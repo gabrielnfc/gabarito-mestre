@@ -35,7 +35,8 @@
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /** Só diretórios com carimbo >= isto precisam de plano de volta. PINADO POR TESTE. */
 export const MIGRATION_GUARD_CUTOFF = '00000000000000';
@@ -266,4 +267,5 @@ function main(argv) {
   process.exit(resultado.ok ? 0 : 1);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main(process.argv.slice(2));
+// Entrypoint robusto a espaço/acento no caminho: `file://` cru falha com %20 e o script sairia 0 em silêncio.
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) main(process.argv.slice(2));

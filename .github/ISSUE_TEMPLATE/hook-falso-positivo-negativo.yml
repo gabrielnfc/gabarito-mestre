@@ -1,0 +1,36 @@
+name: "Hook: falso positivo / negativo"
+description: Um comando legítimo foi bloqueado, ou um destrutivo/de produção passou.
+title: "[hook] "
+labels: ["hook", "bug"]
+body:
+  - type: dropdown
+    id: tipo
+    attributes:
+      label: Tipo
+      options:
+        - Falso positivo (legítimo bloqueado) — prioridade máxima
+        - Falso negativo (destrutivo ou produção passou)
+    validations: { required: true }
+  - type: dropdown
+    id: hook
+    attributes:
+      label: Hook
+      options: [guard-destructive.sh (R2), guard-production.sh (R3), não sei]
+    validations: { required: true }
+  - type: textarea
+    id: comando
+    attributes:
+      label: Comando exato (anonimize caminhos, hosts e credenciais)
+      render: bash
+    validations: { required: true }
+  - type: textarea
+    id: motivo
+    attributes:
+      label: Mensagem do hook (permissionDecisionReason) ou "passou sem mensagem"
+    validations: { required: true }
+  - type: input
+    id: versoes
+    attributes:
+      label: Versões
+      placeholder: "plugin 1.0.1 · Claude Code 2.1.261 · macOS 15 / bash 3.2.57"
+    validations: { required: true }

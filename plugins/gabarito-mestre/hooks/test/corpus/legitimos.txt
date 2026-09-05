@@ -1,0 +1,65 @@
+git status --short; echo "--- limpo acima = revisor não deixou resíduo ---"
+git log --oneline -15 && echo "--- MIGRATIONS DIR ---" && ls -la supabase/migrations 2>/dev/null | tail -20; ls -d */ | head -30
+git diff .gitignore | head -20; echo ---; git log --oneline -3 -- .planning/ 2>/dev/null | head -3; git ls-files .planning/ | head -3
+git commit -m "docs(plan): top farma 1016 criada, especializado mantem 1004 — task 16 reescrita" && git rev-parse --short HEAD
+git fetch origin --quiet && git show origin/main:src/modules/orders/order.controller.ts | sed -n '440,530p'
+git checkout -q -b docs/claude-sso-porteiro origin/main && git branch --show-current
+npm run test:mjs 2>&1 | grep -E '^ℹ (tests|pass|fail)'; npm run test:ts 2>&1 | grep -E '^ℹ (tests|pass|fail)'
+npm test 2>&1 | tail -15
+npx biome check tests/integration/_write-guard.ts vitest.config.ts 2>&1 | head -60
+node "$HOME/.claude/get-shit-done/bin/gsd-tools.cjs" config-get workflow.discuss_mode 2>/dev/null || echo "discuss"
+gh pr checks 16 2>&1 | head -20
+gh api repos/org/repo/actions/jobs/99122329938/logs 2>/dev/null | grep -aE "error|Error|✖|ELIFECYCLE|exited" | head -15
+gh run view 32935488771 --log-failed 2>&1 | head -100
+sed -n '1,20p' tests/integration/write-pedidos.test.ts
+grep -n -i 'undefined\|confirmar\|responseBody' tests/integration/pedido-roundtrip.test.ts | head -40
+cat AGENTS.md
+ls -la && find . -type f -not -path '*/node_modules/*' -not -path './.git/*' | head -100 && echo --- && git status 2>&1 | head -3
+find migrations -maxdepth 2 | head -40; echo "=== exit $? ==="
+wc -l docs/*.md README.md && echo "===HEAD CONSOLIDADA===" && head -120 "docs/TRUEWMS-DOCUMENTACAO-CONSOLIDADA.md"
+curl -s --max-time 4 --retry 4 --retry-delay 2 --retry-all-errors http://localhost:3001/health
+docker exec -i supabase_db_app psql -U postgres -d postgres -t -A -c "select string_agg(id, ',' order by id) from permissions;"
+npx jest import-draft.builder import-parse.processor --silent 2>&1 | tail -8
+npx tsc --noEmit 2>&1 | grep -c "error TS"; git rev-parse --short HEAD; git status --porcelain | head -5
+lsof -a -p 10175 -d cwd -Fn 2>/dev/null | grep '^n'; echo "--- porta 3000 cwd ---"; lsof -a -p 73801 -d cwd -Fn 2>/dev/null | grep '^n'
+ps aux | grep -E "jest" | grep -v grep | awk '{print $2, $10, $11}' | head -3
+grep -rn "DROP TABLE" prisma/migrations/
+grep -rn deleteMany src/ | head
+cat .github/workflows/deploy-production.yml
+NODE_ENV=production npm run build
+npm install --production
+npm ci --omit=dev
+vercel --prod
+git clean -n
+git rm -r --cached dist
+npm rm lodash
+echo "cleanup done" > /dev/null
+docker ps -a && docker images
+docker compose up -d db
+npx prisma migrate dev --name add_index
+npx prisma db push
+psql "$DATABASE_URL" -c "SELECT count(*) FROM orders"
+curl -s https://example.com/products?page=2
+gh api repos/org/repo/environments/deploy-producao --jq .name
+cat .env.example && grep -c PROD .env.example
+API_PROD_TOKEN= npm test
+sed -n '1,40p' src/resources/produtos.ts
+cat config.production.example.yml
+node -e "console.log(process.env.NODE_ENV)"
+rm -f coverage/lcov.info
+mkdir -p .spike/2026-09-05-x && cp script.mjs .spike/2026-09-05-x/
+git rm -r --cached dist
+git reset --soft HEAD~1
+git worktree remove ../wt
+git commit -m "rm -rf handling"
+grep -rn "rm -rf" docs/
+docker rm app
+find . -name "*.log" | head
+rsync -a src/ dst/
+FOO=bar npm test
+grep -rn "process.env.API_PROD_KEY" src/
+git grep '$PROD_DB_URL'
+git commit -m "fix: prod.example.com timeout"
+echo "see https://prod.example.com" >> notes.md
+ls deploy-prod.sh
+cat docs/prod-runbook.md

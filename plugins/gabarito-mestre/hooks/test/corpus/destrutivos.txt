@@ -1,0 +1,52 @@
+rm -rf node_modules
+rm -r build/
+sudo rm -rf /var/lib/postgresql/data
+find . -name "*.log" | xargs rm -rf
+cd /tmp && rm -Rf cache
+psql "$DATABASE_URL" -c "DROP TABLE orders"
+psql -c 'DROP DATABASE app_test'
+mysql -u root -e "DROP SCHEMA legacy"
+psql "$DATABASE_URL" -c "TRUNCATE TABLE logs"
+docker exec supabase_db psql -U postgres -c "TRUNCATE orders CASCADE"
+npx prisma migrate reset --force
+npx prisma db push --force-reset
+npx typeorm schema:drop
+npx sequelize-cli db:drop
+supabase db reset
+bin/rails db:reset
+php artisan migrate:fresh
+docker volume rm pgdata
+docker volume prune -f
+docker system prune -af --volumes
+docker compose down -v
+node -e "await prisma.customer.deleteMany()"
+node -e "db.order.updateMany({ data: { status: 'x' } })"
+npx tsx -e "await db.user.deleteMany({})"
+git clean -fdx
+git clean -xdf
+dd if=/dev/zero of=/dev/disk2 bs=1m
+cat image.iso > /dev/sdb
+mkfs.ext4 /dev/nvme0n1p1
+diskutil eraseDisk JHFS+ X disk2
+{ rm -rf dist; }
+if true; then rm -rf dist; fi
+for f in a b; do rm -rf "$f"; done
+\rm -rf dist
+nohup rm -rf dist &
+timeout 10 rm -rf dist
+FOO="say \"hi\"" rm -rf dist
+bash -c "rm -rf dist"
+eval "rm -rf dist"
+bash <<< 'rm -rf dist'
+node -e "fs.rmSync('dist',{recursive:true})"
+python3 -c "import shutil; shutil.rmtree('dist')"
+find . -name "*.log" -delete
+find . -type d -exec rm -rf {} +
+npx rimraf dist
+git rm -rf src/
+git worktree remove --force ../wt
+rsync -a --delete src/ dst/
+git reset --hard origin/main
+docker rm -f app
+aws s3 rm s3://b/p --recursive
+gsutil rm -r gs://b/p

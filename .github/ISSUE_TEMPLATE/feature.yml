@@ -1,0 +1,19 @@
+name: "Regra, gate ou padrão novo"
+description: Proposta com o incidente ou medição que a justifica.
+title: "[proposta] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: incidente
+    attributes:
+      label: Incidente ou medição que motiva (regra sem incidente é intenção — AGENTS.md §8)
+    validations: { required: true }
+  - type: textarea
+    id: proposta
+    attributes:
+      label: O que muda (regra, gate, padrão de hook) e o que torna impossível
+    validations: { required: true }
+  - type: textarea
+    id: teste
+    attributes:
+      label: Como seria o teste ou o caso de corpus que prova

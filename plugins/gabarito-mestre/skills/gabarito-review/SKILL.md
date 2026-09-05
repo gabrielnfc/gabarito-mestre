@@ -1,7 +1,7 @@
 ---
 name: gabarito-review
 description: Review adversarial de código com mutações executadas e veredito binário APROVADO/REPROVADO. Use quando o usuário pedir para "revisar o diff", "review adversarial", "revisar a task", "revisar a PR", "code review desta entrega", "rodar as mutações", "o teste falharia sem a implementação?", "review this diff/PR/branch" ou ao fim de cada task de um plano. Nunca aprova sem ter rodado mutação. Não conserta código.
-allowed-tools: Read, Glob, Grep, Bash(git diff:*), Bash(git log:*), Bash(git show:*), Bash(git stash:*), Bash(git checkout:*), Bash(git apply:*), Bash(npm test:*), Bash(npm run:*), Bash(npx:*), Bash(node:*), Bash(pnpm:*), Bash(yarn:*), Edit
+allowed-tools: Read, Glob, Grep, Bash(git diff:*), Bash(git log:*), Bash(git show:*), Bash(git stash:*), Bash(git checkout -- *), Bash(git apply:*), Bash(npm test:*), Bash(npm run:*), Bash(npx:*), Bash(node:*), Bash(pnpm:*), Bash(yarn:*), Edit
 ---
 
 # gabarito-review

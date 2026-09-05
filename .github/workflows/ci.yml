@@ -1,0 +1,59 @@
+# CI do repositório do plugin. Ações pinadas por SHA (referencia.md §10).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: claude plugin validate --strict
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: npm install -g @anthropic-ai/claude-code
+      - run: claude plugin validate ./plugins/gabarito-mestre --strict
+      - run: claude plugin validate . --strict
+
+  gates:
+    name: gates — 77 testes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: cd plugins/gabarito-mestre/gates && npm test
+
+  hooks:
+    name: hooks — corpora (bash ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: bash --version | head -1
+      - run: node --test plugins/gabarito-mestre/hooks/test/guards.test.mjs
+
+  doctor-self:
+    name: doctor não se auto-detecta (M10)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: |
+          node plugins/gabarito-mestre/gates/scripts/harness-doctor.mjs --json > out.json
+          node -e "const j=require('./out.json');const bad=j.resultados.filter(r=>r.found&&/gabarito-mestre\//.test(r.evidence||''));if(bad.length){console.error('auto-detecção:',bad.map(r=>r.id));process.exit(1)}console.log('ok — nenhuma evidência vinda do plugin')"

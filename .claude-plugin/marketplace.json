@@ -6,15 +6,23 @@
     "name": "Gabriel Nascimento",
     "url": "https://github.com/gabrielnfc"
   },
-  "allowCrossMarketplaceDependenciesOn": ["claude-plugins-official"],
+  "allowCrossMarketplaceDependenciesOn": [
+    "claude-plugins-official"
+  ],
   "plugins": [
     {
       "name": "gabarito-mestre",
       "source": "./plugins/gabarito-mestre",
       "description": "Barra o destrutivo (hooks R2/R3), confere o produzido (conformidade, review adversarial, spike) e mede o nível real de adoção (doctor). Exige superpowers; ui-ux-pro-max quando a tarefa é de UI/UX.",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "category": "productivity",
-      "keywords": ["harness", "guardrails", "hooks", "code-review", "safety"]
+      "keywords": [
+        "harness",
+        "guardrails",
+        "hooks",
+        "code-review",
+        "safety"
+      ]
     }
   ]
 }

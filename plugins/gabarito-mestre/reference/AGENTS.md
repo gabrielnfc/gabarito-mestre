@@ -227,7 +227,7 @@ Skill que reimplementa superpowers é régua duplicada em dois lugares — o que
 
 **Fail-closed declarado (G9):** plugin vizinho ausente **não** é motivo para pular a etapa. A skill do gabarito degrada para o modo próprio e **avisa em uma linha** que está sem a maquinaria. Indisponibilidade nunca vira silêncio.
 
-**Hooks (a):** `guard-destructive.sh` (R2) e `guard-production.sh` (R3) rodam antes de todo comando Bash. Escape hatch nominal: `GABARITO_ALLOW_DESTRUCTIVE="<motivo>"` — motivo vazio não libera.
+**Hooks (a):** `guard-destructive.sh` (R2) e `guard-production.sh` (R3) rodam antes de todo comando Bash. Escape hatch nominal: `GABARITO_ALLOW_DESTRUCTIVE="<motivo>"` (R2) / `GABARITO_ALLOW_PRODUCTION="<motivo>"` (R3), só no início do comando ou no ambiente, motivo com ≥ 8 caracteres e ≥ 2 palavras — vazio ou curto não libera; o uso fica no transcript e é achado de review se não houver autorização do usuário registrada. **Limites declarados (G9):** é grep, não sandbox — `kubectl delete`, `terraform destroy`, `git push --force`, script escrito e executado depois passam; a lista completa está no README do plugin, e o que o grep não vê é coberto por G3/G7 e pelo review com mutação.
 
 ---
 

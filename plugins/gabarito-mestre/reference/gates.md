@@ -4,8 +4,8 @@
 > correspondente não precise ser lida por ninguém — a máquina lembra.
 > Esta é a I12 aplicada ao próprio harness.
 
-Código em `tools/gabarito-gates/`. **Zero dependências** — só builtins do Node ≥ 22.18 (ver "Requisitos" no fim).
-Rode `npm test` lá: 76 testes, incluindo os que reproduzem os incidentes originais.
+Código em `tools/gabarito-gates/` (instalado pelo plugin; os imports abaixo são relativos a partir de `src/` — ajuste a profundidade, ou copie os dois `.ts` para o seu `src/`). **Zero dependências** — só builtins do Node ≥ 22.18 (ver "Requisitos" no fim).
+Rode `npm test` lá: 77 testes, incluindo os que reproduzem os incidentes originais.
 
 | Gate | Regra | Forma | O que ele torna impossível |
 |---|---|---|---|
@@ -25,7 +25,7 @@ Rode `npm test` lá: 76 testes, incluindo os que reproduzem os incidentes origin
 
 ```ts
 // onde o client de banco nasce — UM lugar, nunca por chamada
-import { massMutationGuard } from 'harness-gates/mass-mutation-guard';
+import { massMutationGuard } from '../tools/gabarito-gates/src/mass-mutation-guard.ts';
 export const db = new PrismaClient().$extends(massMutationGuard());
 ```
 
@@ -34,7 +34,7 @@ não enxerga valor vindo de variável; a de runtime só age depois que o código
 
 ```js
 // eslint.config.js
-import noUnfilteredMassMutation from 'harness-gates/eslint';
+import noUnfilteredMassMutation from './tools/gabarito-gates/eslint/no-unfiltered-mass-mutation.js';
 export default [
   {
     plugins: { harness: { rules: { 'no-unfiltered-mass-mutation': noUnfilteredMassMutation } } },
@@ -58,7 +58,7 @@ Nos **dois** entrypoints do runner de testes (setup de env e setup global — me
 é a que não protege o caminho que ninguém lembrou):
 
 ```ts
-import { assertNotProduction } from 'harness-gates/production-host-guard';
+import { assertNotProduction } from '../tools/gabarito-gates/src/production-host-guard.ts';
 assertNotProduction(process.env.API_BASE_URL, process.env.API_PROD_BASE_URL, 'o ERP');
 ```
 
@@ -70,7 +70,7 @@ Compara **host**, não URL. Não imprime nenhum dos lados. URL de destino invál
 Nos dois processos (API e worker):
 
 ```ts
-import { assertBootEnvironment, hostOf } from 'harness-gates/production-host-guard';
+import { assertBootEnvironment, hostOf } from '../tools/gabarito-gates/src/production-host-guard.ts';
 assertBootEnvironment(
   hostOf(process.env.ERP_BASE_URL),   // host EFETIVO — o discriminador
   ['sandbox', 'localhost', '127.0.0.1'],
@@ -239,7 +239,7 @@ Smoke test executado em projeto novo e vazio (05/09/2026, Node 22.22.2):
 | `deploy-order-check` sem `deployOrder` no config | **exit 1** — gate não declarado é gate ausente |
 | regra ESLint sob ESLint 9 real | pegou `deleteMany()`, `where: {}` e `id: undefined`; **não** acusou o filtro válido nem o `allowFullScan` |
 | `import` dos guards a partir de projeto consumidor | ok em runtime e sob `tsc --noEmit` |
-| suíte completa rodando da cópia do consumidor | 76/76 |
+| suíte completa rodando da cópia do consumidor | 77/77 |
 
 **O limite da regra de lint, medido no mesmo teste:** ela **não** pega
 `where: { tenantId }` quando `tenantId` é variável que vale `undefined` — que é

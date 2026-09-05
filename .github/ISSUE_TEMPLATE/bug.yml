@@ -1,0 +1,27 @@
+name: "Bug (gate, skill, instalador, doctor)"
+description: Algo que não é hook se comportou diferente do documentado.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área
+      options: [gates (doctor, migrations-guard, ratchet, deploy-order), skill, agent, instalar.sh, docs/README, outro]
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes:
+      label: Como reproduzir (comandos e saída colada)
+      render: shell
+    validations: { required: true }
+  - type: textarea
+    id: esperado
+    attributes:
+      label: O que era esperado, e onde está documentado
+    validations: { required: true }
+  - type: input
+    id: versoes
+    attributes:
+      label: Versões (plugin · Claude Code · Node · SO)
+    validations: { required: true }

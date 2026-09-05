@@ -26,10 +26,13 @@ if [ -e "$DEST/CLAUDE.md" ]; then
   else printf '\n@AGENTS.md\n' >> "$DEST/CLAUDE.md"; echo "  emendado CLAUDE.md (+ linha @AGENTS.md; nada removido)"; criados=$((criados+1)); fi
 else put templates/CLAUDE.md CLAUDE.md; fi
 # gates → tools/gabarito-gates (arquivo a arquivo, sem sobrescrever)
-while IFS= read -r f; do rel="${f#$ROOT/gates/}"; put "gates/$rel" "tools/gabarito-gates/$rel"; done < <(find "$ROOT/gates" -type f -not -path '*/node_modules/*' | sort)
+while IFS= read -r f; do rel="${f#"$ROOT/gates/"}"; put "gates/$rel" "tools/gabarito-gates/$rel"; done < <(find "$ROOT/gates" -type f -not -path '*/node_modules/*' -not -name .DS_Store | sort)
 echo "── $criados criado(s), $mantidos mantido(s). Nenhum arquivo apagado ou sobrescrito."
 echo "── Nível de adoção NÃO foi declarado (fica \`____\` no AGENTS.md §0.2). Meça com o doctor:"
 echo
-cd "$DEST" && node tools/gabarito-gates/scripts/harness-doctor.mjs --explain || true
+if ! command -v node >/dev/null 2>&1; then echo "AVISO: node não encontrado — o doctor não rodou. Instale Node ≥ 22.18 e rode: node tools/gabarito-gates/scripts/harness-doctor.mjs --explain"; else
+  cd "$DEST" && node tools/gabarito-gates/scripts/harness-doctor.mjs --explain; rc=$?
+  [ $rc -ne 0 ] && echo "doctor saiu com código $rc (nível declarado maior que o medido, ou erro acima)."
+fi
 echo
 echo "── Próximos passos: (1) preencher o Apêndice do AGENTS.md · (2) declarar no §0.2 o nível que o doctor MEDIU · (3) calibrar antes de ligar gates (docs/harness/adocao.md §3)"

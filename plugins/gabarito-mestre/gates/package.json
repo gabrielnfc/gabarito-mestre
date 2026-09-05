@@ -1,7 +1,7 @@
 {
-  "name": "harness-gates",
+  "name": "gabarito-gates",
   "version": "1.0.0",
-  "description": "Gates executáveis do harness de engenharia — as regras que a máquina lembra, para que ninguém precise.",
+  "description": "Gates executáveis do Gabarito Mestre — as regras que a máquina lembra, para que ninguém precise.",
   "type": "module",
   "license": "MIT",
   "engines": {

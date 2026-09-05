@@ -1,4 +1,4 @@
-# harness-gates
+# gabarito-gates
 
 Gates executáveis do harness de engenharia. **Zero dependências** — só builtins do Node ≥ 22.18 (ver "Requisitos" no fim).
 
@@ -18,7 +18,7 @@ correspondente do `AGENTS.md` não precise ser lida por ninguém.
 ## Testes
 
 ```bash
-npm test          # 76 testes
+npm test          # 77 testes
 ```
 
 Cada suíte declara no cabeçalho as **mutações prescritas**. Toda uma delas tem que

@@ -1,5 +1,7 @@
 # Gabarito Mestre
 
+[![ci](https://github.com/gabrielnfc/gabarito-mestre/actions/workflows/ci.yml/badge.svg)](https://github.com/gabrielnfc/gabarito-mestre/actions/workflows/ci.yml) [![release](https://img.shields.io/github/v/release/gabrielnfc/gabarito-mestre?label=release)](https://github.com/gabrielnfc/gabarito-mestre/releases) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **Gabarito mestre** é o molde de referência da manufatura — aquele contra o qual todos os outros são conferidos. É o que este plugin de Claude Code faz: **barra o que é destrutivo** (hooks) e **confere o que é produzido** (skills de conformidade, review adversarial e spike), enquanto o **doctor** mede — e reprova quando mente — o nível real de adoção do harness.
 
 Derivado de prática medida, não de boa-prática genérica: cada regra e cada gate existe por causa de um incidente real, e o incidente está escrito ao lado da regra (`plugins/gabarito-mestre/reference/AGENTS.md`).
@@ -73,16 +75,18 @@ Dois `PreToolUse` sobre `Bash`. Leem o comando, inspecionam por grep (não parse
 
 | Família | Exemplos barrados |
 |---|---|
-| rm recursivo | `rm -rf` · `rm -r` · `sudo rm -rf` · `xargs rm -rf` · `--recursive` |
-| git clean forçado | `git clean -fdx` · `-f` · `--force` (dry-run `-n` passa) |
-| docker | `docker volume rm\|prune` · `docker system prune` · `docker compose down -v` |
+| rm recursivo | `rm -rf` · `rm -r` · `\rm -rf` · `--recursive` · `rimraf` · `find … -delete` · `find … -exec rm` · dentro de `{ }`, `then`, `do`, `sudo`, `xargs`, `nohup`, `timeout N` |
+| git destrutivo | `git clean -f\|-fdx` · `git reset --hard` · `git worktree remove --force` · `git rm -r` (sem `--cached`) — dry-run `-n` e `--soft` passam |
+| docker | `docker rm -f\|-v` · `docker volume rm\|prune` · `docker system prune` · `docker compose down -v` |
 | reset de migrations | `prisma migrate reset` · `db push --force-reset` · `typeorm schema:drop` · `sequelize db:drop` · `knex migrate:rollback --all` · `drizzle-kit drop` · `supabase db reset` · `rails db:drop\|reset` · `artisan migrate:fresh\|reset` · `manage.py flush` · `mix ecto.drop` · `dotnet ef database drop` · `flyway clean` · `liquibase drop-all` |
-| SQL/ORM em one-liner | `DROP TABLE\|DATABASE\|SCHEMA` · `TRUNCATE` · `DELETE FROM` · `.deleteMany(` · `.updateMany(` — **só quando o comando também invoca um executor** (`psql`, `mysql`, `node -e`, `prisma db execute`…). `grep "DROP TABLE"` é leitura e passa. |
-| escrita crua em disco | `dd of=/dev/…` · `> /dev/sd…` · `mkfs` · `diskutil erase…` · `shred` · `wipefs` |
+| payload destrutivo em executor | `DROP TABLE\|DATABASE\|SCHEMA` · `TRUNCATE` · `DELETE FROM` · `.deleteMany(` · `.updateMany(` · `fs.rmSync(…recursive)` · `shutil.rmtree` — **só quando o comando também invoca um executor** (`psql`, `mysql`, `node -e`, `python3 -c`, `prisma db execute`, `bash -c`, `eval`, `sh <<<`…). `grep "DROP TABLE"` é leitura e passa. |
+| sync / nuvem / disco | `rsync --delete` · `aws s3 rm --recursive` · `gsutil rm -r` · `dd of=/dev/…` · `> /dev/sd…` · `mkfs` · `diskutil erase…` · `shred` · `wipefs` |
+
+**Menção ≠ execução.** Antes de varrer, o hook remove (i) o corpo de heredocs que só escrevem arquivo com terminador **citado** (`cat >> notas.md <<'EOF'`) — com terminador sem aspas o bash expande `$(…)` na escrita, então essas linhas ficam; e (ii) segmentos de `grep`/`rg`/`sed`/`echo`/`git log`/`git commit -m`, que só leem ou registram texto. O que vem depois de `|`, `;` ou `&&` continua varrido (`grep x | xargs rm -rf` bloqueia).
 
 ### `guard-production.sh` — R3
 
-Barra **uso** de credencial/host de produção: `$X_PROD_URL`, `${PROD_TOKEN}`, `process.env.API_PROD_KEY`, atribuição com valor (`API_PROD_TOKEN=abc npm test`), hosts (`prod.exemplo.com`, `api.production.exemplo.com`), URLs com segmento `prod`. **Não** barra: `API_PROD_TOKEN=` vazio (`.env.example`), `deploy-production.yml` (arquivo, não host), `NODE_ENV=production`, `npm install --production`, `/products`.
+Barra **uso** de credencial/host de produção: `$X_PROD_URL`, `${PROD_TOKEN}`, `process.env.API_PROD_KEY`, atribuição com valor (`API_PROD_TOKEN=abc npm test`), hosts (`prod.exemplo.com`, `api.production.exemplo.com`, `db-prod.rds.amazonaws.com`, `prod.internal`), URLs com segmento `prod`. **Não** barra: `API_PROD_TOKEN=` vazio (`.env.example`), `deploy-production.yml` (arquivo, não host), `NODE_ENV=production`, `npm install --production`, `/products`, nem menção em `grep`/`sed`/`git commit -m`/heredoc de anotação.
 
 Configurável por env, porque domínio hardcoded de um projeto não serve para mais ninguém:
 
@@ -98,19 +102,27 @@ GABARITO_PROD_PATTERNS_EXTRA='sankhyacloud\.com\.br' # SOMA ao default
 | **Falso positivo (M3)** — 50 comandos legítimos, 25 reais (transcripts de Claude Code desta máquina) + 25 sintéticos armadilha | **0 / 50 bloqueados** |
 | **Falso negativo (M4)** — 30 destrutivos cobrindo as 6 famílias + 12 de produção | **30 / 30** e **12 / 12 bloqueados** |
 | **Escape hatch (M5)** — motivo preenchido libera · vazio não · aviso traz o motivo · ausente não | **4 / 4 nos dois hooks** |
-| **Corpus completo — 7.037 comandos Bash reais** (todos os transcripts de Claude Code desta máquina, 11 projetos) | destrutivo: **34 bloqueados (0,48 %)**, dos quais 28 eram de fato `rm -rf`/`DELETE`/`DROP`/`docker rm -v` executados e **6 falsos positivos (0,09 %)** — texto de PR/commit ou padrão de `grep` citando SQL num comando que também chama `psql`. Produção: **26 bloqueados (0,37 %)**, 25 acessos reais a host/credencial de produção e **1 falso positivo** (anotação de memória citando a URL). |
+| **Corpus completo — 7.037 comandos Bash reais** (todos os transcripts de Claude Code desta máquina, 11 projetos; hooks da 1.0.1) | destrutivo: **46 bloqueados (0,65 %)** — 43 eram de fato `rm -rf`, `DELETE`/`DROP`, `git worktree remove --force`, `git reset --hard`, `docker rm -v` executados; **3 falsos positivos (0,04 %)**: corpo de PR (`gh pr create --body`) citando `prisma migrate reset`, heredoc de `python3` escrevendo texto com `rm -rf`, e `psql \d … \| grep` num comando que também tinha `DELETE`. Produção: **23 bloqueados (0,33 %)**, 22 acessos reais a host/credencial de produção e **1 falso positivo** (anotação de memória citando a URL). |
 
 O rigor tem motivo: um bloqueio indevido faz alguém desativar o plugin inteiro — e aí se perde também a proteção que funcionava.
 
+### Limites declarados (G9 — o que os hooks NÃO pegam)
+
+É grep, não sandbox (I9). Passam, por decisão: `kubectl delete` · `terraform destroy` · `gh repo delete` · `git push --force` · `git branch -D` · `git checkout -- .` · `truncate -s0` · `: > arquivo` · `heroku -a app-prod` · `kubectl -n production` · `s3://app-prod-bucket` · `vercel --prod` · `$(cat prod-token.txt)` · e **script escrito por heredoc/Write e executado no comando seguinte** (`cat > x.sh <<'EOF' … EOF; bash x.sh`). Para o seu caso, some padrões em `GABARITO_PROD_PATTERNS_EXTRA`; para o resto existem as guardas de runtime (G3/G7) e o review adversarial com mutação.
+
 ### Escape hatch
 
-Nominal e grepável. Motivo **não-vazio** obrigatório; vazio ou só espaços **não libera**. Vale no ambiente do processo ou como prefixo inline (o motivo fica no transcript ao lado do ato):
+Nominal e grepável. Regras, todas medidas:
+
+- motivo **obrigatório**, com **≥ 8 caracteres e ≥ 2 palavras** — `"lol"` não libera; vazio ou só espaços não libera;
+- vale no ambiente do processo (`GABARITO_ALLOW_DESTRUCTIVE` para R2, `GABARITO_ALLOW_PRODUCTION` para R3 — cada uma aceita a outra) ou como prefixo **no início do comando**. Comentário no fim (`rm -rf x # GABARITO_ALLOW_…`) ou `echo` no meio **não** liberam;
+- o hook permite **e** imprime aviso (`systemMessage` + stderr) com o motivo e a origem (`env`/`inline`).
 
 ```bash
-GABARITO_ALLOW_DESTRUCTIVE="expurgo de build autorizado por gabriel em 2026-09-05" rm -rf build
+GABARITO_ALLOW_DESTRUCTIVE="autorizado por gabriel em 2026-09-05 — expurgo do build antigo" rm -rf build
 ```
 
-O hook permite **e** imprime aviso (`systemMessage` + stderr) com o motivo. Não existe variável que desligue os hooks sem motivo.
+A mensagem de bloqueio diz ao agente como usar o hatch **depois de obter autorização do usuário**. Isso é decisão de desenho: o motivo fica no transcript ao lado do ato, e é o que o review adversarial confere (R18). Quem preferir que só o humano libere, exporte a variável no `env` do `settings.json` e trate qualquer uso inline como achado de review.
 
 **Fail-open declarado (G9):** sem `node`, `jq` nem `python3` para ler o JSON do stdin, o hook avisa em stderr e deixa passar — bloquear todo Bash faria o usuário desinstalar o plugin. Node é requisito do pacote de qualquer forma.
 
@@ -156,10 +168,21 @@ Os parâmetros que vêm no pacote foram **calibrados em OUTRO projeto**. Copiar 
 ```bash
 claude plugin validate ./plugins/gabarito-mestre --strict   # Validation passed
 cd plugins/gabarito-mestre/gates && npm test                  # 77 testes (50 mjs + 27 ts)
+node --test plugins/gabarito-mestre/hooks/test/guards.test.mjs               # corpora dos hooks
 ```
+
+**Testes dos hooks:** `node --test plugins/gabarito-mestre/hooks/test/guards.test.mjs` roda os corpora deste README (legítimos, destrutivos, produção, escape hatch) contra os scripts reais — é o que o CI do repositório executa.
+
+**Por que `plugin.json` não declara `hooks`:** `hooks/hooks.json` é carregado automaticamente; declarar `"hooks": "./hooks/hooks.json"` faz o plugin **falhar ao carregar** com `Duplicate hooks file detected` (medido em 2.1.261). `validate --strict` não pega isso; só `claude plugin list` depois de instalar.
 
 O doctor **não se auto-detecta**: o pacote de gates e a pasta `reference/` são excluídos da varredura em qualquer local de instalação (M10). Antes dessa exclusão, rodar o doctor na raiz deste repositório contava 9 checagens como "ok" a partir dos próprios testes dos gates.
 
+## Contribuir
+
+[`CONTRIBUTING.md`](CONTRIBUTING.md) — o que aceitamos e o checklist de PR · [`SECURITY.md`](SECURITY.md) — bypass de hook é vulnerabilidade · [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) · [`CHANGELOG.md`](CHANGELOG.md).
+
+O achado mais valioso é um **comando legítimo bloqueado**: abra a issue "Hook: falso positivo / negativo" com o comando exato.
+
 ## Licença
 
-MIT.
+[MIT](LICENSE).

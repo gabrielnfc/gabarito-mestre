@@ -35,7 +35,8 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const TOLERANCE = 0.5; // pontos percentuais — ruído natural entre runs
 export const METRICAS = ['lines', 'statements', 'functions', 'branches'];
@@ -282,4 +283,5 @@ function main(argv) {
   process.exit(out.ok ? 0 : 1);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main(process.argv.slice(2));
+// Entrypoint robusto a espaço/acento no caminho: `file://` cru falha com %20 e o script sairia 0 em silêncio.
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) main(process.argv.slice(2));

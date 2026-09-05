@@ -6,13 +6,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/guard-destructive.sh\"",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/guard-destructive.sh\"",
             "shell": "bash",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/guard-production.sh\"",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/guard-production.sh\"",
             "shell": "bash",
             "timeout": 10
           }

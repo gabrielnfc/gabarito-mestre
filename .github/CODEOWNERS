@@ -1,0 +1,4 @@
+# Revisão obrigatória do mantenedor em tudo; hooks e gates são controle de segurança.
+*                                   @gabrielnfc
+/plugins/gabarito-mestre/hooks/     @gabrielnfc
+/plugins/gabarito-mestre/gates/     @gabrielnfc

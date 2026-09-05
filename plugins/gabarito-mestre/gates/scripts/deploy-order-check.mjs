@@ -31,7 +31,8 @@
  */
 
 import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /** Recorta o arquivo a partir da primeira linha que casa `sectionPattern`. */
 export function scopeFrom(content, sectionPattern) {
@@ -111,4 +112,5 @@ function main() {
   process.exit(out.ok ? 0 : 1);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main();
+// Entrypoint robusto a espaço/acento no caminho: `file://` cru falha com %20 e o script sairia 0 em silêncio.
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) main();

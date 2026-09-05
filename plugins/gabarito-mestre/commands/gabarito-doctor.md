@@ -5,16 +5,16 @@ allowed-tools: Bash(node:*), Read
 
 Rode o doctor do gabarito no diretório do projeto e explique a saída.
 
-1. Execute exatamente:
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/harness-doctor.mjs" --explain
-```
-
-   Se o repositório já tem a cópia instalada em `tools/gabarito-gates/`, prefira ela (é a que roda no CI):
+1. Se o repositório já tem a cópia instalada (`tools/gabarito-gates/`), use ela — é a que roda no CI:
 
 ```bash
 node tools/gabarito-gates/scripts/harness-doctor.mjs --explain
+```
+
+   Senão (harness ainda não instalado), use a cópia do plugin:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/harness-doctor.mjs" --explain
 ```
 
 2. Cole a saída inteira. Não resuma antes de colar.
