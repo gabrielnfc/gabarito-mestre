@@ -1,0 +1,6 @@
+{
+  "_comment": "Atestados do que nenhuma varredura prova. `confirmado: true` + `por` + `em` (AAAA-MM-DD). Vence em 180 dias. Atestado é (c), não (a).",
+  "branch-protegida": { "confirmado": false, "por": "", "em": "" },
+  "backup-verificado": { "confirmado": false, "por": "", "em": "" },
+  "ruleset-obrigatorio": { "confirmado": false, "por": "", "em": "" }
+}

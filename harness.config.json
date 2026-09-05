@@ -1,0 +1,27 @@
+{
+  "_comment": "TEMPLATE — ajuste ao seu repo e apague o que não usar. Ver docs/harness/gates.md.",
+
+  "docsDir": "docs",
+  "migrationsDir": "prisma/migrations",
+  "ciDir": ".github/workflows",
+
+  "quality": {
+    "baselineFile": ".quality/baseline.json",
+    "coverage": {
+      "api": "apps/api/coverage/coverage-summary.json",
+      "web": "apps/web/coverage/coverage-summary.json"
+    },
+    "duplication": { "report": ".quality/jscpd.json", "ceiling": 2 },
+    "violations": { "report": ".quality/eslint.json" }
+  },
+
+  "deployOrder": [
+    {
+      "label": "staging",
+      "file": ".github/workflows/deploy-staging.yml",
+      "deploy": ["SVC_WORKER", "SVC_API"],
+      "rollback": ["SVC_API", "SVC_WORKER"],
+      "rollbackSection": "rollback"
+    }
+  ]
+}

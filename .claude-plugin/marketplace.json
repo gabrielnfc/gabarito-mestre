@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "gabarito-mestre",
+  "description": "Marketplace do Gabarito Mestre — o molde contra o qual todo o resto é conferido.",
+  "owner": {
+    "name": "Gabriel Nascimento",
+    "url": "https://github.com/gabrielnfc"
+  },
+  "allowCrossMarketplaceDependenciesOn": ["claude-plugins-official"],
+  "plugins": [
+    {
+      "name": "gabarito-mestre",
+      "source": "./plugins/gabarito-mestre",
+      "description": "Barra o destrutivo (hooks R2/R3), confere o produzido (conformidade, review adversarial, spike) e mede o nível real de adoção (doctor). Exige superpowers; ui-ux-pro-max quando a tarefa é de UI/UX.",
+      "version": "1.0.0",
+      "category": "productivity",
+      "keywords": ["harness", "guardrails", "hooks", "code-review", "safety"]
+    }
+  ]
+}

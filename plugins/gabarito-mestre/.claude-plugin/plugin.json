@@ -1,0 +1,29 @@
+{
+  "name": "gabarito-mestre",
+  "displayName": "Gabarito Mestre",
+  "version": "1.0.0",
+  "description": "Molde de referência para engenharia com agentes: barra o que é destrutivo (hooks R2/R3), confere o que é produzido (design, plano, review, spike) e mede o nível real de adoção (doctor). Compõe com superpowers (processo) e ui-ux-pro-max (interface).",
+  "author": {
+    "name": "Gabriel Nascimento",
+    "url": "https://github.com/gabrielnfc"
+  },
+  "homepage": "https://github.com/gabrielnfc/gabarito-mestre",
+  "repository": "https://github.com/gabrielnfc/gabarito-mestre",
+  "license": "MIT",
+  "keywords": [
+    "harness",
+    "guardrails",
+    "hooks",
+    "code-review",
+    "tdd",
+    "safety",
+    "engineering-standards",
+    "superpowers"
+  ],
+  "dependencies": [
+    {
+      "name": "superpowers",
+      "marketplace": "claude-plugins-official"
+    }
+  ]
+}

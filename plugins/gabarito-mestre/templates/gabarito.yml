@@ -1,0 +1,48 @@
+# Gabarito Mestre — gates no CI. Ações pinadas por SHA (referencia.md §10).
+# SHAs resolvidos em 2026-09-05 via `gh api repos/<owner>/<repo>/git/ref/tags/v4`:
+#   actions/checkout@v4   → 11d5960a326750d5838078e36cf38b85af677262
+#   actions/setup-node@v4 → 49933ea5288caeca8642d1e84afbd3f7d6820020
+name: gabarito
+
+on:
+  pull_request:
+  push:
+    branches: [main, master, staging]
+
+permissions:
+  contents: read
+
+jobs:
+  doctor:
+    name: harness-doctor (§0.2 — nível declarado ≤ nível medido)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: node tools/gabarito-gates/scripts/harness-doctor.mjs
+
+  gates-tests:
+    name: suíte dos gates (77 testes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: cd tools/gabarito-gates && npm test
+
+  migrations-guard:
+    name: guarda de migrations (G8)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      # Ajuste --dir ao seu ORM. Sem migrations no repo, o gate sai 0. CALIBRE antes de tornar obrigatório (adocao.md §3).
+      - run: node tools/gabarito-gates/scripts/migrations-guard.mjs --base origin/${{ github.base_ref }} --dir prisma/migrations
