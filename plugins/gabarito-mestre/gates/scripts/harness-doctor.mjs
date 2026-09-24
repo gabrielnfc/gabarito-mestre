@@ -16,15 +16,23 @@
  * vivem em `.harness/attest.json`: atestado nominal, com data e autor. Atestado é (c),
  * não (a) — mas datado e revisável vale muito mais que presumido.
  *
+ * 1.1.0: oito checagens novas (fluxo, Iniciativa atestada, versionamento, changelog, tag,
+ * tamanho do AGENTS.md, paralelismo calibrado) e um aviso (modelo resolvido, que NÃO entra
+ * no nível). Config inválida é fail-open declarado: checagens de config ficam FALTA, nunca
+ * stack trace.
+ *
  * USO
  *   node harness-doctor.mjs            # tabela + veredito, sai !=0 se o nível mentir
  *   node harness-doctor.mjs --json     # saída para máquina
  *   node harness-doctor.mjs --explain  # inclui como consertar cada item faltante
+ *   node harness-doctor.mjs --cache    # grava .harness/doctor-cache.json { nivel, declarado, em } (lido pelo cartão de sessão)
  */
 
-import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
-import { join, relative, sep, resolve } from 'node:path';
+import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join, relative, sep, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
+import { checar } from './versionamento-check.mjs';
 
 const SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'coverage', '.next', '.turbo',
@@ -147,6 +155,31 @@ function attestOk(attest, id) {
   if (Number.isNaN(dias)) return null;
   if (dias > ATTEST_TTL_DAYS) return { stale: true, ...a, dias: Math.round(dias) };
   return { stale: false, ...a, dias: Math.round(dias) };
+}
+
+// ────────────────────────────────────────────────────────────── 1.1.0 — auxiliares
+
+const ISO_DATA = /^\d{4}-\d{2}-\d{2}$/;
+const diasDesde = (data) => {
+  const d = (Date.now() - Date.parse(data)) / 86_400_000;
+  return Number.isNaN(d) ? null : d;
+};
+
+/** ids das checagens novas da 1.1.0 — a linha "rode o onboarding" só aparece por causa delas. */
+export const NOVAS_1_1_0 = [
+  'fluxo-configurado', 'iniciativa-resolvida', 'versionamento', 'changelog',
+  'tag-semver', 'agents-tamanho', 'paralelismo-calibrado', 'modelo-resolvido',
+];
+
+/**
+ * Bytes UTF-8 do núcleo (tudo antes do PRIMEIRO cabeçalho de linha que começa com `## Apêndice`,
+ * inclusive a quebra de linha anterior) e do Apêndice. CRLF conta bytes reais. Sem Apêndice: 0.
+ */
+export function tamanhoAgents(texto) {
+  const t = String(texto ?? '');
+  const m = /(^|\r?\n)## Apêndice/.exec(t);
+  const corte = m ? m.index + m[1].length : t.length;
+  return { nucleo: Buffer.byteLength(t.slice(0, corte), 'utf8'), apendice: Buffer.byteLength(t.slice(corte), 'utf8') };
 }
 
 // ────────────────────────────────────────────────────────────── checagens
@@ -365,6 +398,95 @@ export const CHECKS = [
     fix: 'marque os checks como obrigatórios e ateste em .harness/attest.json',
   },
 
+  // ── Nível 2 — 1.1.0 (Workflow TRUE, versionamento, contexto)
+  {
+    id: 'fluxo-configurado',
+    rule: 'R19 / FLX-2',
+    level: 2,
+    kind: 'scan',
+    label: 'fluxo configurado (onboarding da fase 2 concluído)',
+    fix: 'rode gabarito-instalar — a fase 2 grava fluxo.resolvidoEm em harness.config.json',
+    detect: (ix, cfg) => {
+      const em = cfg.fluxo?.resolvidoEm;
+      if (typeof em === 'string' && ISO_DATA.test(em)) return { found: true, evidence: `fluxo.resolvidoEm = ${em}` };
+      return { found: false, evidence: cfg.configInvalido ? 'harness.config.json inválido' : 'sem fluxo.resolvidoEm (AAAA-MM-DD)' };
+    },
+  },
+  {
+    id: 'iniciativa-resolvida',
+    rule: 'R19 / FLX-1',
+    level: 2,
+    kind: 'attest',
+    label: 'Iniciativa confirmada na ferramenta — existe ≠ ativa (I10)',
+    fix: 'confirme a Iniciativa no onboarding e ateste iniciativa-resolvida em .harness/attest.json',
+  },
+  {
+    id: 'versionamento',
+    rule: 'R20 / VER-3',
+    level: 2,
+    kind: 'scan',
+    label: 'versionamento configurado e histórico recente conforme (20 commits de primeiro pai)',
+    fix: 'rode gabarito-instalar (fase 3) e corrija os commits apontados por versionamento-check.mjs',
+    detect: (ix, cfg) => {
+      const em = cfg.versionamento?.resolvidoEm;
+      if (!em) return { found: false, evidence: cfg.configInvalido ? 'harness.config.json inválido' : 'sem versionamento.resolvidoEm' };
+      const r = checar(ix.root, { max: 20 });
+      if (r.failOpen) return { found: false, evidence: r.failOpen };
+      if (r.aviso) return { found: true, evidence: `resolvido em ${em}`, warn: `${r.aviso} — histórico não conferido` };
+      if (r.ok) return { found: true, evidence: `resolvido em ${em} · ${r.commits} commit(s) conformes` };
+      return { found: false, evidence: `${r.achados.length} achado(s): ${r.achados.slice(0, 2).map((a) => `${a.sha} ${a.motivo}`).join('; ')}` };
+    },
+  },
+  {
+    id: 'changelog',
+    rule: 'R20',
+    level: 2,
+    kind: 'scan',
+    label: 'CHANGELOG com seção Unreleased (Keep a Changelog)',
+    fix: 'crie o CHANGELOG.md com `## [Unreleased]` — a PR escreve a linha dela lá',
+    detect: (ix, cfg) => {
+      const f = cfg.versionamento?.changelog ?? 'CHANGELOG.md';
+      if (!ix.has(f)) return { found: false, evidence: `${f} ausente` };
+      return /^## \[?Unreleased\]?/m.test(ix.read(f)) ? { found: true, evidence: f } : { found: false, evidence: `${f} sem seção Unreleased` };
+    },
+  },
+  {
+    id: 'tag-semver',
+    rule: 'R20',
+    level: 2,
+    kind: 'scan',
+    opcional: true,
+    label: 'ao menos uma tag SemVer (opcional em repo sem release)',
+    fix: 'marque a release: git tag v1.0.0 — opcional até a primeira release',
+    detect: (ix, cfg) => {
+      let tags;
+      try {
+        tags = execFileSync('git', ['tag', '--list'], { cwd: ix.root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\n').filter(Boolean);
+      } catch {
+        return { found: false, evidence: '--' };
+      }
+      const re = new RegExp(cfg.versionamento?.tag ?? '^v\\d+\\.\\d+\\.\\d+$');
+      const t = tags.find((x) => re.test(x));
+      return t ? { found: true, evidence: t } : { found: false, evidence: 'nenhuma tag SemVer' };
+    },
+  },
+  {
+    id: 'agents-tamanho',
+    rule: 'CTX-1',
+    level: 2,
+    kind: 'scan',
+    label: 'AGENTS.md dentro do teto — núcleo e Apêndice medidos em bytes',
+    fix: 'migre texto do núcleo para docs/harness/referencia.md — regra não some, texto migra (ADR-CTX-1)',
+    detect: (ix, cfg) => {
+      if (!ix.has(cfg.agentsFile)) return { found: false, evidence: `${cfg.agentsFile} ausente` };
+      const { nucleo, apendice } = tamanhoAgents(ix.read(cfg.agentsFile));
+      const maxN = Number(cfg.contexto?.nucleoMaxBytes ?? 17291);
+      const maxA = Number(cfg.contexto?.apendiceMaxBytes ?? 4096);
+      const evidence = `núcleo ${nucleo}/${maxN} B · apêndice ${apendice}/${maxA} B`;
+      return { found: nucleo <= maxN && apendice <= maxA, evidence };
+    },
+  },
+
   // ── Nível 3 — completo
   {
     id: 'ordem-de-subida',
@@ -439,6 +561,45 @@ export const CHECKS = [
       return f ? { found: true, evidence: f } : { found: false };
     },
   },
+  {
+    id: 'paralelismo-calibrado',
+    rule: 'R21 / PAR-1',
+    level: 3,
+    kind: 'scan',
+    label: 'paralelismo calibrado nesta máquina (≤ 180 d, teto ≥ simultaneos ≥ 1)',
+    fix: 'rode capacidade.mjs --calibrar e grave orquestracao.paralelismo via onboarding-config.mjs',
+    detect: (ix, cfg) => {
+      const p = cfg.orquestracao?.paralelismo;
+      if (!p?.calibradoEm) return { found: false, evidence: 'sem orquestracao.paralelismo.calibradoEm' };
+      const d = diasDesde(p.calibradoEm);
+      if (d === null || d > ATTEST_TTL_DAYS) return { found: false, evidence: `calibração vencida ou inválida (${p.calibradoEm})` };
+      const s = Number(p.simultaneos);
+      const t = Number(p.teto);
+      return t >= s && s >= 1
+        ? { found: true, evidence: `simultaneos ${s} · teto ${t} · calibrado ${p.calibradoEm}` }
+        : { found: false, evidence: `teto ${t} ≥ simultaneos ${s} ≥ 1 não vale` };
+    },
+  },
+
+  // ── Avisos — não entram no nível (ORQ-5)
+  {
+    id: 'modelo-resolvido',
+    rule: 'R21 / ORQ-5',
+    level: 'warn',
+    kind: 'scan',
+    label: 'modelo do orquestrador resolvido há menos de validadeDias',
+    fix: 'revalide o modelo com gabarito-instalar (fase 4) — é aviso: não muda o nível nem quebra o CI',
+    detect: (ix, cfg) => {
+      const m = cfg.orquestracao?.modelo;
+      if (!m?.resolvidoEm) return { found: false, evidence: 'sem orquestracao.modelo.resolvidoEm' };
+      const d = diasDesde(m.resolvidoEm);
+      const v = Number(m.validadeDias ?? 90);
+      if (d === null) return { found: false, evidence: `resolvidoEm inválido (${m.resolvidoEm})` };
+      return d <= v
+        ? { found: true, evidence: `${m.alias || '?'} resolvido em ${m.resolvidoEm} (${Math.round(v - d)} d restantes)` }
+        : { found: false, evidence: `VENCIDO há ${Math.round(d - v)} d (${m.alias || '?'}, resolvido em ${m.resolvidoEm}) — revalide` };
+    },
+  },
 ];
 
 // ────────────────────────────────────────────────────────────── nível
@@ -450,8 +611,18 @@ export function parseDeclaredLevel(agentsMd) {
 
 export function run(root = process.cwd(), overrides = {}) {
   const cfgFile = join(root, 'harness.config.json');
-  const fileCfg = existsSync(cfgFile) ? JSON.parse(readFileSync(cfgFile, 'utf8')) : {};
-  const cfg = { ...DEFAULTS, ...fileCfg, ...overrides };
+  let fileCfg = {};
+  let configInvalido = false;
+  if (existsSync(cfgFile)) {
+    try {
+      const lido = JSON.parse(readFileSync(cfgFile, 'utf8') || '{}');
+      if (lido && typeof lido === 'object' && !Array.isArray(lido)) fileCfg = lido;
+      else configInvalido = true;
+    } catch {
+      configInvalido = true; // fail-open declarado: checagens de config ficam FALTA, nunca stack trace
+    }
+  }
+  const cfg = { ...DEFAULTS, ...fileCfg, ...overrides, configInvalido };
 
   const ix = createIndex(root, cfg);
   const attest = loadAttest(ix, cfg);
@@ -469,6 +640,7 @@ export function run(root = process.cwd(), overrides = {}) {
   });
 
   // Nível alcançado = maior N em que TODA checagem obrigatória de nível <= N passou.
+  // `level: 'warn'` nunca é igual a 1, 2 ou 3: avisos não entram na conta por construção.
   let alcancado = 0;
   for (const nivel of [1, 2, 3]) {
     const obrigatorias = resultados.filter((r) => r.level === nivel && !r.opcional);
@@ -479,6 +651,11 @@ export function run(root = process.cwd(), overrides = {}) {
   const agents = ix.has(cfg.agentsFile) ? ix.read(cfg.agentsFile) : null;
   const declarado = parseDeclaredLevel(agents);
 
+  const novasFaltando = resultados
+    .filter((r) => NOVAS_1_1_0.includes(r.id) && r.level !== 'warn' && !r.opcional && !r.found)
+    .map((r) => r.id);
+  const avisos = resultados.filter((r) => r.level === 'warn' && !r.found).map((r) => `${r.id}: ${r.evidence ?? ''}`);
+
   return {
     resultados,
     alcancado,
@@ -486,6 +663,9 @@ export function run(root = process.cwd(), overrides = {}) {
     mentindo: declarado !== null && declarado > alcancado,
     semAgents: agents === null,
     semDeclaracao: agents !== null && declarado === null,
+    novasFaltando,
+    avisos,
+    configInvalido,
   };
 }
 
@@ -507,7 +687,18 @@ function render(out, explain) {
     }
     linhas.push('');
   }
+  const avisos = out.resultados.filter((x) => x.level === 'warn');
+  if (avisos.length) {
+    linhas.push('── Avisos (não contam no nível)');
+    for (const r of avisos) {
+      linhas.push(`${r.found ? '  ok ' : ' warn'} ${r.rule.padEnd(10)} ${r.label}`);
+      if (r.evidence) linhas.push(`        ↳ ${r.evidence}`);
+      if (explain && !r.found) linhas.push(`        → ${r.fix}`);
+    }
+    linhas.push('');
+  }
   linhas.push(`Nível alcançado: ${out.alcancado}   ·   declarado no AGENTS.md: ${out.declarado ?? '(não declarado)'}`);
+  if (out.configInvalido) linhas.push('AVISO: harness.config.json inválido — checagens de config ficam FALTA (fail-open declarado (G9)).');
   if (out.semAgents) linhas.push('AVISO: AGENTS.md não encontrado na raiz.');
   else if (out.semDeclaracao) linhas.push('AVISO: o §0.2 não declara nível. Preencha — é a honestidade do documento sobre si mesmo.');
   if (out.mentindo) {
@@ -517,12 +708,31 @@ function render(out, explain) {
       'Um nível inflado é exatamente a mentira que o §0.2 existe para pegar.',
       'Conserto: implemente os gates que faltam, OU baixe o nível declarado.',
     );
+    if (out.novasFaltando.length) linhas.push('checagens novas da 1.1.0: rode o onboarding ou declare o nível medido');
   }
   return linhas.join('\n');
 }
 
+function raizDoRepo(cwd = process.cwd()) {
+  try {
+    const r = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return r || cwd;
+  } catch {
+    return cwd;
+  }
+}
+
+/** Única escrita do doctor. `run()` continua puro; o cartão de sessão lê este arquivo (DOC-2, TTL 24 h). */
+function gravarCache(root, out) {
+  const f = join(root, '.harness', 'doctor-cache.json');
+  mkdirSync(dirname(f), { recursive: true });
+  writeFileSync(f, `${JSON.stringify({ nivel: out.alcancado, declarado: out.declarado, em: new Date().toISOString() }, null, 2)}\n`);
+}
+
 function main(argv) {
-  const out = run(process.cwd());
+  const root = raizDoRepo();
+  const out = run(root);
+  if (argv.includes('--cache')) gravarCache(root, out); // antes do exit: o cartão precisa do cache mesmo quando o repo mente
   if (argv.includes('--json')) {
     process.stdout.write(
       JSON.stringify(
