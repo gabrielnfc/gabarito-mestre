@@ -1,10 +1,12 @@
 # Fluxo — Workflow TRUE no harness
 
-Fonte normativa do fluxo de trabalho (Flight Levels + Kanban, fase 1: TI e Desenvolvimento). Transcrita de `docs/workflow-true.html` (Flow Management Office, versão de 2026-09-10); onde este arquivo e o HTML divergirem, **este arquivo vence** e o HTML é corrigido. Instalado em `docs/harness/fluxo.md`; não é importado no `CLAUDE.md` — é consultado sob demanda por quem escreve design, plano, card ou conformidade.
+Fonte normativa do fluxo de trabalho (Flight Levels + Kanban, fase 1: TI e Desenvolvimento). Transcrita de `docs/workflow-true.html` (Flow Management Office, 80.550 bytes, sem data no documento); onde este arquivo e o HTML divergirem, **este arquivo vence** e o HTML deve ser corrigido por quem o mantém. Instalado em `docs/harness/fluxo.md`; não é importado no `CLAUDE.md` — é consultado sob demanda por quem escreve design, plano, card ou conformidade.
 
 Como o harness usa os termos: **Iniciativa = FL3** · **Epic = FL2 = documento de design** · **PBI = FL1 = plano, branch e PR** (ADR-FLX-1: um plano por PBI). Task de plano não é card: é fatia de um PBI. `tipo` de um PBI ∈ {`US`, `Enabler`, `TechDebt`, `Spike`, `Bug`, `Tarefa`}.
 
 O que liga os níveis é o **fio condutor**: todo item operacional existe porque está vinculado a algo tático, que existe porque está vinculado a algo estratégico. Nenhum item é aberto sem vínculo explícito com o nível imediatamente acima. PBI sem Epic, ou Epic sem Iniciativa, é desalinhamento no fluxo, não exceção aceitável (R19).
+
+As frases "No harness" ao longo deste documento descrevem a 1.1.0 completa; até a fase que as entrega integrar — cartão de sessão (T9), instalação em `docs/harness/fluxo.md` (T10), `AGENTS.md §7/§8` e R19 (T17) — são (b).
 
 ## 1. Os três níveis
 
@@ -42,7 +44,7 @@ Cada nível tem quadro, cadência e políticas próprias, e nenhum opera isolado
 
 ## 2. Os oito tipos de card
 
-Cada tipo existe para um propósito. Template e exemplo vêm da fonte; placeholders entre `[…]`. Os templates prontos para copiar vivem em `templates/fluxo/<tipo>.md`.
+Cada tipo existe para um propósito. Template e exemplo vêm da fonte; placeholders entre `[…]`. Os templates prontos para copiar vivem em `templates/fluxo/<arquivo>.md`, nome em minúsculas e hífen: `Iniciativa` → `iniciativa.md` · `Epic` → `epic.md` · `US` → `us.md` · `Enabler` → `enabler.md` · `TechDebt` → `tech-debt.md` · `Spike` → `spike.md` · `Bug` → `bug.md` · `Tarefa` → `tarefa.md`.
 
 ### 2.1 Iniciativa / Projeto — FL3
 
@@ -298,7 +300,7 @@ Critérios de Aceite
 ```
 ## 3. Políticas gerais
 
-As regras de cada nível estão em §1. Estas cinco valem para o sistema inteiro e sustentam a conexão entre as três altitudes.
+As regras de cada nível estão em §1. Estas cinco (o HTML diz "quatro" e lista cinco; prevalece cinco, REQ-FLX-1) valem para o sistema inteiro e sustentam a conexão entre as três altitudes.
 
 1. **Fio condutor obrigatório.** Nenhum PBI é aberto sem vínculo com um Epic ativo, e nenhum Epic sem vínculo com uma Iniciativa ativa. Uma Iniciativa padrão por repo, com override explícito no Epic (`Iniciativa: <outro ID> (override: <motivo>)`, D4).
 2. **Bloqueios escalam por altitude.** Item bloqueado além do combinado no nível operacional sobe para o tático; a mesma regra vale do tático para o estratégico.
@@ -383,6 +385,6 @@ Iniciativa em Preparado ainda é opção, mesmo pronta — tratar item não prio
 
 ## 7. Métricas medem item, nunca pessoa
 
-Lead time, cycle time, throughput (vazão) e envelhecimento (idade do item na coluna atual) são propriedades do **item** e do **sistema**. Servem para calcular prazo (percentil 85 da distribuição, nunca média), expor gargalo (coluna onde o WIP acumula) e revisar políticas (§3.5). Não servem para avaliar indivíduos: métrica de fluxo usada em avaliação de pessoa deixa de medir o fluxo no dia seguinte, porque passa a ser otimizada por quem é medido.
+Lead time, cycle time, throughput (vazão) e envelhecimento (idade do item na coluna atual) são propriedades do **item** e do **sistema**. Servem para calcular prazo (percentil 85 da distribuição), expor gargalo (coluna onde o WIP acumula) e revisar políticas (§3.5). Não servem para avaliar indivíduos: métrica de fluxo usada em avaliação de pessoa deixa de medir o fluxo no dia seguinte.
 
 O que o harness registra hoje: movimento (`MOVIMENTO` no ledger, §5), bloqueio (`BLOQUEADA`, §4.4) e envelhecimento por PBI (cartão de sessão, §4.4). Cálculo agregado de lead time e throughput **não** está no harness 1.1.0 — é item de `docs/backlog.md` do plugin, gatilho "fase 2 do Workflow TRUE" (b).

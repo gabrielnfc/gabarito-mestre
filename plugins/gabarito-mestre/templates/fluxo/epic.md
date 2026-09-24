@@ -6,7 +6,7 @@ status: Backlog
 atualizadoEm: "AAAA-MM-DD"
 ---
 # [Nome do Epic]
-FL2 · Epic · `docs/harness/fluxo.md §2.2`. Status possíveis: Backlog · Em refinamento · Preparado · Em execução · Em validação · Concluído. Override de Iniciativa (D4): `Iniciativa: [outro ID] (override: [motivo])` nesta linha — nunca só no frontmatter.
+FL2 · Epic · `docs/harness/fluxo.md §2.2`. Status possíveis: Backlog · Em refinamento · Preparado · Em execução · Em validação · Concluído. Override de Iniciativa (D4): no frontmatter `iniciativa:` vai o ID efetivo; o override e o motivo ficam nesta linha de cabeçalho — `Iniciativa: [outro ID] (override: [motivo])`.
 ## Narrativa (Elevator Pitch)
 Para [público ou persona]
 que [necessidade ou problema],
