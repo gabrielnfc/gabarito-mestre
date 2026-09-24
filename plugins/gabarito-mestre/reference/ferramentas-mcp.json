@@ -1,0 +1,69 @@
+{
+  "_comment": "Servidor MCP → ferramenta de planejamento → hierarquia e status sugeridos para o Workflow TRUE (docs/harness/fluxo.md §1, §4). padraoServidor é testado com new RegExp(p, 'i') sobre o segmento <server> de mcp__<server>__<tool>. Nomes observados em 2026-09-24 (a): claude_ai_ClickUp, plugin_productivity_clickup, plugin_design_atlassian, plugin_design_linear, plugin_design_notion, plugin_design_asana, plugin_productivity_monday. Hierarquia e status são sugestão (b) até um onboarding confirmar; então grave confirmadoEm. Sem match: ferramenta 'arquivos' ou nome livre informado pelo usuário. A lista cresce por PR.",
+  "versao": 1,
+  "ferramentas": [
+    {
+      "padraoServidor": "clickup",
+      "ferramenta": "clickup",
+      "hierarquiaSugerida": { "FL3": "Space ou Folder (uma Iniciativa por Folder)", "FL2": "List (um Epic por List) ou Task com custom field Tipo=Epic", "FL1": "Task (subtask = task do plano, opcional)" },
+      "statusSugerido": { "FL2": { "preparado": "Preparado", "em_execucao": "Em execução", "em_validacao": "Em validação", "concluido": "Concluído" },
+                          "FL1": { "preparado": "Preparado", "em_execucao": "Em execução", "revisao": "Revisão e teste", "pronto": "Pronto para liberar", "concluido": "Concluído" } },
+      "comoBuscarIniciativa": "Peça ok para LER (ONB-3). Use clickup_get_workspace_hierarchy e procure Space/Folder cujo nome contenha o nome informado; se não achar, clickup_search pelo nome. Confirme que está ativo (não arquivado) — existir não é estar ativo (I10). Grave id, nome e URL sem token. Vazio não é prova: pergunte de novo antes de gravar (b).",
+      "confirmadoEm": null
+    },
+    {
+      "padraoServidor": "jira|atlassian",
+      "ferramenta": "jira",
+      "hierarquiaSugerida": { "FL3": "Initiative (Advanced Roadmaps / Premium) ou Project", "FL2": "Epic", "FL1": "Story, Task, Bug (Sub-task = task do plano, opcional)" },
+      "statusSugerido": { "FL2": { "preparado": "To Do", "em_execucao": "In Progress", "em_validacao": "In Review", "concluido": "Done" },
+                          "FL1": { "preparado": "To Do", "em_execucao": "In Progress", "revisao": "In Review", "pronto": "Ready to Release", "concluido": "Done" } },
+      "comoBuscarIniciativa": "Peça ok para LER. Busque com JQL `issuetype = Initiative AND summary ~ \"<nome>\"`; sem tipo Initiative no site, use `project = <chave>` e trate o Project como Iniciativa. Confirme status ativo (não Done/Closed). Grave chave, nome e URL sem token. Vazio não é prova (I4).",
+      "confirmadoEm": null
+    },
+    {
+      "padraoServidor": "linear",
+      "ferramenta": "linear",
+      "hierarquiaSugerida": { "FL3": "Initiative", "FL2": "Project", "FL1": "Issue (sub-issue = task do plano, opcional)" },
+      "statusSugerido": { "FL2": { "preparado": "Planned", "em_execucao": "In Progress", "em_validacao": "In Review", "concluido": "Completed" },
+                          "FL1": { "preparado": "Todo", "em_execucao": "In Progress", "revisao": "In Review", "pronto": "Ready", "concluido": "Done" } },
+      "comoBuscarIniciativa": "Peça ok para LER. Liste Initiatives e filtre pelo nome; sem Initiatives no workspace, use Projects e trate o Project como Iniciativa (então FL2 = milestone ou label Epic — confirme com o usuário). Confirme status ativo. Grave id, nome e URL sem token.",
+      "confirmadoEm": null
+    },
+    {
+      "padraoServidor": "notion",
+      "ferramenta": "notion",
+      "hierarquiaSugerida": { "FL3": "Database 'Iniciativas' (uma página por Iniciativa)", "FL2": "Database 'Epics' com relation → Iniciativa", "FL1": "Database 'PBIs' com relation → Epic" },
+      "statusSugerido": { "FL2": { "preparado": "Preparado", "em_execucao": "Em execução", "em_validacao": "Em validação", "concluido": "Concluído" },
+                          "FL1": { "preparado": "Preparado", "em_execucao": "Em execução", "revisao": "Revisão e teste", "pronto": "Pronto para liberar", "concluido": "Concluído" } },
+      "comoBuscarIniciativa": "Peça ok para LER. Use a busca do servidor pelo nome e filtre resultados que sejam páginas de um database de Iniciativas (propriedade Status presente). Confirme status ativo. Grave id da página, nome e URL sem token. Pergunte qual propriedade (relation) liga PBI→Epic; grave em vinculoPbiEpic.",
+      "confirmadoEm": null
+    },
+    {
+      "padraoServidor": "trello",
+      "ferramenta": "trello",
+      "hierarquiaSugerida": { "FL3": "Card no board 'Portfólio'", "FL2": "Card no board 'Tático' (link para o card da Iniciativa)", "FL1": "Card no board do time (link para o card do Epic)" },
+      "statusSugerido": { "FL2": { "preparado": "Preparado", "em_execucao": "Em execução", "em_validacao": "Em validação", "concluido": "Concluído" },
+                          "FL1": { "preparado": "Preparado", "em_execucao": "Em execução", "revisao": "Revisão e teste", "pronto": "Pronto para liberar", "concluido": "Concluído" } },
+      "comoBuscarIniciativa": "Nome de servidor não observado (b): confirme o padrão com o usuário antes de gravar. Peça ok para LER. Liste boards, localize 'Portfólio' e busque o card pelo nome; a lista (coluna) do card é o status. Grave id, nome e URL sem token. Vínculo PBI→Epic é por link/attachment no card: grave em vinculoPbiEpic.",
+      "confirmadoEm": null
+    },
+    {
+      "padraoServidor": "asana",
+      "ferramenta": "asana",
+      "hierarquiaSugerida": { "FL3": "Portfolio (ou Project marcado Iniciativa)", "FL2": "Project (um Epic por Project) ou Section", "FL1": "Task (subtask = task do plano, opcional)" },
+      "statusSugerido": { "FL2": { "preparado": "Preparado", "em_execucao": "Em execução", "em_validacao": "Em validação", "concluido": "Concluído" },
+                          "FL1": { "preparado": "Preparado", "em_execucao": "Em execução", "revisao": "Revisão e teste", "pronto": "Pronto para liberar", "concluido": "Concluído" } },
+      "comoBuscarIniciativa": "Peça ok para LER. Busque Portfolios pelo nome; sem Portfolios no plano da conta, busque Projects e trate o Project como Iniciativa (então FL2 = Section — confirme). Confirme que não está arquivado. Grave gid, nome e URL sem token.",
+      "confirmadoEm": null
+    },
+    {
+      "padraoServidor": "monday",
+      "ferramenta": "monday",
+      "hierarquiaSugerida": { "FL3": "Item no board 'Portfólio'", "FL2": "Group ou Item no board 'Tático' (coluna Connect boards → Iniciativa)", "FL1": "Item no board do time (Connect boards → Epic; subitem = task do plano, opcional)" },
+      "statusSugerido": { "FL2": { "preparado": "Preparado", "em_execucao": "Working on it", "em_validacao": "Em validação", "concluido": "Done" },
+                          "FL1": { "preparado": "Preparado", "em_execucao": "Working on it", "revisao": "Revisão e teste", "pronto": "Pronto para liberar", "concluido": "Done" } },
+      "comoBuscarIniciativa": "Peça ok para LER. Liste boards, localize 'Portfólio' e busque o item pelo nome; a coluna Status é o status. Grave id, nome e URL sem token. Pergunte qual coluna Connect boards liga PBI→Epic; grave em vinculoPbiEpic.",
+      "confirmadoEm": null
+    }
+  ]
+}
