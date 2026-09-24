@@ -99,30 +99,48 @@ export function listarCommits(root, { base, max = 20 } = {}) {
 export function checar(root, opts = {}) {
   const { cfg, failOpen } = opts.cfg ? { cfg: { ...DEFAULTS, ...opts.cfg }, failOpen: null } : lerConfig(root);
   if (failOpen) return { ok: true, achados: [], failOpen };
-  let commits;
-  try {
-    commits = listarCommits(root, opts);
-  } catch (e) {
-    return { ok: true, achados: [], aviso: `sem git legível em ${root} (${String(e?.message ?? e).split('\n')[0]})` };
-  }
   const achados = [];
-  for (const c of commits) {
-    if (c.pais.length >= 2) continue; // merge do orquestrador: o squash é atestado, não varrido
-    const r = validarCommit(c.assunto, cfg);
-    if (!r.ok) achados.push({ sha: c.sha.slice(0, 7), motivo: `${r.motivo} — "${c.assunto}"` });
-  }
+  let commits = [];
+  let gitLegivel = true;
+
+  // Valida branch primeiro (sempre rodando, mesmo com falha de base)
   let branch = opts.branch;
   if (!branch) {
     try {
       branch = git(['rev-parse', '--abbrev-ref', 'HEAD'], root).trim();
     } catch {
       branch = null;
+      gitLegivel = false;
     }
   }
   if (branch && branch !== 'HEAD') {
     const r = validarBranch(branch, cfg);
     if (!r.ok) achados.push({ sha: 'branch', motivo: r.motivo });
   }
+
+  // Se base foi passado, verifica se ref existe
+  if (opts.base) {
+    try {
+      git(['rev-parse', '--verify', '--quiet', `${opts.base}^{commit}`], root);
+    } catch {
+      return { ok: false, achados: [{ sha: '-', motivo: `ref de base não encontrada: ${opts.base} — no CI use fetch-depth: 0 (actions/checkout) ou passe --base com uma ref existente` }, ...achados], commits: 0, branch: branch ?? null };
+    }
+  }
+
+  // Só então processa commits
+  try {
+    commits = listarCommits(root, opts);
+  } catch (e) {
+    if (!gitLegivel) return { ok: true, achados: [...achados], aviso: `sem git legível em ${root} (${String(e?.message ?? e).split('\n')[0]})`, commits: 0, branch: branch ?? null };
+    return { ok: true, achados: [...achados], aviso: `sem git legível em ${root} (${String(e?.message ?? e).split('\n')[0]})`, commits: 0, branch: branch ?? null };
+  }
+
+  for (const c of commits) {
+    if (c.pais.length >= 2) continue; // merge do orquestrador: o squash é atestado, não varrido
+    const r = validarCommit(c.assunto, cfg);
+    if (!r.ok) achados.push({ sha: c.sha.slice(0, 7), motivo: `${r.motivo} — "${c.assunto}"` });
+  }
+
   return { ok: achados.length === 0, achados, commits: commits.length, branch: branch ?? null };
 }
 
@@ -153,8 +171,8 @@ function main(argv) {
   }
   if (r.aviso) console.error(`[R20] ${r.aviso} — nada conferido`);
   for (const a of r.achados) console.error(`::error::[R20] ${a.sha} ${a.motivo}`);
-  if (r.ok) console.log(`[R20] ok — ${r.commits} commit(s) conferido(s)${r.branch ? `, branch ${r.branch}` : ''}`);
-  else console.error(`[R20] ${r.achados.length} achado(s). Formato: tipo(PBI-n): assunto · branch tipo/PBI-n-slug ou wt/PBI-n-i. Ver docs/harness/referencia.md §10.`);
+  if (r.ok && !r.aviso && r.achados.length === 0) console.log(`[R20] ok — ${r.commits} commit(s) conferido(s)${r.branch ? `, branch ${r.branch}` : ''}`);
+  else if (!r.ok) console.error(`[R20] ${r.achados.length} achado(s). Formato: tipo(PBI-n): assunto · branch tipo/PBI-n-slug ou wt/PBI-n-i. Ver docs/harness/referencia.md §10.`);
   process.exit(r.ok ? 0 : 1);
 }
 

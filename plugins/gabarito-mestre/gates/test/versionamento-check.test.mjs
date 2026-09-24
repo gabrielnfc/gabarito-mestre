@@ -11,6 +11,7 @@
  *  M3  validarBranch case-insensitive (`feat/pbi-12` passa)
  *  M4  fail-closed sem config (exit 1)
  *  M5  validar só o primeiro commit do intervalo
+ *  M6  tratar ref de base ausente como fail-open (exit 0)
  */
 
 import { test, describe } from 'node:test';
@@ -200,6 +201,33 @@ describe('checar — fail-open declarado (Review Focus 3)', () => {
   });
 });
 
+describe('checar — ref de base ausente (fail-closed)', () => {
+  test('base inexistente → ok:false com achado de ref ausente; branch inválida aparece como segundo achado', () => {
+    const dir = repoGit();
+    git(dir, 'checkout', '-q', '-b', 'feat/pbi-4-z');
+    const r = checar(dir, { base: 'origin/nao-existe', max: 20 });
+    assert.equal(r.ok, false);
+    assert.match(r.achados[0].motivo, /ref de base não encontrada: origin\/nao-existe/);
+    assert.equal(r.achados[0].sha, '-');
+    assert.equal(r.achados[1].sha, 'branch');
+    assert.equal(r.commits, 0);
+  });
+  test('base inexistente com branch válida → só o achado de ref', () => {
+    const dir = repoGit();
+    const r = checar(dir, { base: 'origin/nao-existe', max: 20 });
+    assert.equal(r.ok, false);
+    assert.equal(r.achados.length, 1);
+    assert.equal(r.achados[0].sha, '-');
+    assert.match(r.achados[0].motivo, /ref de base não encontrada/);
+  });
+  test('fixture sem .git continua com mensagem própria "sem git"', () => {
+    const r = checar(repo({ 'harness.config.json': CONFIG }), { max: 20 });
+    assert.equal(r.ok, true);
+    assert.match(r.aviso, /sem git/);
+    assert.doesNotMatch(r.aviso, /ref de base/);
+  });
+});
+
 describe('CLI', () => {
   test('histórico ok → exit 0 e resumo', () => {
     const dir = repoGit();
@@ -223,6 +251,14 @@ describe('CLI', () => {
     git(dir, 'commit', '-q', '--allow-empty', '-m', 'feat(PBI-3): y');
     assert.equal(cli(['--root', dir, '--base', 'main', '--branch', 'feat/PBI-3-y'], dir).status, 0);
     assert.equal(cli(['--root', dir, '--base', 'main', '--branch', 'hotfix/PBI-3'], dir).status, 1);
+  });
+  test('--base inexistente → exit 1, stderr com "ref de base não encontrada", stdout sem "ok —"', () => {
+    const dir = repoGit();
+    const r = cli(['--root', dir, '--base', 'origin/nao-existe'], dir);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /ref de base não encontrada: origin\/nao-existe/);
+    assert.doesNotMatch(r.stdout, /ok —/);
+    assert.match(r.stderr, /::error::\[R20\] -/);
   });
   test('sem config: exit 0, stderr "fail-open declarado (G9)", sem stack trace', () => {
     const dir = repoGit(null);
