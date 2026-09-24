@@ -73,7 +73,7 @@ Given o instalador rodou · When leio `docs/harness/fluxo.md` · Then as sete se
   "iniciativa": { "id": "", "nome": "", "url": "<sem token, nunca>" },
   "mapeamento": { "FL3": "", "FL2": "", "FL1": "" },
   "status": { "FL2": {}, "FL1": {} },
-  "vinculoPbiEpic": "<campo/relacionamento na ferramenta, ou 'frontmatter' em arquivos>",
+  "vinculoPbiEpic": { "tipo": "campo | relacionamento | frontmatter", "nome": "<nome na ferramenta>" },
   "escrita": false,
   "idPadrao": "^[A-Z]+-\\d+$",
   "resolvidoEm": "AAAA-MM-DD"
