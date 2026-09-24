@@ -14,12 +14,12 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, readdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, readdirSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { join, dirname, resolve } from 'node:path';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mergeDeep, aplicar, aplicarSettings, diffChaves, lerJson, ArquivoInvalido, SECOES } from '../scripts/onboarding-config.mjs';
+import { mergeDeep, aplicar, aplicarSettings, diffChaves, lerJson, ArquivoInvalido, SECOES, escreverAtomico, raizDoRepo } from '../scripts/onboarding-config.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(here, '..', 'scripts', 'onboarding-config.mjs');
@@ -66,6 +66,9 @@ describe('mergeDeep — chave a chave, nunca remove', () => {
   test('patch que não é objeto devolve cópia da base', () => {
     assert.deepEqual(mergeDeep({ a: 1 }, 'x'), { a: 1 });
     assert.deepEqual(mergeDeep(null, { a: 1 }), { a: 1 });
+  });
+  test('undefined aninhado é ignorado; chave original persiste', () => {
+    assert.deepEqual(mergeDeep({ a: { x: 1, y: 2 } }, { a: { x: undefined } }), { a: { x: 1, y: 2 } });
   });
 });
 
@@ -145,6 +148,64 @@ describe('diffChaves e lerJson', () => {
     assert.deepEqual(lerJson(join(dir, 'nao-existe.json')), {});
     assert.deepEqual(lerJson(join(dir, 'vazio.json')), {});
     assert.throws(() => lerJson(join(dir, 'ruim.json')), ArquivoInvalido);
+  });
+});
+
+describe('escreverAtomico — atomicidade via tmp+rename', () => {
+  test('arquivo original intacto byte a byte se falha entre tmp e rename; nenhum .tmp sobra', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'atomic-'));
+    const caminho = join(dir, 'config.json');
+    const original = '{"original":true}\n';
+    writeFileSync(caminho, original);
+
+    // Criar objeto com referência circular para forçar erro no JSON.stringify
+    const obj = { a: 1 };
+    obj.self = obj;
+
+    // escreverAtomico deve lançar (circularidade) SEM tocar no arquivo original
+    assert.throws(() => escreverAtomico(caminho, obj));
+
+    // Arquivo original deve estar intacto
+    assert.equal(readFileSync(caminho, 'utf8'), original);
+
+    // Nenhum .tmp deve sobrar
+    const arquivos = readdirSync(dir);
+    assert.deepEqual(arquivos.filter((f) => f.includes('.tmp')), []);
+  });
+});
+
+describe('raizDoRepo — encontrar raiz do repositório via git', () => {
+  test('raizDoRepo retorna raiz do repo quando chamado de subdiretório com .git', () => {
+    const repo_dir = mkdtempSync(join(tmpdir(), 'git-repo-'));
+    execFileSync('git', ['init', '-q'], { cwd: repo_dir });
+
+    const subdir = join(repo_dir, 'src', 'nested');
+    mkdirSync(subdir, { recursive: true });
+
+    const raiz = raizDoRepo(subdir);
+    // No macOS, tmpdir() pode retornar /private/..., mas git resolve symlinks. Compare realpaths.
+    assert.equal(realpathSync(raiz), realpathSync(repo_dir));
+  });
+
+  test('CLI sem --root grava em <raiz>/harness.config.json quando chamado de subdiretório', () => {
+    const repo_dir = mkdtempSync(join(tmpdir(), 'git-cli-'));
+    execFileSync('git', ['init', '-q'], { cwd: repo_dir });
+
+    const subdir = join(repo_dir, 'src', 'nested');
+    mkdirSync(subdir, { recursive: true });
+
+    const r = cli(['--set', 'contexto', '{"teste":true}'], subdir);
+    assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+
+    // Arquivo deve estar na raiz do repo, não em subdir
+    // No macOS, repo_dir pode ter /private/, então temos que comparar de forma mais flexível
+    const configPathRepo = join(resolve(repo_dir), 'harness.config.json');
+    const configPathSub = join(resolve(subdir), 'harness.config.json');
+    assert.ok(existsSync(configPathRepo), `config não encontrado em ${configPathRepo}`);
+    assert.ok(!existsSync(configPathSub));
+
+    const cfg = JSON.parse(readFileSync(configPathRepo, 'utf8'));
+    assert.equal(cfg.contexto.teste, true);
   });
 });
 
