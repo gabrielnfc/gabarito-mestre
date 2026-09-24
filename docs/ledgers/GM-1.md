@@ -2,7 +2,7 @@
 Rulings herdados: R1, R2, R21   Contexto externo: nenhum (sem sandbox, sem banco)
 
 ## LER PRIMEIRO — 2026-09-24
-Fase 1 do rollout 1.1.0: fonte normativa do fluxo (11 arquivos). Tasks T1→T2→T3→T4 seriais neste worktree (ruling F1-R1). Baseline verde: 77 gates + 148 hooks. Pendências (b): T10 instala `fluxo.md`; T22 copia `templates/fluxo/`.
+Fase 1 do rollout 1.1.0: fonte normativa do fluxo (11 arquivos). Tasks T1→T2→T3→T4 seriais neste worktree (ruling F1-R1). Baseline verde: 77 gates + 148 hooks. Pendências (b): T10 instala `fluxo.md`; T22 copia `templates/fluxo/`. Tarefa fora da TI não tem plano/branch; onde registra bloqueio é (b) até T9. Emenda 2026-09-24 (item 7 do review final de branch): T9 trata `status` sem chave em `fluxo.status` (ex.: `Backlog`, `Em refinamento`, todo o FL3) como opção, não comprometido.
 
 ## Pre-flight — pares produz × consome
 | Par | Produz × Consome | Achado |

@@ -125,7 +125,7 @@ Seções novas, **nunca** presentes no template; gravadas por `onboarding-config
   "mapeamento": { "FL3": "…", "FL2": "…", "FL1": "…" },
   "status": { "FL2": { "preparado": "…", "em_execucao": "…", "em_validacao": "…", "concluido": "…" },
               "FL1": { "preparado": "…", "em_execucao": "…", "revisao": "…", "pronto": "…", "concluido": "…" } },
-  "vinculoPbiEpic": "campo | relacionamento | frontmatter",
+  "vinculoPbiEpic": { "tipo": "campo | relacionamento | frontmatter", "nome": "<nome na ferramenta>" },
   "escrita": false,
   "idPadrao": "^[A-Z]+-\\d+$",
   "ledgerDir": "docs/ledgers",
@@ -332,3 +332,5 @@ T25 ─ T26 (serial; T26 é medição manual em repos descartáveis)
 ## Emendas (2026-09-24, revisão cruzada)
 
 - #2: grafia canônica de `MOVIMENTO` fixada no contrato ("Ledger"): `MOVIMENTO FL2 <EPIC> <de>→<para> <AAAA-MM-DD>` com `<de>`/`<para>` = chaves de `fluxo.status.FL2` (minúsculas, sem espaço); `lerLedger` tolera o nome de coluna.
+- #7 (review final de branch, 2026-09-24): T9 deve tratar `status` sem chave correspondente em `fluxo.status` (ex.: `Backlog`, `Em refinamento` — todo o FL3, que não tem chave mapeada) como "opção, não comprometido", nunca como bloqueio ou erro de configuração.
+- #8 (review final de branch, 2026-09-24): `fluxo.vinculoPbiEpic` fixado como objeto `{ "tipo": "campo | relacionamento | frontmatter", "nome": "<nome na ferramenta>" }`, não string solta — `tipo` diz a natureza do vínculo, `nome` diz como ele se chama na ferramenta detectada. Exemplo do contrato de config (linha 128) ajustado.
