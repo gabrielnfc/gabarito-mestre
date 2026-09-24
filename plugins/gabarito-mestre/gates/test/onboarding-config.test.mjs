@@ -14,7 +14,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, readdirSync, existsSync, realpathSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, readdirSync, existsSync, realpathSync, symlinkSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
@@ -152,25 +152,28 @@ describe('diffChaves e lerJson', () => {
 });
 
 describe('escreverAtomico — atomicidade via tmp+rename', () => {
-  test('arquivo original intacto byte a byte se falha entre tmp e rename; nenhum .tmp sobra', () => {
+  test('tmp+rename substitui symlink sem seguir; arquivo alvo intacto', () => {
     const dir = mkdtempSync(join(tmpdir(), 'atomic-'));
-    const caminho = join(dir, 'config.json');
+    const realFile = join(dir, 'real.json');
+    const destLink = join(dir, 'dest.json');
     const original = '{"original":true}\n';
-    writeFileSync(caminho, original);
 
-    // Criar objeto com referência circular para forçar erro no JSON.stringify
-    const obj = { a: 1 };
-    obj.self = obj;
+    // Arquivo real com conteúdo X
+    writeFileSync(realFile, original);
 
-    // escreverAtomico deve lançar (circularidade) SEM tocar no arquivo original
-    assert.throws(() => escreverAtomico(caminho, obj));
+    // Symlink apontando para o arquivo real
+    symlinkSync(realFile, destLink);
 
-    // Arquivo original deve estar intacto
-    assert.equal(readFileSync(caminho, 'utf8'), original);
+    // Escrever através do symlink com escreverAtomico
+    escreverAtomico(destLink, { new: 'data' });
 
-    // Nenhum .tmp deve sobrar
-    const arquivos = readdirSync(dir);
-    assert.deepEqual(arquivos.filter((f) => f.includes('.tmp')), []);
+    // Com tmp+rename (correto): symlink é SUBSTITUÍDO por arquivo regular,
+    // e o arquivo real continua intacto (porque rename não segue symlink)
+    assert.equal(lstatSync(destLink).isSymbolicLink(), false, 'dest deve ser arquivo regular, não symlink');
+    assert.equal(readFileSync(realFile, 'utf8'), original, 'arquivo real deve estar intacto byte a byte');
+
+    // Com escrita direta (mutação): writeFileSync segue o symlink e sobrescreve
+    // o arquivo real, fazendo este teste falhar.
   });
 });
 
