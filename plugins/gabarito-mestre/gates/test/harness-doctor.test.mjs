@@ -14,6 +14,7 @@
  *  M7  cortar só em `## Apêndice\n` exato (`## Apêndice — Projeto` deixa de ser corte)
  *  M8  `run()` gravando o cache (viola pureza)
  *  M9  `JSON.parse` sem try/catch em `run()` (config inválida vira stack trace)
+ *  M10 linha "checagens novas" impressa incondicionalmente — deve derrubar
  */
 
 import { test, describe } from 'node:test';
@@ -434,5 +435,24 @@ describe('doctor 1.1.0 — render', () => {
   test('as 8 checagens novas existem, com id/regra/nível/rótulo/conserto', () => {
     assert.equal(NOVAS_1_1_0.length, 8);
     for (const id of NOVAS_1_1_0) assert.ok(CHECKS.find((c) => c.id === id), id);
+  });
+  test('repo saudável 1.1.0 (declarado ≤ alcançado): a linha "checagens novas" NÃO aparece (M10)', () => {
+    const r = spawnSync(process.execPath, [SCRIPT], { cwd: repo(fixtureNivel2_110(2)), encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stdout);
+    assert.doesNotMatch(r.stdout, /checagens novas da 1\.1\.0/);
+  });
+  test('mentindo só por checagem ANTIGA (novasFaltando vazio): a linha "checagens novas" NÃO aparece (M10)', () => {
+    // fixture 1.1.0 completa (fluxo, versionamento, changelog, iniciativa, agents-tamanho e
+    // paralelismo-calibrado todos OK) mas sem o atestado ANTIGO 'ruleset-obrigatorio' — o
+    // nível cai (declarado 3 > alcançado 1) só por causa de uma checagem da 1.0.1.
+    const fx = fixtureNivel2_110(3, { orquestracao: { paralelismo: { simultaneos: 2, teto: 4, calibradoEm: hoje } } });
+    fx['.harness/attest.json'] = JSON.stringify({ 'branch-protegida': ok, 'backup-verificado': ok, 'iniciativa-resolvida': ok });
+    const dir = repo(fx);
+    const out = run(dir);
+    assert.equal(out.mentindo, true, JSON.stringify({ declarado: out.declarado, alcancado: out.alcancado }));
+    assert.deepEqual(out.novasFaltando, [], JSON.stringify(out.novasFaltando));
+    const r = spawnSync(process.execPath, [SCRIPT], { cwd: dir, encoding: 'utf8' });
+    assert.equal(r.status, 1);
+    assert.doesNotMatch(r.stdout, /checagens novas da 1\.1\.0/);
   });
 });
