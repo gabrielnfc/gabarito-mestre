@@ -3,6 +3,41 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/). Versionamento: [SemVer](https://semver.org/lang/pt-BR/).
 Usuários do plugin só recebem atualização quando `version` muda.
 
+## [Unreleased]
+
+Rollout do Workflow TRUE (1.1.0): três níveis de card, gates de versionamento no CI, hooks novos e
+harness-doctor mais rigoroso.
+
+> **Aviso:** um repositório já em nível 2 ou 3 com o harness 1.0.1 **cai para nível 1** assim que
+> `harness-doctor` 1.1.0 rodar, até o onboarding ser refeito — as checagens novas (fluxo, versionamento,
+> changelog, tamanho do `AGENTS.md`) contam para o nível 2. Não é regressão do harness: é o doctor medindo
+> em vez de presumir. Rode o onboarding para recuperar o nível.
+
+### Adicionado
+- **Workflow TRUE**: três níveis de card (Iniciativa · Epic · PBI), oito tipos, políticas de fluxo e
+  colunas de movimento em `docs/harness/fluxo.md`; templates dos 8 tipos de card prontos para uso.
+- **Gate de versionamento no CI**: novo job `versionamento` em `gabarito.yml` valida Conventional Commits
+  com escopo do PBI e nome de branch (R20) contra o histórico da PR.
+- **`harness-doctor` mais rigoroso**: 8 checagens novas (fluxo configurado, versionamento, changelog,
+  iniciativa resolvida, tamanho do `AGENTS.md`, entre outras), `--cache` e `--explain` para ler cada item.
+- **Três hooks novos**: `guard-versioning.sh` barra commit ou branch fora do padrão antes de acontecer;
+  `session-card.sh` injeta um cartão de sessão (≤ 40 linhas) no início de cada sessão; `remind-orchestrator.sh`
+  lembra a regra "orquestrador não implementa" (R21), quando habilitado.
+- **`instalar.sh`**: flags `--atualizar` (upgrade sem sobrescrever edição local do repo), `--gates-substituir`
+  e `--codeowners`.
+- **Templates novos**, instalados pelo onboarding: `PULL_REQUEST_TEMPLATE.md` (fio condutor, banco e deploy,
+  prova, revisor humano), `CHANGELOG.md` e `docs/backlog.md`.
+- **`attest.json`**: dois atestados novos — `iniciativa-resolvida` e `squash-titulo-pr`.
+
+### Alterado
+- **`AGENTS.md`** reescrito para a 1.1.0: papéis do orquestrador/implementador/revisor (R19–R21), camadas de
+  contexto por agente, ciclo por altitude (Iniciativa → Epic → PBI → task). O detalhamento que saiu do núcleo
+  migrou para `docs/harness/referencia.md`, `adocao.md` e `prompts.md` — nenhuma regra foi removida.
+- **`docs/harness/adocao.md`**: escada de níveis de adoção alinhada ao que o doctor mede de fato; a orientação
+  deixa de assumir uma pessoa sênior orquestrando sozinha.
+- **`docs/harness/prompts.md`**: prompt do implementador ganha o isolamento por worktree (porta, schema,
+  namespace); prompt do orquestrador ganha o passo "antes de despachar".
+
 ## [1.0.1] — 2026-09-05
 
 Correções do review adversarial independente (2 Critical, 7 Important, 14 Minor).
