@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Invariantes de TEXTO da 1.1.0 — job `texto` do ci.yml chama este script (B11, handoff §B).
-# bash puro (3.2+/GNU), roda da RAIZ do repositório. Cada checagem imprime o que conferiu e
-# sai 1 no PRIMEIRO desvio (acumula achados e sai 1 no fim, nunca "imprime e sai 0" — B11).
+# bash puro (3.2+/GNU), roda da RAIZ do repositório. Cada checagem imprime o que conferiu; um
+# desvio NÃO interrompe — o script roda todas as checagens, acumula as falhas e sai 1 no fim se
+# houver ao menos uma (nunca "imprime e sai 0" — B11).
 #
 # Fonte de cada checagem: handoff.md §B (B1–B11), task-25-brief.md (Emenda #14, fluxo.md
 # 7 seções em ORDEM), ruling F6-R4 (nomes dos 4 jobs do ruleset não mudam — conferido no
@@ -19,7 +20,8 @@
 #  B7  desalinhar cache/Apêndice/fluxo.md/Isolamento/CODEOWNERS entre os arquivos que têm de casar
 #  B8  PR_TEMPLATE.md listar tipo que não está em tiposComEscopoDePbi/tiposLivres (DEFAULTS)
 #  F6-R7 usar `grep -c '"hooks"'` sem `[[:space:]]*:` (sempre 1, por causa da keyword)
-#  "77 testes" reintroduzido em plugins/gabarito-mestre, README.md ou CONTRIBUTING.md
+#  "77 testes" reintroduzido em plugins/gabarito-mestre, .github/, README.md ou CONTRIBUTING.md
+#  renomear no ci.yml um dos 4 checks exigidos pelo ruleset de main, ou tirar ubuntu-latest/macos-latest da matriz de hooks
 #  nomes da 1.0.1 (4 skills · 3 agents · 1 command · 2+3 hooks · 7 gates + 4 scripts · R1–R18 · G1–G9 · I1–I12)
 set -u
 AQUI="$(cd "$(dirname "$0")" && pwd)"
@@ -222,8 +224,16 @@ check "os três version == 1.1.0 (achei '$v1' '$v2' '$v3')" '[ "$v1" = "$v2" ] &
 # conta 1. A checagem correta ancora na FORMA DE CHAVE JSON: `"hooks"` seguido de `:` (com ou sem espaço).
 HOOKS_KEY=$(grep -c '"hooks"[[:space:]]*:' "$P/.claude-plugin/plugin.json")
 check "plugin.json sem chave \"hooks\" (F6-R7)" '[ "'"$HOOKS_KEY"'" -eq 0 ]' "plugin.json declara uma chave \"hooks\" (achei $HOOKS_KEY)"
-N77=$(grep -rn '77 testes' "$P" "$ROOT/README.md" "$ROOT/CONTRIBUTING.md" --include='*.md' --include='*.yml' --include='*.sh' --include='*.json' 2>/dev/null | grep -v 'scripts/test/texto.test.sh' | wc -l | tr -d ' ')
+N77=$(grep -rn '77 testes' "$P" "$ROOT/.github" "$ROOT/README.md" "$ROOT/CONTRIBUTING.md" --include='*.md' --include='*.yml' --include='*.sh' --include='*.json' 2>/dev/null | grep -v 'scripts/test/texto.test.sh' | wc -l | tr -d ' ')
 check "'77 testes' = 0 fora do CHANGELOG" '[ "'"$N77"'" -eq 0 ]' "'77 testes' ainda aparece ($N77 linha(s))"
+# Ruleset de main (F6-R4, MINOR-7 do review final): os 4 checks exigidos são nomes de job do ci.yml.
+# Renomear um deles trava toda PR no GitHub — aqui o desvio aparece antes do push.
+CI="$ROOT/.github/workflows/ci.yml"
+HOOKS_JOB=$(awk '/^  hooks:/{f=1;next} f&&/^  [a-z][a-z-]*:/{f=0} f' "$CI")
+check "ci.yml: check 'claude plugin validate --strict' (ruleset)" "grep -qxF '    name: claude plugin validate --strict' '$CI'" "nome de job exigido pelo ruleset ausente"
+check "ci.yml: check 'doctor não se auto-detecta (M10)' (ruleset)" "grep -qxF '    name: doctor não se auto-detecta (M10)' '$CI'" "nome de job exigido pelo ruleset ausente"
+check "ci.yml: check 'hooks — corpora (bash \${{ matrix.os }})' (ruleset)" 'printf "%s\n" "$HOOKS_JOB" | grep -qxF "    name: hooks — corpora (bash \${{ matrix.os }})"' "nome do job hooks exigido pelo ruleset ausente"
+check "ci.yml: matriz de hooks com ubuntu-latest e macos-latest (ruleset)" 'OSL=$(printf "%s\n" "$HOOKS_JOB" | grep -E "^ +os:"); printf "%s" "$OSL" | grep -q "ubuntu-latest" && printf "%s" "$OSL" | grep -q "macos-latest"' "matriz do job hooks não produz os 2 nomes exigidos"
 nomes_falhou=0
 for f in skills/gabarito-instalar/SKILL.md skills/gabarito-conformidade/SKILL.md skills/gabarito-review/SKILL.md skills/gabarito-spike/SKILL.md \
          agents/gabarito-implementador.md agents/gabarito-revisor.md agents/gabarito-spike.md commands/gabarito-doctor.md \
