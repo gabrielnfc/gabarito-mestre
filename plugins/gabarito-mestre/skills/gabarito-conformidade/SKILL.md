@@ -49,7 +49,7 @@ Ordem fixa. Seção pulada = incompleto, não enxuto.
 | 9 | **Pendências** — o que ficou aberto, por quê, o que desbloqueia | risco só na cabeça de alguém |
 | 10 | **Emendas datadas** inline (`_(Emenda AAAA-MM-DD, origem — motivo)_`), nada apagado (R16) | histórico reescrito |
 | 11 | **Marcação (a)/(b)/(c)** em toda afirmação normativa (R18) | (b) citado como se fosse (a) |
-| 12 | **Fio condutor (R19, `fluxo.md §5`)** — cabeçalho com `Iniciativa: <ID>` e `Epic: <ID>`; lista dos PBIs do Epic (ID + tipo), índice, não plano (ADR-FLX-1); Iniciativa diferente da padrão do repo só como `Iniciativa: <ID> (override: <motivo>)` (D4) | sem `Epic:` · sem `Iniciativa:` · sem lista de PBIs · override sem motivo · ID fora de `fluxo.idPadrao`. **Sem `fluxo.resolvidoEm`: AVISO, não falta** |
+| 12 | **Fio condutor (R19, `fluxo.md`, abertura antes de §1)** — cabeçalho com `Iniciativa: <ID>` e `Epic: <ID>`; lista dos PBIs do Epic (ID + tipo), índice, não plano (ADR-FLX-1); Iniciativa diferente da padrão do repo só como `Iniciativa: <ID> (override: <motivo>)` (D4) | sem `Epic:` · sem `Iniciativa:` · sem lista de PBIs · override sem motivo · ID fora de `fluxo.idPadrao`. **Sem `fluxo.resolvidoEm`: AVISO, não falta** |
 
 ## Checklist — PLANO (`referencia.md §2.2`)
 
