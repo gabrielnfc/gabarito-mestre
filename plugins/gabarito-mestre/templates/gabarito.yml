@@ -18,13 +18,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0   # a checagem `versionamento` lê os últimos 20 commits de primeiro pai
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
       - run: node tools/gabarito-gates/scripts/harness-doctor.mjs
 
   gates-tests:
-    name: suíte dos gates (77 testes)
+    name: suíte dos gates
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -32,6 +34,21 @@ jobs:
         with:
           node-version: '22'
       - run: cd tools/gabarito-gates && npm test
+
+  versionamento:
+    name: versionamento (R20 — branch e commits em Conventional Commits com escopo do PBI)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0   # obrigatório: o check percorre origin/main..HEAD
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: node tools/gabarito-gates/scripts/versionamento-check.mjs --base origin/main --branch "$GITHUB_HEAD_REF"
+      # Fail-open declarado (G9): sem `versionamento.resolvidoEm` em harness.config.json o check
+      # avisa e sai 0 — repo sem onboarding não trava; também não está protegido.
 
   # Guarda de migrations (G8) — NÃO vem ligada: calibre antes (docs/harness/adocao.md §3, corte temporal e
   # falsos positivos sobre o histórico). Depois, adicione o job conforme docs/harness/gates.md §4.
