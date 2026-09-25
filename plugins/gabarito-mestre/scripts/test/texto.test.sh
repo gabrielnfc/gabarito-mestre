@@ -109,8 +109,19 @@ done
 # ── B2 (handoff §B.2) — DISPATCH idêntico, hatches usados, ≤ 40 == MAX_LINHAS, inegociável ──
 echo "── B2: DISPATCH idêntico, hatches em hooks/, ≤ 40 == MAX_LINHAS, inegociável cobre R1–R21"
 DISPATCH_FMT='DISPATCH Task <N> slots=<slots> worktree wt/<PBI>-<n>'
-check "DISPATCH em prompts.md"    "grep -qF '$DISPATCH_FMT' '$Q'" "formato ausente/diferente em prompts.md"
-check "DISPATCH em referencia.md" "grep -qF '$DISPATCH_FMT' '$R'" "formato ausente/diferente em referencia.md"
+# Achado MAJOR #1 (review T25b, task-25b-review.md): `grep -qF` só prova PRESENÇA em algum lugar do
+# arquivo — referencia.md cita a linha DISPATCH 3x (§2.3 l.62, §3.1 l.92, "Antes de despachar" l.150);
+# mutar só a ocorrência canônica (l.62) deixava a checagem verde porque as outras duas ainda casavam.
+# Fix: toda ocorrência do literal "DISPATCH Task" no arquivo tem de ser, ela mesma, uma ocorrência do
+# formato canônico completo — conta as duas e exige igualdade (e ≥ 1, para não passar vazio).
+for par in "$Q:prompts.md" "$R:referencia.md"; do
+  arq="${par%%:*}"; nome="${par##*:}"
+  n_lit=$(grep -o 'DISPATCH Task' "$arq" | wc -l | tr -d ' ')
+  n_can=$(grep -o -F "$DISPATCH_FMT" "$arq" | wc -l | tr -d ' ')
+  check "toda ocorrência de 'DISPATCH Task' em $nome casa o formato canônico ($n_can/$n_lit)" \
+    '[ "'"$n_lit"'" -ge 1 ] && [ "'"$n_lit"'" -eq "'"$n_can"'" ]' \
+    "$nome tem $n_lit ocorrência(s) de 'DISPATCH Task' mas só $n_can casa(m) o formato completo"
+done
 for hv in GABARITO_ALLOW_DESTRUCTIVE GABARITO_ALLOW_PRODUCTION GABARITO_ALLOW_VERSIONING; do
   check "$hv citado no AGENTS.md existe em hooks/" "grep -q '$hv' '$A' && grep -rlq '$hv' '$P/hooks/'*.sh >/dev/null 2>&1" "hatch sem uso em hooks/"
 done
