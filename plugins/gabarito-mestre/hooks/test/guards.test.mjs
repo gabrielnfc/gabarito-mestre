@@ -407,3 +407,102 @@ describe('guard-versioning.sh — R20 (T13)', () => {
     }
   });
 });
+
+// Plugin falso: só o que os hooks chamam. ${root}/${plugin} no cartão viram os argumentos recebidos;
+// ${pid} (RULING F3-R1) vira process.env.GABARITO_PID_RAIZ visto pelo script Node.
+function fakePluginRoot({
+  cartao = ['GABARITO · cartão FAKE', 'root=${root}', 'plugin=${plugin}', 'linha com "aspas", \\ barra\te tab'],
+  cartaoExit = 0,
+  semCartao = false,
+  capacidade = '{"slots":3,"motivo":"load ok"}',
+  capacidadeExit = 0,
+  semCapacidade = false,
+} = {}) {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'gm-plugin-')));
+  mkdirSync(join(dir, 'gates', 'scripts'), { recursive: true });
+  if (!semCartao) {
+    writeFileSync(join(dir, 'gates', 'scripts', 'cartao-sessao.mjs'), `
+const a = process.argv.slice(2);
+const root = a[a.indexOf('--root') + 1]; const plugin = a[a.indexOf('--plugin-root') + 1];
+const pid = process.env.GABARITO_PID_RAIZ || '';
+const linhas = ${JSON.stringify(cartao)}.map((l) => l.replace('\${root}', root).replace('\${plugin}', plugin).replace('\${pid}', pid));
+process.stdout.write(linhas.join('\\n') + '\\n');
+process.exit(${cartaoExit});
+`);
+  }
+  if (!semCapacidade) {
+    writeFileSync(join(dir, 'gates', 'scripts', 'capacidade.mjs'), `process.stdout.write(${JSON.stringify(capacidade)}); process.exit(${capacidadeExit});`);
+  }
+  return dir;
+}
+const ctx = (r) => JSON.parse(r.stdout).hookSpecificOutput;
+
+describe('session-card.sh — ORQ-3 (T14)', () => {
+  test('injeta additionalContext em SessionStart; --root é o toplevel do git mesmo em apps/api; --plugin-root é CLAUDE_PLUGIN_ROOT', () => {
+    const plugin = fakePluginRoot();
+    const repo = fixtureRepo();
+    const r = runAt('session-card.sh', '', { cwd: join(repo, 'apps', 'api'), env: { CLAUDE_PLUGIN_ROOT: plugin }, event: 'SessionStart' });
+    assert.equal(r.code, 0, r.stderr);
+    const h = ctx(r);
+    assert.equal(h.hookEventName, 'SessionStart');
+    assert.match(h.additionalContext, /^GABARITO · cartão FAKE\n/);
+    assert.ok(h.additionalContext.includes(`root=${repo}\n`), h.additionalContext);
+    assert.ok(h.additionalContext.includes(`plugin=${plugin}\n`), h.additionalContext);
+  });
+  test('sem .git: --root é o cwd (Review Focus 2)', () => {
+    const plugin = fakePluginRoot();
+    const solto = fixtureRepo({ git: false });
+    const r = runAt('session-card.sh', '', { cwd: join(solto, 'apps', 'api'), env: { CLAUDE_PLUGIN_ROOT: plugin }, event: 'SessionStart' });
+    assert.ok(ctx(r).additionalContext.includes(`root=${join(solto, 'apps', 'api')}\n`));
+  });
+  test('JSON válido com aspas, barra invertida e tab no cartão', () => {
+    const r = runAt('session-card.sh', '', { cwd: fixtureRepo(), env: { CLAUDE_PLUGIN_ROOT: fakePluginRoot() }, event: 'SessionStart' });
+    assert.ok(ctx(r).additionalContext.includes('linha com "aspas", \\ barra\te tab'));
+  });
+  test('≤ 40 linhas mesmo se o script devolver 60', () => {
+    const plugin = fakePluginRoot({ cartao: Array.from({ length: 60 }, (_, i) => `linha ${i + 1}`) });
+    const r = runAt('session-card.sh', '', { cwd: fixtureRepo(), env: { CLAUDE_PLUGIN_ROOT: plugin }, event: 'SessionStart' });
+    const linhas = ctx(r).additionalContext.split('\n');
+    assert.equal(linhas.length, 40);
+    assert.equal(linhas[39], 'linha 40');
+  });
+  test('script sai com 1 → exit 0, stdout vazio, fail-open declarado em stderr', () => {
+    const r = runAt('session-card.sh', '', { cwd: fixtureRepo(), env: { CLAUDE_PLUGIN_ROOT: fakePluginRoot({ cartaoExit: 1 }) }, event: 'SessionStart' });
+    assert.equal(r.code, 0);
+    assert.equal(r.stdout, '');
+    assert.match(r.stderr, /cartao-sessao\.mjs saiu com 1.*fail-open declarado/);
+  });
+  test('CLAUDE_PLUGIN_ROOT sem gates/scripts/cartao-sessao.mjs → exit 0, fail-open declarado', () => {
+    const r = runAt('session-card.sh', '', { cwd: fixtureRepo(), env: { CLAUDE_PLUGIN_ROOT: fakePluginRoot({ semCartao: true }) }, event: 'SessionStart' });
+    assert.equal(r.code, 0);
+    assert.equal(r.stdout, '');
+    assert.match(r.stderr, /cartao-sessao\.mjs ausente.*fail-open declarado/);
+  });
+  test('cartão vazio (só espaço) → exit 0 sem saída', () => {
+    const r = runAt('session-card.sh', '', { cwd: fixtureRepo(), env: { CLAUDE_PLUGIN_ROOT: fakePluginRoot({ cartao: ['', '  '] }) }, event: 'SessionStart' });
+    assert.equal(r.code, 0);
+    assert.equal(r.stdout, '');
+  });
+  test('stdin vazio (sem JSON) não quebra', () => {
+    const r = spawnSync('bash', [join(HOOKS, 'session-card.sh')], { input: '', encoding: 'utf8', cwd: fixtureRepo(), env: cleanEnv({ CLAUDE_PLUGIN_ROOT: fakePluginRoot() }) });
+    assert.equal(r.status, 0);
+    assert.equal(ctx({ stdout: r.stdout }).hookEventName, 'SessionStart');
+  });
+  test('GABARITO_PID_RAIZ (RULING F3-R1): exportado antes de chamar o node, com o PID de quem abriu o bash do hook', () => {
+    // spawnSync executa bash diretamente (sem shell intermediário): o pai do bash é este processo de teste.
+    const plugin = fakePluginRoot({ cartao: ['${pid}'] });
+    const r = runAt('session-card.sh', '', { cwd: fixtureRepo(), env: { CLAUDE_PLUGIN_ROOT: plugin }, event: 'SessionStart' });
+    assert.equal(r.code, 0, r.stderr);
+    const texto = ctx(r).additionalContext;
+    assert.notEqual(texto.trim(), '');
+    assert.equal(texto.trim(), String(process.pid));
+  });
+  const REAL = join(PLUGIN, 'gates', 'scripts', 'cartao-sessao.mjs');
+  test('smoke com o cartao-sessao.mjs real: repo sem onboarding → uma linha "sem onboarding"', { skip: !existsSync(REAL) && 'T9 ainda não integrada' }, () => {
+    const r = runAt('session-card.sh', '', { cwd: fixtureRepo({ config: {} }), env: { CLAUDE_PLUGIN_ROOT: PLUGIN }, event: 'SessionStart' });
+    assert.equal(r.code, 0, r.stderr);
+    const texto = ctx(r).additionalContext;
+    assert.match(texto, /sem onboarding/);
+    assert.equal(texto.split('\n').length, 1);
+  });
+});
