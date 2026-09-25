@@ -6,7 +6,9 @@
  *
  * MUTAÇÕES PRESCRITAS (cada uma tem que derrubar a suíte):
  *  M1  trocar `exit 2` por `exit 1` em gabarito_deny            → "deny sai com 2"
- *  M2  aceitar motivo vazio no escape hatch                       → "motivo vazio NÃO libera"
+ *  M2  aceitar motivo vazio no escape hatch — redundante com a checagem de tamanho abaixo
+ *      (motivo vazio tem ${#motivo}=0 < 8, já barrado ali); não derruba mais a suíte sozinha,
+ *      mas o comportamento externo (motivo vazio não libera) segue coberto por "motivo curto"
  *  M3  remover a checagem de terminador citado no stripper       → "heredoc sem aspas com $(rm -rf) bloqueia"
  *  M4  remover `bash -c`/eval de SHELLEXEC                        → destrutivos.txt (bash -c "rm -rf")
  */
@@ -183,6 +185,19 @@ describe('_common.sh — escape hatch por nome (T12)', () => {
     const r = runCommon(injecao, { env: { GABARITO_ALLOW_VERSIONING: ok } });
     assert.match(r.stdout, /rc=1/);
     assert.doesNotMatch(r.stdout, /INJETADO/);
+  });
+  test('nome de VAR SEM espaço (não sofre word-splitting em "for v in $vars") não injeta comando no eval: sentinela não criado, hatch não libera', () => {
+    // Payload de achado 1 (review T12): sem espaço literal, usa ${IFS} para recompor o
+    // separador só DEPOIS, dentro do próprio eval. Single-quoted no snippet para que ${IFS}
+    // chegue intacto (não expandido) em `vars`, provando a validação do `case` isoladamente
+    // do acidente de word-splitting que protegia o teste anterior.
+    const sentinelDir = realpathSync(mkdtempSync(join(tmpdir(), 'gm-hooks-sentinel-')));
+    const sentinel = join(sentinelDir, 'PWNED');
+    const payload = `x};touch\${IFS}${sentinelDir}/PWNED;x`;
+    const snippet = `GABARITO_CMD="x"; gabarito_escape_hatch "R20" '${payload}'; echo "rc=$?"`;
+    const r = runCommon(snippet);
+    assert.match(r.stdout, /rc=1/);
+    assert.equal(existsSync(sentinel), false);
   });
   test('assinatura 1.0.1 (um argumento) continua valendo para o par', () => {
     assert.match(runCommon('GABARITO_CMD="x"; gabarito_escape_hatch "R2"; echo "rc=$?"', { env: { GABARITO_ALLOW_PRODUCTION: ok } }).stdout, /rc=0/);
