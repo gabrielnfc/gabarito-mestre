@@ -431,7 +431,13 @@ process.exit(${cartaoExit});
 `);
   }
   if (!semCapacidade) {
-    writeFileSync(join(dir, 'gates', 'scripts', 'capacidade.mjs'), `process.stdout.write(${JSON.stringify(capacidade)}); process.exit(${capacidadeExit});`);
+    // ${pid} (RULING F3-R2) vira process.env.GABARITO_PID_RAIZ, lido em runtime pelo script Node —
+    // mesmo padrão do ${pid} de cartao-sessao.mjs acima. Sem ${pid} na string, o .replace() é no-op.
+    writeFileSync(join(dir, 'gates', 'scripts', 'capacidade.mjs'), `
+const pid = process.env.GABARITO_PID_RAIZ || '';
+process.stdout.write(${JSON.stringify(capacidade)}.replace('\${pid}', pid));
+process.exit(${capacidadeExit});
+`);
   }
   return dir;
 }
@@ -504,5 +510,64 @@ describe('session-card.sh — ORQ-3 (T14)', () => {
     const texto = ctx(r).additionalContext;
     assert.match(texto, /sem onboarding/);
     assert.equal(texto.split('\n').length, 1);
+  });
+});
+
+describe('remind-orchestrator.sh — ORQ-4 (T15)', () => {
+  const ligado = { orquestracao: { lembretePorPrompt: true, paralelismo: { simultaneos: 2, teto: 4 } } };
+  const remind = (cwd, plugin) => runAt('remind-orchestrator.sh', '', { cwd, env: { CLAUDE_PLUGIN_ROOT: plugin }, event: 'UserPromptSubmit' });
+
+  test('lembretePorPrompt true: uma linha R21 com slots vindos de capacidade.mjs', () => {
+    const r = remind(fixtureRepo({ config: ligado }), fakePluginRoot({ capacidade: '{"slots":3,"motivo":"load ok"}' }));
+    assert.equal(r.code, 0, r.stderr);
+    const h = ctx(r);
+    assert.equal(h.hookEventName, 'UserPromptSubmit');
+    assert.equal(h.additionalContext, 'R21: despache, não implemente · slots: 3');
+  });
+  test('lembretePorPrompt false: exit 0, stdout vazio', () => {
+    const r = remind(fixtureRepo({ config: { orquestracao: { lembretePorPrompt: false } } }), fakePluginRoot());
+    assert.equal(r.code, 0);
+    assert.equal(r.stdout, '');
+  });
+  test('config sem a chave: desligado, fail-open declarado em stderr; sem harness.config.json: silêncio total', () => {
+    const r1 = remind(fixtureRepo({ config: { fluxo: {} } }), fakePluginRoot());
+    assert.equal(r1.code, 0); assert.equal(r1.stdout, ''); assert.match(r1.stderr, /lembretePorPrompt.*fail-open declarado/);
+    const r2 = remind(fixtureRepo(), fakePluginRoot());
+    assert.equal(r2.code, 0); assert.equal(r2.stdout, ''); assert.equal(r2.stderr, '');
+  });
+  test('capacidade.mjs falha ou falta: slots vêm de paralelismo.simultaneos marcados "(config)"', () => {
+    const r1 = remind(fixtureRepo({ config: ligado }), fakePluginRoot({ capacidade: '', capacidadeExit: 1 }));
+    assert.equal(ctx(r1).additionalContext, 'R21: despache, não implemente · slots: 2 (config)');
+    const r2 = remind(fixtureRepo({ config: ligado }), fakePluginRoot({ semCapacidade: true }));
+    assert.equal(ctx(r2).additionalContext, 'R21: despache, não implemente · slots: 2 (config)');
+    const r3 = remind(fixtureRepo({ config: ligado }), fakePluginRoot({ capacidade: 'não é json' }));
+    assert.equal(ctx(r3).additionalContext, 'R21: despache, não implemente · slots: 2 (config)');
+  });
+  test('sem simultaneos no config e sem capacidade: default 2 (config)', () => {
+    const r = remind(fixtureRepo({ config: { orquestracao: { lembretePorPrompt: true } } }), fakePluginRoot({ semCapacidade: true }));
+    assert.equal(ctx(r).additionalContext, 'R21: despache, não implemente · slots: 2 (config)');
+  });
+  test('nunca exit 2: JSON inválido, stdin vazio, plugin root inexistente', () => {
+    const casos = [
+      remind(fixtureRepo({ config: '{"orquestracao": {' }), fakePluginRoot()),
+      remind(fixtureRepo({ config: ligado }), '/caminho/que/nao/existe'),
+      { code: spawnSync('bash', [join(HOOKS, 'remind-orchestrator.sh')], { input: '', encoding: 'utf8', cwd: fixtureRepo({ config: ligado }), env: cleanEnv({ CLAUDE_PLUGIN_ROOT: fakePluginRoot() }) }).status },
+    ];
+    for (const r of casos) assert.equal(r.code, 0);
+  });
+  test('monorepo: lembrete ligado na raiz vale em apps/api', () => {
+    const repo = fixtureRepo({ config: ligado });
+    const r = remind(join(repo, 'apps', 'api'), fakePluginRoot());
+    assert.match(ctx(r).additionalContext, /^R21: despache/);
+  });
+  // RULING F3-R2 (emenda fase 2 → fase 3, vence o brief): antes de chamar capacidade.mjs, o hook exporta
+  // GABARITO_PID_RAIZ=$PPID (senão process.ppid dentro do node seria o bash do hook, não o Claude Code —
+  // mesmo raciocínio de F3-R1 em session-card.sh). O fake de capacidade.mjs eco o pid recebido no campo
+  // `slots` (valor numérico válido); spawnSync roda bash sem shell intermediário, então o pai do bash
+  // é este processo de teste — String(process.pid) tem de aparecer no slots devolvido.
+  test('RULING F3-R2: GABARITO_PID_RAIZ exportado antes de chamar capacidade.mjs, com o pid de quem abriu o bash do hook', () => {
+    const r = remind(fixtureRepo({ config: ligado }), fakePluginRoot({ capacidade: '{"slots":${pid},"motivo":"eco pid"}' }));
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(ctx(r).additionalContext, `R21: despache, não implemente · slots: ${process.pid}`);
   });
 });
