@@ -30,13 +30,18 @@ harness-doctor mais rigoroso.
 - **`attest.json`**: dois atestados novos — `iniciativa-resolvida` e `squash-titulo-pr`.
 
 ### Alterado
-- **`AGENTS.md`** reescrito para a 1.1.0: papéis do orquestrador/implementador/revisor (R19–R21), camadas de
-  contexto por agente, ciclo por altitude (Iniciativa → Epic → PBI → task). O detalhamento que saiu do núcleo
-  migrou para `docs/harness/referencia.md`, `adocao.md` e `prompts.md` — nenhuma regra foi removida.
+- **`AGENTS.md`** reescrito para a 1.1.0: três regras novas no núcleo — R19 (fio condutor Iniciativa → Epic →
+  PBI), R20 (versionamento é gate) e R21 (orquestrador despacha, não implementa; contenda sem override) —,
+  papéis do orquestrador/implementador/revisor, camadas de contexto por agente, ciclo por altitude (Iniciativa →
+  Epic → PBI → task). O detalhamento que saiu do núcleo migrou para `docs/harness/referencia.md`, `adocao.md` e
+  `prompts.md` — nenhuma regra foi removida.
 - **`docs/harness/adocao.md`**: escada de níveis de adoção alinhada ao que o doctor mede de fato; a orientação
   deixa de assumir uma pessoa sênior orquestrando sozinha.
 - **`docs/harness/prompts.md`**: prompt do implementador ganha o isolamento por worktree (porta, schema,
   namespace); prompt do orquestrador ganha o passo "antes de despachar".
+- **Numeração das regras de projeto (quebra para quem já adotou):** as regras específicas do projeto, no Apêndice
+  do `AGENTS.md`, passam a começar em **R30** (antes **R19**), porque R19–R21 agora são regras do núcleo. Quem já
+  adotou a 1.0.x e tem R19+ no Apêndice precisa renumerar para R30+ e atualizar as referências a elas.
 
 ## [1.0.1] — 2026-09-05
 
