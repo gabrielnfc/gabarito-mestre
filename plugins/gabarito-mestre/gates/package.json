@@ -1,6 +1,6 @@
 {
   "name": "gabarito-gates",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Gates executáveis do Gabarito Mestre — as regras que a máquina lembra, para que ninguém precise.",
   "type": "module",
   "license": "MIT",
@@ -16,14 +16,20 @@
     "harness-doctor": "./scripts/harness-doctor.mjs",
     "harness-migrations-guard": "./scripts/migrations-guard.mjs",
     "harness-deploy-order": "./scripts/deploy-order-check.mjs",
-    "harness-quality": "./scripts/quality-ratchet.mjs"
+    "harness-quality": "./scripts/quality-ratchet.mjs",
+    "harness-onboarding-config": "./scripts/onboarding-config.mjs",
+    "harness-capacidade": "./scripts/capacidade.mjs",
+    "harness-versionamento-check": "./scripts/versionamento-check.mjs",
+    "harness-cartao-sessao": "./scripts/cartao-sessao.mjs"
   },
   "scripts": {
     "test": "npm run test:mjs && npm run test:ts",
     "test:mjs": "node --test test/*.test.mjs",
     "test:ts": "node --experimental-strip-types --test test/*.test.ts",
     "doctor": "node scripts/harness-doctor.mjs --explain",
-    "quality": "node scripts/quality-ratchet.mjs"
+    "quality": "node scripts/quality-ratchet.mjs",
+    "versionamento": "node scripts/versionamento-check.mjs --base origin/main",
+    "capacidade": "node scripts/capacidade.mjs --json"
   },
   "files": [
     "src",
