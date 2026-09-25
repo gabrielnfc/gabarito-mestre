@@ -55,6 +55,6 @@ fi
 
 [ -z "$hit" ] && exit 0
 
-if gabarito_escape_hatch "R3 · $hit"; then exit 0; fi
+if gabarito_escape_hatch "R3 · $hit" GABARITO_ALLOW_PRODUCTION; then exit 0; fi
 
 gabarito_deny "Acesso a produção de terceiro bloqueado pela regra R3 ($hit). Formule a pergunta, estime o custo (chamadas, páginas, entidades) e peça ao usuário autorização NOMINAL para esta consulta antes de repetir — leitura inclusive; escrita é proibida em absoluto. Ver AGENTS.md §1. Só com autorização nominal do usuário: repita com GABARITO_ALLOW_PRODUCTION=\"autorizado por <quem> em <data> — <consulta>\" no início do comando."
