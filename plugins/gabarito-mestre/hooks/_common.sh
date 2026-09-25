@@ -83,10 +83,12 @@ gabarito_escape_hatch() {
     echo "gabarito-mestre: escape hatch IGNORADO ($rotulo) — motivo curto demais (mínimo 8 caracteres e 2 palavras): '$motivo'" >&2
     return 1
   fi
-  local esc
+  local esc esc_rotulo esc_origem
   esc=$(gabarito_json_escape "$motivo")
+  esc_rotulo=$(gabarito_json_escape "$rotulo")
+  esc_origem=$(gabarito_json_escape "$origem")
   echo "gabarito-mestre: ESCAPE HATCH usado ($rotulo, via $origem) — motivo: $motivo" >&2
-  printf '{"systemMessage":"⚠ gabarito-mestre: escape hatch usado (%s, via %s). Motivo declarado: %s"}\n' "$rotulo" "$origem" "$esc"
+  printf '{"systemMessage":"⚠ gabarito-mestre: escape hatch usado (%s, via %s). Motivo declarado: %s"}\n' "$esc_rotulo" "$esc_origem" "$esc"
   return 0
 }
 

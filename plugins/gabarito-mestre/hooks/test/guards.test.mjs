@@ -406,6 +406,22 @@ describe('guard-versioning.sh — R20 (T13)', () => {
       assert.match(r.stderr, /fail-open/);
     }
   });
+
+  // Achado 1 (review final F3-R6, MAJOR): $rotulo do hatch carrega texto livre do usuário (cabeçalho de
+  // commit, nome de branch) e tinha de passar por gabarito_json_escape antes de entrar no systemMessage.
+  test('rótulo do hatch com aspas duplas não quebra o JSON do systemMessage (achado 1)', () => {
+    const ok = 'autorizado por gabriel em 2026-09-24 — importação de histórico legado';
+    const r1 = runAt('guard-versioning.sh', `GABARITO_ALLOW_VERSIONING="${ok}" git commit -m 'diz "oi" e tal'`, { cwd: root });
+    assert.equal(r1.code, 0, r1.stderr);
+    const j1 = JSON.parse(r1.stdout); // lança se o JSON estiver malformado
+    assert.match(j1.systemMessage, /diz .oi. e tal/);
+
+    const ok2 = 'autorizado por gabriel em 2026-09-24 — branch de experimento';
+    const r2 = runAt('guard-versioning.sh', `GABARITO_ALLOW_VERSIONING="${ok2}" git checkout -b 'x"y'`, { cwd: root });
+    assert.equal(r2.code, 0, r2.stderr);
+    const j2 = JSON.parse(r2.stdout);
+    assert.match(j2.systemMessage, /x.y/);
+  });
 });
 
 // Plugin falso: só o que os hooks chamam. ${root}/${plugin} no cartão viram os argumentos recebidos;
