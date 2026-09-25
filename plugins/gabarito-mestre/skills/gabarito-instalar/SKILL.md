@@ -342,7 +342,8 @@ Registra o vínculo PBI → Epic → Iniciativa no cache local que os hooks leem
    const fs = require("fs"); const p = ".harness/fluxo-cache.json";
    const [pbi, epic, iniciativa, titulo] = process.argv.slice(1);
    let c = {}; try { c = JSON.parse(fs.readFileSync(p, "utf8")); } catch {}
-   c[pbi] = { epic, iniciativa, titulo, em: new Date().toISOString().slice(0, 10) };
+   const dataLocal = (d) => { const p2 = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; }; // F2-R10: local, não toISOString() (UTC)
+   c[pbi] = { epic, iniciativa, titulo, em: dataLocal(new Date()) };
    fs.mkdirSync(".harness", { recursive: true });
    fs.writeFileSync(p + ".tmp", JSON.stringify(c, null, 2) + "\n"); fs.renameSync(p + ".tmp", p);
    console.log("fluxo-cache:", pbi, "→", epic, "→", iniciativa);
