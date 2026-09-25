@@ -26,6 +26,7 @@ F6-R5 — T26: M15 (headless, sem MCP) roda com subagente; M14 (interativo, Clic
 F6-R6 — trailer: `Co-Authored-By: Claude Opus 5.5 (1M context)` + `Claude-Session` — custo-se-errado: atribuição.
 
 ## Progresso
+Task T25c: DONE (sonnet; 9a0c1ef, 2bf4247, ecb36d7, 61f7dbc, 3adcd91 + af144a6 fix). Handoff A1–A7: mensagem de fail-open do §10 = a do hook; "PBIs em voo" (cartão) × "tasks em voo" (DISPATCH) desambiguados em `prompts.md` e `referencia.md`; snippet do `--vincular` grava data local (medido: 23:30 -03:00 → local 2026-09-25, UTC daria 2026-09-26); exceção serial do Isolamento em agente, `prompts.md` e `referencia.md §3.1` com o bloco verbatim idêntico; conformidade cita a abertura de `fluxo.md` para o fio condutor; linha `VINCULO` em `referencia.md §2.3`; `.github/PULL_REQUEST_TEMPLATE.md` do repo = template do plugin (doctor: `pr-template` sem aviso; check M10 ok). Review (sonnet) REPROVADO por 1 MAJOR ("em voo" sem qualificar em `referencia.md:149`), fix round 1/5 (1 addressed, 0 open; 3adcd91..af144a6), re-review APROVADO. Suítes: validate ok · gates 240 + 27 · hooks 269.
 
 ## CORTE DA SESSÃO (com motivo)
 
