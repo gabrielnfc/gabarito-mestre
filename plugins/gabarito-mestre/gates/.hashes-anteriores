@@ -1,0 +1,19 @@
+# sha256 dos arquivos de gates/ na 1.0.1 (commit 1c85330)
+# gerado com: `git archive 1c85330 plugins/gabarito-mestre/gates | tar -x -C <tmp>` e `shasum -a 256 <arquivo>` (caminho relativo a gates/)
+# usado por instalar.sh (hash_manifesto) como fallback quando .instalado.json não tem a entrada (F2-R9): repo 1.0.1 sem
+# manifesto que roda --atualizar --gates-substituir precisa de uma forma de provar "isto é o arquivo original, pode substituir".
+f47b2d24bcccf504d850e3d1e67ec95b729e9367f25fb68ce221d1773f559fa3  eslint/no-unfiltered-mass-mutation.js
+8dbd112bf2de5e167913a24ca88f11c6881e271f8512e27d7b87216a3c37b52a  package.json
+1c002a7cc340da353f40ed10bcb3343af53c269f6ee885433fa15459294d6355  README.md
+dccb1ff97bcbd963a455c9233b7438615951dcc533fa12f58a8b29097b90920f  scripts/deploy-order-check.mjs
+c813807bcf05a58f2afa9cc5503d432ad74f9c051b5cadd3ac33ff2f0b7563bc  scripts/harness-doctor.mjs
+d800a9515f980699fde53cce69c417599bc4660662657ecedcdbf4127ad5d30e  scripts/migrations-guard.mjs
+6084166fe411d2276e0527360bed1acfb082d36de3a1a610fab0552f19f99af9  scripts/quality-ratchet.mjs
+d7816b1b8f4ecbba54d1e73c23cef385bcd38075f28dd1b071ee7d938245b861  src/mass-mutation-guard.ts
+50f1e27bd6f14613ed0a65561450eb488c85edb9c69bcfc1433545d206f90b0e  src/production-host-guard.ts
+0a11c4db84d5421cd28089f2187374f20bf80eaf832993b4532bc5d7764aac12  test/deploy-order.test.mjs
+db5f68d5bfc7390445b60bdf8699c97b23fa2899d8cd0df22bbf33498656ebdf  test/harness-doctor.test.mjs
+b89bc6d923870d56f90511efb7e71135554692f341cdcad3e301d9ceeb73055e  test/mass-mutation-guard.test.ts
+85c21c51a553107d1f3a0c63fed5ac0b19a1bbe18519124c9ad5fb8e93378845  test/migrations-guard.test.mjs
+a70ab0b4f27b3d84503c406ae50746e5f8c95786427d9f17e65c6043be9f966d  test/production-host-guard.test.ts
+41289635128bdf5d2686d5e075a2ca48a214f636cd192b6b3324e3c5d327380f  test/quality-ratchet.test.mjs

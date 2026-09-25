@@ -34,7 +34,7 @@
  * Run vermelho nunca deve gravar baseline — e o `--accept` recusa quando há `errors`.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -283,5 +283,15 @@ function main(argv) {
   process.exit(out.ok ? 0 : 1);
 }
 
-// Entrypoint robusto a espaço/acento no caminho: `file://` cru falha com %20 e o script sairia 0 em silêncio.
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) main(process.argv.slice(2));
+// Entrypoint robusto a espaço/acento e a symlink: `file://` cru falha com %20, e comparar
+// contra `resolve(argv[1])` sem realpath falha atrás de qualquer symlink (macOS /var,
+// cache de plugin, bin do npm/homebrew) — o script sairia 0 em silêncio nos dois casos.
+function ehEntrypoint() {
+  if (!process.argv[1]) return false;
+  try {
+    return fileURLToPath(import.meta.url) === realpathSync(resolve(process.argv[1]));
+  } catch {
+    return false;
+  }
+}
+if (ehEntrypoint()) main(process.argv.slice(2));
