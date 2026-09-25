@@ -27,6 +27,8 @@ F4-R5 — trailer dos commits desta fase: `Co-Authored-By: Claude Opus 5.5 (1M c
 F4-R6 — configurações do GitHub (só squash com título da PR, apagar branch no merge, ruleset em `main` com checks obrigatórios) foram negadas pela permissão desta sessão; ficam com o usuário, com os comandos no relatório. O merge desta PR segue o plano: squash — custo-se-errado: `main` desprotegido até o usuário aplicar.
 
 ## Progresso
+Task T17: DONE (opus; f747864). `AGENTS.md` = bloco 17.3 do plano, 18.545 B: núcleo 17.244 (teto 17.291) · Apêndice 1.301 (teto 4.096), por `tamanhoAgents` e por medição independente. Corte de §9 (passo 9) não foi necessário. Greps dos passos 3–6 e 11 todos no esperado; R1–R21, I1–I12, G1–G9 presentes; gates 238 + 27. Cortes C1–C12 com texto literal conferido contra `f747864~1` (C1 → `adocao.md §1`; C2–C7 → `referencia.md`; C8, C9, C12 sem destino por redundância; C10 → T23; C11 → T25). Review (sonnet) APROVADO: mutações 1, 2 e 8 do fecho derrubam `tamanhoAgents`/grep; duas próprias não são pegas por nenhum grep (esvaziar o texto de I11 mantendo o rótulo; citar `versionamento-checker.mjs` inexistente).
+Ruling F4-R7 — os dois gaps de cobertura não voltam para T17 (o diff está certo; falta checagem): viram insumo para o `ci.yml` de T25 — conferir texto mínimo de cada R/I/G, não só o rótulo, e que todo `*.mjs`/`*.sh` citado no `AGENTS.md` existe no plugin — custo-se-errado: uma regra esvaziada passa até T25.
 
 ## CORTE DA SESSÃO (com motivo)
 
