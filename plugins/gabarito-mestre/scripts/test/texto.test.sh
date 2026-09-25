@@ -234,6 +234,12 @@ check "ci.yml: check 'claude plugin validate --strict' (ruleset)" "grep -qxF '  
 check "ci.yml: check 'doctor não se auto-detecta (M10)' (ruleset)" "grep -qxF '    name: doctor não se auto-detecta (M10)' '$CI'" "nome de job exigido pelo ruleset ausente"
 check "ci.yml: check 'hooks — corpora (bash \${{ matrix.os }})' (ruleset)" 'printf "%s\n" "$HOOKS_JOB" | grep -qxF "    name: hooks — corpora (bash \${{ matrix.os }})"' "nome do job hooks exigido pelo ruleset ausente"
 check "ci.yml: matriz de hooks com ubuntu-latest e macos-latest (ruleset)" 'OSL=$(printf "%s\n" "$HOOKS_JOB" | grep -E "^ +os:"); printf "%s" "$OSL" | grep -q "ubuntu-latest" && printf "%s" "$OSL" | grep -q "macos-latest"' "matriz do job hooks não produz os 2 nomes exigidos"
+# F6-R12: cenário 8/8b do instalar.test.sh extrai a fixture 1.0.1 com `git archive 1c85330 …`
+# (instalar.test.sh l.36) — exige histórico completo. Checkout raso do Actions derruba o job
+# instalador com "fatal: not a valid object name: 1c85330". O checkout do job instalador tem
+# de pedir fetch-depth: 0.
+INSTALADOR_JOB=$(awk '/^  instalador:/{f=1;next} f&&/^  [a-z][a-z-]*:/{f=0} f' "$CI")
+check "ci.yml: job instalador com fetch-depth: 0 (cenário 8 lê 1c85330)" 'printf "%s\n" "$INSTALADOR_JOB" | grep -qE "fetch-depth:[[:space:]]*0"' "checkout do job instalador sem fetch-depth: 0 — cenário 8 do instalar.test.sh precisa do histórico completo"
 nomes_falhou=0
 for f in skills/gabarito-instalar/SKILL.md skills/gabarito-conformidade/SKILL.md skills/gabarito-review/SKILL.md skills/gabarito-spike/SKILL.md \
          agents/gabarito-implementador.md agents/gabarito-revisor.md agents/gabarito-spike.md commands/gabarito-doctor.md \
