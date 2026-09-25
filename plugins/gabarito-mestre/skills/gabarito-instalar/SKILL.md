@@ -1,7 +1,7 @@
 ---
 name: gabarito-instalar
 description: Instala o harness Gabarito Mestre neste repositório e faz o onboarding do fluxo em quatro fases (instalação determinística, fluxo, versionamento, orquestração). Use quando o usuário pedir para "instalar o gabarito", "instalar o harness", "adotar o gabarito-mestre", "configurar AGENTS.md", "setup do harness", "colocar os gates neste repo", "bootstrap do gabarito", "install gabarito", "fazer o onboarding", "refazer onboarding", "vincular PBI-<n>" ou "gabarito-instalar --vincular <PBI>". Cria AGENTS.md, CLAUDE.md (só o import), docs/harness/, tools/gabarito-gates/, harness.config.json, .harness/attest.json e o workflow de CI; grava as seções fluxo, versionamento e orquestracao do harness.config.json via onboarding-config.mjs; roda o doctor ao fim. Nunca declara o nível de adoção.
-allowed-tools: Bash(bash:*), Bash(node:*), Bash(ls:*), Bash(cat:*), Bash(cp:*), Bash(mkdir:*), Bash(git status:*), Bash(git rev-parse:*), Bash(claude mcp list:*), Read, Glob, Grep, Edit, AskUserQuestion
+allowed-tools: Bash(bash:*), Bash(node:*), Bash(ls:*), Bash(cat:*), Bash(cp:*), Bash(mkdir:*), Bash(test:*), Bash(grep:*), Bash(git status:*), Bash(git rev-parse:*), Bash(claude mcp list:*), Read, Glob, Grep, Edit, AskUserQuestion
 ---
 
 # gabarito-instalar
@@ -19,6 +19,8 @@ Quatro fases, nesta ordem: **(1)** instalação determinística · **(2)** fluxo
 **Fail-open declarado (G9):** superpowers ausente não impede nada aqui (instalação e onboarding são determinísticos). Avise em uma linha: `superpowers não está instalado — a instalação segue; o planejamento da subida de nível ficará sem a maquinaria de brainstorm/plano.`
 
 **Sessão sem `AskUserQuestion`** (headless `claude -p`, ou ferramenta indisponível): **não invente respostas.** Use o default de cada pergunta, marque cada valor como **(b)** e liste todos no fechamento ("o que ficou (b)"). Escrita na ferramenta (`fluxo.escrita`) **nunca** fica `true` sem resposta explícita.
+
+**Um comando por chamada.** Cada bloco `bash` abaixo é um comando simples, coberto pelo `allowed-tools`; rode-o como está. Não encadeie com `;`, `&&`, `||`, `if` ou `[ … ]` — composto não casa com as permissões e, em sessão headless, para pedindo aprovação. A decisão (existe / não existe, esqueleto / próprio) é sua, em prosa, a partir do exit e do stdout.
 
 ## Como ler a saída de `onboarding-config.mjs`
 
@@ -61,8 +63,14 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/instalar.sh" .
 Antes de rodar, meça o que já existe:
 
 ```bash
-if [ -d tools/gabarito-gates ] && [ ! -f tools/gabarito-gates/.instalado.json ]; then echo "harness 1.0.x (sem .instalado.json)"; fi
-[ -f tools/gabarito-gates/.instalado.json ] && node -e 'console.log("instalado", JSON.parse(require("fs").readFileSync("tools/gabarito-gates/.instalado.json","utf8")).versao)'
+test -d tools/gabarito-gates
+```
+```bash
+test -f tools/gabarito-gates/.instalado.json
+```
+Exit 0 = existe; exit 1 = não existe. Diretório existe e manifesto não → harness 1.0.x. Manifesto existe → leia a versão:
+```bash
+node -e 'console.log("instalado", JSON.parse(require("fs").readFileSync("tools/gabarito-gates/.instalado.json","utf8")).versao)'
 ```
 
 `tools/gabarito-gates/` **sem** `.instalado.json` é instalação **1.0.x** (o manifesto nasceu na 1.1.0): trate como versão anterior — pergunte por `AskUserQuestion` se roda `instalar.sh . --atualizar` (opções: `--atualizar` · `--atualizar --gates-substituir` · só instalar o que falta, sem `--atualizar`). Se o repo já tem harness de uma versão anterior (esse caso, ou `.instalado.json` com `versao` ≠ `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json`), **pergunte** antes: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/instalar.sh" . --atualizar` grava `<arquivo>.novo` + `diff --stat` para `AGENTS.md` e `docs/harness/*.md` (nunca sobrescreve) e avisa que **R19–R21 agora são do harness; regras de projeto passam a R30+**; `--atualizar --gates-substituir` troca `tools/gabarito-gates/` arquivo a arquivo com `.bak`, recusando (→ `.novo`) o que foi editado localmente (ADR-TIM-1). Com `--atualizar` o doctor **não** roda ao fim — o usuário ainda vai aplicar os `.novo`.
@@ -148,34 +156,47 @@ node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding-config.mjs" --root . --set 
 
 ### 2.5 Áreas e donos → `CODEOWNERS`
 
-Três casos, decididos por medição (não por memória da fase 1):
+Três casos, decididos por medição (não por memória da fase 1). Rode um comando por vez:
 
 ```bash
-if [ ! -e .github/CODEOWNERS ]; then echo "CODEOWNERS: ausente"
-elif [ "$(grep -vc '^[[:space:]]*\(#.*\)\?$' .github/CODEOWNERS)" -eq 0 ] && grep -q '^# Áreas e donos (TIM-1) — preenchido pelo onboarding' .github/CODEOWNERS; then echo "CODEOWNERS: esqueleto"
-else echo "CODEOWNERS: próprio"; fi
+test -e .github/CODEOWNERS
 ```
+Exit 1 → **ausente**. Exit 0 → conte as linhas que não são comentário nem vazias, e o marcador do esqueleto:
+```bash
+grep -c -v '^[[:space:]]*\(#.*\)\?$' .github/CODEOWNERS
+```
+```bash
+grep -c '^# Áreas e donos (TIM-1) — preenchido pelo onboarding' .github/CODEOWNERS
+```
+(`grep -c` imprime `0` e sai com exit 1 quando não há linha — leia o número, não o exit.) Primeiro `0` **e** segundo `≥ 1` → **esqueleto**; qualquer outra combinação → **próprio**.
 
-- **ausente** → crie com uma linha por área (`<padrão de caminho> <@dono>`), mostrando antes:
+- **ausente** → crie com uma linha por área (`<padrão de caminho> <@dono>`), mostrando o conteúdo antes. `flag: "wx"` recusa se o arquivo passou a existir (R2):
   ```bash
-  mkdir -p .github && cat > .github/CODEOWNERS <<'EOF'
-  # Áreas e donos — gerado pelo onboarding do gabarito-mestre em <AAAA-MM-DD>. Fonte: AGENTS.md, Apêndice "Áreas e donos".
+  mkdir -p .github
+  ```
+  ```bash
+  node -e 'require("fs").writeFileSync(".github/CODEOWNERS", process.argv[1], { flag: "wx" }); console.log("criado .github/CODEOWNERS")' '# Áreas e donos — gerado pelo onboarding do gabarito-mestre em <AAAA-MM-DD>. Fonte: AGENTS.md, Apêndice "Áreas e donos".
   <padrão> <@dono>
-  EOF
+  '
   ```
 - **esqueleto** (só comentários, e o primeiro é o marcador que `instalar.sh --codeowners` escreve: `# Áreas e donos (TIM-1) — preenchido pelo onboarding (gabarito-instalar, fase 2). Uma linha por área:`) → **preencha**: mantenha o marcador, troque a linha `# <caminho/>  @<dono>` pelas linhas reais (`Edit`, mostrando o diff antes).
 - **próprio** (qualquer linha não comentada, ou comentário que não é o marcador) → **não toque**; diga em uma linha que o Apêndice vai citar o arquivo existente.
 
 ### 2.6 Sem ferramenta: `docs/fluxo/` (FLX-5)
 
-Só com `ferramenta: arquivos`. Crie **apenas o que não existe**:
+Só com `ferramenta: arquivos`. Crie **apenas o que não existe** — um comando por vez:
 
 ```bash
 mkdir -p docs/fluxo/epics docs/fluxo/pbis
-[ -e docs/fluxo/iniciativa.md ]        || cp "${CLAUDE_PLUGIN_ROOT}/templates/fluxo/iniciativa.md" docs/fluxo/iniciativa.md
-[ -e docs/fluxo/epics/EPIC-EXEMPLO.md ] || cp "${CLAUDE_PLUGIN_ROOT}/templates/fluxo/epic.md"       docs/fluxo/epics/EPIC-EXEMPLO.md
-[ -e docs/fluxo/pbis/PBI-EXEMPLO.md ]   || cp "${CLAUDE_PLUGIN_ROOT}/templates/fluxo/us.md"         docs/fluxo/pbis/PBI-EXEMPLO.md
 ```
+
+Para cada par abaixo, primeiro `test -e <destino>`; **só com exit 1** rode o `cp -n` (o `-n` é a segunda trava: nunca sobrescreve). Exit 0 → mantido; diga em uma linha.
+
+| Teste | Cópia (só se o teste deu exit 1) |
+|---|---|
+| `test -e docs/fluxo/iniciativa.md` | `cp -n "${CLAUDE_PLUGIN_ROOT}/templates/fluxo/iniciativa.md" docs/fluxo/iniciativa.md` |
+| `test -e docs/fluxo/epics/EPIC-EXEMPLO.md` | `cp -n "${CLAUDE_PLUGIN_ROOT}/templates/fluxo/epic.md" docs/fluxo/epics/EPIC-EXEMPLO.md` |
+| `test -e docs/fluxo/pbis/PBI-EXEMPLO.md` | `cp -n "${CLAUDE_PLUGIN_ROOT}/templates/fluxo/us.md" docs/fluxo/pbis/PBI-EXEMPLO.md` |
 
 Depois, com `Edit`, preencha no frontmatter de `docs/fluxo/iniciativa.md` o `id` e o nome da Iniciativa; em `EPIC-EXEMPLO.md` o `iniciativa: <ID>`; em `PBI-EXEMPLO.md` o `epic: EPIC-EXEMPLO`. Os outros templates (`enabler`, `tech-debt`, `spike`, `bug`, `tarefa`) ficam no plugin: quem abre um card copia de `${CLAUDE_PLUGIN_ROOT}/templates/fluxo/<tipo>.md` — diga isso em uma linha. `docs/backlog.md` continua sendo o backlog do harness (R17), não um nível do fluxo.
 
@@ -202,13 +223,18 @@ Com escrita autorizada, troque também os dois `____` do rótulo da linha Fluxo 
    - arquivo **criado pela fase 1 desta mesma execução** (a saída do instalador teve `criado   .github/workflows/gabarito.yml`) → peça ok por `AskUserQuestion` e aplique com `Edit` **só com ok**. Sem ok, ou sessão sem `AskUserQuestion`: não aplique; o item vai para a lista (b).
    - arquivo que **já existia** (saída `mantido`, ou a fase 1 não rodou nesta execução) → **não edite** (R2); avise em uma linha qual linha trocar e em qual arquivo.
 4. Mostre o mapa tipo de PBI → prefixo de branch e peça ok: US→`feat` · Bug→`fix` (hotfix é `fix` com PBI de Bug) · Enabler→`enabler` · TechDebt→`debt` · Spike→`spike` · Tarefa→`task`; sem PBI: `chore|docs|ci|build|test/<slug>`; worktree de implementador: `wt/<PBI>-<n>`.
-5. Instale **só o que não existe** (ONB-4; nenhum arquivo pré-existente é alterado):
+5. Instale **só o que não existe** (ONB-4; nenhum arquivo pré-existente é alterado) — um comando por vez:
    ```bash
    mkdir -p .github docs
-   [ -e .github/PULL_REQUEST_TEMPLATE.md ] || cp "${CLAUDE_PLUGIN_ROOT}/templates/PULL_REQUEST_TEMPLATE.md" .github/PULL_REQUEST_TEMPLATE.md
-   [ -e CHANGELOG.md ]                     || cp "${CLAUDE_PLUGIN_ROOT}/templates/CHANGELOG.md" CHANGELOG.md
-   [ -e docs/backlog.md ]                  || cp "${CLAUDE_PLUGIN_ROOT}/templates/backlog.md" docs/backlog.md
    ```
+   Para cada par, primeiro o teste; **só com exit 1** a cópia (`cp -n`: segunda trava, nunca sobrescreve). Exit 0 → mantido.
+
+   | Teste | Cópia (só se o teste deu exit 1) |
+   |---|---|
+   | `test -e .github/PULL_REQUEST_TEMPLATE.md` | `cp -n "${CLAUDE_PLUGIN_ROOT}/templates/PULL_REQUEST_TEMPLATE.md" .github/PULL_REQUEST_TEMPLATE.md` |
+   | `test -e CHANGELOG.md` | `cp -n "${CLAUDE_PLUGIN_ROOT}/templates/CHANGELOG.md" CHANGELOG.md` |
+   | `test -e docs/backlog.md` | `cp -n "${CLAUDE_PLUGIN_ROOT}/templates/backlog.md" docs/backlog.md` |
+
    Se o `PULL_REQUEST_TEMPLATE.md` já existia, avise em uma linha quais itens do template do gabarito faltam nele (título `tipo(PBI-n): assunto`, PBI, Epic, requisito, migration compatível, plano de volta, janela, teardown, revisor humano) — **não edite**.
 6. Grave:
    ```bash
@@ -320,11 +346,14 @@ Registra o vínculo PBI → Epic → Iniciativa no cache local que os hooks leem
    console.log("fluxo-cache:", pbi, "→", epic, "→", iniciativa);
    ' "<PBI>" "<EPIC>" "<INI>" "<título do card>"
    ```
-4. Ledger `<fluxo.ledgerDir>/<PBI>.md`: se não existe, crie com o cabeçalho de `docs/harness/referencia.md §2.3` (plano: `(b) ainda sem plano`). Acrescente a linha (não é lida por script; é rastro):
+4. Ledger `<fluxo.ledgerDir>/<PBI>.md`: se não existe, crie com o cabeçalho de `docs/harness/referencia.md §2.3` (plano: `(b) ainda sem plano`); depois acrescente a linha `VINCULO` (não é lida por script; é rastro). Criação com `flag: "wx"` — ledger existente nunca é sobrescrito, só recebe a linha no fim:
    ```bash
-   cat >> "<ledgerDir>/<PBI>.md" <<'EOF'
-   VINCULO <PBI> epic=<EPIC> iniciativa=<INI> <AAAA-MM-DD> fonte=<ferramenta|arquivo>
-   EOF
+   node -e '
+   const fs = require("fs"); const [arq, cabecalho, linha] = process.argv.slice(1);
+   fs.mkdirSync(require("path").dirname(arq), { recursive: true });
+   try { fs.writeFileSync(arq, cabecalho, { flag: "wx" }); console.log("ledger criado:", arq); } catch (e) { if (e.code !== "EEXIST") throw e; }
+   fs.appendFileSync(arq, linha + "\n"); console.log("ledger +", linha);
+   ' "<ledgerDir>/<PBI>.md" "<cabeçalho de referencia.md §2.3, terminado em \n>" "VINCULO <PBI> epic=<EPIC> iniciativa=<INI> <AAAA-MM-DD> fonte=<ferramenta|arquivo>"
    ```
 5. Com `fluxo.escrita: false`, se o card na ferramenta ainda não está em "em execução", avise **em uma linha**: `ferramenta não atualizada (escrita não autorizada) — mova <PBI> à mão ou autorize escrita no onboarding` (FLX-6). Nunca escreva.
 6. Mostre `cat .harness/fluxo-cache.json` e `git status`; pare. O cache é gitignored; o ledger é versionado.
