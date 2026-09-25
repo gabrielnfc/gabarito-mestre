@@ -24,6 +24,7 @@ F3-R4 — implementadores não tocam `docs/ledgers/GM-3.md`; o orquestrador o at
 F3-R5 — modelos: sonnet em T12–T15 (bash com comportamento a preservar/integrar), haiku em T16 (JSON + testes transcritos) — custo-se-errado: rodada extra.
 
 ## Progresso
+Task T12: DONE (sonnet; fd9fd2d feat, 06ce11f test). Hooks 148 → RED 151/157 → GREEN 157 → 158 após correção. `_common.sh` 6→9 funções; fallback jq→node→python3 3/3 medido; instalador 70 ok. Review adversarial (sonnet): M1, M3, M4, M5 + 2 próprias derrubaram; 1 BLOCKER — a validação do nome da VAR antes do `eval` não tinha teste (o teste com espaço passava por word-splitting; payload com `${IFS}` executava código com a validação removida). Corrigido com teste de sentinela em tmpdir; re-review confirmou por mutação (158→157, cai só o teste novo). M2 não derruba mais (linha redundante com a checagem de tamanho); cabeçalho de mutações ajustado. Capacidade medida no fim: slots 1 (4 pesados) → T13 serial (F3-R3).
 
 ## CORTE DA SESSÃO (com motivo)
 
