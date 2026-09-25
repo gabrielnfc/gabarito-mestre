@@ -101,7 +101,6 @@ export function checar(root, opts = {}) {
   if (failOpen) return { ok: true, achados: [], failOpen };
   const achados = [];
   let commits = [];
-  let gitLegivel = true;
 
   // Valida branch primeiro (sempre rodando, mesmo com falha de base)
   let branch = opts.branch;
@@ -110,7 +109,6 @@ export function checar(root, opts = {}) {
       branch = git(['rev-parse', '--abbrev-ref', 'HEAD'], root).trim();
     } catch {
       branch = null;
-      gitLegivel = false;
     }
   }
   if (branch && branch !== 'HEAD') {
@@ -131,7 +129,8 @@ export function checar(root, opts = {}) {
   try {
     commits = listarCommits(root, opts);
   } catch (e) {
-    if (!gitLegivel) return { ok: true, achados: [...achados], aviso: `sem git legível em ${root} (${String(e?.message ?? e).split('\n')[0]})`, commits: 0, branch: branch ?? null };
+    // Git ilegível (branch ou histórico): F2-R7/G9 — indisponível NUNCA vale como validado.
+    // Quem chama (o doctor) trata este `aviso` como found:false, não found:true+warn.
     return { ok: true, achados: [...achados], aviso: `sem git legível em ${root} (${String(e?.message ?? e).split('\n')[0]})`, commits: 0, branch: branch ?? null };
   }
 
@@ -160,7 +159,14 @@ function main(argv) {
   };
   const root = arg('root') ? resolve(arg('root')) : raizDoRepo();
   const max = Number(arg('max', 20)) || 20;
-  const r = checar(root, { base: arg('base'), branch: arg('branch'), max });
+  const branch = arg('branch');
+  // M2: `--branch --json` (a flag seguinte, sem valor) não pode virar "branch = --json" em
+  // silêncio — exige um valor de fato.
+  if (branch !== undefined && branch.startsWith('--')) {
+    console.error(`versionamento-check.mjs: --branch exige um nome de branch (recebeu \`${branch}\`)`);
+    process.exit(1);
+  }
+  const r = checar(root, { base: arg('base'), branch, max });
   if (argv.includes('--json')) {
     process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
     process.exit(r.failOpen ? 0 : r.ok ? 0 : 1);

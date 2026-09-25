@@ -28,7 +28,7 @@
  *   node harness-doctor.mjs --cache    # grava .harness/doctor-cache.json { nivel, declarado, em } (lido pelo cartão de sessão)
  */
 
-import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, renameSync, realpathSync } from 'node:fs';
 import { join, relative, sep, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -432,7 +432,8 @@ export const CHECKS = [
       if (!em) return { found: false, evidence: cfg.configInvalido ? 'harness.config.json inválido' : 'sem versionamento.resolvidoEm' };
       const r = checar(ix.root, { max: 20 });
       if (r.failOpen) return { found: false, evidence: r.failOpen };
-      if (r.aviso) return { found: true, evidence: `resolvido em ${em}`, warn: `${r.aviso} — histórico não conferido` };
+      // F2-R7/G9: validação indisponível (git ilegível) nunca vale como validado — FALTA, não passa com aviso.
+      if (r.aviso) return { found: false, evidence: `histórico não conferido (sem git legível)` };
       if (r.ok) return { found: true, evidence: `resolvido em ${em} · ${r.commits} commit(s) conformes` };
       return { found: false, evidence: `${r.achados.length} achado(s): ${r.achados.slice(0, 2).map((a) => `${a.sha} ${a.motivo}`).join('; ')}` };
     },
@@ -726,7 +727,10 @@ function raizDoRepo(cwd = process.cwd()) {
 function gravarCache(root, out) {
   const f = join(root, '.harness', 'doctor-cache.json');
   mkdirSync(dirname(f), { recursive: true });
-  writeFileSync(f, `${JSON.stringify({ nivel: out.alcancado, declarado: out.declarado, em: new Date().toISOString() }, null, 2)}\n`);
+  // M5: tmp + rename — leitor concorrente (o cartão de sessão) nunca vê um arquivo pela metade.
+  const tmp = `${f}.tmp-${process.pid}`;
+  writeFileSync(tmp, `${JSON.stringify({ nivel: out.alcancado, declarado: out.declarado, em: new Date().toISOString() }, null, 2)}\n`);
+  renameSync(tmp, f);
 }
 
 function main(argv) {

@@ -133,6 +133,9 @@ function main(argv) {
   } catch (e) {
     if (e instanceof ArquivoInvalido) {
       console.error(`[ONB-7] ${e.message} — não escrevo por cima de arquivo que não consigo ler (fail-open declarado (G9))`);
+      // F2-R8: exit 0 continua (contrato), mas o stdout também ganha a linha — quem decide
+      // pelo resultado (a skill da fase 5) lê stdout, não stderr.
+      console.log(`[ONB-7] ${alvo} NÃO escrito — JSON inválido (fail-open declarado, G9)`);
       process.exit(0);
     }
     if (e instanceof RangeError) {

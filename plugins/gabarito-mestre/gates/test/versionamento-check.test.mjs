@@ -252,6 +252,13 @@ describe('CLI', () => {
     assert.equal(cli(['--root', dir, '--base', 'main', '--branch', 'feat/PBI-3-y'], dir).status, 0);
     assert.equal(cli(['--root', dir, '--base', 'main', '--branch', 'hotfix/PBI-3'], dir).status, 1);
   });
+  test('M2: --branch seguido de outra flag (sem valor) é erro de uso, não trata a flag como nome de branch', () => {
+    const dir = repoGit();
+    const r = cli(['--root', dir, '--branch', '--json'], dir);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /--branch exige um nome de branch/);
+    assert.doesNotMatch(r.stdout, /^\{/, 'não deveria ter tentado interpretar --json como valor de --branch e ainda assim imprimir JSON');
+  });
   test('--base inexistente → exit 1, stderr com "ref de base não encontrada", stdout sem "ok —"', () => {
     const dir = repoGit();
     const r = cli(['--root', dir, '--base', 'origin/nao-existe'], dir);

@@ -48,6 +48,13 @@ const dias = (agora, iso) => {
   const d = (agora - Date.parse(iso)) / 86_400_000;
   return Number.isNaN(d) ? null : d;
 };
+/** "AAAA-MM-DD HH:MM" no fuso LOCAL da máquina (F2-R10) — nunca `toISOString()` (UTC), que
+ * cruza o dia perto da meia-noite local. */
+const dataHoraLocal = (ms) => {
+  const d = new Date(ms);
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+};
 
 export function resolverRaiz(cwd = process.cwd()) {
   try {
@@ -155,16 +162,24 @@ function doctorEmCache(root, pluginRoot, agora) {
   const script = join(pluginRoot, 'gates', 'scripts', 'harness-doctor.mjs');
   const indisponivel = { nivel: null, declarado: null, em: null, fonte: 'indisponível' };
   if (!existsSync(script)) return c ? { nivel: c.nivel ?? null, declarado: c.declarado ?? null, em: c.em, fonte: 'cache vencido (doctor do plugin não encontrado)' } : indisponivel;
+  const emAntes = c?.em ?? null; // I1: só chamamos de "recalculado agora" se o `em` do cache realmente mudou.
   try {
     // realpath: o guarda de entrypoint do doctor agora já compara com realpath (T9b) — este realpathSync
     // aqui é redundante para o doctor, mas inofensivo, e continua útil caso `script` chegue por um symlink
     // que o próprio doctor não veria (ex.: pluginRoot resolvido a partir de um caminho symlinkado).
     execFileSync(process.execPath, [realpathSync(script), '--json', '--cache'], { cwd: root, stdio: 'ignore', timeout: DOCTOR_TIMEOUT_MS });
   } catch {
-    /* exit 1 = repo mente; o cache foi gravado antes do exit. Timeout ou crash: cai no `ler()` abaixo. */
+    /* exit 1 = repo mente; o cache foi gravado antes do exit. Timeout ou crash: cai no `ler()` abaixo —
+       e como o doctor quebrado (crash/timeout) NUNCA chega a gravar, `em` continua o de antes (ver abaixo). */
   }
   c = ler();
-  return c ? { nivel: c.nivel ?? null, declarado: c.declarado ?? null, em: c.em, fonte: 'recalculado agora' } : indisponivel;
+  if (!c) return indisponivel; // não havia cache e o doctor não gravou nada: nada a mostrar.
+  if (c.em === emAntes) {
+    // I1: o `em` não mudou — o doctor falhou (crash/timeout) sem regravar. G9: validação
+    // indisponível nunca vale como "recalculado agora"; mantém o nível velho, rotulado como vencido.
+    return { nivel: c.nivel ?? null, declarado: c.declarado ?? null, em: c.em, fonte: 'cache vencido (doctor falhou)' };
+  }
+  return { nivel: c.nivel ?? null, declarado: c.declarado ?? null, em: c.em, fonte: 'recalculado agora' };
 }
 
 export function coletar(cwd, pluginRoot, opts = {}) {
@@ -276,7 +291,7 @@ export function coletar(cwd, pluginRoot, opts = {}) {
 export function montarCartao(ctx) {
   if (!ctx || ctx.semOnboarding) return [LINHA_SEM_ONBOARDING];
   const L = [];
-  L.push(`GABARITO · cartão de sessão · ${new Date(ctx.agora).toISOString().slice(0, 16).replace('T', ' ')}`);
+  L.push(`GABARITO · cartão de sessão · ${dataHoraLocal(ctx.agora)}`);
 
   const m = ctx.config.orquestracao.modelo;
   if (m.resolvidoEm) {

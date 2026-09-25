@@ -248,6 +248,13 @@ describe('CLI', () => {
     assert.doesNotMatch(r.stderr, /\n\s+at /);
     assert.equal(readFileSync(join(dir, 'harness.config.json'), 'utf8'), '{"a":');
   });
+  test('F2-R8: harness.config.json inválido — o STDOUT (não só o stderr) ganha a linha "NÃO escrito"; exit 0 continua', () => {
+    const dir = repo({ 'harness.config.json': '{"a":' });
+    const r = cli(['--root', dir, '--set', 'fluxo', '{"ferramenta":"arquivos"}'], dir);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /\[ONB-7\] harness\.config\.json NÃO escrito — JSON inválido \(fail-open declarado, G9\)/);
+    assert.doesNotMatch(r.stdout, /atualizado/, 'a linha de sucesso não aparece quando não escreveu nada');
+  });
   test('--settings emenda .claude/settings.json', () => {
     const dir = repo({ '.claude/settings.json': '{"permissions":{"allow":["Read"]}}' });
     const r = cli(['--root', dir, '--settings', '{"model":"fable"}'], dir);

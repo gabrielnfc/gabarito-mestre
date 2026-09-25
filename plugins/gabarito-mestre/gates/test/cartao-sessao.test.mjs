@@ -53,6 +53,14 @@ before(() => {
 });
 
 const AGORA = '2026-09-24T12:00:00Z';
+/** F2-R10: o cabeçalho usa hora LOCAL da máquina, não UTC — a asserção reproduz a mesma
+ * conta (getFullYear/getMonth/getDate/getHours/getMinutes) para não depender do fuso de
+ * quem roda o teste. */
+const cabecalhoLocal = (iso) => {
+  const d = new Date(iso);
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `GABARITO · cartão de sessão · ${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+};
 const GIT_ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t.dev', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t.dev', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 const git = (dir, ...args) => execFileSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8', env: GIT_ENV, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
@@ -82,6 +90,11 @@ function repoGit(arquivos = {}, branch = 'feat/PBI-123-x') {
 }
 /** Plugin falso: só o plugin.json — sem doctor, o cartão marca "indisponível" e o teste fica rápido. */
 const pluginFalso = (versao = '1.1.0') => repo({ '.claude-plugin/plugin.json': JSON.stringify({ name: 'gabarito-mestre', version: versao }) });
+/** Plugin cujo harness-doctor.mjs QUEBRA (process.exit(1) sem gravar cache) — para testar I1. */
+const pluginQuebrado = () => repo({
+  '.claude-plugin/plugin.json': JSON.stringify({ name: 'gabarito-mestre', version: '1.1.0' }),
+  'gates/scripts/harness-doctor.mjs': '#!/usr/bin/env node\nprocess.exit(1);\n',
+});
 const cache = (obj) => ({ '.harness/fluxo-cache.json': JSON.stringify(obj) });
 const CACHE_123 = cache({ 'PBI-123': { epic: 'EPIC-7', iniciativa: 'INI-1', titulo: 'x', em: '2026-09-20' } });
 const LEDGER_123 = ['# Ledger PBI-123', '', '## LER PRIMEIRO', 'contexto', '', 'MOVIMENTO FL2 EPIC-7 preparado→em_execucao 2026-09-21', 'DISPATCH Task 1 slots=2 worktree wt/PBI-123-1'].join('\n');
@@ -161,7 +174,7 @@ describe('montarCartao — formato fixo e ≤ 40 linhas', () => {
   test('as 11 linhas do contrato, na ordem', () => {
     const L = montarCartao(ctxBase());
     assert.ok(L.length <= MAX_LINHAS);
-    assert.equal(L[0], 'GABARITO · cartão de sessão · 2026-09-24 12:00');
+    assert.equal(L[0], cabecalhoLocal(AGORA));
     assert.equal(L[1], 'Modelo: mais-potente · alias fable · resolvido 2026-09-01 (66 d restantes)');
     assert.equal(L[2], 'Branch: feat/PBI-123-x @ abc1234');
     assert.equal(L[3], 'PBI: PBI-123 · Epic: EPIC-7 · estado em_execucao · Iniciativa: INI-1 (fonte: cache 2026-09-20)');
@@ -172,6 +185,18 @@ describe('montarCartao — formato fixo e ≤ 40 linhas', () => {
     assert.equal(L[8], 'Harness: instalado 1.1.0 · plugin 1.1.0');
     assert.equal(L[9], 'Plugins: superpowers presente (c)');
     assert.equal(L.at(-1), 'R21: despache, não implemente. Velocidade nunca compra concorrência.');
+  });
+  test('F2-R10: cabeçalho usa data/hora LOCAL, não UTC — instante que cruza o dia', () => {
+    const tzAntigo = process.env.TZ;
+    process.env.TZ = 'America/Sao_Paulo';
+    try {
+      // 2026-09-24T23:30:00-03:00 == 2026-09-25T02:30:00Z: em UTC já seria "amanhã".
+      const ctx = { ...ctxBase(), agora: Date.parse('2026-09-24T23:30:00-03:00') };
+      const L = montarCartao(ctx);
+      assert.equal(L[0], 'GABARITO · cartão de sessão · 2026-09-24 23:30');
+    } finally {
+      if (tzAntigo === undefined) delete process.env.TZ; else process.env.TZ = tzAntigo;
+    }
   });
   test('modelo vencido → "VENCIDO — revalide com gabarito-instalar"; sem resolvidoEm → (b)', () => {
     const c = ctxBase();
@@ -365,6 +390,21 @@ describe('coletar — cache do doctor (DOC-2, TTL 24 h)', () => {
     const ctx = coletar(repoGit(), pluginFalso(), opts());
     assert.deepEqual(ctx.doctor, { nivel: null, declarado: null, em: null, fonte: 'indisponível' });
   });
+  test('I1: cache vencido (25 h) + doctor do plugin QUEBRA sem regravar → "cache vencido (doctor falhou)", nível velho preservado (nunca "recalculado agora")', () => {
+    const dir = repoGit(cacheDoctor(25));
+    const antes = JSON.parse(readFileSync(join(dir, '.harness/doctor-cache.json'), 'utf8'));
+    const ctx = coletar(dir, pluginQuebrado(), optsReais());
+    const depois = JSON.parse(readFileSync(join(dir, '.harness/doctor-cache.json'), 'utf8'));
+    assert.equal(depois.em, antes.em, 'o doctor quebrado não regravou o cache');
+    assert.equal(ctx.doctor.fonte, 'cache vencido (doctor falhou)');
+    assert.equal(ctx.doctor.nivel, antes.nivel, 'nível velho é mantido, não vira null');
+  });
+  test('I1: cache ausente + doctor do plugin QUEBRA sem gravar nada → "indisponível" (nunca "recalculado agora")', () => {
+    const dir = repoGit();
+    const ctx = coletar(dir, pluginQuebrado(), optsReais());
+    assert.equal(existsSync(join(dir, '.harness', 'doctor-cache.json')), false);
+    assert.deepEqual(ctx.doctor, { nivel: null, declarado: null, em: null, fonte: 'indisponível' });
+  });
 });
 
 describe('coletar/CLI — config ausente/vazia/inválida/sem fluxo (Review Focus 3)', () => {
@@ -400,7 +440,7 @@ describe('coletar/CLI — config ausente/vazia/inválida/sem fluxo (Review Focus
     const r = cli(['--root', dir, '--plugin-root', pluginFalso(), '--json', '--agora', AGORA], dir);
     assert.equal(r.status, 0, r.stderr);
     const j = JSON.parse(r.stdout);
-    assert.equal(j.linhas[0], 'GABARITO · cartão de sessão · 2026-09-24 12:00');
+    assert.equal(j.linhas[0], cabecalhoLocal(AGORA));
     assert.equal(j.ctx.pbi, 'PBI-123');
     assert.ok(j.linhas.length <= 40);
   });

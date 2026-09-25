@@ -180,6 +180,17 @@ describe('calibrar — fórmula do contrato', () => {
     assert.deepEqual(c.limites, { loadPorCoreMax: 1.5, memDisponivelMinMB: 2048, discoLivreMinGB: 5 });
     assert.equal(c.calibradoEm, '2026-09-24');
   });
+  test('F2-R10: calibradoEm usa data LOCAL da máquina, não UTC — instante que cruza o dia', () => {
+    const tzAntigo = process.env.TZ;
+    process.env.TZ = 'America/Sao_Paulo';
+    try {
+      // 2026-09-24T23:30:00-03:00 == 2026-09-25T02:30:00Z: em UTC já seria "amanhã".
+      const c = calibrar({ cores: 8 }, new Date('2026-09-24T23:30:00-03:00'));
+      assert.equal(c.calibradoEm, '2026-09-24');
+    } finally {
+      if (tzAntigo === undefined) delete process.env.TZ; else process.env.TZ = tzAntigo;
+    }
+  });
 });
 
 describe('lerParalelismo — config ausente/vazia/inválida/sem seção', () => {

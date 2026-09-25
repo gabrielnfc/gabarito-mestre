@@ -19,7 +19,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
@@ -252,6 +252,18 @@ function agentsComNucleo(bytesNucleo, apendice = '## Apêndice — Projeto\n\nIn
 }
 const GIT_ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t.dev', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t.dev', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 const git = (dir, ...args) => execFileSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8', env: GIT_ENV, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+/**
+ * F2-R7: `versionamento` só passa com git LEGÍVEL e histórico conforme — um repo sem `.git`
+ * não conta mais como "ok com aviso" (G9). Fixtures que precisam alcançar nível 2/3 via
+ * `versionamento` usam este helper: `main` (BRANCHES_PADRAO) + um commit `chore:` (tiposLivres).
+ */
+function repoComGit(arquivos) {
+  const dir = repo(arquivos);
+  git(dir, 'init', '-q');
+  git(dir, 'symbolic-ref', 'HEAD', 'refs/heads/main');
+  git(dir, 'commit', '-q', '--allow-empty', '-m', 'chore: fixture inicial');
+  return dir;
+}
 
 describe('doctor 1.1.0 — tamanhoAgents (CTX-1, Review Focus 4)', () => {
   test('corta no primeiro cabeçalho que COMEÇA com "## Apêndice" — inclusive "## Apêndice — Projeto"', () => {
@@ -304,7 +316,7 @@ describe('doctor 1.1.0 — fixtures 1.0.1 e 1.1.0 (DOC-1)', () => {
     for (const c of CHECKS.filter((c) => NOVAS_1_1_0.includes(c.id))) assert.notEqual(c.level, 1, `${c.id} não pode ser nível 1`);
   });
   test('depois do onboarding (fixture 1.1.0) o nível volta a 2', () => {
-    const out = run(repo(fixtureNivel2_110(2)));
+    const out = run(repoComGit(fixtureNivel2_110(2)));
     assert.equal(out.alcancado, 2, JSON.stringify(out.novasFaltando));
     assert.equal(out.mentindo, false);
     assert.deepEqual(out.novasFaltando, ['paralelismo-calibrado'], 'só a checagem de nível 3 segue faltando (onboarding fase 4 não rodou)');
@@ -328,10 +340,12 @@ describe('doctor 1.1.0 — fixtures 1.0.1 e 1.1.0 (DOC-1)', () => {
     assert.equal(run(repo({ 'AGENTS.md': agents(0), 'harness.config.json': cfg, 'HISTORY.md': '## 1.0.0\n' })).resultados.find((r) => r.id === 'changelog').found, false);
     assert.equal(run(repo({ 'AGENTS.md': agents(0), 'CHANGELOG.md': '## [Unreleased]\n' })).resultados.find((r) => r.id === 'changelog').found, true, 'default CHANGELOG.md');
   });
-  test('versionamento: sem git é ok com aviso; com histórico ruim é FALTA', () => {
+  test('versionamento: sem git legível é FALTA (F2-R7/G9: indisponível nunca vale como validado); com histórico ruim também é FALTA', () => {
     const semGit = run(repo(fixtureNivel2_110(2))).resultados.find((r) => r.id === 'versionamento');
-    assert.equal(semGit.found, true);
-    assert.match(semGit.warn, /histórico não conferido/);
+    assert.equal(semGit.found, false);
+    assert.equal(semGit.warn, undefined);
+    assert.match(semGit.evidence, /histórico não conferido/);
+    assert.match(semGit.evidence, /sem git legível/);
     const dir = repo(fixtureNivel2_110(2));
     git(dir, 'init', '-q');
     git(dir, 'symbolic-ref', 'HEAD', 'refs/heads/main');
@@ -363,7 +377,7 @@ describe('doctor 1.1.0 — fixtures 1.0.1 e 1.1.0 (DOC-1)', () => {
 
 describe('doctor 1.1.0 — modelo-resolvido é warn, não FALTA (ORQ-5)', () => {
   test('vencido há 91 dias: aviso presente e nível INALTERADO', () => {
-    const out = run(repo(fixtureNivel2_110(2, { orquestracao: { modelo: { politica: 'mais-potente', alias: 'fable', resolvidoEm: diasAtras(91), validadeDias: 90 } } })));
+    const out = run(repoComGit(fixtureNivel2_110(2, { orquestracao: { modelo: { politica: 'mais-potente', alias: 'fable', resolvidoEm: diasAtras(91), validadeDias: 90 } } })));
     assert.equal(out.alcancado, 2);
     assert.equal(CHECKS.find((c) => c.id === 'modelo-resolvido').level, 'warn');
     assert.ok(out.avisos.some((a) => a.startsWith('modelo-resolvido')), JSON.stringify(out.avisos));
@@ -415,6 +429,14 @@ describe('doctor 1.1.0 — cache (DOC-2)', () => {
     spawnSync(process.execPath, [SCRIPT, '--json'], { cwd: dir, encoding: 'utf8' });
     assert.equal(existsSync(join(dir, '.harness', 'doctor-cache.json')), false);
   });
+  test('M5: gravarCache é atômico (tmp + rename) — nenhum .tmp sobra em .harness/', () => {
+    const dir = repo({ 'AGENTS.md': agents(0) });
+    const r = spawnSync(process.execPath, [SCRIPT, '--json', '--cache'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(existsSync(join(dir, '.harness', 'doctor-cache.json')));
+    const arquivos = readdirSync(join(dir, '.harness'));
+    assert.deepEqual(arquivos.filter((f) => f.includes('.tmp')), [], JSON.stringify(arquivos));
+  });
 });
 
 describe('doctor 1.1.0 — render', () => {
@@ -426,7 +448,7 @@ describe('doctor 1.1.0 — render', () => {
     assert.match(r.stdout, /→ rode gabarito-instalar/);
   });
   test('modelo vencido aparece como "warn" numa seção de avisos e não altera o exit', () => {
-    const dir = repo(fixtureNivel2_110(2, { orquestracao: { modelo: { alias: 'fable', resolvidoEm: diasAtras(91), validadeDias: 90 } } }));
+    const dir = repoComGit(fixtureNivel2_110(2, { orquestracao: { modelo: { alias: 'fable', resolvidoEm: diasAtras(91), validadeDias: 90 } } }));
     const r = spawnSync(process.execPath, [SCRIPT], { cwd: dir, encoding: 'utf8' });
     assert.equal(r.status, 0, r.stdout);
     assert.match(r.stdout, /── Avisos/);
@@ -437,7 +459,7 @@ describe('doctor 1.1.0 — render', () => {
     for (const id of NOVAS_1_1_0) assert.ok(CHECKS.find((c) => c.id === id), id);
   });
   test('repo saudável 1.1.0 (declarado ≤ alcançado): a linha "checagens novas" NÃO aparece (M10)', () => {
-    const r = spawnSync(process.execPath, [SCRIPT], { cwd: repo(fixtureNivel2_110(2)), encoding: 'utf8' });
+    const r = spawnSync(process.execPath, [SCRIPT], { cwd: repoComGit(fixtureNivel2_110(2)), encoding: 'utf8' });
     assert.equal(r.status, 0, r.stdout);
     assert.doesNotMatch(r.stdout, /checagens novas da 1\.1\.0/);
   });
@@ -447,7 +469,7 @@ describe('doctor 1.1.0 — render', () => {
     // nível cai (declarado 3 > alcançado 1) só por causa de uma checagem da 1.0.1.
     const fx = fixtureNivel2_110(3, { orquestracao: { paralelismo: { simultaneos: 2, teto: 4, calibradoEm: hoje } } });
     fx['.harness/attest.json'] = JSON.stringify({ 'branch-protegida': ok, 'backup-verificado': ok, 'iniciativa-resolvida': ok });
-    const dir = repo(fx);
+    const dir = repoComGit(fx);
     const out = run(dir);
     assert.equal(out.mentindo, true, JSON.stringify({ declarado: out.declarado, alcancado: out.alcancado }));
     assert.deepEqual(out.novasFaltando, [], JSON.stringify(out.novasFaltando));
