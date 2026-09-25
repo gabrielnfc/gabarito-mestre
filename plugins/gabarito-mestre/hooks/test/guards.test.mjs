@@ -17,6 +17,8 @@
  *  M8  guard-versioning: remover o exit 0 do fail-open sem resolvidoEm                 → "sem harness.config.json: fail-open"
  *  M12 guard-versioning: trocar gabarito_strip_write_heredocs por cat no SCAN          → corpus PASSA cat >> notas.md <<'EOF' …
  *  M13 guard-versioning: esvaziar POS_LINHA/POS_TEXTO (git em qualquer posição)        → corpus PASSA echo 'git commit -m "wip"'
+ *  M14 session-card.sh: remover o `if ! command -v node` (deixar cair no `node "$SCRIPT"` sem node no PATH) → "node ausente"
+ *  M15 remind-orchestrator.sh: trocar `Number.isInteger(s)` por checagem que aceita float/string          → "slots não inteiro cai no fallback"
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,6 +32,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const HOOKS = join(here, '..');
 const PLUGIN = join(HOOKS, '..');
 
+// PATH mínimo (bash, git, dirname, cat, head, sed, mktemp — todos em /bin ou /usr/bin nos runners
+// suportados) que não inclui o diretório onde `node` normalmente vive (/usr/local/bin, homebrew, nvm…).
+// B10 (T25b, handoff §B.10): prova o ramo "node ausente" sem stub — comando de verdade some do PATH.
+const PATH_SEM_NODE = '/bin:/usr/bin:/usr/sbin:/sbin';
 const HATCH_VARS = ['GABARITO_ALLOW_DESTRUCTIVE', 'GABARITO_ALLOW_PRODUCTION', 'GABARITO_ALLOW_VERSIONING'];
 function cleanEnv(env = {}) {
   const e = { ...process.env };
@@ -515,6 +521,14 @@ describe('session-card.sh — ORQ-3 (T14)', () => {
     assert.equal(r.stdout, '');
     assert.match(r.stderr, /cartao-sessao\.mjs ausente.*fail-open declarado/);
   });
+  // B10 (T25b, handoff §B.10): ramo "node ausente" — PATH real sem `node`, sem stub de fakePluginRoot
+  // (a checagem `command -v node` roda antes de qualquer coisa tocar em gates/scripts/cartao-sessao.mjs).
+  test('node ausente do PATH → exit 0, stdout vazio, fail-open declarado em stderr (M14)', () => {
+    const r = runAt('session-card.sh', '', { cwd: fixtureRepo(), env: { CLAUDE_PLUGIN_ROOT: fakePluginRoot(), PATH: PATH_SEM_NODE }, event: 'SessionStart' });
+    assert.equal(r.code, 0);
+    assert.equal(r.stdout, '');
+    assert.match(r.stderr, /node ausente.*fail-open declarado/);
+  });
   test('cartão vazio (só espaço) → exit 0 sem saída', () => {
     const r = runAt('session-card.sh', '', { cwd: fixtureRepo(), env: { CLAUDE_PLUGIN_ROOT: fakePluginRoot({ cartao: ['', '  '] }) }, event: 'SessionStart' });
     assert.equal(r.code, 0);
@@ -573,6 +587,14 @@ describe('remind-orchestrator.sh — ORQ-4 (T15)', () => {
     assert.equal(ctx(r2).additionalContext, 'R21: despache, não implemente · slots: 2 (config)');
     const r3 = remind(fixtureRepo({ config: ligado }), fakePluginRoot({ capacidade: 'não é json' }));
     assert.equal(ctx(r3).additionalContext, 'R21: despache, não implemente · slots: 2 (config)');
+  });
+  // B10 (T25b, handoff §B.10): capacidade.mjs devolve JSON válido, mas `slots` não é inteiro
+  // (float ou string) — `Number.isInteger(s)` tem de rejeitar e cair no fallback "(config)" (M15).
+  test('slots não inteiro vindo de capacidade.mjs (float ou string): cai no fallback "(config)"', () => {
+    const r1 = remind(fixtureRepo({ config: ligado }), fakePluginRoot({ capacidade: '{"slots":3.5,"motivo":"load parcial"}' }));
+    assert.equal(ctx(r1).additionalContext, 'R21: despache, não implemente · slots: 2 (config)');
+    const r2 = remind(fixtureRepo({ config: ligado }), fakePluginRoot({ capacidade: '{"slots":"3","motivo":"string"}' }));
+    assert.equal(ctx(r2).additionalContext, 'R21: despache, não implemente · slots: 2 (config)');
   });
   test('sem simultaneos no config e sem capacidade: default 2 (config)', () => {
     const r = remind(fixtureRepo({ config: { orquestracao: { lembretePorPrompt: true } } }), fakePluginRoot({ semCapacidade: true }));
