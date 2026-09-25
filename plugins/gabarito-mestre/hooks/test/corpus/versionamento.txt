@@ -1,0 +1,82 @@
+# Corpus do guard-versioning.sh (R20). Uma entrada por linha: <VEREDITO> <espaços> <comando>.
+# VEREDITO: PASSA (exit 0, stdout vazio) · BLOQUEIA (exit 2, motivo cita R20) · HATCH (exit 0 e stdout com systemMessage).
+# A sequência literal \n dentro do comando vira quebra de linha (separador de entrada multilinha deste corpus).
+# Linhas vazias e `#` são ignoradas. Roda num repo de fixture com harness.config.json (versionamento.resolvidoEm
+# presente), branch feat/PBI-1-x e os arquivos msg-ok.txt / msg-ruim.txt na raiz.
+
+# ── legítimas (≥ 12) ──
+PASSA    git commit -m "feat(PBI-12): login por magic link"
+PASSA    git commit -m 'fix(PBI-7): timeout do webhook'
+PASSA    git commit --message="docs: atualiza README"
+PASSA    git commit -am "chore: bump deps"
+PASSA    git commit -m "feat(PBI-1): assunto" -m "corpo longo sem formato"
+PASSA    git add -A && git commit -q -m "enabler(GM-3): hooks de versionamento" && git rev-parse --short HEAD
+PASSA    git commit -m "$(cat <<'EOF'\nfeat(PBI-123): assunto do heredoc\n\ncorpo com detalhes\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)"
+PASSA    git commit -F - <<'MSG'\nchore(deps): via -F -\n\ncorpo\nMSG
+PASSA    git commit -F msg-ok.txt
+PASSA    git commit --amend --no-edit
+PASSA    git commit
+PASSA    git commit -m "feat(PBI-12)!: quebra de contrato da API"
+PASSA    git checkout -b feat/PBI-12-magic-link
+PASSA    git checkout -q -b docs/claude-sso-porteiro origin/main && git branch --show-current
+PASSA    git switch -c chore/bump-deps
+PASSA    git branch enabler/GM-3-hooks
+PASSA    git branch -d feat/PBI-12-x
+PASSA    git branch --list 'feat/*'
+PASSA    git checkout main && git pull
+PASSA    git log --oneline -5 && git status --short
+PASSA    git commit -m "revert: desfaz feat(PBI-3)"
+
+# ── inválidas (≥ 12) ──
+BLOQUEIA    git commit -m "arrumei"
+BLOQUEIA    git commit -m "fix: sem escopo de PBI"
+BLOQUEIA    git commit -m "feat(pbi-12): minúsculas"
+BLOQUEIA    git commit -m "hotfix(PBI-1): tipo inexistente"
+BLOQUEIA    git commit --message="Feat(PBI-1): maiúscula no tipo"
+BLOQUEIA    git commit -am "wip"
+BLOQUEIA    git commit -m "corpo primeiro" -m "feat(PBI-1): só no segundo"
+BLOQUEIA    git add . && git commit -m "arrumei" && git push
+BLOQUEIA    git commit -m "$(cat <<'EOF'\narrumei tudo\n\nfeat(PBI-1): na segunda linha não vale\nEOF\n)"
+BLOQUEIA    git commit -F - <<'EOF'\nmudanças\nEOF
+BLOQUEIA    git commit -F msg-ruim.txt
+BLOQUEIA    git commit --amend -m "arrumei de novo"
+BLOQUEIA    git commit -m "feat(PBI-12):sem espaço"
+BLOQUEIA    git checkout -b hotfix/PBI-1
+BLOQUEIA    git checkout -b chore/PBI-1
+BLOQUEIA    git switch --create feat/pbi-12
+BLOQUEIA    git branch feature-login
+BLOQUEIA    git checkout -B main-2
+
+# ── worktree (≥ 4) ──
+PASSA    git worktree add -b wt/PBI-123-1 ../wt1
+PASSA    git worktree add ../wt2 -b wt/PBI-12-2 main
+PASSA    git worktree add -B wt/PBI-7-3 ../wt3
+PASSA    git worktree add --detach ../wt-solto
+PASSA    git worktree list && git worktree prune
+BLOQUEIA    git worktree add -b wt/PBI-12 ../wt-sem-indice
+BLOQUEIA    git worktree add -b feature/x ../wt-x
+
+# ── fail-open por -F ausente ──
+PASSA    git commit -F nao-existe.txt
+
+# ── escape hatch (≥ 2): HATCH = exit 0 E stdout com systemMessage; cruzamento e motivo curto NÃO liberam ──
+HATCH    GABARITO_ALLOW_VERSIONING="autorizado por gabriel em 2026-09-24 — importação de histórico legado" git commit -m "arrumei"
+HATCH    GABARITO_ALLOW_VERSIONING='autorizado por gabriel em 2026-09-24 — branch de experimento' git checkout -b experimento-x
+BLOQUEIA    GABARITO_ALLOW_DESTRUCTIVE="autorizado por gabriel em 2026-09-24 — hatch de outro hook" git commit -m "arrumei"
+BLOQUEIA    GABARITO_ALLOW_VERSIONING="lol" git commit -m "arrumei"
+BLOQUEIA    git commit -m "arrumei" # GABARITO_ALLOW_VERSIONING="autorizado por gabriel em 2026-09-24 — no fim não vale"
+
+# ── mais legítimas ──
+PASSA    git commit -m "test: cobre o heredoc multilinha"
+PASSA    git commit -m "ci: matriz macos e ubuntu"
+PASSA    git switch -C fix/PBI-9-timeout
+PASSA    git -C apps/api commit -m "refactor(PBI-4): extrai cliente http"
+PASSA    git commit --amend
+
+# ── menção ≠ commit: git fora de posição de comando e heredoc de anotação passam ──
+PASSA    echo 'git commit -m "wip"'
+PASSA    cat >> notas.md <<'EOF'\n- depois: git commit -m "arrumei"\ngit checkout -b feature-login\nEOF\ngit status
+PASSA    grep -rn "git commit -m" docs/ | head
+BLOQUEIA    cat >> notas.md <<'EOF'\nnota\nEOF\ngit commit -m "arrumei"
+BLOQUEIA    x=$(git commit -m "arrumei") && echo "$x"
+BLOQUEIA    cd apps/api && git checkout -b feature-login
