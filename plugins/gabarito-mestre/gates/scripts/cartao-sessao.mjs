@@ -156,9 +156,9 @@ function doctorEmCache(root, pluginRoot, agora) {
   const indisponivel = { nivel: null, declarado: null, em: null, fonte: 'indisponível' };
   if (!existsSync(script)) return c ? { nivel: c.nivel ?? null, declarado: c.declarado ?? null, em: c.em, fonte: 'cache vencido (doctor do plugin não encontrado)' } : indisponivel;
   try {
-    // realpath: o entrypoint do doctor compara fileURLToPath(import.meta.url) com resolve(process.argv[1]) —
-    // Node resolve symlinks ao gerar import.meta.url do módulo principal, então um caminho passado através de
-    // um symlink (ex.: tmpdir do macOS, /var → /private/var) faria essa comparação falhar e o doctor não rodar.
+    // realpath: o guarda de entrypoint do doctor agora já compara com realpath (T9b) — este realpathSync
+    // aqui é redundante para o doctor, mas inofensivo, e continua útil caso `script` chegue por um symlink
+    // que o próprio doctor não veria (ex.: pluginRoot resolvido a partir de um caminho symlinkado).
     execFileSync(process.execPath, [realpathSync(script), '--json', '--cache'], { cwd: root, stdio: 'ignore', timeout: DOCTOR_TIMEOUT_MS });
   } catch {
     /* exit 1 = repo mente; o cache foi gravado antes do exit. Timeout ou crash: cai no `ler()` abaixo. */
@@ -347,5 +347,15 @@ function main(argv) {
   process.exit(0);
 }
 
-// Entrypoint robusto a espaço/acento no caminho: `file://` cru falha com %20 e o script sairia 0 em silêncio.
-if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) main(process.argv.slice(2));
+// Entrypoint robusto a espaço/acento e a symlink: `file://` cru falha com %20, e comparar
+// contra `resolve(argv[1])` sem realpath falha atrás de qualquer symlink (macOS /var,
+// cache de plugin, bin do npm/homebrew) — o script sairia 0 em silêncio nos dois casos.
+function ehEntrypoint() {
+  if (!process.argv[1]) return false;
+  try {
+    return fileURLToPath(import.meta.url) === realpathSync(resolve(process.argv[1]));
+  } catch {
+    return false;
+  }
+}
+if (ehEntrypoint()) main(process.argv.slice(2));
