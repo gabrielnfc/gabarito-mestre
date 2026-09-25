@@ -27,6 +27,8 @@ Ordem fixa. Design que pula seção está incompleto, não enxuto.
 | **Pendências** | o que ficou aberto, por quê, o que desbloqueia | risco escrito ≠ risco esquecido |
 | **Emendas** | datadas, inline no requisito afetado | R16 |
 
+O design passa por **review adversarial antes do plano** (decisão do usuário → design → review adversarial → plano): etapa do ciclo de `AGENTS.md §7`, feita por instância distinta de quem escreveu o design.
+
 **Identificação**
 
 - `REQ-<ÁREA 3 letras>-<n>` — **append-only**: nunca renumerado, nunca reutilizado. Gaps são legítimos (IDs reservados por spec paralela). Emenda de requisito ganha sufixo: `REQ-PED-1b`, `REQ-END-7a`.
@@ -56,7 +58,7 @@ Rulings herdados: R3, R5, R8...          Contexto externo: (sandbox fora, lane a
 ## Rulings de pre-flight (F3-R1, F3-R2...)   — decisão + motivo + custo-se-errado
 ## Progresso
 MOVIMENTO FL2 <EPIC> preparado→em_execucao <AAAA-MM-DD>       (ao integrar o 1º commit do PBI; <de>/<para> = chaves de fluxo.status.FL2, sem espaços)
-DISPATCH Task <N> slots=<n> worktree wt/<PBI>-<n>            (uma linha por dispatch; slots medido)
+DISPATCH Task <N> slots=<slots> worktree wt/<PBI>-<n>        (uma linha por dispatch; slots medido)
 Task N: DONE pelo implementador (worktree @ sha; RED→GREEN, contagens, achados/desvios)
 Task N: complete (review Aprovado — o que o revisor PROVOU; sha de integração). Minors: ...
 BLOQUEADA <AAAA-MM-DD> <motivo> — dono: <quem>               (item não muda de coluna)
@@ -86,11 +88,11 @@ Arquivo único, versionado, **um formato só**: `| Item | Origem | Gatilho |`. C
 
 Critério em `AGENTS.md §6` (R21). A mecânica:
 
-Um **worktree git por implementador paralelo**, em branch **`wt/<PBI>-<n>`** criada a partir da branch do PBI — `n` é o índice do worktree (1, 2, …), gravado no nome da branch e na linha `DISPATCH Task <N> slots=<n> worktree wt/<PBI>-<n>` do ledger (§2.3). O mesmo `n` resolve o **isolamento** do implementador — porta `3000+n`, schema `wt_{n}`, namespace `wt-{n}` (`orquestracao.paralelismo.isolamentoWorktree`) — e vai no prompt de dispatch (`prompts.md`, bloco "Isolamento"). O padrão `wt/…` é o único nome de branch sem tipo que `guard-versioning.sh` aceita (`versionamento.branchWorktree`). Motivo do isolamento: hooks fazem stash, commits concorrentes corrompem o index, e a suíte de um vê arquivo meio-escrito do vizinho.
+Um **worktree git por implementador paralelo**, em branch **`wt/<PBI>-<n>`** criada a partir da branch do PBI — `n` é o índice do worktree (1, 2, …), gravado no nome da branch e no campo `worktree wt/<PBI>-<n>` da linha `DISPATCH Task <N> slots=<slots> worktree wt/<PBI>-<n>` do ledger (§2.3); `slots=<slots>` é o número medido por `capacidade.mjs`, não o índice (`lerLedger` conta como "sem medição" o dispatch sem `slots=<dígitos>`). O mesmo `n` resolve o **isolamento** do implementador — porta `3000+n`, schema `wt_{n}`, namespace `wt-{n}` (`orquestracao.paralelismo.isolamentoWorktree`) — e vai no prompt de dispatch (`prompts.md`, bloco "Isolamento"). O padrão `wt/…` é o único nome de branch sem tipo que `guard-versioning.sh` aceita (`versionamento.branchWorktree`). Motivo do isolamento: hooks fazem stash, commits concorrentes corrompem o index, e a suíte de um vê arquivo meio-escrito do vizinho.
 
 **Quantos ao mesmo tempo:** `slots` de `capacidade.mjs`, medido **antes de cada dispatch** (`prompts.md`, "Orquestrador — antes de despachar"): `min(simultaneos, teto, o que a máquina permite)`, nunca < 1; `GABARITO_PARALELISMO=<n>` substitui `simultaneos` na sessão, ainda sob o `teto`. Item entra quando um sai. Dispatch sem linha `slots=` no ledger é achado de review — o cartão de sessão avisa "dispatch sem medição".
 
-**Contenda:** task que toca qualquer caminho de `paralelismo.arquivosDeContenda` (lockfile, `prisma/`, barrel, `docs/fluxo/`) é **serial** — o plano marca `serial: contenda`, `gabarito-conformidade` reprova grafo que a paraleliza, e não existe override em runtime: nem "é rápido", nem "é uma linha".
+**Contenda:** task que toca qualquer caminho de `orquestracao.paralelismo.arquivosDeContenda` (lockfile, `prisma/`, barrel, `docs/fluxo/`) é **serial** — o plano marca `serial: contenda`, `gabarito-conformidade` reprova grafo que a paraleliza, e não existe override em runtime: nem "é rápido", nem "é uma linha".
 
 O orquestrador integra com `merge --no-ff` **na ordem do grafo** — são esses merge commits, de dois pais, que `versionamento-check.mjs` ignora (§10, "Versionamento"). O revisor roda sobre o **diff integrado**, não sobre o worktree. Conflito é raro por construção (arquivo disjunto é pré-condição) e, quando ocorre, o orquestrador resolve ou serializa e reexecuta a segunda task sobre a base nova.
 
@@ -144,7 +146,7 @@ Tabela em `AGENTS.md §6`. A janela de contexto é recurso finito, dividido entr
 
 **Regra: o orquestrador não lê saída bruta que um subagente possa resumir.** Log de suíte, diff extenso, resultado de busca ampla, documentação de terceiro — vão para um subagente que devolve o resumo com `arquivo:linha`. O orquestrador lê bruto só o que precisa julgar por si: o veredito do revisor, a linha do ledger, a linha do gate que reprovou. Relatório é alegação (R18): o que precisa de prova, o orquestrador confere por medição pontual (`grep`, um teste, um `git show`), não por leitura integral.
 
-**Antes de despachar** (a sequência completa em `prompts.md`, "Orquestrador — antes de despachar"): `capacidade.mjs` → `slots`; no ledger, `DISPATCH` sem `DONE` correspondente → em voo; `git worktree list` → vivos; só despacha se em voo < slots; registra `DISPATCH Task <N> slots=<n> worktree wt/<PBI>-<n>`.
+**Antes de despachar** (a sequência completa em `prompts.md`, "Orquestrador — antes de despachar"): `capacidade.mjs` → `slots`; no ledger, `DISPATCH` sem `DONE` correspondente → em voo; `git worktree list` → vivos; só despacha se em voo < slots; registra `DISPATCH Task <N> slots=<slots> worktree wt/<PBI>-<n>`.
 
 **Servidores MCP** também ocupam a janela: cada servidor conectado injeta a descrição de todas as suas ferramentas em toda sessão. Escopo de projeto (`.mcp.json`) só com o necessário — `adocao.md §4`, "MCP demais no contexto".
 
@@ -306,9 +308,9 @@ Trunk-based (D2 da spec 1.1.0). É o detalhe da linha do `AGENTS.md §3`; entre 
 
 - **`main` protegida**, nada entra sem PR (R1; atestado `branch-protegida`, 180 d).
 - **Branch curta por PBI**: `<tipo>/<PBI>[-slug]`, `<tipo>` ∈ `tiposComEscopoDePbi`. Mapa tipo de card → prefixo: US→`feat` · Bug→`fix` (hotfix é `fix` com PBI de Bug) · Enabler→`enabler` · TechDebt→`debt` · Spike→`spike` · Tarefa→`task`; `perf` e `refactor` também levam PBI. Sem PBI só `chore|docs|ci|build|test` com slug livre em minúsculas. Worktree de implementador: `wt/<PBI>-<n>` (§3.1). Branch vive dias — PBI é concluível em poucos dias (`fluxo.md §1`). *(`guard-versioning.sh` intercepta `checkout -b|-B`, `switch -c|-C|--create`, `branch <nome>`, `worktree add -b|-B`; `versionamento-check.mjs --branch` no CI.)*
-- **Conventional Commits com escopo**: cabeçalho `tipo(escopo): assunto`. Tipo ∈ `tiposComEscopoDePbi` **exige** escopo casando `idPadrao` (`feat(PBI-12): …`); tipo ∈ `tiposLivres` (`chore|docs|ci|build|test|release|revert`) aceita escopo livre ou ausente. A forma `git commit -m "$(cat <<'EOF' … EOF)"` é validada pela **primeira linha do corpo**; `-m` múltiplo, pelo primeiro; `-F <arquivo>`, pelo arquivo. *(`guard-versioning.sh` no commit; `versionamento-check.mjs --base origin/main` no CI; doctor `versionamento` sobre os últimos 20 commits de primeiro pai de `main` mais a branch atual.)*
+- **Conventional Commits com escopo**: cabeçalho `tipo(escopo): assunto`. Tipo ∈ `tiposComEscopoDePbi` **exige** escopo casando `idPadrao` (`feat(PBI-12): …`); tipo ∈ `tiposLivres` (`chore|docs|ci|build|test|release|revert`) aceita escopo livre ou ausente. A forma `git commit -m "$(cat <<'EOF' … EOF)"` é validada pela **primeira linha do corpo**; `-m` múltiplo, pelo primeiro; `-F <arquivo>`, pelo arquivo. *(`guard-versioning.sh` no commit; `versionamento-check.mjs --base origin/main` no CI; doctor `versionamento` sobre os últimos 20 commits de primeiro pai de `HEAD`, a branch em que roda.)* **Limite declarado (VER-3, b):** o doctor não confere `main` mais a branch atual; commits trazidos por merge de outras branches não são inspecionados.
 - **Merge commits do orquestrador são ignorados pelo check.** `merge --no-ff` de worktree (§3.1) gera commit de dois pais com mensagem automática; o check valida só commits de um pai. O que chega a `main` é o squash — o histórico de worktree não sobrevive ao merge da PR.
-- **Squash-merge com título CC**: um método de merge só (ver "Deploy"); o título da PR é o cabeçalho do commit que entra em `main` — `tipo(PBI-n): assunto`, primeira linha do `PULL_REQUEST_TEMPLATE.md`. Nenhuma varredura prova que o ruleset exige isso: **atestado `squash-titulo-pr`** em `.harness/attest.json`, 180 d.
+- **Squash-merge com título CC**: um método de merge só (ver "Deploy"); o título da PR é o cabeçalho do commit que entra em `main` — `tipo(PBI-n): assunto`, primeira linha do `PULL_REQUEST_TEMPLATE.md`. Nenhuma varredura prova que o ruleset exige isso: **atestado `squash-titulo-pr`** em `.harness/attest.json`, 180 d — atestado sem checagem automática (b): nenhum código lê essa chave (o doctor não a confere).
 - **SemVer** — `MAJOR` quebra contrato · `MINOR` adiciona · `PATCH` conserta. `feat` sugere MINOR, `fix` PATCH; `!` após o tipo ou `BREAKING CHANGE:` no rodapé sugere MAJOR. A versão é decidida no release, não em cada PR.
 - **CHANGELOG na PR**: `CHANGELOG.md` em Keep a Changelog; **toda PR acrescenta a própria linha em `## [Unreleased]`**, na categoria certa (Added · Changed · Deprecated · Removed · Fixed · Security), citando o PBI. O release move `Unreleased` para `## [x.y.z] — AAAA-MM-DD`. *(doctor `changelog`: arquivo existe e tem `[Unreleased]`.)*
 - **Tag por release**: `vMAJOR.MINOR.PATCH` sobre o commit de `main` que o CHANGELOG descreve. A tag é índice de qual commit está no ar; o deploy é por digest (ver "Deploy"). Tag exige ok explícito (R1). *(doctor `tag-semver`, opcional em repo sem release.)*

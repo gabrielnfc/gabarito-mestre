@@ -20,7 +20,7 @@ Este arquivo é o **núcleo**: leia-o inteiro, sempre. O detalhamento vive em `d
 
 Do mais forte ao mais fraco. Em conflito, o mais forte vence e o mais fraco é corrigido **na mesma sessão**.
 
-1. Regra inegociável (§1–§3 deste arquivo)
+1. Regra inegociável (R1–R21 deste arquivo)
 2. Decisão do usuário registrada e datada (`D1..Dn`, marcada *não reabrir*)
 3. Spec vigente do requisito — o Given/When/Then é o critério de aceite
 4. Plano vigente — **é o plano, não o design, que autoriza construir**
@@ -52,7 +52,7 @@ Regra sem gate é intenção. Esta linha diz o que os gates **deste repo hoje** 
 
 Não é honra: **`harness-doctor` mede o nível real e reprova quando este número é maior** (comando e leitura da saída em `adocao.md §1`). Um nível inflado é exatamente a mentira que esta seção existe para pegar.
 
-O que nenhuma varredura prova — proteção de branch, backup testado, checks obrigatórios no ruleset, Iniciativa ativa, squash com título CC — vive atestado, nominal e datado, em `.harness/attest.json`, e **vence em 180 dias**: atestado velho é "não sei", que é "não".
+O que nenhuma varredura prova — proteção de branch, backup testado, checks obrigatórios no ruleset, Iniciativa ativa, squash com título CC (b) — vive atestado, nominal e datado, em `.harness/attest.json`, e **vence em 180 dias**: atestado velho é "não sei", que é "não".
 
 ---
 
@@ -185,7 +185,7 @@ Iniciativa (FL3) → Epic (FL2) = design → PBI (FL1) = entrega, um plano por P
 
 **O que autoriza construir é o plano** — e o plano é de **um PBI** (ADR-FLX-1). O design é do Epic e lista os PBIs; não os planeja. Design pronto sem plano é desenho — e o STATUS diz isso em voz alta. Anatomia em `referencia.md §2`.
 
-**Ready** — PBI: DoR de FL1 (`fluxo.md`) — Epic ativo · card completo para o tipo · plano com aceite Given/When/Then · dependências fechadas. Task: existe no plano com aceite · spec lida via ponteiro.
+**Ready** — PBI: DoR de FL1 (`fluxo.md`) — Epic ativo · card completo para o tipo · plano com aceite Given/When/Then · dependências fechadas. Task: existe no plano com aceite · dependências fechadas · spec lida via ponteiro.
 **Done** — Task: teste visto falhando e depois verde · commit atômico · **review adversarial aprovado com mutações executadas** · checkbox · ledger. PBI: DoD de FL1 — todas as tasks Done · PR mergeada com título CC · CHANGELOG · `MOVIMENTO` registrado.
 **A unidade da PR é o PBI** — o que faz sentido reverter junto e subir junto. Exceções e travas em `referencia.md §3.4`.
 
@@ -212,7 +212,7 @@ Este harness é distribuído como o plugin **gabarito-mestre** e não opera sozi
 |---|---|---|
 | **superpowers** (sempre) | **CONDUZ** | como o trabalho é dividido, despachado e executado |
 | **ui-ux-pro-max** (só em tarefa de UI/UX) | **DESENHA** | layout, interação, acessibilidade, texto de interface |
-| **gabarito-mestre** | **MANDA** | o que não se negocia (§1–§3) e o formato do que sai |
+| **gabarito-mestre** | **MANDA** | o que não se negocia (R1–R21) e o formato do que sai |
 
 **Em conflito, o gabarito vence** — ele é o item 1 da ordem de autoridade (§0). Superpowers entra nos itens 4 e 7; ui-ux-pro-max no 7. As skills do gabarito delegam a superpowers e depois conferem — o como está no SKILL.md de cada uma.
 
