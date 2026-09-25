@@ -32,15 +32,25 @@ GATES_DIR="tools/gabarito-gates"
 MANIFESTO="$DEST/$GATES_DIR/.instalado.json"
 criados=0; mantidos=0; novos=0; iguais=0; substituidos=0; recusados=0
 ESCRITOS=""   # relativos a tools/gabarito-gates/, um por linha: o que ESTA execução escreveu
+MISTO=0       # 1 = algum gate já instalado vai ficar diferente do plugin (F2-R9); ver pré-varredura abaixo
 
 # ── utilitários ────────────────────────────────────────────────────────────────────────────
 sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1; else sha256sum "$1" | cut -d' ' -f1; fi; }
 versao_gates() { sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$ROOT/gates/package.json" | head -n1; }
-# hash gravado no manifesto para <rel>, ou vazio (ausente do manifesto = nunca passou pelo instalador).
+# hash gravado no manifesto para <rel>, ou vazio (ausente do manifesto = nunca passou pelo
+# instalador). Usado tal e qual por escrever_manifesto (preserva só o que já era conhecido —
+# um .hashes-anteriores nunca deve "aparecer" sozinho no manifesto de um arquivo intocado).
 hash_manifesto() {
   [ -f "$MANIFESTO" ] || return 0
   local chave; chave="$(printf '%s' "$1" | sed 's/[.[\*^$]/\\&/g')"
   sed -nE "s|^[[:space:]]*\"$chave\"[[:space:]]*:[[:space:]]*\"([0-9a-f]{64})\".*|\1|p" "$MANIFESTO" | head -n1
+}
+# hash da 1.0.1 (gates/.hashes-anteriores) para <rel>, ou vazio. Só entra na decisão de
+# --gates-substituir (F2-R9): repo 1.0.1 sem manifesto ainda precisa provar "isto é o
+# arquivo original" para ser substituído — nunca usado para preencher o manifesto novo.
+hash_anterior() {
+  [ -f "$ROOT/gates/.hashes-anteriores" ] || return 0
+  awk -v r="$1" '$1 !~ /^#/ && $2 == r { print $1; exit }' "$ROOT/gates/.hashes-anteriores"
 }
 escrito_nesta_execucao() { printf '%s' "$ESCRITOS" | grep -qxF -- "$1"; }
 diff_stat() { # diff_stat <antigo> <novo> — uma linha de resumo, indentada
@@ -62,14 +72,31 @@ put_ref() { # put_ref <origem> <destino-rel> — referência do harness: --atual
   [ -e "$src" ] || return 0
   if [ ! -e "$dst" ]; then put "$1" "$2"; return; fi
   if [ "$ATUALIZAR" -eq 0 ]; then echo "  mantido  $2 (já existia — não sobrescrevo)"; mantidos=$((mantidos+1)); return; fi
+  # rm -f "$dst.novo": só apaga um .novo que ESTE instalador tenha deixado para trás numa
+  # execução anterior (ficou obsoleto porque agora $2 é igual à referência do plugin) — a
+  # ÚNICA deleção que este script faz; nunca apaga nada que não tenha sido escrito por ele.
   if cmp -s "$src" "$dst"; then echo "  igual    $2"; iguais=$((iguais+1)); rm -f "$dst.novo"; return; fi
   cp "$src" "$dst.novo"; echo "  novo     $2.novo (aplique à mão; $2 intocado)"; diff_stat "$dst" "$dst.novo"; novos=$((novos+1))
 }
 put_gate() { # put_gate <rel-dentro-de-gates> — ADR-TIM-1
   local rel="$1" src="$ROOT/gates/$1" dst="$DEST/$GATES_DIR/$1" disco gravado
-  if [ ! -e "$dst" ]; then put "gates/$rel" "$GATES_DIR/$rel"; ESCRITOS="$ESCRITOS$rel"$'\n'; return; fi
-  if cmp -s "$src" "$dst"; then # idêntico: nada a fazer; sem entrada no manifesto continua "nunca passou pelo instalador"
+  if [ ! -e "$dst" ]; then
+    # F2-R9: se algum gate JÁ instalado vai ficar diferente do plugin depois desta execução
+    # (MISTO=1 — ver pré-varredura abaixo), um arquivo NOVO de test/ não é instalado direto:
+    # ele testaria comportamento 1.1.0 contra scripts/ que ainda podem estar em 1.0.x. Vai
+    # para .novo, com o aviso; scripts/ novos continuam instalados (são só aditivos).
+    if [ "$MISTO" -eq 1 ] && [ "${rel#test/}" != "$rel" ]; then
+      mkdir -p "$(dirname "$dst")"
+      cp "$src" "$dst.novo"
+      echo "  novo     $GATES_DIR/$rel.novo (tools/gabarito-gates em 1.0.x — rode --atualizar --gates-substituir)"
+      novos=$((novos+1))
+      return
+    fi
+    put "gates/$rel" "$GATES_DIR/$rel"; ESCRITOS="$ESCRITOS$rel"$'\n'; return
+  fi
+  if cmp -s "$src" "$dst"; then # idêntico ao plugin: registra no manifesto (F2-R9) — nunca fica "nunca passou pelo instalador"
     if [ "$ATUALIZAR" -eq 1 ]; then iguais=$((iguais+1)); else mantidos=$((mantidos+1)); fi
+    ESCRITOS="$ESCRITOS$rel"$'\n'
     return
   fi
   if [ "$GATES_SUBSTITUIR" -eq 0 ]; then
@@ -77,6 +104,7 @@ put_gate() { # put_gate <rel-dentro-de-gates> — ADR-TIM-1
     mantidos=$((mantidos+1)); return
   fi
   disco="$(sha256 "$dst")"; gravado="$(hash_manifesto "$rel")"
+  [ -n "$gravado" ] || gravado="$(hash_anterior "$rel")"
   if [ -n "$gravado" ] && [ "$gravado" = "$disco" ]; then
     cp "$dst" "$dst.bak"; cp "$src" "$dst"; ESCRITOS="$ESCRITOS$rel"$'\n'
     echo "  substituído $GATES_DIR/$rel (.bak guardado)"; substituidos=$((substituidos+1))
@@ -129,6 +157,21 @@ if [ -e "$DEST/CLAUDE.md" ]; then
   if grep -qE '^@AGENTS\.md\s*$' "$DEST/CLAUDE.md"; then echo "  mantido  CLAUDE.md (já importa AGENTS.md)"; mantidos=$((mantidos+1))
   else printf '\n@AGENTS.md\n' >> "$DEST/CLAUDE.md"; echo "  emendado CLAUDE.md (+ linha @AGENTS.md; nada removido)"; criados=$((criados+1)); fi
 else put templates/CLAUDE.md CLAUDE.md; fi
+# Pré-varredura (só em --atualizar, F2-R9): existe algum gate JÁ instalado que vai ficar
+# diferente do plugin depois desta execução (não será substituído)? Se sim, MISTO=1 e os
+# arquivos NOVOS de test/ (ver put_gate) vão para .novo em vez de instalar direto — nunca
+# scripts/ de uma versão convivendo com test/ de outra.
+if [ "$ATUALIZAR" -eq 1 ]; then
+  while IFS= read -r f; do
+    relm="${f#"$ROOT/gates/"}"; dstm="$DEST/$GATES_DIR/$relm"
+    [ -e "$dstm" ] || continue
+    cmp -s "$f" "$dstm" && continue
+    if [ "$GATES_SUBSTITUIR" -eq 0 ]; then MISTO=1; break; fi
+    discom="$(sha256 "$dstm")"; gravadom="$(hash_manifesto "$relm")"
+    [ -n "$gravadom" ] || gravadom="$(hash_anterior "$relm")"
+    if [ -z "$gravadom" ] || [ "$gravadom" != "$discom" ]; then MISTO=1; break; fi
+  done < <(find "$ROOT/gates" -type f -not -path '*/node_modules/*' -not -name .DS_Store | sort)
+fi
 # gates → tools/gabarito-gates (arquivo a arquivo)
 while IFS= read -r f; do put_gate "${f#"$ROOT/gates/"}"; done < <(find "$ROOT/gates" -type f -not -path '*/node_modules/*' -not -name .DS_Store | sort)
 escrever_manifesto

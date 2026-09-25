@@ -12,10 +12,13 @@
 #  M4  rodar o doctor em --atualizar
 #  M5  aceitar --gates-substituir sem --atualizar
 #  M6  gravar no manifesto o hash de arquivo "mantido" que o instalador não escreveu
+#  M7  cenário 8/8b: remover o fallback de gates/.hashes-anteriores (hash_anterior sempre vazio)
+#  M8  cenário 8/8b: MISTO nunca fica 1 (novos de test/ sempre instalados direto)
 set -eu
 AQUI="$(cd "$(dirname "$0")" && pwd)"
 INSTALAR="$AQUI/../instalar.sh"
 PLUGIN="$(cd "$AQUI/../.." && pwd)"
+REPO_ROOT="$(cd "$PLUGIN/../.." && pwd)"
 passou=0; falhou=0
 ok()    { passou=$((passou+1)); echo "  ok    $1"; }
 falha() { falhou=$((falhou+1)); echo "  FALHA $1" >&2; }
@@ -25,6 +28,12 @@ novo_repo() { mktemp -d "${TMPDIR:-/tmp}/instalar-XXXXXX"; }
 GATES="tools/gabarito-gates"
 MANIF="$GATES/.instalado.json"
 hash_no_manifesto() { sed -nE "s|^[[:space:]]*\"$2\"[[:space:]]*:[[:space:]]*\"([0-9a-f]{64})\".*|\1|p" "$1/$MANIF" | head -n1; }
+# Fixture 1.0.1 REAL de gates/ (commit 1c85330), sem .instalado.json — imprime o caminho do dir extraído.
+fixture_101_gates() {
+  local out; out="$(mktemp -d "${TMPDIR:-/tmp}/gm-101-XXXXXX")"
+  (cd "$REPO_ROOT" && git archive 1c85330 plugins/gabarito-mestre/gates) | (cd "$out" && tar -x)
+  printf '%s' "$out/plugins/gabarito-mestre/gates"
+}
 
 echo "── cenário 1: instalação limpa"
 R="$(novo_repo)"
@@ -105,6 +114,46 @@ check "CODEOWNERS criado com esqueleto"           'grep -q "Áreas e donos" "$R7
 printf '* @time\n' > "$R7/.github/CODEOWNERS"
 bash "$INSTALAR" "$R7" --codeowners >/dev/null 2>&1
 check "CODEOWNERS existente é mantido"            '[ "$(cat "$R7/.github/CODEOWNERS")" = "* @time" ]'
+
+echo "── cenário 8: --atualizar --gates-substituir sobre 1.0.1 REAL (fixture do commit 1c85330, sem manifesto)"
+R8="$(novo_repo)"
+mkdir -p "$R8/$GATES"
+FX8="$(fixture_101_gates)"
+cp -R "$FX8/." "$R8/$GATES/"
+if SAIDA8="$(bash "$INSTALAR" "$R8" --atualizar --gates-substituir 2>&1)"; then RC8=0; else RC8=$?; fi
+check "sai 0"                                        '[ "$RC8" -eq 0 ]'
+check "harness-doctor.mjs (1.0.1→1.1.0) substituído" 'cmp -s "$R8/$GATES/scripts/harness-doctor.mjs" "$PLUGIN/gates/scripts/harness-doctor.mjs"'
+check ".bak guarda a versão 1.0.1 do doctor"         '[ -f "$R8/$GATES/scripts/harness-doctor.mjs.bak" ]'
+check "package.json (1.0.1→1.1.0) substituído"       'cmp -s "$R8/$GATES/package.json" "$PLUGIN/gates/package.json"'
+check "migrations-guard.mjs (1.0.1→1.1.0) substituído" 'cmp -s "$R8/$GATES/scripts/migrations-guard.mjs" "$PLUGIN/gates/scripts/migrations-guard.mjs"'
+check "README.md (idêntico nas duas versões) sem .bak" '[ ! -e "$R8/$GATES/README.md.bak" ]'
+check "README.md entra no manifesto mesmo idêntico"  '[ -n "$(hash_no_manifesto "$R8" README.md)" ]'
+check "script novo da 1.1.0 (capacidade.mjs) instalado" '[ -f "$R8/$GATES/scripts/capacidade.mjs" ]'
+check "teste novo da 1.1.0 (capacidade.test.mjs) instalado (tudo substituído — sem estado misto)" '[ -f "$R8/$GATES/test/capacidade.test.mjs" ]'
+check "nenhum .novo sobra (substituição completa)"   '[ -z "$(find "$R8/$GATES" -name "*.novo")" ]'
+if NPMOUT8="$(cd "$R8/$GATES" && node --test test/*.test.mjs 2>&1)"; then NPMRC8=0; else NPMRC8=$?; fi
+check "node --test test/*.test.mjs é verde na cópia instalada" '[ "$NPMRC8" -eq 0 ]'
+
+echo "── cenário 8b: idem, mas com UM arquivo 1.0.1 editado localmente — só ele é recusado"
+R8B="$(novo_repo)"
+mkdir -p "$R8B/$GATES"
+FX8B="$(fixture_101_gates)"
+cp -R "$FX8B/." "$R8B/$GATES/"
+printf '\n// edicao local\n' >> "$R8B/$GATES/scripts/harness-doctor.mjs"
+EDITADO_ANTES="$(cat "$R8B/$GATES/scripts/harness-doctor.mjs")"
+if SAIDA8B="$(bash "$INSTALAR" "$R8B" --atualizar --gates-substituir 2>&1)"; then RC8B=0; else RC8B=$?; fi
+check "sai 0"                                        '[ "$RC8B" -eq 0 ]'
+check "arquivo editado NÃO foi tocado"               '[ "$(cat "$R8B/$GATES/scripts/harness-doctor.mjs")" = "$EDITADO_ANTES" ]'
+check ".novo do arquivo editado = plugin"            'cmp -s "$R8B/$GATES/scripts/harness-doctor.mjs.novo" "$PLUGIN/gates/scripts/harness-doctor.mjs"'
+check "outro arquivo 1.0.1 (migrations-guard) foi substituído normalmente" 'cmp -s "$R8B/$GATES/scripts/migrations-guard.mjs" "$PLUGIN/gates/scripts/migrations-guard.mjs"'
+check "script novo da 1.1.0 (capacidade.mjs) instalado (aditivo, não é test/)" '[ -f "$R8B/$GATES/scripts/capacidade.mjs" ]'
+check "teste novo da 1.1.0 (capacidade.test.mjs) vai para .novo (estado misto)" '[ ! -e "$R8B/$GATES/test/capacidade.test.mjs" ] && [ -f "$R8B/$GATES/test/capacidade.test.mjs.novo" ]'
+check "teste novo (cartao-sessao.test.mjs) também vai para .novo"   '[ -f "$R8B/$GATES/test/cartao-sessao.test.mjs.novo" ]'
+check "aviso de versão mista aparece"                'printf "%s" "$SAIDA8B" | grep -q "tools/gabarito-gates em 1.0.x — rode --atualizar --gates-substituir"'
+NOVO_TEST_REAL="$(find "$R8B/$GATES/test" -name "*.novo" | wc -l | tr -d ' ')"
+check "6 testes novos da 1.1.0 foram para .novo"     '[ "$NOVO_TEST_REAL" -eq 6 ]'
+NOVO_CONTADO="$(printf '%s' "$SAIDA8B" | grep -oE '[0-9]+ \.novo' | grep -oE '^[0-9]+')"
+check "contador do resumo (\$novos .novo) bate com os 6 arquivos .novo de test/" '[ "$NOVO_CONTADO" = "$NOVO_TEST_REAL" ]'
 
 echo "── $passou ok, $falhou falha(s)"
 [ "$falhou" -eq 0 ]
