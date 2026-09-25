@@ -1,6 +1,6 @@
 # Referência do harness
 
-Detalhamento de `AGENTS.md`. Consultado sob demanda, não lido inteiro toda sessão.
+Detalhamento de `AGENTS.md`. Consultado sob demanda e **por ponteiro** (`arquivo:linhas`, §3.5), não lido inteiro toda sessão.
 
 As regras (`R*`), invariantes (`I*`) e guardas (`G*`) citadas aqui estão definidas no `AGENTS.md`.
 Os incidentes citados são reais e existem para que a regra não precise ser reaprendida pelo mesmo preço.
@@ -15,6 +15,7 @@ Ordem fixa. Design que pula seção está incompleto, não enxuto.
 
 | Seção | Conteúdo | Por quê |
 |---|---|---|
+| **Fio condutor** (topo) | `Iniciativa: <ID>` · `Epic: <ID>` · lista dos PBIs do Epic (índice, não plano). Override de Iniciativa: `Iniciativa: <outro ID> (override: <motivo>)` | R19 — design é do Epic; sem `Epic:` é NÃO CONFORME (`fluxo.md §2`) |
 | **STATUS** (topo, destacado) | `DESENHO PRONTO · plano ainda não escrito` · `ENTREGA 1 IMPLEMENTADA · 2 e 3 são desenho` | separa ritualmente **o que o sistema faz** de **o que está escrito que fará** |
 | **Fato medido** | tabela `M1..Mn`: medição · resultado · quando · autorização (quando tocou terceiro) | fato e desenho nunca dividem parágrafo |
 | **Decisões do usuário** | `D1..Dn` — decisão · **alternativa rejeitada e por quê** — marcada *não reabrir* | força justificar o caminho não escolhido; é o que impede rediscussão infinita |
@@ -35,28 +36,37 @@ Ordem fixa. Design que pula seção está incompleto, não enxuto.
 
 ### 2.2 Anatomia do plano
 
-Tasks numeradas · **grafo de dependências explícito** (é ele que declara o que pode rodar em paralelo) · cada task diz **qual requisito fecha** · fases com **gate objetivo em contagem verificável** · **Task 0 = spike** quando há incógnita externa · pré-condições de rollout listadas **antes** da primeira linha de código.
+Cabeçalho `PBI: <ID>` (**um só** — ADR-FLX-1) e `Epic: <ID>` · tasks numeradas, cada uma com `tipo` ∈ {US, Enabler, TechDebt, Spike, Bug, Tarefa} · **grafo de dependências explícito** (é ele que declara o que pode rodar em paralelo) · task que toca caminho de `arquivosDeContenda` marca `serial: contenda` e nunca aparece em paralelo no grafo (R21) · cada task diz **qual requisito fecha** · fases com **gate objetivo em contagem verificável** · **Task 0 = spike** quando há incógnita externa · pré-condições de rollout listadas **antes** da primeira linha de código. Grupos dentro do plano são fases, nunca outros PBIs: dois PBIs, dois planos.
 
 Gate de fase é contagem — *"12 primitivos tratados + 5 substituições + 3 retrofits = fase completa"* — não "parece pronto". Checkpoint humano julga estética, texto e produto; **nunca substitui o checklist**.
 
 ### 2.3 Ledger
 
-Um por entrega. É o **mecanismo de continuidade entre sessões**: não é diário, é handoff. **Versione-o** (sem segredo dentro) — ledger gitignored morre com a máquina.
+Um por **PBI** (ADR-FLX-1), em `<ledgerDir>/<PBI>.md` (default `docs/ledgers/`). É o **mecanismo de continuidade entre sessões**: não é diário, é handoff. **Versione-o** (sem segredo dentro) — ledger gitignored morre com a máquina.
 
+````
 ```
-# Ledger — plano: <caminho>   Branch: <nome> @ <sha>   Spec (autoridade): <caminho>
+# Ledger — PBI: <ID> · Epic: <ID>   Plano: <caminho>   Branch: <nome> @ <sha>   Spec (autoridade): <caminho>
 Rulings herdados: R3, R5, R8...          Contexto externo: (sandbox fora, lane afetada)
 
+## LER PRIMEIRO — <AAAA-MM-DD>
+(estado atual em ≤ 5 linhas; reescrito a cada corte de sessão — é o que o cartão de sessão aponta)
 ## Pre-flight — pares produz × consome
 | Par | Produz × Consome | Achado |
 ## Rulings de pre-flight (F3-R1, F3-R2...)   — decisão + motivo + custo-se-errado
 ## Progresso
+MOVIMENTO FL2 <EPIC> preparado→em_execucao <AAAA-MM-DD>       (ao integrar o 1º commit do PBI; <de>/<para> = chaves de fluxo.status.FL2, sem espaços)
+DISPATCH Task <N> slots=<n> worktree wt/<PBI>-<n>            (uma linha por dispatch; slots medido)
 Task N: DONE pelo implementador (worktree @ sha; RED→GREEN, contagens, achados/desvios)
 Task N: complete (review Aprovado — o que o revisor PROVOU; sha de integração). Minors: ...
+BLOQUEADA <AAAA-MM-DD> <motivo> — dono: <quem>               (item não muda de coluna)
 ## CORTE DA SESSÃO (com motivo)
 ## FECHO — PR mergeada
 | # | Achado | Fix | Review |    + backlog gerado + decisões não escritas
 ```
+````
+
+As linhas `MOVIMENTO`, `DISPATCH`, `BLOQUEADA` e o título `## LER PRIMEIRO` são **lidas por máquina** (cartão de sessão, conformidade): grafia exata, uma por linha, sem markdown em volta. `MOVIMENTO` segue `fluxo.md §5` (propagação); `DISPATCH` vem de §3.1; `BLOQUEADA` de `fluxo.md §4` — bloqueio é marcação, não coluna, e tem dono do desbloqueio.
 
 Cada task registra: quem fez (worktree + sha) · ciclo RED→GREEN com contagem de testes · achados e desvios declarados · veredito de review **com o que foi provado** · sha de integração · "minors" diferidos. Nada implícito.
 
@@ -74,13 +84,19 @@ Arquivo único, versionado, **um formato só**: `| Item | Origem | Gatilho |`. C
 
 ### 3.1 Paralelismo — mecânica
 
-Critério em `AGENTS.md §6`. A mecânica:
+Critério em `AGENTS.md §6` (R21). A mecânica:
 
-Um **worktree git por implementador paralelo**, branch temporária a partir da branch da entrega. Motivo do isolamento: hooks fazem stash, commits concorrentes corrompem o index, e a suíte de um vê arquivo meio-escrito do vizinho.
+Um **worktree git por implementador paralelo**, em branch **`wt/<PBI>-<n>`** criada a partir da branch do PBI — `n` é o índice do worktree (1, 2, …), gravado no nome da branch e na linha `DISPATCH Task <N> slots=<n> worktree wt/<PBI>-<n>` do ledger (§2.3). O mesmo `n` resolve o **isolamento** do implementador — porta `3000+n`, schema `wt_{n}`, namespace `wt-{n}` (`orquestracao.paralelismo.isolamentoWorktree`) — e vai no prompt de dispatch (`prompts.md`, bloco "Isolamento"). O padrão `wt/…` é o único nome de branch sem tipo que `guard-versioning.sh` aceita (`versionamento.branchWorktree`). Motivo do isolamento: hooks fazem stash, commits concorrentes corrompem o index, e a suíte de um vê arquivo meio-escrito do vizinho.
 
-O orquestrador integra com `merge --no-ff` **na ordem do grafo**. O revisor roda sobre o **diff integrado**, não sobre o worktree. Conflito é raro por construção (arquivo disjunto é pré-condição) e, quando ocorre, o orquestrador resolve ou serializa e reexecuta a segunda task sobre a base nova.
+**Quantos ao mesmo tempo:** `slots` de `capacidade.mjs`, medido **antes de cada dispatch** (`prompts.md`, "Orquestrador — antes de despachar"): `min(simultaneos, teto, o que a máquina permite)`, nunca < 1; `GABARITO_PARALELISMO=<n>` substitui `simultaneos` na sessão, ainda sob o `teto`. Item entra quando um sai. Dispatch sem linha `slots=` no ledger é achado de review — o cartão de sessão avisa "dispatch sem medição".
 
-**Os dois incidentes que tornaram "recurso compartilhado é serial" uma pré-condição dura:**
+**Contenda:** task que toca qualquer caminho de `paralelismo.arquivosDeContenda` (lockfile, `prisma/`, barrel, `docs/fluxo/`) é **serial** — o plano marca `serial: contenda`, `gabarito-conformidade` reprova grafo que a paraleliza, e não existe override em runtime: nem "é rápido", nem "é uma linha".
+
+O orquestrador integra com `merge --no-ff` **na ordem do grafo** — são esses merge commits, de dois pais, que `versionamento-check.mjs` ignora (§10, "Versionamento"). O revisor roda sobre o **diff integrado**, não sobre o worktree. Conflito é raro por construção (arquivo disjunto é pré-condição) e, quando ocorre, o orquestrador resolve ou serializa e reexecuta a segunda task sobre a base nova.
+
+**Escalada:** task reprovada `rodadasAntesDeEscalar` vezes (default 2) vira `BLOQUEADA <data> <motivo> — dono: <quem>` no ledger e o orquestrador **escala ao usuário** com o custo estimado das opções — nunca uma terceira rodada em silêncio (`fluxo.md §4`, bloqueio é marcação).
+
+**Os dois incidentes que tornaram "recurso compartilhado é serial" uma pré-condição dura** — e o motivo de `AGENTS.md §6` dizer que não há override:
 
 - **Três lanes de integração externa simultâneas:** colisão de namespace no sandbox compartilhado + degradação em rajada — leituras puras voltando vazias, cascateando para suítes ditas "locais". Regra que sobrou: espaçar lanes e **partir a lane hermética da não-hermética**.
 - **Worker ligado durante a suíte:** o worker consumiu em paralelo o job que o teste enfileirou — corrida de status, erro de anti-duplicidade no externo e **quatro registros órfãos** que escaparam do teardown por id. Virou **guarda de partida no código da suíte**: falha alto se detectar worker vivo.
@@ -106,21 +122,51 @@ Uma entrega por sessão é **hábito forte, não regra** — planos grandes atra
 
 ### 3.4 Cadência e unidade de PR
 
-**Sem sprint, sem timebox, sem WIP formal.** A estrutura é **Onda → Plano → Fatia/Task**. WIP implícito: **uma entrega de código em voo por vez**; leituras e spikes paralelos são livres.
+**Cadência é fluxo contínuo** — sem sprint e sem timebox. A estrutura é a dos três níveis de `fluxo.md §1`: **Iniciativa (FL3) → Epic (FL2) → PBI (FL1) → tasks do plano**. Limite de trabalho em andamento existe e é explícito, por nível: o **WIP de FL1 é por coluna e definido pelo time em `fluxo.md §6`**; **PBIs em voo ≤ WIP FL1 do time**; **implementadores simultâneos ≤ `paralelismo.simultaneos`**, medido a cada dispatch (§3.1). Leituras e spikes paralelos são livres — não ocupam slot nem coluna. Vocabulário: `simultaneos` é máquina; "PBIs em voo" é Kanban; "worktrees vivos" é medição — nunca "WIP" sem qualificador.
 
-**A unidade da PR é a ENTREGA**: o conjunto que faz sentido **reverter junto** e **subir junto**.
+**A unidade da PR é o PBI** (ADR-FLX-1): branch, plano, ledger e PR são por PBI, e o título da PR é o cabeçalho Conventional Commits que vira o commit de squash (§10, "Versionamento"). Um Epic tem N PBIs, cada um com o próprio plano; o design do Epic lista os PBIs, não os planeja. PBI é concluível em poucos dias — se não é, eram dois.
 
-O custo de abrir PR a mais é medido, não teórico: com branch obrigatoriamente atualizada e auto-merge desligado, mergear N PRs é **serial** — cada merge deixa as outras atrás, exigindo atualização + CI novo, e cada merge com código dispara um deploy que se espera **verificar** antes do próximo.
+O custo de abrir PR a mais é medido, não teórico: com branch obrigatoriamente atualizada e auto-merge desligado, mergear N PRs é **serial** — cada merge deixa as outras atrás, exigindo atualização + CI novo, e cada merge com código dispara um deploy que se espera **verificar** antes do próximo. Por isso a unidade é o PBI, não a task.
 
-**PR separada é obrigatória quando:** *(1)* tem migration — a volta é diferente e a esteira tem ordem própria; *(2)* é hotfix — fura a fila sem carregar trabalho inacabado; *(3)* precisa subir em ordem — se o deploy tem etapas, a PR acompanha; *(4)* toca escrita em sistema externo, RBAC ou segurança — não por tamanho, por **atenção**; *(5)* está incerto ou com revisão contestada — o que pode ser reprovado sai do lote.
+**PBI que exige PR própria mesmo pequeno:** *(1)* tem migration — a volta é diferente e a esteira tem ordem própria; *(2)* é Bug em produção (hotfix: `fix/<PBI>`) — fura a fila sem carregar trabalho inacabado; *(3)* precisa subir em ordem — se o deploy tem etapas, a PR acompanha; *(4)* toca escrita em sistema externo, RBAC ou segurança — não por tamanho, por **atenção**; *(5)* está incerto ou com revisão contestada — o que pode ser reprovado sai do lote. Um PBI que reúna dois desses motivos é sinal de que eram dois PBIs.
 
-**Travas:** nunca abrir segunda PR de um tema que já tem PR aberta · passou de ~15 arquivos de produção, **pare e pergunte** se dá para cortar (sinal para pensar, não regra dura — uma PR de guarda de segurança tinha 54 arquivos e era indivisível) · lote maior ⇒ branch mais velha, sincronize a cada merge · **tamanho não é o risco real**: naquela PR de 54 arquivos a regressão que quase passou era de runtime, invisível para unit/build/qualidade e pega só pela lane de integração. **PR que toca ORM ou contrato exige a lane de integração antes de ser declarada pronta.**
+**Travas:** nunca abrir segunda PR de um PBI que já tem PR aberta · passou de ~15 arquivos de produção, **pare e pergunte** se dá para cortar (sinal para pensar, não regra dura — uma PR de guarda de segurança tinha 54 arquivos e era indivisível) · PBI mais longo ⇒ branch mais velha, sincronize a cada merge em `main` · **tamanho não é o risco real**: naquela PR de 54 arquivos a regressão que quase passou era de runtime, invisível para unit/build/qualidade e pega só pela lane de integração. **PR que toca ORM ou contrato exige a lane de integração antes de ser declarada pronta.**
+
+### 3.5 Camadas de contexto
+
+Tabela em `AGENTS.md §6`. A janela de contexto é recurso finito, dividido entre regra, estado e trabalho; o harness a separa em cinco camadas e cada agente carrega só as suas.
+
+- **Camada 0 — núcleo.** `AGENTS.md` inteiro, toda sessão, via `@AGENTS.md`. Tem teto de bytes (ADR-CTX-1: 17.291 no núcleo, 4.096 no Apêndice — `contexto.nucleoMaxBytes` / `contexto.apendiceMaxBytes`), medido pelo doctor (`agents-tamanho`, n2). Conteúdo novo empurra detalhe para cá ou para `fluxo.md` — **texto migra, regra não some**. O teto sobe só por decisão registrada com medição de impacto.
+- **Camada 1 — cartão de sessão.** ≤ 40 linhas injetadas no SessionStart por `session-card.sh` (`cartao-sessao.mjs`): modelo e validade, branch e sha, PBI/Epic/Iniciativa, em voo, worktrees, slots, nível do doctor em cache (24 h), envelhecidos, `LER PRIMEIRO` do ledger, versões instalada × plugin. É **estado**, não regra; nunca substitui o ledger. Sem onboarding, é uma linha.
+- **Camada 2 — referência por ponteiro.** `referencia.md`, `fluxo.md`, spec e plano entram por `arquivo:linhas`, na seção que a pergunta exige, nunca inteiros. Quem despacha passa ponteiros; quem recebe lê o trecho (§3.3).
+- **Camada 3 — subagente isolado.** Implementação, spike, review e exploração pesada rodam em contexto próprio (R21). Para o orquestrador volta **só o relatório** (≤ 25 linhas, cada afirmação marcada (a)/(b)); o resto morre com o subagente.
+- **Camada 4 — handoff por ledger.** Entre sessões, o que sobrevive é o ledger com `LER PRIMEIRO` datado (§3.3). Contexto que não foi para o ledger não existe na sessão seguinte.
+
+**Regra: o orquestrador não lê saída bruta que um subagente possa resumir.** Log de suíte, diff extenso, resultado de busca ampla, documentação de terceiro — vão para um subagente que devolve o resumo com `arquivo:linha`. O orquestrador lê bruto só o que precisa julgar por si: o veredito do revisor, a linha do ledger, a linha do gate que reprovou. Relatório é alegação (R18): o que precisa de prova, o orquestrador confere por medição pontual (`grep`, um teste, um `git show`), não por leitura integral.
+
+**Antes de despachar** (a sequência completa em `prompts.md`, "Orquestrador — antes de despachar"): `capacidade.mjs` → `slots`; no ledger, `DISPATCH` sem `DONE` correspondente → em voo; `git worktree list` → vivos; só despacha se em voo < slots; registra `DISPATCH Task <N> slots=<n> worktree wt/<PBI>-<n>`.
+
+**Servidores MCP** também ocupam a janela: cada servidor conectado injeta a descrição de todas as suas ferramentas em toda sessão. Escopo de projeto (`.mcp.json`) só com o necessário — `adocao.md §4`, "MCP demais no contexto".
 
 ---
 
 ## §5. Guardas — mecanismo e parâmetros
 
 Os números abaixo foram calibrados num projeto real. **Meça antes de ligar** (`adocao.md §3`).
+
+Índice — a linha por guarda que vivia no `AGENTS.md §5` até a 1.0.1 (migrou para caber no teto do núcleo, ADR-CTX-1). Seis já são código em `tools/gabarito-gates/` (instalação em `gates.md`).
+
+| # | Guarda | Em uma linha |
+|---|---|---|
+| **G1** | leitura truncada | helper único que pagina até a página incompleta e **lança** em vez de devolver censo parcial |
+| **G2** | leitura vazia | leitura vazia com estado local a proteger ⇒ **no-op + warn estruturado**, nunca limpeza |
+| **G3** | mutação em massa | recusa filtro sem condição efetiva **e** `undefined` em qualquer profundidade; escape hatch nominal com motivo obrigatório — `mass-mutation-guard.ts` |
+| **G4** | massa suspeita | passada que muda uma fração grande do estado conhecido ⇒ zero updates + warn |
+| **G5** | tenant | 404 uniforme para cross-tenant; chokepoint único por domínio |
+| **G6** | config parcial | `PATCH` lê o **body cru**: chave ausente preserva, chave presente vale — inclusive `null` explícito |
+| **G7** | trava de boot | recusa subir com ambiente inconsistente; discriminador é o **host efetivo**, nunca o nome do ambiente — `production-host-guard.ts` |
+| **G8** | migration | grep (não parser): destrutiva exige plano de volta; migration aplicada não pode sumir do repo — `migrations-guard.mjs` |
+| **G9** | fail-closed declarado | cada indisponibilidade decide explicitamente entre fechar e abrir, **no documento** |
 
 **G1 — leitura truncada.** Helper único que pagina até página incompleta, com teto (ex.: 200 páginas), e que **lança** ao detectar página vazia em posição > 0 ou teto estourado com última página cheia. **Nunca devolve censo parcial.** Página 0 vazia é vazio legítimo. Todo consumidor usa o helper — implementação própria "que devolve parcial com warn" é o drift clássico, e apareceu no repo de origem.
 
@@ -254,6 +300,21 @@ Prática de review, não de ferramenta: **toda mutação prescrita tem que derru
 
 **Guarda de migrations, duas funções:** *(i)* reprovar destrutiva sem plano de volta; *(ii)* **comentar o SQL na PR**, em comentário único e atualizado por marcador, incluindo o plano de volta — para o revisor ler a afirmação de reversibilidade. Push sem migration marca o comentário anterior como **superado**: nunca cria outro nem deixa SQL órfão.
 
+### Versionamento (R20)
+
+Trunk-based (D2 da spec 1.1.0). É o detalhe da linha do `AGENTS.md §3`; entre parênteses, a máquina que sustenta cada item — sem ela, o item é convenção, e convenção não sobrevive a agente autônomo (I12).
+
+- **`main` protegida**, nada entra sem PR (R1; atestado `branch-protegida`, 180 d).
+- **Branch curta por PBI**: `<tipo>/<PBI>[-slug]`, `<tipo>` ∈ `tiposComEscopoDePbi`. Mapa tipo de card → prefixo: US→`feat` · Bug→`fix` (hotfix é `fix` com PBI de Bug) · Enabler→`enabler` · TechDebt→`debt` · Spike→`spike` · Tarefa→`task`; `perf` e `refactor` também levam PBI. Sem PBI só `chore|docs|ci|build|test` com slug livre em minúsculas. Worktree de implementador: `wt/<PBI>-<n>` (§3.1). Branch vive dias — PBI é concluível em poucos dias (`fluxo.md §1`). *(`guard-versioning.sh` intercepta `checkout -b|-B`, `switch -c|-C|--create`, `branch <nome>`, `worktree add -b|-B`; `versionamento-check.mjs --branch` no CI.)*
+- **Conventional Commits com escopo**: cabeçalho `tipo(escopo): assunto`. Tipo ∈ `tiposComEscopoDePbi` **exige** escopo casando `idPadrao` (`feat(PBI-12): …`); tipo ∈ `tiposLivres` (`chore|docs|ci|build|test|release|revert`) aceita escopo livre ou ausente. A forma `git commit -m "$(cat <<'EOF' … EOF)"` é validada pela **primeira linha do corpo**; `-m` múltiplo, pelo primeiro; `-F <arquivo>`, pelo arquivo. *(`guard-versioning.sh` no commit; `versionamento-check.mjs --base origin/main` no CI; doctor `versionamento` sobre os últimos 20 commits de primeiro pai de `main` mais a branch atual.)*
+- **Merge commits do orquestrador são ignorados pelo check.** `merge --no-ff` de worktree (§3.1) gera commit de dois pais com mensagem automática; o check valida só commits de um pai. O que chega a `main` é o squash — o histórico de worktree não sobrevive ao merge da PR.
+- **Squash-merge com título CC**: um método de merge só (ver "Deploy"); o título da PR é o cabeçalho do commit que entra em `main` — `tipo(PBI-n): assunto`, primeira linha do `PULL_REQUEST_TEMPLATE.md`. Nenhuma varredura prova que o ruleset exige isso: **atestado `squash-titulo-pr`** em `.harness/attest.json`, 180 d.
+- **SemVer** — `MAJOR` quebra contrato · `MINOR` adiciona · `PATCH` conserta. `feat` sugere MINOR, `fix` PATCH; `!` após o tipo ou `BREAKING CHANGE:` no rodapé sugere MAJOR. A versão é decidida no release, não em cada PR.
+- **CHANGELOG na PR**: `CHANGELOG.md` em Keep a Changelog; **toda PR acrescenta a própria linha em `## [Unreleased]`**, na categoria certa (Added · Changed · Deprecated · Removed · Fixed · Security), citando o PBI. O release move `Unreleased` para `## [x.y.z] — AAAA-MM-DD`. *(doctor `changelog`: arquivo existe e tem `[Unreleased]`.)*
+- **Tag por release**: `vMAJOR.MINOR.PATCH` sobre o commit de `main` que o CHANGELOG descreve. A tag é índice de qual commit está no ar; o deploy é por digest (ver "Deploy"). Tag exige ok explícito (R1). *(doctor `tag-semver`, opcional em repo sem release.)*
+- **Escape hatch** `GABARITO_ALLOW_VERSIONING="<motivo>"` — nominal, ≥ 8 caracteres e ≥ 2 palavras, no início do comando ou no ambiente; **não cruza** com os hatches de R2/R3 (um hatch, uma regra). Uso sem autorização do usuário registrada é achado de review.
+- **Fail-open declarado (G9):** sem `versionamento.resolvidoEm` em `harness.config.json`, hook e check não bloqueiam nada e dizem isso em stderr ("fail-open declarado (G9)"). Repo sem onboarding não é travado — e também não está protegido: o doctor marca `FALTA versionamento` até o onboarding rodar.
+
 **Deploy**
 
 - Um método de merge só — elimina a classe de risco em vez de apostar em comportamento medido uma vez.
@@ -286,9 +347,19 @@ Prática de review, não de ferramenta: **toda mutação prescrita tem que derru
 - Dado real lido de terceiro **não vai para commit** — só o mapeamento de campos vira documento.
 - Cadastro livre de usuário **desligado** em todo ambiente com autenticação gerenciada: o padrão da plataforma costuma ser o inverso, e isso é item de checklist de criação de ambiente, sem teste que pegue.
 
+**Gates que sustentam R2 e R3** (texto que vivia no `AGENTS.md §1` até a 1.0.1; migrou para caber no teto do núcleo, ADR-CTX-1):
+
+- **R2 — `massMutationGuard()` no client + regra de lint `no-unfiltered-mass-mutation`** (G3). Duas barreiras independentes — a estática não enxerga valor vindo de variável; a de runtime só age depois que o código rodou. Uma sozinha não bastaria. Instalação em `gates.md §1`.
+- **R3 — `assertNotProduction()` nos dois entrypoints do runner** (API e worker). Compara **host**, nunca imprime nenhum dos lados, e reprova URL inválida — sem host resolvível não há prova de que não é produção. Credencial de produção nunca no CI. Instalação em `gates.md §2`.
+
 ---
 
 ## §12. Anti-padrões já pagos
+
+**Os incidentes por trás de R2 e R3** (texto que vivia no `AGENTS.md §1` até a 1.0.1; migrou para caber no teto do núcleo, ADR-CTX-1). Existem para que a regra não precise ser reaprendida pelo mesmo preço:
+
+- **R2 — incidente real:** uma base local com milhares de registros, montada com centenas de leituras e **sem backup**, foi apagada por um teardown cujo `where` ficou vazio — o ORM descarta campo `undefined` em silêncio, e `{ tenantId: undefined }` virou `DELETE … WHERE 1=1`. É a primeira linha da tabela abaixo; G3 é o conserto, e o backup verificado por read-back (`adocao.md §1`, nível 1) o que o teria tornado irrelevante.
+- **R3 — por que leitura também exige permissão:** produção é o sistema vivo de alguém — a consulta consome sessão, aparece no log de auditoria do fornecedor, e quem responde por ela é o usuário, não o agente. Por isso a autorização é nominal, para aquela consulta, com custo estimado antes.
 
 | Sintoma | Causa | Conserto |
 |---|---|---|
