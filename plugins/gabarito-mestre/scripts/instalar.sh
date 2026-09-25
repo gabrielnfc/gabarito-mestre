@@ -82,10 +82,14 @@ put_gate() { # put_gate <rel-dentro-de-gates> — ADR-TIM-1
   local rel="$1" src="$ROOT/gates/$1" dst="$DEST/$GATES_DIR/$1" disco gravado
   if [ ! -e "$dst" ]; then
     # F2-R9: se algum gate JÁ instalado vai ficar diferente do plugin depois desta execução
-    # (MISTO=1 — ver pré-varredura abaixo), um arquivo NOVO de test/ não é instalado direto:
-    # ele testaria comportamento 1.1.0 contra scripts/ que ainda podem estar em 1.0.x. Vai
-    # para .novo, com o aviso; scripts/ novos continuam instalados (são só aditivos).
-    if [ "$MISTO" -eq 1 ] && [ "${rel#test/}" != "$rel" ]; then
+    # (MISTO=1 — ver pré-varredura abaixo), um arquivo NOVO não é instalado direto — nunca
+    # scripts/ de uma versão convivendo com test/ de outra. Duas situações:
+    #   GATES_SUBSTITUIR=0 (sem flag nenhuma, ou --atualizar sem --gates-substituir): NADA em
+    #     gates/ está sendo corrigido nesta execução — todo arquivo novo (scripts/ E test/) vai
+    #     para .novo; a cópia instalada fica 100% na versão antiga até rodar --gates-substituir.
+    #   GATES_SUBSTITUIR=1 com MISTO por causa de um arquivo RECUSADO (editado localmente): só
+    #     os test/ novos (testariam a versão nova) vão para .novo; scripts/ novos são aditivos.
+    if [ "$MISTO" -eq 1 ] && { [ "$GATES_SUBSTITUIR" -eq 0 ] || [ "${rel#test/}" != "$rel" ]; }; then
       mkdir -p "$(dirname "$dst")"
       cp "$src" "$dst.novo"
       echo "  novo     $GATES_DIR/$rel.novo (tools/gabarito-gates em 1.0.x — rode --atualizar --gates-substituir)"
@@ -157,21 +161,21 @@ if [ -e "$DEST/CLAUDE.md" ]; then
   if grep -qE '^@AGENTS\.md\s*$' "$DEST/CLAUDE.md"; then echo "  mantido  CLAUDE.md (já importa AGENTS.md)"; mantidos=$((mantidos+1))
   else printf '\n@AGENTS.md\n' >> "$DEST/CLAUDE.md"; echo "  emendado CLAUDE.md (+ linha @AGENTS.md; nada removido)"; criados=$((criados+1)); fi
 else put templates/CLAUDE.md CLAUDE.md; fi
-# Pré-varredura (só em --atualizar, F2-R9): existe algum gate JÁ instalado que vai ficar
-# diferente do plugin depois desta execução (não será substituído)? Se sim, MISTO=1 e os
-# arquivos NOVOS de test/ (ver put_gate) vão para .novo em vez de instalar direto — nunca
-# scripts/ de uma versão convivendo com test/ de outra.
-if [ "$ATUALIZAR" -eq 1 ]; then
-  while IFS= read -r f; do
-    relm="${f#"$ROOT/gates/"}"; dstm="$DEST/$GATES_DIR/$relm"
-    [ -e "$dstm" ] || continue
-    cmp -s "$f" "$dstm" && continue
-    if [ "$GATES_SUBSTITUIR" -eq 0 ]; then MISTO=1; break; fi
-    discom="$(sha256 "$dstm")"; gravadom="$(hash_manifesto "$relm")"
-    [ -n "$gravadom" ] || gravadom="$(hash_anterior "$relm")"
-    if [ -z "$gravadom" ] || [ "$gravadom" != "$discom" ]; then MISTO=1; break; fi
-  done < <(find "$ROOT/gates" -type f -not -path '*/node_modules/*' -not -name .DS_Store | sort)
-fi
+# Pré-varredura (F2-R9, roda SEMPRE — com ou sem flags): existe algum gate JÁ instalado
+# (tools/gabarito-gates/ pode já existir de uma instalação 1.0.x anterior, mesmo sem
+# --atualizar) que vai ficar diferente do plugin depois desta execução (não será
+# substituído)? Se sim, MISTO=1 — ver put_gate para o que isso muda nos arquivos NOVOS.
+# Repo novo (tools/gabarito-gates/ ainda não existe): todo `[ -e "$dstm" ]` abaixo falha,
+# o loop não encontra nada e MISTO continua 0 — instalação limpa não regride.
+while IFS= read -r f; do
+  relm="${f#"$ROOT/gates/"}"; dstm="$DEST/$GATES_DIR/$relm"
+  [ -e "$dstm" ] || continue
+  cmp -s "$f" "$dstm" && continue
+  if [ "$GATES_SUBSTITUIR" -eq 0 ]; then MISTO=1; break; fi
+  discom="$(sha256 "$dstm")"; gravadom="$(hash_manifesto "$relm")"
+  [ -n "$gravadom" ] || gravadom="$(hash_anterior "$relm")"
+  if [ -z "$gravadom" ] || [ "$gravadom" != "$discom" ]; then MISTO=1; break; fi
+done < <(find "$ROOT/gates" -type f -not -path '*/node_modules/*' -not -name .DS_Store | sort)
 # gates → tools/gabarito-gates (arquivo a arquivo)
 while IFS= read -r f; do put_gate "${f#"$ROOT/gates/"}"; done < <(find "$ROOT/gates" -type f -not -path '*/node_modules/*' -not -name .DS_Store | sort)
 escrever_manifesto

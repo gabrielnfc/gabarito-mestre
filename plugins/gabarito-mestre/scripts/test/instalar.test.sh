@@ -14,6 +14,8 @@
 #  M6  gravar no manifesto o hash de arquivo "mantido" que o instalador não escreveu
 #  M7  cenário 8/8b: remover o fallback de gates/.hashes-anteriores (hash_anterior sempre vazio)
 #  M8  cenário 8/8b: MISTO nunca fica 1 (novos de test/ sempre instalados direto)
+#  M9  cenário 9: voltar a condicionar a pré-varredura MISTO a --atualizar (sem flag nenhuma
+#      nunca detecta versão mista, e test/ novo é criado sobre scripts/ antigos)
 set -eu
 AQUI="$(cd "$(dirname "$0")" && pwd)"
 INSTALAR="$AQUI/../instalar.sh"
@@ -154,6 +156,31 @@ NOVO_TEST_REAL="$(find "$R8B/$GATES/test" -name "*.novo" | wc -l | tr -d ' ')"
 check "6 testes novos da 1.1.0 foram para .novo"     '[ "$NOVO_TEST_REAL" -eq 6 ]'
 NOVO_CONTADO="$(printf '%s' "$SAIDA8B" | grep -oE '[0-9]+ \.novo' | grep -oE '^[0-9]+')"
 check "contador do resumo (\$novos .novo) bate com os 6 arquivos .novo de test/" '[ "$NOVO_CONTADO" = "$NOVO_TEST_REAL" ]'
+
+echo "── cenário 9: SEM flags sobre 1.0.1 REAL já instalado — nunca cria test/ novo sobre scripts/ antigos"
+R9="$(novo_repo)"
+mkdir -p "$R9/$GATES"
+FX9="$(fixture_101_gates)"
+cp -R "$FX9/." "$R9/$GATES/"
+if SAIDA9="$(bash "$INSTALAR" "$R9" 2>&1)"; then RC9=0; else RC9=$?; fi
+check "sai 0"                                        '[ "$RC9" -eq 0 ]'
+check "harness-doctor.mjs 1.0.1 NÃO foi tocado (sem --atualizar, R2)" 'cmp -s "$R9/$GATES/scripts/harness-doctor.mjs" "$FX9/scripts/harness-doctor.mjs"'
+check "nenhum arquivo criado direto dentro de tools/gabarito-gates/ (tudo .novo)" \
+  '[ ! -e "$R9/$GATES/scripts/capacidade.mjs" ] && [ ! -e "$R9/$GATES/test/capacidade.test.mjs" ]'
+check "script novo da 1.1.0 (capacidade.mjs) foi para .novo"  '[ -f "$R9/$GATES/scripts/capacidade.mjs.novo" ]'
+check "teste novo da 1.1.0 (capacidade.test.mjs) foi para .novo" '[ -f "$R9/$GATES/test/capacidade.test.mjs.novo" ]'
+NOVO9_REAL="$(find "$R9/$GATES" -name "*.novo" | wc -l | tr -d ' ')"
+check "11 arquivos novos da 1.1.0 (4 scripts + 6 test + .hashes-anteriores) foram para .novo" '[ "$NOVO9_REAL" -eq 11 ]'
+check "aviso de versão mista aparece mesmo sem --atualizar" 'printf "%s" "$SAIDA9" | grep -q "tools/gabarito-gates em 1.0.x — rode --atualizar --gates-substituir"'
+if NPMOUT9="$(cd "$R9/$GATES" && node --test test/*.test.mjs 2>&1)"; then NPMRC9=0; else NPMRC9=$?; fi
+check "node --test test/*.test.mjs continua sendo a suíte 1.0.1 (sem os testes novos) e é verde" '[ "$NPMRC9" -eq 0 ]'
+
+echo "── cenário 9b: repo NOVO (sem tools/) sem flags — instalação limpa não regride"
+R9B="$(novo_repo)"
+if SAIDA9B="$(bash "$INSTALAR" "$R9B" 2>&1)"; then RC9B=0; else RC9B=$?; fi
+check "sai 0"                                        '[ "$RC9B" -eq 0 ]'
+check "gates instalados direto (sem .novo)"          '[ -f "$R9B/$GATES/scripts/harness-doctor.mjs" ] && [ -z "$(find "$R9B/$GATES" -name "*.novo")" ]'
+check "sem aviso de versão mista (nada estava instalado antes)" '! printf "%s" "$SAIDA9B" | grep -q "tools/gabarito-gates em 1.0.x"'
 
 echo "── $passou ok, $falhou falha(s)"
 [ "$falhou" -eq 0 ]
