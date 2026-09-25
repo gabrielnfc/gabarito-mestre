@@ -73,7 +73,7 @@ Para o item 11, cruze a lista de arquivos de cada task com a lista de contenda (
 
 Tipo lido de `tipo:` no frontmatter ou do título. Card vindo de ferramenta (ClickUp, Jira…): o usuário cola o texto ou aponta o arquivo exportado — esta skill **não lê MCP**.
 
-**Comum a todo card** (`fluxo.md §2` e `§5`): frontmatter com `id` (casa `fluxo.idPadrao`), `tipo`, `status` (nome que existe em `fluxo.status` do nível) · **vínculo**: PBI tem `epic:`; Epic tem `iniciativa:` (ou override com motivo); Iniciativa não tem pai · sem vínculo = item "fio condutor (R19)" (AVISO sem `fluxo.resolvidoEm`) · **DoR** do nível (`fluxo.md §1`) antes de entrar em execução.
+**Comum a todo card** (`fluxo.md §2` e `§5`): frontmatter com `id` (casa `fluxo.idPadrao`), `tipo` · **status**: coluna com chave em `fluxo.status.<nível>` (`fluxo.md §4`) — bate com o valor mapeado da chave → confere como hoje, diverge → falta; coluna **sem** chave em `fluxo.status` (ex.: `Backlog` e `Em refinamento` em FL2, e todo o FL3, que não tem `fluxo.status.FL3`) é **opção, não comprometido** (Emenda #7 do plano-mestre) — linha informativa, nunca `FALTA`/`SUSPEITA`, e nenhuma emenda que empurre o card de coluna · **vínculo**: PBI tem `epic:`; Epic tem `iniciativa:` (ou override com motivo); Iniciativa não tem pai · sem vínculo = item "fio condutor (R19)" (AVISO sem `fluxo.resolvidoEm`) · **DoR** do nível (`fluxo.md §1`) antes de entrar em execução.
 
 | Tipo | Campos obrigatórios (`fluxo.md §2`) | Reprova se |
 |---|---|---|

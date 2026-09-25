@@ -123,9 +123,11 @@ Sem ferramenta (`arquivos`): pergunte ID e nome da Iniciativa; `url` fica `""`.
 | 2 | Nomes dos status FL2 (Epic) para as chaves `preparado` · `em_execucao` · `em_validacao` · `concluido` | `statusSugerido.FL2` da entrada casada (os nomes que a ferramenta mostra); em `arquivos`: os **nomes de coluna** de `fluxo.md §4` — `Preparado`, `Em execução`, `Em validação`, `Concluído` (FL2 tem ainda `Backlog` e `Em refinamento`, que não são chaves do harness) |
 | 3 | Nomes dos status FL1 (PBI) para as chaves `preparado` · `em_execucao` · `revisao` · `pronto` · `concluido` | `statusSugerido.FL1` da entrada casada; em `arquivos`: `Preparado`, `Em execução`, `Revisão e teste`, `Pronto para liberar`, `Concluído` |
 | 4 | Formato de ID (regex) | `^[A-Z]+-\d+$` |
-| 5 | Como o PBI aponta para o Epic: `tipo` (`campo` · `relacionamento` · `frontmatter`) e `nome` na ferramenta | com ferramenta: o vínculo que `hierarquiaSugerida.FL1`/`comoBuscarIniciativa` citam (custom field → `campo`; relation, link ou lista-pai → `relacionamento`), com o nome que a ferramenta mostra; em `arquivos`: `frontmatter` / `epic` (a chave que o cartão de sessão lê em `docs/fluxo/pbis/<PBI>.md`) |
+| 5 | Como o PBI aponta para o Epic: `tipo` (`campo` · `relacionamento` · `frontmatter`) e `nome` na ferramenta — **só com ferramenta MCP**; em `arquivos` não se pergunta (ver nota abaixo) | com ferramenta: o vínculo que `hierarquiaSugerida.FL1`/`comoBuscarIniciativa` citam (custom field → `campo`; relation, link ou lista-pai → `relacionamento`), com o nome que a ferramenta mostra |
 | 6 | **Escrita autorizada na ferramenta?** (ADR-FLX-2) | **não** — só vira `true` com resposta explícita; anote quem e quando |
 | 7 | Áreas do repo e dono de cada uma (TIM-1) | uma área: `*` → o usuário |
+
+Em `arquivos`, o vínculo é sempre `{ "tipo": "frontmatter", "nome": "epic" }` — **não pergunte** a pergunta 5; diga em uma linha: `o cartão de sessão lê `epic:` no frontmatter do PBI`.
 
 As **chaves** de `fluxo.status` (`preparado`, `em_execucao`, …) nunca mudam — são o que `MOVIMENTO` e o cartão usam; só os **valores** variam por ferramenta. Em `arquivos`, o valor é o que vai em `status:` no frontmatter de `docs/fluxo/**/*.md`.
 
@@ -136,14 +138,14 @@ Monte o JSON e grave (o script faz merge, preserva `_comment` e chaves desconhec
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding-config.mjs" --root . --set fluxo '{
   "ferramenta": "<clickup|jira|linear|notion|trello|asana|monday|arquivos|nome livre>",
-  "mcp": "<nome do servidor ou null>",
+  "mcp": <"nome do servidor" ou null sem aspas — nunca grave a string "null">,
   "iniciativa": { "id": "<ID>", "nome": "<nome>", "url": "<url sem token ou vazio>" },
   "mapeamento": { "FL3": "<resposta 1>", "FL2": "<resposta 1>", "FL1": "<resposta 1>" },
   "status": {
     "FL2": { "preparado": "<…>", "em_execucao": "<…>", "em_validacao": "<…>", "concluido": "<…>" },
     "FL1": { "preparado": "<…>", "em_execucao": "<…>", "revisao": "<…>", "pronto": "<…>", "concluido": "<…>" }
   },
-  "vinculoPbiEpic": { "tipo": "<campo|relacionamento|frontmatter — resposta 5>", "nome": "<nome na ferramenta — resposta 5>" },
+  "vinculoPbiEpic": { "tipo": "<arquivos: sempre `frontmatter` · com ferramenta: resposta 5 (`campo`|`relacionamento`)>", "nome": "<arquivos: sempre `epic` · com ferramenta: resposta 5>" },
   "escrita": false,
   "idPadrao": "<resposta 4>",
   "ledgerDir": "docs/ledgers",
