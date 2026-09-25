@@ -46,8 +46,8 @@ Repos 1.0.x não mudam até rodarem `instalar.sh --atualizar`.
   `tag-semver` (opcional), `agents-tamanho` (núcleo ≤ 17.291 B, Apêndice ≤ 4.096 B), `paralelismo-calibrado` e
   `warn modelo-resolvido` (aviso, não entra no nível); `--cache` (24 h); linha "checagens novas da 1.1.0: rode o
   onboarding ou declare o nível medido".
-- **Instalador** — `--atualizar` (`.novo` + `diff --stat`, aviso "R19–R21 são do harness; regras de projeto passam a
-  R30+"), `--atualizar --gates-substituir` (ADR-TIM-1: só `tools/gabarito-gates/`, `.bak`, recusa por hash divergente),
+- **Instalador** — `--atualizar` (`.novo` + `diff --stat`, aviso de que R19–R21 agora são do harness e as regras de
+  projeto passam a R30+, com renumeração no Apêndice), `--atualizar --gates-substituir` (ADR-TIM-1: só `tools/gabarito-gates/`, `.bak`, recusa por hash divergente),
   `--codeowners`; `tools/gabarito-gates/.instalado.json`; emenda do `.gitignore` (`.harness/doctor-cache.json`,
   `.harness/fluxo-cache.json`, `*.novo`, `*.bak`); `scripts/test/instalar.test.sh`.
 - **Conformidade** — checklists por tipo de card (Iniciativa, Epic com lista de PBIs, US, Enabler, TechDebt, Tarefa,
