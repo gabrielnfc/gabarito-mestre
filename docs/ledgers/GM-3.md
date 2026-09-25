@@ -1,0 +1,46 @@
+# Ledger — PBI: GM-3 · Epic: (b) — repo do plugin, sem onboarding   Plano: docs/superpowers/plans/2026-09-24-workflow-true-1.1.0-fase-3-hooks.md   Branch: enabler/GM-3-hooks @ 3143d38   Spec (autoridade): docs/superpowers/specs/2026-09-24-workflow-true-design.md
+Rulings herdados: R1, R2, R21, F1-R1, F2-R1..R11   Contexto externo: nenhum (hooks testados contra scripts falsos em tmpdir)
+
+## LER PRIMEIRO — 2026-09-24
+Fase 3 do rollout 1.1.0: `_common.sh` generalizado (T12), `guard-versioning.sh` R20 (T13), `session-card.sh` (T14), `remind-orchestrator.sh` (T15), `hooks.json` (T16). Fase 2 integrada em `main` (PR #2, `3143d38`). Baseline medida: gates 236 mjs + 27 ts · instalador 70 ok · hooks 148.
+Ordem: T12 → (T13 em worktree próprio ‖ T14 → T15 neste worktree, conforme slots medidos) → T16 sozinha. Emendas da fase 2 valem: `GABARITO_PID_RAIZ=$PPID` e `--plugin-root` sempre.
+
+## Pre-flight — pares produz × consome
+| Par | Produz × Consome | Achado |
+|---|---|---|
+| T12 × T13/T14/T15 | T12 cria `gabarito_escape_hatch`, `gabarito_repo_root`, `gabarito_config_get`, `gabarito_ere`, `gabarito_strip_write_heredocs` e os helpers de teste `cleanEnv`/`runAt`/`fixtureRepo`/`runCommon` · os três consomem | T12 antes de todas |
+| T14 × T15 | T14 cria o helper de teste `fakePluginRoot` (com `capacidade`) · T15 usa | T15 depois de T14 |
+| T13 × T14/T15 | todos acrescentam `describe` ao fim de `guards.test.mjs` e linhas M6–M13 no cabeçalho | contenda textual só; união resolve |
+| T13–T15 × T16 | três scripts · `hooks.json` os registra | T16 por último, sozinha |
+| T14 × emenda fase 2 | script do plano chama `cartao-sessao.mjs` sem `GABARITO_PID_RAIZ` | lacuna → F3-R1 |
+| T15 × emenda fase 2 | script do plano chama `capacidade.mjs` sem `GABARITO_PID_RAIZ` | lacuna → F3-R2 |
+| T12..T16 (texto próprio) | cada task manda commitar `docs/ledgers/GM-3.md` junto | conflito com execução paralela → F3-R4 |
+
+## Rulings de pre-flight
+F3-R1 — T14 exporta `GABARITO_PID_RAIZ=$PPID` antes do `node` e ganha teste (script falso ecoa a variável; tem de ser o PID de quem chamou o hook, não o bash do hook) — emenda da fase 2 vence o texto do plano — custo-se-errado: um teste a mais.
+F3-R2 — T15 idem para `capacidade.mjs` (sem isso `process.ppid` é o bash do hook e o Claude Code conta como pesado) — custo-se-errado: um teste a mais.
+F3-R3 — paralelismo: T13 roda em worktree/branch próprio a partir da cabeça de T12, em paralelo com T14→T15 neste worktree, **só se** `capacidade.mjs` medir slots ≥ 2 no dispatch (pedido do usuário: velocidade sem estourar o MacBook); com slot 1, serial T13→T14→T15. T13 integra por rebase feito pelo próprio implementador (resolução por união) — custo-se-errado: um rebase com conflito textual.
+F3-R4 — implementadores não tocam `docs/ledgers/GM-3.md`; o orquestrador o atualiza e commita após cada review — custo-se-errado: nenhum.
+F3-R5 — modelos: sonnet em T12–T15 (bash com comportamento a preservar/integrar), haiku em T16 (JSON + testes transcritos) — custo-se-errado: rodada extra.
+
+## Progresso
+Task T12: DONE (sonnet; fd9fd2d feat, 06ce11f test). Hooks 148 → RED 151/157 → GREEN 157 → 158 após correção. `_common.sh` 6→9 funções; fallback jq→node→python3 3/3 medido; instalador 70 ok. Review adversarial (sonnet): M1, M3, M4, M5 + 2 próprias derrubaram; 1 BLOCKER — a validação do nome da VAR antes do `eval` não tinha teste (o teste com espaço passava por word-splitting; payload com `${IFS}` executava código com a validação removida). Corrigido com teste de sentinela em tmpdir; re-review confirmou por mutação (158→157, cai só o teste novo). M2 não derruba mais (linha redundante com a checagem de tamanho); cabeçalho de mutações ajustado. Capacidade medida no fim: slots 1 (4 pesados) → T13 serial (F3-R3).
+Task T13: DONE (sonnet; 140e455). Hooks 158 → RED 159/233 (74 falhas, exit 127) → GREEN 233. Corpus `versionamento.txt` 63 entradas (35 PASSA · 26 BLOQUEIA · 2 HATCH · 7 worktree). Pior caso medido 176 ms (heredoc em `-m`), timeout 10 s. `claude plugin validate --strict` ok. Review adversarial (sonnet) APROVADO: M5, M6, M7, M8, M12, M13 + 1 própria (`gabarito_ere` identidade) derrubaram; sondas `git -C`, `git -c`, `checkout -b válido && commit inválido` bloqueiam. Pendência: comportamento em GNU (CI ubuntu) não medido localmente.
+Task T14: DONE (sonnet; 5aaffe1). Hooks 233 → RED 233/243 (10 falhas) → GREEN 243. F3-R1 aplicado (`export GABARITO_PID_RAIZ=$PPID`, teste cai sem o export). Prova de mão com o `cartao-sessao.mjs` real neste repo: uma linha "harness sem onboarding", exit 0. Review adversarial (sonnet) APROVADO: M9 + 3 próprias (sem export, escape de barra, STATUS ignorado) derrubaram; JSON válido com bytes de controle e UTF-8; stdin drena sem travar. Minor diferido: ramo "node ausente" sem teste.
+Task T15: DONE (sonnet; f7eebde). Hooks 243 → RED (exit 127) → GREEN 251. F3-R2 aplicado (`export GABARITO_PID_RAIZ=$PPID` antes de `capacidade.mjs`; teste cai sem o export). Prova de mão com `capacidade.mjs` real: `slots: 1` medido. `capacidade.mjs` não aceita `--plugin-root` (a emenda vale só para o cartão). O `harness.config.json` da prova de mão ficou solto na raiz do worktree (o guard R2 barrou o `rm` do subagente); o orquestrador o moveu para o scratch, sem apagar. Review adversarial (sonnet) APROVADO: M10 + 2 próprias (sem export; sem o silêncio da decisão 4) derrubaram. Minor diferido: a checagem `Number.isInteger(slots)` não tem teste (a saída continua JSON válido; efeito só cosmético).
+Task T16: DONE (haiku; c104b4b). Hooks 251 → GREEN 256. `hooks.json`: PreToolUse/Bash com 3 guards (timeout 10), SessionStart `startup|resume|clear|compact` (30), UserPromptSubmit sem matcher (5); `plugin.json` sem `hooks`. `claude plugin validate --strict` ok (o review provou que ele faz parse do `hooks.json`). Gate: corpus 63 · 35 PASSA · 26 BLOQUEIA · 7 worktree · 2 HATCH; `_common.sh` 9 funções. Review adversarial (sonnet) APROVADO: M11 + 2 próprias (timeout 60, ordem dos guards) derrubaram. Não medido: carga do plugin numa sessão interativa real (passo 5 do brief). Pendência para T25: seção "Hooks" do README (três hooks novos, hatch `GABARITO_ALLOW_VERSIONING`, hatches não cruzam fora do par).
+
+Review final da branch (fable): COM CORREÇÕES. Suítes verdes e M5–M13 + 4 mutações próprias entre tasks derrubaram. MAJOR 1 — o rótulo do hatch ia para `systemMessage` sem escape (JSON inválido com aspas no comando). MAJOR 2 — só o primeiro `git commit` do comando era validado (`git commit -m "docs: a" && git commit -m "arrumei"` passava). Minors: prefixos `then/do/{/time/env/command` escapavam da posição de comando; `-m"x"` colado; regex de config inválido virava deny com razão enganosa; `git branch -f`/`--orphan`; `git -c k="v com espaço"`; hatch inline lê só a 1ª atribuição; `-F` lê a 1ª linha de qualquer arquivo. Integração medida: `legitimos.txt` pelo guard onboarded sem falso positivo novo; 3 guards somam 75–215 ms por comando; neste repo (sem onboarding) os três hooks novos são fail-open. GNU: NÃO MEDIDO (registry do docker inalcançável; um `docker pull` pendurado do revisor foi encerrado pelo orquestrador) — o CI ubuntu da PR é o gate.
+Ruling F3-R6 — uma rodada de correção: 1, 2, 3, 4 e 7 com teste; 5, 6, 8 e 9 como "Limites declarados" no cabeçalho de `guard-versioning.sh` — custo-se-errado: um bypass declarado em vez de fechado.
+Fix wave: f51613f (achado 1) · 7420786 (achados 2, 3, 4, 7 + limites). Hooks 256 → 269; corpus 74 entradas (36 PASSA · 36 BLOQUEIA · 8 worktree · 2 HATCH); pior caso 383 ms. Re-review (sonnet) APROVADO: cada achado confirmado por mutação; trocar o herestring do loop por pipe derruba 32 testes (a escolha é load-bearing).
+Ruling F3-R7 — dois achados novos do re-review ficam diferidos, sem segunda rodada (regra do método): N1 `git commit -amFoo` / `-am"msg"` (flag combinado colado) passa sem inspeção; N2 `git commit -m -F arq` cai no fail-open de "-F ausente" em vez de validar a mensagem "-F". Mesma classe dos limites declarados — custo-se-errado: dois bypass raros do R20 até a próxima fase que tocar o hook.
+Minors diferidos para T25/fase 6: ramo "node ausente" do cartão sem teste; `Number.isInteger(slots)` sem teste; N1/N2 acima; carga do plugin numa sessão interativa real não medida; README "Hooks".
+Tree final: hooks 269 · instalador 70 · gates 236 mjs + 27 ts · `claude plugin validate --strict` ok.
+
+PR #3 aberta. CI: hooks em ubuntu e macOS verdes (GNU agora medido), validate ok, gates ok; job "doctor não se auto-detecta (M10)" vermelho — `health-commit` achou evidência em `hooks/test/guards.test.mjs` (texto "commit … versionamento" casa a regex da checagem).
+Ruling F3-R8 — `gabarito-mestre/hooks/` entra no `excludePaths` do doctor (mesmo motivo de `gates/` e `reference/`), regex intacta — custo-se-errado: um caminho de app contendo literalmente `gabarito-mestre/hooks/` deixa de contar como evidência.
+Fix fc622fe: gates 236 → 238 mjs (+ 27 ts); check do CI reproduzido local → ok. Review (sonnet) APROVADO: a mutação que remove a entrada derruba o teste novo. Minor diferido: `excludePaths` casa por substring e não tem teste de fronteira (alargar para `hooks/` não derruba nada) — convenção anterior, vale para as quatro entradas.
+
+## CORTE DA SESSÃO (com motivo)
+
+## FECHO — PR mergeada

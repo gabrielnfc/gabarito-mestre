@@ -64,6 +64,6 @@ fi
 
 [ -z "$familia" ] && exit 0
 
-if gabarito_escape_hatch "R2 · $familia"; then exit 0; fi
+if gabarito_escape_hatch "R2 · $familia" GABARITO_ALLOW_DESTRUCTIVE; then exit 0; fi
 
 gabarito_deny "Comando destrutivo bloqueado pela regra R2 (padrão: $familia). Descreva o que seria apagado (alvo, filtro, contagem estimada, ambiente) e peça autorização ao usuário antes de repetir. Ver AGENTS.md §1. Só com autorização do usuário: repita com GABARITO_ALLOW_DESTRUCTIVE=\"autorizado por <quem> em <data> — <o quê>\" no início do comando."

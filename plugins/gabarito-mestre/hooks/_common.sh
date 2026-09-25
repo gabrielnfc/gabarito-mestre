@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Funções comuns aos dois guards do gabarito-mestre. Compatível com bash 3.2 (macOS).
-# Não é hook: é carregado por `source` pelos guards.
+# Funções comuns aos hooks do gabarito-mestre. Compatível com bash 3.2 (macOS).
+# Não é hook: é carregado por `source` pelos hooks.
 
 # Lê o JSON do stdin e devolve `.tool_input.command` em GABARITO_CMD.
 # Ordem de parser: jq (≈5 ms) → node → python3. Sem nenhum deles, FAIL-OPEN DECLARADO (G9):
@@ -44,19 +44,35 @@ gabarito_json_escape() {
     }'
 }
 
-# Escape hatch nominal e grepável. Duas variáveis (a segunda é alias para deixar o R3 legível):
-#   GABARITO_ALLOW_DESTRUCTIVE="motivo"   GABARITO_ALLOW_PRODUCTION="motivo"
+# Escape hatch nominal e grepável. Assinatura: gabarito_escape_hatch <ROTULO> [<VAR>]
+#   gabarito_escape_hatch "R2 · rm recursivo" GABARITO_ALLOW_DESTRUCTIVE
+#   gabarito_escape_hatch "R20 · cabeçalho" GABARITO_ALLOW_VERSIONING
+# <VAR> é o nome da variável que libera ESTE hook. Compatibilidade medida (README "Escape hatch"):
+# GABARITO_ALLOW_DESTRUCTIVE e GABARITO_ALLOW_PRODUCTION aceitam uma pela outra — SÓ entre essas duas.
+# Qualquer outra variável (ex.: GABARITO_ALLOW_VERSIONING) libera só o seu hook: hatches não cruzam.
+# Sem <VAR> (chamada antiga com um argumento) vale o par DESTRUCTIVE/PRODUCTION.
 # Vale (1) no ambiente do processo do Claude Code, ou (2) como PREFIXO do próprio comando —
 # só no INÍCIO do comando, para que comentário ou `echo` no meio não libere:
-#   GABARITO_ALLOW_DESTRUCTIVE='expurgo de build autorizado por gabriel 2026-09-05' rm -rf build
+#   GABARITO_ALLOW_DESTRUCTIVE='expurgo de build autorizado por gabriel 2026-09-05' <comando>
 # O motivo precisa ter ≥ 8 caracteres e ≥ 2 palavras — "lol" não é motivo. Vazio NÃO libera.
 # Devolve 0 (liberado) e imprime o aviso; devolve 1 se não há liberação.
 gabarito_escape_hatch() {
-  local motivo="${GABARITO_ALLOW_DESTRUCTIVE-}"
-  [ -z "$motivo" ] && motivo="${GABARITO_ALLOW_PRODUCTION-}"
-  local origem="env"
+  local rotulo="$1"
+  local vars="${2-}"
+  case "$vars" in
+    ""|GABARITO_ALLOW_DESTRUCTIVE|GABARITO_ALLOW_PRODUCTION) vars="GABARITO_ALLOW_DESTRUCTIVE GABARITO_ALLOW_PRODUCTION" ;;
+  esac
+  local motivo="" v origem="env"
+  for v in $vars; do
+    case "$v" in
+      *[!A-Z0-9_]*|"") continue ;;   # só identificador entra no eval
+    esac
+    [ -z "$motivo" ] && eval "motivo=\${$v-}"
+  done
   if [ -z "$motivo" ]; then
-    motivo=$(printf '%s' "$GABARITO_CMD" | head -n1 | sed -nE "s/^[[:space:]]*GABARITO_ALLOW_(DESTRUCTIVE|PRODUCTION)=(\"([^\"]*)\"|'([^']*)'|([^[:space:]]*)).*/\3\4\5/p")
+    local alt
+    alt=$(printf '%s' "$vars" | tr ' ' '|')
+    motivo=$(printf '%s' "$GABARITO_CMD" | head -n1 | sed -nE "s/^[[:space:]]*(${alt})=(\"([^\"]*)\"|'([^']*)'|([^[:space:]]*)).*/\3\4\5/p")
     origem="inline"
   fi
   motivo=$(printf '%s' "$motivo" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
@@ -64,14 +80,59 @@ gabarito_escape_hatch() {
   local palavras
   palavras=$(printf '%s' "$motivo" | wc -w | tr -d ' ')
   if [ "${#motivo}" -lt 8 ] || [ "$palavras" -lt 2 ]; then
-    echo "gabarito-mestre: escape hatch IGNORADO ($1) — motivo curto demais (mínimo 8 caracteres e 2 palavras): '$motivo'" >&2
+    echo "gabarito-mestre: escape hatch IGNORADO ($rotulo) — motivo curto demais (mínimo 8 caracteres e 2 palavras): '$motivo'" >&2
     return 1
   fi
-  local esc
+  local esc esc_rotulo esc_origem
   esc=$(gabarito_json_escape "$motivo")
-  echo "gabarito-mestre: ESCAPE HATCH usado ($1, via $origem) — motivo: $motivo" >&2
-  printf '{"systemMessage":"⚠ gabarito-mestre: escape hatch usado (%s, via %s). Motivo declarado: %s"}\n' "$1" "$origem" "$esc"
+  esc_rotulo=$(gabarito_json_escape "$rotulo")
+  esc_origem=$(gabarito_json_escape "$origem")
+  echo "gabarito-mestre: ESCAPE HATCH usado ($rotulo, via $origem) — motivo: $motivo" >&2
+  printf '{"systemMessage":"⚠ gabarito-mestre: escape hatch usado (%s, via %s). Motivo declarado: %s"}\n' "$esc_rotulo" "$esc_origem" "$esc"
   return 0
+}
+
+# Raiz do repositório: `git rev-parse --show-toplevel` (sessão aberta em subpasta de monorepo resolve
+# para a raiz); sem git ou fora de repo, o diretório atual. Nunca falha, nunca imprime erro.
+gabarito_repo_root() {
+  local r
+  r=$(git rev-parse --show-toplevel 2>/dev/null)
+  if [ -n "$r" ]; then printf '%s' "$r"; else printf '%s' "$(pwd -P)"; fi
+}
+
+# Lê um valor de `<raiz>/harness.config.json` por caminho pontuado: gabarito_config_get versionamento.resolvidoEm [raiz]
+# Saída: escalar cru (string/número/true/false); array → um elemento por linha; objeto → JSON compacto;
+# ausente, null, arquivo ausente ou JSON inválido → vazio (quem chama decide o fail-open).
+# Parser: jq → node → python3, como gabarito_read_command. Sem parser: vazio.
+gabarito_config_get() {
+  local caminho="$1" raiz="${2-}" arq
+  [ -z "$raiz" ] && raiz=$(gabarito_repo_root)
+  arq="$raiz/harness.config.json"
+  [ -f "$arq" ] || return 0
+  if command -v jq >/dev/null 2>&1; then
+    jq -r --arg p "$caminho" 'getpath($p | split(".")) | if . == null then empty elif type == "array" then .[] elif type == "object" then tojson else tostring end' "$arq" 2>/dev/null
+  elif command -v node >/dev/null 2>&1; then
+    node -e 'const [f,p]=process.argv.slice(1);let j;try{j=JSON.parse(require("fs").readFileSync(f,"utf8"))}catch(e){process.exit(0)}let v=j;for(const k of p.split(".")){if(v==null||typeof v!=="object"){v=undefined;break}v=v[k]}if(v==null)process.exit(0);if(Array.isArray(v))process.stdout.write(v.map(String).join("\n")+"\n");else if(typeof v==="object")process.stdout.write(JSON.stringify(v)+"\n");else process.stdout.write(String(v)+"\n")' "$arq" "$caminho" 2>/dev/null
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import sys,json
+f,p=sys.argv[1],sys.argv[2]
+try: j=json.load(open(f))
+except Exception: sys.exit(0)
+v=j
+for k in p.split("."):
+  v=v.get(k) if isinstance(v,dict) else None
+  if v is None: sys.exit(0)
+if isinstance(v,bool): print("true" if v else "false")
+elif isinstance(v,list): print("\n".join(str(x) for x in v))
+elif isinstance(v,dict): print(json.dumps(v))
+else: print(v)' "$arq" "$caminho" 2>/dev/null
+  fi
+  return 0
+}
+
+# Traduz um regex vindo do JSON (estilo JavaScript: \d, \w) para ERE do grep -E do sistema (BSD e GNU).
+gabarito_ere() {
+  printf '%s' "$1" | sed -E 's/\\d/[0-9]/g; s/\\w/[A-Za-z0-9_]/g'
 }
 
 # Bloqueia: JSON no stdout (lido pelo Claude Code mesmo com exit 2) + motivo no stderr + exit 2.
@@ -95,7 +156,9 @@ gabarito_deny() {
 #    O corte é no próximo `|`, `;` ou `&` — o que vem depois (`| xargs rm -rf`) continua varrido.
 # LIMITE DECLARADO: script escrito por heredoc/Write e executado no comando seguinte é invisível a
 # este grep — para isso existem as guardas de runtime (G3/G7) e o review adversarial.
-gabarito_scan_text() {
+# Só a etapa 1 (heredocs de escrita), sem remover grep/sed/commit: é o que guard-versioning.sh usa,
+# porque lá `git commit -m` É o objeto inspecionado — mas anotação em heredoc citando um commit não é commit.
+gabarito_strip_write_heredocs() {
   awk '
     BEGIN { skip = 0; quoted = 0 }
     skip == 1 {
@@ -111,8 +174,10 @@ gabarito_scan_text() {
         gsub(/["'"'"']/, "", t); term = t; skip = 1; print; next
       }
       print
-    }' | LC_ALL=C sed -E 's/(^|[|;&])[[:space:]]*(git[[:space:]]+(grep|log|commit)|grep|egrep|fgrep|rg|ag|sed|echo|printf)([[:space:]]+[^|;&]*)?/\1 /g'
+    }'
 }
 
-# Compatibilidade com o nome antigo.
-gabarito_strip_write_heredocs() { gabarito_scan_text; }
+# Etapas 1 + 2: o que guard-destructive.sh e guard-production.sh varrem.
+gabarito_scan_text() {
+  gabarito_strip_write_heredocs | LC_ALL=C sed -E 's/(^|[|;&])[[:space:]]*(git[[:space:]]+(grep|log|commit)|grep|egrep|fgrep|rg|ag|sed|echo|printf)([[:space:]]+[^|;&]*)?/\1 /g'
+}
