@@ -24,6 +24,12 @@
 # FAIL-OPEN DECLARADO (G9): sem `versionamento.resolvidoEm` (repo sem onboarding) → aviso em stderr, exit 0.
 # Escape hatch: GABARITO_ALLOW_VERSIONING="motivo" (env ou prefixo NO INÍCIO do comando); ≥8 chars e ≥2 palavras.
 # Hatches não cruzam: GABARITO_ALLOW_DESTRUCTIVE/PRODUCTION NÃO liberam este hook.
+#
+# LIMITES DECLARADOS (não barra; registrado na review final F3-R6, não corrigido nesta rodada):
+#   · git branch -f|--force|-q · git checkout/switch --orphan: fora do escopo desta spec (achado 5).
+#   · git -c chave="valor com espaço": o valor não casa [^[:space:]]+, `-c` com valor entre aspas com espaço não é reconhecido (achado 6).
+#   · hatch inline (prefixo GABARITO_ALLOW_VERSIONING="…" no início do comando) lê só a 1ª atribuição de env do comando — a ordem entre duas variáveis de hatch decide qual libera (achado 8, ver _common.sh).
+#   · git commit -F <arquivo>: lê a 1ª linha de qualquer arquivo REGULAR legível a partir do cwd/raiz — não confirma que é de fato uma mensagem de commit (achado 9).
 set -u
 . "$(dirname "$0")/_common.sh"
 gabarito_read_command
@@ -32,16 +38,28 @@ gabarito_read_command
 SCAN=$(printf '%s' "$GABARITO_CMD" | gabarito_strip_write_heredocs)
 
 # Posição de comando (mesma ideia do guard-destructive): início, ou após ; & | ( ` $( — com atribuições antes.
+# POS_LINHA (branch, step 1) NÃO ganha grupos novos — a extração de nome de branch depende de \7/\9 exatos
+# (comentário abaixo). Achado 3 (review final F3-R6, MINOR): também reconhece then/do/else/{ como início de
+# segmento e time/env/command como wrapper antes de `git commit` — guard-destructive já aceita `time rm -rf`/
+# `then rm -rf`; guard-versioning não aceitava o equivalente. Duas variantes da mesma ideia porque `[[:space:]]`
+# com um `\n` LITERAL dentro do colchete quebra `grep -E` no BSD ("brackets not balanced") mas funciona no
+# `match()` do awk — POS_LINHA_COMMIT (grep, linha a linha; sem \n no colchete) para o pré-filtro; POS_TEXTO
+# (awk sobre o texto inteiro; \n no colchete faz cada linha também contar como início) para o step 2.
 NL=$'\n'
 ASSIGN='([A-Za-z_][A-Za-z0-9_]*=("([^"\\]|\\.)*"|'"'"'[^'"'"']*'"'"'|\$\([^)]*\)|[^[:space:]]*)[[:space:]]+)*'
+WRAP_COMMIT='((time|env|command)[[:space:]]+)*'
 GITOPTS='git([[:space:]]+-[A-Za-z-]+([[:space:]=][^[:space:]]+)?)*[[:space:]]+'
 POS_LINHA="(^|[;&|(\`]|\\\$\\()[[:space:]]*${ASSIGN}"           # grep/sed: linha a linha, ^ é início de linha
-POS_TEXTO="(^|[;&|(\`${NL}]|\\\$\\()[[:space:]]*${ASSIGN}"      # awk sobre o texto inteiro: newline entra no colchete
-GITP_L="${POS_LINHA}${GITOPTS}"    # grupos: 1 posição · 2-4 atribuições · 5-6 opções do git → o próximo grupo é \7
-GITP_T="${POS_TEXTO}${GITOPTS}"
+POS_LINHA_COMMIT="(^|[;&|(\`{]|\\\$\\(|[[:space:]](then|do|else)[[:space:]])[[:space:]]*${ASSIGN}${WRAP_COMMIT}"
+POS_TEXTO="(^|[;&|(\`{${NL}]|\\\$\\(|[[:space:]](then|do|else)[[:space:]])[[:space:]]*${ASSIGN}${WRAP_COMMIT}"
+GITP_L="${POS_LINHA}${GITOPTS}"        # grupos: 1 posição · 2-4 atribuições · 5-6 opções do git → o próximo grupo é \7
+GITP_LC="${POS_LINHA_COMMIT}${GITOPTS}" # pré-filtro (grep, linha a linha) — sem backreferences numeradas
+GITP_T="${POS_TEXTO}${GITOPTS}"        # step 2 (awk, texto inteiro) — sem backreferences numeradas
 
 # Pré-filtro barato: sem `git` em posição de comando seguido de commit/checkout/switch/branch/worktree, nada a fazer.
-printf '%s\n' "$SCAN" | LC_ALL=C grep -Eq "${GITP_L}(commit|checkout|switch|branch|worktree)([[:space:]]|$)" || exit 0
+# Usa GITP_LC (mais permissivo que GITP_L) para não barrar aqui a posição then/do/{/time/env/command do achado 3;
+# a extração de NOME de branch (step 1) continua usando GITP_L, sem mudança de comportamento para branch.
+printf '%s\n' "$SCAN" | LC_ALL=C grep -Eq "${GITP_LC}(commit|checkout|switch|branch|worktree)([[:space:]]|$)" || exit 0
 
 ROOT=$(gabarito_repo_root)
 RESOLVIDO=$(gabarito_config_get versionamento.resolvidoEm "$ROOT")
@@ -71,6 +89,22 @@ em_lista() { # em_lista <item> <lista separada por espaço>
   local i; for i in $2; do [ "$i" = "$1" ] && return 0; done; return 1
 }
 
+# Achado 7 (review final F3-R6, MINOR): regex de config inválido para ERE (ex.: "^(feat", parêntese sem
+# fechar) faz `grep -E` sair com status 2 (erro), não 1 (não casou); `! grep ...` trata os dois igual e
+# vira deny com razão enganosa ("fora do padrão"). gabarito_ere_match distingue os três casos e, no erro,
+# é fail-open DECLARADO (G9) citando a CHAVE do config — não deny.
+# gabarito_ere_match <valor> <regex> <chave-completa-do-config-para-a-mensagem>
+gabarito_ere_match() {
+  local valor="$1" regex="$2" chave="$3" rc
+  printf '%s' "$valor" | LC_ALL=C grep -Eq "$regex" 2>/dev/null
+  rc=$?
+  if [ "$rc" -ge 2 ]; then
+    echo "gabarito-mestre: $chave é um regex inválido para ERE ('$regex') — R20 não aplicada neste comando (fail-open declarado, G9)" >&2
+    exit 0
+  fi
+  return "$rc"
+}
+
 bloquear() { # bloquear <frase> <o que fazer> — três camadas: frase · o que fazer · regra citada
   local frase="$1" oque="$2"
   if gabarito_escape_hatch "R20 · $frase" GABARITO_ALLOW_VERSIONING; then exit 0; fi
@@ -89,83 +123,103 @@ NOMES=$(printf '%s\n' "$SCAN" | tr ';|&' '\n\n\n' | while IFS= read -r seg; do
   [ -n "$n" ] && printf '%s\n' "$n"
 done)
 for nome in $NOMES; do
-  if ! printf '%s' "$nome" | LC_ALL=C grep -Eq "$BRANCH_ERE" && ! printf '%s' "$nome" | LC_ALL=C grep -Eq "$WT_ERE"; then
+  if ! gabarito_ere_match "$nome" "$BRANCH_ERE" "versionamento.branchPadrao" && ! gabarito_ere_match "$nome" "$WT_ERE" "versionamento.branchWorktree"; then
     bloquear "nome de branch '$nome' fora do padrão" "Crie a branch com o tipo do PBI e o ID do card (branchPadrao: $BRANCH_RE) ou como worktree de implementador (branchWorktree: $WT_RE)."
   fi
 done
 
 # ── 2. Cabeçalho do commit ───────────────────────────────────────────────────────────────
-# Recorta o texto a partir do primeiro `git … commit` em posição de comando; sem ele, não há commit a validar.
-COMMIT_TXT=$(printf '%s\n' "$SCAN" | GITP="$GITP_T" awk '
+# Achado 2 (review final F3-R6, MAJOR): TODA ocorrência de `git … commit` em posição de comando é validada,
+# não só a 1ª — `git commit -m "a" && git commit -m "b"` e `git commit -m "a"; git commit --amend -m "b"`
+# bloqueavam apenas o 1º commit antes. Cada ocorrência vira um trecho — do início dela até o início da
+# PRÓXIMA ocorrência (ou fim do texto) — separado por \001 (byte de controle; não aparece em texto de
+# comando de shell). Isso preserva heredocs multilinha intactos (nada de dividir por ; & | — quebraria
+# corpo de heredoc que contivesse esses caracteres) e evita que um commit sem -m/-F próprio (ex.: --amend)
+# "roube" o -m de uma ocorrência seguinte, já que cada trecho termina antes da próxima.
+COMMIT_TRECHOS=$(printf '%s\n' "$SCAN" | GITP="$GITP_T" awk '
   { s = s (NR > 1 ? "\n" : "") $0 }
-  END { if (match(s, ENVIRON["GITP"] "commit([[:space:]]|$)")) print substr(s, RSTART) }')
-[ -z "$COMMIT_TXT" ] && exit 0
+  END {
+    n = 0; start = 1
+    while (match(substr(s, start), ENVIRON["GITP"] "commit([[:space:]]|$)")) {
+      n++; pos[n] = start + RSTART - 1; start = pos[n] + RLENGTH
+    }
+    for (i = 1; i <= n; i++) {
+      fim = (i < n) ? pos[i + 1] - 1 : length(s)
+      printf "%s\001", substr(s, pos[i], fim - pos[i] + 1)
+    }
+  }')
+[ -z "$COMMIT_TRECHOS" ] && exit 0
 
 ATUAL=$(git -C "$ROOT" symbolic-ref --short -q HEAD 2>/dev/null || git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)
 case "$ATUAL" in main|master) exit 0 ;; esac
 
-CAB=""; FONTE=""
-# (a) heredoc na linha do commit: -m "$(cat <<'EOF' … )" ou -F - <<'EOF' → 1ª linha do corpo
-CAB=$(printf '%s\n' "$COMMIT_TXT" | awk -v gitp="$GITOPTS" '
-  found == 0 && $0 ~ (gitp "commit") && /<<-?[[:space:]]*["'"'"']?[A-Za-z_][A-Za-z0-9_]*["'"'"']?/ { found = 1; next }
-  found == 1 { sub(/^\t+/, ""); print; exit }')
-[ -n "$CAB" ] && FONTE="heredoc"
-# (b) -F <arquivo> / --file=<arquivo> (que não seja "-")
-if [ -z "$CAB" ]; then
-  ARQ=$(printf '%s\n' "$COMMIT_TXT" | tr '\n' ' ' | sed -nE "s/.*${GITOPTS}commit[^;&|]*[[:space:]](-F|--file)[[:space:]=]+(\"([^\"]*)\"|'([^']*)'|([^[:space:];&|]+)).*/\5\6\7/p")
-  if [ -n "$ARQ" ] && [ "$ARQ" != "-" ]; then
-    case "$ARQ" in /*) CAND="$ARQ" ;; *) CAND="$PWD/$ARQ"; [ -f "$CAND" ] || CAND="$ROOT/$ARQ" ;; esac
-    if [ -f "$CAND" ]; then
-      CAB=$(head -n1 "$CAND"); FONTE="arquivo $ARQ"
-    else
-      echo "gabarito-mestre: git commit -F '$ARQ' — arquivo não encontrado a partir de $PWD nem de $ROOT; cabeçalho não inspecionado (fail-open declarado, G9)" >&2
-      exit 0
+while IFS= read -r -d $'\001' COMMIT_TXT; do
+  CAB=""; FONTE=""
+  # (a) heredoc na linha do commit: -m "$(cat <<'EOF' … )" ou -F - <<'EOF' → 1ª linha do corpo
+  CAB=$(printf '%s\n' "$COMMIT_TXT" | awk -v gitp="$GITOPTS" '
+    found == 0 && $0 ~ (gitp "commit") && /<<-?[[:space:]]*["'"'"']?[A-Za-z_][A-Za-z0-9_]*["'"'"']?/ { found = 1; next }
+    found == 1 { sub(/^\t+/, ""); print; exit }')
+  [ -n "$CAB" ] && FONTE="heredoc"
+  # (b) -F <arquivo> / --file=<arquivo> (que não seja "-")
+  if [ -z "$CAB" ]; then
+    ARQ=$(printf '%s\n' "$COMMIT_TXT" | tr '\n' ' ' | sed -nE "s/.*${GITOPTS}commit[^;&|]*[[:space:]](-F|--file)[[:space:]=]+(\"([^\"]*)\"|'([^']*)'|([^[:space:];&|]+)).*/\5\6\7/p")
+    if [ -n "$ARQ" ] && [ "$ARQ" != "-" ]; then
+      case "$ARQ" in /*) CAND="$ARQ" ;; *) CAND="$PWD/$ARQ"; [ -f "$CAND" ] || CAND="$ROOT/$ARQ" ;; esac
+      if [ -f "$CAND" ]; then
+        CAB=$(head -n1 "$CAND"); FONTE="arquivo $ARQ"
+      else
+        echo "gabarito-mestre: git commit -F '$ARQ' — arquivo não encontrado a partir de $PWD nem de $ROOT; cabeçalho não inspecionado (fail-open declarado, G9)" >&2
+        exit 0
+      fi
     fi
   fi
-fi
-# (c) -m / --message= / -am / -m duplo → primeiro argumento após o PRIMEIRO flag de mensagem, 1ª linha
-if [ -z "$CAB" ]; then
-  CAB=$(printf '%s\n' "$COMMIT_TXT" | awk -v gitp="$GITOPTS" '
-    { s = s (NR > 1 ? "\n" : "") $0 }
-    END {
-      if (!match(s, gitp "commit")) exit
-      s = substr(s, RSTART + RLENGTH)
-      if (!match(s, /(^|[[:space:]])(-[a-zA-Z]*m|--message)([[:space:]]+|=)/)) exit
-      s = substr(s, RSTART + RLENGTH)
-      c = substr(s, 1, 1)
-      if (c == "\"") {
-        out = ""; i = 2
-        while (i <= length(s)) {
-          ch = substr(s, i, 1)
-          if (ch == "\\" && i < length(s)) { out = out substr(s, i + 1, 1); i += 2; continue }
-          if (ch == "\"") break
-          out = out ch; i++
+  # (c) -m / --message= / -am / -m duplo → primeiro argumento após o PRIMEIRO flag de mensagem, 1ª linha.
+  # Achado 4 (review final F3-R6, MINOR): -m colado ao valor sem espaço nem `=` (`-m"x"`, `-marrumei`) — a
+  # forma combinada `-[a-zA-Z]*m` continua exigindo separador (p.ex. `-am "x"`); o `-m` isolado aceita valor
+  # colado (separador vazio), que é sintaxe válida do git (getopt: última opção do cluster absorve o valor).
+  if [ -z "$CAB" ]; then
+    CAB=$(printf '%s\n' "$COMMIT_TXT" | awk -v gitp="$GITOPTS" '
+      { s = s (NR > 1 ? "\n" : "") $0 }
+      END {
+        if (!match(s, gitp "commit")) exit
+        s = substr(s, RSTART + RLENGTH)
+        if (!match(s, /(^|[[:space:]])(-[a-zA-Z]*m([[:space:]]+|=)|-m|--message([[:space:]]+|=))/)) exit
+        s = substr(s, RSTART + RLENGTH)
+        c = substr(s, 1, 1)
+        if (c == "\"") {
+          out = ""; i = 2
+          while (i <= length(s)) {
+            ch = substr(s, i, 1)
+            if (ch == "\\" && i < length(s)) { out = out substr(s, i + 1, 1); i += 2; continue }
+            if (ch == "\"") break
+            out = out ch; i++
+          }
+        } else if (c == "'"'"'") {
+          out = substr(s, 2); sub(/'"'"'.*/, "", out)
+        } else {
+          out = s; sub(/[[:space:];&|].*/, "", out)
         }
-      } else if (c == "'"'"'") {
-        out = substr(s, 2); sub(/'"'"'.*/, "", out)
-      } else {
-        out = s; sub(/[[:space:];&|].*/, "", out)
-      }
-      sub(/\n.*/, "", out)
-      print out
-    }')
-  [ -n "$CAB" ] && FONTE="-m"
-fi
-[ -z "$CAB" ] && exit 0   # --amend sem -m, commit interativo, mensagem vazia: não é deste hook
+        sub(/\n.*/, "", out)
+        print out
+      }')
+    [ -n "$CAB" ] && FONTE="-m"
+  fi
+  [ -z "$CAB" ] && continue   # --amend sem -m, commit interativo, mensagem vazia: este commit não é deste hook
 
-TIPO=$(printf '%s' "$CAB" | sed -nE 's/^([a-z]+)(\(([^)]*)\))?!?: (.+)$/\1/p')
-ESCOPO=$(printf '%s' "$CAB" | sed -nE 's/^([a-z]+)(\(([^)]*)\))?!?: (.+)$/\3/p')
-if [ -z "$TIPO" ]; then
-  bloquear "cabeçalho '$CAB' não é Conventional Commits" "Reescreva a primeira linha da mensagem (fonte: $FONTE) como tipo(escopo): assunto, com espaço depois dos dois-pontos."
-fi
-if em_lista "$TIPO" "$TIPOS_PBI"; then
-  if [ -z "$ESCOPO" ]; then
-    bloquear "tipo '$TIPO' exige o ID do PBI como escopo" "Escreva $TIPO(<PBI>): assunto, com <PBI> casando $ID_RE (ex.: $TIPO(PBI-123): assunto). Sem PBI, use um tipo livre ($LISTA_LIVRES) se couber."
+  TIPO=$(printf '%s' "$CAB" | sed -nE 's/^([a-z]+)(\(([^)]*)\))?!?: (.+)$/\1/p')
+  ESCOPO=$(printf '%s' "$CAB" | sed -nE 's/^([a-z]+)(\(([^)]*)\))?!?: (.+)$/\3/p')
+  if [ -z "$TIPO" ]; then
+    bloquear "cabeçalho '$CAB' não é Conventional Commits" "Reescreva a primeira linha da mensagem (fonte: $FONTE) como tipo(escopo): assunto, com espaço depois dos dois-pontos."
   fi
-  if ! printf '%s' "$ESCOPO" | LC_ALL=C grep -Eq "$ID_ERE"; then
-    bloquear "escopo '$ESCOPO' não casa o padrão de ID $ID_RE" "Use o ID do card exatamente como na ferramenta (maiúsculas, hífen, número), ex.: $TIPO(PBI-123): assunto."
+  if em_lista "$TIPO" "$TIPOS_PBI"; then
+    if [ -z "$ESCOPO" ]; then
+      bloquear "tipo '$TIPO' exige o ID do PBI como escopo" "Escreva $TIPO(<PBI>): assunto, com <PBI> casando $ID_RE (ex.: $TIPO(PBI-123): assunto). Sem PBI, use um tipo livre ($LISTA_LIVRES) se couber."
+    fi
+    if ! gabarito_ere_match "$ESCOPO" "$ID_ERE" "fluxo.idPadrao"; then
+      bloquear "escopo '$ESCOPO' não casa o padrão de ID $ID_RE" "Use o ID do card exatamente como na ferramenta (maiúsculas, hífen, número), ex.: $TIPO(PBI-123): assunto."
+    fi
+  elif ! em_lista "$TIPO" "$TIPOS_LIVRES"; then
+    bloquear "tipo '$TIPO' não existe na convenção" "Use um tipo com escopo de PBI ($LISTA_PBI) ou um tipo livre ($LISTA_LIVRES). Hotfix é fix(<PBI de Bug>): assunto."
   fi
-elif ! em_lista "$TIPO" "$TIPOS_LIVRES"; then
-  bloquear "tipo '$TIPO' não existe na convenção" "Use um tipo com escopo de PBI ($LISTA_PBI) ou um tipo livre ($LISTA_LIVRES). Hotfix é fix(<PBI de Bug>): assunto."
-fi
+done <<< "$COMMIT_TRECHOS"
 exit 0

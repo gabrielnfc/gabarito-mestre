@@ -80,3 +80,20 @@ PASSA    grep -rn "git commit -m" docs/ | head
 BLOQUEIA    cat >> notas.md <<'EOF'\nnota\nEOF\ngit commit -m "arrumei"
 BLOQUEIA    x=$(git commit -m "arrumei") && echo "$x"
 BLOQUEIA    cd apps/api && git checkout -b feature-login
+
+# ── achado 2 (review final F3-R6, MAJOR): TODO `git commit` em posição de comando é validado, não só o 1º ──
+PASSA    git commit -m "feat(PBI-1): primeiro" && git commit -m "fix(PBI-2): segundo"
+BLOQUEIA    git commit -m "docs: a" && git commit -m "arrumei"
+BLOQUEIA    git commit -m "docs: a"; git commit --amend -m "arrumei"
+
+# ── achado 3 (review final F3-R6, MINOR): then/do/{/time/env/command também são posição de comando ──
+BLOQUEIA    if true; then git commit -m "arrumei"; fi
+BLOQUEIA    for i in 1; do git commit -m "arrumei"; done
+BLOQUEIA    { git commit -m "arrumei"; }
+BLOQUEIA    time git commit -m "arrumei"
+BLOQUEIA    env git commit -m "arrumei"
+BLOQUEIA    command git commit -m "arrumei"
+
+# ── achado 4 (review final F3-R6, MINOR): -m colado ao valor (sem espaço/=) também é reconhecido ──
+BLOQUEIA    git commit -m"arrumei"
+BLOQUEIA    git commit -marrumei

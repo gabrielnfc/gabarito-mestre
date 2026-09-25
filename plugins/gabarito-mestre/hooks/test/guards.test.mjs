@@ -346,6 +346,21 @@ describe('guard-versioning.sh — R20 (T13)', () => {
     assert.match(r.stderr, /versionamento\.resolvidoEm/);
   });
 
+  // Achado 7 (review final F3-R6, MINOR): branchPadrao inválido para ERE (parêntese sem fechar) fazia
+  // `grep -E` sair com status 2 (erro de sintaxe), que `! grep` tratava igual a "não casou" — deny com razão
+  // enganosa ("fora do padrão") e `parentheses not balanced` no stderr. Tem de ser fail-open declarado (G9).
+  test('regex de config inválido para ERE: fail-open declarado (G9), não deny (achado 7)', () => {
+    const invalido = fixtureRepo({
+      branch: 'feat/PBI-1-x',
+      config: { fluxo: { idPadrao: '^[A-Z]+-\\d+$', resolvidoEm: '2026-09-24' }, versionamento: { branchPadrao: '^(feat', resolvidoEm: '2026-09-24' } },
+    });
+    const r = runAt('guard-versioning.sh', 'git checkout -b feat/PBI-1-x', { cwd: invalido });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.stdout, '');
+    assert.match(r.stderr, /branchPadrao/);
+    assert.match(r.stderr, /fail-open declarado, G9/);
+  });
+
   test('comando sem git commit/checkout/switch/branch/worktree: exit 0, sem stdout, sem stderr (não lê config)', () => {
     for (const cmd of ['npm test', 'git status', 'git log --oneline', 'git push origin HEAD', 'echo "git commit -m x"']) {
       const r = runAt('guard-versioning.sh', cmd, { cwd: root });
