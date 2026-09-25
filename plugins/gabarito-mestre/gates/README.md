@@ -18,7 +18,7 @@ correspondente do `AGENTS.md` não precise ser lida por ninguém.
 ## Testes
 
 ```bash
-npm test          # 77 testes
+npm test          # 268 testes (241 mjs + 27 ts) — medido em 2026-09-25
 ```
 
 Cada suíte declara no cabeçalho as **mutações prescritas**. Toda uma delas tem que

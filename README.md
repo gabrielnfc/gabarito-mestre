@@ -62,7 +62,7 @@ plugins/gabarito-mestre/
   commands/  /gabarito-doctor
   hooks/     guard-destructive.sh (R2) · guard-production.sh (R3) · guard-versioning.sh (R20) · session-card.sh (cartão de sessão) · remind-orchestrator.sh (R21, opcional)
   reference/ AGENTS.md + referencia.md · gates.md · adocao.md · prompts.md · fluxo.md · ferramentas-mcp.json
-  gates/     7 gates + 4 scripts de fluxo (onboarding-config · capacidade · versionamento-check · cartao-sessao), 267 testes, zero dependências
+  gates/     7 gates + 4 scripts de fluxo (onboarding-config · capacidade · versionamento-check · cartao-sessao), 268 testes, zero dependências
   templates/ harness.config.json · attest.json · CLAUDE.md · gabarito.yml (CI) · PULL_REQUEST_TEMPLATE.md · CHANGELOG.md · backlog.md · fluxo/ (8 cards)
   scripts/   instalar.sh (--atualizar · --gates-substituir · --codeowners) · test/instalar.test.sh
 ```
@@ -297,7 +297,7 @@ Medidas em repos descartáveis (`mktemp -d`, `git init`, `instalar.sh`, sessão 
 |---|---|---|---|
 | M14 | **Onboarding com MCP ClickUp** — sessão interativa: número de servidores MCP avisado; `ferramenta: clickup` proposta e confirmada; ok em uma linha antes de ler; Iniciativa lida com status confirmado (I10); `fluxo` gravado com `escrita: false`; `CODEOWNERS` com as áreas informadas; `.claude/settings.json` pré-existente com `permissions` intacto após gravar `model`; `--vincular <PBI>` grava o cache **sem nenhuma chamada de escrita** no ClickUp (grep do transcript); doctor ao fim. **Mutação (ONB-1):** apagar `versionamento.resolvidoEm` e pedir "instala" → só a fase 3 roda | **NÃO MEDIDO** | — |
 | M15 | **Onboarding sem MCP (`arquivos`), headless** — `docs/fluxo/` criado com `PBI-EXEMPLO.md` (`epic:` no frontmatter); PR template, `CHANGELOG.md` e `docs/backlog.md` criados só se ausentes; calibração gravada com `calibradoEm`; `settings.json` **não** gravado (sem consentimento); cartão de sessão em branch `feat/PBI-1-…` com `PBI: PBI-1 · Epic: EPIC-1` após `--vincular`, ≤ 40 linhas. **Conformidade:** design sem `Epic:` → AVISO antes do onboarding, FALTA depois; plano com T2 ∥ T3 tocando `prisma/` → "contenda (R21)"; Epic sem lista de PBIs → "Epic: PBIs (fluxo.md §2)". **Mutação de prompt:** retirar a linha "fio condutor" do checklist de design → o item some do veredito; retirar "contenda" → idem | **NÃO MEDIDO** | — |
-| M16 | Contagem de testes: gates (`npm test`) · hooks (`guards.test.mjs`) · instalador (`instalar.test.sh`, casos) | 267 · 269 · 70 | 2026-09-25 |
+| M16 | Contagem de testes: gates (`npm test`) · hooks (`guards.test.mjs`) · instalador (`instalar.test.sh`, casos) | 268 · 271 · 70 | 2026-09-25 |
 
 ---
 
@@ -306,8 +306,8 @@ Medidas em repos descartáveis (`mktemp -d`, `git init`, `instalar.sh`, sessão 
 ```bash
 claude plugin validate ./plugins/gabarito-mestre --strict   # Validation passed
 claude plugin validate . --strict                            # Validation passed (marketplace)
-cd plugins/gabarito-mestre/gates && npm test                  # 267 testes (240 mjs + 27 ts) — medido em 2026-09-25
-node --test plugins/gabarito-mestre/hooks/test/guards.test.mjs               # 269 casos: corpora R2, R3, R20, cartão, lembrete
+cd plugins/gabarito-mestre/gates && npm test                  # 268 testes (241 mjs + 27 ts) — medido em 2026-09-25
+node --test plugins/gabarito-mestre/hooks/test/guards.test.mjs               # 271 casos: corpora R2, R3, R20, cartão, lembrete
 bash plugins/gabarito-mestre/scripts/test/instalar.test.sh                   # 70 casos: fixture 1.0.1 → --atualizar / --gates-substituir
 ```
 

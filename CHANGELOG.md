@@ -92,7 +92,7 @@ Repos 1.0.x não mudam até rodarem `instalar.sh --atualizar`.
 - README: seções Fluxo, Onboarding, Versionamento, Orquestração e modelo, Paralelismo medido, Contexto em camadas,
   Atualizar de 1.0.x e a tabela "Medições da 1.1.0" (M14/M15); limites declarados novos (hooks de versionamento, raiz
   por cwd em 3 gates da 1.0.1, falso positivo de `ledger-versionado`); contagem de testes medida nesta versão — gates
-  267 (240 mjs + 27 ts), hooks 269, instalador 70 casos.
+  268 (241 mjs + 27 ts), hooks 271, instalador 70 casos.
 
 ## [1.0.1] — 2026-09-05
 
