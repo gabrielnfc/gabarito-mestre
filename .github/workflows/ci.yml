@@ -23,7 +23,7 @@ jobs:
       - run: claude plugin validate . --strict
 
   gates:
-    name: gates — 77 testes
+    name: gates — node --test (mjs + ts)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -31,6 +31,20 @@ jobs:
         with:
           node-version: '22'
       - run: cd plugins/gabarito-mestre/gates && npm test
+
+  instalador:
+    name: instalar.sh — fixture 1.0.1, --atualizar, --gates-substituir (bash ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: bash --version | head -1
+      - run: bash plugins/gabarito-mestre/scripts/test/instalar.test.sh
 
   hooks:
     name: hooks — corpora (bash ${{ matrix.os }})
@@ -45,6 +59,16 @@ jobs:
           node-version: '22'
       - run: bash --version | head -1
       - run: node --test plugins/gabarito-mestre/hooks/test/guards.test.mjs
+
+  texto:
+    name: texto — invariantes da 1.1.0 (grep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: bash plugins/gabarito-mestre/scripts/test/texto.test.sh
 
   doctor-self:
     name: doctor não se auto-detecta (M10)
