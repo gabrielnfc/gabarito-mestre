@@ -32,6 +32,7 @@ F5-R8 — a pré-condição "Antes de despachar" com maiúscula não casa porque
 F5-R9 — trailer dos commits: `Co-Authored-By: Claude Opus 5.5 (1M context)` + `Claude-Session` (mesmo motivo de F4-R5) — custo-se-errado: atribuição.
 
 ## Progresso
+2026-09-25 — GitHub configurado pelo orquestrador com autorização explícita do usuário (encerra a pendência de F4-R6): só squash, título da PR como cabeçalho do commit, corpo da PR como mensagem, branch apagada no merge; ruleset "main" (id 23998269) ativo em `main` — proíbe deleção e force-push, exige histórico linear, PR (0 aprovações — mantenedor único) e os checks `claude plugin validate --strict`, `doctor não se auto-detecta (M10)`, `hooks — corpora (bash ubuntu-latest)`, `hooks — corpora (bash macos-latest)`. O job "gates — 77 testes" fica fora da lista porque T25 renomeia; T25 acrescenta o nome novo ao ruleset.
 
 ## CORTE DA SESSÃO (com motivo)
 
