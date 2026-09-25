@@ -67,6 +67,9 @@ const DEFAULTS = {
     // por construção (é o vocabulário do próprio harness) — presença ali não prova nada
     // sobre a APLICAÇÃO que instalou o harness.
     'gabarito-mestre/hooks/',
+    // RULING F4-R10: templates do plugin são o que ele INSTALA no repo do usuário; a
+    // presença deles no próprio plugin não prova nada sobre a aplicação que os adotou.
+    'gabarito-mestre/templates/',
   ],
 };
 

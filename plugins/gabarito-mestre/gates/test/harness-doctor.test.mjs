@@ -220,6 +220,28 @@ describe('doctor — não se detecta a si mesmo', () => {
     assert.equal(r.found, true);
     assert.equal(r.evidence, 'src/health.ts');
   });
+
+  test('RULING F4-R10: template que o plugin INSTALA não conta como evidência de pr-template', () => {
+    const out = run(
+      repo({
+        'AGENTS.md': agents(0),
+        'plugins/gabarito-mestre/templates/PULL_REQUEST_TEMPLATE.md': 'migration requisito teardown',
+      }),
+    );
+    assert.equal(out.resultados.find((r) => r.id === 'pr-template').found, false);
+  });
+
+  test('RULING F4-R10: controle — o mesmo template na aplicação conta como evidência', () => {
+    const out = run(
+      repo({
+        'AGENTS.md': agents(0),
+        '.github/PULL_REQUEST_TEMPLATE.md': 'migration requisito teardown',
+      }),
+    );
+    const r = out.resultados.find((r) => r.id === 'pr-template');
+    assert.equal(r.found, true);
+    assert.equal(r.evidence, '.github/PULL_REQUEST_TEMPLATE.md');
+  });
 });
 
 describe('doctor — integridade do registro', () => {

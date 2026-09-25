@@ -1,5 +1,5 @@
 {
-  "_comment": "TEMPLATE — ajuste ao seu repo e apague o que não usar. Ver docs/harness/gates.md.",
+  "_comment": "TEMPLATE — ajuste ao seu repo e apague o que não usar. Ver docs/harness/gates.md. As seções `fluxo`, `versionamento`, `orquestracao` e `contexto` NÃO vêm neste template: quem as grava é o onboarding (`gabarito-instalar`, via tools/gabarito-gates/scripts/onboarding-config.mjs), cada uma com o seu `resolvidoEm`. Sem elas, guard-versioning e cartão de sessão ficam em fail-open declarado (G9) e o doctor marca FALTA fluxo-configurado. Não copie essas seções à mão a partir da documentação: rode o onboarding.",
 
   "docsDir": "docs",
   "migrationsDir": "prisma/migrations",

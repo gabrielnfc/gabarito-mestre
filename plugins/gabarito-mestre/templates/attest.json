@@ -1,6 +1,8 @@
 {
-  "_comment": "Atestados do que nenhuma varredura prova. `confirmado: true` + `por` + `em` (AAAA-MM-DD). Vence em 180 dias. Atestado é (c), não (a).",
+  "_comment": "Atestados do que nenhuma varredura prova. `confirmado: true` + `por` + `em` (AAAA-MM-DD). Vence em 180 dias. Atestado é (c), não (a). `iniciativa-resolvida`: a Iniciativa padrão do repo existe e está ATIVA na ferramenta de planejamento (I10: existe ≠ ativa) — doctor n2. `squash-titulo-pr`: o ruleset da branch exige squash-merge e o título da PR em Conventional Commits (R20) — doctor não lê ruleset.",
   "branch-protegida": { "confirmado": false, "por": "", "em": "" },
   "backup-verificado": { "confirmado": false, "por": "", "em": "" },
-  "ruleset-obrigatorio": { "confirmado": false, "por": "", "em": "" }
+  "ruleset-obrigatorio": { "confirmado": false, "por": "", "em": "" },
+  "iniciativa-resolvida": { "confirmado": false, "por": "", "em": "" },
+  "squash-titulo-pr": { "confirmado": false, "por": "", "em": "" }
 }
