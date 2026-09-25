@@ -1,8 +1,8 @@
 {
   "name": "gabarito-mestre",
   "displayName": "Gabarito Mestre",
-  "version": "1.0.1",
-  "description": "Molde de referência para engenharia com agentes: barra o que é destrutivo (hooks R2/R3), confere o que é produzido (design, plano, review, spike) e mede o nível real de adoção (doctor). Compõe com superpowers (processo) e ui-ux-pro-max (interface).",
+  "version": "1.1.0",
+  "description": "Molde de referência para engenharia com agentes: barra o destrutivo, o acesso a produção e o versionamento fora do padrão (hooks R2/R3/R20), confere o que é produzido (design, plano, cards de fluxo, review, spike), injeta o cartão de sessão (R21) e mede o nível real de adoção (doctor). Onboarding do Workflow TRUE (Flight Levels + Kanban) na instalação. Compõe com superpowers (processo) e ui-ux-pro-max (interface).",
   "author": {
     "name": "Gabriel Nascimento",
     "url": "https://github.com/gabrielnfc"
@@ -18,7 +18,11 @@
     "tdd",
     "safety",
     "engineering-standards",
-    "superpowers"
+    "superpowers",
+    "workflow",
+    "kanban",
+    "flight-levels",
+    "trunk-based"
   ],
   "dependencies": [
     {

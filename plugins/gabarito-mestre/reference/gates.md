@@ -5,7 +5,7 @@
 > Esta é a I12 aplicada ao próprio harness.
 
 Código em `tools/gabarito-gates/` (instalado pelo plugin; os imports abaixo são relativos a partir de `src/` — ajuste a profundidade, ou copie os dois `.ts` para o seu `src/`). **Zero dependências** — só builtins do Node ≥ 22.18 (ver "Requisitos" no fim).
-Rode `npm test` lá: 77 testes, incluindo os que reproduzem os incidentes originais.
+Rode `npm test` lá: a contagem é medida a cada versão (1.1.0: 268 testes), incluindo os que reproduzem os incidentes originais.
 
 | Gate | Regra | Forma | O que ele torna impossível |
 |---|---|---|---|

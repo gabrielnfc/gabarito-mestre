@@ -21,11 +21,12 @@ Não é prompt para um subagente: é a sequência que o **orquestrador** executa
    → slots=<n> (motivo). slots = min(simultaneos, teto, o que a máquina permite agora); nunca < 1.
    GABARITO_PARALELISMO=<n> substitui simultaneos nesta sessão, ainda sob o teto.
 
-2. Em voo — conte no ledger do PBI: linhas DISPATCH sem "Task <N>: DONE" correspondente.
-   Confira com `git worktree list`. em_voo=<k>. Se k >= slots: espere um sair. Item entra quando um sai.
+2. Tasks em voo — conte no ledger do PBI: linhas DISPATCH sem "Task <N>: DONE" correspondente
+   (não confundir com "PBIs em voo" do cartão de sessão, que é outra contagem — Kanban por PBI).
+   Confira com `git worktree list`. tasks_em_voo=<k>. Se k >= slots: espere um sair. Item entra quando um sai.
 
 3. Contenda — a task toca algum caminho de orquestracao.paralelismo.arquivosDeContenda
-   (lockfile, prisma/, barrel, docs/fluxo/)? SIM → serial: só despacha com em_voo = 0 e nada
+   (lockfile, prisma/, barrel, docs/fluxo/)? SIM → serial: só despacha com tasks_em_voo = 0 e nada
    entra até ela terminar. Não há override: nem "é rápido", nem "é uma linha no lockfile".
 
 4. Disjunção — os arquivos desta task cruzam com os de alguma task em voo? SIM → serial.
@@ -86,6 +87,8 @@ Você está no worktree wt/<PBI>-<n> (branch a partir de <branch do PBI>). Tudo 
 — dev server, banco de teste, fila, cache, diretório temporário — usa SÓ esses três valores.
 Porta, schema ou namespace fora deles pertencem a outro implementador ou ao orquestrador:
 encontrou um ocupado, não "pegue o próximo" — pare e reporte.
+Isolamento vale quando o dispatch é num worktree `wt/<PBI>-<n>` (paralelo); dispatch serial
+no checkout do orquestrador não usa porta/schema próprios (`referencia.md §3.1`).
 
 Método: TDD estrito. Escreva o teste, VEJA VERMELHO, implemente, veja verde.
 Um commit atômico por ciclo. Mensagem Conventional Commits com escopo do PBI:

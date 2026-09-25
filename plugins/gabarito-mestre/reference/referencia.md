@@ -57,6 +57,7 @@ Rulings herdados: R3, R5, R8...          Contexto externo: (sandbox fora, lane a
 | Par | Produz × Consome | Achado |
 ## Rulings de pre-flight (F3-R1, F3-R2...)   — decisão + motivo + custo-se-errado
 ## Progresso
+VINCULO <PBI> epic=<EPIC> iniciativa=<INI> <AAAA-MM-DD> fonte=<ferramenta|arquivo>   (gravada por --vincular ao abrir a branch; rastro — nenhum script lê)
 MOVIMENTO FL2 <EPIC> preparado→em_execucao <AAAA-MM-DD>       (ao integrar o 1º commit do PBI; <de>/<para> = chaves de fluxo.status.FL2, sem espaços)
 DISPATCH Task <N> slots=<slots> worktree wt/<PBI>-<n>        (uma linha por dispatch; slots medido)
 Task N: DONE pelo implementador (worktree @ sha; RED→GREEN, contagens, achados/desvios)
@@ -68,7 +69,7 @@ BLOQUEADA <AAAA-MM-DD> <motivo> — dono: <quem>               (item não muda d
 ```
 ````
 
-As linhas `MOVIMENTO`, `DISPATCH`, `BLOQUEADA` e o título `## LER PRIMEIRO` são **lidas por máquina** (cartão de sessão, conformidade): grafia exata, uma por linha, sem markdown em volta. `MOVIMENTO` segue `fluxo.md §5` (propagação); `DISPATCH` vem de §3.1; `BLOQUEADA` de `fluxo.md §4` — bloqueio é marcação, não coluna, e tem dono do desbloqueio.
+As linhas `MOVIMENTO`, `DISPATCH`, `BLOQUEADA` e o título `## LER PRIMEIRO` são **lidas por máquina** (cartão de sessão, conformidade): grafia exata, uma por linha, sem markdown em volta. `MOVIMENTO` segue `fluxo.md §5` (propagação); `DISPATCH` vem de §3.1; `BLOQUEADA` de `fluxo.md §4` — bloqueio é marcação, não coluna, e tem dono do desbloqueio. `VINCULO` é **só rastro** — gravada por `gabarito-instalar --vincular` (ORQ-6) ao abrir a branch do PBI; nenhum script lê essa linha.
 
 Cada task registra: quem fez (worktree + sha) · ciclo RED→GREEN com contagem de testes · achados e desvios declarados · veredito de review **com o que foi provado** · sha de integração · "minors" diferidos. Nada implícito.
 
@@ -88,7 +89,7 @@ Arquivo único, versionado, **um formato só**: `| Item | Origem | Gatilho |`. C
 
 Critério em `AGENTS.md §6` (R21). A mecânica:
 
-Um **worktree git por implementador paralelo**, em branch **`wt/<PBI>-<n>`** criada a partir da branch do PBI — `n` é o índice do worktree (1, 2, …), gravado no nome da branch e no campo `worktree wt/<PBI>-<n>` da linha `DISPATCH Task <N> slots=<slots> worktree wt/<PBI>-<n>` do ledger (§2.3); `slots=<slots>` é o número medido por `capacidade.mjs`, não o índice (`lerLedger` conta como "sem medição" o dispatch sem `slots=<dígitos>`). O mesmo `n` resolve o **isolamento** do implementador — porta `3000+n`, schema `wt_{n}`, namespace `wt-{n}` (`orquestracao.paralelismo.isolamentoWorktree`) — e vai no prompt de dispatch (`prompts.md`, bloco "Isolamento"). O padrão `wt/…` é o único nome de branch sem tipo que `guard-versioning.sh` aceita (`versionamento.branchWorktree`). Motivo do isolamento: hooks fazem stash, commits concorrentes corrompem o index, e a suíte de um vê arquivo meio-escrito do vizinho.
+Um **worktree git por implementador paralelo**, em branch **`wt/<PBI>-<n>`** criada a partir da branch do PBI — `n` é o índice do worktree (1, 2, …), gravado no nome da branch e no campo `worktree wt/<PBI>-<n>` da linha `DISPATCH Task <N> slots=<slots> worktree wt/<PBI>-<n>` do ledger (§2.3); `slots=<slots>` é o número medido por `capacidade.mjs`, não o índice (`lerLedger` conta como "sem medição" o dispatch sem `slots=<dígitos>`). O mesmo `n` resolve o **isolamento** do implementador — porta `3000+n`, schema `wt_{n}`, namespace `wt-{n}` (`orquestracao.paralelismo.isolamentoWorktree`) — e vai no prompt de dispatch (`prompts.md`, bloco "Isolamento"). O padrão `wt/…` é o único nome de branch sem tipo que `guard-versioning.sh` aceita (`versionamento.branchWorktree`). Motivo do isolamento: hooks fazem stash, commits concorrentes corrompem o index, e a suíte de um vê arquivo meio-escrito do vizinho. **O isolamento só vale em dispatch com worktree** (paralelo); dispatch serial no checkout do próprio orquestrador não usa porta, schema nem namespace próprios.
 
 **Quantos ao mesmo tempo:** `slots` de `capacidade.mjs`, medido **antes de cada dispatch** (`prompts.md`, "Orquestrador — antes de despachar"): `min(simultaneos, teto, o que a máquina permite)`, nunca < 1; `GABARITO_PARALELISMO=<n>` substitui `simultaneos` na sessão, ainda sob o `teto`. Item entra quando um sai. Dispatch sem linha `slots=` no ledger é achado de review — o cartão de sessão avisa "dispatch sem medição".
 
@@ -139,14 +140,14 @@ O custo de abrir PR a mais é medido, não teórico: com branch obrigatoriamente
 Tabela em `AGENTS.md §6`. A janela de contexto é recurso finito, dividido entre regra, estado e trabalho; o harness a separa em cinco camadas e cada agente carrega só as suas.
 
 - **Camada 0 — núcleo.** `AGENTS.md` inteiro, toda sessão, via `@AGENTS.md`. Tem teto de bytes (ADR-CTX-1: 17.291 no núcleo, 4.096 no Apêndice — `contexto.nucleoMaxBytes` / `contexto.apendiceMaxBytes`), medido pelo doctor (`agents-tamanho`, n2). Conteúdo novo empurra detalhe para cá ou para `fluxo.md` — **texto migra, regra não some**. O teto sobe só por decisão registrada com medição de impacto.
-- **Camada 1 — cartão de sessão.** ≤ 40 linhas injetadas no SessionStart por `session-card.sh` (`cartao-sessao.mjs`): modelo e validade, branch e sha, PBI/Epic/Iniciativa, em voo, worktrees, slots, nível do doctor em cache (24 h), envelhecidos, `LER PRIMEIRO` do ledger, versões instalada × plugin. É **estado**, não regra; nunca substitui o ledger. Sem onboarding, é uma linha.
+- **Camada 1 — cartão de sessão.** ≤ 40 linhas injetadas no SessionStart por `session-card.sh` (`cartao-sessao.mjs`): modelo e validade, branch e sha, PBI/Epic/Iniciativa, PBIs em voo, worktrees, slots, nível do doctor em cache (24 h), envelhecidos, `LER PRIMEIRO` do ledger, versões instalada × plugin. É **estado**, não regra; nunca substitui o ledger. Sem onboarding, é uma linha.
 - **Camada 2 — referência por ponteiro.** `referencia.md`, `fluxo.md`, spec e plano entram por `arquivo:linhas`, na seção que a pergunta exige, nunca inteiros. Quem despacha passa ponteiros; quem recebe lê o trecho (§3.3).
 - **Camada 3 — subagente isolado.** Implementação, spike, review e exploração pesada rodam em contexto próprio (R21). Para o orquestrador volta **só o relatório** (≤ 25 linhas, cada afirmação marcada (a)/(b)); o resto morre com o subagente.
 - **Camada 4 — handoff por ledger.** Entre sessões, o que sobrevive é o ledger com `LER PRIMEIRO` datado (§3.3). Contexto que não foi para o ledger não existe na sessão seguinte.
 
 **Regra: o orquestrador não lê saída bruta que um subagente possa resumir.** Log de suíte, diff extenso, resultado de busca ampla, documentação de terceiro — vão para um subagente que devolve o resumo com `arquivo:linha`. O orquestrador lê bruto só o que precisa julgar por si: o veredito do revisor, a linha do ledger, a linha do gate que reprovou. Relatório é alegação (R18): o que precisa de prova, o orquestrador confere por medição pontual (`grep`, um teste, um `git show`), não por leitura integral.
 
-**Antes de despachar** (a sequência completa em `prompts.md`, "Orquestrador — antes de despachar"): `capacidade.mjs` → `slots`; no ledger, `DISPATCH` sem `DONE` correspondente → em voo; `git worktree list` → vivos; só despacha se em voo < slots; registra `DISPATCH Task <N> slots=<slots> worktree wt/<PBI>-<n>`.
+**Antes de despachar** (a sequência completa em `prompts.md`, "Orquestrador — antes de despachar"): `capacidade.mjs` → `slots`; no ledger, `DISPATCH` sem `DONE` correspondente → tasks em voo (contagem por task/DISPATCH dentro do PBI, não a mesma de "PBIs em voo" da camada 1); `git worktree list` → vivos; só despacha se tasks em voo < slots; registra `DISPATCH Task <N> slots=<slots> worktree wt/<PBI>-<n>`.
 
 **Servidores MCP** também ocupam a janela: cada servidor conectado injeta a descrição de todas as suas ferramentas em toda sessão. Escopo de projeto (`.mcp.json`) só com o necessário — `adocao.md §4`, "MCP demais no contexto".
 
@@ -315,7 +316,7 @@ Trunk-based (D2 da spec 1.1.0). É o detalhe da linha do `AGENTS.md §3`; entre 
 - **CHANGELOG na PR**: `CHANGELOG.md` em Keep a Changelog; **toda PR acrescenta a própria linha em `## [Unreleased]`**, na categoria certa (Added · Changed · Deprecated · Removed · Fixed · Security), citando o PBI. O release move `Unreleased` para `## [x.y.z] — AAAA-MM-DD`. *(doctor `changelog`: arquivo existe e tem `[Unreleased]`.)*
 - **Tag por release**: `vMAJOR.MINOR.PATCH` sobre o commit de `main` que o CHANGELOG descreve. A tag é índice de qual commit está no ar; o deploy é por digest (ver "Deploy"). Tag exige ok explícito (R1). *(doctor `tag-semver`, opcional em repo sem release.)*
 - **Escape hatch** `GABARITO_ALLOW_VERSIONING="<motivo>"` — nominal, ≥ 8 caracteres e ≥ 2 palavras, no início do comando ou no ambiente; **não cruza** com os hatches de R2/R3 (um hatch, uma regra). Uso sem autorização do usuário registrada é achado de review.
-- **Fail-open declarado (G9):** sem `versionamento.resolvidoEm` em `harness.config.json`, hook e check não bloqueiam nada e dizem isso em stderr ("fail-open declarado (G9)"). Repo sem onboarding não é travado — e também não está protegido: o doctor marca `FALTA versionamento` até o onboarding rodar.
+- **Fail-open declarado (G9):** sem `versionamento.resolvidoEm` em `harness.config.json`, hook e check não bloqueiam nada. O hook (`guard-versioning.sh`) avisa em stderr ("fail-open declarado, G9"); o check (`versionamento-check.mjs`) avisa em stderr do mesmo jeito ("fail-open declarado (G9)"), **exceto com `--json`**, que só marca `failOpen` no JSON de saída — sem linha em stderr. Repo sem onboarding não é travado — e também não está protegido: o doctor marca `FALTA versionamento` até o onboarding rodar.
 
 **Deploy**
 

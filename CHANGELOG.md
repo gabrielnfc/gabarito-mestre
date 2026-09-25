@@ -5,8 +5,12 @@ Usuários do plugin só recebem atualização quando `version` muda.
 
 ## [Unreleased]
 
-Rollout do Workflow TRUE (1.1.0): três níveis de card, gates de versionamento no CI, hooks novos e
-harness-doctor mais rigoroso.
+## [1.1.0] — 2026-09-25
+
+Camada de fluxo (Workflow TRUE: Flight Levels + Kanban), onboarding na instalação, versionamento trunk-based como gate,
+orquestração por subagente com paralelismo medido e contexto em camadas. **Aditiva sobre a 1.0.1**: nenhuma regra, gate,
+hook, skill ou agente removido (ADR-CTX-1: texto do núcleo do `AGENTS.md` migrou para a referência; regra não sumiu).
+Repos 1.0.x não mudam até rodarem `instalar.sh --atualizar`.
 
 > **Aviso:** um repositório já em nível 2 ou 3 com o harness 1.0.1 **cai para nível 1** assim que
 > `harness-doctor` 1.1.0 rodar, até o onboarding ser refeito — as checagens novas (fluxo, versionamento,
@@ -14,34 +18,81 @@ harness-doctor mais rigoroso.
 > em vez de presumir. Rode o onboarding para recuperar o nível.
 
 ### Adicionado
-- **Workflow TRUE**: três níveis de card (Iniciativa · Epic · PBI), oito tipos, políticas de fluxo e
-  colunas de movimento em `docs/harness/fluxo.md`; templates dos 8 tipos de card prontos para uso.
-- **Gate de versionamento no CI**: novo job `versionamento` em `gabarito.yml` valida Conventional Commits
-  com escopo do PBI e nome de branch (R20) contra o histórico da PR.
-- **`harness-doctor` mais rigoroso**: 8 checagens novas (fluxo configurado, versionamento, changelog,
-  iniciativa resolvida, tamanho do `AGENTS.md`, entre outras), `--cache` e `--explain` para ler cada item.
-- **Três hooks novos**: `guard-versioning.sh` barra commit ou branch fora do padrão antes de acontecer;
-  `session-card.sh` injeta um cartão de sessão (≤ 40 linhas) no início de cada sessão; `remind-orchestrator.sh`
-  lembra a regra "orquestrador não implementa" (R21), quando habilitado.
-- **`instalar.sh`**: flags `--atualizar` (upgrade sem sobrescrever edição local do repo), `--gates-substituir`
-  e `--codeowners`.
-- **Templates novos**, instalados pelo onboarding: `PULL_REQUEST_TEMPLATE.md` (fio condutor, banco e deploy,
-  prova, revisor humano), `CHANGELOG.md` e `docs/backlog.md`.
-- **`attest.json`**: dois atestados novos — `iniciativa-resolvida` e `squash-titulo-pr`.
+- **Fluxo** — `reference/fluxo.md` (7 seções: níveis · 8 tipos de card · políticas · movimento · propagação ·
+  compromisso/WIP/vazão · métricas medem item, nunca pessoa), instalado em `docs/harness/fluxo.md`; `templates/fluxo/`
+  com os 8 cards; `reference/ferramentas-mcp.json`; seção `fluxo` do `harness.config.json` — gravada pelo onboarding,
+  nunca pelo template. Regra **R19 — fio condutor obrigatório** (`AGENTS.md §7`).
+- **Onboarding** — `gabarito-instalar` em 4 fases (instalação · fluxo · versionamento · orquestração), gatilho por
+  `resolvidoEm` de cada fase, detecção da ferramenta de planejamento por MCP (`claude mcp list` + tools visíveis),
+  leitura da Iniciativa só com ok em uma linha (I10: existe ≠ ativa; I4: vazio não é prova), escrita na ferramenta
+  desligada por default (ADR-FLX-2), `CODEOWNERS` a partir de "Áreas e donos", `docs/fluxo/` quando não há ferramenta,
+  modo `--vincular <PBI>`; `gates/scripts/onboarding-config.mjs` (merge chave a chave, `_comment` preservado, `--settings`).
+- **Versionamento** — regra **R20** (`AGENTS.md §3`, detalhe em `referencia.md §10`); hook `guard-versioning.sh`
+  (branch `tipo/<PBI>-slug` · `wt/<PBI>-<n>` · commit `tipo(PBI): assunto`, inclusive `-m "$(cat <<'EOF' …)"`, `-F`,
+  `-am`), escape hatch `GABARITO_ALLOW_VERSIONING` (hatches não cruzam), fail-open sem onboarding;
+  `gates/scripts/versionamento-check.mjs` (ignora merge commits; CI com `fetch-depth: 0`); templates
+  `PULL_REQUEST_TEMPLATE.md` (fio condutor, banco e deploy, prova, revisor humano), `CHANGELOG.md`, `backlog.md` —
+  instalados pelo onboarding só se ausentes; atestado `squash-titulo-pr`.
+- **Orquestração** — regra **R21 — orquestrador despacha, não implementa** (`AGENTS.md §6`; velocidade nunca compra
+  concorrência); hook `session-card.sh` (SessionStart: cartão ≤ 40 linhas via `cartao-sessao.mjs` — modelo e validade,
+  PBI/Epic/Iniciativa, PBIs em voo, slots, doctor em cache, envelhecidos, LER PRIMEIRO, versão instalada × plugin,
+  superpowers); hook `remind-orchestrator.sh` (UserPromptSubmit, `lembretePorPrompt`, desligado por default, nunca
+  bloqueia); `.harness/fluxo-cache.json`; política de modelo por alias com validade de 90 dias (ADR-ORQ-1).
+- **Paralelismo** — `gates/scripts/capacidade.mjs` (cores, load, memória disponível via `vm_stat`/`MemAvailable`,
+  disco, processos pesados excluindo a árvore do Claude Code; `slots`; `--calibrar`; `GABARITO_PARALELISMO`);
+  `arquivosDeContenda` (serial sem override); `isolamentoWorktree` resolvido no prompt do implementador
+  ("Isolamento: porta · schema · namespace — não use outro"); escalada ao usuário após `rodadasAntesDeEscalar`.
+- **Doctor** — checagens `fluxo-configurado`, `iniciativa-resolvida` (atestado), `versionamento`, `changelog`,
+  `tag-semver` (opcional), `agents-tamanho` (núcleo ≤ 17.291 B, Apêndice ≤ 4.096 B), `paralelismo-calibrado` e
+  `warn modelo-resolvido` (aviso, não entra no nível); `--cache` (24 h); linha "checagens novas da 1.1.0: rode o
+  onboarding ou declare o nível medido".
+- **Instalador** — `--atualizar` (`.novo` + `diff --stat`, aviso de que R19–R21 agora são do harness e as regras de
+  projeto passam a R30+, com renumeração no Apêndice), `--atualizar --gates-substituir` (ADR-TIM-1: só `tools/gabarito-gates/`, `.bak`, recusa por hash divergente),
+  `--codeowners`; `tools/gabarito-gates/.instalado.json`; emenda do `.gitignore` (`.harness/doctor-cache.json`,
+  `.harness/fluxo-cache.json`, `*.novo`, `*.bak`); `scripts/test/instalar.test.sh`.
+- **Conformidade** — checklists por tipo de card (Iniciativa, Epic com lista de PBIs, US, Enabler, TechDebt, Tarefa,
+  Spike, Bug) citando `fluxo.md §2`; fio condutor no design (`Iniciativa:`/`Epic:` + PBIs) e no plano (`PBI:` único,
+  `Epic:`, tipo por task); contenda serial no grafo; fail-open declarado — sem `fluxo.resolvidoEm`, fio condutor é AVISO.
+- **Referência** — `referencia.md §3.5` "Camadas de contexto" (orquestrador não lê saída bruta que um subagente possa
+  resumir) e `§10` "Versionamento"; `adocao.md §4` "MCP demais no contexto" e `§5` reescrito (orquestração por pessoa
+  **com** ownership por área); `prompts.md` com "Isolamento" (Implementador) e "Antes de despachar" (Orquestrador);
+  `AGENTS.md §6` com a tabela de 5 camadas de contexto e Apêndice com Fluxo · Versionamento · Modelo · Paralelismo ·
+  Isolamento · Áreas e donos.
+- CI deste repositório: job `instalador` (`instalar.test.sh`, Ubuntu + macOS) e job `texto` (7 seções de `fluxo.md`;
+  R19/R20/R21/R30+ e `§3.7` = 0 no `AGENTS.md`; `§3.5` e "Versionamento" em `referencia.md`; "MCP demais" em
+  `adocao.md`; `AskUserQuestion` e nenhum `mcp__` no `allowed-tools` da skill; três `version` iguais; sem `"hooks"`
+  em `plugin.json`; sem "77 testes"; lista de nomes da 1.0.1 presente).
 
 ### Alterado
-- **`AGENTS.md`** reescrito para a 1.1.0: três regras novas no núcleo — R19 (fio condutor Iniciativa → Epic →
-  PBI), R20 (versionamento é gate) e R21 (orquestrador despacha, não implementa; contenda sem override) —,
-  papéis do orquestrador/implementador/revisor, camadas de contexto por agente, ciclo por altitude (Iniciativa →
-  Epic → PBI → task). O detalhamento que saiu do núcleo migrou para `docs/harness/referencia.md`, `adocao.md` e
-  `prompts.md` — nenhuma regra foi removida.
-- **`docs/harness/adocao.md`**: escada de níveis de adoção alinhada ao que o doctor mede de fato; a orientação
-  deixa de assumir uma pessoa sênior orquestrando sozinha.
-- **`docs/harness/prompts.md`**: prompt do implementador ganha o isolamento por worktree (porta, schema,
-  namespace); prompt do orquestrador ganha o passo "antes de despachar".
-- **Numeração das regras de projeto (quebra para quem já adotou):** as regras específicas do projeto, no Apêndice
-  do `AGENTS.md`, passam a começar em **R30** (antes **R19**), porque R19–R21 agora são regras do núcleo. Quem já
-  adotou a 1.0.x e tem R19+ no Apêndice precisa renumerar para R30+ e atualizar as referências a elas.
+- `AGENTS.md`: núcleo com teto de **17.291 bytes** (ADR-CTX-1) — os blocos "Motivo"/"Gate" de R2/R3, os "dois
+  incidentes" do §6, "Consequência prática", "Fronteira com UI/UX" e a lista de limites dos hooks do §9 e o comando do
+  §0.2 migraram para `referencia.md §5/§11/§12/§3.1`, `adocao.md §1` e README; §7 reescrito (Iniciativa → Epic → PBI,
+  **um plano por PBI** — ADR-FLX-1; Ready/Done por altitude); papéis do orquestrador/implementador/revisor; ponteiro
+  `§3.7` corrigido para `§3.4`; §8 ganha a revisão das políticas de fluxo.
+- **Numeração das regras de projeto (quebra para quem já adotou):** as regras específicas do projeto, no Apêndice do
+  `AGENTS.md`, passam de `R19+` a **`R30+`**, porque R19–R21 agora são regras do núcleo. Quem já adotou a 1.0.x e tem
+  R19+ no Apêndice precisa renumerar para R30+ e atualizar as referências a elas (`instalar.sh --atualizar` avisa).
+- `referencia.md §3.1` (worktree `wt/<PBI>-<n>`) e `§3.4` ("unidade da PR é o PBI"; WIP por nível em `fluxo.md`;
+  "Sem sprint, sem timebox, sem WIP formal" removido).
+- `adocao.md`: escada de níveis de adoção alinhada ao que o doctor mede de fato; a orientação deixa de assumir uma
+  pessoa sênior orquestrando sozinha.
+- `hooks/_common.sh`: `gabarito_escape_hatch <ROTULO> <VAR>` (R2 e R3 continuam aceitando uma pela outra — comportamento
+  medido da 1.0.1; R20 não cruza), `gabarito_repo_root` (`git rev-parse --show-toplevel`, monorepo em subpasta),
+  `gabarito_config_get`.
+- `templates/gabarito.yml`: `fetch-depth: 0`, job `versionamento` (Conventional Commits com escopo do PBI e nome de
+  branch contra o histórico da PR), nome do job de testes sem número.
+- `templates/attest.json`: chaves `iniciativa-resolvida` e `squash-titulo-pr`. `templates/harness.config.json`: só o
+  `_comment` (as seções novas nascem no onboarding).
+- `gates/package.json`: versão alinhada ao plugin (era `1.0.0`, M12) e `bin` novos.
+- `/gabarito-doctor`: explica `warn` (≠ `FALTA` ≠ `--`), a linha "checagens novas da 1.1.0" e `--cache`.
+- `gabarito-implementador`: bloco "Isolamento", idêntico ao de `prompts.md`.
+- `gabarito-instalar`: `allowed-tools` com `AskUserQuestion`, `Edit`, `Bash(claude mcp list:*)` — nenhum `mcp__*`
+  (permissão por chamada, R3).
+- `.github/PULL_REQUEST_TEMPLATE.md` deste repositório passa a ser o `templates/PULL_REQUEST_TEMPLATE.md` do plugin.
+- README: seções Fluxo, Onboarding, Versionamento, Orquestração e modelo, Paralelismo medido, Contexto em camadas,
+  Atualizar de 1.0.x e a tabela "Medições da 1.1.0" (M14/M15); limites declarados novos (hooks de versionamento, raiz
+  por cwd em 3 gates da 1.0.1, falso positivo de `ledger-versionado`); contagem de testes medida nesta versão — gates
+  268 (241 mjs + 27 ts), hooks 271, instalador 70 casos.
 
 ## [1.0.1] — 2026-09-05
 
@@ -81,5 +132,6 @@ Correções do review adversarial independente (2 Critical, 7 Important, 14 Mino
 Primeira publicação: marketplace + plugin com hooks R2/R3, 4 skills, 3 agents, `/gabarito-doctor`, 7 gates
 (77 testes), instalador, templates e README com as 13 medições.
 
+[1.1.0]: https://github.com/gabrielnfc/gabarito-mestre/compare/gabarito-mestre--v1.0.1...gabarito-mestre--v1.1.0
 [1.0.1]: https://github.com/gabrielnfc/gabarito-mestre/compare/gabarito-mestre--v1.0.0...gabarito-mestre--v1.0.1
 [1.0.0]: https://github.com/gabrielnfc/gabarito-mestre/releases/tag/gabarito-mestre--v1.0.0
