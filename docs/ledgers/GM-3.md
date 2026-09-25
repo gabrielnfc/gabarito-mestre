@@ -37,6 +37,10 @@ Ruling F3-R7 — dois achados novos do re-review ficam diferidos, sem segunda ro
 Minors diferidos para T25/fase 6: ramo "node ausente" do cartão sem teste; `Number.isInteger(slots)` sem teste; N1/N2 acima; carga do plugin numa sessão interativa real não medida; README "Hooks".
 Tree final: hooks 269 · instalador 70 · gates 236 mjs + 27 ts · `claude plugin validate --strict` ok.
 
+PR #3 aberta. CI: hooks em ubuntu e macOS verdes (GNU agora medido), validate ok, gates ok; job "doctor não se auto-detecta (M10)" vermelho — `health-commit` achou evidência em `hooks/test/guards.test.mjs` (texto "commit … versionamento" casa a regex da checagem).
+Ruling F3-R8 — `gabarito-mestre/hooks/` entra no `excludePaths` do doctor (mesmo motivo de `gates/` e `reference/`), regex intacta — custo-se-errado: um caminho de app contendo literalmente `gabarito-mestre/hooks/` deixa de contar como evidência.
+Fix fc622fe: gates 236 → 238 mjs (+ 27 ts); check do CI reproduzido local → ok. Review (sonnet) APROVADO: a mutação que remove a entrada derruba o teste novo. Minor diferido: `excludePaths` casa por substring e não tem teste de fronteira (alargar para `hooks/` não derruba nada) — convenção anterior, vale para as quatro entradas.
+
 ## CORTE DA SESSÃO (com motivo)
 
 ## FECHO — PR mergeada
