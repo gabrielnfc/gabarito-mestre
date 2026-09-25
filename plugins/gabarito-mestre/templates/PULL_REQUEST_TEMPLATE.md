@@ -1,6 +1,6 @@
 <!--
 Título desta PR: `tipo(PBI-n): assunto` — é o cabeçalho do commit de squash que entra em main (R20).
-tipo ∈ feat | fix | enabler | debt | spike | task | perf | refactor (com PBI) · chore | docs | ci | build | test (sem PBI).
+tipo ∈ feat | fix | enabler | debt | spike | task | perf | refactor (com PBI) · chore | docs | ci | build | test | release | revert (sem PBI).
 -->
 
 ## Fio condutor (R19)
