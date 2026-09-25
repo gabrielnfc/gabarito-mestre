@@ -15,6 +15,8 @@
  *  M8  `run()` gravando o cache (viola pureza)
  *  M9  `JSON.parse` sem try/catch em `run()` (config inválida vira stack trace)
  *  M10 linha "checagens novas" impressa incondicionalmente — deve derrubar
+ *  M11 F4-R10: alargar a entrada de excludePaths de 'gabarito-mestre/templates/' para 'templates/'
+ *      (a exclusão passa a valer para QUALQUER caminho que contenha "templates/", não só o do plugin)
  */
 
 import { test, describe } from 'node:test';
@@ -241,6 +243,21 @@ describe('doctor — não se detecta a si mesmo', () => {
     const r = out.resultados.find((r) => r.id === 'pr-template');
     assert.equal(r.found, true);
     assert.equal(r.evidence, '.github/PULL_REQUEST_TEMPLATE.md');
+  });
+
+  // B9 (T25b, handoff §B.9): a exclusão tem de ficar ANCORADA em 'gabarito-mestre/templates/' — não em
+  // 'templates/' puro. Um template FORA do plugin, num caminho que também contém a palavra "templates/"
+  // (aqui: apps/templates/), não pode virar invisível para a varredura de evidência (M11).
+  test('B9: template fora do plugin em caminho "apps/templates/" CONTA como evidência (exclusão não pode alargar para "templates/" nu)', () => {
+    const out = run(
+      repo({
+        'AGENTS.md': agents(0),
+        'apps/templates/PULL_REQUEST_TEMPLATE.md': 'migration requisito teardown',
+      }),
+    );
+    const r = out.resultados.find((r) => r.id === 'pr-template');
+    assert.equal(r.found, true);
+    assert.equal(r.evidence, 'apps/templates/PULL_REQUEST_TEMPLATE.md');
   });
 });
 
