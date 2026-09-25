@@ -63,6 +63,10 @@ const DEFAULTS = {
     // por construção os nomes que as checagens procuram (massMutationGuard, assertNotProduction…),
     // e a presença da BIBLIOTECA não prova que ela está LIGADA na aplicação.
     'gabarito-gates/', 'gabarito-mestre/gates/', 'gabarito-mestre/reference/',
+    // RULING F3-R8: os hooks do plugin e seus testes citam commit, versão, produção etc.
+    // por construção (é o vocabulário do próprio harness) — presença ali não prova nada
+    // sobre a APLICAÇÃO que instalou o harness.
+    'gabarito-mestre/hooks/',
   ],
 };
 

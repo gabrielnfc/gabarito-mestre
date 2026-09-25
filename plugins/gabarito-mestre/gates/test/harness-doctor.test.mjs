@@ -198,6 +198,28 @@ describe('doctor — não se detecta a si mesmo', () => {
     );
     assert.equal(out.resultados.find((r) => r.id === 'G3-mass-mutation').found, false);
   });
+
+  test('RULING F3-R8: teste dos hooks do plugin não conta como evidência de health-commit', () => {
+    const out = run(
+      repo({
+        'AGENTS.md': agents(0),
+        'plugins/gabarito-mestre/hooks/test/x.test.mjs': 'commit hash and app version exposed here',
+      }),
+    );
+    assert.equal(out.resultados.find((r) => r.id === 'health-commit').found, false);
+  });
+
+  test('RULING F3-R8: controle — o mesmo texto na aplicação conta como evidência', () => {
+    const out = run(
+      repo({
+        'AGENTS.md': agents(0),
+        'src/health.ts': 'commit hash and app version exposed here',
+      }),
+    );
+    const r = out.resultados.find((r) => r.id === 'health-commit');
+    assert.equal(r.found, true);
+    assert.equal(r.evidence, 'src/health.ts');
+  });
 });
 
 describe('doctor — integridade do registro', () => {
