@@ -29,6 +29,10 @@ Task T10: DONE (sonnet; caf5dae test, bad3734 feat). RED 16 ok/22 falhas → GRE
 Task T11: DONE (haiku; 65d809e test, 7f05515 feat). package.json 1.1.0, 8 bin, zero deps. Gate da fase medido: 8 scripts · NOVAS_1_1_0 8 · CHECKS 27 · npm test 229 mjs + 27 ts = 256 · instalar.test.sh 38 · guards 148 · validate --strict ok · doctor sem autodetecção.
 Nota de processo: este ledger foi restaurado ao commit inicial por um subagente durante T11 (provável `checkout` amplo); reconstruído a partir do ledger scratch (`.superpowers/sdd/…/progress.md`), que é a fonte de recuperação. Ruling F2-R6: implementadores só podem `checkout --` os próprios arquivos — reforçado nos dispatches seguintes.
 
+Review final da branch (fable): COM CORREÇÕES. C1 — upgrade 1.0.1→1.1.0 deixava `tools/gabarito-gates` misto (1.0.1 nunca gravou manifesto; instalador recusava substituir) e o CI do usuário vermelho. I1 — cache do doctor vencido rotulado "recalculado agora" quando o doctor falha. I2 — git ilegível contava `versionamento` como found. I4 — ONB-7 fail-open só em stderr. M1–M9 (datas UTC, `--branch --json`, cache não atômico, etc.).
+Rulings: F2-R7 git ilegível → `found:false` (G9 vence o plano T8) · F2-R8 ONB-7 alvo inválido: exit 0 + linha explícita no stdout · F2-R9 upgrade: hashes da 1.0.1 embarcados em `gates/.hashes-anteriores`, idêntico entra no manifesto, `test/` novos vão para `.novo` se algum gate divergir e não for substituído · F2-R10 datas gravadas em fuso local.
+Para as fases seguintes: fase 3 — hook exporta `GABARITO_PID_RAIZ=$PPID` e sempre passa `--plugin-root`; fase 6 — default de `--plugin-root` na cópia instalada, raiz por cwd nos 3 scripts 1.0.1, `plugin.json` 1.0.1 até T25, `ledger-versionado` aceita arquivo não versionado, CHANGELOG avisa queda de nível dos repos 1.0.1; contrato — `versionamento-check` sem `resolvidoEm` diz "repo sem onboarding".
+
 ## CORTE DA SESSÃO (com motivo)
 
 ## FECHO — PR mergeada
