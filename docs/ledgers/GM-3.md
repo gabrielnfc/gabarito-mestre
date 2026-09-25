@@ -25,6 +25,7 @@ F3-R5 — modelos: sonnet em T12–T15 (bash com comportamento a preservar/integ
 
 ## Progresso
 Task T12: DONE (sonnet; fd9fd2d feat, 06ce11f test). Hooks 148 → RED 151/157 → GREEN 157 → 158 após correção. `_common.sh` 6→9 funções; fallback jq→node→python3 3/3 medido; instalador 70 ok. Review adversarial (sonnet): M1, M3, M4, M5 + 2 próprias derrubaram; 1 BLOCKER — a validação do nome da VAR antes do `eval` não tinha teste (o teste com espaço passava por word-splitting; payload com `${IFS}` executava código com a validação removida). Corrigido com teste de sentinela em tmpdir; re-review confirmou por mutação (158→157, cai só o teste novo). M2 não derruba mais (linha redundante com a checagem de tamanho); cabeçalho de mutações ajustado. Capacidade medida no fim: slots 1 (4 pesados) → T13 serial (F3-R3).
+Task T13: DONE (sonnet; 140e455). Hooks 158 → RED 159/233 (74 falhas, exit 127) → GREEN 233. Corpus `versionamento.txt` 63 entradas (35 PASSA · 26 BLOQUEIA · 2 HATCH · 7 worktree). Pior caso medido 176 ms (heredoc em `-m`), timeout 10 s. `claude plugin validate --strict` ok. Review adversarial (sonnet) APROVADO: M5, M6, M7, M8, M12, M13 + 1 própria (`gabarito_ere` identidade) derrubaram; sondas `git -C`, `git -c`, `checkout -b válido && commit inválido` bloqueiam. Pendência: comportamento em GNU (CI ubuntu) não medido localmente.
 
 ## CORTE DA SESSÃO (com motivo)
 
