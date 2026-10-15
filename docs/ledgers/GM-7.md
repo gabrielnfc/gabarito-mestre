@@ -6,7 +6,7 @@
 
 | Item | Estado | Onde |
 |---|---|---|
-| Spec | **r22** — r21 aprovada (3/3 Fable, 0 achado, ok do dono); r22 = emendas E1–E7 do ruling R3 | `docs/superpowers/specs/2026-10-15-hotfix-1.1.1-design.md` (histórico das 22 rodadas em §8) |
+| Spec | **r23** — r21 aprovada (3/3 Fable, 0 achado, ok do dono); r22 = E1–E7 (R3); r23 = exceção de HOME (R4) | `docs/superpowers/specs/2026-10-15-hotfix-1.1.1-design.md` (histórico das 22 rodadas em §8) |
 | Plano-mestre | Escrito; review Fable rodada 1 **REPROVADO** (transversal: 1 BLOCKER, 4 MAJOR, 2 MINOR) — em emenda | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1.md` |
 | Planos de fase | Escritos (commit 950372b); review Fable rodada 1 **REPROVADO** em todas (F1: 1 MAJOR 6 MINOR; F2: 2 BLOCKER 4 MAJOR 4 MINOR; F3: 5 MAJOR 5 MINOR; F4: 1 BLOCKER 2 MINOR) — em emenda | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1-fase-{1-base,2-segredos,3-guardas,4-integracao}.md` |
 | Implementação | Não iniciada | — |
@@ -32,6 +32,7 @@ Próximos passos, nesta ordem:
 - R1 (2026-10-15): pivô D9 — subagente em lista branca, orquestrador em lista negra contra acidente (aprovado pelo dono após r5).
 - R2 (2026-10-15): mantida a entrega única (sem dividir em duas PRs); dono aprovou a spec r21 com "ok".
 - R3 (2026-10-15): spec r22 — dono aprovou E1, E3, E4, E5, E6 como propostas; E2 pelo lado A (l.86 mantida; casos de l.183 viram `grep -rn --null`/`rg --hidden -0`); E7 ratificada (`-o` não é flag de saída em ferramentas de busca). Origem: conflitos internos da spec achados no review Fable dos planos (rodada 1). Detalhe em spec §8.
+- R4 (2026-10-15): spec r23 — fora de git, `cwd` = `$HOME`, ancestral de `$HOME` ou `/` não dá escopo de escrita a S (REQ-H0-5; MH148 em §6 H0-5). Origem: A19 da emenda do plano da fase 3. Escopo de leitura inalterado (segredos seguem cobertos por H3).
 - Nota (falso positivo para a 1.2.0): aplicar E5 por `sed` no Bash foi barrado pela R3 da 1.1.0 por **menção** a host `*.prod.*.com` dentro de texto de script; contornado com Edit.
 
 ## Medições (Task 0)
