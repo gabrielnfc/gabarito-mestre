@@ -7,16 +7,16 @@
 | Item | Estado | Onde |
 |---|---|---|
 | Spec | **r26** — r21 aprovada (3/3 Fable, 0 achado, ok do dono); r22 E1–E7 (R3); r23 HOME (R4); r24 E8/E9 (R5); r24.1 git (R6); r25 acidente × disfarce (R7) e fgrep/zgrep (R8); r26 S1–S6 (R10) | `docs/superpowers/specs/2026-10-15-hotfix-1.1.1-design.md` (histórico r0–r26 em §8) |
-| Plano-mestre | r11 (66a46c8); review completo final Opus (R9) REPROVADO → emendado; rodada 8 (Opus): 8 MINOR — em emenda |
-| Planos de fase | r11 (66a46c8); rodada 8 (Opus): F1 5 MINOR; F2 2 MAJOR 4 MINOR; F3 1 MAJOR 4 MINOR — em emenda |
+| Plano-mestre | r12 (fb4c907; rodada 8 emendada) — review do delta rodada 9 (Opus) | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1.md` |
+| Planos de fase | r12 (fb4c907; rodada 8 emendada) — review do delta rodada 9 (Opus) | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1-fase-{1-base,2-segredos,3-guardas,4-integracao}.md` |
 | Implementação | Não iniciada | — |
 
 ## HANDOFF (2026-10-16, sessão 2 — parada por falta de créditos do Fable)
 
 Próximos passos, nesta ordem:
 
-1. Planos escritos (950372b) e emendados até r8; spec r25 (rulings R3–R8; F2-20 promovida a E8). A partir da r25 os revisores classificam cada vetor como acidente (cobre) ou disfarce (§5-2 para O, R7).
-2. Review completo final (Opus, R9) feito em 8916ad0: REPROVADO (F1 3 MAJOR; F2 5 MAJOR; F3 1 MAJOR; F4 1 BLOCKER; transversal 1 MAJOR) — achados em scratchpad `achados-final.md` (resumo nesta linha). Em emenda: spec r26 (R10) + 5 planos. Depois: review do delta (Opus) até zerar e novo review completo final (Opus).
+1. Planos escritos (950372b) e emendados até r12 (fb4c907); spec r26 commitada (6b2a014; rulings R3–R10; F2-20 promovida a E8). Revisor: Opus (R9/R10). Critério R7 (acidente × disfarce) nos prompts.
+2. Review completo final (Opus) em 8916ad0 REPROVOU; emendas + rodada 8 (delta) aplicadas; rodada 9 (delta, Opus) em curso sobre fb4c907. Quando zerar: novo review completo final (Opus, 5 instâncias novas).
 3. Review dos planos (mestre + fases) no **Opus** (R9/R10; Fable sem créditos); só passa com **0 achado** (BLOCKER, MAJOR e MINOR). Repetir emenda + review do delta até zerar; terminar com um review completo por instância nova.
 4. Pedir o ok do dono no plano e o método de execução (recomendado: subagent-driven, implementador opus, revisor fable por task).
 5. T0 (spike M-A..M-E) antes de qualquer código; resultados aqui e em `hooks/lib/medicoes.mjs`.
