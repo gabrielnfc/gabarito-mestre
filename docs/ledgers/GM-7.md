@@ -7,16 +7,16 @@
 | Item | Estado | Onde |
 |---|---|---|
 | Spec | **r26** — r21 aprovada (3/3 Fable, 0 achado, ok do dono); r22 E1–E7 (R3); r23 HOME (R4); r24 E8/E9 (R5); r24.1 git (R6); r25 acidente × disfarce (R7) e fgrep/zgrep (R8); r26 S1–S6 (R10) | `docs/superpowers/specs/2026-10-15-hotfix-1.1.1-design.md` (histórico r0–r26 em §8) |
-| Plano-mestre | r12 (fb4c907; rodada 8 emendada) — review do delta rodada 9 (Opus) | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1.md` |
-| Planos de fase | r12 (fb4c907; rodada 8 emendada) — review do delta rodada 9 (Opus) | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1-fase-{1-base,2-segredos,3-guardas,4-integracao}.md` |
+| Plano-mestre | r13 (9c25d4e; rodada 9 emendada) — review do delta rodada 10 (Opus) | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1.md` |
+| Planos de fase | r13 (9c25d4e; rodada 9 emendada) — review do delta rodada 10 (Opus) | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1-fase-{1-base,2-segredos,3-guardas,4-integracao}.md` |
 | Implementação | Não iniciada | — |
 
 ## HANDOFF (2026-10-16, sessão 2 — parada por falta de créditos do Fable)
 
 Próximos passos, nesta ordem:
 
-1. Planos escritos (950372b) e emendados até r12 (fb4c907); spec r26 commitada (6b2a014; rulings R3–R10; F2-20 promovida a E8). Revisor: Opus (R9/R10). Critério R7 (acidente × disfarce) nos prompts.
-2. Review completo final (Opus) em 8916ad0 REPROVOU; emendas + rodada 8 (delta) aplicadas; rodada 9 (delta, Opus) em curso sobre fb4c907. Quando zerar: novo review completo final (Opus, 5 instâncias novas).
+1. Planos escritos (950372b) e emendados até r13 (9c25d4e); spec r26 commitada (6b2a014; rulings R3–R10; F2-20 promovida a E8). Revisor: Opus (R9/R10). Critério R7 (acidente × disfarce) nos prompts.
+2. Review completo final (Opus) em 8916ad0 REPROVOU; emendas + rodada 8 (delta) aplicadas; rodadas 8–9 (delta, Opus) aplicadas; rodada 10 em curso sobre 9c25d4e. Quando zerar: novo review completo final (Opus, 5 instâncias novas).
 3. Review dos planos (mestre + fases) no **Opus** (R9/R10; Fable sem créditos); só passa com **0 achado** (BLOCKER, MAJOR e MINOR). Repetir emenda + review do delta até zerar; terminar com um review completo por instância nova.
 4. Pedir o ok do dono no plano e o método de execução (recomendado: subagent-driven, implementador opus, revisor fable por task).
 5. T0 (spike M-A..M-E) antes de qualquer código; resultados aqui e em `hooks/lib/medicoes.mjs`.
@@ -39,6 +39,8 @@ Próximos passos, nesta ordem:
 - R8 (2026-10-16): `fgrep`/`zgrep` entram em REQ-H3-8 e E8 (spec r25).
 - R9 (2026-10-16): créditos do Fable esgotados no review completo final; dono autorizou o review final no segundo modelo mais forte disponível (Opus 5.5). Exceção pontual à regra "review sempre no Fable".
 - R10 (2026-10-16): spec r26 — S1 instalador grava `producao`/listas por `--set-arquivo` (sem valor no comando; R3 × REQ-H6-4); S2 comparação sem caixa no macOS (escopo, alvos de config, segredo; `realpathSync.native`); S3 REQ-H4-3 += `sed` com `i` em grupo, `git rm|mv`, `unlink`, `patch`, operandos de `git -C`; S4 `rg --hostname-bin` sem replay; S5 `xargs`/`while read` alimentados por `<` ou here-string seguem REQ-H3-9; S6 `fgrep|zgrep` em REQ-H0-10 e na exceção de `-o`. MH152–MH157. Origem: review completo final (Opus, R9). Revisor até o fim: Opus.
+- R11 (2026-10-16): spec r27 — replay de git só de `git ls-files` (índice) e `git grep` sem `--textconv|-O`; demais produtores git (`status|diff|log|show|…`) para abridor ⇒ deny sem replay; config do usuário volta ao replay (checagem de risco em todos os escopos); `GIT_SEGURO` com `core.hooksPath=/dev/null`, `diff.ignoreSubmodules=all`, `gpg.*program=/nonexistent`, `GIT_OPTIONAL_LOCKS=0`. MH158. Origem: rodadas 8–10 acharam fsmonitor, filtros, gpg, hook `post-index-change`, submódulos — superfície não convergia.
+- Decisão de plano F2-25 (2026-10-16, orquestrador; spec já exige replay sem efeito colateral): antes de qualquer replay de git, ler a config do repo-alvo com `git config --get-regexp` (não executa nada); chave de risco (`filter.*`, `core.fsmonitor`, `gpg.*`, `log.showSignature`, `diff.*.textconv|command`, `diff.external`) ⇒ deny sem replay; replay com `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null` e `-c core.fsmonitor=false -c log.showSignature=false`. Spec l.123 (REQ-H7-3) alinhada editorialmente com S4 (`--hostname-bin`).
 - Decisão de plano F2-20 (2026-10-15, orquestrador; spec omissa, alinhada a l.85): no replay de H3, só atribuições `CI|NODE_ENV|FORCE_COLOR|NO_COLOR|TZ|LANG|LC_ALL` no prefixo do segmento; outra ⇒ deny sem replay (custo: `IFS=: grep -rn x src` nega). Comunicada ao dono, que pode promovê-la a emenda E8.
 - Nota (falso positivo para a 1.2.0): aplicar E5 por `sed` no Bash foi barrado pela R3 da 1.1.0 por **menção** a host `*.prod.*.com` dentro de texto de script; contornado com Edit.
 
