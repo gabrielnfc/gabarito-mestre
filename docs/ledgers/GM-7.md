@@ -7,8 +7,8 @@
 | Item | Estado | Onde |
 |---|---|---|
 | Spec | **r25** — r21 aprovada (3/3 Fable, 0 achado, ok do dono); r22 E1–E7 (R3); r23 HOME (R4); r24 E8/E9 (R5); r24.1 git (R6); r25 acidente × disfarce (R7) e fgrep/zgrep (R8) | `docs/superpowers/specs/2026-10-15-hotfix-1.1.1-design.md` (histórico r0–r25 em §8) |
-| Plano-mestre | r8 — rodada 6: 4 MINOR documentais (corrigidos) | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1.md` |
-| Planos de fase | r8 — rodada 6: F3 aprovada (r5); F1 1 MINOR; F2 1 MAJOR 2 MINOR (coordenação `env -0`) — em emenda | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1-fase-{1-base,2-segredos,3-guardas,4-integracao}.md` |
+| Plano-mestre | r9 (760000b); rodada 7: MINOR editorial corrigido — próximo: review completo final | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1.md` |
+| Planos de fase | r9 (760000b); rodada 7: 4 MINOR editoriais (corrigidos) — próximo: review completo final | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1-fase-{1-base,2-segredos,3-guardas,4-integracao}.md` |
 | Implementação | Não iniciada | — |
 
 ## HANDOFF (2026-10-15, atualizado na sessão 2)
