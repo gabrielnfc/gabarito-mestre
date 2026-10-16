@@ -37,6 +37,7 @@ Próximos passos, nesta ordem:
 - R6 (2026-10-16): spec r24.1 — E8 em `git` só nos subcomandos que H3 lê (`git grep`, `git add` amplo, produtores de REQ-H3-9 (a)); `GIT_PAGER=cat git log`, `GIT_AUTHOR_NAME=x git commit` permitidos.
 - R7 (2026-10-16): critério de convergência para O (D9 "contra acidente"): forma que agente escreve por acidente é coberta; composição deliberada (`set -a`+`declare`, `eval "export …"`, `exec N<`+`read -u N`, grupo em subshell com `<`, `echo . | xargs grep -r`, alias/função antes) é limite §5-2 para O e deny para S (lista branca). Revisores classificam antes de achar.
 - R8 (2026-10-16): `fgrep`/`zgrep` entram em REQ-H3-8 e E8 (spec r25).
+- R9 (2026-10-16): créditos do Fable esgotados no review completo final; dono autorizou o review final no segundo modelo mais forte disponível (Opus 5.5). Exceção pontual à regra "review sempre no Fable".
 - Decisão de plano F2-20 (2026-10-15, orquestrador; spec omissa, alinhada a l.85): no replay de H3, só atribuições `CI|NODE_ENV|FORCE_COLOR|NO_COLOR|TZ|LANG|LC_ALL` no prefixo do segmento; outra ⇒ deny sem replay (custo: `IFS=: grep -rn x src` nega). Comunicada ao dono, que pode promovê-la a emenda E8.
 - Nota (falso positivo para a 1.2.0): aplicar E5 por `sed` no Bash foi barrado pela R3 da 1.1.0 por **menção** a host `*.prod.*.com` dentro de texto de script; contornado com Edit.
 
