@@ -11,12 +11,12 @@
 | Planos de fase | r9 (760000b); rodada 7: 4 MINOR editoriais (corrigidos) — próximo: review completo final | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1-fase-{1-base,2-segredos,3-guardas,4-integracao}.md` |
 | Implementação | Não iniciada | — |
 
-## HANDOFF (2026-10-15, atualizado na sessão 2)
+## HANDOFF (2026-10-16, sessão 2 — parada por falta de créditos do Fable)
 
 Próximos passos, nesta ordem:
 
 1. Planos escritos (950372b) e emendados até r8; spec r25 (rulings R3–R8; F2-20 promovida a E8). A partir da r25 os revisores classificam cada vetor como acidente (cobre) ou disfarce (§5-2 para O, R7).
-2. Retomar na rodada de review: zerar os achados abertos (delta), depois review completo por instâncias novas do Fable.
+2. Retomar no **review completo final** (rodadas de delta 1–7 concluídas; r7 deixou só editoriais, corrigidos em 8916ad0): 5 instâncias Fable novas — uma por fase (extraem o código do plano e rodam suítes + mutações) e uma transversal (spec r25 inteira, contrato, MH1..MH151, ponteiros `l.N` com `aud_ptr.py`). Critério R7 no prompt. Disparado em 8916ad0 e interrompido por HTTP 429 (créditos do Fable esgotados) — reexecutar inteiro.
 3. Review dos planos (mestre + fases) no **Fable**; só passa com **0 achado** (BLOCKER, MAJOR e MINOR). Repetir emenda + review do delta até zerar; terminar com um review completo por instância nova.
 4. Pedir o ok do dono no plano e o método de execução (recomendado: subagent-driven, implementador opus, revisor fable por task).
 5. T0 (spike M-A..M-E) antes de qualquer código; resultados aqui e em `hooks/lib/medicoes.mjs`.
