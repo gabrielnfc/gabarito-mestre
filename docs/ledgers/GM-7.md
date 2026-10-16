@@ -7,15 +7,15 @@
 | Item | Estado | Onde |
 |---|---|---|
 | Spec | **r25** — r21 aprovada (3/3 Fable, 0 achado, ok do dono); r22 E1–E7 (R3); r23 HOME (R4); r24 E8/E9 (R5); r24.1 git (R6); r25 acidente × disfarce (R7) e fgrep/zgrep (R8) | `docs/superpowers/specs/2026-10-15-hotfix-1.1.1-design.md` (histórico r0–r25 em §8) |
-| Plano-mestre | r7 (efb27cb) — em review (rodada 5) | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1.md` |
-| Planos de fase | r7 (efb27cb) — em review (rodada 5, critério R7) | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1-fase-{1-base,2-segredos,3-guardas,4-integracao}.md` |
+| Plano-mestre | r8 — rodada 6: 4 MINOR documentais (corrigidos) | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1.md` |
+| Planos de fase | r8 — rodada 6: F3 aprovada (r5); F1 1 MINOR; F2 1 MAJOR 2 MINOR (coordenação `env -0`) — em emenda | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1-fase-{1-base,2-segredos,3-guardas,4-integracao}.md` |
 | Implementação | Não iniciada | — |
 
 ## HANDOFF (2026-10-15, atualizado na sessão 2)
 
 Próximos passos, nesta ordem:
 
-1. Planos escritos (950372b) e emendados até r7 (efb27cb); spec r25 (rulings R3–R8; F2-20 promovida a E8). A partir da r25 os revisores classificam cada vetor como acidente (cobre) ou disfarce (§5-2 para O, R7).
+1. Planos escritos (950372b) e emendados até r8; spec r25 (rulings R3–R8; F2-20 promovida a E8). A partir da r25 os revisores classificam cada vetor como acidente (cobre) ou disfarce (§5-2 para O, R7).
 2. Retomar na rodada de review: zerar os achados abertos (delta), depois review completo por instâncias novas do Fable.
 3. Review dos planos (mestre + fases) no **Fable**; só passa com **0 achado** (BLOCKER, MAJOR e MINOR). Repetir emenda + review do delta até zerar; terminar com um review completo por instância nova.
 4. Pedir o ok do dono no plano e o método de execução (recomendado: subagent-driven, implementador opus, revisor fable por task).
