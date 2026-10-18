@@ -6,20 +6,21 @@
 
 | Item | Estado | Onde |
 |---|---|---|
-| Spec | **r27** — r21 aprovada (3/3 Fable, 0 achado, ok do dono); r22 E1–E7 (R3); r23 HOME (R4); r24 E8/E9 (R5); r24.1 git (R6); r25 acidente × disfarce (R7) e fgrep/zgrep (R8); r26 S1–S6 (R10); r27 replay de git restrito (R11) | `docs/superpowers/specs/2026-10-15-hotfix-1.1.1-design.md` (histórico r0–r27 em §8) |
-| Plano-mestre | r14 (727b40c; rodada 10 emendada) — review do delta rodada 11 (Opus) | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1.md` |
-| Planos de fase | r14 (727b40c; rodada 10 emendada) — review do delta rodada 11 (Opus) | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1-fase-{1-base,2-segredos,3-guardas,4-integracao}.md` |
+| Spec | **r27.1** — r21 aprovada (3/3 Fable, 0 achado, ok do dono); r22 E1–E7 (R3); r23 HOME (R4); r24 E8/E9 (R5); r24.1 git (R6); r25 acidente × disfarce (R7) e fgrep/zgrep (R8); r26 S1–S6 (R10); r27 replay de git restrito (R11) | `docs/superpowers/specs/2026-10-15-hotfix-1.1.1-design.md` (histórico r0–r27 em §8) |
+| Plano-mestre | r15 (handoff) — **PAUSADO: dono vai pivotar** | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1.md` |
+| Planos de fase | r15 (handoff); rodada 11 emendada em F1/F3/F4/mestre; F2 pendente — **PAUSADO: dono vai pivotar** | `docs/superpowers/plans/2026-10-15-hotfix-1.1.1-fase-{1-base,2-segredos,3-guardas,4-integracao}.md` |
 | Implementação | Não iniciada | — |
 
-## HANDOFF (2026-10-16, sessão 2 — parada por falta de créditos do Fable)
+## HANDOFF (2026-10-18, sessão 2 encerrada — DONO DECIDIU PIVOTAR; discutir em sessão nova)
 
-Próximos passos, nesta ordem:
+**Pivô:** em 2026-10-18 o dono disse que "resolveu pivotar tudo" e quer discutir em sessão nova. O conteúdo do pivô ainda NÃO foi dito. Nada abaixo deve ser executado antes dessa conversa; a primeira ação da próxima sessão é ouvir o pivô e decidir o destino deste trabalho (aproveitar, reduzir escopo ou arquivar).
 
-1. Planos escritos (950372b) e emendados até r14 (727b40c); spec r27 commitada (727b40c; rulings R3–R11; F2-20 promovida a E8). Revisor: Opus (R9/R10). Critério R7 (acidente × disfarce) nos prompts.
-2. Review completo final (Opus) em 8916ad0 REPROVOU; emendas + rodada 8 (delta) aplicadas; rodadas 8–9 (delta, Opus) aplicadas; rodada 11 em curso sobre 727b40c. Quando zerar: novo review completo final (Opus, 5 instâncias novas).
-3. Review dos planos (mestre + fases) no **Opus** (R9/R10; Fable sem créditos); só passa com **0 achado** (BLOCKER, MAJOR e MINOR). Repetir emenda + review do delta até zerar; terminar com um review completo por instância nova.
-4. Pedir o ok do dono no plano e o método de execução (recomendado: subagent-driven, implementador opus, revisor fable por task).
-5. T0 (spike M-A..M-E) antes de qualquer código; resultados aqui e em `hooks/lib/medicoes.mjs`.
+**Onde o trabalho parou (para avaliar o que aproveitar):**
+- Spec r27.1 (`docs/superpowers/specs/2026-10-15-hotfix-1.1.1-design.md`, 251 linhas, MH1–MH158; rulings R1–R12 na seção Rulings; histórico em §8). Numeração das l.1–249 estável desde a r25 (regra: emenda nunca insere linha antes de §8).
+- Plano-mestre + 4 planos de fase em r15 (commit do handoff): rodada 11 (delta, Opus) emendada nas fases 1, 3, 4 e mestre; **fase 2 NÃO recebeu a rodada 11** (corretor interrompido no handoff). Pendências da fase 2: (1) `RE_CONFIG_RISCO` só `core.fsmonitor` com caminho (r27.1) e testes allow com `filter.lfs`/`gpg.ssh.program` globais; (2) `LS_FILES_ARVORE` com prefixos de longas (`--mod`, `--del`); (3) casos `ls-files -k|-u|--debug|--killed|--unmerged`; (4) `git grep --ext-grep` deny; (5) regex única do jq `(?<![.\w$])env(?!\w)|\$ENV|(?<![.\w$"])(?:include|import)\b` exportada de `segredos.mjs` (a fase 3 já consome por stub); (6) texto/código morto de `ENV_GIT_SEGURO`/`GIT_SEM_PROGRAMA_DIFF`.
+- Revisor: Opus (R9/R10; Fable sem créditos). Critério R7 (acidente × disfarce) nos prompts. Regra do dono: 0 achado (MINOR inclusive).
+- Trajetória do review (delta): rodada 8 = 3 MAJOR/21 MINOR → rodada 11 = 2 MAJOR/15 MINOR; o review completo final (Opus) ainda não passou. Implementação: não iniciada (T0 não rodou).
+- Lição para o pivô: o custo veio quase todo de H3 (replay de comandos do usuário/repo para decidir segredo) e do tokenizador de shell — superfície adversarial sem fim; R7 (acidente × disfarce) e R11 (replay de git restrito) foram as decisões que fizeram convergir.
 
 ## Regras do dono para esta entrega
 
