@@ -2,14 +2,14 @@
 Rulings herdados: R1, R2, R3 (1.1.0) · GM-7 R13 (arquivamento; o que a 2.0 reaproveita)          Contexto externo: nenhum tocado; referências lidas só em scratchpad (ver memória `referencias-mods-2-0`)
 
 ## LER PRIMEIRO — 2026-10-19
-A1 Fundação = GM-8. Spec r0 escrita em 2026-10-18; **r1 em 2026-10-19** após conformidade (11 faltas) + review Fable rodada 1 (REPROVADO: 4 BLOCKER, 23 MAJOR, 19 MINOR — todos aplicados; ver R7–R9). **Próximo:** Fable rodada 2 (agente frio) + conformidade r1 → 0 achado → dono lê → reader testing → `writing-plans`.
+A1 Fundação = GM-8. Spec r0 em 2026-10-18; r1 e **r2 em 2026-10-19** após conformidade (11 faltas) + Fable rodada 1 (46 achados, R7–R9) + Fable rodada 2 (34 achados, R10) — todos aplicados. **Próximo:** Fable rodada 3 (agente frio) → 0 achado → dono lê → reader testing → `writing-plans`.
 Regras do dono: fatos, não hipóteses (toda premissa é T0); 0 achado; review no modelo mais potente (Fable; fallback Opus registrado); PT-BR; nome do método = **Fluxo Gabarito**.
 
 ## Estado
 
 | Item | Estado | Onde |
 |---|---|---|
-| Spec | **r1** — 47 REQ, 18 T0; conformidade r0 NÃO CONFORME (11) e Fable r0 REPROVADO (46) aplicados; rodada 2 em andamento | `docs/superpowers/specs/2026-10-18-fundacao-2.0-design.md` |
+| Spec | **r2** — 49 REQ, 21 T0; rodadas Fable 1 (46 achados) e 2 (34 achados) aplicadas; rodada 3 em andamento | `docs/superpowers/specs/2026-10-18-fundacao-2.0-design.md` |
 | Plano | não escrito | — |
 | Implementação | não iniciada | — |
 | T0 | nenhuma rodou | spec §Testes e gates |
@@ -17,7 +17,7 @@ Regras do dono: fatos, não hipóteses (toda premissa é T0); 0 achado; review n
 ## Rulings
 
 - R1 (2026-10-18): fatiamento — A1 Fundação (GM-8) antes do loop (GM-9); motivo: toda T0 do loop lê do diário. Dono aprovou.
-- R2 (2026-10-18): compatibilidade — mod assume a guarda; `guard-production.sh` fica sempre; `guard-destructive.sh`/`guard-versioning.sh` desligam com o mod ativo e morrem em PBI próprio se o corpus comparativo (T0-9) confirmar. Dono aprovou (opção 2).
+- R2 (2026-10-18): compatibilidade — mod assume a guarda; `guard-production.sh` fica sempre; `guard-destructive.sh`/`guard-versioning.sh` desligam com o mod ativo e morrem em PBI próprio se o corpus comparativo (T0-9) confirmar. Dono aprovou (opção 2). **Superado por R9 (2026-10-19): `guard-versioning.sh` nunca desliga** — achado B3 da rodada 1 (R20 é piso).
 - R3 (2026-10-18): pouso primário por `/clear` + `$.prompt.submit` — o validador do build 2.1.301 avisa que o hook `session.compact` não roda em plugin de usuário sob org gerenciada (M3).
 - R4 (2026-10-18): hatch de produção/destrutivo sai do texto do comando; só `/gabarito autorizar` humano (M7: hatch atual é autodeclarável pelo modelo).
 - R5 (2026-10-18): piso de qualidade tighten-only independe da spec (dev júnior no trilho); dono pediu explicitamente.
@@ -25,6 +25,7 @@ Regras do dono: fatos, não hipóteses (toda premissa é T0); 0 achado; review n
 - R7 (2026-10-19): fatos da API que mudaram a arquitetura na r1, todos conferidos no `.d.ts` (M15–M19): módulo sem Node ⇒ núcleo do diário puro + I/O no CLI via `$.process.run` (ADR-ARQ-2); hook falho = fail-open sem `.catch` ⇒ REQ-GRD-12; `$.turn.abort` só turno principal e sem `$.agent.kill` ⇒ D7 reescrita (abort + deny spawn; subagente em background = T0-4); `$.command.run`/`$.session.compact` rejeitam com turno rodando ⇒ pouso disparado por `$.clock.after(0)` (ADR-POU-1). Custo-se-errado: mod que não carrega ou guarda que abre em silêncio.
 - R8 (2026-10-19): anel de integridade (D13/ADR-GRD-3/REQ-GRD-13) — o modelo nunca escreve em `.harness/**`, config, workflows, pasta do plugin, nem invoca `diario.mjs`. Motivo: sem ele o modelo forja `spec.aprovada`, despausa por `rm .harness/PAUSAR` e desliga os hooks Bash (B1 da rodada 1).
 - R9 (2026-10-19): `guard-versioning.sh` nunca desliga (D4 corrigida — B3); `guard-destructive.sh` só desliga com marcador renovado (≤ 60 s) nascido após `guarda.pronta` (B4/M13). `fluxo.aprovarPlano` e `custo` saem da A1 (M18, R6). Decisões D4/D5/D7/D8/D11 ajustadas por **fato da API ou brecha provada**, não por reabertura — o dono confirma na leitura da r1.
+- R10 (2026-10-19): rodada 2 do Fable (REPROVADO: 3 BLOCKER, 16 MAJOR, 15 MINOR) aplicada na **r2**. Fatos novos conferidos no `.d.ts`: `session.start` nunca dispara em `/clear` e `session.end` dispara (⇒ o callback do pouso conclui a retomada; POU-6/7); retorno de `turn.*` sem efeito (⇒ `.catch` grava `guardaFalhou`, GRD-12); `plugin test` usa `mock.store` em memória (⇒ `guarda.pronta` por `/gabarito ativar-guarda`, ADR-GRD-2); `$.tool.register` existe (⇒ D15, `gabarito_task`, DIA-15); `PromptOrigin` é união aberta (⇒ só `composer|bridge` é humano, sem enumerar o resto). M22 estava errada (há duas specs) ⇒ PIS-1 vira ratchet sobre specs tocadas na PR. Marcador do `.sh` por `session_id` (M-i); pausado nega todo `tool.call` de S (M-f); anéis integridade/produção/segredo sobre texto cru antes do desembrulho (M-k); um `stat` resolvido permitido no anel de integridade, disfarce de O = limite G9 (M-g). T0-19/20/21 novas. Custo-se-errado: pouso que nunca retoma; guarda "pronta" que nunca liga.
 
 ## Referências que a implementação deve ler (licenças conferidas em 2026-10-18)
 - Diário: `affaan-m/ECC` `scripts/lib/eval-harness/{canonical,envelope,capsule,receipt}.js` + testes (MIT) — clonar e adaptar.
