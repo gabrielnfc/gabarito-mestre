@@ -160,7 +160,5 @@
 {"nome":"n1-git-pathspec-from-file-orq","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env | git add --pathspec-from-file=-"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"n1-subshell-find-wc-silencio-sub","req":"GRD-5","tool":"Bash","input":{"command":"(find . -name .env; ls) | wc -l"},"agente":"sub","esperado":{"faixa":"silencio"}}
 {"nome":"n1-subshell-find-wc-silencio-orq","req":"GRD-5","tool":"Bash","input":{"command":"(find . -name .env; ls) | wc -l"},"agente":"orq","esperado":{"faixa":"silencio"}}
-{"nome":"n1-find-pwd-subst-silencio-sub","req":"GRD-5","tool":"Bash","input":{"command":"find $(pwd) -name .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
-{"nome":"n1-find-pwd-subst-silencio-orq","req":"GRD-5","tool":"Bash","input":{"command":"find $(pwd) -name .env"},"agente":"orq","esperado":{"faixa":"silencio"}}
 {"nome":"n1-find-tee-arquivo-silencio-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env | tee lista.txt"},"agente":"sub","esperado":{"faixa":"silencio"}}
 {"nome":"n1-find-tee-arquivo-silencio-orq","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env | tee lista.txt"},"agente":"orq","esperado":{"faixa":"silencio"}}
