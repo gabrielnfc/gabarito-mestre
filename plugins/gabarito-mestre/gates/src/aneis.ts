@@ -585,6 +585,8 @@ const SO_REDIRECIONA = new Set(['echo', 'printf']);
 // Q15: checar existência não é leitura.
 const EXISTENCIA = new Set(['ls', 'test', '[', '[[', 'stat']);
 // Valores de `find` que são padrão de nome, não caminho.
+// `find` com ação sobre o resultado (`-exec`, `-delete`...) volta a tratar o padrão como possível caminho de segredo.
+const FIND_ACAO = new Set(['-exec', '-execdir', '-ok', '-okdir', '-delete']);
 const FIND_PADRAO = new Set(['-name', '-iname', '-path', '-ipath', '-wholename', '-iwholename', '-regex', '-iregex', '-lname', '-ilname']);
 const GREP = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'jq']);
 const BANCOS = new Set(['psql', 'pg_dump', 'pg_dumpall', 'pg_restore', 'mysql', 'mysqldump', 'mongosh', 'mongo', 'redis-cli']);
@@ -676,7 +678,7 @@ export function anelDeBash(segmentos: Segmento[], contexto: Contexto, cwd?: stri
       continue;
     }
 
-    const uteis = s.cmd === 'find' ? semPadroesDeFind(s.args) : semTextoLivre(s.cmd, s.args);
+    const uteis = s.cmd === 'find' && !s.args.some((a) => FIND_ACAO.has(a)) ? semPadroesDeFind(s.args) : semTextoLivre(s.cmd, s.args);
     const pos = candidatos(uteis).filter(ehCaminhoPlausivel);
 
     if (s.cmd === 'git') {
