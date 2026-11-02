@@ -5,8 +5,9 @@
  * → `decidir` → stdout → diário. A decisão sai ANTES do `append` (que pode esperar até 3 s por lock): o
  * `timeout: 5` do hook nunca derruba um `ask`/`deny` já decidido.
  *
- * Nunca devolve `allow` (D1). Payload ilegível não é decidível: aviso em stderr e exit 0 (fail-open declarado,
- * G9). Exceção em `decidir` NÃO é fail-open total: segredo e integridade seguem pedindo (visão §6.1).
+ * Nunca devolve `allow` (D1). Envelope ilegível não é decidível: aviso em stderr e exit 0 (fail-open declarado,
+ * G9). Envelope lido + QUALQUER exceção depois (Q21): o que a guarda não conseguiu classificar, ela pede, em toda
+ * chamada (`ask` ao orquestrador, `deny` ao subagent), com saída constante que não depende do caminho que falhou.
  * Nenhuma variável de ambiente muda o veredito: não existe escape hatch.
  */
 
@@ -144,41 +145,6 @@ function montarContexto(entrada             , raiz               , cwd        , 
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// exceção da decisão
-
-const SENSIVEL = /(^|[/\s'"=<>:])\.env(?![.\w-]*example)|\.pem\b|\.key\b|\.aws\/|\.config\/gh\b|\.harness\b|harness\.config\.json|\.claude\/settings|\.github\/workflows|\.git(\/|\b)|gabarito-gates|CLAUDE_PLUGIN_ROOT|\bgit\b[^;&|]*\b(remote|fetch|pull|update-ref|symbolic-ref|config)\b/i;
-
-                                                                                                                                   
-
-/**
- * `decidir` não deve lançar (robustez-guarda.test.ts), mas se lançar a visão §6.1 manda fail-closed em segredo e
- * integridade: sem classificação confiável, qualquer chamada que MENCIONE um desses caminhos ou comandos pede
- * (`deny` para subagent). O resto segue sem decisão, com aviso.
- */
-export function decidirSeguro(entrada             , config                     , contexto          , decidirFn                 = decidir)        {
-  try {
-    const d = decidirFn(entrada, config, contexto);
-    return { permissionDecision: d.permissionDecision, motivo: d.motivo, systemMessage: d.systemMessage, decisao: d };
-  } catch (e) {
-    return falhaSegura(entrada, e);
-  }
-}
-
-/** Resultado quando a classificação não pôde ser feita: pede se a chamada menciona segredo ou integridade. */
-export function falhaSegura(entrada             , e         )        {
-  process.stderr.write(`gabarito-mestre: guarda falhou ao classificar (${e instanceof Error ? e.message : String(e)})\n`);
-  let texto = '';
-  try { texto = JSON.stringify(entrada?.tool_input ?? null) ?? ''; } catch { /* nada */ }
-  if (SENSIVEL.test(texto)) {
-    const sub = typeof entrada?.agent_id === 'string' && entrada.agent_id !== '';
-    return sub
-      ? { permissionDecision: 'deny', motivo: 'a guarda não conseguiu classificar esta chamada e ela menciona segredo ou integridade do harness: só o orquestrador pode pedir', systemMessage: null, decisao: null }
-      : { permissionDecision: 'ask', motivo: 'a guarda não conseguiu classificar esta chamada e ela menciona segredo ou integridade do harness: confirme com o humano', systemMessage: null, decisao: null };
-  }
-  return { motivo: null, systemMessage: 'GABARITO: a guarda falhou ao classificar esta chamada; segredo e integridade não foram verificados', decisao: null };
-}
-
-// ---------------------------------------------------------------------------------------------------------------
 // mensagens, marcador e diário
 
 /** Q7: uma vez por sessão. O marcador é só `wx` em `os.tmpdir()`; não altera o veredito. */
@@ -213,43 +179,106 @@ function diarioGravavel(dir        )          {
   }
 }
 
-function escrever(saida                                )       {
-  if (saida === null) return;
-  try {
-    writeSync(1, `${JSON.stringify(saida)}\n`);
-  } catch (e) {
-    process.stderr.write(`gabarito-mestre: não consegui escrever a decisão (${e instanceof Error ? e.message : String(e)})\n`);
-  }
-}
-
 function aviso(msg        )       {
   process.stderr.write(`gabarito-mestre: ${msg} (guarda sem decisão, fail-open declarado)\n`);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// saída e último recurso (Q21)
 
-// Estado para o último recurso: se algo lançar depois de a entrada ser lida, a decisão ainda sai.
+// Constantes: o pedido de último recurso não passa por JSON.stringify, por montagem de texto nem por dado da entrada.
+const PEDIDO_ORQ = Buffer.from(
+  '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"a guarda falhou ao classificar esta chamada e não sabe se ela toca segredo, integridade ou produção: confirme ou reduza o comando"}}\n',
+);
+const PEDIDO_SUB = Buffer.from(
+  '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"a guarda falhou ao classificar esta chamada e não sabe se ela toca segredo, integridade ou produção: só o orquestrador pode pedir"}}\n',
+);
+
+const TENTATIVAS_ESCRITA = 100;
+
+// Estado do último recurso: só a entrada lida e quanto da saída já foi para o stdout.
 let atual                     = null;
-let decisaoCalculada               = null;
+let pendente                = null;
+let escritos = 0;
 let jaEscreveu = false;
 
-function saidaDe(r       , extras          )                                 {
+const ehSubagent = (entrada                    )          => typeof entrada?.agent_id === 'string' && entrada.agent_id !== '';
+
+/** Escreve o buffer inteiro (writeSync pode escrever menos). `jaEscreveu` só vira `true` depois de o último byte sair. */
+function emitir(buf        )       {
+  pendente = buf;
+  for (let tentativas = 0; escritos < buf.length; ) {
+    try {
+      escritos += writeSync(1, buf, escritos);
+    } catch (e) {
+      if ((e                         ).code !== 'EAGAIN' || ++tentativas >= TENTATIVAS_ESCRITA) throw e;
+    }
+  }
+  jaEscreveu = true;
+}
+
+function saidaDe(r         , extras          )                {
   const saida                          = {};
   if (r.permissionDecision === 'ask' || r.permissionDecision === 'deny') {
     saida.hookSpecificOutput = { hookEventName: 'PreToolUse', permissionDecision: r.permissionDecision, permissionDecisionReason: r.motivo ?? 'a guarda pede confirmação' };
   }
   const msgs = r.systemMessage ? [r.systemMessage, ...extras] : extras;
   if (msgs.length > 0) saida.systemMessage = msgs.join(' · ');
-  return Object.keys(saida).length > 0 ? saida : null;
+  return Object.keys(saida).length > 0 ? Buffer.from(`${JSON.stringify(saida)}\n`) : null;
+}
+
+/** Mensagem do erro sem o que veio da entrada (comando, caminho, URL com credencial): vai ao stderr e ao diário. */
+function limparErro(e         , entrada                    )         {
+  let t = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+  const folhas           = [];
+  const colher = (v         , nivel        )       => {
+    if (typeof v === 'string') { if (v.length >= 3) folhas.push(v); } else if (nivel < 4 && v !== null && typeof v === 'object') for (const x of Object.values(v)) colher(x, nivel + 1);
+  };
+  colher(entrada?.tool_input, 0);
+  for (const f of folhas.sort((a, b) => b.length - a.length)) t = t.split(f).join('[entrada]');
+  return t.replace(/\s+/g, ' ').slice(0, 160);
+}
+
+/** Q21: evento `guarda.ask|deny` com `motivo: "excecao"`, só se o diário estiver são; qualquer falha aqui é silenciosa. */
+function registrarExcecao(entrada             , erro        )       {
+  try {
+    const cwd = typeof entrada.cwd === 'string' && entrada.cwd !== '' ? entrada.cwd : process.cwd();
+    const raiz = raizPorFs(process.env.CLAUDE_PROJECT_DIR) ?? raizPorFs(cwd);
+    const sessao = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;
+    if (raiz === null || sessao === null) return;
+    const guarda = lerGuarda(raiz);
+    if (!guarda.onboarding) return;
+    const dir = dirEntrega(raiz, idDaEntrega(linhaDe(git(raiz, ['symbolic-ref', '--short', 'HEAD'])), guarda.idPadrao));
+    if (!diarioGravavel(dir)) return;
+    const sub = ehSubagent(entrada);
+    const autor = linhaDe(git(raiz, ['config', 'user.email'])) ?? 'desconhecido';
+    append(dir, sessao, {
+      ts: new Date().toISOString(),
+      autor,
+      sessao,
+      agente: sub ? `subagent:${entrada.agent_id}` : 'orquestrador',
+      tipo: sub ? 'guarda.deny' : 'guarda.ask',
+      dados: { motivo: 'excecao', erro },
+    });
+  } catch { /* diário doente: a decisão já saiu */ }
 }
 
 /**
- * Último recurso (algo lançou depois de a entrada ser lida): o que já estava decidido sai; se nem a decisão existia,
- * vale o fallback de segredo e integridade. `null` = nada a escrever (já escreveu, ou nem havia entrada).
+ * Último recurso: a guarda lançou depois de o envelope ser lido. Se a decisão já saiu inteira, nada a fazer; se saiu
+ * pela metade, termina a MESMA saída (não mistura com outra); senão, pede com a saída constante.
  */
-export function saidaDeFalha(e         , entrada                    , calculada              , jaEscreveu         )                                 {
-  if (jaEscreveu || entrada === null) return null;
-  return saidaDe(calculada ?? falhaSegura(entrada, e), []);
+function pedirPorExcecao(e         )       {
+  const entrada = atual;
+  if (entrada === null || jaEscreveu) return;
+  const erro = limparErro(e, entrada);
+  process.stderr.write(`gabarito-mestre: guarda falhou depois de ler a chamada (${erro}); pedindo\n`);
+  try {
+    emitir(escritos > 0 && pendente !== null ? pendente : ehSubagent(entrada) ? PEDIDO_SUB : PEDIDO_ORQ);
+  } catch (e2) {
+    process.stderr.write(`gabarito-mestre: não consegui escrever a decisão (${limparErro(e2, entrada)})\n`);
+    return;
+  }
+  registrarExcecao(entrada, erro);
 }
 
 function principal()       {
@@ -282,8 +311,7 @@ function principal()       {
   const guarda = raizSessao === null ? null : lerGuarda(raizSessao);
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..', '..');
   const contexto = montarContexto(entrada, raizCwd ?? raizSessao, cwd, pluginRoot);
-  const r = decidirSeguro(entrada, guarda?.config ?? null, contexto);
-  decisaoCalculada = r;
+  const r = decidir(entrada, guarda?.config ?? null, contexto);
 
   const sessao = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;
   const mensagens           = [];
@@ -298,7 +326,7 @@ function principal()       {
   }
 
   // Diário: só em repo com onboarding (Q20), só com evento, nunca com o comando.
-  const evento = r.decisao?.evento ?? null;
+  const evento = r.evento;
   let gravar                      = null;
   if (evento !== null && raizSessao !== null && guarda?.onboarding) {
     if (sessao === null) {
@@ -320,8 +348,9 @@ function principal()       {
     }
   }
 
-  jaEscreveu = true;
-  escrever(saidaDe({ ...r, systemMessage: null }, mensagens));
+  const saida = saidaDe({ ...r, systemMessage: null }, mensagens);
+  if (saida !== null) emitir(saida);
+  else jaEscreveu = true; // decisão final: silêncio
 
   if (gravar) {
     try {
@@ -344,9 +373,8 @@ if (ehEntrypoint()) {
   try {
     principal();
   } catch (e) {
-    aviso(`erro inesperado (${e instanceof Error ? e.message : String(e)})`);
-    // O que já estava decidido sai; se nem a decisão existia, vale o fallback de segredo e integridade.
-    escrever(saidaDeFalha(e, atual, decisaoCalculada, jaEscreveu));
+    if (atual === null) aviso(`erro inesperado antes de ler o envelope (${e instanceof Error ? e.message : String(e)})`);
+    else pedirPorExcecao(e);
   }
   process.exitCode = 0;
 }
