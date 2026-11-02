@@ -709,15 +709,28 @@ export const CHECKS = [
 
 // ────────────────────────────────────────────────────────────── camada de guarda (REQ-INF-2)
 
-/** Heartbeat até 7 dias ainda diz "ativa"; além disso a guarda pode ter parado — vira só "configurada". */
-const HEARTBEAT_ATIVA_H = 168;
+/**
+ * `ativa` descreve ESTA árvore, então só aceita evidência que não viaja pelo git: o marcador local
+ * `.harness/heartbeat.json` (gitignored), gravado pelo SessionStart junto com a linha `guarda.heartbeat` do diário,
+ * e CRUZADO com essa linha (mesmo `sessao` e `ts`). O diário é versionado (REQ-DIA-1): um clone o recebe de outro
+ * autor, e por si só ele nunca dá `ativa` — vira anotação em `configurada` (sombra-heartbeat.md).
+ */
+const HEARTBEAT_ATIVA_H = 24;
+/** O diário de outro autor/máquina some da anotação depois de 7 dias. */
+const HEARTBEAT_DIARIO_H = 168;
 /** Relógios diferem: até 5 min à frente ainda é "agora"; além disso o ts é forjado ou quebrado. */
 const HEARTBEAT_SKEW_MS = 5 * 60_000;
-/** Só a cauda do jsonl é lida: o heartbeat mais recente é o último da sessão. */
+const MARCADOR_ARQUIVO = '.harness/heartbeat.json';
+const MARCADOR_MAX_BYTES = 64 * 1024;
+/** Teto de leitura de UM diário: acima disso o arquivo não é lido (sem estourar memória). */
+const DIARIO_MAX_BYTES = 32 * 1024 * 1024;
+/** Anotação: só a cauda do jsonl, dos arquivos mais recentes. */
 const HEARTBEAT_CAUDA_BYTES = 1024 * 1024;
 const HEARTBEAT_MAX_ENTREGAS = 5000;
 const HEARTBEAT_MAX_ARQUIVOS = 50;
 const ISO_TS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+/** O único caminho que o marcador pode apontar: diário de uma entrega, relativo, sem `..`, sem barra extra. */
+const ARQUIVO_DIARIO = /^\.harness\/entregas\/([^/\\]+)\/(events\.[^/\\]+\.jsonl)$/;
 const ehDirReal = (p) => {
   try {
     return lstatSync(p).isDirectory(); // lstat: um symlink para diretório NÃO é diretório
@@ -726,14 +739,18 @@ const ehDirReal = (p) => {
   }
 };
 
-/** Últimos `HEARTBEAT_CAUDA_BYTES` do arquivo regular (nunca symlink), sem a 1ª linha se ela foi cortada. null = ilegível. */
-function lerCauda(arquivo) {
+/**
+ * Lê um arquivo REGULAR (nunca symlink, nunca FIFO) por inteiro, ou só a cauda de `cauda` bytes (sem a 1ª linha, que
+ * pode estar cortada). null = ilegível, não regular ou maior que `max`. `O_NONBLOCK`: abrir um FIFO não bloqueia.
+ */
+function lerSeguro(arquivo, { max, cauda } = {}) {
   let fd;
   try {
-    fd = openSync(arquivo, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    fd = openSync(arquivo, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0));
     const st = fstatSync(fd);
     if (!st.isFile()) return null;
-    const inicio = Math.max(0, st.size - HEARTBEAT_CAUDA_BYTES);
+    if (max !== undefined && st.size > max) return null;
+    const inicio = cauda === undefined ? 0 : Math.max(0, st.size - cauda);
     const buf = Buffer.alloc(st.size - inicio);
     let lidos = 0;
     while (lidos < buf.length) {
@@ -752,8 +769,68 @@ function lerCauda(arquivo) {
   }
 }
 
-/** Horas desde o heartbeat válido mais recente em `.harness/entregas/<id>/events.*.jsonl`, ou null. */
-function horasDesdeHeartbeat(raiz, agora) {
+const tsValido = (ts, agora) => {
+  if (typeof ts !== 'string' || !ISO_TS.test(ts)) return null;
+  const t = Date.parse(ts);
+  return Number.isNaN(t) || t > agora + HEARTBEAT_SKEW_MS ? null : t; // futuro: forjado ou relógio quebrado
+};
+
+/** O git rastreia este caminho? (sem git ou fora de repo: não.) Marcador versionado por engano não é local. */
+function rastreado(raiz, rel) {
+  try {
+    const out = execFileSync('git', ['ls-files', '-z', '--', rel], { cwd: raiz, encoding: 'utf8', env: envGit(), stdio: ['ignore', 'pipe', 'ignore'] });
+    return out.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Linhas de um diário parseadas como eventos `guarda.heartbeat` (objeto, `tipo` exato). */
+function* heartbeatsDe(texto) {
+  for (const linha of texto.split('\n')) {
+    if (!linha.includes('guarda.heartbeat')) continue;
+    let ev;
+    try {
+      ev = JSON.parse(linha);
+    } catch {
+      continue; // linha truncada
+    }
+    if (ev && typeof ev === 'object' && !Array.isArray(ev) && ev.tipo === 'guarda.heartbeat') yield ev;
+  }
+}
+
+/**
+ * Horas desde o heartbeat LOCAL desta árvore: marcador `.harness/heartbeat.json` válido, não rastreado, cujo `arquivo`
+ * (só ele é aberto) tem a linha `guarda.heartbeat` de mesmo `sessao` e `ts`. null = sem evidência local.
+ */
+function horasDesdeHeartbeatLocal(raiz, agora) {
+  const harness = join(raiz, '.harness');
+  if (!ehDirReal(harness)) return null;
+  const texto = lerSeguro(join(raiz, MARCADOR_ARQUIVO), { max: MARCADOR_MAX_BYTES });
+  if (texto === null) return null;
+  let m;
+  try {
+    m = JSON.parse(texto);
+  } catch {
+    return null;
+  }
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return null;
+  const t = tsValido(m.ts, agora);
+  if (t === null || typeof m.sessao !== 'string' || typeof m.arquivo !== 'string') return null;
+  const alvo = ARQUIVO_DIARIO.exec(m.arquivo);
+  if (!alvo || alvo[1] === '.' || alvo[1] === '..') return null;
+  if (!ehDirReal(join(harness, 'entregas')) || !ehDirReal(join(harness, 'entregas', alvo[1]))) return null;
+  if (rastreado(raiz, MARCADOR_ARQUIVO)) return null; // versionado por engano: viaja pelo git, não prova esta árvore
+  const diario = lerSeguro(join(raiz, m.arquivo), { max: DIARIO_MAX_BYTES });
+  if (diario === null) return null;
+  for (const ev of heartbeatsDe(diario)) {
+    if (ev.sessao === m.sessao && ev.ts === m.ts) return Math.max(0, (agora - t) / 3_600_000);
+  }
+  return null;
+}
+
+/** O heartbeat mais recente dos diários `.harness/entregas/<id>/events.*.jsonl` (qualquer autor), ou null. Só anotação. */
+function heartbeatDoDiario(raiz, agora) {
   const harness = join(raiz, '.harness');
   const base = join(harness, 'entregas');
   if (!ehDirReal(harness) || !ehDirReal(base)) return null;
@@ -763,9 +840,7 @@ function horasDesdeHeartbeat(raiz, agora) {
   } catch {
     return null;
   }
-  // Candidatos: events.*.jsonl, os mais recentemente escritos primeiro.
-  // O heartbeat é anexado a cada SessionStart, então o arquivo vivo é o de mtime mais novo; ler só os N mais novos
-  // limita o custo mesmo com milhares de entregas acumuladas.
+  // Os events.*.jsonl mais recentemente escritos primeiro: ler só os N mais novos limita o custo com milhares de entregas.
   const candidatos = [];
   for (const id of entregas) {
     const dir = join(base, id);
@@ -778,7 +853,7 @@ function horasDesdeHeartbeat(raiz, agora) {
     }
     for (const nome of nomes) {
       try {
-        // O tipo NÃO é filtrado aqui: quem recusa symlink e não-arquivo é `lerCauda` (O_NOFOLLOW + fstat), numa defesa só.
+        // O tipo NÃO é filtrado aqui: quem recusa symlink e não-arquivo é `lerSeguro` (O_NOFOLLOW + fstat), numa defesa só.
         candidatos.push({ arquivo: join(dir, nome), mtime: lstatSync(join(dir, nome)).mtimeMs });
       } catch {
         /* sumiu entre o readdir e o lstat */
@@ -788,24 +863,16 @@ function horasDesdeHeartbeat(raiz, agora) {
   candidatos.sort((a, b) => b.mtime - a.mtime);
   let melhor = null;
   for (const { arquivo } of candidatos.slice(0, HEARTBEAT_MAX_ARQUIVOS)) {
-    const texto = lerCauda(arquivo);
+    const texto = lerSeguro(arquivo, { cauda: HEARTBEAT_CAUDA_BYTES });
     if (texto === null) continue;
-    for (const linha of texto.split('\n')) {
-      if (!linha.includes('guarda.heartbeat')) continue;
-      let ev;
-      try {
-        ev = JSON.parse(linha);
-      } catch {
-        continue; // linha truncada
-      }
-      if (!ev || typeof ev !== 'object' || Array.isArray(ev) || ev.tipo !== 'guarda.heartbeat') continue;
-      if (typeof ev.ts !== 'string' || !ISO_TS.test(ev.ts)) continue;
-      const t = Date.parse(ev.ts);
-      if (Number.isNaN(t) || t > agora + HEARTBEAT_SKEW_MS) continue; // futuro: forjado ou relógio quebrado
-      if (melhor === null || t > melhor) melhor = t;
+    for (const ev of heartbeatsDe(texto)) {
+      const t = tsValido(ev.ts, agora);
+      if (t !== null && (melhor === null || t > melhor.t)) melhor = { t, autor: typeof ev.autor === 'string' ? ev.autor : 'desconhecido' };
     }
   }
-  return melhor === null ? null : Math.max(0, (agora - melhor) / 3_600_000);
+  if (melhor === null) return null;
+  const ha = Math.max(0, (agora - melhor.t) / 3_600_000);
+  return ha > HEARTBEAT_DIARIO_H ? null : { ha, autor: melhor.autor };
 }
 
 /** Quantas entradas da lista da guarda `.claude/settings.json` do repo já tem em `permissions.deny`. */
@@ -832,24 +899,26 @@ function ambientesDeclarados(config) {
 }
 
 function camadaDe(raiz, agoraMs, g) {
-  const ha = horasDesdeHeartbeat(raiz, agoraMs);
+  const ha = horasDesdeHeartbeatLocal(raiz, agoraMs);
   const ambientes = ambientesDeclarados(g.config);
   let estado = 'nenhuma';
   if (ha !== null && ha <= HEARTBEAT_ATIVA_H) estado = 'ativa';
   else if (ambientes.length) estado = 'configurada';
   else if (entradasDeny(raiz) > 0) estado = 'permissions.deny';
   // 'mod' (guarda por mod, sem hook) fica no contrato, mas nenhum sinal em disco o prova: nunca é devolvido.
-  return { estado, heartbeatHa: ha, fonte: g.config ? g.fonte : null, divergente: g.divergente, ambientes };
+  // O diário versionado (de qualquer autor) só informa; não decide o estado. Com marcador local válido não precisa de anotação.
+  const diario = estado === 'ativa' ? null : heartbeatDoDiario(raiz, agoraMs);
+  return { estado, heartbeatHa: ha, fonte: g.config ? g.fonte : null, divergente: g.divergente, ambientes, diario };
 }
 
 /**
- * Camada de guarda deste repo (REQ-INF-2): `ativa` (heartbeat válido há ≤ 7 d) · `configurada`
+ * Camada de guarda deste repo (REQ-INF-2): `ativa` (heartbeat LOCAL — marcador gitignored cruzado com o diário — há ≤ 24 h) · `configurada`
  * (guarda.ambientes declarados) · `permissions.deny` (só a 2ª camada do instalador) · `nenhuma`.
  * `fonte`/`divergente` vêm de `lerGuarda` (origin/HEAD vale; árvore divergente só é reportada).
  */
 export function camadaGuarda(raiz, agora = Date.now()) {
-  const { estado, heartbeatHa, fonte, divergente } = camadaDe(raiz, agora instanceof Date ? agora.getTime() : Number(agora), lerGuarda(raiz));
-  return { estado, heartbeatHa, fonte, divergente };
+  const { estado, heartbeatHa, fonte, divergente, diario } = camadaDe(raiz, agora instanceof Date ? agora.getTime() : Number(agora), lerGuarda(raiz));
+  return { estado, heartbeatHa, fonte, divergente, diario };
 }
 
 // ────────────────────────────────────────────────────────────── nível
@@ -964,7 +1033,7 @@ function render(out, explain) {
   }
   const c = out.camada;
   const quente = c.heartbeatHa === null ? '' : ` (heartbeat há ${Math.round(c.heartbeatHa)} h)`;
-  linhas.push(`Camada de guarda: ${c.estado}${c.estado === 'ativa' ? quente : ''}${c.fonte ? ` · fonte ${c.fonte}` : ''}${c.divergente ? ' · DIVERGENTE (árvore ≠ origin/HEAD; vale o origin)' : ''}`);
+  linhas.push(`Camada de guarda: ${c.estado}${c.estado === 'ativa' ? quente : ''}${c.estado !== 'ativa' && c.heartbeatHa !== null ? ` · último heartbeat local há ${Math.round(c.heartbeatHa)} h` : ''}${c.estado !== 'ativa' && c.diario ? ` · diário com heartbeat há ${Math.round(c.diario.ha)} h (${c.diario.autor}; veio pelo git, não prova esta árvore)` : ''}${c.fonte ? ` · fonte ${c.fonte}` : ''}${c.divergente ? ' · DIVERGENTE (árvore ≠ origin/HEAD; vale o origin)' : ''}`);
   linhas.push(`Ambientes declarados: ${c.ambientes.length ? c.ambientes.join(', ') : '(nenhum)'}`);
   if (out.perfil) linhas.push(`Perfil: ${out.perfil}`);
   linhas.push('');

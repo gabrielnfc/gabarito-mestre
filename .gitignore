@@ -4,3 +4,6 @@ docs/workflow-true.html
 
 # brainstorming visual companion
 .superpowers/
+
+# estado local do harness (nao viaja pelo git): heartbeat da guarda desta arvore
+.harness/heartbeat.json

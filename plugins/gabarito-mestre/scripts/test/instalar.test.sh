@@ -16,6 +16,7 @@
 #  M13 T6: --guarda substitui o deny existente      ⇒ settings-deny-preserva-existente
 #  M14 T6: --guarda sobrescreve JSON inválido       ⇒ settings-deny-recusa
 #  M15 T6: .gitignore sem `.harness/entregas/_sem-id/` ⇒ gitignore-sem-id
+#  M19 T6 r1: .gitignore sem `.harness/heartbeat.json` ⇒ gitignore-heartbeat-local
 #  M16 T6: --atualizar sobrescreve gate editado     ⇒ atualizar-nao-sobrescreve-gate
 set -eu
 AQUI="$(cd "$(dirname "$0")" && pwd)"
@@ -71,7 +72,8 @@ check "instalador-conjunto-exato: o que foi instalado é exatamente o esperado, 
   '[ "$(instalado_de "$R")" = "$(esperado_instalado)" ]'
 check "instalador-nao-copia-test: sem test/, sem README, sem .hashes-anteriores, sem manifesto" \
   '[ ! -e "$R/$GATES/test" ] && [ ! -e "$R/$GATES/README.md" ] && [ ! -e "$R/$GATES/.hashes-anteriores" ] && [ ! -e "$R/$GATES/.instalado.json" ]'
-check ".gitignore com as 5 linhas"                '[ "$(grep -cxF -e ".harness/doctor-cache.json" -e ".harness/fluxo-cache.json" -e ".harness/entregas/_sem-id/" -e "*.novo" -e "*.bak" "$R/.gitignore")" -eq 5 ]'
+check ".gitignore com as 6 linhas"                '[ "$(grep -cxF -e ".harness/doctor-cache.json" -e ".harness/fluxo-cache.json" -e ".harness/entregas/_sem-id/" -e ".harness/heartbeat.json" -e "*.novo" -e "*.bak" "$R/.gitignore")" -eq 6 ]'
+check "gitignore-heartbeat-local: .harness/heartbeat.json ignorado (nao viaja pelo git)" 'grep -qxF ".harness/heartbeat.json" "$R/.gitignore"'
 check "gitignore-sem-id: .harness/entregas/_sem-id/ ignorado" 'grep -qxF ".harness/entregas/_sem-id/" "$R/.gitignore"'
 check "template de CI instalado não tem o job gates-tests (test/ não vai junto)" '! grep -q "gates-tests" "$R/.github/workflows/gabarito.yml" && ! grep -q "npm test" "$R/.github/workflows/gabarito.yml"'
 check "config instalada não traz chaves mortas"   '! grep -q "migrationsDir" "$R/harness.config.json" && ! grep -q "squash-titulo-pr" "$R/.harness/attest.json"'
