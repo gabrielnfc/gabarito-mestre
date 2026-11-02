@@ -2,11 +2,11 @@
 
 [![ci](https://github.com/gabrielnfc/gabarito-mestre/actions/workflows/ci.yml/badge.svg)](https://github.com/gabrielnfc/gabarito-mestre/actions/workflows/ci.yml) [![release](https://img.shields.io/github/v/release/gabrielnfc/gabarito-mestre?label=release)](https://github.com/gabrielnfc/gabarito-mestre/releases) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Gabarito mestre** é o molde de referência da manufatura — aquele contra o qual todos os outros são conferidos. É o que este plugin de Claude Code faz: **barra o que é destrutivo** (hooks) e **confere o que é produzido** (skills de conformidade, review adversarial e spike), enquanto o **doctor** mede — e reprova quando mente — o nível real de adoção do harness.
+**Gabarito mestre** é o molde de referência da manufatura — aquele contra o qual todos os outros são conferidos. É o que este plugin de Claude Code faz: **pede confirmação onde o estrago não volta** — segredo, integridade do harness e escrita em produção — e registra o resto (guarda) e **confere o que é produzido** (skills de conformidade, review adversarial e spike), enquanto o **doctor** mede — e reprova quando mente — o nível real de adoção do harness.
 
 Derivado de prática medida, não de boa-prática genérica: cada regra e cada gate existe por causa de um incidente real, e o incidente está escrito ao lado da regra (`plugins/gabarito-mestre/reference/AGENTS.md`).
 
-Os números das seções de hooks e peso morto foram **medidos em 2026-09-05** na 1.0.1 (Claude Code 2.1.261, Node 24.14.1, macOS). Os de hooks R2/R3 continuam valendo na 1.1.0: `guard-destructive.sh` e `guard-production.sh` não mudaram de comportamento (os mesmos padrões; só o nome do escape hatch). A tabela de peso morto **não foi remedida na 1.1.0**, e para o que a 1.1.0 acrescentou (checagens novas do doctor, R19–R21, 3 hooks) ela é **NÃO MEDIDO**. Os números da 1.1.0 estão na seção **Medições da 1.1.0**, cada um com a própria data. Onde não foi possível medir, está escrito **NÃO MEDIDO**.
+Os números de peso morto foram **medidos em 2026-09-05** na 1.0.1 (Claude Code 2.1.261, Node 24.14.1, macOS). Os hooks `guard-destructive.sh` e `guard-production.sh`, que essas medições descreviam, **foram removidos na 2.0**: a guarda é um hook só (seção **Guarda de ambiente**), com medição própria e datada. A tabela de peso morto **não foi remedida**, e para o que a 1.1.0 e a 2.0 acrescentaram ela é **NÃO MEDIDO**. Os números da 1.1.0 estão na seção **Medições da 1.1.0**, cada um com a própria data. Onde não foi possível medir, está escrito **NÃO MEDIDO**.
 
 ---
 
@@ -60,7 +60,7 @@ plugins/gabarito-mestre/
   skills/    gabarito-instalar (4 fases + --vincular) · gabarito-conformidade (anatomia + cards + fio condutor) · gabarito-review · gabarito-spike
   agents/    gabarito-implementador (com Isolamento) · gabarito-revisor · gabarito-spike
   commands/  /gabarito-doctor
-  hooks/     guard-destructive.sh (R2) · guard-production.sh (R3) · guard-versioning.sh (R20) · session-card.sh (cartão de sessão) · remind-orchestrator.sh (R21, opcional)
+  hooks/     hooks.json: guarda de ambiente (R2/R3, `gates/dist/guarda.js`, 3 matchers) · session-card.sh (cartão de sessão) · remind-orchestrator.sh (R21, opcional); R20 é hook git, instalado por instalar.sh
   reference/ AGENTS.md + referencia.md · gates.md · adocao.md · prompts.md · fluxo.md · ferramentas-mcp.json
   gates/     7 gates + 4 scripts de fluxo (onboarding-config · capacidade · versionamento-check · cartao-sessao), 268 testes, zero dependências
   templates/ harness.config.json · attest.json · CLAUDE.md · gabarito.yml (CI) · PULL_REQUEST_TEMPLATE.md · CHANGELOG.md · backlog.md · fluxo/ (8 cards)
@@ -80,7 +80,7 @@ Três regras novas no `AGENTS.md`, todas com gate:
 | Regra | Uma linha | Gate |
 |---|---|---|
 | **R19 — fio condutor obrigatório** (§7) | nenhum PBI sem Epic ativo, nenhum Epic sem Iniciativa ativa; card sem vínculo é desalinhamento, não exceção; métricas medem item, nunca pessoa | `gabarito-conformidade` (design: `Iniciativa:`/`Epic:` + PBIs; plano: `PBI:` único + `Epic:` + tipo por task) · cartão de sessão (`PBI: (b) não resolvido` quando falta) |
-| **R20 — versionamento é gate, não convenção** (§3) | trunk-based · branch por PBI · Conventional Commits com escopo do PBI · SemVer · CHANGELOG na PR · tag por release · squash com título CC | `guard-versioning.sh` (PreToolUse) · `versionamento-check.mjs` (CI e doctor) |
+| **R20 — versionamento é gate, não convenção** (§3) | trunk-based · branch por PBI · Conventional Commits com escopo do PBI · SemVer · CHANGELOG na PR · tag por release · squash com título CC | hooks git `commit-msg` e `pre-push` · `versionamento-check.mjs` (CI e doctor) |
 | **R21 — orquestrador despacha, não implementa** (§6) | toda implementação, spike, review e exploração pesada roda em subagente; **velocidade nunca compra concorrência** — arquivo disjunto, contenda e recurso compartilhado serial não têm override | cartão de sessão · `remind-orchestrator.sh` (opcional) · conformidade (contenda) |
 
 Regras de projeto no Apêndice passam de `R19+` a **`R30+`** — `instalar.sh --atualizar` avisa a renumeração.
@@ -114,10 +114,9 @@ Termina com o doctor e a lista **"o que ficou (b)"**. Sessão sem `AskUserQuesti
 
 Trunk-based (D2): `main` protegida, branch curta por PBI, Conventional Commits com escopo do PBI, SemVer, CHANGELOG na PR, tag por release, squash-merge com título CC. O que a máquina lembra:
 
-- **`guard-versioning.sh`** (PreToolUse · Bash · `timeout 10`): intercepta criação de branch (`git checkout -b|-B`, `git switch -c|-C|--create`, `git branch <nome>`, `git worktree add -b|-B`) e valida contra `branchPadrao` **ou** `branchWorktree`; intercepta `git commit` com `-m`, `--message=`, `-am`, `-m` múltiplo (valida o primeiro), `-m "$(cat <<'EOF' … EOF)"` (a forma padrão do Claude Code — valida a primeira linha do corpo), `-F <arquivo>` e `-F -` com heredoc, e valida `tipo(escopo): assunto` — escopo casando `idPadrao` quando o tipo ∈ `tiposComEscopoDePbi`, livre ou ausente quando ∈ `tiposLivres`. **Não** intercepta `--amend` sem `-m`, commit interativo, nem mensagens em `main`/`master`. Bloqueia com `exit 2` e motivo em três camadas. Passam: `feat/PBI-12-x`, `chore/bump-deps`, `wt/PBI-12-1`, `feat(PBI-123): …`, `docs: …`. Reprovam: `hotfix/PBI-1`, `chore/PBI-1`, `feat/pbi-12`, `git commit -m "arrumei"`, `fix: c` (escopo obrigatório ausente).
-- **Escape hatch** `GABARITO_ALLOW_VERSIONING="<motivo ≥ 8 caracteres, ≥ 2 palavras>"` — mesmas regras dos outros; **hatches não cruzam** (R2 e R3 continuam aceitando uma pela outra, comportamento medido da 1.0.1; R20 não aceita nenhuma das duas).
+- **Hooks git `commit-msg` e `pre-push`** (instalados por `instalar.sh`, que anexa entre marcadores e encadeia em `.husky/` ou `core.hooksPath`): chamam `versionamento-check.mjs --msg|--branch` e recusam mensagem fora de `tipo(escopo): assunto` e branch fora do padrão. O `PreToolUse` de versionamento deixou de existir. **Limite declarado:** `--no-verify`, `HUSKY=0` e `-c core.hooksPath=` contornam o hook local; o backstop é o job `versionamento` do CI. Não existe variável de escape.
 - **`versionamento-check.mjs`** (`--base origin/main --branch "$GITHUB_HEAD_REF"`): valida commits de `base..HEAD` **ignorando merge commits** (2 pais) e o nome da branch; no `gabarito.yml` com `fetch-depth: 0`; no doctor, checagem `versionamento` sobre os últimos 20 commits de primeiro pai. O título CC no squash é **atestado** (`squash-titulo-pr` em `attest.json`) — nenhuma varredura prova a configuração do ruleset. **Limite declarado (VER-3, b):** o doctor confere o first-parent de `HEAD` — a branch em que roda —, não `main` mais a branch atual; commits trazidos por merge de outras branches não são inspecionados.
-- **Fail-open declarado (G9):** sem `versionamento.resolvidoEm`, o hook avisa em stderr e deixa passar — repo sem onboarding não é travado. Raiz do repo via `git rev-parse --show-toplevel`: sessão aberta em subpasta de monorepo funciona.
+- **Fail-open declarado (G9):** sem `versionamento.resolvidoEm`, o hook git avisa em stderr e deixa passar — repo sem onboarding não é travado. Raiz do repo via `git rev-parse --show-toplevel`: sessão aberta em subpasta de monorepo funciona.
 
 Detalhe da regra em `referencia.md §10` ("Versionamento"); a política de prefixos deriva de `tiposComEscopoDePbi` + `tiposLivres` — uma lista, não duas.
 
@@ -184,66 +183,37 @@ Nomes da 1.0.1 que continuam existindo (PKG-2, conferido por grep no CI): 4 skil
 
 ---
 
-## Hooks — o que bloqueiam, e os números
+## Guarda de ambiente — o que pede, o que registra, e os números
 
-Três `PreToolUse` sobre `Bash` (R2, R3 e, a partir da 1.1.0, R20 — descrito em **Versionamento**), um `SessionStart` (cartão) e um `UserPromptSubmit` (lembrete, desligado por default). Os PreToolUse leem o comando, inspecionam por grep (não parser — I9), bloqueiam com `exit 2` e devolvem o motivo em três camadas (frase → o que fazer → regra citada). Confirmado em sessão real: `rm -rf junk` e `curl "$API_PROD_URL/health"` bloqueados, com o motivo chegando verbatim ao agente e o alvo intacto.
+Um `PreToolUse` só (`gates/dist/guarda.js`, `timeout 5`) em três matchers — `Bash`, `Edit|Write|Read|Grep` e `mcp__.*` —, mais um `SessionStart` (cartão) e um `UserPromptSubmit` (lembrete, desligado por default). Substitui `guard-destructive.sh` (R2) e `guard-production.sh` (R3), que bloqueavam por regex de comando. O hook classifica o **alvo** (host, banco, projeto, MCP, caminho) contra os ambientes que o repo declara e decide por faixa; sempre sai com exit 0 e nunca devolve `allow`, de modo que o prompt nativo do Claude Code continua valendo.
 
-### `guard-destructive.sh` — R2
+| Faixa | Quando | O que acontece |
+|---|---|---|
+| silêncio | `teste` ou alvo desconhecido | nada |
+| log | destrutivo em alvo local (`rm -rf .next`, `TRUNCATE` em `127.0.0.1`) | evento no diário, sem mensagem |
+| mostrar | `homolog`; leitura ou execução em produção | evento e `systemMessage` de uma linha (`leu PRODUÇÃO · <host> · permitido`) |
+| pedir | **segredo** (`.env*`, `*.pem`, `*.key`, `~/.aws`…), **integridade do harness** (`.harness/**`, `harness.config.json`, `.claude/settings*.json`, `.github/workflows/**`, `.git/**`, o próprio plugin) e **escrita em produção** fora de `guarda.producao.permitidos` | `ask` ao orquestrador; `deny` ao subagent (`agent_id` presente) |
 
-| Família | Exemplos barrados |
-|---|---|
-| rm recursivo | `rm -rf` · `rm -r` · `\rm -rf` · `--recursive` · `rimraf` · `find … -delete` · `find … -exec rm` · dentro de `{ }`, `then`, `do`, `sudo`, `xargs`, `nohup`, `timeout N` |
-| git destrutivo | `git clean -f\|-fdx` · `git reset --hard` · `git worktree remove --force` · `git rm -r` (sem `--cached`) — dry-run `-n` e `--soft` passam |
-| docker | `docker rm -f\|-v` · `docker volume rm\|prune` · `docker system prune` · `docker compose down -v` |
-| reset de migrations | `prisma migrate reset` · `db push --force-reset` · `typeorm schema:drop` · `sequelize db:drop` · `knex migrate:rollback --all` · `drizzle-kit drop` · `supabase db reset` · `rails db:drop\|reset` · `artisan migrate:fresh\|reset` · `manage.py flush` · `mix ecto.drop` · `dotnet ef database drop` · `flyway clean` · `liquibase drop-all` |
-| payload destrutivo em executor | `DROP TABLE\|DATABASE\|SCHEMA` · `TRUNCATE` · `DELETE FROM` · `.deleteMany(` · `.updateMany(` · `fs.rmSync(…recursive)` · `shutil.rmtree` — **só quando o comando também invoca um executor** (`psql`, `mysql`, `node -e`, `python3 -c`, `prisma db execute`, `bash -c`, `eval`, `sh <<<`…). `grep "DROP TABLE"` é leitura e passa. |
-| sync / nuvem / disco | `rsync --delete` · `aws s3 rm --recursive` · `gsutil rm -r` · `dd of=/dev/…` · `> /dev/sd…` · `mkfs` · `diskutil erase…` · `shred` · `wipefs` |
+A config vem de `refs/remotes/origin/HEAD:harness.config.json`, **nunca da árvore local**: um subagent que reescreve o arquivo não muda o veredito. Sem essa ref, a árvore local vale com `permitidos` vazio, e a guarda avisa uma vez por sessão. Comando Bash acima de 64 KB não é lido inteiro e por isso pede. O diário (`.harness/entregas/<PBI>/events.<sessao>.jsonl`) guarda `ambiente`, `acao` e `alvo`, nunca o comando nem URL com credencial, e só existe em repo com onboarding.
 
-**Menção ≠ execução.** Antes de varrer, o hook remove (i) o corpo de heredocs que só escrevem arquivo com terminador **citado** (`cat >> notas.md <<'EOF'`) — com terminador sem aspas o bash expande `$(…)` na escrita, então essas linhas ficam; e (ii) segmentos de `grep`/`rg`/`sed`/`echo`/`git log`/`git commit -m`, que só leem ou registram texto. O que vem depois de `|`, `;` ou `&&` continua varrido (`grep x | xargs rm -rf` bloqueia).
+**Sem escape hatch.** Não há variável de ambiente, prefixo de comando nem mensagem que libere: o `ask` é o caminho para o humano autorizar, e `permitidos[]` (lido de `origin/HEAD`, portanto mudado só por merge revisado) é o caminho para a rotina de produção.
 
-### `guard-production.sh` — R3
+### Fail-open declarado (G9)
 
-Barra **uso** de credencial/host de produção: `$X_PROD_URL`, `${PROD_TOKEN}`, `process.env.API_PROD_KEY`, atribuição com valor (`API_PROD_TOKEN=abc npm test`), hosts (`prod.exemplo.com`, `api.production.exemplo.com`, `db-prod.rds.amazonaws.com`, `prod.internal`), URLs com segmento `prod`. **Não** barra: `API_PROD_TOKEN=` vazio (`.env.example`), `deploy-production.yml` (arquivo, não host), `NODE_ENV=production`, `npm install --production`, `/products`, nem menção em `grep`/`sed`/`git commit -m`/heredoc de anotação.
+Payload que não é JSON, sem `tool_input` ou com `command` que não é texto: aviso em stderr, exit 0, sem decisão. `cwd` fora de repositório git: só os anéis de segredo e integridade valem. Diário indisponível (`.harness` somente leitura, `session_id` fora do padrão): a guarda segue e o `systemMessage` avisa; lock preso não atrasa a decisão, que sai antes da gravação. **Exceção dentro da classificação:** não é fail-open total; a chamada que menciona segredo ou integridade continua pedindo (`deny` ao subagent) e as demais seguem com aviso. `node` ausente é o único caso em que o hook nem sobe: o Claude Code o trata como erro não bloqueante do hook.
 
-Configurável por env, porque domínio hardcoded de um projeto não serve para mais ninguém:
-
-```bash
-GABARITO_PROD_PATTERNS='minha-ere|outra'          # SUBSTITUI o default (ERE, case-insensitive)
-GABARITO_PROD_PATTERNS_EXTRA='sankhyacloud\.com\.br' # SOMA ao default
-```
-
-### Taxas medidas
+### Medido
 
 | Medição | Resultado |
 |---|---|
-| **Falso positivo (M3)** — 50 comandos legítimos, 25 reais (transcripts de Claude Code desta máquina) + 25 sintéticos armadilha | **0 / 50 bloqueados** |
-| **Falso negativo (M4)** — 30 destrutivos cobrindo as 6 famílias + 12 de produção | **30 / 30** e **12 / 12 bloqueados** |
-| **Escape hatch (M5)** — motivo preenchido libera · vazio não · aviso traz o motivo · ausente não | **4 / 4 nos dois hooks** |
-| **Corpus completo — 7.037 comandos Bash reais** (todos os transcripts de Claude Code desta máquina, 11 projetos; hooks da 1.0.1) | destrutivo: **46 bloqueados (0,65 %)** — 43 eram de fato `rm -rf`, `DELETE`/`DROP`, `git worktree remove --force`, `git reset --hard`, `docker rm -v` executados; **3 falsos positivos (0,04 %)**: corpo de PR (`gh pr create --body`) citando `prisma migrate reset`, heredoc de `python3` escrevendo texto com `rm -rf`, e `psql \d … \| grep` num comando que também tinha `DELETE`. Produção: **23 bloqueados (0,33 %)**, 22 acessos reais a host/credencial de produção e **1 falso positivo** (anotação de memória citando a URL). |
+| Latência do hook, 20 execuções em processo novo, comando benigno, config em `origin/HEAD` (`gates/scripts/bench-guarda.mjs`, 2026-11-02, Node 24.14.1, macOS) | p50 33,0 ms · p95 34,4 ms (piso do Node: p95 19,6 ms) · limite local 60 ms, CI 150 ms |
+| Corpus da guarda (`hooks/test/corpus/guarda-*.jsonl`) | 220 casos em `gates/test/corpus-guarda.test.ts`; 10 deles ponta a ponta por `dist/guarda.js` em `hooks/test/guarda-corpus-e2e.test.mjs` |
 
-O rigor tem motivo: um bloqueio indevido faz alguém desativar o plugin inteiro — e aí se perde também a proteção que funcionava.
+As taxas de falso positivo e negativo da 1.0.1 (7.037 comandos reais) descreviam os hooks por regex e **não valem para a guarda 2.0**; a remedição com transcript real é **NÃO MEDIDO**.
 
-### Limites declarados (G9 — o que os hooks NÃO pegam)
+### Limites declarados (o que a guarda NÃO pega)
 
-É grep, não sandbox (I9). Passam, por decisão: `kubectl delete` · `terraform destroy` · `gh repo delete` · `git push --force` · `git branch -D` · `git checkout -- .` · `truncate -s0` · `: > arquivo` · `heroku -a app-prod` · `kubectl -n production` · `s3://app-prod-bucket` · `vercel --prod` · `$(cat prod-token.txt)` · e **script escrito por heredoc/Write e executado no comando seguinte** (`cat > x.sh <<'EOF' … EOF; bash x.sh`). Para o seu caso, some padrões em `GABARITO_PROD_PATTERNS_EXTRA`; para o resto existem as guardas de runtime (G3/G7) e o review adversarial com mutação.
-
-**`guard-versioning.sh` (R20)** — passam, declarados no cabeçalho do hook e nas reviews da fase 3 (F3-R6, F3-R7): `git branch -f|--force|-q` e `git checkout|switch --orphan` (fora do escopo) · `git -c chave="valor com espaço"` (o `-c` com valor entre aspas com espaço não é reconhecido) · hatch inline lê só a **1ª** atribuição de env do comando (a ordem entre duas variáveis de hatch decide qual libera) · `git commit -F <arquivo>` lê a 1ª linha de **qualquer** arquivo regular legível — não confirma que é mensagem de commit · commit em `main`/`master` não é validado (o squash vale pelo título da PR, atestado `squash-titulo-pr`) · e dois bypass raros: `git commit -amFoo` / `-am"msg"` (flag combinado colado) passa sem inspeção, e `git commit -m -F arq` cai no fail-open de "`-F` ausente" em vez de validar a mensagem. Itens no `docs/backlog.md`.
-
-### Escape hatch
-
-Nominal e grepável. Regras, todas medidas:
-
-- motivo **obrigatório**, com **≥ 8 caracteres e ≥ 2 palavras** — `"lol"` não libera; vazio ou só espaços não libera;
-- vale no ambiente do processo (`GABARITO_ALLOW_DESTRUCTIVE` para R2, `GABARITO_ALLOW_PRODUCTION` para R3 — cada uma aceita a outra) ou como prefixo **no início do comando**. Comentário no fim (`rm -rf x # GABARITO_ALLOW_…`) ou `echo` no meio **não** liberam; `GABARITO_ALLOW_VERSIONING` para R20 **não** cruza com nenhuma das duas;
-- o hook permite **e** imprime aviso (`systemMessage` + stderr) com o motivo e a origem (`env`/`inline`).
-
-```bash
-GABARITO_ALLOW_DESTRUCTIVE="autorizado por gabriel em 2026-09-05 — expurgo do build antigo" rm -rf build
-```
-
-A mensagem de bloqueio diz ao agente como usar o hatch **depois de obter autorização do usuário**. Isso é decisão de desenho: o motivo fica no transcript ao lado do ato, e é o que o review adversarial confere (R18). Quem preferir que só o humano libere, exporte a variável no `env` do `settings.json` e trate qualquer uso inline como achado de review.
-
-**Fail-open declarado (G9):** sem `node`, `jq` nem `python3` para ler o JSON do stdin, o hook avisa em stderr e deixa passar — bloquear todo Bash faria o usuário desinstalar o plugin. Node é requisito do pacote de qualquer forma.
+Não há tokenizador de shell completo. Passam: indireção (`X=rm; $X`, `base64 | sh`, `eval`), script gravado por `Write` e executado no comando seguinte, `xargs`/`timeout`/`exec`/`rsync` como invólucro de comando destrutivo, expansão de chaves (`{.env,x}`) e `SELECT fn_que_escreve()` em MCP. Sob o mesmo usuário de SO a guarda é *tamper-evident*, não *tamper-proof*: a prevenção real é o ruleset do GitHub e o CI. Detalhe em `classificar-alvo.ts` e na spec E1.
 
 ---
 
@@ -262,7 +232,7 @@ Instalado em dois repositórios descartáveis:
 | Checagens do doctor (19, 1 opcional) | **8 / 19** | G3 mutação em massa · G3 undefined estrito · R3 trava de produção · backup verificado · G8 migrations · ordem de subida · health commit+versão · RLS (opcional) |
 | Regras do `AGENTS.md` (R1–R18) | **6 / 18** | R6 cliente único · R7 fronteira não mockada · R8 idempotência · R10 tenant · R11 erro cru de terceiro · R12 escrita em ambiente compartilhado |
 | Guardas (G1–G9) | **8 / 9** | G1–G8 (só G9 fail-closed sobrevive) |
-| Hooks | **1 / 2 sem uso** | `guard-production.sh` nunca dispara; `guard-destructive.sh` continua útil (rm, git clean, docker) |
+| Hooks (1.0.1) | **1 / 2 sem uso** | medido com os dois guards bash, removidos na 2.0; a guarda de ambiente, num CLI puro e sem ambientes declarados, só aplica segredo e integridade |
 
 **Consequência que importa:** num CLI puro, **4 das 7 checagens obrigatórias de nível 1 são inaplicáveis** (G3 ×2, R3, backup) — o repo **nunca sai do nível 0 pelo doctor**, por construção, não por falha. Declare no Apêndice o que é inaplicável em vez de fingir; o que vale sem nenhum gate — §1, §4 e a marcação (a)/(b)/(c) — vale igual num CLI. `adocao.md §5` diz quando o harness não serve.
 

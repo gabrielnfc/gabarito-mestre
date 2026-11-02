@@ -291,7 +291,7 @@ describe('CLI', () => {
 });
 
 // ────────────────────────────────────────────────────────────── --msg e --so-branch (GM-9 T5)
-// Casos de mensagem migrados do corpus do antigo guard-versioning.sh (sem os de hatch): agora o mesmo
+// Casos de mensagem migrados do corpus do antigo hook de PreToolUse de versionamento (sem os de hatch): agora o mesmo
 // veredito sai do hook git `commit-msg`, que chama `--msg <arquivo>`.
 describe('CLI --msg <arquivo> (hook commit-msg)', () => {
   const dir = repo({ 'harness.config.json': CONFIG });

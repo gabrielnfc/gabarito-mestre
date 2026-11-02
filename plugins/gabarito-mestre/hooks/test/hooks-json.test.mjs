@@ -12,15 +12,22 @@ describe('hooks.json — registro dos hooks (T16)', () => {
   const cfg = JSON.parse(readFileSync(join(HOOKS, 'hooks.json'), 'utf8')).hooks;
   const cmds = (grupo) => grupo.hooks.map((h) => h.command);
 
-  test('PreToolUse/Bash: os dois guards (R2, R3), nesta ordem — versionamento é hook git, não PreToolUse, timeout 10, shell bash', () => {
-    assert.equal(cfg.PreToolUse.length, 1);
-    const g = cfg.PreToolUse[0];
-    assert.equal(g.matcher, 'Bash');
-    assert.deepEqual(cmds(g), [
-      'bash "${CLAUDE_PLUGIN_ROOT}/hooks/guard-destructive.sh"',
-      'bash "${CLAUDE_PLUGIN_ROOT}/hooks/guard-production.sh"',
-    ]);
-    for (const h of g.hooks) { assert.equal(h.type, 'command'); assert.equal(h.shell, 'bash'); assert.equal(h.timeout, 10); }
+  test('PreToolUse: três matchers (Bash, Edit|Write|Read|Grep, mcp__.*), o mesmo comando node da guarda, timeout 5', () => {
+    assert.deepEqual(cfg.PreToolUse.map((g) => g.matcher), ['Bash', 'Edit|Write|Read|Grep', 'mcp__.*']);
+    for (const g of cfg.PreToolUse) {
+      assert.deepEqual(cmds(g), ['node "${CLAUDE_PLUGIN_ROOT}/gates/dist/guarda.js"']);
+      for (const h of g.hooks) { assert.equal(h.type, 'command'); assert.equal(h.timeout, 5); }
+    }
+    assert.ok(existsSync(join(PLUGIN, 'gates', 'dist', 'guarda.js')));
+  });
+  test('os guards bash antigos não existem nem são citados (R2/R3 vivem em guarda.js)', () => {
+    // nomes montados por partes: o texto.test.sh proíbe citá-los em qualquer arquivo de plugins/**
+    const nomes = ['destructive', 'production', 'versioning'].map((n) => ['guard', n].join('-'));
+    const bruto = readFileSync(join(HOOKS, 'hooks.json'), 'utf8');
+    for (const n of nomes) {
+      assert.equal(bruto.includes(n), false, n);
+      assert.equal(existsSync(join(HOOKS, `${n}.sh`)), false, `${n}.sh`);
+    }
   });
   test('SessionStart tem session-card com matcher startup|resume|clear|compact e timeout 30', () => {
     assert.equal(cfg.SessionStart.length, 1);
@@ -36,8 +43,9 @@ describe('hooks.json — registro dos hooks (T16)', () => {
     assert.deepEqual(cmds(g), ['bash "${CLAUDE_PLUGIN_ROOT}/hooks/remind-orchestrator.sh"']);
     assert.equal(g.hooks[0].timeout, 5);
   });
-  test('todo comando aponta para um script existente em hooks/ com shebang bash', () => {
+  test('todo comando bash aponta para um script existente em hooks/ com shebang bash', () => {
     for (const grupos of Object.values(cfg)) for (const g of grupos) for (const h of g.hooks) {
+      if (h.command.startsWith('node ')) continue; // guarda.js: coberto no teste dos matchers
       const m = h.command.match(/^bash "\$\{CLAUDE_PLUGIN_ROOT\}\/hooks\/([a-z-]+\.sh)"$/);
       assert.ok(m, h.command);
       const p = join(HOOKS, m[1]);
