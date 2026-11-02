@@ -33,3 +33,7 @@ Item sai daqui quando entra num plano ou a decisão de descarte é registrada. I
 | Classificador trata `curl -X DELETE` em host de prod como `execucao`/`mostrar` — FN declarado | plano E1, corpus `prod-curl-mostrar` — dono: Gabriel | visto em transcript real |
 | `capacidade.mjs` aplicar a fórmula de slots de S4 (custo medido com trabalho trivial; recalibrar com build/testes) | S4 GM-9 — dono: Gabriel | E2 começa |
 | Aprendizados do loop de E1: decisões D e hipóteses M em `docs/aprendizados/loop-e1.md` | ledger GM-9 R13 — dono: Gabriel | spec da entrega indicada em cada item |
+| Comparar `origin/HEAD` com `git ls-remote` fora do hook (SessionStart ou CI); medido 0,5 s | Sombra, GM-9 R14 — dono: Gabriel | 1º caso de fonte divergente em transcript |
+| `lerGuarda`: `[]` na ref vira config vazia em vez de local; sem `--no-lazy-fetch` em clone parcial; 4 mutações de forma sobrevivem | re-review T2b, MINOR 3–5 — dono: Gabriel | próxima mudança em `lerGuarda` |
+| FN de classificação declarados: `xargs`, `timeout`, `exec`, `rsync`, `find -delete`, `perl -i`, `curl -o`, chaves `{.env,x}`, heredoc | review T2 — dono: Gabriel | um deles visto em transcript real |
+| Sandbox de processo para subagent (fecha indireção em `.git`) | R14 — dono: Gabriel | forja por indireção em transcript real |

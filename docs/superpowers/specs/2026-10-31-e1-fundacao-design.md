@@ -130,6 +130,11 @@ _(Emenda 2026-11-02, S1 + decisão do dono, ledger GM-9 R10 — fato novo sobre 
 
 - **Q13 (a, S1, Claude Code 2.1.316, N=1 por modo)** `ask` chega ao humano em `default`, `auto`, `bypassPermissions` e `dontAsk` no TUI; em `-p` vira erro devolvido ao modelo. **A guarda devolve `ask` em todos os modos, sem fallback de `deny`** e sem lógica por `permission_mode`. Substitui o trecho de D7 sobre `deny` + instrução de modo e a Q5. Rejeitado: manter `deny` em bypass/`dontAsk` — sem base medida e tira a saída de `cp .env.example .env`. Limite: em loop sem humano o `ask` aguarda; se versão futura negar o `ask`, o efeito continua sendo bloqueio. Corrige M9 para `dontAsk` no TUI.
 
+_(Emenda 2026-11-02, Sombra + delegação do dono, ledger GM-9 R14 — seis meios medidos forjam a fonte local.)_
+
+- **Q14 (a, medido)** Retira "plumbing é inofensivo" de D2. **Modelo de ameaça:** a guarda cobre deslize e atalho por ferramenta direta; sob o mesmo usuário de SO é *tamper-evident*, não *tamper-proof*. Prevenção real: ruleset do GitHub e CI. **Regra por capacidade, em lista permitida:** subagent só roda `git add|commit|status|diff|log|show|checkout|switch|restore|branch|rev-parse|merge-base|stash|rebase|cherry-pick|reset|blame|grep|ls-files|mv|rm` e `push` para remoto literalmente `origin` com destino que não seja `refs/remotes/*` nem branch de prod; qualquer outro `git` ⇒ anel de integridade (`deny` subagent, `ask` orquestrador). REQ-GRD-5: os três caminhos de `.git` viram `.git/**`, incluindo o arquivo `.git` de worktree. Config lida da raiz da sessão (`CLAUDE_PROJECT_DIR`), nunca de cwd; anéis de caminho seguem o toplevel do cwd. Limite declarado: indireção (`X=git`, `python`, `node` escrevendo em `.git`), e `git ls-remote` (medido 0,50–0,58 s, 9× o p95) fica fora do hook (backlog). Rejeitado: enumerar comandos proibidos — erro do GM-7 (R8), a Sombra propôs a variante por capacidade e a lista permitida é a forma que já está em D2 ("só precisa de").
+- **Q15** Checagem de existência não é leitura: `ls`, `test`, `[`, `stat`, `git log`, `git check-ignore` citando caminho de segredo ⇒ sem decisão. Segredo por argumento cobre leitura e cópia.
+
 ## Riscos
 
 - S1 refutado em `auto`/`bypass`: fallback `deny` + `systemMessage` já decidido.
