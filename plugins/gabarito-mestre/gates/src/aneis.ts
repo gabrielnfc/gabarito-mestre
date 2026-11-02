@@ -361,6 +361,8 @@ const GIT_PERMITIDOS = new Set([
   '', 'add', 'commit', 'status', 'diff', 'log', 'show', 'checkout', 'switch', 'restore', 'branch', 'rev-parse',
   'merge-base', 'check-ignore', 'stash', 'rebase', 'cherry-pick', 'reset', 'blame', 'grep', 'ls-files', 'mv', 'rm',
 ]);
+// Q16: o orquestrador só é interrompido por estes; todo outro `git` segue o prompt nativo.
+const GIT_PEDE_ORQUESTRADOR = new Set(['remote', 'fetch', 'pull', 'update-ref', 'symbolic-ref', 'config']);
 const PUSH_COM_VALOR = new Set(['-o', '--push-option', '--repo', '--receive-pack', '--exec']);
 
 export type GitLido = { sub: string; resto: string[]; configs: string[] };
@@ -404,6 +406,20 @@ function pushPermitido(resto: string[]): boolean {
   if (pos.length > 0 && pos[0] !== 'origin') return false;
   for (let i = 1; i < pos.length; i++) if (destinoDeRefspec(pos[i]).startsWith('refs/remotes/')) return false;
   return true;
+}
+
+/** Q16: destino `refs/remotes/*` forja a fonte local; vale para qualquer papel. */
+function pushSemRefsRemotes(resto: string[]): boolean {
+  const pos = posicionaisDePush(resto);
+  for (let i = 1; i < pos.length; i++) if (destinoDeRefspec(pos[i]).startsWith('refs/remotes/')) return false;
+  return true;
+}
+
+/** `.git` ou `.git/**` (inclui o arquivo `.git` de worktree), sem distinção de caixa. */
+function dentroDeDotGit(caminho: string, contexto: Contexto, cwd?: string | null): boolean {
+  if (caminho.trim() === '') return false;
+  const rel = resolver(caminho, contexto, cwd).rel?.toLowerCase();
+  return rel !== undefined && rel !== null && (rel === '.git' || rel.startsWith('.git/'));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -471,7 +487,7 @@ function empilhar(dest: string[], origem: string[]): void {
  * Procura o anel em todos os segmentos. Segredo vence integridade; dentro do mesmo anel vale o primeiro achado.
  * Retorna `null` se nenhum segmento toca um caminho de anel. `cwd` é o diretório da chamada; `cd` muda o corrente.
  */
-export function anelDeBash(segmentos: Segmento[], contexto: Contexto, cwd?: string | null): AchadoAnel | null {
+export function anelDeBash(segmentos: Segmento[], contexto: Contexto, cwd?: string | null, subagent = true): AchadoAnel | null {
   let integridade: AchadoAnel | null = null;
   let atual: string | null = cwd ?? null;
 
@@ -496,9 +512,10 @@ export function anelDeBash(segmentos: Segmento[], contexto: Contexto, cwd?: stri
       const g = lerGit(s.args);
       const gitResto = candidatos(semTextoLivre('git', g.resto)).filter(ehCaminhoPlausivel);
       if (g.configs.some((c) => /^(remote\.|url\.|core\.hookspath)/i.test(c))) integridade ??= { anel: 'integridade', alvo: '.git/config', escrita: true };
+      if (!subagent && gitResto.some((p) => dentroDeDotGit(p, contexto, atual))) integridade ??= { anel: 'integridade', alvo: '.git', escrita: true };
       if (g.sub === 'push') {
-        if (!pushPermitido(g.resto)) integridade ??= { anel: 'integridade', alvo: 'refs/remotes', escrita: true };
-      } else if (!GIT_PERMITIDOS.has(g.sub)) {
+        if (!(subagent ? pushPermitido(g.resto) : pushSemRefsRemotes(g.resto))) integridade ??= { anel: 'integridade', alvo: 'refs/remotes', escrita: true };
+      } else if (subagent ? !GIT_PERMITIDOS.has(g.sub) : GIT_PEDE_ORQUESTRADOR.has(g.sub)) {
         const alvo = g.sub === 'remote' || g.sub === 'config' ? '.git/config' : g.sub === 'fetch' || g.sub === 'pull' || g.sub === 'update-ref' || g.sub === 'symbolic-ref' ? 'refs/remotes' : '.git';
         integridade ??= { anel: 'integridade', alvo, escrita: true };
       }
