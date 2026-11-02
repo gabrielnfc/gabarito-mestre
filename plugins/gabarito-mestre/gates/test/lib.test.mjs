@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { arg, ehEntrypoint } from '../lib/cli.mjs';
 import { lerJson } from '../lib/config.mjs';
-import { raizPorFs, inferirPbi } from '../lib/git.mjs';
+import { raizPorFs, inferirPbi, PADROES } from '../lib/git.mjs';
 import { hojeISO, diasEntre } from '../lib/datas.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -86,6 +86,12 @@ describe('lib/git', () => {
     assert.deepEqual(inferirPbi('wt/GM-9-3'), { pbi: 'GM-9', n: 3 });
     assert.deepEqual(inferirPbi('feat/GM-9-slug'), { pbi: 'GM-9', n: null });
     assert.equal(inferirPbi('main'), null);
+  });
+  test('PADROES é a fonte única: inclui refactor e é o que o cartão usa', async () => {
+    assert.ok(PADROES.tiposComEscopoDePbi.includes('refactor'));
+    const { DEFAULTS } = await import('../scripts/cartao-sessao.mjs');
+    assert.equal(DEFAULTS.versionamento.tiposComEscopoDePbi, PADROES.tiposComEscopoDePbi);
+    assert.equal(DEFAULTS.fluxo.idPadrao, PADROES.idPadrao);
   });
 });
 

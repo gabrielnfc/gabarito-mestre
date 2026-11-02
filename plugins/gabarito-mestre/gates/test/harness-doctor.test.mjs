@@ -395,6 +395,10 @@ describe('doctor 1.1.0 — fixtures 1.0.1 e 1.1.0 (DOC-1)', () => {
     assert.equal(r.found, false);
     assert.match(r.evidence, /vencido/);
   });
+  test('atestado com `em` numérico segue inválido (diasEntre da lib não aceita número como data)', () => {
+    const r = run(repo({ 'AGENTS.md': agents(0), '.harness/attest.json': JSON.stringify({ 'iniciativa-resolvida': { ...ok, em: Date.now() } }) })).resultados.find((x) => x.id === 'iniciativa-resolvida');
+    assert.equal(r.found, false);
+  });
   test('changelog: exige o arquivo de versionamento.changelog com "## [Unreleased]" ou "## Unreleased"', () => {
     const cfg = JSON.stringify({ versionamento: { changelog: 'HISTORY.md' } });
     assert.equal(run(repo({ 'AGENTS.md': agents(0), 'harness.config.json': cfg, 'HISTORY.md': '## Unreleased\n' })).resultados.find((r) => r.id === 'changelog').found, true);

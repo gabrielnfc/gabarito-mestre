@@ -37,6 +37,16 @@ fixture_101_gates() {
   printf '%s' "$out/plugins/gabarito-mestre/gates"
 }
 
+# Arquivos de gates/ do plugin (mesmo find do instalador) AUSENTES no fixture 1.0.1, opcionalmente só sob
+# um prefixo (ex.: test/). É o esperado calculado: tasks que somem arquivos em gates/ não quebram a contagem.
+esperados_novos() { # esperados_novos <fixture> [prefixo/]
+  local fx="$1" pre="${2:-}" rel n=0
+  while IFS= read -r rel; do
+    case "$rel" in "$pre"*) [ -e "$fx/$rel" ] || n=$((n+1)) ;; esac
+  done < <(cd "$PLUGIN/gates" && find . -type f -not -path '*/node_modules/*' -not -name .DS_Store | sed 's|^\./||' | sort)
+  printf '%s' "$n"
+}
+
 echo "── cenário 1: instalação limpa"
 R="$(novo_repo)"
 if SAIDA="$(bash "$INSTALAR" "$R" 2>&1)"; then RC1=0; else RC1=$?; fi
@@ -153,7 +163,8 @@ check "teste novo da 1.1.0 (capacidade.test.mjs) vai para .novo (estado misto)" 
 check "teste novo (cartao-sessao.test.mjs) também vai para .novo"   '[ -f "$R8B/$GATES/test/cartao-sessao.test.mjs.novo" ]'
 check "aviso de versão mista aparece"                'printf "%s" "$SAIDA8B" | grep -q "tools/gabarito-gates em 1.0.x — rode --atualizar --gates-substituir"'
 NOVO_TEST_REAL="$(find "$R8B/$GATES/test" -name "*.novo" | wc -l | tr -d ' ')"
-check "6 testes novos da 1.1.0 foram para .novo"     '[ "$NOVO_TEST_REAL" -eq 6 ]'
+ESPERADO8B="$(esperados_novos "$FX8B" test/)"
+check "todo teste novo da 1.1.0 (ausente no fixture) foi para .novo — nem a mais, nem a menos ($ESPERADO8B)" '[ "$ESPERADO8B" -gt 0 ] && [ "$NOVO_TEST_REAL" -eq "$ESPERADO8B" ]'
 NOVO_CONTADO="$(printf '%s' "$SAIDA8B" | grep -oE '[0-9]+ \.novo' | grep -oE '^[0-9]+')"
 check "contador do resumo (\$novos .novo) bate com os 6 arquivos .novo de test/" '[ "$NOVO_CONTADO" = "$NOVO_TEST_REAL" ]'
 
@@ -170,7 +181,8 @@ check "nenhum arquivo criado direto dentro de tools/gabarito-gates/ (tudo .novo)
 check "script novo da 1.1.0 (capacidade.mjs) foi para .novo"  '[ -f "$R9/$GATES/scripts/capacidade.mjs.novo" ]'
 check "teste novo da 1.1.0 (capacidade.test.mjs) foi para .novo" '[ -f "$R9/$GATES/test/capacidade.test.mjs.novo" ]'
 NOVO9_REAL="$(find "$R9/$GATES" -name "*.novo" | wc -l | tr -d ' ')"
-check "11 arquivos novos da 1.1.0 (4 scripts + 6 test + .hashes-anteriores) foram para .novo" '[ "$NOVO9_REAL" -eq 11 ]'
+ESPERADO9="$(esperados_novos "$FX9")"
+check "todo arquivo novo de gates/ (ausente no fixture 1.0.1) foi para .novo — nem a mais, nem a menos ($ESPERADO9)" '[ "$ESPERADO9" -gt 0 ] && [ "$NOVO9_REAL" -eq "$ESPERADO9" ]'
 check "aviso de versão mista aparece mesmo sem --atualizar" 'printf "%s" "$SAIDA9" | grep -q "tools/gabarito-gates em 1.0.x — rode --atualizar --gates-substituir"'
 if NPMOUT9="$(cd "$R9/$GATES" && node --test test/*.test.mjs 2>&1)"; then NPMRC9=0; else NPMRC9=$?; fi
 check "node --test test/*.test.mjs continua sendo a suíte 1.0.1 (sem os testes novos) e é verde" '[ "$NPMRC9" -eq 0 ]'

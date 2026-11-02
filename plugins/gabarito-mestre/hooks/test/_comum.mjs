@@ -1,6 +1,9 @@
 /**
  * Helpers compartilhados dos testes de hook (GM-9 T1a: separados de guards.test.mjs para que T4, T5 e T7
  * editem arquivos diferentes). Não é um teste: o glob `*.test.mjs` não o pega.
+ *
+ * Cabeçalho histórico de mutações (M1–M15) do arquivo original:
+ *   git show 0e96a5d:plugins/gabarito-mestre/hooks/test/guards.test.mjs
  */
 import { spawnSync } from 'node:child_process';
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';

@@ -3,7 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 
-const PADROES = {
+/** Padrões de id de PBI e tipos de commit com escopo de PBI — fonte única (cartao-sessao.DEFAULTS reutiliza). */
+export const PADROES = {
   idPadrao: '^[A-Z]+-\\d+$',
   tiposComEscopoDePbi: ['feat', 'fix', 'enabler', 'debt', 'spike', 'task', 'perf', 'refactor'],
 };

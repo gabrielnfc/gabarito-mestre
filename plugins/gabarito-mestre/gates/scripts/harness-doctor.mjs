@@ -160,7 +160,7 @@ const ATTEST_TTL_DAYS = 180;
 function attestOk(attest, id) {
   const a = attest[id];
   if (!a || a.confirmado !== true || !a.em || !a.por) return null;
-  const dias = diasEntre(a.em, Date.now());
+  const dias = diasEntre(String(a.em), Date.now()); // String: `em` numérico no JSON continua inválido (Date.parse(String) → NaN)
   if (Number.isNaN(dias)) return null;
   if (dias > ATTEST_TTL_DAYS) return { stale: true, ...a, dias: Math.round(dias) };
   return { stale: false, ...a, dias: Math.round(dias) };
@@ -170,7 +170,7 @@ function attestOk(attest, id) {
 
 const ISO_DATA = /^\d{4}-\d{2}-\d{2}$/;
 const diasDesde = (data) => {
-  const d = diasEntre(data, Date.now());
+  const d = diasEntre(String(data), Date.now());
   return Number.isNaN(d) ? null : d;
 };
 

@@ -63,6 +63,10 @@ describe('gates/package.json 1.1.0', () => {
       assert.ok(pkg.bin[nome], nome);
     }
   });
+  test('files publica lib/ (os scripts importam ../lib/*)', () => {
+    assert.ok(pkg.files.includes('lib'), `files sem lib: ${JSON.stringify(pkg.files)}`);
+    assert.ok(existsSync(join(GATES, 'lib', 'cli.mjs')));
+  });
   test('zero dependências e Node ≥ 22.18', () => {
     assert.deepEqual(pkg.dependencies, {});
     assert.deepEqual(pkg.devDependencies, {});

@@ -22,7 +22,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { arg, ehEntrypoint } from '../lib/cli.mjs';
 import { lerJson } from '../lib/config.mjs';
-import { git, raizDoRepo, inferirPbi } from '../lib/git.mjs';
+import { git, raizDoRepo, inferirPbi, PADROES } from '../lib/git.mjs';
 import { diasEntre } from '../lib/datas.mjs';
 import { medir, calcularSlots } from './capacidade.mjs';
 
@@ -32,8 +32,8 @@ export const DOCTOR_TIMEOUT_MS = 20_000; // o hook tem 30 s
 export const LINHA_SEM_ONBOARDING = 'GABARITO: harness sem onboarding — rode gabarito-instalar (fail-open declarado, G9)';
 export const LINHA_INDISPONIVEL = 'GABARITO: cartão indisponível — fail-open declarado (G9)';
 export const DEFAULTS = {
-  fluxo: { ferramenta: 'arquivos', idPadrao: '^[A-Z]+-\\d+$', ledgerDir: 'docs/ledgers', envelhecimentoDias: 3 },
-  versionamento: { tiposComEscopoDePbi: ['feat', 'fix', 'enabler', 'debt', 'spike', 'task', 'perf', 'refactor'] },
+  fluxo: { ferramenta: 'arquivos', idPadrao: PADROES.idPadrao, ledgerDir: 'docs/ledgers', envelhecimentoDias: 3 },
+  versionamento: { tiposComEscopoDePbi: PADROES.tiposComEscopoDePbi },
   orquestracao: { modelo: { politica: 'mais-potente', alias: '', resolvidoEm: '', validadeDias: 90 } },
 };
 
