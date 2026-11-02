@@ -18,11 +18,16 @@ Branch: `enabler/GM-9-fundacao-2.0` → alvo `next` (canal alpha). Spec: `docs/s
 - **R7 (2026-10-31)** Dono decidiu, após o teto de 2 rodadas: **exceção única** — verificação diff-only em Fable das 5 correções MAJOR da r2 (não é rodada: o revisor só confirma se cada cenário fechou). Motivo: duas correções são de segurança (forja de ref; integridade via Bash) e verificar o texto custa minutos, errar custa task refeita. Regra registrada junto: se a verificação trouxer MAJOR novo, para — problema vira de desenho, não de texto; volta ao dono sem nova correção.
 - **R8 (2026-11-02)** Verificação diff-only (R7): **4/5 FECHADOS**. Aberto: item 1 (forja da fonte) por **lacuna de enumeração** em D2 — `git remote set-head`, `git fetch` com refspec para `refs/remotes/**`, `git -c remote.origin.url=…` não estavam na lista. Classificado pelo verificador como residual do mesmo cenário, não achado novo. Tratamento na r3: D2 troca lista por **regra** ("subagent não administra remoto nem refs": todo `git remote|fetch|pull|update-ref|symbolic-ref|config` e `git -c remote.*|url.*|core.hooksPath` ⇒ integridade), 3 casos novos no corpus, REQ-GRD-6 fixa "em branch prod" = `contexto.branchAtual ∈ prod.branches`. **Não houve nova verificação** (teto + exceção única já usada): a prova fica nos testes congelados `integridade-remote-set-head-sub`, `integridade-fetch-refspec-sub`, `integridade-git-c-remote-sub` em E1. Lição registrada: enumerar comandos de ataque é o erro do GM-7; regra por capacidade (o que o subagent *pode*) fecha a classe inteira.
 - **R9 (2026-11-02)** Dono aprovou o plano de E1 e as emendas Q1–Q12 (spec r4, seção Emendas; plano `docs/superpowers/plans/2026-11-02-e1-fundacao.md`). Fatos novos: Q4 forja de `origin/HEAD` por branch homônima, medida; Q11 doc oficial sem conceito de canal. Conformidade do plano: CONFORME (0 faltas, avisos de fio condutor). Implementador e spikes em Sonnet 5.5, review de task em Opus 5.5, review final em Fable 5.1.
+- **R10 (2026-11-02)** Q13: dono aprovou `ask` em todos os modos após S1 contradizer D7. Spec com emenda; corpus troca `fallback-bypass-deny` e `fallback-dontask-deny` por `modo-bypass-ask` e `modo-dontask-ask`.
+- **R11 (2026-11-02)** Desvios de spike: S4 criou `gm-spike-pg` e copiou o volume do `true_force` para `gm_spike_data`, fora do cerco; `supabase` local com assinatura inválida. Hook barrou a remoção; decisão com o dono. S1 gravou e removeu `skipDangerousModePermissionPrompt` em `~/.claude/settings.json`. Lição: brief de spike proíbe criar recurso fora da lista e usa cópia das settings em `bypass`.
 
 ## Medições
 
 - M1–M9 na spec E1 (a).
-- S1–S4: pendentes (b).
+- **S1** (2.1.316, N=1) `ask` chega em default/auto/bypass/dontAsk/subagent no TUI; `-p` nega. `agent_id` só em subagent; `agent_type` pode faltar. `SessionStart.systemMessage` visível. CONFIRMADA; contradiz D7 (R10).
+- **S2** Pane cor 24-bit CONFIRMADA (2/2). `MessageDisplay` para saída nativa REFUTADA (0 chamadas em `/context`, `/cost`): E4 precisa de outro caminho.
+- **S3** `classic.PreToolUse` de plugin roda 3/3. `tool.check` allow não supera `permissions.deny` de projeto, 0/3 leram (só `-p`, `Read`). Doctor sem aviso M8.
+- **S4** ~350 MB RAM, ~28 % de núcleo no pico, ~40 MB disco sem deps (~1,13 GB com `node_modules`), clone ~19 MB/0,15 s. Fórmula em `.superpowers/sdd/…/task-S4-report.md`; trabalho do slot trivial, recalibrar em E2 (backlog).
 
 ## Corte / backlog
 

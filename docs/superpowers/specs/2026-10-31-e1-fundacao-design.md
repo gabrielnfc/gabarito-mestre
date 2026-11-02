@@ -126,6 +126,10 @@ _(Emenda 2026-11-02, plano de E1 + aprovação do dono, ledger GM-9 R9 — confl
 - **Q11 (a, doc oficial 2026-11-02)** Sem conceito de canal; plugin duplicado no catálogo é erro. `next` usa `name: gabarito-mestre-next`, instalação `claude plugin marketplace add gabrielnfc/gabarito-mestre#next`; volta o nome ao virar `main` (E5). Corrige "dois canais no `marketplace.json`" da visão A10.
 - **Q12** Versão medida ≠ instalada no CI ⇒ `::warning`, não falha (`plugins/gabarito-mestre/medido-em.json`). Revalidar spike é decisão humana.
 
+_(Emenda 2026-11-02, S1 + decisão do dono, ledger GM-9 R10 — fato novo sobre a premissa de D7.)_
+
+- **Q13 (a, S1, Claude Code 2.1.316, N=1 por modo)** `ask` chega ao humano em `default`, `auto`, `bypassPermissions` e `dontAsk` no TUI; em `-p` vira erro devolvido ao modelo. **A guarda devolve `ask` em todos os modos, sem fallback de `deny`** e sem lógica por `permission_mode`. Substitui o trecho de D7 sobre `deny` + instrução de modo e a Q5. Rejeitado: manter `deny` em bypass/`dontAsk` — sem base medida e tira a saída de `cp .env.example .env`. Limite: em loop sem humano o `ask` aguarda; se versão futura negar o `ask`, o efeito continua sendo bloqueio. Corrige M9 para `dontAsk` no TUI.
+
 ## Riscos
 
 - S1 refutado em `auto`/`bypass`: fallback `deny` + `systemMessage` já decidido.
