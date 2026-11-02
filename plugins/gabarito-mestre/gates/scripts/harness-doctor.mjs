@@ -26,12 +26,18 @@
  *   node harness-doctor.mjs --json     # saída para máquina
  *   node harness-doctor.mjs --explain  # inclui como consertar cada item faltante
  *   node harness-doctor.mjs --cache    # grava .harness/doctor-cache.json { nivel, declarado, em } (lido pelo cartão de sessão)
+ *
+ * 2.0 (E1): reporta a CAMADA DE GUARDA (ativa · configurada · permissions.deny · nenhuma), com a fonte da
+ * config (origin|local) e se a árvore diverge do origin/HEAD; lista os ambientes declarados; entende o
+ * perfil `repo-sem-app` (só G3 e teardown viram n/a); varre por `git ls-files` (arquivo ignorado não é
+ * evidência); G8 não aceita `.md`; avisa chaves removidas. Nada disso muda o nível além do perfil.
  */
 
-import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, renameSync, lstatSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'node:fs';
 import { join, relative, sep, dirname } from 'node:path';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import { raizDoRepo } from '../lib/git.mjs';
+import { lerGuarda, DENY_GUARDA, CHAVES_MORTAS } from '../lib/config.mjs';
 import { diasEntre } from '../lib/datas.mjs';
 import { execFileSync } from 'node:child_process';
 import { checar } from './versionamento-check.mjs';
@@ -44,7 +50,6 @@ const SKIP_DIRS = new Set([
 const DEFAULTS = {
   agentsFile: 'AGENTS.md',
   docsDir: 'docs',
-  migrationsDir: 'prisma/migrations',
   ciDir: '.github/workflows',
   attestFile: '.harness/attest.json',
   sourceExts: ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'],
@@ -97,13 +102,45 @@ function walk(root, onFile) {
   }
 }
 
+/** Sem redirecionamento herdado: GIT_DIR & cia apontariam o git para outro repositório. */
+function envGit() {
+  const env = { ...process.env };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY']) delete env[k];
+  return env;
+}
+
+/**
+ * Arquivos que o git enxerga (rastreados + novos não ignorados), relativos à raiz — ou null (sem git, git
+ * ilegível, ou `root` não é a raiz do repo: aí o disco é a verdade e a varredura cai para o `walk`).
+ * `-z`: caminho com espaço ou não ASCII chega cru, sem aspas.
+ */
+function arquivosDoGit(root) {
+  try {
+    const opts = { cwd: root, encoding: 'utf8', env: envGit(), stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 256 * 1024 * 1024 };
+    if (execFileSync('git', ['rev-parse', '--show-prefix'], opts).trim() !== '') return null;
+    const lista = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], opts).split('\0').filter(Boolean);
+    return [...new Set(lista)].filter((r) => {
+      if (r.split('/').some((seg) => SKIP_DIRS.has(seg))) return false;
+      try {
+        return lstatSync(join(root, r)).isFile(); // symlink e submódulo ficam de fora, como no walk
+      } catch {
+        return false; // rastreado mas apagado do disco
+      }
+    });
+  } catch {
+    return null;
+  }
+}
+
 function createIndex(root, cfg) {
-  const files = [];
-  walk(root, (f) => files.push(f));
+  let rel0 = arquivosDoGit(root);
+  if (!rel0) {
+    const files = [];
+    walk(root, (f) => files.push(f));
+    rel0 = files.map((f) => relative(root, f).split(sep).join('/'));
+  }
   const excluir = cfg.excludePaths ?? [];
-  const rel = files
-    .map((f) => relative(root, f).split(sep).join('/'))
-    .filter((r) => !excluir.some((p) => r.includes(p)));
+  const rel = rel0.filter((r) => !excluir.some((p) => r.includes(p)));
   const cache = new Map();
 
   const read = (r) => {
@@ -117,6 +154,9 @@ function createIndex(root, cfg) {
     return cache.get(r);
   };
 
+  let guarda; // lerGuarda custa 2 spawns de git: uma vez por run()
+  const lerGuardaUmaVez = () => (guarda ??= lerGuarda(root));
+
   const isSource = (r) => cfg.sourceExts.some((ext) => r.endsWith(ext));
   const isTest = (r) => /(\.|\/)(spec|test)\.[cm]?[jt]sx?$/.test(r) || r.includes('/test/') || r.includes('/__tests__/');
 
@@ -125,6 +165,7 @@ function createIndex(root, cfg) {
     files: rel,
     read,
     has: (r) => existsSync(join(root, r)),
+    guarda: lerGuardaUmaVez,
     /** Procura um padrão nos arquivos que casam o filtro. Devolve o primeiro caminho, ou null. */
     grep(pattern, filter = isSource) {
       const re = typeof pattern === 'string' ? new RegExp(pattern) : pattern;
@@ -390,7 +431,8 @@ export const CHECKS = [
     label: 'guarda de migrations ligada no CI',
     fix: 'rode migrations-guard.mjs num job obrigatório de PR',
     detect: (ix, cfg) => {
-      const script = ix.grep(/DESTRUCTIVE_PATTERN|migrations-guard/, (r) => ix.isSource(r) || r.endsWith('.md'));
+      // Só código é evidência: um `.md` que MENCIONA a guarda não a instala (T6, REQ-INF-2).
+      const script = ix.grep(/DESTRUCTIVE_PATTERN|migrations-guard/, (r) => ix.isSource(r));
       const ci = ix.files
         .filter((r) => r.startsWith(cfg.ciDir))
         .find((r) => /migrations-guard|migrations_guard/.test(ix.read(r)));
@@ -610,9 +652,198 @@ export const CHECKS = [
         : { found: false, evidence: `VENCIDO há ${Math.round(d - v)} d (${m.alias || '?'}, resolvido em ${m.resolvidoEm}) — revalide` };
     },
   },
+  {
+    id: 'guarda-ambientes',
+    rule: 'GRD-1',
+    level: 'warn',
+    kind: 'scan',
+    label: 'ambientes da guarda declarados (guarda.ambientes)',
+    fix: 'declare guarda.ambientes.{teste,homolog,prod} em harness.config.json (hosts, projetos, bancos, mcps, variaveis) — é aviso: sem eles só os anéis de segredo e integridade agem, e nada é negado por ambiente',
+    detect: (ix) => {
+      const nomes = ambientesDeclarados(ix.guarda().config);
+      return nomes.length
+        ? { found: true, evidence: nomes.join(', ') }
+        : { found: false, evidence: 'sem guarda.ambientes: só os anéis de segredo e integridade agem; nada é negado por ambiente' };
+    },
+  },
+  {
+    id: 'guarda-divergente',
+    rule: 'GRD-1 / D2',
+    level: 'warn',
+    kind: 'scan',
+    label: 'config da guarda da árvore igual à de origin/HEAD',
+    fix: 'a guarda lê origin/HEAD, não a árvore: mescle a mudança de guarda.* na branch padrão — até lá a árvore local é ignorada',
+    detect: (ix) => {
+      const g = ix.guarda();
+      return g.divergente
+        ? { found: false, evidence: 'guarda.* da árvore ≠ origin/HEAD — vale a do origin' }
+        : { found: true, evidence: g.fonte === 'origin' ? 'iguais' : 'sem origin/HEAD (config local; permitidos ignorado)' };
+    },
+  },
+  {
+    id: 'chaves-mortas',
+    rule: 'INF-2',
+    level: 'warn',
+    kind: 'scan',
+    label: 'sem chaves de config removidas na 2.0',
+    fix: 'apague as chaves listadas de harness.config.json e .harness/attest.json — nenhum gate as lê mais',
+    detect: (ix, cfg) => {
+      const achadas = [];
+      for (const caminho of CHAVES_MORTAS) {
+        let v = cfg;
+        for (const parte of caminho.split('.')) v = v && typeof v === 'object' && !Array.isArray(v) ? v[parte] : undefined;
+        if (v !== undefined) achadas.push(caminho);
+      }
+      if (cfg.attestFile && ix.has(cfg.attestFile)) {
+        try {
+          const a = JSON.parse(ix.read(cfg.attestFile));
+          if (a && typeof a === 'object' && 'squash-titulo-pr' in a) achadas.push('attest.squash-titulo-pr');
+        } catch {
+          /* atestado ilegível já é FALTA nos atestados */
+        }
+      }
+      return achadas.length ? { found: false, evidence: `${achadas.join(', ')} — removida(s) na 2.0` } : { found: true, evidence: 'nenhuma' };
+    },
+  },
 ];
 
+// ────────────────────────────────────────────────────────────── camada de guarda (REQ-INF-2)
+
+/** Heartbeat até 7 dias ainda diz "ativa"; além disso a guarda pode ter parado — vira só "configurada". */
+const HEARTBEAT_ATIVA_H = 168;
+/** Relógios diferem: até 5 min à frente ainda é "agora"; além disso o ts é forjado ou quebrado. */
+const HEARTBEAT_SKEW_MS = 5 * 60_000;
+/** Só a cauda do jsonl é lida: o heartbeat mais recente é o último da sessão. */
+const HEARTBEAT_CAUDA_BYTES = 1024 * 1024;
+const HEARTBEAT_MAX_ENTREGAS = 500;
+const HEARTBEAT_MAX_ARQUIVOS = 200;
+const ISO_TS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+const ehDirReal = (p) => {
+  try {
+    return lstatSync(p).isDirectory(); // lstat: um symlink para diretório NÃO é diretório
+  } catch {
+    return false;
+  }
+};
+
+/** Últimos `HEARTBEAT_CAUDA_BYTES` do arquivo regular (nunca symlink), sem a 1ª linha se ela foi cortada. null = ilegível. */
+function lerCauda(arquivo) {
+  let fd;
+  try {
+    fd = openSync(arquivo, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    const st = fstatSync(fd);
+    if (!st.isFile()) return null;
+    const inicio = Math.max(0, st.size - HEARTBEAT_CAUDA_BYTES);
+    const buf = Buffer.alloc(st.size - inicio);
+    let lidos = 0;
+    while (lidos < buf.length) {
+      const n = readSync(fd, buf, lidos, buf.length - lidos, inicio + lidos);
+      if (n === 0) break;
+      lidos += n;
+    }
+    const texto = buf.subarray(0, lidos).toString('utf8');
+    if (inicio === 0) return texto;
+    const nl = texto.indexOf('\n');
+    return nl === -1 ? '' : texto.slice(nl + 1);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/** Horas desde o heartbeat válido mais recente em `.harness/entregas/<id>/events.*.jsonl`, ou null. */
+function horasDesdeHeartbeat(raiz, agora) {
+  const harness = join(raiz, '.harness');
+  const base = join(harness, 'entregas');
+  if (!ehDirReal(harness) || !ehDirReal(base)) return null;
+  let melhor = null;
+  let entregas;
+  try {
+    entregas = readdirSync(base).slice(0, HEARTBEAT_MAX_ENTREGAS);
+  } catch {
+    return null;
+  }
+  for (const id of entregas) {
+    const dir = join(base, id);
+    if (!ehDirReal(dir)) continue;
+    let nomes;
+    try {
+      nomes = readdirSync(dir).filter((n) => /^events\..+\.jsonl$/.test(n)).slice(0, HEARTBEAT_MAX_ARQUIVOS);
+    } catch {
+      continue;
+    }
+    for (const nome of nomes) {
+      const texto = lerCauda(join(dir, nome));
+      if (texto === null) continue;
+      for (const linha of texto.split('\n')) {
+        if (!linha.includes('guarda.heartbeat')) continue;
+        let ev;
+        try {
+          ev = JSON.parse(linha);
+        } catch {
+          continue; // linha truncada
+        }
+        if (!ev || typeof ev !== 'object' || Array.isArray(ev) || ev.tipo !== 'guarda.heartbeat') continue;
+        if (typeof ev.ts !== 'string' || !ISO_TS.test(ev.ts)) continue;
+        const t = Date.parse(ev.ts);
+        if (Number.isNaN(t) || t > agora + HEARTBEAT_SKEW_MS) continue; // futuro: forjado ou relógio quebrado
+        if (melhor === null || t > melhor) melhor = t;
+      }
+    }
+  }
+  return melhor === null ? null : Math.max(0, (agora - melhor) / 3_600_000);
+}
+
+/** Quantas entradas da lista da guarda `.claude/settings.json` do repo já tem em `permissions.deny`. */
+function entradasDeny(raiz) {
+  const f = join(raiz, '.claude', 'settings.json');
+  try {
+    const st = lstatSync(f);
+    if (!st.isFile() || st.size > 1024 * 1024) return 0;
+    const deny = JSON.parse(readFileSync(f, 'utf8'))?.permissions?.deny;
+    return Array.isArray(deny) ? DENY_GUARDA.filter((e) => deny.includes(e)).length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+const BLOCOS_AMBIENTE = ['hosts', 'projetos', 'bancos', 'mcps', 'variaveis'];
+/** Ambientes com declaração real. `branches` sozinho não conta: `lerGuarda` o sintetiza de `branchPadrao`. */
+function ambientesDeclarados(config) {
+  const amb = config?.ambientes && typeof config.ambientes === 'object' ? config.ambientes : {};
+  return ['teste', 'homolog', 'prod'].filter((n) => {
+    const a = amb[n];
+    return a && typeof a === 'object' && BLOCOS_AMBIENTE.some((b) => Array.isArray(a[b]) && a[b].length > 0);
+  });
+}
+
+function camadaDe(raiz, agoraMs, g) {
+  const ha = horasDesdeHeartbeat(raiz, agoraMs);
+  const ambientes = ambientesDeclarados(g.config);
+  let estado = 'nenhuma';
+  if (ha !== null && ha <= HEARTBEAT_ATIVA_H) estado = 'ativa';
+  else if (ambientes.length) estado = 'configurada';
+  else if (entradasDeny(raiz) > 0) estado = 'permissions.deny';
+  // 'mod' (guarda por mod, sem hook) fica no contrato, mas nenhum sinal em disco o prova: nunca é devolvido.
+  return { estado, heartbeatHa: ha, fonte: g.config ? g.fonte : null, divergente: g.divergente, ambientes };
+}
+
+/**
+ * Camada de guarda deste repo (REQ-INF-2): `ativa` (heartbeat válido há ≤ 7 d) · `configurada`
+ * (guarda.ambientes declarados) · `permissions.deny` (só a 2ª camada do instalador) · `nenhuma`.
+ * `fonte`/`divergente` vêm de `lerGuarda` (origin/HEAD vale; árvore divergente só é reportada).
+ */
+export function camadaGuarda(raiz, agora = Date.now()) {
+  const { estado, heartbeatHa, fonte, divergente } = camadaDe(raiz, agora instanceof Date ? agora.getTime() : Number(agora), lerGuarda(raiz));
+  return { estado, heartbeatHa, fonte, divergente };
+}
+
 // ────────────────────────────────────────────────────────────── nível
+
+/** Perfil de repo sem aplicação (plugin, biblioteca de docs): G3 e teardown não se aplicam. */
+const PERFIL_SEM_APP = 'repo-sem-app';
+const PERFIL_NA = ['G3-mass-mutation', 'G3-strict-undefined', 'teardown-por-id'];
 
 export function parseDeclaredLevel(agentsMd) {
   const m = /Nível de adoção declarado:\s*`?\s*([0-3])\s*`?/i.exec(agentsMd ?? '');
@@ -637,7 +868,14 @@ export function run(root = process.cwd(), overrides = {}) {
   const ix = createIndex(root, cfg);
   const attest = loadAttest(ix, cfg);
 
+  // Perfil explícito (casamento exato): repo sem aplicação não tem client de banco nem teardown a proteger.
+  // SÓ essas três checagens viram n/a — R3, segredo e atestados seguem valendo (perfil não rebaixa segurança).
+  const perfil = cfg.perfil === PERFIL_SEM_APP ? PERFIL_SEM_APP : null;
+
   const resultados = CHECKS.map((c) => {
+    if (perfil === PERFIL_SEM_APP && PERFIL_NA.includes(c.id)) {
+      return { ...c, found: true, na: true, evidence: `n/a — perfil ${perfil} (sem aplicação nem banco)` };
+    }
     if (c.kind === 'attest') {
       const a = attestOk(attest, c.id);
       if (!a) return { ...c, found: false, evidence: 'sem atestado em .harness/attest.json' };
@@ -666,8 +904,12 @@ export function run(root = process.cwd(), overrides = {}) {
     .map((r) => r.id);
   const avisos = resultados.filter((r) => r.level === 'warn' && !r.found).map((r) => `${r.id}: ${r.evidence ?? ''}`);
 
+  const camada = camadaDe(root, Date.now(), ix.guarda());
+
   return {
     resultados,
+    camada,
+    perfil,
     alcancado,
     declarado,
     mentindo: declarado !== null && declarado > alcancado,
@@ -688,7 +930,7 @@ function render(out, explain) {
     const rotulo = { 1: 'segurança', 2: 'processo', 3: 'completo' }[nivel];
     linhas.push(`── Nível ${nivel} — ${rotulo}`);
     for (const r of out.resultados.filter((x) => x.level === nivel)) {
-      const marca = r.found ? '  ok ' : r.opcional ? '  -- ' : ' FALTA';
+      const marca = r.na ? ' n/a ' : r.found ? '  ok ' : r.opcional ? '  -- ' : ' FALTA';
       const tipo = r.kind === 'attest' ? ' (atestado)' : '';
       linhas.push(`${marca} ${r.rule.padEnd(10)} ${r.label}${tipo}`);
       if (r.evidence) linhas.push(`        ↳ ${r.evidence}`);
@@ -707,6 +949,12 @@ function render(out, explain) {
     }
     linhas.push('');
   }
+  const c = out.camada;
+  const quente = c.heartbeatHa === null ? '' : ` (heartbeat há ${Math.round(c.heartbeatHa)} h)`;
+  linhas.push(`Camada de guarda: ${c.estado}${c.estado === 'ativa' ? quente : ''}${c.fonte ? ` · fonte ${c.fonte}` : ''}${c.divergente ? ' · DIVERGENTE (árvore ≠ origin/HEAD; vale o origin)' : ''}`);
+  linhas.push(`Ambientes declarados: ${c.ambientes.length ? c.ambientes.join(', ') : '(nenhum)'}`);
+  if (out.perfil) linhas.push(`Perfil: ${out.perfil}`);
+  linhas.push('');
   linhas.push(`Nível alcançado: ${out.alcancado}   ·   declarado no AGENTS.md: ${out.declarado ?? '(não declarado)'}`);
   if (out.configInvalido) linhas.push('AVISO: harness.config.json inválido — checagens de config ficam FALTA (fail-open declarado (G9)).');
   if (out.semAgents) linhas.push('AVISO: AGENTS.md não encontrado na raiz.');

@@ -10,15 +10,20 @@
  *  M3  --dry-run grava mesmo assim
  *  M4  grava por cima de harness.config.json com JSON inválido
  *  M5  `undefined` no patch apaga a chave
+ *  M6  T6: --deny-guarda substitui `permissions.deny` em vez de unir ⇒ settings-deny-preserva-existente
+ *  M7  T6: --deny-guarda sobrescreve settings com JSON inválido ⇒ settings-deny-recusa
+ *  M8  T6: lista da guarda sem `Read(.env*)` ou com `Write(.env*)` ⇒ settings-deny
+ *  M9  T6: não remover chave morta do patch ⇒ chaves-mortas-fora-do-patch
  */
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, readdirSync, existsSync, realpathSync, symlinkSync, lstatSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, readdirSync, existsSync, realpathSync, symlinkSync, lstatSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import * as onb from '../scripts/onboarding-config.mjs'; // namespace: o RED da T6 falha por teste, não pelo import
 import { mergeDeep, aplicar, aplicarSettings, diffChaves, lerJson, ArquivoInvalido, SECOES, escreverAtomico, raizDoRepo } from '../scripts/onboarding-config.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -271,5 +276,145 @@ describe('CLI', () => {
   });
   test('sem --set nem --settings: exit 1 com uso', () => {
     assert.equal(cli(['--root', repo()], tmpdir()).status, 1);
+  });
+});
+
+// ────────────────────────────────────────────────────────────── T6 — --deny-guarda e chaves mortas
+
+const LISTA = ['Read(.env*)', 'Read(!.env.example)', 'Edit(.env*)', 'Read(**/*.pem)', 'Edit(**/*.pem)', 'Read(**/*.key)', 'Edit(**/*.key)'];
+const SETTINGS = '.claude/settings.json';
+const lerSettings = (dir) => JSON.parse(readFileSync(join(dir, SETTINGS), 'utf8'));
+const denyGuarda = (dir, extra = []) => cli(['--root', dir, '--deny-guarda', ...extra], dir);
+
+describe('T6 settings-deny — a 2ª camada (REQ-GRD-5)', () => {
+  test('settings-deny: a lista é EXATAMENTE as 7 entradas — sem Write(, sem ./ (M7)', () => {
+    assert.deepEqual(onb.DENY_GUARDA, LISTA);
+    assert.ok(!onb.DENY_GUARDA.some((e) => e.startsWith('Write(')));
+    assert.ok(!onb.DENY_GUARDA.some((e) => e.includes('./')));
+  });
+
+  test('settings-deny: sem .claude/settings.json ⇒ cria só com permissions.deny', () => {
+    const dir = repo();
+    const r = denyGuarda(dir);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(lerSettings(dir), { permissions: { deny: LISTA } });
+    assert.match(r.stdout, /\[ONB-7\] \.claude\/settings\.json criado/);
+  });
+
+  test('settings-deny-preserva-existente: une ao deny próprio, preserva o resto e a ordem, sem duplicar', () => {
+    const antes = { model: 'fable', permissions: { allow: ['Read'], deny: ['Bash(rm:*)', 'Read(.env*)', { regra: 'objeto' }], ask: ['Bash(git push:*)'] }, hooks: { x: 1 } };
+    const dir = repo({ [SETTINGS]: `${JSON.stringify(antes, null, 4)}\n` });
+    const r = denyGuarda(dir);
+    assert.equal(r.status, 0, r.stderr);
+    const s = lerSettings(dir);
+    assert.deepEqual(s.permissions.deny, ['Bash(rm:*)', 'Read(.env*)', { regra: 'objeto' }, ...LISTA.filter((e) => e !== 'Read(.env*)')]);
+    assert.deepEqual(s.permissions.allow, ['Read']);
+    assert.deepEqual(s.permissions.ask, ['Bash(git push:*)']);
+    assert.equal(s.model, 'fable');
+    assert.deepEqual(s.hooks, { x: 1 });
+    assert.match(readFileSync(join(dir, SETTINGS), 'utf8'), /^\{\n    "model"/, 'a indentação de 4 espaços do usuário foi mantida');
+  });
+
+  test('settings-deny-idempotente: segunda execução não muda um byte e diz "sem mudanças"', () => {
+    const dir = repo({ [SETTINGS]: '{"permissions":{"deny":["Bash(rm:*)"]}}' });
+    denyGuarda(dir);
+    const antes = readFileSync(join(dir, SETTINGS), 'utf8');
+    const r = denyGuarda(dir);
+    assert.equal(readFileSync(join(dir, SETTINGS), 'utf8'), antes);
+    assert.match(r.stdout, /sem mudanças/);
+  });
+
+  test('settings-deny-dry-run: não escreve', () => {
+    const dir = repo();
+    const r = denyGuarda(dir, ['--dry-run']);
+    assert.equal(r.status, 0);
+    assert.equal(existsSync(join(dir, SETTINGS)), false);
+    assert.match(r.stdout, /dry-run/);
+  });
+
+  describe('settings-deny-recusa — em dúvida, não toca; dá a linha para colar', () => {
+    const cenarios = {
+      'JSON inválido': () => repo({ [SETTINGS]: '{"permissions": ' }),
+      'JSON com comentário': () => repo({ [SETTINGS]: '{\n  // meu comentário\n  "model": "fable"\n}\n' }),
+      'raiz não é objeto': () => repo({ [SETTINGS]: '[1,2]' }),
+      '`permissions` não é objeto': () => repo({ [SETTINGS]: '{"permissions":"tudo"}' }),
+      '`permissions.deny` não é array': () => repo({ [SETTINGS]: '{"permissions":{"deny":"Read"}}' }),
+      'settings.json é symlink': () => {
+        const dir = repo();
+        const fora = repo({ 'alvo.json': '{"model":"x"}' });
+        mkdirSync(join(dir, '.claude'));
+        symlinkSync(join(fora, 'alvo.json'), join(dir, SETTINGS));
+        return dir;
+      },
+      '.claude é symlink': () => {
+        const dir = repo();
+        const fora = repo({ 'settings.json': '{}' });
+        symlinkSync(fora, join(dir, '.claude'));
+        return dir;
+      },
+      'settings.json sem permissão de escrita': () => {
+        const dir = repo({ [SETTINGS]: '{"model":"x"}' });
+        chmodSync(join(dir, SETTINGS), 0o444);
+        return dir;
+      },
+    };
+    for (const [nome, montar] of Object.entries(cenarios)) {
+      test(`settings-deny-recusa: ${nome}`, (t) => {
+        if (nome.includes('permissão') && process.getuid?.() === 0) return t.skip('root ignora chmod');
+        const dir = montar();
+        const alvo = join(dir, SETTINGS);
+        const antes = existsSync(alvo) ? readFileSync(alvo, 'utf8') : null;
+        const r = denyGuarda(dir);
+        assert.equal(r.status, 0, r.stderr);
+        assert.match(r.stdout, /\[ONB-7\] \.claude\/settings\.json NÃO escrito — /, r.stdout);
+        for (const e of LISTA) assert.ok(r.stdout.includes(e), `a linha para colar traz ${e}`);
+        assert.equal(existsSync(alvo) ? readFileSync(alvo, 'utf8') : null, antes, 'arquivo intacto');
+        assert.deepEqual(readdirSync(join(dir, '.claude')).filter((n) => n.includes('.tmp')), [], 'nenhum .tmp deixado');
+      });
+    }
+  });
+
+  test('settings-deny: aplicarDenyGuarda() devolve acao/motivo estruturados', () => {
+    const r = onb.aplicarDenyGuarda(repo({ [SETTINGS]: 'não json' }));
+    assert.equal(r.acao, 'recusado');
+    assert.match(r.motivo, /JSON/);
+    assert.equal(onb.aplicarDenyGuarda(repo()).acao, 'criado');
+  });
+});
+
+describe('T6 chaves mortas (REQ-INF-2)', () => {
+  test('chaves-mortas: a lista é exatamente as seis do plano (atestado fica fora: não é config)', () => {
+    assert.deepEqual([...onb.CHAVES_MORTAS].sort(), ['migrationsDir', 'orquestracao.paralelismo.modo', 'orquestracao.sempreSubagente', 'versionamento.commit', 'versionamento.modelo'].sort());
+  });
+
+  test('chaves-mortas-fora-do-patch: --set versionamento descarta modelo/commit e avisa; o resto grava', () => {
+    const dir = repo();
+    const r = cli(['--root', dir, '--set', 'versionamento', '{"modelo":"trunk","commit":"conventional","tag":"^v","resolvidoEm":"2026-11-02"}'], dir);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(lerCfg(dir).versionamento, { tag: '^v', resolvidoEm: '2026-11-02' });
+    assert.match(r.stdout, /chave removida na 2\.0, ignorada: versionamento\.modelo/);
+    assert.match(r.stdout, /chave removida na 2\.0, ignorada: versionamento\.commit/);
+  });
+
+  test('chaves-mortas-fora-do-patch: orquestracao.sempreSubagente e paralelismo.modo saem; orquestracao.modelo (viva) fica', () => {
+    const dir = repo();
+    const patch = { modelo: { politica: 'mais-potente', alias: 'x' }, sempreSubagente: true, lembretePorPrompt: false, paralelismo: { modo: 'auto', simultaneos: 2, teto: 4 } };
+    const r = cli(['--root', dir, '--set', 'orquestracao', JSON.stringify(patch)], dir);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(lerCfg(dir).orquestracao, { modelo: { politica: 'mais-potente', alias: 'x' }, lembretePorPrompt: false, paralelismo: { simultaneos: 2, teto: 4 } });
+  });
+
+  test('chaves-mortas-fora-do-patch: aplicar() devolve as removidas e não toca o patch do chamador', () => {
+    const patch = { modelo: 'trunk', tag: 'x' };
+    const r = onb.aplicar(repo(), 'versionamento', patch, { dryRun: true });
+    assert.deepEqual(r.removidas, ['versionamento.modelo']);
+    assert.deepEqual(patch, { modelo: 'trunk', tag: 'x' });
+  });
+
+  test('chaves-mortas: chave morta que JÁ está no arquivo do usuário não é removida (R2: só emenda)', () => {
+    const dir = repo({ 'harness.config.json': JSON.stringify({ migrationsDir: 'prisma/migrations', versionamento: { modelo: 'trunk' } }) });
+    cli(['--root', dir, '--set', 'versionamento', '{"tag":"x"}'], dir);
+    assert.equal(lerCfg(dir).migrationsDir, 'prisma/migrations');
+    assert.equal(lerCfg(dir).versionamento.modelo, 'trunk');
   });
 });

@@ -113,3 +113,23 @@ export function lerGuarda(raiz) {
   const l = paraGuarda(localRaw, { zerarPermitidos: true });
   return { config: l?.config ?? null, fonte: 'local', divergente: false, branchPadrao: l?.branchPadrao ?? null };
 }
+
+/** `permissions.deny` da 2ª camada da guarda (REQ-GRD-5). Sem `./` (profundidade qualquer) e nunca `Write(…)`. */
+export const DENY_GUARDA = [
+  'Read(.env*)',
+  'Read(!.env.example)',
+  'Edit(.env*)',
+  'Read(**/*.pem)',
+  'Edit(**/*.pem)',
+  'Read(**/*.key)',
+  'Edit(**/*.key)',
+];
+
+/** Chaves de `harness.config.json` que nenhum gate lê mais (REQ-INF-2). `attest.squash-titulo-pr` é tratada à parte (é atestado). */
+export const CHAVES_MORTAS = [
+  'migrationsDir',
+  'versionamento.modelo',
+  'versionamento.commit',
+  'orquestracao.sempreSubagente',
+  'orquestracao.paralelismo.modo',
+];

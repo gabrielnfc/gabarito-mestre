@@ -15,18 +15,28 @@
  *  M8  `run()` gravando o cache (viola pureza)
  *  M9  `JSON.parse` sem try/catch em `run()` (config inválida vira stack trace)
  *  M10 linha "checagens novas" impressa incondicionalmente — deve derrubar
+ *  M12 T6: `fonte` da camada ignorada (sempre null) ⇒ doctor-camada-divergente
+ *  M13 T6: G8 aceitando `.md` como evidência ⇒ g8-md-nao-evidencia
+ *  M14 T6: heartbeat com ts futuro aceito ⇒ doctor-camada-heartbeat-futuro
+ *  M15 T6: seguir symlink em events.*.jsonl ⇒ doctor-camada-heartbeat-symlink
+ *  M16 T6: voltar a varrer o disco (sem git ls-files) ⇒ doctor-varre-git-ls-files
+ *  M17 T6: perfil repo-sem-app também marcando R3-prod-guard n/a ⇒ doctor-repo-sem-app
+ *  M18 T6: remover o String() de diasDesde ⇒ diasdesde-numerico-invalido
  *  M11 F4-R10: alargar a entrada de excludePaths de 'gabarito-mestre/templates/' para 'templates/'
  *      (a exclusão passa a valer para QUALQUER caminho que contenha "templates/", não só o do plugin)
  */
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { run, parseDeclaredLevel, CHECKS, tamanhoAgents, NOVAS_1_1_0 } from '../scripts/harness-doctor.mjs';
+import * as doctor from '../scripts/harness-doctor.mjs'; // camadaGuarda via namespace: o RED falha por teste, não pelo import
+import * as onboarding from '../scripts/onboarding-config.mjs';
+const DENY_GUARDA = onboarding.DENY_GUARDA ?? [];
 
 function repo(arquivos) {
   const dir = mkdtempSync(join(tmpdir(), 'doctor-'));
@@ -53,7 +63,8 @@ describe('doctor — o que ele mede', () => {
   test('repo vazio: nível 0 e nenhuma checagem encontrada', () => {
     const out = run(repo({ 'AGENTS.md': agents(0) }));
     assert.equal(out.alcancado, 0);
-    assert.equal(out.resultados.filter((r) => r.found && r.id !== 'agents-tamanho').length, 0, 'agents-tamanho passa por construção num AGENTS.md mínimo');
+    // avisos (level 'warn': chaves-mortas, guarda-divergente) passam por construção num repo vazio — não são gates
+    assert.equal(out.resultados.filter((r) => r.found && r.level !== 'warn' && r.id !== 'agents-tamanho').length, 0, 'agents-tamanho passa por construção num AGENTS.md mínimo');
   });
 
   test('detecta a guarda de mutação em massa e aponta onde ela é LIGADA', () => {
@@ -450,7 +461,8 @@ describe('doctor 1.1.0 — modelo-resolvido é warn, não FALTA (ORQ-5)', () => 
   });
   test('dentro da validade: sem aviso', () => {
     const out = run(repo(fixtureNivel2_110(2, { orquestracao: { modelo: { alias: 'fable', resolvidoEm: diasAtras(10), validadeDias: 90 } } })));
-    assert.deepEqual(out.avisos, []);
+    // T6: sem guarda.ambientes o doctor avisa (guarda-ambientes); aqui só interessa que o MODELO não avisa
+    assert.deepEqual(out.avisos.filter((a) => a.startsWith('modelo-resolvido')), []);
   });
 });
 
@@ -541,5 +553,328 @@ describe('doctor 1.1.0 — render', () => {
     const r = spawnSync(process.execPath, [SCRIPT], { cwd: dir, encoding: 'utf8' });
     assert.equal(r.status, 1);
     assert.doesNotMatch(r.stdout, /checagens novas da 1\.1\.0/);
+  });
+});
+
+// ────────────────────────────────────────────────────────────── T6 — camada de guarda, perfil, git ls-files
+
+const AGORA = Date.parse('2026-11-02T12:00:00.000Z');
+const horasAtras = (h) => new Date(AGORA - h * 3_600_000).toISOString();
+const hb = (ts, extra = {}) => JSON.stringify({ seq: 1, ts, autor: 'a@b.c', sessao: 's1', agente: 'orquestrador', tipo: 'guarda.heartbeat', dados: { fonte: 'local' }, hash_anterior: null, ...extra });
+const CFG_GUARDA = { guarda: { ambientes: { teste: { hosts: ['127.0.0.1'] }, prod: { hosts: ['api.exemplo.com'] } } } };
+const camada = (dir) => doctor.camadaGuarda(dir, AGORA);
+const arq = (dir, rel, texto) => { mkdirSync(dirname(join(dir, rel)), { recursive: true }); writeFileSync(join(dir, rel), texto); };
+
+/** repo git com `origin` (bare) e origin/HEAD; `origem` vai commitada, `local` sobrescreve a árvore. */
+function repoComOrigin({ origem, local }) {
+  const dir = mkdtempSync(join(tmpdir(), 'doctor-origin-'));
+  git(dir, 'init', '-q', '-b', 'main');
+  writeFileSync(join(dir, 'harness.config.json'), JSON.stringify(origem));
+  git(dir, 'add', '.');
+  git(dir, 'commit', '-q', '-m', 'chore: inicio');
+  const bare = mkdtempSync(join(tmpdir(), 'doctor-bare-'));
+  git(bare, 'init', '-q', '--bare', '-b', 'main');
+  git(dir, 'remote', 'add', 'origin', bare);
+  git(dir, 'push', '-q', 'origin', 'main');
+  git(dir, 'remote', 'set-head', 'origin', 'main');
+  if (local !== undefined) writeFileSync(join(dir, 'harness.config.json'), typeof local === 'string' ? local : JSON.stringify(local));
+  return dir;
+}
+
+describe('T6 doctor — camada de guarda (REQ-INF-2)', () => {
+  test('doctor-camada-ativa: heartbeat há 2 h ⇒ ativa, heartbeatHa 2, fonte local', () => {
+    const dir = repo({ 'harness.config.json': JSON.stringify(CFG_GUARDA), '.harness/entregas/GM-9/events.s1.jsonl': `${hb(horasAtras(2))}\n` });
+    const c = camada(dir);
+    assert.equal(c.estado, 'ativa');
+    assert.equal(c.heartbeatHa, 2);
+    assert.equal(c.fonte, 'local');
+    assert.equal(c.divergente, false);
+  });
+
+  test('doctor-camada-ativa: vale o heartbeat MAIS RECENTE entre vários arquivos e entregas', () => {
+    const dir = repo({
+      'harness.config.json': JSON.stringify(CFG_GUARDA),
+      '.harness/entregas/GM-8/events.a.jsonl': `${hb(horasAtras(50))}\n`,
+      '.harness/entregas/GM-9/events.b.jsonl': `${hb(horasAtras(9))}\n${hb(horasAtras(3))}\n${hb(horasAtras(20))}\n`,
+    });
+    assert.equal(camada(dir).heartbeatHa, 3);
+  });
+
+  test('doctor-camada-configurada: heartbeat velho (> 7 d) ou ausente com ambientes declarados ⇒ configurada', () => {
+    const velho = repo({ 'harness.config.json': JSON.stringify(CFG_GUARDA), '.harness/entregas/GM-9/events.s1.jsonl': `${hb(horasAtras(24 * 8))}\n` });
+    assert.equal(camada(velho).estado, 'configurada');
+    assert.equal(camada(velho).heartbeatHa, 24 * 8);
+    const sem = repo({ 'harness.config.json': JSON.stringify(CFG_GUARDA) });
+    assert.equal(camada(sem).estado, 'configurada');
+    assert.equal(camada(sem).heartbeatHa, null);
+  });
+
+  test('doctor-camada-divergente: árvore ≠ origin/HEAD ⇒ fonte origin, divergente true (a config do origin é a que vale)', () => {
+    const dir = repoComOrigin({ origem: CFG_GUARDA, local: { guarda: { ambientes: { teste: { hosts: ['outro.local'] } } } } });
+    const c = camada(dir);
+    assert.equal(c.fonte, 'origin');
+    assert.equal(c.divergente, true);
+    assert.equal(c.estado, 'configurada');
+    const igual = repoComOrigin({ origem: CFG_GUARDA, local: CFG_GUARDA });
+    assert.equal(camada(igual).fonte, 'origin');
+    assert.equal(camada(igual).divergente, false);
+  });
+
+  test('doctor-camada-config-local-invalida-origin-valida: lê o origin, marca divergente, não lança', () => {
+    const dir = repoComOrigin({ origem: CFG_GUARDA, local: '{ isto não é json' });
+    const c = camada(dir);
+    assert.equal(c.fonte, 'origin');
+    assert.equal(c.divergente, true);
+    assert.equal(c.estado, 'configurada');
+  });
+
+  test('doctor-camada-nenhuma: sem config, sem deny, sem heartbeat ⇒ nenhuma, fonte null', () => {
+    const c = camada(repo({ 'README.md': 'x' }));
+    assert.deepEqual(c, { estado: 'nenhuma', heartbeatHa: null, fonte: null, divergente: false });
+  });
+
+  test('doctor-camada-sem-git: dir sem .git nem origin ⇒ fonte local, sem exceção', () => {
+    const c = camada(repo({ 'harness.config.json': JSON.stringify(CFG_GUARDA) }));
+    assert.equal(c.fonte, 'local');
+    assert.equal(c.divergente, false);
+  });
+
+  test('doctor-camada-worktree: git worktree lê o .harness do próprio worktree', () => {
+    const principal = repoComGit({ 'harness.config.json': JSON.stringify(CFG_GUARDA) });
+    const wt = join(mkdtempSync(join(tmpdir(), 'doctor-wt-')), 'wt');
+    git(principal, 'worktree', 'add', '-q', '-b', 'wt/GM-9-1', wt);
+    arq(wt, '.harness/entregas/GM-9/events.s1.jsonl', `${hb(horasAtras(1))}\n`);
+    assert.equal(camada(wt).estado, 'ativa');
+    assert.equal(camada(principal).estado, 'configurada', 'o principal não enxerga o heartbeat do worktree');
+  });
+
+  test('doctor-camada-permissions-deny: .claude/settings.json com a lista do instalador ⇒ permissions.deny', () => {
+    const dir = repo({ '.claude/settings.json': JSON.stringify({ permissions: { deny: DENY_GUARDA } }) });
+    assert.equal(camada(dir).estado, 'permissions.deny');
+    const alheio = repo({ '.claude/settings.json': JSON.stringify({ permissions: { deny: ['Bash(ls:*)'] } }) });
+    assert.equal(camada(alheio).estado, 'nenhuma', 'deny próprio, sem nenhuma entrada da guarda, não é a camada');
+    const quebrado = repo({ '.claude/settings.json': '{ // comentário\n}' });
+    assert.equal(camada(quebrado).estado, 'nenhuma');
+  });
+
+  test('doctor-camada-prioridade: ativa > configurada > permissions.deny', () => {
+    const base = { '.claude/settings.json': JSON.stringify({ permissions: { deny: DENY_GUARDA } }) };
+    assert.equal(camada(repo({ ...base, 'harness.config.json': JSON.stringify(CFG_GUARDA) })).estado, 'configurada');
+    assert.equal(camada(repo({ ...base, '.harness/entregas/GM-9/events.s1.jsonl': `${hb(horasAtras(1))}\n` })).estado, 'ativa');
+  });
+
+  describe('ataques ao heartbeat (ts, linhas, tamanho, symlink)', () => {
+    const cfg = { 'harness.config.json': JSON.stringify(CFG_GUARDA) };
+    const comLinhas = (linhas) => repo({ ...cfg, '.harness/entregas/GM-9/events.s1.jsonl': linhas.join('\n') });
+
+    test('doctor-camada-heartbeat-ts-invalido: "ontem", número, vazio e data sem hora não valem', () => {
+      for (const ts of ['ontem', 12345, '', '2026', '1', null]) {
+        const c = camada(comLinhas([hb(ts)]));
+        assert.equal(c.estado, 'configurada', `ts=${JSON.stringify(ts)}`);
+        assert.equal(c.heartbeatHa, null, `ts=${JSON.stringify(ts)}`);
+      }
+    });
+
+    test('doctor-camada-heartbeat-ts-ausente: evento sem ts não vale', () => {
+      const sem = JSON.stringify({ tipo: 'guarda.heartbeat', dados: { fonte: 'local' } });
+      assert.equal(camada(comLinhas([sem])).estado, 'configurada');
+    });
+
+    test('doctor-camada-heartbeat-futuro: ts além de 5 min no futuro não vale; dentro da tolerância vale como 0 h', () => {
+      assert.equal(camada(comLinhas([hb(new Date(AGORA + 3_600_000).toISOString())])).estado, 'configurada');
+      const c = camada(comLinhas([hb(new Date(AGORA + 60_000).toISOString())]));
+      assert.equal(c.estado, 'ativa');
+      assert.equal(c.heartbeatHa, 0);
+    });
+
+    test('doctor-camada-heartbeat-linhas-ruins: null, string, array, truncada e outro tipo são ignorados; a boa vale', () => {
+      const c = camada(comLinhas(['null', '"str"', '[]', '42', '{"tipo":"guarda.heartbeat","ts":"2026-11-02T1', JSON.stringify({ tipo: 'sessao.inicio', ts: horasAtras(1) }), hb(horasAtras(4))]));
+      assert.equal(c.estado, 'ativa');
+      assert.equal(c.heartbeatHa, 4);
+      assert.equal(camada(comLinhas(['null', 'lixo'])).estado, 'configurada');
+    });
+
+    test('doctor-camada-heartbeat-arquivo-enorme: lê só a cauda; heartbeat no fim de 4 MiB vale, sem estourar memória', () => {
+      const lixo = `${JSON.stringify({ tipo: 'outro', ts: horasAtras(1), x: 'y'.repeat(80) })}\n`;
+      const dir = repo({ ...cfg });
+      arq(dir, '.harness/entregas/GM-9/events.s1.jsonl', lixo.repeat(Math.ceil((4 * 1024 * 1024) / lixo.length)) + `${hb(horasAtras(6))}\n`);
+      assert.equal(camada(dir).heartbeatHa, 6);
+      // uma única linha gigante, sem quebra de linha: nada a ler, sem exceção
+      const dir2 = repo({ ...cfg });
+      arq(dir2, '.harness/entregas/GM-9/events.s1.jsonl', 'z'.repeat(5 * 1024 * 1024));
+      assert.equal(camada(dir2).estado, 'configurada');
+    });
+
+    test('doctor-camada-heartbeat-symlink: events.*.jsonl, entregas/<id> e entregas como symlink não valem', () => {
+      const fora = mkdtempSync(join(tmpdir(), 'doctor-fora-'));
+      writeFileSync(join(fora, 'ev.jsonl'), `${hb(horasAtras(1))}\n`);
+      const a = repo({ ...cfg });
+      mkdirSync(join(a, '.harness/entregas/GM-9'), { recursive: true });
+      symlinkSync(join(fora, 'ev.jsonl'), join(a, '.harness/entregas/GM-9/events.s1.jsonl'));
+      assert.equal(camada(a).estado, 'configurada', 'arquivo symlink');
+      const b = repo({ ...cfg });
+      mkdirSync(join(b, '.harness/entregas'), { recursive: true });
+      mkdirSync(join(fora, 'GM-9'));
+      writeFileSync(join(fora, 'GM-9/events.s1.jsonl'), `${hb(horasAtras(1))}\n`);
+      symlinkSync(join(fora, 'GM-9'), join(b, '.harness/entregas/GM-9'));
+      assert.equal(camada(b).estado, 'configurada', 'diretório symlink');
+      const c = repo({ ...cfg });
+      mkdirSync(join(c, '.harness'), { recursive: true });
+      symlinkSync(fora, join(c, '.harness/entregas'));
+      mkdirSync(join(fora, 'GM-7'));
+      writeFileSync(join(fora, 'GM-7/events.s1.jsonl'), `${hb(horasAtras(1))}\n`);
+      assert.equal(camada(c).estado, 'configurada', 'entregas symlink');
+    });
+
+    test('doctor-camada-heartbeat-nome: só events.*.jsonl diretamente em entregas/<id>/ conta', () => {
+      const dir = repo({ ...cfg, '.harness/entregas/GM-9/outro.jsonl': `${hb(horasAtras(1))}\n`, '.harness/entregas/GM-9/sub/events.s1.jsonl': `${hb(horasAtras(1))}\n`, '.harness/events.s1.jsonl': `${hb(horasAtras(1))}\n` });
+      assert.equal(camada(dir).estado, 'configurada');
+    });
+  });
+});
+
+describe('T6 doctor — run(): camada, ambientes, perfil, avisos', () => {
+  test('doctor-lista-ambientes: só ambiente com declaração real entra; prod sintetizado por branchPadrao não conta', () => {
+    const dir = repo({ 'harness.config.json': JSON.stringify({ versionamento: { branchPadrao: 'main' }, guarda: { ambientes: { teste: { hosts: ['127.0.0.1'] }, homolog: { projetos: ['ref-h'] }, prod: {} } } }) });
+    const out = run(dir);
+    assert.deepEqual(out.camada.ambientes, ['teste', 'homolog']);
+    assert.equal(out.camada.estado, 'configurada');
+  });
+
+  test('doctor-sem-secao-guarda-avisa: sem guarda.ambientes ⇒ aviso, camada nenhuma, nível intacto', () => {
+    const fx = fixtureNivel2_110(2);
+    const sem = run(repoComGit(fx));
+    assert.equal(sem.camada.estado, 'nenhuma');
+    assert.ok(sem.avisos.some((a) => /^guarda-ambientes: .*guarda\.ambientes/.test(a)), JSON.stringify(sem.avisos));
+    const com = run(repoComGit({ ...fx, 'harness.config.json': JSON.stringify({ ...JSON.parse(fx['harness.config.json']), ...CFG_GUARDA }) }));
+    assert.ok(!com.avisos.some((a) => /^guarda-ambientes/.test(a)));
+    assert.equal(sem.alcancado, com.alcancado, 'o aviso não mexe no nível');
+    assert.equal(CHECKS.find((c) => c.id === 'guarda-ambientes').level, 'warn');
+  });
+
+  test('doctor-aviso-divergente: árvore ≠ origin/HEAD vira aviso', () => {
+    const dir = repoComOrigin({ origem: CFG_GUARDA, local: { guarda: { ambientes: { teste: { hosts: ['x'] } } } } });
+    assert.ok(run(dir).avisos.some((a) => /^guarda-divergente/.test(a)));
+  });
+
+  test('doctor-repo-sem-app: perfil explícito ⇒ G3 e teardown n/a (found, na); segurança restante segue valendo', () => {
+    const dir = repo({ 'AGENTS.md': agents(0), 'harness.config.json': JSON.stringify({ perfil: 'repo-sem-app' }) });
+    const out = run(dir);
+    const por = Object.fromEntries(out.resultados.map((r) => [r.id, r]));
+    for (const id of ['G3-mass-mutation', 'G3-strict-undefined', 'teardown-por-id']) {
+      assert.equal(por[id].found, true, id);
+      assert.equal(por[id].na, true, id);
+      assert.match(por[id].evidence, /n\/a/, id);
+    }
+    for (const id of ['R3-prod-guard', 'secrets-fora-do-repo', 'branch-protegida', 'backup-verificado']) {
+      assert.equal(por[id].found, false, `${id} NÃO pode ser rebaixado pelo perfil`);
+      assert.notEqual(por[id].na, true, id);
+    }
+    assert.equal(out.perfil, 'repo-sem-app');
+    const sem = run(repo({ 'AGENTS.md': agents(0) }));
+    assert.equal(sem.resultados.find((r) => r.id === 'G3-mass-mutation').na, undefined);
+    assert.equal(sem.perfil, null);
+  });
+
+  test('doctor-repo-sem-app: valor de perfil inexistente ou com outra caixa não rebaixa nada', () => {
+    for (const perfil of ['REPO-SEM-APP', 'repo-sem-app ', 'app', ['repo-sem-app'], true]) {
+      const out = run(repo({ 'AGENTS.md': agents(0), 'harness.config.json': JSON.stringify({ perfil }) }));
+      assert.equal(out.resultados.find((r) => r.id === 'G3-mass-mutation').found, false, JSON.stringify(perfil));
+      assert.equal(out.perfil, null);
+    }
+  });
+
+  test('doctor-repo-sem-app: com os atestados e o resto de segurança, perfil leva o repo ao nível 1', () => {
+    const dir = repo({
+      'AGENTS.md': agents(0),
+      'harness.config.json': JSON.stringify({ perfil: 'repo-sem-app' }),
+      'src/db.ts': 'assertNotProduction();',
+      '.gitignore': '.env\n',
+      '.harness/attest.json': JSON.stringify({ 'branch-protegida': ok, 'backup-verificado': ok }),
+    });
+    assert.equal(run(dir).alcancado, 1);
+  });
+
+  test('g8-md-nao-evidencia: menção em .md não prova a guarda; script de código prova', () => {
+    const g8 = (arquivos) => run(repo({ 'AGENTS.md': agents(0), ...arquivos })).resultados.find((r) => r.id === 'G8-migrations-guard');
+    assert.equal(g8({ 'README.md': 'rode migrations-guard.mjs e DESTRUCTIVE_PATTERN no CI' }).found, false);
+    assert.equal(g8({ 'docs/harness/gates.md': 'migrations-guard' }).found, false);
+    assert.equal(g8({ 'scripts/migrations-guard.mjs': 'DESTRUCTIVE_PATTERN' }).found, true);
+  });
+
+  test('doctor-varre-git-ls-files: arquivo ignorado pelo git não é evidência; rastreado e não-ASCII com espaço é', () => {
+    const ignorado = repoComGit({ 'AGENTS.md': agents(0), '.gitignore': 'src/guard.ts\n', 'src/guard.ts': 'assertNotProduction()' });
+    assert.equal(run(ignorado).resultados.find((r) => r.id === 'R3-prod-guard').found, false, 'ignorado');
+    const naoIgnorado = repoComGit({ 'AGENTS.md': agents(0), 'src/ação do guarda.ts': 'assertNotProduction()' });
+    const r3 = run(naoIgnorado).resultados.find((r) => r.id === 'R3-prod-guard');
+    assert.equal(r3.found, true);
+    assert.equal(r3.evidence, 'src/ação do guarda.ts');
+    const commitado = repoComGit({ 'AGENTS.md': agents(0), 'src/b c.ts': 'assertNotProduction()' });
+    git(commitado, 'add', '-A');
+    git(commitado, 'commit', '-q', '-m', 'chore: add');
+    assert.equal(run(commitado).resultados.find((r) => r.id === 'R3-prod-guard').evidence, 'src/b c.ts');
+  });
+
+  test('doctor-varre-git-ls-files: fora de repo git a varredura de disco segue valendo (fallback)', () => {
+    const r3 = run(repo({ 'AGENTS.md': agents(0), 'src/guard.ts': 'assertNotProduction()' })).resultados.find((r) => r.id === 'R3-prod-guard');
+    assert.equal(r3.found, true);
+  });
+
+  test('doctor-varre-git-ls-files: diretório dentro de OUTRO repo (não é a raiz) cai na varredura de disco', () => {
+    const pai = repoComGit({ '.gitignore': 'sub/\n' });
+    const sub = join(pai, 'sub');
+    arq(sub, 'AGENTS.md', agents(0));
+    arq(sub, 'src/guard.ts', 'assertNotProduction()');
+    assert.equal(run(sub).resultados.find((r) => r.id === 'R3-prod-guard').found, true);
+  });
+
+  test('doctor-chaves-mortas: config e atestado com chaves removidas viram aviso listando cada uma', () => {
+    const dir = repo({
+      'AGENTS.md': agents(0),
+      'harness.config.json': JSON.stringify({ migrationsDir: 'prisma/migrations', versionamento: { modelo: 'trunk', commit: 'conventional' }, orquestracao: { sempreSubagente: true, modelo: { alias: 'x' }, paralelismo: { modo: 'auto' } } }),
+      '.harness/attest.json': JSON.stringify({ 'squash-titulo-pr': ok }),
+    });
+    const out = run(dir);
+    const a = out.avisos.find((x) => x.startsWith('chaves-mortas'));
+    assert.ok(a, JSON.stringify(out.avisos));
+    for (const k of ['migrationsDir', 'versionamento.modelo', 'versionamento.commit', 'orquestracao.sempreSubagente', 'orquestracao.paralelismo.modo', 'attest.squash-titulo-pr']) assert.ok(a.includes(k), `${k} em: ${a}`);
+    assert.ok(!a.includes('orquestracao.modelo'), 'orquestracao.modelo está VIVA');
+    assert.ok(!run(repo({ 'AGENTS.md': agents(0), 'harness.config.json': JSON.stringify({ orquestracao: { modelo: { alias: 'x' } } }) })).avisos.some((x) => x.startsWith('chaves-mortas')));
+  });
+
+  test('doctor-chaves-mortas: o doctor deixou de ter migrationsDir como default', () => {
+    assert.equal(readFileSync(SCRIPT, 'utf8').includes("migrationsDir: 'prisma/migrations'"), false);
+  });
+
+  test('diasdesde-numerico-invalido (herdado T1a MINOR B): calibradoEm numérico no JSON é inválido, não "hoje"', () => {
+    const cfg = { orquestracao: { paralelismo: { simultaneos: 2, teto: 4, calibradoEm: Date.now() } } };
+    const r = run(repo({ 'AGENTS.md': agents(0), 'harness.config.json': JSON.stringify(cfg) })).resultados.find((x) => x.id === 'paralelismo-calibrado');
+    assert.equal(r.found, false);
+    assert.match(r.evidence, /inválida/);
+    const m = run(repo({ 'AGENTS.md': agents(0), 'harness.config.json': JSON.stringify({ orquestracao: { modelo: { alias: 'x', resolvidoEm: Date.now(), validadeDias: 90 } } }) })).resultados.find((x) => x.id === 'modelo-resolvido');
+    assert.equal(m.found, false);
+    assert.match(m.evidence, /inválido/);
+  });
+});
+
+describe('T6 doctor — CLI', () => {
+  test('doctor-json-expoe-camada-e-perfil: --json traz camada {estado,heartbeatHa,fonte,divergente,ambientes} e perfil', () => {
+    const dir = repoComGit({ 'AGENTS.md': agents(0), 'harness.config.json': JSON.stringify({ perfil: 'repo-sem-app', ...CFG_GUARDA }) });
+    const r = spawnSync(process.execPath, [SCRIPT, '--json'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const j = JSON.parse(r.stdout);
+    assert.deepEqual(Object.keys(j.camada).sort(), ['ambientes', 'divergente', 'estado', 'fonte', 'heartbeatHa']);
+    assert.equal(j.camada.estado, 'configurada');
+    assert.deepEqual(j.camada.ambientes, ['teste', 'prod']);
+    assert.equal(j.perfil, 'repo-sem-app');
+  });
+
+  test('doctor-render-camada: texto mostra camada, fonte, ambientes e perfil; n/a aparece como n/a, não como ok', () => {
+    const dir = repoComGit({ 'AGENTS.md': agents(0), 'harness.config.json': JSON.stringify({ perfil: 'repo-sem-app', ...CFG_GUARDA }), '.harness/entregas/GM-9/events.s1.jsonl': `${hb(new Date(Date.now() - 2 * 3_600_000).toISOString())}\n` });
+    const r = spawnSync(process.execPath, [SCRIPT], { cwd: dir, encoding: 'utf8' });
+    assert.match(r.stdout, /Camada de guarda: ativa \(heartbeat há 2 h\) · fonte local/);
+    assert.match(r.stdout, /Ambientes declarados: teste, prod/);
+    assert.match(r.stdout, /Perfil: repo-sem-app/);
+    assert.match(r.stdout, / n\/a .*guarda de mutação em massa/);
   });
 });
