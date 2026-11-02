@@ -48,15 +48,38 @@ const FALLBACK = [
   'fi',
 ];
 
+/**
+ * O pre-push recebe os refs no STDIN e o hook de terceiro (git lfs, o que já existia) também os lê. Ler o stdin
+ * aqui o esvaziaria para ele: o bloco copia o stdin para um temporário (mktemp), alimenta o check por lá, religa
+ * o stdin ao temporário (`exec 0<`) e remove o nome — o hook seguinte lê os mesmos refs. POSIX, sem bashismo.
+ * mktemp falhou: avisa e pula o check com o stdin intacto (fail-open declarado, G9).
+ */
+const PRE_PUSH = [
+  ...PRELUDIO,
+  '  gm_tmp=$(mktemp "${TMPDIR:-/tmp}/gabarito-prepush.XXXXXX" 2>/dev/null) || gm_tmp=""',
+  '  if [ -z "$gm_tmp" ]; then',
+  '    echo "gabarito-mestre: mktemp falhou — R20 (branch) não conferida (fail-open declarado, G9)" >&2',
+  '  else',
+  '    cat > "$gm_tmp"',
+  '    gm_rc=0; node "$gm_check" --pre-push < "$gm_tmp" || gm_rc=$?',
+  '    exec 0< "$gm_tmp"',
+  '    rm -f "$gm_tmp"',
+  '    if [ "$gm_rc" -eq 2 ]; then exit 1; fi',
+  '    if [ "$gm_rc" -ne 0 ]; then echo "gabarito-mestre: versionamento-check falhou (código $gm_rc) — R20 não conferida (fail-open declarado, G9)" >&2; fi',
+  '  fi',
+  ...FALLBACK,
+];
+
 const CORPO = {
   'commit-msg': [...PRELUDIO, ...aposCheck('--msg "$1"'), ...FALLBACK],
-  'pre-push': [...PRELUDIO, ...aposCheck('--pre-push'), ...FALLBACK],
+  'pre-push': PRE_PUSH,
 };
 
 /** A linha para o usuário colar à mão quando o instalador recusa. */
+const CHECK_SH = '"$(git rev-parse --show-toplevel)/tools/gabarito-gates/scripts/versionamento-check.mjs"';
 const LINHA = {
-  'commit-msg': 'node "$(git rev-parse --show-toplevel)/tools/gabarito-gates/scripts/versionamento-check.mjs" --msg "$1" || [ $? -ne 2 ] || exit 1',
-  'pre-push': 'node "$(git rev-parse --show-toplevel)/tools/gabarito-gates/scripts/versionamento-check.mjs" --pre-push || [ $? -ne 2 ] || exit 1',
+  'commit-msg': `node ${CHECK_SH} --msg "$1" || [ $? -ne 2 ] || exit 1`,
+  'pre-push': `gm_tmp=$(mktemp) && cat > "$gm_tmp" && { node ${CHECK_SH} --pre-push < "$gm_tmp"; gm_rc=$?; exec 0< "$gm_tmp"; rm -f "$gm_tmp"; [ "$gm_rc" -ne 2 ] || exit 1; }`,
 };
 
 function bloco(hook) {

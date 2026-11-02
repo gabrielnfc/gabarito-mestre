@@ -11,6 +11,7 @@
  *  R3  sem recusar shebang não-shell / binário / symlink / sem exec / marcador incompleto ⇒ recusa-*
  *  R4  hooksPath global ou fora do repo aceito                    ⇒ hookspath-*-recusa
  *  R5  pre-push olhando o HEAD em vez do ref de destino           ⇒ pre-push-*
+ *  R7  não religar o stdin do pre-push (hook antigo lê 0 linhas)  ⇒ preserva-stdin-pre-push
  *  R6  bloquear em qualquer código ≠ 0 (não só no 2)              ⇒ lib-ausente-nao-trava
  */
 
@@ -449,5 +450,53 @@ describe('só o exit 2 bloqueia; crash vira aviso (fail-open declarado, G9)', ()
     const c = git(dir, 'commit', '-am', 'feat(GM-9): ok');
     assert.equal(c.status, 0, c.stderr);
     assert.match(c.stderr, /R20 não conferida/);
+  });
+});
+
+describe('pre-push: o stdin continua inteiro para o hook de terceiro', () => {
+  // Hook antigo (como o git lfs): lê os refs do stdin. Compara o que ele recebe SEM e COM o nosso bloco.
+  function refsRecebidos({ quebrarCheck }) {
+    const dir = repo();
+    const bares = [0, 1].map(() => {
+      const b = mkdtempSync(join(tmpdir(), 'gm-hg-bare-'));
+      gitOk(b, 'init', '-q', '--bare');
+      return b;
+    });
+    gitOk(dir, 'remote', 'add', 'r1', bares[0]);
+    gitOk(dir, 'remote', 'add', 'r2', bares[1]);
+    criarHook(dir, '#!/bin/sh\ncat >> "$PWD/stdin.log"\necho --- >> "$PWD/stdin.log"\n', { nome: 'pre-push' });
+    assert.equal(git(dir, 'push', 'r1', 'HEAD').status, 0);
+    assert.equal(instalarHooksGit(dir).hooks['pre-push'].acao, 'anexado');
+    if (quebrarCheck) {
+      unlinkSync(join(dir, 'tools', 'gabarito-gates'));
+      mkdirSync(join(dir, 'tools', 'gabarito-gates', 'scripts'), { recursive: true });
+      copyFileSync(join(GATES, 'scripts', 'versionamento-check.mjs'), join(dir, 'tools', 'gabarito-gates', 'scripts', 'versionamento-check.mjs'));
+    }
+    const p = git(dir, 'push', 'r2', 'HEAD');
+    assert.equal(p.status, 0, p.stderr);
+    if (quebrarCheck) assert.match(p.stderr, /R20 não conferida/);
+    const [sem, com] = readFileSync(join(dir, 'stdin.log'), 'utf8').split('---\n');
+    return { sem, com };
+  }
+  test('preserva-stdin-pre-push: check aprova — o hook antigo recebe as mesmas linhas', () => {
+    const { sem, com } = refsRecebidos({ quebrarCheck: false });
+    assert.match(sem, /^HEAD [0-9a-f]{40} refs\/heads\/feat\/GM-9-x 0{40}\n$/);
+    assert.equal(com, sem);
+  });
+  test('preserva-stdin-pre-push: check crasha (lib ausente) — idem, e o push segue com aviso', () => {
+    const { sem, com } = refsRecebidos({ quebrarCheck: true });
+    assert.ok(sem.length > 0);
+    assert.equal(com, sem);
+  });
+  test('o temporário não sobra em TMPDIR', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'gm-hg-tmpdir-'));
+    const dir = repo();
+    const bare = mkdtempSync(join(tmpdir(), 'gm-hg-bare-'));
+    gitOk(bare, 'init', '-q', '--bare');
+    gitOk(dir, 'remote', 'add', 'origin', bare);
+    instalarHooksGit(dir);
+    const r = spawnSync('git', ['push', 'origin', 'HEAD'], { cwd: dir, encoding: 'utf8', env: { ...GIT_ENV, TMPDIR: tmp } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(readdirSync(tmp), []);
   });
 });
