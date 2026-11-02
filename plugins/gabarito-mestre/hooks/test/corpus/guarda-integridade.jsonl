@@ -92,3 +92,25 @@
 {"nome":"r3-find-exec-benigno-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name \"*.ts\" -exec grep x {} +"},"agente":"sub","esperado":{"faixa":"silencio"}}
 {"nome":"r3-find-name-env-sem-acao-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
 {"nome":"r3-find-name-env-print-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env -print"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"r3-q16-remote-sub","req":"GRD-5","tool":"Bash","input":{"command":"git remote set-url origin https://x.invalid/r.git"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-q16-remote-orq","req":"GRD-5","tool":"Bash","input":{"command":"git remote set-url origin https://x.invalid/r.git"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"r3-q16-fetch-sub","req":"GRD-5","tool":"Bash","input":{"command":"git fetch origin"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-q16-fetch-orq","req":"GRD-5","tool":"Bash","input":{"command":"git fetch origin"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"r3-q16-pull-sub","req":"GRD-5","tool":"Bash","input":{"command":"git pull origin main"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-q16-pull-orq","req":"GRD-5","tool":"Bash","input":{"command":"git pull origin main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"r3-q16-update-ref-sub","req":"GRD-5","tool":"Bash","input":{"command":"git update-ref refs/heads/x abc"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-q16-update-ref-orq","req":"GRD-5","tool":"Bash","input":{"command":"git update-ref refs/heads/x abc"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"r3-q16-symbolic-ref-sub","req":"GRD-5","tool":"Bash","input":{"command":"git symbolic-ref HEAD refs/heads/x"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-q16-symbolic-ref-orq","req":"GRD-5","tool":"Bash","input":{"command":"git symbolic-ref HEAD refs/heads/x"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"r3-q16-config-sub","req":"GRD-5","tool":"Bash","input":{"command":"git config core.hooksPath /tmp/h"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-q16-config-orq","req":"GRD-5","tool":"Bash","input":{"command":"git config core.hooksPath /tmp/h"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"r3-q16-c-remote-sub","req":"GRD-5","tool":"Bash","input":{"command":"git -c remote.origin.url=/tmp/x status"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-q16-c-remote-orq","req":"GRD-5","tool":"Bash","input":{"command":"git -c remote.origin.url=/tmp/x status"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"r3-q16-c-url-sub","req":"GRD-5","tool":"Bash","input":{"command":"git -c url.https://x/.insteadOf=y status"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-q16-c-url-orq","req":"GRD-5","tool":"Bash","input":{"command":"git -c url.https://x/.insteadOf=y status"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"r3-q16-c-hookspath-sub","req":"GRD-5","tool":"Bash","input":{"command":"git -c core.hooksPath=/tmp/h status"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-q16-c-hookspath-orq","req":"GRD-5","tool":"Bash","input":{"command":"git -c core.hooksPath=/tmp/h status"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"r3-q16-push-refs-remotes-sub","req":"GRD-5","tool":"Bash","input":{"command":"git push origin HEAD:refs/remotes/origin/main"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-q16-push-refs-remotes-orq","req":"GRD-5","tool":"Bash","input":{"command":"git push origin HEAD:refs/remotes/origin/main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"r3-q16-alvo-dotgit-sub","req":"GRD-5","tool":"Bash","input":{"command":"git merge .git/config"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-q16-alvo-dotgit-orq","req":"GRD-5","tool":"Bash","input":{"command":"git merge .git/config"},"agente":"orq","esperado":{"faixa":"ask"}}
