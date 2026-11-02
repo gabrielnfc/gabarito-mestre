@@ -28,7 +28,7 @@ const ID_PADRAO = '[A-Z]+-\\d+';
 const CHAVES_AMBIENTE: Array<keyof AmbienteDecl> = ['hosts', 'projetos', 'bancos', 'mcps', 'variaveis', 'branches'];
 
 type Fonte = 'origin' | 'local' | 'nenhuma';
-type Guarda = { config: ConfigGuarda | null; fonte: Fonte; divergente: boolean; onboarding: boolean; idPadrao: string };
+type Guarda = { config: ConfigGuarda | null; fonte: Fonte; divergente: boolean; localIgnorada: boolean; onboarding: boolean; idPadrao: string };
 
 // ---------------------------------------------------------------------------------------------------------------
 // fs e git
@@ -110,14 +110,17 @@ function lerGuarda(raiz: string): Guarda {
   const origem = parseJson(git(raiz, ['show', 'refs/remotes/origin/HEAD:harness.config.json']));
   if (origem !== null) {
     const o = normalizar(origem, 'origin');
-    const divergente = local !== null && normalizar(local, 'local').assinatura !== o.assinatura;
-    return { config: o.config, fonte: 'origin', divergente, onboarding: true, idPadrao: o.idPadrao };
+    const l = local === null ? null : normalizar(local, 'local');
+    const divergente = l !== null && l.assinatura !== o.assinatura;
+    // D2: origin sem seção `guarda` vence mesmo que a árvore local a tenha; a árvore local é ignorada, e isso se avisa.
+    const localIgnorada = o.config === null && l !== null && l.config !== null;
+    return { config: o.config, fonte: 'origin', divergente, localIgnorada, onboarding: true, idPadrao: o.idPadrao };
   }
   if (local !== null) {
     const l = normalizar(local, 'local');
-    return { config: l.config, fonte: 'local', divergente: false, onboarding: true, idPadrao: l.idPadrao };
+    return { config: l.config, fonte: 'local', divergente: false, localIgnorada: false, onboarding: true, idPadrao: l.idPadrao };
   }
-  return { config: null, fonte: 'nenhuma', divergente: false, onboarding: false, idPadrao: ID_PADRAO };
+  return { config: null, fonte: 'nenhuma', divergente: false, localIgnorada: false, onboarding: false, idPadrao: ID_PADRAO };
 }
 
 function linhaDe(texto: string | null): string | null {
@@ -317,11 +320,13 @@ function principal(): void {
   const mensagens: string[] = [];
   if (r.systemMessage) mensagens.push(r.systemMessage);
 
-  if (guarda !== null && guarda.config !== null && (guarda.fonte === 'local' || guarda.divergente) && primeiraVez(sessao)) {
+  if (guarda !== null && (guarda.localIgnorada || (guarda.config !== null && (guarda.fonte === 'local' || guarda.divergente))) && primeiraVez(sessao)) {
     mensagens.push(
-      guarda.divergente
-        ? 'GABARITO: a config da guarda na árvore local diverge de origin/HEAD; vale a de origin/HEAD'
-        : 'GABARITO: sem origin/HEAD com harness.config.json; config da guarda lida da árvore local e `permitidos` ignorado',
+      guarda.localIgnorada
+        ? 'GABARITO: a árvore local declara `guarda`, mas origin/HEAD não tem essa seção; vale origin/HEAD: só os anéis de segredo e integridade até o merge'
+        : guarda.divergente
+          ? 'GABARITO: a config da guarda na árvore local diverge de origin/HEAD; vale a de origin/HEAD'
+          : 'GABARITO: sem origin/HEAD com harness.config.json; config da guarda lida da árvore local e `permitidos` ignorado',
     );
   }
 
