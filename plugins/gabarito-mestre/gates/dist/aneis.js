@@ -32,10 +32,14 @@ import { posix } from 'node:path';
                    
                       
                      
+                                                                                                                 
+                            
+                                                                                                 
+                 
   
 
                                                     
-                                          
+                                                                                  
 
 const NEUTRO = '\u0000';
 const SUBST = '\u0001';
@@ -183,6 +187,15 @@ function lexar(src        )                                      {
   const pendentes            = [];
   const semTerminador = new Set        ();
   let linhaIni = 0;
+  // Parênteses abertos: substituição (`$(`, `<(`, `>(`) ou subshell. Crase alterna.
+  const pilha            = [];
+  const posPilha           = [];
+  // Grupos `{ …; }`: posição do primeiro segmento. `fecho` é o último grupo (`( )` ou `{ }`) que acabou de fechar.
+  const chaves           = [];
+  let fecho                                      = null;
+  // Segmentos cuja saída entra por `|` no próximo que for criado.
+  let aguardando          = [];
+  let crase = false;
 
   const fimPalavra = () => {
     if (palavra) toks.push({ t: cur, e: curE });
@@ -193,7 +206,14 @@ function lexar(src        )                                      {
   const fimSegmento = (fim        , proximo        ) => {
     fimPalavra();
     const cru = src.slice(ini, fim).trim();
-    if (toks.length) segs.push({ cru, toks });
+    if (toks.length) {
+      if (toks[0].t === '{') chaves.push(segs.length);
+      const novo        = { cru, toks, pipePara: null, subst: crase || pilha.includes(true) };
+      segs.push(novo);
+      for (const a of aguardando) a.pipePara = novo;
+      aguardando = [];
+      if (toks.length === 1 && toks[0].t === '}') fecho = { ini: chaves.pop() ?? segs.length - 1, fim: segs.length };
+    }
     toks = [];
     ini = proximo;
   };
@@ -283,6 +303,15 @@ function lexar(src        )                                      {
     }
     if (c === '\n' || c === ';' || c === '(' || c === ')' || c === '`') {
       fimSegmento(i, i + 1);
+      if (c === '(') {
+        pilha.push(src[i - 1] === '$' || src[i - 1] === '<' || src[i - 1] === '>');
+        posPilha.push(segs.length);
+      }
+      if (c === ')') {
+        pilha.pop();
+        fecho = { ini: posPilha.pop() ?? segs.length, fim: segs.length };
+      }
+      if (c === '`') crase = !crase;
       if (c === '\n') linhaIni = segs.length;
       continue;
     }
@@ -294,10 +323,17 @@ function lexar(src        )                                      {
       continue;
     }
     if (c === '|') {
-      if (src[i + 1] === '|' || src[i + 1] === '&') {
+      if (src[i + 1] === '|') {
         fimSegmento(i, i + 2);
         i++;
-      } else fimSegmento(i, i + 1);
+      } else {
+        // `|` e `|&`: a saída do segmento anterior (ou do grupo que acabou de fechar) entra no próximo.
+        fimSegmento(i, i + (src[i + 1] === '&' ? 2 : 1));
+        // Grupo que acabou de fechar (`( a; b ) |`, `{ a; b; } |`): a saída de todos os seus segmentos entra no próximo.
+        const de = fecho !== null && fecho.fim === segs.length ? fecho.ini : segs.length - 1;
+        aguardando = segs.slice(Math.max(de, 0));
+        if (src[i + 1] === '&') i++;
+      }
       continue;
     }
     if (c === '>' || c === '<') {
@@ -413,7 +449,7 @@ function montar(b       , profundidade        )             {
       runner = true;
     } else break;
   }
-  if (p >= w.length) return atribs.length || saidas.length || entradas.length ? [{ cru: b.cru, cmd: '', args: [], exp: [], atribs, saidas, entradas }] : [];
+  if (p >= w.length) return atribs.length || saidas.length || entradas.length ? [{ cru: b.cru, cmd: '', args: [], exp: [], atribs, saidas, entradas, pipePara: null, subst: b.subst }] : [];
 
   let primeiro = w[p];
   if (runner) {
@@ -429,15 +465,31 @@ function montar(b       , profundidade        )             {
     const k = args.findIndex((a) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a));
     if (k >= 0 && typeof args[k + 1] === 'string') return segmentar(args[k + 1], profundidade + 1);
   }
-  return [{ cru: b.cru, cmd, args, exp, atribs, saidas, entradas }];
+  return [{ cru: b.cru, cmd, args, exp, atribs, saidas, entradas, pipePara: null, subst: b.subst }];
 }
 
 export function segmentar(comando        , profundidade = 0)             {
   const src = profundidade === 0 && comando.length > TETO_COMANDO ? comando.slice(0, TETO_COMANDO) : comando;
   const { segs, extras } = lexar(src);
   const out             = [];
-  for (const b of segs) for (const s of montar(b, profundidade)) out.push(s);
-  if (profundidade < 3) for (const e of extras) for (const s of segmentar(e, profundidade + 1)) out.push(s);
+  const montados                             = [];
+  for (const b of segs) {
+    const ms = montar(b, profundidade);
+    montados.push([b, ms]);
+    for (const s of ms) out.push(s);
+  }
+  // Liga cada segmento ao que recebe a sua saída (o primeiro segmento montado do bruto de destino).
+  const primeiro = new Map                 ();
+  for (const [b, ms] of montados) if (ms.length) primeiro.set(b, ms[0]);
+  for (const [b, ms] of montados) {
+    const alvo = b.pipePara ? (primeiro.get(b.pipePara) ?? null) : null;
+    if (alvo) for (const s of ms) if (s.pipePara === null) s.pipePara = alvo;
+  }
+  // `extras` vêm de `$(…)`/crase dentro de aspas duplas: são substituição.
+  if (profundidade < 3) for (const e of extras) for (const s of segmentar(e, profundidade + 1)) {
+    s.subst = true;
+    out.push(s);
+  }
   return out;
 }
 
@@ -589,14 +641,16 @@ const EXISTENCIA = new Set(['ls', 'test', '[', '[[', 'stat']);
 const FIND_ACAO = new Set(['-exec', '-execdir', '-ok', '-okdir', '-delete']);
 const FIND_PADRAO = new Set(['-name', '-iname', '-path', '-ipath', '-wholename', '-iwholename', '-regex', '-iregex', '-lname', '-ilname']);
 const GREP = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'jq']);
-const BANCOS = new Set(['psql', 'pg_dump', 'pg_dumpall', 'pg_restore', 'mysql', 'mysqldump', 'mongosh', 'mongo', 'redis-cli']);
+const BANCOS = new Set(['psql', 'pg_dump', 'pg_dumpall', 'pg_restore', 'mysql', 'mysqldump', 'mariadb', 'mariadb-dump', 'mongosh', 'mongo', 'redis-cli']);
 
                                                                         
 
 /** Remove o valor de opções que carregam texto (mensagem, SQL), nunca caminho. */
 function semTextoLivre(cmd        , args          )           {
-  const curtas = cmd === 'git' ? ['-m'] : BANCOS.has(cmd) ? ['-c'] : [];
-  const longas = cmd === 'git' ? ['--message'] : BANCOS.has(cmd) ? ['--command'] : [];
+  // `mysql`/`mariadb` carregam o SQL em `-e/--execute`; os demais clientes, em `-c/--command`.
+  const execute = cmd === 'mysql' || cmd === 'mariadb';
+  const curtas = cmd === 'git' ? ['-m'] : execute ? ['-e'] : BANCOS.has(cmd) ? ['-c'] : [];
+  const longas = cmd === 'git' ? ['--message'] : execute ? ['--execute'] : BANCOS.has(cmd) ? ['--command'] : [];
   if (curtas.length === 0) return args;
   const out           = [];
   for (let i = 0; i < args.length; i++) {
@@ -650,6 +704,20 @@ function empilhar(dest          , origem          )       {
   for (let i = 0; i < origem.length; i++) dest.push(origem[i]);
 }
 
+/** Segue a cadeia de `|` a partir de `idx`: `true` se algum consumidor não é filtro de texto. */
+function saidaConsumida(segmentos            , idx        , indice                       )          {
+  for (let c = segmentos[idx].pipePara; c !== null; c = c.pipePara) {
+    // `sort --files0-from=-`, `wc --files-from=-`: o filtro passa a abrir os caminhos listados.
+    // `git hash-object --stdin-paths`, `git add --pathspec-from-file=-`: `git` está em `LE_COMO_DADO` por causa de heredoc, mas aqui abre os caminhos.
+    if (!LE_COMO_DADO.has(c.cmd) || c.cmd === 'git' || c.args.some((a) => a.startsWith('--files0-from') || a.startsWith('--files-from'))) return true;
+    // Filtro que recebe substituição de processo (`tee >(xargs cat)`): quem consome é o comando de dentro.
+    if (indice.size === 0) segmentos.forEach((x, i) => indice.set(x, i));
+    const d = segmentos[(indice.get(c) ?? segmentos.length) + 1];
+    if (d !== undefined && d.subst && !LE_COMO_DADO.has(d.cmd)) return true;
+  }
+  return false;
+}
+
 /**
  * Procura o anel em todos os segmentos. Segredo vence integridade; dentro do mesmo anel vale o primeiro achado.
  * Retorna `null` se nenhum segmento toca um caminho de anel. `cwd` é o diretório da chamada; `cd` muda o corrente.
@@ -660,7 +728,9 @@ export function anelDeBash(segmentos            , contexto          , cwd       
   // `cd a;` em cadeia faz o caminho crescer e cada `resolve` custar o tamanho dele: acima do limite, para de seguir o `cd`.
   let cdPerdido = false;
 
-  for (const s of segmentos) {
+  const indice = new Map                  ();
+  for (let idx = 0; idx < segmentos.length; idx++) {
+    const s = segmentos[idx];
     const escritas           = [...s.saidas];
     const leituras           = [...s.entradas];
     const remocoes           = [];
@@ -679,7 +749,10 @@ export function anelDeBash(segmentos            , contexto          , cwd       
       continue;
     }
 
-    const uteis = s.cmd === 'find' && !s.args.some((a) => FIND_ACAO.has(a)) ? semPadroesDeFind(s.args) : semTextoLivre(s.cmd, s.args);
+    // `find` com padrão é listagem (Q15) só quando ninguém age sobre o resultado: sem `-exec`/`-delete`, fora de
+    // substituição e com a cadeia de `|` terminando em filtro de texto (ou em nada). `xargs`, laço, `sh`… consomem.
+    const listagem = s.cmd === 'find' && !s.args.some((a) => FIND_ACAO.has(a)) && !s.subst && !saidaConsumida(segmentos, idx, indice);
+    const uteis = listagem ? semPadroesDeFind(s.args) : semTextoLivre(s.cmd, s.args);
     const pos = candidatos(uteis).filter(ehCaminhoPlausivel);
 
     if (s.cmd === 'git') {

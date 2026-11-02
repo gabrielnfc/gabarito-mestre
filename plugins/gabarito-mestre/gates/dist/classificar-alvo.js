@@ -26,7 +26,9 @@ const ORDEM              = ['prod', 'homolog', 'teste'];
 const NEUTRO                = { ambiente: 'desconhecido', acao: 'leitura', alvo: '', destrutivo: false, anel: null, segmentosProdEscrita: [] };
 
 const REDE = new Set(['curl', 'wget', 'http', 'https', 'xh', 'ssh', 'scp', 'rsync', 'nc', 'telnet']);
-const BANCO = new Set(['psql', 'pg_dump', 'pg_dumpall', 'pg_restore', 'mysql', 'mysqldump', 'mongosh', 'mongo', 'redis-cli']);
+const BANCO = new Set(['psql', 'pg_dump', 'pg_dumpall', 'pg_restore', 'mysql', 'mysqldump', 'mariadb', 'mariadb-dump', 'mongosh', 'mongo', 'redis-cli']);
+// Clientes cujo SQL vem em `-e/--execute` (e não em `-c/--command`).
+const SQL_POR_EXECUTE = new Set(['mysql', 'mariadb']);
 const SUSPEITO = /(^|[.-])(prod|production|prd)([.-]|$)/i;
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
 
@@ -200,7 +202,8 @@ function classificarSegmento(s          , cfg                     , ctx         
     else if (g.sub === 'branch' && g.resto.includes('-D')) p.destrutivo = true;
     else if (g.sub === 'push' && g.resto.some((a) => a === '-f' || a === '--force' || a.startsWith('--force-with-lease') || a === '--mirror')) p.destrutivo = true;
   } else if (BANCO.has(s.cmd)) {
-    const todos = todosValores(s.args, ['--command'], ['-c']);
+    // Flag que carrega o SQL, por cliente: `mysql`/`mariadb` usam `-e/--execute`; os demais, `-c/--command`.
+    const todos = SQL_POR_EXECUTE.has(s.cmd) ? todosValores(s.args, ['--execute'], ['-e']) : todosValores(s.args, ['--command'], ['-c']);
     sqls = todos.length ? todos : null;
     if (sqls !== null && sqls.some(sqlDestrutivo)) p.destrutivo = true;
   }
