@@ -249,6 +249,12 @@ describe('projeção e caminho', () => {
     for (const m of marcadores) assert.match(m, /^m\d+-fim$/, `marcador cortado no meio: ${m}`);
     // mais recente primeiro, sem buracos: m10000, m9999, m9998, ...
     marcadores.forEach((m, i) => assert.equal(m, `m${10000 - i}-fim`, `posição ${i}`));
+    // no máximo um marcador por linha, e nada de resto de linha (ts, tipo) depois do último `-fim` do corte
+    for (const linha of s.split('\n')) {
+      assert.ok((linha.match(/\bm\d+(?:-f(?:i(?:m)?)?)?/g) ?? []).length <= 1, `mais de um evento na linha: ${linha.slice(0, 80)}`);
+    }
+    const resto = s.slice(s.lastIndexOf('-fim') + 4);
+    assert.doesNotMatch(resto, /\d{4}-\d|producao/, 'resto de linha cortada após o último evento');
   });
 
   test('dirEntrega-sem-id: null ⇒ _sem-id; com id ⇒ o id', () => {
