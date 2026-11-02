@@ -4,6 +4,7 @@
  *
  * MUTAÇÕES PRESCRITAS:
  *  R1  aceitar `tool_input` nulo sem checar ⇒ `entrada-malformada-nao-lanca` falha
+ *  R2  remover a checagem de tamanho em `decidir` ⇒ `teto-pede-em-vez-de-ignorar` e `teto-fronteira` falham
  */
 
 import { test, describe } from 'node:test';
@@ -57,8 +58,42 @@ describe('robustez da guarda', () => {
     }
   });
 
-  test('so-o-prefixo-vale-acima-do-teto: o que passa de 64 KB é ignorado, o início vale', () => {
-    const d = decidir(bash(`vercel --prod ${'x'.repeat(100000)}`), CONFIG, CTX);
-    assert.equal(d.faixa, 'ask');
+  test('teto-pede-em-vez-de-ignorar: acima de 64 KB a cauda perigosa vira ask (orq) ou deny (sub), com motivo e sem o comando', () => {
+    const cauda = bash(`echo ${'x'.repeat(70000)} && rm .env`);
+    const o = decidir(cauda, CONFIG, CTX);
+    assert.equal(o.faixa, 'ask');
+    assert.equal(o.evento?.tipo, 'guarda.ask');
+    assert.equal(o.evento?.dados.motivo, 'teto');
+    assert.equal(o.evento?.dados.chars, cauda.tool_input.command.length);
+    assert.equal(decidir({ ...cauda, agent_id: 'a1' }, CONFIG, CTX).faixa, 'deny');
+    // O evento e as mensagens não carregam o comando.
+    const saida = JSON.stringify([o.evento, o.systemMessage, o.motivo, o.classificacao.alvo]);
+    assert.equal(saida.includes('xxxxxxxx'), false);
+    assert.equal(saida.includes('rm .env'), false);
+  });
+
+  test('teto-fronteira: 65 536 caracteres passam, 65 537 pedem; conta unidades UTF-16', () => {
+    assert.equal(decidir(bash('x'.repeat(65536)), CONFIG, CTX).faixa, 'silencio');
+    assert.equal(decidir(bash('x'.repeat(65537)), CONFIG, CTX).faixa, 'ask');
+    assert.equal(decidir(bash('\u{1F600}'.repeat(32768)), CONFIG, CTX).faixa, 'silencio'); // 65 536 unidades, 131 072 bytes
+    assert.equal(decidir(bash('\u{1F600}'.repeat(32768) + 'x'), CONFIG, CTX).faixa, 'ask');
+    assert.equal(decidir(bash('é'.repeat(40000)), CONFIG, CTX).faixa, 'silencio'); // 80 KB em UTF-8, abaixo do teto em caracteres
+  });
+
+  test('teto-prefixo-prevalece: ask/deny do início vale e não ganha dados de teto', () => {
+    const o = decidir(bash(`rm .env ${'x'.repeat(70000)}`), CONFIG, CTX);
+    assert.equal(o.faixa, 'ask');
+    assert.equal(o.evento?.dados.motivo, undefined);
+    const d = decidir({ ...bash(`rm .env ${'x'.repeat(70000)}`), agent_id: 'a1' }, CONFIG, CTX);
+    assert.equal(d.faixa, 'deny');
+    assert.equal(d.evento?.dados.motivo, undefined);
+  });
+
+  test('teto-so-bash: Edit, Read e MCP gigantes não são afetados', () => {
+    const grande = 'x'.repeat(200000);
+    assert.equal(decidir({ tool_name: 'Edit', tool_input: { file_path: 'a.txt', old_string: grande, new_string: grande }, cwd: '/repo' }, CONFIG, CTX).faixa, 'silencio');
+    assert.equal(decidir({ tool_name: 'Read', tool_input: { file_path: `${grande}.txt` }, cwd: '/repo' }, CONFIG, CTX).faixa, 'silencio');
+    assert.equal(decidir({ tool_name: 'mcp__outro__tool', tool_input: { query: grande } }, CONFIG, CTX).faixa, 'silencio');
+    assert.equal(decidir({ tool_name: 'Bash', tool_input: { command: grande }, agent_id: 'a1' }, CONFIG, CTX).faixa, 'deny');
   });
 });

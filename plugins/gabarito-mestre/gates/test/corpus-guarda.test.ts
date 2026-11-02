@@ -19,8 +19,8 @@ import type { ConfigGuarda, Contexto, EntradaHook } from '../src/tipos.ts';
 
 const CORPUS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'hooks', 'test', 'corpus');
 const ARQUIVOS = ['guarda-bash', 'guarda-mcp', 'guarda-caminho', 'guarda-integridade'];
-const REQS = new Set(['GRD-2', 'GRD-4', 'GRD-5', 'GRD-6']);
-const TOTAL_CORPUS = 202;
+const REQS = new Set(['GRD-2', 'GRD-3', 'GRD-4', 'GRD-5', 'GRD-6']);
+const TOTAL_CORPUS = 213;
 // Nominados pelo dono + casos que as mutações prescritas da spec citam.
 const NOMINADOS = [
   'teste-sem-decisao',
@@ -60,11 +60,18 @@ const CONTEXTO_PADRAO: Contexto = {
 
 const CONFIG: ConfigGuarda = JSON.parse(readFileSync(join(CORPUS, '_ambientes.json'), 'utf8'));
 
+// Comando gigante não cabe em JSONL legível: `input.gerar` = {antes, char, n, depois} vira `command` ao carregar.
+function materializar(c: Caso): Caso {
+  const g = c.input.gerar as { antes: string; char: string; n: number; depois: string } | undefined;
+  if (g === undefined) return c;
+  return { ...c, input: { command: `${g.antes}${g.char.repeat(g.n)}${g.depois}` } };
+}
+
 function carregar(arquivo: string): Caso[] {
   return readFileSync(join(CORPUS, `${arquivo}.jsonl`), 'utf8')
     .split('\n')
     .filter((l) => l.trim() !== '')
-    .map((l) => JSON.parse(l) as Caso);
+    .map((l) => materializar(JSON.parse(l) as Caso));
 }
 
 const todos: Array<Caso & { arquivo: string }> = ARQUIVOS.flatMap((a) => carregar(a).map((c) => ({ ...c, arquivo: a })));
