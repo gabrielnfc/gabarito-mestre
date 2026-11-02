@@ -8,7 +8,8 @@
  *   Heredoc: o corpo é dado quando todo comando da linha o lê como dado (`cat`, `git`, `tee`…); com delimitador sem
  *   aspas, `$(…)` e crases do corpo valem como comando; interpretador na linha (`sh`, `bash`, `python`, `| bash`) ou
  *   terminador ausente ⇒ o corpo é lido como comando. Sem tokenizador completo, sem backreference.
- * - Teto de 64 KB por comando: o que passa disso é ignorado (falha segura de desempenho, não de exceção).
+ * - Teto de 65 536 caracteres (UTF-16) por comando: `segmentar` só lê o início; `decidir` pede (orquestrador) ou nega
+ *   (subagent) o que passa disso, porque a cauda não foi inspecionada (Q17, proposta pendente do dono).
  */
 
 import { posix } from 'node:path';

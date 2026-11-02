@@ -106,3 +106,14 @@
 {"nome":"heredoc-ssh-e-comando","req":"GRD-2","tool":"Bash","input":{"command":"ssh host <<'EOF'\nrm .env\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
 {"nome":"heredoc-bash-menos-tabs-e-comando","req":"GRD-2","tool":"Bash","input":{"command":"bash <<-'EOF'\n\trm .env\n\tEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
 {"nome":"heredoc-tee-env-continua-escrita","req":"GRD-2","tool":"Bash","input":{"command":"tee .env <<'EOF'\nx\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"bash-acima-do-teto-cauda-segredo-orq","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"echo ","char":"x","n":70000,"depois":" && rm .env"}},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","motivoContem":"64 KB"}}
+{"nome":"bash-acima-do-teto-cauda-segredo-sub","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"echo ","char":"x","n":70000,"depois":" && rm .env"}},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","motivoContem":"64 KB"}}
+{"nome":"bash-acima-do-teto-benigno-orq","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"echo ","char":"x","n":65537,"depois":""}},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","motivoContem":"64 KB"}}
+{"nome":"bash-acima-do-teto-benigno-sub","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"echo ","char":"x","n":65537,"depois":""}},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","motivoContem":"64 KB"}}
+{"nome":"bash-acima-do-teto-prefixo-prod-orq","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"vercel --prod ","char":"x","n":100000,"depois":""}},"agente":"orq","esperado":{"faixa":"ask","motivoContem":"PRODUÇÃO"}}
+{"nome":"bash-acima-do-teto-prefixo-prod-sub","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"vercel --prod ","char":"x","n":100000,"depois":""}},"agente":"sub","esperado":{"faixa":"deny","motivoContem":"PRODUÇÃO"}}
+{"nome":"bash-acima-do-teto-prefixo-segredo-sub","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"cat .env; echo ","char":"x","n":70000,"depois":""}},"agente":"sub","esperado":{"faixa":"deny","motivoContem":"segredo"}}
+{"nome":"bash-no-teto-65536-cauda-segredo","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"echo ","char":"x","n":65520,"depois":" && rm .env"}},"agente":"orq","esperado":{"faixa":"ask","motivoContem":"segredo"}}
+{"nome":"bash-no-teto-65536-benigno","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"echo ","char":"x","n":65531,"depois":""}},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"bash-teto-fora-do-bmp-65536-benigno","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"","char":"😀","n":32768,"depois":""}},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"bash-teto-fora-do-bmp-65537-pede","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"","char":"😀","n":32768,"depois":"x"}},"agente":"orq","esperado":{"faixa":"ask","motivoContem":"64 KB"}}
