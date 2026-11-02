@@ -43,7 +43,7 @@ jobs:
       - run: node plugins/gabarito-mestre/gates/scripts/build.mjs --check
 
   instalador:
-    name: instalar.sh — fixture 1.0.1, --atualizar, --gates-substituir (bash ${{ matrix.os }})
+    name: instalar.sh — instalação, --atualizar, --guarda, upgrade da 1.1.0 real (bash ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -90,9 +90,23 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
+      # A raiz tem harness.config.json com `perfil: repo-sem-app` e `guarda.ambientes`. O doctor tem que: (1) reportar a
+      # camada e o perfil; (2) marcar SÓ G3 e teardown como n/a; (3) não achar evidência dentro do próprio plugin.
       - run: |
           node plugins/gabarito-mestre/gates/scripts/harness-doctor.mjs --json > out.json
-          node -e "const j=require('./out.json');const bad=j.resultados.filter(r=>r.found&&/gabarito-mestre\//.test(r.evidence||''));if(bad.length){console.error('auto-detecção:',bad.map(r=>r.id));process.exit(1)}console.log('ok — nenhuma evidência vinda do plugin')"
+          node -e "
+            const j=require('./out.json');
+            const por=Object.fromEntries(j.resultados.map(r=>[r.id,r]));
+            const erros=[];
+            if(j.perfil!=='repo-sem-app') erros.push('perfil: '+j.perfil);
+            if(!j.camada||j.camada.estado==='nenhuma') erros.push('camada ausente: '+JSON.stringify(j.camada));
+            for(const id of ['G3-mass-mutation','G3-strict-undefined','teardown-por-id']) if(!por[id].na) erros.push(id+' deveria ser n/a');
+            for(const id of ['R3-prod-guard','secrets-fora-do-repo']) if(por[id].na) erros.push(id+' NÃO pode ser n/a');
+            const bad=j.resultados.filter(r=>r.found&&!r.na&&/gabarito-mestre\//.test(r.evidence||''));
+            if(bad.length) erros.push('auto-detecção: '+bad.map(r=>r.id));
+            if(erros.length){console.error(erros.join('\n'));process.exit(1)}
+            console.log('ok — perfil, camada '+j.camada.estado+', nenhuma evidência vinda do plugin');
+          "
 
   versao-medida:
     name: versao-medida — Claude Code medido × instalado (aviso, nunca falha)

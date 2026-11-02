@@ -13,7 +13,8 @@ correspondente do `AGENTS.md` não precise ser lida por ninguém.
 | `scripts/migrations-guard.mjs` | G8 — migrations | R2 |
 | `scripts/deploy-order-check.mjs` | ordem de subida | §10 |
 | `scripts/quality-ratchet.mjs` | ratchet de qualidade | R4 |
-| `scripts/harness-doctor.mjs` | §0.2 — nível de adoção | §0.2 |
+| `scripts/harness-doctor.mjs` | §0.2 — nível de adoção; camada de guarda, ambientes e perfil | §0.2 |
+| `scripts/onboarding-config.mjs` | grava as seções do onboarding e a 2ª camada da guarda (`--deny-guarda`) | R2 |
 
 ## Testes
 
@@ -26,4 +27,4 @@ derrubar a suíte — a que não derrubar é um achado, não um alívio.
 
 ## Instalação
 
-`docs/harness/gates.md`.
+`docs/harness/gates.md`. O instalador copia estes arquivos para `tools/gabarito-gates/` **sem** `test/` e sem este README: a suíte (`npm test`) roda aqui, no repo do plugin.
