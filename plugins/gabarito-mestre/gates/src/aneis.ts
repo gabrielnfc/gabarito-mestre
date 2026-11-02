@@ -528,7 +528,8 @@ export function lerGit(args: string[]): GitLido {
     if (a === '-c' || a === '--config-env') {
       if (args[i + 1] !== undefined) configs.push(args[i + 1]);
       i++;
-    } else if (GIT_GLOBAIS_COM_VALOR.has(a)) i++;
+    } else if (a.startsWith('--config-env=')) configs.push(a.slice(13));
+    else if (GIT_GLOBAIS_COM_VALOR.has(a)) i++;
     else if (a.startsWith('-')) continue;
     else break;
   }
@@ -577,11 +578,14 @@ function dentroDeDotGit(caminho: string, contexto: Contexto, cwd?: string | null
 // ---------------------------------------------------------------------------------------------------------------
 // Bash
 
+const LIMITE_CD = 4096;
 const REMOVE = new Set(['rm', 'rmdir', 'unlink', 'shred']);
 const ESCREVE_TUDO = new Set(['rm', 'rmdir', 'chmod', 'chown', 'chgrp', 'ln', 'truncate', 'touch', 'install', 'unlink', 'shred', 'mv', 'tee']);
 const SO_REDIRECIONA = new Set(['echo', 'printf']);
 // Q15: checar existência não é leitura.
 const EXISTENCIA = new Set(['ls', 'test', '[', '[[', 'stat']);
+// Valores de `find` que são padrão de nome, não caminho.
+const FIND_PADRAO = new Set(['-name', '-iname', '-path', '-ipath', '-wholename', '-iwholename', '-regex', '-iregex', '-lname', '-ilname']);
 const GREP = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'jq']);
 const BANCOS = new Set(['psql', 'pg_dump', 'pg_dumpall', 'pg_restore', 'mysql', 'mysqldump', 'mongosh', 'mongo', 'redis-cli']);
 
@@ -598,6 +602,15 @@ function semTextoLivre(cmd: string, args: string[]): string[] {
     if (curtas.includes(a) || longas.includes(a)) i++;
     else if (longas.some((l) => a.startsWith(`${l}=`)) || (cmd === 'git' && a.length > 2 && a.startsWith('-m') && !a.startsWith('--'))) continue;
     else out.push(a);
+  }
+  return out;
+}
+
+function semPadroesDeFind(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (FIND_PADRAO.has(args[i])) i++;
+    else out.push(args[i]);
   }
   return out;
 }
@@ -642,6 +655,8 @@ function empilhar(dest: string[], origem: string[]): void {
 export function anelDeBash(segmentos: Segmento[], contexto: Contexto, cwd?: string | null, subagent = true): AchadoAnel | null {
   let integridade: AchadoAnel | null = null;
   let atual: string | null = cwd ?? null;
+  // `cd a;` em cadeia faz o caminho crescer e cada `resolve` custar o tamanho dele: acima do limite, para de seguir o `cd`.
+  let cdPerdido = false;
 
   for (const s of segmentos) {
     const escritas: string[] = [...s.saidas];
@@ -650,14 +665,18 @@ export function anelDeBash(segmentos: Segmento[], contexto: Contexto, cwd?: stri
 
     if (s.cmd === 'cd') {
       const d = s.args.find((a) => !a.startsWith('-'));
-      if (d !== undefined && !d.includes('$') && !d.startsWith('~')) {
+      if (!cdPerdido && d !== undefined && !d.includes('$') && !d.startsWith('~')) {
         const base = atual ?? contexto.raiz;
         atual = base && base.startsWith('/') ? posix.resolve(base, d) : null;
+        if (atual !== null && atual.length > LIMITE_CD) {
+          atual = null;
+          cdPerdido = true;
+        }
       }
       continue;
     }
 
-    const uteis = semTextoLivre(s.cmd, s.args);
+    const uteis = s.cmd === 'find' ? semPadroesDeFind(s.args) : semTextoLivre(s.cmd, s.args);
     const pos = candidatos(uteis).filter(ehCaminhoPlausivel);
 
     if (s.cmd === 'git') {
@@ -671,7 +690,9 @@ export function anelDeBash(segmentos: Segmento[], contexto: Contexto, cwd?: stri
         const alvo = g.sub === 'remote' || g.sub === 'config' ? '.git/config' : g.sub === 'fetch' || g.sub === 'pull' || g.sub === 'update-ref' || g.sub === 'symbolic-ref' ? 'refs/remotes' : '.git';
         integridade ??= { anel: 'integridade', alvo, escrita: true };
       }
-      if (g.sub !== 'log' && g.sub !== 'check-ignore') empilhar(leituras, gitResto);
+      // Q15: `git log -- .env` só confere existência; com patch (`-p`, `-u`, `-c`, `--cc`, `-L`, `-U`) mostra o conteúdo.
+      const mostraConteudo = g.sub === 'log' && g.resto.some((a) => /^(-p|-u|-c|--cc|--patch\S*|--unified\S*|-L\S*|-U\d*|--word-diff\S*|--color-words\S*)$/.test(a));
+      if ((g.sub !== 'log' && g.sub !== 'check-ignore') || mostraConteudo) empilhar(leituras, gitResto);
     } else if (EXISTENCIA.has(s.cmd)) {
       // Q15: sem leitura.
     } else if (s.cmd === 'cp' || s.cmd === 'mv') {
