@@ -44,3 +44,41 @@
 {"nome":"modo-dontask-ask","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"orq","modo":"dontAsk","esperado":{"faixa":"ask"}}
 {"nome":"fallback-auto-ask","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"orq","modo":"auto","esperado":{"faixa":"ask"}}
 {"nome":"modo-bypass-benigno","req":"GRD-4","tool":"Bash","input":{"command":"ls -la"},"agente":"orq","modo":"bypassPermissions","esperado":{"faixa":"silencio"}}
+{"nome":"prefixo-then","req":"GRD-2","tool":"Bash","input":{"command":"if true; then vercel --prod; fi"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"prefixo-do","req":"GRD-2","tool":"Bash","input":{"command":"for i in 1 2; do vercel --prod; done"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"prefixo-chaves","req":"GRD-2","tool":"Bash","input":{"command":"{ vercel --prod; }"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"prefixo-bang","req":"GRD-2","tool":"Bash","input":{"command":"! vercel --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"prefixo-npx-versao","req":"GRD-2","tool":"Bash","input":{"command":"npx vercel@latest --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"prefixo-pnpm-dlx-versao","req":"GRD-2","tool":"Bash","input":{"command":"pnpm dlx vercel@latest --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"prefixo-env-opcao-u","req":"GRD-2","tool":"Bash","input":{"command":"env -u FOO vercel --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"continuacao-linha","req":"GRD-2","tool":"Bash","input":{"command":"vercel --prod\\\n --yes"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"continuacao-linha-git","req":"GRD-2","tool":"Bash","input":{"command":"git \\\n push origin main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"newline-separador","req":"GRD-2","tool":"Bash","input":{"command":"ls\nvercel --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"subst-aspas-duplas","req":"GRD-2","tool":"Bash","input":{"command":"echo \"$(vercel --prod)\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"subst-crase-aspas-duplas","req":"GRD-2","tool":"Bash","input":{"command":"echo \"`vercel --prod`\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"subst-atribuicao","req":"GRD-2","tool":"Bash","input":{"command":"X=\"$(vercel --prod)\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-push-mais-main","req":"GRD-6","tool":"Bash","input":{"command":"git push origin +main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-push-refs-heads-main","req":"GRD-6","tool":"Bash","input":{"command":"git push origin refs/heads/main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-push-mirror","req":"GRD-6","tool":"Bash","input":{"command":"git push --mirror"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-push-all","req":"GRD-6","tool":"Bash","input":{"command":"git push --all origin"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-push-arroba-main","req":"GRD-6","tool":"Bash","input":{"command":"git push origin @"},"agente":"orq","contexto":{"branchAtual":"main"},"esperado":{"faixa":"ask"}}
+{"nome":"git-push-head-sem-branch","req":"GRD-6","tool":"Bash","input":{"command":"git push origin HEAD"},"agente":"orq","contexto":{"branchAtual":null},"esperado":{"faixa":"mostrar","evento":"producao.acesso","alvo":"HEAD"}}
+{"nome":"git-push-destino-resolvido-pelo-shell","req":"GRD-6","tool":"Bash","input":{"command":"git push origin \"$(git branch --show-current)\""},"agente":"orq","esperado":{"faixa":"mostrar","evento":"producao.acesso"}}
+{"nome":"supabase-db-url-prod","req":"GRD-6","tool":"Bash","input":{"command":"supabase db push --db-url postgresql://u:s3nh4@db.prod.exemplo.com/x"},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"supabase-flag-antes-do-sub","req":"GRD-6","tool":"Bash","input":{"command":"supabase --project-ref ref-prod db push"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"psql-conninfo-host","req":"GRD-6","tool":"Bash","input":{"command":"psql \"host=db.prod.exemplo.com dbname=x\" -c \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"psql-dbname-url","req":"GRD-6","tool":"Bash","input":{"command":"psql --dbname=postgresql://u:s3nh4@db.prod.exemplo.com/x -c \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"psql-varios-c-pior-vence","req":"GRD-6","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -c \"SELECT 1\" -c \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"psql-copy-e-escrita","req":"GRD-6","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -c \"\\copy t from 'x.csv'\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"alvo-url-sem-credencial-fora-de-regra","req":"GRD-4","tool":"Bash","input":{"command":"curl https://user:s3nh4@host.com/ca.pem"},"agente":"sub","esperado":{"faixa":"silencio","alvo":""}}
+{"nome":"alvo-sql-nunca-vira-alvo","req":"GRD-4","tool":"Bash","input":{"command":"psql -c \"UPDATE t SET a=1 WHERE b=c.key\""},"agente":"sub","esperado":{"faixa":"silencio","alvo":""}}
+{"nome":"mensagem-de-commit-nao-e-caminho","req":"GRD-5","tool":"Bash","input":{"command":"git commit -m \"fix: rotaciona cert.pem\""},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"grep-padrao-nao-e-caminho","req":"GRD-5","tool":"Bash","input":{"command":"grep .env .gitignore"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"jq-filtro-nao-e-caminho","req":"GRD-5","tool":"Bash","input":{"command":"jq .key package.json"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"grep-item-key-padrao","req":"GRD-5","tool":"Bash","input":{"command":"grep -r item.key src"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"existencia-ls","req":"GRD-5","tool":"Bash","input":{"command":"ls -la .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"existencia-test","req":"GRD-5","tool":"Bash","input":{"command":"test -f .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"existencia-colchete","req":"GRD-5","tool":"Bash","input":{"command":"[ -f .env ] && echo ok"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"existencia-stat","req":"GRD-5","tool":"Bash","input":{"command":"stat .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"existencia-git-log","req":"GRD-5","tool":"Bash","input":{"command":"git log -- .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"existencia-git-check-ignore","req":"GRD-5","tool":"Bash","input":{"command":"git check-ignore .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
