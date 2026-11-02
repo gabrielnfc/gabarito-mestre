@@ -28,7 +28,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync, symlinkSync, realpathSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync, symlinkSync, realpathSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
@@ -724,6 +724,18 @@ describe('T6 doctor — camada de guarda (REQ-INF-2)', () => {
       mkdirSync(join(fora, 'GM-7'));
       writeFileSync(join(fora, 'GM-7/events.s1.jsonl'), `${hb(horasAtras(1))}\n`);
       assert.equal(camada(c).estado, 'configurada', 'entregas symlink');
+    });
+
+    test('doctor-camada-heartbeat-muitas-entregas: com 120 entregas velhas, o arquivo mais recentemente escrito é o que vale', () => {
+      const dir = repo({ ...cfg });
+      const velho = new Date(AGORA - 30 * 86_400_000);
+      for (let i = 0; i < 120; i++) {
+        arq(dir, `.harness/entregas/GM-${i}/events.s${i}.jsonl`, `${hb(horasAtras(24 * 30))}\n`);
+        utimesSync(join(dir, `.harness/entregas/GM-${i}/events.s${i}.jsonl`), velho, velho);
+      }
+      arq(dir, '.harness/entregas/GM-999/events.nova.jsonl', `${hb(horasAtras(2))}\n`);
+      utimesSync(join(dir, '.harness/entregas/GM-999/events.nova.jsonl'), new Date(AGORA), new Date(AGORA));
+      assert.equal(camada(dir).heartbeatHa, 2);
     });
 
     test('doctor-camada-heartbeat-nome: só events.*.jsonl diretamente em entregas/<id>/ conta', () => {

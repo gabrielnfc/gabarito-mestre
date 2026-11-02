@@ -715,8 +715,8 @@ const HEARTBEAT_ATIVA_H = 168;
 const HEARTBEAT_SKEW_MS = 5 * 60_000;
 /** Só a cauda do jsonl é lida: o heartbeat mais recente é o último da sessão. */
 const HEARTBEAT_CAUDA_BYTES = 1024 * 1024;
-const HEARTBEAT_MAX_ENTREGAS = 500;
-const HEARTBEAT_MAX_ARQUIVOS = 200;
+const HEARTBEAT_MAX_ENTREGAS = 5000;
+const HEARTBEAT_MAX_ARQUIVOS = 50;
 const ISO_TS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 const ehDirReal = (p) => {
   try {
@@ -757,39 +757,52 @@ function horasDesdeHeartbeat(raiz, agora) {
   const harness = join(raiz, '.harness');
   const base = join(harness, 'entregas');
   if (!ehDirReal(harness) || !ehDirReal(base)) return null;
-  let melhor = null;
   let entregas;
   try {
     entregas = readdirSync(base).slice(0, HEARTBEAT_MAX_ENTREGAS);
   } catch {
     return null;
   }
+  // Candidatos: arquivos regulares events.*.jsonl (lstat: symlink fica de fora), os mais recentemente escritos primeiro.
+  // O heartbeat é anexado a cada SessionStart, então o arquivo vivo é o de mtime mais novo; ler só os N mais novos
+  // limita o custo mesmo com milhares de entregas acumuladas.
+  const candidatos = [];
   for (const id of entregas) {
     const dir = join(base, id);
     if (!ehDirReal(dir)) continue;
     let nomes;
     try {
-      nomes = readdirSync(dir).filter((n) => /^events\..+\.jsonl$/.test(n)).slice(0, HEARTBEAT_MAX_ARQUIVOS);
+      nomes = readdirSync(dir).filter((n) => /^events\..+\.jsonl$/.test(n));
     } catch {
       continue;
     }
     for (const nome of nomes) {
-      const texto = lerCauda(join(dir, nome));
-      if (texto === null) continue;
-      for (const linha of texto.split('\n')) {
-        if (!linha.includes('guarda.heartbeat')) continue;
-        let ev;
-        try {
-          ev = JSON.parse(linha);
-        } catch {
-          continue; // linha truncada
-        }
-        if (!ev || typeof ev !== 'object' || Array.isArray(ev) || ev.tipo !== 'guarda.heartbeat') continue;
-        if (typeof ev.ts !== 'string' || !ISO_TS.test(ev.ts)) continue;
-        const t = Date.parse(ev.ts);
-        if (Number.isNaN(t) || t > agora + HEARTBEAT_SKEW_MS) continue; // futuro: forjado ou relógio quebrado
-        if (melhor === null || t > melhor) melhor = t;
+      try {
+        const st = lstatSync(join(dir, nome));
+        if (st.isFile()) candidatos.push({ arquivo: join(dir, nome), mtime: st.mtimeMs });
+      } catch {
+        /* sumiu entre o readdir e o lstat */
       }
+    }
+  }
+  candidatos.sort((a, b) => b.mtime - a.mtime);
+  let melhor = null;
+  for (const { arquivo } of candidatos.slice(0, HEARTBEAT_MAX_ARQUIVOS)) {
+    const texto = lerCauda(arquivo);
+    if (texto === null) continue;
+    for (const linha of texto.split('\n')) {
+      if (!linha.includes('guarda.heartbeat')) continue;
+      let ev;
+      try {
+        ev = JSON.parse(linha);
+      } catch {
+        continue; // linha truncada
+      }
+      if (!ev || typeof ev !== 'object' || Array.isArray(ev) || ev.tipo !== 'guarda.heartbeat') continue;
+      if (typeof ev.ts !== 'string' || !ISO_TS.test(ev.ts)) continue;
+      const t = Date.parse(ev.ts);
+      if (Number.isNaN(t) || t > agora + HEARTBEAT_SKEW_MS) continue; // futuro: forjado ou relógio quebrado
+      if (melhor === null || t > melhor) melhor = t;
     }
   }
   return melhor === null ? null : Math.max(0, (agora - melhor) / 3_600_000);
