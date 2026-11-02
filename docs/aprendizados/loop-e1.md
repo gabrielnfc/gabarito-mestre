@@ -36,8 +36,8 @@ Dados por task: `docs/aprendizados/metricas-e1.jsonl` (uma linha por task). Resu
 | Exp. | Mudança | Métrica | Resultado | Decisão |
 |---|---|---|---|---|
 | X1 | Gate mecânico antes do review | Mesmo commit com e sem gate | 2/2 BLOCKERs de suíte pegos em backtest | **Manter** (A1). Não sustenta redução de tempo total |
-| X2 | Ataques no brief do implementador | Achados do review que a lista previa, na mesma task | T6, T7 em curso | Medindo |
-| X3 | Mutações do gate rodadas em paralelo e, em correção, só as novas | Tempo do gate | Base: 182 s com 26 mutações em série | Próximo |
+| X2 | Ataques no brief do implementador | Achados do review que a lista previa, na mesma task | 1º review. T6: 3 de 14 achados, 0 de 4 MAJOR. T7: 5 de 10 (3 só parciais), MAJOR único parcial. T2 rodada 2: 2 de 13, 0 de 3 MAJOR. Contagem pelo revisor; não mede quantos defeitos a lista evitou antes do review | Medindo; re-reviews de T2, T6 e T7 acrescentam dados |
+| X3 | Mutações do gate rodadas em paralelo e, em correção, só as novas | Tempo do gate | Base: 182 s com 26 mutações em série. Só a parte "só as novas" foi aplicada (T2 r2, T6 r1, T7 r1); paralelo não feito. Tempo com mutações não registrado | Em curso, sem resultado |
 | X5 | Relatório de subagent ≤ 5 linhas no retorno; resto só em arquivo | Caracteres devolvidos por retorno, da mesma task antes e depois não existe; só o custo medido | Sem base medida | Adotado por custo baixo, sem alegar ganho |
 | X4 | Correção por implementador novo com brief da rodada, em vez de retomar | Tokens por rodada | Base: T5 retomada chegou a 246 mil tokens | Depois de X3 |
 
@@ -58,3 +58,4 @@ Dados por task: `docs/aprendizados/metricas-e1.jsonl` (uma linha por task). Resu
 | E9 | Consumo de contexto sem critério: `plugin-authoring` para consulta pequena, `docker ps` inteiro, 3 páginas de doc, relatórios de 20 linhas | Contexto cresce rápido | Filtrar saída antes de ler; subagent para leitura grande; retorno ≤ 5 linhas |
 | E10 | Prescrevi teto de 64 KB em T2 sem medir o que cortar faz | Comando após 64 KB passa em silêncio; regressão de segurança | Teto de entrada em guarda: definir antes o veredito acima do teto, com teste |
 | E11 | Juntei `git worktree remove --force` e a gravação dos briefs num só comando e despachei implementadores na mesma resposta, sem ver o resultado | Hook bloqueou o comando inteiro; T6 parou sem brief (72 mil tokens, 27 s); T7 saiu sem brief | Gravar brief e despachar em respostas separadas, conferindo o arquivo. Operação sujeita a hook vai em comando próprio |
+| E12 | Mandei corrigir MINORs de guarda na última rodada da T2 sem pedir ataque de regressão específico | A correção do FP de `find` virou MAJOR A1: `find -name .env -exec cat` passou a silêncio; T2 voltou ao dono | Correção de falso positivo em guarda exige, no brief, os casos perigosos vizinhos como ataque. Na última rodada, MINOR de guarda só com isso, senão backlog |
