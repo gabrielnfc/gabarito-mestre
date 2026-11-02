@@ -12,7 +12,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -140,7 +140,7 @@ describe('lib/config lerGuarda', () => {
     const d = repo({ origin: cfg(['vercel ls *']), local: cfg(['*']) });
     const g = lerGuarda(d);
     assert.equal(g.fonte, 'origin');
-    assert.deepEqual(g.config.producao.permitidos, ['vercel ls *']);
+    assert.deepEqual(g.config.permitidos, ['vercel ls *']);
     assert.deepEqual(g.config.ambientes.prod.hosts, ['db.alvo.test']);
   });
 
@@ -155,7 +155,7 @@ describe('lib/config lerGuarda', () => {
     assert.equal(sh(d, 'rev-parse', 'origin/HEAD'), sh(d, 'rev-parse', 'HEAD'));
     const g = lerGuarda(d);
     assert.equal(g.fonte, 'origin');
-    assert.deepEqual(g.config.producao.permitidos, []);
+    assert.deepEqual(g.config.permitidos, []);
     assert.equal(g.branchPadrao, 'main');
   });
 
@@ -165,13 +165,13 @@ describe('lib/config lerGuarda', () => {
     writeFileSync(join(d, 'harness.config.json'), JSON.stringify(cfg(['*'])));
     const g = lerGuarda(d);
     assert.equal(g.fonte, 'local');
-    assert.deepEqual(g.config.producao.permitidos, []);
+    assert.deepEqual(g.config.permitidos, []);
     assert.deepEqual(g.config.ambientes.prod.hosts, ['db.alvo.test']);
     assert.equal(g.divergente, false);
     // origin/HEAD existe, mas o arquivo não existe na ref
     const g2 = lerGuarda(repo({ origin: undefined, local: cfg(['*']) }));
     assert.equal(g2.fonte, 'local');
-    assert.deepEqual(g2.config.producao.permitidos, []);
+    assert.deepEqual(g2.config.permitidos, []);
     // nada em lugar nenhum
     assert.deepEqual(lerGuarda(novo()), { config: null, fonte: 'local', divergente: false, branchPadrao: null });
   });
@@ -185,5 +185,159 @@ describe('lib/config lerGuarda', () => {
   test('lerguarda-divergente', () => {
     assert.equal(lerGuarda(repo({ origin: cfg(['a']), local: cfg(['a']) })).divergente, false);
     assert.equal(lerGuarda(repo({ origin: cfg(['a']), local: cfg(['a', 'b']) })).divergente, true);
+  });
+});
+
+describe('lib/config lerGuarda — forja', () => {
+  const sh = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const novo = () => {
+    const d = realpathSync(mkdtempSync(join(tmpdir(), 'gm-guarda-')));
+    sh(d, 'init', '-q', '-b', 'main');
+    sh(d, 'config', 'user.email', 't@t');
+    sh(d, 'config', 'user.name', 't');
+    sh(d, 'config', 'commit.gpgsign', 'false');
+    return d;
+  };
+  const cfg = (permitidos, bp = 'main') => ({
+    versionamento: { branchPadrao: bp },
+    guarda: { producao: { permitidos }, ambientes: { prod: { hosts: ['db.alvo.test'] } } },
+  });
+  const grava = (d, obj) => writeFileSync(join(d, 'harness.config.json'), typeof obj === 'string' ? obj : JSON.stringify(obj));
+  const commita = (d, msg) => {
+    sh(d, 'add', '-A');
+    sh(d, 'commit', '-qm', msg);
+    return sh(d, 'rev-parse', 'HEAD');
+  };
+  /** origin real (symref → origin/main) com `origin`; devolve o repo e o SHA real. */
+  function comOrigin(origin) {
+    const d = novo();
+    grava(d, origin);
+    const base = commita(d, 'base');
+    sh(d, 'update-ref', 'refs/remotes/origin/main', base);
+    sh(d, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    return { d, base };
+  }
+  const forja = (d) => {
+    grava(d, cfg(['*'], 'forjada'));
+    return commita(d, 'forja');
+  };
+  const vazio = (g) => {
+    assert.equal(g.fonte, 'local');
+    assert.deepEqual(g.config.permitidos, []);
+  };
+
+  test('lerguarda-branch-nome-longo-sem-head', () => {
+    const { d } = comOrigin(cfg([]));
+    sh(d, 'symbolic-ref', '--delete', 'refs/remotes/origin/HEAD'); // remoto buscado, sem HEAD
+    forja(d);
+    sh(d, 'branch', 'refs/remotes/origin/HEAD', 'HEAD'); // vira refs/heads/refs/remotes/origin/HEAD
+    vazio(lerGuarda(d));
+  });
+
+  test('lerguarda-tag-nome-longo-sem-head', () => {
+    const { d } = comOrigin(cfg([]));
+    sh(d, 'symbolic-ref', '--delete', 'refs/remotes/origin/HEAD');
+    forja(d);
+    sh(d, 'tag', 'refs/remotes/origin/HEAD', 'HEAD');
+    vazio(lerGuarda(d));
+  });
+
+  test('lerguarda-symref-pendurado', () => {
+    const { d } = comOrigin(cfg([]));
+    sh(d, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/naoexiste');
+    forja(d);
+    sh(d, 'branch', 'refs/remotes/origin/HEAD', 'HEAD');
+    vazio(lerGuarda(d));
+  });
+
+  test('lerguarda-replace-blob', () => {
+    const { d } = comOrigin(cfg([]));
+    const blobReal = sh(d, 'rev-parse', 'refs/remotes/origin/HEAD:harness.config.json');
+    const blobForjado = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: d, input: JSON.stringify(cfg(['*'])), encoding: 'utf8' }).trim();
+    sh(d, 'replace', blobReal, blobForjado);
+    assert.deepEqual(JSON.parse(sh(d, 'show', 'refs/remotes/origin/HEAD:harness.config.json')).guarda.producao.permitidos, ['*']); // a forja funciona no git puro
+    const g = lerGuarda(d);
+    assert.equal(g.fonte, 'origin');
+    assert.deepEqual(g.config.permitidos, []);
+  });
+
+  test('lerguarda-replace-commit', () => {
+    const { d, base } = comOrigin(cfg([]));
+    const f = forja(d);
+    sh(d, 'replace', base, f);
+    const g = lerGuarda(d);
+    assert.equal(g.fonte, 'origin');
+    assert.deepEqual(g.config.permitidos, []);
+    assert.equal(g.branchPadrao, 'main');
+  });
+
+  test('lerguarda-git-dir-no-ambiente', () => {
+    const { d } = comOrigin(cfg(['real']));
+    const outro = novo();
+    grava(outro, cfg(['*'], 'forjada'));
+    commita(outro, 'forja');
+    sh(outro, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    sh(outro, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    const antes = { ...process.env };
+    process.env.GIT_DIR = join(outro, '.git');
+    process.env.GIT_WORK_TREE = outro;
+    process.env.GIT_OBJECT_DIRECTORY = join(outro, '.git', 'objects');
+    try {
+      const g = lerGuarda(d);
+      assert.equal(g.fonte, 'origin');
+      assert.deepEqual(g.config.permitidos, ['real']);
+      assert.equal(g.branchPadrao, 'main');
+    } finally {
+      for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_OBJECT_DIRECTORY']) {
+        if (antes[k] === undefined) delete process.env[k];
+        else process.env[k] = antes[k];
+      }
+    }
+  });
+
+  test('lerguarda-forma-config-guarda', () => {
+    const { d } = comOrigin(cfg(['a *']));
+    const g = lerGuarda(d);
+    assert.deepEqual(Object.keys(g.config).sort(), ['ambientes', 'permitidos']); // ConfigGuarda (src/tipos.ts)
+    assert.ok(Array.isArray(g.config.permitidos) && g.config.permitidos.every((p) => typeof p === 'string'));
+    assert.equal(g.config.producao, undefined);
+    // fonte local: `permitidos` zerado em QUALQUER aninhamento
+    const l = novo();
+    grava(l, { guarda: { permitidos: ['*'], producao: { permitidos: ['*'] }, ambientes: { prod: { permitidos: ['*'], hosts: ['db.alvo.test'] } } } });
+    const gl = lerGuarda(l);
+    vazio(gl);
+    assert.ok(!JSON.stringify(gl.config).includes('"*"'));
+    assert.deepEqual(gl.config.ambientes.prod.hosts, ['db.alvo.test']);
+  });
+
+  test('lerguarda-json-invalido-na-ref', () => {
+    const { d } = comOrigin('{ isto nao e json');
+    grava(d, cfg(['*']));
+    const g = lerGuarda(d);
+    vazio(g);
+    assert.deepEqual(g.config.ambientes.prod.hosts, ['db.alvo.test']); // veio do local, sem permitidos
+  });
+
+  test('lerguarda-divergente-ambientes', () => {
+    const a = cfg(['x']);
+    const b = cfg(['x']);
+    b.guarda.ambientes.prod.hosts = ['outro.alvo.test'];
+    const { d } = comOrigin(a);
+    grava(d, b);
+    assert.equal(lerGuarda(d).divergente, true);
+    grava(d, a);
+    assert.equal(lerGuarda(d).divergente, false);
+  });
+
+  test('lerguarda-custo', () => {
+    const { d } = comOrigin(cfg([]));
+    const t = [];
+    for (let i = 0; i < 20; i++) {
+      const t0 = process.hrtime.bigint();
+      lerGuarda(d);
+      t.push(Number(process.hrtime.bigint() - t0) / 1e6);
+    }
+    t.sort((x, y) => x - y);
+    assert.ok(t[19] < 500, `p95 ${t[18]}ms`); // sanidade; o número vai no relatório
   });
 });

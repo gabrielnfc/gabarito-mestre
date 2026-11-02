@@ -2,7 +2,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { git } from './git.mjs';
+import { execFileSync } from 'node:child_process';
 
 /** null = ausente · undefined = JSON inválido/ilegível · {} = arquivo vazio (quem chama decide o que fazer com cada um). */
 export function lerJson(caminho) {
@@ -31,36 +31,77 @@ export function lerConfig(raiz, defaults = {}) {
   return { cfg: { ...defaults, ...(raw && typeof raw === 'object' ? raw : {}) }, failOpen: null };
 }
 
-/** Ref remota fixa, SEMPRE pelo nome completo: `origin/HEAD` (curto) resolve `refs/heads/origin/HEAD` antes — forjável por `git branch origin/HEAD`. */
+/** Ref remota fixa. Resolvida por casamento EXATO (`for-each-ref`), nunca por `git show <nome>`: o DWIM do git cairia em `refs/heads/…`/`refs/tags/…` homônimos (forjáveis por `git branch|tag`). */
 const REF_ORIGIN = 'refs/remotes/origin/HEAD';
 
-/** `guarda` + `versionamento.branchPadrao` de um `harness.config.json` já parseado → { config: ConfigGuarda, branchPadrao } (ou null). */
+/** Variáveis que redirecionam o git para outro repositório/objetos — nunca herdadas pela leitura da guarda. */
+const GIT_ENV_PROIBIDO = [
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_INDEX_FILE',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_COMMON_DIR',
+  'GIT_NAMESPACE',
+];
+
+/** `git --no-replace-objects <args>` (ignora `refs/replace`), ambiente sem redirecionamento; lança em erro. */
+function gitSeguro(args, cwd) {
+  const env = { ...process.env };
+  for (const k of GIT_ENV_PROIBIDO) delete env[k];
+  return execFileSync('git', ['--no-replace-objects', ...args], {
+    cwd,
+    env,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+}
+
+/** Cópia de `v` sem nenhuma chave `permitidos` em qualquer aninhamento (fonte local não concede permissão). */
+function semPermitidos(v) {
+  if (Array.isArray(v)) return v.map(semPermitidos);
+  if (v && typeof v === 'object') {
+    return Object.fromEntries(Object.entries(v).filter(([k]) => k !== 'permitidos').map(([k, x]) => [k, semPermitidos(x)]));
+  }
+  return v;
+}
+
+/** `harness.config.json` parseado → { config: ConfigGuarda, branchPadrao } (ou null). `permitidos` vem só de `guarda.producao.permitidos`. */
 function paraGuarda(raw, { zerarPermitidos }) {
   if (!raw || typeof raw !== 'object') return null;
   const g = raw.guarda && typeof raw.guarda === 'object' ? raw.guarda : {};
   const branchPadrao = typeof raw.versionamento?.branchPadrao === 'string' ? raw.versionamento.branchPadrao : null;
-  const ambientes = { ...(g.ambientes ?? {}) };
-  if (branchPadrao || g.ambientes?.prod) {
+  let ambientes = g.ambientes && typeof g.ambientes === 'object' ? g.ambientes : {};
+  if (zerarPermitidos) ambientes = semPermitidos(ambientes);
+  ambientes = { ...ambientes };
+  if (branchPadrao || ambientes.prod) {
     // default de `branches` do ambiente de produção = branchPadrao da MESMA fonte
-    const atual = g.ambientes?.prod ?? {};
-    ambientes.prod = { ...atual, branches: atual.branches ?? (branchPadrao ? [branchPadrao] : []) };
+    const atual = ambientes.prod && typeof ambientes.prod === 'object' && !Array.isArray(ambientes.prod) ? ambientes.prod : {};
+    ambientes.prod = { ...atual, branches: Array.isArray(atual.branches) ? atual.branches : branchPadrao ? [branchPadrao] : [] };
   }
-  const producao = { ...(g.producao ?? {}), permitidos: zerarPermitidos ? [] : (g.producao?.permitidos ?? []) };
-  return { config: { ...g, ambientes, producao }, branchPadrao };
+  const lista = g.producao?.permitidos;
+  const permitidos = zerarPermitidos || !Array.isArray(lista) ? [] : lista.filter((p) => typeof p === 'string');
+  return { config: { ambientes, permitidos }, branchPadrao };
 }
 
 /**
- * Config da guarda lida de `refs/remotes/origin/HEAD:harness.config.json` (D2) — um spawn de git.
- * Sem remoto / ref ausente / arquivo ausente na ref ⇒ `fonte: 'local'`, `permitidos` zerado.
- * `divergente`: `guarda` da árvore local ≠ a da ref (deep equal).
+ * Config da guarda lida de `refs/remotes/origin/HEAD:harness.config.json` (D2) — duas chamadas de git:
+ * (1) objeto da ref por casamento exato; (2) blob pelo SHA. Sem remoto / symref pendurado / arquivo ausente
+ * ou inválido na ref ⇒ `fonte: 'local'`, `permitidos` vazio. `divergente`: `guarda` local ≠ a da ref (deep equal).
  */
 export function lerGuarda(raiz) {
   const local = lerJson(join(raiz, 'harness.config.json'));
   const localRaw = local && typeof local === 'object' ? local : null;
   let origin = null;
   try {
-    const raw = JSON.parse(git(['show', `${REF_ORIGIN}:harness.config.json`], raiz));
-    if (raw && typeof raw === 'object') origin = raw;
+    const linhas = gitSeguro(['for-each-ref', '--format=%(refname) %(objectname)', REF_ORIGIN], raiz)
+      .split('\n')
+      .filter(Boolean);
+    const [nome, sha] = (linhas[0] ?? '').split(' ');
+    if (linhas.length === 1 && nome === REF_ORIGIN && /^[0-9a-f]{40,64}$/.test(sha ?? '')) {
+      const raw = JSON.parse(gitSeguro(['show', `${sha}:harness.config.json`], raiz));
+      if (raw && typeof raw === 'object') origin = raw;
+    }
   } catch {
     origin = null;
   }
