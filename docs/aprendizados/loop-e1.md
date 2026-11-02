@@ -23,3 +23,29 @@ Primeira execução real do fluxo da 2.0, no próprio GM-9. Cada item vira requi
 | M2 | M | Sonnet × Opus como implementador (visão §6.9) | 5/5 primeiros reviews reprovaram com Sonnet, sem grupo de comparação | E2 |
 | M3 | M | Gate reduz tempo total por task para 6–10 min | Até agora não confirmado: T2b ~15 min, T5 > 14 min | E2 |
 | M4 | M | Fórmula de slots de S4 sob trabalho real | Medida só com trabalho trivial | E2 |
+
+## Diário de otimização (por task)
+
+**Método (dono, 2026-11-02):** cada task aplica o que a anterior ensinou e deixa um aprendizado. Um experimento por vez, com métrica definida antes; o número decide entre manter, descartar ou repetir. **Piso fixo, fora de experimento:** RED válido, review por mutação em instância nova, sem segredo no diff, sem hatch. Só aperta. Para quando o ganho de 3 tasks seguidas ficar abaixo do ruído; aí o processo vira decisão D em E2.
+
+**Métrica principal:** tempo somado de agente até APROVADO (`impl + review + correções + re-reviews`) e rodadas até aprovar. **Secundárias:** tokens, defeito que escapou para a etapa seguinte.
+
+| Task | Fluxo | Impl. | Review | Correções + re-reviews | Total até agora | Rodadas | O que causou retrabalho |
+|---|---|---|---|---|---|---|---|
+| T8 | sem gate | 198 s | 241 s | 207 s | 10,8 min, aprovada | 1 | Suíte não rodada |
+| T1a | sem gate | 521 s | 421 s | 500 s | 24 min, R12 | 1 | Suíte não rodada |
+| T1b | sem gate | 311 s | 312 s | 1137 s | 29 min, R12 | 2 | Assert frouxo |
+| T2b | gate | 141 s | 290 s | 564 s | 16,6 min, R14 | 1 | Forja não prevista |
+| T5 | gate | 429 s | 417 s | 916 s + rodada 2 | > 29 min | 2 | Hook de terceiro, stdin |
+| T3 | gate | 161 s | 525 s | 497 s + re-review | > 20 min | 1 | Lock, regex, vazamento |
+| T2 | gate | 521 s | 430 s | 497 s + re-review | > 24 min | 1 | Parser, FN e FP |
+
+| Exp. | Mudança | Métrica | Resultado | Decisão |
+|---|---|---|---|---|
+| X1 | Gate mecânico antes do review | Reprovação por suíte | 2/3 → 0/4; gate 14–35 s | **Manter** (A1) |
+| X1b | Idem | Total por task | Não caiu: review passou a atacar mais fundo, retrabalho migrou para julgamento | Hipótese M3 **refutada até agora** |
+| X2 | Ataques no brief do implementador | Rodadas e tempo na 1ª aprovação | T6 em curso | Medindo |
+| X3 | Mutações do gate rodadas em paralelo e, em correção, só as novas | Tempo do gate | Base: 182 s com 26 mutações em série | Próximo |
+| X4 | Correção por implementador novo com brief da rodada, em vez de retomar | Tokens por rodada | Base: T5 retomada chegou a 246 mil tokens | Depois de X3 |
+
+**Leitura até aqui:** o gargalo não é implementar (141–521 s). É descobrir defeito só no review e corrigir (500–1100 s por task). Os defeitos são reais e de segurança, então a alavanca é antecipá-los, não reduzir o review.
