@@ -12,13 +12,15 @@
  * USO
  *   node versionamento-check.mjs --base origin/main --branch "$GITHUB_HEAD_REF"   # CI (fetch-depth: 0)
  *   node versionamento-check.mjs --max 20 --json                                  # doctor / local
+ *   node versionamento-check.mjs --msg .git/COMMIT_EDITMSG                        # hook git commit-msg
+ *   node versionamento-check.mjs --so-branch                                      # hook git pre-push (só o nome da branch)
  */
 
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { arg, ehEntrypoint } from '../lib/cli.mjs';
-import { raizDoRepo } from '../lib/git.mjs';
+import { raizDoRepo, branchAtual } from '../lib/git.mjs';
 import { lerConfig as lerConfigBase } from '../lib/config.mjs';
 
 export { raizDoRepo }; // API pública: antes definida aqui, agora vem de lib/git
@@ -94,6 +96,43 @@ export function listarCommits(root, { base, max = 20 } = {}) {
     });
 }
 
+/** Mensagens que o git gera sozinho e que não são escritas por quem commita: merge, fixup!/squash!/amend!. */
+const MSG_GERADA = /^(Merge |fixup! |squash! |amend! )/;
+
+/** Cabeçalho de uma mensagem de commit: 1ª linha que não é comentário (`# …`, o git as descarta). */
+export function cabecalhoDaMensagem(texto) {
+  return String(texto ?? '').split(/\r?\n/).find((l) => l.trim() && !l.startsWith('#')) ?? '';
+}
+
+/**
+ * Hook `commit-msg`: confere a mensagem do arquivo que o git entrega. Arquivo ilegível ou mensagem vazia
+ * REPROVA (indisponível nunca vale como validado). Sem onboarding: fail-open declarado (G9).
+ */
+export function checarMensagem(root, arquivo, opts = {}) {
+  const { cfg, failOpen } = opts.cfg ? { cfg: { ...DEFAULTS, ...opts.cfg }, failOpen: null } : lerConfig(root);
+  if (failOpen) return { ok: true, achados: [], failOpen };
+  let texto;
+  try {
+    texto = readFileSync(arquivo, 'utf8');
+  } catch (e) {
+    return { ok: false, achados: [{ sha: 'msg', motivo: `mensagem ilegível (${arquivo}): ${String(e?.code ?? e?.message ?? e)}` }] };
+  }
+  const cab = cabecalhoDaMensagem(texto);
+  if (MSG_GERADA.test(cab)) return { ok: true, achados: [] };
+  const r = validarCommit(cab, cfg);
+  return r.ok ? { ok: true, achados: [] } : { ok: false, achados: [{ sha: 'msg', motivo: `${r.motivo} — "${cab}"` }] };
+}
+
+/** Hook `pre-push`: só o nome da branch (sem varrer commits). */
+export function checarSoBranch(root, nome, opts = {}) {
+  const { cfg, failOpen } = opts.cfg ? { cfg: { ...DEFAULTS, ...opts.cfg }, failOpen: null } : lerConfig(root);
+  if (failOpen) return { ok: true, achados: [], failOpen };
+  const b = nome ?? branchAtual(root);
+  if (!b || b === 'HEAD') return { ok: true, achados: [] }; // detached: nada a conferir
+  const r = validarBranch(b, cfg);
+  return r.ok ? { ok: true, achados: [] } : { ok: false, achados: [{ sha: 'branch', motivo: r.motivo }] };
+}
+
 export function checar(root, opts = {}) {
   const { cfg, failOpen } = opts.cfg ? { cfg: { ...DEFAULTS, ...opts.cfg }, failOpen: null } : lerConfig(root);
   if (failOpen) return { ok: true, achados: [], failOpen };
@@ -142,6 +181,21 @@ export function checar(root, opts = {}) {
 }
 
 
+/** Saída dos modos de hook (`--msg`, `--so-branch`): erro legível em stderr, exit 0/1. */
+function sair(r, argv, o_que) {
+  if (argv.includes('--json')) {
+    process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+    process.exit(r.failOpen || r.ok ? 0 : 1);
+  }
+  if (r.failOpen) {
+    console.error(`[R20] ${r.failOpen} — fail-open declarado (G9)`);
+    process.exit(0);
+  }
+  for (const a of r.achados) console.error(`[R20] ${a.motivo}`);
+  if (!r.ok) console.error(`[R20] ${o_que} reprovada. Formato: tipo(PBI-n): assunto · branch tipo/PBI-n-slug ou wt/PBI-n-i. Ver docs/harness/referencia.md §10.`);
+  process.exit(r.ok ? 0 : 1);
+}
+
 function main(argv) {
   const root = arg(argv, 'root') ? resolve(arg(argv, 'root')) : raizDoRepo();
   const max = Number(arg(argv, 'max', 20)) || 20;
@@ -152,6 +206,15 @@ function main(argv) {
     console.error(`versionamento-check.mjs: --branch exige um nome de branch (recebeu \`${branch}\`)`);
     process.exit(1);
   }
+  if (argv.includes('--msg')) {
+    const arq = arg(argv, 'msg');
+    if (arq === undefined || arq.startsWith('--')) {
+      console.error('[R20] --msg exige o caminho do arquivo da mensagem (o hook commit-msg passa "$1")');
+      process.exit(1);
+    }
+    return sair(checarMensagem(root, resolve(arq)), argv, 'mensagem');
+  }
+  if (argv.includes('--so-branch')) return sair(checarSoBranch(root, branch), argv, 'branch');
   const r = checar(root, { base: arg(argv, 'base'), branch, max });
   if (argv.includes('--json')) {
     process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);

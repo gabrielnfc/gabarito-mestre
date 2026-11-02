@@ -12,14 +12,13 @@ describe('hooks.json — registro dos hooks (T16)', () => {
   const cfg = JSON.parse(readFileSync(join(HOOKS, 'hooks.json'), 'utf8')).hooks;
   const cmds = (grupo) => grupo.hooks.map((h) => h.command);
 
-  test('PreToolUse/Bash: os três guards, nesta ordem, timeout 10, shell bash', () => {
+  test('PreToolUse/Bash: os dois guards (R2, R3), nesta ordem — versionamento é hook git, não PreToolUse, timeout 10, shell bash', () => {
     assert.equal(cfg.PreToolUse.length, 1);
     const g = cfg.PreToolUse[0];
     assert.equal(g.matcher, 'Bash');
     assert.deepEqual(cmds(g), [
       'bash "${CLAUDE_PLUGIN_ROOT}/hooks/guard-destructive.sh"',
       'bash "${CLAUDE_PLUGIN_ROOT}/hooks/guard-production.sh"',
-      'bash "${CLAUDE_PLUGIN_ROOT}/hooks/guard-versioning.sh"',
     ]);
     for (const h of g.hooks) { assert.equal(h.type, 'command'); assert.equal(h.shell, 'bash'); assert.equal(h.timeout, 10); }
   });

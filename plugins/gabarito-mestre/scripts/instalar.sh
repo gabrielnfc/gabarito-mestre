@@ -180,6 +180,10 @@ done < <(find "$ROOT/gates" -type f -not -path '*/node_modules/*' -not -name .DS
 while IFS= read -r f; do put_gate "${f#"$ROOT/gates/"}"; done < <(find "$ROOT/gates" -type f -not -path '*/node_modules/*' -not -name .DS_Store | sort)
 escrever_manifesto
 emendar_gitignore
+# Versionamento (R20) como hooks do git (commit-msg + pre-push). Anexa entre marcadores, nunca sobrescreve,
+# idempotente. Sem node ou sem repo git: avisa e segue (o instalador não falha por isso).
+if command -v node >/dev/null 2>&1; then node "$ROOT/gates/scripts/instalar-hooks-git.mjs" "$DEST" || true
+else echo "  AVISO: node não encontrado — hooks git de versionamento (R20) não instalados"; fi
 if [ "$CODEOWNERS" -eq 1 ]; then
   if [ -e "$DEST/.github/CODEOWNERS" ]; then echo "  mantido  .github/CODEOWNERS"; mantidos=$((mantidos+1)); else
     mkdir -p "$DEST/.github"

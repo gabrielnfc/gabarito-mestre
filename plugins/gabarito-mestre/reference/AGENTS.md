@@ -110,7 +110,7 @@ Nenhum destes acontece por iniciativa de agente. Valem para pessoas e para **tod
 
 **R18 — Toda afirmação normativa carrega marcação (a)/(b)/(c)** (§0.1). Relatório de subagente é **alegação**, não prova.
 
-**R20 — Versionamento é gate, não convenção.** Trunk-based · branch curta por PBI · Conventional Commits com escopo do PBI · SemVer · CHANGELOG na PR · tag por release · squash com título CC. Gate: `guard-versioning.sh` + `versionamento-check.mjs`; detalhe em `referencia.md §10`.
+**R20 — Versionamento é gate, não convenção.** Trunk-based · branch curta por PBI · Conventional Commits com escopo do PBI · SemVer · CHANGELOG na PR · tag por release · squash com título CC. Gate: hooks git `commit-msg`/`pre-push` + `versionamento-check.mjs` (CI); detalhe em `referencia.md §10`.
 
 > A numeração é **append-only**: regra nova ganha número novo; regra morta é riscada mantendo o número. R19 e R21 vivem no §7 e no §6. Regras específicas deste projeto começam em **R30** (Apêndice).
 
@@ -218,7 +218,7 @@ Este harness é distribuído como o plugin **gabarito-mestre** e não opera sozi
 
 **Fail-closed declarado (G9):** plugin vizinho ausente **não** é motivo para pular a etapa. A skill do gabarito degrada para o modo próprio e **avisa em uma linha** que está sem a maquinaria. Indisponibilidade nunca vira silêncio.
 
-**Hooks (a):** antes de todo comando Bash — `guard-destructive.sh` (R2), `guard-production.sh` (R3), `guard-versioning.sh` (R20). No início da sessão — `session-card.sh` injeta o cartão (≤ 40 linhas; sem onboarding, uma linha). A cada prompt — `remind-orchestrator.sh` (R21), só com `lembretePorPrompt: true`. Escape hatch nominal por regra: `GABARITO_ALLOW_DESTRUCTIVE` (R2) · `GABARITO_ALLOW_PRODUCTION` (R3) · `GABARITO_ALLOW_VERSIONING` (R20, não cruza com os outros) — `="<motivo>"` no início do comando ou no ambiente, motivo com ≥ 8 caracteres e ≥ 2 palavras; o uso fica no transcript e é achado de review sem autorização do usuário registrada. **Limites (G9):** é grep, não sandbox — o que passa está listado no README do plugin; o que o grep não vê é coberto por G3/G7 e pelo review com mutação.
+**Hooks (a):** antes de todo comando Bash — `guard-destructive.sh` (R2), `guard-production.sh` (R3). R20 é hook do git (`commit-msg`, `pre-push`), não do Bash. No início da sessão — `session-card.sh` injeta o cartão (≤ 40 linhas; sem onboarding, uma linha). A cada prompt — `remind-orchestrator.sh` (R21), só com `lembretePorPrompt: true`. Escape hatch nominal por regra: `GABARITO_ALLOW_DESTRUCTIVE` (R2) · `GABARITO_ALLOW_PRODUCTION` (R3) — `="<motivo>"` no início do comando ou no ambiente, motivo com ≥ 8 caracteres e ≥ 2 palavras; o uso fica no transcript e é achado de review sem autorização do usuário registrada. **Limites (G9):** é grep, não sandbox — o que passa está listado no README do plugin; o que o grep não vê é coberto por G3/G7 e pelo review com mutação.
 
 ---
 

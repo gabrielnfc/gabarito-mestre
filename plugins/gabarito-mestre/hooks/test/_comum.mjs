@@ -19,7 +19,7 @@ export const PLUGIN = join(HOOKS, '..');
 // suportados) que não inclui o diretório onde `node` normalmente vive (/usr/local/bin, homebrew, nvm…).
 // B10 (T25b, handoff §B.10): prova o ramo "node ausente" sem stub — comando de verdade some do PATH.
 export const PATH_SEM_NODE = '/bin:/usr/bin:/usr/sbin:/sbin';
-export const HATCH_VARS = ['GABARITO_ALLOW_DESTRUCTIVE', 'GABARITO_ALLOW_PRODUCTION', 'GABARITO_ALLOW_VERSIONING'];
+export const HATCH_VARS = ['GABARITO_ALLOW_DESTRUCTIVE', 'GABARITO_ALLOW_PRODUCTION'];
 export function cleanEnv(env = {}) {
   const e = { ...process.env };
   for (const k of [...HATCH_VARS, 'GABARITO_PROD_PATTERNS', 'GABARITO_PROD_PATTERNS_EXTRA', 'CLAUDE_PLUGIN_ROOT']) delete e[k];

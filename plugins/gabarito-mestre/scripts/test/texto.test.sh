@@ -124,7 +124,7 @@ for par in "$Q:prompts.md" "$R:referencia.md"; do
     '[ "'"$n_lit"'" -ge 1 ] && [ "'"$n_lit"'" -eq "'"$n_can"'" ]' \
     "$nome tem $n_lit ocorrência(s) de 'DISPATCH Task' mas só $n_can casa(m) o formato completo"
 done
-for hv in GABARITO_ALLOW_DESTRUCTIVE GABARITO_ALLOW_PRODUCTION GABARITO_ALLOW_VERSIONING; do
+for hv in GABARITO_ALLOW_DESTRUCTIVE GABARITO_ALLOW_PRODUCTION; do
   check "$hv citado no AGENTS.md existe em hooks/" "grep -q '$hv' '$A' && grep -rlq '$hv' '$P/hooks/'*.sh >/dev/null 2>&1" "hatch sem uso em hooks/"
 done
 MAXL=$(grep -oE "MAX_LINHAS = [0-9]+" "$CS" | grep -oE '[0-9]+')
@@ -249,7 +249,7 @@ check "ci.yml: versao-medida nunca falha — sem exit 1 (Q12)" '! printf "%s\n" 
 nomes_falhou=0
 for f in skills/gabarito-instalar/SKILL.md skills/gabarito-conformidade/SKILL.md skills/gabarito-review/SKILL.md skills/gabarito-spike/SKILL.md \
          agents/gabarito-implementador.md agents/gabarito-revisor.md agents/gabarito-spike.md commands/gabarito-doctor.md \
-         hooks/guard-destructive.sh hooks/guard-production.sh hooks/guard-versioning.sh hooks/session-card.sh hooks/remind-orchestrator.sh \
+         hooks/guard-destructive.sh hooks/guard-production.sh hooks/session-card.sh hooks/remind-orchestrator.sh \
          gates/src/mass-mutation-guard.ts gates/src/production-host-guard.ts gates/eslint/no-unfiltered-mass-mutation.js \
          gates/scripts/migrations-guard.mjs gates/scripts/deploy-order-check.mjs gates/scripts/quality-ratchet.mjs gates/scripts/harness-doctor.mjs \
          gates/scripts/onboarding-config.mjs gates/scripts/capacidade.mjs gates/scripts/versionamento-check.mjs gates/scripts/cartao-sessao.mjs; do

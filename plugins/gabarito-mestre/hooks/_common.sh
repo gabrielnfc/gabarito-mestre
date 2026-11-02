@@ -46,10 +46,9 @@ gabarito_json_escape() {
 
 # Escape hatch nominal e grepável. Assinatura: gabarito_escape_hatch <ROTULO> [<VAR>]
 #   gabarito_escape_hatch "R2 · rm recursivo" GABARITO_ALLOW_DESTRUCTIVE
-#   gabarito_escape_hatch "R20 · cabeçalho" GABARITO_ALLOW_VERSIONING
 # <VAR> é o nome da variável que libera ESTE hook. Compatibilidade medida (README "Escape hatch"):
 # GABARITO_ALLOW_DESTRUCTIVE e GABARITO_ALLOW_PRODUCTION aceitam uma pela outra — SÓ entre essas duas.
-# Qualquer outra variável (ex.: GABARITO_ALLOW_VERSIONING) libera só o seu hook: hatches não cruzam.
+# Qualquer outra variável libera só o seu hook: hatches não cruzam.
 # Sem <VAR> (chamada antiga com um argumento) vale o par DESTRUCTIVE/PRODUCTION.
 # Vale (1) no ambiente do processo do Claude Code, ou (2) como PREFIXO do próprio comando —
 # só no INÍCIO do comando, para que comentário ou `echo` no meio não libere:
@@ -130,11 +129,6 @@ else: print(v)' "$arq" "$caminho" 2>/dev/null
   return 0
 }
 
-# Traduz um regex vindo do JSON (estilo JavaScript: \d, \w) para ERE do grep -E do sistema (BSD e GNU).
-gabarito_ere() {
-  printf '%s' "$1" | sed -E 's/\\d/[0-9]/g; s/\\w/[A-Za-z0-9_]/g'
-}
-
 # Bloqueia: JSON no stdout (lido pelo Claude Code mesmo com exit 2) + motivo no stderr + exit 2.
 gabarito_deny() {
   local reason="$1"
@@ -156,8 +150,6 @@ gabarito_deny() {
 #    O corte é no próximo `|`, `;` ou `&` — o que vem depois (`| xargs rm -rf`) continua varrido.
 # LIMITE DECLARADO: script escrito por heredoc/Write e executado no comando seguinte é invisível a
 # este grep — para isso existem as guardas de runtime (G3/G7) e o review adversarial.
-# Só a etapa 1 (heredocs de escrita), sem remover grep/sed/commit: é o que guard-versioning.sh usa,
-# porque lá `git commit -m` É o objeto inspecionado — mas anotação em heredoc citando um commit não é commit.
 gabarito_strip_write_heredocs() {
   awk '
     BEGIN { skip = 0; quoted = 0 }

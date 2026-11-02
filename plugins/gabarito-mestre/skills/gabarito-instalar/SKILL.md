@@ -257,7 +257,7 @@ Com escrita autorizada, troque também os dois `____` do rótulo da linha Fluxo 
    ```
    | Versionamento: modelo · prefixos de branch · resolvido em (R20) | trunk-based (D2), trunk <trunk> · branch tipo/<PBI>-slug · worktree wt/<PBI>-<n> · Conventional Commits com escopo do PBI · SemVer · CHANGELOG na PR · tag vX.Y.Z · squash com título CC · resolvido em <AAAA-MM-DD> |
    ```
-8. Diga em uma linha: a partir de agora o hook `guard-versioning.sh` (R20) barra branch e commit fora do padrão; escape hatch nominal `GABARITO_ALLOW_VERSIONING="<motivo ≥ 8 caracteres, ≥ 2 palavras>"` — hatches não cruzam.
+8. Diga em uma linha: a partir de agora os hooks git `commit-msg` e `pre-push` (R20, instalados por `instalar.sh`) barram commit e push fora do padrão.
 
 ## Fase 4 — orquestração (roda se falta `orquestracao.modelo.resolvidoEm`)
 

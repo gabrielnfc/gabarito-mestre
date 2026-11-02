@@ -111,20 +111,9 @@ describe('_common.sh — escape hatch por nome (T12)', () => {
     assert.equal(run('guard-destructive.sh', 'rm -rf build', { GABARITO_ALLOW_PRODUCTION: ok }).code, 0);
     assert.equal(run('guard-production.sh', 'curl "$API_PROD_URL/x"', { GABARITO_ALLOW_DESTRUCTIVE: ok }).code, 0);
   });
-  test('GABARITO_ALLOW_VERSIONING NÃO libera R2 nem R3 (hatches não cruzam fora do par)', () => {
-    assert.equal(blocked(run('guard-destructive.sh', 'rm -rf build', { GABARITO_ALLOW_VERSIONING: ok })), true);
-    assert.equal(blocked(run('guard-production.sh', 'curl "$API_PROD_URL/x"', { GABARITO_ALLOW_VERSIONING: ok })), true);
-  });
-  test('chamada direta: VAR nomeada libera só ela (env e inline); nome inválido não entra no eval', () => {
-    const snippet = 'GABARITO_CMD="git commit -m x"; gabarito_escape_hatch "R20" GABARITO_ALLOW_VERSIONING; echo "rc=$?"';
-    assert.match(runCommon(snippet, { env: { GABARITO_ALLOW_VERSIONING: ok } }).stdout, /rc=0/);
-    assert.match(runCommon(snippet, { env: { GABARITO_ALLOW_DESTRUCTIVE: ok } }).stdout, /rc=1/);
-    const inline = `GABARITO_CMD='GABARITO_ALLOW_VERSIONING="${ok}" git commit -m x'; gabarito_escape_hatch "R20" GABARITO_ALLOW_VERSIONING; echo "rc=$?"`;
-    assert.match(runCommon(inline).stdout, /rc=0/);
-    const cruzado = `GABARITO_CMD='GABARITO_ALLOW_DESTRUCTIVE="${ok}" git commit -m x'; gabarito_escape_hatch "R20" GABARITO_ALLOW_VERSIONING; echo "rc=$?"`;
-    assert.match(runCommon(cruzado).stdout, /rc=1/);
-    const injecao = 'GABARITO_CMD="x"; gabarito_escape_hatch "R20" "X; echo INJETADO"; echo "rc=$?"';
-    const r = runCommon(injecao, { env: { GABARITO_ALLOW_VERSIONING: ok } });
+  test('chamada direta: nome de VAR inválido não entra no eval', () => {
+    const injecao = 'GABARITO_CMD="x"; gabarito_escape_hatch "R2" "X; echo INJETADO"; echo "rc=$?"';
+    const r = runCommon(injecao, { env: { GABARITO_ALLOW_DESTRUCTIVE: ok } });
     assert.match(r.stdout, /rc=1/);
     assert.doesNotMatch(r.stdout, /INJETADO/);
   });
@@ -143,17 +132,16 @@ describe('_common.sh — escape hatch por nome (T12)', () => {
   });
   test('assinatura 1.0.1 (um argumento) continua valendo para o par', () => {
     assert.match(runCommon('GABARITO_CMD="x"; gabarito_escape_hatch "R2"; echo "rc=$?"', { env: { GABARITO_ALLOW_PRODUCTION: ok } }).stdout, /rc=0/);
-    assert.match(runCommon('GABARITO_CMD="x"; gabarito_escape_hatch "R2"; echo "rc=$?"', { env: { GABARITO_ALLOW_VERSIONING: ok } }).stdout, /rc=1/);
   });
   test('rótulo e origem aparecem no systemMessage', () => {
-    const r = runCommon('GABARITO_CMD="x"; gabarito_escape_hatch "R20 · cabeçalho" GABARITO_ALLOW_VERSIONING', { env: { GABARITO_ALLOW_VERSIONING: ok } });
+    const r = runCommon('GABARITO_CMD="x"; gabarito_escape_hatch "R2 · rm recursivo" GABARITO_ALLOW_DESTRUCTIVE', { env: { GABARITO_ALLOW_DESTRUCTIVE: ok } });
     const j = JSON.parse(r.stdout);
-    assert.match(j.systemMessage, /R20 · cabeçalho, via env/);
+    assert.match(j.systemMessage, /R2 · rm recursivo, via env/);
     assert.match(j.systemMessage, /teste do par medido/);
   });
 });
 
-describe('_common.sh — gabarito_repo_root, gabarito_config_get, gabarito_ere (T12)', () => {
+describe('_common.sh — gabarito_repo_root, gabarito_config_get (T12)', () => {
   test('raiz: subpasta de repo git → toplevel; sem .git → cwd (Review Focus 2)', () => {
     const d = fixtureRepo();
     assert.equal(runCommon('gabarito_repo_root', { cwd: join(d, 'apps', 'api') }).stdout, d);
@@ -183,9 +171,5 @@ describe('_common.sh — gabarito_repo_root, gabarito_config_get, gabarito_ere (
     const d = fixtureRepo({ config: { fluxo: { idPadrao: '^[A-Z]+-\\d+$' } } });
     assert.equal(runCommon('gabarito_config_get fluxo.idPadrao', { cwd: join(d, 'apps', 'api') }).stdout.trim(), '^[A-Z]+-\\d+$');
     assert.equal(runCommon(`gabarito_config_get fluxo.idPadrao "${d}"`, { cwd: '/' }).stdout.trim(), '^[A-Z]+-\\d+$');
-  });
-  test('ere: \\d e \\w viram classes POSIX; o resto fica', () => {
-    assert.equal(runCommon("gabarito_ere '^[A-Z]+-\\d+$'").stdout, '^[A-Z]+-[0-9]+$');
-    assert.equal(runCommon("gabarito_ere '^wt/\\w+-\\d+-\\d+$'").stdout, '^wt/[A-Za-z0-9_]+-[0-9]+-[0-9]+$');
   });
 });

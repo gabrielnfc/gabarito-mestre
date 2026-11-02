@@ -142,7 +142,7 @@ Quando não serve — diga, em vez de adotar pela metade:
 
 - **Protótipo descartável.** §1 continua valendo (delete e produção alheia machucam igual). O resto é custo sem retorno.
 - **Repositório sem CI.** Fique no Nível 1 até existir CI; declarar Nível 3 sem pipeline é a mentira que o §0.2 existe para pegar.
-- **Repositório sem onboarding.** Sem `versionamento.resolvidoEm`, o hook de versionamento (`guard-versioning.sh`) fica em fail-open declarado (G9); sem `fluxo.resolvidoEm`, o cartão também: nada trava, nada protege, e o doctor marca `FALTA fluxo-configurado`. Não é um nível — é o antes do nível.
+- **Repositório sem onboarding.** Sem `versionamento.resolvidoEm`, os hooks git de versionamento (`commit-msg`, `pre-push`) ficam em fail-open declarado (G9); sem `fluxo.resolvidoEm`, o cartão também: nada trava, nada protege, e o doctor marca `FALTA fluxo-configurado`. Não é um nível — é o antes do nível.
 
 ---
 
