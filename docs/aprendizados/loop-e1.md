@@ -56,3 +56,4 @@ Dados por task: `docs/aprendizados/metricas-e1.jsonl` (uma linha por task). Resu
 | E7 | Escrevi Q14 sem conferir o efeito no orquestrador | `git merge` pediria humano; corrigida por Q16 | Emenda redigida por mim passa pela Sombra antes de entrar |
 | E8 | Rodei o gate com base errada e aceitei "0 commits" na primeira leitura | Checagens de diff vazias | A3; ler a saída, não só o veredito |
 | E9 | Consumo de contexto sem critério: `plugin-authoring` para consulta pequena, `docker ps` inteiro, 3 páginas de doc, relatórios de 20 linhas | Contexto cresce rápido | Filtrar saída antes de ler; subagent para leitura grande; retorno ≤ 5 linhas |
+| E10 | Prescrevi teto de 64 KB em T2 sem medir o que cortar faz | Comando após 64 KB passa em silêncio; regressão de segurança | Teto de entrada em guarda: definir antes o veredito acima do teto, com teste |
