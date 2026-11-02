@@ -146,3 +146,21 @@
 {"nome":"n1-find-pem-head-silencio-orq","req":"GRD-5","tool":"Bash","input":{"command":"find ~ -name '*.pem' | head"},"agente":"orq","esperado":{"faixa":"silencio"}}
 {"nome":"n1-find-ts-xargs-grep-benigno-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name \"*.ts\" | xargs grep x"},"agente":"sub","esperado":{"faixa":"silencio"}}
 {"nome":"n1-find-ts-xargs-grep-benigno-orq","req":"GRD-5","tool":"Bash","input":{"command":"find . -name \"*.ts\" | xargs grep x"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"n1-grupo-chave-find-xargs-sub","req":"GRD-5","tool":"Bash","input":{"command":"{ find . -name .env; } | xargs cat"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"n1-grupo-chave-find-xargs-orq","req":"GRD-5","tool":"Bash","input":{"command":"{ find . -name .env; } | xargs cat"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"n1-grupo-chave-find-ls-xargs-sub","req":"GRD-5","tool":"Bash","input":{"command":"{ find . -name .env; ls; } | xargs cat"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"n1-grupo-chave-find-ls-xargs-orq","req":"GRD-5","tool":"Bash","input":{"command":"{ find . -name .env; ls; } | xargs cat"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"n1-subshell-find-ls-xargs-sub","req":"GRD-5","tool":"Bash","input":{"command":"(find . -name .env; ls) | xargs cat"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"n1-subshell-find-ls-xargs-orq","req":"GRD-5","tool":"Bash","input":{"command":"(find . -name .env; ls) | xargs cat"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"n1-tee-procsubst-xargs-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env | tee >(xargs cat)"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"n1-tee-procsubst-xargs-orq","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env | tee >(xargs cat)"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"n1-git-stdin-paths-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env | git hash-object --stdin-paths"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"n1-git-stdin-paths-orq","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env | git hash-object --stdin-paths"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"n1-git-pathspec-from-file-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env | git add --pathspec-from-file=-"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"n1-git-pathspec-from-file-orq","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env | git add --pathspec-from-file=-"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"n1-subshell-find-wc-silencio-sub","req":"GRD-5","tool":"Bash","input":{"command":"(find . -name .env; ls) | wc -l"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"n1-subshell-find-wc-silencio-orq","req":"GRD-5","tool":"Bash","input":{"command":"(find . -name .env; ls) | wc -l"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"n1-find-pwd-subst-silencio-sub","req":"GRD-5","tool":"Bash","input":{"command":"find $(pwd) -name .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"n1-find-pwd-subst-silencio-orq","req":"GRD-5","tool":"Bash","input":{"command":"find $(pwd) -name .env"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"n1-find-tee-arquivo-silencio-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env | tee lista.txt"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"n1-find-tee-arquivo-silencio-orq","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env | tee lista.txt"},"agente":"orq","esperado":{"faixa":"silencio"}}
