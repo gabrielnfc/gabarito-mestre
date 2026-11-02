@@ -67,7 +67,7 @@ plugins/gabarito-mestre/
   scripts/   instalar.sh (--atualizar · --guarda · --codeowners) · test/instalar.test.sh
 ```
 
-Depois de instalar o plugin, **instale o harness no seu repositório**: diga "instala o gabarito" (skill `gabarito-instalar`) ou rode `bash <plugin-root>/scripts/instalar.sh .`. A fase 1 cria `AGENTS.md`, `CLAUDE.md` (só a linha `@AGENTS.md`), `docs/harness/` (com `fluxo.md`), `tools/gabarito-gates/` (+ `.instalado.json`), `harness.config.json`, `.harness/attest.json`, `.github/workflows/gabarito.yml` e emenda o `.gitignore`; nunca sobrescreve nem apaga. As fases 2–4 (só pela skill) fazem o onboarding do fluxo, do versionamento e da orquestração. **O nível de adoção fica `____`** — é o doctor quem mede (`/gabarito-doctor`).
+Depois de instalar o plugin, **instale o harness no seu repositório**: diga "instala o gabarito" (skill `gabarito-instalar`) ou rode `bash <plugin-root>/scripts/instalar.sh .`. A fase 1 cria `AGENTS.md`, `CLAUDE.md` (só a linha `@AGENTS.md`), `docs/harness/` (com `fluxo.md`), `tools/gabarito-gates/`, `harness.config.json`, `.harness/attest.json`, `.github/workflows/gabarito.yml` e emenda o `.gitignore`; nunca sobrescreve nem apaga. As fases 2–4 (só pela skill) fazem o onboarding do fluxo, do versionamento e da orquestração. **O nível de adoção fica `____`** — é o doctor quem mede (`/gabarito-doctor`).
 
 ---
 

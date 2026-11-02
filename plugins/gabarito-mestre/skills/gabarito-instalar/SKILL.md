@@ -82,7 +82,7 @@ O que o instalador cria (de `${CLAUDE_PLUGIN_ROOT}/reference/` e `templates/`):
 | `docs/harness/{referencia,gates,adocao,prompts,fluxo}.md` | `reference/` | consultados por ponteiro; `fluxo.md` é a fonte normativa do Workflow TRUE |
 | `tools/gabarito-gates/` | `gates/` | gates e scripts, zero dependências, Node ≥ 22.18; sem `test/`, `README.md` nem manifesto de versão |
 | `harness.config.json` | `templates/` | template — as seções `fluxo`, `versionamento`, `orquestracao` **não** vêm nele: nascem no onboarding |
-| `.harness/attest.json` | `templates/` | tudo `confirmado: false` — atestar é ato nominal e datado (inclui `iniciativa-resolvida`, `squash-titulo-pr`) |
+| `.harness/attest.json` | `templates/` | tudo `confirmado: false` — atestar é ato nominal e datado (inclui `iniciativa-resolvida`) |
 | `.github/workflows/gabarito.yml` | `templates/` | doctor + testes dos gates + versionamento (`fetch-depth: 0`) + guarda de migrations (guarda de migrations desligada por padrão — `gates.md §4`) |
 | `.gitignore` (emenda) | — | garante `.harness/doctor-cache.json`, `.harness/fluxo-cache.json`, `.harness/entregas/_sem-id/`, `.harness/heartbeat.json`, `*.novo`, `*.bak`; nada removido |
 

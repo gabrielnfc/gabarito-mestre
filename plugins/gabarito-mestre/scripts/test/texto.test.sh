@@ -272,6 +272,8 @@ check "sem menção viva a --gates-substituir em plugins/** e README (flag remov
 SKILL_I="$P/skills/gabarito-instalar/SKILL.md"
 check "skill gabarito-instalar não usa 'test -f …/.instalado.json' para detectar versão" '! grep -qE "^test -f tools/gabarito-gates/.instalado.json" "$SKILL_I"' "a skill ainda decide pela existência de um manifesto que o instalador 2.0 não grava"
 check "skill gabarito-instalar não promete .instalado.json na tabela do que o instalador cria" '! grep -E "^\| .tools/gabarito-gates/. \+ .\.instalado\.json" "$SKILL_I" | grep -q .' "tabela da fase 1 promete o manifesto"
+check "README não promete .instalado.json entre o que o instalador cria (só diz que acabou)" '! grep -qE "\+ .\.instalado\.json" "'"$ROOT"'/README.md"' "README ainda promete o manifesto"
+check "skill gabarito-instalar não promete squash-titulo-pr no attest.json (template não o tem; chave morta)" '! grep -E "^\| .\.harness/attest\.json." "$SKILL_I" | grep -q "squash-titulo-pr"' "tabela promete atestado removido"
 
 echo "── $falhas falha(s)"
 [ "$falhas" -eq 0 ]
