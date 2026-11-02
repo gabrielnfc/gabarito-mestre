@@ -605,14 +605,16 @@ const EXISTENCIA = new Set(['ls', 'test', '[', '[[', 'stat']);
 const FIND_ACAO = new Set(['-exec', '-execdir', '-ok', '-okdir', '-delete']);
 const FIND_PADRAO = new Set(['-name', '-iname', '-path', '-ipath', '-wholename', '-iwholename', '-regex', '-iregex', '-lname', '-ilname']);
 const GREP = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'jq']);
-const BANCOS = new Set(['psql', 'pg_dump', 'pg_dumpall', 'pg_restore', 'mysql', 'mysqldump', 'mongosh', 'mongo', 'redis-cli']);
+const BANCOS = new Set(['psql', 'pg_dump', 'pg_dumpall', 'pg_restore', 'mysql', 'mysqldump', 'mariadb', 'mariadb-dump', 'mongosh', 'mongo', 'redis-cli']);
 
 export type AchadoAnel = { anel: Anel; alvo: string; escrita: boolean };
 
 /** Remove o valor de opções que carregam texto (mensagem, SQL), nunca caminho. */
 function semTextoLivre(cmd: string, args: string[]): string[] {
-  const curtas = cmd === 'git' ? ['-m'] : BANCOS.has(cmd) ? ['-c'] : [];
-  const longas = cmd === 'git' ? ['--message'] : BANCOS.has(cmd) ? ['--command'] : [];
+  // `mysql`/`mariadb` carregam o SQL em `-e/--execute`; os demais clientes, em `-c/--command`.
+  const execute = cmd === 'mysql' || cmd === 'mariadb';
+  const curtas = cmd === 'git' ? ['-m'] : execute ? ['-e'] : BANCOS.has(cmd) ? ['-c'] : [];
+  const longas = cmd === 'git' ? ['--message'] : execute ? ['--execute'] : BANCOS.has(cmd) ? ['--command'] : [];
   if (curtas.length === 0) return args;
   const out: string[] = [];
   for (let i = 0; i < args.length; i++) {
