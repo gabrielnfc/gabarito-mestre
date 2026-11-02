@@ -25,6 +25,7 @@ Branch: `enabler/GM-9-fundacao-2.0` → alvo `next` (canal alpha). Spec: `docs/s
 - **R13 (2026-11-02)** Dono: aprendizados do loop viram decisões a implementar no harness. Registro único em `docs/aprendizados/loop-e1.md`: com medição ⇒ D; sem ⇒ M. Ponto de entrada: spec da entrega indicada.
 - **R14 (2026-11-02)** Sombra (Fable, fria): seis meios forjam a fonte; boa prática = controle sob o mesmo usuário é *tamper-evident*; A+C como emenda, B no backlog. Dono delegou a recomendação do orquestrador: emendas Q14 e Q15 aprovadas. T2b fecha sem os achados de `.git/objects`, `.git/HEAD` e `fast-import`: anel `.git/**` e limite declarado cobrem.
 - **R15 (2026-11-02)** Sombra: Q14 estendeu ao orquestrador, por negação, lista feita para subagent. Q16 separa por papel, por delegação do dono. R12: T1b A2 fechado no re-review da T3 (resíduo: oráculo aceita corte seco em 10 de 101 tamanhos, MINOR).
+- **R16 (2026-11-02)** Lote julgado pelo dono, seguindo a recomendação do orquestrador: Q17 caminho A (teto do Bash fail-closed), Q18 (aceite 4 sem nível ≥ 1; E5), Q19 (canário amplia, texto pela Sombra), Q20 (heartbeat local). Evidência: `.superpowers/sdd/2026-11-02-e1-fundacao/sombra-*.md`. Q18 afrouxa aceite; as outras apertam. Q17 e Q18 corrigem defeito do orquestrador (E10) e da spec. Exceção de escopo por ruling: T6 corrige `skills/gabarito-instalar/SKILL.md` e `README.md` (A4); job `instalador` mantém nome velho por causa do ruleset de `main`; renomear em E5.
 
 ## Medições
 

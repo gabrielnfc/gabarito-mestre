@@ -73,7 +73,7 @@ Loop autônomo (gatilho: E2) · pouso (E2) · Sombra (E3) · painel/mod (E4) · 
 
 **REQ-INF-1 Versionamento sai do PreToolUse.** `guard-versioning.sh` removido; `instalar.sh` grava hooks git `commit-msg` e `pre-push` → `node tools/gabarito-gates/scripts/versionamento-check.mjs --msg|--branch`; encadeia em `.husky/` ou `core.hooksPath` se existirem, senão `.git/hooks/`; nunca sobrescreve, anexa com marcador. Limite declarado: `--no-verify`, `HUSKY=0`, `-c core.hooksPath=` contornam — backstop é o job `versionamento` do CI (`gabarito.yml`, já existe). *Given* três repos temporários (sem husky, com husky, com hooksPath) *Then* recusam `git commit -am"foo"` e aceitam `feat(GM-9): …`.
 
-**REQ-INF-2 Doctor e config.** Doctor reporta camada de guarda: `ativa (heartbeat há Nh)` / `configurada` / `permissions.deny` / `mod` / `nenhuma`, com **`fonte: origin | local` e `divergente` quando árvore ≠ `origin/HEAD`** — heartbeat = evento `guarda.heartbeat {fonte}` gravado no SessionStart; lista ambientes; aviso de M8 quando S3 mostrar que mod pode sobrepor deny; perfil `repo sem app` (G3/teardown = n/a); G8 não aceita `.md` como evidência; varredura por `git ls-files`. Chaves mortas removidas (`migrationsDir`, `versionamento.modelo`, `versionamento.commit`, `orquestracao.sempreSubagente`, `paralelismo.modo`, `attest.squash-titulo-pr`). `gates/lib/{config,git,cli,datas}.mjs` substitui as cópias (7× config, 8× `ehEntrypoint`, 5× `arg`, 6× raiz).
+**REQ-INF-2 Doctor e config.** Doctor reporta camada de guarda: `ativa (heartbeat há Nh)` / `configurada` / `permissions.deny` / `mod` / `nenhuma`, com **`fonte: origin | local` e `divergente` quando árvore ≠ `origin/HEAD`** — `ativa` exige heartbeat local (Q20); lista ambientes; aviso de M8 quando S3 mostrar que mod pode sobrepor deny; perfil `repo sem app` (G3/teardown = n/a); G8 não aceita `.md` como evidência; varredura por `git ls-files`. Chaves mortas removidas (`migrationsDir`, `versionamento.modelo`, `versionamento.commit`, `orquestracao.sempreSubagente`, `paralelismo.modo`, `attest.squash-titulo-pr`). `gates/lib/{config,git,cli,datas}.mjs` substitui as cópias (7× config, 8× `ehEntrypoint`, 5× `arg`, 6× raiz).
 
 **REQ-INF-3 Instalador enxuto.** Não copia `test/`, `README`, `.hashes-anteriores`; template de CI do usuário perde `gates-tests`; `--gates-substituir` e manifesto de hashes removidos (D9).
 
@@ -95,7 +95,7 @@ Loop autônomo (gatilho: E2) · pouso (E2) · Sombra (E3) · painel/mod (E4) · 
 1. Corpus e mutações da tabela verdes; review Fable final executa as mutações e APROVA.
 2. p95 wall ≤ 60 ms local (ledger), ≤ 150 ms no CI; suíte total ≤ 15 s local (M3: 36 s).
 3. S1 com número e veredito no ledger **antes de T4**; S2–S4 antes do review final.
-4. Doctor neste repo com `harness.config.json` + ambientes + perfil `repo sem app` sai de nível 0 e reporta camada; `doctor-self` do CI testa a exclusão com perfil explícito.
+4. (Q18) Doctor neste repo com `harness.config.json` + ambientes + perfil `repo sem app` reporta camada, fonte, ambientes e perfil; marca só G3/teardown como n/a; não acha evidência dentro do próprio plugin; `doctor-self` do CI testa a exclusão com perfil explícito. Nível ≥ 1 deste repo é dogfooding e fica para E5.
 5. PR em **`next`** (canal alpha, visão A10), versão `2.0.0-alpha.1`; `main` intocado.
 
 ## Rollout (ordem e motivo)
@@ -138,6 +138,12 @@ _(Emenda 2026-11-02, Sombra + delegação do dono, ledger GM-9 R14 — seis meio
 _(Emenda 2026-11-02, Sombra + delegação do dono, ledger GM-9 R15.)_
 
 - **Q16 (corrige Q14)** Duas listas, uma por papel. **Subagent:** lista permitida de Q14; qualquer outro `git` ⇒ `deny`. **Orquestrador:** `ask` só em `remote`, `fetch`, `pull`, `update-ref`, `symbolic-ref`, `config`, `-c remote.*|url.*|core.hooksPath`, `push` com destino `refs/remotes/*`, e alvo de caminho em `.git/**` por argumento ou redirecionamento; todo outro `git` ⇒ sem decisão, prompt nativo segue. Motivo: `merge`, `tag`, `worktree add` não tocam alvo de integridade de D2, e pedir humano neles contraria a meta 1 da visão.
+
+_(Emendas 2026-11-02, Sombra + decisão do dono, ledger GM-9 R16.)_
+
+- **Q17 (teto do Bash; corrige fail-open silencioso)** `segmentar` mantém `TETO_COMANDO = 65 536` caracteres UTF-16. Comando acima do teto não pôde ser inspecionado: `agent_id` ausente ⇒ `ask` com motivo; presente ⇒ `deny`; evento `guarda.ask`/`guarda.deny` com `dados.motivo: "teto"` e `dados.chars`; sem tipo de evento novo. `ask`/`deny` do prefixo prevalece. Limite declarado em REQ-GRD-2. Corpus: `bash-acima-do-teto-cauda-segredo-orq` ⇒ `ask`, `bash-acima-do-teto-cauda-segredo-sub` ⇒ `deny`. Mutação: remover a checagem de tamanho ⇒ os dois falham. Medido: `decidir` p95 5,5 ms em 10 MB. Detalhe: Sombra `teto-bash`.
+- **Q18 (aceite 4)** Reescrito acima: nível ≥ 1 só com evidência fabricada (`assertNotProduction()` e atestado de backup inexistente), pois `E1:76` limita o perfil a G3/teardown. Em E5, dogfooding: `.env` no `.gitignore` da raiz; atestado `branch-protegida` pelo dono; decisão do dono sobre `R3-prod-guard` e `backup-verificado` em repo sem app. Perfil autodeclarado não dispensa R3 nem backup.
+- **Q20 (heartbeat local)** `ativa` exige `.harness/heartbeat.json` (gitignored; `{ts, sessao, arquivo, autor, fonte, divergente}`), gravado pelo SessionStart na mesma chamada que anexa `guarda.heartbeat` ao diário, só em repo com onboarding, atômico (tmp + rename), cruzado com a linha `guarda.heartbeat` de mesmo `sessao` e `ts` em `arquivo` desta árvore; válido por ≤ 24 h (skew 5 min). Heartbeat só no diário, de qualquer autor, nunca dá `ativa`: `configurada · diário com heartbeat há Nh (autor)`, até 7 d. Sem onboarding, nada é gravado. `instalar.sh` acrescenta a entrada ao `.gitignore`. Provas: `doctor-camada-ativa`, `doctor-heartbeat-clonado-nao-ativa`, `doctor-marcador-sem-evento`, `doctor-heartbeat-25h`, `cartao-grava-heartbeat-local`, `cartao-sem-onboarding-nao-grava`. Mutações: ignorar o marcador; pular o cruzamento; `24 → 168`. Limite (R14): marcador é tamper-evident. Detalhe: Sombra `heartbeat-evidencia`.
 
 ## Riscos
 
