@@ -135,6 +135,10 @@ _(Emenda 2026-11-02, Sombra + delegação do dono, ledger GM-9 R14 — seis meio
 - **Q14 (a, medido)** Retira "plumbing é inofensivo" de D2. **Modelo de ameaça:** a guarda cobre deslize e atalho por ferramenta direta; sob o mesmo usuário de SO é *tamper-evident*, não *tamper-proof*. Prevenção real: ruleset do GitHub e CI. **Regra por capacidade, em lista permitida:** subagent só roda `git add|commit|status|diff|log|show|checkout|switch|restore|branch|rev-parse|merge-base|stash|rebase|cherry-pick|reset|blame|grep|ls-files|mv|rm` e `push` para remoto literalmente `origin` com destino que não seja `refs/remotes/*` nem branch de prod; qualquer outro `git` ⇒ anel de integridade (`deny` subagent, `ask` orquestrador). REQ-GRD-5: os três caminhos de `.git` viram `.git/**`, incluindo o arquivo `.git` de worktree. Config lida da raiz da sessão (`CLAUDE_PROJECT_DIR`), nunca de cwd; anéis de caminho seguem o toplevel do cwd. Limite declarado: indireção (`X=git`, `python`, `node` escrevendo em `.git`), e `git ls-remote` (medido 0,50–0,58 s, 9× o p95) fica fora do hook (backlog). Rejeitado: enumerar comandos proibidos — erro do GM-7 (R8), a Sombra propôs a variante por capacidade e a lista permitida é a forma que já está em D2 ("só precisa de").
 - **Q15** Checagem de existência não é leitura: `ls`, `test`, `[`, `stat`, `git log`, `git check-ignore` citando caminho de segredo ⇒ sem decisão. Segredo por argumento cobre leitura e cópia.
 
+_(Emenda 2026-11-02, Sombra + delegação do dono, ledger GM-9 R15.)_
+
+- **Q16 (corrige Q14)** Duas listas, uma por papel. **Subagent:** lista permitida de Q14; qualquer outro `git` ⇒ `deny`. **Orquestrador:** `ask` só em `remote`, `fetch`, `pull`, `update-ref`, `symbolic-ref`, `config`, `-c remote.*|url.*|core.hooksPath`, `push` com destino `refs/remotes/*`, e alvo de caminho em `.git/**` por argumento ou redirecionamento; todo outro `git` ⇒ sem decisão, prompt nativo segue. Motivo: `merge`, `tag`, `worktree add` não tocam alvo de integridade de D2, e pedir humano neles contraria a meta 1 da visão.
+
 ## Riscos
 
 - S1 refutado em `auto`/`bypass`: fallback `deny` + `systemMessage` já decidido.

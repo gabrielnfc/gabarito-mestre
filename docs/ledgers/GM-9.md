@@ -23,6 +23,7 @@ Branch: `enabler/GM-9-fundacao-2.0` → alvo `next` (canal alpha). Spec: `docs/s
 - **R12 (2026-11-02)** Exceção nominal do dono, por recomendação do orquestrador após a Sombra apontar violação de R1. T1b aceita integrada; A1 e A2 só fecham quando aprovados nos reviews de T2 e T3 (reprovou ⇒ integração parada, volta ao dono). T1a aceita com achado A (conjunto × contagem) aberto até a T6. Emenda de processo no plano, seção Execução. Erro do orquestrador registrado: fechou as duas sozinho e apresentou como decidido.
 - **R13 (2026-11-02)** Dono: aprendizados do loop viram decisões a implementar no harness. Registro único em `docs/aprendizados/loop-e1.md`: com medição ⇒ D; sem ⇒ M. Ponto de entrada: spec da entrega indicada.
 - **R14 (2026-11-02)** Sombra (Fable, fria): seis meios forjam a fonte; boa prática = controle sob o mesmo usuário é *tamper-evident*; A+C como emenda, B no backlog. Dono delegou a recomendação do orquestrador: emendas Q14 e Q15 aprovadas. T2b fecha sem os achados de `.git/objects`, `.git/HEAD` e `fast-import`: anel `.git/**` e limite declarado cobrem.
+- **R15 (2026-11-02)** Sombra: Q14 estendeu ao orquestrador, por negação, lista feita para subagent. Q16 separa por papel, por delegação do dono. R12: T1b A2 fechado no re-review da T3 (resíduo: oráculo aceita corte seco em 10 de 101 tamanhos, MINOR).
 
 ## Medições
 
