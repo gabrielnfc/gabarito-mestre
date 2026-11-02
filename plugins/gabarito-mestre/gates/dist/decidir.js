@@ -80,10 +80,14 @@ export function decidir(entrada             , config                     , conte
   const d = decidirConteudo(entrada, config, contexto);
   if (d.faixa === 'ask' || d.faixa === 'deny') return d;
   const comando = entrada?.tool_name === 'Bash' && typeof entrada?.tool_input === 'object' && entrada.tool_input !== null ? entrada.tool_input.command : undefined;
-  if (typeof comando !== 'string' || comando.length <= TETO_COMANDO) return d;
+  if (typeof comando !== 'string') return d;
+  const longo = comando.length > TETO_COMANDO;
+  if (!longo && d.classificacao.cdPerdido !== true) return d;
   const subagent = entrada.agent_id !== undefined && entrada.agent_id !== '';
   const dados = { ...dadosDe(d.classificacao), motivo: 'teto', chars: comando.length };
-  const motivo = 'comando acima de 64 KB: a guarda só lê o início e não consegue inspecionar o resto; reduza ou grave o script por Write';
+  const motivo = longo
+    ? 'comando acima de 64 KB: a guarda só lê o início e não consegue inspecionar o resto; reduza ou grave o script por Write'
+    : 'cadeia de cd longa demais: a guarda perdeu o diretório corrente e não consegue inspecionar o resto; reduza ou grave o script por Write';
   return subagent
     ? { classificacao: d.classificacao, faixa: 'deny', permissionDecision: 'deny', evento: { tipo: 'guarda.deny', dados }, systemMessage: null, motivo }
     : { classificacao: d.classificacao, faixa: 'ask', permissionDecision: 'ask', evento: { tipo: 'guarda.ask', dados }, systemMessage: null, motivo };

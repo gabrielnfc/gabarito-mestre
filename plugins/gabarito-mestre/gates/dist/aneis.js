@@ -585,6 +585,8 @@ const SO_REDIRECIONA = new Set(['echo', 'printf']);
 // Q15: checar existência não é leitura.
 const EXISTENCIA = new Set(['ls', 'test', '[', '[[', 'stat']);
 // Valores de `find` que são padrão de nome, não caminho.
+// `find` com ação sobre o resultado (`-exec`, `-delete`...) volta a tratar o padrão como possível caminho de segredo.
+const FIND_ACAO = new Set(['-exec', '-execdir', '-ok', '-okdir', '-delete']);
 const FIND_PADRAO = new Set(['-name', '-iname', '-path', '-ipath', '-wholename', '-iwholename', '-regex', '-iregex', '-lname', '-ilname']);
 const GREP = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'jq']);
 const BANCOS = new Set(['psql', 'pg_dump', 'pg_dumpall', 'pg_restore', 'mysql', 'mysqldump', 'mongosh', 'mongo', 'redis-cli']);
@@ -652,7 +654,7 @@ function empilhar(dest          , origem          )       {
  * Procura o anel em todos os segmentos. Segredo vence integridade; dentro do mesmo anel vale o primeiro achado.
  * Retorna `null` se nenhum segmento toca um caminho de anel. `cwd` é o diretório da chamada; `cd` muda o corrente.
  */
-export function anelDeBash(segmentos            , contexto          , cwd                , subagent = true)                    {
+export function anelDeBash(segmentos            , contexto          , cwd                , subagent = true, estado                         )                    {
   let integridade                    = null;
   let atual                = cwd ?? null;
   // `cd a;` em cadeia faz o caminho crescer e cada `resolve` custar o tamanho dele: acima do limite, para de seguir o `cd`.
@@ -671,12 +673,13 @@ export function anelDeBash(segmentos            , contexto          , cwd       
         if (atual !== null && atual.length > LIMITE_CD) {
           atual = null;
           cdPerdido = true;
+          if (estado) estado.cdPerdido = true;
         }
       }
       continue;
     }
 
-    const uteis = s.cmd === 'find' ? semPadroesDeFind(s.args) : semTextoLivre(s.cmd, s.args);
+    const uteis = s.cmd === 'find' && !s.args.some((a) => FIND_ACAO.has(a)) ? semPadroesDeFind(s.args) : semTextoLivre(s.cmd, s.args);
     const pos = candidatos(uteis).filter(ehCaminhoPlausivel);
 
     if (s.cmd === 'git') {
