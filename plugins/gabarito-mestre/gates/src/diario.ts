@@ -1,6 +1,6 @@
 import type { Evento } from './tipos.ts';
 
-// STUB (RED T1b): a implementação vem na T6.
+// STUB (RED T1b): a implementação vem na T6, exceto `projetar`, que é da T3.
 export function recusaCanario(linha: string): string | null {
   void linha;
   throw new Error('não implementado (RED T1b)');

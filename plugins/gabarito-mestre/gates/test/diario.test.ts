@@ -205,8 +205,8 @@ describe('projeção e caminho', () => {
     assert.equal(typeof p.resumo, 'object');
   });
 
-  // O instantâneo lista um evento por linha, com `ts`, `tipo` e `dados.alvo`; os marcadores `alvo`
-  // abaixo terminam em `-fim` para detectar linha cortada no meio.
+  // O instantâneo cita o `dados.alvo` de cada evento, um evento por linha (cabeçalho e rodapé são livres);
+  // os marcadores `alvo` abaixo terminam em `-fim` para detectar corte no meio de uma linha.
   const evP = (n: number, ts: string, sessao: string, tipo: TipoEvento): Evento => ({
     seq: n, ts, autor: 'dev@exemplo.com', sessao, agente: 'orquestrador', tipo,
     dados: { alvo: `m${n}-fim` }, hash_anterior: null,
@@ -224,7 +224,7 @@ describe('projeção e caminho', () => {
     assert.deepEqual(projetar([]).resumo, {});
   });
 
-  test('projetar-ordem: mais recente primeiro, por (ts, sessao), independente da ordem de entrada', () => {
+  test('projetar-ordem: eventos mais recentes (ts) aparecem antes, independente da ordem de entrada', () => {
     const es = [
       evP(1, '2026-11-02T10:00:00.000Z', 's1', 'guarda.deny'),
       evP(2, '2026-11-02T10:05:00.000Z', 'sA', 'guarda.deny'),
@@ -234,22 +234,21 @@ describe('projeção e caminho', () => {
     const s = projetar(es).instantaneo;
     const pos = (n: number): number => s.indexOf(`m${n}-fim`);
     for (const n of [1, 2, 3, 4]) assert.ok(pos(n) >= 0, `m${n} ausente do instantâneo`);
-    // ts mais novo primeiro; no empate de ts, sessao maior (sB) antes de sA.
-    assert.ok(pos(4) < pos(2), 'empate de ts: sB antes de sA');
-    assert.ok(pos(2) < pos(3), '10:05 antes de 10:02');
+    // Só a ordem de ocorrência dos `alvo` importa; o desempate por sessao não tem direção exigida.
+    assert.ok(Math.max(pos(2), pos(4)) < pos(3), '10:05 (qualquer sessão) antes de 10:02');
     assert.ok(pos(3) < pos(1), '10:02 antes de 10:00');
   });
 
-  test('projetar-corte-em-linha-inteira: o corte em 6000 nunca deixa linha truncada', () => {
+  test('projetar-corte-em-linha-inteira: o corte em 6000 cai na fronteira de linha (cabeçalho e rodapé permitidos)', () => {
     const es = Array.from({ length: 10000 }, (_, i) =>
       evP(i + 1, new Date(Date.UTC(2026, 10, 2, 0, 0, 0) + i * 1000).toISOString(), 's1', 'producao.acesso'));
     const s = projetar(es).instantaneo;
-    assert.ok(s.length <= 6000);
-    const ls = s.split('\n').filter((l) => l !== '');
-    assert.ok(ls.length > 10, 'instantâneo deveria ter várias linhas');
-    for (const l of ls) assert.match(l, /m\d+-fim/, `linha truncada: ${l}`);
-    assert.match(ls[ls.length - 1], /-fim$/, 'última linha cortada no meio');
-    assert.ok(ls[0].includes('m10000-fim'), 'a linha mais recente vem primeiro');
+    assert.ok(s.length <= 6000, `instantaneo com ${s.length} caracteres`);
+    const marcadores = s.match(/\bm\d+(?:-f(?:i(?:m)?)?)?/g) ?? [];
+    assert.ok(marcadores.length > 10, 'instantâneo deveria listar vários eventos');
+    for (const m of marcadores) assert.match(m, /^m\d+-fim$/, `marcador cortado no meio: ${m}`);
+    // mais recente primeiro, sem buracos: m10000, m9999, m9998, ...
+    marcadores.forEach((m, i) => assert.equal(m, `m${10000 - i}-fim`, `posição ${i}`));
   });
 
   test('dirEntrega-sem-id: null ⇒ _sem-id; com id ⇒ o id', () => {

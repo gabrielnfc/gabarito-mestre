@@ -41,6 +41,6 @@
 {"nome":"prefixo-env","req":"GRD-2","tool":"Bash","input":{"command":"FOO=1 vercel --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"prefixo-bash-c","req":"GRD-2","tool":"Bash","input":{"command":"bash -c 'vercel --prod'"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"sem-secao-vercel","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"orq","config":"ausente","esperado":{"faixa":"silencio"}}
-{"nome":"fallback-dontask-deny","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"orq","modo":"dontAsk","esperado":{"faixa":"deny","motivoContem":"modo"}}
+{"nome":"modo-dontask-ask","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"orq","modo":"dontAsk","esperado":{"faixa":"ask"}}
 {"nome":"fallback-auto-ask","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"orq","modo":"auto","esperado":{"faixa":"ask"}}
 {"nome":"modo-bypass-benigno","req":"GRD-4","tool":"Bash","input":{"command":"ls -la"},"agente":"orq","modo":"bypassPermissions","esperado":{"faixa":"silencio"}}

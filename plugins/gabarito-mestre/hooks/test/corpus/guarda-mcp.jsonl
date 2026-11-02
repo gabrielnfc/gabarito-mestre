@@ -2,7 +2,7 @@
 {"nome":"mcp-prod-drop-orq","req":"GRD-6","tool":"mcp__supabase_prod__execute_sql","input":{"query":"DROP TABLE t"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"mcp-prod-drop-sub","req":"GRD-6","tool":"mcp__supabase_prod__execute_sql","input":{"query":"DROP TABLE t"},"agente":"sub","esperado":{"faixa":"deny"}}
 {"nome":"mcp-prod-list","req":"GRD-4","tool":"mcp__supabase_prod__list_tables","input":{},"agente":"orq","esperado":{"faixa":"mostrar","acao":"leitura"}}
-{"nome":"mcp-homolog-drop","req":"GRD-4","tool":"mcp__supabase_homolog__execute_sql","input":{"query":"DROP TABLE t"},"agente":"orq","esperado":{"faixa":"mostrar"}}
+{"nome":"mcp-homolog-drop","req":"GRD-4","tool":"mcp__supabase_homolog__execute_sql","input":{"query":"DROP TABLE t"},"agente":"orq","esperado":{"faixa":"mostrar","evento":"operacao.destrutiva"}}
 {"nome":"mcp-teste-drop","req":"GRD-6","tool":"mcp__supabase_local__execute_sql","input":{"query":"DROP TABLE t"},"agente":"orq","esperado":{"faixa":"log","evento":"operacao.destrutiva"}}
 {"nome":"mcp-nao-declarado","req":"GRD-4","tool":"mcp__figma__use_figma","input":{},"agente":"orq","esperado":{"faixa":"silencio"}}
 {"nome":"mcp-rpc-fn-conhecido","req":"GRD-4","tool":"mcp__supabase_prod__execute_sql","input":{"query":"SELECT fn_que_escreve()"},"agente":"orq","esperado":{"faixa":"mostrar"}}

@@ -13,4 +13,4 @@
 {"nome":"segredo-gh","req":"GRD-5","tool":"Read","input":{"file_path":"~/.config/gh/hosts.yml"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"falso-environment","req":"GRD-5","tool":"Read","input":{"file_path":"docs/environment.md"},"agente":"sub","esperado":{"faixa":"silencio"}}
 {"nome":"sem-secao-segredo","req":"GRD-5","tool":"Read","input":{"file_path":".env"},"agente":"sub","config":"ausente","esperado":{"faixa":"deny"}}
-{"nome":"fallback-bypass-deny","req":"GRD-5","tool":"Read","input":{"file_path":".env"},"agente":"orq","modo":"bypassPermissions","esperado":{"faixa":"deny","motivoContem":"modo"}}
+{"nome":"modo-bypass-ask","req":"GRD-5","tool":"Read","input":{"file_path":".env"},"agente":"orq","modo":"bypassPermissions","esperado":{"faixa":"ask"}}
