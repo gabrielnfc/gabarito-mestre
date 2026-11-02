@@ -4,6 +4,7 @@
  *
  * MUTAÇÕES PRESCRITAS:
  *  R1  aceitar `tool_input` nulo sem checar ⇒ `entrada-malformada-nao-lanca` falha
+ *  R3  remover o limite de comprimento do `cd` em `anelDeBash` ⇒ `cd-em-cadeia-nao-e-quadratico` falha
  *  R2  remover a checagem de tamanho em `decidir` ⇒ `teto-pede-em-vez-de-ignorar` e `teto-fronteira` falham
  */
 
@@ -56,6 +57,13 @@ describe('robustez da guarda', () => {
       const ms = performance.now() - t0;
       assert.ok(ms < 100, `${comando.length} bytes levaram ${ms.toFixed(1)} ms`);
     }
+  });
+
+  test('cd-em-cadeia-nao-e-quadratico: 13 mil `cd a;` (65 KB) em menos de 100 ms', () => {
+    const t0 = performance.now();
+    decidir(bash('cd a;'.repeat(13000)), CONFIG, CTX);
+    const ms = performance.now() - t0;
+    assert.ok(ms < 100, `65 KB de cd levaram ${ms.toFixed(1)} ms`);
   });
 
   test('teto-pede-em-vez-de-ignorar: acima de 64 KB a cauda perigosa vira ask (orq) ou deny (sub), com motivo e sem o comando', () => {
