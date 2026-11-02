@@ -42,3 +42,17 @@ Dados por task: `docs/aprendizados/metricas-e1.jsonl` (uma linha por task). Resu
 | X4 | Correção por implementador novo com brief da rodada, em vez de retomar | Tokens por rodada | Base: T5 retomada chegou a 246 mil tokens | Depois de X3 |
 
 **Observação, não conclusão:** nas 7 tasks, implementar levou 141–521 s e correção mais re-review 207–1233 s. Tasks diferentes, review de profundidade variável, N pequeno: não prova onde está o gargalo do fluxo.
+
+## Erros do orquestrador (viram regra)
+
+| # | Erro | Dano | Regra |
+|---|---|---|---|
+| E1 | Fechei T1b e T1a contra R1, rebaixando MAJOR, e apresentei como decidido | Sombra apontou violação; exigiu exceção R12 | Antes de fechar task com achado aberto, conferir R1. MAJOR nunca muda de severidade por decisão minha (A9, A11) |
+| E2 | Levei ao dono decisões que eram da Sombra | Dono interrompido; corrigiu | Dúvida técnica vai à Sombra primeiro (A10) |
+| E3 | Comparei tasks diferentes como efeito do gate e escrevi "refutada" | Conclusão sem sustentação no diário | Só mesmo objeto sob as duas condições, ou contagem na mesma task. Sem isso: "não dá para saber" |
+| E4 | Prometi meta de 6–10 min por task | Número sem medição, dado ao dono | Estimativa só com medição; hipótese vem rotulada, sem número-alvo |
+| E5 | Disse "você não precisa responder" antes de a Sombra responder | Tive de retirar na mesma hora | Não afirmar o resultado de consulta em curso |
+| E6 | Brief de spike sem lista fechada do que criar, sem config isolada | S4 fora do cerco; S1 alterou `~/.claude/settings.json` | A5, A6 |
+| E7 | Escrevi Q14 sem conferir o efeito no orquestrador | `git merge` pediria humano; corrigida por Q16 | Emenda redigida por mim passa pela Sombra antes de entrar |
+| E8 | Rodei o gate com base errada e aceitei "0 commits" na primeira leitura | Checagens de diff vazias | A3; ler a saída, não só o veredito |
+| E9 | Consumo de contexto sem critério: `plugin-authoring` para consulta pequena, `docker ps` inteiro, 3 páginas de doc, relatórios de 20 linhas | Contexto cresce rápido | Filtrar saída antes de ler; subagent para leitura grande; retorno ≤ 5 linhas |
