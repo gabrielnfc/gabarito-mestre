@@ -65,15 +65,13 @@ Antes de rodar, meça o que já existe:
 ```bash
 test -d tools/gabarito-gates
 ```
+Exit 0 = existe; exit 1 = não existe. O instalador 2.0 **não grava manifesto nem versão** em `tools/gabarito-gates/`: a versão instalada não se lê de um arquivo. O único resquício legível é o `.instalado.json` que a **1.1.x** deixou (a 2.0 não o apaga nem o atualiza):
 ```bash
-test -f tools/gabarito-gates/.instalado.json
+if [ -f tools/gabarito-gates/.instalado.json ]; then node -e 'console.log("instalado", JSON.parse(require("fs").readFileSync("tools/gabarito-gates/.instalado.json","utf8")).versao)'; else echo "sem .instalado.json"; fi
 ```
-Exit 0 = existe; exit 1 = não existe. Diretório existe e manifesto não → harness 1.0.x. Manifesto existe → leia a versão:
-```bash
-node -e 'console.log("instalado", JSON.parse(require("fs").readFileSync("tools/gabarito-gates/.instalado.json","utf8")).versao)'
-```
+Com o arquivo, é instalação 1.1.x (use a `versao` impressa). Sem o arquivo, com `tools/gabarito-gates/` presente, é 1.0.x **ou** 2.0 — o `--atualizar` abaixo resolve sem precisar saber: ele compara arquivo a arquivo e imprime `igual` ou `novo`.
 
-`tools/gabarito-gates/` **sem** `.instalado.json` é instalação **1.0.x** (o manifesto nasceu na 1.1.0): trate como versão anterior — pergunte por `AskUserQuestion` se roda `instalar.sh . --atualizar` (opções: `--atualizar` · `--atualizar --gates-substituir` · só instalar o que falta, sem `--atualizar`). Se o repo já tem harness de uma versão anterior (esse caso, ou `.instalado.json` com `versao` ≠ `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json`), **pergunte** antes: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/instalar.sh" . --atualizar` grava `<arquivo>.novo` + `diff --stat` para `AGENTS.md` e `docs/harness/*.md` (nunca sobrescreve) e avisa que **R19–R21 agora são do harness; regras de projeto passam a R30+**; `--atualizar --gates-substituir` troca `tools/gabarito-gates/` arquivo a arquivo com `.bak`, recusando (→ `.novo`) o que foi editado localmente (ADR-TIM-1). Com `--atualizar` o doctor **não** roda ao fim — o usuário ainda vai aplicar os `.novo`.
+Se `tools/gabarito-gates/` existe, o repo já tem harness de uma versão anterior (ou da atual): **pergunte** por `AskUserQuestion` se roda `instalar.sh . --atualizar` (opções: `--atualizar` · só instalar o que falta, sem `--atualizar`). `bash "${CLAUDE_PLUGIN_ROOT}/scripts/instalar.sh" . --atualizar` grava `<arquivo>.novo` + `diff --stat` para `AGENTS.md`, `docs/harness/*.md` e os gates em `tools/gabarito-gates/` que diferem do plugin (nunca sobrescreve, nunca apaga) e avisa que **R19–R21 agora são do harness; regras de projeto passam a R30+**. O usuário aplica os `.novo` à mão. Com `--atualizar` o doctor **não** roda ao fim — o usuário ainda vai aplicar os `.novo`.
 
 O que o instalador cria (de `${CLAUDE_PLUGIN_ROOT}/reference/` e `templates/`):
 
@@ -82,11 +80,11 @@ O que o instalador cria (de `${CLAUDE_PLUGIN_ROOT}/reference/` e `templates/`):
 | `AGENTS.md` | `reference/AGENTS.md` | núcleo (≤ 17.291 B, lido sempre); Apêndice em branco (≤ 4.096 B) |
 | `CLAUDE.md` | `templates/CLAUDE.md` | **APENAS** `@AGENTS.md`. Os docs de referência **não** são importados — são sob demanda, de propósito |
 | `docs/harness/{referencia,gates,adocao,prompts,fluxo}.md` | `reference/` | consultados por ponteiro; `fluxo.md` é a fonte normativa do Workflow TRUE |
-| `tools/gabarito-gates/` + `.instalado.json` | `gates/` | gates e scripts, zero dependências, Node ≥ 22.18; `.instalado.json` guarda hash por arquivo |
+| `tools/gabarito-gates/` | `gates/` | gates e scripts, zero dependências, Node ≥ 22.18; sem `test/`, `README.md` nem manifesto de versão |
 | `harness.config.json` | `templates/` | template — as seções `fluxo`, `versionamento`, `orquestracao` **não** vêm nele: nascem no onboarding |
 | `.harness/attest.json` | `templates/` | tudo `confirmado: false` — atestar é ato nominal e datado (inclui `iniciativa-resolvida`, `squash-titulo-pr`) |
 | `.github/workflows/gabarito.yml` | `templates/` | doctor + testes dos gates + versionamento (`fetch-depth: 0`) + guarda de migrations (guarda de migrations desligada por padrão — `gates.md §4`) |
-| `.gitignore` (emenda) | — | garante `.harness/doctor-cache.json`, `.harness/fluxo-cache.json`, `*.novo`, `*.bak`; nada removido |
+| `.gitignore` (emenda) | — | garante `.harness/doctor-cache.json`, `.harness/fluxo-cache.json`, `.harness/entregas/_sem-id/`, `.harness/heartbeat.json`, `*.novo`, `*.bak`; nada removido |
 
 Cole a saída do instalador. **Anote** se ela tem a linha `criado   .github/workflows/gabarito.yml` (o arquivo nasceu nesta execução) ou `mantido` — a fase 3 decide por isso se pode ajustar o trunk no workflow. Se nenhuma fase 2–4 for rodar, cole também a do doctor e vá ao **Fechamento**.
 
@@ -365,7 +363,7 @@ Registra o vínculo PBI → Epic → Iniciativa no cache local que os hooks leem
 
 - Declarar nível de adoção. A skill deixa `____`. Nível é medido, nunca presumido.
 - Importar `docs/harness/*.md` no `CLAUDE.md`.
-- Sobrescrever ou apagar qualquer arquivo do usuário (R2). O instalador não faz isso; `onboarding-config.mjs` só emenda; você também não. Única exceção: `tools/gabarito-gates/` via `--atualizar --gates-substituir`, com `.bak` (ADR-TIM-1).
+- Sobrescrever ou apagar qualquer arquivo do usuário (R2). O instalador não faz isso; `onboarding-config.mjs` só emenda; você também não. Sem exceção: nem `tools/gabarito-gates/` — o que difere vira `<arquivo>.novo`.
 - Editar `harness.config.json` ou `.claude/settings.json` à mão — só via `onboarding-config.mjs`.
 - Tratar exit 0 de `onboarding-config.mjs` como sucesso sem ler o stdout (`NÃO escrito` é falha declarada).
 - Escrever na ferramenta de planejamento sem `fluxo.escrita: true` (ADR-FLX-2). `--vincular` **nunca** escreve.

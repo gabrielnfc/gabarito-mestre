@@ -21,6 +21,7 @@
 #  B8  PR_TEMPLATE.md listar tipo que não está em tiposComEscopoDePbi/tiposLivres (DEFAULTS)
 #  F6-R7 usar `grep -c '"hooks"'` sem `[[:space:]]*:` (sempre 1, por causa da keyword)
 #  "77 testes" reintroduzido em plugins/gabarito-mestre, .github/, README.md ou CONTRIBUTING.md
+#  A4 r1: voltar a citar --gates-substituir como opção, ou `test -f …/.instalado.json` na skill
 #  A3 r1: renomear o job instalador do ci.yml ⇒ nome exato do ruleset; doctor-self deixar de exigir configurada
 #  renomear no ci.yml um dos 4 checks exigidos pelo ruleset de main, ou tirar ubuntu-latest/macos-latest da matriz de hooks
 #  nomes da 1.0.1 (4 skills · 3 agents · 1 command · 2+3 hooks · 7 gates + 4 scripts · R1–R18 · G1–G9 · I1–I12)
@@ -263,6 +264,14 @@ for rn in $(seq 1 18); do grep -qE "(^|[^A-Z0-9])R$rn([^0-9]|$)" "$A" || { falha
 for gn in $(seq 1 9);  do grep -qE "(^|[^A-Z0-9])G$gn([^0-9]|$)" "$A" || { falha "nomes da 1.0.1: G$gn" "ausente do AGENTS.md"; nomes_falhou=1; }; done
 for in_ in $(seq 1 12); do grep -qE "(^|[^A-Z0-9])I$in_([^0-9]|$)" "$A" || { falha "nomes da 1.0.1: I$in_" "ausente do AGENTS.md"; nomes_falhou=1; }; done
 [ "$nomes_falhou" -eq 0 ] && ok "nomes da 1.0.1 presentes: 4 skills, 3 agents, 1 command, 2 hooks (+3), 7 gates (+4 scripts), R1–R18, G1–G9, I1–I12"
+
+# A4 (T6 r1): a skill oficial e o README não mandam rodar flag removida nem dependem do manifesto que a 2.0 não grava.
+# Menção que DIZ que a flag acabou ("não há/existe mais") é permitida; qualquer outra, não.
+FLAG_VIVA=$(grep -rn -e '--gates-substituir' "$P" "$ROOT/README.md" --include='*.md' --include='*.sh' --include='*.mjs' --include='*.json' 2>/dev/null | grep -v -e '/scripts/test/' -e '/gates/test/' -e '/gates/dist/' -e 'node_modules' | grep -viE 'n(ã|a)o (h(á|a)|existe) mais' | wc -l | tr -d ' ')
+check "sem menção viva a --gates-substituir em plugins/** e README (flag removida na 2.0)" '[ "'"$FLAG_VIVA"'" -eq 0 ]' "flag removida ainda citada como utilizável ($FLAG_VIVA linha(s))"
+SKILL_I="$P/skills/gabarito-instalar/SKILL.md"
+check "skill gabarito-instalar não usa 'test -f …/.instalado.json' para detectar versão" '! grep -qE "^test -f tools/gabarito-gates/.instalado.json" "$SKILL_I"' "a skill ainda decide pela existência de um manifesto que o instalador 2.0 não grava"
+check "skill gabarito-instalar não promete .instalado.json na tabela do que o instalador cria" '! grep -E "^\| .tools/gabarito-gates/. \+ .\.instalado\.json" "$SKILL_I" | grep -q .' "tabela da fase 1 promete o manifesto"
 
 echo "── $falhas falha(s)"
 [ "$falhas" -eq 0 ]
