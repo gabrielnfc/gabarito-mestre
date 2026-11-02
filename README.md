@@ -200,7 +200,7 @@ A config vem de `refs/remotes/origin/HEAD:harness.config.json`, **nunca da árvo
 
 ### Fail-open declarado (G9)
 
-Payload que não é JSON, sem `tool_input` ou com `command` que não é texto: aviso em stderr, exit 0, sem decisão. `cwd` fora de repositório git: só os anéis de segredo e integridade valem. Diário indisponível (`.harness` somente leitura, `session_id` fora do padrão): a guarda segue e o `systemMessage` avisa; lock preso não atrasa a decisão, que sai antes da gravação. **Exceção dentro da classificação:** não é fail-open total; a chamada que menciona segredo ou integridade continua pedindo (`deny` ao subagent) e as demais seguem com aviso. `node` ausente é o único caso em que o hook nem sobe: o Claude Code o trata como erro não bloqueante do hook.
+Payload que não é JSON, sem `tool_input` ou com `command` que não é texto: aviso em stderr, exit 0, sem decisão. `cwd` fora de repositório git: só os anéis de segredo e integridade valem. Diário indisponível (`.harness` somente leitura, `session_id` fora do padrão): a guarda segue e o `systemMessage` avisa; lock preso não atrasa a decisão, que sai antes da gravação. **Exceção dentro da classificação:** não é fail-open total; a chamada que menciona segredo ou integridade continua pedindo (`deny` ao subagent) e as demais seguem com aviso. `node` ausente é o único caso em que o hook nem sobe (shell devolve 127): pela documentação do Claude Code, saída diferente de 0 e 2 é erro não bloqueante; **não medido aqui**.
 
 ### Medido
 
