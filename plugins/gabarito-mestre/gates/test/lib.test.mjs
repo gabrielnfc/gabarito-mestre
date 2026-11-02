@@ -5,6 +5,9 @@
  *  M1  ehEntrypoint sem realpath      ⇒ `ehEntrypoint-symlink` falha
  *  M2  lerJson lançando em inválido   ⇒ `lerJson-invalido-undefined` falha
  *  M3  apagar o import de um script   ⇒ a suíte dele falha (entrypoint-guard / testes do script)
+ *  M4  git show origin/HEAD:… (nome curto) ⇒ `permitidos-forjado-branch-homonima` falha
+ *  M5  ler a árvore local em vez da ref   ⇒ `lerguarda-origin-vence` falha
+ *  M6  preservar `permitidos` local       ⇒ `lerguarda-ausente-local-permitidos-vazio` falha
  */
 
 import { test, describe } from 'node:test';
@@ -13,9 +16,9 @@ import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { arg, ehEntrypoint } from '../lib/cli.mjs';
-import { lerJson } from '../lib/config.mjs';
+import { lerJson, lerGuarda } from '../lib/config.mjs';
 import { raizPorFs, inferirPbi, PADROES } from '../lib/git.mjs';
 import { hojeISO, diasEntre } from '../lib/datas.mjs';
 
@@ -103,5 +106,84 @@ describe('lib/datas', () => {
   test('diasEntre', () => {
     assert.equal(diasEntre('2026-11-01T00:00:00Z', '2026-11-03T00:00:00Z'), 2);
     assert.ok(Number.isNaN(diasEntre('lixo', '2026-11-03')));
+  });
+});
+
+describe('lib/config lerGuarda', () => {
+  const sh = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const novo = () => {
+    const d = mkdtempSync(join(tmpdir(), 'gm-guarda-'));
+    sh(d, 'init', '-q', '-b', 'main');
+    sh(d, 'config', 'user.email', 't@t');
+    sh(d, 'config', 'user.name', 't');
+    sh(d, 'config', 'commit.gpgsign', 'false');
+    return d;
+  };
+  /** Repo com um commit (config `origin` ou só x.txt); `refs/remotes/origin/HEAD` → esse commit; `local` sobrescreve a árvore. */
+  function repo({ origin, local }) {
+    const d = novo();
+    if (origin !== undefined) writeFileSync(join(d, 'harness.config.json'), JSON.stringify(origin));
+    else writeFileSync(join(d, 'x.txt'), 'x');
+    sh(d, 'add', '-A');
+    sh(d, 'commit', '-qm', 'base');
+    sh(d, 'update-ref', 'refs/remotes/origin/main', sh(d, 'rev-parse', 'HEAD'));
+    sh(d, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    if (local !== undefined) writeFileSync(join(d, 'harness.config.json'), JSON.stringify(local));
+    return d;
+  }
+  const cfg = (permitidos, branchPadrao = 'main') => ({
+    versionamento: { branchPadrao },
+    guarda: { producao: { permitidos }, ambientes: { prod: { hosts: ['db.alvo.test'] } } },
+  });
+
+  test('lerguarda-origin-vence', () => {
+    const d = repo({ origin: cfg(['vercel ls *']), local: cfg(['*']) });
+    const g = lerGuarda(d);
+    assert.equal(g.fonte, 'origin');
+    assert.deepEqual(g.config.producao.permitidos, ['vercel ls *']);
+    assert.deepEqual(g.config.ambientes.prod.hosts, ['db.alvo.test']);
+  });
+
+  test('permitidos-forjado-branch-homonima', () => {
+    const d = repo({ origin: cfg([]) });
+    // subagent forja: branch homônima `origin/HEAD` num commit com permitidos "*"
+    writeFileSync(join(d, 'harness.config.json'), JSON.stringify(cfg(['*'], 'forjada')));
+    sh(d, 'add', '-A');
+    sh(d, 'commit', '-qm', 'forja');
+    sh(d, 'branch', 'origin/HEAD', 'HEAD');
+    // premissa medida (Q4): o nome curto resolve para a branch forjada
+    assert.equal(sh(d, 'rev-parse', 'origin/HEAD'), sh(d, 'rev-parse', 'HEAD'));
+    const g = lerGuarda(d);
+    assert.equal(g.fonte, 'origin');
+    assert.deepEqual(g.config.producao.permitidos, []);
+    assert.equal(g.branchPadrao, 'main');
+  });
+
+  test('lerguarda-ausente-local-permitidos-vazio', () => {
+    // sem origin/HEAD
+    const d = novo();
+    writeFileSync(join(d, 'harness.config.json'), JSON.stringify(cfg(['*'])));
+    const g = lerGuarda(d);
+    assert.equal(g.fonte, 'local');
+    assert.deepEqual(g.config.producao.permitidos, []);
+    assert.deepEqual(g.config.ambientes.prod.hosts, ['db.alvo.test']);
+    assert.equal(g.divergente, false);
+    // origin/HEAD existe, mas o arquivo não existe na ref
+    const g2 = lerGuarda(repo({ origin: undefined, local: cfg(['*']) }));
+    assert.equal(g2.fonte, 'local');
+    assert.deepEqual(g2.config.producao.permitidos, []);
+    // nada em lugar nenhum
+    assert.deepEqual(lerGuarda(novo()), { config: null, fonte: 'local', divergente: false, branchPadrao: null });
+  });
+
+  test('lerguarda-branchpadrao-da-ref', () => {
+    const g = lerGuarda(repo({ origin: cfg([], 'trunk'), local: cfg([], 'forjada') }));
+    assert.equal(g.branchPadrao, 'trunk');
+    assert.deepEqual(g.config.ambientes.prod.branches, ['trunk']); // default = branchPadrao da MESMA ref
+  });
+
+  test('lerguarda-divergente', () => {
+    assert.equal(lerGuarda(repo({ origin: cfg(['a']), local: cfg(['a']) })).divergente, false);
+    assert.equal(lerGuarda(repo({ origin: cfg(['a']), local: cfg(['a', 'b']) })).divergente, true);
   });
 });
