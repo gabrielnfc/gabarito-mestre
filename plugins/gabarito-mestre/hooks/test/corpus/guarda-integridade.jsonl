@@ -66,3 +66,10 @@
 {"nome":"q16-git-merge-redirect-dotgit-orq","req":"GRD-5","tool":"Bash","input":{"command":"git merge feat/GM-1-y > .git/config"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"q16-git-merge-arg-dotgit-orq","req":"GRD-5","tool":"Bash","input":{"command":"git merge .git/MERGE_MSG"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"q16-git-c-hookspath-commit-sub","req":"GRD-5","tool":"Bash","input":{"command":"git -c core.hooksPath=x commit -m y"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"q15-git-log-patch-le-conteudo","req":"GRD-5","tool":"Bash","input":{"command":"git log -p -- .env"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"q15-git-log-patch-longo-le-conteudo","req":"GRD-5","tool":"Bash","input":{"command":"git log --patch --oneline -- .env"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"q15-git-log-oneline-segue-existencia","req":"GRD-5","tool":"Bash","input":{"command":"git log --oneline --stat -- .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"git-config-env-forma-igual-sub","req":"GRD-5","tool":"Bash","input":{"command":"git --config-env=core.hooksPath=X commit -m y"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"find-name-padrao-nao-e-leitura","req":"GRD-5","tool":"Bash","input":{"command":"find . -name \".env*\" -type f"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"find-iname-pem-nao-e-leitura","req":"GRD-5","tool":"Bash","input":{"command":"find . -iname \"*.pem\" -print"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"find-caminho-env-le","req":"GRD-5","tool":"Bash","input":{"command":"find .env -type f"},"agente":"sub","esperado":{"faixa":"deny"}}
