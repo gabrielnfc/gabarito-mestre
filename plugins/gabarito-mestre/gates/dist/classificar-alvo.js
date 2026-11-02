@@ -356,9 +356,11 @@ function classificarBash(entrada             , cfg                     , ctx    
   // O anel vem antes do ambiente.
   const cwd = typeof entrada.cwd === 'string' ? entrada.cwd : null;
   const subagent = entrada?.agent_id !== undefined && entrada?.agent_id !== '';
-  const anel = anelDeBash(segmentos, ctx, cwd, subagent);
-  if (anel) return { ...base, ambiente: 'desconhecido', acao: anel.escrita ? 'escrita' : 'leitura', alvo: reduzirAlvo(anel.alvo), anel: anel.anel };
-  return base;
+  const estado = { cdPerdido: false };
+  const anel = anelDeBash(segmentos, ctx, cwd, subagent, estado);
+  const comEstado = estado.cdPerdido ? { ...base, cdPerdido: true } : base;
+  if (anel) return { ...comEstado, ambiente: 'desconhecido', acao: anel.escrita ? 'escrita' : 'leitura', alvo: reduzirAlvo(anel.alvo), anel: anel.anel };
+  return comEstado;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
