@@ -1,10 +1,12 @@
 /**
- * Anéis fixos da guarda (REQ-GRD-5) e o leitor de Bash que os alimenta. Puro: sem I/O, sem `process.env`.
+ * Anéis fixos da guarda (REQ-GRD-5, Q14, Q15) e o leitor de Bash que os alimenta. Puro: sem I/O, sem `process.env`.
  *
  * - Segredo bloqueia leitura e escrita. Integridade bloqueia só escrita (Q2).
  * - O leitor de Bash é deliberadamente pequeno (E1:56): segmenta por `&&`, `||`, `;`, `|`, `&`, quebra de
- *   linha, parênteses e crases, respeita aspas, corta comentário e descarta os prefixos transparentes (Q10).
- *   Sem heredoc, sem backreference. Falsos negativos conhecidos: `X=rm; $X`, `base64 | sh`, `eval`.
+ *   linha, parênteses e crases, respeita aspas, junta `\`+quebra, corta comentário, lê `$(…)`/crases dentro de
+ *   aspas duplas (um nível) e descarta prefixos transparentes (Q10, palavras de controle, `@versão` de npx).
+ *   Sem tokenizador completo, sem heredoc, sem backreference.
+ * - Teto de 64 KB por comando: o que passa disso é ignorado (falha segura de desempenho, não de exceção).
  */
 
 import { posix } from 'node:path';
@@ -33,9 +35,26 @@ import { posix } from 'node:path';
                                           
 
 const NEUTRO = '\u0000';
+const SUBST = '\u0001';
+export const TETO_COMANDO = 65536;
 
-function lexar(src        )          {
+function fimDeSubstituicao(src        , ini        , abre        )         {
+  // `ini` aponta para o primeiro caractere depois de `$(` ou da crase de abertura.
+  if (abre === '`') {
+    const j = src.indexOf('`', ini);
+    return j < 0 ? src.length : j;
+  }
+  let prof = 1;
+  for (let j = ini; j < src.length; j++) {
+    if (src[j] === '(') prof++;
+    else if (src[j] === ')' && --prof === 0) return j;
+  }
+  return src.length;
+}
+
+function lexar(src        )                                      {
   const segs          = [];
+  const extras           = [];
   let toks        = [];
   let ini = 0;
   let cur = '';
@@ -75,6 +94,20 @@ function lexar(src        )          {
         cur += src[i + 1];
         curE += src[i + 1] === '$' ? NEUTRO : src[i + 1];
         i++;
+      } else if ((c === '$' && src[i + 1] === '(') || c === '`') {
+        const abre = c === '`' ? '`' : '$(';
+        const comeco = i + abre.length;
+        const fim = fimDeSubstituicao(src, comeco, c === '`' ? '`' : '(');
+        const dentro = src.slice(comeco, fim);
+        if (dentro.trim() === 'pwd') {
+          cur += '$PWD';
+          curE += '$PWD';
+        } else {
+          extras.push(dentro);
+          cur += SUBST;
+          curE += SUBST;
+        }
+        i = fim;
       } else {
         cur += c;
         curE += c;
@@ -87,6 +120,10 @@ function lexar(src        )          {
       continue;
     }
     if (c === '\\') {
+      if (src[i + 1] === '\n') {
+        i++;
+        continue;
+      }
       if (i + 1 < n) {
         literal(src[i + 1]);
         palavra = true;
@@ -148,11 +185,16 @@ function lexar(src        )          {
     palavra = true;
   }
   fimSegmento(n, n);
-  return segs;
+  return { segs, extras };
 }
 
-const SUDO_COM_VALOR = new Set(['-u', '-g', '-h', '-p', '-C', '-D', '-R', '-T', '-U']);
+const SUDO_VALOR = new Set(['-u', '-g', '-h', '-p', '-C', '-D', '-R', '-T', '-U']);
+const ENV_VALOR = new Set(['-u', '-C', '-S', '--unset', '--chdir']);
+const RUNNER_VALOR = new Set(['-p', '--package']);
+const SEM_VALOR = new Set        ();
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
+// Palavras de controle e `!`/`{`: o comando de verdade é o que vem depois.
+const CONTROLE = new Set(['then', 'do', 'else', 'elif', 'while', 'until', 'if', '!', '{', '}', 'fi', 'done']);
 
 function base(cmd        )         {
   return cmd.slice(cmd.lastIndexOf('/') + 1);
@@ -177,48 +219,59 @@ function montar(b       , profundidade        )             {
     x.push(k.e);
   }
 
+  // Índice em vez de `splice`: linear mesmo com milhares de tokens.
+  let p = 0;
   const atribs           = [];
-  const pular = (n        ) => {
-    w.splice(0, n);
-    x.splice(0, n);
-  };
-  const pularFlags = (comValor         ) => {
-    while (w.length && (w[0].startsWith('-') || /^[A-Za-z_]\w*=/.test(w[0]))) {
-      const f = w[0];
-      pular(1);
-      if (comValor && SUDO_COM_VALOR.has(f) && w.length) pular(1);
+  const atrib = (t        ) => /^[A-Za-z_]\w*=/.test(t);
+  const pularFlags = (comValor             ) => {
+    while (p < w.length && (w[p].startsWith('-') || atrib(w[p]))) {
+      const f = w[p++];
+      if (f === '--') break;
+      if (comValor.has(f) && p < w.length) p++;
     }
   };
-  for (let guarda = 0; guarda < 8 && w.length; guarda++) {
-    if (/^[A-Za-z_]\w*=/.test(w[0])) {
-      atribs.push(w[0]);
-      pular(1);
+  let runner = false;
+  for (let guarda = 0; guarda < 16 && p < w.length; guarda++) {
+    if (atrib(w[p])) {
+      atribs.push(w[p++]);
       continue;
     }
-    const cabeca = base(w[0]);
-    if (cabeca === 'sudo') {
-      pular(1);
-      pularFlags(true);
-    } else if (cabeca === 'env' || cabeca === 'command' || cabeca === 'time' || cabeca === 'nohup') {
-      pular(1);
-      pularFlags(false);
+    const cabeca = base(w[p]);
+    if (CONTROLE.has(cabeca)) p++;
+    else if (cabeca === 'sudo') {
+      p++;
+      pularFlags(SUDO_VALOR);
+    } else if (cabeca === 'env') {
+      p++;
+      pularFlags(ENV_VALOR);
+    } else if (cabeca === 'command' || cabeca === 'time' || cabeca === 'nohup') {
+      p++;
+      pularFlags(SEM_VALOR);
     } else if (cabeca === 'npx' || cabeca === 'bunx') {
-      pular(1);
-      pularFlags(false);
-    } else if ((cabeca === 'pnpm' || cabeca === 'yarn') && w[1] === 'dlx') {
-      pular(2);
-      pularFlags(false);
-    } else if ((cabeca === 'npm' || cabeca === 'pnpm') && w[1] === 'exec') {
-      pular(2);
-      pularFlags(false);
-      if (w[0] === '--') pular(1);
+      p++;
+      pularFlags(RUNNER_VALOR);
+      runner = true;
+    } else if ((cabeca === 'pnpm' || cabeca === 'yarn') && w[p + 1] === 'dlx') {
+      p += 2;
+      pularFlags(RUNNER_VALOR);
+      runner = true;
+    } else if ((cabeca === 'npm' || cabeca === 'pnpm') && w[p + 1] === 'exec') {
+      p += 2;
+      pularFlags(RUNNER_VALOR);
+      runner = true;
     } else break;
   }
-  if (!w.length) return atribs.length || saidas.length || entradas.length ? [{ cru: b.cru, cmd: '', args: [], exp: [], atribs, saidas, entradas }] : [];
+  if (p >= w.length) return atribs.length || saidas.length || entradas.length ? [{ cru: b.cru, cmd: '', args: [], exp: [], atribs, saidas, entradas }] : [];
 
-  const cmd = base(w[0]);
-  const args = w.slice(1);
-  const exp = x.slice(1);
+  let primeiro = w[p];
+  if (runner) {
+    // `vercel@latest` ⇒ `vercel`; pacote com escopo (`@x/y`) mantém o `@` inicial.
+    const at = primeiro.indexOf('@', 1);
+    if (at > 0) primeiro = primeiro.slice(0, at);
+  }
+  const cmd = base(primeiro);
+  const args = w.slice(p + 1);
+  const exp = x.slice(p + 1);
 
   if (SHELLS.has(cmd) && profundidade < 3) {
     const k = args.findIndex((a) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a));
@@ -228,28 +281,48 @@ function montar(b       , profundidade        )             {
 }
 
 export function segmentar(comando        , profundidade = 0)             {
-  return lexar(comando).flatMap((b) => montar(b, profundidade));
+  const src = profundidade === 0 && comando.length > TETO_COMANDO ? comando.slice(0, TETO_COMANDO) : comando;
+  const { segs, extras } = lexar(src);
+  const out             = [];
+  for (const b of segs) for (const s of montar(b, profundidade)) out.push(s);
+  if (profundidade < 3) for (const e of extras) for (const s of segmentar(e, profundidade + 1)) out.push(s);
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Caminhos
 
-/** `-h`/valores de `--chave=valor`: devolve o valor de um token que parece caminho. */
-function valorDeFlag(a        )         {
-  if (a.startsWith('--') && a.includes('=')) return a.slice(a.indexOf('=') + 1);
-  return a;
+function resolver(caminho        , contexto          , cwd                )                                       {
+  let p = caminho.trim();
+  p = p.replace(/\$\{?CLAUDE_PLUGIN_ROOT\}?/g, contexto.pluginRoot ?? '$CLAUDE_PLUGIN_ROOT');
+  const base = cwd && cwd.startsWith('/') ? cwd : contexto.raiz && contexto.raiz.startsWith('/') ? contexto.raiz : null;
+  if (base) p = p.replace(/\$\{?PWD\}?/g, base);
+  p = p.replace(/^\$\{?HOME\}?/, '~');
+  if (!p.startsWith('/') && !p.startsWith('~') && !p.startsWith('$') && base) p = posix.resolve(base, p);
+  let norm = posix.normalize(p).replace(/^\.\//, '');
+  if (norm.length > 1) norm = norm.replace(/\/+$/, '');
+  const raiz = contexto.raiz ? contexto.raiz.replace(/\/+$/, '') : null;
+  let rel                = null;
+  if (norm.startsWith('/')) {
+    if (raiz && norm === raiz) rel = '';
+    else if (raiz && norm.startsWith(`${raiz}/`)) rel = norm.slice(raiz.length + 1);
+  } else if (!norm.startsWith('~') && !norm.startsWith('..') && !norm.startsWith('$')) rel = norm === '.' ? '' : norm;
+  return { norm, rel };
 }
 
-export function anelDeCaminho(caminho        , contexto          )              {
-  const bruto = caminho.trim();
-  if (bruto === '') return null;
-  const norm = posix.normalize(bruto).replace(/^\.\//, '');
+const AREAS_DIR = ['.harness', 'tools/gabarito-gates', '.github/workflows', '.git/refs/remotes'];
+const ANCESTRAIS = ['tools', '.github', '.claude', '.git', '.git/refs'];
+
+export function anelDeCaminho(caminho        , contexto          , cwd                )              {
+  if (caminho.trim() === '') return null;
+  const { norm, rel } = resolver(caminho, contexto, cwd);
   const segs = norm.split('/').filter((s) => s !== '' && s !== '.');
   const nome = segs.length ? segs[segs.length - 1] : '';
+  const minusculo = nome.toLowerCase();
 
-  // Segredo (leitura e escrita).
-  if (/^\.env(\..+)?$/.test(nome) && !/\.(example|sample|template|dist)$/.test(nome)) return 'segredo';
-  if (/\.(pem|key)$/.test(nome)) return 'segredo';
+  // Segredo (leitura e escrita): `.env*` literal, só `.env.example` é exceção; sem distinção de caixa.
+  if (minusculo.startsWith('.env') && minusculo !== '.env.example') return 'segredo';
+  if (/^[^.][\s\S]*\.(pem|key)$/i.test(nome)) return 'segredo';
   if (segs.includes('.aws')) return 'segredo';
   for (let i = 0; i + 1 < segs.length; i++) if (segs[i] === '.config' && segs[i + 1] === 'gh') return 'segredo';
 
@@ -258,26 +331,37 @@ export function anelDeCaminho(caminho        , contexto          )              
     const pr = contexto.pluginRoot.replace(/\/+$/, '');
     if (norm === pr || norm.startsWith(`${pr}/`)) return 'integridade';
   }
-  let rel                = norm;
-  if (norm.startsWith('/')) {
-    const raiz = contexto.raiz ? contexto.raiz.replace(/\/+$/, '') : null;
-    rel = raiz && norm.startsWith(`${raiz}/`) ? norm.slice(raiz.length + 1) : null;
-  }
-  if (rel === null || rel.startsWith('../') || rel.startsWith('~')) return null;
-  if (rel === 'harness.config.json') return 'integridade';
-  if (rel === '.harness' || rel.startsWith('.harness/')) return 'integridade';
-  if (rel.startsWith('tools/gabarito-gates/')) return 'integridade';
-  if (/^\.claude\/settings[^/]*\.json$/.test(rel)) return 'integridade';
-  if (rel.startsWith('.github/workflows/')) return 'integridade';
-  if (rel === '.git/config' || rel === '.git/packed-refs' || rel.startsWith('.git/refs/remotes/')) return 'integridade';
+  if (rel === null) return null;
+  // Sem distinção de caixa: o APFS padrão do macOS não distingue.
+  const r = rel.toLowerCase();
+  if (r === 'harness.config.json') return 'integridade';
+  if (r === '.git' || r.startsWith('.git/')) return 'integridade';
+  for (const d of AREAS_DIR) if (r === d || r.startsWith(`${d}/`)) return 'integridade';
+  if (/^\.claude\/settings[^/]*\.json$/.test(r)) return 'integridade';
   return null;
 }
 
+/** Remoção de um diretório que contém uma área de integridade (`rm -rf .github`). */
+export function ancestralDeIntegridade(caminho        , contexto          , cwd                )          {
+  if (caminho.trim() === '') return false;
+  const { norm, rel } = resolver(caminho, contexto, cwd);
+  if (contexto.pluginRoot) {
+    const pr = contexto.pluginRoot.replace(/\/+$/, '');
+    if (pr.startsWith(`${norm}/`)) return true;
+  }
+  if (rel === null) return false;
+  return rel === '' || ANCESTRAIS.includes(rel);
+}
+
 // ---------------------------------------------------------------------------------------------------------------
-// Git
+// Git (Q14): lista permitida por capacidade
 
 const GIT_GLOBAIS_COM_VALOR = new Set(['-C', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--super-prefix']);
-const GIT_ADMIN_REMOTO = new Set(['remote', 'fetch', 'pull', 'update-ref', 'symbolic-ref', 'config']);
+const GIT_PERMITIDOS = new Set([
+  '', 'add', 'commit', 'status', 'diff', 'log', 'show', 'checkout', 'switch', 'restore', 'branch', 'rev-parse',
+  'merge-base', 'check-ignore', 'stash', 'rebase', 'cherry-pick', 'reset', 'blame', 'grep', 'ls-files', 'mv', 'rm',
+]);
+const PUSH_COM_VALOR = new Set(['-o', '--push-option', '--repo', '--receive-pack', '--exec']);
 
                                                                           
 
@@ -297,68 +381,173 @@ export function lerGit(args          )          {
   return { sub: args[i] ?? '', resto: args.slice(i + 1), configs };
 }
 
+/** Posicionais de um `git push`: [remoto, ...refspecs]. */
+export function posicionaisDePush(resto          )           {
+  const out           = [];
+  for (let i = 0; i < resto.length; i++) {
+    const a = resto[i];
+    if (PUSH_COM_VALOR.has(a)) i++;
+    else if (!a.startsWith('-')) out.push(a);
+  }
+  return out;
+}
+
+export function destinoDeRefspec(r        )         {
+  const sem = r.startsWith('+') ? r.slice(1) : r;
+  const i = sem.lastIndexOf(':');
+  return i >= 0 ? sem.slice(i + 1) : sem;
+}
+
+function pushPermitido(resto          )          {
+  if (resto.some((a) => a === '--repo' || a.startsWith('--repo=') || a === '--receive-pack' || a.startsWith('--receive-pack=') || a === '--exec' || a.startsWith('--exec='))) return false;
+  const pos = posicionaisDePush(resto);
+  if (pos.length > 0 && pos[0] !== 'origin') return false;
+  for (let i = 1; i < pos.length; i++) if (destinoDeRefspec(pos[i]).startsWith('refs/remotes/')) return false;
+  return true;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Bash
 
+const REMOVE = new Set(['rm', 'rmdir', 'unlink', 'shred']);
 const ESCREVE_TUDO = new Set(['rm', 'rmdir', 'chmod', 'chown', 'chgrp', 'ln', 'truncate', 'touch', 'install', 'unlink', 'shred', 'mv', 'tee']);
 const SO_REDIRECIONA = new Set(['echo', 'printf']);
+// Q15: checar existência não é leitura.
+const EXISTENCIA = new Set(['ls', 'test', '[', '[[', 'stat']);
+const GREP = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'jq']);
+const BANCOS = new Set(['psql', 'pg_dump', 'pg_dumpall', 'pg_restore', 'mysql', 'mysqldump', 'mongosh', 'mongo', 'redis-cli']);
 
                                                                         
 
-function positionais(args          )           {
-  return args.filter((a) => a !== '' && !a.startsWith('-')).concat(args.filter((a) => a.startsWith('--') && a.includes('=')).map(valorDeFlag));
+/** Remove o valor de opções que carregam texto (mensagem, SQL), nunca caminho. */
+function semTextoLivre(cmd        , args          )           {
+  const curtas = cmd === 'git' ? ['-m'] : BANCOS.has(cmd) ? ['-c'] : [];
+  const longas = cmd === 'git' ? ['--message'] : BANCOS.has(cmd) ? ['--command'] : [];
+  if (curtas.length === 0) return args;
+  const out           = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (curtas.includes(a) || longas.includes(a)) i++;
+    else if (longas.some((l) => a.startsWith(`${l}=`)) || (cmd === 'git' && a.length > 2 && a.startsWith('-m') && !a.startsWith('--'))) continue;
+    else out.push(a);
+  }
+  return out;
+}
+
+/** Candidatos a caminho nos argumentos: o próprio token, `--opt=valor`, `k=@arq`, `@arq`. */
+function candidatos(args          )           {
+  const out           = [];
+  for (const a of args) {
+    if (a === '') continue;
+    if (a.startsWith('-')) {
+      const i = a.indexOf('=');
+      if (i > 0) out.push(a.slice(i + 1).replace(/^@/, ''));
+      continue;
+    }
+    const m = /^[^=@]+=@(.+)$/.exec(a);
+    out.push(m ? m[1] : a.startsWith('@') ? a.slice(1) : a);
+  }
+  return out;
+}
+
+function ehCaminhoPlausivel(t        )          {
+  return t !== '' && !/\s/.test(t) && !t.includes('://') && t.length <= 4096;
+}
+
+function valorT(args          )                                          {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '-t' || a === '--target-directory') return { dir: args[i + 1] ?? null, resto: args.slice(0, i).concat(args.slice(i + 2)) };
+    if (a.startsWith('--target-directory=')) return { dir: a.slice(19), resto: args.slice(0, i).concat(args.slice(i + 1)) };
+  }
+  return { dir: null, resto: args };
+}
+
+function empilhar(dest          , origem          )       {
+  for (let i = 0; i < origem.length; i++) dest.push(origem[i]);
 }
 
 /**
  * Procura o anel em todos os segmentos. Segredo vence integridade; dentro do mesmo anel vale o primeiro achado.
- * Retorna `null` se nenhum segmento toca um caminho de anel.
+ * Retorna `null` se nenhum segmento toca um caminho de anel. `cwd` é o diretório da chamada; `cd` muda o corrente.
  */
-export function anelDeBash(segmentos            , contexto          )                    {
+export function anelDeBash(segmentos            , contexto          , cwd                )                    {
   let integridade                    = null;
-  const marcar = (anel             , alvo        , escrita         )                    => {
-    if (anel === 'segredo') return { anel, alvo, escrita };
-    if (anel === 'integridade' && escrita && integridade === null) integridade = { anel, alvo, escrita };
-    return null;
-  };
+  let atual                = cwd ?? null;
 
   for (const s of segmentos) {
     const escritas           = [...s.saidas];
     const leituras           = [...s.entradas];
-    const pos = positionais(s.args);
+    const remocoes           = [];
+
+    if (s.cmd === 'cd') {
+      const d = s.args.find((a) => !a.startsWith('-'));
+      if (d !== undefined && !d.includes('$') && !d.startsWith('~')) {
+        const base = atual ?? contexto.raiz;
+        atual = base && base.startsWith('/') ? posix.resolve(base, d) : null;
+      }
+      continue;
+    }
+
+    const uteis = semTextoLivre(s.cmd, s.args);
+    const pos = candidatos(uteis).filter(ehCaminhoPlausivel);
 
     if (s.cmd === 'git') {
       const g = lerGit(s.args);
-      if (g.configs.some((c) => /^(remote\.|url\.|core\.hookspath)/i.test(c))) {
-        integridade ??= { anel: 'integridade', alvo: '.git/config', escrita: true };
-      }
-      if (GIT_ADMIN_REMOTO.has(g.sub)) {
-        const alvo = g.sub === 'remote' || g.sub === 'config' ? '.git/config' : 'refs/remotes';
+      const gitResto = candidatos(semTextoLivre('git', g.resto)).filter(ehCaminhoPlausivel);
+      if (g.configs.some((c) => /^(remote\.|url\.|core\.hookspath)/i.test(c))) integridade ??= { anel: 'integridade', alvo: '.git/config', escrita: true };
+      if (g.sub === 'push') {
+        if (!pushPermitido(g.resto)) integridade ??= { anel: 'integridade', alvo: 'refs/remotes', escrita: true };
+      } else if (!GIT_PERMITIDOS.has(g.sub)) {
+        const alvo = g.sub === 'remote' || g.sub === 'config' ? '.git/config' : g.sub === 'fetch' || g.sub === 'pull' || g.sub === 'update-ref' || g.sub === 'symbolic-ref' ? 'refs/remotes' : '.git';
         integridade ??= { anel: 'integridade', alvo, escrita: true };
       }
-      leituras.push(...positionais(g.resto));
-    } else if (s.cmd === 'cp') {
-      if (pos.length) escritas.push(pos[pos.length - 1]);
-      leituras.push(...pos.slice(0, -1));
+      if (g.sub !== 'log' && g.sub !== 'check-ignore') empilhar(leituras, gitResto);
+    } else if (EXISTENCIA.has(s.cmd)) {
+      // Q15: sem leitura.
+    } else if (s.cmd === 'cp' || s.cmd === 'mv') {
+      const t = valorT(uteis);
+      const fontes = t.resto.filter((a) => !a.startsWith('-')).filter(ehCaminhoPlausivel);
+      if (t.dir !== null) {
+        escritas.push(t.dir);
+        if (s.cmd === 'cp') empilhar(leituras, fontes);
+        else empilhar(escritas, fontes);
+        if (s.cmd === 'mv') empilhar(remocoes, fontes);
+      } else if (fontes.length) {
+        escritas.push(fontes[fontes.length - 1]);
+        const srcs = fontes.slice(0, -1);
+        if (s.cmd === 'cp') empilhar(leituras, srcs);
+        else {
+          empilhar(escritas, srcs);
+          empilhar(remocoes, srcs);
+        }
+      }
     } else if (s.cmd === 'sed') {
-      if (s.args.some((a) => /^-[a-zA-Z]*i/.test(a) || a.startsWith('--in-place'))) escritas.push(...pos);
-      else leituras.push(...pos);
+      if (s.args.some((a) => /^-[a-zA-Z]*i/.test(a) || a.startsWith('--in-place'))) empilhar(escritas, pos);
+      else empilhar(leituras, pos);
     } else if (s.cmd === 'dd') {
-      for (const a of s.args) if (a.startsWith('of=')) escritas.push(a.slice(3));
-      for (const a of s.args) if (a.startsWith('if=')) leituras.push(a.slice(3));
+      for (const a of s.args) {
+        if (a.startsWith('of=')) escritas.push(a.slice(3));
+        else if (a.startsWith('if=')) leituras.push(a.slice(3));
+      }
     } else if (ESCREVE_TUDO.has(s.cmd)) {
-      escritas.push(...pos);
+      empilhar(escritas, pos);
+      if (REMOVE.has(s.cmd)) empilhar(remocoes, pos);
+    } else if (GREP.has(s.cmd)) {
+      // O primeiro argumento que não é opção é o padrão, salvo `-e`/`--regexp`.
+      const temE = s.args.some((a) => a === '-e' || a === '--regexp' || a.startsWith('--regexp='));
+      empilhar(leituras, temE ? pos : pos.slice(1));
     } else if (!SO_REDIRECIONA.has(s.cmd)) {
-      leituras.push(...pos);
+      empilhar(leituras, pos);
     }
 
     for (const p of escritas) {
-      const hit = marcar(anelDeCaminho(p, contexto), p, true);
-      if (hit) return hit;
+      const r = anelDeCaminho(p, contexto, atual);
+      if (r === 'segredo') return { anel: 'segredo', alvo: p, escrita: true };
+      if (r === 'integridade') integridade ??= { anel: 'integridade', alvo: p, escrita: true };
     }
-    for (const p of leituras) {
-      const hit = marcar(anelDeCaminho(p, contexto), p, false);
-      if (hit) return hit;
-    }
+    for (const p of remocoes) if (ancestralDeIntegridade(p, contexto, atual)) integridade ??= { anel: 'integridade', alvo: p, escrita: true };
+    for (const p of leituras) if (anelDeCaminho(p, contexto, atual) === 'segredo') return { anel: 'segredo', alvo: p, escrita: false };
   }
   return integridade;
 }

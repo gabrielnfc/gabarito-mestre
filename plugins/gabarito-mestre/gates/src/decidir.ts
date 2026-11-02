@@ -34,7 +34,7 @@ function dadosDe(c: Classificacao): Record<string, unknown> {
 
 export function decidir(entrada: EntradaHook, config: ConfigGuarda | null, contexto: Contexto): Decisao {
   const c = classificar(entrada, config, contexto);
-  const subagent = entrada.agent_id !== undefined && entrada.agent_id !== '';
+  const subagent = entrada?.agent_id !== undefined && entrada?.agent_id !== '';
   const dados = dadosDe(c);
 
   const barrar = (rotulo: string): Decisao =>

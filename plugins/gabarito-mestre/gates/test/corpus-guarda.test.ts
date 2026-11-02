@@ -20,7 +20,7 @@ import type { ConfigGuarda, Contexto, EntradaHook } from '../src/tipos.ts';
 const CORPUS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'hooks', 'test', 'corpus');
 const ARQUIVOS = ['guarda-bash', 'guarda-mcp', 'guarda-caminho', 'guarda-integridade'];
 const REQS = new Set(['GRD-2', 'GRD-4', 'GRD-5', 'GRD-6']);
-const TOTAL_CORPUS = 94;
+const TOTAL_CORPUS = 163;
 // Nominados pelo dono + casos que as mutações prescritas da spec citam.
 const NOMINADOS = [
   'teste-sem-decisao',
@@ -44,6 +44,7 @@ type Caso = {
   input: Record<string, unknown>;
   agente: 'orq' | 'sub';
   modo?: string;
+  cwd?: string;
   contexto?: Partial<Contexto>;
   config?: 'ausente';
   esperado: { faixa: string; evento?: string; ambiente?: string; acao?: string; alvo?: string; motivoContem?: string };
@@ -76,7 +77,7 @@ function rodar(c: Caso, modo?: string) {
     tool_input: c.input,
     permission_mode: modo ?? c.modo ?? 'default',
     session_id: 'sessao-corpus',
-    cwd: '/repo',
+    cwd: c.cwd ?? '/repo',
     ...(c.agente === 'sub' ? { agent_id: 'agent-sub-1', agent_type: 'general-purpose' } : {}),
   };
   const contexto: Contexto = { ...CONTEXTO_PADRAO, ...(c.contexto ?? {}) };
