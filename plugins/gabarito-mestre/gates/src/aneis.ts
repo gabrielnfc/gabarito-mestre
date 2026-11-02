@@ -654,7 +654,7 @@ function empilhar(dest: string[], origem: string[]): void {
  * Procura o anel em todos os segmentos. Segredo vence integridade; dentro do mesmo anel vale o primeiro achado.
  * Retorna `null` se nenhum segmento toca um caminho de anel. `cwd` é o diretório da chamada; `cd` muda o corrente.
  */
-export function anelDeBash(segmentos: Segmento[], contexto: Contexto, cwd?: string | null, subagent = true): AchadoAnel | null {
+export function anelDeBash(segmentos: Segmento[], contexto: Contexto, cwd?: string | null, subagent = true, estado?: { cdPerdido: boolean }): AchadoAnel | null {
   let integridade: AchadoAnel | null = null;
   let atual: string | null = cwd ?? null;
   // `cd a;` em cadeia faz o caminho crescer e cada `resolve` custar o tamanho dele: acima do limite, para de seguir o `cd`.
@@ -673,6 +673,7 @@ export function anelDeBash(segmentos: Segmento[], contexto: Contexto, cwd?: stri
         if (atual !== null && atual.length > LIMITE_CD) {
           atual = null;
           cdPerdido = true;
+          if (estado) estado.cdPerdido = true;
         }
       }
       continue;

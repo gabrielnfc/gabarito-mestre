@@ -50,6 +50,8 @@ export type Classificacao = {
   destrutivo: boolean;
   anel: 'segredo' | 'integridade' | null;
   segmentosProdEscrita: string[];
+  /** Q17: a cadeia de `cd` passou de LIMITE_CD e a guarda perdeu o diretório corrente (só Bash). */
+  cdPerdido?: boolean;
 };
 export type Decisao = {
   classificacao: Classificacao;
