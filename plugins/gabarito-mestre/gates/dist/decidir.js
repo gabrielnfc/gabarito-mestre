@@ -6,6 +6,7 @@
  */
 
 import { classificar } from './classificar-alvo.js';
+import { TETO_COMANDO } from './aneis.js';
                                                                                                           
 
 // `*` casa qualquer trecho; o resto é literal. Casa o segmento inteiro (Q6).
@@ -32,7 +33,7 @@ function dadosDe(c               )                          {
   return dados;
 }
 
-export function decidir(entrada             , config                     , contexto          )          {
+function decidirConteudo(entrada             , config                     , contexto          )          {
   const c = classificar(entrada, config, contexto);
   const subagent = entrada?.agent_id !== undefined && entrada?.agent_id !== '';
   const dados = dadosDe(c);
@@ -69,4 +70,21 @@ export function decidir(entrada             , config                     , conte
   }
   if (c.destrutivo) return { classificacao: c, faixa: 'log', evento: { tipo: 'operacao.destrutiva', dados }, systemMessage: null, motivo: null };
   return { classificacao: c, faixa: 'silencio', evento: null, systemMessage: null, motivo: null };
+}
+
+/**
+ * Q17: comando Bash acima do teto não foi lido inteiro (`segmentar` só vê o início). Sem poder inspecionar, pede:
+ * orquestrador ⇒ `ask`, subagent ⇒ `deny`. `ask`/`deny` do prefixo prevalece. O evento leva `motivo` e `chars`, nunca o comando.
+ */
+export function decidir(entrada             , config                     , contexto          )          {
+  const d = decidirConteudo(entrada, config, contexto);
+  if (d.faixa === 'ask' || d.faixa === 'deny') return d;
+  const comando = entrada?.tool_name === 'Bash' && typeof entrada?.tool_input === 'object' && entrada.tool_input !== null ? entrada.tool_input.command : undefined;
+  if (typeof comando !== 'string' || comando.length <= TETO_COMANDO) return d;
+  const subagent = entrada.agent_id !== undefined && entrada.agent_id !== '';
+  const dados = { ...dadosDe(d.classificacao), motivo: 'teto', chars: comando.length };
+  const motivo = 'comando acima de 64 KB: a guarda só lê o início e não consegue inspecionar o resto; reduza ou grave o script por Write';
+  return subagent
+    ? { classificacao: d.classificacao, faixa: 'deny', permissionDecision: 'deny', evento: { tipo: 'guarda.deny', dados }, systemMessage: null, motivo }
+    : { classificacao: d.classificacao, faixa: 'ask', permissionDecision: 'ask', evento: { tipo: 'guarda.ask', dados }, systemMessage: null, motivo };
 }

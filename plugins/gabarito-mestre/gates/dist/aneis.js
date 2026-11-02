@@ -5,8 +5,11 @@
  * - O leitor de Bash é deliberadamente pequeno (E1:56): segmenta por `&&`, `||`, `;`, `|`, `&`, quebra de
  *   linha, parênteses e crases, respeita aspas, junta `\`+quebra, corta comentário, lê `$(…)`/crases dentro de
  *   aspas duplas (um nível) e descarta prefixos transparentes (Q10, palavras de controle, `@versão` de npx).
- *   Sem tokenizador completo, sem heredoc, sem backreference.
- * - Teto de 64 KB por comando: o que passa disso é ignorado (falha segura de desempenho, não de exceção).
+ *   Heredoc: o corpo é dado quando todo comando da linha o lê como dado (`cat`, `git`, `tee`…); com delimitador sem
+ *   aspas, `$(…)` e crases do corpo valem como comando; interpretador na linha (`sh`, `bash`, `python`, `| bash`) ou
+ *   terminador ausente ⇒ o corpo é lido como comando. Sem tokenizador completo, sem backreference.
+ * - Teto de 65 536 caracteres (UTF-16) por comando: `segmentar` só lê o início; `decidir` pede (orquestrador) ou nega
+ *   (subagent) o que passa disso, porque a cauda não foi inspecionada (Q17, proposta pendente do dono).
  */
 
 import { posix } from 'node:path';
@@ -38,6 +41,69 @@ const NEUTRO = '\u0000';
 const SUBST = '\u0001';
 export const TETO_COMANDO = 65536;
 
+                                                                 
+
+/** Lê o delimitador de um heredoc; `k` aponta para o que vem depois de `<<`. `null` se não houver palavra. */
+function lerDelimitador(src        , k        )                                     {
+  const n = src.length;
+  let tabs = false;
+  if (src[k] === '-') {
+    tabs = true;
+    k++;
+  }
+  while (src[k] === ' ' || src[k] === '\t') k++;
+  const ini = k;
+  let delim = '';
+  let citado = false;
+  while (k < n) {
+    const c = src[k];
+    if (c === "'") {
+      const j = src.indexOf("'", k + 1);
+      if (j < 0) return null;
+      citado = true;
+      delim += src.slice(k + 1, j);
+      k = j + 1;
+    } else if (c === '"') {
+      citado = true;
+      k++;
+      while (k < n && src[k] !== '"') {
+        if (src[k] === '\\' && k + 1 < n) k++;
+        delim += src[k++];
+      }
+      if (k >= n) return null;
+      k++;
+    } else if (c === '\\') {
+      citado = true;
+      if (k + 1 < n) delim += src[k + 1];
+      k += 2;
+    } else if (/[\s;&|<>()]/.test(c)) break;
+    else delim += src[k++];
+  }
+  if (k === ini || delim === '') return null;
+  return { h: { delim, citado, tabs }, fim: k };
+}
+
+/**
+ * Corpo de um heredoc: `ini` é o primeiro caractere da primeira linha do corpo. Devolve o corpo e o índice do `\n`
+ * (ou do fim) que fecha a linha do terminador; `null` se o terminador não existe (corpo lido como comando).
+ */
+function corpoDeHeredoc(src        , ini        , h         )                                        {
+  const n = src.length;
+  let pos = ini;
+  for (;;) {
+    let e = src.indexOf('\n', pos);
+    const ultima = e < 0;
+    if (ultima) e = n;
+    let linha = src.slice(pos, e);
+    if (h.tabs) linha = linha.replace(/^\t+/, '');
+    if (linha === h.delim) return { corpo: src.slice(ini, pos), fim: e };
+    if (ultima) return null;
+    pos = e + 1;
+  }
+}
+
+const MAX_HEREDOCS = 16;
+
 function fimDeSubstituicao(src        , ini        , abre        )         {
   // `ini` aponta para o primeiro caractere depois de `$(` ou da crase de abertura.
   if (abre === '`') {
@@ -45,12 +111,64 @@ function fimDeSubstituicao(src        , ini        , abre        )         {
     return j < 0 ? src.length : j;
   }
   let prof = 1;
+  const pend            = [];
+  const sem = new Set        ();
   for (let j = ini; j < src.length; j++) {
-    if (src[j] === '(') prof++;
-    else if (src[j] === ')' && --prof === 0) return j;
+    const c = src[j];
+    if (c === '\\') j++;
+    else if (c === "'") {
+      const k = src.indexOf("'", j + 1);
+      if (k > 0) j = k;
+    } else if (c === '"') {
+      let k = j + 1;
+      while (k < src.length && src[k] !== '"') k += src[k] === '\\' ? 2 : 1;
+      if (k < src.length) j = k;
+    } else if (c === '<' && src[j + 1] === '<' && src[j + 2] !== '<' && src[j - 1] !== '<') {
+      const d = lerDelimitador(src, j + 2);
+      if (d && pend.length < MAX_HEREDOCS) {
+        pend.push(d.h);
+        j = d.fim - 1;
+      } else j++;
+    } else if (c === '\n' && pend.length) {
+      let fim = j;
+      for (const h of pend) {
+        if (sem.has(h.delim)) continue;
+        const r = corpoDeHeredoc(src, fim + 1, h);
+        if (r) fim = r.fim;
+        else sem.add(h.delim);
+      }
+      pend.length = 0;
+      j = fim;
+    } else if (c === '(') prof++;
+    else if (c === ')' && --prof === 0) return j;
   }
   return src.length;
 }
+
+/** `$(…)` e crases no corpo de um heredoc sem aspas: o shell executa. */
+function expansoesDoCorpo(corpo        )           {
+  const out           = [];
+  for (let i = 0; i < corpo.length; i++) {
+    const c = corpo[i];
+    if (c === '\\') i++;
+    else if (c === '$' && corpo[i + 1] === '(') {
+      const fim = fimDeSubstituicao(corpo, i + 2, '(');
+      out.push(corpo.slice(i + 2, fim));
+      i = fim;
+    } else if (c === '`') {
+      const fim = fimDeSubstituicao(corpo, i + 1, '`');
+      out.push(corpo.slice(i + 1, fim));
+      i = fim;
+    }
+  }
+  return out;
+}
+
+// Quem lê o heredoc só como dado. Qualquer outro comando na linha (sh, bash, python, ssh, …) faz do corpo um script.
+const LE_COMO_DADO = new Set([
+  'cat', 'tee', 'git', 'gh', 'wc', 'sort', 'uniq', 'head', 'tail', 'tr', 'cut', 'grep', 'egrep', 'fgrep', 'rg', 'jq', 'diff', 'cmp',
+  'base64', 'shasum', 'sha256sum', 'md5sum', 'nl', 'fold', 'column', 'echo', 'printf',
+]);
 
 function lexar(src        )                                      {
   const segs          = [];
@@ -62,6 +180,9 @@ function lexar(src        )                                      {
   let palavra = false;
   let aspas = '';
   const n = src.length;
+  const pendentes            = [];
+  const semTerminador = new Set        ();
+  let linhaIni = 0;
 
   const fimPalavra = () => {
     if (palavra) toks.push({ t: cur, e: curE });
@@ -138,8 +259,31 @@ function lexar(src        )                                      {
       i = j - 1;
       continue;
     }
+    if (c === '\n' && pendentes.length) {
+      fimSegmento(i, i + 1);
+      // O corpo só é dado se todo comando da linha o lê como dado; senão segue lexado como comando.
+      const dado = segs.slice(linhaIni).every((b) => montar(b, 3).every((m) => m.cmd === '' || LE_COMO_DADO.has(m.cmd)));
+      let fim = i;
+      for (const h of pendentes) {
+        if (semTerminador.has(h.delim)) continue;
+        const r = corpoDeHeredoc(src, fim + 1, h);
+        if (!r) {
+          semTerminador.add(h.delim);
+          continue;
+        }
+        if (dado) {
+          if (!h.citado) for (const e of expansoesDoCorpo(r.corpo)) extras.push(e);
+          fim = r.fim;
+        }
+      }
+      pendentes.length = 0;
+      i = fim;
+      linhaIni = segs.length;
+      continue;
+    }
     if (c === '\n' || c === ';' || c === '(' || c === ')' || c === '`') {
       fimSegmento(i, i + 1);
+      if (c === '\n') linhaIni = segs.length;
       continue;
     }
     if (c === '&') {
@@ -173,6 +317,14 @@ function lexar(src        )                                      {
       }
       if (c === '>' && src[j + 1] === '|') j++;
       toks.push({ t: '', e: '', op: c });
+      if (c === '<' && j - i === 1) {
+        const d = lerDelimitador(src, j + 1);
+        if (d && pendentes.length < MAX_HEREDOCS) {
+          pendentes.push(d.h);
+          toks.push({ t: '', e: '' });
+          j = d.fim - 1;
+        }
+      }
       i = j;
       continue;
     }
@@ -361,6 +513,8 @@ const GIT_PERMITIDOS = new Set([
   '', 'add', 'commit', 'status', 'diff', 'log', 'show', 'checkout', 'switch', 'restore', 'branch', 'rev-parse',
   'merge-base', 'check-ignore', 'stash', 'rebase', 'cherry-pick', 'reset', 'blame', 'grep', 'ls-files', 'mv', 'rm',
 ]);
+// Q16: o orquestrador só é interrompido por estes; todo outro `git` segue o prompt nativo.
+const GIT_PEDE_ORQUESTRADOR = new Set(['remote', 'fetch', 'pull', 'update-ref', 'symbolic-ref', 'config']);
 const PUSH_COM_VALOR = new Set(['-o', '--push-option', '--repo', '--receive-pack', '--exec']);
 
                                                                           
@@ -374,7 +528,8 @@ export function lerGit(args          )          {
     if (a === '-c' || a === '--config-env') {
       if (args[i + 1] !== undefined) configs.push(args[i + 1]);
       i++;
-    } else if (GIT_GLOBAIS_COM_VALOR.has(a)) i++;
+    } else if (a.startsWith('--config-env=')) configs.push(a.slice(13));
+    else if (GIT_GLOBAIS_COM_VALOR.has(a)) i++;
     else if (a.startsWith('-')) continue;
     else break;
   }
@@ -406,14 +561,31 @@ function pushPermitido(resto          )          {
   return true;
 }
 
+/** Q16: destino `refs/remotes/*` forja a fonte local; vale para qualquer papel. */
+function pushSemRefsRemotes(resto          )          {
+  const pos = posicionaisDePush(resto);
+  for (let i = 1; i < pos.length; i++) if (destinoDeRefspec(pos[i]).startsWith('refs/remotes/')) return false;
+  return true;
+}
+
+/** `.git` ou `.git/**` (inclui o arquivo `.git` de worktree), sem distinção de caixa. */
+function dentroDeDotGit(caminho        , contexto          , cwd                )          {
+  if (caminho.trim() === '') return false;
+  const rel = resolver(caminho, contexto, cwd).rel?.toLowerCase();
+  return rel !== undefined && rel !== null && (rel === '.git' || rel.startsWith('.git/'));
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Bash
 
+const LIMITE_CD = 4096;
 const REMOVE = new Set(['rm', 'rmdir', 'unlink', 'shred']);
 const ESCREVE_TUDO = new Set(['rm', 'rmdir', 'chmod', 'chown', 'chgrp', 'ln', 'truncate', 'touch', 'install', 'unlink', 'shred', 'mv', 'tee']);
 const SO_REDIRECIONA = new Set(['echo', 'printf']);
 // Q15: checar existência não é leitura.
 const EXISTENCIA = new Set(['ls', 'test', '[', '[[', 'stat']);
+// Valores de `find` que são padrão de nome, não caminho.
+const FIND_PADRAO = new Set(['-name', '-iname', '-path', '-ipath', '-wholename', '-iwholename', '-regex', '-iregex', '-lname', '-ilname']);
 const GREP = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack', 'jq']);
 const BANCOS = new Set(['psql', 'pg_dump', 'pg_dumpall', 'pg_restore', 'mysql', 'mysqldump', 'mongosh', 'mongo', 'redis-cli']);
 
@@ -430,6 +602,15 @@ function semTextoLivre(cmd        , args          )           {
     if (curtas.includes(a) || longas.includes(a)) i++;
     else if (longas.some((l) => a.startsWith(`${l}=`)) || (cmd === 'git' && a.length > 2 && a.startsWith('-m') && !a.startsWith('--'))) continue;
     else out.push(a);
+  }
+  return out;
+}
+
+function semPadroesDeFind(args          )           {
+  const out           = [];
+  for (let i = 0; i < args.length; i++) {
+    if (FIND_PADRAO.has(args[i])) i++;
+    else out.push(args[i]);
   }
   return out;
 }
@@ -471,9 +652,11 @@ function empilhar(dest          , origem          )       {
  * Procura o anel em todos os segmentos. Segredo vence integridade; dentro do mesmo anel vale o primeiro achado.
  * Retorna `null` se nenhum segmento toca um caminho de anel. `cwd` é o diretório da chamada; `cd` muda o corrente.
  */
-export function anelDeBash(segmentos            , contexto          , cwd                )                    {
+export function anelDeBash(segmentos            , contexto          , cwd                , subagent = true)                    {
   let integridade                    = null;
   let atual                = cwd ?? null;
+  // `cd a;` em cadeia faz o caminho crescer e cada `resolve` custar o tamanho dele: acima do limite, para de seguir o `cd`.
+  let cdPerdido = false;
 
   for (const s of segmentos) {
     const escritas           = [...s.saidas];
@@ -482,27 +665,34 @@ export function anelDeBash(segmentos            , contexto          , cwd       
 
     if (s.cmd === 'cd') {
       const d = s.args.find((a) => !a.startsWith('-'));
-      if (d !== undefined && !d.includes('$') && !d.startsWith('~')) {
+      if (!cdPerdido && d !== undefined && !d.includes('$') && !d.startsWith('~')) {
         const base = atual ?? contexto.raiz;
         atual = base && base.startsWith('/') ? posix.resolve(base, d) : null;
+        if (atual !== null && atual.length > LIMITE_CD) {
+          atual = null;
+          cdPerdido = true;
+        }
       }
       continue;
     }
 
-    const uteis = semTextoLivre(s.cmd, s.args);
+    const uteis = s.cmd === 'find' ? semPadroesDeFind(s.args) : semTextoLivre(s.cmd, s.args);
     const pos = candidatos(uteis).filter(ehCaminhoPlausivel);
 
     if (s.cmd === 'git') {
       const g = lerGit(s.args);
       const gitResto = candidatos(semTextoLivre('git', g.resto)).filter(ehCaminhoPlausivel);
       if (g.configs.some((c) => /^(remote\.|url\.|core\.hookspath)/i.test(c))) integridade ??= { anel: 'integridade', alvo: '.git/config', escrita: true };
+      if (!subagent && gitResto.some((p) => dentroDeDotGit(p, contexto, atual))) integridade ??= { anel: 'integridade', alvo: '.git', escrita: true };
       if (g.sub === 'push') {
-        if (!pushPermitido(g.resto)) integridade ??= { anel: 'integridade', alvo: 'refs/remotes', escrita: true };
-      } else if (!GIT_PERMITIDOS.has(g.sub)) {
+        if (!(subagent ? pushPermitido(g.resto) : pushSemRefsRemotes(g.resto))) integridade ??= { anel: 'integridade', alvo: 'refs/remotes', escrita: true };
+      } else if (subagent ? !GIT_PERMITIDOS.has(g.sub) : GIT_PEDE_ORQUESTRADOR.has(g.sub)) {
         const alvo = g.sub === 'remote' || g.sub === 'config' ? '.git/config' : g.sub === 'fetch' || g.sub === 'pull' || g.sub === 'update-ref' || g.sub === 'symbolic-ref' ? 'refs/remotes' : '.git';
         integridade ??= { anel: 'integridade', alvo, escrita: true };
       }
-      if (g.sub !== 'log' && g.sub !== 'check-ignore') empilhar(leituras, gitResto);
+      // Q15: `git log -- .env` só confere existência; com patch (`-p`, `-u`, `-c`, `--cc`, `-L`, `-U`) mostra o conteúdo.
+      const mostraConteudo = g.sub === 'log' && g.resto.some((a) => /^(-p|-u|-c|--cc|--patch\S*|--unified\S*|-L\S*|-U\d*|--word-diff\S*|--color-words\S*)$/.test(a));
+      if ((g.sub !== 'log' && g.sub !== 'check-ignore') || mostraConteudo) empilhar(leituras, gitResto);
     } else if (EXISTENCIA.has(s.cmd)) {
       // Q15: sem leitura.
     } else if (s.cmd === 'cp' || s.cmd === 'mv') {
