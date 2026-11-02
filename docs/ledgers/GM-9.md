@@ -4,6 +4,7 @@ Branch: `enabler/GM-9-fundacao-2.0` → alvo `next` (canal alpha). Spec: `docs/s
 
 ## Estado
 
+- **2026-11-02, pouso a 55 % de contexto.** Integradas em `enabler/GM-9-fundacao-2.0` (só local, sem push desde `ed70c66`): T8, T1a, T1b, T2b, T3. `origin/next` criado. Em worktree `../gabarito-mestre-wt/GM-9-<n>`: T2 (`wt/GM-9-2`, re-review da rodada 1), T5 (`wt/GM-9-5`, re-review final, rodada 2), T6 e T7 (implementando). Falta: T4, review final Fable, PR em `next`. Estado por task, decisões e gate em `.superpowers/sdd/2026-11-02-e1-fundacao/` (gitignored, local).
 - 2026-11-02: plano de E1 aprovado (R9); execução começa pela Onda A.
 - 2026-11-02: specs visão (r1+emendas) e E1 (r3) **aprovadas pelo dono** e commitadas (570e6d9, f0fab3b, b440c0c + este). Nenhum código. Próximo: plano de E1 (só E1) na sessão seguinte, após handoff.
 
@@ -32,6 +33,12 @@ Branch: `enabler/GM-9-fundacao-2.0` → alvo `next` (canal alpha). Spec: `docs/s
 - **S2** Pane cor 24-bit CONFIRMADA (2/2). `MessageDisplay` para saída nativa REFUTADA (0 chamadas em `/context`, `/cost`): E4 precisa de outro caminho.
 - **S3** `classic.PreToolUse` de plugin roda 3/3. `tool.check` allow não supera `permissions.deny` de projeto, 0/3 leram (só `-p`, `Read`). Doctor sem aviso M8.
 - **S4** ~350 MB RAM, ~28 % de núcleo no pico, ~40 MB disco sem deps (~1,13 GB com `node_modules`), clone ~19 MB/0,15 s. Fórmula em `.superpowers/sdd/…/task-S4-report.md`; trabalho do slot trivial, recalibrar em E2 (backlog).
+
+## Medição diária
+
+### Dia 2026-11-02 (17:14 em diante)
+Dados por task: `docs/aprendizados/metricas-e1.jsonl`. Aprovadas: T8, T1a (R12), T1b (R12), T2b (R14), T3. Spikes: 4/4. Modelos: implementação e spikes Sonnet 5.5; review de task Opus 5.5; Sombra Fable 5.1 (3 consultas). Slots: pico de 7 agentes simultâneos. Limite 5h/7d: fechou 0 vezes. Rodadas: 1, 1, 2, 1, 1. Tokens de subagent: não somados; valores por agente no retorno de cada um.
+**Re-estimativa E1–E6: sem número.** Só 5 tasks fechadas, de tamanho e risco diferentes, com profundidade de review variável (E3, E4): mediana não prevê E2–E6. Observação sem efeito causal: tempo de agente por task entre 10,8 e 29 min. Próximo dado útil: corte mínimo completo e tempo de parede até o merge em `next`.
 
 ## Corte / backlog
 
