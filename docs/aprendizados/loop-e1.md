@@ -19,6 +19,7 @@ Primeira execução real do fluxo da 2.0, no próprio GM-9. Cada item vira requi
 | A11 | D | Orquestrador não apresenta decisão própria como fechada quando a regra manda escalar | Mesma R12 | E2, orquestrador |
 | A12 | D | `MessageDisplay` não serve para espelhar saídas nativas | S2: 0 chamadas em `/context`, `/cost` | E4 |
 | A13 | D | `ask` em todos os modos, sem lógica por `permission_mode` | S1 + Q13 | E1 (feito) |
+| A14 | D | Memória em 3 camadas: quente (instantâneo ≤ 6.000 caracteres injetado), morna (busca por chave em `decisoes.jsonl`, `metricas-e1.jsonl`), fria (`events.*.jsonl`, nunca injetado). Quem lê dado grande é script, e devolve resumo | `MEMORY.md` 4 KB é o único carregado sempre; o que cresce sem teto é o transcript do orquestrador | E2 |
 | M1 | M | Ataques do review no brief do implementador aumentam aprovação na 1ª rodada | Hipótese; medir em T4, T6, T7 | E2 |
 | M2 | M | Sonnet × Opus como implementador (visão §6.9) | 5/5 primeiros reviews reprovaram com Sonnet, sem grupo de comparação | E2 |
 | M3 | M | Gate reduz tempo total por task para 6–10 min | Até agora não confirmado: T2b ~15 min, T5 > 14 min | E2 |
@@ -30,15 +31,7 @@ Primeira execução real do fluxo da 2.0, no próprio GM-9. Cada item vira requi
 
 **Métrica principal:** tempo somado de agente até APROVADO (`impl + review + correções + re-reviews`) e rodadas até aprovar. **Secundárias:** tokens, defeito que escapou para a etapa seguinte.
 
-| Task | Fluxo | Impl. | Review | Correções + re-reviews | Total até agora | Rodadas | O que causou retrabalho |
-|---|---|---|---|---|---|---|---|
-| T8 | sem gate | 198 s | 241 s | 207 s | 10,8 min, aprovada | 1 | Suíte não rodada |
-| T1a | sem gate | 521 s | 421 s | 500 s | 24 min, R12 | 1 | Suíte não rodada |
-| T1b | sem gate | 311 s | 312 s | 1137 s | 29 min, R12 | 2 | Assert frouxo |
-| T2b | gate | 141 s | 290 s | 564 s | 16,6 min, R14 | 1 | Forja não prevista |
-| T5 | gate | 429 s | 417 s | 916 s + rodada 2 | > 29 min | 2 | Hook de terceiro, stdin |
-| T3 | gate | 161 s | 525 s | 497 s + re-review | > 20 min | 1 | Lock, regex, vazamento |
-| T2 | gate | 521 s | 430 s | 497 s + re-review | > 24 min | 1 | Parser, FN e FP |
+Dados por task: `docs/aprendizados/metricas-e1.jsonl` (uma linha por task). Resumo: `node docs/aprendizados/metricas.mjs`. Este arquivo guarda só decisões e experimentos.
 
 | Exp. | Mudança | Métrica | Resultado | Decisão |
 |---|---|---|---|---|
@@ -46,6 +39,7 @@ Primeira execução real do fluxo da 2.0, no próprio GM-9. Cada item vira requi
 | X1b | Idem | Total por task | Não caiu: review passou a atacar mais fundo, retrabalho migrou para julgamento | Hipótese M3 **refutada até agora** |
 | X2 | Ataques no brief do implementador | Rodadas e tempo na 1ª aprovação | T6 em curso | Medindo |
 | X3 | Mutações do gate rodadas em paralelo e, em correção, só as novas | Tempo do gate | Base: 182 s com 26 mutações em série | Próximo |
+| X5 | Relatório de subagent ≤ 5 linhas no retorno; resto só em arquivo | Caracteres devolvidos ao orquestrador por task | Base: relatórios de até 3 mil caracteres por retorno, inteiros no transcript | Vale a partir de T7 |
 | X4 | Correção por implementador novo com brief da rodada, em vez de retomar | Tokens por rodada | Base: T5 retomada chegou a 246 mil tokens | Depois de X3 |
 
 **Leitura até aqui:** o gargalo não é implementar (141–521 s). É descobrir defeito só no review e corrigir (500–1100 s por task). Os defeitos são reais e de segurança, então a alavanca é antecipá-los, não reduzir o review.
