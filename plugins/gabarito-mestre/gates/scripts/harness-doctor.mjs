@@ -763,7 +763,7 @@ function horasDesdeHeartbeat(raiz, agora) {
   } catch {
     return null;
   }
-  // Candidatos: arquivos regulares events.*.jsonl (lstat: symlink fica de fora), os mais recentemente escritos primeiro.
+  // Candidatos: events.*.jsonl, os mais recentemente escritos primeiro.
   // O heartbeat é anexado a cada SessionStart, então o arquivo vivo é o de mtime mais novo; ler só os N mais novos
   // limita o custo mesmo com milhares de entregas acumuladas.
   const candidatos = [];
@@ -778,8 +778,8 @@ function horasDesdeHeartbeat(raiz, agora) {
     }
     for (const nome of nomes) {
       try {
-        const st = lstatSync(join(dir, nome));
-        if (st.isFile()) candidatos.push({ arquivo: join(dir, nome), mtime: st.mtimeMs });
+        // O tipo NÃO é filtrado aqui: quem recusa symlink e não-arquivo é `lerCauda` (O_NOFOLLOW + fstat), numa defesa só.
+        candidatos.push({ arquivo: join(dir, nome), mtime: lstatSync(join(dir, nome)).mtimeMs });
       } catch {
         /* sumiu entre o readdir e o lstat */
       }
