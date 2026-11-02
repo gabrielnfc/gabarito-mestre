@@ -1,7 +1,7 @@
 /**
  * Testes do ORQ-3 — cartão de sessão.
  *
- * O cartão é a camada 1 de contexto: ≤ 40 linhas que o orquestrador lê antes de despachar.
+ * O cartão é a camada 1 de contexto: cartão de ≤ 40 linhas (≤ 6.000 caracteres com o instantâneo, no hook) que o orquestrador lê antes de despachar.
  * Ele NUNCA inventa — PBI só quando a branch casa idPadrao, Epic só do cache/arquivo, o resto
  * marcado (b). Sem onboarding é UMA linha e exit 0. Cache do doctor vale 24 h.
  *

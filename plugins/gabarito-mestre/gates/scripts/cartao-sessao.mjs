@@ -2,7 +2,7 @@
 /**
  * ORQ-3 — cartão de sessão.
  *
- * Camada 1 de contexto: o que o orquestrador precisa saber ao abrir a sessão, em ≤ 40 linhas —
+ * Camada 1 de contexto: o que o orquestrador precisa saber ao abrir a sessão, em ≤ 40 linhas de cartão (no hook, mais o instantâneo do diário, ≤ 6.000 caracteres) —
  * modelo resolvido e validade, branch/PBI/Epic/Iniciativa (cache offline ORQ-6 ou arquivo),
  * PBIs em voo, worktrees vivos, slots medidos (PAR-1), nível do doctor em cache (DOC-2, 24 h),
  * PBIs envelhecidos (FLX-8), ponteiro LER PRIMEIRO do ledger, versão instalada × plugin e
@@ -12,6 +12,7 @@
  *
  * USO
  *   node cartao-sessao.mjs                                                       # texto do cartão
+ *   node cartao-sessao.mjs --hook                                                # SessionStart: stdin JSON → duas vias; grava diário e marcador
  *   node cartao-sessao.mjs --root <dir> --plugin-root <dir> --json --agora <ISO> # teste
  */
 
