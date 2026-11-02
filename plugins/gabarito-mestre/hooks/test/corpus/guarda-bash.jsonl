@@ -117,3 +117,18 @@
 {"nome":"bash-no-teto-65536-benigno","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"echo ","char":"x","n":65531,"depois":""}},"agente":"sub","esperado":{"faixa":"silencio"}}
 {"nome":"bash-teto-fora-do-bmp-65536-benigno","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"","char":"😀","n":32768,"depois":""}},"agente":"sub","esperado":{"faixa":"silencio"}}
 {"nome":"bash-teto-fora-do-bmp-65537-pede","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"","char":"😀","n":32768,"depois":"x"}},"agente":"orq","esperado":{"faixa":"ask","motivoContem":"64 KB"}}
+{"nome":"f4-prod-drop-mysql-e-orq","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -u root -e \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-drop-mysql-e-sub","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -u root -e \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-drop-mysql-execute-orq","req":"GRD-4","tool":"Bash","input":{"command":"mysql --host=db.prod.exemplo.com --execute=\"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-drop-mysql-execute-sub","req":"GRD-4","tool":"Bash","input":{"command":"mysql --host=db.prod.exemplo.com --execute=\"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-drop-mysql-execute-sep-orq","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com --execute \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-drop-mysql-execute-sep-sub","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com --execute \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-drop-mariadb-orq","req":"GRD-4","tool":"Bash","input":{"command":"mariadb -h db.prod.exemplo.com -e \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-drop-mariadb-sub","req":"GRD-4","tool":"Bash","input":{"command":"mariadb -h db.prod.exemplo.com -e \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-truncate-mysql-orq","req":"GRD-4","tool":"Bash","input":{"command":"mysql -hdb.prod.exemplo.com -e \"TRUNCATE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-truncate-mysql-sub","req":"GRD-4","tool":"Bash","input":{"command":"mysql -hdb.prod.exemplo.com -e \"TRUNCATE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-local-truncate-mysql-orq","req":"GRD-6","tool":"Bash","input":{"command":"mysql -h 127.0.0.1 -e \"TRUNCATE t\""},"agente":"orq","esperado":{"faixa":"log","evento":"operacao.destrutiva"}}
+{"nome":"f4-local-truncate-mysql-sub","req":"GRD-6","tool":"Bash","input":{"command":"mysql -h 127.0.0.1 -e \"TRUNCATE t\""},"agente":"sub","esperado":{"faixa":"log","evento":"operacao.destrutiva"}}
+{"nome":"f4-homolog-drop-mariadb-orq","req":"GRD-6","tool":"Bash","input":{"command":"mariadb -h db.homolog.exemplo.com -e \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"mostrar","evento":"operacao.destrutiva"}}
+{"nome":"f4-prod-select-mysql-orq","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -e \"SELECT 1\""},"agente":"orq","esperado":{"faixa":"mostrar"}}
+{"nome":"f4-prod-select-mysql-sub","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -e \"SELECT 1\""},"agente":"sub","esperado":{"faixa":"mostrar"}}
