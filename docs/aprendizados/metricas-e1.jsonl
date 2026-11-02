@@ -5,3 +5,4 @@
 {"task":"T3","fluxo":"gate","impl_s":161,"review_s":525,"correcao_s":951,"rodadas":1,"estado":"aprovada","causa":"lock-regex-vazamento"}
 {"task":"T5","fluxo":"gate","impl_s":429,"review_s":417,"correcao_s":2124,"rodadas":2,"estado":"aprovada","causa":"hook-terceiro"}
 {"task":"T2","fluxo":"gate","impl_s":521,"review_s":430,"correcao_s":497,"rodadas":1,"estado":"re-review","causa":"parser"}
+{"task": "T7", "fluxo": "gate", "impl_s": null, "review_s": 582, "correcao_s": 1220, "rodadas": 1, "estado": "aprovada", "causa": "escrita-sem-onboarding", "x2": {"review1": "5/10, MAJOR parcial", "rereview": "3/8, 0 MAJOR"}}
