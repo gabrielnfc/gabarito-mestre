@@ -609,7 +609,7 @@ describe('T6 doctor — camada de guarda (REQ-INF-2)', () => {
     assert.equal(camada(dir).heartbeatHa, 3);
   });
 
-  test('doctor-heartbeat-janela-24h: 24 h exatas ainda é ativa; 25 h é configurada com o heartbeatHa local', () => {
+  test('doctor-heartbeat-25h: 24 h exatas ainda é ativa; 25 h é configurada com o heartbeatHa local', () => {
     const exato = repo({ ...cfg });
     heartbeatLocal(exato, 24);
     assert.equal(camada(exato).estado, 'ativa');
@@ -1238,6 +1238,7 @@ describe('T6 doctor — CLI', () => {
     const r = spawnSync(process.execPath, [SCRIPT], { cwd: dir, encoding: 'utf8' });
     assert.match(r.stdout, /Camada de guarda: configurada .*diário com heartbeat há 20 h \(colega@x/);
     assert.doesNotMatch(r.stdout, /Camada de guarda: ativa/);
+    assert.doesNotMatch(r.stdout, /veio pelo git/, 'M2: o doctor não sabe a origem; afirmar "veio pelo git" pode ser falso');
   });
 
   test('doctor-render-camada: texto mostra camada, fonte, ambientes e perfil; n/a aparece como n/a, não como ok', () => {
