@@ -55,7 +55,8 @@ const SEGREDOS: Record<string, string> = {
 
 describe('canário', () => {
   test('canario-nao-recusa-task: task-list, risk-matrix e prod-disk-01 passam', () => {
-    for (const texto of ['docs/task-list.md', 'risk-matrix.ts', 'prod-disk-01']) {
+    // `risk-abcdefghijklmnopqrst.ts` contém `sk-` + 16 ou mais caracteres, sem borda de palavra antes do `sk`.
+    for (const texto of ['docs/task-list.md', 'risk-matrix.ts', 'prod-disk-01', 'risk-abcdefghijklmnopqrst.ts']) {
       assert.equal(recusaCanario(JSON.stringify({ dados: { alvo: texto } })), null, texto);
       assert.equal(recusaCanario(texto), null, texto);
     }
@@ -82,6 +83,25 @@ describe('append', () => {
     assert.deepEqual(Object.keys(eventos[0].dados).sort(), ['padrao', 'tipo']);
     assert.equal(eventos[0].dados.tipo, 'guarda.deny');
     assert.equal(typeof eventos[0].dados.padrao, 'string');
+  });
+
+  test('diario-roundtrip: ler devolve os campos gravados; seq e hash_anterior são calculados', () => {
+    const dir = tmp();
+    const original = ev('producao.acesso', { alvo: 'db.prod.exemplo.com', ambiente: 'prod', acao: 'leitura', n: 1 });
+    assert.deepEqual(append(dir, 's1', original), { ok: true, gravado: 'evento' });
+    const [primeiro] = ler(dir);
+    assert.deepEqual(primeiro, { ...original, seq: 1, hash_anterior: null });
+    assert.deepEqual(append(dir, 's1', { ...original, tipo: 'guarda.deny', dados: { alvo: 'x' } }), { ok: true, gravado: 'evento' });
+    const es = ler(dir);
+    assert.equal(es.length, 2);
+    assert.equal(es[1].tipo, 'guarda.deny');
+    assert.deepEqual(es[1].dados, { alvo: 'x' });
+    assert.equal(es[1].autor, original.autor);
+    assert.equal(es[1].sessao, original.sessao);
+    assert.equal(es[1].agente, original.agente);
+    assert.equal(es[1].ts, original.ts);
+    assert.equal(es[1].seq, 2);
+    assert.equal(es[1].hash_anterior, sha(linhas(join(dir, 'events.s1.jsonl'))[0]));
   });
 
   test('diario-cadeia: seq 1,2,3; hash_anterior = sha256 da linha anterior; o 1º é null', () => {
@@ -117,16 +137,24 @@ describe('append', () => {
     assert.deepEqual(r, { ok: true, gravado: 'evento' });
   });
 
-  test('diario-indisponivel-segue: dir somente leitura ⇒ {ok:false} sem lançar', (t) => {
-    if (typeof process.getuid === 'function' && process.getuid() === 0) return t.skip('root ignora permissão de diretório');
+  test('diario-cria-caminho: diretório aninhado inexistente é criado (mkdir recursivo)', () => {
     const base = tmp();
-    chmodSync(base, 0o555);
+    const dir = join(base, '.harness', 'entregas', 'GM-9');
+    assert.deepEqual(append(dir, 's1', ev()), { ok: true, gravado: 'evento' });
+    assert.equal(ler(dir).length, 1);
+  });
+
+  test('diario-indisponivel-segue: diretório existente somente leitura ⇒ {ok:false} sem lançar', (t) => {
+    if (typeof process.getuid === 'function' && process.getuid() === 0) return t.skip('root ignora permissão de diretório (skip declarado)');
+    const dir = tmp();
+    chmodSync(dir, 0o555);
     try {
-      const r = append(join(base, 'entregas', 'x'), 's1', ev());
-      assert.equal(r.ok, false);
-      if (!r.ok) assert.equal(typeof r.erro, 'string');
+      let r: ReturnType<typeof append> | undefined;
+      assert.doesNotThrow(() => { r = append(dir, 's1', ev()); });
+      assert.equal(r?.ok, false);
+      if (r && !r.ok) assert.equal(typeof r.erro, 'string');
     } finally {
-      chmodSync(base, 0o755);
+      chmodSync(dir, 0o755);
     }
   });
 
@@ -175,6 +203,53 @@ describe('projeção e caminho', () => {
     assert.ok(p.instantaneo.length > 0);
     assert.ok(p.instantaneo.length <= 6000, `instantaneo com ${p.instantaneo.length} caracteres`);
     assert.equal(typeof p.resumo, 'object');
+  });
+
+  // O instantâneo lista um evento por linha, com `ts`, `tipo` e `dados.alvo`; os marcadores `alvo`
+  // abaixo terminam em `-fim` para detectar linha cortada no meio.
+  const evP = (n: number, ts: string, sessao: string, tipo: TipoEvento): Evento => ({
+    seq: n, ts, autor: 'dev@exemplo.com', sessao, agente: 'orquestrador', tipo,
+    dados: { alvo: `m${n}-fim` }, hash_anterior: null,
+  });
+
+  test('projetar-resumo: conta por tipo com valores exatos', () => {
+    const es = [
+      evP(1, '2026-11-02T10:00:00.000Z', 's1', 'producao.acesso'),
+      evP(2, '2026-11-02T10:01:00.000Z', 's1', 'guarda.deny'),
+      evP(3, '2026-11-02T10:02:00.000Z', 's1', 'producao.acesso'),
+      evP(4, '2026-11-02T10:03:00.000Z', 's1', 'producao.acesso'),
+      evP(5, '2026-11-02T10:04:00.000Z', 's1', 'operacao.destrutiva'),
+    ];
+    assert.deepEqual(projetar(es).resumo, { 'producao.acesso': 3, 'guarda.deny': 1, 'operacao.destrutiva': 1 });
+    assert.deepEqual(projetar([]).resumo, {});
+  });
+
+  test('projetar-ordem: mais recente primeiro, por (ts, sessao), independente da ordem de entrada', () => {
+    const es = [
+      evP(1, '2026-11-02T10:00:00.000Z', 's1', 'guarda.deny'),
+      evP(2, '2026-11-02T10:05:00.000Z', 'sA', 'guarda.deny'),
+      evP(3, '2026-11-02T10:02:00.000Z', 's1', 'guarda.deny'),
+      evP(4, '2026-11-02T10:05:00.000Z', 'sB', 'guarda.deny'),
+    ];
+    const s = projetar(es).instantaneo;
+    const pos = (n: number): number => s.indexOf(`m${n}-fim`);
+    for (const n of [1, 2, 3, 4]) assert.ok(pos(n) >= 0, `m${n} ausente do instantâneo`);
+    // ts mais novo primeiro; no empate de ts, sessao maior (sB) antes de sA.
+    assert.ok(pos(4) < pos(2), 'empate de ts: sB antes de sA');
+    assert.ok(pos(2) < pos(3), '10:05 antes de 10:02');
+    assert.ok(pos(3) < pos(1), '10:02 antes de 10:00');
+  });
+
+  test('projetar-corte-em-linha-inteira: o corte em 6000 nunca deixa linha truncada', () => {
+    const es = Array.from({ length: 10000 }, (_, i) =>
+      evP(i + 1, new Date(Date.UTC(2026, 10, 2, 0, 0, 0) + i * 1000).toISOString(), 's1', 'producao.acesso'));
+    const s = projetar(es).instantaneo;
+    assert.ok(s.length <= 6000);
+    const ls = s.split('\n').filter((l) => l !== '');
+    assert.ok(ls.length > 10, 'instantâneo deveria ter várias linhas');
+    for (const l of ls) assert.match(l, /m\d+-fim/, `linha truncada: ${l}`);
+    assert.match(ls[ls.length - 1], /-fim$/, 'última linha cortada no meio');
+    assert.ok(ls[0].includes('m10000-fim'), 'a linha mais recente vem primeiro');
   });
 
   test('dirEntrega-sem-id: null ⇒ _sem-id; com id ⇒ o id', () => {

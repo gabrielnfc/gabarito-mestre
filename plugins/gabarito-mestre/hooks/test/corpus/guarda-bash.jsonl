@@ -14,7 +14,7 @@
 {"nome":"prod-leitura-sub","req":"GRD-4","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -c 'SELECT 1'"},"agente":"sub","esperado":{"faixa":"mostrar","evento":"producao.acesso"}}
 {"nome":"prod-curl-mostrar","req":"GRD-4","tool":"Bash","input":{"command":"curl -X DELETE https://api.exemplo.com/x"},"agente":"orq","esperado":{"faixa":"mostrar","acao":"execucao"}}
 {"nome":"orq-prod-escrita","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","ambiente":"prod","acao":"escrita"}}
-{"nome":"subagent-prod-escrita","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny"}}
+{"nome":"subagent-prod-escrita","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","motivoContem":"orquestrador"}}
 {"nome":"vercel-target-production","req":"GRD-6","tool":"Bash","input":{"command":"vercel deploy --target production"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"prod-drop-psql","req":"GRD-6","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -c 'DROP TABLE t'"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"supabase-linked-prod","req":"GRD-6","tool":"Bash","input":{"command":"supabase db push --linked"},"agente":"orq","contexto":{"refLinkado":"ref-prod"},"esperado":{"faixa":"ask"}}
@@ -41,5 +41,6 @@
 {"nome":"prefixo-env","req":"GRD-2","tool":"Bash","input":{"command":"FOO=1 vercel --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"prefixo-bash-c","req":"GRD-2","tool":"Bash","input":{"command":"bash -c 'vercel --prod'"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"sem-secao-vercel","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"orq","config":"ausente","esperado":{"faixa":"silencio"}}
-{"nome":"fallback-dontask-deny","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"orq","modo":"dontAsk","esperado":{"faixa":"deny"}}
+{"nome":"fallback-dontask-deny","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"orq","modo":"dontAsk","esperado":{"faixa":"deny","motivoContem":"modo"}}
 {"nome":"fallback-auto-ask","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"orq","modo":"auto","esperado":{"faixa":"ask"}}
+{"nome":"modo-bypass-benigno","req":"GRD-4","tool":"Bash","input":{"command":"ls -la"},"agente":"orq","modo":"bypassPermissions","esperado":{"faixa":"silencio"}}

@@ -1,4 +1,5 @@
 {"nome":"integridade-config-sub","req":"GRD-5","tool":"Edit","input":{"file_path":"harness.config.json","old_string":"a","new_string":"b"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"sem-secao-integridade-sub","req":"GRD-5","tool":"Edit","input":{"file_path":"harness.config.json","old_string":"a","new_string":"b"},"agente":"sub","config":"ausente","esperado":{"faixa":"deny"}}
 {"nome":"integridade-config-orq","req":"GRD-5","tool":"Edit","input":{"file_path":"harness.config.json","old_string":"a","new_string":"b"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"integridade-config-sub-bash","req":"GRD-5","tool":"Bash","input":{"command":"cat > .claude/settings.json"},"agente":"sub","esperado":{"faixa":"deny"}}
 {"nome":"integridade-workflow-mv","req":"GRD-5","tool":"Bash","input":{"command":"mv x .github/workflows/ci.yml"},"agente":"sub","esperado":{"faixa":"deny"}}

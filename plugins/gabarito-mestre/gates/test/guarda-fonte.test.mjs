@@ -53,7 +53,7 @@ function git(cwd, ...args) {
  * origem: config em origin/HEAD (null = arquivo ausente na ref); local: config na árvore (null = ausente);
  * remoto: existe `origin`; setHead: `refs/remotes/origin/HEAD` resolvível.
  */
-function montar({ origem = null, local = null, remoto = true, setHead = true }) {
+function montar({ origem = null, local = null, remoto = true, setHead = true, branch = null }) {
   const repo = mkdtempSync(join(tmpdir(), 'gm-fonte-repo-'));
   git(repo, 'init', '-q', '-b', 'main');
   writeFileSync(join(repo, 'README.md'), 'x\n');
@@ -67,6 +67,7 @@ function montar({ origem = null, local = null, remoto = true, setHead = true }) 
     git(repo, 'push', '-q', 'origin', 'main');
     if (setHead) git(repo, 'remote', 'set-head', 'origin', 'main');
   }
+  if (branch) git(repo, 'checkout', '-q', '-b', branch);
   if (local) writeFileSync(join(repo, 'harness.config.json'), JSON.stringify(local));
   return repo;
 }
@@ -97,6 +98,8 @@ const CENARIOS = {
     rodarGuarda(montar({ origem: config({ permitidos: ['vercel --prod'] }) }), 'vercel --prod'),
   'branchpadrao-local-ignorado': () =>
     rodarGuarda(montar({ origem: config({ branchPadrao: 'main' }), local: config({ branchPadrao: 'x' }) }), 'git push'),
+  'branchpadrao-trunk': () =>
+    rodarGuarda(montar({ origem: config({ branchPadrao: 'trunk' }), branch: 'trunk' }), 'git push'),
   'origin-head-ausente': () =>
     rodarGuarda(montar({ local: config({ permitidos: ['*'] }), setHead: false }), 'vercel --prod'),
   'sem-remoto-sem-config': () => rodarGuarda(montar({ remoto: false }), 'vercel --prod'),
@@ -115,6 +118,10 @@ describe('fonte da config (D2)', () => {
     assert.equal(CENARIOS['branchpadrao-local-ignorado']().decisao, 'ask');
   });
 
+  test('branchpadrao-trunk: origin com branchPadrao "trunk"; git push em trunk ⇒ ask (nada de "main" fixo)', () => {
+    assert.equal(CENARIOS['branchpadrao-trunk']().decisao, 'ask');
+  });
+
   test('origin-head-ausente: sem origin/HEAD, local com permitidos ["*"] ⇒ ask e systemMessage cita "local"', () => {
     const r = CENARIOS['origin-head-ausente']();
     assert.equal(r.decisao, 'ask');
@@ -125,7 +132,7 @@ describe('fonte da config (D2)', () => {
     assert.equal(CENARIOS['sem-remoto-sem-config']().decisao, undefined);
   });
 
-  test('saida-nunca-allow: nenhum dos cinco cenários devolve allow', () => {
+  test('saida-nunca-allow: nenhum dos seis cenários devolve allow', () => {
     for (const [nome, rodar] of Object.entries(CENARIOS)) {
       assert.notEqual(rodar().decisao, 'allow', nome);
     }
