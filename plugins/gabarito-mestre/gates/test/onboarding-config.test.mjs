@@ -374,6 +374,23 @@ describe('T6 settings-deny — a 2ª camada (REQ-GRD-5)', () => {
     }
   });
 
+  test('settings-deny-linha-colavel (M5): a instrução manda colar na RAIZ e a linha, colada como diz, vira permissions.deny efetivo', () => {
+    const dir = repo({ [SETTINGS]: '{ // comentário\n}' });
+    const r = denyGuarda(dir);
+    assert.doesNotMatch(r.stdout, /dentro de "permissions"/, 'a linha já traz a chave "permissions": colar dentro dela a aninharia');
+    assert.match(r.stdout, /raiz de \.claude\/settings\.json/);
+    const linha = onb.aplicarDenyGuarda(dir).linha;
+    assert.deepEqual(JSON.parse(`{ ${linha} }`).permissions.deny, LISTA, 'colada na raiz, a linha é o deny efetivo');
+    assert.equal(JSON.parse(`{ "permissions": { ${linha} } }`).permissions.deny, undefined, 'controle: colada dentro de permissions o deny não vale');
+  });
+
+  test('settings-deny-modo (M10-O8): o modo do arquivo do usuário (0600) é preservado ao emendar', () => {
+    const dir = repo({ [SETTINGS]: '{"model":"x"}\n' });
+    chmodSync(join(dir, SETTINGS), 0o600);
+    assert.equal(denyGuarda(dir).status, 0);
+    assert.equal(lstatSync(join(dir, SETTINGS)).mode & 0o777, 0o600);
+  });
+
   test('settings-deny: aplicarDenyGuarda() devolve acao/motivo estruturados', () => {
     const r = onb.aplicarDenyGuarda(repo({ [SETTINGS]: 'não json' }));
     assert.equal(r.acao, 'recusado');

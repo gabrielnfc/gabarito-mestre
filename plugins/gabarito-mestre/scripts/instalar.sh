@@ -69,13 +69,13 @@ instalar_guarda() { # --guarda: a emenda do JSON é do onboarding-config.mjs (un
   local linha='"permissions": { "deny": ["Read(.env*)", "Read(!.env.example)", "Edit(.env*)", "Read(**/*.pem)", "Edit(**/*.pem)", "Read(**/*.key)", "Edit(**/*.key)"] }'
   if ! command -v node >/dev/null 2>&1; then
     echo "[ONB-7] .claude/settings.json NÃO escrito — node não encontrado (a emenda segura do JSON precisa dele)"
-    echo "  Cole você mesmo em .claude/settings.json, dentro de \"permissions\":"
+    echo "  Cole você mesmo na raiz de .claude/settings.json (a linha já traz a chave \"permissions\"; se o arquivo já tem uma, acrescente estas entradas ao seu \"deny\" em vez de repetir a chave):"
     echo "    $linha"
     return 0
   fi
   if ! node "$ROOT/gates/scripts/onboarding-config.mjs" --root "$DEST" --deny-guarda; then
     echo "[ONB-7] .claude/settings.json NÃO escrito — o script de emenda falhou"
-    echo "  Cole você mesmo em .claude/settings.json, dentro de \"permissions\":"
+    echo "  Cole você mesmo na raiz de .claude/settings.json (a linha já traz a chave \"permissions\"; se o arquivo já tem uma, acrescente estas entradas ao seu \"deny\" em vez de repetir a chave):"
     echo "    $linha"
   fi
 }

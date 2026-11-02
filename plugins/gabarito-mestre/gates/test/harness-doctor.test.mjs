@@ -729,6 +729,23 @@ describe('T6 doctor — camada de guarda (REQ-INF-2)', () => {
     assert.equal(camada(quebrado).estado, 'nenhuma');
   });
 
+  test('doctor-camada-permissions-deny-parcial (M7): UMA entrada da lista não é a camada; as 7 são', () => {
+    const uma = repo({ '.claude/settings.json': JSON.stringify({ permissions: { deny: ['Read(.env*)'] } }) });
+    assert.equal(camada(uma).estado, 'nenhuma');
+    const seis = repo({ '.claude/settings.json': JSON.stringify({ permissions: { deny: DENY_GUARDA.slice(1) } }) });
+    assert.equal(camada(seis).estado, 'nenhuma');
+    const todas = repo({ '.claude/settings.json': JSON.stringify({ permissions: { deny: ['Bash(ls:*)', ...DENY_GUARDA] } }) });
+    assert.equal(camada(todas).estado, 'permissions.deny', 'lista própria somada às 7');
+  });
+
+  test('doctor-ignora-git-dir-herdado (M10-O4): GIT_DIR/GIT_WORK_TREE do ambiente não fazem o doctor listar OUTRO repositório', () => {
+    const outro = repoComGit({ 'x.txt': 'x' });
+    const dir = repoComGit({ 'AGENTS.md': agents(0), 'src/guard.ts': 'assertNotProduction()' });
+    const r = spawnSync(process.execPath, [SCRIPT, '--json'], { cwd: dir, encoding: 'utf8', env: { ...process.env, GIT_DIR: join(outro, '.git'), GIT_WORK_TREE: outro } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).resultados.find((x) => x.id === 'R3-prod-guard').found, true);
+  });
+
   test('doctor-camada-prioridade: ativa > configurada > permissions.deny', () => {
     const base = { '.claude/settings.json': JSON.stringify({ permissions: { deny: DENY_GUARDA } }) };
     assert.equal(camada(repo({ ...base, 'harness.config.json': JSON.stringify(CFG_GUARDA) })).estado, 'configurada');

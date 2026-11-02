@@ -16,6 +16,7 @@
 #  M13 T6: --guarda substitui o deny existente      ⇒ settings-deny-preserva-existente
 #  M14 T6: --guarda sobrescreve JSON inválido       ⇒ settings-deny-recusa
 #  M15 T6: .gitignore sem `.harness/entregas/_sem-id/` ⇒ gitignore-sem-id
+#  M20 T6 r1: `Write(.env*)` (ou entrada a menos) na linha para colar de instalar.sh ⇒ linha-colavel-igual-ao-deny
 #  M19 T6 r1: .gitignore sem `.harness/heartbeat.json` ⇒ gitignore-heartbeat-local
 #  M16 T6: --atualizar sobrescreve gate editado     ⇒ atualizar-nao-sobrescreve-gate
 set -eu
@@ -161,6 +162,11 @@ recusa "symlink" s_symlink
 recusa ".claude symlink" s_dir_symlink
 if [ "$(id -u)" -ne 0 ]; then recusa "sem permissão de escrita" s_somente_leitura; else ok "sem permissão de escrita: pulado (root ignora chmod)"; fi
 
+# A linha para colar (caminho sem node) é digitada à mão em instalar.sh: tem de ser, entrada por entrada, a lista que o
+# onboarding-config.mjs grava (M10-O7: um `Write(.env*)` ali passava despercebido porque o caminho sem node não roda aqui).
+LINHA_SH="$(sed -n "s/^  local linha='\(.*\)'\$/\1/p" "$INSTALAR")"
+check "linha-colavel-igual-ao-deny: a linha do instalar.sh (sem node) tem EXATAMENTE as 7 entradas e nenhum Write(" \
+  'node -e "const l=JSON.parse(\"{\"+process.argv[1]+\"}\").permissions.deny; const e=process.argv[2].split(\"|\"); process.exit(JSON.stringify(l)===JSON.stringify(e)&&!l.some(x=>x.startsWith(\"Write(\"))?0:1)" "$LINHA_SH" "$DENY_EXATO"'
 # sem node: recusa com a linha, não quebra a instalação (só roda onde /usr/bin:/bin não tem node)
 if ! PATH="/usr/bin:/bin" command -v node >/dev/null 2>&1; then
   R5N="$(novo_repo)"

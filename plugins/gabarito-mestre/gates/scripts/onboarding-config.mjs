@@ -211,7 +211,7 @@ function mainDenyGuarda(root, dryRun) {
   const alvo = SETTINGS_FILE;
   if (r.acao === 'recusado') {
     console.log(`[ONB-7] ${alvo} NÃO escrito — ${r.motivo}`);
-    console.log(`  Não toquei no arquivo. Cole você mesmo em ${alvo}, dentro de "permissions":`);
+    console.log(`  Não toquei no arquivo. Cole você mesmo na raiz de ${alvo} (a linha já traz a chave "permissions"; se o arquivo já tem uma, acrescente estas entradas ao seu "deny" em vez de repetir a chave):`);
     console.log(`    ${r.linha}`);
     process.exit(0);
   }

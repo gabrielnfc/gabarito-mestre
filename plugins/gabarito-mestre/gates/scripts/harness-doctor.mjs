@@ -36,7 +36,6 @@
 import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, renameSync, lstatSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'node:fs';
 import { join, relative, sep, dirname } from 'node:path';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { raizDoRepo } from '../lib/git.mjs';
 import { lerGuarda, DENY_GUARDA, CHAVES_MORTAS } from '../lib/config.mjs';
 import { diasEntre } from '../lib/datas.mjs';
 import { execFileSync } from 'node:child_process';
@@ -129,6 +128,15 @@ function arquivosDoGit(root) {
     });
   } catch {
     return null;
+  }
+}
+
+/** toplevel do repo de `cwd` — com `GIT_DIR` & cia do ambiente (hook do git, CI) limpos, ou o próprio `cwd`. */
+function raizSemGitDirHerdado(cwd = process.cwd()) {
+  try {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', env: envGit(), stdio: ['ignore', 'pipe', 'ignore'] }).trim() || cwd;
+  } catch {
+    return cwd;
   }
 }
 
@@ -889,7 +897,7 @@ function entradasDeny(raiz) {
     const st = lstatSync(f);
     if (!st.isFile() || st.size > 1024 * 1024) return 0;
     const deny = JSON.parse(readFileSync(f, 'utf8'))?.permissions?.deny;
-    return Array.isArray(deny) ? DENY_GUARDA.filter((e) => deny.includes(e)).length : 0;
+    return Array.isArray(deny) ? DENY_GUARDA.filter((e) => deny.includes(e)).length : 0; // a camada é a lista INTEIRA (ver camadaDe)
   } catch {
     return 0;
   }
@@ -911,7 +919,7 @@ function camadaDe(raiz, agoraMs, g) {
   let estado = 'nenhuma';
   if (ha !== null && ha <= HEARTBEAT_ATIVA_H) estado = 'ativa';
   else if (ambientes.length) estado = 'configurada';
-  else if (entradasDeny(raiz) > 0) estado = 'permissions.deny';
+  else if (entradasDeny(raiz) === DENY_GUARDA.length) estado = 'permissions.deny'; // as 7: uma entrada solta não é a 2ª camada
   // 'mod' (guarda por mod, sem hook) fica no contrato, mas nenhum sinal em disco o prova: nunca é devolvido.
   // O diário versionado (de qualquer autor) só informa; não decide o estado. Com marcador local válido não precisa de anotação.
   const diario = estado === 'ativa' ? null : heartbeatDoDiario(raiz, agoraMs);
@@ -1072,7 +1080,7 @@ function gravarCache(root, out) {
 }
 
 function main(argv) {
-  const root = raizDoRepo();
+  const root = raizSemGitDirHerdado();
   const out = run(root);
   if (argv.includes('--cache')) gravarCache(root, out); // antes do exit: o cartão precisa do cache mesmo quando o repo mente
   if (argv.includes('--json')) {
