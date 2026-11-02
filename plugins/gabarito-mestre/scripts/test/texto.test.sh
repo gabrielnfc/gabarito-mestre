@@ -21,6 +21,7 @@
 #  B8  PR_TEMPLATE.md listar tipo que não está em tiposComEscopoDePbi/tiposLivres (DEFAULTS)
 #  F6-R7 usar `grep -c '"hooks"'` sem `[[:space:]]*:` (sempre 1, por causa da keyword)
 #  "77 testes" reintroduzido em plugins/gabarito-mestre, .github/, README.md ou CONTRIBUTING.md
+#  A3 r1: renomear o job instalador do ci.yml ⇒ nome exato do ruleset; doctor-self deixar de exigir configurada
 #  renomear no ci.yml um dos 4 checks exigidos pelo ruleset de main, ou tirar ubuntu-latest/macos-latest da matriz de hooks
 #  nomes da 1.0.1 (4 skills · 3 agents · 1 command · 2+3 hooks · 7 gates + 4 scripts · R1–R18 · G1–G9 · I1–I12)
 set -u
@@ -239,6 +240,9 @@ check "ci.yml: matriz de hooks com ubuntu-latest e macos-latest (ruleset)" 'OSL=
 # de pedir fetch-depth: 0.
 INSTALADOR_JOB=$(awk '/^  instalador:/{f=1;next} f&&/^  [a-z][a-z-]*:/{f=0} f' "$CI")
 check "ci.yml: job instalador com fetch-depth: 0 (cenário 8 lê 1c85330)" 'printf "%s\n" "$INSTALADOR_JOB" | grep -qE "fetch-depth:[[:space:]]*0"' "checkout do job instalador sem fetch-depth: 0 — cenário 8 do instalar.test.sh precisa do histórico completo"
+check "ci.yml: check do job instalador com o NOME EXATO exigido pelo ruleset de main (A3)" 'printf "%s\n" "$INSTALADOR_JOB" | grep -qxF "    name: instalar.sh — fixture 1.0.1, --atualizar, --gates-substituir (bash \${{ matrix.os }})"' "nome do job instalador diverge do contexto exigido pelo ruleset: os 2 checks (ubuntu/macos) nunca reportam em PR para main"
+DOCTOR_JOB=$(awk '/^  doctor-self:/{f=1;next} f&&/^  [a-z][a-z-]*:/{f=0} f' "$CI")
+check "ci.yml: doctor-self exige camada 'configurada' (no CI limpo 'ativa' é falso positivo)" 'printf "%s\n" "$DOCTOR_JOB" | grep -q "camada.estado!==.configurada."' "doctor-self não falha quando a camada volta a ativa num checkout limpo"
 # Canal next (T8, Q12): CI roda em push para next; versao-medida avisa (::warning) e nunca falha.
 PUSH_BLOCK=$(awk '/^on:/{f=1;next} f&&/^[a-z]/{f=0} f' "$CI")
 check "ci.yml: push.branches inclui next (canal next)" 'printf "%s\n" "$PUSH_BLOCK" | grep -E "^ +branches:" | grep -qE "\bnext\b"' "next ausente de push.branches"

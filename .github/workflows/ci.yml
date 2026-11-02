@@ -43,7 +43,8 @@ jobs:
       - run: node plugins/gabarito-mestre/gates/scripts/build.mjs --check
 
   instalador:
-    name: instalar.sh — instalação, --atualizar, --guarda, upgrade da 1.1.0 real (bash ${{ matrix.os }})
+    # Nome preso ao ruleset de main (contexto exigido): renomear só na E5, junto com o ruleset.
+    name: instalar.sh — fixture 1.0.1, --atualizar, --gates-substituir (bash ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -99,7 +100,7 @@ jobs:
             const por=Object.fromEntries(j.resultados.map(r=>[r.id,r]));
             const erros=[];
             if(j.perfil!=='repo-sem-app') erros.push('perfil: '+j.perfil);
-            if(!j.camada||j.camada.estado==='nenhuma') erros.push('camada ausente: '+JSON.stringify(j.camada));
+            if(!j.camada||j.camada.estado!=='configurada') erros.push('camada deveria ser configurada (sem marcador local no checkout limpo; ativa seria falso positivo): '+JSON.stringify(j.camada));
             for(const id of ['G3-mass-mutation','G3-strict-undefined','teardown-por-id']) if(!por[id].na) erros.push(id+' deveria ser n/a');
             for(const id of ['R3-prod-guard','secrets-fora-do-repo']) if(por[id].na) erros.push(id+' NÃO pode ser n/a');
             const bad=j.resultados.filter(r=>r.found&&!r.na&&/gabarito-mestre\//.test(r.evidence||''));
