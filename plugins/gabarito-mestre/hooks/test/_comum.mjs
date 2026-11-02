@@ -6,7 +6,7 @@
  *   git show 0e96a5d:plugins/gabarito-mestre/hooks/test/guards.test.mjs
  */
 import { spawnSync } from 'node:child_process';
-import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,31 +19,17 @@ export const PLUGIN = join(HOOKS, '..');
 // suportados) que não inclui o diretório onde `node` normalmente vive (/usr/local/bin, homebrew, nvm…).
 // B10 (T25b, handoff §B.10): prova o ramo "node ausente" sem stub — comando de verdade some do PATH.
 export const PATH_SEM_NODE = '/bin:/usr/bin:/usr/sbin:/sbin';
-export const HATCH_VARS = ['GABARITO_ALLOW_DESTRUCTIVE', 'GABARITO_ALLOW_PRODUCTION'];
 export function cleanEnv(env = {}) {
   const e = { ...process.env };
-  for (const k of [...HATCH_VARS, 'GABARITO_PROD_PATTERNS', 'GABARITO_PROD_PATTERNS_EXTRA', 'CLAUDE_PLUGIN_ROOT']) delete e[k];
+  delete e.CLAUDE_PLUGIN_ROOT;
   return { ...e, ...env };
 }
-export function run(script, command, env = {}) {
-  const r = spawnSync('bash', [join(HOOKS, script)], {
-    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } }),
-    encoding: 'utf8',
-    env: cleanEnv(env),
-  });
-  return { code: r.status, stdout: r.stdout, stderr: r.stderr };
-}
-// Como run(), mas com cwd (o hook resolve a raiz a partir dele) e evento configurável.
+// Roda um hook bash com cwd (o hook resolve a raiz a partir dele) e evento configurável.
 export function runAt(script, command, { cwd, env = {}, event = 'PreToolUse' } = {}) {
   const payload = event === 'PreToolUse'
     ? { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd }
     : { hook_event_name: event, session_id: 'teste', cwd };
   const r = spawnSync('bash', [join(HOOKS, script)], { input: JSON.stringify(payload), encoding: 'utf8', cwd, env: cleanEnv(env) });
-  return { code: r.status, stdout: r.stdout, stderr: r.stderr };
-}
-// Executa um trecho bash com _common.sh carregado (testa as funções sem passar por um hook).
-export function runCommon(snippet, { cwd = HOOKS, env = {} } = {}) {
-  const r = spawnSync('bash', ['-c', `. "${join(HOOKS, '_common.sh')}"; ${snippet}`], { encoding: 'utf8', cwd, env: cleanEnv(env) });
   return { code: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 // Repo de fixture: tmpdir físico (macOS: /var → /private/var), apps/api/ para o caso monorepo,
@@ -59,6 +45,3 @@ export function fixtureRepo({ git = true, branch = 'feat/PBI-1-x', config = null
   for (const [rel, txt] of Object.entries(files)) writeFileSync(join(dir, rel), txt);
   return dir;
 }
-export const corpus = (f) =>
-  readFileSync(join(here, 'corpus', f), 'utf8').split('\n').filter((l) => l.trim() && !l.startsWith('#'));
-export const blocked = (r) => r.code === 2;

@@ -6,15 +6,28 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/guard-destructive.sh\"",
-            "shell": "bash",
-            "timeout": 10
-          },
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/gates/dist/guarda.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|Read|Grep",
+        "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/guard-production.sh\"",
-            "shell": "bash",
-            "timeout": 10
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/gates/dist/guarda.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/gates/dist/guarda.js\"",
+            "timeout": 5
           }
         ]
       }

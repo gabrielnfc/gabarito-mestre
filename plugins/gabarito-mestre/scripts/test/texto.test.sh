@@ -124,9 +124,12 @@ for par in "$Q:prompts.md" "$R:referencia.md"; do
     '[ "'"$n_lit"'" -ge 1 ] && [ "'"$n_lit"'" -eq "'"$n_can"'" ]' \
     "$nome tem $n_lit ocorrência(s) de 'DISPATCH Task' mas só $n_can casa(m) o formato completo"
 done
-for hv in GABARITO_ALLOW_DESTRUCTIVE GABARITO_ALLOW_PRODUCTION; do
-  check "$hv citado no AGENTS.md existe em hooks/" "grep -q '$hv' '$A' && grep -rlq '$hv' '$P/hooks/'*.sh >/dev/null 2>&1" "hatch sem uso em hooks/"
-done
+# Q9/REQ-GRD-5: sem escape hatch em lugar nenhum de plugins/** (código, reference/, templates/, skills, testes),
+# exceto este arquivo, que precisa citar o nome para procurar por ele. Specs e ledgers em docs/ ficam fora.
+HATCH_ACHADOS=$(grep -rIl 'GABARITO_ALLOW' "$P" 2>/dev/null | grep -v "/scripts/test/texto.test.sh$" || true)
+check "GABARITO_ALLOW = 0 em plugins/** (REQ-GRD-5, Q9)" '[ -z "$HATCH_ACHADOS" ]' "hatch residual em: $(printf '%s' "$HATCH_ACHADOS" | tr '\n' ' ')"
+GUARDS_CITADOS=$(grep -rIlE 'guard-(destructive|production|versioning)' "$P" 2>/dev/null | grep -v "/scripts/test/texto.test.sh$" || true)
+check "nenhum guard bash antigo citado em plugins/** (REQ-GRD-3, REQ-INF-1)" '[ -z "$GUARDS_CITADOS" ]' "menção residual em: $(printf '%s' "$GUARDS_CITADOS" | tr '\n' ' ')"
 MAXL=$(grep -oE "LIMITE_CONTEXTO = [0-9]+" "$CS" | grep -oE '[0-9]+')
 check "'≤ 6.000 caracteres' do AGENTS.md bate com LIMITE_CONTEXTO=$MAXL de cartao-sessao.mjs" "grep -q '≤ 6.000 caracteres' '$A' && [ '$MAXL' = 6000 ]" "LIMITE_CONTEXTO ≠ 6000 ou AGENTS.md não cita ≤ 6.000 caracteres"
 check "'inegociável' cobre R1–R21" "grep -q 'inegociável (R1–R21' '$A'" "frase de cobertura ausente ou alcance diferente"
@@ -249,7 +252,7 @@ check "ci.yml: versao-medida nunca falha — sem exit 1 (Q12)" '! printf "%s\n" 
 nomes_falhou=0
 for f in skills/gabarito-instalar/SKILL.md skills/gabarito-conformidade/SKILL.md skills/gabarito-review/SKILL.md skills/gabarito-spike/SKILL.md \
          agents/gabarito-implementador.md agents/gabarito-revisor.md agents/gabarito-spike.md commands/gabarito-doctor.md \
-         hooks/guard-destructive.sh hooks/guard-production.sh hooks/session-card.sh hooks/remind-orchestrator.sh \
+         hooks/session-card.sh gates/dist/guarda.js hooks/remind-orchestrator.sh \
          gates/src/mass-mutation-guard.ts gates/src/production-host-guard.ts gates/eslint/no-unfiltered-mass-mutation.js \
          gates/scripts/migrations-guard.mjs gates/scripts/deploy-order-check.mjs gates/scripts/quality-ratchet.mjs gates/scripts/harness-doctor.mjs \
          gates/scripts/onboarding-config.mjs gates/scripts/capacidade.mjs gates/scripts/versionamento-check.mjs gates/scripts/cartao-sessao.mjs; do
@@ -258,7 +261,7 @@ done
 for rn in $(seq 1 18); do grep -qE "(^|[^A-Z0-9])R$rn([^0-9]|$)" "$A" || { falha "nomes da 1.0.1: R$rn" "ausente do AGENTS.md"; nomes_falhou=1; }; done
 for gn in $(seq 1 9);  do grep -qE "(^|[^A-Z0-9])G$gn([^0-9]|$)" "$A" || { falha "nomes da 1.0.1: G$gn" "ausente do AGENTS.md"; nomes_falhou=1; }; done
 for in_ in $(seq 1 12); do grep -qE "(^|[^A-Z0-9])I$in_([^0-9]|$)" "$A" || { falha "nomes da 1.0.1: I$in_" "ausente do AGENTS.md"; nomes_falhou=1; }; done
-[ "$nomes_falhou" -eq 0 ] && ok "nomes da 1.0.1 presentes: 4 skills, 3 agents, 1 command, 2 hooks (+3), 7 gates (+4 scripts), R1–R18, G1–G9, I1–I12"
+[ "$nomes_falhou" -eq 0 ] && ok "nomes da 1.0.1 presentes: 4 skills, 3 agents, 1 command, 1 guarda + 2 hooks (+3), 7 gates (+4 scripts), R1–R18, G1–G9, I1–I12"
 
 echo "── $falhas falha(s)"
 [ "$falhas" -eq 0 ]
