@@ -16,10 +16,12 @@
  *   node onboarding-config.mjs --settings '{"model":"fable"}'
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { arg, ehEntrypoint } from '../lib/cli.mjs';
+import { raizDoRepo } from '../lib/git.mjs';
+
+export { raizDoRepo }; // API pública: antes definida aqui, agora vem de lib/git
 
 export const SECOES = ['fluxo', 'versionamento', 'orquestracao', 'contexto'];
 export const CONFIG_FILE = 'harness.config.json';
@@ -92,24 +94,12 @@ export function aplicarSettings(root, patch, opts = {}) {
   return aplicarEm(join(root, SETTINGS_FILE), patch, opts);
 }
 
-export function raizDoRepo(cwd = process.cwd()) {
-  try {
-    const r = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    return r || cwd;
-  } catch {
-    return cwd;
-  }
-}
 
 function main(argv) {
-  const arg = (nome) => {
-    const i = argv.indexOf(`--${nome}`);
-    return i !== -1 ? argv[i + 1] : undefined;
-  };
-  const root = arg('root') ? resolve(arg('root')) : raizDoRepo();
+  const root = arg(argv, 'root') ? resolve(arg(argv, 'root')) : raizDoRepo();
   const dryRun = argv.includes('--dry-run');
   const iSet = argv.indexOf('--set');
-  const settings = arg('settings');
+  const settings = arg(argv, 'settings');
   if (iSet === -1 && settings === undefined) {
     console.error("uso: onboarding-config.mjs [--root <dir>] --set <fluxo|versionamento|orquestracao|contexto> '<json>' | --settings '<json>' [--dry-run]");
     process.exit(1);
@@ -149,15 +139,4 @@ function main(argv) {
   process.exit(0);
 }
 
-// Entrypoint robusto a espaço/acento e a symlink: `file://` cru falha com %20, e comparar
-// contra `resolve(argv[1])` sem realpath falha atrás de qualquer symlink (macOS /var,
-// cache de plugin, bin do npm/homebrew) — o script sairia 0 em silêncio nos dois casos.
-function ehEntrypoint() {
-  if (!process.argv[1]) return false;
-  try {
-    return fileURLToPath(import.meta.url) === realpathSync(resolve(process.argv[1]));
-  } catch {
-    return false;
-  }
-}
-if (ehEntrypoint()) main(process.argv.slice(2));
+if (ehEntrypoint(import.meta.url)) main(process.argv.slice(2));

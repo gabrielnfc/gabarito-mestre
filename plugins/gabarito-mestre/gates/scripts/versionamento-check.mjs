@@ -14,10 +14,14 @@
  *   node versionamento-check.mjs --max 20 --json                                  # doctor / local
  */
 
-import { readFileSync, existsSync, realpathSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { arg, ehEntrypoint } from '../lib/cli.mjs';
+import { raizDoRepo } from '../lib/git.mjs';
+import { lerConfig as lerConfigBase } from '../lib/config.mjs';
+
+export { raizDoRepo }; // API pública: antes definida aqui, agora vem de lib/git
 
 export const DEFAULTS = {
   modelo: 'trunk',
@@ -65,14 +69,8 @@ export function validarBranch(nome, cfg = DEFAULTS) {
 // ────────────────────────────────────────────────────────────── config e git
 
 export function lerConfig(root) {
-  const f = join(root, 'harness.config.json');
-  if (!existsSync(f)) return { cfg: null, failOpen: 'harness.config.json ausente' };
-  let raw;
-  try {
-    raw = JSON.parse(readFileSync(f, 'utf8') || '{}');
-  } catch (e) {
-    return { cfg: null, failOpen: `harness.config.json inválido (${String(e.message).split('\n')[0]})` };
-  }
+  const { cfg: raw, failOpen } = lerConfigBase(root, {});
+  if (failOpen) return { cfg: null, failOpen };
   const v = raw?.versionamento;
   if (!v || typeof v !== 'object' || !v.resolvidoEm) return { cfg: null, failOpen: 'versionamento.resolvidoEm ausente (repo sem onboarding)' };
   return { cfg: { ...DEFAULTS, ...v, idPadrao: raw?.fluxo?.idPadrao ?? DEFAULTS.idPadrao }, failOpen: null };
@@ -143,30 +141,18 @@ export function checar(root, opts = {}) {
   return { ok: achados.length === 0, achados, commits: commits.length, branch: branch ?? null };
 }
 
-export function raizDoRepo(cwd = process.cwd()) {
-  try {
-    const r = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    return r || cwd;
-  } catch {
-    return cwd;
-  }
-}
 
 function main(argv) {
-  const arg = (nome, fallback) => {
-    const i = argv.indexOf(`--${nome}`);
-    return i !== -1 && argv[i + 1] !== undefined ? argv[i + 1] : fallback;
-  };
-  const root = arg('root') ? resolve(arg('root')) : raizDoRepo();
-  const max = Number(arg('max', 20)) || 20;
-  const branch = arg('branch');
+  const root = arg(argv, 'root') ? resolve(arg(argv, 'root')) : raizDoRepo();
+  const max = Number(arg(argv, 'max', 20)) || 20;
+  const branch = arg(argv, 'branch');
   // M2: `--branch --json` (a flag seguinte, sem valor) não pode virar "branch = --json" em
   // silêncio — exige um valor de fato.
   if (branch !== undefined && branch.startsWith('--')) {
     console.error(`versionamento-check.mjs: --branch exige um nome de branch (recebeu \`${branch}\`)`);
     process.exit(1);
   }
-  const r = checar(root, { base: arg('base'), branch, max });
+  const r = checar(root, { base: arg(argv, 'base'), branch, max });
   if (argv.includes('--json')) {
     process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
     process.exit(r.failOpen ? 0 : r.ok ? 0 : 1);
@@ -182,15 +168,4 @@ function main(argv) {
   process.exit(r.ok ? 0 : 1);
 }
 
-// Entrypoint robusto a espaço/acento e a symlink: `file://` cru falha com %20, e comparar
-// contra `resolve(argv[1])` sem realpath falha atrás de qualquer symlink (macOS /var,
-// cache de plugin, bin do npm/homebrew) — o script sairia 0 em silêncio nos dois casos.
-function ehEntrypoint() {
-  if (!process.argv[1]) return false;
-  try {
-    return fileURLToPath(import.meta.url) === realpathSync(resolve(process.argv[1]));
-  } catch {
-    return false;
-  }
-}
-if (ehEntrypoint()) main(process.argv.slice(2));
+if (ehEntrypoint(import.meta.url)) main(process.argv.slice(2));

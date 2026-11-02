@@ -60,7 +60,7 @@ jobs:
         with:
           node-version: '22'
       - run: bash --version | head -1
-      - run: node --test plugins/gabarito-mestre/hooks/test/guards.test.mjs
+      - run: node --test plugins/gabarito-mestre/hooks/test/*.test.mjs
 
   texto:
     name: texto — invariantes da 1.1.0 (grep)

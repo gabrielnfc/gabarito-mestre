@@ -28,9 +28,11 @@
  *   node harness-doctor.mjs --cache    # grava .harness/doctor-cache.json { nivel, declarado, em } (lido pelo cartão de sessão)
  */
 
-import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, renameSync, realpathSync } from 'node:fs';
-import { join, relative, sep, resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
+import { join, relative, sep, dirname } from 'node:path';
+import { ehEntrypoint } from '../lib/cli.mjs';
+import { raizDoRepo } from '../lib/git.mjs';
+import { diasEntre } from '../lib/datas.mjs';
 import { execFileSync } from 'node:child_process';
 import { checar } from './versionamento-check.mjs';
 
@@ -158,7 +160,7 @@ const ATTEST_TTL_DAYS = 180;
 function attestOk(attest, id) {
   const a = attest[id];
   if (!a || a.confirmado !== true || !a.em || !a.por) return null;
-  const dias = (Date.now() - Date.parse(a.em)) / 86_400_000;
+  const dias = diasEntre(a.em, Date.now());
   if (Number.isNaN(dias)) return null;
   if (dias > ATTEST_TTL_DAYS) return { stale: true, ...a, dias: Math.round(dias) };
   return { stale: false, ...a, dias: Math.round(dias) };
@@ -168,7 +170,7 @@ function attestOk(attest, id) {
 
 const ISO_DATA = /^\d{4}-\d{2}-\d{2}$/;
 const diasDesde = (data) => {
-  const d = (Date.now() - Date.parse(data)) / 86_400_000;
+  const d = diasEntre(data, Date.now());
   return Number.isNaN(d) ? null : d;
 };
 
@@ -721,14 +723,6 @@ function render(out, explain) {
   return linhas.join('\n');
 }
 
-function raizDoRepo(cwd = process.cwd()) {
-  try {
-    const r = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    return r || cwd;
-  } catch {
-    return cwd;
-  }
-}
 
 /** Única escrita do doctor. `run()` continua puro; o cartão de sessão lê este arquivo (DOC-2, TTL 24 h). */
 function gravarCache(root, out) {
@@ -758,15 +752,4 @@ function main(argv) {
   process.exit(out.mentindo ? 1 : 0);
 }
 
-// Entrypoint robusto a espaço/acento e a symlink: `file://` cru falha com %20, e comparar
-// contra `resolve(argv[1])` sem realpath falha atrás de qualquer symlink (macOS /var,
-// cache de plugin, bin do npm/homebrew) — o script sairia 0 em silêncio nos dois casos.
-function ehEntrypoint() {
-  if (!process.argv[1]) return false;
-  try {
-    return fileURLToPath(import.meta.url) === realpathSync(resolve(process.argv[1]));
-  } catch {
-    return false;
-  }
-}
-if (ehEntrypoint()) main(process.argv.slice(2));
+if (ehEntrypoint(import.meta.url)) main(process.argv.slice(2));

@@ -18,11 +18,15 @@
  *   node capacidade.mjs --calibrar      # valores sugeridos para orquestracao.paralelismo
  */
 
-import { readFileSync, existsSync, statfsSync, realpathSync } from 'node:fs';
+import { readFileSync, existsSync, statfsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { availableParallelism, loadavg, platform } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { arg, ehEntrypoint } from '../lib/cli.mjs';
+import { raizDoRepo } from '../lib/git.mjs';
+import { hojeISO } from '../lib/datas.mjs';
+
+export { raizDoRepo }; // API pública: antes definida aqui, agora vem de lib/git
 
 export const DEFAULTS = {
   modo: 'auto',
@@ -38,12 +42,6 @@ export const CPU_PESADO_PCT = 20;
 export const RSS_PESADO_MB = 500;
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-/** AAAA-MM-DD no fuso LOCAL da máquina (F2-R10) — nunca `toISOString()`, que é UTC e cruza o
- * dia perto da meia-noite local (ex.: 23:30 -03:00 viraria "amanhã" em UTC). */
-const dataLocal = (d) => {
-  const p2 = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
-};
 /** Número finito ou null. Aceita vírgula decimal (ps em locale pt-BR imprime `0,5`). */
 const num = (v) => {
   if (v === undefined || v === null || v === '') return null;
@@ -194,7 +192,7 @@ export function calibrar(medidas, hoje = new Date()) {
     simultaneos: clamp(Math.floor(cores / 4), 1, 3),
     teto: clamp(Math.floor(cores / 2), 2, 8),
     limites: { ...DEFAULTS.limites },
-    calibradoEm: dataLocal(hoje),
+    calibradoEm: hojeISO(hoje),
   };
 }
 
@@ -213,22 +211,10 @@ export function lerParalelismo(root) {
   return p && typeof p === 'object' ? { paralelismo: p, aviso: null } : { paralelismo: null, aviso: 'defaults (orquestracao ausente)' };
 }
 
-export function raizDoRepo(cwd = process.cwd()) {
-  try {
-    const r = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    return r || cwd;
-  } catch {
-    return cwd;
-  }
-}
 
 function main(argv) {
-  const arg = (nome) => {
-    const i = argv.indexOf(`--${nome}`);
-    return i !== -1 ? argv[i + 1] : undefined;
-  };
   try {
-    const root = arg('root') ? resolve(arg('root')) : raizDoRepo();
+    const root = arg(argv, 'root') ? resolve(arg(argv, 'root')) : raizDoRepo();
     const medidas = medir(process.env, root);
     if (argv.includes('--calibrar')) {
       process.stdout.write(`${JSON.stringify(calibrar(medidas), null, 2)}\n`);
@@ -247,15 +233,4 @@ function main(argv) {
   process.exit(0);
 }
 
-// Entrypoint robusto a espaço/acento e a symlink: `file://` cru falha com %20, e comparar
-// contra `resolve(argv[1])` sem realpath falha atrás de qualquer symlink (macOS /var,
-// cache de plugin, bin do npm/homebrew) — o script sairia 0 em silêncio nos dois casos.
-function ehEntrypoint() {
-  if (!process.argv[1]) return false;
-  try {
-    return fileURLToPath(import.meta.url) === realpathSync(resolve(process.argv[1]));
-  } catch {
-    return false;
-  }
-}
-if (ehEntrypoint()) main(process.argv.slice(2));
+if (ehEntrypoint(import.meta.url)) main(process.argv.slice(2));

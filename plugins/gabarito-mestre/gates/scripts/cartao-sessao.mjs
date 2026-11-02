@@ -20,6 +20,10 @@ import { join, resolve, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { arg, ehEntrypoint } from '../lib/cli.mjs';
+import { lerJson } from '../lib/config.mjs';
+import { git, raizDoRepo, inferirPbi } from '../lib/git.mjs';
+import { diasEntre } from '../lib/datas.mjs';
 import { medir, calcularSlots } from './capacidade.mjs';
 
 export const MAX_LINHAS = 40;
@@ -33,19 +37,8 @@ export const DEFAULTS = {
   orquestracao: { modelo: { politica: 'mais-potente', alias: '', resolvidoEm: '', validadeDias: 90 } },
 };
 
-const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-/** null = ausente · undefined = JSON inválido (quem chama decide o que fazer com cada um). */
-const lerJson = (f) => {
-  if (!existsSync(f)) return null;
-  try {
-    const t = readFileSync(f, 'utf8');
-    return t.trim() === '' ? {} : JSON.parse(t);
-  } catch {
-    return undefined;
-  }
-};
 const dias = (agora, iso) => {
-  const d = (agora - Date.parse(iso)) / 86_400_000;
+  const d = diasEntre(iso, agora);
   return Number.isNaN(d) ? null : d;
 };
 /** "AAAA-MM-DD HH:MM" no fuso LOCAL da máquina (F2-R10) — nunca `toISOString()` (UTC), que
@@ -56,26 +49,11 @@ const dataHoraLocal = (ms) => {
   return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
 };
 
-export function resolverRaiz(cwd = process.cwd()) {
-  try {
-    return git(['rev-parse', '--show-toplevel'], cwd) || cwd;
-  } catch {
-    return cwd;
-  }
-}
+export const resolverRaiz = raizDoRepo;
 
 // ────────────────────────────────────────────────────────────── puras
 
-export function inferirPbi(branch, cfg = DEFAULTS) {
-  const idRe = new RegExp(cfg?.fluxo?.idPadrao ?? DEFAULTS.fluxo.idPadrao);
-  const tipos = cfg?.versionamento?.tiposComEscopoDePbi ?? DEFAULTS.versionamento.tiposComEscopoDePbi;
-  const b = String(branch ?? '');
-  const wt = /^wt\/(.+)-(\d+)$/.exec(b);
-  if (wt && idRe.test(wt[1])) return { pbi: wt[1], n: Number(wt[2]) };
-  const m = /^([a-z]+)\/([A-Za-z]+-\d+)(?:-|$)/.exec(b);
-  if (m && tipos.includes(m[1]) && idRe.test(m[2])) return { pbi: m[2], n: null };
-  return null;
-}
+export { inferirPbi }; // movido para lib/git (mesma assinatura)
 
 /** Frontmatter YAML de uma chave por linha (`chave: valor`), sem aninhamento — é o que os templates de card usam. */
 export function lerFrontmatter(texto) {
@@ -341,15 +319,11 @@ export function montarCartao(ctx) {
 }
 
 function main(argv) {
-  const arg = (nome) => {
-    const i = argv.indexOf(`--${nome}`);
-    return i !== -1 ? argv[i + 1] : undefined;
-  };
-  const pluginRoot = arg('plugin-root') ? resolve(arg('plugin-root')) : resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const pluginRoot = arg(argv, 'plugin-root') ? resolve(arg(argv, 'plugin-root')) : resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
   let ctx;
   let linhas;
   try {
-    ctx = coletar(arg('root') ? resolve(arg('root')) : process.cwd(), pluginRoot, { agora: arg('agora') });
+    ctx = coletar(arg(argv, 'root') ? resolve(arg(argv, 'root')) : process.cwd(), pluginRoot, { agora: arg(argv, 'agora') });
     if (ctx.configInvalido) console.error('[ORQ-3] harness.config.json inválido — cartão mínimo (fail-open declarado (G9))');
     linhas = montarCartao(ctx);
   } catch (e) {
@@ -362,15 +336,4 @@ function main(argv) {
   process.exit(0);
 }
 
-// Entrypoint robusto a espaço/acento e a symlink: `file://` cru falha com %20, e comparar
-// contra `resolve(argv[1])` sem realpath falha atrás de qualquer symlink (macOS /var,
-// cache de plugin, bin do npm/homebrew) — o script sairia 0 em silêncio nos dois casos.
-function ehEntrypoint() {
-  if (!process.argv[1]) return false;
-  try {
-    return fileURLToPath(import.meta.url) === realpathSync(resolve(process.argv[1]));
-  } catch {
-    return false;
-  }
-}
-if (ehEntrypoint()) main(process.argv.slice(2));
+if (ehEntrypoint(import.meta.url)) main(process.argv.slice(2));
