@@ -82,3 +82,27 @@
 {"nome":"existencia-stat","req":"GRD-5","tool":"Bash","input":{"command":"stat .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
 {"nome":"existencia-git-log","req":"GRD-5","tool":"Bash","input":{"command":"git log -- .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
 {"nome":"existencia-git-check-ignore","req":"GRD-5","tool":"Bash","input":{"command":"git check-ignore .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"heredoc-commit-corpo-nao-e-comando","req":"GRD-2","tool":"Bash","input":{"command":"git commit -m \"$(cat <<'EOF'\nfeat: x\n\nrm .env\nfix (parênteses :)\nEOF\n)\""},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"heredoc-commit-corpo-nao-e-comando-orq","req":"GRD-2","tool":"Bash","input":{"command":"git commit -m \"$(cat <<'EOF'\nfeat: x\n\nrm .env\nEOF\n)\""},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"heredoc-bash-direto-e-comando","req":"GRD-2","tool":"Bash","input":{"command":"bash <<'EOF'\nrm .env\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-sh-em-substituicao-e-comando","req":"GRD-2","tool":"Bash","input":{"command":"echo \"$(sh <<'EOF'\nrm .env\nEOF\n)\""},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-python-e-comando","req":"GRD-2","tool":"Bash","input":{"command":"python3 - <<'EOF'\ncat .env\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-cat-pipe-bash-e-comando","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'EOF' | bash\nrm .env\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-sem-aspas-executa-subst","req":"GRD-2","tool":"Bash","input":{"command":"cat <<EOF\nx $(rm .env) y\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-sem-aspas-executa-crase","req":"GRD-2","tool":"Bash","input":{"command":"cat <<EOF\nx `cat .env` y\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-aspas-duplas-no-delimitador","req":"GRD-2","tool":"Bash","input":{"command":"cat <<\"EOF\"\n$(rm .env)\nEOF"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"heredoc-barra-no-delimitador","req":"GRD-2","tool":"Bash","input":{"command":"cat <<\\EOF\n$(rm .env)\nEOF"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"heredoc-menos-com-tabs","req":"GRD-2","tool":"Bash","input":{"command":"cat <<-'EOF'\n\trm .env\n\tEOF"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"heredoc-dois-na-mesma-linha","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'A' <<'B'\nrm .env\nA\ncat .env\nB"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"heredoc-dois-e-comando-depois","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'A' <<'B'\nx\nA\ny\nB\nrm .env"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-sem-terminador-lido-como-comando","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'EOF'\nrm .env"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-delimitador-repetido-no-corpo","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'EOF'\nx\nEOF\nrm .env\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-comando-depois-do-fechamento","req":"GRD-2","tool":"Bash","input":{"command":"echo \"$(cat <<'EOF'\nx\nEOF\n)\"; vercel --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"heredoc-redirect-env","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'EOF' > .env\nx\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-redirect-git-config","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'EOF' > .git/config\nx\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-redirect-settings","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'EOF' > .claude/settings.json\nx\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-aritmetica-nao-engole-o-resto","req":"GRD-2","tool":"Bash","input":{"command":"echo $((1<<2))\nrm .env"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-cat-pipe-bash-sem-espaco","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'EOF'|bash\nrm .env\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-ssh-e-comando","req":"GRD-2","tool":"Bash","input":{"command":"ssh host <<'EOF'\nrm .env\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-bash-menos-tabs-e-comando","req":"GRD-2","tool":"Bash","input":{"command":"bash <<-'EOF'\n\trm .env\n\tEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-tee-env-continua-escrita","req":"GRD-2","tool":"Bash","input":{"command":"tee .env <<'EOF'\nx\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
