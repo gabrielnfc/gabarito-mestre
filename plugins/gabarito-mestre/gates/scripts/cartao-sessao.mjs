@@ -15,8 +15,8 @@
  *   node cartao-sessao.mjs --root <dir> --plugin-root <dir> --json --agora <ISO> # teste
  */
 
-import { readFileSync, existsSync, realpathSync, lstatSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { readFileSync, existsSync, realpathSync, lstatSync, writeFileSync, renameSync, mkdirSync, unlinkSync } from 'node:fs';
+import { join, resolve, dirname, relative } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -358,6 +358,28 @@ export function ajustarAoLimite(texto, max) {
   return saida.length <= max ? saida : '';
 }
 
+/**
+ * `.harness/heartbeat.json` (gitignored): evidência LOCAL de que o hook rodou aqui (Q20). Escrita atômica
+ * (tmp + rename; rename substitui um symlink sem segui-lo). Devolve '' se gravou, ou a mensagem do erro.
+ */
+function gravarMarcador(raiz, dados) {
+  const alvo = join(raiz, '.harness', 'heartbeat.json');
+  const tmp = join(raiz, '.harness', `heartbeat.${process.pid}.${Date.now()}.tmp`);
+  try {
+    mkdirSync(join(raiz, '.harness'), { recursive: true });
+    writeFileSync(tmp, `${JSON.stringify(dados)}\n`, { flag: 'wx', mode: 0o644 });
+    renameSync(tmp, alvo);
+    return '';
+  } catch (e) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* tmp nem chegou a existir */
+    }
+    return String(e?.message ?? e).split('\n')[0];
+  }
+}
+
 /** Os três caminhos do diário não podem ser symlink: o hook não escreve fora da árvore da entrega. */
 function caminhosSemSymlink(raiz, dir) {
   for (const p of [join(raiz, '.harness'), join(raiz, '.harness', 'entregas'), dir]) {
@@ -420,7 +442,8 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
 
   let instantaneo = '';
   let diarioOk = false;
-  if (diario) {
+  if (diario && !ctx.semOnboarding && !ctx.erro) {
+    // Sem onboarding (ou cartão indisponível) o hook não escreve nada: o instalador ainda não ignorou `.harness/` (F1, Q20).
     const dir = diario.dirEntrega(raiz, pbi);
     if (!caminhosSemSymlink(raiz, dir)) {
       falhas.push('diário em caminho com symlink — nada lido nem gravado');
@@ -451,10 +474,18 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
         diarioOk = true;
         for (const ev of eventosNovos) {
           const r = diario.append(dir, entrada.sessionId, ev);
-          if (!r.ok) {
+          if (!r.ok || r.gravado === 'recusa') {
             diarioOk = false;
-            falhas.push(`diário recusou ${ev.tipo}: ${r.erro}`);
+            falhas.push(`diário recusou ${ev.tipo}: ${r.erro ?? 'canário'}`);
             break;
+          }
+        }
+        if (diarioOk) {
+          const arquivo = relative(raiz, join(dir, `events.${entrada.sessionId}.jsonl`)).split('\\').join('/');
+          const erro = gravarMarcador(raiz, { ts, sessao: entrada.sessionId, arquivo, autor, fonte, divergente });
+          if (erro) {
+            diarioOk = false;
+            falhas.push(`marcador do heartbeat não gravado: ${erro}`);
           }
         }
       }
@@ -471,7 +502,7 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
 
   const mensagem = [
     ctx.semOnboarding ? 'GABARITO · harness sem onboarding' : `GABARITO · ${branch}${pbi ? ` · ${pbi}` : ''}`,
-    `Guarda: fonte ${fonte}${divergente ? ' · config local diverge da origin' : ''}${diarioOk ? '' : ' · heartbeat não gravado'}`,
+    `Guarda: fonte ${fonte}${divergente ? ' · config local diverge da origin' : ''}${diarioOk || ctx.semOnboarding ? '' : ' · heartbeat não gravado'}`,
     ctx.capacidade ? `Modelo ${ctx.config.orquestracao.modelo.alias || '?'} · slots ${ctx.capacidade.slots}` : 'Cartão completo no contexto da sessão',
   ]
     .slice(0, LIMITE_MENSAGEM_LINHAS)

@@ -144,14 +144,22 @@ describe('session-card.sh — ORQ-3 (T14)', () => {
     const j = JSON.parse(r.stdout);
     assert.ok(j.systemMessage.split('\n').length <= 3);
   });
-  test('smoke com o cartao-sessao.mjs real: SessionStart grava sessao.inicio e guarda.heartbeat do session_id do stdin', { skip: !existsSync(REAL) && 'T9 ainda não integrada' }, () => {
-    const repo = fixtureRepo({ config: {} });
+  test('smoke com o cartao-sessao.mjs real: SessionStart grava sessao.inicio, guarda.heartbeat e o marcador do session_id do stdin (repo com onboarding)', { skip: !existsSync(REAL) && 'T9 ainda não integrada' }, () => {
+    const repo = fixtureRepo({ config: { fluxo: { resolvidoEm: '2026-09-20' } } });
     const r = spawnSync('bash', [join(HOOKS, 'session-card.sh')], { input: JSON.stringify({ session_id: 'smoke-1', source: 'startup' }), encoding: 'utf8', cwd: repo, env: cleanEnv({ CLAUDE_PLUGIN_ROOT: PLUGIN }) });
     assert.equal(r.status, 0, r.stderr);
     const arq = join(repo, '.harness', 'entregas', '_sem-id', 'events.smoke-1.jsonl');
     assert.ok(existsSync(arq), 'diário não criado');
     const tipos = readFileSync(arq, 'utf8').trim().split('\n').map((l) => JSON.parse(l).tipo);
     assert.deepEqual(tipos, ['sessao.inicio', 'guarda.heartbeat']);
+    assert.equal(JSON.parse(readFileSync(join(repo, '.harness', 'heartbeat.json'), 'utf8')).sessao, 'smoke-1');
+  });
+  test('smoke com o cartao-sessao.mjs real: repo sem onboarding não ganha .harness (nada gravado)', { skip: !existsSync(REAL) && 'T9 ainda não integrada' }, () => {
+    const repo = fixtureRepo({ config: {} });
+    const r = spawnSync('bash', [join(HOOKS, 'session-card.sh')], { input: JSON.stringify({ session_id: 'smoke-2', source: 'startup' }), encoding: 'utf8', cwd: repo, env: cleanEnv({ CLAUDE_PLUGIN_ROOT: PLUGIN }) });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(existsSync(join(repo, '.harness')), false);
+    assert.match(JSON.parse(r.stdout).hookSpecificOutput.additionalContext, /sem onboarding/);
   });
 });
 

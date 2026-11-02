@@ -18,7 +18,7 @@
 
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync, realpathSync, copyFileSync, symlinkSync, chmodSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync, realpathSync, copyFileSync, symlinkSync, chmodSync, readdirSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
@@ -707,6 +707,91 @@ describe('cartão em duas vias — hook SessionStart (T7)', () => {
     assert.equal(r.code, 0, r.stderr);
     assert.ok(!r.ctx.split('\n').includes('Linha-forjada'));
     assert.ok(!r.msg.split('\n').includes('Linha-forjada'));
+  });
+  const lerMarcador = (dir) => JSON.parse(readFileSync(join(dir, '.harness', 'heartbeat.json'), 'utf8'));
+  const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
+  test('cartao-grava-heartbeat-local: marcador .harness/heartbeat.json com o mesmo sessao/ts da linha do diário, formato fechado', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    const r = hook(dir, { session_id: 'sess-m', source: 'startup' });
+    assert.equal(r.code, 0, r.stderr);
+    const m = lerMarcador(dir);
+    assert.deepEqual(Object.keys(m).sort(), ['arquivo', 'autor', 'divergente', 'fonte', 'sessao', 'ts']);
+    const hb = ler(dirDiario(dir)).find((e) => e.tipo === 'guarda.heartbeat');
+    assert.match(m.ts, ISO);
+    assert.equal(m.ts, hb.ts);
+    assert.equal(m.sessao, 'sess-m');
+    assert.equal(m.autor, hb.autor);
+    assert.equal(m.fonte, 'local');
+    assert.equal(m.divergente, false);
+    assert.equal(m.arquivo, '.harness/entregas/PBI-123/events.sess-m.jsonl');
+    assert.ok(readFileSync(join(dir, m.arquivo), 'utf8').includes('"guarda.heartbeat"'));
+    assert.deepEqual(readdirSync(join(dir, '.harness')).filter((f) => f.startsWith('heartbeat') && f !== 'heartbeat.json'), [], 'tmp deixado para trás');
+  });
+  test('cartao-grava-heartbeat-local: segunda sessão sobrescreve (último vence) e o marcador é arquivo regular', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    hook(dir, { session_id: 'a1' });
+    hook(dir, { session_id: 'b2' });
+    assert.equal(lerMarcador(dir).sessao, 'b2');
+    assert.ok(lstatSync(join(dir, '.harness', 'heartbeat.json')).isFile());
+  });
+  test('marcador: symlink no lugar é substituído sem tocar o alvo; diretório no lugar não derruba o cartão', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    const alvo = join(repo(), 'alheio.txt');
+    writeFileSync(alvo, 'intacto');
+    symlinkSync(alvo, join(dir, '.harness', 'heartbeat.json'));
+    const r = hook(dir, { session_id: 's1' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(readFileSync(alvo, 'utf8'), 'intacto');
+    const d2 = repoGit({ ...CACHE_123 });
+    mkdirSync(join(d2, '.harness', 'heartbeat.json'));
+    const r2 = hook(d2, { session_id: 's1' });
+    assert.equal(r2.code, 0, r2.stderr);
+    assert.match(r2.ctx, /PBI: PBI-123/);
+    assert.match(r2.msg, /heartbeat não gravado/);
+  });
+  test('marcador não atualiza quando o diário falha: sem session_id, .harness arquivo, symlink de eventos, canário', () => {
+    const casos = [
+      ['sem sid', (d) => hook(d, '{}')],
+      ['symlink de eventos', (d) => {
+        mkdirSync(dirDiario(d), { recursive: true });
+        symlinkSync(join(repo(), 'x.txt'), join(dirDiario(d), 'events.s1.jsonl'));
+        return hook(d, { session_id: 's1' });
+      }],
+      ['canário no session_id', (d) => hook(d, { session_id: `ghp_${'A'.repeat(30)}` })],
+    ];
+    for (const [nome, rodar] of casos) {
+      const dir = repoGit({ ...CACHE_123 });
+      const r = rodar(dir);
+      assert.equal(r.code, 0, nome);
+      assert.equal(existsSync(join(dir, '.harness', 'heartbeat.json')), false, nome);
+      assert.match(r.msg, /heartbeat não gravado/, nome);
+    }
+  });
+  test('cartao-sem-onboarding-nao-grava: repo git sem config, config inválida, subpasta e sem git: nenhum .harness, árvore limpa, cartão sai', () => {
+    const semConfig = repo({ 'a.txt': 'x' });
+    git(semConfig, 'init', '-q');
+    const invalida = repo({ 'harness.config.json': '{nao json' });
+    git(invalida, 'init', '-q');
+    const semGit = repo({ 'a.txt': 'x' });
+    const sub = repo({ 'pasta/a.txt': 'x' });
+    git(sub, 'init', '-q');
+    for (const [dir, cwd] of [[semConfig, semConfig], [invalida, invalida], [semGit, semGit], [sub, join(sub, 'pasta')]]) {
+      const r = hook(dir, { session_id: 'sem-1' });
+      assert.equal(r.code, 0, r.stderr);
+      assert.ok(r.ctx.length > 0);
+      assert.ok(r.msg.split('\n').length <= 3);
+      assert.equal(existsSync(join(dir, '.harness')), false, dir);
+      assert.equal(existsSync(join(cwd, '.harness')), false, cwd);
+      assert.doesNotMatch(r.msg, /heartbeat não gravado/);
+    }
+    assert.equal(git(semConfig, 'status', '--short', '--untracked-files=all').replace(/\?\? a\.txt/, '').trim(), '');
+  });
+  test('cartao-sem-onboarding-nao-grava: cwd na subpasta com a raiz onboarded grava só na raiz', () => {
+    const dir = repoGit({ ...CACHE_123, 'pasta/a.txt': 'x' });
+    const r = spawnSync(process.execPath, [SCRIPT, '--hook', '--plugin-root', pluginFalso(), '--agora', AGORA], { cwd: join(dir, 'pasta'), input: JSON.stringify({ session_id: 's1' }), encoding: 'utf8', env: { ...process.env, GABARITO_INSTALLED_PLUGINS: '/nao/existe.json' } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(existsSync(join(dir, 'pasta', '.harness')), false);
+    assert.equal(lerMarcador(dir).sessao, 's1');
   });
   test('sem --hook a CLI de texto continua igual e não grava diário', () => {
     const dir = repoGit({ ...CACHE_123 });
