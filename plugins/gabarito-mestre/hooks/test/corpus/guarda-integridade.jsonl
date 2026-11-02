@@ -1,0 +1,23 @@
+{"nome":"integridade-config-sub","req":"GRD-5","tool":"Edit","input":{"file_path":"harness.config.json","old_string":"a","new_string":"b"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"integridade-config-orq","req":"GRD-5","tool":"Edit","input":{"file_path":"harness.config.json","old_string":"a","new_string":"b"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"integridade-config-sub-bash","req":"GRD-5","tool":"Bash","input":{"command":"cat > .claude/settings.json"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"integridade-workflow-mv","req":"GRD-5","tool":"Bash","input":{"command":"mv x .github/workflows/ci.yml"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"integridade-sed-i","req":"GRD-5","tool":"Bash","input":{"command":"sed -i '' s/a/b/ harness.config.json"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"integridade-update-ref-sub","req":"GRD-5","tool":"Bash","input":{"command":"git update-ref refs/remotes/origin/main abc"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"integridade-remote-set-url-sub","req":"GRD-5","tool":"Bash","input":{"command":"git remote set-url origin /tmp/x"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"integridade-remote-set-head-sub","req":"GRD-5","tool":"Bash","input":{"command":"git remote set-head origin x"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"integridade-fetch-refspec-sub","req":"GRD-5","tool":"Bash","input":{"command":"git fetch origin +x:refs/remotes/origin/main"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"integridade-git-c-remote-sub","req":"GRD-5","tool":"Bash","input":{"command":"git -c remote.origin.url=/tmp/x fetch"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"integridade-symbolic-ref-sub","req":"GRD-5","tool":"Bash","input":{"command":"git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/x"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"integridade-git-global-opt","req":"GRD-5","tool":"Bash","input":{"command":"git -C sub config a b"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"integridade-pull-sub","req":"GRD-5","tool":"Bash","input":{"command":"git pull"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"integridade-fetch-orq","req":"GRD-5","tool":"Bash","input":{"command":"git fetch"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"integridade-plugin-root","req":"GRD-5","tool":"Edit","input":{"file_path":"/plugin/hooks/hooks.json","old_string":"a","new_string":"b"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"integridade-gates","req":"GRD-5","tool":"Write","input":{"file_path":"tools/gabarito-gates/x.mjs","content":"x"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"integridade-git-config-arq","req":"GRD-5","tool":"Edit","input":{"file_path":".git/config","old_string":"a","new_string":"b"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"integridade-caminho-absoluto","req":"GRD-5","tool":"Edit","input":{"file_path":"/repo/harness.config.json","old_string":"a","new_string":"b"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"integridade-caminho-dotdot","req":"GRD-5","tool":"Edit","input":{"file_path":"src/../harness.config.json","old_string":"a","new_string":"b"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"hooks-generico-livre","req":"GRD-5","tool":"Edit","input":{"file_path":"src/hooks/useX.ts","old_string":"a","new_string":"b"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"integridade-leitura-livre","req":"GRD-5","tool":"Read","input":{"file_path":"harness.config.json"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"integridade-cat-livre","req":"GRD-5","tool":"Bash","input":{"command":"cat harness.config.json"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"subagent-git-normal","req":"GRD-5","tool":"Bash","input":{"command":"git add . && git commit -m x && git status"},"agente":"sub","esperado":{"faixa":"silencio"}}

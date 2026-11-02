@@ -1,0 +1,16 @@
+{"nome":"segredo-env-sub","req":"GRD-5","tool":"Read","input":{"file_path":".env"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny"}}
+{"nome":"segredo-env-orq","req":"GRD-5","tool":"Read","input":{"file_path":".env"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask"}}
+{"nome":"segredo-env-example","req":"GRD-5","tool":"Read","input":{"file_path":".env.example"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"cp-env-example","req":"GRD-5","tool":"Bash","input":{"command":"cp .env.example docs/exemplo.txt"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"cp-env-para-env-orq","req":"GRD-5","tool":"Bash","input":{"command":"cp .env.example .env"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"cp-env-para-env-sub","req":"GRD-5","tool":"Bash","input":{"command":"cp .env.example .env"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"segredo-pem-grep","req":"GRD-5","tool":"Grep","input":{"path":"certs/x.pem","pattern":"x"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"segredo-key-edit","req":"GRD-5","tool":"Edit","input":{"file_path":"a/b.key","old_string":"a","new_string":"b"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"segredo-bash-cat","req":"GRD-5","tool":"Bash","input":{"command":"cat .env"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"segredo-bash-redir","req":"GRD-5","tool":"Bash","input":{"command":"echo x > .env.local"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"segredo-bash-tee","req":"GRD-5","tool":"Bash","input":{"command":"echo x | tee .env"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"segredo-aws","req":"GRD-5","tool":"Read","input":{"file_path":"~/.aws/credentials"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"segredo-gh","req":"GRD-5","tool":"Read","input":{"file_path":"~/.config/gh/hosts.yml"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"falso-environment","req":"GRD-5","tool":"Read","input":{"file_path":"docs/environment.md"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"sem-secao-segredo","req":"GRD-5","tool":"Read","input":{"file_path":".env"},"agente":"sub","config":"ausente","esperado":{"faixa":"deny"}}
+{"nome":"fallback-bypass-deny","req":"GRD-5","tool":"Read","input":{"file_path":".env"},"agente":"orq","modo":"bypassPermissions","esperado":{"faixa":"deny"}}

@@ -32,6 +32,16 @@ jobs:
           node-version: '22'
       - run: cd plugins/gabarito-mestre/gates && npm test
 
+  dist-em-dia:
+    name: dist em dia (gates/dist == build de gates/src, Node 22)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: node plugins/gabarito-mestre/gates/scripts/build.mjs --check
+
   instalador:
     name: instalar.sh — fixture 1.0.1, --atualizar, --gates-substituir (bash ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
