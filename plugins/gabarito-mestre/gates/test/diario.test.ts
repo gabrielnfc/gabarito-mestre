@@ -17,7 +17,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, utimesSync, chmodSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, utimesSync, chmodSync, readdirSync, symlinkSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -260,5 +260,189 @@ describe('projeção e caminho', () => {
   test('dirEntrega-sem-id: null ⇒ _sem-id; com id ⇒ o id', () => {
     assert.equal(dirEntrega('/r', null), join('/r', '.harness', 'entregas', '_sem-id'));
     assert.equal(dirEntrega('/r', 'GM-9'), join('/r', '.harness', 'entregas', 'GM-9'));
+  });
+});
+
+// ---- Rodada de correção 1 (review T3) ----
+
+/** Roda um `append` em processo filho (um laço infinito não trava o runner); mata em `limiteMs`. */
+const filhoAppend = (dir: string, opts = '', limiteMs = 8000): Promise<{ saiu: boolean; saida: string }> =>
+  new Promise((resolve) => {
+    const codigo = `
+      import { append } from ${JSON.stringify(DIARIO_TS)};
+      const a = Date.now();
+      const r = append(${JSON.stringify(dir)}, 's1', { ts: 't', autor: 'a', sessao: 's1', agente: 'o', tipo: 'guarda.deny', dados: {} }${opts});
+      console.log(JSON.stringify({ ms: Date.now() - a, r }));`;
+    const p = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', codigo], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let saida = '';
+    p.stdout.on('data', (d) => { saida += d; });
+    const t = setTimeout(() => p.kill('SIGKILL'), limiteMs);
+    p.on('close', (c) => { clearTimeout(t); resolve({ saiu: c === 0, saida }); });
+  });
+
+describe('lock robusto', () => {
+  test('lock-symlink-pendente: termina com {ok:false}, sem laço', async () => {
+    const dir = tmp();
+    symlinkSync(join(dir, 'nao-existe'), join(dir, 'events.s1.jsonl.lock'));
+    const r = await filhoAppend(dir);
+    assert.equal(r.saiu, true, 'append não terminou (laço infinito)');
+    const o = JSON.parse(r.saida);
+    assert.equal(o.r.ok, false);
+    assert.ok(o.ms < 1500, `lock inválido deveria falhar na hora, levou ${o.ms} ms`);
+  });
+
+  test('lock-diretorio: {ok:false}, sem laço', async () => {
+    const dir = tmp();
+    mkdirSync(join(dir, 'events.s1.jsonl.lock'));
+    const r = await filhoAppend(dir);
+    assert.equal(r.saiu, true);
+    const o = JSON.parse(r.saida);
+    assert.equal(o.r.ok, false);
+    assert.ok(o.ms < 1500, `levou ${o.ms} ms`);
+  });
+
+  test('lock-prazo: lock que nunca envelhece ⇒ {ok:false} em ~3 s, abaixo do timeout de 5 s do hook', async () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'events.s1.jsonl.lock'), 'outro');
+    // `agora` devolve sempre o mtime do lock ⇒ idade 0 ⇒ nunca órfão
+    const mtime = statSync(join(dir, 'events.s1.jsonl.lock')).mtimeMs;
+    const r = await filhoAppend(dir, `, { agora: () => ${mtime} }`, 7000);
+    assert.equal(r.saiu, true, 'append passou de 7 s');
+    const o = JSON.parse(r.saida);
+    assert.equal(o.r.ok, false);
+    assert.ok(o.ms >= 2500 && o.ms < 4500, `esperou ${o.ms} ms`);
+  });
+
+  test('lock-mtime-futuro: conta como órfão e é quebrado', () => {
+    const dir = tmp();
+    const lock = join(dir, 'events.s1.jsonl.lock');
+    writeFileSync(lock, '');
+    const fut = Date.now() / 1000 + 86400;
+    utimesSync(lock, fut, fut);
+    const a = Date.now();
+    assert.deepEqual(append(dir, 's1', ev()), { ok: true, gravado: 'evento' });
+    assert.ok(Date.now() - a < 800);
+  });
+
+  test('lock-so-do-dono: lock tomado por outro durante o append não é apagado', () => {
+    const dir = tmp();
+    const lock = join(dir, 'events.s1.jsonl.lock');
+    const dados = { toJSON: () => { if (existsSync(lock)) writeFileSync(lock, 'token-de-outro'); return { x: 1 }; } };
+    assert.deepEqual(append(dir, 's1', ev('guarda.deny', dados as unknown as Record<string, unknown>)), { ok: true, gravado: 'evento' });
+    assert.equal(readFileSync(lock, 'utf8'), 'token-de-outro');
+  });
+});
+
+describe('canário completo', () => {
+  test('canario-tamanho: 300 KB ⇒ recusa em < 50 ms, sem regex e sem o conteúdo', () => {
+    const dir = tmp();
+    const grande = 'eyJ'.repeat(100000);
+    const t0 = performance.now();
+    const r = append(dir, 's1', ev('guarda.deny', { alvo: grande }));
+    const ms = performance.now() - t0;
+    assert.deepEqual(r, { ok: true, gravado: 'recusa' });
+    assert.ok(ms < 50, `levou ${ms.toFixed(0)} ms`);
+    const [e] = ler(dir);
+    assert.equal(e.tipo, 'diario.recusa');
+    assert.deepEqual(e.dados, { tipo: 'guarda.deny', padrao: 'tamanho' });
+    assert.ok(readFileSync(join(dir, 'events.s1.jsonl'), 'utf8').length < 1000);
+  });
+
+  for (const c of ['ts', 'autor', 'agente', 'tipo', 'sessao'] as const) {
+    test(`canario-por-campo: segredo em ${c} não vai literal ao arquivo`, () => {
+      const dir = tmp();
+      const segredo = SEGREDOS.ghp;
+      const base = ev();
+      const r = append(dir, 's1', { ...base, [c]: segredo } as typeof base);
+      assert.deepEqual(r, { ok: true, gravado: 'recusa' });
+      const bruto = readFileSync(join(dir, 'events.s1.jsonl'), 'utf8');
+      assert.equal(bruto.includes(segredo), false, `segredo em ${c} vazou`);
+      const [e] = ler(dir);
+      assert.equal(e.tipo, 'diario.recusa');
+      if (c === 'tipo') assert.equal(e.dados.tipo, '[redigido]');
+      else assert.equal((e as unknown as Record<string, unknown>)[c], '[redigido]');
+    });
+  }
+
+  test('canario-folha-desserializada: Bearer com quebra e chave com segredo recusam; URL com @ em outro campo não', () => {
+    const d1 = tmp();
+    assert.deepEqual(append(d1, 's1', ev('guarda.deny', { h: 'Bearer\n' + 'd'.repeat(20) })), { ok: true, gravado: 'recusa' });
+    const d2 = tmp();
+    assert.deepEqual(append(d2, 's1', ev('guarda.deny', { [SEGREDOS.ghp]: 1 })), { ok: true, gravado: 'recusa' });
+    const d3 = tmp();
+    assert.deepEqual(append(d3, 's1', ev('guarda.deny', { alvo: 'https://db.exemplo.com', via: 'a@b.c' })), { ok: true, gravado: 'evento' });
+  });
+});
+
+describe('sessão e caminho', () => {
+  test('sessao-invalida: traversal, quebra de linha, vazio e nulo ⇒ {ok:false}, nada escrito', () => {
+    const base = tmp();
+    const dir = join(base, 'a', 'b');
+    for (const s of ['../../fora', 'x/../../../fora2', 'a/b', '', 'q\nz', 'nul\0x', 'a'.repeat(129)]) {
+      const r = append(dir, s, ev());
+      assert.equal(r.ok, false, JSON.stringify(s));
+    }
+    assert.deepEqual(readdirSync(base), [], 'algo foi escrito');
+  });
+
+  test('dirEntrega-pbi-invalido: fora de ^[A-Z]+-\\d+$ ⇒ _sem-id', () => {
+    for (const p of ['../../../etc', 'GM-9/../..', '/abs', 'a/b', '..', 'gm-9', 'GM-']) {
+      assert.equal(dirEntrega('/r', p), join('/r', '.harness', 'entregas', '_sem-id'), p);
+    }
+  });
+
+  test('diario-symlink: events.<sessao>.jsonl symlink ⇒ {ok:false} e o alvo intacto', () => {
+    const dir = tmp();
+    const alvo = join(dir, 'alvo.txt');
+    writeFileSync(alvo, 'orig\n');
+    symlinkSync(alvo, join(dir, 'events.s1.jsonl'));
+    assert.equal(append(dir, 's1', ev()).ok, false);
+    assert.equal(readFileSync(alvo, 'utf8'), 'orig\n');
+  });
+});
+
+describe('reparo, tolerância e projeção', () => {
+  test('linha truncada: o evento seguinte começa em linha própria; seq cai para a contagem; ler ignora a truncada', () => {
+    const dir = tmp();
+    assert.equal(append(dir, 's1', ev()).ok, true);
+    assert.equal(append(dir, 's1', ev()).ok, true);
+    const f = join(dir, 'events.s1.jsonl');
+    writeFileSync(f, readFileSync(f, 'utf8') + '{"seq":3,"ts":"2026');
+    assert.equal(append(dir, 's1', ev()).ok, true);
+    const ls = readFileSync(f, 'utf8').split('\n');
+    assert.equal(ls.length, 5);
+    assert.equal(ls[2], '{"seq":3,"ts":"2026');
+    const novo = JSON.parse(ls[3]) as Evento;
+    assert.equal(novo.seq, 4);
+    assert.equal(novo.hash_anterior, sha('{"seq":3,"ts":"2026'));
+    assert.deepEqual(ler(dir).map((e) => e.seq), [1, 2, 4]);
+  });
+
+  test('ler-tolerante: linhas null, lixo e seq não numérico não derrubam', () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'events.s1.jsonl'), 'null\nlixo\n{"seq":"abc","tipo":"guarda.deny","ts":"t","sessao":"s1","dados":{}}\n');
+    assert.equal(ler(dir).length, 1);
+    assert.equal(append(dir, 's1', ev()).ok, true);
+    assert.doesNotThrow(() => projetar([null as unknown as Evento, ...ler(dir)]));
+  });
+
+  test('projetar-alvo-gigante: alvo é cortado e não esconde os demais; quebra de linha vira espaço', () => {
+    const mk = (n: number, alvo: string): Evento => ({ seq: n, ts: `2026-11-02T10:0${n}:00.000Z`, autor: 'a', sessao: 's1', agente: 'o', tipo: 'guarda.deny', dados: { alvo }, hash_anterior: null });
+    const s = projetar([mk(1, 'primeiro-fim'), mk(2, 'x'.repeat(7000)), mk(3, 'a\nb\r\nc-fim')]).instantaneo;
+    assert.ok(s.includes('primeiro-fim'), 'o alvo gigante escondeu o evento antigo');
+    assert.equal(s.includes('x'.repeat(301)), false);
+    assert.ok(s.includes('a b c-fim'));
+    assert.ok(s.length <= 6000);
+  });
+
+  test('projetar-desempate: mesmo ts, sessões diferentes ⇒ saída independe da ordem de entrada', () => {
+    const mk = (sessao: string, alvo: string): Evento => ({ seq: 1, ts: '2026-11-02T10:00:00.000Z', autor: 'a', sessao, agente: 'o', tipo: 'guarda.deny', dados: { alvo }, hash_anterior: null });
+    const es = [mk('sA', 'A-fim'), mk('sB', 'B-fim'), mk('sC', 'C-fim')];
+    assert.equal(projetar(es).instantaneo, projetar([...es].reverse()).instantaneo);
+  });
+
+  test('projetar-resumo-total: o resumo conta todos os eventos, não só os que cabem', () => {
+    const es: Evento[] = Array.from({ length: 500 }, (_, i) => ({ seq: i + 1, ts: `2026-11-02T10:00:${String(i % 60).padStart(2, '0')}.000Z`, autor: 'a', sessao: 's1', agente: 'o', tipo: 'guarda.deny', dados: { alvo: 'h'.repeat(100) }, hash_anterior: null }));
+    assert.deepEqual(projetar(es).resumo, { 'guarda.deny': 500 });
   });
 });
