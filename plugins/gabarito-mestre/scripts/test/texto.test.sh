@@ -217,9 +217,8 @@ check "SKILL.md conformidade: fio condutor · contenda (R21) · Epic: PBIs" "gre
 # ── pacote — versões, hooks (F6-R7), 77 testes, nomes da 1.0.1 (PKG-1, PKG-2) ─────────
 echo "── pacote — versões, sem hooks em plugin.json, sem 77 testes, nomes da 1.0.1"
 v1=$(node -p "require('$P/.claude-plugin/plugin.json').version" 2>/dev/null)
-v2=$(node -p "require('$ROOT/.claude-plugin/marketplace.json').plugins[0].version" 2>/dev/null)
 v3=$(node -p "require('$P/gates/package.json').version" 2>/dev/null)
-check "os três version == 1.1.0 (achei '$v1' '$v2' '$v3')" '[ "$v1" = "$v2" ] && [ "$v2" = "$v3" ] && [ "$v1" = "1.1.0" ]' "versões divergem ou ≠ 1.1.0"
+check "version plugin == gates == 2.0.0-alpha.1 (achei '$v1' '$v3')" '[ "$v1" = "$v3" ] && [ "$v1" = "2.0.0-alpha.1" ]' "versões divergem ou ≠ 2.0.0-alpha.1"
 # RULING F6-R7 (2): o grep do plano `grep -c '"hooks"'` é sempre verdadeiro — a keyword do array já
 # conta 1. A checagem correta ancora na FORMA DE CHAVE JSON: `"hooks"` seguido de `:` (com ou sem espaço).
 HOOKS_KEY=$(grep -c '"hooks"[[:space:]]*:' "$P/.claude-plugin/plugin.json")

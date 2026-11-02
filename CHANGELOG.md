@@ -5,6 +5,14 @@ Usuários do plugin só recebem atualização quando `version` muda.
 
 ## [Unreleased]
 
+## [2.0.0-alpha.1] — 2026-11-02
+
+Primeira pré-versão do canal `next` (GM-9, E1). Catálogo `gabarito-mestre-next` (o Claude Code não tem conceito de
+canal de release e não aceita o mesmo plugin duas vezes num `marketplace.json`: dois canais são dois catálogos com `name`
+diferente). Instalação: `claude plugin marketplace add gabrielnfc/gabarito-mestre#next`. A versão fica só no
+`plugin.json`; a entrada do `marketplace.json` deixa de repeti-la. `gates/medido-em.json` registra a versão do Claude Code
+em que os spikes foram medidos; o job `versao-medida` do CI avisa (`::warning`) quando a instalada difere, sem falhar.
+
 ## [1.1.0] — 2026-09-25
 
 Camada de fluxo (Workflow TRUE: Flight Levels + Kanban), onboarding na instalação, versionamento trunk-based como gate,
