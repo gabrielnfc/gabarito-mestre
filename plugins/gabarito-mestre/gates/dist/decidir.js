@@ -34,7 +34,7 @@ function dadosDe(c               )                          {
 
 export function decidir(entrada             , config                     , contexto          )          {
   const c = classificar(entrada, config, contexto);
-  const subagent = entrada.agent_id !== undefined && entrada.agent_id !== '';
+  const subagent = entrada?.agent_id !== undefined && entrada?.agent_id !== '';
   const dados = dadosDe(c);
 
   const barrar = (rotulo        )          =>
