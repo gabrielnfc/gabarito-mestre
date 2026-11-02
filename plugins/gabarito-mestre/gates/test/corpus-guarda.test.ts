@@ -175,16 +175,15 @@ describe('corpus da guarda', () => {
 });
 
 describe('permission_mode não muda o veredito (Q13)', () => {
-  test('modo-nao-muda-veredito: decidir ignora o modo (bypassPermissions, dontAsk, auto)', () => {
-    for (const nome of ['subagent-prod-escrita', 'orq-prod-escrita', 'teste-sem-decisao']) {
-      const c = todos.find((x) => x.nome === nome);
-      assert.ok(c, `caso ${nome} ausente`);
+  test('modo-nao-muda-veredito: decidir ignora o modo (bypassPermissions, dontAsk, auto) em todos os casos', () => {
+    for (const c of todos) {
       for (const modo of ['bypassPermissions', 'dontAsk', 'auto']) {
         const d = rodar(c, modo);
         const esperado = c.esperado.faixa === 'ask' ? 'ask' : c.esperado.faixa === 'deny' ? 'deny' : undefined;
-        assert.equal(d.faixa, c.esperado.faixa, `${nome} em ${modo}`);
-        assert.equal(d.permissionDecision, esperado, `${nome} em ${modo}`);
-        assert.equal(d.evento?.tipo ?? null, c.esperado.evento ?? null, `${nome} em ${modo}`);
+        assert.equal(d.faixa, c.esperado.faixa, `${c.nome} em ${modo}`);
+        assert.equal(d.permissionDecision, esperado, `${c.nome} em ${modo}`);
+        // A decisão inteira (faixa, evento, mensagem, motivo, classificação) é a mesma em qualquer modo.
+        assert.deepEqual(d, rodar(c, 'default'), `${c.nome} em ${modo}: decisão difere da de default`);
       }
     }
   });
