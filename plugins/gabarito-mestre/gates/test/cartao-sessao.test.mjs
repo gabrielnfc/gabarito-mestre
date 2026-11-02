@@ -182,6 +182,14 @@ describe('montarCartao — formato fixo e ≤ 40 linhas', () => {
     c.config.orquestracao.modelo.resolvidoEm = 2026;
     assert.match(linha(montarCartao(c), 'Modelo:'), /VENCIDO/);
   });
+  test('F9: resolvidoEm texto inválido ou data futura → VENCIDO, nunca "d restantes"', () => {
+    for (const v of ['lixo', '2099-01-01', '9999-12-31T00:00:00Z']) {
+      const c = ctxBase();
+      c.config.orquestracao.modelo.resolvidoEm = v;
+      assert.match(linha(montarCartao(c), 'Modelo:'), /VENCIDO/, v);
+      assert.doesNotMatch(linha(montarCartao(c), 'Modelo:'), /d restantes/, v);
+    }
+  });
   test('campo com quebra de linha e controle não vira outra linha do cartão', () => {
     const c = ctxBase();
     c.branch = 'feat/PBI-1\nlinha-forjada\u001b[31m';
@@ -478,7 +486,7 @@ describe('cartão em duas vias — hook SessionStart (T7)', () => {
     const e = { ...process.env, GABARITO_INSTALLED_PLUGINS: '/nao/existe.json' };
     delete e.CLAUDE_PROJECT_DIR;
     Object.assign(e, env);
-    const r = spawnSync(process.execPath, [SCRIPT, '--hook', '--root', dir, '--plugin-root', pluginFalso(), '--agora', AGORA, ...args], { cwd: dir, input, encoding: 'utf8', env: e });
+    const r = spawnSync(process.execPath, [SCRIPT, '--hook', '--root', dir, '--plugin-root', pluginFalso(), '--agora', AGORA, ...args], { cwd: dir, input, encoding: 'utf8', env: e, timeout: 8000 });
     let j = null;
     try { j = JSON.parse(r.stdout); } catch { /* saída vazia ou inválida: o teste assere */ }
     return { code: r.status, stderr: r.stderr, stdout: r.stdout, json: j, ctx: j?.hookSpecificOutput?.additionalContext, msg: j?.systemMessage };
@@ -792,6 +800,48 @@ describe('cartão em duas vias — hook SessionStart (T7)', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.equal(existsSync(join(dir, 'pasta', '.harness')), false);
     assert.equal(lerMarcador(dir).sessao, 's1');
+  });
+  test('F10: corte nos 6.000 e nas 160 colunas nunca deixa substituto solto (alias de emojis)', () => {
+    const dir = repo({ 'harness.config.json': CONFIG({ orquestracao: { modelo: { politica: 'mais-potente', alias: '😀'.repeat(4000), resolvidoEm: '2026-09-01', validadeDias: 90 } } }) });
+    git(dir, 'init', '-q');
+    const r = hook(dir, { session_id: 's1' });
+    assert.equal(r.code, 0, r.stderr);
+    const solto = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    assert.doesNotMatch(r.ctx, solto);
+    assert.doesNotMatch(r.msg, solto);
+    assert.ok(r.ctx.length <= 6000);
+    assert.ok(r.msg.split('\n').every((l) => l.length <= 160));
+  });
+  test('F3: events.*.jsonl que é symlink ou FIFO não é lido: texto de fora não entra e o hook não trava', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    const fora = join(repo(), 'fora.jsonl');
+    writeFileSync(fora, `${JSON.stringify(evento('x', 'guarda.deny', { alvo: 'FORA_DA_ARVORE' }))}\n`);
+    mkdirSync(dirDiario(dir), { recursive: true });
+    symlinkSync(fora, join(dirDiario(dir), 'events.link.jsonl'));
+    const mk = spawnSync('mkfifo', [join(dirDiario(dir), 'events.fifo.jsonl')]);
+    assert.equal(mk.status, 0);
+    const t0 = Date.now();
+    const r = hook(dir, { session_id: 's1' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(Date.now() - t0 < 6000, 'travou na FIFO');
+    assert.doesNotMatch(r.stdout, /FORA_DA_ARVORE/);
+    assert.match(r.ctx, /PBI: PBI-123/);
+    assert.match(r.stderr, /não é arquivo regular/);
+  });
+  test('F5: sem dist/diario.js o segredo continua redigido nas duas vias, nada é gravado e o hook sai 0', () => {
+    const raiz = mkdtempSync(join(tmpdir(), 'sem-dist-'));
+    mkdirSync(join(raiz, 'scripts'), { recursive: true });
+    mkdirSync(join(raiz, 'lib'), { recursive: true });
+    for (const f of readdirSync(join(here, '..', 'scripts'))) if (f.endsWith('.mjs')) copyFileSync(join(here, '..', 'scripts', f), join(raiz, 'scripts', f));
+    for (const f of readdirSync(join(here, '..', 'lib'))) copyFileSync(join(here, '..', 'lib', f), join(raiz, 'lib', f));
+    const token = `ghp_${'A'.repeat(30)}`;
+    const dir = repoGit({ ...CACHE_123 }, `feat/PBI-123-${token}`);
+    const r = spawnSync(process.execPath, [join(raiz, 'scripts', 'cartao-sessao.mjs'), '--hook', '--root', dir, '--plugin-root', pluginFalso(), '--agora', AGORA], { cwd: dir, input: JSON.stringify({ session_id: 's1' }), encoding: 'utf8', env: { ...process.env, GABARITO_INSTALLED_PLUGINS: '/nao/existe.json' } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(!r.stdout.includes(token), 'segredo vazou');
+    assert.match(r.stderr, /diário indisponível/);
+    assert.equal(existsSync(join(dir, '.harness', 'entregas')), false);
+    assert.equal(existsSync(join(dir, '.harness', 'heartbeat.json')), false);
   });
   test('sem --hook a CLI de texto continua igual e não grava diário', () => {
     const dir = repoGit({ ...CACHE_123 });

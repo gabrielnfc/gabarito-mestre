@@ -16,7 +16,7 @@
  *   node cartao-sessao.mjs --root <dir> --plugin-root <dir> --json --agora <ISO> # teste
  */
 
-import { readFileSync, existsSync, realpathSync, lstatSync, writeFileSync, renameSync, mkdirSync, unlinkSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, realpathSync, lstatSync, writeFileSync, renameSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join, resolve, dirname, relative } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -284,7 +284,8 @@ export function montarCartao(ctx) {
   const m = ctx.config.orquestracao.modelo;
   if (m.resolvidoEm) {
     const d = dias(ctx.agora, m.resolvidoEm);
-    const restantes = d === null ? null : Math.floor(Number(m.validadeDias ?? 90) - d);
+    // data futura (> 1 d, folga de fuso) é validade forjada: vale como inválida, igual a texto e número
+    const restantes = d === null || d < -1 ? null : Math.floor(Number(m.validadeDias ?? 90) - d);
     const estado = restantes !== null && restantes >= 0 ? `${restantes} d restantes` : 'VENCIDO — revalide com gabarito-instalar';
     L.push(`Modelo: ${m.politica} · alias ${m.alias || '?'} · resolvido ${m.resolvidoEm} (${estado})`);
   } else {
@@ -346,6 +347,16 @@ export function interpretarEntrada(texto) {
   }
 }
 
+/** Corta em `max` unidades UTF-16 sem deixar substituto alto solto no fim. */
+export const cortar = (texto, max) => {
+  const t = texto.slice(0, max);
+  return /[\uD800-\uDBFF]$/.test(t) ? t.slice(0, -1) : t;
+};
+
+/** Último recurso sem `dist/diario.js` (canário indisponível): padrões de segredo comuns, para a redação nunca desligar (F5). */
+const SEGREDO_FALLBACK = /ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|\bAKIA[A-Z0-9]{12,}|\bASIA[A-Z0-9]{12,}|-----BEGIN [A-Z ]*PRIVATE|\bsk-[A-Za-z0-9]{16,}|xox[bp]-[A-Za-z0-9-]{10,}|:\/\/[^/\s:]+:[^@\s]+@|Bearer\s+[A-Za-z0-9._-]{16,}|eyJ[\w-]{20,}\.eyJ[\w-]{20,}/;
+const recusaFallback = (linha) => (SEGREDO_FALLBACK.test(linha) ? 'segredo' : null);
+
 /** Linha com algo que o canário do diário recusaria: nunca sai em nenhuma das duas vias. */
 const semSegredo = (linha, recusa) => (recusa(linha) === null ? linha : LINHA_REDIGIDA);
 
@@ -379,6 +390,23 @@ function gravarMarcador(raiz, dados) {
     }
     return String(e?.message ?? e).split('\n')[0];
   }
+}
+
+/** `events.*.jsonl` que não é arquivo regular (symlink, FIFO…): ler seguiria o link ou travaria (F3). */
+function arquivosNaoRegulares(dir) {
+  let nomes;
+  try {
+    nomes = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return nomes.filter((n) => /^events\..+\.jsonl$/.test(n)).filter((n) => {
+    try {
+      return !lstatSync(join(dir, n)).isFile();
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** Os três caminhos do diário não podem ser symlink: o hook não escreve fora da árvore da entrega. */
@@ -419,7 +447,7 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
   } catch (e) {
     falhas.push(`diário indisponível: ${String(e?.message ?? e).split('\n')[0]}`);
   }
-  const recusa = diario?.recusaCanario ?? (() => null);
+  const recusa = diario?.recusaCanario ?? recusaFallback;
 
   let branch = ctx.branch ?? null;
   if (branch === null) {
@@ -450,6 +478,8 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
       falhas.push('diário em caminho com symlink — nada lido nem gravado');
     } else {
       try {
+        const naoRegular = arquivosNaoRegulares(dir);
+        if (naoRegular.length > 0) throw new Error(`${naoRegular[0]} não é arquivo regular — diário não lido`);
         const eventos = diario.ler(dir);
         if (eventos.length > 0) {
           instantaneo = diario.projetar(eventos).instantaneo.split('\n').map((l) => semSegredo(limparLinha(l), recusa)).join('\n');
@@ -499,7 +529,7 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
     const cabe = sobra > 0 ? ajustarAoLimite(instantaneo, sobra) : '';
     if (cabe) texto += `\n${cabe}`;
   }
-  texto = texto.slice(0, LIMITE_CONTEXTO);
+  texto = cortar(texto, LIMITE_CONTEXTO);
 
   const mensagem = [
     ctx.semOnboarding ? 'GABARITO · harness sem onboarding' : `GABARITO · ${branch}${pbi ? ` · ${pbi}` : ''}`,
@@ -507,7 +537,7 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
     ctx.capacidade ? `Modelo ${ctx.config.orquestracao.modelo.alias || '?'} · slots ${ctx.capacidade.slots}` : 'Cartão completo no contexto da sessão',
   ]
     .slice(0, LIMITE_MENSAGEM_LINHAS)
-    .map((l) => semSegredo(limparLinha(l), recusa).slice(0, LIMITE_MENSAGEM_LINHA))
+    .map((l) => cortar(semSegredo(limparLinha(l), recusa), LIMITE_MENSAGEM_LINHA))
     .join('\n');
 
   const saida = { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: texto }, systemMessage: mensagem };
