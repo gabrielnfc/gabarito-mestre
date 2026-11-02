@@ -7,7 +7,8 @@
  * `curl -o` (escrita por flag de saída), expansão de chaves (`{.env,x}`), heredoc (o corpo vira segmentos),
  * indireção (`X=rm; $X`, `base64 | sh`, `eval`), caminho com espaço em argumento de Bash, substituição fora de
  * aspas duplas além de um nível, `cd` dentro de subshell (vale para o resto do comando), `$(pwd)` fora de aspas.
- * `git` fora da lista permitida pede confirmação também do orquestrador (Q14: o anel não distingue quem chama).
+ * `git`: duas listas por papel (Q16). Subagent: fora da lista permitida de Q14 ⇒ `deny`. Orquestrador: só `remote`, `fetch`,
+ * `pull`, `update-ref`, `symbolic-ref`, `config`, `-c remote.*|url.*|core.hooksPath`, `push` a `refs/remotes/*` e alvo em `.git/**`.
  *
  * Convenção de `ambiente`: `desconhecido` com `alvo` vazio = nada a declarar; `desconhecido` com `alvo`
  * preenchido = referência de produção que não dá para verificar (D3, push/merge sem base conhecida) ⇒ `mostrar`.
@@ -354,7 +355,8 @@ function classificarBash(entrada: EntradaHook, cfg: ConfigGuarda | null, ctx: Co
 
   // O anel vem antes do ambiente.
   const cwd = typeof entrada.cwd === 'string' ? entrada.cwd : null;
-  const anel = anelDeBash(segmentos, ctx, cwd);
+  const subagent = entrada?.agent_id !== undefined && entrada?.agent_id !== '';
+  const anel = anelDeBash(segmentos, ctx, cwd, subagent);
   if (anel) return { ...base, ambiente: 'desconhecido', acao: anel.escrita ? 'escrita' : 'leitura', alvo: reduzirAlvo(anel.alvo), anel: anel.anel };
   return base;
 }
