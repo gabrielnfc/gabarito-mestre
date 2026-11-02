@@ -41,6 +41,8 @@ Dados por task: `docs/aprendizados/metricas-e1.jsonl` (uma linha por task). Resu
 | X5 | Relatório de subagent ≤ 5 linhas no retorno; resto só em arquivo | Caracteres devolvidos por retorno, da mesma task antes e depois não existe; só o custo medido | Sem base medida | Adotado por custo baixo, sem alegar ganho |
 | X4 | Correção por implementador novo com brief da rodada, em vez de retomar | Tokens por rodada | Base: T5 retomada chegou a 246 mil tokens | Depois de X3 |
 
+**Contagem dentro da mesma task (última rodada):** T2 r2: 2 de 3 MAJOR nasceram de mudança além dos MAJOR anteriores (MINOR A6, `LIMITE_CD`). T6 r2: 1 de 1 (M6). N = 2 tasks; sustenta testar "última rodada só corrige BLOCKER/MAJOR" (M6, a medir), ainda não é decisão.
+
 **Observação, não conclusão:** nas 7 tasks, implementar levou 141–521 s e correção mais re-review 207–1233 s. Tasks diferentes, review de profundidade variável, N pequeno: não prova onde está o gargalo do fluxo.
 
 ## Erros do orquestrador (viram regra)
@@ -59,3 +61,5 @@ Dados por task: `docs/aprendizados/metricas-e1.jsonl` (uma linha por task). Resu
 | E10 | Prescrevi teto de 64 KB em T2 sem medir o que cortar faz | Comando após 64 KB passa em silêncio; regressão de segurança | Teto de entrada em guarda: definir antes o veredito acima do teto, com teste |
 | E11 | Juntei `git worktree remove --force` e a gravação dos briefs num só comando e despachei implementadores na mesma resposta, sem ver o resultado | Hook bloqueou o comando inteiro; T6 parou sem brief (72 mil tokens, 27 s); T7 saiu sem brief | Gravar brief e despachar em respostas separadas, conferindo o arquivo. Operação sujeita a hook vai em comando próprio |
 | E12 | Mandei corrigir MINORs de guarda na última rodada da T2 sem pedir ataque de regressão específico | A correção do FP de `find` virou MAJOR A1: `find -name .env -exec cat` passou a silêncio; T2 voltou ao dono | Correção de falso positivo em guarda exige, no brief, os casos perigosos vizinhos como ataque. Na última rodada, MINOR de guarda só com isso, senão backlog |
+| E13 | Pedi no brief da T6 r2 para não corrigir MINOR além de uma linha, e não conferi antes de despachar o re-review que o relatório dizia ter fechado M1–M5 | Correção de M6 virou MAJOR R2-1 e levou a T6 ao teto; só o revisor tratou | Ao receber relatório, comparar o escopo feito com o pedido; escopo excedido volta ao implementador antes do review |
+
