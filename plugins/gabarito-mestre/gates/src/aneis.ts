@@ -5,7 +5,9 @@
  * - O leitor de Bash é deliberadamente pequeno (E1:56): segmenta por `&&`, `||`, `;`, `|`, `&`, quebra de
  *   linha, parênteses e crases, respeita aspas, junta `\`+quebra, corta comentário, lê `$(…)`/crases dentro de
  *   aspas duplas (um nível) e descarta prefixos transparentes (Q10, palavras de controle, `@versão` de npx).
- *   Sem tokenizador completo, sem heredoc, sem backreference.
+ *   Heredoc: o corpo é dado quando todo comando da linha o lê como dado (`cat`, `git`, `tee`…); com delimitador sem
+ *   aspas, `$(…)` e crases do corpo valem como comando; interpretador na linha (`sh`, `bash`, `python`, `| bash`) ou
+ *   terminador ausente ⇒ o corpo é lido como comando. Sem tokenizador completo, sem backreference.
  * - Teto de 64 KB por comando: o que passa disso é ignorado (falha segura de desempenho, não de exceção).
  */
 
@@ -38,6 +40,69 @@ const NEUTRO = '\u0000';
 const SUBST = '\u0001';
 export const TETO_COMANDO = 65536;
 
+type Heredoc = { delim: string; citado: boolean; tabs: boolean };
+
+/** Lê o delimitador de um heredoc; `k` aponta para o que vem depois de `<<`. `null` se não houver palavra. */
+function lerDelimitador(src: string, k: number): { h: Heredoc; fim: number } | null {
+  const n = src.length;
+  let tabs = false;
+  if (src[k] === '-') {
+    tabs = true;
+    k++;
+  }
+  while (src[k] === ' ' || src[k] === '\t') k++;
+  const ini = k;
+  let delim = '';
+  let citado = false;
+  while (k < n) {
+    const c = src[k];
+    if (c === "'") {
+      const j = src.indexOf("'", k + 1);
+      if (j < 0) return null;
+      citado = true;
+      delim += src.slice(k + 1, j);
+      k = j + 1;
+    } else if (c === '"') {
+      citado = true;
+      k++;
+      while (k < n && src[k] !== '"') {
+        if (src[k] === '\\' && k + 1 < n) k++;
+        delim += src[k++];
+      }
+      if (k >= n) return null;
+      k++;
+    } else if (c === '\\') {
+      citado = true;
+      if (k + 1 < n) delim += src[k + 1];
+      k += 2;
+    } else if (/[\s;&|<>()]/.test(c)) break;
+    else delim += src[k++];
+  }
+  if (k === ini || delim === '') return null;
+  return { h: { delim, citado, tabs }, fim: k };
+}
+
+/**
+ * Corpo de um heredoc: `ini` é o primeiro caractere da primeira linha do corpo. Devolve o corpo e o índice do `\n`
+ * (ou do fim) que fecha a linha do terminador; `null` se o terminador não existe (corpo lido como comando).
+ */
+function corpoDeHeredoc(src: string, ini: number, h: Heredoc): { corpo: string; fim: number } | null {
+  const n = src.length;
+  let pos = ini;
+  for (;;) {
+    let e = src.indexOf('\n', pos);
+    const ultima = e < 0;
+    if (ultima) e = n;
+    let linha = src.slice(pos, e);
+    if (h.tabs) linha = linha.replace(/^\t+/, '');
+    if (linha === h.delim) return { corpo: src.slice(ini, pos), fim: e };
+    if (ultima) return null;
+    pos = e + 1;
+  }
+}
+
+const MAX_HEREDOCS = 16;
+
 function fimDeSubstituicao(src: string, ini: number, abre: string): number {
   // `ini` aponta para o primeiro caractere depois de `$(` ou da crase de abertura.
   if (abre === '`') {
@@ -45,12 +110,64 @@ function fimDeSubstituicao(src: string, ini: number, abre: string): number {
     return j < 0 ? src.length : j;
   }
   let prof = 1;
+  const pend: Heredoc[] = [];
+  const sem = new Set<string>();
   for (let j = ini; j < src.length; j++) {
-    if (src[j] === '(') prof++;
-    else if (src[j] === ')' && --prof === 0) return j;
+    const c = src[j];
+    if (c === '\\') j++;
+    else if (c === "'") {
+      const k = src.indexOf("'", j + 1);
+      if (k > 0) j = k;
+    } else if (c === '"') {
+      let k = j + 1;
+      while (k < src.length && src[k] !== '"') k += src[k] === '\\' ? 2 : 1;
+      if (k < src.length) j = k;
+    } else if (c === '<' && src[j + 1] === '<' && src[j + 2] !== '<' && src[j - 1] !== '<') {
+      const d = lerDelimitador(src, j + 2);
+      if (d && pend.length < MAX_HEREDOCS) {
+        pend.push(d.h);
+        j = d.fim - 1;
+      } else j++;
+    } else if (c === '\n' && pend.length) {
+      let fim = j;
+      for (const h of pend) {
+        if (sem.has(h.delim)) continue;
+        const r = corpoDeHeredoc(src, fim + 1, h);
+        if (r) fim = r.fim;
+        else sem.add(h.delim);
+      }
+      pend.length = 0;
+      j = fim;
+    } else if (c === '(') prof++;
+    else if (c === ')' && --prof === 0) return j;
   }
   return src.length;
 }
+
+/** `$(…)` e crases no corpo de um heredoc sem aspas: o shell executa. */
+function expansoesDoCorpo(corpo: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < corpo.length; i++) {
+    const c = corpo[i];
+    if (c === '\\') i++;
+    else if (c === '$' && corpo[i + 1] === '(') {
+      const fim = fimDeSubstituicao(corpo, i + 2, '(');
+      out.push(corpo.slice(i + 2, fim));
+      i = fim;
+    } else if (c === '`') {
+      const fim = fimDeSubstituicao(corpo, i + 1, '`');
+      out.push(corpo.slice(i + 1, fim));
+      i = fim;
+    }
+  }
+  return out;
+}
+
+// Quem lê o heredoc só como dado. Qualquer outro comando na linha (sh, bash, python, ssh, …) faz do corpo um script.
+const LE_COMO_DADO = new Set([
+  'cat', 'tee', 'git', 'gh', 'wc', 'sort', 'uniq', 'head', 'tail', 'tr', 'cut', 'grep', 'egrep', 'fgrep', 'rg', 'jq', 'diff', 'cmp',
+  'base64', 'shasum', 'sha256sum', 'md5sum', 'nl', 'fold', 'column', 'echo', 'printf',
+]);
 
 function lexar(src: string): { segs: Bruto[]; extras: string[] } {
   const segs: Bruto[] = [];
@@ -62,6 +179,9 @@ function lexar(src: string): { segs: Bruto[]; extras: string[] } {
   let palavra = false;
   let aspas = '';
   const n = src.length;
+  const pendentes: Heredoc[] = [];
+  const semTerminador = new Set<string>();
+  let linhaIni = 0;
 
   const fimPalavra = () => {
     if (palavra) toks.push({ t: cur, e: curE });
@@ -138,8 +258,31 @@ function lexar(src: string): { segs: Bruto[]; extras: string[] } {
       i = j - 1;
       continue;
     }
+    if (c === '\n' && pendentes.length) {
+      fimSegmento(i, i + 1);
+      // O corpo só é dado se todo comando da linha o lê como dado; senão segue lexado como comando.
+      const dado = segs.slice(linhaIni).every((b) => montar(b, 3).every((m) => m.cmd === '' || LE_COMO_DADO.has(m.cmd)));
+      let fim = i;
+      for (const h of pendentes) {
+        if (semTerminador.has(h.delim)) continue;
+        const r = corpoDeHeredoc(src, fim + 1, h);
+        if (!r) {
+          semTerminador.add(h.delim);
+          continue;
+        }
+        if (dado) {
+          if (!h.citado) for (const e of expansoesDoCorpo(r.corpo)) extras.push(e);
+          fim = r.fim;
+        }
+      }
+      pendentes.length = 0;
+      i = fim;
+      linhaIni = segs.length;
+      continue;
+    }
     if (c === '\n' || c === ';' || c === '(' || c === ')' || c === '`') {
       fimSegmento(i, i + 1);
+      if (c === '\n') linhaIni = segs.length;
       continue;
     }
     if (c === '&') {
@@ -173,6 +316,14 @@ function lexar(src: string): { segs: Bruto[]; extras: string[] } {
       }
       if (c === '>' && src[j + 1] === '|') j++;
       toks.push({ t: '', e: '', op: c });
+      if (c === '<' && j - i === 1) {
+        const d = lerDelimitador(src, j + 1);
+        if (d && pendentes.length < MAX_HEREDOCS) {
+          pendentes.push(d.h);
+          toks.push({ t: '', e: '' });
+          j = d.fim - 1;
+        }
+      }
       i = j;
       continue;
     }
