@@ -15,18 +15,22 @@
  *   node cartao-sessao.mjs --root <dir> --plugin-root <dir> --json --agora <ISO> # teste
  */
 
-import { readFileSync, existsSync, realpathSync } from 'node:fs';
+import { readFileSync, existsSync, realpathSync, lstatSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { arg, ehEntrypoint } from '../lib/cli.mjs';
-import { lerJson } from '../lib/config.mjs';
+import { lerJson, lerGuarda } from '../lib/config.mjs';
 import { git, raizDoRepo, inferirPbi, PADROES } from '../lib/git.mjs';
 import { diasEntre } from '../lib/datas.mjs';
 import { medir, calcularSlots } from './capacidade.mjs';
 
 export const MAX_LINHAS = 40;
+export const LIMITE_CONTEXTO = 6000;
+export const LIMITE_MENSAGEM_LINHAS = 3;
+export const LIMITE_MENSAGEM_LINHA = 160;
+export const LINHA_REDIGIDA = '[linha redigida: possível segredo]';
 export const CACHE_DOCTOR_H = 24;
 export const DOCTOR_TIMEOUT_MS = 20_000; // o hook tem 30 s
 export const LINHA_SEM_ONBOARDING = 'GABARITO: harness sem onboarding — rode gabarito-instalar (fail-open declarado, G9)';
@@ -38,6 +42,8 @@ export const DEFAULTS = {
 };
 
 const dias = (agora, iso) => {
+  // `diasEntre` aceita número (ms); aqui só vale data ISO em texto — número vira "inválido" e o modelo, VENCIDO.
+  if (typeof iso !== 'string') return null;
   const d = diasEntre(iso, agora);
   return Number.isNaN(d) ? null : d;
 };
@@ -50,6 +56,9 @@ const dataHoraLocal = (ms) => {
 };
 
 export const resolverRaiz = raizDoRepo;
+
+/** Caracteres de controle (inclui \n, \r, ESC) e separadores de linha Unicode viram espaço: um campo nunca vira outra linha. */
+export const limparLinha = (s) => String(s ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ');
 
 // ────────────────────────────────────────────────────────────── puras
 
@@ -315,7 +324,182 @@ export function montarCartao(ctx) {
   if (ctx.avisosLedger?.length) L.push(`Avisos: ${ctx.avisosLedger.slice(0, 3).join(' · ')}${ctx.avisosLedger.length > 3 ? ` +${ctx.avisosLedger.length - 3}` : ''}`);
 
   L.push('R21: despache, não implemente. Velocidade nunca compra concorrência.');
-  return L.slice(0, MAX_LINHAS);
+  return L.slice(0, MAX_LINHAS).map(limparLinha);
+}
+
+// ────────────────────────────────────────────────────────────── hook SessionStart (T7)
+
+const ORIGENS = new Set(['startup', 'resume', 'clear', 'compact']);
+
+/** Lê o JSON de SessionStart; qualquer defeito (vazio, inválido, não-objeto) devolve entrada vazia. */
+export function interpretarEntrada(texto) {
+  try {
+    const j = JSON.parse(texto);
+    if (!j || typeof j !== 'object' || Array.isArray(j)) return { sessionId: null, origem: 'desconhecida' };
+    return {
+      sessionId: typeof j.session_id === 'string' ? j.session_id : null,
+      origem: ORIGENS.has(j.source) ? j.source : 'desconhecida',
+    };
+  } catch {
+    return { sessionId: null, origem: 'desconhecida' };
+  }
+}
+
+/** Linha com algo que o canário do diário recusaria: nunca sai em nenhuma das duas vias. */
+const semSegredo = (linha, recusa) => (recusa(linha) === null ? linha : LINHA_REDIGIDA);
+
+/** Corta linhas inteiras do fim até caber em `max` caracteres; marca o corte. Cabeçalho maior que `max` ⇒ ''. */
+export function ajustarAoLimite(texto, max) {
+  if (texto.length <= max) return texto;
+  const marca = '... instantâneo truncado';
+  const linhas = texto.split('\n');
+  while (linhas.length > 1 && [...linhas, marca].join('\n').length > max) linhas.pop();
+  const saida = [...linhas, marca].join('\n');
+  return saida.length <= max ? saida : '';
+}
+
+/** Os três caminhos do diário não podem ser symlink: o hook não escreve fora da árvore da entrega. */
+function caminhosSemSymlink(raiz, dir) {
+  for (const p of [join(raiz, '.harness'), join(raiz, '.harness', 'entregas'), dir]) {
+    try {
+      if (lstatSync(p).isSymbolicLink()) return false;
+    } catch {
+      /* ausente é normal: append cria */
+    }
+  }
+  return true;
+}
+
+/**
+ * Monta as duas vias do SessionStart e grava `sessao.inicio` + `guarda.heartbeat {fonte}`.
+ * Pura em relação ao processo: devolve `{ saida, falhas }`; quem chama imprime e decide o exit (sempre 0).
+ */
+export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) {
+  const falhas = [];
+  const entrada = interpretarEntrada(entradaTexto);
+  let ctx;
+  let linhas;
+  try {
+    ctx = coletar(cwd, pluginRoot, { agora });
+    if (ctx.configInvalido) falhas.push('harness.config.json inválido — cartão mínimo');
+    linhas = montarCartao(ctx);
+  } catch (e) {
+    falhas.push(`cartão indisponível: ${String(e?.message ?? e).split('\n')[0]}`);
+    ctx = { erro: true, root: resolverRaiz(cwd), agora: agora ? Date.parse(agora) : Date.now() };
+    linhas = [LINHA_INDISPONIVEL];
+  }
+  const raiz = ctx.root;
+
+  let diario = null;
+  try {
+    diario = await import('../dist/diario.js');
+  } catch (e) {
+    falhas.push(`diário indisponível: ${String(e?.message ?? e).split('\n')[0]}`);
+  }
+  const recusa = diario?.recusaCanario ?? (() => null);
+
+  let branch = ctx.branch ?? null;
+  if (branch === null) {
+    try {
+      branch = git(['rev-parse', '--abbrev-ref', 'HEAD'], raiz);
+    } catch {
+      branch = '(sem git)';
+    }
+  }
+  const pbi = ctx.pbi ?? inferirPbi(branch, ctx.config)?.pbi ?? null;
+
+  let fonte = 'local';
+  let divergente = false;
+  try {
+    const g = lerGuarda(process.env.CLAUDE_PROJECT_DIR || raiz);
+    fonte = g.fonte === 'origin' ? 'origin' : 'local';
+    divergente = g.divergente === true;
+  } catch (e) {
+    falhas.push(`config da guarda ilegível: ${String(e?.message ?? e).split('\n')[0]}`);
+  }
+
+  let instantaneo = '';
+  let diarioOk = false;
+  if (diario) {
+    const dir = diario.dirEntrega(raiz, pbi);
+    if (!caminhosSemSymlink(raiz, dir)) {
+      falhas.push('diário em caminho com symlink — nada lido nem gravado');
+    } else {
+      try {
+        const eventos = diario.ler(dir);
+        if (eventos.length > 0) {
+          instantaneo = diario.projetar(eventos).instantaneo.split('\n').map((l) => semSegredo(limparLinha(l), recusa)).join('\n');
+        }
+      } catch (e) {
+        falhas.push(`leitura do diário falhou: ${String(e?.message ?? e).split('\n')[0]}`);
+      }
+      if (entrada.sessionId === null) {
+        falhas.push('stdin sem session_id — sessao.inicio e heartbeat não gravados');
+      } else {
+        let autor = 'desconhecido';
+        try {
+          autor = git(['config', 'user.email'], raiz) || autor;
+        } catch {
+          /* sem user.email: o diário aceita "desconhecido" */
+        }
+        const ts = new Date(ctx.agora).toISOString();
+        const base = { ts, autor, sessao: entrada.sessionId, agente: 'orquestrador' };
+        const eventosNovos = [
+          { ...base, tipo: 'sessao.inicio', dados: { origem: entrada.origem } },
+          { ...base, tipo: 'guarda.heartbeat', dados: { fonte, divergente } },
+        ];
+        diarioOk = true;
+        for (const ev of eventosNovos) {
+          const r = diario.append(dir, entrada.sessionId, ev);
+          if (!r.ok) {
+            diarioOk = false;
+            falhas.push(`diário recusou ${ev.tipo}: ${r.erro}`);
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  let texto = linhas.map((l) => semSegredo(limparLinha(l), recusa)).join('\n');
+  if (instantaneo) {
+    const sobra = LIMITE_CONTEXTO - texto.length - 1;
+    const cabe = sobra > 0 ? ajustarAoLimite(instantaneo, sobra) : '';
+    if (cabe) texto += `\n${cabe}`;
+  }
+  texto = texto.slice(0, LIMITE_CONTEXTO);
+
+  const mensagem = [
+    ctx.semOnboarding ? 'GABARITO · harness sem onboarding' : `GABARITO · ${branch}${pbi ? ` · ${pbi}` : ''}`,
+    `Guarda: fonte ${fonte}${divergente ? ' · config local diverge da origin' : ''}${diarioOk ? '' : ' · heartbeat não gravado'}`,
+    ctx.capacidade ? `Modelo ${ctx.config.orquestracao.modelo.alias || '?'} · slots ${ctx.capacidade.slots}` : 'Cartão completo no contexto da sessão',
+  ]
+    .slice(0, LIMITE_MENSAGEM_LINHAS)
+    .map((l) => semSegredo(limparLinha(l), recusa).slice(0, LIMITE_MENSAGEM_LINHA))
+    .join('\n');
+
+  const saida = { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: texto }, systemMessage: mensagem };
+  return { saida, falhas };
+}
+
+async function mainHook(argv) {
+  const pluginRoot = arg(argv, 'plugin-root') ? resolve(arg(argv, 'plugin-root')) : resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  let entradaTexto = '';
+  try {
+    entradaTexto = readFileSync(0, 'utf8');
+  } catch {
+    /* sem stdin: entrada vazia, fail-open declarado abaixo */
+  }
+  const cwd = arg(argv, 'root') ? resolve(arg(argv, 'root')) : process.cwd();
+  let resultado;
+  try {
+    resultado = await montarSaidaHook({ cwd, pluginRoot, agora: arg(argv, 'agora'), entradaTexto });
+  } catch (e) {
+    resultado = { saida: null, falhas: [`cartão indisponível: ${String(e?.message ?? e).split('\n')[0]}`] };
+  }
+  for (const f of resultado.falhas) console.error(`[ORQ-3] ${f} (fail-open declarado (G9))`);
+  if (resultado.saida) process.stdout.write(`${JSON.stringify(resultado.saida)}\n`);
+  process.exit(0); // sempre 0: falha no cartão nunca derruba a sessão
 }
 
 function main(argv) {
@@ -336,4 +520,8 @@ function main(argv) {
   process.exit(0);
 }
 
-if (ehEntrypoint(import.meta.url)) main(process.argv.slice(2));
+if (ehEntrypoint(import.meta.url)) {
+  const argv = process.argv.slice(2);
+  if (argv.includes('--hook')) await mainHook(argv);
+  else main(argv);
+}

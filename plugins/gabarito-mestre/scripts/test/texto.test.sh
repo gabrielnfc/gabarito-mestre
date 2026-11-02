@@ -108,8 +108,8 @@ for f in $(grep -oE '[A-Za-z0-9_-]+\.(mjs|sh)' "$A" | sort -u); do
 done
 [ "$b1b_falhou" -eq 0 ] && ok "todo *.mjs/*.sh citado no AGENTS.md existe em gates/scripts/ ou hooks/"
 
-# ── B2 (handoff §B.2) — DISPATCH idêntico, hatches usados, ≤ 40 == MAX_LINHAS, inegociável ──
-echo "── B2: DISPATCH idêntico, hatches em hooks/, ≤ 40 == MAX_LINHAS, inegociável cobre R1–R21"
+# ── B2 (handoff §B.2) — DISPATCH idêntico, hatches usados, ≤ 6.000 caracteres == LIMITE_CONTEXTO, inegociável ──
+echo "── B2: DISPATCH idêntico, hatches em hooks/, ≤ 6.000 caracteres == LIMITE_CONTEXTO, inegociável cobre R1–R21"
 DISPATCH_FMT='DISPATCH Task <N> slots=<slots> worktree wt/<PBI>-<n>'
 # Achado MAJOR #1 (review T25b, task-25b-review.md): `grep -qF` só prova PRESENÇA em algum lugar do
 # arquivo — referencia.md cita a linha DISPATCH 3x (§2.3 l.62, §3.1 l.92, "Antes de despachar" l.150);
@@ -127,8 +127,8 @@ done
 for hv in GABARITO_ALLOW_DESTRUCTIVE GABARITO_ALLOW_PRODUCTION; do
   check "$hv citado no AGENTS.md existe em hooks/" "grep -q '$hv' '$A' && grep -rlq '$hv' '$P/hooks/'*.sh >/dev/null 2>&1" "hatch sem uso em hooks/"
 done
-MAXL=$(grep -oE "MAX_LINHAS = [0-9]+" "$CS" | grep -oE '[0-9]+')
-check "'≤ 40' do AGENTS.md bate com MAX_LINHAS=$MAXL de cartao-sessao.mjs" "grep -q '≤ 40 linhas' '$A' && [ '$MAXL' = 40 ]" "MAX_LINHAS ≠ 40 ou AGENTS.md não cita ≤ 40 linhas"
+MAXL=$(grep -oE "LIMITE_CONTEXTO = [0-9]+" "$CS" | grep -oE '[0-9]+')
+check "'≤ 6.000 caracteres' do AGENTS.md bate com LIMITE_CONTEXTO=$MAXL de cartao-sessao.mjs" "grep -q '≤ 6.000 caracteres' '$A' && [ '$MAXL' = 6000 ]" "LIMITE_CONTEXTO ≠ 6000 ou AGENTS.md não cita ≤ 6.000 caracteres"
 check "'inegociável' cobre R1–R21" "grep -q 'inegociável (R1–R21' '$A'" "frase de cobertura ausente ou alcance diferente"
 
 # ── B3 (handoff §B.3) — adocao.md tag-semver opcional; prompts.md passo 9 ─────────────

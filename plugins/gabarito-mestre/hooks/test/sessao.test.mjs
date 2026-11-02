@@ -5,7 +5,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HOOKS, PLUGIN, PATH_SEM_NODE, cleanEnv, runAt, fixtureRepo } from './_comum.mjs';
@@ -15,6 +15,7 @@ import { HOOKS, PLUGIN, PATH_SEM_NODE, cleanEnv, runAt, fixtureRepo } from './_c
 function fakePluginRoot({
   cartao = ['GABARITO · cartão FAKE', 'root=${root}', 'plugin=${plugin}', 'linha com "aspas", \\ barra\te tab'],
   cartaoExit = 0,
+  saidaBruta = null,
   semCartao = false,
   capacidade = '{"slots":3,"motivo":"load ok"}',
   capacidadeExit = 0,
@@ -23,12 +24,20 @@ function fakePluginRoot({
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'gm-plugin-')));
   mkdirSync(join(dir, 'gates', 'scripts'), { recursive: true });
   if (!semCartao) {
+    // GM-9 T7: o hook chama `cartao-sessao.mjs --hook` com o stdin do SessionStart; o node devolve o JSON final.
+    // `${sid}` vira o session_id recebido no stdin; sem `--hook` o fake sai 3 (prova que o .sh passa a flag).
     writeFileSync(join(dir, 'gates', 'scripts', 'cartao-sessao.mjs'), `
+import { readFileSync } from 'node:fs';
 const a = process.argv.slice(2);
+if (!a.includes('--hook')) process.exit(3);
 const root = a[a.indexOf('--root') + 1]; const plugin = a[a.indexOf('--plugin-root') + 1];
 const pid = process.env.GABARITO_PID_RAIZ || '';
-const linhas = ${JSON.stringify(cartao)}.map((l) => l.replace('\${root}', root).replace('\${plugin}', plugin).replace('\${pid}', pid));
-process.stdout.write(linhas.join('\\n') + '\\n');
+let sid = '';
+try { sid = JSON.parse(readFileSync(0, 'utf8')).session_id ?? ''; } catch {}
+const linhas = ${JSON.stringify(cartao)}.map((l) => l.replace('\${root}', root).replace('\${plugin}', plugin).replace('\${pid}', pid).replace('\${sid}', sid));
+const texto = linhas.join('\\n');
+if (${JSON.stringify(saidaBruta)} !== null) process.stdout.write(${JSON.stringify(saidaBruta)});
+else if (texto.trim() !== '') process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: texto }, systemMessage: 'fake' }) + '\\n');
 process.exit(${cartaoExit});
 `);
   }
@@ -67,12 +76,24 @@ describe('session-card.sh — ORQ-3 (T14)', () => {
     const r = runAt('session-card.sh', '', { cwd: fixtureRepo(), env: { CLAUDE_PLUGIN_ROOT: fakePluginRoot() }, event: 'SessionStart' });
     assert.ok(ctx(r).additionalContext.includes('linha com "aspas", \\ barra\te tab'));
   });
-  test('≤ 40 linhas mesmo se o script devolver 60', () => {
-    const plugin = fakePluginRoot({ cartao: Array.from({ length: 60 }, (_, i) => `linha ${i + 1}`) });
-    const r = runAt('session-card.sh', '', { cwd: fixtureRepo(), env: { CLAUDE_PLUGIN_ROOT: plugin }, event: 'SessionStart' });
-    const linhas = ctx(r).additionalContext.split('\n');
-    assert.equal(linhas.length, 40);
-    assert.equal(linhas[39], 'linha 40');
+  // GM-9 T7: o teto de 40 linhas morreu (o cartão agora é ≤ 6.000 caracteres, cortado pelo node); o .sh não reescreve a saída.
+  test('o hook passa --hook e repassa o stdin do SessionStart ao node (session_id chega lá)', () => {
+    const plugin = fakePluginRoot({ cartao: ['sessao=${sid}'] });
+    const r = spawnSync('bash', [join(HOOKS, 'session-card.sh')], { input: JSON.stringify({ session_id: 'abc-123', source: 'startup' }), encoding: 'utf8', cwd: fixtureRepo(), env: cleanEnv({ CLAUDE_PLUGIN_ROOT: plugin }) });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(ctx({ stdout: r.stdout }).additionalContext, 'sessao=abc-123');
+  });
+  test('duas vias: additionalContext e systemMessage saem do JSON do node, sem reescrita', () => {
+    const r = runAt('session-card.sh', '', { cwd: fixtureRepo(), env: { CLAUDE_PLUGIN_ROOT: fakePluginRoot({ cartao: Array.from({ length: 60 }, (_, i) => `linha ${i + 1}`) }) }, event: 'SessionStart' });
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.hookSpecificOutput.additionalContext.split('\n').length, 60);
+    assert.equal(j.systemMessage, 'fake');
+  });
+  test('node devolve texto que não é JSON → exit 0, stdout vazio, fail-open declarado', () => {
+    const r = runAt('session-card.sh', '', { cwd: fixtureRepo(), env: { CLAUDE_PLUGIN_ROOT: fakePluginRoot({ saidaBruta: 'isto não é json' }) }, event: 'SessionStart' });
+    assert.equal(r.code, 0);
+    assert.equal(r.stdout, '');
+    assert.match(r.stderr, /não é JSON.*fail-open declarado/);
   });
   test('script sai com 1 → exit 0, stdout vazio, fail-open declarado em stderr', () => {
     const r = runAt('session-card.sh', '', { cwd: fixtureRepo(), env: { CLAUDE_PLUGIN_ROOT: fakePluginRoot({ cartaoExit: 1 }) }, event: 'SessionStart' });
@@ -120,6 +141,17 @@ describe('session-card.sh — ORQ-3 (T14)', () => {
     const texto = ctx(r).additionalContext;
     assert.match(texto, /sem onboarding/);
     assert.equal(texto.split('\n').length, 1);
+    const j = JSON.parse(r.stdout);
+    assert.ok(j.systemMessage.split('\n').length <= 3);
+  });
+  test('smoke com o cartao-sessao.mjs real: SessionStart grava sessao.inicio e guarda.heartbeat do session_id do stdin', { skip: !existsSync(REAL) && 'T9 ainda não integrada' }, () => {
+    const repo = fixtureRepo({ config: {} });
+    const r = spawnSync('bash', [join(HOOKS, 'session-card.sh')], { input: JSON.stringify({ session_id: 'smoke-1', source: 'startup' }), encoding: 'utf8', cwd: repo, env: cleanEnv({ CLAUDE_PLUGIN_ROOT: PLUGIN }) });
+    assert.equal(r.status, 0, r.stderr);
+    const arq = join(repo, '.harness', 'entregas', '_sem-id', 'events.smoke-1.jsonl');
+    assert.ok(existsSync(arq), 'diário não criado');
+    const tipos = readFileSync(arq, 'utf8').trim().split('\n').map((l) => JSON.parse(l).tipo);
+    assert.deepEqual(tipos, ['sessao.inicio', 'guarda.heartbeat']);
   });
 });
 

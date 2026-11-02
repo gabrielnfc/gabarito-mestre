@@ -164,7 +164,7 @@ Uma linha por guarda, mecanismo e parâmetros em `referencia.md §5`; instalaç�
 | Camada | O que entra | Quando |
 |---|---|---|
 | 0 | este núcleo | sempre (`@AGENTS.md`) |
-| 1 | cartão de sessão (≤ 40 linhas) | SessionStart |
+| 1 | cartão de sessão (≤ 6.000 caracteres) | SessionStart |
 | 2 | referência por ponteiro (`arquivo:linhas`) | sob demanda |
 | 3 | subagente isolado — só o relatório (≤ 25 linhas) volta | cada dispatch |
 | 4 | handoff por ledger (`LER PRIMEIRO`) | fim e início de sessão |
@@ -218,7 +218,7 @@ Este harness é distribuído como o plugin **gabarito-mestre** e não opera sozi
 
 **Fail-closed declarado (G9):** plugin vizinho ausente **não** é motivo para pular a etapa. A skill do gabarito degrada para o modo próprio e **avisa em uma linha** que está sem a maquinaria. Indisponibilidade nunca vira silêncio.
 
-**Hooks (a):** antes de todo comando Bash — `guard-destructive.sh` (R2), `guard-production.sh` (R3). R20 é hook do git (`commit-msg`, `pre-push`), não do Bash. No início da sessão — `session-card.sh` injeta o cartão (≤ 40 linhas; sem onboarding, uma linha). A cada prompt — `remind-orchestrator.sh` (R21), só com `lembretePorPrompt: true`. Escape hatch nominal por regra: `GABARITO_ALLOW_DESTRUCTIVE` (R2) · `GABARITO_ALLOW_PRODUCTION` (R3) — `="<motivo>"` no início do comando ou no ambiente, motivo com ≥ 8 caracteres e ≥ 2 palavras; o uso fica no transcript e é achado de review sem autorização do usuário registrada. **Limites (G9):** é grep, não sandbox — o que passa está listado no README do plugin; o que o grep não vê é coberto por G3/G7 e pelo review com mutação.
+**Hooks (a):** antes de todo comando Bash — `guard-destructive.sh` (R2), `guard-production.sh` (R3). R20 é hook do git (`commit-msg`, `pre-push`), não do Bash. No início da sessão — `session-card.sh` injeta o cartão (≤ 6.000 caracteres; sem onboarding, uma linha). A cada prompt — `remind-orchestrator.sh` (R21), só com `lembretePorPrompt: true`. Escape hatch nominal por regra: `GABARITO_ALLOW_DESTRUCTIVE` (R2) · `GABARITO_ALLOW_PRODUCTION` (R3) — `="<motivo>"` no início do comando ou no ambiente, motivo com ≥ 8 caracteres e ≥ 2 palavras; o uso fica no transcript e é achado de review sem autorização do usuário registrada. **Limites (G9):** é grep, não sandbox — o que passa está listado no README do plugin; o que o grep não vê é coberto por G3/G7 e pelo review com mutação.
 
 ---
 
