@@ -4,7 +4,7 @@ Branch: `enabler/GM-9-fundacao-2.0` → alvo `next` (canal alpha). Spec: `docs/s
 
 ## Estado
 
-- 2026-11-02: specs visão r1 / E1 r3 prontas para commit na branch; aguardando ok do dono. Nenhum código.
+- 2026-11-02: specs visão (r1+emendas) e E1 (r3) **aprovadas pelo dono** e commitadas (570e6d9, f0fab3b, b440c0c + este). Nenhum código. Próximo: plano de E1 (só E1) na sessão seguinte, após handoff.
 
 ## Rulings
 
