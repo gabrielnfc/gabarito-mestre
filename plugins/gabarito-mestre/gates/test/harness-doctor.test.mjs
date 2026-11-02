@@ -788,7 +788,7 @@ describe('T6 doctor — camada de guarda (REQ-INF-2)', () => {
     test('doctor-marcador-arquivo-caminho: só .harness/entregas/<id>/events.*.jsonl; ../, absoluto, subpasta e outro nome não valem', () => {
       const fora = mkdtempSync(join(tmpdir(), 'doctor-fora-'));
       writeFileSync(join(fora, 'events.s1.jsonl'), `${hb(horasAtras(1))}\n`);
-      for (const arquivo of ['../x/events.s1.jsonl', '.harness/entregas/../entregas/GM-9/events.s1.jsonl', '.harness/entregas/../../events.s1.jsonl', join(fora, 'events.s1.jsonl'), '/etc/passwd', '.harness/entregas/GM-9/outro.jsonl', '.harness/entregas/GM-9/sub/events.s1.jsonl', '.harness/events.s1.jsonl', '.harness/entregas/GM-9/events.s1.jsonl/', '.harness\\entregas\\GM-9\\events.s1.jsonl', '']) {
+      for (const arquivo of ['../x/events.s1.jsonl', '.harness/entregas/../entregas/GM-9/events.s1.jsonl', '.harness/entregas/../../events.s1.jsonl', '.harness/entregas/../events.s1.jsonl', '.harness/entregas/./events.s1.jsonl', join(fora, 'events.s1.jsonl'), '/etc/passwd', '.harness/entregas/GM-9/outro.jsonl', '.harness/entregas/GM-9/sub/events.s1.jsonl', '.harness/events.s1.jsonl', '.harness/entregas/GM-9/events.s1.jsonl/', '.harness\\entregas\\GM-9\\events.s1.jsonl', '']) {
         const dir = repo({ ...cfg });
         arq(dir, '.harness/entregas/GM-9/outro.jsonl', `${hb(horasAtras(1))}\n`);
         arq(dir, '.harness/entregas/GM-9/sub/events.s1.jsonl', `${hb(horasAtras(1))}\n`);
