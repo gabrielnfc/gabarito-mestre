@@ -33,6 +33,7 @@ function projetoTemporario() {
     join(raiz, 'src', 'decidir.ts'),
     "import { f } from './classificar-alvo.ts';\nexport const g = (n: number): string => f(n as never);\n",
   );
+  writeFileSync(join(raiz, 'src', 'aneis.ts'), 'export const a: number = 0;\n');
   writeFileSync(join(raiz, 'src', 'diario.ts'), 'export const h = (n: number): number => n + 1;\n');
   writeFileSync(join(raiz, 'src', 'guarda.ts'), "import './diario.ts';\nexport const i: number = 1;\n");
   return raiz;
