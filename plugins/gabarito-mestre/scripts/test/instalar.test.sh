@@ -194,5 +194,20 @@ check "sai 0"                                        '[ "$RC9B" -eq 0 ]'
 check "gates instalados direto (sem .novo)"          '[ -f "$R9B/$GATES/scripts/harness-doctor.mjs" ] && [ -z "$(find "$R9B/$GATES" -name "*.novo")" ]'
 check "sem aviso de versão mista (nada estava instalado antes)" '! printf "%s" "$SAIDA9B" | grep -q "tools/gabarito-gates em 1.0.x"'
 
+echo "── cenário 10: hooks git de versionamento (R20) — repo git novo, gate antigo e hook de terceiro"
+GITENV="GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1"
+R10="$(novo_repo)"; env $GITENV git -C "$R10" init -q
+if SAIDA10="$(env $GITENV bash "$INSTALAR" "$R10" 2>&1)"; then RC10=0; else RC10=$?; fi
+check "repo git novo: sai 0 e grava commit-msg e pre-push" '[ "$RC10" -eq 0 ] && [ -x "$R10/.git/hooks/commit-msg" ] && [ -x "$R10/.git/hooks/pre-push" ]'
+check "2ª execução não duplica o bloco" 'bash "$INSTALAR" "$R10" >/dev/null 2>&1; [ "$(grep -c "# >>> gabarito-mestre" "$R10/.git/hooks/commit-msg")" -eq 1 ]'
+R10B="$(novo_repo)"; env $GITENV git -C "$R10B" init -q
+mkdir -p "$R10B/$GATES/scripts"; printf 'export const x = 1; // versionamento-check 1.1.0, sem o modo de hook\n' > "$R10B/$GATES/scripts/versionamento-check.mjs"
+SAIDA10B="$(env $GITENV bash "$INSTALAR" "$R10B" 2>&1)" || true
+check "gate instalado sem --msg: NÃO grava hook e explica como atualizar" '[ ! -e "$R10B/.git/hooks/commit-msg" ] && printf "%s" "$SAIDA10B" | grep -q "anterior" && printf "%s" "$SAIDA10B" | grep -q -- "--gates-substituir"'
+R10C="$(novo_repo)"; env $GITENV git -C "$R10C" init -q
+printf '#!/usr/bin/env python3\nprint(1)\n' > "$R10C/.git/hooks/commit-msg"; chmod +x "$R10C/.git/hooks/commit-msg"; cp "$R10C/.git/hooks/commit-msg" "$R10C.orig"
+if SAIDA10C="$(env $GITENV bash "$INSTALAR" "$R10C" 2>&1)"; then RC10C=0; else RC10C=$?; fi
+check "hook python de terceiro: sai 0, avisa, e o arquivo fica byte a byte igual" '[ "$RC10C" -eq 0 ] && cmp -s "$R10C/.git/hooks/commit-msg" "$R10C.orig" && printf "%s" "$SAIDA10C" | grep -q "NÃO instalados"'
+
 echo "── $passou ok, $falhou falha(s)"
 [ "$falhou" -eq 0 ]

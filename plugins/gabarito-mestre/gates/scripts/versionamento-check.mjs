@@ -13,14 +13,16 @@
  *   node versionamento-check.mjs --base origin/main --branch "$GITHUB_HEAD_REF"   # CI (fetch-depth: 0)
  *   node versionamento-check.mjs --max 20 --json                                  # doctor / local
  *   node versionamento-check.mjs --msg .git/COMMIT_EDITMSG                        # hook git commit-msg
- *   node versionamento-check.mjs --so-branch                                      # hook git pre-push (só o nome da branch)
+ *   node versionamento-check.mjs --pre-push < refs-do-stdin                       # hook git pre-push (cada refs/heads/* de destino)
+ *
+ * EXIT (modos de hook --msg/--pre-push): 0 ok · 2 REPROVADO · 1 erro/crash (o hook só bloqueia em 2; resto = aviso, G9)
  */
 
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { arg, ehEntrypoint } from '../lib/cli.mjs';
-import { raizDoRepo, branchAtual } from '../lib/git.mjs';
+import { raizDoRepo } from '../lib/git.mjs';
 import { lerConfig as lerConfigBase } from '../lib/config.mjs';
 
 export { raizDoRepo }; // API pública: antes definida aqui, agora vem de lib/git
@@ -115,7 +117,7 @@ export function checarMensagem(root, arquivo, opts = {}) {
   try {
     texto = readFileSync(arquivo, 'utf8');
   } catch (e) {
-    return { ok: false, achados: [{ sha: 'msg', motivo: `mensagem ilegível (${arquivo}): ${String(e?.code ?? e?.message ?? e)}` }] };
+    return { ok: false, erro: true, achados: [{ sha: 'msg', motivo: `mensagem ilegível (${arquivo}): ${String(e?.code ?? e?.message ?? e)}` }] };
   }
   const cab = cabecalhoDaMensagem(texto);
   if (MSG_GERADA.test(cab)) return { ok: true, achados: [] };
@@ -123,14 +125,24 @@ export function checarMensagem(root, arquivo, opts = {}) {
   return r.ok ? { ok: true, achados: [] } : { ok: false, achados: [{ sha: 'msg', motivo: `${r.motivo} — "${cab}"` }] };
 }
 
-/** Hook `pre-push`: só o nome da branch (sem varrer commits). */
-export function checarSoBranch(root, nome, opts = {}) {
+const ZEROS = /^0+$/;
+
+/**
+ * Hook `pre-push`: o git entrega em stdin uma linha por ref `<local_ref> <local_sha> <remote_ref> <remote_sha>`.
+ * Confere o nome de cada `refs/heads/*` DE DESTINO (não o HEAD local: `git push origin outra`, `HEAD:ruim`).
+ * Tag, outros refs e delete (local_sha zerado) passam.
+ */
+export function checarRefsDoPush(root, stdin, opts = {}) {
   const { cfg, failOpen } = opts.cfg ? { cfg: { ...DEFAULTS, ...opts.cfg }, failOpen: null } : lerConfig(root);
   if (failOpen) return { ok: true, achados: [], failOpen };
-  const b = nome ?? branchAtual(root);
-  if (!b || b === 'HEAD') return { ok: true, achados: [] }; // detached: nada a conferir
-  const r = validarBranch(b, cfg);
-  return r.ok ? { ok: true, achados: [] } : { ok: false, achados: [{ sha: 'branch', motivo: r.motivo }] };
+  const achados = [];
+  for (const linha of String(stdin ?? '').split('\n')) {
+    const [, localSha, remoteRef] = linha.trim().split(/\s+/);
+    if (!remoteRef?.startsWith('refs/heads/') || ZEROS.test(localSha ?? '')) continue;
+    const r = validarBranch(remoteRef.slice('refs/heads/'.length), cfg);
+    if (!r.ok) achados.push({ sha: 'branch', motivo: r.motivo });
+  }
+  return { ok: achados.length === 0, achados };
 }
 
 export function checar(root, opts = {}) {
@@ -181,11 +193,11 @@ export function checar(root, opts = {}) {
 }
 
 
-/** Saída dos modos de hook (`--msg`, `--so-branch`): erro legível em stderr, exit 0/1. */
+/** Saída dos modos de hook (`--msg`, `--pre-push`): 0 ok · 2 reprovado · 1 erro (o hook só bloqueia em 2). */
 function sair(r, argv, o_que) {
   if (argv.includes('--json')) {
     process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
-    process.exit(r.failOpen || r.ok ? 0 : 1);
+    process.exit(r.failOpen || r.ok ? 0 : r.erro ? 1 : 2);
   }
   if (r.failOpen) {
     console.error(`[R20] ${r.failOpen} — fail-open declarado (G9)`);
@@ -193,7 +205,7 @@ function sair(r, argv, o_que) {
   }
   for (const a of r.achados) console.error(`[R20] ${a.motivo}`);
   if (!r.ok) console.error(`[R20] ${o_que} reprovada. Formato: tipo(PBI-n): assunto · branch tipo/PBI-n-slug ou wt/PBI-n-i. Ver docs/harness/referencia.md §10.`);
-  process.exit(r.ok ? 0 : 1);
+  process.exit(r.ok ? 0 : r.erro ? 1 : 2);
 }
 
 function main(argv) {
@@ -214,7 +226,11 @@ function main(argv) {
     }
     return sair(checarMensagem(root, resolve(arq)), argv, 'mensagem');
   }
-  if (argv.includes('--so-branch')) return sair(checarSoBranch(root, branch), argv, 'branch');
+  if (argv.includes('--pre-push')) {
+    let entrada = '';
+    try { entrada = readFileSync(0, 'utf8'); } catch { /* sem stdin: nada a conferir */ }
+    return sair(checarRefsDoPush(root, entrada), argv, 'branch');
+  }
   const r = checar(root, { base: arg(argv, 'base'), branch, max });
   if (argv.includes('--json')) {
     process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);

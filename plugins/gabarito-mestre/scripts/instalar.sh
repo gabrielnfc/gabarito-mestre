@@ -181,9 +181,17 @@ while IFS= read -r f; do put_gate "${f#"$ROOT/gates/"}"; done < <(find "$ROOT/ga
 escrever_manifesto
 emendar_gitignore
 # Versionamento (R20) como hooks do git (commit-msg + pre-push). Anexa entre marcadores, nunca sobrescreve,
-# idempotente. Sem node ou sem repo git: avisa e segue (o instalador não falha por isso).
-if command -v node >/dev/null 2>&1; then node "$ROOT/gates/scripts/instalar-hooks-git.mjs" "$DEST" || true
-else echo "  AVISO: node não encontrado — hooks git de versionamento (R20) não instalados"; fi
+# idempotente; em dúvida o instalador NÃO toca e avisa (recusado). Só grava o hook se o versionamento-check
+# INSTALADO anuncia --msg: gate antigo (1.1.0) sem --msg viraria hook que reprova todo commit. Sem node: avisa.
+CHECK_INSTALADO="$DEST/$GATES_DIR/scripts/versionamento-check.mjs"
+if ! command -v node >/dev/null 2>&1; then
+  echo "  AVISO: node não encontrado — hooks git de versionamento (R20) não instalados"
+elif [ -f "$CHECK_INSTALADO" ] && grep -q -- '--msg' "$CHECK_INSTALADO" && grep -q -- '--pre-push' "$CHECK_INSTALADO"; then
+  node "$ROOT/gates/scripts/instalar-hooks-git.mjs" "$DEST" || true
+else
+  echo "  AVISO: $GATES_DIR/scripts/versionamento-check.mjs instalado é anterior (sem --msg/--pre-push) — hooks git (R20) NÃO instalados."
+  echo "         Rode: instalar.sh --atualizar --gates-substituir e depois instalar.sh de novo."
+fi
 if [ "$CODEOWNERS" -eq 1 ]; then
   if [ -e "$DEST/.github/CODEOWNERS" ]; then echo "  mantido  .github/CODEOWNERS"; mantidos=$((mantidos+1)); else
     mkdir -p "$DEST/.github"

@@ -319,13 +319,13 @@ describe('CLI --msg <arquivo> (hook commit-msg)', () => {
   });
   for (const m of reprovam) test(`reprova: ${JSON.stringify(m).slice(0, 70)}`, () => {
     const r = msg(m);
-    assert.equal(r.status, 1, r.stdout);
+    assert.equal(r.status, 2, r.stdout);
     assert.match(r.stderr, /\[R20\]/);
     assert.doesNotMatch(r.stderr, /ALLOW_[A-Z]+|escape hatch/i);
   });
   test('só a primeira linha vale; linhas de comentário do git (# …) antes dela são ignoradas', () => {
     assert.equal(msg('# Please enter\nfeat(PBI-1): ok\n').status, 0);
-    assert.equal(msg('# nota\narrumei\nfeat(PBI-1): ok\n').status, 1);
+    assert.equal(msg('# nota\narrumei\nfeat(PBI-1): ok\n').status, 2);
   });
   test('mensagem reprovada explica o formato e cita a mensagem recebida', () => {
     const r = msg('wip');
@@ -351,12 +351,23 @@ describe('CLI --msg <arquivo> (hook commit-msg)', () => {
   });
 });
 
-describe('CLI --so-branch (hook pre-push)', () => {
+describe('CLI --pre-push (hook pre-push, refs no stdin)', () => {
   const dir = repo({ 'harness.config.json': CONFIG });
-  test('branch fora do padrão → exit 1; no padrão → exit 0; não varre commits', () => {
-    assert.equal(cli(['--root', dir, '--so-branch', '--branch', 'hotfix/x'], dir).status, 1);
-    assert.equal(cli(['--root', dir, '--so-branch', '--branch', 'feat/PBI-1-x'], dir).status, 0);
-    assert.equal(cli(['--root', dir, '--so-branch', '--branch', 'wt/PBI-1-2'], dir).status, 0);
-    assert.equal(cli(['--root', dir, '--so-branch', '--branch', 'main'], dir).status, 0);
+  const SHA = 'a'.repeat(40); const ZERO = '0'.repeat(40);
+  const push = (...refs) => spawnSync(process.execPath, [SCRIPT, '--root', dir, '--pre-push'], {
+    cwd: dir, encoding: 'utf8', env: GIT_ENV, input: refs.map(([l, ls, r]) => `${l} ${ls} ${r} ${ZERO}`).join('\n') + '\n',
+  });
+  test('cada refs/heads/* de destino é conferido; ruim → exit 2; boas → 0', () => {
+    assert.equal(push(['refs/heads/x', SHA, 'refs/heads/hotfix/x']).status, 2);
+    assert.equal(push(['HEAD', SHA, 'refs/heads/ruim']).status, 2);
+    assert.equal(push(['refs/heads/a', SHA, 'refs/heads/feat/PBI-1-x'], ['refs/heads/b', SHA, 'refs/heads/wt/PBI-1-2'], ['refs/heads/m', SHA, 'refs/heads/main']).status, 0);
+    assert.equal(push(['refs/heads/a', SHA, 'refs/heads/feat/PBI-1-x'], ['refs/heads/b', SHA, 'refs/heads/ruim']).status, 2, 'uma ruim entre boas');
+  });
+  test('tag, outros refs e delete (local_sha zerado) passam', () => {
+    assert.equal(push(['refs/tags/v1', SHA, 'refs/tags/ruim-nome']).status, 0);
+    assert.equal(push(['(delete)', ZERO, 'refs/heads/ruim']).status, 0);
+  });
+  test('stdin vazio: nada a conferir, exit 0', () => {
+    assert.equal(push().status, 0);
   });
 });
