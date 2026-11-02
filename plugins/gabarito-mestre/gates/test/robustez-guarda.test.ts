@@ -66,6 +66,44 @@ describe('robustez da guarda', () => {
     assert.ok(ms < 100, `65 KB de cd levaram ${ms.toFixed(1)} ms`);
   });
 
+  test('cd-perdido-pede: acima de LIMITE_CD a guarda perdeu o diretório e pede (orq) ou nega (sub), com motivo teto e sem o comando', () => {
+    const casos = [
+      bash(`${'cd a;'.repeat(2100)} cd /repo/.git; echo x > config`),
+      bash(`cd ${'a'.repeat(4091)}; cd /repo/.git; echo x > config`),
+      bash(`${'cd a;'.repeat(2100)} echo ok`),
+    ];
+    for (const e of casos) {
+      const o = decidir(e, CONFIG, CTX);
+      assert.equal(o.faixa, 'ask');
+      assert.equal(o.evento?.tipo, 'guarda.ask');
+      assert.equal(o.evento?.dados.motivo, 'teto');
+      assert.equal(o.evento?.dados.chars, e.tool_input.command.length);
+      const s = decidir({ ...e, agent_id: 'a1' }, CONFIG, CTX);
+      assert.equal(s.faixa, 'deny');
+      assert.equal(s.evento?.tipo, 'guarda.deny');
+      assert.equal(s.evento?.dados.motivo, 'teto');
+      const saida = JSON.stringify([o.evento, o.systemMessage, o.motivo, s.evento, s.motivo]);
+      assert.equal(saida.includes('echo x'), false);
+      assert.equal(saida.includes('cd a;cd a'), false);
+    }
+  });
+
+  test('cd-limite-fronteira: caminho de 4096 caracteres segue sem decisão, 4097 pede; cd benigno abaixo do limite segue sem decisão', () => {
+    assert.equal(decidir(bash(`cd ${'a'.repeat(4090)}; echo ok`), CONFIG, CTX).faixa, 'silencio'); // /repo/ + 4090 = 4096
+    assert.equal(decidir(bash(`cd ${'a'.repeat(4091)}; echo ok`), CONFIG, CTX).faixa, 'ask'); // 4097
+    assert.equal(decidir(bash(`${'cd a;'.repeat(900)} echo ok`), CONFIG, CTX).faixa, 'silencio');
+    assert.equal(decidir({ ...bash(`${'cd a;'.repeat(900)} echo ok`), agent_id: 'a1' }, CONFIG, CTX).faixa, 'silencio');
+  });
+
+  test('cd-perdido-nao-sobrepoe: ask/deny já obtido prevalece sobre o motivo teto', () => {
+    const e = bash(`${'cd a;'.repeat(2100)} cat .env`);
+    const s = decidir({ ...e, agent_id: 'a1' }, CONFIG, CTX);
+    assert.equal(s.faixa, 'deny');
+    assert.equal(s.evento?.dados.motivo, undefined);
+    assert.equal(s.evento?.dados.anel, 'segredo');
+    assert.equal(decidir(e, CONFIG, CTX).evento?.dados.motivo, undefined);
+  });
+
   test('teto-pede-em-vez-de-ignorar: acima de 64 KB a cauda perigosa vira ask (orq) ou deny (sub), com motivo e sem o comando', () => {
     const cauda = bash(`echo ${'x'.repeat(70000)} && rm .env`);
     const o = decidir(cauda, CONFIG, CTX);
