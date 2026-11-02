@@ -73,3 +73,22 @@
 {"nome":"find-name-padrao-nao-e-leitura","req":"GRD-5","tool":"Bash","input":{"command":"find . -name \".env*\" -type f"},"agente":"sub","esperado":{"faixa":"silencio"}}
 {"nome":"find-iname-pem-nao-e-leitura","req":"GRD-5","tool":"Bash","input":{"command":"find . -iname \"*.pem\" -print"},"agente":"sub","esperado":{"faixa":"silencio"}}
 {"nome":"find-caminho-env-le","req":"GRD-5","tool":"Bash","input":{"command":"find .env -type f"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-find-exec-cat-env-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env -exec cat {} \\;"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-find-exec-cat-env-orq","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env -exec cat {} \\;"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"r3-find-exec-padrao-glob-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name \".env*\" -exec cat {} +"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-find-exec-padrao-glob-orq","req":"GRD-5","tool":"Bash","input":{"command":"find . -name \".env*\" -exec cat {} +"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"r3-find-exec-pem-cp-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name \"*.pem\" -exec cp {} /tmp \\;"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-find-exec-pem-cp-orq","req":"GRD-5","tool":"Bash","input":{"command":"find . -name \"*.pem\" -exec cp {} /tmp \\;"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"r3-find-delete-env-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env -delete"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-find-delete-env-orq","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env -delete"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"r3-find-execdir-env-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env -execdir cat {} \\;"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-find-ok-env-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env -ok cat {} \\;"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-find-okdir-env-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env -okdir cat {} \\;"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-find-exec-antes-do-name-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -exec cat {} \\; -name .env"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-find-iname-maiusculo-exec-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -iname .ENV -exec cat {} \\;"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-find-path-exec-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -path '*/.env' -exec cat {} \\;"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-find-regex-exec-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -regex '.*/.env' -exec cat {} \\;"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-find-exec-sh-c-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env -exec sh -c 'cat \"$1\"' _ {} \\;"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"r3-find-exec-benigno-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name \"*.ts\" -exec grep x {} +"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"r3-find-name-env-sem-acao-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"r3-find-name-env-print-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env -print"},"agente":"sub","esperado":{"faixa":"silencio"}}
