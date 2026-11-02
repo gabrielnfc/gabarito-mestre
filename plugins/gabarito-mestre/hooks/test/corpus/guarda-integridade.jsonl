@@ -114,3 +114,7 @@
 {"nome":"r3-q16-push-refs-remotes-orq","req":"GRD-5","tool":"Bash","input":{"command":"git push origin HEAD:refs/remotes/origin/main"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"r3-q16-alvo-dotgit-sub","req":"GRD-5","tool":"Bash","input":{"command":"git merge .git/config"},"agente":"sub","esperado":{"faixa":"deny"}}
 {"nome":"r3-q16-alvo-dotgit-orq","req":"GRD-5","tool":"Bash","input":{"command":"git merge .git/config"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"f4-mysql-e-texto-nao-e-caminho-sub","req":"GRD-5","tool":"Bash","input":{"command":"mysql -h 127.0.0.1 -e .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"f4-mysql-e-texto-nao-e-caminho-orq","req":"GRD-5","tool":"Bash","input":{"command":"mysql -h 127.0.0.1 -e .env"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"f4-mariadb-execute-texto-nao-e-caminho-sub","req":"GRD-5","tool":"Bash","input":{"command":"mariadb -h 127.0.0.1 --execute=.env"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"f4-mariadb-execute-texto-nao-e-caminho-orq","req":"GRD-5","tool":"Bash","input":{"command":"mariadb -h 127.0.0.1 --execute=.env"},"agente":"orq","esperado":{"faixa":"silencio"}}

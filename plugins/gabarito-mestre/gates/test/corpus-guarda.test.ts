@@ -20,7 +20,7 @@ import type { ConfigGuarda, Contexto, EntradaHook } from '../src/tipos.ts';
 const CORPUS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'hooks', 'test', 'corpus');
 const ARQUIVOS = ['guarda-bash', 'guarda-mcp', 'guarda-caminho', 'guarda-integridade'];
 const REQS = new Set(['GRD-2', 'GRD-3', 'GRD-4', 'GRD-5', 'GRD-6']);
-const TOTAL_CORPUS = 261 + 36 + 15;
+const TOTAL_CORPUS = 261 + 36 + 15 + 4;
 // Nominados pelo dono + casos que as mutações prescritas da spec citam.
 const NOMINADOS = [
   'teste-sem-decisao',
