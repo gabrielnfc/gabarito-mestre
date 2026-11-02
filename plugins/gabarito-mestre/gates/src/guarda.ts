@@ -160,17 +160,22 @@ export function decidirSeguro(entrada: EntradaHook, config: ConfigGuarda | null,
     const d = decidirFn(entrada, config, contexto);
     return { permissionDecision: d.permissionDecision, motivo: d.motivo, systemMessage: d.systemMessage, decisao: d };
   } catch (e) {
-    process.stderr.write(`gabarito-mestre: guarda falhou ao classificar (${e instanceof Error ? e.message : String(e)})\n`);
-    let texto = '';
-    try { texto = JSON.stringify(entrada?.tool_input ?? null) ?? ''; } catch { /* nada */ }
-    if (SENSIVEL.test(texto)) {
-      const sub = typeof entrada?.agent_id === 'string' && entrada.agent_id !== '';
-      return sub
-        ? { permissionDecision: 'deny', motivo: 'a guarda não conseguiu classificar esta chamada e ela menciona segredo ou integridade do harness: só o orquestrador pode pedir', systemMessage: null, decisao: null }
-        : { permissionDecision: 'ask', motivo: 'a guarda não conseguiu classificar esta chamada e ela menciona segredo ou integridade do harness: confirme com o humano', systemMessage: null, decisao: null };
-    }
-    return { motivo: null, systemMessage: 'GABARITO: a guarda falhou ao classificar esta chamada; segredo e integridade não foram verificados', decisao: null };
+    return falhaSegura(entrada, e);
   }
+}
+
+/** Resultado quando a classificação não pôde ser feita: pede se a chamada menciona segredo ou integridade. */
+export function falhaSegura(entrada: EntradaHook, e: unknown): Saida {
+  process.stderr.write(`gabarito-mestre: guarda falhou ao classificar (${e instanceof Error ? e.message : String(e)})\n`);
+  let texto = '';
+  try { texto = JSON.stringify(entrada?.tool_input ?? null) ?? ''; } catch { /* nada */ }
+  if (SENSIVEL.test(texto)) {
+    const sub = typeof entrada?.agent_id === 'string' && entrada.agent_id !== '';
+    return sub
+      ? { permissionDecision: 'deny', motivo: 'a guarda não conseguiu classificar esta chamada e ela menciona segredo ou integridade do harness: só o orquestrador pode pedir', systemMessage: null, decisao: null }
+      : { permissionDecision: 'ask', motivo: 'a guarda não conseguiu classificar esta chamada e ela menciona segredo ou integridade do harness: confirme com o humano', systemMessage: null, decisao: null };
+  }
+  return { motivo: null, systemMessage: 'GABARITO: a guarda falhou ao classificar esta chamada; segredo e integridade não foram verificados', decisao: null };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -223,6 +228,30 @@ function aviso(msg: string): void {
 
 // ---------------------------------------------------------------------------------------------------------------
 
+// Estado para o último recurso: se algo lançar depois de a entrada ser lida, a decisão ainda sai.
+let atual: EntradaHook | null = null;
+let decisaoCalculada: Saida | null = null;
+let jaEscreveu = false;
+
+function saidaDe(r: Saida, extras: string[]): Record<string, unknown> | null {
+  const saida: Record<string, unknown> = {};
+  if (r.permissionDecision === 'ask' || r.permissionDecision === 'deny') {
+    saida.hookSpecificOutput = { hookEventName: 'PreToolUse', permissionDecision: r.permissionDecision, permissionDecisionReason: r.motivo ?? 'a guarda pede confirmação' };
+  }
+  const msgs = r.systemMessage ? [r.systemMessage, ...extras] : extras;
+  if (msgs.length > 0) saida.systemMessage = msgs.join(' · ');
+  return Object.keys(saida).length > 0 ? saida : null;
+}
+
+/**
+ * Último recurso (algo lançou depois de a entrada ser lida): o que já estava decidido sai; se nem a decisão existia,
+ * vale o fallback de segredo e integridade. `null` = nada a escrever (já escreveu, ou nem havia entrada).
+ */
+export function saidaDeFalha(e: unknown, entrada: EntradaHook | null, calculada: Saida | null, jaEscreveu: boolean): Record<string, unknown> | null {
+  if (jaEscreveu || entrada === null) return null;
+  return saidaDe(calculada ?? falhaSegura(entrada, e), []);
+}
+
 function principal(): void {
   let bruto = '';
   try {
@@ -242,6 +271,7 @@ function principal(): void {
   if (entrada === null) return aviso('payload não é um objeto');
   if (typeof entrada.tool_name !== 'string' || objeto(entrada.tool_input) === null) return aviso('payload sem tool_name ou tool_input');
   if (entrada.tool_name === 'Bash' && typeof entrada.tool_input.command !== 'string') return aviso('Bash sem command em texto');
+  atual = entrada;
 
   const cwd = typeof entrada.cwd === 'string' && entrada.cwd !== '' ? entrada.cwd : process.cwd();
   const raizCwd = raizPorFs(cwd);
@@ -253,6 +283,7 @@ function principal(): void {
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..', '..');
   const contexto = montarContexto(entrada, raizCwd ?? raizSessao, cwd, pluginRoot);
   const r = decidirSeguro(entrada, guarda?.config ?? null, contexto);
+  decisaoCalculada = r;
 
   const sessao = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;
   const mensagens: string[] = [];
@@ -289,12 +320,8 @@ function principal(): void {
     }
   }
 
-  const saida: Record<string, unknown> = {};
-  if (r.permissionDecision === 'ask' || r.permissionDecision === 'deny') {
-    saida.hookSpecificOutput = { hookEventName: 'PreToolUse', permissionDecision: r.permissionDecision, permissionDecisionReason: r.motivo ?? 'a guarda pede confirmação' };
-  }
-  if (mensagens.length > 0) saida.systemMessage = mensagens.join(' · ');
-  escrever(Object.keys(saida).length > 0 ? saida : null);
+  jaEscreveu = true;
+  escrever(saidaDe({ ...r, systemMessage: null }, mensagens));
 
   if (gravar) {
     try {
@@ -318,6 +345,8 @@ if (ehEntrypoint()) {
     principal();
   } catch (e) {
     aviso(`erro inesperado (${e instanceof Error ? e.message : String(e)})`);
+    // O que já estava decidido sai; se nem a decisão existia, vale o fallback de segredo e integridade.
+    escrever(saidaDeFalha(e, atual, decisaoCalculada, jaEscreveu));
   }
   process.exitCode = 0;
 }

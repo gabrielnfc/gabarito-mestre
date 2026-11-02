@@ -342,6 +342,25 @@ describe('exceção da decisão (visão §6.1: fail-closed em segredo e integrid
     // `.env.example` não é segredo
     assert.equal(orq('Read', { file_path: '/repo/.env.example' }).permissionDecision, undefined);
   });
+
+  test('excecao-tardia-ainda-decide: lançar depois da leitura não apaga a decisão nem o fallback', async () => {
+    const { saidaDeFalha, decidirSeguro } = await import(pathToFileURL(GUARDA).href);
+    const erro = new Error('boom');
+    const ctx = { branchAtual: null, refLinkado: null, remoteUrl: null, raiz: '/repo', pluginRoot: '/plugin' };
+    const lido = { tool_name: 'Read', tool_input: { file_path: '/repo/.env' } };
+    const ask = (s) => s?.hookSpecificOutput?.permissionDecision;
+
+    // nenhuma decisão calculada: vale o fallback de segredo e integridade
+    assert.equal(ask(saidaDeFalha(erro, lido, null, false)), 'ask');
+    assert.equal(ask(saidaDeFalha(erro, { ...lido, agent_id: 'a1' }, null, false)), 'deny');
+    assert.match(saidaDeFalha(erro, { tool_name: 'Bash', tool_input: { command: 'ls' } }, null, false).systemMessage, /\S/);
+    // decisão já calculada: sai ela, não o fallback
+    const calculada = decidirSeguro({ tool_name: 'Bash', tool_input: { command: 'ls' } }, null, ctx);
+    assert.equal(saidaDeFalha(erro, lido, calculada, false), null, 'decisão silenciosa continua silenciosa');
+    // já escreveu, ou nem leu a entrada: não escreve de novo
+    assert.equal(saidaDeFalha(erro, lido, null, true), null);
+    assert.equal(saidaDeFalha(erro, null, null, false), null);
+  });
 });
 
 describe('saída', () => {
