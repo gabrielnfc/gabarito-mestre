@@ -43,9 +43,12 @@ const linhas = (arquivo: string): string[] => readFileSync(arquivo, 'utf8').spli
 const SEGREDOS: Record<string, string> = {
   'ghp': 'ghp_' + 'A'.repeat(24),
   'gho': 'gho_' + 'B'.repeat(24),
+  'gh[sur]': 'ghs_' + 'G'.repeat(36),
+  'github_pat': 'github_' + 'pat_' + 'H'.repeat(22) + '_' + 'I'.repeat(59),
   'AKIA': 'AKIA' + 'ABCDEFGHIJKL',
   'ASIA': 'ASIA' + 'ABCDEFGHIJKL',
   'BEGIN': '-----' + 'BEGIN PRIVATE KEY-----',
+  'sk-prefixado': 'sk-' + 'ant-' + 'api03-' + 'J'.repeat(93) + 'AA',
   'sk': 'sk-' + 'c'.repeat(20),
   'xox': 'xoxb-' + '1234567890',
   'url-credencial': 'postgres://u:' + 's3nh4@db.exemplo.com/x',
@@ -62,14 +65,75 @@ describe('canário', () => {
     }
   });
 
-  test('diario-recusa-segredo: um valor por padrão ⇒ não-null', () => {
+  test('diario-recusa-segredo: 13 padrões, um valor por alternativa ⇒ recusa com o nome do padrão', () => {
+    assert.equal(Object.keys(SEGREDOS).length, 13);
     for (const [nome, valor] of Object.entries(SEGREDOS)) {
-      assert.notEqual(recusaCanario(JSON.stringify({ dados: { alvo: valor } })), null, `padrão ${nome}`);
+      assert.equal(recusaCanario(JSON.stringify({ dados: { alvo: valor } })), nome, `padrão ${nome}`);
+    }
+  });
+
+  test('canario-quatro-formatos: sk-ant, sk-proj, github_pat, ghs/ghu/ghr, inclusive truncados a 55 caracteres', () => {
+    const formatos: Record<string, string> = {
+      'sk-ant-api03': 'sk-' + 'ant-api03-' + 'K'.repeat(93) + 'AA',
+      'sk-ant-admin01': 'sk-' + 'ant-admin01-' + 'K'.repeat(93) + 'AA',
+      'sk-proj': 'sk-' + 'proj-' + 'L_-'.repeat(30),
+      'sk-svcacct': 'sk-' + 'svcacct-' + 'M'.repeat(58),
+      'github_pat': 'github_' + 'pat_' + 'N'.repeat(22) + '_' + 'O'.repeat(59),
+      'ghs': 'ghs_' + 'P'.repeat(36),
+      'ghu': 'ghu_' + 'Q'.repeat(36),
+      'ghr': 'ghr_' + 'R'.repeat(36),
+    };
+    for (const [nome, valor] of Object.entries(formatos)) {
+      assert.notEqual(recusaCanario(valor), null, nome);
+      assert.notEqual(recusaCanario(valor.slice(0, 55)), null, `${nome} truncado a 55`);
+      assert.notEqual(recusaCanario(`x ${valor} y`), null, `${nome} no meio do texto`);
+    }
+  });
+
+  test('canario-nao-recusa-novos: nomes e docs plausíveis dos três padrões novos passam', () => {
+    for (const texto of [
+      'docs/github_pat_rotation_runbook_2026.md',
+      'github_pat_ tokens têm prefixo próprio',
+      'highs_abcdefghijklmnopqrstuvwxyz',
+      'laughs_ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+      'docs/ghs_runbook.md',
+      'sk-ant-api03-',
+      'usa sk-ant-api03-xxxx no .env',
+      'the task-sk-ant-ipode',
+      'risk-proj-' + 'abcdefghijklmnopqrstuvwxyzabcdefghij',
+    ]) {
+      assert.equal(recusaCanario(texto), null, texto);
+      assert.equal(recusaCanario(JSON.stringify({ dados: { alvo: texto } })), null, texto);
+    }
+  });
+
+  test('canario-linha-16kb-adversarial: 16 KB de quase-casamentos termina rápido e não recusa', () => {
+    const entradas = ['sk-proj-' + 'a'.repeat(31) + ' ', 'github_pat_' + 'a'.repeat(39) + ' ', 'ghs_' + 'a'.repeat(19) + ' ', 'sk-', 's', 'g', '_', '-'];
+    for (const u of entradas) {
+      const linha = u.repeat(Math.ceil(16384 / u.length)).slice(0, 16384);
+      const t0 = process.hrtime.bigint();
+      const r = recusaCanario(linha);
+      const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+      assert.equal(r, null, u.slice(0, 20));
+      assert.ok(ms < 60, `${u.slice(0, 20)}: ${ms} ms`);
     }
   });
 });
 
 describe('append', () => {
+  test('diario-recusa-nao-silenciosa: cada formato novo grava diario.recusa com padrao não vazio e sem o valor', () => {
+    for (const nome of ['gh[sur]', 'github_pat', 'sk-prefixado']) {
+      const dir = tmp();
+      const r = append(dir, 's1', ev('guarda.deny', { alvo: SEGREDOS[nome] }));
+      assert.deepEqual(r, { ok: true, gravado: 'recusa' }, nome);
+      const bruto = readFileSync(join(dir, 'events.s1.jsonl'), 'utf8');
+      assert.equal(bruto.includes(SEGREDOS[nome]), false, `${nome} vazou`);
+      const [e] = ler(dir);
+      assert.equal(e.tipo, 'diario.recusa');
+      assert.equal(e.dados.padrao, nome);
+    }
+  });
+
   test('diario-recusa-grava-evento: grava diario.recusa {tipo,padrao}, sem dados e sem o segredo', () => {
     const dir = tmp();
     const segredo = SEGREDOS.ghp;

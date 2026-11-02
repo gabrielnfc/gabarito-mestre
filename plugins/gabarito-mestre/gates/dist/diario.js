@@ -12,9 +12,12 @@ import { join } from 'node:path';
 const CANARIO                                           = [
   ['ghp', /ghp_[A-Za-z0-9]{20,}/],
   ['gho', /gho_[A-Za-z0-9]{20,}/],
+  ['gh[sur]', /\bgh[sur]_[A-Za-z0-9]{20,}/],
+  ['github_pat', /github_pat_[A-Za-z0-9_]{40,}/],
   ['AKIA', /\bAKIA[A-Z0-9]{12,}/],
   ['ASIA', /\bASIA[A-Z0-9]{12,}/],
   ['BEGIN', /-----BEGIN/],
+  ['sk-prefixado', /\bsk-(?:ant|proj|svcacct|admin)-[A-Za-z0-9_-]{32,}/],
   ['sk', /\bsk-[A-Za-z0-9]{16,}/],
   ['xox', /xox[bp]-[A-Za-z0-9-]{10,}/],
   ['url-credencial', /:\/\/[^/\s]+:[^@\s]+@/],
