@@ -128,7 +128,8 @@ function arquivosDoGit(root) {
       }
     });
   } catch {
-    return existsSync(join(root, '.git')) ? [] : null;
+    // marca `ilegivel`: o chamador distingue "não sei" de "não existe" (R2-1)
+    return existsSync(join(root, '.git')) ? Object.assign([], { ilegivel: true }) : null;
   }
 }
 
@@ -1001,7 +1002,17 @@ export function run(root = process.cwd(), overrides = {}) {
     else break;
   }
 
-  const agents = ix.has(cfg.agentsFile) ? ix.read(cfg.agentsFile) : null;
+  // Git ilegível: nada vale como evidência, mas a DECLARAÇÃO do AGENTS.md vem do disco — ela só pode endurecer o gate
+  // (declarado > medido ⇒ rc 1), nunca contar como evidência. Com o git legível, ignorado/apagado segue ausente (R1).
+  const gitIlegivel = visiveis.ilegivel === true;
+  let agents = ix.has(cfg.agentsFile) ? ix.read(cfg.agentsFile) : null;
+  if (agents === null && gitIlegivel) {
+    try {
+      agents = readFileSync(join(root, cfg.agentsFile), 'utf8');
+    } catch {
+      agents = null;
+    }
+  }
   const declarado = parseDeclaredLevel(agents);
 
   const novasFaltando = resultados
@@ -1019,6 +1030,7 @@ export function run(root = process.cwd(), overrides = {}) {
     declarado,
     mentindo: declarado !== null && declarado > alcancado,
     semAgents: agents === null,
+    gitIlegivel,
     semDeclaracao: agents !== null && declarado === null,
     novasFaltando,
     avisos,
@@ -1062,6 +1074,7 @@ function render(out, explain) {
   linhas.push('');
   linhas.push(`Nível alcançado: ${out.alcancado}   ·   declarado no AGENTS.md: ${out.declarado ?? '(não declarado)'}`);
   if (out.configInvalido) linhas.push('AVISO: harness.config.json inválido — checagens de config ficam FALTA (fail-open declarado (G9)).');
+  if (out.gitIlegivel) linhas.push('AVISO: git ilegível neste ambiente (dono diferente, índice corrompido, git fora do PATH…): nenhum arquivo vale como evidência; o nível declarado vem do disco.');
   if (out.semAgents) linhas.push('AVISO: AGENTS.md não encontrado na raiz.');
   else if (out.semDeclaracao) linhas.push('AVISO: o §0.2 não declara nível. Preencha — é a honestidade do documento sobre si mesmo.');
   if (out.mentindo) {

@@ -1181,10 +1181,80 @@ describe('T6 doctor — R1: arquivo ignorado/apagado não é evidência em NENHU
     writeFileSync(join(dir, '.git', 'index'), 'lixo que não é um índice');
     assert.throws(() => git(dir, 'ls-files'), /index|signature|fatal/i, 'premissa: o git de fato falha');
     const out = run(dir);
-    assert.equal(out.semAgents, true);
+    assert.equal(out.semAgents, false, 'o arquivo existe: git ilegível não é arquivo ausente');
+    assert.equal(out.gitIlegivel, true);
     assert.equal(out.perfil, null);
     assert.equal(out.alcancado, 0);
     assert.equal(out.resultados.find((r) => r.id === 'branch-protegida').found, false);
+  });
+
+  // R2-1: git ilegível não desliga o gate do nível declarado. A declaração vem do disco (não é evidência: só pode endurecer).
+  const cli = (dir, env = {}) => spawnSync(process.execPath, [SCRIPT], { cwd: dir, encoding: 'utf8', env: { ...process.env, ...env } });
+  const dirIlegivel = (como, nivel = 3) => {
+    const dir = repoComGit({ 'AGENTS.md': agents(nivel) });
+    if (como === 'indice') writeFileSync(join(dir, '.git', 'index'), 'lixo');
+    if (como === 'head') writeFileSync(join(dir, '.git', 'HEAD'), 'lixo');
+    return dir;
+  };
+  for (const como of ['indice', 'head']) {
+    test(`doctor-git-ilegivel-gate (${como}): declarado 3, medido 0 ⇒ rc 1, sem dizer que o AGENTS.md não existe`, () => {
+      const dir = dirIlegivel(como);
+      const out = run(dir);
+      assert.equal(out.declarado, 3);
+      assert.equal(out.alcancado, 0);
+      assert.equal(out.mentindo, true);
+      assert.equal(out.semAgents, false);
+      const r = cli(dir);
+      assert.equal(r.status, 1, r.stdout);
+      assert.match(r.stdout, /declara nível 3 e os gates sustentam 0/);
+      assert.doesNotMatch(r.stdout, /não encontrado/);
+      assert.match(r.stdout, /git ileg/i, 'a saída diz que o git não pôde ser lido');
+    });
+  }
+
+  test('doctor-git-ilegivel-gate (git fora do PATH): rc 1 e mensagem de git', () => {
+    const dir = dirIlegivel('nenhum');
+    const r = cli(dir, { PATH: dirname(process.execPath) });
+    assert.equal(r.status, 1, r.stdout);
+    assert.doesNotMatch(r.stdout, /não encontrado/);
+    assert.match(r.stdout, /git ileg/i);
+  });
+
+  test('doctor-git-ilegivel-gate (.git apontando para lugar nenhum): rc 1', () => {
+    const dir = repo({ 'AGENTS.md': agents(3) });
+    writeFileSync(join(dir, '.git'), 'gitdir: /nao/existe/aqui\n');
+    const r = cli(dir);
+    assert.equal(r.status, 1, r.stdout);
+    assert.match(r.stdout, /git ileg/i);
+  });
+
+  test('doctor-git-ilegivel-gate (GIT_DIR inválido herdado): o doctor o ignora, git legível, nível medido normal', () => {
+    const dir = dirIlegivel('nenhum', 0);
+    const r = cli(dir, { GIT_DIR: '/nao/existe' });
+    assert.equal(r.status, 0, r.stdout);
+    assert.doesNotMatch(r.stdout, /git ileg/i);
+  });
+
+  test('doctor-git-ilegivel-gate: declarado 0 com git ilegível ⇒ rc 0, mas avisa do git', () => {
+    const dir = dirIlegivel('indice', 0);
+    const r = cli(dir);
+    assert.equal(r.status, 0, r.stdout);
+    assert.match(r.stdout, /git ileg/i);
+  });
+
+  test('doctor-git-ilegivel-gate: git legível não mudou — AGENTS.md ignorado continua ausente (R1)', () => {
+    const dir = repoComGit({ 'AGENTS.md': agents(3), '.gitignore': 'AGENTS.md\n' });
+    const out = run(dir);
+    assert.equal(out.gitIlegivel, false);
+    assert.equal(out.semAgents, true);
+    assert.equal(out.mentindo, false);
+  });
+
+  test('doctor-git-ilegivel-gate: sem commit e fora de git não são "ilegível"', () => {
+    const novo = repo({ 'AGENTS.md': agents(0) });
+    git(novo, 'init', '-q');
+    assert.equal(run(novo).gitIlegivel, false);
+    assert.equal(run(repo({ 'AGENTS.md': agents(0) })).gitIlegivel, false);
   });
 
   test('doctor-config-ignorada-versionamento: o histórico é conferido com a config VISÍVEL; a ignorada não afrouxa tiposLivres', () => {
