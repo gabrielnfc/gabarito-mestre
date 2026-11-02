@@ -239,6 +239,13 @@ check "ci.yml: matriz de hooks com ubuntu-latest e macos-latest (ruleset)" 'OSL=
 # de pedir fetch-depth: 0.
 INSTALADOR_JOB=$(awk '/^  instalador:/{f=1;next} f&&/^  [a-z][a-z-]*:/{f=0} f' "$CI")
 check "ci.yml: job instalador com fetch-depth: 0 (cenário 8 lê 1c85330)" 'printf "%s\n" "$INSTALADOR_JOB" | grep -qE "fetch-depth:[[:space:]]*0"' "checkout do job instalador sem fetch-depth: 0 — cenário 8 do instalar.test.sh precisa do histórico completo"
+# Canal next (T8, Q12): CI roda em push para next; versao-medida avisa (::warning) e nunca falha.
+PUSH_BLOCK=$(awk '/^on:/{f=1;next} f&&/^[a-z]/{f=0} f' "$CI")
+check "ci.yml: push.branches inclui next (canal next)" 'printf "%s\n" "$PUSH_BLOCK" | grep -E "^ +branches:" | grep -qE "\bnext\b"' "next ausente de push.branches"
+MEDIDA_JOB=$(awk '/^  versao-medida:/{f=1;next} f&&/^  [a-z][a-z-]*:/{f=0} f' "$CI")
+check "ci.yml: job versao-medida existe (Q12)" '[ -n "$MEDIDA_JOB" ]' "job versao-medida ausente"
+check "ci.yml: versao-medida emite ::warning (Q12)" 'printf "%s\n" "$MEDIDA_JOB" | grep -q "::warning"' "::warning ausente"
+check "ci.yml: versao-medida nunca falha — sem exit 1 (Q12)" '! printf "%s\n" "$MEDIDA_JOB" | grep -qE "exit[[:space:]]+[1-9]"' "versao-medida tem exit não-zero"
 nomes_falhou=0
 for f in skills/gabarito-instalar/SKILL.md skills/gabarito-conformidade/SKILL.md skills/gabarito-review/SKILL.md skills/gabarito-spike/SKILL.md \
          agents/gabarito-implementador.md agents/gabarito-revisor.md agents/gabarito-spike.md commands/gabarito-doctor.md \

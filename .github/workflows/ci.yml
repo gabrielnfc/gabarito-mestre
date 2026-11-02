@@ -94,7 +94,7 @@ jobs:
           node-version: '22'
       - run: npm install -g @anthropic-ai/claude-code
       - run: |
-          medido=$(node -p "require('./plugins/gabarito-mestre/gates/medido-em.json').claudeCode")
+          medido=$(node -p "require('./plugins/gabarito-mestre/medido-em.json').claudeCode")
           instalado=$(claude --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
           if [ "$medido" != "$instalado" ]; then
             echo "::warning title=versao-medida::spikes medidos no Claude Code $medido; instalado $instalado. Revalidar é decisão humana."

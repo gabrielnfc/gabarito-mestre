@@ -9,20 +9,36 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const GATES = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(join(GATES, 'package.json'), 'utf8'));
 
+// Só é "repo do plugin" se a raiz tiver plugins/gabarito-mestre/.claude-plugin/plugin.json. Na cópia instalada
+// (tools/gabarito-gates) o pai pode ter um marketplace.json alheio: não basta existir o arquivo.
+const ehRepoDoPlugin = (raiz) => existsSync(join(raiz, 'plugins', 'gabarito-mestre', '.claude-plugin', 'plugin.json'));
 const RAIZ = join(GATES, '..', '..', '..');
-// Na cópia instalada em tools/gabarito-gates não existe plugin.json nem marketplace.json: esses testes só valem no repo do plugin.
-const PLUGIN_JSON = join(GATES, '..', '.claude-plugin', 'plugin.json');
+const PLUGIN_JSON = join(RAIZ, 'plugins', 'gabarito-mestre', '.claude-plugin', 'plugin.json');
 const MKT_JSON = join(RAIZ, '.claude-plugin', 'marketplace.json');
-const noPlugin = existsSync(PLUGIN_JSON) ? false : 'fora do repo do plugin';
-const noMkt = existsSync(MKT_JSON) ? false : 'fora do repo do plugin';
+const MEDIDO = join(RAIZ, 'plugins', 'gabarito-mestre', 'medido-em.json');
+const fora = ehRepoDoPlugin(RAIZ) ? false : 'fora do repo do plugin';
+const noPlugin = fora, noMkt = fora;
 const ler = (p) => JSON.parse(readFileSync(p, 'utf8'));
+
+describe('ehRepoDoPlugin — cópia instalada sob um pai com marketplace.json alheio', () => {
+  test('pai/.claude-plugin/marketplace.json sem plugins/gabarito-mestre não é repo do plugin', () => {
+    const pai = mkdtempSync(join(tmpdir(), 'gm-pkg-'));
+    mkdirSync(join(pai, '.claude-plugin'), { recursive: true });
+    writeFileSync(join(pai, '.claude-plugin', 'marketplace.json'), '{"name":"alheio"}');
+    assert.equal(ehRepoDoPlugin(pai), false);
+    mkdirSync(join(pai, 'plugins', 'gabarito-mestre', '.claude-plugin'), { recursive: true });
+    writeFileSync(join(pai, 'plugins', 'gabarito-mestre', '.claude-plugin', 'plugin.json'), '{}');
+    assert.equal(ehRepoDoPlugin(pai), true);
+  });
+});
 
 describe('gates/package.json 1.1.0', () => {
   test('version é 2.0.0-alpha.1 (canal next)', () => {
@@ -37,8 +53,8 @@ describe('gates/package.json 1.1.0', () => {
   test('versão só no plugin.json (doc oficial); entrada do marketplace não duplica', { skip: noMkt }, () => {
     assert.equal(ler(MKT_JSON).plugins[0].version, undefined);
   });
-  test('medido-em.json registra a versão do Claude Code do spike (Q12)', () => {
-    const m = JSON.parse(readFileSync(join(GATES, 'medido-em.json'), 'utf8'));
+  test('medido-em.json (raiz do plugin, fora de gates/) registra a versão do Claude Code do spike (Q12)', { skip: fora }, () => {
+    const m = ler(MEDIDO);
     assert.match(m.claudeCode, /^\d+\.\d+\.\d+$/);
   });
   test('todo bin aponta para um script existente e os quatro novos estão lá', () => {
