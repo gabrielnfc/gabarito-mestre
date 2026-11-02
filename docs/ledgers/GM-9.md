@@ -1,0 +1,28 @@
+# Ledger GM-9 — E1 Fundação (gabarito-mestre 2.0)
+
+Branch: `enabler/GM-9-fundacao-2.0` → alvo `next` (canal alpha). Spec: `docs/superpowers/specs/2026-10-31-e1-fundacao-design.md`. Visão: `docs/superpowers/specs/2026-10-31-visao-2.0-design.md`.
+
+## Estado
+
+- 2026-11-02: specs visão r1 / E1 r3 prontas para commit na branch; aguardando ok do dono. Nenhum código.
+
+## Rulings
+
+- **R1 (2026-10-31)** Processo calibrado: BLOCKER/MAJOR bloqueiam; zero MINOR *sem decisão* (corrige na rodada ou backlog com dono e gatilho); MINOR nunca gera rodada; teto 2 rodadas; fecha por mutação executada; Fable só no review final e na Sombra. Revoga "0 achado MINOR incl." (GM-7/GM-8: ~15k linhas de docs, ~770 achados, 0 código). Dono confirmou após tentar voltar à regra antiga.
+- **R2 (2026-10-31)** Builder check (agente frio) devolveu 9 perguntas de E1 + 3 de visão; 10 resolvidas pelo redator e marcadas na spec; 2 do dono: S4 pode escrever no Supabase local do true_force (sim, com cerco `gm_spike_*`, porta 54322, zero commit) e canal de release (`next` como segundo canal do marketplace, `2.0.0-alpha.n`; `main` segue 1.1.x até E5).
+- **R3 (2026-10-31)** Conformidade: 7 faltas de forma em cada spec (STATUS, M-ids, D-ids com alternativa rejeitada, ADR com cláusula de morte, dono/gatilho em fora de escopo, mutação por REQ, motivo no rollout, legenda (a)/(b)/(c)); fio condutor como AVISO (repo sem onboarding). Todas aplicadas na r1.
+- **R4 (2026-10-31)** Review Fable rodada 1 da r0: **REPROVADO** — 3 BLOCKER (`allow` suprime prompt nativo; config local forjável por Bash; URL de banco com senha no diário), 5 MAJOR (`agent_type` ≠ subagent; exceção de integridade por registro forjável; segredo deny sem saída para `cp .env.example .env`; `acao` de MCP indefinida; prazo × escopo), 15 MINOR. Tratamento: BLOCKER e MAJOR → D1–D9 da spec r1; MINOR 9–19, 21, 23 corrigidos na r1; MINOR 20 → corpus (REQ-GRD-6); MINOR 22 → backlog (teto de latência no CI). Custo-se-errado: perda de dado por `rm -rf` fora do repo sem prompt; hatch de volta por `cat > harness.config.json`; senha de prod num PR.
+- **R5 (2026-10-31)** Durante a edição desta spec, o `guard-destructive.sh` da 1.1.0 **bloqueou um heredoc Python** que apenas citava `rm -rf` em texto (falso positivo "menção vs acesso", M3 da visão). Contornado gravando o script por `Write` (ferramenta não inspecionada pelo hook) — exatamente o furo que REQ-GRD-3 fecha com matcher `Edit|Write|Read|Grep`. Hatch **não** foi usado.
+- **R6 (2026-10-31)** Review Fable rodada 2 da r1: **REPROVADO** — 0 BLOCKER, 5 MAJOR (bootstrap/forja de `origin/<branchPadrao>`; ref remota ausente indefinida; cláusula Bash do anel de integridade escrita só para segredo; classificador puro sem `contexto`; canário `sk-` sem borda apaga eventos legítimos), 8 MINOR. Todos de texto; nenhum reabre decisão. Tratamento na r2: D2 reescrita (`origin/HEAD`, `branchPadrao` lido da própria ref, refs/remoto no anel de integridade, ref ausente ≡ sem remoto); cláusula Bash repetida para integridade; `contexto {branchAtual, refLinkado, remoteUrl}` sem rede, `gh pr merge` sem base ⇒ mostrar; canário com bordas e `diario.recusa` nunca silenciosa; `permitidos` não suprime prompt nativo; fallback por `permission_mode` com instrução de modo; M7 corrigido, regras sem `./`; visão §5 e §6.1 alinhadas à E1; doctor reporta `fonte`; `texto.test.sh` exclui a si mesmo; MINOR 13 → backlog. Fato novo (a): em `auto` o `ask` de hook vai ao prompt (M10) — S1 encolhe para `bypassPermissions` + `SessionStart.systemMessage`. **Teto de 2 rodadas atingido: decisão do dono registrada em R7.**
+- **R7 (2026-10-31)** Dono decidiu, após o teto de 2 rodadas: **exceção única** — verificação diff-only em Fable das 5 correções MAJOR da r2 (não é rodada: o revisor só confirma se cada cenário fechou). Motivo: duas correções são de segurança (forja de ref; integridade via Bash) e verificar o texto custa minutos, errar custa task refeita. Regra registrada junto: se a verificação trouxer MAJOR novo, para — problema vira de desenho, não de texto; volta ao dono sem nova correção.
+- **R8 (2026-11-02)** Verificação diff-only (R7): **4/5 FECHADOS**. Aberto: item 1 (forja da fonte) por **lacuna de enumeração** em D2 — `git remote set-head`, `git fetch` com refspec para `refs/remotes/**`, `git -c remote.origin.url=…` não estavam na lista. Classificado pelo verificador como residual do mesmo cenário, não achado novo. Tratamento na r3: D2 troca lista por **regra** ("subagent não administra remoto nem refs": todo `git remote|fetch|pull|update-ref|symbolic-ref|config` e `git -c remote.*|url.*|core.hooksPath` ⇒ integridade), 3 casos novos no corpus, REQ-GRD-6 fixa "em branch prod" = `contexto.branchAtual ∈ prod.branches`. **Não houve nova verificação** (teto + exceção única já usada): a prova fica nos testes congelados `integridade-remote-set-head-sub`, `integridade-fetch-refspec-sub`, `integridade-git-c-remote-sub` em E1. Lição registrada: enumerar comandos de ataque é o erro do GM-7; regra por capacidade (o que o subagent *pode*) fecha a classe inteira.
+
+## Medições
+
+- M1–M9 na spec E1 (a).
+- S1–S4: pendentes (b).
+
+## Corte / backlog
+
+- Teto de latência no CI por máquina (MINOR 22) — dono Gabriel; gatilho: 1º falso vermelho por p95.
+- FN de Bash (`X=rm; $X`, `base64 | sh`) — dono Gabriel; gatilho: visto em transcript real.
