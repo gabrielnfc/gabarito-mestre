@@ -1,7 +1,7 @@
 # E1 — Fundação: guarda por ambiente, diário mínimo, spikes
 
 Iniciativa: gabarito-mestre 2.0 · Epic: E1 · PBI: GM-9 (Enabler)
-Data: 2026-10-31 · Visão: `2026-10-31-visao-2.0-design.md` · r3 (r0: 3 BLOCKER, 5 MAJOR, 15 MINOR; r1: 0 BLOCKER, 5 MAJOR, 8 MINOR; r2 verificação diff-only 4/5, residual fechado por regra em D2 — ver ledger GM-9 R4, R6, R8)
+Data: 2026-10-31 · Visão: `2026-10-31-visao-2.0-design.md` · r4 (r3 + emendas Q1–Q12 de 2026-11-02, ver seção Emendas; r0: 3 BLOCKER, 5 MAJOR, 15 MINOR; r1: 0 BLOCKER, 5 MAJOR, 8 MINOR; r2 verificação diff-only 4/5, residual fechado por regra em D2 — ver ledger GM-9 R4, R6, R8)
 Legenda: **(a)** medido/lido · **(b)** a medir · **(c)** decisão do dono ou do redator.
 
 **STATUS.** Hoje (1.1.0): três hooks Bash (`guard-destructive.sh`, `guard-production.sh`, `guard-versioning.sh`) com regex que simula shell, escape hatch `GABARITO_ALLOW_*`, cartão de sessão de 40 linhas só para o modelo. **Esta spec: nada implementado.**
@@ -108,6 +108,23 @@ T0 S1–S4 (S1 bloqueia T4; S4 em paralelo) → T1 `gates/lib` + corpus em RED (
 - Exibição de `systemMessage` em SessionStart (S1).
 - Mod sobrepondo `deny` sem managed settings (S3) — se verdadeiro, doctor avisa e E4 ganha requisito.
 - Backlog (dono Gabriel): teto de latência no CI por máquina (gatilho: 1º falso vermelho por p95); FN de Bash (`X=rm`, `base64 | sh`) e de MCP (`SELECT fn_que_escreve()`) — gatilho: visto em transcript real.
+
+## Emendas
+
+_(Emenda 2026-11-02, plano de E1 + aprovação do dono, ledger GM-9 R9 — conflitos e lacunas que impediam virar teste. O texto acima fica como escrito; onde divergir, vale esta seção. Detalhe em `docs/superpowers/plans/2026-11-02-e1-fundacao.md`.)_
+
+- **Q1** `cp .env.example .env` ⇒ `ask` (orquestrador), `deny` (subagent), como D7 e REQ-GRD-5. `cp-env-example` passa a ser `cp .env.example docs/exemplo.txt` ⇒ sem decisão.
+- **Q2** Anel de integridade é de **escrita**: `Edit|Write`, Bash com redirecionamento, `tee`, `sed -i`, destino de `mv`/`cp`, `rm`, `chmod`, `ln`, `truncate`, e comandos de ref/remoto de D2. `Read|Grep|cat` livres. Segredo segue barrando leitura.
+- **Q3** Faixa nominal `log`: sem decisão, sem `systemMessage`, com evento. `rm -rf`/`TRUNCATE` local ⇒ `log`; comentário com `TRUNCATE` ⇒ `silencio`.
+- **Q4 (a, medido 2026-11-02)** `git rev-parse origin/HEAD` resolve `refs/heads/origin/HEAD` antes de `refs/remotes/…`: `git branch origin/HEAD <D>` devolveu `D`. D2 lê sempre `git show refs/remotes/origin/HEAD:harness.config.json`, nome completo.
+- **Q5** `-p` não é valor de `permission_mode`: `bypassPermissions`/`dontAsk` ⇒ `deny` + instrução; em `-p` o `ask` é negado pelo próprio Claude Code (M9). S1 confirma.
+- **Q6** `permitidos[]`: glob só com `*`, contra o segmento Bash inteiro ou o nome da tool MCP; todo segmento `prod/escrita` precisa casar.
+- **Q7** `systemMessage` de fonte (sem remoto/divergente): uma vez por sessão, marcador em `os.tmpdir()/gm-guarda-<sessao>`.
+- **Q8** `contexto` ganha `raiz` e `pluginRoot`, ambos sem rede.
+- **Q9** T4 remove o hatch de `guard-versioning.sh` e `_common.sh` se T5 ainda não integrou.
+- **Q10** Prefixos transparentes: `npx`, `bunx`, `pnpm dlx`, `yarn dlx`, `sudo`, `env`, `command`, `time`, `X=1`; `sh|bash|zsh -c` desce um nível. Sem tokenizador completo.
+- **Q11 (a, doc oficial 2026-11-02)** Sem conceito de canal; plugin duplicado no catálogo é erro. `next` usa `name: gabarito-mestre-next`, instalação `claude plugin marketplace add gabrielnfc/gabarito-mestre#next`; volta o nome ao virar `main` (E5). Corrige "dois canais no `marketplace.json`" da visão A10.
+- **Q12** Versão medida ≠ instalada no CI ⇒ `::warning`, não falha (`gates/medido-em.json`). Revalidar spike é decisão humana.
 
 ## Riscos
 
