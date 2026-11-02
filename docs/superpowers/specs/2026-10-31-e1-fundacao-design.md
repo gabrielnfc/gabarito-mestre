@@ -124,7 +124,7 @@ _(Emenda 2026-11-02, plano de E1 + aprovação do dono, ledger GM-9 R9 — confl
 - **Q9** T4 remove o hatch de `guard-versioning.sh` e `_common.sh` se T5 ainda não integrou.
 - **Q10** Prefixos transparentes: `npx`, `bunx`, `pnpm dlx`, `yarn dlx`, `sudo`, `env`, `command`, `time`, `X=1`; `sh|bash|zsh -c` desce um nível. Sem tokenizador completo.
 - **Q11 (a, doc oficial 2026-11-02)** Sem conceito de canal; plugin duplicado no catálogo é erro. `next` usa `name: gabarito-mestre-next`, instalação `claude plugin marketplace add gabrielnfc/gabarito-mestre#next`; volta o nome ao virar `main` (E5). Corrige "dois canais no `marketplace.json`" da visão A10.
-- **Q12** Versão medida ≠ instalada no CI ⇒ `::warning`, não falha (`gates/medido-em.json`). Revalidar spike é decisão humana.
+- **Q12** Versão medida ≠ instalada no CI ⇒ `::warning`, não falha (`plugins/gabarito-mestre/medido-em.json`). Revalidar spike é decisão humana.
 
 ## Riscos
 

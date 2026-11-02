@@ -28,3 +28,7 @@ Item sai daqui quando entra num plano ou a decisão de descarte é registrada. I
 | Teto de latência da guarda no CI depende da máquina (p95 ≤ 60 ms local, ≤ 150 ms CI) — calibrar por runner | review Fable spec E1 r0, MINOR 22 — dono: Gabriel | 1º falso vermelho por p95 no CI |
 | Falsos negativos conhecidos do classificador Bash por primeiro token (`X=rm; $X -rf`, `base64 -d \| sh`) — aceitos em E1 porque o anel de prod é por alvo | spec E1 REQ-GRD-2 — dono: Gabriel | um dos dois visto em transcript real |
 | Classificador MCP trata `SELECT fn_que_escreve()` (RPC) como leitura — FN conhecido | review Fable spec E1 r1, MINOR 13 — dono: Gabriel | 1º RPC de escrita em transcript real |
+| `gabarito-instalar` grava `gabarito-mestre@gabarito-mestre` e marketplace sem `#next` mesmo no canal alpha | review T8 GM-9, MINOR 4 — dono: Gabriel | onboarding novo em E5, ou 1ª instalação alpha por outra pessoa |
+| Caminho de `medido-em.json` em `ci.yml` sem teste: errado, deixa o job `versao-medida` vermelho e viola Q12 | re-review T8 GM-9 — dono: Gabriel | próxima mudança de `versao-medida` |
+| Classificador trata `curl -X DELETE` em host de prod como `execucao`/`mostrar` — FN declarado | plano E1, corpus `prod-curl-mostrar` — dono: Gabriel | visto em transcript real |
+| `capacidade.mjs` aplicar a fórmula de slots de S4 (custo medido com trabalho trivial; recalibrar com build/testes) | S4 GM-9 — dono: Gabriel | E2 começa |
