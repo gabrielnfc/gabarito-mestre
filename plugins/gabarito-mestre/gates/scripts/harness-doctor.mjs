@@ -39,7 +39,7 @@ import { ehEntrypoint } from '../lib/cli.mjs';
 import { lerGuarda, DENY_GUARDA, CHAVES_MORTAS } from '../lib/config.mjs';
 import { diasEntre } from '../lib/datas.mjs';
 import { execFileSync } from 'node:child_process';
-import { checar } from './versionamento-check.mjs';
+import { checar, DEFAULTS as VERSIONAMENTO_DEFAULTS } from './versionamento-check.mjs';
 
 const SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'coverage', '.next', '.turbo',
@@ -109,8 +109,9 @@ function envGit() {
 }
 
 /**
- * Arquivos que o git enxerga (rastreados + novos não ignorados), relativos à raiz — ou null (sem git, git
- * ilegível, ou `root` não é a raiz do repo: aí o disco é a verdade e a varredura cai para o `walk`).
+ * Arquivos que o git enxerga (rastreados + novos não ignorados), relativos à raiz — ou null (sem git, ou `root` não é
+ * a raiz do repo: aí o disco é a verdade e a varredura cai para o `walk`). Com `.git` presente mas o git ilegível
+ * (índice corrompido, rc ≠ 0) devolve [] — nada vale como evidência; reabrir o disco reabriria o A2.
  * `-z`: caminho com espaço ou não ASCII chega cru, sem aspas.
  */
 function arquivosDoGit(root) {
@@ -127,7 +128,7 @@ function arquivosDoGit(root) {
       }
     });
   } catch {
-    return null;
+    return existsSync(join(root, '.git')) ? [] : null;
   }
 }
 
@@ -140,13 +141,16 @@ function raizSemGitDirHerdado(cwd = process.cwd()) {
   }
 }
 
-function createIndex(root, cfg) {
-  let rel0 = arquivosDoGit(root);
-  if (!rel0) {
-    const files = [];
-    walk(root, (f) => files.push(f));
-    rel0 = files.map((f) => relative(root, f).split(sep).join('/'));
-  }
+/** O que conta como evidência neste repo: a lista do git, ou a varredura do disco quando não há git. */
+function arquivosVisiveis(root) {
+  const doGit = arquivosDoGit(root);
+  if (doGit) return doGit;
+  const files = [];
+  walk(root, (f) => files.push(f));
+  return files.map((f) => relative(root, f).split(sep).join('/'));
+}
+
+function createIndex(root, cfg, rel0 = arquivosVisiveis(root)) {
   // Evidência = o que o git enxerga (ou o disco, sem git). `has` e `read` obedecem ao MESMO conjunto, sem o filtro de
   // excludePaths: arquivo ignorado (.gitignore, .git/info/exclude) não existe para o doctor, em nenhum caminho.
   const visiveis = new Set(rel0);
@@ -496,7 +500,8 @@ export const CHECKS = [
     detect: (ix, cfg) => {
       const em = cfg.versionamento?.resolvidoEm;
       if (!em) return { found: false, evidence: cfg.configInvalido ? 'harness.config.json inválido' : 'sem versionamento.resolvidoEm' };
-      const r = checar(ix.root, { max: 20 });
+      // A config já veio do índice (visível ao git): `checar` não a relê do disco, onde poderia estar ignorada.
+      const r = checar(ix.root, { max: 20, cfg: { ...cfg.versionamento, idPadrao: cfg.fluxo?.idPadrao ?? VERSIONAMENTO_DEFAULTS.idPadrao } });
       if (r.failOpen) return { found: false, evidence: r.failOpen };
       // F2-R7/G9: validação indisponível (git ilegível) nunca vale como validado — FALTA, não passa com aviso.
       if (r.aviso) return { found: false, evidence: `histórico não conferido (sem git legível)` };
@@ -528,7 +533,7 @@ export const CHECKS = [
     detect: (ix, cfg) => {
       let tags;
       try {
-        tags = execFileSync('git', ['tag', '--list'], { cwd: ix.root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\n').filter(Boolean);
+        tags = execFileSync('git', ['tag', '--list'], { cwd: ix.root, encoding: 'utf8', env: envGit(), stdio: ['ignore', 'pipe', 'ignore'] }).split('\n').filter(Boolean);
       } catch {
         return { found: false, evidence: '--' };
       }
@@ -951,7 +956,10 @@ export function run(root = process.cwd(), overrides = {}) {
   const cfgFile = join(root, 'harness.config.json');
   let fileCfg = {};
   let configInvalido = false;
-  if (existsSync(cfgFile)) {
+  // A config decide perfil, atestado e checagens: vale o mesmo que o resto da evidência. Ignorada pelo git (ou rastreada e
+  // apagada) = ausente, como seria no clone do commit. A camada de guarda a lê por outro caminho (lerGuarda), de propósito.
+  const visiveis = arquivosVisiveis(root);
+  if (visiveis.includes('harness.config.json') && existsSync(cfgFile)) {
     try {
       const lido = JSON.parse(readFileSync(cfgFile, 'utf8') || '{}');
       if (lido && typeof lido === 'object' && !Array.isArray(lido)) fileCfg = lido;
@@ -962,7 +970,7 @@ export function run(root = process.cwd(), overrides = {}) {
   }
   const cfg = { ...DEFAULTS, ...fileCfg, ...overrides, configInvalido };
 
-  const ix = createIndex(root, cfg);
+  const ix = createIndex(root, cfg, visiveis);
   const attest = loadAttest(ix, cfg);
 
   // Perfil explícito (casamento exato): repo sem aplicação não tem client de banco nem teardown a proteger.
