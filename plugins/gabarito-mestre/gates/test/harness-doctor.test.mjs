@@ -989,6 +989,46 @@ describe('T6 doctor — run(): camada, ambientes, perfil, avisos', () => {
     assert.equal(run(dir).alcancado, 1);
   });
 
+  describe('A2 — arquivo ignorado pelo git não é evidência em NENHUM caminho (has, atestado, changelog, AGENTS.md)', () => {
+    const base = { 'harness.config.json': JSON.stringify({ perfil: 'repo-sem-app' }), 'src/db.ts': 'assertNotProduction();', '.env.example': 'X=1\n' };
+    const atestados = JSON.stringify({ 'branch-protegida': ok, 'backup-verificado': ok });
+
+    test('doctor-ignorado-nao-e-evidencia: atestado em .harness/ ignorado não sobe o nível (clone do mesmo commit também seria 0)', () => {
+      const visivel = repoComGit({ ...base, 'AGENTS.md': agents(0), '.gitignore': '.env\n', '.harness/attest.json': atestados });
+      assert.equal(run(visivel).alcancado, 1, 'controle: o mesmo atestado versionável vale');
+      const ignorado = repoComGit({ ...base, 'AGENTS.md': agents(0), '.gitignore': '.env\n.harness/\n', '.harness/attest.json': atestados });
+      const out = run(ignorado);
+      assert.equal(out.alcancado, 0);
+      assert.equal(out.resultados.find((r) => r.id === 'branch-protegida').found, false);
+    });
+
+    test('doctor-ignorado-nao-e-evidencia: atestado ignorado por .git/info/exclude também não vale', () => {
+      const dir = repoComGit({ ...base, 'AGENTS.md': agents(0), '.gitignore': '.env\n', '.harness/attest.json': atestados });
+      writeFileSync(join(dir, '.git', 'info', 'exclude'), '.harness/attest.json\n');
+      assert.equal(run(dir).alcancado, 0);
+    });
+
+    test('doctor-ignorado-nao-e-evidencia: CHANGELOG.md ignorado não é evidência do changelog', () => {
+      const ch = (gi) => run(repoComGit({ 'AGENTS.md': agents(0), '.gitignore': gi, 'CHANGELOG.md': '## [Unreleased]\n' })).resultados.find((r) => r.id === 'changelog');
+      assert.equal(ch('').found, true, 'controle');
+      assert.equal(ch('CHANGELOG.md\n').found, false);
+    });
+
+    test('doctor-ignorado-nao-e-evidencia: AGENTS.md ignorado não alimenta o nível declarado nem o tamanho', () => {
+      const dir = repoComGit({ 'AGENTS.md': agents(2), '.gitignore': 'AGENTS.md\n' });
+      const out = run(dir);
+      assert.equal(out.declarado, null);
+      assert.equal(out.resultados.find((r) => r.id === 'agents-tamanho').found, false);
+      assert.equal(run(repoComGit({ 'AGENTS.md': agents(2) })).declarado, 2, 'controle');
+    });
+
+    test('doctor-ignorado-nao-e-evidencia: repo sem nenhum commit conta arquivos novos (não ignorados) como evidência', () => {
+      const dir = repo({ ...base, 'AGENTS.md': agents(0), '.gitignore': '.env\n', '.harness/attest.json': atestados });
+      git(dir, 'init', '-q');
+      assert.equal(run(dir).alcancado, 1);
+    });
+  });
+
   test('g8-md-nao-evidencia: menção em .md não prova a guarda; script de código prova', () => {
     const g8 = (arquivos) => run(repo({ 'AGENTS.md': agents(0), ...arquivos })).resultados.find((r) => r.id === 'G8-migrations-guard');
     assert.equal(g8({ 'README.md': 'rode migrations-guard.mjs e DESTRUCTIVE_PATTERN no CI' }).found, false);

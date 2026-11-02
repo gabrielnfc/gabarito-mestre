@@ -139,12 +139,19 @@ function createIndex(root, cfg) {
     walk(root, (f) => files.push(f));
     rel0 = files.map((f) => relative(root, f).split(sep).join('/'));
   }
+  // Evidência = o que o git enxerga (ou o disco, sem git). `has` e `read` obedecem ao MESMO conjunto, sem o filtro de
+  // excludePaths: arquivo ignorado (.gitignore, .git/info/exclude) não existe para o doctor, em nenhum caminho.
+  const visiveis = new Set(rel0);
   const excluir = cfg.excludePaths ?? [];
   const rel = rel0.filter((r) => !excluir.some((p) => r.includes(p)));
   const cache = new Map();
 
   const read = (r) => {
     if (!cache.has(r)) {
+      if (!visiveis.has(r)) {
+        cache.set(r, '');
+        return '';
+      }
       try {
         cache.set(r, readFileSync(join(root, r), 'utf8'));
       } catch {
@@ -164,7 +171,7 @@ function createIndex(root, cfg) {
     root,
     files: rel,
     read,
-    has: (r) => existsSync(join(root, r)),
+    has: (r) => visiveis.has(r),
     guarda: lerGuardaUmaVez,
     /** Procura um padrão nos arquivos que casam o filtro. Devolve o primeiro caminho, ou null. */
     grep(pattern, filter = isSource) {
