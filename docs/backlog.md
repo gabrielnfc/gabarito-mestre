@@ -39,3 +39,9 @@ Item sai daqui quando entra num plano ou a decisão de descarte é registrada. I
 | Sandbox de processo para subagent (fecha indireção em `.git`) | R14 — dono: Gabriel | forja por indireção em transcript real |
 | Diário: `dados` com `toJSON`, `new String`, `URL` escapa do canário (T4 mantém `dados` plano); oráculo aceita corte seco em 10 de 101 tamanhos; teto de 16 KB e "canário antes do lock" sem teste que falhe; `/\n+$/` quadrática com arquivo corrompido; janela stat/unlink ao quebrar lock órfão | re-review T3, M1–M4 — dono: Gabriel | próxima mudança em `diario.ts` ou 1º seq duplicado em diário real |
 | `instalar-hooks-git`: `LINHA` colada em hook `-e` bloqueia push em crash; falha de `cat` passa branch ruim sem aviso; sem teste para ramo `mktemp`, `TMPDIR` com espaço, `LINHA`; `git lfs` não medido; só macOS medido; isenções de `Merge`, `fixup!`, `Revert`, `--continue`; `-m` com `#`; bloco de versão futura | review T5, MINOR — dono: Gabriel | 1º falso bloqueio, ou repo com LFS no time |
+| Relativo sem âncora com espaço fora do anel | Q28 — dono: Gabriel | caso visto em transcrito, ou `cwd` com espaço em repo adotado |
+| `eval "…"` e `sh -c "…"` atrás de prefixo: abrir `eval` como shell | `task-7-r5-review.md` achado 2 — dono: Gabriel | caso visto em transcrito; nunca lexer novo (E17) |
+| Citação em heredoc lido como script pede (T7 r5 achado 3) | MINOR — dono: Gabriel | 1º falso positivo fora de sonda ou teste |
+| N5 viva, falta negativo em área de integridade (T7 r5 achado 4) | MINOR — dono: Gabriel | próxima mudança em `arquivoDePausa` |
+| `trash -x<arquivo>`, caminho colado em opção curta | Q26 item 2 — dono: Gabriel | caso visto em transcrito |
+| `load_medido` baixo em suíte curta | esta Sombra — dono: Gabriel | `motivo` de carga abaixo de `slots_max` sem gate vermelho no loop real, ou 1º adotante com suíte abaixo de 60 s |
