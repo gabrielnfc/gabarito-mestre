@@ -1753,6 +1753,125 @@ describe('devolver preserva commit e relata ignorados', () => {
     assert.ok(!amb.branches().some((b) => b.startsWith('wt-preservado/')));
   });
 
+  // HEAD solto: nenhuma branch segura o que ele aponta, então o commit vai para `wt-preservado/*` antes da volta (sombra-t6c.md).
+  const umaVez = (cmd, depois = "echo '# pass 1'") => { const f = join(novoTmp('loop-flag-'), 'ja'); return `if [ ! -f ${f} ]; then touch ${f}; ${cmd}; else ${depois}; fi`; };
+  /** Segue a saída que a mensagem indica (checkout da branch), repete `integrar` e prova o alcance depois de expirar reflog e coletar lixo. */
+  const seguirSaida = (amb, msg) => {
+    const co = spawnSync('git', ['checkout', 'wt/GM-10-T1'], { cwd: amb.wt('T1'), encoding: 'utf8' });
+    assert.equal(co.status, 0, co.stderr);
+    const r2 = amb.cli(['integrar', 'T1']);
+    const wtExiste = existsSync(amb.wt('T1'));
+    g(amb.dir, 'reflog', 'expire', '--expire=now', '--all');
+    g(amb.dir, 'gc', '-q', '--prune=now');
+    return { r2, wtExiste, al: alcancavel(amb, msg) };
+  };
+
+  test('head-solto-segue-a-saida-sem-perder', () => {
+    const amb = comSuite(umaVez('git checkout -q --detach; git commit -q --allow-empty -m solto; exit 1'));
+    amb.aprovar('T1');
+    avancaBase(amb);
+    const r1 = amb.cli(['integrar', 'T1']);
+    assert.equal(r1.j.erro, 'gate_reprovado', r1.out);
+    assert.equal(r1.j.voltou, false);
+    assert.equal(r1.j.branch_voltou, true);
+    assert.equal(r1.j.head_em, 'solto');
+    assert.match(r1.j.preservado_solto, PRESERVADO);
+    assert.equal(amb.topo(r1.j.preservado_solto), r1.j.topo_solto);
+    assert.ok(r1.j.mensagem.includes(r1.j.preservado_solto), 'a mensagem cita a branch que segura o commit');
+    assert.match(r1.j.mensagem, /git checkout wt\/GM-10-T1/);
+    const { r2, wtExiste, al } = seguirSaida(amb, 'solto');
+    assert.equal(r2.rc, 0, r2.out + r2.err);
+    assert.equal(wtExiste, false, 'a worktree foi removida');
+    assert.deepEqual(al, ['solto'], 'o commit do HEAD solto segue alcançável por --branches');
+
+    // verde, mesma regra: o `head_mudou` também preserva
+    const amb2 = comSuite(umaVez("git checkout -q --detach; git commit -q --allow-empty -m solto; echo '# pass 1'"));
+    amb2.aprovar('T1');
+    avancaBase(amb2);
+    const v1 = amb2.cli(['integrar', 'T1']);
+    assert.equal(v1.j.erro, 'head_mudou', v1.out);
+    assert.match(v1.j.preservado_solto, PRESERVADO);
+    const v = seguirSaida(amb2, 'solto');
+    assert.equal(v.r2.rc, 0, v.r2.out + v.r2.err);
+    assert.deepEqual(v.al, ['solto']);
+  });
+
+  test('head-solto-e-branch-preserva-os-dois', () => {
+    const amb = comSuite(umaVez('git commit -q --allow-empty -m nabranch; git checkout -q --detach; git commit -q --allow-empty -m solto; exit 1'));
+    amb.aprovar('T1');
+    avancaBase(amb);
+    const r1 = amb.cli(['integrar', 'T1']);
+    assert.match(r1.j.preservado, PRESERVADO);
+    assert.match(r1.j.preservado_solto, PRESERVADO);
+    assert.notEqual(r1.j.preservado, r1.j.preservado_solto);
+    const { r2, al } = seguirSaida(amb, 'solto');
+    assert.equal(r2.rc, 0, r2.out + r2.err);
+    assert.deepEqual(al, ['solto']);
+    assert.deepEqual(alcancavel(amb, 'nabranch'), ['nabranch'], 'o commit que ficou na branch também sobrevive');
+  });
+
+  test('head-solto-no-topo-uma-branch', () => {
+    const amb = comSuite(umaVez('git commit -q --allow-empty -m nabranch; git checkout -q --detach; exit 1'));
+    amb.aprovar('T1');
+    avancaBase(amb);
+    const r1 = amb.cli(['integrar', 'T1']);
+    assert.match(r1.j.preservado, PRESERVADO);
+    assert.equal(r1.j.preservado_solto, undefined, 'mesmo sha da branch: 1 branch só');
+    assert.equal(amb.branches().filter((b) => b.startsWith('wt-preservado/')).length, 1);
+    const { r2, al } = seguirSaida(amb, 'nabranch');
+    assert.equal(r2.rc, 0, r2.out + r2.err);
+    assert.deepEqual(al, ['nabranch']);
+  });
+
+  test('head-solto-sem-commit-nao-preserva', () => {
+    const amb = comSuite(umaVez('git checkout -q --detach; exit 1'));
+    amb.aprovar('T1');
+    avancaBase(amb);
+    const r1 = amb.cli(['integrar', 'T1']);
+    assert.equal(r1.j.head_em, 'solto');
+    assert.equal(r1.j.preservado_solto, undefined);
+    const { r2 } = seguirSaida(amb, 'naoexiste');
+    assert.equal(r2.rc, 0, r2.out + r2.err);
+    assert.ok(!amb.branches().some((b) => b.startsWith('wt-preservado/')));
+  });
+
+  test('head-solto-preservar-falha-nao-manda-checkout', () => {
+    const amb = comSuite(umaVez('git checkout -q --detach; git commit -q --allow-empty -m solto; exit 1'));
+    amb.aprovar('T1');
+    const revisado = amb.topo('wt/GM-10-T1');
+    avancaBase(amb);
+    const r1 = amb.cli(['integrar', 'T1'], { extra: { GIT_FALHAR: 'branch wt-preservado' } });
+    assert.equal(r1.rc, 1, r1.out + r1.err);
+    assert.equal(r1.j.voltou, false);
+    assert.equal(r1.j.head_em, undefined);
+    assert.equal(r1.j.preservado_solto, undefined);
+    assert.match(r1.j.mensagem, /não consegui preservar/);
+    assert.match(r1.j.mensagem, /confira à mão/);
+    assert.ok(!/git checkout/.test(r1.j.mensagem), 'sem a saída que abandonaria o commit');
+    assert.equal(g(amb.wt('T1'), 'log', '-1', '--format=%s', 'HEAD').trim(), 'solto', 'o HEAD segue no commit');
+    assert.equal(r1.j.branch_voltou, undefined, 'a branch não foi movida');
+    assert.notEqual(amb.topo('wt/GM-10-T1'), revisado, 'segue no commit rebaseado, não voltou');
+    const r2 = amb.cli(['integrar', 'T1']);
+    assert.equal(r2.j.erro, 'head_divergente');
+  });
+
+  test('head-solto-hook-pre-rebase-preserva', () => {
+    const amb = comSuite("echo '# pass 1'");
+    amb.aprovar('T1');
+    avancaBase(amb);
+    const flag = join(novoTmp('loop-flag-'), 'ja');
+    const hp = join(amb.dir, g(amb.dir, 'rev-parse', '--git-path', 'hooks').trim(), 'pre-rebase');
+    mkdirSync(dirname(hp), { recursive: true });
+    writeFileSync(hp, `#!/bin/sh\nif [ ! -f ${flag} ]; then touch ${flag}; git checkout -q --detach; git commit -q --allow-empty -m solto; exit 1; fi\nexit 0\n`);
+    chmodSync(hp, 0o755);
+    const r1 = amb.cli(['integrar', 'T1']);
+    assert.equal(r1.j.erro, 'rebase_falhou', r1.out);
+    assert.match(r1.j.preservado_solto, PRESERVADO);
+    const { r2, al } = seguirSaida(amb, 'solto');
+    assert.equal(r2.rc, 0, r2.out + r2.err);
+    assert.deepEqual(al, ['solto']);
+  });
+
   test('integrar-relata-ignorados', () => {
     const amb = ambiente();
     appendFileSync(join(amb.dir, '.gitignore'), '*.local\n');

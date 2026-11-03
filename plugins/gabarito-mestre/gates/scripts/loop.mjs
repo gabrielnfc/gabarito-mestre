@@ -503,7 +503,8 @@ function suitesDaTask(wt, t) {
  * ao commit revisado, para a próxima `integrar` não cair em `commit_nao_revisado`. Decide pelo ESTADO medido, não pelo erro:
  * (1) commit que o gate deixou na branch (topo diferente do alvo que ele avaliou) vai antes para `wt-preservado/*`, e se isso falha
  * nada é movido; (2) HEAD na branch da task: `reset --keep`; (3) HEAD em outra branch ou solto: o HEAD não é tocado, só a ref
- * volta, com troca condicional. Só `merge_nao_confirmado` (o merge pode ter entrado) fica sem volta. Nenhum caminho perde commit.
+ * volta, com troca condicional. Só `merge_nao_confirmado` (o merge pode ter entrado) fica sem volta. Commit em ref ou no HEAD ao fim da suíte
+ * segue alcançável em toda saída; commit que a própria suíte abandonou antes de terminar está fora.
  */
 function devolver(c, wt, branch, revisado, alvo, e) {
   if (!(e instanceof Falha) || e.erro === 'merge_nao_confirmado') return e;
@@ -517,21 +518,31 @@ function devolver(c, wt, branch, revisado, alvo, e) {
   let topo = '';
   try { topo = git(wt, 'rev-parse', ref); } catch (e1) { motivos.push(`rev-parse ${ref}: ${String(e1.message ?? e1)}`); }
   let preservadoOk = topo !== '';
-  if (topo !== '' && topo !== revisado && topo !== alvo) {
-    const nome = `wt-preservado/${c.entrega}-${c.taskDevolvida}-${topo.slice(0, 12)}`;
-    const pr = gitOk(wt, 'branch', nome, topo);
+  const preservar = (sha) => {
+    const nome = `wt-preservado/${c.entrega}-${c.taskDevolvida}-${sha.slice(0, 12)}`;
+    const pr = gitOk(wt, 'branch', nome, sha);
     let existe = false;
-    if (!pr.ok) { try { existe = git(wt, 'rev-parse', `refs/heads/${nome}`) === topo; } catch { /* sem a branch */ } }
-    if (pr.ok || existe) {
-      extra.preservado = nome;
-      extra.topo = topo;
-    } else {
-      preservadoOk = false;
-      motivos.push(`não consegui preservar o commit ${topo.slice(0, 12)} em ${nome}: ${pr.motivo}`);
-    }
+    if (!pr.ok) { try { existe = git(wt, 'rev-parse', `refs/heads/${nome}`) === sha; } catch { /* sem a branch */ } }
+    if (pr.ok || existe) return nome;
+    preservadoOk = false;
+    motivos.push(`não consegui preservar o commit ${sha.slice(0, 12)} em ${nome}: ${pr.motivo}`);
+    return undefined;
+  };
+  if (topo !== '' && topo !== revisado && topo !== alvo) {
+    extra.preservado = preservar(topo);
+    if (extra.preservado !== undefined) extra.topo = topo;
   }
   let cabeca = '';
   try { cabeca = git(wt, 'symbolic-ref', '-q', 'HEAD'); } catch { /* solto */ }
+  if (cabeca === '') {
+    // HEAD solto: nenhuma branch segura o que ele aponta, e `git checkout` da saída o abandonaria.
+    let solto = '';
+    try { solto = git(wt, 'rev-parse', 'HEAD'); } catch (e2) { preservadoOk = false; motivos.push(`rev-parse HEAD: ${String(e2.message ?? e2)}`); }
+    if (solto !== '' && solto !== topo) {
+      extra.preservado_solto = preservar(solto);
+      if (extra.preservado_solto !== undefined) extra.topo_solto = solto;
+    }
+  }
   let confere = false;
   if (preservadoOk) {
     if (cabeca === ref) {
@@ -552,13 +563,14 @@ function devolver(c, wt, branch, revisado, alvo, e) {
     }
   }
   extra.voltou = confere;
-  const cita = extra.preservado ? `; o commit ${topo.slice(0, 12)} que não foi revisado foi preservado em ${extra.preservado}` : '';
+  let cita = extra.preservado ? `; o commit ${topo.slice(0, 12)} que não foi revisado foi preservado em ${extra.preservado}` : '';
+  if (extra.preservado_solto) cita += `; o commit ${extra.topo_solto.slice(0, 12)} do HEAD solto foi preservado em ${extra.preservado_solto}`;
   if (confere) {
     e.message += `; a ${branch} voltou ao commit revisado ${revisado.slice(0, 12)}${cita}`;
   } else if (extra.head_em !== undefined) {
     e.message += `; o HEAD da worktree está em ${extra.head_em}, não na ${branch}: NÃO foi tocado; a ${branch} ${extra.branch_voltou ? 'voltou' : 'NÃO voltou'} ao commit revisado ${revisado.slice(0, 12)}${cita}; faça \`git checkout ${branch}\` com a árvore limpa e repita integrar${motivos.length ? ` (${motivos.join(' / ')})` : ''}`;
   } else {
-    e.message += `; E a volta da ${branch} ao commit revisado ${revisado.slice(0, 12)} FALHOU (${motivos.join(' / ') || 'a branch não está no commit revisado'})${cita}: confira à mão${extra.preservado ? '' : ', nada foi movido ou apagado por esta volta'}`;
+    e.message += `; E a volta da ${branch} ao commit revisado ${revisado.slice(0, 12)} FALHOU (${motivos.join(' / ') || 'a branch não está no commit revisado'})${cita}: confira à mão${extra.preservado || extra.preservado_solto ? '' : ', nada foi movido ou apagado por esta volta'}`;
   }
   e.extra = extra;
   return e;
