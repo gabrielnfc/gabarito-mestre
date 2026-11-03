@@ -33,9 +33,9 @@ function validar(bruto: unknown): ResultadoPlano {
     if (!ehObjeto(t)) return recusa(`task #${i} não é um objeto`);
     if (typeof t.id !== 'string' || t.id === '') return recusa(`task #${i} sem \`id\` em texto`);
     if (tasks.has(t.id)) return recusa(`id repetido: ${t.id}`);
-    const deps = t.deps ?? [];
+    const deps = t.deps;
     if (!ehListaDeTexto(deps)) return recusa(`task ${t.id}: \`deps\` não é lista de ids`);
-    const brutos = t.arquivos ?? [];
+    const brutos = t.arquivos;
     if (!ehListaDeTexto(brutos)) return recusa(`task ${t.id}: \`arquivos\` não é lista de caminhos`);
     const arquivos: string[] = [];
     for (const a of brutos) {

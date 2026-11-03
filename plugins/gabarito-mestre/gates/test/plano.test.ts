@@ -88,3 +88,41 @@ test('plano-entrada-hostil: getters que lançam não lançam; __proto__ não pol
   assert.equal(({} as Record<string, unknown>).arquivos, undefined);
   assert.equal(Object.getPrototypeOf({}), Object.prototype);
 });
+
+const recusado = (...tasks: unknown[]) => validarPlano(plano(...tasks));
+
+test('plano-arquivos-ausente: arquivos ausente ou null recusa citando task e campo; [] segue válido', () => {
+  for (const ruim of [{ id: 'a', deps: [] }, { id: 'a', deps: [], arquivos: null }, { id: 'a', deps: [], arquivos: undefined }]) {
+    const r = recusado(ruim);
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.erro, /task a.*arquivos/);
+  }
+  // campo digitado errado nas duas tasks: não pode virar ok:true sem colisão
+  assert.equal(recusado({ id: 'a', arquivo: ['x.ts'], deps: [] }, { id: 'b', arquivo: ['x.ts'], deps: [] }).ok, false);
+  assert.equal(recusado({ id: 'a', deps: [], arquivos: [] }).ok, true);
+});
+
+test('plano-deps-ausente: deps ausente ou null recusa citando task e campo; [] segue válido', () => {
+  for (const ruim of [{ id: 'a', arquivos: [] }, { id: 'a', deps: null, arquivos: [] }, { id: 'a', deps: undefined, arquivos: [] }]) {
+    const r = recusado(ruim);
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.erro, /task a.*deps/);
+  }
+  assert.equal(recusado({ id: 'a', deps: [], arquivos: [] }).ok, true);
+});
+
+test('plano-campo-nao-array: string, objeto e item não string recusam', () => {
+  const casos: [unknown, RegExp][] = [
+    [{ id: 'a', deps: [], arquivos: 'x.ts' }, /task a.*arquivos/],
+    [{ id: 'a', deps: [], arquivos: { 0: 'x.ts' } }, /task a.*arquivos/],
+    [{ id: 'a', deps: [], arquivos: ['x.ts', 1] }, /task a.*arquivos/],
+    [{ id: 'a', deps: {}, arquivos: [] }, /task a.*deps/],
+    [{ id: 'a', deps: 'a', arquivos: [] }, /task a.*deps/],
+    [{ id: 'a', deps: [1], arquivos: [] }, /task a.*deps/],
+  ];
+  for (const [task, re] of casos) {
+    const r = recusado(task);
+    assert.equal(r.ok, false, JSON.stringify(task));
+    if (!r.ok) assert.match(r.erro, re);
+  }
+});
