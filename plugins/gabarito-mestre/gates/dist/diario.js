@@ -29,7 +29,8 @@ const LOCK_MAX_IDADE_MS = 2000;
 const LOCK_ESPERA_MS = 10;
 // Abaixo do `timeout: 5` do hook e acima dos 2 s da quebra de lock órfão.
 const LOCK_PRAZO_MS = 3000;
-const INSTANTANEO_MAX = 6000;
+// F3: ≈ 1,5k tokens. O pouso e o `SessionStart:compact` reinjetam isto; o cartão tem seu próprio limite.
+const INSTANTANEO_MAX = 3200;
 const LINHA_MAX = 16384;
 const CAMPO_MAX = 256;
 const ALVO_MAX = 300;
@@ -208,30 +209,81 @@ export function ler(dir        )           {
 
 const cmp = (a        , b        )         => (a < b ? -1 : a > b ? 1 : 0);
 
-export function projetar(eventos          )                                                          {
+/** Corta em `n` unidades e não deixa meio par substituto no fim. */
+function corta(s        , n        )         {
+  const c = s.slice(0, n);
+  const u = c.charCodeAt(c.length - 1);
+  return c.length === n && u >= 0xd800 && u <= 0xdbff ? c.slice(0, -1) : c;
+}
+
+const ehObjeto = (x         )                               => x !== null && typeof x === 'object' && !Array.isArray(x);
+
+/** Duração por task aprovada: `task.iniciada` do implementador até `review.veredito` APROVADO; rodadas somam. */
+function duracoes(ordemCrescente          )           {
+  const aberta = new Map                ();
+  const acumulado = new Map                ();
+  const feitas           = [];
+  const ms = (ts         )         => (typeof ts === 'string' ? Date.parse(ts) : NaN);
+  for (const e of ordemCrescente) {
+    if (!ehObjeto(e.dados) || typeof e.dados.task !== 'string') continue;
+    const task = e.dados.task;
+    if (e.tipo === 'task.reaberta') {
+      aberta.delete(task);
+      acumulado.delete(task);
+    } else if (e.tipo === 'task.iniciada') {
+      if (e.dados.papel !== 'implementador') continue;
+      const t = ms(e.ts);
+      if (Number.isNaN(t)) aberta.delete(task);
+      else aberta.set(task, t);
+    } else if (e.tipo === 'review.veredito') {
+      const ini = aberta.get(task);
+      if (ini === undefined) continue;
+      aberta.delete(task);
+      const fim = ms(e.ts);
+      if (Number.isNaN(fim) || fim < ini) continue;
+      acumulado.set(task, (acumulado.get(task) ?? 0) + (fim - ini));
+      if (e.dados.veredito === 'APROVADO') {
+        feitas.push((acumulado.get(task)          ) / 1000);
+        acumulado.delete(task);
+      }
+    }
+  }
+  return feitas;
+}
+
+function mediana(xs          )         {
+  const o = [...xs].sort((a, b) => a - b);
+  const m = o.length >> 1;
+  return o.length % 2 === 1 ? o[m] : (o[m - 1] + o[m]) / 2;
+}
+
+export function projetar(eventos          )                                                                                                       {
   const validos = eventos.filter((e) => e !== null && typeof e === 'object');
   const resumo                         = {};
   for (const e of validos) resumo[e.tipo] = (resumo[e.tipo] ?? 0) + 1;
 
   // mais recentes primeiro, por (ts, sessao)
   const ordenados = [...validos].sort((a, b) => cmp(String(b.ts), String(a.ts)) || cmp(String(b.sessao), String(a.sessao)));
+  const medidas = duracoes([...ordenados].reverse());
+  const eta = medidas.length >= 3 ? { medianaS: mediana(medidas), n: medidas.length } : null;
+  const linhaEta = eta === null ? 'ETA: sem dados' : `ETA: ${eta.n} tasks, mediana ${Math.round(eta.medianaS * 10) / 10} s`;
   const cabecalho = `Diário: ${validos.length} evento(s)`;
   const rodape = (omitidos        )         => `... ${omitidos} anterior(es) omitido(s)`;
 
   const linhas           = [];
-  // orçamento: cabeçalho + rodapé do pior caso + quebras; cada evento é uma linha inteira
-  let usado = cabecalho.length + rodape(validos.length).length + 2;
+  // orçamento: cabeçalho + ETA + rodapé do pior caso + quebras, reservados antes dos eventos
+  let usado = cabecalho.length + linhaEta.length + rodape(validos.length).length + 3;
   for (const e of ordenados) {
-    const alvo = String(e.dados?.alvo ?? '-').replace(/[\r\n]+/g, ' ').slice(0, ALVO_MAX);
-    const linha = `${String(e.ts).slice(0, 40)} ${String(e.tipo).slice(0, 64)} ${alvo}`;
+    const alvo = corta(String(ehObjeto(e.dados) ? (e.dados.alvo ?? '-') : '-').replace(/[\r\n]+/g, ' '), ALVO_MAX);
+    const linha = `${corta(String(e.ts), 40)} ${corta(String(e.tipo), 64)} ${alvo}`;
     if (usado + linha.length + 1 > INSTANTANEO_MAX) break;
     linhas.push(linha);
     usado += linha.length + 1;
   }
   const omitidos = validos.length - linhas.length;
-  const partes = [cabecalho, ...linhas];
+  const partes = [cabecalho, linhaEta, ...linhas];
   if (omitidos > 0) partes.push(rodape(omitidos));
-  return { instantaneo: partes.join('\n'), resumo };
+  return { instantaneo: partes.join('\n'), resumo, eta };
 }
 
 export function dirEntrega(raiz        , pbi               )         {

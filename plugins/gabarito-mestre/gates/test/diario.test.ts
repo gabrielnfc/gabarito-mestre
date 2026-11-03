@@ -252,7 +252,7 @@ describe('append', () => {
 });
 
 describe('projeção e caminho', () => {
-  test('instantaneo-6000: 10 mil eventos ⇒ instantaneo.length <= 6000', () => {
+  test('instantaneo-3200: 10 mil eventos ⇒ instantaneo.length <= 3200', () => {
     const eventos: Evento[] = Array.from({ length: 10000 }, (_, i) => ({
       seq: i + 1,
       ts: '2026-11-02T12:00:00.000Z',
@@ -265,7 +265,7 @@ describe('projeção e caminho', () => {
     }));
     const p = projetar(eventos);
     assert.ok(p.instantaneo.length > 0);
-    assert.ok(p.instantaneo.length <= 6000, `instantaneo com ${p.instantaneo.length} caracteres`);
+    assert.ok(p.instantaneo.length <= 3200, `instantaneo com ${p.instantaneo.length} caracteres`);
     assert.equal(typeof p.resumo, 'object');
   });
 
@@ -303,11 +303,11 @@ describe('projeção e caminho', () => {
     assert.ok(pos(3) < pos(1), '10:02 antes de 10:00');
   });
 
-  test('projetar-corte-em-linha-inteira: o corte em 6000 cai na fronteira de linha (cabeçalho e rodapé permitidos)', () => {
+  test('projetar-corte-em-linha-inteira: o corte em 3200 cai na fronteira de linha (cabeçalho e rodapé permitidos)', () => {
     const es = Array.from({ length: 10000 }, (_, i) =>
       evP(i + 1, new Date(Date.UTC(2026, 10, 2, 0, 0, 0) + i * 1000).toISOString(), 's1', 'producao.acesso'));
     const s = projetar(es).instantaneo;
-    assert.ok(s.length <= 6000, `instantaneo com ${s.length} caracteres`);
+    assert.ok(s.length <= 3200, `instantaneo com ${s.length} caracteres`);
     const marcadores = s.match(/\bm\d+(?:-f(?:i(?:m)?)?)?/g) ?? [];
     assert.ok(marcadores.length > 10, 'instantâneo deveria listar vários eventos');
     for (const m of marcadores) assert.match(m, /^m\d+-fim$/, `marcador cortado no meio: ${m}`);
@@ -496,13 +496,116 @@ describe('reparo, tolerância e projeção', () => {
     assert.ok(s.includes('primeiro-fim'), 'o alvo gigante escondeu o evento antigo');
     assert.equal(s.includes('x'.repeat(301)), false);
     assert.ok(s.includes('a b c-fim'));
-    assert.ok(s.length <= 6000);
+    assert.ok(s.length <= 3200);
   });
 
   test('projetar-desempate: mesmo ts, sessões diferentes ⇒ saída independe da ordem de entrada', () => {
     const mk = (sessao: string, alvo: string): Evento => ({ seq: 1, ts: '2026-11-02T10:00:00.000Z', autor: 'a', sessao, agente: 'o', tipo: 'guarda.deny', dados: { alvo }, hash_anterior: null });
     const es = [mk('sA', 'A-fim'), mk('sB', 'B-fim'), mk('sC', 'C-fim')];
     assert.equal(projetar(es).instantaneo, projetar([...es].reverse()).instantaneo);
+  });
+
+  // ETA (REQ-OBS-1): mediana de duração das tasks aprovadas; < 3 medições ⇒ "sem dados".
+  const T0 = Date.UTC(2026, 10, 3, 10, 0, 0);
+  const iso = (s: number): string => new Date(T0 + s * 1000).toISOString();
+  const evT = (n: number, s: number | string, tipo: TipoEvento, dados: Record<string, unknown>): Evento => ({
+    seq: n, ts: typeof s === 'number' ? iso(s) : s, autor: 'a', sessao: 's1', agente: 'o', tipo, dados, hash_anterior: null,
+  });
+  const ini = (n: number, s: number | string, task: string, papel = 'implementador'): Evento => evT(n, s, 'task.iniciada', { task, papel });
+  const ver = (n: number, s: number | string, task: string, veredito = 'APROVADO'): Evento => evT(n, s, 'review.veredito', { task, veredito, blocker: 0, major: 0, rodada: 1 });
+  const aprovada = (base: number, task: string, dur: number): Evento[] => [ini(base, base * 1000, task), ver(base + 1, base * 1000 + dur, task)];
+
+  test('eta-sem-dados-com-2: duas medições ⇒ eta null e linha "ETA: sem dados"', () => {
+    const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 200)];
+    const p = projetar(es);
+    assert.equal(p.eta, null);
+    assert.ok(p.instantaneo.split('\n').includes('ETA: sem dados'));
+  });
+
+  test('eta-sem-dados-com-2: zero eventos também diz sem dados', () => {
+    const p = projetar([]);
+    assert.equal(p.eta, null);
+    assert.ok(p.instantaneo.split('\n').includes('ETA: sem dados'));
+  });
+
+  test('eta-mediana-com-3: ímpar pega o do meio; par, a média dos dois do meio', () => {
+    const impar = projetar([...aprovada(1, 'T1', 300), ...aprovada(3, 'T2', 100), ...aprovada(5, 'T3', 200)]);
+    assert.deepEqual(impar.eta, { medianaS: 200, n: 3 });
+    assert.ok(impar.instantaneo.split('\n').includes('ETA: 3 tasks, mediana 200 s'));
+    const par = projetar([...aprovada(1, 'T1', 10), ...aprovada(3, 'T2', 20), ...aprovada(5, 'T3', 40), ...aprovada(7, 'T4', 1000)]);
+    assert.deepEqual(par.eta, { medianaS: 30, n: 4 });
+  });
+
+  test('eta-ignora-reprovada: veredito REPROVADO sozinho não é medição', () => {
+    const base = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 100), ini(5, 5000, 'T3'), ver(6, 5400, 'T3', 'REPROVADO')];
+    assert.equal(projetar(base).eta, null);
+  });
+
+  test('eta-rodadas-somam: REPROVADO + nova rodada APROVADA entram como UMA medição de 150 + 50 s', () => {
+    const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 300),
+      ini(5, 5000, 'T3'), ver(6, 5150, 'T3', 'REPROVADO'), ini(7, 6000, 'T3'), ver(8, 6050, 'T3', 'APROVADO')];
+    assert.deepEqual(projetar(es).eta, { medianaS: 200, n: 3 });
+  });
+
+  test('eta-so-implementador: iniciada de revisor ou correção não abre a contagem', () => {
+    const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 100),
+      ini(5, 5000, 'T3', 'revisor'), ver(6, 5500, 'T3')];
+    assert.equal(projetar(es).eta, null);
+  });
+
+  test('eta-reaberta-recomeca: task.reaberta zera a contagem acumulada (800 s da rodada velha não entram)', () => {
+    const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 300),
+      ini(5, 5000, 'T3'), ver(6, 5800, 'T3', 'REPROVADO'),
+      evT(7, 6000, 'task.reaberta', { task: 'T3', origem: 'dono' }),
+      ini(8, 7000, 'T3'), ver(9, 7200, 'T3')];
+    assert.deepEqual(projetar(es).eta, { medianaS: 200, n: 3 });
+  });
+
+  test('eta-descarta-ts-invalido-e-duracao-negativa', () => {
+    const base = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 100)];
+    assert.equal(projetar([...base, ini(5, '0-ontem', 'T3'), ver(6, 5100, 'T3')]).eta, null, 'ts inválido no início');
+    assert.equal(projetar([...base, ini(5, 5000, 'T3'), ver(6, 'nao-e-data', 'T3')]).eta, null, 'ts inválido no fim');
+    // ordem textual diz "depois", o instante real diz "antes" (fusos diferentes): duração negativa
+    const antes = [...base, ini(5, '2026-11-03T20:00:00.000Z', 'T3'), ver(6, '2026-11-03T21:00:00.000+05:00', 'T3')];
+    assert.equal(projetar(antes).eta, null, 'duração negativa');
+  });
+
+  test('eta-dados-malformado-nao-lanca: dados não objeto e eventos nulos são ignorados', () => {
+    const lixo = [
+      null as unknown as Evento,
+      { ...ini(1, 0, 'T1'), dados: 'texto' as unknown as Record<string, unknown> },
+      { ...ver(2, 10, 'T1'), dados: null as unknown as Record<string, unknown> },
+      { ...ver(3, 10, 'T1'), dados: [1] as unknown as Record<string, unknown> },
+      evT(4, 5, 'task.iniciada', {}),
+    ];
+    let p!: ReturnType<typeof projetar>;
+    assert.doesNotThrow(() => { p = projetar(lixo); });
+    assert.equal(p.eta, null);
+  });
+
+  test('instantaneo-eta-reservada: com orçamento esgotado a linha de ETA continua inteira e dentro de 3.200', () => {
+    const es: Evento[] = [
+      ...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 200), ...aprovada(5, 'T3', 300),
+      ...Array.from({ length: 3000 }, (_, i) => evT(100 + i, 10000 + i, 'guarda.deny', { alvo: `m${i}-fim` })),
+    ];
+    const s = projetar(es).instantaneo;
+    assert.ok(s.length <= 3200, `instantaneo com ${s.length}`);
+    assert.ok(s.split('\n').includes('ETA: 3 tasks, mediana 200 s'));
+    assert.match(s, /anterior\(es\) omitido\(s\)/);
+  });
+
+  test('instantaneo-nao-corta-surrogate: emoji e acento no alvo não deixam surrogate solto, e o limite é por length', () => {
+    const mk = (n: number, alvo: string): Evento => ({ seq: n, ts: `2026-11-02T10:0${n}:00.000Z`, autor: 'a', sessao: 's1', agente: 'o', tipo: 'guarda.deny', dados: { alvo }, hash_anterior: null });
+    // 299 'á' + emoji (2 unidades): o corte em 300 cairia entre as metades
+    const alvo = 'á'.repeat(299) + '😀' + 'fim';
+    const s = projetar([mk(1, alvo)]).instantaneo;
+    assert.equal(/[\ud800-\udbff](?![\udc00-\udfff])/.test(s), false, 'surrogate alto solto');
+    assert.equal(/(?<![\ud800-\udbff])[\udc00-\udfff]/.test(s), false, 'surrogate baixo solto');
+    const muitos = Array.from({ length: 2000 }, (_, i) => mk(i + 1, '😀'.repeat(150)));
+    muitos.forEach((e, i) => { e.ts = new Date(T0 + i * 1000).toISOString(); });
+    const t = projetar(muitos).instantaneo;
+    assert.ok(t.length <= 3200, `instantaneo com ${t.length}`);
+    assert.equal(/[\ud800-\udbff](?![\udc00-\udfff])/.test(t), false);
   });
 
   test('projetar-resumo-total: o resumo conta todos os eventos, não só os que cabem', () => {

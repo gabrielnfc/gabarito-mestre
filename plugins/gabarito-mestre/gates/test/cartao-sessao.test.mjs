@@ -516,7 +516,8 @@ describe('cartão em duas vias — hook SessionStart (T7)', () => {
     const r = hook(dir, { session_id: 's-nova', source: 'startup' });
     assert.equal(r.code, 0, r.stderr);
     assert.ok(r.ctx.length <= 6000, String(r.ctx.length));
-    assert.ok(r.ctx.length > 4000, `o diário deveria ocupar o espaço (${r.ctx.length})`);
+    assert.ok(r.ctx.length > 3000, `o diário deveria ocupar o espaço (${r.ctx.length})`);
+    assert.match(r.ctx, /ETA: sem dados/);
     assert.match(r.ctx, /instantâneo truncado|omitido/);
   });
   test('cartao-6000-caracteres: cartão sozinho maior que o limite é cortado em exatamente 6.000', () => {
