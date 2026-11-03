@@ -24,7 +24,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "npm run test:mjs && npm run test:ts",
+    "test": "node --experimental-strip-types --test test/*.test.mjs test/*.test.ts",
     "test:mjs": "node --test test/*.test.mjs",
     "test:ts": "node --experimental-strip-types --test test/*.test.ts",
     "doctor": "node scripts/harness-doctor.mjs --explain",
