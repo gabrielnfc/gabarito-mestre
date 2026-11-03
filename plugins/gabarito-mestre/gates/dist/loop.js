@@ -49,86 +49,117 @@ export function ordenar(eventos          )                                      
   return { ok: true, eventos: saida };
 }
 
-                                                                                    
-               
-                    
-                     
-                       
-                     
-                      
-                            
-                                                                                              
-                
-                                                                                                 
-                                                                      
-  
+                        
+                                                                                                                                  
+
+/** Eventos de task como a tabela os enxerga; o veredito já vem classificado pela rodada e pelos achados. */
+export const CHAVES_DE_EVENTO = [
+  'iniciada.implementador', 'iniciada.revisor', 'iniciada.correcao', 'task.concluida',
+  'veredito.aprovado', 'veredito.aprovado.com_achado',
+  'veredito.reprovado.r1', 'veredito.reprovado.teto', 'veredito.reprovado.sem_achado',
+  'task.integrada', 'reaberta.retomada', 'reaberta.dono',
+]         ;
+                                                            
+
+const VEREDITOS = {
+  'veredito.aprovado': 'aprovada',
+  'veredito.reprovado.r1': 'reprovada',
+  'veredito.reprovado.teto': 'no_teto',
+  'veredito.reprovado.sem_achado': 'reprovada',
+}         ;
+
+/**
+ * Única fonte do estado de uma task: estado → evento → próximo estado. Par ausente é diário inválido.
+ * `veredito.aprovado.com_achado` não aparece em nenhum estado de propósito (A11).
+ * `reaberta.retomada` fora de agente em voo não muda nada: quem decide reabrir é o orquestrador, não esta tabela.
+ */
+export const TRANSICOES                                                               = {
+  pendente: { 'iniciada.implementador': 'implementando', 'reaberta.retomada': 'pendente', 'reaberta.dono': 'pendente' },
+  implementando: { 'task.concluida': 'concluida', 'reaberta.retomada': 'pendente', 'reaberta.dono': 'implementando' },
+  concluida: { 'iniciada.revisor': 'em_revisao', ...VEREDITOS, 'reaberta.retomada': 'concluida', 'reaberta.dono': 'concluida' },
+  em_revisao: { ...VEREDITOS, 'reaberta.retomada': 'concluida', 'reaberta.dono': 'em_revisao' },
+  reprovada: { 'iniciada.correcao': 'corrigindo', 'reaberta.retomada': 'reprovada', 'reaberta.dono': 'reprovada' },
+  corrigindo: { 'task.concluida': 'concluida', 'reaberta.retomada': 'reprovada', 'reaberta.dono': 'corrigindo' },
+  aprovada: { 'task.integrada': 'integrada', 'reaberta.retomada': 'aprovada', 'reaberta.dono': 'aprovada' },
+  no_teto: { 'reaberta.retomada': 'no_teto', 'reaberta.dono': 'pendente' },
+  integrada: { 'reaberta.retomada': 'integrada', 'reaberta.dono': 'integrada' },
+};
 
 const contagem = (v         )          => Number.isInteger(v) && (v          ) >= 0;
 
-const estadoInicial = ()         => ({
-  iniciada: false, integrada: false, concluidaPos: -1, revisorPos: -1, correcaoPos: -1, veredito: null, teto: false, porRodada: new Map(),
-});
-
-/** Estado por task, ou `null` se algum evento de task sai do plano ou do contrato de `dados`. */
-function projetar(plano       , eventos          )                                                               {
-  const estados = new Map                ();
-  for (const t of plano.tasks) estados.set(t.id, estadoInicial());
-  let ciVermelhos = 0;
-  for (const [pos, e] of eventos.entries()) {
-    const dados = e.dados ?? {};
-    if (e.tipo === 'ci.resultado') {
-      if (typeof dados.verde !== 'boolean') return null;
-      ciVermelhos = dados.verde ? 0 : ciVermelhos + 1;
-      continue;
-    }
-    if (!TIPOS_DE_TASK.includes(e.tipo)) continue;
-    const est = estados.get(dados.task          );
-    if (!est) return null;
-    if (e.tipo === 'task.iniciada') {
-      if (!PAPEIS.includes(dados.papel)) return null;
-      est.iniciada = true;
-      if (dados.papel === 'revisor') est.revisorPos = pos;
-      if (dados.papel === 'correcao') est.correcaoPos = pos;
-    } else if (e.tipo === 'task.concluida') {
-      est.iniciada = true;
-      est.concluidaPos = pos;
-    } else if (e.tipo === 'task.integrada') {
-      // Integrar sem aprovação vigente é o fechamento sozinho (A11): nunca vira `concluir`.
-      if (!aprovada(est)) return null;
-      est.integrada = true;
-    } else if (e.tipo === 'task.reaberta') {
-      if (dados.origem !== 'dono' && dados.origem !== 'retomada') return null;
-      if (dados.origem === 'dono') {
-        if (est.teto && !est.integrada) estados.set(dados.task          , estadoInicial());
-      } else if (est.iniciada && est.concluidaPos < 0 && !est.veredito) {
-        est.iniciada = false;
-      }
-    } else {
-      const { veredito, rodada, major, blocker } = dados;
-      if (veredito !== 'APROVADO' && veredito !== 'REPROVADO') return null;
-      if (!contagem(rodada) || (rodada          ) < 1 || !contagem(major) || !contagem(blocker)) return null;
+/** Classifica um evento de task; `string` é o motivo de o `dados` não cumprir o contrato. */
+function chaveDe(e        , rodada        )                                                         {
+  const dados = e.dados ?? {};
+  switch (e.tipo) {
+    case 'task.iniciada':
+      if (!PAPEIS.includes(dados.papel)) return 'papel inválido';
+      return { chave: `iniciada.${dados.papel         }`               , rodada: null };
+    case 'task.concluida':
+      return { chave: 'task.concluida', rodada: null };
+    case 'task.integrada':
+      return { chave: 'task.integrada', rodada: null };
+    case 'task.reaberta':
+      if (dados.origem !== 'dono' && dados.origem !== 'retomada') return 'origem inválida';
+      return { chave: `reaberta.${dados.origem}`               , rodada: null };
+    case 'review.veredito': {
+      const { veredito, rodada: declarada, major, blocker } = dados;
+      if (veredito !== 'APROVADO' && veredito !== 'REPROVADO') return 'veredito inválido';
+      if (!contagem(declarada) || !contagem(major) || !contagem(blocker)) return 'contagem inválida';
+      // Rodada é o nº de vereditos desde a última reabertura do dono; quem declara outra mente.
+      if (declarada !== rodada + 1) return 'rodada fora de sequência';
       const achados = (major          ) + (blocker          );
-      const aprovado = veredito === 'APROVADO';
-      if (aprovado && achados > 0) return null;
-      const mesma = est.porRodada.get(rodada          );
-      if (mesma && mesma.concluidaPos === est.concluidaPos && mesma.aprovado !== aprovado) return null;
-      est.porRodada.set(rodada          , { aprovado, concluidaPos: est.concluidaPos });
-      est.iniciada = true;
-      if (!aprovado && (rodada          ) >= 2 && achados > 0) est.teto = true;
-      // Vale o da maior rodada; na mesma rodada, o mais recente.
-      if (!est.veredito || (rodada          ) >= est.veredito.rodada) {
-        est.veredito = { aprovado, rodada: rodada          , achados, pos };
-      }
+      if (veredito === 'APROVADO') return { chave: achados > 0 ? 'veredito.aprovado.com_achado' : 'veredito.aprovado', rodada: rodada + 1 };
+      if (rodada + 1 === 1) return { chave: 'veredito.reprovado.r1', rodada: 1 };
+      return { chave: achados > 0 ? 'veredito.reprovado.teto' : 'veredito.reprovado.sem_achado', rodada: rodada + 1 };
     }
+    default:
+      return 'tipo fora do contrato de task';
+  }
+}
+
+/** Redutor único: eventos de UMA task, já ordenados, para o estado dela. Nada decide estado fora de `TRANSICOES`. */
+export function estadoDe(eventosDaTask          )                                                                {
+  let estado             = 'pendente';
+  let rodada = 0;
+  for (const e of eventosDaTask) {
+    const c = chaveDe(e, rodada);
+    if (typeof c === 'string') return { invalido: c };
+    const proximo = TRANSICOES[estado][c.chave];
+    if (proximo === undefined) return { invalido: `${c.chave} em ${estado}` };
+    estado = proximo;
+    rodada = proximo === 'pendente' ? 0 : (c.rodada ?? rodada);
+  }
+  return { estado, rodada };
+}
+
+                                                           
+
+/** Estado por task, ou `null` se algum evento sai do plano, do contrato de `dados` ou da tabela. */
+function projetar(plano       , eventos          )                                                                     {
+  const porTask = new Map                  ();
+  for (const t of plano.tasks) porTask.set(t.id, []);
+  let ciVermelhos = 0;
+  for (const e of eventos) {
+    if (e.tipo === 'ci.resultado') {
+      const verde = (e.dados ?? {}).verde;
+      if (typeof verde !== 'boolean') return null;
+      ciVermelhos = verde ? 0 : ciVermelhos + 1;
+    } else if (TIPOS_DE_TASK.includes(e.tipo)) {
+      const fila = porTask.get((e.dados ?? {}).task          );
+      if (!fila) return null;
+      fila.push(e);
+    }
+  }
+  const estados = new Map                      ();
+  for (const [id, fila] of porTask) {
+    const r = estadoDe(fila);
+    if ('invalido' in r) return null;
+    estados.set(id, r);
   }
   return { estados, ciVermelhos };
 }
 
-/** Commit posterior ao veredito válido (ou nenhum veredito): o que está na branch ainda não foi revisto. */
-const semRevisao = (e        )          => e.concluidaPos >= 0 && (!e.veredito || e.concluidaPos > e.veredito.pos);
-const aprovada = (e        )          => !e.teto && !semRevisao(e) && e.veredito?.aprovado === true;
-const reprovadaSemCommitNovo = (e        )          => !semRevisao(e) && e.veredito?.aprovado === false;
-const noTeto = (e        )          => !e.integrada && e.teto;
+const de = (estados                           , id        )                         => estados.get(id)?.estado;
 
 /** Ancestrais de `id`, com guarda contra ciclo: `validarPlano` barra ciclo, a função pura não presume. */
 function ancestrais(plano       , id        )           {
@@ -144,10 +175,8 @@ function ancestrais(plano       , id        )           {
   return [...vistos];
 }
 
-function integravel(plano       , estados                     , id        )          {
-  const e = estados.get(id);
-  if (!e || e.integrada || !aprovada(e)) return false;
-  return ancestrais(plano, id).every((a) => estados.get(a)?.integrada === true);
+function integravel(plano       , estados                           , id        )          {
+  return de(estados, id) === 'aprovada' && ancestrais(plano, id).every((a) => de(estados, a) === 'integrada');
 }
 
 /** Aprovada, não integrada e com a cadeia inteira de dependências já integrada. */
@@ -159,14 +188,11 @@ export function podeIntegrar(plano       , eventos          , id        )       
 }
 
 /** A9: dep libera o dependente se integrada, se no teto, ou se aprovada e presa por um teto acima dela. */
-function depLiberada(plano       , estados                     , dep        )          {
-  const e = estados.get(dep);
-  if (!e) return false;
-  if (e.integrada || noTeto(e)) return true;
-  return aprovada(e) && ancestrais(plano, dep).some((a) => noTeto(estados.get(a)          ));
+function depLiberada(plano       , estados                           , dep        )          {
+  const e = de(estados, dep);
+  if (e === 'integrada' || e === 'no_teto') return true;
+  return e === 'aprovada' && ancestrais(plano, dep).some((a) => de(estados, a) === 'no_teto');
 }
-
-const paraRevisor = (e        )          => !e.integrada && !e.teto && semRevisao(e) && e.revisorPos < e.concluidaPos;
 
 export function proximaAcao(plano       , eventos          , sinais        )           {
   // (1)
@@ -185,11 +211,11 @@ export function proximaAcao(plano       , eventos          , sinais        )    
   if (plano.tasks.length === 0) return { tipo: 'parar', motivo: 'nao_conseguiu' };
 
   const { estados } = proj;
-  const est = (id        )         => estados.get(id)          ;
+  const est = (id        )               => estados.get(id)                ;
   const ids = plano.tasks.map((t) => t.id);
   const capacidade = Math.max(0, sinais.slots - sinais.vivos);
   const despachar = (itens                                  )           => ({ tipo: 'despachar', itens: itens.slice(0, capacidade) });
-  const revisores = ids.filter((id) => paraRevisor(est(id))).map((task) => ({ task, papel: 'revisor'          }));
+  const revisores = ids.filter((id) => est(id).estado === 'concluida').map((task) => ({ task, papel: 'revisor'          }));
 
   // (5) `percent` nulo não satisfaz a comparação.
   if (sinais.percent !== null && sinais.percent >= sinais.x) {
@@ -204,13 +230,10 @@ export function proximaAcao(plano       , eventos          , sinais        )    
 
   // (7)
   const correcoes = ids
-    .filter((id) => {
-      const e = est(id);
-      return !e.integrada && reprovadaSemCommitNovo(e) && e.veredito .rodada === 1 && e.correcaoPos < e.veredito .pos;
-    })
+    .filter((id) => est(id).estado === 'reprovada' && est(id).rodada === 1)
     .map((task) => ({ task, papel: 'correcao'          }));
   const novas = plano.tasks
-    .filter((t) => !est(t.id).iniciada && t.deps.every((d) => depLiberada(plano, estados, d)))
+    .filter((t) => est(t.id).estado === 'pendente' && t.deps.every((d) => depLiberada(plano, estados, d)))
     .map((t) => ({ task: t.id, papel: 'implementador'          }));
   const itens = [...correcoes, ...revisores, ...novas];
   if (itens.length > 0) {
@@ -218,12 +241,12 @@ export function proximaAcao(plano       , eventos          , sinais        )    
   }
 
   // (8)
-  if (ids.every((id) => est(id).integrada)) return { tipo: 'concluir' };
+  if (ids.every((id) => est(id).estado === 'integrada')) return { tipo: 'concluir' };
 
   // (9)
   if (sinais.vivos > 0) return { tipo: 'esperar', motivo: 'agentes vivos' };
-  const noLimite = ids.find((id) => noTeto(est(id)));
+  const noLimite = ids.find((id) => est(id).estado === 'no_teto');
   if (noLimite !== undefined) return { tipo: 'parar', motivo: 'teto_rodadas', task: noLimite };
   // Sem agente vivo e sem próxima ação (ex.: task iniciada cujo agente morreu): para, nunca em silêncio.
-  return { tipo: 'parar', motivo: 'nao_conseguiu', task: ids.find((id) => !est(id).integrada)           };
+  return { tipo: 'parar', motivo: 'nao_conseguiu', task: ids.find((id) => est(id).estado !== 'integrada')           };
 }
