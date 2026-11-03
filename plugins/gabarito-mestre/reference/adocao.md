@@ -67,7 +67,7 @@ Aqui o trabalho passa a ser reproduzível por outro agente ou outra pessoa.
 - [ ] Endpoint de saúde com commit e versão + smoke que **mede** o bundle servido.
 - [ ] Identidade federada, pool por ambiente, sem chave estática.
 - [ ] Teste que congela o estado de RLS, com sweep dinâmico do catálogo.
-- [ ] **Paralelismo calibrado** na máquina que orquestra: `orquestracao.paralelismo.calibradoEm` ≤ 180 d, `teto ≥ simultaneos ≥ 1` (`capacidade.mjs --calibrar`; doctor `paralelismo-calibrado`).
+- [ ] **Paralelismo calibrado** na máquina que orquestra: `orquestracao.paralelismo.calibradoEm` ≤ 180 d, `teto ≥ simultaneos ≥ 1` (`capacidade.mjs --sugerir`; doctor `paralelismo-calibrado`).
 - [ ] Revisão do harness com dono e cadência *(AGENTS.md §8)*.
 
 ---

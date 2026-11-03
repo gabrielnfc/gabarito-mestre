@@ -21,11 +21,13 @@
  *   node capacidade.mjs --calibrar [--suite <cmd>] [--cwd <dir>]
  *       roda a suíte em N=1,2,3,… slots simultâneos (cada um com TMPDIR próprio, removido ao fim) e para na
  *       1ª falha ou na 1ª queda de vazão. Grava `.harness/capacidade.json` (gitignored) por arquivo temporário
- *       + rename: `{hostname, slots_max, rss_pico_mb, tmpdir_mb, cpu_total}`. Suíte falhando em N=1 ⇒ rc 1 e
+ *       + rename: `{hostname, slots_max, rss_pico_mb, tmpdir_mb, cpu_total, load_medido}` (load_medido = mediana do load1 no
+ *       degrau aprovado; cpu_total fica gravado como informação). Suíte falhando em N=1 ⇒ rc 1 e
  *       o arquivo anterior fica intacto. Teto da escada: núcleos da máquina (nunca um número fixo).
  *   node capacidade.mjs --medido [--json]
  *       slots = min(slots_max, floor((mem − reserva)/rss), floor((disco − reserva)/tmpdir),
- *                   slots_max × cpu_livre/cpu_total se cpu_livre = cores − load1 < cpu_total), nunca < 1.
+ *                   floor(slots_max × load_medido / load1) se load1 > load_medido), nunca < 1.
+ *       Campo `load_medido` ausente ou inválido (calibração antiga): 1 slot + aviso que cita o campo e `--calibrar`.
  *       Sem arquivo, hostname diferente, JSON corrompido, campo inválido ou medição falhando: 1 slot + aviso.
  *       Reservas: `orquestracao.paralelismo.limites` (defaults memDisponivelMinMB e discoLivreMinGB, acima).
  *       `--calibrar` sai de qualquer aviso.
@@ -238,7 +240,7 @@ export const MARGEM_QUEDA = 0.05;
 const INTERVALO_AMOSTRA_MS = 200;
 const MB = 1_048_576;
 const positivo = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
-const CAMPOS_MEDIDOS = ['rss_pico_mb', 'tmpdir_mb', 'cpu_total'];
+const CAMPOS_MEDIDOS = ['rss_pico_mb', 'tmpdir_mb', 'cpu_total', 'load_medido'];
 const SUFIXO_CALIBRAR = '— rode capacidade.mjs --calibrar';
 
 /** Valida o conteúdo do arquivo. Zero, negativo, ausente, texto ou infinito num campo medido é inválido, nunca "ilimitado". */
@@ -250,7 +252,7 @@ function validarCapacidade(obj, host) {
     if (!positivo(obj[c])) return { causa: `campo ${c} inválido (${JSON.stringify(obj[c])}): precisa ser número finito > 0` };
   }
   if (obj.hostname !== host) return { causa: `calibrado em ${obj.hostname}, esta máquina é ${host}` };
-  return { dados: { hostname: obj.hostname, slots_max: obj.slots_max, rss_pico_mb: obj.rss_pico_mb, tmpdir_mb: obj.tmpdir_mb, cpu_total: obj.cpu_total } };
+  return { dados: { hostname: obj.hostname, slots_max: obj.slots_max, rss_pico_mb: obj.rss_pico_mb, tmpdir_mb: obj.tmpdir_mb, cpu_total: obj.cpu_total, load_medido: obj.load_medido } };
 }
 
 /** Lê `.harness/capacidade.json`. Qualquer defeito devolve `{ dados: null, aviso }` — nunca lança, nunca inventa número. */
@@ -284,14 +286,13 @@ export function slotsMedidos(lido, medidas, limites = {}) {
   const lim = { ...DEFAULTS.limites, ...(limites && typeof limites === 'object' ? limites : {}) };
   const reservaMem = num(lim.memDisponivelMinMB) ?? DEFAULTS.limites.memDisponivelMinMB;
   const reservaDiscoMB = (num(lim.discoLivreMinGB) ?? DEFAULTS.limites.discoLivreMinGB) * 1024;
-  const livreCpu = m.cores - m.load1;
   const candidatos = [
     { n: d.slots_max, motivo: `slots_max ${d.slots_max}` },
     { n: Math.floor((m.memDisponivelMB - reservaMem) / d.rss_pico_mb), motivo: `mem: (${m.memDisponivelMB} − ${reservaMem} MB)/${d.rss_pico_mb} MB por slot` },
     { n: Math.floor((m.discoLivreGB * 1024 - reservaDiscoMB) / d.tmpdir_mb), motivo: `disco: (${m.discoLivreGB} GB − ${reservaDiscoMB / 1024} GB)/${d.tmpdir_mb} MB por slot` },
   ];
-  if (livreCpu < d.cpu_total) {
-    candidatos.push({ n: Math.floor((d.slots_max * livreCpu) / d.cpu_total), motivo: `cpu: ${livreCpu.toFixed(2)} núcleos livres < ${d.cpu_total} medidos com ${d.slots_max} slot(s)` });
+  if (m.load1 > d.load_medido) {
+    candidatos.push({ n: Math.floor((d.slots_max * d.load_medido) / m.load1), motivo: `carga: load1 ${m.load1} > ${d.load_medido} medido com ${d.slots_max} slot(s)` });
   }
   let melhor = candidatos[0];
   for (const c of candidatos) if (c.n < melhor.n) melhor = c;
@@ -336,8 +337,8 @@ export async function escada(medirN, { maxN, margem = MARGEM_QUEDA } = {}) {
     bom = { n, ...p };
     ant = p;
   }
-  if (!bom) return { slots_max: 0, rss_pico_mb: 0, tmpdir_mb: 0, cpu_total: 0, erro: erro ?? 'nenhuma medição', parou };
-  return { slots_max: bom.n, rss_pico_mb: bom.rss_pico_mb, tmpdir_mb: bom.tmpdir_mb, cpu_total: bom.cpu_total, vazao: bom.vazao, erro: null, parou };
+  if (!bom) return { slots_max: 0, rss_pico_mb: 0, tmpdir_mb: 0, cpu_total: 0, load_medido: 0, erro: erro ?? 'nenhuma medição', parou };
+  return { slots_max: bom.n, rss_pico_mb: bom.rss_pico_mb, tmpdir_mb: bom.tmpdir_mb, cpu_total: bom.cpu_total, load_medido: bom.load_medido, vazao: bom.vazao, erro: null, parou };
 }
 
 /** Temporário + rename: o arquivo anterior só é trocado por um novo inteiro. Falhou: lança, remove o temporário, o anterior fica. */
@@ -434,8 +435,9 @@ function rssPorGrupo() {
  * n / mediana da parede do slot), RSS pico do grupo do slot (amostrado), uso do TMPDIR antes de removê-lo e CPU
  * ocupada da máquina durante a rodada, em núcleos. Os TMPDIR são removidos ao fim; a suíte é `sh -c` num grupo próprio.
  */
-export async function rodarSlots(n, { suite, cwd, base, intervaloMs = INTERVALO_AMOSTRA_MS }) {
+export async function rodarSlots(n, { suite, cwd, base, intervaloMs = INTERVALO_AMOSTRA_MS, lerLoad = () => loadavg()[0] }) {
   const slots = [];
+  const loads = [];
   try {
     for (let i = 0; i < n; i++) {
       const dir = mkdtempSync(join(base, 'slot-'));
@@ -467,6 +469,7 @@ export async function rodarSlots(n, { suite, cwd, base, intervaloMs = INTERVALO_
     const aberto = () => slots.some((s) => s.rc === null);
     while (aberto()) {
       await dormir(50);
+      loads.push(lerLoad());
       const por = await rssPorGrupo();
       if (por === null) psFalhou = true;
       else for (const s of slots) if (s.rc === null) s.rss = Math.max(s.rss, por.get(s.pid) ?? 0);
@@ -484,6 +487,7 @@ export async function rodarSlots(n, { suite, cwd, base, intervaloMs = INTERVALO_
       rss_pico_mb: psFalhou ? 0 : Math.round(Math.max(...slots.map((s) => s.rss)) * 10) / 10,
       tmpdir_mb: Math.round((Math.max(...bytes) / MB) * 1000) / 1000,
       cpu_total: Math.round(cpuTotal * 100) / 100,
+      load_medido: loads.length ? Math.round(mediana(loads) * 100) / 100 : 0,
     };
   } finally {
     for (const s of slots) {
@@ -502,17 +506,17 @@ export async function rodarSlots(n, { suite, cwd, base, intervaloMs = INTERVALO_
  * `--calibrar`: sobe a escada com a suíte do repo e grava `.harness/capacidade.json`. Sem N=1 limpo: rc 1 e nada é gravado
  * (o arquivo anterior fica como estava). Teto da escada = `maxN` ou os núcleos da máquina.
  */
-export async function calibrarCapacidade(root, { suite = 'npm test', cwd = root, hostname = osHostname(), maxN = availableParallelism(), base = tmpdir() } = {}) {
+export async function calibrarCapacidade(root, { suite = 'npm test', cwd = root, hostname = osHostname(), maxN = availableParallelism(), base = tmpdir(), lerLoad } = {}) {
   mkdirSync(base, { recursive: true });
   const meu = mkdtempSync(join(base, 'cal-'));
   ativos.dirs.add(meu);
   try {
     const r = await escada(async (n) => {
-      const m = await rodarSlots(n, { suite, cwd, base: meu });
+      const m = await rodarSlots(n, { suite, cwd, base: meu, ...(lerLoad ? { lerLoad } : {}) });
       return m.falhas > 0 ? { ok: false, causa: `suíte falhou em ${m.falhas}/${n} slot(s)` } : { ok: true, ...m };
     }, { maxN });
     if (r.slots_max < 1) return { rc: 1, causa: r.erro ?? 'sem medição', parou: r.parou };
-    const dados = { hostname, slots_max: r.slots_max, rss_pico_mb: r.rss_pico_mb, tmpdir_mb: r.tmpdir_mb, cpu_total: r.cpu_total };
+    const dados = { hostname, slots_max: r.slots_max, rss_pico_mb: r.rss_pico_mb, tmpdir_mb: r.tmpdir_mb, cpu_total: r.cpu_total, load_medido: r.load_medido };
     gravarAtomico(join(root, ARQUIVO_CAPACIDADE), dados);
     return { rc: 0, dados, parou: r.parou };
   } catch (e) {

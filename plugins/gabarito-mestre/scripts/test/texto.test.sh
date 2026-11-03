@@ -278,5 +278,15 @@ check "skill gabarito-instalar não promete .instalado.json na tabela do que o i
 check "README não promete .instalado.json entre o que o instalador cria (só diz que acabou)" '! grep -qE "\+ .\.instalado\.json" "'"$ROOT"'/README.md"' "README ainda promete o manifesto"
 check "skill gabarito-instalar não promete squash-titulo-pr no attest.json (template não o tem; chave morta)" '! grep -E "^\| .\.harness/attest\.json." "$SKILL_I" | grep -q "squash-titulo-pr"' "tabela promete atestado removido"
 
+# GM-10 T11 r2 (achado 2): o `--calibrar` da T11 é a escada medida (slots_max, rss, tmpdir, cpu_total, load_medido), não a fórmula por
+# núcleos. Quem espera `simultaneos`/`teto`/`limites`/`calibradoEm` chama `--sugerir`. Skill, adocao.md e README não misturam os dois.
+CAP="$P/gates/scripts/capacidade.mjs"
+MISTURA=$(grep -n -e '--calibrar' "$SKILL_I" "$P/reference/adocao.md" "$ROOT/README.md" | grep -E 'simultaneos|teto|calibradoEm|--json' | wc -l | tr -d ' ')
+check "skill, adocao.md e README não mandam --calibrar esperando simultaneos/teto/calibradoEm/--json (é --sugerir)" '[ "'"$MISTURA"'" -eq 0 ]' "$MISTURA linha(s) com --calibrar e campos da fórmula por núcleos"
+check "skill gabarito-instalar chama capacidade.mjs --sugerir --json na fase 4.3" 'grep -qE "capacidade\.mjs\" --root \. --sugerir --json" "$SKILL_I"' "fase 4.3 sem o comando novo"
+SUG_JSON=$(cd "$ROOT" && node "$CAP" --root "$ROOT" --sugerir --json 2>/dev/null)
+SUG_CHAVES=$(printf '%s' "$SUG_JSON" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const o=JSON.parse(s);process.stdout.write(["simultaneos","teto","limites","calibradoEm"].every(k=>k in o)?"ok":"falta")}catch{process.stdout.write("invalido")}})')
+check "texto da skill 4.3 (simultaneos, teto, limites, calibradoEm) confere com a saída real de --sugerir --json" '[ "'"$SUG_CHAVES"'" = ok ]' "saída real de --sugerir --json: $SUG_CHAVES"
+
 echo "── $falhas falha(s)"
 [ "$falhas" -eq 0 ]

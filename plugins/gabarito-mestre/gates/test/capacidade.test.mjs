@@ -291,7 +291,7 @@ const fake = (dir, { k, ms = 700, modo = 'falha', registro = '' }) => {
   return `${JSON.stringify(process.execPath)} ${JSON.stringify(f)} ${JSON.stringify(join(dir, 'vivos'))} ${k} ${ms} ${modo} ${registro ? JSON.stringify(registro) : ''}`;
 };
 const filhoDe = (...a) => mkdtempSync(join(tmpdir(), a.join('') || 'cap11-'));
-const bom = { slots_max: 3, rss_pico_mb: 1000, tmpdir_mb: 100, cpu_total: 6, hostname: 'maq-a' };
+const bom = { slots_max: 3, rss_pico_mb: 1000, tmpdir_mb: 100, cpu_total: 6, load_medido: 12, hostname: 'maq-a' };
 const medidasOk = { cores: 16, load1: 0, memDisponivelMB: 20000, discoLivreGB: 200, pesados: 0, plataforma: 'test' };
 const comArquivo = (conteudo) => {
   const dir = repo();
@@ -301,7 +301,12 @@ const comArquivo = (conteudo) => {
 };
 
 describe('T11 escada — para na 1ª falha ou na 1ª queda de vazão', () => {
-  const ponto = (n, extra = {}) => ({ ok: true, vazao: n * 2, rss_pico_mb: 100 + n, tmpdir_mb: 10 + n, cpu_total: n + 0.5, ...extra });
+  test('load_medido 0 no degrau: medição inválida, para antes dele (nunca vira medida)', async () => {
+    const r = await escada(async (n) => ({ ok: true, vazao: n * 2, rss_pico_mb: 100, tmpdir_mb: 10, cpu_total: 3, load_medido: n === 2 ? 0 : 5 }), { maxN: 4 });
+    assert.equal(r.slots_max, 1);
+    assert.match(r.parou, /load_medido/);
+  });
+  const ponto = (n, extra = {}) => ({ ok: true, vazao: n * 2, rss_pico_mb: 100 + n, tmpdir_mb: 10 + n, cpu_total: n + 0.5, load_medido: n + 4, ...extra });
   test('calibra-para-na-falha: falha em N=3 → slots_max 2, medidas do N=2, não sobe', async () => {
     const vistos = [];
     const r = await escada(async (n) => { vistos.push(n); return n === 3 ? { ok: false, causa: 'suíte falhou' } : ponto(n); }, { maxN: 8 });
@@ -310,6 +315,7 @@ describe('T11 escada — para na 1ª falha ou na 1ª queda de vazão', () => {
     assert.equal(r.rss_pico_mb, 102);
     assert.equal(r.tmpdir_mb, 12);
     assert.equal(r.cpu_total, 2.5);
+    assert.equal(r.load_medido, 6, 'carga do degrau que passou, não a do que falhou');
     assert.equal(r.erro, null);
     assert.match(r.parou, /^falha — N=3: suíte falhou/);
   });
@@ -388,6 +394,7 @@ describe('T11 runtime — lerCapacidade e slotsMedidos', () => {
     ['rss_pico_mb', 0], ['rss_pico_mb', undefined], ['rss_pico_mb', -1], ['rss_pico_mb', 'x'],
     ['tmpdir_mb', 0], ['tmpdir_mb', undefined], ['tmpdir_mb', null],
     ['cpu_total', 0], ['cpu_total', undefined], ['cpu_total', null], ['cpu_total', -1], ['cpu_total', 1e999],
+    ['load_medido', 0], ['load_medido', undefined], ['load_medido', null], ['load_medido', -1], ['load_medido', 1e999],
     ['hostname', ''], ['hostname', undefined],
   ]) {
     test(`campo inválido (${campo} = ${String(valor)}): 1 slot, aviso cita o campo — zero/ausente não é infinito`, () => {
@@ -437,13 +444,31 @@ describe('T11 runtime — lerCapacidade e slotsMedidos', () => {
     assert.equal(r.slots, 2);
     assert.match(r.motivo, /disco/);
   });
-  test('carga-reduz: CPU livre (cores − load1) abaixo de cpu_total reduz proporcionalmente; acima não toca', () => {
-    const l = lerCapacidade(comArquivo({ ...bom, slots_max: 4, cpu_total: 8 }), 'maq-a');
-    assert.equal(slotsMedidos(l, { ...medidasOk, cores: 16, load1: 8 }).slots, 4, 'livre 8 = cpu_total: sem redução');
-    const r = slotsMedidos(l, { ...medidasOk, cores: 16, load1: 12 });
-    assert.equal(r.slots, 2, 'livre 4 de 8 → metade');
-    assert.match(r.motivo, /cpu|carga|load/i);
-    assert.equal(slotsMedidos(l, { ...medidasOk, cores: 16, load1: 40 }).slots, 1);
+  test('carga-reduz: só acima da carga medida, proporcional; igual não toca; núcleos não entram', () => {
+    const l = lerCapacidade(comArquivo({ ...bom, slots_max: 4, cpu_total: 15.79, load_medido: 12 }), 'maq-a');
+    assert.equal(slotsMedidos(l, { ...medidasOk, load1: 0 }).slots, 4);
+    assert.equal(slotsMedidos(l, { ...medidasOk, load1: 12 }).slots, 4, 'igual à medida: sem redução');
+    assert.equal(slotsMedidos(l, { ...medidasOk, load1: 12.01 }).slots, 3, 'acima: despacho novo espera');
+    assert.equal(slotsMedidos(l, { ...medidasOk, load1: 24 }).slots, 2, 'dobro → metade');
+    const r = slotsMedidos(l, { ...medidasOk, load1: 96 });
+    assert.equal(r.slots, 1);
+    assert.match(r.motivo, /carga/);
+    assert.equal(slotsMedidos(l, { ...medidasOk, cores: 2, load1: 12 }).slots, 4, 'menos núcleos não muda: a grandeza é load1 × load1');
+  });
+  test('carga da medição sem slot rodando não reduz (cpu_total alto não entra na conta, achado 1)', () => {
+    const l = lerCapacidade(comArquivo({ ...bom, slots_max: 2, cpu_total: 14.14, load_medido: 9 }), 'maq-a');
+    assert.equal(slotsMedidos(l, { ...medidasOk, load1: 6 }).slots, 2);
+  });
+  test('slots próprios já estão na medida: load1 igual ao do degrau com slots_max vivos mantém slots_max', () => {
+    const l = lerCapacidade(comArquivo({ ...bom, slots_max: 3, load_medido: 25 }), 'maq-a');
+    assert.equal(slotsMedidos(l, { ...medidasOk, load1: 25 }).slots, 3);
+  });
+  test('arquivo sem load_medido (calibração antiga): 1 slot e aviso para recalibrar', () => {
+    const { load_medido: _, ...antigo } = bom;
+    const l = lerCapacidade(comArquivo(antigo), 'maq-a');
+    const r = slotsMedidos(l, medidasOk);
+    assert.equal(r.slots, 1);
+    assert.match(r.aviso, /load_medido.*--calibrar/);
   });
   test('nunca-menos-que-1: tudo estourado → 1', () => {
     const l = lerCapacidade(comArquivo(bom), 'maq-a');
@@ -465,14 +490,13 @@ describe('T11 runtime — lerCapacidade e slotsMedidos', () => {
     }
   }
   test('sem-numero-fixo: a saída acompanha os números do arquivo e da máquina (modelo independente)', () => {
-    for (const [slots_max, rss, tmp, cpu, cores, load, mem, disco] of [
-      [9, 700, 40, 3, 8, 1, 9000, 60], [5, 2500, 300, 12, 32, 10, 30000, 20], [7, 300, 10, 2, 4, 0, 5000, 500], [3, 123, 77, 5, 10, 7, 4000, 9],
+    for (const [slots_max, rss, tmp, cpu, cores, load, mem, disco, lm] of [
+      [9, 700, 40, 3, 8, 1, 9000, 60, 20], [5, 2500, 300, 12, 32, 10, 30000, 20, 4], [7, 300, 10, 2, 4, 0, 5000, 500, 3], [3, 123, 77, 5, 10, 7, 4000, 9, 5],
     ]) {
-      const l = lerCapacidade(comArquivo({ hostname: 'maq-a', slots_max, rss_pico_mb: rss, tmpdir_mb: tmp, cpu_total: cpu }), 'maq-a');
+      const l = lerCapacidade(comArquivo({ hostname: 'maq-a', slots_max, rss_pico_mb: rss, tmpdir_mb: tmp, cpu_total: cpu, load_medido: lm }), 'maq-a');
       const m = { cores, load1: load, memDisponivelMB: mem, discoLivreGB: disco, pesados: 0 };
-      const livre = cores - load;
-      const porCpu = livre < cpu ? Math.floor((slots_max * livre) / cpu) : slots_max;
-      const esperado = Math.max(1, Math.min(slots_max, Math.floor((mem - DEFAULTS.limites.memDisponivelMinMB) / rss), Math.floor((disco * 1024 - DEFAULTS.limites.discoLivreMinGB * 1024) / tmp), porCpu));
+      const porCarga = load > lm ? Math.floor((slots_max * lm) / load) : slots_max;
+      const esperado = Math.max(1, Math.min(slots_max, Math.floor((mem - DEFAULTS.limites.memDisponivelMinMB) / rss), Math.floor((disco * 1024 - DEFAULTS.limites.discoLivreMinGB * 1024) / tmp), porCarga));
       assert.equal(slotsMedidos(l, m).slots, esperado, JSON.stringify({ slots_max, rss, tmp, cpu, cores, load, mem, disco }));
     }
     const fonte = readFileSync(SCRIPT, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
@@ -515,8 +539,16 @@ describe('T11 rodarSlots e calibrarCapacidade — suíte fake, processos reais',
     assert.ok(r.rss_pico_mb > 0, `rss ${r.rss_pico_mb}`);
     assert.ok(r.tmpdir_mb > 0, `tmpdir ${r.tmpdir_mb}`);
     assert.ok(r.cpu_total > 0, `cpu ${r.cpu_total}`);
+    assert.ok(r.load_medido >= 0);
     assert.ok(r.vazao > 0);
     assert.equal(r.vazao, (3 * 60_000) / r.mediana_ms, 'vazão = N slots por mediana da parede do slot, em slots/min');
+  });
+  test('load_medido é a mediana das amostras do degrau: pico isolado não vira medida', async () => {
+    const base = filhoDe('base-');
+    const aux = filhoDe('aux-');
+    let i = 0;
+    const r = await rodarSlots(1, { suite: fake(aux, { k: 9, ms: 700 }), cwd: aux, base, lerLoad: () => (i++ === 0 ? 100 : 5) });
+    assert.equal(r.load_medido, 5);
   });
   test('slot que falha é contado; TMPDIR ainda removido', async () => {
     const base = filhoDe('base-');
@@ -529,19 +561,20 @@ describe('T11 rodarSlots e calibrarCapacidade — suíte fake, processos reais',
     const root = repo();
     const aux = filhoDe('aux-');
     const base = filhoDe('base-');
-    const r = await calibrarCapacidade(root, { suite: fake(aux, { k: 2, ms: 600, modo: 'falha' }), cwd: aux, hostname: 'maq-z', maxN: 5, base });
+    const r = await calibrarCapacidade(root, { suite: fake(aux, { k: 2, ms: 600, modo: 'falha' }), cwd: aux, hostname: 'maq-z', maxN: 5, base, lerLoad: () => 7 });
     assert.equal(r.rc, 0, r.causa);
     const g = JSON.parse(readFileSync(join(root, '.harness', 'capacidade.json'), 'utf8'));
     assert.equal(g.slots_max, 2);
     assert.equal(g.hostname, 'maq-z');
-    for (const k of ['rss_pico_mb', 'tmpdir_mb', 'cpu_total']) assert.ok(g[k] > 0, k);
+    assert.equal(g.load_medido, 7, 'lerLoad injetado por parâmetro chega ao arquivo');
+    for (const k of ['rss_pico_mb', 'tmpdir_mb', 'cpu_total', 'load_medido']) assert.ok(g[k] > 0, k);
     assert.deepEqual(readdirSync(base), []);
     assert.deepEqual(readdirSync(join(root, '.harness')), ['capacidade.json']);
   });
   test('e2e calibra-para-na-queda: sem falha, mas N=3 demora 3× → slots_max 2', async () => {
     const root = repo();
     const aux = filhoDe('aux-');
-    const r = await calibrarCapacidade(root, { suite: fake(aux, { k: 2, ms: 600, modo: 'lento' }), cwd: aux, hostname: 'maq-z', maxN: 5, base: filhoDe('base-') });
+    const r = await calibrarCapacidade(root, { suite: fake(aux, { k: 2, ms: 600, modo: 'lento' }), cwd: aux, hostname: 'maq-z', maxN: 5, base: filhoDe('base-'), lerLoad: () => 7 });
     assert.equal(r.rc, 0, r.causa);
     assert.equal(JSON.parse(readFileSync(join(root, '.harness', 'capacidade.json'), 'utf8')).slots_max, 2);
   });
@@ -556,6 +589,14 @@ describe('T11 rodarSlots e calibrarCapacidade — suíte fake, processos reais',
     assert.equal(readFileSync(join(root, '.harness', 'capacidade.json'), 'utf8'), antes);
     assert.deepEqual(readdirSync(join(root, '.harness')), ['capacidade.json']);
     assert.deepEqual(readdirSync(base), []);
+  });
+  test('loadavg sempre 0 (plataforma sem load): rc 1, nada gravado, causa cita load_medido', async () => {
+    const root = repo();
+    const aux = filhoDe('aux-');
+    const r = await calibrarCapacidade(root, { suite: fake(aux, { k: 9, ms: 600 }), cwd: aux, hostname: 'maq-a', maxN: 3, base: filhoDe('base-'), lerLoad: () => 0 });
+    assert.equal(r.rc, 1);
+    assert.match(r.causa, /load_medido/);
+    assert.equal(existsSync(join(root, '.harness', 'capacidade.json')), false);
   });
   test('suíte inexistente (ferramenta falhando): rc 1, nada gravado', async () => {
     const root = repo();
@@ -579,7 +620,7 @@ describe('T11 rodarSlots e calibrarCapacidade — suíte fake, processos reais',
     assert.deepEqual(readdirSync(join(root, '.harness')), ['capacidade.json']);
     assert.deepEqual(readdirSync(base), [], 'TMPDIR dos slots removido');
   });
-  test('CLI e2e: --calibrar sai do aviso; --medido lê o arquivo calibrado', async () => {
+  test('CLI e2e: calibrar sai do aviso; --medido lê o arquivo calibrado (load injetado por parâmetro, não pela máquina)', async () => {
     const root = repo();
     const aux = filhoDe('aux-');
     const base = filhoDe('base-');
@@ -588,8 +629,8 @@ describe('T11 rodarSlots e calibrarCapacidade — suíte fake, processos reais',
     assert.equal(antes.status, 0);
     assert.match(antes.stdout, /^slots: 1/);
     assert.match(antes.stderr, /--calibrar/);
-    const cal = cli(['--calibrar', '--root', root, '--suite', fake(aux, { k: 2, ms: 600 }), '--cwd', aux], root, env2);
-    assert.equal(cal.status, 0, cal.stderr);
+    const cal = await calibrarCapacidade(root, { suite: fake(aux, { k: 2, ms: 600 }), cwd: aux, hostname: 'maq-cli', maxN: 5, base, lerLoad: () => 7 });
+    assert.equal(cal.rc, 0, cal.causa);
     const depois = cli(['--medido', '--json', '--root', root], root, env2);
     assert.equal(depois.status, 0, depois.stderr);
     assert.equal(depois.stderr, '');
