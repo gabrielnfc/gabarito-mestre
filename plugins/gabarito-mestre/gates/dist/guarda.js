@@ -12,9 +12,9 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync } from 'node:fs';
+import { accessSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { precisaContexto } from './classificar-alvo.js';
 import { decidir } from './decidir.js';
@@ -284,6 +284,75 @@ function pedirPorExcecao(e         )       {
   registrarExcecao(entrada, erro);
 }
 
+
+// ---------------------------------------------------------------------------------------------------------------
+// kill switch (GM-10, REQ-POU-2)
+
+const MSG_PAUSA = 'pausado: /gabarito retomar';
+
+/** Raiz do checkout principal quando `raiz` é worktree (`.git` é arquivo): `commondir` por fs, sem spawn. */
+function raizPrincipal(raiz        )                {
+  try {
+    const ponteiro = join(raiz, '.git');
+    if (!lstatSync(ponteiro).isFile()) return null;
+    const m = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(ponteiro, 'utf8'));
+    if (m === null) return null;
+    const gitdir = isAbsolute(m[1]) ? m[1] : resolve(raiz, m[1]);
+    const comum = resolve(gitdir, readFileSync(join(gitdir, 'commondir'), 'utf8').trim());
+    return basename(comum) === '.git' ? dirname(comum) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Existência vale (arquivo, diretório, symlink quebrado). Só `ENOENT` é "ausente": outro erro de stat conta como pausa. */
+function existePausar(raiz        )          {
+  try {
+    lstatSync(join(raiz, '.harness', 'PAUSAR'));
+    return true;
+  } catch (e) {
+    return (e                         ).code !== 'ENOENT';
+  }
+}
+
+/** Raízes onde a pausa vale: a da sessão, a do cwd e o checkout principal de cada uma (worktree de task obedece o principal). */
+function pausado(raizes                      )          {
+  const vistas = new Set        ();
+  for (const r of raizes) {
+    if (r === null) continue;
+    for (const c of [r, raizPrincipal(r)]) {
+      if (c === null || vistas.has(c)) continue;
+      vistas.add(c);
+      if (existePausar(c)) return true;
+    }
+  }
+  return false;
+}
+
+/** Sob pausa: `Agent`/`Task` a todos; qualquer ferramenta a subagent. O orquestrador segue a guarda normal nas outras. */
+const negaPorPausa = (entrada             )          => entrada.tool_name === 'Agent' || entrada.tool_name === 'Task' || ehSubagent(entrada);
+
+/** `loop.pausa {negado}`: só se o diário estiver são; qualquer falha é silenciosa (a decisão já saiu). */
+function registrarPausa(entrada             , raiz               )       {
+  try {
+    const sessao = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;
+    if (raiz === null || sessao === null) return;
+    const guarda = lerGuarda(raiz);
+    if (!guarda.onboarding) return;
+    const dir = dirEntrega(raiz, idDaEntrega(linhaDe(git(raiz, ['symbolic-ref', '--short', 'HEAD'])), guarda.idPadrao));
+    if (!diarioGravavel(dir)) return;
+    const autor = linhaDe(git(raiz, ['config', 'user.email'])) ?? 'desconhecido';
+    append(dir, sessao, {
+      ts: new Date().toISOString(),
+      autor,
+      sessao,
+      agente: ehSubagent(entrada) ? `subagent:${entrada.agent_id}` : 'orquestrador',
+      tipo: 'loop.pausa',
+      dados: { negado: entrada.tool_name.slice(0, 128) },
+    });
+  } catch { /* diário doente: a decisão já saiu */ }
+}
+
 function principal()       {
   let bruto = '';
   try {
@@ -310,6 +379,13 @@ function principal()       {
   // Q14: a config e o diário vêm da raiz da sessão (CLAUDE_PROJECT_DIR), nunca de um cwd que o agente mudou.
   const raizSessao = raizPorFs(process.env.CLAUDE_PROJECT_DIR) ?? raizCwd;
   if (raizSessao === null) process.stderr.write('gabarito-mestre: cwd fora de um repositório git; só os anéis de segredo e integridade valem\n');
+
+  // Kill switch: antes de classificar; só `lstat`, sem config, remoto nem diário (o deny não depende deles).
+  if (negaPorPausa(entrada) && pausado([raizSessao, raizCwd])) {
+    emitir(Buffer.from(`${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: MSG_PAUSA } })}\n`));
+    registrarPausa(entrada, raizSessao);
+    return;
+  }
 
   const guarda = raizSessao === null ? null : lerGuarda(raizSessao);
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..', '..');
