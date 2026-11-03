@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
+import { estadoDe, ordenar } from './loop.ts';
+import type { EstadoTask } from './loop.ts';
 import type { Evento } from './tipos.ts';
 
 /**
@@ -218,37 +220,63 @@ function corta(s: string, n: number): string {
 
 const ehObjeto = (x: unknown): x is Record<string, unknown> => x !== null && typeof x === 'object' && !Array.isArray(x);
 
-/** Duração por task aprovada: `task.iniciada` do implementador até `review.veredito` APROVADO; rodadas somam. */
-function duracoes(ordemCrescente: Evento[]): number[] {
-  const aberta = new Map<string, number>();
-  const acumulado = new Map<string, number>();
-  const feitas: number[] = [];
-  const ms = (ts: unknown): number => (typeof ts === 'string' ? Date.parse(ts) : NaN);
-  for (const e of ordemCrescente) {
-    if (!ehObjeto(e.dados) || typeof e.dados.task !== 'string') continue;
-    const task = e.dados.task;
-    if (e.tipo === 'task.reaberta') {
-      aberta.delete(task);
-      acumulado.delete(task);
-    } else if (e.tipo === 'task.iniciada') {
-      // correção só reabre contagem de task já reprovada; revisor nunca abre
-      const papel = e.dados.papel;
-      if (papel !== 'implementador' && !(papel === 'correcao' && acumulado.has(task))) continue;
-      const t = ms(e.ts);
-      if (Number.isNaN(t)) aberta.delete(task);
-      else aberta.set(task, t);
-    } else if (e.tipo === 'review.veredito') {
-      const ini = aberta.get(task);
-      if (ini === undefined) continue;
-      aberta.delete(task);
-      const fim = ms(e.ts);
-      if (Number.isNaN(fim) || fim < ini) continue;
-      acumulado.set(task, (acumulado.get(task) ?? 0) + (fim - ini));
-      if (e.dados.veredito === 'APROVADO') {
-        feitas.push((acumulado.get(task) as number) / 1000);
-        acumulado.delete(task);
+/** Task com trabalho em curso: o cronômetro anda enquanto o estado da T2 está aqui. */
+const EM_TRABALHO: ReadonlySet<EstadoTask> = new Set<EstadoTask>(['implementando', 'concluida', 'em_revisao', 'corrigindo']);
+const TIPOS_DE_TASK: ReadonlySet<string> = new Set(['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta']);
+
+/**
+ * Duração de UMA task aprovada (REQ-OBS-1), seguindo a transição da T2 (`estadoDe`) e nunca lendo
+ * `tipo`/`papel`/`origem` por conta própria. Soma dos intervalos em trabalho que terminaram em veredito;
+ * tentativa abandonada por retomada não entra; voltar a `pendente` recomeça do zero. `null`: task não
+ * aprovada, ou sequência que a T2 rejeita (a projeção não inventa número).
+ */
+function duracaoDaTask(fila: Evento[]): number | null {
+  // `ordenar` da T2 só aceita cada sessão em ordem de `seq`; a ordem de entrada daqui não é garantida.
+  const porSeq = [...fila].sort((a, b) => cmp(String(a.sessao), String(b.sessao)) || Number(a.seq) - Number(b.seq));
+  const ord = ordenar(porSeq);
+  if (!ord.ok) return null;
+  let aberta: number | undefined;
+  let acumulado: number | undefined;
+  let feita: number | null = null;
+  let antes: EstadoTask = 'pendente';
+  for (let i = 0; i < ord.eventos.length; i++) {
+    const r = estadoDe(ord.eventos.slice(0, i + 1));
+    if ('invalido' in r) return null;
+    const e = ord.eventos[i];
+    const t = Date.parse(e.ts); // `ordenar` já barrou ts inválido
+    const depois = r.estado;
+    if (depois === 'pendente' && antes !== 'pendente') {
+      aberta = undefined;
+      acumulado = undefined;
+    } else if (!EM_TRABALHO.has(antes) && EM_TRABALHO.has(depois)) {
+      aberta = t;
+    } else if (EM_TRABALHO.has(antes) && !EM_TRABALHO.has(depois)) {
+      const ini = aberta;
+      aberta = undefined;
+      // saída por reabertura = tentativa abandonada, não soma; saída por veredito soma o intervalo (se for coerente)
+      if (e.tipo === 'review.veredito') {
+        if (ini !== undefined && t >= ini) acumulado = (acumulado ?? 0) + (t - ini);
+        if (depois === 'aprovada' && acumulado !== undefined) feita = acumulado / 1000;
       }
     }
+    antes = depois;
+  }
+  return feita;
+}
+
+/** Duração por task aprovada: agrupa por task e delega a cada uma o `duracaoDaTask`. */
+function duracoes(eventos: Evento[]): number[] {
+  const porTask = new Map<string, Evento[]>();
+  for (const e of eventos) {
+    if (!TIPOS_DE_TASK.has(e.tipo) || !ehObjeto(e.dados) || typeof e.dados.task !== 'string') continue;
+    const fila = porTask.get(e.dados.task) ?? [];
+    fila.push(e);
+    porTask.set(e.dados.task, fila);
+  }
+  const feitas: number[] = [];
+  for (const fila of porTask.values()) {
+    const d = duracaoDaTask(fila);
+    if (d !== null) feitas.push(d);
   }
   return feitas;
 }
@@ -266,7 +294,7 @@ export function projetar(eventos: Evento[]): { instantaneo: string; resumo: Reco
 
   // mais recentes primeiro, por (ts, sessao)
   const ordenados = [...validos].sort((a, b) => cmp(String(b.ts), String(a.ts)) || cmp(String(b.sessao), String(a.sessao)));
-  const medidas = duracoes([...ordenados].reverse());
+  const medidas = duracoes(validos);
   const eta = medidas.length >= 3 ? { medianaS: mediana(medidas), n: medidas.length } : null;
   const linhaEta = eta === null ? 'ETA: sem dados' : `ETA: ${eta.n} tasks, mediana ${Math.round(eta.medianaS * 10) / 10} s`;
   const cabecalho = `Diário: ${validos.length} evento(s)`;

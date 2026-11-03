@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { append, ler, projetar, recusaCanario, dirEntrega } from '../src/diario.ts';
+import { estadoDe } from '../src/loop.ts';
 import type { Evento, TipoEvento } from '../src/tipos.ts';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -512,8 +513,20 @@ describe('reparo, tolerância e projeção', () => {
     seq: n, ts: typeof s === 'number' ? iso(s) : s, autor: 'a', sessao: 's1', agente: 'o', tipo, dados, hash_anterior: null,
   });
   const ini = (n: number, s: number | string, task: string, papel = 'implementador'): Evento => evT(n, s, 'task.iniciada', { task, papel });
-  const ver = (n: number, s: number | string, task: string, veredito = 'APROVADO'): Evento => evT(n, s, 'review.veredito', { task, veredito, blocker: 0, major: 0, rodada: 1 });
-  const aprovada = (base: number, task: string, dur: number): Evento[] => [ini(base, base * 1000, task), ver(base + 1, base * 1000 + dur, task)];
+  const ver = (n: number, s: number | string, task: string, veredito = 'APROVADO', rodada = 1, major = 0): Evento =>
+    evT(n, s, 'review.veredito', { task, veredito, blocker: 0, major, rodada });
+  const conc = (n: number, s: number | string, task: string): Evento => evT(n, s, 'task.concluida', { task });
+  const reab = (n: number, s: number | string, task: string, origem: 'dono' | 'retomada'): Evento => evT(n, s, 'task.reaberta', { task, origem });
+  /** implementador, concluida, revisor, veredito: o ciclo mínimo que a T2 aceita; só `tsIni` e `tsVer` importam à ETA. */
+  const ciclo = (b: number, task: string, tsIni: number | string, tsVer: number | string, veredito = 'APROVADO'): Evento[] => [
+    ini(b * 10, tsIni, task), conc(b * 10 + 1, tsIni, task), ini(b * 10 + 2, tsIni, task, 'revisor'), ver(b * 10 + 3, tsVer, task, veredito),
+  ];
+  const aprovada = (base: number, task: string, dur: number): Evento[] => ciclo(base, task, base * 1000, base * 1000 + dur);
+  /** A T2 tem de aceitar a sequência e parar no estado esperado: o teste não inventa sequência ilegal. */
+  const legalNaT2 = (es: Evento[], task: string, esperado: string): void => {
+    const r = estadoDe(es.filter((e) => (e.dados as { task?: string }).task === task));
+    assert.deepEqual('invalido' in r ? r : r.estado, esperado);
+  };
 
   test('eta-sem-dados-com-2: duas medições ⇒ eta null e linha "ETA: sem dados"', () => {
     const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 200)];
@@ -537,13 +550,16 @@ describe('reparo, tolerância e projeção', () => {
   });
 
   test('eta-ignora-reprovada: veredito REPROVADO sozinho não é medição', () => {
-    const base = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 100), ini(5, 5000, 'T3'), ver(6, 5400, 'T3', 'REPROVADO')];
+    const base = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 100), ...ciclo(5, 'T3', 5000, 5400, 'REPROVADO')];
+    legalNaT2(base, 'T3', 'reprovada');
     assert.equal(projetar(base).eta, null);
   });
 
   test('eta-rodadas-somam: REPROVADO + nova rodada APROVADA entram como UMA medição de 150 + 50 s', () => {
     const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 300),
-      ini(5, 5000, 'T3'), ver(6, 5150, 'T3', 'REPROVADO'), ini(7, 6000, 'T3'), ver(8, 6050, 'T3', 'APROVADO')];
+      ...ciclo(5, 'T3', 5000, 5150, 'REPROVADO'),
+      ini(60, 6000, 'T3', 'correcao'), conc(61, 6000, 'T3'), ini(62, 6000, 'T3', 'revisor'), ver(63, 6050, 'T3', 'APROVADO', 2)];
+    legalNaT2(es, 'T3', 'aprovada');
     assert.deepEqual(projetar(es).eta, { medianaS: 200, n: 3 });
   });
 
@@ -551,7 +567,7 @@ describe('reparo, tolerância e projeção', () => {
     ini(b, b * 1000, task), evT(b + 1, b * 1000 + 50, 'task.concluida', { task }), ini(b + 2, b * 1000 + 60, task, 'revisor'),
     ver(b + 3, b * 1000 + d.r1, task, 'REPROVADO'), ini(b + 4, b * 1000 + d.r1 + 10, task, 'correcao'),
     evT(b + 5, b * 1000 + d.r1 + 10 + d.corr, 'task.concluida', { task }), ini(b + 6, b * 1000 + d.r1 + d.corr + 20, task, 'revisor'),
-    ver(b + 7, b * 1000 + d.r1 + d.corr + 20 + d.r2, task, 'APROVADO'),
+    ver(b + 7, b * 1000 + d.r1 + d.corr + 20 + d.r2, task, 'APROVADO', 2),
   ];
 
   test('eta-rodada-2-conta: sequência real da T2 (impl, revisor, REPROVADO, correcao, revisor, APROVADO) entra na ETA', () => {
@@ -567,37 +583,91 @@ describe('reparo, tolerância e projeção', () => {
     assert.deepEqual(projetar([...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 900), ...seqT2(100, 'T3', { r1: 400, corr: 100, r2: 60 })]).eta, { medianaS: 570, n: 3 });
   });
 
-  test('eta-dono-recomeca: task.reaberta de origem dono zera o acumulado; correcao depois dela não abre contagem', () => {
-    const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 300),
-      ini(5, 5000, 'T3'), ver(6, 5800, 'T3', 'REPROVADO'),
-      evT(7, 6000, 'task.reaberta', { task: 'T3', origem: 'dono' }),
-      ini(8, 7000, 'T3', 'correcao'), ver(9, 7100, 'T3')];
-    assert.equal(projetar(es).eta, null, 'correcao sem rodada anterior não abre');
-    const com = [...es.slice(0, 7), ini(8, 7000, 'T3'), ver(9, 7200, 'T3')];
-    assert.deepEqual(projetar(com).eta, { medianaS: 200, n: 3 });
-  });
-
   test('eta-so-implementador: iniciada de revisor ou correção não abre a contagem', () => {
     const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 100),
       ini(5, 5000, 'T3', 'revisor'), ver(6, 5500, 'T3')];
     assert.equal(projetar(es).eta, null);
   });
 
-  test('eta-reaberta-recomeca: task.reaberta zera a contagem acumulada (800 s da rodada velha não entram)', () => {
-    const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 300),
-      ini(5, 5000, 'T3'), ver(6, 5800, 'T3', 'REPROVADO'),
-      evT(7, 6000, 'task.reaberta', { task: 'T3', origem: 'dono' }),
-      ini(8, 7000, 'T3'), ver(9, 7200, 'T3')];
-    assert.deepEqual(projetar(es).eta, { medianaS: 200, n: 3 });
-  });
-
   test('eta-descarta-ts-invalido-e-duracao-negativa', () => {
     const base = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 100)];
-    assert.equal(projetar([...base, ini(5, '0-ontem', 'T3'), ver(6, 5100, 'T3')]).eta, null, 'ts inválido no início');
-    assert.equal(projetar([...base, ini(5, 5000, 'T3'), ver(6, 'nao-e-data', 'T3')]).eta, null, 'ts inválido no fim');
+    assert.equal(projetar([...base, ...ciclo(5, 'T3', '0-ontem', 5100)]).eta, null, 'ts inválido no início');
+    assert.equal(projetar([...base, ...ciclo(5, 'T3', 5000, 'nao-e-data')]).eta, null, 'ts inválido no fim');
     // ordem textual diz "depois", o instante real diz "antes" (fusos diferentes): duração negativa
-    const antes = [...base, ini(5, '2026-11-03T20:00:00.000Z', 'T3'), ver(6, '2026-11-03T21:00:00.000+05:00', 'T3')];
+    const antes = [...base, ...ciclo(5, 'T3', '2026-11-03T20:00:00.000Z', '2026-11-03T21:00:00.000+05:00')];
     assert.equal(projetar(antes).eta, null, 'duração negativa');
+  });
+
+  // Rodada 3 (Sombra Q-ETA): a ETA segue a transição da T2; cada sequência abaixo é conferida na T2 antes de medir.
+  const base2 = (a: number, b: number): Evento[] => [...aprovada(1, 'T1', a), ...aprovada(3, 'T2', b)];
+
+  test('eta-s1-revisao-retomada-conta: em_revisao + retomada volta a concluida e a task conta desde o 1º início', () => {
+    const t3 = [ini(50, 10000, 'T3'), conc(51, 10100, 'T3'), ini(52, 10200, 'T3', 'revisor'), reab(53, 10300, 'T3', 'retomada'),
+      ini(54, 10400, 'T3', 'revisor'), ver(55, 11000, 'T3')];
+    legalNaT2(t3, 'T3', 'aprovada');
+    assert.deepEqual(projetar([...base2(500, 2000), ...t3]).eta, { medianaS: 1000, n: 3 });
+  });
+
+  test('eta-s2-correcao-retomada-soma-r1: correção abandonada é descartada e a rodada 1 continua somada', () => {
+    const t3 = [...ciclo(5, 'T3', 10000, 10400, 'REPROVADO'),
+      ini(60, 10410, 'T3', 'correcao'), reab(61, 10700, 'T3', 'retomada'),
+      ini(62, 12000, 'T3', 'correcao'), conc(63, 12010, 'T3'), ini(64, 12020, 'T3', 'revisor'), ver(65, 12100, 'T3', 'APROVADO', 2)];
+    legalNaT2(t3, 'T3', 'aprovada');
+    // 400 (r1) + 100 (correção refeita) = 500; os 290 s abandonados não entram
+    assert.deepEqual(projetar([...base2(100, 900), ...t3]).eta, { medianaS: 500, n: 3 });
+  });
+
+  test('eta-s3-s4-s6-sem-transicao-contam: reabertura que não muda o estado na T2 não tira a task da amostra', () => {
+    const b = base2(300, 900);
+    const s3 = [ini(50, 10000, 'T3'), conc(51, 10010, 'T3'), reab(52, 10100, 'T3', 'retomada'), ini(53, 10200, 'T3', 'revisor'), ver(54, 10600, 'T3')];
+    legalNaT2(s3, 'T3', 'aprovada');
+    assert.deepEqual(projetar([...b, ...s3]).eta, { medianaS: 600, n: 3 }, 'S3 concluida + retomada');
+    for (const [nome, origem] of [['S4 reprovada + retomada', 'retomada'], ['S6 reprovada + dono', 'dono']] as const) {
+      const t3 = [...ciclo(5, 'T3', 10000, 10400, 'REPROVADO'), reab(60, 10450, 'T3', origem),
+        ini(61, 10500, 'T3', 'correcao'), conc(62, 10510, 'T3'), ini(63, 10520, 'T3', 'revisor'), ver(64, 10700, 'T3', 'APROVADO', 2)];
+      legalNaT2(t3, 'T3', 'aprovada');
+      assert.deepEqual(projetar([...b, ...t3]).eta, { medianaS: 600, n: 3 }, nome);
+    }
+  });
+
+  test('eta-s5-tentativa-abandonada-descartada: implementando + retomada recomeça do zero; só a tentativa que aprovou conta', () => {
+    const t3 = [ini(50, 10000, 'T3'), reab(51, 10300, 'T3', 'retomada'), ...ciclo(6, 'T3', 11000, 11100)];
+    legalNaT2(t3, 'T3', 'aprovada');
+    assert.deepEqual(projetar([...base2(50, 1000), ...t3]).eta, { medianaS: 100, n: 3 });
+  });
+
+  test('eta-s7-dono-zera: no_teto + dono volta a pendente e recomeça a soma, rodadas velhas não entram', () => {
+    const t3 = [...ciclo(5, 'T3', 10000, 10400, 'REPROVADO'),
+      ini(60, 10410, 'T3', 'correcao'), conc(61, 10420, 'T3'), ini(62, 10430, 'T3', 'revisor'), ver(63, 10900, 'T3', 'REPROVADO', 2, 1),
+      reab(64, 12000, 'T3', 'dono'),
+      ini(65, 13000, 'T3'), conc(66, 13010, 'T3'), ini(67, 13020, 'T3', 'revisor'), ver(68, 13100, 'T3', 'APROVADO', 1)];
+    legalNaT2(t3, 'T3', 'aprovada');
+    assert.deepEqual(projetar([...base2(50, 1000), ...t3]).eta, { medianaS: 100, n: 3 });
+  });
+
+  test('eta-ts-fora-de-ordem-nao-some: veredito com ts anterior ao início perde só o intervalo, não a task', () => {
+    const t3 = [...ciclo(5, 'T3', '2026-11-03T20:00:00.000Z', '2026-11-03T19:00:00.000Z', 'REPROVADO'),
+      ini(60, 30000, 'T3', 'correcao'), conc(61, 30010, 'T3'), ini(62, 30020, 'T3', 'revisor'), ver(63, 30300, 'T3', 'APROVADO', 2)];
+    legalNaT2(t3, 'T3', 'aprovada');
+    let p!: ReturnType<typeof projetar>;
+    assert.doesNotThrow(() => { p = projetar([...base2(100, 900), ...t3]); });
+    assert.deepEqual(p.eta, { medianaS: 300, n: 3 });
+  });
+
+  test('eta-sequencia-invalida-fora: sequência que a T2 rejeita deixa a task fora da amostra, sem número inventado', () => {
+    const t3 = [ini(50, 10000, 'T3'), ver(51, 10500, 'T3')]; // veredito sem revisão: a T2 rejeita
+    assert.ok('invalido' in estadoDe(t3), 'a T2 tem de rejeitar esta sequência');
+    assert.equal(projetar([...base2(100, 200), ...t3]).eta, null);
+    // aprovada e depois um evento ilegal: a T2 rejeita a task inteira, a medição já feita não sobrevive
+    const depois = [...aprovada(5, 'T3', 100), ini(60, 20000, 'T3', 'revisor')];
+    assert.ok('invalido' in estadoDe(depois), 'a T2 tem de rejeitar esta sequência');
+    assert.equal(projetar([...base2(100, 200), ...depois]).eta, null);
+  });
+
+  test('eta-ordem-de-entrada-embaralhada: a ETA ordena por seq como a T2, não pela ordem em que os eventos chegam', () => {
+    const t3 = [ini(50, 10000, 'T3'), conc(51, 10010, 'T3'), ini(52, 10020, 'T3', 'revisor'), ver(53, 10700, 'T3')];
+    legalNaT2(t3, 'T3', 'aprovada');
+    assert.deepEqual(projetar([...base2(100, 900), ...[...t3].reverse()]).eta, { medianaS: 700, n: 3 });
   });
 
   test('eta-dados-malformado-nao-lanca: dados não objeto e eventos nulos são ignorados', () => {
