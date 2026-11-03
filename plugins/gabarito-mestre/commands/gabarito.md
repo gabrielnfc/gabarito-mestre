@@ -25,7 +25,16 @@ Consulte o CLI antes de agir. `ilegivel:true`, ou `alvo` nulo com `pausado:false
   e `alvo` definido: grave com caminho absoluto entre aspas simples, `mkdir -p '<alvo>/.harness' && printf 'pausado\n' > '<alvo>/.harness/PAUSAR'`.
 - `retomar`: `pausado:false`: "Não estava pausado", pare. `ilegivel:true`: "Continua pausado: ponteiro da worktree ilegível", sem remover, com a
   causa. Senão remova **cada** raiz de `existentes`: `rm '<raiz>/.harness/PAUSAR'` (se for diretório o `rm` falha: a reconsulta diz "continua pausado").
-  Retomar não recomeça nada sozinho: o próximo `proxima` do loop recomeça a task em curso.
+  Remover o arquivo **não recomeça nada**: task em voo continua em voo, e o `proxima` pula uma task `implementando`, `corrigindo`
+  ou `em_revisao` sem agente (devolve a seguinte, ou `parar nao_conseguiu`). Quem recomeça é a retomada, assim:
+  - **Com o mod**, `/gabarito retomar` faz tudo: com 0 agentes vivos reabre cada task em voo (`task.reaberta`, origem `retomada`),
+    grava `loop.pausa` e abre o turno do loop sem ninguém digitar. Com agentes vivos não reabre nada: eles terminam e a notificação
+    retoma. Diário, plano ou lista de agentes ilegíveis: não reabre e diz a causa.
+  - **Sem o mod**, é você quem reabre. Depois de remover o arquivo, com 0 agentes seus vivos, leia o diário
+    (`.harness/entregas/<id>/events.*.jsonl`) e chame, para cada task em voo,
+    `node ${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs reabrir <task>` (grava `task.reaberta`, origem `retomada`); só então
+    `loop.mjs proxima --vivos 0` e siga o ciclo da skill `gabarito-loop`. Com agente vivo, **não reabra**: dois implementadores na
+    mesma worktree não existem; espere o hand-back. Diário ilegível: não reabra e diga a causa.
 
 Depois, **reconsulte o CLI** e relate só o que ele mostra, sempre com o caminho absoluto: o `rc` do `printf` e do `rm` nunca decide o relato.
 "Pausado" só com `alvo` em `existentes`; "retomado" só com `pausado:false`. Comando negado (`ask` recusado): a reconsulta diz "não está pausado"

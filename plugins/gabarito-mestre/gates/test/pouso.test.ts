@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  analisarFronteira, codigoPonte, marcaDeProgresso, dadosMedicao, ehRevisor, INSTANTANEO_MAX, jaParou, lerX, negaDespacho, portaDoPouso, textoRetomada, tokensDe, vivosDe,
+  analisarFronteira, codigoPonte, marcaDeProgresso, dadosMedicao, ehRevisor, INSTANTANEO_MAX, jaParou, lerX, negaDespacho, portaDoPouso, tasksEmVoo, textoRetomada, tokensDe, vivosDe,
 } from '../src/pouso.ts';
 import type { Evento, TipoEvento } from '../src/tipos.ts';
 
@@ -66,6 +66,10 @@ test('nega-despacho-so-se-5-dispara: integrar e concluir passam; todo o resto ne
   }
   assert.equal(negaDespacho({ tipo: 'integrar', tasks: ['a'] }, false), false);
   assert.equal(negaDespacho({ tipo: 'concluir' }, false), false);
+});
+test('nega-despacho-diario-invalido-nunca-passa: sem veredito a fronteira é consumida, mas diário fora da tabela nega mesmo assim', () => {
+  assert.equal(negaDespacho({ tipo: 'parar', motivo: 'diario_invalido' }, true), true);
+  assert.equal(negaDespacho({ tipo: 'parar', motivo: 'diario_invalido' }, false), true);
 });
 
 // ---- já parou / tokens (sinais do núcleo) ----
@@ -161,7 +165,16 @@ test('task-integrada-nao-desfaz-nem-consome: integrada depois do veredito deixa 
 });
 test('fronteira-consumida-sem-veredito: pouso sem nenhum veredito também consome', () => {
   assert.equal(an(ini('a'), pou()).consumida, true);
-  assert.equal(an(ini('a')).consumida, false);
+});
+test('k-sem-veredito-nao-pousa: sem review.veredito a fronteira não existe (consumida), com ou sem task em curso, diário vazio incluso', () => {
+  assert.deepEqual(analisarFronteira([]), { consumida: true, motivo: null });
+  assert.deepEqual(an(ini('a')), { consumida: true, motivo: null });
+  assert.deepEqual(an(ini('a'), con('a')), { consumida: true, motivo: null });
+  assert.deepEqual(an(ini('a'), con('a'), ver('a')), { consumida: false, motivo: null });
+});
+test('k-sem-veredito-ilegivel-nao-vira-liberado: diário ilegível segue com motivo e consumida falso', () => {
+  assert.deepEqual(analisarFronteira(null), { consumida: false, motivo: 'diário ilegível' });
+  assert.equal(an(ini('a'), ['task.iniciada', { papel: 'implementador' }]).consumida, false);
 });
 test('fronteira-pouso-entre-sessoes: a ordem é a de ordenar, não a de chegada', () => {
   relogio = 0;
@@ -182,6 +195,40 @@ test('analise-ruim-tem-motivo: não-lista e fora de ordem dizem por quê', () =>
   assert.notEqual(analisarFronteira(null).motivo, null);
   assert.notEqual(analisarFronteira([null]).motivo, null);
   assert.equal(analisarFronteira([]).motivo, null);
+});
+
+// ---- tasks em voo: o que `/gabarito retomar` reabre (fato F) ----
+const PL = { entrega: 'GM-10', tasks: ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, deps: [], arquivos: [`${id}.ts`] })) };
+const emVoo = (...itens: [TipoEvento, Record<string, unknown>][]) => tasksEmVoo(PL, diario(...itens));
+const iniP = (task: string, papel: string): [TipoEvento, Record<string, unknown>] => ['task.iniciada', { task, papel }];
+test('tasks-em-voo-por-estado: implementando, corrigindo e em_revisao contam; os outros estados não', () => {
+  const r = emVoo(
+    iniP('a', 'implementador'),
+    iniP('b', 'implementador'), con('b'), iniP('b', 'revisor'),
+    iniP('c', 'implementador'), con('c'), ver('c', 'REPROVADO'), iniP('c', 'correcao'),
+    iniP('d', 'implementador'), con('d'),
+  );
+  assert.deepEqual(r, { ok: true, tasks: ['a', 'b', 'c'] });
+});
+test('tasks-em-voo-nenhuma: aprovada, integrada, reprovada, pendente e diário vazio dão lista vazia', () => {
+  assert.deepEqual(emVoo(), { ok: true, tasks: [] });
+  assert.deepEqual(emVoo(ini('a'), con('a'), ver('a')), { ok: true, tasks: [] });
+  assert.deepEqual(emVoo(ini('a'), con('a'), ver('a'), ['task.integrada', { task: 'a', sha: 'x' }]), { ok: true, tasks: [] });
+  assert.deepEqual(emVoo(ini('a'), con('a'), ver('a', 'REPROVADO')), { ok: true, tasks: [] });
+});
+test('tasks-em-voo-ilegivel: não-lista, fora de ordem, task fora do plano e transição inválida nunca viram lista vazia', () => {
+  for (const r of [
+    tasksEmVoo(PL, null),
+    tasksEmVoo(PL, [null]),
+    tasksEmVoo(null, []),
+    tasksEmVoo({ entrega: 'x', tasks: 'ruim' }, []),
+    emVoo(ini('zzz')),
+    emVoo(con('a')),
+    emVoo(ini('a'), ['task.iniciada', { papel: 'implementador' }]),
+  ]) {
+    assert.equal(r.ok, false);
+    assert.equal(typeof (r as { motivo: string }).motivo, 'string');
+  }
 });
 
 test('marca-de-progresso: custo.medicao e loop.parar não contam; qualquer outro evento conta; ilegível é -1', () => {

@@ -15,7 +15,7 @@
  */
 import { proximaAcao } from '../gates/dist/loop.js';
 import {
-  analisarFronteira, codigoPonte, dadosMedicao, ehRevisor, jaParou, lerX, marcaDeProgresso, negaDespacho, portaDoPouso, textoRetomada, tokensDe, vivosDe,
+  analisarFronteira, codigoPonte, dadosMedicao, ehRevisor, jaParou, lerX, marcaDeProgresso, negaDespacho, portaDoPouso, tasksEmVoo, textoRetomada, tokensDe, vivosDe,
 } from '../gates/dist/pouso.js';
 
 const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
@@ -316,8 +316,59 @@ async function comandoPausa($, acao) {
   } catch {
     return { text: `Falhou: não consegui remover ${arquivo}. O loop continua pausado.` };
   }
+  const loop = await loopAtivo($); // sem entrega com plano não há loop a recomeçar
+  const r = loop === null ? { texto: '', abrir: false } : await recomecarLoop($, loop);
   const gravou = await registrar('retomado');
-  return { text: `Retomado: ${arquivo} removido.${gravou ? '' : ' O diário não gravou loop.pausa.'}` };
+  const aviso = gravou ? '' : ' O diário não gravou loop.pausa.';
+  let texto = `Retomado: ${arquivo} removido.${aviso} ${r.texto}`.trim();
+  if (r.abrir && !abrirTurno($)) texto += ' Não consegui agendar o turno: o loop não voltou sozinho.';
+  return { text: texto };
+}
+
+/** Prompt do turno aberto por `/gabarito retomar`: o modelo não digita nada, a skill diz o resto. */
+const PROMPT_RETOMADA = 'Retomada pelo dono (/gabarito retomar). Continue o loop da entrega com a skill gabarito-loop: consulte a próxima ação e siga-a.';
+
+/**
+ * Depois de remover PAUSAR (tabela de transições de `/gabarito retomar`, T15): com vivos 0 reabre cada task em voo (origem
+ * `retomada`, o que `proxima` não faz sozinho) e abre um turno. Vivos > 0, vivos não medidos, plano ou diário ilegível, ou
+ * reabertura que falhou: não reabre mais nada e não abre turno (nunca dois implementadores na mesma worktree); a causa vai no texto.
+ */
+async function recomecarLoop($, c) {
+  let lista = null;
+  try { lista = await $.agent.list(); } catch { lista = null; }
+  if (!Array.isArray(lista)) return { abrir: false, texto: 'Não reabri nada nem abri turno: agentes vivos não medidos (agent.list falhou). O loop não recomeça sozinho.' };
+  const l = await ponte($, { op: 'ler', dir: c.dir, cwd: c.cwd });
+  if (l.ok !== true || !Array.isArray(l.eventos)) {
+    return { abrir: false, texto: `Não reabri nada nem abri turno: diário ilegível (${typeof l.erro === 'string' ? l.erro : 'leitura falhou'}). O loop não recomeça sozinho.` };
+  }
+  const p = await ponte($, { op: 'plano', dir: c.dir, raiz: c.raiz, cwd: c.cwd });
+  if (p.ok !== true || p.plano === null || typeof p.plano !== 'object') {
+    return { abrir: false, texto: `Não reabri nada nem abri turno: plano ilegível (${typeof p.erro === 'string' ? p.erro : 'leitura falhou'}). O loop não recomeça sozinho.` };
+  }
+  if (vivosDe(lista) > 0) return { abrir: false, texto: 'Agentes vivos terminam o que fazem; a notificação deles retoma o loop. Nada foi reaberto e nenhum turno foi aberto.' };
+  const voo = tasksEmVoo(p.plano, l.eventos);
+  if (!voo.ok) return { abrir: false, texto: `Não reabri nada nem abri turno: ${voo.motivo}. O loop não recomeça sozinho.` };
+  for (const task of voo.tasks) {
+    if (!(await gravar($, c, { agente: 'orquestrador', tipo: 'task.reaberta', dados: { task, origem: 'retomada' } }))) {
+      return { abrir: false, texto: `Não consegui gravar task.reaberta da task ${task}: parei sem abrir turno. Rode reabrir ${task} pelo loop.mjs.` };
+    }
+  }
+  const n = voo.tasks.length;
+  return { abrir: true, texto: n === 0 ? 'Nenhuma task em voo; abrindo o turno do loop.' : `${n} task(s) reaberta(s) (${voo.tasks.join(', ')}); abrindo o turno do loop.` };
+}
+
+/** Agenda o `prompt.submit` fora do handler do comando (mesmo padrão do pouso, S7). `false` se não deu para agendar; falha do envio vai à tela. */
+function abrirTurno($) {
+  try {
+    $.clock.after(0, () => {
+      Promise.resolve($.prompt.submit({ text: PROMPT_RETOMADA }))
+        .then((s) => { if (s === null || typeof s !== 'object' || s.drop !== undefined) throw new Error('recusado'); })
+        .catch(() => avisar($, 'gabarito: o turno da retomada não abriu; o loop não voltou sozinho. Digite uma mensagem para continuar.'));
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export const register = (on) => {

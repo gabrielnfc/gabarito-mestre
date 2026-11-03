@@ -41,6 +41,12 @@ mostre o aviso e sugira `node ${CLAUDE_PLUGIN_ROOT}/gates/scripts/capacidade.mjs
 `/gabarito pausar|retomar` (com o mod) ou `/<plugin>:gabarito pausar|retomar` (sem mod). Você **não** cria nem remove
 `.harness/PAUSAR`: a guarda trata isso como integridade do harness e pede ao dono. Pausado, não há `Agent` novo.
 
+**Retomar** remove o arquivo, e só isso: task em voo (`implementando`, `corrigindo`, `em_revisao`) continua em voo e o `proxima`
+a pula. Com o mod, `/gabarito retomar` já reabre cada task em voo (com 0 agentes vivos), grava `loop.pausa` e abre o turno: você
+recebe o prompt de retomada e segue o ciclo. Sem o mod, ou se uma task em voo ficou sem agente por outro motivo, **você**
+chama `$LOOP reabrir <task>` (origem `retomada`) por task em voo e só então `proxima --vivos <n>`. Nunca reabra com agente vivo
+na task: seriam dois implementadores na mesma worktree. Diário ilegível ou `reabrir` com `ok:false`: pare e diga a causa.
+
 ## Sem mod
 
 O doctor diz `loop: sem mod (sem pouso automático)`. O ciclo acima vale igual, e o hook `Stop` impede parar em silêncio; só o

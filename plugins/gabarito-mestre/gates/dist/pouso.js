@@ -1,5 +1,6 @@
-import { ordenar } from './loop.js';
-                                                   
+import { estadoDe, ordenar } from './loop.js';
+                                            
+                                                          
 
 /**
  * Núcleo do pouso (REQ-POU-1, GM-10 T9). Puro e sem `node:`: o mod o importa dentro do ambiente dele, que não tem Node.
@@ -54,9 +55,10 @@ export function portaDoPouso(a              )             {
 /**
  * `Agent` negado para quem não é revisor ⇔ a cláusula (5) de `proximaAcao` dispararia (E8). Com `percent` ≥ X toda resposta
  * do núcleo, menos `integrar` e `concluir`, vem da (5) ou de uma cláusula que vence a (5) (pausa, teto de tokens, CI, diário).
- * Fronteira consumida: o mod passou `percent: null` ao núcleo e a (5) não dispara.
+ * Fronteira consumida: o mod passou `percent: null` ao núcleo e a (5) não dispara. Exceção: `diario_invalido` sempre nega.
  */
 export function negaDespacho(acao          , consumida         )          {
+  if (acao.tipo === 'parar' && acao.motivo === 'diario_invalido') return true; // diário fora da tabela nunca libera, nem sem fronteira
   return consumida !== true && acao.tipo !== 'integrar' && acao.tipo !== 'concluir';
 }
 
@@ -93,13 +95,14 @@ const TIPOS_DE_TASK                    = ['task.iniciada', 'task.concluida', 're
 const sem = (motivo               )                   => ({ consumida: false, motivo });
 
 /**
- * Fronteira consumida (E1/E7, visão §6.7): existe `sessao.pouso` posterior ao último `review.veredito` na ordem da T2.
- * Se o pouso consumiu a fronteira, o mod passa `percent: null` ao núcleo. Quem decide o resto é o núcleo, nunca esta função.
+ * Fronteira consumida (E1/E7, visão §6.7): não há fronteira aberta. Duas formas: não existe nenhum `review.veredito` no diário
+ * (REQ-POU-1 define fronteira como veredito; sem ele não há o que pousar, aceite 1), ou existe `sessao.pouso` posterior ao último
+ * `review.veredito` na ordem da T2. Consumida ⇒ o mod passa `percent: null` ao núcleo. Quem decide o resto é o núcleo, nunca esta função.
  * Diário ilegível, fora de ordem, ou com evento de task sem `dados.task` ⇒ `motivo` diz por quê e nada é consumido.
  */
 export function analisarFronteira(eventos         )                   {
   if (!Array.isArray(eventos)) return sem('diário ilegível');
-  if (eventos.length === 0) return sem(null);
+  if (eventos.length === 0) return { consumida: true, motivo: null };
   let ord                            ;
   try {
     ord = ordenar(eventos            );
@@ -110,8 +113,44 @@ export function analisarFronteira(eventos         )                   {
   const task = (e        )          => (e.dados !== null && typeof e.dados === 'object' ? e.dados.task : undefined);
   if (ord.eventos.filter((e) => TIPOS_DE_TASK.includes(e.tipo)).some((e) => typeof task(e) !== 'string')) return sem('evento de task sem task');
   const ultimoDe = (tipo        )         => ord.eventos.reduce((m, e, i) => (e.tipo === tipo ? i : m), -1);
-  const pouso = ultimoDe('sessao.pouso');
-  return { consumida: pouso >= 0 && pouso > ultimoDe('review.veredito'), motivo: null };
+  const veredito = ultimoDe('review.veredito');
+  if (veredito < 0) return { consumida: true, motivo: null };
+  return { consumida: ultimoDe('sessao.pouso') > veredito, motivo: null };
+}
+
+const EM_VOO                        = ['implementando', 'corrigindo', 'em_revisao'];
+
+/**
+ * Tasks que `/gabarito retomar` reabre (origem `retomada`): as que o diário deixa em voo, `implementando`, `corrigindo` ou
+ * `em_revisao`. Quem chama garante vivos 0; com agente vivo nada é reaberto. Plano ou diário ilegível, evento fora do plano ou
+ * transição inválida ⇒ `ok: false` com o motivo: nunca uma lista vazia que pareça "nada a reabrir".
+ */
+export function tasksEmVoo(plano         , eventos         )                                                                {
+  const tasks = plano !== null && typeof plano === 'object' ? (plano         ).tasks : undefined;
+  if (!Array.isArray(tasks) || tasks.some((t) => t === null || typeof t !== 'object' || typeof t.id !== 'string')) return { ok: false, motivo: 'plano ilegível' };
+  if (!Array.isArray(eventos)) return { ok: false, motivo: 'diário ilegível' };
+  let ord                            ;
+  try {
+    ord = ordenar(eventos            );
+  } catch {
+    return { ok: false, motivo: 'diário ilegível' };
+  }
+  if (!ord.ok) return { ok: false, motivo: 'diário fora de ordem' };
+  const porTask = new Map                  (tasks.map((t) => [t.id, []]));
+  for (const e of ord.eventos) {
+    if (!TIPOS_DE_TASK.includes(e.tipo)) continue;
+    const t = e.dados !== null && typeof e.dados === 'object' ? e.dados.task : undefined;
+    const fila = typeof t === 'string' ? porTask.get(t) : undefined;
+    if (fila === undefined) return { ok: false, motivo: 'evento de task fora do plano' };
+    fila.push(e);
+  }
+  const voo           = [];
+  for (const [id, fila] of porTask) {
+    const r = estadoDe(fila);
+    if ('invalido' in r) return { ok: false, motivo: `diário fora da tabela de transições (task ${id})` };
+    if (EM_VOO.includes(r.estado)) voo.push(id);
+  }
+  return { ok: true, tasks: voo };
 }
 
 /** Eventos que não são trabalho do loop: o próprio mod os grava a cada turno ou ao parar. */

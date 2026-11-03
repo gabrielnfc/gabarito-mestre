@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { CHAVES_DE_EVENTO, estadoDe, ordenar, podeIntegrar, proximaAcao, TRANSICOES } from '../src/loop.ts';
 import type { ChaveEvento, EstadoTask } from '../src/loop.ts';
+import { analisarFronteira, negaDespacho } from '../src/pouso.ts';
 import type { Evento, Plano, Sinais, TipoEvento } from '../src/tipos.ts';
 
 const plano = (...tasks: [string, string[]?][]): Plano => ({
@@ -198,8 +199,50 @@ test('tabela-K-reprovada-r1-pousa', () => {
 test('tabela-K-no-teto-com-dependente-pousa', () => {
   assert.deepEqual(proximaAcao(plano(['a'], ['b', ['a']]), diario(...noTeto('a')), NX()), { tipo: 'pousar' });
 });
-test('tabela-K-inicio-sem-evento-pousa', () => {
-  assert.deepEqual(proximaAcao(plano(['a']), [], NX()), { tipo: 'pousar' });
+/** O que o mod faz: fronteira consumida (inclui "sem veredito") ⇒ `percent: null` ao núcleo (REQ-POU-1, aceite 1). */
+const comFronteira = (p: Plano, evs: Evento[], s: Partial<Sinais> = {}) => {
+  const f = analisarFronteira(evs);
+  return proximaAcao(p, evs, sinais({ percent: f.consumida ? null : 60, x: 50, ...s }));
+};
+test('k-sem-veredito-nao-pousa: sem review.veredito a fronteira não existe; percent nulo ao núcleo e o despacho segue (aceite 1)', () => {
+  assert.deepEqual(comFronteira(plano(['a']), []), { tipo: 'despachar', itens: [{ task: 'a', papel: 'implementador' }] });
+  const so = diario(ini('a'), con('a'));
+  assert.equal(comFronteira(plano(['a']), so, { vivos: 0 }).tipo, 'despachar');
+  assert.equal(negaDespacho(comFronteira(plano(['a']), []), analisarFronteira([]).consumida), false);
+});
+test('k-fim-em-concluir: plano de 3 tasks, X baixo, sequência ideal: 2 pousos, 0 sem veredito, termina em concluir (Sombra T13, fato B)', () => {
+  const pl = plano(['T1'], ['T2'], ['T3', ['T1']]);
+  let seq = 0;
+  const E: Evento[] = [];
+  const grava = (tipo: TipoEvento, dados: Record<string, unknown>) => {
+    seq += 1;
+    E.push(ev(seq, new Date(Date.UTC(2026, 10, 3, 12, 0, seq)).toISOString(), 's', tipo, dados));
+  };
+  let vivos: { task: string; papel: string }[] = [];
+  const log: string[] = [];
+  for (let guard = 0; guard < 80; guard++) {
+    const f = analisarFronteira(E);
+    const a = proximaAcao(pl, E, { slots: 2, percent: f.consumida ? null : 3, x: 1, pausado: false, vivos: vivos.length, tokens: null, tetoTokens: null, podePousar: true });
+    log.push(a.tipo);
+    if (a.tipo === 'concluir' || a.tipo === 'parar') break;
+    if (a.tipo === 'pousar') { grava('sessao.pouso', { percent: 3, x: 1 }); grava('sessao.retomada', { chars: 10 }); continue; }
+    if (a.tipo === 'despachar') { for (const i of a.itens) { grava('task.iniciada', { task: i.task, papel: i.papel }); vivos.push(i); } continue; }
+    if (a.tipo === 'integrar') { for (const t of a.tasks) grava('task.integrada', { task: t, sha: 'x' }); continue; }
+    const i = vivos.shift();
+    if (i === undefined) break;
+    if (i.papel === 'implementador') grava('task.concluida', { task: i.task, sha: 'x' });
+    else grava('review.veredito', { task: i.task, veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 });
+  }
+  assert.equal(log.at(-1), 'concluir', log.join(','));
+  let veredictos = 0;
+  let semVeredito = 0;
+  let pousos = 0;
+  for (const e of E) {
+    if (e.tipo === 'review.veredito') veredictos += 1;
+    if (e.tipo === 'sessao.pouso') { pousos += 1; if (veredictos === 0) semVeredito += 1; veredictos = 0; }
+  }
+  assert.equal(pousos, 2);
+  assert.equal(semVeredito, 0);
 });
 test('tabela-K-sem-pouso-quando-nao-pode: podePousar falso para com sem_pouso', () => {
   assert.deepEqual(proximaAcao(plano(['a']), diario(...aprovada('a')), NX({ podePousar: false })), { tipo: 'parar', motivo: 'sem_pouso' });

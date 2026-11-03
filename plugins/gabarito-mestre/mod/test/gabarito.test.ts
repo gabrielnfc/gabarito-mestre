@@ -45,6 +45,17 @@ const FRONT = [
   { seq: 3, ts: '2026-11-03T00:00:03.000Z', autor: 'a', sessao: 's0', agente: 'o', tipo: 'review.veredito', dados: { task: 'a', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, hash_anterior: null },
 ]
 const SEM_FRONT = FRONT.slice(0, 2)
+// uma task `b` inteira antes: sem `review.veredito` no diário não há fronteira (T15, REQ-POU-1), então os casos de "a" precisam de uma
+const B_FEITA = [
+  { seq: 1, ts: '2026-11-03T00:00:01.000Z', autor: 'a', sessao: 's0', agente: 'o', tipo: 'task.iniciada', dados: { task: 'b', papel: 'implementador' }, hash_anterior: null },
+  { seq: 2, ts: '2026-11-03T00:00:02.000Z', autor: 'a', sessao: 's0', agente: 'o', tipo: 'task.concluida', dados: { task: 'b', sha: 'x' }, hash_anterior: null },
+  { seq: 3, ts: '2026-11-03T00:00:03.000Z', autor: 'a', sessao: 's0', agente: 'o', tipo: 'review.veredito', dados: { task: 'b', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, hash_anterior: null },
+  { seq: 4, ts: '2026-11-03T00:00:04.000Z', autor: 'a', sessao: 's0', agente: 'o', tipo: 'task.integrada', dados: { task: 'b', sha: 'd' }, hash_anterior: null },
+]
+const aposB = (...itens: [string, Record<string, unknown>][]) => [...B_FEITA, ...itens.map(([t, d], i) => ({ ...B_FEITA[0], seq: 5 + i, ts: `2026-11-03T00:00:${String(5 + i).padStart(2, '0')}.000Z`, tipo: t, dados: d }))]
+const A_INI = ['task.iniciada', { task: 'a', papel: 'implementador' }] as [string, Record<string, unknown>]
+const A_CON = ['task.concluida', { task: 'a', sha: 'x' }] as [string, Record<string, unknown>]
+const A_REVISAR = aposB(A_INI, A_CON)
 const CHAVE = `pouso:${DIR}`
 const PLANO = { entrega: 'PBI-7', tasks: [{ id: 'a', deps: [], arquivos: ['a.ts'] }, { id: 'b', deps: [], arquivos: ['b.ts'] }] }
 const EV = (seq: number, tipo: string, dados: Record<string, unknown>) =>
@@ -277,6 +288,15 @@ test('sem-fronteira-nao-pousa', async ($, on) => {
   await pousar(m)
   expect(m.est.clears).toBe(0)
 })
+for (const [nome, eventos] of [['task-concluida', SEM_FRONT], ['diario-vazio', []]] as [string, any[]][]) {
+  test(`k-sem-veredito-nao-pousa-${nome}: sem review.veredito o mod não limpa e o Agent passa, mesmo com percent ≥ X (aceite 1)`, async ($, on) => {
+    const m = mundo($, on, { eventos })
+    await pousar(m)
+    expect(m.est.clears).toBe(0)
+    expect(m.tipos()).toEqual([])
+    expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  })
+}
 test('diario-ilegivel-nao-pousa: fronteira falsa', async ($, on) => {
   const m = mundo($, on, { lerFalha: true })
   await pousar(m)
@@ -413,7 +433,7 @@ test('estado-pousavel-nega: o núcleo manda pousar e o despacho fica negado enqu
 })
 
 // ---- J: task em voo sem agente vivo não é fronteira; o núcleo diz nao_conseguiu (5b), o mod espera 3 turnos (REQ-LOOP-5) ----
-const EM_VOO = [FRONT[0]]
+const EM_VOO = aposB(A_INI)
 test('em-voo-sem-agente-para-nao-conseguiu: três turnos sem evento novo viram loop.parar nao_conseguiu com aviso visível, sem pouso', async ($, on) => {
   const m = mundo($, on, { eventos: EM_VOO })
   await m.inicio()
@@ -485,7 +505,7 @@ test('x-cruzado-no-mesmo-turno-do-veredito (MAJOR 1, variante): integrada e perc
   expect(m.est.clears).toBe(1)
 })
 test('revisor-despachavel-nao-para (MAJOR 2): task concluída, percent alto, três turnos de conversa ⇒ sem loop.parar; o revisor passa; o implementador não', async ($, on) => {
-  const m = mundo($, on, { eventos: SEM_FRONT })
+  const m = mundo($, on, { eventos: A_REVISAR })
   await m.inicio()
   for (let i = 0; i < 6; i++) { await m.turno(); await m.clock.settle() }
   expect(parou(m)).toHaveLength(0)
@@ -515,7 +535,7 @@ const CASOS_AGENT: [string, Opc, 'nega' | 'passa'][] = [
   ['tudo integrado (L: concluir, a (5) não dispara)', { plano_json: UM, eventos: [...FRONT, INT_A] }, 'passa'],
   ['fronteira consumida (F)', { eventos: [...FRONT, EV(4, 'sessao.pouso', { percent: 60, x: 50 })] }, 'passa'],
   ['só resta o teto (M: parar)', { plano_json: UM, eventos: NO_TETO }, 'nega'],
-  ['task concluída à espera do revisor (H)', { eventos: SEM_FRONT }, 'nega'],
+  ['task concluída à espera do revisor (H)', { eventos: A_REVISAR }, 'nega'],
   ['agente vivo (I)', { agentes: [{ id: 'a1', status: 'running' }] }, 'nega'],
   ['task em voo sem agente (J)', { eventos: EM_VOO }, 'nega'],
 ]
@@ -922,6 +942,101 @@ test('gabarito-retomar-remove: apaga PAUSAR e grava loop.pausa, nunca task.reabe
   expect(m.grav.filter((g) => g.tipo === 'loop.pausa')).toEqual([{ agente: 'orquestrador', tipo: 'loop.pausa', dados: { estado: 'retomado' } }])
   expect(m.tipos().includes('task.reaberta')).toBe(false)
 })
+// ---- /gabarito retomar recomeça o loop (T15, fatos E e F) ----
+const PLANO5 = { entrega: 'PBI-7', tasks: ['a', 'b', 'c', 'd'].map((id) => ({ id, deps: [], arquivos: [`${id}.ts`] })) }
+const VOO = [
+  EV(1, 'task.iniciada', { task: 'a', papel: 'implementador' }),
+  EV(2, 'task.iniciada', { task: 'b', papel: 'implementador' }), EV(3, 'task.concluida', { task: 'b', sha: 'x' }), EV(4, 'task.iniciada', { task: 'b', papel: 'revisor' }),
+  EV(5, 'task.iniciada', { task: 'c', papel: 'implementador' }), EV(6, 'task.concluida', { task: 'c', sha: 'y' }),
+  EV(7, 'review.veredito', { task: 'c', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 }), EV(8, 'task.iniciada', { task: 'c', papel: 'correcao' }),
+  EV(9, 'task.iniciada', { task: 'd', papel: 'implementador' }), EV(10, 'task.concluida', { task: 'd', sha: 'z' }),
+]
+const retomarCom = async ($: any, on: any, o: Opc = {}) => {
+  const m = mundo($, on, { arquivos: [ARQ], ...o })
+  await m.inicio()
+  const r = await m.cmd('retomar')
+  await m.clock.settle()
+  return { m, r }
+}
+const pausaRetomado = (m: ReturnType<typeof mundo>) => m.grav.filter((g) => g.tipo === 'loop.pausa')
+const ESPERADO = [{ agente: 'orquestrador', tipo: 'loop.pausa', dados: { estado: 'retomado' } }]
+test('retomar-vivos-0-com-task-em-voo: remove, task.reaberta {retomada} em cada task em voo, loop.pausa, depois prompt.submit', async ($, on) => {
+  const { m, r } = await retomarCom($, on, { eventos: VOO, plano_json: PLANO5, agentes: [] })
+  expect(m.arquivos.has(ARQ)).toBe(false)
+  expect(m.grav.filter((g) => g.tipo === 'task.reaberta').map((g) => g.dados)).toEqual([
+    { task: 'a', origem: 'retomada' }, { task: 'b', origem: 'retomada' }, { task: 'c', origem: 'retomada' },
+  ])
+  expect(pausaRetomado(m)).toEqual(ESPERADO)
+  expect(m.log.filter((l) => /^(unlink|append|submit)/.test(l)).map((l) => l.replace(/:.*PAUSAR$/, ''))).toEqual([
+    'unlink', 'append:task.reaberta', 'append:task.reaberta', 'append:task.reaberta', 'append:loop.pausa', 'submit',
+  ])
+  expect(m.est.submits).toHaveLength(1)
+  expect(r.text).toMatch(/^Retomado/)
+})
+test('retomar-vivos-0-sem-task-em-voo: remove, loop.pausa e prompt.submit, sem task.reaberta', async ($, on) => {
+  const { m } = await retomarCom($, on, { agentes: [] })
+  expect(m.arquivos.has(ARQ)).toBe(false)
+  expect(m.tipos()).toEqual(['loop.pausa'])
+  expect(pausaRetomado(m)).toEqual(ESPERADO)
+  expect(m.est.submits).toHaveLength(1)
+})
+test('retomar-vivos-maior-que-0: remove e grava loop.pausa, não reabre, não abre turno, diz que os vivos terminam', async ($, on) => {
+  const { m, r } = await retomarCom($, on, { eventos: VOO, plano_json: PLANO5, agentes: [{ id: 'ag1', status: 'running' }] })
+  expect(m.arquivos.has(ARQ)).toBe(false)
+  expect(m.tipos()).toEqual(['loop.pausa'])
+  expect(m.est.submits).toHaveLength(0)
+  expect(r.text).toMatch(/vivos terminam/)
+})
+for (const [nome, o, causa] of [
+  ['agentes-nao-medidos', { agentes: 'falha' }, /vivos.*não medido/],
+  ['diario-ilegivel', { lerFalha: true, lerErro: 'linha truncada' }, /diário.*linha truncada/],
+  ['plano-ilegivel', { plano_json: 'falha' }, /plano/],
+] as [string, Opc, RegExp][]) {
+  test(`retomar-${nome}: remove e grava loop.pausa, não reabre, não abre turno, texto com a causa`, async ($, on) => {
+    const { m, r } = await retomarCom($, on, { eventos: VOO, ...o, agentes: o.agentes ?? [] })
+    expect(m.arquivos.has(ARQ)).toBe(false)
+    expect(m.tipos()).toEqual(['loop.pausa'])
+    expect(m.est.submits).toHaveLength(0)
+    expect(r.text).toMatch(causa)
+    expect(r.text).not.toMatch(/o loop volta/)
+  })
+}
+test('retomar-reabrir-falha: task que não reabriu não vira loop de volta; sem turno, texto com a causa, loop.pausa gravado', async ($, on) => {
+  const { m, r } = await retomarCom($, on, { eventos: VOO, plano_json: PLANO5, agentes: [], appendFalha: ['task.reaberta'] })
+  expect(m.tipos()).toEqual(['loop.pausa'])
+  expect(m.est.submits).toHaveLength(0)
+  expect(r.text).toMatch(/task\.reaberta|reabrir/)
+})
+test('retomar-submit-falha: não diz que o loop volta; avisa na tela', async ($, on) => {
+  const { m, r } = await retomarCom($, on, { agentes: [], submitFalha: true })
+  expect(pausaRetomado(m)).toEqual(ESPERADO)
+  expect(m.toasts.join(' ')).toMatch(/não voltou sozinho/)
+  expect(r.text).not.toMatch(/o loop volta sozinho\.$/)
+})
+test('retomar-sem-entrega-com-plano: remove o arquivo e diz retomado, mas não há loop a recomeçar (nada reaberto, nenhum turno)', async ($, on) => {
+  const { m, r } = await retomarCom($, on, { plano: false, agentes: [], eventos: VOO, plano_json: PLANO5 })
+  expect(m.arquivos.has(ARQ)).toBe(false)
+  expect(r.text).toMatch(/^Retomado/)
+  expect(m.tipos().includes('task.reaberta')).toBe(false)
+  expect(m.est.submits).toHaveLength(0)
+})
+test('retomar-sem-pausar-nao-abre-turno: sem PAUSAR nada grava e nada é enviado', async ($, on) => {
+  const m = mundo($, on, { agentes: [], eventos: VOO, plano_json: PLANO5 })
+  await m.inicio()
+  const r = await m.cmd('retomar')
+  await m.clock.settle()
+  expect(r.text).toMatch(/não estava pausado/i)
+  expect(m.tipos()).toEqual([])
+  expect(m.est.submits).toHaveLength(0)
+})
+test('retomar-remocao-falha-nao-abre-turno: arquivo continua, nada reaberto, nada enviado', async ($, on) => {
+  const { m, r } = await retomarCom($, on, { agentes: [], eventos: VOO, plano_json: PLANO5, unlinkFalha: true })
+  expect(r.text).toMatch(/^Falhou/)
+  expect(m.arquivos.has(ARQ)).toBe(true)
+  expect(m.tipos()).toEqual([])
+  expect(m.est.submits).toHaveLength(0)
+})
+
 test('pausar-falha-de-escrita: diz que falhou, não diz pausado, não grava evento', async ($, on) => {
   const m = mundo($, on, { writeFalha: true })
   await m.inicio()
