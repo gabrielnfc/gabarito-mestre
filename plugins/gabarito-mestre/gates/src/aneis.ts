@@ -505,6 +505,16 @@ export function anelDeCaminho(caminho: string, contexto: Contexto, cwd?: string 
   return null;
 }
 
+/** `.harness/PAUSAR`, `.harness` ou a raiz de uma raiz de pausa, em qualquer grafia de caixa (alvo de `git rm|mv`). */
+function alvoDePausa(caminho: string, contexto: Contexto, cwd?: string | null): boolean {
+  if (caminho.trim() === '') return false;
+  const { norm } = resolver(caminho, contexto, cwd);
+  const segs = norm.toLowerCase().split('/').filter((x) => x !== '' && x !== '.');
+  const ult = segs[segs.length - 1];
+  if (ult === '.harness' || (ult === 'pausar' && segs[segs.length - 2] === '.harness')) return true;
+  return raizesDePausa(contexto).includes(norm.toLowerCase());
+}
+
 /** Remoção de um diretório que contém uma área de integridade (`rm -rf .github`). */
 export function ancestralDeIntegridade(caminho: string, contexto: Contexto, cwd?: string | null): boolean {
   if (caminho.trim() === '') return false;
@@ -532,15 +542,19 @@ const GIT_PERMITIDOS = new Set([
 const GIT_PEDE_ORQUESTRADOR = new Set(['remote', 'fetch', 'pull', 'update-ref', 'symbolic-ref', 'config']);
 const PUSH_COM_VALOR = new Set(['-o', '--push-option', '--repo', '--receive-pack', '--exec']);
 
-export type GitLido = { sub: string; resto: string[]; configs: string[] };
+export type GitLido = { sub: string; resto: string[]; configs: string[]; dirs: string[] };
 
 /** Separa as opções globais do git (`-C x`, `-c k=v`, `--git-dir=…`) do subcomando. */
 export function lerGit(args: string[]): GitLido {
   const configs: string[] = [];
+  const dirs: string[] = [];
   let i = 0;
   for (; i < args.length; i++) {
     const a = args[i];
-    if (a === '-c' || a === '--config-env') {
+    if (a === '-C') {
+      if (args[i + 1] !== undefined) dirs.push(args[i + 1]);
+      i++;
+    } else if (a === '-c' || a === '--config-env') {
       if (args[i + 1] !== undefined) configs.push(args[i + 1]);
       i++;
     } else if (a.startsWith('--config-env=')) configs.push(a.slice(13));
@@ -548,7 +562,7 @@ export function lerGit(args: string[]): GitLido {
     else if (a.startsWith('-')) continue;
     else break;
   }
-  return { sub: args[i] ?? '', resto: args.slice(i + 1), configs };
+  return { sub: args[i] ?? '', resto: args.slice(i + 1), configs, dirs };
 }
 
 /** Posicionais de um `git push`: [remoto, ...refspecs]. */
@@ -713,11 +727,15 @@ export function anelDeBash(segmentos: Segmento[], contexto: Contexto, cwd?: stri
       // Q15: `git log -- .env` só confere existência; com patch (`-p`, `-u`, `-c`, `--cc`, `-L`, `-U`) mostra o conteúdo.
       const mostraConteudo = g.sub === 'log' && g.resto.some((a) => /^(-p|-u|-c|--cc|--patch\S*|--unified\S*|-L\S*|-U\d*|--word-diff\S*|--color-words\S*)$/.test(a));
       if ((g.sub !== 'log' && g.sub !== 'check-ignore') || mostraConteudo) empilhar(leituras, gitResto);
-      // `git rm`/`git mv` apagam do disco o que apontam. Só a pausa entra aqui (REQ-POU-2); as demais áreas seguem como na E1.
+      // `git rm`/`git mv` apagam ou movem do disco o que apontam. Só a pausa entra aqui (REQ-POU-2): `.harness/PAUSAR`, `.harness` e a raiz
+      // de cada checkout em que a pausa é lida. As demais áreas seguem como na E1. `-C` muda a base dos caminhos relativos.
       if (g.sub === 'rm' || g.sub === 'mv') {
-        const alvos = gitResto.filter((a) => /(^|\/)\.harness\/pausar$/i.test(a.replace(/\/+$/, '')));
-        empilhar(escritas, alvos);
-        empilhar(remocoes, alvos);
+        let base: string | null = atual ?? cwd ?? contexto.raiz ?? null;
+        for (const d of g.dirs) base = d.startsWith('/') ? d : base ? posix.resolve(base, d) : null;
+        const baseGit = g.dirs.length ? base : atual;
+        const alvos = gitResto.filter((a) => alvoDePausa(a, contexto, baseGit));
+        empilhar(escritas, alvos.map((a) => (baseGit && !a.startsWith('/') ? posix.resolve(baseGit, a) : a)));
+        empilhar(remocoes, alvos.map((a) => (baseGit && !a.startsWith('/') ? posix.resolve(baseGit, a) : a)));
       }
     } else if (EXISTENCIA.has(s.cmd)) {
       // Q15: sem leitura.

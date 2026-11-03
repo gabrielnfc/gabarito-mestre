@@ -296,11 +296,10 @@ describe('integridade e mensagem', () => {
     assert.equal(rodar(wt, 'Write', { file_path: alvo, content: '' }, SUB).decisao, 'deny');
   });
 
-  test('pausar-ler-pede: falso positivo aceito, ler o arquivo pelo Bash também pede ao orquestrador', () => {
+  test('pausar-ler-silencio: sem rede por texto (R4), ler o arquivo pelo Bash não pede; o anel de segredo segue valendo', () => {
     const repo = montar();
     pausar(repo);
-    assert.equal(rodar(repo, 'Bash', { command: 'cat .harness/PAUSAR' }).decisao, 'ask');
-    // o anel de segredo continua vencendo a integridade
+    assert.equal(rodar(repo, 'Bash', { command: 'cat .harness/PAUSAR' }).decisao, undefined);
     assert.match(rodar(repo, 'Bash', { command: 'cat .env .harness/PAUSAR' }).motivo, /segredo/);
   });
 
@@ -516,6 +515,71 @@ describe('anel do PAUSAR nas mesmas raízes da pausa', () => {
     git(repo, 'worktree', 'add', '-q', '-b', 'wt/GM-R3-12', wt);
     assert.equal(rodar(wt, 'Bash', { command: 'ls' }).decisao, undefined);
     assert.equal(rodar(wt, 'Bash', { command: 'rm -r .harness' }).decisao, 'ask');
+  });
+});
+
+describe('R4: git mv|rm de .harness no anel, sem rede por texto', () => {
+  test('git-mv-harness-no-anel: o diretório, o arquivo e a raiz, em qualquer grafia', () => {
+    const { wt, M } = cenario('GM-R4-1');
+    for (const command of [
+      `git -C ${M} mv .harness z`, `cd ${M} && git mv .harness z`, `git mv ${M}/.harness z`, `git mv ${M}/.HARNESS z`, `git -C ${M} mv .HARNESS z`,
+      `git mv ${M}/.harness/pausar z`, `git -C ${M} mv .harness/PAUSAR z`, `git mv x ${M}/.harness/pausar`, `git mv ${M} z`, `git -C ${M} mv .harness/ z`,
+    ]) {
+      assert.equal(rodar(wt, 'Bash', { command }).decisao, 'ask', command);
+      assert.equal(rodar(wt, 'Bash', { command }, SUB).decisao, 'deny', command);
+    }
+    assert.equal(rodar(M, 'Bash', { command: 'git mv .harness z' }).decisao, 'ask');
+  });
+
+  test('git-rm-harness-no-anel: o diretório e o arquivo, com -r, --cached, -f e -C', () => {
+    const { wt, M } = cenario('GM-R4-2');
+    for (const command of [
+      `git -C ${M} rm -r .harness`, `git rm -r --cached ${M}/.harness`, `git -C ${M}/.harness rm -f PAUSAR`, `git -C ${M} rm .harness//pausar`,
+      `git rm -rf ${M}/.HARNESS`, `git -C ${M} rm -f .harness/PAUSAR`, `git rm ${M}/.harness/pausar`, `git -C ${M} rm -r .harness/`,
+    ]) {
+      assert.equal(rodar(wt, 'Bash', { command }).decisao, 'ask', command);
+      assert.equal(rodar(wt, 'Bash', { command }, SUB).decisao, 'deny', command);
+    }
+  });
+
+  test('git-C-principal-no-anel: -C muda a base dos caminhos relativos, também encadeado', () => {
+    const { wt, M } = cenario('GM-R4-3');
+    for (const command of [`git -C ${M} mv .harness z`, `git -C ${M} -C .harness rm PAUSAR`, `git -C ${M}/sub -C .. rm -r .harness`, `git -C ${M} -c core.x=1 rm -r .harness`]) {
+      assert.equal(rodar(wt, 'Bash', { command }).decisao, 'ask', command);
+    }
+    // -C para outro repo não é raiz de pausa: silêncio
+    const outro = montar();
+    assert.equal(rodar(wt, 'Bash', { command: `git -C ${outro} mv .harness z` }).decisao, undefined);
+  });
+
+  test('commit-citando-pausar-nao-pede: só citar o caminho não é alvo, orquestrador e subagent', () => {
+    const { wt } = cenario('GM-R4-4');
+    for (const command of ['git commit -m "doc: .harness/PAUSAR para o loop"', 'git log --grep=.harness/PAUSAR', "git commit -m 'apaga .harness/PAUSAR da doc'"]) {
+      assert.equal(rodar(wt, 'Bash', { command }).decisao, undefined, command);
+    }
+    const livre = montar();
+    assert.equal(rodar(livre, 'Bash', { command: 'git commit -m "doc: .harness/PAUSAR"' }, SUB).decisao, undefined);
+  });
+
+  test('echo-citando-pausar-nao-pede: echo e grep com o caminho no texto', () => {
+    const { wt } = cenario('GM-R4-5');
+    for (const command of ['echo .harness/PAUSAR', 'echo "rm .harness/PAUSAR"', 'grep -r ".harness/PAUSAR" docs']) {
+      assert.equal(rodar(wt, 'Bash', { command }).decisao, undefined, command);
+    }
+    const livre = montar();
+    assert.equal(rodar(livre, 'Bash', { command: 'echo .harness/PAUSAR' }, SUB).decisao, undefined);
+  });
+
+  test('rm-pausar-segue-no-anel: toda remoção literal segue pelo anel, relativa e absoluta', () => {
+    const { repo, wt, M } = cenario('GM-R4-6');
+    for (const command of [
+      'rm .harness/PAUSAR', 'rm -f .harness/pausar', 'unlink .harness/PAUSAR', 'mv .harness/PAUSAR /tmp/x', 'rm -r .harness', `rm ${M}/.harness/PAUSAR`,
+      `cd ${M} && rm .harness/PAUSAR`, 'git rm -f .harness/PAUSAR', `bash -c 'rm ${M}/.harness/PAUSAR'`, 'rm ./.harness/PAUSAR', ': > .harness/PAUSAR',
+    ]) {
+      assert.equal(rodar(repo, 'Bash', { command }).decisao, 'ask', `principal: ${command}`);
+      assert.equal(rodar(wt, 'Bash', { command }).decisao, 'ask', `worktree: ${command}`);
+      assert.equal(rodar(wt, 'Bash', { command }, SUB).decisao, 'deny', `sub: ${command}`);
+    }
   });
 });
 

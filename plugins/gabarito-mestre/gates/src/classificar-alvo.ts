@@ -425,9 +425,8 @@ function classificarBash(entrada: EntradaHook, cfg: ConfigGuarda | null, ctx: Co
   const cwd = typeof entrada.cwd === 'string' ? entrada.cwd : null;
   const subagent = entrada?.agent_id !== undefined && entrada?.agent_id !== '';
   const estado = { cdPerdido: false };
-  // Kill switch: a presença do texto `.harness/PAUSAR` no comando basta (sem lexer novo). Ler o arquivo também pede: falso positivo aceito.
-  const achado = anelDeBash(segmentos, ctx, cwd, subagent, estado);
-  const anel = achado?.anel === 'segredo' || !comando.includes('.harness/PAUSAR') ? achado : { anel: 'integridade' as const, alvo: '.harness/PAUSAR', escrita: true };
+  // Kill switch (REQ-POU-2): só o anel de caminho protege `.harness/PAUSAR`; citar o caminho num texto não é alvo.
+  const anel = anelDeBash(segmentos, ctx, cwd, subagent, estado);
   const comEstado = estado.cdPerdido ? { ...base, cdPerdido: true } : base;
   if (anel) return { ...comEstado, ambiente: 'desconhecido', acao: anel.escrita ? 'escrita' : 'leitura', alvo: reduzirAlvo(anel.alvo), anel: anel.anel };
   return comEstado;
