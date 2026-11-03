@@ -45,3 +45,4 @@ Item sai daqui quando entra num plano ou a decisão de descarte é registrada. I
 | N5 viva, falta negativo em área de integridade (T7 r5 achado 4) | MINOR — dono: Gabriel | próxima mudança em `arquivoDePausa` |
 | `trash -x<arquivo>`, caminho colado em opção curta | Q26 item 2 — dono: Gabriel | caso visto em transcrito |
 | `load_medido` baixo em suíte curta | esta Sombra — dono: Gabriel | `motivo` de carga abaixo de `slots_max` sem gate vermelho no loop real, ou 1º adotante com suíte abaixo de 60 s |
+| Hook R2 não vê `rm -rf` dentro de script gravado por heredoc e executado depois | E30 — dono: Gabriel | spec da E3 |

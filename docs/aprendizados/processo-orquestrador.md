@@ -20,6 +20,7 @@ Vale para toda sessão, a partir de 2026-11-03. Ler ao retomar, antes de escreve
 | P4 | Revisão na 2ª rodada reprovada: Sombra antes de nova rodada, pergunta aberta sobre a abordagem (E16). Nada de 3ª rodada por inércia | T6 e T7 foram a 5 | Rodadas por task, base 3,2 | Em vigor |
 | P5 | Medição pesada (calibração, escada, `npm test` repetido) só com máquina sem agente em teste; brief proíbe | Load 88–95 na calibração; Sombra subiu a ~33 durante T6 e T7 | Falha por tempo em gate | Em vigor |
 | P6 | Mutação viva declarada equivalente exige o caso que prova; sem o caso, conta como viva (E28) | N5 e K10 refutadas | Viva declarada equivalente e refutada, base 2 | Em vigor |
+| P8 | Todo brief proíbe `env` e dump de variável; lê só a variável pelo nome (E30) | Token de mensageria exposto em saída de Sombra | Exposição em transcript, base 1 | Em vigor |
 | P7 | Otimização achada entra aqui na hora, com métrica. Nunca "da próxima entrega em diante" sem motivo medido (E29) | Dono cobrou | | Em vigor |
 
 **P1, 1º uso (T13, 2026-11-03):** Sombra, 6,5 min, 2 defeitos de produto (linha K, `/gabarito retomar`) e 1 erro de brief (`CLAUDE_CONFIG_DIR` zera a medição) antes de sessão real. Se os defeitos teriam aparecido só na T13: leitura, não medição do custo evitado.
