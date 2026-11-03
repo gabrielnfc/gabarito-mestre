@@ -14,6 +14,7 @@ type Opc = {
   agentes?: { id: string; status: string }[] | 'falha'
   eventos?: any[]
   lerFalha?: boolean
+  lerErro?: string
   instantaneo?: string | 'falha'
   appendFalha?: string[]
   clearFalha?: boolean
@@ -48,9 +49,21 @@ function mundo($: any, on: any, o: Opc = {}) {
   const grav: Ev[] = []
   const toasts: string[] = []
   const pedidos: any[] = []
+  const evs: any[] = [...(o.eventos ?? FRONT)]
+  let relogio = 0
   const store = new Map<string, unknown>(Object.entries(o.storeInicial ?? {}))
   const arquivos = new Set<string>(o.arquivos ?? [])
-  const est = { percent: o.percent === undefined ? 60 : o.percent, clears: 0, submits: [] as string[], liberar: null as null | (() => void) }
+  const est = { dir: DIR, plano: o.plano !== false, percent: o.percent === undefined ? 60 : o.percent, clears: 0, submits: [] as string[], liberar: null as null | (() => void) }
+
+  // o diário em memória: tudo que o mod grava volta na próxima leitura, com seq e ts válidos para a T2
+  const seqs = new Map<string, number>()
+  for (const e of evs) seqs.set(e.sessao, Math.max(seqs.get(e.sessao) ?? 0, e.seq))
+  const add = (agente: string, tipo: string, dados: Record<string, unknown>, sessao = 's0') => {
+    const seq = (seqs.get(sessao) ?? 0) + 1
+    seqs.set(sessao, seq)
+    relogio += 1
+    evs.push({ seq, ts: new Date(Date.UTC(2026, 10, 3, 1, 0, relogio)).toISOString(), autor: 'a', sessao, agente, tipo, dados, hash_anterior: null })
+  }
 
   on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: 'sess-1' }))
@@ -76,7 +89,7 @@ function mundo($: any, on: any, o: Opc = {}) {
   })
   on('store.delete', (_: any, e: any) => { log.push(`store.delete:${e.key}`); store.delete(e.key); return { value: undefined } })
   on('state.set', () => { log.push('state.set'); return { value: { isSet: true, version: 1 } } })
-  on('fs.exists', (_: any, e: any) => ({ value: arquivos.has(e.path) || (e.path === `${DIR}/plano.json` && o.plano !== false) }))
+  on('fs.exists', (_: any, e: any) => ({ value: arquivos.has(e.path) || (e.path === `${est.dir}/plano.json` && est.plano) }))
   on('fs.write', (_: any, e: any) => {
     if (o.writeFalha) return { deny: 'disco cheio' }
     if (!o.escritaNaoAparece) arquivos.add(e.path)
@@ -90,8 +103,8 @@ function mundo($: any, on: any, o: Opc = {}) {
       const q = JSON.parse(e.init?.stdin ?? '{}')
       pedidos.push(q)
       if (o.ponteSai1) return { value: { exitCode: 1, stdout: JSON.stringify({ ok: true, raiz: RAIZ, dir: DIR, plano: true, eventos: FRONT, texto: 'x' }), stderr: 'boom', isStdoutTruncated: false, isStderrTruncated: false } }
-      if (q.op === 'dir') return ok(JSON.stringify({ ok: true, raiz: RAIZ, dir: DIR, plano: o.plano !== false }))
-      if (q.op === 'ler') return ok(JSON.stringify(o.lerFalha ? { ok: false, erro: 'x' } : { ok: true, eventos: o.eventos ?? FRONT }))
+      if (q.op === 'dir') return ok(JSON.stringify({ ok: true, raiz: RAIZ, dir: est.dir, plano: est.plano }))
+      if (q.op === 'ler') return ok(JSON.stringify(o.lerFalha ? { ok: false, erro: o.lerErro ?? 'x' } : { ok: true, eventos: evs }))
       if (q.op === 'instantaneo') {
         log.push('instantaneo')
         const t = o.instantaneo ?? 'Diário: 3 evento(s)\nETA: sem dados'
@@ -101,6 +114,7 @@ function mundo($: any, on: any, o: Opc = {}) {
         log.push(`append:${q.ev.tipo}`)
         if (o.appendFalha?.includes(q.ev.tipo)) return ok(JSON.stringify({ ok: false, erro: 'x' }))
         grav.push({ agente: q.ev.agente, tipo: q.ev.tipo, dados: q.ev.dados })
+        add(q.ev.agente, q.ev.tipo, q.ev.dados, 'sess-1')
         return ok(JSON.stringify({ ok: true, gravado: 'evento' }))
       }
     }
@@ -137,7 +151,7 @@ function mundo($: any, on: any, o: Opc = {}) {
   const inicio = (interativo = o.interativo ?? true) => $.session.start({ cwd: RAIZ, surface: interativo ? 'terminal' : null, isInteractive: interativo })
   const cmd = (args: string) => $.command.run({ command: 'gabarito', args })
   const tipos = () => grav.map((g) => g.tipo)
-  return { log, grav, toasts, pedidos, store, arquivos, est, clock, turno, agent, inicio, cmd, tipos }
+  return { log, grav, toasts, pedidos, store, arquivos, est, clock, turno, agent, inicio, cmd, tipos, evs, add }
 }
 
 const pousar = async (m: ReturnType<typeof mundo>) => { await m.inicio(); await m.turno(); await m.clock.settle() }
@@ -285,13 +299,244 @@ test('pouso-nao-repete: hand-back com percent indefinido depois do clear não fa
   m.est.liberar?.(); await m.clock.settle()
   expect(m.est.clears).toBe(1)
 })
-test('retomado-volta-a-ocioso: depois do submit um novo ciclo pode pousar', async ($, on) => {
+test('retomado-volta-a-ocioso: depois do submit o store some, mas a fronteira gasta não pousa de novo', async ($, on) => {
   const m = mundo($, on)
   await pousar(m)
   expect(m.store.has(CHAVE)).toBe(false)
   m.est.percent = 55
   await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(1)
+})
+test('x-baixo-um-pouso-por-veredito: X=1, percent definido em todo turno, um veredito ⇒ um pouso (S1)', async ($, on) => {
+  const m = mundo($, on, { x: '1', percent: 5 })
+  await m.inicio()
+  for (let i = 0; i < 5; i++) { m.est.percent = 5; await m.turno(); await m.clock.settle() }
+  expect(m.est.clears).toBe(1)
+  expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(1)
+  expect(m.tipos().filter((t) => t === 'sessao.retomada')).toHaveLength(1)
+  expect(parou(m)).toHaveLength(0)
+})
+test('x-baixo-um-pouso-por-veredito: veredito novo abre uma segunda fronteira, e só uma', async ($, on) => {
+  const m = mundo($, on, { x: '1', percent: 5 })
+  await m.inicio()
+  await m.turno(); await m.clock.settle()
+  m.add('o', 'task.iniciada', { task: 'b', papel: 'implementador' })
+  m.add('o', 'task.concluida', { task: 'b', sha: 'y' })
+  m.add('o', 'review.veredito', { task: 'b', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 })
+  for (let i = 0; i < 4; i++) { m.est.percent = 5; await m.turno(); await m.clock.settle() }
   expect(m.est.clears).toBe(2)
+  expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(2)
+})
+test('sem-veredito-novo-nao-pousa: task nova em curso ou concluída depois do pouso não é fronteira', async ($, on) => {
+  const m = mundo($, on)
+  await pousar(m)
+  m.add('o', 'task.iniciada', { task: 'b', papel: 'implementador' })
+  m.est.percent = 60; await m.turno(); await m.clock.settle()
+  m.add('o', 'task.concluida', { task: 'b', sha: 'y' })
+  m.est.percent = 60; await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(1)
+})
+test('despacho-liberado-apos-pouso: com a fronteira consumida o Agent passa mesmo com percent ≥ X (E1)', async ($, on) => {
+  const m = mundo($, on)
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/) // antes: fronteira nova, POUSAVEL
+  await pousar(m)
+  m.est.percent = 60
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  expect((await m.agent(undefined)).deny).toBeUndefined()
+  m.add('o', 'task.iniciada', { task: 'b', papel: 'implementador' })
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+})
+test('veredito-novo-volta-a-travar: depois de gasto o pouso, outro veredito com percent ≥ X nega o despacho de novo', async ($, on) => {
+  const m = mundo($, on, { agentes: [{ id: 'a1', status: 'running' }] })
+  m.add('o', 'sessao.pouso', { percent: 60, x: 50 })
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  m.add('o', 'task.iniciada', { task: 'b', papel: 'implementador' })
+  m.add('o', 'task.concluida', { task: 'b', sha: 'y' })
+  m.add('o', 'review.veredito', { task: 'b', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 })
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/TRAVADO/)
+})
+
+// ---- tabela de estados: o que cada linha faz com o Agent e com o turno ----
+test('estado-ocioso-abaixo-x: permite e nada grava', async ($, on) => {
+  const m = mundo($, on, { percent: 20 })
+  await pousar(m)
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  expect(m.tipos()).toEqual([])
+})
+test('estado-travado-vivos: nega o despacho, não pousa, não para', async ($, on) => {
+  const m = mundo($, on, { agentes: [{ id: 'a1', status: 'running' }] })
+  await pousar(m)
+  const r = await m.agent('gabarito-implementador')
+  expect(r.deny).toMatch(/TRAVADO/)
+  expect(m.est.clears).toBe(0)
+  expect(parou(m)).toHaveLength(0)
+  expect((await m.agent('gabarito-revisor')).deny).toBeUndefined()
+})
+test('estado-pousando-nega: store com estado nega o despacho', async ($, on) => {
+  const m = mundo($, on, { storeInicial: { [CHAVE]: { estado: 'retomando', desde: 1 } } })
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/POUSANDO/)
+})
+test('estado-sem-pouso-nega: depois de falhar o pouso o despacho segue negado', async ($, on) => {
+  const m = mundo($, on, { clearFalha: true })
+  await pousar(m)
+  m.est.percent = 60
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/SEM_POUSO/)
+})
+test('estado-sem-pouso-nao-interativo: -p nega o despacho acima de X', async ($, on) => {
+  const m = mundo($, on, { interativo: false })
+  await m.inicio(false)
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/SEM_POUSO/)
+})
+test('estado-pousavel-nega: fronteira nova sem vivos nega o despacho enquanto o pouso não roda', async ($, on) => {
+  const m = mundo($, on)
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/POUSAVEL/)
+})
+
+// ---- encalhado: sem fronteira, sem vivos, nada a despachar ⇒ para com aviso (E3) ----
+test('encalhado-para-sem-pouso: três turnos sem evento novo viram loop.parar sem_pouso com aviso visível', async ($, on) => {
+  const m = mundo($, on, { eventos: SEM_FRONT })
+  await m.inicio()
+  await m.turno(); await m.turno()
+  expect(parou(m)).toHaveLength(0)
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/ENCALHADO/)
+  await m.turno(); await m.clock.settle()
+  expect(parou(m)).toHaveLength(1)
+  expect(parou(m)[0].dados).toEqual({ motivo: 'sem_pouso', causa: 'sem_fronteira' })
+  expect(m.toasts.some((t) => t.includes('sem_pouso'))).toBe(true)
+  expect(m.est.clears).toBe(0)
+  await m.turno(); await m.turno(); await m.turno()
+  expect(parou(m)).toHaveLength(1)
+})
+test('encalhado-zera-com-evento-novo: progresso no diário recomeça a contagem', async ($, on) => {
+  const m = mundo($, on, { eventos: SEM_FRONT })
+  await m.inicio()
+  await m.turno(); await m.turno()
+  m.add('o', 'ci.resultado', { verde: true })
+  await m.turno(); await m.turno()
+  expect(parou(m)).toHaveLength(0)
+  await m.turno()
+  expect(parou(m)).toHaveLength(1)
+})
+test('encalhado-ignora-a-propria-medicao: custo.medicao por turno não conta como progresso', async ($, on) => {
+  const m = mundo($, on, { eventos: SEM_FRONT })
+  await m.inicio()
+  for (let i = 0; i < 3; i++) await m.turno({ usage: USO })
+  expect(m.tipos().filter((t) => t === 'custo.medicao')).toHaveLength(3)
+  expect(parou(m)).toHaveLength(1)
+})
+
+// ---- leitura estrita do diário: dado ruim nunca vira fronteira (MAJOR 2) ----
+test('diario-truncado-nao-pousa (C1): a ponte estrita recusa e o mod avisa', async ($, on) => {
+  const m = mundo($, on, { lerFalha: true, lerErro: 'linha 4 ilegível em events.s0.jsonl' })
+  await pousar(m)
+  expect(m.est.clears).toBe(0)
+  expect(m.toasts.some((t) => t.includes('diário') && t.includes('linha 4'))).toBe(true)
+})
+test('lacuna-seq-nao-pousa (C2): lacuna de seq recusada pela ponte', async ($, on) => {
+  const m = mundo($, on, { lerFalha: true, lerErro: 'lacuna de seq na linha 3 de events.s0.jsonl' })
+  await pousar(m)
+  expect(m.est.clears).toBe(0)
+  expect(m.toasts.some((t) => t.includes('lacuna de seq'))).toBe(true)
+})
+test('evento-sem-task-nao-pousa (C3): evento de task sem task depois do veredito', async ($, on) => {
+  const m = mundo($, on, { eventos: [...FRONT, { seq: 4, ts: '2026-11-03T00:00:04.000Z', autor: 'a', sessao: 's0', agente: 'o', tipo: 'task.iniciada', dados: { papel: 'implementador' }, hash_anterior: null }] })
+  await pousar(m)
+  expect(m.est.clears).toBe(0)
+  expect(m.toasts.some((t) => t.includes('diário') && t.includes('task'))).toBe(true)
+})
+test('arquivo-ilegivel-nao-pousa (C4): ponte que devolve erro de leitura nunca vira pouso, e o aviso não se repete', async ($, on) => {
+  const m = mundo($, on, { lerFalha: true, lerErro: 'arquivo ilegível: events.s1.jsonl' })
+  await m.inicio()
+  await m.turno(); await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(0)
+  expect(m.toasts.filter((t) => t.includes('arquivo ilegível'))).toHaveLength(1)
+})
+test('diario-volta-a-ser-integro: depois de um aviso, a leitura boa pousa', async ($, on) => {
+  const o: Opc = { lerFalha: true }
+  const m = mundo($, on, o)
+  await m.inicio()
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(0)
+  o.lerFalha = false
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(1)
+})
+
+// ---- entrega resolvida a cada disparo (MAJOR 3) ----
+test('entrega-muda-com-branch: sessão aberta sem plano, depois a branch do PBI: o mod passa a agir na pasta nova (S2)', async ($, on) => {
+  const m = mundo($, on, { plano: false })
+  await m.inicio()
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(0)
+  expect(m.pedidos.filter((p) => p.op === 'append')).toHaveLength(0)
+  m.est.dir = '/repo/.harness/entregas/PBI-8'
+  m.est.plano = true
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/)
+  await m.turno({ usage: USO }); await m.clock.settle()
+  expect(m.est.clears).toBe(1)
+  expect(m.store.has('pouso:/repo/.harness/entregas/PBI-8')).toBe(false)
+  const dirs = new Set(m.pedidos.filter((p) => p.op === 'append').map((p) => p.dir))
+  expect([...dirs]).toEqual(['/repo/.harness/entregas/PBI-8'])
+  expect(m.tipos()).toContain('custo.medicao')
+})
+test('entrega-muda-com-branch: de volta a main sem plano, o mod volta a não mudar nada', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  m.est.plano = false
+  m.est.dir = '/repo/.harness/entregas/_sem-id'
+  await m.turno({ usage: USO }); await m.clock.settle()
+  expect(m.est.clears).toBe(0)
+  expect(m.tipos()).toEqual([])
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+})
+
+// ---- interrupção, erro e reason desconhecido nunca pousam (MAJOR 4) ----
+test('abortado-nao-pousa: Esc do dono (isAborted) com tudo a favor não limpa nem submete (S3)', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await m.turno({ isAborted: true, reason: 'aborted' }); await m.clock.settle()
+  expect(m.est.clears).toBe(0)
+  expect(m.est.submits).toHaveLength(0)
+  await m.turno({ isAborted: true }); await m.clock.settle() // reason 'answer' com isAborted ainda não pousa
+  expect(m.est.clears).toBe(0)
+  await m.turno(); await m.clock.settle() // o fim normal seguinte pousa
+  expect(m.est.clears).toBe(1)
+})
+test('erro-api-nao-pousa: reason error não limpa o contexto no meio da falha (S3b)', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await m.turno({ reason: 'error' }); await m.clock.settle()
+  expect(m.est.clears).toBe(0)
+  expect(m.est.submits).toHaveLength(0)
+})
+for (const reason of ['refusal', 'xyz', '', 'ANSWER', undefined, null]) {
+  test(`reason-desconhecido-nao-pousa-${String(reason)}: só 'answer' decide (lista permitida)`, async ($, on) => {
+    const m = mundo($, on)
+    await m.inicio()
+    await m.turno({ reason }); await m.clock.settle()
+    expect(m.est.clears).toBe(0)
+  })
+}
+test('isaborted-nao-booleano-nao-pousa: ausente ou texto não vira fim normal', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await m.turno({ isAborted: undefined }); await m.turno({ isAborted: 'false' }); await m.turno({ isAborted: null }); await m.clock.settle()
+  expect(m.est.clears).toBe(0)
+})
+test('abortado-ainda-mede: o custo do turno interrompido existe e vai ao diário', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await m.turno({ isAborted: true, reason: 'aborted', usage: USO })
+  expect(m.grav.filter((g) => g.tipo === 'custo.medicao')).toHaveLength(1)
+  expect(m.est.clears).toBe(0)
+})
+test('erro-api-nao-pousa: API que lança em todo lugar nunca vira pouso nem sucesso', async ($, on) => {
+  const m = mundo($, on, { usageFalha: true, agentes: 'falha', lerFalha: true })
+  await m.inicio()
+  const r = await m.turno({ answer: 'ok' }); await m.clock.settle()
+  expect(r.text).toBe('ok')
+  expect(m.est.clears).toBe(0)
+  expect(m.tipos()).toEqual([])
 })
 
 // ---- pouso: falhas ----
@@ -309,14 +554,29 @@ test('clear-falha: sem_pouso, aviso, ocioso, sem submit, sem segundo clear', asy
   expect(m.est.clears).toBe(1)
   expect(parou(m)).toHaveLength(1)
 })
-test('desistiu-ate-descer: depois de falhar, volta a tentar só quando o percent cair abaixo de X', async ($, on) => {
+test('desistiu-ate-descer: falha antes de gastar a fronteira só volta a tentar quando o percent cair abaixo de X', async ($, on) => {
+  const o: Opc = { storeSetFalha: true }
+  const m = mundo($, on, o)
+  await pousar(m)
+  expect(m.est.clears).toBe(0)
+  o.storeSetFalha = false
+  m.est.percent = 70
+  await m.turno(); await m.clock.settle() // ainda desistiu: percent não caiu
+  expect(m.est.clears).toBe(0)
+  m.est.percent = 10
+  await m.turno(); await m.clock.settle()
+  m.est.percent = 70
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(1)
+})
+test('falha-depois-do-pouso-gasta-a-fronteira: clear que falha grava sessao.pouso e não tenta de novo sem veredito novo', async ($, on) => {
   const m = mundo($, on, { clearFalha: true })
   await pousar(m)
   m.est.percent = 10
   await m.turno(); await m.clock.settle()
   m.est.percent = 70
   await m.turno(); await m.clock.settle()
-  expect(m.est.clears).toBe(2)
+  expect(m.est.clears).toBe(1)
 })
 test('submit-falha: sem_pouso, aviso, ocioso', async ($, on) => {
   const m = mundo($, on, { submitFalha: true })
@@ -566,11 +826,51 @@ test('medicao-agentid-estranho: id fora do padrão não vira nome de agente', as
   await m.turno({ agentId: '../x', usage: USO })
   expect(m.tipos()).toEqual([])
 })
-test('medicao-nao-do-orquestrador: turno principal não grava custo.medicao', async ($, on) => {
+test('mede-orquestrador: turno principal grava custo.medicao {agente: orquestrador}, um por turno, só números (S4)', async ($, on) => {
   const m = mundo($, on, { percent: 5 })
+  await m.inicio()
+  await m.turno({ usage: USO, answer: 'rm -rf SENTINELA-CRUA' })
+  await m.turno({ usage: { ...USO, input_tokens: 40 } })
+  const g = m.grav.filter((x) => x.tipo === 'custo.medicao')
+  expect(g).toEqual([
+    { agente: 'orquestrador', tipo: 'custo.medicao', dados: { input_tokens: 100, output_tokens: 20, cache_read: 5, cache_creation: 7 } },
+    { agente: 'orquestrador', tipo: 'custo.medicao', dados: { input_tokens: 40, output_tokens: 20, cache_read: 5, cache_creation: 7 } },
+  ])
+  expect(JSON.stringify(m.pedidos)).not.toContain('SENTINELA-CRUA')
+  expect(m.pedidos.filter((p) => p.op === 'append').every((p) => p.unicoPorAgente !== true)).toBe(true)
+})
+test('mede-orquestrador-sem-usage-ou-invalido: nada inventado', async ($, on) => {
+  const m = mundo($, on, { percent: 5 })
+  await m.inicio()
+  await m.turno()
+  await m.turno({ usage: { ...USO, output_tokens: -1 } })
+  await m.turno({ usage: { input_tokens: 1 } })
+  expect(m.tipos()).toEqual([])
+})
+test('mede-orquestrador-sem-loop: sem plano.json não grava', async ($, on) => {
+  const m = mundo($, on, { plano: false })
   await m.inicio()
   await m.turno({ usage: USO })
   expect(m.tipos()).toEqual([])
+})
+test('mede-orquestrador-nao-do-subagent: turno de subagent grava só o dele', async ($, on) => {
+  const m = mundo($, on, { percent: 5 })
+  await m.inicio()
+  await m.turno({ agentId: 'ag1', usage: USO })
+  expect(m.grav.map((g) => g.agente)).toEqual(['subagent:ag1'])
+})
+test('mede-orquestrador-com-pouso: o turno que pousa também é medido, antes do evento de pouso', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await m.turno({ usage: USO }); await m.clock.settle()
+  expect(m.tipos()).toEqual(['custo.medicao', 'sessao.pouso', 'sessao.retomada'])
+})
+test('mede-orquestrador-diario-fora-do-ar: falha ao gravar a medição não derruba o turno nem o pouso', async ($, on) => {
+  const m = mundo($, on, { appendFalha: ['custo.medicao'] })
+  await m.inicio()
+  const r = await m.turno({ usage: USO, answer: 'ok' }); await m.clock.settle()
+  expect(r.text).toBe('ok')
+  expect(m.est.clears).toBe(1)
 })
 
 // ---- instantâneo reinjetado (F3) ----

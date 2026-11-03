@@ -21,7 +21,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, utimesSync, chmodS
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { append, ler, projetar, recusaCanario, dirEntrega } from '../src/diario.ts';
+import { append, ler, lerEstrito, projetar, recusaCanario, dirEntrega } from '../src/diario.ts';
 import { estadoDe } from '../src/loop.ts';
 import type { Evento, TipoEvento } from '../src/tipos.ts';
 
@@ -711,5 +711,113 @@ describe('reparo, tolerância e projeção', () => {
   test('projetar-resumo-total: o resumo conta todos os eventos, não só os que cabem', () => {
     const es: Evento[] = Array.from({ length: 500 }, (_, i) => ({ seq: i + 1, ts: `2026-11-02T10:00:${String(i % 60).padStart(2, '0')}.000Z`, autor: 'a', sessao: 's1', agente: 'o', tipo: 'guarda.deny', dados: { alvo: 'h'.repeat(100) }, hash_anterior: null }));
     assert.deepEqual(projetar(es).resumo, { 'guarda.deny': 500 });
+  });
+});
+
+describe('lerEstrito (GM-10 T9 r2: leitura sem tolerância para decidir pouso)', () => {
+  const grava = (dir: string, n: number, sessao = 's1') => { for (let i = 0; i < n; i++) assert.equal(append(dir, sessao, ev()).ok, true); };
+
+  test('estrito-integro: devolve os mesmos eventos de ler', () => {
+    const dir = tmp();
+    grava(dir, 3);
+    const r = lerEstrito(dir);
+    assert.equal(r.ok, true);
+    if (r.ok) assert.deepEqual(r.eventos, ler(dir));
+  });
+  test('estrito-pasta-vazia-ok: sem arquivo de evento não há o que contestar', () => {
+    const dir = tmp();
+    assert.deepEqual(lerEstrito(dir), { ok: true, eventos: [] });
+  });
+  test('estrito-pasta-inexistente: falha com motivo', () => {
+    const r = lerEstrito(join(tmp(), 'nao-existe'));
+    assert.equal(r.ok, false);
+  });
+  test('estrito-linha-truncada: JSON cortado no fim falha', () => {
+    const dir = tmp();
+    grava(dir, 2);
+    const f = join(dir, 'events.s1.jsonl');
+    writeFileSync(f, readFileSync(f, 'utf8') + '{"seq":3,"ts":"2026');
+    assert.equal(lerEstrito(dir).ok, false);
+  });
+  test('estrito-linha-lixo-ou-null: não é objeto de evento', () => {
+    for (const lixo of ['null', 'lixo', '[]', '3']) {
+      const dir = tmp();
+      grava(dir, 1);
+      const f = join(dir, 'events.s1.jsonl');
+      writeFileSync(f, readFileSync(f, 'utf8') + lixo + '\n');
+      assert.equal(lerEstrito(dir).ok, false, lixo);
+    }
+  });
+  test('estrito-lacuna-de-seq: 1, 2, 4 falha mesmo com hash coerente', () => {
+    const dir = tmp();
+    grava(dir, 3);
+    const f = join(dir, 'events.s1.jsonl');
+    const ls = readFileSync(f, 'utf8').split('\n');
+    const o = JSON.parse(ls[2]);
+    o.seq = 4;
+    ls[2] = JSON.stringify(o);
+    writeFileSync(f, ls.join('\n'));
+    assert.equal(lerEstrito(dir).ok, false);
+  });
+  test('estrito-seq-nao-numerico: falha', () => {
+    const dir = tmp();
+    grava(dir, 2);
+    const f = join(dir, 'events.s1.jsonl');
+    const ls = readFileSync(f, 'utf8').split('\n');
+    const o = JSON.parse(ls[1]);
+    o.seq = '2';
+    ls[1] = JSON.stringify(o);
+    writeFileSync(f, ls.join('\n'));
+    assert.equal(lerEstrito(dir).ok, false);
+  });
+  test('estrito-hash-que-nao-confere: falha', () => {
+    const dir = tmp();
+    grava(dir, 3);
+    const f = join(dir, 'events.s1.jsonl');
+    const ls = readFileSync(f, 'utf8').split('\n');
+    const o = JSON.parse(ls[1]);
+    o.hash_anterior = 'f'.repeat(64);
+    ls[1] = JSON.stringify(o);
+    writeFileSync(f, ls.join('\n'));
+    assert.equal(lerEstrito(dir).ok, false);
+  });
+  test('estrito-primeiro-com-hash: o primeiro evento tem hash_anterior nulo', () => {
+    const dir = tmp();
+    grava(dir, 1);
+    const f = join(dir, 'events.s1.jsonl');
+    const o = JSON.parse(readFileSync(f, 'utf8').trim());
+    o.hash_anterior = 'a'.repeat(64);
+    writeFileSync(f, JSON.stringify(o) + '\n');
+    assert.equal(lerEstrito(dir).ok, false);
+  });
+  test('estrito-arquivo-ilegivel: chmod 000 falha, não pula o arquivo', { skip: process.getuid?.() === 0 }, () => {
+    const dir = tmp();
+    grava(dir, 1, 's1');
+    grava(dir, 1, 's2');
+    const f = join(dir, 'events.s2.jsonl');
+    chmodSync(f, 0o000);
+    try {
+      assert.equal(lerEstrito(dir).ok, false);
+      assert.equal(ler(dir).length, 1); // a leitura tolerante continua pulando: é por isso que ela não decide pouso
+    } finally {
+      chmodSync(f, 0o644);
+    }
+  });
+  test('estrito-varias-sessoes: cada arquivo tem a própria cadeia', () => {
+    const dir = tmp();
+    grava(dir, 2, 's1');
+    grava(dir, 2, 's2');
+    const r = lerEstrito(dir);
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.eventos.length, 4);
+  });
+  test('estrito-depois-de-recuperacao-de-linha-truncada: a cadeia aceita o que ler descarta? não: continua inválida', () => {
+    const dir = tmp();
+    grava(dir, 2);
+    const f = join(dir, 'events.s1.jsonl');
+    writeFileSync(f, readFileSync(f, 'utf8') + '{"seq":3,"ts":"2026');
+    grava(dir, 1);
+    assert.deepEqual(ler(dir).map((e) => e.seq), [1, 2, 4]);
+    assert.equal(lerEstrito(dir).ok, false);
   });
 });

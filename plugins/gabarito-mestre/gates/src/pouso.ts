@@ -12,24 +12,51 @@ export const INSTANTANEO_MAX = 3200;
 /** Nome real em `agents/gabarito-revisor.md` e o mesmo com o namespace do plugin; comparação por igualdade, nunca por prefixo. */
 export const REVISORES: readonly string[] = ['gabarito-revisor', 'gabarito-mestre:gabarito-revisor'];
 
-export type DecisaoPouso = 'nada' | 'bloquear_despacho' | 'pousar';
+export type EstadoPouso = 'OCIOSO' | 'TRAVADO' | 'POUSAVEL' | 'POUSANDO' | 'POUSADO' | 'SEM_POUSO' | 'ENCALHADO';
+export type DespachoPouso = 'permitir' | 'negar';
+export type AcaoPouso = 'nada' | 'esperar' | 'encalhe' | 'pousar' | 'parar_nao_interativo';
 export type EntradaPouso = {
+  /** `turn.complete` sem `agentId`; subagent nunca decide. */
+  orquestrador: boolean;
   percent: number | null;
   x: number;
+  /** Chave do store presente (ou ilegível): um pouso está em andamento. */
+  pousando: boolean;
+  /** Um pouso falhou e o percent ainda não caiu abaixo de X. */
+  desistiu: boolean;
+  interativo: boolean;
+  /** Um `sessao.pouso` posterior ao último `review.veredito`: a fronteira já foi gasta. */
+  consumida: boolean;
   vivos: number;
-  fronteira: boolean;
-  jaPousando: boolean;
-  orquestrador: boolean;
+  /** Último evento de task é `review.veredito` posterior ao último `sessao.pouso`, com diário íntegro. */
+  novaFronteira: boolean;
 };
+export type LinhaPouso = { estado: EstadoPouso; despacho: DespachoPouso; acao: AcaoPouso };
 
-/** Primeira linha que casa. Dado ausente ou fora do tipo nunca vira pouso: `percent` indefinido é `nada`, `vivos` e `fronteira` ruins bloqueiam. */
-export function decidirPouso(a: EntradaPouso): DecisaoPouso {
-  if (a.orquestrador !== true) return 'nada';
-  if (typeof a.percent !== 'number' || !Number.isFinite(a.percent)) return 'nada';
-  if (a.jaPousando) return 'nada';
-  if (a.percent < a.x) return 'nada';
-  if (a.vivos !== 0 || a.fronteira !== true) return 'bloquear_despacho';
-  return 'pousar';
+type Regra = { estado: EstadoPouso; casa: (a: EntradaPouso) => boolean; despacho: DespachoPouso; acao: AcaoPouso };
+const percentValido = (a: EntradaPouso): a is EntradaPouso & { percent: number } => typeof a.percent === 'number' && Number.isFinite(a.percent);
+
+/**
+ * Tabela de estados do pouso (Sombra T9), a primeira linha que casa decide. Dado ausente ou fora do tipo nunca vira pouso:
+ * `percent` indefinido é OCIOSO; `vivos` ruim é TRAVADO; `novaFronteira` que não é `true` é ENCALHADO.
+ * Só a última linha tem a ação `pousar`.
+ */
+const TABELA: readonly Regra[] = [
+  { estado: 'OCIOSO', casa: (a) => a.orquestrador !== true, despacho: 'permitir', acao: 'nada' },
+  { estado: 'OCIOSO', casa: (a) => !percentValido(a), despacho: 'permitir', acao: 'nada' },
+  { estado: 'OCIOSO', casa: (a) => (a.percent as number) < a.x, despacho: 'permitir', acao: 'nada' },
+  { estado: 'POUSANDO', casa: (a) => a.pousando !== false, despacho: 'negar', acao: 'nada' },
+  { estado: 'SEM_POUSO', casa: (a) => a.desistiu !== false, despacho: 'negar', acao: 'nada' },
+  { estado: 'SEM_POUSO', casa: (a) => a.interativo !== true, despacho: 'negar', acao: 'parar_nao_interativo' },
+  { estado: 'POUSADO', casa: (a) => a.consumida === true, despacho: 'permitir', acao: 'nada' },
+  { estado: 'TRAVADO', casa: (a) => !(Number.isInteger(a.vivos) && a.vivos === 0), despacho: 'negar', acao: 'esperar' },
+  { estado: 'ENCALHADO', casa: (a) => a.novaFronteira !== true, despacho: 'negar', acao: 'encalhe' },
+  { estado: 'POUSAVEL', casa: () => true, despacho: 'negar', acao: 'pousar' },
+];
+
+export function decidirEstado(a: EntradaPouso): LinhaPouso {
+  const r = TABELA.find((t) => t.casa(a)) as Regra;
+  return { estado: r.estado, despacho: r.despacho, acao: r.acao };
 }
 
 const X_RE = /^\d+(\.\d+)?$/;
@@ -60,25 +87,52 @@ export function vivosDe(lista: unknown): number {
 
 const TIPOS_DE_TASK: readonly string[] = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
 
+export type AnaliseFronteira = { nova: boolean; consumida: boolean; motivo: string | null };
+
+const sem = (motivo: string | null): AnaliseFronteira => ({ nova: false, consumida: false, motivo });
+
 /**
- * Fronteira (visão §6.7): a última transição de task do diário é `review.veredito` e a sequência dessa task é válida para a T2
- * (`ordenar` + `estadoDe`). Diário ilegível, fora de ordem ou com sequência inválida ⇒ falso.
+ * Fronteira (visão §6.7) lida da ordem da T2 (`ordenar` + `estadoDe`):
+ * - `nova`: a última transição de task é `review.veredito`, a sequência dessa task vale para a T2 e esse veredito
+ *   é POSTERIOR ao último `sessao.pouso` (um pouso consome a fronteira);
+ * - `consumida`: existe `sessao.pouso` posterior ao último `review.veredito`.
+ * Diário ilegível, fora de ordem, ou com evento de task sem `dados.task` ⇒ nada é fronteira e `motivo` diz por quê.
  */
-export function fronteira(eventos: unknown): boolean {
-  if (!Array.isArray(eventos) || eventos.length === 0) return false;
+export function analisarFronteira(eventos: unknown): AnaliseFronteira {
+  if (!Array.isArray(eventos)) return sem('diário ilegível');
+  if (eventos.length === 0) return sem(null);
   let ord: ReturnType<typeof ordenar>;
   try {
     ord = ordenar(eventos as Evento[]);
   } catch {
-    return false;
+    return sem('diário ilegível');
   }
-  if (!ord.ok) return false;
+  if (!ord.ok) return sem('diário fora de ordem');
   const task = (e: Evento): unknown => (e.dados !== null && typeof e.dados === 'object' ? e.dados.task : undefined);
-  const deTask = ord.eventos.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && typeof task(e) === 'string');
+  const deTask = ord.eventos.filter((e) => TIPOS_DE_TASK.includes(e.tipo));
+  if (deTask.some((e) => typeof task(e) !== 'string')) return sem('evento de task sem task');
+  const ultimoDe = (tipo: string): number => ord.eventos.reduce((m, e, i) => (e.tipo === tipo ? i : m), -1);
+  const pouso = ultimoDe('sessao.pouso');
+  const consumida = pouso >= 0 && pouso > ultimoDe('review.veredito');
   const ultimo = deTask[deTask.length - 1];
-  if (ultimo === undefined || ultimo.tipo !== 'review.veredito') return false;
+  if (ultimo === undefined || ultimo.tipo !== 'review.veredito') return { nova: false, consumida, motivo: null };
   const dela = deTask.filter((e) => task(e) === task(ultimo));
-  return !('invalido' in estadoDe(dela));
+  const valida = !('invalido' in estadoDe(dela));
+  return { nova: valida && ord.eventos.lastIndexOf(ultimo) > pouso, consumida, motivo: null };
+}
+
+/** Eventos que não são trabalho do loop: o próprio mod os grava a cada turno ou ao parar. */
+const SEM_PROGRESSO: readonly string[] = ['custo.medicao', 'loop.parar'];
+
+/** Quantos eventos de progresso o diário tem; muda quando algo novo acontece. Não-lista ⇒ -1 (constante: conta como encalhe). */
+export function marcaDeProgresso(eventos: unknown): number {
+  if (!Array.isArray(eventos)) return -1;
+  return eventos.filter((e) => !SEM_PROGRESSO.includes((e as Evento | null)?.tipo as string)).length;
+}
+
+/** Só a fronteira nova importa a quem decide pouso. */
+export function fronteira(eventos: unknown): boolean {
+  return analisarFronteira(eventos).nova;
 }
 
 export function ehRevisor(subagentType: unknown): boolean {
@@ -117,7 +171,7 @@ export function textoRetomada(instantaneo: string): string | null {
 /**
  * Programa que o mod passa a `node --input-type=module -e` (o ambiente do mod não tem `node:`). Lê UM objeto JSON no stdin
  * (`{op, …}`), escreve UM JSON no stdout e sempre sai 0. Dados nunca entram no programa: só o caminho do `diario.js`.
- * Ops: `dir` (raiz, pasta da entrega, `plano.json`), `ler`, `instantaneo`, `append` (`unicoPorAgente` não repete o par tipo+agente).
+ * Ops: `dir` (raiz, pasta da entrega, `plano.json`), `ler` (estrita: `lerEstrito`), `instantaneo`, `append` (`unicoPorAgente` não repete o par tipo+agente).
  */
 export function codigoPonte(diarioUrl: string): string {
   return [
@@ -136,7 +190,8 @@ export function codigoPonte(diarioUrl: string): string {
     `    const dir = d.dirEntrega(raiz, pbi);`,
     `    out({ ok: true, raiz, dir, plano: existsSync(join(dir, 'plano.json')) });`,
     `  } else if (e.op === 'ler') {`,
-    `    out({ ok: true, eventos: d.ler(e.dir) });`,
+    `    const l = d.lerEstrito(e.dir);`,
+    `    out(l.ok ? { ok: true, eventos: l.eventos } : { ok: false, erro: l.motivo });`,
     `  } else if (e.op === 'instantaneo') {`,
     `    out({ ok: true, texto: d.projetar(d.ler(e.dir)).instantaneo });`,
     `  } else if (e.op === 'append') {`,

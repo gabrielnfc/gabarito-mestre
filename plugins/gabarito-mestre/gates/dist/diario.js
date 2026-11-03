@@ -209,6 +209,47 @@ export function ler(dir        )           {
   return out;
 }
 
+                                                                                             
+
+/**
+ * Leitura SEM tolerância, para decisão irreversível (pouso). Ao contrário de `ler`, nada é descartado em silêncio:
+ * pasta ou arquivo ilegível, linha que não é um objeto JSON, `seq` fora de 1, 2, 3… no arquivo da sessão e
+ * `hash_anterior` que não confere com a linha anterior viram `{ ok: false, motivo }`.
+ */
+export function lerEstrito(dir        )                 {
+  let nomes          ;
+  try {
+    nomes = readdirSync(dir).filter((n) => /^events\..+\.jsonl$/.test(n));
+  } catch {
+    return { ok: false, motivo: 'pasta do diário ilegível' };
+  }
+  const out           = [];
+  for (const nome of nomes.sort()) {
+    let bruto        ;
+    try {
+      bruto = readFileSync(join(dir, nome), 'utf8');
+    } catch {
+      return { ok: false, motivo: `arquivo ilegível: ${nome}` };
+    }
+    const linhas = bruto.split('\n');
+    if (linhas[linhas.length - 1] === '') linhas.pop();
+    for (let i = 0; i < linhas.length; i++) {
+      let o         ;
+      try {
+        o = JSON.parse(linhas[i]);
+      } catch {
+        return { ok: false, motivo: `linha ${i + 1} ilegível em ${nome}` };
+      }
+      if (o === null || typeof o !== 'object' || Array.isArray(o)) return { ok: false, motivo: `linha ${i + 1} não é evento em ${nome}` };
+      const e = o                           ;
+      if (e.seq !== i + 1) return { ok: false, motivo: `lacuna de seq na linha ${i + 1} de ${nome}` };
+      if (e.hash_anterior !== (i === 0 ? null : sha(linhas[i - 1]))) return { ok: false, motivo: `hash_anterior não confere na linha ${i + 1} de ${nome}` };
+      out.push(o          );
+    }
+  }
+  return { ok: true, eventos: out };
+}
+
 const cmp = (a        , b        )         => (a < b ? -1 : a > b ? 1 : 0);
 
 /** Corta em `n` unidades e não deixa meio par substituto no fim. */
