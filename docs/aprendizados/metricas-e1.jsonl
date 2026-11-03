@@ -10,3 +10,4 @@
 {"task": "T6", "fluxo": "gate", "impl_s": null, "review_s": 511, "correcao_s": 3220, "rodadas": 3, "estado": "aprovada", "causa": "evidencia-ignorada+correcao-fora-do-pedido"}
 {"task": "T4", "fluxo": "gate", "impl_s": 1946, "review_s": 987, "correcao_s": 1582, "rodadas": 1, "estado": "aprovada-sem-integrar", "causa": "fallback-excecao"}
 {"task": "T2", "fluxo": "gate", "impl_s": null, "review_s": null, "correcao_s": 4636, "rodadas": 4, "estado": "parada-desenho", "causa": "classificador-texto-bash"}
+{"task": "T2R", "fluxo": "gate", "impl_s": null, "review_s": null, "correcao_s": null, "rodadas": 3, "estado": "aprovada", "causa": "exceção nominal do dono na rodada 3"}
