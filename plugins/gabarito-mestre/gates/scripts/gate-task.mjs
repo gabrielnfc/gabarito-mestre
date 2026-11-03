@@ -22,6 +22,9 @@ import { performance } from 'node:perf_hooks';
 import { ehEntrypoint } from '../lib/cli.mjs';
 
 const SEGREDO = /ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|\bAKIA[A-Z0-9]{12,}|\bASIA[A-Z0-9]{12,}|-----BEGIN [A-Z ]*PRIVATE|\bsk-[A-Za-z0-9]{16,}|xox[bp]-[A-Za-z0-9-]{10,}|:\/\/[^/\s:]+:[^@\s]+@|Bearer\s+[A-Za-z0-9._-]{16,}|eyJ[\w-]{20,}\.eyJ[\w-]{20,}/;
+// Literais montados: o gate não pode acusar o próprio código-fonte (hatch e allow).
+const HATCH = ['GABARITO', 'ALLOW'].join('_');
+const ALLOW_ADD = new RegExp(`permissionDecision["': ]+["']${['al', 'low'].join('')}`);
 const MS_ZERO = 100; // mutação "morta" em menos que isto não mediu nada (E19)
 
 /** Roda `cmd` no bash; nunca rejeita: falha ao iniciar vira rc -1 com a mensagem em `out`. */
@@ -141,7 +144,7 @@ export async function avaliar(opts) {
   else ok(seg.length ? `segredo: ${seg.length} linha(s) só em arquivo de teste, revisor confere` : 'sem segredo no diff');
   const contaHatch = (ref) => {
     try {
-      return git('grep', '-c', 'GABARITO_ALLOW', ref, '--', '.', ':(exclude)*/test/*', ':(exclude)*.test.*')
+      return git('grep', '-c', HATCH, ref, '--', '.', ':(exclude)*/test/*', ':(exclude)*.test.*')
         .trim().split('\n').filter(Boolean).reduce((n, l) => n + Number(l.split(':').pop()), 0);
     } catch {
       return 0; // git grep sai 1 sem ocorrência
@@ -149,8 +152,8 @@ export async function avaliar(opts) {
   };
   const hatchAntes = contaHatch(base);
   const hatchDepois = contaHatch('HEAD');
-  hatchDepois > hatchAntes ? falhar(`GABARITO_ALLOW aumentou: ${hatchAntes} -> ${hatchDepois}`) : ok(`hatch não aumentou (${hatchAntes} -> ${hatchDepois})`);
-  adicionadas.some((a) => /permissionDecision["': ]+["']allow/.test(a.l)) ? falhar('allow adicionado') : ok('sem allow adicionado');
+  hatchDepois > hatchAntes ? falhar(`${HATCH} aumentou: ${hatchAntes} -> ${hatchDepois}`) : ok(`hatch não aumentou (${hatchAntes} -> ${hatchDepois})`);
+  adicionadas.some((a) => ALLOW_ADD.test(a.l)) ? falhar('allow adicionado') : ok('sem allow adicionado');
 
   // 5. Suítes, em paralelo
   const suites = normalizarSuites(opts.suites ?? cfg.gates?.suites);
