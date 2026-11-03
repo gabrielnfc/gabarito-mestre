@@ -171,7 +171,7 @@ function sqlsDoSegmento(s: Segmento): string[] {
 const URL_EM_TEXTO = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/i;
 const CONNINFO_HOST = /(?:^|\s)host(?:addr)?=([^\s'"]+)/gi;
 
-function hostsDoSegmento(s: Segmento): string[] {
+function hostsDoSegmento(s: Segmento, cfg: ConfigGuarda): string[] {
   const hosts: string[] = [];
   const rede = REDE.has(s.cmd);
   const banco = BANCO.has(s.cmd);
@@ -183,6 +183,12 @@ function hostsDoSegmento(s: Segmento): string[] {
       if (h) hosts.push(h);
       else if (rede && /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+/.test(a)) hosts.push(a.slice(a.indexOf('@') + 1).split(/[:/]/)[0].toLowerCase());
       else if ((s.cmd === 'curl' || s.cmd === 'wget') && /^[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?(\/|$)/i.test(a)) hosts.push(a.split(/[:/]/)[0].toLowerCase());
+      else if (rede && !a.startsWith('-')) {
+        // R2: posicional `host`, `host:porta`, `host:/caminho`, `host/caminho` sem `user@`. Só conta host declarado em prod,
+        // para `scp dump.sql x` não virar alvo desconhecido.
+        const h2 = a.split(/[:/]/)[0].toLowerCase();
+        if (h2 !== '' && declarado(cfg, 'hosts', h2) === 'prod') hosts.push(h2);
+      }
       if (banco) for (const c of a.matchAll(CONNINFO_HOST)) hosts.push(c[1].toLowerCase());
     }
   }
@@ -228,7 +234,8 @@ function positionaisDe(args: string[]): string[] {
 
 function rank(p: Parcial): number {
   if (p.prodEscrita) return 4;
-  if (p.ambiente === 'prod') return 3;
+  // Em prod, execução vence leitura: o rótulo e o evento dizem o pior (a faixa é a mesma).
+  if (p.ambiente === 'prod') return p.acao === 'execucao' ? 3.5 : 3;
   if (p.ambiente === 'homolog' || (p.ambiente === 'desconhecido' && p.alvo !== '')) return 2;
   if (p.destrutivo) return 1;
   return 0;
@@ -271,7 +278,7 @@ function classificarSegmento(s: Segmento, cfg: ConfigGuarda | null, ctx: Context
 
   // Alvos candidatos; o mais grave vence.
   const candidatos: Array<{ ambiente: Ambiente; alvo: string }> = [];
-  for (const h of hostsDoSegmento(s)) {
+  for (const h of hostsDoSegmento(s, cfg)) {
     const a = ambienteDeHost(cfg, h);
     if (a) candidatos.push(a);
   }
