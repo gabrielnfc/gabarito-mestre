@@ -76,7 +76,7 @@ describe('session-card.sh — ORQ-3 (T14)', () => {
     const r = runAt('session-card.sh', '', { cwd: fixtureRepo(), env: { CLAUDE_PLUGIN_ROOT: fakePluginRoot() }, event: 'SessionStart' });
     assert.ok(ctx(r).additionalContext.includes('linha com "aspas", \\ barra\te tab'));
   });
-  // GM-9 T7: o teto de 40 linhas morreu (o cartão agora é ≤ 6.000 caracteres, cortado pelo node); o .sh não reescreve a saída.
+  // GM-9 T7: o teto de 40 linhas morreu (o cartão agora é ≤ 4.329 caracteres, cortado pelo node); o .sh não reescreve a saída.
   test('o hook passa --hook e repassa o stdin do SessionStart ao node (session_id chega lá)', () => {
     const plugin = fakePluginRoot({ cartao: ['sessao=${sid}'] });
     const r = spawnSync('bash', [join(HOOKS, 'session-card.sh')], { input: JSON.stringify({ session_id: 'abc-123', source: 'startup' }), encoding: 'utf8', cwd: fixtureRepo(), env: cleanEnv({ CLAUDE_PLUGIN_ROOT: plugin }) });

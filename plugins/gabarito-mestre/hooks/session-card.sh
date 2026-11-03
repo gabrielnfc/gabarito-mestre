@@ -2,7 +2,7 @@
 # gabarito-mestre · session-card.sh — implementa a ORQ-3 (cartão de sessão em duas vias, GM-9 T7).
 # SessionStart (startup|resume|clear|compact). Roda `gates/scripts/cartao-sessao.mjs --hook` do plugin com a raiz
 # do repo (git toplevel → cwd) e REPASSA o stdin (session_id, source) ao node. O node lê o diário, grava
-# `sessao.inicio` + `guarda.heartbeat {fonte}` e devolve o JSON final: `additionalContext` (≤ 6.000 caracteres,
+# `sessao.inicio` + `guarda.heartbeat {fonte}` e devolve o JSON final: `additionalContext` (≤ 4.329 caracteres,
 # para o modelo) e `systemMessage` (≤ 3 linhas, para o humano). Este hook só resolve raiz e plugin-root e
 # repassa; não reescreve o conteúdo. Nunca bloqueia: qualquer falha é FAIL-OPEN DECLARADO (stderr, exit 0).
 set -u

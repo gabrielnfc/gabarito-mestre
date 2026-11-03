@@ -110,8 +110,8 @@ for f in $(grep -oE '[A-Za-z0-9_-]+\.(mjs|sh)' "$A" | sort -u); do
 done
 [ "$b1b_falhou" -eq 0 ] && ok "todo *.mjs/*.sh citado no AGENTS.md existe em gates/scripts/ ou hooks/"
 
-# ── B2 (handoff §B.2) — DISPATCH idêntico, hatches usados, ≤ 6.000 caracteres == LIMITE_CONTEXTO, inegociável ──
-echo "── B2: DISPATCH idêntico, hatches em hooks/, ≤ 6.000 caracteres == LIMITE_CONTEXTO, inegociável cobre R1–R21"
+# ── B2 (handoff §B.2) — DISPATCH idêntico, hatches usados, ≤ 4.329 caracteres == LIMITE_CONTEXTO, inegociável ──
+echo "── B2: DISPATCH idêntico, hatches em hooks/, ≤ 4.329 caracteres == LIMITE_CONTEXTO, inegociável cobre R1–R21"
 DISPATCH_FMT='DISPATCH Task <N> slots=<slots> worktree wt/<PBI>-<n>'
 # Achado MAJOR #1 (review T25b, task-25b-review.md): `grep -qF` só prova PRESENÇA em algum lugar do
 # arquivo — referencia.md cita a linha DISPATCH 3x (§2.3 l.62, §3.1 l.92, "Antes de despachar" l.150);
@@ -133,7 +133,7 @@ check "GABARITO_ALLOW = 0 em plugins/** (REQ-GRD-5, Q9)" '[ -z "$HATCH_ACHADOS" 
 GUARDS_CITADOS=$(grep -rIlE 'guard-(destructive|production|versioning)' "$P" 2>/dev/null | grep -v "/scripts/test/texto.test.sh$" || true)
 check "nenhum guard bash antigo citado em plugins/** (REQ-GRD-3, REQ-INF-1)" '[ -z "$GUARDS_CITADOS" ]' "menção residual em: $(printf '%s' "$GUARDS_CITADOS" | tr '\n' ' ')"
 MAXL=$(grep -oE "LIMITE_CONTEXTO = [0-9]+" "$CS" | grep -oE '[0-9]+')
-check "'≤ 6.000 caracteres' do AGENTS.md bate com LIMITE_CONTEXTO=$MAXL de cartao-sessao.mjs" "grep -q '≤ 6.000 caracteres' '$A' && [ '$MAXL' = 6000 ]" "LIMITE_CONTEXTO ≠ 6000 ou AGENTS.md não cita ≤ 6.000 caracteres"
+check "'≤ 4.329 caracteres' do AGENTS.md bate com LIMITE_CONTEXTO=$MAXL de cartao-sessao.mjs" "grep -q '≤ 4.329 caracteres' '$A' && [ '$MAXL' = 4329 ]" "LIMITE_CONTEXTO ≠ 4329 ou AGENTS.md não cita ≤ 4.329 caracteres"
 check "'inegociável' cobre R1–R21" "grep -q 'inegociável (R1–R21' '$A'" "frase de cobertura ausente ou alcance diferente"
 
 # ── B3 (handoff §B.3) — adocao.md tag-semver opcional; prompts.md passo 9 ─────────────

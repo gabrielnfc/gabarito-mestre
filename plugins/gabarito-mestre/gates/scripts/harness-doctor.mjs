@@ -640,7 +640,7 @@ export const CHECKS = [
     level: 3,
     kind: 'scan',
     label: 'paralelismo calibrado nesta máquina (≤ 180 d, teto ≥ simultaneos ≥ 1)',
-    fix: 'rode capacidade.mjs --calibrar e grave orquestracao.paralelismo via onboarding-config.mjs',
+    fix: 'rode capacidade.mjs --sugerir e grave orquestracao.paralelismo via onboarding-config.mjs',
     detect: (ix, cfg) => {
       const p = cfg.orquestracao?.paralelismo;
       if (!p?.calibradoEm) return { found: false, evidence: 'sem orquestracao.paralelismo.calibradoEm' };
