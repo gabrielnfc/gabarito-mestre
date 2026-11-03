@@ -11,13 +11,13 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  nomeBanco, marcaClone, validarDb, bancosVivos, ident, HOSTS_LOCAIS,
+  nomeBanco, nomeTemporario, marcaClone, marcaPronto, validarDb, bancosVivos, ident, HOSTS_LOCAIS,
 } from '../scripts/db-template.mjs';
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'db-template.mjs');
@@ -26,7 +26,7 @@ const FAKE_PSQL = String.raw`
 import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
 const argv = process.argv.slice(2);
 const ESTADO = process.env.FAKE_STATE, LOG = process.env.FAKE_LOG;
-appendFileSync(LOG, JSON.stringify({ quem: 'psql', argv }) + '\n');
+appendFileSync(LOG, JSON.stringify({ quem: 'psql', argv, title: process.title, pg: Object.keys(process.env).filter((k) => /^PG/i.test(k)) }) + '\n');
 const sql = argv[argv.indexOf('-c') + 1];
 const st = existsSync(ESTADO) ? JSON.parse(readFileSync(ESTADO, 'utf8')) : { dbs: { postgres: {}, template0: {}, template1: {} } };
 const salvar = () => writeFileSync(ESTADO, JSON.stringify(st));
@@ -61,15 +61,25 @@ if ((m = new RegExp("^SELECT 'E:' \\|\\| coalesce\\(shobj_description\\(oid, 'pg
 } else if ((m = new RegExp('^DROP DATABASE IF EXISTS ' + Q + ' WITH \\(FORCE\\)$').exec(sql))) {
   const nome = un(m[1]); const d = st.dbs[nome];
   if (d) { if (d.template) erro('ERROR: cannot drop a template database'); delete st.dbs[nome]; salvar(); }
-} else if ((m = new RegExp("^SELECT datname FROM pg_database WHERE datname LIKE " + L + " ESCAPE '\\\\' ORDER BY datname$").exec(sql))) {
-  const pad = un(m[1]); let re = '^';
-  for (let i = 0; i < pad.length; i++) {
-    const c = pad[i];
-    if (c === '\\') { re += pad[++i].replace(/[.*+?^$()|[\]{}\\]/g, '\\$&'); }
-    else if (c === '%') re += '.*'; else if (c === '_') re += '.';
-    else re += c.replace(/[.*+?^$()|[\]{}\\]/g, '\\$&');
-  }
-  const nomes = Object.keys(st.dbs).filter((n) => new RegExp(re + '$').test(n)).sort();
+} else if ((m = new RegExp('^ALTER DATABASE ' + Q + ' RENAME TO ' + Q + '$').exec(sql))) {
+  const de = un(m[1]), para = un(m[2]);
+  if (process.env.FAKE_RACE && !st.dbs[para]) { st.dbs[para] = { comment: JSON.parse(process.env.FAKE_RACE).comment, allow: false, template: true }; salvar(); }
+  if (!st.dbs[de]) erro('ERROR: database does not exist');
+  if (st.dbs[para]) erro('ERROR: database "' + para + '" already exists');
+  st.dbs[para] = st.dbs[de]; delete st.dbs[de]; salvar();
+} else if ((m = new RegExp("^SELECT datname FROM pg_database WHERE datname LIKE " + L + " ESCAPE '\\\\'(?: AND shobj_description\\(oid, 'pg_database'\\) LIKE " + L + " ESCAPE '\\\\')? ORDER BY datname$").exec(sql))) {
+  const like = (pad) => {
+    let re = '^';
+    for (let i = 0; i < pad.length; i++) {
+      const c = pad[i];
+      if (c === '\\') { re += pad[++i].replace(/[.*+?^$()|[\]{}\\]/g, '\\$&'); }
+      else if (c === '%') re += '.*'; else if (c === '_') re += '.';
+      else re += c.replace(/[.*+?^$()|[\]{}\\]/g, '\\$&');
+    }
+    return new RegExp(re + '$');
+  };
+  const r1 = like(un(m[1])), r2 = m[2] === undefined ? null : like(un(m[2]));
+  const nomes = Object.keys(st.dbs).filter((n) => r1.test(n) && (!r2 || r2.test(st.dbs[n].comment ?? ''))).sort();
   const extra = process.env.FAKE_EXTRA ? JSON.parse(process.env.FAKE_EXTRA) : [];
   process.stdout.write([...nomes, ...extra].join('\n') + '\n');
 } else erro('fake: SQL desconhecido: ' + sql, 3);
@@ -77,28 +87,38 @@ if ((m = new RegExp("^SELECT 'E:' \\|\\| coalesce\\(shobj_description\\(oid, 'pg
 
 const FAKE_MIGRAR = String.raw`
 import { appendFileSync } from 'node:fs';
-appendFileSync(process.env.FAKE_LOG, JSON.stringify({ quem: 'migrar', argv: process.argv.slice(2), env: process.env.GABARITO_DB }) + '\n');
+appendFileSync(process.env.FAKE_LOG, JSON.stringify({ quem: 'migrar', argv: process.argv.slice(2), env: process.env.GABARITO_DB, pg: Object.fromEntries(Object.entries(process.env).filter(([k]) => /^PG/i.test(k))) }) + '\n');
 if (process.argv[3] === 'falha') { process.stderr.write('ERROR: migração quebrou\nLINE 1: SELECT x\n                ^\n'); process.exit(1); }
 `;
 
-/** Projeto temporário (sem git) com fake psql, fake migrar e config. */
-function projeto(db = {}, { semDb = false } = {}) {
+/** Projeto temporário com fake psql (`bin/psql`: o basename é o que a validação exige), fake migrar e config. */
+function projeto(db = {}, { semDb = false, git = false, semConfig = false, config } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'dbt-'));
-  const psql = join(dir, 'fake-psql.mjs'), migrar = join(dir, 'fake-migrar.mjs');
+  const bin = join(dir, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'package.json'), '{"type":"module"}');
+  const psql = join(bin, 'psql'), migrar = join(dir, 'fake-migrar.mjs');
   writeFileSync(psql, FAKE_PSQL);
   writeFileSync(migrar, FAKE_MIGRAR);
-  const cfg = semDb ? {} : { db: { psql: [process.execPath, psql, '-U', 'postgres'], template: 'gm_tpl', migrar: [process.execPath, migrar, '{db}'], ...db } };
-  writeFileSync(join(dir, 'harness.config.json'), JSON.stringify(cfg));
+  const cfg = semDb ? {} : { db: { psql: [process.execPath, psql], template: 'gm_tpl', migrar: [process.execPath, migrar, '{db}'], ...db } };
+  if (!semConfig) writeFileSync(join(dir, 'harness.config.json'), config ?? JSON.stringify(cfg));
   const estado = join(dir, 'estado.json'), log = join(dir, 'log.jsonl');
   writeFileSync(log, '');
   const env = { ...process.env, FAKE_STATE: estado, FAKE_LOG: log };
   delete env['GABARITO' + '_ALLOW'];
+  for (const k of Object.keys(env)) if (/^PG/i.test(k)) delete env[k];
+  if (git) { gitEm(dir)('init', '-q', '-b', 'main'); gitEm(dir)('commit', '-q', '--allow-empty', '-m', 'x'); }
   const rodar = (args, extra = {}) => spawnSync(process.execPath, [SCRIPT, ...args], { cwd: dir, encoding: 'utf8', env: { ...env, ...extra } });
+  const prep = (sessao = 'S1', extra = {}) => rodar(['preparar', '--sessao', sessao], extra);
   const chamadas = () => readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   const sqls = () => chamadas().filter((c) => c.quem === 'psql').map((c) => c.argv[c.argv.indexOf('-c') + 1]);
   const bancos = () => (existsSync(estado) ? JSON.parse(readFileSync(estado, 'utf8')).dbs : null);
-  return { dir, rodar, chamadas, sqls, bancos, estado, migrarJs: migrar, psqlJs: psql };
+  const temporarios = () => sqls().map((q) => /^CREATE DATABASE "(gm_prep_[^"]+)"$/.exec(q)?.[1]).filter(Boolean);
+  return { dir, rodar, prep, chamadas, sqls, bancos, temporarios, estado, migrarJs: migrar, psqlJs: psql, env };
 }
+
+const gitEm = (cwd) => (...a) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: 'pipe', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+const SO_SISTEMA = ['postgres', 'template0', 'template1'];
 
 describe('nome do banco', () => {
   test('nome-banco-normaliza', () => {
@@ -131,10 +151,17 @@ describe('nome do banco', () => {
     assert.throws(() => nomeBanco('', 't1'), /inválido/);
   });
 
-  test('marca-do-clone-separa-t-1-de-t1', () => {
+  test('marca-do-clone-separa-t-1-de-t1-e-entregas-irmas', () => {
     assert.notEqual(marcaClone('GM-10', 'T-1'), marcaClone('GM-10', 'T1'));
     assert.equal(marcaClone('GM-10', 'T1'), marcaClone('GM-10', 'T1'));
     assert.notEqual(marcaClone('GM-1', '0T'), marcaClone('GM-10', 'T')); // separador não deixa fundir os ids
+    assert.notEqual(marcaClone('GM10', 'T1'), marcaClone('GM-10', 'T1')); // entrega exata, não normalizada
+  });
+
+  test('marca-pronta-carrega-a-sessao-em-hash', () => {
+    assert.notEqual(marcaPronto('S1'), marcaPronto('S2'));
+    assert.equal(marcaPronto('S1'), marcaPronto('S1'));
+    assert.match(marcaPronto("x'; DROP DATABASE y; --"), /^gm-e2:template:pronto:[0-9a-f]{16}$/);
   });
 });
 
@@ -150,38 +177,209 @@ describe('validação de config', () => {
     assert.equal(validarDb({ db: base }).ok, true);
   });
 
+  test('recusa-template-com-prefixo-de-preparo', () => {
+    for (const t of ['gm_prep_1_abcdef012345', 'GM_PREP_x']) {
+      const v = validarDb({ db: { ...base, template: t } });
+      assert.equal(v.ok, false, t);
+      assert.match(v.erro, /reservado/);
+    }
+  });
+
   test('recusa-host-remoto', () => {
-    for (const h of ['db.prod.exemplo.com', 'localhost.evil.com', '127.0.0.1.nip.io', 'evil.com/127.0.0.1', '127.0.0.1 ', 'LOCALHOST', '0.0.0.0', '']) {
+    for (const h of ['db.prod.exemplo.com', 'localhost.evil.com', '127.0.0.1.nip.io', 'evil.com/127.0.0.1', '127.0.0.1 ', 'LOCALHOST', '0.0.0.0', '', 7, null, ['localhost']]) {
       assert.equal(validarDb({ db: { ...base, host: h } }).ok, false, `[${h}]`);
     }
     for (const h of HOSTS_LOCAIS) assert.equal(validarDb({ db: { ...base, host: h } }).ok, true, h);
   });
 
-  test('recusa-host-remoto-no-argv-do-psql', () => {
-    const remotos = [
-      ['psql', '-h', 'evil.com'], ['psql', '--host', 'evil.com'], ['psql', '--host=evil.com'], ['psql', '-hevil.com'],
-      ['psql', 'postgres://u:p@evil.com:5432/db'], ['psql', 'postgresql://evil.com/db'], ['psql', 'postgres://u@localhost.evil.com/db'],
+  test('porta-so-numero-de-porta', () => {
+    for (const ok of [5432, '54399', 65535, 1]) assert.equal(validarDb({ db: { ...base, porta: ok } }).ok, true, String(ok));
+    for (const ruim of ['abc', '5432;', '', 0, 65536, -1, 1.5, true, null, '1e3', ' 5432', [5432]]) {
+      const v = validarDb({ db: { ...base, porta: ruim } });
+      assert.equal(v.ok, false, `[${ruim}]`);
+      assert.match(v.erro, /db\.porta/);
+    }
+  });
+
+  test('admin-so-nome-simples', () => {
+    for (const ruim of ['host=remoto.invalid dbname=postgres', 'postgresql://remoto.invalid/postgres', 'a b', 'a-b', '', '-x', 'a=b', 'postgres;']) {
+      const v = validarDb({ db: { ...base, admin: ruim } });
+      assert.equal(v.ok, false, `[${ruim}]`);
+      assert.match(v.erro, /db\.admin/);
+    }
+    assert.equal(validarDb({ db: { ...base, admin: 'meu_admin1' } }).ok, true);
+    assert.equal(validarDb({ db: base }).db.admin, 'postgres');
+  });
+
+  test('nada-depois-do-psql-o-que-vem-antes-e-involucro', () => {
+    const recusados = [
+      ['psql', '-h', 'remoto.invalid'], ['psql', '-d', 'host=remoto.invalid dbname=x'], ['psql', '--host=remoto.invalid'],
+      ['psql', 'postgresql://remoto.invalid/x'], ['/usr/bin/psql', '-hremoto.invalid'], ['psql', '-Xh', 'remoto.invalid'],
+      ['docker', 'exec', 'c', 'psql', '-h', 'remoto.invalid'], ['docker', 'exec', 'c', 'psql', '-U', 'postgres'],
+      ['psql', 'host=remoto.invalid'], ['psql', '--hos', 'remoto.invalid'], ['psql', 'psql'],
     ];
-    for (const psql of remotos) assert.equal(validarDb({ db: { ...base, psql } }).ok, false, psql.join(' '));
-    const locais = [['psql', '-h', '127.0.0.1'], ['psql', '--host=localhost'], ['psql', 'postgres://u@[::1]:5432/db'], ['psql', '-h', '::1']];
-    for (const psql of locais) assert.equal(validarDb({ db: { ...base, psql } }).ok, true, psql.join(' '));
+    for (const psql of recusados) {
+      const v = validarDb({ db: { ...base, psql } });
+      assert.equal(v.ok, false, psql.join(' '));
+      assert.match(v.erro, /db\.psql/);
+    }
+    const aceitos = [['psql'], ['/usr/bin/psql'], ['/opt/pg 16/bin/psql'], ['docker', 'exec', 'c', 'psql'], ['docker', 'exec', '-u', 'postgres', 'gm-e2-pg', '/usr/bin/psql']];
+    for (const psql of aceitos) assert.equal(validarDb({ db: { ...base, psql } }).ok, true, psql.join(' '));
+  });
+
+  test('sem-executavel-psql-no-argv-recusa', () => {
+    for (const psql of [['docker', 'exec', 'c', 'pg'], ['psqlx'], ['/usr/bin/psql2'], ['xpsql']]) {
+      const v = validarDb({ db: { ...base, psql } });
+      assert.equal(v.ok, false, psql.join(' '));
+      assert.match(v.erro, /db\.psql/);
+    }
   });
 
   test('config-malformada-e-recusada-com-motivo', () => {
     assert.match(validarDb({ db: [] }).erro, /objeto/);
+    assert.match(validarDb({ db: null }).erro, /objeto/);
     assert.match(validarDb({ db: { ...base, psql: 'psql' } }).erro, /db\.psql/);
     assert.match(validarDb({ db: { ...base, psql: [] } }).erro, /db\.psql/);
     assert.match(validarDb({ db: { ...base, template: '' } }).erro, /db\.template/);
     assert.match(validarDb({ db: { ...base, migrar: 'x' } }).erro, /db\.migrar/);
+    for (const cfg of [null, [], 'x', 3, undefined]) assert.match(validarDb(cfg).erro, /config/, String(cfg));
   });
 
   test('sem-db-na', () => {
     assert.deepEqual(validarDb({}), { ok: true, na: true });
-    assert.deepEqual(validarDb(null), { ok: true, na: true });
+    assert.deepEqual(validarDb({ outro: 1 }), { ok: true, na: true });
     const p = projeto({}, { semDb: true });
-    const r = p.rodar(['preparar']);
+    const r = p.rodar(['preparar', '--sessao', 'S1']);
     assert.equal(r.status, 0);
     assert.equal(r.stdout.trim(), 'n/a');
+    assert.equal(p.chamadas().length, 0);
+  });
+});
+
+describe('config ilegível nunca vira n/a', () => {
+  const casos = {
+    'json-truncado': ['{"db": {"psql": [', /inválido/],
+    'raiz-array': ['[]', /objeto/],
+    'raiz-null': ['null', /objeto/],
+    'raiz-texto': ['"db"', /objeto/],
+    'vazio': ['', /inválido/],
+    'db-null': ['{"db": null}', /db/],
+  };
+  for (const [nome, [texto, motivo]] of Object.entries(casos)) {
+    test(`config-${nome}-sai-1-com-a-causa`, () => {
+      const p = projeto({}, { config: texto });
+      for (const args of [['preparar', '--sessao', 'S1'], ['clonar', 'T1', '--entrega', 'GM-10'], ['orfaos', '--entrega', 'GM-10'], ['soltar', 'T1', '--entrega', 'GM-10'], ['soltar-template']]) {
+        const r = p.rodar(args);
+        assert.equal(r.status, 1, `${args[0]}: ${r.stdout}`);
+        assert.notEqual(r.stdout.trim(), 'n/a');
+        assert.match(r.stderr, motivo);
+      }
+      assert.equal(p.chamadas().length, 0);
+    });
+  }
+
+  test('config-ausente-sai-1', () => {
+    const p = projeto({}, { semConfig: true });
+    const r = p.rodar(['preparar', '--sessao', 'S1']);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /ausente/);
+    assert.notEqual(r.stdout.trim(), 'n/a');
+  });
+
+  test('config-ilegivel-diretorio-sai-1', () => {
+    const p = projeto({}, { semConfig: true });
+    mkdirSync(join(p.dir, 'harness.config.json'));
+    const r = p.rodar(['preparar', '--sessao', 'S1']);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /ilegível/);
+  });
+});
+
+describe('conexão montada pelo plugin', () => {
+  const PG_AMBIENTE = { PGHOST: 'remoto.invalid', PGPORT: '1', PGDATABASE: 'outro', PGSERVICE: 'svc_remoto', PGHOSTADDR: '203.0.113.9', PGPASSWORD: 'segredo', PGOPTIONS: '-c x=1', PGSERVICEFILE: '/x', PGUSER: 'alguem' };
+
+  test('psql-recebe-h-e-p-do-plugin-antes-do-banco', () => {
+    const p = projeto({ host: '127.0.0.1', porta: 54399 });
+    assert.equal(p.prep().status, 0);
+    for (const c of p.chamadas().filter((x) => x.quem === 'psql')) {
+      const a = c.argv;
+      assert.equal(a[a.indexOf('-h') + 1], '127.0.0.1');
+      assert.equal(a[a.indexOf('-p') + 1], '54399');
+      assert.equal(a.filter((x) => x === '-h').length, 1);
+      assert.ok(a.indexOf('-h') < a.indexOf('-d'));
+    }
+  });
+
+  test('sem-host-na-config-o-plugin-fixa-localhost-e-nao-passa-p', () => {
+    const p = projeto();
+    assert.equal(p.prep().status, 0);
+    const a = p.chamadas().find((x) => x.quem === 'psql').argv;
+    assert.equal(a[a.indexOf('-h') + 1], 'localhost');
+    assert.ok(!a.includes('-p'));
+    assert.equal(a[a.indexOf('-d') + 1], 'postgres');
+  });
+
+  test('admin-vai-em-d-como-nome-simples', () => {
+    const p = projeto({ admin: 'meu_admin' });
+    assert.equal(p.prep().status, 0);
+    const a = p.chamadas().find((x) => x.quem === 'psql').argv;
+    assert.equal(a[a.indexOf('-d') + 1], 'meu_admin');
+  });
+
+  test('ambiente-do-psql-sem-nenhuma-PG', () => {
+    const p = projeto();
+    assert.equal(p.prep('S1', PG_AMBIENTE).status, 0);
+    for (const c of p.chamadas().filter((x) => x.quem === 'psql')) assert.deepEqual(c.pg, []);
+  });
+
+  test('migrar-roda-com-PGHOST-PGPORT-PGDATABASE-forcados', () => {
+    const p = projeto({ host: '::1', porta: '54399' });
+    assert.equal(p.prep('S1', PG_AMBIENTE).status, 0);
+    const m = p.chamadas().find((c) => c.quem === 'migrar');
+    const tmp = p.temporarios()[0];
+    assert.equal(m.pg.PGHOST, '::1');
+    assert.equal(m.pg.PGPORT, '54399');
+    assert.equal(m.pg.PGDATABASE, tmp);
+    assert.equal(m.env, tmp);
+    assert.equal(m.pg.PGSERVICE, undefined);
+    assert.equal(m.pg.PGHOSTADDR, undefined);
+    assert.equal(m.pg.PGOPTIONS, undefined);
+    assert.equal(m.pg.PGPASSWORD, 'segredo', 'credencial do usuário segue');
+    assert.equal(m.pg.PGUSER, 'alguem');
+  });
+
+  test('migrar-sem-porta-na-config-forca-5432', () => {
+    const p = projeto();
+    assert.equal(p.prep('S1', { PGPORT: '1' }).status, 0);
+    const m = p.chamadas().find((c) => c.quem === 'migrar');
+    assert.equal(m.pg.PGPORT, '5432');
+    assert.equal(m.pg.PGHOST, 'localhost');
+  });
+
+  test('psql-por-argv-sem-shell', () => {
+    // metacaracteres de shell no invólucro chegam literais ao processo (sem sh -c)
+    const q = projeto();
+    const cfg = { db: { psql: [process.execPath, '--title=$(echo pwn);`id`', q.psqlJs], template: 'gm_tpl', migrar: [process.execPath, q.migrarJs, '{db}'] } };
+    writeFileSync(join(q.dir, 'harness.config.json'), JSON.stringify(cfg));
+    const r = q.prep();
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(q.chamadas().find((c) => c.quem === 'psql').title, '$(echo pwn);`id`');
+  });
+
+  test('recusa-host-remoto-no-cli-sem-chamar-psql', () => {
+    const p = projeto({ host: '127.0.0.1.nip.io' });
+    const r = p.prep();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /host .* recusado/);
+    assert.equal(p.chamadas().length, 0);
+  });
+
+  test('argumento-depois-do-psql-no-cli-sem-chamar-psql', () => {
+    const p = projeto();
+    writeFileSync(join(p.dir, 'harness.config.json'), JSON.stringify({ db: { psql: [process.execPath, p.psqlJs, '-h', 'remoto.invalid'], template: 'gm_tpl', migrar: ['x'] } }));
+    const r = p.prep();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /db\.psql/);
     assert.equal(p.chamadas().length, 0);
   });
 });
@@ -189,104 +387,212 @@ describe('validação de config', () => {
 describe('preparar', () => {
   test('recusa-template-postgres-no-cli-sem-chamar-psql', () => {
     const p = projeto({ template: 'Postgres' });
-    const r = p.rodar(['preparar']);
+    const r = p.prep();
     assert.equal(r.status, 1);
     assert.match(r.stderr, /banco do sistema/);
     assert.equal(p.chamadas().length, 0);
   });
 
-  test('recusa-host-remoto-no-cli-sem-chamar-psql', () => {
-    const p = projeto({ host: '127.0.0.1.nip.io' });
-    const r = p.rodar(['preparar']);
-    assert.equal(r.status, 1);
-    assert.match(r.stderr, /host .* recusado/);
+  test('sem-sessao-recusa-sem-chamar-psql', () => {
+    const p = projeto();
+    for (const args of [['preparar'], ['preparar', '--sessao'], ['preparar', '--sessao', ''], ['preparar', '--sessao', '--entrega', 'GM-10'], ['preparar', '--entrega', 'GM-10']]) {
+      const r = p.rodar(args);
+      assert.equal(r.status, 2, args.join(' '));
+      assert.match(r.stderr, /--sessao/);
+    }
     assert.equal(p.chamadas().length, 0);
   });
 
-  test('template-sem-conexao-apos-preparar', () => {
+  test('sessao-hostil-nunca-entra-no-sql-crua', () => {
     const p = projeto();
-    const r = p.rodar(['preparar']);
+    const hostil = "x'; DROP DATABASE gm_tpl; --";
+    const r = p.prep(hostil);
     assert.equal(r.status, 0, r.stderr);
+    assert.ok(!p.sqls().some((s) => s.includes('DROP DATABASE gm_tpl') || s.includes(hostil)));
+    assert.equal(p.bancos().gm_tpl.comment, marcaPronto(hostil));
+  });
+
+  test('montagem-atomica-migra-em-temporario-e-renomeia-no-fim', () => {
+    const p = projeto();
+    const r = p.prep();
+    assert.equal(r.status, 0, r.stderr);
+    const [tmp, ...outros] = p.temporarios();
+    assert.match(tmp, /^gm_prep_[0-9a-f]+_[0-9a-f]{12}$/);
+    assert.ok(Buffer.byteLength(tmp) <= 63);
+    assert.equal(outros.length, 0);
     const ordem = p.chamadas().map((c) => (c.quem === 'migrar' ? 'MIGRAR' : c.argv[c.argv.indexOf('-c') + 1]));
-    const i = (re) => ordem.findIndex((s) => (typeof re === 'string' ? s === re : re.test(s)));
-    assert.ok(i('MIGRAR') > i(/^CREATE DATABASE "gm_tpl"$/) && i('MIGRAR') > -1, 'migra depois de criar');
-    assert.ok(i(/ALLOW_CONNECTIONS false/) > i('MIGRAR'), 'fecha conexões depois de migrar');
-    assert.ok(i(/IS_TEMPLATE true/) > i(/ALLOW_CONNECTIONS false/), 'papel sem superusuário ⇒ IS_TEMPLATE');
-    assert.ok(i(/COMMENT ON DATABASE "gm_tpl" IS 'gm-e2:template:pronto'/) > i(/IS_TEMPLATE true/), 'marca pronto por último');
-    assert.deepEqual(p.bancos().gm_tpl, { comment: 'gm-e2:template:pronto', allow: false, template: true });
+    const i = (x) => ordem.findIndex((s) => (typeof x === 'string' ? s === x : x.test(s)));
+    assert.ok(i(`CREATE DATABASE ${ident(tmp)}`) > -1 && i('MIGRAR') > i(`CREATE DATABASE ${ident(tmp)}`), 'migra depois de criar o temporário');
+    assert.ok(i(`ALTER DATABASE ${ident(tmp)} WITH ALLOW_CONNECTIONS false`) > i('MIGRAR'), 'fecha conexões depois de migrar');
+    assert.ok(i(`ALTER DATABASE ${ident(tmp)} WITH IS_TEMPLATE true`) > i(/ALLOW_CONNECTIONS false/), 'papel sem superusuário ⇒ IS_TEMPLATE');
+    assert.ok(i(`COMMENT ON DATABASE ${ident(tmp)} IS '${marcaPronto('S1')}'`) > i(/IS_TEMPLATE true/), 'marca pronto depois de tudo');
+    assert.ok(i(`ALTER DATABASE ${ident(tmp)} RENAME TO "gm_tpl"`) > i(/COMMENT ON DATABASE/), 'rename por último');
+    assert.ok(!ordem.some((s) => /CREATE DATABASE "gm_tpl"/.test(s)), 'o nome final nunca é criado direto');
+    assert.ok(!ordem.some((s) => /preparando/.test(s)), 'sem marca preparando');
     assert.ok(!ordem.some((s) => /DATABASE "postgres"/.test(s)), 'nunca mexe em postgres');
+    assert.deepEqual(Object.keys(p.bancos()).sort(), ['gm_tpl', ...SO_SISTEMA]);
+    assert.deepEqual(p.bancos().gm_tpl, { comment: marcaPronto('S1'), allow: false, template: true });
+    assert.equal(JSON.parse(r.stdout).reaproveitado, false);
+  });
+
+  test('nome-do-temporario-leva-o-pid-do-dono-e-e-unico-por-chamada', () => {
+    const a = nomeTemporario(), b = nomeTemporario();
+    assert.notEqual(a, b);
+    for (const n of [a, b]) assert.match(n, new RegExp(`^gm_prep_${process.pid.toString(16)}_[0-9a-f]{12}$`));
+    const p = projeto();
+    const r = p.prep();
+    assert.ok(p.temporarios()[0].startsWith(`gm_prep_${r.pid.toString(16)}_`), 'o pid no nome é o do processo que prepara');
+  });
+
+  test('migrar-recebe-o-temporario-por-argv-e-env', () => {
+    const p = projeto();
+    p.prep();
+    const m = p.chamadas().find((c) => c.quem === 'migrar');
+    assert.deepEqual(m.argv, [p.temporarios()[0]]);
+    assert.equal(m.env, p.temporarios()[0]);
   });
 
   test('superusuario-nao-marca-is-template', () => {
     const p = projeto();
-    const r = p.rodar(['preparar'], { FAKE_SUPER: '1' });
+    const r = p.prep('S1', { FAKE_SUPER: '1' });
     assert.equal(r.status, 0, r.stderr);
     assert.ok(!p.sqls().some((s) => /IS_TEMPLATE/.test(s)));
     assert.equal(p.bancos().gm_tpl.allow, false);
   });
 
-  test('migrar-recebe-o-template-por-argv-e-env', () => {
-    const p = projeto();
-    p.rodar(['preparar']);
-    const m = p.chamadas().find((c) => c.quem === 'migrar');
-    assert.deepEqual(m.argv, ['gm_tpl']);
-    assert.equal(m.env, 'gm_tpl');
-  });
-
-  test('migrar-falha-nao-marca-pronto-e-nao-clona', () => {
+  test('migrar-falha-solta-o-proprio-temporario-nao-marca-pronto-e-nao-clona', () => {
     const p = projeto();
     writeFileSync(join(p.dir, 'harness.config.json'), JSON.stringify({ db: { psql: [process.execPath, p.psqlJs], template: 'gm_tpl', migrar: [process.execPath, p.migrarJs, '{db}', 'falha'] } }));
-    const r = p.rodar(['preparar']);
+    const r = p.prep();
     assert.equal(r.status, 1);
     assert.match(r.stderr, /db\.migrar falhou \(ERROR: migração quebrou\)/);
-    assert.match(r.stderr, /NÃO foi marcado como pronto/);
-    assert.equal(p.bancos().gm_tpl.comment, 'gm-e2:template:preparando');
-    assert.ok(!p.sqls().some((s) => /ALLOW_CONNECTIONS|IS_TEMPLATE|template:pronto/.test(s)));
+    assert.match(r.stderr, /NÃO foi publicado/);
+    assert.deepEqual(Object.keys(p.bancos()).sort(), SO_SISTEMA, 'nem template nem temporário sobram');
+    assert.ok(!p.sqls().some((s) => /ALLOW_CONNECTIONS|IS_TEMPLATE true|template:pronto|RENAME/.test(s)));
     const c = p.rodar(['clonar', 'T1', '--entrega', 'GM-10']);
     assert.equal(c.status, 1);
     assert.match(c.stderr, /não está pronto/);
     assert.ok(!p.sqls().some((s) => /^CREATE DATABASE "gm_gm10_t1"/.test(s)));
   });
 
-  test('sem-migrar-declarado-falha-claro', () => {
+  test('falha-depois-do-migrar-tambem-solta-o-temporario', () => {
     const p = projeto();
-    writeFileSync(join(p.dir, 'harness.config.json'), JSON.stringify({ db: { psql: [process.execPath, p.psqlJs], template: 'gm_tpl' } }));
-    const r = p.rodar(['preparar']);
+    const r = p.prep('S1', { FAKE_FAIL: 'ALLOW_CONNECTIONS false' });
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /db\.migrar ausente/);
-    assert.notEqual(p.bancos()?.gm_tpl?.comment, 'gm-e2:template:pronto');
+    assert.deepEqual(Object.keys(p.bancos()).sort(), SO_SISTEMA);
+    const q = projeto();
+    const f = q.prep('S1', { FAKE_FAIL: 'COMMENT ON DATABASE' }); // depois de IS_TEMPLATE true: tem de desmarcar antes do drop
+    assert.equal(f.status, 1);
+    assert.deepEqual(Object.keys(q.bancos()).sort(), SO_SISTEMA);
+    assert.ok(q.sqls().some((s) => /IS_TEMPLATE false/.test(s)));
   });
 
-  test('preparar-de-novo-reaproveita-sem-migrar-outra-vez', () => {
+  test('sem-migrar-declarado-falha-claro-sem-criar-nada', () => {
     const p = projeto();
-    p.rodar(['preparar']);
-    const r = p.rodar(['preparar']);
+    writeFileSync(join(p.dir, 'harness.config.json'), JSON.stringify({ db: { psql: [process.execPath, p.psqlJs], template: 'gm_tpl' } }));
+    const r = p.prep();
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /db\.migrar ausente/);
+    assert.ok(!p.sqls().some((s) => /^CREATE/.test(s)), 'nada foi criado');
+  });
+
+  test('mesma-sessao-reaproveita-sem-migrar-outra-vez', () => {
+    const p = projeto();
+    p.prep('S1');
+    const r = p.prep('S1');
     assert.equal(r.status, 0);
     assert.equal(p.chamadas().filter((c) => c.quem === 'migrar').length, 1);
     assert.equal(JSON.parse(r.stdout).reaproveitado, true);
   });
 
+  test('outra-sessao-recria-com-o-novo-so-depois-de-pronto', () => {
+    const p = projeto();
+    p.prep('S1');
+    const r = p.prep('S2');
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(p.chamadas().filter((c) => c.quem === 'migrar').length, 2);
+    assert.equal(JSON.parse(r.stdout).reaproveitado, false);
+    assert.equal(p.bancos().gm_tpl.comment, marcaPronto('S2'));
+    assert.deepEqual(Object.keys(p.bancos()).sort(), ['gm_tpl', ...SO_SISTEMA]);
+    const ordem = p.sqls();
+    const tmp2 = p.temporarios()[1];
+    const iMigrado = ordem.lastIndexOf(`ALTER DATABASE ${ident(tmp2)} WITH ALLOW_CONNECTIONS false`);
+    const iDesmarca = ordem.indexOf('ALTER DATABASE "gm_tpl" WITH IS_TEMPLATE false');
+    const iDrop = ordem.indexOf('DROP DATABASE IF EXISTS "gm_tpl" WITH (FORCE)');
+    const iRename = ordem.indexOf(`ALTER DATABASE ${ident(tmp2)} RENAME TO "gm_tpl"`);
+    assert.ok(iMigrado > -1 && iDesmarca > iMigrado && iDrop > iDesmarca && iRename > iDrop, 'o velho só cai com o novo já pronto');
+  });
+
+  test('antigo-nao-cai-se-o-novo-falha', () => {
+    const p = projeto();
+    p.prep('S1');
+    const r = p.prep('S2', { FAKE_FAIL: 'ALLOW_CONNECTIONS false' });
+    assert.equal(r.status, 1);
+    assert.equal(p.bancos().gm_tpl.comment, marcaPronto('S1'), 'o template antigo continua inteiro');
+    assert.deepEqual(Object.keys(p.bancos()).sort(), ['gm_tpl', ...SO_SISTEMA]);
+  });
+
+  test('drop-do-antigo-falha-solta-o-proprio-temporario-e-mantem-o-antigo', () => {
+    const p = projeto();
+    p.prep('S1');
+    const r = p.prep('S2', { FAKE_FAIL: '^DROP DATABASE IF EXISTS "gm_tpl"' });
+    assert.equal(r.status, 1);
+    assert.equal(p.bancos().gm_tpl.comment, marcaPronto('S1'));
+    assert.deepEqual(Object.keys(p.bancos()).sort(), ['gm_tpl', ...SO_SISTEMA]);
+  });
+
+  test('perde-o-rename-para-a-mesma-sessao-solta-o-proprio-e-reaproveita-o-vencedor', () => {
+    const p = projeto();
+    const r = p.prep('S1', { FAKE_RACE: JSON.stringify({ comment: marcaPronto('S1') }) });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).reaproveitado, true);
+    const [tmp] = p.temporarios();
+    assert.ok(p.sqls().includes(`DROP DATABASE IF EXISTS ${ident(tmp)} WITH (FORCE)`), 'solta o próprio temporário');
+    assert.deepEqual(Object.keys(p.bancos()).sort(), ['gm_tpl', ...SO_SISTEMA]);
+    assert.equal(p.bancos().gm_tpl.comment, marcaPronto('S1'));
+    assert.ok(!p.sqls().some((s) => /"gm_tpl"/.test(s) && /DROP|IS_TEMPLATE/.test(s)), 'o banco do vencedor não é tocado');
+  });
+
+  test('perde-o-rename-para-outra-marca-falha-sem-tocar-no-que-la-esta', () => {
+    for (const comment of [marcaPronto('S0'), 'meu banco', '']) {
+      const p = projeto();
+      const r = p.prep('S1', { FAKE_RACE: JSON.stringify({ comment }) });
+      assert.equal(r.status, 1, comment);
+      assert.match(r.stderr, /gm_tpl/);
+      const [tmp] = p.temporarios();
+      assert.ok(p.sqls().includes(`DROP DATABASE IF EXISTS ${ident(tmp)} WITH (FORCE)`));
+      assert.equal(p.bancos().gm_tpl.comment, comment);
+      assert.ok(!p.sqls().some((s) => /"gm_tpl"/.test(s) && /DROP|IS_TEMPLATE/.test(s)));
+    }
+  });
+
+  test('nunca-solta-preparo-de-outro-processo', () => {
+    const p = projeto();
+    writeFileSync(p.estado, JSON.stringify({ dbs: { postgres: {}, gm_prep_ffff_aaaaaaaaaaaa: { comment: marcaPronto('S1') } } }));
+    const r = p.prep('S1');
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(p.bancos().gm_prep_ffff_aaaaaaaaaaaa, 'o preparo alheio continua');
+    assert.ok(!p.sqls().some((s) => s.includes('gm_prep_ffff')));
+  });
+
+  test('dois-preparos-tem-temporarios-distintos', () => {
+    const a = projeto(), b = projeto();
+    a.prep(); b.prep();
+    assert.notEqual(a.temporarios()[0], b.temporarios()[0]);
+  });
+
   test('banco-alheio-com-o-nome-do-template-e-recusado', () => {
     const p = projeto();
     writeFileSync(p.estado, JSON.stringify({ dbs: { postgres: {}, gm_tpl: { comment: 'meu banco' } } }));
-    const r = p.rodar(['preparar']);
+    const r = p.prep();
     assert.equal(r.status, 1);
     assert.match(r.stderr, /não foi criado pelo Gabarito/);
     assert.ok(!p.sqls().some((s) => /DROP|CREATE/.test(s)));
   });
-
-  test('sobra-de-preparo-interrompido-e-refeita', () => {
-    const p = projeto();
-    writeFileSync(p.estado, JSON.stringify({ dbs: { postgres: {}, gm_tpl: { comment: 'gm-e2:template:preparando' } } }));
-    const r = p.rodar(['preparar']);
-    assert.equal(r.status, 0, r.stderr);
-    assert.ok(p.sqls().some((s) => s === 'DROP DATABASE IF EXISTS "gm_tpl" WITH (FORCE)'));
-    assert.equal(p.bancos().gm_tpl.comment, 'gm-e2:template:pronto');
-  });
 });
 
 describe('clonar e soltar', () => {
-  const pronto = () => { const p = projeto(); const r = p.rodar(['preparar']); assert.equal(r.status, 0, r.stderr); return p; };
+  const pronto = () => { const p = projeto(); const r = p.prep(); assert.equal(r.status, 0, r.stderr); return p; };
 
   test('clonar-usa-template', () => {
     const p = pronto();
@@ -314,32 +620,32 @@ describe('clonar e soltar', () => {
     assert.ok(!p.sqls().some((s) => /^CREATE/.test(s)));
   });
 
+  test('clonar-nao-aceita-banco-sem-marca-de-pronto-nem-preparo-em-curso', () => {
+    for (const comment of ['', 'meu', 'gm-e2:template:preparando', 'gm-e2:template:pronto', 'gm-e2:template:pronto:zzzz']) {
+      const p = projeto();
+      writeFileSync(p.estado, JSON.stringify({ dbs: { postgres: {}, gm_tpl: { comment, template: true } } }));
+      const r = p.rodar(['clonar', 'T1', '--entrega', 'GM-10']);
+      assert.equal(r.status, 1, comment);
+      assert.ok(!p.sqls().some((s) => /^CREATE/.test(s)), comment);
+    }
+  });
+
   test('clonar-id-hostil-vai-citado-em-um-unico-argv', () => {
     const p = pronto();
     const r = p.rodar(['clonar', 'a"; DROP DATABASE gm_tpl; --', '--entrega', 'GM-10']);
     assert.equal(r.status, 0, r.stderr);
     const create = p.chamadas().filter((c) => c.quem === 'psql').map((c) => c.argv).find((a) => /CREATE DATABASE "gm_gm10_/.test(a[a.indexOf('-c') + 1]));
     assert.equal(create[create.indexOf('-c') + 1], 'CREATE DATABASE "gm_gm10_adropdatabasegmtpl" TEMPLATE "gm_tpl"');
-    assert.ok(!p.sqls().some((s) => /DROP/.test(s)));
+    assert.ok(!p.sqls().some((s) => /DROP DATABASE IF EXISTS "gm_gm10/.test(s)));
     assert.ok(p.bancos().gm_tpl, 'template intacto');
   });
 
   test('template-com-aspas-vai-como-identificador-citado', () => {
     const p = projeto({ template: 'tpl"; DROP DATABASE x; --' });
-    const r = p.rodar(['preparar']);
+    const r = p.prep();
     assert.equal(r.status, 0, r.stderr);
-    assert.ok(p.sqls().includes('CREATE DATABASE "tpl""; DROP DATABASE x; --"'));
-    assert.deepEqual(Object.keys(p.bancos()).sort(), ['postgres', 'template0', 'template1', 'tpl"; DROP DATABASE x; --']);
-  });
-
-  test('psql-por-argv-sem-shell', () => {
-    // argumento com metacaracteres de shell chega literal ao processo (sem sh -c)
-    const q = projeto();
-    writeFileSync(join(q.dir, 'harness.config.json'), JSON.stringify({ db: { psql: [process.execPath, q.psqlJs, '-U', '$(echo pwn);`id`'], template: 'gm_tpl', migrar: [process.execPath, q.migrarJs, '{db}'] } }));
-    const r = q.rodar(['preparar']);
-    assert.equal(r.status, 0, r.stderr);
-    const a = q.chamadas().find((c) => c.quem === 'psql').argv;
-    assert.equal(a[a.indexOf('-U') + 1], '$(echo pwn);`id`');
+    assert.ok(p.sqls().includes(`ALTER DATABASE ${ident(p.temporarios()[0])} RENAME TO "tpl""; DROP DATABASE x; --"`));
+    assert.deepEqual(Object.keys(p.bancos()).sort(), [...SO_SISTEMA, 'tpl"; DROP DATABASE x; --'].sort());
   });
 
   test('soltar-force', () => {
@@ -417,22 +723,45 @@ describe('clonar e soltar', () => {
 });
 
 describe('órfãos', () => {
-  const comBancos = (nomes) => {
-    const p = projeto();
-    writeFileSync(p.estado, JSON.stringify({ dbs: { postgres: {}, template1: {}, ...Object.fromEntries(nomes.map((n) => [n, {}])) } }));
+  /** `spec`: nome simples (sem marca) ou `[nome, entrega, task]` (com a marca de clone que o script grava). */
+  const comBancos = (spec, opts = { git: true }) => {
+    const p = projeto({}, opts);
+    const dbs = { postgres: {}, template1: {} };
+    for (const x of spec) {
+      if (typeof x === 'string') dbs[x] = {};
+      else dbs[x[0]] = { comment: marcaClone(x[1], x[2]) };
+    }
+    writeFileSync(p.estado, JSON.stringify({ dbs }));
     return p;
   };
+  const lista = (p, entrega, extra) => JSON.parse(p.rodar(['orfaos', '--entrega', entrega], extra).stdout).orfaos;
 
   test('orfao-com-escape-nao-pega-gmaster', () => {
-    const p = comBancos(['gm_e2_a', 'gm_e2_b', 'gmaster', 'gmxe2xzzz', 'gm_e2x_c', 'gm_outra_a']);
+    const p = comBancos([['gm_e2_a', 'e2', 'a'], ['gm_e2_b', 'e2', 'b'], ['gmaster', 'e2', 'a'], ['gmxe2xzzz', 'e2', 'a'], ['gm_e2x_c', 'e2', 'c'], ['gm_outra_a', 'outra', 'a']]);
     const r = p.rodar(['orfaos', '--entrega', 'e2']);
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(JSON.parse(r.stdout).orfaos, ['gm_e2_a', 'gm_e2_b']);
     assert.ok(p.sqls().some((s) => s.includes("LIKE 'gm\\_e2\\_%' ESCAPE '\\'")), p.sqls().join('\n'));
   });
 
+  test('orfao-exige-a-marca-de-clone-da-entrega', () => {
+    const p = comBancos([['gm_e2_ok', 'e2', 'ok'], 'gm_e2_semmarca']);
+    const e = JSON.parse(readFileSync(p.estado, 'utf8'));
+    e.dbs.gm_e2_alheio = { comment: 'meu banco' };
+    e.dbs.gm_e2_pronto = { comment: marcaPronto('S1') };
+    writeFileSync(p.estado, JSON.stringify(e));
+    assert.deepEqual(lista(p, 'e2'), ['gm_e2_ok']);
+  });
+
+  test('orfao-entrega-exata-GM10-nao-pega-GM-10', () => {
+    const p = comBancos([['gm_gm10_t1', 'GM-10', 'T1']]);
+    assert.deepEqual(lista(p, 'GM10'), []);
+    assert.deepEqual(lista(p, 'gm10'), []);
+    assert.deepEqual(lista(p, 'GM-10'), ['gm_gm10_t1']);
+  });
+
   test('orfao-valida-a-lista-que-veio-do-banco', () => {
-    const p = comBancos(['gm_e2_ok']);
+    const p = comBancos([['gm_e2_ok', 'e2', 'ok']]);
     const hostis = ['gm_e2_x"; DROP DATABASE y;--', 'gm_e2_a_b', 'gm_e2_', 'gmaster', 'GM_E2_ok', 'gm_e2_' + 'a'.repeat(60), 'gm_e2_ok'];
     const r = p.rodar(['orfaos', '--entrega', 'e2'], { FAKE_EXTRA: JSON.stringify(hostis) });
     assert.equal(r.status, 0, r.stderr);
@@ -440,37 +769,65 @@ describe('órfãos', () => {
     assert.ok(!p.sqls().some((s) => /^(DROP|ALTER|CREATE)/.test(s)), 'listar não altera nada');
   });
 
-  test('orfao-nao-lista-o-proprio-template', () => {
-    const p = comBancos(['gm_e2_tpl', 'gm_e2_a']);
+  test('orfao-nao-lista-o-template-mesmo-com-nome-no-padrao', () => {
+    const p = comBancos([['gm_e2_a', 'e2', 'a']]);
+    const e = JSON.parse(readFileSync(p.estado, 'utf8'));
+    e.dbs.gm_e2_tpl = { comment: marcaPronto('S1'), template: true };
+    writeFileSync(p.estado, JSON.stringify(e));
     writeFileSync(join(p.dir, 'harness.config.json'), JSON.stringify({ db: { psql: [process.execPath, p.psqlJs], template: 'gm_e2_tpl', migrar: ['x'] } }));
-    assert.deepEqual(JSON.parse(p.rodar(['orfaos', '--entrega', 'e2']).stdout).orfaos, ['gm_e2_a']);
+    assert.deepEqual(lista(p, 'e2'), ['gm_e2_a']);
   });
 
-  test('orfao-worktree-viva-fica', () => {
-    const raiz = mkdtempSync(join(tmpdir(), 'dbt-git-'));
-    const git = (...a) => execFileSync('git', a, { cwd: raiz, encoding: 'utf8', stdio: 'pipe', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
-    git('init', '-q', '-b', 'main');
-    git('commit', '-q', '--allow-empty', '-m', 'x');
-    const p = projeto();
-    writeFileSync(join(raiz, 'harness.config.json'), readFileSync(join(p.dir, 'harness.config.json')));
-    git('worktree', 'add', '-q', '-b', 'wt/GM-10-T-1', join(raiz, 'wt1'));
-    writeFileSync(p.estado, JSON.stringify({ dbs: { postgres: {}, gm_gm10_t1: {}, gm_gm10_t2: {}, gm_gm10_t3: {} } }));
-    const env = { ...process.env, FAKE_STATE: p.estado, FAKE_LOG: join(p.dir, 'log.jsonl') };
-    const r = spawnSync(process.execPath, [SCRIPT, 'orfaos', '--entrega', 'GM-10'], { cwd: raiz, encoding: 'utf8', env });
-    assert.equal(r.status, 0, r.stderr);
-    assert.deepEqual(JSON.parse(r.stdout).orfaos, ['gm_gm10_t2', 'gm_gm10_t3']);
+  test('orfao-worktree-viva-por-caminho-fica-mesmo-em-rebase-detached', () => {
+    const p = comBancos([['gm_gm10_t1', 'GM-10', 'T-1'], ['gm_gm10_t2', 'GM-10', 'T2'], ['gm_gm10_t3', 'GM-10', 'T3']]);
+    gitEm(p.dir)('worktree', 'add', '-q', '--detach', join(p.dir, '.harness', 'worktrees', 'T-1')); // sem branch, como num rebase parado
+    assert.deepEqual(lista(p, 'GM-10'), ['gm_gm10_t2', 'gm_gm10_t3']);
   });
 
-  test('bancos-vivos-so-conta-worktree-existente-da-entrega', () => {
+  test('orfao-worktree-fora-de-harness-worktrees-nao-protege', () => {
+    const p = comBancos([['gm_gm10_t1', 'GM-10', 'T1']]);
+    gitEm(p.dir)('worktree', 'add', '-q', '-b', 'wt/GM-10-T1', join(p.dir, 'outro-lugar', 'T1'));
+    assert.deepEqual(lista(p, 'GM-10'), ['gm_gm10_t1']);
+  });
+
+  test('orfao-git-falhando-e-erro-nunca-lista-vazia', () => {
+    const p = comBancos([['gm_gm10_t1', 'GM-10', 'T1']], { git: false });
+    const r = p.rodar(['orfaos', '--entrega', 'GM-10']);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /git worktree list falhou/);
+    assert.equal(r.stdout.trim(), '');
+  });
+
+  test('bancos-vivos-so-conta-worktree-existente-sob-harness-worktrees', () => {
     const porcelain = [
       'worktree /r\nHEAD aaa\nbranch refs/heads/main',
-      'worktree /r/wt/a\nHEAD bbb\nbranch refs/heads/wt/GM-10-T1',
-      'worktree /r/wt/b\nHEAD ccc\nbranch refs/heads/wt/GM-10-T2\nprunable gitdir file points to non-existent location',
-      'worktree /r/wt/c\nHEAD ddd\nbranch refs/heads/wt/GM-11-T3',
-      'worktree /r/wt/d\nHEAD eee\ndetached',
-      'worktree /sumiu\nHEAD fff\nbranch refs/heads/wt/GM-10-T4',
+      'worktree /r/.harness/worktrees/T1\nHEAD bbb\nbranch refs/heads/wt/GM-10-T1',
+      'worktree /r/.harness/worktrees/T2\nHEAD ccc\ndetached',
+      'worktree /r/.harness/worktrees/T3\nHEAD ddd\nbranch refs/heads/wt/GM-10-T3\nprunable gitdir file points to non-existent location',
+      'worktree /r/.harness/worktrees/T4\nHEAD eee\nbranch refs/heads/qualquer',
+      'worktree /r/.harness/worktrees/T5/fundo\nHEAD fff\ndetached',
+      'worktree /r/wt/T6\nHEAD ggg\nbranch refs/heads/wt/GM-10-T6',
+      'worktree /r/.harness/worktrees/sumiu\nHEAD hhh\ndetached',
+      'worktree /outro/.harness/worktrees/T7\nHEAD iii\ndetached',
     ].join('\n\n');
-    const vivos = bancosVivos('GM-10', porcelain, (c) => c !== '/sumiu');
-    assert.deepEqual([...vivos], ['gm_gm10_t1']);
+    const vivos = bancosVivos('GM-10', porcelain, (c) => !c.endsWith('/sumiu'));
+    assert.deepEqual([...vivos].sort(), ['gm_gm10_t1', 'gm_gm10_t2', 'gm_gm10_t4']);
+  });
+
+  test('bancos-vivos-porcelain-vazio-ou-sem-principal-lanca', () => {
+    for (const ruim of ['', '\n', 'HEAD aaa\nbranch refs/heads/main']) assert.throws(() => bancosVivos('GM-10', ruim), /worktree/);
+  });
+
+  test('temporario-sem-dono-aparece-pelo-padrao-e-o-vivo-fica', () => {
+    const morto = spawnSync(process.execPath, ['-e', '0']).pid;
+    const vivoNome = `gm_prep_${process.pid.toString(16)}_aaaaaaaaaaaa`;
+    const mortoNome = `gm_prep_${morto.toString(16)}_bbbbbbbbbbbb`;
+    const p = comBancos([]);
+    const e = JSON.parse(readFileSync(p.estado, 'utf8'));
+    e.dbs[vivoNome] = {}; e.dbs[mortoNome] = {}; e.dbs.gm_prep_lixo = {};
+    writeFileSync(p.estado, JSON.stringify(e));
+    const out = JSON.parse(p.rodar(['orfaos', '--entrega', 'e2']).stdout);
+    assert.deepEqual(out.temporarios, [mortoNome]);
+    assert.ok(!p.sqls().some((s) => /^(DROP|ALTER|CREATE)/.test(s)), 'listar não altera nada');
   });
 });
