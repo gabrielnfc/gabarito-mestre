@@ -541,13 +541,18 @@ describe('anel do PAUSAR nas mesmas raízes da pausa', () => {
     }
   });
 
-  test('pausar-limite-declarado: variável, glob, interpretador, find, pushd, git clean ficam como estão (Q26 item 4)', () => {
+  test('pausar-limite-declarado: variável, interpretador, find, pushd, git clean ficam como estão (Q26 item 4); glob no .harness do principal agora pede (anel por raiz, T17)', () => {
     const { wt, M } = cenario('GM-R3-11');
     for (const command of [
-      `F=${M}/.harness/pausar; rm $F`, `rm ${M}/.harness/*`, `cd ${M}/.harness; rm -f *`, `python3 -c "import os; os.remove('${M}/.harness/pausar')"`,
+      `F=${M}/.harness/pausar; rm $F`, `python3 -c "import os; os.remove('${M}/.harness/pausar')"`,
       `node -e "require('fs').unlinkSync('${M}/.harness/pausar')"`, `find ${M}/.harness -delete`, `pushd ${M}/.harness && rm PAUSAR`, `git -C ${M} clean -fdx`,
     ]) {
       assert.equal(rodar(wt, 'Bash', { command }).decisao, undefined, `limite: ${command}`);
+    }
+    // Saiu do limite: o caminho do glob é absoluto (ou o `cd` é), logo cai no `.harness` do principal, qualquer que seja o cwd.
+    for (const command of [`rm ${M}/.harness/*`, `cd ${M}/.harness; rm -f *`]) {
+      assert.equal(rodar(wt, 'Bash', { command }).decisao, 'ask', `agora pede: ${command}`);
+      assert.equal(rodar(wt, 'Bash', { command }, SUB).decisao, 'deny', `agora nega o subagent: ${command}`);
     }
   });
 

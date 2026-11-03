@@ -456,10 +456,26 @@ function resolver(caminho        , contexto          , cwd                )     
   const raiz = contexto.raiz ? contexto.raiz.replace(/\/+$/, '') : null;
   let rel                = null;
   if (norm.startsWith('/')) {
-    if (raiz && norm === raiz) rel = '';
-    else if (raiz && norm.startsWith(`${raiz}/`)) rel = norm.slice(raiz.length + 1);
+    // A raiz mais profunda que contém o caminho decide (REQ-POU-2, emenda a Q14): a sessão, o cwd e as worktrees que o git registra.
+    // O veredito é função do caminho, não do cwd. Caixa exata: outra grafia não é prefixo e cai no anel da raiz que a contém.
+    // A raiz do cwd só conta se não for um checkout aninhado em `<principal>/.harness` que o git não registra como filho direto de `worktrees/`.
+    const extras = raizesDeAnel(contexto);
+    const pausa = raizesDePausa(contexto);
+    const aninhada = raiz !== null && !extras.includes(raiz) && pausa.some((p) => raiz.toLowerCase().startsWith(`${p}/.harness/`));
+    let dono                = null;
+    for (const c of [aninhada ? null : raiz, ...extras]) {
+      if (typeof c !== 'string' || c === '') continue;
+      if ((norm === c || norm.startsWith(`${c}/`)) && (dono === null || c.length > dono.length)) dono = c;
+    }
+    if (dono !== null) rel = norm === dono ? '' : norm.slice(dono.length + 1);
   } else if (!norm.startsWith('~') && !norm.startsWith('..') && !norm.startsWith('$')) rel = norm === '.' ? '' : norm;
   return { norm, rel };
+}
+
+/** As raízes do anel (sem barra final, caixa original), vindas de `guarda.ts` (`raizesDeAnel`); vazia sem contexto. */
+function raizesDeAnel(contexto          )           {
+  const r = (contexto                                          ).raizesDeAnel;
+  return Array.isArray(r) ? r.map((x) => x.replace(/\/+$/, '')) : [];
 }
 
 /** As raízes da pausa (minúsculas, sem barra final), vindas de `guarda.ts`; vazia fora de repo ou sem contexto. */

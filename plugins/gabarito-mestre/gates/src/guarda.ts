@@ -12,7 +12,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { accessSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync } from 'node:fs';
+import { accessSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, statSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -130,7 +130,7 @@ function linhaDe(texto: string | null): string | null {
 
 function montarContexto(entrada: EntradaHook, raiz: string | null, cwd: string, pluginRoot: string | null, raizes: string[]): Contexto {
   // `raizes`: as raízes da pausa, para o anel (`aneis.ts`); `raiz` segue sendo a do cwd (Q14).
-  const nulos: Contexto & { raizes: string[] } = { branchAtual: null, refLinkado: null, remoteUrl: null, raiz, pluginRoot, raizes };
+  const nulos: Contexto & { raizes: string[]; raizesDeAnel: string[] } = { branchAtual: null, refLinkado: null, remoteUrl: null, raiz, pluginRoot, raizes, raizesDeAnel: raizesDeAnel(raizes) };
   if (!precisaContexto(entrada)) return nulos;
   const base = raiz ?? cwd;
   let refLinkado: string | null = null;
@@ -335,6 +335,32 @@ export function raizesDePausa(raizSessao: string | null, raizCwd: string | null)
     for (const c of [r, p]) if (typeof c === 'string' && !raizes.includes(c)) raizes.push(c);
   }
   return { raizes, ilegivel };
+}
+
+/**
+ * Raízes do anel (REQ-POU-2): as da pausa mais as worktrees que o git registra em cada uma (`<r>/.git/worktrees/<n>/gitdir`).
+ * Só fs, sem spawn. Uma worktree entra se o ponteiro termina em `.git` e esse `.git` é arquivo; e, se estiver sob `<r>/.harness`,
+ * só como filho direto de `<r>/.harness/worktrees`. Qualquer falha de leitura: não entra, e o caminho fica no anel do principal (nega).
+ */
+export function raizesDeAnel(raizes: string[]): string[] {
+  // Um checkout aninhado em `<outra>/.harness/` só volta à lista se o git o registrar como filho direto de `worktrees/` (abaixo).
+  const aninhada = (x: string): boolean => raizes.some((o) => o !== x && x.toLowerCase().startsWith(`${o.toLowerCase()}/.harness/`));
+  const todas = raizes.filter((x) => !aninhada(x));
+  for (const r of raizes) {
+    let nomes: string[];
+    try { nomes = readdirSync(join(r, '.git', 'worktrees')); } catch { continue; }
+    for (const n of nomes) {
+      try {
+        const dir = join(r, '.git', 'worktrees', n);
+        const ptr = resolve(dir, readFileSync(join(dir, 'gitdir'), 'utf8').trim());
+        if (basename(ptr) !== '.git' || !lstatSync(ptr).isFile()) continue;
+        const wt = dirname(ptr);
+        if ((wt === `${r}/.harness` || wt.startsWith(`${r}/.harness/`)) && dirname(wt) !== `${r}/.harness/worktrees`) continue;
+        if (!todas.includes(wt)) todas.push(wt);
+      } catch { /* ponteiro ilegível: a worktree fica no anel do principal */ }
+    }
+  }
+  return todas;
 }
 
 const pausado = (p: { raizes: string[]; ilegivel: boolean }): boolean => p.ilegivel || p.raizes.some(existePausar);
