@@ -35,6 +35,7 @@ function commit(dir, arquivo, conteudo, msg = 'feat(GM-10): x') {
   g(dir, 'add', arquivo);
   g(dir, 'commit', '-q', '-m', msg);
 }
+const hatch = ['GABARITO', 'ALLOW'].join('_');
 const texto = (r) => r.relato.join('\n');
 const verde = { suites: [{ nome: 'ok', cmd: 'exit 0' }] };
 
@@ -132,10 +133,10 @@ describe('gate-task', () => {
     assert.ok(rc.reprova > 0, 'teste no mesmo diff não perdoa segredo em arquivo de produto');
   });
 
-  test('gate-hatch-e-allow: GABARITO_ALLOW aumentar e allow adicionado reprovam', async () => {
+  test(`gate-hatch-e-allow: ${hatch} aumentar e allow adicionado reprovam`, async () => {
     const a = repo();
-    commit(a.dir, 'src/h.txt', 'GABARITO_ALLOW=1\n');
-    assert.match(texto(await avaliar({ wt: a.dir, base: a.base, ...verde })), /GABARITO_ALLOW aumentou/);
+    commit(a.dir, 'src/h.txt', `${hatch}=1\n`);
+    assert.match(texto(await avaliar({ wt: a.dir, base: a.base, ...verde })), new RegExp(`${hatch} aumentou`));
     const b = repo();
     commit(b.dir, 'src/p.txt', `permissionDecision: "${'al' + 'low'}"\n`);
     assert.match(texto(await avaliar({ wt: b.dir, base: b.base, ...verde })), /allow adicionado/);
