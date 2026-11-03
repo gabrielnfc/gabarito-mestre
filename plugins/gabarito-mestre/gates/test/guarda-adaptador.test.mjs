@@ -215,7 +215,7 @@ describe('diário', () => {
     assert.doesNotMatch(evs[0].texto, /psql/);
     assert.doesNotMatch(evs[0].texto, /select/);
     assert.match(evs[0].texto, /db\.prod\.exemplo\.com/);
-    assert.match(evs[0].texto, /producao\.acesso/);
+    assert.match(evs[0].texto, /guarda\.ask/);
   });
 
   test('evento-no-diretorio-do-pbi: branch feat/GM-9-x grava em entregas/GM-9', () => {
