@@ -75,6 +75,7 @@ function mundo($: any, on: any, o: Opc = {}) {
   const log: string[] = []
   const grav: Ev[] = []
   const toasts: string[] = []
+  const escritas = new Map<string, string>()
   const pedidos: any[] = []
   const evs: any[] = [...(o.eventos ?? FRONT)]
   let relogio = 0
@@ -120,6 +121,7 @@ function mundo($: any, on: any, o: Opc = {}) {
   on('fs.write', (_: any, e: any) => {
     if (o.writeFalha) return { deny: 'disco cheio' }
     if (!o.escritaNaoAparece) arquivos.add(e.path)
+    escritas.set(e.path, e.text)
     log.push(`fs.write:${e.path}`)
     return { value: undefined }
   })
@@ -183,7 +185,7 @@ function mundo($: any, on: any, o: Opc = {}) {
   const inicio = (interativo = o.interativo ?? true) => $.session.start({ cwd: RAIZ, surface: interativo ? 'terminal' : null, isInteractive: interativo })
   const cmd = (args: string) => $.command.run({ command: 'gabarito', args })
   const tipos = () => grav.map((g) => g.tipo)
-  return { log, grav, toasts, pedidos, store, arquivos, est, clock, turno, agent, inicio, cmd, tipos, evs, add }
+  return { log, grav, toasts, escritas, pedidos, store, arquivos, est, clock, turno, agent, inicio, cmd, tipos, evs, add }
 }
 
 const pousar = async (m: ReturnType<typeof mundo>) => { await m.inicio(); await m.turno(); await m.clock.settle() }
@@ -1254,4 +1256,52 @@ test('instantaneo-tokens: o prompt de retomada cabe em 1,5k tokens (≈2,16 cara
   expect(inst.length / 2.16).toBeLessThanOrEqual(1500)
   expect(texto.length - inst.length).toBeLessThan(160)
   for (const g of m.grav) expect(JSON.stringify(g.dados)).not.toMatch(/rm -rf|git push|curl /)
+})
+
+
+// ---- T18: pouso pendente (REQ-LOOP-5): o mod nega Agent porque a ação é `pousar` e deixa o marcador para o hook Stop.
+// A costura com o Stop real (arquivo gravado pelo mod, lido pelo hook) está em gates/test/stop-loop.test.mjs: este runner não importa node:*. ----
+const MARCADOR = `${RAIZ}/.harness/pouso-pendente.json`
+const ruido = (seq: number, tipo: string, dados: Record<string, unknown> = {}) => EV(seq, tipo, dados)
+test('mod-grava-marcador-so-em-pousar: nega por pouso pendente e grava {entrega, linhas} antes do deny', async ($, on) => {
+  // guarda.ask e custo.medicao não são progresso para o Stop: a contagem é a do contador (TIPOS_DE_PROGRESSO), não "todo evento"
+  const m = mundo($, on, { eventos: [...FRONT, ruido(4, 'guarda.ask', { alvo: 'x' }), ruido(5, 'custo.medicao', { tokens: 1 })] })
+  const r = await m.agent('gabarito-implementador')
+  expect(r.deny).toMatch(/pouso pendente/)
+  expect(JSON.parse(m.escritas.get(MARCADOR) ?? 'null')).toEqual({ entrega: 'PBI-7', linhas: 3 })
+})
+test('mod-grava-marcador-conta-ci-resultado: ci.resultado é progresso, como no contador do Stop', async ($, on) => {
+  const m = mundo($, on, { eventos: [...FRONT, ruido(4, 'ci.resultado', { verde: true })] })
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso pendente/)
+  expect(JSON.parse(m.escritas.get(MARCADOR) ?? 'null').linhas).toBe(4)
+})
+const outroDeny: [string, any, RegExp][] = [
+  ['pausado', { arquivos: [`${PRINCIPAL}/.harness/PAUSAR`] }, /pausado/],
+  ['revisao-pendente', { eventos: A_REVISAR }, /revisão pendente/],
+  ['pousando', { storeInicial: { [CHAVE]: { estado: 'pousando' } } }, /POUSANDO/],
+  ['sem-pouso', { interativo: false }, /SEM_POUSO/],
+]
+for (const [nome, opc, re] of outroDeny) {
+  test(`mod-nao-grava-em-outro-deny-${nome}: nega sem deixar marcador`, async ($, on) => {
+    const m = mundo($, on, opc)
+    if (nome === 'sem-pouso') await m.inicio(false)
+    expect((await m.agent('gabarito-implementador')).deny).toMatch(re)
+    expect(m.escritas.has(MARCADOR)).toBe(false)
+  })
+}
+test('mod-nao-grava-para-revisor: o revisor passa e não há marcador', async ($, on) => {
+  const m = mundo($, on)
+  expect((await m.agent('gabarito-revisor')).deny).toBeUndefined()
+  expect(m.escritas.has(MARCADOR)).toBe(false)
+})
+test('mod-nao-grava-sem-deny: abaixo de X o Agent passa e não há marcador', async ($, on) => {
+  const m = mundo($, on, { percent: 10 })
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  expect(m.escritas.has(MARCADOR)).toBe(false)
+})
+test('mod-falha-ao-gravar-ainda-nega: disco cheio não libera o Agent', async ($, on) => {
+  const m = mundo($, on, { writeFalha: true })
+  const r = await m.agent('gabarito-implementador')
+  expect(r.deny).toMatch(/pouso pendente/)
+  expect(m.escritas.has(MARCADOR)).toBe(false)
 })

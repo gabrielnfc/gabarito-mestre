@@ -11,7 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { saidaParaAcao, TIPOS_DE_PROGRESSO } from '../scripts/stop-loop.mjs';
 
 const aqui = dirname(fileURLToPath(import.meta.url));
@@ -739,4 +739,179 @@ test('stop-8-stops-com-acao-barrada-termina-em-loop-parar', () => {
   assert.equal(saidas[3].json.decision, undefined, 'o 4º Stop (3 sem progresso) já para');
   assert.match(saidas[3].json.systemMessage, /Gravei loop\.parar/);
   for (const r of saidas.slice(4)) mudo(r);
+});
+
+// ------------------------------------------------------------------------------------- pouso pendente (REQ-LOOP-5, T18)
+
+const marcadorDe = (raiz) => join(raiz, '.harness', 'pouso-pendente.json');
+const gravaMarcador = (raiz, valor) => {
+  mkdirSync(join(raiz, '.harness'), { recursive: true });
+  writeFileSync(marcadorDe(raiz), typeof valor === 'string' ? valor : JSON.stringify(valor));
+};
+/** Repo com a ação pendente de sempre (T1 por despachar) e `linhas` eventos de progresso no diário. */
+function comAcao(linhas = 1) {
+  const raiz = repo();
+  plano(raiz);
+  for (let i = 0; i < linhas; i++) progresso(raiz);
+  return raiz;
+}
+
+test('stop-marcador-valido-nao-bloqueia: apaga marcador e contador, avisa e deixa o turno acabar', () => {
+  const raiz = comAcao(1);
+  bloqueia(stop(raiz)); // grava o contador {linhas: 1, stops: 0}
+  bloqueia(stop(raiz));
+  assert.equal(contador(raiz).stops, 1);
+  gravaMarcador(raiz, { entrega: 'GM-10', linhas: 1 });
+  const r = stop(raiz);
+  avisa(r, /Loop: pouso pendente; se a sessão não retomar, digite uma mensagem/);
+  assert.equal(r.json.reason, undefined);
+  assert.equal(existsSync(marcadorDe(raiz)), false, 'marcador apagado');
+  assert.equal(existsSync(contadorDe(raiz)), false, 'contador apagado');
+});
+
+test('stop-marcador-linhas-diferente-bloqueia: contagem de outro momento é ignorada e apagada', () => {
+  const raiz = comAcao(2);
+  gravaMarcador(raiz, { entrega: 'GM-10', linhas: 1 });
+  const r = stop(raiz);
+  bloqueia(r, /Loop da entrega GM-10 segue/);
+  assert.equal(existsSync(marcadorDe(raiz)), false, 'marcador velho apagado');
+  assert.equal(contador(raiz).linhas, 2);
+});
+
+test('stop-marcador-outra-entrega-bloqueia', () => {
+  const raiz = comAcao(1);
+  gravaMarcador(raiz, { entrega: 'GM-99', linhas: 1 });
+  bloqueia(stop(raiz), /Loop da entrega GM-10 segue/);
+  assert.equal(existsSync(marcadorDe(raiz)), false);
+});
+
+for (const [nome, conteudo, causa] of [
+  ['json-torto', '{"entrega":"GM-10","linhas":', /pouso pendente.*não é JSON/],
+  ['formato', JSON.stringify({ entrega: 'GM-10', linhas: 'um' }), /pouso pendente.*formato/],
+]) {
+  test(`stop-marcador-corrompido-avisa-e-bloqueia: ${nome}`, () => {
+    const raiz = comAcao(1);
+    gravaMarcador(raiz, conteudo);
+    const r = stop(raiz);
+    bloqueia(r, /Loop da entrega GM-10 segue/);
+    assert.match(r.json.systemMessage, causa);
+    assert.equal(existsSync(marcadorDe(raiz)), false, 'tentou apagar e conseguiu');
+  });
+}
+
+test('stop-marcador-so-uma-vez: o 2º Stop bloqueia e o contador recomeça', () => {
+  const raiz = comAcao(1);
+  bloqueia(stop(raiz));
+  bloqueia(stop(raiz));
+  assert.equal(contador(raiz).stops, 1);
+  gravaMarcador(raiz, { entrega: 'GM-10', linhas: 1 });
+  avisa(stop(raiz), /pouso pendente/);
+  bloqueia(stop(raiz), /segue/);
+  assert.deepEqual(contador(raiz), { entrega: 'GM-10', linhas: 1, stops: 0 }, 'sem o contador zerado, este Stop seria o 2º, não o 1º');
+});
+
+test('stop-marcador-nao-apaga-bloqueia: marcador que não sai nunca silencia duas vezes', { skip: SEM_ROOT }, () => {
+  const raiz = comAcao(1);
+  // diretório no lugar do arquivo: leitura falha (EISDIR) e unlink também; o marcador "não apaga"
+  mkdirSync(marcadorDe(raiz), { recursive: true });
+  writeFileSync(join(marcadorDe(raiz), 'x'), '');
+  const r1 = stop(raiz);
+  bloqueia(r1, /segue/);
+  const r2 = stop(raiz);
+  bloqueia(r2, /segue/);
+  assert.equal(r2.json.systemMessage === undefined || !/pouso pendente; se a sessão/.test(r2.json.systemMessage), true);
+});
+
+test('stop-marcador-valido-que-nao-apaga-bloqueia: leu certo, não conseguiu apagar ⇒ regra normal', { skip: SEM_ROOT }, () => {
+  const raiz = comAcao(1);
+  gravaMarcador(raiz, { entrega: 'GM-10', linhas: 1 });
+  chmodSync(join(raiz, '.harness'), 0o555); // lê o arquivo, mas não remove entrada do diretório
+  try {
+    const r = stop(raiz);
+    // sem o marcador apagado, avisar de novo a cada Stop silenciaria o loop para sempre.
+    // (.harness só-leitura também impede o contador de gravar, então a saída é o aviso do contador, nunca o do pouso.)
+    assert.equal(existsSync(marcadorDe(raiz)), true);
+    assert.doesNotMatch(r.json?.systemMessage ?? '', /pouso pendente; se a sessão/, `silenciou: ${r.stdout}`);
+  } finally {
+    chmodSync(join(raiz, '.harness'), 0o755);
+  }
+});
+
+test('stop-sem-marcador-igual-hoje', () => {
+  const raiz = comAcao(1);
+  bloqueia(stop(raiz), /segue/);
+  assert.deepEqual(contador(raiz), { entrega: 'GM-10', linhas: 1, stops: 0 });
+  assert.equal(existsSync(marcadorDe(raiz)), false);
+});
+
+// ------------------------------------------------------------------------------------- costura mod × Stop (P9, T18)
+
+/**
+ * O MOD real (`mod/gabarito.mjs`) grava o marcador por um `$` que escreve em disco de verdade; o Stop real (processo) o lê.
+ * Nada entre os dois é simulado: o que sai de `$.fs.write` é o que `stop-loop.mjs` abre. O `$` aqui é só a plataforma
+ * (sessão, usage, ponte via processo real); os dois lados da costura são o código de produção.
+ */
+async function modGravaMarcador(raiz) {
+  const { register } = await import(pathToFileURL(join(GATES, '..', 'mod', 'gabarito.mjs')).href);
+  const handlers = {};
+  register((nome, a, b) => { handlers[nome] = b ?? a; });
+  const $ = {
+    session: { root: async () => raiz, repo: async () => ({ root: raiz }), id: async () => 'sess-costura', usage: async () => ({ context: { percent: 60 } }) },
+    plugin: { root: join(GATES, '..') },
+    process: {
+      run: async (argv, init = {}) => {
+        const r = spawnSync(argv[0], argv.slice(1), { cwd: init.cwd, input: init.stdin, encoding: 'utf8' });
+        return { exitCode: r.status ?? 1, stdout: r.stdout, stderr: r.stderr };
+      },
+    },
+    fs: {
+      exists: async (p) => existsSync(p),
+      write: async (p, texto) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, texto); },
+    },
+    env: { get: async () => undefined },
+    agent: { list: async () => [] },
+    store: { get: async () => undefined, set: async () => {}, delete: async () => {} },
+    ui: { toast: async () => {}, log: () => {} },
+    clock: { now: async () => Date.now(), after: () => {} },
+  };
+  await handlers['session.start']($, { isInteractive: true }, async () => undefined);
+  return handlers['tool.call']($, { tool: 'Agent', subagent_type: 'gabarito-implementador' }, async () => ({ passou: true }));
+}
+
+test('costura-mod-grava-stop-le: o marcador que o mod grava é o que o Stop real lê, com a mesma contagem de linhas', async () => {
+  const { append, ler } = await import(pathToFileURL(join(GATES, 'dist', 'diario.js')).href);
+  const base = [
+    ['task.iniciada', { task: 'T1', papel: 'implementador' }],
+    ['task.concluida', { task: 'T1', sha: 'x' }],
+    ['review.veredito', { task: 'T1', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }],
+    ['guarda.ask', { alvo: 'x' }], // não é progresso
+    ['ci.resultado', { verde: true }],
+    ['custo.medicao', { input_tokens: 1, output_tokens: 1, cache_creation: 0, cache_read: 0 }], // não é progresso
+  ];
+  // diário de verdade (cadeia de hash válida): o mod o lê pela ponte real, o Stop o lê do disco
+  const montar = () => {
+    const raiz = repo('wt/GM-10-8');
+    plano(raiz, { entrega: 'GM-10', tasks: [{ id: 'T1', deps: [], arquivos: ['a.ts'] }, { id: 'T2', deps: [], arquivos: ['b.ts'] }] });
+    for (const [tipo, dados] of base) {
+      const r = append(entregaDir(raiz), 's0', { ts: new Date((relogio += 1000)).toISOString(), autor: 'a', sessao: 's0', agente: 'orquestrador', tipo, dados });
+      assert.ok(r.ok, `append ${tipo}`);
+    }
+    return raiz;
+  };
+  const real = montar();
+  const controle = montar(); // mesmo diário, sem mod: o contador do Stop diz quantas linhas ELE conta
+  assert.equal(ler(entregaDir(real)).length, base.length);
+  const r = await modGravaMarcador(real);
+  assert.match(r.deny ?? '', /pouso pendente/);
+  assert.ok(existsSync(marcadorDe(real)), 'o mod gravou o arquivo que o Stop abre');
+
+  bloqueia(stop(controle));
+  const esperado = contador(controle);
+  assert.equal(esperado.linhas, 4);
+  assert.deepEqual(JSON.parse(readFileSync(marcadorDe(real), 'utf8')), { entrega: esperado.entrega, linhas: esperado.linhas });
+
+  const lido = stop(real);
+  avisa(lido, /Loop: pouso pendente/);
+  assert.equal(existsSync(marcadorDe(real)), false, 'o Stop consumiu o marcador do mod');
+  assert.ok(lido.json.reason === undefined);
 });

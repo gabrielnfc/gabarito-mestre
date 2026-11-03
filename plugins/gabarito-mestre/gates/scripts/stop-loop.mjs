@@ -11,6 +11,9 @@
  *   loop.parar sem task depois .... silêncio
  *   diário ilegível ............... systemMessage, nunca vira `concluir`
  *   proximaAcao: concluir/esperar . silêncio; parar: systemMessage; despachar/integrar: block
+ * Pouso pendente (T18): `.harness/pouso-pendente.json {entrega, linhas}`, gravado pelo mod ao negar `Agent` porque a ação é `pousar`.
+ * Marcador válido (mesma entrega e mesma contagem de progresso) ⇒ apaga marcador e contador, avisa e NÃO bloqueia, para o turno
+ * terminar e o `turn.complete` pousar. Ausente, de outra contagem, ilegível ou que não apaga: regra normal, nunca silencia duas vezes.
  * O terceiro Stop sem evento de progresso (tipos que `proximaAcao` consome) no diário da entrega grava `loop.parar {sem_progresso}` e deixa parar com aviso.
  * Falha de dado ou de ferramenta dentro de loop vira systemMessage com a causa, nunca block que prenda a sessão.
  * Sai sempre 0. Núcleo em dist/ (loop.js, plano.js, diario.js): ausente ⇒ aviso, nunca exceção.
@@ -167,6 +170,43 @@ function gravarContador(caminho, valor) {
   }
 }
 
+/**
+ * Marcador de pouso pendente. `{ valido: true }` só se leu, bateu entrega e contagem E apagou: sem apagar, avisar de novo a cada Stop
+ * silenciaria o loop para sempre. Qualquer outra coisa: `{ valido: false, causa }`, com `causa` só quando o arquivo existe e não se lê.
+ */
+function lerMarcador(caminho, entrega, linhas) {
+  let bruto;
+  try {
+    bruto = readFileSync(caminho, 'utf8');
+  } catch (e) {
+    if (e?.code === 'ENOENT') return { valido: false, causa: null };
+    tentarApagar(caminho);
+    return { valido: false, causa: `marcador de pouso pendente ilegível (${e?.code ?? 'erro'}); ignorei` };
+  }
+  let o;
+  try {
+    o = JSON.parse(bruto);
+  } catch {
+    tentarApagar(caminho);
+    return { valido: false, causa: 'marcador de pouso pendente corrompido (não é JSON); ignorei' };
+  }
+  if (o === null || typeof o !== 'object' || typeof o.entrega !== 'string' || !inteiro(o.linhas, Number.MAX_SAFE_INTEGER)) {
+    tentarApagar(caminho);
+    return { valido: false, causa: 'marcador de pouso pendente corrompido (formato); ignorei' };
+  }
+  const apagou = tentarApagar(caminho);
+  return { valido: apagou && o.entrega === entrega && o.linhas === linhas, causa: null };
+}
+
+function tentarApagar(caminho) {
+  try {
+    unlinkSync(caminho);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function pausado(raiz) {
   if (existsSync(join(raiz, '.harness', 'PAUSAR'))) return true;
   const comum = git(raiz, ['rev-parse', '--git-common-dir']);
@@ -270,7 +310,13 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   // Há ação: o `block` só vale se houver contador que o termine.
   const caminho = join(raiz, '.harness', 'stop-contador.json');
   const linhas = eventos.filter((e) => TIPOS_DE_PROGRESSO.includes(e.tipo)).length; // campo `linhas` do contador = eventos de progresso
-  const { anterior, causa } = lerContador(caminho, entrega);
+  const marcador = lerMarcador(join(raiz, '.harness', 'pouso-pendente.json'), entrega, linhas);
+  if (marcador.valido) {
+    tentarApagar(caminho); // contador recomeça: o pouso é progresso
+    return aviso('Loop: pouso pendente; se a sessão não retomar, digite uma mensagem');
+  }
+  const { anterior, causa: causaContador } = lerContador(caminho, entrega);
+  const causa = [marcador.causa, causaContador].filter((c) => c !== null).join('; ') || null;
   const stops = anterior !== null && anterior.linhas === linhas ? anterior.stops + 1 : 0;
 
   if (stops >= LIMITE_SEM_PROGRESSO) {

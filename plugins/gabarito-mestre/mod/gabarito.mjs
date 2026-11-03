@@ -19,6 +19,8 @@ import {
 } from '../gates/dist/pouso.js';
 
 const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
+// Mesma lista do contador do hook Stop (`TIPOS_DE_PROGRESSO` em gates/scripts/stop-loop.mjs); o teste de costura falha se divergirem.
+const TIPOS_DE_PROGRESSO = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'ci.resultado'];
 const USO = 'Uso: /gabarito pausar | /gabarito retomar';
 
 // Variáveis do módulo recomeçam num reload; o que precisa sobreviver está no store.
@@ -312,6 +314,18 @@ async function medirOrquestrador($, e) {
   await gravar($, c, { agente: 'orquestrador', tipo: 'custo.medicao', dados });
 }
 
+/**
+ * Pouso pendente (REQ-LOOP-5): o Stop não pode bloquear o turno que vai pousar. Grava `.harness/pouso-pendente.json {entrega, linhas}`,
+ * `linhas` = eventos de progresso, a mesma contagem do contador do Stop. Falhar em gravar não muda o deny (o Stop cai na regra normal).
+ */
+async function marcarPousoPendente($, c, eventos) {
+  try {
+    const entrega = c.dir.split('/').filter(Boolean).at(-1);
+    const linhas = eventos.filter((ev) => TIPOS_DE_PROGRESSO.includes(ev?.tipo)).length;
+    await $.fs.write(`${c.raiz}/.harness/pouso-pendente.json`, JSON.stringify({ entrega, linhas }) + '\n');
+  } catch { /* o deny segue */ }
+}
+
 async function pausar($) {
   const repo = await $.session.repo();
   const raiz = repo?.root ?? (await $.session.root());
@@ -447,6 +461,7 @@ export const register = (on) => {
       if (c !== null) {
         const r = await avaliar($, c);
         if (r.negar) {
+          if (r.acao?.tipo === 'pousar' && r.mundo !== null) await marcarPousoPendente($, c, r.mundo.eventos);
           return { deny: `pouso: contexto em ${r.percent}% (X=${r.x}%), ${descrever(r)}. Sem despacho novo; só o revisor passa.` };
         }
       }
