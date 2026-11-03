@@ -144,7 +144,7 @@ Task no teto: rodada 2 REPROVADA com `major+blocker>0`. Teto é estado: nada o t
 
 **Files:** Create `gates/scripts/loop.mjs`, `gates/test/loop-cli.test.mjs`.
 
-**Interfaces — Consumes:** `validarPlano`, `proximaAcao`, `podeIntegrar`, `avaliar`, `db-template.mjs`, `medir/calcularSlots`. **Produces:** `loop.mjs proxima | abrir <task> | integrar <task> | fechar <task> | parar <motivo>`, saída JSON em stdout. Branch `wt/<entrega>-<task>`, worktree em `.harness/worktrees/<task>` (gitignored por T1 se faltar, senão aqui), `TMPDIR` em `<worktree>/.tmp-gabarito` exportado na saída de `abrir`. `abrir` e `integrar` gravam `task.iniciada`, `task.integrada`.
+**Interfaces — Consumes:** `validarPlano`, `proximaAcao`, `podeIntegrar`, `avaliar`, `db-template.mjs`, `medir/calcularSlots`. **Produces:** `loop.mjs proxima | abrir <task> | iniciar <task> <papel> | concluir <task> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | integrar <task> | fechar <task> | reabrir <task> | parar <motivo>`, saída JSON em stdout. Só estes comandos gravam evento de task no diário: `iniciar` grava `task.iniciada`, `concluir` `task.concluida`, `veredito` `review.veredito`, `reabrir` `task.reaberta {origem:'retomada'}`; origem `dono` só pelo comando humano da T9. Branch `wt/<entrega>-<task>`, worktree em `.harness/worktrees/<task>` (gitignored por T1 se faltar, senão aqui), `TMPDIR` em `<worktree>/.tmp-gabarito` exportado na saída de `abrir`. `abrir` e `integrar` gravam `task.iniciada`, `task.integrada`.
 
 `integrar`: recusa com `podeIntegrar=false`; rebase; gate; `merge --ff-only`; grava evento; chama `fechar`. `fechar`: `soltar` banco, apaga `.tmp-gabarito` (só esse caminho, validado dentro da worktree), `git worktree remove` sem `--force`.
 
