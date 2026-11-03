@@ -498,37 +498,67 @@ function suitesDaTask(wt, t) {
   }
 }
 
-/** Identidade do conteúdo de um diff, estável a mudança de linha e de base (o que o rebase pode mexer sem mudar o conteúdo). */
-function patchId(wt, ...alcance) {
-  const diff = git(wt, 'diff', '--binary', '--no-color', '--no-ext-diff', ...alcance);
-  return gitComEntrada(wt, `${diff}\n`, 'patch-id', '--stable').split(/\s+/)[0] ?? '';
-}
-
 /**
- * `integrar` é tudo ou nada na branch: a falha depois de mexer nela (rebase, gate, merge) devolve `refs/heads/<branch>` e a worktree
- * ao commit revisado, para a próxima `integrar` não cair em `commit_nao_revisado`. Só a falha que deixa o merge incerto
- * (`merge_nao_confirmado`: ele pode ter entrado) fica sem volta. Se a volta falha, a Falha original sai dizendo os dois fatos.
+ * `integrar` é tudo ou nada na branch: a falha depois de mexer nela (rebase, gate, merge) devolve `refs/heads/<branch>`
+ * ao commit revisado, para a próxima `integrar` não cair em `commit_nao_revisado`. Decide pelo ESTADO medido, não pelo erro:
+ * (1) commit que o gate deixou na branch (topo diferente do alvo que ele avaliou) vai antes para `wt-preservado/*`, e se isso falha
+ * nada é movido; (2) HEAD na branch da task: `reset --keep`; (3) HEAD em outra branch ou solto: o HEAD não é tocado, só a ref
+ * volta, com troca condicional. Só `merge_nao_confirmado` (o merge pode ter entrado) fica sem volta. Nenhum caminho perde commit.
  */
-function devolver(wt, branch, revisado, e) {
+function devolver(c, wt, branch, revisado, alvo, e) {
   if (!(e instanceof Falha) || e.erro === 'merge_nao_confirmado') return e;
   if (e.erro === 'rebase_conflito' && e.extra?.abortado === false) {
     e.message += `; a ${branch} não foi movida pelo rebase (segue em ${revisado.slice(0, 12)}), mas a worktree continua em rebase`;
     return e;
   }
   const motivos = [];
-  const rs = gitOk(wt, 'reset', '--keep', revisado);
-  if (!rs.ok) motivos.push(`reset --keep: ${rs.motivo}`);
-  let confere = false;
-  try {
-    confere = git(wt, 'rev-parse', `refs/heads/${branch}`) === revisado && git(wt, 'rev-parse', 'HEAD') === revisado && git(wt, 'symbolic-ref', '-q', 'HEAD') === `refs/heads/${branch}`;
-  } catch (e3) {
-    motivos.push(String(e3.message ?? e3));
+  const extra = { ...e.extra };
+  const ref = `refs/heads/${branch}`;
+  let topo = '';
+  try { topo = git(wt, 'rev-parse', ref); } catch (e1) { motivos.push(`rev-parse ${ref}: ${String(e1.message ?? e1)}`); }
+  let preservadoOk = topo !== '';
+  if (topo !== '' && topo !== revisado && topo !== alvo) {
+    const nome = `wt-preservado/${c.entrega}-${c.taskDevolvida}-${topo.slice(0, 12)}`;
+    const pr = gitOk(wt, 'branch', nome, topo);
+    let existe = false;
+    if (!pr.ok) { try { existe = git(wt, 'rev-parse', `refs/heads/${nome}`) === topo; } catch { /* sem a branch */ } }
+    if (pr.ok || existe) {
+      extra.preservado = nome;
+      extra.topo = topo;
+    } else {
+      preservadoOk = false;
+      motivos.push(`não consegui preservar o commit ${topo.slice(0, 12)} em ${nome}: ${pr.motivo}`);
+    }
   }
-  const extra = { ...e.extra, voltou: confere };
+  let cabeca = '';
+  try { cabeca = git(wt, 'symbolic-ref', '-q', 'HEAD'); } catch { /* solto */ }
+  let confere = false;
+  if (preservadoOk) {
+    if (cabeca === ref) {
+      const rs = gitOk(wt, 'reset', '--keep', revisado);
+      if (!rs.ok) motivos.push(`reset --keep: ${rs.motivo}`);
+      try {
+        confere = git(wt, 'rev-parse', ref) === revisado && git(wt, 'rev-parse', 'HEAD') === revisado && git(wt, 'symbolic-ref', '-q', 'HEAD') === ref;
+      } catch (e3) {
+        motivos.push(String(e3.message ?? e3));
+      }
+    } else {
+      const ur = gitOk(wt, 'update-ref', ref, revisado, topo);
+      if (!ur.ok) motivos.push(`update-ref: ${ur.motivo}`);
+      let refVoltou = false;
+      try { refVoltou = git(wt, 'rev-parse', ref) === revisado; } catch (e3) { motivos.push(String(e3.message ?? e3)); }
+      extra.branch_voltou = refVoltou;
+      extra.head_em = cabeca === '' ? 'solto' : cabeca;
+    }
+  }
+  extra.voltou = confere;
+  const cita = extra.preservado ? `; o commit ${topo.slice(0, 12)} que não foi revisado foi preservado em ${extra.preservado}` : '';
   if (confere) {
-    e.message += `; a ${branch} voltou ao commit revisado ${revisado.slice(0, 12)}`;
+    e.message += `; a ${branch} voltou ao commit revisado ${revisado.slice(0, 12)}${cita}`;
+  } else if (extra.head_em !== undefined) {
+    e.message += `; o HEAD da worktree está em ${extra.head_em}, não na ${branch}: NÃO foi tocado; a ${branch} ${extra.branch_voltou ? 'voltou' : 'NÃO voltou'} ao commit revisado ${revisado.slice(0, 12)}${cita}; faça \`git checkout ${branch}\` com a árvore limpa e repita integrar${motivos.length ? ` (${motivos.join(' / ')})` : ''}`;
   } else {
-    e.message += `; E a volta da ${branch} ao commit revisado ${revisado.slice(0, 12)} FALHOU (${motivos.join(' / ') || 'a branch não está no commit revisado'}): confira à mão, nada foi apagado`;
+    e.message += `; E a volta da ${branch} ao commit revisado ${revisado.slice(0, 12)} FALHOU (${motivos.join(' / ') || 'a branch não está no commit revisado'})${cita}: confira à mão${extra.preservado ? '' : ', nada foi movido ou apagado por esta volta'}`;
   }
   e.extra = extra;
   return e;
@@ -562,7 +592,6 @@ async function integrar(c, plano, task) {
     throw new Falha('commit_nao_revisado', `o HEAD de ${branch} (${atual.slice(0, 12)}) não é o commit de task.concluida (${typeof revisado === 'string' ? revisado.slice(0, 12) : 'sem sha'}): há commit que ninguém revisou; nada foi feito`, nada);
   }
   const mutacoes = carregarMutacoes(c, t);
-  const pidAntes = patchId(wt, `refs/heads/${base}...HEAD`);
   let alvo;
   try {
     try {
@@ -579,9 +608,6 @@ async function integrar(c, plano, task) {
           : `rebase da ${branch} sobre ${base} deu conflito e \`git rebase --abort\` FALHOU (${ab.motivo}); a worktree ${relative(c.raiz, wt)} segue em rebase, nada foi apagado: resolva ou aborte à mão`,
         { ...nada, abortado: ab.ok },
       );
-    }
-    if (patchId(wt, `refs/heads/${base}`, 'HEAD') !== pidAntes) {
-      throw new Falha('rebase_mudou_conteudo', `o rebase da ${branch} sobre ${base} mudou o conteúdo que o revisor aprovou; sem merge nem evento`, nada);
     }
     alvo = git(wt, 'rev-parse', 'HEAD');
 
@@ -618,7 +644,7 @@ async function integrar(c, plano, task) {
       throw new Falha('merge_sem_efeito', `o merge de ${alvo.slice(0, 12)} não mudou ${base} (antes ${baseAntes.slice(0, 12)}, depois ${baseDepois.slice(0, 12)}); sem evento`, nada);
     }
   } catch (e) {
-    throw devolver(wt, branch, revisado, e);
+    throw devolver({ ...c, taskDevolvida: task }, wt, branch, revisado, alvo, e);
   }
 
   try {
@@ -634,7 +660,7 @@ async function integrar(c, plano, task) {
     const causa = e instanceof Falha ? `${e.erro}: ${e.message}` : String(e.message ?? e);
     throw new Falha('fechar_falhou', `o merge entrou e o evento task.integrada foi gravado, mas fechar falhou (${causa})`, { merge: true, evento: true, causa: e.erro });
   }
-  return { task, branch, base, merge: true, evento: true, fechada: true, banco: fechada.banco };
+  return { task, branch, base, merge: true, evento: true, fechada: true, banco: fechada.banco, ignorados_removidos: fechada.ignorados_removidos };
 }
 
 // ─────────────────────────────────────────────────────────────── proxima

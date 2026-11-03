@@ -1379,13 +1379,6 @@ describe('integrar entra só o commit aprovado', () => {
     nada(amb, antes, amb.cli(['integrar', 'T1']), 'commit_nao_revisado');
   });
 
-  test('integrar-head-mudou-entre-gate-e-merge-recusa', () => {
-    const amb = ambiente({ config: { ...CONFIG_PADRAO, gates: { suites: ["git commit -q --allow-empty -m mexe; echo '# pass 1'"] } } });
-    amb.aprovar('T1');
-    const antes = semEfeito(amb);
-    nada(amb, antes, amb.cli(['integrar', 'T1']), 'head_mudou');
-  });
-
   test('integrar-merge-sem-efeito-recusa-sem-evento', () => {
     const amb = ambiente();
     amb.aprovar('T1');
@@ -1397,16 +1390,6 @@ exec "${GIT_REAL}" "$@"
 `, { mode: 0o755 });
     const antes = semEfeito(amb);
     nada(amb, antes, amb.cli(['integrar', 'T1']), 'merge_sem_efeito');
-  });
-
-  test('integrar-rebase-que-muda-o-conteudo-recusa', () => {
-    const amb = ambiente();
-    amb.aprovar('T1');
-    writeFileSync(join(amb.dir, 'src/t1.txt'), 'x\n');
-    g(amb.dir, 'add', 'src/t1.txt');
-    g(amb.dir, 'commit', '-q', '-m', 'chore: mesma mudanca na base');
-    const antes = semEfeito(amb);
-    nada(amb, antes, amb.cli(['integrar', 'T1']), 'rebase_mudou_conteudo');
   });
 });
 
@@ -1587,6 +1570,7 @@ describe('integrar tudo ou nada (rodada 3)', () => {
     assert.equal(r.j.evento, true);
     assert.ok(!existsSync(w));
     assert.ok(existsSync(join(amb.dir, 'src/t1.txt')));
+    assert.deepEqual(r.j.ignorados_removidos, ['node_modules/', 'y.local']);
   });
 
   test('integrar-showuntracked-no-recusa', () => {
@@ -1649,5 +1633,159 @@ describe('ci', () => {
     const r = amb.cli(['proxima', '--vivos', '0']);
     assert.equal(r.rc, 0, r.out);
     assert.deepEqual(r.j.acao, { tipo: 'parar', motivo: 'ci_vermelho' });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────── rodada 4: a volta decide pelo estado e não perde commit
+describe('devolver preserva commit e relata ignorados', () => {
+  const alcancavel = (amb, msg) => g(amb.dir, 'log', '--branches', '--format=%s', `--grep=${msg}`).trim().split('\n').filter(Boolean);
+  const comSuite = (cmd) => ambiente({ config: { ...CONFIG_PADRAO, gates: { suites: [cmd] } } });
+  const avancaBase = (amb) => {
+    writeFileSync(join(amb.dir, 'src/b.txt'), 'b\n');
+    g(amb.dir, 'add', 'src/b.txt');
+    g(amb.dir, 'commit', '-q', '-m', 'chore: avanca');
+  };
+  const PRESERVADO = /^wt-preservado\/GM-10-T1-[0-9a-f]{12}$/;
+
+  test('head-mudou-preserva-commit', () => {
+    const amb = comSuite("git commit -q --allow-empty -m mexe; echo '# pass 1'");
+    amb.aprovar('T1');
+    const revisado = amb.topo('wt/GM-10-T1');
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'head_mudou');
+    assert.equal(r.j.merge, false);
+    assert.equal(r.j.evento, false);
+    assert.equal(r.j.voltou, true);
+    assert.match(r.j.preservado, PRESERVADO);
+    assert.equal(amb.topo(r.j.preservado), r.j.topo);
+    assert.equal(g(amb.dir, 'log', '-1', '--format=%s', r.j.preservado).trim(), 'mexe');
+    assert.deepEqual(alcancavel(amb, 'mexe'), ['mexe']);
+    assert.equal(amb.topo('wt/GM-10-T1'), revisado);
+    assert.equal(g(amb.wt('T1'), 'rev-parse', 'HEAD').trim(), revisado);
+    assert.ok(r.j.mensagem.includes(r.j.preservado), 'a mensagem cita onde o commit está');
+    assert.ok(!amb.tipos().includes('task.integrada'));
+  });
+
+  test('gate-reprovado-com-commit-preserva', () => {
+    const amb = comSuite('git commit -q --allow-empty -m mexe; exit 1');
+    amb.aprovar('T1');
+    const revisado = amb.topo('wt/GM-10-T1');
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'gate_reprovado');
+    assert.equal(r.j.voltou, true);
+    assert.match(r.j.preservado, PRESERVADO);
+    assert.deepEqual(alcancavel(amb, 'mexe'), ['mexe']);
+    assert.equal(amb.topo('wt/GM-10-T1'), revisado);
+  });
+
+  test('head-alheio-nao-toca', () => {
+    const amb = comSuite("git checkout -q -b alheia; git commit -q --allow-empty -m trabalho-alheio; exit 1");
+    amb.aprovar('T1');
+    const revisado = amb.topo('wt/GM-10-T1');
+    avancaBase(amb);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'gate_reprovado');
+    const w = amb.wt('T1');
+    assert.equal(g(w, 'symbolic-ref', 'HEAD').trim(), 'refs/heads/alheia', 'o HEAD não foi tocado');
+    assert.equal(g(amb.dir, 'log', '-1', '--format=%s', 'alheia').trim(), 'trabalho-alheio', 'a branch alheia não foi movida');
+    assert.deepEqual(alcancavel(amb, 'trabalho-alheio'), ['trabalho-alheio']);
+    assert.equal(amb.topo('wt/GM-10-T1'), revisado);
+    assert.equal(r.j.voltou, false);
+    assert.ok(!amb.branches().some((b) => b.startsWith('wt-preservado/')), 'o rebaseado que o gate avaliou não é commit novo');
+    assert.equal(r.j.branch_voltou, true);
+    assert.equal(r.j.head_em, 'refs/heads/alheia');
+    assert.match(r.j.mensagem, /NÃO foi tocado/);
+    assert.match(r.j.mensagem, /git checkout wt\/GM-10-T1/);
+  });
+
+  test('head-alheio-com-suite-verde-nao-toca', () => {
+    const amb = comSuite("git checkout -q -b alheia; git commit -q --allow-empty -m trabalho-alheio; echo '# pass 1'");
+    amb.aprovar('T1');
+    const revisado = amb.topo('wt/GM-10-T1');
+    avancaBase(amb);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'head_mudou');
+    assert.equal(g(amb.dir, 'log', '-1', '--format=%s', 'alheia').trim(), 'trabalho-alheio');
+    assert.equal(g(amb.wt('T1'), 'symbolic-ref', 'HEAD').trim(), 'refs/heads/alheia');
+    assert.equal(amb.topo('wt/GM-10-T1'), revisado);
+    assert.equal(r.j.branch_voltou, true);
+  });
+
+  test('head-solto-com-commit-nao-toca', () => {
+    const amb = comSuite("git checkout -q --detach; git commit -q --allow-empty -m solto; exit 1");
+    amb.aprovar('T1');
+    const revisado = amb.topo('wt/GM-10-T1');
+    avancaBase(amb);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.branch_voltou, true);
+    assert.equal(r.j.head_em, 'solto');
+    assert.equal(amb.topo('wt/GM-10-T1'), revisado);
+    assert.notEqual(g(amb.wt('T1'), 'rev-parse', 'HEAD').trim(), revisado, 'o HEAD solto fica onde estava');
+  });
+
+  test('commit-so-na-primeira-tentativa-fica-preservado', () => {
+    const flag = join(novoTmp('loop-flag-'), 'ja');
+    const amb = comSuite(`if [ ! -f ${flag} ]; then touch ${flag}; git commit -q --allow-empty -m mexe; fi; echo '# pass 1'`);
+    amb.aprovar('T1');
+    const r1 = amb.cli(['integrar', 'T1']);
+    assert.equal(r1.j.erro, 'head_mudou', r1.out);
+    const r2 = amb.cli(['integrar', 'T1']);
+    assert.equal(r2.rc, 0, r2.out + r2.err);
+    assert.deepEqual(alcancavel(amb, 'mexe'), ['mexe'], 'o commit sobrevive à integração da retentativa');
+    assert.ok(amb.branches().includes(r1.j.preservado));
+  });
+
+  test('preservar-falha-nao-move-nada', () => {
+    const amb = comSuite('git commit -q --allow-empty -m mexe; exit 1');
+    amb.aprovar('T1');
+    const r = amb.cli(['integrar', 'T1'], { extra: { GIT_FALHAR: 'branch wt-preservado' } });
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.voltou, false);
+    assert.equal(r.j.preservado, undefined);
+    assert.deepEqual(alcancavel(amb, 'mexe'), ['mexe'], 'o commit segue alcançável por branch');
+    assert.equal(g(amb.dir, 'log', '-1', '--format=%s', 'wt/GM-10-T1').trim(), 'mexe');
+    assert.match(r.j.mensagem, /não consegui preservar/);
+    assert.ok(!amb.branches().some((b) => b.startsWith('wt-preservado/')));
+  });
+
+  test('integrar-relata-ignorados', () => {
+    const amb = ambiente();
+    appendFileSync(join(amb.dir, '.gitignore'), '*.local\n');
+    g(amb.dir, 'add', '.gitignore');
+    g(amb.dir, 'commit', '-q', '-m', 'chore: ignora');
+    amb.aprovar('T1');
+    writeFileSync(join(amb.wt('T1'), 'y.local'), 'y');
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.ignorados_removidos, ['y.local']);
+  });
+
+  test('integrar-sem-ignorados-relata-lista-vazia', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.ignorados_removidos, []);
+  });
+
+  test('rebase-com-contexto-mudado-integra', () => {
+    const amb = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt', 'src/a.txt'] }]) });
+    const linhas = (n8) => ['l1', 'l2', 'l3', 'l4', 'l5', 'l6', 'l7', n8, 'l9', 'l10'].join('\n') + '\n';
+    writeFileSync(join(amb.dir, 'src/a.txt'), linhas('l8'));
+    g(amb.dir, 'add', 'src/a.txt');
+    g(amb.dir, 'commit', '-q', '-m', 'chore: dez linhas');
+    amb.aprovar('T1', 'src/t1.txt', [['src/a.txt', linhas('l8').replace('l10', 'L10-T1')]]);
+    writeFileSync(join(amb.dir, 'src/a.txt'), linhas('L8-BASE'));
+    g(amb.dir, 'add', 'src/a.txt');
+    g(amb.dir, 'commit', '-q', '-m', 'chore: base mexe no contexto');
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.merge, true);
+    assert.equal(readFileSync(join(amb.dir, 'src/a.txt'), 'utf8'), linhas('L8-BASE').replace('l10', 'L10-T1'));
   });
 });
