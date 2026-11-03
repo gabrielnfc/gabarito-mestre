@@ -48,6 +48,14 @@ describe('regras-subagent.md — regras padrão (Q27 item 3)', () => {
     assert.equal(linhas.length, 5, linhas.join('\n'));
     for (const l of linhas) assert.match(l, /\[(barreira|instrução)\]/, l);
   });
+  test('barreira declara o limite: segredo e produção dizem o que a guarda nega e o que nada bloqueia', () => {
+    const r1 = linhas.find((x) => /^1\./.test(x));
+    const r3 = linhas.find((x) => /^3\./.test(x));
+    for (const c of ['.env*', '*.pem', '*.key', '~/.aws', '~/.config/gh', '~/.ssh']) assert.ok(r1.includes(c), c);
+    assert.match(r1, /nada bloqueia/);
+    assert.match(r3, /alvo declarado/);
+    assert.match(r3, /nada bloqueia/);
+  });
   test('marcas certas: ler segredo e produção são barreira; imprimir segredo, push/PR/merge e contornar hook são instrução', () => {
     const marca = (re) => { const l = linhas.find((x) => re.test(x)); assert.ok(l, String(re)); return l.match(/\[(barreira|instrução)\]/)[1]; };
     assert.equal(marca(/ler|leia/i), 'barreira');
