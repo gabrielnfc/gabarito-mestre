@@ -14,3 +14,6 @@ docs/workflow-true.html
 
 # E2 (GM-10): contador do hook Stop é estado local
 .harness/stop-contador.json*
+
+# E2 (GM-10): worktrees das tasks (uma por task, criadas pelo loop)
+.harness/worktrees/

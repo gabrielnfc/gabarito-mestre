@@ -1,0 +1,659 @@
+#!/usr/bin/env node
+/**
+ * REQ-LOOP-3 e REQ-LOOP-2 pela borda — `loop.mjs`: worktree por task, integração com gate e próxima ação.
+ *
+ *   loop.mjs proxima [--vivos <n>]
+ *   loop.mjs abrir <task> | fechar <task> | integrar <task>
+ *   loop.mjs iniciar <task> <implementador|revisor|correcao> | concluir <task> | reabrir <task>
+ *   loop.mjs veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major>
+ *   loop.mjs parar <motivo>
+ *   todos aceitam --entrega <GM-10> (senão vem da branch); os que gravam aceitam --sessao <id> (padrão `loop`).
+ *
+ * CONTRATO DE FALHA. Saída é UMA linha de JSON em stdout, sempre com `ok`; falha traz `erro` (código) e `mensagem`.
+ * Dado ausente, corrompido ou ferramenta falhando nunca vira sucesso; rc 0 só com o efeito feito. Uso errado sai 2.
+ *
+ * QUEM GRAVA NO DIÁRIO. Só `iniciar` (task.iniciada), `concluir` (task.concluida), `veredito` (review.veredito),
+ * `reabrir` (task.reaberta, SÓ origem `retomada`: nenhum argumento produz `dono`), `integrar` (task.integrada) e
+ * `parar` (loop.parar). `abrir` não grava. Todo evento de task é conferido contra `TRANSICOES` ANTES de gravar:
+ * o CLI nunca produz um diário que o núcleo recuse.
+ *
+ * Tudo que toca git vai por `execFileSync` com argv, sem shell. Nada é apagado por outro meio que `git worktree remove`
+ * sem `--force`, `git branch -d` do que `abrir` acabou de criar e o `.tmp-gabarito` da própria worktree.
+ */
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import {
+  existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync,
+} from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { ehEntrypoint } from '../lib/cli.mjs';
+import * as diario from '../dist/diario.js';
+import { estadoDe, ordenar, podeIntegrar, proximaAcao } from '../dist/loop.js';
+import { validarPlano } from '../dist/plano.js';
+import { avaliar } from './gate-task.mjs';
+import { clonar, soltar, validarDb } from './db-template.mjs';
+
+const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
+const ENTREGA_RE = /^[A-Z]+-\d+$/;
+const SESSAO_RE = /^[A-Za-z0-9._-]{1,128}$/;
+const NUM_RE = /^(0|[1-9]\d{0,14})$/;
+const PAPEIS = ['implementador', 'revisor', 'correcao'];
+const MOTIVOS = ['teto_rodadas', 'ci_vermelho', 'teto_tokens', 'sem_pouso', 'sem_progresso', 'diario_invalido', 'nao_conseguiu'];
+const TIPOS_DE_TASK = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
+const GLOB = /[*?[\]{}]/;
+const TMP = '.tmp-gabarito';
+const X_PADRAO = 50;
+const SINAIS_NEUTROS = { slots: 1, percent: null, x: X_PADRAO, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false };
+const GIT_REDIRECIONA = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_NAMESPACE'];
+
+/** Falha com código: vira `{ok:false, erro, mensagem, ...extra}` e rc 1 (ou 2 para uso). */
+class Falha extends Error {
+  constructor(erro, mensagem, extra = {}, rc = 1) {
+    super(mensagem);
+    this.erro = erro;
+    this.extra = extra;
+    this.rc = rc;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────── git
+
+function ambienteGit() {
+  const env = { ...process.env };
+  for (const k of GIT_REDIRECIONA) delete env[k];
+  return env;
+}
+
+/** `git -C cwd <args>`; stdout com trim. Lança `Error` com `.saida` (primeira linha útil de stderr). */
+function git(cwd, ...args) {
+  try {
+    return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: ambienteGit(), maxBuffer: 64 * 1024 * 1024 }).trim();
+  } catch (e) {
+    const texto = String(e.stderr ?? '').trim() || String(e.stdout ?? '').trim() || e.message;
+    const erro = new Error(texto.split('\n').filter(Boolean).slice(-3).join(' / '));
+    erro.saida = texto;
+    throw erro;
+  }
+}
+
+const gitOk = (cwd, ...args) => {
+  try { git(cwd, ...args); return { ok: true }; } catch (e) { return { ok: false, motivo: e.message }; }
+};
+
+/** Raiz da worktree PRINCIPAL, de qualquer worktree do repositório (`--git-common-dir`). */
+function raizPrincipal(cwd) {
+  let comum;
+  try {
+    comum = git(cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir');
+  } catch (e) {
+    throw new Falha('fora_de_repo', `não é um repositório git (${e.message})`);
+  }
+  const real = realpathSync(comum);
+  if (basename(real) !== '.git') throw new Falha('repo_nao_suportado', `git-common-dir inesperado (${real}): só repositório com worktree principal em <raiz>/.git`);
+  return dirname(real);
+}
+
+// ─────────────────────────────────────────────────────────────── entrada
+
+/** Argumentos estritos. Flag desconhecida, sem valor ou repetida e posicional a mais ou a menos é uso (rc 2). */
+function lerArgs(argv) {
+  const [cmd, ...resto] = argv;
+  const ESPEC = {
+    proxima: { pos: 0, flags: ['entrega', 'vivos'] },
+    abrir: { pos: 1, flags: ['entrega'] },
+    fechar: { pos: 1, flags: ['entrega'] },
+    integrar: { pos: 1, flags: ['entrega', 'sessao'] },
+    iniciar: { pos: 2, flags: ['entrega', 'sessao'] },
+    concluir: { pos: 1, flags: ['entrega', 'sessao'] },
+    reabrir: { pos: 1, flags: ['entrega', 'sessao'] },
+    veredito: { pos: 5, flags: ['entrega', 'sessao'] },
+    parar: { pos: 1, flags: ['entrega', 'sessao'] },
+  };
+  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | iniciar <task> <papel> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo>  [--entrega GM-10]';
+  if (typeof cmd !== 'string' || !Object.hasOwn(ESPEC, cmd)) throw new Falha('uso', `comando desconhecido ou ausente. ${uso}`, {}, 2);
+  const esp = ESPEC[cmd];
+  const pos = [];
+  const flags = {};
+  for (let i = 0; i < resto.length; i++) {
+    const a = resto[i];
+    if (a.startsWith('--')) {
+      const nome = a.slice(2);
+      if (!esp.flags.includes(nome)) throw new Falha('uso', `argumento desconhecido para ${cmd}: ${a}. ${uso}`, {}, 2);
+      const v = resto[i + 1];
+      if (v === undefined || v.startsWith('--')) throw new Falha('uso', `${a} sem valor. ${uso}`, {}, 2);
+      if (Object.hasOwn(flags, nome)) throw new Falha('uso', `${a} repetido. ${uso}`, {}, 2);
+      flags[nome] = v;
+      i++;
+    } else {
+      pos.push(a);
+    }
+  }
+  if (pos.length !== esp.pos) throw new Falha('uso', `${cmd} espera ${esp.pos} argumento(s) posicional(is), veio ${pos.length}. ${uso}`, {}, 2);
+  return { cmd, pos, flags };
+}
+
+/** Forma de tudo que vira caminho, branch ou argv: conferida ANTES de qualquer leitura ou efeito. */
+function validarForma(cmd, pos, flags) {
+  if (flags.entrega !== undefined && !ENTREGA_RE.test(flags.entrega)) throw new Falha('entrega_invalida', `--entrega "${flags.entrega}" fora da forma ${ENTREGA_RE}`);
+  if (flags.sessao !== undefined && !SESSAO_RE.test(flags.sessao)) throw new Falha('argumento_invalido', `--sessao fora da forma ${SESSAO_RE}`);
+  if (cmd === 'proxima') {
+    if (flags.vivos !== undefined && !NUM_RE.test(flags.vivos)) throw new Falha('argumento_invalido', `--vivos "${flags.vivos}": esperado inteiro >= 0`);
+    return {};
+  }
+  if (cmd === 'parar') {
+    if (!MOTIVOS.includes(pos[0])) throw new Falha('argumento_invalido', `motivo "${pos[0]}" fora da lista: ${MOTIVOS.join(', ')}`);
+    return { motivo: pos[0] };
+  }
+  const [task] = pos;
+  if (typeof task !== 'string' || !ID_RE.test(task)) throw new Falha('id_invalido', `task ${JSON.stringify(task)} fora da forma ${ID_RE}`);
+  if (cmd === 'iniciar' && !PAPEIS.includes(pos[1])) throw new Falha('papel_invalido', `papel "${pos[1]}" fora da lista: ${PAPEIS.join(', ')}`);
+  if (cmd === 'veredito') {
+    const [, v, rodada, blocker, major] = pos;
+    if (v !== 'APROVADO' && v !== 'REPROVADO') throw new Falha('argumento_invalido', `veredito "${v}": esperado APROVADO ou REPROVADO`);
+    if (!/^[1-9]\d{0,14}$/.test(rodada)) throw new Falha('argumento_invalido', `rodada "${rodada}": esperado inteiro >= 1`);
+    for (const [nome, n] of [['blocker', blocker], ['major', major]]) {
+      if (!NUM_RE.test(n)) throw new Falha('argumento_invalido', `${nome} "${n}": esperado inteiro >= 0`);
+    }
+    return { task, veredito: v, rodada: Number(rodada), blocker: Number(blocker), major: Number(major) };
+  }
+  return { task, papel: cmd === 'iniciar' ? pos[1] : undefined };
+}
+
+// ─────────────────────────────────────────────────────────────── contexto, plano, config, diário
+
+function contexto(cwd, flags) {
+  const raiz = raizPrincipal(cwd);
+  let entrega = flags.entrega;
+  if (entrega === undefined) {
+    let branch = '';
+    try { branch = git(cwd, 'rev-parse', '--abbrev-ref', 'HEAD'); } catch { /* sem branch */ }
+    entrega = /[A-Z]+-\d+/.exec(branch)?.[0];
+    if (entrega === undefined || !ENTREGA_RE.test(entrega)) {
+      throw new Falha('entrega_nao_inferida', `não achei a entrega na branch "${branch}"; passe --entrega <ID>`);
+    }
+  }
+  const dirEntrega = diario.dirEntrega(raiz, entrega);
+  return { cwd, raiz, entrega, dirEntrega, sessao: flags.sessao ?? 'loop' };
+}
+
+const normalizadoDb = (id) => id.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+function carregarPlano(c) {
+  const arq = join(c.dirEntrega, 'plano.json');
+  const rel = relative(c.raiz, arq);
+  let texto;
+  try {
+    texto = readFileSync(arq, 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') throw new Falha('plano_ausente', `${rel} não existe: sem plano.json não há loop para esta entrega`);
+    throw new Falha('plano_invalido', `${rel} ilegível (${e.code ?? e.message})`);
+  }
+  let bruto;
+  try { bruto = JSON.parse(texto); } catch (e) { throw new Falha('plano_invalido', `${rel} não é JSON (${String(e.message).split('\n')[0]})`); }
+  const v = validarPlano(bruto);
+  if (!v.ok) throw new Falha('plano_invalido', `${rel}: ${v.erro}`);
+  const plano = v.plano;
+  if (plano.entrega !== c.entrega) throw new Falha('plano_invalido', `${rel}: entrega "${plano.entrega}" difere da pasta "${c.entrega}"`);
+  const vistos = new Map();
+  for (const t of plano.tasks) {
+    if (!ID_RE.test(t.id)) throw new Falha('plano_invalido', `task ${JSON.stringify(t.id)} fora da forma ${ID_RE}: id vira branch, caminho e argv`);
+    // APFS ignora caixa; o nome do banco ignora caixa e pontuação: dois ids que colidem em qualquer um dos dois são o mesmo recurso.
+    for (const chave of [`caixa:${t.id.toLowerCase()}`, `banco:${normalizadoDb(t.id)}`]) {
+      const outro = vistos.get(chave);
+      if (outro !== undefined) throw new Falha('plano_invalido', `tasks ${outro} e ${t.id} colidem (${chave.split(':')[0] === 'caixa' ? 'mesmo nome em sistema de arquivos sem distinção de caixa' : 'mesmo nome de banco'})`);
+      vistos.set(chave, t.id);
+    }
+    if (t.arquivos.length === 0) throw new Falha('plano_invalido', `task ${t.id} sem \`arquivos\`: escopo vazio não é escopo`);
+    const glob = t.arquivos.find((a) => GLOB.test(a));
+    if (glob !== undefined) throw new Falha('plano_invalido', `task ${t.id}: \`arquivos\` não aceita glob (${glob}); liste arquivos ou diretórios`);
+  }
+  return plano;
+}
+
+function tarefa(plano, id) {
+  const t = plano.tasks.find((x) => x.id === id);
+  if (!t) throw new Falha('task_fora_do_plano', `task ${id} não está no plano da entrega ${plano.entrega}`);
+  return t;
+}
+
+/** `{cfg}`; ausente ⇒ `{cfg:null}`; ilegível ou de forma errada ⇒ falha (a config decide teto e banco: não adivinha). */
+function lerConfig(raiz) {
+  const f = join(raiz, 'harness.config.json');
+  let texto;
+  try {
+    texto = readFileSync(f, 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') return { cfg: null };
+    throw new Falha('config_invalida', `harness.config.json ilegível (${e.code ?? e.message})`);
+  }
+  let cfg;
+  try { cfg = JSON.parse(texto); } catch (e) { throw new Falha('config_invalida', `harness.config.json inválido (${String(e.message).split('\n')[0]})`); }
+  if (cfg === null || typeof cfg !== 'object' || Array.isArray(cfg)) throw new Falha('config_invalida', 'harness.config.json: a raiz não é um objeto');
+  return { cfg };
+}
+
+const sha = (s) => createHash('sha256').update(s).digest('hex');
+
+/**
+ * Leitura estrita: `diario.ler` descarta linha corrompida em silêncio, o que aqui viraria `concluir` sobre dado perdido.
+ * Linha que não é objeto JSON, cadeia de hash quebrada e arquivo que não é regular ⇒ `diario_ilegivel`.
+ */
+function lerDiarioEstrito(dir) {
+  let nomes;
+  try {
+    nomes = readdirSync(dir);
+  } catch (e) {
+    if (e.code === 'ENOENT') return [];
+    throw new Falha('diario_ilegivel', `diário ilegível (${e.code ?? e.message})`);
+  }
+  const eventos = [];
+  for (const nome of nomes.filter((n) => /^events\..+\.jsonl$/.test(n)).sort()) {
+    const p = join(dir, nome);
+    let texto;
+    try {
+      if (!lstatSync(p).isFile()) throw new Error('não é arquivo regular');
+      texto = readFileSync(p, 'utf8');
+    } catch (e) {
+      throw new Falha('diario_ilegivel', `${nome}: ${e.message}`);
+    }
+    let anterior = null;
+    for (const [i, linha] of texto.split('\n').entries()) {
+      if (linha === '') continue;
+      let o;
+      try { o = JSON.parse(linha); } catch { throw new Falha('diario_ilegivel', `${nome}, linha ${i + 1}: não é JSON`); }
+      if (o === null || typeof o !== 'object' || Array.isArray(o)) throw new Falha('diario_ilegivel', `${nome}, linha ${i + 1}: não é um objeto`);
+      const esperado = anterior === null ? null : sha(anterior);
+      if (o.hash_anterior !== esperado) throw new Falha('diario_ilegivel', `${nome}, linha ${i + 1}: cadeia de hash quebrada`);
+      anterior = linha;
+      eventos.push(o);
+    }
+  }
+  return eventos;
+}
+
+/** `parar{diario_invalido}` do núcleo = diário que a tabela recusa (a regra 1 vem antes de qualquer sinal). */
+const diarioInvalido = (plano, eventos) => {
+  const a = proximaAcao(plano, eventos, SINAIS_NEUTROS);
+  return a.tipo === 'parar' && a.motivo === 'diario_invalido';
+};
+
+/**
+ * Confere o evento contra a tabela e SÓ ENTÃO grava. O diário atual já inválido recusa (nada piora um diário quebrado);
+ * a transição que a tabela não aceita recusa com a causa. Limite declarado: sem lock em volta do par ler+gravar, dois
+ * CLIs simultâneos sobre a mesma task podem passar juntos pela conferência.
+ */
+function gravar(c, plano, tipo, dados) {
+  const eventos = lerDiarioEstrito(c.dirEntrega);
+  if (diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega já não passa na tabela de transições; nada foi gravado');
+  const ts = new Date().toISOString();
+  const minhas = eventos.filter((e) => e.sessao === c.sessao).map((e) => e.seq);
+  const candidato = {
+    seq: (minhas.length ? Math.max(...minhas) : 0) + 1, ts, autor: 'desconhecido', sessao: c.sessao, agente: 'orquestrador', tipo, dados, hash_anterior: null,
+  };
+  if (TIPOS_DE_TASK.includes(tipo)) {
+    const ord = ordenar(eventos);
+    const fila = (ord.ok ? ord.eventos : []).filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === dados.task);
+    const r = estadoDe([...fila, candidato]);
+    if ('invalido' in r) throw new Falha('transicao_invalida', `${tipo} não cabe na tabela para a task ${dados.task}: ${r.invalido}; nada foi gravado`);
+    if (diarioInvalido(plano, [...eventos, candidato])) throw new Falha('transicao_invalida', `${tipo} tornaria o diário inválido; nada foi gravado`);
+  }
+  let autor = 'desconhecido';
+  try { autor = git(c.raiz, 'config', 'user.email') || autor; } catch { /* sem user.email: o diário aceita "desconhecido" */ }
+  const r = diario.append(c.dirEntrega, c.sessao, { ts, autor, sessao: c.sessao, agente: 'orquestrador', tipo, dados });
+  if (!r.ok) throw new Falha('evento_nao_gravado', `${tipo} não gravado: ${r.erro}`);
+  if (r.gravado !== 'evento') throw new Falha('evento_nao_gravado', `${tipo} recusado pelo canário do diário`);
+  return { tipo, ...dados };
+}
+
+// ─────────────────────────────────────────────────────────────── worktrees
+
+const caminhoWt = (c, task) => join(c.raiz, '.harness', 'worktrees', task);
+const ramo = (c, task) => `wt/${c.entrega}-${task}`;
+
+function worktreesRegistradas(raiz) {
+  const saida = git(raiz, 'worktree', 'list', '--porcelain');
+  const caminhos = [];
+  for (const l of saida.split('\n')) {
+    if (!l.startsWith('worktree ')) continue;
+    const p = l.slice(9);
+    try { caminhos.push(realpathSync(p)); } catch { caminhos.push(p); }
+  }
+  return caminhos;
+}
+
+function worktreeViva(c, task) {
+  const p = caminhoWt(c, task);
+  if (!existsSync(p)) throw new Falha('worktree_ausente', `não há worktree em ${relative(c.raiz, p)}; rode abrir ${task}`);
+  if (!worktreesRegistradas(c.raiz).includes(realpathSync(p))) throw new Falha('worktree_ausente', `${relative(c.raiz, p)} existe mas o git não a conhece como worktree`);
+  return p;
+}
+
+function ramoDoPrincipal(raiz) {
+  try {
+    return git(raiz, 'symbolic-ref', '-q', '--short', 'HEAD');
+  } catch {
+    throw new Falha('principal_sem_branch', 'a worktree principal está em HEAD solto: não há branch do PBI para basear nem receber a task');
+  }
+}
+
+function garantirTmp(wt) {
+  const tmp = join(wt, TMP);
+  if (!existsSync(tmp)) mkdirSync(tmp);
+  // O `*` dentro do próprio diretório o ignora (e ao próprio arquivo) sem tocar `.gitignore` versionado nem `info/exclude` compartilhado.
+  if (!existsSync(join(tmp, '.gitignore'))) writeFileSync(join(tmp, '.gitignore'), '*\n');
+  return tmp;
+}
+
+function abrir(c, plano, task) {
+  tarefa(plano, task);
+  const { cfg } = lerConfig(c.raiz);
+  const v = validarDb(cfg ?? {});
+  if (!v.ok) throw new Falha('db_invalido', v.erro);
+  const base = ramoDoPrincipal(c.raiz);
+  const branch = ramo(c, task);
+  const existentes = git(c.raiz, 'for-each-ref', '--format=%(refname:short)', 'refs/heads').split('\n').filter(Boolean);
+  if (existentes.some((b) => b.toLowerCase() === branch.toLowerCase())) throw new Falha('branch_existe', `a branch ${branch} já existe (ou colide por caixa); abrir não toca no que existe`);
+  const pasta = join(c.raiz, '.harness', 'worktrees');
+  const caminho = caminhoWt(c, task);
+  if (existsSync(pasta) && readdirSync(pasta).some((n) => n.toLowerCase() === task.toLowerCase())) {
+    throw new Falha('worktree_existe', `já existe ${relative(c.raiz, join(pasta, task))} (ou colide por caixa); abrir não toca no que existe`);
+  }
+  mkdirSync(pasta, { recursive: true });
+  try {
+    git(c.raiz, 'worktree', 'add', '-b', branch, caminho, git(c.raiz, 'rev-parse', 'HEAD'));
+  } catch (e) {
+    throw new Falha('worktree_falhou', `git worktree add falhou: ${e.message}`);
+  }
+  let banco = 'n/a';
+  let clonado = false;
+  try {
+    if (!v.na) {
+      banco = clonar(v.db, c.entrega, task).banco;
+      clonado = true;
+    }
+    garantirTmp(caminho);
+  } catch (e) {
+    const restos = [];
+    if (clonado) {
+      try { soltar(v.db, c.entrega, task); } catch (e2) { restos.push(`banco ${banco} (${e2.message})`); }
+    }
+    const rem = gitOk(c.raiz, 'worktree', 'remove', caminho);
+    if (!rem.ok) restos.push(`worktree ${relative(c.raiz, caminho)} (${rem.motivo})`);
+    else {
+      const br = gitOk(c.raiz, 'branch', '-d', branch);
+      if (!br.ok) restos.push(`branch ${branch} (${br.motivo})`);
+    }
+    const causa = e instanceof Error ? e.message : String(e);
+    throw new Falha(
+      clonado || !v.na ? 'banco_falhou' : 'tmpdir_falhou',
+      restos.length === 0
+        ? `abrir falhou (${causa}); a worktree e a branch ${branch} criadas agora foram desfeitas`
+        : `abrir falhou (${causa}); NÃO consegui desfazer tudo, ficou: ${restos.join('; ')}. Branch criada: ${branch}`,
+      { desfeito: restos.length === 0, branch, worktree: caminho, restos },
+    );
+  }
+  const tmp = join(caminho, TMP);
+  return { task, branch, base, worktree: caminho, tmpdir: tmp, env: { TMPDIR: tmp }, banco };
+}
+
+/** Confere, sem apagar nada, que `.tmp-gabarito` é um diretório comum (lstat: symlink e arquivo são recusados). `null` = não existe. */
+function validarTmp(wt) {
+  const p = join(wt, TMP);
+  let st;
+  try {
+    st = lstatSync(p);
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    throw new Falha('tmpdir_invalido', `${TMP} ilegível (${e.code ?? e.message}); nada foi apagado`);
+  }
+  if (st.isSymbolicLink() || !st.isDirectory()) throw new Falha('tmpdir_invalido', `${TMP} não é um diretório comum (symlink ou arquivo); recusado, nada foi apagado`);
+  return p;
+}
+
+function fechar(c, task) {
+  const wt = worktreeViva(c, task);
+  const tmpValido = validarTmp(wt);
+  const sujo = git(wt, 'status', '--porcelain');
+  if (sujo !== '') {
+    const linhas = sujo.split('\n');
+    throw new Falha('worktree_suja', `a worktree ${task} tem ${linhas.length} item(ns) não commitado(s) e foi MANTIDA, junto do banco: ${linhas.slice(0, 10).join(' | ')}`, { sujeira: linhas.slice(0, 20) });
+  }
+  const { cfg } = lerConfig(c.raiz);
+  const v = validarDb(cfg ?? {});
+  if (!v.ok) throw new Falha('db_invalido', v.erro);
+  let banco = 'n/a';
+  if (!v.na) {
+    try {
+      banco = soltar(v.db, c.entrega, task).estado;
+    } catch (e) {
+      throw new Falha('banco_nao_solto', `o banco da task ${task} não foi solto (${e.message}); a worktree foi mantida`);
+    }
+  }
+  if (tmpValido !== null) {
+    try {
+      rmSync(tmpValido, { recursive: true });
+    } catch (e) {
+      throw new Falha('tmpdir_falhou', `não consegui apagar ${TMP}: ${e.code ?? e.message}; a worktree foi mantida`, { banco });
+    }
+  }
+  try {
+    git(c.raiz, 'worktree', 'remove', wt);
+  } catch (e) {
+    throw new Falha('remove_falhou', `git worktree remove (sem --force) recusou: ${e.message}; a worktree foi mantida`, { banco });
+  }
+  return { task, worktree: wt, removida: true, banco };
+}
+
+function carregarMutacoes(c, t) {
+  if (t.mutacoes === undefined) return undefined;
+  const arq = resolve(c.raiz, t.mutacoes);
+  const rel = relative(c.raiz, arq);
+  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) throw new Falha('mutacoes_invalidas', `mutacoes "${t.mutacoes}" aponta para fora da raiz do repositório`);
+  let lista;
+  try {
+    if (!statSync(arq).isFile()) throw new Error('não é arquivo');
+    lista = JSON.parse(readFileSync(arq, 'utf8'));
+  } catch (e) {
+    throw new Falha('mutacoes_invalidas', `mutacoes ${t.mutacoes}: ${e.code ?? e.message}`);
+  }
+  if (!Array.isArray(lista) || lista.length === 0) throw new Falha('mutacoes_invalidas', `mutacoes ${t.mutacoes}: esperado lista não vazia`);
+  return lista;
+}
+
+/** Diretório vira `dir/`; arquivo fica exato. O gate trata `dir` sem barra como arquivo, e `dir` como arquivo reprovaria o que está dentro. */
+function escopo(wt, arquivos) {
+  return arquivos.map((a) => {
+    try { return statSync(join(wt, a)).isDirectory() ? `${a}/` : a; } catch { return a; }
+  });
+}
+
+function suitesDaTask(wt, t) {
+  if (t.teste_afetado === undefined) return undefined;
+  try {
+    const cfg = JSON.parse(readFileSync(join(wt, 'harness.config.json'), 'utf8'));
+    const base = cfg?.gates?.suites;
+    return Array.isArray(base) ? [...base, { nome: 'teste_afetado', cmd: t.teste_afetado }] : undefined;
+  } catch {
+    return undefined; // o gate lê o mesmo arquivo e reprova com a causa
+  }
+}
+
+async function integrar(c, plano, task) {
+  const t = tarefa(plano, task);
+  const eventos = lerDiarioEstrito(c.dirEntrega);
+  if (diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições; integrar recusado');
+  if (!podeIntegrar(plano, eventos, task)) throw new Falha('nao_integravel', `a task ${task} não está aprovada com toda a cadeia de dependências integrada`, { merge: false, evento: false });
+  const wt = worktreeViva(c, task);
+  const sujo = git(wt, 'status', '--porcelain');
+  if (sujo !== '') throw new Falha('worktree_suja', `a worktree ${task} tem trabalho não commitado; nada foi feito: ${sujo.split('\n').slice(0, 10).join(' | ')}`, { merge: false, evento: false });
+  const base = ramoDoPrincipal(c.raiz);
+  const mutacoes = carregarMutacoes(c, t);
+  const branch = ramo(c, task);
+
+  try {
+    git(wt, 'rebase', `refs/heads/${base}`);
+  } catch (e) {
+    const gitDir = (n) => resolve(wt, git(wt, 'rev-parse', '--git-path', n));
+    const emCurso = ['rebase-merge', 'rebase-apply'].some((n) => existsSync(gitDir(n)));
+    if (!emCurso) throw new Falha('rebase_falhou', `git rebase falhou sem deixar rebase em curso: ${e.message}`, { merge: false, evento: false });
+    const ab = gitOk(wt, 'rebase', '--abort');
+    throw new Falha(
+      'rebase_conflito',
+      ab.ok
+        ? `rebase da ${branch} sobre ${base} deu conflito e foi abortado; a task NÃO foi integrada: ${e.message}`
+        : `rebase da ${branch} sobre ${base} deu conflito e \`git rebase --abort\` FALHOU (${ab.motivo}); a worktree ${relative(c.raiz, wt)} segue em rebase, nada foi apagado: resolva ou aborte à mão`,
+      { merge: false, evento: false, abortado: ab.ok },
+    );
+  }
+
+  const tmp = garantirTmp(wt);
+  process.env.TMPDIR = tmp;
+  let r;
+  try {
+    r = await avaliar({ wt, base: `refs/heads/${base}`, card: c.entrega, files: escopo(wt, t.arquivos), mutacoes, suites: suitesDaTask(wt, t) });
+  } catch (e) {
+    throw new Falha('gate_erro', `o gate falhou ao rodar: ${e.message}; a branch ficou rebaseada, sem merge nem evento`, { merge: false, evento: false });
+  }
+  if (r.reprova > 0) {
+    throw new Falha('gate_reprovado', `gate reprovado (${r.reprova}); a branch ${branch} ficou rebaseada, sem merge nem evento`, { merge: false, evento: false, relato: r.relato });
+  }
+
+  try {
+    git(c.raiz, 'merge', '--ff-only', `refs/heads/${branch}`);
+  } catch (e) {
+    throw new Falha('merge_falhou', `git merge --ff-only da ${branch} em ${base} falhou: ${e.message}; sem evento`, { merge: false, evento: false });
+  }
+
+  try {
+    gravar(c, plano, 'task.integrada', { task });
+  } catch (e) {
+    const causa = e instanceof Falha ? `${e.erro}: ${e.message}` : String(e.message ?? e);
+    throw new Falha('evento_nao_gravado', `o merge da ${branch} ENTROU em ${base}, mas o evento task.integrada NÃO foi gravado (${causa}); fechar não foi chamado`, { merge: true, evento: false });
+  }
+  let fechada;
+  try {
+    fechada = fechar(c, task);
+  } catch (e) {
+    const causa = e instanceof Falha ? `${e.erro}: ${e.message}` : String(e.message ?? e);
+    throw new Falha('fechar_falhou', `o merge entrou e o evento task.integrada foi gravado, mas fechar falhou (${causa})`, { merge: true, evento: true, causa: e.erro });
+  }
+  return { task, branch, base, merge: true, evento: true, fechada: true, banco: fechada.banco };
+}
+
+// ─────────────────────────────────────────────────────────────── proxima
+
+function inteiroPositivo(v) {
+  return Number.isSafeInteger(v) && v >= 1;
+}
+
+function sinaisDe(c, cfg, eventos, flags) {
+  const aviso = [];
+  const loop = cfg?.loop !== null && typeof cfg?.loop === 'object' && !Array.isArray(cfg.loop) ? cfg.loop : {};
+  let slots = 1;
+  if (inteiroPositivo(loop.slots)) slots = loop.slots;
+  else aviso.push(`loop.slots ${Object.hasOwn(loop, 'slots') ? 'inválido' : 'ausente'} em harness.config.json: 1 slot`);
+
+  let tetoTokens = null;
+  if (Object.hasOwn(loop, 'tetoTokens')) {
+    if (!inteiroPositivo(loop.tetoTokens)) throw new Falha('config_invalida', 'loop.tetoTokens inválido: esperado inteiro >= 1 (um teto ilegível não pode virar "sem teto")');
+    tetoTokens = loop.tetoTokens;
+  }
+
+  // Tokens gastos = entrada + saída + criação de cache de todo `custo.medicao`; leitura de cache não conta (é o que o cache poupa).
+  let tokens = null;
+  for (const e of eventos) {
+    if (e.tipo !== 'custo.medicao') continue;
+    let soma = 0;
+    for (const campo of ['input_tokens', 'output_tokens', 'cache_creation', 'cache_read']) {
+      const n = e.dados?.[campo];
+      if (n === undefined) continue;
+      if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) throw new Falha('diario_invalido', `custo.medicao com ${campo} inválido (${JSON.stringify(n)}): o teto de tokens não pode ser conferido`);
+      if (campo !== 'cache_read') soma += n;
+    }
+    tokens = (tokens ?? 0) + soma;
+  }
+
+  let vivos = 0;
+  if (flags.vivos !== undefined) vivos = Number(flags.vivos);
+  else aviso.push('--vivos ausente: assumido 0 (o orquestrador conhece os agentes vivos; o diário não)');
+
+  const xEnv = process.env.GABARITO_POUSO_X;
+  const x = xEnv !== undefined && /^\d{1,3}$/.test(xEnv) && Number(xEnv) >= 1 && Number(xEnv) <= 100 ? Number(xEnv) : X_PADRAO;
+
+  let pausado = existsSync(join(c.raiz, '.harness', 'PAUSAR'));
+  try {
+    const topo = git(c.cwd, 'rev-parse', '--show-toplevel');
+    if (existsSync(join(topo, '.harness', 'PAUSAR'))) pausado = true;
+  } catch { /* o principal já foi conferido */ }
+
+  return { sinais: { slots, percent: null, x, pausado, vivos, tokens, tetoTokens, podePousar: false }, aviso };
+}
+
+function proxima(c, plano, flags) {
+  const { cfg } = lerConfig(c.raiz);
+  const eventos = lerDiarioEstrito(c.dirEntrega);
+  const { sinais, aviso } = sinaisDe(c, cfg, eventos, flags);
+  if (cfg === null) aviso.push('harness.config.json ausente');
+  const acao = proximaAcao(plano, eventos, sinais);
+  if (acao.tipo === 'parar' && acao.motivo === 'diario_invalido') {
+    throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições (evento fora de ordem ou de task desconhecida)', { acao, sinais });
+  }
+  return { acao, sinais, ...(aviso.length ? { aviso } : {}) };
+}
+
+// ─────────────────────────────────────────────────────────────── despacho
+
+async function executar(argv, cwd) {
+  const { cmd, pos, flags } = lerArgs(argv);
+  const forma = validarForma(cmd, pos, flags);
+  const c = contexto(cwd, flags);
+  if (cmd === 'parar') return { ...gravarSemPlano(c, 'loop.parar', { motivo: forma.motivo }) };
+  const plano = carregarPlano(c);
+  const { task } = forma;
+  switch (cmd) {
+    case 'proxima': return proxima(c, plano, flags);
+    case 'abrir': return abrir(c, plano, task);
+    case 'fechar': tarefa(plano, task); return fechar(c, task);
+    case 'integrar': return integrar(c, plano, task);
+    case 'iniciar':
+      tarefa(plano, task);
+      worktreeViva(c, task);
+      return { evento: gravar(c, plano, 'task.iniciada', { task, papel: forma.papel }) };
+    case 'concluir': tarefa(plano, task); return { evento: gravar(c, plano, 'task.concluida', { task }) };
+    case 'veredito':
+      tarefa(plano, task);
+      return { evento: gravar(c, plano, 'review.veredito', { task, veredito: forma.veredito, rodada: forma.rodada, blocker: forma.blocker, major: forma.major }) };
+    case 'reabrir': tarefa(plano, task); return { evento: gravar(c, plano, 'task.reaberta', { task, origem: 'retomada' }) };
+    default: throw new Falha('uso', `comando desconhecido: ${cmd}`, {}, 2);
+  }
+}
+
+/** `parar` é o registro de que o loop parou, inclusive por diário inválido: não confere o diário nem o plano, só grava. */
+function gravarSemPlano(c, tipo, dados) {
+  let autor = 'desconhecido';
+  try { autor = git(c.raiz, 'config', 'user.email') || autor; } catch { /* nada */ }
+  const r = diario.append(c.dirEntrega, c.sessao, { ts: new Date().toISOString(), autor, sessao: c.sessao, agente: 'orquestrador', tipo, dados });
+  if (!r.ok) throw new Falha('evento_nao_gravado', `${tipo} não gravado: ${r.erro}`);
+  if (r.gravado !== 'evento') throw new Falha('evento_nao_gravado', `${tipo} recusado pelo canário do diário`);
+  return { evento: { tipo, ...dados } };
+}
+
+export async function main(argv, cwd = process.cwd()) {
+  let saida;
+  let rc = 0;
+  try {
+    saida = { ok: true, ...(await executar(argv, cwd)) };
+  } catch (e) {
+    if (e instanceof Falha) {
+      saida = { ok: false, erro: e.erro, mensagem: e.message, ...e.extra };
+      rc = e.rc;
+    } else {
+      saida = { ok: false, erro: 'excecao', mensagem: e instanceof Error ? e.message : String(e) };
+      rc = 1;
+    }
+  }
+  process.stdout.write(`${JSON.stringify(saida)}\n`);
+  return rc;
+}
+
+if (ehEntrypoint(import.meta.url)) main(process.argv.slice(2)).then((rc) => { process.exitCode = rc; });
