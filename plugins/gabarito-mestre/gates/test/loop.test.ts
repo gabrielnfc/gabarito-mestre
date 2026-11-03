@@ -40,9 +40,23 @@ test('seq-repetido-para', () => {
   const evs = [ev(1, '2026-11-03T00:00:01.000Z', 's1', ...ini('a')), ev(1, '2026-11-03T00:00:02.000Z', 's1', ...con('a'))];
   assert.deepEqual(ordenar(evs), { ok: false });
 });
-test('ts-regride-na-sessao-para', () => {
-  const evs = [ev(1, '2026-11-03T00:00:02.000Z', 's1', ...ini('a')), ev(2, '2026-11-03T00:00:01.000Z', 's1', ...con('a'))];
-  assert.deepEqual(ordenar(evs), { ok: false });
+test('ts-regride-na-sessao-nao-invalida-e-seq-manda', () => {
+  const x = ev(1, '2026-11-03T00:00:05.000Z', 's1', ...ini('a'));
+  const y = ev(2, '2026-11-03T00:00:01.000Z', 's1', ...con('a'));
+  assert.deepEqual(ordenar([x, y]), { ok: true, eventos: [x, y] });
+  assert.equal(proximaAcao(plano(['a']), [x, y], sinais()).tipo, 'despachar');
+});
+test('ts-contraditorio-nao-quebra-seq-ao-intercalar-sessoes', () => {
+  const x = ev(1, '2026-11-03T00:00:05.000Z', 's1', ...ci(true));
+  const y = ev(2, '2026-11-03T00:00:01.000Z', 's1', ...ci(false));
+  const z = ev(1, '2026-11-03T00:00:03.000Z', 's2', ...ci(false));
+  assert.deepEqual(ordenar([x, y, z]), { ok: true, eventos: [z, x, y] });
+});
+test('duas-sessoes-mesmo-ts-desempata-por-sessao', () => {
+  const b1 = ev(1, '2026-11-03T00:00:05.000Z', 'b', ...ci(true));
+  const a1 = ev(1, '2026-11-03T00:00:05.000Z', 'a', ...ci(true));
+  const a2 = ev(2, '2026-11-03T00:00:05.000Z', 'a', ...ci(true));
+  assert.deepEqual(ordenar([b1, a1, a2]), { ok: true, eventos: [a1, a2, b1] });
 });
 test('ts-invalido-para', () => {
   assert.deepEqual(ordenar([ev(1, 'ontem', 's1', ...ini('a'))]), { ok: false });
@@ -251,10 +265,117 @@ test('dependente-de-bloqueada-nao-aprovada-espera', () => {
   const a = proximaAcao(p, diario(...noTeto('a'), ini('b')), sinais({ vivos: 1 }));
   assert.equal(a.tipo, 'esperar');
 });
-test('integrada-por-decisao-do-dono-libera-a-cadeia', () => {
-  const p = plano(['a'], ['b', ['a']]);
-  const evs = diario(...noTeto('a'), int('a'), ...aprovada('b'));
-  assert.equal(podeIntegrar(p, evs, 'b'), true);
+// teto como estado
+const invalido = { tipo: 'parar', motivo: 'diario_invalido' };
+const tetoDe = (t: string) => ({ tipo: 'parar', motivo: 'teto_rodadas', task: t });
+const dono = (task: string): [TipoEvento, Record<string, unknown>] => ['task.reaberta', { task, origem: 'dono' }];
+const retomada = (task: string): [TipoEvento, Record<string, unknown>] => ['task.reaberta', { task, origem: 'retomada' }];
+test('teto-sobrevive-a-concluida', () => {
+  const evs = diario(...noTeto('a'), con('a'));
+  assert.deepEqual(proximaAcao(plano(['a']), evs, sinais()), tetoDe('a'));
+  assert.deepEqual(proximaAcao(plano(['a']), evs, sinais({ percent: 60, vivos: 0 })), { tipo: 'pousar' }, 'no x não há revisor para task no teto');
+});
+test('teto-sobrevive-a-aprovado-r3', () => {
+  for (const evs of [diario(...noTeto('a'), ver('a', 'APROVADO', 3)), diario(...noTeto('a'), con('a'), ver('a', 'APROVADO', 3))]) {
+    assert.deepEqual(proximaAcao(plano(['a']), evs, sinais()), tetoDe('a'));
+    assert.equal(podeIntegrar(plano(['a']), evs, 'a'), false);
+  }
+});
+test('teto-sobrevive-a-aprovado-r2-com-commit-novo', () => {
+  assert.deepEqual(proximaAcao(plano(['a']), diario(...noTeto('a'), con('a'), ver('a', 'APROVADO', 2)), sinais()), tetoDe('a'));
+});
+test('teto-por-blocker-sobrevive-e-rodada-3-entra-no-teto', () => {
+  assert.deepEqual(proximaAcao(plano(['a']), diario(...noTeto('a', 0, 1), con('a')), sinais()), tetoDe('a'));
+  const r3 = diario(ini('a'), con('a'), ver('a', 'REPROVADO', 3, 1), con('a'), ver('a', 'APROVADO', 4));
+  assert.deepEqual(proximaAcao(plano(['a']), r3, sinais()), tetoDe('a'));
+});
+test('dono-libera-teto', () => {
+  const p = plano(['a']);
+  const lib = diario(...noTeto('a'), dono('a'));
+  assert.deepEqual(proximaAcao(p, lib, sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'implementador' }] });
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), dono('a'), ...aprovada('a')), sinais()), { tipo: 'integrar', tasks: ['a'] }, 'mesma rodada 1 de antes não colide');
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), dono('a'), ...pronta('a')), sinais()), { tipo: 'concluir' });
+});
+test('dono-zera-as-rodadas', () => {
+  const p = plano(['a']);
+  const r1 = diario(...noTeto('a'), dono('a'), ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1));
+  assert.deepEqual(proximaAcao(p, r1, sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'correcao' }] });
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), dono('a'), ...noTeto('a')), sinais()), tetoDe('a'), 'teto de novo');
+});
+test('teto-em-dep-transitiva-apos-dono-libera', () => {
+  const p = plano(['a'], ['b', ['a']], ['c', ['b']]);
+  const base = [...noTeto('a'), ...aprovada('b'), ...aprovada('c')];
+  const lib = diario(...base, dono('a'));
+  assert.deepEqual(proximaAcao(p, lib, sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'implementador' }] });
+  assert.equal(podeIntegrar(p, lib, 'b'), false);
+  assert.equal(podeIntegrar(p, lib, 'c'), false);
+  const prontaA = diario(...base, dono('a'), ...pronta('a'));
+  assert.equal(podeIntegrar(p, prontaA, 'b'), true);
+  assert.equal(podeIntegrar(p, prontaA, 'c'), false);
+  const depsSoltas = diario(...noTeto('a'), ...aprovada('b'), dono('a'), ini('a'));
+  assert.equal(proximaAcao(p, depsSoltas, sinais({ vivos: 1 })).tipo, 'esperar', 'c não nasce com o teto liberado');
+});
+test('dono-sem-rodada-anterior-nao-muda-nada', () => {
+  assert.deepEqual(proximaAcao(plano(['a']), diario(dono('a')), sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'implementador' }] });
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a'), dono('a')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['a']), diario(...aprovada('a'), dono('a')), sinais()), { tipo: 'integrar', tasks: ['a'] });
+  assert.deepEqual(proximaAcao(plano(['a']), diario(...pronta('a'), dono('a')), sinais()), { tipo: 'concluir' });
+});
+// aprovado com achado e vereditos opostos
+test('aprovado-com-achado-invalida', () => {
+  for (const [m, b] of [[1, 0], [0, 1]]) {
+    const evs = diario(ini('a'), con('a'), ver('a', 'APROVADO', 1, m, b));
+    assert.deepEqual(proximaAcao(plano(['a']), evs, sinais()), invalido);
+    assert.equal(podeIntegrar(plano(['a']), evs, 'a'), false);
+  }
+});
+test('vereditos-opostos-mesma-rodada-invalida', () => {
+  const p = plano(['a']);
+  assert.deepEqual(proximaAcao(p, diario(ini('a'), con('a'), ver('a', 'REPROVADO', 1, 2), ver('a', 'APROVADO', 1)), sinais()), invalido);
+  assert.deepEqual(proximaAcao(p, diario(ini('a'), con('a'), ver('a', 'APROVADO', 1), ver('a', 'REPROVADO', 1, 1)), sinais()), invalido);
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ver('a', 'APROVADO', 2)), sinais()), invalido);
+  assert.deepEqual(proximaAcao(p, diario(ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), ver('a', 'APROVADO', 2), ver('a', 'APROVADO', 1)), sinais()), invalido, 'oposto com rodada maior no meio');
+});
+test('vereditos-opostos-com-concluida-entre-e-iguais-valem', () => {
+  const p = plano(['a']);
+  assert.deepEqual(proximaAcao(p, diario(ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), con('a'), ver('a', 'APROVADO', 1)), sinais()), { tipo: 'integrar', tasks: ['a'] });
+  assert.deepEqual(proximaAcao(p, diario(ini('a'), con('a'), ver('a', 'APROVADO', 1), ver('a', 'APROVADO', 1)), sinais()), { tipo: 'integrar', tasks: ['a'] });
+  const outra = diario(ini('a'), ini('b'), con('a'), con('b'), ver('a', 'REPROVADO', 1, 1), ver('b', 'APROVADO', 1));
+  assert.notDeepEqual(proximaAcao(plano(['a'], ['b']), outra, sinais()), invalido, 'por task');
+});
+// retomada
+test('retomada-recomeca-iniciada-sem-concluida', () => {
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a'), retomada('a')), sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'implementador' }] });
+  assert.equal(proximaAcao(plano(['a']), diario(ini('a'), retomada('a'), ini('a')), sinais({ vivos: 1 })).tipo, 'esperar');
+});
+test('retomada-nao-libera-teto', () => {
+  assert.deepEqual(proximaAcao(plano(['a']), diario(...noTeto('a'), retomada('a')), sinais()), tetoDe('a'));
+  assert.equal(podeIntegrar(plano(['a']), diario(...noTeto('a'), retomada('a'), ver('a', 'APROVADO', 3)), 'a'), false);
+});
+test('retomada-nao-apaga-concluida-nem-veredito', () => {
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a'), con('a'), retomada('a')), sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'revisor' }] });
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ver('a', 'REPROVADO', 2, 0, 0), retomada('a')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['a']), diario(...pronta('a'), retomada('a')), sinais()), { tipo: 'concluir' });
+});
+test('reaberta-invalida', () => {
+  for (const d of [{ task: 'a' }, { task: 'a', origem: 'orquestrador' }, { task: 'zz', origem: 'dono' }, { task: 'zz', origem: 'retomada' }, { origem: 'dono' }]) {
+    assert.deepEqual(proximaAcao(plano(['a']), diario(['task.reaberta', d]), sinais()), invalido, JSON.stringify(d));
+  }
+});
+// integrada sem aprovação
+test('integrada-sem-aprovacao-invalida', () => {
+  const p = plano(['a']);
+  const casos = [
+    [int('a')],
+    [ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), int('a')],
+    [ini('a'), con('a'), int('a')],
+    noTeto('a').concat([int('a')]),
+    noTeto('a').concat([con('a'), ver('a', 'APROVADO', 3), int('a')]),
+    [...aprovada('a'), con('a'), int('a')],
+  ];
+  for (const c of casos) {
+    assert.deepEqual(proximaAcao(p, diario(...c), sinais()), invalido, JSON.stringify(c));
+  }
 });
 // (8)
 test('concluir-exige-todas-integradas', () => {

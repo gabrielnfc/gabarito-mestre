@@ -9,28 +9,44 @@ export type { AcaoLoop, MotivoParar, Papel, Plano, Sinais, TaskPlano } from './t
 
 const TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 const PAPEIS: readonly unknown[] = ['implementador', 'revisor', 'correcao'];
-const TIPOS_DE_TASK: readonly string[] = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada'];
+const TIPOS_DE_TASK: readonly string[] = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
 
 /** Comparação por código, nunca por localidade: a ordem não pode depender da máquina. */
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-/** Ordem por `seq` dentro da sessão e `(ts, sessao)` entre sessões. Fora de ordem não se adivinha. */
+/**
+ * Ordem só por `seq` dentro da sessão: a guarda carimba `ts` antes do lock, então `ts` contraditório na sessão
+ * é esperado e não invalida. Entre sessões, intercala pelas cabeças em `(ts, sessao)`, sem reordenar nenhuma delas.
+ */
 export function ordenar(eventos: Evento[]): { ok: true; eventos: Evento[] } | { ok: false } {
-  const ultimo = new Map<string, { seq: number; ms: number }>();
-  const comMs: { e: Evento; ms: number }[] = [];
+  const sessoes = new Map<string, { e: Evento; ms: number }[]>();
   for (const e of eventos) {
     if (typeof e?.sessao !== 'string' || !Number.isInteger(e.seq) || typeof e.ts !== 'string' || !TS_RE.test(e.ts)) {
       return { ok: false };
     }
     const ms = Date.parse(e.ts);
     if (Number.isNaN(ms)) return { ok: false };
-    const anterior = ultimo.get(e.sessao);
-    if (anterior && (e.seq <= anterior.seq || ms < anterior.ms)) return { ok: false };
-    ultimo.set(e.sessao, { seq: e.seq, ms });
-    comMs.push({ e, ms });
+    const fila = sessoes.get(e.sessao) ?? [];
+    const anterior = fila[fila.length - 1];
+    if (anterior && e.seq <= anterior.e.seq) return { ok: false };
+    fila.push({ e, ms });
+    sessoes.set(e.sessao, fila);
   }
-  comMs.sort((a, b) => a.ms - b.ms || cmp(a.e.sessao, b.e.sessao) || a.e.seq - b.e.seq);
-  return { ok: true, eventos: comMs.map((x) => x.e) };
+  const nomes = [...sessoes.keys()].sort(cmp);
+  const cabeca = new Map(nomes.map((n) => [n, 0]));
+  const saida: Evento[] = [];
+  while (saida.length < eventos.length) {
+    let melhor: { nome: string; ms: number } | null = null;
+    for (const nome of nomes) {
+      const prox = (sessoes.get(nome) as { e: Evento; ms: number }[])[cabeca.get(nome) as number];
+      if (prox && (!melhor || prox.ms < melhor.ms)) melhor = { nome, ms: prox.ms };
+    }
+    const { nome } = melhor as { nome: string };
+    const i = cabeca.get(nome) as number;
+    saida.push((sessoes.get(nome) as { e: Evento; ms: number }[])[i].e);
+    cabeca.set(nome, i + 1);
+  }
+  return { ok: true, eventos: saida };
 }
 
 type Veredito = { aprovado: boolean; rodada: number; achados: number; pos: number };
@@ -41,16 +57,22 @@ type Estado = {
   revisorPos: number;
   correcaoPos: number;
   veredito: Veredito | null;
+  /** Estado, não derivação do último veredito: só `task.reaberta {origem:'dono'}` desliga. */
+  teto: boolean;
+  /** Último veredito por rodada e o commit a que ele se refere, para achar vereditos opostos. */
+  porRodada: Map<number, { aprovado: boolean; concluidaPos: number }>;
 };
 
 const contagem = (v: unknown): boolean => Number.isInteger(v) && (v as number) >= 0;
 
+const estadoInicial = (): Estado => ({
+  iniciada: false, integrada: false, concluidaPos: -1, revisorPos: -1, correcaoPos: -1, veredito: null, teto: false, porRodada: new Map(),
+});
+
 /** Estado por task, ou `null` se algum evento de task sai do plano ou do contrato de `dados`. */
 function projetar(plano: Plano, eventos: Evento[]): { estados: Map<string, Estado>; ciVermelhos: number } | null {
   const estados = new Map<string, Estado>();
-  for (const t of plano.tasks) {
-    estados.set(t.id, { iniciada: false, integrada: false, concluidaPos: -1, revisorPos: -1, correcaoPos: -1, veredito: null });
-  }
+  for (const t of plano.tasks) estados.set(t.id, estadoInicial());
   let ciVermelhos = 0;
   for (const [pos, e] of eventos.entries()) {
     const dados = e.dados ?? {};
@@ -71,15 +93,31 @@ function projetar(plano: Plano, eventos: Evento[]): { estados: Map<string, Estad
       est.iniciada = true;
       est.concluidaPos = pos;
     } else if (e.tipo === 'task.integrada') {
+      // Integrar sem aprovação vigente é o fechamento sozinho (A11): nunca vira `concluir`.
+      if (!aprovada(est)) return null;
       est.integrada = true;
+    } else if (e.tipo === 'task.reaberta') {
+      if (dados.origem !== 'dono' && dados.origem !== 'retomada') return null;
+      if (dados.origem === 'dono') {
+        if (est.teto && !est.integrada) estados.set(dados.task as string, estadoInicial());
+      } else if (est.iniciada && est.concluidaPos < 0 && !est.veredito) {
+        est.iniciada = false;
+      }
     } else {
       const { veredito, rodada, major, blocker } = dados;
       if (veredito !== 'APROVADO' && veredito !== 'REPROVADO') return null;
       if (!contagem(rodada) || (rodada as number) < 1 || !contagem(major) || !contagem(blocker)) return null;
+      const achados = (major as number) + (blocker as number);
+      const aprovado = veredito === 'APROVADO';
+      if (aprovado && achados > 0) return null;
+      const mesma = est.porRodada.get(rodada as number);
+      if (mesma && mesma.concluidaPos === est.concluidaPos && mesma.aprovado !== aprovado) return null;
+      est.porRodada.set(rodada as number, { aprovado, concluidaPos: est.concluidaPos });
       est.iniciada = true;
+      if (!aprovado && (rodada as number) >= 2 && achados > 0) est.teto = true;
       // Vale o da maior rodada; na mesma rodada, o mais recente.
       if (!est.veredito || (rodada as number) >= est.veredito.rodada) {
-        est.veredito = { aprovado: veredito === 'APROVADO', rodada: rodada as number, achados: (major as number) + (blocker as number), pos };
+        est.veredito = { aprovado, rodada: rodada as number, achados, pos };
       }
     }
   }
@@ -88,10 +126,9 @@ function projetar(plano: Plano, eventos: Evento[]): { estados: Map<string, Estad
 
 /** Commit posterior ao veredito válido (ou nenhum veredito): o que está na branch ainda não foi revisto. */
 const semRevisao = (e: Estado): boolean => e.concluidaPos >= 0 && (!e.veredito || e.concluidaPos > e.veredito.pos);
-const aprovada = (e: Estado): boolean => !semRevisao(e) && e.veredito?.aprovado === true;
+const aprovada = (e: Estado): boolean => !e.teto && !semRevisao(e) && e.veredito?.aprovado === true;
 const reprovadaSemCommitNovo = (e: Estado): boolean => !semRevisao(e) && e.veredito?.aprovado === false;
-const noTeto = (e: Estado): boolean =>
-  !e.integrada && reprovadaSemCommitNovo(e) && e.veredito!.rodada >= 2 && e.veredito!.achados > 0;
+const noTeto = (e: Estado): boolean => !e.integrada && e.teto;
 
 /** Ancestrais de `id`, com guarda contra ciclo: `validarPlano` barra ciclo, a função pura não presume. */
 function ancestrais(plano: Plano, id: string): string[] {
@@ -129,7 +166,7 @@ function depLiberada(plano: Plano, estados: Map<string, Estado>, dep: string): b
   return aprovada(e) && ancestrais(plano, dep).some((a) => noTeto(estados.get(a) as Estado));
 }
 
-const paraRevisor = (e: Estado): boolean => !e.integrada && semRevisao(e) && e.revisorPos < e.concluidaPos;
+const paraRevisor = (e: Estado): boolean => !e.integrada && !e.teto && semRevisao(e) && e.revisorPos < e.concluidaPos;
 
 export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais): AcaoLoop {
   // (1)

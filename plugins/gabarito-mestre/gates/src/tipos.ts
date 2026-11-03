@@ -18,6 +18,7 @@ export type TipoEvento =
   | 'task.concluida'
   | 'review.veredito'
   | 'task.integrada'
+  | 'task.reaberta'
   | 'ci.resultado'
   | 'loop.parar'
   | 'loop.pausa'
@@ -84,6 +85,7 @@ export type Evento = {
 };
 
 // E2 (GM-10): plano como dado e contratos do loop. `dados` do diário nunca carrega comando cru.
+// `task.reaberta`: `dados = {task, origem: 'dono' | 'retomada'}`; só `dono`, por comando humano, libera o teto.
 export type TaskPlano = { id: string; deps: string[]; arquivos: string[]; teste_afetado?: string; mutacoes?: string };
 export type Plano = { entrega: string; tasks: TaskPlano[] };
 export type Sinais = {

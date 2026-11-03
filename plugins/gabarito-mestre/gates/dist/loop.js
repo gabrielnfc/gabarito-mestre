@@ -9,28 +9,44 @@
 
 const TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 const PAPEIS                     = ['implementador', 'revisor', 'correcao'];
-const TIPOS_DE_TASK                    = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada'];
+const TIPOS_DE_TASK                    = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
 
 /** Comparação por código, nunca por localidade: a ordem não pode depender da máquina. */
 const cmp = (a        , b        )         => (a < b ? -1 : a > b ? 1 : 0);
 
-/** Ordem por `seq` dentro da sessão e `(ts, sessao)` entre sessões. Fora de ordem não se adivinha. */
+/**
+ * Ordem só por `seq` dentro da sessão: a guarda carimba `ts` antes do lock, então `ts` contraditório na sessão
+ * é esperado e não invalida. Entre sessões, intercala pelas cabeças em `(ts, sessao)`, sem reordenar nenhuma delas.
+ */
 export function ordenar(eventos          )                                                  {
-  const ultimo = new Map                                     ();
-  const comMs                              = [];
+  const sessoes = new Map                                     ();
   for (const e of eventos) {
     if (typeof e?.sessao !== 'string' || !Number.isInteger(e.seq) || typeof e.ts !== 'string' || !TS_RE.test(e.ts)) {
       return { ok: false };
     }
     const ms = Date.parse(e.ts);
     if (Number.isNaN(ms)) return { ok: false };
-    const anterior = ultimo.get(e.sessao);
-    if (anterior && (e.seq <= anterior.seq || ms < anterior.ms)) return { ok: false };
-    ultimo.set(e.sessao, { seq: e.seq, ms });
-    comMs.push({ e, ms });
+    const fila = sessoes.get(e.sessao) ?? [];
+    const anterior = fila[fila.length - 1];
+    if (anterior && e.seq <= anterior.e.seq) return { ok: false };
+    fila.push({ e, ms });
+    sessoes.set(e.sessao, fila);
   }
-  comMs.sort((a, b) => a.ms - b.ms || cmp(a.e.sessao, b.e.sessao) || a.e.seq - b.e.seq);
-  return { ok: true, eventos: comMs.map((x) => x.e) };
+  const nomes = [...sessoes.keys()].sort(cmp);
+  const cabeca = new Map(nomes.map((n) => [n, 0]));
+  const saida           = [];
+  while (saida.length < eventos.length) {
+    let melhor                                      = null;
+    for (const nome of nomes) {
+      const prox = (sessoes.get(nome)                               )[cabeca.get(nome)          ];
+      if (prox && (!melhor || prox.ms < melhor.ms)) melhor = { nome, ms: prox.ms };
+    }
+    const { nome } = melhor                    ;
+    const i = cabeca.get(nome)          ;
+    saida.push((sessoes.get(nome)                               )[i].e);
+    cabeca.set(nome, i + 1);
+  }
+  return { ok: true, eventos: saida };
 }
 
                                                                                     
@@ -41,16 +57,22 @@ export function ordenar(eventos          )                                      
                      
                       
                             
+                                                                                              
+                
+                                                                                                 
+                                                                      
   
 
 const contagem = (v         )          => Number.isInteger(v) && (v          ) >= 0;
 
+const estadoInicial = ()         => ({
+  iniciada: false, integrada: false, concluidaPos: -1, revisorPos: -1, correcaoPos: -1, veredito: null, teto: false, porRodada: new Map(),
+});
+
 /** Estado por task, ou `null` se algum evento de task sai do plano ou do contrato de `dados`. */
 function projetar(plano       , eventos          )                                                               {
   const estados = new Map                ();
-  for (const t of plano.tasks) {
-    estados.set(t.id, { iniciada: false, integrada: false, concluidaPos: -1, revisorPos: -1, correcaoPos: -1, veredito: null });
-  }
+  for (const t of plano.tasks) estados.set(t.id, estadoInicial());
   let ciVermelhos = 0;
   for (const [pos, e] of eventos.entries()) {
     const dados = e.dados ?? {};
@@ -71,15 +93,31 @@ function projetar(plano       , eventos          )                              
       est.iniciada = true;
       est.concluidaPos = pos;
     } else if (e.tipo === 'task.integrada') {
+      // Integrar sem aprovação vigente é o fechamento sozinho (A11): nunca vira `concluir`.
+      if (!aprovada(est)) return null;
       est.integrada = true;
+    } else if (e.tipo === 'task.reaberta') {
+      if (dados.origem !== 'dono' && dados.origem !== 'retomada') return null;
+      if (dados.origem === 'dono') {
+        if (est.teto && !est.integrada) estados.set(dados.task          , estadoInicial());
+      } else if (est.iniciada && est.concluidaPos < 0 && !est.veredito) {
+        est.iniciada = false;
+      }
     } else {
       const { veredito, rodada, major, blocker } = dados;
       if (veredito !== 'APROVADO' && veredito !== 'REPROVADO') return null;
       if (!contagem(rodada) || (rodada          ) < 1 || !contagem(major) || !contagem(blocker)) return null;
+      const achados = (major          ) + (blocker          );
+      const aprovado = veredito === 'APROVADO';
+      if (aprovado && achados > 0) return null;
+      const mesma = est.porRodada.get(rodada          );
+      if (mesma && mesma.concluidaPos === est.concluidaPos && mesma.aprovado !== aprovado) return null;
+      est.porRodada.set(rodada          , { aprovado, concluidaPos: est.concluidaPos });
       est.iniciada = true;
+      if (!aprovado && (rodada          ) >= 2 && achados > 0) est.teto = true;
       // Vale o da maior rodada; na mesma rodada, o mais recente.
       if (!est.veredito || (rodada          ) >= est.veredito.rodada) {
-        est.veredito = { aprovado: veredito === 'APROVADO', rodada: rodada          , achados: (major          ) + (blocker          ), pos };
+        est.veredito = { aprovado, rodada: rodada          , achados, pos };
       }
     }
   }
@@ -88,10 +126,9 @@ function projetar(plano       , eventos          )                              
 
 /** Commit posterior ao veredito válido (ou nenhum veredito): o que está na branch ainda não foi revisto. */
 const semRevisao = (e        )          => e.concluidaPos >= 0 && (!e.veredito || e.concluidaPos > e.veredito.pos);
-const aprovada = (e        )          => !semRevisao(e) && e.veredito?.aprovado === true;
+const aprovada = (e        )          => !e.teto && !semRevisao(e) && e.veredito?.aprovado === true;
 const reprovadaSemCommitNovo = (e        )          => !semRevisao(e) && e.veredito?.aprovado === false;
-const noTeto = (e        )          =>
-  !e.integrada && reprovadaSemCommitNovo(e) && e.veredito .rodada >= 2 && e.veredito .achados > 0;
+const noTeto = (e        )          => !e.integrada && e.teto;
 
 /** Ancestrais de `id`, com guarda contra ciclo: `validarPlano` barra ciclo, a função pura não presume. */
 function ancestrais(plano       , id        )           {
@@ -129,7 +166,7 @@ function depLiberada(plano       , estados                     , dep        )   
   return aprovada(e) && ancestrais(plano, dep).some((a) => noTeto(estados.get(a)          ));
 }
 
-const paraRevisor = (e        )          => !e.integrada && semRevisao(e) && e.revisorPos < e.concluidaPos;
+const paraRevisor = (e        )          => !e.integrada && !e.teto && semRevisao(e) && e.revisorPos < e.concluidaPos;
 
 export function proximaAcao(plano       , eventos          , sinais        )           {
   // (1)
