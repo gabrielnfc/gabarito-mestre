@@ -303,6 +303,44 @@ describe('integridade e mensagem', () => {
     assert.match(rodar(repo, 'Bash', { command: 'cat .env .harness/PAUSAR' }).motivo, /segredo/);
   });
 
+  test('pausar-comando-fora-da-lista-pede: o arquivo da pausa escrito inteiro entra no anel seja qual for o comando (R5)', () => {
+    const repo = montar();
+    const wt = join(realpathSync(mkdtempSync(join(tmpdir(), 'gm-kill-wt-'))), 'wt');
+    git(repo, 'worktree', 'add', '-q', '-b', 'wt/GM-9-6', wt);
+    pausar(repo);
+    const alvo = join(repo, '.harness', 'PAUSAR');
+    const comandos = [
+      `nice rm ${alvo}`, `eval rm ${alvo}`, `exec rm ${alvo}`, `(exec rm ${alvo})`, `timeout 5 rm ${alvo}`,
+      `rsync --remove-source-files ${alvo} /tmp/x`, `trash ${alvo}`, `nice rm .harness/pausar`, `nice rm .harness//PAUSAR`,
+      `nice rm x/../.harness/PAUSAR`, `cd ${repo}/.harness; nice rm pausar`, `cd ${repo}; nice rm .HARNESS/Pausar`,
+    ];
+    for (const command of comandos) {
+      for (const cwd of [repo, wt]) {
+        const o = rodar(cwd, 'Bash', { command });
+        assert.equal(o.decisao, 'ask', `${command} @ ${cwd === repo ? 'repo' : 'wt'}`);
+        assert.match(o.motivo, /integridade/, command);
+      }
+    }
+  });
+
+  test('pausar-leitor-fora-do-anel-silencio: leitor, citação e .harness ou raiz em comando fora do anel seguem em silêncio (E12)', () => {
+    const repo = montar();
+    pausar(repo);
+    const alvo = join(repo, '.harness', 'PAUSAR');
+    const comandos = [
+      'cat .harness/PAUSAR', 'head .harness/PAUSAR', 'tail .harness/PAUSAR', 'wc -c .harness/PAUSAR', 'less .harness/PAUSAR', 'file .harness/PAUSAR',
+      'diff .harness/PAUSAR README.md', 'shasum .harness/PAUSAR', 'grep x .harness/PAUSAR', 'ls .harness/PAUSAR', 'stat .harness/PAUSAR',
+      'test -f .harness/PAUSAR', `cat ${alvo}`, `less ${alvo}`, `file ${alvo}`,
+      'echo .harness/PAUSAR', 'printf "%s" .harness/PAUSAR', 'git commit -m "apaga .harness/PAUSAR"', 'git log --grep=.harness/PAUSAR',
+      'gh pr create --title "rm .harness/PAUSAR"',
+      'du -sh .harness', `du -sh ${repo}`, 'nice rm sub/PAUSAR', 'nice rm PAUSAR', 'rg x .harness', 'tar -cf /tmp/x.tar .harness', 'ls .harness', `ls ${repo}`,
+    ];
+    for (const command of comandos) {
+      const o = rodar(repo, 'Bash', { command });
+      assert.equal(o.decisao, undefined, command);
+    }
+  });
+
   test('mensagem-nao-ensina-bypass: texto exato, sem systemMessage e sem caminho', () => {
     const repo = montar();
     pausar(repo);

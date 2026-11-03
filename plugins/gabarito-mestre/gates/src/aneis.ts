@@ -515,6 +515,18 @@ function alvoDePausa(caminho: string, contexto: Contexto, cwd?: string | null): 
   return raizesDePausa(contexto).includes(norm.toLowerCase());
 }
 
+/** `.harness/PAUSAR` escrito inteiro, em qualquer grafia de caixa. Falha ao resolver nunca libera nem lança: devolve false (o veredito de antes). */
+function arquivoDePausa(caminho: string, contexto: Contexto, cwd?: string | null): boolean {
+  try {
+    if (caminho.trim() === '') return false;
+    const { norm } = resolver(caminho, contexto, cwd);
+    const segs = norm.toLowerCase().split('/').filter((x) => x !== '' && x !== '.');
+    return segs[segs.length - 1] === 'pausar' && segs[segs.length - 2] === '.harness';
+  } catch {
+    return false;
+  }
+}
+
 /** Remoção de um diretório que contém uma área de integridade (`rm -rf .github`). */
 export function ancestralDeIntegridade(caminho: string, contexto: Contexto, cwd?: string | null): boolean {
   if (caminho.trim() === '') return false;
@@ -611,6 +623,8 @@ const LIMITE_CD = 4096;
 const REMOVE = new Set(['rm', 'rmdir', 'unlink', 'shred']);
 const ESCREVE_TUDO = new Set(['rm', 'rmdir', 'chmod', 'chown', 'chgrp', 'ln', 'truncate', 'touch', 'install', 'unlink', 'shred', 'mv', 'tee']);
 const SO_REDIRECIONA = new Set(['echo', 'printf']);
+// Leitores que não estão em LE_COMO_DADO: o arquivo da pausa como argumento deles é leitura, não alvo (REQ-POU-2).
+const LE_ARQUIVO = new Set(['less', 'more', 'file']);
 // Q15: checar existência não é leitura.
 const EXISTENCIA = new Set(['ls', 'test', '[', '[[', 'stat']);
 // Valores de `find` que são padrão de nome, não caminho.
@@ -773,6 +787,8 @@ export function anelDeBash(segmentos: Segmento[], contexto: Contexto, cwd?: stri
       empilhar(leituras, temE ? pos : pos.slice(1));
     } else if (!SO_REDIRECIONA.has(s.cmd)) {
       empilhar(leituras, pos);
+      // REQ-POU-2: `.harness/PAUSAR` escrito inteiro como argumento de comando que não é leitor conhecido (nice, eval, trash, rsync…).
+      if (!LE_COMO_DADO.has(s.cmd) && !LE_ARQUIVO.has(s.cmd)) empilhar(escritas, pos.filter((p) => arquivoDePausa(p, contexto, atual)));
     }
 
     for (const p of escritas) {
