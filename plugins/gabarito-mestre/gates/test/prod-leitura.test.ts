@@ -7,6 +7,9 @@
  *  P2  `permitidos` valer para subagent ⇒ `permitidos-leitura-nao-vale-sub` (corpus) e `mcp-permitido-nao-vale-sub` falham
  *  P3  voltar leitura em prod para `mostrar` ⇒ `prod-leitura` e `mcp-prod-list` (corpus) falham
  *  P4  `permitido()` aceitar o conjunto vazio de padrões ⇒ `sem-remoto-permitidos-vazio-pede` falha
+ *  P5  `casa()` sem a âncora final `$` ⇒ `permitidos-segmento-inteiro` falha
+ *  P7  host posicional de qualquer ambiente declarado (não só prod) ⇒ `host-posicional-so-prod` falha
+ *  P6  `rank` empata leitura e execução em prod ⇒ `execucao-vence-leitura-no-rotulo` falha
  */
 
 import { test, describe } from 'node:test';
@@ -50,13 +53,37 @@ describe('permitidos casa todo segmento prod (Q6, Q26)', () => {
     assert.equal(d.faixa, 'mostrar');
     assert.equal(d.evento?.tipo, 'producao.acesso');
   });
-  test('permitidos-leitura-nao-libera-escrita: padrão de leitura de mysql não libera DROP em -e', () => {
+  test('permitidos-padrao-exato-de-leitura-nao-casa-outra-escrita: padrão exato de leitura de mysql não casa o DROP em -e', () => {
     const c = cfg(['mysql -h db.prod.exemplo.com -e "SELECT*']);
     const ok = bash('mysql -h db.prod.exemplo.com -e "SELECT 1"', c);
     assert.equal(ok.faixa, 'mostrar');
     const d = bash('mysql -h db.prod.exemplo.com -e "DROP TABLE t"', c);
     assert.equal(d.faixa, 'ask');
     assert.equal(d.classificacao.acao, 'escrita');
+  });
+  test('permitidos-segmento-inteiro: padrão não casa o mesmo comando com sufixo (-X DELETE) ⇒ ask', () => {
+    const base = 'curl -sS https://api.exemplo.com/health';
+    const c = cfg([base]);
+    assert.equal(bash(base, c).faixa, 'mostrar');
+    const d = bash(`${base} -X DELETE`, c);
+    assert.equal(d.faixa, 'ask');
+    assert.equal(d.classificacao.acao, 'execucao');
+  });
+  test('execucao-vence-leitura-no-rotulo: leitura + execução no mesmo comando, nas duas ordens ⇒ execução', () => {
+    const L = 'curl -sS https://api.exemplo.com/h';
+    const X = 'curl -X DELETE https://api.exemplo.com/x';
+    for (const cmd of [`${L} && ${X}`, `${X} && ${L}`]) {
+      const d = bash(cmd, cfg([]));
+      assert.equal(d.faixa, 'ask', cmd);
+      assert.equal(d.classificacao.acao, 'execucao', cmd);
+      assert.equal(d.evento?.dados.acao, 'execucao', cmd);
+      assert.match(d.motivo ?? '', /execução/, cmd);
+    }
+  });
+  test('host-posicional-so-prod: ssh/scp a homolog ou loopback segue como hoje (silêncio)', () => {
+    for (const cmd of ['ssh staging.exemplo.com', 'scp dump.sql staging.exemplo.com:/tmp', 'ssh localhost']) {
+      assert.equal(bash(cmd, cfg([])).faixa, 'silencio', cmd);
+    }
   });
   test('permitidos-leitura-e-escrita-juntas: leitura casa, escrita não ⇒ ask com acao escrita e motivo de escrita', () => {
     for (const cmd of [`${LEITURA} && ${ESCRITA}`, `${ESCRITA} && ${LEITURA}`]) {
