@@ -231,7 +231,9 @@ function duracoes(ordemCrescente: Evento[]): number[] {
       aberta.delete(task);
       acumulado.delete(task);
     } else if (e.tipo === 'task.iniciada') {
-      if (e.dados.papel !== 'implementador') continue;
+      // correção só reabre contagem de task já reprovada; revisor nunca abre
+      const papel = e.dados.papel;
+      if (papel !== 'implementador' && !(papel === 'correcao' && acumulado.has(task))) continue;
       const t = ms(e.ts);
       if (Number.isNaN(t)) aberta.delete(task);
       else aberta.set(task, t);

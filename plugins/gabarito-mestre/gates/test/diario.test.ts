@@ -547,6 +547,36 @@ describe('reparo, tolerância e projeção', () => {
     assert.deepEqual(projetar(es).eta, { medianaS: 200, n: 3 });
   });
 
+  const seqT2 = (b: number, task: string, d: { r1: number; corr: number; r2: number }): Evento[] => [
+    ini(b, b * 1000, task), evT(b + 1, b * 1000 + 50, 'task.concluida', { task }), ini(b + 2, b * 1000 + 60, task, 'revisor'),
+    ver(b + 3, b * 1000 + d.r1, task, 'REPROVADO'), ini(b + 4, b * 1000 + d.r1 + 10, task, 'correcao'),
+    evT(b + 5, b * 1000 + d.r1 + 10 + d.corr, 'task.concluida', { task }), ini(b + 6, b * 1000 + d.r1 + d.corr + 20, task, 'revisor'),
+    ver(b + 7, b * 1000 + d.r1 + d.corr + 20 + d.r2, task, 'APROVADO'),
+  ];
+
+  test('eta-rodada-2-conta: sequência real da T2 (impl, revisor, REPROVADO, correcao, revisor, APROVADO) entra na ETA', () => {
+    const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 100), ...seqT2(100, 'T3', { r1: 400, corr: 100, r2: 60 })];
+    assert.deepEqual(projetar(es).eta?.n, 3);
+  });
+
+  test('eta-duracao-soma-rodadas: rodada 1 (início até REPROVADO) + rodada 2 (correcao até APROVADO)', () => {
+    const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 100), ...seqT2(100, 'T3', { r1: 400, corr: 100, r2: 60 })];
+    // 400 + (100 + 10 + 60) = 570; mediana de [100, 100, 570] = 100; com 4 tasks a mediana expõe a soma
+    const p = projetar([...es, ...aprovada(200, 'T4', 300)]);
+    assert.deepEqual(p.eta, { medianaS: 200, n: 4 });
+    assert.deepEqual(projetar([...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 900), ...seqT2(100, 'T3', { r1: 400, corr: 100, r2: 60 })]).eta, { medianaS: 570, n: 3 });
+  });
+
+  test('eta-dono-recomeca: task.reaberta de origem dono zera o acumulado; correcao depois dela não abre contagem', () => {
+    const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 300),
+      ini(5, 5000, 'T3'), ver(6, 5800, 'T3', 'REPROVADO'),
+      evT(7, 6000, 'task.reaberta', { task: 'T3', origem: 'dono' }),
+      ini(8, 7000, 'T3', 'correcao'), ver(9, 7100, 'T3')];
+    assert.equal(projetar(es).eta, null, 'correcao sem rodada anterior não abre');
+    const com = [...es.slice(0, 7), ini(8, 7000, 'T3'), ver(9, 7200, 'T3')];
+    assert.deepEqual(projetar(com).eta, { medianaS: 200, n: 3 });
+  });
+
   test('eta-so-implementador: iniciada de revisor ou correção não abre a contagem', () => {
     const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 100),
       ini(5, 5000, 'T3', 'revisor'), ver(6, 5500, 'T3')];
