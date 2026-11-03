@@ -67,7 +67,7 @@ describe('regras-subagent.sh — injeção (Q27)', () => {
     const ctx = contexto(rodar({ cwd: dir }));
     assert.ok(SO_PADRAO(ctx));
     assert.equal(ctx.includes('[barreira]'), true);
-    assert.equal(ctx.includes('regras do projeto'), false);
+    assert.equal(/Regras do projeto/.test(ctx), false);
   });
   test('arquivo do projeto presente: regras do projeto vêm depois das padrão', () => {
     const dir = repoComRegras('Regra do dono: ZZZ-REGRA-DO-PROJETO\n');
