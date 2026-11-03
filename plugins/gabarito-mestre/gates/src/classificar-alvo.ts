@@ -3,6 +3,15 @@
  * Sem I/O, sem `process.env`, sem relógio. `alvo` é sempre host, ref, caminho ou nome de variável:
  * nunca comando cru nem URL com credencial.
  *
+ * Escopo (Q26): só segurança de caminho e alvo declarado; não é barreira contra vazamento por composição. Passam, por
+ * declaração: leitura de segredo por interpretador (`python -c`, `node -e`, heredoc de interpretador); caminho montado por
+ * variável, substituição ou glob (`F=.env; cat $F`, `cat "$(echo .env)"`, `cat .en*`); `find … | xargs` e `$(find …)`;
+ * `env`/`printenv`; `base64 | sh`; indireção que escreve em `.git/**` (`X=git; $X update-ref …`, interpretador).
+ * Cobertos, não limite: `git push|fetch|update-ref|symbolic-ref|remote set-head` para `refs/remotes/*`;
+ * redirecionamento, `cp` e `sed -i` em `.git/**`; `find` com `-exec|-execdir|-ok|-okdir|-delete` sobre padrão de segredo.
+ * Produção (Q26): qualquer ação em `prod` (leitura, execução, escrita) pede ao orquestrador e nega ao subagent;
+ * `segmentosProd` lista todo segmento `prod` para `permitidos` casar um a um.
+ *
  * Limites declarados (sem tokenizador completo): `xargs`, `timeout`, `exec`, `rsync`, `find -delete`, `perl -i`,
  * `curl -o` (escrita por flag de saída), expansão de chaves (`{.env,x}`), heredoc (o corpo vira segmentos),
  * indireção (`X=rm; $X`, `base64 | sh`, `eval`), caminho com espaço em argumento de Bash, substituição fora de
