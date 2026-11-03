@@ -52,25 +52,46 @@ async function ponte($, pedido) {
   }
 }
 
-/** Raiz do checkout e pasta da entrega, resolvidas a CADA disparo (a ponte lê a branch, como `uso-subagent.mjs`). Sem entrega ⇒ `null`. */
-async function contexto($) {
-  try {
-    const cwd = await $.session.root();
-    const r = await ponte($, { op: 'dir', cwd });
-    if (r.ok === true && typeof r.dir === 'string' && typeof r.raiz === 'string') return { cwd, raiz: r.raiz, dir: r.dir };
-  } catch { /* sem sessão */ }
-  return null;
+/**
+ * Raiz do checkout e pasta da entrega, resolvidas a CADA disparo (a ponte lê a branch, como `uso-subagent.mjs`).
+ * `{ c, falha }`: `c` com a entrega; `c: null, falha: null` só quando não há repositório (nada a ler); `falha` com a causa quando não deu para ler.
+ */
+async function lerContexto($) {
+  let cwd;
+  try { cwd = await $.session.root(); } catch { return { c: null, falha: 'sessão sem raiz' }; }
+  const r = await ponte($, { op: 'dir', cwd });
+  if (r.ok === true && typeof r.dir === 'string' && typeof r.raiz === 'string') return { c: { cwd, raiz: r.raiz, dir: r.dir }, falha: null };
+  let repo;
+  try { repo = await $.session.repo(); } catch { return { c: null, falha: 'ponte do diário falhou' }; }
+  return repo === null || repo === undefined ? { c: null, falha: null } : { c: null, falha: typeof r.erro === 'string' ? r.erro : 'ponte do diário falhou' };
 }
 
-/** Loop ativo = a pasta da entrega tem plano.json. Sem ele o mod não muda nada. */
+async function contexto($) {
+  return (await lerContexto($)).c;
+}
+
+/**
+ * Loop ativo = a pasta da entrega tem plano.json. `{ c: null, falha: null }` é "sem loop" de verdade (sem repositório ou sem plano);
+ * `falha` é "não consegui ler" (ponte ou `fs.exists` falhando) e NUNCA se confunde com ausência.
+ */
 async function loopAtivo($) {
-  const c = await contexto($);
-  if (c === null) return null;
+  const k = await lerContexto($);
+  if (k.c === null) return k;
   try {
-    return (await $.fs.exists(`${c.dir}/plano.json`)) === true ? c : null;
+    return (await $.fs.exists(`${k.c.dir}/plano.json`)) === true ? { c: k.c, falha: null } : { c: null, falha: null };
   } catch {
-    return null;
+    return { c: null, falha: 'não consegui confirmar se há plano.json' };
   }
+}
+
+let leituraAvisada = null; // causa do último aviso de "não consegui ler" (não repete a cada turno)
+/** Falha de leitura em caminho de pouso, despacho ou medição: avisa uma vez por causa; nunca pousa. */
+async function avisarLeitura($, falha) {
+  if (falha === undefined) return;
+  if (falha === null) { leituraAvisada = null; return; }
+  if (leituraAvisada === falha) return;
+  leituraAvisada = falha;
+  await avisar($, `gabarito: não consegui ler se há loop nesta entrega (${falha}). Nenhum pouso e nenhuma medição até voltar a ler.`);
 }
 
 async function gravar($, c, ev, extra = {}) {
@@ -253,7 +274,8 @@ async function pararDoNucleo($, c, acao, m) {
 
 /** `true` quando um pouso foi agendado (o `ocupado` fica preso até ele terminar). */
 async function aoCompletarTurno($) {
-  const c = await loopAtivo($);
+  const { c, falha } = await loopAtivo($);
+  await avisarLeitura($, falha);
   if (c === null) { espera = null; return false; }
   const r = await avaliar($, c);
   if (r.porta.acao === 'parar_nao_interativo') {
@@ -274,7 +296,8 @@ async function medir($, e) {
   if (typeof e.agentId !== 'string' || !ID_RE.test(e.agentId)) return;
   const dados = dadosMedicao(e.usage);
   if (dados === null) return;
-  const c = await loopAtivo($);
+  const { c, falha } = await loopAtivo($);
+  await avisarLeitura($, falha);
   if (c === null) return;
   await gravar($, c, { agente: `subagent:${e.agentId}`, tipo: 'custo.medicao', dados }, { unicoPorAgente: true });
 }
@@ -283,7 +306,8 @@ async function medir($, e) {
 async function medirOrquestrador($, e) {
   const dados = dadosMedicao(e.usage);
   if (dados === null) return;
-  const c = await loopAtivo($);
+  const { c, falha } = await loopAtivo($);
+  await avisarLeitura($, falha);
   if (c === null) return;
   await gravar($, c, { agente: 'orquestrador', tipo: 'custo.medicao', dados });
 }
@@ -316,8 +340,10 @@ async function comandoPausa($, acao) {
   } catch {
     return { text: `Falhou: não consegui remover ${arquivo}. O loop continua pausado.` };
   }
-  const loop = await loopAtivo($); // sem entrega com plano não há loop a recomeçar
-  const r = loop === null ? { texto: '', abrir: false } : await recomecarLoop($, loop);
+  const { c: loop, falha } = await loopAtivo($); // sem entrega com plano não há loop a recomeçar; não conseguir ler NÃO é isso
+  const r = falha !== null
+    ? { abrir: false, texto: `Não reabri nada nem abri turno: não consegui ler se há loop (${falha}). O loop não recomeça sozinho.` }
+    : loop === null ? { texto: '', abrir: false } : await recomecarLoop($, loop);
   const gravou = await registrar('retomado');
   const aviso = gravou ? '' : ' O diário não gravou loop.pausa.';
   let texto = `Retomado: ${arquivo} removido.${aviso} ${r.texto}`.trim();
@@ -416,7 +442,8 @@ export const register = (on) => {
 
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     try {
-      const c = ehRevisor(e.subagent_type) ? null : await loopAtivo($);
+      const { c, falha } = ehRevisor(e.subagent_type) ? { c: null } : await loopAtivo($);
+      await avisarLeitura($, falha);
       if (c !== null) {
         const r = await avaliar($, c);
         if (r.negar) {

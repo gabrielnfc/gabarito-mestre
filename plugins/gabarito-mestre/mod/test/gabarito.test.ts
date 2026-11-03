@@ -37,6 +37,7 @@ type Opc = {
   plano_json?: unknown
   config?: { slots?: number; tetoTokens?: number | null }
   existsFalha?: boolean
+  existsPlanoFalha?: boolean
 }
 
 const FRONT = [
@@ -115,7 +116,7 @@ function mundo($: any, on: any, o: Opc = {}) {
   })
   on('store.delete', (_: any, e: any) => { log.push(`store.delete:${e.key}`); store.delete(e.key); return { value: undefined } })
   on('state.set', () => { log.push('state.set'); return { value: { isSet: true, version: 1 } } })
-  on('fs.exists', (_: any, e: any) => (o.existsFalha && e.path.endsWith('PAUSAR') ? { deny: 'fs fora do ar' } : { value: arquivos.has(e.path) || (e.path === `${est.dir}/plano.json` && est.plano) }))
+  on('fs.exists', (_: any, e: any) => (o.existsPlanoFalha && e.path.endsWith('plano.json') ? { deny: 'fs fora do ar' } : o.existsFalha && e.path.endsWith('PAUSAR') ? { deny: 'fs fora do ar' } : { value: arquivos.has(e.path) || (e.path === `${est.dir}/plano.json` && est.plano) }))
   on('fs.write', (_: any, e: any) => {
     if (o.writeFalha) return { deny: 'disco cheio' }
     if (!o.escritaNaoAparece) arquivos.add(e.path)
@@ -1019,6 +1020,66 @@ test('retomar-sem-entrega-com-plano: remove o arquivo e diz retomado, mas não h
   expect(r.text).toMatch(/^Retomado/)
   expect(m.tipos().includes('task.reaberta')).toBe(false)
   expect(m.est.submits).toHaveLength(0)
+})
+test('retomar-exists-lanca-nao-diz-retomado: fs.exists do plano lançando não vira "sem loop": tasks em voo seguem, sem turno, texto com a causa', async ($, on) => {
+  const { m, r } = await retomarCom($, on, { eventos: VOO, plano_json: PLANO5, agentes: [], existsPlanoFalha: true })
+  expect(m.arquivos.has(ARQ)).toBe(false)
+  expect(m.tipos()).toEqual(['loop.pausa'])
+  expect(m.est.submits).toHaveLength(0)
+  expect(r.text).toMatch(/não consegui confirmar se há plano\.json/)
+  expect(r.text).toMatch(/não recomeça sozinho/)
+})
+test('retomar-ponte-falha-nao-diz-retomado: ponte falhando não vira "sem loop": sem reabrir, sem turno, texto com a causa', async ($, on) => {
+  const { m, r } = await retomarCom($, on, { eventos: VOO, plano_json: PLANO5, agentes: [], ponteSai1: true })
+  expect(m.arquivos.has(ARQ)).toBe(false)
+  expect(m.tipos()).toEqual([])
+  expect(m.est.submits).toHaveLength(0)
+  expect(r.text).toMatch(/ponte do diário falhou/)
+  expect(r.text).toMatch(/não recomeça sozinho/)
+})
+// ---- não consegui ler o plano nos outros chamadores de loopAtivo: avisa (uma vez), nunca pousa, nunca vira "sem loop" calado ----
+test('turno-exists-lanca-avisa-e-nao-pousa: aoCompletarTurno com fs.exists do plano lançando', async ($, on) => {
+  const m = mundo($, on, { existsPlanoFalha: true })
+  await pousar(m)
+  expect(m.est.clears).toBe(0)
+  expect(m.toasts.join(' ')).toMatch(/não consegui ler se há loop.*plano\.json/)
+  await m.turno(); await m.clock.settle()
+  expect(m.toasts.filter((t) => /não consegui ler se há loop/.test(t))).toHaveLength(1)
+})
+test('turno-ponte-falha-avisa-e-nao-pousa: aoCompletarTurno com a ponte falhando', async ($, on) => {
+  const m = mundo($, on, { ponteSai1: true })
+  await pousar(m)
+  expect(m.est.clears).toBe(0)
+  expect(m.toasts.join(' ')).toMatch(/não consegui ler se há loop.*ponte do diário falhou/)
+})
+test('agent-exists-lanca-avisa-e-nao-pousa: tool.call Agent com fs.exists do plano lançando avisa, sem pouso', async ($, on) => {
+  const m = mundo($, on, { existsPlanoFalha: true })
+  await m.inicio()
+  await m.agent('gabarito-implementador')
+  expect(m.toasts.join(' ')).toMatch(/não consegui ler se há loop/)
+  expect(m.est.clears).toBe(0)
+})
+test('medicao-orquestrador-exists-lanca-avisa: sem custo.medicao gravada e aviso visível', async ($, on) => {
+  const m = mundo($, on, { existsPlanoFalha: true, percent: 10 })
+  await m.inicio()
+  await m.turno({ isAborted: true, reason: 'aborted', usage: USO }) // só a medição roda: o aviso não pode vir da decisão do turno
+  await m.clock.settle()
+  expect(m.tipos()).toEqual([])
+  expect(m.toasts.join(' ')).toMatch(/não consegui ler se há loop/)
+})
+test('medicao-subagent-exists-lanca-avisa: sem custo.medicao do subagent e aviso visível', async ($, on) => {
+  const m = mundo($, on, { existsPlanoFalha: true })
+  await m.inicio()
+  await m.turno({ agentId: 'ag1', usage: USO }); await m.clock.settle()
+  expect(m.tipos()).toEqual([])
+  expect(m.toasts.join(' ')).toMatch(/não consegui ler se há loop/)
+})
+test('sem-plano-de-verdade-nao-avisa: plano.json ausente (exists devolve false) segue calado', async ($, on) => {
+  const m = mundo($, on, { plano: false })
+  await pousar(m)
+  await m.agent('gabarito-implementador')
+  expect(m.toasts).toEqual([])
+  expect(m.est.clears).toBe(0)
 })
 test('retomar-sem-pausar-nao-abre-turno: sem PAUSAR nada grava e nada é enviado', async ($, on) => {
   const m = mundo($, on, { agentes: [], eventos: VOO, plano_json: PLANO5 })
