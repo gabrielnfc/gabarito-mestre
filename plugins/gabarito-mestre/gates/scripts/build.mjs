@@ -24,7 +24,7 @@ process.emitWarning = (aviso, ...resto) => {
   return emitOriginal.call(process, aviso, ...resto);
 };
 
-export const MODULOS = ['aneis', 'classificar-alvo', 'decidir', 'diario', 'guarda', 'plano', 'loop'];
+export const MODULOS = ['aneis', 'classificar-alvo', 'decidir', 'diario', 'guarda', 'plano', 'loop', 'pouso'];
 
 export function reescreverImports(js) {
   return js

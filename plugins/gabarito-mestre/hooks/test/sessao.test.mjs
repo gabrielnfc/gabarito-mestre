@@ -163,6 +163,38 @@ describe('session-card.sh — ORQ-3 (T14)', () => {
   });
 });
 
+describe('SessionStart:compact reinjeta o instantâneo sem mod (GM-10 T9, F10, F11)', () => {
+  test('compact-reinjeta-instantaneo: o hook clássico de compact injeta o instantâneo do diário, sem depender de mod', async () => {
+    const hooksJson = JSON.parse(readFileSync(join(PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
+    const matcher = hooksJson.hooks.SessionStart[0].matcher.split('|');
+    assert.ok(matcher.includes('compact') && matcher.includes('clear'), `matcher do SessionStart: ${matcher}`);
+    assert.ok(hooksJson.hooks.SessionStart[0].hooks[0].command.includes('session-card.sh'));
+
+    const diario = await import(join(PLUGIN, 'gates', 'dist', 'diario.js'));
+    const repo = fixtureRepo({ branch: 'feat/PBI-1-x', config: { fluxo: { resolvidoEm: '2026-09-20' } } });
+    const dir = join(repo, '.harness', 'entregas', '_sem-id');
+    const ev = (tipo, dados) => ({ ts: '2026-11-03T10:00:00.000Z', autor: 'a', sessao: 'antiga', agente: 'orquestrador', tipo, dados });
+    assert.equal(diario.append(dir, 'antiga', ev('sessao.pouso', { percent: 61, x: 50 })).ok, true);
+    assert.equal(diario.append(dir, 'antiga', ev('sessao.retomada', { chars: 120 })).ok, true);
+
+    const entrada = JSON.stringify({ session_id: 'depois-do-compact', source: 'compact' });
+    const r = spawnSync('bash', [join(HOOKS, 'session-card.sh')], { input: entrada, encoding: 'utf8', cwd: repo, env: cleanEnv({ CLAUDE_PLUGIN_ROOT: PLUGIN }) });
+    assert.equal(r.status, 0, r.stderr);
+    const h = JSON.parse(r.stdout).hookSpecificOutput;
+    assert.equal(h.hookEventName, 'SessionStart');
+    assert.match(h.additionalContext, /Diário: \d+ evento\(s\)/);
+    assert.match(h.additionalContext, /sessao\.pouso/);
+    assert.match(h.additionalContext, /sessao\.retomada/);
+    assert.ok(h.additionalContext.length <= 6000, `cartão com ${h.additionalContext.length} caracteres`);
+  });
+  test('compact-nao-bloqueia: sem diário o hook de compact sai 0 e não impede a compactação', () => {
+    const repo = fixtureRepo({ config: { fluxo: { resolvidoEm: '2026-09-20' } } });
+    const r = spawnSync('bash', [join(HOOKS, 'session-card.sh')], { input: JSON.stringify({ session_id: 'c2', source: 'compact' }), encoding: 'utf8', cwd: repo, env: cleanEnv({ CLAUDE_PLUGIN_ROOT: PLUGIN }) });
+    assert.equal(r.status, 0, r.stderr);
+    assert.notEqual(r.status, 2);
+  });
+});
+
 describe('remind-orchestrator.sh — ORQ-4 (T15)', () => {
   const ligado = { orquestracao: { lembretePorPrompt: true, paralelismo: { simultaneos: 2, teto: 4 } } };
   const remind = (cwd, plugin) => runAt('remind-orchestrator.sh', '', { cwd, env: { CLAUDE_PLUGIN_ROOT: plugin }, event: 'UserPromptSubmit' });
