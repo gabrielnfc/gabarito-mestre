@@ -207,3 +207,7 @@
 {"nome":"q23-find-wc-e-teste-orq","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env | wc -l; npm test"},"agente":"orq","esperado":{"faixa":"silencio"}}
 {"nome":"q23-find-wc-e-subst-aspas-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env | wc -l; echo \"$(npm test)\""},"agente":"sub","esperado":{"faixa":"silencio"}}
 {"nome":"q23-find-wc-e-subst-aspas-orq","req":"GRD-5","tool":"Bash","input":{"command":"find . -name .env | wc -l; echo \"$(npm test)\""},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"q23-subst-aspas-find-sub","req":"GRD-5","tool":"Bash","input":{"command":"cat \"$(find . -name .env)\""},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"q23-subst-aspas-find-orq","req":"GRD-5","tool":"Bash","input":{"command":"cat \"$(find . -name .env)\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"q23-name-glob-instancia-sub","req":"GRD-5","tool":"Bash","input":{"command":"find . -name 'x*.pem' | xargs cat"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"q23-name-glob-instancia-orq","req":"GRD-5","tool":"Bash","input":{"command":"find . -name 'x*.pem' | xargs cat"},"agente":"orq","esperado":{"faixa":"ask"}}
