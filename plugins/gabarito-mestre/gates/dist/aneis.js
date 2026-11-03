@@ -32,14 +32,19 @@ import { posix } from 'node:path';
                    
                       
                      
-                                                                                                                 
-                            
                                                                                                  
                  
+                                                                                                                             
+                
+                                                                                                                               
+                
   
 
                                                     
-                                                                                  
+                                                                                        
+// Comando composto: o corpo (entre a cabeça e done/fi/esac) é um nível abaixo, como um grupo.
+const ABRE_COMPOSTO = new Set(['for', 'while', 'until', 'if', 'case', 'select']);
+const FECHA_COMPOSTO = new Set(['done', 'fi', 'esac']);
 
 const NEUTRO = '\u0000';
 const SUBST = '\u0001';
@@ -189,13 +194,12 @@ function lexar(src        )                                      {
   let linhaIni = 0;
   // Parênteses abertos: substituição (`$(`, `<(`, `>(`) ou subshell. Crase alterna.
   const pilha            = [];
-  const posPilha           = [];
-  // Grupos `{ …; }`: posição do primeiro segmento. `fecho` é o último grupo (`( )` ou `{ }`) que acabou de fechar.
+  // Grupos `{ …; }` abertos: posição do primeiro segmento.
   const chaves           = [];
-  let fecho                                      = null;
-  // Segmentos cuja saída entra por `|` no próximo que for criado.
-  let aguardando          = [];
   let crase = false;
+  let lista = 0;
+  let compostoProf = 0;
+  const topo = () => pilha.length === 0 && chaves.length === 0 && !crase;
 
   const fimPalavra = () => {
     if (palavra) toks.push({ t: cur, e: curE });
@@ -208,11 +212,13 @@ function lexar(src        )                                      {
     const cru = src.slice(ini, fim).trim();
     if (toks.length) {
       if (toks[0].t === '{') chaves.push(segs.length);
-      const novo        = { cru, toks, pipePara: null, subst: crase || pilha.includes(true) };
+      const cabeca = toks[0].t;
+      const nivel = pilha.length + chaves.length + (crase ? 1 : 0) + compostoProf;
+      const novo        = { cru, toks, subst: crase || pilha.includes(true), nivel, lista };
       segs.push(novo);
-      for (const a of aguardando) a.pipePara = novo;
-      aguardando = [];
-      if (toks.length === 1 && toks[0].t === '}') fecho = { ini: chaves.pop() ?? segs.length - 1, fim: segs.length };
+      if (ABRE_COMPOSTO.has(cabeca)) compostoProf++;
+      if (FECHA_COMPOSTO.has(cabeca) && compostoProf > 0) compostoProf--;
+      if (toks.length === 1 && toks[0].t === '}') chaves.pop();
     }
     toks = [];
     ini = proximo;
@@ -281,6 +287,7 @@ function lexar(src        )                                      {
     }
     if (c === '\n' && pendentes.length) {
       fimSegmento(i, i + 1);
+      if (topo()) lista++;
       // O corpo só é dado se todo comando da linha o lê como dado; senão segue lexado como comando.
       const dado = segs.slice(linhaIni).every((b) => montar(b, 3).every((m) => m.cmd === '' || LE_COMO_DADO.has(m.cmd)));
       let fim = i;
@@ -303,13 +310,12 @@ function lexar(src        )                                      {
     }
     if (c === '\n' || c === ';' || c === '(' || c === ')' || c === '`') {
       fimSegmento(i, i + 1);
+      if ((c === '\n' || c === ';') && topo()) lista++;
       if (c === '(') {
         pilha.push(src[i - 1] === '$' || src[i - 1] === '<' || src[i - 1] === '>');
-        posPilha.push(segs.length);
       }
       if (c === ')') {
         pilha.pop();
-        fecho = { ini: posPilha.pop() ?? segs.length, fim: segs.length };
       }
       if (c === '`') crase = !crase;
       if (c === '\n') linhaIni = segs.length;
@@ -320,18 +326,17 @@ function lexar(src        )                                      {
         fimSegmento(i, i + 2);
         i++;
       } else fimSegmento(i, i + 1);
+      if (topo()) lista++;
       continue;
     }
     if (c === '|') {
       if (src[i + 1] === '|') {
         fimSegmento(i, i + 2);
         i++;
+        if (topo()) lista++;
       } else {
-        // `|` e `|&`: a saída do segmento anterior (ou do grupo que acabou de fechar) entra no próximo.
+        // `|` e `|&`: só separa segmentos; quem consome a saída não é seguido (forma fechada, Q23).
         fimSegmento(i, i + (src[i + 1] === '&' ? 2 : 1));
-        // Grupo que acabou de fechar (`( a; b ) |`, `{ a; b; } |`): a saída de todos os seus segmentos entra no próximo.
-        const de = fecho !== null && fecho.fim === segs.length ? fecho.ini : segs.length - 1;
-        aguardando = segs.slice(Math.max(de, 0));
         if (src[i + 1] === '&') i++;
       }
       continue;
@@ -449,7 +454,7 @@ function montar(b       , profundidade        )             {
       runner = true;
     } else break;
   }
-  if (p >= w.length) return atribs.length || saidas.length || entradas.length ? [{ cru: b.cru, cmd: '', args: [], exp: [], atribs, saidas, entradas, pipePara: null, subst: b.subst }] : [];
+  if (p >= w.length) return atribs.length || saidas.length || entradas.length ? [{ cru: b.cru, cmd: '', args: [], exp: [], atribs, saidas, entradas, subst: b.subst, nivel: b.nivel, lista: b.lista }] : [];
 
   let primeiro = w[p];
   if (runner) {
@@ -463,31 +468,21 @@ function montar(b       , profundidade        )             {
 
   if (SHELLS.has(cmd) && profundidade < 3) {
     const k = args.findIndex((a) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a));
-    if (k >= 0 && typeof args[k + 1] === 'string') return segmentar(args[k + 1], profundidade + 1);
+    // O script de `bash -c` herda a lista e o nível do segmento que o carrega (fail-closed: tudo dele fica na mesma lista).
+    if (k >= 0 && typeof args[k + 1] === 'string') return segmentar(args[k + 1], profundidade + 1).map((s) => ({ ...s, lista: b.lista, nivel: b.nivel + s.nivel }));
   }
-  return [{ cru: b.cru, cmd, args, exp, atribs, saidas, entradas, pipePara: null, subst: b.subst }];
+  return [{ cru: b.cru, cmd, args, exp, atribs, saidas, entradas, subst: b.subst, nivel: b.nivel, lista: b.lista }];
 }
 
 export function segmentar(comando        , profundidade = 0)             {
   const src = profundidade === 0 && comando.length > TETO_COMANDO ? comando.slice(0, TETO_COMANDO) : comando;
   const { segs, extras } = lexar(src);
   const out             = [];
-  const montados                             = [];
-  for (const b of segs) {
-    const ms = montar(b, profundidade);
-    montados.push([b, ms]);
-    for (const s of ms) out.push(s);
-  }
-  // Liga cada segmento ao que recebe a sua saída (o primeiro segmento montado do bruto de destino).
-  const primeiro = new Map                 ();
-  for (const [b, ms] of montados) if (ms.length) primeiro.set(b, ms[0]);
-  for (const [b, ms] of montados) {
-    const alvo = b.pipePara ? (primeiro.get(b.pipePara) ?? null) : null;
-    if (alvo) for (const s of ms) if (s.pipePara === null) s.pipePara = alvo;
-  }
+  for (const b of segs) for (const s of montar(b, profundidade)) out.push(s);
   // `extras` vêm de `$(…)`/crase dentro de aspas duplas: são substituição.
   if (profundidade < 3) for (const e of extras) for (const s of segmentar(e, profundidade + 1)) {
     s.subst = true;
+    s.lista = -1;
     out.push(s);
   }
   return out;
@@ -662,6 +657,54 @@ function semTextoLivre(cmd        , args          )           {
   return out;
 }
 
+// Amostras do anel de segredo: o padrão de `find` casa o anel se pode selecionar uma delas (semântica de glob/regex, não literal).
+const AMOSTRAS_NOME = ['.env', '.env.local', 'a.pem', 'a.key'];
+const AMOSTRAS_CAMINHO = ['./.env', './app/.env.local', './certs/a.pem', './a.key', '/home/u/.aws/credentials', '/home/u/.config/gh/hosts.yml'];
+const FIND_POR_CAMINHO = new Set(['-path', '-ipath', '-wholename', '-iwholename']);
+const FIND_POR_REGEX = new Set(['-regex', '-iregex']);
+const META = /[.*+?^${}()|[\]\\]/g;
+
+function globParaRegex(g        )         {
+  let r = '';
+  for (let i = 0; i < g.length; i++) {
+    const c = g[i];
+    if (c === '*') r += '[\\s\\S]*';
+    else if (c === '?') r += '[\\s\\S]';
+    else if (c === '[') {
+      const j = g.indexOf(']', i + 2);
+      if (j < 0) r += '\\[';
+      else {
+        let cls = g.slice(i + 1, j);
+        if (cls[0] === '!') cls = '^' + cls.slice(1);
+        r += '[' + cls.replace(/\\/g, '\\\\') + ']';
+        i = j;
+      }
+    } else if (c === '\\' && i + 1 < g.length) r += g[++i].replace(META, '\\$&');
+    else r += c.replace(META, '\\$&');
+  }
+  return '^' + r + '$';
+}
+
+/** Caminho de amostra que o padrão de `find` seleciona, ou `null`. Regex inválida ⇒ fail-closed (primeira amostra). */
+function padraoDeFindCasaSegredo(opcao        , padrao        )                {
+  const insensivel = opcao.startsWith('-i');
+  const amostras = FIND_POR_CAMINHO.has(opcao) || FIND_POR_REGEX.has(opcao) ? AMOSTRAS_CAMINHO : AMOSTRAS_NOME;
+  // Instância concreta do glob (`*`→'', `?`→'a', `[xy]`→'x'): `x*.pem` ⇒ `x.pem`, que o anel reconhece por nome.
+  if (!FIND_POR_REGEX.has(opcao)) {
+    const instancia = padrao.replace(/\[!?([^\]])[^\]]*\]/g, '$1').replace(/\*/g, '').replace(/\?/g, 'a').replace(/\\(.)/g, '$1');
+    if (instancia !== '' && anelDeCaminho(instancia, { raiz: null, pluginRoot: null, branchAtual: null, refLinkado: null, remoteUrl: null }            , null) === 'segredo') return instancia;
+  }
+  let re        ;
+  try {
+    // `find -regex` usa emacs/posix básico por padrão: `\(`, `\|`, `\{` viram os metacaracteres do JS.
+    const fonte = FIND_POR_REGEX.has(opcao) ? '^(?:' + padrao.replace(/\\([(){}|])/g, '$1') + ')$' : globParaRegex(padrao);
+    re = new RegExp(fonte, insensivel ? 'i' : '');
+  } catch {
+    return amostras[0];
+  }
+  return amostras.find((a) => re.test(a)) ?? null;
+}
+
 function semPadroesDeFind(args          )           {
   const out           = [];
   for (let i = 0; i < args.length; i++) {
@@ -704,18 +747,11 @@ function empilhar(dest          , origem          )       {
   for (let i = 0; i < origem.length; i++) dest.push(origem[i]);
 }
 
-/** Segue a cadeia de `|` a partir de `idx`: `true` se algum consumidor não é filtro de texto. */
-function saidaConsumida(segmentos            , idx        , indice                       )          {
-  for (let c = segmentos[idx].pipePara; c !== null; c = c.pipePara) {
-    // `sort --files0-from=-`, `wc --files-from=-`: o filtro passa a abrir os caminhos listados.
-    // `git hash-object --stdin-paths`, `git add --pathspec-from-file=-`: `git` está em `LE_COMO_DADO` por causa de heredoc, mas aqui abre os caminhos.
-    if (!LE_COMO_DADO.has(c.cmd) || c.cmd === 'git' || c.args.some((a) => a.startsWith('--files0-from') || a.startsWith('--files-from'))) return true;
-    // Filtro que recebe substituição de processo (`tee >(xargs cat)`): quem consome é o comando de dentro.
-    if (indice.size === 0) segmentos.forEach((x, i) => indice.set(x, i));
-    const d = segmentos[(indice.get(c) ?? segmentos.length) + 1];
-    if (d !== undefined && d.subst && !LE_COMO_DADO.has(d.cmd)) return true;
-  }
-  return false;
+/** Filtro de texto: lê a lista como dado e não abre os caminhos. `git` sai (`hash-object --stdin-paths`); `--files0-from`/`--files-from` abrem. */
+function filtroDeTexto(o          )          {
+  if (o.cmd === '') return true;
+  if (!LE_COMO_DADO.has(o.cmd) || o.cmd === 'git') return false;
+  return !o.args.some((a) => a.startsWith('--files0-from') || a.startsWith('--files-from'));
 }
 
 /**
@@ -728,7 +764,6 @@ export function anelDeBash(segmentos            , contexto          , cwd       
   // `cd a;` em cadeia faz o caminho crescer e cada `resolve` custar o tamanho dele: acima do limite, para de seguir o `cd`.
   let cdPerdido = false;
 
-  const indice = new Map                  ();
   for (let idx = 0; idx < segmentos.length; idx++) {
     const s = segmentos[idx];
     const escritas           = [...s.saidas];
@@ -749,10 +784,17 @@ export function anelDeBash(segmentos            , contexto          , cwd       
       continue;
     }
 
-    // `find` com padrão é listagem (Q15) só quando ninguém age sobre o resultado: sem `-exec`/`-delete`, fora de
-    // substituição e com a cadeia de `|` terminando em filtro de texto (ou em nada). `xargs`, laço, `sh`… consomem.
-    const listagem = s.cmd === 'find' && !s.args.some((a) => FIND_ACAO.has(a)) && !s.subst && !saidaConsumida(segmentos, idx, indice);
-    const uteis = listagem ? semPadroesDeFind(s.args) : semTextoLivre(s.cmd, s.args);
+    // `find` com padrão é listagem (Q15, Q23) só na forma fechada: sem `-exec`/`-delete`, fora de substituição, em nível zero
+    // e com só filtros de texto na mesma lista. Qualquer sintaxe a mais (grupo, laço, função, consumidor) quebra a forma.
+    const listagem = s.cmd === 'find' && !s.args.some((a) => FIND_ACAO.has(a)) && !s.subst && s.nivel === 0 && segmentos.every((o) => o === s || o.lista !== s.lista || filtroDeTexto(o));
+    const uteis = s.cmd === 'find' ? semPadroesDeFind(s.args) : semTextoLivre(s.cmd, s.args);
+    if (s.cmd === 'find' && !listagem) {
+      for (let k = 0; k + 1 < s.args.length; k++) {
+        if (!FIND_PADRAO.has(s.args[k])) continue;
+        const r = padraoDeFindCasaSegredo(s.args[k], s.args[k + 1]);
+        if (r !== null) leituras.push(r);
+      }
+    }
     const pos = candidatos(uteis).filter(ehCaminhoPlausivel);
 
     if (s.cmd === 'git') {

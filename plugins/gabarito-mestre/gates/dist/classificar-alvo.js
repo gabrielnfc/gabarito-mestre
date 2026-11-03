@@ -111,6 +111,54 @@ function todosValores(args          , longas          , curtas          )       
   return out;
 }
 
+// Q24: opções curtas agrupadas (getopt): o valor de uma letra que leva valor é o resto do token ou o argumento seguinte.
+const LETRAS_COM_VALOR                         = {
+  psql: 'cdfFhLopPRTUv', pg_dump: 'dfFhjnNpStTUZ', pg_dumpall: 'fhlpSU', pg_restore: 'dfFhjLnNpPStTU',
+  mysql: 'ehuPSDI', mysqldump: 'huPSr', mariadb: 'ehuPSDI', 'mariadb-dump': 'huPSr', mongosh: '', mongo: '', 'redis-cli': 'hpnaui',
+};
+const SO_COLADO                         = { mysql: 'p', mariadb: 'p', mysqldump: 'p', 'mariadb-dump': 'p' };
+function valoresCurtos(cmd        , args          , letra        )           {
+  const comValor = LETRAS_COM_VALOR[cmd] ?? '';
+  const soColado = SO_COLADO[cmd] ?? '';
+  const out           = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.length < 2 || a[0] !== '-' || a[1] === '-') continue;
+    for (let k = 1; k < a.length; k++) {
+      const l = a[k];
+      if (soColado.includes(l)) {
+        if (l === letra && k + 1 < a.length) out.push(a.slice(k + 1));
+        break;
+      }
+      if (comValor.includes(l)) {
+        const v = k + 1 < a.length ? a.slice(k + 1) : args[++i];
+        if (l === letra && v !== undefined) out.push(v);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+// Abreviação de opção longa (`--exec=` por `--execute`, `--comm` por `--command`): prefixo de 3+ letras, como getopt_long/my_getopt aceitam.
+function valoresAbreviados(args          , longa        )           {
+  const out           = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!a.startsWith('--')) continue;
+    const eq = a.indexOf('=');
+    const nome = eq > 0 ? a.slice(2, eq) : a.slice(2);
+    if (nome.length < 3 || nome === longa || !longa.startsWith(nome)) continue;
+    const v = eq > 0 ? a.slice(eq + 1) : args[++i];
+    if (v !== undefined) out.push(v);
+  }
+  return out;
+}
+
+function sqlsDoSegmento(s          )           {
+  return [...new Set([...(SQL_POR_EXECUTE.has(s.cmd) ? todosValores(s.args, ['--execute'], ['-e']) : todosValores(s.args, ['--command'], ['-c'])), ...valoresCurtos(s.cmd, s.args, SQL_POR_EXECUTE.has(s.cmd) ? 'e' : 'c'), ...valoresAbreviados(s.args, SQL_POR_EXECUTE.has(s.cmd) ? 'execute' : 'command')])];
+}
+
 const URL_EM_TEXTO = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/i;
 const CONNINFO_HOST = /(?:^|\s)host(?:addr)?=([^\s'"]+)/gi;
 
@@ -132,6 +180,7 @@ function hostsDoSegmento(s          )           {
   if (banco) {
     const h = valorDe(s.args, ['--host'], ['-h']);
     if (h) hosts.push(h.toLowerCase());
+    for (const v of valoresCurtos(s.cmd, s.args, 'h')) hosts.push(v.toLowerCase());
     for (const at of s.atribs) if (at.startsWith('PGHOST=')) hosts.push(at.slice(7).toLowerCase());
   }
   return hosts;
@@ -203,7 +252,7 @@ function classificarSegmento(s          , cfg                     , ctx         
     else if (g.sub === 'push' && g.resto.some((a) => a === '-f' || a === '--force' || a.startsWith('--force-with-lease') || a === '--mirror')) p.destrutivo = true;
   } else if (BANCO.has(s.cmd)) {
     // Flag que carrega o SQL, por cliente: `mysql`/`mariadb` usam `-e/--execute`; os demais, `-c/--command`.
-    const todos = SQL_POR_EXECUTE.has(s.cmd) ? todosValores(s.args, ['--execute'], ['-e']) : todosValores(s.args, ['--command'], ['-c']);
+    const todos = sqlsDoSegmento(s);
     sqls = todos.length ? todos : null;
     if (sqls !== null && sqls.some(sqlDestrutivo)) p.destrutivo = true;
   }
