@@ -14,13 +14,12 @@
  * Sem mod, loop e kill switch seguem (D1): nada aqui é pré-requisito dos hooks clássicos.
  */
 import { proximaAcao } from '../gates/dist/loop.js';
+import * as nucleo from '../gates/dist/loop.js'; // `nucleo.TIPOS_DE_PROGRESSO`: fonte única da lista (lida só em marcarPousoPendente)
 import {
   analisarFronteira, codigoPonte, dadosMedicao, ehRevisor, jaParou, lerX, marcaDeProgresso, negaDespacho, portaDoPouso, tasksEmVoo, textoRetomada, tokensDe, vivosDe,
 } from '../gates/dist/pouso.js';
 
 const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
-// Mesma lista do contador do hook Stop (`TIPOS_DE_PROGRESSO` em gates/scripts/stop-loop.mjs); o teste de costura falha se divergirem.
-const TIPOS_DE_PROGRESSO = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'ci.resultado'];
 const USO = 'Uso: /gabarito pausar | /gabarito retomar';
 
 // Variáveis do módulo recomeçam num reload; o que precisa sobreviver está no store.
@@ -320,8 +319,11 @@ async function medirOrquestrador($, e) {
  */
 async function marcarPousoPendente($, c, eventos) {
   try {
+    // Fonte única com o Stop (gates/src/loop.ts). Lista ausente ou vazia: não grava (contagem falsa liberaria parada indevida); o deny segue.
+    const tipos = nucleo.TIPOS_DE_PROGRESSO;
+    if (!Array.isArray(tipos) || tipos.length === 0) return;
     const entrega = c.dir.split('/').filter(Boolean).at(-1);
-    const linhas = eventos.filter((ev) => TIPOS_DE_PROGRESSO.includes(ev?.tipo)).length;
+    const linhas = eventos.filter((ev) => tipos.includes(ev?.tipo)).length;
     await $.fs.write(`${c.raiz}/.harness/pouso-pendente.json`, JSON.stringify({ entrega, linhas }) + '\n');
   } catch { /* o deny segue */ }
 }

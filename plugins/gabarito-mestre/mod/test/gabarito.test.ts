@@ -1270,6 +1270,11 @@ test('mod-grava-marcador-so-em-pousar: nega por pouso pendente e grava {entrega,
   expect(r.deny).toMatch(/pouso pendente/)
   expect(JSON.parse(m.escritas.get(MARCADOR) ?? 'null')).toEqual({ entrega: 'PBI-7', linhas: 3 })
 })
+test('mod-grava-marcador-conta-task-integrada-e-reaberta: os 6 tipos de progresso contam, como no Stop', async ($, on) => {
+  const m = mundo($, on, { eventos: [...FRONT, INT_A, ruido(5, 'task.reaberta', { task: 'b', origem: 'retomada' })] })
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso pendente/)
+  expect(JSON.parse(m.escritas.get(MARCADOR) ?? 'null').linhas).toBe(5)
+})
 test('mod-grava-marcador-conta-ci-resultado: ci.resultado é progresso, como no contador do Stop', async ($, on) => {
   const m = mundo($, on, { eventos: [...FRONT, ruido(4, 'ci.resultado', { verde: true })] })
   expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso pendente/)

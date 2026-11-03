@@ -12,7 +12,8 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { saidaParaAcao, TIPOS_DE_PROGRESSO } from '../scripts/stop-loop.mjs';
+import { saidaParaAcao } from '../scripts/stop-loop.mjs';
+import { TIPOS_DE_PROGRESSO } from '../dist/loop.js';
 
 const aqui = dirname(fileURLToPath(import.meta.url));
 const GATES = join(aqui, '..');
@@ -717,13 +718,39 @@ test('stop-linha-corrompida-nao-zera: nem derruba o hook', () => {
   assert.equal(contador(raiz).stops, 2, 'linha torta não virou progresso');
 });
 
-test('stop-lista-progresso-igual-loop: a lista do hook é a que proximaAcao consome', () => {
+const LISTA_REQ_LOOP_5 = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'ci.resultado'];
+
+test('stop-lista-progresso-igual-loop: a lista única é a que proximaAcao consome (REQ-LOOP-5)', () => {
   const fonte = readFileSync(join(GATES, 'src', 'loop.ts'), 'utf8');
   const m = fonte.match(/const TIPOS_DE_TASK[^=]*=\s*\[([^\]]*)\]/);
   assert.ok(m, 'loop.ts perdeu TIPOS_DE_TASK');
   const deTask = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
   assert.ok(/e\.tipo === 'ci\.resultado'/.test(fonte), 'loop.ts deixou de consumir ci.resultado');
   assert.deepEqual([...TIPOS_DE_PROGRESSO].sort(), [...deTask, 'ci.resultado'].sort());
+  // tirar qualquer tipo da fonte reprova: a lista é a da spec, item a item
+  assert.deepEqual([...TIPOS_DE_PROGRESSO].sort(), [...LISTA_REQ_LOOP_5].sort());
+});
+
+test('stop-e-mod-nao-tem-lista-propria: stop-loop.mjs e mod/gabarito.mjs não redeclaram os tipos', () => {
+  for (const arq of [join(GATES, 'scripts', 'stop-loop.mjs'), join(GATES, '..', 'mod', 'gabarito.mjs')]) {
+    const codigo = readFileSync(arq, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    // o mod grava `task.reaberta` de verdade; o que não pode existir é um array com 2+ tipos de evento
+    assert.ok(!/\[[^\]]*'(task|review|ci)\.[a-z]+'[^\]]*,[^\]]*'(task|review|ci)\.[a-z]+'[^\]]*\]/.test(codigo), `${arq} declara lista própria de tipos`);
+  }
+});
+
+test('stop-loop-sem-lista-de-progresso-avisa-sem-block: nunca conta com lista vazia', () => {
+  const raiz = repo();
+  plano(raiz);
+  const script = copiaSemDist(false, ['plano.js', 'diario.js']);
+  const dist = join(dirname(dirname(script)), 'dist');
+  const js = readFileSync(join(GATES, 'dist', 'loop.js'), 'utf8').replace(/^export const TIPOS_DE_PROGRESSO\b.*$/m, '');
+  assert.ok(!/export const TIPOS_DE_PROGRESSO/.test(js), 'preparo: export removido');
+  writeFileSync(join(dist, 'loop.js'), js);
+  const r = stop(raiz, {}, { script });
+  avisa(r, /TIPOS_DE_PROGRESSO/);
+  assert.equal(r.stderr, '');
+  assert.equal(existsSync(join(raiz, '.harness', 'stop-contador.json')), false, 'não contou nada');
 });
 
 test('stop-8-stops-com-acao-barrada-termina-em-loop-parar', () => {

@@ -33,12 +33,6 @@ const SESSAO_DO_HOOK = 'stop-loop';
 const PLANO_MAX = 1024 * 1024;
 const STOPS_MAX = 1_000_000;
 const ITENS_NO_MOTIVO = 6;
-const TIPOS_DE_TASK = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
-/**
- * Progresso para o contador de Stops (REQ-LOOP-5): só o evento que `proximaAcao` consome (loop.ts: TIPOS_DE_TASK e
- * `ci.resultado`). Guarda, sessão, custo, pouso e pausa não contam. O teste `stop-lista-progresso-igual-loop` falha se divergir.
- */
-export const TIPOS_DE_PROGRESSO = [...TIPOS_DE_TASK, 'ci.resultado'];
 const PAPEL = { implementador: 'implementador', revisor: 'revisor', correcao: 'correção' };
 const MOTIVO = {
   teto_rodadas: 'teto de rodadas de review',
@@ -283,6 +277,13 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   if (!dl.ok) return dl.aviso;
   const dd = await carregar('diario');
   if (!dd.ok) return dd.aviso;
+  // Fonte única dos tipos (loop.ts). Lista ausente ou vazia nunca vira "0 progresso": sem ela não há como contar, então só avisa.
+  const listaOk = (l) => Array.isArray(l) && l.length > 0 && l.every((t) => typeof t === 'string');
+  if (!listaOk(dl.mod.TIPOS_DE_TASK) || !listaOk(dl.mod.TIPOS_DE_PROGRESSO)) {
+    return aviso('Loop: dist/loop.js sem TIPOS_DE_PROGRESSO; nada decidido; rode node gates/scripts/build.mjs');
+  }
+  const TIPOS_DE_TASK = dl.mod.TIPOS_DE_TASK;
+  const TIPOS_DE_PROGRESSO = dl.mod.TIPOS_DE_PROGRESSO;
 
   const lido = lerDiario(dir);
   if (lido.erro) return aviso(`Loop: diário da entrega ${limpo(entrega)} ilegível: ${lido.erro}; nada decidido`);

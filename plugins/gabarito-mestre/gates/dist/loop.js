@@ -9,7 +9,12 @@
 
 const TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 const PAPEIS                     = ['implementador', 'revisor', 'correcao'];
-const TIPOS_DE_TASK                    = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
+export const TIPOS_DE_TASK                    = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
+/**
+ * Progresso (REQ-LOOP-5): os eventos que `proximaAcao` consome, TIPOS_DE_TASK e `ci.resultado`. Fonte única: o hook Stop
+ * (contador de Stops) e o mod (marcador de pouso pendente) importam esta lista; guarda, sessão, custo, pouso e pausa não contam.
+ */
+export const TIPOS_DE_PROGRESSO                    = [...TIPOS_DE_TASK, 'ci.resultado'];
 
 /** Comparação por código, nunca por localidade: a ordem não pode depender da máquina. */
 const cmp = (a        , b        )         => (a < b ? -1 : a > b ? 1 : 0);
