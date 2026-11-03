@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { avaliar } from '../scripts/gate-task.mjs';
+import { avaliar, falhas } from '../scripts/gate-task.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '../scripts/gate-task.mjs');
 const g = (dir, ...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8' });
@@ -37,7 +37,13 @@ function commit(dir, arquivo, conteudo, msg = 'feat(GM-10): x') {
 }
 const hatch = ['GABARITO', 'ALLOW'].join('_');
 const texto = (r) => r.relato.join('\n');
-const verde = { suites: [{ nome: 'ok', cmd: 'exit 0' }] };
+// Suíte verde só com prova positiva: rc 0 e ao menos 1 teste contado na saída.
+const conta = (n = 3) => `echo 'ℹ tests ${n}'; echo 'ℹ pass ${n}'; echo 'ℹ fail 0'`;
+const verde = { suites: [{ nome: 'ok', cmd: conta() }] };
+const vermelho = (nome, { total = 1, quebras = 1, rc = 1, extra = '' } = {}) => ({
+  nome: 's', cmd: `echo '✖ ${nome} (1.2ms)'; echo 'ℹ tests ${total}'; echo 'ℹ fail ${quebras}'; ${extra}exit ${rc}`,
+});
+const nWorktrees = (dir) => g(dir, 'worktree', 'list').trim().split('\n').length;
 
 describe('gate-task', () => {
   test('gate-0-commits: sem commits contra a base reprova', async () => {
@@ -139,7 +145,12 @@ describe('gate-task', () => {
     assert.match(texto(await avaliar({ wt: a.dir, base: a.base, ...verde })), new RegExp(`${hatch} aumentou`));
     const b = repo();
     commit(b.dir, 'src/p.txt', `permissionDecision: "${'al' + 'low'}"\n`);
-    assert.match(texto(await avaliar({ wt: b.dir, base: b.base, ...verde })), /allow adicionado/);
+    assert.match(texto(await avaliar({ wt: b.dir, base: b.base, ...verde })), /^FALHA +allow adicionado$/m);
+    const c = repo();
+    commit(c.dir, 'src/q.txt', 'nada\n');
+    const rc = await avaliar({ wt: c.dir, base: c.base, ...verde });
+    assert.match(texto(rc), /^ok +sem allow adicionado$/m);
+    assert.doesNotMatch(texto(rc), /^FALHA +allow/m);
   });
 
   test('gate-suite-vermelha e suíte pela config gates.suites', async () => {
@@ -151,21 +162,23 @@ describe('gate-task', () => {
     const r = await avaliar({ wt: dir, base });
     assert.ok(r.reprova > 0);
     assert.match(texto(r), /rc=3/);
-    const r2 = await avaliar({ wt: dir, base, suites: [{ nome: 'ok', cmd: 'exit 0' }] });
+    const r2 = await avaliar({ wt: dir, base, ...verde });
     assert.equal(r2.reprova, 0, 'suítes de opts vencem a config');
   });
 
-  test('gate-sem-suite: aviso visível, não silêncio', async () => {
+  test('gate-sem-suite: reprova, nada rodou não é verde', async () => {
     const { dir, base } = repo();
     commit(dir, 'src/b.txt', 'b\n');
     const r = await avaliar({ wt: dir, base });
-    assert.match(texto(r), /AVISO.*nenhuma suíte/);
+    assert.ok(r.reprova > 0);
+    assert.match(texto(r), /FALHA +nenhuma suíte/);
+    assert.doesNotMatch(texto(r), /AVISO.*nenhuma suíte/);
   });
 
   test('gate-red-por-nome-so-da-task (A2)', async () => {
     const { dir, base } = repo();
     commit(dir, 'src/b.txt', 'b\n');
-    const falha = (nome) => ({ nome: 's', cmd: `echo '✖ ${nome} (1.2ms)'; echo 'ℹ fail 1'; exit 1` });
+    const falha = (nome) => vermelho(nome);
     const conhecido = await avaliar({ wt: dir, base, red: ['teste-esperado'], suites: [falha('teste-esperado')] });
     assert.equal(conhecido.reprova, 0, texto(conhecido));
     assert.match(texto(conhecido), /só RED conhecido/);
@@ -183,7 +196,7 @@ describe('gate-task', () => {
     assert.ok(r.reprova > 0);
     const parcial = await avaliar({
       wt: dir, base, red: ['teste-esperado'],
-      suites: [{ nome: 's', cmd: "echo '✖ teste-esperado (1ms)'; echo 'ℹ fail 2'; exit 1" }],
+      suites: [vermelho('teste-esperado', { total: 2, quebras: 2 })],
     });
     assert.ok(parcial.reprova > 0, 'fail 2 com 1 nome reconhecido: sobra falha sem nome');
   });
@@ -276,6 +289,199 @@ describe('gate-task', () => {
     assert.match(texto(r), /árvore restaurada/);
     assert.equal(g(dir, 'status', '--short').trim(), '');
   });
+  // ---- Rodada 2: VERDE exige prova positiva ----
+
+  test('suíte: rc 0 sem teste contado não é verde (true, echo sem prefixo, tests 0, glob vazio)', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    for (const cmd of ['true', '', 'echo tests 5', "echo 'ℹ tests 0'; echo 'ℹ pass 0'", "node --test 'nao/existe/*.test.mjs'"]) {
+      const r = await avaliar({ wt: dir, base, suites: [{ nome: 's', cmd }] });
+      assert.ok(r.reprova > 0, `deveria reprovar: ${JSON.stringify(cmd)}\n${texto(r)}`);
+      assert.doesNotMatch(texto(r), /ok +s verde/);
+    }
+  });
+
+  test('suíte: marcador sem contagem é explícito, relatado e contado à parte', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const r = await avaliar({ wt: dir, base, suites: [{ nome: 'bash', cmd: 'echo tests 5', semContagem: true }] });
+    assert.equal(r.reprova, 0, texto(r));
+    assert.match(texto(r), /sem contagem de testes, marcador declarado/);
+    assert.equal(r.semContagem, 1);
+    assert.equal(r.testes, 0);
+    const falso = await avaliar({ wt: dir, base, suites: [{ nome: 'bash', cmd: 'exit 1', semContagem: true }] });
+    assert.ok(falso.reprova > 0, 'marcador não perdoa rc diferente de zero');
+  });
+
+  test('suíte: pipe sem pipefail não esconde falha (false | true)', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const a = await avaliar({ wt: dir, base, suites: [{ nome: 'p', cmd: 'false | true', semContagem: true }] });
+    assert.ok(a.reprova > 0, texto(a));
+    const b = await avaliar({ wt: dir, base, suites: [{ nome: 'p', cmd: `(${vermelho('novo-quebrado').cmd}) | tail -5` }] });
+    assert.ok(b.reprova > 0, texto(b));
+  });
+
+  test('suíte: rc 0 com a saída declarando fail N reprova', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const rodar = async (nome) => ({ nome, rc: 0, out: '✖ x (1ms)\nℹ tests 2\nℹ pass 1\nℹ fail 1\n', ms: 5 });
+    const r = await avaliar({ wt: dir, base, rodar, suites: ['qualquer'] });
+    assert.ok(r.reprova > 0);
+    assert.match(texto(r), /rc=0 mas a saída declara fail 1/);
+  });
+
+  test('RED: rc por sinal ou diferente de 1 nunca é RED conhecido', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const red = ['esperado'];
+    const porSinal = await avaliar({ wt: dir, base, red, suites: [vermelho('esperado', { extra: 'kill -9 $$; ' })] });
+    assert.ok(porSinal.reprova > 0, texto(porSinal));
+    assert.doesNotMatch(texto(porSinal), /só RED conhecido/);
+    assert.match(texto(porSinal), /rc anormal ou morte por sinal/);
+    const rc137 = await avaliar({ wt: dir, base, red, suites: [vermelho('esperado', { rc: 137 })] });
+    assert.ok(rc137.reprova > 0, texto(rc137));
+    assert.match(texto(rc137), /rc anormal ou morte por sinal/);
+    const rc2 = await avaliar({ wt: dir, base, red, suites: [vermelho('esperado', { rc: 2 })] });
+    assert.ok(rc2.reprova > 0, 'node --test sai 1; rc 2 é outro erro (runner, sintaxe)');
+    assert.doesNotMatch(texto(rc2), /só RED conhecido/);
+    assert.doesNotMatch(texto(rc2), /rc anormal/, 'rc 2 é normal, só não é o 1 do runner');
+  });
+
+  test('RED: sem resumo, ou com falha extra sem nome (outro runner), nunca entra', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const red = ['esperado'];
+    const semResumo = await avaliar({ wt: dir, base, red, suites: [{ nome: 's', cmd: "echo '✖ esperado (1ms)'; exit 1" }] });
+    assert.ok(semResumo.reprova > 0, texto(semResumo));
+    const doisRunners = await avaliar({
+      wt: dir, base, red,
+      suites: [{ nome: 's', cmd: `${vermelho('esperado', { rc: 0 }).cmd}; echo 'ℹ tests 1'; echo 'ℹ fail 1'; echo boom-sintaxe; exit 1` }],
+    });
+    assert.ok(doisRunners.reprova > 0, texto(doisRunners));
+    assert.doesNotMatch(texto(doisRunners), /só RED conhecido/);
+  });
+
+  test('falhas(): nomes vêm da seção "failing tests" quando existe (suíte pai não conta)', () => {
+    const out = ['  ✖ filho-ruim (0.2ms)', '✖ pai (0.6ms)', 'ℹ tests 2', 'ℹ fail 1', '', '✖ failing tests:', '', '✖ filho-ruim (0.2ms)', '  Error: x'].join('\n');
+    const f = falhas(out);
+    assert.deepEqual(f.nomes, ['filho-ruim']);
+    assert.equal(f.declaradas, 1);
+    assert.equal(falhas('ℹ fail 1\nℹ fail 2').declaradas, 3, 'resumos de vários runners somam');
+    assert.equal(falhas('nada').declaradas, null);
+  });
+
+  test('A4: nome em --red só vale se falha na base, medido em worktree detached removida', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const so = (marca) => ({
+      nome: 's', cmd: `if [ -f ${marca} ]; then echo '✖ teste-esperado (1ms)'; echo 'ℹ tests 1'; echo 'ℹ fail 1'; exit 1; else echo 'ℹ tests 1'; echo 'ℹ pass 1'; fi`,
+    });
+    // src/b.txt só existe no HEAD: o teste passa na base, "RED" é alegação sem medição
+    const falso = await avaliar({ wt: dir, base, red: ['teste-esperado'], suites: [so('src/b.txt')] });
+    assert.ok(falso.reprova > 0, texto(falso));
+    assert.match(texto(falso), /teste-esperado.*não falha na base/);
+    // src/a.txt existe na base e no HEAD: falha nos dois, RED real
+    const real = await avaliar({ wt: dir, base, red: ['teste-esperado'], suites: [so('src/a.txt')] });
+    assert.equal(real.reprova, 0, texto(real));
+    assert.match(texto(real), /medido na base/);
+    assert.equal(nWorktrees(dir), 1, 'worktree temporária removida');
+  });
+
+  test('A4: sem --red não cria worktree; com --red e base inexistente reprova sem worktree', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const cwds = [];
+    const rodar = async (nome, cmd, cwd) => { cwds.push(cwd); return { nome, rc: 0, out: 'ℹ tests 1\nℹ pass 1\n', ms: 5 }; };
+    const r = await avaliar({ wt: dir, base, rodar, suites: ['x'] });
+    assert.equal(r.reprova, 0, texto(r));
+    assert.deepEqual(cwds, [dir]);
+    const b = await avaliar({ wt: dir, base: 'nao-existe-xyz', red: ['a'], ...verde });
+    assert.match(texto(b), /base inexistente/);
+    assert.equal(nWorktrees(dir), 1);
+  });
+
+  test('A4: erro durante a medição ainda remove a worktree (finally)', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const rodar = async (nome) => {
+      if (/@base/.test(nome)) throw new Error('explodiu-base');
+      return { nome, rc: 1, out: '✖ esperado (1ms)\nℹ tests 1\nℹ fail 1\n', ms: 5 };
+    };
+    await assert.rejects(avaliar({ wt: dir, base, red: ['esperado'], rodar, suites: ['x'] }), /explodiu-base/);
+    assert.equal(nWorktrees(dir), 1);
+  });
+
+  test('A4: worktree que não sai sem --force fica e é relatada, não forçada', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const suja = { nome: 's', cmd: `touch lixo-da-suite; ${vermelho('esperado').cmd}` };
+    const r = await avaliar({ wt: dir, base, red: ['esperado'], suites: [suja] });
+    assert.match(texto(r), /ALERTA.*worktree temporária restante/);
+    assert.ok(r.alertas >= 1);
+    assert.equal(nWorktrees(dir), 2, 'sem --force a worktree com arquivo novo permanece');
+  });
+
+  test('escopo: rename conta os dois lados (origem fora do escopo; origem proibida)', async () => {
+    const a = repo();
+    mkdirSync(join(a.dir, 'outro'));
+    g(a.dir, 'mv', 'src/a.txt', 'outro/a2.txt');
+    g(a.dir, 'commit', '-q', '-m', 'feat(GM-10): move');
+    const ra = await avaliar({ wt: a.dir, base: a.base, files: ['outro/'], ...verde });
+    assert.ok(ra.reprova > 0, texto(ra));
+    assert.match(texto(ra), /fora do escopo: .*src\/a\.txt/);
+    const b = repo();
+    mkdirSync(join(b.dir, 'novo'));
+    g(b.dir, 'mv', 'src/a.txt', 'novo/a.txt');
+    g(b.dir, 'commit', '-q', '-m', 'feat(GM-10): move');
+    const rb = await avaliar({ wt: b.dir, base: b.base, proibidos: ['^src/'], ...verde });
+    assert.match(texto(rb), /arquivo proibido.*src\/a\.txt/);
+  });
+
+  test('escopo: lista vazia reprova; sem lista é aviso, não ok', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'outro/x.txt', 'x\n');
+    const vazia = await avaliar({ wt: dir, base, files: [], ...verde });
+    assert.ok(vazia.reprova > 0);
+    assert.match(texto(vazia), /escopo vazio/);
+    const sem = await avaliar({ wt: dir, base, ...verde });
+    assert.match(texto(sem), /AVISO.*escopo não verificado/);
+    assert.doesNotMatch(texto(sem), /ok .*dentro do escopo/);
+  });
+
+  test('config corrompida reprova com a causa; ausente é config vazia', async () => {
+    const { dir, base } = repo();
+    writeFileSync(join(dir, 'harness.config.json'), '{"gates":{"suites":["exit 1"],}}');
+    g(dir, 'add', 'harness.config.json');
+    g(dir, 'commit', '-q', '-m', 'chore: config quebrada');
+    const r = await avaliar({ wt: dir, base, ...verde });
+    assert.ok(r.reprova > 0);
+    assert.match(texto(r), /harness\.config\.json ilegível/);
+    const ok = repo();
+    commit(ok.dir, 'src/b.txt', 'b\n');
+    assert.equal((await avaliar({ wt: ok.dir, base: ok.base, ...verde })).reprova, 0);
+  });
+
+  test('mutações mal formadas reprovam (objeto, vazia, sem para)', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const obj = await avaliar({ wt: dir, base, mutacoes: { nome: 'x' }, ...verde });
+    assert.match(texto(obj), /mutações deve ser uma lista/);
+    const vazia = await avaliar({ wt: dir, base, mutacoes: [], ...verde });
+    assert.match(texto(vazia), /mutações deve ser uma lista/);
+    const semPara = await avaliar({ wt: dir, base, mutacoes: [mut({ para: undefined, teste: lento })], ...verde });
+    assert.ok(semPara.reprova > 0);
+    assert.match(texto(semPara), /mutação m1.*"para"/);
+  });
+
+  test('linha final: contagem do que rodou; nada executado não é limpo', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const r = await avaliar({ wt: dir, base, mutacoes: [mut({ teste: lento })], suites: [{ nome: 'a', cmd: conta(4) }, { nome: 'b', cmd: conta(2) }] });
+    assert.equal(r.reprova, 0, texto(r));
+    assert.deepEqual([r.suites, r.testes, r.mutacoes], [2, 6, 1]);
+  });
+
 });
 
 describe('gate-task CLI', () => {
@@ -285,7 +491,7 @@ describe('gate-task CLI', () => {
     assert.match(sem.stderr, /uso:/i);
     const { dir, base } = repo();
     commit(dir, 'src/b.txt', 'b\n');
-    const ok = spawnSync(process.execPath, [CLI, dir, base, '--suite', 'exit 0', '--suite', 'true'], { encoding: 'utf8' });
+    const ok = spawnSync(process.execPath, [CLI, dir, base, '--suite', conta(2), '--suite', conta(1)], { encoding: 'utf8' });
     assert.equal(ok.status, 0, ok.stdout + ok.stderr);
     assert.match(ok.stdout, /GATE VERDE/);
     const ruim = spawnSync(process.execPath, [CLI, dir, base, '--suite', 'exit 1'], { encoding: 'utf8' });
@@ -301,8 +507,54 @@ describe('gate-task CLI', () => {
     writeFileSync(join(aux, 'files.txt'), 'src/\n');
     writeFileSync(join(aux, 'mut.json'), JSON.stringify([{ nome: 'm', arquivo: 'src/a.txt', de: 'ORIG', para: 'X', teste: 'sleep 0.15; grep -q ORIG src/a.txt' }]));
     const r = spawnSync(process.execPath, [CLI, dir, base, '--red', join(aux, 'red.txt'), '--files', join(aux, 'files.txt'), '--mut', join(aux, 'mut.json'),
-      '--suite', "echo '✖ teste-esperado (1ms)'; echo 'ℹ fail 1'; exit 1"], { encoding: 'utf8' });
+      '--suite', vermelho('teste-esperado').cmd], { encoding: 'utf8' });
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /mutação m morta/);
+  });
+
+  // ---- Rodada 2: argumentos ----
+  const cli = (...a) => spawnSync(process.execPath, [CLI, ...a], { encoding: 'utf8' });
+  const reprovou = (r, causa) => {
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /GATE REPROVADO/);
+    assert.match(r.stdout, causa);
+    assert.doesNotMatch(r.stdout, /GATE VERDE/);
+    assert.doesNotMatch(r.stdout + r.stderr, /\bat .*:\d+:\d+/, 'sem stack');
+  };
+
+  test('CLI: argumento inválido reprova com a causa, nada roda', () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const aux = mkdtempSync(join(tmpdir(), 'gate-aux-'));
+    const f = (nome, txt) => { writeFileSync(join(aux, nome), txt); return join(aux, nome); };
+    const boa = ['--suite', conta()];
+    reprovou(cli(dir, base, '--suit', 'exit 1'), /argumento desconhecido: --suit/);
+    reprovou(cli(dir, base, ...boa, '--suite'), /--suite sem valor/);
+    reprovou(cli(dir, base, '--suite', '--files', f('a.txt', 'src/\n')), /--suite sem valor/);
+    reprovou(cli(dir, base, ...boa, 'solto'), /argumento desconhecido: solto/);
+    reprovou(cli(dir, base, ...boa, '--files', f('vazio.txt', '')), /--files.*sem entradas/);
+    reprovou(cli(dir, base, ...boa, '--files', f('coment.txt', '# só comentário\n\n')), /--files.*sem entradas/);
+    reprovou(cli(dir, base, ...boa, '--files', join(aux, 'nao-existe.txt')), /--files.*não consegui ler/);
+    reprovou(cli(dir, base, ...boa, '--red', f('red-vazio.txt', '\n')), /--red.*sem entradas/);
+    reprovou(cli(dir, base, ...boa, '--mut', f('obj.json', '{"nome":"x"}')), /--mut.*lista/);
+    reprovou(cli(dir, base, ...boa, '--mut', f('vazia.json', '[]')), /--mut.*lista/);
+    reprovou(cli(dir, base, ...boa, '--mut', f('ruim.json', '[{')), /--mut.*JSON/);
+    reprovou(cli(dir, base, ...boa, '--mut', join(aux, 'nao-existe.json')), /--mut.*não consegui ler/);
+    reprovou(cli(dir, base, ...boa, '--card', 'A-1', '--card', 'B-2'), /--card repetido/);
+  });
+
+  test('CLI: linha final conta o que rodou; marcador aparece', () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const a = cli(dir, base, '--suite', conta(3));
+    assert.equal(a.status, 0, a.stdout);
+    assert.match(a.stdout, /GATE VERDE \(1 suítes, 3 testes, 0 mutações\)/);
+    const b = cli(dir, base, '--suite-sem-contagem', 'echo tests 5');
+    assert.equal(b.status, 0, b.stdout);
+    assert.match(b.stdout, /GATE VERDE \(1 suítes, 0 testes, 0 mutações\) com 1 suíte\(s\) sem contagem/);
+    const c = cli(dir, base);
+    reprovou(c, /nenhuma suíte/);
+    const d = cli(dir, base, '--suite', 'true');
+    reprovou(d, /nenhum teste contado/);
   });
 });
