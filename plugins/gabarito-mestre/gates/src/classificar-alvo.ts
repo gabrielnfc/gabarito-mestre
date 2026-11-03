@@ -187,7 +187,7 @@ function hostsDoSegmento(s: Segmento, cfg: ConfigGuarda): string[] {
         // R2: posicional `host`, `host:porta`, `host:/caminho`, `host/caminho` sem `user@`. Só conta host declarado em prod,
         // para `scp dump.sql x` não virar alvo desconhecido.
         const h2 = a.split(/[:/]/)[0].toLowerCase();
-        if (h2 !== '' && declarado(cfg, 'hosts', h2) === 'prod') hosts.push(h2);
+        if (h2 !== '' && (declarado(cfg, 'hosts', h2) ?? declarado(cfg, 'bancos', h2)) === 'prod') hosts.push(h2);
       }
       if (banco) for (const c of a.matchAll(CONNINFO_HOST)) hosts.push(c[1].toLowerCase());
     }
