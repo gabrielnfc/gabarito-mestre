@@ -92,7 +92,7 @@ Roda duas vezes no mesmo commit de T1, em worktrees separadas: Sonnet `high` e O
 
 Precedência: (1) `ordenar` falha ⇒ `parar diario_invalido`; (2) `pausado` ⇒ `esperar`; (3) `tokens ≥ tetoTokens` ⇒ `parar teto_tokens`; (4) 2 `ci.resultado {verde:false}` seguidos ⇒ `parar ci_vermelho`; (5) `percent ≥ x`: task `concluida` sem veredito ⇒ `despachar` só `revisor`; `vivos>0` ⇒ `esperar`; senão `podePousar` ? `pousar` : `parar sem_pouso`; `percent` nulo não entra neste ramo; (6) aprovadas não integradas com `podeIntegrar` ⇒ `integrar`; (7) reprovada na rodada 1 ⇒ `correcao`; concluída sem veredito ⇒ `revisor`; deps integradas e não iniciadas ⇒ `implementador`; sempre até `slots − vivos`, mínimo 0; (8) todas integradas ⇒ `concluir`; (9) nada a fazer e `vivos>0` ⇒ `esperar`; nada a fazer, `vivos=0` e task no teto ⇒ `parar teto_rodadas {task}`.
 
-Task no teto: rodada 2 REPROVADA com `major+blocker>0`. Dependentes dela despacham e commitam, mas `podeIntegrar` é `false` (transitivo).
+Task no teto: rodada 2 REPROVADA com `major+blocker>0`. Teto é estado: nada o tira, salvo `task.reaberta {task, origem:"dono"}`. `task.reaberta {task, origem:"retomada"}` recomeça task iniciada e não concluída, sem liberar teto. Dependentes de task no teto despacham e commitam, mas `podeIntegrar` é `false` (transitivo). `TipoEvento` ganha `task.reaberta`.
 
 - [ ] **Step 1: Testes:** um por cláusula acima, mais `paralelas-respeitam-slots` (4 prontas, `slots:3, vivos:1` ⇒ 2 itens), `teto-independente-segue`, `teto-dependente-nao-integra`, `x-so-revisor`, `percent-nulo-nao-pousa`, `seq-fora-de-ordem-para`, `duas-sessoes-ordem-ts-sessao`, `concluir-exige-todas-integradas`.
 - [ ] **Step 2: RED** com o erro "não implementado".
