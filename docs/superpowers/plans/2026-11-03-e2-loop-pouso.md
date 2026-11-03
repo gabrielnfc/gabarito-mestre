@@ -182,7 +182,7 @@ Loop ativo = `plano.json` da entrega da branch e sem `task.integrada` final. `ba
 
 ### Task 9: Mod de pouso
 
-**Depende de T5 e de S12.** Compactação segue o que S12 medir; se S12 não fechar a detecção, o trecho vira limite declarado e medição, sem chute.
+**Depende de T5.** Compactação não é do mod: `SessionStart:compact` já está no matcher de `hooks.json` (S12, F11). Teste `compact-reinjeta-instantaneo` em `hooks/test/sessao.test.mjs`.
 
 **Files:** Create `gates/src/pouso.ts`, `gates/test/pouso.test.ts`, `mod/test/gabarito.test.mjs`. Modify `mod/gabarito.mjs`, `gates/scripts/build.mjs:27` só com `'pouso'` (T1 não o declara: é serial após T5).
 

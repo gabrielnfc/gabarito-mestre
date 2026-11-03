@@ -22,6 +22,8 @@ Legenda: **(a)** medido/lido · **(b)** a medir · **(c)** decisão do dono ou d
 | F9 | S10: `npm test` + hooks por slot em N=1/2/3/4/8 = 14,9/19,5/22,9/35,2/62,8 s; falha por tempo em N=4 (10/12) e N=8 (14/24), 0/18 em N≤3; 5,0 núcleos e até 1,65 GB; fórmula de S4 refutada (26→1 pela CPU, 3 medidos sem falha). Worktree 2,3 MB, 0,05 s. 84 MB por execução no `TMPDIR` |
 | F10 | S11: X=60 refutado (86,6 % > piso medido 84,2 % = 842.026 tokens; janela 1M suposta, não exposta); 40 e 50 cabem; 40 ≈ 18 % menos `cache_read` por turno e ≈ 23 % menos turnos por ciclo; custo do pouso não medido. Compactação a 27,0/37,8/84,3 %, todas após ~53,8 min ociosa, 0 por pressão em 1.882 turnos. Janelas > 120 min excluídas do limite (se contadas, nenhum X cabe) |
 
+| F11 | S12: `SessionStart:compact` dispara 7/7 e `additionalContext` chega ao request 9/9; hand-back logo após a compactação encontra o contexto, 5/5. `PreCompact` também dispara sem compactação (2/2), logo não serve de detector; bloqueia em manual e na rota `reactive` forçada, auto natural não medido. Opus e Fable: `window` 1.000.000, limiar 967.000 |
+
 ## Decisões (c)
 
 - **D1 Núcleo puro decide, adaptador executa.** `gates/src/loop.ts` sem I/O; CLI, hook e mod só traduzem. Sem mod, loop e kill switch seguem; só pouso automático e teto de tokens faltam, e o doctor diz. Rejeitado: lógica no mod (API instável, M1).
@@ -45,7 +47,7 @@ Legenda: **(a)** medido/lido · **(b)** a medir · **(c)** decisão do dono ou d
 
 **REQ-DB-1 Banco por worktree.** `db.psql` (argv em config, `docker exec` é um valor) + `db.template`. Template é banco próprio, nunca `postgres`; migrado e com seed 1× por sessão, `ALLOW_CONNECTIONS false` após migrar; clone `gm_<entrega>_<task>` com ids em minúsculas `[a-z0-9]`, sem `_`, ≤ 63 bytes; papel só com `CREATEDB` ⇒ template `IS_TEMPLATE true`, desmarcado antes do drop; `DROP … WITH (FORCE)` ao fechar. Órfão = nome exato com escape, sem worktree viva; conexão não é prova (F8). Só host local; outro host ⇒ recusa. Sem `db` declarado ⇒ n/a, doctor mostra. Limite declarado: Supabase local não medido.
 
-**REQ-POU-1 Pouso.** Mod no `turn.complete` do orquestrador: `percent ≥ X` ⇒ sem despacho novo (`Agent` negado); vivos = 0 (`$.agent.list` sem `pending|running|waiting`) e fronteira = `review.veredito` da task corrente gravado após afetados verdes (visão §6.7) ⇒ grava evento, gera instantâneo ≤ 3.200 caracteres (F3 ≈ 1,5k tokens; `plugin test` confere `context.tokens` ≤ 1,5k) e `clock.after(0)` → `/clear` → `prompt.submit`. `percent` indefinido ⇒ não pousa. Hand-back que chega após `/clear` entra com o instantâneo (F2). Compactação fora do pouso ⇒ reinjeta o instantâneo antes do próximo turno (F10; detecção por S12). `-p` não pousa (F1): `parar{sem_pouso}` em X.
+**REQ-POU-1 Pouso.** Mod no `turn.complete` do orquestrador: `percent ≥ X` ⇒ sem despacho novo (`Agent` negado); vivos = 0 (`$.agent.list` sem `pending|running|waiting`) e fronteira = `review.veredito` da task corrente gravado após afetados verdes (visão §6.7) ⇒ grava evento, gera instantâneo ≤ 3.200 caracteres (F3 ≈ 1,5k tokens; `plugin test` confere `context.tokens` ≤ 1,5k) e `clock.after(0)` → `/clear` → `prompt.submit`. `percent` indefinido ⇒ não pousa. Hand-back que chega após `/clear` entra com o instantâneo (F2). Compactação fora do pouso ⇒ hook clássico `SessionStart:compact` reinjeta o instantâneo por `additionalContext` (F10, F11), sem depender de mod; não bloqueia a compactação. `-p` não pousa (F1): `parar{sem_pouso}` em X.
 
 **REQ-POU-2 Kill switch.** `.harness/PAUSAR` + `/gabarito pausar|retomar` (mod) ou `/<plugin>:gabarito` (sem mod). Com o arquivo: guarda nega `Agent` a todos e toda ferramenta a subagent, com mensagem "pausado: `/gabarito retomar`". Ferramenta em curso termina: limite declarado (F6). Retomar recomeça a task; nunca despausa sozinho; apagar o arquivo pelo modelo cai no anel de integridade.
 
@@ -53,7 +55,7 @@ Legenda: **(a)** medido/lido · **(b)** a medir · **(c)** decisão do dono ou d
 
 ## Spikes e medições dentro das tasks (b)
 
-A6 modelo do implementador: a 1ª task pura roda em Sonnet `high` e Opus `low` no mesmo commit; métrica = tokens por task aprovada. M1 ataques: contagem na mesma task. M3: rodadas que o gate evitou, contadas na mesma task. M5: tokens de contexto por etapa, por `session.measure`. S12: detecção de compactação e `percent` em Opus. Supabase real: fora, sem autorização. `five_hour`: 0/58, não prova ausência.
+A6 modelo do implementador: a 1ª task pura roda em Sonnet `high` e Opus `low` no mesmo commit; métrica = tokens por task aprovada. M1 ataques: contagem na mesma task. M3: rodadas que o gate evitou, contadas na mesma task. M5: tokens de contexto por etapa, por `session.measure`. Causa da compactação ociosa: não medida, exige ~54 min e não é determinística. Supabase real: fora, sem autorização. `five_hour`: 0/58, não prova ausência.
 
 ## Fora de escopo (dono: Gabriel)
 
