@@ -65,3 +65,4 @@ Dados por task: `docs/aprendizados/metricas-e1.jsonl`. Aprovadas: T8, T1a (R12),
 
 - Teto de latência no CI por máquina (MINOR 22) — dono Gabriel; gatilho: 1º falso vermelho por p95.
 - FN de Bash (`X=rm; $X`, `base64 | sh`) — dono Gabriel; gatilho: visto em transcript real.
+- **R37 (2026-11-03)** Dono: mantém o token do GitHub; ruleset não é barreira independente, a PR declara. Confirma leitura em produção pede, subagent nunca lê, só o smoke em `permitidos`. Destrutivo local fica em REQ-GRD-6 (E18). Backup de `wt/GM-9-2` e `wt/GM-9-4` feito, autorizado. Q26 aplicada na spec e na visão com o texto da Sombra. Sandbox vira opção para casos isolados, backlog. `SubagentStart` entra na E1 (Q27, em revisão): sentinela chegou ao subagent em `claude -p` 2.1.316, 1 chamada.
