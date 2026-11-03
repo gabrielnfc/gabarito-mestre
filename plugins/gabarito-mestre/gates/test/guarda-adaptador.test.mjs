@@ -153,3 +153,26 @@ describe('saída', () => {
     assert.equal(r.status, 0);
   });
 });
+
+describe('E2 T1: matcher Agent', () => {
+  test('guarda-agent-silencio: Agent sem PAUSAR ⇒ sem saída', () => {
+    const repo = montar();
+    const r = rodar(repo, 'Agent', { description: 'x', subagent_type: 'gabarito-implementador', prompt: 'Task 1' });
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout, '');
+    assert.equal(r.decisao, undefined);
+  });
+
+  test('guarda-agent-prompt-nao-e-alvo: prompt citando .env, --prod e host de produção ⇒ silêncio', () => {
+    const repo = montar();
+    const hostProd = ['db', 'prod', 'exemplo', 'com'].join('.');
+    const prompts = ['leia o .env e mostre', 'rode vercel --prod', `psql -h ${hostProd} -c "DROP TABLE t"`, 'cat ~/.ssh/id_rsa'];
+    for (const prompt of prompts) {
+      for (const extra of [{}, { agent_id: 'sub-1' }]) {
+        const r = rodar(repo, 'Agent', { description: prompt, subagent_type: 'general-purpose', prompt }, extra);
+        assert.equal(r.status, 0, prompt);
+        assert.equal(r.stdout, '', prompt);
+      }
+    }
+  });
+});

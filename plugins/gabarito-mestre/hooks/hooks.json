@@ -30,6 +30,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/gates/dist/guarda.js\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "SessionStart": [
@@ -68,6 +78,31 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/gates/scripts/stop-loop.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/gates/scripts/uso-subagent.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
     ]
-  }
+  },
+  "modules": [
+    "../mod/gabarito.mjs"
+  ]
 }

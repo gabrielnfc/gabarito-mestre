@@ -13,7 +13,17 @@ export type TipoEvento =
   | 'guarda.ask'
   | 'sessao.inicio'
   | 'guarda.heartbeat'
-  | 'diario.recusa';
+  | 'diario.recusa'
+  | 'task.iniciada'
+  | 'task.concluida'
+  | 'review.veredito'
+  | 'task.integrada'
+  | 'ci.resultado'
+  | 'loop.parar'
+  | 'loop.pausa'
+  | 'custo.medicao'
+  | 'sessao.pouso'
+  | 'sessao.retomada';
 export type Fonte = 'origin' | 'local';
 export type AmbienteDecl = {
   hosts?: string[];
@@ -72,3 +82,26 @@ export type Evento = {
   dados: Record<string, unknown>;
   hash_anterior: string | null;
 };
+
+// E2 (GM-10): plano como dado e contratos do loop. `dados` do diário nunca carrega comando cru.
+export type TaskPlano = { id: string; deps: string[]; arquivos: string[]; teste_afetado?: string; mutacoes?: string };
+export type Plano = { entrega: string; tasks: TaskPlano[] };
+export type Sinais = {
+  slots: number;
+  percent: number | null;
+  x: number;
+  pausado: boolean;
+  vivos: number;
+  tokens: number | null;
+  tetoTokens: number | null;
+  podePousar: boolean;
+};
+export type Papel = 'implementador' | 'revisor' | 'correcao';
+export type MotivoParar = 'teto_rodadas' | 'ci_vermelho' | 'teto_tokens' | 'sem_pouso' | 'sem_progresso' | 'diario_invalido' | 'nao_conseguiu';
+export type AcaoLoop =
+  | { tipo: 'despachar'; itens: { task: string; papel: Papel }[] }
+  | { tipo: 'integrar'; tasks: string[] }
+  | { tipo: 'esperar'; motivo: string }
+  | { tipo: 'pousar' }
+  | { tipo: 'parar'; motivo: MotivoParar; task?: string }
+  | { tipo: 'concluir' };

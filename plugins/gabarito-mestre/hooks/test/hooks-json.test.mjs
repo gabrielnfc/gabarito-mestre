@@ -5,6 +5,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { HOOKS, PLUGIN } from './_comum.mjs';
 
@@ -12,8 +13,8 @@ describe('hooks.json — registro dos hooks (T16)', () => {
   const cfg = JSON.parse(readFileSync(join(HOOKS, 'hooks.json'), 'utf8')).hooks;
   const cmds = (grupo) => grupo.hooks.map((h) => h.command);
 
-  test('PreToolUse: três matchers (Bash, Edit|Write|Read|Grep, mcp__.*), o mesmo comando node da guarda, timeout 5', () => {
-    assert.deepEqual(cfg.PreToolUse.map((g) => g.matcher), ['Bash', 'Edit|Write|Read|Grep', 'mcp__.*']);
+  test('PreToolUse: quatro matchers (Bash, Edit|Write|Read|Grep, mcp__.*, Agent), o mesmo comando node da guarda, timeout 5', () => {
+    assert.deepEqual(cfg.PreToolUse.map((g) => g.matcher), ['Bash', 'Edit|Write|Read|Grep', 'mcp__.*', 'Agent']);
     for (const g of cfg.PreToolUse) {
       assert.deepEqual(cmds(g), ['node "${CLAUDE_PLUGIN_ROOT}/gates/dist/guarda.js"']);
       for (const h of g.hooks) { assert.equal(h.type, 'command'); assert.equal(h.timeout, 5); }
@@ -65,6 +66,25 @@ describe('hooks.json — registro dos hooks (T16)', () => {
       const p = join(HOOKS, m[1]);
       assert.ok(existsSync(p), p);
       assert.match(readFileSync(p, 'utf8').split('\n')[0], /^#!\/usr\/bin\/env bash$/);
+    }
+  });
+  test('E2: Stop e SubagentStop sem matcher (stubs node, timeout 5) e módulo do mod existente', () => {
+    const bruto = JSON.parse(readFileSync(join(HOOKS, 'hooks.json'), 'utf8'));
+    for (const [ev, script] of [['Stop', 'stop-loop.mjs'], ['SubagentStop', 'uso-subagent.mjs']]) {
+      assert.equal(bruto.hooks[ev].length, 1, ev);
+      assert.equal(bruto.hooks[ev][0].matcher, undefined, ev);
+      assert.deepEqual(cmds(bruto.hooks[ev][0]), [`node "\${CLAUDE_PLUGIN_ROOT}/gates/scripts/${script}"`], ev);
+      assert.ok(existsSync(join(PLUGIN, 'gates', 'scripts', script)), script);
+    }
+    assert.equal(bruto.modules.length, 1);
+    assert.ok(existsSync(join(HOOKS, bruto.modules[0])), bruto.modules[0]);
+  });
+  test('E2: stubs de Stop e SubagentStop saem 0 sem imprimir nada', () => {
+    for (const script of ['stop-loop.mjs', 'uso-subagent.mjs']) {
+      const r = spawnSync(process.execPath, [join(PLUGIN, 'gates', 'scripts', script)], { input: '{"hook_event_name":"Stop"}', encoding: 'utf8' });
+      assert.equal(r.status, 0, script);
+      assert.equal(r.stdout, '', script);
+      assert.equal(r.stderr, '', script);
     }
   });
   test('plugin.json não declara "hooks" (chave duplicada quebra o load)', () => {

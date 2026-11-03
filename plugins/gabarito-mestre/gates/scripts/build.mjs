@@ -3,7 +3,7 @@
  * build.mjs — gera gates/dist/*.js a partir de gates/src/*.ts (sem dependência).
  *
  * USO
- *   node scripts/build.mjs                grava dist/{aneis,classificar-alvo,decidir,diario,guarda}.js
+ *   node scripts/build.mjs                grava dist/{aneis,classificar-alvo,decidir,diario,guarda,plano,loop}.js
  *   node scripts/build.mjs --check        compara em memória; sai 1 listando divergências
  *   node scripts/build.mjs --raiz <dir>   usa <dir>/src e <dir>/dist (testes)
  *
@@ -24,7 +24,7 @@ process.emitWarning = (aviso, ...resto) => {
   return emitOriginal.call(process, aviso, ...resto);
 };
 
-export const MODULOS = ['aneis', 'classificar-alvo', 'decidir', 'diario', 'guarda'];
+export const MODULOS = ['aneis', 'classificar-alvo', 'decidir', 'diario', 'guarda', 'plano', 'loop'];
 
 export function reescreverImports(js) {
   return js
