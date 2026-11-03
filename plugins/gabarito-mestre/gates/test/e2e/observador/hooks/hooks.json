@@ -1,0 +1,10 @@
+{
+  "modules": ["../register.mjs"],
+  "hooks": {
+    "Stop": [{ "hooks": [{ "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/classic.sh\"" }] }],
+    "SubagentStart": [{ "hooks": [{ "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/classic.sh\"" }] }],
+    "SubagentStop": [{ "hooks": [{ "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/classic.sh\"" }] }],
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/classic.sh\"" }] }],
+    "PreToolUse": [{ "matcher": "Agent", "hooks": [{ "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/classic.sh\"" }] }]
+  }
+}

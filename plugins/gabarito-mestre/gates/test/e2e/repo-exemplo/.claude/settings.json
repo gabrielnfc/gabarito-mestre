@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": { "superpowers@claude-plugins-official": true },
+  "permissions": {
+    "deny": ["Read(~/.claude/**)", "Edit(~/.claude/**)", "Write(~/.claude/**)", "Read(//Users/*/.claude/**)", "Edit(//Users/*/.claude/**)"]
+  }
+}
