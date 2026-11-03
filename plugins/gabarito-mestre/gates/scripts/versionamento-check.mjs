@@ -12,12 +12,20 @@
  * USO
  *   node versionamento-check.mjs --base origin/main --branch "$GITHUB_HEAD_REF"   # CI (fetch-depth: 0)
  *   node versionamento-check.mjs --max 20 --json                                  # doctor / local
+ *   node versionamento-check.mjs --msg .git/COMMIT_EDITMSG                        # hook git commit-msg
+ *   node versionamento-check.mjs --pre-push < refs-do-stdin                       # hook git pre-push (cada refs/heads/* de destino)
+ *
+ * EXIT (modos de hook --msg/--pre-push): 0 ok · 2 REPROVADO · 1 erro/crash (o hook só bloqueia em 2; resto = aviso, G9)
  */
 
-import { readFileSync, existsSync, realpathSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { arg, ehEntrypoint } from '../lib/cli.mjs';
+import { raizDoRepo } from '../lib/git.mjs';
+import { lerConfig as lerConfigBase } from '../lib/config.mjs';
+
+export { raizDoRepo }; // API pública: antes definida aqui, agora vem de lib/git
 
 export const DEFAULTS = {
   modelo: 'trunk',
@@ -65,14 +73,8 @@ export function validarBranch(nome, cfg = DEFAULTS) {
 // ────────────────────────────────────────────────────────────── config e git
 
 export function lerConfig(root) {
-  const f = join(root, 'harness.config.json');
-  if (!existsSync(f)) return { cfg: null, failOpen: 'harness.config.json ausente' };
-  let raw;
-  try {
-    raw = JSON.parse(readFileSync(f, 'utf8') || '{}');
-  } catch (e) {
-    return { cfg: null, failOpen: `harness.config.json inválido (${String(e.message).split('\n')[0]})` };
-  }
+  const { cfg: raw, failOpen } = lerConfigBase(root, {});
+  if (failOpen) return { cfg: null, failOpen };
   const v = raw?.versionamento;
   if (!v || typeof v !== 'object' || !v.resolvidoEm) return { cfg: null, failOpen: 'versionamento.resolvidoEm ausente (repo sem onboarding)' };
   return { cfg: { ...DEFAULTS, ...v, idPadrao: raw?.fluxo?.idPadrao ?? DEFAULTS.idPadrao }, failOpen: null };
@@ -94,6 +96,53 @@ export function listarCommits(root, { base, max = 20 } = {}) {
       const [sha, pais, assunto] = l.split('\0');
       return { sha, pais: pais ? pais.split(' ').filter(Boolean) : [], assunto: assunto ?? '' };
     });
+}
+
+/** Mensagens que o git gera sozinho e que não são escritas por quem commita: merge, fixup!/squash!/amend!. */
+const MSG_GERADA = /^(Merge |fixup! |squash! |amend! )/;
+
+/** Cabeçalho de uma mensagem de commit: 1ª linha que não é comentário (`# …`, o git as descarta). */
+export function cabecalhoDaMensagem(texto) {
+  return String(texto ?? '').split(/\r?\n/).find((l) => l.trim() && !l.startsWith('#')) ?? '';
+}
+
+/**
+ * Hook `commit-msg`: confere a mensagem do arquivo que o git entrega. Arquivo ilegível ou mensagem vazia
+ * REPROVA (indisponível nunca vale como validado). Sem onboarding: fail-open declarado (G9).
+ */
+export function checarMensagem(root, arquivo, opts = {}) {
+  const { cfg, failOpen } = opts.cfg ? { cfg: { ...DEFAULTS, ...opts.cfg }, failOpen: null } : lerConfig(root);
+  if (failOpen) return { ok: true, achados: [], failOpen };
+  let texto;
+  try {
+    texto = readFileSync(arquivo, 'utf8');
+  } catch (e) {
+    return { ok: false, erro: true, achados: [{ sha: 'msg', motivo: `mensagem ilegível (${arquivo}): ${String(e?.code ?? e?.message ?? e)}` }] };
+  }
+  const cab = cabecalhoDaMensagem(texto);
+  if (MSG_GERADA.test(cab)) return { ok: true, achados: [] };
+  const r = validarCommit(cab, cfg);
+  return r.ok ? { ok: true, achados: [] } : { ok: false, achados: [{ sha: 'msg', motivo: `${r.motivo} — "${cab}"` }] };
+}
+
+const ZEROS = /^0+$/;
+
+/**
+ * Hook `pre-push`: o git entrega em stdin uma linha por ref `<local_ref> <local_sha> <remote_ref> <remote_sha>`.
+ * Confere o nome de cada `refs/heads/*` DE DESTINO (não o HEAD local: `git push origin outra`, `HEAD:ruim`).
+ * Tag, outros refs e delete (local_sha zerado) passam.
+ */
+export function checarRefsDoPush(root, stdin, opts = {}) {
+  const { cfg, failOpen } = opts.cfg ? { cfg: { ...DEFAULTS, ...opts.cfg }, failOpen: null } : lerConfig(root);
+  if (failOpen) return { ok: true, achados: [], failOpen };
+  const achados = [];
+  for (const linha of String(stdin ?? '').split('\n')) {
+    const [, localSha, remoteRef] = linha.trim().split(/\s+/);
+    if (!remoteRef?.startsWith('refs/heads/') || ZEROS.test(localSha ?? '')) continue;
+    const r = validarBranch(remoteRef.slice('refs/heads/'.length), cfg);
+    if (!r.ok) achados.push({ sha: 'branch', motivo: r.motivo });
+  }
+  return { ok: achados.length === 0, achados };
 }
 
 export function checar(root, opts = {}) {
@@ -143,30 +192,46 @@ export function checar(root, opts = {}) {
   return { ok: achados.length === 0, achados, commits: commits.length, branch: branch ?? null };
 }
 
-export function raizDoRepo(cwd = process.cwd()) {
-  try {
-    const r = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    return r || cwd;
-  } catch {
-    return cwd;
+
+/** Saída dos modos de hook (`--msg`, `--pre-push`): 0 ok · 2 reprovado · 1 erro (o hook só bloqueia em 2). */
+function sair(r, argv, o_que) {
+  if (argv.includes('--json')) {
+    process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+    process.exit(r.failOpen || r.ok ? 0 : r.erro ? 1 : 2);
   }
+  if (r.failOpen) {
+    console.error(`[R20] ${r.failOpen} — fail-open declarado (G9)`);
+    process.exit(0);
+  }
+  for (const a of r.achados) console.error(`[R20] ${a.motivo}`);
+  if (!r.ok) console.error(`[R20] ${o_que} reprovada. Formato: tipo(PBI-n): assunto · branch tipo/PBI-n-slug ou wt/PBI-n-i. Ver docs/harness/referencia.md §10.`);
+  process.exit(r.ok ? 0 : r.erro ? 1 : 2);
 }
 
 function main(argv) {
-  const arg = (nome, fallback) => {
-    const i = argv.indexOf(`--${nome}`);
-    return i !== -1 && argv[i + 1] !== undefined ? argv[i + 1] : fallback;
-  };
-  const root = arg('root') ? resolve(arg('root')) : raizDoRepo();
-  const max = Number(arg('max', 20)) || 20;
-  const branch = arg('branch');
+  const root = arg(argv, 'root') ? resolve(arg(argv, 'root')) : raizDoRepo();
+  const max = Number(arg(argv, 'max', 20)) || 20;
+  const branch = arg(argv, 'branch');
   // M2: `--branch --json` (a flag seguinte, sem valor) não pode virar "branch = --json" em
   // silêncio — exige um valor de fato.
   if (branch !== undefined && branch.startsWith('--')) {
     console.error(`versionamento-check.mjs: --branch exige um nome de branch (recebeu \`${branch}\`)`);
     process.exit(1);
   }
-  const r = checar(root, { base: arg('base'), branch, max });
+  if (argv.includes('--msg')) {
+    const arq = arg(argv, 'msg');
+    if (arq === undefined || arq.startsWith('--')) {
+      console.error('[R20] --msg exige o caminho do arquivo da mensagem (o hook commit-msg passa "$1")');
+      process.exit(1);
+    }
+    return sair(checarMensagem(root, resolve(arq)), argv, 'mensagem');
+  }
+  if (argv.includes('--pre-push')) {
+    let entrada = '';
+    try { entrada = readFileSync(0, 'utf8'); } catch { /* sem stdin: nada a conferir */ }
+    return sair(checarRefsDoPush(root, entrada), argv, 'branch');
+  }
+  const r = checar(root, { base: arg(argv, 'base'), branch, max });
   if (argv.includes('--json')) {
     process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
     process.exit(r.failOpen ? 0 : r.ok ? 0 : 1);
@@ -182,15 +247,4 @@ function main(argv) {
   process.exit(r.ok ? 0 : 1);
 }
 
-// Entrypoint robusto a espaço/acento e a symlink: `file://` cru falha com %20, e comparar
-// contra `resolve(argv[1])` sem realpath falha atrás de qualquer symlink (macOS /var,
-// cache de plugin, bin do npm/homebrew) — o script sairia 0 em silêncio nos dois casos.
-function ehEntrypoint() {
-  if (!process.argv[1]) return false;
-  try {
-    return fileURLToPath(import.meta.url) === realpathSync(resolve(process.argv[1]));
-  } catch {
-    return false;
-  }
-}
-if (ehEntrypoint()) main(process.argv.slice(2));
+if (ehEntrypoint(import.meta.url)) main(process.argv.slice(2));

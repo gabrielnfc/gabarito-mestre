@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# gabarito-mestre · session-card.sh — implementa a ORQ-3 (cartão de sessão, ≤ 40 linhas).
-# SessionStart (startup|resume|clear|compact). Não lê tool_input: o payload de SessionStart não tem comando.
-# Roda `gates/scripts/cartao-sessao.mjs` do plugin com a raiz do repo (git toplevel → cwd) e injeta o texto em
-# `hookSpecificOutput.additionalContext`. Nunca bloqueia: qualquer falha é FAIL-OPEN DECLARADO (stderr, exit 0).
-# Quem decide o conteúdo (onboarding ausente → uma linha; PBI/Epic; slots; doctor…) é o script Node (T9);
-# este hook só resolve raiz e plugin-root, delimita 40 linhas e embala o JSON.
+# gabarito-mestre · session-card.sh — implementa a ORQ-3 (cartão de sessão em duas vias, GM-9 T7).
+# SessionStart (startup|resume|clear|compact). Roda `gates/scripts/cartao-sessao.mjs --hook` do plugin com a raiz
+# do repo (git toplevel → cwd) e REPASSA o stdin (session_id, source) ao node. O node lê o diário, grava
+# `sessao.inicio` + `guarda.heartbeat {fonte}` e devolve o JSON final: `additionalContext` (≤ 6.000 caracteres,
+# para o modelo) e `systemMessage` (≤ 3 linhas, para o humano). Este hook só resolve raiz e plugin-root e
+# repassa; não reescreve o conteúdo. Nunca bloqueia: qualquer falha é FAIL-OPEN DECLARADO (stderr, exit 0).
 set -u
 . "$(dirname "$0")/_common.sh"
-cat >/dev/null 2>&1 || true   # drena o stdin (JSON de SessionStart) sem depender dele
+ENTRADA=$(cat 2>/dev/null || true)   # stdin de SessionStart: vai inteiro para o node
 
 ROOT=$(gabarito_repo_root)
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -27,15 +27,15 @@ fi
 # cartao-sessao.mjs (via capacidade.mjs) meça a árvore de processos certa.
 export GABARITO_PID_RAIZ=$PPID
 
-CARTAO=$(node "$SCRIPT" --root "$ROOT" --plugin-root "$PLUGIN_ROOT")
+SAIDA=$(printf '%s' "$ENTRADA" | node "$SCRIPT" --hook --root "$ROOT" --plugin-root "$PLUGIN_ROOT")
 STATUS=$?
 if [ "$STATUS" -ne 0 ]; then
   echo "gabarito-mestre: cartao-sessao.mjs saiu com $STATUS — cartão não injetado (fail-open declarado, G9)" >&2
   exit 0
 fi
-CARTAO=$(printf '%s\n' "$CARTAO" | head -n 40)
-[ -z "${CARTAO//[[:space:]]/}" ] && exit 0
-
-ESC=$(gabarito_json_escape "$CARTAO")
-printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$ESC"
+case "$SAIDA" in
+  '{'*'}') printf '%s\n' "$SAIDA" ;;
+  '') ;;
+  *) echo "gabarito-mestre: cartao-sessao.mjs devolveu saída que não é JSON — cartão não injetado (fail-open declarado, G9)" >&2 ;;
+esac
 exit 0

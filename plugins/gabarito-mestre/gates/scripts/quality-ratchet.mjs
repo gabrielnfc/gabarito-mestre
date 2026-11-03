@@ -34,9 +34,10 @@
  * Run vermelho nunca deve gravar baseline — e o `--accept` recusa quando há `errors`.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, realpathSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { ehEntrypoint } from '../lib/cli.mjs';
+import { lerJson as lerJsonBase } from '../lib/config.mjs';
 
 export const TOLERANCE = 0.5; // pontos percentuais — ruído natural entre runs
 export const METRICAS = ['lines', 'statements', 'functions', 'branches'];
@@ -49,13 +50,8 @@ const DEFAULTS = {
   violations: { report: null },
 };
 
-function lerJson(caminho) {
-  try {
-    return JSON.parse(readFileSync(caminho, 'utf8'));
-  } catch {
-    return null;
-  }
-}
+// null para ausente E para inválido (aqui os dois significam "sem dado").
+const lerJson = (caminho) => lerJsonBase(caminho) ?? null;
 
 /** Extrai percentuais + CONTAGEM DE ARQUIVOS de um `coverage-summary.json`. */
 export function lerCobertura(resumo) {
@@ -283,15 +279,4 @@ function main(argv) {
   process.exit(out.ok ? 0 : 1);
 }
 
-// Entrypoint robusto a espaço/acento e a symlink: `file://` cru falha com %20, e comparar
-// contra `resolve(argv[1])` sem realpath falha atrás de qualquer symlink (macOS /var,
-// cache de plugin, bin do npm/homebrew) — o script sairia 0 em silêncio nos dois casos.
-function ehEntrypoint() {
-  if (!process.argv[1]) return false;
-  try {
-    return fileURLToPath(import.meta.url) === realpathSync(resolve(process.argv[1]));
-  } catch {
-    return false;
-  }
-}
-if (ehEntrypoint()) main(process.argv.slice(2));
+if (ehEntrypoint(import.meta.url)) main(process.argv.slice(2));

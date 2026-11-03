@@ -34,9 +34,9 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync, existsSync, realpathSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readFileSync, existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { ehEntrypoint } from '../lib/cli.mjs';
 
 /** Só diretórios com carimbo >= isto precisam de plano de volta. PINADO POR TESTE. */
 export const MIGRATION_GUARD_CUTOFF = '00000000000000';
@@ -267,15 +267,4 @@ function main(argv) {
   process.exit(resultado.ok ? 0 : 1);
 }
 
-// Entrypoint robusto a espaço/acento e a symlink: `file://` cru falha com %20, e comparar
-// contra `resolve(argv[1])` sem realpath falha atrás de qualquer symlink (macOS /var,
-// cache de plugin, bin do npm/homebrew) — o script sairia 0 em silêncio nos dois casos.
-function ehEntrypoint() {
-  if (!process.argv[1]) return false;
-  try {
-    return fileURLToPath(import.meta.url) === realpathSync(resolve(process.argv[1]));
-  } catch {
-    return false;
-  }
-}
-if (ehEntrypoint()) main(process.argv.slice(2));
+if (ehEntrypoint(import.meta.url)) main(process.argv.slice(2));

@@ -110,7 +110,7 @@ Nenhum destes acontece por iniciativa de agente. Valem para pessoas e para **tod
 
 **R18 — Toda afirmação normativa carrega marcação (a)/(b)/(c)** (§0.1). Relatório de subagente é **alegação**, não prova.
 
-**R20 — Versionamento é gate, não convenção.** Trunk-based · branch curta por PBI · Conventional Commits com escopo do PBI · SemVer · CHANGELOG na PR · tag por release · squash com título CC. Gate: `guard-versioning.sh` + `versionamento-check.mjs`; detalhe em `referencia.md §10`.
+**R20 — Versionamento é gate, não convenção.** Trunk-based · branch curta por PBI · Conventional Commits com escopo do PBI · SemVer · CHANGELOG na PR · tag por release · squash com título CC. Gate: hooks git `commit-msg`/`pre-push` + `versionamento-check.mjs` (CI); detalhe em `referencia.md §10`.
 
 > A numeração é **append-only**: regra nova ganha número novo; regra morta é riscada mantendo o número. R19 e R21 vivem no §7 e no §6. Regras específicas deste projeto começam em **R30** (Apêndice).
 
@@ -164,7 +164,7 @@ Uma linha por guarda, mecanismo e parâmetros em `referencia.md §5`; instalaç�
 | Camada | O que entra | Quando |
 |---|---|---|
 | 0 | este núcleo | sempre (`@AGENTS.md`) |
-| 1 | cartão de sessão (≤ 40 linhas) | SessionStart |
+| 1 | cartão de sessão (≤ 6.000 caracteres) | SessionStart |
 | 2 | referência por ponteiro (`arquivo:linhas`) | sob demanda |
 | 3 | subagente isolado — só o relatório (≤ 25 linhas) volta | cada dispatch |
 | 4 | handoff por ledger (`LER PRIMEIRO`) | fim e início de sessão |
@@ -218,7 +218,7 @@ Este harness é distribuído como o plugin **gabarito-mestre** e não opera sozi
 
 **Fail-closed declarado (G9):** plugin vizinho ausente **não** é motivo para pular a etapa. A skill do gabarito degrada para o modo próprio e **avisa em uma linha** que está sem a maquinaria. Indisponibilidade nunca vira silêncio.
 
-**Hooks (a):** antes de todo comando Bash — `guard-destructive.sh` (R2), `guard-production.sh` (R3), `guard-versioning.sh` (R20). No início da sessão — `session-card.sh` injeta o cartão (≤ 40 linhas; sem onboarding, uma linha). A cada prompt — `remind-orchestrator.sh` (R21), só com `lembretePorPrompt: true`. Escape hatch nominal por regra: `GABARITO_ALLOW_DESTRUCTIVE` (R2) · `GABARITO_ALLOW_PRODUCTION` (R3) · `GABARITO_ALLOW_VERSIONING` (R20, não cruza com os outros) — `="<motivo>"` no início do comando ou no ambiente, motivo com ≥ 8 caracteres e ≥ 2 palavras; o uso fica no transcript e é achado de review sem autorização do usuário registrada. **Limites (G9):** é grep, não sandbox — o que passa está listado no README do plugin; o que o grep não vê é coberto por G3/G7 e pelo review com mutação.
+**Hooks (a):** `gates/dist/guarda.js` (R2, R3) antes de toda chamada Bash, `Edit|Write|Read|Grep` e MCP: classifica o alvo pelos `guarda.ambientes` (de `origin/HEAD`) e **pede** (`ask`; `deny` ao subagent) em segredo, integridade do harness e produção, leitura inclusive (`permitidos` dispensa); o resto passa, no diário. Sem escape hatch. R20 é hook do git (`commit-msg`, `pre-push`). Injetam: `session-card.sh` na sessão (cartão ≤ 6.000 caracteres); `remind-orchestrator.sh` por prompt (R21, `lembretePorPrompt: true`); `regras-subagent.sh` por subagent (≤ 2.000: instrução, não barreira). **Limites (G9):** alvo declarado, não sandbox; passam interpretador (`python -c`), caminho montado (`$F`, glob), `find | xargs`, `env`, `base64 | sh` e indireção para `.git/**` (`referencia.md` §5); o resto é G3/G7 e review.
 
 ---
 

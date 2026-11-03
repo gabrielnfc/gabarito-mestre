@@ -1,7 +1,7 @@
 /**
  * Testes do ORQ-3 — cartão de sessão.
  *
- * O cartão é a camada 1 de contexto: ≤ 40 linhas que o orquestrador lê antes de despachar.
+ * O cartão é a camada 1 de contexto: cartão de ≤ 40 linhas (≤ 6.000 caracteres com o instantâneo, no hook) que o orquestrador lê antes de despachar.
  * Ele NUNCA inventa — PBI só quando a branch casa idPadrao, Epic só do cache/arquivo, o resto
  * marcado (b). Sem onboarding é UMA linha e exit 0. Cache do doctor vale 24 h.
  *
@@ -18,11 +18,12 @@
 
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync, realpathSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync, realpathSync, copyFileSync, symlinkSync, chmodSync, readdirSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { append, ler, dirEntrega } from '../dist/diario.js';
 import {
   montarCartao, inferirPbi, coletar, lerLedger, lerFrontmatter, normalizarEstado, MAX_LINHAS, LINHA_SEM_ONBOARDING, DEFAULTS,
 } from '../scripts/cartao-sessao.mjs';
@@ -42,6 +43,9 @@ function montarPluginReal() {
   writeFileSync(join(dir, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'gabarito-mestre', version: '1.1.0' }));
   mkdirSync(join(dir, 'gates', 'scripts'), { recursive: true });
   for (const f of ['harness-doctor.mjs', 'versionamento-check.mjs']) copyFileSync(join(here, '..', 'scripts', f), join(dir, 'gates', 'scripts', f));
+  // os scripts importam ../lib/* (GM-9 T1a): a cópia precisa levar a lib junto, como o instalador leva
+  mkdirSync(join(dir, 'gates', 'lib'), { recursive: true });
+  for (const f of ['cli', 'config', 'git', 'datas']) copyFileSync(join(here, '..', 'lib', `${f}.mjs`), join(dir, 'gates', 'lib', `${f}.mjs`));
   return dir;
 }
 
@@ -170,6 +174,28 @@ describe('montarCartao — formato fixo e ≤ 40 linhas', () => {
     ledger: { caminho: 'docs/ledgers/PBI-123.md', linhaLerPrimeiro: 3 },
     versoes: { instalada: '1.1.0', plugin: '1.1.0' },
     superpowers: 'presente (c)',
+  });
+  test('herdado T1a: resolvidoEm numérico (ms) é inválido → VENCIDO, nunca "90 d restantes"', () => {
+    const c = ctxBase();
+    c.config.orquestracao.modelo.resolvidoEm = Date.parse(AGORA);
+    assert.match(linha(montarCartao(c), 'Modelo:'), /VENCIDO — revalide com gabarito-instalar/);
+    c.config.orquestracao.modelo.resolvidoEm = 2026;
+    assert.match(linha(montarCartao(c), 'Modelo:'), /VENCIDO/);
+  });
+  test('F9: resolvidoEm texto inválido ou data futura → VENCIDO, nunca "d restantes"', () => {
+    for (const v of ['lixo', '2099-01-01', '9999-12-31T00:00:00Z']) {
+      const c = ctxBase();
+      c.config.orquestracao.modelo.resolvidoEm = v;
+      assert.match(linha(montarCartao(c), 'Modelo:'), /VENCIDO/, v);
+      assert.doesNotMatch(linha(montarCartao(c), 'Modelo:'), /d restantes/, v);
+    }
+  });
+  test('campo com quebra de linha e controle não vira outra linha do cartão', () => {
+    const c = ctxBase();
+    c.branch = 'feat/PBI-1\nlinha-forjada\u001b[31m';
+    const L = montarCartao(c);
+    assert.ok(L.every((l) => !/[\u0000-\u001f]/.test(l)));
+    assert.ok(!L.includes('linha-forjada'));
   });
   test('as 11 linhas do contrato, na ordem', () => {
     const L = montarCartao(ctxBase());
@@ -450,5 +476,377 @@ describe('coletar/CLI — config ausente/vazia/inválida/sem fluxo (Review Focus
     const r = cli(['--plugin-root', pluginFalso(), '--agora', AGORA], join(dir, 'apps', 'web'));
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /^PBI: PBI-123 · Epic: EPIC-7/m);
+  });
+});
+
+describe('cartão em duas vias — hook SessionStart (T7)', () => {
+  const GUARDA_CONFIG = { guarda: { ambientes: { prod: { hosts: ['alvo.exemplo.com'] } } }, versionamento: { branchPadrao: 'main' } };
+  const hook = (dir, entrada, { env = {}, args = [] } = {}) => {
+    const input = typeof entrada === 'string' ? entrada : JSON.stringify(entrada);
+    const e = { ...process.env, GABARITO_INSTALLED_PLUGINS: '/nao/existe.json' };
+    delete e.CLAUDE_PROJECT_DIR;
+    Object.assign(e, env);
+    const r = spawnSync(process.execPath, [SCRIPT, '--hook', '--root', dir, '--plugin-root', pluginFalso(), '--agora', AGORA, ...args], { cwd: dir, input, encoding: 'utf8', env: e, timeout: 8000 });
+    let j = null;
+    try { j = JSON.parse(r.stdout); } catch { /* saída vazia ou inválida: o teste assere */ }
+    return { code: r.status, stderr: r.stderr, stdout: r.stdout, json: j, ctx: j?.hookSpecificOutput?.additionalContext, msg: j?.systemMessage };
+  };
+  const dirDiario = (dir, pbi = 'PBI-123') => dirEntrega(dir, pbi);
+  const evento = (sessao, tipo, dados, ts = '2026-09-24T11:00:00.000Z') => ({ ts, autor: 'a@b.dev', sessao, agente: 'orquestrador', tipo, dados });
+  /** Repo com config onboarded e alias gigante: o cartão sozinho passa de 6.000 caracteres. */
+  const repoAliasGigante = () => {
+    const dir = repo({ 'harness.config.json': CONFIG({ orquestracao: { modelo: { politica: 'mais-potente', alias: 'a'.repeat(7000), resolvidoEm: '2026-09-01', validadeDias: 90 } } }) });
+    git(dir, 'init', '-q');
+    return dir;
+  };
+  /** Publica a config na ref origin/HEAD e deixa a árvore local divergente. */
+  const comOrigin = (dir, divergir) => {
+    writeFileSync(join(dir, 'harness.config.json'), JSON.stringify({ ...JSON.parse(CONFIG()), ...GUARDA_CONFIG }));
+    git(dir, 'add', 'harness.config.json');
+    git(dir, 'commit', '-q', '-m', 'chore: config');
+    git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    if (divergir) writeFileSync(join(dir, 'harness.config.json'), JSON.stringify({ ...JSON.parse(CONFIG()), guarda: { ambientes: { prod: { hosts: ['outro.exemplo.com'] } } } }));
+  };
+
+  test('cartao-6000-caracteres: diário cheio + cartão somados nunca passam de 6.000', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    const d = dirDiario(dir);
+    for (let i = 0; i < 120; i++) append(d, 'antiga', evento('antiga', 'guarda.deny', { alvo: `caminho/${'x'.repeat(200)}/${i}` }, `2026-09-24T10:${String(i % 60).padStart(2, '0')}:00.000Z`));
+    const r = hook(dir, { session_id: 's-nova', source: 'startup' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.ctx.length <= 6000, String(r.ctx.length));
+    assert.ok(r.ctx.length > 4000, `o diário deveria ocupar o espaço (${r.ctx.length})`);
+    assert.match(r.ctx, /instantâneo truncado|omitido/);
+  });
+  test('cartao-6000-caracteres: cartão sozinho maior que o limite é cortado em exatamente 6.000', () => {
+    const r = hook(repoAliasGigante(), { session_id: 's1' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.ctx.length, 6000);
+  });
+  test('cartao-mensagem-3-linhas: systemMessage tem de 1 a 3 linhas curtas, mesmo com alias gigante', () => {
+    const r = hook(repoAliasGigante(), { session_id: 's1' });
+    const linhas = r.msg.split('\n');
+    assert.ok(linhas.length >= 1 && linhas.length <= 3, r.msg);
+    assert.ok(linhas.every((l) => l.length > 0 && l.length <= 160), r.msg);
+    assert.ok(linhas.length >= 2, 'deve trazer ao menos cabeçalho e linha da guarda');
+  });
+  test('cartao-incorpora-instantaneo: additionalContext traz instantâneo, modelo, PBI/Epic e slots', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    const d = dirDiario(dir);
+    append(d, 'velha', evento('velha', 'guarda.deny', { alvo: 'apps/api/.env' }));
+    append(d, 'velha', evento('velha', 'producao.acesso', { alvo: 'host:alvo.exemplo.com' }, '2026-09-24T11:30:00.000Z'));
+    const r = hook(dir, { session_id: 's-nova', source: 'startup' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.ctx, /Diário: 2 evento\(s\)/);
+    assert.match(r.ctx, /guarda\.deny apps\/api\/\.env/);
+    assert.match(r.ctx, /producao\.acesso host:alvo\.exemplo\.com/);
+    assert.match(r.ctx, /Modelo: mais-potente · alias fable/);
+    assert.match(r.ctx, /PBI: PBI-123 · Epic: EPIC-7/);
+    assert.match(r.ctx, /slots: /);
+    assert.equal(r.json.hookSpecificOutput.hookEventName, 'SessionStart');
+  });
+  test('cartao-incorpora-instantaneo: segredo escrito à mão em dados não sai em nenhuma via', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    const d = dirDiario(dir);
+    mkdirSync(d, { recursive: true });
+    const segredo = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2';
+    writeFileSync(join(d, 'events.forjada.jsonl'), JSON.stringify({ seq: 1, ts: '2026-09-24T11:00:00.000Z', autor: 'x', sessao: 'forjada', agente: 'orquestrador', tipo: 'guarda.deny', dados: { alvo: segredo }, hash_anterior: null }) + '\n');
+    const r = hook(dir, { session_id: 's-nova' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!r.stdout.includes(segredo), 'segredo vazou');
+    assert.match(r.ctx, /linha redigida/);
+  });
+  test('segredo em branch nunca vai ao systemMessage nem ao additionalContext', () => {
+    const segredo = 'ghp_' + 'Z9y8X7w6V5u4T3s2R1q0P9o8';
+    const dir = repoGit({ ...CACHE_123 }, `feat/PBI-123-${segredo}`);
+    const r = hook(dir, { session_id: 's1' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!r.stdout.includes(segredo));
+    assert.ok(!r.msg.includes(segredo));
+    assert.match(r.msg, /linha redigida/);
+  });
+  test('cartao-grava-heartbeat-fonte: sessao.inicio e guarda.heartbeat {fonte: local} com o session_id do stdin', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    const r = hook(dir, { session_id: 'sess-abc', source: 'startup' });
+    assert.equal(r.code, 0, r.stderr);
+    const es = ler(dirDiario(dir));
+    assert.deepEqual(es.map((e) => e.tipo), ['sessao.inicio', 'guarda.heartbeat']);
+    assert.ok(es.every((e) => e.sessao === 'sess-abc'));
+    assert.equal(es[0].dados.origem, 'startup');
+    assert.equal(es[1].dados.fonte, 'local');
+    assert.equal(es[1].dados.divergente, false);
+    assert.deepEqual(es.map((e) => e.seq), [1, 2]);
+  });
+  test('cartao-grava-heartbeat-fonte: com origin/HEAD resolvível a fonte é "origin" e a divergência é registrada', () => {
+    const dir = repoGit({}, 'main');
+    comOrigin(dir, true);
+    const r = hook(dir, { session_id: 'sess-o' });
+    assert.equal(r.code, 0, r.stderr);
+    const hb = ler(dirDiario(dir, null)).find((e) => e.tipo === 'guarda.heartbeat');
+    assert.equal(hb.dados.fonte, 'origin');
+    assert.equal(hb.dados.divergente, true);
+    assert.match(r.msg, /fonte origin/);
+    assert.match(r.msg, /diverge/);
+  });
+  test('CLAUDE_PROJECT_DIR manda na fonte da config da guarda (Q14), não o cwd', () => {
+    const sessao = repoGit({}, 'main');
+    comOrigin(sessao, false);
+    const outro = repoGit({});
+    const r = hook(outro, { session_id: 's1' }, { env: { CLAUDE_PROJECT_DIR: sessao } });
+    assert.equal(r.code, 0, r.stderr);
+    const hb = ler(dirDiario(outro)).find((e) => e.tipo === 'guarda.heartbeat');
+    assert.equal(hb.dados.fonte, 'origin');
+  });
+  test('resume, clear e compact na mesma sessão: cadeia íntegra, origem em cada início, origem desconhecida registrada como tal', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    for (const source of ['startup', 'resume', 'clear', 'compact']) assert.equal(hook(dir, { session_id: 'mesma', source }).code, 0);
+    const es = ler(dirDiario(dir));
+    assert.deepEqual(es.map((e) => e.seq), [1, 2, 3, 4, 5, 6, 7, 8]);
+    assert.deepEqual(es.filter((e) => e.tipo === 'sessao.inicio').map((e) => e.dados.origem), ['startup', 'resume', 'clear', 'compact']);
+    assert.equal(hook(dir, { session_id: 'mesma', source: 'qualquer-coisa' }).code, 0);
+    assert.equal(ler(dirDiario(dir)).at(-2).dados.origem, 'desconhecida');
+  });
+  test('cartao-sem-session-id-fail-open: stdin vazio, JSON inválido, sem session_id, não-objeto: cartão sai, nada é gravado', () => {
+    for (const entrada of ['', '{nao json', '{}', '[]', 'null', '{"session_id": 42}', '{"session_id": ""}']) {
+      const dir = repoGit({ ...CACHE_123 });
+      const r = hook(dir, entrada);
+      assert.equal(r.code, 0, `${entrada}: ${r.stderr}`);
+      assert.match(r.ctx, /PBI: PBI-123/, entrada);
+      assert.deepEqual(ler(dirDiario(dir)), [], entrada);
+      assert.match(r.stderr, /fail-open declarado/, entrada);
+      assert.match(r.msg, /heartbeat não gravado/, entrada);
+    }
+  });
+  test('cartao-sem-session-id-fail-open: session_id com ../, barra ou quebra de linha é recusado pelo diário e o cartão segue', () => {
+    for (const id of ['../escape', 'a/b', 'a\nb', 'x'.repeat(200)]) {
+      const dir = repoGit({ ...CACHE_123 });
+      const r = hook(dir, { session_id: id });
+      assert.equal(r.code, 0, id);
+      assert.match(r.ctx, /PBI: PBI-123/);
+      assert.deepEqual(ler(dirDiario(dir)), []);
+      assert.ok(!existsSync(join(dir, '.harness', 'escape')), id);
+      assert.match(r.stderr, /fail-open declarado/);
+    }
+  });
+  test('cartao-diario-indisponivel-segue: .harness é arquivo → exit 0, cartão completo, falha declarada', () => {
+    const dir = repoGit({});
+    writeFileSync(join(dir, '.harness'), 'arquivo');
+    const r = hook(dir, { session_id: 's1' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.ctx, /GABARITO · cartão de sessão/);
+    assert.match(r.stderr, /diário recusou .*fail-open declarado/);
+    assert.match(r.msg, /heartbeat não gravado/);
+  });
+  test('cartao-diario-indisponivel-segue: .harness somente leitura → exit 0 e cartão completo', () => {
+    const ro = repoGit({ ...CACHE_123 });
+    chmodSync(join(ro, '.harness'), 0o555);
+    try {
+      const r = hook(ro, { session_id: 's1' });
+      assert.equal(r.code, 0, r.stderr);
+      assert.match(r.ctx, /PBI: PBI-123/);
+      assert.match(r.stderr, /fail-open declarado/);
+    } finally {
+      chmodSync(join(ro, '.harness'), 0o755);
+    }
+  });
+  test('cartao-diario-indisponivel-segue: events.<id>.jsonl symlink → exit 0, o alvo do link não é tocado', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    const alvo = join(repo(), 'alheio.txt');
+    writeFileSync(alvo, 'intacto');
+    mkdirSync(dirDiario(dir), { recursive: true });
+    symlinkSync(alvo, join(dirDiario(dir), 'events.s1.jsonl'));
+    const r = hook(dir, { session_id: 's1' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(readFileSync(alvo, 'utf8'), 'intacto');
+    assert.match(r.stderr, /fail-open declarado/);
+  });
+  test('.harness como symlink: nada lido nem gravado fora da árvore', () => {
+    const dir = repoGit({});
+    const fora = repo();
+    symlinkSync(fora, join(dir, '.harness'));
+    const r = hook(dir, { session_id: 's1' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(existsSync(join(fora, 'entregas')), false);
+    assert.match(r.stderr, /symlink/);
+  });
+  test('diário gigante: 50 mil eventos projetam em tempo curto e a saída respeita o limite', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    const d = dirDiario(dir);
+    mkdirSync(d, { recursive: true });
+    const linhas = [];
+    for (let i = 1; i <= 50_000; i++) linhas.push(JSON.stringify({ seq: i, ts: `2026-09-24T10:${String(i % 60).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}.000Z`, autor: 'a', sessao: 'grande', agente: 'orquestrador', tipo: 'guarda.deny', dados: { alvo: `p/${i}` }, hash_anterior: null }));
+    writeFileSync(join(d, 'events.grande.jsonl'), linhas.join('\n') + '\n');
+    const t0 = Date.now();
+    const r = hook(dir, { session_id: 's-nova' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(Date.now() - t0 < 10_000);
+    assert.ok(r.ctx.length <= 6000);
+    assert.match(r.ctx, /Diário: 50000 evento\(s\)/);
+  });
+  test('repo sem git: raiz é o cwd, cartão mínimo, sem quebra', () => {
+    const dir = repo({ 'harness.config.json': CONFIG() });
+    const r = hook(dir, { session_id: 's1' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.ctx, /Branch: \(sem git\)/);
+  });
+  test('repo em worktree: PBI vem da branch wt/…, diário no diretório do worktree', () => {
+    const principal = repoGit({}, 'main');
+    const wt = join(realpathSync(repo()), 'wt');
+    git(principal, 'worktree', 'add', '-q', '-b', 'wt/PBI-123-2', wt);
+    writeFileSync(join(wt, 'harness.config.json'), CONFIG());
+    const r = hook(wt, { session_id: 's-wt' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.ctx, /PBI: PBI-123 \(worktree 2\)/);
+    assert.equal(ler(dirDiario(wt)).length, 2);
+  });
+  test('caracteres de controle em branch e acentos: a saída continua JSON válido de uma linha', () => {
+    const dir = repoGit({ ...CACHE_123 }, 'feat/PBI-123-ação-bell');
+    const r = hook(dir, { session_id: 's1' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.stdout.trimEnd().split('\n').length, 1);
+    assert.match(r.ctx, /ação/);
+    assert.ok(!/[\u0000-\u0008\u000b-\u001f]/.test(r.ctx));
+  });
+  test('alias com controle e quebra de linha na config: JSON válido, sem linha forjada', () => {
+    const dir = repo({ 'harness.config.json': CONFIG({ orquestracao: { modelo: { politica: 'mais-potente', alias: 'fable\nLinha-forjada\u001b[31m', resolvidoEm: '2026-09-01', validadeDias: 90 } } }) });
+    git(dir, 'init', '-q');
+    const r = hook(dir, { session_id: 's1' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!r.ctx.split('\n').includes('Linha-forjada'));
+    assert.ok(!r.msg.split('\n').includes('Linha-forjada'));
+  });
+  const lerMarcador = (dir) => JSON.parse(readFileSync(join(dir, '.harness', 'heartbeat.json'), 'utf8'));
+  const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
+  test('cartao-grava-heartbeat-local: marcador .harness/heartbeat.json com o mesmo sessao/ts da linha do diário, formato fechado', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    const r = hook(dir, { session_id: 'sess-m', source: 'startup' });
+    assert.equal(r.code, 0, r.stderr);
+    const m = lerMarcador(dir);
+    assert.deepEqual(Object.keys(m).sort(), ['arquivo', 'autor', 'divergente', 'fonte', 'sessao', 'ts']);
+    const hb = ler(dirDiario(dir)).find((e) => e.tipo === 'guarda.heartbeat');
+    assert.match(m.ts, ISO);
+    assert.equal(m.ts, hb.ts);
+    assert.equal(m.sessao, 'sess-m');
+    assert.equal(m.autor, hb.autor);
+    assert.equal(m.fonte, 'local');
+    assert.equal(m.divergente, false);
+    assert.equal(m.arquivo, '.harness/entregas/PBI-123/events.sess-m.jsonl');
+    assert.ok(readFileSync(join(dir, m.arquivo), 'utf8').includes('"guarda.heartbeat"'));
+    assert.deepEqual(readdirSync(join(dir, '.harness')).filter((f) => f.startsWith('heartbeat') && f !== 'heartbeat.json'), [], 'tmp deixado para trás');
+  });
+  test('cartao-grava-heartbeat-local: segunda sessão sobrescreve (último vence) e o marcador é arquivo regular', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    hook(dir, { session_id: 'a1' });
+    hook(dir, { session_id: 'b2' });
+    assert.equal(lerMarcador(dir).sessao, 'b2');
+    assert.ok(lstatSync(join(dir, '.harness', 'heartbeat.json')).isFile());
+  });
+  test('marcador: symlink no lugar é substituído sem tocar o alvo; diretório no lugar não derruba o cartão', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    const alvo = join(repo(), 'alheio.txt');
+    writeFileSync(alvo, 'intacto');
+    symlinkSync(alvo, join(dir, '.harness', 'heartbeat.json'));
+    const r = hook(dir, { session_id: 's1' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(readFileSync(alvo, 'utf8'), 'intacto');
+    const d2 = repoGit({ ...CACHE_123 });
+    mkdirSync(join(d2, '.harness', 'heartbeat.json'));
+    const r2 = hook(d2, { session_id: 's1' });
+    assert.equal(r2.code, 0, r2.stderr);
+    assert.match(r2.ctx, /PBI: PBI-123/);
+    assert.match(r2.msg, /heartbeat não gravado/);
+  });
+  test('marcador não atualiza quando o diário falha: sem session_id, .harness arquivo, symlink de eventos, canário', () => {
+    const casos = [
+      ['sem sid', (d) => hook(d, '{}')],
+      ['symlink de eventos', (d) => {
+        mkdirSync(dirDiario(d), { recursive: true });
+        symlinkSync(join(repo(), 'x.txt'), join(dirDiario(d), 'events.s1.jsonl'));
+        return hook(d, { session_id: 's1' });
+      }],
+      ['canário no session_id', (d) => hook(d, { session_id: `ghp_${'A'.repeat(30)}` })],
+    ];
+    for (const [nome, rodar] of casos) {
+      const dir = repoGit({ ...CACHE_123 });
+      const r = rodar(dir);
+      assert.equal(r.code, 0, nome);
+      assert.equal(existsSync(join(dir, '.harness', 'heartbeat.json')), false, nome);
+      assert.match(r.msg, /heartbeat não gravado/, nome);
+    }
+  });
+  test('cartao-sem-onboarding-nao-grava: repo git sem config, config inválida, subpasta e sem git: nenhum .harness, árvore limpa, cartão sai', () => {
+    const semConfig = repo({ 'a.txt': 'x' });
+    git(semConfig, 'init', '-q');
+    const invalida = repo({ 'harness.config.json': '{nao json' });
+    git(invalida, 'init', '-q');
+    const semGit = repo({ 'a.txt': 'x' });
+    const sub = repo({ 'pasta/a.txt': 'x' });
+    git(sub, 'init', '-q');
+    for (const [dir, cwd] of [[semConfig, semConfig], [invalida, invalida], [semGit, semGit], [sub, join(sub, 'pasta')]]) {
+      const r = hook(dir, { session_id: 'sem-1' });
+      assert.equal(r.code, 0, r.stderr);
+      assert.ok(r.ctx.length > 0);
+      assert.ok(r.msg.split('\n').length <= 3);
+      assert.equal(existsSync(join(dir, '.harness')), false, dir);
+      assert.equal(existsSync(join(cwd, '.harness')), false, cwd);
+      assert.doesNotMatch(r.msg, /heartbeat não gravado/);
+    }
+    assert.equal(git(semConfig, 'status', '--short', '--untracked-files=all').replace(/\?\? a\.txt/, '').trim(), '');
+  });
+  test('cartao-sem-onboarding-nao-grava: cwd na subpasta com a raiz onboarded grava só na raiz', () => {
+    const dir = repoGit({ ...CACHE_123, 'pasta/a.txt': 'x' });
+    const r = spawnSync(process.execPath, [SCRIPT, '--hook', '--plugin-root', pluginFalso(), '--agora', AGORA], { cwd: join(dir, 'pasta'), input: JSON.stringify({ session_id: 's1' }), encoding: 'utf8', env: { ...process.env, GABARITO_INSTALLED_PLUGINS: '/nao/existe.json' } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(existsSync(join(dir, 'pasta', '.harness')), false);
+    assert.equal(lerMarcador(dir).sessao, 's1');
+  });
+  test('F10: corte nos 6.000 e nas 160 colunas nunca deixa substituto solto (alias de emojis)', () => {
+    const dir = repo({ 'harness.config.json': CONFIG({ orquestracao: { modelo: { politica: 'mais-potente', alias: '😀'.repeat(4000), resolvidoEm: '2026-09-01', validadeDias: 90 } } }) });
+    git(dir, 'init', '-q');
+    const r = hook(dir, { session_id: 's1' });
+    assert.equal(r.code, 0, r.stderr);
+    const solto = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    assert.doesNotMatch(r.ctx, solto);
+    assert.doesNotMatch(r.msg, solto);
+    assert.ok(r.ctx.length <= 6000);
+    assert.ok(r.msg.split('\n').every((l) => l.length <= 160));
+  });
+  test('F3: events.*.jsonl que é symlink ou FIFO não é lido: texto de fora não entra e o hook não trava', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    const fora = join(repo(), 'fora.jsonl');
+    writeFileSync(fora, `${JSON.stringify(evento('x', 'guarda.deny', { alvo: 'FORA_DA_ARVORE' }))}\n`);
+    mkdirSync(dirDiario(dir), { recursive: true });
+    symlinkSync(fora, join(dirDiario(dir), 'events.link.jsonl'));
+    const mk = spawnSync('mkfifo', [join(dirDiario(dir), 'events.fifo.jsonl')]);
+    assert.equal(mk.status, 0);
+    const t0 = Date.now();
+    const r = hook(dir, { session_id: 's1' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(Date.now() - t0 < 6000, 'travou na FIFO');
+    assert.doesNotMatch(r.stdout, /FORA_DA_ARVORE/);
+    assert.match(r.ctx, /PBI: PBI-123/);
+    assert.match(r.stderr, /não é arquivo regular/);
+  });
+  test('F5: sem dist/diario.js o segredo continua redigido nas duas vias, nada é gravado e o hook sai 0', () => {
+    const raiz = mkdtempSync(join(tmpdir(), 'sem-dist-'));
+    mkdirSync(join(raiz, 'scripts'), { recursive: true });
+    mkdirSync(join(raiz, 'lib'), { recursive: true });
+    for (const f of readdirSync(join(here, '..', 'scripts'))) if (f.endsWith('.mjs')) copyFileSync(join(here, '..', 'scripts', f), join(raiz, 'scripts', f));
+    for (const f of readdirSync(join(here, '..', 'lib'))) copyFileSync(join(here, '..', 'lib', f), join(raiz, 'lib', f));
+    const token = `ghp_${'A'.repeat(30)}`;
+    const dir = repoGit({ ...CACHE_123 }, `feat/PBI-123-${token}`);
+    const r = spawnSync(process.execPath, [join(raiz, 'scripts', 'cartao-sessao.mjs'), '--hook', '--root', dir, '--plugin-root', pluginFalso(), '--agora', AGORA], { cwd: dir, input: JSON.stringify({ session_id: 's1' }), encoding: 'utf8', env: { ...process.env, GABARITO_INSTALLED_PLUGINS: '/nao/existe.json' } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(!r.stdout.includes(token), 'segredo vazou');
+    assert.match(r.stderr, /diário indisponível/);
+    assert.equal(existsSync(join(dir, '.harness', 'entregas')), false);
+    assert.equal(existsSync(join(dir, '.harness', 'heartbeat.json')), false);
+  });
+  test('sem --hook a CLI de texto continua igual e não grava diário', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    const r = spawnSync(process.execPath, [SCRIPT, '--root', dir, '--plugin-root', pluginFalso(), '--agora', AGORA], { cwd: dir, encoding: 'utf8', env: { ...process.env, GABARITO_INSTALLED_PLUGINS: '/nao/existe.json' } });
+    assert.match(r.stdout, /^PBI: PBI-123/m);
+    assert.deepEqual(ler(dirDiario(dir)), []);
   });
 });

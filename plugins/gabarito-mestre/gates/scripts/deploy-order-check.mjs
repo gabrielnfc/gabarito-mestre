@@ -30,9 +30,9 @@
  *   }
  */
 
-import { readFileSync, existsSync, realpathSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { ehEntrypoint } from '../lib/cli.mjs';
 
 /** Recorta o arquivo a partir da primeira linha que casa `sectionPattern`. */
 export function scopeFrom(content, sectionPattern) {
@@ -112,15 +112,4 @@ function main() {
   process.exit(out.ok ? 0 : 1);
 }
 
-// Entrypoint robusto a espaço/acento e a symlink: `file://` cru falha com %20, e comparar
-// contra `resolve(argv[1])` sem realpath falha atrás de qualquer symlink (macOS /var,
-// cache de plugin, bin do npm/homebrew) — o script sairia 0 em silêncio nos dois casos.
-function ehEntrypoint() {
-  if (!process.argv[1]) return false;
-  try {
-    return fileURLToPath(import.meta.url) === realpathSync(resolve(process.argv[1]));
-  } catch {
-    return false;
-  }
-}
-if (ehEntrypoint()) main();
+if (ehEntrypoint(import.meta.url)) main();

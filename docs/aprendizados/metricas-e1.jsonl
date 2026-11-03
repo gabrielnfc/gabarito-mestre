@@ -1,0 +1,13 @@
+{"task":"T8","fluxo":"sem-gate","impl_s":198,"review_s":241,"correcao_s":207,"rodadas":1,"estado":"aprovada","causa":"suite"}
+{"task":"T1a","fluxo":"sem-gate","impl_s":521,"review_s":421,"correcao_s":500,"rodadas":1,"estado":"aprovada-R12","causa":"suite"}
+{"task":"T1b","fluxo":"sem-gate","impl_s":311,"review_s":312,"correcao_s":1137,"rodadas":2,"estado":"aprovada-R12","causa":"assert-frouxo"}
+{"task":"T2b","fluxo":"gate","impl_s":141,"review_s":290,"correcao_s":564,"rodadas":1,"estado":"aprovada-R14","causa":"forja"}
+{"task":"T3","fluxo":"gate","impl_s":161,"review_s":525,"correcao_s":951,"rodadas":1,"estado":"aprovada","causa":"lock-regex-vazamento"}
+{"task":"T5","fluxo":"gate","impl_s":429,"review_s":417,"correcao_s":2124,"rodadas":2,"estado":"aprovada","causa":"hook-terceiro"}
+{"task":"T2","fluxo":"gate","impl_s":521,"review_s":430,"correcao_s":497,"rodadas":1,"estado":"re-review","causa":"parser"}
+{"task": "T7", "fluxo": "gate", "impl_s": null, "review_s": 582, "correcao_s": 1220, "rodadas": 1, "estado": "aprovada", "causa": "escrita-sem-onboarding", "x2": {"review1": "5/10, MAJOR parcial", "rereview": "3/8, 0 MAJOR"}}
+{"task": "T3b", "fluxo": "gate", "impl_s": 193, "review_s": null, "correcao_s": 0, "rodadas": 0, "estado": "aprovada", "causa": null}
+{"task": "T6", "fluxo": "gate", "impl_s": null, "review_s": 511, "correcao_s": 3220, "rodadas": 3, "estado": "aprovada", "causa": "evidencia-ignorada+correcao-fora-do-pedido"}
+{"task": "T4", "fluxo": "gate", "impl_s": 1946, "review_s": 987, "correcao_s": 1582, "rodadas": 1, "estado": "aprovada-sem-integrar", "causa": "fallback-excecao"}
+{"task": "T2", "fluxo": "gate", "impl_s": null, "review_s": null, "correcao_s": 4636, "rodadas": 4, "estado": "parada-desenho", "causa": "classificador-texto-bash"}
+{"task": "T2R", "fluxo": "gate", "impl_s": null, "review_s": null, "correcao_s": null, "rodadas": 3, "estado": "aprovada", "causa": "exceção nominal do dono na rodada 3"}

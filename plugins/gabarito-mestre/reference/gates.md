@@ -161,6 +161,38 @@ Varre o repo, calcula o nível de adoção real, lê o declarado no `AGENTS.md �
 **reprova quando o declarado é maior**. Rode com `--explain` para receber o conserto de
 cada item faltante, `--json` para máquina.
 
+A varredura enxerga o que o **git** enxerga (`git ls-files` + arquivos novos não ignorados): arquivo
+ignorado não é evidência. Fora de repo git ela cai para o disco. G8 só aceita **código** como evidência
+— um `.md` que cita a guarda não a instala.
+
+**Camada de guarda.** O doctor reporta qual camada da guarda está de pé: `ativa` (há um evento
+`guarda.heartbeat` válido, de até 7 dias, em `.harness/entregas/<id>/events.*.jsonl`; o ts precisa ser
+ISO e não pode estar no futuro) · `configurada` (`guarda.ambientes` declarados) · `permissions.deny`
+(só a 2ª camada do instalador) · `nenhuma`. Mostra a `fonte` da config (`origin` = `origin/HEAD`, a que
+vale; `local` = sem remoto) e se a árvore **diverge** do origin, e lista os ambientes declarados. Sem
+`guarda.ambientes` é só aviso: os anéis de segredo e integridade agem, nada é negado por ambiente.
+Avisos não entram no nível.
+
+**Perfil `repo-sem-app`** (`"perfil": "repo-sem-app"` no `harness.config.json`, valor exato): repo sem
+aplicação nem banco. Só `G3-mass-mutation`, `G3-strict-undefined` e `teardown-por-id` viram `n/a`
+(contam como cumpridas e aparecem como `n/a`, nunca como `ok`). R3, segredo e os atestados continuam
+valendo — o perfil não rebaixa segurança além disso.
+
+**Chaves removidas.** `migrationsDir`, `versionamento.modelo`, `versionamento.commit`,
+`orquestracao.sempreSubagente`, `orquestracao.paralelismo.modo` e o atestado `squash-titulo-pr` não são
+lidos por nenhum gate; se estiverem no seu repo o doctor avisa (`chaves-mortas`). O
+`onboarding-config.mjs` as descarta do patch e diz quais.
+
+**2ª camada, `--guarda`.** `instalar.sh --guarda` une ao `permissions.deny` de `.claude/settings.json`
+`Read(.env*)`, `Read(!.env.example)`, `Edit(.env*)`, `Read(**/*.pem)`, `Edit(**/*.pem)`,
+`Read(**/*.key)`, `Edit(**/*.key)` — nunca `Write(…)`, nunca `./`. Nunca substitui o que você já tem;
+em dúvida (JSON inválido ou com comentário, symlink, sem permissão de escrita, formato inesperado, sem
+`node`) não escreve e imprime a linha para você colar.
+
+O instalador copia `tools/gabarito-gates/` **sem** `test/`, `README.md` nem `.hashes-anteriores` — a
+suíte vive no repo do plugin. Não há mais `--gates-substituir` nem manifesto: o que já existe e difere
+vira `<arquivo>.novo` com `--atualizar`, e você aplica à mão.
+
 O que nenhuma varredura prova — proteção de branch, backup testado, checks obrigatórios
 no ruleset — vive em `.harness/attest.json`:
 

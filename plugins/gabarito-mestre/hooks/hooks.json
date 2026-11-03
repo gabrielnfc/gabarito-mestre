@@ -6,21 +6,28 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/guard-destructive.sh\"",
-            "shell": "bash",
-            "timeout": 10
-          },
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/gates/dist/guarda.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|Read|Grep",
+        "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/guard-production.sh\"",
-            "shell": "bash",
-            "timeout": 10
-          },
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/gates/dist/guarda.js\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*",
+        "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/guard-versioning.sh\"",
-            "shell": "bash",
-            "timeout": 10
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/gates/dist/guarda.js\"",
+            "timeout": 5
           }
         ]
       }
@@ -34,6 +41,18 @@
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-card.sh\"",
             "shell": "bash",
             "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/regras-subagent.sh\"",
+            "shell": "bash",
+            "timeout": 5
           }
         ]
       }

@@ -1,5 +1,5 @@
 name: "Hook: falso positivo / negativo"
-description: Um comando legítimo foi bloqueado, ou um destrutivo/de produção passou.
+description: Um comando legítimo pediu confirmação sem motivo, ou segredo, integridade ou escrita em produção passou sem pedir.
 title: "[hook] "
 labels: ["hook", "bug"]
 body:
@@ -8,14 +8,14 @@ body:
     attributes:
       label: Tipo
       options:
-        - Falso positivo (legítimo bloqueado) — prioridade máxima
-        - Falso negativo (destrutivo ou produção passou)
+        - Falso positivo (legítimo pediu confirmação ou foi negado) — prioridade máxima
+        - Falso negativo (segredo, integridade ou escrita em produção passou)
     validations: { required: true }
   - type: dropdown
     id: hook
     attributes:
       label: Hook
-      options: [guard-destructive.sh (R2), guard-production.sh (R3), não sei]
+      options: [guarda de ambiente (guarda.js), hook git de versionamento, session-card, não sei]
     validations: { required: true }
   - type: textarea
     id: comando

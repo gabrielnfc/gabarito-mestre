@@ -12,6 +12,8 @@
  *  M4  fail-closed sem config (exit 1)
  *  M5  validar só o primeiro commit do intervalo
  *  M6  tratar ref de base ausente como fail-open (exit 0)
+ *  M7  --msg ler a última linha em vez da primeira (GM-9 T5)
+ *  M8  --msg ignorar o veredito e sair 0 (GM-9 T5)
  */
 
 import { test, describe } from 'node:test';
@@ -285,5 +287,87 @@ describe('CLI', () => {
     const r = cli([], join(dir, 'apps', 'api'));
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /\[R20\] ok/);
+  });
+});
+
+// ────────────────────────────────────────────────────────────── --msg e --so-branch (GM-9 T5)
+// Casos de mensagem migrados do corpus do antigo hook de PreToolUse de versionamento (sem os de hatch): agora o mesmo
+// veredito sai do hook git `commit-msg`, que chama `--msg <arquivo>`.
+describe('CLI --msg <arquivo> (hook commit-msg)', () => {
+  const dir = repo({ 'harness.config.json': CONFIG });
+  let n = 0;
+  const msg = (texto, args = []) => {
+    const f = join(dir, `COMMIT_EDITMSG_${n++}`);
+    writeFileSync(f, texto);
+    return cli(['--root', dir, '--msg', f, ...args], dir);
+  };
+  const passam = [
+    'feat(PBI-12): login por magic link', 'fix(PBI-7): timeout do webhook', 'docs: atualiza README', 'chore: bump deps',
+    'enabler(GM-3): hooks de versionamento', 'feat(PBI-12)!: quebra de contrato da API', 'revert: desfaz feat(PBI-3)',
+    'test: cobre o heredoc multilinha', 'ci: matriz macos e ubuntu', 'refactor(PBI-4): extrai cliente http',
+    'feat(PBI-123): assunto do heredoc\n\ncorpo com detalhes\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n',
+    "Merge branch 'feat/PBI-2-x'", 'fixup! feat(PBI-1): a',
+  ];
+  const reprovam = [
+    'arrumei', 'fix: sem escopo de PBI', 'feat(pbi-12): minúsculas', 'hotfix(PBI-1): tipo inexistente',
+    'Feat(PBI-1): maiúscula no tipo', 'wip', 'feat(PBI-12):sem espaço', 'arrumei tudo\n\nfeat(PBI-1): na segunda linha não vale\n',
+    'mudanças\n', '', '\n\n',
+  ];
+  for (const m of passam) test(`passa: ${JSON.stringify(m).slice(0, 70)}`, () => {
+    const r = msg(m);
+    assert.equal(r.status, 0, r.stderr);
+  });
+  for (const m of reprovam) test(`reprova: ${JSON.stringify(m).slice(0, 70)}`, () => {
+    const r = msg(m);
+    assert.equal(r.status, 2, r.stdout);
+    assert.match(r.stderr, /\[R20\]/);
+    assert.doesNotMatch(r.stderr, /ALLOW_[A-Z]+|escape hatch/i);
+  });
+  test('só a primeira linha vale; linhas de comentário do git (# …) antes dela são ignoradas', () => {
+    assert.equal(msg('# Please enter\nfeat(PBI-1): ok\n').status, 0);
+    assert.equal(msg('# nota\narrumei\nfeat(PBI-1): ok\n').status, 2);
+  });
+  test('mensagem reprovada explica o formato e cita a mensagem recebida', () => {
+    const r = msg('wip');
+    assert.match(r.stderr, /tipo\(escopo\): assunto/);
+    assert.match(r.stderr, /"wip"/);
+  });
+  test('arquivo inexistente → exit 1 (indisponível não vale como validado)', () => {
+    const r = cli(['--root', dir, '--msg', join(dir, 'nao-existe')], dir);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /\[R20\]/);
+  });
+  test('sem config de versionamento: fail-open declarado (G9), exit 0', () => {
+    const sem = repoGit(null);
+    const f = join(sem, 'MSG'); writeFileSync(f, 'wip');
+    const r = cli(['--root', sem, '--msg', f], sem);
+    assert.equal(r.status, 0);
+    assert.match(r.stderr, /fail-open declarado \(G9\)/);
+  });
+  test('--msg sem valor (fim do argv) → exit 1, não cai no modo histórico', () => {
+    const r = cli(['--root', dir, '--msg'], dir);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /--msg exige/);
+  });
+});
+
+describe('CLI --pre-push (hook pre-push, refs no stdin)', () => {
+  const dir = repo({ 'harness.config.json': CONFIG });
+  const SHA = 'a'.repeat(40); const ZERO = '0'.repeat(40);
+  const push = (...refs) => spawnSync(process.execPath, [SCRIPT, '--root', dir, '--pre-push'], {
+    cwd: dir, encoding: 'utf8', env: GIT_ENV, input: refs.map(([l, ls, r]) => `${l} ${ls} ${r} ${ZERO}`).join('\n') + '\n',
+  });
+  test('cada refs/heads/* de destino é conferido; ruim → exit 2; boas → 0', () => {
+    assert.equal(push(['refs/heads/x', SHA, 'refs/heads/hotfix/x']).status, 2);
+    assert.equal(push(['HEAD', SHA, 'refs/heads/ruim']).status, 2);
+    assert.equal(push(['refs/heads/a', SHA, 'refs/heads/feat/PBI-1-x'], ['refs/heads/b', SHA, 'refs/heads/wt/PBI-1-2'], ['refs/heads/m', SHA, 'refs/heads/main']).status, 0);
+    assert.equal(push(['refs/heads/a', SHA, 'refs/heads/feat/PBI-1-x'], ['refs/heads/b', SHA, 'refs/heads/ruim']).status, 2, 'uma ruim entre boas');
+  });
+  test('tag, outros refs e delete (local_sha zerado) passam', () => {
+    assert.equal(push(['refs/tags/v1', SHA, 'refs/tags/ruim-nome']).status, 0);
+    assert.equal(push(['(delete)', ZERO, 'refs/heads/ruim']).status, 0);
+  });
+  test('stdin vazio: nada a conferir, exit 0', () => {
+    assert.equal(push().status, 0);
   });
 });

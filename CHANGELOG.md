@@ -5,6 +5,20 @@ Usuários do plugin só recebem atualização quando `version` muda.
 
 ## [Unreleased]
 
+### Alterado (GM-9 T4, quebra de comportamento no canal `next`)
+
+- **Hook único da guarda** (`gates/dist/guarda.js`, matchers `Bash`, `Edit|Write|Read|Grep`, `mcp__.*`) substitui `guard-destructive.sh` e `guard-production.sh`. Classifica o alvo por ambiente declarado (config lida de `origin/HEAD`) e só pede (`ask`/`deny`) em segredo, integridade do harness e escrita em produção; destrutivo local vira evento no diário. Nunca devolve `allow`.
+- **Escape hatch removido**: as variáveis `GABARITO_ALLOW_*` deixaram de existir e nenhuma mensagem explica contorno. Para rotina de produção, `guarda.producao.permitidos` em `harness.config.json` (lido de `origin/HEAD`).
+- `gates/scripts/bench-guarda.mjs` mede o p95 do hook (local ≤ 60 ms; CI ≤ 150 ms, job `hooks`).
+
+## [2.0.0-alpha.1] — 2026-11-02
+
+Primeira pré-versão do canal `next` (GM-9, E1). Catálogo `gabarito-mestre-next` (o Claude Code não tem conceito de
+canal de release e não aceita o mesmo plugin duas vezes num `marketplace.json`: dois canais são dois catálogos com `name`
+diferente). Instalação: `claude plugin marketplace add gabrielnfc/gabarito-mestre#next`. A versão fica só no
+`plugin.json`; a entrada do `marketplace.json` deixa de repeti-la. `plugins/gabarito-mestre/medido-em.json` registra a versão do Claude Code
+em que os spikes foram medidos; o job `versao-medida` do CI avisa (`::warning`) quando a instalada difere, sem falhar.
+
 ## [1.1.0] — 2026-09-25
 
 Camada de fluxo (Workflow TRUE: Flight Levels + Kanban), onboarding na instalação, versionamento trunk-based como gate,

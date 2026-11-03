@@ -4,7 +4,7 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, next]
 
 permissions:
   contents: read
@@ -32,7 +32,18 @@ jobs:
           node-version: '22'
       - run: cd plugins/gabarito-mestre/gates && npm test
 
+  dist-em-dia:
+    name: dist em dia (gates/dist == build de gates/src, Node 22)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: node plugins/gabarito-mestre/gates/scripts/build.mjs --check
+
   instalador:
+    # Nome preso ao ruleset de main (contexto exigido): renomear só na E5, junto com o ruleset.
     name: instalar.sh — fixture 1.0.1, --atualizar, --gates-substituir (bash ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -60,7 +71,9 @@ jobs:
         with:
           node-version: '22'
       - run: bash --version | head -1
-      - run: node --test plugins/gabarito-mestre/hooks/test/guards.test.mjs
+      - run: node --test plugins/gabarito-mestre/hooks/test/*.test.mjs
+      - name: latência da guarda (p95 wall ≤ 150 ms no runner; local ≤ 60 ms)
+        run: node plugins/gabarito-mestre/gates/scripts/bench-guarda.mjs --n 20 --limite 150
 
   texto:
     name: texto — invariantes da 1.1.0 (grep)
@@ -80,6 +93,39 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
+      # A raiz tem harness.config.json com `perfil: repo-sem-app` e `guarda.ambientes`. O doctor tem que: (1) reportar a
+      # camada e o perfil; (2) marcar SÓ G3 e teardown como n/a; (3) não achar evidência dentro do próprio plugin.
       - run: |
           node plugins/gabarito-mestre/gates/scripts/harness-doctor.mjs --json > out.json
-          node -e "const j=require('./out.json');const bad=j.resultados.filter(r=>r.found&&/gabarito-mestre\//.test(r.evidence||''));if(bad.length){console.error('auto-detecção:',bad.map(r=>r.id));process.exit(1)}console.log('ok — nenhuma evidência vinda do plugin')"
+          node -e "
+            const j=require('./out.json');
+            const por=Object.fromEntries(j.resultados.map(r=>[r.id,r]));
+            const erros=[];
+            if(j.perfil!=='repo-sem-app') erros.push('perfil: '+j.perfil);
+            if(!j.camada||j.camada.estado!=='configurada') erros.push('camada deveria ser configurada (sem marcador local no checkout limpo; ativa seria falso positivo): '+JSON.stringify(j.camada));
+            for(const id of ['G3-mass-mutation','G3-strict-undefined','teardown-por-id']) if(!por[id].na) erros.push(id+' deveria ser n/a');
+            for(const id of ['R3-prod-guard','secrets-fora-do-repo']) if(por[id].na) erros.push(id+' NÃO pode ser n/a');
+            const bad=j.resultados.filter(r=>r.found&&!r.na&&/gabarito-mestre\//.test(r.evidence||''));
+            if(bad.length) erros.push('auto-detecção: '+bad.map(r=>r.id));
+            if(erros.length){console.error(erros.join('\n'));process.exit(1)}
+            console.log('ok — perfil, camada '+j.camada.estado+', nenhuma evidência vinda do plugin');
+          "
+
+  versao-medida:
+    name: versao-medida — Claude Code medido × instalado (aviso, nunca falha)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: npm install -g @anthropic-ai/claude-code
+      - run: |
+          medido=$(node -p "require('./plugins/gabarito-mestre/medido-em.json').claudeCode")
+          instalado=$(claude --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          if [ "$medido" != "$instalado" ]; then
+            echo "::warning title=versao-medida::spikes medidos no Claude Code $medido; instalado $instalado. Revalidar é decisão humana."
+          else
+            echo "Claude Code $instalado == medido"
+          fi
+          exit 0

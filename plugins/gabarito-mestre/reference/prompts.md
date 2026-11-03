@@ -92,7 +92,7 @@ no checkout do orquestrador não usa porta/schema próprios (`referencia.md §3.
 
 Método: TDD estrito. Escreva o teste, VEJA VERMELHO, implemente, veja verde.
 Um commit atômico por ciclo. Mensagem Conventional Commits com escopo do PBI:
-`<tipo>(<PBI>): <assunto>` (R20 — o hook reprova o resto; não use GABARITO_ALLOW_VERSIONING).
+`<tipo>(<PBI>): <assunto>` (R20 — o hook git `commit-msg` reprova o resto).
 
 Recurso compartilhado (banco, fila, ambiente externo, namespace) é SERIAL — não paralelize.
 Toda leitura paginada vai até a página incompleta antes de qualquer contagem ou conclusão (I1).

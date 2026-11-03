@@ -1,0 +1,194 @@
+{"nome":"teste-sem-decisao","req":"GRD-4","tool":"Bash","input":{"command":"psql -h 127.0.0.1 -c 'select 1'"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"desconhecido-sem-decisao","req":"GRD-4","tool":"Bash","input":{"command":"ls -la"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"subagent-benigno","req":"GRD-4","tool":"Bash","input":{"command":"npm test"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"destrutivo-rm-local","req":"GRD-6","tool":"Bash","input":{"command":"rm -rf .next dist"},"agente":"orq","esperado":{"faixa":"log","evento":"operacao.destrutiva"}}
+{"nome":"destrutivo-truncate-local","req":"GRD-6","tool":"Bash","input":{"command":"psql -h 127.0.0.1 -c 'TRUNCATE t'"},"agente":"orq","esperado":{"faixa":"log","evento":"operacao.destrutiva"}}
+{"nome":"destrutivo-comentario","req":"GRD-6","tool":"Bash","input":{"command":"echo ok # TRUNCATE t"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"destrutivo-reset-local","req":"GRD-6","tool":"Bash","input":{"command":"git reset --hard"},"agente":"orq","esperado":{"faixa":"log","evento":"operacao.destrutiva"}}
+{"nome":"destrutivo-docker-rm","req":"GRD-6","tool":"Bash","input":{"command":"docker rm -f x"},"agente":"orq","esperado":{"faixa":"log","evento":"operacao.destrutiva"}}
+{"nome":"destrutivo-homolog","req":"GRD-6","tool":"Bash","input":{"command":"psql -h db.homolog.exemplo.com -c 'DROP TABLE t'"},"agente":"orq","esperado":{"faixa":"mostrar","evento":"operacao.destrutiva"}}
+{"nome":"homolog-host","req":"GRD-4","tool":"Bash","input":{"command":"curl https://staging.exemplo.com/x"},"agente":"orq","esperado":{"faixa":"mostrar","evento":"producao.acesso"}}
+{"nome":"mencao-vercel","req":"GRD-2","tool":"Bash","input":{"command":"grep -r \"vercel --prod\" docs"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"mencao-rm","req":"GRD-2","tool":"Bash","input":{"command":"echo \"rm -rf /\""},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"prod-leitura","req":"GRD-4","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -c 'SELECT 1'"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","acao":"leitura","motivoContem":"leitura"}}
+{"nome":"prod-leitura-sub","req":"GRD-4","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -c 'SELECT 1'"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny"}}
+{"nome":"prod-curl-execucao-pede","req":"GRD-4","tool":"Bash","input":{"command":"curl -X DELETE https://api.exemplo.com/x"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","acao":"execucao"}}
+{"nome":"orq-prod-escrita","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","ambiente":"prod","acao":"escrita"}}
+{"nome":"subagent-prod-escrita","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","motivoContem":"orquestrador"}}
+{"nome":"vercel-target-production","req":"GRD-6","tool":"Bash","input":{"command":"vercel deploy --target production"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"prod-drop-psql","req":"GRD-6","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -c 'DROP TABLE t'"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"supabase-linked-prod","req":"GRD-6","tool":"Bash","input":{"command":"supabase db push --linked"},"agente":"orq","contexto":{"refLinkado":"ref-prod"},"esperado":{"faixa":"ask"}}
+{"nome":"supabase-linked-homolog","req":"GRD-6","tool":"Bash","input":{"command":"supabase db push --linked"},"agente":"orq","contexto":{"refLinkado":"ref-homolog"},"esperado":{"faixa":"mostrar"}}
+{"nome":"supabase-link-composto","req":"GRD-6","tool":"Bash","input":{"command":"supabase link --project-ref ref-prod && supabase db push"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-push-force-main","req":"GRD-6","tool":"Bash","input":{"command":"git push --force"},"agente":"orq","contexto":{"branchAtual":"main"},"esperado":{"faixa":"ask"}}
+{"nome":"git-push-sem-args-main","req":"GRD-6","tool":"Bash","input":{"command":"git push"},"agente":"orq","contexto":{"branchAtual":"main"},"esperado":{"faixa":"ask"}}
+{"nome":"git-push-head-main","req":"GRD-6","tool":"Bash","input":{"command":"git push origin HEAD:main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-push-origin-main","req":"GRD-6","tool":"Bash","input":{"command":"git push origin main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-push-head-main-sub","req":"GRD-6","tool":"Bash","input":{"command":"git push origin HEAD:main"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"git-push-feat","req":"GRD-6","tool":"Bash","input":{"command":"git push origin feat/GM-1-x"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"git-push-sem-args-feat","req":"GRD-6","tool":"Bash","input":{"command":"git push"},"agente":"orq","esperado":{"faixa":"mostrar","evento":"producao.acesso"}}
+{"nome":"gh-pr-merge-main","req":"GRD-6","tool":"Bash","input":{"command":"gh pr merge 12"},"agente":"orq","contexto":{"branchAtual":"main"},"esperado":{"faixa":"ask"}}
+{"nome":"gh-pr-merge-base-desconhecida","req":"GRD-2","tool":"Bash","input":{"command":"gh pr merge 12"},"agente":"orq","esperado":{"faixa":"mostrar"}}
+{"nome":"d3-hostname-sem-alvo","req":"GRD-4","tool":"Bash","input":{"command":"curl https://prod-api.interno.com/x"},"agente":"orq","esperado":{"faixa":"mostrar"}}
+{"nome":"d3-hostname-nunca-ask","req":"GRD-4","tool":"Bash","input":{"command":"psql -h db-prd.interno.com -c 'DROP TABLE t'"},"agente":"orq","esperado":{"faixa":"mostrar"}}
+{"nome":"variavel-prod","req":"GRD-4","tool":"Bash","input":{"command":"psql $PROD_DATABASE_URL -c 'DROP TABLE t'"},"agente":"orq","esperado":{"faixa":"ask","alvo":"PROD_DATABASE_URL"}}
+{"nome":"url-credencial-reduzida","req":"GRD-4","tool":"Bash","input":{"command":"psql postgres://u:s3nh4@db.prod.exemplo.com/x -c 'SELECT 1'"},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"permitidos-casa","req":"GRD-4","tool":"Bash","input":{"command":"vercel deploy --prebuilt --prod"},"agente":"orq","esperado":{"faixa":"mostrar","evento":"producao.acesso"}}
+{"nome":"permitidos-nao-vale-sub","req":"GRD-4","tool":"Bash","input":{"command":"vercel deploy --prebuilt --prod"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"permitidos-segmento-composto","req":"GRD-4","tool":"Bash","input":{"command":"vercel deploy --prebuilt --prod && vercel --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"composto-pior-segmento","req":"GRD-2","tool":"Bash","input":{"command":"ls && vercel --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"prefixo-npx","req":"GRD-2","tool":"Bash","input":{"command":"npx vercel --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"prefixo-env","req":"GRD-2","tool":"Bash","input":{"command":"FOO=1 vercel --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"prefixo-bash-c","req":"GRD-2","tool":"Bash","input":{"command":"bash -c 'vercel --prod'"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"sem-secao-vercel","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"orq","config":"ausente","esperado":{"faixa":"silencio"}}
+{"nome":"modo-dontask-ask","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"orq","modo":"dontAsk","esperado":{"faixa":"ask"}}
+{"nome":"fallback-auto-ask","req":"GRD-4","tool":"Bash","input":{"command":"vercel --prod"},"agente":"orq","modo":"auto","esperado":{"faixa":"ask"}}
+{"nome":"modo-bypass-benigno","req":"GRD-4","tool":"Bash","input":{"command":"ls -la"},"agente":"orq","modo":"bypassPermissions","esperado":{"faixa":"silencio"}}
+{"nome":"prefixo-then","req":"GRD-2","tool":"Bash","input":{"command":"if true; then vercel --prod; fi"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"prefixo-do","req":"GRD-2","tool":"Bash","input":{"command":"for i in 1 2; do vercel --prod; done"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"prefixo-chaves","req":"GRD-2","tool":"Bash","input":{"command":"{ vercel --prod; }"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"prefixo-bang","req":"GRD-2","tool":"Bash","input":{"command":"! vercel --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"prefixo-npx-versao","req":"GRD-2","tool":"Bash","input":{"command":"npx vercel@latest --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"prefixo-pnpm-dlx-versao","req":"GRD-2","tool":"Bash","input":{"command":"pnpm dlx vercel@latest --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"prefixo-env-opcao-u","req":"GRD-2","tool":"Bash","input":{"command":"env -u FOO vercel --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"continuacao-linha","req":"GRD-2","tool":"Bash","input":{"command":"vercel --prod\\\n --yes"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"continuacao-linha-git","req":"GRD-2","tool":"Bash","input":{"command":"git \\\n push origin main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"newline-separador","req":"GRD-2","tool":"Bash","input":{"command":"ls\nvercel --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"subst-aspas-duplas","req":"GRD-2","tool":"Bash","input":{"command":"echo \"$(vercel --prod)\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"subst-crase-aspas-duplas","req":"GRD-2","tool":"Bash","input":{"command":"echo \"`vercel --prod`\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"subst-atribuicao","req":"GRD-2","tool":"Bash","input":{"command":"X=\"$(vercel --prod)\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-push-mais-main","req":"GRD-6","tool":"Bash","input":{"command":"git push origin +main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-push-refs-heads-main","req":"GRD-6","tool":"Bash","input":{"command":"git push origin refs/heads/main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-push-mirror","req":"GRD-6","tool":"Bash","input":{"command":"git push --mirror"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-push-all","req":"GRD-6","tool":"Bash","input":{"command":"git push --all origin"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-push-arroba-main","req":"GRD-6","tool":"Bash","input":{"command":"git push origin @"},"agente":"orq","contexto":{"branchAtual":"main"},"esperado":{"faixa":"ask"}}
+{"nome":"git-push-head-sem-branch","req":"GRD-6","tool":"Bash","input":{"command":"git push origin HEAD"},"agente":"orq","contexto":{"branchAtual":null},"esperado":{"faixa":"mostrar","evento":"producao.acesso","alvo":"HEAD"}}
+{"nome":"git-push-destino-resolvido-pelo-shell","req":"GRD-6","tool":"Bash","input":{"command":"git push origin \"$(git branch --show-current)\""},"agente":"orq","esperado":{"faixa":"mostrar","evento":"producao.acesso"}}
+{"nome":"supabase-db-url-prod","req":"GRD-6","tool":"Bash","input":{"command":"supabase db push --db-url postgresql://u:s3nh4@db.prod.exemplo.com/x"},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"supabase-flag-antes-do-sub","req":"GRD-6","tool":"Bash","input":{"command":"supabase --project-ref ref-prod db push"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"psql-conninfo-host","req":"GRD-6","tool":"Bash","input":{"command":"psql \"host=db.prod.exemplo.com dbname=x\" -c \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"psql-dbname-url","req":"GRD-6","tool":"Bash","input":{"command":"psql --dbname=postgresql://u:s3nh4@db.prod.exemplo.com/x -c \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"psql-varios-c-pior-vence","req":"GRD-6","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -c \"SELECT 1\" -c \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"psql-copy-e-escrita","req":"GRD-6","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -c \"\\copy t from 'x.csv'\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"alvo-url-sem-credencial-fora-de-regra","req":"GRD-4","tool":"Bash","input":{"command":"curl https://user:s3nh4@host.com/ca.pem"},"agente":"sub","esperado":{"faixa":"silencio","alvo":""}}
+{"nome":"alvo-sql-nunca-vira-alvo","req":"GRD-4","tool":"Bash","input":{"command":"psql -c \"UPDATE t SET a=1 WHERE b=c.key\""},"agente":"sub","esperado":{"faixa":"silencio","alvo":""}}
+{"nome":"mensagem-de-commit-nao-e-caminho","req":"GRD-5","tool":"Bash","input":{"command":"git commit -m \"fix: rotaciona cert.pem\""},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"grep-padrao-nao-e-caminho","req":"GRD-5","tool":"Bash","input":{"command":"grep .env .gitignore"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"jq-filtro-nao-e-caminho","req":"GRD-5","tool":"Bash","input":{"command":"jq .key package.json"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"grep-item-key-padrao","req":"GRD-5","tool":"Bash","input":{"command":"grep -r item.key src"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"existencia-ls","req":"GRD-5","tool":"Bash","input":{"command":"ls -la .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"existencia-test","req":"GRD-5","tool":"Bash","input":{"command":"test -f .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"existencia-colchete","req":"GRD-5","tool":"Bash","input":{"command":"[ -f .env ] && echo ok"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"existencia-stat","req":"GRD-5","tool":"Bash","input":{"command":"stat .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"existencia-git-log","req":"GRD-5","tool":"Bash","input":{"command":"git log -- .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"existencia-git-check-ignore","req":"GRD-5","tool":"Bash","input":{"command":"git check-ignore .env"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"heredoc-commit-corpo-nao-e-comando","req":"GRD-2","tool":"Bash","input":{"command":"git commit -m \"$(cat <<'EOF'\nfeat: x\n\nrm .env\nfix (parênteses :)\nEOF\n)\""},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"heredoc-commit-corpo-nao-e-comando-orq","req":"GRD-2","tool":"Bash","input":{"command":"git commit -m \"$(cat <<'EOF'\nfeat: x\n\nrm .env\nEOF\n)\""},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"heredoc-bash-direto-e-comando","req":"GRD-2","tool":"Bash","input":{"command":"bash <<'EOF'\nrm .env\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-sh-em-substituicao-e-comando","req":"GRD-2","tool":"Bash","input":{"command":"echo \"$(sh <<'EOF'\nrm .env\nEOF\n)\""},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-python-e-comando","req":"GRD-2","tool":"Bash","input":{"command":"python3 - <<'EOF'\ncat .env\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-cat-pipe-bash-e-comando","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'EOF' | bash\nrm .env\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-sem-aspas-executa-subst","req":"GRD-2","tool":"Bash","input":{"command":"cat <<EOF\nx $(rm .env) y\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-sem-aspas-executa-crase","req":"GRD-2","tool":"Bash","input":{"command":"cat <<EOF\nx `cat .env` y\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-aspas-duplas-no-delimitador","req":"GRD-2","tool":"Bash","input":{"command":"cat <<\"EOF\"\n$(rm .env)\nEOF"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"heredoc-barra-no-delimitador","req":"GRD-2","tool":"Bash","input":{"command":"cat <<\\EOF\n$(rm .env)\nEOF"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"heredoc-menos-com-tabs","req":"GRD-2","tool":"Bash","input":{"command":"cat <<-'EOF'\n\trm .env\n\tEOF"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"heredoc-dois-na-mesma-linha","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'A' <<'B'\nrm .env\nA\ncat .env\nB"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"heredoc-dois-e-comando-depois","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'A' <<'B'\nx\nA\ny\nB\nrm .env"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-sem-terminador-lido-como-comando","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'EOF'\nrm .env"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-delimitador-repetido-no-corpo","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'EOF'\nx\nEOF\nrm .env\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-comando-depois-do-fechamento","req":"GRD-2","tool":"Bash","input":{"command":"echo \"$(cat <<'EOF'\nx\nEOF\n)\"; vercel --prod"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"heredoc-redirect-env","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'EOF' > .env\nx\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-redirect-git-config","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'EOF' > .git/config\nx\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-redirect-settings","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'EOF' > .claude/settings.json\nx\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-aritmetica-nao-engole-o-resto","req":"GRD-2","tool":"Bash","input":{"command":"echo $((1<<2))\nrm .env"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-cat-pipe-bash-sem-espaco","req":"GRD-2","tool":"Bash","input":{"command":"cat <<'EOF'|bash\nrm .env\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-ssh-e-comando","req":"GRD-2","tool":"Bash","input":{"command":"ssh host <<'EOF'\nrm .env\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-bash-menos-tabs-e-comando","req":"GRD-2","tool":"Bash","input":{"command":"bash <<-'EOF'\n\trm .env\n\tEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"heredoc-tee-env-continua-escrita","req":"GRD-2","tool":"Bash","input":{"command":"tee .env <<'EOF'\nx\nEOF"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"bash-acima-do-teto-cauda-segredo-orq","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"echo ","char":"x","n":70000,"depois":" && rm .env"}},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","motivoContem":"64 KB"}}
+{"nome":"bash-acima-do-teto-cauda-segredo-sub","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"echo ","char":"x","n":70000,"depois":" && rm .env"}},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","motivoContem":"64 KB"}}
+{"nome":"bash-acima-do-teto-benigno-orq","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"echo ","char":"x","n":65537,"depois":""}},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","motivoContem":"64 KB"}}
+{"nome":"bash-acima-do-teto-benigno-sub","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"echo ","char":"x","n":65537,"depois":""}},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","motivoContem":"64 KB"}}
+{"nome":"bash-acima-do-teto-prefixo-prod-orq","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"vercel --prod ","char":"x","n":100000,"depois":""}},"agente":"orq","esperado":{"faixa":"ask","motivoContem":"PRODUÇÃO"}}
+{"nome":"bash-acima-do-teto-prefixo-prod-sub","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"vercel --prod ","char":"x","n":100000,"depois":""}},"agente":"sub","esperado":{"faixa":"deny","motivoContem":"PRODUÇÃO"}}
+{"nome":"bash-acima-do-teto-prefixo-segredo-sub","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"cat .env; echo ","char":"x","n":70000,"depois":""}},"agente":"sub","esperado":{"faixa":"deny","motivoContem":"segredo"}}
+{"nome":"bash-no-teto-65536-cauda-segredo","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"echo ","char":"x","n":65520,"depois":" && rm .env"}},"agente":"orq","esperado":{"faixa":"ask","motivoContem":"segredo"}}
+{"nome":"bash-no-teto-65536-benigno","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"echo ","char":"x","n":65531,"depois":""}},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"bash-teto-fora-do-bmp-65536-benigno","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"","char":"😀","n":32768,"depois":""}},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"bash-teto-fora-do-bmp-65537-pede","req":"GRD-3","tool":"Bash","input":{"gerar":{"antes":"","char":"😀","n":32768,"depois":"x"}},"agente":"orq","esperado":{"faixa":"ask","motivoContem":"64 KB"}}
+{"nome":"q24-mysql-Ne-sub","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -Ne \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-mysql-Ne-orq","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -Ne \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-mysql-BNe-sub","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -BNe \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-mysql-BNe-orq","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -BNe \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-mysql-sNe-sub","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -sNe \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-mysql-sNe-orq","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -sNe \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-mysql-ve-sub","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -ve \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-mysql-ve-orq","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -ve \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-mysql-Ne-colado-sub","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -Ne\"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-mysql-Ne-colado-orq","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -Ne\"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-mariadb-Ne-sub","req":"GRD-4","tool":"Bash","input":{"command":"mariadb -h db.prod.exemplo.com -Ne \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-mariadb-Ne-orq","req":"GRD-4","tool":"Bash","input":{"command":"mariadb -h db.prod.exemplo.com -Ne \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-mysql-h-colado-Ne-sub","req":"GRD-4","tool":"Bash","input":{"command":"mysql -hdb.prod.exemplo.com -Ne \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-mysql-h-colado-Ne-orq","req":"GRD-4","tool":"Bash","input":{"command":"mysql -hdb.prod.exemplo.com -Ne \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-mysql-exec-abreviado-sub","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com --exec=\"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-mysql-exec-abreviado-orq","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com --exec=\"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-psql-Xc-sub","req":"GRD-4","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -Xc \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-psql-Xc-orq","req":"GRD-4","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -Xc \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-psql-qAtc-sub","req":"GRD-4","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -qAtc \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-psql-qAtc-orq","req":"GRD-4","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -qAtc \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-psql-tAc-sub","req":"GRD-4","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -tAc \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-psql-tAc-orq","req":"GRD-4","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -tAc \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-psql-1c-sub","req":"GRD-4","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -1c \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-psql-1c-orq","req":"GRD-4","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -1c \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-psql-Ah-host-c-sub","req":"GRD-4","tool":"Bash","input":{"command":"psql -Ah db.prod.exemplo.com -c \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-psql-Ah-host-c-orq","req":"GRD-4","tool":"Bash","input":{"command":"psql -Ah db.prod.exemplo.com -c \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-psql-pghost-Xc-sub","req":"GRD-4","tool":"Bash","input":{"command":"PGHOST=db.prod.exemplo.com psql -Xc \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-psql-pghost-Xc-orq","req":"GRD-4","tool":"Bash","input":{"command":"PGHOST=db.prod.exemplo.com psql -Xc \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-psql-url-Atc-sub","req":"GRD-4","tool":"Bash","input":{"command":"psql postgres://u:s3nh4@db.prod.exemplo.com/x -Atc \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-psql-url-Atc-orq","req":"GRD-4","tool":"Bash","input":{"command":"psql postgres://u:s3nh4@db.prod.exemplo.com/x -Atc \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-psql-command-abreviado-sub","req":"GRD-4","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com --comm \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-psql-command-abreviado-orq","req":"GRD-4","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com --comm \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"q24-psql-Atc-prod-leitura-sub","req":"GRD-4","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -Atc \"SELECT 1\""},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny"}}
+{"nome":"q24-psql-Atc-prod-leitura-orq","req":"GRD-4","tool":"Bash","input":{"command":"psql -h db.prod.exemplo.com -Atc \"SELECT 1\""},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask"}}
+{"nome":"q24-mysql-Ne-local-log-sub","req":"GRD-6","tool":"Bash","input":{"command":"mysql -h 127.0.0.1 -Ne \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"log","evento":"operacao.destrutiva"}}
+{"nome":"q24-mysql-Ne-local-log-orq","req":"GRD-6","tool":"Bash","input":{"command":"mysql -h 127.0.0.1 -Ne \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"log","evento":"operacao.destrutiva"}}
+{"nome":"f4-prod-drop-mysql-e-orq","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -u root -e \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-drop-mysql-e-sub","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -u root -e \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-drop-mysql-execute-orq","req":"GRD-4","tool":"Bash","input":{"command":"mysql --host=db.prod.exemplo.com --execute=\"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-drop-mysql-execute-sub","req":"GRD-4","tool":"Bash","input":{"command":"mysql --host=db.prod.exemplo.com --execute=\"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-drop-mysql-execute-sep-orq","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com --execute \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-drop-mysql-execute-sep-sub","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com --execute \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-drop-mariadb-orq","req":"GRD-4","tool":"Bash","input":{"command":"mariadb -h db.prod.exemplo.com -e \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-drop-mariadb-sub","req":"GRD-4","tool":"Bash","input":{"command":"mariadb -h db.prod.exemplo.com -e \"DROP TABLE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-truncate-mysql-orq","req":"GRD-4","tool":"Bash","input":{"command":"mysql -hdb.prod.exemplo.com -e \"TRUNCATE t\""},"agente":"orq","esperado":{"faixa":"ask","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-prod-truncate-mysql-sub","req":"GRD-4","tool":"Bash","input":{"command":"mysql -hdb.prod.exemplo.com -e \"TRUNCATE t\""},"agente":"sub","esperado":{"faixa":"deny","alvo":"db.prod.exemplo.com"}}
+{"nome":"f4-local-truncate-mysql-orq","req":"GRD-6","tool":"Bash","input":{"command":"mysql -h 127.0.0.1 -e \"TRUNCATE t\""},"agente":"orq","esperado":{"faixa":"log","evento":"operacao.destrutiva"}}
+{"nome":"f4-local-truncate-mysql-sub","req":"GRD-6","tool":"Bash","input":{"command":"mysql -h 127.0.0.1 -e \"TRUNCATE t\""},"agente":"sub","esperado":{"faixa":"log","evento":"operacao.destrutiva"}}
+{"nome":"f4-homolog-drop-mariadb-orq","req":"GRD-6","tool":"Bash","input":{"command":"mariadb -h db.homolog.exemplo.com -e \"DROP TABLE t\""},"agente":"orq","esperado":{"faixa":"mostrar","evento":"operacao.destrutiva"}}
+{"nome":"f4-prod-select-mysql-orq","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -e \"SELECT 1\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"f4-prod-select-mysql-sub","req":"GRD-4","tool":"Bash","input":{"command":"mysql -h db.prod.exemplo.com -e \"SELECT 1\""},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"permitidos-leitura","req":"GRD-4","tool":"Bash","input":{"command":"curl -sS https://api.exemplo.com/health"},"agente":"orq","esperado":{"faixa":"mostrar","evento":"producao.acesso","acao":"leitura"}}
+{"nome":"permitidos-leitura-nao-vale-sub","req":"GRD-4","tool":"Bash","input":{"command":"curl -sS https://api.exemplo.com/health"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny"}}
+{"nome":"vercel-logs-prod-pede","req":"GRD-4","tool":"Bash","input":{"command":"vercel logs --prod"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","ambiente":"prod"}}
+{"nome":"variavel-prod-leitura-pede","req":"GRD-4","tool":"Bash","input":{"command":"echo $PROD_DATABASE_URL"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask"}}
+{"nome":"r2-ssh-host-nu-orq","req":"GRD-4","tool":"Bash","input":{"command":"ssh api.exemplo.com"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","ambiente":"prod"}}
+{"nome":"r2-ssh-host-nu-sub","req":"GRD-4","tool":"Bash","input":{"command":"ssh api.exemplo.com"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","ambiente":"prod"}}
+{"nome":"r2-ssh-porta-host-nu-orq","req":"GRD-4","tool":"Bash","input":{"command":"ssh -p 22 api.exemplo.com"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","ambiente":"prod"}}
+{"nome":"r2-ssh-porta-host-nu-sub","req":"GRD-4","tool":"Bash","input":{"command":"ssh -p 22 api.exemplo.com"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","ambiente":"prod"}}
+{"nome":"r2-scp-host-caminho-orq","req":"GRD-4","tool":"Bash","input":{"command":"scp dump.sql api.exemplo.com:/tmp"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","ambiente":"prod"}}
+{"nome":"r2-scp-host-caminho-sub","req":"GRD-4","tool":"Bash","input":{"command":"scp dump.sql api.exemplo.com:/tmp"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","ambiente":"prod"}}
+{"nome":"r2-rsync-host-caminho-orq","req":"GRD-4","tool":"Bash","input":{"command":"rsync -a x api.exemplo.com:/y"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","ambiente":"prod"}}
+{"nome":"r2-rsync-host-caminho-sub","req":"GRD-4","tool":"Bash","input":{"command":"rsync -a x api.exemplo.com:/y"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","ambiente":"prod"}}
+{"nome":"r2-nc-host-porta-orq","req":"GRD-4","tool":"Bash","input":{"command":"nc api.exemplo.com 443"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","ambiente":"prod"}}
+{"nome":"r2-nc-host-porta-sub","req":"GRD-4","tool":"Bash","input":{"command":"nc api.exemplo.com 443"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","ambiente":"prod"}}
+{"nome":"r2-scp-host-nao-declarado","req":"GRD-4","tool":"Bash","input":{"command":"scp dump.sql bkp.local:/tmp"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"r2-ssh-host-nao-declarado","req":"GRD-4","tool":"Bash","input":{"command":"ssh outro.exemplo.net"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"r3-ssh-host-banco-orq","req":"GRD-4","tool":"Bash","input":{"command":"ssh db.prod.exemplo.com"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","ambiente":"prod"}}
+{"nome":"r3-ssh-host-banco-sub","req":"GRD-4","tool":"Bash","input":{"command":"ssh db.prod.exemplo.com"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","ambiente":"prod"}}
+{"nome":"r3-nc-host-banco-orq","req":"GRD-4","tool":"Bash","input":{"command":"nc db.prod.exemplo.com 5432"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","ambiente":"prod"}}
+{"nome":"r3-nc-host-banco-sub","req":"GRD-4","tool":"Bash","input":{"command":"nc db.prod.exemplo.com 5432"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","ambiente":"prod"}}
+{"nome":"r3-http-host-caminho-orq","req":"GRD-4","tool":"Bash","input":{"command":"http api.exemplo.com/x"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","ambiente":"prod"}}
+{"nome":"r3-http-host-caminho-sub","req":"GRD-4","tool":"Bash","input":{"command":"http api.exemplo.com/x"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","ambiente":"prod"}}
+{"nome":"r3-xh-host-caminho-orq","req":"GRD-4","tool":"Bash","input":{"command":"xh api.exemplo.com/x"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","ambiente":"prod"}}
+{"nome":"r3-xh-host-caminho-sub","req":"GRD-4","tool":"Bash","input":{"command":"xh api.exemplo.com/x"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","ambiente":"prod"}}

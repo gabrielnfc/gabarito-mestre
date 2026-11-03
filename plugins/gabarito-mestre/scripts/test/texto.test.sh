@@ -21,6 +21,8 @@
 #  B8  PR_TEMPLATE.md listar tipo que não está em tiposComEscopoDePbi/tiposLivres (DEFAULTS)
 #  F6-R7 usar `grep -c '"hooks"'` sem `[[:space:]]*:` (sempre 1, por causa da keyword)
 #  "77 testes" reintroduzido em plugins/gabarito-mestre, .github/, README.md ou CONTRIBUTING.md
+#  A4 r1: voltar a citar --gates-substituir como opção, ou `test -f …/.instalado.json` na skill
+#  A3 r1: renomear o job instalador do ci.yml ⇒ nome exato do ruleset; doctor-self deixar de exigir configurada
 #  renomear no ci.yml um dos 4 checks exigidos pelo ruleset de main, ou tirar ubuntu-latest/macos-latest da matriz de hooks
 #  nomes da 1.0.1 (4 skills · 3 agents · 1 command · 2+3 hooks · 7 gates + 4 scripts · R1–R18 · G1–G9 · I1–I12)
 set -u
@@ -108,8 +110,8 @@ for f in $(grep -oE '[A-Za-z0-9_-]+\.(mjs|sh)' "$A" | sort -u); do
 done
 [ "$b1b_falhou" -eq 0 ] && ok "todo *.mjs/*.sh citado no AGENTS.md existe em gates/scripts/ ou hooks/"
 
-# ── B2 (handoff §B.2) — DISPATCH idêntico, hatches usados, ≤ 40 == MAX_LINHAS, inegociável ──
-echo "── B2: DISPATCH idêntico, hatches em hooks/, ≤ 40 == MAX_LINHAS, inegociável cobre R1–R21"
+# ── B2 (handoff §B.2) — DISPATCH idêntico, hatches usados, ≤ 6.000 caracteres == LIMITE_CONTEXTO, inegociável ──
+echo "── B2: DISPATCH idêntico, hatches em hooks/, ≤ 6.000 caracteres == LIMITE_CONTEXTO, inegociável cobre R1–R21"
 DISPATCH_FMT='DISPATCH Task <N> slots=<slots> worktree wt/<PBI>-<n>'
 # Achado MAJOR #1 (review T25b, task-25b-review.md): `grep -qF` só prova PRESENÇA em algum lugar do
 # arquivo — referencia.md cita a linha DISPATCH 3x (§2.3 l.62, §3.1 l.92, "Antes de despachar" l.150);
@@ -124,11 +126,14 @@ for par in "$Q:prompts.md" "$R:referencia.md"; do
     '[ "'"$n_lit"'" -ge 1 ] && [ "'"$n_lit"'" -eq "'"$n_can"'" ]' \
     "$nome tem $n_lit ocorrência(s) de 'DISPATCH Task' mas só $n_can casa(m) o formato completo"
 done
-for hv in GABARITO_ALLOW_DESTRUCTIVE GABARITO_ALLOW_PRODUCTION GABARITO_ALLOW_VERSIONING; do
-  check "$hv citado no AGENTS.md existe em hooks/" "grep -q '$hv' '$A' && grep -rlq '$hv' '$P/hooks/'*.sh >/dev/null 2>&1" "hatch sem uso em hooks/"
-done
-MAXL=$(grep -oE "MAX_LINHAS = [0-9]+" "$CS" | grep -oE '[0-9]+')
-check "'≤ 40' do AGENTS.md bate com MAX_LINHAS=$MAXL de cartao-sessao.mjs" "grep -q '≤ 40 linhas' '$A' && [ '$MAXL' = 40 ]" "MAX_LINHAS ≠ 40 ou AGENTS.md não cita ≤ 40 linhas"
+# Q9/REQ-GRD-5: sem escape hatch em lugar nenhum de plugins/** (código, reference/, templates/, skills, testes),
+# exceto este arquivo, que precisa citar o nome para procurar por ele. Specs e ledgers em docs/ ficam fora.
+HATCH_ACHADOS=$(grep -rIl 'GABARITO_ALLOW' "$P" 2>/dev/null | grep -v "/scripts/test/texto.test.sh$" || true)
+check "GABARITO_ALLOW = 0 em plugins/** (REQ-GRD-5, Q9)" '[ -z "$HATCH_ACHADOS" ]' "hatch residual em: $(printf '%s' "$HATCH_ACHADOS" | tr '\n' ' ')"
+GUARDS_CITADOS=$(grep -rIlE 'guard-(destructive|production|versioning)' "$P" 2>/dev/null | grep -v "/scripts/test/texto.test.sh$" || true)
+check "nenhum guard bash antigo citado em plugins/** (REQ-GRD-3, REQ-INF-1)" '[ -z "$GUARDS_CITADOS" ]' "menção residual em: $(printf '%s' "$GUARDS_CITADOS" | tr '\n' ' ')"
+MAXL=$(grep -oE "LIMITE_CONTEXTO = [0-9]+" "$CS" | grep -oE '[0-9]+')
+check "'≤ 6.000 caracteres' do AGENTS.md bate com LIMITE_CONTEXTO=$MAXL de cartao-sessao.mjs" "grep -q '≤ 6.000 caracteres' '$A' && [ '$MAXL' = 6000 ]" "LIMITE_CONTEXTO ≠ 6000 ou AGENTS.md não cita ≤ 6.000 caracteres"
 check "'inegociável' cobre R1–R21" "grep -q 'inegociável (R1–R21' '$A'" "frase de cobertura ausente ou alcance diferente"
 
 # ── B3 (handoff §B.3) — adocao.md tag-semver opcional; prompts.md passo 9 ─────────────
@@ -217,9 +222,8 @@ check "SKILL.md conformidade: fio condutor · contenda (R21) · Epic: PBIs" "gre
 # ── pacote — versões, hooks (F6-R7), 77 testes, nomes da 1.0.1 (PKG-1, PKG-2) ─────────
 echo "── pacote — versões, sem hooks em plugin.json, sem 77 testes, nomes da 1.0.1"
 v1=$(node -p "require('$P/.claude-plugin/plugin.json').version" 2>/dev/null)
-v2=$(node -p "require('$ROOT/.claude-plugin/marketplace.json').plugins[0].version" 2>/dev/null)
 v3=$(node -p "require('$P/gates/package.json').version" 2>/dev/null)
-check "os três version == 1.1.0 (achei '$v1' '$v2' '$v3')" '[ "$v1" = "$v2" ] && [ "$v2" = "$v3" ] && [ "$v1" = "1.1.0" ]' "versões divergem ou ≠ 1.1.0"
+check "version plugin == gates == 2.0.0-alpha.1 (achei '$v1' '$v3')" '[ "$v1" = "$v3" ] && [ "$v1" = "2.0.0-alpha.1" ]' "versões divergem ou ≠ 2.0.0-alpha.1"
 # RULING F6-R7 (2): o grep do plano `grep -c '"hooks"'` é sempre verdadeiro — a keyword do array já
 # conta 1. A checagem correta ancora na FORMA DE CHAVE JSON: `"hooks"` seguido de `:` (com ou sem espaço).
 HOOKS_KEY=$(grep -c '"hooks"[[:space:]]*:' "$P/.claude-plugin/plugin.json")
@@ -240,10 +244,20 @@ check "ci.yml: matriz de hooks com ubuntu-latest e macos-latest (ruleset)" 'OSL=
 # de pedir fetch-depth: 0.
 INSTALADOR_JOB=$(awk '/^  instalador:/{f=1;next} f&&/^  [a-z][a-z-]*:/{f=0} f' "$CI")
 check "ci.yml: job instalador com fetch-depth: 0 (cenário 8 lê 1c85330)" 'printf "%s\n" "$INSTALADOR_JOB" | grep -qE "fetch-depth:[[:space:]]*0"' "checkout do job instalador sem fetch-depth: 0 — cenário 8 do instalar.test.sh precisa do histórico completo"
+check "ci.yml: check do job instalador com o NOME EXATO exigido pelo ruleset de main (A3)" 'printf "%s\n" "$INSTALADOR_JOB" | grep -qxF "    name: instalar.sh — fixture 1.0.1, --atualizar, --gates-substituir (bash \${{ matrix.os }})"' "nome do job instalador diverge do contexto exigido pelo ruleset: os 2 checks (ubuntu/macos) nunca reportam em PR para main"
+DOCTOR_JOB=$(awk '/^  doctor-self:/{f=1;next} f&&/^  [a-z][a-z-]*:/{f=0} f' "$CI")
+check "ci.yml: doctor-self exige camada 'configurada' (no CI limpo 'ativa' é falso positivo)" 'printf "%s\n" "$DOCTOR_JOB" | grep -q "camada.estado!==.configurada."' "doctor-self não falha quando a camada volta a ativa num checkout limpo"
+# Canal next (T8, Q12): CI roda em push para next; versao-medida avisa (::warning) e nunca falha.
+PUSH_BLOCK=$(awk '/^on:/{f=1;next} f&&/^[a-z]/{f=0} f' "$CI")
+check "ci.yml: push.branches inclui next (canal next)" 'printf "%s\n" "$PUSH_BLOCK" | grep -E "^ +branches:" | grep -qE "\bnext\b"' "next ausente de push.branches"
+MEDIDA_JOB=$(awk '/^  versao-medida:/{f=1;next} f&&/^  [a-z][a-z-]*:/{f=0} f' "$CI")
+check "ci.yml: job versao-medida existe (Q12)" '[ -n "$MEDIDA_JOB" ]' "job versao-medida ausente"
+check "ci.yml: versao-medida emite ::warning (Q12)" 'printf "%s\n" "$MEDIDA_JOB" | grep -q "::warning"' "::warning ausente"
+check "ci.yml: versao-medida nunca falha — sem exit 1 (Q12)" '! printf "%s\n" "$MEDIDA_JOB" | grep -qE "exit[[:space:]]+[1-9]"' "versao-medida tem exit não-zero"
 nomes_falhou=0
 for f in skills/gabarito-instalar/SKILL.md skills/gabarito-conformidade/SKILL.md skills/gabarito-review/SKILL.md skills/gabarito-spike/SKILL.md \
          agents/gabarito-implementador.md agents/gabarito-revisor.md agents/gabarito-spike.md commands/gabarito-doctor.md \
-         hooks/guard-destructive.sh hooks/guard-production.sh hooks/guard-versioning.sh hooks/session-card.sh hooks/remind-orchestrator.sh \
+         hooks/session-card.sh gates/dist/guarda.js hooks/remind-orchestrator.sh \
          gates/src/mass-mutation-guard.ts gates/src/production-host-guard.ts gates/eslint/no-unfiltered-mass-mutation.js \
          gates/scripts/migrations-guard.mjs gates/scripts/deploy-order-check.mjs gates/scripts/quality-ratchet.mjs gates/scripts/harness-doctor.mjs \
          gates/scripts/onboarding-config.mjs gates/scripts/capacidade.mjs gates/scripts/versionamento-check.mjs gates/scripts/cartao-sessao.mjs; do
@@ -252,7 +266,17 @@ done
 for rn in $(seq 1 18); do grep -qE "(^|[^A-Z0-9])R$rn([^0-9]|$)" "$A" || { falha "nomes da 1.0.1: R$rn" "ausente do AGENTS.md"; nomes_falhou=1; }; done
 for gn in $(seq 1 9);  do grep -qE "(^|[^A-Z0-9])G$gn([^0-9]|$)" "$A" || { falha "nomes da 1.0.1: G$gn" "ausente do AGENTS.md"; nomes_falhou=1; }; done
 for in_ in $(seq 1 12); do grep -qE "(^|[^A-Z0-9])I$in_([^0-9]|$)" "$A" || { falha "nomes da 1.0.1: I$in_" "ausente do AGENTS.md"; nomes_falhou=1; }; done
-[ "$nomes_falhou" -eq 0 ] && ok "nomes da 1.0.1 presentes: 4 skills, 3 agents, 1 command, 2 hooks (+3), 7 gates (+4 scripts), R1–R18, G1–G9, I1–I12"
+[ "$nomes_falhou" -eq 0 ] && ok "nomes da 1.0.1 presentes: 4 skills, 3 agents, 1 command, 1 guarda + 2 hooks (+3), 7 gates (+4 scripts), R1–R18, G1–G9, I1–I12"
+
+# A4 (T6 r1): a skill oficial e o README não mandam rodar flag removida nem dependem do manifesto que a 2.0 não grava.
+# Menção que DIZ que a flag acabou ("não há/existe mais") é permitida; qualquer outra, não.
+FLAG_VIVA=$(grep -rn -e '--gates-substituir' "$P" "$ROOT/README.md" --include='*.md' --include='*.sh' --include='*.mjs' --include='*.json' 2>/dev/null | grep -v -e '/scripts/test/' -e '/gates/test/' -e '/gates/dist/' -e 'node_modules' | grep -viE 'n(ã|a)o (h(á|a)|existe) mais' | wc -l | tr -d ' ')
+check "sem menção viva a --gates-substituir em plugins/** e README (flag removida na 2.0)" '[ "'"$FLAG_VIVA"'" -eq 0 ]' "flag removida ainda citada como utilizável ($FLAG_VIVA linha(s))"
+SKILL_I="$P/skills/gabarito-instalar/SKILL.md"
+check "skill gabarito-instalar não usa 'test -f …/.instalado.json' para detectar versão" '! grep -qE "^test -f tools/gabarito-gates/.instalado.json" "$SKILL_I"' "a skill ainda decide pela existência de um manifesto que o instalador 2.0 não grava"
+check "skill gabarito-instalar não promete .instalado.json na tabela do que o instalador cria" '! grep -E "^\| .tools/gabarito-gates/. \+ .\.instalado\.json" "$SKILL_I" | grep -q .' "tabela da fase 1 promete o manifesto"
+check "README não promete .instalado.json entre o que o instalador cria (só diz que acabou)" '! grep -qE "\+ .\.instalado\.json" "'"$ROOT"'/README.md"' "README ainda promete o manifesto"
+check "skill gabarito-instalar não promete squash-titulo-pr no attest.json (template não o tem; chave morta)" '! grep -E "^\| .\.harness/attest\.json." "$SKILL_I" | grep -q "squash-titulo-pr"' "tabela promete atestado removido"
 
 echo "── $falhas falha(s)"
 [ "$falhas" -eq 0 ]

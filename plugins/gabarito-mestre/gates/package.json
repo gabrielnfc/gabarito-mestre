@@ -1,6 +1,6 @@
 {
   "name": "gabarito-gates",
-  "version": "1.1.0",
+  "version": "2.0.0-alpha.1",
   "description": "Gates executáveis do Gabarito Mestre — as regras que a máquina lembra, para que ninguém precise.",
   "type": "module",
   "license": "MIT",
@@ -23,7 +23,8 @@
     "harness-cartao-sessao": "./scripts/cartao-sessao.mjs"
   },
   "scripts": {
-    "test": "npm run test:mjs && npm run test:ts",
+    "build": "node scripts/build.mjs",
+    "test": "node --experimental-strip-types --test test/*.test.mjs test/*.test.ts",
     "test:mjs": "node --test test/*.test.mjs",
     "test:ts": "node --experimental-strip-types --test test/*.test.ts",
     "doctor": "node scripts/harness-doctor.mjs --explain",
@@ -33,7 +34,9 @@
   },
   "files": [
     "src",
+    "dist",
     "scripts",
+    "lib",
     "eslint",
     "README.md"
   ],

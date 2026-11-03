@@ -18,7 +18,7 @@ Obrigado por querer conferir o molde. Este repositório segue o próprio harness
 claude plugin validate ./plugins/gabarito-mestre --strict      # Validation passed
 claude plugin validate . --strict                               # marketplace
 cd plugins/gabarito-mestre/gates && npm test                     # 268 testes (medido em 2026-09-25)
-node --test plugins/gabarito-mestre/hooks/test/guards.test.mjs  # corpora dos hooks
+node --test plugins/gabarito-mestre/hooks/test/*.test.mjs  # corpora dos hooks
 ```
 
 Requisitos: Node ≥ 22.18, bash (os hooks são testados em bash 3.2 do macOS — não use bashismo ≥ 4), `jq` opcional.

@@ -1,0 +1,8 @@
+{
+  "ambientes": {
+    "teste":   { "hosts": ["127.0.0.1", "localhost"], "bancos": ["127.0.0.1"], "mcps": ["mcp__supabase_local__"] },
+    "homolog": { "hosts": ["staging.exemplo.com"], "projetos": ["ref-homolog"], "bancos": ["db.homolog.exemplo.com"], "mcps": ["mcp__supabase_homolog__"] },
+    "prod":    { "hosts": ["api.exemplo.com"], "projetos": ["ref-prod"], "bancos": ["db.prod.exemplo.com"], "mcps": ["mcp__supabase_prod__"], "variaveis": ["PROD_DATABASE_URL"], "branches": ["main"] }
+  },
+  "permitidos": ["vercel deploy --prebuilt --prod", "curl -sS https://api.exemplo.com/health"]
+}
