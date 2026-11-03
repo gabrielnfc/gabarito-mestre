@@ -43,6 +43,20 @@ describe('hooks.json — registro dos hooks (T16)', () => {
     assert.deepEqual(cmds(g), ['bash "${CLAUDE_PLUGIN_ROOT}/hooks/remind-orchestrator.sh"']);
     assert.equal(g.hooks[0].timeout, 5);
   });
+  test('SubagentStart tem regras-subagent sem matcher, shell bash e timeout 5; nenhum outro evento o usa (Q27)', () => {
+    assert.equal(cfg.SubagentStart.length, 1);
+    const g = cfg.SubagentStart[0];
+    assert.equal(g.matcher, undefined);
+    assert.deepEqual(cmds(g), ['bash "${CLAUDE_PLUGIN_ROOT}/hooks/regras-subagent.sh"']);
+    assert.equal(g.hooks[0].type, 'command');
+    assert.equal(g.hooks[0].shell, 'bash');
+    assert.equal(g.hooks[0].timeout, 5);
+    // sessão de orquestrador não recebe as regras: só SubagentStart as injeta
+    for (const [ev, grupos] of Object.entries(cfg)) {
+      if (ev === 'SubagentStart') continue;
+      assert.equal(JSON.stringify(grupos).includes('regras-subagent'), false, ev);
+    }
+  });
   test('todo comando bash aponta para um script existente em hooks/ com shebang bash', () => {
     for (const grupos of Object.values(cfg)) for (const g of grupos) for (const h of g.hooks) {
       if (h.command.startsWith('node ')) continue; // guarda.js: coberto no teste dos matchers
