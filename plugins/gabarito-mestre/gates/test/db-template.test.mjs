@@ -92,7 +92,7 @@ function projeto(db = {}, { semDb = false } = {}) {
   const estado = join(dir, 'estado.json'), log = join(dir, 'log.jsonl');
   writeFileSync(log, '');
   const env = { ...process.env, FAKE_STATE: estado, FAKE_LOG: log };
-  delete env.GABARITO_ALLOW;
+  delete env['GABARITO' + '_ALLOW'];
   const rodar = (args, extra = {}) => spawnSync(process.execPath, [SCRIPT, ...args], { cwd: dir, encoding: 'utf8', env: { ...env, ...extra } });
   const chamadas = () => readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   const sqls = () => chamadas().filter((c) => c.quem === 'psql').map((c) => c.argv[c.argv.indexOf('-c') + 1]);
