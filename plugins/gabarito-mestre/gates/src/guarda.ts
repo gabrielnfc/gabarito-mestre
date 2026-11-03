@@ -329,8 +329,16 @@ function pausado(raizes: Array<string | null>): boolean {
   return false;
 }
 
-/** Sob pausa: `Agent`/`Task` a todos; qualquer ferramenta a subagent. O orquestrador segue a guarda normal nas outras. */
-const negaPorPausa = (entrada: EntradaHook): boolean => entrada.tool_name === 'Agent' || entrada.tool_name === 'Task' || ehSubagent(entrada);
+/** A única ferramenta que o subagent ainda usa sob pausa: devolver o relatório (nome exato). */
+const HANDBACK = 'SubagentHandback';
+
+/** Sob pausa: `Agent`/`Task` a todos; qualquer ferramenta a subagent, salvo a de devolver o relatório. O orquestrador segue a guarda normal nas outras. */
+const negaPorPausa = (entrada: EntradaHook): boolean =>
+  entrada.tool_name === 'Agent' || entrada.tool_name === 'Task' || (ehSubagent(entrada) && entrada.tool_name !== HANDBACK);
+
+/** Sem pausa, o matcher `.*` entrega toda ferramenta; só estas têm classificação. O resto sai em silêncio, sem classificar. */
+const CLASSIFICAVEIS = new Set(['Bash', 'Edit', 'Write', 'Read', 'Grep', 'Agent', 'Task']);
+const classificavel = (nome: string): boolean => CLASSIFICAVEIS.has(nome) || nome.startsWith('mcp__');
 
 /** `loop.pausa {negado}`: só se o diário estiver são; qualquer falha é silenciosa (a decisão já saiu). */
 function registrarPausa(entrada: EntradaHook, raiz: string | null): void {
@@ -384,6 +392,10 @@ function principal(): void {
   if (negaPorPausa(entrada) && pausado([raizSessao, raizCwd])) {
     emitir(Buffer.from(`${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: MSG_PAUSA } })}\n`));
     registrarPausa(entrada, raizSessao);
+    return;
+  }
+  if (!classificavel(entrada.tool_name)) {
+    jaEscreveu = true; // decisão final: silêncio
     return;
   }
 

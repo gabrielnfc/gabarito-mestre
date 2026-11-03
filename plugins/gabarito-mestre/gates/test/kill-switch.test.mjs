@@ -10,6 +10,9 @@
  *  K6  ignorar o checkout principal ⇒ `pausar-worktree-obedece-principal` falha
  *  K7  mensagem diferente ⇒ `mensagem-nao-ensina-bypass` falha
  *  K8  erro de stat libera ⇒ `pausar-erro-de-stat-nao-libera` falha
+ *  W1  matcher de hooks.json sem `.*` ⇒ `matcher-cobre-glob` falha
+ *  W2  handback negado sob pausa ⇒ `handback-passa-sob-pausa` falha
+ *  W3  anel sem o `.harness/PAUSAR` absoluto ⇒ `pausar-absoluto-worktree-pede` falha
  */
 
 import { test, describe } from 'node:test';
@@ -17,7 +20,14 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { git, montar, rodar, eventosDe } from './_adaptador-helpers.mjs';
+import { fileURLToPath } from 'node:url';
+import { CONFIG, git, montar, rodar, eventosDe } from './_adaptador-helpers.mjs';
+
+const HOOKS = JSON.parse(readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', 'hooks', 'hooks.json'), 'utf8'));
+/** Quantos hooks de PreToolUse da guarda disparam para a ferramenta, pelo matcher real de hooks.json (anchorado como o Claude Code). */
+function disparos(tool) {
+  return HOOKS.hooks.PreToolUse.filter((g) => new RegExp(`^(?:${g.matcher})$`).test(tool) && g.hooks.some((h) => /guarda\.js/.test(h.command))).length;
+}
 
 const MSG = 'pausado: /gabarito retomar';
 const SUB = { agent_id: 'a1', agent_type: 'implementador' };
@@ -57,7 +67,9 @@ describe('pausado: Agent e subagent', () => {
       ['Grep', { pattern: 'x' }],
       ['Glob', { pattern: '*' }],
       ['mcp__servidor__ferramenta', { a: 1 }],
-      ['SubagentHandback', { message: 'pronto' }],
+      ['NotebookEdit', { notebook_path: join(repo, 'a.ipynb') }],
+      ['WebFetch', { url: 'https://exemplo.com' }],
+      ['FerramentaQueNaoExiste', {}],
     ];
     for (const [tool, input] of casos) {
       const r = rodar(repo, tool, input, SUB);
@@ -211,6 +223,16 @@ describe('raiz', () => {
   });
 });
 
+describe('raiz da sessão e raiz do cwd valem cada uma (R1, R2)', () => {
+  test('pausar-raiz-sessao-e-raiz-cwd: pausa só na sessão ou só no cwd nega', () => {
+    const a = montar();
+    const b = montar();
+    pausar(a);
+    assert.equal(rodar(a, 'Read', { file_path: join(b, 'README.md') }, { ...SUB, cwd: b }, { repo: a, cwd: b }).decisao, 'deny');
+    assert.equal(rodar(b, 'Read', { file_path: join(a, 'README.md') }, { ...SUB, cwd: a }, { repo: b, cwd: a }).decisao, 'deny');
+  });
+});
+
 describe('integridade e mensagem', () => {
   test('pausar-remocao-pelo-modelo-e-integridade: rm, mv e redirecionamento sobre PAUSAR', () => {
     const repo = montar();
@@ -231,15 +253,49 @@ describe('integridade e mensagem', () => {
     assert.equal(rodar(repo, 'Bash', { command: 'rm .harness/PAUSAR' }, SUB).decisao, 'deny');
   });
 
-  // LACUNA RELATADA (fora do escopo da T7: aneis.ts): o anel resolve caminho absoluto só contra a raiz da cwd; o PAUSAR do
-  // principal, visto da worktree, fica fora dela. `todo` registra a lacuna sem quebrar a suíte.
-  test('pausar-remocao-pelo-principal-a-partir-da-worktree: caminho absoluto até o PAUSAR do principal', { todo: 'anel de integridade não cobre o checkout principal visto da worktree' }, () => {
+  test('pausar-absoluto-worktree-pede: caminho absoluto até o PAUSAR do principal, visto da worktree (Edit, Write e Bash)', () => {
     const repo = montar();
     const wt = join(realpathSync(mkdtempSync(join(tmpdir(), 'gm-kill-wt-'))), 'wt');
     git(repo, 'worktree', 'add', '-q', '-b', 'wt/GM-9-3', wt);
+    const alvo = pausar(repo);
+    for (const command of [`rm ${alvo}`, `mv ${alvo} /tmp/x`, `: > ${alvo}`]) {
+      const o = rodar(wt, 'Bash', { command });
+      assert.equal(o.decisao, 'ask', command);
+    }
+    for (const tool of ['Edit', 'Write']) {
+      const o = rodar(wt, tool, { file_path: alvo, content: '', old_string: 'a', new_string: 'b' });
+      assert.equal(o.decisao, 'ask', tool);
+      assert.match(o.motivo, /integridade/, tool);
+    }
+  });
+
+  test('pausar-cd-rm-pede: cd até o principal e rm relativo', () => {
+    const repo = montar();
+    const wt = join(realpathSync(mkdtempSync(join(tmpdir(), 'gm-kill-wt-'))), 'wt');
+    git(repo, 'worktree', 'add', '-q', '-b', 'wt/GM-9-4', wt);
     pausar(repo);
-    const o = rodar(wt, 'Bash', { command: `rm ${join(repo, '.harness', 'PAUSAR')}` });
-    assert.equal(o.decisao, 'ask');
+    for (const command of [`cd ${repo} && rm .harness/PAUSAR`, `cd ${repo}; rm -f ./.harness/PAUSAR`]) {
+      const o = rodar(wt, 'Bash', { command });
+      assert.equal(o.decisao, 'ask', command);
+      assert.match(o.motivo, /integridade/, command);
+    }
+  });
+
+  test('subagent-pausar-absoluto-nega: o subagent leva deny no caminho absoluto, sem pausa ativa', () => {
+    const repo = montar();
+    const wt = join(realpathSync(mkdtempSync(join(tmpdir(), 'gm-kill-wt-'))), 'wt');
+    git(repo, 'worktree', 'add', '-q', '-b', 'wt/GM-9-5', wt);
+    const alvo = join(repo, '.harness', 'PAUSAR');
+    assert.equal(rodar(wt, 'Bash', { command: `rm ${alvo}` }, SUB).decisao, 'deny');
+    assert.equal(rodar(wt, 'Write', { file_path: alvo, content: '' }, SUB).decisao, 'deny');
+  });
+
+  test('pausar-ler-pede: falso positivo aceito, ler o arquivo pelo Bash também pede ao orquestrador', () => {
+    const repo = montar();
+    pausar(repo);
+    assert.equal(rodar(repo, 'Bash', { command: 'cat .harness/PAUSAR' }).decisao, 'ask');
+    // o anel de segredo continua vencendo a integridade
+    assert.match(rodar(repo, 'Bash', { command: 'cat .env .harness/PAUSAR' }).motivo, /segredo/);
   });
 
   test('mensagem-nao-ensina-bypass: texto exato, sem systemMessage e sem caminho', () => {
@@ -261,5 +317,64 @@ describe('integridade e mensagem', () => {
     const r = rodar(repo, 'Agent', { description: 'x', prompt: 'y' });
     assert.equal(r.motivo, MSG);
     assert.equal(readFileSync(join(repo, '.harness', 'PAUSAR'), 'utf8'), 'qualquer coisa\n');
+  });
+});
+
+describe('o matcher de hooks.json cobre toda ferramenta', () => {
+  test('matcher-cobre-glob: Glob, NotebookEdit, Skill, SendMessage e as demais disparam a guarda uma vez', () => {
+    for (const tool of ['Glob', 'NotebookEdit', 'Skill', 'SendMessage', 'TodoWrite', 'ToolSearch', 'Monitor', 'TaskStop', 'EnterWorktree', 'Bash', 'Edit', 'Agent', 'mcp__x__y']) {
+      assert.equal(disparos(tool), 1, tool);
+    }
+  });
+
+  test('matcher-cobre-webfetch: WebFetch e WebSearch disparam, e o subagent leva deny sob pausa', () => {
+    const repo = montar();
+    pausar(repo);
+    for (const tool of ['WebFetch', 'WebSearch']) {
+      assert.equal(disparos(tool), 1, tool);
+      const r = rodar(repo, tool, { url: 'https://exemplo.com', query: 'x' }, SUB);
+      assert.equal(r.decisao, 'deny', tool);
+      assert.equal(r.motivo, MSG, tool);
+    }
+  });
+
+  test('handback-passa-sob-pausa: SubagentHandback dispara o hook e passa em silêncio; só o nome exato', () => {
+    const repo = montar();
+    pausar(repo);
+    assert.equal(disparos('SubagentHandback'), 1);
+    const r = rodar(repo, 'SubagentHandback', { message: 'pronto' }, SUB);
+    assert.equal(r.decisao, undefined);
+    assert.equal(r.stdout, '');
+    for (const nome of ['subagenthandback', 'SubagentHandback2', 'XSubagentHandback']) {
+      assert.equal(rodar(repo, nome, { message: 'x' }, SUB).decisao, 'deny', nome);
+    }
+  });
+
+  test('ferramenta-desconhecida-negada-sob-pausa: subagent, qualquer nome; o orquestrador segue livre', () => {
+    const repo = montar();
+    pausar(repo);
+    for (const tool of ['Glob', 'Skill', 'SendMessage', 'FerramentaDoFuturo']) {
+      assert.equal(rodar(repo, tool, {}, SUB).decisao, 'deny', tool);
+      assert.equal(rodar(repo, tool, {}).decisao, undefined, tool);
+    }
+  });
+
+  test('sem-pausa-glob-silencio: sem o arquivo, ferramenta fora da lista sai em silêncio e sem diário', () => {
+    const repo = montar();
+    for (const [tool, input] of [['Glob', { pattern: '.env*' }], ['WebFetch', { url: 'https://api.exemplo.com' }], ['NotebookEdit', { notebook_path: join(repo, '.env') }], ['Skill', {}]]) {
+      for (const extra of [{}, SUB]) {
+        const r = rodar(repo, tool, input, extra);
+        assert.equal(r.decisao, undefined, tool);
+        assert.equal(r.stdout, '', tool);
+      }
+    }
+    assert.deepEqual(eventosDe(repo), []);
+  });
+
+  test('sem-pausa-mcp-classifica: MCP de produção segue classificado pelo matcher `.*` (não cai no silêncio)', () => {
+    const repo = montar({ origem: { ...CONFIG, guarda: { ...CONFIG.guarda, ambientes: { ...CONFIG.guarda.ambientes, prod: { ...CONFIG.guarda.ambientes.prod, mcps: ['mcp__prodsrv'] } } } } });
+    const r = rodar(repo, 'mcp__prodsrv__execute_sql', { query: 'delete from t' });
+    assert.equal(r.decisao, 'ask');
+    assert.equal(rodar(repo, 'mcp__prodsrv__execute_sql', { query: 'delete from t' }, SUB).decisao, 'deny');
   });
 });

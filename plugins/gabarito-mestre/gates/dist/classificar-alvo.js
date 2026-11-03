@@ -425,7 +425,9 @@ function classificarBash(entrada             , cfg                     , ctx    
   const cwd = typeof entrada.cwd === 'string' ? entrada.cwd : null;
   const subagent = entrada?.agent_id !== undefined && entrada?.agent_id !== '';
   const estado = { cdPerdido: false };
-  const anel = anelDeBash(segmentos, ctx, cwd, subagent, estado);
+  // Kill switch: a presença do texto `.harness/PAUSAR` no comando basta (sem lexer novo). Ler o arquivo também pede: falso positivo aceito.
+  const achado = anelDeBash(segmentos, ctx, cwd, subagent, estado);
+  const anel = achado?.anel === 'segredo' || !comando.includes('.harness/PAUSAR') ? achado : { anel: 'integridade'         , alvo: '.harness/PAUSAR', escrita: true };
   const comEstado = estado.cdPerdido ? { ...base, cdPerdido: true } : base;
   if (anel) return { ...comEstado, ambiente: 'desconhecido', acao: anel.escrita ? 'escrita' : 'leitura', alvo: reduzirAlvo(anel.alvo), anel: anel.anel };
   return comEstado;

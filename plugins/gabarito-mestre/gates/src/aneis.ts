@@ -479,6 +479,8 @@ export function anelDeCaminho(caminho: string, contexto: Contexto, cwd?: string 
   for (let i = 0; i + 1 < segs.length; i++) if (segs[i] === '.config' && segs[i + 1] === 'gh') return 'segredo';
 
   // Integridade (só escrita; quem chama decide).
+  // Kill switch: qualquer caminho terminado em `.harness/PAUSAR`, de qualquer raiz (o do checkout principal visto da worktree).
+  if (segs.length >= 2 && segs[segs.length - 2] === '.harness' && nome === 'PAUSAR') return 'integridade';
   if (contexto.pluginRoot) {
     const pr = contexto.pluginRoot.replace(/\/+$/, '');
     if (norm === pr || norm.startsWith(`${pr}/`)) return 'integridade';

@@ -13,8 +13,8 @@ describe('hooks.json — registro dos hooks (T16)', () => {
   const cfg = JSON.parse(readFileSync(join(HOOKS, 'hooks.json'), 'utf8')).hooks;
   const cmds = (grupo) => grupo.hooks.map((h) => h.command);
 
-  test('PreToolUse: quatro matchers (Bash, Edit|Write|Read|Grep, mcp__.*, Agent), o mesmo comando node da guarda, timeout 5', () => {
-    assert.deepEqual(cfg.PreToolUse.map((g) => g.matcher), ['Bash', 'Edit|Write|Read|Grep', 'mcp__.*', 'Agent']);
+  test('PreToolUse: um só matcher `.*` (kill switch vale para toda ferramenta), o mesmo comando node da guarda, timeout 5', () => {
+    assert.deepEqual(cfg.PreToolUse.map((g) => g.matcher), ['.*']);
     for (const g of cfg.PreToolUse) {
       assert.deepEqual(cmds(g), ['node "${CLAUDE_PLUGIN_ROOT}/gates/dist/guarda.js"']);
       for (const h of g.hooks) { assert.equal(h.type, 'command'); assert.equal(h.timeout, 5); }
