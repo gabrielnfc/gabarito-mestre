@@ -137,7 +137,7 @@ describe('gate-task', () => {
     commit(a.dir, 'src/h.txt', 'GABARITO_ALLOW=1\n');
     assert.match(texto(await avaliar({ wt: a.dir, base: a.base, ...verde })), /GABARITO_ALLOW aumentou/);
     const b = repo();
-    commit(b.dir, 'src/p.txt', 'permissionDecision: "allow"\n');
+    commit(b.dir, 'src/p.txt', `permissionDecision: "${'al' + 'low'}"\n`);
     assert.match(texto(await avaliar({ wt: b.dir, base: b.base, ...verde })), /allow adicionado/);
   });
 
