@@ -184,3 +184,11 @@
 {"nome":"r2-nc-host-porta-sub","req":"GRD-4","tool":"Bash","input":{"command":"nc api.exemplo.com 443"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","ambiente":"prod"}}
 {"nome":"r2-scp-host-nao-declarado","req":"GRD-4","tool":"Bash","input":{"command":"scp dump.sql bkp.local:/tmp"},"agente":"orq","esperado":{"faixa":"silencio"}}
 {"nome":"r2-ssh-host-nao-declarado","req":"GRD-4","tool":"Bash","input":{"command":"ssh outro.exemplo.net"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"r3-ssh-host-banco-orq","req":"GRD-4","tool":"Bash","input":{"command":"ssh db.prod.exemplo.com"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","ambiente":"prod"}}
+{"nome":"r3-ssh-host-banco-sub","req":"GRD-4","tool":"Bash","input":{"command":"ssh db.prod.exemplo.com"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","ambiente":"prod"}}
+{"nome":"r3-nc-host-banco-orq","req":"GRD-4","tool":"Bash","input":{"command":"nc db.prod.exemplo.com 5432"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","ambiente":"prod"}}
+{"nome":"r3-nc-host-banco-sub","req":"GRD-4","tool":"Bash","input":{"command":"nc db.prod.exemplo.com 5432"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","ambiente":"prod"}}
+{"nome":"r3-http-host-caminho-orq","req":"GRD-4","tool":"Bash","input":{"command":"http api.exemplo.com/x"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","ambiente":"prod"}}
+{"nome":"r3-http-host-caminho-sub","req":"GRD-4","tool":"Bash","input":{"command":"http api.exemplo.com/x"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","ambiente":"prod"}}
+{"nome":"r3-xh-host-caminho-orq","req":"GRD-4","tool":"Bash","input":{"command":"xh api.exemplo.com/x"},"agente":"orq","esperado":{"faixa":"ask","evento":"guarda.ask","ambiente":"prod"}}
+{"nome":"r3-xh-host-caminho-sub","req":"GRD-4","tool":"Bash","input":{"command":"xh api.exemplo.com/x"},"agente":"sub","esperado":{"faixa":"deny","evento":"guarda.deny","ambiente":"prod"}}
