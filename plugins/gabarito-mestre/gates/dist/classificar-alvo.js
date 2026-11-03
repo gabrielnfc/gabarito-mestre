@@ -3,6 +3,15 @@
  * Sem I/O, sem `process.env`, sem relógio. `alvo` é sempre host, ref, caminho ou nome de variável:
  * nunca comando cru nem URL com credencial.
  *
+ * Escopo (Q26): só segurança de caminho e alvo declarado; não é barreira contra vazamento por composição. Passam, por
+ * declaração: leitura de segredo por interpretador (`python -c`, `node -e`, heredoc de interpretador); caminho montado por
+ * variável, substituição ou glob (`F=.env; cat $F`, `cat "$(echo .env)"`, `cat .en*`); `find … | xargs` e `$(find …)`;
+ * `env`/`printenv`; `base64 | sh`; indireção que escreve em `.git/**` (`X=git; $X update-ref …`, interpretador).
+ * Cobertos, não limite: `git push|fetch|update-ref|symbolic-ref|remote set-head` para `refs/remotes/*`;
+ * redirecionamento, `cp` e `sed -i` em `.git/**`; `find` com `-exec|-execdir|-ok|-okdir|-delete` sobre padrão de segredo.
+ * Produção (Q26): qualquer ação em `prod` (leitura, execução, escrita) pede ao orquestrador e nega ao subagent;
+ * `segmentosProd` lista todo segmento `prod` para `permitidos` casar um a um.
+ *
  * Limites declarados (sem tokenizador completo): `xargs`, `timeout`, `exec`, `rsync`, `find -delete`, `perl -i`,
  * `curl -o` (escrita por flag de saída), expansão de chaves (`{.env,x}`), heredoc (o corpo vira segmentos),
  * indireção (`X=rm; $X`, `base64 | sh`, `eval`), caminho com espaço em argumento de Bash, substituição fora de
@@ -23,10 +32,12 @@ const ORDEM              = ['prod', 'homolog', 'teste'];
 
                                                                                                                                          
 
-const NEUTRO                = { ambiente: 'desconhecido', acao: 'leitura', alvo: '', destrutivo: false, anel: null, segmentosProdEscrita: [] };
+const NEUTRO                = { ambiente: 'desconhecido', acao: 'leitura', alvo: '', destrutivo: false, anel: null, segmentosProd: [] };
 
 const REDE = new Set(['curl', 'wget', 'http', 'https', 'xh', 'ssh', 'scp', 'rsync', 'nc', 'telnet']);
-const BANCO = new Set(['psql', 'pg_dump', 'pg_dumpall', 'pg_restore', 'mysql', 'mysqldump', 'mongosh', 'mongo', 'redis-cli']);
+const BANCO = new Set(['psql', 'pg_dump', 'pg_dumpall', 'pg_restore', 'mysql', 'mysqldump', 'mariadb', 'mariadb-dump', 'mongosh', 'mongo', 'redis-cli']);
+// Clientes cujo SQL vem em `-e/--execute` (e não em `-c/--command`).
+const SQL_POR_EXECUTE = new Set(['mysql', 'mariadb']);
 const SUSPEITO = /(^|[.-])(prod|production|prd)([.-]|$)/i;
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
 
@@ -109,6 +120,54 @@ function todosValores(args          , longas          , curtas          )       
   return out;
 }
 
+// Q24: opções curtas agrupadas (getopt): o valor de uma letra que leva valor é o resto do token ou o argumento seguinte.
+const LETRAS_COM_VALOR                         = {
+  psql: 'cdfFhLopPRTUv', pg_dump: 'dfFhjnNpStTUZ', pg_dumpall: 'fhlpSU', pg_restore: 'dfFhjLnNpPStTU',
+  mysql: 'ehuPSDI', mysqldump: 'huPSr', mariadb: 'ehuPSDI', 'mariadb-dump': 'huPSr', mongosh: '', mongo: '', 'redis-cli': 'hpnaui',
+};
+const SO_COLADO                         = { mysql: 'p', mariadb: 'p', mysqldump: 'p', 'mariadb-dump': 'p' };
+function valoresCurtos(cmd        , args          , letra        )           {
+  const comValor = LETRAS_COM_VALOR[cmd] ?? '';
+  const soColado = SO_COLADO[cmd] ?? '';
+  const out           = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.length < 2 || a[0] !== '-' || a[1] === '-') continue;
+    for (let k = 1; k < a.length; k++) {
+      const l = a[k];
+      if (soColado.includes(l)) {
+        if (l === letra && k + 1 < a.length) out.push(a.slice(k + 1));
+        break;
+      }
+      if (comValor.includes(l)) {
+        const v = k + 1 < a.length ? a.slice(k + 1) : args[++i];
+        if (l === letra && v !== undefined) out.push(v);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+// Abreviação de opção longa (`--exec=` por `--execute`, `--comm` por `--command`): prefixo de 3+ letras, como getopt_long/my_getopt aceitam.
+function valoresAbreviados(args          , longa        )           {
+  const out           = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!a.startsWith('--')) continue;
+    const eq = a.indexOf('=');
+    const nome = eq > 0 ? a.slice(2, eq) : a.slice(2);
+    if (nome.length < 3 || nome === longa || !longa.startsWith(nome)) continue;
+    const v = eq > 0 ? a.slice(eq + 1) : args[++i];
+    if (v !== undefined) out.push(v);
+  }
+  return out;
+}
+
+function sqlsDoSegmento(s          )           {
+  return [...new Set([...(SQL_POR_EXECUTE.has(s.cmd) ? todosValores(s.args, ['--execute'], ['-e']) : todosValores(s.args, ['--command'], ['-c'])), ...valoresCurtos(s.cmd, s.args, SQL_POR_EXECUTE.has(s.cmd) ? 'e' : 'c'), ...valoresAbreviados(s.args, SQL_POR_EXECUTE.has(s.cmd) ? 'execute' : 'command')])];
+}
+
 const URL_EM_TEXTO = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/i;
 const CONNINFO_HOST = /(?:^|\s)host(?:addr)?=([^\s'"]+)/gi;
 
@@ -130,6 +189,7 @@ function hostsDoSegmento(s          )           {
   if (banco) {
     const h = valorDe(s.args, ['--host'], ['-h']);
     if (h) hosts.push(h.toLowerCase());
+    for (const v of valoresCurtos(s.cmd, s.args, 'h')) hosts.push(v.toLowerCase());
     for (const at of s.atribs) if (at.startsWith('PGHOST=')) hosts.push(at.slice(7).toLowerCase());
   }
   return hosts;
@@ -200,7 +260,8 @@ function classificarSegmento(s          , cfg                     , ctx         
     else if (g.sub === 'branch' && g.resto.includes('-D')) p.destrutivo = true;
     else if (g.sub === 'push' && g.resto.some((a) => a === '-f' || a === '--force' || a.startsWith('--force-with-lease') || a === '--mirror')) p.destrutivo = true;
   } else if (BANCO.has(s.cmd)) {
-    const todos = todosValores(s.args, ['--command'], ['-c']);
+    // Flag que carrega o SQL, por cliente: `mysql`/`mariadb` usam `-e/--execute`; os demais, `-c/--command`.
+    const todos = sqlsDoSegmento(s);
     sqls = todos.length ? todos : null;
     if (sqls !== null && sqls.some(sqlDestrutivo)) p.destrutivo = true;
   }
@@ -350,7 +411,7 @@ function classificarBash(entrada             , cfg                     , ctx    
     alvo: reduzirAlvo(topo.alvo),
     destrutivo: topo.destrutivo,
     anel: null,
-    segmentosProdEscrita: parciais.filter((x) => x.prodEscrita).map((x) => x.cru),
+    segmentosProd: parciais.filter((x) => x.ambiente === 'prod').map((x) => x.cru),
   };
 
   // O anel vem antes do ambiente.
@@ -382,7 +443,7 @@ function classificarMcp(entrada             , cfg                     )         
     alvo: nome.split('__')[1] ?? nome,
     destrutivo: sql !== null && sqlDestrutivo(sql),
     anel: null,
-    segmentosProdEscrita: ambiente === 'prod' && !leitura ? [nome] : [],
+    segmentosProd: ambiente === 'prod' ? [nome] : [],
   };
 }
 

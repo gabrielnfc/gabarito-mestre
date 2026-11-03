@@ -17,9 +17,10 @@ function casa(padrao        , texto        )          {
 
 function permitido(c               , config                     )          {
   const padroes = config?.permitidos ?? [];
-  return c.segmentosProdEscrita.every((seg) => padroes.some((p) => casa(p, seg)));
+  return c.segmentosProd.every((seg) => padroes.some((p) => casa(p, seg)));
 }
 
+const ROTULO_ACAO                         = { leitura: 'leitura', escrita: 'escrita', execucao: 'execução' };
 const ROTULO                         = { prod: 'PRODUÇÃO', homolog: 'HOMOLOG', desconhecido: 'ALVO NÃO VERIFICADO', teste: 'TESTE' };
 
 function mensagemMostrar(c               )         {
@@ -61,7 +62,8 @@ function decidirConteudo(entrada             , config                     , cont
   if (c.anel === 'segredo') return barrar('segredo');
   if (c.anel === 'integridade') return barrar('integridade');
 
-  if (c.segmentosProdEscrita.length > 0 && !(!subagent && permitido(c, config))) return barrar('escrita em PRODUÇÃO');
+  // Q26: prod com qualquer ação pede; `permitidos` (só orquestrador) precisa casar todo segmento prod.
+  if (c.segmentosProd.length > 0 && !(!subagent && permitido(c, config))) return barrar(`${ROTULO_ACAO[c.acao]} em PRODUÇÃO`);
 
   const mostra = c.ambiente !== 'teste' && c.alvo !== '';
   if (mostra) {
