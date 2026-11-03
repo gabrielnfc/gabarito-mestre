@@ -44,5 +44,6 @@ Item sai daqui quando entra num plano ou a decisão de descarte é registrada. I
 | Citação em heredoc lido como script pede (T7 r5 achado 3) | MINOR — dono: Gabriel | 1º falso positivo fora de sonda ou teste |
 | N5 viva, falta negativo em área de integridade (T7 r5 achado 4) | MINOR — dono: Gabriel | próxima mudança em `arquivoDePausa` |
 | `trash -x<arquivo>`, caminho colado em opção curta | Q26 item 2 — dono: Gabriel | caso visto em transcrito |
-| `load_medido` baixo em suíte curta | esta Sombra — dono: Gabriel | `motivo` de carga abaixo de `slots_max` sem gate vermelho no loop real, ou 1º adotante com suíte abaixo de 60 s |
+| `load_medido` de 1 passagem subestima o regime (28,76 contra 39,7 a 47,3, mesma CPU, suíte 115 s). Candidato: maior mediana de 3 rodadas no degrau final | `sombra-t13b.md` — dono: Gabriel | Ao fim da 1ª entrega com loop e calibração real, sem fixture: ≥ 1 `aviso` com `carga:` e 0 gate vermelho; ou 1º adotante com suíte abaixo de 60 s |
+| Adotante sem marketplace oficial: `plugin install` rc 0 e plugin inteiro não carrega, guardas incluídas | `sombra-t13b.md` — dono: Gabriel | spec da E5, onboarding e doctor |
 | Hook R2 não vê `rm -rf` dentro de script gravado por heredoc e executado depois | E30 — dono: Gabriel | spec da E3 |
