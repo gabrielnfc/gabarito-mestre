@@ -22,6 +22,8 @@ Vale para toda sessão, a partir de 2026-11-03. Ler ao retomar, antes de escreve
 | P6 | Mutação viva declarada equivalente exige o caso que prova; sem o caso, conta como viva (E28) | N5 e K10 refutadas | Viva declarada equivalente e refutada, base 2 | Em vigor |
 | P7 | Otimização achada entra aqui na hora, com métrica. Nunca "da próxima entrega em diante" sem motivo medido (E29) | Dono cobrou | | Em vigor |
 
+**P1, 1º uso (T13, 2026-11-03):** Sombra, 6,5 min, 2 defeitos de produto (linha K, `/gabarito retomar`) e 1 erro de brief (`CLAUDE_CONFIG_DIR` zera a medição) antes de sessão real. Se os defeitos teriam aparecido só na T13: leitura, não medição do custo evitado.
+
 ## Antes do commit (implementador)
 
 Rode cada item como sonda sua e relate o resultado:
