@@ -7,14 +7,15 @@
  *   loop.mjs iniciar <task> <implementador|revisor|correcao> | concluir <task> | reabrir <task>
  *   loop.mjs veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major>
  *   loop.mjs parar <motivo>
+ *   loop.mjs ci <verde|vermelho>
  *   todos aceitam --entrega <GM-10> (senão vem da branch); os que gravam aceitam --sessao <id> (padrão `loop`).
  *
  * CONTRATO DE FALHA. Saída é UMA linha de JSON em stdout, sempre com `ok`; falha traz `erro` (código) e `mensagem`.
  * Dado ausente, corrompido ou ferramenta falhando nunca vira sucesso; rc 0 só com o efeito feito. Uso errado sai 2.
  *
  * QUEM GRAVA NO DIÁRIO. Só `iniciar` (task.iniciada), `concluir` (task.concluida), `veredito` (review.veredito),
- * `reabrir` (task.reaberta, SÓ origem `retomada`: nenhum argumento produz `dono`), `integrar` (task.integrada) e
- * `parar` (loop.parar). `abrir` não grava. Todo evento de task é conferido contra `TRANSICOES` ANTES de gravar:
+ * `reabrir` (task.reaberta, SÓ origem `retomada`: nenhum argumento produz `dono`), `integrar` (task.integrada),
+ * `ci` (ci.resultado) e `parar` (loop.parar). `concluir` e `integrar` gravam o `sha`. `abrir` não grava no diário (grava a base em `branch.<branch>.gabaritoBase`). Todo evento de task é conferido contra `TRANSICOES` ANTES de gravar:
  * o CLI nunca produz um diário que o núcleo recuse.
  *
  * Tudo que toca git vai por `execFileSync` com argv, sem shell. Nada é apagado por outro meio que `git worktree remove`
@@ -65,9 +66,11 @@ function ambienteGit() {
 }
 
 /** `git -C cwd <args>`; stdout com trim. Lança `Error` com `.saida` (primeira linha útil de stderr). */
-function git(cwd, ...args) {
+function git(cwd, ...args) { return gitComEntrada(cwd, undefined, ...args); }
+
+function gitComEntrada(cwd, input, ...args) {
   try {
-    return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: ambienteGit(), maxBuffer: 64 * 1024 * 1024 }).trim();
+    return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', input, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], env: ambienteGit(), maxBuffer: 64 * 1024 * 1024 }).trim();
   } catch (e) {
     const texto = String(e.stderr ?? '').trim() || String(e.stdout ?? '').trim() || e.message;
     const erro = new Error(texto.split('\n').filter(Boolean).slice(-3).join(' / '));
@@ -108,8 +111,9 @@ function lerArgs(argv) {
     reabrir: { pos: 1, flags: ['entrega', 'sessao'] },
     veredito: { pos: 5, flags: ['entrega', 'sessao'] },
     parar: { pos: 1, flags: ['entrega', 'sessao'] },
+    ci: { pos: 1, flags: ['entrega', 'sessao'] },
   };
-  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | iniciar <task> <papel> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo>  [--entrega GM-10]';
+  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | iniciar <task> <papel> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho>  [--entrega GM-10]';
   if (typeof cmd !== 'string' || !Object.hasOwn(ESPEC, cmd)) throw new Falha('uso', `comando desconhecido ou ausente. ${uso}`, {}, 2);
   const esp = ESPEC[cmd];
   const pos = [];
@@ -143,6 +147,10 @@ function validarForma(cmd, pos, flags) {
   if (cmd === 'parar') {
     if (!MOTIVOS.includes(pos[0])) throw new Falha('argumento_invalido', `motivo "${pos[0]}" fora da lista: ${MOTIVOS.join(', ')}`);
     return { motivo: pos[0] };
+  }
+  if (cmd === 'ci') {
+    if (pos[0] !== 'verde' && pos[0] !== 'vermelho') throw new Falha('argumento_invalido', `ci "${pos[0]}": esperado verde ou vermelho`);
+    return { verde: pos[0] === 'verde' };
   }
   const [task] = pos;
   if (typeof task !== 'string' || !ID_RE.test(task)) throw new Falha('id_invalido', `task ${JSON.stringify(task)} fora da forma ${ID_RE}`);
@@ -372,6 +380,7 @@ function abrir(c, plano, task) {
       clonado = true;
     }
     garantirTmp(caminho);
+    git(c.raiz, 'config', `branch.${branch}.gabaritoBase`, base);
   } catch (e) {
     const restos = [];
     if (clonado) {
@@ -413,10 +422,19 @@ function validarTmp(wt) {
 function fechar(c, task) {
   const wt = worktreeViva(c, task);
   const tmpValido = validarTmp(wt);
-  const sujo = git(wt, 'status', '--porcelain');
-  if (sujo !== '') {
-    const linhas = sujo.split('\n');
-    throw new Falha('worktree_suja', `a worktree ${task} tem ${linhas.length} item(ns) não commitado(s) e foi MANTIDA, junto do banco: ${linhas.slice(0, 10).join(' | ')}`, { sujeira: linhas.slice(0, 20) });
+  try {
+    git(wt, 'symbolic-ref', '-q', 'HEAD');
+  } catch {
+    throw new Falha('head_solto', `a worktree ${task} está em HEAD solto: um commit nela não pertence a branch nenhuma e se perderia; foi MANTIDA, junto do banco`);
+  }
+  const linhasStatus = git(wt, 'status', '--porcelain', '--ignored').split('\n').filter(Boolean);
+  const sujas = linhasStatus.filter((l) => !l.startsWith('!! '));
+  if (sujas.length > 0) {
+    throw new Falha('worktree_suja', `a worktree ${task} tem ${sujas.length} item(ns) não commitado(s) e foi MANTIDA, junto do banco: ${sujas.slice(0, 10).join(' | ')}`, { sujeira: sujas.slice(0, 20) });
+  }
+  const ignorados = linhasStatus.filter((l) => l.startsWith('!! ') && l.slice(3).replace(/\/$/, '') !== TMP);
+  if (ignorados.length > 0) {
+    throw new Falha('worktree_com_ignorados', `a worktree ${task} tem ${ignorados.length} item(ns) ignorado(s) pelo git que a remoção apagaria e foi MANTIDA, junto do banco: ${ignorados.slice(0, 10).map((l) => l.slice(3)).join(' | ')}`, { ignorados: ignorados.slice(0, 20).map((l) => l.slice(3)) });
   }
   const { cfg } = lerConfig(c.raiz);
   const v = validarDb(cfg ?? {});
@@ -478,6 +496,12 @@ function suitesDaTask(wt, t) {
   }
 }
 
+/** Identidade do conteúdo de um diff, estável a mudança de linha e de base (o que o rebase pode mexer sem mudar o conteúdo). */
+function patchId(wt, ...alcance) {
+  const diff = git(wt, 'diff', '--binary', '--no-color', '--no-ext-diff', ...alcance);
+  return gitComEntrada(wt, `${diff}\n`, 'patch-id', '--stable').split(/\s+/)[0] ?? '';
+}
+
 async function integrar(c, plano, task) {
   const t = tarefa(plano, task);
   const eventos = lerDiarioEstrito(c.dirEntrega);
@@ -486,25 +510,47 @@ async function integrar(c, plano, task) {
   const wt = worktreeViva(c, task);
   const sujo = git(wt, 'status', '--porcelain');
   if (sujo !== '') throw new Falha('worktree_suja', `a worktree ${task} tem trabalho não commitado; nada foi feito: ${sujo.split('\n').slice(0, 10).join(' | ')}`, { merge: false, evento: false });
-  const base = ramoDoPrincipal(c.raiz);
-  const mutacoes = carregarMutacoes(c, t);
   const branch = ramo(c, task);
+  const nada = { merge: false, evento: false };
+
+  // O que o gate aprova é exatamente o que entra: a base vem do `abrir`, o HEAD é a branch da task e o commit é o que o revisor viu.
+  let baseGravada = '';
+  try { baseGravada = git(c.raiz, 'config', '--get', `branch.${branch}.gabaritoBase`); } catch { /* ausente */ }
+  if (baseGravada === '') throw new Falha('base_divergente', `a base de ${branch} não está gravada (branch.${branch}.gabaritoBase): não sei onde integrar; nada foi feito`, nada);
+  const base = ramoDoPrincipal(c.raiz);
+  if (base !== baseGravada) throw new Falha('base_divergente', `a worktree principal está em ${base}, mas ${branch} foi aberta sobre ${baseGravada}; nada foi feito`, nada);
+  let cabeca = '';
+  try { cabeca = git(wt, 'symbolic-ref', '-q', 'HEAD'); } catch { /* solto */ }
+  if (cabeca !== `refs/heads/${branch}`) throw new Falha('head_divergente', `o HEAD da worktree ${task} é ${cabeca === '' ? 'solto' : cabeca}, não refs/heads/${branch}: o que o gate avaliaria não é o que entraria; nada foi feito`, nada);
+  const ord = ordenar(eventos);
+  const concluidas = (ord.ok ? ord.eventos : []).filter((e) => e.tipo === 'task.concluida' && e.dados?.task === task);
+  const revisado = concluidas.at(-1)?.dados?.sha;
+  const atual = git(wt, 'rev-parse', `refs/heads/${branch}`);
+  if (typeof revisado !== 'string' || revisado !== atual) {
+    throw new Falha('commit_nao_revisado', `o HEAD de ${branch} (${atual.slice(0, 12)}) não é o commit de task.concluida (${typeof revisado === 'string' ? revisado.slice(0, 12) : 'sem sha'}): há commit que ninguém revisou; nada foi feito`, nada);
+  }
+  const mutacoes = carregarMutacoes(c, t);
+  const pidAntes = patchId(wt, `refs/heads/${base}...HEAD`);
 
   try {
     git(wt, 'rebase', `refs/heads/${base}`);
   } catch (e) {
     const gitDir = (n) => resolve(wt, git(wt, 'rev-parse', '--git-path', n));
     const emCurso = ['rebase-merge', 'rebase-apply'].some((n) => existsSync(gitDir(n)));
-    if (!emCurso) throw new Falha('rebase_falhou', `git rebase falhou sem deixar rebase em curso: ${e.message}`, { merge: false, evento: false });
+    if (!emCurso) throw new Falha('rebase_falhou', `git rebase falhou sem deixar rebase em curso: ${e.message}`, nada);
     const ab = gitOk(wt, 'rebase', '--abort');
     throw new Falha(
       'rebase_conflito',
       ab.ok
         ? `rebase da ${branch} sobre ${base} deu conflito e foi abortado; a task NÃO foi integrada: ${e.message}`
         : `rebase da ${branch} sobre ${base} deu conflito e \`git rebase --abort\` FALHOU (${ab.motivo}); a worktree ${relative(c.raiz, wt)} segue em rebase, nada foi apagado: resolva ou aborte à mão`,
-      { merge: false, evento: false, abortado: ab.ok },
+      { ...nada, abortado: ab.ok },
     );
   }
+  if (patchId(wt, `refs/heads/${base}`, 'HEAD') !== pidAntes) {
+    throw new Falha('rebase_mudou_conteudo', `o rebase da ${branch} sobre ${base} mudou o conteúdo que o revisor aprovou; a branch ficou rebaseada, sem merge nem evento`, nada);
+  }
+  const alvo = git(wt, 'rev-parse', 'HEAD');
 
   const tmp = garantirTmp(wt);
   process.env.TMPDIR = tmp;
@@ -512,20 +558,35 @@ async function integrar(c, plano, task) {
   try {
     r = await avaliar({ wt, base: `refs/heads/${base}`, card: c.entrega, files: escopo(wt, t.arquivos), mutacoes, suites: suitesDaTask(wt, t) });
   } catch (e) {
-    throw new Falha('gate_erro', `o gate falhou ao rodar: ${e.message}; a branch ficou rebaseada, sem merge nem evento`, { merge: false, evento: false });
+    throw new Falha('gate_erro', `o gate falhou ao rodar: ${e.message}; a branch ficou rebaseada, sem merge nem evento`, nada);
   }
   if (r.reprova > 0) {
-    throw new Falha('gate_reprovado', `gate reprovado (${r.reprova}); a branch ${branch} ficou rebaseada, sem merge nem evento`, { merge: false, evento: false, relato: r.relato });
+    throw new Falha('gate_reprovado', `gate reprovado (${r.reprova}); a branch ${branch} ficou rebaseada, sem merge nem evento`, { ...nada, relato: r.relato });
   }
+  if (git(wt, 'rev-parse', 'HEAD') !== alvo || git(wt, 'rev-parse', `refs/heads/${branch}`) !== alvo) {
+    throw new Falha('head_mudou', `o HEAD da ${branch} mudou entre o gate (${alvo.slice(0, 12)}) e o merge: o gate não viu o que entraria; sem merge nem evento`, nada);
+  }
+  if (ramoDoPrincipal(c.raiz) !== base) throw new Falha('base_divergente', `a worktree principal deixou ${base} antes do merge; sem merge nem evento`, nada);
 
+  const baseAntes = git(c.raiz, 'rev-parse', `refs/heads/${base}`);
+  let saidaMerge;
   try {
-    git(c.raiz, 'merge', '--ff-only', `refs/heads/${branch}`);
+    saidaMerge = git(c.raiz, 'merge', '--ff-only', alvo);
   } catch (e) {
-    throw new Falha('merge_falhou', `git merge --ff-only da ${branch} em ${base} falhou: ${e.message}; sem evento`, { merge: false, evento: false });
+    throw new Falha('merge_falhou', `git merge --ff-only da ${branch} em ${base} falhou: ${e.message}; sem evento`, nada);
+  }
+  let baseDepois;
+  try {
+    baseDepois = git(c.raiz, 'rev-parse', `refs/heads/${base}`);
+  } catch (e) {
+    throw new Falha('merge_nao_confirmado', `não consegui conferir ${base} depois do merge (${e.message}); sem evento`, { merge: null, evento: false });
+  }
+  if (baseDepois !== alvo || baseAntes === alvo || /already up to date/i.test(saidaMerge)) {
+    throw new Falha('merge_sem_efeito', `o merge de ${alvo.slice(0, 12)} não mudou ${base} (antes ${baseAntes.slice(0, 12)}, depois ${baseDepois.slice(0, 12)}); sem evento`, nada);
   }
 
   try {
-    gravar(c, plano, 'task.integrada', { task });
+    gravar(c, plano, 'task.integrada', { task, sha: alvo });
   } catch (e) {
     const causa = e instanceof Falha ? `${e.erro}: ${e.message}` : String(e.message ?? e);
     throw new Falha('evento_nao_gravado', `o merge da ${branch} ENTROU em ${base}, mas o evento task.integrada NÃO foi gravado (${causa}); fechar não foi chamado`, { merge: true, evento: false });
@@ -619,7 +680,13 @@ async function executar(argv, cwd) {
       tarefa(plano, task);
       worktreeViva(c, task);
       return { evento: gravar(c, plano, 'task.iniciada', { task, papel: forma.papel }) };
-    case 'concluir': tarefa(plano, task); return { evento: gravar(c, plano, 'task.concluida', { task }) };
+    case 'concluir': {
+      tarefa(plano, task);
+      const wt = worktreeViva(c, task);
+      const sha = git(wt, 'rev-parse', `refs/heads/${ramo(c, task)}`);
+      return { evento: gravar(c, plano, 'task.concluida', { task, sha }) };
+    }
+    case 'ci': return { evento: gravar(c, plano, 'ci.resultado', { verde: forma.verde }) };
     case 'veredito':
       tarefa(plano, task);
       return { evento: gravar(c, plano, 'review.veredito', { task, veredito: forma.veredito, rodada: forma.rodada, blocker: forma.blocker, major: forma.major }) };

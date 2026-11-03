@@ -136,9 +136,10 @@ function ambiente({ branch = 'enabler/GM-10-loop', config = CONFIG_PADRAO, plano
       g(w, 'commit', '-q', '-m', msg);
     },
     /** abrir → iniciar → commit → concluir → revisor → APROVADO. Devolve a worktree. */
-    aprovar(t, arquivo = `src/${t.toLowerCase()}.txt`) {
+    aprovar(t, arquivo = `src/${t.toLowerCase()}.txt`, extras = []) {
       for (const a of [['abrir', t], ['iniciar', t, 'implementador']]) assert.equal(amb.cli(a).rc, 0, a.join(' '));
       amb.commitNaWt(t, arquivo);
+      for (const [f, conteudo] of extras) amb.commitNaWt(t, f, conteudo);
       for (const a of [['concluir', t], ['iniciar', t, 'revisor'], ['veredito', t, 'APROVADO', '1', '0', '0']]) {
         const r = amb.cli(a);
         assert.equal(r.rc, 0, `${a.join(' ')} ${r.out}`);
@@ -409,8 +410,7 @@ describe('ids e plano', () => {
 
   test('arquivos-diretorio-nao-aprova-arquivo-de-fora', () => {
     const amb = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/dir'] }]) });
-    amb.aprovar('T1', 'src/dir/x.txt');
-    amb.commitNaWt('T1', 'src/outro.txt');
+    amb.aprovar('T1', 'src/dir/x.txt', [['src/outro.txt', 'x\n']]);
     const antes = amb.topo();
     const r = amb.cli(['integrar', 'T1']);
     assert.equal(r.rc, 1);
@@ -643,7 +643,7 @@ describe('integrar', () => {
     assert.ok(existsSync(join(amb.dir, 'src/t1.txt')), 'o trabalho entrou na branch do PBI');
     assert.equal(amb.topo(), amb.topo('wt/GM-10-T1'));
     assert.equal(amb.eventos().at(-1).tipo, 'task.integrada');
-    assert.deepEqual(amb.eventos().at(-1).dados, { task: 'T1' });
+    assert.deepEqual(amb.eventos().at(-1).dados, { task: 'T1', sha: amb.topo() });
     assert.ok(!existsSync(w), 'worktree removida');
     assert.equal(g(amb.dir, 'status', '--short').trim(), '');
   });
@@ -786,8 +786,7 @@ describe('integrar', () => {
 
   test('integrar-gate-com-config-ilegivel-reprova', () => {
     const amb = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt', 'harness.config.json'] }]) });
-    amb.aprovar('T1');
-    amb.commitNaWt('T1', 'harness.config.json', '{nao json');
+    amb.aprovar('T1', 'src/t1.txt', [['harness.config.json', '{nao json']]);
     const r = amb.cli(['integrar', 'T1']);
     assert.equal(r.rc, 1);
     assert.equal(r.j.erro, 'gate_reprovado');
@@ -797,8 +796,7 @@ describe('integrar', () => {
 
   test('integrar-gate-reprova-arquivo-fora-do-escopo', () => {
     const amb = ambiente();
-    amb.aprovar('T1');
-    amb.commitNaWt('T1', 'src/intruso.txt');
+    amb.aprovar('T1', 'src/t1.txt', [['src/intruso.txt', 'x\n']]);
     const topo = amb.topo();
     const r = amb.cli(['integrar', 'T1']);
     assert.equal(r.rc, 1);
@@ -1270,5 +1268,207 @@ describe('contrato de falha', () => {
       assert.ok(r.j && typeof r.j.ok === 'boolean', a.join(' ') + r.out + r.err);
       assert.ok(!/at .*loop\.mjs|node:internal/.test(r.err), r.err);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────── rodada 2: o que o gate aprovou é o que entra
+describe('integrar entra só o commit aprovado', () => {
+  const nada = (amb, antes, r, erro) => {
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, erro, r.out);
+    assert.equal(r.j.merge, false);
+    assert.equal(r.j.evento, false);
+    assert.deepEqual(semEfeito(amb), antes);
+    assert.ok(!amb.tipos().includes('task.integrada'));
+  };
+
+  test('abrir-grava-base', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    assert.equal(g(amb.dir, 'config', '--get', 'branch.wt/GM-10-T1.gabaritoBase').trim(), 'enabler/GM-10-loop');
+  });
+
+  test('concluir-grava-sha', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    const concl = amb.eventos().find((e) => e.tipo === 'task.concluida');
+    assert.equal(concl.dados.sha, amb.topo('wt/GM-10-T1'));
+    assert.match(concl.dados.sha, /^[0-9a-f]{40}$/);
+  });
+
+  test('integrada-grava-sha', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const ev = amb.eventos().at(-1);
+    assert.equal(ev.tipo, 'task.integrada');
+    assert.equal(ev.dados.sha, amb.topo());
+    assert.ok(amb.gitChamadas().some((l) => new RegExp(`merge --ff-only ${ev.dados.sha}$`).test(l)), 'merge por sha, não por nome de ref');
+  });
+
+  test('integrar-commit-fora-do-gate-recusa', () => {
+    const amb = ambiente();
+    const w = amb.aprovar('T1');
+    amb.commitNaWt('T1', 'FORA.txt', 'fora do escopo\n', 'lixo sem padrao');
+    g(w, 'checkout', '-q', '-b', 'limpa', 'HEAD~1');
+    amb.commitNaWt('T1', 'src/t1.txt', 'limpo\n');
+    const antes = semEfeito(amb);
+    nada(amb, antes, amb.cli(['integrar', 'T1']), 'head_divergente');
+    assert.ok(!existsSync(join(amb.dir, 'FORA.txt')));
+  });
+
+  test('integrar-head-solto-recusa', () => {
+    const amb = ambiente();
+    const w = amb.aprovar('T1');
+    g(w, 'checkout', '-q', '--detach');
+    amb.commitNaWt('T1', 'src/solto.txt');
+    const antes = semEfeito(amb);
+    nada(amb, antes, amb.cli(['integrar', 'T1']), 'head_divergente');
+    assert.ok(!existsSync(join(amb.dir, 'src/solto.txt')));
+  });
+
+  test('integrar-outra-branch-recusa', () => {
+    const amb = ambiente();
+    const w = amb.aprovar('T1');
+    g(w, 'checkout', '-q', '-b', 'outra');
+    const antes = semEfeito(amb);
+    nada(amb, antes, amb.cli(['integrar', 'T1']), 'head_divergente');
+  });
+
+  test('integrar-principal-em-outra-base-recusa', () => {
+    for (const outra of ['main', 'GM-99-outro']) {
+      const amb = ambiente();
+      amb.aprovar('T1');
+      g(amb.dir, 'checkout', '-q', '-b', outra);
+      const antes = semEfeito(amb);
+      nada(amb, antes, amb.cli(['integrar', 'T1', '--entrega', 'GM-10']), 'base_divergente');
+      assert.equal(amb.topo('enabler/GM-10-loop'), amb.topo(outra));
+    }
+  });
+
+  test('integrar-sem-base-gravada-recusa', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    g(amb.dir, 'config', '--unset', 'branch.wt/GM-10-T1.gabaritoBase');
+    const antes = semEfeito(amb);
+    const r = amb.cli(['integrar', 'T1']);
+    nada(amb, antes, r, 'base_divergente');
+    assert.match(r.j.mensagem, /não está gravada/);
+  });
+
+  test('integrar-commit-apos-veredito-recusa', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    amb.commitNaWt('T1', 'src/t1.txt', 'depois\n', 'feat(GM-10): depois do veredito');
+    const antes = semEfeito(amb);
+    nada(amb, antes, amb.cli(['integrar', 'T1']), 'commit_nao_revisado');
+  });
+
+  test('integrar-concluida-sem-sha-recusa', () => {
+    const amb = ambiente();
+    amb.cli(['abrir', 'T1']);
+    amb.semear([
+      ['task.iniciada', { task: 'T1', papel: 'implementador' }],
+      ['task.concluida', { task: 'T1' }],
+      ['review.veredito', { task: 'T1', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }],
+    ]);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    const antes = semEfeito(amb);
+    nada(amb, antes, amb.cli(['integrar', 'T1']), 'commit_nao_revisado');
+  });
+
+  test('integrar-head-mudou-entre-gate-e-merge-recusa', () => {
+    const amb = ambiente({ config: { ...CONFIG_PADRAO, gates: { suites: ["git commit -q --allow-empty -m mexe; echo '# pass 1'"] } } });
+    amb.aprovar('T1');
+    const antes = semEfeito(amb);
+    nada(amb, antes, amb.cli(['integrar', 'T1']), 'head_mudou');
+  });
+
+  test('integrar-merge-sem-efeito-recusa-sem-evento', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    const bin = amb.env.PATH.split(':')[0];
+    writeFileSync(join(bin, 'git'), `#!/bin/bash
+echo "$*" >> "$GIT_LOG"
+if [[ "$*" == *"merge --ff-only"* ]]; then echo "Already up to date."; exit 0; fi
+exec "${GIT_REAL}" "$@"
+`, { mode: 0o755 });
+    const antes = semEfeito(amb);
+    nada(amb, antes, amb.cli(['integrar', 'T1']), 'merge_sem_efeito');
+  });
+
+  test('integrar-rebase-que-muda-o-conteudo-recusa', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    writeFileSync(join(amb.dir, 'src/t1.txt'), 'x\n');
+    g(amb.dir, 'add', 'src/t1.txt');
+    g(amb.dir, 'commit', '-q', '-m', 'chore: mesma mudanca na base');
+    const antes = semEfeito(amb);
+    nada(amb, antes, amb.cli(['integrar', 'T1']), 'rebase_mudou_conteudo');
+  });
+});
+
+describe('fechar não perde nada (rodada 2)', () => {
+  test('fechar-ignorado-relata', () => {
+    const amb = ambiente();
+    amb.comBanco();
+    appendFileSync(join(amb.dir, '.gitignore'), '*.local\n');
+    g(amb.dir, 'add', '.gitignore');
+    g(amb.dir, 'commit', '-q', '-m', 'chore: ignora local');
+    amb.cli(['abrir', 'T1']);
+    const w = amb.wt('T1');
+    writeFileSync(join(w, 'x.local'), 'guarde');
+    const r = amb.cli(['fechar', 'T1']);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'worktree_com_ignorados');
+    assert.match(r.j.mensagem, /x\.local/);
+    assert.equal(readFileSync(join(w, 'x.local'), 'utf8'), 'guarde');
+    assert.ok(existsSync(join(w, '.tmp-gabarito')), 'tmp só sai depois das recusas');
+    assert.ok(!amb.sqls().some((s) => /^DROP/.test(s)), 'o banco não foi solto');
+  });
+
+  test('fechar-head-solto-recusa', () => {
+    const amb = ambiente();
+    amb.comBanco();
+    amb.cli(['abrir', 'T1']);
+    const w = amb.wt('T1');
+    g(w, 'checkout', '-q', '--detach');
+    amb.commitNaWt('T1', 'src/solto.txt');
+    const sha = g(w, 'rev-parse', 'HEAD').trim();
+    const r = amb.cli(['fechar', 'T1']);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'head_solto');
+    assert.ok(existsSync(w));
+    assert.equal(g(w, 'rev-parse', 'HEAD').trim(), sha);
+    assert.ok(existsSync(join(w, '.tmp-gabarito')));
+    assert.ok(!amb.sqls().some((s) => /^DROP/.test(s)), 'o banco não foi solto');
+  });
+});
+
+describe('ci', () => {
+  test('ci-grava-resultado', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['ci', 'verde']).rc, 0);
+    assert.equal(amb.cli(['ci', 'vermelho']).rc, 0);
+    const ev = amb.eventos().filter((e) => e.tipo === 'ci.resultado');
+    assert.deepEqual(ev.map((e) => e.dados), [{ verde: true }, { verde: false }]);
+    const antes = amb.eventos().length;
+    for (const a of [['ci', 'azul'], ['ci', 'VERDE'], ['ci', '']]) {
+      const r = amb.cli(a);
+      assert.equal(r.rc, 1, a.join(' '));
+      assert.equal(r.j.ok, false);
+    }
+    assert.equal(amb.eventos().length, antes);
+  });
+
+  test('ci-vermelho-2x-para', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['ci', 'vermelho']).rc, 0);
+    assert.notEqual(amb.cli(['proxima', '--vivos', '0']).j.acao.motivo, 'ci_vermelho');
+    assert.equal(amb.cli(['ci', 'vermelho']).rc, 0);
+    const r = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(r.rc, 0, r.out);
+    assert.deepEqual(r.j.acao, { tipo: 'parar', motivo: 'ci_vermelho' });
   });
 });
