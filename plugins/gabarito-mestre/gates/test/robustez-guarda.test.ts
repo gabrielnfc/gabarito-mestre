@@ -60,9 +60,13 @@ describe('robustez da guarda', () => {
   });
 
   test('cd-em-cadeia-nao-e-quadratico: 13 mil `cd a;` (65 KB) em menos de 100 ms', () => {
-    const t0 = performance.now();
-    decidir(bash('cd a;'.repeat(13000)), CONFIG, CTX);
-    const ms = performance.now() - t0;
+    // Menor de 5 medições: disputa de CPU com a suíte em paralelo só aumenta o tempo; custo quadrático não some.
+    let ms = Infinity;
+    for (let i = 0; i < 5; i++) {
+      const t0 = performance.now();
+      decidir(bash('cd a;'.repeat(13000)), CONFIG, CTX);
+      ms = Math.min(ms, performance.now() - t0);
+    }
     assert.ok(ms < 100, `65 KB de cd levaram ${ms.toFixed(1)} ms`);
   });
 
