@@ -1,24 +1,21 @@
 /**
- * Anel por raiz mais profunda (GM-10, REQ-POU-2 r6, REQ-LOOP-3): a worktree de task em `.harness/worktrees/<task>` recebe
- * a escrita do implementador; `.harness`, config, `.git`, workflows e `.env` seguem barrados, na worktree e no principal,
- * com qualquer cwd. Teste de COSTURA (P9): `loop.mjs abrir` real → `guarda.js` por stdin → escrita e commit reais → `integrar`.
+ * Anel: raiz só acrescenta (GM-10, REQ-POU-2 r7, REQ-LOOP-3): o caminho é medido contra TODA raiz que o contém, sem distinção de caixa.
+ * Única subtração: `.harness/worktrees/<n>` registrada em `<principal>/.git/worktrees` do principal da sessão (CLAUDE_PROJECT_DIR).
+ * A worktree de task recebe a escrita do implementador; `.harness`, config, `.git`, workflows e `.env` seguem barrados, na worktree e
+ * no principal, com qualquer cwd. Teste de COSTURA (P9): `loop.mjs abrir` real → `guarda.js` por stdin com `agent_id` → escrita e
+ * commit reais → `integrar`.
  *
- * MUTAÇÕES PRESCRITAS (JSON em .superpowers/sdd/2026-11-03-e2-loop/task-17-mut.json, roda sobre dist/):
- *  G1  primeira raiz que contém, em vez da mais longa ⇒ `anel-e2e-abrir-hook` falha
- *  G2  `raizesDeAnel` devolve só `raizes` ⇒ `anel-e2e-abrir-hook` falha
- *  G3  lista sem o principal ⇒ `anel-cwd-nao-muda-veredito` falha
- *  G4  qualquer filho de `.harness/worktrees`, sem registro ⇒ `anel-worktree-falsa` falha
- *  G5  sem a checagem de filho direto ⇒ `anel-registrada-fora-de-worktrees` falha
- *  G6  erro de leitura entra na lista ⇒ `anel-gitdir-ilegivel-nega` falha
- *  G7  comparação sem caixa exata ⇒ `anel-caixa-nega` falha
- *  G8  `rel` da worktree medido contra o principal ⇒ `anel-e2e-abrir-hook` falha
+ * MUTAÇÕES PRESCRITAS (JSON em .superpowers/sdd/2026-11-03-e2-loop/task-17-r2-mut.json, roda sobre dist/): U1 a U12.
+ *  U1 raiz mais profunda em vez de união · U2 registro de qualquer raiz isenta · U2b pasta da raiz lida, não da âncora
+ *  U3 âncora pelo cwd · U4 sem env cai no cwd · U5 contém com caixa exata · U6 isenção sem caixa exata · U7 prefixo sem barra
+ *  U8 sem basename `.git` · U9 ponteiro relativo sem resolve · U10 sem isFile · U11 isenção sem filho direto · U12 isenção nunca aplicada
  */
 
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync, appendFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { rodarBruto, sessaoNova } from './_adaptador-helpers.mjs';
@@ -26,6 +23,7 @@ import { rodarBruto, sessaoNova } from './_adaptador-helpers.mjs';
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const LOOP = join(AQUI, '..', 'scripts', 'loop.mjs');
 const PLUGIN = realpathSync(join(AQUI, '..', '..'));
+const GUARDA = join(AQUI, '..', 'dist', 'guarda.js');
 
 const HOST = 'host-teste';
 const MEDIDAS = { GABARITO_CAP_HOSTNAME: HOST, GABARITO_CAP_CORES: '8', GABARITO_CAP_LOAD1: '0.5', GABARITO_CAP_MEM_MB: '64000', GABARITO_CAP_DISCO_GB: '500', GABARITO_CAP_PESADOS: '0' };
@@ -119,7 +117,7 @@ const ataques = (wt, R, { profundo }) => [
   ['rm -rf worktrees', ...B(`rm -rf ${R}/.harness/worktrees`)], ['Bash > wt/.git', ...B(`echo x > ${wt}/.git`)],
 ];
 
-describe('anel pela raiz mais profunda', () => {
+describe('anel: raiz só acrescenta', () => {
   test('anel-e2e-abrir-hook: abrir real, guarda por stdin nos 2 cwd, escrita e commit reais, integrar encontra o commit; 32 ataques, todos deny', () => {
     const { R, H } = cenario();
     // 1. Cada escrita legítima passa em silêncio, com o cwd no principal e com o cwd na worktree.
@@ -241,5 +239,81 @@ describe('anel pela raiz mais profunda', () => {
       for (const [nome, tool, input] of ataques(H, R, { profundo: true })) assert.equal(hook(R, cwd, tool, input, false), 'ask', nome);
       for (const [nome, tool, input] of legitimos(H)) assert.equal(hook(R, cwd, tool, input, false), undefined, nome);
     }
+  });
+});
+
+const w = (p, c = 'x\n') => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, c); };
+function repoRaiz() {
+  const R = join(realpathSync(mkdtempSync(join(tmpdir(), 'anelraiz-'))), 'repo'); mkdirSync(R);
+  execFileSync('git', ['init', '-q', '-b', 'enabler/GM-99-x', R]); g(R, 'config', 'user.email', 't@t'); g(R, 'config', 'user.name', 't');
+  w(join(R, 'a.txt')); w(join(R, 'harness.config.json'), '{}\n'); g(R, 'add', '-A'); g(R, 'commit', '-qm', 'c');
+  const H = join(R, '.harness/worktrees/T1'); g(R, 'worktree', 'add', '-q', '-b', 'wt/T1', H);
+  return { R, H };
+}
+function hookRaiz(cwd, file_path, { projeto, sub = true } = {}) {
+  const e = { tool_name: 'Write', tool_input: { file_path, content: 'x' }, session_id: 's', cwd, hook_event_name: 'PreToolUse', ...(sub ? { agent_id: 'a', agent_type: 'x' } : {}) };
+  const env = { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN }; delete env.CLAUDE_PROJECT_DIR; if (projeto) env.CLAUDE_PROJECT_DIR = projeto;
+  const r = spawnSync(process.execPath, [GUARDA], { input: JSON.stringify(e), encoding: 'utf8', env, cwd });
+  try { return JSON.parse(r.stdout.trim().split('\n').pop()).hookSpecificOutput?.permissionDecision; } catch { return undefined; }
+}
+describe('raiz só acrescenta anel (REQ-POU-2 r7)', () => {
+  test('anel-registro-forjado-nao-isenta', () => {
+    const { R, H } = repoRaiz();
+    w(`${H}/sub/.git/worktrees/e/gitdir`, `${R}/.claude/.git\n`); w(`${R}/.claude/.git`, 'gitdir: x\n');
+    w(`${R}/.harness/worktrees/T9/.git`, 'gitdir: x\n'); w(`${H}/sub2/.git/worktrees/e/gitdir`, `${R}/.harness/worktrees/T9/.git\n`);
+    assert.equal(hookRaiz(`${H}/sub`, `${R}/.claude/settings.json`, { projeto: R }), 'deny');
+    assert.equal(hookRaiz(`${R}/.claude`, `${R}/.claude/settings.json`, { projeto: R }), 'deny');
+    assert.equal(hookRaiz(`${H}/sub2`, `${R}/.harness/worktrees/T9/x`, { projeto: R }), 'deny');
+  });
+  test('anel-ancora-so-da-sessao', () => {
+    const { R, H } = repoRaiz();
+    const F = join(dirname(R), 'falso');
+    w(`${R}/.harness/worktrees/T9/.git`, 'gitdir: x\n');
+    w(`${F}/.git/worktrees/e/gitdir`, `${R}/.harness/worktrees/T9/.git\n`); w(`${F}/.git/worktrees/e/commondir`, `${F}/.git\n`);
+    w(`${H}/sub/.git`, `gitdir: ${F}/.git/worktrees/e\n`);
+    assert.equal(hookRaiz(`${H}/sub`, `${R}/.harness/worktrees/T9/x`, { projeto: R }), 'deny');
+    assert.equal(hookRaiz(`${R}/.harness/worktrees/T9`, `${R}/.harness/worktrees/T9/x`, { projeto: R }), 'deny');
+  });
+  test('anel-sem-sessao-nada-isento', () => {
+    const { R, H } = repoRaiz();
+    for (const cwd of [R, H]) assert.equal(hookRaiz(cwd, `${H}/a`), 'deny');
+    assert.equal(hookRaiz(R, `${H}/a`, { projeto: R }), undefined);
+  });
+  test('anel-area-registrada-segue-no-anel', () => {
+    const { R, H } = repoRaiz();
+    for (const [d, a] of [['.github/workflows', 'e.yml'], ['.claude', 'settings.json'], ['tools/gabarito-gates', 'g.js'], ['.git/zz', 'x'], ['.HARNESS/x', 'y'], ['.harness/x', 'y'], ['.harness/worktrees/a/b', 'x']]) {
+      if (!d.startsWith('.HARNESS') || !d.endsWith('/x')) { try { g(R, 'worktree', 'add', '-q', '-b', `z${d.replace(/\W/g, '')}`, join(R, d)); } catch { /* mesma pasta em APFS */ } }
+      else g(R, 'worktree', 'add', '-q', '-b', 'zH', join(R, '.HARNESS/q'));
+      const alvo = d.endsWith('/x') && d.startsWith('.HARNESS') ? `${R}/.HARNESS/q/y` : `${R}/${d}/${a}`;
+      for (const cwd of [R, H]) assert.equal(hookRaiz(cwd, alvo, { projeto: R }), 'deny', `${alvo} cwd ${cwd}`);
+    }
+  });
+  test('anel-isenta-so-filho-direto-caixa-exata', () => {
+    const { R } = repoRaiz();
+    g(R, 'worktree', 'add', '-q', '-b', 'zC', join(R, '.HARNESS/worktrees/Z'));
+    assert.equal(hookRaiz(R, `${R}/.HARNESS/worktrees/Z/x`, { projeto: R }), 'deny');
+    assert.equal(hookRaiz(R, `${R}/.harness/worktrees/Z/x`, { projeto: R }), 'deny');
+    assert.equal(hookRaiz(R, `${R}/.harness/worktrees/T1evil/x`, { projeto: R }), 'deny', 'irmã com o mesmo prefixo');
+  });
+  test('anel-raiz-outra-caixa-nega', () => {
+    const { R, H } = repoRaiz();
+    const U = join(dirname(R), basename(R).toUpperCase());
+    for (const cwd of [R, H]) for (const a of ['harness.config.json', '.harness/x', '.git/config', '.github/workflows/c.yml', '.harness/worktrees/T1/a']) {
+      assert.equal(hookRaiz(cwd, `${U}/${a}`, { projeto: R }), 'deny', a);
+    }
+    assert.equal(hookRaiz(R, `${U}/harness.config.json`, { projeto: R, sub: false }), 'ask');
+    assert.equal(hookRaiz(R, `${U}/src/a`, { projeto: R }), undefined, 'fora das áreas segue');
+  });
+  test('anel-ponteiro-precisa-de-git', () => {
+    const { R, H } = repoRaiz();
+    const gd = join(R, '.git/worktrees/T1/gitdir');
+    writeFileSync(gd, `${H}/a.txt\n`);
+    assert.equal(hookRaiz(R, `${H}/a`, { projeto: R }), 'deny');
+  });
+  test('anel-ponteiro-relativo', () => {
+    const { R } = repoRaiz();
+    const T6 = join(R, '.harness/worktrees/T6'); g(R, 'worktree', 'add', '-q', '--relative-paths', '-b', 'zR', T6);
+    assert.equal(hookRaiz(R, `${T6}/a`, { projeto: R }), undefined);
+    assert.equal(hookRaiz(R, `${T6}/.harness/x`, { projeto: R }), 'deny');
   });
 });

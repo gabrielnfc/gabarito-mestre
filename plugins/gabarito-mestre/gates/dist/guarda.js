@@ -128,9 +128,10 @@ function linhaDe(texto               )                {
   return t === '' ? null : t.split('\n')[0];
 }
 
-function montarContexto(entrada             , raiz               , cwd        , pluginRoot               , raizes          )           {
+function montarContexto(entrada             , raiz               , cwd        , pluginRoot               , raizes          , ancora               )           {
   // `raizes`: as raízes da pausa, para o anel (`aneis.ts`); `raiz` segue sendo a do cwd (Q14).
-  const nulos                                                          = { branchAtual: null, refLinkado: null, remoteUrl: null, raiz, pluginRoot, raizes, raizesDeAnel: raizesDeAnel(raizes) };
+  const anel = raizesDeAnel(raizes, ancora);
+  const nulos                                                                                                          = { branchAtual: null, refLinkado: null, remoteUrl: null, raiz, pluginRoot, raizes, raizesDeAnel: anel.todas, raizesIsentas: anel.isentas, ancora };
   if (!precisaContexto(entrada)) return nulos;
   const base = raiz ?? cwd;
   let refLinkado                = null;
@@ -338,15 +339,16 @@ export function raizesDePausa(raizSessao               , raizCwd               )
 }
 
 /**
- * Raízes do anel (REQ-POU-2): as da pausa mais as worktrees que o git registra em cada uma (`<r>/.git/worktrees/<n>/gitdir`).
- * Só fs, sem spawn. Uma worktree entra se o ponteiro termina em `.git` e esse `.git` é arquivo; e, se estiver sob `<r>/.harness`,
- * só como filho direto de `<r>/.harness/worktrees`. Qualquer falha de leitura: não entra, e o caminho fica no anel do principal (nega).
+ * Raízes do anel (REQ-POU-2). Toda raiz só ACRESCENTA anel: `aneis.ts` testa o caminho contra todas as que o contêm.
+ * `todas`: as da pausa mais as worktrees que o git registra em cada uma. `isentas`: só o que tira `.harness/worktrees/<n>` do anel
+ * do principal: registro lido de `<ancora>/.git/worktrees` (área do anel), ponteiro em `.git` arquivo, filho direto, caixa exata.
+ * A âncora vem de CLAUDE_PROJECT_DIR, nunca do cwd. Só fs, sem spawn. Qualquer falha de leitura: não entra (nega).
  */
-export function raizesDeAnel(raizes          )           {
-  // Um checkout aninhado em `<outra>/.harness/` só volta à lista se o git o registrar como filho direto de `worktrees/` (abaixo).
-  const aninhada = (x        )          => raizes.some((o) => o !== x && x.toLowerCase().startsWith(`${o.toLowerCase()}/.harness/`));
-  const todas = raizes.filter((x) => !aninhada(x));
-  for (const r of raizes) {
+export function raizesDeAnel(raizes          , ancora               )                                         {
+  const todas = [...raizes];
+  const isentas           = [];
+  const fontes = ancora !== null && !raizes.includes(ancora) ? [...raizes, ancora] : raizes;
+  for (const r of fontes) {
     let nomes          ;
     try { nomes = readdirSync(join(r, '.git', 'worktrees')); } catch { continue; }
     for (const n of nomes) {
@@ -355,12 +357,20 @@ export function raizesDeAnel(raizes          )           {
         const ptr = resolve(dir, readFileSync(join(dir, 'gitdir'), 'utf8').trim());
         if (basename(ptr) !== '.git' || !lstatSync(ptr).isFile()) continue;
         const wt = dirname(ptr);
-        if ((wt === `${r}/.harness` || wt.startsWith(`${r}/.harness/`)) && dirname(wt) !== `${r}/.harness/worktrees`) continue;
         if (!todas.includes(wt)) todas.push(wt);
-      } catch { /* ponteiro ilegível: a worktree fica no anel do principal */ }
+        if (r === ancora && dirname(wt) === `${ancora}/.harness/worktrees`) isentas.push(wt);
+      } catch { /* ponteiro ilegível: fica no anel do principal */ }
     }
   }
-  return todas;
+  return { todas, isentas };
+}
+
+/** O checkout principal da sessão, só por CLAUDE_PROJECT_DIR. Sem a variável, ou com ponteiro ilegível: null, nada é isento. */
+export function ancoraDaSessao(projeto         )                {
+  const s = raizPorFs(projeto);
+  if (s === null) return null;
+  const p = raizPrincipal(s);
+  return p === ILEGIVEL ? null : (p                 ) ?? s;
 }
 
 const pausado = (p                                         )          => p.ilegivel || p.raizes.some(existePausar);
@@ -438,7 +448,7 @@ function principal()       {
 
   const guarda = raizSessao === null ? null : lerGuarda(raizSessao);
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-  const contexto = montarContexto(entrada, raizCwd ?? raizSessao, cwd, pluginRoot, pausa.raizes);
+  const contexto = montarContexto(entrada, raizCwd ?? raizSessao, cwd, pluginRoot, pausa.raizes, ancoraDaSessao(process.env.CLAUDE_PROJECT_DIR));
   const r = decidir(entrada, guarda?.config ?? null, contexto);
 
   const sessao = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;

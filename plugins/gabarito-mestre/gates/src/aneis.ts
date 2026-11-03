@@ -444,7 +444,7 @@ export function segmentar(comando: string, profundidade = 0): Segmento[] {
 // ---------------------------------------------------------------------------------------------------------------
 // Caminhos
 
-function resolver(caminho: string, contexto: Contexto, cwd?: string | null): { norm: string; rel: string | null } {
+function resolver(caminho: string, contexto: Contexto, cwd?: string | null): { norm: string; rels: string[] } {
   let p = caminho.trim();
   p = p.replace(/\$\{?CLAUDE_PLUGIN_ROOT\}?/g, contexto.pluginRoot ?? '$CLAUDE_PLUGIN_ROOT');
   const base = cwd && cwd.startsWith('/') ? cwd : contexto.raiz && contexto.raiz.startsWith('/') ? contexto.raiz : null;
@@ -454,22 +454,25 @@ function resolver(caminho: string, contexto: Contexto, cwd?: string | null): { n
   let norm = posix.normalize(p).replace(/^\.\//, '');
   if (norm.length > 1) norm = norm.replace(/\/+$/, '');
   const raiz = contexto.raiz ? contexto.raiz.replace(/\/+$/, '') : null;
-  let rel: string | null = null;
+  const rels: string[] = [];
   if (norm.startsWith('/')) {
-    // A raiz mais profunda que contém o caminho decide (REQ-POU-2, emenda a Q14): a sessão, o cwd e as worktrees que o git registra.
-    // O veredito é função do caminho, não do cwd. Caixa exata: outra grafia não é prefixo e cai no anel da raiz que a contém.
-    // A raiz do cwd só conta se não for um checkout aninhado em `<principal>/.harness` que o git não registra como filho direto de `worktrees/`.
-    const extras = raizesDeAnel(contexto);
-    const pausa = raizesDePausa(contexto);
-    const aninhada = raiz !== null && !extras.includes(raiz) && pausa.some((p) => raiz.toLowerCase().startsWith(`${p}/.harness/`));
-    let dono: string | null = null;
-    for (const c of [aninhada ? null : raiz, ...extras]) {
-      if (typeof c !== 'string' || c === '') continue;
-      if ((norm === c || norm.startsWith(`${c}/`)) && (dono === null || c.length > dono.length)) dono = c;
+    // REQ-POU-2: o caminho é medido contra TODA raiz que o contém, sem distinção de caixa; raiz nova só acrescenta anel.
+    // A única subtração: `rel` do principal da sessão não conta para o que está dentro de `.harness/worktrees/<n>` registrada, caixa exata.
+    const ancora = (contexto as Contexto & { ancora?: string | null }).ancora ?? null;
+    const isentas = ((contexto as Contexto & { raizesIsentas?: string[] }).raizesIsentas ?? []);
+    const isento = isentas.some((w) => norm.startsWith(`${w}/`));
+    const baixo = norm.toLowerCase();
+    const vistas = new Set<string>();
+    for (const c of [raiz, ...raizesDeAnel(contexto)]) {
+      if (typeof c !== 'string' || c === '' || vistas.has(c)) continue;
+      vistas.add(c);
+      const cb = c.toLowerCase();
+      if (baixo !== cb && !baixo.startsWith(`${cb}/`)) continue;
+      if (isento && c === ancora) continue;
+      rels.push(baixo === cb ? '' : norm.slice(c.length + 1));
     }
-    if (dono !== null) rel = norm === dono ? '' : norm.slice(dono.length + 1);
-  } else if (!norm.startsWith('~') && !norm.startsWith('..') && !norm.startsWith('$')) rel = norm === '.' ? '' : norm;
-  return { norm, rel };
+  } else if (!norm.startsWith('~') && !norm.startsWith('..') && !norm.startsWith('$')) rels.push(norm === '.' ? '' : norm);
+  return { norm, rels };
 }
 
 /** As raízes do anel (sem barra final, caixa original), vindas de `guarda.ts` (`raizesDeAnel`); vazia sem contexto. */
@@ -489,7 +492,7 @@ const ANCESTRAIS = ['tools', '.github', '.claude', '.git', '.git/refs'];
 
 export function anelDeCaminho(caminho: string, contexto: Contexto, cwd?: string | null): Anel | null {
   if (caminho.trim() === '') return null;
-  const { norm, rel } = resolver(caminho, contexto, cwd);
+  const { norm, rels } = resolver(caminho, contexto, cwd);
   const segs = norm.split('/').filter((s) => s !== '' && s !== '.');
   const nome = segs.length ? segs[segs.length - 1] : '';
   const minusculo = nome.toLowerCase();
@@ -511,13 +514,14 @@ export function anelDeCaminho(caminho: string, contexto: Contexto, cwd?: string 
     const pr = contexto.pluginRoot.replace(/\/+$/, '');
     if (norm === pr || norm.startsWith(`${pr}/`)) return 'integridade';
   }
-  if (rel === null) return null;
-  // Sem distinção de caixa: o APFS padrão do macOS não distingue.
-  const r = rel.toLowerCase();
-  if (r === 'harness.config.json') return 'integridade';
-  if (r === '.git' || r.startsWith('.git/')) return 'integridade';
-  for (const d of AREAS_DIR) if (r === d || r.startsWith(`${d}/`)) return 'integridade';
-  if (/^\.claude\/settings[^/]*\.json$/.test(r)) return 'integridade';
+  for (const rel of rels) {
+    // Sem distinção de caixa: o APFS padrão do macOS não distingue.
+    const r = rel.toLowerCase();
+    if (r === 'harness.config.json') return 'integridade';
+    if (r === '.git' || r.startsWith('.git/')) return 'integridade';
+    for (const d of AREAS_DIR) if (r === d || r.startsWith(`${d}/`)) return 'integridade';
+    if (/^\.claude\/settings[^/]*\.json$/.test(r)) return 'integridade';
+  }
   return null;
 }
 
@@ -546,7 +550,7 @@ function arquivoDePausa(caminho: string, contexto: Contexto, cwd?: string | null
 /** Remoção de um diretório que contém uma área de integridade (`rm -rf .github`). */
 export function ancestralDeIntegridade(caminho: string, contexto: Contexto, cwd?: string | null): boolean {
   if (caminho.trim() === '') return false;
-  const { norm, rel } = resolver(caminho, contexto, cwd);
+  const { norm, rels } = resolver(caminho, contexto, cwd);
   if (contexto.pluginRoot) {
     const pr = contexto.pluginRoot.replace(/\/+$/, '');
     if (pr.startsWith(`${norm}/`)) return true;
@@ -554,8 +558,7 @@ export function ancestralDeIntegridade(caminho: string, contexto: Contexto, cwd?
   // A própria raiz de cada checkout em que a pausa é lida contém `.harness/PAUSAR`.
   const baixo = norm.toLowerCase();
   if (raizesDePausa(contexto).includes(baixo)) return true;
-  if (rel === null) return false;
-  return rel === '' || ANCESTRAIS.includes(rel);
+  return rels.some((rel) => rel === '' || ANCESTRAIS.includes(rel));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -628,8 +631,7 @@ function pushSemRefsRemotes(resto: string[]): boolean {
 /** `.git` ou `.git/**` (inclui o arquivo `.git` de worktree), sem distinção de caixa. */
 function dentroDeDotGit(caminho: string, contexto: Contexto, cwd?: string | null): boolean {
   if (caminho.trim() === '') return false;
-  const rel = resolver(caminho, contexto, cwd).rel?.toLowerCase();
-  return rel !== undefined && rel !== null && (rel === '.git' || rel.startsWith('.git/'));
+  return resolver(caminho, contexto, cwd).rels.some((x) => { const rel = x.toLowerCase(); return rel === '.git' || rel.startsWith('.git/'); });
 }
 
 // ---------------------------------------------------------------------------------------------------------------
