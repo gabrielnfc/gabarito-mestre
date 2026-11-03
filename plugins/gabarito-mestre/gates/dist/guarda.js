@@ -128,8 +128,9 @@ function linhaDe(texto               )                {
   return t === '' ? null : t.split('\n')[0];
 }
 
-function montarContexto(entrada             , raiz               , cwd        , pluginRoot               )           {
-  const nulos           = { branchAtual: null, refLinkado: null, remoteUrl: null, raiz, pluginRoot };
+function montarContexto(entrada             , raiz               , cwd        , pluginRoot               , raizes          )           {
+  // `raizes`: as raízes da pausa, para o anel (`aneis.ts`); `raiz` segue sendo a do cwd (Q14).
+  const nulos                                  = { branchAtual: null, refLinkado: null, remoteUrl: null, raiz, pluginRoot, raizes };
   if (!precisaContexto(entrada)) return nulos;
   const base = raiz ?? cwd;
   let refLinkado                = null;
@@ -290,8 +291,11 @@ function pedirPorExcecao(e         )       {
 
 const MSG_PAUSA = 'pausado: /gabarito retomar';
 
-/** Raiz do checkout principal quando `raiz` é worktree (`.git` é arquivo): `commondir` por fs, sem spawn. */
-function raizPrincipal(raiz        )                {
+/** Erro de leitura ao descobrir o checkout principal: não é "sem principal", é "não sei" (a pausa vale). */
+const ILEGIVEL = Symbol('ponteiro-ilegivel');
+
+/** Raiz do checkout principal quando `raiz` é worktree (`.git` é arquivo): `commondir` por fs, sem spawn. `null` = não é worktree. */
+function raizPrincipal(raiz        )                                  {
   try {
     const ponteiro = join(raiz, '.git');
     if (!lstatSync(ponteiro).isFile()) return null;
@@ -300,8 +304,9 @@ function raizPrincipal(raiz        )                {
     const gitdir = isAbsolute(m[1]) ? m[1] : resolve(raiz, m[1]);
     const comum = resolve(gitdir, readFileSync(join(gitdir, 'commondir'), 'utf8').trim());
     return basename(comum) === '.git' ? dirname(comum) : null;
-  } catch {
-    return null;
+  } catch (e) {
+    // Só ENOENT é "não é worktree" (sem `.git`, submódulo sem `commondir`); qualquer outro erro de leitura não libera.
+    return (e                         ).code === 'ENOENT' ? null : ILEGIVEL;
   }
 }
 
@@ -315,19 +320,24 @@ function existePausar(raiz        )          {
   }
 }
 
-/** Raízes onde a pausa vale: a da sessão, a do cwd e o checkout principal de cada uma (worktree de task obedece o principal). */
-function pausado(raizes                      )          {
-  const vistas = new Set        ();
-  for (const r of raizes) {
+/**
+ * As raízes onde a pausa vale: a da sessão, a do cwd e o checkout principal de cada uma (worktree de task obedece o principal).
+ * A mesma lista decide a leitura (`pausado`) e a proteção (anel de `.harness/PAUSAR`, `.harness` e a própria raiz).
+ * `ilegivel`: o ponteiro de uma worktree não pôde ser lido; o principal é desconhecido e a pausa vale.
+ */
+function raizesDePausa(raizSessao               , raizCwd               )                                          {
+  const raizes           = [];
+  let ilegivel = false;
+  for (const r of [raizSessao, raizCwd]) {
     if (r === null) continue;
-    for (const c of [r, raizPrincipal(r)]) {
-      if (c === null || vistas.has(c)) continue;
-      vistas.add(c);
-      if (existePausar(c)) return true;
-    }
+    const p = raizPrincipal(r);
+    if (p === ILEGIVEL) ilegivel = true;
+    for (const c of [r, p]) if (typeof c === 'string' && !raizes.includes(c)) raizes.push(c);
   }
-  return false;
+  return { raizes, ilegivel };
 }
+
+const pausado = (p                                         )          => p.ilegivel || p.raizes.some(existePausar);
 
 /** A única ferramenta que o subagent ainda usa sob pausa: devolver o relatório (nome exato). */
 const HANDBACK = 'SubagentHandback';
@@ -389,7 +399,8 @@ function principal()       {
   if (raizSessao === null) process.stderr.write('gabarito-mestre: cwd fora de um repositório git; só os anéis de segredo e integridade valem\n');
 
   // Kill switch: antes de classificar; só `lstat`, sem config, remoto nem diário (o deny não depende deles).
-  if (negaPorPausa(entrada) && pausado([raizSessao, raizCwd])) {
+  const pausa = raizesDePausa(raizSessao, raizCwd);
+  if (negaPorPausa(entrada) && pausado(pausa)) {
     emitir(Buffer.from(`${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: MSG_PAUSA } })}\n`));
     registrarPausa(entrada, raizSessao);
     return;
@@ -401,7 +412,7 @@ function principal()       {
 
   const guarda = raizSessao === null ? null : lerGuarda(raizSessao);
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-  const contexto = montarContexto(entrada, raizCwd ?? raizSessao, cwd, pluginRoot);
+  const contexto = montarContexto(entrada, raizCwd ?? raizSessao, cwd, pluginRoot, pausa.raizes);
   const r = decidir(entrada, guarda?.config ?? null, contexto);
 
   const sessao = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;

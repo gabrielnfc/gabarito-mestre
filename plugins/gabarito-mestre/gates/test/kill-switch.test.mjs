@@ -13,6 +13,12 @@
  *  W1  matcher de hooks.json sem `.*` ⇒ `matcher-cobre-glob` falha
  *  W2  handback negado sob pausa ⇒ `handback-passa-sob-pausa` falha
  *  W3  anel sem o `.harness/PAUSAR` absoluto ⇒ `pausar-absoluto-worktree-pede` falha
+ *  R1  `raizesDePausa` sem o principal ⇒ os `pausar-*-principal-da-worktree-pede` falham
+ *  R2  comparação do arquivo/diretório com caixa ⇒ `pausar-remover-arquivo-caixa-worktree-pede` falha
+ *  R3  `ancestralDeIntegridade` sem `raizes` ⇒ `pausar-remover-raiz-principal-da-worktree-pede` falha
+ *  R4  anel de `.harness` só na raiz do cwd ⇒ `pausar-remover-dir-principal-da-worktree-pede` falha
+ *  R5  `raizPrincipal` com erro de leitura devolve null ⇒ `pausar-ponteiro-ilegivel-nao-libera` falha
+ *  R6  `pausado` e o anel com listas de raízes diferentes ⇒ `pausar-pausa-e-anel-mesmas-raizes` falha
  */
 
 import { test, describe } from 'node:test';
@@ -376,5 +382,157 @@ describe('o matcher de hooks.json cobre toda ferramenta', () => {
     const r = rodar(repo, 'mcp__prodsrv__execute_sql', { query: 'delete from t' });
     assert.equal(r.decisao, 'ask');
     assert.equal(rodar(repo, 'mcp__prodsrv__execute_sql', { query: 'delete from t' }, SUB).decisao, 'deny');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// T7 rodada 3 (Sombra): o anel protege nas mesmas raízes em que a pausa é lida.
+
+/** Principal com PAUSAR e uma worktree de task sem ele. `M` = principal visto da worktree. */
+function cenario(nome) {
+  const repo = montar();
+  const wt = join(realpathSync(mkdtempSync(join(tmpdir(), 'gm-kill-r3-'))), 'wt');
+  git(repo, 'worktree', 'add', '-q', '-b', `wt/${nome}`, wt);
+  pausar(repo);
+  return { repo, wt, M: repo };
+}
+
+describe('anel do PAUSAR nas mesmas raízes da pausa', () => {
+  test('pausar-remover-arquivo-caixa-worktree-pede: o arquivo, qualquer caixa, remoção e escrita', () => {
+    const { wt, M } = cenario('GM-R3-1');
+    const cmds = [
+      `rm ${M}/.harness/pausar`, `rm ${M}/.HARNESS/PAUSAR`, `rm ${M}/.Harness/Pausar`, `unlink ${M}/.harness/pausar`, `shred ${M}/.harness/pausar`,
+      `mv ${M}/.harness/pausar /tmp/x`, `mv /tmp/x ${M}/.harness/pausar`, `mv /tmp/x ${M}/.HARNESS/PAUSAR`,
+      `: > ${M}/.harness/pausar`, `echo x | tee ${M}/.harness/pausar`, `sed -i s/a/b/ ${M}/.harness/pausar`, `truncate -s 0 ${M}/.harness/pausar`,
+      `chmod 000 ${M}/.harness/pausar`, `ln -sf /tmp/x ${M}/.harness/pausar`, `touch ${M}/.harness/pausar`,
+    ];
+    for (const command of cmds) {
+      assert.equal(rodar(wt, 'Bash', { command }).decisao, 'ask', command);
+      assert.equal(rodar(wt, 'Bash', { command }, SUB).decisao, 'deny', command);
+    }
+    for (const tool of ['Edit', 'Write']) {
+      for (const file_path of [`${M}/.harness/pausar`, `${M}/.HARNESS/PAUSAR`]) {
+        assert.equal(rodar(wt, tool, { file_path, content: '', old_string: 'a', new_string: 'b' }).decisao, 'ask', `${tool} ${file_path}`);
+      }
+    }
+  });
+
+  test('pausar-remover-dir-principal-da-worktree-pede: o diretório .harness do principal', () => {
+    const { wt, M } = cenario('GM-R3-2');
+    for (const command of [`rm -r ${M}/.harness`, `rm -rf ${M}/.harness/`, `rm -rf ${M}/.HARNESS`, `rmdir ${M}/.harness`, `mv ${M}/.harness /tmp/x`, `mv ${M}/.Harness /tmp/x`]) {
+      assert.equal(rodar(wt, 'Bash', { command }).decisao, 'ask', command);
+      assert.equal(rodar(wt, 'Bash', { command }, SUB).decisao, 'deny', command);
+    }
+  });
+
+  test('pausar-mover-dir-principal-da-worktree-pede: mv do diretório e da raiz, fonte', () => {
+    const { wt, M } = cenario('GM-R3-3');
+    for (const command of [`mv ${M}/.harness /tmp/y`, `mv ${M} /tmp/y`]) {
+      assert.equal(rodar(wt, 'Bash', { command }).decisao, 'ask', command);
+    }
+  });
+
+  test('pausar-remover-raiz-principal-da-worktree-pede: a própria raiz do principal', () => {
+    const { wt, M } = cenario('GM-R3-4');
+    for (const command of [`rm -rf ${M}`, `rm -rf ${M}/`, `mv ${M} /tmp/y`]) {
+      assert.equal(rodar(wt, 'Bash', { command }).decisao, 'ask', command);
+      assert.equal(rodar(wt, 'Bash', { command }, SUB).decisao, 'deny', command);
+    }
+  });
+
+  test('pausar-cd-harness-rm-caixa-pede: cd literal até o principal e rm relativo, qualquer caixa', () => {
+    const { wt, M } = cenario('GM-R3-5');
+    for (const command of [
+      `cd ${M} && rm .harness/PAUSAR`, `cd ${M} && rm .harness/pausar`, `cd ${M}/.harness && rm PAUSAR`, `cd ${M}/.harness; rm pausar`,
+      `cd ${M}; rm -r .harness`, `cd ${M}; rm -rf .HARNESS`, `cd ${M}/.harness && mv pausar /tmp/x`,
+    ]) {
+      assert.equal(rodar(wt, 'Bash', { command }).decisao, 'ask', command);
+    }
+  });
+
+  test('pausar-formas-literais-pedem: ./, //, x/../, aspas, barra, bash -c, git -C', () => {
+    const { wt, M } = cenario('GM-R3-6');
+    for (const command of [
+      `rm ${M}/./.harness/pausar`, `rm ${M}//.harness//pausar`, `rm ${M}/x/../.harness/pausar`, `rm "${M}/.harness/pausar"`, `rm '${M}/.harness/pausar'`,
+      `rm ${M}/.harn\\ess/pausar`, `bash -c 'rm ${M}/.harness/pausar'`, `git -C ${M} rm -f .harness/pausar`, `rm -rf ${M}/./.harness`, `rm -rf ${M}/x/..`,
+    ]) {
+      assert.equal(rodar(wt, 'Bash', { command }).decisao, 'ask', command);
+    }
+  });
+
+  test('pausar-tabela-r2: os 7 comandos do achado 1, a partir da worktree com PAUSAR só no principal', () => {
+    const { wt, M } = cenario('GM-R3-7');
+    for (const command of [
+      `rm ${M}/.harness/pausar`, `mv ${M}/.harness/pausar /tmp/x`, `cd ${M} && rm .harness/pausar`, `cd ${M}/.harness; rm pausar`,
+      `rm ${M}/.HARNESS/PAUSAR`, `mv ${M}/.harness /tmp/x`, `rm -r ${M}/.harness`,
+    ]) {
+      assert.equal(rodar(wt, 'Bash', { command }).decisao, 'ask', command);
+    }
+  });
+
+  test('pausar-cwd-qualquer: da raiz principal, de subdiretório e de .harness o mesmo conjunto vale', () => {
+    const { repo, wt, M } = cenario('GM-R3-8');
+    mkdirSync(join(wt, 'sub'));
+    for (const cwd of [repo, join(repo, '.harness'), wt, join(wt, 'sub')]) {
+      for (const command of [`rm ${M}/.harness/pausar`, `rm -r ${M}/.harness`, `rm -rf ${M}`]) {
+        assert.equal(rodar(repo, 'Bash', { command }, { cwd }).decisao, 'ask', `${cwd} ${command}`);
+      }
+    }
+  });
+
+  test('pausar-pausa-e-anel-mesmas-raizes: a raiz da sessão também protege (sessão e cwd em raízes diferentes)', () => {
+    const { repo, wt } = cenario('GM-R3-9');
+    const outro = join(realpathSync(mkdtempSync(join(tmpdir(), 'gm-kill-r3o-'))), 'wt2');
+    git(repo, 'worktree', 'add', '-q', '-b', 'wt/GM-R3-9b', outro);
+    // sessão = wt2 (worktree), cwd = wt; o principal é comum às duas
+    assert.equal(rodar(outro, 'Bash', { command: `rm -r ${repo}/.harness` }, { cwd: wt }).decisao, 'ask');
+    // sessão = wt, cwd num repo qualquer sem pausa: a raiz da sessão (e seu principal) ainda protege
+    const fora = montar();
+    assert.equal(rodar(wt, 'Bash', { command: `rm -r ${repo}/.harness` }, { cwd: fora }).decisao, 'ask');
+    assert.equal(rodar(wt, 'Bash', { command: `rm -rf ${wt}` }, { cwd: fora }).decisao, 'ask');
+  });
+
+  test('pausar-harness-de-outro-repo-silencio: .harness fora das raízes de pausa não pede', () => {
+    const { wt } = cenario('GM-R3-10');
+    const outro = montar();
+    for (const command of [`rm -rf ${outro}/.harness`, `rm -rf /tmp/x/.harness`, `rm -rf ${outro}`]) {
+      assert.equal(rodar(wt, 'Bash', { command }).decisao, undefined, command);
+    }
+  });
+
+  test('pausar-limite-declarado: variável, glob, interpretador, find, pushd, git clean ficam como estão (Q26 item 4)', () => {
+    const { wt, M } = cenario('GM-R3-11');
+    for (const command of [
+      `F=${M}/.harness/pausar; rm $F`, `rm ${M}/.harness/*`, `cd ${M}/.harness; rm -f *`, `python3 -c "import os; os.remove('${M}/.harness/pausar')"`,
+      `node -e "require('fs').unlinkSync('${M}/.harness/pausar')"`, `find ${M}/.harness -delete`, `pushd ${M}/.harness && rm PAUSAR`, `git -C ${M} clean -fdx`,
+    ]) {
+      assert.equal(rodar(wt, 'Bash', { command }).decisao, undefined, `limite: ${command}`);
+    }
+  });
+
+  test('pausar-sem-pausa-silencio: sem PAUSAR em lugar nenhum a regra é a da E1', () => {
+    const repo = montar();
+    const wt = join(realpathSync(mkdtempSync(join(tmpdir(), 'gm-kill-r3s-'))), 'wt');
+    git(repo, 'worktree', 'add', '-q', '-b', 'wt/GM-R3-12', wt);
+    assert.equal(rodar(wt, 'Bash', { command: 'ls' }).decisao, undefined);
+    assert.equal(rodar(wt, 'Bash', { command: 'rm -r .harness' }).decisao, 'ask');
+  });
+});
+
+describe('contrato de falha: erro nunca libera', () => {
+  test('pausar-ponteiro-ilegivel-nao-libera: .git da worktree ilegível com PAUSAR no principal ⇒ pausa vale', () => {
+    const { wt } = cenario('GM-R3-13');
+    chmodSync(join(wt, '.git'), 0o000);
+    try {
+      assert.equal(rodar(wt, 'Read', { file_path: join(wt, 'README.md') }, SUB).decisao, 'deny');
+      assert.equal(rodar(wt, 'Agent', { description: 'x', prompt: 'y' }).decisao, 'deny');
+    } finally {
+      chmodSync(join(wt, '.git'), 0o644);
+    }
+  });
+
+  test('pausar-raiz-nao-resolve-nao-libera: sem repo algum, o arquivo pelo nome continua protegido', () => {
+    const fora = realpathSync(mkdtempSync(join(tmpdir(), 'gm-kill-fora-')));
+    assert.equal(rodar(null, 'Bash', { command: `rm ${fora}/.harness/pausar` }, { cwd: fora }, { repo: null, cwd: fora }).decisao, 'ask');
   });
 });

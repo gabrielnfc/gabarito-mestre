@@ -462,6 +462,12 @@ function resolver(caminho        , contexto          , cwd                )     
   return { norm, rel };
 }
 
+/** As raízes da pausa (minúsculas, sem barra final), vindas de `guarda.ts`; vazia fora de repo ou sem contexto. */
+function raizesDePausa(contexto          )           {
+  const r = (contexto                                    ).raizes;
+  return Array.isArray(r) ? r.map((x) => x.replace(/\/+$/, '').toLowerCase()) : [];
+}
+
 const AREAS_DIR = ['.harness', 'tools/gabarito-gates', '.github/workflows', '.git/refs/remotes'];
 const ANCESTRAIS = ['tools', '.github', '.claude', '.git', '.git/refs'];
 
@@ -480,7 +486,11 @@ export function anelDeCaminho(caminho        , contexto          , cwd          
 
   // Integridade (só escrita; quem chama decide).
   // Kill switch: qualquer caminho terminado em `.harness/PAUSAR`, de qualquer raiz (o do checkout principal visto da worktree).
-  if (segs.length >= 2 && segs[segs.length - 2] === '.harness' && nome === 'PAUSAR') return 'integridade';
+  // Sem distinção de caixa (APFS), como o resto dos anéis.
+  if (segs.length >= 2 && segs[segs.length - 2].toLowerCase() === '.harness' && minusculo === 'pausar') return 'integridade';
+  // O diretório `.harness` de cada raiz em que a pausa é lida (a lista de `guarda.ts`), não só o da raiz do cwd.
+  const baixo = norm.toLowerCase();
+  for (const r of raizesDePausa(contexto)) if (baixo === `${r}/.harness`) return 'integridade';
   if (contexto.pluginRoot) {
     const pr = contexto.pluginRoot.replace(/\/+$/, '');
     if (norm === pr || norm.startsWith(`${pr}/`)) return 'integridade';
@@ -503,6 +513,9 @@ export function ancestralDeIntegridade(caminho        , contexto          , cwd 
     const pr = contexto.pluginRoot.replace(/\/+$/, '');
     if (pr.startsWith(`${norm}/`)) return true;
   }
+  // A própria raiz de cada checkout em que a pausa é lida contém `.harness/PAUSAR`.
+  const baixo = norm.toLowerCase();
+  if (raizesDePausa(contexto).includes(baixo)) return true;
   if (rel === null) return false;
   return rel === '' || ANCESTRAIS.includes(rel);
 }
@@ -700,6 +713,12 @@ export function anelDeBash(segmentos            , contexto          , cwd       
       // Q15: `git log -- .env` só confere existência; com patch (`-p`, `-u`, `-c`, `--cc`, `-L`, `-U`) mostra o conteúdo.
       const mostraConteudo = g.sub === 'log' && g.resto.some((a) => /^(-p|-u|-c|--cc|--patch\S*|--unified\S*|-L\S*|-U\d*|--word-diff\S*|--color-words\S*)$/.test(a));
       if ((g.sub !== 'log' && g.sub !== 'check-ignore') || mostraConteudo) empilhar(leituras, gitResto);
+      // `git rm`/`git mv` apagam do disco o que apontam. Só a pausa entra aqui (REQ-POU-2); as demais áreas seguem como na E1.
+      if (g.sub === 'rm' || g.sub === 'mv') {
+        const alvos = gitResto.filter((a) => /(^|\/)\.harness\/pausar$/i.test(a.replace(/\/+$/, '')));
+        empilhar(escritas, alvos);
+        empilhar(remocoes, alvos);
+      }
     } else if (EXISTENCIA.has(s.cmd)) {
       // Q15: sem leitura.
     } else if (s.cmd === 'cp' || s.cmd === 'mv') {
