@@ -763,6 +763,7 @@ describe('integrar', () => {
     g(amb.dir, 'add', 'src/b.txt');
     g(amb.dir, 'commit', '-q', '-m', 'chore: avanca');
     const topoMain = amb.topo();
+    const revisadoAntes = amb.topo('wt/GM-10-T1');
     const r = amb.cli(['integrar', 'T1']);
     assert.equal(r.rc, 1);
     assert.equal(r.j.erro, 'gate_reprovado');
@@ -770,9 +771,9 @@ describe('integrar', () => {
     assert.equal(r.j.evento, false);
     assert.equal(amb.topo(), topoMain, 'sem merge');
     assert.ok(!amb.tipos().includes('task.integrada'), 'sem evento');
-    assert.equal(g(amb.wt('T1'), 'rev-parse', 'HEAD~1').trim(), topoMain, 'a branch ficou rebaseada');
+    assert.equal(amb.topo('wt/GM-10-T1'), revisadoAntes, 'a branch voltou ao commit revisado');
     assert.ok(existsSync(amb.wt('T1')));
-    assert.ok(!amb.gitChamadas().some((l) => /merge/.test(l)));
+    assert.ok(!amb.gitChamadas().some((l) => / merge /.test(l)));
   });
 
   test('integrar-gate-sem-suite-reprova', () => {
@@ -1410,22 +1411,67 @@ exec "${GIT_REAL}" "$@"
 });
 
 describe('fechar não perde nada (rodada 2)', () => {
-  test('fechar-ignorado-relata', () => {
+  const comIgnorado = () => {
     const amb = ambiente();
     amb.comBanco();
     appendFileSync(join(amb.dir, '.gitignore'), '*.local\n');
     g(amb.dir, 'add', '.gitignore');
     g(amb.dir, 'commit', '-q', '-m', 'chore: ignora local');
+    return amb;
+  };
+
+  test('fechar-ignorado-remove-e-relata', () => {
+    const amb = comIgnorado();
     amb.cli(['abrir', 'T1']);
     const w = amb.wt('T1');
-    writeFileSync(join(w, 'x.local'), 'guarde');
+    writeFileSync(join(w, 'x.local'), 'regeneravel');
+    const r = amb.cli(['fechar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.ignorados_removidos, ['x.local']);
+    assert.ok(!existsSync(w), 'a worktree saiu');
+    assert.ok(amb.sqls().some((s) => /^DROP/.test(s)), 'o banco foi solto');
+  });
+
+  test('fechar-nao-rastreado-recusa', () => {
+    const amb = comIgnorado();
+    amb.cli(['abrir', 'T1']);
+    const w = amb.wt('T1');
+    writeFileSync(join(w, 'x.local'), 'regeneravel');
+    writeFileSync(join(w, 'unico.txt'), 'trabalho unico');
     const r = amb.cli(['fechar', 'T1']);
     assert.equal(r.rc, 1, r.out);
-    assert.equal(r.j.erro, 'worktree_com_ignorados');
-    assert.match(r.j.mensagem, /x\.local/);
-    assert.equal(readFileSync(join(w, 'x.local'), 'utf8'), 'guarde');
-    assert.ok(existsSync(join(w, '.tmp-gabarito')), 'tmp só sai depois das recusas');
+    assert.equal(r.j.erro, 'worktree_suja');
+    assert.match(r.j.mensagem, /unico\.txt/);
+    assert.equal(readFileSync(join(w, 'unico.txt'), 'utf8'), 'trabalho unico');
+    assert.equal(readFileSync(join(w, 'x.local'), 'utf8'), 'regeneravel');
     assert.ok(!amb.sqls().some((s) => /^DROP/.test(s)), 'o banco não foi solto');
+  });
+
+  test('fechar-showuntracked-no-recusa', () => {
+    const amb = ambiente();
+    g(amb.dir, 'config', 'status.showUntrackedFiles', 'no');
+    amb.cli(['abrir', 'T1']);
+    const w = amb.wt('T1');
+    writeFileSync(join(w, 'unico.txt'), 'trabalho unico');
+    const r = amb.cli(['fechar', 'T1']);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'worktree_suja');
+    assert.equal(readFileSync(join(w, 'unico.txt'), 'utf8'), 'trabalho unico');
+  });
+
+  test('fechar-remove-sem-efeito-rc1', () => {
+    const amb = ambiente();
+    amb.cli(['abrir', 'T1']);
+    const bin = amb.env.PATH.split(':')[0];
+    writeFileSync(join(bin, 'git'), `#!/bin/bash
+echo "$*" >> "$GIT_LOG"
+if [[ "$*" == *"worktree remove"* ]]; then exit 0; fi
+exec "${GIT_REAL}" "$@"
+`, { mode: 0o755 });
+    const r = amb.cli(['fechar', 'T1']);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'remove_falhou');
+    assert.ok(existsSync(amb.wt('T1')));
   });
 
   test('fechar-head-solto-recusa', () => {
@@ -1443,6 +1489,139 @@ describe('fechar não perde nada (rodada 2)', () => {
     assert.equal(g(w, 'rev-parse', 'HEAD').trim(), sha);
     assert.ok(existsSync(join(w, '.tmp-gabarito')));
     assert.ok(!amb.sqls().some((s) => /^DROP/.test(s)), 'o banco não foi solto');
+  });
+});
+
+describe('integrar tudo ou nada (rodada 3)', () => {
+  const FLAG = () => join(novoTmp('loop-flag-'), 'verde');
+  const avancaBase = (amb) => {
+    writeFileSync(join(amb.dir, 'src/b.txt'), 'b\n');
+    g(amb.dir, 'add', 'src/b.txt');
+    g(amb.dir, 'commit', '-q', '-m', 'chore: avanca');
+  };
+  const gateVerdeSe = (flag) => ({ gates: { suites: [`test -f ${flag} && echo '# pass 1'`] } });
+
+  test('integrar-gate-vermelho-volta-ao-revisado', () => {
+    const flag = FLAG();
+    const amb = ambiente({ config: gateVerdeSe(flag) });
+    amb.aprovar('T1');
+    const revisado = amb.topo('wt/GM-10-T1');
+    avancaBase(amb);
+    const topoMain = amb.topo();
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'gate_reprovado');
+    assert.equal(r.j.voltou, true);
+    assert.match(r.j.mensagem, /voltou ao commit revisado/);
+    assert.equal(amb.topo('wt/GM-10-T1'), revisado, 'a branch');
+    assert.equal(g(amb.wt('T1'), 'rev-parse', 'HEAD').trim(), revisado, 'a worktree');
+    assert.equal(g(amb.wt('T1'), 'status', '--porcelain').trim(), '');
+    assert.equal(amb.topo(), topoMain);
+    assert.ok(!amb.tipos().includes('task.integrada'));
+  });
+
+  test('integrar-conflito-volta-ao-revisado', () => {
+    const amb = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/a.txt'] }]) });
+    amb.cli(['abrir', 'T1']);
+    amb.cli(['iniciar', 'T1', 'implementador']);
+    amb.commitNaWt('T1', 'src/a.txt', 'TASK\n');
+    for (const a of [['concluir', 'T1'], ['iniciar', 'T1', 'revisor'], ['veredito', 'T1', 'APROVADO', '1', '0', '0']]) amb.cli(a);
+    const revisado = amb.topo('wt/GM-10-T1');
+    writeFileSync(join(amb.dir, 'src/a.txt'), 'MAIN\n');
+    g(amb.dir, 'commit', '-q', '-am', 'chore: main mexe');
+    for (let i = 0; i < 2; i += 1) {
+      const r = amb.cli(['integrar', 'T1']);
+      assert.equal(r.rc, 1, r.out);
+      assert.equal(r.j.erro, 'rebase_conflito', `tentativa ${i + 1}: ${r.out}`);
+      assert.equal(r.j.voltou, true);
+      assert.equal(amb.topo('wt/GM-10-T1'), revisado);
+      assert.equal(g(amb.wt('T1'), 'rev-parse', 'HEAD').trim(), revisado);
+    }
+  });
+
+  test('integrar-apos-falha-repete-sem-commit-nao-revisado', () => {
+    const flag = FLAG();
+    const amb = ambiente({ config: gateVerdeSe(flag) });
+    amb.aprovar('T1');
+    avancaBase(amb);
+    const r1 = amb.cli(['integrar', 'T1']);
+    assert.equal(r1.j.erro, 'gate_reprovado', r1.out);
+    writeFileSync(flag, 'ok');
+    const r2 = amb.cli(['integrar', 'T1']);
+    assert.equal(r2.rc, 0, r2.out + r2.err);
+    assert.equal(r2.j.merge, true);
+    assert.ok(existsSync(join(amb.dir, 'src/t1.txt')));
+    assert.equal(amb.eventos().at(-1).tipo, 'task.integrada');
+  });
+
+  test('integrar-volta-falha-relata', () => {
+    const flag = FLAG();
+    const amb = ambiente({ config: gateVerdeSe(flag) });
+    amb.aprovar('T1');
+    const revisado = amb.topo('wt/GM-10-T1');
+    avancaBase(amb);
+    const r = amb.cli(['integrar', 'T1'], { extra: { GIT_FALHAR: 'reset --keep' } });
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'gate_reprovado', 'a causa original não se perde');
+    assert.equal(r.j.voltou, false);
+    assert.match(r.j.mensagem, /gate reprovado/);
+    assert.match(r.j.mensagem, /volta .* FALHOU/);
+    assert.notEqual(amb.topo('wt/GM-10-T1'), revisado, 'ficou onde o rebase deixou, sem apagar');
+    assert.ok(existsSync(amb.wt('T1')));
+    assert.ok(!amb.tipos().includes('task.integrada'));
+  });
+
+  test('integrar-com-ignorado-rc0', () => {
+    const amb = ambiente();
+    appendFileSync(join(amb.dir, '.gitignore'), 'node_modules/\n*.local\n');
+    g(amb.dir, 'add', '.gitignore');
+    g(amb.dir, 'commit', '-q', '-m', 'chore: ignora');
+    amb.aprovar('T1');
+    const w = amb.wt('T1');
+    mkdirSync(join(w, 'node_modules'));
+    writeFileSync(join(w, 'node_modules', 'x.js'), 'x');
+    writeFileSync(join(w, 'y.local'), 'y');
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.merge, true);
+    assert.equal(r.j.evento, true);
+    assert.ok(!existsSync(w));
+    assert.ok(existsSync(join(amb.dir, 'src/t1.txt')));
+  });
+
+  test('integrar-showuntracked-no-recusa', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    g(amb.dir, 'config', 'status.showUntrackedFiles', 'no');
+    writeFileSync(join(amb.wt('T1'), 'unico.txt'), 'trabalho unico');
+    const antes = semEfeito(amb);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'worktree_suja');
+    assert.equal(r.j.merge, false);
+    assert.deepEqual(semEfeito(amb), antes);
+    assert.equal(readFileSync(join(amb.wt('T1'), 'unico.txt'), 'utf8'), 'trabalho unico');
+  });
+
+  test('integrar-merge-nao-confirmado-nao-volta', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    const revisado = amb.topo('wt/GM-10-T1');
+    avancaBase(amb);
+    const bin = amb.env.PATH.split(':')[0];
+    const cont = join(dirname(bin), 'cont');
+    writeFileSync(join(bin, 'git'), `#!/bin/bash
+echo "$*" >> "$GIT_LOG"
+if [[ "$*" == *"merge --ff-only"* ]]; then touch "${cont}"; fi
+if [ -f "${cont}" ] && [[ "$*" == *"rev-parse refs/heads/enabler/GM-10-loop"* ]]; then echo "falha injetada" >&2; exit 1; fi
+exec "${GIT_REAL}" "$@"
+`, { mode: 0o755 });
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'merge_nao_confirmado');
+    assert.equal(r.j.merge, null);
+    assert.notEqual(amb.topo('wt/GM-10-T1'), revisado, 'o merge pode ter entrado: a branch não volta');
+    assert.doesNotMatch(r.j.mensagem, /voltou/);
   });
 });
 

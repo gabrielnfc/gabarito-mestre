@@ -419,6 +419,9 @@ function validarTmp(wt) {
   return p;
 }
 
+/** Sujeira lida sempre igual, sem depender de `status.showUntrackedFiles` do usuário: modificado, `??` e ignorado (`!!`). */
+const STATUS_SUJEIRA = ['status', '--porcelain', '--untracked-files=normal', '--ignored', '--ignore-submodules=none'];
+
 function fechar(c, task) {
   const wt = worktreeViva(c, task);
   const tmpValido = validarTmp(wt);
@@ -427,15 +430,13 @@ function fechar(c, task) {
   } catch {
     throw new Falha('head_solto', `a worktree ${task} está em HEAD solto: um commit nela não pertence a branch nenhuma e se perderia; foi MANTIDA, junto do banco`);
   }
-  const linhasStatus = git(wt, 'status', '--porcelain', '--ignored').split('\n').filter(Boolean);
+  const linhasStatus = git(wt, ...STATUS_SUJEIRA).split('\n').filter(Boolean);
   const sujas = linhasStatus.filter((l) => !l.startsWith('!! '));
   if (sujas.length > 0) {
-    throw new Falha('worktree_suja', `a worktree ${task} tem ${sujas.length} item(ns) não commitado(s) e foi MANTIDA, junto do banco: ${sujas.slice(0, 10).join(' | ')}`, { sujeira: sujas.slice(0, 20) });
+    throw new Falha('worktree_suja', `a worktree ${task} tem ${sujas.length} item(ns) não commitado(s) ou não rastreado(s) e foi MANTIDA, junto do banco: ${sujas.slice(0, 10).join(' | ')}`, { sujeira: sujas.slice(0, 20) });
   }
-  const ignorados = linhasStatus.filter((l) => l.startsWith('!! ') && l.slice(3).replace(/\/$/, '') !== TMP);
-  if (ignorados.length > 0) {
-    throw new Falha('worktree_com_ignorados', `a worktree ${task} tem ${ignorados.length} item(ns) ignorado(s) pelo git que a remoção apagaria e foi MANTIDA, junto do banco: ${ignorados.slice(0, 10).map((l) => l.slice(3)).join(' | ')}`, { ignorados: ignorados.slice(0, 20).map((l) => l.slice(3)) });
-  }
+  // Ignorado é regenerável (o repo o declarou em .gitignore): sai com a worktree e é relatado, nunca em silêncio.
+  const ignorados = linhasStatus.filter((l) => l.startsWith('!! ') && l.slice(3).replace(/\/$/, '') !== TMP).map((l) => l.slice(3));
   const { cfg } = lerConfig(c.raiz);
   const v = validarDb(cfg ?? {});
   if (!v.ok) throw new Falha('db_invalido', v.erro);
@@ -459,7 +460,8 @@ function fechar(c, task) {
   } catch (e) {
     throw new Falha('remove_falhou', `git worktree remove (sem --force) recusou: ${e.message}; a worktree foi mantida`, { banco });
   }
-  return { task, worktree: wt, removida: true, banco };
+  if (existsSync(wt)) throw new Falha('remove_falhou', `git worktree remove saiu sem erro, mas ${relative(c.raiz, wt)} continua existindo`, { banco });
+  return { task, worktree: wt, removida: true, banco, ignorados_removidos: ignorados };
 }
 
 function carregarMutacoes(c, t) {
@@ -502,14 +504,44 @@ function patchId(wt, ...alcance) {
   return gitComEntrada(wt, `${diff}\n`, 'patch-id', '--stable').split(/\s+/)[0] ?? '';
 }
 
+/**
+ * `integrar` é tudo ou nada na branch: a falha depois de mexer nela (rebase, gate, merge) devolve `refs/heads/<branch>` e a worktree
+ * ao commit revisado, para a próxima `integrar` não cair em `commit_nao_revisado`. Só a falha que deixa o merge incerto
+ * (`merge_nao_confirmado`: ele pode ter entrado) fica sem volta. Se a volta falha, a Falha original sai dizendo os dois fatos.
+ */
+function devolver(wt, branch, revisado, e) {
+  if (!(e instanceof Falha) || e.erro === 'merge_nao_confirmado') return e;
+  if (e.erro === 'rebase_conflito' && e.extra?.abortado === false) {
+    e.message += `; a ${branch} não foi movida pelo rebase (segue em ${revisado.slice(0, 12)}), mas a worktree continua em rebase`;
+    return e;
+  }
+  const motivos = [];
+  const rs = gitOk(wt, 'reset', '--keep', revisado);
+  if (!rs.ok) motivos.push(`reset --keep: ${rs.motivo}`);
+  let confere = false;
+  try {
+    confere = git(wt, 'rev-parse', `refs/heads/${branch}`) === revisado && git(wt, 'rev-parse', 'HEAD') === revisado && git(wt, 'symbolic-ref', '-q', 'HEAD') === `refs/heads/${branch}`;
+  } catch (e3) {
+    motivos.push(String(e3.message ?? e3));
+  }
+  const extra = { ...e.extra, voltou: confere };
+  if (confere) {
+    e.message += `; a ${branch} voltou ao commit revisado ${revisado.slice(0, 12)}`;
+  } else {
+    e.message += `; E a volta da ${branch} ao commit revisado ${revisado.slice(0, 12)} FALHOU (${motivos.join(' / ') || 'a branch não está no commit revisado'}): confira à mão, nada foi apagado`;
+  }
+  e.extra = extra;
+  return e;
+}
+
 async function integrar(c, plano, task) {
   const t = tarefa(plano, task);
   const eventos = lerDiarioEstrito(c.dirEntrega);
   if (diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições; integrar recusado');
   if (!podeIntegrar(plano, eventos, task)) throw new Falha('nao_integravel', `a task ${task} não está aprovada com toda a cadeia de dependências integrada`, { merge: false, evento: false });
   const wt = worktreeViva(c, task);
-  const sujo = git(wt, 'status', '--porcelain');
-  if (sujo !== '') throw new Falha('worktree_suja', `a worktree ${task} tem trabalho não commitado; nada foi feito: ${sujo.split('\n').slice(0, 10).join(' | ')}`, { merge: false, evento: false });
+  const sujo = git(wt, ...STATUS_SUJEIRA).split('\n').filter((l) => l !== '' && !l.startsWith('!! '));
+  if (sujo.length > 0) throw new Falha('worktree_suja', `a worktree ${task} tem trabalho não commitado ou não rastreado; nada foi feito: ${sujo.slice(0, 10).join(' | ')}`, { merge: false, evento: false });
   const branch = ramo(c, task);
   const nada = { merge: false, evento: false };
 
@@ -531,58 +563,62 @@ async function integrar(c, plano, task) {
   }
   const mutacoes = carregarMutacoes(c, t);
   const pidAntes = patchId(wt, `refs/heads/${base}...HEAD`);
+  let alvo;
+  try {
+    try {
+      git(wt, 'rebase', `refs/heads/${base}`);
+    } catch (e) {
+      const gitDir = (n) => resolve(wt, git(wt, 'rev-parse', '--git-path', n));
+      const emCurso = ['rebase-merge', 'rebase-apply'].some((n) => existsSync(gitDir(n)));
+      if (!emCurso) throw new Falha('rebase_falhou', `git rebase falhou sem deixar rebase em curso: ${e.message}`, nada);
+      const ab = gitOk(wt, 'rebase', '--abort');
+      throw new Falha(
+        'rebase_conflito',
+        ab.ok
+          ? `rebase da ${branch} sobre ${base} deu conflito e foi abortado; a task NÃO foi integrada: ${e.message}`
+          : `rebase da ${branch} sobre ${base} deu conflito e \`git rebase --abort\` FALHOU (${ab.motivo}); a worktree ${relative(c.raiz, wt)} segue em rebase, nada foi apagado: resolva ou aborte à mão`,
+        { ...nada, abortado: ab.ok },
+      );
+    }
+    if (patchId(wt, `refs/heads/${base}`, 'HEAD') !== pidAntes) {
+      throw new Falha('rebase_mudou_conteudo', `o rebase da ${branch} sobre ${base} mudou o conteúdo que o revisor aprovou; sem merge nem evento`, nada);
+    }
+    alvo = git(wt, 'rev-parse', 'HEAD');
 
-  try {
-    git(wt, 'rebase', `refs/heads/${base}`);
-  } catch (e) {
-    const gitDir = (n) => resolve(wt, git(wt, 'rev-parse', '--git-path', n));
-    const emCurso = ['rebase-merge', 'rebase-apply'].some((n) => existsSync(gitDir(n)));
-    if (!emCurso) throw new Falha('rebase_falhou', `git rebase falhou sem deixar rebase em curso: ${e.message}`, nada);
-    const ab = gitOk(wt, 'rebase', '--abort');
-    throw new Falha(
-      'rebase_conflito',
-      ab.ok
-        ? `rebase da ${branch} sobre ${base} deu conflito e foi abortado; a task NÃO foi integrada: ${e.message}`
-        : `rebase da ${branch} sobre ${base} deu conflito e \`git rebase --abort\` FALHOU (${ab.motivo}); a worktree ${relative(c.raiz, wt)} segue em rebase, nada foi apagado: resolva ou aborte à mão`,
-      { ...nada, abortado: ab.ok },
-    );
-  }
-  if (patchId(wt, `refs/heads/${base}`, 'HEAD') !== pidAntes) {
-    throw new Falha('rebase_mudou_conteudo', `o rebase da ${branch} sobre ${base} mudou o conteúdo que o revisor aprovou; a branch ficou rebaseada, sem merge nem evento`, nada);
-  }
-  const alvo = git(wt, 'rev-parse', 'HEAD');
+    const tmp = garantirTmp(wt);
+    process.env.TMPDIR = tmp;
+    let r;
+    try {
+      r = await avaliar({ wt, base: `refs/heads/${base}`, card: c.entrega, files: escopo(wt, t.arquivos), mutacoes, suites: suitesDaTask(wt, t) });
+    } catch (e) {
+      throw new Falha('gate_erro', `o gate falhou ao rodar: ${e.message}; sem merge nem evento`, nada);
+    }
+    if (r.reprova > 0) {
+      throw new Falha('gate_reprovado', `gate reprovado (${r.reprova}); sem merge nem evento`, { ...nada, relato: r.relato });
+    }
+    if (git(wt, 'rev-parse', 'HEAD') !== alvo || git(wt, 'rev-parse', `refs/heads/${branch}`) !== alvo) {
+      throw new Falha('head_mudou', `o HEAD da ${branch} mudou entre o gate (${alvo.slice(0, 12)}) e o merge: o gate não viu o que entraria; sem merge nem evento`, nada);
+    }
+    if (ramoDoPrincipal(c.raiz) !== base) throw new Falha('base_divergente', `a worktree principal deixou ${base} antes do merge; sem merge nem evento`, nada);
 
-  const tmp = garantirTmp(wt);
-  process.env.TMPDIR = tmp;
-  let r;
-  try {
-    r = await avaliar({ wt, base: `refs/heads/${base}`, card: c.entrega, files: escopo(wt, t.arquivos), mutacoes, suites: suitesDaTask(wt, t) });
+    const baseAntes = git(c.raiz, 'rev-parse', `refs/heads/${base}`);
+    let saidaMerge;
+    try {
+      saidaMerge = git(c.raiz, 'merge', '--ff-only', alvo);
+    } catch (e) {
+      throw new Falha('merge_falhou', `git merge --ff-only da ${branch} em ${base} falhou: ${e.message}; sem evento`, nada);
+    }
+    let baseDepois;
+    try {
+      baseDepois = git(c.raiz, 'rev-parse', `refs/heads/${base}`);
+    } catch (e) {
+      throw new Falha('merge_nao_confirmado', `não consegui conferir ${base} depois do merge (${e.message}); sem evento`, { merge: null, evento: false });
+    }
+    if (baseDepois !== alvo || baseAntes === alvo || /already up to date/i.test(saidaMerge)) {
+      throw new Falha('merge_sem_efeito', `o merge de ${alvo.slice(0, 12)} não mudou ${base} (antes ${baseAntes.slice(0, 12)}, depois ${baseDepois.slice(0, 12)}); sem evento`, nada);
+    }
   } catch (e) {
-    throw new Falha('gate_erro', `o gate falhou ao rodar: ${e.message}; a branch ficou rebaseada, sem merge nem evento`, nada);
-  }
-  if (r.reprova > 0) {
-    throw new Falha('gate_reprovado', `gate reprovado (${r.reprova}); a branch ${branch} ficou rebaseada, sem merge nem evento`, { ...nada, relato: r.relato });
-  }
-  if (git(wt, 'rev-parse', 'HEAD') !== alvo || git(wt, 'rev-parse', `refs/heads/${branch}`) !== alvo) {
-    throw new Falha('head_mudou', `o HEAD da ${branch} mudou entre o gate (${alvo.slice(0, 12)}) e o merge: o gate não viu o que entraria; sem merge nem evento`, nada);
-  }
-  if (ramoDoPrincipal(c.raiz) !== base) throw new Falha('base_divergente', `a worktree principal deixou ${base} antes do merge; sem merge nem evento`, nada);
-
-  const baseAntes = git(c.raiz, 'rev-parse', `refs/heads/${base}`);
-  let saidaMerge;
-  try {
-    saidaMerge = git(c.raiz, 'merge', '--ff-only', alvo);
-  } catch (e) {
-    throw new Falha('merge_falhou', `git merge --ff-only da ${branch} em ${base} falhou: ${e.message}; sem evento`, nada);
-  }
-  let baseDepois;
-  try {
-    baseDepois = git(c.raiz, 'rev-parse', `refs/heads/${base}`);
-  } catch (e) {
-    throw new Falha('merge_nao_confirmado', `não consegui conferir ${base} depois do merge (${e.message}); sem evento`, { merge: null, evento: false });
-  }
-  if (baseDepois !== alvo || baseAntes === alvo || /already up to date/i.test(saidaMerge)) {
-    throw new Falha('merge_sem_efeito', `o merge de ${alvo.slice(0, 12)} não mudou ${base} (antes ${baseAntes.slice(0, 12)}, depois ${baseDepois.slice(0, 12)}); sem evento`, nada);
+    throw devolver(wt, branch, revisado, e);
   }
 
   try {
