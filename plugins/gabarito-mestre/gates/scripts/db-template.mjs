@@ -161,7 +161,9 @@ function criarSql(db, run = spawnSync) {
 /** `null` se o banco não existe; senão o comentário (pode ser ''). */
 function comentarioDe(sql, nome) {
   const out = sql(`SELECT 'E:' || coalesce(shobj_description(oid, 'pg_database'), '') FROM pg_database WHERE datname = ${literal(nome)}`);
-  return out.startsWith('E:') ? out.slice(2) : null;
+  if (out === '') return null; // nenhuma linha: o banco não existe
+  if (out.startsWith('E:')) return out.slice(2);
+  throw new ErroDb(`saída do psql fora da forma ao ler "${nome}" (esperava "E:<comentário>" ou nada; veio: ${JSON.stringify(out.slice(0, 80))}); nada foi alterado`);
 }
 
 const marcar = (sql, nome, marca) => sql(`COMMENT ON DATABASE ${ident(nome)} IS ${literal(marca)}`);

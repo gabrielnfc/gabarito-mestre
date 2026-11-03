@@ -690,6 +690,57 @@ describe('clonar e soltar', () => {
     assert.ok(p.bancos().gm_gm10_t1);
   });
 
+  /** Troca `db.psql` por um invólucro que roda o psql falso e escreve `aviso` no stdout ANTES da saída real. */
+  function comAviso(p, aviso) {
+    const w = join(p.dir, 'wrap');
+    mkdirSync(w);
+    writeFileSync(join(w, 'package.json'), '{"type":"module"}');
+    writeFileSync(join(w, 'psql'), `import { spawnSync } from 'node:child_process';
+process.stdout.write(${JSON.stringify(aviso)} + '\\n');
+const r = spawnSync(process.execPath, [${JSON.stringify(p.psqlJs)}, ...process.argv.slice(2)], { stdio: ['ignore', 'inherit', 'inherit'] });
+process.exit(r.status ?? 1);
+`);
+    const cfgPath = join(p.dir, 'harness.config.json');
+    const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
+    cfg.db.psql = [process.execPath, join(w, 'psql')];
+    writeFileSync(cfgPath, JSON.stringify(cfg));
+  }
+
+  test('soltar-saida-corrompida-falha', () => {
+    const p = pronto();
+    p.rodar(['clonar', 'T1', '--entrega', 'GM-10']);
+    comAviso(p, 'AVISO: algo no stdout');
+    const r = p.rodar(['soltar', 'T1', '--entrega', 'GM-10']);
+    assert.equal(r.status, 1);
+    assert.doesNotMatch(r.stdout + r.stderr, /ausente/);
+    assert.match(r.stderr, /fora da forma|saída inesperada/);
+    assert.ok(p.bancos().gm_gm10_t1, 'nada foi apagado');
+    assert.ok(!p.sqls().some((s) => /^DROP/.test(s)));
+  });
+
+  test('soltar-template-saida-corrompida-falha', () => {
+    const p = pronto();
+    const antes = p.sqls().length;
+    comAviso(p, 'AVISO: algo no stdout');
+    const r = p.rodar(['soltar-template']);
+    assert.equal(r.status, 1);
+    assert.doesNotMatch(r.stdout + r.stderr, /ausente/);
+    assert.match(r.stderr, /fora da forma|saída inesperada/);
+    assert.ok(p.bancos().gm_tpl, 'template fica');
+    assert.ok(!p.sqls().slice(antes).some((s) => /^(DROP|ALTER)/.test(s)), 'nenhum DROP/ALTER depois da leitura corrompida');
+  });
+
+  test('sem-linha-segue-ausente', () => {
+    const p = pronto();
+    const r = p.rodar(['soltar', 'T9', '--entrega', 'GM-10']);
+    assert.equal(r.status, 0);
+    assert.equal(JSON.parse(r.stdout).estado, 'ausente');
+    p.rodar(['soltar-template']);
+    const t = p.rodar(['soltar-template']);
+    assert.equal(t.status, 0);
+    assert.equal(JSON.parse(t.stdout).estado, 'ausente');
+  });
+
   test('soltar-template-desmarca-antes-do-drop', () => {
     const p = pronto();
     assert.equal(p.bancos().gm_tpl.template, true);
