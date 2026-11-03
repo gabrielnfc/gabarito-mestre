@@ -157,9 +157,17 @@ export async function avaliar(opts) {
     return resultado();
   }
 
-  // 1. Árvore limpa
-  const sujo = git('status', '--short').trim();
+  // 1. Árvore limpa. A forma é fixa: a config local do git (status.showUntrackedFiles=no) não pode esconder arquivo novo
+  // (`--untracked-files=normal`) e `--ignored` traz os ignorados (`!!`). Ignorado não reprova a árvore inicial (node_modules da
+  // worktree é legítimo e `loop.mjs integrar` o relata e remove), mas é relatado, e a checagem final de árvore restaurada compara
+  // TUDO: mutação que deixa arquivo novo, ignorado ou não, reprova. Única exceção: `.tmp-gabarito/`, o TMPDIR que o loop dá à
+  // worktree (ignora a si mesmo; o `fechar` o confere e remove).
+  const status = () => git('status', '--short', '--untracked-files=normal', '--ignored').split('\n').filter((l) => l !== '' && l !== '!! .tmp-gabarito/');
+  const inicial = status();
+  const sujo = inicial.filter((l) => !l.startsWith('!! ')).join('\n').trim();
+  const ignorados = inicial.filter((l) => l.startsWith('!! '));
   sujo ? falhar(`árvore suja: ${sujo.split('\n').length} arquivo(s)`) : ok('árvore limpa');
+  if (ignorados.length) aviso(`${ignorados.length} ignorado(s) na worktree: ${ignorados.map((l) => l.slice(3)).join(', ')}`);
 
   // 2. Conventional Commits com o card
   const commits = git('log', '--format=%s', `${base}..HEAD`).trim().split('\n').filter(Boolean);
@@ -284,7 +292,7 @@ export async function avaliar(opts) {
       else if (r.ms < minMs) alerta(`mutação ${m.nome} falhou em ${seg}s (tempo ~zero): o teste provavelmente não rodou; morte não provada`);
       else { ok(`mutação ${m.nome} morta (${seg}s)`); nMortas++; }
     }
-    git('status', '--short').trim() !== sujo ? falhar('mutação deixou árvore alterada') : ok('árvore restaurada após mutações');
+    status().join('\n') !== inicial.join('\n') ? falhar('mutação deixou árvore alterada') : ok('árvore restaurada após mutações');
   }
 
   // Relato limpo sem nenhuma suíte provada não existe (cinto sobre os suspensórios acima).

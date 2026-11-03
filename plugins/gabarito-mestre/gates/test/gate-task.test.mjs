@@ -76,6 +76,60 @@ describe('gate-task', () => {
     assert.match(texto(r), /árvore suja/);
   });
 
+  test('gate-status-ignora-config-local: status.showUntrackedFiles=no não esconde arquivo novo', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    g(dir, 'config', 'status.showUntrackedFiles', 'no');
+    writeFileSync(join(dir, 'solto.txt'), 'x');
+    const r = await avaliar({ wt: dir, base, ...verde });
+    assert.ok(r.reprova > 0, texto(r));
+    assert.match(texto(r), /árvore suja/);
+  });
+
+  test('gate-status-ignorado: ignorado não reprova a árvore inicial mas é relatado; o novo ignorado de uma mutação reprova', async () => {
+    const { dir, base } = repo();
+    commit(dir, '.gitignore', 'oculto.txt\n*.cache\n');
+    writeFileSync(join(dir, 'oculto.txt'), 'x');
+    const r = await avaliar({ wt: dir, base, ...verde });
+    assert.equal(r.reprova, 0, texto(r));
+    assert.match(texto(r), /AVISO +1 ignorado\(s\) na worktree: oculto\.txt/);
+    const rodar = async (nome) => {
+      if (nome === 'm1') writeFileSync(join(dir, 'novo.cache'), 'x');
+      return { nome, rc: nome === 'm1' ? 1 : 0, out: '', ms: 500 };
+    };
+    const r2 = await avaliar({ wt: dir, base, mutacoes: [mut()], rodar, ...verde });
+    assert.match(texto(r2), /FALHA +mutação deixou árvore alterada/, texto(r2));
+  });
+
+  test('gate-status-tmpdir-do-loop: .tmp-gabarito/ (TMPDIR da worktree, ignora a si mesmo) não aparece; outro ignorado é relatado', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    mkdirSync(join(dir, '.tmp-gabarito'));
+    writeFileSync(join(dir, '.tmp-gabarito', '.gitignore'), '*\n');
+    writeFileSync(join(dir, '.tmp-gabarito', 'x'), 'x');
+    const r = await avaliar({ wt: dir, base, ...verde });
+    assert.equal(r.reprova, 0, texto(r));
+    mkdirSync(join(dir, '.tmp-outro'));
+    writeFileSync(join(dir, '.tmp-outro', '.gitignore'), '*\n');
+    assert.doesNotMatch(texto(r), /tmp-gabarito/);
+    const r2 = await avaliar({ wt: dir, base, ...verde });
+    assert.match(texto(r2), /AVISO +1 ignorado\(s\) na worktree: \.tmp-outro\//);
+    assert.doesNotMatch(texto(r2), /tmp-gabarito/);
+  });
+
+  test('gate-status-final-mesma-forma: mutação que deixa arquivo novo reprova mesmo com showUntrackedFiles=no', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    g(dir, 'config', 'status.showUntrackedFiles', 'no');
+    // o teste da mutação cria um arquivo novo na worktree: a checagem final de árvore restaurada tem que vê-lo
+    const rodar = async (nome) => {
+      if (nome === 'm1') writeFileSync(join(dir, 'lixo-da-mutacao.txt'), 'x');
+      return { nome, rc: nome === 'm1' ? 1 : 0, out: '', ms: 500 };
+    };
+    const r = await avaliar({ wt: dir, base, mutacoes: [mut()], rodar, ...verde });
+    assert.match(texto(r), /FALHA +mutação deixou árvore alterada/, texto(r));
+  });
+
   test('gate-commit-fora-padrao: escopo do card vem da branch', async () => {
     const { dir, base } = repo({ branch: 'wt/ABC-7-2' });
     commit(dir, 'src/b.txt', 'b\n', 'feat(GM-10): card errado');

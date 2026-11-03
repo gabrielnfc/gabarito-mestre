@@ -43,7 +43,7 @@ function montarPluginReal() {
   mkdirSync(join(dir, '.claude-plugin'), { recursive: true });
   writeFileSync(join(dir, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'gabarito-mestre', version: '1.1.0' }));
   mkdirSync(join(dir, 'gates', 'scripts'), { recursive: true });
-  for (const f of ['harness-doctor.mjs', 'versionamento-check.mjs']) copyFileSync(join(here, '..', 'scripts', f), join(dir, 'gates', 'scripts', f));
+  for (const f of ['harness-doctor.mjs', 'versionamento-check.mjs', 'db-template.mjs']) copyFileSync(join(here, '..', 'scripts', f), join(dir, 'gates', 'scripts', f));
   // os scripts importam ../lib/* (GM-9 T1a): a cópia precisa levar a lib junto, como o instalador leva
   mkdirSync(join(dir, 'gates', 'lib'), { recursive: true });
   for (const f of ['cli', 'config', 'git', 'datas']) copyFileSync(join(here, '..', 'lib', `${f}.mjs`), join(dir, 'gates', 'lib', `${f}.mjs`));

@@ -2,7 +2,7 @@
 /**
  * REQ-LOOP-3 e REQ-LOOP-2 pela borda — `loop.mjs`: worktree por task, integração com gate e próxima ação.
  *
- *   loop.mjs proxima [--vivos <n>]
+ *   loop.mjs proxima [--vivos <n>]    slots = `capacidade.mjs --medido`; `loop.slots` do config só reduz (sem calibração: 1 slot e aviso)
  *   loop.mjs abrir <task> | fechar <task> | integrar <task>
  *   loop.mjs iniciar <task> <implementador|revisor|correcao> | concluir <task> | reabrir <task>
  *   loop.mjs veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major>
@@ -21,12 +21,13 @@
  * Tudo que toca git vai por `execFileSync` com argv, sem shell. Nada é apagado por outro meio que `git worktree remove`
  * sem `--force`, `git branch -d` do que `abrir` acabou de criar e o `.tmp-gabarito` da própria worktree.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import * as diario from '../dist/diario.js';
 import { estadoDe, ordenar, podeIntegrar, proximaAcao } from '../dist/loop.js';
@@ -681,12 +682,48 @@ function inteiroPositivo(v) {
   return Number.isSafeInteger(v) && v >= 1;
 }
 
+const CAPACIDADE_CLI = join(dirname(fileURLToPath(import.meta.url)), 'capacidade.mjs');
+const CAPACIDADE_TIMEOUT_MS = 30_000;
+
+/**
+ * Slots da máquina: a saída de `capacidade.mjs --medido --json` (REQ-SLOT-1). Medição falhando, comando que não roda, saída que
+ * não é JSON ou `slots` que não é inteiro >= 1 ⇒ 1 slot e aviso; nunca um número alto por omissão. `rodar` é injetável nos testes.
+ */
+export function slotsDaCapacidade(raiz, rodar = (args, opts) => spawnSync(process.execPath, args, opts)) {
+  const um = (aviso) => ({ slots: 1, aviso: `slots: 1 slot, ${aviso}` });
+  let r;
+  try {
+    r = rodar([CAPACIDADE_CLI, '--medido', '--json', '--root', raiz], { cwd: raiz, encoding: 'utf8', timeout: CAPACIDADE_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
+  } catch (e) {
+    return um(`capacidade.mjs não rodou (${e.message})`);
+  }
+  if (r.error) return um(`capacidade.mjs não rodou (${r.error.message})`);
+  if (r.signal) return um(`capacidade.mjs morreu por sinal ${r.signal}`);
+  if (r.status !== 0) return um(`capacidade.mjs saiu com rc ${r.status}${r.stderr ? ` (${String(r.stderr).trim().split('\n')[0]})` : ''}`);
+  let j;
+  try { j = JSON.parse(String(r.stdout)); } catch { return um('saída de capacidade.mjs não é JSON'); }
+  if (j === null || typeof j !== 'object' || Array.isArray(j)) return um('saída de capacidade.mjs não é um objeto JSON');
+  if (!inteiroPositivo(j.slots)) return um(`capacidade.mjs devolveu slots inválido (${JSON.stringify(j.slots)}): esperado inteiro >= 1`);
+  return { slots: j.slots, aviso: typeof j.aviso === 'string' && j.aviso !== '' ? `slots: ${j.aviso}` : null };
+}
+
 function sinaisDe(c, cfg, eventos, flags) {
   const aviso = [];
-  const loop = cfg?.loop !== null && typeof cfg?.loop === 'object' && !Array.isArray(cfg.loop) ? cfg.loop : {};
-  let slots = 1;
-  if (inteiroPositivo(loop.slots)) slots = loop.slots;
-  else aviso.push(`loop.slots ${Object.hasOwn(loop, 'slots') ? 'inválido' : 'ausente'} em harness.config.json: 1 slot`);
+  const loopBruto = cfg?.loop;
+  const loop = loopBruto !== null && typeof loopBruto === 'object' && !Array.isArray(loopBruto) ? loopBruto : {};
+  // A fonte dos slots é a medição. `loop.slots` do config só REDUZ: valor ausente não muda nada; presente e inválido
+  // (inclusive `loop` que não é objeto) vale 1 slot e aviso, nunca a medição inteira.
+  const medido = slotsDaCapacidade(c.raiz);
+  if (medido.aviso) aviso.push(medido.aviso);
+  let slots = medido.slots;
+  const slotsCfg = Object.hasOwn(loop, 'slots') ? loop.slots : undefined;
+  if (cfg !== null && cfg !== undefined && loopBruto !== undefined && loop !== loopBruto) {
+    slots = 1;
+    aviso.push('loop.slots ilegível: `loop` em harness.config.json não é um objeto; 1 slot, a medição não vence config ilegível');
+  } else if (slotsCfg !== undefined) {
+    if (inteiroPositivo(slotsCfg)) slots = Math.min(slots, slotsCfg);
+    else { slots = 1; aviso.push('loop.slots inválido em harness.config.json (esperado inteiro >= 1): 1 slot'); }
+  }
 
   let tetoTokens = null;
   if (Object.hasOwn(loop, 'tetoTokens')) {

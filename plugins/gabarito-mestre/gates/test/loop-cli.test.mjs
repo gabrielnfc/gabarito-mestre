@@ -14,6 +14,7 @@ import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { marcaPronto } from '../scripts/db-template.mjs';
+import { slotsDaCapacidade } from '../scripts/loop.mjs';
 import * as diario from '../dist/diario.js';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -77,7 +78,12 @@ const PLANO_PADRAO = planoDe([
   { id: 'T3', deps: [], arquivos: ['src/t3.txt'] },
 ]);
 
-function ambiente({ branch = 'enabler/GM-10-loop', config = CONFIG_PADRAO, plano = PLANO_PADRAO, gitignore = true } = {}) {
+// Capacidade FALSA e medidas da máquina por variável: o teste nunca depende da máquina que o roda (REQ-SLOT-1).
+const HOST_TESTE = 'host-teste';
+const CAPACIDADE_PADRAO = { hostname: HOST_TESTE, slots_max: 2, rss_pico_mb: 500, tmpdir_mb: 100, cpu_total: 100, load_medido: 1 };
+const MEDIDAS_PADRAO = { GABARITO_CAP_HOSTNAME: HOST_TESTE, GABARITO_CAP_CORES: '8', GABARITO_CAP_LOAD1: '0.5', GABARITO_CAP_MEM_MB: '64000', GABARITO_CAP_DISCO_GB: '500', GABARITO_CAP_PESADOS: '0' };
+
+function ambiente({ branch = 'enabler/GM-10-loop', config = CONFIG_PADRAO, plano = PLANO_PADRAO, gitignore = true, capacidade = CAPACIDADE_PADRAO } = {}) {
   const dir = novoTmp('loop-cli-');
   g(dir, 'init', '-q', '-b', branch);
   g(dir, 'config', 'user.email', 't@t');
@@ -105,8 +111,11 @@ function ambiente({ branch = 'enabler/GM-10-loop', config = CONFIG_PADRAO, plano
   const estado = join(ferramentas, 'estado.json');
   writeFileSync(gitLog, '');
   writeFileSync(psqlLog, '');
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, GIT_LOG: gitLog, FAKE_LOG: psqlLog, FAKE_STATE: estado };
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, GIT_LOG: gitLog, FAKE_LOG: psqlLog, FAKE_STATE: estado, ...MEDIDAS_PADRAO };
   for (const k of Object.keys(env)) if (/^(PG|GIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR))/i.test(k) || k === 'GABARITO_POUSO_X') delete env[k];
+  // estado local, fora do git (como o .gitignore do repo faz com .harness/capacidade.json): não suja a árvore dos gates
+  appendFileSync(join(dir, '.git', 'info', 'exclude'), '.harness/capacidade.json\n');
+  if (capacidade !== null) writeFileSync(join(dir, '.harness', 'capacidade.json'), typeof capacidade === 'string' ? capacidade : JSON.stringify(capacidade));
   delete env.GIT_FALHAR;
   let seq = 0;
   const amb = {
@@ -1078,24 +1087,34 @@ describe('proxima', () => {
     assert.equal(r.out.trim().split('\n').length, 1, 'uma linha de JSON');
   });
 
-  test('proxima-slots-ausentes-ou-invalidos-um-slot-com-aviso', () => {
-    for (const loop of [undefined, {}, { slots: 0 }, { slots: -1 }, { slots: 'dois' }, { slots: 2.5 }, { slots: null }, 'x']) {
+  test('proxima-config-slots-ausente-vale-a-medicao-sem-aviso-de-config', () => {
+    for (const loop of [undefined, {}]) {
       const amb = ambiente({ config: { gates: { suites: ["echo '# pass 1'"] }, ...(loop === undefined ? {} : { loop }) } });
+      const r = amb.cli(['proxima', '--vivos', '0']);
+      assert.equal(r.rc, 0, JSON.stringify(loop) + r.out);
+      assert.equal(r.j.sinais.slots, 2, JSON.stringify(loop));
+      assert.equal(r.j.aviso, undefined, JSON.stringify(r.j.aviso));
+    }
+  });
+
+  test('proxima-config-slots-invalido-um-slot-com-aviso (nunca sobe a medição)', () => {
+    for (const loop of [{ slots: 0 }, { slots: -1 }, { slots: 'dois' }, { slots: 2.5 }, { slots: null }, 'x', null]) {
+      const amb = ambiente({ config: { gates: { suites: ["echo '# pass 1'"] }, loop } });
       const r = amb.cli(['proxima', '--vivos', '0']);
       assert.equal(r.rc, 0, JSON.stringify(loop) + r.out);
       assert.equal(r.j.sinais.slots, 1, JSON.stringify(loop));
       assert.equal(r.j.acao.itens.length, 1);
-      assert.ok(r.j.aviso.some((a) => /slots/.test(a)), JSON.stringify(loop));
+      assert.ok(r.j.aviso.some((a) => /loop\.slots/.test(a)), JSON.stringify(loop));
     }
   });
 
-  test('proxima-sem-config-um-slot-com-aviso', () => {
+  test('proxima-sem-config-vale-a-medicao-com-aviso-de-config', () => {
     const amb = ambiente();
     spawnSync('rm', [join(amb.dir, 'harness.config.json')]);
     const r = amb.cli(['proxima', '--vivos', '0']);
     assert.equal(r.rc, 0, r.out);
-    assert.equal(r.j.sinais.slots, 1);
-    assert.ok(r.j.aviso.some((a) => /slots/.test(a)));
+    assert.equal(r.j.sinais.slots, 2, 'a medição não depende do config');
+    assert.ok(r.j.aviso.some((a) => /harness\.config\.json ausente/.test(a)));
   });
 
   test('proxima-config-corrompida-rc-1', () => {
@@ -1189,6 +1208,74 @@ describe('proxima', () => {
     assert.equal(r.rc, 1);
     assert.equal(r.j.erro, 'diario_invalido');
     assert.deepEqual(r.j.acao, { tipo: 'parar', motivo: 'diario_invalido' });
+  });
+
+  const QUATRO = planoDe(['T1', 'T2', 'T3', 'T4'].map((id) => ({ id, deps: [], arquivos: [`src/${id.toLowerCase()}.txt`] })));
+  const semLoopSlots = { gates: { suites: ["echo '# pass 1'"] } };
+
+  test('proxima-slots-medidos: slots vêm de capacidade.mjs --medido, não do config', () => {
+    const amb = ambiente({ plano: QUATRO, config: semLoopSlots, capacidade: { ...CAPACIDADE_PADRAO, slots_max: 3 } });
+    const r = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.sinais.slots, 3);
+    assert.equal(r.j.acao.itens.length, 3);
+    assert.equal(r.j.aviso, undefined);
+    // memória medida abaixo do necessário reduz: a medição da máquina vale, não só o arquivo
+    const mem = amb.cli(['proxima', '--vivos', '0'], { extra: { GABARITO_CAP_MEM_MB: '2300' } });
+    assert.equal(mem.j.sinais.slots, 1, 'quociente de memória: (2300 − reserva)/500 < 2');
+    // carga acima da medida reduz
+    const carga = amb.cli(['proxima', '--vivos', '0'], { extra: { GABARITO_CAP_LOAD1: '6' } });
+    assert.equal(carga.j.sinais.slots, 1, 'floor(3 × 1 / 6) = 0 → 1');
+  });
+
+  test('proxima-sem-calibracao-1-slot: arquivo ausente, corrompido, de outra máquina ou inválido ⇒ 1 slot e aviso', () => {
+    const casos = {
+      ausente: null,
+      corrompido: '{nao json',
+      'de outro hostname': { ...CAPACIDADE_PADRAO, hostname: 'outra-maquina', slots_max: 9 },
+      'slots_max zero': { ...CAPACIDADE_PADRAO, slots_max: 0 },
+      'campo medido zero': { ...CAPACIDADE_PADRAO, rss_pico_mb: 0, slots_max: 9 },
+      'campo medido ausente': { hostname: HOST_TESTE, slots_max: 9 },
+      'array': [],
+    };
+    for (const [nome, capacidade] of Object.entries(casos)) {
+      const amb = ambiente({ plano: QUATRO, config: { ...semLoopSlots, loop: { slots: 4 } }, capacidade });
+      const r = amb.cli(['proxima', '--vivos', '0']);
+      assert.equal(r.rc, 0, `${nome}: ${r.out}${r.err}`);
+      assert.equal(r.j.sinais.slots, 1, nome);
+      assert.equal(r.j.acao.itens.length, 1, nome);
+      assert.ok(r.j.aviso.some((a) => /slots/.test(a) && /calibr/.test(a)), `${nome}: ${JSON.stringify(r.j.aviso)}`);
+    }
+  });
+
+  test('proxima-sem-calibracao-1-slot: medição da máquina falhando ou saída inválida do comando ⇒ 1 slot e aviso, nunca slots_max', () => {
+    const rodar = (saida) => () => saida;
+    const um = (r, rx) => { assert.equal(r.slots, 1); assert.match(r.aviso, rx); };
+    um(slotsDaCapacidade('/x', rodar({ status: 1, stdout: '{"slots":9}', stderr: 'boom' })), /rc 1/);
+    um(slotsDaCapacidade('/x', rodar({ status: null, signal: 'SIGTERM', stdout: '', stderr: '' })), /SIGTERM|sinal/);
+    um(slotsDaCapacidade('/x', rodar({ status: null, error: new Error('ENOENT'), stdout: '', stderr: '' })), /ENOENT/);
+    um(slotsDaCapacidade('/x', rodar({ status: 0, stdout: 'isto não é json', stderr: '' })), /JSON/);
+    for (const slots of [0, -1, 2.5, '9', null, undefined, Infinity, 1e21]) {
+      um(slotsDaCapacidade('/x', rodar({ status: 0, stdout: JSON.stringify({ slots }), stderr: '' })), /slots/);
+    }
+    um(slotsDaCapacidade('/x', rodar({ status: 0, stdout: '[3]', stderr: '' })), /JSON|objeto/);
+    // saída boa: o número medido passa, com o aviso do próprio capacidade.mjs quando houver
+    assert.deepEqual(slotsDaCapacidade('/x', rodar({ status: 0, stdout: JSON.stringify({ slots: 3, motivo: 'm' }), stderr: '' })), { slots: 3, aviso: null });
+    assert.equal(slotsDaCapacidade('/x', rodar({ status: 0, stdout: JSON.stringify({ slots: 1, aviso: 'sem calibração' }), stderr: '' })).aviso, 'slots: sem calibração');
+  });
+
+  test('proxima-config-so-reduz: loop.slots menor reduz; maior nunca vence a medição', () => {
+    const base = { plano: QUATRO, capacidade: { ...CAPACIDADE_PADRAO, slots_max: 3 } };
+    const menor = ambiente({ ...base, config: { ...semLoopSlots, loop: { slots: 1 } } }).cli(['proxima', '--vivos', '0']);
+    assert.equal(menor.j.sinais.slots, 1);
+    assert.equal(menor.j.aviso, undefined);
+    for (const alto of [3, 4, 99, 1e9]) {
+      const r = ambiente({ ...base, config: { ...semLoopSlots, loop: { slots: alto } } }).cli(['proxima', '--vivos', '0']);
+      assert.equal(r.j.sinais.slots, 3, `loop.slots ${alto}`);
+    }
+    // loop.slots alto com calibração ausente continua 1 slot
+    const sem = ambiente({ ...base, capacidade: null, config: { ...semLoopSlots, loop: { slots: 99 } } }).cli(['proxima', '--vivos', '0']);
+    assert.equal(sem.j.sinais.slots, 1);
   });
 
   test('proxima-concluir-com-tudo-integrado', () => {

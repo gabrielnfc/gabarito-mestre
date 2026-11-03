@@ -22,6 +22,19 @@ jobs:
       - run: claude plugin validate ./plugins/gabarito-mestre --strict
       - run: claude plugin validate . --strict
 
+  mod:
+    name: mod — claude plugin test (só o teste do mod conta)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: npm install -g @anthropic-ai/claude-code
+      # `claude plugin test .` sai sempre 1: carrega os gates/test/*.test.ts, que são node:test. O script sai 0 só se o
+      # teste do mod carregou (`(pass)`) e nenhum teste falhou; "did not load" dos *.test.ts de gates/ não conta.
+      - run: cd plugins/gabarito-mestre && bash scripts/test/mod-test.sh
+
   gates:
     name: gates — node --test (mjs + ts)
     runs-on: ubuntu-latest
