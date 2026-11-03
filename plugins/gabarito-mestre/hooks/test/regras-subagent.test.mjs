@@ -7,7 +7,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, symlinkSync, readFileSync, chmodSync, mkdtempSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, symlinkSync, readFileSync, chmodSync, truncateSync, mkdtempSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HOOKS, PLUGIN, PATH_SEM_NODE, cleanEnv, fixtureRepo } from './_comum.mjs';
@@ -200,17 +200,14 @@ describe('regras-subagent.sh — teto de 2.000 caracteres (Q27 item 4)', () => {
       assert.match(ctx, /truncad/i);
     }
   });
-  test('arquivo enorme (32 MB) não estoura o timeout de 5 s', () => {
-    const dir = repoComRegras();
-    const caminho = join(dir, '.harness', 'regras-subagent.md');
-    const bloco = 'ação '.repeat(200000); // ~1 MB
-    writeFileSync(caminho, Buffer.alloc(0));
-    for (let i = 0; i < 32; i++) writeFileSync(caminho, bloco, { flag: 'a' });
+  test('arquivo enorme (3 GB esparso) não estoura o timeout de 5 s nem a memória: leitura limitada em bytes', () => {
+    const dir = repoComRegras('início ação\n');
+    truncateSync(join(dir, '.harness', 'regras-subagent.md'), 3 * 1024 ** 3);
     const r = rodar({ cwd: dir });
     const ctx = contexto(r);
     assert.ok(r.ms < 4000, `${r.ms} ms`);
     assert.ok(n(ctx) <= TETO);
-    assert.match(ctx, /truncad/i);
+    assert.ok(ctx.includes('início ação'));
   });
 });
 
