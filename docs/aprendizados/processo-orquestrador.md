@@ -34,5 +34,6 @@ Rode cada item como sonda sua e relate o resultado:
 
 ## Fila
 
-- X7, contexto inicial de subagent: mediana 41.532 tokens no 1º turno (R13), pago por agente. Brief em `.superpowers/sdd/2026-11-03-e2-loop/spike-X7.md`.
+- X7, mutação mecânica sem LLM antes do review, backtest em T3 e T4. Brief em `.superpowers/sdd/2026-11-03-e2-loop/spike-X7.md`. Em curso desde 2026-11-03.
+- Contexto inicial de subagent: mediana 41.532 tokens no 1º turno (R13), pago por agente. Medir o que entra nele.
 - X3, mutações em paralelo: gate pesa pouco (90 min de 7h30). Só depois de X7.
