@@ -679,7 +679,9 @@ function candidatos(args          )           {
 }
 
 function ehCaminhoPlausivel(t        )          {
-  return t !== '' && !/\s/.test(t) && !t.includes('://') && t.length <= 4096;
+  // Q28: token com espaço só conta como caminho quando tem âncora (`/`, `~/`, `./`, `../`) e nenhuma quebra de linha.
+  const formaDeCaminho = !/\s/.test(t) || (/^(\/|~\/|\.\.?\/)/.test(t) && !/[\r\n]/.test(t));
+  return t !== '' && formaDeCaminho && !t.includes('://') && t.length <= 4096;
 }
 
 function valorT(args          )                                          {

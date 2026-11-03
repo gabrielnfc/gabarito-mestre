@@ -19,11 +19,15 @@
  *  R4  anel de `.harness` só na raiz do cwd ⇒ `pausar-remover-dir-principal-da-worktree-pede` falha
  *  R5  `raizPrincipal` com erro de leitura devolve null ⇒ `pausar-ponteiro-ilegivel-nao-libera` falha
  *  R6  `pausado` e o anel com listas de raízes diferentes ⇒ `pausar-pausa-e-anel-mesmas-raizes` falha
+ *  Q1  `ehCaminhoPlausivel` volta ao `!/\s/` (M1 da Sombra, task-14-mut.json) ⇒ `espaco-ancorado-pede-*` falham
+ *  Q2  sem a âncora (`/`, `~/`, `./`, `../`) ⇒ `espaco-texto-nao-pede` falha
+ *  Q3  sem a checagem de quebra de linha ⇒ `espaco-quebra-de-linha-e-texto` falha
+ *  Q4  sem `~/` na âncora ⇒ `espaco-ancorado-pede-*` falham (`cat "~/a b/.env"`)
  */
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -636,5 +640,109 @@ describe('contrato de falha: erro nunca libera', () => {
   test('pausar-raiz-nao-resolve-nao-libera: sem repo algum, o arquivo pelo nome continua protegido', () => {
     const fora = realpathSync(mkdtempSync(join(tmpdir(), 'gm-kill-fora-')));
     assert.equal(rodar(null, 'Bash', { command: `rm ${fora}/.harness/pausar` }, { cwd: fora }, { repo: null, cwd: fora }).decisao, 'ask');
+  });
+});
+
+/** Repo cujo caminho tem espaço (Drive, OneDrive, iCloud): o diretório do repo é renomeado para `meu projeto`. */
+function repoComEspaco() {
+  const montado = montar();
+  const pai = realpathSync(mkdtempSync(join(tmpdir(), 'gm-kill-esp-')));
+  const repo = join(pai, 'meu projeto');
+  renameSync(montado, repo);
+  return repo;
+}
+
+describe('token com espaço e âncora conta como caminho (Q28)', () => {
+  const PAPEIS = [
+    ['orquestrador', {}, 'ask'],
+    ['subagent', SUB, 'deny'],
+  ];
+
+  test('espaco-ancorado-pede-absoluto: as 14 formas absolutas da tabela da Sombra, nos dois papéis', () => {
+    const A = repoComEspaco();
+    const formas = [
+      `cat "${A}/.env"`, `rm "${A}/.env"`, `cat "${A}/certs/a.pem"`, `rm "${A}/.github/workflows/x.yml"`, `rm "${A}/.harness/PAUSAR"`,
+      `mv "${A}/.harness/PAUSAR" /tmp/x`, `git rm -f "${A}/.harness/PAUSAR"`, `nice rm "${A}/.harness/PAUSAR"`, `cp "${A}/.env" /tmp/x`,
+      `mv /tmp/x "${A}/harness.config.json"`, `sed -i s/a/b/ "${A}/harness.config.json"`, `rm "${A}/tools/gabarito-gates/x"`,
+      `cat ${A.replace(' ', '\\ ')}/.env`, `cat '${A}/.env'`,
+    ];
+    assert.equal(formas.length, 14);
+    for (const [papel, extra, esperado] of PAPEIS) {
+      for (const command of formas) assert.equal(rodar(A, 'Bash', { command }, extra).decisao, esperado, `${papel}: ${command}`);
+    }
+  });
+
+  test('espaco-ancorado-pede-relativo-com-ancora: ./, ../ e ~/ com espaço', () => {
+    const A = repoComEspaco();
+    for (const [papel, extra, esperado] of PAPEIS) {
+      for (const command of [`cat "./pasta x/.env"`, `cat "../a b/.env"`, `cat "~/a b/.env"`]) {
+        assert.equal(rodar(A, 'Bash', { command }, extra).decisao, esperado, `${papel}: ${command}`);
+      }
+    }
+  });
+
+  test('espaco-texto-nao-pede: os 9 negativos de texto (2 deles falso positivo aceito, Q28)', () => {
+    const A = repoComEspaco();
+    const silenciosos = [
+      'git commit -m "ver /x/.env e mais"', 'gh pr create --title "renovar a.pem" --body "ver src/.env depois"', 'node x.mjs "ler o arquivo docs/.env agora"',
+      `grep "foo bar" "${A}/README.md"`, 'curl -d "a b/.env" http://x', `echo "rm ${A}/.env"`, 'npm run x -- "api.key é chave"',
+    ];
+    for (const [papel, extra] of PAPEIS) {
+      for (const command of silenciosos) assert.equal(rodar(A, 'Bash', { command }, extra).decisao, undefined, `${papel}: ${command}`);
+    }
+    // Falso positivo aceito pela Q28: texto de argumento que começa por `/` e termina em caminho do anel.
+    for (const [papel, extra, esperado] of PAPEIS) {
+      for (const command of ['gh pr create --title "/gabarito pausar agora" --body "/foo bar/.env"', 'claude -p "/gabarito ler a b/.env"']) {
+        assert.equal(rodar(A, 'Bash', { command }, extra).decisao, esperado, `${papel}: ${command}`);
+      }
+    }
+  });
+
+  test('espaco-quebra-de-linha-e-texto: corpo multilinha que começa por / e termina em .env não é caminho', () => {
+    const A = repoComEspaco();
+    for (const [papel, extra] of PAPEIS) {
+      for (const command of ['gh pr create --body "/x\nfoo/.env"', 'git commit -m "/nota\r\nver pasta/.env"']) {
+        assert.equal(rodar(A, 'Bash', { command }, extra).decisao, undefined, `${papel}: ${command}`);
+      }
+    }
+  });
+
+  test('espaco-relativo-limite: relativo sem âncora e comando inteiro entre aspas seguem fora do anel (limite declarado, Q28)', () => {
+    const A = repoComEspaco();
+    for (const [papel, extra] of PAPEIS) {
+      for (const command of [
+        'cat "pasta x/.env"', 'cat "meu cert.pem"', 'rm ".github/workflows/meu ci.yml"', 'eval "rm /tmp/x/.harness/PAUSAR"', 'nice sh -c "rm /tmp/x/.harness/PAUSAR"',
+      ]) {
+        assert.equal(rodar(A, 'Bash', { command }, extra).decisao, undefined, `${papel}: ${command}`);
+      }
+    }
+  });
+
+  test('espaco-ataques-e12: gh, curl, node, cp, mv e git -C com espaço, origem e destino', () => {
+    const A = repoComEspaco();
+    const pedem = [
+      `cp "/tmp/x y/f" "${A}/.env"`, `cp "${A}/.env" "/tmp/dest dir/x"`, `mv "${A}/a b" "${A}/.github/workflows/x.yml"`,
+      `mv "${A}/.harness/PAUSAR" "/tmp/dest dir/x"`, `git -C "${A}" rm -f .harness/PAUSAR`, `git -C "${A}/.harness" rm -f PAUSAR`,
+    ];
+    const silenciam = [
+      `cp "${A}/a b.txt" "/tmp/dest dir/c.txt"`, `mv "${A}/a b.txt" "${A}/c d.txt"`, `git -C "${A}" status`, `git -C "${A}" log --oneline`,
+      'gh pr create --title "renovar a.pem" --body "/tmp/x"', 'curl -d "a b/.env" http://x', 'node x.mjs "ler o arquivo docs/.env agora"',
+    ];
+    for (const [papel, extra, esperado] of PAPEIS) {
+      for (const command of pedem) assert.equal(rodar(A, 'Bash', { command }, extra).decisao, esperado, `${papel}: ${command}`);
+      for (const command of silenciam) assert.equal(rodar(A, 'Bash', { command }, extra).decisao, undefined, `${papel}: ${command}`);
+    }
+  });
+
+  test('espaco-token-que-nao-resolve-nao-libera-nem-lanca: token sem resolução mantém o veredito de antes', () => {
+    const A = repoComEspaco();
+    const longo = `/${'a b/'.repeat(1500)}.env`;
+    for (const [, extra] of PAPEIS) {
+      for (const command of [`cat "${longo}"`, 'cat "~/"', 'cat "./"', 'cat "/ "']) {
+        const o = rodar(A, 'Bash', { command }, extra);
+        assert.equal(o.status, 0, command.slice(0, 40));
+        assert.notEqual(o.decisao, 'allow', command.slice(0, 40));
+      }
+    }
   });
 });
