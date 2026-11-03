@@ -704,7 +704,12 @@ export function slotsDaCapacidade(raiz, rodar = (args, opts) => spawnSync(proces
   try { j = JSON.parse(String(r.stdout)); } catch { return um('saída de capacidade.mjs não é JSON'); }
   if (j === null || typeof j !== 'object' || Array.isArray(j)) return um('saída de capacidade.mjs não é um objeto JSON');
   if (!inteiroPositivo(j.slots)) return um(`capacidade.mjs devolveu slots inválido (${JSON.stringify(j.slots)}): esperado inteiro >= 1`);
-  return { slots: j.slots, aviso: typeof j.aviso === 'string' && j.aviso !== '' ? `slots: ${j.aviso}` : null };
+  // Redução (memória, disco, carga) traz o motivo: `motivo` que não começa por `slots_max` vira aviso, somado ao que já havia.
+  // `motivo` ausente ou não texto não lança e não muda `slots`.
+  const avisos = [];
+  if (typeof j.aviso === 'string' && j.aviso !== '') avisos.push(`slots: ${j.aviso}`);
+  if (typeof j.motivo === 'string' && j.motivo !== '' && !j.motivo.startsWith('slots_max')) avisos.push(`slots: ${j.slots}, ${j.motivo}`);
+  return { slots: j.slots, aviso: avisos.length > 0 ? avisos.join('; ') : null };
 }
 
 function sinaisDe(c, cfg, eventos, flags) {

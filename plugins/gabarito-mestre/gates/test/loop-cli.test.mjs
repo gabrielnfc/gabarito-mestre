@@ -1260,8 +1260,36 @@ describe('proxima', () => {
     }
     um(slotsDaCapacidade('/x', rodar({ status: 0, stdout: '[3]', stderr: '' })), /JSON|objeto/);
     // saída boa: o número medido passa, com o aviso do próprio capacidade.mjs quando houver
-    assert.deepEqual(slotsDaCapacidade('/x', rodar({ status: 0, stdout: JSON.stringify({ slots: 3, motivo: 'm' }), stderr: '' })), { slots: 3, aviso: null });
+    assert.deepEqual(slotsDaCapacidade('/x', rodar({ status: 0, stdout: JSON.stringify({ slots: 3, motivo: 'slots_max 3' }), stderr: '' })), { slots: 3, aviso: null });
     assert.equal(slotsDaCapacidade('/x', rodar({ status: 0, stdout: JSON.stringify({ slots: 1, aviso: 'sem calibração' }), stderr: '' })).aviso, 'slots: sem calibração');
+  });
+
+  test('proxima-reducao-traz-motivo: motivo que não é slots_max (memória, disco, carga) aparece em aviso, somado ao aviso existente', () => {
+    const rodar = (obj) => () => ({ status: 0, stdout: JSON.stringify(obj), stderr: '' });
+    const carga = 'carga: load1 47.3 > 28.76 medido com 3 slot(s)';
+    assert.equal(slotsDaCapacidade('/x', rodar({ slots: 1, motivo: carga })).aviso, `slots: 1, ${carga}`);
+    assert.equal(slotsDaCapacidade('/x', rodar({ slots: 2, motivo: 'mem 900 MB < 2048' })).aviso, 'slots: 2, mem 900 MB < 2048');
+    // aviso já existente não se perde
+    const dois = slotsDaCapacidade('/x', rodar({ slots: 1, motivo: carga, aviso: 'sem calibração' })).aviso;
+    assert.match(dois, /sem calibração/);
+    assert.match(dois, /carga: load1 47\.3/);
+    assert.equal(slotsDaCapacidade('/x', rodar({ slots: 1, motivo: carga })).slots, 1);
+  });
+
+  test('proxima-sem-reducao-sem-aviso: motivo slots_max (sem redução) não gera aviso', () => {
+    const rodar = (obj) => () => ({ status: 0, stdout: JSON.stringify(obj), stderr: '' });
+    assert.deepEqual(slotsDaCapacidade('/x', rodar({ slots: 3, motivo: 'slots_max 3' })), { slots: 3, aviso: null });
+    assert.deepEqual(slotsDaCapacidade('/x', rodar({ slots: 3, motivo: 'slots_max' })), { slots: 3, aviso: null });
+  });
+
+  test('proxima-motivo-ausente: motivo ausente ou não texto não lança nem muda slots; sem aviso inventado', () => {
+    const rodar = (obj) => () => ({ status: 0, stdout: JSON.stringify(obj), stderr: '' });
+    for (const motivo of [undefined, null, 5, {}, [], true, '']) {
+      const r = slotsDaCapacidade('/x', rodar(motivo === undefined ? { slots: 3 } : { slots: 3, motivo }));
+      assert.deepEqual(r, { slots: 3, aviso: null }, JSON.stringify(motivo));
+    }
+    // aviso próprio sobrevive a motivo inválido
+    assert.equal(slotsDaCapacidade('/x', rodar({ slots: 1, aviso: 'sem calibração', motivo: 7 })).aviso, 'slots: sem calibração');
   });
 
   test('proxima-config-so-reduz: loop.slots menor reduz; maior nunca vence a medição', () => {
