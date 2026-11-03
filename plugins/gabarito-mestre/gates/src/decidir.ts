@@ -17,9 +17,10 @@ function casa(padrao: string, texto: string): boolean {
 
 function permitido(c: Classificacao, config: ConfigGuarda | null): boolean {
   const padroes = config?.permitidos ?? [];
-  return c.segmentosProdEscrita.every((seg) => padroes.some((p) => casa(p, seg)));
+  return c.segmentosProd.every((seg) => padroes.some((p) => casa(p, seg)));
 }
 
+const ROTULO_ACAO: Record<string, string> = { leitura: 'leitura', escrita: 'escrita', execucao: 'execução' };
 const ROTULO: Record<string, string> = { prod: 'PRODUÇÃO', homolog: 'HOMOLOG', desconhecido: 'ALVO NÃO VERIFICADO', teste: 'TESTE' };
 
 function mensagemMostrar(c: Classificacao): string {
@@ -61,7 +62,8 @@ function decidirConteudo(entrada: EntradaHook, config: ConfigGuarda | null, cont
   if (c.anel === 'segredo') return barrar('segredo');
   if (c.anel === 'integridade') return barrar('integridade');
 
-  if (c.segmentosProdEscrita.length > 0 && !(!subagent && permitido(c, config))) return barrar('escrita em PRODUÇÃO');
+  // Q26: prod com qualquer ação pede; `permitidos` (só orquestrador) precisa casar todo segmento prod.
+  if (c.segmentosProd.length > 0 && !(!subagent && permitido(c, config))) return barrar(`${ROTULO_ACAO[c.acao]} em PRODUÇÃO`);
 
   const mostra = c.ambiente !== 'teste' && c.alvo !== '';
   if (mostra) {

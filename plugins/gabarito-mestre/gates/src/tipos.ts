@@ -49,7 +49,8 @@ export type Classificacao = {
   alvo: string;
   destrutivo: boolean;
   anel: 'segredo' | 'integridade' | null;
-  segmentosProdEscrita: string[];
+  /** Q26/Q6: todo segmento `prod`, de qualquer ação (Bash: o segmento cru; MCP: o nome da tool). */
+  segmentosProd: string[];
   /** Q17: a cadeia de `cd` passou de LIMITE_CD e a guarda perdeu o diretório corrente (só Bash). */
   cdPerdido?: boolean;
 };

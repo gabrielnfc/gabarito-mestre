@@ -23,7 +23,7 @@ const ORDEM: Declarado[] = ['prod', 'homolog', 'teste'];
 
 type Parcial = { ambiente: Ambiente; acao: Classificacao['acao']; alvo: string; destrutivo: boolean; prodEscrita: boolean; cru: string };
 
-const NEUTRO: Classificacao = { ambiente: 'desconhecido', acao: 'leitura', alvo: '', destrutivo: false, anel: null, segmentosProdEscrita: [] };
+const NEUTRO: Classificacao = { ambiente: 'desconhecido', acao: 'leitura', alvo: '', destrutivo: false, anel: null, segmentosProd: [] };
 
 const REDE = new Set(['curl', 'wget', 'http', 'https', 'xh', 'ssh', 'scp', 'rsync', 'nc', 'telnet']);
 const BANCO = new Set(['psql', 'pg_dump', 'pg_dumpall', 'pg_restore', 'mysql', 'mysqldump', 'mariadb', 'mariadb-dump', 'mongosh', 'mongo', 'redis-cli']);
@@ -402,7 +402,7 @@ function classificarBash(entrada: EntradaHook, cfg: ConfigGuarda | null, ctx: Co
     alvo: reduzirAlvo(topo.alvo),
     destrutivo: topo.destrutivo,
     anel: null,
-    segmentosProdEscrita: parciais.filter((x) => x.prodEscrita).map((x) => x.cru),
+    segmentosProd: parciais.filter((x) => x.ambiente === 'prod').map((x) => x.cru),
   };
 
   // O anel vem antes do ambiente.
@@ -434,7 +434,7 @@ function classificarMcp(entrada: EntradaHook, cfg: ConfigGuarda | null): Classif
     alvo: nome.split('__')[1] ?? nome,
     destrutivo: sql !== null && sqlDestrutivo(sql),
     anel: null,
-    segmentosProdEscrita: ambiente === 'prod' && !leitura ? [nome] : [],
+    segmentosProd: ambiente === 'prod' ? [nome] : [],
   };
 }
 
