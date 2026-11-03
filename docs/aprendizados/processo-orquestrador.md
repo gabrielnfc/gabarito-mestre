@@ -34,8 +34,11 @@ Rode cada item como sonda sua e relate o resultado:
 4. **Vizinhos do caso.** Corrigiu um caso, teste os adjacentes: caixa, espaço no caminho, aspas, relativo e absoluto, worktree e principal (T7, E12).
 5. **O teste distingue?** Troque a regra por outra plausível: o teste precisa falhar. Ele não pode depender de carga ou relógio da máquina.
 
+## Descartado
+
+- X7, mutação mecânica sem LLM antes do review: REFUTADA. Backtest em T3 e T4: 0 de 13 MAJOR apontados, mínimo era 5; 38 vivas, 25 % equivalentes na amostra de 20; 0 tokens, ~10 min por task. Os MAJOR são checagem ausente ou caso não testado, que troca textual não cria. Relatório: `.superpowers/sdd/2026-11-03-e2-loop/spike-X7-relatorio.md`. Não entra no gate.
+
 ## Fila
 
-- X7, mutação mecânica sem LLM antes do review, backtest em T3 e T4. Brief em `.superpowers/sdd/2026-11-03-e2-loop/spike-X7.md`. Em curso desde 2026-11-03.
 - Contexto inicial de subagent: mediana 41.532 tokens no 1º turno (R13), pago por agente. Medir o que entra nele.
 - X3, mutações em paralelo: gate pesa pouco (90 min de 7h30). Só depois de X7.
