@@ -11,3 +11,6 @@ docs/workflow-true.html
 # E2 (GM-10): capacidade medida e kill switch são estado local
 .harness/capacidade.json
 .harness/PAUSAR
+
+# E2 (GM-10): contador do hook Stop é estado local
+.harness/stop-contador.json*
