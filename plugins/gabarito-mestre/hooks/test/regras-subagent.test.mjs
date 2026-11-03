@@ -53,7 +53,7 @@ describe('regras-subagent.md — regras padrão (Q27 item 3)', () => {
     const r3 = linhas.find((x) => /^3\./.test(x));
     for (const c of ['.env*', '*.pem', '*.key', '~/.aws', '~/.config/gh', '~/.ssh']) assert.ok(r1.includes(c), c);
     assert.match(r1, /nada bloqueia/);
-    assert.match(r3, /alvo declarado/);
+    assert.match(r3, /reconhece pela configuração/);
     assert.match(r3, /nada bloqueia/);
   });
   test('marcas certas: ler segredo e produção são barreira; imprimir segredo, push/PR/merge e contornar hook são instrução', () => {
