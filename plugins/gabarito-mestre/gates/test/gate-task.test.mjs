@@ -86,7 +86,7 @@ describe('gate-task', () => {
     assert.match(texto(r), /árvore suja/);
   });
 
-  test('gate-status-ignorado: ignorado não reprova a árvore inicial mas é relatado; o novo ignorado de uma mutação reprova', async () => {
+  test('gate-status-ignorado: ignorado nunca reprova (existente nem novo de mutação) e é relatado', async () => {
     const { dir, base } = repo();
     commit(dir, '.gitignore', 'oculto.txt\n*.cache\n');
     writeFileSync(join(dir, 'oculto.txt'), 'x');
@@ -95,10 +95,11 @@ describe('gate-task', () => {
     assert.match(texto(r), /AVISO +1 ignorado\(s\) na worktree: oculto\.txt/);
     const rodar = async (nome) => {
       if (nome === 'm1') writeFileSync(join(dir, 'novo.cache'), 'x');
-      return { nome, rc: nome === 'm1' ? 1 : 0, out: '', ms: 500 };
+      return { nome, rc: nome === 'm1' ? 1 : 0, out: nome === 'ok' ? 'ℹ tests 3\nℹ pass 3\nℹ fail 0' : '', ms: 500 };
     };
     const r2 = await avaliar({ wt: dir, base, mutacoes: [mut()], rodar, ...verde });
-    assert.match(texto(r2), /FALHA +mutação deixou árvore alterada/, texto(r2));
+    assert.equal(r2.reprova, 0, texto(r2));
+    assert.match(texto(r2), /AVISO +1 ignorado\(s\) gerado\(s\) no gate: novo\.cache/);
   });
 
   test('gate-status-tmpdir-do-loop: .tmp-gabarito/ (TMPDIR da worktree, ignora a si mesmo) não aparece; outro ignorado é relatado', async () => {
@@ -128,6 +129,85 @@ describe('gate-task', () => {
     };
     const r = await avaliar({ wt: dir, base, mutacoes: [mut()], rodar, ...verde });
     assert.match(texto(r), /FALHA +mutação deixou árvore alterada/, texto(r));
+  });
+
+  // Estados 3 a 12 da tabela Q1 da Sombra (sombra-t12.md). O teste da mutação "morre" com sleep: o gate exige ms >= 100.
+  const conta3 = conta();
+  const morre = (corpo = '') => `grep -q c src/b.txt && { ${corpo}sleep 0.4; exit 1; }; exit 0`;
+  const comMut = (cmdTeste) => ({ mutacoes: [{ nome: 'm1', arquivo: 'src/b.txt', de: 'b', para: 'c', teste: cmdTeste }] });
+  const caso = (ignore = '') => {
+    const r = repo();
+    if (ignore) commit(r.dir, '.gitignore', ignore);
+    commit(r.dir, 'src/b.txt', 'b\n');
+    return r;
+  };
+
+  test('gate-suite-gera-ignorado: ignorado gerado pela suíte não reprova, é relatado (caso A)', async () => {
+    const { dir, base } = caso('__pycache__/\n');
+    const suites = [{ nome: 's', cmd: `mkdir -p __pycache__; echo x > __pycache__/l.pyc; ${conta3}` }];
+    const r = await avaliar({ wt: dir, base, suites, ...comMut(morre()) });
+    assert.equal(r.reprova, 0, texto(r));
+    assert.match(texto(r), /AVISO +1 ignorado\(s\) gerado\(s\) no gate: __pycache__\//);
+  });
+
+  test('gate-falha-gera-ignorado: ignorado que só nasce quando o teste da mutação falha não reprova (caso B)', async () => {
+    const { dir, base } = caso('test-results/\n');
+    const r = await avaliar({ wt: dir, base, ...verde, ...comMut(morre('mkdir -p test-results; echo x > test-results/f; ')) });
+    assert.equal(r.reprova, 0, texto(r));
+    assert.match(texto(r), /AVISO +1 ignorado\(s\) gerado\(s\) no gate: test-results\//);
+  });
+
+  test('gate-mutacao-apaga-ignorado: mutação que apaga ignorado existente não reprova (caso I)', async () => {
+    const { dir, base } = caso('dist/\n');
+    mkdirSync(join(dir, 'dist'));
+    writeFileSync(join(dir, 'dist', 'x.js'), '1');
+    const r = await avaliar({ wt: dir, base, ...verde, ...comMut(morre('rm dist/x.js; ')) });
+    assert.equal(r.reprova, 0, texto(r));
+  });
+
+  test('gate-falha-suite-e-ignorado: suíte que falha reprova pela suíte, com o AVISO do ignorado (caso J)', async () => {
+    const { dir, base } = caso('cov/\n');
+    const r = await avaliar({ wt: dir, base, suites: [{ nome: 's', cmd: 'mkdir -p cov; echo x > cov/l; exit 1' }] });
+    assert.ok(r.reprova > 0, texto(r));
+    assert.match(texto(r), /FALHA +s rc=1/);
+    assert.match(texto(r), /AVISO +1 ignorado\(s\) gerado\(s\) no gate: cov\//);
+  });
+
+  test('gate-suite-altera-arvore: suíte que cria não ignorado ou altera rastreado reprova, com ou sem mutação (casos C, D, E)', async () => {
+    for (const [cmd, esperado] of [['echo x > coverage.out', /\?\? coverage\.out/], ['echo y >> src/b.txt', /M src\/b\.txt/]]) {
+      const { dir, base } = caso();
+      const suites = [{ nome: 's', cmd: `${cmd}; ${conta3}` }];
+      const r = await avaliar({ wt: dir, base, suites });
+      assert.ok(r.reprova > 0, texto(r));
+      assert.match(texto(r), /FALHA +suíte alterou a árvore/);
+      assert.match(texto(r), esperado);
+    }
+    const { dir, base } = caso();
+    const suites = [{ nome: 's', cmd: `echo x > coverage.out; ${conta3}` }];
+    const r = await avaliar({ wt: dir, base, suites, ...comMut(morre()) });
+    assert.equal(r.reprova, 1, `culpa só a suíte, não a mutação:\n${texto(r)}`);
+    assert.match(texto(r), /FALHA +suíte alterou a árvore/);
+    assert.doesNotMatch(texto(r), /mutação deixou árvore alterada/);
+  });
+
+  test('gate-status-branch-config: status.branch=true não inventa sujeira (caso H)', async () => {
+    const { dir, base } = caso();
+    g(dir, 'config', 'status.branch', 'true');
+    const r = await avaliar({ wt: dir, base, ...verde });
+    assert.equal(r.reprova, 0, texto(r));
+    assert.match(texto(r), /ok +árvore limpa/);
+  });
+
+  test('gate-mutacao-deixa-nao-rastreado: teste da mutação que deixa arquivo novo reprova, nomeando a mutação (caso F)', async () => {
+    const { dir, base } = caso();
+    const r = await avaliar({ wt: dir, base, ...verde, ...comMut(morre('echo x > sobra.txt; ')) });
+    assert.match(texto(r), /FALHA +mutação deixou árvore alterada/, texto(r));
+  });
+
+  test('gate-git-falha-nunca-verde: git status que falha depois das suítes lança, nunca devolve verde (caso K)', async () => {
+    const { dir, base } = caso();
+    const suites = [{ nome: 's', cmd: `mv .git .gitX; ${conta3}` }];
+    await assert.rejects(() => avaliar({ wt: dir, base, suites }));
   });
 
   test('gate-commit-fora-padrao: escopo do card vem da branch', async () => {

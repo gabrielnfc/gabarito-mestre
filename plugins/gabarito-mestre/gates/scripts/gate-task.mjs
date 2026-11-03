@@ -157,14 +157,17 @@ export async function avaliar(opts) {
     return resultado();
   }
 
-  // 1. Árvore limpa. A forma é fixa: a config local do git (status.showUntrackedFiles=no) não pode esconder arquivo novo
-  // (`--untracked-files=normal`) e `--ignored` traz os ignorados (`!!`). Ignorado não reprova a árvore inicial (node_modules da
-  // worktree é legítimo e `loop.mjs integrar` o relata e remove), mas é relatado, e a checagem final de árvore restaurada compara
-  // TUDO: mutação que deixa arquivo novo, ignorado ou não, reprova. Única exceção: `.tmp-gabarito/`, o TMPDIR que o loop dá à
-  // worktree (ignora a si mesmo; o `fechar` o confere e remove).
-  const status = () => git('status', '--short', '--untracked-files=normal', '--ignored').split('\n').filter((l) => l !== '' && l !== '!! .tmp-gabarito/');
+  // 1. Árvore limpa, uma regra só nas três fases (início, depois das suítes, depois das mutações): rastreado alterado ou
+  // não rastreado novo reprova; ignorado (`!!`) nunca reprova e é relatado. A forma é fixa e igual à de `loop.mjs`
+  // (STATUS_SUJEIRA): a config local do git (status.showUntrackedFiles=no, status.branch=true) não esconde arquivo novo nem
+  // inventa linha. Ignorado não reprova porque execução que falha gera artefato próprio (`test-results/` só existe quando o
+  // teste falha) e porque node_modules da worktree é legítimo (`loop.mjs integrar` o relata e remove). Única exceção:
+  // `.tmp-gabarito/`, o TMPDIR que o loop dá à worktree (ignora a si mesmo; o `fechar` o confere e remove).
+  const status = () => git('status', '--porcelain', '--untracked-files=normal', '--ignored', '--ignore-submodules=none').split('\n').filter((l) => l !== '' && l !== '!! .tmp-gabarito/');
+  const limpo = (linhas) => linhas.filter((l) => !l.startsWith('!! '));
+  const lista = (linhas) => linhas.slice(0, 10).join(', ') + (linhas.length > 10 ? `, … (+${linhas.length - 10})` : '');
   const inicial = status();
-  const sujo = inicial.filter((l) => !l.startsWith('!! ')).join('\n').trim();
+  const sujo = limpo(inicial).join('\n').trim();
   const ignorados = inicial.filter((l) => l.startsWith('!! '));
   sujo ? falhar(`árvore suja: ${sujo.split('\n').length} arquivo(s)`) : ok('árvore limpa');
   if (ignorados.length) aviso(`${ignorados.length} ignorado(s) na worktree: ${ignorados.map((l) => l.slice(3)).join(', ')}`);
@@ -245,6 +248,11 @@ export async function avaliar(opts) {
     }
   }
 
+  // 5a. A suíte não pode deixar rastreado alterado nem não rastreado novo (o `fechar` recusaria depois com worktree_suja).
+  const posSuites = status();
+  const mudouSuites = limpo(posSuites).filter((l) => !limpo(inicial).includes(l));
+  if (mudouSuites.length) falhar(`suíte alterou a árvore: ${lista(mudouSuites)}`);
+
   // 5b. A4: nome em --red só vale se falha na base (medido em worktree detached temporária)
   if (red.size && suites.length) await medirBase({ red, suites, base, git, rodar, ok, falhar, alerta });
 
@@ -292,8 +300,12 @@ export async function avaliar(opts) {
       else if (r.ms < minMs) alerta(`mutação ${m.nome} falhou em ${seg}s (tempo ~zero): o teste provavelmente não rodou; morte não provada`);
       else { ok(`mutação ${m.nome} morta (${seg}s)`); nMortas++; }
     }
-    status().join('\n') !== inicial.join('\n') ? falhar('mutação deixou árvore alterada') : ok('árvore restaurada após mutações');
+    limpo(status()).join('\n') !== limpo(posSuites).join('\n') ? falhar('mutação deixou árvore alterada') : ok('árvore restaurada após mutações');
   }
+
+  // Ignorado novo (gerado pela suíte ou pelas mutações) é relatado, nunca reprova.
+  const novosIgnorados = status().filter((l) => l.startsWith('!! ') && !inicial.includes(l));
+  if (novosIgnorados.length) aviso(`${novosIgnorados.length} ignorado(s) gerado(s) no gate: ${lista(novosIgnorados.map((l) => l.slice(3)))}`);
 
   // Relato limpo sem nenhuma suíte provada não existe (cinto sobre os suspensórios acima).
   if (!reprova && !nSuites) falhar('nada foi executado: nenhuma suíte provada');

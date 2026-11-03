@@ -12,7 +12,7 @@ E2 do canal `next` (GM-10): loop de implementação com pouso de contexto, e a g
 ### Adicionado (GM-10 T12)
 
 - **Skill `gabarito-loop`** (≤ 60 linhas): o ciclo e os ponteiros ao CLI `gates/scripts/loop.mjs`; a decisão é do CLI e o estado, do diário da entrega.
-- **Comando `/<plugin>:gabarito pausar|retomar`**: kill switch sem o mod. Avisa o usuário de que escrever ou remover `.harness/PAUSAR` pelo modelo cai no anel de integridade da guarda (`ask`).
+- **Comando `/<plugin>:gabarito pausar|retomar`**: kill switch sem o mod. Avisa o usuário de que escrever ou remover `.harness/PAUSAR` pelo modelo cai no anel de integridade da guarda (`ask`). O estado e o `alvo` vêm de `gates/scripts/pausa.mjs`, só leitura, com as funções da guarda (vale de subdiretório e de worktree de task); o relato vem da reconsulta. Limite declarado: `CLAUDE_PROJECT_DIR` não chega ao Bash, então `cd` para outro repositório desvia o `alvo`.
 - **Doctor**: linhas `loop: mod ativo | sem mod (sem pouso automático)` e `db: declarado | n/a`. `mod ativo` exige prova (marcador local do heartbeat e `custo.medicao` do orquestrador da mesma sessão, ≤ 24 h); o mod existir no repo não basta. `db` com bloco inválido mostra `inválido`, nunca `declarado`.
 - **Agente `gabarito-spike`**: o brief traz a lista fechada do que o spike pode criar e um diretório de config isolado; o agente não grava config global.
 - **CI**: job `mod` roda `scripts/test/mod-test.sh` (`claude plugin test .` com os `*.test.ts` de `gates/` fora da conta).
@@ -20,7 +20,7 @@ E2 do canal `next` (GM-10): loop de implementação com pouso de contexto, e a g
 ### Alterado (GM-10 T12, quebra de comportamento no canal `next`)
 
 - **`loop.mjs proxima`**: os slots vêm de `capacidade.mjs --medido`. Sem calibração, medição falhando ou saída inválida: 1 slot e aviso. `loop.slots` do `harness.config.json` deixou de ser a fonte: só **reduz** a medição; valor inválido vale 1 slot.
-- **`gate-task.mjs`**: a árvore é conferida com `status --untracked-files=normal --ignored`, independente da config local do git (`status.showUntrackedFiles=no` não esconde mais arquivo novo). Ignorado é relatado e não reprova a árvore inicial; a checagem final de árvore restaurada compara tudo.
+- **`gate-task.mjs`**: a árvore é conferida com `status --untracked-files=normal --ignored`, independente da config local do git (`status.showUntrackedFiles=no` não esconde mais arquivo novo). Mesma regra no início, depois das suítes e depois das mutações: rastreado alterado ou não rastreado novo reprova; ignorado nunca reprova e é relatado (execução que falha gera artefato próprio). Limite declarado: verde que depende de ignorado e arquivo novo coberto por exclude local do git; a rede é o CI em `concluir`.
 
 ### Alterado (GM-9 T4, quebra de comportamento no canal `next`)
 

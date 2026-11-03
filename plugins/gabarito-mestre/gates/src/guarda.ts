@@ -295,7 +295,7 @@ const MSG_PAUSA = 'pausado: /gabarito retomar';
 const ILEGIVEL = Symbol('ponteiro-ilegivel');
 
 /** Raiz do checkout principal quando `raiz` é worktree (`.git` é arquivo): `commondir` por fs, sem spawn. `null` = não é worktree. */
-function raizPrincipal(raiz: string): string | null | typeof ILEGIVEL {
+export function raizPrincipal(raiz: string): string | null | typeof ILEGIVEL {
   try {
     const ponteiro = join(raiz, '.git');
     if (!lstatSync(ponteiro).isFile()) return null;
@@ -311,7 +311,7 @@ function raizPrincipal(raiz: string): string | null | typeof ILEGIVEL {
 }
 
 /** Existência vale (arquivo, diretório, symlink quebrado). Só `ENOENT` é "ausente": outro erro de stat conta como pausa. */
-function existePausar(raiz: string): boolean {
+export function existePausar(raiz: string): boolean {
   try {
     lstatSync(join(raiz, '.harness', 'PAUSAR'));
     return true;
@@ -325,7 +325,7 @@ function existePausar(raiz: string): boolean {
  * A mesma lista decide a leitura (`pausado`) e a proteção (anel de `.harness/PAUSAR`, `.harness` e a própria raiz).
  * `ilegivel`: o ponteiro de uma worktree não pôde ser lido; o principal é desconhecido e a pausa vale.
  */
-function raizesDePausa(raizSessao: string | null, raizCwd: string | null): { raizes: string[]; ilegivel: boolean } {
+export function raizesDePausa(raizSessao: string | null, raizCwd: string | null): { raizes: string[]; ilegivel: boolean } {
   const raizes: string[] = [];
   let ilegivel = false;
   for (const r of [raizSessao, raizCwd]) {

@@ -92,6 +92,17 @@ describe('gates/package.json 1.1.0', () => {
     assert.match(t, /`ask`/);
     assert.equal(t.includes(HATCH), false);
   });
+  test('gabarito-comando-usa-cli: o comando consulta pausa.mjs; sem `test -e`, sem caminho relativo, limite da raiz em prosa', { skip: fora }, () => {
+    const t = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'commands', 'gabarito.md'), 'utf8');
+    assert.match(t, /^allowed-tools: Read, Bash\(node:\*\)$/m);
+    assert.match(t, /node \$\{CLAUDE_PLUGIN_ROOT\}\/gates\/scripts\/pausa\.mjs/);
+    assert.equal(t.includes('test -e'), false, 'a conferência relativa ao cwd volta ao falso "pausado"');
+    assert.doesNotMatch(t, /(?:>|\brm|-p) '?\.\/?\.harness/, 'comando com caminho relativo para .harness');
+    assert.match(t, /<alvo>\/\.harness\/PAUSAR/);
+    assert.match(t, /se `alvo` não é o repositório desta sessão, pare e diga/i);
+    assert.match(t, /reconsult/);
+    assert.equal(existsSync(join(GATES, 'scripts', 'pausa.mjs')), true);
+  });
   test('version do plugin.json igual à dos gates', { skip: noPlugin }, () => {
     assert.equal(ler(PLUGIN_JSON).version, pkg.version);
   });
