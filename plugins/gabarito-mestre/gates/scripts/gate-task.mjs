@@ -88,7 +88,10 @@ function lerConfig(wt) {
 }
 
 /** Devolve { suites, erros }: entrada sem `cmd` string não vazio é erro, não suíte ignorada. */
-function normalizarSuites(lista) {
+// Com --red, o resumo e o rc de partes diferentes de um comando composto se misturam: só comando simples.
+const COMPOSTO = /[;&|`\n\r]|\$\(/;
+
+function normalizarSuites(lista, comRed = false) {
   if (!Array.isArray(lista)) return { suites: [], erros: ['suítes devem ser uma lista'] };
   const suites = [];
   const erros = [];
@@ -96,6 +99,7 @@ function normalizarSuites(lista) {
     const o = typeof s === 'string' ? { cmd: s } : (s ?? {});
     const nome = o.nome ?? `suite-${i + 1}`;
     if (typeof o.cmd !== 'string' || !o.cmd.trim()) erros.push(`suíte ${nome}: comando vazio ou ausente`);
+    else if (comRed && COMPOSTO.test(o.cmd)) erros.push(`suíte ${nome}: com --red, a suíte precisa ser comando simples (sem &&, ||, ;, |, &, quebra de linha, $( ou crase): ${JSON.stringify(o.cmd.slice(0, 80))}`);
     else suites.push({ nome, cmd: o.cmd, cwd: o.cwd, semContagem: o.semContagem === true });
   });
   return { suites, erros };
@@ -205,7 +209,7 @@ export async function avaliar(opts) {
   adicionadas.some((a) => ALLOW_ADD.test(a.l)) ? falhar('allow adicionado') : ok('sem allow adicionado');
 
   // 5. Suítes, em paralelo. Verde = rc 0 + teste contado (ou marcador declarado); nada menos.
-  const { suites, erros: errosSuites } = normalizarSuites(opts.suites ?? cfg.gates?.suites ?? []);
+  const { suites, erros: errosSuites } = normalizarSuites(opts.suites ?? cfg.gates?.suites ?? [], red.size > 0);
   errosSuites.forEach((e) => falhar(e));
   if (!suites.length && !errosSuites.length) falhar('nenhuma suíte declarada (--suite, --suite-sem-contagem ou gates.suites): nada foi executado');
   const rs = await Promise.all(suites.map((s) => rodar(s.nome, s.cmd, s.cwd ? resolve(wt, s.cwd) : wt)));

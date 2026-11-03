@@ -40,9 +40,16 @@ const texto = (r) => r.relato.join('\n');
 // Suíte verde só com prova positiva: rc 0 e ao menos 1 teste contado na saída.
 const conta = (n = 3) => `echo 'ℹ tests ${n}'; echo 'ℹ pass ${n}'; echo 'ℹ fail 0'`;
 const verde = { suites: [{ nome: 'ok', cmd: conta() }] };
-const vermelho = (nome, { total = 1, quebras = 1, rc = 1, extra = '' } = {}) => ({
+const vermelhoCru = (nome, { total = 1, quebras = 1, rc = 1, extra = '' } = {}) => ({
   nome: 's', cmd: `echo '✖ ${nome} (1.2ms)'; echo 'ℹ tests ${total}'; echo 'ℹ fail ${quebras}'; ${extra}exit ${rc}`,
 });
+// Com --red a suíte é comando simples (gate exige): o corpo composto vai para um script fora do repo.
+const script = (cmd) => {
+  const f = join(mkdtempSync(join(tmpdir(), 'gate-task-sh-')), 'suite.sh');
+  writeFileSync(f, `${cmd}\n`);
+  return `bash ${f}`;
+};
+const vermelho = (nome, o) => ({ nome: 's', cmd: script(vermelhoCru(nome, o).cmd) });
 const nWorktrees = (dir) => g(dir, 'worktree', 'list').trim().split('\n').length;
 
 describe('gate-task', () => {
@@ -318,7 +325,7 @@ describe('gate-task', () => {
     commit(dir, 'src/b.txt', 'b\n');
     const a = await avaliar({ wt: dir, base, suites: [{ nome: 'p', cmd: 'false | true', semContagem: true }] });
     assert.ok(a.reprova > 0, texto(a));
-    const b = await avaliar({ wt: dir, base, suites: [{ nome: 'p', cmd: `(${vermelho('novo-quebrado').cmd}) | tail -5` }] });
+    const b = await avaliar({ wt: dir, base, suites: [{ nome: 'p', cmd: `(${vermelhoCru('novo-quebrado').cmd}) | tail -5` }] });
     assert.ok(b.reprova > 0, texto(b));
   });
 
@@ -356,10 +363,60 @@ describe('gate-task', () => {
     assert.ok(semResumo.reprova > 0, texto(semResumo));
     const doisRunners = await avaliar({
       wt: dir, base, red,
-      suites: [{ nome: 's', cmd: `${vermelho('esperado', { rc: 0 }).cmd}; echo 'ℹ tests 1'; echo 'ℹ fail 1'; echo boom-sintaxe; exit 1` }],
+      suites: [{ nome: 's', cmd: script(`${vermelhoCru('esperado', { rc: 0 }).cmd}; echo 'ℹ tests 1'; echo 'ℹ fail 1'; echo boom-sintaxe; exit 1`) }],
     });
     assert.ok(doisRunners.reprova > 0, texto(doisRunners));
     assert.doesNotMatch(texto(doisRunners), /só RED conhecido/);
+  });
+
+  describe('RED conhecido só com suíte simples', () => {
+    const resumo = "echo '✖ esperado (1ms)'; echo 'ℹ tests 1'; echo 'ℹ fail 1'";
+    const causa = /FALHA\s+suíte s: com --red, a suíte precisa ser comando simples/;
+    const rodaCom = async (cmd, red = ['esperado']) => {
+      const { dir, base } = repo();
+      commit(dir, 'src/b.txt', 'b\n');
+      return avaliar({ wt: dir, base, red, suites: [{ nome: 's', cmd }] });
+    };
+    test('red-suite-and-reprova', async () => {
+      const r = await rodaCom(`node -e "process.exit(0)" && ${resumo}; exit 1`);
+      assert.ok(r.reprova > 0, texto(r));
+      assert.match(texto(r), causa);
+      assert.doesNotMatch(texto(r), /só RED conhecido/);
+    });
+    test('red-suite-ponto-virgula-reprova', async () => {
+      const r = await rodaCom(`${resumo}; exit 1`);
+      assert.match(texto(r), causa);
+      assert.doesNotMatch(texto(r), /só RED conhecido/);
+    });
+    test('red-suite-pipe-reprova', async () => {
+      const r = await rodaCom('echo x | cat');
+      assert.match(texto(r), causa);
+      const ou = await rodaCom('false || true');
+      assert.match(texto(ou), causa);
+      const sub = await rodaCom('echo $(echo x)');
+      assert.match(texto(sub), causa);
+      const crase = await rodaCom('echo `echo x`');
+      assert.match(texto(crase), causa);
+      const fundo = await rodaCom('echo x &');
+      assert.match(texto(fundo), causa);
+      const quebra = await rodaCom('echo x\necho y');
+      assert.match(texto(quebra), causa);
+    });
+    test('red-suite-simples-segue', async () => {
+      const { dir, base } = repo();
+      commit(dir, 'src/b.txt', 'b\n');
+      writeFileSync(join(dir, 'red.sh'), `${resumo}\nexit 1\n`);
+      const r = await avaliar({ wt: dir, base, red: ['esperado'], suites: [{ nome: 's', cmd: 'bash red.sh' }] });
+      assert.doesNotMatch(texto(r), causa);
+      assert.match(texto(r), /só RED conhecido: 1/);
+    });
+    test('sem-red-suite-composta-segue', async () => {
+      const r = await rodaCom(conta(), []);
+      assert.doesNotMatch(texto(r), causa);
+      assert.match(texto(r), /verde: 3 teste/);
+      const semOpcao = await rodaCom(conta(), null);
+      assert.doesNotMatch(texto(semOpcao), causa);
+    });
   });
 
   test('falhas(): nomes vêm da seção "failing tests" quando existe (suíte pai não conta)', () => {
@@ -375,7 +432,7 @@ describe('gate-task', () => {
     const { dir, base } = repo();
     commit(dir, 'src/b.txt', 'b\n');
     const so = (marca) => ({
-      nome: 's', cmd: `if [ -f ${marca} ]; then echo '✖ teste-esperado (1ms)'; echo 'ℹ tests 1'; echo 'ℹ fail 1'; exit 1; else echo 'ℹ tests 1'; echo 'ℹ pass 1'; fi`,
+      nome: 's', cmd: script(`if [ -f ${marca} ]; then echo '✖ teste-esperado (1ms)'; echo 'ℹ tests 1'; echo 'ℹ fail 1'; exit 1; else echo 'ℹ tests 1'; echo 'ℹ pass 1'; fi`),
     });
     // src/b.txt só existe no HEAD: o teste passa na base, "RED" é alegação sem medição
     const falso = await avaliar({ wt: dir, base, red: ['teste-esperado'], suites: [so('src/b.txt')] });
@@ -415,7 +472,7 @@ describe('gate-task', () => {
   test('A4: worktree que não sai sem --force fica e é relatada, não forçada', async () => {
     const { dir, base } = repo();
     commit(dir, 'src/b.txt', 'b\n');
-    const suja = { nome: 's', cmd: `touch lixo-da-suite; ${vermelho('esperado').cmd}` };
+    const suja = { nome: 's', cmd: script(`touch lixo-da-suite; ${vermelhoCru('esperado').cmd}`) };
     const r = await avaliar({ wt: dir, base, red: ['esperado'], suites: [suja] });
     assert.match(texto(r), /ALERTA.*worktree temporária restante/);
     assert.ok(r.alertas >= 1);
