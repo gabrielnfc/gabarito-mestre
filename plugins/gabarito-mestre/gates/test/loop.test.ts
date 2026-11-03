@@ -270,14 +270,55 @@ test('dependente-de-bloqueada-nao-aprovada-espera', () => {
 const tetoDe = (t: string) => ({ tipo: 'parar', motivo: 'teto_rodadas', task: t });
 const dono = (task: string): [TipoEvento, Record<string, unknown>] => ['task.reaberta', { task, origem: 'dono' }];
 const retomada = (task: string): [TipoEvento, Record<string, unknown>] => ['task.reaberta', { task, origem: 'retomada' }];
-test('no-teto-e-terminal-fora-do-dono', () => {
+const EVENTOS_AVULSOS: [string, [TipoEvento, Record<string, unknown>]][] = [
+  ['iniciada.implementador', ini('a')], ['iniciada.revisor', ini('a', 'revisor')], ['iniciada.correcao', ini('a', 'correcao')],
+  ['concluida', con('a')], ['aprovado r3', ver('a', 'APROVADO', 3)], ['aprovado r2 com achado', ver('a', 'APROVADO', 2, 1)],
+  ['aprovado r1', ver('a', 'APROVADO', 1)], ['reprovado r1', ver('a', 'REPROVADO', 1, 1)], ['reprovado r3', ver('a', 'REPROVADO', 3, 1)],
+  ['reprovado r2 duplicado', ver('a', 'REPROVADO', 2, 1)], ['retomada', retomada('a')],
+];
+test('teto-evento-avulso-mantem', () => {
   const p = plano(['a']);
   assert.deepEqual(proximaAcao(p, diario(...noTeto('a')), sinais()), tetoDe('a'));
   assert.deepEqual(proximaAcao(p, diario(...noTeto('a')), sinais({ percent: 60 })), { tipo: 'pousar' }, 'no x não há revisor para task no teto');
-  for (const mais of [con('a'), ver('a', 'APROVADO', 3), ver('a', 'APROVADO', 2), ver('a', 'REPROVADO', 3, 1), ini('a', 'correcao'), ini('a', 'revisor'), int('a')]) {
+  for (const [nome, mais] of EVENTOS_AVULSOS) {
     const evs = diario(...noTeto('a'), mais);
-    assert.deepEqual(proximaAcao(p, evs, sinais()), invalido, JSON.stringify(mais));
+    assert.deepEqual(proximaAcao(p, evs, sinais()), tetoDe('a'), nome);
+    assert.deepEqual(estadoDe(evs), { estado: 'no_teto', rodada: 2 }, `${nome}: não conta rodada`);
+    assert.equal(podeIntegrar(p, evs, 'a'), false, nome);
+  }
+});
+test('teto-duplicata-veredito-mantem', () => {
+  const p = plano(['a']);
+  const evs = diario(...noTeto('a'), ver('a', 'REPROVADO', 2, 1), ver('a', 'REPROVADO', 2, 1));
+  assert.deepEqual(proximaAcao(p, evs, sinais()), tetoDe('a'));
+  assert.deepEqual(estadoDe(evs), { estado: 'no_teto', rodada: 2 });
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), con('a'), con('a')), sinais()), tetoDe('a'));
+  const malformado = diario(...noTeto('a'), ['review.veredito', { task: 'a', veredito: 'TALVEZ', rodada: 3, major: 0, blocker: 0 }]);
+  assert.deepEqual(proximaAcao(p, malformado, sinais()), invalido, 'malformado segue inválido antes da tabela');
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ver('a', 'REPROVADO', -1, 0)), sinais()), invalido);
+});
+test('teto-depois-dono-libera', () => {
+  const p = plano(['a']);
+  const impl = { tipo: 'despachar', itens: [{ task: 'a', papel: 'implementador' }] };
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), con('a'), dono('a')), sinais()), impl, 'teto, concluida, dono');
+  for (const [nome, mais] of EVENTOS_AVULSOS) {
+    assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), mais, dono('a')), sinais()), impl, nome);
+  }
+  assert.deepEqual(estadoDe(diario(...noTeto('a'), con('a'), dono('a'))), { estado: 'pendente', rodada: 0 });
+});
+test('teto-integrada-invalida', () => {
+  const p = plano(['a']);
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), int('a')), sinais()), invalido);
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), con('a'), int('a')), sinais()), invalido);
+});
+test('teto-aprovado-nao-integra', () => {
+  const p = plano(['a']);
+  for (const v of [ver('a', 'APROVADO', 3), ver('a', 'APROVADO', 2), ver('a', 'APROVADO', 1)]) {
+    const evs = diario(...noTeto('a'), v);
     assert.equal(podeIntegrar(p, evs, 'a'), false);
+    const a = proximaAcao(p, evs, sinais());
+    assert.notEqual(a.tipo, 'integrar');
+    assert.deepEqual(a, tetoDe('a'));
   }
 });
 test('teto-por-blocker-e-rodada-3-entra-no-teto', () => {
@@ -330,7 +371,7 @@ test('vereditos-opostos-mesma-rodada-invalida', () => {
   const p = plano(['a']);
   assert.deepEqual(proximaAcao(p, diario(ini('a'), con('a'), ver('a', 'REPROVADO', 1, 2), ver('a', 'APROVADO', 1)), sinais()), invalido);
   assert.deepEqual(proximaAcao(p, diario(ini('a'), con('a'), ver('a', 'APROVADO', 1), ver('a', 'REPROVADO', 1, 1)), sinais()), invalido);
-  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ver('a', 'APROVADO', 2)), sinais()), invalido);
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ver('a', 'APROVADO', 2)), sinais()), tetoDe('a'), 'no teto o veredito é avulso e mantém');
   assert.deepEqual(proximaAcao(p, diario(ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), ver('a', 'APROVADO', 2), ver('a', 'APROVADO', 1)), sinais()), invalido, 'oposto com rodada maior no meio');
 });
 test('vereditos-opostos-com-correcao-entre-valem', () => {
@@ -462,6 +503,15 @@ corrigindo reaberta.dono corrigindo
 aprovada task.integrada integrada
 aprovada reaberta.retomada aprovada
 aprovada reaberta.dono aprovada
+no_teto iniciada.implementador no_teto
+no_teto iniciada.revisor no_teto
+no_teto iniciada.correcao no_teto
+no_teto task.concluida no_teto
+no_teto veredito.aprovado no_teto
+no_teto veredito.aprovado.com_achado no_teto
+no_teto veredito.reprovado.r1 no_teto
+no_teto veredito.reprovado.teto no_teto
+no_teto veredito.reprovado.sem_achado no_teto
 no_teto reaberta.retomada no_teto
 no_teto reaberta.dono pendente
 integrada reaberta.retomada integrada
@@ -492,7 +542,7 @@ for (const estado of Object.keys(TRANSICOES) as EstadoTask[]) {
       assert.equal('invalido' in chegou ? chegou.invalido : chegou.estado, estado, 'o prefixo leva ao estado');
       const r = estadoDe(diario(...evs, eventoDaChave(chave, rodada)));
       if (esperado === undefined) assert.ok('invalido' in r, JSON.stringify(r));
-      else assert.deepEqual(r, { estado: esperado, rodada: esperado === 'pendente' ? 0 : chave.startsWith('veredito.') ? rodada + 1 : rodada });
+      else assert.deepEqual(r, { estado: esperado, rodada: esperado === 'pendente' ? 0 : chave.startsWith('veredito.') && estado !== 'no_teto' ? rodada + 1 : rodada });
     });
   }
 }

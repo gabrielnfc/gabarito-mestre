@@ -81,14 +81,20 @@ export const TRANSICOES                                                         
   reprovada: { 'iniciada.correcao': 'corrigindo', 'reaberta.retomada': 'reprovada', 'reaberta.dono': 'reprovada' },
   corrigindo: { 'task.concluida': 'concluida', 'reaberta.retomada': 'reprovada', 'reaberta.dono': 'corrigindo' },
   aprovada: { 'task.integrada': 'integrada', 'reaberta.retomada': 'aprovada', 'reaberta.dono': 'aprovada' },
-  no_teto: { 'reaberta.retomada': 'no_teto', 'reaberta.dono': 'pendente' },
+  // Autotransição: só o dono tira do teto; evento avulso não tira nem quebra. `task.integrada` fica de fora: integrar sem liberação é fraude.
+  no_teto: {
+    'iniciada.implementador': 'no_teto', 'iniciada.revisor': 'no_teto', 'iniciada.correcao': 'no_teto', 'task.concluida': 'no_teto',
+    'veredito.aprovado': 'no_teto', 'veredito.aprovado.com_achado': 'no_teto', 'veredito.reprovado.r1': 'no_teto',
+    'veredito.reprovado.teto': 'no_teto', 'veredito.reprovado.sem_achado': 'no_teto',
+    'reaberta.retomada': 'no_teto', 'reaberta.dono': 'pendente',
+  },
   integrada: { 'reaberta.retomada': 'integrada', 'reaberta.dono': 'integrada' },
 };
 
 const contagem = (v         )          => Number.isInteger(v) && (v          ) >= 0;
 
 /** Classifica um evento de task; `string` é o motivo de o `dados` não cumprir o contrato. */
-function chaveDe(e        , rodada        )                                                         {
+function chaveDe(e        , rodada        , estado            )                                                         {
   const dados = e.dados ?? {};
   switch (e.tipo) {
     case 'task.iniciada':
@@ -106,11 +112,15 @@ function chaveDe(e        , rodada        )                                     
       if (veredito !== 'APROVADO' && veredito !== 'REPROVADO') return 'veredito inválido';
       if (!contagem(declarada) || !contagem(major) || !contagem(blocker)) return 'contagem inválida';
       // Rodada é o nº de vereditos desde a última reabertura do dono; quem declara outra mente.
-      if (declarada !== rodada + 1) return 'rodada fora de sequência';
+      // No teto o veredito é avulso: não conta rodada, e a duplicata não pode quebrar a saída do dono.
+      const noTeto = estado === 'no_teto';
+      if (!noTeto && declarada !== rodada + 1) return 'rodada fora de sequência';
+      const n = noTeto ? (declarada          ) : rodada + 1;
+      const novaRodada = noTeto ? null : n;
       const achados = (major          ) + (blocker          );
-      if (veredito === 'APROVADO') return { chave: achados > 0 ? 'veredito.aprovado.com_achado' : 'veredito.aprovado', rodada: rodada + 1 };
-      if (rodada + 1 === 1) return { chave: 'veredito.reprovado.r1', rodada: 1 };
-      return { chave: achados > 0 ? 'veredito.reprovado.teto' : 'veredito.reprovado.sem_achado', rodada: rodada + 1 };
+      if (veredito === 'APROVADO') return { chave: achados > 0 ? 'veredito.aprovado.com_achado' : 'veredito.aprovado', rodada: novaRodada };
+      if (n === 1) return { chave: 'veredito.reprovado.r1', rodada: novaRodada };
+      return { chave: achados > 0 ? 'veredito.reprovado.teto' : 'veredito.reprovado.sem_achado', rodada: novaRodada };
     }
     default:
       return 'tipo fora do contrato de task';
@@ -122,7 +132,7 @@ export function estadoDe(eventosDaTask          )                               
   let estado             = 'pendente';
   let rodada = 0;
   for (const e of eventosDaTask) {
-    const c = chaveDe(e, rodada);
+    const c = chaveDe(e, rodada, estado);
     if (typeof c === 'string') return { invalido: c };
     const proximo = TRANSICOES[estado][c.chave];
     if (proximo === undefined) return { invalido: `${c.chave} em ${estado}` };
