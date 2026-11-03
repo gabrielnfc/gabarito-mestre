@@ -1226,6 +1226,12 @@ describe('proxima', () => {
     // carga acima da medida reduz
     const carga = amb.cli(['proxima', '--vivos', '0'], { extra: { GABARITO_CAP_LOAD1: '6' } });
     assert.equal(carga.j.sinais.slots, 1, 'floor(3 × 1 / 6) = 0 → 1');
+    // costura (P9): redução de 3 para 2 slots passa por capacidade.mjs --medido real e chega em `aviso` do proxima
+    const dois = amb.cli(['proxima', '--vivos', '0'], { extra: { GABARITO_CAP_MEM_MB: '3200' } });
+    assert.equal(dois.j.sinais.slots, 2, '(3200 − 2048)/500 = 2');
+    assert.ok(Array.isArray(dois.j.aviso), JSON.stringify(dois.j.aviso));
+    assert.ok(dois.j.aviso.some((a) => /^slots: 2, mem: /.test(a)), JSON.stringify(dois.j.aviso));
+    assert.ok(carga.j.aviso.some((a) => /^slots: 1, carga: /.test(a)), JSON.stringify(carga.j.aviso));
   });
 
   test('proxima-sem-calibracao-1-slot: arquivo ausente, corrompido, de outra máquina ou inválido ⇒ 1 slot e aviso', () => {
