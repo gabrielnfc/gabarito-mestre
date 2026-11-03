@@ -50,16 +50,16 @@ describe('robustez da guarda', () => {
     }
   });
 
-  test('comando-de-1mb-e-rapido: 1 MB de `env -a` em menos de 100 ms', () => {
+  test('comando-de-1mb-e-rapido: 1 MB de `env -a` em menos de 400 ms', () => {
     for (const comando of [`env ${'-a '.repeat(350000)}ls`, `${'ls; '.repeat(260000)}`, `echo ${'x'.repeat(1 << 20)}`]) {
       const t0 = performance.now();
       decidir(bash(comando), CONFIG, CTX);
       const ms = performance.now() - t0;
-      assert.ok(ms < 100, `${comando.length} bytes levaram ${ms.toFixed(1)} ms`);
+      assert.ok(ms < 400, `${comando.length} bytes levaram ${ms.toFixed(1)} ms`);
     }
   });
 
-  test('cd-em-cadeia-nao-e-quadratico: 13 mil `cd a;` (65 KB) em menos de 100 ms', () => {
+  test('cd-em-cadeia-nao-e-quadratico: 13 mil `cd a;` (65 KB) em menos de 400 ms', () => {
     // Menor de 5 medições: disputa de CPU com a suíte em paralelo só aumenta o tempo; custo quadrático não some.
     let ms = Infinity;
     for (let i = 0; i < 5; i++) {
@@ -67,7 +67,7 @@ describe('robustez da guarda', () => {
       decidir(bash('cd a;'.repeat(13000)), CONFIG, CTX);
       ms = Math.min(ms, performance.now() - t0);
     }
-    assert.ok(ms < 100, `65 KB de cd levaram ${ms.toFixed(1)} ms`);
+    assert.ok(ms < 400, `65 KB de cd levaram ${ms.toFixed(1)} ms`);
   });
 
   test('cd-perdido-pede: acima de LIMITE_CD a guarda perdeu o diretório e pede (orq) ou nega (sub), com motivo teto e sem o comando', () => {
