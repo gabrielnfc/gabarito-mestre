@@ -11,7 +11,7 @@
  *   loop.parar sem task depois .... silêncio
  *   diário ilegível ............... systemMessage, nunca vira `concluir`
  *   proximaAcao: concluir/esperar . silêncio; parar: systemMessage; despachar/integrar: block
- * O terceiro Stop sem linha nova no diário da entrega grava `loop.parar {sem_progresso}` e deixa parar com aviso.
+ * O terceiro Stop sem evento de progresso (tipos que `proximaAcao` consome) no diário da entrega grava `loop.parar {sem_progresso}` e deixa parar com aviso.
  * Falha de dado ou de ferramenta dentro de loop vira systemMessage com a causa, nunca block que prenda a sessão.
  * Sai sempre 0. Núcleo em dist/ (loop.js, plano.js, diario.js): ausente ⇒ aviso, nunca exceção.
  */
@@ -31,6 +31,11 @@ const PLANO_MAX = 1024 * 1024;
 const STOPS_MAX = 1_000_000;
 const ITENS_NO_MOTIVO = 6;
 const TIPOS_DE_TASK = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
+/**
+ * Progresso para o contador de Stops (REQ-LOOP-5): só o evento que `proximaAcao` consome (loop.ts: TIPOS_DE_TASK e
+ * `ci.resultado`). Guarda, sessão, custo, pouso e pausa não contam. O teste `stop-lista-progresso-igual-loop` falha se divergir.
+ */
+export const TIPOS_DE_PROGRESSO = [...TIPOS_DE_TASK, 'ci.resultado'];
 const PAPEL = { implementador: 'implementador', revisor: 'revisor', correcao: 'correção' };
 const MOTIVO = {
   teto_rodadas: 'teto de rodadas de review',
@@ -264,7 +269,7 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
 
   // Há ação: o `block` só vale se houver contador que o termine.
   const caminho = join(raiz, '.harness', 'stop-contador.json');
-  const linhas = eventos.length;
+  const linhas = eventos.filter((e) => TIPOS_DE_PROGRESSO.includes(e.tipo)).length; // campo `linhas` do contador = eventos de progresso
   const { anterior, causa } = lerContador(caminho, entrega);
   const stops = anterior !== null && anterior.linhas === linhas ? anterior.stops + 1 : 0;
 
@@ -284,9 +289,9 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
       res = { ok: false, erro: curto(e?.name ?? 'erro', 60) };
     }
     if (res.ok && res.gravado === 'evento') {
-      return aviso(`Loop da entrega ${limpo(entrega)} parou: ${LIMITE_SEM_PROGRESSO} Stops sem linha nova no diário [sem_progresso]. Gravei loop.parar; retome pelo comando do dono.`);
+      return aviso(`Loop da entrega ${limpo(entrega)} parou: ${LIMITE_SEM_PROGRESSO} Stops sem evento de progresso no diário [sem_progresso]. Gravei loop.parar; retome pelo comando do dono.`);
     }
-    return aviso(`Loop da entrega ${limpo(entrega)}: ${LIMITE_SEM_PROGRESSO} Stops sem linha nova [sem_progresso], mas NÃO consegui gravar loop.parar (${curto(res.erro ?? res.gravado, 80)}); deixo parar sem bloquear.`);
+    return aviso(`Loop da entrega ${limpo(entrega)}: ${LIMITE_SEM_PROGRESSO} Stops sem evento de progresso [sem_progresso], mas NÃO consegui gravar loop.parar (${curto(res.erro ?? res.gravado, 80)}); deixo parar sem bloquear.`);
   }
 
   const falha = gravarContador(caminho, { entrega, linhas, stops });

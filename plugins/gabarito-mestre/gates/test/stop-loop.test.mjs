@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { saidaParaAcao } from '../scripts/stop-loop.mjs';
+import { saidaParaAcao, TIPOS_DE_PROGRESSO } from '../scripts/stop-loop.mjs';
 
 const aqui = dirname(fileURLToPath(import.meta.url));
 const GATES = join(aqui, '..');
@@ -48,10 +48,14 @@ function diario(raiz, sessao, eventos, id = 'GM-10') {
   const antes = existsSync(arq) ? readFileSync(arq, 'utf8') : '';
   writeFileSync(arq, antes + eventos.map((e) => JSON.stringify(e)).join('\n') + '\n');
 }
-/** Uma linha qualquer e válida: conta como progresso sem mexer em task. */
+/** Uma linha qualquer e válida, de tipo que NÃO é progresso (a guarda grava isso a cada tentativa barrada). */
 let seqAvulso = 0;
 const linhaAvulsa = (raiz, sessao = 'avulsa', id = 'GM-10') =>
   diario(raiz, sessao, [ev(sessao, ++seqAvulso, 'guarda.ask', { alvo: 'x' })], id);
+
+/** Evento de progresso que não muda a ação pendente de T1: `ci.resultado` verde (`proximaAcao` o consome). */
+const progresso = (raiz, sessao = 'prog', id = 'GM-10') =>
+  diario(raiz, sessao, [ev(sessao, ++seqAvulso, 'ci.resultado', { verde: true })], id);
 
 const TASK_APROVADA = (sessao = 's') => [
   ev(sessao, 1, 'task.iniciada', { task: 'T1', papel: 'implementador' }),
@@ -444,7 +448,7 @@ test('stop-motivo-lista-no-maximo-poucas-tasks', () => {
 test('stop-contador-grava-entrega-linhas-e-stops', () => {
   const raiz = repo();
   plano(raiz);
-  linhaAvulsa(raiz);
+  progresso(raiz);
   bloqueia(stop(raiz));
   assert.deepEqual(contador(raiz), { entrega: 'GM-10', linhas: 1, stops: 0 });
   bloqueia(stop(raiz));
@@ -488,8 +492,8 @@ test('stop-linha-nova-zera', () => {
   bloqueia(stop(raiz));
   bloqueia(stop(raiz));
   assert.equal(contador(raiz).stops, 2);
-  linhaAvulsa(raiz);
-  bloqueia(stop(raiz)); // sem a linha nova, este seria o 3º sem progresso e pararia
+  progresso(raiz);
+  bloqueia(stop(raiz)); // sem o evento de progresso, este seria o 3º sem progresso e pararia
   assert.equal(contador(raiz).stops, 0);
   bloqueia(stop(raiz));
   bloqueia(stop(raiz));
@@ -501,7 +505,7 @@ test('stop-linha-nova-de-outra-entrega-nao-zera', () => {
   plano(raiz);
   bloqueia(stop(raiz));
   bloqueia(stop(raiz));
-  diario(raiz, 'outra', [ev('outra', 1, 'guarda.ask', {})], 'GM-99');
+  diario(raiz, 'outra', [ev('outra', 1, 'ci.resultado', { verde: true })], 'GM-99');
   bloqueia(stop(raiz));
   assert.equal(contador(raiz).stops, 2);
 });
@@ -509,11 +513,12 @@ test('stop-linha-nova-de-outra-entrega-nao-zera', () => {
 test('stop-sessoes-multiplas-somam', () => {
   const raiz = repo();
   plano(raiz);
-  diario(raiz, 'a', [ev('a', 1, 'guarda.ask', {})]);
-  diario(raiz, 'b', [ev('b', 1, 'guarda.ask', {}), ev('b', 2, 'guarda.ask', {})]);
+  const ci = (s, n) => ev(s, n, 'ci.resultado', { verde: true });
+  diario(raiz, 'a', [ci('a', 1)]);
+  diario(raiz, 'b', [ci('b', 1), ci('b', 2)]);
   bloqueia(stop(raiz));
   assert.equal(contador(raiz).linhas, 3);
-  diario(raiz, 'c', [ev('c', 1, 'guarda.ask', {})]); // só a 3ª sessão cresceu
+  diario(raiz, 'c', [ev('c', 1, 'ci.resultado', { verde: true })]); // só a 3ª sessão cresceu
   bloqueia(stop(raiz));
   assert.deepEqual(contador(raiz), { entrega: 'GM-10', linhas: 4, stops: 0 });
 });
@@ -661,4 +666,77 @@ test('stop-saida-e-uma-unica-linha-json-e-rc-zero-sempre', () => {
   const r = stop(raiz);
   assert.equal(r.rc, 0);
   assert.equal(r.stdout.trim().split('\n').length, 1);
+});
+
+// ------------------------------------------------------------------------------------- só progresso zera (REQ-LOOP-5, emenda)
+
+test('stop-guarda-ask-nao-zera', () => {
+  const raiz = repo();
+  plano(raiz);
+  bloqueia(stop(raiz));
+  bloqueia(stop(raiz));
+  linhaAvulsa(raiz); // guarda.ask entre os Stops
+  bloqueia(stop(raiz));
+  assert.equal(contador(raiz).stops, 2, 'guarda.ask não zera');
+});
+
+test('stop-custo-medicao-nao-zera', () => {
+  const raiz = repo();
+  plano(raiz);
+  bloqueia(stop(raiz));
+  bloqueia(stop(raiz));
+  diario(raiz, 'mod', [ev('mod', 1, 'custo.medicao', { tokens: 10 }), ev('mod', 2, 'guarda.heartbeat', {})]);
+  bloqueia(stop(raiz));
+  assert.equal(contador(raiz).stops, 2, 'custo.medicao e heartbeat não zeram');
+});
+
+test('stop-evento-de-task-zera', () => {
+  const raiz = repo();
+  plano(raiz, { entrega: 'GM-10', tasks: [{ id: 'T1', deps: [], arquivos: ['a.ts'] }, { id: 'T2', deps: [], arquivos: ['b.ts'] }] });
+  bloqueia(stop(raiz));
+  bloqueia(stop(raiz));
+  bloqueia(stop(raiz));
+  assert.equal(contador(raiz).stops, 2);
+  diario(raiz, 's', [ev('s', 1, 'task.iniciada', { task: 'T1', papel: 'implementador' })]);
+  bloqueia(stop(raiz), /T2/);
+  assert.equal(contador(raiz).stops, 0);
+});
+
+test('stop-linha-corrompida-nao-zera: nem derruba o hook', () => {
+  const raiz = repo();
+  plano(raiz);
+  bloqueia(stop(raiz));
+  bloqueia(stop(raiz));
+  const arq = join(entregaDir(raiz), 'events.torto.jsonl');
+  writeFileSync(arq, '{"tipo":"ci.resultado","dados":{"verde":tr\n');
+  const r = stop(raiz);
+  avisa(r, /ilegível/);
+  assert.equal(contador(raiz).stops, 1, 'contador intocado');
+  writeFileSync(arq, '');
+  bloqueia(stop(raiz));
+  assert.equal(contador(raiz).stops, 2, 'linha torta não virou progresso');
+});
+
+test('stop-lista-progresso-igual-loop: a lista do hook é a que proximaAcao consome', () => {
+  const fonte = readFileSync(join(GATES, 'src', 'loop.ts'), 'utf8');
+  const m = fonte.match(/const TIPOS_DE_TASK[^=]*=\s*\[([^\]]*)\]/);
+  assert.ok(m, 'loop.ts perdeu TIPOS_DE_TASK');
+  const deTask = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  assert.ok(/e\.tipo === 'ci\.resultado'/.test(fonte), 'loop.ts deixou de consumir ci.resultado');
+  assert.deepEqual([...TIPOS_DE_PROGRESSO].sort(), [...deTask, 'ci.resultado'].sort());
+});
+
+test('stop-8-stops-com-acao-barrada-termina-em-loop-parar', () => {
+  const raiz = repo();
+  plano(raiz);
+  const saidas = [];
+  for (let i = 0; i < 8; i++) {
+    linhaAvulsa(raiz); // a guarda grava guarda.ask a cada tentativa barrada, entre os Stops
+    saidas.push(stop(raiz));
+  }
+  assert.equal(linhasDoDiario(raiz).filter((e) => e.tipo === 'loop.parar').length, 1);
+  assert.ok(saidas.slice(0, 3).every((r) => r.json?.decision === 'block'));
+  assert.equal(saidas[3].json.decision, undefined, 'o 4º Stop (3 sem progresso) já para');
+  assert.match(saidas[3].json.systemMessage, /Gravei loop\.parar/);
+  for (const r of saidas.slice(4)) mudo(r);
 });
