@@ -204,6 +204,9 @@ function depLiberada(plano       , estados                           , dep      
   return e === 'aprovada' && ancestrais(plano, dep).some((a) => de(estados, a) === 'no_teto');
 }
 
+const EM_VOO                        = ['implementando', 'corrigindo', 'em_revisao'];
+const SEM_RESTO                        = ['integrada', 'no_teto'];
+
 export function proximaAcao(plano       , eventos          , sinais        )           {
   // (1)
   const ord = ordenar(eventos);
@@ -231,7 +234,13 @@ export function proximaAcao(plano       , eventos          , sinais        )    
   if (sinais.percent !== null && sinais.percent >= sinais.x) {
     if (revisores.length > 0 && capacidade >= 1) return despachar(revisores);
     if (sinais.vivos > 0) return { tipo: 'esperar', motivo: 'agentes vivos antes do pouso' };
-    return sinais.podePousar ? { tipo: 'pousar' } : { tipo: 'parar', motivo: 'sem_pouso' };
+    // (5b) Sem agente vivo, task em voo não é fronteira (REQ-POU-1 exige `review.veredito`): o agente morreu. Não pousa.
+    const emVoo = ids.find((id) => EM_VOO.includes(est(id).estado));
+    if (emVoo !== undefined) return { tipo: 'parar', motivo: 'nao_conseguiu', task: emVoo };
+    // (5d) Pousar só se resta trabalho; sem resto, o loop conclui (8) ou para no teto (9) antes de qualquer pouso.
+    if (ids.some((id) => !SEM_RESTO.includes(est(id).estado))) {
+      return sinais.podePousar ? { tipo: 'pousar' } : { tipo: 'parar', motivo: 'sem_pouso' };
+    }
   }
 
   // (6)

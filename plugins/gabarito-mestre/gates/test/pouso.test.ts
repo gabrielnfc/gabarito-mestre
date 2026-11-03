@@ -1,4 +1,4 @@
-/** Testes do núcleo do pouso (REQ-POU-1, GM-10 T9): decidirPouso, X, vivos, fronteira, revisor, medição e a ponte para o diário. Mutações: task-9-mut.json. */
+/** Testes do núcleo do pouso (REQ-POU-1, GM-10 T9): pré-condições do mod, X, vivos, fronteira consumida, revisor, medição e a ponte. Mutações: task-9-mut.json, task-9-r3-mut.json. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  analisarFronteira, codigoPonte, marcaDeProgresso, dadosMedicao, decidirEstado, ehRevisor, fronteira, INSTANTANEO_MAX, lerX, textoRetomada, vivosDe,
+  analisarFronteira, codigoPonte, marcaDeProgresso, dadosMedicao, ehRevisor, INSTANTANEO_MAX, jaParou, lerX, negaDespacho, portaDoPouso, textoRetomada, tokensDe, vivosDe,
 } from '../src/pouso.ts';
 import type { Evento, TipoEvento } from '../src/tipos.ts';
 
@@ -15,59 +15,76 @@ const aqui = dirname(fileURLToPath(import.meta.url));
 const GATES = join(aqui, '..');
 const PLUGIN = join(GATES, '..');
 
-const base = { orquestrador: true, percent: 60 as number | null, x: 50, pousando: false, desistiu: false, interativo: true, consumida: false, vivos: 0, novaFronteira: true };
-const dec = (o: Partial<typeof base> = {}) => decidirEstado({ ...base, ...o });
+const base = { orquestrador: true, percent: 60 as number | null, x: 50, pousando: false, desistiu: false, interativo: true };
+const dec = (o: Partial<typeof base> = {}) => portaDoPouso({ ...base, ...o });
 const linha = (estado: string, despacho: string, acao: string) => ({ estado, despacho, acao });
 
-// ---- decidirEstado: tabela de 7 estados (Sombra T9), uma linha por teste, primeira que casa ----
-test('tabela-ociosa-subagent: orquestrador falso nunca decide, nem com tudo a favor', () => {
+// ---- portaDoPouso: pré-condições A a E da Sombra T9b, uma linha por teste, primeira que casa ----
+test('porta-A-B-ociosa-subagent: orquestrador falso nunca decide, nem com tudo a favor', () => {
   assert.deepEqual(dec({ orquestrador: false }), linha('OCIOSO', 'permitir', 'nada'));
   assert.deepEqual(dec({ orquestrador: false, percent: null, pousando: true }), linha('OCIOSO', 'permitir', 'nada'));
 });
-test('tabela-ociosa-percent-nulo: percent nulo, NaN, infinito ou ausente permite e nada faz, antes de qualquer outra linha', () => {
+test('porta-B-ociosa-percent-nulo: percent nulo, NaN, infinito ou ausente permite e nada faz, antes de qualquer outra linha', () => {
   for (const percent of [null, Number.NaN, Number.POSITIVE_INFINITY, undefined as unknown as number]) {
-    assert.deepEqual(dec({ percent, pousando: true, desistiu: true, vivos: 3 }), linha('OCIOSO', 'permitir', 'nada'));
+    assert.deepEqual(dec({ percent, pousando: true, desistiu: true }), linha('OCIOSO', 'permitir', 'nada'));
   }
 });
-test('tabela-ociosa-abaixo-x: percent menor que X permite, mesmo com vivos ou sem fronteira', () => {
+test('porta-B-ociosa-abaixo-x: percent menor que X permite', () => {
   assert.deepEqual(dec({ percent: 49.9 }), linha('OCIOSO', 'permitir', 'nada'));
-  assert.deepEqual(dec({ percent: 0, vivos: 5, novaFronteira: false, pousando: true }), linha('OCIOSO', 'permitir', 'nada'));
+  assert.deepEqual(dec({ percent: 0, pousando: true }), linha('OCIOSO', 'permitir', 'nada'));
 });
-test('tabela-pousando: store com estado nega e nada faz (jaPousando)', () => {
+test('porta-C-pousando: store com estado nega e nada faz', () => {
   assert.deepEqual(dec({ pousando: true }), linha('POUSANDO', 'negar', 'nada'));
-  assert.deepEqual(dec({ pousando: true, desistiu: true, interativo: false, consumida: true }), linha('POUSANDO', 'negar', 'nada'));
+  assert.deepEqual(dec({ pousando: true, desistiu: true, interativo: false }), linha('POUSANDO', 'negar', 'nada'));
 });
-test('tabela-sem-pouso-desistiu: pouso que falhou nega sem parar de novo', () => {
+test('porta-D-sem-pouso-desistiu: pouso que falhou nega sem parar de novo', () => {
   assert.deepEqual(dec({ desistiu: true }), linha('SEM_POUSO', 'negar', 'nada'));
+  assert.deepEqual(dec({ desistiu: true, interativo: false }), linha('SEM_POUSO', 'negar', 'nada'));
 });
-test('tabela-sem-pouso-nao-interativo: -p nega e manda parar', () => {
+test('porta-E-sem-pouso-nao-interativo: -p nega e manda parar', () => {
   assert.deepEqual(dec({ interativo: false }), linha('SEM_POUSO', 'negar', 'parar_nao_interativo'));
-  assert.deepEqual(dec({ interativo: false, consumida: true, vivos: 2 }), linha('SEM_POUSO', 'negar', 'parar_nao_interativo'));
 });
-test('tabela-pousado: fronteira consumida libera o despacho e não pousa (E1)', () => {
-  assert.deepEqual(dec({ consumida: true, novaFronteira: false }), linha('POUSADO', 'permitir', 'nada'));
-  assert.deepEqual(dec({ consumida: true, vivos: 4 }), linha('POUSADO', 'permitir', 'nada'));
+test('porta-X-igual-passa-a-palavra-ao-nucleo: percent igual a X e tudo livre', () => {
+  assert.deepEqual(dec({ percent: 50 }), linha('NUCLEO', 'nucleo', 'nucleo'));
+  assert.deepEqual(dec({ percent: 1, x: 1 }), linha('NUCLEO', 'nucleo', 'nucleo'));
+  assert.deepEqual(dec({ percent: 100 }), linha('NUCLEO', 'nucleo', 'nucleo'));
 });
-test('tabela-travado: vivos > 0 nega e espera', () => {
-  assert.deepEqual(dec({ vivos: 1 }), linha('TRAVADO', 'negar', 'esperar'));
-  assert.deepEqual(dec({ vivos: 1, novaFronteira: false }), linha('TRAVADO', 'negar', 'esperar'));
+test('porta-nao-decide-nada-do-loop: nenhuma combinação tem outra ação além de nada, parar_nao_interativo e nucleo', () => {
+  const vals: Partial<typeof base>[] = [{ orquestrador: false }, { percent: null }, { percent: 10 }, { pousando: true }, { desistiu: true }, { interativo: false }, {}];
+  for (const v of vals) assert.ok(['nada', 'parar_nao_interativo', 'nucleo'].includes(dec(v).acao));
 });
-test('tabela-travado-vivos-ruim: vivos negativo, NaN ou fracionário nunca vira pouso', () => {
-  for (const vivos of [Number.NaN, -1, 0.5, undefined as unknown as number]) assert.deepEqual(dec({ vivos }), linha('TRAVADO', 'negar', 'esperar'));
+
+// ---- Agent: nega ⇔ a (5) dispararia (E8) ----
+test('nega-despacho-so-se-5-dispara: integrar e concluir passam; todo o resto nega; consumida passa sempre', () => {
+  const acoes = [
+    { tipo: 'despachar', itens: [{ task: 'a', papel: 'revisor' }] }, { tipo: 'esperar', motivo: 'x' }, { tipo: 'pousar' },
+    { tipo: 'parar', motivo: 'sem_pouso' }, { tipo: 'parar', motivo: 'teto_rodadas', task: 'a' }, { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' },
+  ] as const;
+  for (const a of acoes) {
+    assert.equal(negaDespacho(a, false), true, a.tipo);
+    assert.equal(negaDespacho(a, true), false, `${a.tipo} consumida`);
+  }
+  assert.equal(negaDespacho({ tipo: 'integrar', tasks: ['a'] }, false), false);
+  assert.equal(negaDespacho({ tipo: 'concluir' }, false), false);
 });
-test('tabela-encalhado: sem vivos e sem fronteira nova nega e conta o encalhe (E3)', () => {
-  assert.deepEqual(dec({ novaFronteira: false }), linha('ENCALHADO', 'negar', 'encalhe'));
-  assert.deepEqual(dec({ novaFronteira: 1 as unknown as boolean }), linha('ENCALHADO', 'negar', 'encalhe'));
+
+// ---- já parou / tokens (sinais do núcleo) ----
+test('ja-parou: termina em loop.parar sem trabalho depois (medição não conta); trabalho depois reabre', () => {
+  assert.equal(jaParou(diario(ini('a'), ['loop.parar', { motivo: 'teto_rodadas', task: 'a' }])), true);
+  assert.equal(jaParou(diario(ini('a'), ['loop.parar', { motivo: 'teto_rodadas' }], ['custo.medicao', { agente: 'orquestrador', input_tokens: 1 }])), true);
+  assert.equal(jaParou(diario(ini('a'), ['loop.parar', { motivo: 'teto_rodadas' }], con('a'))), false);
+  assert.equal(jaParou(diario(ini('a'))), false);
+  assert.equal(jaParou(null), false);
+  assert.equal(jaParou('x'), false);
+  assert.equal(jaParou([null]), false);
 });
-test('tabela-pousavel: X, sem vivos, fronteira nova, interativo e livre pousa', () => {
-  assert.deepEqual(dec(), linha('POUSAVEL', 'negar', 'pousar'));
-  assert.deepEqual(dec({ percent: 50 }), linha('POUSAVEL', 'negar', 'pousar'));
-  assert.deepEqual(dec({ percent: 1, x: 1 }), linha('POUSAVEL', 'negar', 'pousar'));
-  assert.deepEqual(dec({ percent: 100 }), linha('POUSAVEL', 'negar', 'pousar'));
-});
-test('tabela-so-pousavel-pousa: nenhuma outra combinação produz a ação pousar', () => {
-  const vals: Partial<typeof base>[] = [{ orquestrador: false }, { percent: null }, { percent: 10 }, { pousando: true }, { desistiu: true }, { interativo: false }, { consumida: true }, { vivos: 1 }, { novaFronteira: false }];
-  for (const v of vals) assert.notEqual(dec(v).acao, 'pousar');
+test('tokens-de: soma entrada, saída e criação; leitura de cache não conta; sem medição é null; dado ruim é ok falso', () => {
+  const med = (d: Record<string, unknown>): [TipoEvento, Record<string, unknown>] => ['custo.medicao', { agente: 'orquestrador', ...d }];
+  assert.deepEqual(tokensDe(diario(ini('a'))), { ok: true, tokens: null });
+  assert.deepEqual(tokensDe(diario(med({ input_tokens: 10, output_tokens: 5, cache_creation: 3, cache_read: 1000 }), med({ input_tokens: 1, output_tokens: 1, cache_creation: 1, cache_read: 9 }))), { ok: true, tokens: 21 });
+  assert.deepEqual(tokensDe(diario(med({ input_tokens: -1 }))), { ok: false });
+  assert.deepEqual(tokensDe(diario(med({ output_tokens: 'x' }))), { ok: false });
+  assert.deepEqual(tokensDe(null), { ok: false });
 });
 
 // ---- X ----
@@ -122,71 +139,25 @@ const con = (task: string): [TipoEvento, Record<string, unknown>] => ['task.conc
 const ver = (task: string, veredito = 'APROVADO', rodada = 1): [TipoEvento, Record<string, unknown>] =>
   ['review.veredito', { task, veredito, rodada, major: veredito === 'APROVADO' ? 0 : 1, blocker: 0 }];
 
-test('fronteira-ultimo-e-veredito: a última transição de task ser review.veredito basta', () => {
-  assert.equal(fronteira(diario(ini('a'), con('a'), ver('a'))), true);
-});
-test('fronteira-veredito-reprovado: veredito de rodada 1 reprovado também é fronteira', () => {
-  assert.equal(fronteira(diario(ini('a'), con('a'), ver('a', 'REPROVADO'))), true);
-});
-test('fronteira-falsa-sem-veredito: última transição é outra', () => {
-  assert.equal(fronteira(diario(ini('a'), con('a'))), false);
-  assert.equal(fronteira(diario(ini('a'))), false);
-});
-test('fronteira-falsa-task-nova-depois: nova task iniciada depois do veredito tira a fronteira', () => {
-  assert.equal(fronteira(diario(ini('a'), con('a'), ver('a'), ini('b'))), false);
-});
-test('fronteira-falsa-integrada-depois: task.integrada depois do veredito não é fronteira', () => {
-  assert.equal(fronteira(diario(ini('a'), con('a'), ver('a'), ['task.integrada', { task: 'a', sha: 'd' }])), false);
-});
-test('fronteira-ignora-evento-que-nao-e-de-task: ci e custo depois do veredito não mudam a resposta', () => {
-  assert.equal(fronteira(diario(ini('a'), con('a'), ver('a'), ['ci.resultado', { verde: true }], ['custo.medicao', { agente: 'x', input_tokens: 1 }])), true);
-});
-test('fronteira-vazia-ou-ruim-falsa: sem evento, não-lista ou lixo é falso', () => {
-  assert.equal(fronteira([]), false);
-  assert.equal(fronteira(null), false);
-  assert.equal(fronteira(undefined), false);
-  assert.equal(fronteira('x'), false);
-  assert.equal(fronteira({}), false);
-  assert.equal(fronteira([null, 3]), false);
-});
-test('fronteira-diario-fora-de-ordem-falsa: seq decrescente na sessão não é adivinhado', () => {
-  relogio = 0;
-  const evs = [ev('task.iniciada', { task: 'a', papel: 'implementador' }, 's1', 2), ev('review.veredito', { task: 'a', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, 's1', 1)];
-  assert.equal(fronteira(evs), false);
-});
-test('fronteira-sequencia-invalida-falsa: veredito sem task concluída é inválido para a T2', () => {
-  assert.equal(fronteira(diario(ini('a'), ver('a'))), false);
-});
-test('fronteira-sem-task-falsa: veredito cujo dados.task não é string não casa', () => {
-  assert.equal(fronteira(diario(['review.veredito', { veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }])), false);
-});
-test('fronteira-entre-sessoes: ordena por (ts, sessao) e usa o último evento de task', () => {
-  relogio = 0;
-  const a = ev('task.iniciada', { task: 'a', papel: 'implementador' }, 's1', 1);
-  const b = ev('task.concluida', { task: 'a', sha: 'x' }, 's1', 2);
-  const c = ev('review.veredito', { task: 'a', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, 's2', 1);
-  assert.equal(fronteira([c, a, b]), true);
-});
-
 const pou = (): [TipoEvento, Record<string, unknown>] => ['sessao.pouso', { percent: 60, x: 50 }];
 const ret = (): [TipoEvento, Record<string, unknown>] => ['sessao.retomada', { chars: 100 }];
 const an = (...itens: [TipoEvento, Record<string, unknown>][]) => analisarFronteira(diario(...itens));
 
-// ---- fronteira nova: um pouso por veredito (E1) ----
-test('fronteira-nova-sem-pouso: veredito sem sessao.pouso antes é fronteira nova e não consumida', () => {
-  assert.deepEqual(an(ini('a'), con('a'), ver('a')), { nova: true, consumida: false, motivo: null });
+// ---- fronteira consumida: um pouso por veredito (E1/E7) ----
+test('fronteira-nao-consumida-sem-pouso: veredito sem sessao.pouso depois não é consumida', () => {
+  assert.deepEqual(an(ini('a'), con('a'), ver('a')), { consumida: false, motivo: null });
 });
 test('x-baixo-um-pouso-por-veredito: pouso consome a fronteira, retomada não a devolve, veredito novo abre outra', () => {
-  assert.deepEqual(an(ini('a'), con('a'), ver('a'), pou()), { nova: false, consumida: true, motivo: null });
-  assert.deepEqual(an(ini('a'), con('a'), ver('a'), pou(), ret()), { nova: false, consumida: true, motivo: null });
-  assert.deepEqual(an(ini('a'), con('a'), ver('a'), pou(), ret(), ini('b')), { nova: false, consumida: true, motivo: null });
-  assert.deepEqual(an(ini('a'), con('a'), ver('a'), pou(), ret(), ini('b'), con('b'), ver('b')), { nova: true, consumida: false, motivo: null });
-  assert.deepEqual(an(ini('a'), con('a'), ver('a'), pou(), ret(), ini('b'), con('b'), ver('b'), pou()), { nova: false, consumida: true, motivo: null });
+  assert.deepEqual(an(ini('a'), con('a'), ver('a'), pou()), { consumida: true, motivo: null });
+  assert.deepEqual(an(ini('a'), con('a'), ver('a'), pou(), ret()), { consumida: true, motivo: null });
+  assert.deepEqual(an(ini('a'), con('a'), ver('a'), pou(), ret(), ini('b')), { consumida: true, motivo: null });
+  assert.deepEqual(an(ini('a'), con('a'), ver('a'), pou(), ret(), ini('b'), con('b'), ver('b')), { consumida: false, motivo: null });
+  assert.deepEqual(an(ini('a'), con('a'), ver('a'), pou(), ret(), ini('b'), con('b'), ver('b'), pou()), { consumida: true, motivo: null });
 });
-test('sem-veredito-novo-nao-pousa: depois do pouso, task em curso ou concluída sem veredito não é fronteira nova', () => {
-  assert.equal(an(ini('a'), con('a'), ver('a'), pou(), ini('b')).nova, false);
-  assert.equal(an(ini('a'), con('a'), ver('a'), pou(), ini('b'), con('b')).nova, false);
-  assert.equal(fronteira(diario(ini('a'), con('a'), ver('a'), pou())), false);
+test('task-integrada-nao-desfaz-nem-consome: integrada depois do veredito deixa a fronteira como estava', () => {
+  const int = (): [TipoEvento, Record<string, unknown>] => ['task.integrada', { task: 'a', sha: 'd' }];
+  assert.equal(an(ini('a'), con('a'), ver('a'), int()).consumida, false);
+  assert.equal(an(ini('a'), con('a'), ver('a'), pou(), int()).consumida, true);
 });
 test('fronteira-consumida-sem-veredito: pouso sem nenhum veredito também consome', () => {
   assert.equal(an(ini('a'), pou()).consumida, true);
@@ -198,15 +169,13 @@ test('fronteira-pouso-entre-sessoes: a ordem é a de ordenar, não a de chegada'
   const b = ev('task.concluida', { task: 'a', sha: 'x' }, 's1', 2);
   const c = ev('review.veredito', { task: 'a', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, 's1', 3);
   const p = ev('sessao.pouso', { percent: 60, x: 50 }, 's2', 1);
-  assert.deepEqual(analisarFronteira([p, a, b, c]), { nova: false, consumida: true, motivo: null });
+  assert.deepEqual(analisarFronteira([p, a, b, c]), { consumida: true, motivo: null });
 });
-test('evento-sem-task-nao-pousa: evento de task sem dados.task invalida a fronteira com motivo (C3)', () => {
-  const r = an(ini('a'), con('a'), ver('a'), ['task.iniciada', { papel: 'implementador' }]);
-  assert.equal(r.nova, false);
+test('evento-sem-task-nao-pousa: evento de task sem dados.task dá motivo e nada é consumido (C3)', () => {
+  const r = an(ini('a'), con('a'), ver('a'), pou(), ['task.iniciada', { papel: 'implementador' }]);
   assert.equal(r.consumida, false);
   assert.match(String(r.motivo), /task/);
   const r2 = an(ini('a'), con('a'), ver('a'), ['task.iniciada', { task: 7 }]);
-  assert.equal(r2.nova, false);
   assert.notEqual(r2.motivo, null);
 });
 test('analise-ruim-tem-motivo: não-lista e fora de ordem dizem por quê', () => {
@@ -346,15 +315,13 @@ function diarioDe(itens: [TipoEvento, Record<string, unknown>][], sessao = 's9')
   return { d, dir, arq: join(dir, `events.${sessao}.jsonl`) };
 }
 const completo = (): [TipoEvento, Record<string, unknown>][] => [ini('a'), con('a'), ver('a')];
-const lerPonte = (d: string, dir: string) => {
-  const l = ponte({ op: 'ler', dir }, d);
-  return { l, nova: l.ok === true && analisarFronteira(l.eventos).nova };
-};
-test('diario-integro-pela-ponte: o controle dá fronteira nova', () => {
+const lerPonte = (d: string, dir: string) => ({ l: ponte({ op: 'ler', dir }, d) });
+test('diario-integro-pela-ponte: o controle lê os três eventos e a análise não acha motivo', () => {
   const { d, dir } = diarioDe(completo());
   const r = lerPonte(d, dir);
   assert.equal(r.l.ok, true);
-  assert.equal(r.nova, true);
+  assert.equal(r.l.eventos.length, 3);
+  assert.equal(analisarFronteira(r.l.eventos).motivo, null);
 });
 test('diario-truncado-nao-pousa: linha truncada no disco depois do veredito (C1)', () => {
   const { d, dir, arq } = diarioDe(completo());
@@ -362,7 +329,6 @@ test('diario-truncado-nao-pousa: linha truncada no disco depois do veredito (C1)
   const r = lerPonte(d, dir);
   assert.equal(r.l.ok, false);
   assert.match(r.l.erro, /ilegível|linha/);
-  assert.equal(r.nova, false);
 });
 test('lacuna-seq-nao-pousa: seq pula de 2 para 5 com a cadeia de hash intacta (C2)', () => {
   const { d, dir, arq } = diarioDe(completo());
@@ -373,7 +339,6 @@ test('lacuna-seq-nao-pousa: seq pula de 2 para 5 com a cadeia de hash intacta (C
   writeFileSync(arq, ls.join('\n'));
   const r = lerPonte(d, dir);
   assert.equal(r.l.ok, false);
-  assert.equal(r.nova, false);
 });
 test('hash-anterior-quebrado-nao-pousa: cadeia que não confere', () => {
   const { d, dir, arq } = diarioDe(completo());
@@ -384,7 +349,6 @@ test('hash-anterior-quebrado-nao-pousa: cadeia que não confere', () => {
   writeFileSync(arq, ls.join('\n'));
   const r = lerPonte(d, dir);
   assert.equal(r.l.ok, false);
-  assert.equal(r.nova, false);
 });
 test('arquivo-ilegivel-nao-pousa: chmod 000 no arquivo da sessão, com ler real (C4)', { skip: process.getuid?.() === 0 }, () => {
   const { d, dir } = diarioDe(completo());
@@ -394,8 +358,7 @@ test('arquivo-ilegivel-nao-pousa: chmod 000 no arquivo da sessão, com ler real 
   try {
     const r = lerPonte(d, dir);
     assert.equal(r.l.ok, false);
-    assert.equal(r.nova, false);
-  } finally {
+    } finally {
     chmodSync(outro, 0o644);
   }
 });
@@ -403,10 +366,44 @@ test('pasta-inexistente-nao-pousa: nada para ler não é fronteira', () => {
   const d = repoTemp();
   const r = lerPonte(d, join(d, 'nao-existe'));
   assert.equal(r.l.ok, false);
-  assert.equal(r.nova, false);
 });
 test('ponte-ler-usa-estrito: linha de lixo no meio não é descartada em silêncio', () => {
   const { d, dir, arq } = diarioDe(completo());
   writeFileSync(arq, 'lixo\n' + readFileSync(arq, 'utf8'));
   assert.equal(ponte({ op: 'ler', dir }, d).ok, false);
+});
+
+// ---- ponte `plano`: plano.json validado e config do loop; dado ruim nunca vira plano (contrato de falha) ----
+const PLANO = { entrega: 'PBI-7', tasks: [{ id: 'a', deps: [], arquivos: ['a.ts'] }] };
+function repoComPlano(plano: unknown, config?: string) {
+  const d = repoTemp();
+  const dir = join(d, '.harness', 'entregas', 'PBI-7');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'plano.json'), typeof plano === 'string' ? plano : JSON.stringify(plano));
+  if (config !== undefined) writeFileSync(join(d, 'harness.config.json'), config);
+  return { d, dir };
+}
+test('ponte-plano: devolve o plano validado, slots e teto da config; sem config, 1 slot e sem teto', () => {
+  const sem = repoComPlano(PLANO);
+  assert.deepEqual(ponte({ op: 'plano', dir: sem.dir, raiz: sem.d }, sem.d), { ok: true, plano: PLANO, slots: 1, tetoTokens: null });
+  const com = repoComPlano(PLANO, JSON.stringify({ loop: { slots: 3, tetoTokens: 900 } }));
+  assert.deepEqual(ponte({ op: 'plano', dir: com.dir, raiz: com.d }, com.d), { ok: true, plano: PLANO, slots: 3, tetoTokens: 900 });
+  const ruim = repoComPlano(PLANO, JSON.stringify({ loop: { slots: 0 } }));
+  assert.equal(ponte({ op: 'plano', dir: ruim.dir, raiz: ruim.d }, ruim.d).slots, 1);
+});
+test('ponte-plano-dado-ruim-nao-e-plano: plano inválido, JSON ilegível, config ilegível e teto inválido dão ok falso', () => {
+  for (const [nome, plano, config] of [
+    ['plano inválido', { entrega: 'x', tasks: 'não' }, undefined],
+    ['plano ilegível', '{nao json', undefined],
+    ['config ilegível', PLANO, '{nao json'],
+    ['teto zero', PLANO, JSON.stringify({ loop: { tetoTokens: 0 } })],
+    ['teto texto', PLANO, JSON.stringify({ loop: { tetoTokens: '900' } })],
+    ['teto nulo', PLANO, JSON.stringify({ loop: { tetoTokens: null } })],
+  ] as const) {
+    const r = repoComPlano(plano, config);
+    assert.equal(ponte({ op: 'plano', dir: r.dir, raiz: r.d }, r.d).ok, false, nome);
+  }
+  const sem = repoTemp();
+  assert.equal(ponte({ op: 'plano', dir: join(sem, 'nao-existe'), raiz: sem }, sem).ok, false);
+  assert.equal(ponte({ op: 'plano', dir: join(sem, 'x') }, sem).ok, false);
 });

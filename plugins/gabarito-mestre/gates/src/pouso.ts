@@ -1,5 +1,5 @@
-import { estadoDe, ordenar } from './loop.ts';
-import type { Evento } from './tipos.ts';
+import { ordenar } from './loop.ts';
+import type { AcaoLoop, Evento } from './tipos.ts';
 
 /**
  * Núcleo do pouso (REQ-POU-1, GM-10 T9). Puro e sem `node:`: o mod o importa dentro do ambiente dele, que não tem Node.
@@ -12,9 +12,10 @@ export const INSTANTANEO_MAX = 3200;
 /** Nome real em `agents/gabarito-revisor.md` e o mesmo com o namespace do plugin; comparação por igualdade, nunca por prefixo. */
 export const REVISORES: readonly string[] = ['gabarito-revisor', 'gabarito-mestre:gabarito-revisor'];
 
-export type EstadoPouso = 'OCIOSO' | 'TRAVADO' | 'POUSAVEL' | 'POUSANDO' | 'POUSADO' | 'SEM_POUSO' | 'ENCALHADO';
-export type DespachoPouso = 'permitir' | 'negar';
-export type AcaoPouso = 'nada' | 'esperar' | 'encalhe' | 'pousar' | 'parar_nao_interativo';
+/** Pré-condições do mod (Sombra T9b, linhas A a E). A decisão de despachar, esperar, pousar ou parar é do núcleo (`proximaAcao`). */
+export type EstadoPouso = 'OCIOSO' | 'POUSANDO' | 'SEM_POUSO' | 'NUCLEO';
+export type DespachoPouso = 'permitir' | 'negar' | 'nucleo';
+export type AcaoPouso = 'nada' | 'parar_nao_interativo' | 'nucleo';
 export type EntradaPouso = {
   /** `turn.complete` sem `agentId`; subagent nunca decide. */
   orquestrador: boolean;
@@ -25,11 +26,6 @@ export type EntradaPouso = {
   /** Um pouso falhou e o percent ainda não caiu abaixo de X. */
   desistiu: boolean;
   interativo: boolean;
-  /** Um `sessao.pouso` posterior ao último `review.veredito`: a fronteira já foi gasta. */
-  consumida: boolean;
-  vivos: number;
-  /** Último evento de task é `review.veredito` posterior ao último `sessao.pouso`, com diário íntegro. */
-  novaFronteira: boolean;
 };
 export type LinhaPouso = { estado: EstadoPouso; despacho: DespachoPouso; acao: AcaoPouso };
 
@@ -37,9 +33,8 @@ type Regra = { estado: EstadoPouso; casa: (a: EntradaPouso) => boolean; despacho
 const percentValido = (a: EntradaPouso): a is EntradaPouso & { percent: number } => typeof a.percent === 'number' && Number.isFinite(a.percent);
 
 /**
- * Tabela de estados do pouso (Sombra T9), a primeira linha que casa decide. Dado ausente ou fora do tipo nunca vira pouso:
- * `percent` indefinido é OCIOSO; `vivos` ruim é TRAVADO; `novaFronteira` que não é `true` é ENCALHADO.
- * Só a última linha tem a ação `pousar`.
+ * Pré-condições do mod, a primeira linha que casa decide. Dado ausente ou fora do tipo nunca vira pouso: `percent`
+ * indefinido é OCIOSO. Só a última linha passa a palavra ao núcleo; nenhuma linha daqui pousa, espera ou despacha.
  */
 const TABELA: readonly Regra[] = [
   { estado: 'OCIOSO', casa: (a) => a.orquestrador !== true, despacho: 'permitir', acao: 'nada' },
@@ -48,15 +43,21 @@ const TABELA: readonly Regra[] = [
   { estado: 'POUSANDO', casa: (a) => a.pousando !== false, despacho: 'negar', acao: 'nada' },
   { estado: 'SEM_POUSO', casa: (a) => a.desistiu !== false, despacho: 'negar', acao: 'nada' },
   { estado: 'SEM_POUSO', casa: (a) => a.interativo !== true, despacho: 'negar', acao: 'parar_nao_interativo' },
-  { estado: 'POUSADO', casa: (a) => a.consumida === true, despacho: 'permitir', acao: 'nada' },
-  { estado: 'TRAVADO', casa: (a) => !(Number.isInteger(a.vivos) && a.vivos === 0), despacho: 'negar', acao: 'esperar' },
-  { estado: 'ENCALHADO', casa: (a) => a.novaFronteira !== true, despacho: 'negar', acao: 'encalhe' },
-  { estado: 'POUSAVEL', casa: () => true, despacho: 'negar', acao: 'pousar' },
+  { estado: 'NUCLEO', casa: () => true, despacho: 'nucleo', acao: 'nucleo' },
 ];
 
-export function decidirEstado(a: EntradaPouso): LinhaPouso {
+export function portaDoPouso(a: EntradaPouso): LinhaPouso {
   const r = TABELA.find((t) => t.casa(a)) as Regra;
   return { estado: r.estado, despacho: r.despacho, acao: r.acao };
+}
+
+/**
+ * `Agent` negado para quem não é revisor ⇔ a cláusula (5) de `proximaAcao` dispararia (E8). Com `percent` ≥ X toda resposta
+ * do núcleo, menos `integrar` e `concluir`, vem da (5) ou de uma cláusula que vence a (5) (pausa, teto de tokens, CI, diário).
+ * Fronteira consumida: o mod passou `percent: null` ao núcleo e a (5) não dispara.
+ */
+export function negaDespacho(acao: AcaoLoop, consumida: boolean): boolean {
+  return consumida !== true && acao.tipo !== 'integrar' && acao.tipo !== 'concluir';
 }
 
 const X_RE = /^\d+(\.\d+)?$/;
@@ -87,16 +88,14 @@ export function vivosDe(lista: unknown): number {
 
 const TIPOS_DE_TASK: readonly string[] = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
 
-export type AnaliseFronteira = { nova: boolean; consumida: boolean; motivo: string | null };
+export type AnaliseFronteira = { consumida: boolean; motivo: string | null };
 
-const sem = (motivo: string | null): AnaliseFronteira => ({ nova: false, consumida: false, motivo });
+const sem = (motivo: string | null): AnaliseFronteira => ({ consumida: false, motivo });
 
 /**
- * Fronteira (visão §6.7) lida da ordem da T2 (`ordenar` + `estadoDe`):
- * - `nova`: a última transição de task é `review.veredito`, a sequência dessa task vale para a T2 e esse veredito
- *   é POSTERIOR ao último `sessao.pouso` (um pouso consome a fronteira);
- * - `consumida`: existe `sessao.pouso` posterior ao último `review.veredito`.
- * Diário ilegível, fora de ordem, ou com evento de task sem `dados.task` ⇒ nada é fronteira e `motivo` diz por quê.
+ * Fronteira consumida (E1/E7, visão §6.7): existe `sessao.pouso` posterior ao último `review.veredito` na ordem da T2.
+ * Se o pouso consumiu a fronteira, o mod passa `percent: null` ao núcleo. Quem decide o resto é o núcleo, nunca esta função.
+ * Diário ilegível, fora de ordem, ou com evento de task sem `dados.task` ⇒ `motivo` diz por quê e nada é consumido.
  */
 export function analisarFronteira(eventos: unknown): AnaliseFronteira {
   if (!Array.isArray(eventos)) return sem('diário ilegível');
@@ -109,16 +108,10 @@ export function analisarFronteira(eventos: unknown): AnaliseFronteira {
   }
   if (!ord.ok) return sem('diário fora de ordem');
   const task = (e: Evento): unknown => (e.dados !== null && typeof e.dados === 'object' ? e.dados.task : undefined);
-  const deTask = ord.eventos.filter((e) => TIPOS_DE_TASK.includes(e.tipo));
-  if (deTask.some((e) => typeof task(e) !== 'string')) return sem('evento de task sem task');
+  if (ord.eventos.filter((e) => TIPOS_DE_TASK.includes(e.tipo)).some((e) => typeof task(e) !== 'string')) return sem('evento de task sem task');
   const ultimoDe = (tipo: string): number => ord.eventos.reduce((m, e, i) => (e.tipo === tipo ? i : m), -1);
   const pouso = ultimoDe('sessao.pouso');
-  const consumida = pouso >= 0 && pouso > ultimoDe('review.veredito');
-  const ultimo = deTask[deTask.length - 1];
-  if (ultimo === undefined || ultimo.tipo !== 'review.veredito') return { nova: false, consumida, motivo: null };
-  const dela = deTask.filter((e) => task(e) === task(ultimo));
-  const valida = !('invalido' in estadoDe(dela));
-  return { nova: valida && ord.eventos.lastIndexOf(ultimo) > pouso, consumida, motivo: null };
+  return { consumida: pouso >= 0 && pouso > ultimoDe('review.veredito'), motivo: null };
 }
 
 /** Eventos que não são trabalho do loop: o próprio mod os grava a cada turno ou ao parar. */
@@ -130,9 +123,39 @@ export function marcaDeProgresso(eventos: unknown): number {
   return eventos.filter((e) => !SEM_PROGRESSO.includes((e as Evento | null)?.tipo as string)).length;
 }
 
-/** Só a fronteira nova importa a quem decide pouso. */
-export function fronteira(eventos: unknown): boolean {
-  return analisarFronteira(eventos).nova;
+/** O diário já termina em `loop.parar` sem evento de trabalho depois: gravar outro seria repetir. Ilegível ⇒ `false` (quem chama não grava). */
+export function jaParou(eventos: unknown): boolean {
+  if (!Array.isArray(eventos)) return false;
+  let ord: ReturnType<typeof ordenar>;
+  try {
+    ord = ordenar(eventos as Evento[]);
+  } catch {
+    return false;
+  }
+  if (!ord.ok) return false;
+  const i = ord.eventos.reduce((m, e, k) => (e.tipo === 'loop.parar' ? k : m), -1);
+  return i >= 0 && ord.eventos.slice(i + 1).every((e) => SEM_PROGRESSO.includes(e.tipo));
+}
+
+/**
+ * Tokens gastos = entrada + saída + criação de cache de todo `custo.medicao`; leitura de cache não conta (mesma conta de `loop.mjs`).
+ * Contagem inválida ⇒ `ok: false`: um teto não pode ser conferido com dado ruim. Sem medição ⇒ `tokens: null`.
+ */
+export function tokensDe(eventos: unknown): { ok: true; tokens: number | null } | { ok: false } {
+  if (!Array.isArray(eventos)) return { ok: false };
+  let tokens: number | null = null;
+  for (const e of eventos as (Evento | null)[]) {
+    if (e?.tipo !== 'custo.medicao') continue;
+    let soma = 0;
+    for (const campo of ['input_tokens', 'output_tokens', 'cache_creation', 'cache_read']) {
+      const n = (e.dados ?? {})[campo];
+      if (n === undefined) continue;
+      if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return { ok: false };
+      if (campo !== 'cache_read') soma += n;
+    }
+    tokens = (tokens ?? 0) + soma;
+  }
+  return { ok: true, tokens };
 }
 
 export function ehRevisor(subagentType: unknown): boolean {
@@ -171,11 +194,14 @@ export function textoRetomada(instantaneo: string): string | null {
 /**
  * Programa que o mod passa a `node --input-type=module -e` (o ambiente do mod não tem `node:`). Lê UM objeto JSON no stdin
  * (`{op, …}`), escreve UM JSON no stdout e sempre sai 0. Dados nunca entram no programa: só o caminho do `diario.js`.
- * Ops: `dir` (raiz, pasta da entrega, `plano.json`), `ler` (estrita: `lerEstrito`), `instantaneo`, `append` (`unicoPorAgente` não repete o par tipo+agente).
+ * Ops: `dir` (raiz, pasta da entrega, `plano.json`), `ler` (estrita: `lerEstrito`), `plano` (`plano.json` validado pela T1 e
+ * `loop.slots`/`loop.tetoTokens` de `harness.config.json`; ilegível ou inválido ⇒ `ok: false`), `instantaneo`,
+ * `append` (`unicoPorAgente` não repete o par tipo+agente).
  */
-export function codigoPonte(diarioUrl: string): string {
+export function codigoPonte(diarioUrl: string, planoUrl: string = diarioUrl.replace(/diario\.js$/, 'plano.js')): string {
   return [
     `import * as d from ${JSON.stringify(diarioUrl)};`,
+    `import * as pl from ${JSON.stringify(planoUrl)};`,
     `import { readFileSync, existsSync } from 'node:fs';`,
     `import { execFileSync } from 'node:child_process';`,
     `import { join } from 'node:path';`,
@@ -192,6 +218,15 @@ export function codigoPonte(diarioUrl: string): string {
     `  } else if (e.op === 'ler') {`,
     `    const l = d.lerEstrito(e.dir);`,
     `    out(l.ok ? { ok: true, eventos: l.eventos } : { ok: false, erro: l.motivo });`,
+    `  } else if (e.op === 'plano') {`,
+    `    const v = pl.validarPlano(JSON.parse(readFileSync(join(e.dir, 'plano.json'), 'utf8')));`,
+    `    if (!v.ok) throw new Error('plano.json inválido: ' + v.erro);`,
+    `    const arq = join(e.raiz, 'harness.config.json');`,
+    `    const cfg = existsSync(arq) ? JSON.parse(readFileSync(arq, 'utf8')) : {};`,
+    `    const lp = cfg !== null && typeof cfg.loop === 'object' && cfg.loop !== null && !Array.isArray(cfg.loop) ? cfg.loop : {};`,
+    `    const inteiro = (n) => Number.isSafeInteger(n) && n >= 1;`,
+    `    if (Object.hasOwn(lp, 'tetoTokens') && !inteiro(lp.tetoTokens)) throw new Error('loop.tetoTokens inválido');`,
+    `    out({ ok: true, plano: v.plano, slots: inteiro(lp.slots) ? lp.slots : 1, tetoTokens: Object.hasOwn(lp, 'tetoTokens') ? lp.tetoTokens : null });`,
     `  } else if (e.op === 'instantaneo') {`,
     `    out({ ok: true, texto: d.projetar(d.ler(e.dir)).instantaneo });`,
     `  } else if (e.op === 'append') {`,

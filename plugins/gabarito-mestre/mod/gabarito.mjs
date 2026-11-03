@@ -2,16 +2,20 @@
  * Mod do gabarito-mestre (E2 Task 9, REQ-POU-1, REQ-POU-2, REQ-OBS-1): pouso automático, trava de despacho acima de X,
  * `/gabarito pausar|retomar` e medição de tokens por subagent. Adaptador fino: a decisão está em `gates/dist/pouso.js`.
  *
- * Decisão: tabela de 7 estados em `decidirEstado` (gates/src/pouso.ts); aqui só se lê o mundo e se executa a linha.
+ * Decisão (E8): uma só, no núcleo. O mod lê o mundo (percent, vivos, pausa, diário, plano, config), chama `proximaAcao` com
+ * sinais reais e executa a resposta; só as pré-condições (`portaDoPouso`: A a E da Sombra T9b) são dele.
+ * `Agent` nega para quem não é revisor ⇔ a cláusula (5) de `proximaAcao` dispararia (`negaDespacho`).
  * Passos do pouso, em `$.store['pouso:<pasta da entrega>']` (`$.state` zera no /clear, o store não: M2):
  *   ocioso (sem chave) -> pousando (gravado ANTES do /clear) -> retomando -> ocioso.
- * Um pouso consome a fronteira: o próximo exige `review.veredito` novo. Diário lido sem tolerância (`lerEstrito`).
+ * Um pouso consome a fronteira (`sessao.pouso` depois do último `review.veredito`): o mod passa `percent: null` ao núcleo e a (5)
+ * não dispara. Diário lido sem tolerância (`lerEstrito`); dado ausente, corrompido ou API lançando nunca vira pouso.
  * Falha em qualquer passo: `loop.parar {sem_pouso}` + aviso visível + ocioso, e nunca um segundo /clear.
  * Entrega, trava e medição são resolvidas a cada disparo: nada de pasta guardada entre turnos.
  * Sem mod, loop e kill switch seguem (D1): nada aqui é pré-requisito dos hooks clássicos.
  */
+import { proximaAcao } from '../gates/dist/loop.js';
 import {
-  analisarFronteira, codigoPonte, dadosMedicao, decidirEstado, ehRevisor, lerX, marcaDeProgresso, textoRetomada, vivosDe,
+  analisarFronteira, codigoPonte, dadosMedicao, ehRevisor, jaParou, lerX, marcaDeProgresso, negaDespacho, portaDoPouso, textoRetomada, tokensDe, vivosDe,
 } from '../gates/dist/pouso.js';
 
 const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
@@ -23,8 +27,8 @@ let ocupado = false; // um turn.complete decide por vez; fica preso até o pouso
 let desistiu = false; // um pouso falhou: só tenta de novo depois que o percent cair abaixo de X
 let xAvisado = null;
 let diarioAvisado = null; // motivo do último aviso de diário ilegível (não repete a cada turno)
-let encalhe = null; // { dir, marca, n }: turnos seguidos sem evento novo no estado ENCALHADO
-const TURNOS_ENCALHADO = 3; // alinhado a REQ-LOOP-5
+let espera = null; // { dir, marca, n }: turnos seguidos sem evento novo com o núcleo respondendo `nao_conseguiu`
+const TURNOS_ESPERA = 3; // alinhado a REQ-LOOP-5: o hand-back pode ainda não ter chegado
 
 const chaveDe = (dir) => `pouso:${dir}`;
 
@@ -156,66 +160,113 @@ async function iniciarPouso($, c, percent, x) {
 async function avisarDiario($, motivo) {
   if (diarioAvisado === motivo) return;
   diarioAvisado = motivo;
-  await avisar($, `gabarito: diário não pôde ser lido com segurança (${motivo}). Sem fronteira: nenhum pouso até o diário voltar a ser íntegro.`);
+  await avisar($, `gabarito: diário ou plano não puderam ser lidos com segurança (${motivo}). Nenhum pouso até voltarem a ser íntegros.`);
 }
 
-/** Diário lido sem tolerância. Qualquer dúvida ⇒ sem fronteira, com aviso (nunca pouso). `marca` = -1 quando ilegível. */
-async function lerFronteira($, c) {
+async function pausadoAgora($) {
+  try { return (await $.fs.exists(await pausar($))) !== false; } catch { return true; } // não saber é pausar: nunca pousa
+}
+
+const inteiroPositivo = (n) => Number.isSafeInteger(n) && n >= 1;
+
+/**
+ * O que o núcleo pede, lido agora, sem tolerância. Qualquer dúvida (diário, plano, config ou teto ilegíveis) ⇒ `null` com aviso:
+ * nunca pouso e nunca "tudo certo". Lista de agentes que falha conta como vivo (`vivosDe`); pausa que não se confirma conta como pausa.
+ */
+async function lerMundo($, c) {
   const l = await ponte($, { op: 'ler', dir: c.dir, cwd: c.cwd });
-  if (l.ok !== true || !Array.isArray(l.eventos)) {
-    await avisarDiario($, typeof l.erro === 'string' ? l.erro : 'leitura falhou');
-    return { nova: false, consumida: false, marca: -1 };
-  }
+  if (l.ok !== true || !Array.isArray(l.eventos)) { await avisarDiario($, typeof l.erro === 'string' ? l.erro : 'leitura falhou'); return null; }
   const a = analisarFronteira(l.eventos);
-  if (a.motivo !== null) {
-    await avisarDiario($, a.motivo);
-    return { nova: false, consumida: false, marca: marcaDeProgresso(l.eventos) };
+  if (a.motivo !== null) { await avisarDiario($, a.motivo); return null; }
+  const t = tokensDe(l.eventos);
+  if (!t.ok) { await avisarDiario($, 'custo.medicao com contagem inválida'); return null; }
+  const p = await ponte($, { op: 'plano', dir: c.dir, raiz: c.raiz, cwd: c.cwd });
+  const tetoOk = p.tetoTokens === null || inteiroPositivo(p.tetoTokens);
+  if (p.ok !== true || p.plano === null || typeof p.plano !== 'object' || !inteiroPositivo(p.slots) || !tetoOk) {
+    await avisarDiario($, typeof p.erro === 'string' ? p.erro : 'plano ilegível');
+    return null;
   }
-  diarioAvisado = null;
-  return { nova: a.nova, consumida: a.consumida, marca: marcaDeProgresso(l.eventos) };
+  let lista = null;
+  try { lista = await $.agent.list(); } catch { lista = null; }
+  return {
+    eventos: l.eventos, plano: p.plano, slots: p.slots, tetoTokens: p.tetoTokens, tokens: t.tokens,
+    vivos: vivosDe(lista), pausado: await pausadoAgora($), consumida: a.consumida, marca: marcaDeProgresso(l.eventos),
+  };
 }
 
-/** Sinais da tabela, lidos agora. Dado que falha não vira "tudo certo": store ilegível conta como pousando, lista de agentes ilegível como vivo. */
-async function lerSinais($, c) {
+function descrever(r) {
+  if (r.porta.estado !== 'NUCLEO') return `estado ${r.porta.estado}`;
+  if (r.mundo === null) return 'diário ou plano ilegíveis';
+  if (r.acao === null) return 'núcleo sem resposta';
+  const a = r.acao;
+  if (a.tipo === 'pousar') return 'pouso pendente';
+  if (a.tipo === 'esperar') return `esperar (${a.motivo})`;
+  if (a.tipo === 'parar') return `loop parado (${a.motivo})`;
+  return a.tipo === 'despachar' ? 'revisão pendente' : a.tipo;
+}
+
+/**
+ * A decisão de um disparo: pré-condições do mod, depois o núcleo. Fora de `NUCLEO` a ação é `null`.
+ * `negar` = `Agent` não revisor negado. Consumida ⇒ `percent: null` ao núcleo (E1); `proximaAcao` lançando ⇒ sem ação e nega.
+ */
+async function avaliar($, c) {
   const x = await xAtual($);
   const percent = await percentAtual($);
   if (percent !== null && percent < x) desistiu = false;
   let pousando = false;
   try { pousando = (await $.store.get(chaveDe(c.dir))) !== undefined; } catch { pousando = true; }
-  let vivos = 0;
-  let f = { nova: false, consumida: false, marca: -1 };
-  if (percent !== null && percent >= x) {
-    let lista = null;
-    try { lista = await $.agent.list(); } catch { lista = null; }
-    vivos = vivosDe(lista);
-    f = await lerFronteira($, c);
+  const porta = portaDoPouso({ orquestrador: true, percent, x, pousando, desistiu, interativo });
+  const r = { porta, percent, x, mundo: null, acao: null, negar: porta.despacho === 'negar' };
+  if (porta.estado !== 'NUCLEO') return r;
+  r.negar = true;
+  r.mundo = await lerMundo($, c);
+  if (r.mundo === null) return r;
+  const m = r.mundo;
+  try {
+    r.acao = proximaAcao(m.plano, m.eventos, {
+      slots: m.slots, percent: m.consumida ? null : percent, x, pausado: m.pausado, vivos: m.vivos,
+      tokens: m.tokens, tetoTokens: m.tetoTokens, podePousar: true,
+    });
+  } catch {
+    await avisarDiario($, 'o núcleo do loop falhou');
+    return r;
   }
-  const entrada = {
-    orquestrador: true, percent, x, pousando, desistiu, interativo, consumida: f.consumida, vivos, novaFronteira: f.nova,
-  };
-  return { entrada, marca: f.marca };
+  if (!(r.acao.tipo === 'parar' && r.acao.motivo === 'diario_invalido')) diarioAvisado = null;
+  r.negar = negaDespacho(r.acao, m.consumida);
+  return r;
+}
+
+/** `parar` do núcleo (teto de rodadas, CI, teto de tokens, `nao_conseguiu`): grava `loop.parar` uma vez, com aviso. Sem pouso. */
+async function pararDoNucleo($, c, acao, m) {
+  if (acao.motivo === 'diario_invalido') { await avisarDiario($, 'sequência de eventos fora da tabela de transições'); return; }
+  if (jaParou(m.eventos)) return;
+  if (acao.motivo === 'nao_conseguiu') {
+    // task em voo sem agente: o hand-back pode ainda não ter chegado; só para depois de N turnos sem evento novo
+    espera = espera !== null && espera.dir === c.dir && espera.marca === m.marca ? { ...espera, n: espera.n + 1 } : { dir: c.dir, marca: m.marca, n: 1 };
+    if (espera.n < TURNOS_ESPERA) return;
+    espera = null;
+  }
+  const dados = acao.task === undefined ? { motivo: acao.motivo } : { motivo: acao.motivo, task: acao.task };
+  await gravar($, c, { agente: 'orquestrador', tipo: 'loop.parar', dados });
+  await avisar($, `gabarito: loop parado (${acao.motivo}${acao.task === undefined ? '' : `, task ${acao.task}`}). Nenhum pouso automático; veja o diário da entrega.`);
 }
 
 /** `true` quando um pouso foi agendado (o `ocupado` fica preso até ele terminar). */
 async function aoCompletarTurno($) {
   const c = await loopAtivo($);
-  if (c === null) { encalhe = null; return false; }
-  const { entrada, marca } = await lerSinais($, c);
-  const linha = decidirEstado(entrada);
-  if (linha.estado !== 'ENCALHADO') encalhe = null;
-  if (linha.acao === 'parar_nao_interativo') {
+  if (c === null) { espera = null; return false; }
+  const r = await avaliar($, c);
+  if (r.porta.acao === 'parar_nao_interativo') {
     // F1: `-p` não tem sessão onde rodar /clear nem `$.agent.list`; sem_pouso, nunca pousa.
+    espera = null;
     await falharPouso($, c, 'nao_interativo');
-  } else if (linha.acao === 'encalhe') {
-    // E3: sem vivos, sem fronteira nova e nada a fazer: depois de N turnos sem evento novo, para com aviso (nunca silêncio).
-    encalhe = encalhe !== null && encalhe.dir === c.dir && encalhe.marca === marca ? { ...encalhe, n: encalhe.n + 1 } : { dir: c.dir, marca, n: 1 };
-    if (encalhe.n >= TURNOS_ENCALHADO) {
-      encalhe = null;
-      await falharPouso($, c, 'sem_fronteira');
-    }
-  } else if (linha.acao === 'pousar') {
-    return await iniciarPouso($, c, entrada.percent, entrada.x);
+    return false;
   }
+  const acao = r.acao;
+  if (acao === null || acao.tipo !== 'parar' || acao.motivo !== 'nao_conseguiu') espera = null;
+  if (acao === null) return false;
+  if (acao.tipo === 'pousar') return await iniciarPouso($, c, r.percent, r.x);
+  if (acao.tipo === 'parar') await pararDoNucleo($, c, acao, r.mundo);
   return false;
 }
 
@@ -316,10 +367,9 @@ export const register = (on) => {
     try {
       const c = ehRevisor(e.subagent_type) ? null : await loopAtivo($);
       if (c !== null) {
-        const { entrada } = await lerSinais($, c);
-        const linha = decidirEstado(entrada);
-        if (linha.despacho === 'negar') {
-          return { deny: `pouso: contexto em ${entrada.percent}% (X=${entrada.x}%), estado ${linha.estado}. Sem despacho novo até pousar; só o revisor passa.` };
+        const r = await avaliar($, c);
+        if (r.negar) {
+          return { deny: `pouso: contexto em ${r.percent}% (X=${r.x}%), ${descrever(r)}. Sem despacho novo; só o revisor passa.` };
         }
       }
     } catch { /* o mod não prende a sessão */ }
