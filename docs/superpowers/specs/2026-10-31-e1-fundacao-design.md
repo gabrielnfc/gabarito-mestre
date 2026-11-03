@@ -179,6 +179,19 @@ _(Emendas 2026-11-02, Sombra + decisão do dono, ledger GM-9 R16.)_
   **Fora desta emenda**
 
   Barreira de segredo no sistema operacional: perfil de sandbox opcional, backlog. Token: o dono mantém o atual (2026-11-03), logo ruleset não é barreira independente; a PR declara. Frequência real de `ask` por sessão gerada por esta emenda: medir em E2 com o diário.
+- **Q27 (dono aprovou a direção em 2026-11-03; texto revisado pela Sombra)** Hook `SubagentStart` injeta regras obrigatórias.
+  Hook `SubagentStart` injeta as regras obrigatórias em todo subagent, para não depender da memória do orquestrador.
+
+  1. `hooks.json` ganha `SubagentStart`, sem matcher, `bash "${CLAUDE_PLUGIN_ROOT}/hooks/regras-subagent.sh"`, `shell: bash`, timeout 5 — como `session-card.sh`. `hooks/test/hooks-json.test.mjs` ganha o caso do grupo.
+  2. O hook devolve `hookSpecificOutput.additionalContext` (`hookEventName: SubagentStart`) com `${CLAUDE_PLUGIN_ROOT}/reference/regras-subagent.md`, seguido de `<raiz>/.harness/regras-subagent.md` se existir, com `<raiz>` = `${CLAUDE_PROJECT_DIR}`, fallback `gabarito_repo_root` (Q14: raiz da sessão, nunca cwd; em worktree de subagent lê a cópia da sessão, não a da branch). O arquivo do projeto é versionado (`instalar.sh` não o ignora) e o dono acrescenta regras nele. Lido da árvore local, não de `origin`: D2 não se aplica porque a regra é instrução (item 6), nenhum veredito da guarda depende dela; a reescrita direta pelo subagent é negada pelo anel de integridade (REQ-GRD-5, escrita, Q2) e a indireção é tamper-evident (Q14).
+  3. Regras padrão, cada uma com a marca: ler segredo — barreira (REQ-GRD-5, `deny`); imprimir valor de segredo — instrução (o canário cobre só o diário); produção — barreira (Q26, Bash e MCP, `deny`); push, PR, merge — instrução (R1 dos agentes; a guarda permite `git push origin <branch própria>`, D2/Q14, e `gh pr` é `mostrar`); contornar bloqueio de hook — instrução: relatar e seguir.
+  4. Teto: 2.000 caracteres somados (doc: 10.000 por campo). Acima disso, trunca e avisa no próprio texto.
+  5. Falha do hook: subagent segue sem as regras — `SubagentStart` não bloqueia e exit 2 vira aviso que o modelo não vê (doc `hooks.md`, tabela de exit code). Não é barreira. A guarda PreToolUse segue valendo.
+  6. Limite declarado em `reference/referencia.md` (§5 Guardas), `reference/AGENTS.md` (§9, parágrafo "Hooks (a)", uma frase, dentro do teto de bytes) e na PR: regra injetada é instrução; o agente pode não seguir (S7 saiu do brief).
+
+  Medido em 2026-11-03: `claude -p` 2.1.316, 1 chamada do hook, sentinela devolvida pelo subagent. Garantido pela doc, sem medir: não bloqueia; `CLAUDE_PROJECT_DIR` exportado ao processo do hook e fixo na raiz da sessão; `cwd` segue o worktree. Não medido: TUI, modo auto, plugin em vez de `--settings`.
+
+  Corpus e mutações: arquivo do projeto presente, ausente, acima do teto; `CLAUDE_PROJECT_DIR` ≠ cwd (lê da raiz da sessão); JSON válido com aspas e quebra de linha no texto. Mutações: tirar o arquivo do projeto ⇒ caso presente falha; tirar o teto ⇒ caso acima falha; ler do cwd ⇒ caso de raiz falha; `hookEventName` errado ⇒ caso de JSON falha.
 
 ## Riscos
 
