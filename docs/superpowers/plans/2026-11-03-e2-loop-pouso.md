@@ -39,7 +39,7 @@ T1 ─┬─ T2 ──┐
     ├─ T7 ─────────┤
     ├─ T8 ─────────┤
     └─ T10 ────────┘
-T11 congelada: emenda à visão §6.8 aguarda o dono. Até lá, 3 slots (S10).
+T11 descongelada: emenda à visão §6.8 aprovada em 2026-11-03.
 ```
 
 T1 é serial porque concentra os arquivos compartilhados (`tipos.ts`, `build.mjs`, `hooks.json`, `.gitignore`). Depois dela, T2, T3, T4, T5, T7, T8, T10 não se tocam.
@@ -144,7 +144,7 @@ Task no teto: rodada 2 REPROVADA com `major+blocker>0`. Teto é estado: nada o t
 
 **Files:** Create `gates/scripts/loop.mjs`, `gates/test/loop-cli.test.mjs`.
 
-**Interfaces — Consumes:** `validarPlano`, `proximaAcao`, `podeIntegrar`, `avaliar`, `db-template.mjs`, `medir/calcularSlots`. **Produces:** `loop.mjs proxima | abrir <task> | iniciar <task> <papel> | concluir <task> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | integrar <task> | fechar <task> | reabrir <task> | parar <motivo>`, saída JSON em stdout. Só estes comandos gravam evento de task no diário: `iniciar` grava `task.iniciada`, `concluir` `task.concluida`, `veredito` `review.veredito`, `reabrir` `task.reaberta {origem:'retomada'}`; origem `dono` só pelo comando humano da T9. Branch `wt/<entrega>-<task>`, worktree em `.harness/worktrees/<task>` (gitignored por T1 se faltar, senão aqui), `TMPDIR` em `<worktree>/.tmp-gabarito` exportado na saída de `abrir`. `abrir` e `integrar` gravam `task.iniciada`, `task.integrada`.
+**Interfaces — Consumes:** `validarPlano`, `proximaAcao`, `podeIntegrar`, `avaliar`, `db-template.mjs`, `medir/calcularSlots`. **Produces:** `loop.mjs proxima | abrir <task> | iniciar <task> <papel> | concluir <task> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | integrar <task> | fechar <task> | reabrir <task> | parar <motivo> | ci <verde|vermelho>`, saída JSON em stdout. Só estes comandos gravam evento de task no diário: `iniciar` grava `task.iniciada`, `concluir` `task.concluida`, `veredito` `review.veredito`, `reabrir` `task.reaberta {origem:'retomada'}`; origem `dono` só pelo comando humano da T9. Branch `wt/<entrega>-<task>`, worktree em `.harness/worktrees/<task>` (gitignored por T1 se faltar, senão aqui), `TMPDIR` em `<worktree>/.tmp-gabarito` exportado na saída de `abrir`. `integrar` grava `task.integrada`; `abrir` não grava evento.
 
 `integrar`: recusa com `podeIntegrar=false`; rebase; gate; `merge --ff-only`; grava evento; chama `fechar`. `fechar`: `soltar` banco, apaga `.tmp-gabarito` (só esse caminho, validado dentro da worktree), `git worktree remove` sem `--force`.
 
@@ -206,9 +206,7 @@ Loop ativo = `plano.json` da entrega da branch e sem `task.integrada` final. `ba
 - [ ] **Step 4: GREEN.**
 - [ ] **Step 5: Commit** `feat(GM-10): tokens por subagent sem mod`.
 
-### Task 11: Capacidade medida (CONGELADA)
-
-Aguarda o dono julgar a emenda à visão §6.8. Se aprovada:
+### Task 11: Capacidade medida
 
 **Files:** Modify `gates/scripts/capacidade.mjs`, `gates/test/capacidade.test.mjs`, `.harness/capacidade.json` (gerado, gitignored).
 
@@ -236,7 +234,7 @@ Aguarda o dono julgar a emenda à visão §6.8. Se aprovada:
 
 **Files:** Create `gates/test/e2e/aceite-loop.exp` e plano de exemplo em `gates/test/e2e/plano-exemplo.json`, fora de `npm test`.
 
-- [ ] **Step 1: Aceite 1:** repo descartável, plano de 3 tasks, 2 paralelas e 1 dependente, TUI `--permission-mode auto`, haiku, `GABARITO_POUSO_X=1`. Esperado: `concluir` sem digitação, 1 `sessao.pouso`, 1 `sessao.retomada`.
+- [ ] **Step 1: Aceite 1:** repo descartável, plano de 3 tasks, 2 paralelas e 1 dependente, TUI `--permission-mode auto`, haiku, `GABARITO_POUSO_X=1`. Esperado: `concluir` sem digitação, ao menos 1 par `sessao.pouso`/`sessao.retomada`, cada `sessao.pouso` precedido por `review.veredito` novo; `context.tokens` do prompt de retomada ≤ 1,5k.
 - [ ] **Step 2: Aceite 2:** `.harness/PAUSAR` no meio ⇒ nenhum `Agent` novo; `/gabarito retomar` recomeça a task.
 - [ ] **Step 3: Aceite 4:** diário traz ETA e tokens por agente.
 - [ ] **Step 4: Aceite 5:** `TMPDIR` 0 bytes após `fechar`.
