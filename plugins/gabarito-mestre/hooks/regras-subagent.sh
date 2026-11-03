@@ -37,9 +37,8 @@ try {
   const arq = path.join(dir, "regras-subagent.md");
   const dl = fs.lstatSync(dir);
   const st = fs.lstatSync(arq);
-  // .harness e o arquivo: nada de symlink; o diretório resolvido tem de ser <raiz real>/.harness
-  if (!dl.isSymbolicLink() && dl.isDirectory() && st.isFile() && !st.isSymbolicLink()
-      && fs.realpathSync(dir) === path.join(fs.realpathSync(raiz), ".harness")) {
+  // .harness e o arquivo: nada de symlink
+  if (!dl.isSymbolicLink() && dl.isDirectory() && st.isFile() && !st.isSymbolicLink()) {
     const fd = fs.openSync(arq, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0));
     try {
       const buf = Buffer.alloc(LER);
