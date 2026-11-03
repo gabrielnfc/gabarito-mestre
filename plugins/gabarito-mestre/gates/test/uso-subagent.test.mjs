@@ -1,7 +1,7 @@
 /**
  * Testes do hook SubagentStop `uso-subagent.mjs` (GM-10 T10, REQ-OBS-1, F7): tokens por subagent sem mod.
  *
- * O hook lê `agent_transcript_path`, soma `message.usage` com dedupe por `message.id`, relê após 60 ms
+ * O hook lê `agent_transcript_path`, soma `message.usage` com dedupe por `message.id`, relê a cada 40 ms até estabilizar (teto 200 ms)
  * (a última mensagem ainda não está no arquivo quando o SubagentStop dispara: S8 P4) e grava
  * `custo.medicao {agente: 'subagent:<id>', …}` por `append` do diário. Só números; nunca conteúdo.
  *
@@ -21,7 +21,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -109,28 +109,132 @@ test('soma-dedupe-por-id: linhas repetidas por message.id contam uma vez; sai 0 
 test('ultima-mensagem-tardia: a releitura após a espera pega a mensagem que chegou depois do disparo', async () => {
   const c = cenario();
   const p = transcript(c, [msg('m1', U(10, 5))]);
-  const { somarUso, ESPERA_MS } = await import(pathToFileURL(SCRIPT).href);
-  assert.equal(ESPERA_MS, 60);
-  let esperou = null;
-  const homeAntes = process.env.HOME;
-  process.env.HOME = c.home; // os.homedir() lê HOME no POSIX
-  let r;
-  try {
-    r = somarUso(p, {
-      dormir: (ms) => {
-        esperou = ms;
+  const { somarUso, PASSO_MS, TETO_ESPERA_MS } = await import(pathToFileURL(SCRIPT).href);
+  assert.equal(PASSO_MS, 40);
+  assert.equal(TETO_ESPERA_MS, 200);
+  const esperas = [];
+  const r = comHome(c, () => somarUso(p, {
+    dormir: (ms) => {
+      esperas.push(ms);
+      if (esperas.length === 1) {
         appendFileSync(p, `${msg('m2', U(3, 9, 40))}\n`); // chega durante a espera
-        appendFileSync(p, `${msg('m1', U(10, 5))}\n`); // e a 1ª repete: dedupe entre as duas leituras
-      },
-    });
-  } finally {
-    process.env.HOME = homeAntes;
-  }
-  assert.equal(esperou, 60);
+        appendFileSync(p, `${msg('m1', U(10, 5))}\n`); // e a 1ª repete: dedupe entre as leituras
+      }
+    },
+  }));
+  assert.equal(esperas[0], 40);
   assert.deepEqual(
     { i: r.input_tokens, o: r.output_tokens, cr: r.cache_read, n: r.mensagens },
     { i: 13, o: 14, cr: 40, n: 2 },
   );
+});
+
+/** Roda `f` com HOME no cenário (os.homedir() lê HOME no POSIX). */
+function comHome(c, f) {
+  const antes = process.env.HOME;
+  process.env.HOME = c.home;
+  try { return f(); } finally { process.env.HOME = antes; }
+}
+
+test('ultima-mensagem-a-100ms-conta: escrita tardia real, em processo separado, entra na soma (sem limite de tempo)', async () => {
+  const c = cenario();
+  const p = transcript(c, [msg('m1', U(10, 5))]);
+  const corpo = JSON.stringify({ session_id: 'sess-1', cwd: c.repo, hook_event_name: 'SubagentStop', agent_id: 'a1', agent_type: 'gabarito-implementador', agent_transcript_path: p });
+  const hook = spawn(process.execPath, [SCRIPT], { env: { ...process.env, HOME: c.home, USERPROFILE: c.home, CLAUDE_PROJECT_DIR: '' }, stdio: ['pipe', 'ignore', 'ignore'] });
+  const fim = new Promise((res) => hook.on('close', res));
+  hook.stdin.end(corpo);
+  // escritor em processo separado: anexa a 2ª mensagem 100 ms depois do disparo do hook
+  const escritor = spawn(process.execPath, ['-e',
+    `setTimeout(()=>require('node:fs').appendFileSync(process.argv[1], process.argv[2]+'\\n'), 100)`, p, msg('m2', U(3, 9, 40))], { stdio: 'ignore' });
+  const fimEscritor = new Promise((res) => escritor.on('close', res));
+  assert.equal(await fim, 0);
+  await fimEscritor;
+  const [m] = medicoes(c);
+  assert.ok(m, 'registrou');
+  assert.equal(m.dados.mensagens, 2);
+  assert.equal(m.dados.input_tokens, 13);
+});
+
+test('releitura-ate-estabilizar: cresceu na espera, relê; estável em 2 leituras seguidas, para (conta leituras, não relógio)', async () => {
+  const c = cenario();
+  const { somarUso } = await import(pathToFileURL(SCRIPT).href);
+  // mensagem chega só na 2ª espera (≈80 ms): a regra "2 leituras seguidas iguais" não pode parar antes
+  const p = transcript(c, [msg('m1', U(10, 5))]);
+  let n = 0;
+  const r = comHome(c, () => somarUso(p, { dormir: () => { n += 1; if (n === 2) appendFileSync(p, `${msg('m2', U(1, 1))}\n`); } }));
+  assert.equal(r.mensagens, 2);
+  assert.equal(r.leituras, 4); // r0, r1 (igual a r0), r2 (cresceu), r3 (igual a r2: para)
+  assert.equal(n, 3);
+});
+
+test('arquivo-parado-nao-espera-teto: arquivo que não muda para cedo; o que sempre cresce para no teto de espera', async () => {
+  const c = cenario();
+  const { somarUso, PASSO_MS, TETO_ESPERA_MS } = await import(pathToFileURL(SCRIPT).href);
+  const p = transcript(c, [msg('m1', U(10, 5))]);
+  const esperas = [];
+  const parado = comHome(c, () => somarUso(p, { dormir: (ms) => esperas.push(ms) }));
+  assert.equal(parado.leituras, 3); // r0 + 2 leituras seguidas iguais
+  assert.ok(esperas.length * PASSO_MS < TETO_ESPERA_MS, `esperou ${esperas.length} passos`);
+  assert.equal(esperas.length, 2);
+  // crescendo a cada espera: nunca estabiliza; para quando a soma das esperas chega ao teto
+  const q = transcript(c, [msg('g0', U(1, 1))], 'agent-cresce.jsonl');
+  const esp2 = [];
+  const cresce = comHome(c, () => somarUso(q, { dormir: (ms) => { esp2.push(ms); appendFileSync(q, `${msg(`g${esp2.length}`, U(1, 1))}\n`); } }));
+  assert.equal(esp2.reduce((a, b) => a + b, 0), TETO_ESPERA_MS);
+  assert.equal(cresce.leituras, TETO_ESPERA_MS / PASSO_MS + 1);
+  assert.equal(cresce.mensagens, TETO_ESPERA_MS / PASSO_MS + 1);
+});
+
+function worktree(c, nome = 'wt-GM-10-3') {
+  const g = (cwd, ...a) => spawnSync('git', a, { cwd, encoding: 'utf8' });
+  writeFileSync(join(c.repo, 'a.txt'), 'x');
+  g(c.repo, 'add', 'a.txt');
+  g(c.repo, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init');
+  const wt = join(bruto('wts'), nome);
+  assert.equal(g(c.repo, 'worktree', 'add', '-q', '-b', 'wt/GM-10-3', wt).status, 0);
+  return wt;
+}
+
+test('worktree-sem-harness-grava-no-projeto: cwd no worktree (sem .harness) e CLAUDE_PROJECT_DIR no projeto grava no projeto', () => {
+  const c = cenario();
+  const wt = worktree(c);
+  assert.equal(existsSync(join(wt, '.harness')), false);
+  const p = transcript(c, [msg('m1', U(10, 5))]);
+  const r = rodar(c, { agent_transcript_path: p, cwd: wt }, { env: { CLAUDE_PROJECT_DIR: c.repo } });
+  assert.equal(r.status, 0);
+  assert.equal(medicoes(c).length, 1);
+  assert.equal(existsSync(join(wt, '.harness')), false, 'nada no worktree');
+});
+
+test('projeto-dir-ausente-sai-0: variável vazia ou ausente cai no cwd; só o cwd do worktree (sem .harness) não grava e sai 0', () => {
+  const c = cenario();
+  const wt = worktree(c);
+  const p = transcript(c, [msg('m1', U(10, 5))]);
+  const r = rodar(c, { agent_transcript_path: p, cwd: wt }, { env: { CLAUDE_PROJECT_DIR: '' } });
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout + r.stderr, '');
+  assert.equal(medicoes(c).length, 0);
+  assert.equal(existsSync(join(wt, '.harness')), false);
+  // variável removida do ambiente (não só vazia), cwd na raiz do projeto: mede
+  const env = { ...process.env, HOME: c.home, USERPROFILE: c.home };
+  delete env.CLAUDE_PROJECT_DIR;
+  const r2 = spawnSync(process.execPath, [SCRIPT], { env, encoding: 'utf8', input: JSON.stringify({ session_id: 'sess-1', cwd: c.repo, agent_id: 'a1', agent_type: 'x', agent_transcript_path: p }) });
+  assert.equal(r2.status, 0);
+  assert.equal(medicoes(c).length, 1);
+});
+
+test('projeto-dir-invalido-sai-0: variável apontando para inexistente, arquivo ou fora de repo não derruba nem grava em lugar errado', () => {
+  const c = cenario();
+  const p = transcript(c, [msg('m1', U(10, 5))]);
+  const fora = bruto('fora'); // existe, mas não é repo nem tem .harness
+  for (const v of [join(c.home, 'nao-existe'), p, fora]) {
+    const r = rodar(c, { agent_transcript_path: p, cwd: c.repo }, { env: { CLAUDE_PROJECT_DIR: v } });
+    assert.equal(r.status, 0, v);
+    assert.equal(r.stdout + r.stderr, '', v);
+    assert.equal(existsSync(join(fora, '.harness')), false, v);
+  }
+  // variável inválida cai no cwd: uma medição só (idempotente), nenhum número inventado
+  assert.equal(medicoes(c).length, 1);
 });
 
 test('agent-type-vazio-ignora: disparo de agente interno (agent_type "" ou ausente) não grava', () => {

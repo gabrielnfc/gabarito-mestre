@@ -2,7 +2,8 @@
 /**
  * uso-subagent.mjs — hook `SubagentStop` (GM-10 T10, REQ-OBS-1, F7): tokens por subagent sem mod.
  *
- * Lê `agent_transcript_path`, soma `message.usage` com dedupe por `message.id`, relê depois de 60 ms (na hora do
+ * Lê `agent_transcript_path`, soma `message.usage` com dedupe por `message.id`, relê a cada 40 ms até o arquivo parar de crescer
+ * (2 leituras seguidas com o mesmo tamanho, depois da primeira espera) ou até 200 ms de espera no total (na hora do
  * SubagentStop a última mensagem ainda não está no arquivo: S8 P4, 7/7 subcontados, 51 ms bastaram) e grava
  * `custo.medicao { agente: 'subagent:<id>', … }` por `append` do diário. Só campos numéricos: o conteúdo das mensagens
  * nunca é guardado, gravado nem impresso.
@@ -21,7 +22,8 @@ import { join, resolve, sep } from 'node:path';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import { git, raizPorFs } from '../lib/git.mjs';
 
-export const ESPERA_MS = 60;
+export const PASSO_MS = 40;
+export const TETO_ESPERA_MS = 200;
 export const TETO_BYTES = 8 * 1024 * 1024;
 const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const ID_ENTREGA_RE = /[A-Z]+-\d+/;
@@ -56,7 +58,7 @@ function lerLinhas(real) {
   try {
     fd = openSync(real, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     const st = fstatSync(fd);
-    if (!st.isFile()) return { linhas: [], parcial: false };
+    if (!st.isFile()) return { linhas: [], parcial: false, tamanho: -1 };
     const parcial = st.size > TETO_BYTES;
     const n = Math.min(st.size, TETO_BYTES);
     const buf = Buffer.alloc(n);
@@ -68,17 +70,17 @@ function lerLinhas(real) {
     }
     let texto = buf.toString('utf8', 0, lido);
     if (parcial) texto = texto.slice(0, texto.lastIndexOf('\n') + 1); // descarta a linha cortada pelo teto
-    return { linhas: texto.split('\n'), parcial };
+    return { linhas: texto.split('\n'), parcial, tamanho: st.size };
   } catch {
-    return { linhas: [], parcial: false };
+    return { linhas: [], parcial: false, tamanho: -1 };
   } finally {
     if (fd >= 0) { try { closeSync(fd); } catch { /* nada */ } }
   }
 }
 
-/** Soma `message.usage` por `message.id` (maior valor por campo); só números entram no mapa. Devolve se a leitura foi parcial. */
+/** Soma `message.usage` por `message.id` (maior valor por campo); só números entram no mapa. Devolve `{parcial, tamanho}`. */
 function acumular(real, porId) {
-  const { linhas, parcial } = lerLinhas(real);
+  const { linhas, parcial, tamanho } = lerLinhas(real);
   for (const l of linhas) {
     if (l === '' || !l.includes('"usage"')) continue;
     let o;
@@ -94,22 +96,34 @@ function acumular(real, porId) {
     }
     porId.set(id, atual);
   }
-  return parcial;
+  return { parcial, tamanho };
 }
 
 /**
- * Soma o uso do transcript: lê, espera `ESPERA_MS`, lê de novo (a última mensagem chega depois do disparo) e junta as duas
- * leituras por `message.id`. `null` se o caminho não vale ou não há mensagem com uso.
+ * Soma o uso do transcript: lê, e enquanto o arquivo cresce espera `PASSO_MS` e relê (a última mensagem chega depois do
+ * disparo), juntando as leituras por `message.id`. Para quando duas leituras seguidas, ambas depois de uma espera, têm o
+ * mesmo tamanho, ou quando as esperas somam `TETO_ESPERA_MS`. `leituras` conta as leituras feitas (só para teste: não é gravado).
+ * `null` se o caminho não vale ou não há mensagem com uso.
  */
 export function somarUso(caminho, { dormir: dorme = dormir } = {}) {
   const real = caminhoValido(caminho);
   if (real === null) return null;
   const porId = new Map();
-  let parcial = acumular(real, porId);
-  dorme(ESPERA_MS);
-  parcial = acumular(real, porId) || parcial;
+  let { parcial } = acumular(real, porId);
+  let leituras = 1;
+  let esperado = 0;
+  let anterior = null; // tamanho da leitura anterior, só de leituras feitas depois de uma espera
+  while (esperado < TETO_ESPERA_MS) {
+    dorme(PASSO_MS);
+    esperado += PASSO_MS;
+    const r = acumular(real, porId);
+    leituras += 1;
+    parcial = r.parcial || parcial;
+    if (anterior !== null && r.tamanho === anterior) break;
+    anterior = r.tamanho;
+  }
   if (porId.size === 0) return null;
-  const soma = { input_tokens: 0, output_tokens: 0, cache_read: 0, cache_creation: 0, mensagens: porId.size, parcial };
+  const soma = { input_tokens: 0, output_tokens: 0, cache_read: 0, cache_creation: 0, mensagens: porId.size, parcial, leituras };
   for (const u of porId.values()) for (const [, para] of CAMPOS) soma[para] += u[para] ?? 0;
   return soma;
 }
@@ -152,7 +166,7 @@ async function main() {
 
   const soma = somarUso(e.agent_transcript_path);
   if (soma === null) return;
-  const { parcial, ...numeros } = soma;
+  const { parcial, leituras: _l, ...numeros } = soma;
   if (jaMedido()) return;
 
   let autor = 'desconhecido';
