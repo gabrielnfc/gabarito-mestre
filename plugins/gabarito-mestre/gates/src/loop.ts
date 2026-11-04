@@ -202,11 +202,9 @@ export function podeIntegrar(plano: Plano, eventos: Evento[], id: string): boole
   return proj !== null && integravel(plano, proj.estados, id);
 }
 
-/** A9: dep libera o dependente se integrada, se no teto, ou se aprovada e presa por um teto acima dela. */
-function depLiberada(plano: Plano, estados: Map<string, EstadoRodada>, dep: string): boolean {
-  const e = de(estados, dep);
-  if (e === 'integrada' || e === 'no_teto') return true;
-  return e === 'aprovada' && ancestrais(plano, dep).some((a) => de(estados, a) === 'no_teto');
+/** A9 (r13): dependente só despacha com a dependência integrada; `abrir` parte da integração, sem o código dela não há o que implementar. */
+function depLiberada(estados: Map<string, EstadoRodada>, dep: string): boolean {
+  return de(estados, dep) === 'integrada';
 }
 
 const EM_VOO: readonly EstadoTask[] = ['implementando', 'corrigindo', 'em_revisao'];
@@ -242,8 +240,9 @@ export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais): Ac
     // (5b) Sem agente vivo, task em voo não é fronteira (REQ-POU-1 exige `review.veredito`): o agente morreu. Não pousa.
     const emVoo = ids.find((id) => EM_VOO.includes(est(id).estado));
     if (emVoo !== undefined) return { tipo: 'parar', motivo: 'nao_conseguiu', task: emVoo };
-    // (5d) Pousar só se resta trabalho; sem resto, o loop conclui (8) ou para no teto (9) antes de qualquer pouso.
-    if (ids.some((id) => !SEM_RESTO.includes(est(id).estado))) {
+    // (5d) Pousar só se resta trabalho que não espera um teto: task fora de {integrada, no_teto} e sem ancestral em `no_teto`.
+    // Sem resto, o loop conclui (8) ou para no teto (9) antes de qualquer pouso.
+    if (plano.tasks.some((t) => !SEM_RESTO.includes(est(t.id).estado) && !ancestrais(plano, t.id).some((a) => de(estados, a) === 'no_teto'))) {
       return sinais.podePousar ? { tipo: 'pousar' } : { tipo: 'parar', motivo: 'sem_pouso' };
     }
   }
@@ -257,7 +256,7 @@ export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais): Ac
     .filter((id) => est(id).estado === 'reprovada' && est(id).rodada === 1)
     .map((task) => ({ task, papel: 'correcao' as const }));
   const novas = plano.tasks
-    .filter((t) => est(t.id).estado === 'pendente' && t.deps.every((d) => depLiberada(plano, estados, d)))
+    .filter((t) => est(t.id).estado === 'pendente' && t.deps.every((d) => depLiberada(estados, d)))
     .map((t) => ({ task: t.id, papel: 'implementador' as const }));
   const itens = [...correcoes, ...revisores, ...novas];
   if (itens.length > 0) {

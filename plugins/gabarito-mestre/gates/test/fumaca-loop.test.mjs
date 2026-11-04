@@ -168,6 +168,32 @@ describe('fumaça do loop sem LLM', { concurrency: 4 }, () => {
     assert.equal(r.proximaFinal.tipo, 'concluir', `proxima final${m}`);
   });
 
+  // A9 r13 (T30): dependente só despacha com a dependência integrada. `tres` com T1 reprovada duas vezes: T2 (independente) segue,
+  // T3 (depende de T1) nunca é iniciada, e o loop para em teto_rodadas de T1; com `liberar`, T1 recomeça e as 3 integram.
+  for (const x of ['50', '1']) {
+    test(`tres-teto (X=${x}): T1 R,R para em teto_rodadas T1; T2 integra, T3 não é iniciada`, async () => {
+      const r = await rodar({ plano: planos('tres'), vereditos: { T1: ['REPROVADO', 'REPROVADO'] }, x });
+      const m = TRILHA(r);
+      assert.equal(r.fim, 'parar teto_rodadas T1', `fim${m}`);
+      assert.equal(r.integradas, 1, `só T2 integra${m}`);
+      assert.deepEqual(r.parar, x === '1' ? ['teto_rodadas'] : [], `loop.parar gravado${m}`);
+      assert.equal(r.pouso, x === '1' ? 1 : 0, `pousos${m}`);
+      assert.deepEqual(r.defeitos, [], `defeitos${m}`);
+      assert.ok(!r.trilha.some((l) => /iniciar T3/.test(l)), `T3 nunca iniciada${m}`);
+      assert.deepEqual(r.proximaFinal, { tipo: 'parar', motivo: 'teto_rodadas', task: 'T1' }, `proxima final${m}`);
+    });
+    test(`tres-teto-liberar (X=${x}): depois de liberar T1 o loop conclui com 3 integradas`, async () => {
+      const r = await rodar({ plano: planos('tres'), vereditos: { T1: ['REPROVADO', 'REPROVADO'] }, x, liberar: true });
+      const m = TRILHA(r);
+      assert.equal(r.fim, 'concluir', `fim${m}`);
+      assert.equal(r.integradas, 3, `integradas${m}`);
+      assert.deepEqual(r.parar, x === '1' ? ['teto_rodadas'] : [], `loop.parar gravado${m}`);
+      assert.equal(r.pouso, x === '1' ? 3 : 0, `pousos${m}`);
+      assert.deepEqual(r.defeitos, [], `defeitos${m}`);
+      assert.equal(r.proximaFinal.tipo, 'concluir', `proxima final${m}`);
+    });
+  }
+
   test('X não atingido: contexto abaixo de X, nenhum Agent negado, nenhum pouso, e o loop conclui', async () => {
     const r = await rodar({ plano: planos('tres'), vereditos: { T1: ['REPROVADO'] }, percent: 10, x: '50' });
     conferir(r, { fim: 'concluir', pouso: 0, integradas: 3, vereditos: 4, correcoes: 1, proxima: 'concluir', denies: 0 });

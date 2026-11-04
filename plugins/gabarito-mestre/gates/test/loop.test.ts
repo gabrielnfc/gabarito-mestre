@@ -196,8 +196,11 @@ test('tabela-K-reprovada-r1-pousa', () => {
   const evs = diario(ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1));
   assert.deepEqual(proximaAcao(plano(['a']), evs, NX()), { tipo: 'pousar' });
 });
-test('tabela-K-no-teto-com-dependente-pousa', () => {
-  assert.deepEqual(proximaAcao(plano(['a'], ['b', ['a']]), diario(...noTeto('a')), NX()), { tipo: 'pousar' });
+test('tabela-K-no-teto-com-dependente-para: dependente de task no teto não é resto; só resta o teto (A9 r13, REQ-POU-1)', () => {
+  assert.deepEqual(proximaAcao(plano(['a'], ['b', ['a']]), diario(...noTeto('a')), NX()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'a' });
+});
+test('tabela-K-independente-com-outra-no-teto-pousa: resto sem ancestral no teto ainda pousa', () => {
+  assert.deepEqual(proximaAcao(plano(['a'], ['b'], ['c', ['a']]), diario(...noTeto('a')), NX()), { tipo: 'pousar' });
 });
 /** O que o mod faz: fronteira consumida (inclui "sem veredito") ⇒ `percent: null` ao núcleo (REQ-POU-1, aceite 1). */
 const comFronteira = (p: Plano, evs: Evento[], s: Partial<Sinais> = {}) => {
@@ -342,15 +345,19 @@ test('teto-independente-segue', () => {
   const a = proximaAcao(plano(['a'], ['b']), diario(...noTeto('a')), sinais());
   assert.deepEqual(a, { tipo: 'despachar', itens: [{ task: 'b', papel: 'implementador' }] });
 });
-test('teto-dependente-nao-integra', () => {
+test('teto-dependente-nao-integra: dependente espera a dependência integrada, direta ou transitiva (A9 r13)', () => {
   const p = plano(['a'], ['b', ['a']], ['c', ['b']]);
-  assert.deepEqual(proximaAcao(p, diario(...noTeto('a')), sinais()), { tipo: 'despachar', itens: [{ task: 'b', papel: 'implementador' }] });
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a')), sinais()), tetoDe('a'), 'b não despacha sem a integrada');
   const evs = diario(...noTeto('a'), ...aprovada('b'));
   assert.equal(podeIntegrar(p, evs, 'b'), false);
-  assert.deepEqual(proximaAcao(p, evs, sinais()), { tipo: 'despachar', itens: [{ task: 'c', papel: 'implementador' }] });
+  assert.deepEqual(proximaAcao(p, evs, sinais()), tetoDe('a'), 'c também espera: dep aprovada não basta');
   const evs2 = diario(...noTeto('a'), ...aprovada('b'), ...aprovada('c'));
   assert.equal(podeIntegrar(p, evs2, 'c'), false, 'transitivo');
-  assert.deepEqual(proximaAcao(p, evs2, sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'a' });
+  assert.deepEqual(proximaAcao(p, evs2, sinais()), tetoDe('a'));
+});
+test('independente-segue-com-outra-no-teto: só a que não depende da task no teto despacha', () => {
+  const p = plano(['a'], ['b'], ['c', ['a']]);
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a')), sinais()), { tipo: 'despachar', itens: [{ task: 'b', papel: 'implementador' }] });
 });
 test('teto-transitivo-mesmo-com-elo-do-meio-integrado', () => {
   const p = plano(['a'], ['b', ['a']], ['c', ['b']]);
