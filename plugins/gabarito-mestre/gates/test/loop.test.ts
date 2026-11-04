@@ -378,6 +378,20 @@ const EVENTOS_AVULSOS: [string, [TipoEvento, Record<string, unknown>]][] = [
   ['aprovado r1', ver('a', 'APROVADO', 1)], ['reprovado r1', ver('a', 'REPROVADO', 1, 1)], ['reprovado r3', ver('a', 'REPROVADO', 3, 1)],
   ['reprovado r2 duplicado', ver('a', 'REPROVADO', 2, 1)], ['retomada', retomada('a')],
 ];
+test('tabela-K-transitivo-no-teto-nao-pousa: a(teto) -> b -> c com X atingido só resta o teto (5d, MAJOR 1)', () => {
+  const p = plano(['a'], ['b', ['a']], ['c', ['b']]);
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a')), sinais({ percent: 60 })), tetoDe('a'));
+});
+test('tabela-K-um-ancestral-no-teto-basta: c com ancestral no teto e outro integrado não é resto (5d)', () => {
+  const p = plano(['a'], ['d'], ['c', ['a', 'd']]);
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ...pronta('d')), sinais({ percent: 60 })), tetoDe('a'));
+});
+test('diamante: c dep a integrada e b no teto não despacha, com e sem X atingido (A9, MAJOR 2)', () => {
+  const p = plano(['a'], ['b'], ['c', ['a', 'b']]);
+  const evs = diario(...pronta('a'), ...noTeto('b'));
+  assert.deepEqual(proximaAcao(p, evs, sinais()), tetoDe('b'));
+  assert.deepEqual(proximaAcao(p, evs, sinais({ percent: 60 })), tetoDe('b'));
+});
 test('teto-evento-avulso-mantem', () => {
   const p = plano(['a']);
   assert.deepEqual(proximaAcao(p, diario(...noTeto('a')), sinais()), tetoDe('a'));
