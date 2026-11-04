@@ -263,6 +263,28 @@ describe('fumaça do loop sem LLM', { concurrency: 4 }, () => {
     assert.equal(r.guarda.deny, 0, `guarda deny${m}`);
   });
 
+  // T31 (Q-T13G, REQ-LOOP-5, P9): `duas`, T1 reprovada duas vezes (teto) e T2 iniciada sem Agent. O núcleo já parou (teto_rodadas T1): o mod
+  // não reabre a órfã nem abre turno e grava esse `parar`. Com `liberar`, T1 recomeça e T2 (que esperou) é reaberta no fim de turno seguinte.
+  test('esquece-teto: T1 R,R + T2 órfã ⇒ o mod grava teto_rodadas, não reabre T2 nem abre turno', async () => {
+    const r = await rodar({ plano: planos('duas'), vereditos: { T1: ['REPROVADO', 'REPROVADO'] }, esquece: 'T2', x: '50' });
+    const m = TRILHA(r);
+    assert.deepEqual(r.parar, ['teto_rodadas'], `loop.parar${m}`);
+    assert.ok(!r.reabertasDe.includes('T2'), `T2 não é reaberta${m}`);
+    assert.equal(r.submits, 0, `nenhum turno aberto pelo mod${m}`);
+    assert.notEqual(r.fim, 'concluir', `não conclui${m}`);
+    assert.deepEqual(r.defeitos, [], `defeitos${m}`);
+  });
+  test('esquece-teto-liberar: depois de liberar T1 a órfã T2 é reaberta, o loop conclui com 2 integradas', async () => {
+    const r = await rodar({ plano: planos('duas'), vereditos: { T1: ['REPROVADO', 'REPROVADO'] }, esquece: 'T2', x: '50', liberar: true });
+    const m = TRILHA(r);
+    assert.equal(r.fim, 'concluir', `fim${m}`);
+    assert.equal(r.integradas, 2, `T1 e T2 integradas${m}`);
+    assert.deepEqual(r.parar, ['teto_rodadas'], `loop.parar uma vez${m}`);
+    assert.ok(r.reabertasDe.includes('T2'), `T2 é reaberta depois de liberar${m}`);
+    assert.deepEqual(r.defeitos, [], `defeitos${m}`);
+    assert.equal(r.proximaFinal.tipo, 'concluir', `proxima final${m}`);
+  });
+
   test('esquece-com-pausa: PAUSAR antes do fim do turno ⇒ o mod não reabre nem abre turno', async () => {
     const r = await rodar({ plano: planos('tres'), esquece: 'T3', pausa: true });
     const m = TRILHA(r);

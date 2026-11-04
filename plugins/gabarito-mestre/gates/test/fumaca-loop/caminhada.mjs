@@ -497,7 +497,9 @@ export async function caminhar(opcoes) {
       r = await ciclo();
       continue;
     }
-    if (fim && !mundo.clearAgora) break; // um pouso agendado muda o fim: o /clear reabre o turno
+    // T31: `parar` do modelo com turno aberto pelo mod (recuperação da órfã que esperou o `liberar`) não encerra: o turno novo continua o ciclo
+    const modAbriu = /^parar /.test(fim ?? '') && mundo.submits.length > submitsVistos;
+    if (fim && !mundo.clearAgora && !modAbriu) break; // um pouso agendado muda o fim: o /clear reabre o turno
     fim = null;
     turno++;
     if (mundo.clearAgora) {

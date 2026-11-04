@@ -332,21 +332,36 @@ const PROMPT_RECUPERACAO = 'Task em voo sem agente: o mod a reabriu. Continue o 
 /**
  * REQ-LOOP-5, task em voo sem agente (Q-T13F D1): `iniciar` sem `Agent` (um hand-back entrou entre os dois). No fim normal do turno, com
  * vivos = 0, sem hand-back a caminho, sem pausa e sem `parar`, reabre as tasks em voo (origem `retomada`) e abre um turno, sem pousar nele.
- * Até 2 vezes por task; na seguinte grava `loop.parar {nao_conseguiu}` e avisa. Qualquer leitura ruim, ou `task.reaberta` que não grava:
+ * Antes de reabrir, pergunta ao núcleo (Q-T13G): `parar` com motivo diferente de `nao_conseguiu` é gravado e não reabre nem abre turno.
+ * Até 2 vezes por task em cada ciclo (`liberar` recomeça a conta); na seguinte grava `loop.parar {nao_conseguiu}` e avisa. Qualquer leitura ruim, ou `task.reaberta` que não grava:
  * não reabre e devolve `false` (o núcleo decide, como antes). `true` = o mod agiu e o turno não decide mais nada.
  */
 async function recuperarOrfas($) {
   const { c } = await loopAtivo($);
-  if (c === null || terminados > recebidos || (await pausadoAgora($))) return false;
-  let lista = null;
-  try { lista = await $.agent.list(); } catch { return false; }
-  if (!Array.isArray(lista) || vivosDe(lista) > 0) return false;
-  const l = await ponte($, { op: 'ler', dir: c.dir, cwd: c.cwd });
-  const p = await ponte($, { op: 'plano', dir: c.dir, raiz: c.raiz, cwd: c.cwd });
-  if (l.ok !== true || !Array.isArray(l.eventos) || p.ok !== true || jaParou(l.eventos)) return false;
-  const voo = tasksEmVoo(p.plano, l.eventos);
+  if (c === null || terminados > recebidos) return false;
+  const m = await lerMundo($, c); // diário, plano, config, teto, vivos e pausa; qualquer dúvida ⇒ `null`
+  if (m === null || m.pausado || m.vivos > 0 || jaParou(m.eventos)) return false;
+  const voo = tasksEmVoo(m.plano, m.eventos);
   if (!voo.ok || voo.tasks.length === 0) return false;
-  const chave = (t) => `${c.dir}|${t}`;
+  // Q-T13G: o núcleo manda. `percent: null` (sem o (5b), que trocaria o motivo por `nao_conseguiu`), vivos 0, tokens e teto reais.
+  // `parar` com motivo diferente de `nao_conseguiu` ⇒ grava esse `parar` e não reabre nem abre turno. Núcleo que lança ⇒ não reabre.
+  let acao = null;
+  try {
+    acao = proximaAcao(m.plano, m.eventos, {
+      slots: m.slots, percent: null, x: await xAtual($), pausado: false, vivos: 0, tokens: m.tokens, tetoTokens: m.tetoTokens, podePousar: true,
+    });
+  } catch {
+    await avisarDiario($, 'o núcleo do loop falhou');
+    return false;
+  }
+  if (acao.tipo === 'parar' && acao.motivo !== 'nao_conseguiu') {
+    espera = null;
+    await pararDoNucleo($, c, acao, m);
+    return true;
+  }
+  // a conta é por ciclo: cada `task.reaberta {dono}` (liberar) da task recomeça a contagem
+  const donos = (t) => m.eventos.filter((e) => e?.tipo === 'task.reaberta' && e.dados?.origem === 'dono' && e.dados?.task === t).length;
+  const chave = (t) => `${c.dir}|${t}|${donos(t)}`;
   const esgotada = voo.tasks.find((t) => (recuperadas.get(chave(t)) ?? 0) >= MAX_RECUPERACOES);
   if (esgotada !== undefined) {
     const gravou = await gravar($, c, { agente: 'orquestrador', tipo: 'loop.parar', dados: { motivo: 'nao_conseguiu', task: esgotada } });

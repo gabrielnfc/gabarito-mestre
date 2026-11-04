@@ -1850,3 +1850,82 @@ test('orfa-sem-task-em-voo-nao-abre-turno: nada em voo ⇒ nada a recuperar', as
   expect(reabertas(m)).toHaveLength(0)
   expect(m.est.submits.filter((s) => s.includes('em voo'))).toHaveLength(0)
 })
+
+// ---- T31 (Q-T13G, REQ-LOOP-5): a recuperação respeita o `parar` do núcleo; a conta é por ciclo (`liberar` recomeça) ----
+const DONO_A = ['task.reaberta', { task: 'a', origem: 'dono' }] as [string, Record<string, unknown>]
+const PLANO_AB = { entrega: 'PBI-7', tasks: [{ id: 'a', deps: [], arquivos: ['a.ts'] }, { id: 'b', deps: [], arquivos: ['b.ts'] }] }
+const EM_TETO_A_E_B_ORFA = [...NO_TETO, EV(7, 'task.iniciada', { task: 'b', papel: 'implementador' })]
+const MEDIDO = EV(8, 'custo.medicao', { agente: 'orquestrador', input_tokens: 90, output_tokens: 20, cache_read: 0, cache_creation: 0 })
+const naoReabre = (m: ReturnType<typeof mundo>) => {
+  expect(reabertas(m)).toHaveLength(0)
+  expect(m.est.submits).toHaveLength(0)
+  expect(m.tipos()).not.toContain('sessao.pouso')
+}
+
+test('orfa-teto-rodadas-nao-reabre: T1 no teto e outra órfã ⇒ grava parar teto_rodadas com aviso, 0 reabertas, 0 turnos', async ($, on) => {
+  const m = mundo($, on, { eventos: EM_TETO_A_E_B_ORFA, plano_json: PLANO_AB })
+  await m.inicio()
+  await recuperar(m)
+  naoReabre(m)
+  expect(parou(m)).toHaveLength(1)
+  expect(parou(m)[0].dados).toEqual({ motivo: 'teto_rodadas', task: 'a' })
+  expect(m.toasts.some((t) => t.includes('teto_rodadas'))).toBe(true)
+  await recuperar(m)
+  expect(parou(m)).toHaveLength(1)
+})
+test('orfa-teto-tokens-nao-reabre: tokens no teto ⇒ grava parar teto_tokens, 0 reabertas, 0 turnos', async ($, on) => {
+  const m = mundo($, on, { eventos: [...ORFA, MEDIDO], config: { tetoTokens: 100 } })
+  await m.inicio()
+  await recuperar(m)
+  naoReabre(m)
+  expect(parou(m)).toHaveLength(1)
+  expect(parou(m)[0].dados).toEqual({ motivo: 'teto_tokens' })
+  expect(m.toasts.some((t) => t.includes('teto_tokens'))).toBe(true)
+})
+test('orfa-ci-vermelho-nao-reabre: 2 CI vermelhos ⇒ grava parar ci_vermelho, 0 reabertas, 0 turnos', async ($, on) => {
+  const m = mundo($, on, { eventos: [...ORFA, EV(8, 'ci.resultado', { verde: false }), EV(9, 'ci.resultado', { verde: false })] })
+  await m.inicio()
+  await recuperar(m)
+  naoReabre(m)
+  expect(parou(m)).toHaveLength(1)
+  expect(parou(m)[0].dados).toEqual({ motivo: 'ci_vermelho' })
+  expect(m.toasts.some((t) => t.includes('ci_vermelho'))).toBe(true)
+})
+test('orfa-nao-conseguiu-do-nucleo-reabre: núcleo com `parar nao_conseguiu` (ou sem parar) a órfã é reaberta e o turno abre', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA }) // sem teto, sem CI vermelho: o núcleo diz `parar nao_conseguiu` (task em voo sem agente)
+  await m.inicio()
+  await recuperar(m)
+  expect(reabertas(m)).toEqual([ORQ_RETOMADA])
+  expect(m.est.submits).toHaveLength(1)
+  expect(parou(m)).toHaveLength(0)
+})
+test('orfa-conta-recomeca-depois-de-liberar: 2 recuperações esgotam a conta; task.reaberta {dono} na task a recomeça (liberar)', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA })
+  await m.inicio()
+  await recuperar(m)
+  m.add('o', ...A_INI_DE_NOVO)
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(2)
+  // a chega ao teto e o dono a libera: novo ciclo, conta zerada
+  m.add('o', ...A_INI_DE_NOVO)
+  m.add('o', ...A_CON)
+  m.add('o', 'review.veredito', { task: 'a', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 })
+  m.add('o', 'task.iniciada', { task: 'a', papel: 'correcao' })
+  m.add('o', ...A_CON)
+  m.add('o', 'review.veredito', { task: 'a', veredito: 'REPROVADO', rodada: 2, major: 1, blocker: 0 })
+  m.add('o', ...DONO_A)
+  m.add('o', ...A_INI_DE_NOVO)
+  await recuperar(m)
+  expect(parou(m)).toHaveLength(0)
+  expect(reabertas(m)).toHaveLength(3)
+  expect(m.est.submits).toHaveLength(3)
+})
+test('orfa-nucleo-lanca-nao-reabre: proximaAcao que lança ⇒ não reabre, não abre turno, não grava parar; aviso de que o núcleo falhou', async ($, on) => {
+  // `c` pendente sem `deps`: `t.deps.every` lança dentro de `proximaAcao`
+  const m = mundo($, on, { eventos: ORFA, plano_json: { entrega: 'PBI-7', tasks: [...PLANO.tasks, { id: 'c', arquivos: ['c.ts'] }] } })
+  await m.inicio()
+  await recuperar(m)
+  naoReabre(m)
+  expect(parou(m)).toHaveLength(0)
+  expect(m.toasts.some((t) => t.includes('núcleo'))).toBe(true)
+})
