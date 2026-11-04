@@ -87,7 +87,7 @@ export type Evento = {
 // E2 (GM-10): plano como dado e contratos do loop. `dados` do diário nunca carrega comando cru.
 // `task.reaberta`: `dados = {task, origem: 'dono' | 'retomada'}`; só `dono`, por comando humano, libera o teto.
 export type TaskPlano = { id: string; deps: string[]; arquivos: string[]; teste_afetado?: string; mutacoes?: string };
-export type Plano = { entrega: string; tasks: TaskPlano[] };
+export type Plano = { entrega: string; spec?: string; tasks: TaskPlano[] };
 export type Sinais = {
   slots: number;
   percent: number | null;

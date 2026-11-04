@@ -354,12 +354,28 @@ function ramoDoPrincipal(raiz) {
   }
 }
 
+/** Sem seguir symlink: `.tmp-gabarito` e o `.gitignore` dele têm de ser o que o `abrir` cria (diretório e arquivo comuns). */
 function garantirTmp(wt) {
-  const tmp = join(wt, TMP);
-  if (!existsSync(tmp)) mkdirSync(tmp);
+  let tmp = validarTmp(wt);
+  if (tmp === null) {
+    tmp = join(wt, TMP);
+    mkdirSync(tmp);
+  }
   // O `*` dentro do próprio diretório o ignora (e ao próprio arquivo) sem tocar `.gitignore` versionado nem `info/exclude` compartilhado.
-  if (!existsSync(join(tmp, '.gitignore'))) writeFileSync(join(tmp, '.gitignore'), '*\n');
+  const ign = join(tmp, '.gitignore');
+  const st = lstatOuNull(ign);
+  if (st === null) writeFileSync(ign, '*\n');
+  else if (!st.isFile()) throw new Falha('tmpdir_invalido', `${TMP}/.gitignore não é um arquivo comum (symlink ou diretório); recusado, nada foi escrito`);
   return tmp;
+}
+
+function lstatOuNull(p) {
+  try {
+    return lstatSync(p);
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    throw new Falha('tmpdir_invalido', `${basename(p)} ilegível (${e.code ?? e.message}); nada foi escrito`);
+  }
 }
 
 /**
@@ -370,17 +386,17 @@ function garantirTmp(wt) {
  */
 function jaAberta(c, task, branch, v) {
   const caminho = caminhoWt(c, task);
+  let base;
   try {
     if (!existsSync(caminho)) return null;
     if (!worktreesRegistradas(c.raiz).includes(realpathSync(caminho))) return null;
     if (git(caminho, 'symbolic-ref', '-q', 'HEAD') !== `refs/heads/${branch}`) return null;
-    const base = git(c.raiz, 'config', '--get', `branch.${branch}.gabaritoBase`);
-    garantirTmp(caminho);
-    const tmp = join(caminho, TMP);
-    return { task, branch, base, worktree: caminho, tmpdir: tmp, env: { TMPDIR: tmp }, banco: v.na ? 'n/a' : nomeBanco(c.entrega, task), ja_aberta: true };
+    base = git(c.raiz, 'config', '--get', `branch.${branch}.gabaritoBase`);
   } catch {
     return null; // não dá para provar que é a nossa: recusa como antes
   }
+  const tmp = garantirTmp(caminho); // é a nossa: symlink em `.tmp-gabarito` recusa com motivo (tmpdir_invalido), nada escrito fora
+  return { task, branch, base, worktree: caminho, tmpdir: tmp, env: { TMPDIR: tmp }, banco: v.na ? 'n/a' : nomeBanco(c.entrega, task), ja_aberta: true };
 }
 
 function abrir(c, plano, task) {
@@ -445,6 +461,7 @@ const caminhoAchados = (wt, rodada) => join(wt, TMP, `review-r${rodada}.md`);
 /** Achados de uma rodada: arquivo regular (lstat: symlink e diretório não valem) com texto além de espaço. */
 function achadosLegiveis(arq) {
   try {
+    if (!lstatSync(dirname(arq)).isDirectory()) return false; // lstat: `.tmp-gabarito` symlink (para fora) não vale
     if (!lstatSync(arq).isFile()) return false;
     return readFileSync(arq, 'utf8').trim() !== '';
   } catch {
@@ -825,12 +842,11 @@ function proxima(c, plano, flags) {
 }
 
 /**
- * O item de despacho carrega o que o /clear apaga: `spec` (ponteiro do plano) e, na `correcao`, `achados` (caminho do arquivo da
+ * O item de despacho carrega o que o /clear apaga: `spec` (ponteiro do topo do plano) e, na `correcao`, `achados` (caminho do arquivo da
  * rodada reprovada). Arquivo ausente ou vazio não vira caminho: `achados: null` e aviso (o orquestrador não manda corrigir às cegas).
  */
 function enriquecer(c, plano, eventos, item, aviso) {
-  const t = plano.tasks.find((x) => x.id === item.task);
-  const saida = { ...item, ...(typeof t?.spec === 'string' ? { spec: t.spec } : {}) };
+  const saida = { ...item, ...(typeof plano.spec === 'string' ? { spec: plano.spec } : {}) };
   if (item.papel !== 'correcao') return saida;
   const ord = ordenar(eventos);
   const reprovado = (ord.ok ? ord.eventos : []).filter((e) => e.tipo === 'review.veredito' && e.dados?.task === item.task && e.dados?.veredito === 'REPROVADO').at(-1);

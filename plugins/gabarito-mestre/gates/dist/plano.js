@@ -27,6 +27,8 @@ function validar(bruto         )                 {
   const lista = bruto.tasks;
   if (typeof entrega !== 'string' || entrega === '') return recusa('plano sem `entrega` em texto');
   if (!Array.isArray(lista)) return recusa('`tasks` não é uma lista');
+  const spec = bruto.spec;
+  if (spec !== undefined && (typeof spec !== 'string' || spec.trim() === '')) return recusa('`spec` do plano não é texto');
 
   const tasks = new Map                   ();
   for (const [i, t] of lista.entries()) {
@@ -45,9 +47,8 @@ function validar(bruto         )                 {
     }
     if (t.teste_afetado !== undefined && typeof t.teste_afetado !== 'string') return recusa(`task ${t.id}: \`teste_afetado\` não é texto`);
     if (t.mutacoes !== undefined && typeof t.mutacoes !== 'string') return recusa(`task ${t.id}: \`mutacoes\` não é texto`);
-    if (t.spec !== undefined && (typeof t.spec !== 'string' || t.spec === '')) return recusa(`task ${t.id}: \`spec\` não é texto`);
-    const nova                                = { id: t.id, deps: [...deps], arquivos };
-    if (t.spec !== undefined) nova.spec = t.spec;
+    if ('spec' in t) return recusa(`task ${t.id}: \`spec\` é campo do plano (topo), não da task`);
+    const nova            = { id: t.id, deps: [...deps], arquivos };
     if (t.teste_afetado !== undefined) nova.teste_afetado = t.teste_afetado;
     if (t.mutacoes !== undefined) nova.mutacoes = t.mutacoes;
     tasks.set(t.id, nova);
@@ -108,7 +109,7 @@ function validar(bruto         )                 {
     }
   }
 
-  return { ok: true, plano: { entrega, tasks: [...tasks.values()] } };
+  return { ok: true, plano: { entrega, ...(spec !== undefined ? { spec } : {}), tasks: [...tasks.values()] } };
 }
 
 export function validarPlano(bruto         )                 {

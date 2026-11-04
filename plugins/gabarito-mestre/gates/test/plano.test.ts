@@ -127,16 +127,22 @@ test('plano-campo-nao-array: string, objeto e item não string recusam', () => {
   }
 });
 
-test('plano-spec: texto opcional é preservado; vazio ou não texto recusa citando task e campo (D8)', () => {
-  const r = validarPlano(plano({ ...t('a', [], ['x.ts']), spec: 'docs/spec.md:10-20' }, t('b', ['a'], ['y.ts'])));
+test('plano-spec: `spec` é campo do topo do plano, preservado; vazio, não texto ou dentro de tasks[] recusa (REQ-LOOP-1)', () => {
+  const r = validarPlano({ ...plano(t('a', [], ['x.ts']), t('b', ['a'], ['y.ts'])), spec: 'docs/minha spec.md:10-20' });
   assert.equal(r.ok, true);
   if (r.ok) {
-    assert.equal((r.plano.tasks[0] as { spec?: string }).spec, 'docs/spec.md:10-20');
-    assert.equal('spec' in r.plano.tasks[1], false, 'sem spec no plano, sem spec na task');
+    assert.equal(r.plano.spec, 'docs/minha spec.md:10-20');
+    assert.equal('spec' in r.plano.tasks[0], false, 'a task não carrega spec');
   }
+  const sem = validarPlano(plano(t('a', [], ['x.ts'])));
+  assert.equal(sem.ok, true);
+  if (sem.ok) assert.equal('spec' in sem.plano, false, 'ausente fica ausente');
   for (const spec of ['', 7, null, ['x'], {}]) {
-    const x = validarPlano(plano({ ...t('a', [], ['x.ts']), spec }));
+    const x = validarPlano({ ...plano(t('a', [], ['x.ts'])), spec });
     assert.equal(x.ok, false, JSON.stringify(spec));
-    if (!x.ok) assert.match(x.erro, /task a.*spec/);
+    if (!x.ok) assert.match(x.erro, /spec/);
   }
+  const naTask = validarPlano(plano({ ...t('a', [], ['x.ts']), spec: 'docs/spec.md' }));
+  assert.equal(naTask.ok, false, 'spec em tasks[] não some em silêncio');
+  if (!naTask.ok) assert.match(naTask.erro, /task a.*spec.*plano/);
 });

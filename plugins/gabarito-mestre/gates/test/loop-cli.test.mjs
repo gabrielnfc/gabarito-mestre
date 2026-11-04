@@ -2199,21 +2199,23 @@ describe('T20: abrir idempotente, achados do revisor e spec', () => {
     assert.match(r.j.mensagem, /rodada esperada: 2\b/);
   });
 
-  test('proxima-traz-spec: o ponteiro da spec vem do plano, em todo item que tem', () => {
+  test('proxima-traz-spec: o ponteiro da spec vem do topo do plano, em todo item (caminho com espaço incluso)', () => {
     const amb = ambiente({
-      plano: planoDe([
-        { id: 'T1', deps: [], arquivos: ['src/t1.txt'], spec: 'docs/spec.md:10-20' },
-        { id: 'T3', deps: [], arquivos: ['src/t3.txt'] },
-      ]),
+      plano: { ...planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }, { id: 'T3', deps: [], arquivos: ['src/t3.txt'] }]), spec: 'docs/minha spec.md:10-20' },
     });
     const p = amb.cli(['proxima', '--vivos', '0']);
     assert.equal(p.rc, 0, p.out + p.err);
-    assert.equal(p.j.acao.itens.find((i) => i.task === 'T1').spec, 'docs/spec.md:10-20');
-    assert.equal(p.j.acao.itens.find((i) => i.task === 'T3').spec, undefined);
+    for (const i of p.j.acao.itens) assert.equal(i.spec, 'docs/minha spec.md:10-20', i.task);
+  });
+
+  test('proxima-sem-spec-no-plano: item sem spec', () => {
+    const p = ambiente().cli(['proxima', '--vivos', '0']);
+    assert.equal(p.rc, 0, p.out + p.err);
+    for (const i of p.j.acao.itens) assert.equal('spec' in i, false);
   });
 
   test('proxima-correcao-traz-spec-e-achados: a correção depois do /clear tem os dois', () => {
-    const amb = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], spec: 'docs/spec.md:10-20' }]) });
+    const amb = ambiente({ plano: { ...planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }]), spec: 'docs/spec.md:10-20' } });
     reprovarR1(amb);
     const item = amb.cli(['proxima', '--vivos', '0']).j.acao.itens[0];
     assert.equal(item.papel, 'correcao');
@@ -2221,12 +2223,96 @@ describe('T20: abrir idempotente, achados do revisor e spec', () => {
     assert.ok(typeof item.achados === 'string' && existsSync(item.achados));
   });
 
-  test('plano-spec-invalida-recusa: spec que não é texto', () => {
-    const amb = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], spec: 7 }]) });
-    const p = amb.cli(['proxima']);
-    assert.equal(p.rc, 1);
-    assert.equal(p.j.erro, 'plano_invalido');
-    assert.match(p.j.mensagem, /spec/);
+  test('plano-spec-invalida-recusa: vazia, não texto, ou dentro de tasks[] (com motivo)', () => {
+    const casos = [
+      [{ ...planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }]), spec: 7 }, /spec/],
+      [{ ...planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }]), spec: '' }, /spec/],
+      [planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], spec: 'docs/spec.md' }]), /task T1.*spec/],
+    ];
+    for (const [plano, re] of casos) {
+      const p = ambiente({ plano }).cli(['proxima']);
+      assert.equal(p.rc, 1, p.out);
+      assert.equal(p.j.erro, 'plano_invalido');
+      assert.match(p.j.mensagem, re);
+    }
+  });
+
+  test('abrir-duas-vezes-devolve-o-banco: o mesmo nome, sem clone novo (REQ-LOOP-3)', () => {
+    const amb = ambiente();
+    amb.comBanco();
+    const a = amb.cli(['abrir', 'T1']);
+    assert.equal(a.rc, 0, a.out + a.err);
+    assert.notEqual(a.j.banco, 'n/a');
+    const b = amb.cli(['abrir', 'T1']);
+    assert.equal(b.rc, 0, b.out + b.err);
+    assert.equal(b.j.ja_aberta, true);
+    assert.equal(b.j.banco, a.j.banco);
+  });
+
+  describe('symlink em .tmp-gabarito (falha fecha, nada fora da worktree)', () => {
+    const fora = (_amb, nome) => novoTmp(`loop-fora-${nome}-`);
+    test('veredito-recusa-tmp-symlink-para-fora: nada gravado', () => {
+      const amb = ambiente();
+      ateRevisor(amb);
+      const tmp = join(amb.wt('T1'), '.tmp-gabarito');
+      const alvo = fora(amb, 'v');
+      writeFileSync(join(alvo, 'review-r1.md'), '- MAJOR 1: x\n');
+      rmSync(tmp, { recursive: true });
+      symlinkSync(alvo, tmp);
+      const antes = amb.eventos().length;
+      const r = amb.cli(['veredito', 'T1', 'REPROVADO', '1', '0', '1']);
+      assert.equal(r.rc, 1, r.out);
+      assert.equal(r.j.ok, false);
+      assert.equal(r.j.erro, 'achados_ausentes');
+      assert.equal(amb.eventos().length, antes);
+    });
+    test('abrir-repetido-recusa-tmp-symlink-sem-escrever-fora', () => {
+      const amb = ambiente();
+      const a = amb.cli(['abrir', 'T1']);
+      const alvo = fora(amb, 'a');
+      rmSync(a.j.tmpdir, { recursive: true });
+      symlinkSync(alvo, a.j.tmpdir);
+      const r = amb.cli(['abrir', 'T1']);
+      assert.equal(r.rc, 1, r.out);
+      assert.equal(r.j.erro, 'tmpdir_invalido');
+      assert.deepEqual(readdirSync(alvo), [], 'nada escrito fora da worktree');
+    });
+    test('abrir-repetido-recusa-gitignore-symlink: o alvo do link não é tocado', () => {
+      const amb = ambiente();
+      const a = amb.cli(['abrir', 'T1']);
+      const alvo = join(fora(amb, 'g'), 'alvo.txt');
+      writeFileSync(alvo, 'intacto');
+      rmSync(join(a.j.tmpdir, '.gitignore'));
+      symlinkSync(alvo, join(a.j.tmpdir, '.gitignore'));
+      const r = amb.cli(['abrir', 'T1']);
+      assert.equal(r.rc, 1, r.out);
+      assert.equal(r.j.erro, 'tmpdir_invalido');
+      assert.equal(readFileSync(alvo, 'utf8'), 'intacto');
+    });
+    test('abrir-repetido-recusa-tmp-arquivo-comum', () => {
+      const amb = ambiente();
+      const a = amb.cli(['abrir', 'T1']);
+      rmSync(a.j.tmpdir, { recursive: true });
+      writeFileSync(a.j.tmpdir, 'x');
+      const r = amb.cli(['abrir', 'T1']);
+      assert.equal(r.rc, 1, r.out);
+      assert.equal(r.j.erro, 'tmpdir_invalido');
+    });
+    test('vizinhos-seguem-passando: diretório real e arquivo comum; symlink dentro da worktree recusa', () => {
+      const amb = ambiente();
+      reprovarR1(amb); // diretório real, arquivo comum: veredito passou (rc 0 no helper)
+      const amb2 = ambiente();
+      ateRevisor(amb2);
+      const tmp = join(amb2.wt('T1'), '.tmp-gabarito');
+      const dentro = join(amb2.wt('T1'), 'dentro');
+      mkdirSync(dentro);
+      writeFileSync(join(dentro, 'review-r1.md'), '- MAJOR 1: x\n');
+      rmSync(tmp, { recursive: true });
+      symlinkSync(dentro, tmp);
+      const r = amb2.cli(['veredito', 'T1', 'REPROVADO', '1', '0', '1']);
+      assert.equal(r.rc, 1, r.out);
+      assert.equal(r.j.erro, 'achados_ausentes');
+    });
   });
 
   test('achados-ignorado-e-fechar-remove: o arquivo não suja o git e sai com a worktree', () => {
