@@ -159,10 +159,10 @@ const inteiroNaoNegativo = (n         )              => typeof n === 'number' &&
  * Tasks que o mod reabre (origem `retomada`) ao fim do turno em que negou `Agent`: o `iniciar` do despacho negado ficou no
  * diário sem agente. Com `vivos > 0` não há como saber qual task é de quem: não reabre nada (a negação fica). Com `vivos = 0`
  * nenhuma task em voo tem agente: são as `min(negados, em voo)`, a que não é de revisor primeiro (o revisor nunca é negado) e,
- * dentro disso, a de `task.iniciada` mais recente. Plano, diário ou contagens ilegíveis ⇒ `ok: false` com o motivo (nunca uma
+ * antes do revisor, as iniciadas até `ate` (a hora da última negação; depois dela é despacho aceito, vai atrás, NÃO é excluída) e, dentro disso, a de `task.iniciada` mais recente. Plano, diário ou contagens ilegíveis ⇒ `ok: false` com o motivo (nunca uma
  * lista vazia que pareça "nada a reabrir").
  */
-export function tasksDoNegado(plano         , eventos         , negados         , vivos         )                                                                {
+export function tasksDoNegado(plano         , eventos         , negados         , vivos         , ate                = null)                                                                {
   if (!inteiroNaoNegativo(negados)) return { ok: false, motivo: 'contagem de negados ilegível' };
   if (!inteiroNaoNegativo(vivos)) return { ok: false, motivo: 'contagem de vivos ilegível' };
   const voo = tasksEmVoo(plano, eventos);
@@ -174,7 +174,8 @@ export function tasksDoNegado(plano         , eventos         , negados         
   if (!ord.ok) return { ok: false, motivo: 'diário fora de ordem' };
   const ultimo = (t        )         => ord.eventos.reduce((m, e, i) => (e.tipo === 'task.iniciada' && e.dados?.task === t ? i : m), -1);
   const revisor = (t        )         => (ord.eventos[ultimo(t)]?.dados?.papel === 'revisor' ? 1 : 0);
-  return { ok: true, tasks: [...voo.tasks].sort((a, b) => revisor(a) - revisor(b) || ultimo(b) - ultimo(a)).slice(0, k) };
+  const depois = (t        )         => (ate !== null && String(ord.eventos[ultimo(t)]?.ts) > ate ? 1 : 0);
+  return { ok: true, tasks: [...voo.tasks].sort((a, b) => revisor(a) - revisor(b) || depois(a) - depois(b) || ultimo(b) - ultimo(a)).slice(0, k) };
 }
 
 /** Eventos que não são trabalho do loop: o próprio mod os grava a cada turno ou ao parar. */

@@ -258,6 +258,22 @@ test('negado-puro-corrigindo-e-revisao: quem não é revisor primeiro; dentro di
   const lote: [TipoEvento, Record<string, unknown>][] = [iniP('a', 'implementador'), con('a'), ver('a', 'REPROVADO'), iniP('a', 'correcao'), iniP('b', 'implementador'), con('b'), iniP('b', 'revisor')];
   assert.deepEqual(doNegado(2, 0, ...lote), { ok: true, tasks: ['a', 'b'] });
 });
+test('negado-puro-ate: `ate` ordena as iniciadas depois dele para o fim e nunca as exclui', () => {
+  const d: [TipoEvento, Record<string, unknown>][] = [iniP('a', 'implementador'), iniP('b', 'implementador'), iniP('c', 'implementador')];
+  const ate = diario(...d)[1].ts;
+  assert.deepEqual(tasksDoNegado(PL, diario(...d), 1, 0, ate), { ok: true, tasks: ['b'] });
+  assert.deepEqual(tasksDoNegado(PL, diario(...d), 3, 0, ate), { ok: true, tasks: ['b', 'a', 'c'] });
+  assert.deepEqual(tasksDoNegado(PL, diario(...d), 3, 0, null), { ok: true, tasks: ['c', 'b', 'a'] });
+  assert.deepEqual(tasksDoNegado(PL, diario(...d), 3, 0, '0000-01-01T00:00:00.000Z'), { ok: true, tasks: ['c', 'b', 'a'] });
+  const so: [TipoEvento, Record<string, unknown>][] = [iniP('a', 'implementador')];
+  assert.deepEqual(tasksDoNegado(PL, diario(...so), 1, 0, '0000-01-01T00:00:00.000Z'), { ok: true, tasks: ['a'] });
+});
+test('negado-puro-ate-e-revisor: o revisor vai por último ANTES de `ate`: a iniciada depois de `ate` ainda precede o revisor', () => {
+  const d: [TipoEvento, Record<string, unknown>][] = [iniP('a', 'implementador'), iniP('b', 'implementador'), con('b'), iniP('b', 'revisor'), iniP('c', 'implementador')];
+  const ate = diario(...d)[3].ts;
+  assert.deepEqual(tasksDoNegado(PL, diario(...d), 2, 0, ate), { ok: true, tasks: ['a', 'c'] });
+  assert.deepEqual(tasksDoNegado(PL, diario(...d), 3, 0, ate), { ok: true, tasks: ['a', 'c', 'b'] });
+});
 test('negado-puro-ilegivel: plano, diário ou contagens ruins nunca viram lista vazia', () => {
   for (const r of [
     tasksDoNegado(PL, null, 1, 0),

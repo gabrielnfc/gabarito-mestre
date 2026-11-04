@@ -29,6 +29,7 @@ let desistiu = false; // um pouso falhou: só tenta de novo depois que o percent
 let xAvisado = null;
 let diarioAvisado = null; // motivo do último aviso de diário ilegível (não repete a cada turno)
 let negados = 0; // Agent de despacho negado neste turno: o `iniciar` dele ficou no diário sem agente
+let negadoAte = null; // hora (relógio de parede, como o diário) da última negação; null ⇒ sem ordenar por ela
 let espera = null; // { dir, marca, n }: turnos seguidos sem evento novo com o núcleo respondendo `nao_conseguiu`
 const TURNOS_ESPERA = 3; // alinhado a REQ-LOOP-5: o hand-back pode ainda não ter chegado
 
@@ -298,7 +299,8 @@ async function aoCompletarTurno($) {
  * D1: `Agent` negado não pode deixar `task.iniciada` para trás. No fim normal do turno, ANTES de decidir, com vivos = 0 reabre
  * (origem `retomada`) as `min(negados, em voo)` tasks: a que não é de revisor primeiro, a iniciada por último. Com agente vivo
  * não há como saber qual task é de quem, então a negação FICA (inclusive em Esc, erro e `/clear`; `session.start` não zera).
- * Só zera depois de ler diário, plano e lista com sucesso e vivos = 0. Reabertura que falha avisa e não insiste. Núcleo intacto.
+ * Só zera depois de `tasksDoNegado` dar ok (diário, plano e lista legíveis) com vivos = 0. As iniciadas depois da última
+ * negação (`negadoAte`) vão atrás na ordem: são despachos aceitos, não a negada. Reabertura que falha avisa e não insiste. Núcleo intacto.
  */
 async function desfazerNegados($) {
   if (negados === 0) return;
@@ -310,10 +312,9 @@ async function desfazerNegados($) {
   let lista = null;
   try { lista = await $.agent.list(); } catch { return; }
   if (!Array.isArray(lista) || vivosDe(lista) > 0) return;
-  const n = negados;
+  const r = tasksDoNegado(p.plano, l.eventos, negados, 0, negadoAte);
+  if (!r.ok) return; // plano ou diário ilegível para a regra: a negação FICA
   negados = 0;
-  const r = tasksDoNegado(p.plano, l.eventos, n, 0);
-  if (!r.ok) return;
   for (const task of r.tasks) {
     if (!(await gravar($, c, { agente: 'orquestrador', tipo: 'task.reaberta', dados: { task, origem: 'retomada' } }))) {
       await avisar($, `gabarito: não consegui gravar task.reaberta da task ${task}; o pouso não acontece. Rode reabrir ${task} pelo loop.mjs.`);
@@ -493,6 +494,7 @@ export const register = (on) => {
         const r = await avaliar($, c);
         if (r.negar) {
           negados += 1;
+          try { negadoAte = new Date().toISOString(); } catch { negadoAte = null; } // parede: o diário grava `new Date()`, o `$.clock` dos testes não
           if (r.acao?.tipo === 'pousar' && r.mundo !== null) await marcarPousoPendente($, c, r.mundo.eventos);
           return { deny: `pouso: contexto em ${r.percent}% (X=${r.x}%), ${descrever(r)}. Sem despacho novo; só o revisor passa. Não tente de novo: encerre o turno.` };
         }

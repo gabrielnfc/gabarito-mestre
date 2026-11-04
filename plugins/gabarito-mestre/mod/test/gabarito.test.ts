@@ -90,7 +90,8 @@ function mundo($: any, on: any, o: Opc = {}) {
     const seq = (seqs.get(sessao) ?? 0) + 1
     seqs.set(sessao, seq)
     relogio += 1
-    evs.push({ seq, ts: new Date(Date.UTC(2026, 10, 3, 1, 0, relogio)).toISOString(), autor: 'a', sessao, agente, tipo, dados, hash_anterior: null })
+    const ultimoTs = evs.reduce((m, e) => Math.max(m, Date.parse(e.ts)), 0) // monotônico: depois de um evento com ts adiantado, o seguinte não volta no tempo
+    evs.push({ seq, ts: new Date(Math.max(Date.UTC(2026, 10, 3, 1, 0, relogio), ultimoTs + 1000)).toISOString(), autor: 'a', sessao, agente, tipo, dados, hash_anterior: null })
   }
 
   on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
@@ -1476,6 +1477,93 @@ test('handback-pendente-reabre-so-a-negada: vivos 0, a concluída ainda sem even
   await m.agent('gabarito-implementador')
   await m.turno(); await m.clock.settle()
   expect(reabertas(m).map((g) => g.dados)).toEqual([{ task: 'c', origem: 'retomada' }])
+})
+// r3: o mod guarda a hora da negação (relógio de parede, como o diário). `iniciar` com ts depois dela é despacho aceito: vai atrás na ordem.
+const DEPOIS = (m: ReturnType<typeof mundo>, tipo: string, dados: Record<string, unknown>) => {
+  m.add('o', tipo, dados)
+  m.evs.at(-1).ts = new Date(Date.now() + 3_600_000 + m.evs.length * 1000).toISOString()
+}
+test('plano-sem-task-mantem-negacao (r3, achado 2): plano ilegível para a regra ⇒ nada reaberto, a negação FICA; plano restaurado reabre a negada', async ($, on) => {
+  const o: Opc = { eventos: aposB(A_INI), plano_json: { entrega: 'PBI-7', tasks: [{ id: 'c', deps: [], arquivos: ['c.ts'] }] } }
+  const m = mundo($, on, o)
+  await m.inicio()
+  await m.agent('gabarito-implementador')
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m)).toHaveLength(0)
+  o.plano_json = PLANO5
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m).map((g) => g.dados)).toEqual([{ task: 'a', origem: 'retomada' }])
+  expect(m.est.clears).toBe(1)
+})
+test('diario-fora-de-ordem-mantem-negacao (r3, achado 2): diário fora de ordem ⇒ nada reaberto, a negação FICA; diário restaurado reabre a negada', async ($, on) => {
+  const m = mundo($, on, { eventos: aposB(A_INI), plano_json: PLANO5 })
+  await m.inicio()
+  await m.agent('gabarito-implementador')
+  m.evs.push({ ...m.evs[0], seq: 1, ts: '2026-11-03T00:00:00.000Z', tipo: 'task.iniciada', dados: { task: 'c', papel: 'implementador' } })
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m)).toHaveLength(0)
+  m.evs.pop()
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m).map((g) => g.dados)).toEqual([{ task: 'a', origem: 'retomada' }])
+})
+test('esc-t3-terminou-reabre-a-negada (r3, achado 1): negação, Esc, /clear, T3 aceito e terminado antes do fim do turno ⇒ reabre a negada, nunca a T3', async ($, on) => {
+  const o: Opc = { eventos: aposB(A_INI), plano_json: PLANO5 }
+  const m = mundo($, on, o)
+  await m.inicio()
+  await m.agent('gabarito-implementador')
+  await m.turno({ isAborted: true }); await m.clock.settle()
+  m.est.percent = 0.5
+  await m.inicio()
+  DEPOIS(m, 'task.iniciada', { task: 'c', papel: 'implementador' })
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m).map((g) => g.dados)).toEqual([{ task: 'a', origem: 'retomada' }])
+})
+test('vivo-clear-t3-terminou-reabre-a-negada (r3, achado 1): negada com outro agente vivo, /clear, T3 aceito, tudo acaba antes do fim do turno ⇒ reabre a negada, nunca a T3', async ($, on) => {
+  const o: Opc = { eventos: aposB(A_INI), plano_json: PLANO5, agentes: VIVO }
+  const m = mundo($, on, o)
+  await m.inicio()
+  await m.agent('gabarito-implementador')
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m)).toHaveLength(0)
+  m.est.percent = 0.5
+  await m.inicio()
+  DEPOIS(m, 'task.iniciada', { task: 'c', papel: 'implementador' })
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  o.agentes = []
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m).map((g) => g.dados)).toEqual([{ task: 'a', origem: 'retomada' }])
+})
+test('deny-antes-do-iniciar-reabre (r3): o deny leu o diário SEM a task; o iniciar entra depois do deny, com ts real depois dele ⇒ ainda reabre (ordena, não filtra)', async ($, on) => {
+  const m = mundo($, on, { eventos: aposB() })
+  await m.inicio()
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/)
+  DEPOIS(m, 'task.iniciada', { task: 'a', papel: 'implementador' })
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m)).toEqual([ORQ_RETOMADA])
+  expect(m.est.clears).toBe(1)
+})
+test('duas-negacoes-a-hora-e-a-ultima (r3, R4): a 1ª negação, c iniciada e negada, d aceita depois ⇒ negadoAte é o da 2ª negação: reabre c e a (não a d)', async ($, on) => {
+  const m = mundo($, on, { eventos: aposB(A_INI), plano_json: PLANO5 })
+  const passar = () => { const t = Date.now(); while (Date.now() < t + 2) { /* o diário tem ms: separa as horas */ } }
+  await m.inicio()
+  await m.agent('gabarito-implementador')
+  passar()
+  m.add('o', 'task.iniciada', { task: 'c', papel: 'implementador' })
+  m.evs.at(-1).ts = new Date().toISOString()
+  passar()
+  await m.agent('gabarito-implementador')
+  DEPOIS(m, 'task.iniciada', { task: 'd', papel: 'implementador' })
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m).map((g) => g.dados)).toEqual([{ task: 'c', origem: 'retomada' }, { task: 'a', origem: 'retomada' }])
+})
+test('revisor-antes-da-negada-que-veio-depois (r3, R5): o revisor já acabou, o veredito não entrou, e o iniciar da negada tem ts depois do deny ⇒ reabre a negada, nunca a task do revisor', async ($, on) => {
+  const m = mundo($, on, { eventos: aposB(C_INI, C_CON, C_REV), plano_json: PLANO5, agentes: [{ id: 'ag1', status: 'completed' }] })
+  await m.inicio()
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/)
+  DEPOIS(m, 'task.iniciada', { task: 'a', papel: 'implementador' })
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m).map((g) => g.dados)).toEqual([{ task: 'a', origem: 'retomada' }])
 })
 test('agent-outro-tipo-com-vivo-fica-e-zera: Explore negado com implementador vivo ⇒ nada reaberto; acabado o hand-back, a negação some e a task em voo sem agente cai no (5b)', async ($, on) => {
   const o: Opc = { eventos: aposB(A_INI), plano_json: PLANO5, agentes: VIVO }
