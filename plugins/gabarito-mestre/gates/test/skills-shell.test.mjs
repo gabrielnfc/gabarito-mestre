@@ -57,3 +57,58 @@ test('regex-pega-o-que-deve-e-poupa-o-legitimo', () => {
     assert.ok(!ATRIBUICAO.test(bom) && !USO.test(bom), bom);
   }
 });
+
+// ---- Costura (P9): o comando da skill roda de verdade no shell, com a raiz do plugin com espaço no caminho.
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+
+const FONTES = ['skills/gabarito-loop/SKILL.md', 'commands/gabarito.md'];
+const CMD_LOOP = /node "?\$\{CLAUDE_PLUGIN_ROOT\}\/gates\/scripts\/loop\.mjs"?[^`\n]*/g;
+
+/** Todo `node ${CLAUDE_PLUGIN_ROOT}/gates/scripts/<x>.mjs` das fontes: o caminho precisa estar entre aspas. */
+function extrairComandosLoop() {
+  const out = [];
+  for (const rel of FONTES) {
+    for (const m of readFileSync(join(PLUGIN, rel), 'utf8').matchAll(CMD_LOOP)) {
+      const cmd = m[0].replace(/\s+#.*$/, '').replace(/<n>/g, '1').replace(/<task>/g, 'T1').trim();
+      out.push({ rel, cmd });
+    }
+  }
+  return out;
+}
+
+function shellsDisponiveis() {
+  return ['bash', 'zsh'].filter((sh) => spawnSync(sh, ['-c', 'exit 0']).status === 0);
+}
+
+test('comando-da-skill-roda-de-verdade-em-bash-e-zsh', () => {
+  const cmds = extrairComandosLoop();
+  assert.ok(cmds.length >= 2, `extração achou ${cmds.length} comando(s) do loop.mjs; esperado >= 2`);
+  const subs = cmds.map((c) => c.cmd.match(/loop\.mjs"?\s+(\S+)/)?.[1]);
+  assert.ok(subs.includes('proxima') && subs.includes('reabrir'), `subcomandos achados: ${subs}`);
+  const shells = shellsDisponiveis();
+  assert.ok(shells.includes('bash'), 'bash ausente');
+  const base = mkdtempSync(join(tmpdir(), 'skills-shell-'));
+  const raiz = join(base, 'raiz com espaco');
+  mkdirSync(raiz);
+  symlinkSync(PLUGIN, join(raiz, 'plugin'));
+  const repo = join(base, 'repo');
+  mkdirSync(repo);
+  assert.equal(spawnSync('git', ['init', '-q', repo]).status, 0);
+  for (const sh of shells) {
+    for (const { rel, cmd } of cmds) {
+      const r = spawnSync(sh, ['-c', cmd], {
+        cwd: repo, encoding: 'utf8',
+        env: { ...process.env, CLAUDE_PLUGIN_ROOT: join(raiz, 'plugin') },
+      });
+      const ctx = `${sh} ${rel}: ${cmd}\nrc=${r.status} stdout=${r.stdout} stderr=${r.stderr}`;
+      assert.notEqual(r.status, 127, `comando não encontrado\n${ctx}`);
+      assert.ok(!/Cannot find module/.test(r.stderr), `script não achado\n${ctx}`);
+      let j;
+      try { j = JSON.parse(r.stdout.trim().split('\n').pop()); } catch { assert.fail(`saída sem JSON\n${ctx}`); }
+      assert.equal(typeof j.ok, 'boolean', ctx);
+      assert.notEqual(j.erro, 'uso', `subcomando caiu em uso\n${ctx}`);
+    }
+  }
+});

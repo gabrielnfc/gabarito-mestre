@@ -95,7 +95,7 @@ describe('gates/package.json 1.1.0', () => {
   test('gabarito-comando-usa-cli: o comando consulta pausa.mjs; sem `test -e`, sem caminho relativo, limite da raiz em prosa', { skip: fora }, () => {
     const t = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'commands', 'gabarito.md'), 'utf8');
     assert.match(t, /^allowed-tools: Read, Bash\(node:\*\)$/m);
-    assert.match(t, /node \$\{CLAUDE_PLUGIN_ROOT\}\/gates\/scripts\/pausa\.mjs/);
+    assert.match(t, /node "\$\{CLAUDE_PLUGIN_ROOT\}\/gates\/scripts\/pausa\.mjs"/);
     assert.equal(t.includes('test -e'), false, 'a conferência relativa ao cwd volta ao falso "pausado"');
     assert.doesNotMatch(t, /(?:>|\brm|-p) '?\.\/?\.harness/, 'comando com caminho relativo para .harness');
     assert.match(t, /<alvo>\/\.harness\/PAUSAR/);

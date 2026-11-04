@@ -11,7 +11,7 @@ A pausa é o arquivo `.harness/PAUSAR` na raiz do checkout principal. Com ele, a
 ferramenta a subagent ("pausado"). Uma ferramenta já em curso termina; a pausa vale do próximo despacho em diante.
 
 **Não calcule raiz nem use caminho relativo.** O estado vem de um CLI só de leitura, que usa as mesmas funções da guarda:
-`node ${CLAUDE_PLUGIN_ROOT}/gates/scripts/pausa.mjs`. Ele imprime `{pausado, ilegivel, alvo, existentes}` (`alvo`: checkout principal
+`node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/pausa.mjs"`. Ele imprime `{pausado, ilegivel, alvo, existentes}` (`alvo`: checkout principal
 onde gravar; `existentes`: raízes onde o arquivo existe) e sai 0, ou 2 fora de repositório ("Fora de repositório: nada alterado", pare). Outro rc,
 ou saída que não é esse JSON: "Não sei o estado: nada alterado", e pare. Limite: o CLI parte do cwd, não da raiz da sessão.
 **Se `alvo` não é o repositório desta sessão, pare e diga.** Sessão aberta em worktree com `cd` ao principal: a pausa gravada na raiz da sessão não aparece aqui; a guarda
@@ -32,7 +32,7 @@ Consulte o CLI antes de agir. `ilegivel:true`, ou `alvo` nulo com `pausado:false
     retoma. Diário, plano ou lista de agentes ilegíveis: não reabre e diz a causa.
   - **Sem o mod**, é você quem reabre. Depois de remover o arquivo, com 0 agentes seus vivos, leia o diário
     (`.harness/entregas/<id>/events.*.jsonl`) e chame, para cada task em voo,
-    `node ${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs reabrir <task>` (grava `task.reaberta`, origem `retomada`); só então
+    `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" reabrir <task>` (grava `task.reaberta`, origem `retomada`); só então
     `loop.mjs proxima --vivos 0` e siga o ciclo da skill `gabarito-loop`. Com agente vivo, **não reabra**: dois implementadores na
     mesma worktree não existem; espere o hand-back. Diário ilegível: não reabra e diga a causa.
 

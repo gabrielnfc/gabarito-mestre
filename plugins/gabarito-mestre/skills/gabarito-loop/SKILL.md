@@ -36,7 +36,7 @@ Use sempre o comando inteiro, sem variável: em zsh, `$VAR` com argumentos dá e
 ## Slots
 
 `proxima` mede a máquina (`capacidade.mjs --medido`); `loop.slots` do config só **reduz**. Sem calibração, 1 slot e aviso:
-mostre o aviso e sugira `node ${CLAUDE_PLUGIN_ROOT}/gates/scripts/capacidade.mjs --calibrar` (roda a suíte várias vezes; é do dono).
+mostre o aviso e sugira `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/capacidade.mjs" --calibrar` (roda a suíte várias vezes; é do dono).
 
 ## Pausa
 
