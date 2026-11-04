@@ -1,11 +1,12 @@
 /**
  * T21 (GM-10, D4): lista de leitores de git para o subagente. A guarda real (`dist/guarda.js`) por stdin, com `agent_id`,
  * cwd no principal e `cd` na worktree. Os 9 leitores passam; `tag`, `worktree`, `merge-tree`, `update-ref` seguem negados;
- * a forma de escrita `--output=<arquivo>` de `rev-list` e `diff-tree` (medida no git 2.50.1) é negada.
+ * `--output=<arquivo>` em QUALQUER `git` (escreve e trunca em log, diff, show, blame, shortlog, rev-list, diff-tree… no git 2.50.1;
+ * o git não aceita abreviação) cai no anel: `deny` para o subagente, `ask` para o orquestrador. `--attr-source` e `--shallow-file`
+ * consomem valor e não podem enganar a leitura do subcomando.
  * Costura (P9): `git worktree add` real → guarda por stdin com `cd <worktree> && git <leitor>` → o git roda e responde.
  *
- * MUTAÇÕES (task-21-mut.json, sobre dist/aneis.js): G1 liberar `tag` e `worktree` · G2 sem a negação de `--output` ·
- * G3 tirar `name-rev` da lista · G4 abreviação de `--output` deixa de ser negada.
+ * MUTAÇÕES (task-21-r2-mut.json, sobre dist/aneis.js): M1 a M9, G1 liberar `tag` e `worktree`, G3 tirar `name-rev` da lista.
  */
 
 import { test, describe, after } from 'node:test';
@@ -84,7 +85,14 @@ describe('T21: o que segue negado ao subagente', () => {
   const NEGADOS = [
     'tag v1', 'tag -d v0', 'worktree add ../x', 'worktree remove x', 'merge-tree HEAD HEAD HEAD', 'update-ref refs/heads/x HEAD',
     'rev-list --output=z HEAD', 'rev-list --output z HEAD', 'diff-tree --output=z HEAD HEAD', 'diff-tree -r --output z HEAD HEAD',
-    'rev-list --out=z HEAD', 'rev-list --outpu=z HEAD',
+    'shortlog --output=z HEAD', 'shortlog --output z HEAD',
+    'log --output=.env', 'log --output .env', 'log -m --output=.env', 'log -1 --format= --output=.env',
+    'diff --output=z', 'show --output=z', 'blame --output=z README.md', 'stash show --output=z', 'cherry-pick --output=z',
+    'log --output=.github/workflows/ci.yml', 'log --output=.git/config', 'log --output=.harness/PAUSAR',
+    '--no-pager log --output=z', '-c a.b=c log --output=z', 'log "--output=z"', 'log --out"put"=z', 'log --output=$X',
+    '--attr-source log tag v9', '--attr-source=HEAD tag v9', '--attr-source log update-ref refs/heads/f HEAD',
+    '--attr-source log config user.name x', '--attr-source log push --force origin main', '--attr-source log remote set-url origin x',
+    '--shallow-file log tag v9', '--shallow-file log push --force origin main',
   ];
   for (const cmd of NEGADOS) {
     test(`negado: git ${cmd}`, () => {
@@ -95,13 +103,43 @@ describe('T21: o que segue negado ao subagente', () => {
     });
   }
 
+  test('a guarda nega --output antes de o git rodar (deny, e a forma de escrita do git não é chamada)', () => {
+    const r = hook(R, R, `git rev-list --output=${R}/saida.txt HEAD`);
+    assert.equal(r.decisao, 'deny');
+  });
+});
+
+describe('T21: --output e globais com valor, o orquestrador', () => {
+  const { R } = cenario();
+  const PEDE = [
+    'rev-list --output=z HEAD', 'shortlog --output z HEAD', 'log --output=.env', 'log -m --output=.env', 'archive --output=z HEAD',
+    '--attr-source log config user.name x', '--attr-source log remote set-url origin x', '--shallow-file log update-ref refs/heads/f HEAD',
+  ];
+  for (const cmd of PEDE) {
+    test(`orquestrador pede: git ${cmd}`, () => {
+      assert.equal(hook(R, R, `git ${cmd}`, false).decisao, 'ask');
+    });
+  }
+});
+
+describe('T21: leitura legítima segue em silêncio nos dois papéis', () => {
+  const { R } = cenario();
+  const SILENCIO = [
+    'log -1 --oneline', 'log --grep=--output', 'log -S--output -1', 'log -- .env', 'commit -m "--output segue negado"',
+    '--no-pager log -1', '--version', '--help', '--no-optional-locks status', '--attr-source HEAD log -1', '--attr-source=HEAD log -1',
+    '--shallow-file x status', 'diff --output-indicator-new=+ HEAD', 'log --output-indicator-old=- -p -1',
+  ];
+  for (const cmd of SILENCIO) {
+    test(`silêncio: git ${cmd}`, () => {
+      for (const sub of [true, false]) {
+        const r = hook(R, R, `git ${cmd}`, sub);
+        assert.equal(r.decisao, undefined, `${sub ? 'subagente' : 'orquestrador'}: ${cmd} => ${r.decisao} ${r.motivo}`);
+      }
+    });
+  }
+
   test('--output-indicator-new é opção de cor, não escrita: o diff-tree passa', () => {
     const r = hook(R, R, 'git diff-tree --output-indicator-new=+ -r HEAD HEAD');
     assert.equal(r.decisao, undefined, r.motivo);
-  });
-
-  test('o arquivo de --output não é criado (a guarda barra antes do git rodar)', () => {
-    const r = hook(R, R, `git rev-list --output=${R}/saida.txt HEAD`);
-    assert.equal(r.decisao, 'deny');
   });
 });

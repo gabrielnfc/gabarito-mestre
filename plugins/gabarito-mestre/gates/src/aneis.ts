@@ -564,16 +564,16 @@ export function ancestralDeIntegridade(caminho: string, contexto: Contexto, cwd?
 // ---------------------------------------------------------------------------------------------------------------
 // Git (Q14): lista permitida por capacidade
 
-const GIT_GLOBAIS_COM_VALOR = new Set(['-C', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--super-prefix']);
+const GIT_GLOBAIS_COM_VALOR = new Set(['-C', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--super-prefix', '--attr-source', '--shallow-file']);
 const GIT_PERMITIDOS = new Set([
   '', 'add', 'commit', 'status', 'diff', 'log', 'show', 'checkout', 'switch', 'restore', 'branch', 'rev-parse',
   'merge-base', 'check-ignore', 'stash', 'rebase', 'cherry-pick', 'reset', 'blame', 'grep', 'ls-files', 'mv', 'rm',
-  // T21 (D4): leitores puros. `tag`, `worktree`, `merge-tree` e `update-ref` seguem fora.
+  // T21 (D4): leitores. `--output` neles cai no anel (abaixo). `tag`, `worktree`, `merge-tree` e `update-ref` seguem fora.
   'ls-tree', 'cat-file', 'rev-list', 'show-ref', 'for-each-ref', 'describe', 'diff-tree', 'shortlog', 'name-rev',
 ]);
-// `rev-list` e `diff-tree` aceitam `--output=<arquivo>` (opções de diff) e escrevem nele: medido no git 2.50.1. Nesses a forma é negada.
-const GIT_LEITORES = new Set(['ls-tree', 'cat-file', 'rev-list', 'show-ref', 'for-each-ref', 'describe', 'diff-tree', 'shortlog', 'name-rev']);
-const GIT_OUTPUT = /^--o(?:u(?:t(?:p(?:u(?:t)?)?)?)?)?(?:=|$)/;
+// `--output=<arquivo>` escreve (e trunca) em log, diff, show, blame, shortlog, rev-list, diff-tree, cherry-pick, range-diff, format-patch, whatchanged
+// (git 2.50.1). O git não aceita abreviação. Em qualquer `git`, para os dois papéis: cai no anel.
+const GIT_OUTPUT = /^--output(?:=|$)/;
 // Q16: o orquestrador só é interrompido por estes; todo outro `git` segue o prompt nativo.
 const GIT_PEDE_ORQUESTRADOR = new Set(['remote', 'fetch', 'pull', 'update-ref', 'symbolic-ref', 'config']);
 const PUSH_COM_VALOR = new Set(['-o', '--push-option', '--repo', '--receive-pack', '--exec']);
@@ -759,7 +759,7 @@ export function anelDeBash(segmentos: Segmento[], contexto: Contexto, cwd?: stri
       if (!subagent && gitResto.some((p) => dentroDeDotGit(p, contexto, atual))) integridade ??= { anel: 'integridade', alvo: '.git', escrita: true };
       if (g.sub === 'push') {
         if (!(subagent ? pushPermitido(g.resto) : pushSemRefsRemotes(g.resto))) integridade ??= { anel: 'integridade', alvo: 'refs/remotes', escrita: true };
-      } else if (subagent && GIT_LEITORES.has(g.sub) && g.resto.some((a) => GIT_OUTPUT.test(a))) {
+      } else if (g.resto.some((a) => GIT_OUTPUT.test(a))) {
         integridade ??= { anel: 'integridade', alvo: '.git', escrita: true };
       } else if (subagent ? !GIT_PERMITIDOS.has(g.sub) : GIT_PEDE_ORQUESTRADOR.has(g.sub)) {
         const alvo = g.sub === 'remote' || g.sub === 'config' ? '.git/config' : g.sub === 'fetch' || g.sub === 'pull' || g.sub === 'update-ref' || g.sub === 'symbolic-ref' ? 'refs/remotes' : '.git';
