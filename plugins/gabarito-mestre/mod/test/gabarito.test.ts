@@ -1345,13 +1345,21 @@ test('negado-em-revisao-nao-conta: o revisor passa, não é negação, e a task 
   expect(reabertas(m)).toHaveLength(0)
   expect(m.est.clears).toBe(0)
 })
-test('negado-com-vivo-reabre-so-a-mais-recente: 2 em voo, 1 vivo, 2 negações ⇒ só a iniciada por último; nenhum pouso', async ($, on) => {
-  const m = mundo($, on, { eventos: aposB(A_INI, C_INI), plano_json: PLANO5, agentes: [{ id: 'ag1', status: 'running' }] })
+const C_CON = ['task.concluida', { task: 'c', sha: 'x' }] as [string, Record<string, unknown>]
+const C_REV = ['task.iniciada', { task: 'c', papel: 'revisor' }] as [string, Record<string, unknown>]
+const VIVO = [{ id: 'ag1', status: 'running' }]
+test('negado-com-vivo-nao-reabre-e-fica: 2 em voo, 1 vivo, 1 negação ⇒ nada reaberto, nenhum pouso; o vivo termina e o turno seguinte reabre a negada', async ($, on) => {
+  const o: Opc = { eventos: aposB(A_INI, C_INI), plano_json: PLANO5, agentes: VIVO }
+  const m = mundo($, on, o)
   await m.inicio()
-  await m.agent('gabarito-implementador'); await m.agent('gabarito-implementador')
+  await m.agent('gabarito-implementador')
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m)).toHaveLength(0)
+  expect(m.est.clears).toBe(0)
+  o.agentes = []
+  m.add('o', 'task.concluida', { task: 'a', sha: 'x' })
   await m.turno(); await m.clock.settle()
   expect(reabertas(m).map((g) => g.dados)).toEqual([{ task: 'c', origem: 'retomada' }])
-  expect(m.est.clears).toBe(0)
 })
 test('negados-maior-que-em-voo-limita: 3 negações, 1 em voo ⇒ uma só reaberta', async ($, on) => {
   const m = mundo($, on, { eventos: aposB(A_INI) })
@@ -1388,46 +1396,126 @@ test('reaberta-nao-grava-avisa: task.reaberta que falha ⇒ aviso, sem pouso, e 
   await m.turno(); await m.clock.settle()
   expect(m.log.filter((l) => l === 'append:task.reaberta')).toHaveLength(1)
 })
-test('agent-list-falha-nao-reabre: vivos não medidos ⇒ nada reaberto, nunca pouso', async ($, on) => {
-  const m = mundo($, on, { eventos: aposB(A_INI), agentes: 'falha' })
+const leituraFalha = (nome: string, quebra: (o: Opc) => void, conserta: (o: Opc) => void) =>
+  test(`leitura-falha-mantem-${nome}: ilegível ⇒ nada reaberto, nunca pouso, e a negação FICA: o turno seguinte reabre`, async ($, on) => {
+    const o: Opc = { eventos: aposB(A_INI) }
+    const m = mundo($, on, o)
+    await m.inicio()
+    await m.agent('gabarito-implementador')
+    quebra(o)
+    await m.turno(); await m.clock.settle()
+    expect(reabertas(m)).toHaveLength(0)
+    expect(m.est.clears).toBe(0)
+    conserta(o)
+    await m.turno(); await m.clock.settle()
+    expect(reabertas(m)).toEqual([ORQ_RETOMADA])
+    expect(m.est.clears).toBe(1)
+  })
+leituraFalha('lista', (o) => { o.agentes = 'falha' }, (o) => { o.agentes = [] })
+leituraFalha('diario', (o) => { o.lerFalha = true }, (o) => { o.lerFalha = false })
+leituraFalha('plano', (o) => { o.plano_json = 'falha' }, (o) => { o.plano_json = undefined })
+const naoDecide = (nome: string, extra: Record<string, unknown>) =>
+  test(`${nome}-mantem: não decide e a negação fica para o próximo fim normal (E4)`, async ($, on) => {
+    const m = mundo($, on, { eventos: aposB(A_INI) })
+    await m.inicio()
+    await m.agent('gabarito-implementador')
+    await m.turno(extra); await m.clock.settle()
+    expect(reabertas(m)).toHaveLength(0)
+    expect(m.est.clears).toBe(0)
+    await m.turno(); await m.clock.settle()
+    expect(reabertas(m)).toEqual([ORQ_RETOMADA])
+    expect(m.est.clears).toBe(1)
+  })
+naoDecide('abortado', { isAborted: true })
+naoDecide('erro-api', { reason: 'error' })
+test('lote-correcao-revisor (achado 1): correção negada + revisor aceito, revisor vivo ⇒ nada reaberto; com vivos 0 só a correção, antes do pouso', async ($, on) => {
+  const o: Opc = { eventos: aposB(A_INI, A_CON, A_VER_REP, A_COR, C_INI, C_CON, C_REV), plano_json: PLANO5, agentes: VIVO }
+  const m = mundo($, on, o)
   await m.inicio()
-  await m.agent('gabarito-implementador')
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/)
+  expect((await m.agent('gabarito-revisor')).deny).toBeUndefined()
   await m.turno(); await m.clock.settle()
   expect(reabertas(m)).toHaveLength(0)
   expect(m.est.clears).toBe(0)
+  o.agentes = []
+  m.add('o', 'review.veredito', { task: 'c', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 })
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m).map((g) => g.dados)).toEqual([{ task: 'a', origem: 'retomada' }])
+  const ordem = m.log.filter((l) => /^(append:task\.reaberta|append:sessao\.pouso|clear)$/.test(l))
+  expect(ordem).toEqual(['append:task.reaberta', 'append:sessao.pouso', 'clear'])
 })
-test('diario-ilegivel-nao-reabre: leitura que falha ⇒ nada reaberto e a contagem zera', async ($, on) => {
-  const m = mundo($, on, { eventos: aposB(A_INI), lerFalha: true })
+test('lote-revisor-ja-terminou (achado 1): o revisor acabou, o veredito ainda não entrou ⇒ a correção negada, nunca a task do revisor', async ($, on) => {
+  const m = mundo($, on, { eventos: aposB(A_INI, A_CON, A_VER_REP, A_COR, C_INI, C_CON, C_REV), plano_json: PLANO5, agentes: [{ id: 'ag1', status: 'completed' }] })
   await m.inicio()
   await m.agent('gabarito-implementador')
+  await m.agent('gabarito-revisor')
   await m.turno(); await m.clock.settle()
-  expect(reabertas(m)).toHaveLength(0)
-  expect(m.est.clears).toBe(0)
+  expect(reabertas(m).map((g) => g.dados)).toEqual([{ task: 'a', origem: 'retomada' }])
 })
-test('plano-ilegivel-nao-reabre: plano que a ponte recusa ⇒ nada reaberto', async ($, on) => {
-  const m = mundo($, on, { eventos: aposB(A_INI), plano_json: 'falha' })
-  await m.inicio()
-  await m.agent('gabarito-implementador')
-  await m.turno(); await m.clock.settle()
-  expect(reabertas(m)).toHaveLength(0)
-})
-test('abortado-nao-reabre: Esc do dono não decide e a contagem fica para o próximo fim normal (E4)', async ($, on) => {
-  const m = mundo($, on, { eventos: aposB(A_INI) })
+test('esc-clear-nao-reabre-a-viva (achado 4): negação, Esc, /clear, despacho aceito e hand-back ⇒ a task viva nunca é reaberta, a negada sim', async ($, on) => {
+  const o: Opc = { eventos: aposB(A_INI), plano_json: PLANO5 }
+  const m = mundo($, on, o)
   await m.inicio()
   await m.agent('gabarito-implementador')
   await m.turno({ isAborted: true }); await m.clock.settle()
-  expect(reabertas(m)).toHaveLength(0)
-  expect(m.est.clears).toBe(0)
+  m.est.percent = 0.5
+  await m.inicio()
+  m.add('o', 'task.iniciada', { task: 'c', papel: 'implementador' })
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  o.agentes = VIVO
   await m.turno(); await m.clock.settle()
-  expect(reabertas(m)).toEqual([ORQ_RETOMADA])
-  expect(m.est.clears).toBe(1)
+  expect(reabertas(m)).toHaveLength(0)
+  o.agentes = []
+  m.add('o', 'task.concluida', { task: 'c', sha: 'x' })
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m).map((g) => g.dados)).toEqual([{ task: 'a', origem: 'retomada' }])
 })
-test('erro-api-nao-reabre: reason error não decide e mantém a contagem', async ($, on) => {
-  const m = mundo($, on, { eventos: aposB(A_INI) })
+test('handback-pendente-reabre-so-a-negada: vivos 0, a concluída ainda sem evento e outra negada ⇒ só a negada, a mais recente', async ($, on) => {
+  const m = mundo($, on, { eventos: aposB(A_INI, C_INI), plano_json: PLANO5, agentes: [{ id: 'ag1', status: 'completed' }] })
   await m.inicio()
   await m.agent('gabarito-implementador')
-  await m.turno({ reason: 'error' }); await m.clock.settle()
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m).map((g) => g.dados)).toEqual([{ task: 'c', origem: 'retomada' }])
+})
+test('agent-outro-tipo-com-vivo-fica-e-zera: Explore negado com implementador vivo ⇒ nada reaberto; acabado o hand-back, a negação some e a task em voo sem agente cai no (5b)', async ($, on) => {
+  const o: Opc = { eventos: aposB(A_INI), plano_json: PLANO5, agentes: VIVO }
+  const m = mundo($, on, o)
+  await m.inicio()
+  await m.agent('Explore')
+  await m.turno(); await m.clock.settle()
   expect(reabertas(m)).toHaveLength(0)
+  o.agentes = []
+  m.add('o', 'task.concluida', { task: 'a', sha: 'x' })
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m)).toHaveLength(0)
+  m.add('o', 'task.iniciada', { task: 'c', papel: 'implementador' })
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m)).toHaveLength(0)
+})
+test('negacao-sobrando-sem-voo-zera: negação sem task em voo ⇒ nada reaberto e a contagem zera, nada reabre depois', async ($, on) => {
+  const m = mundo($, on, { eventos: aposB(), plano_json: PLANO5 })
+  await m.inicio()
+  await m.agent('gabarito-implementador')
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m)).toHaveLength(0)
+  m.est.percent = 0.5
+  m.add('o', 'task.iniciada', { task: 'c', papel: 'implementador' })
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m)).toHaveLength(0)
+})
+test('reaberta-falha-para-em-3-turnos: task.reaberta que não grava ⇒ aviso, não insiste, e em 3 turnos o núcleo grava loop.parar nao_conseguiu', async ($, on) => {
+  const m = mundo($, on, { eventos: aposB(A_INI), appendFalha: ['task.reaberta'] })
+  await m.inicio()
+  await m.agent('gabarito-implementador')
+  await m.turno(); await m.clock.settle()
+  expect(m.toasts.some((t) => t.includes('task.reaberta'))).toBe(true)
+  expect(parou(m)).toHaveLength(0)
+  await m.turno(); await m.clock.settle()
+  await m.turno(); await m.clock.settle()
+  expect(m.log.filter((l) => l === 'append:task.reaberta')).toHaveLength(1)
+  expect(parou(m)).toHaveLength(1)
+  expect(parou(m)[0].dados).toMatchObject({ motivo: 'nao_conseguiu' })
+  expect(m.est.clears).toBe(0)
 })
 test('subagent-nao-reabre: turn.complete de subagent não desfaz a negação do orquestrador', async ($, on) => {
   const m = mundo($, on, { eventos: aposB(A_INI) })

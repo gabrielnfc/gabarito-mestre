@@ -295,14 +295,13 @@ async function aoCompletarTurno($) {
 }
 
 /**
- * D1: `Agent` negado não pode deixar `task.iniciada` para trás. No fim normal do turno, ANTES de decidir, reabre (origem
- * `retomada`) as `min(negados, em voo − vivos)` tasks iniciadas por último. A contagem zera sempre que este código roda:
- * leitura ilegível, lista de agentes ilegível ou reabertura que falha nunca reabrem nada nem insistem (aviso). Núcleo intacto.
+ * D1: `Agent` negado não pode deixar `task.iniciada` para trás. No fim normal do turno, ANTES de decidir, com vivos = 0 reabre
+ * (origem `retomada`) as `min(negados, em voo)` tasks: a que não é de revisor primeiro, a iniciada por último. Com agente vivo
+ * não há como saber qual task é de quem, então a negação FICA (inclusive em Esc, erro e `/clear`; `session.start` não zera).
+ * Só zera depois de ler diário, plano e lista com sucesso e vivos = 0. Reabertura que falha avisa e não insiste. Núcleo intacto.
  */
 async function desfazerNegados($) {
   if (negados === 0) return;
-  const n = negados;
-  negados = 0;
   const { c } = await loopAtivo($);
   if (c === null) return;
   const l = await ponte($, { op: 'ler', dir: c.dir, cwd: c.cwd });
@@ -310,8 +309,10 @@ async function desfazerNegados($) {
   if (l.ok !== true || p.ok !== true) return;
   let lista = null;
   try { lista = await $.agent.list(); } catch { return; }
-  if (!Array.isArray(lista)) return;
-  const r = tasksDoNegado(p.plano, l.eventos, n, vivosDe(lista));
+  if (!Array.isArray(lista) || vivosDe(lista) > 0) return;
+  const n = negados;
+  negados = 0;
+  const r = tasksDoNegado(p.plano, l.eventos, n, 0);
   if (!r.ok) return;
   for (const task of r.tasks) {
     if (!(await gravar($, c, { agente: 'orquestrador', tipo: 'task.reaberta', dados: { task, origem: 'retomada' } }))) {

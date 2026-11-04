@@ -244,17 +244,19 @@ test('negado-puro-ordem: a iniciada por último primeiro, e só tantas quantas a
   assert.deepEqual(doNegado(2, 0, ...d), { ok: true, tasks: ['c', 'a'] });
   assert.deepEqual(doNegado(3, 0, ...d), { ok: true, tasks: ['c', 'a', 'b'] });
 });
-test('negado-puro-limites: nunca mais que as em voo sem agente vivo', () => {
+test('negado-puro-limites: com vivo nada se reabre; sem vivo, nunca mais que as em voo', () => {
   const d: [TipoEvento, Record<string, unknown>][] = [iniP('a', 'implementador'), iniP('b', 'implementador')];
   assert.deepEqual(doNegado(5, 0, ...d), { ok: true, tasks: ['b', 'a'] });
-  assert.deepEqual(doNegado(5, 1, ...d), { ok: true, tasks: ['b'] });
+  assert.deepEqual(doNegado(5, 1, ...d), { ok: true, tasks: [] });
   assert.deepEqual(doNegado(5, 2, ...d), { ok: true, tasks: [] });
   assert.deepEqual(doNegado(1, 9, ...d), { ok: true, tasks: [] });
 });
-test('negado-puro-corrigindo-e-revisao: a iniciada mais recente vale também para correcao e revisor', () => {
+test('negado-puro-corrigindo-e-revisao: quem não é revisor primeiro; dentro disso, a iniciada mais recente', () => {
   const r = doNegado(1, 0, iniP('a', 'implementador'), con('a'), ver('a', 'REPROVADO'), iniP('a', 'correcao'), iniP('b', 'implementador'), con('b'), iniP('b', 'revisor'));
-  assert.deepEqual(r, { ok: true, tasks: ['b'] });
+  assert.deepEqual(r, { ok: true, tasks: ['a'] });
   assert.deepEqual(doNegado(2, 0, iniP('a', 'implementador'), con('a'), ver('a', 'REPROVADO'), iniP('a', 'correcao'), iniP('b', 'implementador')), { ok: true, tasks: ['b', 'a'] });
+  const lote: [TipoEvento, Record<string, unknown>][] = [iniP('a', 'implementador'), con('a'), ver('a', 'REPROVADO'), iniP('a', 'correcao'), iniP('b', 'implementador'), con('b'), iniP('b', 'revisor')];
+  assert.deepEqual(doNegado(2, 0, ...lote), { ok: true, tasks: ['a', 'b'] });
 });
 test('negado-puro-ilegivel: plano, diário ou contagens ruins nunca viram lista vazia', () => {
   for (const r of [
