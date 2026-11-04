@@ -1929,3 +1929,38 @@ test('orfa-nucleo-lanca-nao-reabre: proximaAcao que lança ⇒ não reabre, não
   expect(parou(m)).toHaveLength(0)
   expect(m.toasts.some((t) => t.includes('núcleo'))).toBe(true)
 })
+
+// ---- T31 r2: diário inválido na recuperação só avisa; a conta é só da task liberada ----
+test('orfa-diario-invalido-do-nucleo-so-avisa: ci.resultado {verde:"x"} com a órfã ⇒ 0 reabertas, 0 turnos, 0 parar, aviso', async ($, on) => {
+  // `tasksEmVoo` aceita o diário; o núcleo devolve `parar diario_invalido`. Mesmo com a suíte verde não reabre nem para.
+  const m = mundo($, on, { eventos: [...ORFA, EV(8, 'ci.resultado', { verde: 'x' })] })
+  await m.inicio()
+  await recuperar(m)
+  naoReabre(m)
+  expect(parou(m)).toHaveLength(0)
+  expect(m.toasts.length).toBeGreaterThan(0)
+})
+test('orfa-liberar-zera-so-a-task-liberada: liberar a não recomeça a conta esgotada de c', async ($, on) => {
+  const plano = { entrega: 'PBI-7', tasks: [...PLANO.tasks, { id: 'c', deps: [], arquivos: ['c.ts'] }] }
+  const C_INI = ['task.iniciada', { task: 'c', papel: 'implementador' }] as [string, Record<string, unknown>]
+  const m = mundo($, on, { eventos: [...ORFA, EV(8, 'task.iniciada', { task: 'c', papel: 'implementador' })], plano_json: plano })
+  await m.inicio()
+  await recuperar(m)
+  m.add('o', ...A_INI_DE_NOVO)
+  m.add('o', ...C_INI)
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(4)
+  m.add('o', ...A_INI_DE_NOVO)
+  m.add('o', ...A_CON)
+  m.add('o', 'review.veredito', { task: 'a', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 })
+  m.add('o', 'task.iniciada', { task: 'a', papel: 'correcao' })
+  m.add('o', ...A_CON)
+  m.add('o', 'review.veredito', { task: 'a', veredito: 'REPROVADO', rodada: 2, major: 1, blocker: 0 })
+  m.add('o', ...DONO_A)
+  m.add('o', ...A_INI_DE_NOVO)
+  m.add('o', ...C_INI)
+  await recuperar(m)
+  expect(parou(m)).toHaveLength(1)
+  expect(parou(m)[0].dados).toEqual({ motivo: 'nao_conseguiu', task: 'c' })
+  expect(reabertas(m)).toHaveLength(4)
+})
