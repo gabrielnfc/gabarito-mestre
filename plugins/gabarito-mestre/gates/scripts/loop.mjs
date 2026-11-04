@@ -27,7 +27,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync,
+  chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -957,6 +957,34 @@ function estadoDaTask(c, task) {
 }
 
 /**
+ * Tira do caminho os achados do ciclo que terminou no teto: `<wt>/.tmp-gabarito/review-r*.md` da task vai por rename para
+ * `.tmp-gabarito/ciclo-<n>/` (n = próximo livre), sem apagar. Sem isso o `veredito REPROVADO` do ciclo novo aceitaria achados velhos.
+ * Worktree ou `.tmp-gabarito` ausente = nada a mover. `.tmp-gabarito` symlink/arquivo ⇒ `tmpdir_invalido`; rename que falha ⇒ `achados_nao_movidos`.
+ */
+function arquivarAchados(c, task) {
+  const wt = caminhoWt(c, task);
+  if (lstatOuNull(wt) === null) return;
+  const tmp = validarTmp(wt);
+  if (tmp === null) return;
+  let nomes;
+  try {
+    nomes = readdirSync(tmp);
+  } catch (e) {
+    throw new Falha('achados_nao_movidos', `${TMP} ilegível (${e.code ?? e.message}); nada foi gravado`);
+  }
+  const achados = nomes.filter((n) => /^review-r\d+\.md$/.test(n));
+  if (achados.length === 0) return;
+  const usados = nomes.map((n) => /^ciclo-(\d+)$/.exec(n)).filter(Boolean).map((m) => Number(m[1]));
+  const destino = join(tmp, `ciclo-${(usados.length ? Math.max(...usados) : 0) + 1}`);
+  try {
+    mkdirSync(destino);
+    for (const n of achados) renameSync(join(tmp, n), join(destino, n));
+  } catch (e) {
+    throw new Falha('achados_nao_movidos', `não consegui mover os achados do ciclo anterior para ${relative(c.raiz, destino)} (${e.code ?? e.message}); a liberação não foi gravada`);
+  }
+}
+
+/**
  * REQ-LOOP-2: a ÚNICA gravação de `task.reaberta {origem:"dono"}`. Fora de `ESPEC` de propósito: nenhum argumento do CLI chega aqui,
  * só o hook `UserPromptExpansion` (`liberar-teto.mjs`), disparado pelo comando que o dono digita. Exige `no_teto`, porque a tabela
  * aceita `reaberta.dono` como autotransição nos outros estados e gravar lá seria evento sem efeito que parece liberação.
@@ -980,6 +1008,7 @@ export function liberarTeto(cwd, task, sessao) {
       if ('invalido' in r || r.estado !== 'pendente') {
         throw new Falha('relogio_do_diario', `a liberação de ${task} não tiraria a task do teto: na ordem do diário o evento cairia antes do teto (um evento do diário tem relógio à frente do agora; estado projetado ${'invalido' in r ? r.invalido : r.estado}). Nada foi gravado`);
       }
+      arquivarAchados(c, task); // última coisa antes do append: toda recusa acima deixa os achados onde estão
     };
     gravar(c, plano, 'task.reaberta', { task, origem: 'dono' }, projetar);
     // O que só o disco revela (o projetado não vê escrita parcial, outra sessão gravando no meio): reler e conferir.

@@ -10,7 +10,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, chmodSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, chmodSync, realpathSync, symlinkSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -323,6 +323,172 @@ test('gravacao-falha: diário sem permissão de escrita ⇒ block com a causa, n
   }
   assert.deepEqual(amb.bytes(), antes);
   assert.equal(donos(amb).length, 0);
+});
+
+// ── T28: liberar não herda os achados do ciclo anterior (review-final-delta D1) ─────────────────────────────────────
+const wtDe = (amb, t = 'T1') => join(amb.dir, '.harness', 'worktrees', t);
+const tmpDe = (amb, t = 'T1') => join(wtDe(amb, t), '.tmp-gabarito');
+const achadosDe = (amb, r, t = 'T1') => join(tmpDe(amb, t), `review-r${r}.md`);
+/** Worktree real (pelo CLI) com os achados do ciclo que bateu no teto. */
+function comAchadosVelhos(amb, t = 'T1') {
+  const ab = loop(amb.dir, 'abrir', t);
+  assert.equal(ab.rc, 0, ab.out + ab.err);
+  writeFileSync(achadosDe(amb, 1, t), `ACHADOS VELHOS r1 ${t}\n`);
+  writeFileSync(achadosDe(amb, 2, t), `ACHADOS VELHOS r2 ${t}\n`);
+}
+const lsTmp = (amb, t = 'T1') => readdirSync(tmpDe(amb, t)).sort();
+
+test('D1-costura: hook real libera; o REPROVADO do ciclo novo exige arquivo do revisor novo e proxima nunca aponta achado velho', () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  comAchadosVelhos(amb);
+  const r = hook(stdinTui(amb.dir));
+  assert.equal(r.rc, 0, r.err);
+  assert.notEqual(r.j?.decision, 'block', r.out);
+  assert.deepEqual(lsTmp(amb).filter((n) => n.startsWith('review-')), [], 'nenhum achado velho no caminho');
+  assert.equal(readFileSync(join(tmpDe(amb), 'ciclo-1', 'review-r1.md'), 'utf8'), 'ACHADOS VELHOS r1 T1\n', 'movido, conteúdo intacto');
+  assert.ok(readFileSync(join(tmpDe(amb), 'ciclo-1', 'review-r2.md'), 'utf8').includes('r2'));
+  const ab = loop(amb.dir, 'abrir', 'T1');
+  assert.equal(ab.j?.ja_aberta, true);
+  const g = spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'feat(GM-10): trabalho'], { cwd: wtDe(amb), encoding: 'utf8' });
+  assert.equal(g.status, 0, g.stderr);
+  for (const a of [['iniciar', 'T1', 'implementador'], ['concluir', 'T1'], ['iniciar', 'T1', 'revisor']]) {
+    const x = loop(amb.dir, ...a);
+    assert.equal(x.rc, 0, `${a.join(' ')}: ${x.out}${x.err}`);
+  }
+  const antes = amb.bytes();
+  const sem = loop(amb.dir, 'veredito', 'T1', 'REPROVADO', '1', '0', '1');
+  assert.equal(sem.j?.erro, 'achados_ausentes', sem.out);
+  assert.deepEqual(amb.bytes(), antes, 'nada gravado');
+  writeFileSync(achadosDe(amb, 1), '- MAJOR 1: achado NOVO (a.ts:1)\n');
+  const ok = loop(amb.dir, 'veredito', 'T1', 'REPROVADO', '1', '0', '1');
+  assert.equal(ok.rc, 0, ok.out + ok.err);
+  const p = loop(amb.dir, 'proxima', '--vivos', '0').j.acao;
+  assert.equal(p.tipo, 'despachar');
+  assert.equal(p.itens[0].papel, 'correcao');
+  assert.equal(realpathSync(p.itens[0].achados), realpathSync(achadosDe(amb, 1)));
+  assert.match(readFileSync(p.itens[0].achados, 'utf8'), /NOVO/);
+});
+
+test('D1-sem-worktree: worktree ausente ⇒ nada a mover, libera e não cria nada', () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  assert.equal(hook(stdinTui(amb.dir)).rc, 0);
+  assert.equal(donos(amb).length, 1);
+  assert.deepEqual(readdirSync(amb.dir).filter((n) => n === '.harness' || n.startsWith('.tmp')), ['.harness']);
+  assert.deepEqual(readdirSync(join(amb.dir, '.harness')).sort(), ['entregas']);
+});
+
+test('D1-sem-tmp: worktree sem .tmp-gabarito, ou com .tmp-gabarito sem achados ⇒ libera sem criar ciclo', () => {
+  const a = repo({ semear: ATE_O_TETO('T1') });
+  mkdirSync(wtDe(a), { recursive: true });
+  assert.equal(hook(stdinTui(a.dir)).rc, 0);
+  assert.equal(donos(a).length, 1);
+  assert.deepEqual(readdirSync(wtDe(a)), []);
+  const b = repo({ semear: ATE_O_TETO('T1') });
+  mkdirSync(tmpDe(b), { recursive: true });
+  writeFileSync(join(tmpDe(b), 'outro.txt'), 'x');
+  assert.equal(hook(stdinTui(b.dir)).rc, 0);
+  assert.deepEqual(lsTmp(b), ['outro.txt']);
+});
+
+test('D1-symlink: .tmp-gabarito symlink ⇒ block, 0 eventos, nada movido fora', () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  const fora = realpathSync(mkdtempSync(join(tmpdir(), 'liberar-fora-')));
+  writeFileSync(join(fora, 'review-r1.md'), 'x\n');
+  mkdirSync(wtDe(amb), { recursive: true });
+  symlinkSync(fora, tmpDe(amb));
+  const antes = amb.bytes();
+  bloqueou(hook(stdinTui(amb.dir)), /tmpdir_invalido|symlink/);
+  assert.deepEqual(amb.bytes(), antes);
+  assert.equal(donos(amb).length, 0);
+  assert.deepEqual(readdirSync(fora), ['review-r1.md'], 'nada saiu nem entrou no alvo do symlink');
+});
+
+test('D1-rename-falha: diretório sem escrita ⇒ block com causa, 0 eventos, achados no lugar', { skip: SEM_ROOT && 'root ignora permissão' }, () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  comAchadosVelhos(amb);
+  const antes = amb.bytes();
+  chmodSync(tmpDe(amb), 0o555);
+  try {
+    const r = hook(stdinTui(amb.dir));
+    bloqueou(r, /achados_nao_movidos|mover os achados/);
+    assert.equal(r.j.systemMessage, undefined);
+  } finally {
+    chmodSync(tmpDe(amb), 0o755);
+  }
+  assert.deepEqual(amb.bytes(), antes);
+  assert.equal(donos(amb).length, 0);
+  assert.deepEqual(lsTmp(amb).filter((n) => n.startsWith('review-')), ['review-r1.md', 'review-r2.md']);
+  assert.equal(loop(amb.dir, 'proxima', '--vivos', '0').j.acao.tipo, 'parar', 'segue no teto');
+});
+
+test('D1-gravacao-falha-depois-de-mover: block; achados seguem em ciclo-1, task segue no teto e liberar de novo funciona', { skip: SEM_ROOT && 'root ignora permissão' }, () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  comAchadosVelhos(amb);
+  chmodSync(amb.entregas, 0o555);
+  try {
+    bloqueou(hook(stdinTui(amb.dir)), /evento_nao_gravado|nao gravado|não gravado/i);
+  } finally {
+    chmodSync(amb.entregas, 0o755);
+  }
+  assert.equal(donos(amb).length, 0);
+  assert.deepEqual(lsTmp(amb).filter((n) => !n.startsWith('.')), ['ciclo-1']);
+  assert.deepEqual(readdirSync(join(tmpDe(amb), 'ciclo-1')).sort(), ['review-r1.md', 'review-r2.md']);
+  assert.equal(loop(amb.dir, 'proxima', '--vivos', '0').j.acao.tipo, 'parar', 'segue no teto');
+  const r = hook(stdinTui(amb.dir));
+  assert.notEqual(r.j?.decision, 'block', r.out);
+  assert.equal(donos(amb).length, 1);
+  assert.deepEqual(lsTmp(amb).filter((n) => !n.startsWith('.')), ['ciclo-1'], 'nada a mover na segunda: não cria ciclo-2 vazio');
+});
+
+test('D1-n-proximo-livre: segundo teto move para ciclo-2 sem sobrescrever ciclo-1', () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  comAchadosVelhos(amb);
+  assert.equal(hook(stdinTui(amb.dir)).rc, 0);
+  amb.semear(ATE_O_TETO('T1'));
+  writeFileSync(achadosDe(amb, 1), 'SEGUNDO CICLO\n');
+  assert.equal(hook(stdinTui(amb.dir)).rc, 0);
+  assert.equal(donos(amb).length, 2);
+  assert.equal(readFileSync(join(tmpDe(amb), 'ciclo-1', 'review-r1.md'), 'utf8'), 'ACHADOS VELHOS r1 T1\n');
+  assert.equal(readFileSync(join(tmpDe(amb), 'ciclo-2', 'review-r1.md'), 'utf8'), 'SEGUNDO CICLO\n');
+});
+
+test('D1-recusas: estado fora do teto, args, relógio e diário ruim ⇒ nada movido', () => {
+  const fora = repo({ semear: IMPL('T1') });
+  comAchadosVelhos(fora);
+  bloqueou(hook(stdinTui(fora.dir)), /nao_esta_no_teto/);
+  assert.deepEqual(lsTmp(fora).filter((n) => !n.startsWith('.')), ['review-r1.md', 'review-r2.md']);
+
+  const args = repo({ semear: ATE_O_TETO('T1') });
+  comAchadosVelhos(args);
+  for (const a of ['', 'T1 T2', '../x', 'T9']) bloqueou(hook(stdinTui(args.dir, { command_args: a })), /./);
+  bloqueou(hook(stdinTui(args.dir, { agent_id: 'a1' })), /agent|subagent/i);
+  assert.deepEqual(lsTmp(args).filter((n) => !n.startsWith('.')), ['review-r1.md', 'review-r2.md']);
+
+  const rel = repo();
+  semearComRelogioAdiante(rel, Date.now() + 3000);
+  comAchadosVelhos(rel);
+  bloqueou(hook(stdinTui(rel.dir)), /relogio_do_diario/);
+  assert.deepEqual(lsTmp(rel).filter((n) => !n.startsWith('.')), ['review-r1.md', 'review-r2.md']);
+  assert.equal(donos(rel).length, 0);
+});
+
+test('D1-so-a-task-pedida: liberar T2 não mexe nos achados de T1', () => {
+  const amb = repo({ plano: PLANO2, semear: [...ATE_O_TETO('T1'), ...ATE_O_TETO('T2')] });
+  comAchadosVelhos(amb, 'T1');
+  comAchadosVelhos(amb, 'T2');
+  assert.equal(hook(stdinTui(amb.dir, { command_args: 'T2' })).rc, 0);
+  assert.deepEqual(lsTmp(amb, 'T1').filter((n) => !n.startsWith('.')), ['review-r1.md', 'review-r2.md']);
+  assert.deepEqual(lsTmp(amb, 'T2').filter((n) => !n.startsWith('.')), ['ciclo-1']);
+});
+
+test('D1-fechar: fechar continua removendo .tmp-gabarito com ciclo-1 dentro', () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  comAchadosVelhos(amb);
+  assert.equal(hook(stdinTui(amb.dir)).rc, 0);
+  assert.ok(lsTmp(amb).includes('ciclo-1'));
+  const f = loop(amb.dir, 'fechar', 'T1');
+  assert.equal(f.rc, 0, f.out + f.err);
+  assert.equal(existsSync(wtDe(amb)), false);
 });
 
 // ── Stop em `concluir` ────────────────────────────────────────────────────────────────────────────────────────────
