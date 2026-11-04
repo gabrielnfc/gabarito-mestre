@@ -158,7 +158,7 @@ fs.closeSync = (fd) => {
 syncBuiltinESMExports();
 `;
 
-test('ultima-mensagem-a-100ms-conta: escrita tardia real, em processo separado, depois da 1ª leitura do hook, entra na soma (ordem por arquivo, sem relógio)', async () => {
+test('ultima-mensagem-tardia-em-processo-separado-conta: escrita tardia real, em processo separado, depois da 1ª leitura do hook, entra na soma (ordem por arquivo, sem relógio)', async () => {
   const c = cenario();
   const p = transcript(c, [msg('m1', U(10, 5))]);
   const pasta = bruto('barreira');
@@ -183,6 +183,17 @@ fs.appendFileSync(process.argv[2], process.argv[3]+'\\n');fs.writeFileSync(proce
   assert.ok(m, 'registrou');
   assert.equal(m.dados.mensagens, 2);
   assert.equal(m.dados.input_tokens, 13);
+});
+
+test('espera-real-tem-limite-inferior: somarUso com a espera real dorme ao menos 2 passos (relógio monotônico; só limite inferior)', async () => {
+  const c = cenario();
+  const p = transcript(c, [msg('m1', U(10, 5))]);
+  const { somarUso, PASSO_MS } = await import(pathToFileURL(SCRIPT).href);
+  const t0 = process.hrtime.bigint();
+  const r = comHome(c, () => somarUso(p));
+  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  assert.equal(r.leituras, 3); // arquivo parado: r0, r1, r2 (igual a r1) ⇒ 2 esperas
+  assert.ok(ms >= 2 * PASSO_MS - 2, `esperou ${ms} ms; o mínimo é 2 esperas de ${PASSO_MS} ms (tolerância 2 ms de granularidade)`);
 });
 
 test('releitura-ate-estabilizar: cresceu na espera, relê; estável em 2 leituras seguidas, para (conta leituras, não relógio)', async () => {
