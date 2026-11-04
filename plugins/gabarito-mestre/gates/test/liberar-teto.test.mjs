@@ -1,0 +1,355 @@
+/**
+ * REQ-LOOP-2 (spec r12, emenda do dono): a saída do teto de rodadas é só do humano, por `/gabarito-mestre:liberar <task>`.
+ * Skill com `disable-model-invocation: true` + hook `UserPromptExpansion` (`liberar-teto.mjs`) que grava `task.reaberta {origem:"dono"}`.
+ * Cada caso sobe um repositório git descartável e roda o adaptador real com o stdin do TUI (medido no spike A1, 2.1.318).
+ *
+ * Limite declarado (Q14): sob o mesmo usuário de SO, `node -e` com `diario.append`, `claude -p` aninhado ou entrada falsa neste script
+ * gravam um evento válido. O que se testa: nenhum caminho comum grava, e a liberação aparece ao dono (Stop em `concluir`).
+ *
+ * MUTAÇÕES PRESCRITAS: task-27-mut.json da entrega.
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, chmodSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import * as diario from '../dist/diario.js';
+import { jaParou } from '../dist/pouso.js';
+
+const AQUI = dirname(fileURLToPath(import.meta.url));
+const GATES = join(AQUI, '..');
+const PLUGIN = join(GATES, '..');
+const HOOK = join(GATES, 'scripts', 'liberar-teto.mjs');
+const LOOP = join(GATES, 'scripts', 'loop.mjs');
+const STOP = join(GATES, 'scripts', 'stop-loop.mjs');
+const SEM_ROOT = typeof process.getuid === 'function' && process.getuid() === 0;
+const COMANDO = 'gabarito-mestre:liberar';
+
+const git = (cwd, ...a) => spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...a], { cwd, encoding: 'utf8' });
+const PLANO = { entrega: 'GM-10', tasks: [{ id: 'T1', deps: [], arquivos: ['a.ts'] }] };
+const PLANO2 = { entrega: 'GM-10', tasks: [{ id: 'T1', deps: [], arquivos: ['a.ts'] }, { id: 'T2', deps: [], arquivos: ['b.ts'] }] };
+
+// Relógio real, estritamente crescente: o hook grava com `new Date()` (subprocesso, bem mais de 1 ms depois do último semeado).
+let relogio = 0;
+const agora = () => (relogio = Math.max(Date.now(), relogio + 1));
+
+/** Repo descartável na branch da entrega, com plano e diário semeado pelo núcleo (nunca à mão). */
+function repo({ plano = PLANO, semear = [], branch = 'enabler/GM-10-teste', init = true } = {}) {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'liberar-')));
+  if (init) {
+    git(dir, 'init', '-q', '-b', branch);
+    git(dir, 'commit', '-q', '--allow-empty', '-m', 'chore: base');
+  }
+  const entregas = join(dir, '.harness', 'entregas', 'GM-10');
+  mkdirSync(entregas, { recursive: true });
+  if (plano !== null) writeFileSync(join(entregas, 'plano.json'), typeof plano === 'string' ? plano : JSON.stringify(plano));
+  const amb = {
+    dir,
+    entregas,
+    semear(lista, sessao = 'loop', relogioDe = agora) {
+      for (const [tipo, dados] of lista) {
+        const r = diario.append(entregas, sessao, { ts: new Date(relogioDe()).toISOString(), autor: 't@t', sessao, agente: 'orquestrador', tipo, dados });
+        assert.ok(r.ok && r.gravado === 'evento', JSON.stringify(r));
+      }
+    },
+    eventos: () => diario.ler(entregas),
+    bytes: () => Object.fromEntries(readdirSync(entregas).sort().map((n) => [n, readFileSync(join(entregas, n), 'utf8')])),
+  };
+  amb.semear(semear);
+  return amb;
+}
+
+const IMPL = (t) => [['task.iniciada', { task: t, papel: 'implementador' }], ['task.concluida', { task: t, sha: 'a'.repeat(40) }]];
+const REPROVA = (t, r) => ['review.veredito', { task: t, veredito: 'REPROVADO', rodada: r, blocker: 0, major: 1 }];
+/** pendente → … → no_teto (2 reprovações com achado). */
+const ATE_O_TETO = (t) => [...IMPL(t), REPROVA(t, 1), ['task.iniciada', { task: t, papel: 'correcao' }], ['task.concluida', { task: t, sha: 'b'.repeat(40) }], REPROVA(t, 2)];
+const APROVA = (t, r) => ['review.veredito', { task: t, veredito: 'APROVADO', rodada: r, blocker: 0, major: 0 }];
+
+/** stdin do TUI (spike A1): command_name, command_args e command_source; `agent_id` só quando vem de subagent. */
+const stdinTui = (dir, extra = {}) => ({
+  session_id: 'S-dono', cwd: dir, hook_event_name: 'UserPromptExpansion', command_name: COMANDO, command_args: 'T1', command_source: 'plugin', ...extra,
+});
+
+function hook(entrada, { cwd, env = {} } = {}) {
+  const input = typeof entrada === 'string' ? entrada : JSON.stringify(entrada);
+  const r = spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', cwd, env: { ...process.env, ...env } });
+  let j = null;
+  try { j = r.stdout.trim() === '' ? null : JSON.parse(r.stdout); } catch { /* fica null */ }
+  return { rc: r.status, j, out: r.stdout, err: r.stderr };
+}
+const loop = (dir, ...args) => {
+  const r = spawnSync(process.execPath, [LOOP, ...args], { cwd: dir, encoding: 'utf8' });
+  let j = null;
+  try { j = JSON.parse(r.stdout.trim()); } catch { /* fica null */ }
+  return { rc: r.status, j, out: r.stdout, err: r.stderr };
+};
+const donos = (amb) => amb.eventos().filter((e) => e.tipo === 'task.reaberta' && e.dados?.origem === 'dono');
+function bloqueou(r, causa) {
+  assert.equal(r.rc, 0, `hook sai 0: ${r.err}`);
+  assert.equal(r.j?.decision, 'block', `block esperado: ${r.out}`);
+  assert.match(String(r.j.reason), causa);
+}
+
+test('no-teto: o comando digitado grava 1 evento dono, relido, e proxima despacha a task de novo', () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  assert.equal(loop(amb.dir, 'proxima').j.acao.tipo, 'parar');
+  const r = hook(stdinTui(amb.dir));
+  assert.equal(r.rc, 0, r.err);
+  assert.notEqual(r.j?.decision, 'block', r.out);
+  const d = donos(amb);
+  assert.equal(d.length, 1);
+  assert.deepEqual(d[0].dados, { task: 'T1', origem: 'dono' });
+  assert.equal(d[0].sessao, 'S-dono');
+  const p = loop(amb.dir, 'proxima', '--vivos', '0').j.acao;
+  assert.equal(p.tipo, 'despachar');
+  assert.deepEqual(p.itens.map((i) => [i.task, i.papel]), [['T1', 'implementador']]);
+  assert.match(String(r.j?.systemMessage), /T1/);
+});
+
+test('fora-do-teto: pendente, em voo, aprovada e integrada recusam com a causa e 0 bytes novos no diário', () => {
+  const casos = {
+    pendente: [],
+    implementando: [['task.iniciada', { task: 'T1', papel: 'implementador' }]],
+    concluida: IMPL('T1'),
+    reprovada: [...IMPL('T1'), REPROVA('T1', 1)],
+    aprovada: [...IMPL('T1'), APROVA('T1', 1)],
+    integrada: [...IMPL('T1'), APROVA('T1', 1), ['task.integrada', { task: 'T1', sha: 'a'.repeat(40) }]],
+  };
+  for (const [estado, eventos] of Object.entries(casos)) {
+    const amb = repo({ semear: eventos });
+    const antes = amb.bytes();
+    bloqueou(hook(stdinTui(amb.dir)), /nao_esta_no_teto/);
+    assert.deepEqual(amb.bytes(), antes, `${estado}: diário intacto`);
+  }
+});
+
+test('so-a-task-pedida: outra task no teto não libera T1', () => {
+  const amb = repo({ plano: PLANO2, semear: ATE_O_TETO('T2') });
+  const antes = amb.bytes();
+  bloqueou(hook(stdinTui(amb.dir)), /nao_esta_no_teto/);
+  assert.deepEqual(amb.bytes(), antes);
+  assert.equal(hook(stdinTui(amb.dir, { command_args: 'T2' })).rc, 0);
+  assert.equal(donos(amb).length, 1);
+  assert.equal(donos(amb)[0].dados.task, 'T2');
+});
+
+test('dado-ruim: task fora do plano, diário corrompido, plano ausente ou inválido, fora de repo ⇒ block com a causa e nada gravado', () => {
+  const fora = repo({ semear: ATE_O_TETO('T1') });
+  let antes = fora.bytes();
+  bloqueou(hook(stdinTui(fora.dir, { command_args: 'T9' })), /task_fora_do_plano/);
+  assert.deepEqual(fora.bytes(), antes);
+
+  const torto = repo({ semear: ATE_O_TETO('T1') });
+  const arq = join(torto.entregas, readdirSync(torto.entregas).find((n) => n.startsWith('events.')));
+  writeFileSync(arq, `${readFileSync(arq, 'utf8')}isto não é json\n`);
+  antes = torto.bytes();
+  bloqueou(hook(stdinTui(torto.dir)), /diario_ilegivel/);
+  assert.deepEqual(torto.bytes(), antes);
+
+  const quebrado = repo({ semear: ATE_O_TETO('T1') });
+  quebrado.semear([['task.integrada', { task: 'T1', sha: 'c'.repeat(40) }]]); // fraude: integrar no teto
+  antes = quebrado.bytes();
+  bloqueou(hook(stdinTui(quebrado.dir)), /diario_invalido|transicao_invalida|diario_ilegivel/);
+  assert.deepEqual(quebrado.bytes(), antes);
+
+  const semPlano = repo({ plano: null, semear: [] });
+  bloqueou(hook(stdinTui(semPlano.dir)), /plano_ausente/);
+  assert.deepEqual(semPlano.bytes(), {});
+
+  const planoRuim = repo({ plano: '{ não é json' });
+  bloqueou(hook(stdinTui(planoRuim.dir)), /plano_invalido/);
+
+  const foraDeRepo = realpathSync(mkdtempSync(join(tmpdir(), 'liberar-sem-git-')));
+  bloqueou(hook(stdinTui(foraDeRepo), { cwd: foraDeRepo }), /./);
+  assert.deepEqual(readdirSync(foraDeRepo), []);
+});
+
+test('branch-sem-entrega: não adivinha a entrega, block e nada gravado', () => {
+  const amb = repo({ semear: ATE_O_TETO('T1'), branch: 'main' });
+  const antes = amb.bytes();
+  bloqueou(hook(stdinTui(amb.dir)), /entrega_nao_inferida/);
+  assert.deepEqual(amb.bytes(), antes);
+});
+
+test('agent_id: pedido vindo de subagent é recusado, nada gravado', () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  const antes = amb.bytes();
+  bloqueou(hook(stdinTui(amb.dir, { agent_id: 'a1', agent_type: 'gabarito-mestre:gabarito-implementador' })), /agent|subagent/i);
+  assert.deepEqual(amb.bytes(), antes);
+  assert.equal(donos(amb).length, 0);
+  bloqueou(hook(stdinTui(amb.dir, { agent_id: '' })), /agent|subagent/i); // presença, não valor
+  assert.deepEqual(amb.bytes(), antes);
+});
+
+test('comando-alheio: outro command_name sai 0, calado, sem efeito (mesmo no teto)', () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  const antes = amb.bytes();
+  for (const nome of ['gabarito-mestre:gabarito', 'outro:liberar', 'liberar', 'gabarito-mestre:liberar-tudo', '']) {
+    const r = hook(stdinTui(amb.dir, { command_name: nome, command_args: '../x' }));
+    assert.equal(r.rc, 0, nome);
+    assert.equal(r.out, '', `${nome}: sem saída`);
+  }
+  assert.deepEqual(amb.bytes(), antes);
+});
+
+test('args-invalidos: vazio, com espaço, caminho e metacaractere ⇒ block, nada gravado', () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  const antes = amb.bytes();
+  for (const args of ['', ' ', 'T1 T2', ' T1', 'T1 ', '../x', '..', 'T1/../T2', 'T1;ls', '$(id)', 'T1\nT2', 'x'.repeat(40)]) {
+    bloqueou(hook(stdinTui(amb.dir, { command_args: args })), /./);
+    assert.deepEqual(amb.bytes(), antes, JSON.stringify(args));
+  }
+  bloqueou(hook(stdinTui(amb.dir, { command_args: undefined })), /./);
+  bloqueou(hook(stdinTui(amb.dir, { command_args: 7 })), /./);
+  assert.deepEqual(amb.bytes(), antes);
+});
+
+test('stdin-ruim: ausente, não JSON ou não objeto ⇒ block (fail-closed), nada gravado', () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  const antes = amb.bytes();
+  for (const entrada of ['', 'não é json', '[]', 'null', '"T1"']) bloqueou(hook(entrada, { cwd: amb.dir }), /stdin|entrada/i);
+  assert.deepEqual(amb.bytes(), antes);
+});
+
+test('CLI: liberar e liberarTeto não são comandos do loop.mjs (uso, rc 2) e nada é gravado', () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  const antes = amb.bytes();
+  for (const args of [['liberar', 'T1'], ['liberarTeto', 'T1'], ['liberar', 'T1', '--sessao', 'dono'], ['reabrir', 'T1', '--origem', 'dono']]) {
+    const r = loop(amb.dir, ...args);
+    assert.equal(r.rc, 2, args.join(' '));
+    assert.equal(r.j?.erro, 'uso');
+    assert.match(r.j.mensagem, /desconhecido/);
+  }
+  assert.match(loop(amb.dir, 'liberar', 'T1').j.mensagem, /desconhecido ou ausente/, 'recusado pela tabela de argumentos, não por um default alcançável');
+  assert.deepEqual(amb.bytes(), antes);
+});
+
+test('reabrir-no-teto-continua-no-teto: o modelo não sai do teto pelo CLI', () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  const r = loop(amb.dir, 'reabrir', 'T1');
+  assert.equal(r.rc, 0, r.out);
+  assert.equal(amb.eventos().at(-1).dados.origem, 'retomada');
+  const p = loop(amb.dir, 'proxima', '--vivos', '0').j.acao;
+  assert.equal(p.tipo, 'parar');
+  assert.equal(p.motivo, 'teto_rodadas');
+  assert.equal(donos(amb).length, 0);
+});
+
+test('depois-da-liberacao: veredito atrasado recebe transicao_invalida e nada é gravado (fato 3)', () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  assert.equal(hook(stdinTui(amb.dir)).rc, 0);
+  const antes = amb.bytes();
+  const r = loop(amb.dir, 'veredito', 'T1', 'APROVADO', '3', '0', '0');
+  assert.equal(r.j?.erro, 'transicao_invalida');
+  assert.deepEqual(amb.bytes(), antes);
+});
+
+test('liberar-reprovar-duas-vezes: novo teto, nova liberação vale, e o loop.parar do segundo teto é regravável (jaParou)', () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  amb.semear([['loop.parar', { motivo: 'teto_rodadas' }]]);
+  assert.equal(jaParou(amb.eventos()), true, 'sem liberação, parar não se repete');
+  assert.equal(hook(stdinTui(amb.dir)).rc, 0);
+  assert.equal(jaParou(amb.eventos()), false, 'a liberação conta como progresso: o próximo teto regrava loop.parar');
+  amb.semear(ATE_O_TETO('T1'));
+  assert.equal(jaParou(amb.eventos()), false);
+  const p = loop(amb.dir, 'proxima', '--vivos', '0').j.acao;
+  assert.deepEqual([p.tipo, p.motivo, p.task], ['parar', 'teto_rodadas', 'T1']);
+  amb.semear([['loop.parar', { motivo: 'teto_rodadas' }]]);
+  assert.equal(jaParou(amb.eventos()), true);
+  assert.equal(hook(stdinTui(amb.dir)).rc, 0, 'segunda liberação');
+  assert.equal(donos(amb).length, 2);
+  assert.equal(loop(amb.dir, 'proxima', '--vivos', '0').j.acao.tipo, 'despachar');
+});
+
+test('relido: evento gravado que não tira a task do teto (diário com relógio no futuro) não vira sucesso', () => {
+  let n = Date.parse('2099-01-01T00:00:00Z');
+  const amb = repo();
+  amb.semear(ATE_O_TETO('T1'), 'loop', () => (n += 1000));
+  const r = hook(stdinTui(amb.dir));
+  bloqueou(r, /evento_nao_gravado/);
+  assert.equal(r.j.systemMessage, undefined);
+  assert.equal(loop(amb.dir, 'proxima', '--vivos', '0').j.acao.tipo, 'parar', 'a task segue no teto');
+});
+
+test('gravacao-falha: diário sem permissão de escrita ⇒ block com a causa, nunca sucesso (contrato)', { skip: SEM_ROOT && 'root ignora permissão' }, () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  const antes = amb.bytes();
+  chmodSync(amb.entregas, 0o555);
+  try {
+    const r = hook(stdinTui(amb.dir));
+    bloqueou(r, /evento_nao_gravado|nao gravado|não gravado/i);
+    assert.equal(r.j.systemMessage, undefined);
+  } finally {
+    chmodSync(amb.entregas, 0o755);
+  }
+  assert.deepEqual(amb.bytes(), antes);
+  assert.equal(donos(amb).length, 0);
+});
+
+// ── Stop em `concluir` ────────────────────────────────────────────────────────────────────────────────────────────
+function stop(dir) {
+  const r = spawnSync(process.execPath, [STOP], { input: JSON.stringify({ session_id: 'S1', cwd: dir, hook_event_name: 'Stop' }), encoding: 'utf8', env: { ...process.env, CLAUDE_PROJECT_DIR: dir } });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout.trim() === '' ? null : JSON.parse(r.stdout);
+}
+const FIM = (t) => [...IMPL(t), APROVA(t, 1), ['task.integrada', { task: t, sha: 'a'.repeat(40) }]];
+
+test('stop-concluir: com liberação o aviso lista task, hora e sessão; sem liberação segue calado', () => {
+  const plano = PLANO;
+  const sem = repo({ plano, semear: [...IMPL('T1'), ['task.reaberta', { task: 'T1', origem: 'retomada' }], APROVA('T1', 1), ['task.integrada', { task: 'T1', sha: 'a'.repeat(40) }]] }); // reabertura da retomada não é liberação
+  assert.equal(loop(sem.dir, 'proxima', '--vivos', '0').j.acao.tipo, 'concluir');
+  assert.equal(stop(sem.dir), null, 'sem liberação do dono (só retomada), concluir é silêncio');
+
+  const com = repo({ plano, semear: ATE_O_TETO('T1') });
+  assert.equal(hook(stdinTui(com.dir)).rc, 0);
+  com.semear([...IMPL('T1'), APROVA('T1', 1), ['task.integrada', { task: 'T1', sha: 'a'.repeat(40) }]]);
+  assert.equal(loop(com.dir, 'proxima', '--vivos', '0').j.acao.tipo, 'concluir');
+  const s = stop(com.dir);
+  assert.notEqual(s?.decision, 'block');
+  assert.match(s?.systemMessage ?? '', /Liberações do teto: T1 \(\d{4}-\d{2}-\d{2}T[\d:.]+Z, S-dono\)/);
+  assert.match(s.systemMessage, /Se não foi você, confira o diário/);
+});
+
+test('stop-concluir: diário ilegível cai no aviso que já existe, nunca vira concluir', () => {
+  const plano = PLANO;
+  const amb = repo({ plano, semear: FIM('T1') });
+  const arq = join(amb.entregas, readdirSync(amb.entregas).find((n) => n.startsWith('events.')));
+  writeFileSync(arq, `${readFileSync(arq, 'utf8')}lixo\n`);
+  const s = stop(amb.dir);
+  assert.match(s?.systemMessage ?? '', /ilegível/);
+  assert.doesNotMatch(s.systemMessage, /Liberações do teto/);
+});
+
+// ── Estáticos: skill, hook, texto ao dono ─────────────────────────────────────────────────────────────────────────
+const lerPlugin = (...p) => readFileSync(join(PLUGIN, ...p), 'utf8');
+
+test('skill-liberar: disable-model-invocation: true no frontmatter; o corpo manda consultar proxima e não afirma que liberou', () => {
+  const t = lerPlugin('skills', 'liberar', 'SKILL.md');
+  const fm = /^---\n([\s\S]*?)\n---\n/.exec(t)?.[1] ?? '';
+  assert.match(fm, /^name: liberar$/m);
+  assert.match(fm, /^disable-model-invocation: true$/m);
+  assert.match(fm, /^description: .+/m);
+  const corpo = t.slice(t.indexOf('\n---\n', 4));
+  assert.match(corpo, /proxima --vivos/);
+  assert.match(corpo, /hand-back|agente vivo/i);
+  assert.doesNotMatch(corpo, /\bliberei\b|\bfoi liberada\b|\bliberada com sucesso\b/i);
+  assert.doesNotMatch(fm, /allowed-tools:.*Write|allowed-tools:.*Edit/);
+});
+
+test('hooks.json: UserPromptExpansion roda liberar-teto.mjs com onFailure block', () => {
+  const h = JSON.parse(lerPlugin('hooks', 'hooks.json')).hooks.UserPromptExpansion;
+  assert.ok(Array.isArray(h) && h.length === 1);
+  const cmd = h[0].hooks[0];
+  assert.equal(cmd.type, 'command');
+  assert.match(cmd.command, /gates\/scripts\/liberar-teto\.mjs/);
+  assert.equal(cmd.onFailure, 'block');
+  assert.ok(Number.isInteger(cmd.timeout) && cmd.timeout > 0);
+});
+
+test('gabarito-loop: o teto manda o dono digitar o comando exato', () => {
+  const t = lerPlugin('skills', 'gabarito-loop', 'SKILL.md');
+  assert.match(t, /\/gabarito-mestre:liberar <task>/);
+  assert.match(t, /só o dono libera/i);
+});

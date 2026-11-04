@@ -16,7 +16,7 @@
  * Dado ausente, corrompido ou ferramenta falhando nunca vira sucesso; rc 0 só com o efeito feito. Uso errado sai 2.
  *
  * QUEM GRAVA NO DIÁRIO. Só `iniciar` (task.iniciada), `concluir` (task.concluida), `veredito` (review.veredito),
- * `reabrir` (task.reaberta, SÓ origem `retomada`: nenhum argumento produz `dono`), `integrar` (task.integrada),
+ * `reabrir` (task.reaberta, SÓ origem `retomada`: nenhum argumento produz `dono`; `dono` sai só de `liberarTeto`, que o hook do comando humano `/gabarito-mestre:liberar` chama), `integrar` (task.integrada),
  * `ci` (ci.resultado) e `parar` (loop.parar). `concluir` e `integrar` gravam o `sha`. `abrir` não grava no diário (grava a base em `branch.<branch>.gabaritoBase`)
  * e é idempotente: worktree registrada com HEAD na branch da task devolve o mesmo resultado com `ja_aberta: true`; qualquer outro estado recusa. Todo evento de task é conferido contra `TRANSICOES` ANTES de gravar:
  * o CLI nunca produz um diário que o núcleo recuse.
@@ -943,6 +943,44 @@ async function executar(argv, cwd) {
     }
     case 'reabrir': tarefa(plano, task); return { evento: gravar(c, plano, 'task.reaberta', { task, origem: 'retomada' }) };
     default: throw new Falha('uso', `comando desconhecido: ${cmd}`, {}, 2);
+  }
+}
+
+/** Estado da task segundo o núcleo, lendo o diário de forma estrita; diário que a tabela recusa ⇒ falha, nunca um estado inventado. */
+function estadoDaTask(c, task) {
+  const eventos = lerDiarioEstrito(c.dirEntrega);
+  const ord = ordenar(eventos);
+  if (!ord.ok) throw new Falha('diario_invalido', 'o diário da entrega não está em ordem');
+  const r = estadoDe(ord.eventos.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === task));
+  if ('invalido' in r) throw new Falha('diario_invalido', `diário da task ${task} fora da tabela de transições: ${r.invalido}`);
+  return { estado: r.estado, donos: eventos.filter((e) => e.tipo === 'task.reaberta' && e.dados?.task === task && e.dados?.origem === 'dono').length };
+}
+
+/**
+ * REQ-LOOP-2: a ÚNICA gravação de `task.reaberta {origem:"dono"}`. Fora de `ESPEC` de propósito: nenhum argumento do CLI chega aqui,
+ * só o hook `UserPromptExpansion` (`liberar-teto.mjs`), disparado pelo comando que o dono digita. Exige `no_teto`, porque a tabela
+ * aceita `reaberta.dono` como autotransição nos outros estados e gravar lá seria evento sem efeito que parece liberação.
+ * Nunca lança: `{ok:true, task, estado}` só com o evento gravado E relido (um evento a mais para a task, estado `pendente`);
+ * qualquer outra coisa é `{ok:false, erro, mensagem}` com 0 eventos novos pela via normal. Sem lock (limite do `gravar`).
+ */
+export function liberarTeto(cwd, task, sessao) {
+  try {
+    if (typeof task !== 'string' || !ID_RE.test(task)) throw new Falha('id_invalido', `task ${JSON.stringify(task)} fora da forma ${ID_RE}`);
+    if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) throw new Falha('argumento_invalido', `sessão fora da forma ${SESSAO_RE}`);
+    const c = contexto(cwd, { sessao });
+    const plano = carregarPlano(c);
+    tarefa(plano, task);
+    const antes = estadoDaTask(c, task);
+    if (antes.estado !== 'no_teto') throw new Falha('nao_esta_no_teto', `task ${task} está em ${antes.estado}; só task no teto de rodadas se libera. Nada foi gravado`);
+    gravar(c, plano, 'task.reaberta', { task, origem: 'dono' });
+    const depois = estadoDaTask(c, task);
+    if (depois.donos !== antes.donos + 1 || depois.estado !== 'pendente') {
+      throw new Falha('evento_nao_gravado', `a liberação de ${task} não tirou a task do teto no diário relido (relógio do diário? estado ${depois.estado}, liberações ${antes.donos} → ${depois.donos})`);
+    }
+    return { ok: true, task, entrega: c.entrega, estado: depois.estado };
+  } catch (e) {
+    if (e instanceof Falha) return { ok: false, erro: e.erro, mensagem: e.message };
+    return { ok: false, erro: 'excecao', mensagem: e instanceof Error ? e.message : String(e) };
   }
 }
 

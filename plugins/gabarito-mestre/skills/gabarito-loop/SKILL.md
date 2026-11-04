@@ -28,7 +28,7 @@ $LOOP proxima --vivos <n>      # n = agentes seus ainda vivos; o diário não os
      `REPROVADO` sem esse arquivo não vazio: `ok:false achados_ausentes`, nada gravado; mande gravar e repita. Rodada errada: `rodada esperada: N`.
    - `integrar` (`tasks[]`): `integrar <task>` (gate, rebase, ff-only do sha aprovado; ele mesmo fecha a worktree).
    - `esperar`: agentes vivos ou slots ocupados; não despache. `pousar` nunca vem do CLI (`percent` nulo): o mod pousa ao fim do turno (sem mod, ver abaixo).
-   - `parar{motivo}`: pare e **escale ao dono** com o motivo e o diário. Não reabra o que a regra manda escalar.
+   - `parar{motivo}`: pare e **escale ao dono** com o motivo e o diário. Não reabra o que a regra manda escalar. `teto_rodadas`: diga o comando exato, só dele: `/gabarito-mestre:liberar <task>` (recomeça em `pendente`); você não o invoca.
    - `concluir`: tudo integrado. Rode a suíte inteira e o CI antes de dizer "pronto".
 2. CI da entrega: `ci verde|vermelho`. Falha que você não consegue resolver: `parar nao_conseguiu`.
 3. Volte a `proxima` depois de cada evento. `reabrir <task>` só recomeça a task (origem `retomada`); o teto de rodadas só o dono libera.

@@ -422,7 +422,32 @@ export async function caminhar(opcoes) {
     mundo.percent = percent; // depois do /clear o contexto é pequeno
   }
 
-  let turno = 0; let fim = null; let blocks = 0; let escFeito = false; let pendenteFeito = false;
+  // ── o dono (REQ-LOOP-2): `/gabarito-mestre:liberar T1` pelo hook real, com o stdin do TUI (spike A1) ──
+  const liberacao = { reabrirSegueNoTeto: null, subagentBloqueado: null, diarioIgual: null, liberou: null, proximaDepois: null };
+  const bytesDiario = () => readdirSync(DIR).filter((n) => /^events\./.test(n)).sort().map((n) => readFileSync(join(DIR, n), 'utf8')).join('\u0000');
+  function donoLibera(task) {
+    const tui = { session_id: 'S-dono', cwd: REAL, hook_event_name: 'UserPromptExpansion', command_name: 'gabarito-mestre:liberar', command_args: task, command_source: 'plugin' };
+    const hook = (extra) => {
+      const r = spawnSync(NODE, [join(PLUGIN, 'gates/scripts/liberar-teto.mjs')], { input: JSON.stringify({ ...tui, ...extra }), cwd: REAL, encoding: 'utf8', env: ambiente(envBase) });
+      let j = null;
+      try { j = r.stdout.trim() === '' ? null : JSON.parse(r.stdout); } catch { def('liberar-teto saída não JSON'); }
+      trilha.push(`  dono /gabarito-mestre:liberar ${task}${extra?.agent_id ? ' (com agent_id)' : ''} -> rc ${r.status} ${j?.decision ?? 'sem block'} ${(j?.reason ?? j?.systemMessage ?? '').slice(0, 110)}`);
+      return { rc: r.status, j };
+    };
+    const reabriu = cli(['reabrir', task]); // o modelo tenta sair do teto por conta própria: continua no teto
+    liberacao.reabrirSegueNoTeto = reabriu.ok && cli(['proxima', '--vivos', '0']).acao?.motivo === 'teto_rodadas';
+    const antes = bytesDiario();
+    const vindoDeSubagent = hook({ agent_id: 'a-fantasma', agent_type: 'gabarito-mestre:gabarito-implementador' });
+    liberacao.subagentBloqueado = vindoDeSubagent.rc === 0 && vindoDeSubagent.j?.decision === 'block';
+    liberacao.diarioIgual = bytesDiario() === antes;
+    const dono = hook({});
+    liberacao.liberou = dono.rc === 0 && dono.j?.decision !== 'block';
+    const p = cli(['proxima', '--vivos', '0']).acao;
+    liberacao.proximaDepois = p ? `${p.tipo} ${(p.itens ?? []).map((i) => `${i.task} ${i.papel}`).join(',')}` : null;
+    if (!(liberacao.reabrirSegueNoTeto && liberacao.subagentBloqueado && liberacao.diarioIgual && liberacao.liberou)) def(`liberação do dono fora do previsto: ${JSON.stringify(liberacao)}`);
+  }
+
+  let turno = 0; let fim = null; let blocks = 0; let escFeito = false; let pendenteFeito = false; let liberou = false;
   const pendentes = []; let submitsVistos = 0;
   mundo.percent = o.percent; // 1ª resposta define o percent
   trilha.push(`T${turno} prompt do dono`);
@@ -461,6 +486,17 @@ export async function caminhar(opcoes) {
       for (const ag of mundo.agentes.filter((a) => a.status === 'running')) { await terminar(ag); pendentes.push(ag); }
     }
     await fimTurnoMod();
+    if (fim && !mundo.clearAgora && o.liberar && !liberou && /^parar teto_rodadas/.test(fim)) {
+      // o dono digita o comando; o corpo da skill manda o modelo consultar `proxima`, e o ciclo segue
+      liberou = true;
+      const liberada = fim.split(' ')[2];
+      donoLibera(liberada);
+      fim = null;
+      turno++;
+      trilha.push(`T${turno} o dono liberou ${liberada}; o modelo consulta proxima`);
+      r = await ciclo();
+      continue;
+    }
     if (fim && !mundo.clearAgora) break; // um pouso agendado muda o fim: o /clear reabre o turno
     fim = null;
     turno++;
@@ -505,6 +541,7 @@ export async function caminhar(opcoes) {
     r = await ciclo();
   }
 
+  const stopFinal = o.liberar ? stop() : undefined; // Stop em `concluir`: lista as liberações ao dono
   // ── leitura depois da corrida ──────────────────────────────────
   const eventos = readdirSync(DIR).filter((n) => /^events\./.test(n)).flatMap((n) => readFileSync(join(DIR, n), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)));
   const ord = eventos.slice().sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : a.seq - b.seq));
@@ -526,6 +563,7 @@ export async function caminhar(opcoes) {
     reabertasDe: eventos.filter((e) => e.tipo === 'task.reaberta').map((e) => e.dados.task), integradas: contar['task.integrada'] ?? 0, vereditos: contar['review.veredito'] ?? 0, reabertas: contar['task.reaberta'] ?? 0,
     denies: mundo.denies.length, submits: mundo.submits.length, guarda: contagem, defeitos, previstos, pousosSemVeredito, leituras, vistos: { ...vistos, retomadas: vistos.retomadas.length },
     retomadaTexto: vistos.retomadas[0] ?? null, proximaFinal: acaoFinal, avisos: mundo.avisos,
+    liberacao, stopFinal,
     tipos: ord.map((e) => e.tipo).filter((t) => !/^(custo\.|guarda\.|sessao\.inicio)/.test(t)), trilha,
   };
 }

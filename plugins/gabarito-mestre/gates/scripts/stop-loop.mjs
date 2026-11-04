@@ -10,7 +10,8 @@
  *   .harness/PAUSAR ............... silêncio (na raiz ou no checkout principal)
  *   loop.parar sem task depois .... silêncio
  *   diário ilegível ............... systemMessage, nunca vira `concluir`
- *   proximaAcao: concluir/esperar . silêncio; parar: systemMessage; despachar/integrar: block
+ *   proximaAcao: esperar ......... silêncio; parar: systemMessage; despachar/integrar: block
+ *   concluir ...................... silêncio, ou systemMessage listando as liberações do dono (`task.reaberta` origem `dono`; REQ-LOOP-2)
  * Pouso pendente (T18): `.harness/pouso-pendente.json {entrega, linhas}`, gravado pelo mod ao negar `Agent` porque a ação é `pousar`.
  * Marcador válido (mesma entrega e mesma contagem de progresso) ⇒ apaga marcador e contador, avisa e NÃO bloqueia, para o turno
  * terminar e o `turn.complete` pousar. Ausente, de outra contagem, ilegível ou que não apaga: regra normal, nunca silencia duas vezes.
@@ -233,6 +234,15 @@ function entregaDaBranch(raiz, branch) {
   }
 }
 
+/** `concluir` com liberação do dono no diário: lista task, hora e sessão (a forja pelo mesmo usuário de SO não é evitável, só visível). Nunca bloqueia. */
+function avisoLiberacoes(eventos, entrega) {
+  const donos = eventos.filter((e) => e?.tipo === 'task.reaberta' && e.dados?.origem === 'dono');
+  if (donos.length === 0) return null;
+  const lista = donos.slice(0, ITENS_NO_MOTIVO).map((e) => `${limpo(e.dados.task)} (${limpo(e.ts)}, ${limpo(e.sessao)})`);
+  const resto = donos.length - lista.length;
+  return aviso(`Loop da entrega ${limpo(entrega)} concluído. Liberações do teto: ${lista.join(', ')}${resto > 0 ? ` e mais ${resto}` : ''}. Se não foi você, confira o diário.`);
+}
+
 /** Núcleo do hook. Devolve o objeto a imprimir, ou `null` para silêncio. */
 export async function executar(texto, ambiente = process.env, cwdProcesso = process.cwd()) {
   const { entrada, aviso: erroEntrada } = lerEntrada(texto);
@@ -303,6 +313,7 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   } catch (e) {
     return aviso(`Loop: proximaAcao falhou (${curto(e?.name ?? 'erro', 60)}); nada decidido`);
   }
+  if (acao.tipo === 'concluir') return avisoLiberacoes(eventos, entrega);
   if (acao.tipo !== 'despachar' && acao.tipo !== 'integrar') return saidaParaAcao(acao, entrega);
 
   const saida = saidaParaAcao(acao, entrega);

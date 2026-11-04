@@ -151,6 +151,23 @@ describe('fumaça do loop sem LLM', { concurrency: 4 }, () => {
     assert.equal(r.reabertas, 1, 'a negação com revisor vivo reabre só a correção, e só quando os vivos chegam a 0 (T19 r3); a 2ª reprovação para no teto antes de qualquer despacho novo');
   });
 
+  // COSTURA (P9) da liberação (REQ-LOOP-2): o dono digita `/gabarito-mestre:liberar T1` e o hook real (`liberar-teto.mjs`, stdin do TUI)
+  // grava; o modelo antes tenta `reabrir` (segue no teto) e um pedido com `agent_id` é recusado sem mexer no diário.
+  test('liberação do dono: teto, reabrir não sai, agent_id é recusado, o comando libera, a task recomeça e o Stop em concluir avisa', async () => {
+    const r = await rodar({ plano: planos('duas'), vereditos: { T1: ['REPROVADO', 'REPROVADO'] }, liberar: true });
+    const m = TRILHA(r);
+    assert.deepEqual(r.liberacao, { reabrirSegueNoTeto: true, subagentBloqueado: true, diarioIgual: true, liberou: true, proximaDepois: 'despachar T1 implementador' }, `a liberação${m}`);
+    assert.equal(r.fim, 'concluir', `fim${m}`);
+    assert.equal(r.integradas, 2, `T1 e T2 integradas${m}`);
+    assert.deepEqual(r.parar, ['teto_rodadas'], `loop.parar uma vez${m}`);
+    assert.equal(r.tipos.filter((t) => t === 'task.reaberta').length >= 2, true, `reabrir (retomada) e liberar (dono)${m}`);
+    assert.deepEqual(r.defeitos, [], `defeitos${m}`);
+    assert.equal(r.guarda.deny, 0, `guarda deny${m}`);
+    assert.match(r.stopFinal?.systemMessage ?? '', /Liberações do teto: T1 \(\S+, S-dono\)/, `o Stop em concluir lista a liberação${m}`);
+    assert.notEqual(r.stopFinal?.decision, 'block', `o aviso nunca bloqueia${m}`);
+    assert.equal(r.proximaFinal.tipo, 'concluir', `proxima final${m}`);
+  });
+
   test('X não atingido: contexto abaixo de X, nenhum Agent negado, nenhum pouso, e o loop conclui', async () => {
     const r = await rodar({ plano: planos('tres'), vereditos: { T1: ['REPROVADO'] }, percent: 10, x: '50' });
     conferir(r, { fim: 'concluir', pouso: 0, integradas: 3, vereditos: 4, correcoes: 1, proxima: 'concluir', denies: 0 });
