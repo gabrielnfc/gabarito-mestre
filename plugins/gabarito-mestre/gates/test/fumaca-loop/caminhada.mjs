@@ -30,7 +30,8 @@ function ambiente(extra = {}) {
     if (k.startsWith('GIT_') || k.startsWith('NODE_TEST') || k === 'NODE_OPTIONS') continue;
     e[k] = v;
   }
-  return { ...e, ...extra };
+  // capacidade fixada pelo fixture: a máquina (carga, memória, disco) não muda o resultado da fumaça
+  return { ...e, GABARITO_CAP_LOAD1: '0', GABARITO_CAP_MEM_MB: '64000', GABARITO_CAP_DISCO_GB: '500', ...extra };
 }
 
 const TEMPLATE = {
@@ -51,7 +52,7 @@ export const LEITURAS_REVISOR = [
 ];
 
 function git(cwd, ...args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', env: ambiente(), stdio: ['ignore', 'pipe', 'pipe'] });
+  return execFileSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8', env: ambiente(), stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 /** Repositório descartável da entrega GM-99. Recusa destino existente (nunca apaga nada). */
