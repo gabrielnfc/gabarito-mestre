@@ -239,3 +239,7 @@ Loop ativo = `plano.json` da entrega da branch e sem `task.integrada` final. `ba
 - [ ] **Step 3: Aceite 4:** diário traz ETA e tokens por agente.
 - [ ] **Step 4: Aceite 5:** `TMPDIR` 0 bytes após `fechar`.
 - [ ] **Step 5: Evidência** no ledger; commit `test(GM-10): aceites de ponta a ponta do loop`.
+
+## Correção pós-T13 r3 (`sombra-t13d.md`, spec r8)
+
+T19 (mod, D1, D7), T20 (CLI e skill, D2, D3, D6, D8) e T21 (lista de leitores, D4) em paralelo. T22 (fumaça sem LLM em `npm test`, D5, P9) abre sobre T19 e T20 e integra depois. Depois, T13 r4 com a fumaça verde na base. Escopo, testes e mutações na tabela da Sombra; tabela vence texto antigo.
