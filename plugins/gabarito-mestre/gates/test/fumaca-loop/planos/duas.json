@@ -1,7 +1,8 @@
 {
   "entrega": "GM-99",
+  "spec": "docs/spec-gm99.md",
   "tasks": [
-    { "id": "T1", "deps": [], "arquivos": ["src/a.mjs", "test/a.test.mjs"], "spec": "docs/spec-gm99.md" },
-    { "id": "T2", "deps": [], "arquivos": ["src/b.mjs", "test/b.test.mjs"], "spec": "docs/spec-gm99.md" }
+    { "id": "T1", "deps": [], "arquivos": ["src/a.mjs", "test/a.test.mjs"] },
+    { "id": "T2", "deps": [], "arquivos": ["src/b.mjs", "test/b.test.mjs"] }
   ]
 }

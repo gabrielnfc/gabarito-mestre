@@ -42,8 +42,13 @@ const TEMPLATE = {
     casos: "import { test } from 'node:test'; import assert from 'node:assert/strict'; import { triplo } from '../src/c.mjs';\ntest('t', () => assert.equal(triplo(2), 6));\n" },
 };
 
-/** Leituras de git que a guarda deixa passar ao revisor hoje (medido em T21: o resto do corpus é da T21). */
-export const LEITURAS_REVISOR = ['git diff HEAD~1', 'git log --oneline -5', 'git status --short', 'git show --stat HEAD', 'git branch --show-current', 'git merge-base HEAD HEAD', 'git blame src/a.mjs'];
+/** Leituras de git que a guarda deixa passar ao revisor: as 7 da base e os 9 leitores da T21. */
+export const LEITURAS_REVISOR = [
+  'git diff HEAD~1', 'git log --oneline -5', 'git status --short', 'git show --stat HEAD', 'git branch --show-current', 'git merge-base HEAD HEAD', 'git blame src/a.mjs',
+  // os 9 leitores da T21 (D4)
+  'git ls-tree HEAD', 'git cat-file -p HEAD', 'git rev-list HEAD', 'git show-ref', 'git for-each-ref', 'git describe --always',
+  'git diff-tree --no-commit-id --name-only -r HEAD', 'git shortlog -s HEAD', 'git name-rev HEAD',
+];
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', env: ambiente(), stdio: ['ignore', 'pipe', 'pipe'] });
@@ -250,9 +255,12 @@ export async function caminhar(opcoes) {
 
   async function despachar(item) {
     const { task, papel } = item;
-    if (typeof item.spec === 'string') vistos.specs++;
+    // spec vem de `proxima` (ponteiro do topo do plano), em todo item: o /clear apaga o que o modelo sabia
+    if (item.spec === 'docs/spec-gm99.md') vistos.specs++;
+    else def(`item ${task} ${papel} sem o spec do topo do plano: ${JSON.stringify(item.spec)}`);
     if (papel === 'correcao') {
       // D2: o /clear apaga o que o revisor disse; o item carrega o caminho e o arquivo tem que existir e ter texto (conta por rodada, não por despacho)
+      if (typeof item.achados === 'string' && !new RegExp(`/\\.harness/worktrees/${task}/\\.tmp-gabarito/review-r\\d+\\.md$`).test(item.achados)) def(`correcao ${task}: achados fora de .tmp-gabarito/review-r<rodada>.md da worktree: ${item.achados}`);
       if (typeof item.achados === 'string' && existsSync(item.achados) && readFileSync(item.achados, 'utf8').trim() !== '') { achadosVistos.add(item.achados); vistos.achados = achadosVistos.size; }
       else def(`correcao ${task} sem achados legíveis no item (${JSON.stringify(item.achados)})`);
     }
@@ -379,6 +387,11 @@ export async function caminhar(opcoes) {
       turno++;
       aposClear(0.5);
       r = await ciclo();
+      if (o.escTermina) {
+        // escT3Terminou: o despacho aceito depois do /clear termina ANTES do fim do turno; o hand-back só chega no turno seguinte (a negação não pode cair nele)
+        for (const ag of mundo.agentes.filter((a) => a.status === 'running')) { await terminar(ag); pendentes.push(ag); }
+        mundo.percent = 0.5;
+      }
       continue;
     }
     const s = stop();

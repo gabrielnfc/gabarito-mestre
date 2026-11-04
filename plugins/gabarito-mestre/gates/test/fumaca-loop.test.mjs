@@ -77,7 +77,7 @@ function conferir(r, e) {
   assert.ok(r.vistos.specs > 0, `proxima devolve spec (D8)${m}`);
   assert.equal(r.vistos.achados, e.correcoes ?? 0, `cada correção traz os achados da rodada reprovada (D2)${m}`);
   assert.deepEqual(Object.values(r.leituras), Object.values(r.leituras).map(() => 'passa'), `leituras do revisor pela guarda${m}`);
-  assert.equal(Object.keys(r.leituras).length, 7, `7 leitores medidos${m}`);
+  assert.equal(Object.keys(r.leituras).length, 16, `16 leitores medidos (7 da base + 9 da T21)${m}`);
   if (e.pouso > 0) {
     assert.match(r.retomadaTexto, /gabarito-loop/, `a retomada nomeia a skill (D7)${m}`);
     assert.ok(r.denies >= 1, `o mod negou o Agent antes do pouso${m}`);
@@ -148,7 +148,7 @@ describe('fumaça do loop sem LLM', { concurrency: 4 }, () => {
   test('teto: T1 reprovada duas vezes para em teto_rodadas', async () => {
     const r = await rodar({ plano: planos('duas'), vereditos: { T1: ['REPROVADO', 'REPROVADO'] } });
     conferir(r, { fim: 'parar teto_rodadas T1', pouso: 1, integradas: 1, vereditos: 3, correcoes: 1, parar: ['teto_rodadas'], proxima: 'parar' });
-    assert.equal(r.reabertas, 2, 'a 1ª negação com revisor vivo reabre só a correção; a 2ª, depois da integração, também');
+    assert.equal(r.reabertas, 1, 'a negação com revisor vivo reabre só a correção, e só quando os vivos chegam a 0 (T19 r3); a 2ª reprovação para no teto antes de qualquer despacho novo');
   });
 
   test('X não atingido: contexto abaixo de X, nenhum Agent negado, nenhum pouso, e o loop conclui', async () => {
@@ -157,24 +157,28 @@ describe('fumaça do loop sem LLM', { concurrency: 4 }, () => {
     assert.equal(r.clears, 0);
   });
 
-  // Os 3 cenários abaixo dependem da regra da T19 r2 (com vivos > 0 o mod não reabre; revisor por último; negação sobrevive a Esc e /clear).
-  // Contra a base atual (T19 r1) falham, e é isso que dizem: `todo` roda o teste e mostra a falha sem quebrar a suíte. Tirar o `todo`
-  // quando a T19 r2 chegar à base. Contra o protótipo p1 da Sombra (q19) os 3 chegam a `concluir`.
-  const PENDENTE_R2 = 'pendente da T19 r2: contra a base r1 o mod reabre a task errada com agente vivo (sombra-t19.md)';
+  // Regra da T19 r3 (com vivos > 0 o mod não reabre; revisor por último; despacho aceito depois da negação vai atrás; negação sobrevive a Esc e /clear).
 
-  test('lote misto: correção negada e revisor aceito na mesma mensagem; só a negada é reaberta, depois que o revisor termina (achado 1)', { todo: PENDENTE_R2 }, async () => {
+  test('lote misto: correção negada e revisor aceito na mesma mensagem; só a negada é reaberta, depois que o revisor termina (achado 1)', async () => {
     const r = await rodar({ plano: planos('duas'), vereditos: { T1: ['REPROVADO'] }, juntos: 2, lote: true });
     conferir(r, { fim: 'concluir', pouso: 1, integradas: 2, vereditos: 3, correcoes: 1, proxima: 'concluir' });
     assert.deepEqual(r.reabertasDe, ['T1'], `T2 (revisor vivo) nunca é reaberta${TRILHA(r)}`);
   });
 
-  test('Esc e /clear com contexto baixo: a negação fica, a task aceita depois não é reaberta (achado 4)', { todo: PENDENTE_R2 }, async () => {
+  test('Esc e /clear com contexto baixo: a negação fica, a task aceita depois não é reaberta (achado 4)', async () => {
     const r = await rodar({ plano: planos('raiz'), esc: true });
     conferir(r, { fim: 'concluir', pouso: 1, integradas: 3, vereditos: 3, proxima: 'concluir' });
     assert.deepEqual(r.reabertasDe, ['T2'], `só a negada (T2) é reaberta, nunca T3${TRILHA(r)}`);
   });
 
-  test('hand-back pendente: o revisor termina antes do fim do turno; a reabertura pega a correção negada, não o revisor', { todo: PENDENTE_R2 }, async () => {
+  test('Esc, /clear e o despacho aceito termina antes do fim do turno (escT3Terminou): reabre a negada (T2), nunca a T3, e o hand-back de T3 conclui', async () => {
+    const r = await rodar({ plano: planos('raiz'), esc: true, escTermina: true });
+    conferir(r, { fim: 'concluir', pouso: 0, integradas: 3, vereditos: 3, proxima: 'concluir' });
+    assert.deepEqual(r.reabertasDe, ['T2'], `só a negada (T2) é reaberta; T3 terminou e é a mais recente, mas veio depois da negação${TRILHA(r)}`);
+    assert.ok(r.trilha.some((l) => /loop concluir T3 -> ok/.test(l)), `concluir T3 passa (T3 nunca foi reaberta)${TRILHA(r)}`);
+  });
+
+  test('hand-back pendente: o revisor termina antes do fim do turno; a reabertura pega a correção negada, não o revisor', async () => {
     const r = await rodar({ plano: planos('duas'), vereditos: { T1: ['REPROVADO'] }, juntos: 2, lote: true, pendente: true });
     conferir(r, { fim: 'concluir', pouso: 1, integradas: 2, vereditos: 3, correcoes: 1, proxima: 'concluir' });
     assert.ok(r.reabertasDe.every((t) => t === 'T1'), `nunca T2${TRILHA(r)}`);
