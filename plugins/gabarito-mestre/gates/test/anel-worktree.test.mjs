@@ -97,6 +97,7 @@ const legitimos = (wt) => [
   ['cp na wt', ...B(`cp ${wt}/a.txt ${wt}/b.txt`)], ['rm arquivo da wt', ...B(`rm ${wt}/b.txt`)],
   ['git -C add', ...B(`git -C ${wt} add -A`)], ['git -C commit', ...B(`git -C ${wt} commit -m x`)], ['cd; git commit', ...B(`cd ${wt} && git add -A && git commit -m x`)],
   ['cd TMPDIR npm', ...B(`cd ${wt} && TMPDIR=${wt}/.tmp-gabarito npm test`)], ['tmp >', ...B(`echo x > ${wt}/.tmp-gabarito/f`)],
+  ['cd TMPDIR externo npm', ...B(`cd ${wt} && TMPDIR=/var/tmp/gabarito-0123456789abcdef npm test`)], // D2: o TMPDIR do abrir é fora da worktree
 ];
 
 /** Ataques ao anel: `wt` é a worktree, `R` o principal. `profundo`: os 3 `wt/../../…`, que só apontam para `.harness` quando a wt é filha de `.harness/worktrees`. */

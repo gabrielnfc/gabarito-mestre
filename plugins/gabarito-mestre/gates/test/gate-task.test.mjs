@@ -102,7 +102,7 @@ describe('gate-task', () => {
     assert.match(texto(r2), /AVISO +1 ignorado\(s\) gerado\(s\) no gate: novo\.cache/);
   });
 
-  test('gate-status-tmpdir-do-loop: .tmp-gabarito/ (TMPDIR da worktree, ignora a si mesmo) não aparece; outro ignorado é relatado', async () => {
+  test('gate-status-tmpdir-do-loop: .tmp-gabarito/ (achados do revisor na worktree, ignora a si mesmo) não aparece; outro ignorado é relatado', async () => {
     const { dir, base } = repo();
     commit(dir, 'src/b.txt', 'b\n');
     mkdirSync(join(dir, '.tmp-gabarito'));

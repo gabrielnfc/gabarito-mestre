@@ -7,11 +7,12 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, symlinkSync, chmodSync, readdirSync, appendFileSync, rmSync,
+  mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, lstatSync, statSync, symlinkSync, chmodSync, readdirSync, appendFileSync, rmSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { marcaPronto } from '../scripts/db-template.mjs';
 import { slotsDaCapacidade } from '../scripts/loop.mjs';
@@ -111,7 +112,8 @@ function ambiente({ branch = 'enabler/GM-10-loop', config = CONFIG_PADRAO, plano
   const estado = join(ferramentas, 'estado.json');
   writeFileSync(gitLog, '');
   writeFileSync(psqlLog, '');
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, GIT_LOG: gitLog, FAKE_LOG: psqlLog, FAKE_STATE: estado, ...MEDIDAS_PADRAO };
+  const tmpSistema = novoTmp('loop-sys-'); // o TMPDIR da task nasce aqui (D2): nada vaza para o do usuário
+  const env = { ...process.env, TMPDIR: tmpSistema, PATH: `${bin}:${process.env.PATH}`, GIT_LOG: gitLog, FAKE_LOG: psqlLog, FAKE_STATE: estado, ...MEDIDAS_PADRAO };
   for (const k of Object.keys(env)) if (/^(PG|GIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR))/i.test(k) || k === 'GABARITO_POUSO_X') delete env[k];
   // estado local, fora do git (como o .gitignore do repo faz com .harness/capacidade.json): não suja a árvore dos gates
   appendFileSync(join(dir, '.git', 'info', 'exclude'), '.harness/capacidade.json\n');
@@ -119,7 +121,7 @@ function ambiente({ branch = 'enabler/GM-10-loop', config = CONFIG_PADRAO, plano
   delete env.GIT_FALHAR;
   let seq = 0;
   const amb = {
-    dir, entregas, env, gitLog, psqlLog, estado, psql: join(psqlDir, 'psql'),
+    dir, entregas, env, tmpSistema, gitLog, psqlLog, estado, psql: join(psqlDir, 'psql'),
     wt: (t) => join(dir, '.harness', 'worktrees', t),
     cli(args, { cwd = dir, extra = {} } = {}) {
       const r = spawnSync(process.execPath, [SCRIPT, ...args], { cwd, encoding: 'utf8', env: { ...env, ...extra } });
@@ -172,6 +174,9 @@ function ambiente({ branch = 'enabler/GM-10-loop', config = CONFIG_PADRAO, plano
   return amb;
 }
 
+/** Nome da pasta do TMPDIR da task: sha256 do caminho da worktree, 16 hex, no tmpdir do sistema (o contrato de D2). */
+const tmpDaTask = (amb, t) => join(amb.tmpSistema, `gabarito-${createHash('sha256').update(amb.wt(t)).digest('hex').slice(0, 16)}`);
+
 const semEfeito = (amb) => ({ branches: amb.branches().join(','), topo: amb.topo(), eventos: amb.eventos().length, wts: existsSync(join(amb.dir, '.harness', 'worktrees')) ? readdirSync(join(amb.dir, '.harness', 'worktrees')).join(',') : '' });
 
 describe('.gitignore da raiz', () => {
@@ -196,18 +201,83 @@ describe('abrir', () => {
     assert.equal(amb.eventos().length, 0, 'abrir não grava evento');
   });
 
-  test('abrir-exporta-tmpdir-e-nao-suja-git-status', () => {
+  test('abrir-tmpdir-fora-da-worktree: exporta, não suja o git e não fica sob a árvore da task', () => {
     const amb = ambiente();
     const r = amb.cli(['abrir', 'T1']);
-    const tmp = join(amb.wt('T1'), '.tmp-gabarito');
-    assert.equal(realpathSync(r.j.tmpdir), realpathSync(tmp));
+    const tmp = r.j.tmpdir;
     assert.equal(realpathSync(r.j.env.TMPDIR), realpathSync(tmp));
-    assert.ok(existsSync(tmp));
+    assert.equal(realpathSync(dirname(tmp)), realpathSync(amb.tmpSistema), 'nasce no tmpdir do sistema');
+    assert.equal(tmp, tmpDaTask(amb, 'T1'));
+    assert.ok(!realpathSync(tmp).startsWith(`${realpathSync(amb.dir)}/`), 'fora do repositório e da worktree');
+    assert.equal(statSync(tmp).mode & 0o777, 0o700);
+    assert.ok(existsSync(join(amb.wt('T1'), '.tmp-gabarito')), 'os achados do revisor seguem em .tmp-gabarito');
     writeFileSync(join(tmp, 'lixo.bin'), 'x');
     mkdirSync(join(tmp, 'sub'));
     writeFileSync(join(tmp, 'sub', 'y'), 'y');
     assert.equal(g(amb.wt('T1'), 'status', '--short').trim(), '', 'TMPDIR não pode sujar o status');
     assert.equal(g(amb.dir, 'status', '--short').trim(), '', 'nem o da raiz principal');
+  });
+
+  test('abrir-duas-vezes-mesmo-tmpdir: estável por worktree; outra task, outra pasta', () => {
+    const amb = ambiente();
+    const a = amb.cli(['abrir', 'T1']);
+    const b = amb.cli(['abrir', 'T1']);
+    assert.equal(b.j.ja_aberta, true);
+    assert.equal(b.j.tmpdir, a.j.tmpdir);
+    const c = amb.cli(['abrir', 'T3']);
+    assert.notEqual(c.j.tmpdir, a.j.tmpdir, 'por worktree, nunca um só para o repositório');
+    // dois repositórios, mesma task: caminhos de worktree diferentes, pastas diferentes
+    const amb2 = ambiente();
+    const d = amb2.cli(['abrir', 'T1'], { extra: { TMPDIR: amb.tmpSistema } }); // mesmo tmpdir do sistema
+    assert.equal(d.rc, 0, d.out + d.err);
+    assert.notEqual(d.j.tmpdir, a.j.tmpdir);
+    assert.ok(existsSync(a.j.tmpdir) && existsSync(c.j.tmpdir) && existsSync(d.j.tmpdir));
+  });
+
+  test('abrir-tmpdir-symlink-recusa: nada escrito no alvo, branch e worktree desfeitas', () => {
+    const amb = ambiente();
+    const alvo = novoTmp('loop-fora-');
+    writeFileSync(join(alvo, 'precioso.txt'), 'vivo');
+    symlinkSync(alvo, tmpDaTask(amb, 'T1')); // a pasta esperada é um link para fora
+    const antes = semEfeito(amb);
+    const r = amb.cli(['abrir', 'T1']);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.ok, false);
+    assert.equal(r.j.erro, 'tmpdir_falhou');
+    assert.equal(r.j.desfeito, true, r.out);
+    assert.deepEqual(readdirSync(alvo), ['precioso.txt'], 'nada escrito no alvo do link');
+    assert.equal(readFileSync(join(alvo, 'precioso.txt'), 'utf8'), 'vivo');
+    assert.ok(!amb.branches().includes('wt/GM-10-T1'));
+    assert.ok(!existsSync(amb.wt('T1')));
+    assert.deepEqual(semEfeito(amb), antes);
+    assert.ok(lstatSync(tmpDaTask(amb, 'T1')).isSymbolicLink(), 'o link, que não era nosso, não foi apagado');
+  });
+
+  test('abrir-tmpdir-falha-desfaz: arquivo no lugar da pasta; worktree, branch e banco desfeitos', () => {
+    const amb = ambiente();
+    amb.comBanco();
+    writeFileSync(tmpDaTask(amb, 'T1'), 'sou um arquivo');
+    const bancosAntes = amb.bancos().join(',');
+    const r = amb.cli(['abrir', 'T1']);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.desfeito, true, r.out);
+    assert.ok(!amb.branches().includes('wt/GM-10-T1'));
+    assert.ok(!existsSync(amb.wt('T1')));
+    assert.equal(amb.bancos().join(','), bancosAntes, 'o banco clonado nesta abertura foi solto');
+    assert.equal(readFileSync(tmpDaTask(amb, 'T1'), 'utf8'), 'sou um arquivo', 'o que não era nosso não foi apagado');
+    // 2ª tentativa depois de arrumar: abre normalmente (nada ficou pelo caminho)
+    rmSync(tmpDaTask(amb, 'T1'));
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+  });
+
+  test('abrir-tmpdir-falha-desfaz-pasta-criada: falha depois de criar a pasta apaga a que criou', () => {
+    const amb = ambiente();
+    const r = amb.cli(['abrir', 'T1'], { extra: { GIT_FALHAR: 'gabaritoBase' } }); // o último passo do abrir falha
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.desfeito, true, r.out);
+    assert.deepEqual(readdirSync(amb.tmpSistema), [], 'a pasta criada nesta abertura foi apagada');
+    assert.ok(!existsSync(amb.wt('T1')));
+    assert.ok(!amb.branches().includes('wt/GM-10-T1'));
   });
 
   test('abrir-branch-existente-recusa', () => {
@@ -802,11 +872,17 @@ describe('integrar', () => {
     assert.equal(amb.topo(), topo);
   });
 
-  test('integrar-gate-recebe-tmpdir-da-worktree', () => {
-    const amb = ambiente({ config: { gates: { suites: ['test "$(basename "$TMPDIR")" = .tmp-gabarito && test "$(basename "$(dirname "$TMPDIR")")" = T1 && echo "# pass 1"'] } } });
-    amb.aprovar('T1');
+  test('integrar-gate-recebe-tmpdir-externo: fora da worktree, o mesmo do abrir, e fechar o apaga', () => {
+    const marca = join(novoTmp('loop-marca-'), 'tmpdir.txt');
+    const amb = ambiente({ config: { gates: { suites: [`case "$TMPDIR" in */.harness/worktrees/*|*/.tmp-gabarito) exit 1;; esac; test "$(basename "$TMPDIR" | cut -c1-9)" = gabarito- && echo "$TMPDIR" > ${marca} && echo "# pass 1"`] } } });
+    const wt = amb.aprovar('T1');
+    const dir = readdirSync(amb.tmpSistema).filter((n) => /^gabarito-/.test(n));
+    assert.equal(dir.length, 1);
     const r = amb.cli(['integrar', 'T1']);
     assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(readFileSync(marca, 'utf8').trim(), join(amb.tmpSistema, dir[0]), 'o gate rodou com o TMPDIR do abrir');
+    assert.ok(!existsSync(wt));
+    assert.deepEqual(readdirSync(amb.tmpSistema).filter((n) => /^gabarito-/.test(n)), [], 'fechar, chamado pelo integrar, apagou a pasta (nome sem aninhar)');
   });
 
   test('integrar-gate-usa-mutacoes-e-teste-afetado-do-plano', () => {
@@ -919,6 +995,67 @@ describe('fechar', () => {
     assert.equal(r.j.ok, true);
     assert.ok(!existsSync(amb.wt('T1')), '0 bytes sobram');
     assert.ok(!g(amb.dir, 'worktree', 'list', '--porcelain').includes('T1'));
+  });
+
+  test('fechar-apaga-tmpdir-externo: com conteúdo fundo; 0 bytes sobram fora da worktree', () => {
+    const amb = ambiente();
+    const a = amb.cli(['abrir', 'T1']);
+    assert.equal(a.j.tmpdir, tmpDaTask(amb, 'T1'));
+    mkdirSync(join(a.j.tmpdir, 'fundo'));
+    writeFileSync(join(a.j.tmpdir, 'fundo', 'x.bin'), Buffer.alloc(2048));
+    const r = amb.cli(['fechar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.ok(!existsSync(a.j.tmpdir));
+    assert.ok(!existsSync(amb.wt('T1')));
+    assert.deepEqual(readdirSync(amb.tmpSistema), [], 'nada sobra no tmpdir do sistema');
+  });
+
+  test('fechar-suja-mantem-tmpdir: worktree suja recusa, mantém a pasta e não cria nenhuma', () => {
+    const amb = ambiente();
+    const a = amb.cli(['abrir', 'T1']);
+    writeFileSync(join(a.j.tmpdir, 'meu.bin'), 'x');
+    writeFileSync(join(amb.wt('T1'), 'sujo.txt'), 'nao commitado');
+    const r = amb.cli(['fechar', 'T1']);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'worktree_suja');
+    assert.equal(readFileSync(join(a.j.tmpdir, 'meu.bin'), 'utf8'), 'x', 'a pasta fica como estava');
+    assert.deepEqual(readdirSync(amb.tmpSistema), [a.j.tmpdir.split('/').at(-1)]);
+    // worktree sem pasta externa: fechar suja não cria uma (nome calculado, sem mkdir)
+    rmSync(a.j.tmpdir, { recursive: true });
+    const r2 = amb.cli(['fechar', 'T1']);
+    assert.equal(r2.j.erro, 'worktree_suja');
+    assert.deepEqual(readdirSync(amb.tmpSistema), []);
+  });
+
+  test('fechar-tmpdir-externo-dono-alheio-recusa: a pasta não é nossa, nada é apagado e a worktree fica', () => {
+    const amb = ambiente();
+    const a = amb.cli(['abrir', 'T1']);
+    writeFileSync(join(a.j.tmpdir, 'dele.bin'), 'x');
+    const pre = join(novoTmp('loop-pre-'), 'outro-dono.mjs');
+    writeFileSync(pre, 'process.getuid = () => process.geteuid() + 1;\n'); // o dono da pasta passa a parecer outro
+    const extra = { NODE_OPTIONS: `--import ${pre}` };
+    for (const cmd of ['fechar', 'abrir']) {
+      const r = amb.cli([cmd, 'T1'], { extra });
+      assert.equal(r.rc, 1, r.out);
+      assert.equal(r.j.erro, 'tmpdir_invalido');
+    }
+    assert.equal(readFileSync(join(a.j.tmpdir, 'dele.bin'), 'utf8'), 'x');
+    assert.ok(existsSync(amb.wt('T1')));
+  });
+
+  test('fechar-tmpdir-externo-symlink-recusa: o alvo e a worktree ficam', () => {
+    const amb = ambiente();
+    const a = amb.cli(['abrir', 'T1']);
+    const alvo = novoTmp('loop-fora-');
+    writeFileSync(join(alvo, 'precioso.txt'), 'vivo');
+    assert.equal(a.j.tmpdir, tmpDaTask(amb, 'T1'));
+    rmSync(a.j.tmpdir, { recursive: true });
+    symlinkSync(alvo, a.j.tmpdir);
+    const r = amb.cli(['fechar', 'T1']);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'tmpdir_invalido');
+    assert.equal(readFileSync(join(alvo, 'precioso.txt'), 'utf8'), 'vivo');
+    assert.ok(existsSync(amb.wt('T1')));
   });
 
   test('fechar-nao-usa-force', () => {
@@ -2051,16 +2188,19 @@ describe('T20: abrir idempotente, achados do revisor e spec', () => {
     assert.deepEqual(b.j.env, a.j.env);
     assert.deepEqual(semEfeito(amb), antes);
     assert.equal(g(amb.wt('T1'), 'rev-parse', 'HEAD'), topoWt);
-    assert.ok(existsSync(join(b.j.tmpdir, '.gitignore')), 'o tmpdir segue pronto');
+    assert.ok(existsSync(join(b.j.worktree, '.tmp-gabarito', '.gitignore')), 'o .tmp-gabarito segue pronto');
+    assert.ok(existsSync(b.j.tmpdir), 'o TMPDIR da task segue pronto');
   });
 
   test('abrir-duas-vezes-recria-o-tmpdir-que-sumiu', () => {
     const amb = ambiente();
     const a = amb.cli(['abrir', 'T1']);
     rmSync(a.j.tmpdir, { recursive: true });
+    rmSync(join(a.j.worktree, '.tmp-gabarito'), { recursive: true });
     const b = amb.cli(['abrir', 'T1']);
     assert.equal(b.rc, 0, b.out + b.err);
-    assert.ok(existsSync(join(a.j.tmpdir, '.gitignore')));
+    assert.ok(existsSync(a.j.tmpdir));
+    assert.ok(existsSync(join(a.j.worktree, '.tmp-gabarito', '.gitignore')));
   });
 
   test('abrir-branch-sem-worktree-recusa: branch sem worktree, e pasta que o git não registra', () => {
@@ -2269,9 +2409,10 @@ describe('T20: abrir idempotente, achados do revisor e spec', () => {
     test('abrir-repetido-recusa-tmp-symlink-sem-escrever-fora', () => {
       const amb = ambiente();
       const a = amb.cli(['abrir', 'T1']);
+      const ach = join(a.j.worktree, '.tmp-gabarito');
       const alvo = fora(amb, 'a');
-      rmSync(a.j.tmpdir, { recursive: true });
-      symlinkSync(alvo, a.j.tmpdir);
+      rmSync(ach, { recursive: true });
+      symlinkSync(alvo, ach);
       const r = amb.cli(['abrir', 'T1']);
       assert.equal(r.rc, 1, r.out);
       assert.equal(r.j.erro, 'tmpdir_invalido');
@@ -2280,10 +2421,11 @@ describe('T20: abrir idempotente, achados do revisor e spec', () => {
     test('abrir-repetido-recusa-gitignore-symlink: o alvo do link não é tocado', () => {
       const amb = ambiente();
       const a = amb.cli(['abrir', 'T1']);
+      const ach = join(a.j.worktree, '.tmp-gabarito');
       const alvo = join(fora(amb, 'g'), 'alvo.txt');
       writeFileSync(alvo, 'intacto');
-      rmSync(join(a.j.tmpdir, '.gitignore'));
-      symlinkSync(alvo, join(a.j.tmpdir, '.gitignore'));
+      rmSync(join(ach, '.gitignore'));
+      symlinkSync(alvo, join(ach, '.gitignore'));
       const r = amb.cli(['abrir', 'T1']);
       assert.equal(r.rc, 1, r.out);
       assert.equal(r.j.erro, 'tmpdir_invalido');
@@ -2292,8 +2434,9 @@ describe('T20: abrir idempotente, achados do revisor e spec', () => {
     test('abrir-repetido-recusa-tmp-arquivo-comum', () => {
       const amb = ambiente();
       const a = amb.cli(['abrir', 'T1']);
-      rmSync(a.j.tmpdir, { recursive: true });
-      writeFileSync(a.j.tmpdir, 'x');
+      const ach = join(a.j.worktree, '.tmp-gabarito');
+      rmSync(ach, { recursive: true });
+      writeFileSync(ach, 'x');
       const r = amb.cli(['abrir', 'T1']);
       assert.equal(r.rc, 1, r.out);
       assert.equal(r.j.erro, 'tmpdir_invalido');
@@ -2313,6 +2456,16 @@ describe('T20: abrir idempotente, achados do revisor e spec', () => {
       assert.equal(r.rc, 1, r.out);
       assert.equal(r.j.erro, 'achados_ausentes');
     });
+  });
+
+  test('achados-seguem-em-tmp-gabarito: o veredito lê da worktree, o TMPDIR da task é outro', () => {
+    const amb = ambiente();
+    reprovarR1(amb);
+    const arq = achadosDe(amb, 'T1', 1);
+    assert.equal(arq, join(amb.wt('T1'), '.tmp-gabarito', 'review-r1.md'));
+    assert.ok(existsSync(arq));
+    const p = amb.cli(['proxima']);
+    assert.match(JSON.stringify(p.j), /\.tmp-gabarito\/review-r1\.md/);
   });
 
   test('achados-ignorado-e-fechar-remove: o arquivo não suja o git e sai com a worktree', () => {

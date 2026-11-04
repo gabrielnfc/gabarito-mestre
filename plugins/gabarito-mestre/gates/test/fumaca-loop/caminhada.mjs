@@ -58,7 +58,7 @@ function git(cwd, ...args) {
 }
 
 /** Repositório descartável da entrega GM-99. Recusa destino existente (nunca apaga nada). */
-export function montarRepo(dest, planoArquivo) {
+export function montarRepo(dest, planoArquivo, { suiteSemGit = false } = {}) {
   if (existsSync(dest)) throw new Error(`destino já existe: ${dest}`);
   mkdirSync(join(dest, 'test'), { recursive: true });
   mkdirSync(join(dest, 'docs'), { recursive: true });
@@ -66,6 +66,21 @@ export function montarRepo(dest, planoArquivo) {
   writeFileSync(join(dest, 'package.json'), JSON.stringify({ name: 'gm99-fumaca', version: '0.0.0', private: true, type: 'module', scripts: { test: 'node --test test/*.test.mjs' } }) + '\n');
   writeFileSync(join(dest, 'harness.config.json'), JSON.stringify({ gates: { suites: ['npm test'] }, loop: { slots: 2, tetoTokens: 1500000 } }) + '\n');
   writeFileSync(join(dest, 'test/base.test.mjs'), "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('base', () => assert.ok(true));\n");
+  // D2: suíte sensível ao repositório pai. O temporário tem de nascer sem `.git` acima dele (CI roda com TMPDIR comum; uma worktree não).
+  if (suiteSemGit) {
+    writeFileSync(join(dest, 'test/sem-git.test.mjs'), [
+      "import { test } from 'node:test';", "import assert from 'node:assert/strict';",
+      "import { existsSync, mkdtempSync, rmSync } from 'node:fs';", "import { tmpdir } from 'node:os';", "import { dirname, join } from 'node:path';",
+      "test('temporário sem .git acima', () => {",
+      "  const d = mkdtempSync(join(tmpdir(), 'sem-git-'));",
+      "  try {",
+      "    let p = d; let achou = null;",
+      "    for (;;) { if (existsSync(join(p, '.git'))) { achou = p; break; } const pai = dirname(p); if (pai === p) break; p = pai; }",
+      "    assert.equal(achou, null, `.git acima do temporário: ${achou}`);",
+      "  } finally { rmSync(d, { recursive: true, force: true }); }",
+      "});", '',
+    ].join('\n'));
+  }
   writeFileSync(join(dest, 'docs/spec-gm99.md'), '# GM-99 (fumaça)\n\nREQ-A: src/a.mjs exporta soma. REQ-B: src/b.mjs exporta dobro. REQ-C: src/c.mjs exporta triplo (usa soma).\n');
   git(dest, 'init', '-q', '-b', 'enabler/GM-99-aceite');
   git(dest, 'config', 'user.email', 'fumaca@example.invalid');
@@ -99,7 +114,7 @@ function modSemReabrir(dir) {
 export async function caminhar(opcoes) {
   const o = { ordem: 'skill', vereditos: {}, x: '1', percent: 6, maxTurnos: 60, ...opcoes };
   const REPO = join(o.tmp, 'repo');
-  montarRepo(REPO, o.plano);
+  montarRepo(REPO, o.plano, { suiteSemGit: o.suiteSemGit === true });
   const REAL = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: REPO, encoding: 'utf8', env: ambiente() }).trim();
   const DIR = join(REAL, '.harness/entregas/GM-99');
   const LOOP = join(PLUGIN, 'gates/scripts/loop.mjs');
@@ -197,6 +212,9 @@ export async function caminhar(opcoes) {
   const achadosVistos = new Set();
   const vistos = { vazioFeito: false, specs: 0, achados: 0, mutacoesVermelhas: 0, retomadas: [] };
   const wtDe = (task) => join(REAL, '.harness/worktrees', task);
+  // TMPDIR da task: o que o `abrir` devolveu em `env`, nunca um caminho escrito à mão (D2). `tmpdirAntigo` é o controle: o caminho da r6.
+  const tmpDaTask = {};
+  const tmpDe = (task) => (o.tmpdirAntigo === true ? join(wtDe(task), '.tmp-gabarito') : tmpDaTask[task]);
 
   function trabalhoImplementador(ag) {
     const wt = wtDe(ag.task);
@@ -208,7 +226,7 @@ export async function caminhar(opcoes) {
       mkdirSync(dirname(alvo), { recursive: true });
       writeFileSync(alvo, c);
     }
-    const tst = bash(`cd "${wt}" && TMPDIR="${wt}/.tmp-gabarito" npm test`, ag);
+    const tst = bash(`cd "${wt}" && TMPDIR="${tmpDe(ag.task)}" npm test`, ag);
     if (tst.rc !== 0) def(`implementador npm test rc ${tst.rc}: ${(tst.out + tst.err).slice(-200)}`);
     const r = bash(`cd "${wt}" && git add -A && git commit -q -m "feat(GM-99): ${ag.task} ${ag.papel}" && git status --short && git log --oneline -2`, ag);
     if (r.rc !== 0) { def(`implementador commit rc ${r.rc}: ${r.err}`); ag.falhou = true; }
@@ -242,7 +260,7 @@ export async function caminhar(opcoes) {
     if (!orig.includes(t.mutar[0])) def(`revisor: ${t.src} sem o trecho a mutar`);
     if (guarda('Edit', { file_path: alvo, old_string: t.mutar[0], new_string: t.mutar[1] }, ag)) def('revisor não muta');
     writeFileSync(alvo, orig.replace(t.mutar[0], t.mutar[1]));
-    const vermelho = bash(`cd "${wt}" && TMPDIR="${wt}/.tmp-gabarito" npm test`, ag);
+    const vermelho = bash(`cd "${wt}" && TMPDIR="${tmpDe(ag.task)}" npm test`, ag);
     if (vermelho.rc === 0) def(`revisor: mutação de ${t.src} não derrubou a suíte (o trabalho da task não é real)`); else vistos.mutacoesVermelhas++;
     const rv = bash(`cd "${wt}" && git checkout -- "${t.src}" && git diff --stat`, ag);
     if (rv.rc !== 0) def(`revisor checkout rc ${rv.rc}`);
@@ -273,6 +291,8 @@ export async function caminhar(opcoes) {
     if (papel !== 'revisor') {
       const a = cli(['abrir', task]); // SKILL: `abrir` SEMPRE, antes de implementador e correcao (idempotente)
       if (!a.ok) return 'parar';
+      if (typeof a.env?.TMPDIR === 'string') tmpDaTask[task] = a.env.TMPDIR;
+      else def(`abrir ${task} sem env.TMPDIR`);
     }
     if (o.ordem === 'corrida') {
       // lote: Agent e iniciar na mesma mensagem; o iniciar entra mesmo com o Agent negado

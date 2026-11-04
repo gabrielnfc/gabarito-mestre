@@ -184,6 +184,16 @@ describe('fumaça do loop sem LLM', { concurrency: 4 }, () => {
     assert.ok(r.reabertasDe.every((t) => t === 'T1'), `nunca T2${TRILHA(r)}`);
   });
 
+  test('suite-sem-git: o TMPDIR do abrir fica fora da worktree; a suíte da task e o gate de integrar não acham .git acima dele (D2)', async () => {
+    const r = await rodar({ plano: planos('uma'), suiteSemGit: true });
+    conferir(r, { fim: 'concluir', pouso: 0, integradas: 1, vereditos: 1 });
+  });
+
+  test('suite-sem-git, controle: com o caminho antigo (TMPDIR dentro da worktree) a suíte reprova', async () => {
+    const r = await rodar({ plano: planos('uma'), suiteSemGit: true, tmpdirAntigo: true });
+    assert.ok(r.defeitos.some((d) => /implementador npm test rc [1-9]/.test(d)), `a suíte sensível ao pai reprova no caminho antigo\n${r.defeitos.join('\n')}`);
+  });
+
   test('controle positivo: com tasksDoNegado devolvendo lista vazia o REPROVADO trava em nao_conseguiu', async () => {
     const r = await rodar({ plano: planos('uma'), vereditos: { T1: ['REPROVADO'] }, semReabrir: true });
     const m = TRILHA(r);

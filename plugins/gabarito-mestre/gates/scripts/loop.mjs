@@ -27,8 +27,9 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync,
+  chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
@@ -369,6 +370,33 @@ function garantirTmp(wt) {
   return tmp;
 }
 
+/**
+ * TMPDIR da task: FORA da worktree (D2). Dentro dela, qualquer teste que suba a árvore acha o `.git` e os arquivos da task.
+ * Nome estável por worktree (sha256 do caminho): `abrir` repetido devolve o mesmo, `fechar` o recalcula sem criar nada.
+ * `.tmp-gabarito` fica só para os achados do revisor (REQ-LOOP-2).
+ */
+const tmpExterno = (wt) => join(realpathSync(tmpdir()), `gabarito-${createHash('sha256').update(wt).digest('hex').slice(0, 16)}`);
+
+/** Confere sem criar nem apagar: `null` = não existe; symlink, não-diretório ou dono alheio recusam. */
+function validarTmpExterno(wt) {
+  const p = tmpExterno(wt);
+  const st = lstatOuNull(p);
+  if (st === null) return null;
+  if (st.isSymbolicLink() || !st.isDirectory()) throw new Falha('tmpdir_invalido', `${p} não é um diretório comum (symlink ou arquivo); recusado, nada foi tocado`);
+  if (typeof process.getuid === 'function' && st.uid !== process.getuid()) throw new Falha('tmpdir_invalido', `${p} é de outro usuário; recusado, nada foi tocado`);
+  return p;
+}
+
+/** Cria (0700) se não existe. `criado` diz se foi agora, para o `abrir` desfazer só o que fez. */
+function garantirTmpExterno(wt) {
+  const existente = validarTmpExterno(wt);
+  if (existente !== null) return { dir: existente, criado: false };
+  const p = tmpExterno(wt);
+  mkdirSync(p, { mode: 0o700 });
+  chmodSync(p, 0o700);
+  return { dir: p, criado: true };
+}
+
 function lstatOuNull(p) {
   try {
     return lstatSync(p);
@@ -395,7 +423,8 @@ function jaAberta(c, task, branch, v) {
   } catch {
     return null; // não dá para provar que é a nossa: recusa como antes
   }
-  const tmp = garantirTmp(caminho); // é a nossa: symlink em `.tmp-gabarito` recusa com motivo (tmpdir_invalido), nada escrito fora
+  garantirTmp(caminho); // é a nossa: symlink em `.tmp-gabarito` recusa com motivo (tmpdir_invalido), nada escrito fora
+  const tmp = garantirTmpExterno(caminho).dir;
   return { task, branch, base, worktree: caminho, tmpdir: tmp, env: { TMPDIR: tmp }, banco: v.na ? 'n/a' : nomeBanco(c.entrega, task), ja_aberta: true };
 }
 
@@ -425,15 +454,21 @@ function abrir(c, plano, task) {
   }
   let banco = 'n/a';
   let clonado = false;
+  let tmp = '';
+  let tmpCriado = false;
   try {
     if (!v.na) {
       banco = clonar(v.db, c.entrega, task).banco;
       clonado = true;
     }
     garantirTmp(caminho);
+    ({ dir: tmp, criado: tmpCriado } = garantirTmpExterno(caminho));
     git(c.raiz, 'config', `branch.${branch}.gabaritoBase`, base);
   } catch (e) {
     const restos = [];
+    if (tmpCriado) {
+      try { rmSync(tmp, { recursive: true }); } catch (e2) { restos.push(`tmpdir ${tmp} (${e2.code ?? e2.message})`); }
+    }
     if (clonado) {
       try { soltar(v.db, c.entrega, task); } catch (e2) { restos.push(`banco ${banco} (${e2.message})`); }
     }
@@ -452,7 +487,6 @@ function abrir(c, plano, task) {
       { desfeito: restos.length === 0, branch, worktree: caminho, restos },
     );
   }
-  const tmp = join(caminho, TMP);
   return { task, branch, base, worktree: caminho, tmpdir: tmp, env: { TMPDIR: tmp }, banco };
 }
 
@@ -489,6 +523,7 @@ const STATUS_SUJEIRA = ['status', '--porcelain', '--untracked-files=normal', '--
 function fechar(c, task) {
   const wt = worktreeViva(c, task);
   const tmpValido = validarTmp(wt);
+  const tmpFora = validarTmpExterno(wt);
   try {
     git(wt, 'symbolic-ref', '-q', 'HEAD');
   } catch {
@@ -517,6 +552,13 @@ function fechar(c, task) {
       rmSync(tmpValido, { recursive: true });
     } catch (e) {
       throw new Falha('tmpdir_falhou', `não consegui apagar ${TMP}: ${e.code ?? e.message}; a worktree foi mantida`, { banco });
+    }
+  }
+  if (tmpFora !== null) {
+    try {
+      rmSync(tmpFora, { recursive: true });
+    } catch (e) {
+      throw new Falha('tmpdir_falhou', `não consegui apagar ${tmpFora}: ${e.code ?? e.message}; a worktree foi mantida`, { banco });
     }
   }
   try {
@@ -687,13 +729,18 @@ async function integrar(c, plano, task) {
     }
     alvo = git(wt, 'rev-parse', 'HEAD');
 
-    const tmp = garantirTmp(wt);
+    garantirTmp(wt);
+    const tmp = garantirTmpExterno(wt).dir;
+    const tmpAntes = process.env.TMPDIR;
     process.env.TMPDIR = tmp;
     let r;
     try {
       r = await avaliar({ wt, base: `refs/heads/${base}`, card: c.entrega, files: escopo(wt, t.arquivos), mutacoes, suites: suitesDaTask(wt, t) });
     } catch (e) {
       throw new Falha('gate_erro', `o gate falhou ao rodar: ${e.message}; sem merge nem evento`, nada);
+    } finally {
+      // `fechar` recalcula o nome a partir de `tmpdir()`: com o TMPDIR do gate ainda no ambiente, o nome sairia dentro do próprio.
+      if (tmpAntes === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = tmpAntes;
     }
     if (r.reprova > 0) {
       throw new Falha('gate_reprovado', `gate reprovado (${r.reprova}); sem merge nem evento`, { ...nada, relato: r.relato });
