@@ -136,19 +136,49 @@ function comHome(c, f) {
   try { return f(); } finally { process.env.HOME = antes; }
 }
 
-test('ultima-mensagem-a-100ms-conta: escrita tardia real, em processo separado, entra na soma (sem limite de tempo)', async () => {
+// Pré-carga do hook (só do teste): depois que o hook fecha a 1ª leitura do transcript, avisa por arquivo e fica parado até
+// o escritor, em outro processo, avisar por arquivo que anexou. Ordem garantida por troca de arquivos, não por relógio.
+const PRECARGA = `
+const fs = require('node:fs');
+const { syncBuiltinESMExports } = require('node:module');
+const [alvo, lido, anexado] = process.env.BARREIRA.split('|');
+const abrir = fs.openSync, fechar = fs.closeSync;
+let fdAlvo = -1, feito = false;
+fs.openSync = (p, ...r) => { const fd = abrir(p, ...r); if (!feito && fdAlvo < 0 && p === alvo) fdAlvo = fd; return fd; };
+fs.closeSync = (fd) => {
+  const r = fechar(fd);
+  if (!feito && fd === fdAlvo) {
+    feito = true;
+    fs.writeFileSync(lido, '1');
+    const cabo = new Int32Array(new SharedArrayBuffer(4));
+    for (let i = 0; i < 3000 && !fs.existsSync(anexado); i++) Atomics.wait(cabo, 0, 0, 5);
+  }
+  return r;
+};
+syncBuiltinESMExports();
+`;
+
+test('ultima-mensagem-a-100ms-conta: escrita tardia real, em processo separado, depois da 1ª leitura do hook, entra na soma (ordem por arquivo, sem relógio)', async () => {
   const c = cenario();
   const p = transcript(c, [msg('m1', U(10, 5))]);
+  const pasta = bruto('barreira');
+  const precarga = join(pasta, 'precarga.cjs');
+  const lido = join(pasta, 'lido');
+  const anexado = join(pasta, 'anexado');
+  writeFileSync(precarga, PRECARGA);
   const corpo = JSON.stringify({ session_id: 'sess-1', cwd: c.repo, hook_event_name: 'SubagentStop', agent_id: 'a1', agent_type: 'gabarito-implementador', agent_transcript_path: p });
-  const hook = spawn(process.execPath, [SCRIPT], { env: { ...process.env, HOME: c.home, USERPROFILE: c.home, CLAUDE_PROJECT_DIR: '' }, stdio: ['pipe', 'ignore', 'ignore'] });
+  // o hook pega o caminho real do transcript (realpath) ao abrir; a pré-carga compara com ele
+  const alvo = realpathSync(p);
+  const hook = spawn(process.execPath, ['--require', precarga, SCRIPT], { env: { ...process.env, HOME: c.home, USERPROFILE: c.home, CLAUDE_PROJECT_DIR: '', BARREIRA: [alvo, lido, anexado].join('|') }, stdio: ['pipe', 'ignore', 'ignore'] });
   const fim = new Promise((res) => hook.on('close', res));
   hook.stdin.end(corpo);
-  // escritor em processo separado: anexa a 2ª mensagem 100 ms depois do disparo do hook
+  // escritor em outro processo: só anexa a 2ª mensagem depois que o hook avisou que terminou a 1ª leitura
   const escritor = spawn(process.execPath, ['-e',
-    `setTimeout(()=>require('node:fs').appendFileSync(process.argv[1], process.argv[2]+'\\n'), 100)`, p, msg('m2', U(3, 9, 40))], { stdio: 'ignore' });
+    `const fs=require('node:fs');const t=Date.now();while(!fs.existsSync(process.argv[1])){if(Date.now()-t>20000)process.exit(2);Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,2);}
+fs.appendFileSync(process.argv[2], process.argv[3]+'\\n');fs.writeFileSync(process.argv[4],'1');`, lido, p, msg('m2', U(3, 9, 40)), anexado], { stdio: 'ignore' });
   const fimEscritor = new Promise((res) => escritor.on('close', res));
   assert.equal(await fim, 0);
-  await fimEscritor;
+  assert.equal(await fimEscritor, 0, 'o escritor viu o aviso do hook e anexou');
   const [m] = medicoes(c);
   assert.ok(m, 'registrou');
   assert.equal(m.dados.mensagens, 2);
