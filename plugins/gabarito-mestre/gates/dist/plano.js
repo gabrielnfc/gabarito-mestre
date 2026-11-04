@@ -45,7 +45,9 @@ function validar(bruto         )                 {
     }
     if (t.teste_afetado !== undefined && typeof t.teste_afetado !== 'string') return recusa(`task ${t.id}: \`teste_afetado\` não é texto`);
     if (t.mutacoes !== undefined && typeof t.mutacoes !== 'string') return recusa(`task ${t.id}: \`mutacoes\` não é texto`);
-    const nova            = { id: t.id, deps: [...deps], arquivos };
+    if (t.spec !== undefined && (typeof t.spec !== 'string' || t.spec === '')) return recusa(`task ${t.id}: \`spec\` não é texto`);
+    const nova                                = { id: t.id, deps: [...deps], arquivos };
+    if (t.spec !== undefined) nova.spec = t.spec;
     if (t.teste_afetado !== undefined) nova.teste_afetado = t.teste_afetado;
     if (t.mutacoes !== undefined) nova.mutacoes = t.mutacoes;
     tasks.set(t.id, nova);

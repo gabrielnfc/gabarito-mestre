@@ -126,3 +126,17 @@ test('plano-campo-nao-array: string, objeto e item não string recusam', () => {
     if (!r.ok) assert.match(r.erro, re);
   }
 });
+
+test('plano-spec: texto opcional é preservado; vazio ou não texto recusa citando task e campo (D8)', () => {
+  const r = validarPlano(plano({ ...t('a', [], ['x.ts']), spec: 'docs/spec.md:10-20' }, t('b', ['a'], ['y.ts'])));
+  assert.equal(r.ok, true);
+  if (r.ok) {
+    assert.equal((r.plano.tasks[0] as { spec?: string }).spec, 'docs/spec.md:10-20');
+    assert.equal('spec' in r.plano.tasks[1], false, 'sem spec no plano, sem spec na task');
+  }
+  for (const spec of ['', 7, null, ['x'], {}]) {
+    const x = validarPlano(plano({ ...t('a', [], ['x.ts']), spec }));
+    assert.equal(x.ok, false, JSON.stringify(spec));
+    if (!x.ok) assert.match(x.erro, /task a.*spec/);
+  }
+});

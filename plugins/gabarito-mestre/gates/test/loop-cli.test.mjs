@@ -7,7 +7,7 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, symlinkSync, chmodSync, readdirSync, appendFileSync,
+  mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, symlinkSync, chmodSync, readdirSync, appendFileSync, rmSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -208,19 +208,6 @@ describe('abrir', () => {
     writeFileSync(join(tmp, 'sub', 'y'), 'y');
     assert.equal(g(amb.wt('T1'), 'status', '--short').trim(), '', 'TMPDIR não pode sujar o status');
     assert.equal(g(amb.dir, 'status', '--short').trim(), '', 'nem o da raiz principal');
-  });
-
-  test('abrir-duas-vezes-recusa-sem-tocar', () => {
-    const amb = ambiente();
-    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
-    amb.commitNaWt('T1', 'src/t1.txt');
-    const antes = semEfeito(amb);
-    const topoWt = g(amb.wt('T1'), 'rev-parse', 'HEAD');
-    const r = amb.cli(['abrir', 'T1']);
-    assert.equal(r.rc, 1);
-    assert.equal(r.j.ok, false);
-    assert.deepEqual(semEfeito(amb), antes);
-    assert.equal(g(amb.wt('T1'), 'rev-parse', 'HEAD'), topoWt);
   });
 
   test('abrir-branch-existente-recusa', () => {
@@ -2027,5 +2014,230 @@ describe('devolver preserva commit e relata ignorados', () => {
     assert.equal(r.rc, 0, r.out + r.err);
     assert.equal(r.j.merge, true);
     assert.equal(readFileSync(join(amb.dir, 'src/a.txt'), 'utf8'), linhas('L8-BASE').replace('l10', 'L10-T1'));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────── T20 (GM-10, spec r8): a memória sobrevive ao /clear
+// Depois do /clear o modelo não sabe se já abriu, em que rodada está nem onde ficaram os achados: o CLI é a única memória.
+
+describe('T20: abrir idempotente, achados do revisor e spec', () => {
+  const achadosDe = (amb, t, r) => join(amb.wt(t), '.tmp-gabarito', `review-r${r}.md`);
+  /** abrir → impl → commit → concluir → revisor, parado antes do veredito. */
+  const ateRevisor = (amb, t = 'T1') => {
+    for (const a of [['abrir', t], ['iniciar', t, 'implementador']]) assert.equal(amb.cli(a).rc, 0, a.join(' '));
+    amb.commitNaWt(t, `src/${t.toLowerCase()}.txt`);
+    for (const a of [['concluir', t], ['iniciar', t, 'revisor']]) assert.equal(amb.cli(a).rc, 0, a.join(' '));
+  };
+  const reprovarR1 = (amb, t = 'T1') => {
+    ateRevisor(amb, t);
+    writeFileSync(achadosDe(amb, t, 1), '- MAJOR 1: falta teste de X (src/t1.txt:1)\n');
+    const r = amb.cli(['veredito', t, 'REPROVADO', '1', '0', '1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+  };
+
+  test('abrir-duas-vezes-ok: o mesmo retorno com ja_aberta, sem tocar no trabalho', () => {
+    const amb = ambiente();
+    const a = amb.cli(['abrir', 'T1']);
+    assert.equal(a.rc, 0, a.out + a.err);
+    assert.equal(a.j.ja_aberta, undefined, 'a 1ª abertura não é ja_aberta');
+    amb.commitNaWt('T1', 'src/t1.txt');
+    const antes = semEfeito(amb);
+    const topoWt = g(amb.wt('T1'), 'rev-parse', 'HEAD');
+    const b = amb.cli(['abrir', 'T1']);
+    assert.equal(b.rc, 0, b.out + b.err);
+    assert.equal(b.j.ok, true);
+    assert.equal(b.j.ja_aberta, true);
+    for (const k of ['task', 'branch', 'base', 'worktree', 'tmpdir', 'banco']) assert.deepEqual(b.j[k], a.j[k], k);
+    assert.deepEqual(b.j.env, a.j.env);
+    assert.deepEqual(semEfeito(amb), antes);
+    assert.equal(g(amb.wt('T1'), 'rev-parse', 'HEAD'), topoWt);
+    assert.ok(existsSync(join(b.j.tmpdir, '.gitignore')), 'o tmpdir segue pronto');
+  });
+
+  test('abrir-duas-vezes-recria-o-tmpdir-que-sumiu', () => {
+    const amb = ambiente();
+    const a = amb.cli(['abrir', 'T1']);
+    rmSync(a.j.tmpdir, { recursive: true });
+    const b = amb.cli(['abrir', 'T1']);
+    assert.equal(b.rc, 0, b.out + b.err);
+    assert.ok(existsSync(join(a.j.tmpdir, '.gitignore')));
+  });
+
+  test('abrir-branch-sem-worktree-recusa: branch sem worktree, e pasta que o git não registra', () => {
+    const amb = ambiente();
+    g(amb.dir, 'branch', 'wt/GM-10-T1');
+    let r = amb.cli(['abrir', 'T1']);
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'branch_existe');
+    // pasta comum no lugar da worktree, com o principal NA branch da task: `symbolic-ref` dentro dela devolveria a branch certa
+    // (o git sobe até o principal), então só o registro de worktrees distingue.
+    g(amb.dir, 'checkout', '-q', 'wt/GM-10-T1');
+    g(amb.dir, 'config', 'branch.wt/GM-10-T1.gabaritoBase', 'enabler/GM-10-loop'); // só o registro de worktrees pode recusar
+    mkdirSync(amb.wt('T1'), { recursive: true });
+    writeFileSync(join(amb.wt('T1'), 'meu.txt'), 'importa');
+    const antes = semEfeito(amb);
+    r = amb.cli(['abrir', 'T1', '--entrega', 'GM-10']);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'branch_existe');
+    assert.deepEqual(semEfeito(amb), antes);
+    assert.equal(readFileSync(join(amb.wt('T1'), 'meu.txt'), 'utf8'), 'importa');
+  });
+
+  test('abrir-outro-head-recusa: worktree registrada com HEAD solto ou em outra branch', () => {
+    for (const mexer of [(w) => g(w, 'checkout', '-q', '--detach'), (w) => g(w, 'checkout', '-q', '-b', 'outra')]) {
+      const amb = ambiente();
+      assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+      mexer(amb.wt('T1'));
+      const antes = semEfeito(amb);
+      const headAntes = g(amb.wt('T1'), 'rev-parse', '--abbrev-ref', 'HEAD');
+      const r = amb.cli(['abrir', 'T1']);
+      assert.equal(r.rc, 1, r.out);
+      assert.equal(r.j.erro, 'branch_existe');
+      assert.deepEqual(semEfeito(amb), antes);
+      assert.equal(g(amb.wt('T1'), 'rev-parse', '--abbrev-ref', 'HEAD'), headAntes, 'nada foi tocado');
+    }
+  });
+
+  test('veredito-reprovado-sem-achados-recusa: ok:false achados_ausentes e nada gravado', () => {
+    const amb = ambiente();
+    ateRevisor(amb);
+    const antes = amb.eventos().length;
+    const r = amb.cli(['veredito', 'T1', 'REPROVADO', '1', '0', '1']);
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.ok, false);
+    assert.equal(r.j.erro, 'achados_ausentes');
+    assert.match(r.j.mensagem, /review-r1\.md/);
+    assert.equal(amb.eventos().length, antes);
+    assert.ok(!(amb.cli(['proxima']).j.acao.itens ?? []).some((i) => i.papel === 'correcao'), 'o estado segue em revisão: nenhum despacho de correção');
+  });
+
+  test('veredito-reprovado-achados-vazio-recusa: arquivo vazio ou só espaço, diretório e symlink', () => {
+    const amb = ambiente();
+    ateRevisor(amb);
+    const antes = amb.eventos().length;
+    const arq = achadosDe(amb, 'T1', 1);
+    for (const prep of [
+      () => writeFileSync(arq, ''),
+      () => writeFileSync(arq, ' \n\t\n'),
+      () => { rmSync(arq); mkdirSync(arq); },
+      () => { rmSync(arq, { recursive: true }); writeFileSync(join(amb.dir, 'fora.md'), 'achado'); symlinkSync(join(amb.dir, 'fora.md'), arq); },
+    ]) {
+      prep();
+      const r = amb.cli(['veredito', 'T1', 'REPROVADO', '1', '0', '1']);
+      assert.equal(r.rc, 1, r.out);
+      assert.equal(r.j.erro, 'achados_ausentes');
+      assert.equal(amb.eventos().length, antes);
+    }
+  });
+
+  test('veredito-reprovado-com-achados-grava', () => {
+    const amb = ambiente();
+    reprovarR1(amb);
+    assert.deepEqual(amb.eventos().at(-1).dados, { task: 'T1', veredito: 'REPROVADO', rodada: 1, blocker: 0, major: 1 });
+  });
+
+  test('veredito-aprovado-sem-arquivo-passa: APROVADO não exige achados', () => {
+    const amb = ambiente();
+    ateRevisor(amb);
+    assert.ok(!existsSync(achadosDe(amb, 'T1', 1)));
+    const r = amb.cli(['veredito', 'T1', 'APROVADO', '1', '0', '0']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(amb.tipos().at(-1), 'review.veredito');
+  });
+
+  test('veredito-reprovado-sem-worktree-recusa: worktree_ausente, nada gravado', () => {
+    const amb = ambiente();
+    ateRevisor(amb);
+    const antes = amb.eventos().length;
+    g(amb.dir, 'worktree', 'remove', '--force', amb.wt('T1'));
+    const r = amb.cli(['veredito', 'T1', 'REPROVADO', '1', '0', '1']);
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'worktree_ausente');
+    assert.equal(amb.eventos().length, antes);
+  });
+
+  test('proxima-correcao-traz-achados: o caminho do arquivo da rodada, depois do /clear só com o CLI', () => {
+    const amb = ambiente();
+    reprovarR1(amb);
+    const p = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(p.rc, 0, p.out + p.err);
+    const item = p.j.acao.itens.find((i) => i.task === 'T1');
+    assert.equal(item.papel, 'correcao');
+    assert.equal(realpathSync(item.achados), realpathSync(achadosDe(amb, 'T1', 1)));
+    assert.match(readFileSync(item.achados, 'utf8'), /MAJOR 1/);
+    for (const i of p.j.acao.itens.filter((x) => x.papel !== 'correcao')) assert.equal(i.achados, undefined, 'só correção traz achados');
+  });
+
+  test('proxima-correcao-sem-arquivo-nao-finge: achados nulo e aviso', () => {
+    const amb = ambiente();
+    reprovarR1(amb);
+    rmSync(achadosDe(amb, 'T1', 1));
+    const p = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(p.rc, 0, p.out + p.err);
+    assert.equal(p.j.acao.itens.find((i) => i.task === 'T1').achados, null);
+    assert.ok((p.j.aviso ?? []).some((a) => /achados.*T1/.test(a)), JSON.stringify(p.j.aviso));
+  });
+
+  test('veredito-rodada-errada-diz-esperada: a mensagem traz a rodada que o diário espera', () => {
+    const amb = ambiente();
+    ateRevisor(amb);
+    let r = amb.cli(['veredito', 'T1', 'APROVADO', '3', '0', '0']);
+    assert.equal(r.j.erro, 'transicao_invalida');
+    assert.match(r.j.mensagem, /rodada esperada: 1\b/);
+    assert.match(r.j.mensagem, /fora de sequência/);
+    // a causa mais fundamental vem primeiro: REPROVADO de rodada errada e sem achados diz a rodada, não os achados
+    r = amb.cli(['veredito', 'T1', 'REPROVADO', '3', '0', '1']);
+    assert.equal(r.j.erro, 'transicao_invalida');
+    // depois de uma reprovação a esperada é a 2
+    writeFileSync(achadosDe(amb, 'T1', 1), 'achado\n');
+    assert.equal(amb.cli(['veredito', 'T1', 'REPROVADO', '1', '0', '1']).rc, 0);
+    for (const a of [['iniciar', 'T1', 'correcao']]) assert.equal(amb.cli(a).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt', 'v2\n');
+    for (const a of [['concluir', 'T1'], ['iniciar', 'T1', 'revisor']]) assert.equal(amb.cli(a).rc, 0);
+    r = amb.cli(['veredito', 'T1', 'APROVADO', '1', '0', '0']);
+    assert.equal(r.j.erro, 'transicao_invalida');
+    assert.match(r.j.mensagem, /rodada esperada: 2\b/);
+  });
+
+  test('proxima-traz-spec: o ponteiro da spec vem do plano, em todo item que tem', () => {
+    const amb = ambiente({
+      plano: planoDe([
+        { id: 'T1', deps: [], arquivos: ['src/t1.txt'], spec: 'docs/spec.md:10-20' },
+        { id: 'T3', deps: [], arquivos: ['src/t3.txt'] },
+      ]),
+    });
+    const p = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(p.rc, 0, p.out + p.err);
+    assert.equal(p.j.acao.itens.find((i) => i.task === 'T1').spec, 'docs/spec.md:10-20');
+    assert.equal(p.j.acao.itens.find((i) => i.task === 'T3').spec, undefined);
+  });
+
+  test('proxima-correcao-traz-spec-e-achados: a correção depois do /clear tem os dois', () => {
+    const amb = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], spec: 'docs/spec.md:10-20' }]) });
+    reprovarR1(amb);
+    const item = amb.cli(['proxima', '--vivos', '0']).j.acao.itens[0];
+    assert.equal(item.papel, 'correcao');
+    assert.equal(item.spec, 'docs/spec.md:10-20');
+    assert.ok(typeof item.achados === 'string' && existsSync(item.achados));
+  });
+
+  test('plano-spec-invalida-recusa: spec que não é texto', () => {
+    const amb = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], spec: 7 }]) });
+    const p = amb.cli(['proxima']);
+    assert.equal(p.rc, 1);
+    assert.equal(p.j.erro, 'plano_invalido');
+    assert.match(p.j.mensagem, /spec/);
+  });
+
+  test('achados-ignorado-e-fechar-remove: o arquivo não suja o git e sai com a worktree', () => {
+    const amb = ambiente();
+    reprovarR1(amb);
+    const arq = achadosDe(amb, 'T1', 1);
+    assert.equal(g(amb.wt('T1'), 'status', '--short').trim(), '', 'ignorado pelo próprio .tmp-gabarito/.gitignore');
+    assert.equal(g(amb.dir, 'status', '--short').trim(), '');
+    const r = amb.cli(['fechar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.ok(!existsSync(arq));
+    assert.ok(!existsSync(amb.wt('T1')));
   });
 });

@@ -18,14 +18,15 @@ $LOOP proxima --vivos <n>      # n = agentes seus ainda vivos; o diário não os
 ## Ciclo
 
 1. `proxima` devolve `acao.tipo`. Siga-o, nada além dele:
-   - `despachar` (`itens[{task,papel}]`): por item, `abrir <task>` (só na 1ª vez), `iniciar <task> <papel>` e o agente do papel
-     (`implementador` e `correcao`: `gabarito-implementador`; `revisor`: `gabarito-revisor`), só com **ponteiros** (plano,
-     spec:linhas, arquivos da task, porta/schema/namespace da worktree). Revisor sempre **novo**, nunca a instância que implementou.
-   - O implementador volta com o commit: `concluir <task>`. O veredito do revisor vira
-     `veredito <task> APROVADO|REPROVADO <rodada> <blocker> <major>`.
+   - `despachar` (`itens[{task,papel,spec?,achados?}]`): por item, `abrir <task>` **sempre**, antes de `implementador` e `correcao`
+     (idempotente: worktree já aberta volta com `ja_aberta:true`; após um `/clear` só o CLI sabe), `iniciar <task> <papel>` e o
+     agente (`implementador` e `correcao`: `gabarito-implementador`; `revisor`: `gabarito-revisor`, sempre **novo**), só com
+     **ponteiros**: plano, `spec` do item, arquivos, porta/schema/namespace da worktree; ao revisor, a rodada; à `correcao`, o `achados`.
+   - O implementador volta com o commit: `concluir <task>`. O revisor grava os achados em `<worktree>/.tmp-gabarito/review-r<rodada>.md`
+     (ignorado pelo git; `fechar` remove) e o veredito vira `veredito <task> APROVADO|REPROVADO <rodada> <blocker> <major>`.
+     `REPROVADO` sem esse arquivo não vazio: `ok:false achados_ausentes`, nada gravado; mande gravar e repita. Rodada errada: `rodada esperada: N`.
    - `integrar` (`tasks[]`): `integrar <task>` (gate, rebase, ff-only do sha aprovado; ele mesmo fecha a worktree).
-   - `esperar`: agentes vivos ou slots ocupados. Não despache, não invente trabalho.
-   - `pousar`: o mod grava o instantâneo e limpa o contexto. Sem mod não há pouso automático (ver abaixo).
+   - `esperar`: agentes vivos ou slots ocupados; não despache. `pousar` nunca vem do CLI (`percent` nulo): o mod pousa ao fim do turno (sem mod, ver abaixo).
    - `parar{motivo}`: pare e **escale ao dono** com o motivo e o diário. Não reabra o que a regra manda escalar.
    - `concluir`: tudo integrado. Rode a suíte inteira e o CI antes de dizer "pronto".
 2. CI da entrega: `ci verde|vermelho`. Falha que você não consegue resolver: `parar nao_conseguiu`.

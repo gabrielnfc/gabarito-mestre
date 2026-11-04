@@ -6,6 +6,8 @@
  *   loop.mjs abrir <task> | fechar <task> | integrar <task>
  *   loop.mjs iniciar <task> <implementador|revisor|correcao> | concluir <task> | reabrir <task>
  *   loop.mjs veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major>
+ *       REPROVADO exige achados não vazios em `<worktree>/.tmp-gabarito/review-r<rodada>.md` (senão `achados_ausentes`, nada gravado);
+ *       `proxima` os aponta (`achados`) no item `correcao`: depois do /clear o arquivo é a única memória deles.
  *   loop.mjs parar <motivo>
  *   loop.mjs ci <verde|vermelho>
  *   todos aceitam --entrega <GM-10> (senão vem da branch); os que gravam aceitam --sessao <id> (padrão `loop`).
@@ -15,7 +17,8 @@
  *
  * QUEM GRAVA NO DIÁRIO. Só `iniciar` (task.iniciada), `concluir` (task.concluida), `veredito` (review.veredito),
  * `reabrir` (task.reaberta, SÓ origem `retomada`: nenhum argumento produz `dono`), `integrar` (task.integrada),
- * `ci` (ci.resultado) e `parar` (loop.parar). `concluir` e `integrar` gravam o `sha`. `abrir` não grava no diário (grava a base em `branch.<branch>.gabaritoBase`). Todo evento de task é conferido contra `TRANSICOES` ANTES de gravar:
+ * `ci` (ci.resultado) e `parar` (loop.parar). `concluir` e `integrar` gravam o `sha`. `abrir` não grava no diário (grava a base em `branch.<branch>.gabaritoBase`)
+ * e é idempotente: worktree registrada com HEAD na branch da task devolve o mesmo resultado com `ja_aberta: true`; qualquer outro estado recusa. Todo evento de task é conferido contra `TRANSICOES` ANTES de gravar:
  * o CLI nunca produz um diário que o núcleo recuse.
  *
  * Tudo que toca git vai por `execFileSync` com argv, sem shell. Nada é apagado por outro meio que `git worktree remove`
@@ -33,7 +36,7 @@ import * as diario from '../dist/diario.js';
 import { estadoDe, ordenar, podeIntegrar, proximaAcao } from '../dist/loop.js';
 import { validarPlano } from '../dist/plano.js';
 import { avaliar } from './gate-task.mjs';
-import { clonar, soltar, validarDb } from './db-template.mjs';
+import { clonar, nomeBanco, soltar, validarDb } from './db-template.mjs';
 
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
 const ENTREGA_RE = /^[A-Z]+-\d+$/;
@@ -291,7 +294,7 @@ const diarioInvalido = (plano, eventos) => {
  * a transição que a tabela não aceita recusa com a causa. Limite declarado: sem lock em volta do par ler+gravar, dois
  * CLIs simultâneos sobre a mesma task podem passar juntos pela conferência.
  */
-function gravar(c, plano, tipo, dados) {
+function gravar(c, plano, tipo, dados, antes = () => {}) {
   const eventos = lerDiarioEstrito(c.dirEntrega);
   if (diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega já não passa na tabela de transições; nada foi gravado');
   const ts = new Date().toISOString();
@@ -303,9 +306,15 @@ function gravar(c, plano, tipo, dados) {
     const ord = ordenar(eventos);
     const fila = (ord.ok ? ord.eventos : []).filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === dados.task);
     const r = estadoDe([...fila, candidato]);
-    if ('invalido' in r) throw new Falha('transicao_invalida', `${tipo} não cabe na tabela para a task ${dados.task}: ${r.invalido}; nada foi gravado`);
+    if ('invalido' in r) {
+      // Depois do /clear a rodada não está em lugar nenhum além do diário: a mensagem diz qual o diário espera.
+      const esperada = r.invalido === 'rodada fora de sequência' ? estadoDe(fila) : null;
+      const dica = esperada !== null && !('invalido' in esperada) ? ` (rodada esperada: ${esperada.rodada + 1})` : '';
+      throw new Falha('transicao_invalida', `${tipo} não cabe na tabela para a task ${dados.task}: ${r.invalido}${dica}; nada foi gravado`);
+    }
     if (diarioInvalido(plano, [...eventos, candidato])) throw new Falha('transicao_invalida', `${tipo} tornaria o diário inválido; nada foi gravado`);
   }
+  antes(); // última conferência antes de gravar (depois da tabela: a causa mais fundamental vem primeiro)
   let autor = 'desconhecido';
   try { autor = git(c.raiz, 'config', 'user.email') || autor; } catch { /* sem user.email: o diário aceita "desconhecido" */ }
   const r = diario.append(c.dirEntrega, c.sessao, { ts, autor, sessao: c.sessao, agente: 'orquestrador', tipo, dados });
@@ -353,6 +362,27 @@ function garantirTmp(wt) {
   return tmp;
 }
 
+/**
+ * `abrir` repetido (depois do /clear o modelo não sabe se já abriu). Só é "já aberta" a worktree que o git REGISTRA no caminho
+ * da task E cujo HEAD está na branch da task. Pasta comum, worktree com HEAD solto ou em outra branch, e branch sem worktree
+ * não são: seguem recusadas como `branch_existe`. Não toca no trabalho; só garante o `.tmp-gabarito`, que `veredito` e `proxima` usam.
+ * Limite declarado: o banco da task não é conferido aqui (o nome vem de `nomeBanco`; `fechar` o solta).
+ */
+function jaAberta(c, task, branch, v) {
+  const caminho = caminhoWt(c, task);
+  try {
+    if (!existsSync(caminho)) return null;
+    if (!worktreesRegistradas(c.raiz).includes(realpathSync(caminho))) return null;
+    if (git(caminho, 'symbolic-ref', '-q', 'HEAD') !== `refs/heads/${branch}`) return null;
+    const base = git(c.raiz, 'config', '--get', `branch.${branch}.gabaritoBase`);
+    garantirTmp(caminho);
+    const tmp = join(caminho, TMP);
+    return { task, branch, base, worktree: caminho, tmpdir: tmp, env: { TMPDIR: tmp }, banco: v.na ? 'n/a' : nomeBanco(c.entrega, task), ja_aberta: true };
+  } catch {
+    return null; // não dá para provar que é a nossa: recusa como antes
+  }
+}
+
 function abrir(c, plano, task) {
   tarefa(plano, task);
   const { cfg } = lerConfig(c.raiz);
@@ -361,6 +391,10 @@ function abrir(c, plano, task) {
   const base = ramoDoPrincipal(c.raiz);
   const branch = ramo(c, task);
   const existentes = git(c.raiz, 'for-each-ref', '--format=%(refname:short)', 'refs/heads').split('\n').filter(Boolean);
+  if (existentes.includes(branch)) {
+    const ja = jaAberta(c, task, branch, v);
+    if (ja !== null) return ja;
+  }
   if (existentes.some((b) => b.toLowerCase() === branch.toLowerCase())) throw new Falha('branch_existe', `a branch ${branch} já existe (ou colide por caixa); abrir não toca no que existe`);
   const pasta = join(c.raiz, '.harness', 'worktrees');
   const caminho = caminhoWt(c, task);
@@ -404,6 +438,18 @@ function abrir(c, plano, task) {
   }
   const tmp = join(caminho, TMP);
   return { task, branch, base, worktree: caminho, tmpdir: tmp, env: { TMPDIR: tmp }, banco };
+}
+
+const caminhoAchados = (wt, rodada) => join(wt, TMP, `review-r${rodada}.md`);
+
+/** Achados de uma rodada: arquivo regular (lstat: symlink e diretório não valem) com texto além de espaço. */
+function achadosLegiveis(arq) {
+  try {
+    if (!lstatSync(arq).isFile()) return false;
+    return readFileSync(arq, 'utf8').trim() !== '';
+  } catch {
+    return false;
+  }
 }
 
 /** Confere, sem apagar nada, que `.tmp-gabarito` é um diretório comum (lstat: symlink e arquivo são recusados). `null` = não existe. */
@@ -775,7 +821,23 @@ function proxima(c, plano, flags) {
   if (acao.tipo === 'parar' && acao.motivo === 'diario_invalido') {
     throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições (evento fora de ordem ou de task desconhecida)', { acao, sinais });
   }
-  return { acao, sinais, ...(aviso.length ? { aviso } : {}) };
+  return { acao: acao.tipo === 'despachar' ? { ...acao, itens: acao.itens.map((i) => enriquecer(c, plano, eventos, i, aviso)) } : acao, sinais, ...(aviso.length ? { aviso } : {}) };
+}
+
+/**
+ * O item de despacho carrega o que o /clear apaga: `spec` (ponteiro do plano) e, na `correcao`, `achados` (caminho do arquivo da
+ * rodada reprovada). Arquivo ausente ou vazio não vira caminho: `achados: null` e aviso (o orquestrador não manda corrigir às cegas).
+ */
+function enriquecer(c, plano, eventos, item, aviso) {
+  const t = plano.tasks.find((x) => x.id === item.task);
+  const saida = { ...item, ...(typeof t?.spec === 'string' ? { spec: t.spec } : {}) };
+  if (item.papel !== 'correcao') return saida;
+  const ord = ordenar(eventos);
+  const reprovado = (ord.ok ? ord.eventos : []).filter((e) => e.tipo === 'review.veredito' && e.dados?.task === item.task && e.dados?.veredito === 'REPROVADO').at(-1);
+  const arq = Number.isInteger(reprovado?.dados?.rodada) ? caminhoAchados(caminhoWt(c, item.task), reprovado.dados.rodada) : null;
+  if (arq !== null && achadosLegiveis(arq)) return { ...saida, achados: arq };
+  aviso.push(`achados da task ${item.task} ausentes ou vazios${arq === null ? '' : ` em ${relative(c.raiz, arq)}`}: o revisor precisa regravá-los antes da correção`);
+  return { ...saida, achados: null };
 }
 
 // ─────────────────────────────────────────────────────────────── despacho
@@ -803,9 +865,19 @@ async function executar(argv, cwd) {
       return { evento: gravar(c, plano, 'task.concluida', { task, sha }) };
     }
     case 'ci': return { evento: gravar(c, plano, 'ci.resultado', { verde: forma.verde }) };
-    case 'veredito':
+    case 'veredito': {
       tarefa(plano, task);
-      return { evento: gravar(c, plano, 'review.veredito', { task, veredito: forma.veredito, rodada: forma.rodada, blocker: forma.blocker, major: forma.major }) };
+      // REPROVADO sem achados no disco manda uma correção às cegas, e o /clear apaga o que o revisor disse: exige o arquivo.
+      const wt = forma.veredito === 'REPROVADO' ? worktreeViva(c, task) : null;
+      const exigirAchados = () => {
+        if (wt === null) return;
+        const arq = caminhoAchados(wt, forma.rodada);
+        if (!achadosLegiveis(arq)) {
+          throw new Falha('achados_ausentes', `REPROVADO exige os achados em ${relative(c.raiz, arq)} (arquivo não vazio); grave-os e repita o veredito; nada foi gravado`, { achados: arq });
+        }
+      };
+      return { evento: gravar(c, plano, 'review.veredito', { task, veredito: forma.veredito, rodada: forma.rodada, blocker: forma.blocker, major: forma.major }, exigirAchados) };
+    }
     case 'reabrir': tarefa(plano, task); return { evento: gravar(c, plano, 'task.reaberta', { task, origem: 'retomada' }) };
     default: throw new Falha('uso', `comando desconhecido: ${cmd}`, {}, 2);
   }

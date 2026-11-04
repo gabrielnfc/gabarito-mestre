@@ -33,6 +33,8 @@ Procure, por padrão:
 - claim de relatório de subagente não conferida no código (R18)
 
 Classifique cada achado: BLOCKER / MAJOR / MINOR, numerado, com arquivo:linha ou medição.
+Veredito REPROVADO: grave os achados (os mesmos que você relata) em `<worktree da task>/.tmp-gabarito/review-r<rodada>.md`, um por linha, antes
+de devolver; o orquestrador só registra o veredito com esse arquivo não vazio, e é por ele que a correção os recebe depois de um `/clear`. APROVADO não grava.
 Relatório de subagente é ALEGAÇÃO — confira no código, sempre.
 Achado que você não conseguir provar, marque como suspeita, não como achado.
 

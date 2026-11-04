@@ -317,3 +317,41 @@ describe('raiz só acrescenta anel (REQ-POU-2 r7)', () => {
     assert.equal(hookRaiz(R, `${T6}/.harness/x`, { projeto: R }), 'deny');
   });
 });
+
+describe('T20: achados do revisor atravessam guarda, veredito e proxima (costura P9)', () => {
+  const REVISOR = { agent_id: 'r1', agent_type: 'gabarito-mestre:gabarito-revisor' };
+  test('achados-e2e-guarda-veredito-proxima: o revisor escreve pela guarda real; o CLI guarda; depois do /clear só o proxima sabe onde está', () => {
+    const { R, H } = cenario();
+    mkdirSync(join(H, 'src'), { recursive: true });
+    writeFileSync(join(H, 'src', 't1.txt'), 'x\n');
+    g(H, 'add', 'src/t1.txt'); g(H, 'commit', '-q', '-m', 'feat(GM-99): trabalho');
+    for (const a of [['abrir', 'T1'], ['iniciar', 'T1', 'implementador'], ['concluir', 'T1'], ['iniciar', 'T1', 'revisor']]) {
+      const r = cli(R, a);
+      assert.equal(r.rc, 0, `${a.join(' ')}: ${r.out}${r.err}`);
+    }
+    const arq = join(H, '.tmp-gabarito', 'review-r1.md');
+    // a guarda deixa o revisor (subagent) gravar os achados, por Write e por Bash, com o cwd no principal e na worktree
+    for (const cwd of [R, H]) {
+      for (const [tool, input] of [['Write', { file_path: arq, content: 'x' }], ['Bash', { command: `echo x > ${arq}` }]]) {
+        const entrada = { tool_name: tool, tool_input: input, permission_mode: 'default', session_id: sessaoNova(), cwd, hook_event_name: 'PreToolUse', ...REVISOR };
+        const r = rodarBruto(JSON.stringify(entrada), { repo: R, cwd });
+        assert.equal(r.status, 0, r.stderr);
+        assert.equal(r.decisao, undefined, `${tool} barrado (cwd ${cwd === R ? 'principal' : 'worktree'})`);
+      }
+    }
+    // sem o arquivo gravado o CLI recusa; com ele, grava
+    assert.equal(cli(R, ['veredito', 'T1', 'REPROVADO', '1', '0', '1']).j.erro, 'achados_ausentes');
+    writeFileSync(arq, '- MAJOR 1: falta teste (src/t1.txt:1)\n');
+    const v = cli(R, ['veredito', 'T1', 'REPROVADO', '1', '0', '1']);
+    assert.equal(v.rc, 0, v.out + v.err);
+    // /clear: só o CLI. abrir repetido não falha e a correção sabe onde estão os achados
+    const ab = cli(R, ['abrir', 'T1']);
+    assert.equal(ab.rc, 0, ab.out + ab.err);
+    assert.equal(ab.j.ja_aberta, true);
+    const p = cli(R, ['proxima', '--vivos', '0']);
+    const item = p.j.acao.itens.find((i) => i.task === 'T1');
+    assert.equal(item.papel, 'correcao');
+    assert.equal(realpathSync(item.achados), realpathSync(arq));
+    assert.match(readFileSync(item.achados, 'utf8'), /MAJOR 1/);
+  });
+});
