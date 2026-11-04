@@ -22,6 +22,7 @@ $LOOP proxima --vivos <n>      # n = agentes seus ainda vivos; o diário não os
      (idempotente: worktree já aberta volta com `ja_aberta:true`; após um `/clear` só o CLI sabe), `iniciar <task> <papel>` e o
      agente (`implementador` e `correcao`: `gabarito-implementador`; `revisor`: `gabarito-revisor`, sempre **novo**), só com
      **ponteiros**: plano, `spec` do item, arquivos, porta/schema/namespace da worktree e o `env.TMPDIR` que `abrir` devolveu (fora da worktree; o agente o exporta em todo Bash de teste, senão o `TMPDIR` próprio não vale; ao revisor, o mesmo: `abrir` repetido devolve o mesmo caminho); ao revisor, a rodada; à `correcao`, o `achados`.
+     `Agent` logo depois de `iniciar`, mesmo com hand-back no meio (trate-o depois); `--vivos` conta só agente lançado e não devolvido.
    - O implementador volta com o commit: `concluir <task>`. O revisor grava os achados em `<worktree>/.tmp-gabarito/review-r<rodada>.md`
      (ignorado pelo git; `fechar` remove) e o veredito vira `veredito <task> APROVADO|REPROVADO <rodada> <blocker> <major>`.
      `REPROVADO` sem esse arquivo não vazio: `ok:false achados_ausentes`, nada gravado; mande gravar e repita. Rodada errada: `rodada esperada: N`.
@@ -42,11 +43,10 @@ mostre o aviso e sugira `node ${CLAUDE_PLUGIN_ROOT}/gates/scripts/capacidade.mjs
 `/gabarito pausar|retomar` (com o mod) ou `/<plugin>:gabarito pausar|retomar` (sem mod). Você **não** cria nem remove
 `.harness/PAUSAR`: a guarda trata isso como integridade do harness e pede ao dono. Pausado, não há `Agent` novo.
 
-**Retomar** remove o arquivo, e só isso: task em voo (`implementando`, `corrigindo`, `em_revisao`) continua em voo e o `proxima`
-a pula. Com o mod, `/gabarito retomar` já reabre cada task em voo (com 0 agentes vivos), grava `loop.pausa` e abre o turno: você
-recebe o prompt de retomada e segue o ciclo. Sem o mod, ou se uma task em voo ficou sem agente por outro motivo, **você**
-chama `$LOOP reabrir <task>` (origem `retomada`) por task em voo e só então `proxima --vivos <n>`. Nunca reabra com agente vivo
-na task: seriam dois implementadores na mesma worktree. Diário ilegível ou `reabrir` com `ok:false`: pare e diga a causa.
+**Retomar** remove o arquivo, e só isso: task em voo (`implementando`, `corrigindo`, `em_revisao`) continua em voo e o `proxima` a pula.
+Com o mod, `/gabarito retomar` já reabre cada task em voo (0 agentes vivos), grava `loop.pausa` e abre o turno: você recebe o prompt de retomada.
+Sem o mod, ou com task em voo sem agente por outro motivo, **você** chama `$LOOP reabrir <task>` (origem `retomada`) por task em voo e só
+então `proxima --vivos <n>`. Nunca reabra com agente vivo: dois implementadores na mesma worktree. Diário ilegível ou `ok:false`: pare e diga a causa.
 
 ## Sem mod
 

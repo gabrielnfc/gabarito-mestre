@@ -194,6 +194,41 @@ describe('fumaça do loop sem LLM', { concurrency: 4 }, () => {
     assert.ok(r.defeitos.some((d) => /implementador npm test rc [1-9]/.test(d)), `a suíte sensível ao pai reprova no caminho antigo\n${r.defeitos.join('\n')}`);
   });
 
+  // T25 (Q-T13F D1, REQ-LOOP-5, P10): `iniciar` sem `Agent`. O hand-back de T2 entra entre `iniciar T3` e o `Agent` que nunca sai; o modelo
+  // trata o hand-back, crê que T3 roda e encerra. O mod (`prompt.submit` peer, `turn.complete`) recupera pelos adaptadores reais.
+
+  for (const x of ['1', '50']) {
+    test(`esquece (X=${x}): iniciar T3 sem Agent, hand-back no meio; o mod reabre T3, abre o turno e o loop conclui (costura P9 da T25)`, async () => {
+      const r = await rodar({ plano: planos('tres'), esquece: 'T3', x });
+      conferir(r, { fim: 'concluir', pouso: x === '1' ? 1 : 0, integradas: 3, vereditos: 3, proxima: 'concluir' });
+      // X=1 também pousa (o Agent negado do pouso reabre a task em voo naquele momento); a órfã é reaberta de qualquer jeito
+      if (x === '50') assert.deepEqual(r.reabertasDe, ['T3'], `só a órfã é reaberta${TRILHA(r)}`);
+      else assert.ok(r.reabertasDe.includes('T3'), `a órfã é reaberta${TRILHA(r)}`);
+      assert.ok(r.submits >= 1, `o mod abriu um turno${TRILHA(r)}`);
+      assert.ok(r.trilha.some((l) => /turno aberto pelo mod: Task em voo sem agente/.test(l)), `o turno aberto é o da recuperação${TRILHA(r)}`);
+    });
+  }
+
+  test('esquece-sempre: o modelo esquece o Agent de T3 em toda tentativa; depois de 2 recuperações o mod grava loop.parar nao_conseguiu', async () => {
+    const r = await rodar({ plano: planos('tres'), esquece: 'T3', esqueceSempre: true });
+    const m = TRILHA(r);
+    assert.deepEqual(r.parar, ['nao_conseguiu'], `loop.parar${m}`);
+    assert.equal(r.reabertas, 2, `2 reaberturas${m}`);
+    assert.deepEqual(r.defeitos, [], `defeitos${m}`);
+    assert.equal(r.integradas, 2, `T3 nunca integra${m}`);
+    assert.ok(r.avisos.some((a) => /nao_conseguiu/.test(a)), `aviso visível${m}`);
+    assert.equal(r.guarda.deny, 0, `guarda deny${m}`);
+  });
+
+  test('esquece-com-pausa: PAUSAR antes do fim do turno ⇒ o mod não reabre nem abre turno', async () => {
+    const r = await rodar({ plano: planos('tres'), esquece: 'T3', pausa: true });
+    const m = TRILHA(r);
+    assert.equal(r.reabertas, 0, `0 reabertas${m}`);
+    assert.equal(r.submits, 0, `nenhum turno aberto${m}`);
+    assert.notEqual(r.fim, 'concluir', `não conclui${m}`);
+    assert.deepEqual(r.parar, [], `sem loop.parar${m}`);
+  });
+
   test('controle positivo: com tasksDoNegado devolvendo lista vazia o REPROVADO trava em nao_conseguiu', async () => {
     const r = await rodar({ plano: planos('uma'), vereditos: { T1: ['REPROVADO'] }, semReabrir: true });
     const m = TRILHA(r);

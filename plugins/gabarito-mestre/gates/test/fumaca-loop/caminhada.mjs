@@ -277,6 +277,7 @@ export async function caminhar(opcoes) {
   const TIPO = { implementador: 'gabarito-mestre:gabarito-implementador', correcao: 'gabarito-mestre:gabarito-implementador', revisor: 'gabarito-mestre:gabarito-revisor' };
   const vivos = () => mundo.agentes.filter((a) => a.status === 'running').length;
 
+  let esqueceu = false; let orfa = null;
   async function despachar(item) {
     const { task, papel } = item;
     // spec vem de `proxima` (ponteiro do topo do plano), em todo item: o /clear apaga o que o modelo sabia
@@ -303,6 +304,12 @@ export async function caminhar(opcoes) {
     } else {
       const i = cli(['iniciar', task, papel]);
       if (!i.ok) return 'parar';
+      if (o.esquece === task && !esqueceu) {
+        // T13 r6: um hand-back entra entre `iniciar` e `Agent`; o modelo trata o hand-back e nunca lança o Agent
+        esqueceu = !o.esqueceSempre; orfa = task; trilha.push(`  ${task}: iniciar sem Agent (hand-back no meio)`);
+        if (o.pausa) writeFileSync(join(REAL, '.harness/PAUSAR'), 'pausado pelo dono\n'); // `esquece-com-pausa`: o dono pausa antes do fim do turno
+        return 'esqueceu';
+      }
       let r = await toolAgent(TIPO[papel]);
       if (r.negado && o.repete) r = await toolAgent(TIPO[papel]); // insiste depois do deny
       if (r.negado) return 'negado';
@@ -311,6 +318,20 @@ export async function caminhar(opcoes) {
     return 'ok';
   }
 
+  /** Trata os hand-backs de quem está vivo, um a um, sem voltar a pensar na task esquecida (run-1). */
+  async function drenar() {
+    for (const ag of mundo.agentes.filter((a) => a.status === 'running')) {
+      await terminar(ag);
+      const e = await processar(ag);
+      if (e) return e;
+      for (let i = 0; i < 4; i++) {
+        const p = cli(['proxima', '--vivos', String(vivos() + 1)]);
+        if (p.acao?.tipo === 'integrar') { for (const t of p.acao.tasks) cli(['integrar', t]); continue; }
+        break;
+      }
+    }
+    return null;
+  }
   async function ciclo() {
     for (let i = 0; i < 25; i++) {
       const p = cli(['proxima', '--vivos', String(vivos())]);
@@ -323,6 +344,7 @@ export async function caminhar(opcoes) {
           if (r === 'negado' && o.lote) { negou = true; continue; } // lote: o modelo despacha o resto da mensagem mesmo com um Agent negado
           if (r !== 'ok') { parou = r; break; }
         }
+        if (parou === 'esqueceu') { const e2 = await drenar(); if (e2) return { fim: e2 }; const pp = cli(['proxima', '--vivos', String(vivos() + 1)]); return { encerra: `crê que ${orfa} roda: ${pp.acao?.tipo}` }; }
         if (parou === 'negado' || (negou && parou === null)) return { encerra: 'Agent negado', negou: true };
         if (parou) return { fim: 'parar' };
         if (a.itens.length === 0) return { encerra: 'sem itens' };
@@ -359,6 +381,7 @@ export async function caminhar(opcoes) {
     mundo.percent = o.percent;
     trilha.push(`  agente ${ag.id} ${ag.task} ${ag.papel} terminou`);
   }
+  async function peer() { if (H['prompt.submit']) await H['prompt.submit']($, { origin: { kind: 'peer' }, text: 'hand-back' }, async (e) => e); }
   async function handback(ag) {
     await terminar(ag);
     return processar(ag);
@@ -366,6 +389,7 @@ export async function caminhar(opcoes) {
   /** O que o orquestrador faz com o resultado de um agente que já terminou (`concluir` ou `veredito`). */
   async function processar(ag) {
     const veredito = ag.veredito; let rodada = ag.rodada;
+    await peer();
     trilha.push(`  hand-back ${ag.id} ${ag.task} ${ag.papel}`);
     if (ag.falhou) return `${ag.papel} falhou`;
     if (ag.papel !== 'revisor') {
@@ -399,7 +423,7 @@ export async function caminhar(opcoes) {
   }
 
   let turno = 0; let fim = null; let blocks = 0; let escFeito = false; let pendenteFeito = false;
-  const pendentes = [];
+  const pendentes = []; let submitsVistos = 0;
   mundo.percent = o.percent; // 1ª resposta define o percent
   trilha.push(`T${turno} prompt do dono`);
   let r = await ciclo();
@@ -442,9 +466,16 @@ export async function caminhar(opcoes) {
     turno++;
     if (mundo.clearAgora) {
       mundo.clearAgora = false;
+      submitsVistos = mundo.submits.length;
       vistos.retomadas.push(mundo.submits.at(-1) ?? '');
       trilha.push(`T${turno} /clear + retomada (${mundo.submits.at(-1)?.length} chars)`);
       aposClear(3);
+      r = await ciclo();
+      continue;
+    }
+    if (mundo.submits.length > submitsVistos) {
+      submitsVistos = mundo.submits.length;
+      trilha.push(`T${turno} turno aberto pelo mod: ${mundo.submits.at(-1).slice(0, 80)}`);
       r = await ciclo();
       continue;
     }
@@ -493,7 +524,7 @@ export async function caminhar(opcoes) {
     fim, turnos: turno, blocks, clears: mundo.clears, pouso: contar['sessao.pouso'] ?? 0, retomada: contar['sessao.retomada'] ?? 0,
     parar: eventos.filter((e) => e.tipo === 'loop.parar').map((e) => e.dados.motivo),
     reabertasDe: eventos.filter((e) => e.tipo === 'task.reaberta').map((e) => e.dados.task), integradas: contar['task.integrada'] ?? 0, vereditos: contar['review.veredito'] ?? 0, reabertas: contar['task.reaberta'] ?? 0,
-    denies: mundo.denies.length, guarda: contagem, defeitos, previstos, pousosSemVeredito, leituras, vistos: { ...vistos, retomadas: vistos.retomadas.length },
+    denies: mundo.denies.length, submits: mundo.submits.length, guarda: contagem, defeitos, previstos, pousosSemVeredito, leituras, vistos: { ...vistos, retomadas: vistos.retomadas.length },
     retomadaTexto: vistos.retomadas[0] ?? null, proximaFinal: acaoFinal, avisos: mundo.avisos,
     tipos: ord.map((e) => e.tipo).filter((t) => !/^(custo\.|guarda\.|sessao\.inicio)/.test(t)), trilha,
   };

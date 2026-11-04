@@ -11,7 +11,7 @@ type Opc = {
   x?: string
   interativo?: boolean
   plano?: boolean
-  agentes?: { id: string; status: string }[] | 'falha'
+  agentes?: { id: string; status: string }[] | 'falha' | 'lixo'
   eventos?: any[]
   lerFalha?: boolean
   lerErro?: string
@@ -103,7 +103,7 @@ function mundo($: any, on: any, o: Opc = {}) {
     if (o.usageFalha) return { deny: 'usage fora do ar' }
     return { value: { startedAt: 0, context: { window: 1_000_000, percent: est.percent ?? undefined, tokens: 1 }, rateLimits: [] } }
   })
-  on('agent.list', () => (o.agentes === 'falha' ? { deny: 'sem sessão' } : { value: o.agentes ?? [] }))
+  on('agent.list', () => (o.agentes === 'falha' ? { deny: 'sem sessão' } : o.agentes === 'lixo' ? { value: 'não é lista' } : { value: o.agentes ?? [] }))
   on('ui.toast', (_: any, e: any) => { toasts.push(e.text); log.push('toast'); return { value: undefined } })
   on('ui.status', () => ({ value: undefined }))
   on('ui.log', () => ({ value: undefined }))
@@ -171,6 +171,7 @@ function mundo($: any, on: any, o: Opc = {}) {
     return { text: '' }
   })
   on('prompt.submit', async (_: any, e: any) => {
+    if (e.origin?.kind === 'peer') { log.push('peer'); return { text: e.text } } // hand-back de subagent: não é um turno aberto pelo mod
     log.push('submit'); est.submits.push(e.text)
     if (o.submitFalha) return { drop: 'recusado' }
     if (o.submitPendente) await new Promise<void>((r) => { est.liberar = r })
@@ -180,13 +181,14 @@ function mundo($: any, on: any, o: Opc = {}) {
   on('tool.call', () => ({ result: {} }))
 
   const clock = mock.clock(on)
+  const peer = () => $.prompt.submit({ text: '<agent-message>[Subagent hand-back]', origin: { kind: 'peer' } })
   const turno = (extra: Record<string, unknown> = {}) =>
     $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', ...extra })
   const agent = (subagent_type?: string) => $.tool.call({ tool: 'Agent', description: 'd', prompt: 'p', subagent_type })
   const inicio = (interativo = o.interativo ?? true) => $.session.start({ cwd: RAIZ, surface: interativo ? 'terminal' : null, isInteractive: interativo })
   const cmd = (args: string) => $.command.run({ command: 'gabarito', args })
   const tipos = () => grav.map((g) => g.tipo)
-  return { log, grav, toasts, escritas, pedidos, store, arquivos, est, clock, turno, agent, inicio, cmd, tipos, evs, add }
+  return { log, grav, toasts, escritas, pedidos, store, arquivos, est, clock, turno, peer, agent, inicio, cmd, tipos, evs, add }
 }
 
 const pousar = async (m: ReturnType<typeof mundo>) => { await m.inicio(); await m.turno(); await m.clock.settle() }
@@ -438,9 +440,13 @@ test('estado-pousavel-nega: o núcleo manda pousar e o despacho fica negado enqu
 
 // ---- J: task em voo sem agente vivo não é fronteira; o núcleo diz nao_conseguiu (5b), o mod espera 3 turnos (REQ-LOOP-5) ----
 const EM_VOO = aposB(A_INI)
+// T25 (spec r12): task em voo sem agente agora é recuperada pelo mod; o (5b) segue valendo quando um hand-back está a caminho e nunca chega
+// (`turn.complete` de subagent sem o `prompt.submit` peer): é esse o estado que os testes abaixo fixam.
+const aCaminho = (m: { turno: (x?: Record<string, unknown>) => Promise<unknown> }) => m.turno({ agentId: 'ag-a-caminho' })
 test('em-voo-sem-agente-para-nao-conseguiu: três turnos sem evento novo viram loop.parar nao_conseguiu com aviso visível, sem pouso', async ($, on) => {
   const m = mundo($, on, { eventos: EM_VOO })
   await m.inicio()
+  await aCaminho(m)
   await m.turno(); await m.turno()
   expect(parou(m)).toHaveLength(0)
   await m.turno(); await m.clock.settle()
@@ -456,6 +462,7 @@ test('em-voo-sem-agente-para-nao-conseguiu: três turnos sem evento novo viram l
 test('em-voo-zera-com-evento-novo: progresso no diário recomeça a contagem', async ($, on) => {
   const m = mundo($, on, { eventos: EM_VOO })
   await m.inicio()
+  await aCaminho(m)
   await m.turno(); await m.turno()
   m.add('o', 'ci.resultado', { verde: true })
   await m.turno(); await m.turno()
@@ -466,6 +473,7 @@ test('em-voo-zera-com-evento-novo: progresso no diário recomeça a contagem', a
 test('em-voo-ignora-a-propria-medicao: custo.medicao por turno não conta como progresso', async ($, on) => {
   const m = mundo($, on, { eventos: EM_VOO })
   await m.inicio()
+  await aCaminho(m)
   for (let i = 0; i < 3; i++) await m.turno({ usage: USO })
   expect(m.tipos().filter((t) => t === 'custo.medicao')).toHaveLength(3)
   expect(parou(m)).toHaveLength(1)
@@ -474,6 +482,7 @@ test('em-voo-contagem-recomeca-se-o-agente-reaparece: turno com agente vivo zera
   const o: Opc = { eventos: EM_VOO }
   const m = mundo($, on, o)
   await m.inicio()
+  await aCaminho(m)
   await m.turno(); await m.turno()
   o.agentes = [{ id: 'a1', status: 'running' }]
   await m.turno()
@@ -1341,6 +1350,7 @@ test('negado-corrigindo-volta-a-reprovada: a correção negada reabre a task rep
 test('negado-em-revisao-nao-conta: o revisor passa, não é negação, e a task em revisão não é reaberta', async ($, on) => {
   const m = mundo($, on, { eventos: aposB(A_INI, A_CON, A_REV) })
   await m.inicio()
+  await aCaminho(m)
   expect((await m.agent('gabarito-revisor')).deny).toBeUndefined()
   await m.turno(); await m.clock.settle()
   expect(reabertas(m)).toHaveLength(0)
@@ -1372,6 +1382,7 @@ test('negados-maior-que-em-voo-limita: 3 negações, 1 em voo ⇒ uma só reaber
 test('sem-negado-nao-reabre: task em voo sem negação ⇒ (5b) como hoje, só loop.parar nao_conseguiu após 3 turnos', async ($, on) => {
   const m = mundo($, on, { eventos: aposB(A_INI) })
   await m.inicio()
+  await aCaminho(m)
   await m.turno(); await m.turno(); await m.turno(); await m.clock.settle()
   expect(reabertas(m)).toHaveLength(0)
   expect(m.tipos()).toContain('loop.parar')
@@ -1387,9 +1398,10 @@ test('iniciar-depois-da-leitura: o deny leu o diário SEM a task em voo; o inici
   expect(reabertas(m)).toEqual([ORQ_RETOMADA])
   expect(m.est.clears).toBe(1)
 })
-test('reaberta-nao-grava-avisa: task.reaberta que falha ⇒ aviso, sem pouso, e não insiste no turno seguinte', async ($, on) => {
+test('reaberta-nao-grava-avisa: task.reaberta que falha ⇒ aviso, sem pouso, e não insiste no turno seguinte (com um hand-back a caminho a recuperação do mod também fica quieta)', async ($, on) => {
   const m = mundo($, on, { eventos: aposB(A_INI), appendFalha: ['task.reaberta'] })
   await m.inicio()
+  await aCaminho(m)
   await m.agent('gabarito-implementador')
   await m.turno(); await m.clock.settle()
   expect(m.toasts.some((t) => t.includes('task.reaberta'))).toBe(true)
@@ -1569,6 +1581,7 @@ test('agent-outro-tipo-com-vivo-fica-e-zera: Explore negado com implementador vi
   const o: Opc = { eventos: aposB(A_INI), plano_json: PLANO5, agentes: VIVO }
   const m = mundo($, on, o)
   await m.inicio()
+  await aCaminho(m)
   await m.agent('Explore')
   await m.turno(); await m.clock.settle()
   expect(reabertas(m)).toHaveLength(0)
@@ -1583,6 +1596,7 @@ test('agent-outro-tipo-com-vivo-fica-e-zera: Explore negado com implementador vi
 test('negacao-sobrando-sem-voo-zera: negação sem task em voo ⇒ nada reaberto e a contagem zera, nada reabre depois', async ($, on) => {
   const m = mundo($, on, { eventos: aposB(), plano_json: PLANO5 })
   await m.inicio()
+  await aCaminho(m)
   await m.agent('gabarito-implementador')
   await m.turno(); await m.clock.settle()
   expect(reabertas(m)).toHaveLength(0)
@@ -1591,9 +1605,10 @@ test('negacao-sobrando-sem-voo-zera: negação sem task em voo ⇒ nada reaberto
   await m.turno(); await m.clock.settle()
   expect(reabertas(m)).toHaveLength(0)
 })
-test('reaberta-falha-para-em-3-turnos: task.reaberta que não grava ⇒ aviso, não insiste, e em 3 turnos o núcleo grava loop.parar nao_conseguiu', async ($, on) => {
+test('reaberta-falha-para-em-3-turnos: task.reaberta que não grava ⇒ aviso, não insiste, e em 3 turnos o núcleo grava loop.parar nao_conseguiu (hand-back a caminho)', async ($, on) => {
   const m = mundo($, on, { eventos: aposB(A_INI), appendFalha: ['task.reaberta'] })
   await m.inicio()
+  await aCaminho(m)
   await m.agent('gabarito-implementador')
   await m.turno(); await m.clock.settle()
   expect(m.toasts.some((t) => t.includes('task.reaberta'))).toBe(true)
@@ -1624,4 +1639,194 @@ test('deny-manda-encerrar: o deny diz para encerrar o turno em vez de tentar de 
 test('deny-manda-encerrar-em-voo: também quando o deny é o nao_conseguiu do núcleo', async ($, on) => {
   const m = mundo($, on, { eventos: aposB(A_INI) })
   expect((await m.agent('gabarito-implementador')).deny).toMatch(/encerre o turno/)
+})
+
+// ---- T25 (Q-T13F D1, REQ-LOOP-5): `iniciar` sem `Agent` deixa task em voo sem agente; no fim normal do turno o mod recupera ----
+// Hand-back a caminho = `turn.complete` de subagent (terminados) acima de `prompt.submit` de origem `peer` (recebidos).
+const ORFA = aposB(A_INI)
+const A_INI_DE_NOVO = ['task.iniciada', { task: 'a', papel: 'implementador' }] as [string, Record<string, unknown>]
+const recuperar = async (m: ReturnType<typeof mundo>) => { await m.turno(); await m.clock.settle() }
+
+test('orfa-reabre-e-abre-turno: 0 vivos, 0 a caminho, sem pausa, sem parar ⇒ task.reaberta {retomada} e um turno com a skill', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA })
+  await m.inicio()
+  await recuperar(m)
+  expect(reabertas(m)).toEqual([ORQ_RETOMADA])
+  expect(m.est.submits).toHaveLength(1)
+  expect(m.est.submits[0]).toContain('gabarito-loop')
+  expect(parou(m)).toHaveLength(0)
+})
+test('orfa-nao-pousa-no-mesmo-turno: com contexto acima de X o turno aberto vem antes de qualquer pouso', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA, percent: 60 })
+  await m.inicio()
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(1)
+  expect(m.est.clears).toBe(0)
+  expect(m.tipos()).not.toContain('sessao.pouso')
+  expect(m.est.submits).toHaveLength(1)
+  expect(m.est.submits[0]).not.toContain('Diário')
+})
+test('orfa-handback-a-caminho-nao-reabre: subagent terminou e o hand-back ainda não chegou ⇒ nada; chegou ⇒ reabre', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA })
+  await m.inicio()
+  await m.turno({ agentId: 'ag-1' })
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(0)
+  expect(m.est.submits).toHaveLength(0)
+  await m.peer()
+  await recuperar(m)
+  expect(reabertas(m)).toEqual([ORQ_RETOMADA])
+  expect(m.est.submits).toHaveLength(1)
+})
+test('orfa-peer-de-outra-origem-nao-conta: só origin.kind peer compensa o turn.complete do subagent', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA })
+  await m.inicio()
+  await m.turno({ agentId: 'ag-1' })
+  await $.prompt.submit({ text: 'digitado pelo dono', origin: { kind: 'user' } })
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(0)
+})
+test('orfa-com-vivo-nao-reabre: agente rodando ⇒ o hand-back acorda o modelo, o mod não faz nada', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA, agentes: VIVO })
+  await m.inicio()
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(0)
+  expect(m.est.submits).toHaveLength(0)
+})
+test('orfa-pausado-nao-reabre: PAUSAR presente ⇒ nada reaberto, nenhum turno', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA, arquivos: [`${PRINCIPAL}/.harness/PAUSAR`] })
+  await m.inicio()
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(0)
+  expect(m.est.submits).toHaveLength(0)
+})
+test('orfa-pausa-nao-confirmada-nao-reabre: fs.exists lançando conta como pausado', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA, existsFalha: true })
+  await m.inicio()
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(0)
+  expect(m.est.submits).toHaveLength(0)
+})
+test('orfa-apos-parar-nao-reabre: o diário termina em loop.parar ⇒ parado, nada reaberto', async ($, on) => {
+  const m = mundo($, on, { eventos: [...ORFA, EV(6, 'loop.parar', { motivo: 'nao_conseguiu', task: 'a' })] })
+  await m.inicio()
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(0)
+  expect(m.est.submits).toHaveLength(0)
+})
+test('orfa-negado-nao-duplica: Agent negado desfaz a negada e o núcleo decide; o mod não reabre também a outra em voo nem abre turno', async ($, on) => {
+  const m = mundo($, on, { eventos: aposB(A_INI, C_INI), plano_json: PLANO5 })
+  await m.inicio()
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/)
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(1)
+  expect(m.est.submits.filter((s) => s.includes('gabarito-loop') && !s.includes('Diário'))).toHaveLength(0)
+})
+test('orfa-terceira-vez-grava-parar: 2 recuperações por task; na seguinte loop.parar nao_conseguiu com aviso, sem nova reabertura nem turno', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA })
+  await m.inicio()
+  await recuperar(m)
+  m.add('o', ...A_INI_DE_NOVO)
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(2)
+  expect(parou(m)).toHaveLength(0)
+  m.add('o', ...A_INI_DE_NOVO)
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(2)
+  expect(m.est.submits).toHaveLength(2)
+  expect(parou(m)).toHaveLength(1)
+  expect(parou(m)[0].dados).toEqual({ motivo: 'nao_conseguiu', task: 'a' })
+  expect(m.toasts.some((t) => t.includes('nao_conseguiu') && t.includes('a'))).toBe(true)
+  await recuperar(m)
+  expect(parou(m)).toHaveLength(1)
+})
+test('orfa-parar-nao-grava-avisa: loop.parar que não grava não vira "parado"; o aviso diz que não gravou', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA, appendFalha: ['loop.parar'] })
+  await m.inicio()
+  await recuperar(m)
+  m.add('o', ...A_INI_DE_NOVO)
+  await recuperar(m)
+  m.add('o', ...A_INI_DE_NOVO)
+  await recuperar(m)
+  expect(parou(m)).toHaveLength(0)
+  expect(reabertas(m)).toHaveLength(2)
+  expect(m.toasts.some((t) => t.includes('loop.parar') && t.includes('não'))).toBe(true)
+})
+test('orfa-reaberta-nao-grava-avisa: task.reaberta que falha ⇒ aviso com reabrir <task>, nenhum turno, nenhum pouso', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA, appendFalha: ['task.reaberta'] })
+  await m.inicio()
+  await recuperar(m)
+  expect(m.toasts.some((t) => t.includes('reabrir a'))).toBe(true)
+  expect(m.est.submits).toHaveLength(0)
+  expect(m.est.clears).toBe(0)
+})
+test('orfa-submit-recusado-avisa: prompt.submit recusado ⇒ a task está reaberta, o aviso diz que o dono digita', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA, submitFalha: true })
+  await m.inicio()
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(1)
+  expect(m.toasts.some((t) => t.includes('Digite'))).toBe(true)
+})
+test('orfa-agent-list-falha-nao-reabre: não saber os vivos não é vivos 0', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA, agentes: 'falha' })
+  await m.inicio()
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(0)
+  expect(m.est.submits).toHaveLength(0)
+})
+test('orfa-agent-list-lixo-nao-reabre: lista que não é lista não é vivos 0', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA, agentes: 'lixo' })
+  await m.inicio()
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(0)
+  expect(m.est.submits).toHaveLength(0)
+})
+test('orfa-diario-ilegivel-nao-reabre: diário que não se lê ⇒ nada reaberto, nenhum turno', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA, lerFalha: true })
+  await m.inicio()
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(0)
+  expect(m.est.submits).toHaveLength(0)
+})
+test('orfa-plano-ilegivel-nao-reabre: plano que não se lê ⇒ nada reaberto, nenhum turno', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA, plano_json: 'falha' })
+  await m.inicio()
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(0)
+  expect(m.est.submits).toHaveLength(0)
+})
+test('orfa-sem-loop-nao-reabre: sem plano.json o mod não muda nada', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA, plano: false })
+  await m.inicio()
+  await recuperar(m)
+  expect(reabertas(m)).toHaveLength(0)
+  expect(m.est.submits).toHaveLength(0)
+})
+test('orfa-abortado-nao-reabre: Esc, erro e reason desconhecido não decidem', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA })
+  await m.inicio()
+  await m.turno({ isAborted: true }); await m.clock.settle()
+  await m.turno({ reason: 'error' }); await m.clock.settle()
+  expect(reabertas(m)).toHaveLength(0)
+  expect(m.est.submits).toHaveLength(0)
+})
+test('orfa-subagent-nao-reabre: turn.complete de subagent nunca recupera', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA })
+  await m.inicio()
+  await m.turno({ agentId: 'ag-1' }); await m.clock.settle()
+  expect(reabertas(m)).toHaveLength(0)
+})
+test('orfa-corrigindo-volta-a-reprovada: correção sem agente reabre a task reprovada', async ($, on) => {
+  const m = mundo($, on, { eventos: aposB(A_INI, A_CON, A_VER_REP, A_COR) })
+  await m.inicio()
+  await recuperar(m)
+  expect(reabertas(m)).toEqual([ORQ_RETOMADA])
+  expect(m.est.submits).toHaveLength(1)
+})
+test('orfa-sem-task-em-voo-nao-abre-turno: nada em voo ⇒ nada a recuperar', async ($, on) => {
+  const m = mundo($, on, { eventos: aposB() })
+  await m.inicio()
+  await m.turno({ percent: 1 }); await m.clock.settle()
+  expect(reabertas(m)).toHaveLength(0)
+  expect(m.est.submits.filter((s) => s.includes('em voo'))).toHaveLength(0)
 })
