@@ -16,7 +16,7 @@
 import { proximaAcao } from '../gates/dist/loop.js';
 import * as nucleo from '../gates/dist/loop.js'; // `nucleo.TIPOS_DE_PROGRESSO`: fonte única da lista (lida só em marcarPousoPendente)
 import {
-  analisarFronteira, codigoPonte, dadosMedicao, ehRevisor, jaParou, lerX, marcaDeProgresso, negaDespacho, portaDoPouso, tasksEmVoo, textoRetomada, tokensDe, vivosDe,
+  analisarFronteira, codigoPonte, dadosMedicao, ehRevisor, jaParou, lerX, marcaDeProgresso, negaDespacho, portaDoPouso, tasksDoNegado, tasksEmVoo, textoRetomada, tokensDe, vivosDe,
 } from '../gates/dist/pouso.js';
 
 const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
@@ -28,6 +28,7 @@ let ocupado = false; // um turn.complete decide por vez; fica preso até o pouso
 let desistiu = false; // um pouso falhou: só tenta de novo depois que o percent cair abaixo de X
 let xAvisado = null;
 let diarioAvisado = null; // motivo do último aviso de diário ilegível (não repete a cada turno)
+let negados = 0; // Agent de despacho negado neste turno: o `iniciar` dele ficou no diário sem agente
 let espera = null; // { dir, marca, n }: turnos seguidos sem evento novo com o núcleo respondendo `nao_conseguiu`
 const TURNOS_ESPERA = 3; // alinhado a REQ-LOOP-5: o hand-back pode ainda não ter chegado
 
@@ -293,6 +294,33 @@ async function aoCompletarTurno($) {
   return false;
 }
 
+/**
+ * D1: `Agent` negado não pode deixar `task.iniciada` para trás. No fim normal do turno, ANTES de decidir, reabre (origem
+ * `retomada`) as `min(negados, em voo − vivos)` tasks iniciadas por último. A contagem zera sempre que este código roda:
+ * leitura ilegível, lista de agentes ilegível ou reabertura que falha nunca reabrem nada nem insistem (aviso). Núcleo intacto.
+ */
+async function desfazerNegados($) {
+  if (negados === 0) return;
+  const n = negados;
+  negados = 0;
+  const { c } = await loopAtivo($);
+  if (c === null) return;
+  const l = await ponte($, { op: 'ler', dir: c.dir, cwd: c.cwd });
+  const p = await ponte($, { op: 'plano', dir: c.dir, raiz: c.raiz, cwd: c.cwd });
+  if (l.ok !== true || p.ok !== true) return;
+  let lista = null;
+  try { lista = await $.agent.list(); } catch { return; }
+  if (!Array.isArray(lista)) return;
+  const r = tasksDoNegado(p.plano, l.eventos, n, vivosDe(lista));
+  if (!r.ok) return;
+  for (const task of r.tasks) {
+    if (!(await gravar($, c, { agente: 'orquestrador', tipo: 'task.reaberta', dados: { task, origem: 'retomada' } }))) {
+      await avisar($, `gabarito: não consegui gravar task.reaberta da task ${task}; o pouso não acontece. Rode reabrir ${task} pelo loop.mjs.`);
+      return;
+    }
+  }
+}
+
 async function medir($, e) {
   if (typeof e.agentId !== 'string' || !ID_RE.test(e.agentId)) return;
   const dados = dadosMedicao(e.usage);
@@ -447,7 +475,7 @@ export const register = (on) => {
         try {
           await medirOrquestrador($, e);
           // lista permitida: só o fim normal decide. Esc do dono, erro de API, recusa ou reason desconhecido nunca pousam (E4).
-          if (dono && e.reason === 'answer' && e.isAborted === false) agendado = await aoCompletarTurno($);
+          if (dono && e.reason === 'answer' && e.isAborted === false) { await desfazerNegados($); agendado = await aoCompletarTurno($); }
         } finally {
           if (dono && !agendado) ocupado = false;
         }
@@ -463,8 +491,9 @@ export const register = (on) => {
       if (c !== null) {
         const r = await avaliar($, c);
         if (r.negar) {
+          negados += 1;
           if (r.acao?.tipo === 'pousar' && r.mundo !== null) await marcarPousoPendente($, c, r.mundo.eventos);
-          return { deny: `pouso: contexto em ${r.percent}% (X=${r.x}%), ${descrever(r)}. Sem despacho novo; só o revisor passa.` };
+          return { deny: `pouso: contexto em ${r.percent}% (X=${r.x}%), ${descrever(r)}. Sem despacho novo; só o revisor passa. Não tente de novo: encerre o turno.` };
         }
       }
     } catch { /* o mod não prende a sessão */ }

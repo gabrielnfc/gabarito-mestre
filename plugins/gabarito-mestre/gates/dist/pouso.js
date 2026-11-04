@@ -241,7 +241,7 @@ export function dadosMedicao(usage         )                                {
   return dados;
 }
 
-const CABECALHO = 'Pouso automático: o contexto foi limpo. Retome o loop do plano pelo diário; estado abaixo.';
+const CABECALHO = 'Pouso automático: o contexto foi limpo. Retome o loop do plano com a skill gabarito-loop (consulte a próxima ação); estado abaixo.';
 
 /** Prompt de retomada = cabeçalho curto + instantâneo inteiro. Vazio ou acima do teto ⇒ `null`: o pouso não acontece. */
 export function textoRetomada(instantaneo        )                {
