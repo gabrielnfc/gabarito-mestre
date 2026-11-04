@@ -12,7 +12,9 @@ const log = ($, o) => {
   cadeia = cadeia.then(async () => {
     if (dir === null) return;
     const t = await $.clock.now();
-    buf.push(JSON.stringify({ t, ...o }));
+    let iso = null;
+    try { iso = new Date().toISOString(); } catch { /* sem Date no host */ } // mesma chamada do mod (negadoAte): formato a comparar com o `ts` do diário
+    buf.push(JSON.stringify({ t, iso, ...o }));
     await $.fs.write(`${dir}/mod.jsonl`, `${buf.join('\n')}\n`);
   }).catch(() => {});
   return cadeia;
@@ -36,6 +38,17 @@ export const register = (on) => {
         const chave = JSON.stringify(l.map((a) => [a.id, a.st]));
         if (chave !== ultimoLista) { ultimoLista = chave; await log($, { ev: 'agentes', lista: l }); }
       });
+      // Marcador de pouso (`.harness/pouso-pendente.json`, escrito pelo mod com $.fs.write): vive poucos segundos, por isso 500 ms; só a mudança é gravada.
+      let raiz = null;
+      try { raiz = (await $.session.repo())?.root ?? (await $.session.root()); } catch { raiz = null; }
+      if (raiz !== null) {
+        let ultimoMarcador = null;
+        $.clock.every(500, async () => {
+          let existe = null;
+          try { existe = (await $.fs.exists(`${raiz}/.harness/pouso-pendente.json`)) === true; } catch { existe = null; }
+          if (existe !== ultimoMarcador) { ultimoMarcador = existe; await log($, { ev: 'pendente', existe }); }
+        });
+      }
     } catch { /* sem relógio: o resto segue */ }
     return next(e);
   });

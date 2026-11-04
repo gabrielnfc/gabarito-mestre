@@ -2,12 +2,14 @@
 /**
  * Leitura das evidências dos aceites (GM-10 T13). Só lê: diário (lerEstrito + ordenar, do núcleo), logs do observador e `loop.mjs proxima`.
  *   avaliar.mjs estado <repo> <rundir> <plugin-root>     uma linha JSON, para o aceite-loop.exp decidir quando parar
+ *   avaliar.mjs medidas <repo> <rundir> <plugin-root>          medições da r5 (transcripts, mod.jsonl, debug.log, diário): só números e nomes
  *   avaliar.mjs relatorio 0 <repo> <rundir> <plugin-root>     aceite 0 (fumaça): números e veredito. Os demais aceites só têm relatório
  *                                                            depois de um aceite 0 VERDE (ordem do brief); até lá não existem aqui.
  * Saída de ferramenta falhando ou diário ilegível reprova: nada aqui devolve verde por falta de dado.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -115,9 +117,110 @@ async function relatorio0(repo, rundir, plugin) {
   console.log(JSON.stringify(out, null, 1));
 }
 
+/** Medições da r5 (brief item 5): lê transcripts, mod.jsonl, debug.log e diário. Só números e nomes; comando com valor secreto não sai. */
+const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
+const segredo = (s) => String(s).replace(/(token|secret|key|senha|password|authorization)(["'=:\s]+)\S+/gi, '$1$2<omitido>').replace(/\b[A-Za-z0-9_-]{32,}\b/g, '<longo>');
+
+/** Pasta de transcripts do Claude Code para um repo: todo caractere fora de [A-Za-z0-9-] vira "-". */
+export const pastaTranscripts = (repo, home) => join(home, '.claude', 'projects', realpathSync(repo).replace(/[^A-Za-z0-9-]/g, '-'));
+
+/** Mensagens do assistente agrupadas por message.id (cada bloco é uma linha do transcript). */
+export function mensagens(arquivo) {
+  const porId = new Map();
+  for (const o of linhas(arquivo)) {
+    if (o.type !== 'assistant' || !o.message?.id) continue;
+    const m = porId.get(o.message.id) ?? { id: o.message.id, ts: o.timestamp, blocos: [] };
+    for (const b of o.message.content ?? []) if (b.type === 'tool_use') m.blocos.push({ nome: b.name, input: b.input ?? {} });
+    porId.set(o.message.id, m);
+  }
+  return [...porId.values()];
+}
+
+export async function medidas(repo, rundir, plugin, home) {
+  const dia = await diario(repo, plugin);
+  if (!dia.ok) { console.log(JSON.stringify({ medidas: 'REPROVADO', motivo: dia.motivo })); process.exitCode = 1; return; }
+  const ev = dia.eventos;
+  const pasta = pastaTranscripts(repo, home);
+  const sessoes = [...new Set(ev.map((e) => e.sessao))].filter((sid) => /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(String(sid))); // `loop` é o id do CLI, não uma sessão
+  const ausentes = sessoes.filter((sid) => !existsSync(join(pasta, `${sid}.jsonl`)));
+  const out = { pasta_existe: existsSync(pasta), sessoes: sessoes.length, transcripts_ausentes: ausentes.length };
+  if (ausentes.length > 0) process.exitCode = 1; // transcript que falta é medição que falta, nunca zero
+  // (i) iniciar e Agent na mesma mensagem
+  let msgs = 0, comIniciar = 0, comAgent = 0, juntos = 0, agentsTotal = 0, bashIniciarCmds = 0;
+  const despachos = [];
+  for (const sid of sessoes) {
+    for (const m of mensagens(join(pasta, `${sid}.jsonl`))) {
+      msgs += 1;
+      const ini = m.blocos.filter((b) => b.nome === 'Bash' && /loop\.mjs['"]?\s+iniciar\b/.test(String(b.input.command ?? '')));
+      const ag = m.blocos.filter((b) => b.nome === 'Agent' || b.nome === 'Task');
+      if (ini.length) comIniciar += 1;
+      bashIniciarCmds += ini.length;
+      if (ag.length) comAgent += 1;
+      agentsTotal += ag.length;
+      if (ini.length && ag.length) juntos += 1;
+      for (const a of ag) despachos.push({ sid: sid.slice(0, 8), ts: m.ts, tipo: String(a.input.subagent_type ?? ''), prompt: String(a.input.prompt ?? ''), com_iniciar: ini.length > 0 });
+    }
+  }
+  out.i_iniciar_e_agent = { mensagens: msgs, com_iniciar: comIniciar, com_agent: comAgent, juntas: juntos, agents: agentsTotal, bash_iniciar: bashIniciarCmds };
+  // (iv) brief traz o caminho de achados e o arquivo existe
+  out.iv_briefs = despachos.map((d, i) => {
+    const caminho = (d.prompt.match(/[\w./~-]*review-r\d+\.md/) ?? [null])[0];
+    const abs = caminho === null ? null : (caminho.startsWith('/') ? caminho : join(repo, caminho));
+    return { n: i + 1, sessao: d.sid, tipo: d.tipo.split(':').pop(), traz_achados: caminho !== null, caminho: caminho === null ? null : pastaRel(caminho, repo), existe: abs === null ? null : existsSync(abs), chars: d.prompt.length };
+  });
+  const reabertas = ev.filter((e) => e.tipo === 'task.reaberta').length;
+  out.iv_reabertas = reabertas;
+  out.iv_reprovados = ev.filter((e) => e.tipo === 'review.veredito' && e.dados?.veredito === 'REPROVADO').length; // 0 ⇒ o caminho de correção com achados não ocorreu
+  // (ii) marcador em .harness
+  const mod = linhas(join(rundir, 'mod.jsonl'));
+  const debug = existsSync(join(rundir, 'debug.log')) ? readFileSync(join(rundir, 'debug.log'), 'utf8').split('\n') : [];
+  const exp = existsSync(join(rundir, 'exp.log')) ? readFileSync(join(rundir, 'exp.log'), 'utf8') : '';
+  const marc = mod.filter((o) => o.ev === 'pendente');
+  out.ii_marcador = {
+    deny_pouso_no_debug: debug.filter((l) => /tool\.call Agent .*resolved by a hooks module \(deny: pouso: contexto em/.test(l)).length,
+    deny_pouso_com_acao_pousar: debug.filter((l) => /resolved by a hooks module \(deny: pouso: contexto em .*(pouse|pousar)/.test(l)).length,
+    apareceu_no_observador: marc.filter((o) => o.existe === true).length, consumido_depois: marc.filter((o) => o.existe === false).length,
+    mencoes_debug: debug.filter((l) => /pouso-pendente/.test(l)).length, perguntas_de_permissao: (exp.match(/PERGUNTA-DE-PERMISSAO/g) ?? []).length,
+    instrumento: marc.length > 0 ? 'observador' : 'ausente',
+  };
+  // (iii) new Date() em host real. `negadoAte` é variável do mod, ilegível de fora; o observador roda depois do mod na cadeia e NÃO vê
+  // tool.call negado (o deny do mod não chama next). Proxy: `iso` = `new Date().toISOString()` do observador, mesmo host, em cada linha.
+  const comIso = mod.filter((o) => typeof o.iso === 'string');
+  out.iii_new_date = {
+    tool_call_negado_visto_pelo_observador: mod.filter((o) => o.ev === 'tool.call' && o.negado === true).length,
+    linhas_com_iso: comIso.length, linhas: mod.length, iso_formato_igual_ao_ts_do_diario: comIso.filter((o) => ISO.test(o.iso)).length,
+    ts_diario_formato_ok: ev.every((e) => ISO.test(String(e.ts))), ts_diario_n: ev.length,
+    deriva_ms_iso_vs_clock_max: comIso.length ? Math.max(...comIso.filter((o) => typeof o.t === 'number').map((o) => Math.abs(Date.parse(o.iso) - o.t))) : null,
+    deny_do_agent_no_debug: debug.filter((l) => /tool\.call Agent .*resolved by a hooks module \(deny/.test(l)).length,
+  };
+  // (v) block x turn.complete
+  const epoch = (l) => Date.parse(l.slice(0, 24));
+  const blocks = debug.filter((l) => /"Hook Stop \(Stop\) success/.test(l) && /"decision\\":\\"block/.test(l)).map(epoch);
+  const stops = debug.filter((l) => /Hooks: Stop \[node .*stop-loop\.mjs.*finished with status/.test(l)).map(epoch);
+  const turnos = mod.filter((o) => o.ev === 'turn.complete' && o.agente === null).map((o) => o.t);
+  out.v_block_x_turn = {
+    stops: stops.length, blocks: blocks.length, turn_complete_orquestrador: turnos.length,
+    turn_complete_em_5s_do_block: blocks.map((b) => turnos.filter((t) => Math.abs(t - b) <= 5000).length),
+    turn_complete_apos_stop_ms: stops.map((s) => { const d = turnos.filter((t) => t >= s - 200).map((t) => t - s); return d.length ? Math.min(...d) : null; }),
+  };
+  // (vi) origem dos operacao.destrutiva
+  out.vi_destrutiva = [];
+  for (const e of ev.filter((x) => x.tipo === 'operacao.destrutiva')) {
+    const aid = String(e.agente).replace(/^subagent:/, '');
+    const arq = join(pasta, e.sessao, 'subagents', `agent-${aid}.jsonl`);
+    const alvo = Date.parse(e.ts);
+    const cands = existsSync(arq) ? mensagens(arq).flatMap((m) => m.blocos.filter((b) => b.nome === 'Bash').map((b) => ({ dt: Math.abs(Date.parse(m.ts) - alvo), cmd: String(b.input.command ?? '') }))).sort((a, b) => a.dt - b.dt) : [];
+    let tipo = null;
+    try { tipo = JSON.parse(readFileSync(join(pasta, e.sessao, 'subagents', `agent-${aid}.meta.json`), 'utf8')).agentType ?? null; } catch { /* sem meta */ }
+    out.vi_destrutiva.push({ seq: e.seq, sessao: e.sessao.slice(0, 8), agente: String(e.agente).slice(0, 24), tipo_agente: tipo, dados: e.dados, transcript_existe: existsSync(arq), comando_mais_proximo: cands[0] ? { dt_ms: cands[0].dt, cmd: segredo(cands[0].cmd).slice(0, 200) } : null });
+  }
+  console.log(JSON.stringify(out, null, 1));
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [cmd, ...a] = process.argv.slice(2);
   if (cmd === 'estado') await estado(a[0], a[1], a[2]);
   else if (cmd === 'relatorio' && a[0] === '0') await relatorio0(a[1], a[2], a[3]);
-  else { console.error('uso: avaliar.mjs estado <repo> <rundir> <plugin-root> | relatorio 0 <repo> <rundir> <plugin-root>'); process.exitCode = 2; }
+  else if (cmd === 'medidas') await medidas(a[0], a[1], a[2], homedir());
+  else { console.error('uso: avaliar.mjs estado <repo> <rundir> <plugin-root> | relatorio 0 <repo> <rundir> <plugin-root> | medidas <repo> <rundir> <plugin-root>'); process.exitCode = 2; }
 }
