@@ -17,6 +17,8 @@ git add -A
 git commit -q -m "chore(GM-99): repositorio descartavel de aceite"
 mkdir -p .harness/entregas/GM-99
 cp "$plano" .harness/entregas/GM-99/plano.json
+# mutações por task (r8): o plano só as cita; ficam em .harness (ignorado), fora do alcance do implementador
+for m in "$aqui"/mutacoes-t*.json; do [ -e "$m" ] && cp "$m" .harness/entregas/GM-99/; done
 node --input-type=module -e '
 import { hostname } from "node:os"; import { writeFileSync } from "node:fs";
 writeFileSync(".harness/capacidade.json", JSON.stringify({ hostname: hostname(), slots_max: 2, rss_pico_mb: 100, tmpdir_mb: 10, cpu_total: 1, load_medido: 200, fixture: true }) + "\n");'

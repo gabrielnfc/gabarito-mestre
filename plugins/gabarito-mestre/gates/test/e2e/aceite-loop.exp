@@ -2,12 +2,14 @@
 # Aceites de ponta a ponta do loop (GM-10 T13). FORA de `npm test`: abre uma TUI real do Claude Code (Haiku), gasta tokens.
 #
 #   aceite-loop.exp <modo> <rundir> <repo> <plugin-root> <observador> <prompt-arquivo> <teto-s>
-#     modo: fumaca (aceite 0, 1 task) | loop (aceite 1 e 4, 3 tasks) | pausa (aceite 2)
+#     modo: fumaca (aceite 0, 1 task) | loop (aceite 1 e 4, 3 tasks) | pausa (aceite 2) | liberar (r8: T1 já no teto, semeada pelo CLI)
 #
 # Isolamento (sombra-t13): `--setting-sources project`, SEM CLAUDE_CONFIG_DIR (sem credencial a medição zera). Todo o resto é
 # lido DEPOIS pelo avaliar.mjs a partir do diário e dos logs do observador; a tela nunca é evidência. O .exp só digita o que
 # está em $rundir/sends.log (trust, prompt, exit e, no modo pausa, os dois comandos): qualquer outra digitação seria
-# "salvar o aceite" e este arquivo não faz. Pergunta de permissão na tela é REGISTRADA e nunca respondida.
+# "salvar o aceite" e este arquivo não faz. No modo liberar são exatamente dois comandos do dono, depois de `acao=parar` estável (15 s), turno do orquestrador encerrado e running 0 (sem exigir `parou=true`, r8b):
+# `/gabarito-mestre:liberar T9` (task fora do plano: recusa, nada gravado) e, 20 s depois, `/gabarito-mestre:liberar T1`; nada mais é respondido.
+# Só LISTA (ls -R) o `.tmp-gabarito` da T1 antes do T9 e 12 s depois do T1 (tmp-T1-antes.txt, tmp-T1-depois.txt): evidência de `ciclo-1`, o `fechar` apaga a pasta. Pergunta de permissão na tela é REGISTRADA e nunca respondida.
 # Trava: TRAVA_S sem evento novo (diário + observador) e 0 agentes vivos ⇒ TRAVADO. Teto global: <teto-s>.
 set TRAVA_S 300
 lassign $argv modo rundir repo plugin obs promptf teto
@@ -28,6 +30,7 @@ proc estado {} {
   return $out
 }
 proc campo {s nome} { if {[regexp "\"$nome\":(\[^,\}\]+)" $s -> v]} { return [string trim $v "\""] } ; return "" }
+proc listar {destino} { global repo; catch {exec sh -c "ls -R '$repo/.harness/worktrees/T1/.tmp-gabarito' > '$destino' 2>&1"} }
 proc nota {txt} { global rundir; set f [open $rundir/exp.log a]; puts $f "[clock seconds] $txt"; close $f }
 
 cd $repo
@@ -62,6 +65,7 @@ send "\r"
 set status RODANDO
 set ultimo ""; set tmudou [clock seconds]; set lastpoll 0; set tfase4 0
 set concluiu 0; set tconcl 0
+set tliberar 0; set liberou 0; set tlib2 0; set tparar 0; set tur ""; set tturno 0
 set pausou 0; set tpausa 0; set retomou 0; set tretomada 0; set pausou2 0; set fase 1
 set timeout 2
 while {1} {
@@ -80,8 +84,26 @@ while {1} {
   set marca "[campo $s eventos]/[campo $s obs]"
   if {$marca ne $ultimo} { set ultimo $marca; set tmudou $agora }
   if {[campo $s running] eq "0" && $agora - $tmudou > $TRAVA_S} { set status TRAVADO; break }
-  if {[campo $s parou] eq "true"} { set status PAROU; break }
+  if {$modo eq "liberar"} {
+    # PAROU só vale depois de liberar. Depois de T1 digitado, 90 s para o evento cair e o modelo seguir.
+    # gatilho (r8b): `acao=parar` estável por 15 s, turno do orquestrador encerrado (turn.complete no observador) e running 0. NÃO exige `parou=true`:
+    # em B o percent é 5 < X, o mod fica OCIOSO e nenhum `loop.parar` de teto é gravado (sombra-t13g, medido em run-b).
+    if {[campo $s acao] eq "parar"} { if {$tparar == 0} { set tparar $agora } } else { set tparar 0 }
+    # o turno encerrado precisa ter 10 s: o mod ainda grava `custo.medicao`/`loop.parar` ~0,3 s depois do `turn.complete` (run-b2b, 1ª tentativa: T9 digitado no mesmo segundo, 2 eventos "entre T9 e T1")
+    if {[campo $s turnos] ne [set tur_ant $tur]} { set tur [campo $s turnos]; set tturno $agora }
+    if {$liberou == 0 && $tparar > 0 && $agora - $tparar >= 15 && [campo $s running] eq "0" && $tur ne "" && $tur > 0 && $agora - $tturno >= 10} {
+      listar $rundir/tmp-T1-antes.txt
+      sends liberar-t9; send -- "/gabarito-mestre:liberar T9"; after 1200; send "\r"; set tliberar $agora; set liberou 1; nota "liberar T9 digitado"
+    } elseif {$liberou == 1 && $agora - $tliberar > 20} {
+      # o TUI devolve ao campo o texto do comando que o hook bloqueou (run-b2b: "…liberar T9/gabarito-mestre:liberar T1"): o dono apaga a linha (Ctrl-U) antes de digitar o 2º; não é resposta, fica em exp.log
+      nota "Ctrl-U: limpa o campo depois do T9 recusado"; send "\025"; after 800
+      sends liberar-t1; send -- "/gabarito-mestre:liberar T1"; after 1200; send "\r"; set tlib2 $agora; set liberou 2; nota "liberar T1 digitado"
+    } elseif {$liberou == 2 && $agora - $tlib2 > 12 && ![file exists $rundir/tmp-T1-depois.txt]} {
+      listar $rundir/tmp-T1-depois.txt
+    } elseif {$liberou == 2 && $agora - $tlib2 > 90 && [campo $s parou] eq "true"} { set status PAROU; break }
+  } elseif {[campo $s parou] eq "true"} { set status PAROU; break }
   if {$modo ne "pausa"} {
+    if {$modo eq "liberar" && $liberou < 2} { continue }
     if {[campo $s acao] eq "concluir"} { if {!$concluiu} { set concluiu 1; set tconcl $agora; nota "concluir visto" } }
     if {$concluiu && $agora - $tconcl > 15} { set status CONCLUIDO; break }
   } else {

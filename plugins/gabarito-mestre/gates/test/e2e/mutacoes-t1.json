@@ -1,0 +1,4 @@
+[
+  { "nome": "soma-vira-subtracao", "arquivo": "src/a.mjs", "de": "a + b", "para": "a - b", "teste": "node --test test/a.test.mjs" },
+  { "nome": "soma-vira-produto", "arquivo": "src/a.mjs", "de": "a + b", "para": "a * b", "teste": "node --test test/a.test.mjs" }
+]

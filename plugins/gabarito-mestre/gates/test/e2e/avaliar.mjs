@@ -5,6 +5,7 @@
  *   avaliar.mjs medidas <repo> <rundir> <plugin-root>          medições da r5 (transcripts, mod.jsonl, debug.log, diário): só números e nomes
  *   avaliar.mjs relatorio 0 <repo> <rundir> <plugin-root>     aceite 0 (fumaça): números e veredito. Os demais aceites só têm relatório
  *                                                            depois de um aceite 0 VERDE (ordem do brief); até lá não existem aqui.
+ *   avaliar.mjs relatorio liberar <repo> <rundir> <plugin-root>   aceite `liberar` (r8): T1 no teto semeada, dono digita T9 (recusa) e T1 (libera), loop conclui
  *   avaliar.mjs relatorio 1|2|4c|5|uma ...                    demais aceites (r6/r7); `uma` = medição de `prompt.submit` depois de `turn.complete` sem /clear (sombra-t13f, item 3)
  * Saída de ferramenta falhando ou diário ilegível reprova: nada aqui devolve verde por falta de dado.
  */
@@ -53,6 +54,13 @@ export function proxima(repo, plugin, vivos) {
   }
 }
 
+/** `parou` = o último `loop.parar` não tem evento de task depois (r8, sombra-t13g item 4): `liberar` grava `task.reaberta{dono}` e tira a corrida do PAROU. */
+const TIPOS_DE_TASK = new Set(['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta']); // = diario.ts TIPOS_DE_TASK
+export const parouAgora = (ev) => {
+  const i = ev.map((e) => e.tipo).lastIndexOf('loop.parar');
+  return i >= 0 && !ev.slice(i + 1).some((e) => TIPOS_DE_TASK.has(e.tipo));
+};
+
 async function estado(repo, rundir, plugin) {
   const dia = await diario(repo, plugin);
   const mod = linhas(join(rundir, 'mod.jsonl'));
@@ -62,8 +70,9 @@ async function estado(repo, rundir, plugin) {
   const p = dia.ok ? proxima(repo, plugin, running) : { ok: false };
   const out = {
     eventos: dia.ok ? ev.length : -1, obs: mod.length + cls.length, running,
+    turnos: mod.filter((o) => o.ev === 'turn.complete' && o.agente === null).length, // turnos encerrados do orquestrador (r8b: gatilho do `liberar`)
     integradas: ev.filter((e) => e.tipo === 'task.integrada').length,
-    acao: p.ok ? p.tipo : 'erro', parou: ev.some((e) => e.tipo === 'loop.parar'),
+    acao: p.ok ? p.tipo : 'erro', parou: parouAgora(ev),
     pausa: existsSync(join(repo, '.harness', 'PAUSAR')),
   };
   console.log(JSON.stringify(out));
@@ -393,6 +402,7 @@ async function relatorio1(repo, rundir, plugin, home) {
   const sessoes = [...new Set(ev.map((e) => e.sessao))].filter((sid) => /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(String(sid)));
   const semTranscript = sessoes.filter((sid) => !existsSync(join(pasta, `${sid}.jsonl`)));
   R.sessoes = sessoes.length; R.transcripts_ausentes = semTranscript.length;
+  R.exit_127 = exit127(repo, home, sessoes).exit_127; // r8: esperado 0 (D-1, zsh)
 
   // 1a Concluir
   const p = proxima(repo, plugin, 0);
@@ -671,15 +681,101 @@ async function relatorioUma(repo, rundir, plugin, home) {
   if (out.veredito_final !== 'VERDE') process.exitCode = 1;
 }
 
+/** `Exit code 127` em resultado de ferramenta, nos transcripts das sessões do diário (r8, D-1: em zsh `$VAR` com argumentos dava 127; esperado 0). */
+export function exit127(repo, home, sessoes) {
+  const pasta = pastaTranscripts(repo, home);
+  let n = 0, ausentes = 0;
+  for (const sid of sessoes) {
+    const arq = join(pasta, `${sid}.jsonl`);
+    if (!existsSync(arq)) { ausentes += 1; continue; }
+    for (const o of linhas(arq)) {
+      if (o.type !== 'user' || !Array.isArray(o.message?.content)) continue;
+      for (const b of o.message.content) {
+        if (b.type !== 'tool_result') continue;
+        const txt = typeof b.content === 'string' ? b.content : Array.isArray(b.content) ? b.content.map((x) => x?.text ?? '').join('') : '';
+        if (/Exit code 127/.test(txt)) n += 1;
+      }
+    }
+  }
+  return { exit_127: n, transcripts_ausentes: ausentes };
+}
+
+/** Aceite `liberar` (r8, sombra-t13g item 6): T1 no teto semeada pelo CLI; o dono digita T9 (recusa) e T1 (libera); o loop conclui. Sem dado ⇒ REPROVADO/NAO_PROVADO, nunca verde. */
+async function relatorioLiberar(repo, rundir, plugin, home) {
+  const dia = await diario(repo, plugin);
+  if (!dia.ok) { console.log(JSON.stringify({ aceite: 'liberar', veredito_final: 'REPROVADO', motivo: dia.motivo })); process.exitCode = 1; return; }
+  const ev = dia.eventos;
+  const n = (t) => ev.filter((e) => e.tipo === t).length;
+  const cls = linhas(join(rundir, 'classic.jsonl'));
+  const sends = existsSync(join(rundir, 'sends.log')) ? readFileSync(join(rundir, 'sends.log'), 'utf8').split('\n').filter(Boolean).map((l) => l.split(' ')) : [];
+  const exp = existsSync(join(rundir, 'exp.status')) ? readFileSync(join(rundir, 'exp.status'), 'utf8').trim() : null;
+  const debug = existsSync(join(rundir, 'debug.log')) ? readFileSync(join(rundir, 'debug.log'), 'utf8') : '';
+  const lerTxt = (f) => (existsSync(join(rundir, f)) ? readFileSync(join(rundir, f), 'utf8') : null);
+  const sessoes = [...new Set(ev.map((e) => e.sessao))].filter((sid) => /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(String(sid)));
+  const donos = ev.filter((e) => e.tipo === 'task.reaberta' && e.dados?.origem === 'dono');
+  const t9 = sends.find((s) => s[1] === 'liberar-t9');
+  const t1 = sends.find((s) => s[1] === 'liberar-t1');
+  const tIni = t9 ? Number(t9[0]) * 1000 : null;
+  const tFim = t1 ? Number(t1[0]) * 1000 : null;
+  const entreT9eT1 = tIni !== null && tFim !== null ? ev.filter((e) => Date.parse(e.ts) >= tIni && Date.parse(e.ts) < tFim) : null;
+  const t9NoDiario = ev.filter((e) => e.dados?.task === 'T9').length;
+  const comandos = cls.filter((o) => o.ev === 'UserPromptExpansion' && /liberar/.test(String(o.command_name)));
+  const argsComando = comandos.map((o) => String(o.command_args));
+  const noDebug = (debug.match(/UserPromptExpansion/g) ?? []).length;
+  const antes = lerTxt('tmp-T1-antes.txt');
+  const depois = lerTxt('tmp-T1-depois.txt');
+  const stopLiberou = /Liberações do teto: T1/.test(debug);
+  const digitados = sends.filter((s) => !['trust', 'prompt', 'exit'].includes(s[1])).map((s) => s[1]);
+  const parar = ev.filter((e) => e.tipo === 'loop.parar');
+  const p = proxima(repo, plugin, 0);
+  const integT1 = ev.filter((e) => e.tipo === 'task.integrada' && e.dados?.task === 'T1').length;
+  const x = exit127(repo, home, sessoes);
+  const out = {
+    aceite: 'liberar', exp_status: exp,
+    parar_antes: parar.map((e) => ({ motivo: e.dados?.motivo, task: e.dados?.task })),
+    reaberta_dono: donos.map((e) => ({ task: e.dados?.task, ts: e.ts })),
+    eventos_entre_t9_e_t1: entreT9eT1 === null ? null : entreT9eT1.length, eventos_da_t9: t9NoDiario,
+    comando_liberar_no_classic: argsComando, user_prompt_expansion_no_debug: noDebug,
+    tmp_T1_antes_tem_review: antes === null ? null : /review-r1\.md/.test(antes) && /review-r2\.md/.test(antes),
+    tmp_T1_depois_tem_ciclo_1: depois === null ? null : /ciclo-1/.test(depois),
+    t1_integrada: integT1, acao_final: p.ok ? p.tipo : 'erro', stop_lista_liberacao: stopLiberou,
+    digitacao: digitados, exit_127: x.exit_127, transcripts_ausentes: x.transcripts_ausentes, sessoes: sessoes.length,
+  };
+  const falhas = [];
+  const nao = [];
+  if (donos.length !== 1 || donos[0]?.dados?.task !== 'T1') falhas.push(`task.reaberta{dono} = ${donos.length} (esperado 1, em T1)`);
+  if (!parar.some((e) => e.dados?.motivo === 'teto_rodadas')) falhas.push('sem loop.parar teto_rodadas antes da liberação');
+  if (entreT9eT1 === null) nao.push('sends.log sem liberar-t9/liberar-t1: a digitação não aconteceu');
+  else if (entreT9eT1.length !== 0) falhas.push(`${entreT9eT1.length} evento(s) entre o T9 e o T1 (esperado 0)`);
+  if (t9NoDiario !== 0) falhas.push('T9 apareceu no diário');
+  if (argsComando.length === 0 && noDebug === 0) nao.push('nem command_name no classic.jsonl nem UserPromptExpansion no debug.log');
+  if (antes === null || depois === null) nao.push('sem a listagem de .tmp-gabarito da T1 (antes/depois)');
+  else {
+    if (!out.tmp_T1_antes_tem_review) falhas.push('antes da liberação a T1 não tinha review-r1.md e review-r2.md');
+    if (!out.tmp_T1_depois_tem_ciclo_1) falhas.push('depois da liberação a T1 não tem ciclo-1');
+  }
+  if (integT1 !== 1) falhas.push(`T1 integrada ${integT1} vez(es) (esperado 1)`);
+  if (out.acao_final !== 'concluir') falhas.push(`acao final != concluir (${out.acao_final})`);
+  if (!stopLiberou) nao.push('systemMessage do Stop com "Liberações do teto: T1" não está no debug.log');
+  if (digitados.length !== 2 || digitados[0] !== 'liberar-t9' || digitados[1] !== 'liberar-t1') falhas.push(`digitação = ${JSON.stringify(digitados)} (esperado liberar-t9, liberar-t1)`);
+  if (x.exit_127 !== 0) falhas.push(`Exit code 127 = ${x.exit_127} (esperado 0)`);
+  if (x.transcripts_ausentes > 0) nao.push('transcript ausente: Exit code 127 não medido');
+  out.falhas = falhas; out.nao_provado = nao;
+  out.veredito_final = falhas.length ? 'REPROVADO' : nao.length ? 'NAO_PROVADO' : 'VERDE';
+  console.log(JSON.stringify(out, null, 1));
+  if (out.veredito_final !== 'VERDE') process.exitCode = 1;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [cmd, ...a] = process.argv.slice(2);
   if (cmd === 'estado') await estado(a[0], a[1], a[2]);
   else if (cmd === 'relatorio' && a[0] === '0') await relatorio0(a[1], a[2], a[3]);
   else if (cmd === 'relatorio' && a[0] === '1') await relatorio1(a[1], a[2], a[3], homedir());
   else if (cmd === 'relatorio' && a[0] === '2') await relatorio2(a[1], a[2], a[3]);
+  else if (cmd === 'relatorio' && a[0] === 'liberar') await relatorioLiberar(a[1], a[2], a[3], homedir());
   else if (cmd === 'relatorio' && a[0] === 'uma') await relatorioUma(a[1], a[2], a[3], homedir());
   else if (cmd === 'relatorio' && a[0] === '5') relatorio5(a[1], a[2], a[3], a[4], a.slice(5));
   else if (cmd === 'relatorio' && a[0] === '4c') await relatorio4c(a[1], a[2], a[3], a[4]);
   else if (cmd === 'medidas') await medidas(a[0], a[1], a[2], homedir());
-  else { console.error('uso: avaliar.mjs estado|medidas <repo> <rundir> <plugin-root> | relatorio 0|1|2|uma <repo> <rundir> <plugin-root> | relatorio 4c <repo> <rundir> <plugin-root> [<rundir-real>] | relatorio 5 <repo> <rundir> <plugin-root> <cwd-rel> <cmd...>'); process.exitCode = 2; }
+  else { console.error('uso: avaliar.mjs estado|medidas <repo> <rundir> <plugin-root> | relatorio 0|1|2|uma|liberar <repo> <rundir> <plugin-root> | relatorio 4c <repo> <rundir> <plugin-root> [<rundir-real>] | relatorio 5 <repo> <rundir> <plugin-root> <cwd-rel> <cmd...>'); process.exitCode = 2; }
 }

@@ -1,0 +1,3 @@
+[
+  { "nome": "triplo-vira-dobro", "arquivo": "src/c.mjs", "de": "n + n + n", "para": "n + n", "teste": "node --test test/c.test.mjs" }
+]
