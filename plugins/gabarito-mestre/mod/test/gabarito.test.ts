@@ -1315,6 +1315,7 @@ test('mod-falha-ao-gravar-ainda-nega: disco cheio não libera o Agent', async ($
 const A_VER_REP = ['review.veredito', { task: 'a', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 }] as [string, Record<string, unknown>]
 const A_COR = ['task.iniciada', { task: 'a', papel: 'correcao' }] as [string, Record<string, unknown>]
 const C_INI = ['task.iniciada', { task: 'c', papel: 'implementador' }] as [string, Record<string, unknown>]
+const A_REV = ['task.iniciada', { task: 'a', papel: 'revisor' }] as [string, Record<string, unknown>]
 const reabertas = (m: ReturnType<typeof mundo>) => m.grav.filter((g) => g.tipo === 'task.reaberta')
 const ORQ_RETOMADA = { agente: 'orquestrador', tipo: 'task.reaberta', dados: { task: 'a', origem: 'retomada' } }
 
@@ -1337,7 +1338,7 @@ test('negado-corrigindo-volta-a-reprovada: a correção negada reabre a task rep
   expect(m.est.clears).toBe(1)
 })
 test('negado-em-revisao-nao-conta: o revisor passa, não é negação, e a task em revisão não é reaberta', async ($, on) => {
-  const m = mundo($, on, { eventos: A_REVISAR })
+  const m = mundo($, on, { eventos: aposB(A_INI, A_CON, A_REV) })
   await m.inicio()
   expect((await m.agent('gabarito-revisor')).deny).toBeUndefined()
   await m.turno(); await m.clock.settle()
