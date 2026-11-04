@@ -76,7 +76,7 @@ describe('session-card.sh — ORQ-3 (T14)', () => {
     const r = runAt('session-card.sh', '', { cwd: fixtureRepo(), env: { CLAUDE_PLUGIN_ROOT: fakePluginRoot() }, event: 'SessionStart' });
     assert.ok(ctx(r).additionalContext.includes('linha com "aspas", \\ barra\te tab'));
   });
-  // GM-9 T7: o teto de 40 linhas morreu (o cartão agora é ≤ 6.000 caracteres, cortado pelo node); o .sh não reescreve a saída.
+  // GM-9 T7: o teto de 40 linhas morreu (o cartão agora é ≤ 4.329 caracteres, cortado pelo node); o .sh não reescreve a saída.
   test('o hook passa --hook e repassa o stdin do SessionStart ao node (session_id chega lá)', () => {
     const plugin = fakePluginRoot({ cartao: ['sessao=${sid}'] });
     const r = spawnSync('bash', [join(HOOKS, 'session-card.sh')], { input: JSON.stringify({ session_id: 'abc-123', source: 'startup' }), encoding: 'utf8', cwd: fixtureRepo(), env: cleanEnv({ CLAUDE_PLUGIN_ROOT: plugin }) });
@@ -160,6 +160,38 @@ describe('session-card.sh — ORQ-3 (T14)', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.equal(existsSync(join(repo, '.harness')), false);
     assert.match(JSON.parse(r.stdout).hookSpecificOutput.additionalContext, /sem onboarding/);
+  });
+});
+
+describe('SessionStart:compact reinjeta o instantâneo sem mod (GM-10 T9, F10, F11)', () => {
+  test('compact-reinjeta-instantaneo: o hook clássico de compact injeta o instantâneo do diário, sem depender de mod', async () => {
+    const hooksJson = JSON.parse(readFileSync(join(PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
+    const matcher = hooksJson.hooks.SessionStart[0].matcher.split('|');
+    assert.ok(matcher.includes('compact') && matcher.includes('clear'), `matcher do SessionStart: ${matcher}`);
+    assert.ok(hooksJson.hooks.SessionStart[0].hooks[0].command.includes('session-card.sh'));
+
+    const diario = await import(join(PLUGIN, 'gates', 'dist', 'diario.js'));
+    const repo = fixtureRepo({ branch: 'feat/PBI-1-x', config: { fluxo: { resolvidoEm: '2026-09-20' } } });
+    const dir = join(repo, '.harness', 'entregas', '_sem-id');
+    const ev = (tipo, dados) => ({ ts: '2026-11-03T10:00:00.000Z', autor: 'a', sessao: 'antiga', agente: 'orquestrador', tipo, dados });
+    assert.equal(diario.append(dir, 'antiga', ev('sessao.pouso', { percent: 61, x: 50 })).ok, true);
+    assert.equal(diario.append(dir, 'antiga', ev('sessao.retomada', { chars: 120 })).ok, true);
+
+    const entrada = JSON.stringify({ session_id: 'depois-do-compact', source: 'compact' });
+    const r = spawnSync('bash', [join(HOOKS, 'session-card.sh')], { input: entrada, encoding: 'utf8', cwd: repo, env: cleanEnv({ CLAUDE_PLUGIN_ROOT: PLUGIN }) });
+    assert.equal(r.status, 0, r.stderr);
+    const h = JSON.parse(r.stdout).hookSpecificOutput;
+    assert.equal(h.hookEventName, 'SessionStart');
+    assert.match(h.additionalContext, /Diário: \d+ evento\(s\)/);
+    assert.match(h.additionalContext, /sessao\.pouso/);
+    assert.match(h.additionalContext, /sessao\.retomada/);
+    assert.ok(h.additionalContext.length <= 6000, `cartão com ${h.additionalContext.length} caracteres`);
+  });
+  test('compact-nao-bloqueia: sem diário o hook de compact sai 0 e não impede a compactação', () => {
+    const repo = fixtureRepo({ config: { fluxo: { resolvidoEm: '2026-09-20' } } });
+    const r = spawnSync('bash', [join(HOOKS, 'session-card.sh')], { input: JSON.stringify({ session_id: 'c2', source: 'compact' }), encoding: 'utf8', cwd: repo, env: cleanEnv({ CLAUDE_PLUGIN_ROOT: PLUGIN }) });
+    assert.equal(r.status, 0, r.stderr);
+    assert.notEqual(r.status, 2);
   });
 });
 

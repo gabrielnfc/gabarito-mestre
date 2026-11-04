@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const GATES = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -27,6 +28,7 @@ const MEDIDO = join(RAIZ, 'plugins', 'gabarito-mestre', 'medido-em.json');
 const fora = ehRepoDoPlugin(RAIZ) ? false : 'fora do repo do plugin';
 const noPlugin = fora, noMkt = fora;
 const ler = (p) => JSON.parse(readFileSync(p, 'utf8'));
+const HATCH = ['GABARITO', 'ALLOW'].join('_');
 
 describe('ehRepoDoPlugin — cópia instalada sob um pai com marketplace.json alheio', () => {
   test('pai/.claude-plugin/marketplace.json sem plugins/gabarito-mestre não é repo do plugin', () => {
@@ -41,8 +43,65 @@ describe('ehRepoDoPlugin — cópia instalada sob um pai com marketplace.json al
 });
 
 describe('gates/package.json 1.1.0', () => {
-  test('version é 2.0.0-alpha.1 (canal next)', () => {
-    assert.equal(pkg.version, '2.0.0-alpha.1');
+  test('version é 2.0.0-alpha.2 (canal next)', () => {
+    assert.equal(pkg.version, '2.0.0-alpha.2');
+  });
+  test('versao-manifestos: plugin.json, gates, marketplace (se trouxer versão) e CHANGELOG dizem a mesma versão', { skip: fora }, () => {
+    const v = ler(PLUGIN_JSON).version;
+    assert.equal(v, pkg.version);
+    for (const p of ler(MKT_JSON).plugins) if (p.version !== undefined) assert.equal(p.version, v, `marketplace: ${p.name}`);
+    const changelog = readFileSync(join(RAIZ, 'CHANGELOG.md'), 'utf8');
+    const primeira = /^## \[(\d[^\]]*)\]/m.exec(changelog.replace(/^## \[Unreleased\][\s\S]*?(?=^## \[\d)/m, ''));
+    assert.equal(primeira?.[1], v, 'a 1ª seção versionada do CHANGELOG é a do plugin');
+  });
+  test('skill gabarito-loop: ≤ 60 linhas, frontmatter, ponteiro ao CLI, sem cópia de spec nem hatch', { skip: fora }, () => {
+    const f = join(RAIZ, 'plugins', 'gabarito-mestre', 'skills', 'gabarito-loop', 'SKILL.md');
+    const t = readFileSync(f, 'utf8');
+    assert.ok(t.split('\n').length - 1 <= 60, `${t.split('\n').length - 1} linhas`);
+    assert.match(t, /^---\nname: gabarito-loop\ndescription: .{40,}\n(allowed-tools: .+\n)?---\n/);
+    assert.match(t, /gates\/scripts\/loop\.mjs/);
+    assert.doesNotMatch(t, /^\*\*REQ-/m, 'definição de requisito é da spec; a skill só aponta');
+    assert.equal(t.includes(HATCH), false);
+  });
+  test('agente gabarito-spike: lista fechada do que cria e config isolada (A5, A6)', { skip: fora }, () => {
+    const t = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'agents', 'gabarito-spike.md'), 'utf8');
+    assert.match(t, /Pode criar \(lista fechada\)/);
+    assert.match(t, /Config isolada/);
+    assert.match(t, /CLAUDE_CONFIG_DIR/);
+    assert.match(t, /Nunca grave em `~\/\.claude`/);
+    assert.equal(t.includes(HATCH), false);
+  });
+  test('mod-test.sh: verde só com o teste do mod carregado e nenhuma falha de verdade (claude falso no PATH)', { skip: fora }, () => {
+    const script = join(RAIZ, 'plugins', 'gabarito-mestre', 'scripts', 'test', 'mod-test.sh');
+    const roda = (saida) => {
+      const bin = mkdtempSync(join(tmpdir(), 'mod-test-bin-'));
+      writeFileSync(join(bin, 'claude'), `#!/bin/bash\ncat <<'FIM'\n${saida}\nFIM\nexit 1\n`, { mode: 0o755 });
+      return spawnSync('bash', [script], { cwd: bin, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } }).status;
+    };
+    const naoCarrega = '(fail) the file did not load';
+    assert.equal(roda(`(pass) x [1ms]\n${naoCarrega}\n${naoCarrega}`), 0, 'só os *.test.ts de gates/ não carregam: é o esperado');
+    assert.equal(roda(naoCarrega), 1, 'zero teste carregado nunca é verde');
+    assert.equal(roda(''), 1, 'saída vazia nunca é verde');
+    assert.equal(roda(`(pass) x [1ms]\nmod/test/gabarito.test.ts: cannot load`), 1, 'o arquivo do mod não carregou');
+    assert.equal(roda(`(pass) x [1ms]\n(fail) y [2ms]`), 1, 'teste do mod falhando');
+  });
+  test('commands/gabarito.md: pausar|retomar sem mod, avisa que a guarda pergunta, sem hatch', { skip: fora }, () => {
+    const t = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'commands', 'gabarito.md'), 'utf8');
+    assert.match(t, /^---\ndescription: .+\nargument-hint: pausar\|retomar\n/);
+    assert.match(t, /\.harness\/PAUSAR/);
+    assert.match(t, /`ask`/);
+    assert.equal(t.includes(HATCH), false);
+  });
+  test('gabarito-comando-usa-cli: o comando consulta pausa.mjs; sem `test -e`, sem caminho relativo, limite da raiz em prosa', { skip: fora }, () => {
+    const t = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'commands', 'gabarito.md'), 'utf8');
+    assert.match(t, /^allowed-tools: Read, Bash\(node:\*\)$/m);
+    assert.match(t, /node "\$\{CLAUDE_PLUGIN_ROOT\}\/gates\/scripts\/pausa\.mjs"/);
+    assert.equal(t.includes('test -e'), false, 'a conferência relativa ao cwd volta ao falso "pausado"');
+    assert.doesNotMatch(t, /(?:>|\brm|-p) '?\.\/?\.harness/, 'comando com caminho relativo para .harness');
+    assert.match(t, /<alvo>\/\.harness\/PAUSAR/);
+    assert.match(t, /se `alvo` não é o repositório desta sessão, pare e diga/i);
+    assert.match(t, /reconsult/);
+    assert.equal(existsSync(join(GATES, 'scripts', 'pausa.mjs')), true);
   });
   test('version do plugin.json igual à dos gates', { skip: noPlugin }, () => {
     assert.equal(ler(PLUGIN_JSON).version, pkg.version);

@@ -21,7 +21,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, utimesSync, chmodS
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { append, ler, projetar, recusaCanario, dirEntrega } from '../src/diario.ts';
+import { append, ler, lerEstrito, projetar, recusaCanario, dirEntrega } from '../src/diario.ts';
+import { estadoDe } from '../src/loop.ts';
 import type { Evento, TipoEvento } from '../src/tipos.ts';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -252,7 +253,7 @@ describe('append', () => {
 });
 
 describe('projeção e caminho', () => {
-  test('instantaneo-6000: 10 mil eventos ⇒ instantaneo.length <= 6000', () => {
+  test('instantaneo-3200: 10 mil eventos ⇒ instantaneo.length <= 3200', () => {
     const eventos: Evento[] = Array.from({ length: 10000 }, (_, i) => ({
       seq: i + 1,
       ts: '2026-11-02T12:00:00.000Z',
@@ -265,7 +266,7 @@ describe('projeção e caminho', () => {
     }));
     const p = projetar(eventos);
     assert.ok(p.instantaneo.length > 0);
-    assert.ok(p.instantaneo.length <= 6000, `instantaneo com ${p.instantaneo.length} caracteres`);
+    assert.ok(p.instantaneo.length <= 3200, `instantaneo com ${p.instantaneo.length} caracteres`);
     assert.equal(typeof p.resumo, 'object');
   });
 
@@ -303,11 +304,11 @@ describe('projeção e caminho', () => {
     assert.ok(pos(3) < pos(1), '10:02 antes de 10:00');
   });
 
-  test('projetar-corte-em-linha-inteira: o corte em 6000 cai na fronteira de linha (cabeçalho e rodapé permitidos)', () => {
+  test('projetar-corte-em-linha-inteira: o corte em 3200 cai na fronteira de linha (cabeçalho e rodapé permitidos)', () => {
     const es = Array.from({ length: 10000 }, (_, i) =>
       evP(i + 1, new Date(Date.UTC(2026, 10, 2, 0, 0, 0) + i * 1000).toISOString(), 's1', 'producao.acesso'));
     const s = projetar(es).instantaneo;
-    assert.ok(s.length <= 6000, `instantaneo com ${s.length} caracteres`);
+    assert.ok(s.length <= 3200, `instantaneo com ${s.length} caracteres`);
     const marcadores = s.match(/\bm\d+(?:-f(?:i(?:m)?)?)?/g) ?? [];
     assert.ok(marcadores.length > 10, 'instantâneo deveria listar vários eventos');
     for (const m of marcadores) assert.match(m, /^m\d+-fim$/, `marcador cortado no meio: ${m}`);
@@ -496,7 +497,7 @@ describe('reparo, tolerância e projeção', () => {
     assert.ok(s.includes('primeiro-fim'), 'o alvo gigante escondeu o evento antigo');
     assert.equal(s.includes('x'.repeat(301)), false);
     assert.ok(s.includes('a b c-fim'));
-    assert.ok(s.length <= 6000);
+    assert.ok(s.length <= 3200);
   });
 
   test('projetar-desempate: mesmo ts, sessões diferentes ⇒ saída independe da ordem de entrada', () => {
@@ -505,8 +506,318 @@ describe('reparo, tolerância e projeção', () => {
     assert.equal(projetar(es).instantaneo, projetar([...es].reverse()).instantaneo);
   });
 
+  // ETA (REQ-OBS-1): mediana de duração das tasks aprovadas; < 3 medições ⇒ "sem dados".
+  const T0 = Date.UTC(2026, 10, 3, 10, 0, 0);
+  const iso = (s: number): string => new Date(T0 + s * 1000).toISOString();
+  const evT = (n: number, s: number | string, tipo: TipoEvento, dados: Record<string, unknown>): Evento => ({
+    seq: n, ts: typeof s === 'number' ? iso(s) : s, autor: 'a', sessao: 's1', agente: 'o', tipo, dados, hash_anterior: null,
+  });
+  const ini = (n: number, s: number | string, task: string, papel = 'implementador'): Evento => evT(n, s, 'task.iniciada', { task, papel });
+  const ver = (n: number, s: number | string, task: string, veredito = 'APROVADO', rodada = 1, major = 0): Evento =>
+    evT(n, s, 'review.veredito', { task, veredito, blocker: 0, major, rodada });
+  const conc = (n: number, s: number | string, task: string): Evento => evT(n, s, 'task.concluida', { task });
+  const reab = (n: number, s: number | string, task: string, origem: 'dono' | 'retomada'): Evento => evT(n, s, 'task.reaberta', { task, origem });
+  /** implementador, concluida, revisor, veredito: o ciclo mínimo que a T2 aceita; só `tsIni` e `tsVer` importam à ETA. */
+  const ciclo = (b: number, task: string, tsIni: number | string, tsVer: number | string, veredito = 'APROVADO'): Evento[] => [
+    ini(b * 10, tsIni, task), conc(b * 10 + 1, tsIni, task), ini(b * 10 + 2, tsIni, task, 'revisor'), ver(b * 10 + 3, tsVer, task, veredito),
+  ];
+  const aprovada = (base: number, task: string, dur: number): Evento[] => ciclo(base, task, base * 1000, base * 1000 + dur);
+  /** A T2 tem de aceitar a sequência e parar no estado esperado: o teste não inventa sequência ilegal. */
+  const legalNaT2 = (es: Evento[], task: string, esperado: string): void => {
+    const r = estadoDe(es.filter((e) => (e.dados as { task?: string }).task === task));
+    assert.deepEqual('invalido' in r ? r : r.estado, esperado);
+  };
+
+  test('eta-sem-dados-com-2: duas medições ⇒ eta null e linha "ETA: sem dados"', () => {
+    const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 200)];
+    const p = projetar(es);
+    assert.equal(p.eta, null);
+    assert.ok(p.instantaneo.split('\n').includes('ETA: sem dados'));
+  });
+
+  test('eta-sem-dados-com-2: zero eventos também diz sem dados', () => {
+    const p = projetar([]);
+    assert.equal(p.eta, null);
+    assert.ok(p.instantaneo.split('\n').includes('ETA: sem dados'));
+  });
+
+  test('eta-mediana-com-3: ímpar pega o do meio; par, a média dos dois do meio', () => {
+    const impar = projetar([...aprovada(1, 'T1', 300), ...aprovada(3, 'T2', 100), ...aprovada(5, 'T3', 200)]);
+    assert.deepEqual(impar.eta, { medianaS: 200, n: 3 });
+    assert.ok(impar.instantaneo.split('\n').includes('ETA: 3 tasks, mediana 200 s'));
+    const par = projetar([...aprovada(1, 'T1', 10), ...aprovada(3, 'T2', 20), ...aprovada(5, 'T3', 40), ...aprovada(7, 'T4', 1000)]);
+    assert.deepEqual(par.eta, { medianaS: 30, n: 4 });
+  });
+
+  test('eta-ignora-reprovada: veredito REPROVADO sozinho não é medição', () => {
+    const base = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 100), ...ciclo(5, 'T3', 5000, 5400, 'REPROVADO')];
+    legalNaT2(base, 'T3', 'reprovada');
+    assert.equal(projetar(base).eta, null);
+  });
+
+  test('eta-rodadas-somam: REPROVADO + nova rodada APROVADA entram como UMA medição de 150 + 50 s', () => {
+    const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 300),
+      ...ciclo(5, 'T3', 5000, 5150, 'REPROVADO'),
+      ini(60, 6000, 'T3', 'correcao'), conc(61, 6000, 'T3'), ini(62, 6000, 'T3', 'revisor'), ver(63, 6050, 'T3', 'APROVADO', 2)];
+    legalNaT2(es, 'T3', 'aprovada');
+    assert.deepEqual(projetar(es).eta, { medianaS: 200, n: 3 });
+  });
+
+  const seqT2 = (b: number, task: string, d: { r1: number; corr: number; r2: number }): Evento[] => [
+    ini(b, b * 1000, task), evT(b + 1, b * 1000 + 50, 'task.concluida', { task }), ini(b + 2, b * 1000 + 60, task, 'revisor'),
+    ver(b + 3, b * 1000 + d.r1, task, 'REPROVADO'), ini(b + 4, b * 1000 + d.r1 + 10, task, 'correcao'),
+    evT(b + 5, b * 1000 + d.r1 + 10 + d.corr, 'task.concluida', { task }), ini(b + 6, b * 1000 + d.r1 + d.corr + 20, task, 'revisor'),
+    ver(b + 7, b * 1000 + d.r1 + d.corr + 20 + d.r2, task, 'APROVADO', 2),
+  ];
+
+  test('eta-rodada-2-conta: sequência real da T2 (impl, revisor, REPROVADO, correcao, revisor, APROVADO) entra na ETA', () => {
+    const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 100), ...seqT2(100, 'T3', { r1: 400, corr: 100, r2: 60 })];
+    assert.deepEqual(projetar(es).eta?.n, 3);
+  });
+
+  test('eta-duracao-soma-rodadas: rodada 1 (início até REPROVADO) + rodada 2 (correcao até APROVADO)', () => {
+    const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 100), ...seqT2(100, 'T3', { r1: 400, corr: 100, r2: 60 })];
+    // 400 + (100 + 10 + 60) = 570; mediana de [100, 100, 570] = 100; com 4 tasks a mediana expõe a soma
+    const p = projetar([...es, ...aprovada(200, 'T4', 300)]);
+    assert.deepEqual(p.eta, { medianaS: 200, n: 4 });
+    assert.deepEqual(projetar([...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 900), ...seqT2(100, 'T3', { r1: 400, corr: 100, r2: 60 })]).eta, { medianaS: 570, n: 3 });
+  });
+
+  test('eta-so-implementador: iniciada de revisor ou correção não abre a contagem', () => {
+    const es = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 100),
+      ini(5, 5000, 'T3', 'revisor'), ver(6, 5500, 'T3')];
+    assert.equal(projetar(es).eta, null);
+  });
+
+  test('eta-descarta-ts-invalido-e-duracao-negativa', () => {
+    const base = [...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 100)];
+    assert.equal(projetar([...base, ...ciclo(5, 'T3', '0-ontem', 5100)]).eta, null, 'ts inválido no início');
+    assert.equal(projetar([...base, ...ciclo(5, 'T3', 5000, 'nao-e-data')]).eta, null, 'ts inválido no fim');
+    // ordem textual diz "depois", o instante real diz "antes" (fusos diferentes): duração negativa
+    const antes = [...base, ...ciclo(5, 'T3', '2026-11-03T20:00:00.000Z', '2026-11-03T21:00:00.000+05:00')];
+    assert.equal(projetar(antes).eta, null, 'duração negativa');
+  });
+
+  // Rodada 3 (Sombra Q-ETA): a ETA segue a transição da T2; cada sequência abaixo é conferida na T2 antes de medir.
+  const base2 = (a: number, b: number): Evento[] => [...aprovada(1, 'T1', a), ...aprovada(3, 'T2', b)];
+
+  test('eta-s1-revisao-retomada-conta: em_revisao + retomada volta a concluida e a task conta desde o 1º início', () => {
+    const t3 = [ini(50, 10000, 'T3'), conc(51, 10100, 'T3'), ini(52, 10200, 'T3', 'revisor'), reab(53, 10300, 'T3', 'retomada'),
+      ini(54, 10400, 'T3', 'revisor'), ver(55, 11000, 'T3')];
+    legalNaT2(t3, 'T3', 'aprovada');
+    assert.deepEqual(projetar([...base2(500, 2000), ...t3]).eta, { medianaS: 1000, n: 3 });
+  });
+
+  test('eta-s2-correcao-retomada-soma-r1: correção abandonada é descartada e a rodada 1 continua somada', () => {
+    const t3 = [...ciclo(5, 'T3', 10000, 10400, 'REPROVADO'),
+      ini(60, 10410, 'T3', 'correcao'), reab(61, 10700, 'T3', 'retomada'),
+      ini(62, 12000, 'T3', 'correcao'), conc(63, 12010, 'T3'), ini(64, 12020, 'T3', 'revisor'), ver(65, 12100, 'T3', 'APROVADO', 2)];
+    legalNaT2(t3, 'T3', 'aprovada');
+    // 400 (r1) + 100 (correção refeita) = 500; os 290 s abandonados não entram
+    assert.deepEqual(projetar([...base2(100, 900), ...t3]).eta, { medianaS: 500, n: 3 });
+  });
+
+  test('eta-s3-s4-s6-sem-transicao-contam: reabertura que não muda o estado na T2 não tira a task da amostra', () => {
+    const b = base2(300, 900);
+    const s3 = [ini(50, 10000, 'T3'), conc(51, 10010, 'T3'), reab(52, 10100, 'T3', 'retomada'), ini(53, 10200, 'T3', 'revisor'), ver(54, 10600, 'T3')];
+    legalNaT2(s3, 'T3', 'aprovada');
+    assert.deepEqual(projetar([...b, ...s3]).eta, { medianaS: 600, n: 3 }, 'S3 concluida + retomada');
+    for (const [nome, origem] of [['S4 reprovada + retomada', 'retomada'], ['S6 reprovada + dono', 'dono']] as const) {
+      const t3 = [...ciclo(5, 'T3', 10000, 10400, 'REPROVADO'), reab(60, 10450, 'T3', origem),
+        ini(61, 10500, 'T3', 'correcao'), conc(62, 10510, 'T3'), ini(63, 10520, 'T3', 'revisor'), ver(64, 10700, 'T3', 'APROVADO', 2)];
+      legalNaT2(t3, 'T3', 'aprovada');
+      assert.deepEqual(projetar([...b, ...t3]).eta, { medianaS: 600, n: 3 }, nome);
+    }
+  });
+
+  test('eta-s5-tentativa-abandonada-descartada: implementando + retomada recomeça do zero; só a tentativa que aprovou conta', () => {
+    const t3 = [ini(50, 10000, 'T3'), reab(51, 10300, 'T3', 'retomada'), ...ciclo(6, 'T3', 11000, 11100)];
+    legalNaT2(t3, 'T3', 'aprovada');
+    assert.deepEqual(projetar([...base2(50, 1000), ...t3]).eta, { medianaS: 100, n: 3 });
+  });
+
+  test('eta-s7-dono-zera: no_teto + dono volta a pendente e recomeça a soma, rodadas velhas não entram', () => {
+    const t3 = [...ciclo(5, 'T3', 10000, 10400, 'REPROVADO'),
+      ini(60, 10410, 'T3', 'correcao'), conc(61, 10420, 'T3'), ini(62, 10430, 'T3', 'revisor'), ver(63, 10900, 'T3', 'REPROVADO', 2, 1),
+      reab(64, 12000, 'T3', 'dono'),
+      ini(65, 13000, 'T3'), conc(66, 13010, 'T3'), ini(67, 13020, 'T3', 'revisor'), ver(68, 13100, 'T3', 'APROVADO', 1)];
+    legalNaT2(t3, 'T3', 'aprovada');
+    assert.deepEqual(projetar([...base2(50, 1000), ...t3]).eta, { medianaS: 100, n: 3 });
+  });
+
+  test('eta-ts-fora-de-ordem-nao-some: veredito com ts anterior ao início perde só o intervalo, não a task', () => {
+    const t3 = [...ciclo(5, 'T3', '2026-11-03T20:00:00.000Z', '2026-11-03T19:00:00.000Z', 'REPROVADO'),
+      ini(60, 30000, 'T3', 'correcao'), conc(61, 30010, 'T3'), ini(62, 30020, 'T3', 'revisor'), ver(63, 30300, 'T3', 'APROVADO', 2)];
+    legalNaT2(t3, 'T3', 'aprovada');
+    let p!: ReturnType<typeof projetar>;
+    assert.doesNotThrow(() => { p = projetar([...base2(100, 900), ...t3]); });
+    assert.deepEqual(p.eta, { medianaS: 300, n: 3 });
+  });
+
+  test('eta-sequencia-invalida-fora: sequência que a T2 rejeita deixa a task fora da amostra, sem número inventado', () => {
+    const t3 = [ini(50, 10000, 'T3'), ver(51, 10500, 'T3')]; // veredito sem revisão: a T2 rejeita
+    assert.ok('invalido' in estadoDe(t3), 'a T2 tem de rejeitar esta sequência');
+    assert.equal(projetar([...base2(100, 200), ...t3]).eta, null);
+    // aprovada e depois um evento ilegal: a T2 rejeita a task inteira, a medição já feita não sobrevive
+    const depois = [...aprovada(5, 'T3', 100), ini(60, 20000, 'T3', 'revisor')];
+    assert.ok('invalido' in estadoDe(depois), 'a T2 tem de rejeitar esta sequência');
+    assert.equal(projetar([...base2(100, 200), ...depois]).eta, null);
+  });
+
+  test('eta-ordem-de-entrada-embaralhada: a ETA ordena por seq como a T2, não pela ordem em que os eventos chegam', () => {
+    const t3 = [ini(50, 10000, 'T3'), conc(51, 10010, 'T3'), ini(52, 10020, 'T3', 'revisor'), ver(53, 10700, 'T3')];
+    legalNaT2(t3, 'T3', 'aprovada');
+    assert.deepEqual(projetar([...base2(100, 900), ...[...t3].reverse()]).eta, { medianaS: 700, n: 3 });
+  });
+
+  test('eta-dados-malformado-nao-lanca: dados não objeto e eventos nulos são ignorados', () => {
+    const lixo = [
+      null as unknown as Evento,
+      { ...ini(1, 0, 'T1'), dados: 'texto' as unknown as Record<string, unknown> },
+      { ...ver(2, 10, 'T1'), dados: null as unknown as Record<string, unknown> },
+      { ...ver(3, 10, 'T1'), dados: [1] as unknown as Record<string, unknown> },
+      evT(4, 5, 'task.iniciada', {}),
+    ];
+    let p!: ReturnType<typeof projetar>;
+    assert.doesNotThrow(() => { p = projetar(lixo); });
+    assert.equal(p.eta, null);
+  });
+
+  test('instantaneo-eta-reservada: com orçamento esgotado a linha de ETA continua inteira e dentro de 3.200', () => {
+    const es: Evento[] = [
+      ...aprovada(1, 'T1', 100), ...aprovada(3, 'T2', 200), ...aprovada(5, 'T3', 300),
+      ...Array.from({ length: 3000 }, (_, i) => evT(100 + i, 10000 + i, 'guarda.deny', { alvo: `m${i}-fim` })),
+    ];
+    const s = projetar(es).instantaneo;
+    assert.ok(s.length <= 3200, `instantaneo com ${s.length}`);
+    assert.ok(s.split('\n').includes('ETA: 3 tasks, mediana 200 s'));
+    assert.match(s, /anterior\(es\) omitido\(s\)/);
+  });
+
+  test('instantaneo-nao-corta-surrogate: emoji e acento no alvo não deixam surrogate solto, e o limite é por length', () => {
+    const mk = (n: number, alvo: string): Evento => ({ seq: n, ts: `2026-11-02T10:0${n}:00.000Z`, autor: 'a', sessao: 's1', agente: 'o', tipo: 'guarda.deny', dados: { alvo }, hash_anterior: null });
+    // 299 'á' + emoji (2 unidades): o corte em 300 cairia entre as metades
+    const alvo = 'á'.repeat(299) + '😀' + 'fim';
+    const s = projetar([mk(1, alvo)]).instantaneo;
+    assert.equal(/[\ud800-\udbff](?![\udc00-\udfff])/.test(s), false, 'surrogate alto solto');
+    assert.equal(/(?<![\ud800-\udbff])[\udc00-\udfff]/.test(s), false, 'surrogate baixo solto');
+    const muitos = Array.from({ length: 2000 }, (_, i) => mk(i + 1, '😀'.repeat(150)));
+    muitos.forEach((e, i) => { e.ts = new Date(T0 + i * 1000).toISOString(); });
+    const t = projetar(muitos).instantaneo;
+    assert.ok(t.length <= 3200, `instantaneo com ${t.length}`);
+    assert.equal(/[\ud800-\udbff](?![\udc00-\udfff])/.test(t), false);
+  });
+
   test('projetar-resumo-total: o resumo conta todos os eventos, não só os que cabem', () => {
     const es: Evento[] = Array.from({ length: 500 }, (_, i) => ({ seq: i + 1, ts: `2026-11-02T10:00:${String(i % 60).padStart(2, '0')}.000Z`, autor: 'a', sessao: 's1', agente: 'o', tipo: 'guarda.deny', dados: { alvo: 'h'.repeat(100) }, hash_anterior: null }));
     assert.deepEqual(projetar(es).resumo, { 'guarda.deny': 500 });
+  });
+});
+
+describe('lerEstrito (GM-10 T9 r2: leitura sem tolerância para decidir pouso)', () => {
+  const grava = (dir: string, n: number, sessao = 's1') => { for (let i = 0; i < n; i++) assert.equal(append(dir, sessao, ev()).ok, true); };
+
+  test('estrito-integro: devolve os mesmos eventos de ler', () => {
+    const dir = tmp();
+    grava(dir, 3);
+    const r = lerEstrito(dir);
+    assert.equal(r.ok, true);
+    if (r.ok) assert.deepEqual(r.eventos, ler(dir));
+  });
+  test('estrito-pasta-vazia-ok: sem arquivo de evento não há o que contestar', () => {
+    const dir = tmp();
+    assert.deepEqual(lerEstrito(dir), { ok: true, eventos: [] });
+  });
+  test('estrito-pasta-inexistente: falha com motivo', () => {
+    const r = lerEstrito(join(tmp(), 'nao-existe'));
+    assert.equal(r.ok, false);
+  });
+  test('estrito-linha-truncada: JSON cortado no fim falha', () => {
+    const dir = tmp();
+    grava(dir, 2);
+    const f = join(dir, 'events.s1.jsonl');
+    writeFileSync(f, readFileSync(f, 'utf8') + '{"seq":3,"ts":"2026');
+    assert.equal(lerEstrito(dir).ok, false);
+  });
+  test('estrito-linha-lixo-ou-null: não é objeto de evento', () => {
+    for (const lixo of ['null', 'lixo', '[]', '3']) {
+      const dir = tmp();
+      grava(dir, 1);
+      const f = join(dir, 'events.s1.jsonl');
+      writeFileSync(f, readFileSync(f, 'utf8') + lixo + '\n');
+      assert.equal(lerEstrito(dir).ok, false, lixo);
+    }
+  });
+  test('estrito-lacuna-de-seq: 1, 2, 4 falha mesmo com hash coerente', () => {
+    const dir = tmp();
+    grava(dir, 3);
+    const f = join(dir, 'events.s1.jsonl');
+    const ls = readFileSync(f, 'utf8').split('\n');
+    const o = JSON.parse(ls[2]);
+    o.seq = 4;
+    ls[2] = JSON.stringify(o);
+    writeFileSync(f, ls.join('\n'));
+    assert.equal(lerEstrito(dir).ok, false);
+  });
+  test('estrito-seq-nao-numerico: falha', () => {
+    const dir = tmp();
+    grava(dir, 2);
+    const f = join(dir, 'events.s1.jsonl');
+    const ls = readFileSync(f, 'utf8').split('\n');
+    const o = JSON.parse(ls[1]);
+    o.seq = '2';
+    ls[1] = JSON.stringify(o);
+    writeFileSync(f, ls.join('\n'));
+    assert.equal(lerEstrito(dir).ok, false);
+  });
+  test('estrito-hash-que-nao-confere: falha', () => {
+    const dir = tmp();
+    grava(dir, 3);
+    const f = join(dir, 'events.s1.jsonl');
+    const ls = readFileSync(f, 'utf8').split('\n');
+    const o = JSON.parse(ls[1]);
+    o.hash_anterior = 'f'.repeat(64);
+    ls[1] = JSON.stringify(o);
+    writeFileSync(f, ls.join('\n'));
+    assert.equal(lerEstrito(dir).ok, false);
+  });
+  test('estrito-primeiro-com-hash: o primeiro evento tem hash_anterior nulo', () => {
+    const dir = tmp();
+    grava(dir, 1);
+    const f = join(dir, 'events.s1.jsonl');
+    const o = JSON.parse(readFileSync(f, 'utf8').trim());
+    o.hash_anterior = 'a'.repeat(64);
+    writeFileSync(f, JSON.stringify(o) + '\n');
+    assert.equal(lerEstrito(dir).ok, false);
+  });
+  test('estrito-arquivo-ilegivel: chmod 000 falha, não pula o arquivo', { skip: process.getuid?.() === 0 }, () => {
+    const dir = tmp();
+    grava(dir, 1, 's1');
+    grava(dir, 1, 's2');
+    const f = join(dir, 'events.s2.jsonl');
+    chmodSync(f, 0o000);
+    try {
+      assert.equal(lerEstrito(dir).ok, false);
+      assert.equal(ler(dir).length, 1); // a leitura tolerante continua pulando: é por isso que ela não decide pouso
+    } finally {
+      chmodSync(f, 0o644);
+    }
+  });
+  test('estrito-varias-sessoes: cada arquivo tem a própria cadeia', () => {
+    const dir = tmp();
+    grava(dir, 2, 's1');
+    grava(dir, 2, 's2');
+    const r = lerEstrito(dir);
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.eventos.length, 4);
+  });
+  test('estrito-depois-de-recuperacao-de-linha-truncada: a cadeia aceita o que ler descarta? não: continua inválida', () => {
+    const dir = tmp();
+    grava(dir, 2);
+    const f = join(dir, 'events.s1.jsonl');
+    writeFileSync(f, readFileSync(f, 'utf8') + '{"seq":3,"ts":"2026');
+    grava(dir, 1);
+    assert.deepEqual(ler(dir).map((e) => e.seq), [1, 2, 4]);
+    assert.equal(lerEstrito(dir).ok, false);
   });
 });

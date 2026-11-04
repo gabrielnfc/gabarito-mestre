@@ -1,0 +1,4 @@
+[
+  { "nome": "dobro-vira-triplo", "arquivo": "src/b.mjs", "de": "n + n", "para": "n * 3", "teste": "node --test test/b.test.mjs" },
+  { "nome": "dobro-soma-2", "arquivo": "src/b.mjs", "de": "n + n", "para": "n + 2", "teste": "node --test test/b.test.mjs" }
+]

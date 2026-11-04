@@ -1,7 +1,7 @@
 /**
  * Testes do ORQ-3 — cartão de sessão.
  *
- * O cartão é a camada 1 de contexto: cartão de ≤ 40 linhas (≤ 6.000 caracteres com o instantâneo, no hook) que o orquestrador lê antes de despachar.
+ * O cartão é a camada 1 de contexto: cartão de ≤ 40 linhas (≤ 2k tokens = LIMITE_CONTEXTO caracteres com o instantâneo, no hook; T11: era 6.000) que o orquestrador lê antes de despachar.
  * Ele NUNCA inventa — PBI só quando a branch casa idPadrao, Epic só do cache/arquivo, o resto
  * marcado (b). Sem onboarding é UMA linha e exit 0. Cache do doctor vale 24 h.
  *
@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 import { append, ler, dirEntrega } from '../dist/diario.js';
 import {
   montarCartao, inferirPbi, coletar, lerLedger, lerFrontmatter, normalizarEstado, MAX_LINHAS, LINHA_SEM_ONBOARDING, DEFAULTS,
+  LIMITE_CONTEXTO, cortarCartao,
 } from '../scripts/cartao-sessao.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -42,7 +43,7 @@ function montarPluginReal() {
   mkdirSync(join(dir, '.claude-plugin'), { recursive: true });
   writeFileSync(join(dir, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'gabarito-mestre', version: '1.1.0' }));
   mkdirSync(join(dir, 'gates', 'scripts'), { recursive: true });
-  for (const f of ['harness-doctor.mjs', 'versionamento-check.mjs']) copyFileSync(join(here, '..', 'scripts', f), join(dir, 'gates', 'scripts', f));
+  for (const f of ['harness-doctor.mjs', 'versionamento-check.mjs', 'db-template.mjs']) copyFileSync(join(here, '..', 'scripts', f), join(dir, 'gates', 'scripts', f));
   // os scripts importam ../lib/* (GM-9 T1a): a cópia precisa levar a lib junto, como o instalador leva
   mkdirSync(join(dir, 'gates', 'lib'), { recursive: true });
   for (const f of ['cli', 'config', 'git', 'datas']) copyFileSync(join(here, '..', 'lib', `${f}.mjs`), join(dir, 'gates', 'lib', `${f}.mjs`));
@@ -509,20 +510,24 @@ describe('cartão em duas vias — hook SessionStart (T7)', () => {
     if (divergir) writeFileSync(join(dir, 'harness.config.json'), JSON.stringify({ ...JSON.parse(CONFIG()), guarda: { ambientes: { prod: { hosts: ['outro.exemplo.com'] } } } }));
   };
 
-  test('cartao-6000-caracteres: diário cheio + cartão somados nunca passam de 6.000', () => {
+  test('cartao-limite-2k-tokens: diário cheio + cartão somados nunca passam de LIMITE_CONTEXTO', () => {
     const dir = repoGit({ ...CACHE_123 });
     const d = dirDiario(dir);
     for (let i = 0; i < 120; i++) append(d, 'antiga', evento('antiga', 'guarda.deny', { alvo: `caminho/${'x'.repeat(200)}/${i}` }, `2026-09-24T10:${String(i % 60).padStart(2, '0')}:00.000Z`));
     const r = hook(dir, { session_id: 's-nova', source: 'startup' });
     assert.equal(r.code, 0, r.stderr);
-    assert.ok(r.ctx.length <= 6000, String(r.ctx.length));
-    assert.ok(r.ctx.length > 4000, `o diário deveria ocupar o espaço (${r.ctx.length})`);
+    assert.ok(r.ctx.length <= LIMITE_CONTEXTO, String(r.ctx.length));
+    assert.ok(r.ctx.length > 3000, `o diário deveria ocupar o espaço (${r.ctx.length})`);
+    assert.match(r.ctx, /ETA: sem dados/);
     assert.match(r.ctx, /instantâneo truncado|omitido/);
   });
-  test('cartao-6000-caracteres: cartão sozinho maior que o limite é cortado em exatamente 6.000', () => {
+  test('cartao-limite-2k-tokens: cartão maior que o limite perde LINHAS inteiras, nunca um pedaço de linha', () => {
     const r = hook(repoAliasGigante(), { session_id: 's1' });
     assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.ctx.length, 6000);
+    assert.ok(r.ctx.length <= LIMITE_CONTEXTO, String(r.ctx.length));
+    assert.doesNotMatch(r.ctx, /a{50}/, 'pedaço do alias gigante sobrou: linha cortada no meio');
+    assert.match(r.ctx, /^Branch: /m);
+    assert.match(r.ctx, /linha\(s\) do cartão omitida/);
   });
   test('cartao-mensagem-3-linhas: systemMessage tem de 1 a 3 linhas curtas, mesmo com alias gigante', () => {
     const r = hook(repoAliasGigante(), { session_id: 's1' });
@@ -681,7 +686,7 @@ describe('cartão em duas vias — hook SessionStart (T7)', () => {
     const r = hook(dir, { session_id: 's-nova' });
     assert.equal(r.code, 0, r.stderr);
     assert.ok(Date.now() - t0 < 10_000);
-    assert.ok(r.ctx.length <= 6000);
+    assert.ok(r.ctx.length <= LIMITE_CONTEXTO);
     assert.match(r.ctx, /Diário: 50000 evento\(s\)/);
   });
   test('repo sem git: raiz é o cwd, cartão mínimo, sem quebra', () => {
@@ -801,7 +806,7 @@ describe('cartão em duas vias — hook SessionStart (T7)', () => {
     assert.equal(existsSync(join(dir, 'pasta', '.harness')), false);
     assert.equal(lerMarcador(dir).sessao, 's1');
   });
-  test('F10: corte nos 6.000 e nas 160 colunas nunca deixa substituto solto (alias de emojis)', () => {
+  test('F10: corte no LIMITE_CONTEXTO e nas 160 colunas nunca deixa substituto solto (alias de emojis)', () => {
     const dir = repo({ 'harness.config.json': CONFIG({ orquestracao: { modelo: { politica: 'mais-potente', alias: '😀'.repeat(4000), resolvidoEm: '2026-09-01', validadeDias: 90 } } }) });
     git(dir, 'init', '-q');
     const r = hook(dir, { session_id: 's1' });
@@ -809,7 +814,7 @@ describe('cartão em duas vias — hook SessionStart (T7)', () => {
     const solto = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
     assert.doesNotMatch(r.ctx, solto);
     assert.doesNotMatch(r.msg, solto);
-    assert.ok(r.ctx.length <= 6000);
+    assert.ok(r.ctx.length <= LIMITE_CONTEXTO);
     assert.ok(r.msg.split('\n').every((l) => l.length <= 160));
   });
   test('F3: events.*.jsonl que é symlink ou FIFO não é lido: texto de fora não entra e o hook não trava', () => {
@@ -848,5 +853,55 @@ describe('cartão em duas vias — hook SessionStart (T7)', () => {
     const r = spawnSync(process.execPath, [SCRIPT, '--root', dir, '--plugin-root', pluginFalso(), '--agora', AGORA], { cwd: dir, encoding: 'utf8', env: { ...process.env, GABARITO_INSTALLED_PLUGINS: '/nao/existe.json' } });
     assert.match(r.stdout, /^PBI: PBI-123/m);
     assert.deepEqual(ler(dirDiario(dir)), []);
+  });
+});
+
+
+describe('T11 · teto de contexto de 2k tokens (R28, item 12)', () => {
+  // S7: 6.000 caracteres = 2.772 tokens. Meta da visão: contexto fixo ≤ 2.000 tokens, com instantâneo de 3.200 caracteres (~1,5k).
+  const S7_CARACTERES = 6000;
+  const S7_TOKENS = 2772;
+  test('LIMITE_CONTEXTO é a meta de 2k tokens convertida pela razão medida no S7 — e não 6.000', () => {
+    assert.equal(LIMITE_CONTEXTO, Math.floor((2000 * S7_CARACTERES) / S7_TOKENS));
+    assert.ok(LIMITE_CONTEXTO < 6000);
+    assert.ok((LIMITE_CONTEXTO * S7_TOKENS) / S7_CARACTERES <= 2000, 'estima mais de 2k tokens');
+  });
+  test('cabe o instantâneo inteiro (3.200 caracteres) e ainda sobra para o cartão', () => {
+    assert.ok(LIMITE_CONTEXTO - 3200 >= 800, `sobra ${LIMITE_CONTEXTO - 3200} para o cartão`);
+  });
+
+  const L = ['GABARITO · cartão de sessão', 'Modelo: x', 'Branch: b @ abc', 'PBI: PBI-1', 'Em voo: 1', 'Doctor: nível 3', 'Envelhecidos: PBI-9 4d', 'Ledger: l — LER PRIMEIRO l.3', 'Avisos: 1 dispatch sem medição', 'R21: despache.'];
+  test('cabendo, devolve tudo e na ordem', () => {
+    assert.equal(cortarCartao(L, 10_000), L.join('\n'));
+  });
+  test('bloqueio e ação pendente ficam; informativo sai antes, do fim para o início', () => {
+    const justo = [L[0], L[6], L[7], L[8]].join('\n').length + 40;
+    const t = cortarCartao(L, justo);
+    assert.ok(t.length <= justo, String(t.length));
+    for (const mantida of [L[0], L[6], L[7], L[8]]) assert.ok(t.split('\n').includes(mantida), `perdeu ${mantida}`);
+    for (const solta of [L[4], L[5], L[9]]) assert.ok(!t.split('\n').includes(solta), `devia ter saído: ${solta}`);
+    assert.match(t, /\.\.\. \d+ linha\(s\) do cartão omitida\(s\)/);
+  });
+  test('VENCIDO e "não resolvido" também são pendência', () => {
+    const l = ['T', 'Modelo: x (VENCIDO — revalide com gabarito-instalar)', `Branch: ${'b'.repeat(60)}`, 'PBI: (b) não inferido — branch fora de branchPadrao', `Plugins: ${'s'.repeat(60)}`, 'Harness: instalado 1 · plugin 2 · rode instalar.sh --atualizar'];
+    const pend = [l[0], l[1], l[3], l[5]].join('\n').length + 1 + '... 2 linha(s) do cartão omitida(s)'.length;
+    const t = cortarCartao(l, pend).split('\n');
+    for (const k of [1, 3, 5]) assert.ok(t.includes(l[k]), l[k]);
+    assert.ok(!t.includes(l[2]) && !t.includes(l[4]), 'informativas deviam ter saído');
+  });
+  test('nunca corta no meio de linha: toda linha da saída é inteira ou a marca; linha que nunca caberia sai inteira', () => {
+    const enorme = `Modelo: ${'z'.repeat(5000)}`;
+    for (const max of [120, 400, 1000, 4329]) {
+      const t = cortarCartao([L[0], enorme, ...L.slice(2)], max);
+      assert.ok(t.length <= max, `${max}: ${t.length}`);
+      for (const linha of t.split('\n')) assert.ok([L[0], enorme, ...L.slice(2)].includes(linha) || /^\.\.\. \d+ linha\(s\) do cartão omitida\(s\)$/.test(linha), `${max}: linha cortada: ${linha}`);
+      assert.ok(!t.includes('zzz'), 'a linha enorme não cabia e deveria ter saído inteira');
+    }
+    const t = cortarCartao([L[0], enorme, ...L.slice(2)], 4329).split('\n');
+    for (const linha of [L[0], ...L.slice(2)]) assert.ok(t.includes(linha), `a linha enorme não pode levar junto: ${linha}`);
+    assert.match(t.at(-1), /^\.\.\. 1 linha\(s\) do cartão omitida\(s\)$/);
+  });
+  test('máximo minúsculo: respeita o limite mesmo assim', () => {
+    for (const max of [0, 1, 5, 20]) assert.ok(cortarCartao(L, max).length <= max, String(max));
   });
 });

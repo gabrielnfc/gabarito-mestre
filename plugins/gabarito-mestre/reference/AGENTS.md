@@ -164,7 +164,7 @@ Uma linha por guarda, mecanismo e parâmetros em `referencia.md §5`; instalaç�
 | Camada | O que entra | Quando |
 |---|---|---|
 | 0 | este núcleo | sempre (`@AGENTS.md`) |
-| 1 | cartão de sessão (≤ 6.000 caracteres) | SessionStart |
+| 1 | cartão de sessão (≤ 4.329 caracteres) | SessionStart |
 | 2 | referência por ponteiro (`arquivo:linhas`) | sob demanda |
 | 3 | subagente isolado — só o relatório (≤ 25 linhas) volta | cada dispatch |
 | 4 | handoff por ledger (`LER PRIMEIRO`) | fim e início de sessão |
@@ -218,7 +218,7 @@ Este harness é distribuído como o plugin **gabarito-mestre** e não opera sozi
 
 **Fail-closed declarado (G9):** plugin vizinho ausente **não** é motivo para pular a etapa. A skill do gabarito degrada para o modo próprio e **avisa em uma linha** que está sem a maquinaria. Indisponibilidade nunca vira silêncio.
 
-**Hooks (a):** `gates/dist/guarda.js` (R2, R3) antes de toda chamada Bash, `Edit|Write|Read|Grep` e MCP: classifica o alvo pelos `guarda.ambientes` (de `origin/HEAD`) e **pede** (`ask`; `deny` ao subagent) em segredo, integridade do harness e produção, leitura inclusive (`permitidos` dispensa); o resto passa, no diário. Sem escape hatch. R20 é hook do git (`commit-msg`, `pre-push`). Injetam: `session-card.sh` na sessão (cartão ≤ 6.000 caracteres); `remind-orchestrator.sh` por prompt (R21, `lembretePorPrompt: true`); `regras-subagent.sh` por subagent (≤ 2.000: instrução, não barreira). **Limites (G9):** alvo declarado, não sandbox; passam interpretador (`python -c`), caminho montado (`$F`, glob), `find | xargs`, `env`, `base64 | sh` e indireção para `.git/**` (`referencia.md` §5); o resto é G3/G7 e review.
+**Hooks (a):** `gates/dist/guarda.js` (R2, R3) antes de toda chamada Bash, `Edit|Write|Read|Grep` e MCP: classifica o alvo pelos `guarda.ambientes` (de `origin/HEAD`) e **pede** (`ask`; `deny` ao subagent) em segredo, integridade do harness e produção, leitura inclusive (`permitidos` dispensa); o resto passa, no diário. Sem escape hatch. R20 é hook do git (`commit-msg`, `pre-push`). Injetam: `session-card.sh` na sessão (cartão ≤ 4.329 caracteres); `remind-orchestrator.sh` por prompt (R21, `lembretePorPrompt: true`); `regras-subagent.sh` por subagent (≤ 2.000: instrução, não barreira). **Limites (G9):** alvo declarado, não sandbox; passam interpretador (`python -c`), caminho montado (`$F`, glob), `find | xargs`, `env`, `base64 | sh` e indireção para `.git/**` (`referencia.md` §5); o resto é G3/G7 e review.
 
 ---
 

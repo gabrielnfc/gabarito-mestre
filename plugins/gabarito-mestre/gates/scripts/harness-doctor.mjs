@@ -40,6 +40,7 @@ import { lerGuarda, DENY_GUARDA, CHAVES_MORTAS } from '../lib/config.mjs';
 import { diasEntre } from '../lib/datas.mjs';
 import { execFileSync } from 'node:child_process';
 import { checar, DEFAULTS as VERSIONAMENTO_DEFAULTS } from './versionamento-check.mjs';
+import { validarDb } from './db-template.mjs';
 
 const SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'coverage', '.next', '.turbo',
@@ -640,7 +641,7 @@ export const CHECKS = [
     level: 3,
     kind: 'scan',
     label: 'paralelismo calibrado nesta máquina (≤ 180 d, teto ≥ simultaneos ≥ 1)',
-    fix: 'rode capacidade.mjs --calibrar e grave orquestracao.paralelismo via onboarding-config.mjs',
+    fix: 'rode capacidade.mjs --sugerir e grave orquestracao.paralelismo via onboarding-config.mjs',
     detect: (ix, cfg) => {
       const p = cfg.orquestracao?.paralelismo;
       if (!p?.calibradoEm) return { found: false, evidence: 'sem orquestracao.paralelismo.calibradoEm' };
@@ -825,6 +826,11 @@ function* heartbeatsDe(texto) {
  * (só ele é aberto) tem a linha `guarda.heartbeat` de mesmo `sessao` e `ts`. null = sem evidência local.
  */
 function horasDesdeHeartbeatLocal(raiz, agora) {
+  return heartbeatLocalDe(raiz, agora)?.ha ?? null;
+}
+
+/** O mesmo, devolvendo também a `sessao` do marcador (o que liga o mod a esta árvore). null = sem evidência local. */
+function heartbeatLocalDe(raiz, agora) {
   const harness = join(raiz, '.harness');
   if (!ehDirReal(harness)) return null;
   const texto = lerSeguro(join(raiz, MARCADOR_ARQUIVO), { max: MARCADOR_MAX_BYTES });
@@ -845,9 +851,64 @@ function horasDesdeHeartbeatLocal(raiz, agora) {
   const diario = lerSeguro(join(raiz, m.arquivo), { max: DIARIO_MAX_BYTES });
   if (diario === null) return null;
   for (const ev of heartbeatsDe(diario)) {
-    if (ev.sessao === m.sessao && ev.ts === m.ts) return Math.max(0, (agora - t) / 3_600_000);
+    if (ev.sessao === m.sessao && ev.ts === m.ts) return { ha: Math.max(0, (agora - t) / 3_600_000), sessao: m.sessao };
   }
   return null;
+}
+
+// ────────────────────────────────────────────────────────────── loop com mod (REQ-LOOP-2)
+
+const SESSAO_SEGURA = /^[A-Za-z0-9._-]{1,128}$/;
+
+/**
+ * O mod do Gabarito carregou NESTA árvore e NESTA sessão? Prova positiva, sem a qual a resposta é `{ mod: false }`:
+ * o marcador local do heartbeat (gitignored, não rastreado, cruzado com o diário) dá a `sessao` desta árvore, e algum
+ * `.harness/entregas/<id>/events.<sessao>.jsonl` tem um `custo.medicao` de `agente: 'orquestrador'` DESSA sessão, de
+ * ≤ 24 h e não do futuro. Só o mod grava esse evento (sem mod o orquestrador fica sem medição, REQ-OBS-1). O mod existir no
+ * repo, um plano.json, um heartbeat da guarda ou um diário de outro autor não provam nada (I10). Limite declarado: o diário
+ * é arquivo local e um processo com escrita nele o forja; a barreira é o anel de integridade da guarda, não este doctor.
+ */
+export function modDoLoop(raiz, agora = Date.now()) {
+  const agoraMs = agora instanceof Date ? agora.getTime() : Number(agora);
+  const hb = heartbeatLocalDe(raiz, agoraMs);
+  if (hb === null || !SESSAO_SEGURA.test(hb.sessao) || hb.sessao === '.' || hb.sessao === '..') return { mod: false };
+  const base = join(raiz, '.harness', 'entregas');
+  if (!ehDirReal(join(raiz, '.harness')) || !ehDirReal(base)) return { mod: false };
+  let entregas;
+  try {
+    entregas = readdirSync(base).slice(0, HEARTBEAT_MAX_ENTREGAS);
+  } catch {
+    return { mod: false };
+  }
+  let melhor = null;
+  for (const id of entregas) {
+    const dir = join(base, id);
+    if (!ehDirReal(dir)) continue;
+    const texto = lerSeguro(join(dir, `events.${hb.sessao}.jsonl`), { cauda: HEARTBEAT_CAUDA_BYTES });
+    if (texto === null) continue;
+    for (const linha of texto.split('\n')) {
+      if (!linha.includes('custo.medicao')) continue;
+      let ev;
+      try {
+        ev = JSON.parse(linha);
+      } catch {
+        continue; // linha truncada
+      }
+      if (!ev || typeof ev !== 'object' || Array.isArray(ev) || ev.tipo !== 'custo.medicao' || ev.agente !== 'orquestrador' || ev.sessao !== hb.sessao) continue;
+      const t = tsValido(ev.ts, agoraMs);
+      if (t === null || (agoraMs - t) / 3_600_000 > HEARTBEAT_ATIVA_H) continue;
+      if (melhor === null || t > melhor) melhor = t;
+    }
+  }
+  return melhor === null ? { mod: false } : { mod: true, ha: Math.max(0, (agoraMs - melhor) / 3_600_000) };
+}
+
+/** `db` do harness.config.json: `declarado` (válido) · `n/a` (sem bloco) · `inválido` (bloco que o loop recusaria) · `indisponível` (config ilegível). */
+function estadoDb(fileCfg, configInvalido) {
+  if (configInvalido) return { estado: 'indisponível', erro: 'harness.config.json inválido' };
+  const v = validarDb(fileCfg);
+  if (!v.ok) return { estado: 'inválido', erro: v.erro };
+  return v.na ? { estado: 'n/a' } : { estado: 'declarado' };
 }
 
 /** O heartbeat mais recente dos diários `.harness/entregas/<id>/events.*.jsonl` (qualquer autor), ou null. Só anotação. */
@@ -1025,6 +1086,8 @@ export function run(root = process.cwd(), overrides = {}) {
   return {
     resultados,
     camada,
+    loop: modDoLoop(root),
+    db: estadoDb(fileCfg, configInvalido),
     perfil,
     alcancado,
     declarado,
@@ -1071,6 +1134,8 @@ function render(out, explain) {
   linhas.push(`Camada de guarda: ${c.estado}${c.estado === 'ativa' ? quente : ''}${c.estado !== 'ativa' && c.heartbeatHa !== null ? ` · último heartbeat local há ${Math.round(c.heartbeatHa)} h` : ''}${c.estado !== 'ativa' && c.diario ? ` · diário com heartbeat há ${Math.round(c.diario.ha)} h (${c.diario.autor})` : ''}${c.fonte ? ` · fonte ${c.fonte}` : ''}${c.divergente ? ' · DIVERGENTE (árvore ≠ origin/HEAD; vale o origin)' : ''}`);
   linhas.push(`Ambientes declarados: ${c.ambientes.length ? c.ambientes.join(', ') : '(nenhum)'}`);
   if (out.perfil) linhas.push(`Perfil: ${out.perfil}`);
+  linhas.push(out.loop.mod ? `loop: mod ativo (custo.medicao do orquestrador há ${Math.round(out.loop.ha)} h)` : 'loop: sem mod (sem pouso automático)');
+  linhas.push(out.db.estado === 'declarado' || out.db.estado === 'n/a' ? `db: ${out.db.estado}` : `db: ${out.db.estado} (${out.db.erro})`);
   linhas.push('');
   linhas.push(`Nível alcançado: ${out.alcancado}   ·   declarado no AGENTS.md: ${out.declarado ?? '(não declarado)'}`);
   if (out.configInvalido) linhas.push('AVISO: harness.config.json inválido — checagens de config ficam FALTA (fail-open declarado (G9)).');

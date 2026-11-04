@@ -15,13 +15,29 @@
  * USO
  *   node capacidade.mjs                 # "slots: 2 (simultaneos)"
  *   node capacidade.mjs --json          # { slots, motivo, medidas }
- *   node capacidade.mjs --calibrar      # valores sugeridos para orquestracao.paralelismo
+ *   node capacidade.mjs --sugerir       # valores sugeridos para orquestracao.paralelismo (PAR-1, por núcleos)
+ *
+ * CAPACIDADE MEDIDA (GM-10, REQ-SLOT-1, F9/D3) — a escada medida no repositório, não custo estimado:
+ *   node capacidade.mjs --calibrar [--suite <cmd>] [--cwd <dir>]
+ *       roda a suíte em N=1,2,3,… slots simultâneos (cada um com TMPDIR próprio, removido ao fim) e para na
+ *       1ª falha ou na 1ª queda de vazão. Grava `.harness/capacidade.json` (gitignored) por arquivo temporário
+ *       + rename: `{hostname, slots_max, rss_pico_mb, tmpdir_mb, cpu_total, load_medido}` (load_medido = mediana do load1 no
+ *       degrau aprovado; cpu_total fica gravado como informação). Suíte falhando em N=1 ⇒ rc 1 e
+ *       o arquivo anterior fica intacto. Teto da escada: núcleos da máquina (nunca um número fixo).
+ *   node capacidade.mjs --medido [--json]
+ *       slots = min(slots_max, floor((mem − reserva)/rss), floor((disco − reserva)/tmpdir),
+ *                   floor(slots_max × load_medido / load1) se load1 > load_medido), nunca < 1.
+ *       Campo `load_medido` ausente ou inválido (calibração antiga): 1 slot + aviso que cita o campo e `--calibrar`.
+ *       Sem arquivo, hostname diferente, JSON corrompido, campo inválido ou medição falhando: 1 slot + aviso.
+ *       Reservas: `orquestracao.paralelismo.limites` (defaults memDisponivelMinMB e discoLivreMinGB, acima).
+ *       `--calibrar` sai de qualquer aviso.
+ * `loop.mjs proxima` ainda lê `loop.slots`; ligar a esta saída é do orquestrador.
  */
 
-import { readFileSync, existsSync, statfsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { execFileSync } from 'node:child_process';
-import { availableParallelism, loadavg, platform } from 'node:os';
+import { readFileSync, existsSync, statfsSync, writeFileSync, renameSync, mkdirSync, mkdtempSync, rmSync, lstatSync, readdirSync, unlinkSync } from 'node:fs';
+import { join, resolve, dirname } from 'node:path';
+import { execFileSync, execFile, spawn } from 'node:child_process';
+import { availableParallelism, loadavg, platform, hostname as osHostname, cpus, tmpdir } from 'node:os';
 import { arg, ehEntrypoint } from '../lib/cli.mjs';
 import { raizDoRepo } from '../lib/git.mjs';
 import { hojeISO } from '../lib/datas.mjs';
@@ -211,12 +227,343 @@ export function lerParalelismo(root) {
   return p && typeof p === 'object' ? { paralelismo: p, aviso: null } : { paralelismo: null, aviso: 'defaults (orquestracao ausente)' };
 }
 
+// ────────────────────────────────────────────────────────────── capacidade medida (GM-10 · REQ-SLOT-1)
 
-function main(argv) {
+export const ARQUIVO_CAPACIDADE = join('.harness', 'capacidade.json');
+/**
+ * Queda de vazão = vazão(N) abaixo de vazão(N−1) × (1 − MARGEM_QUEDA). Derivada do S10 (suíte do próprio repo):
+ * a mediana do slot em N estável varia 1,3 % (N=1) a 2,2 % (N=3) entre máximo e mediana; a queda real medida foi
+ * 7,9 → 6,8 slots/min (−13,9 %, N=3→4, com 10/12 slots falhando). 5 % fica acima do ruído e abaixo da queda.
+ * Vazão igual ou subindo nunca é queda.
+ */
+export const MARGEM_QUEDA = 0.05;
+const INTERVALO_AMOSTRA_MS = 200;
+const MB = 1_048_576;
+const positivo = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
+const CAMPOS_MEDIDOS = ['rss_pico_mb', 'tmpdir_mb', 'cpu_total', 'load_medido'];
+const SUFIXO_CALIBRAR = '— rode capacidade.mjs --calibrar';
+
+/** Valida o conteúdo do arquivo. Zero, negativo, ausente, texto ou infinito num campo medido é inválido, nunca "ilimitado". */
+function validarCapacidade(obj, host) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { causa: 'conteúdo não é um objeto' };
+  if (typeof obj.hostname !== 'string' || obj.hostname === '') return { causa: `campo hostname ausente ou inválido (${JSON.stringify(obj.hostname)})` };
+  if (!Number.isInteger(obj.slots_max) || obj.slots_max < 1) return { causa: `campo slots_max inválido (${JSON.stringify(obj.slots_max)}): precisa ser inteiro ≥ 1` };
+  for (const c of CAMPOS_MEDIDOS) {
+    if (!positivo(obj[c])) return { causa: `campo ${c} inválido (${JSON.stringify(obj[c])}): precisa ser número finito > 0` };
+  }
+  if (obj.hostname !== host) return { causa: `calibrado em ${obj.hostname}, esta máquina é ${host}` };
+  return { dados: { hostname: obj.hostname, slots_max: obj.slots_max, rss_pico_mb: obj.rss_pico_mb, tmpdir_mb: obj.tmpdir_mb, cpu_total: obj.cpu_total, load_medido: obj.load_medido } };
+}
+
+/** Lê `.harness/capacidade.json`. Qualquer defeito devolve `{ dados: null, aviso }` — nunca lança, nunca inventa número. */
+export function lerCapacidade(root, host = osHostname()) {
+  const f = join(root, ARQUIVO_CAPACIDADE);
+  if (!existsSync(f)) return { dados: null, aviso: `sem calibração: ${ARQUIVO_CAPACIDADE} não existe ${SUFIXO_CALIBRAR}` };
+  let obj;
+  try {
+    obj = JSON.parse(readFileSync(f, 'utf8'));
+  } catch (e) {
+    return { dados: null, aviso: `${ARQUIVO_CAPACIDADE} ilegível ou JSON corrompido (${String(e.message).split('\n')[0]}) ${SUFIXO_CALIBRAR}` };
+  }
+  const v = validarCapacidade(obj, host);
+  return v.dados ? { dados: v.dados, aviso: null } : { dados: null, aviso: `${ARQUIVO_CAPACIDADE}: ${v.causa} ${SUFIXO_CALIBRAR}` };
+}
+
+/**
+ * slots = min(slots_max, floor((mem − reserva)/rss), floor((disco − reserva)/tmpdir), redução por CPU), nunca < 1.
+ * `limites` traz as reservas (`memDisponivelMinMB`, `discoLivreMinGB`) completadas por DEFAULTS.limites.
+ * Sem dado válido ou com medição falhando: 1 slot e aviso — nunca `slots_max` por omissão.
+ */
+export function slotsMedidos(lido, medidas, limites = {}) {
+  const m = medidas ?? {};
+  if (!lido?.dados) return { slots: 1, motivo: '1 slot: sem capacidade válida', aviso: lido?.aviso ?? `capacidade indisponível ${SUFIXO_CALIBRAR}`, medidas: m };
+  const d = lido.dados;
+  for (const k of ['cores', 'load1', 'memDisponivelMB', 'discoLivreGB']) {
+    if (!Number.isFinite(m[k]) || m[k] < 0 || (k === 'cores' && m[k] === 0)) {
+      return { slots: 1, motivo: `1 slot: medição de ${k} indisponível`, aviso: `medição de ${k} falhou (${String(m[k])}) — 1 slot, não ${d.slots_max}`, medidas: m };
+    }
+  }
+  const lim = { ...DEFAULTS.limites, ...(limites && typeof limites === 'object' ? limites : {}) };
+  const reservaMem = num(lim.memDisponivelMinMB) ?? DEFAULTS.limites.memDisponivelMinMB;
+  const reservaDiscoMB = (num(lim.discoLivreMinGB) ?? DEFAULTS.limites.discoLivreMinGB) * 1024;
+  const candidatos = [
+    { n: d.slots_max, motivo: `slots_max ${d.slots_max}` },
+    { n: Math.floor((m.memDisponivelMB - reservaMem) / d.rss_pico_mb), motivo: `mem: (${m.memDisponivelMB} − ${reservaMem} MB)/${d.rss_pico_mb} MB por slot` },
+    { n: Math.floor((m.discoLivreGB * 1024 - reservaDiscoMB) / d.tmpdir_mb), motivo: `disco: (${m.discoLivreGB} GB − ${reservaDiscoMB / 1024} GB)/${d.tmpdir_mb} MB por slot` },
+  ];
+  if (m.load1 > d.load_medido) {
+    candidatos.push({ n: Math.floor((d.slots_max * d.load_medido) / m.load1), motivo: `carga: load1 ${m.load1} > ${d.load_medido} medido com ${d.slots_max} slot(s)` });
+  }
+  let melhor = candidatos[0];
+  for (const c of candidatos) if (c.n < melhor.n) melhor = c;
+  if (melhor.n < 1) return { slots: 1, motivo: `${melhor.motivo} — mínimo 1`, aviso: null, medidas: m };
+  return { slots: melhor.n, motivo: melhor.motivo, aviso: null, medidas: m };
+}
+
+/**
+ * A escada: `medirN(n)` roda a suíte com n slots e devolve `{ ok, causa?, vazao, rss_pico_mb, tmpdir_mb, cpu_total }`.
+ * Para na 1ª falha, na 1ª queda de vazão (> margem) ou em `maxN`. `slots_max` = último N sem falha e sem queda, com as
+ * medidas DELE. Medição inválida (0, ausente, NaN) ou exceção nunca vira sucesso: para antes desse N. N=1 sem sucesso ⇒ slots_max 0 e `erro`.
+ */
+export async function escada(medirN, { maxN, margem = MARGEM_QUEDA } = {}) {
+  let bom = null;
+  let ant = null;
+  let erro = null;
+  let parou = `teto ${maxN}`;
+  for (let n = 1; n <= maxN; n++) {
+    let p;
+    try {
+      p = await medirN(n);
+    } catch (e) {
+      erro = `N=${n}: medição lançou: ${String(e?.message ?? e).split('\n')[0]}`;
+      parou = erro;
+      break;
+    }
+    if (!p || p.ok === false) {
+      erro = `N=${n}: ${p?.causa ?? 'suíte falhou'}`;
+      parou = `falha — ${erro}`;
+      break;
+    }
+    const ruim = ['vazao', ...CAMPOS_MEDIDOS].find((c) => !positivo(p[c]));
+    if (ruim) {
+      erro = `N=${n}: medição inválida (${ruim} = ${String(p[ruim])})`;
+      parou = erro;
+      break;
+    }
+    if (ant && p.vazao < ant.vazao * (1 - margem)) {
+      parou = `queda de vazão em N=${n}: ${p.vazao.toFixed(2)} < ${ant.vazao.toFixed(2)} × ${1 - margem}`;
+      break;
+    }
+    bom = { n, ...p };
+    ant = p;
+  }
+  if (!bom) return { slots_max: 0, rss_pico_mb: 0, tmpdir_mb: 0, cpu_total: 0, load_medido: 0, erro: erro ?? 'nenhuma medição', parou };
+  return { slots_max: bom.n, rss_pico_mb: bom.rss_pico_mb, tmpdir_mb: bom.tmpdir_mb, cpu_total: bom.cpu_total, load_medido: bom.load_medido, vazao: bom.vazao, erro: null, parou };
+}
+
+/** Temporário + rename: o arquivo anterior só é trocado por um novo inteiro. Falhou: lança, remove o temporário, o anterior fica. */
+export function gravarAtomico(alvo, objeto) {
+  const tmp = `${alvo}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    const texto = `${JSON.stringify(objeto, null, 2)}\n`;
+    mkdirSync(dirname(alvo), { recursive: true });
+    writeFileSync(tmp, texto, { flag: 'wx', mode: 0o644 });
+    renameSync(tmp, alvo);
+  } catch (e) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* o temporário nem chegou a existir */
+    }
+    throw e;
+  }
+}
+
+// Estado da calibração em curso: o que uma interrupção precisa matar e remover.
+const ativos = { grupos: new Set(), dirs: new Set() };
+function limparAtivos() {
+  for (const g of ativos.grupos) {
+    try {
+      process.kill(-g, 'SIGKILL');
+    } catch {
+      /* grupo já terminou */
+    }
+  }
+  ativos.grupos.clear();
+  for (const d of ativos.dirs) {
+    try {
+      rmSync(d, { recursive: true, force: true });
+    } catch {
+      /* melhor esforço na interrupção */
+    }
+  }
+  ativos.dirs.clear();
+}
+
+/** Uso em disco (blocos alocados, ou tamanho se maior) de uma árvore; não segue symlink. */
+function usoEmDisco(caminho) {
+  let total = 0;
+  const visita = (c) => {
+    let st;
+    try {
+      st = lstatSync(c);
+    } catch {
+      return;
+    }
+    total += Math.max(st.size, (st.blocks ?? 0) * 512);
+    if (st.isDirectory()) {
+      let nomes = [];
+      try {
+        nomes = readdirSync(c);
+      } catch {
+        /* ilegível: conta o que deu */
+      }
+      for (const n of nomes) visita(join(c, n));
+    }
+  };
+  visita(caminho);
+  return total;
+}
+
+const msCpuOcupada = () => cpus().reduce((a, c) => a + c.times.user + c.times.nice + c.times.sys + c.times.irq, 0);
+const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+const mediana = (xs) => {
+  const o = [...xs].sort((a, b) => a - b);
+  const i = o.length >> 1;
+  return o.length % 2 ? o[i] : (o[i - 1] + o[i]) / 2;
+};
+
+/** RSS somado (MB) por grupo de processos, de `ps -axo pgid=,rss=`. `null` se o ps falhar. */
+function rssPorGrupo() {
+  return new Promise((ok) => {
+    execFile('ps', ['-axo', 'pgid=,rss='], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, env: { ...process.env, LC_ALL: 'C' } }, (err, saida) => {
+      if (err) return ok(null);
+      const por = new Map();
+      for (const l of String(saida).split('\n')) {
+        const c = l.trim().split(/\s+/);
+        const g = num(c[0]);
+        const kb = num(c[1]);
+        if (g !== null && kb !== null) por.set(g, (por.get(g) ?? 0) + kb / 1024);
+      }
+      ok(por);
+    });
+  });
+}
+
+/**
+ * Roda `n` cópias da suíte ao mesmo tempo, cada uma com TMPDIR próprio (em `base`), e mede: falhas, vazão (slots/min =
+ * n / mediana da parede do slot), RSS pico do grupo do slot (amostrado), uso do TMPDIR antes de removê-lo e CPU
+ * ocupada da máquina durante a rodada, em núcleos. Os TMPDIR são removidos ao fim; a suíte é `sh -c` num grupo próprio.
+ */
+export async function rodarSlots(n, { suite, cwd, base, intervaloMs = INTERVALO_AMOSTRA_MS, lerLoad = () => loadavg()[0] }) {
+  const slots = [];
+  const loads = [];
+  try {
+    for (let i = 0; i < n; i++) {
+      const dir = mkdtempSync(join(base, 'slot-'));
+      ativos.dirs.add(dir);
+      slots.push({ dir, pid: 0, rc: null, ms: 0, rss: 0 });
+    }
+    const t0 = Date.now();
+    const cpu0 = msCpuOcupada();
+    for (const s of slots) {
+      const t = Date.now();
+      const c = spawn(suite, { shell: true, cwd, detached: true, stdio: 'ignore', env: { ...process.env, TMPDIR: s.dir, TMP: s.dir, TEMP: s.dir } });
+      s.pid = c.pid;
+      if (c.pid) ativos.grupos.add(c.pid);
+      s.fim = new Promise((res) => {
+        c.on('error', () => {
+          s.rc = -1;
+          s.ms = Date.now() - t;
+          res();
+        });
+        c.on('close', (code, sinal) => {
+          s.rc = code ?? (sinal ? -1 : 0);
+          s.ms = Date.now() - t;
+          if (c.pid) ativos.grupos.delete(c.pid);
+          res();
+        });
+      });
+    }
+    let psFalhou = false;
+    const aberto = () => slots.some((s) => s.rc === null);
+    while (aberto()) {
+      await dormir(50);
+      loads.push(lerLoad());
+      const por = await rssPorGrupo();
+      if (por === null) psFalhou = true;
+      else for (const s of slots) if (s.rc === null) s.rss = Math.max(s.rss, por.get(s.pid) ?? 0);
+      if (aberto()) await dormir(intervaloMs);
+    }
+    await Promise.all(slots.map((s) => s.fim));
+    const parede = Math.max(1, Date.now() - t0);
+    const cpuTotal = (msCpuOcupada() - cpu0) / parede;
+    const bytes = slots.map((s) => usoEmDisco(s.dir));
+    const medianaMs = mediana(slots.map((s) => Math.max(1, s.ms)));
+    return {
+      falhas: slots.filter((s) => s.rc !== 0).length,
+      mediana_ms: medianaMs,
+      vazao: (n * 60_000) / medianaMs,
+      rss_pico_mb: psFalhou ? 0 : Math.round(Math.max(...slots.map((s) => s.rss)) * 10) / 10,
+      tmpdir_mb: Math.round((Math.max(...bytes) / MB) * 1000) / 1000,
+      cpu_total: Math.round(cpuTotal * 100) / 100,
+      load_medido: loads.length ? Math.round(mediana(loads) * 100) / 100 : 0,
+    };
+  } finally {
+    for (const s of slots) {
+      try {
+        rmSync(s.dir, { recursive: true, force: true });
+      } catch {
+        /* a verificação abaixo denuncia */
+      }
+      if (!existsSync(s.dir)) ativos.dirs.delete(s.dir);
+      if (s.pid) ativos.grupos.delete(s.pid);
+    }
+  }
+}
+
+/**
+ * `--calibrar`: sobe a escada com a suíte do repo e grava `.harness/capacidade.json`. Sem N=1 limpo: rc 1 e nada é gravado
+ * (o arquivo anterior fica como estava). Teto da escada = `maxN` ou os núcleos da máquina.
+ */
+export async function calibrarCapacidade(root, { suite = 'npm test', cwd = root, hostname = osHostname(), maxN = availableParallelism(), base = tmpdir(), lerLoad } = {}) {
+  mkdirSync(base, { recursive: true });
+  const meu = mkdtempSync(join(base, 'cal-'));
+  ativos.dirs.add(meu);
+  try {
+    const r = await escada(async (n) => {
+      const m = await rodarSlots(n, { suite, cwd, base: meu, ...(lerLoad ? { lerLoad } : {}) });
+      return m.falhas > 0 ? { ok: false, causa: `suíte falhou em ${m.falhas}/${n} slot(s)` } : { ok: true, ...m };
+    }, { maxN });
+    if (r.slots_max < 1) return { rc: 1, causa: r.erro ?? 'sem medição', parou: r.parou };
+    const dados = { hostname, slots_max: r.slots_max, rss_pico_mb: r.rss_pico_mb, tmpdir_mb: r.tmpdir_mb, cpu_total: r.cpu_total, load_medido: r.load_medido };
+    gravarAtomico(join(root, ARQUIVO_CAPACIDADE), dados);
+    return { rc: 0, dados, parou: r.parou };
+  } catch (e) {
+    return { rc: 1, causa: String(e?.message ?? e).split('\n')[0] };
+  } finally {
+    rmSync(meu, { recursive: true, force: true });
+    ativos.dirs.delete(meu);
+  }
+}
+
+
+async function main(argv) {
   try {
     const root = arg(argv, 'root') ? resolve(arg(argv, 'root')) : raizDoRepo();
-    const medidas = medir(process.env, root);
+    const host = process.env.GABARITO_CAP_HOSTNAME || osHostname();
     if (argv.includes('--calibrar')) {
+      const parar = () => {
+        limparAtivos();
+        process.exit(130);
+      };
+      process.once('SIGINT', parar);
+      process.once('SIGTERM', parar);
+      const r = await calibrarCapacidade(root, {
+        suite: arg(argv, 'suite', 'npm test'),
+        cwd: arg(argv, 'cwd') ? resolve(arg(argv, 'cwd')) : root,
+        hostname: host,
+        maxN: num(process.env.GABARITO_CAP_CORES) ?? availableParallelism(),
+        base: process.env.GABARITO_CAL_TMP || tmpdir(),
+      });
+      if (r.rc !== 0) {
+        console.error(`[PAR-1] calibração falhou: ${r.causa} — ${ARQUIVO_CAPACIDADE} não foi alterado`);
+        process.exit(1);
+      }
+      process.stdout.write(`${JSON.stringify({ ...r.dados, parou: r.parou }, null, 2)}\n`);
+      process.exit(0);
+    }
+    if (argv.includes('--medido')) {
+      const medidas = medir(process.env, root);
+      const { paralelismo } = lerParalelismo(root);
+      const r = slotsMedidos(lerCapacidade(root, host), medidas, paralelismo?.limites);
+      if (r.aviso) console.error(`[PAR-1] ${r.aviso}`);
+      if (argv.includes('--json')) process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+      else process.stdout.write(`slots: ${r.slots} (${r.motivo})\n`);
+      process.exit(0);
+    }
+    const medidas = medir(process.env, root);
+    if (argv.includes('--sugerir')) {
       process.stdout.write(`${JSON.stringify(calibrar(medidas), null, 2)}\n`);
       process.exit(0);
     }
@@ -227,10 +574,14 @@ function main(argv) {
     else process.stdout.write(`slots: ${r.slots} (${r.motivo})\n`);
   } catch (e) {
     const msg = String(e?.message ?? e).split('\n')[0];
+    if (argv.includes('--calibrar')) {
+      console.error(`[PAR-1] calibração falhou: ${msg} — ${ARQUIVO_CAPACIDADE} não foi alterado`);
+      process.exit(1);
+    }
     console.error(`[PAR-1] erro ao medir: ${msg} (fail-open declarado (G9))`);
     process.stdout.write(argv.includes('--json') ? `${JSON.stringify({ slots: 1, motivo: `erro: ${msg}`, medidas: null })}\n` : `slots: 1 (erro: ${msg} — fail-open declarado (G9))\n`);
   }
   process.exit(0);
 }
 
-if (ehEntrypoint(import.meta.url)) main(process.argv.slice(2));
+if (ehEntrypoint(import.meta.url)) await main(process.argv.slice(2));

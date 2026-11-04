@@ -122,6 +122,8 @@ describe('doctor 1.1.0 — fixtures 1.0.1 e 1.1.0 (DOC-1)', () => {
     assert.equal(run(repo({ 'AGENTS.md': agents(0), 'harness.config.json': cfg({ simultaneos: 2, teto: 4, calibradoEm: diasAtras(181) }) })).resultados.find((r) => r.id === id).found, false);
     assert.equal(run(repo({ 'AGENTS.md': agents(0), 'harness.config.json': cfg({ simultaneos: 5, teto: 4, calibradoEm: hoje }) })).resultados.find((r) => r.id === id).found, false);
     assert.equal(CHECKS.find((c) => c.id === id).level, 3);
+    assert.match(CHECKS.find((c) => c.id === id).fix, /--sugerir/, "o fix aponta --sugerir (T11: --calibrar virou a escada)");
+    assert.doesNotMatch(CHECKS.find((c) => c.id === id).fix, /--calibrar/);
   });
 });
 

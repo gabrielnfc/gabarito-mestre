@@ -1,0 +1,4 @@
+{
+  "gates": { "suites": ["npm test"] },
+  "loop": { "slots": 2, "tetoTokens": 1500000 }
+}

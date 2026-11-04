@@ -1,0 +1,132 @@
+#!/usr/bin/expect -f
+# Aceites de ponta a ponta do loop (GM-10 T13). FORA de `npm test`: abre uma TUI real do Claude Code (Haiku), gasta tokens.
+#
+#   aceite-loop.exp <modo> <rundir> <repo> <plugin-root> <observador> <prompt-arquivo> <teto-s>
+#     modo: fumaca (aceite 0, 1 task) | loop (aceite 1 e 4, 3 tasks) | pausa (aceite 2) | liberar (r8: T1 já no teto, semeada pelo CLI)
+#
+# Isolamento (sombra-t13): `--setting-sources project`, SEM CLAUDE_CONFIG_DIR (sem credencial a medição zera). Todo o resto é
+# lido DEPOIS pelo avaliar.mjs a partir do diário e dos logs do observador; a tela nunca é evidência. O .exp só digita o que
+# está em $rundir/sends.log (trust, prompt, exit e, no modo pausa, os dois comandos): qualquer outra digitação seria
+# "salvar o aceite" e este arquivo não faz. No modo liberar são exatamente dois comandos do dono, depois de `acao=parar` estável (15 s), turno do orquestrador encerrado e running 0 (sem exigir `parou=true`, r8b):
+# `/gabarito-mestre:liberar T9` (task fora do plano: recusa, nada gravado) e, 20 s depois, `/gabarito-mestre:liberar T1`; nada mais é respondido.
+# Só LISTA (ls -R) o `.tmp-gabarito` da T1 antes do T9 e 12 s depois do T1 (tmp-T1-antes.txt, tmp-T1-depois.txt): evidência de `ciclo-1`, o `fechar` apaga a pasta. Pergunta de permissão na tela é REGISTRADA e nunca respondida.
+# Trava: TRAVA_S sem evento novo (diário + observador) e 0 agentes vivos ⇒ TRAVADO. Teto global: <teto-s>.
+set TRAVA_S 300
+lassign $argv modo rundir repo plugin obs promptf teto
+set avaliar [file join [file dirname [info script]] avaliar.mjs]
+set env(TERM) xterm-256color
+set env(OBS_DIR) $rundir
+foreach v {CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION} { set env($v) false }
+set env(CLAUDE_CODE_DISABLE_AUTO_MEMORY) 1
+set env(CLAUDE_CODE_FORCE_SESSION_PERSISTENCE) 1
+if {![info exists env(GABARITO_POUSO_X)]} { set env(GABARITO_POUSO_X) 1 }
+file mkdir $rundir
+set fd [open $promptf]; set prompt [string trim [read $fd]]; close $fd
+
+proc sends {tag} { global rundir; set f [open $rundir/sends.log a]; puts $f "[clock seconds] $tag"; close $f }
+proc estado {} {
+  global avaliar repo rundir plugin
+  if {[catch {exec node $avaliar estado $repo $rundir $plugin} out]} { return "" }
+  return $out
+}
+proc campo {s nome} { if {[regexp "\"$nome\":(\[^,\}\]+)" $s -> v]} { return [string trim $v "\""] } ; return "" }
+proc listar {destino} { global repo; catch {exec sh -c "ls -R '$repo/.harness/worktrees/T1/.tmp-gabarito' > '$destino' 2>&1"} }
+proc nota {txt} { global rundir; set f [open $rundir/exp.log a]; puts $f "[clock seconds] $txt"; close $f }
+
+cd $repo
+log_user 0
+log_file -a $rundir/tty.raw
+set stty_init "rows 50 cols 160"
+spawn claude --plugin-dir $plugin --plugin-dir $obs --setting-sources project --strict-mcp-config \
+  --model claude-haiku-5-5 --permission-mode auto --debug-file $rundir/debug.log
+set t0 [clock seconds]
+nota "inicio modo=$modo"
+
+# diálogo de confiança: opcional (S8). Padrão "No, exit": seta para baixo e Enter. Outro diálogo ⇒ NÃO PROVADO, sem responder.
+set timeout 15
+expect {
+  -re {Enter.*confirm|trust this folder} { after 500; sends trust; send "\033\[B"; after 400; send "\r"; after 4000 }
+  -re {login|Log in|API key} { nota "LOGIN: nao respondo"; set f [open $rundir/exp.status w]; puts $f NAO_PROVADO_LOGIN; close $f; catch {close}; catch {wait}; exit 3 }
+  timeout {}
+  eof { nota "EOF cedo"; exit 1 }
+}
+after 3000
+# Pré-voo: dependência não satisfeita ⇒ NÃO PROVADO, sem gastar o prompt.
+if {![catch {exec grep -c -E "dependency-unsatisfied|is not installed" $rundir/debug.log}]} {
+  nota "PLUGIN NAO CARREGOU"
+  set f [open $rundir/exp.status w]; puts $f NAO_PROVADO_PLUGIN; close $f
+  send "\003"; after 500; send "\003"; catch {close}; catch {wait}; exit 3
+}
+sends prompt
+send -- $prompt
+after 1500
+send "\r"
+
+set status RODANDO
+set ultimo ""; set tmudou [clock seconds]; set lastpoll 0; set tfase4 0
+set concluiu 0; set tconcl 0
+set tliberar 0; set liberou 0; set tlib2 0; set tparar 0; set tur ""; set tturno 0
+set pausou 0; set tpausa 0; set retomou 0; set tretomada 0; set pausou2 0; set fase 1
+set timeout 2
+while {1} {
+  expect {
+    -re {Do you want to|Allow this|Esc to cancel} { nota "PERGUNTA-DE-PERMISSAO na tela" }
+    -re {.+} {}
+    timeout {}
+    eof { nota "EOF"; set status EOF; break }
+  }
+  set agora [clock seconds]
+  if {$agora - $t0 > $teto} { set status TETO_GLOBAL; break }
+  if {$agora - $lastpoll < 5} { continue }
+  set lastpoll $agora
+  set s [estado]
+  if {$s eq ""} { continue }
+  set marca "[campo $s eventos]/[campo $s obs]"
+  if {$marca ne $ultimo} { set ultimo $marca; set tmudou $agora }
+  if {[campo $s running] eq "0" && $agora - $tmudou > $TRAVA_S} { set status TRAVADO; break }
+  if {$modo eq "liberar"} {
+    # PAROU só vale depois de liberar. Depois de T1 digitado, 90 s para o evento cair e o modelo seguir.
+    # gatilho (r8b): `acao=parar` estável por 15 s, turno do orquestrador encerrado (turn.complete no observador) e running 0. NÃO exige `parou=true`:
+    # em B o percent é 5 < X, o mod fica OCIOSO e nenhum `loop.parar` de teto é gravado (sombra-t13g, medido em run-b).
+    if {[campo $s acao] eq "parar"} { if {$tparar == 0} { set tparar $agora } } else { set tparar 0 }
+    # o turno encerrado precisa ter 10 s: o mod ainda grava `custo.medicao`/`loop.parar` ~0,3 s depois do `turn.complete` (run-b2b, 1ª tentativa: T9 digitado no mesmo segundo, 2 eventos "entre T9 e T1")
+    if {[campo $s turnos] ne [set tur_ant $tur]} { set tur [campo $s turnos]; set tturno $agora }
+    if {$liberou == 0 && $tparar > 0 && $agora - $tparar >= 15 && [campo $s running] eq "0" && $tur ne "" && $tur > 0 && $agora - $tturno >= 10} {
+      listar $rundir/tmp-T1-antes.txt
+      sends liberar-t9; send -- "/gabarito-mestre:liberar T9"; after 1200; send "\r"; set tliberar $agora; set liberou 1; nota "liberar T9 digitado"
+    } elseif {$liberou == 1 && $agora - $tliberar > 20} {
+      # o TUI devolve ao campo o texto do comando que o hook bloqueou (run-b2b: "…liberar T9/gabarito-mestre:liberar T1"): o dono apaga a linha (Ctrl-U) antes de digitar o 2º; não é resposta, fica em exp.log
+      nota "Ctrl-U: limpa o campo depois do T9 recusado"; send "\025"; after 800
+      sends liberar-t1; send -- "/gabarito-mestre:liberar T1"; after 1200; send "\r"; set tlib2 $agora; set liberou 2; nota "liberar T1 digitado"
+    } elseif {$liberou == 2 && $agora - $tlib2 > 12 && ![file exists $rundir/tmp-T1-depois.txt]} {
+      listar $rundir/tmp-T1-depois.txt
+    } elseif {$liberou == 2 && $agora - $tlib2 > 90 && [campo $s parou] eq "true"} { set status PAROU; break }
+  } elseif {[campo $s parou] eq "true"} { set status PAROU; break }
+  if {$modo ne "pausa"} {
+    if {$modo eq "liberar" && $liberou < 2} { continue }
+    if {[campo $s acao] eq "concluir"} { if {!$concluiu} { set concluiu 1; set tconcl $agora; nota "concluir visto" } }
+    if {$concluiu && $agora - $tconcl > 15} { set status CONCLUIDO; break }
+  } else {
+    # fase 1: espera um Agent em running e toca PAUSAR por fora; fase 2: espera o agente acabar + 90 s; fase 3: /gabarito retomar; fase 4: espera 150 s; fase 5: /gabarito pausar com turno em voo
+    if {$fase == 1 && [campo $s running] ne "0" && [campo $s running] ne ""} {
+      exec touch $repo/.harness/PAUSAR; set tpausa $agora; set fase 2; nota "PAUSAR tocado com running=[campo $s running]"
+    } elseif {$fase == 2 && [campo $s running] eq "0" && $agora - $tpausa > 90} {
+      sends retomar; send -- "/gabarito retomar"; after 1200; send "\r"; set tretomada $agora; set fase 3; nota "retomar digitado"
+    } elseif {$fase == 3 && $agora - $tretomada > 150} {
+      set fase 4
+      if {[campo $s running] ne "0" && [campo $s running] ne ""} { sends pausar; send -- "/gabarito pausar"; after 1200; send "\r"; set tpausa2 $agora; nota "pausar digitado em voo" } else { nota "pausar em voo: nenhum agente vivo, nao digitado" }
+      set tfase4 $agora
+    } elseif {$fase == 4 && $agora - $tfase4 > 45} { set status PAUSA_COMPLETA; break }
+    if {$fase == 2 && $agora - $tpausa > 600} { set status TETO_PAUSA; break }
+  }
+}
+nota "fim status=$status t=[expr {[clock seconds]-$t0}]"
+set f [open $rundir/exp.status w]; puts $f $status; close $f
+sends exit
+send "/exit\r"
+after 2500
+send "\r"
+set timeout 15
+expect { eof {} timeout { nota "nao saiu; Ctrl-C"; send "\003"; after 500; send "\003" } }
+catch {close}; catch {wait}
+puts "exp done $status"

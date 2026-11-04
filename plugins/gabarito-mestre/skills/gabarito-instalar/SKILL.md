@@ -284,8 +284,9 @@ Mostre os aliases conhecidos (`fable`, `opus`, `sonnet`, `haiku` — M2) e pergu
 
 1. Calibre:
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/capacidade.mjs" --root . --calibrar --json
+   node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/capacidade.mjs" --root . --sugerir --json
    ```
+   Não use `--calibrar` aqui: é a escada medida, que roda a suíte do repo e grava `.harness/capacidade.json`.
    A saída traz `simultaneos`, `teto`, `limites` e `calibradoEm`. Fórmula (contrato): `simultaneos = clamp(floor(cores/4), 1, 3)`; `teto = clamp(floor(cores/2), 2, 8)`. Para mostrar cores, load, memória disponível e disco, rode também `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/capacidade.mjs" --root . --json` (objeto `medidas`: `cores`, `load1`, `memDisponivelMB`, `discoLivreGB`) e mostre-os junto dos valores sugeridos.
 2. Pergunte `simultaneos` e `teto` com os medidos como default (`teto ≥ simultaneos ≥ 1`).
 3. Proponha `arquivosDeContenda` a partir do que existe no repo — verifique com `ls`/`Glob`: lockfile detectado (`package-lock.json` · `pnpm-lock.yaml` · `yarn.lock` · `bun.lockb` · `Cargo.lock` · `poetry.lock` · `go.sum`), `prisma/` se existir, `src/index.ts` se existir, e **sempre** `docs/fluxo/`. Usuário confirma a lista.

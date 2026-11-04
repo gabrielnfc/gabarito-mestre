@@ -2,7 +2,7 @@
 /**
  * ORQ-3 — cartão de sessão.
  *
- * Camada 1 de contexto: o que o orquestrador precisa saber ao abrir a sessão, em ≤ 40 linhas de cartão (no hook, mais o instantâneo do diário, ≤ 6.000 caracteres) —
+ * Camada 1 de contexto: o que o orquestrador precisa saber ao abrir a sessão, em ≤ 40 linhas de cartão (no hook, mais o instantâneo do diário, ≤ LIMITE_CONTEXTO caracteres = 2k tokens) —
  * modelo resolvido e validade, branch/PBI/Epic/Iniciativa (cache offline ORQ-6 ou arquivo),
  * PBIs em voo, worktrees vivos, slots medidos (PAR-1), nível do doctor em cache (DOC-2, 24 h),
  * PBIs envelhecidos (FLX-8), ponteiro LER PRIMEIRO do ledger, versão instalada × plugin e
@@ -28,7 +28,13 @@ import { diasEntre } from '../lib/datas.mjs';
 import { medir, calcularSlots } from './capacidade.mjs';
 
 export const MAX_LINHAS = 40;
-export const LIMITE_CONTEXTO = 6000;
+/**
+ * Teto do que o hook injeta: cartão + instantâneo SOMADOS. Meta da visão (R28, item 12): contexto fixo ≤ 2.000 tokens
+ * por sessão, com instantâneo de 3.200 caracteres (~1,5k tokens). Razão medida no S7: 6.000 caracteres = 2.772 tokens.
+ * 4329 = floor(2000 × 6000 / 2772); antes era 6.000 (≈ 2.772 tokens, 39 % acima da meta). Sobram 1.129 para o cartão.
+ * O teste `T11 · teto de contexto` recalcula a conta a partir dos números do S7.
+ */
+export const LIMITE_CONTEXTO = 4329;
 export const LIMITE_MENSAGEM_LINHAS = 3;
 export const LIMITE_MENSAGEM_LINHA = 160;
 export const LINHA_REDIGIDA = '[linha redigida: possível segredo]';
@@ -353,6 +359,43 @@ export const cortar = (texto, max) => {
   return /[\uD800-\uDBFF]$/.test(t) ? t.slice(0, -1) : t;
 };
 
+const MARCA_OMITIDAS = (n) => `... ${n} linha(s) do cartão omitida(s)`;
+/** Bloqueio ou ação pendente: o corte só chega nestas depois de esgotar as informativas. */
+const PENDENTE = /VENCIDO|\(b\) não|inválido|indisponível|sem onboarding|gabarito-instalar|\brode\b|^Avisos:|LER PRIMEIRO|BLOQUEAD|^Envelhecidos: (?!—)/;
+
+/**
+ * Cabe o cartão em `max` caracteres perdendo LINHAS INTEIRAS, nunca um pedaço de linha. Ordem de sacrifício:
+ * linha que sozinha nunca caberia; depois as informativas, do fim para o início; depois as de bloqueio ou ação pendente
+ * (mesma ordem); a 1ª linha é a última a sair. Quando algo sai, uma linha final diz quantas. Só se nem isso couber
+ * (`max` minúsculo) corta caracteres — o limite vale mais que a linha.
+ */
+export function cortarCartao(linhas, max) {
+  const junta = (ls, omitidas) => (omitidas ? [...ls, MARCA_OMITIDAS(omitidas)] : ls).join('\n');
+  if (junta(linhas, 0).length <= max) return junta(linhas, 0);
+  const manter = linhas.map(() => true);
+  let omitidas = 0;
+  const atual = () => junta(linhas.filter((_, i) => manter[i]), omitidas);
+  const solta = (i) => {
+    manter[i] = false;
+    omitidas++;
+  };
+  const folga = MARCA_OMITIDAS(linhas.length).length + 1;
+  linhas.forEach((l, i) => {
+    if (l.length + folga > max) solta(i);
+  });
+  const idx = linhas.map((_, i) => i).filter((i) => manter[i]);
+  const ordem = [
+    ...idx.filter((i) => i > 0 && !PENDENTE.test(linhas[i])).reverse(),
+    ...idx.filter((i) => i > 0 && PENDENTE.test(linhas[i])).reverse(),
+    ...idx.filter((i) => i === 0),
+  ];
+  for (const i of ordem) {
+    if (atual().length <= max) break;
+    solta(i);
+  }
+  return cortar(atual(), max);
+}
+
 /** Último recurso sem `dist/diario.js` (canário indisponível): padrões de segredo comuns, para a redação nunca desligar (F5). */
 const SEGREDO_FALLBACK = /ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|\bAKIA[A-Z0-9]{12,}|\bASIA[A-Z0-9]{12,}|-----BEGIN [A-Z ]*PRIVATE|\bsk-[A-Za-z0-9]{16,}|xox[bp]-[A-Za-z0-9-]{10,}|:\/\/[^/\s:]+:[^@\s]+@|Bearer\s+[A-Za-z0-9._-]{16,}|eyJ[\w-]{20,}\.eyJ[\w-]{20,}/;
 const recusaFallback = (linha) => (SEGREDO_FALLBACK.test(linha) ? 'segredo' : null);
@@ -523,7 +566,7 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
     }
   }
 
-  let texto = linhas.map((l) => semSegredo(limparLinha(l), recusa)).join('\n');
+  let texto = cortarCartao(linhas.map((l) => semSegredo(limparLinha(l), recusa)), LIMITE_CONTEXTO);
   if (instantaneo) {
     const sobra = LIMITE_CONTEXTO - texto.length - 1;
     const cabe = sobra > 0 ? ajustarAoLimite(instantaneo, sobra) : '';

@@ -12,9 +12,9 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync } from 'node:fs';
+import { accessSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, statSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { precisaContexto } from './classificar-alvo.ts';
 import { decidir } from './decidir.ts';
@@ -128,8 +128,10 @@ function linhaDe(texto: string | null): string | null {
   return t === '' ? null : t.split('\n')[0];
 }
 
-function montarContexto(entrada: EntradaHook, raiz: string | null, cwd: string, pluginRoot: string | null): Contexto {
-  const nulos: Contexto = { branchAtual: null, refLinkado: null, remoteUrl: null, raiz, pluginRoot };
+function montarContexto(entrada: EntradaHook, raiz: string | null, cwd: string, pluginRoot: string | null, raizes: string[], ancora: string | null): Contexto {
+  // `raizes`: as raízes da pausa, para o anel (`aneis.ts`); `raiz` segue sendo a do cwd (Q14).
+  const anel = raizesDeAnel(raizes, ancora);
+  const nulos: Contexto & { raizes: string[]; raizesDeAnel: string[]; raizesIsentas: string[]; ancora: string | null } = { branchAtual: null, refLinkado: null, remoteUrl: null, raiz, pluginRoot, raizes, raizesDeAnel: anel.todas, raizesIsentas: anel.isentas, ancora };
   if (!precisaContexto(entrada)) return nulos;
   const base = raiz ?? cwd;
   let refLinkado: string | null = null;
@@ -284,6 +286,127 @@ function pedirPorExcecao(e: unknown): void {
   registrarExcecao(entrada, erro);
 }
 
+
+// ---------------------------------------------------------------------------------------------------------------
+// kill switch (GM-10, REQ-POU-2)
+
+const MSG_PAUSA = 'pausado: /gabarito retomar';
+
+/** Erro de leitura ao descobrir o checkout principal: não é "sem principal", é "não sei" (a pausa vale). */
+const ILEGIVEL = Symbol('ponteiro-ilegivel');
+
+/** Raiz do checkout principal quando `raiz` é worktree (`.git` é arquivo): `commondir` por fs, sem spawn. `null` = não é worktree. */
+export function raizPrincipal(raiz: string): string | null | typeof ILEGIVEL {
+  try {
+    const ponteiro = join(raiz, '.git');
+    if (!lstatSync(ponteiro).isFile()) return null;
+    const m = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(ponteiro, 'utf8'));
+    if (m === null) return null;
+    const gitdir = isAbsolute(m[1]) ? m[1] : resolve(raiz, m[1]);
+    const comum = resolve(gitdir, readFileSync(join(gitdir, 'commondir'), 'utf8').trim());
+    return basename(comum) === '.git' ? dirname(comum) : null;
+  } catch (e) {
+    // Só ENOENT é "não é worktree" (sem `.git`, submódulo sem `commondir`); qualquer outro erro de leitura não libera.
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? null : ILEGIVEL;
+  }
+}
+
+/** Existência vale (arquivo, diretório, symlink quebrado). Só `ENOENT` é "ausente": outro erro de stat conta como pausa. */
+export function existePausar(raiz: string): boolean {
+  try {
+    lstatSync(join(raiz, '.harness', 'PAUSAR'));
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code !== 'ENOENT';
+  }
+}
+
+/**
+ * As raízes onde a pausa vale: a da sessão, a do cwd e o checkout principal de cada uma (worktree de task obedece o principal).
+ * A mesma lista decide a leitura (`pausado`) e a proteção (anel de `.harness/PAUSAR`, `.harness` e a própria raiz).
+ * `ilegivel`: o ponteiro de uma worktree não pôde ser lido; o principal é desconhecido e a pausa vale.
+ */
+export function raizesDePausa(raizSessao: string | null, raizCwd: string | null): { raizes: string[]; ilegivel: boolean } {
+  const raizes: string[] = [];
+  let ilegivel = false;
+  for (const r of [raizSessao, raizCwd]) {
+    if (r === null) continue;
+    const p = raizPrincipal(r);
+    if (p === ILEGIVEL) ilegivel = true;
+    for (const c of [r, p]) if (typeof c === 'string' && !raizes.includes(c)) raizes.push(c);
+  }
+  return { raizes, ilegivel };
+}
+
+/**
+ * Raízes do anel (REQ-POU-2). Toda raiz só ACRESCENTA anel: `aneis.ts` testa o caminho contra todas as que o contêm.
+ * `todas`: as da pausa mais as worktrees que o git registra em cada uma. `isentas`: só o que tira `.harness/worktrees/<n>` do anel
+ * do principal: registro lido de `<ancora>/.git/worktrees` (área do anel), ponteiro em `.git` arquivo, filho direto, caixa exata.
+ * A âncora vem de CLAUDE_PROJECT_DIR, nunca do cwd. Só fs, sem spawn. Qualquer falha de leitura: não entra (nega).
+ */
+export function raizesDeAnel(raizes: string[], ancora: string | null): { todas: string[]; isentas: string[] } {
+  const todas = [...raizes];
+  const isentas: string[] = [];
+  const fontes = ancora !== null && !raizes.includes(ancora) ? [...raizes, ancora] : raizes;
+  for (const r of fontes) {
+    let nomes: string[];
+    try { nomes = readdirSync(join(r, '.git', 'worktrees')); } catch { continue; }
+    for (const n of nomes) {
+      try {
+        const dir = join(r, '.git', 'worktrees', n);
+        const ptr = resolve(dir, readFileSync(join(dir, 'gitdir'), 'utf8').trim());
+        if (basename(ptr) !== '.git' || !lstatSync(ptr).isFile()) continue;
+        const wt = dirname(ptr);
+        if (!todas.includes(wt)) todas.push(wt);
+        if (r === ancora && dirname(wt) === `${ancora}/.harness/worktrees`) isentas.push(wt);
+      } catch { /* ponteiro ilegível: fica no anel do principal */ }
+    }
+  }
+  return { todas, isentas };
+}
+
+/** O checkout principal da sessão, só por CLAUDE_PROJECT_DIR. Sem a variável, ou com ponteiro ilegível: null, nada é isento. */
+export function ancoraDaSessao(projeto: unknown): string | null {
+  const s = raizPorFs(projeto);
+  if (s === null) return null;
+  const p = raizPrincipal(s);
+  return p === ILEGIVEL ? null : (p as string | null) ?? s;
+}
+
+const pausado = (p: { raizes: string[]; ilegivel: boolean }): boolean => p.ilegivel || p.raizes.some(existePausar);
+
+/** A única ferramenta que o subagent ainda usa sob pausa: devolver o relatório (nome exato). */
+const HANDBACK = 'SubagentHandback';
+
+/** Sob pausa: `Agent`/`Task` a todos; qualquer ferramenta a subagent, salvo a de devolver o relatório. O orquestrador segue a guarda normal nas outras. */
+const negaPorPausa = (entrada: EntradaHook): boolean =>
+  entrada.tool_name === 'Agent' || entrada.tool_name === 'Task' || (ehSubagent(entrada) && entrada.tool_name !== HANDBACK);
+
+/** Sem pausa, o matcher `.*` entrega toda ferramenta; só estas têm classificação. O resto sai em silêncio, sem classificar. */
+const CLASSIFICAVEIS = new Set(['Bash', 'Edit', 'Write', 'Read', 'Grep', 'Agent', 'Task']);
+const classificavel = (nome: string): boolean => CLASSIFICAVEIS.has(nome) || nome.startsWith('mcp__');
+
+/** `loop.pausa {negado}`: só se o diário estiver são; qualquer falha é silenciosa (a decisão já saiu). */
+function registrarPausa(entrada: EntradaHook, raiz: string | null): void {
+  try {
+    const sessao = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;
+    if (raiz === null || sessao === null) return;
+    const guarda = lerGuarda(raiz);
+    if (!guarda.onboarding) return;
+    const dir = dirEntrega(raiz, idDaEntrega(linhaDe(git(raiz, ['symbolic-ref', '--short', 'HEAD'])), guarda.idPadrao));
+    if (!diarioGravavel(dir)) return;
+    const autor = linhaDe(git(raiz, ['config', 'user.email'])) ?? 'desconhecido';
+    append(dir, sessao, {
+      ts: new Date().toISOString(),
+      autor,
+      sessao,
+      agente: ehSubagent(entrada) ? `subagent:${entrada.agent_id}` : 'orquestrador',
+      tipo: 'loop.pausa',
+      dados: { negado: entrada.tool_name.slice(0, 128) },
+    });
+  } catch { /* diário doente: a decisão já saiu */ }
+}
+
 function principal(): void {
   let bruto = '';
   try {
@@ -311,9 +434,21 @@ function principal(): void {
   const raizSessao = raizPorFs(process.env.CLAUDE_PROJECT_DIR) ?? raizCwd;
   if (raizSessao === null) process.stderr.write('gabarito-mestre: cwd fora de um repositório git; só os anéis de segredo e integridade valem\n');
 
+  // Kill switch: antes de classificar; só `lstat`, sem config, remoto nem diário (o deny não depende deles).
+  const pausa = raizesDePausa(raizSessao, raizCwd);
+  if (negaPorPausa(entrada) && pausado(pausa)) {
+    emitir(Buffer.from(`${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: MSG_PAUSA } })}\n`));
+    registrarPausa(entrada, raizSessao);
+    return;
+  }
+  if (!classificavel(entrada.tool_name)) {
+    jaEscreveu = true; // decisão final: silêncio
+    return;
+  }
+
   const guarda = raizSessao === null ? null : lerGuarda(raizSessao);
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-  const contexto = montarContexto(entrada, raizCwd ?? raizSessao, cwd, pluginRoot);
+  const contexto = montarContexto(entrada, raizCwd ?? raizSessao, cwd, pluginRoot, pausa.raizes, ancoraDaSessao(process.env.CLAUDE_PROJECT_DIR));
   const r = decidir(entrada, guarda?.config ?? null, contexto);
 
   const sessao = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;

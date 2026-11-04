@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
+import { estadoDe, ordenar } from './loop.ts';
+import type { EstadoTask } from './loop.ts';
 import type { Evento } from './tipos.ts';
 
 /**
@@ -29,7 +31,8 @@ const LOCK_MAX_IDADE_MS = 2000;
 const LOCK_ESPERA_MS = 10;
 // Abaixo do `timeout: 5` do hook e acima dos 2 s da quebra de lock órfão.
 const LOCK_PRAZO_MS = 3000;
-const INSTANTANEO_MAX = 6000;
+// F3: ≈ 1,5k tokens. O pouso e o `SessionStart:compact` reinjetam isto; o cartão tem seu próprio limite.
+const INSTANTANEO_MAX = 3200;
 const LINHA_MAX = 16384;
 const CAMPO_MAX = 256;
 const ALVO_MAX = 300;
@@ -206,32 +209,152 @@ export function ler(dir: string): Evento[] {
   return out;
 }
 
+export type LeituraEstrita = { ok: true; eventos: Evento[] } | { ok: false; motivo: string };
+
+/**
+ * Leitura SEM tolerância, para decisão irreversível (pouso). Ao contrário de `ler`, nada é descartado em silêncio:
+ * pasta ou arquivo ilegível, linha que não é um objeto JSON, `seq` fora de 1, 2, 3… no arquivo da sessão e
+ * `hash_anterior` que não confere com a linha anterior viram `{ ok: false, motivo }`.
+ */
+export function lerEstrito(dir: string): LeituraEstrita {
+  let nomes: string[];
+  try {
+    nomes = readdirSync(dir).filter((n) => /^events\..+\.jsonl$/.test(n));
+  } catch {
+    return { ok: false, motivo: 'pasta do diário ilegível' };
+  }
+  const out: Evento[] = [];
+  for (const nome of nomes.sort()) {
+    let bruto: string;
+    try {
+      bruto = readFileSync(join(dir, nome), 'utf8');
+    } catch {
+      return { ok: false, motivo: `arquivo ilegível: ${nome}` };
+    }
+    const linhas = bruto.split('\n');
+    if (linhas[linhas.length - 1] === '') linhas.pop();
+    for (let i = 0; i < linhas.length; i++) {
+      let o: unknown;
+      try {
+        o = JSON.parse(linhas[i]);
+      } catch {
+        return { ok: false, motivo: `linha ${i + 1} ilegível em ${nome}` };
+      }
+      if (o === null || typeof o !== 'object' || Array.isArray(o)) return { ok: false, motivo: `linha ${i + 1} não é evento em ${nome}` };
+      const e = o as Record<string, unknown>;
+      if (e.seq !== i + 1) return { ok: false, motivo: `lacuna de seq na linha ${i + 1} de ${nome}` };
+      if (e.hash_anterior !== (i === 0 ? null : sha(linhas[i - 1]))) return { ok: false, motivo: `hash_anterior não confere na linha ${i + 1} de ${nome}` };
+      out.push(o as Evento);
+    }
+  }
+  return { ok: true, eventos: out };
+}
+
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-export function projetar(eventos: Evento[]): { instantaneo: string; resumo: Record<string, number> } {
+/** Corta em `n` unidades e não deixa meio par substituto no fim. */
+function corta(s: string, n: number): string {
+  const c = s.slice(0, n);
+  const u = c.charCodeAt(c.length - 1);
+  return c.length === n && u >= 0xd800 && u <= 0xdbff ? c.slice(0, -1) : c;
+}
+
+const ehObjeto = (x: unknown): x is Record<string, unknown> => x !== null && typeof x === 'object' && !Array.isArray(x);
+
+/** Task com trabalho em curso: o cronômetro anda enquanto o estado da T2 está aqui. */
+const EM_TRABALHO: ReadonlySet<EstadoTask> = new Set<EstadoTask>(['implementando', 'concluida', 'em_revisao', 'corrigindo']);
+const TIPOS_DE_TASK: ReadonlySet<string> = new Set(['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta']);
+
+/**
+ * Duração de UMA task aprovada (REQ-OBS-1), seguindo a transição da T2 (`estadoDe`) e nunca lendo
+ * `tipo`/`papel`/`origem` por conta própria. Soma dos intervalos em trabalho que terminaram em veredito;
+ * tentativa abandonada por retomada não entra; voltar a `pendente` recomeça do zero. `null`: task não
+ * aprovada, ou sequência que a T2 rejeita (a projeção não inventa número).
+ */
+function duracaoDaTask(fila: Evento[]): number | null {
+  // `ordenar` da T2 só aceita cada sessão em ordem de `seq`; a ordem de entrada daqui não é garantida.
+  const porSeq = [...fila].sort((a, b) => cmp(String(a.sessao), String(b.sessao)) || Number(a.seq) - Number(b.seq));
+  const ord = ordenar(porSeq);
+  if (!ord.ok) return null;
+  let aberta: number | undefined;
+  let acumulado: number | undefined;
+  let feita: number | null = null;
+  let antes: EstadoTask = 'pendente';
+  for (let i = 0; i < ord.eventos.length; i++) {
+    const r = estadoDe(ord.eventos.slice(0, i + 1));
+    if ('invalido' in r) return null;
+    const e = ord.eventos[i];
+    const t = Date.parse(e.ts); // `ordenar` já barrou ts inválido
+    const depois = r.estado;
+    if (depois === 'pendente' && antes !== 'pendente') {
+      aberta = undefined;
+      acumulado = undefined;
+    } else if (!EM_TRABALHO.has(antes) && EM_TRABALHO.has(depois)) {
+      aberta = t;
+    } else if (EM_TRABALHO.has(antes) && !EM_TRABALHO.has(depois)) {
+      const ini = aberta;
+      aberta = undefined;
+      // saída por reabertura = tentativa abandonada, não soma; saída por veredito soma o intervalo (se for coerente)
+      if (e.tipo === 'review.veredito') {
+        if (ini !== undefined && t >= ini) acumulado = (acumulado ?? 0) + (t - ini);
+        if (depois === 'aprovada' && acumulado !== undefined) feita = acumulado / 1000;
+      }
+    }
+    antes = depois;
+  }
+  return feita;
+}
+
+/** Duração por task aprovada: agrupa por task e delega a cada uma o `duracaoDaTask`. */
+function duracoes(eventos: Evento[]): number[] {
+  const porTask = new Map<string, Evento[]>();
+  for (const e of eventos) {
+    if (!TIPOS_DE_TASK.has(e.tipo) || !ehObjeto(e.dados) || typeof e.dados.task !== 'string') continue;
+    const fila = porTask.get(e.dados.task) ?? [];
+    fila.push(e);
+    porTask.set(e.dados.task, fila);
+  }
+  const feitas: number[] = [];
+  for (const fila of porTask.values()) {
+    const d = duracaoDaTask(fila);
+    if (d !== null) feitas.push(d);
+  }
+  return feitas;
+}
+
+function mediana(xs: number[]): number {
+  const o = [...xs].sort((a, b) => a - b);
+  const m = o.length >> 1;
+  return o.length % 2 === 1 ? o[m] : (o[m - 1] + o[m]) / 2;
+}
+
+export function projetar(eventos: Evento[]): { instantaneo: string; resumo: Record<string, number>; eta: { medianaS: number; n: number } | null } {
   const validos = eventos.filter((e) => e !== null && typeof e === 'object');
   const resumo: Record<string, number> = {};
   for (const e of validos) resumo[e.tipo] = (resumo[e.tipo] ?? 0) + 1;
 
   // mais recentes primeiro, por (ts, sessao)
   const ordenados = [...validos].sort((a, b) => cmp(String(b.ts), String(a.ts)) || cmp(String(b.sessao), String(a.sessao)));
+  const medidas = duracoes(validos);
+  const eta = medidas.length >= 3 ? { medianaS: mediana(medidas), n: medidas.length } : null;
+  const linhaEta = eta === null ? 'ETA: sem dados' : `ETA: ${eta.n} tasks, mediana ${Math.round(eta.medianaS * 10) / 10} s`;
   const cabecalho = `Diário: ${validos.length} evento(s)`;
   const rodape = (omitidos: number): string => `... ${omitidos} anterior(es) omitido(s)`;
 
   const linhas: string[] = [];
-  // orçamento: cabeçalho + rodapé do pior caso + quebras; cada evento é uma linha inteira
-  let usado = cabecalho.length + rodape(validos.length).length + 2;
+  // orçamento: cabeçalho + ETA + rodapé do pior caso + quebras, reservados antes dos eventos
+  let usado = cabecalho.length + linhaEta.length + rodape(validos.length).length + 3;
   for (const e of ordenados) {
-    const alvo = String(e.dados?.alvo ?? '-').replace(/[\r\n]+/g, ' ').slice(0, ALVO_MAX);
-    const linha = `${String(e.ts).slice(0, 40)} ${String(e.tipo).slice(0, 64)} ${alvo}`;
+    const alvo = corta(String(ehObjeto(e.dados) ? (e.dados.alvo ?? '-') : '-').replace(/[\r\n]+/g, ' '), ALVO_MAX);
+    const linha = `${corta(String(e.ts), 40)} ${corta(String(e.tipo), 64)} ${alvo}`;
     if (usado + linha.length + 1 > INSTANTANEO_MAX) break;
     linhas.push(linha);
     usado += linha.length + 1;
   }
   const omitidos = validos.length - linhas.length;
-  const partes = [cabecalho, ...linhas];
+  const partes = [cabecalho, linhaEta, ...linhas];
   if (omitidos > 0) partes.push(rodape(omitidos));
-  return { instantaneo: partes.join('\n'), resumo };
+  return { instantaneo: partes.join('\n'), resumo, eta };
 }
 
 export function dirEntrega(raiz: string, pbi: string | null): string {

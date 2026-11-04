@@ -110,8 +110,8 @@ for f in $(grep -oE '[A-Za-z0-9_-]+\.(mjs|sh)' "$A" | sort -u); do
 done
 [ "$b1b_falhou" -eq 0 ] && ok "todo *.mjs/*.sh citado no AGENTS.md existe em gates/scripts/ ou hooks/"
 
-# ── B2 (handoff §B.2) — DISPATCH idêntico, hatches usados, ≤ 6.000 caracteres == LIMITE_CONTEXTO, inegociável ──
-echo "── B2: DISPATCH idêntico, hatches em hooks/, ≤ 6.000 caracteres == LIMITE_CONTEXTO, inegociável cobre R1–R21"
+# ── B2 (handoff §B.2) — DISPATCH idêntico, hatches usados, ≤ 4.329 caracteres == LIMITE_CONTEXTO, inegociável ──
+echo "── B2: DISPATCH idêntico, hatches em hooks/, ≤ 4.329 caracteres == LIMITE_CONTEXTO, inegociável cobre R1–R21"
 DISPATCH_FMT='DISPATCH Task <N> slots=<slots> worktree wt/<PBI>-<n>'
 # Achado MAJOR #1 (review T25b, task-25b-review.md): `grep -qF` só prova PRESENÇA em algum lugar do
 # arquivo — referencia.md cita a linha DISPATCH 3x (§2.3 l.62, §3.1 l.92, "Antes de despachar" l.150);
@@ -133,7 +133,7 @@ check "GABARITO_ALLOW = 0 em plugins/** (REQ-GRD-5, Q9)" '[ -z "$HATCH_ACHADOS" 
 GUARDS_CITADOS=$(grep -rIlE 'guard-(destructive|production|versioning)' "$P" 2>/dev/null | grep -v "/scripts/test/texto.test.sh$" || true)
 check "nenhum guard bash antigo citado em plugins/** (REQ-GRD-3, REQ-INF-1)" '[ -z "$GUARDS_CITADOS" ]' "menção residual em: $(printf '%s' "$GUARDS_CITADOS" | tr '\n' ' ')"
 MAXL=$(grep -oE "LIMITE_CONTEXTO = [0-9]+" "$CS" | grep -oE '[0-9]+')
-check "'≤ 6.000 caracteres' do AGENTS.md bate com LIMITE_CONTEXTO=$MAXL de cartao-sessao.mjs" "grep -q '≤ 6.000 caracteres' '$A' && [ '$MAXL' = 6000 ]" "LIMITE_CONTEXTO ≠ 6000 ou AGENTS.md não cita ≤ 6.000 caracteres"
+check "'≤ 4.329 caracteres' do AGENTS.md bate com LIMITE_CONTEXTO=$MAXL de cartao-sessao.mjs" "grep -q '≤ 4.329 caracteres' '$A' && [ '$MAXL' = 4329 ]" "LIMITE_CONTEXTO ≠ 4329 ou AGENTS.md não cita ≤ 4.329 caracteres"
 check "'inegociável' cobre R1–R21" "grep -q 'inegociável (R1–R21' '$A'" "frase de cobertura ausente ou alcance diferente"
 
 # ── B3 (handoff §B.3) — adocao.md tag-semver opcional; prompts.md passo 9 ─────────────
@@ -223,7 +223,7 @@ check "SKILL.md conformidade: fio condutor · contenda (R21) · Epic: PBIs" "gre
 echo "── pacote — versões, sem hooks em plugin.json, sem 77 testes, nomes da 1.0.1"
 v1=$(node -p "require('$P/.claude-plugin/plugin.json').version" 2>/dev/null)
 v3=$(node -p "require('$P/gates/package.json').version" 2>/dev/null)
-check "version plugin == gates == 2.0.0-alpha.1 (achei '$v1' '$v3')" '[ "$v1" = "$v3" ] && [ "$v1" = "2.0.0-alpha.1" ]' "versões divergem ou ≠ 2.0.0-alpha.1"
+check "version plugin == gates == 2.0.0-alpha.2 (achei '$v1' '$v3')" '[ "$v1" = "$v3" ] && [ "$v1" = "2.0.0-alpha.2" ]' "versões divergem ou ≠ 2.0.0-alpha.2"
 # RULING F6-R7 (2): o grep do plano `grep -c '"hooks"'` é sempre verdadeiro — a keyword do array já
 # conta 1. A checagem correta ancora na FORMA DE CHAVE JSON: `"hooks"` seguido de `:` (com ou sem espaço).
 HOOKS_KEY=$(grep -c '"hooks"[[:space:]]*:' "$P/.claude-plugin/plugin.json")
@@ -277,6 +277,16 @@ check "skill gabarito-instalar não usa 'test -f …/.instalado.json' para detec
 check "skill gabarito-instalar não promete .instalado.json na tabela do que o instalador cria" '! grep -E "^\| .tools/gabarito-gates/. \+ .\.instalado\.json" "$SKILL_I" | grep -q .' "tabela da fase 1 promete o manifesto"
 check "README não promete .instalado.json entre o que o instalador cria (só diz que acabou)" '! grep -qE "\+ .\.instalado\.json" "'"$ROOT"'/README.md"' "README ainda promete o manifesto"
 check "skill gabarito-instalar não promete squash-titulo-pr no attest.json (template não o tem; chave morta)" '! grep -E "^\| .\.harness/attest\.json." "$SKILL_I" | grep -q "squash-titulo-pr"' "tabela promete atestado removido"
+
+# GM-10 T11 r2 (achado 2): o `--calibrar` da T11 é a escada medida (slots_max, rss, tmpdir, cpu_total, load_medido), não a fórmula por
+# núcleos. Quem espera `simultaneos`/`teto`/`limites`/`calibradoEm` chama `--sugerir`. Skill, adocao.md e README não misturam os dois.
+CAP="$P/gates/scripts/capacidade.mjs"
+MISTURA=$(grep -n -e '--calibrar' "$SKILL_I" "$P/reference/adocao.md" "$ROOT/README.md" | grep -E 'simultaneos|teto|calibradoEm|--json' | wc -l | tr -d ' ')
+check "skill, adocao.md e README não mandam --calibrar esperando simultaneos/teto/calibradoEm/--json (é --sugerir)" '[ "'"$MISTURA"'" -eq 0 ]' "$MISTURA linha(s) com --calibrar e campos da fórmula por núcleos"
+check "skill gabarito-instalar chama capacidade.mjs --sugerir --json na fase 4.3" 'grep -qE "capacidade\.mjs\" --root \. --sugerir --json" "$SKILL_I"' "fase 4.3 sem o comando novo"
+SUG_JSON=$(cd "$ROOT" && node "$CAP" --root "$ROOT" --sugerir --json 2>/dev/null)
+SUG_CHAVES=$(printf '%s' "$SUG_JSON" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const o=JSON.parse(s);process.stdout.write(["simultaneos","teto","limites","calibradoEm"].every(k=>k in o)?"ok":"falta")}catch{process.stdout.write("invalido")}})')
+check "texto da skill 4.3 (simultaneos, teto, limites, calibradoEm) confere com a saída real de --sugerir --json" '[ "'"$SUG_CHAVES"'" = ok ]' "saída real de --sugerir --json: $SUG_CHAVES"
 
 echo "── $falhas falha(s)"
 [ "$falhas" -eq 0 ]

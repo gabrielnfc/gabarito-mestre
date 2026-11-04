@@ -10,10 +10,11 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { MODULOS } from '../scripts/build.mjs';
 
 const GATES = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BUILD = join(GATES, 'scripts', 'build.mjs');
@@ -36,6 +37,11 @@ function projetoTemporario() {
   writeFileSync(join(raiz, 'src', 'aneis.ts'), 'export const a: number = 0;\n');
   writeFileSync(join(raiz, 'src', 'diario.ts'), 'export const h = (n: number): number => n + 1;\n');
   writeFileSync(join(raiz, 'src', 'guarda.ts'), "import './diario.ts';\nexport const i: number = 1;\n");
+  // módulos que o fixture não detalha ganham um corpo mínimo: o teste não fixa quantos MODULOS existem (A8)
+  for (const m of MODULOS) {
+    const arq = join(raiz, 'src', `${m}.ts`);
+    if (!existsSync(arq)) writeFileSync(arq, `export const ${m.replace(/\W/g, '_')}: number = 0;\n`);
+  }
   return raiz;
 }
 

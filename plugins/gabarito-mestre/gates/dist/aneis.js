@@ -444,7 +444,7 @@ export function segmentar(comando        , profundidade = 0)             {
 // ---------------------------------------------------------------------------------------------------------------
 // Caminhos
 
-function resolver(caminho        , contexto          , cwd                )                                       {
+function resolver(caminho        , contexto          , cwd                )                                   {
   let p = caminho.trim();
   p = p.replace(/\$\{?CLAUDE_PLUGIN_ROOT\}?/g, contexto.pluginRoot ?? '$CLAUDE_PLUGIN_ROOT');
   const base = cwd && cwd.startsWith('/') ? cwd : contexto.raiz && contexto.raiz.startsWith('/') ? contexto.raiz : null;
@@ -454,12 +454,37 @@ function resolver(caminho        , contexto          , cwd                )     
   let norm = posix.normalize(p).replace(/^\.\//, '');
   if (norm.length > 1) norm = norm.replace(/\/+$/, '');
   const raiz = contexto.raiz ? contexto.raiz.replace(/\/+$/, '') : null;
-  let rel                = null;
+  const rels           = [];
   if (norm.startsWith('/')) {
-    if (raiz && norm === raiz) rel = '';
-    else if (raiz && norm.startsWith(`${raiz}/`)) rel = norm.slice(raiz.length + 1);
-  } else if (!norm.startsWith('~') && !norm.startsWith('..') && !norm.startsWith('$')) rel = norm === '.' ? '' : norm;
-  return { norm, rel };
+    // REQ-POU-2: o caminho é medido contra TODA raiz que o contém, sem distinção de caixa; raiz nova só acrescenta anel.
+    // A única subtração: `rel` do principal da sessão não conta para o que está dentro de `.harness/worktrees/<n>` registrada, caixa exata.
+    const ancora = (contexto                                         ).ancora ?? null;
+    const isentas = ((contexto                                           ).raizesIsentas ?? []);
+    const isento = isentas.some((w) => norm.startsWith(`${w}/`));
+    const baixo = norm.toLowerCase();
+    const vistas = new Set        ();
+    for (const c of [raiz, ...raizesDeAnel(contexto)]) {
+      if (typeof c !== 'string' || c === '' || vistas.has(c)) continue;
+      vistas.add(c);
+      const cb = c.toLowerCase();
+      if (baixo !== cb && !baixo.startsWith(`${cb}/`)) continue;
+      if (isento && c === ancora) continue;
+      rels.push(baixo === cb ? '' : norm.slice(c.length + 1));
+    }
+  } else if (!norm.startsWith('~') && !norm.startsWith('..') && !norm.startsWith('$')) rels.push(norm === '.' ? '' : norm);
+  return { norm, rels };
+}
+
+/** As raízes do anel (sem barra final, caixa original), vindas de `guarda.ts` (`raizesDeAnel`); vazia sem contexto. */
+function raizesDeAnel(contexto          )           {
+  const r = (contexto                                          ).raizesDeAnel;
+  return Array.isArray(r) ? r.map((x) => x.replace(/\/+$/, '')) : [];
+}
+
+/** As raízes da pausa (minúsculas, sem barra final), vindas de `guarda.ts`; vazia fora de repo ou sem contexto. */
+function raizesDePausa(contexto          )           {
+  const r = (contexto                                    ).raizes;
+  return Array.isArray(r) ? r.map((x) => x.replace(/\/+$/, '').toLowerCase()) : [];
 }
 
 const AREAS_DIR = ['.harness', 'tools/gabarito-gates', '.github/workflows', '.git/refs/remotes'];
@@ -467,7 +492,7 @@ const ANCESTRAIS = ['tools', '.github', '.claude', '.git', '.git/refs'];
 
 export function anelDeCaminho(caminho        , contexto          , cwd                )              {
   if (caminho.trim() === '') return null;
-  const { norm, rel } = resolver(caminho, contexto, cwd);
+  const { norm, rels } = resolver(caminho, contexto, cwd);
   const segs = norm.split('/').filter((s) => s !== '' && s !== '.');
   const nome = segs.length ? segs[segs.length - 1] : '';
   const minusculo = nome.toLowerCase();
@@ -479,53 +504,99 @@ export function anelDeCaminho(caminho        , contexto          , cwd          
   for (let i = 0; i + 1 < segs.length; i++) if (segs[i] === '.config' && segs[i + 1] === 'gh') return 'segredo';
 
   // Integridade (só escrita; quem chama decide).
+  // Kill switch: qualquer caminho terminado em `.harness/PAUSAR`, de qualquer raiz (o do checkout principal visto da worktree).
+  // Sem distinção de caixa (APFS), como o resto dos anéis.
+  if (segs.length >= 2 && segs[segs.length - 2].toLowerCase() === '.harness' && minusculo === 'pausar') return 'integridade';
+  // O diretório `.harness` de cada raiz em que a pausa é lida (a lista de `guarda.ts`), não só o da raiz do cwd.
+  const baixo = norm.toLowerCase();
+  for (const r of raizesDePausa(contexto)) if (baixo === `${r}/.harness`) return 'integridade';
   if (contexto.pluginRoot) {
     const pr = contexto.pluginRoot.replace(/\/+$/, '');
     if (norm === pr || norm.startsWith(`${pr}/`)) return 'integridade';
   }
-  if (rel === null) return null;
-  // Sem distinção de caixa: o APFS padrão do macOS não distingue.
-  const r = rel.toLowerCase();
-  if (r === 'harness.config.json') return 'integridade';
-  if (r === '.git' || r.startsWith('.git/')) return 'integridade';
-  for (const d of AREAS_DIR) if (r === d || r.startsWith(`${d}/`)) return 'integridade';
-  if (/^\.claude\/settings[^/]*\.json$/.test(r)) return 'integridade';
+  for (const rel of rels) {
+    // Sem distinção de caixa: o APFS padrão do macOS não distingue.
+    const r = rel.toLowerCase();
+    if (r === 'harness.config.json') return 'integridade';
+    if (r === '.git' || r.startsWith('.git/')) return 'integridade';
+    for (const d of AREAS_DIR) if (r === d || r.startsWith(`${d}/`)) return 'integridade';
+    if (/^\.claude\/settings[^/]*\.json$/.test(r)) return 'integridade';
+  }
   return null;
+}
+
+/** `.harness/PAUSAR`, `.harness` ou a raiz de uma raiz de pausa, em qualquer grafia de caixa (alvo de `git rm|mv`). */
+function alvoDePausa(caminho        , contexto          , cwd                )          {
+  if (caminho.trim() === '') return false;
+  const { norm } = resolver(caminho, contexto, cwd);
+  const segs = norm.toLowerCase().split('/').filter((x) => x !== '' && x !== '.');
+  const ult = segs[segs.length - 1];
+  if (ult === '.harness' || (ult === 'pausar' && segs[segs.length - 2] === '.harness')) return true;
+  return raizesDePausa(contexto).includes(norm.toLowerCase());
+}
+
+/** `.harness/PAUSAR` escrito inteiro, em qualquer grafia de caixa. Falha ao resolver nunca libera nem lança: devolve false (o veredito de antes). */
+function arquivoDePausa(caminho        , contexto          , cwd                )          {
+  try {
+    if (caminho.trim() === '') return false;
+    const { norm } = resolver(caminho, contexto, cwd);
+    const segs = norm.toLowerCase().split('/').filter((x) => x !== '' && x !== '.');
+    return segs[segs.length - 1] === 'pausar' && segs[segs.length - 2] === '.harness';
+  } catch {
+    return false;
+  }
 }
 
 /** Remoção de um diretório que contém uma área de integridade (`rm -rf .github`). */
 export function ancestralDeIntegridade(caminho        , contexto          , cwd                )          {
   if (caminho.trim() === '') return false;
-  const { norm, rel } = resolver(caminho, contexto, cwd);
+  const { norm, rels } = resolver(caminho, contexto, cwd);
   if (contexto.pluginRoot) {
     const pr = contexto.pluginRoot.replace(/\/+$/, '');
     if (pr.startsWith(`${norm}/`)) return true;
   }
-  if (rel === null) return false;
-  return rel === '' || ANCESTRAIS.includes(rel);
+  // A própria raiz de cada checkout em que a pausa é lida contém `.harness/PAUSAR`.
+  const baixo = norm.toLowerCase();
+  if (raizesDePausa(contexto).includes(baixo)) return true;
+  return rels.some((rel) => rel === '' || ANCESTRAIS.includes(rel));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // Git (Q14): lista permitida por capacidade
 
-const GIT_GLOBAIS_COM_VALOR = new Set(['-C', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--super-prefix']);
+const GIT_GLOBAIS_COM_VALOR = new Set(['-C', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--super-prefix', '--attr-source', '--shallow-file']);
 const GIT_PERMITIDOS = new Set([
   '', 'add', 'commit', 'status', 'diff', 'log', 'show', 'checkout', 'switch', 'restore', 'branch', 'rev-parse',
   'merge-base', 'check-ignore', 'stash', 'rebase', 'cherry-pick', 'reset', 'blame', 'grep', 'ls-files', 'mv', 'rm',
+  // T21 (D4): leitores. `--output` neles cai no anel (abaixo). `tag`, `worktree`, `merge-tree` e `update-ref` seguem fora.
+  'ls-tree', 'cat-file', 'rev-list', 'show-ref', 'for-each-ref', 'describe', 'diff-tree', 'shortlog', 'name-rev',
 ]);
+// `--output=<arquivo>` escreve (e trunca) em log, diff, show, blame, shortlog, rev-list, diff-tree, cherry-pick, range-diff, format-patch, whatchanged
+// (git 2.50.1). O git não aceita abreviação. Em qualquer `git`, para os dois papéis: cai no anel.
+const GIT_OUTPUT = /^--output(?:=|$)/;
 // Q16: o orquestrador só é interrompido por estes; todo outro `git` segue o prompt nativo.
 const GIT_PEDE_ORQUESTRADOR = new Set(['remote', 'fetch', 'pull', 'update-ref', 'symbolic-ref', 'config']);
+// Leitura por forma (T24): `worktree` só com `list` em 1º; `hash-object` sem `-…w` e sem `--stdin-*` (o git abrevia, `--stdin-p` vale).
+function gitLeituraPorForma(sub        , resto          )          {
+  if (sub === 'worktree') return resto[0] === 'list';
+  if (sub === 'hash-object') return !resto.some((a) => /^-[^-]*w|^--stdin-/.test(a));
+  return false;
+}
 const PUSH_COM_VALOR = new Set(['-o', '--push-option', '--repo', '--receive-pack', '--exec']);
 
-                                                                          
+                                                                                          
 
 /** Separa as opções globais do git (`-C x`, `-c k=v`, `--git-dir=…`) do subcomando. */
 export function lerGit(args          )          {
   const configs           = [];
+  const dirs           = [];
   let i = 0;
   for (; i < args.length; i++) {
     const a = args[i];
-    if (a === '-c' || a === '--config-env') {
+    if (a === '-C') {
+      if (args[i + 1] !== undefined) dirs.push(args[i + 1]);
+      i++;
+    } else if (a === '-c' || a === '--config-env') {
       if (args[i + 1] !== undefined) configs.push(args[i + 1]);
       i++;
     } else if (a.startsWith('--config-env=')) configs.push(a.slice(13));
@@ -533,7 +604,7 @@ export function lerGit(args          )          {
     else if (a.startsWith('-')) continue;
     else break;
   }
-  return { sub: args[i] ?? '', resto: args.slice(i + 1), configs };
+  return { sub: args[i] ?? '', resto: args.slice(i + 1), configs, dirs };
 }
 
 /** Posicionais de um `git push`: [remoto, ...refspecs]. */
@@ -571,8 +642,7 @@ function pushSemRefsRemotes(resto          )          {
 /** `.git` ou `.git/**` (inclui o arquivo `.git` de worktree), sem distinção de caixa. */
 function dentroDeDotGit(caminho        , contexto          , cwd                )          {
   if (caminho.trim() === '') return false;
-  const rel = resolver(caminho, contexto, cwd).rel?.toLowerCase();
-  return rel !== undefined && rel !== null && (rel === '.git' || rel.startsWith('.git/'));
+  return resolver(caminho, contexto, cwd).rels.some((x) => { const rel = x.toLowerCase(); return rel === '.git' || rel.startsWith('.git/'); });
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -582,6 +652,8 @@ const LIMITE_CD = 4096;
 const REMOVE = new Set(['rm', 'rmdir', 'unlink', 'shred']);
 const ESCREVE_TUDO = new Set(['rm', 'rmdir', 'chmod', 'chown', 'chgrp', 'ln', 'truncate', 'touch', 'install', 'unlink', 'shred', 'mv', 'tee']);
 const SO_REDIRECIONA = new Set(['echo', 'printf']);
+// Leitores que não estão em LE_COMO_DADO: o arquivo da pausa como argumento deles é leitura, não alvo (REQ-POU-2).
+const LE_ARQUIVO = new Set(['less', 'more', 'file']);
 // Q15: checar existência não é leitura.
 const EXISTENCIA = new Set(['ls', 'test', '[', '[[', 'stat']);
 // Valores de `find` que são padrão de nome, não caminho.
@@ -636,7 +708,9 @@ function candidatos(args          )           {
 }
 
 function ehCaminhoPlausivel(t        )          {
-  return t !== '' && !/\s/.test(t) && !t.includes('://') && t.length <= 4096;
+  // Q28: token com espaço só conta como caminho quando tem âncora (`/`, `~/`, `./`, `../`) e nenhuma quebra de linha.
+  const formaDeCaminho = !/\s/.test(t) || (/^(\/|~\/|\.\.?\/)/.test(t) && !/[\r\n]/.test(t));
+  return t !== '' && formaDeCaminho && !t.includes('://') && t.length <= 4096;
 }
 
 function valorT(args          )                                          {
@@ -691,13 +765,25 @@ export function anelDeBash(segmentos            , contexto          , cwd       
       if (!subagent && gitResto.some((p) => dentroDeDotGit(p, contexto, atual))) integridade ??= { anel: 'integridade', alvo: '.git', escrita: true };
       if (g.sub === 'push') {
         if (!(subagent ? pushPermitido(g.resto) : pushSemRefsRemotes(g.resto))) integridade ??= { anel: 'integridade', alvo: 'refs/remotes', escrita: true };
-      } else if (subagent ? !GIT_PERMITIDOS.has(g.sub) : GIT_PEDE_ORQUESTRADOR.has(g.sub)) {
+      } else if (g.resto.some((a) => GIT_OUTPUT.test(a))) {
+        integridade ??= { anel: 'integridade', alvo: '.git', escrita: true };
+      } else if (subagent ? !GIT_PERMITIDOS.has(g.sub) && !gitLeituraPorForma(g.sub, g.resto) : GIT_PEDE_ORQUESTRADOR.has(g.sub)) {
         const alvo = g.sub === 'remote' || g.sub === 'config' ? '.git/config' : g.sub === 'fetch' || g.sub === 'pull' || g.sub === 'update-ref' || g.sub === 'symbolic-ref' ? 'refs/remotes' : '.git';
         integridade ??= { anel: 'integridade', alvo, escrita: true };
       }
       // Q15: `git log -- .env` só confere existência; com patch (`-p`, `-u`, `-c`, `--cc`, `-L`, `-U`) mostra o conteúdo.
       const mostraConteudo = g.sub === 'log' && g.resto.some((a) => /^(-p|-u|-c|--cc|--patch\S*|--unified\S*|-L\S*|-U\d*|--word-diff\S*|--color-words\S*)$/.test(a));
       if ((g.sub !== 'log' && g.sub !== 'check-ignore') || mostraConteudo) empilhar(leituras, gitResto);
+      // `git rm`/`git mv` apagam ou movem do disco o que apontam. Só a pausa entra aqui (REQ-POU-2): `.harness/PAUSAR`, `.harness` e a raiz
+      // de cada checkout em que a pausa é lida. As demais áreas seguem como na E1. `-C` muda a base dos caminhos relativos.
+      if (g.sub === 'rm' || g.sub === 'mv') {
+        let base                = atual ?? cwd ?? contexto.raiz ?? null;
+        for (const d of g.dirs) base = d.startsWith('/') ? d : base ? posix.resolve(base, d) : null;
+        const baseGit = g.dirs.length ? base : atual;
+        const alvos = gitResto.filter((a) => alvoDePausa(a, contexto, baseGit));
+        empilhar(escritas, alvos.map((a) => (baseGit && !a.startsWith('/') ? posix.resolve(baseGit, a) : a)));
+        empilhar(remocoes, alvos.map((a) => (baseGit && !a.startsWith('/') ? posix.resolve(baseGit, a) : a)));
+      }
     } else if (EXISTENCIA.has(s.cmd)) {
       // Q15: sem leitura.
     } else if (s.cmd === 'cp' || s.cmd === 'mv') {
@@ -734,6 +820,8 @@ export function anelDeBash(segmentos            , contexto          , cwd       
       empilhar(leituras, temE ? pos : pos.slice(1));
     } else if (!SO_REDIRECIONA.has(s.cmd)) {
       empilhar(leituras, pos);
+      // REQ-POU-2: `.harness/PAUSAR` escrito inteiro como argumento de comando que não é leitor conhecido (nice, eval, trash, rsync…).
+      if (!LE_COMO_DADO.has(s.cmd) && !LE_ARQUIVO.has(s.cmd)) empilhar(escritas, pos.filter((p) => arquivoDePausa(p, contexto, atual)));
     }
 
     for (const p of escritas) {

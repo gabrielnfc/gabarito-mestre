@@ -7,3 +7,16 @@ docs/workflow-true.html
 
 # estado local do harness (nao viaja pelo git): heartbeat da guarda desta arvore
 .harness/heartbeat.json
+
+# E2 (GM-10): capacidade medida e kill switch são estado local
+.harness/capacidade.json
+.harness/PAUSAR
+
+# E2 (GM-10): contador do hook Stop é estado local
+.harness/stop-contador.json*
+
+# E2 (GM-10): marcador de pouso pendente (mod -> hook Stop) é estado local
+.harness/pouso-pendente.json*
+
+# E2 (GM-10): worktrees das tasks (uma por task, criadas pelo loop)
+.harness/worktrees/
