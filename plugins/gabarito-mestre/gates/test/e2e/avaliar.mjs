@@ -424,7 +424,8 @@ async function relatorio1(repo, rundir, plugin, home) {
   const digit = sends.filter((s) => !['trust', 'prompt', 'exit'].includes(s[1])).length;
   const exp1 = existsSync(join(rundir, 'exp.log')) ? readFileSync(join(rundir, 'exp.log'), 'utf8') : '';
   const perguntas = (exp1.match(/PERGUNTA-DE-PERMISSAO/g) ?? []).length;
-  R['1b'] = { composer, digitacao_apos_prompt: digit, perguntas_de_permissao: perguntas, veredito: composer === 1 && digit === 0 && perguntas === 0 ? 'VERDE' : 'REPROVADO' };
+  const semLogs = !existsSync(join(rundir, 'sends.log')) || !existsSync(join(rundir, 'exp.log')); // r2: sem sends.log ou exp.log a ausência de digitação/pergunta é vácuo
+  R['1b'] = { composer, digitacao_apos_prompt: digit, perguntas_de_permissao: perguntas, veredito: composer === 1 && digit === 0 && perguntas === 0 ? (semLogs ? 'NAO_PROVADO' : 'VERDE') : 'REPROVADO' };
 
   // 1c Paralelismo
   const primeira = sessoes.length ? primeiraProxima(join(pasta, `${sessoes[0]}.jsonl`)) : null;
@@ -452,6 +453,8 @@ async function relatorio1(repo, rundir, plugin, home) {
   const f1d = [];
   if (pousos.length < 1) f1d.push('0 pouso');
   if (pousos.length !== n('sessao.retomada')) f1d.push('pouso != retomada');
+  const idxRet = ev.map((e, i) => ({ e, i })).filter((x) => x.e.tipo === 'sessao.retomada').map((x) => x.i);
+  if (pousos.length === idxRet.length && pousos.some((x, k) => idxRet[k] < x.i)) f1d.push('retomada antes do pouso');
   if (porPouso.some((c) => c < 1)) f1d.push('pouso sem veredito novo');
   if (clears !== pousos.length || cmdClear !== pousos.length) f1d.push('/clear != pousos');
   R['1d'].falhas = f1d;
@@ -523,7 +526,7 @@ async function relatorio1(repo, rundir, plugin, home) {
   R.guarda_deny = { total: n('guarda.deny'), alvos: ev.filter((e) => e.tipo === 'guarda.deny').map((e) => ({ agente: String(e.agente).slice(0, 14), alvo: e.dados?.alvo, anel: e.dados?.anel })) };
   R.dur_s = ev.length ? Math.round((epoch(ev.at(-1).ts) - epoch(ev[0].ts)) / 1000) : null;
   const vs = ['1a', '1b', '1c', '1d', '4a', '4b'].map((k) => R[k].veredito);
-  R.veredito_final = vs.every((v) => v === 'VERDE') ? 'VERDE' : vs.includes('REPROVADO') ? 'REPROVADO' : 'PARCIAL';
+  R.veredito_final = R.exit_127 > 0 ? 'REPROVADO' : vs.every((v) => v === 'VERDE') ? 'VERDE' : vs.includes('REPROVADO') ? 'REPROVADO' : 'PARCIAL'; // r2: `Exit code 127` reprova (como em `liberar`)
   console.log(JSON.stringify(R, null, 1));
 }
 
@@ -749,6 +752,16 @@ async function relatorioLiberar(repo, rundir, plugin, home) {
   else if (entreT9eT1.length !== 0) falhas.push(`${entreT9eT1.length} evento(s) entre o T9 e o T1 (esperado 0)`);
   if (t9NoDiario !== 0) falhas.push('T9 apareceu no diário');
   if (argsComando.length === 0 && noDebug === 0) nao.push('nem command_name no classic.jsonl nem UserPromptExpansion no debug.log');
+  else if (argsComando.length === 0) nao.push('command_args ausente no classic.jsonl: T9 e T1 não conferidos no hook');
+  else {
+    // r2: a ligação comando × evento. O hook tem de ter visto `liberar T9` e depois `liberar T1`, cada um como argumento inteiro (a concatenação de run-b2b não vale).
+    const iT9 = argsComando.findIndex((a) => a.trim() === 'T9');
+    const iT1 = argsComando.findIndex((a) => a.trim() === 'T1');
+    if (iT9 < 0) falhas.push('o hook não viu `liberar T9` (command_args sem T9 inteiro)');
+    if (iT1 < 0) falhas.push('o hook não viu `liberar T1` (command_args sem T1 inteiro)');
+    if (iT9 >= 0 && iT1 >= 0 && iT9 > iT1) falhas.push('command_args com T1 antes de T9');
+  }
+  if (tFim !== null && donos.length === 1 && Date.parse(donos[0].ts) < tFim) falhas.push('task.reaberta{dono} anterior ao `liberar T1` digitado (sends.log)');
   if (antes === null || depois === null) nao.push('sem a listagem de .tmp-gabarito da T1 (antes/depois)');
   else {
     if (!out.tmp_T1_antes_tem_review) falhas.push('antes da liberação a T1 não tinha review-r1.md e review-r2.md');
