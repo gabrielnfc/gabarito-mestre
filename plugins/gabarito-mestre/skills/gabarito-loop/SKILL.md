@@ -11,9 +11,9 @@ O estado do loop vive no **diário** da entrega (`.harness/entregas/<id>/`); a d
 `${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs`. Requisitos: REQ-LOOP-1 a 5, REQ-SLOT-1, REQ-POU-1 e 2 da spec da entrega.
 
 ```bash
-LOOP="node ${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs"   # ou tools/gabarito-gates/scripts/loop.mjs
-$LOOP proxima --vivos <n>      # n = agentes seus ainda vivos; o diário não os conhece
+node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" proxima --vivos <n>   # n = agentes seus ainda vivos; o diário não os conhece
 ```
+Use sempre o comando inteiro, sem variável: em zsh, `$VAR` com argumentos dá exit 127. Sem o plugin, o script é `tools/gabarito-gates/scripts/loop.mjs`.
 
 ## Ciclo
 
@@ -45,7 +45,7 @@ mostre o aviso e sugira `node ${CLAUDE_PLUGIN_ROOT}/gates/scripts/capacidade.mjs
 
 **Retomar** remove o arquivo, e só isso: task em voo (`implementando`, `corrigindo`, `em_revisao`) continua em voo e o `proxima` a pula.
 Com o mod, `/gabarito retomar` já reabre cada task em voo (0 agentes vivos), grava `loop.pausa` e abre o turno: você recebe o prompt de retomada.
-Sem o mod, ou com task em voo sem agente por outro motivo, **você** chama `$LOOP reabrir <task>` (origem `retomada`) por task em voo e só
+Sem o mod, ou com task em voo sem agente por outro motivo, **você** chama `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" reabrir <task>` (origem `retomada`) por task em voo e só
 então `proxima --vivos <n>`. Nunca reabra com agente vivo: dois implementadores na mesma worktree. Diário ilegível ou `ok:false`: pare e diga a causa.
 
 ## Sem mod
