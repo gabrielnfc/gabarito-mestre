@@ -5,12 +5,13 @@
  *   avaliar.mjs medidas <repo> <rundir> <plugin-root>          medições da r5 (transcripts, mod.jsonl, debug.log, diário): só números e nomes
  *   avaliar.mjs relatorio 0 <repo> <rundir> <plugin-root>     aceite 0 (fumaça): números e veredito. Os demais aceites só têm relatório
  *                                                            depois de um aceite 0 VERDE (ordem do brief); até lá não existem aqui.
+ *   avaliar.mjs relatorio 1|2|4c|5|uma ...                    demais aceites (r6/r7); `uma` = medição de `prompt.submit` depois de `turn.complete` sem /clear (sombra-t13f, item 3)
  * Saída de ferramenta falhando ou diário ilegível reprova: nada aqui devolve verde por falta de dado.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const ENTREGA = 'GM-99';
@@ -237,7 +238,14 @@ const duKb = (p) => { try { return Number(execFileSync('du', ['-sk', p], { encod
 const gitRc = (cwd, ...a) => spawnSync('git', a, { cwd, encoding: 'utf8' }).status;
 const epoch = (ts) => Date.parse(ts);
 
-/** Aceite 5 (TMPDIR): `abrir`, comando com o `env` devolvido, `fechar`. `cwdRel`/`cmd` escolhem a suíte (fixture ou `gates`). */
+/** KB de `dir` sem a subpasta `excluir` (r7: o `TMPDIR` da task nasce DENTRO do `TMPDIR` do shell; medir `ext` com ela reprova por instrumento). */
+const duSem = (dir, excluir) => {
+  try { return readdirSync(dir).filter((n) => n !== excluir).reduce((s, n) => s + (duKb(join(dir, n)) ?? 0), 0); } catch { return null; }
+};
+
+/** Aceite 5 (TMPDIR): `abrir`, comando com o `env` devolvido, `fechar`. `cwdRel`/`cmd` escolhem a suíte (fixture ou `gates`).
+ *  r7 (D2): o `TMPDIR` da task fica em `<TMPDIR do shell>/gabarito-<hash da worktree>`: FORA da worktree, DENTRO de `ext`. Critérios:
+ *  fora da worktree; `ext` sem a pasta da task igual antes/depois; a pasta da task some no `fechar`. `.tmp-gabarito` não é mais critério. */
 function relatorio5(repo, rundir, plugin, cwdRel, cmd) {
   const loop = join(plugin, 'gates/scripts/loop.mjs');
   const ext = join(rundir, 'tmp-externo');
@@ -248,16 +256,21 @@ function relatorio5(repo, rundir, plugin, cwdRel, cmd) {
   if (ab.rc !== 0 || ab.json?.ok !== true) { console.log(JSON.stringify({ ...base, veredito_final: 'REPROVADO', motivo: 'abrir falhou', saida: ab.json ?? ab.stderr.slice(0, 200) })); process.exitCode = 1; return; }
   const wt = ab.json.worktree;
   const tmp = ab.json.env?.TMPDIR ?? ab.json.tmpdir;
-  const extAntes = duKb(ext);
+  const nomeTask = basename(tmp);
+  const extReal = realpathSync(ext);
+  const foraDaWorktree = relative(realpathSync(wt), tmp).startsWith('..');
+  const dentroDeExt = !relative(extReal, tmp).startsWith('..') && relative(extReal, tmp) !== '';
+  const extAntes = duSem(ext, nomeTask);
   const t = spawnSync(cmd[0], cmd.slice(1), { cwd: join(wt, cwdRel), env: { ...process.env, TMPDIR: tmp }, encoding: 'utf8' });
   const antesKb = duKb(tmp);
-  const extDepoisTeste = duKb(ext);
+  const extDepoisTeste = duSem(ext, nomeTask);
   const fe = nodeCli(loop, ['fechar', 'T1'], { cwd: repo, env: envShell });
   const depoisExiste = existsSync(tmp);
-  const extDepois = duKb(ext);
+  const extDepois = duSem(ext, nomeTask);
   const out = {
-    ...base, rc_comando: t.status, tmpdir_vigente_kb_antes_do_fechar: antesKb, tmpdir_existe_depois: depoisExiste,
-    externa_kb_antes: extAntes, externa_kb_depois_do_teste: extDepoisTeste, externa_kb_depois: extDepois,
+    ...base, rc_comando: t.status, tmpdir_da_task: nomeTask, tmpdir_fora_da_worktree: foraDaWorktree, tmpdir_dentro_do_tmpdir_do_shell: dentroDeExt,
+    tmpdir_vigente_kb_antes_do_fechar: antesKb, tmpdir_da_task_existe_depois: depoisExiste, tmp_gabarito_existe_depois: existsSync(join(wt, '.tmp-gabarito')),
+    externa_sem_a_pasta_da_task_kb_antes: extAntes, externa_sem_a_pasta_da_task_kb_depois_do_teste: extDepoisTeste, externa_sem_a_pasta_da_task_kb_depois: extDepois,
     fechar_ok: fe.json?.ok === true, fechar_erro: fe.json?.erro ?? null, fechar_mensagem: fe.json?.ok === true ? null : String(fe.json?.mensagem ?? fe.stderr).slice(0, 300),
     worktree_existe_depois: existsSync(wt),
   };
@@ -265,9 +278,11 @@ function relatorio5(repo, rundir, plugin, cwdRel, cmd) {
   const falhas = [];
   if (t.status !== 0) falhas.push('comando de teste falhou');
   if (!(antesKb > 0)) { v = 'NAO_PROVADO'; falhas.push('TMPDIR vigente com 0 KB antes do fechar (vácuo: a suíte não grava ali)'); }
+  if (!foraDaWorktree) falhas.push('TMPDIR da task dentro da worktree');
+  if (!dentroDeExt) falhas.push('TMPDIR da task fora do TMPDIR do shell');
   if (!out.fechar_ok) falhas.push('fechar falhou');
-  if (depoisExiste) falhas.push('.tmp-gabarito existe depois do fechar');
-  if (extAntes !== extDepois) falhas.push('pasta externa mudou');
+  if (depoisExiste) falhas.push('pasta TMPDIR da task existe depois do fechar');
+  if (extAntes === null || extAntes !== extDepois) falhas.push('pasta externa (sem a da task) mudou');
   if (falhas.some((f) => !f.startsWith('TMPDIR vigente'))) v = 'REPROVADO';
   out.falhas = falhas;
   out.veredito_final = v;
@@ -588,14 +603,83 @@ async function relatorio2(repo, rundir, plugin) {
   console.log(JSON.stringify(R, null, 1));
 }
 
+/**
+ * Medição `uma` (r7, sombra-t13f item 3): diário semeado com `task.iniciada T1 implementador` e NENHUM agente. É a única prova real de
+ * `prompt.submit` depois de `turn.complete` sem `/clear`. Espera: `task.reaberta {retomada}` 1, `prompt.submit` origem plugin 1 (depois do
+ * `turn.complete` do orquestrador e da reaberta), `concluir`, digitação 0, `/clear` 0. `reabrir` digitado pelo MODELO (transcript) é
+ * separado: a reaberta tem de ser do mod. Pouso é desligado na corrida (`GABARITO_POUSO_X=99`), senão o 2º prompt de plugin não seria a recuperação.
+ */
+async function relatorioUma(repo, rundir, plugin, home) {
+  const dia = await diario(repo, plugin);
+  if (!dia.ok) { console.log(JSON.stringify({ aceite: 'uma', veredito_final: 'REPROVADO', motivo: dia.motivo })); process.exitCode = 1; return; }
+  const ev = dia.eventos;
+  const n = (t) => ev.filter((e) => e.tipo === t).length;
+  const mod = linhas(join(rundir, 'mod.jsonl'));
+  const cls = linhas(join(rundir, 'classic.jsonl'));
+  const sends = existsSync(join(rundir, 'sends.log')) ? readFileSync(join(rundir, 'sends.log'), 'utf8').split('\n').filter(Boolean).map((l) => l.split(' ')) : [];
+  const exp = existsSync(join(rundir, 'exp.status')) ? readFileSync(join(rundir, 'exp.status'), 'utf8').trim() : null;
+  const expLog = existsSync(join(rundir, 'exp.log')) ? readFileSync(join(rundir, 'exp.log'), 'utf8') : '';
+  const reabertas = ev.filter((e) => e.tipo === 'task.reaberta');
+  const semeada = ev.find((e) => e.tipo === 'task.iniciada');
+  const pasta = pastaTranscripts(repo, home);
+  const sessoes = [...new Set(ev.map((e) => e.sessao))].filter((sid) => /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(String(sid)));
+  // `reabrir` e `iniciar` digitados pelo modelo (transcripts das sessões do diário). Sem transcript ⇒ não dá para separar: NAO_PROVADO.
+  const ausentes = sessoes.filter((sid) => !existsSync(join(pasta, `${sid}.jsonl`)));
+  let reabrirDoModelo = 0, iniciarDoModelo = 0;
+  for (const sid of sessoes) {
+    for (const m of mensagens(join(pasta, `${sid}.jsonl`))) {
+      for (const b of m.blocos) {
+        const cmd = String(b.input.command ?? '');
+        if (b.nome === 'Bash' && /loop\.mjs['"]?\s+reabrir\b|\$L(OOP)?\s+reabrir\b/.test(cmd)) reabrirDoModelo += 1;
+        if (b.nome === 'Bash' && /\biniciar\s+T\d+\s+(implementador|revisor|correcao)\b/.test(cmd)) iniciarDoModelo += 1;
+      }
+    }
+  }
+  const submits = mod.filter((o) => o.ev === 'prompt.submit');
+  const plug = submits.filter((o) => o.origem === 'plugin');
+  const turnosOrq = mod.filter((o) => o.ev === 'turn.complete' && o.agente === null);
+  const tReab = reabertas.length ? Date.parse(reabertas[0].ts) : null;
+  const dePlug = plug[0] ?? null;
+  const turnoAntes = dePlug === null ? null : [...turnosOrq].reverse().find((o) => o.t <= dePlug.t) ?? null;
+  const p = proxima(repo, plugin, 0);
+  const clears = cls.filter((o) => o.ev === 'SessionStart' && o.source === 'clear').length;
+  const digit = sends.filter((s) => !['trust', 'prompt', 'exit'].includes(s[1])).length;
+  const out = {
+    aceite: 'uma', exp_status: exp, semeada: semeada ? { tipo: semeada.tipo, task: semeada.dados?.task, papel: semeada.dados?.papel, seq: semeada.seq } : null,
+    task_reaberta: reabertas.map((e) => ({ task: e.dados?.task, origem: e.dados?.origem, ts: e.ts })),
+    prompt_submit: { composer: submits.filter((o) => o.origem === 'composer').length, plugin: plug.length, peer: submits.filter((o) => o.origem === 'peer').length },
+    plugin_apos_turn_complete_do_orquestrador_ms: dePlug && turnoAntes ? dePlug.t - turnoAntes.t : null,
+    plugin_apos_task_reaberta_ms: dePlug && tReab !== null ? dePlug.t - tReab : null,
+    plugin_chars: dePlug?.chars ?? null,
+    reabrir_digitado_pelo_modelo: reabrirDoModelo, iniciar_do_modelo: iniciarDoModelo, task_iniciada_total: n('task.iniciada'),
+    clear_session_start: clears, digitacao_apos_prompt: digit, pouso: n('sessao.pouso'), loop_parar: n('loop.parar'),
+    integradas: n('task.integrada'), acao_final: p.ok ? p.tipo : 'erro', guarda_deny: n('guarda.deny'),
+    perguntas_de_permissao: (expLog.match(/PERGUNTA-DE-PERMISSAO/g) ?? []).length, transcripts_ausentes: ausentes.length,
+  };
+  const falhas = [];
+  if (out.task_reaberta.length !== 1 || out.task_reaberta[0]?.origem !== 'retomada') falhas.push(`task.reaberta {retomada} = ${out.task_reaberta.length} (esperado 1)`);
+  if (out.prompt_submit.plugin !== 1) falhas.push(`prompt.submit plugin = ${out.prompt_submit.plugin} (esperado 1)`);
+  if (out.plugin_apos_turn_complete_do_orquestrador_ms === null || out.plugin_apos_turn_complete_do_orquestrador_ms < 0) falhas.push('prompt.submit plugin sem turn.complete do orquestrador antes');
+  if (out.acao_final !== 'concluir') falhas.push(`acao final != concluir (${out.acao_final})`);
+  if (digit !== 0) falhas.push('digitação após o prompt');
+  if (clears !== 0) falhas.push('/clear na corrida (a medição é sem /clear)');
+  if (reabrirDoModelo !== 0) falhas.push('o modelo reabriu a task sozinho: a recuperação não é do mod');
+  if (out.loop_parar !== 0) falhas.push('loop.parar > 0');
+  out.falhas = falhas;
+  out.veredito_final = ausentes.length ? 'NAO_PROVADO' : falhas.length === 0 ? 'VERDE' : 'REPROVADO';
+  console.log(JSON.stringify(out, null, 1));
+  if (out.veredito_final !== 'VERDE') process.exitCode = 1;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [cmd, ...a] = process.argv.slice(2);
   if (cmd === 'estado') await estado(a[0], a[1], a[2]);
   else if (cmd === 'relatorio' && a[0] === '0') await relatorio0(a[1], a[2], a[3]);
   else if (cmd === 'relatorio' && a[0] === '1') await relatorio1(a[1], a[2], a[3], homedir());
   else if (cmd === 'relatorio' && a[0] === '2') await relatorio2(a[1], a[2], a[3]);
+  else if (cmd === 'relatorio' && a[0] === 'uma') await relatorioUma(a[1], a[2], a[3], homedir());
   else if (cmd === 'relatorio' && a[0] === '5') relatorio5(a[1], a[2], a[3], a[4], a.slice(5));
   else if (cmd === 'relatorio' && a[0] === '4c') await relatorio4c(a[1], a[2], a[3], a[4]);
   else if (cmd === 'medidas') await medidas(a[0], a[1], a[2], homedir());
-  else { console.error('uso: avaliar.mjs estado|medidas <repo> <rundir> <plugin-root> | relatorio 0|1|2 <repo> <rundir> <plugin-root> | relatorio 4c <repo> <rundir> <plugin-root> [<rundir-real>] | relatorio 5 <repo> <rundir> <plugin-root> <cwd-rel> <cmd...>'); process.exitCode = 2; }
+  else { console.error('uso: avaliar.mjs estado|medidas <repo> <rundir> <plugin-root> | relatorio 0|1|2|uma <repo> <rundir> <plugin-root> | relatorio 4c <repo> <rundir> <plugin-root> [<rundir-real>] | relatorio 5 <repo> <rundir> <plugin-root> <cwd-rel> <cmd...>'); process.exitCode = 2; }
 }
