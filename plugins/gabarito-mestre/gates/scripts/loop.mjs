@@ -315,7 +315,7 @@ function gravar(c, plano, tipo, dados, antes = () => {}) {
     }
     if (diarioInvalido(plano, [...eventos, candidato])) throw new Falha('transicao_invalida', `${tipo} tornaria o diário inválido; nada foi gravado`);
   }
-  antes(); // última conferência antes de gravar (depois da tabela: a causa mais fundamental vem primeiro)
+  antes(candidato, eventos); // última conferência antes de gravar (depois da tabela: a causa mais fundamental vem primeiro)
   let autor = 'desconhecido';
   try { autor = git(c.raiz, 'config', 'user.email') || autor; } catch { /* sem user.email: o diário aceita "desconhecido" */ }
   const r = diario.append(c.dirEntrega, c.sessao, { ts, autor, sessao: c.sessao, agente: 'orquestrador', tipo, dados });
@@ -972,10 +972,20 @@ export function liberarTeto(cwd, task, sessao) {
     tarefa(plano, task);
     const antes = estadoDaTask(c, task);
     if (antes.estado !== 'no_teto') throw new Falha('nao_esta_no_teto', `task ${task} está em ${antes.estado}; só task no teto de rodadas se libera. Nada foi gravado`);
-    gravar(c, plano, 'task.reaberta', { task, origem: 'dono' });
+    // Projeta o candidato NA ORDEM REAL (relógio de outra sessão pode pô-lo antes do teto): se a task não sairia de `no_teto`, recusa com 0 bytes.
+    const projetar = (candidato, eventos) => {
+      const ord = ordenar([...eventos, candidato]);
+      if (!ord.ok) throw new Falha('diario_invalido', `a liberação de ${task} deixaria o diário fora de ordem; nada foi gravado`);
+      const r = estadoDe(ord.eventos.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === task));
+      if ('invalido' in r || r.estado !== 'pendente') {
+        throw new Falha('relogio_do_diario', `a liberação de ${task} não tiraria a task do teto: na ordem do diário o evento cairia antes do teto (um evento do diário tem relógio à frente do agora; estado projetado ${'invalido' in r ? r.invalido : r.estado}). Nada foi gravado`);
+      }
+    };
+    gravar(c, plano, 'task.reaberta', { task, origem: 'dono' }, projetar);
+    // O que só o disco revela (o projetado não vê escrita parcial, outra sessão gravando no meio): reler e conferir.
     const depois = estadoDaTask(c, task);
     if (depois.donos !== antes.donos + 1 || depois.estado !== 'pendente') {
-      throw new Falha('evento_nao_gravado', `a liberação de ${task} não tirou a task do teto no diário relido (relógio do diário? estado ${depois.estado}, liberações ${antes.donos} → ${depois.donos})`);
+      throw new Falha('liberacao_sem_efeito', `o evento de ${task} foi gravado mas o diário relido não mostra a task fora do teto (estado ${depois.estado}, liberações ${antes.donos} → ${depois.donos}); confira o diário`);
     }
     return { ok: true, task, entrega: c.entrega, estado: depois.estado };
   } catch (e) {

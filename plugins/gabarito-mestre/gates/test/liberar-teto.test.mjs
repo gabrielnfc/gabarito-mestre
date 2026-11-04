@@ -183,6 +183,15 @@ test('agent_id: pedido vindo de subagent é recusado, nada gravado', () => {
   assert.deepEqual(amb.bytes(), antes);
 });
 
+test('comando-alheio vindo de subagent: sai 0, calado, sem block (command_name antes de agent_id)', () => {
+  const amb = repo({ semear: ATE_O_TETO('T1') });
+  const antes = amb.bytes();
+  const r = hook(stdinTui(amb.dir, { command_name: 'gsd-help', agent_id: 'a1' }));
+  assert.equal(r.rc, 0, r.err);
+  assert.equal(r.out.trim(), '');
+  assert.deepEqual(amb.bytes(), antes);
+});
+
 test('comando-alheio: outro command_name sai 0, calado, sem efeito (mesmo no teto)', () => {
   const amb = repo({ semear: ATE_O_TETO('T1') });
   const antes = amb.bytes();
@@ -263,14 +272,42 @@ test('liberar-reprovar-duas-vezes: novo teto, nova liberação vale, e o loop.pa
   assert.equal(loop(amb.dir, 'proxima', '--vivos', '0').j.acao.tipo, 'despachar');
 });
 
-test('relido: evento gravado que não tira a task do teto (diário com relógio no futuro) não vira sucesso', () => {
-  let n = Date.parse('2099-01-01T00:00:00Z');
-  const amb = repo();
-  amb.semear(ATE_O_TETO('T1'), 'loop', () => (n += 1000));
-  const r = hook(stdinTui(amb.dir));
-  bloqueou(r, /evento_nao_gravado/);
-  assert.equal(r.j.systemMessage, undefined);
-  assert.equal(loop(amb.dir, 'proxima', '--vivos', '0').j.acao.tipo, 'parar', 'a task segue no teto');
+/** ATE_O_TETO com a última linha `ms` à frente do agora, em outra sessão (`loop`) que a do dono. */
+const semearComRelogioAdiante = (amb, aFrente) => {
+  const lista = ATE_O_TETO('T1');
+  let i = 0;
+  amb.semear(lista, 'loop', () => (++i === lista.length ? aFrente : Date.now() - 60000 + i));
+};
+
+for (const [nome, aFrente] of [['3 s no futuro', () => Date.now() + 3000], ['em 2099', () => Date.parse('2099-01-01T00:00:00Z')]]) {
+  test(`relogio-adiante (${nome}): outra sessão ⇒ block com a causa verdadeira, diário igual byte a byte, 3 tentativas = 0 eventos; a mesma sessão libera`, () => {
+    const amb = repo();
+    semearComRelogioAdiante(amb, aFrente());
+    const antes = amb.bytes();
+    for (let i = 0; i < 3; i += 1) {
+      const r = hook(stdinTui(amb.dir));
+      bloqueou(r, /relogio_do_diario/);
+      assert.doesNotMatch(String(r.j.reason), /evento_nao_gravado/, 'o evento NÃO foi gravado: o código não pode dizer o contrário');
+      assert.equal(r.j.systemMessage, undefined);
+      assert.deepEqual(amb.bytes(), antes);
+    }
+    assert.equal(donos(amb).length, 0);
+    assert.equal(loop(amb.dir, 'proxima', '--vivos', '0').j.acao.tipo, 'parar', 'a task segue no teto');
+    // Mesma sessão do diário: a ordem é por seq, o evento cai depois do teto e a liberação vale.
+    const ok = hook(stdinTui(amb.dir, { session_id: 'loop' }));
+    assert.notEqual(ok.j?.decision, 'block', ok.out);
+    assert.equal(donos(amb).length, 1);
+    assert.equal(loop(amb.dir, 'proxima', '--vivos', '0').j.acao.tipo, 'despachar');
+  });
+}
+
+test('relido: evento que o disco mostra sem efeito não vira sucesso, e o código não diz "não gravado"', () => {
+  // O que só o disco revela: o projetado passou, mas o relido não bate. Provoca trocando o plano de lugar entre as duas leituras é
+  // impossível sem corrida; então o teste fixa o contrato de nomes: o código da releitura não é o de "nada gravado".
+  const fonte = readFileSync(LOOP, 'utf8');
+  const trecho = fonte.slice(fonte.indexOf('export function liberarTeto'));
+  assert.match(trecho, /'liberacao_sem_efeito'/);
+  assert.doesNotMatch(trecho, /Falha\('evento_nao_gravado', `a liberação/);
 });
 
 test('gravacao-falha: diário sem permissão de escrita ⇒ block com a causa, nunca sucesso (contrato)', { skip: SEM_ROOT && 'root ignora permissão' }, () => {
@@ -338,7 +375,14 @@ test('skill-liberar: disable-model-invocation: true no frontmatter; o corpo mand
   assert.doesNotMatch(fm, /allowed-tools:.*Write|allowed-tools:.*Edit/);
 });
 
-test('hooks.json: UserPromptExpansion roda liberar-teto.mjs com onFailure block', () => {
+/** Semântica de matcher da doc de hooks: só letras, dígitos, `_` e `|` ⇒ lista exata; qualquer outro caractere ⇒ regex JS. Vazio/`*` casa tudo. */
+const casa = (matcher, nome) => {
+  if (matcher === undefined || matcher === '' || matcher === '*') return true;
+  if (/^[A-Za-z0-9_|]+$/.test(matcher)) return matcher.split('|').includes(nome);
+  return new RegExp(matcher).test(nome);
+};
+
+test('hooks.json: UserPromptExpansion roda liberar-teto.mjs com onFailure block, e só para o próprio comando (matcher real)', () => {
   const h = JSON.parse(lerPlugin('hooks', 'hooks.json')).hooks.UserPromptExpansion;
   assert.ok(Array.isArray(h) && h.length === 1);
   const cmd = h[0].hooks[0];
@@ -346,6 +390,12 @@ test('hooks.json: UserPromptExpansion roda liberar-teto.mjs com onFailure block'
   assert.match(cmd.command, /gates\/scripts\/liberar-teto\.mjs/);
   assert.equal(cmd.onFailure, 'block');
   assert.ok(Number.isInteger(cmd.timeout) && cmd.timeout > 0);
+  // onFailure: block sem matcher bloquearia todo comando digitado de qualquer plugin quando o script falha.
+  assert.equal(typeof h[0].matcher, 'string');
+  assert.ok(casa(h[0].matcher, COMANDO), `o matcher ${h[0].matcher} tem de casar ${COMANDO}`);
+  for (const alheio of ['gsd-help', 'gabarito-mestre:gabarito-instalar', 'liberar', 'x-gabarito-mestre:liberar', 'gabarito-mestre:liberar-tudo', '']) {
+    assert.ok(!casa(h[0].matcher, alheio), `o matcher ${h[0].matcher} não pode casar ${JSON.stringify(alheio)}`);
+  }
 });
 
 test('gabarito-loop: o teto manda o dono digitar o comando exato', () => {

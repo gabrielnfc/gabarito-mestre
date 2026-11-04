@@ -51,6 +51,7 @@
     ],
     "UserPromptExpansion": [
       {
+        "matcher": "^gabarito-mestre:liberar$",
         "hooks": [
           {
             "type": "command",
