@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  analisarFronteira, codigoPonte, marcaDeProgresso, dadosMedicao, ehRevisor, INSTANTANEO_MAX, jaParou, lerX, negaDespacho, portaDoPouso, tasksEmVoo, textoRetomada, tokensDe, vivosDe,
+  analisarFronteira, codigoPonte, marcaDeProgresso, dadosMedicao, ehRevisor, INSTANTANEO_MAX, jaParou, lerX, negaDespacho, portaDoPouso, tasksDoNegado, tasksEmVoo, textoRetomada, tokensDe, vivosDe,
 } from '../src/pouso.ts';
 import type { Evento, TipoEvento } from '../src/tipos.ts';
 
@@ -225,6 +225,48 @@ test('tasks-em-voo-ilegivel: não-lista, fora de ordem, task fora do plano e tra
     emVoo(ini('zzz')),
     emVoo(con('a')),
     emVoo(ini('a'), ['task.iniciada', { papel: 'implementador' }]),
+  ]) {
+    assert.equal(r.ok, false);
+    assert.equal(typeof (r as { motivo: string }).motivo, 'string');
+  }
+});
+
+// ---- tasks do negado: o que o mod reabre quando um Agent foi negado (T19, D1) ----
+const doNegado = (negados: number, vivos: number, ...itens: [TipoEvento, Record<string, unknown>][]) => tasksDoNegado(PL, diario(...itens), negados, vivos);
+test('negado-puro-vazio: sem negação, ou sem task em voo, nada a reabrir', () => {
+  assert.deepEqual(doNegado(0, 0, iniP('a', 'implementador')), { ok: true, tasks: [] });
+  assert.deepEqual(doNegado(2, 0), { ok: true, tasks: [] });
+  assert.deepEqual(doNegado(1, 0, iniP('a', 'implementador'), con('a'), ver('a')), { ok: true, tasks: [] });
+});
+test('negado-puro-ordem: a iniciada por último primeiro, e só tantas quantas as negações', () => {
+  const d: [TipoEvento, Record<string, unknown>][] = [iniP('b', 'implementador'), iniP('a', 'implementador'), iniP('c', 'implementador')];
+  assert.deepEqual(doNegado(1, 0, ...d), { ok: true, tasks: ['c'] });
+  assert.deepEqual(doNegado(2, 0, ...d), { ok: true, tasks: ['c', 'a'] });
+  assert.deepEqual(doNegado(3, 0, ...d), { ok: true, tasks: ['c', 'a', 'b'] });
+});
+test('negado-puro-limites: nunca mais que as em voo sem agente vivo', () => {
+  const d: [TipoEvento, Record<string, unknown>][] = [iniP('a', 'implementador'), iniP('b', 'implementador')];
+  assert.deepEqual(doNegado(5, 0, ...d), { ok: true, tasks: ['b', 'a'] });
+  assert.deepEqual(doNegado(5, 1, ...d), { ok: true, tasks: ['b'] });
+  assert.deepEqual(doNegado(5, 2, ...d), { ok: true, tasks: [] });
+  assert.deepEqual(doNegado(1, 9, ...d), { ok: true, tasks: [] });
+});
+test('negado-puro-corrigindo-e-revisao: a iniciada mais recente vale também para correcao e revisor', () => {
+  const r = doNegado(1, 0, iniP('a', 'implementador'), con('a'), ver('a', 'REPROVADO'), iniP('a', 'correcao'), iniP('b', 'implementador'), con('b'), iniP('b', 'revisor'));
+  assert.deepEqual(r, { ok: true, tasks: ['b'] });
+  assert.deepEqual(doNegado(2, 0, iniP('a', 'implementador'), con('a'), ver('a', 'REPROVADO'), iniP('a', 'correcao'), iniP('b', 'implementador')), { ok: true, tasks: ['b', 'a'] });
+});
+test('negado-puro-ilegivel: plano, diário ou contagens ruins nunca viram lista vazia', () => {
+  for (const r of [
+    tasksDoNegado(PL, null, 1, 0),
+    tasksDoNegado(null, [], 1, 0),
+    tasksDoNegado(PL, diario(iniP('zzz', 'implementador')), 1, 0),
+    tasksDoNegado(PL, diario(iniP('a', 'implementador')), -1, 0),
+    tasksDoNegado(PL, diario(iniP('a', 'implementador')), 1.5, 0),
+    tasksDoNegado(PL, diario(iniP('a', 'implementador')), Number.NaN, 0),
+    tasksDoNegado(PL, diario(iniP('a', 'implementador')), 1, -1),
+    tasksDoNegado(PL, diario(iniP('a', 'implementador')), 1, Number.NaN),
+    tasksDoNegado(PL, diario(iniP('a', 'implementador')), '1' as unknown as number, 0),
   ]) {
     assert.equal(r.ok, false);
     assert.equal(typeof (r as { motivo: string }).motivo, 'string');
