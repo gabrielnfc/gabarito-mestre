@@ -14,7 +14,7 @@ Primeira execução real do fluxo da 2.0, no próprio GM-9. Cada item vira requi
 | A6 | D | Spike em `bypassPermissions` usa config isolada | S1 gravou `skipDangerousModePermissionPrompt` em `~/.claude/settings.json` (R11) | E2, agente de spike |
 | A7 | D | Separar testes por dono antes de abrir paralelo | Divisão de `guards.test.mjs` deu arquivos separados a T4, T5, T7 | E2, planejador |
 | A8 | D | Teste não fixa contagem de arquivos do produto | Quebrou em T8 e T1a | E5, gates |
-| A9 | D | Task no teto com MAJOR aberto: ledger, dependentes seguem até o commit sem integrar, integra só após decisão nominal do dono | Fechei T1b e T1a sozinho; Sombra apontou violação de R1 (R12) | E2, orquestrador |
+| A9 | D | Task no teto com MAJOR aberto: ledger, dependentes seguem até o commit sem integrar, integra só após decisão nominal do dono. Na E2, dependente espera a dependência integrada: sem o código dela não há o que implementar (Q-T13G) | Fechei T1b e T1a sozinho; Sombra apontou violação de R1 (R12) | E2, orquestrador |
 | A10 | D | Dúvida técnica vai à Sombra antes do dono | Decisão do dono (visão §6.6), não medição de eficácia | E3 |
 | A11 | D | Orquestrador não apresenta decisão própria como fechada quando a regra manda escalar | Mesma R12 | E2, orquestrador |
 | A12 | D | `MessageDisplay` não serve para espelhar saídas nativas | S2: 0 chamadas em `/context`, `/cost` | E4 |
