@@ -576,6 +576,12 @@ const GIT_PERMITIDOS = new Set([
 const GIT_OUTPUT = /^--output(?:=|$)/;
 // Q16: o orquestrador só é interrompido por estes; todo outro `git` segue o prompt nativo.
 const GIT_PEDE_ORQUESTRADOR = new Set(['remote', 'fetch', 'pull', 'update-ref', 'symbolic-ref', 'config']);
+// Leitura por forma (T24): `worktree` só com `list` em 1º; `hash-object` sem `-…w` e sem `--stdin-*` (o git abrevia, `--stdin-p` vale).
+function gitLeituraPorForma(sub        , resto          )          {
+  if (sub === 'worktree') return resto[0] === 'list';
+  if (sub === 'hash-object') return !resto.some((a) => /^-[^-]*w|^--stdin-/.test(a));
+  return false;
+}
 const PUSH_COM_VALOR = new Set(['-o', '--push-option', '--repo', '--receive-pack', '--exec']);
 
                                                                                           
@@ -761,7 +767,7 @@ export function anelDeBash(segmentos            , contexto          , cwd       
         if (!(subagent ? pushPermitido(g.resto) : pushSemRefsRemotes(g.resto))) integridade ??= { anel: 'integridade', alvo: 'refs/remotes', escrita: true };
       } else if (g.resto.some((a) => GIT_OUTPUT.test(a))) {
         integridade ??= { anel: 'integridade', alvo: '.git', escrita: true };
-      } else if (subagent ? !GIT_PERMITIDOS.has(g.sub) : GIT_PEDE_ORQUESTRADOR.has(g.sub)) {
+      } else if (subagent ? !GIT_PERMITIDOS.has(g.sub) && !gitLeituraPorForma(g.sub, g.resto) : GIT_PEDE_ORQUESTRADOR.has(g.sub)) {
         const alvo = g.sub === 'remote' || g.sub === 'config' ? '.git/config' : g.sub === 'fetch' || g.sub === 'pull' || g.sub === 'update-ref' || g.sub === 'symbolic-ref' ? 'refs/remotes' : '.git';
         integridade ??= { anel: 'integridade', alvo, escrita: true };
       }

@@ -77,7 +77,7 @@ function conferir(r, e) {
   assert.ok(r.vistos.specs > 0, `proxima devolve spec (D8)${m}`);
   assert.equal(r.vistos.achados, e.correcoes ?? 0, `cada correção traz os achados da rodada reprovada (D2)${m}`);
   assert.deepEqual(Object.values(r.leituras), Object.values(r.leituras).map(() => 'passa'), `leituras do revisor pela guarda${m}`);
-  assert.equal(Object.keys(r.leituras).length, 16, `16 leitores medidos (7 da base + 9 da T21)${m}`);
+  assert.equal(Object.keys(r.leituras).length, 17, `17 leitores medidos (7 da base + 9 da T21 + hash-object da T24)${m}`);
   if (e.pouso > 0) {
     assert.match(r.retomadaTexto, /gabarito-loop/, `a retomada nomeia a skill (D7)${m}`);
     assert.ok(r.denies >= 1, `o mod negou o Agent antes do pouso${m}`);

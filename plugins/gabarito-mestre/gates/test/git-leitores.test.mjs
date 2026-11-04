@@ -6,12 +6,15 @@
  * consomem valor e não podem enganar a leitura do subcomando.
  * Costura (P9): `git worktree add` real → guarda por stdin com `cd <worktree> && git <leitor>` → o git roda e responde.
  *
+ * T24 (GM-10, sombra-t13e.md "(b)"): `worktree` só com `list` em 1º e `hash-object` sem `-…w` nem `--stdin-*` passam para o subagente (leitura);
+ * toda forma de escrita da tabela segue negada, nos 2 cwd. Mutações da T24 em task-24-mut.json.
+ *
  * MUTAÇÕES (task-21-r2-mut.json, sobre dist/aneis.js): M1 a M9, G1 liberar `tag` e `worktree`, G3 tirar `name-rev` da lista.
  */
 
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -83,7 +86,7 @@ describe('T21: leitores de git passam para o subagente', () => {
 describe('T21: o que segue negado ao subagente', () => {
   const { R, WT } = cenario();
   const NEGADOS = [
-    'tag v1', 'tag -d v0', 'worktree add ../x', 'worktree remove x', 'merge-tree HEAD HEAD HEAD', 'update-ref refs/heads/x HEAD',
+    'tag v1', 'tag -d v0', 'merge-tree HEAD HEAD HEAD', 'update-ref refs/heads/x HEAD',
     'rev-list --output=z HEAD', 'rev-list --output z HEAD', 'diff-tree --output=z HEAD HEAD', 'diff-tree -r --output z HEAD HEAD',
     'shortlog --output=z HEAD', 'shortlog --output z HEAD',
     'log --output=.env', 'log --output .env', 'log -m --output=.env', 'log -1 --format= --output=.env',
@@ -141,5 +144,87 @@ describe('T21: leitura legítima segue em silêncio nos dois papéis', () => {
   test('--output-indicator-new é opção de cor, não escrita: o diff-tree passa', () => {
     const r = hook(R, R, 'git diff-tree --output-indicator-new=+ -r HEAD HEAD');
     assert.equal(r.decisao, undefined, r.motivo);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// T24: leitura por forma. Linha da tabela de sombra-t13e.md: [comando, subagente, orquestrador]. 'p' = passa em silêncio.
+const P = 'p', D = 'deny', A = 'ask';
+const TABELA_T24 = [
+  ['git worktree list', P, P], ['git worktree list --porcelain', P, P], ['git worktree list -v', P, P],
+  ['git worktree list --porcelain -z', P, P], ['git worktree list --expire 1.day.ago', P, P], ['git worktree list add x', P, P],
+  ['git worktree list --output=z.txt', D, A], ['git worktree list .env', D, A],
+  ['git worktree', D, P], ['git worktree -h', D, P], ['git worktree --x list', D, P],
+  ['git worktree add ../novoW', D, P], ['git worktree add -b n ../novoW', D, P], ['git worktree remove ../W2', D, P],
+  ['git worktree move ../W2 ../W3', D, P], ['git worktree prune', D, P], ['git worktree prune -n', D, P],
+  ['git worktree lock ../W2', D, P], ['git worktree repair', D, P],
+  // sem medição na tabela (Sombra, Testes 2): `list` fora da 1ª posição não vale
+  ['git worktree add list', D, P], ['git worktree remove list', D, P],
+  ['git hash-object b.txt', P, P], ['git hash-object -t blob b.txt', P, P], ['git hash-object -tblob b.txt', P, P],
+  ['git hash-object --no-filters b.txt', P, P], ['git hash-object --path=a.txt b.txt', P, P], ['git hash-object --stdin < b.txt', P, P],
+  ['git hash-object --write b.txt', P, P],
+  ['git hash-object -- -w', D, P], ['git hash-object -w b.txt', D, P], ['git hash-object -wt blob b.txt', D, P],
+  ['git hash-object -t blob -w b.txt', D, P], ['git hash-object b.txt -w', D, P], ['git hash-object --stdin -w < b.txt', D, P],
+  ['git hash-object -w --stdin-paths < paths.txt', D, P], ['git hash-object "-w" b.txt', D, P], ['git hash-object \\-w b.txt', D, P],
+  ['git hash-object --output=z.txt b.txt', D, A],
+  ['git hash-object .env', D, A], ['git hash-object --path=.env b.txt', D, A], ['git hash-object --stdin < .env', D, A],
+  ['git hash-object --stdin-paths < paths.txt', D, P], ['echo .env | git hash-object --stdin-paths', D, P], ['echo .env | git hash-object --stdin-p', D, P],
+  // limites declarados (Q14): indireção e `-c filter.*`; já valem para `git add`, permitido
+  ['F=-w; git hash-object $F b.txt', P, P], ['git hash-object $(echo -w) b.txt', P, P], ['git hash-object `echo -w` b.txt', P, P],
+  ['git -c filter.x.clean="touch pwn" hash-object a.txt', P, P],
+];
+
+describe('T24: worktree list e hash-object sem gravar (tabela da Sombra), nos 2 cwd e com -C', () => {
+  const { R, WT } = cenario();
+  const quando = (v) => (v === P ? undefined : v);
+  for (const [cmd, sub, orq] of TABELA_T24) {
+    test(`T24 ${cmd}`, () => {
+      const formas = [['principal', R, cmd], ['cd wt', R, `cd ${WT} && ${cmd}`], ['cwd wt', WT, cmd]];
+      // `-C` só onde o git vem em 1º lugar na linha.
+      if (cmd.startsWith('git ')) formas.push(['-C wt', R, `git -C ${WT} ${cmd.slice(4)}`]);
+      for (const [rotulo, cwd, linha] of formas) {
+        assert.equal(hook(R, cwd, linha).decisao, quando(sub), `subagente, ${rotulo}: ${linha}`);
+        assert.equal(hook(R, cwd, linha, false).decisao, quando(orq), `orquestrador, ${rotulo}: ${linha}`);
+      }
+    });
+  }
+});
+
+describe('T24: costura real, a guarda libera e o git responde sem mexer em .git; a forma negada escreve', () => {
+  const { R, WT } = cenario();
+  /** Hash de todo arquivo em .git, menos o `index` (o git atualiza o stat cache ao ler). */
+  function foto(raiz) {
+    const out = {};
+    const ande = (d) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const c = join(d, e.name);
+        if (e.isDirectory()) ande(c);
+        else if (c !== join(raiz, 'index')) out[c.slice(raiz.length)] = `${statSync(c).size}:${readFileSync(c).toString('base64')}`;
+      }
+    };
+    ande(raiz);
+    return out;
+  }
+  const rodar = (cwd, ...args) => spawnSync('git', args, { cwd, encoding: 'utf8' });
+
+  test('worktree list e hash-object: liberados, respondem, .git igual', () => {
+    writeFileSync(join(R, 'b.txt'), 'conteudo novo da T24\n');
+    const antes = foto(join(R, '.git'));
+    for (const [linha, args] of [[`cd ${WT} && git worktree list`, ['worktree', 'list']], [`git hash-object b.txt`, ['hash-object', 'b.txt']]]) {
+      assert.equal(hook(R, R, linha).decisao, undefined, linha);
+      const r = rodar(R, ...args);
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(r.stdout.trim().length > 0, `${linha} respondeu`);
+    }
+    assert.deepEqual(foto(join(R, '.git')), antes, 'ler não gravou nada em .git');
+  });
+
+  test('hash-object -w grava em .git (a forma negada escreve) e a guarda a nega', () => {
+    writeFileSync(join(R, 'c.txt'), 'outro conteudo da T24\n');
+    assert.equal(hook(R, R, 'git hash-object -w c.txt').decisao, 'deny');
+    const antes = foto(join(R, '.git'));
+    const r = rodar(R, 'hash-object', '-w', 'c.txt');
+    assert.equal(r.status, 0, r.stderr);
+    assert.notDeepEqual(foto(join(R, '.git')), antes, '-w muda .git');
   });
 });

@@ -43,12 +43,14 @@ const TEMPLATE = {
     casos: "import { test } from 'node:test'; import assert from 'node:assert/strict'; import { triplo } from '../src/c.mjs';\ntest('t', () => assert.equal(triplo(2), 6));\n" },
 };
 
-/** Leituras de git que a guarda deixa passar ao revisor: as 7 da base e os 9 leitores da T21. */
+/** Leituras de git que a guarda deixa passar ao revisor: as 7 da base, os 9 leitores da T21 e o `hash-object` sem `-w` da T24. */
 export const LEITURAS_REVISOR = [
   'git diff HEAD~1', 'git log --oneline -5', 'git status --short', 'git show --stat HEAD', 'git branch --show-current', 'git merge-base HEAD HEAD', 'git blame src/a.mjs',
   // os 9 leitores da T21 (D4)
   'git ls-tree HEAD', 'git cat-file -p HEAD', 'git rev-list HEAD', 'git show-ref', 'git for-each-ref', 'git describe --always',
   'git diff-tree --no-commit-id --name-only -r HEAD', 'git shortlog -s HEAD', 'git name-rev HEAD',
+  // T24: leitura por forma
+  'git hash-object package.json',
 ];
 
 function git(cwd, ...args) {
@@ -210,6 +212,9 @@ export async function caminhar(opcoes) {
     if (tst.rc !== 0) def(`implementador npm test rc ${tst.rc}: ${(tst.out + tst.err).slice(-200)}`);
     const r = bash(`cd "${wt}" && git add -A && git commit -q -m "feat(GM-99): ${ag.task} ${ag.papel}" && git status --short && git log --oneline -2`, ag);
     if (r.rc !== 0) { def(`implementador commit rc ${r.rc}: ${r.err}`); ag.falhou = true; }
+    // T24: o implementador confere as worktrees; `git worktree list` passa pela guarda real, sem deny.
+    const lista = bash(`git worktree list`, ag);
+    if (lista.rc !== 0 || !lista.out.includes(wt)) def(`implementador git worktree list rc ${lista.rc}, sem ${wt}: ${lista.err}`);
   }
 
   /** O revisor grava os achados da rodada; com `achadosVazios` a 1ª gravação vem vazia (a CLI tem que recusar o REPROVADO). */
