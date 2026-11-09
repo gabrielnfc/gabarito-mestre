@@ -1,8 +1,14 @@
 /** Testes de proximaAcao, podeIntegrar e ordenar (REQ-LOOP-2). Mutações: task-2-r3-mut.json. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { CHAVES_DE_EVENTO, estadoDe, ordenar, podeIntegrar, proximaAcao, TRANSICOES } from '../src/loop.ts';
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { CHAVES_DE_EVENTO, estadoDe, ordenar, podeIntegrar, proximaAcao, tasksCongeladas, TIPOS_DE_PROGRESSO, TRANSICOES } from '../src/loop.ts';
+import * as diarioFs from '../src/diario.ts';
+import { projetarEmendas, reqsCongelados, SESSAO_EMENDAS } from '../src/emenda.ts';
 import type { ChaveEvento, EstadoTask } from '../src/loop.ts';
 import { analisarFronteira, negaDespacho } from '../src/pouso.ts';
 import type { Evento, Plano, Sinais, TipoEvento } from '../src/tipos.ts';
@@ -185,6 +191,11 @@ test('tabela-J-em-voo-sem-agente-nao-pousa: implementando, corrigindo e em_revis
 test('tabela-J-motivo-e-da-task-em-voo: outra task no teto não troca o motivo para teto_rodadas', () => {
   const evs = diario(...noTeto('a'), ini('b'));
   assert.deepEqual(proximaAcao(plano(['a'], ['b']), evs, NX()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'b' });
+});
+test('tabela-9b-antes-de-9c: no_teto vence task em voo quando o percent não manda pousar (r2 MINOR)', () => {
+  const evs = diario(...noTeto('a'), ini('b'));
+  assert.deepEqual(proximaAcao(plano(['a'], ['b']), evs, sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['b'], ['a']), diario(ini('b'), ...noTeto('a')), sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'a' });
 });
 test('tabela-K-aprovada-nao-integrada-pousa', () => {
   assert.deepEqual(proximaAcao(plano(['a']), diario(...aprovada('a')), NX()), { tipo: 'pousar' });
@@ -739,4 +750,439 @@ test('pura-mesma-entrada-mesma-saida-sem-mutar', () => {
 test('fonte-sem-node-nem-relogio', () => {
   const fonte = readFileSync(new URL('../src/loop.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(fonte, /node:|Date\.now|new Date|Math\.random|process\./);
+});
+
+// ===================================================================================================================
+// GM-11 T6: congelar por REQ (REQ-EME-2, REQ-ENT-1 cláusula 4b). Tabela e decisões: sombra-p1b.md, Task 6.
+// ===================================================================================================================
+const TS_BASE = Date.UTC(2026, 10, 9, 12, 0, 0);
+const tsN = (n: number): string => new Date(TS_BASE + n * 1000).toISOString();
+/** Diário das tasks: sessão `loop`, seq e ts crescentes (ts a partir de 0 s). */
+const diarioT = (...evs: [TipoEvento, Record<string, unknown>][]): Evento[] =>
+  evs.map(([tipo, dados], i) => ev(i + 1, tsN(i), 'loop', tipo, dados));
+const DADOS_PROP = { diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'tecnica' };
+/** `emenda.proposta` na sessão fixa `emendas`; `n` = segundos a partir de TS_BASE (default: depois de qualquer diário de teste). */
+const prop = (seq: number, req: string, extra: Record<string, unknown> = {}, n = 100 + seq, sessao = 'emendas'): Evento =>
+  ev(seq, tsN(n), sessao, 'emenda.proposta', { req, ...DADOS_PROP, ...extra });
+const julga = (seq: number, tipo: 'spec.emendada' | 'emenda.rejeitada', proposta_seq: unknown, n = 200 + seq, sessao = 'dono-s', origem: unknown = 'dono'): Evento =>
+  ev(seq, tsN(n), sessao, tipo, { proposta_seq, origem });
+const T = (id: string, deps: string[], reqs?: string[]) => ({ id, deps, arquivos: [`${id}.ts`], ...(reqs === undefined ? {} : { reqs }) });
+const planoR = (...tasks: ReturnType<typeof T>[]): Plano => ({ entrega: 'GM-11', tasks });
+const exigeProd = (p: Plano, extra: Record<string, unknown> = {}): Plano => ({ ...p, politica_entrega: { exige_prod: true, ...extra } });
+
+// --- tasksCongeladas
+test('tasks-congeladas-por-req-exato-e-dependentes', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1'], ['REQ-B-1']), T('T3', [], ['REQ-C-1']));
+  const c = tasksCongeladas(p, [prop(1, 'REQ-A-1')]);
+  assert.deepEqual([...c].sort(), ['T1', 'T2']);
+});
+test('congela-por-req-nao-por-task-da-proposta', () => {
+  // a proposta cita `task: T2`, mas o REQ só está em T1.reqs: congela T1, não T2
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', [], ['REQ-B-1']));
+  const c = tasksCongeladas(p, [prop(1, 'REQ-A-1', { task: 'T2' })]);
+  assert.deepEqual([...c], ['T1']);
+});
+test('congela-req-exato', () => {
+  const p = planoR(T('T1', [], ['REQ-A-10']), T('T2', [], ['REQ-A-1']));
+  assert.deepEqual([...tasksCongeladas(p, [prop(1, 'REQ-A-1')])], ['T2']);
+  assert.deepEqual([...tasksCongeladas(p, [prop(1, 'REQ-A-10')])], ['T1']);
+});
+test('task-sem-reqs-nao-congela', () => {
+  const p = planoR(T('T1', []), T('T2', [], []), T('T3', [], ['REQ-A-1']));
+  assert.deepEqual([...tasksCongeladas(p, [prop(1, 'REQ-A-1')])], ['T3']);
+});
+test('congela-dependente-transitivo', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']), T('T3', ['T2']), T('T4', []));
+  assert.deepEqual([...tasksCongeladas(p, [prop(1, 'REQ-A-1')])].sort(), ['T1', 'T2', 'T3']);
+});
+test('dependente-de-integrada-congelada-congela', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']));
+  const evs = [...diarioT(...pronta('T1')), prop(1, 'REQ-A-1')];
+  assert.deepEqual([...tasksCongeladas(p, evs)].sort(), ['T1', 'T2']);
+});
+test('tasks-congeladas-sem-evento-de-emenda-vazio', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']));
+  assert.deepEqual([...tasksCongeladas(p, [])], []);
+  assert.deepEqual([...tasksCongeladas(p, diarioT(...aprovada('T1')))], []);
+});
+test('spec-emendada-libera', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']));
+  assert.deepEqual([...tasksCongeladas(p, [prop(1, 'REQ-A-1'), julga(1, 'spec.emendada', 1)])], []);
+});
+test('rejeitada-libera', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']));
+  assert.deepEqual([...tasksCongeladas(p, [prop(1, 'REQ-A-1'), julga(1, 'emenda.rejeitada', 1)])], []);
+});
+test('julgamento-ts-antes-da-proposta-libera', () => {
+  // relógio que recua: o julgamento (sessão do dono) tem ts ANTERIOR ao da proposta e fecha do mesmo jeito (casa por proposta_seq)
+  const p = planoR(T('T1', [], ['REQ-A-1']));
+  const evs = [julga(1, 'spec.emendada', 1, 5), prop(1, 'REQ-A-1', {}, 50)];
+  assert.deepEqual([...tasksCongeladas(p, evs)], []);
+  assert.equal(proximaAcao(p, [...diarioT(...pronta('T1')), ...evs], sinais()).tipo, 'concluir');
+});
+test('julgamento-invalido-ou-sem-proposta-nao-libera', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']));
+  const aberta = prop(1, 'REQ-A-1');
+  const forma = ev(1, tsN(300), 'dono-s', 'spec.emendada', { proposta_seq: 1, origem: 'ninguem' });
+  assert.deepEqual([...tasksCongeladas(p, [aberta, forma])], ['T1'], 'forma inválida: a proposta segue aberta');
+  assert.deepEqual([...tasksCongeladas(p, [aberta, julga(1, 'spec.emendada', 9)])], ['T1'], 'proposta_seq inexistente');
+});
+test('emenda-ausente-x-corrompida', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']));
+  const sem = diarioT(...aprovada('T1'));
+  const torta = ev(1, tsN(100), 'emendas', 'emenda.proposta', { req: 'REQ-A-1' }); // faltam diff, fato, ...
+  const semDados = ev(2, tsN(101), 'emendas', 'emenda.proposta', undefined);
+  for (const lixo of [torta, semDados]) {
+    assert.deepEqual([...tasksCongeladas(p, [lixo])], [], 'proposta de forma inválida é ignorada');
+    assert.deepEqual(proximaAcao(p, [...sem, lixo], sinais()), { tipo: 'integrar', tasks: ['T1'] }, 'nada congela e não é diario_invalido');
+  }
+  assert.deepEqual(proximaAcao(p, sem, sinais()), { tipo: 'integrar', tasks: ['T1'] });
+});
+test('proposta-de-outra-sessao-nao-congela', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']));
+  assert.deepEqual([...tasksCongeladas(p, [prop(1, 'REQ-A-1', {}, 100, 'loop')])], []);
+});
+test('tasks-congeladas-diario-invalido-todas', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', []), T('T3', ['T2']));
+  const fora = [ev(2, tsN(1), 'loop', ...ini('T1')), ev(1, tsN(2), 'loop', ...con('T1'))];
+  assert.deepEqual([...tasksCongeladas(p, fora)].sort(), ['T1', 'T2', 'T3']);
+  const semTs = [{ ...ev(1, tsN(1), 'loop', ...ini('T1')), ts: 'ontem' }];
+  assert.deepEqual([...tasksCongeladas(p, semTs)].sort(), ['T1', 'T2', 'T3']);
+});
+
+// --- podeIntegrar (D6-2)
+test('pode-integrar-congelada-false', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', [], ['REQ-B-1']));
+  const evs = diarioT(...aprovada('T1'), ...aprovada('T2'));
+  assert.equal(podeIntegrar(p, evs, 'T1'), true, 'preparo: sem proposta integra');
+  const com = [...evs, prop(1, 'REQ-A-1')];
+  assert.equal(podeIntegrar(p, com, 'T1'), false);
+  assert.equal(podeIntegrar(p, com, 'T2'), true, 'só o REQ afetado congela');
+  assert.equal(podeIntegrar(p, [...com, julga(1, 'emenda.rejeitada', 1)], 'T1'), true, 'julgada, libera');
+});
+test('pode-integrar-dependente-de-congelada-false', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']));
+  const evs = [...diarioT(...pronta('T1'), ...aprovada('T2')), prop(1, 'REQ-A-1')];
+  assert.equal(podeIntegrar(p, evs, 'T2'), false);
+});
+
+// --- proximaAcao: filtros (5), (6), (7)
+test('congela-so-req-afetado', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', [], ['REQ-B-1']));
+  assert.deepEqual(proximaAcao(p, [prop(1, 'REQ-A-1')], sinais()), { tipo: 'despachar', itens: [{ task: 'T2', papel: 'implementador' }] });
+});
+test('congela-dependente', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']), T('T3', []));
+  const evs = [...diarioT(...pronta('T1')), prop(1, 'REQ-A-1')];
+  assert.deepEqual(proximaAcao(p, evs, sinais()), { tipo: 'despachar', itens: [{ task: 'T3', papel: 'implementador' }] });
+});
+test('aprovada-congelada-nao-integra', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', [], ['REQ-B-1']));
+  const evs = [...diarioT(...aprovada('T1'), ...aprovada('T2')), prop(1, 'REQ-A-1')];
+  assert.deepEqual(proximaAcao(p, evs, sinais()), { tipo: 'integrar', tasks: ['T2'] });
+});
+test('concluida-congelada-sem-revisor', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']));
+  const evs = [...diarioT(ini('T1'), con('T1')), prop(1, 'REQ-A-1')];
+  assert.deepEqual(proximaAcao(p, evs, sinais()), { tipo: 'esperar', motivo: 'emenda', propostas: [{ seq: 1, req: 'REQ-A-1' }] });
+  const livre = diarioT(ini('T1'), con('T1'));
+  assert.deepEqual(proximaAcao(p, livre, sinais()), { tipo: 'despachar', itens: [{ task: 'T1', papel: 'revisor' }] });
+});
+test('reprovada-congelada-sem-correcao', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']));
+  const base = diarioT(ini('T1'), con('T1'), ver('T1', 'REPROVADO', 1, 1));
+  assert.deepEqual(proximaAcao(p, base, sinais()), { tipo: 'despachar', itens: [{ task: 'T1', papel: 'correcao' }] }, 'preparo');
+  assert.deepEqual(proximaAcao(p, [...base, prop(1, 'REQ-A-1')], sinais()), { tipo: 'esperar', motivo: 'emenda', propostas: [{ seq: 1, req: 'REQ-A-1' }] });
+});
+test('x-revisor-exclui-congelada', () => {
+  // percent ≥ x: o revisor da task congelada não sai antes do pouso; o da livre sai
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', [], ['REQ-B-1']));
+  const base = diarioT(ini('T1'), con('T1'), ini('T2'), con('T2'));
+  const alto = sinais({ percent: 90 });
+  assert.deepEqual(proximaAcao(p, [...base, prop(1, 'REQ-A-1')], alto), { tipo: 'despachar', itens: [{ task: 'T2', papel: 'revisor' }] });
+  assert.deepEqual(proximaAcao(p, base, alto), { tipo: 'despachar', itens: [{ task: 'T1', papel: 'revisor' }, { task: 'T2', papel: 'revisor' }] });
+});
+test('pouso-com-tudo-congelado', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']));
+  const evs = [...diarioT(...aprovada('T1')), prop(1, 'REQ-A-1')];
+  assert.deepEqual(proximaAcao(p, evs, sinais({ percent: 90 })), { tipo: 'pousar' });
+  assert.deepEqual(proximaAcao(p, evs, sinais({ percent: 90, podePousar: false })), { tipo: 'parar', motivo: 'sem_pouso' });
+});
+test('em-voo-termina', () => {
+  // task congelada em voo: a `task.concluida` e o veredito seguem aceitos pela tabela (o diário não vira inválido)
+  const p = planoR(T('T1', [], ['REQ-A-1']));
+  const e = (...evs: [TipoEvento, Record<string, unknown>][]) => [...diarioT(...evs), prop(1, 'REQ-A-1')];
+  assert.deepEqual(proximaAcao(p, e(ini('T1'), con('T1')), sinais()).tipo, 'esperar');
+  assert.deepEqual(proximaAcao(p, e(ini('T1'), con('T1'), ini('T1', 'revisor'), ver('T1', 'APROVADO', 1)), sinais()), { tipo: 'esperar', motivo: 'emenda', propostas: [{ seq: 1, req: 'REQ-A-1' }] });
+  // agente vivo da task congelada: espera por ele, não por emenda
+  assert.deepEqual(proximaAcao(p, e(ini('T1')), sinais({ vivos: 1 })), { tipo: 'esperar', motivo: 'agentes vivos' });
+});
+
+// --- proximaAcao: (8) e (9)
+test('esperar-emenda-com-propostas', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']));
+  const evs = [...diarioT(...aprovada('T1')), prop(1, 'REQ-A-1')];
+  assert.deepEqual(proximaAcao(p, evs, sinais()), { tipo: 'esperar', motivo: 'emenda', propostas: [{ seq: 1, req: 'REQ-A-1' }] });
+});
+test('esperar-emenda-lista-todas-as-abertas', () => {
+  // `propostas` = todas as abertas por seq, também as que não congelam task alguma
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', [], ['REQ-B-1']));
+  const evs = [...diarioT(...pronta('T2'), ini('T1'), con('T1')), prop(1, 'REQ-X-9'), prop(2, 'REQ-A-1'), prop(3, 'REQ-B-1'), julga(1, 'emenda.rejeitada', 3)];
+  const a = proximaAcao(p, evs, sinais());
+  assert.deepEqual(a, { tipo: 'esperar', motivo: 'emenda', propostas: [{ seq: 1, req: 'REQ-X-9' }, { seq: 2, req: 'REQ-A-1' }] });
+});
+test('concluir-com-proposta-aberta-espera', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', []));
+  const feito = diarioT(...pronta('T1'), ...pronta('T2'));
+  assert.deepEqual(proximaAcao(p, feito, sinais()), { tipo: 'concluir' }, 'preparo');
+  assert.deepEqual(proximaAcao(p, [...feito, prop(1, 'REQ-A-1')], sinais()), { tipo: 'esperar', motivo: 'emenda', propostas: [{ seq: 1, req: 'REQ-A-1' }] });
+  // proposta de REQ que nenhuma task cita também segura a conclusão
+  assert.deepEqual(proximaAcao(p, [...feito, prop(1, 'REQ-Z-1')], sinais()), { tipo: 'esperar', motivo: 'emenda', propostas: [{ seq: 1, req: 'REQ-Z-1' }] });
+  assert.deepEqual(proximaAcao(p, [...feito, prop(1, 'REQ-A-1'), julga(1, 'spec.emendada', 1)], sinais()), { tipo: 'concluir' });
+});
+test('teto-vence-emenda', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', []));
+  const evs = [...diarioT(...noTeto('T2')), prop(1, 'REQ-A-1')];
+  assert.deepEqual(proximaAcao(p, evs, sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'T2' });
+});
+test('emenda-nao-mascara-task-presa', () => {
+  // T1 congelada pendente; T3 fora de C reprovada na rodada 2 sem achado: ninguém a despacha, e a emenda não explica isso
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T3', []));
+  const presa = diarioT(ini('T3'), con('T3'), ver('T3', 'REPROVADO', 1, 1), ini('T3', 'correcao'), con('T3'), ver('T3', 'REPROVADO', 2, 0, 0));
+  assert.deepEqual(proximaAcao(p, [...presa, prop(1, 'REQ-A-1')], sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'T3' });
+});
+test('emenda-nao-mascara-agente-morto', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', []));
+  const morto = [...diarioT(ini('T2')), prop(1, 'REQ-A-1')];
+  assert.deepEqual(proximaAcao(p, morto, sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'T2' });
+  // a própria task congelada em voo, sem agente vivo: também morreu
+  const p1 = planoR(T('T1', [], ['REQ-A-1']));
+  assert.deepEqual(proximaAcao(p1, [...diarioT(ini('T1')), prop(1, 'REQ-A-1')], sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'T1' });
+});
+test('9c-aponta-a-task-em-voo-nao-a-primeira-nao-integrada', () => {
+  // T1 congelada pendente vem antes no plano, mas quem morreu é T2
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', []));
+  const a = proximaAcao(p, [...diarioT(ini('T2')), prop(1, 'REQ-A-1')], sinais());
+  assert.equal(a.tipo === 'parar' ? a.task : null, 'T2');
+});
+test('sem-slot-livre-segue-na-presenca-de-emenda', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', []));
+  assert.deepEqual(proximaAcao(p, [prop(1, 'REQ-A-1')], sinais({ slots: 1, vivos: 1 })), { tipo: 'esperar', motivo: 'sem slot livre' });
+});
+test('progresso-inclui-julgamento', () => {
+  assert.ok(TIPOS_DE_PROGRESSO.includes('spec.emendada'));
+  assert.ok(TIPOS_DE_PROGRESSO.includes('emenda.rejeitada'));
+  assert.ok(!TIPOS_DE_PROGRESSO.includes('emenda.proposta'), 'a proposta é só pedido, não progresso');
+  assert.ok(TIPOS_DE_PROGRESSO.includes('ci.resultado'));
+});
+
+// --- (4b) janela_ausente, D6-1
+test('exige-prod-sob-demanda-para', () => {
+  const p = exigeProd(planoR(T('T1', [])));
+  assert.deepEqual(proximaAcao(p, [], sinais({ politica: 'sob_demanda' })), { tipo: 'parar', motivo: 'janela_ausente' });
+});
+test('exige-prod-continua-ou-janela-nao-para', () => {
+  const p = exigeProd(planoR(T('T1', [])));
+  for (const politica of ['continua', 'janela'] as const) {
+    assert.deepEqual(proximaAcao(p, [], sinais({ politica })), { tipo: 'despachar', itens: [{ task: 'T1', papel: 'implementador' }] }, politica);
+  }
+});
+test('exige-prod-falso-ou-ausente-nao-para', () => {
+  const base = planoR(T('T1', []));
+  const despacha = { tipo: 'despachar', itens: [{ task: 'T1', papel: 'implementador' }] };
+  assert.deepEqual(proximaAcao({ ...base, politica_entrega: { exige_prod: false } }, [], sinais({ politica: 'sob_demanda' })), despacha);
+  assert.deepEqual(proximaAcao(base, [], sinais({ politica: 'sob_demanda' })), despacha);
+});
+test('exige-prod-sinais-sem-politica-nao-avalia', () => {
+  // D6-1: `politica` ausente = não avaliada. Stop e mod não a passam e não podem parar por `janela_ausente`.
+  const p = exigeProd(planoR(T('T1', [])));
+  assert.deepEqual(proximaAcao(p, [], sinais()), { tipo: 'despachar', itens: [{ task: 'T1', papel: 'implementador' }] });
+  assert.deepEqual(proximaAcao(p, [], sinais({ politica: undefined })), { tipo: 'despachar', itens: [{ task: 'T1', papel: 'implementador' }] });
+});
+test('pausado-vence-janela-ausente', () => {
+  const p = exigeProd(planoR(T('T1', [])));
+  assert.deepEqual(proximaAcao(p, [], sinais({ pausado: true, politica: 'sob_demanda' })), { tipo: 'esperar', motivo: 'pausado' });
+});
+test('teto-de-tokens-e-ci-vermelho-vencem-janela-ausente', () => {
+  const p = exigeProd(planoR(T('T1', [])));
+  assert.deepEqual(proximaAcao(p, [], sinais({ politica: 'sob_demanda', tokens: 10, tetoTokens: 5 })), { tipo: 'parar', motivo: 'teto_tokens' });
+  assert.deepEqual(proximaAcao(p, diario(ci(false), ci(false)), sinais({ politica: 'sob_demanda' })), { tipo: 'parar', motivo: 'ci_vermelho' });
+});
+test('janela-ausente-vem-antes-do-plano-vazio-e-da-emenda', () => {
+  assert.deepEqual(proximaAcao(exigeProd(planoR()), [], sinais({ politica: 'sob_demanda' })), { tipo: 'parar', motivo: 'janela_ausente' });
+  const p = exigeProd(planoR(T('T1', [], ['REQ-A-1'])));
+  assert.deepEqual(proximaAcao(p, [prop(1, 'REQ-A-1')], sinais({ politica: 'sob_demanda' })), { tipo: 'parar', motivo: 'janela_ausente' });
+});
+
+// --- ci.resultado de homolog não é o CI do loop
+test('ci-homolog-vermelho-nao-conta-no-ci-vermelho', () => {
+  const p = planoR(T('T1', []));
+  const h = (verde: boolean): [TipoEvento, Record<string, unknown>] => ['ci.resultado', { verde, alvo: 'homolog' }];
+  assert.equal(proximaAcao(p, diario(h(false), h(false), h(false)), sinais()).tipo, 'despachar');
+  assert.equal(proximaAcao(p, diario(ci(false), h(false), h(false)), sinais()).tipo, 'despachar', 'um vermelho do CI do loop + homolog: ainda 1');
+});
+test('ci-homolog-verde-nao-zera-o-ci-vermelho', () => {
+  const p = planoR(T('T1', []));
+  const verdeH: [TipoEvento, Record<string, unknown>] = ['ci.resultado', { verde: true, alvo: 'homolog' }];
+  assert.deepEqual(proximaAcao(p, diario(ci(false), verdeH, ci(false)), sinais()), { tipo: 'parar', motivo: 'ci_vermelho' });
+});
+test('ci-sem-alvo-ou-alvo-estranho-conta', () => {
+  const p = planoR(T('T1', []));
+  const outro = (verde: boolean): [TipoEvento, Record<string, unknown>] => ['ci.resultado', { verde, alvo: 'prod' }];
+  assert.deepEqual(proximaAcao(p, diario(ci(false), ci(false)), sinais()), { tipo: 'parar', motivo: 'ci_vermelho' });
+  assert.deepEqual(proximaAcao(p, diario(outro(false), outro(false)), sinais()), { tipo: 'parar', motivo: 'ci_vermelho' }, 'só `homolog` exato sai da conta');
+});
+test('ci-homolog-com-verde-invalido-segue-diario-invalido', () => {
+  const p = planoR(T('T1', []));
+  assert.deepEqual(proximaAcao(p, diario(['ci.resultado', { verde: 'sim', alvo: 'homolog' }]), sinais()), invalido);
+});
+
+// --- costura (P9): os adaptadores reais (dist, hook Stop, `loop.mjs`) atravessam o núcleo
+const GATES = fileURLToPath(new URL('..', import.meta.url));
+const git = (cwd: string, ...a: string[]) => spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { cwd, encoding: 'utf8' });
+const semAmbienteDoHarness = (): NodeJS.ProcessEnv => {
+  const e = { ...process.env };
+  for (const k of Object.keys(e)) if (k.startsWith('GABARITO_') || k === 'CLAUDE_PROJECT_DIR') delete e[k];
+  return e;
+};
+/** Repo descartável da entrega GM-11 com `plano.json`; a pasta da entrega fica fora do git, como no produto. */
+function repoDaEntrega(plan: Plano): { raiz: string; dir: string } {
+  const raiz = realpathSync(mkdtempSync(join(tmpdir(), 'loop-t6-')));
+  git(raiz, 'init', '-q', '-b', 'enabler/GM-11-loop');
+  writeFileSync(join(raiz, 'harness.config.json'), JSON.stringify({ gates: { suites: ["echo '# pass 1'"] }, loop: { slots: 2 } }));
+  writeFileSync(join(raiz, '.gitignore'), '.harness/entregas/\n.harness/worktrees/\n');
+  git(raiz, 'add', '-A');
+  git(raiz, 'commit', '-q', '-m', 'chore: base');
+  const dir = join(raiz, '.harness', 'entregas', 'GM-11');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'plano.json'), JSON.stringify(plan));
+  return { raiz, dir };
+}
+/** Grava pelo `append` real, com a cadeia de hash que a leitura estrita confere. */
+function semear(dir: string, sessao: string, itens: [string, Record<string, unknown>][], n0: number): void {
+  itens.forEach(([tipo, dados], i) => {
+    const r = diarioFs.append(dir, sessao, { ts: tsN(n0 + i), autor: 't@t', sessao, agente: 'orquestrador', tipo, dados } as never);
+    assert.ok(r.ok, JSON.stringify(r));
+  });
+}
+const stopLoop = (raiz: string) => {
+  const r = spawnSync(process.execPath, [join(GATES, 'scripts', 'stop-loop.mjs')], {
+    cwd: raiz, encoding: 'utf8', input: JSON.stringify({ session_id: 'S1', cwd: raiz, background_tasks: [] }), env: { ...semAmbienteDoHarness(), CLAUDE_PROJECT_DIR: raiz },
+  });
+  return { rc: r.status, stdout: r.stdout, stderr: r.stderr };
+};
+const integrarCli = (raiz: string, task: string) => {
+  const r = spawnSync(process.execPath, [join(GATES, 'scripts', 'loop.mjs'), 'integrar', task], { cwd: raiz, encoding: 'utf8', env: semAmbienteDoHarness() });
+  let j: Record<string, unknown> | null = null;
+  try { j = JSON.parse(r.stdout.trim()); } catch { /* fica null */ }
+  return { rc: r.status, j, out: r.stdout, err: r.stderr };
+};
+
+test('stop-e-mod-sem-politica-nao-param', () => {
+  // costura: o hook Stop real chama `proximaAcao` do dist sem `politica`; plano com `exige_prod` não pode virar `janela_ausente`
+  const { raiz } = repoDaEntrega(exigeProd(planoR(T('T1', []))));
+  const r = stopLoop(raiz);
+  assert.equal(r.rc, 0, r.stderr);
+  const j = JSON.parse(r.stdout);
+  assert.equal(j.decision, 'block', r.stdout);
+  assert.match(j.reason, /despache T1/);
+  assert.doesNotMatch(r.stdout, /janela_ausente/);
+});
+test('integrar-cli-congelada-recusa', () => {
+  // costura: `loop.mjs integrar` real, sem passar por `proxima`, herda o congelamento de `podeIntegrar`
+  const { raiz, dir } = repoDaEntrega(planoR(T('T1', [], ['REQ-A-1']), T('T2', [], ['REQ-B-1'])));
+  semear(dir, 'loop', [...aprovada('T1'), ...aprovada('T2')], 0);
+  semear(dir, 'emendas', [['emenda.proposta', { req: 'REQ-A-1', ...DADOS_PROP }]], 100);
+  const r = integrarCli(raiz, 'T1');
+  assert.equal(r.rc, 1, r.out + r.err);
+  assert.equal(r.j?.erro, 'nao_integravel');
+  assert.ok(!readdirSync(dir).some((n) => /integrad/.test(n)));
+  assert.ok(!diarioFs.ler(dir).some((e) => e.tipo === 'task.integrada'), 'nada foi gravado como integrada');
+});
+test('linha-corrompida-nao-descongela', () => {
+  // `diario.ler` descarta linha corrompida em silêncio; a leitura dos adaptadores é estrita e recusa (nunca descongela)
+  const { raiz, dir } = repoDaEntrega(planoR(T('T1', [], ['REQ-A-1'])));
+  semear(dir, 'loop', aprovada('T1'), 0);
+  semear(dir, 'emendas', [['emenda.proposta', { req: 'REQ-A-1', ...DADOS_PROP }]], 100);
+  const arq = join(dir, 'events.emendas.jsonl');
+  const original = readFileSync(arq, 'utf8');
+  // (a) a própria linha da proposta corrompida: a leitura tolerante a perde, e o REQ pareceria livre
+  writeFileSync(arq, original.replace('"tipo":"emenda.proposta"', '"tipo":"emenda.proposta'));
+  assert.deepEqual(diarioFs.ler(dir).filter((e) => e.tipo === 'emenda.proposta'), [], 'preparo: a leitura tolerante descartou a proposta');
+  const r = integrarCli(raiz, 'T1');
+  assert.equal(r.rc, 1, r.out + r.err);
+  assert.equal(r.j?.erro, 'diario_ilegivel');
+  assert.ok(!diarioFs.ler(dir).some((e) => e.tipo === 'task.integrada'));
+  const s = stopLoop(raiz);
+  assert.doesNotMatch(s.stdout, /"decision":\s*"block"/, 'o Stop não manda integrar sobre diário ilegível');
+  assert.match(s.stdout, /ilegível/);
+  // (b) lixo no fim do arquivo
+  writeFileSync(arq, original);
+  appendFileSync(arq, '{"seq":2,"tipo":\n');
+  assert.equal(integrarCli(raiz, 'T1').j?.erro, 'diario_ilegivel');
+});
+test('costura-dist-congela-pelo-mesmo-nucleo', async () => {
+  // o dist (o que Stop, mod e CLI importam) congela como o src
+  const dist = await import(new URL('../dist/loop.js', import.meta.url).href);
+  const p = planoR(T('T1', [], ['REQ-A-1']));
+  const evs = [...diarioT(...aprovada('T1')), prop(1, 'REQ-A-1')];
+  assert.deepEqual([...dist.tasksCongeladas(p, evs)], ['T1']);
+  assert.equal(dist.podeIntegrar(p, evs, 'T1'), false);
+  assert.deepEqual(dist.proximaAcao(exigeProd(p), [], sinais()).tipo, 'despachar');
+});
+
+// --- `loop.ts` congela pela projeção ÚNICA de `emenda.ts` (sem cópia local); o oráculo abaixo é independente do que está sendo medido
+test('loop-congela-pela-projecao-de-emenda', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', [], ['REQ-B-1']), T('T3', ['T2']));
+  const cenarios: Evento[][] = [
+    [],
+    [prop(1, 'REQ-A-1')],
+    [prop(1, 'REQ-A-1'), prop(2, 'REQ-B-1'), julga(1, 'spec.emendada', 1), julga(2, 'emenda.rejeitada', 2)],
+    [prop(1, 'REQ-A-1'), julga(1, 'emenda.rejeitada', 1, 200), julga(2, 'spec.emendada', 1, 201)],
+    [julga(1, 'spec.emendada', 1, 5), prop(1, 'REQ-A-1', {}, 50)],
+    [prop(1, 'REQ-A-1', {}, 100, 'loop'), prop(2, 'REQ-B-1')],
+    [prop(1, 'REQ-A-1'), ev(1, tsN(300), 'dono-s', 'spec.emendada', { proposta_seq: 1, origem: 'x' })],
+    [prop(1, 'REQ-A-1', { diff: '' }), prop(2, 'REQ-B-1')],
+    [ev(1, tsN(100), 'emendas', 'emenda.proposta', undefined as never), prop(2, 'REQ-B-1')],
+    [prop(1, 'REQ-A-1'), julga(1, 'spec.emendada', 7)],
+  ];
+  assert.equal(SESSAO_EMENDAS, 'emendas');
+  for (const [i, evs] of cenarios.entries()) {
+    const est = projetarEmendas(evs);
+    const esperadas = new Set(est.abertas.length === 0 ? [] : p.tasks.filter((t) => t.reqs?.some((r) => reqsCongelados(est).has(r))).map((t) => t.id));
+    for (const t of p.tasks) if (t.deps.some((d) => esperadas.has(d)) || t.deps.some((d) => p.tasks.find((x) => x.id === d)?.deps.some((dd) => esperadas.has(dd)))) esperadas.add(t.id);
+    assert.deepEqual([...tasksCongeladas(p, evs)].sort(), [...esperadas].sort(), `cenário ${i}`);
+    const a = proximaAcao(p, evs, sinais());
+    if (est.abertas.length > 0 && a.tipo === 'esperar' && a.motivo === 'emenda') {
+      assert.deepEqual(a.propostas, est.abertas.map((x) => ({ seq: x.seq, req: x.req })), `cenário ${i}`);
+    }
+  }
+});
+test('proposta-de-outra-sessao-nao-congela-no-loop', () => {
+  // só a sessão fixa `emendas` propõe: a mesma forma gravada em `loop` não congela (a fonte é `emenda.ts`, com a regra única)
+  const p = planoR(T('T1', [], ['REQ-A-1']));
+  const evs = [...diarioT(...aprovada('T1')), prop(4, 'REQ-A-1', {}, 100, 'loop')];
+  assert.deepEqual([...tasksCongeladas(p, evs)], []);
+  assert.equal(podeIntegrar(p, evs, 'T1'), true);
+  assert.deepEqual(proximaAcao(p, evs, sinais()), { tipo: 'integrar', tasks: ['T1'] });
+  const propria = [...diarioT(...aprovada('T1')), prop(1, 'REQ-A-1')];
+  assert.deepEqual([...tasksCongeladas(p, propria)], ['T1']);
+});
+test('dist-loop-nao-importa-node-nem-modulo-que-importe', () => {
+  // o mod carrega `dist/loop.js` como módulo de hook: só import relativo e, transitivamente, nenhum `node:*` (medido: `claude plugin test`)
+  const visto = new Set<string>();
+  const visita = (nome: string): void => {
+    if (visto.has(nome)) return;
+    visto.add(nome);
+    const js = readFileSync(join(GATES, 'dist', nome), 'utf8');
+    assert.doesNotMatch(js, /from\s+['"]node:|import\s+['"]node:|require\(/, `dist/${nome} importa node:*`);
+    assert.deepEqual([...js.matchAll(/\b(?:from|import)\s+['"]([^'"]+)['"]/g)].map((m) => m[1]).filter((m) => !m.startsWith('./')), [], `dist/${nome}: só import relativo (inclui 'path', 'fs' sem prefixo)`);
+    const ts = readFileSync(join(GATES, 'src', nome.replace(/\.js$/, '.ts')), 'utf8');
+    assert.deepEqual([...ts.matchAll(/\b(?:from|import)\s+['"]([^'"]+)['"]/g)].map((m) => m[1]).filter((m) => !m.startsWith('./')), [], `src/${nome}: só import relativo`);
+    for (const m of js.matchAll(/\bfrom\s+['"]\.\/([^'"]+\.js)['"]/g)) visita(m[1]);
+  };
+  visita('loop.js');
+  assert.ok(visto.has('formas.js'));
+  // `loop.js` consome a projeção de `emenda.js` (fonte única, que usa `plano.js`): entram no fecho, e nenhum deles importa `node:*`
+  assert.ok(visto.has('emenda.js') && visto.has('plano.js'), 'loop.js deve importar emenda.js (sem cópia da projeção)');
 });

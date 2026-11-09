@@ -383,10 +383,14 @@ async function recuperarOrfas($) {
   return true;
 }
 
+/** GM-11 T9: modelo que respondeu o turno (`usage.model`); vazio, `<synthetic>` ou fora do padrão ⇒ `null`. A chave sempre vai. */
+const modeloDe = (usage) => (typeof usage?.model === 'string' && usage.model !== '' && !usage.model.startsWith('<') ? usage.model : null);
+
 async function medir($, e) {
   if (typeof e.agentId !== 'string' || !ID_RE.test(e.agentId)) return;
-  const dados = dadosMedicao(e.usage);
-  if (dados === null) return;
+  const base = dadosMedicao(e.usage);
+  if (base === null) return;
+  const dados = { ...base, modelo: modeloDe(e.usage) };
   const { c, falha } = await loopAtivo($);
   await avisarLeitura($, falha);
   if (c === null) return;
@@ -395,8 +399,9 @@ async function medir($, e) {
 
 /** REQ-OBS-1: com mod o orquestrador é medido, um `custo.medicao` por turno (o `usage()` zera no /clear; o total vive no diário). */
 async function medirOrquestrador($, e) {
-  const dados = dadosMedicao(e.usage);
-  if (dados === null) return;
+  const base = dadosMedicao(e.usage);
+  if (base === null) return;
+  const dados = { ...base, modelo: modeloDe(e.usage) };
   const { c, falha } = await loopAtivo($);
   await avisarLeitura($, falha);
   if (c === null) return;

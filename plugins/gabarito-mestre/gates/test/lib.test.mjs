@@ -8,17 +8,24 @@
  *  M4  git show origin/HEAD:… (nome curto) ⇒ `permitidos-forjado-branch-homonima` falha
  *  M5  ler a árvore local em vez da ref   ⇒ `lerguarda-origin-vence` falha
  *  M6  preservar `permitidos` local       ⇒ `lerguarda-ausente-local-permitidos-vazio` falha
+ * GM-11 T1:
+ *  M-C1 lerConfigOrigin com `git show origin/HEAD:…` (nome curto) ⇒ `config-origin-homonima-forjada` falha
+ *  M-C2 lerConfigOrigin aceitar JSON array ⇒ `config-origin-ausente-x-invalida` falha
+ *  M-C3 lerConfigOrigin com JSON ilegível virando config vazia ⇒ `config-origin-ausente-x-invalida` falha
+ *  M-C4 sem origin, cair na árvore local como `fonte: 'origin'` ⇒ `config-origin-sem-origin-ignora-local` falha
+ *  M-C5..M-C12 (r3) cair no local/HEAD/índice com origin ausente ou corrompido, ou mesclar o local sob origin válido ⇒ `config-origin-nunca-le-local-matriz` falha
+ *  (o `try` externo de lerConfigOrigin é defesa em profundidade: lerRawOrigin nunca lança, tirá-lo é mutante equivalente)
  */
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { arg, ehEntrypoint } from '../lib/cli.mjs';
-import { lerJson, lerGuarda } from '../lib/config.mjs';
+import { lerJson, lerGuarda, lerConfigOrigin, MODELOS_PADRAO, ORDEM_MODELO } from '../lib/config.mjs';
 import { raizPorFs, inferirPbi, PADROES } from '../lib/git.mjs';
 import { hojeISO, diasEntre } from '../lib/datas.mjs';
 
@@ -339,5 +346,170 @@ describe('lib/config lerGuarda — forja', () => {
     }
     t.sort((x, y) => x - y);
     assert.ok(t[19] < 500, `p95 ${t[18]}ms`); // sanidade; o número vai no relatório
+  });
+});
+
+describe('lib/config lerConfigOrigin (GM-11 T1)', () => {
+  const sh = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const novo = () => {
+    const d = realpathSync(mkdtempSync(join(tmpdir(), 'gm-cfgorigin-')));
+    sh(d, 'init', '-q', '-b', 'main');
+    sh(d, 'config', 'user.email', 't@t');
+    sh(d, 'config', 'user.name', 't');
+    sh(d, 'config', 'commit.gpgsign', 'false');
+    return d;
+  };
+  /** `conteudo` (texto cru) vira o `harness.config.json` do commit apontado por `refs/remotes/origin/HEAD`; `undefined` = o arquivo não existe na ref. */
+  function repo(conteudo, local) {
+    const d = novo();
+    if (conteudo !== undefined) writeFileSync(join(d, 'harness.config.json'), conteudo);
+    else writeFileSync(join(d, 'x.txt'), 'x');
+    sh(d, 'add', '-A');
+    sh(d, 'commit', '-qm', 'base');
+    sh(d, 'update-ref', 'refs/remotes/origin/main', sh(d, 'rev-parse', 'HEAD'));
+    sh(d, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    if (local !== undefined) writeFileSync(join(d, 'harness.config.json'), local);
+    return d;
+  }
+
+  test('config-origin-ausente-x-invalida: sem remoto, sem arquivo na ref, blob não JSON, array e escalar dão nenhuma, com motivos distintos; nunca lança', () => {
+    const semRemoto = lerConfigOrigin(novo());
+    assert.deepEqual([semRemoto.cfg, semRemoto.fonte], [null, 'nenhuma']);
+    const semArquivo = lerConfigOrigin(repo(undefined));
+    assert.deepEqual([semArquivo.cfg, semArquivo.fonte], [null, 'nenhuma']);
+    const invalidos = ['{"entrega":', 'não é json', '[1,2]', '[]', 'null', '"texto"', '42', 'true', ''].map((t) => lerConfigOrigin(repo(t)));
+    for (const r of invalidos) assert.deepEqual([r.cfg, r.fonte], [null, 'nenhuma']);
+    // `invalida`: ausente (sem remoto, sem arquivo na ref) = false; corrompido (JSON ilegível, array, escalar, vazio) = true
+    assert.equal(semRemoto.invalida, false);
+    assert.equal(semArquivo.invalida, false);
+    for (const r of invalidos) assert.equal(r.invalida, true);
+    // ausente e corrompido não são a mesma coisa
+    assert.notEqual(semRemoto.motivo, invalidos[0].motivo);
+    assert.notEqual(semArquivo.motivo, invalidos[0].motivo);
+    assert.notEqual(semRemoto.motivo, semArquivo.motivo);
+    for (const r of [semRemoto, semArquivo, ...invalidos]) assert.match(r.motivo, /\S/);
+    // entrada que não é diretório: não lança
+    for (const raiz of ['/caminho/que/nao/existe/gm-cfgorigin', '', undefined, null, 5, {}]) {
+      let r;
+      assert.doesNotThrow(() => { r = lerConfigOrigin(raiz); }, String(raiz));
+      assert.deepEqual([r.cfg, r.fonte, r.invalida], [null, 'nenhuma', false]);
+    }
+  });
+
+  test('config-origin-sem-origin-ignora-local: com harness.config.json local presente, sem origin nunca lê a árvore local (sem remoto, sem arquivo na ref, symref pendurado)', () => {
+    const local = JSON.stringify({ entrega: { politica: 'continua', comandos: { deploy: 'rm -rf x' } } });
+    const semRemoto = novo();
+    writeFileSync(join(semRemoto, 'harness.config.json'), local);
+    const semArquivo = repo(undefined, local);
+    const pendurado = novo();
+    writeFileSync(join(pendurado, 'x.txt'), 'x');
+    writeFileSync(join(pendurado, 'harness.config.json'), local);
+    sh(pendurado, 'add', '-A');
+    sh(pendurado, 'commit', '-qm', 'base');
+    sh(pendurado, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/inexistente');
+    for (const d of [semRemoto, semArquivo, pendurado]) {
+      assert.ok(JSON.parse(readFileSync(join(d, 'harness.config.json'), 'utf8')).entrega, 'premissa: o arquivo local existe');
+      const r = lerConfigOrigin(d);
+      assert.deepEqual([r.cfg, r.fonte, r.invalida], [null, 'nenhuma', false]);
+    }
+  });
+
+  test('config-origin-nunca-le-local-matriz: origin {sem remoto, symref pendurado, sem arquivo, corrompido, válido} x local bom na árvore, no índice e num commit novo em HEAD; só origin conta', () => {
+    const L = { entrega: { politica: 'continua', comandos: { deploy: 'x' } }, sombra: { julga_emendas: true } };
+    const textoL = JSON.stringify(L);
+    /** Commit antigo (apontado por origin, se houver) e depois um commit NOVO em HEAD com L; a árvore e o índice ficam com L. */
+    function celula(estado) {
+      const d = novo();
+      let comOrigin = true;
+      if (estado.tipo === 'sem-remoto') comOrigin = false;
+      else {
+        if (estado.conteudo !== undefined) writeFileSync(join(d, 'harness.config.json'), estado.conteudo);
+        else writeFileSync(join(d, 'x.txt'), 'x');
+        sh(d, 'add', '-A');
+        sh(d, 'commit', '-qm', 'origin');
+        if (estado.tipo === 'pendurado') sh(d, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/inexistente');
+        else {
+          sh(d, 'update-ref', 'refs/remotes/origin/main', sh(d, 'rev-parse', 'HEAD'));
+          sh(d, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+        }
+      }
+      writeFileSync(join(d, 'harness.config.json'), textoL);
+      sh(d, 'add', '-A');
+      sh(d, 'commit', '-qm', 'local novo');
+      // premissas: o local bom está na árvore, no índice e em HEAD, e é diferente do que origin aponta
+      assert.deepEqual(JSON.parse(readFileSync(join(d, 'harness.config.json'), 'utf8')), L, 'premissa: árvore parseia como L');
+      assert.deepEqual(JSON.parse(sh(d, 'show', ':harness.config.json')), L, 'premissa: índice parseia como L');
+      assert.deepEqual(JSON.parse(sh(d, 'show', 'HEAD:harness.config.json')), L, 'premissa: HEAD parseia como L');
+      if (comOrigin && estado.tipo !== 'pendurado') {
+        assert.notEqual(sh(d, 'rev-parse', 'HEAD'), sh(d, 'rev-parse', 'refs/remotes/origin/HEAD'), 'premissa: HEAD é um commit novo, depois de origin');
+      }
+      return d;
+    }
+    const linhas = [
+      { nome: 'sem remoto', tipo: 'sem-remoto', ausente: true },
+      { nome: 'symref pendurado', tipo: 'pendurado', conteudo: undefined, ausente: true },
+      { nome: 'ref sem o arquivo', tipo: 'ref', conteudo: undefined, ausente: true },
+      ...['{"entrega":', 'não é json', '[1,2]', '[]', 'null', '"texto"', '42', 'true', ''].map((t) => ({ nome: `corrompido ${JSON.stringify(t)}`, tipo: 'ref', conteudo: t, ausente: false })),
+      { nome: 'válido {}', tipo: 'ref', conteudo: '{}', valido: {} },
+      { nome: 'válido sem entrega', tipo: 'ref', conteudo: '{"sombra":{"teto":9}}', valido: { sombra: { teto: 9 } } },
+    ];
+    for (const linha of linhas) {
+      const r = lerConfigOrigin(celula(linha));
+      if (linha.valido) {
+        assert.equal(r.fonte, 'origin', linha.nome);
+        assert.deepEqual(r.cfg, linha.valido, `${linha.nome}: cfg é só o JSON de origin`);
+        assert.equal(r.invalida, false, linha.nome);
+        assert.equal(r.motivo, null, linha.nome);
+        assert.equal(r.cfg.entrega, undefined, `${linha.nome}: nenhuma chave de L (entrega)`);
+        assert.equal(r.cfg.sombra?.julga_emendas, undefined, `${linha.nome}: nenhuma chave de L (julga_emendas)`);
+      } else {
+        assert.deepEqual([r.cfg, r.fonte, r.invalida], [null, 'nenhuma', !linha.ausente], linha.nome);
+        assert.match(r.motivo, /\S/, linha.nome);
+      }
+    }
+  });
+
+  test('config-origin-le-a-ref: objeto da ref vence a árvore local e traz o motivo nulo', () => {
+    const d = repo(JSON.stringify({ entrega: { politica: 'continua' }, sombra: { teto: 9 } }), JSON.stringify({ entrega: { politica: 'janela' } }));
+    const r = lerConfigOrigin(d);
+    assert.equal(r.fonte, 'origin');
+    assert.equal(r.motivo, null);
+    assert.equal(r.invalida, false);
+    assert.deepEqual(r.cfg, { entrega: { politica: 'continua' }, sombra: { teto: 9 } });
+    assert.deepEqual(lerConfigOrigin(repo('{}')).cfg, {}, 'objeto vazio é config válida');
+  });
+
+  test('config-origin-homonima-forjada: branch `origin/HEAD` forjada não vale; vale a ref completa (mesma resolução de lerGuarda)', () => {
+    const d = repo(JSON.stringify({ entrega: { politica: 'sob_demanda' } }));
+    writeFileSync(join(d, 'harness.config.json'), JSON.stringify({ entrega: { politica: 'continua' } }));
+    sh(d, 'add', '-A');
+    sh(d, 'commit', '-qm', 'forja');
+    sh(d, 'branch', 'origin/HEAD', 'HEAD');
+    assert.equal(sh(d, 'rev-parse', 'origin/HEAD'), sh(d, 'rev-parse', 'HEAD'), 'premissa: o nome curto resolve para a branch forjada');
+    const r = lerConfigOrigin(d);
+    assert.equal(r.fonte, 'origin');
+    assert.deepEqual(r.cfg, { entrega: { politica: 'sob_demanda' } });
+    // e é a mesma ref que lerGuarda lê
+    assert.equal(lerGuarda(d).fonte, 'origin');
+  });
+
+  test('config-origin-symref-pendurado: origin/HEAD apontando para ref inexistente dá nenhuma', () => {
+    const d = novo();
+    writeFileSync(join(d, 'x.txt'), 'x');
+    sh(d, 'add', '-A');
+    sh(d, 'commit', '-qm', 'base');
+    sh(d, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/inexistente');
+    const r = lerConfigOrigin(d);
+    assert.deepEqual([r.cfg, r.fonte, r.invalida], [null, 'nenhuma', false]);
+  });
+
+  test('modelos-padrao-e-ordem: perfil por papel e ordem haiku < sonnet < opus < fable', () => {
+    assert.deepEqual(MODELOS_PADRAO, {
+      implementador: { modelo: 'sonnet', esforco: 'high' }, revisor: { modelo: 'opus' }, sombra: { modelo: 'opus' },
+      revisor_final: { modelo: 'fable' }, spike: { modelo: 'opus' }, basico: { modelo: 'haiku' },
+    });
+    assert.deepEqual(ORDEM_MODELO, { haiku: 0, sonnet: 1, opus: 2, fable: 3 });
+    assert.equal(Object.isFrozen(MODELOS_PADRAO) && Object.isFrozen(ORDEM_MODELO), true);
+    for (const p of Object.values(MODELOS_PADRAO)) assert.equal(Object.isFrozen(p), true);
   });
 });

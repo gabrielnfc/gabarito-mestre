@@ -1,7 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
+import { formaInvalida } from './formas.ts';
 import { estadoDe, ordenar } from './loop.ts';
+import { diarioEmOrdem, projetarDecisoes } from './sombra.ts';
+import type { DecisaoSombra } from './sombra.ts';
 import type { EstadoTask } from './loop.ts';
 import type { Evento } from './tipos.ts';
 
@@ -27,12 +30,17 @@ const CANARIO: ReadonlyArray<readonly [string, RegExp]> = [
   ['jwt', /eyJ[\w-]{20,}\.eyJ[\w-]{20,}/],
 ];
 
+const ERRO_MAX = 300;
 const LOCK_MAX_IDADE_MS = 2000;
 const LOCK_ESPERA_MS = 10;
 // Abaixo do `timeout: 5` do hook e acima dos 2 s da quebra de lock órfão.
 const LOCK_PRAZO_MS = 3000;
 // F3: ≈ 1,5k tokens. O pouso e o `SessionStart:compact` reinjetam isto; o cartão tem seu próprio limite.
 const INSTANTANEO_MAX = 3200;
+// Bloco de decisões da Sombra (T11), em unidades UTF-16 como o resto do orçamento: cabeçalho, linhas e rodapé.
+const DECISOES_MAX = 1600;
+const DECISAO_ANCORA_MAX = 64;
+const DECISAO_RESPOSTA_MAX = 160;
 const LINHA_MAX = 16384;
 const CAMPO_MAX = 256;
 const ALVO_MAX = 300;
@@ -141,6 +149,19 @@ export function append(
   let fd = -1;
   try {
     if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) return { ok: false, erro: 'sessão inválida' };
+
+    // GM-11 T5: forma de `dados` por tipo ANTES do canário; forma inválida não toca arquivo, lock nem linha.
+    const forma = formaInvalida(ev.tipo, ev.dados);
+    if (forma !== null) {
+      // o motivo ecoa o valor bruto. Limite ANTES de qualquer regex: `dados` acima de LINHA_MAX não roda canário e é
+      // redigido; a janela do erro tem ERRO_MAX + CAMPO_MAX. Canário sobre os valores crus (o escape do JSON não esconde
+      // o segredo) e sobre a janela (segredo que só se forma entre folhas); casou ⇒ [redigido]; só então o corte.
+      let grande: boolean;
+      try { grande = (JSON.stringify(ev.dados) ?? '').length > LINHA_MAX; } catch { grande = true; }
+      const janela = `forma_invalida: ${forma}`.slice(0, ERRO_MAX + CAMPO_MAX);
+      const limpo = !grande && varrer(ev.dados) === null && recusaCanario(janela) === null;
+      return { ok: false, erro: limpo ? janela.slice(0, ERRO_MAX) : 'forma_invalida: [redigido]' };
+    }
 
     // canário ANTES do lock; linha grande é recusada sem rodar regex.
     const padrao = JSON.stringify(ev).length > LINHA_MAX ? 'tamanho' : varrer(ev);
@@ -328,7 +349,39 @@ function mediana(xs: number[]): number {
   return o.length % 2 === 1 ? o[m] : (o[m - 1] + o[m]) / 2;
 }
 
-export function projetar(eventos: Evento[]): { instantaneo: string; resumo: Record<string, number>; eta: { medianaS: number; n: number } | null } {
+const CONTROLE = /[\u0000-\u001f\u007f\u2028\u2029]+/g;
+const semControle = (t: string): string => t.replace(CONTROLE, ' ');
+const rodapeDecisoes = (fora: number): string => `... ${fora} decisão(ões) fora`;
+const AVISO_FORA_DE_ORDEM = 'Decisões da Sombra: diário fora de ordem';
+
+/** Ordem do bloco: mais recente primeiro por `(ts, sessao, seq)`, a mesma de `projetarDecisoes`. `ts` já foi validado por `diarioEmOrdem`. */
+function maisRecenteAntes(a: DecisaoSombra, b: DecisaoSombra): number {
+  return Date.parse(b.ts) - Date.parse(a.ts) || cmp(b.sessao, a.sessao) || b.seq - a.seq;
+}
+
+/**
+ * Bloco de decisões vigentes (REQ-SOM-1). `entrada` já está em `(sessao, seq)`. Fora de ordem ⇒ linha de aviso (corrompido ≠ ausente);
+ * nenhuma decisão ⇒ sem bloco. Orçamento: cabeçalho + rodapé do pior caso reservados antes da 1ª linha; o bloco final tem ≤ DECISOES_MAX.
+ */
+function blocoDecisoes(entrada: Evento[]): { linhas: string[]; decisoes: number } {
+  if (!diarioEmOrdem(entrada)) return { linhas: [AVISO_FORA_DE_ORDEM], decisoes: 0 };
+  const vigentes = [...projetarDecisoes(entrada).values()].sort(maisRecenteAntes);
+  if (vigentes.length === 0) return { linhas: [], decisoes: 0 };
+  const cabecalho = `Decisões da Sombra (${vigentes.length}):`;
+  let usado = cabecalho.length + 1 + rodapeDecisoes(vigentes.length).length + 1;
+  const linhas: string[] = [];
+  for (const d of vigentes) {
+    const ancora = d.req ?? `task:${d.task}`;
+    const linha = `${corta(semControle(ancora), DECISAO_ANCORA_MAX)} ${d.hash.slice(0, 8)} ${corta(semControle(d.resposta), DECISAO_RESPOSTA_MAX)}`;
+    if (usado + linha.length + 1 > DECISOES_MAX) break;
+    linhas.push(linha);
+    usado += linha.length + 1;
+  }
+  const fora = vigentes.length - linhas.length;
+  return { linhas: [cabecalho, ...linhas, ...(fora > 0 ? [rodapeDecisoes(fora)] : [])], decisoes: vigentes.length };
+}
+
+export function projetar(eventos: Evento[]): { instantaneo: string; resumo: Record<string, number>; eta: { medianaS: number; n: number } | null; decisoes: number } {
   const validos = eventos.filter((e) => e !== null && typeof e === 'object');
   const resumo: Record<string, number> = {};
   for (const e of validos) resumo[e.tipo] = (resumo[e.tipo] ?? 0) + 1;
@@ -341,9 +394,13 @@ export function projetar(eventos: Evento[]): { instantaneo: string; resumo: Reco
   const cabecalho = `Diário: ${validos.length} evento(s)`;
   const rodape = (omitidos: number): string => `... ${omitidos} anterior(es) omitido(s)`;
 
+  // a entrada vai para (sessao, seq) antes de projetar decisões, como em `duracaoDaTask`: a ordem de chegada não pode mudar a saída
+  const porSeq = [...validos].sort((a, b) => cmp(String(a.sessao), String(b.sessao)) || Number(a.seq) - Number(b.seq));
+  const bloco = blocoDecisoes(porSeq);
+
   const linhas: string[] = [];
-  // orçamento: cabeçalho + ETA + rodapé do pior caso + quebras, reservados antes dos eventos
-  let usado = cabecalho.length + linhaEta.length + rodape(validos.length).length + 3;
+  // orçamento: cabeçalho + ETA + bloco de decisões + rodapé do pior caso + quebras, reservados antes dos eventos
+  let usado = cabecalho.length + linhaEta.length + rodape(validos.length).length + 3 + (bloco.linhas.length > 0 ? bloco.linhas.join('\n').length + 1 : 0);
   for (const e of ordenados) {
     const alvo = corta(String(ehObjeto(e.dados) ? (e.dados.alvo ?? '-') : '-').replace(/[\r\n]+/g, ' '), ALVO_MAX);
     const linha = `${corta(String(e.ts), 40)} ${corta(String(e.tipo), 64)} ${alvo}`;
@@ -352,9 +409,9 @@ export function projetar(eventos: Evento[]): { instantaneo: string; resumo: Reco
     usado += linha.length + 1;
   }
   const omitidos = validos.length - linhas.length;
-  const partes = [cabecalho, linhaEta, ...linhas];
+  const partes = [cabecalho, linhaEta, ...bloco.linhas, ...linhas];
   if (omitidos > 0) partes.push(rodape(omitidos));
-  return { instantaneo: partes.join('\n'), resumo, eta };
+  return { instantaneo: partes.join('\n'), resumo, eta, decisoes: bloco.decisoes };
 }
 
 export function dirEntrega(raiz: string, pbi: string | null): string {

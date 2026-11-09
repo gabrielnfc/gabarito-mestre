@@ -12,6 +12,9 @@
  * dentro de `~/.claude/projects` (realpath), lido por fd com O_NOFOLLOW e com teto de bytes; acima do teto lê o começo
  * e marca `parcial`.
  *
+ * GM-11 T9: `dados` ganha `modelo` (último `message.model` real do transcript; `<synthetic>` e vazio não valem; nenhum ⇒ `null`,
+ * a chave nunca falta) e, quando o `agent_type` é de um papel do gabarito, `papel`. `agente` segue `subagent:<id>`: o dedupe não muda.
+ *
  * Ignora: `agent_type` vazio ou ausente (S7 P2: 25 de 28 disparos são forks do motor), `agent_id`/`session_id` fora
  * do padrão, repositório sem `.harness` ou sem a pasta da entrega (não cria diretório), agente que já tem
  * `custo.medicao` no diário (do mod ou de um disparo anterior deste hook: idempotente por `agent_id`).
@@ -25,6 +28,7 @@ import { git, raizPorFs } from '../lib/git.mjs';
 export const PASSO_MS = 40;
 export const TETO_ESPERA_MS = 200;
 export const TETO_BYTES = 8 * 1024 * 1024;
+export const CAUDA_BYTES = 256 * 1024; // acima do teto, só para achar o último modelo real no fim do arquivo
 const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const ID_ENTREGA_RE = /[A-Z]+-\d+/;
 const CAMPOS = [
@@ -33,6 +37,33 @@ const CAMPOS = [
   ['cache_read_input_tokens', 'cache_read'],
   ['cache_creation_input_tokens', 'cache_creation'],
 ];
+
+const PAPEIS = new Set(['sombra', 'revisor', 'implementador', 'spike']);
+const PAPEL_RE = /^(?:[^:\s]+:)?gabarito-([a-z]+)$/;
+
+/**
+ * Papel do gabarito a partir do `agent_type` (`gabarito-sombra`, com ou sem prefixo `<plugin>:`). Tipo de outro agente, vazio ou
+ * que não seja texto ⇒ `null`: nunca inventa papel.
+ */
+export function papelDoAgente(agentType) {
+  if (typeof agentType !== 'string') return null;
+  const m = PAPEL_RE.exec(agentType);
+  return m !== null && PAPEIS.has(m[1]) ? m[1] : null;
+}
+
+/** Último `message.model` não vazio e que não começa com `<` (`<synthetic>`), na ordem das linhas; nenhum ⇒ `null`. Linha torta é ignorada. */
+export function modeloDoTranscript(linhas) {
+  let modelo = null;
+  if (!Array.isArray(linhas)) return null;
+  for (const l of linhas) {
+    if (typeof l !== 'string' || !l.includes('"model"')) continue;
+    let o;
+    try { o = JSON.parse(l); } catch { continue; }
+    const v = o?.message?.model;
+    if (typeof v === 'string' && v !== '' && !v.startsWith('<')) modelo = v;
+  }
+  return modelo;
+}
 
 /** Espera por bloqueio (Atomics.wait), sem laço de CPU. */
 function dormir(ms) {
@@ -70,7 +101,21 @@ function lerLinhas(real) {
     }
     let texto = buf.toString('utf8', 0, lido);
     if (parcial) texto = texto.slice(0, texto.lastIndexOf('\n') + 1); // descarta a linha cortada pelo teto
-    return { linhas: texto.split('\n'), parcial, tamanho: st.size };
+    let cauda = null;
+    if (parcial) {
+      // a cauda (últimos CAUDA_BYTES) serve só ao modelo: o último real é o do fim do arquivo, não o do começo lido
+      const ini = st.size - CAUDA_BYTES;
+      const cb = Buffer.alloc(CAUDA_BYTES);
+      let lc = 0;
+      while (lc < CAUDA_BYTES) {
+        const k = readSync(fd, cb, lc, CAUDA_BYTES - lc, ini + lc);
+        if (k <= 0) break;
+        lc += k;
+      }
+      const t = cb.toString('utf8', 0, lc);
+      cauda = t.slice(t.indexOf('\n') + 1).split('\n'); // descarta a primeira linha, cortada no meio
+    }
+    return { linhas: texto.split('\n'), cauda, parcial, tamanho: st.size };
   } catch {
     return { linhas: [], parcial: false, tamanho: -1 };
   } finally {
@@ -78,9 +123,9 @@ function lerLinhas(real) {
   }
 }
 
-/** Soma `message.usage` por `message.id` (maior valor por campo); só números entram no mapa. Devolve `{parcial, tamanho}`. */
+/** Soma `message.usage` por `message.id` (maior valor por campo); só números entram no mapa. Devolve `{parcial, tamanho, modelo}`. */
 function acumular(real, porId) {
-  const { linhas, parcial, tamanho } = lerLinhas(real);
+  const { linhas, cauda, parcial, tamanho } = lerLinhas(real);
   for (const l of linhas) {
     if (l === '' || !l.includes('"usage"')) continue;
     let o;
@@ -96,7 +141,7 @@ function acumular(real, porId) {
     }
     porId.set(id, atual);
   }
-  return { parcial, tamanho };
+  return { parcial, tamanho, modelo: modeloDoTranscript(cauda ?? linhas) ?? (cauda === null ? null : modeloDoTranscript(linhas)) };
 }
 
 /**
@@ -109,7 +154,9 @@ export function somarUso(caminho, { dormir: dorme = dormir } = {}) {
   const real = caminhoValido(caminho);
   if (real === null) return null;
   const porId = new Map();
-  let { parcial } = acumular(real, porId);
+  const primeira = acumular(real, porId);
+  let { parcial } = primeira;
+  let modelo = primeira.modelo;
   let leituras = 1;
   let esperado = 0;
   let anterior = null; // tamanho da leitura anterior, só de leituras feitas depois de uma espera
@@ -119,11 +166,12 @@ export function somarUso(caminho, { dormir: dorme = dormir } = {}) {
     const r = acumular(real, porId);
     leituras += 1;
     parcial = r.parcial || parcial;
+    modelo = r.modelo ?? modelo; // a releitura mais nova vê o arquivo maior: o último real dela vale
     if (anterior !== null && r.tamanho === anterior) break;
     anterior = r.tamanho;
   }
   if (porId.size === 0) return null;
-  const soma = { input_tokens: 0, output_tokens: 0, cache_read: 0, cache_creation: 0, mensagens: porId.size, parcial, leituras };
+  const soma = { input_tokens: 0, output_tokens: 0, cache_read: 0, cache_creation: 0, mensagens: porId.size, parcial, leituras, modelo };
   for (const u of porId.values()) for (const [, para] of CAMPOS) soma[para] += u[para] ?? 0;
   return soma;
 }
@@ -166,7 +214,9 @@ async function main() {
 
   const soma = somarUso(e.agent_transcript_path);
   if (soma === null) return;
-  const { parcial, leituras: _l, ...numeros } = soma;
+  const { parcial, leituras: _l, modelo, ...numeros } = soma;
+  const papel = papelDoAgente(e.agent_type);
+  const dadosBase = { ...numeros, modelo, ...(papel === null ? {} : { papel }) };
   if (jaMedido()) return;
 
   let autor = 'desconhecido';
@@ -177,7 +227,7 @@ async function main() {
     sessao: e.session_id,
     agente,
     tipo: 'custo.medicao',
-    dados: parcial ? { ...numeros, parcial: true } : numeros,
+    dados: parcial ? { ...dadosBase, parcial: true } : dadosBase,
   });
 }
 

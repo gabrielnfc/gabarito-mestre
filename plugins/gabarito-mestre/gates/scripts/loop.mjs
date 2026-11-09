@@ -9,17 +9,29 @@
  *       REPROVADO exige achados não vazios em `<worktree>/.tmp-gabarito/review-r<rodada>.md` (senão `achados_ausentes`, nada gravado);
  *       `proxima` os aponta (`achados`) no item `correcao`: depois do /clear o arquivo é a única memória deles.
  *   loop.mjs parar <motivo>
- *   loop.mjs ci <verde|vermelho>
+ *   loop.mjs ci <verde|vermelho> [--alvo homolog]
+ *   loop.mjs desvio <task> --req <REQ> --evidencia <t> --arquivos <a,b> --causa <regra_negocio|tecnica>      (`--arquivos ''` = lista vazia, explícita)
+ *   loop.mjs descoberta --evidencia <t> --causa <regra_negocio|tecnica>
+ *   loop.mjs emenda propor --req <REQ> [--task <id>] --diff <arquivo> --fato <t> --alternativa <t> --evidencia <t> --causa <c> [--arquivos <a,b>]
+ *       grava SEMPRE em `events.emendas.jsonl` (`--sessao` é ignorada: o seq da proposta é o dela) e devolve `{proposta_seq, req, task?, congeladas}`;
+ *       `proposta_seq` vem da RELEITURA estrita do arquivo (a única `emenda.proposta` com o `ts` e os `dados` gravados), nunca do candidato de `gravar`.
+ *   loop.mjs emenda julgar <seq> <aprovar|rejeitar>   origem `sombra`: recusa sem `sombra.julga_emendas: true` em `origin/HEAD` (o config local não conta)
  *   todos aceitam --entrega <GM-10> (senão vem da branch); os que gravam aceitam --sessao <id> (padrão `loop`).
  *
  * CONTRATO DE FALHA. Saída é UMA linha de JSON em stdout, sempre com `ok`; falha traz `erro` (código) e `mensagem`.
  * Dado ausente, corrompido ou ferramenta falhando nunca vira sucesso; rc 0 só com o efeito feito. Uso errado sai 2.
  *
  * QUEM GRAVA NO DIÁRIO. Só `iniciar` (task.iniciada), `concluir` (task.concluida), `veredito` (review.veredito),
- * `reabrir` (task.reaberta, SÓ origem `retomada`: nenhum argumento produz `dono`; `dono` sai só de `liberarTeto`, que o hook do comando humano `/gabarito-mestre:liberar` chama), `integrar` (task.integrada),
+ * `desvio`, `descoberta`, `emenda propor` (emenda.proposta) e `emenda julgar` (spec.emendada ou emenda.rejeitada, origem `sombra`; a origem `dono` sai só de
+ * `julgarEmendaDono`, que o hook `emenda-dono.mjs` chama), `reabrir` (task.reaberta, SÓ origem `retomada`: nenhum argumento produz `dono`; `dono` sai só de `liberarTeto`, que o hook do comando humano `/gabarito-mestre:liberar` chama), `integrar` (task.integrada),
  * `ci` (ci.resultado) e `parar` (loop.parar). `concluir` e `integrar` gravam o `sha`. `abrir` não grava no diário (grava a base em `branch.<branch>.gabaritoBase`)
  * e é idempotente: worktree registrada com HEAD na branch da task devolve o mesmo resultado com `ja_aberta: true`; qualquer outro estado recusa. Todo evento de task é conferido contra `TRANSICOES` ANTES de gravar:
  * o CLI nunca produz um diário que o núcleo recuse.
+ *
+ * LIMITES DECLARADOS (E3). (1) Com `sombra.julga_emendas: true` o orquestrador pode julgar a própria proposta com origem `sombra` sem consultar a
+ * Sombra: nada liga o julgamento a uma `decisao.sombra`; a opção é do dono, em origin. (2) A regra (4) de `proximaAcao` conta todo `ci.resultado`
+ * (homolog e PR juntos): o lado é o seguro, para mais cedo. (3) Dois `emenda propor` simultâneos validam fora do lock; o `proposta_seq` devolvido é
+ * sempre o da própria linha. (4) O aviso de emenda depende de "posterior" entre sessões: relógio atrasado no julgamento cala o aviso (falso negativo).
  *
  * Tudo que toca git vai por `execFileSync` com argv, sem shell. Nada é apagado por outro meio que `git worktree remove`
  * sem `--force`, `git branch -d` do que `abrir` acabou de criar e o `.tmp-gabarito` da própria worktree.
@@ -32,10 +44,16 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { ehEntrypoint } from '../lib/cli.mjs';
+import { lerConfigOrigin, MODELOS_PADRAO } from '../lib/config.mjs';
 import * as diario from '../dist/diario.js';
-import { estadoDe, ordenar, podeIntegrar, proximaAcao } from '../dist/loop.js';
-import { validarPlano } from '../dist/plano.js';
+import { escopoDaTask, projetarEmendas, SESSAO_EMENDAS, validarJulgamento, validarProposta } from '../dist/emenda.js';
+import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
+import { formaInvalida, REQ_RE } from '../dist/formas.js';
+import { estadoDe, ordenar, podeIntegrar, proximaAcao, tasksCongeladas } from '../dist/loop.js';
+import { normalizarCaminho, validarPlano } from '../dist/plano.js';
+import { contarConsultas, projetarDecisoes, trechoDoReq } from '../dist/sombra.js';
 import { avaliar } from './gate-task.mjs';
 import { clonar, nomeBanco, soltar, validarDb } from './db-template.mjs';
 
@@ -44,11 +62,19 @@ const ENTREGA_RE = /^[A-Z]+-\d+$/;
 const SESSAO_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const NUM_RE = /^(0|[1-9]\d{0,14})$/;
 const PAPEIS = ['implementador', 'revisor', 'correcao'];
-const MOTIVOS = ['teto_rodadas', 'ci_vermelho', 'teto_tokens', 'sem_pouso', 'sem_progresso', 'diario_invalido', 'nao_conseguiu'];
+const MOTIVOS = ['teto_rodadas', 'ci_vermelho', 'teto_tokens', 'sem_pouso', 'sem_progresso', 'diario_invalido', 'nao_conseguiu', 'smoke', 'rollback', 'janela_ausente'];
 const TIPOS_DE_TASK = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
 const GLOB = /[*?[\]{}]/;
 const TMP = '.tmp-gabarito';
 const X_PADRAO = 50;
+const CAUSAS = ['regra_negocio', 'tecnica'];
+const TEXTO_MAX = 2000;
+const DIFF_MAX = 4000;
+const ARQUIVOS_MAX = 50;
+const DADOS_MAX = 12000;
+const TETO_SOMBRA_PADRAO = 26;
+const FAMILIAS = ['haiku', 'sonnet', 'opus', 'fable'];
+const SEQ_RE = /^[1-9]\d{0,8}$/;
 const SINAIS_NEUTROS = { slots: 1, percent: null, x: X_PADRAO, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false };
 const GIT_REDIRECIONA = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_NAMESPACE'];
 
@@ -116,9 +142,12 @@ function lerArgs(argv) {
     reabrir: { pos: 1, flags: ['entrega', 'sessao'] },
     veredito: { pos: 5, flags: ['entrega', 'sessao'] },
     parar: { pos: 1, flags: ['entrega', 'sessao'] },
-    ci: { pos: 1, flags: ['entrega', 'sessao'] },
+    ci: { pos: 1, flags: ['entrega', 'sessao', 'alvo'] },
+    desvio: { pos: 1, flags: ['entrega', 'sessao', 'req', 'evidencia', 'arquivos', 'causa'], obrig: ['req', 'evidencia', 'arquivos', 'causa'] },
+    descoberta: { pos: 0, flags: ['entrega', 'sessao', 'evidencia', 'causa'], obrig: ['evidencia', 'causa'] },
+    emenda: { pos: null, flags: ['entrega', 'sessao', 'req', 'task', 'diff', 'fato', 'alternativa', 'evidencia', 'causa', 'arquivos'] },
   };
-  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | iniciar <task> <papel> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho>  [--entrega GM-10]';
+  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | iniciar <task> <papel> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar>  [--entrega GM-10]';
   if (typeof cmd !== 'string' || !Object.hasOwn(ESPEC, cmd)) throw new Falha('uso', `comando desconhecido ou ausente. ${uso}`, {}, 2);
   const esp = ESPEC[cmd];
   const pos = [];
@@ -137,9 +166,116 @@ function lerArgs(argv) {
       pos.push(a);
     }
   }
+  if (cmd === 'emenda') {
+    const sub = pos[0];
+    const propor = sub === 'propor' && pos.length === 1;
+    const julgar = sub === 'julgar' && pos.length === 3;
+    if (!propor && !julgar) throw new Falha('uso', `emenda espera \`propor\` ou \`julgar <seq> <aprovar|rejeitar>\`. ${uso}`, {}, 2);
+    const obrig = propor ? ['req', 'diff', 'fato', 'alternativa', 'evidencia', 'causa'] : [];
+    const permitidas = propor ? esp.flags : ['entrega', 'sessao'];
+    const fora = Object.keys(flags).find((n) => !permitidas.includes(n));
+    if (fora !== undefined) throw new Falha('uso', `--${fora} não vale para emenda ${sub}. ${uso}`, {}, 2);
+    const falta = obrig.find((n) => !Object.hasOwn(flags, n));
+    if (falta !== undefined) throw new Falha('uso', `emenda propor exige --${falta}. ${uso}`, {}, 2);
+    return { cmd, pos, flags };
+  }
   if (pos.length !== esp.pos) throw new Falha('uso', `${cmd} espera ${esp.pos} argumento(s) posicional(is), veio ${pos.length}. ${uso}`, {}, 2);
+  const falta = (esp.obrig ?? []).find((n) => !Object.hasOwn(flags, n));
+  if (falta !== undefined) throw new Falha('uso', `${cmd} exige --${falta}. ${uso}`, {}, 2);
   return { cmd, pos, flags };
 }
+
+// ─────────────────────────────────────────────────────────────── formas de desvio, descoberta e emenda
+
+function causaDe(v) {
+  if (!CAUSAS.includes(v)) throw new Falha('argumento_invalido', `--causa ${JSON.stringify(v)}: esperado ${CAUSAS.join(' ou ')}`);
+  return v;
+}
+
+/** Texto obrigatório não vazio (depois de `trim`): `{[nome]: texto}`. Tamanho e canário vêm depois, em `limitarTextos`. */
+function textoDe(nome, v) {
+  if (typeof v !== 'string' || v.trim() === '') throw new Falha('argumento_invalido', `--${nome} vazio: esperado texto`);
+  return { [nome]: v };
+}
+
+/** `a,b` ⇒ lista normalizada; `''` ⇒ `[]` (explícito); item vazio ou caminho que escapa ⇒ `caminho_invalido` (o vazio não some em silêncio). */
+function listaDeCaminhos(texto, { normalizar = true } = {}) {
+  if (texto === '') return [];
+  const itens = texto.split(',');
+  if (itens.length > ARQUIVOS_MAX) throw new Falha('proposta_longa', `--arquivos tem ${itens.length} itens, máximo ${ARQUIVOS_MAX}`);
+  return itens.map((a) => {
+    const n = a === '' ? null : normalizarCaminho(a);
+    if (n === null) throw new Falha('caminho_invalido', a === '' ? 'caminho inválido: item vazio em --arquivos' : `caminho inválido: ${a}`);
+    return normalizar ? n : a;
+  });
+}
+
+/** Limite de 2.000 por texto e canário em todos, ANTES de qualquer escrita. A mensagem nomeia o campo e o padrão, nunca o valor. */
+function limitarTextos(textos) {
+  for (const [nome, v] of Object.entries(textos)) {
+    if (v.length > TEXTO_MAX && nome !== 'diff' && nome !== 'arquivos') throw new Falha('proposta_longa', `${nome} tem ${v.length} caracteres, máximo ${TEXTO_MAX}; nada foi gravado`);
+  }
+  for (const [nome, v] of Object.entries(textos)) {
+    const padrao = diario.recusaCanario(v);
+    if (padrao !== null) throw new Falha('segredo_na_proposta', `${nome} casa o canário de segredo (${padrao}); nada foi gravado`);
+  }
+}
+
+function limitarDados(dados) {
+  const n = JSON.stringify(dados).length;
+  if (n > DADOS_MAX) throw new Falha('proposta_longa', `a proposta tem ${n} caracteres serializados, máximo ${DADOS_MAX}; nada foi gravado`);
+}
+
+/** Forma de `emenda propor|julgar`: tudo que vira `dados`, conferido antes de qualquer leitura ou efeito. */
+function formaEmenda(pos, flags) {
+  if (flags.entrega !== undefined && !ENTREGA_RE.test(flags.entrega)) throw new Falha('entrega_invalida', `--entrega "${flags.entrega}" fora da forma ${ENTREGA_RE}`);
+  if (flags.sessao !== undefined && !SESSAO_RE.test(flags.sessao)) throw new Falha('argumento_invalido', `--sessao fora da forma ${SESSAO_RE}`);
+  if (pos[0] === 'julgar') {
+    const [, seq, decisao] = pos;
+    if (!SEQ_RE.test(seq)) throw new Falha('argumento_invalido', `seq ${JSON.stringify(seq)}: esperado inteiro >= 1 sem zeros à esquerda (até 9 dígitos)`);
+    if (decisao !== 'aprovar' && decisao !== 'rejeitar') throw new Falha('argumento_invalido', `decisão ${JSON.stringify(decisao)}: esperado aprovar ou rejeitar`);
+    return { sub: 'julgar', seq: Number(seq), decisao };
+  }
+  if (!REQ_RE.test(flags.req)) throw new Falha('argumento_invalido', `--req ${JSON.stringify(flags.req)} fora da forma REQ-<ÁREA>-<n>`);
+  if (flags.task !== undefined && !ID_RE.test(flags.task)) throw new Falha('argumento_invalido', `--task ${JSON.stringify(flags.task)} fora da forma ${ID_RE}`);
+  causaDe(flags.causa);
+  for (const nome of ['fato', 'alternativa', 'evidencia']) textoDe(nome, flags[nome]);
+  return { sub: 'propor' };
+}
+
+/** `--diff` lido do arquivo: ausente × ilegível distintos; vazio e acima de 4.000 caracteres recusam. */
+function lerDiffDe(cwd, arquivo) {
+  const abs = resolve(cwd, arquivo);
+  let texto;
+  try {
+    const st = statSync(abs);
+    if (!st.isFile()) throw Object.assign(new Error('não é arquivo regular'), { code: 'ENOTFILE' });
+    if (st.size > DIFF_MAX * 4) throw new Falha('diff_longo', `o diff tem ${st.size} bytes: mais de ${DIFF_MAX} caracteres; nada foi gravado`);
+    texto = readFileSync(abs, 'utf8');
+  } catch (e) {
+    if (e instanceof Falha) throw e;
+    if (e.code === 'ENOENT') throw new Falha('diff_ausente', `${arquivo} não existe`);
+    throw new Falha('diff_ilegivel', `${arquivo} ilegível (${e.code ?? e.message})`);
+  }
+  if (texto.trim() === '') throw new Falha('argumento_invalido', `${arquivo}: diff vazio`);
+  if (texto.length > DIFF_MAX) throw new Falha('diff_longo', `o diff tem ${texto.length} caracteres, máximo ${DIFF_MAX}; nada foi gravado`);
+  return texto;
+}
+
+/** `dados` de `emenda.proposta`, tudo conferido antes do diário (diff, limites, canário, caminhos). */
+function prepararProposta(cwd, flags) {
+  const diff = lerDiffDe(cwd, flags.diff);
+  const arquivos = flags.arquivos === undefined ? undefined : listaDeCaminhos(flags.arquivos, { normalizar: false });
+  limitarTextos({ diff, fato: flags.fato, alternativa: flags.alternativa, evidencia: flags.evidencia });
+  const dados = {
+    req: flags.req, ...(flags.task !== undefined ? { task: flags.task } : {}), diff, fato: flags.fato, alternativa: flags.alternativa, evidencia: flags.evidencia, causa: flags.causa,
+    ...(arquivos !== undefined ? { arquivos } : {}),
+  };
+  limitarDados(dados);
+  return dados;
+}
+
+// ─────────────────────────────────────────────────────────────── entrada (validação)
 
 /** Forma de tudo que vira caminho, branch ou argv: conferida ANTES de qualquer leitura ou efeito. */
 function validarForma(cmd, pos, flags) {
@@ -155,10 +291,20 @@ function validarForma(cmd, pos, flags) {
   }
   if (cmd === 'ci') {
     if (pos[0] !== 'verde' && pos[0] !== 'vermelho') throw new Falha('argumento_invalido', `ci "${pos[0]}": esperado verde ou vermelho`);
-    return { verde: pos[0] === 'verde' };
+    if (flags.alvo !== undefined && flags.alvo !== 'homolog') throw new Falha('argumento_invalido', `--alvo ${JSON.stringify(flags.alvo)}: só \`homolog\` (ou sem a flag)`);
+    return { verde: pos[0] === 'verde', ...(flags.alvo !== undefined ? { alvo: flags.alvo } : {}) };
   }
+  if (cmd === 'descoberta') return { dados: { ...textoDe('evidencia', flags.evidencia), causa: causaDe(flags.causa) }, textos: { evidencia: flags.evidencia } };
+  if (cmd === 'emenda') return formaEmenda(pos, flags);
   const [task] = pos;
   if (typeof task !== 'string' || !ID_RE.test(task)) throw new Falha('id_invalido', `task ${JSON.stringify(task)} fora da forma ${ID_RE}`);
+  if (cmd === 'desvio') {
+    if (!REQ_RE.test(flags.req)) throw new Falha('argumento_invalido', `--req ${JSON.stringify(flags.req)} fora da forma REQ-<ÁREA>-<n>`);
+    const causa = causaDe(flags.causa);
+    const evid = textoDe('evidencia', flags.evidencia);
+    const arquivos = listaDeCaminhos(flags.arquivos);
+    return { task, req: flags.req, dados: { task, req: flags.req, ...evid, arquivos, causa }, textos: { evidencia: flags.evidencia, arquivos: arquivos.join(',') } };
+  }
   if (cmd === 'iniciar' && !PAPEIS.includes(pos[1])) throw new Falha('papel_invalido', `papel "${pos[1]}" fora da lista: ${PAPEIS.join(', ')}`);
   if (cmd === 'veredito') {
     const [, v, rodada, blocker, major] = pos;
@@ -319,8 +465,9 @@ function gravar(c, plano, tipo, dados, antes = () => {}) {
   let autor = 'desconhecido';
   try { autor = git(c.raiz, 'config', 'user.email') || autor; } catch { /* sem user.email: o diário aceita "desconhecido" */ }
   const r = diario.append(c.dirEntrega, c.sessao, { ts, autor, sessao: c.sessao, agente: 'orquestrador', tipo, dados });
-  if (!r.ok) throw new Falha('evento_nao_gravado', `${tipo} não gravado: ${r.erro}`);
-  if (r.gravado !== 'evento') throw new Falha('evento_nao_gravado', `${tipo} recusado pelo canário do diário`);
+  // O `append` recusa a forma com o prefixo `forma_invalida: `: só ele é forma; qualquer outro erro é gravação que falhou.
+  if (!r.ok) throw new Falha(/^forma_invalida: /.test(r.erro) ? 'forma_invalida' : 'evento_nao_gravado', `${tipo} não gravado: ${r.erro}`);
+  if (r.gravado !== 'evento') throw new Falha('evento_nao_gravado', `${tipo} recusado pelo diário (canário ou tamanho)`);
   return { tipo, ...dados };
 }
 
@@ -692,6 +839,7 @@ async function integrar(c, plano, task) {
   if (sujo.length > 0) throw new Falha('worktree_suja', `a worktree ${task} tem trabalho não commitado ou não rastreado; nada foi feito: ${sujo.slice(0, 10).join(' | ')}`, { merge: false, evento: false });
   const branch = ramo(c, task);
   const nada = { merge: false, evento: false };
+  let relatoVerde = []; // só `desvio:`/`aviso:` do gate (T16); o relato completo fica no ramo reprovado
 
   // O que o gate aprova é exatamente o que entra: a base vem do `abrir`, o HEAD é a branch da task e o commit é o que o revisor viu.
   let baseGravada = '';
@@ -735,13 +883,14 @@ async function integrar(c, plano, task) {
     process.env.TMPDIR = tmp;
     let r;
     try {
-      r = await avaliar({ wt, base: `refs/heads/${base}`, card: c.entrega, files: escopo(wt, t.arquivos), mutacoes, suites: suitesDaTask(wt, t) });
+      r = await avaliar({ wt, base: `refs/heads/${base}`, card: c.entrega, files: escopo(wt, escopoDaTask(plano, projetarEmendas(eventos), task)), mutacoes, suites: suitesDaTask(wt, t) });
     } catch (e) {
       throw new Falha('gate_erro', `o gate falhou ao rodar: ${e.message}; sem merge nem evento`, nada);
     } finally {
       // `fechar` recalcula o nome a partir de `tmpdir()`: com o TMPDIR do gate ainda no ambiente, o nome sairia dentro do próprio.
       if (tmpAntes === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = tmpAntes;
     }
+    relatoVerde = r.relato.filter((l) => /^(desvio|aviso): /.test(l));
     if (r.reprova > 0) {
       throw new Falha('gate_reprovado', `gate reprovado (${r.reprova}); sem merge nem evento`, { ...nada, relato: r.relato });
     }
@@ -783,7 +932,7 @@ async function integrar(c, plano, task) {
     const causa = e instanceof Falha ? `${e.erro}: ${e.message}` : String(e.message ?? e);
     throw new Falha('fechar_falhou', `o merge entrou e o evento task.integrada foi gravado, mas fechar falhou (${causa})`, { merge: true, evento: true, causa: e.erro });
   }
-  return { task, branch, base, merge: true, evento: true, fechada: true, banco: fechada.banco, ignorados_removidos: fechada.ignorados_removidos };
+  return { task, branch, base, merge: true, evento: true, fechada: true, banco: fechada.banco, ignorados_removidos: fechada.ignorados_removidos, relato: relatoVerde };
 }
 
 // ─────────────────────────────────────────────────────────────── proxima
@@ -876,24 +1025,161 @@ function sinaisDe(c, cfg, eventos, flags) {
   return { sinais: { slots, percent: null, x, pausado, vivos, tokens, tetoTokens, podePousar: false }, aviso };
 }
 
-function proxima(c, plano, flags) {
-  const { cfg } = lerConfig(c.raiz);
-  const eventos = lerDiarioEstrito(c.dirEntrega);
-  const { sinais, aviso } = sinaisDe(c, cfg, eventos, flags);
-  if (cfg === null) aviso.push('harness.config.json ausente');
-  const acao = proximaAcao(plano, eventos, sinais);
-  if (acao.tipo === 'parar' && acao.motivo === 'diario_invalido') {
-    throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições (evento fora de ordem ou de task desconhecida)', { acao, sinais });
-  }
-  return { acao: acao.tipo === 'despachar' ? { ...acao, itens: acao.itens.map((i) => enriquecer(c, plano, eventos, i, aviso)) } : acao, sinais, ...(aviso.length ? { aviso } : {}) };
+/** `sombra.teto` de `origin/HEAD`: ausente ⇒ 26; inteiro >= 1 vale; qualquer outra coisa ⇒ 26 e aviso (a origem corrompida já foi avisada à parte). */
+function tetoDaSombra(origin) {
+  if (origin.fonte !== 'origin') return { teto: TETO_SOMBRA_PADRAO };
+  const s = origin.cfg.sombra;
+  if (s === undefined) return { teto: TETO_SOMBRA_PADRAO };
+  if (s === null || typeof s !== 'object' || Array.isArray(s)) return { teto: TETO_SOMBRA_PADRAO, aviso: `sombra.teto inválido em origin/HEAD (\`sombra\` não é objeto): teto ${TETO_SOMBRA_PADRAO}` };
+  if (!Object.hasOwn(s, 'teto')) return { teto: TETO_SOMBRA_PADRAO };
+  if (!Number.isInteger(s.teto) || s.teto < 1) return { teto: TETO_SOMBRA_PADRAO, aviso: `sombra.teto inválido em origin/HEAD (${JSON.stringify(s.teto)}): esperado inteiro >= 1; teto ${TETO_SOMBRA_PADRAO}` };
+  return { teto: s.teto };
 }
 
 /**
- * O item de despacho carrega o que o /clear apaga: `spec` (ponteiro do topo do plano) e, na `correcao`, `achados` (caminho do arquivo da
- * rodada reprovada). Arquivo ausente ou vazio não vira caminho: `achados: null` e aviso (o orquestrador não manda corrigir às cegas).
+ * Modelo do papel do item: `implementador` e `correcao` usam a chave `implementador`, `revisor` a `revisor`. Fonte: `orquestracao.modelos` do config LOCAL
+ * (a mesma de `orquestracao.modelo`; não decide produção), texto ou `{modelo, esforco?}`. Família = 1ª de haiku|sonnet|opus|fable contida no nome em caixa
+ * baixa (`claude-opus-5-5` ⇒ `opus`): os agentes têm `model: inherit`, então o que o `Agent` recebe é esta família. Ausente ⇒ `MODELOS_PADRAO`;
+ * entrada que não se entende ⇒ o padrão e um aviso (ausente ≠ corrompido).
  */
-function enriquecer(c, plano, eventos, item, aviso) {
-  const saida = { ...item, ...(typeof plano.spec === 'string' ? { spec: plano.spec } : {}) };
+function modeloDoItem(cfg, papel, aviso) {
+  const chave = papel === 'revisor' ? 'revisor' : 'implementador';
+  const padrao = { ...MODELOS_PADRAO[chave] };
+  const avisa = (m) => { const t = `modelo do papel ${chave}: ${m}; usei o padrão ${padrao.modelo}`; if (!aviso.includes(t)) aviso.push(t); return padrao; };
+  const orq = cfg?.orquestracao;
+  if (orq === undefined) return padrao;
+  if (orq === null || typeof orq !== 'object' || Array.isArray(orq)) return avisa('`orquestracao` em harness.config.json não é um objeto');
+  const modelos = orq.modelos;
+  if (modelos === undefined) return padrao;
+  if (modelos === null || typeof modelos !== 'object' || Array.isArray(modelos)) return avisa('orquestracao.modelos inválido (não é um objeto)');
+  if (!Object.hasOwn(modelos, chave)) return padrao;
+  const e = modelos[chave];
+  let nome;
+  let esforco;
+  if (typeof e === 'string') nome = e;
+  else if (e !== null && typeof e === 'object' && !Array.isArray(e) && typeof e.modelo === 'string' && (e.esforco === undefined || (typeof e.esforco === 'string' && e.esforco !== ''))) {
+    nome = e.modelo;
+    esforco = e.esforco;
+  } else return avisa(`orquestracao.modelos.${chave} inválido (esperado texto ou {modelo, esforco?})`);
+  const familia = FAMILIAS.find((f) => nome.toLowerCase().includes(f));
+  if (familia === undefined) return avisa(`orquestracao.modelos.${chave} ${JSON.stringify(nome)} não é haiku, sonnet, opus nem fable`);
+  return { modelo: familia, ...(esforco !== undefined ? { esforco } : {}) };
+}
+
+/** Os julgamentos que aprovaram: o 1º julgamento válido de cada proposta (aprovar ou rejeitar) a fecha; só `spec.emendada` entra, com a posição em `ordenar`. */
+function julgamentosAprovados(ord, est) {
+  const aprovadas = new Map(est.aprovadas.map((p) => [p.seq, p]));
+  const vistos = new Set();
+  const saida = [];
+  ord.forEach((e, idx) => {
+    if ((e.tipo !== 'spec.emendada' && e.tipo !== 'emenda.rejeitada') || formaInvalida(e.tipo, e.dados) !== null) return;
+    const seq = e.dados.proposta_seq;
+    if (vistos.has(seq)) return;
+    vistos.add(seq);
+    if (e.tipo === 'spec.emendada' && aprovadas.has(seq)) saida.push({ seq, req: aprovadas.get(seq).req, idx });
+  });
+  return saida;
+}
+
+/**
+ * Aviso de emenda em task já feita: `spec.emendada` POSTERIOR, em `ordenar`, ao último `review.veredito APROVADO` de task com o REQ (`aprovada` ou `integrada`;
+ * a integração não passa por revisão, então não prova nada sobre a spec: Sombra C5). Cala enquanto OUTRA task do plano com o mesmo REQ está fora de
+ * `integrada` (o ajuste está a caminho) ou teve o seu último APROVADO depois do julgamento (o ajuste foi revisado contra a spec emendada).
+ */
+function avisosDeEmenda(plano, ord, est) {
+  const julg = julgamentosAprovados(ord, est);
+  if (julg.length === 0) return [];
+  const info = new Map();
+  for (const t of plano.tasks) {
+    const dela = ord.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === t.id);
+    const r = estadoDe(dela);
+    if ('invalido' in r) continue;
+    const ultimo = (f) => ord.findLastIndex((e) => e.dados?.task === t.id && f(e));
+    info.set(t.id, {
+      estado: r.estado,
+      aprovada: ultimo((e) => e.tipo === 'review.veredito' && e.dados.veredito === 'APROVADO'),
+    });
+  }
+  const avisos = [];
+  for (const j of julg) {
+    const comReq = plano.tasks.filter((t) => Array.isArray(t.reqs) && t.reqs.includes(j.req) && info.has(t.id));
+    for (const t of comReq) {
+      const inf = info.get(t.id);
+      if (inf.aprovada < 0 || j.idx <= inf.aprovada) continue;
+      const cala = comReq.some((u) => u.id !== t.id && (info.get(u.id).estado !== 'integrada' || info.get(u.id).aprovada > j.idx));
+      if (!cala) avisos.push(`Atenção: ${j.req} emendado (#${j.seq}) depois de ${t.id} integrada/aprovada: acrescente task de ajuste`);
+    }
+  }
+  return avisos;
+}
+
+function proxima(c, plano, flags) {
+  const { cfg } = lerConfig(c.raiz);
+  const eventos = lerDiarioEstrito(c.dirEntrega);
+  const origin = lerConfigOrigin(c.raiz);
+  const avisoOrigin = [];
+  if (origin.invalida) avisoOrigin.push(`config de origin inválida: ${origin.motivo}`);
+  const ce = lerConfigEntrega(origin.cfg);
+  for (const e of ce.erros) avisoOrigin.push(`entrega: ${e}`);
+  const pol = politicaEfetiva(ce, plano.politica_entrega);
+  if (!pol.ok) throw new Falha(pol.erro, pol.mensagem);
+  const { sinais, aviso } = sinaisDe(c, cfg, eventos, flags);
+  aviso.push(...avisoOrigin);
+  if (cfg === null) aviso.push('harness.config.json ausente');
+  const acao = proximaAcao(plano, eventos, { ...sinais, politica: pol.politica });
+  if (acao.tipo === 'parar' && acao.motivo === 'diario_invalido') {
+    throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições (evento fora de ordem ou de task desconhecida)', { acao, sinais });
+  }
+  const ord = ordenar(eventos);
+  const ordenados = ord.ok ? ord.eventos : [];
+  const est = projetarEmendas(eventos);
+  const { teto, aviso: avisoTeto } = tetoDaSombra(origin);
+  if (avisoTeto !== undefined) aviso.push(avisoTeto);
+  const consultas = contarConsultas(eventos);
+  if (consultas > teto) aviso.push(`Atenção: ${consultas} consultas à Sombra, teto ${teto}`);
+  aviso.push(...avisosDeEmenda(plano, ordenados, est));
+  const extra = { cfg, ordenados, est, decisoes: projetarDecisoes(eventos) };
+  return { acao: acao.tipo === 'despachar' ? { ...acao, itens: acao.itens.map((i) => enriquecer(c, plano, eventos, i, aviso, extra)) } : acao, sinais, ...(aviso.length ? { aviso } : {}) };
+}
+
+/** Decisões vigentes do item: as dos REQs da task e as da âncora `task:<id>`, sem as de consulta anterior à última emenda de um REQ da âncora; mais recente primeiro. */
+function decisoesDoItem(c, plano, item, reqs, extra) {
+  const { ordenados, est, decisoes } = extra;
+  const julg = julgamentosAprovados(ordenados, est);
+  const posicao = (f) => ordenados.findLastIndex(f);
+  const lista = [];
+  for (const d of decisoes.values()) {
+    const doReq = d.req !== undefined && reqs.includes(d.req);
+    const daTask = d.task !== undefined && d.task === item.task;
+    if (!doReq && !daTask) continue;
+    const reqsDaAncora = d.req !== undefined ? [d.req] : reqs;
+    const ultimaEmenda = Math.max(-1, ...julg.filter((j) => reqsDaAncora.includes(j.req)).map((j) => j.idx));
+    const consulta = posicao((e) => e.tipo === 'sombra.consulta' && formaInvalida(e.tipo, e.dados) === null && e.dados.pergunta_hash === d.hash);
+    if (consulta >= 0 && consulta < ultimaEmenda) continue;
+    // `arquivo` relativo à raiz principal não abre de dentro da worktree da task (`.harness/` não existe lá): sai absoluto, e nunca de fora da raiz.
+    const abs = resolve(c.raiz, d.arquivo);
+    const rel = relative(c.raiz, abs);
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) continue;
+    lista.push({ pos: posicao((e) => e.tipo === 'decisao.sombra' && e.sessao === d.sessao && e.seq === d.seq), d, abs });
+  }
+  return lista.sort((a, b) => b.pos - a.pos).map(({ d, abs }) => ({ hash: d.hash, ancora: d.req !== undefined ? d.req : `task:${d.task}`, resposta: d.resposta, arquivo: abs }));
+}
+
+/**
+ * O item de despacho carrega o que o /clear apaga: `spec` (ponteiro do topo do plano), `modelo`, `decisoes` e `emendas` (as aprovadas dos REQs da task: o
+ * arquivo da spec nunca é editado pela emenda, então o implementador, a correção e o revisor leem o diff aqui) e, na `correcao`, `achados` (caminho do
+ * arquivo da rodada reprovada). Arquivo de achados ausente ou vazio não vira caminho: `achados: null` e aviso (o orquestrador não manda corrigir às cegas).
+ */
+function enriquecer(c, plano, eventos, item, aviso, extra) {
+  const t = plano.tasks.find((x) => x.id === item.task);
+  const reqs = Array.isArray(t?.reqs) ? t.reqs : [];
+  const saida = {
+    ...item,
+    ...(typeof plano.spec === 'string' ? { spec: plano.spec } : {}),
+    modelo: modeloDoItem(extra.cfg, item.papel, aviso),
+    decisoes: decisoesDoItem(c, plano, item, reqs, extra),
+    emendas: extra.est.aprovadas.filter((p) => reqs.includes(p.req)).map((p) => ({ proposta_seq: p.seq, req: p.req, diff: p.diff })),
+  };
   if (item.papel !== 'correcao') return saida;
   const ord = ordenar(eventos);
   const reprovado = (ord.ok ? ord.eventos : []).filter((e) => e.tipo === 'review.veredito' && e.dados?.task === item.task && e.dados?.veredito === 'REPROVADO').at(-1);
@@ -903,16 +1189,136 @@ function enriquecer(c, plano, eventos, item, aviso) {
   return { ...saida, achados: null };
 }
 
+// ─────────────────────────────────────────────────────────────── emenda, desvio, descoberta
+
+const CODIGO_JULGAMENTO = { 'diário fora de ordem': 'diario_invalido', 'proposta já julgada': 'ja_julgada', 'proposta inexistente': 'proposta_inexistente' };
+
+/** REQ com trecho na spec do plano. Spec ausente, ilegível ou fora da raiz ⇒ `false` (sem a spec não há como provar o REQ). */
+function reqNaSpec(c, plano, req) {
+  if (typeof plano.spec !== 'string' || plano.spec === '') return false;
+  try {
+    const abs = resolve(c.raiz, plano.spec);
+    const rel = relative(c.raiz, abs);
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return false;
+    const real = realpathSync(abs);
+    const relReal = relative(realpathSync(c.raiz), real);
+    if (relReal.startsWith('..') || isAbsolute(relReal)) return false;
+    return trechoDoReq(readFileSync(real, 'utf8'), req) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function propor(c, plano, dados, antesDoAppend) {
+  const eventos = lerDiarioEstrito(c.dirEntrega);
+  if (diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições; nada foi gravado');
+  const motivo = validarProposta(plano, projetarEmendas(eventos), dados);
+  if (motivo !== null) throw new Falha('proposta_recusada', motivo, { motivo });
+  if (dados.task === undefined && !plano.tasks.some((t) => Array.isArray(t.reqs) && t.reqs.includes(dados.req)) && !reqNaSpec(c, plano, dados.req)) {
+    throw new Falha('req_desconhecido', `${dados.req} não está em nenhuma task do plano nem na spec: erro de digitação prenderia o \`concluir\` até o dono rejeitar; nada foi gravado`);
+  }
+  let ts = null;
+  gravar(c, plano, 'emenda.proposta', dados, (candidato) => { ts = candidato.ts; if (antesDoAppend) antesDoAppend(); });
+  // O `seq` da linha só o arquivo sabe (o candidato de `gravar` sai de uma leitura anterior ao lock): relê e acha a linha pelo `ts` e pelos `dados`.
+  const depois = lerDiarioEstrito(c.dirEntrega);
+  const minhas = depois.filter((e) => e.sessao === SESSAO_EMENDAS && e.tipo === 'emenda.proposta' && e.ts === ts && isDeepStrictEqual(e.dados, dados));
+  if (minhas.length !== 1) {
+    throw new Falha('seq_nao_confirmado', `a emenda.proposta FOI gravada (events.${SESSAO_EMENDAS}.jsonl), mas achei ${minhas.length} linha(s) com o mesmo ts e os mesmos dados: não sei qual é o proposta_seq; confira o diário`);
+  }
+  const congeladas = tasksCongeladas(plano, depois);
+  return { proposta_seq: minhas[0].seq, req: dados.req, ...(dados.task !== undefined ? { task: dados.task } : {}), congeladas: plano.tasks.map((t) => t.id).filter((id) => congeladas.has(id)) };
+}
+
+/** `emenda propor` fora do despacho de `executar`, para o teste injetar uma escrita concorrente (`antes`) entre a conferência e o append. Devolve o resultado ou lança. */
+export function proporEmenda(cwd, flags, { antes } = {}) {
+  formaEmenda(['propor'], flags);
+  const c = contexto(cwd, { entrega: flags.entrega, sessao: SESSAO_EMENDAS });
+  const dados = prepararProposta(cwd, flags);
+  return propor(c, carregarPlano(c), dados, antes);
+}
+
+/** Posição do julgamento que FECHA a proposta: o 1º válido na ordem do diário (aprovar ou rejeitar), como `projetarEmendas`. */
+function julgamentoQueFecha(eventos, seq) {
+  const ord = ordenar(eventos);
+  if (!ord.ok) return null;
+  const e = ord.eventos.find((x) => (x.tipo === 'spec.emendada' || x.tipo === 'emenda.rejeitada') && formaInvalida(x.tipo, x.dados) === null && x.dados.proposta_seq === seq);
+  return e === undefined ? null : { tipo: e.tipo, origem: e.dados.origem };
+}
+
+/** Julga a proposta `seq` e relê: `ok` só com o evento gravado E fechando a proposta com a mesma origem. Sem lock (limite do `gravar`). */
+function julgar(c, plano, seq, decisao, origem, antes) {
+  const eventos = lerDiarioEstrito(c.dirEntrega);
+  if (diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições; nada foi gravado');
+  const est = projetarEmendas(eventos);
+  const motivo = validarJulgamento(est, seq, origem, origem === 'sombra');
+  if (motivo !== null) throw new Falha(CODIGO_JULGAMENTO[motivo] ?? 'julgamento_invalido', motivo);
+  const proposta = est.abertas.find((p) => p.seq === seq);
+  const tipo = decisao === 'aprovar' ? 'spec.emendada' : 'emenda.rejeitada';
+  gravar(c, plano, tipo, { proposta_seq: seq, origem }, () => { if (antes) antes(); });
+  const fecha = julgamentoQueFecha(lerDiarioEstrito(c.dirEntrega), seq);
+  if (fecha === null || fecha.tipo !== tipo || fecha.origem !== origem) {
+    throw new Falha('julgamento_sem_efeito', `o evento ${tipo} da proposta #${seq} foi gravado, mas ${fecha === null ? 'o diário relido não a fecha' : `outro julgamento (${fecha.tipo}, origem ${fecha.origem}) a fecha`}: confira o diário`);
+  }
+  return { seq, req: proposta.req, tipo, entrega: c.entrega };
+}
+
+function julgarComoSombra(c, plano, seq, decisao) {
+  const o = lerConfigOrigin(c.raiz);
+  const liga = o.fonte === 'origin' && o.cfg.sombra !== null && typeof o.cfg.sombra === 'object' && o.cfg.sombra.julga_emendas === true;
+  if (!liga) {
+    throw new Falha('julga_emendas_desligado', o.invalida
+      ? `config de origin/HEAD inválida (${o.motivo}): sem sombra.julga_emendas verdadeiro lá, a Sombra não julga; nada foi gravado`
+      : 'sombra.julga_emendas não é true em origin/HEAD (o config local não conta): a Sombra não julga; nada foi gravado');
+  }
+  return { ...julgar(c, plano, seq, decisao, 'sombra'), origem: 'sombra' };
+}
+
+/**
+ * Julgamento do DONO: a ÚNICA gravação de `spec.emendada`/`emenda.rejeitada` com `origem:"dono"`. Fora de `ESPEC`: nenhum argumento do CLI chega aqui, só o
+ * hook `UserPromptExpansion` (`emenda-dono.mjs`), disparado pelo comando que o dono digita. Nunca lança: `{ok:true, seq, req, tipo, entrega}` só com o evento
+ * gravado E relido fechando a proposta com origem `dono`; qualquer outra coisa é `{ok:false, erro, mensagem}`. `opcoes.antes` é gancho de teste (corrida).
+ */
+export function julgarEmendaDono(cwd, seq, decisao, sessao, opcoes = {}) {
+  try {
+    if (!Number.isInteger(seq) || seq < 1) throw new Falha('argumento_invalido', `seq ${JSON.stringify(seq)}: esperado inteiro >= 1`);
+    if (decisao !== 'aprovar' && decisao !== 'rejeitar') throw new Falha('argumento_invalido', `decisão ${JSON.stringify(decisao)}: esperado aprovar ou rejeitar`);
+    if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) throw new Falha('argumento_invalido', `sessão fora da forma ${SESSAO_RE}`);
+    const c = contexto(cwd, { sessao });
+    return { ok: true, ...julgar(c, carregarPlano(c), seq, decisao, 'dono', opcoes.antes) };
+  } catch (e) {
+    if (e instanceof Falha) return { ok: false, erro: e.erro, mensagem: e.message };
+    return { ok: false, erro: 'excecao', mensagem: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 // ─────────────────────────────────────────────────────────────── despacho
 
 async function executar(argv, cwd) {
   const { cmd, pos, flags } = lerArgs(argv);
   const forma = validarForma(cmd, pos, flags);
-  const c = contexto(cwd, flags);
+  const c = contexto(cwd, cmd === 'emenda' && forma.sub === 'propor' ? { ...flags, sessao: SESSAO_EMENDAS } : flags);
   if (cmd === 'parar') return { ...gravarSemPlano(c, 'loop.parar', { motivo: forma.motivo }) };
+  // Tudo que só depende dos argumentos (diff, tamanho, canário, caminhos) é conferido antes de abrir o plano e o diário.
+  let propostaPronta;
+  if (cmd === 'emenda' && forma.sub === 'propor') propostaPronta = prepararProposta(cwd, flags);
+  if (cmd === 'desvio' || cmd === 'descoberta') {
+    limitarTextos(forma.textos);
+    limitarDados(forma.dados);
+    const invalida = formaInvalida(cmd, forma.dados);
+    if (invalida !== null) throw new Falha('argumento_invalido', invalida);
+  }
   const plano = carregarPlano(c);
   const { task } = forma;
   switch (cmd) {
+    case 'desvio': {
+      const t = tarefa(plano, task);
+      if (!Array.isArray(t.reqs) || !t.reqs.includes(forma.req)) throw new Falha('req_fora_da_task', `${forma.req} não está em \`reqs\` da task ${task}`);
+      return { evento: gravar(c, plano, 'desvio', forma.dados) };
+    }
+    case 'descoberta': return { evento: gravar(c, plano, 'descoberta', forma.dados) };
+    case 'emenda':
+      if (forma.sub === 'propor') return propor(c, plano, propostaPronta);
+      return julgarComoSombra(c, plano, forma.seq, forma.decisao);
     case 'proxima': return proxima(c, plano, flags);
     case 'abrir': return abrir(c, plano, task);
     case 'fechar': tarefa(plano, task); return fechar(c, task);
@@ -927,7 +1333,7 @@ async function executar(argv, cwd) {
       const sha = git(wt, 'rev-parse', `refs/heads/${ramo(c, task)}`);
       return { evento: gravar(c, plano, 'task.concluida', { task, sha }) };
     }
-    case 'ci': return { evento: gravar(c, plano, 'ci.resultado', { verde: forma.verde }) };
+    case 'ci': return { evento: gravar(c, plano, 'ci.resultado', { verde: forma.verde, ...(forma.alvo !== undefined ? { alvo: forma.alvo } : {}) }) };
     case 'veredito': {
       tarefa(plano, task);
       // REPROVADO sem achados no disco manda uma correção às cegas, e o /clear apaga o que o revisor disse: exige o arquivo.

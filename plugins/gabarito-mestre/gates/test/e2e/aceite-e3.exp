@@ -1,0 +1,99 @@
+#!/usr/bin/expect -f
+# Aceites 1 a 4 da E3 (GM-11 T15). FORA de `npm test`: abre uma TUI real do Claude Code (haiku) em repo descartável sob .claude-tmp/t15/, gasta tokens.
+#
+#   aceite-e3.exp <modo> <rundir> <repo> <plugin-root> <avaliar-e3.mjs> <prompt-arquivo> <teto-s>
+#     modo: sombra (aceites 1 e 4) | emenda (aceite 2) | entrega (aceite 3)
+#
+# Mesmo isolamento do aceite-loop.exp (GM-10): `--setting-sources project`, `enabledPlugins` no settings do repo (R46), SEM CLAUDE_CONFIG_DIR
+# (transcript e medição ficam em ~/.claude/projects). Sem o mod observador: a evidência vem do diário, dos transcripts e do debug.log, lidos
+# DEPOIS pelo avaliar-e3.mjs; a tela nunca é evidência. O .exp só digita o que está em $rundir/sends.log: trust, prompt, exit e, no modo emenda,
+# o comando do dono `/gabarito-mestre:emenda aprovar 1` (a emenda foi proposta no preparo; só o humano julga). Pergunta de permissão é REGISTRADA e nunca respondida.
+# Trava: TRAVA_S sem evento novo e sem transcript novo ⇒ TRAVADO. Teto global: <teto-s>.
+set TRAVA_S 300
+lassign $argv modo rundir repo plugin avaliar promptf teto
+catch {unset env(CLAUDE_CONFIG_DIR)}
+set env(TERM) xterm-256color
+foreach v {CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION} { set env($v) false }
+set env(CLAUDE_CODE_DISABLE_AUTO_MEMORY) 1
+set env(CLAUDE_CODE_FORCE_SESSION_PERSISTENCE) 1
+file mkdir $rundir
+set fd [open $promptf]; set prompt [string trim [read $fd]]; close $fd
+
+proc sends {tag} { global rundir; set f [open $rundir/sends.log a]; puts $f "[clock seconds] $tag"; close $f }
+proc nota {txt} { global rundir; set f [open $rundir/exp.log a]; puts $f "[clock seconds] $txt"; close $f }
+proc estado {} {
+  global avaliar repo rundir plugin modo
+  if {[catch {exec node $avaliar estado $repo $rundir $plugin $modo} out]} { return "" }
+  return $out
+}
+proc campo {s nome} { if {[regexp "\"$nome\":(\[^,\}\]+)" $s -> v]} { return [string trim $v "\""] } ; return "" }
+
+cd $repo
+log_user 0
+log_file -a $rundir/tty.raw
+set stty_init "rows 50 cols 160"
+spawn claude --plugin-dir $plugin --setting-sources project --strict-mcp-config \
+  --model claude-haiku-5-5 --permission-mode auto --debug-file $rundir/debug.log
+set t0 [clock seconds]
+nota "inicio modo=$modo"
+
+set timeout 15
+expect {
+  -re {Enter.*confirm|trust this folder} { after 500; sends trust; send "\033\[B"; after 400; send "\r"; after 4000 }
+  -re {login|Log in|API key} { nota "LOGIN: nao respondo"; set f [open $rundir/exp.status w]; puts $f NAO_PROVADO_LOGIN; close $f; catch {close}; catch {wait}; exit 3 }
+  timeout {}
+  eof { nota "EOF cedo"; exit 1 }
+}
+after 3000
+if {![catch {exec grep -c -E "dependency-unsatisfied|is not installed" $rundir/debug.log}]} {
+  nota "PLUGIN NAO CARREGOU"
+  set f [open $rundir/exp.status w]; puts $f NAO_PROVADO_PLUGIN; close $f
+  send "\003"; after 500; send "\003"; catch {close}; catch {wait}; exit 3
+}
+sends prompt
+send -- $prompt
+after 2500
+send "\r"
+after 2500
+send "\r"
+
+set status RODANDO
+set ultimo ""; set tmudou [clock seconds]; set lastpoll 0
+set tfim 0; set digitou 0
+set timeout 2
+while {1} {
+  expect {
+    -re {Do you want to|Allow this|Esc to cancel} { nota "PERGUNTA-DE-PERMISSAO na tela" }
+    -re {.+} {}
+    timeout {}
+    eof { nota "EOF"; set status EOF; break }
+  }
+  set agora [clock seconds]
+  if {$agora - $t0 > $teto} { set status TETO_GLOBAL; break }
+  if {$agora - $lastpoll < 5} { continue }
+  set lastpoll $agora
+  set s [estado]
+  if {$s eq ""} { continue }
+  set marca "[campo $s eventos]/[campo $s transcripts]/[campo $s idle_s]"
+  if {[campo $s idle_s] ne "" && [campo $s idle_s] < 5} { set tmudou $agora }
+  if {$agora - $tmudou > $TRAVA_S} { set status TRAVADO; break }
+  if {$modo eq "emenda" && $digitou == 0 && [campo $s espera_emenda] eq "true" && [campo $s idle_s] >= 20} {
+    # o dono julga: o turno do orquestrador já parou em `esperar{emenda}` e T2 está integrada
+    sends emenda-aprovar; send -- "/gabarito-mestre:emenda aprovar 1"; after 1200; send "\r"; set digitou 1; nota "emenda aprovar 1 digitado"
+    continue
+  }
+  if {[campo $s fim] eq "true" && [campo $s idle_s] >= 25} {
+    if {$tfim == 0} { set tfim $agora; nota "fim visto" }
+    if {$agora - $tfim >= 5} { set status CONCLUIDO; break }
+  }
+}
+nota "fim status=$status t=[expr {[clock seconds]-$t0}]"
+set f [open $rundir/exp.status w]; puts $f $status; close $f
+sends exit
+send "/exit\r"
+after 2500
+send "\r"
+set timeout 15
+expect { eof {} timeout { nota "nao saiu; Ctrl-C"; send "\003"; after 500; send "\003" } }
+catch {close}; catch {wait}
+puts "exp done $status"

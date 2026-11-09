@@ -641,7 +641,7 @@ test('stop-dist-plano-ausente-avisa-sem-excecao', () => {
 test('stop-dist-loop-ausente-avisa-sem-excecao', () => {
   const raiz = repo();
   plano(raiz);
-  const r = stop(raiz, {}, { script: copiaSemDist(false, ['plano.js', 'diario.js']) });
+  const r = stop(raiz, {}, { script: copiaSemDist(false, ['plano.js', 'formas.js', 'diario.js']) });
   avisa(r, /dist/);
   assert.equal(r.stderr, '');
 });
@@ -649,7 +649,7 @@ test('stop-dist-loop-ausente-avisa-sem-excecao', () => {
 test('stop-dist-diario-ausente-avisa-sem-excecao', () => {
   const raiz = repo();
   plano(raiz);
-  const r = stop(raiz, {}, { script: copiaSemDist(false, ['plano.js', 'loop.js']) });
+  const r = stop(raiz, {}, { script: copiaSemDist(false, ['plano.js', 'formas.js', 'emenda.js', 'loop.js']) });
   avisa(r, /dist/);
   assert.equal(r.stderr, '');
 });
@@ -718,7 +718,8 @@ test('stop-linha-corrompida-nao-zera: nem derruba o hook', () => {
   assert.equal(contador(raiz).stops, 2, 'linha torta não virou progresso');
 });
 
-const LISTA_REQ_LOOP_5 = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'ci.resultado'];
+// GM-11 T6: o julgamento de emenda (descongela) também é progresso; a `emenda.proposta` não.
+const LISTA_REQ_LOOP_5 = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'ci.resultado', 'spec.emendada', 'emenda.rejeitada'];
 
 test('stop-lista-progresso-igual-loop: a lista única é a que proximaAcao consome (REQ-LOOP-5)', () => {
   const fonte = readFileSync(join(GATES, 'src', 'loop.ts'), 'utf8');
@@ -726,7 +727,7 @@ test('stop-lista-progresso-igual-loop: a lista única é a que proximaAcao conso
   assert.ok(m, 'loop.ts perdeu TIPOS_DE_TASK');
   const deTask = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
   assert.ok(/e\.tipo === 'ci\.resultado'/.test(fonte), 'loop.ts deixou de consumir ci.resultado');
-  assert.deepEqual([...TIPOS_DE_PROGRESSO].sort(), [...deTask, 'ci.resultado'].sort());
+  assert.deepEqual([...TIPOS_DE_PROGRESSO].sort(), [...deTask, 'ci.resultado', 'spec.emendada', 'emenda.rejeitada'].sort());
   // tirar qualquer tipo da fonte reprova: a lista é a da spec, item a item
   assert.deepEqual([...TIPOS_DE_PROGRESSO].sort(), [...LISTA_REQ_LOOP_5].sort());
 });
@@ -742,7 +743,7 @@ test('stop-e-mod-nao-tem-lista-propria: stop-loop.mjs e mod/gabarito.mjs não re
 test('stop-loop-sem-lista-de-progresso-avisa-sem-block: nunca conta com lista vazia', () => {
   const raiz = repo();
   plano(raiz);
-  const script = copiaSemDist(false, ['plano.js', 'diario.js']);
+  const script = copiaSemDist(false, ['plano.js', 'formas.js', 'emenda.js', 'diario.js', 'sombra.js']);
   const dist = join(dirname(dirname(script)), 'dist');
   const js = readFileSync(join(GATES, 'dist', 'loop.js'), 'utf8').replace(/^export const TIPOS_DE_PROGRESSO\b.*$/m, '');
   assert.ok(!/export const TIPOS_DE_PROGRESSO/.test(js), 'preparo: export removido');
@@ -941,4 +942,96 @@ test('costura-mod-grava-stop-le: o marcador que o mod grava é o que o Stop real
   avisa(lido, /Loop: pouso pendente/);
   assert.equal(existsSync(marcadorDe(real)), false, 'o Stop consumiu o marcador do mod');
   assert.ok(lido.json.reason === undefined);
+});
+
+// ------------------------------------------------------------------------------------- GM-11 T13: esperar{emenda}
+
+const DADOS_PROPOSTA = { diff: 'x', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'tecnica', arquivos: ['a.ts'] };
+/** `n` propostas abertas (sessão fixa `emendas`, seq 1..n) com os REQs dados; T1 integrada, então a ação é `esperar{emenda}`. */
+function emTudoIntegradoComPropostas(reqs, branch = 'wt/GM-10-8') {
+  const raiz = repo(branch);
+  plano(raiz);
+  diario(raiz, 's', [...TASK_APROVADA(), ev('s', 4, 'task.integrada', { task: 'T1' })]);
+  diario(raiz, 'emendas', reqs.map((req, i) => ev('emendas', i + 1, 'emenda.proposta', { req, ...DADOS_PROPOSTA })));
+  return raiz;
+}
+
+test('esperar-emenda-stop-avisa: lista #seq REQ, orienta o comando e lê o texto inteiro', () => {
+  const raiz = emTudoIntegradoComPropostas(['REQ-A-1', 'REQ-B-2']);
+  const r = stop(raiz);
+  avisa(r, /./);
+  assert.equal(
+    r.json.systemMessage,
+    'Loop da entrega GM-10 espera julgamento de emenda: #1 REQ-A-1, #2 REQ-B-2. Julgue com /gabarito-mestre:emenda aprovar|rejeitar <seq>.',
+  );
+});
+
+test('esperar-emenda-stop-avisa: acima de ITENS_NO_MOTIVO (6) lista 6 e diz "e mais <n>"', () => {
+  const raiz = emTudoIntegradoComPropostas(Array.from({ length: 8 }, (_, i) => `REQ-A-${i + 1}`));
+  const r = stop(raiz);
+  avisa(r, /./);
+  assert.equal(
+    r.json.systemMessage,
+    'Loop da entrega GM-10 espera julgamento de emenda: #1 REQ-A-1, #2 REQ-A-2, #3 REQ-A-3, #4 REQ-A-4, #5 REQ-A-5, #6 REQ-A-6 e mais 2. Julgue com /gabarito-mestre:emenda aprovar|rejeitar <seq>.',
+  );
+});
+
+test('esperar-emenda-nao-bloqueia: sem decision/reason; saída pura também', () => {
+  const puro = saidaParaAcao({ tipo: 'esperar', motivo: 'emenda', propostas: [{ seq: 4, req: 'REQ-A-1' }] }, 'GM-10');
+  assert.deepEqual(Object.keys(puro), ['systemMessage']);
+  assert.match(puro.systemMessage, /#4 REQ-A-1/);
+  const r = stop(emTudoIntegradoComPropostas(['REQ-A-1']));
+  assert.equal(r.json.decision, undefined);
+  assert.equal(r.json.reason, undefined);
+});
+
+test('esperar-emenda-nao-conta-sem-progresso: 4 Stops seguidos avisam e nenhum grava loop.parar nem contador', () => {
+  const raiz = emTudoIntegradoComPropostas(['REQ-A-1']);
+  const antes = linhasDoDiario(raiz).length;
+  for (let i = 0; i < 4; i++) {
+    const r = stop(raiz);
+    avisa(r, /espera julgamento de emenda/);
+    assert.doesNotMatch(r.json.systemMessage, /sem_progresso|parou/);
+  }
+  assert.equal(linhasDoDiario(raiz).filter((e) => e.tipo === 'loop.parar').length, 0);
+  assert.equal(linhasDoDiario(raiz).length, antes, 'não grava nada no diário');
+  assert.equal(existsSync(contadorDe(raiz)), false, 'não passa pelo contador');
+});
+
+test('esperar-outro-motivo-silencio: agentes vivos, sem slot e motivo ausente seguem em silêncio', () => {
+  for (const motivo of ['agentes vivos', 'sem slot livre', undefined]) {
+    assert.equal(saidaParaAcao({ tipo: 'esperar', motivo }, 'GM-10'), null, String(motivo));
+    assert.equal(saidaParaAcao({ tipo: 'esperar', motivo, propostas: [{ seq: 1, req: 'REQ-A-1' }] }, 'GM-10'), null, `${motivo} com propostas`);
+  }
+  assert.equal(saidaParaAcao({ tipo: 'esperar', motivo: 'emenda', propostas: [] }, 'GM-10'), null, 'sem proposta não há o que dizer');
+  assert.equal(saidaParaAcao({ tipo: 'esperar', motivo: 'emenda' }, 'GM-10'), null, 'propostas ausente nunca vira lista inventada');
+});
+
+test('esperar-emenda: texto do diário não vaza controle nem passa de 60 caracteres por REQ', () => {
+  const s = saidaParaAcao({ tipo: 'esperar', motivo: 'emenda', propostas: [{ seq: 1, req: 'REQ-A-1\n{"decision":"block"}' + 'x'.repeat(100) }] }, 'GM-10');
+  assert.doesNotMatch(s.systemMessage, /\n/);
+  assert.ok(s.systemMessage.length < 400);
+});
+
+test('stop-esperar-emenda-via-dist: diário real (append) com proposta aberta, proximaAcao do dist, mensagem do hook', async () => {
+  const { append } = await import(pathToFileURL(join(GATES, 'dist', 'diario.js')).href);
+  const { proximaAcao } = await import(pathToFileURL(join(GATES, 'dist', 'loop.js')).href);
+  const { ler } = await import(pathToFileURL(join(GATES, 'dist', 'diario.js')).href);
+  const raiz = repo('wt/GM-10-8');
+  plano(raiz);
+  const grava = (sessao, tipo, dados) => assert.ok(append(entregaDir(raiz), sessao, {
+    ts: new Date((relogio += 1000)).toISOString(), autor: 'a', sessao, agente: 'orquestrador', tipo, dados,
+  }).ok, tipo);
+  grava('s', 'task.iniciada', { task: 'T1', papel: 'implementador' });
+  grava('s', 'task.concluida', { task: 'T1' });
+  grava('s', 'review.veredito', { task: 'T1', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 });
+  grava('s', 'task.integrada', { task: 'T1' });
+  grava('emendas', 'emenda.proposta', { req: 'REQ-A-1', ...DADOS_PROPOSTA });
+  const acao = proximaAcao(PLANO, ler(entregaDir(raiz)), {
+    slots: 1, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false,
+  });
+  assert.deepEqual(acao, { tipo: 'esperar', motivo: 'emenda', propostas: [{ seq: 1, req: 'REQ-A-1' }] });
+  const r = stop(raiz);
+  avisa(r, /#1 REQ-A-1/);
+  assert.equal(r.json.systemMessage, saidaParaAcao(acao, 'GM-10').systemMessage, 'o hook diz o que a função pura diz da ação real');
 });

@@ -22,10 +22,11 @@
  * Sai 0 verde, 1 reprovado (inclui argumento inválido), 2 uso (sem worktree/base).
  */
 import { spawn, execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, mkdtempSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdtempSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve, relative, isAbsolute } from 'node:path';
+import { join, resolve, relative, isAbsolute, dirname } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
 
 const SEGREDO = /ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|\bAKIA[A-Z0-9]{12,}|\bASIA[A-Z0-9]{12,}|-----BEGIN [A-Z ]*PRIVATE|\bsk-[A-Za-z0-9]{16,}|xox[bp]-[A-Za-z0-9-]{10,}|:\/\/[^/\s:]+:[^@\s]+@|Bearer\s+[A-Za-z0-9._-]{16,}|eyJ[\w-]{20,}\.eyJ[\w-]{20,}/;
@@ -33,6 +34,53 @@ const SEGREDO = /ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|\bAKIA[A-Z0-9]{12,}|\
 const HATCH = ['GABARITO', 'ALLOW'].join('_');
 const ALLOW_ADD = new RegExp(`permissionDecision["': ]+["']${['al', 'low'].join('')}`);
 const MS_ZERO = 100; // mutação "morta" em menos que isto não mediu nada (E19)
+
+// Leitor estrito do diário (dist/diario.js). Ausente ⇒ `desviosDaTask` avisa; o resto do gate não depende dele.
+let lerEstrito = null;
+let erroDiario = 'dist/diario.js ausente; rode node gates/scripts/build.mjs';
+try {
+  const m = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'diario.js')).href);
+  if (typeof m.lerEstrito === 'function') lerEstrito = m.lerEstrito;
+  else erroDiario = 'dist/diario.js sem lerEstrito; rode node gates/scripts/build.mjs';
+} catch { /* fica o motivo acima */ }
+
+/**
+ * Texto vindo do diário entra no relato por lista de PERMITIDOS (como `limpo` de stop-loop.mjs): letra, marca, número,
+ * pontuação, símbolo e espaço comum. Todo o resto (LF, CR, VT, FF, NEL, U+2028/2029, controles C0/C1, NBSP, invisíveis,
+ * bidi) vira espaço: nenhuma quebra de linha que um leitor reconheça forja `GATE VERDE`. Tamanho limitado.
+ */
+const limpoTxt = (v, n = 120) => String(v).replace(/[^\p{L}\p{M}\p{N}\p{P}\p{S} ]+/gu, ' ').slice(0, n);
+
+/**
+ * Desvios (evento `desvio`) que a task desta worktree gravou no diário da entrega (GM-11 T13). Entrega e task vêm da branch
+ * `wt/<entrega>-<task>`; o diário fica na raiz do checkout PRINCIPAL (`git rev-parse --git-common-dir`), também de dentro da worktree.
+ * Fora de worktree de task, ou sem pasta de diário da entrega: `{ desvios: [] }` (silêncio). Diário ilegível ou de cadeia
+ * quebrada: `{ aviso }`, nunca lista vazia: ausente ≠ corrompido. Nunca lança.
+ */
+export function desviosDaTask(worktree) {
+  const git = (...a) => execFileSync('git', ['-C', worktree, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  let branch;
+  try { branch = git('rev-parse', '--abbrev-ref', 'HEAD'); } catch { return { desvios: [] }; }
+  const m = /^wt\/([A-Z]+-\d+)-(.+)$/.exec(branch);
+  if (!m) return { desvios: [] };
+  const [, entrega, task] = m;
+  let dir;
+  try {
+    dir = join(dirname(resolve(worktree, git('rev-parse', '--git-common-dir'))), '.harness', 'entregas', entrega);
+  } catch (e) {
+    return { aviso: `desvios não lidos (raiz do checkout principal: ${limpoTxt(String(e.stderr ?? e.message).trim().split('\n')[0])})` };
+  }
+  try {
+    statSync(dir);
+  } catch (e) {
+    return e?.code === 'ENOENT' ? { desvios: [] } : { aviso: `desvios não lidos (diário da entrega ${entrega}: ${e?.code ?? 'erro'})` };
+  }
+  if (lerEstrito === null) return { aviso: `desvios não lidos (${erroDiario})` };
+  let lido;
+  try { lido = lerEstrito(dir); } catch (e) { return { aviso: `desvios não lidos (${limpoTxt(e?.name ?? 'erro', 60)})` }; }
+  if (!lido.ok) return { aviso: `desvios não lidos (${limpoTxt(lido.motivo)})` };
+  return { desvios: lido.eventos.filter((e) => e?.tipo === 'desvio' && e.dados?.task === task).map((e) => e.dados) };
+}
 
 /** Roda `cmd` no bash com pipefail; nunca rejeita: falha ao iniciar ou morte por sinal vira rc -1. */
 export function rodarShell(nome, cmd, cwd) {
@@ -218,6 +266,14 @@ export async function avaliar(opts) {
   const hatchDepois = contaHatch('HEAD');
   hatchDepois > hatchAntes ? falhar(`${HATCH} aumentou: ${hatchAntes} -> ${hatchDepois}`) : ok(`hatch não aumentou (${hatchAntes} -> ${hatchDepois})`);
   adicionadas.some((a) => ALLOW_ADD.test(a.l)) ? falhar('allow adicionado') : ok('sem allow adicionado');
+
+  // 4b. Desvios que a task registrou (GM-11 T13): só relato, nunca reprova. Não ler ≠ não haver: vira aviso.
+  const dv = desviosDaTask(wt);
+  if (dv.aviso) relato.push(`aviso: ${dv.aviso}`);
+  for (const d of dv.desvios ?? []) {
+    const arqs = Array.isArray(d.arquivos) ? d.arquivos.map((a) => limpoTxt(a, 200)).join(', ') : '';
+    relato.push(`desvio: ${[limpoTxt(d.req, 60), arqs].filter(Boolean).join(' ')} (${limpoTxt(d.causa, 20)})`);
+  }
 
   // 5. Suítes, em paralelo. Verde = rc 0 + teste contado (ou marcador declarado); nada menos.
   const { suites, erros: errosSuites } = normalizarSuites(opts.suites ?? cfg.gates?.suites ?? [], red.size > 0);

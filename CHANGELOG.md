@@ -5,6 +5,19 @@ Usuários do plugin só recebem atualização quando `version` muda.
 
 ## [Unreleased]
 
+## [2.0.0-alpha.3] — 2026-11-09
+
+E3 do canal `next` (GM-11): Sombra, emendas à spec, entrega e modelo por papel. Contrato e requisitos na spec da E3; aqui só o que o usuário vê.
+
+### Adicionado (GM-11 T14)
+
+- **Doctor, aviso `modelos-por-papel`**: papel de `orquestracao.modelos` abaixo do recomendado (`haiku < sonnet < opus < fable`; esforço fora da comparação) ou com nome desconhecido vira aviso. Não muda o nível, não quebra o CI e nunca compara um papel com outro. Config ausente fica em silêncio; corrompida avisa.
+- **Skill `gabarito-loop`** (≤ 80 linhas): ponteiros a `sombra.mjs`, a `loop.mjs desvio|descoberta|emenda propor` e a `entrega.mjs decidir|executar`; `integrar` verde repassa o `relato` (`desvio:`/`aviso:`).
+
+### Alterado (GM-11 T14)
+
+- Versão `2.0.0-alpha.3` no plugin e em `gates/package.json`.
+
 ## [2.0.0-alpha.2] — 2026-11-03
 
 E2 do canal `next` (GM-10): loop de implementação com pouso de contexto, e a guarda da E1 (GM-9 T4) que estava em `Unreleased`.

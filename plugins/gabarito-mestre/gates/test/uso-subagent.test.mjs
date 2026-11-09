@@ -334,8 +334,10 @@ test('nao-grava-conteudo: sentinela da mensagem fica fora do diário, do stdout 
   assert.equal(r.stdout + r.stderr, '');
   for (const n of readdirSync(c.dir)) assert.ok(!readFileSync(join(c.dir, n), 'utf8').includes(SENTINELA), n);
   const [m] = medicoes(c);
-  for (const [k, v] of Object.entries(m.dados)) assert.equal(typeof v, 'number', k);
-  assert.deepEqual(Object.keys(m.dados).sort(), ['cache_creation', 'cache_read', 'input_tokens', 'mensagens', 'output_tokens']);
+  // GM-11 T9: `modelo` (texto ou null) e `papel` (texto) são os únicos campos não numéricos; o conteúdo da mensagem segue fora
+  for (const [k, v] of Object.entries(m.dados)) if (k !== 'modelo' && k !== 'papel') assert.equal(typeof v, 'number', k);
+  assert.equal(m.dados.modelo, null);
+  assert.deepEqual(Object.keys(m.dados).sort(), ['cache_creation', 'cache_read', 'input_tokens', 'mensagens', 'modelo', 'output_tokens', 'papel']);
 });
 
 test('nao-duplica-com-mod: evento do mod para o mesmo agente impede a gravação', async () => {
@@ -395,7 +397,7 @@ test('arquivo-acima-do-teto-parcial: acima do teto lê só o teto, marca parcial
   const c = cenario();
   const { TETO_BYTES } = await import(pathToFileURL(SCRIPT).href);
   const p = join(c.projetos, 'grande.jsonl');
-  const um = `${msg('m0', U(1, 1))}\n`;
+  const um = `${msg('m0', U(1, 1), { model: 'modelo-do-inicio' })}\n`;
   writeFileSync(p, um);
   // enche até passar o teto com mensagens de ids distintos, cada uma valendo 1 input
   const bloco = Array.from({ length: 2000 }, (_, i) => msg(`g${i}`, U(1, 0))).join('\n') + '\n';
@@ -404,12 +406,15 @@ test('arquivo-acima-do-teto-parcial: acima do teto lê só o teto, marca parcial
     appendFileSync(p, bloco);
     tam = statSync(p).size;
   }
-  appendFileSync(p, `${msg('ultima-depois-do-teto', U(1000000, 0))}\n`);
-  const r = rodar(c, { agent_transcript_path: p });
+  appendFileSync(p, `${msg('ultima-depois-do-teto', U(1000000, 0), { model: 'modelo-do-fim' })}\n`);
+  const r = rodar(c, { agent_transcript_path: p, agent_type: 'gabarito-mestre:gabarito-revisor' });
   assert.equal(r.status, 0);
   const [m] = medicoes(c);
   assert.ok(m, 'registrou');
   assert.equal(m.dados.parcial, true);
+  // GM-11 T9 r2: o ramo parcial carrega papel e modelo; o modelo vale o do fim do arquivo (último real), não o do começo lido
+  assert.equal(m.dados.papel, 'revisor');
+  assert.equal(m.dados.modelo, 'modelo-do-fim');
   assert.ok(m.dados.input_tokens < 1000000, 'não leu a mensagem depois do teto');
   assert.ok(m.dados.mensagens > 1000);
 });
@@ -447,4 +452,148 @@ test('espera-sem-cpu: a espera de 60 ms é bloqueio, não laço; tempo total do 
   const fonte = readFileSync(SCRIPT, 'utf8');
   assert.match(fonte, /Atomics\.wait/);
   assert.doesNotMatch(fonte, /while\s*\(\s*(Date\.now|performance\.now)/);
+});
+
+// ---- GM-11 T9: papel e modelo no custo ----
+
+test('custo-sombra-papel: agent_type gabarito-mestre:gabarito-sombra grava papel sombra; a chave do agente não muda', () => {
+  const c = cenario();
+  const p = transcript(c, [msg('m1', U(10, 5), { model: 'claude-sonnet-5-5' })]);
+  const r = rodar(c, { agent_transcript_path: p, agent_type: 'gabarito-mestre:gabarito-sombra' });
+  assert.equal(r.status, 0);
+  const m = medicoes(c);
+  assert.equal(m.length, 1);
+  assert.equal(m[0].agente, 'subagent:a1');
+  assert.equal(m[0].dados.papel, 'sombra');
+});
+
+test('custo-traz-modelo-e-papel: dados ganha modelo e papel, mais os números de sempre', () => {
+  const c = cenario();
+  const p = transcript(c, [msg('m1', U(10, 5, 1, 2), { model: 'claude-sonnet-5-5' })]);
+  rodar(c, { agent_transcript_path: p, agent_type: 'gabarito-mestre:gabarito-implementador' });
+  const [m] = medicoes(c);
+  assert.equal(m.dados.modelo, 'claude-sonnet-5-5');
+  assert.equal(m.dados.papel, 'implementador');
+  assert.equal(m.dados.input_tokens, 10);
+  assert.equal(m.dados.cache_creation, 2);
+});
+
+test('papel-desconhecido-omitido: tipo fora dos quatro papéis não grava papel; sufixo colado ou com prefixo estranho também não', async () => {
+  const { papelDoAgente } = await import(pathToFileURL(SCRIPT).href);
+  const casos = {
+    'gabarito-sombra': 'sombra',
+    'gabarito-mestre:gabarito-sombra': 'sombra',
+    'gabarito-revisor': 'revisor',
+    'gabarito-mestre:gabarito-revisor': 'revisor',
+    'gabarito-implementador': 'implementador',
+    'x:gabarito-spike': 'spike',
+    Explore: null,
+    'general-purpose': null,
+    '': null,
+    'gabarito-sombra-extra': null,
+    'meu-gabarito-sombra': null,
+    'a:b:gabarito-sombra': null,
+    'gabarito-outro': null,
+    'gabarito-mestre:gabarito-planejador': null,
+    'GABARITO-SOMBRA': null,
+    'gabarito-mestre:': null,
+  };
+  for (const [tipo, esperado] of Object.entries(casos)) assert.equal(papelDoAgente(tipo), esperado, `tipo ${JSON.stringify(tipo)}`);
+  assert.equal(papelDoAgente(undefined), null);
+  assert.equal(papelDoAgente(42), null);
+  const c = cenario();
+  const p = transcript(c, [msg('m1', U(10, 5), { model: 'm-real' })]);
+  rodar(c, { agent_transcript_path: p, agent_type: 'Explore' });
+  const [m] = medicoes(c);
+  assert.equal('papel' in m.dados, false);
+  assert.equal(m.dados.modelo, 'm-real');
+});
+
+test('modelo-ignora-synthetic: <synthetic> depois do real não vira modelo', async () => {
+  const { modeloDoTranscript } = await import(pathToFileURL(SCRIPT).href);
+  assert.equal(modeloDoTranscript([msg('m1', U(1, 1), { model: 'claude-opus-4-7' }), msg('m2', U(1, 1), { model: '<synthetic>' })]), 'claude-opus-4-7');
+  assert.equal(modeloDoTranscript([msg('m1', U(1, 1), { model: '<synthetic>' })]), null);
+  assert.equal(modeloDoTranscript([msg('m1', U(1, 1), { model: '' }), msg('m2', U(1, 1), { model: 7 })]), null);
+  const c = cenario();
+  const p = transcript(c, [msg('m1', U(10, 5), { model: 'claude-opus-4-7' }), msg('m2', U(1, 1), { model: '<synthetic>' })]);
+  rodar(c, { agent_transcript_path: p });
+  assert.equal(medicoes(c)[0].dados.modelo, 'claude-opus-4-7');
+});
+
+test('modelo-ultimo-real: com mais de um modelo vale o último real, na ordem do arquivo', async () => {
+  const { modeloDoTranscript } = await import(pathToFileURL(SCRIPT).href);
+  assert.equal(modeloDoTranscript([msg('m1', U(1, 1), { model: 'a-model' }), msg('m2', U(1, 1), { model: 'b-model' }), msg('m3', U(1, 1), { model: '<synthetic>' })]), 'b-model');
+  assert.equal(modeloDoTranscript([msg('m1', U(1, 1), { model: 'b-model' }), msg('m2', U(1, 1), { model: 'a-model' })]), 'a-model');
+  const c = cenario();
+  const p = transcript(c, [msg('m1', U(10, 5), { model: 'a-model' }), msg('m2', U(1, 1), { model: 'b-model' })]);
+  rodar(c, { agent_transcript_path: p });
+  assert.equal(medicoes(c)[0].dados.modelo, 'b-model');
+});
+
+test('modelo-ausente-null: sem message.model a medição grava modelo null (chave presente), e os números continuam', () => {
+  const c = cenario();
+  const p = transcript(c, [msg('m1', U(10, 5))]);
+  rodar(c, { agent_transcript_path: p });
+  const [m] = medicoes(c);
+  assert.equal('modelo' in m.dados, true);
+  assert.equal(m.dados.modelo, null);
+  assert.equal(m.dados.input_tokens, 10);
+});
+
+test('dedupe-intacto-com-papel: segundo disparo, com outro agent_type ou depois do mod, não duplica; agente segue subagent:<id>', () => {
+  const c = cenario();
+  const p = transcript(c, [msg('m1', U(10, 5), { model: 'm-a' })]);
+  rodar(c, { agent_transcript_path: p, agent_type: 'gabarito-mestre:gabarito-sombra' });
+  rodar(c, { agent_transcript_path: p, agent_type: 'gabarito-mestre:gabarito-revisor' });
+  rodar(c, { agent_transcript_path: p, agent_type: 'gabarito-mestre:gabarito-sombra' });
+  const m = medicoes(c);
+  assert.equal(m.length, 1);
+  assert.equal(m[0].agente, 'subagent:a1');
+  assert.equal(m[0].dados.papel, 'sombra');
+  const outro = rodar(c, { agent_transcript_path: p, agent_id: 'a2', agent_type: 'gabarito-mestre:gabarito-sombra' });
+  assert.equal(outro.status, 0);
+  assert.deepEqual(medicoes(c).map((x) => x.agente).sort(), ['subagent:a1', 'subagent:a2']);
+});
+
+test('transcript-ausente-x-corrompido: sem arquivo nada é gravado; lixo inteiro nada; linha torta é ignorada e o resto soma', () => {
+  const c = cenario();
+  // ausente: caminho que não existe
+  assert.equal(rodar(c, { agent_transcript_path: join(c.projetos, 'nao-existe.jsonl') }).status, 0);
+  assert.equal(medicoes(c).length, 0);
+  // corrompido por inteiro: nada para somar, e custo não vira 0 inventado
+  const lixo = transcript(c, ['{nao json "usage" "model"', '{"message":', 'xxxx'], 'lixo.jsonl');
+  assert.equal(rodar(c, { agent_transcript_path: lixo }).status, 0);
+  assert.equal(medicoes(c).length, 0);
+  // linha torta no meio e linha final truncada (com model): ignoradas; soma e modelo vêm do resto
+  const torta = transcript(c, [
+    msg('m1', U(10, 5), { model: 'm-bom' }),
+    '{"type":"assistant","message":{"id":"mX","model":"m-torto","usage":{"input_tokens":999',
+    msg('m2', U(1, 2), { model: 'm-bom2' }),
+    '{"type":"assistant","message":{"id":"mY","model":"m-truncado","usage":{"input_tokens":50,"output_tok',
+  ], 'torta.jsonl');
+  rodar(c, { agent_transcript_path: torta });
+  const [m] = medicoes(c);
+  assert.equal(m.dados.input_tokens, 11);
+  assert.equal(m.dados.output_tokens, 7);
+  assert.equal(m.dados.mensagens, 2);
+  assert.equal(m.dados.modelo, 'm-bom2');
+});
+
+test('papel-e-modelo-nao-gravam-conteudo: o texto da mensagem segue fora do diário mesmo com papel e modelo', () => {
+  const c = cenario();
+  const p = transcript(c, [msg('m1', U(10, 5), { model: 'm-real' })]);
+  rodar(c, { agent_transcript_path: p, agent_type: 'gabarito-mestre:gabarito-sombra' });
+  for (const n of readdirSync(c.dir)) assert.ok(!readFileSync(join(c.dir, n), 'utf8').includes(SENTINELA));
+});
+
+test('modelo-da-mensagem-tardia: o modelo da mensagem que chega durante a espera vale (a releitura é a mais completa)', async () => {
+  const c = cenario();
+  const p = transcript(c, [msg('m1', U(10, 5), { model: 'm-cedo' })]);
+  const { somarUso } = await import(pathToFileURL(SCRIPT).href);
+  let n = 0;
+  const r = comHome(c, () => somarUso(p, {
+    dormir: () => { n += 1; if (n === 1) appendFileSync(p, `${msg('m2', U(3, 9), { model: 'm-tarde' })}\n`); },
+  }));
+  assert.equal(r.modelo, 'm-tarde');
+  assert.equal(r.mensagens, 2);
 });

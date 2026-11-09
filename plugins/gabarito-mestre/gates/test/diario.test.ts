@@ -821,3 +821,382 @@ describe('lerEstrito (GM-10 T9 r2: leitura sem tolerância para decidir pouso)',
     assert.equal(lerEstrito(dir).ok, false);
   });
 });
+
+// GM-11 T5: `append` valida a forma de `dados` por tipo antes do canário; forma inválida não toca o arquivo.
+describe('append: forma de dados por tipo (GM-11 T5)', () => {
+  const invalida = (): Omit<Evento, 'seq' | 'hash_anterior'> => ev('emenda.proposta', { req: 'REQ-A-1' });
+
+  test('append-forma-invalida-nada-gravado: emenda.proposta sem campos ⇒ forma_invalida, sem arquivo nem lock', () => {
+    const dir = tmp();
+    const r = append(dir, 's1', invalida());
+    assert.equal(r.ok, false);
+    assert.match((r as { erro: string }).erro, /^forma_invalida: emenda\.proposta: /);
+    assert.equal(existsSync(join(dir, 'events.s1.jsonl')), false, 'arquivo criado');
+    assert.equal(existsSync(join(dir, 'events.s1.jsonl.lock')), false, 'lock ficou');
+  });
+
+  test('append-forma-valida-grava: desvio com forma completa grava o evento', () => {
+    const dir = tmp();
+    const r = append(dir, 's1', ev('desvio', { task: 'T1', req: 'REQ-A-1', evidencia: 'teste x', arquivos: [], causa: 'tecnica' }));
+    assert.deepEqual(r, { ok: true, gravado: 'evento' });
+    assert.equal(ler(dir)[0].tipo, 'desvio');
+  });
+
+  test('append-tipo-antigo-segue: tipo da E1/E2 sem regra e ci.resultado com dados não objeto seguem gravados', () => {
+    const dir = tmp();
+    assert.deepEqual(append(dir, 's1', ev('guarda.deny', { alvo: 'x' })), { ok: true, gravado: 'evento' });
+    assert.deepEqual(append(dir, 's1', ev('ci.resultado', 'texto' as unknown as Record<string, unknown>)), { ok: true, gravado: 'evento' });
+    assert.equal(ler(dir).length, 2);
+  });
+
+  test('append-forma-antes-do-canario: forma inválida com segredo nos dados ⇒ forma_invalida, não diario.recusa', () => {
+    const dir = tmp();
+    const r = append(dir, 's1', ev('emenda.proposta', { req: 'REQ-A-1', diff: SEGREDOS.ghp }));
+    assert.equal(r.ok, false);
+    assert.match((r as { erro: string }).erro, /^forma_invalida: /);
+    assert.equal(existsSync(join(dir, 'events.s1.jsonl')), false);
+  });
+
+  test('append-dados-ausente-x-corrompido: ausente e corrompido dão erros distintos, 0 bytes', () => {
+    const dir = tmp();
+    const semDados = { ...ev('desvio'), dados: undefined } as unknown as Omit<Evento, 'seq' | 'hash_anterior'>;
+    const corrompido = ev('desvio', 'texto' as unknown as Record<string, unknown>);
+    const a = append(dir, 's1', semDados) as { ok: false; erro: string };
+    const b = append(dir, 's1', corrompido) as { ok: false; erro: string };
+    assert.equal(a.ok, false);
+    assert.equal(b.ok, false);
+    assert.notEqual(a.erro, b.erro);
+    assert.match(a.erro, /dados ausente/);
+    assert.match(b.erro, /dados corrompido/);
+    assert.equal(existsSync(join(dir, 'events.s1.jsonl')), false);
+  });
+
+  test('append-pelo-dist: dist/diario.js recusa o mesmo caso sem tocar o arquivo', async () => {
+    const dist = await import(join(AQUI, '..', 'dist', 'diario.js'));
+    const dir = tmp();
+    const r = dist.append(dir, 's1', invalida());
+    assert.equal(r.ok, false);
+    assert.match(r.erro, /^forma_invalida: emenda\.proposta: /);
+    assert.equal(existsSync(join(dir, 'events.s1.jsonl')), false);
+  });
+
+  test('append-forma-nao-toma-o-lock: lock alheio fresco ⇒ volta na hora e o lock fica intacto', () => {
+    const dir = tmp();
+    const lock = join(dir, 'events.s1.jsonl.lock');
+    writeFileSync(lock, 'outro-dono');
+    const t0 = Date.now();
+    const r = append(dir, 's1', invalida());
+    const ms = Date.now() - t0;
+    assert.equal(r.ok, false);
+    assert.match((r as { erro: string }).erro, /^forma_invalida: /);
+    assert.ok(ms < 500, `esperou o lock: ${ms} ms`);
+    assert.equal(readFileSync(lock, 'utf8'), 'outro-dono', 'lock alheio tocado');
+    assert.equal(existsSync(join(dir, 'events.s1.jsonl')), false);
+  });
+
+  test('append-forma-nao-quebra-lock-velho: lock alheio velho continua lá', () => {
+    const dir = tmp();
+    const lock = join(dir, 'events.s1.jsonl.lock');
+    writeFileSync(lock, 'outro-dono');
+    const r = append(dir, 's1', invalida(), { agora: () => Date.now() + 60_000 });
+    assert.equal(r.ok, false);
+    assert.match((r as { erro: string }).erro, /^forma_invalida: /);
+    assert.equal(readFileSync(lock, 'utf8'), 'outro-dono', 'lock alheio apagado');
+  });
+
+  test('append-forma-lock-alheio-pelo-dist: o mesmo pelo dist', async () => {
+    const dist = await import(join(AQUI, '..', 'dist', 'diario.js'));
+    const dir = tmp();
+    const lock = join(dir, 'events.s1.jsonl.lock');
+    writeFileSync(lock, 'outro-dono');
+    const t0 = Date.now();
+    const r = dist.append(dir, 's1', invalida());
+    assert.equal(r.ok, false);
+    assert.ok(Date.now() - t0 < 500, 'dist esperou o lock');
+    assert.equal(readFileSync(lock, 'utf8'), 'outro-dono');
+  });
+
+  test('append-erro-sem-segredo: o valor secreto no motivo vira [redigido]', () => {
+    const dir = tmp();
+    const r = append(dir, 's1', ev('emenda.proposta', { req: SEGREDOS.ghp, diff: 'x' })) as { ok: false; erro: string };
+    assert.equal(r.ok, false);
+    assert.match(r.erro, /^forma_invalida: /);
+    assert.ok(!r.erro.includes(SEGREDOS.ghp), 'segredo voltou no erro');
+    assert.ok(r.erro.includes('[redigido]'));
+  });
+
+  test('append-erro-cortado: valor longo abaixo de LINHA_MAX ⇒ erro com exatamente 300 caracteres', () => {
+    const dir = tmp();
+    const r = append(dir, 's1', ev('desvio', { task: 'T1', req: 'x'.repeat(1000) })) as { ok: false; erro: string };
+    assert.equal(r.ok, false);
+    assert.match(r.erro, /^forma_invalida: desvio: campo `req` inválido: "x{100}/);
+    assert.equal(r.erro.length, 300);
+  });
+
+  const TOK = 'abcdefghijklmnopqrstuvwxyz';
+  type Erro = { ok: false; erro: string };
+  const semSegredo = (r: unknown, seg: string, nome: string): void => {
+    const e = r as Erro;
+    assert.equal(e.ok, false, nome);
+    assert.equal(e.erro, 'forma_invalida: [redigido]', nome);
+    assert.ok(!e.erro.includes(seg), `${nome}: segredo voltou`);
+  };
+
+  test('r3-erro-200kb-sem-regex: dados acima de LINHA_MAX ⇒ redigido, sem regex, sem tocar arquivo', () => {
+    for (const req of ['://a:'.repeat(40000), 'x'.repeat(200000), 'Bearer\n' + TOK + 'x'.repeat(200000)]) {
+      const dir = tmp();
+      const t0 = Date.now();
+      const r = append(dir, 's1', ev('desvio', { task: 'T1', req })) as Erro;
+      const ms = Date.now() - t0;
+      assert.ok(ms < 500, `regex sobre texto sem limite: ${ms} ms`);
+      assert.equal(r.erro, 'forma_invalida: [redigido]');
+      assert.ok(!r.erro.includes(TOK));
+      assert.equal(existsSync(join(dir, 'events.s1.jsonl')), false);
+    }
+    const r = append(tmp(), 's1', ev('desvio', { task: 'T1', req: 'x', evidencia: '://a:'.repeat(40000) })) as Erro;
+    assert.equal(r.erro, 'forma_invalida: [redigido]');
+  });
+
+  test('r3-erro-segredo-escapado: controle antes do segredo não escapa do canário (valor e chave)', () => {
+    const casos: [string, Record<string, unknown>, string][] = [
+      ['Bearer\\n', { req: 'Bearer\n' + TOK }, TOK],
+      ['\\tAKIA', { req: '\tAKIAABCDEFGHIJKLMNOP' }, 'AKIAABCDEFGHIJKLMNOP'],
+      ['\\nsk-', { req: '\nsk-' + TOK }, 'sk-' + TOK],
+      ['\\rghs_', { req: '\rghs_' + TOK }, 'ghs_' + TOK],
+      ['\\u0001sk-', { req: '\u0001sk-' + TOK }, 'sk-' + TOK],
+      ['chave Bearer\\n', { req: { ['Bearer\n' + TOK]: 1 } }, TOK],
+    ];
+    for (const [nome, dados, seg] of casos) semSegredo(append(tmp(), 's1', ev('emenda.proposta', dados)), seg, nome);
+    semSegredo(append(tmp(), 's1', ev('sombra.consulta', { pergunta_hash: 'a'.repeat(64), req: 'Bearer\t' + TOK })), TOK, 'consulta');
+  });
+
+  test('r3-erro-segredo-entre-folhas: url-credencial formada no eco, inclusive cruzando o corte', () => {
+    semSegredo(append(tmp(), 's1', ev('emenda.proposta', { req: ['://a', ':segredo@'] })), 'segredo', 'curto');
+    semSegredo(append(tmp(), 's1', ev('emenda.proposta', { req: ['y'.repeat(200), '://hostlongo', ':' + 'p'.repeat(60) + '@'] })), 'pppp', 'no corte');
+  });
+
+  test('r3-erro-segredo-no-corte: token que cruza o caractere 300 não sai pela metade', () => {
+    semSegredo(append(tmp(), 's1', ev('emenda.proposta', { req: 'y'.repeat(229) + 'ghp_' + TOK + 'ABCD' })), 'ghp_abcdefghijk', 'ghp');
+  });
+
+  test('r3-erro-nunca-lanca: dados que JSON.stringify não serializa ⇒ forma_invalida redigida', () => {
+    const r = append(tmp(), 's1', ev('emenda.proposta', { req: 'REQ-A-1', diff: 1n } as unknown as Record<string, unknown>)) as Erro;
+    assert.equal(r.erro, 'forma_invalida: [redigido]');
+  });
+
+  test('r3-erro-diagnostico-preservado: sem segredo e curto, o motivo volta inteiro', () => {
+    const r = append(tmp(), 's1', ev('emenda.proposta', { req: 'REQ-a-1', diff: 'x' })) as Erro;
+    assert.equal(r.erro, 'forma_invalida: emenda.proposta: campo `req` inválido: "REQ-a-1" não casa REQ-<ÁREA>-<n>');
+  });
+
+  test('r3-erro-pelo-dist: escape e 200 KB pelo dist', async () => {
+    const dist = await import(join(AQUI, '..', 'dist', 'diario.js'));
+    semSegredo(dist.append(tmp(), 's1', ev('emenda.proposta', { req: 'Bearer\n' + TOK })), TOK, 'dist escape');
+    const t0 = Date.now();
+    const r = dist.append(tmp(), 's1', ev('desvio', { task: 'T1', req: '://a:'.repeat(40000) }));
+    assert.ok(Date.now() - t0 < 500, 'dist roda regex sem limite');
+    assert.equal(r.erro, 'forma_invalida: [redigido]');
+  });
+});
+
+describe('instantâneo com decisões da Sombra (GM-11 T11)', () => {
+  const hx = (i: number): string => createHash('sha256').update(`h${i}`).digest('hex');
+  const iso = (i: number): string => new Date(Date.UTC(2026, 10, 9, 10, 0, 0) + i * 1000).toISOString();
+  const evD = (seq: number, ts: string, sessao: string, tipo: TipoEvento, dados: unknown): Evento =>
+    ({ seq, ts, autor: 'a', sessao, agente: 'o', tipo, dados: dados as Record<string, unknown>, hash_anterior: null });
+  const decD = (seq: number, hash: string, resposta: string, extra: Record<string, unknown> = {}, sessao = 's1', ts = iso(seq)): Evento =>
+    evD(seq, ts, sessao, 'decisao.sombra', { pergunta_hash: hash, req: 'REQ-A-1', resposta, arquivo: `sombra/${hash}.resposta.md`, pergunta_enviesada: false, fontes: ['spec:1'], ...extra });
+  const guarda = (seq: number, alvo: string, sessao = 's1'): Evento => evD(seq, iso(seq), sessao, 'guarda.deny', { alvo });
+  const trinta = (): Evento[] => Array.from({ length: 30 }, (_, i) => decD(i + 1, hx(i), 'r'.repeat(200)));
+  const linhasDe = (s: string): string[] => s.split('\n');
+  /** Do cabeçalho `Decisões da Sombra (` até o rodapé `... k decisão(ões) fora` (ou até a última linha de decisão). */
+  const bloco = (s: string): string => {
+    const l = linhasDe(s);
+    const i = l.findIndex((x) => x.startsWith('Decisões da Sombra'));
+    if (i < 0) return '';
+    let f = i + 1;
+    while (f < l.length && /^\S+ [0-9a-f]{8} /.test(l[f]) && !l[f].startsWith('20')) f++;
+    if (l[f]?.startsWith('... ') && /decisão\(ões\) fora$/.test(l[f])) f++;
+    return l.slice(i, f).join('\n');
+  };
+
+  test('instantaneo-sem-decisao-igual-e2: texto idêntico ao da E2 e objeto só com `decisoes: 0` a mais', () => {
+    const es = [guarda(1, 'a-fim'), guarda(2, 'b-fim')];
+    const p = projetar(es);
+    assert.equal(p.instantaneo, `Diário: 2 evento(s)\nETA: sem dados\n${iso(2)} guarda.deny b-fim\n${iso(1)} guarda.deny a-fim`);
+    assert.deepEqual(p, { instantaneo: p.instantaneo, resumo: { 'guarda.deny': 2 }, eta: null, decisoes: 0 });
+    assert.deepEqual(projetar([]), { instantaneo: 'Diário: 0 evento(s)\nETA: sem dados', resumo: {}, eta: null, decisoes: 0 });
+  });
+
+  test('instantaneo-decisoes-ate-1600: 30 decisões de 200 caracteres, rodapé do pior caso reservado', () => {
+    const p = projetar(trinta());
+    const b = bloco(p.instantaneo);
+    const cab = 'Decisões da Sombra (30):';
+    const linha = `REQ-A-1 ${hx(0).slice(0, 8)} ${'r'.repeat(160)}`;
+    const reserva = cab.length + 1 + '... 30 decisão(ões) fora'.length + 1;
+    const cabem = Math.floor((1600 - reserva) / (linha.length + 1));
+    assert.ok(b.length <= 1600, `bloco com ${b.length}`);
+    assert.equal(linhasDe(b).length, cabem + 2, 'cabeçalho + linhas + rodapé');
+    assert.equal(linhasDe(b)[0], cab);
+    assert.equal(linhasDe(b).at(-1), `... ${30 - cabem} decisão(ões) fora`);
+    assert.equal(p.decisoes, 30);
+  });
+
+  test('instantaneo-rodape-reservado: 9 linhas de 174 cabem sem o rodapé (1.591) e passam de 1.600 com ele; só 8 entram', () => {
+    const es = Array.from({ length: 30 }, (_, i) => decD(i + 1, hx(i), 'r'.repeat(156)));
+    const b = bloco(projetar(es).instantaneo);
+    assert.equal(linhasDe(b).length - 2, 8);
+    assert.equal(linhasDe(b).at(-1), '... 22 decisão(ões) fora');
+    assert.ok(b.length <= 1600, `bloco com ${b.length}`);
+  });
+
+  test('instantaneo-total-3200: 30 decisões + 500 eventos ⇒ ≤ 3.200 e eventos recentes seguem aparecendo', () => {
+    const es = [...trinta(), ...Array.from({ length: 500 }, (_, i) => guarda(100 + i, `ev${100 + i}-fim`))];
+    const p = projetar(es);
+    assert.ok(p.instantaneo.length <= 3200, `total ${p.instantaneo.length}`);
+    assert.ok(p.instantaneo.includes('ev599-fim'), 'evento mais recente sumiu');
+    assert.ok(p.instantaneo.length > 3000, 'o orçamento dos eventos devia ser usado');
+    assert.equal(p.decisoes, 30);
+    assert.equal(linhasDe(p.instantaneo)[2].startsWith('Decisões da Sombra (30):'), true, 'bloco logo depois do ETA');
+  });
+
+  test('instantaneo-resposta-160: o corte de 160 é na resposta, não na linha', () => {
+    const l = linhasDe(projetar([decD(1, hx(1), 'x'.repeat(500))]).instantaneo);
+    assert.equal(l[3], `REQ-A-1 ${hx(1).slice(0, 8)} ${'x'.repeat(160)}`);
+    assert.equal(l.length, 5, 'cabeçalho, ETA, bloco (2 linhas) e o evento da decisão');
+  });
+
+  test('instantaneo-conta-fora: mais recente primeiro e rodapé com a contagem exata', () => {
+    const es = Array.from({ length: 10 }, (_, i) => decD(i + 1, hx(i), `resp-${i}-` + 'z'.repeat(190)));
+    const l = linhasDe(projetar(es).instantaneo);
+    assert.equal(l[2], 'Decisões da Sombra (10):');
+    assert.ok(l[3].includes(` ${hx(9).slice(0, 8)} resp-9-`), 'a 1ª linha é a mais recente');
+    assert.ok(l[4].includes(` ${hx(8).slice(0, 8)} resp-8-`));
+    assert.equal(l[3 + 8], '... 2 decisão(ões) fora');
+  });
+
+  test('instantaneo-ordem-ts-sessao-seq: empate de ts desempata por sessao e depois por seq, do maior ao menor', () => {
+    const ts = iso(5);
+    const es = [decD(1, hx(1), 'a-s', {}, 'sA', ts), decD(1, hx(2), 'b-s', {}, 'sB', ts), decD(2, hx(3), 'c-s', {}, 'sB', ts)];
+    const l = linhasDe(projetar(es).instantaneo).slice(3, 6);
+    assert.deepEqual(l.map((x) => x.split(' ')[2]), ['c-s', 'b-s', 'a-s']);
+  });
+
+  test('instantaneo-ordem-ts-vence-sessao: o ts manda; sessão maior com ts mais antigo vem depois', () => {
+    const es = [decD(1, hx(1), 'antiga', {}, 'sB', iso(1)), decD(1, hx(2), 'recente', {}, 'sA', iso(9))];
+    assert.deepEqual(linhasDe(projetar(es).instantaneo).slice(3, 5).map((x) => x.split(' ')[2]), ['recente', 'antiga']);
+  });
+
+  test('instantaneo-decisoes-vigentes-nao-eventos: duas decisões do mesmo hash contam 1, vence a mais recente', () => {
+    const es = [decD(1, hx(1), 'velha'), decD(2, hx(1), 'nova'), decD(3, hx(2), 'outra')];
+    const p = projetar(es);
+    assert.equal(p.decisoes, 2);
+    const l = linhasDe(p.instantaneo);
+    assert.equal(l[2], 'Decisões da Sombra (2):');
+    assert.equal(l.filter((x) => x.includes(hx(1).slice(0, 8))).length, 1);
+    assert.equal(l.some((x) => x.endsWith(' velha')), false);
+    assert.ok(l.some((x) => x.endsWith(' nova')));
+    assert.equal(projetar([decD(1, hx(1), 'velha'), decD(2, hx(1), 'nova')]).decisoes, 1);
+  });
+
+  test('instantaneo-decisao-corrompida-ignorada: forma inválida não conta e não aparece; ausente x corrompido são casos distintos', () => {
+    const ruins = [
+      evD(1, iso(1), 's1', 'decisao.sombra', undefined),
+      evD(2, iso(2), 's1', 'decisao.sombra', 'x'),
+      decD(3, hx(3), 'r'.repeat(1001)),
+    ];
+    const p = projetar(ruins);
+    assert.equal(p.decisoes, 0);
+    assert.equal(p.instantaneo.includes('Decisões da Sombra'), false);
+    const mista = projetar([...ruins, decD(4, hx(4), 'boa')]);
+    assert.equal(mista.decisoes, 1);
+    assert.ok(linhasDe(mista.instantaneo).includes('Decisões da Sombra (1):'));
+    // corrompido (fora de ordem) ≠ ausente
+    const fora = projetar([decD(1, hx(1), 'a'), guarda(1, 'dup')]);
+    assert.notEqual(fora.instantaneo.includes('diário fora de ordem'), projetar([decD(1, hx(1), 'a'), guarda(2, 'ok')]).instantaneo.includes('diário fora de ordem'));
+  });
+
+  test('instantaneo-diario-fora-de-ordem-avisa: seq repetido, ts ilegível ou sessão ausente ⇒ linha única e decisoes 0', () => {
+    const casos: [string, Evento[]][] = [
+      ['seq repetido de outro tipo', [decD(1, hx(1), 'a'), guarda(1, 'dup')]],
+      ['ts ilegível', [decD(1, hx(1), 'a'), evD(2, 'ontem', 's1', 'guarda.deny', { alvo: 'x' })]],
+      ['sem sessão', [decD(1, hx(1), 'a'), { ...guarda(2, 'x'), sessao: undefined as unknown as string }]],
+    ];
+    for (const [nome, es] of casos) {
+      const p = projetar(es);
+      const l = linhasDe(p.instantaneo);
+      assert.equal(l[2], 'Decisões da Sombra: diário fora de ordem', nome);
+      assert.equal(p.decisoes, 0, nome);
+      assert.equal(p.instantaneo.includes('Decisões da Sombra ('), false, nome);
+    }
+  });
+
+  test('instantaneo-entrada-embaralhada-igual: mesma saída em qualquer ordem de entrada', () => {
+    const es = [
+      decD(1, hx(1), 'um', {}, 'sA', iso(1)), decD(2, hx(2), 'dois', {}, 'sA', iso(2)), decD(1, hx(3), 'tres', {}, 'sB', iso(3)),
+      guarda(3, 'g1-fim', 'sA'), guarda(2, 'g2-fim', 'sB'),
+    ];
+    const ref = projetar(es);
+    assert.equal(ref.decisoes, 3);
+    for (const v of [[...es].reverse(), [es[2], es[4], es[0], es[3], es[1]], [es[1], es[0], es[3], es[2], es[4]]]) {
+      const p = projetar(v);
+      assert.equal(p.instantaneo, ref.instantaneo);
+      assert.equal(p.decisoes, 3);
+    }
+  });
+
+  test('instantaneo-quebra-unicode-vira-espaco: controle, DEL, U+2028 e U+2029 viram espaço, linha única', () => {
+    const r = 'a\nb\rc\td\u0000e\u007ff g h\u001fi\r\n\r\nj';
+    const l = linhasDe(projetar([decD(1, hx(1), r)]).instantaneo);
+    assert.equal(l.length, 5, 'cabeçalho, ETA, bloco (2 linhas) e o evento da decisão: nenhuma quebra extra');
+    assert.equal(l[3], `REQ-A-1 ${hx(1).slice(0, 8)} a b c d e f g h i j`);
+  });
+
+  test('instantaneo-corte-sem-meio-par: corte em 160 caindo num emoji não deixa meio par', () => {
+    const r = 'x'.repeat(159) + '😀' + 'yyy';
+    const l = linhasDe(projetar([decD(1, hx(1), r)]).instantaneo);
+    assert.equal(l[3], `REQ-A-1 ${hx(1).slice(0, 8)} ${'x'.repeat(159)}`);
+    assert.equal(/[\ud800-\udbff](?![\udc00-\udfff])/.test(l[3]), false);
+    const inteiro = projetar([decD(1, hx(1), 'x'.repeat(158) + '😀')]).instantaneo;
+    assert.ok(inteiro.includes('x'.repeat(158) + '😀'), 'par inteiro dentro de 160 fica');
+  });
+
+  test('instantaneo-ancora-longa-cortada: âncora de 500 caracteres vira 64; âncora de task usa o prefixo task:', () => {
+    const req = 'REQ-' + 'A'.repeat(500) + '-1';
+    const l = linhasDe(projetar([decD(1, hx(1), 'ok', { req })]).instantaneo);
+    assert.equal(l[3], `${req.slice(0, 64)} ${hx(1).slice(0, 8)} ok`);
+    const t = decD(2, hx(2), 'tk', { task: 'T3', req: undefined });
+    delete (t.dados as Record<string, unknown>).req;
+    assert.equal(linhasDe(projetar([t]).instantaneo)[3], `task:T3 ${hx(2).slice(0, 8)} tk`);
+  });
+
+  test('instantaneo-mostra-decisao-gravada: decisão gravada pelo append real do dist aparece na projeção do dist', async () => {
+    // `sombra.mjs registrar` (T7) ainda não existe neste ramo: o append real do dist grava o mesmo evento `decisao.sombra`.
+    const dist = await import(join(AQUI, '..', 'dist', 'diario.js'));
+    const dir = tmp();
+    const r = dist.append(dir, 's1', { ts: iso(1), autor: 'a', sessao: 's1', agente: 'orquestrador', tipo: 'decisao.sombra',
+      dados: { pergunta_hash: hx(7), req: 'REQ-A-1', resposta: 'sim, com a emenda', arquivo: `sombra/${hx(7)}.resposta.md`, pergunta_enviesada: false, fontes: ['spec:1'] } });
+    assert.equal(r.ok, true);
+    const p = dist.projetar(dist.ler(dir));
+    assert.equal(p.decisoes, 1);
+    assert.ok(p.instantaneo.split('\n').includes(`REQ-A-1 ${hx(7).slice(0, 8)} sim, com a emenda`));
+  });
+
+  test('instantaneo-pouso-aceita-pior-caso: textoRetomada do dist não devolve null com 30 decisões e 500 eventos', async () => {
+    const dist = await import(join(AQUI, '..', 'dist', 'diario.js'));
+    const pouso = await import(join(AQUI, '..', 'dist', 'pouso.js'));
+    const dir = tmp();
+    for (let i = 0; i < 30; i++) {
+      const r = dist.append(dir, 's1', { ts: iso(i), autor: 'a', sessao: 's1', agente: 'orquestrador', tipo: 'decisao.sombra',
+        dados: { pergunta_hash: hx(i), req: 'REQ-A-1', resposta: 'r'.repeat(200), arquivo: `sombra/${hx(i)}.resposta.md`, pergunta_enviesada: false, fontes: ['spec:1'] } });
+      assert.equal(r.ok, true);
+    }
+    for (let i = 0; i < 500; i++) assert.equal(dist.append(dir, 's1', { ts: iso(100 + i), autor: 'a', sessao: 's1', agente: 'orquestrador', tipo: 'guarda.deny', dados: { alvo: `host-${i}.exemplo.com` } }).ok, true);
+    const p = dist.projetar(dist.ler(dir));
+    assert.equal(p.decisoes, 30);
+    assert.ok(p.instantaneo.length <= 3200);
+    const t = pouso.textoRetomada(p.instantaneo);
+    assert.notEqual(t, null);
+    assert.ok(t.includes('Decisões da Sombra (30):'));
+  });
+});

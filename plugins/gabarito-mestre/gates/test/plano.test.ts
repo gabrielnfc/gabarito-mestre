@@ -5,10 +5,15 @@
  *  M3 sem checagem de id repetido ⇒ plano-id-repetido falha
  *  M4 colisão ignora dependência (sempre erro) ⇒ plano-arquivo-colide-com-dep-transitiva-ok falha
  *  M5 sem normalizar caminho ⇒ plano-arquivo-normalizado falha
+ * GM-11 T1:
+ *  M-P1 `reqs` sem checar repetição ⇒ plano-reqs-fora-do-padrao falha
+ *  M-P2 janela sem checar fuso ⇒ plano-politica-janela-invalida falha
+ *  M-P3 temDependencia só direta ⇒ tem-dependencia-transitiva falha
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validarPlano } from '../src/plano.ts';
+import { posix } from 'node:path';
+import { validarPlano, temDependencia, normalizarCaminho } from '../src/plano.ts';
 
 const t = (id: string, deps: string[] = [], arquivos: string[] = []) => ({ id, deps, arquivos });
 const plano = (...tasks: unknown[]) => ({ entrega: 'GM-10', tasks });
@@ -145,4 +150,155 @@ test('plano-spec: `spec` é campo do topo do plano, preservado; vazio, não text
   const naTask = validarPlano(plano({ ...t('a', [], ['x.ts']), spec: 'docs/spec.md' }));
   assert.equal(naTask.ok, false, 'spec em tasks[] não some em silêncio');
   if (!naTask.ok) assert.match(naTask.erro, /task a.*spec.*plano/);
+});
+
+// ── GM-11 T1: reqs por task, política de entrega e temDependencia ──────────────────────────────────────────────────────────────────
+const comReqs = (reqs: unknown) => plano({ ...t('a', [], ['x.ts']), reqs });
+const comPolitica = (politica_entrega: unknown) => ({ ...plano(t('a', [], ['x.ts'])), politica_entrega });
+
+test('plano-reqs-validos: reqs preservado; ausente fica ausente', () => {
+  const r = validarPlano(comReqs(['REQ-SOM-1', 'REQ-EME-2']));
+  assert.equal(r.ok, true);
+  if (r.ok) assert.deepEqual(r.plano.tasks[0].reqs, ['REQ-SOM-1', 'REQ-EME-2']);
+  const sem = validarPlano(plano(t('a', [], ['x.ts'])));
+  assert.equal(sem.ok && 'reqs' in sem.plano.tasks[0], false);
+});
+
+test('plano-reqs-fora-do-padrao: fora de REQ_RE, repetido, vazio, não-lista e não-string recusam citando task e campo', () => {
+  const ruins: unknown[] = [['REQ-A-1x'], ['req-a-1'], ['REQ-A-1', 'REQ-A-1'], [], 'REQ-A-1', { 0: 'REQ-A-1' }, [1], [null], [''], null, [['REQ-A-1']]];
+  for (const reqs of ruins) {
+    const r = validarPlano(comReqs(reqs));
+    assert.equal(r.ok, false, JSON.stringify(reqs));
+    if (!r.ok) assert.match(r.erro, /task a.*reqs/);
+  }
+});
+
+test('plano-sem-politica-ok: politica_entrega é opcional e não aparece quando ausente', () => {
+  const r = validarPlano(plano(t('a', [], ['x.ts'])));
+  assert.equal(r.ok, true);
+  if (r.ok) assert.equal('politica_entrega' in r.plano, false);
+});
+
+test('plano-politica-valida: preservada inteira', () => {
+  const p = { politica: 'janela', exige_prod: true, janela: { dias: [1, 2, 3], inicio: '22:00', fim: '06:00', fuso: 'America/Sao_Paulo' } };
+  const r = validarPlano(comPolitica(p));
+  assert.equal(r.ok, true);
+  if (r.ok) assert.deepEqual(r.plano.politica_entrega, p);
+  assert.equal(validarPlano(comPolitica({ exige_prod: false })).ok, true);
+  assert.equal(validarPlano(comPolitica({ politica: 'continua', exige_prod: false })).ok, true);
+});
+
+test('plano-politica-janela-invalida: dia 7, 24:00, 23:60, fuso Mars/Base e demais formas ruins recusam sem lançar', () => {
+  const j = (extra: Record<string, unknown>) => ({ exige_prod: false, janela: { dias: [1], inicio: '09:00', fim: '18:00', fuso: 'UTC', ...extra } });
+  const ruins: unknown[] = [
+    j({ dias: [7] }), j({ dias: [-1] }), j({ dias: [] }), j({ dias: [1.5] }), j({ dias: ['1'] }), j({ dias: 1 }), j({ dias: undefined }),
+    j({ inicio: '24:00' }), j({ fim: '23:60' }), j({ inicio: '9:00' }), j({ fim: '18:00:00' }), j({ inicio: 900 }), j({ inicio: undefined }),
+    j({ fuso: 'Mars/Base' }), j({ fuso: '' }), j({ fuso: 7 }), j({ fuso: undefined }),
+    { exige_prod: false, janela: 'x' }, { exige_prod: false, janela: null }, { exige_prod: false, janela: [] },
+    { exige_prod: 'sim' }, {}, { politica: 'continua' }, { politica: 'sempre', exige_prod: false }, { politica: 7, exige_prod: false }, 'x', 7, [], null,
+  ];
+  for (const p of ruins) {
+    let r: ReturnType<typeof validarPlano> | undefined;
+    assert.doesNotThrow(() => { r = validarPlano(comPolitica(p)); });
+    assert.equal(r?.ok, false, JSON.stringify(p));
+    if (r && !r.ok) assert.match(r.erro, /politica_entrega/);
+  }
+  assert.equal(validarPlano(comPolitica(j({ inicio: '00:00', fim: '23:59', dias: [0, 6], fuso: 'America/New_York' }))).ok, true);
+});
+
+test('plano-politica-intl-lancando: Intl que lança no fuso não lança do validarPlano', () => {
+  const original = Intl.DateTimeFormat;
+  // @ts-expect-error troca controlada para provar o try
+  Intl.DateTimeFormat = function () { throw new TypeError('Intl indisponível'); };
+  try {
+    let r: ReturnType<typeof validarPlano> | undefined;
+    assert.doesNotThrow(() => { r = validarPlano(comPolitica({ exige_prod: false, janela: { dias: [1], inicio: '09:00', fim: '18:00', fuso: 'UTC' } })); });
+    assert.equal(r?.ok, false);
+  } finally { Intl.DateTimeFormat = original; }
+});
+
+test('tem-dependencia-transitiva: ancestral direto ou transitivo, nos dois sentidos; irmãs e a própria task não', () => {
+  const r = validarPlano(plano(t('a', [], ['a.ts']), t('b', ['a'], ['b.ts']), t('c', ['b'], ['c.ts']), t('d', [], ['d.ts']), t('e', ['a'], ['e.ts'])));
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  const p = r.plano;
+  assert.equal(temDependencia(p, 'a', 'b'), true);
+  assert.equal(temDependencia(p, 'b', 'a'), true);
+  assert.equal(temDependencia(p, 'a', 'c'), true, 'transitiva');
+  assert.equal(temDependencia(p, 'c', 'a'), true, 'transitiva, sentido inverso');
+  assert.equal(temDependencia(p, 'b', 'e'), false, 'irmãs');
+  assert.equal(temDependencia(p, 'd', 'a'), false);
+  assert.equal(temDependencia(p, 'a', 'a'), false);
+  assert.equal(temDependencia(p, 'a', 'inexistente'), false);
+  assert.equal(temDependencia(p, '__proto__', 'a'), false);
+});
+
+test('tem-dependencia-ciclo-nao-trava: grafo cíclico (que validarPlano barra) não entra em laço', () => {
+  const ciclico = { entrega: 'e', tasks: [{ id: 'a', deps: ['b'], arquivos: [] }, { id: 'b', deps: ['a'], arquivos: [] }, { id: 'z', deps: [], arquivos: [] }] };
+  assert.equal(temDependencia(ciclico, 'a', 'z'), false);
+  assert.equal(temDependencia(ciclico, 'a', 'b'), true);
+});
+
+test('normalizar-caminho-exportada: a regra que validarPlano usa para comparar arquivos', () => {
+  assert.equal(normalizarCaminho('./a'), 'a');
+  assert.equal(normalizarCaminho('a'), 'a');
+  assert.equal(normalizarCaminho('a//b'), 'a/b');
+  assert.equal(normalizarCaminho('d/../a.ts'), 'a.ts');
+  assert.equal(normalizarCaminho('a\\b'), 'a/b');
+  assert.equal(normalizarCaminho('a/b/'), 'a/b');
+  for (const ruim of ['', '/abs', '../fora', '.', 'a\0b', 'C:\\x']) assert.equal(normalizarCaminho(ruim), null, JSON.stringify(ruim));
+});
+
+test('barra-invertida-absoluta-recusa: `\\a` e `\\\\srv\\x` são absolutos depois da troca, no normalizador e no plano', () => {
+  for (const abs of ['\\a', '\\\\srv\\x', '\\', '\\a\\b']) {
+    assert.equal(normalizarCaminho(abs), null, JSON.stringify(abs));
+    const r = validarPlano(plano(t('a', [], [abs])));
+    assert.equal(r.ok, false, JSON.stringify(abs));
+    if (!r.ok) assert.match(r.erro, /caminho inválido/);
+  }
+  assert.equal(normalizarCaminho('a\\b'), 'a/b', 'barra invertida no meio continua separador');
+});
+
+test('normaliza-igual-posix-no-relativo: sem `node:path` no núcleo, o oráculo vive só aqui', () => {
+  const alfabeto = ['a', '.', '..', '/', '\\', '', 'C:'];
+  const ehRelativoSimples = (o: string, c: string): boolean => !c.includes('\0') && !/^[A-Za-z]:/.test(c) && !/^[A-Za-z]:/.test(o) && !o.startsWith('/') && o !== '' && o !== '.' && o !== '..' && !o.startsWith('../');
+  let comparados = 0;
+  let escapam = 0;
+  const gera = (prefixo: string[], fundo: number): void => {
+    const c = prefixo.join('');
+    const oraculo = posix.normalize(c.replace(/\\/g, '/') || '.').replace(/\/+$/, '');
+    const n = normalizarCaminho(c);
+    // idempotência: o que sai normalizado entra normalizado (escopoDaTask re-normaliza `arquivos` já guardados)
+    if (n !== null) assert.equal(normalizarCaminho(n), n, `n(n(x)) != n(x) para ${JSON.stringify(c)}`);
+    if (!c.includes('\0') && !c.replace(/\\/g, '/').startsWith('/') && oraculo.startsWith('../')) {
+      assert.equal(n, null, `escapa da raiz: ${JSON.stringify(c)}`);
+      escapam++;
+    }
+    if (ehRelativoSimples(oraculo, c)) {
+      assert.equal(n, oraculo, JSON.stringify(c));
+      comparados++;
+    } else if (c.replace(/\\/g, '/').startsWith('/')) {
+      assert.equal(normalizarCaminho(c), null, `absoluto: ${JSON.stringify(c)}`);
+    }
+    if (fundo === 0) return;
+    for (const x of alfabeto) gera([...prefixo, x], fundo - 1);
+  };
+  gera([], 5);
+  assert.ok(comparados > 500, `comparou só ${comparados}`);
+  assert.ok(escapam > 500, `só ${escapam} entradas que escapam da raiz`);
+});
+
+test('normaliza-idempotente-com-prefixo-de-unidade: `X:` vale para a SAÍDA, não só a entrada (r2 MAJOR 1)', () => {
+  assert.equal(normalizarCaminho('./a:b'), normalizarCaminho('a:b'));
+  assert.equal(normalizarCaminho('./a:b'), null);
+  for (const c of ['./C:\\x', 'd/../c:x', './x:', 'a/../b:/c', 'C:/../a', 'c:/x/../..']) {
+    assert.equal(normalizarCaminho(c), null, JSON.stringify(c));
+  }
+  assert.equal(normalizarCaminho('./ab:c'), 'ab:c', 'só uma letra seguida de `:` é unidade');
+  assert.equal(normalizarCaminho('x/a:b'), 'x/a:b', 'dois-pontos fora do começo é nome');
+});
+
+test('ponto-ponto-nao-desempilha-ponto-ponto: a guarda da pilha defende a raiz (r2 MAJOR 2)', () => {
+  for (const c of ['../../a', '../../../a', 'a/../../../b', '../a/../../b']) assert.equal(normalizarCaminho(c), null, JSON.stringify(c));
+  assert.equal(normalizarCaminho('a/../b'), 'b');
 });

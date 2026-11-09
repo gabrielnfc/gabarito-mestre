@@ -85,26 +85,46 @@ function paraGuarda(raw, { zerarPermitidos }) {
 }
 
 /**
- * Config da guarda lida de `refs/remotes/origin/HEAD:harness.config.json` (D2) — duas chamadas de git:
- * (1) objeto da ref por casamento exato; (2) blob pelo SHA. Sem remoto / symref pendurado / arquivo ausente
+ * `harness.config.json` de `refs/remotes/origin/HEAD` parseado, ou `raw: null` com o `motivo` — duas chamadas de git: (1) objeto da ref por casamento
+ * exato; (2) blob pelo SHA. Fonte única da resolução de `REF_ORIGIN` (D2): `lerGuarda` e `lerConfigOrigin` passam por aqui, nenhuma lê a ref por conta
+ * própria. Nunca lança. `raw` é o que o JSON for (objeto ou array): quem chama decide o que aceita.
+ */
+function lerRawOrigin(raiz) {
+  let sha;
+  try {
+    const linhas = gitSeguro(['for-each-ref', '--format=%(refname) %(objectname)', REF_ORIGIN], raiz)
+      .split('\n')
+      .filter(Boolean);
+    const [nome, objeto] = (linhas[0] ?? '').split(' ');
+    if (linhas.length !== 1 || nome !== REF_ORIGIN || !/^[0-9a-f]{40,64}$/.test(objeto ?? '')) return { raw: null, invalida: false, motivo: 'sem refs/remotes/origin/HEAD' };
+    sha = objeto;
+  } catch {
+    return { raw: null, invalida: false, motivo: 'sem refs/remotes/origin/HEAD' };
+  }
+  let blob;
+  try {
+    blob = gitSeguro(['show', `${sha}:harness.config.json`], raiz);
+  } catch {
+    return { raw: null, invalida: false, motivo: 'harness.config.json ausente em origin/HEAD' };
+  }
+  try {
+    const raw = JSON.parse(blob);
+    return raw && typeof raw === 'object'
+      ? { raw, invalida: false, motivo: null }
+      : { raw: null, invalida: true, motivo: 'harness.config.json de origin/HEAD inválido (não é objeto JSON)' };
+  } catch {
+    return { raw: null, invalida: true, motivo: 'harness.config.json de origin/HEAD inválido (JSON ilegível)' };
+  }
+}
+
+/**
+ * Config da guarda lida de `refs/remotes/origin/HEAD:harness.config.json` (D2). Sem remoto / symref pendurado / arquivo ausente
  * ou inválido na ref ⇒ `fonte: 'local'`, `permitidos` vazio. `divergente`: `guarda` local ≠ a da ref (deep equal).
  */
 export function lerGuarda(raiz) {
   const local = lerJson(join(raiz, 'harness.config.json'));
   const localRaw = local && typeof local === 'object' ? local : null;
-  let origin = null;
-  try {
-    const linhas = gitSeguro(['for-each-ref', '--format=%(refname) %(objectname)', REF_ORIGIN], raiz)
-      .split('\n')
-      .filter(Boolean);
-    const [nome, sha] = (linhas[0] ?? '').split(' ');
-    if (linhas.length === 1 && nome === REF_ORIGIN && /^[0-9a-f]{40,64}$/.test(sha ?? '')) {
-      const raw = JSON.parse(gitSeguro(['show', `${sha}:harness.config.json`], raiz));
-      if (raw && typeof raw === 'object') origin = raw;
-    }
-  } catch {
-    origin = null;
-  }
+  const { raw: origin } = lerRawOrigin(raiz);
   if (origin) {
     const { config, branchPadrao } = paraGuarda(origin, { zerarPermitidos: false });
     const divergente = !isDeepStrictEqual(localRaw?.guarda ?? null, origin.guarda ?? null);
@@ -113,6 +133,36 @@ export function lerGuarda(raiz) {
   const l = paraGuarda(localRaw, { zerarPermitidos: true });
   return { config: l?.config ?? null, fonte: 'local', divergente: false, branchPadrao: l?.branchPadrao ?? null };
 }
+
+/**
+ * `harness.config.json` de `refs/remotes/origin/HEAD` por inteiro (E3: `entrega.*`, `sombra.*`), mesma resolução de `lerGuarda`: ref de nome completo,
+ * nunca a árvore local nem uma branch homônima. Nunca lança. `{ cfg, fonte: 'origin', motivo: null }` só com objeto JSON; senão `{ cfg: null, fonte: 'nenhuma',
+ * motivo }` com motivos distintos para ausente (sem remoto, sem ref, sem arquivo) e corrompido (JSON ilegível, array, escalar): ausente não vira corrompido.
+ * Quem lê `fonte: 'nenhuma'` aplica o default seguro (`sob_demanda`, sem comandos); nada vira sucesso por faltar config.
+ */
+export function lerConfigOrigin(raiz) {
+  try {
+    const { raw, invalida, motivo } = lerRawOrigin(raiz);
+    if (raw === null) return { cfg: null, fonte: 'nenhuma', invalida, motivo };
+    if (Array.isArray(raw)) return { cfg: null, fonte: 'nenhuma', invalida: true, motivo: 'harness.config.json de origin/HEAD inválido (array, esperado objeto)' };
+    return { cfg: raw, fonte: 'origin', invalida: false, motivo: null };
+  } catch (e) {
+    return { cfg: null, fonte: 'nenhuma', invalida: true, motivo: `origin/HEAD ilegível (${e instanceof Error ? e.message.split('\n')[0] : 'erro desconhecido'})` };
+  }
+}
+
+/** Perfil de modelo por papel (REQ-MOD-1). O doctor avisa abaixo do recomendado; nunca bloqueia. */
+export const MODELOS_PADRAO = Object.freeze({
+  implementador: Object.freeze({ modelo: 'sonnet', esforco: 'high' }),
+  revisor: Object.freeze({ modelo: 'opus' }),
+  sombra: Object.freeze({ modelo: 'opus' }),
+  revisor_final: Object.freeze({ modelo: 'fable' }),
+  spike: Object.freeze({ modelo: 'opus' }),
+  basico: Object.freeze({ modelo: 'haiku' }),
+});
+
+/** Ordem das famílias de modelo; o esforço não entra na comparação (Sombra D5). */
+export const ORDEM_MODELO = Object.freeze({ haiku: 0, sonnet: 1, opus: 2, fable: 3 });
 
 /** `permissions.deny` da 2ª camada da guarda (REQ-GRD-5). Sem `./` (profundidade qualquer) e nunca `Write(…)`. */
 export const DENY_GUARDA = [

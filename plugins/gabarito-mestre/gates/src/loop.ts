@@ -3,7 +3,10 @@
  * A precedência de `proximaAcao` é o contrato da Task 2 do plano da E2; cada cláusula traz o número dela.
  */
 
-import type { AcaoLoop, Evento, Papel, Plano, Sinais } from './tipos.ts';
+// O mod carrega `dist/loop.js` como módulo de hook: só import relativo e, no fecho inteiro, nenhum módulo embutido do Node (por isso `plano.ts` normaliza caminho por conta própria).
+// A projeção das propostas abertas é UMA só, a de `emenda.ts`; `emenda.ts` importa `ordenar` daqui (ciclo medido nos runners).
+import { projetarEmendas } from './emenda.ts';
+import type { AcaoLoop, Evento, Papel, Plano, PropostaAberta, Sinais } from './tipos.ts';
 
 export type { AcaoLoop, MotivoParar, Papel, Plano, Sinais, TaskPlano } from './tipos.ts';
 
@@ -11,10 +14,11 @@ const TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/
 const PAPEIS: readonly unknown[] = ['implementador', 'revisor', 'correcao'];
 export const TIPOS_DE_TASK: readonly string[] = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
 /**
- * Progresso (REQ-LOOP-5): os eventos que `proximaAcao` consome, TIPOS_DE_TASK e `ci.resultado`. Fonte única: o hook Stop
- * (contador de Stops) e o mod (marcador de pouso pendente) importam esta lista; guarda, sessão, custo, pouso e pausa não contam.
+ * Progresso (REQ-LOOP-5): os eventos que `proximaAcao` consome, TIPOS_DE_TASK, `ci.resultado` e o julgamento de emenda (descongela).
+ * Fonte única: o hook Stop (contador de Stops) e o mod (marcador de pouso pendente) importam esta lista; guarda, sessão, custo,
+ * pouso, pausa e a própria `emenda.proposta` (só um pedido) não contam.
  */
-export const TIPOS_DE_PROGRESSO: readonly string[] = [...TIPOS_DE_TASK, 'ci.resultado'];
+export const TIPOS_DE_PROGRESSO: readonly string[] = [...TIPOS_DE_TASK, 'ci.resultado', 'spec.emendada', 'emenda.rejeitada'];
 
 /** Comparação por código, nunca por localidade: a ordem não pode depender da máquina. */
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -156,9 +160,11 @@ function projetar(plano: Plano, eventos: Evento[]): { estados: Map<string, Estad
   let ciVermelhos = 0;
   for (const e of eventos) {
     if (e.tipo === 'ci.resultado') {
-      const verde = (e.dados ?? {}).verde;
-      if (typeof verde !== 'boolean') return null;
-      ciVermelhos = verde ? 0 : ciVermelhos + 1;
+      const dados = e.dados ?? {};
+      if (typeof dados.verde !== 'boolean') return null;
+      // CI de homolog é da entrega (T4/T8), não do loop: não soma nem zera os vermelhos. Só `homolog` exato sai da conta.
+      if (dados.alvo === 'homolog') continue;
+      ciVermelhos = dados.verde ? 0 : ciVermelhos + 1;
     } else if (TIPOS_DE_TASK.includes(e.tipo)) {
       const fila = porTask.get((e.dados ?? {}).task as string);
       if (!fila) return null;
@@ -194,12 +200,34 @@ function integravel(plano: Plano, estados: Map<string, EstadoRodada>, id: string
   return de(estados, id) === 'aprovada' && ancestrais(plano, id).every((a) => de(estados, a) === 'integrada');
 }
 
-/** Aprovada, não integrada e com a cadeia inteira de dependências já integrada. */
+/**
+ * Congelamento por REQ (REQ-EME-2). `congeladas`: task cujo `reqs` tem REQ com proposta aberta (casamento exato, não por prefixo,
+ * e nunca pela `task` citada na proposta) e toda dependente transitiva, de qualquer estado, integrada ou não. `abertas`: TODAS as
+ * propostas abertas válidas por `seq`, citem ou não uma task. Diário que não ordena ⇒ todas as tasks congeladas (falha fechada).
+ */
+function congelamento(plano: Plano, eventos: Evento[]): { congeladas: Set<string>; abertas: PropostaAberta[] } {
+  const todas = new Set(plano.tasks.map((t) => t.id));
+  const ord = ordenar(eventos);
+  if (!ord.ok) return { congeladas: todas, abertas: [] };
+  const abertas = projetarEmendas(eventos).abertas.map((p) => ({ seq: p.seq, req: p.req }));
+  const reqs = new Set(abertas.map((p) => p.req));
+  const diretas = plano.tasks.filter((t) => Array.isArray(t.reqs) && t.reqs.some((r) => reqs.has(r))).map((t) => t.id);
+  const congeladas = new Set(diretas);
+  for (const t of plano.tasks) if (ancestrais(plano, t.id).some((a) => diretas.includes(a))) congeladas.add(t.id);
+  return { congeladas, abertas };
+}
+
+/** Tasks que uma proposta aberta congela (REQ-EME-2): pelo REQ e pelas dependências. Puro. */
+export function tasksCongeladas(plano: Plano, eventos: Evento[]): Set<string> {
+  return congelamento(plano, eventos).congeladas;
+}
+
+/** Aprovada, não integrada, com a cadeia inteira de dependências integrada e fora do congelamento. */
 export function podeIntegrar(plano: Plano, eventos: Evento[], id: string): boolean {
   const ord = ordenar(eventos);
   if (!ord.ok) return false;
   const proj = projetar(plano, ord.eventos);
-  return proj !== null && integravel(plano, proj.estados, id);
+  return proj !== null && integravel(plano, proj.estados, id) && !tasksCongeladas(plano, eventos).has(id);
 }
 
 /** A9 (r13): dependente só despacha com a dependência integrada; `abrir` parte da integração, sem o código dela não há o que implementar. */
@@ -223,15 +251,23 @@ export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais): Ac
   }
   // (4)
   if (proj.ciVermelhos >= 2) return { tipo: 'parar', motivo: 'ci_vermelho' };
+  // (4b) Política `sob_demanda` com produção exigida não tem janela para subir. `politica` ausente = não avaliada: Stop e mod não a
+  // passam e não podem parar por isto; só `loop.mjs proxima` a preenche (D6-1).
+  if (plano.politica_entrega?.exige_prod === true && sinais.politica === 'sob_demanda') {
+    return { tipo: 'parar', motivo: 'janela_ausente' };
+  }
   // Plano vazio não é sucesso: nada foi entregue.
   if (plano.tasks.length === 0) return { tipo: 'parar', motivo: 'nao_conseguiu' };
 
   const { estados } = proj;
   const est = (id: string): EstadoRodada => estados.get(id) as EstadoRodada;
   const ids = plano.tasks.map((t) => t.id);
+  const { congeladas, abertas } = congelamento(plano, ord.eventos);
+  const livre = (id: string): boolean => !congeladas.has(id);
   const capacidade = Math.max(0, sinais.slots - sinais.vivos);
   const despachar = (itens: { task: string; papel: Papel }[]): AcaoLoop => ({ tipo: 'despachar', itens: itens.slice(0, capacidade) });
-  const revisores = ids.filter((id) => est(id).estado === 'concluida').map((task) => ({ task, papel: 'revisor' as const }));
+  // Congelada não ganha revisor, correção, integração nem despacho novo; em voo ela termina (a tabela segue aceitando o evento).
+  const revisores = ids.filter((id) => est(id).estado === 'concluida' && livre(id)).map((task) => ({ task, papel: 'revisor' as const }));
 
   // (5) `percent` nulo não satisfaz a comparação.
   if (sinais.percent !== null && sinais.percent >= sinais.x) {
@@ -248,28 +284,35 @@ export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais): Ac
   }
 
   // (6)
-  const integraveis = ids.filter((id) => integravel(plano, estados, id));
+  const integraveis = ids.filter((id) => livre(id) && integravel(plano, estados, id));
   if (integraveis.length > 0) return { tipo: 'integrar', tasks: integraveis };
 
   // (7)
   const correcoes = ids
-    .filter((id) => est(id).estado === 'reprovada' && est(id).rodada === 1)
+    .filter((id) => livre(id) && est(id).estado === 'reprovada' && est(id).rodada === 1)
     .map((task) => ({ task, papel: 'correcao' as const }));
   const novas = plano.tasks
-    .filter((t) => est(t.id).estado === 'pendente' && t.deps.every((d) => depLiberada(estados, d)))
+    .filter((t) => livre(t.id) && est(t.id).estado === 'pendente' && t.deps.every((d) => depLiberada(estados, d)))
     .map((t) => ({ task: t.id, papel: 'implementador' as const }));
   const itens = [...correcoes, ...revisores, ...novas];
   if (itens.length > 0) {
     return capacidade >= 1 ? despachar(itens) : { tipo: 'esperar', motivo: 'sem slot livre' };
   }
 
-  // (8)
-  if (ids.every((id) => est(id).estado === 'integrada')) return { tipo: 'concluir' };
+  // (8) Tudo integrado: com proposta aberta a spec está em disputa, então nem `concluir` nem entrega (REQ-EME-2).
+  const esperaEmenda = (): AcaoLoop => ({ tipo: 'esperar', motivo: 'emenda', propostas: abertas });
+  if (ids.every((id) => est(id).estado === 'integrada')) return abertas.length === 0 ? { tipo: 'concluir' } : esperaEmenda();
 
   // (9)
   if (sinais.vivos > 0) return { tipo: 'esperar', motivo: 'agentes vivos' };
   const noLimite = ids.find((id) => est(id).estado === 'no_teto');
   if (noLimite !== undefined) return { tipo: 'parar', motivo: 'teto_rodadas', task: noLimite };
+  // Task em voo sem agente vivo morreu, congelada ou não: a emenda não a explica.
+  const morta = ids.find((id) => EM_VOO.includes(est(id).estado));
+  if (morta !== undefined) return { tipo: 'parar', motivo: 'nao_conseguiu', task: morta };
+  // Só espera o dono quando TUDO que falta está congelado; uma task fora do congelamento que ninguém despacha está presa.
+  const faltam = ids.filter((id) => est(id).estado !== 'integrada');
+  if (faltam.every((id) => congeladas.has(id))) return esperaEmenda();
   // Sem agente vivo e sem próxima ação (ex.: task iniciada cujo agente morreu): para, nunca em silêncio.
-  return { tipo: 'parar', motivo: 'nao_conseguiu', task: ids.find((id) => est(id).estado !== 'integrada') as string };
+  return { tipo: 'parar', motivo: 'nao_conseguiu', task: faltam.find(livre) as string };
 }

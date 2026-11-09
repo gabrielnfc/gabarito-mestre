@@ -5,12 +5,13 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { avaliar, falhas } from '../scripts/gate-task.mjs';
+import { avaliar, falhas, desviosDaTask } from '../scripts/gate-task.mjs';
+import { append } from '../dist/diario.js';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '../scripts/gate-task.mjs');
 const g = (dir, ...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8' });
@@ -747,5 +748,265 @@ describe('gate-task CLI', () => {
     reprovou(c, /nenhuma suíte/);
     const d = cli(dir, base, '--suite', 'true');
     reprovou(d, /nenhum teste contado/);
+  });
+});
+
+// ------------------------------------------------------------------------------------- GM-11 T13: desvios no relato
+
+/** Checkout principal + worktree `wt/<entrega>-<task>` num caminho COM ESPAÇO; o diário fica na raiz principal. */
+function comWorktree({ branch = 'wt/GM-10-3', commits = true } = {}) {
+  const { dir: principal, base } = repo({ branch: null });
+  const wt = join(mkdtempSync(join(tmpdir(), 'gate task ')), 'minha wt');
+  g(principal, 'worktree', 'add', '-q', '-b', branch, wt);
+  if (commits) commit(wt, 'src/b.txt', 'b\n');
+  return { principal, wt, base };
+}
+const dirEntrega = (principal, entrega = 'GM-10') => join(principal, '.harness', 'entregas', entrega);
+let relogioDesvio = Date.parse('2026-11-09T10:00:00Z');
+const gravar = (dir, tipo, dados, sessao = 's1') => assert.ok(append(dir, sessao, {
+  ts: new Date((relogioDesvio += 1000)).toISOString(), autor: 'a', sessao, agente: 'implementador', tipo, dados,
+}).ok, tipo);
+const cli = (wt, base, ...a) => spawnSync(process.execPath, [CLI, wt, base, ...a], { encoding: 'utf8' });
+const desvio = (o = {}) => ({ task: '3', req: 'REQ-A-1', evidencia: 'e', arquivos: ['src/b.txt', 'src/c.txt'], causa: 'tecnica', ...o });
+
+describe('gate-task: desvios (GM-11 T13)', () => {
+  test('gate-relata-desvio: uma linha por desvio, com req, arquivos e causa lidos do diário', async () => {
+    const { principal, wt, base } = comWorktree();
+    gravar(dirEntrega(principal), 'desvio', desvio());
+    gravar(dirEntrega(principal), 'desvio', desvio({ req: 'REQ-B-7', arquivos: [], causa: 'regra_negocio' }));
+    assert.deepEqual(desviosDaTask(wt).desvios.map((d) => d.req), ['REQ-A-1', 'REQ-B-7']);
+    const r = await avaliar({ wt, base, ...verde });
+    const linhas = r.relato.filter((l) => l.startsWith('desvio:'));
+    assert.deepEqual(linhas, ['desvio: REQ-A-1 src/b.txt, src/c.txt (tecnica)', 'desvio: REQ-B-7 (regra_negocio)']);
+    assert.ok(!texto(r).includes('desvios não lidos'));
+  });
+
+  test('gate-relata-desvio: só os da task desta branch (3 não é 13) e só os da entrega da branch', async () => {
+    const { principal, wt, base } = comWorktree({ branch: 'wt/GM-10-3' });
+    gravar(dirEntrega(principal), 'desvio', desvio({ task: '13', req: 'REQ-X-1' }));
+    gravar(dirEntrega(principal), 'desvio', desvio({ task: '3', req: 'REQ-OK-1' }));
+    gravar(dirEntrega(principal, 'GM-11'), 'desvio', desvio({ task: '3', req: 'REQ-OUTRA-1' }));
+    gravar(dirEntrega(principal), 'task.iniciada', { task: '3', papel: 'implementador' }, 's2');
+    const { desvios } = desviosDaTask(wt);
+    assert.deepEqual(desvios.map((d) => d.req), ['REQ-OK-1']);
+    const r = await avaliar({ wt, base, ...verde });
+    assert.equal(r.relato.filter((l) => l.startsWith('desvio:')).length, 1);
+  });
+
+  test('gate-relata-desvio: entrega com hífen no nome e task com hífen (wt/GM-10-T-3) separam no primeiro número', () => {
+    const { principal, wt } = comWorktree({ branch: 'wt/GM-10-T-3' });
+    gravar(dirEntrega(principal), 'desvio', desvio({ task: 'T-3' }));
+    assert.equal(desviosDaTask(wt).desvios.length, 1);
+  });
+
+  test('gate-desvio-nao-reprova: com desvio o veredito e a linha final são os mesmos', async () => {
+    const sem = comWorktree();
+    const com = comWorktree();
+    gravar(dirEntrega(com.principal), 'desvio', desvio());
+    const a = await avaliar({ wt: sem.wt, base: sem.base, ...verde });
+    const b = await avaliar({ wt: com.wt, base: com.base, ...verde });
+    assert.equal(a.reprova, 0, texto(a));
+    assert.equal(b.reprova, 0, texto(b));
+    assert.equal(b.alertas, a.alertas);
+    assert.deepEqual([b.suites, b.testes, b.mutacoes], [a.suites, a.testes, a.mutacoes]);
+    const cA = cli(sem.wt, sem.base, '--suite', conta(3));
+    const cB = cli(com.wt, com.base, '--suite', conta(3));
+    assert.equal(cB.status, 0, cB.stdout);
+    assert.match(cB.stdout, /desvio: REQ-A-1/);
+    // saída do gate inalterada: a mesma linha `GATE VERDE (...)`, sem menção a desvio
+    const final = (o) => /GATE VERDE \(.*?\)/.exec(o.stdout)[0];
+    assert.equal(final(cB), final(cA));
+    assert.equal(final(cB), 'GATE VERDE (1 suítes, 3 testes, 0 mutações)');
+  });
+
+  test('gate-sem-diario-x-diario-ilegivel: sem pasta nenhuma linha; cadeia quebrada ou linha torta avisa e nunca vira "0 desvios"', async () => {
+    const { principal, wt, base } = comWorktree();
+    // ausente
+    assert.deepEqual(desviosDaTask(wt), { desvios: [] });
+    const r0 = await avaliar({ wt, base, ...verde });
+    assert.deepEqual(r0.relato.filter((l) => /desvio/i.test(l)), []);
+    // pasta existe e é diário válido sem desvio: também nenhuma linha
+    gravar(dirEntrega(principal), 'task.iniciada', { task: '3', papel: 'implementador' });
+    assert.deepEqual(desviosDaTask(wt), { desvios: [] });
+    // corrompido: cadeia quebrada (a 2ª linha não aponta para o hash da 1ª)
+    gravar(dirEntrega(principal), 'desvio', desvio());
+    const arq = join(dirEntrega(principal), 'events.s1.jsonl');
+    const [l1, l2] = readFileSync(arq, 'utf8').trim().split('\n');
+    writeFileSync(arq, `${l1}\n${l2.replace(/"hash_anterior":"[0-9a-f]+"/, '"hash_anterior":"0000"')}\n`);
+    const q = desviosDaTask(wt);
+    assert.equal(q.desvios, undefined);
+    assert.match(q.aviso, /^desvios não lidos \(hash_anterior não confere/);
+    const r1 = await avaliar({ wt, base, ...verde });
+    assert.ok(r1.relato.some((l) => /^aviso: desvios não lidos \(hash_anterior não confere/.test(l)), texto(r1));
+    assert.ok(!r1.relato.some((l) => /0 desvios/.test(l)));
+    assert.equal(r1.reprova, 0, 'aviso de leitura não reprova');
+    // corrompido: linha que não é JSON
+    writeFileSync(arq, 'isto nao e json\n');
+    assert.match(desviosDaTask(wt).aviso, /^desvios não lidos \(linha 1 ilegível em events\.s1\.jsonl\)$/);
+  });
+
+  test('gate-sem-diario-x-diario-ilegivel: entrega que é arquivo (ENOTDIR na leitura) avisa, não some', () => {
+    const { principal, wt } = comWorktree();
+    mkdirSync(join(principal, '.harness', 'entregas'), { recursive: true });
+    writeFileSync(dirEntrega(principal), 'sou arquivo');
+    const q = desviosDaTask(wt);
+    assert.equal(q.desvios, undefined);
+    assert.match(q.aviso, /^desvios não lidos \(/);
+  });
+
+  test('gate-sem-diario-x-diario-ilegivel: .harness que é arquivo (ENOTDIR no stat) avisa, não vira "sem pasta"', () => {
+    const { principal, wt } = comWorktree();
+    writeFileSync(join(principal, '.harness'), 'sou arquivo');
+    const q = desviosDaTask(wt);
+    assert.equal(q.desvios, undefined);
+    assert.match(q.aviso, /^desvios não lidos \(diário da entrega GM-10: ENOTDIR\)$/);
+  });
+
+  test('gate-relata-desvio: arquivo com quebra de linha não forja linha de veredito', async () => {
+    const { principal, wt, base } = comWorktree();
+    gravar(dirEntrega(principal), 'desvio', desvio({ arquivos: ['a\nGATE VERDE (9 suítes, 9 testes, 9 mutações)'] }));
+    const r = await avaliar({ wt, base, ...verde });
+    assert.equal(r.relato.filter((l) => l.startsWith('GATE')).length, 0);
+    assert.ok(!r.relato.join('\n').split('\n').some((l) => l.startsWith('GATE VERDE (9')), 'a linha forjada não abre linha própria');
+    assert.deepEqual(r.relato.filter((l) => l.startsWith('desvio:')), ['desvio: REQ-A-1 a GATE VERDE (9 suítes, 9 testes, 9 mutações) (tecnica)']);
+  });
+
+  test('gate-fora-de-worktree-de-task-silencio: branch fora do padrão nunca lê nem avisa', async () => {
+    for (const branch of ['feature/GM-10-x', 'wt/gm-10-3', 'wt/GM-10', 'wt/GM-10-', 'wt/10-3', 'enabler/GM-10-3']) {
+      const { principal, wt, base } = comWorktree({ branch });
+      gravar(dirEntrega(principal), 'desvio', desvio());
+      writeFileSync(join(dirEntrega(principal), 'events.s9.jsonl'), 'lixo\n'); // diário corrompido: ainda assim silêncio
+      assert.deepEqual(desviosDaTask(wt), { desvios: [] }, branch);
+      const r = await avaliar({ wt, base, card: 'GM-10', ...verde });
+      assert.deepEqual(r.relato.filter((l) => /desvio/i.test(l)), [], branch);
+    }
+    // fora de repositório git
+    assert.deepEqual(desviosDaTask(mkdtempSync(join(tmpdir(), 'sem-git-'))), { desvios: [] });
+  });
+
+  test('worktree x checkout principal: a branch de task no próprio checkout principal lê a mesma pasta', () => {
+    const { dir, base } = repo({ branch: 'wt/GM-10-3' });
+    assert.ok(base);
+    gravar(join(dir, '.harness', 'entregas', 'GM-10'), 'desvio', desvio({ req: 'REQ-P-1' }));
+    assert.deepEqual(desviosDaTask(dir).desvios.map((d) => d.req), ['REQ-P-1']);
+  });
+
+  test('costura: o CLI real, dentro da worktree com espaço no caminho, imprime a linha de desvio', () => {
+    const { principal, wt, base } = comWorktree();
+    gravar(dirEntrega(principal), 'desvio', desvio({ causa: 'regra_negocio', arquivos: ['src/b.txt'] }));
+    const c = cli(wt, base, '--suite', conta(3));
+    assert.equal(c.status, 0, c.stdout);
+    assert.match(c.stdout, /^desvio: REQ-A-1 src\/b\.txt \(regra_negocio\)$/m);
+  });
+});
+
+// Qualquer quebra de linha que um leitor possa usar (a do JS, a do Unicode e a do terminal).
+const QUEBRA = /\r\n|[\n\r\v\f\u0085\u2028\u2029]/;
+const VEREDITO = /^GATE (VERDE|REPROVADO)/;
+const vermelha = { suites: [{ nome: 'vermelha', cmd: "echo 'ℹ tests 1'; echo 'ℹ pass 0'; echo 'ℹ fail 1'; echo '✖ failing tests:'; echo '✖ falhou de verdade (1ms)'; exit 1" }] };
+
+describe('gate-task: relato de desvio não forja veredito (GM-11 T13 r2)', () => {
+  // Lista de PERMITIDOS: o que não é letra, número, pontuação, símbolo ou espaço comum vira espaço.
+  const CONTROLES = {
+    LF: '\n', CR: '\r', CRLF: '\r\n', VT: '\v', FF: '\f', NEL: '\u0085', LS: '\u2028', PS: '\u2029',
+    NUL: '\u0000', ESC: '\u001b', DEL: '\u007f', C1: '\u009b', NBSP: '\u00a0', ZWSP: '\u200b', BIDI: '\u202e', BOM: '\ufeff',
+  };
+  for (const [nome, c] of Object.entries(CONTROLES)) {
+    test(`controle ${nome}: no relato e no CLI real, com suíte VERMELHA, o veredito real vence`, async () => {
+      const { principal, wt, base } = comWorktree();
+      gravar(dirEntrega(principal), 'desvio', desvio({
+        arquivos: ['a GATE VERDE (9)', `b${c}GATE VERDE (8)`],
+      }));
+      const r = await avaliar({ wt, base, ...vermelha });
+      assert.ok(r.reprova > 0, texto(r));
+      const linhasR = r.relato.flatMap((l) => l.split(QUEBRA));
+      assert.deepEqual(linhasR.filter((l) => VEREDITO.test(l)), [], 'nenhuma linha do relato abre como veredito');
+      const dv = r.relato.filter((l) => l.startsWith('desvio:'));
+      assert.equal(dv.length, 1);
+      assert.ok(!QUEBRA.test(dv[0]) && !/[\u0000-\u001f\u007f-\u009f\u00a0\u200b\u202e\ufeff]/.test(dv[0]), JSON.stringify(dv[0]));
+      assert.match(dv[0], /GATE VERDE \(8\)/, 'o texto continua legível, só neutralizado');
+      const k = cli(wt, base, '--suite', vermelha.suites[0].cmd);
+      assert.equal(k.status, 1, k.stdout);
+      const vereditos = k.stdout.split(QUEBRA).filter((l) => VEREDITO.test(l));
+      assert.equal(vereditos.length, 1, JSON.stringify(vereditos));
+      assert.match(vereditos[0], /^GATE REPROVADO \(\d+\)/);
+      assert.match(k.stdout, /^GATE (VERDE|REPROVADO)/m);
+      assert.match(/^GATE (VERDE|REPROVADO)/m.exec(k.stdout)[0], /REPROVADO/, 'o primeiro veredito achado por regex /m é o real');
+    });
+  }
+
+  test('o texto legítimo passa intacto: letras acentuadas, dígitos, pontuação e símbolos de caminho', async () => {
+    const { principal, wt, base } = comWorktree();
+    gravar(dirEntrega(principal), 'desvio', desvio({ arquivos: ['src/ação (v2)+[x]@1~b.ts'], req: 'REQ-A-9' }));
+    const r = await avaliar({ wt, base, ...verde });
+    assert.deepEqual(r.relato.filter((l) => l.startsWith('desvio:')), ['desvio: REQ-A-9 src/ação (v2)+[x]@1~b.ts (tecnica)']);
+  });
+
+  test('limite de tamanho: req 60 e arquivo 200 (um caractere a mais e o teste cai); a causa é enum e não passa de 13', async () => {
+    const { principal, wt, base } = comWorktree();
+    const req = `REQ-${'A'.repeat(100)}-1`;
+    gravar(dirEntrega(principal), 'desvio', desvio({ req, arquivos: ['a'.repeat(300)] }));
+    const r = await avaliar({ wt, base, ...verde });
+    assert.deepEqual(r.relato.filter((l) => l.startsWith('desvio:')), [`desvio: ${req.slice(0, 60)} ${'a'.repeat(200)} (tecnica)`]);
+  });
+
+  test('limite de tamanho do motivo do aviso (padrão 120): diário com nome de sessão enorme', () => {
+    const { principal, wt } = comWorktree();
+    const dir = dirEntrega(principal);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `events.${'s'.repeat(200)}.jsonl`), 'lixo\n');
+    const q = desviosDaTask(wt);
+    assert.match(q.aviso, /^desvios não lidos \(linha 1 ilegível em events\.s+\)$/);
+    const motivo = /\((.*)\)$/.exec(q.aviso)[1];
+    assert.equal(motivo.length, 120);
+  });
+});
+
+describe('gate-task: sem dist/ o gate segue e avisa (GM-11 T13 r2)', () => {
+  /** Cópia só de scripts/ e lib/ (sem dist/): o gate carrega sem o leitor do diário. */
+  function semDist(dist) {
+    const raiz = mkdtempSync(join(tmpdir(), 'gate sem dist '));
+    const gates = join(raiz, 'gates');
+    cpSync(join(dirname(CLI), '..', 'lib'), join(gates, 'lib'), { recursive: true });
+    mkdirSync(join(gates, 'scripts'), { recursive: true });
+    cpSync(CLI, join(gates, 'scripts', 'gate-task.mjs'));
+    if (dist !== undefined) { mkdirSync(join(gates, 'dist'), { recursive: true }); writeFileSync(join(gates, 'dist', 'diario.js'), dist); }
+    return join(gates, 'scripts', 'gate-task.mjs');
+  }
+  const rodar = (script, wt, base) => spawnSync(process.execPath, [script, wt, base, '--suite', conta(3)], { encoding: 'utf8' });
+
+  test('dist/diario.js ausente: o gate carrega, avisa (nunca "0 desvios") e segue VERDE', () => {
+    const { principal, wt, base } = comWorktree();
+    gravar(dirEntrega(principal), 'desvio', desvio());
+    const c = rodar(semDist(), wt, base);
+    assert.equal(c.status, 0, c.stdout + c.stderr);
+    assert.match(c.stdout, /^aviso: desvios não lidos \(dist\/diario\.js ausente; rode node gates\/scripts\/build\.mjs\)$/m);
+    assert.ok(!/^desvio:/m.test(c.stdout), 'sem leitor não há linha de desvio');
+    assert.match(c.stdout, /^GATE VERDE \(1 suítes, 3 testes, 0 mutações\)/m);
+  });
+
+  test('dist/diario.js sem lerEstrito: avisa com a causa própria e segue VERDE', () => {
+    const { principal, wt, base } = comWorktree();
+    gravar(dirEntrega(principal), 'desvio', desvio());
+    const c = rodar(semDist('export const outra = 1;\n'), wt, base);
+    assert.equal(c.status, 0, c.stdout + c.stderr);
+    assert.match(c.stdout, /^aviso: desvios não lidos \(dist\/diario\.js sem lerEstrito; rode node gates\/scripts\/build\.mjs\)$/m);
+    assert.match(c.stdout, /^GATE VERDE/m);
+  });
+
+  test('dist/diario.js que não carrega (erro de sintaxe): avisa e segue VERDE', () => {
+    const { principal, wt, base } = comWorktree();
+    gravar(dirEntrega(principal), 'desvio', desvio());
+    const c = rodar(semDist('export const = ;\n'), wt, base);
+    assert.equal(c.status, 0, c.stdout + c.stderr);
+    assert.match(c.stdout, /^aviso: desvios não lidos \(dist\/diario\.js ausente/m);
+    assert.match(c.stdout, /^GATE VERDE/m);
+  });
+
+  test('sem dist/ e sem pasta de diário: silêncio (ausente de verdade ≠ não lido)', () => {
+    const { wt, base } = comWorktree();
+    const c = rodar(semDist(), wt, base);
+    assert.equal(c.status, 0, c.stdout + c.stderr);
+    assert.ok(!/desvio/i.test(c.stdout), c.stdout);
   });
 });

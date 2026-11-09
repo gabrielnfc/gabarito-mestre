@@ -18,7 +18,8 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { precisaContexto } from './classificar-alvo.ts';
 import { decidir } from './decidir.ts';
-import { append, dirEntrega } from './diario.ts';
+import { append, dirEntrega, lerEstrito } from './diario.ts';
+import { consultasAbertas, diarioEmOrdem, promptSombra } from './sombra.ts';
 import type { AmbienteDecl, ConfigGuarda, Contexto, Decisao, EntradaHook, TipoEvento } from './tipos.ts';
 
 const GIT_TIMEOUT_MS = 2000;
@@ -382,6 +383,76 @@ const HANDBACK = 'SubagentHandback';
 const negaPorPausa = (entrada: EntradaHook): boolean =>
   entrada.tool_name === 'Agent' || entrada.tool_name === 'Task' || (ehSubagent(entrada) && entrada.tool_name !== HANDBACK);
 
+// ---------------------------------------------------------------------------------------------------------------
+// entrega só pelo orquestrador e prompt da Sombra (GM-11 T12, REQ-ENT-2, REQ-SOM-4)
+
+/**
+ * Posição: depois da pausa, ANTES do `return` de `classificavel` (`Monitor` e qualquer ferramenta com `command` rodam shell sem passar
+ * pela classificação). Ordem: entrega, depois Sombra. "Passa" = segue o fluxo normal (`decidir`); esta guarda nunca devolve `allow`.
+ *
+ * LIMITES DECLARADOS. (1) Entrega: `agent_id` presente + qualquer ferramenta com `tool_input.command` em texto cujo valor, em caixa baixa e
+ * sem `'`, `"`, `\` e `` ` ``, contém `entrega.mjs` ⇒ `deny`. Nome montado por glob, variável ou em tempo de execução (`entr*.mjs`, `$X`,
+ * `'entrega'+'.mjs'`) não casa. Falso positivo aceito: subagent não cita `entrega.mjs` no shell; usa Read/Grep/Edit e `git add`/`git diff` do
+ * diretório. (2) Sombra: `SendMessage` a um agente Sombra vivo e agente de outro tipo com o brief e a hipótese passam (a guarda não sabe o tipo
+ * do agente pelo id); `registrar` confia na transcrição do orquestrador (P1b D7-8). (3) Corrida: `registrar` entre o `perguntar` e o `Agent`
+ * fecha a consulta e a guarda nega o despacho: lado seguro.
+ */
+const MSG_ENTREGA = 'entrega só pelo orquestrador';
+const MSG_PROMPT = 'Sombra só com o prompt devolvido por sombra.mjs perguntar';
+const MSG_MODELO = 'Sombra só em Opus (D3)';
+const MSG_SEM_CONSULTA = 'Sombra: sem consulta aberta para este prompt (rode sombra.mjs perguntar)';
+const MSG_ILEGIVEL = 'Sombra: diário ilegível; nada conferido';
+const MSG_FORA_DE_ORDEM = 'Sombra: diário fora de ordem; nada conferido';
+const SOMBRA_TIPO_RE = /(^|:)gabarito-sombra$/i;
+const CAMINHO_SOMBRA_RE = /\.harness\/entregas\/([A-Z]+-\d+)\/sombra\/([0-9a-f]{64})\.md/;
+const FAMILIAS_MODELO = ['haiku', 'sonnet', 'opus', 'fable'] as const;
+const NIVEL_OPUS = 2;
+
+/** Família = 1ª de `haiku|sonnet|opus|fable` contida no nome em caixa baixa; desconhecida (ou não texto) conta como abaixo de opus. */
+function modeloAbaixoDeOpus(m: unknown): boolean {
+  if (typeof m !== 'string') return true;
+  const baixo = m.toLowerCase();
+  const i = FAMILIAS_MODELO.findIndex((f) => baixo.includes(f));
+  return i < NIVEL_OPUS;
+}
+
+function negaEntrega(entrada: EntradaHook): string | null {
+  if (!ehSubagent(entrada)) return null;
+  const comando = (entrada.tool_input as Record<string, unknown>).command;
+  if (typeof comando !== 'string') return null;
+  return comando.toLowerCase().replace(/['"\\`]/g, '').includes('entrega.mjs') ? MSG_ENTREGA : null;
+}
+
+/** `null` = confere (segue o fluxo normal); texto = motivo do `deny`. */
+function negaSombra(entrada: EntradaHook, raizSessao: string | null): string | null {
+  if (entrada.tool_name !== 'Agent' && entrada.tool_name !== 'Task') return null;
+  const tipo = (entrada.tool_input as Record<string, unknown>).subagent_type;
+  if (typeof tipo !== 'string' || !SOMBRA_TIPO_RE.test(tipo)) return null;
+  const input = entrada.tool_input as Record<string, unknown>;
+  const prompt = input.prompt;
+  if (typeof prompt !== 'string') return MSG_PROMPT;
+  const m = CAMINHO_SOMBRA_RE.exec(prompt);
+  if (m === null) return MSG_PROMPT;
+  const [caminho, entrega, hash] = m;
+  if (prompt !== promptSombra(caminho)) return MSG_PROMPT;
+  if (Object.hasOwn(input, 'model') && input.model !== undefined && modeloAbaixoDeOpus(input.model)) return MSG_MODELO;
+  if (raizSessao === null) return MSG_SEM_CONSULTA;
+  const p = raizPrincipal(raizSessao);
+  if (p === ILEGIVEL) return MSG_ILEGIVEL;
+  const dir = dirEntrega((p as string | null) ?? raizSessao, entrega);
+  try {
+    readdirSync(dir);
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? MSG_SEM_CONSULTA : MSG_ILEGIVEL;
+  }
+  const lido = lerEstrito(dir);
+  if (!lido.ok) return MSG_ILEGIVEL;
+  if (!diarioEmOrdem(lido.eventos)) return MSG_FORA_DE_ORDEM;
+  return consultasAbertas(lido.eventos).includes(hash) ? null : MSG_SEM_CONSULTA;
+}
+
+const negar = (motivo: string): Buffer => Buffer.from(`${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: motivo } })}\n`);
+
 /** Sem pausa, o matcher `.*` entrega toda ferramenta; só estas têm classificação. O resto sai em silêncio, sem classificar. */
 const CLASSIFICAVEIS = new Set(['Bash', 'Edit', 'Write', 'Read', 'Grep', 'Agent', 'Task']);
 const classificavel = (nome: string): boolean => CLASSIFICAVEIS.has(nome) || nome.startsWith('mcp__');
@@ -439,6 +510,11 @@ function principal(): void {
   if (negaPorPausa(entrada) && pausado(pausa)) {
     emitir(Buffer.from(`${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: MSG_PAUSA } })}\n`));
     registrarPausa(entrada, raizSessao);
+    return;
+  }
+  const negado = negaEntrega(entrada) ?? negaSombra(entrada, raizSessao);
+  if (negado !== null) {
+    emitir(negar(negado));
     return;
   }
   if (!classificavel(entrada.tool_name)) {

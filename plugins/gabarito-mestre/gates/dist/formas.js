@@ -1,0 +1,209 @@
+/**
+ * Forma de `dados` por tipo de evento do diário (GM-11 T1, REQ-SOM-2, EME-1, ENT-2). Núcleo puro e total: `formaInvalida` nunca lança,
+ * qualquer `dados` (null, array, texto, número, objeto com `__proto__`, getter que lança) vira motivo, nunca exceção.
+ *
+ * Contrato de falha: `dados` ausente (`undefined`) e `dados` corrompido (qualquer valor que não seja objeto simples) têm motivos distintos;
+ * campo obrigatório ausente e campo inválido também. Só vale propriedade própria: o que vem do prototype não conta (D1).
+ * `null` = forma ok ou tipo sem regra. Tipos da E1/E2 não ganham regra nova, salvo os campos opcionais de `ci.resultado` e
+ * `custo.medicao`; para eles, `dados` que não é objeto segue aceito (é o que o diário aceita hoje: nenhum evento existente passa a ser recusado).
+ */
+
+/** `REQ-<ÁREA>-<n>`, padrão inteiro (âncoras): `REQ-A-1x` e minúscula não casam. */
+export const REQ_RE         = /^REQ-[A-Z0-9]+-\d+$/;
+
+const HASH_RE = /^[0-9a-f]{64}$/;
+const TS_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+const CAUSAS                    = ['regra_negocio', 'tecnica'];
+const ORIGENS                    = ['dono', 'sombra'];
+const POLITICAS                    = ['continua', 'janela', 'sob_demanda'];
+const MOTIVOS_FIM                    = ['deploy', 'smoke', 'rollback'];
+const RESPOSTA_MAX = 1000;
+
+                                   
+const ehObjeto = (v         )           => v !== null && typeof v === 'object' && !Array.isArray(v);
+/** Só propriedade própria; `undefined` explícito vale como ausente. */
+const campo = (o     , k        )          => (Object.hasOwn(o, k) ? o[k] : undefined);
+const texto = (v         )              => typeof v === 'string' && v.trim() !== '';
+const inteiroPositivo = (v         )              => typeof v === 'number' && Number.isInteger(v) && v >= 1;
+
+/** Cada regra devolve o motivo (citando o campo) ou `null`. */
+                                       
+
+const obrigatorio = (nome        )         => `campo \`${nome}\` ausente`;
+
+/** Texto não vazio (obrigatório). */
+function exigirTexto(o     , nome        )                {
+  const v = campo(o, nome);
+  if (v === undefined) return obrigatorio(nome);
+  return texto(v) ? null : `campo \`${nome}\` inválido: esperado texto não vazio`;
+}
+
+/** Texto não vazio (opcional). */
+function opcionalTexto(o     , nome        )                {
+  const v = campo(o, nome);
+  if (v === undefined) return null;
+  return texto(v) ? null : `campo \`${nome}\` inválido: esperado texto não vazio`;
+}
+
+function exigirReq(o     , nome = 'req')                {
+  const v = campo(o, nome);
+  if (v === undefined) return obrigatorio(nome);
+  return typeof v === 'string' && REQ_RE.test(v) ? null : `campo \`${nome}\` inválido: ${JSON.stringify(v)} não casa REQ-<ÁREA>-<n>`;
+}
+
+function exigirEnum(o     , nome        , valores                   )                {
+  const v = campo(o, nome);
+  if (v === undefined) return obrigatorio(nome);
+  return typeof v === 'string' && valores.includes(v) ? null : `campo \`${nome}\` inválido: esperado um de ${valores.join(' | ')}`;
+}
+
+function exigirBooleano(o     , nome        )                {
+  const v = campo(o, nome);
+  if (v === undefined) return obrigatorio(nome);
+  return typeof v === 'boolean' ? null : `campo \`${nome}\` inválido: esperado booleano`;
+}
+
+function exigirHash(o     )                {
+  const v = campo(o, 'pergunta_hash');
+  if (v === undefined) return obrigatorio('pergunta_hash');
+  return typeof v === 'string' && HASH_RE.test(v) ? null : 'campo `pergunta_hash` inválido: esperado sha256 em hex minúsculo (64)';
+}
+
+function exigirReqOuTask(o     )                {
+  const req = campo(o, 'req');
+  const task = campo(o, 'task');
+  if (req !== undefined && task !== undefined) return 'campos `req` e `task` juntos: exatamente um dos dois';
+  if (req === undefined && task === undefined) return 'campo `req` ou `task` ausente: exatamente um dos dois';
+  return req !== undefined ? exigirReq(o) : exigirTexto(o, 'task');
+}
+
+function listaDeTextos(o     , nome        , { vazia }                    )                {
+  const v = campo(o, nome);
+  if (v === undefined) return obrigatorio(nome);
+  if (!Array.isArray(v)) return `campo \`${nome}\` inválido: esperado lista de textos`;
+  if (!vazia && v.length === 0) return `campo \`${nome}\` inválido: lista vazia`;
+  return v.every(texto) ? null : `campo \`${nome}\` inválido: todo item deve ser texto não vazio`;
+}
+
+const inteiroPos = (o     , nome        )                => {
+  const v = campo(o, nome);
+  if (v === undefined) return obrigatorio(nome);
+  return inteiroPositivo(v) ? null : `campo \`${nome}\` inválido: esperado inteiro ≥ 1`;
+};
+
+/** Ordem de checagem estável: o 1º defeito é o motivo. */
+const primeiro = (...rs                   )                => rs.find((r) => r !== null) ?? null;
+
+const decisaoSombra        = (o) => {
+  const resposta = campo(o, 'resposta');
+  let respostaErro               ;
+  if (resposta === undefined) respostaErro = obrigatorio('resposta');
+  else if (typeof resposta !== 'string') respostaErro = 'campo `resposta` inválido: esperado texto';
+  else {
+    const n = [...resposta].length;
+    respostaErro = resposta.trim() === '' ? 'campo `resposta` inválido: vazia' : n > RESPOSTA_MAX ? `campo \`resposta\` inválido: ${n} caracteres, máximo ${RESPOSTA_MAX}` : null;
+  }
+  const subst = campo(o, 'substitui');
+  let substErro                = null;
+  if (subst !== undefined) {
+    substErro = ehObjeto(subst) && texto(campo(subst, 'sessao')) && inteiroPositivo(campo(subst, 'seq'))
+      ? null
+      : 'campo `substitui` inválido: esperado {sessao: texto, seq: inteiro ≥ 1}';
+  }
+  const fora = campo(o, 'fora_da_regra');
+  const foraErro = fora === undefined || fora === true ? null : 'campo `fora_da_regra` inválido: só `true` ou ausente';
+  const emenda = campo(o, 'emenda_seq');
+  const emendaErro = emenda === undefined ? null : inteiroPositivo(emenda) ? null : 'campo `emenda_seq` inválido: esperado inteiro ≥ 1';
+  const fontes = campo(o, 'fontes');
+  const medicao = campo(o, 'medicao');
+  const fontesErro = fontes === undefined ? null : listaDeTextos(o, 'fontes', { vazia: false });
+  const medicaoErro = medicao === undefined ? null : texto(medicao) ? null : 'campo `medicao` inválido: esperado texto não vazio';
+  const base = primeiro(
+    exigirHash(o), exigirReqOuTask(o), respostaErro, exigirTexto(o, 'arquivo'), exigirBooleano(o, 'pergunta_enviesada'),
+    fontesErro, medicaoErro, substErro, foraErro, emendaErro,
+  );
+  if (base !== null) return base;
+  if (fora === true) return emenda === undefined ? 'campo `emenda_seq` ausente: `fora_da_regra` exige a emenda que o cobre' : null;
+  return fontes === undefined && medicao === undefined ? 'campo `fontes` ou `medicao` ausente: decisão sem fonte nem medição' : null;
+};
+
+function quando(o     )                {
+  const v = campo(o, 'quando');
+  if (v === undefined) return obrigatorio('quando');
+  const m = typeof v === 'string' ? TS_RE.exec(v) : null;
+  const invalido = 'campo `quando` inválido: esperado instante ISO 8601 com fuso';
+  if (m === null) return invalido;
+  const [ano, mes, dia, h, mi, s] = [1, 2, 3, 4, 5, 6].map((i) => Number(m[i]));
+  const diasNoMes = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+  if (mes < 1 || mes > 12 || dia < 1 || dia > diasNoMes || h > 23 || mi > 59 || s > 59) return invalido;
+  return Number.isFinite(Date.parse(v          )) ? null : invalido;
+}
+
+const REGRAS                             = new Map               ([
+  ['sombra.consulta', (o) => primeiro(exigirHash(o), exigirReqOuTask(o))],
+  ['decisao.sombra', decisaoSombra],
+  ['desvio', (o) => primeiro(exigirTexto(o, 'task'), exigirReq(o), exigirTexto(o, 'evidencia'), listaDeTextos(o, 'arquivos', { vazia: true }), exigirEnum(o, 'causa', CAUSAS))],
+  ['descoberta', (o) => primeiro(exigirTexto(o, 'evidencia'), exigirEnum(o, 'causa', CAUSAS))],
+  [
+    'emenda.proposta',
+    (o) => {
+      const arquivos = campo(o, 'arquivos');
+      return primeiro(
+        exigirReq(o), opcionalTexto(o, 'task'), exigirTexto(o, 'diff'), exigirTexto(o, 'fato'), exigirTexto(o, 'alternativa'),
+        exigirTexto(o, 'evidencia'), exigirEnum(o, 'causa', CAUSAS), arquivos === undefined ? null : listaDeTextos(o, 'arquivos', { vazia: true }),
+      );
+    },
+  ],
+  ['spec.emendada', (o) => primeiro(inteiroPos(o, 'proposta_seq'), exigirEnum(o, 'origem', ORIGENS))],
+  ['emenda.rejeitada', (o) => primeiro(inteiroPos(o, 'proposta_seq'), exigirEnum(o, 'origem', ORIGENS))],
+  ['entrega.inicio', (o) => exigirEnum(o, 'politica', POLITICAS)],
+  ['entrega.smoke', (o) => exigirBooleano(o, 'ok')],
+  ['entrega.rollback', (o) => exigirBooleano(o, 'ok')],
+  [
+    'entrega.fim',
+    (o) => primeiro(exigirBooleano(o, 'ok'), campo(o, 'motivo') === undefined ? null : exigirEnum(o, 'motivo', MOTIVOS_FIM)),
+  ],
+  ['entrega.agendada', quando],
+]);
+
+/** Tipos da E1/E2 que ganharam só campos opcionais: `dados` que não é objeto segue aceito (nada que existe hoje passa a ser recusado). */
+const REGRAS_OPCIONAIS                             = new Map               ([
+  [
+    'ci.resultado',
+    (o) => {
+      const alvo = campo(o, 'alvo');
+      return alvo === undefined || alvo === 'homolog' ? null : 'campo `alvo` inválido: só `homolog` ou ausente';
+    },
+  ],
+  [
+    'custo.medicao',
+    (o) => {
+      const papel = campo(o, 'papel');
+      const modelo = campo(o, 'modelo');
+      return primeiro(
+        papel === undefined || typeof papel === 'string' ? null : 'campo `papel` inválido: esperado texto',
+        modelo === undefined || modelo === null || typeof modelo === 'string' ? null : 'campo `modelo` inválido: esperado texto ou null',
+      );
+    },
+  ],
+]);
+
+/**
+ * Motivo pelo qual `dados` não tem a forma do tipo, ou `null` (forma ok, ou tipo sem regra). Total: nunca lança.
+ * `dados` ausente ⇒ "dados ausente"; `dados` que não é objeto ⇒ "dados corrompido".
+ */
+export function formaInvalida(tipo        , dados         )                {
+  try {
+    if (typeof tipo !== 'string') return null;
+    const opcional = REGRAS_OPCIONAIS.get(tipo);
+    if (opcional !== undefined) return ehObjeto(dados) ? opcional(dados) : null;
+    const regra = REGRAS.get(tipo);
+    if (regra === undefined) return null;
+    if (dados === undefined) return `${tipo}: dados ausente`;
+    if (!ehObjeto(dados)) return `${tipo}: dados corrompido (não é um objeto)`;
+    const motivo = regra(dados);
+    return motivo === null ? null : `${tipo}: ${motivo}`;
+  } catch (e) {
+    return `${typeof tipo === 'string' ? tipo : 'evento'}: dados corrompido (ilegível: ${e instanceof Error ? e.message : 'erro desconhecido'})`;
+  }
+}
