@@ -10,7 +10,7 @@
  *   .harness/PAUSAR ............... silêncio (na raiz ou no checkout principal)
  *   loop.parar sem task depois .... silêncio
  *   diário ilegível ............... systemMessage, nunca vira `concluir`
- *   proximaAcao: esperar ......... silêncio; parar: systemMessage; despachar/integrar: block
+ *   proximaAcao: esperar ......... silêncio (exceto `emenda`: systemMessage com as propostas abertas, sem block e sem contador); parar: systemMessage; despachar/integrar: block
  *   concluir ...................... silêncio, ou systemMessage listando as liberações do dono (`task.reaberta` origem `dono`; REQ-LOOP-2)
  * Pouso pendente (T18): `.harness/pouso-pendente.json {entrega, linhas}`, gravado pelo mod ao negar `Agent` porque a ação é `pousar`.
  * Marcador válido (mesma entrega e mesma contagem de progresso) ⇒ apaga marcador e contador, avisa e NÃO bloqueia, para o turno
@@ -84,8 +84,17 @@ export function saidaParaAcao(acao, entrega) {
       const task = acao.task !== undefined ? ` (task ${limpo(acao.task)})` : '';
       return aviso(`Loop da entrega ${e} parou: ${MOTIVO[acao.motivo] ?? id} [${id}]${task}. Nada foi gravado; veja o diário e retome pelo comando do dono.`);
     }
+    case 'esperar': {
+      // Só `emenda` fala: espera por julgamento do dono. Aviso, nunca block (o dono não é um agente que o hook possa acionar).
+      if (acao.motivo !== 'emenda') return null;
+      const propostas = Array.isArray(acao.propostas) ? acao.propostas : [];
+      if (propostas.length === 0) return null;
+      const lista = propostas.slice(0, ITENS_NO_MOTIVO).map((p) => `#${limpo(p?.seq)} ${limpo(p?.req)}`);
+      const resto = propostas.length - lista.length;
+      return aviso(`Loop da entrega ${e} espera julgamento de emenda: ${lista.join(', ')}${resto > 0 ? ` e mais ${resto}` : ''}. Julgue com /gabarito-mestre:emenda aprovar|rejeitar <seq>.`);
+    }
     default:
-      return null; // concluir, esperar e pousar: o hook não tem o que dizer
+      return null; // concluir e pousar: o hook não tem o que dizer
   }
 }
 
