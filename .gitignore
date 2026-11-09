@@ -23,3 +23,7 @@ docs/workflow-true.html
 
 # arquivos residuais de uso próprio do Claude (temporários, scripts, saídas) — nunca viajam pelo git
 .claude-tmp/
+
+# material de apresentação local do dono (visão e Horizon), fora do repositório público
+docs/fluxo-gabarito-visao.pdf
+docs/references/
