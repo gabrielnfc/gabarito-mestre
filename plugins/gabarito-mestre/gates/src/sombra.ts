@@ -181,7 +181,7 @@ export function montarBrief(e: {
   pergunta: string; ancora: string; spec: string; trechos: { req: string; texto: string }[];
   emendas: { proposta_seq: number; req: string; diff: string }[]; task?: TaskPlano;
 }): string {
-  const partes: string[] = ['# Brief da Sombra', '', '## Pergunta', '', e.pergunta.replace(/\s+/gu, ' ').trim(), '', '## Âncora', '', e.ancora, '', '## Spec', '', e.spec];
+  const partes: string[] = ['# Brief da Sombra', '', '## Pergunta', '', `> ${e.pergunta.replace(/\s+/gu, ' ').trim()}`, '', '## Âncora', '', e.ancora, '', '## Spec', '', e.spec];
   if (e.task !== undefined) {
     const t = e.task;
     partes.push('', '## Task do plano', '', `- id: ${t.id}`, `- deps: ${t.deps.length > 0 ? t.deps.join(', ') : '(nenhuma)'}`,
