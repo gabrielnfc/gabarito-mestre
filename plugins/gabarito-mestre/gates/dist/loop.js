@@ -3,9 +3,9 @@
  * A precedência de `proximaAcao` é o contrato da Task 2 do plano da E2; cada cláusula traz o número dela.
  */
 
-// Só `formas.ts` (sem imports): o mod carrega `dist/loop.js` como módulo de hook, que não pode importar módulo embutido do Node nem outro módulo que o faça.
-// `emenda.ts` importa `plano.ts` (caminhos do Node); por isso a projeção das propostas abertas mora aqui e é conferida contra `emenda.ts` em teste.
-import { formaInvalida } from './formas.js';
+// O mod carrega `dist/loop.js` como módulo de hook: só import relativo e, no fecho inteiro, nenhum módulo embutido do Node (por isso `plano.ts` normaliza caminho por conta própria).
+// A projeção das propostas abertas é UMA só, a de `emenda.ts`; `emenda.ts` importa `ordenar` daqui (ciclo medido nos runners).
+import { projetarEmendas } from './emenda.js';
                                                                                          
 
                                                                                          
@@ -200,30 +200,6 @@ function integravel(plano       , estados                           , id        
   return de(estados, id) === 'aprovada' && ancestrais(plano, id).every((a) => de(estados, a) === 'integrada');
 }
 
-/** Sessão fixa das propostas (a mesma de `emenda.ts`, conferida em teste). */
-const SESSAO_EMENDAS = 'emendas';
-
-/**
- * Propostas abertas (REQ-EME-1) sobre eventos JÁ ordenados: `emenda.proposta` de forma válida na sessão `emendas`, sem julgamento
- * válido (`spec.emendada`/`emenda.rejeitada`, de qualquer sessão; o 1º na ordem fecha; casa por `proposta_seq`). Mesma regra de
- * `projetarEmendas`, que os testes confrontam. Por `seq`.
- */
-function propostasAbertas(ordenados          )                   {
-  const propostas = new Map                        ();
-  for (const e of ordenados) {
-    if (e.tipo === 'emenda.proposta' && e.sessao === SESSAO_EMENDAS && formaInvalida('emenda.proposta', e.dados) === null) {
-      propostas.set(e.seq, { seq: e.seq, req: (e.dados                           ).req           });
-    }
-  }
-  const julgadas = new Set        ();
-  for (const e of ordenados) {
-    if ((e.tipo === 'spec.emendada' || e.tipo === 'emenda.rejeitada') && formaInvalida(e.tipo, e.dados) === null) {
-      julgadas.add((e.dados                           ).proposta_seq          );
-    }
-  }
-  return [...propostas.values()].filter((p) => !julgadas.has(p.seq)).sort((a, b) => a.seq - b.seq);
-}
-
 /**
  * Congelamento por REQ (REQ-EME-2). `congeladas`: task cujo `reqs` tem REQ com proposta aberta (casamento exato, não por prefixo,
  * e nunca pela `task` citada na proposta) e toda dependente transitiva, de qualquer estado, integrada ou não. `abertas`: TODAS as
@@ -233,7 +209,7 @@ function congelamento(plano       , eventos          )                          
   const todas = new Set(plano.tasks.map((t) => t.id));
   const ord = ordenar(eventos);
   if (!ord.ok) return { congeladas: todas, abertas: [] };
-  const abertas = propostasAbertas(ord.eventos);
+  const abertas = projetarEmendas(eventos).abertas.map((p) => ({ seq: p.seq, req: p.req }));
   const reqs = new Set(abertas.map((p) => p.req));
   const diretas = plano.tasks.filter((t) => Array.isArray(t.reqs) && t.reqs.some((r) => reqs.has(r))).map((t) => t.id);
   const congeladas = new Set(diretas);

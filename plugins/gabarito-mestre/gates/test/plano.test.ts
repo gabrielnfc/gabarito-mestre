@@ -12,6 +12,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { posix } from 'node:path';
 import { validarPlano, temDependencia, normalizarCaminho } from '../src/plano.ts';
 
 const t = (id: string, deps: string[] = [], arquivos: string[] = []) => ({ id, deps, arquivos });
@@ -246,4 +247,34 @@ test('normalizar-caminho-exportada: a regra que validarPlano usa para comparar a
   assert.equal(normalizarCaminho('a\\b'), 'a/b');
   assert.equal(normalizarCaminho('a/b/'), 'a/b');
   for (const ruim of ['', '/abs', '../fora', '.', 'a\0b', 'C:\\x']) assert.equal(normalizarCaminho(ruim), null, JSON.stringify(ruim));
+});
+
+test('barra-invertida-absoluta-recusa: `\\a` e `\\\\srv\\x` são absolutos depois da troca, no normalizador e no plano', () => {
+  for (const abs of ['\\a', '\\\\srv\\x', '\\', '\\a\\b']) {
+    assert.equal(normalizarCaminho(abs), null, JSON.stringify(abs));
+    const r = validarPlano(plano(t('a', [], [abs])));
+    assert.equal(r.ok, false, JSON.stringify(abs));
+    if (!r.ok) assert.match(r.erro, /caminho inválido/);
+  }
+  assert.equal(normalizarCaminho('a\\b'), 'a/b', 'barra invertida no meio continua separador');
+});
+
+test('normaliza-igual-posix-no-relativo: sem `node:path` no núcleo, o oráculo vive só aqui', () => {
+  const alfabeto = ['a', '.', '..', '/', '\\', '', 'C:'];
+  const ehRelativoSimples = (o: string, c: string): boolean => !c.includes('\0') && !/^[A-Za-z]:/.test(c) && !o.startsWith('/') && o !== '' && o !== '.' && o !== '..' && !o.startsWith('../');
+  let comparados = 0;
+  const gera = (prefixo: string[], fundo: number): void => {
+    const c = prefixo.join('');
+    const oraculo = posix.normalize(c.replace(/\\/g, '/') || '.').replace(/\/+$/, '');
+    if (ehRelativoSimples(oraculo, c)) {
+      assert.equal(normalizarCaminho(c), oraculo, JSON.stringify(c));
+      comparados++;
+    } else if (c.replace(/\\/g, '/').startsWith('/')) {
+      assert.equal(normalizarCaminho(c), null, `absoluto: ${JSON.stringify(c)}`);
+    }
+    if (fundo === 0) return;
+    for (const x of alfabeto) gera([...prefixo, x], fundo - 1);
+  };
+  gera([], 5);
+  assert.ok(comparados > 500, `comparou só ${comparados}`);
 });

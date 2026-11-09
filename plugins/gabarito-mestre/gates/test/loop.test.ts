@@ -1126,8 +1126,8 @@ test('costura-dist-congela-pelo-mesmo-nucleo', async () => {
   assert.deepEqual(dist.proximaAcao(exigeProd(p), [], sinais()).tipo, 'despachar');
 });
 
-// --- a projeção local de `loop.ts` é a de `emenda.ts` (o mod não deixa `loop.ts` importar `emenda.ts`: ver o teste seguinte)
-test('projecao-local-igual-a-de-emenda-ts', () => {
+// --- `loop.ts` congela pela projeção ÚNICA de `emenda.ts` (sem cópia local); o oráculo abaixo é independente do que está sendo medido
+test('loop-congela-pela-projecao-de-emenda', () => {
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', [], ['REQ-B-1']), T('T3', ['T2']));
   const cenarios: Evento[][] = [
     [],
@@ -1153,6 +1153,16 @@ test('projecao-local-igual-a-de-emenda-ts', () => {
     }
   }
 });
+test('proposta-de-outra-sessao-nao-congela-no-loop', () => {
+  // só a sessão fixa `emendas` propõe: a mesma forma gravada em `loop` não congela (a fonte é `emenda.ts`, com a regra única)
+  const p = planoR(T('T1', [], ['REQ-A-1']));
+  const evs = [...diarioT(...aprovada('T1')), prop(4, 'REQ-A-1', {}, 100, 'loop')];
+  assert.deepEqual([...tasksCongeladas(p, evs)], []);
+  assert.equal(podeIntegrar(p, evs, 'T1'), true);
+  assert.deepEqual(proximaAcao(p, evs, sinais()), { tipo: 'integrar', tasks: ['T1'] });
+  const propria = [...diarioT(...aprovada('T1')), prop(1, 'REQ-A-1')];
+  assert.deepEqual([...tasksCongeladas(p, propria)], ['T1']);
+});
 test('dist-loop-nao-importa-node-nem-modulo-que-importe', () => {
   // o mod carrega `dist/loop.js` como módulo de hook: só import relativo e, transitivamente, nenhum `node:*` (medido: `claude plugin test`)
   const visto = new Set<string>();
@@ -1165,5 +1175,6 @@ test('dist-loop-nao-importa-node-nem-modulo-que-importe', () => {
   };
   visita('loop.js');
   assert.ok(visto.has('formas.js'));
-  assert.ok(!visto.has('emenda.js') && !visto.has('plano.js'));
+  // `loop.js` consome a projeção de `emenda.js` (fonte única, que usa `plano.js`): entram no fecho, e nenhum deles importa `node:*`
+  assert.ok(visto.has('emenda.js') && visto.has('plano.js'), 'loop.js deve importar emenda.js (sem cópia da projeção)');
 });

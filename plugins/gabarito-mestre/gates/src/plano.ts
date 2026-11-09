@@ -7,7 +7,6 @@
  * contra o config de `origin/HEAD` não é daqui (o plano não vê o config; T4).
  */
 
-import { posix } from 'node:path';
 import { REQ_RE } from './formas.ts';
 import type { Janela, Plano, PoliticaPlano, TaskPlano } from './tipos.ts';
 
@@ -17,10 +16,22 @@ const recusa = (erro: string): ResultadoPlano => ({ ok: false, erro });
 const ehObjeto = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
 const ehListaDeTexto = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
-/** Caminho relativo normalizado (`./a` = `a`, `a//b` = `a/b`) ou `null` se vazio, absoluto, com NUL ou que escapa da raiz. Mesma regra de `validarPlano`. */
+/**
+ * Caminho relativo normalizado (`./a` = `a`, `a//b` = `a/b`) ou `null` se vazio, absoluto, com NUL ou que escapa da raiz. Mesma regra de `validarPlano`.
+ * Sem `node:path`: o núcleo é carregado pelo mod como módulo de hook, que não importa módulo embutido do Node (pilha de segmentos própria).
+ * A barra invertida vira `/` ANTES do teste de absoluto: `\a` e `\\srv\x` são absolutos e são recusados.
+ */
 export function normalizarCaminho(c: string): string | null {
-  if (c === '' || c.includes('\0') || c.startsWith('/') || /^[A-Za-z]:[\\/]/.test(c)) return null;
-  const n = posix.normalize(c.replace(/\\/g, '/')).replace(/\/+$/, '');
+  if (c === '' || c.includes('\0') || /^[A-Za-z]:/.test(c)) return null;
+  const barras = c.replace(/\\/g, '/');
+  if (barras.startsWith('/')) return null;
+  const pilha: string[] = [];
+  for (const parte of barras.split('/')) {
+    if (parte === '' || parte === '.') continue;
+    if (parte === '..' && pilha.length > 0 && pilha[pilha.length - 1] !== '..') pilha.pop();
+    else pilha.push(parte);
+  }
+  const n = pilha.join('/');
   if (n === '' || n === '.' || n === '..' || n.startsWith('../')) return null;
   return n;
 }
