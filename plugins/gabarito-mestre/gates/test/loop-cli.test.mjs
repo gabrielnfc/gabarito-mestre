@@ -3178,3 +3178,68 @@ describe('E3 T10: integrar com o escopo das emendas', () => {
     assert.equal(fora.cli(['integrar', 'T1']).j.erro, 'gate_reprovado', 'diretório não aprova arquivo de nome parecido');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════ GM-11 T16: integrar relata desvios no verde
+describe('E3 T16: integrar repassa desvio e aviso do gate no verde', () => {
+  const FORMA = /^(desvio|aviso): /;
+  const desviar = (amb, extra = []) => amb.cli(['desvio', 'T1', '--req', 'REQ-A-1', '--evidencia', 'e', '--arquivos', 'a.ts', '--causa', 'tecnica', ...extra]);
+
+  test('integrar-verde-relata-desvio: desvio gravado pelo CLI real, gate real verde, integrar devolve a linha', () => {
+    const amb = ambReq();
+    amb.aprovar('T1');
+    const d = desviar(amb);
+    assert.equal(d.rc, 0, d.out + d.err);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.merge, true);
+    assert.equal(r.j.evento, true);
+    assert.equal(r.j.fechada, true);
+    assert.deepEqual(r.j.relato, ['desvio: REQ-A-1 a.ts (tecnica)']);
+    for (const l of r.j.relato) assert.match(l, FORMA);
+  });
+
+  test('integrar-verde-sem-desvio-relato-vazio: o campo existe e vale []; nada de ok/veredito vaza', () => {
+    const amb = ambReq();
+    amb.aprovar('T1');
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.ok(Array.isArray(r.j.relato), 'relato sempre presente');
+    assert.equal(r.j.relato.length, 0);
+    assert.doesNotMatch(r.out, /ok {5}|GATE VERDE/, 'linhas ok e veredito não vazam na saída');
+  });
+
+  test('integrar-verde-so-linhas-desvio-e-aviso: desvio de outra task não entra; a ordem original vale', () => {
+    const amb = ambReq();
+    amb.aprovar('T1');
+    assert.equal(desviar(amb).rc, 0);
+    assert.equal(amb.cli(['desvio', 'T1', '--req', 'REQ-A-1', '--evidencia', 'e2', '--arquivos', 'b.ts', '--causa', 'regra_negocio']).rc, 0);
+    assert.equal(amb.cli(['desvio', 'T2', '--req', 'REQ-B-1', '--evidencia', 'e', '--arquivos', 'z.ts', '--causa', 'tecnica']).rc, 0);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.relato, ['desvio: REQ-A-1 a.ts (tecnica)', 'desvio: REQ-A-1 b.ts (regra_negocio)']);
+  });
+
+  test('integrar-verde-repassa-aviso-de-diario-nao-lido: lacuna de seq que o integrar tolera, o gate avisa', () => {
+    const amb = ambReq();
+    amb.aprovar('T1');
+    writeFileSync(join(amb.entregas, 'events.outra.jsonl'), JSON.stringify({ seq: 7, hash_anterior: null, ts: '2026-01-01T00:00:00.000Z', autor: 't@t', sessao: 'outra', agente: 'x', tipo: 'nota', dados: {} }) + '\n');
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.merge, true);
+    assert.equal(r.j.relato.length, 1);
+    assert.match(r.j.relato[0], /^aviso: desvios não lidos \(lacuna de seq na linha 1 de events\.outra\.jsonl\)$/);
+  });
+
+  test('integrar-reprovado-mantem-relato-completo-e-rc: ramo gate_reprovado inalterado', () => {
+    const amb = ambReq({ config: { gates: { suites: ['test ! -f src/t1.txt'] } } });
+    amb.aprovar('T1');
+    assert.equal(desviar(amb).rc, 0);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'gate_reprovado');
+    assert.equal(r.j.merge, false);
+    assert.ok(r.j.relato.some((l) => /^FALHA /.test(l)), 'FALHA continua no relato');
+    assert.ok(r.j.relato.some((l) => /^ok {5}/.test(l)), 'o relato completo (com ok) segue na reprovação');
+    assert.ok(r.j.relato.includes('desvio: REQ-A-1 a.ts (tecnica)'));
+  });
+});

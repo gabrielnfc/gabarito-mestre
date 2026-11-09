@@ -839,6 +839,7 @@ async function integrar(c, plano, task) {
   if (sujo.length > 0) throw new Falha('worktree_suja', `a worktree ${task} tem trabalho não commitado ou não rastreado; nada foi feito: ${sujo.slice(0, 10).join(' | ')}`, { merge: false, evento: false });
   const branch = ramo(c, task);
   const nada = { merge: false, evento: false };
+  let relatoVerde = []; // só `desvio:`/`aviso:` do gate (T16); o relato completo fica no ramo reprovado
 
   // O que o gate aprova é exatamente o que entra: a base vem do `abrir`, o HEAD é a branch da task e o commit é o que o revisor viu.
   let baseGravada = '';
@@ -889,6 +890,7 @@ async function integrar(c, plano, task) {
       // `fechar` recalcula o nome a partir de `tmpdir()`: com o TMPDIR do gate ainda no ambiente, o nome sairia dentro do próprio.
       if (tmpAntes === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = tmpAntes;
     }
+    relatoVerde = r.relato.filter((l) => /^(desvio|aviso): /.test(l));
     if (r.reprova > 0) {
       throw new Falha('gate_reprovado', `gate reprovado (${r.reprova}); sem merge nem evento`, { ...nada, relato: r.relato });
     }
@@ -930,7 +932,7 @@ async function integrar(c, plano, task) {
     const causa = e instanceof Falha ? `${e.erro}: ${e.message}` : String(e.message ?? e);
     throw new Falha('fechar_falhou', `o merge entrou e o evento task.integrada foi gravado, mas fechar falhou (${causa})`, { merge: true, evento: true, causa: e.erro });
   }
-  return { task, branch, base, merge: true, evento: true, fechada: true, banco: fechada.banco, ignorados_removidos: fechada.ignorados_removidos };
+  return { task, branch, base, merge: true, evento: true, fechada: true, banco: fechada.banco, ignorados_removidos: fechada.ignorados_removidos, relato: relatoVerde };
 }
 
 // ─────────────────────────────────────────────────────────────── proxima
