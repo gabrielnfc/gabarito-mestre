@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
+import { formaInvalida } from './formas.js';
 import { estadoDe, ordenar } from './loop.js';
                                             
                                          
@@ -141,6 +142,10 @@ export function append(
   let fd = -1;
   try {
     if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) return { ok: false, erro: 'sessão inválida' };
+
+    // GM-11 T5: forma de `dados` por tipo ANTES do canário; forma inválida não toca arquivo, lock nem linha.
+    const forma = formaInvalida(ev.tipo, ev.dados);
+    if (forma !== null) return { ok: false, erro: `forma_invalida: ${forma}` };
 
     // canário ANTES do lock; linha grande é recusada sem rodar regex.
     const padrao = JSON.stringify(ev).length > LINHA_MAX ? 'tamanho' : varrer(ev);

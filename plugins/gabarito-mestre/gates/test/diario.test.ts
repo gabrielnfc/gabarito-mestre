@@ -821,3 +821,62 @@ describe('lerEstrito (GM-10 T9 r2: leitura sem tolerância para decidir pouso)',
     assert.equal(lerEstrito(dir).ok, false);
   });
 });
+
+// GM-11 T5: `append` valida a forma de `dados` por tipo antes do canário; forma inválida não toca o arquivo.
+describe('append: forma de dados por tipo (GM-11 T5)', () => {
+  const invalida = (): Omit<Evento, 'seq' | 'hash_anterior'> => ev('emenda.proposta', { req: 'REQ-A-1' });
+
+  test('append-forma-invalida-nada-gravado: emenda.proposta sem campos ⇒ forma_invalida, sem arquivo nem lock', () => {
+    const dir = tmp();
+    const r = append(dir, 's1', invalida());
+    assert.equal(r.ok, false);
+    assert.match((r as { erro: string }).erro, /^forma_invalida: emenda\.proposta: /);
+    assert.equal(existsSync(join(dir, 'events.s1.jsonl')), false, 'arquivo criado');
+    assert.equal(existsSync(join(dir, 'events.s1.jsonl.lock')), false, 'lock ficou');
+  });
+
+  test('append-forma-valida-grava: desvio com forma completa grava o evento', () => {
+    const dir = tmp();
+    const r = append(dir, 's1', ev('desvio', { task: 'T1', req: 'REQ-A-1', evidencia: 'teste x', arquivos: [], causa: 'tecnica' }));
+    assert.deepEqual(r, { ok: true, gravado: 'evento' });
+    assert.equal(ler(dir)[0].tipo, 'desvio');
+  });
+
+  test('append-tipo-antigo-segue: tipo da E1/E2 sem regra e ci.resultado com dados não objeto seguem gravados', () => {
+    const dir = tmp();
+    assert.deepEqual(append(dir, 's1', ev('guarda.deny', { alvo: 'x' })), { ok: true, gravado: 'evento' });
+    assert.deepEqual(append(dir, 's1', ev('ci.resultado', 'texto' as unknown as Record<string, unknown>)), { ok: true, gravado: 'evento' });
+    assert.equal(ler(dir).length, 2);
+  });
+
+  test('append-forma-antes-do-canario: forma inválida com segredo nos dados ⇒ forma_invalida, não diario.recusa', () => {
+    const dir = tmp();
+    const r = append(dir, 's1', ev('emenda.proposta', { req: 'REQ-A-1', diff: SEGREDOS.ghp }));
+    assert.equal(r.ok, false);
+    assert.match((r as { erro: string }).erro, /^forma_invalida: /);
+    assert.equal(existsSync(join(dir, 'events.s1.jsonl')), false);
+  });
+
+  test('append-dados-ausente-x-corrompido: ausente e corrompido dão erros distintos, 0 bytes', () => {
+    const dir = tmp();
+    const semDados = { ...ev('desvio'), dados: undefined } as unknown as Omit<Evento, 'seq' | 'hash_anterior'>;
+    const corrompido = ev('desvio', 'texto' as unknown as Record<string, unknown>);
+    const a = append(dir, 's1', semDados) as { ok: false; erro: string };
+    const b = append(dir, 's1', corrompido) as { ok: false; erro: string };
+    assert.equal(a.ok, false);
+    assert.equal(b.ok, false);
+    assert.notEqual(a.erro, b.erro);
+    assert.match(a.erro, /dados ausente/);
+    assert.match(b.erro, /dados corrompido/);
+    assert.equal(existsSync(join(dir, 'events.s1.jsonl')), false);
+  });
+
+  test('append-pelo-dist: dist/diario.js recusa o mesmo caso sem tocar o arquivo', async () => {
+    const dist = await import(join(AQUI, '..', 'dist', 'diario.js'));
+    const dir = tmp();
+    const r = dist.append(dir, 's1', invalida());
+    assert.equal(r.ok, false);
+    assert.match(r.erro, /^forma_invalida: emenda\.proposta: /);
+    assert.equal(existsSync(join(dir, 'events.s1.jsonl')), false);
+  });
+});
