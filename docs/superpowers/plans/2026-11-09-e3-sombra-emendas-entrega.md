@@ -46,8 +46,8 @@
 | 1 | T2, T3, T4, T5 | T1 |
 | 2 | T6 (T3, T4), T7 (T2, T3, T5), T8 (T4, T5), T9 (T1) | |
 | 3 | T10 (T6, T7), T11 (T2, T5), T12 (T7, T8), T13 (T6) | |
-| 4 | T14 (T9, T10) | |
-| 5 | T15 (todas) | |
+| 4 | T14 (T9, T10), T16 (T10, T13) | |
+| 5 | T15 (todas, inclusive T16) | |
 
 Paralelismo efetivo 3 (`slots_max` medido, E2 F9). Caminho crítico T1 → T3 → T6 → T10 → T14 → T15.
 
@@ -68,7 +68,7 @@ Paralelismo efetivo 3 (`slots_max` medido, E2 F9). Caminho crítico T1 → T3 �
 | SOM-4 | `cache-nao-conta-no-teto` (T2), `proxima-aviso-acima-do-teto` (T10), `sombra-prompt-com-hipotese-nega` (T12), `custo-sombra-papel` (T9) | M-SOM4a: contar `decisao.sombra` como consulta · M-SOM4b: comparar prompt por prefixo |
 | EME-1 | `forma-proposta-sem-causa` (T1), `emenda-dono-grava-origem-dono` (T10), `julgar-sombra-sem-flag-recusa` (T10) | M-EME1: aceitar `origem:'sombra'` sem `julga_emendas` |
 | EME-2 | `congela-so-req-afetado` (T6), `esperar-emenda-stop-avisa` (T13), `escopo-soma-arquivos-aprovados` (T3) | M-EME2: congelar só `pendente` ⇒ `aprovada-congelada-nao-integra` falha |
-| EME-3 | `revisor-item-traz-emendas-aprovadas` (T10), `gate-relata-desvio` (T13) | M-EME3: item `revisor` sem `diff` |
+| EME-3 | `revisor-item-traz-emendas-aprovadas` (T10), `gate-relata-desvio` (T13), `integrar-verde-relata-desvio` (T16) | M-EME3: item `revisor` sem `diff`; M-REL1 |
 | ENT-1 | `plano-afrouxa-recusa` (T4), `config-local-ignorada` (T8), `exige-prod-sob-demanda-para` (T6) | M-ENT1: aceitar `continua` sobre `janela` |
 | ENT-2 | `smoke-falho-rollback-parar` (T8), `subagent-entrega-mjs-caixa-nega` (T12) | M-ENT2a: pular rollback · M-ENT2b: casar só no início do segmento |
 | MOD-1 | `proxima-item-traz-modelo` (T10), `custo-traz-modelo-e-papel` (T9), `doctor-avisa-abaixo` (T14) | M-MOD1: doctor compara entre papéis ⇒ `doctor-nao-compara-entre-papeis` falha |
@@ -367,6 +367,17 @@ Fumaça sem LLM (P9, entra em `npm test`): plano de 3 tasks com `reqs`, pelos CL
 - [ ] **Step 3: Escrever.**
 - [ ] **Step 4: GREEN;** `claude plugin validate .`; `npm test`.
 - [ ] **Step 5: P2 + Commit** `enabler(GM-11): doctor dos modelos, skill do loop e versão alpha.3`.
+
+### Task 16: `integrar` relata desvios no verde (emenda da Sombra, `sombra-relato-verde.md`)
+
+**Depende de:** T10, T13. Onda 4, em paralelo com T14. T15 passa a depender também de T16.
+
+**Files:** Modify `gates/scripts/loop.mjs` (`integrar`, ramo verde), `gates/test/loop-cli.test.mjs`.
+
+**Produces:** no VERDE, `integrar` devolve `relato: string[]` só com as linhas `^(desvio|aviso): ` do gate, `[]` sem nenhuma; resto do retorno e rc sem mudança; ramo `gate_reprovado` sem mudança. `[]` não prova 0 desvios (diário ilegível vem como `aviso:`).
+
+- [ ] **Step 1: Testes (P9, gate real, CLIs reais):** `integrar-verde-relata-desvio`, `integrar-verde-sem-desvio-relato-vazio` (toda linha casa `/^(desvio|aviso): /`). Mutações M-REL1 (sem `relato`), M-REL2 (`[]` fixo), M-REL3 (sem filtro).
+- [ ] **Step 2: RED. Step 3: Implementar. Step 4: GREEN. Step 5: P2 + Commit** `fix(GM-11): integrar relata desvios no verde`.
 
 ### Task 15: Fumaça de entrega e aceites
 
