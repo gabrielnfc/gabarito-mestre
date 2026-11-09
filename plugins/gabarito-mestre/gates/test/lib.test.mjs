@@ -13,6 +13,7 @@
  *  M-C2 lerConfigOrigin aceitar JSON array ⇒ `config-origin-ausente-x-invalida` falha
  *  M-C3 lerConfigOrigin com JSON ilegível virando config vazia ⇒ `config-origin-ausente-x-invalida` falha
  *  M-C4 sem origin, cair na árvore local como `fonte: 'origin'` ⇒ `config-origin-sem-origin-ignora-local` falha
+ *  M-C5..M-C12 (r3) cair no local/HEAD/índice com origin ausente ou corrompido, ou mesclar o local sob origin válido ⇒ `config-origin-nunca-le-local-matriz` falha
  *  (o `try` externo de lerConfigOrigin é defesa em profundidade: lerRawOrigin nunca lança, tirá-lo é mutante equivalente)
  */
 
@@ -410,6 +411,61 @@ describe('lib/config lerConfigOrigin (GM-11 T1)', () => {
       assert.ok(JSON.parse(readFileSync(join(d, 'harness.config.json'), 'utf8')).entrega, 'premissa: o arquivo local existe');
       const r = lerConfigOrigin(d);
       assert.deepEqual([r.cfg, r.fonte, r.invalida], [null, 'nenhuma', false]);
+    }
+  });
+
+  test('config-origin-nunca-le-local-matriz: origin {sem remoto, symref pendurado, sem arquivo, corrompido, válido} x local bom na árvore, no índice e num commit novo em HEAD; só origin conta', () => {
+    const L = { entrega: { politica: 'continua', comandos: { deploy: 'x' } }, sombra: { julga_emendas: true } };
+    const textoL = JSON.stringify(L);
+    /** Commit antigo (apontado por origin, se houver) e depois um commit NOVO em HEAD com L; a árvore e o índice ficam com L. */
+    function celula(estado) {
+      const d = novo();
+      let comOrigin = true;
+      if (estado.tipo === 'sem-remoto') comOrigin = false;
+      else {
+        if (estado.conteudo !== undefined) writeFileSync(join(d, 'harness.config.json'), estado.conteudo);
+        else writeFileSync(join(d, 'x.txt'), 'x');
+        sh(d, 'add', '-A');
+        sh(d, 'commit', '-qm', 'origin');
+        if (estado.tipo === 'pendurado') sh(d, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/inexistente');
+        else {
+          sh(d, 'update-ref', 'refs/remotes/origin/main', sh(d, 'rev-parse', 'HEAD'));
+          sh(d, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+        }
+      }
+      writeFileSync(join(d, 'harness.config.json'), textoL);
+      sh(d, 'add', '-A');
+      sh(d, 'commit', '-qm', 'local novo');
+      // premissas: o local bom está na árvore, no índice e em HEAD, e é diferente do que origin aponta
+      assert.deepEqual(JSON.parse(readFileSync(join(d, 'harness.config.json'), 'utf8')), L, 'premissa: árvore parseia como L');
+      assert.deepEqual(JSON.parse(sh(d, 'show', ':harness.config.json')), L, 'premissa: índice parseia como L');
+      assert.deepEqual(JSON.parse(sh(d, 'show', 'HEAD:harness.config.json')), L, 'premissa: HEAD parseia como L');
+      if (comOrigin && estado.tipo !== 'pendurado') {
+        assert.notEqual(sh(d, 'rev-parse', 'HEAD'), sh(d, 'rev-parse', 'refs/remotes/origin/HEAD'), 'premissa: HEAD é um commit novo, depois de origin');
+      }
+      return d;
+    }
+    const linhas = [
+      { nome: 'sem remoto', tipo: 'sem-remoto', ausente: true },
+      { nome: 'symref pendurado', tipo: 'pendurado', conteudo: undefined, ausente: true },
+      { nome: 'ref sem o arquivo', tipo: 'ref', conteudo: undefined, ausente: true },
+      ...['{"entrega":', 'não é json', '[1,2]', '[]', 'null', '"texto"', '42', 'true', ''].map((t) => ({ nome: `corrompido ${JSON.stringify(t)}`, tipo: 'ref', conteudo: t, ausente: false })),
+      { nome: 'válido {}', tipo: 'ref', conteudo: '{}', valido: {} },
+      { nome: 'válido sem entrega', tipo: 'ref', conteudo: '{"sombra":{"teto":9}}', valido: { sombra: { teto: 9 } } },
+    ];
+    for (const linha of linhas) {
+      const r = lerConfigOrigin(celula(linha));
+      if (linha.valido) {
+        assert.equal(r.fonte, 'origin', linha.nome);
+        assert.deepEqual(r.cfg, linha.valido, `${linha.nome}: cfg é só o JSON de origin`);
+        assert.equal(r.invalida, false, linha.nome);
+        assert.equal(r.motivo, null, linha.nome);
+        assert.equal(r.cfg.entrega, undefined, `${linha.nome}: nenhuma chave de L (entrega)`);
+        assert.equal(r.cfg.sombra?.julga_emendas, undefined, `${linha.nome}: nenhuma chave de L (julga_emendas)`);
+      } else {
+        assert.deepEqual([r.cfg, r.fonte, r.invalida], [null, 'nenhuma', !linha.ausente], linha.nome);
+        assert.match(r.motivo, /\S/, linha.nome);
+      }
     }
   });
 
