@@ -3,6 +3,8 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFi
 import { join } from 'node:path';
 import { formaInvalida } from './formas.js';
 import { estadoDe, ordenar } from './loop.js';
+import { diarioEmOrdem, projetarDecisoes } from './sombra.js';
+                                                 
                                             
                                          
 
@@ -35,6 +37,10 @@ const LOCK_ESPERA_MS = 10;
 const LOCK_PRAZO_MS = 3000;
 // F3: ≈ 1,5k tokens. O pouso e o `SessionStart:compact` reinjetam isto; o cartão tem seu próprio limite.
 const INSTANTANEO_MAX = 3200;
+// Bloco de decisões da Sombra (T11), em unidades UTF-16 como o resto do orçamento: cabeçalho, linhas e rodapé.
+const DECISOES_MAX = 1600;
+const DECISAO_ANCORA_MAX = 64;
+const DECISAO_RESPOSTA_MAX = 160;
 const LINHA_MAX = 16384;
 const CAMPO_MAX = 256;
 const ALVO_MAX = 300;
@@ -343,7 +349,39 @@ function mediana(xs          )         {
   return o.length % 2 === 1 ? o[m] : (o[m - 1] + o[m]) / 2;
 }
 
-export function projetar(eventos          )                                                                                                       {
+const CONTROLE = /[\u0000-\u001f\u007f\u2028\u2029]+/g;
+const semControle = (t        )         => t.replace(CONTROLE, ' ');
+const rodapeDecisoes = (fora        )         => `... ${fora} decisão(ões) fora`;
+const AVISO_FORA_DE_ORDEM = 'Decisões da Sombra: diário fora de ordem';
+
+/** Ordem do bloco: mais recente primeiro por `(ts, sessao, seq)`, a mesma de `projetarDecisoes`. `ts` já foi validado por `diarioEmOrdem`. */
+function maisRecenteAntes(a               , b               )         {
+  return Date.parse(b.ts) - Date.parse(a.ts) || cmp(b.sessao, a.sessao) || b.seq - a.seq;
+}
+
+/**
+ * Bloco de decisões vigentes (REQ-SOM-1). `entrada` já está em `(sessao, seq)`. Fora de ordem ⇒ linha de aviso (corrompido ≠ ausente);
+ * nenhuma decisão ⇒ sem bloco. Orçamento: cabeçalho + rodapé do pior caso reservados antes da 1ª linha; o bloco final tem ≤ DECISOES_MAX.
+ */
+function blocoDecisoes(entrada          )                                         {
+  if (!diarioEmOrdem(entrada)) return { linhas: [AVISO_FORA_DE_ORDEM], decisoes: 0 };
+  const vigentes = [...projetarDecisoes(entrada).values()].sort(maisRecenteAntes);
+  if (vigentes.length === 0) return { linhas: [], decisoes: 0 };
+  const cabecalho = `Decisões da Sombra (${vigentes.length}):`;
+  let usado = cabecalho.length + 1 + rodapeDecisoes(vigentes.length).length + 1;
+  const linhas           = [];
+  for (const d of vigentes) {
+    const ancora = d.req ?? `task:${d.task}`;
+    const linha = `${corta(semControle(ancora), DECISAO_ANCORA_MAX)} ${d.hash.slice(0, 8)} ${corta(semControle(d.resposta), DECISAO_RESPOSTA_MAX)}`;
+    if (usado + linha.length + 1 > DECISOES_MAX) break;
+    linhas.push(linha);
+    usado += linha.length + 1;
+  }
+  const fora = vigentes.length - linhas.length;
+  return { linhas: [cabecalho, ...linhas, ...(fora > 0 ? [rodapeDecisoes(fora)] : [])], decisoes: vigentes.length };
+}
+
+export function projetar(eventos          )                                                                                                                         {
   const validos = eventos.filter((e) => e !== null && typeof e === 'object');
   const resumo                         = {};
   for (const e of validos) resumo[e.tipo] = (resumo[e.tipo] ?? 0) + 1;
@@ -356,9 +394,13 @@ export function projetar(eventos          )                                     
   const cabecalho = `Diário: ${validos.length} evento(s)`;
   const rodape = (omitidos        )         => `... ${omitidos} anterior(es) omitido(s)`;
 
+  // a entrada vai para (sessao, seq) antes de projetar decisões, como em `duracaoDaTask`: a ordem de chegada não pode mudar a saída
+  const porSeq = [...validos].sort((a, b) => cmp(String(a.sessao), String(b.sessao)) || Number(a.seq) - Number(b.seq));
+  const bloco = blocoDecisoes(porSeq);
+
   const linhas           = [];
-  // orçamento: cabeçalho + ETA + rodapé do pior caso + quebras, reservados antes dos eventos
-  let usado = cabecalho.length + linhaEta.length + rodape(validos.length).length + 3;
+  // orçamento: cabeçalho + ETA + bloco de decisões + rodapé do pior caso + quebras, reservados antes dos eventos
+  let usado = cabecalho.length + linhaEta.length + rodape(validos.length).length + 3 + (bloco.linhas.length > 0 ? bloco.linhas.join('\n').length + 1 : 0);
   for (const e of ordenados) {
     const alvo = corta(String(ehObjeto(e.dados) ? (e.dados.alvo ?? '-') : '-').replace(/[\r\n]+/g, ' '), ALVO_MAX);
     const linha = `${corta(String(e.ts), 40)} ${corta(String(e.tipo), 64)} ${alvo}`;
@@ -367,9 +409,9 @@ export function projetar(eventos          )                                     
     usado += linha.length + 1;
   }
   const omitidos = validos.length - linhas.length;
-  const partes = [cabecalho, linhaEta, ...linhas];
+  const partes = [cabecalho, linhaEta, ...bloco.linhas, ...linhas];
   if (omitidos > 0) partes.push(rodape(omitidos));
-  return { instantaneo: partes.join('\n'), resumo, eta };
+  return { instantaneo: partes.join('\n'), resumo, eta, decisoes: bloco.decisoes };
 }
 
 export function dirEntrega(raiz        , pbi               )         {
