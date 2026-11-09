@@ -44,8 +44,12 @@ try {
   else erroDiario = 'dist/diario.js sem lerEstrito; rode node gates/scripts/build.mjs';
 } catch { /* fica o motivo acima */ }
 
-/** Texto vindo do diário entra no relato: sem controle, tamanho limitado. */
-const limpoTxt = (v, n = 120) => String(v).replace(/[\u0000-\u001f\u007f]+/g, ' ').slice(0, n);
+/**
+ * Texto vindo do diário entra no relato por lista de PERMITIDOS (como `limpo` de stop-loop.mjs): letra, marca, número,
+ * pontuação, símbolo e espaço comum. Todo o resto (LF, CR, VT, FF, NEL, U+2028/2029, controles C0/C1, NBSP, invisíveis,
+ * bidi) vira espaço: nenhuma quebra de linha que um leitor reconheça forja `GATE VERDE`. Tamanho limitado.
+ */
+const limpoTxt = (v, n = 120) => String(v).replace(/[^\p{L}\p{M}\p{N}\p{P}\p{S} ]+/gu, ' ').slice(0, n);
 
 /**
  * Desvios (evento `desvio`) que a task desta worktree gravou no diário da entrega (GM-11 T13). Entrega e task vêm da branch
