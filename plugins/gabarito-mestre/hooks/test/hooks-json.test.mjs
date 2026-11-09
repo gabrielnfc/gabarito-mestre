@@ -87,6 +87,40 @@ describe('hooks.json — registro dos hooks (T16)', () => {
       assert.equal(r.stderr, '', script);
     }
   });
+  test('emenda-user-prompt-expansion-onfailure-block: matcher ancorado, node, timeout 10, onFailure block; liberar intacto', () => {
+    const grupos = cfg.UserPromptExpansion;
+    assert.deepEqual(grupos.map((g) => g.matcher), ['^gabarito-mestre:liberar$', '^gabarito-mestre:emenda$']);
+    const g = grupos[1];
+    assert.equal(g.hooks.length, 1);
+    assert.equal(g.hooks[0].type, 'command');
+    assert.equal(g.hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/emenda-dono.mjs"');
+    assert.equal(g.hooks[0].timeout, 10);
+    assert.equal(g.hooks[0].onFailure, 'block');
+    assert.ok(existsSync(join(PLUGIN, 'gates', 'scripts', 'emenda-dono.mjs')));
+    // o matcher é âncora de fim a fim: não pega `emendaX`, `x:emenda` nem `emenda` sem o plugin
+    const re = new RegExp(g.matcher);
+    assert.equal(re.test('gabarito-mestre:emenda'), true);
+    for (const n of ['gabarito-mestre:emendaX', 'gabarito-mestre:emenda ', 'x:gabarito-mestre:emenda', 'emenda', 'gabarito-mestre:liberar']) assert.equal(re.test(n), false, n);
+  });
+  test('emenda-dono-stub-bloqueia: o comando da emenda sai com block e "nada foi gravado"; outro comando e stdin ruim', () => {
+    const rodar = (input) => spawnSync(process.execPath, [join(PLUGIN, 'gates', 'scripts', 'emenda-dono.mjs')], { input, encoding: 'utf8' });
+    const r = rodar(JSON.stringify({ hook_event_name: 'UserPromptExpansion', command_name: 'gabarito-mestre:emenda', command_args: 'aprovar 3' }));
+    assert.equal(r.status, 0);
+    const o = JSON.parse(r.stdout);
+    assert.equal(o.decision, 'block');
+    assert.match(o.reason, /não implementado; nada foi gravado/);
+    // outro comando: silêncio total (o stub só age no matcher do próprio comando)
+    const outro = rodar(JSON.stringify({ hook_event_name: 'UserPromptExpansion', command_name: 'gabarito-mestre:liberar', command_args: 'T1' }));
+    assert.equal(outro.status, 0);
+    assert.equal(outro.stdout, '');
+    assert.equal(outro.stderr, '');
+    // stdin ausente e não JSON: não dá para saber que não é o nosso comando, então bloqueia (como o liberar)
+    for (const ruim of ['', 'não é json', '[]', 'null']) {
+      const b = rodar(ruim);
+      assert.equal(b.status, 0, ruim);
+      assert.equal(JSON.parse(b.stdout).decision, 'block', ruim);
+    }
+  });
   test('plugin.json não declara "hooks" (chave duplicada quebra o load)', () => {
     const pj = JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8'));
     assert.equal(pj.hooks, undefined);

@@ -8,6 +8,10 @@
  *  M4  git show origin/HEAD:… (nome curto) ⇒ `permitidos-forjado-branch-homonima` falha
  *  M5  ler a árvore local em vez da ref   ⇒ `lerguarda-origin-vence` falha
  *  M6  preservar `permitidos` local       ⇒ `lerguarda-ausente-local-permitidos-vazio` falha
+ * GM-11 T1:
+ *  M-C1 lerConfigOrigin com `git show origin/HEAD:…` (nome curto) ⇒ `config-origin-homonima-forjada` falha
+ *  M-C2 lerConfigOrigin sem try ⇒ `config-origin-ausente-x-invalida` falha
+ *  M-C3 lerConfigOrigin aceitar JSON array ⇒ `config-origin-ausente-x-invalida` falha
  */
 
 import { test, describe } from 'node:test';
@@ -18,7 +22,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { arg, ehEntrypoint } from '../lib/cli.mjs';
-import { lerJson, lerGuarda } from '../lib/config.mjs';
+import { lerJson, lerGuarda, lerConfigOrigin, MODELOS_PADRAO, ORDEM_MODELO } from '../lib/config.mjs';
 import { raizPorFs, inferirPbi, PADROES } from '../lib/git.mjs';
 import { hojeISO, diasEntre } from '../lib/datas.mjs';
 
@@ -339,5 +343,97 @@ describe('lib/config lerGuarda — forja', () => {
     }
     t.sort((x, y) => x - y);
     assert.ok(t[19] < 500, `p95 ${t[18]}ms`); // sanidade; o número vai no relatório
+  });
+});
+
+describe('lib/config lerConfigOrigin (GM-11 T1)', () => {
+  const sh = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const novo = () => {
+    const d = realpathSync(mkdtempSync(join(tmpdir(), 'gm-cfgorigin-')));
+    sh(d, 'init', '-q', '-b', 'main');
+    sh(d, 'config', 'user.email', 't@t');
+    sh(d, 'config', 'user.name', 't');
+    sh(d, 'config', 'commit.gpgsign', 'false');
+    return d;
+  };
+  /** `conteudo` (texto cru) vira o `harness.config.json` do commit apontado por `refs/remotes/origin/HEAD`; `undefined` = o arquivo não existe na ref. */
+  function repo(conteudo, local) {
+    const d = novo();
+    if (conteudo !== undefined) writeFileSync(join(d, 'harness.config.json'), conteudo);
+    else writeFileSync(join(d, 'x.txt'), 'x');
+    sh(d, 'add', '-A');
+    sh(d, 'commit', '-qm', 'base');
+    sh(d, 'update-ref', 'refs/remotes/origin/main', sh(d, 'rev-parse', 'HEAD'));
+    sh(d, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    if (local !== undefined) writeFileSync(join(d, 'harness.config.json'), local);
+    return d;
+  }
+
+  test('config-origin-ausente-x-invalida: sem remoto, sem arquivo na ref, blob não JSON, array e escalar dão nenhuma, com motivos distintos; nunca lança', () => {
+    const semRemoto = lerConfigOrigin(novo());
+    assert.deepEqual([semRemoto.cfg, semRemoto.fonte], [null, 'nenhuma']);
+    const semArquivo = lerConfigOrigin(repo(undefined));
+    assert.deepEqual([semArquivo.cfg, semArquivo.fonte], [null, 'nenhuma']);
+    const invalidos = ['{"entrega":', 'não é json', '[1,2]', '[]', 'null', '"texto"', '42', 'true', ''].map((t) => lerConfigOrigin(repo(t)));
+    for (const r of invalidos) assert.deepEqual([r.cfg, r.fonte], [null, 'nenhuma']);
+    // `invalida`: ausente (sem remoto, sem arquivo na ref) = false; corrompido (JSON ilegível, array, escalar, vazio) = true
+    assert.equal(semRemoto.invalida, false);
+    assert.equal(semArquivo.invalida, false);
+    for (const r of invalidos) assert.equal(r.invalida, true);
+    // ausente e corrompido não são a mesma coisa
+    assert.notEqual(semRemoto.motivo, invalidos[0].motivo);
+    assert.notEqual(semArquivo.motivo, invalidos[0].motivo);
+    assert.notEqual(semRemoto.motivo, semArquivo.motivo);
+    for (const r of [semRemoto, semArquivo, ...invalidos]) assert.match(r.motivo, /\S/);
+    // entrada que não é diretório: não lança
+    for (const raiz of ['/caminho/que/nao/existe/gm-cfgorigin', '', undefined, null, 5, {}]) {
+      let r;
+      assert.doesNotThrow(() => { r = lerConfigOrigin(raiz); }, String(raiz));
+      assert.deepEqual([r.cfg, r.fonte, r.invalida], [null, 'nenhuma', false]);
+    }
+  });
+
+  test('config-origin-le-a-ref: objeto da ref vence a árvore local e traz o motivo nulo', () => {
+    const d = repo(JSON.stringify({ entrega: { politica: 'continua' }, sombra: { teto: 9 } }), JSON.stringify({ entrega: { politica: 'janela' } }));
+    const r = lerConfigOrigin(d);
+    assert.equal(r.fonte, 'origin');
+    assert.equal(r.motivo, null);
+    assert.equal(r.invalida, false);
+    assert.deepEqual(r.cfg, { entrega: { politica: 'continua' }, sombra: { teto: 9 } });
+    assert.deepEqual(lerConfigOrigin(repo('{}')).cfg, {}, 'objeto vazio é config válida');
+  });
+
+  test('config-origin-homonima-forjada: branch `origin/HEAD` forjada não vale; vale a ref completa (mesma resolução de lerGuarda)', () => {
+    const d = repo(JSON.stringify({ entrega: { politica: 'sob_demanda' } }));
+    writeFileSync(join(d, 'harness.config.json'), JSON.stringify({ entrega: { politica: 'continua' } }));
+    sh(d, 'add', '-A');
+    sh(d, 'commit', '-qm', 'forja');
+    sh(d, 'branch', 'origin/HEAD', 'HEAD');
+    assert.equal(sh(d, 'rev-parse', 'origin/HEAD'), sh(d, 'rev-parse', 'HEAD'), 'premissa: o nome curto resolve para a branch forjada');
+    const r = lerConfigOrigin(d);
+    assert.equal(r.fonte, 'origin');
+    assert.deepEqual(r.cfg, { entrega: { politica: 'sob_demanda' } });
+    // e é a mesma ref que lerGuarda lê
+    assert.equal(lerGuarda(d).fonte, 'origin');
+  });
+
+  test('config-origin-symref-pendurado: origin/HEAD apontando para ref inexistente dá nenhuma', () => {
+    const d = novo();
+    writeFileSync(join(d, 'x.txt'), 'x');
+    sh(d, 'add', '-A');
+    sh(d, 'commit', '-qm', 'base');
+    sh(d, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/inexistente');
+    const r = lerConfigOrigin(d);
+    assert.deepEqual([r.cfg, r.fonte, r.invalida], [null, 'nenhuma', false]);
+  });
+
+  test('modelos-padrao-e-ordem: perfil por papel e ordem haiku < sonnet < opus < fable', () => {
+    assert.deepEqual(MODELOS_PADRAO, {
+      implementador: { modelo: 'sonnet', esforco: 'high' }, revisor: { modelo: 'opus' }, sombra: { modelo: 'opus' },
+      revisor_final: { modelo: 'fable' }, spike: { modelo: 'opus' }, basico: { modelo: 'haiku' },
+    });
+    assert.deepEqual(ORDEM_MODELO, { haiku: 0, sonnet: 1, opus: 2, fable: 3 });
+    assert.equal(Object.isFrozen(MODELOS_PADRAO) && Object.isFrozen(ORDEM_MODELO), true);
+    for (const p of Object.values(MODELOS_PADRAO)) assert.equal(Object.isFrozen(p), true);
   });
 });

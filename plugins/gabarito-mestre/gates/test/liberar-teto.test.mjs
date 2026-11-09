@@ -549,8 +549,12 @@ const casa = (matcher, nome) => {
 };
 
 test('hooks.json: UserPromptExpansion roda liberar-teto.mjs com onFailure block, e só para o próprio comando (matcher real)', () => {
-  const h = JSON.parse(lerPlugin('hooks', 'hooks.json')).hooks.UserPromptExpansion;
-  assert.ok(Array.isArray(h) && h.length === 1);
+  // GM-11 T1: o evento ganhou o grupo da emenda (matcher próprio); o do liberar continua sozinho no seu matcher.
+  const todos = JSON.parse(lerPlugin('hooks', 'hooks.json')).hooks.UserPromptExpansion;
+  assert.ok(Array.isArray(todos) && todos.length === 2);
+  const h = todos.filter((g) => /liberar-teto\.mjs/.test(JSON.stringify(g)));
+  assert.equal(h.length, 1);
+  assert.equal(todos.filter((g) => casa(g.matcher, COMANDO)).length, 1, 'só um grupo casa o liberar');
   const cmd = h[0].hooks[0];
   assert.equal(cmd.type, 'command');
   assert.match(cmd.command, /gates\/scripts\/liberar-teto\.mjs/);
