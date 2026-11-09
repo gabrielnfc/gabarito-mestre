@@ -324,6 +324,21 @@ describe('perguntar', () => {
     assert.deepEqual(eventosDe(dir), []);
   });
 
+  test('spec-symlink-para-fora-da-raiz-recusada-sem-ler', () => {
+    const r = novoRepo({ spec: null });
+    const fora = novoTmp('sombra-fora-');
+    const alvo = join(fora, 'externa.md');
+    writeFileSync(alvo, '**REQ-A-1 L.** SEGREDO_DE_FORA_DA_RAIZ\n');
+    mkdirSync(join(r.raiz, 'docs'), { recursive: true });
+    symlinkSync(alvo, join(r.raiz, 'docs', 'spec.md'));
+    const a = perguntar(r.raiz, 'x?');
+    assert.equal(a.rc, 1);
+    assert.equal(a.out.erro, 'spec_fora_da_raiz');
+    assert.ok(!JSON.stringify(a.out).includes('SEGREDO_DE_FORA_DA_RAIZ'), 'o conteúdo de fora não vaza na saída');
+    assert.deepEqual(eventosDe(r), []);
+    assert.deepEqual(arquivosSombra(r), [], 'nenhum brief gravado');
+  });
+
   test('diario-ausente-x-corrompido', () => {
     const limpo = novoRepo();
     assert.equal(perguntar(limpo.raiz, 'x?').rc, 0, 'sem eventos ⇒ grava');
@@ -577,6 +592,22 @@ describe('registrar', () => {
     assert.equal(a.out.erro, 'sem_consulta');
     assert.deepEqual(dosTipo(r, 'decisao.sombra'), []);
     assert.deepEqual(arquivosSombra(r), []);
+  });
+
+  test('registrar-hash-nunca-perguntado-com-outra-consulta-aberta', () => {
+    const r = novoRepo();
+    const outra = consulta(r, 'pergunta real?');
+    const nunca = sha256('nunca perguntado');
+    assert.notEqual(outra, nunca);
+    const antes = eventosDe(r).length;
+    const arquivosAntes = arquivosSombra(r);
+    const a = registrar(r, nunca, BOA);
+    assert.equal(a.rc, 1);
+    assert.equal(a.out.erro, 'sem_consulta');
+    assert.deepEqual(dosTipo(r, 'decisao.sombra'), []);
+    assert.equal(eventosDe(r).length, antes, 'nenhum evento novo');
+    assert.deepEqual(arquivosSombra(r), arquivosAntes, 'nenhum arquivo novo');
+    assert.equal(registrar(r, outra, BOA).rc, 0, 'o hash perguntado de fato segue aceito');
   });
 
   test('registrar-sem-fontes-nem-medicao-recusa', () => {
