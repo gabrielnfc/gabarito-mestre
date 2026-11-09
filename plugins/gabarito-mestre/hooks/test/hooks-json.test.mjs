@@ -4,7 +4,7 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, mkdtempSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -90,7 +90,7 @@ describe('hooks.json — registro dos hooks (T16)', () => {
   });
   test('emenda-user-prompt-expansion-onfailure-block: matcher ancorado, node, timeout 10, onFailure block; liberar intacto', () => {
     const grupos = cfg.UserPromptExpansion;
-    assert.deepEqual(grupos.map((g) => g.matcher), ['^gabarito-mestre:liberar$', '^gabarito-mestre:emenda$']);
+    assert.deepEqual(grupos.map((g) => g.matcher), ['^gabarito-mestre:liberar$', '^gabarito-mestre:emenda$', '^gabarito-mestre:aprovar$']);
     const g = grupos[1];
     assert.equal(g.hooks.length, 1);
     assert.equal(g.hooks[0].type, 'command');
@@ -123,6 +123,44 @@ describe('hooks.json — registro dos hooks (T16)', () => {
       assert.equal(b.status, 0, ruim);
       assert.equal(JSON.parse(b.stdout).decision, 'block', ruim);
     }
+  });
+  test('hooks-json-aprovar-onfailure-block: matcher ancorado, node, timeout 10, onFailure block; liberar e emenda intactos (E4 T1)', () => {
+    const grupos = cfg.UserPromptExpansion;
+    assert.equal(grupos.length, 3);
+    const g = grupos[2];
+    assert.equal(g.matcher, '^gabarito-mestre:aprovar$');
+    assert.equal(g.hooks.length, 1);
+    assert.equal(g.hooks[0].type, 'command');
+    assert.equal(g.hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/aprovar-spec.mjs"');
+    assert.equal(g.hooks[0].timeout, 10);
+    assert.equal(g.hooks[0].onFailure, 'block');
+    assert.ok(existsSync(join(PLUGIN, 'gates', 'scripts', 'aprovar-spec.mjs')));
+    const re = new RegExp(g.matcher);
+    assert.equal(re.test('gabarito-mestre:aprovar'), true);
+    for (const n of ['gabarito-mestre:aprovarX', 'gabarito-mestre:aprovar ', 'x:gabarito-mestre:aprovar', 'aprovar', 'gabarito-mestre:emenda', 'gabarito-mestre:liberar']) assert.equal(re.test(n), false, n);
+    // os dois anteriores não mudaram
+    assert.equal(grupos[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/liberar-teto.mjs"');
+    assert.equal(grupos[1].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/emenda-dono.mjs"');
+    assert.equal(grupos[0].hooks[0].onFailure, 'block');
+    assert.equal(grupos[1].hooks[0].onFailure, 'block');
+  });
+  test('aprovar-stub-bloqueia: o stub da T1 bloqueia sempre, com "não implementado; nada foi gravado", e não grava diário (T8 o implementa)', () => {
+    const rodar = (input, cwd) => spawnSync(process.execPath, [join(PLUGIN, 'gates', 'scripts', 'aprovar-spec.mjs')], { input, encoding: 'utf8', cwd });
+    const fora = mkdtempSync(join(tmpdir(), 'aprovar-stub-'));
+    const entradas = [
+      JSON.stringify({ hook_event_name: 'UserPromptExpansion', command_name: 'gabarito-mestre:aprovar', command_args: '', cwd: fora }),
+      JSON.stringify({ hook_event_name: 'UserPromptExpansion', command_name: 'gabarito-mestre:liberar', command_args: 'T1', cwd: fora }),
+      '', 'não é json', '[]', 'null',
+    ];
+    for (const input of entradas) {
+      const r = rodar(input, fora);
+      assert.equal(r.status, 0, input);
+      assert.equal(r.stderr, '', input);
+      const o = JSON.parse(r.stdout);
+      assert.equal(o.decision, 'block', input);
+      assert.match(o.reason, /não implementado; nada foi gravado/, input);
+    }
+    assert.deepEqual(readdirSync(fora), [], 'nada foi criado no cwd');
   });
   test('plugin.json não declara "hooks" (chave duplicada quebra o load)', () => {
     const pj = JSON.parse(readFileSync(join(PLUGIN, '.claude-plugin', 'plugin.json'), 'utf8'));

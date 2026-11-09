@@ -4,8 +4,8 @@
  *
  * Contrato de falha: `dados` ausente (`undefined`) e `dados` corrompido (qualquer valor que não seja objeto simples) têm motivos distintos;
  * campo obrigatório ausente e campo inválido também. Só vale propriedade própria: o que vem do prototype não conta (D1).
- * `null` = forma ok ou tipo sem regra. Tipos da E1/E2 não ganham regra nova, salvo os campos opcionais de `ci.resultado` e
- * `custo.medicao`; para eles, `dados` que não é objeto segue aceito (é o que o diário aceita hoje: nenhum evento existente passa a ser recusado).
+ * `null` = forma ok ou tipo sem regra. Tipos da E1/E2 não ganham regra nova, salvo os campos opcionais de `ci.resultado`,
+ * `custo.medicao` e (E4) `task.iniciada.modelo` e `task.integrada.mutacoes`; para eles, `dados` que não é objeto segue aceito (é o que o diário aceita hoje: nenhum evento existente passa a ser recusado).
  */
 
 /** `REQ-<ÁREA>-<n>`, padrão inteiro (âncoras): `REQ-A-1x` e minúscula não casam. */
@@ -18,6 +18,8 @@ const ORIGENS                    = ['dono', 'sombra'];
 const POLITICAS                    = ['continua', 'janela', 'sob_demanda'];
 const MOTIVOS_FIM                    = ['deploy', 'smoke', 'rollback'];
 const RESPOSTA_MAX = 1000;
+const MOTIVO_DEVOLVIDA_MAX = 200;
+const MODELOS_TASK                    = ['haiku', 'sonnet', 'opus', 'fable'];
 
                                    
 const ehObjeto = (v         )           => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -90,6 +92,20 @@ const inteiroPos = (o     , nome        )                => {
   if (v === undefined) return obrigatorio(nome);
   return inteiroPositivo(v) ? null : `campo \`${nome}\` inválido: esperado inteiro ≥ 1`;
 };
+
+function exigirSha256(o     )                {
+  const v = campo(o, 'sha256');
+  if (v === undefined) return obrigatorio('sha256');
+  return typeof v === 'string' && HASH_RE.test(v) ? null : 'campo `sha256` inválido: esperado sha256 em hex minúsculo (64)';
+}
+
+function motivoDevolvida(o     )                {
+  const v = campo(o, 'motivo');
+  if (v === undefined) return obrigatorio('motivo');
+  if (typeof v !== 'string' || v.trim() === '') return 'campo `motivo` inválido: esperado texto não vazio';
+  const n = [...v].length;
+  return n > MOTIVO_DEVOLVIDA_MAX ? `campo \`motivo\` inválido: ${n} caracteres, máximo ${MOTIVO_DEVOLVIDA_MAX}` : null;
+}
 
 /** Ordem de checagem estável: o 1º defeito é o motivo. */
 const primeiro = (...rs                   )                => rs.find((r) => r !== null) ?? null;
@@ -164,6 +180,9 @@ const REGRAS                             = new Map               ([
     (o) => primeiro(exigirBooleano(o, 'ok'), campo(o, 'motivo') === undefined ? null : exigirEnum(o, 'motivo', MOTIVOS_FIM)),
   ],
   ['entrega.agendada', quando],
+  // E4 (GM-12): `spec.aprovada` grava o caminho de `plano.spec` e o sha256 aprovado; `entrega.devolvida` guarda só o motivo (o comando nunca vai ao diário).
+  ['spec.aprovada', (o) => primeiro(exigirTexto(o, 'spec'), exigirSha256(o))],
+  ['entrega.devolvida', motivoDevolvida],
 ]);
 
 /** Tipos da E1/E2 que ganharam só campos opcionais: `dados` que não é objeto segue aceito (nada que existe hoje passa a ser recusado). */
@@ -173,6 +192,30 @@ const REGRAS_OPCIONAIS                             = new Map               ([
     (o) => {
       const alvo = campo(o, 'alvo');
       return alvo === undefined || alvo === 'homolog' ? null : 'campo `alvo` inválido: só `homolog` ou ausente';
+    },
+  ],
+  [
+    // E4: `modelo` opcional (a task diz com que modelo o agente foi despachado); dado antigo sem o campo segue válido.
+    'task.iniciada',
+    (o) => {
+      const modelo = campo(o, 'modelo');
+      return modelo === undefined || (typeof modelo === 'string' && MODELOS_TASK.includes(modelo))
+        ? null
+        : `campo \`modelo\` inválido: esperado um de ${MODELOS_TASK.join(' | ')}`;
+    },
+  ],
+  [
+    // E4: `mutacoes {total, mortas}` opcional (contagem do gate de mutação desta task); `mortas ≤ total`.
+    'task.integrada',
+    (o) => {
+      const m = campo(o, 'mutacoes');
+      if (m === undefined) return null;
+      const invalido = 'campo `mutacoes` inválido: esperado {total, mortas} inteiros ≥ 0 com mortas ≤ total';
+      if (!ehObjeto(m)) return invalido;
+      const total = campo(m, 'total');
+      const mortas = campo(m, 'mortas');
+      const inteiroNaoNegativo = (v         )              => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+      return inteiroNaoNegativo(total) && inteiroNaoNegativo(mortas) && mortas <= total ? null : invalido;
     },
   ],
   [

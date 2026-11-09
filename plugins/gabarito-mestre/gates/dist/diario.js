@@ -283,7 +283,7 @@ function corta(s        , n        )         {
 const ehObjeto = (x         )                               => x !== null && typeof x === 'object' && !Array.isArray(x);
 
 /** Task com trabalho em curso: o cronômetro anda enquanto o estado da T2 está aqui. */
-const EM_TRABALHO                          = new Set            (['implementando', 'concluida', 'em_revisao', 'corrigindo']);
+export const EM_TRABALHO                          = new Set            (['implementando', 'concluida', 'em_revisao', 'corrigindo']);
 const TIPOS_DE_TASK                      = new Set(['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta']);
 
 /**
@@ -327,7 +327,7 @@ function duracaoDaTask(fila          )                {
 }
 
 /** Duração por task aprovada: agrupa por task e delega a cada uma o `duracaoDaTask`. */
-function duracoes(eventos          )           {
+export function duracoes(eventos          )           {
   const porTask = new Map                  ();
   for (const e of eventos) {
     if (!TIPOS_DE_TASK.has(e.tipo) || !ehObjeto(e.dados) || typeof e.dados.task !== 'string') continue;
@@ -343,7 +343,7 @@ function duracoes(eventos          )           {
   return feitas;
 }
 
-function mediana(xs          )         {
+export function mediana(xs          )         {
   const o = [...xs].sort((a, b) => a - b);
   const m = o.length >> 1;
   return o.length % 2 === 1 ? o[m] : (o[m - 1] + o[m]) / 2;

@@ -3,8 +3,12 @@
  * Consumidores: classificar-alvo, decidir, diario, guarda e seus testes.
  */
 
+import type { DecisaoEntrega } from './entrega.ts';
+import type { EstadoTask } from './loop.ts';
+
 export type Ambiente = 'teste' | 'homolog' | 'prod' | 'desconhecido';
-export type Acao = 'leitura' | 'escrita' | 'execucao';
+/** Ação da ferramenta sobre o alvo (guarda). `Acao` é o botão do painel (E4); este era `Acao` até GM-12 T1. */
+export type AcaoFerramenta = 'leitura' | 'escrita' | 'execucao';
 export type Faixa = 'silencio' | 'log' | 'mostrar' | 'ask' | 'deny';
 export type TipoEvento =
   | 'producao.acesso'
@@ -37,7 +41,10 @@ export type TipoEvento =
   | 'entrega.smoke'
   | 'entrega.rollback'
   | 'entrega.fim'
-  | 'entrega.agendada';
+  | 'entrega.agendada'
+  // E4 (GM-12): painel
+  | 'spec.aprovada'
+  | 'entrega.devolvida';
 export type Fonte = 'origin' | 'local';
 export type AmbienteDecl = {
   hosts?: string[];
@@ -69,7 +76,7 @@ export type EntradaHook = {
 };
 export type Classificacao = {
   ambiente: Ambiente;
-  acao: Acao;
+  acao: AcaoFerramenta;
   alvo: string;
   destrutivo: boolean;
   anel: 'segredo' | 'integridade' | null;
@@ -106,7 +113,8 @@ export type PoliticaEntrega = 'continua' | 'janela' | 'sob_demanda';
 export type Janela = { dias: number[]; inicio: string; fim: string; fuso: string };
 /** `politica_entrega` do plano só aperta o que o config de `origin/HEAD` declara; afrouxar é recusado (T4, não daqui). */
 export type PoliticaPlano = { politica?: PoliticaEntrega; exige_prod: boolean; janela?: Janela };
-export type TaskPlano = { id: string; deps: string[]; arquivos: string[]; reqs?: string[]; teste_afetado?: string; mutacoes?: string };
+/** `titulo` (E4): ≤ 40 colunas, sem caractere de controle; só o painel o lê. */
+export type TaskPlano = { id: string; deps: string[]; arquivos: string[]; reqs?: string[]; teste_afetado?: string; mutacoes?: string; titulo?: string };
 export type Plano = { entrega: string; spec?: string; politica_entrega?: PoliticaPlano; tasks: TaskPlano[] };
 export type Sinais = {
   slots: number;
@@ -143,3 +151,64 @@ export type AcaoLoop =
   | { tipo: 'pousar' }
   | { tipo: 'parar'; motivo: MotivoParar; task?: string }
   | { tipo: 'concluir' };
+
+// E4 (GM-12): contratos do painel. Núcleo puro em `painel*.ts`; `EntradaPainel` é o que o CLI (`painel.mjs`) monta, `EstadoPainel` o que o render lê.
+export type CorTema = 'success' | 'warning' | 'error' | 'inactive' | 'planMode' | 'claude' | 'suggestion' | 'remember' | 'autoAccept' | 'ide';
+export type Segmento = { texto: string; cor?: CorTema };
+export type Linha = Segmento[];
+export type PacoteNomes = { nome: string; lider: string; sabio: string; nomes: string[] };
+export type UsoAgente = { contexto: number; tok: number; modelo: string | null };
+export type AgenteVivo = { id: string; type: string; description: string; status: string; uso: UsoAgente | null };
+/** `fuso`, `base`, `entregaId`, `modeloSessao`, `specSha` e `tetoSombra` só o CLI preenche (Sombra 5); o mod nunca. */
+export type EntradaPainel = {
+  /** Só preenchida pelo CLI com o loop em `concluir` (toda task integrada e sem proposta aberta). */
+  decisaoEntrega: DecisaoEntrega | null;
+  pausado: boolean;
+  contexto: { percent: number | null; tokens: number | null; window: number | null };
+  limites: { h5: number | null; d7: number | null };
+  x: number;
+  agentes: AgenteVivo[];
+  pacote: PacoteNomes;
+  notificacao: { ts: string } | { motivo: string } | null;
+  agoraMs: number;
+  fuso: string;
+  titulo: string | null;
+  politica: { politica: PoliticaEntrega; dias: number[] | null };
+  base: string;
+  entregaId: string;
+  modeloSessao: string | null;
+  /** sha256 atual de `plano.spec`. */
+  specSha: string | null;
+  /** `sombra.teto` de origin (26 padrão). */
+  tetoSombra: number;
+};
+/** Botão do painel: `comando` null quando a ação é uma instrução ao dono, sem comando que a execute. (Não confundir com `AcaoFerramenta`.) */
+export type Acao = { rotulo: string; comando: string | null };
+export type ItemDepende = { nivel: 'parar' | 'dono'; motivo: string; acoes: Acao[] };
+export type GlifoTask = '✓' | '●' | '◐' | '○' | '✗';
+export type TaskPainel = { id: string; titulo?: string; estado: EstadoTask; glifo: GlifoTask; nome?: string; papel?: Papel; modelo?: string; desdeS?: number; deps: string[] };
+export type AgentePainel = {
+  nome: string | null; papel: Papel | null; task?: string; estadoTask: EstadoTask | null; modelo: string | null;
+  ctxPct: number | null; ctxTok: number | null; tok: number | null; desdeS: number | null; cor: CorTema;
+};
+export type EstadoPainel = {
+  id: string; titulo: string | null; pacote: string;
+  plano: {
+    tasks: TaskPainel[]; feitas: number; total: number; pct: number;
+    eta: { hora: string; restanteS: number; maisMenosS: number; n: number } | null; rodadaMedia: number | null; medianaS: number | null;
+  };
+  equipe: {
+    lider: { nome: string; modelo: string | null; ctx: number | null; x: number; tok: number | null; h5: number | null; d7: number | null; narrativa: string };
+    agentes: AgentePainel[];
+    /** Sombra 6: `nome` null antes do 1º despacho do par (task, revisor); `mutacoesHoje`/`mortasHoje` null sem integração de hoje com `mutacoes`. */
+    revisoresAguardando: { nome: string | null; task: string; mutacoesHoje: number | null; mortasHoje: number | null }[];
+    sombra: { nome: string; modelo: string | null; decisoes: number; ultima: { seq: number; resposta: string; fonte: string | null } | null };
+  };
+  parado: boolean;
+  parar: { motivo: MotivoParar; texto: string; acoes: Acao[]; hora: string; emVoo: string[]; alteracoes: number } | null;
+  depende: ItemDepende[]; atencao: string[];
+  historico: { glifo: string; texto: string; hora: string; cor: CorTema }[]; ocultos: number;
+  rodape: { ci: { verde: boolean | null; execucoesHoje: number }; prod: { leituras: number; alteracoes: number }; politica: string };
+  notificacao: EntradaPainel['notificacao']; qualidade: { rodadaMedia: number | null; mortas: number | null };
+};
+export type OpcoesRender = { preset: 'esquadrao' | 'executivo'; tema: 'color' | 'mono'; narracao: boolean; largura: number };
