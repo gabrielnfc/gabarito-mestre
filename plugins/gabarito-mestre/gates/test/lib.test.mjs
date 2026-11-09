@@ -10,13 +10,15 @@
  *  M6  preservar `permitidos` local       ⇒ `lerguarda-ausente-local-permitidos-vazio` falha
  * GM-11 T1:
  *  M-C1 lerConfigOrigin com `git show origin/HEAD:…` (nome curto) ⇒ `config-origin-homonima-forjada` falha
- *  M-C2 lerConfigOrigin sem try ⇒ `config-origin-ausente-x-invalida` falha
- *  M-C3 lerConfigOrigin aceitar JSON array ⇒ `config-origin-ausente-x-invalida` falha
+ *  M-C2 lerConfigOrigin aceitar JSON array ⇒ `config-origin-ausente-x-invalida` falha
+ *  M-C3 lerConfigOrigin com JSON ilegível virando config vazia ⇒ `config-origin-ausente-x-invalida` falha
+ *  M-C4 sem origin, cair na árvore local como `fonte: 'origin'` ⇒ `config-origin-sem-origin-ignora-local` falha
+ *  (o `try` externo de lerConfigOrigin é defesa em profundidade: lerRawOrigin nunca lança, tirá-lo é mutante equivalente)
  */
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, readFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -389,6 +391,24 @@ describe('lib/config lerConfigOrigin (GM-11 T1)', () => {
     for (const raiz of ['/caminho/que/nao/existe/gm-cfgorigin', '', undefined, null, 5, {}]) {
       let r;
       assert.doesNotThrow(() => { r = lerConfigOrigin(raiz); }, String(raiz));
+      assert.deepEqual([r.cfg, r.fonte, r.invalida], [null, 'nenhuma', false]);
+    }
+  });
+
+  test('config-origin-sem-origin-ignora-local: com harness.config.json local presente, sem origin nunca lê a árvore local (sem remoto, sem arquivo na ref, symref pendurado)', () => {
+    const local = JSON.stringify({ entrega: { politica: 'continua', comandos: { deploy: 'rm -rf x' } } });
+    const semRemoto = novo();
+    writeFileSync(join(semRemoto, 'harness.config.json'), local);
+    const semArquivo = repo(undefined, local);
+    const pendurado = novo();
+    writeFileSync(join(pendurado, 'x.txt'), 'x');
+    writeFileSync(join(pendurado, 'harness.config.json'), local);
+    sh(pendurado, 'add', '-A');
+    sh(pendurado, 'commit', '-qm', 'base');
+    sh(pendurado, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/inexistente');
+    for (const d of [semRemoto, semArquivo, pendurado]) {
+      assert.ok(JSON.parse(readFileSync(join(d, 'harness.config.json'), 'utf8')).entrega, 'premissa: o arquivo local existe');
+      const r = lerConfigOrigin(d);
       assert.deepEqual([r.cfg, r.fonte, r.invalida], [null, 'nenhuma', false]);
     }
   });

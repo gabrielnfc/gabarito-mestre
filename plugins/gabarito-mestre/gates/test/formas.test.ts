@@ -81,6 +81,8 @@ test('forma-decisao-resposta-1001: resposta de 1 a 1000 caracteres', () => {
   ruim('decisao.sombra', decisao({ pergunta_enviesada: 'não' }), /pergunta_enviesada/);
   ruim('decisao.sombra', decisao({ substitui: { sessao: 's', seq: 0 } }), /substitui/);
   ruim('decisao.sombra', decisao({ substitui: 'x' }), /substitui/);
+  ruim('decisao.sombra', decisao({ substitui: { seq: 2 } }), /substitui/);
+  ruim('decisao.sombra', decisao({ substitui: { sessao: '', seq: 2 } }), /substitui/);
   ok('decisao.sombra', decisao({ substitui: { sessao: 's', seq: 2 } }));
 });
 
@@ -106,6 +108,8 @@ test('forma-desvio-evidencia-vazia: desvio e descoberta', () => {
   ruim('desvio', { ...d, evidencia: '' }, /evidencia/);
   ruim('desvio', { ...d, evidencia: '  ' }, /evidencia/);
   ruim('desvio', { ...d, arquivos: 'a.ts' }, /arquivos/);
+  const { arquivos: _a, ...semArquivos } = d;
+  ruim('desvio', semArquivos, /arquivos/);
   ruim('desvio', { ...d, arquivos: [1] }, /arquivos/);
   ruim('desvio', { ...d, causa: 'x' }, /causa/);
   ruim('desvio', { ...d, req: 'LOOP-1' }, /req/);
@@ -159,6 +163,7 @@ test('forma-entrega: inicio, smoke, rollback e agendada', () => {
   ruim('entrega.agendada', { quando: '2026-02-31T09:00:00Z' }, /quando/);
   ruim('entrega.agendada', { quando: '2026-11-10T25:00:00Z' }, /quando/);
   ruim('entrega.agendada', { quando: '2026-11-10' }, /quando/);
+  ruim('entrega.agendada', { quando: '2026-11-10T09:00:00' }, /quando/); // sem fuso: Date.parse leria na hora local da máquina
   ruim('entrega.agendada', { quando: 1762765200000 }, /quando/);
   ruim('entrega.agendada', {}, /quando/);
 });
