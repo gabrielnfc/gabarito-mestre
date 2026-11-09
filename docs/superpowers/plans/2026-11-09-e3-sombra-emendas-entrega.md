@@ -388,7 +388,7 @@ Fumaça sem LLM (P9, entra em `npm test`): plano de 3 tasks com `reqs`, pelos CL
 - [ ] **Step 1: Fumaça** `fumaca-entrega-smoke-falho`: repo descartável, origin bare com `entrega.politica: continua` e scripts falsos (deploy ok, smoke falha, rollback grava marcador), `ci --alvo homolog verde` após a última integração, `entrega.mjs executar` ⇒ rollback executado, `parar{smoke}`, comando ausente do diário. Entra em `npm test`.
 - [ ] **Step 2: Aceite 1:** TUI `--permission-mode auto`, haiku, a mesma pergunta 2× ⇒ 1 `Agent` Sombra e 1 `decisao.sombra`; a 2ª volta `cache: true`.
 - [ ] **Step 3: Aceite 2:** proposta aberta no REQ de T1: T2 independente chega a `integrada`, T1 espera com aviso no Stop; `/gabarito-mestre:emenda aprovar <seq>` ⇒ T1 segue a `concluir`.
-- [ ] **Step 4: Aceite 3** (fumaça do Step 1 pela TUI) e **Aceite 4:** `custo.medicao` do aceite 1 traz `modelo` e `papel: 'sombra'`.
+- [ ] **Step 4: Aceite 3** pela fumaça do Step 1 (TUI em `auto`: limite declarado, `sombra-aceites.md`) e **Aceite 4:** `custo.medicao` do aceite 1 traz `modelo` e `papel: 'sombra'`.
 - [ ] **Step 5: Evidência** no ledger `docs/ledgers/GM-11.md`; P2; commit `test(GM-11): fumaça de entrega e aceites da E3`.
 
 ---
