@@ -649,7 +649,7 @@ test('stop-dist-loop-ausente-avisa-sem-excecao', () => {
 test('stop-dist-diario-ausente-avisa-sem-excecao', () => {
   const raiz = repo();
   plano(raiz);
-  const r = stop(raiz, {}, { script: copiaSemDist(false, ['plano.js', 'formas.js', 'loop.js']) });
+  const r = stop(raiz, {}, { script: copiaSemDist(false, ['plano.js', 'formas.js', 'emenda.js', 'loop.js']) });
   avisa(r, /dist/);
   assert.equal(r.stderr, '');
 });
@@ -718,7 +718,8 @@ test('stop-linha-corrompida-nao-zera: nem derruba o hook', () => {
   assert.equal(contador(raiz).stops, 2, 'linha torta não virou progresso');
 });
 
-const LISTA_REQ_LOOP_5 = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'ci.resultado'];
+// GM-11 T6: o julgamento de emenda (descongela) também é progresso; a `emenda.proposta` não.
+const LISTA_REQ_LOOP_5 = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'ci.resultado', 'spec.emendada', 'emenda.rejeitada'];
 
 test('stop-lista-progresso-igual-loop: a lista única é a que proximaAcao consome (REQ-LOOP-5)', () => {
   const fonte = readFileSync(join(GATES, 'src', 'loop.ts'), 'utf8');
@@ -726,7 +727,7 @@ test('stop-lista-progresso-igual-loop: a lista única é a que proximaAcao conso
   assert.ok(m, 'loop.ts perdeu TIPOS_DE_TASK');
   const deTask = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
   assert.ok(/e\.tipo === 'ci\.resultado'/.test(fonte), 'loop.ts deixou de consumir ci.resultado');
-  assert.deepEqual([...TIPOS_DE_PROGRESSO].sort(), [...deTask, 'ci.resultado'].sort());
+  assert.deepEqual([...TIPOS_DE_PROGRESSO].sort(), [...deTask, 'ci.resultado', 'spec.emendada', 'emenda.rejeitada'].sort());
   // tirar qualquer tipo da fonte reprova: a lista é a da spec, item a item
   assert.deepEqual([...TIPOS_DE_PROGRESSO].sort(), [...LISTA_REQ_LOOP_5].sort());
 });
@@ -742,7 +743,7 @@ test('stop-e-mod-nao-tem-lista-propria: stop-loop.mjs e mod/gabarito.mjs não re
 test('stop-loop-sem-lista-de-progresso-avisa-sem-block: nunca conta com lista vazia', () => {
   const raiz = repo();
   plano(raiz);
-  const script = copiaSemDist(false, ['plano.js', 'formas.js', 'diario.js']);
+  const script = copiaSemDist(false, ['plano.js', 'formas.js', 'emenda.js', 'diario.js']);
   const dist = join(dirname(dirname(script)), 'dist');
   const js = readFileSync(join(GATES, 'dist', 'loop.js'), 'utf8').replace(/^export const TIPOS_DE_PROGRESSO\b.*$/m, '');
   assert.ok(!/export const TIPOS_DE_PROGRESSO/.test(js), 'preparo: export removido');
