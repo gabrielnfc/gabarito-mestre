@@ -20,3 +20,6 @@ docs/workflow-true.html
 
 # E2 (GM-10): worktrees das tasks (uma por task, criadas pelo loop)
 .harness/worktrees/
+
+# arquivos residuais de uso próprio do Claude (temporários, scripts, saídas) — nunca viajam pelo git
+.claude-tmp/

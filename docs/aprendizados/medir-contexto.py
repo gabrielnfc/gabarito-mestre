@@ -3,7 +3,7 @@
 # Uso: medir-contexto.py <prefixo do id da sessão>. Só imprime números.
 import glob, json, os, sys
 
-pasta = os.path.expanduser('~/.claude/projects/' + os.getcwd().replace('/', '-').replace('_', '-'))
+pasta = os.path.join(os.environ.get('CLAUDE_CONFIG_DIR') or os.path.expanduser('~/.claude'), 'projects', '' + os.getcwd().replace('/', '-').replace('_', '-'))
 arquivos = glob.glob(f'{pasta}/{sys.argv[1]}*.jsonl')
 if len(arquivos) != 1:
     sys.exit(f'transcript: {len(arquivos)} encontrados')
