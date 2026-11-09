@@ -40,7 +40,7 @@ test('fumaca-sombra-e-emenda: consulta, pendente, registrar, cache, congelamento
   assert.equal(o.integrarT1.j.merge, true);
   assert.deepEqual(o.proxima4.j.acao.itens.map((i) => [i.task, i.papel]), [['T3', 'implementador']]);
   assert.deepEqual(o.final.j.acao, { tipo: 'concluir' });
-  // medido: a integração de T1 é posterior ao julgamento do dono; por isso o fim não traz aviso de emenda
+  // medido: T1 foi aprovada contra a spec antiga e integrada sem revisão nova: o aviso persiste até `concluir`
   const pos = (tipo, filtro = () => true) => o.eventos.findIndex((e) => e.tipo === tipo && filtro(e));
   const ordenados = [...o.eventos].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
   const idx = (e) => ordenados.indexOf(e);
@@ -48,6 +48,10 @@ test('fumaca-sombra-e-emenda: consulta, pendente, registrar, cache, congelamento
   const integradaT1 = o.eventos[pos('task.integrada', (e) => e.dados.task === 'T1')];
   assert.deepEqual(emendada.dados, { proposta_seq: 1, origem: 'dono' });
   assert.ok(idx(integradaT1) > idx(emendada), 'task.integrada de T1 posterior à spec.emendada');
-  assert.ok(!(o.final.j.aviso ?? []).some((a) => /emendado/.test(a)), JSON.stringify(o.final.j.aviso));
+  const aprovadoT1 = o.eventos[pos('review.veredito', (e) => e.dados.task === 'T1' && e.dados.veredito === 'APROVADO')];
+  assert.ok(idx(aprovadoT1) < idx(emendada), 'o APROVADO de T1 é anterior à spec.emendada');
+  const AVISO = ['Atenção: REQ-A-1 emendado (#1) depois de T1 integrada/aprovada: acrescente task de ajuste'];
+  assert.deepEqual((o.proxima4.j.aviso ?? []).filter((a) => /emendado/.test(a)), AVISO);
+  assert.deepEqual((o.final.j.aviso ?? []).filter((a) => /emendado/.test(a)), AVISO);
   assert.equal(o.temaPlano, 3);
 });

@@ -2628,6 +2628,18 @@ describe('E3 T10: proxima, modelo, decisões, emendas e avisos', () => {
     assert.ok(isAbsolute(t1.decisoes[1].arquivo));
   });
 
+  test('item-decisao-fora-da-raiz-omitida: decisão com `arquivo` que resolve fora da raiz do repositório não vira caminho do item', () => {
+    const amb = ambReq();
+    const dec = (h, arquivo, resp) => ['decisao.sombra', { pergunta_hash: h, req: 'REQ-A-1', resposta: resp, arquivo, pergunta_enviesada: false, fontes: ['spec'] }];
+    grava(amb, relogioDe(), [
+      ['sombra.consulta', { pergunta_hash: H('1'), req: 'REQ-A-1' }], dec(H('1'), '../../x.resposta.md', 'fora por ..'),
+      ['sombra.consulta', { pergunta_hash: H('2'), req: 'REQ-A-1' }], dec(H('2'), '.harness/entregas/GM-10/sombra/dentro.resposta.md', 'dentro'),
+    ]);
+    const t1 = amb.cli(['proxima', '--vivos', '0']).j.acao.itens.find((i) => i.task === 'T1');
+    assert.deepEqual(t1.decisoes.map((d) => d.resposta), ['dentro'], JSON.stringify(t1.decisoes));
+    for (const d of t1.decisoes) assert.ok(d.arquivo.startsWith(amb.dir), d.arquivo);
+  });
+
   test('item-omite-decisao-anterior-a-emenda: só a consulta posterior à última emenda do REQ da âncora entra', () => {
     const amb = ambReq();
     const rel = relogioDe();
@@ -2760,6 +2772,18 @@ describe('E3 T10: proxima, modelo, decisões, emendas e avisos', () => {
     const amb = ambiente({ plano: PLANO_REQ });
     grava(amb, relogioDe(), [...IMPL_E('T1'), ['emendas', 'emenda.proposta', PROPOSTA()], ['dono', 'spec.emendada', { proposta_seq: 1, origem: 'dono' }], APROVA_E('T1'), INTEGRA_E('T1')]);
     assert.deepEqual(AVISO_EMENDA(amb.cli(['proxima', '--vivos', '0']).j, /emendado/), []);
+  });
+
+  test('proxima-aviso-emenda-aprovada-antes-integrada-depois: a referência é o último APROVADO; integrar depois da emenda sem revisão nova não cala', () => {
+    const amb = ambiente({ plano: PLANO_REQ });
+    grava(amb, relogioDe(), [...IMPL_E('T1'), APROVA_E('T1'), ['emendas', 'emenda.proposta', PROPOSTA()], ['dono', 'spec.emendada', { proposta_seq: 1, origem: 'dono' }], INTEGRA_E('T1')]);
+    assert.deepEqual(AVISO_EMENDA(amb.cli(['proxima', '--vivos', '0']).j, /emendado/), ['Atenção: REQ-A-1 emendado (#1) depois de T1 integrada/aprovada: acrescente task de ajuste']);
+  });
+
+  test('proxima-aviso-cala-so-com-ajuste-revisado: outra task integrada depois do julgamento mas aprovada antes dele não cala', () => {
+    const amb = ambiente({ plano: PLANO_AJUSTE });
+    grava(amb, relogioDe(), [...IMPL_E('T1'), APROVA_E('T1'), INTEGRA_E('T1'), ...IMPL_E('T5'), APROVA_E('T5'), ['emendas', 'emenda.proposta', PROPOSTA()], ['dono', 'spec.emendada', { proposta_seq: 1, origem: 'dono' }], INTEGRA_E('T5')]);
+    assert.deepEqual(AVISO_EMENDA(amb.cli(['proxima', '--vivos', '0']).j, /emendado/).map((a) => /depois de (T\d)/.exec(a)[1]), ['T1', 'T5']);
   });
 
   test('proxima-aviso-cala-com-task-de-ajuste: outra task com o REQ pendente, ou integrada depois do julgamento, cala; integrada antes avisa as duas', () => {

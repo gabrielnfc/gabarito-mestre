@@ -1080,8 +1080,9 @@ function julgamentosAprovados(ord, est) {
 }
 
 /**
- * Aviso de emenda em task já feita: `spec.emendada` POSTERIOR, em `ordenar`, à `task.integrada` (ou ao último `review.veredito APROVADO`) de task com o REQ.
- * Cala enquanto outra task do plano com o mesmo REQ está fora de `integrada` (o ajuste está a caminho) ou foi integrada depois do julgamento (o ajuste foi feito).
+ * Aviso de emenda em task já feita: `spec.emendada` POSTERIOR, em `ordenar`, ao último `review.veredito APROVADO` de task com o REQ (`aprovada` ou `integrada`;
+ * a integração não passa por revisão, então não prova nada sobre a spec: Sombra C5). Cala enquanto OUTRA task do plano com o mesmo REQ está fora de
+ * `integrada` (o ajuste está a caminho) ou teve o seu último APROVADO depois do julgamento (o ajuste foi revisado contra a spec emendada).
  */
 function avisosDeEmenda(plano, ord, est) {
   const julg = julgamentosAprovados(ord, est);
@@ -1094,7 +1095,6 @@ function avisosDeEmenda(plano, ord, est) {
     const ultimo = (f) => ord.findLastIndex((e) => e.dados?.task === t.id && f(e));
     info.set(t.id, {
       estado: r.estado,
-      integrada: ultimo((e) => e.tipo === 'task.integrada'),
       aprovada: ultimo((e) => e.tipo === 'review.veredito' && e.dados.veredito === 'APROVADO'),
     });
   }
@@ -1103,9 +1103,8 @@ function avisosDeEmenda(plano, ord, est) {
     const comReq = plano.tasks.filter((t) => Array.isArray(t.reqs) && t.reqs.includes(j.req) && info.has(t.id));
     for (const t of comReq) {
       const inf = info.get(t.id);
-      const ref = inf.integrada >= 0 ? inf.integrada : inf.aprovada;
-      if (ref < 0 || j.idx <= ref) continue;
-      const cala = comReq.some((u) => u.id !== t.id && (info.get(u.id).estado !== 'integrada' || info.get(u.id).integrada > j.idx));
+      if (inf.aprovada < 0 || j.idx <= inf.aprovada) continue;
+      const cala = comReq.some((u) => u.id !== t.id && (info.get(u.id).estado !== 'integrada' || info.get(u.id).aprovada > j.idx));
       if (!cala) avisos.push(`Atenção: ${j.req} emendado (#${j.seq}) depois de ${t.id} integrada/aprovada: acrescente task de ajuste`);
     }
   }
