@@ -9,7 +9,7 @@
  * Nada de relógio nem carga decide resultado: cada passo espera o processo que terminou.
  */
 import { spawnSync, execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, copyFileSync, readFileSync, mkdtempSync, realpathSync } from 'node:fs';
+import { mkdirSync, writeFileSync, copyFileSync, readFileSync, mkdtempSync, realpathSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -119,3 +119,67 @@ export function caminhar() {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) process.stdout.write(`${JSON.stringify(caminhar())}\n`);
+
+/**
+ * Caminhada da entrega com smoke falho (GM-11 T15, P9), pelos CLIs REAIS `loop.mjs` e `entrega.mjs` e por `dist/`, em repo descartável com `origin`
+ * bare (o config de entrega vem de `origin/HEAD`). SIMULADO: deploy, smoke e rollback (scripts que só gravam marcadores fora do repo) e o modelo.
+ * O deploy falso copia `entrega.ancora` no momento em que roda: prova que a âncora existe ANTES do deploy.
+ */
+export function caminharEntregaFalha() {
+  const sentinela = 'SENTINELA_ARGV_fumaca_7c1e';
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'fumaca-entrega-')));
+  const repo = join(dir, 'repo');
+  const marcas = join(dir, 'marcas');
+  mkdirSync(repo);
+  mkdirSync(marcas);
+  git(repo, 'init', '-q', '-b', 'enabler/GM-99-fumaca');
+  mkdirSync(join(repo, 'src'));
+  mkdirSync(join(repo, 'fake'));
+  writeFileSync(join(repo, 'src', '.gitkeep'), '');
+  writeFileSync(join(repo, '.gitignore'), '.harness/\n');
+  const ancora = join(repo, '.harness', 'entregas', 'GM-99', 'entrega.ancora');
+  const corpos = {
+    deploy: `cp '${ancora}' "$M/ancora-no-deploy.json"\ntouch "$M/deploy"`,
+    smoke: 'touch "$M/smoke"\nexit 1',
+    rollback: 'touch "$M/rollback"',
+  };
+  for (const [nome, corpo] of Object.entries(corpos)) writeFileSync(join(repo, 'fake', `${nome}.sh`), `M='${marcas}'\necho "$0|$PWD" >> "$M/exec.log"\n${corpo}\n`);
+  const comandos = {};
+  for (const nome of ['deploy', 'smoke', 'rollback']) comandos[nome] = { argv: ['bash', join(repo, 'fake', `${nome}.sh`), ...(nome === 'deploy' ? [sentinela] : [])], timeout_s: 20 };
+  writeFileSync(join(repo, 'harness.config.json'), `${JSON.stringify({ gates: { suites: ["echo '# pass 1'"] }, loop: { slots: 2 }, entrega: { politica: 'continua', base: 'enabler/GM-99-fumaca', comandos } })}\n`);
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'chore: base');
+  const bare = join(dir, 'origin.git');
+  mkdirSync(bare);
+  git(bare, 'init', '-q', '--bare', '-b', 'enabler/GM-99-fumaca');
+  git(repo, 'remote', 'add', 'origin', bare);
+  git(repo, 'push', '-q', 'origin', 'enabler/GM-99-fumaca');
+  git(repo, 'remote', 'set-head', 'origin', 'enabler/GM-99-fumaca');
+  const entregas = join(repo, '.harness', 'entregas', 'GM-99');
+  mkdirSync(entregas, { recursive: true });
+  writeFileSync(join(entregas, 'plano.json'), JSON.stringify({ entrega: 'GM-99', tasks: [{ id: 'T1', deps: [], arquivos: ['src/a.mjs'] }] }));
+  writeFileSync(join(repo, '.harness', 'capacidade.json'), JSON.stringify({ hostname: 'host-fumaca', slots_max: 2, rss_pico_mb: 500, tmpdir_mb: 100, cpu_total: 100, load_medido: 1 }));
+  const r = { dir: repo, entregas };
+  const entrega = (...args) => cli('entrega.mjs', repo, [...args, '--entrega', 'GM-99']);
+
+  aprovar(r, 'T1', 'src/a.mjs');
+  ok(loop(r, 'integrar', 'T1'), 'integrar T1');
+  ok(loop(r, 'ci', 'verde', '--alvo', 'homolog'), 'ci verde homolog');
+  const obs = { sentinela, dir: repo };
+  obs.decidirAntes = entrega('decidir');
+  const antes = diario.ler(entregas).length;
+  obs.executar = entrega('executar');
+  obs.eventosEntrega = diario.ler(entregas).slice(antes);
+  obs.marcas = readdirSync(marcas).filter((n) => n !== 'exec.log' && n !== 'ancora-no-deploy.json').sort();
+  obs.execLog = readFileSync(join(marcas, 'exec.log'), 'utf8').split('\n').filter(Boolean);
+  obs.ancoraNoDeploy = JSON.parse(readFileSync(join(marcas, 'ancora-no-deploy.json'), 'utf8'));
+  obs.ancoraFinal = JSON.parse(readFileSync(ancora, 'utf8'));
+  const arquivosDiario = readdirSync(entregas).filter((n) => /^events\..+\.jsonl$/.test(n));
+  obs.textoDiario = arquivosDiario.map((n) => readFileSync(join(entregas, n), 'utf8')).join('\n');
+  obs.linhaInicio = readFileSync(join(entregas, 'events.loop.jsonl'), 'utf8').split('\n').filter(Boolean).find((l) => JSON.parse(l).tipo === 'entrega.inicio');
+  obs.proximaDepois = ok(loop(r, 'proxima', '--vivos', '0'), 'proxima depois');
+  obs.segundo = entrega('executar');
+  obs.decidirDepois = entrega('decidir');
+  obs.lockSolto = !existsSync(join(entregas, 'entrega.lock'));
+  return obs;
+}

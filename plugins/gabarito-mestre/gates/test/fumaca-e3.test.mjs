@@ -6,7 +6,10 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { caminhar } from './fumaca-e3/caminhada.mjs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { caminhar, caminharEntregaFalha } from './fumaca-e3/caminhada.mjs';
 
 test('fumaca-sombra-e-emenda: consulta, pendente, registrar, cache, congelamento, hook do dono e conclusão', () => {
   const o = caminhar();
@@ -54,4 +57,44 @@ test('fumaca-sombra-e-emenda: consulta, pendente, registrar, cache, congelamento
   assert.deepEqual((o.proxima4.j.aviso ?? []).filter((a) => /emendado/.test(a)), AVISO);
   assert.deepEqual((o.final.j.aviso ?? []).filter((a) => /emendado/.test(a)), AVISO);
   assert.equal(o.temaPlano, 3);
+});
+
+test('fumaca-entrega-smoke-falho: ci homolog verde, executar com smoke falho ⇒ rollback executado, parar{smoke}, comando fora do diário, âncora antes do deploy', () => {
+  const o = caminharEntregaFalha();
+  // antes de subir: a política `continua` com homolog verde posterior à última integração decide `subir`
+  assert.deepEqual(o.decidirAntes.j.decisao, { tipo: 'subir' });
+  assert.equal(o.decidirAntes.j.politica, 'continua');
+  // executar: o smoke falhou e o rollback FOI executado (marcador gravado pelo script falso, não só o evento)
+  assert.equal(o.executar.rc, 1);
+  assert.equal(o.executar.j.ok, false);
+  assert.equal(o.executar.j.erro, 'etapa_falhou');
+  assert.deepEqual(o.executar.j.etapas.map((e) => [e.etapa, e.ok, e.falha ?? null]), [['deploy', true, null], ['smoke', false, 'rc'], ['rollback', true, null]]);
+  assert.deepEqual(o.marcas, ['deploy', 'rollback', 'smoke']);
+  assert.deepEqual(o.execLog.map((l) => l.split('|')[0].split('/').at(-1)), ['deploy.sh', 'smoke.sh', 'rollback.sh'], 'ordem: deploy, smoke, rollback');
+  // diário: smoke falho, rollback ok, fim {ok:false, motivo:smoke}, parar{smoke}
+  const tipos = o.eventosEntrega.map((e) => e.tipo);
+  assert.deepEqual(tipos, ['producao.acesso', 'entrega.inicio', 'entrega.smoke', 'producao.acesso', 'entrega.rollback', 'entrega.fim', 'loop.parar']);
+  assert.deepEqual(o.eventosEntrega.find((e) => e.tipo === 'entrega.smoke').dados, { ok: false });
+  assert.deepEqual(o.eventosEntrega.find((e) => e.tipo === 'entrega.rollback').dados, { ok: true });
+  assert.deepEqual(o.eventosEntrega.find((e) => e.tipo === 'entrega.fim').dados, { ok: false, motivo: 'smoke' });
+  assert.deepEqual(o.eventosEntrega.find((e) => e.tipo === 'loop.parar').dados, { motivo: 'smoke' });
+  assert.deepEqual(o.eventosEntrega.filter((e) => e.tipo === 'producao.acesso').map((e) => e.dados.alvo), ['entrega:deploy', 'entrega:rollback']);
+  // o comando (argv com a sentinela) vai ao stdout, nunca ao diário
+  assert.ok(o.executar.j.etapas[0].comando.includes(o.sentinela), 'o comando está no stdout');
+  assert.equal(o.textoDiario.includes(o.sentinela), false, 'o comando não entra no diário');
+  assert.equal(o.textoDiario.includes('deploy.sh'), false);
+  // âncora: gravada ANTES do deploy (o deploy falso lê a âncora e registra o que viu) e aponta o entrega.inicio real
+  assert.equal(o.ancoraNoDeploy.sessao, 'loop');
+  const inicio = o.eventosEntrega.find((e) => e.tipo === 'entrega.inicio');
+  assert.equal(o.ancoraNoDeploy.seq, inicio.seq);
+  assert.deepEqual(o.ancoraFinal, o.ancoraNoDeploy);
+  assert.equal(o.ancoraFinal.hash, createHash('sha256').update(o.linhaInicio).digest('hex'));
+  // depois: a próxima decisão e o loop param por smoke; sem 2º deploy
+  // `proxima` (estado das tasks) segue em `concluir`: a parada da entrega é a decisão de `entrega.mjs` (parar{smoke}), derivada do diário
+  assert.deepEqual(o.proximaDepois.j.acao, { tipo: 'concluir' });
+  assert.deepEqual(o.decidirDepois.j.decisao, { tipo: 'parar', motivo: 'smoke' });
+  assert.equal(o.lockSolto, true, 'o lock da entrega foi solto');
+  assert.equal(o.segundo.j.erro, 'nao_subiu');
+  assert.deepEqual(o.segundo.j.decisao, { tipo: 'parar', motivo: 'smoke' });
+  assert.equal(o.execLog.length, 3, 'o 2º executar não rodou nada');
 });
