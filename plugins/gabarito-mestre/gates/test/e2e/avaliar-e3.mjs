@@ -12,7 +12,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSyn
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { diario, linhas, mensagens, pastaTranscripts, proxima } from './avaliar.mjs';
+import { diario, pastaTranscripts, proxima } from './avaliar.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const PERGUNTA = 'A função soma aceita números negativos?';
@@ -111,12 +111,39 @@ function transcripts(repo) {
 
 const sessoesDoDiario = (ev) => [...new Set(ev.map((e) => e.sessao))].filter((s) => /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(String(s)));
 
+/** Problemas de leitura dos transcripts: `ausentes` (sessão do diário sem arquivo) e `ilegiveis` (arquivo ⇒ nº de linhas que não são JSON). Ausente ≠ corrompido. */
+const novosProblemas = () => ({ ausentes: new Set(), ilegiveis: new Map() });
+
+/** Objetos de um transcript. Arquivo ausente ⇒ `[]` e registrado em `prob.ausentes`; linha ilegível ⇒ registrada em `prob.ilegiveis` (nunca descartada em silêncio). */
+function lerTranscript(arquivo, prob) {
+  if (!existsSync(arquivo)) { prob.ausentes.add(arquivo); return []; }
+  const objs = [];
+  let ruins = 0;
+  for (const l of readFileSync(arquivo, 'utf8').split('\n').filter(Boolean)) {
+    try { objs.push(JSON.parse(l)); } catch { ruins += 1; }
+  }
+  if (ruins > 0) prob.ilegiveis.set(arquivo, ruins); else prob.ilegiveis.delete(arquivo);
+  return objs;
+}
+
+/** Mensagens do assistente agrupadas por `message.id` (cada bloco é uma linha do transcript). */
+function mensagens(arquivo, prob) {
+  const porId = new Map();
+  for (const o of lerTranscript(arquivo, prob)) {
+    if (o.type !== 'assistant' || !o.message?.id) continue;
+    const m = porId.get(o.message.id) ?? { id: o.message.id, ts: o.timestamp, blocos: [] };
+    for (const b of o.message.content ?? []) if (b.type === 'tool_use') m.blocos.push({ nome: b.name, input: b.input ?? {} });
+    porId.set(o.message.id, m);
+  }
+  return [...porId.values()];
+}
+
 /** Blocos `Agent` do ORQUESTRADOR (transcripts de sessão, não de subagent), sem repetir `message.id`. */
-function agentes(repo, ev) {
+function agentes(repo, ev, prob) {
   const { pasta } = transcripts(repo);
   const out = [];
   for (const sid of sessoesDoDiario(ev)) {
-    for (const m of mensagens(join(pasta, `${sid}.jsonl`))) {
+    for (const m of mensagens(join(pasta, `${sid}.jsonl`), prob)) {
       for (const b of m.blocos) if (b.nome === 'Agent' || b.nome === 'Task') out.push({ ts: m.ts, tipo: String(b.input.subagent_type ?? ''), modelo: b.input.model ?? null });
     }
   }
@@ -124,12 +151,12 @@ function agentes(repo, ev) {
 }
 
 /** Resultados de Bash cujo comando contém `trecho`, na ordem do transcript: o texto devolvido ao modelo. */
-function resultadosBash(repo, ev, trecho) {
+function resultadosBash(repo, ev, trecho, prob) {
   const { pasta } = transcripts(repo);
   const out = [];
   for (const sid of sessoesDoDiario(ev)) {
     const usos = new Map();
-    for (const o of linhas(join(pasta, `${sid}.jsonl`))) {
+    for (const o of lerTranscript(join(pasta, `${sid}.jsonl`), prob)) {
       const c = o.message?.content;
       if (!Array.isArray(c)) continue;
       for (const b of c) {
@@ -154,11 +181,11 @@ async function estado(repo, rundir, plugin, modo) {
   const integradas = ev.filter((e) => e.tipo === 'task.integrada').map((e) => e.dados.task);
   const out = {
     eventos: dia.ok ? ev.length : -1, idle_s: idle, transcripts: t.achados.length, acao: p.ok ? p.tipo : 'erro', motivo: p.ok ? (p.acao?.motivo ?? null) : null,
-    decisoes: n('decisao.sombra'), consultas: n('sombra.consulta'), agentes_sombra: dia.ok ? agentes(repo, ev).filter((a) => /gabarito-sombra$/.test(a.tipo)).length : 0,
+    decisoes: n('decisao.sombra'), consultas: n('sombra.consulta'), agentes_sombra: dia.ok ? agentes(repo, ev, novosProblemas()).filter((a) => /gabarito-sombra$/.test(a.tipo)).length : 0,
     integradas, emendada: n('spec.emendada'), fim_entrega: n('entrega.fim'), parar: n('loop.parar'),
   };
   // `fim`: o que cada modo precisa ter acontecido para o aceite poder encerrar (o .exp ainda espera `idle_s`)
-  if (modo === 'sombra') out.fim = out.decisoes >= 1 && resultadosBash(repo, ev, 'sombra.mjs').filter((r) => /"cache":\s*true/.test(r.texto)).length >= 1;
+  if (modo === 'sombra') out.fim = out.decisoes >= 1 && resultadosBash(repo, ev, 'sombra.mjs', novosProblemas()).filter((r) => /"cache":\s*true/.test(r.texto)).length >= 1;
   if (modo === 'emenda') { out.espera_emenda = out.acao === 'esperar' && out.motivo === 'emenda' && integradas.includes('T2') && out.emendada === 0; out.fim = out.acao === 'concluir' && out.emendada === 1; }
   if (modo === 'entrega') out.fim = out.fim_entrega >= 1;
   console.log(JSON.stringify(out));
@@ -175,31 +202,43 @@ async function relatorio(qual, repo, rundir, plugin) {
   const exp = existsSync(join(rundir, 'exp.status')) ? readFileSync(join(rundir, 'exp.status'), 'utf8').trim() : 'sem exp.status';
   const falhas = [];
   const naoProvado = [];
-  if (/^NAO_PROVADO/.test(exp)) naoProvado.push(`exp.status ${exp}`);
+  // sessão que não terminou (TRAVADO) ou que o .exp marcou não provada: a evidência pode estar incompleta, não reprovada
+  if (/^(NAO_PROVADO|TRAVADO)/.test(exp)) naoProvado.push(`exp.status ${exp}`);
   const debug = existsSync(join(rundir, 'debug.log')) ? readFileSync(join(rundir, 'debug.log'), 'utf8').split('\n') : [];
   const stopLinhas = debug.filter((l) => /"Hook Stop \(Stop\) success/.test(l));
-  const ag = agentes(repo, ev);
+  const bloqueio = debug.find((l) => /Auto mode classifier blocked action/.test(l));
+  const prob = novosProblemas();
+  const ag = agentes(repo, ev, prob);
+  // transcript que falta é prova que falta (NAO_PROVADO); linha ilegível é transcript corrompido (REPROVADO): nunca zero nem linha pulada (M1)
+  const daTranscript = []; // falhas que só valem se o transcript foi lido: com transcript ausente viram "não provado"
+  const veredictar = (falhas) => {
+    if (prob.ausentes.size > 0) naoProvado.push(...daTranscript.map((f) => `sem transcript para afirmar: ${f}`));
+    else falhas.push(...daTranscript);
+    for (const a of [...prob.ausentes].sort()) naoProvado.push(`transcript ausente: ${a}`);
+    for (const [a, n] of [...prob.ilegiveis].sort()) falhas.push(`transcript ilegível: ${a} tem ${n} ${n === 1 ? 'linha' : 'linhas'} que não ${n === 1 ? 'é' : 'são'} JSON`);
+    return veredito(falhas, naoProvado);
+  };
   const sombras = ag.filter((a) => /gabarito-sombra$/.test(a.tipo));
   const base = { aceite: qual, exp_status: exp, eventos: ev.length, tipos: tiposDe(ev).filter((t) => !/^custo|^guarda/.test(t)) };
 
   if (qual === '1') {
-    const res = resultadosBash(repo, ev, 'sombra.mjs');
+    const res = resultadosBash(repo, ev, 'sombra.mjs', prob);
     const perguntas = res.filter((r) => /perguntar/.test(r.comando));
     const cache = perguntas.filter((r) => /"cache":\s*true/.test(r.texto));
     const decisoes = ev.filter((e) => e.tipo === 'decisao.sombra');
     const out = { ...base, agentes_sombra: sombras.length, modelo_do_agent: sombras.map((a) => a.modelo), perguntar_chamadas: perguntas.length, perguntar_cache_true: cache.length, decisao_sombra: decisoes.length, consultas: n('sombra.consulta'), cache_na_2a: perguntas.length >= 2 && /"cache":\s*true/.test(perguntas.at(-1).texto) && !/"cache":\s*true/.test(perguntas[0].texto) };
-    if (sombras.length !== 1) falhas.push(`Agent Sombra = ${sombras.length}, esperado 1`);
+    if (sombras.length !== 1) daTranscript.push(`Agent Sombra = ${sombras.length}, esperado 1`);
     if (decisoes.length !== 1) falhas.push(`decisao.sombra = ${decisoes.length}, esperado 1`);
-    if (!out.cache_na_2a) falhas.push('a 2ª pergunta não voltou cache:true (ou a 1ª já voltou)');
-    return saida({ ...out, falhas, veredito: veredito(falhas, naoProvado) });
+    if (!out.cache_na_2a) daTranscript.push('a 2ª pergunta não voltou cache:true (ou a 1ª já voltou)');
+    return saida({ ...out, falhas, nao_provado: naoProvado, veredito: veredictar(falhas) });
   }
   if (qual === '4') {
     const med = ev.filter((e) => e.tipo === 'custo.medicao' && String(e.agente).startsWith('subagent:'));
     const sombra = med.filter((e) => e.dados?.papel === 'sombra');
-    const out = { ...base, medicoes_subagent: med.map((e) => ({ agente: String(e.agente).slice(0, 18), papel: e.dados?.papel ?? null, modelo: e.dados?.modelo ?? null, output_tokens: e.dados?.output_tokens ?? null })), medicoes_papel_sombra: sombra.length, mod_ativo_nesta_sessao: existsSync(join(rundir, 'mod.jsonl')) };
+    const out = { ...base, medicoes_subagent: med.map((e) => ({ agente: String(e.agente).slice(0, 18), papel: e.dados?.papel ?? null, modelo: e.dados?.modelo ?? null, output_tokens: e.dados?.output_tokens ?? null })), medicoes_papel_sombra: sombra.length, mod_ativo_nesta_sessao: existsSync(join(rundir, 'mod.jsonl')) || debug.some((l) => /hooks module gabarito-mestre\S* loaded/.test(l)) };
     if (sombra.length < 1) falhas.push("nenhum custo.medicao com papel: 'sombra'");
     else if (!sombra.every((e) => typeof e.dados.modelo === 'string' && e.dados.modelo !== '')) falhas.push('custo.medicao de Sombra sem modelo');
-    return saida({ ...out, falhas, veredito: veredito(falhas, naoProvado) });
+    return saida({ ...out, falhas, nao_provado: naoProvado, veredito: veredictar(falhas) });
   }
   if (qual === '2') {
     const pos = (t, f = () => true) => ev.findIndex((e) => e.tipo === t && f(e));
@@ -217,7 +256,7 @@ async function relatorio(qual, repo, rundir, plugin) {
     if (!(iT1 > iEm && iEm >= 0)) falhas.push('T1 não integrou depois da emenda');
     if (out.acao_final !== 'concluir') falhas.push(`proxima final = ${out.acao_final}, esperado concluir`);
     if (avisosStop < 1) naoProvado.push('nenhum Stop com aviso de emenda no debug.log');
-    return saida({ ...out, falhas, veredito: veredito(falhas, naoProvado) });
+    return saida({ ...out, falhas, nao_provado: naoProvado, veredito: veredictar(falhas) });
   }
   if (qual === '3') {
     const marcasDir = join(dirname(repo), 'marcas');
@@ -231,7 +270,12 @@ async function relatorio(qual, repo, rundir, plugin) {
     if (!ev.some((e) => e.tipo === 'entrega.fim' && e.dados?.ok === false && e.dados?.motivo === 'smoke')) falhas.push('sem entrega.fim{ok:false, motivo:smoke}');
     if (!ancora) falhas.push('sem entrega.ancora');
     if (out.comando_no_diario) falhas.push('comando de deploy no diário');
-    return saida({ ...out, falhas, veredito: veredito(falhas, naoProvado) });
+    // nada rodou porque o classificador negou o deploy: o aceite não foi exercido (NAO_PROVADO), não falhou. Se algo rodou, a falha é real.
+    if (bloqueio && marcas.length === 0 && entregaEv.length === 0 && !ancora) {
+      naoProvado.push(`classificador de modo automático negou a ação no debug.log: ${bloqueio.replace(/^\S+\s+\[\w+\]\s+/, '')}`);
+      falhas.length = 0;
+    }
+    return saida({ ...out, falhas, nao_provado: naoProvado, veredito: veredictar(falhas) });
   }
   throw new Error(`aceite ${qual}`);
 }
