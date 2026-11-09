@@ -10,7 +10,7 @@ import {
   mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, lstatSync, statSync, symlinkSync, chmodSync, readdirSync, appendFileSync, rmSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, isAbsolute } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -1205,7 +1205,9 @@ describe('proxima', () => {
     const r = amb.cli(['proxima', '--vivos', '0']);
     assert.equal(r.rc, 0, r.out + r.err);
     assert.equal(r.j.ok, true);
-    assert.deepEqual(r.j.acao, { tipo: 'despachar', itens: [{ task: 'T1', papel: 'implementador' }, { task: 'T3', papel: 'implementador' }] });
+    // E3 (T10): todo item leva `modelo`, `decisoes` e `emendas` (vazias sem Sombra nem emenda)
+    const item = (task) => ({ task, papel: 'implementador', modelo: { modelo: 'sonnet', esforco: 'high' }, decisoes: [], emendas: [] });
+    assert.deepEqual(r.j.acao, { tipo: 'despachar', itens: [item('T1'), item('T3')] });
     assert.deepEqual(r.j.sinais, { slots: 2, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false });
     assert.equal(r.j.aviso, undefined);
     assert.equal(r.out.trim().split('\n').length, 1, 'uma linha de JSON');
@@ -2478,5 +2480,677 @@ describe('T20: abrir idempotente, achados do revisor e spec', () => {
     assert.equal(r.rc, 0, r.out + r.err);
     assert.ok(!existsSync(arq));
     assert.ok(!existsSync(amb.wt('T1')));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════ GM-11 T10: proxima com Sombra e emendas, CLI de emenda, desvio, ci
+// MUTAÇÕES PRESCRITAS: task-10-mut.json da entrega (.superpowers/sdd/2026-11-09-e3-sombra/).
+
+const H = (c) => c.repeat(64);
+const PLANO_REQ = {
+  entrega: 'GM-10',
+  spec: 'docs/spec.md',
+  tasks: [
+    { id: 'T1', deps: [], arquivos: ['src/t1.txt'], reqs: ['REQ-A-1'] },
+    { id: 'T2', deps: [], arquivos: ['src/t2.txt'], reqs: ['REQ-B-1'] },
+    { id: 'T3', deps: ['T1'], arquivos: ['src/t3.txt'], reqs: ['REQ-C-1'] },
+  ],
+};
+const PLANO_AJUSTE = {
+  entrega: 'GM-10',
+  tasks: [
+    { id: 'T1', deps: [], arquivos: ['src/t1.txt'], reqs: ['REQ-A-1'] },
+    { id: 'T5', deps: ['T1'], arquivos: ['src/t5.txt'], reqs: ['REQ-A-1'] },
+  ],
+};
+const IMPL_E = (t) => [['task.iniciada', { task: t, papel: 'implementador' }], ['task.concluida', { task: t, sha: 'a'.repeat(40) }]];
+const APROVA_E = (t) => ['review.veredito', { task: t, veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }];
+const INTEGRA_E = (t) => ['task.integrada', { task: t, sha: 'a'.repeat(40) }];
+const REPROVA_E = (t) => ['review.veredito', { task: t, veredito: 'REPROVADO', rodada: 1, blocker: 0, major: 1 }];
+const PROPOSTA = (extra = {}) => ({ req: 'REQ-A-1', diff: '+ regra nova', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'regra_negocio', ...extra });
+
+/** Relógio que só cresce, em segundos a partir de 2026-02-01: o que vai de uma sessão para outra respeita a ordem de escrita. */
+const relogioDe = () => { let n = 0; return () => new Date(Date.UTC(2026, 1, 1, 0, 0, ++n)).toISOString(); };
+function escreve(amb, sessao, tipo, dados, ts) {
+  const r = diario.append(amb.entregas, sessao, { ts, autor: 't@t', sessao, agente: 'orquestrador', tipo, dados });
+  assert.ok(r.ok && r.gravado === 'evento', JSON.stringify(r));
+}
+/** `lista` = [[sessao?, tipo, dados]] ; sem sessão ⇒ `loop`. */
+function grava(amb, rel, lista) {
+  for (const it of lista) {
+    const [sessao, tipo, dados] = it.length === 3 ? it : ['loop', ...it];
+    escreve(amb, sessao, tipo, dados, rel());
+  }
+}
+const bytesDoDiario = (amb) => Object.fromEntries(readdirSync(amb.entregas).filter((n) => n.startsWith('events.')).sort().map((n) => [n, readFileSync(join(amb.entregas, n), 'utf8')]));
+const ambReq = (opts = {}) => {
+  const amb = ambiente({ plano: PLANO_REQ, ...opts });
+  mkdirSync(join(amb.dir, 'docs'), { recursive: true });
+  writeFileSync(join(amb.dir, 'docs', 'spec.md'), '# Spec\n\n**REQ-A-1** regra A.\n\n**REQ-B-1** regra B.\n\n**REQ-C-1** regra C.\n');
+  return amb;
+};
+
+/** `refs/remotes/origin/HEAD` com `harness.config.json` = `cfg` (texto ou objeto), por plumbing: a árvore local não muda. */
+function comOrigin(amb, cfg) {
+  const texto = typeof cfg === 'string' ? cfg : JSON.stringify(cfg);
+  const feito = (args, input) => {
+    const r = spawnSync('git', ['-C', amb.dir, ...args], { encoding: 'utf8', input });
+    assert.equal(r.status, 0, `${args.join(' ')}: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  const blob = feito(['hash-object', '-w', '--stdin'], texto);
+  const arvore = feito(['mktree'], `100644 blob ${blob}\tharness.config.json\n`);
+  const commit = feito(['commit-tree', arvore, '-m', 'origin'], undefined);
+  feito(['update-ref', 'refs/remotes/origin/main', commit]);
+  feito(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
+}
+const diffEm = (amb, texto = '--- a\n+++ b\n+ regra\n', nome = 'd.diff') => {
+  const f = join(amb.tmpSistema, nome);
+  writeFileSync(f, texto);
+  return f;
+};
+const proporArgs = (amb, extra = {}, { diff } = {}) => {
+  const f = { req: 'REQ-A-1', diff: diff ?? diffEm(amb), fato: 'fato', alternativa: 'alt', evidencia: 'evid', causa: 'regra_negocio', ...extra };
+  return ['emenda', 'propor', ...Object.entries(f).flatMap(([k, v]) => (v === undefined ? [] : [`--${k}`, v]))];
+};
+const emendasDoDiario = (amb) => diario.ler(amb.entregas).filter((e) => e.sessao === 'emendas');
+
+describe('E3 T10: proxima, modelo, decisões, emendas e avisos', () => {
+  test('parar-motivos-da-e3-aceitos: smoke, rollback e janela_ausente gravam loop.parar', () => {
+    for (const motivo of ['smoke', 'rollback', 'janela_ausente']) {
+      const amb = ambiente();
+      const r = amb.cli(['parar', motivo]);
+      assert.equal(r.rc, 0, `${motivo}: ${r.out}`);
+      assert.deepEqual(amb.eventos().at(-1).dados, { motivo });
+    }
+  });
+
+  test('proxima-item-traz-modelo: implementador e correção usam o implementador, revisor o revisor', () => {
+    const amb = ambiente();
+    const imp = amb.cli(['proxima', '--vivos', '0']).j.acao.itens;
+    assert.ok(imp.length >= 1 && imp.every((i) => i.papel === 'implementador'));
+    for (const i of imp) assert.deepEqual(i.modelo, { modelo: 'sonnet', esforco: 'high' });
+    const rev = ambiente();
+    rev.semear(IMPL_E('T1'));
+    const ri = rev.cli(['proxima', '--vivos', '0']).j.acao.itens.find((i) => i.papel === 'revisor');
+    assert.deepEqual(ri.modelo, { modelo: 'opus' });
+    const cor = ambiente();
+    cor.semear([...IMPL_E('T1'), REPROVA_E('T1')]);
+    const ci = cor.cli(['proxima', '--vivos', '0']).j.acao.itens.find((i) => i.papel === 'correcao');
+    assert.deepEqual(ci.modelo, { modelo: 'sonnet', esforco: 'high' });
+  });
+
+  test('proxima-modelo-config-vence-padrao e proxima-modelo-normaliza-id-completo', () => {
+    const cfg = { ...CONFIG_PADRAO, orquestracao: { modelos: { implementador: { modelo: 'Claude-Haiku-5-5', esforco: 'low' }, revisor: 'claude-opus-5-5' } } };
+    const amb = ambiente({ config: cfg });
+    const p = amb.cli(['proxima', '--vivos', '0']);
+    assert.deepEqual(p.j.acao.itens[0].modelo, { modelo: 'haiku', esforco: 'low' });
+    assert.ok(!(p.j.aviso ?? []).some((a) => /modelo/i.test(a)), JSON.stringify(p.j.aviso));
+    amb.semear(IMPL_E('T1'));
+    const ri = amb.cli(['proxima', '--vivos', '0']).j.acao.itens.find((i) => i.papel === 'revisor');
+    assert.deepEqual(ri.modelo, { modelo: 'opus' });
+  });
+
+  test('proxima-modelo-desconhecido-padrao-com-aviso: família desconhecida, entrada torta e `modelos` que não é objeto', () => {
+    const casos = [
+      [{ revisor: 'gpt-4' }, /revisor/],
+      [{ revisor: 42 }, /revisor/],
+      [{ revisor: { esforco: 'low' } }, /revisor/],
+      [['x'], /modelos/],
+    ];
+    for (const [modelos, aviso] of casos) {
+      const amb = ambiente({ config: { ...CONFIG_PADRAO, orquestracao: { modelos } } });
+      amb.semear(IMPL_E('T1'));
+      const p = amb.cli(['proxima', '--vivos', '0']);
+      assert.deepEqual(p.j.acao.itens.find((i) => i.papel === 'revisor').modelo, { modelo: 'opus' }, JSON.stringify(modelos));
+      assert.ok(p.j.aviso.some((a) => aviso.test(a) && /modelo/i.test(a)), `${JSON.stringify(modelos)} ⇒ ${JSON.stringify(p.j.aviso)}`);
+    }
+  });
+
+  test('item-implementador-traz-decisoes-do-req, item-traz-decisao-ancora-task e item-decisao-arquivo-absoluto', () => {
+    const amb = ambReq();
+    const rel = relogioDe();
+    const dec = (h, ancora, resp) => ['decisao.sombra', { pergunta_hash: h, ...ancora, resposta: resp, arquivo: `.harness/entregas/GM-10/sombra/${h}.x.resposta.md`, pergunta_enviesada: false, fontes: ['spec'] }];
+    grava(amb, rel, [
+      ['sombra.consulta', { pergunta_hash: H('1'), req: 'REQ-A-1' }], dec(H('1'), { req: 'REQ-A-1' }, 'resposta do req A'),
+      ['sombra.consulta', { pergunta_hash: H('2'), task: 'T1' }], dec(H('2'), { task: 'T1' }, 'resposta da task T1'),
+      ['sombra.consulta', { pergunta_hash: H('3'), req: 'REQ-B-1' }], dec(H('3'), { req: 'REQ-B-1' }, 'resposta do req B'),
+      ['sombra.consulta', { pergunta_hash: H('4'), task: 'T2' }], dec(H('4'), { task: 'T2' }, 'resposta da task T2'),
+    ]);
+    const antesBytes = bytesDoDiario(amb);
+    const itens = amb.cli(['proxima', '--vivos', '0']).j.acao.itens;
+    assert.deepEqual(bytesDoDiario(amb), antesBytes, 'proxima não grava nada em nenhuma linha');
+    const t1 = itens.find((i) => i.task === 'T1');
+    const t2 = itens.find((i) => i.task === 'T2');
+    assert.deepEqual(t1.decisoes.map((d) => [d.hash, d.ancora, d.resposta]), [[H('2'), 'task:T1', 'resposta da task T1'], [H('1'), 'REQ-A-1', 'resposta do req A']]);
+    assert.deepEqual(t2.decisoes.map((d) => d.resposta), ['resposta da task T2', 'resposta do req B']);
+    assert.equal(t1.decisoes[0].arquivo, join(amb.dir, '.harness', 'entregas', 'GM-10', 'sombra', `${H('2')}.x.resposta.md`));
+    assert.ok(isAbsolute(t1.decisoes[1].arquivo));
+  });
+
+  test('item-omite-decisao-anterior-a-emenda: só a consulta posterior à última emenda do REQ da âncora entra', () => {
+    const amb = ambReq();
+    const rel = relogioDe();
+    const dec = (h, ancora, resp) => ['decisao.sombra', { pergunta_hash: h, ...ancora, resposta: resp, arquivo: `.harness/entregas/GM-10/sombra/${h}.x.resposta.md`, pergunta_enviesada: false, fontes: ['spec'] }];
+    grava(amb, rel, [
+      ['sombra.consulta', { pergunta_hash: H('1'), req: 'REQ-A-1' }], dec(H('1'), { req: 'REQ-A-1' }, 'velha do req A'),
+      ['sombra.consulta', { pergunta_hash: H('2'), task: 'T1' }], dec(H('2'), { task: 'T1' }, 'velha da task T1'),
+      ['sombra.consulta', { pergunta_hash: H('3'), req: 'REQ-B-1' }], dec(H('3'), { req: 'REQ-B-1' }, 'req B, outro REQ'),
+      ['emendas', 'emenda.proposta', PROPOSTA()],
+      ['dono', 'spec.emendada', { proposta_seq: 1, origem: 'dono' }],
+      ['sombra.consulta', { pergunta_hash: H('5'), req: 'REQ-A-1' }], dec(H('5'), { req: 'REQ-A-1' }, 'nova do req A'),
+      ['sombra.consulta', { pergunta_hash: H('6'), task: 'T1' }], dec(H('6'), { task: 'T1' }, 'nova da task T1'),
+    ]);
+    const itens = amb.cli(['proxima', '--vivos', '0']).j.acao.itens;
+    assert.deepEqual(itens.find((i) => i.task === 'T1').decisoes.map((d) => d.resposta), ['nova da task T1', 'nova do req A']);
+    assert.deepEqual(itens.find((i) => i.task === 'T2').decisoes.map((d) => d.resposta), ['req B, outro REQ'], 'a emenda de REQ-A-1 não tira a decisão de REQ-B-1');
+  });
+
+  test('item-implementador-traz-emendas-aprovadas, item-correcao-traz-emendas-aprovadas e revisor-item-traz-emendas-aprovadas', () => {
+    const base = [
+      ['emendas', 'emenda.proposta', PROPOSTA({ diff: '+ A um' })],
+      ['dono', 'spec.emendada', { proposta_seq: 1, origem: 'dono' }],
+      ['emendas', 'emenda.proposta', PROPOSTA({ req: 'REQ-B-1', diff: '+ B um' })],
+      ['dono', 'spec.emendada', { proposta_seq: 2, origem: 'dono' }],
+      ['emendas', 'emenda.proposta', PROPOSTA({ diff: '+ A dois' })],
+      ['dono', 'spec.emendada', { proposta_seq: 3, origem: 'dono' }],
+      ['emendas', 'emenda.proposta', PROPOSTA({ diff: '+ A rejeitada' })],
+      ['dono', 'emenda.rejeitada', { proposta_seq: 4, origem: 'dono' }],
+    ];
+    const casos = [
+      ['implementador', []],
+      ['revisor', IMPL_E('T1')],
+      ['correcao', [...IMPL_E('T1'), REPROVA_E('T1')]],
+    ];
+    for (const [papel, estado] of casos) {
+      const amb = ambReq();
+      const rel = relogioDe();
+      grava(amb, rel, [...estado, ...base]);
+      const item = amb.cli(['proxima', '--vivos', '0']).j.acao.itens.find((i) => i.task === 'T1');
+      assert.equal(item.papel, papel);
+      assert.deepEqual(item.emendas, [{ proposta_seq: 1, req: 'REQ-A-1', diff: '+ A um' }, { proposta_seq: 3, req: 'REQ-A-1', diff: '+ A dois' }], papel);
+    }
+  });
+
+  test('proxima-aviso-acima-do-teto: 26 não avisa (teto padrão), 27 avisa com o número e o teto', () => {
+    const amb = ambiente();
+    const rel = relogioDe();
+    const consultas = (n, de = 0) => Array.from({ length: n }, (_, i) => ['sombra.consulta', { pergunta_hash: (de + i + 1).toString(16).padStart(64, '0'), req: 'REQ-A-1' }]);
+    grava(amb, rel, consultas(26));
+    const p26 = amb.cli(['proxima', '--vivos', '0']).j;
+    assert.ok(!(p26.aviso ?? []).some((a) => /Sombra/.test(a)), JSON.stringify(p26.aviso));
+    grava(amb, rel, consultas(1, 26));
+    const p27 = amb.cli(['proxima', '--vivos', '0']).j;
+    assert.ok(p27.aviso.includes('Atenção: 27 consultas à Sombra, teto 26'), JSON.stringify(p27.aviso));
+  });
+
+  test('proxima-teto-de-origin: 5 vale; "30", 0 e 1.5 caem em 26 com aviso; origin corrompida cai em 26 com aviso do motivo', () => {
+    const consultas = (n) => Array.from({ length: n }, (_, i) => ['sombra.consulta', { pergunta_hash: (i + 1).toString(16).padStart(64, '0'), req: 'REQ-A-1' }]);
+    const a5 = ambiente();
+    comOrigin(a5, { sombra: { teto: 5 } });
+    grava(a5, relogioDe(), consultas(6));
+    assert.ok(a5.cli(['proxima', '--vivos', '0']).j.aviso.includes('Atenção: 6 consultas à Sombra, teto 5'));
+    for (const teto of ['30', 0, 1.5]) {
+      const amb = ambiente();
+      comOrigin(amb, { sombra: { teto } });
+      grava(amb, relogioDe(), consultas(27));
+      const j = amb.cli(['proxima', '--vivos', '0']).j;
+      assert.ok(j.aviso.includes('Atenção: 27 consultas à Sombra, teto 26'), `${teto}: ${JSON.stringify(j.aviso)}`);
+      assert.ok(j.aviso.some((x) => /sombra\.teto/.test(x)), `${teto}: aviso do teto inválido ${JSON.stringify(j.aviso)}`);
+    }
+    const ruim = ambiente();
+    comOrigin(ruim, '{nao json');
+    const j = ruim.cli(['proxima', '--vivos', '0']).j;
+    assert.equal(j.ok, true);
+    assert.ok(j.aviso.some((x) => /config de origin inv.lida: .*JSON ileg.vel/.test(x)), JSON.stringify(j.aviso));
+    const ausente = ambiente().cli(['proxima', '--vivos', '0']).j;
+    assert.ok(!(ausente.aviso ?? []).some((x) => /origin/.test(x)), 'sem origin não é erro');
+  });
+
+  test('proxima-origin-invalida-aviso: a política de entrega inválida de origin degrada e é avisada', () => {
+    const amb = ambiente();
+    comOrigin(amb, { entrega: { politica: 'sempre' } });
+    const j = amb.cli(['proxima', '--vivos', '0']).j;
+    assert.equal(j.ok, true);
+    assert.ok(j.aviso.some((x) => /entrega\.politica/.test(x)), JSON.stringify(j.aviso));
+  });
+
+  test('proxima-politica-afrouxada-falha: plano continua com origin janela ⇒ ok:false politica_afrouxada, rc 1, sem ação', () => {
+    const plano = { ...PLANO_PADRAO, politica_entrega: { exige_prod: false, politica: 'continua' } };
+    const amb = ambiente({ plano });
+    comOrigin(amb, { entrega: { politica: 'janela', janela: { dias: [1], inicio: '09:00', fim: '10:00', fuso: 'UTC' } } });
+    const r = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.ok, false);
+    assert.equal(r.j.erro, 'politica_afrouxada');
+    assert.match(r.j.mensagem, /continua/);
+    assert.equal(r.j.acao, undefined);
+    assert.equal(amb.eventos().length, 0, 'nada gravado');
+  });
+
+  test('proxima-janela-ausente: exige_prod e política sob_demanda ⇒ parar{janela_ausente}; o motivo é gravável por `parar`', () => {
+    const plano = { ...PLANO_PADRAO, politica_entrega: { exige_prod: true } };
+    const amb = ambiente({ plano });
+    const j = amb.cli(['proxima', '--vivos', '0']).j;
+    assert.deepEqual(j.acao, { tipo: 'parar', motivo: 'janela_ausente' });
+    assert.equal(amb.cli(['parar', 'janela_ausente']).rc, 0);
+    const abre = ambiente({ plano: { ...PLANO_PADRAO, politica_entrega: { exige_prod: true, politica: 'janela' } } });
+    comOrigin(abre, { entrega: { politica: 'continua' } }); // o plano aperta continua → janela, mas não traz a janela
+    const r = abre.cli(['proxima', '--vivos', '0']);
+    assert.equal(r.j.erro, 'janela_ausente', 'janela pedida sem janela declarada recusa com a causa');
+    assert.equal(r.rc, 1);
+  });
+
+  const AVISO_EMENDA = (j, re) => (j.aviso ?? []).filter((a) => re.test(a));
+
+  test('proxima-aviso-emenda-em-integrada: emenda posterior à integração de task com o REQ avisa, citando a task e o seq', () => {
+    const amb = ambiente({ plano: PLANO_REQ });
+    grava(amb, relogioDe(), [...IMPL_E('T1'), APROVA_E('T1'), INTEGRA_E('T1'), ['emendas', 'emenda.proposta', PROPOSTA()], ['dono', 'spec.emendada', { proposta_seq: 1, origem: 'dono' }]]);
+    const j = amb.cli(['proxima', '--vivos', '0']).j;
+    assert.deepEqual(AVISO_EMENDA(j, /emendado/), ['Atenção: REQ-A-1 emendado (#1) depois de T1 integrada/aprovada: acrescente task de ajuste']);
+  });
+
+  test('proxima-aviso-emenda-apos-aprovacao: task só aprovada (não integrada) também avisa (P1b D6-4)', () => {
+    const amb = ambiente({ plano: { entrega: 'GM-10', tasks: [PLANO_AJUSTE.tasks[0]] } });
+    grava(amb, relogioDe(), [...IMPL_E('T1'), APROVA_E('T1'), ['emendas', 'emenda.proposta', PROPOSTA()], ['dono', 'spec.emendada', { proposta_seq: 1, origem: 'dono' }]]);
+    assert.equal(AVISO_EMENDA(amb.cli(['proxima', '--vivos', '0']).j, /REQ-A-1 emendado \(#1\) depois de T1/).length, 1);
+  });
+
+  test('proxima-aviso-emenda-antes-da-integracao-calado: emenda anterior à integração não avisa', () => {
+    const amb = ambiente({ plano: PLANO_REQ });
+    grava(amb, relogioDe(), [...IMPL_E('T1'), ['emendas', 'emenda.proposta', PROPOSTA()], ['dono', 'spec.emendada', { proposta_seq: 1, origem: 'dono' }], APROVA_E('T1'), INTEGRA_E('T1')]);
+    assert.deepEqual(AVISO_EMENDA(amb.cli(['proxima', '--vivos', '0']).j, /emendado/), []);
+  });
+
+  test('proxima-aviso-cala-com-task-de-ajuste: outra task com o REQ pendente, ou integrada depois do julgamento, cala; integrada antes avisa as duas', () => {
+    const emenda = [['emendas', 'emenda.proposta', PROPOSTA()], ['dono', 'spec.emendada', { proposta_seq: 1, origem: 'dono' }]];
+    const pendente = ambiente({ plano: PLANO_AJUSTE });
+    grava(pendente, relogioDe(), [...IMPL_E('T1'), APROVA_E('T1'), INTEGRA_E('T1'), ...emenda]);
+    assert.deepEqual(AVISO_EMENDA(pendente.cli(['proxima', '--vivos', '0']).j, /emendado/), [], 'T5 (mesmo REQ) ainda pendente: o ajuste está a caminho');
+    const emCurso = ambiente({ plano: PLANO_AJUSTE });
+    grava(emCurso, relogioDe(), [...IMPL_E('T1'), APROVA_E('T1'), INTEGRA_E('T1'), ...emenda, ...IMPL_E('T5')]);
+    assert.deepEqual(AVISO_EMENDA(emCurso.cli(['proxima', '--vivos', '0']).j, /emendado/), [], 'T5 em curso também cala');
+    const depois = ambiente({ plano: PLANO_AJUSTE });
+    grava(depois, relogioDe(), [...IMPL_E('T1'), APROVA_E('T1'), INTEGRA_E('T1'), ...emenda, ...IMPL_E('T5'), APROVA_E('T5'), INTEGRA_E('T5')]);
+    assert.deepEqual(AVISO_EMENDA(depois.cli(['proxima', '--vivos', '0']).j, /emendado/), [], 'T5 integrada depois do julgamento: ajuste feito');
+    const antes = ambiente({ plano: PLANO_AJUSTE });
+    grava(antes, relogioDe(), [...IMPL_E('T1'), APROVA_E('T1'), INTEGRA_E('T1'), ...IMPL_E('T5'), APROVA_E('T5'), INTEGRA_E('T5'), ...emenda]);
+    assert.deepEqual(AVISO_EMENDA(antes.cli(['proxima', '--vivos', '0']).j, /emendado/).map((a) => /depois de (T\d)/.exec(a)[1]), ['T1', 'T5']);
+  });
+});
+
+describe('E3 T10: emenda propor, emenda julgar, desvio, descoberta e ci', () => {
+  test('propor-grava-na-sessao-emendas e devolve {proposta_seq, req, task?, congeladas}', () => {
+    const amb = ambReq();
+    const r = amb.cli(proporArgs(amb, { task: 'T1' }));
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.ok, true);
+    assert.equal(r.j.proposta_seq, 1);
+    assert.equal(r.j.req, 'REQ-A-1');
+    assert.equal(r.j.task, 'T1');
+    assert.deepEqual([...r.j.congeladas].sort(), ['T1', 'T3'], 'T1 pelo REQ e T3 por depender dela; T2 fica de fora');
+    const e = emendasDoDiario(amb);
+    assert.equal(e.length, 1);
+    assert.equal(e[0].tipo, 'emenda.proposta');
+    assert.deepEqual(e[0].dados, { req: 'REQ-A-1', task: 'T1', diff: '--- a\n+++ b\n+ regra\n', fato: 'fato', alternativa: 'alt', evidencia: 'evid', causa: 'regra_negocio' });
+    assert.equal(amb.eventos().filter((x) => x.sessao !== 'emendas').length, 0);
+    const sem = ambReq();
+    assert.equal(sem.cli(proporArgs(sem)).j.task, undefined, 'sem --task, sem `task` na saída');
+    assert.ok(!('task' in emendasDoDiario(sem)[0].dados));
+  });
+
+  test('propor-igual-duas-vezes: cada chamada devolve o seq da própria linha, mesmo com dados idênticos', () => {
+    const amb = ambReq();
+    const args = proporArgs(amb);
+    assert.equal(amb.cli(args).j.proposta_seq, 1);
+    assert.equal(amb.cli(args).j.proposta_seq, 2);
+    assert.deepEqual(emendasDoDiario(amb).map((e) => e.seq), [1, 2]);
+  });
+
+  test('propor-ignora-flag-sessao: --sessao x grava em events.emendas.jsonl (SP D1)', () => {
+    const amb = ambReq();
+    const r = amb.cli([...proporArgs(amb), '--sessao', 'x']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.ok(existsSync(join(amb.entregas, 'events.emendas.jsonl')));
+    assert.ok(!existsSync(join(amb.entregas, 'events.x.jsonl')));
+    assert.equal(emendasDoDiario(amb)[0].sessao, 'emendas');
+  });
+
+  test('propor-devolve-seq-do-arquivo: com proposta concorrente injetada antes do append, o seq é o da linha gravada', async () => {
+    const { proporEmenda } = await import('../scripts/loop.mjs');
+    const amb = ambReq();
+    const flags = { req: 'REQ-A-1', diff: diffEm(amb), fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'regra_negocio' };
+    const injeta = () => escreve(amb, 'emendas', 'emenda.proposta', PROPOSTA({ req: 'REQ-B-1', diff: 'outra' }), '2026-03-01T00:00:00.000Z');
+    const r = proporEmenda(amb.dir, flags, { antes: injeta });
+    const doArquivo = emendasDoDiario(amb).find((e) => e.dados.diff === '--- a\n+++ b\n+ regra\n');
+    assert.equal(doArquivo.seq, 2, 'a injetada tomou o seq 1');
+    assert.equal(r.proposta_seq, doArquivo.seq);
+  });
+
+  test('propor-recusa-de-uso: flag obrigatória ausente, desconhecida ou repetida ⇒ rc 2 sem gravar', () => {
+    const amb = ambReq();
+    const antes = bytesDoDiario(amb);
+    for (const falta of ['req', 'diff', 'fato', 'alternativa', 'evidencia', 'causa']) {
+      const r = amb.cli(proporArgs(amb, { [falta]: undefined }));
+      assert.equal(r.rc, 2, `${falta}: ${r.out}`);
+      assert.equal(r.j.erro, 'uso');
+    }
+    assert.equal(amb.cli([...proporArgs(amb), '--nada', 'x']).rc, 2);
+    assert.equal(amb.cli([...proporArgs(amb), '--fato', 'outra']).rc, 2);
+    assert.equal(amb.cli(['emenda']).rc, 2);
+    assert.equal(amb.cli(['emenda', 'propor', 'sobra', ...proporArgs(amb).slice(2)]).rc, 2);
+    assert.equal(amb.cli(['emenda', 'revogar', '1']).rc, 2);
+    assert.deepEqual(bytesDoDiario(amb), antes);
+  });
+
+  test('propor-argumento-invalido: req, task e causa fora da forma ⇒ rc 1 sem gravar; diff vazio também', () => {
+    const amb = ambReq();
+    const antes = bytesDoDiario(amb);
+    for (const extra of [{ req: 'req-a-1' }, { req: 'REQ-A-1x' }, { task: '../T1' }, { causa: 'preguica' }]) {
+      const r = amb.cli(proporArgs(amb, extra));
+      assert.equal(r.j.erro, 'argumento_invalido', JSON.stringify(extra));
+      assert.equal(r.rc, 1);
+    }
+    const vazio = amb.cli(proporArgs(amb, {}, { diff: diffEm(amb, ' \n\t\n', 'vazio.diff') }));
+    assert.equal(vazio.j.erro, 'argumento_invalido');
+    assert.deepEqual(bytesDoDiario(amb), antes);
+  });
+
+  test('propor-diff-ausente-x-ilegivel: arquivo inexistente e diretório são erros distintos', () => {
+    const amb = ambReq();
+    const ausente = amb.cli(proporArgs(amb, {}, { diff: join(amb.tmpSistema, 'nao-existe.diff') }));
+    assert.equal(ausente.j.erro, 'diff_ausente');
+    const dir = join(amb.tmpSistema, 'um-dir');
+    mkdirSync(dir);
+    const ilegivel = amb.cli(proporArgs(amb, {}, { diff: dir }));
+    assert.equal(ilegivel.j.erro, 'diff_ilegivel');
+    assert.equal(ausente.rc, 1);
+    assert.equal(emendasDoDiario(amb).length, 0);
+  });
+
+  test('propor-diff-longo-recusa-antes-do-diario: 4.001 caracteres ⇒ diff_longo, 0 bytes em todo events.*; 4.000 passa', () => {
+    const amb = ambReq();
+    const antes = bytesDoDiario(amb);
+    const r = amb.cli(proporArgs(amb, {}, { diff: diffEm(amb, 'x'.repeat(4001), 'longo.diff') }));
+    assert.equal(r.j.erro, 'diff_longo');
+    assert.equal(r.rc, 1);
+    assert.deepEqual(bytesDoDiario(amb), antes, '0 bytes em todo events.*.jsonl');
+    assert.ok(!amb.tipos().includes('diario.recusa'));
+    const ok = amb.cli(proporArgs(amb, {}, { diff: diffEm(amb, 'x'.repeat(4000), 'limite.diff') }));
+    assert.equal(ok.rc, 0, ok.out);
+  });
+
+  test('propor-texto-longo-nada-gravado: fato, alternativa ou evidencia > 2.000 e arquivos > 50 ⇒ proposta_longa, sem diario.recusa', () => {
+    const amb = ambReq();
+    const antes = bytesDoDiario(amb);
+    for (const campo of ['fato', 'alternativa', 'evidencia']) {
+      const r = amb.cli(proporArgs(amb, { [campo]: 'y'.repeat(2001) }));
+      assert.equal(r.j.erro, 'proposta_longa', campo);
+    }
+    const muitos = Array.from({ length: 51 }, (_, i) => `src/f${i}.txt`).join(',');
+    const r = amb.cli(proporArgs(amb, { task: 'T1', arquivos: muitos }));
+    assert.equal(r.j.erro, 'proposta_longa');
+    assert.deepEqual(bytesDoDiario(amb), antes);
+    assert.ok(!amb.tipos().includes('diario.recusa'));
+    const limite = amb.cli(proporArgs(amb, { fato: 'y'.repeat(2000) }));
+    assert.equal(limite.rc, 0, limite.out);
+  });
+
+  test('propor-segredo-nada-gravado: canário em qualquer campo de texto ⇒ segredo_na_proposta, 0 bytes, e a mensagem não ecoa o segredo', () => {
+    const amb = ambReq();
+    const antes = bytesDoDiario(amb);
+    const segredo = `ghp_${'a1'.repeat(18)}`;
+    const alvos = [{ fato: segredo }, { alternativa: segredo }, { evidencia: segredo }];
+    for (const extra of alvos) {
+      const r = amb.cli(proporArgs(amb, extra));
+      assert.equal(r.j.erro, 'segredo_na_proposta', JSON.stringify(Object.keys(extra)));
+      assert.ok(!r.out.includes(segredo), 'o segredo não é ecoado');
+    }
+    const noDiff = amb.cli(proporArgs(amb, {}, { diff: diffEm(amb, `+ token ${segredo}\n`, 'seg.diff') }));
+    assert.equal(noDiff.j.erro, 'segredo_na_proposta');
+    assert.deepEqual(bytesDoDiario(amb), antes);
+    assert.ok(!amb.tipos().includes('diario.recusa'));
+  });
+
+  test('propor-arquivos-item-vazio-recusa e propor-arquivos-sem-task: o vazio não some em silêncio', () => {
+    const amb = ambReq();
+    const antes = bytesDoDiario(amb);
+    for (const lista of ['a,,b', 'a,', ',a']) {
+      const r = amb.cli(proporArgs(amb, { task: 'T1', arquivos: lista }));
+      assert.equal(r.j.erro, 'caminho_invalido', lista);
+      assert.match(r.j.mensagem, /caminho inv.lido/);
+    }
+    const semTask = amb.cli(proporArgs(amb, { arquivos: 'src/x.txt' }));
+    assert.equal(semTask.j.ok, false);
+    assert.match(semTask.j.mensagem, /arquivos exigem task/);
+    const fora = amb.cli(proporArgs(amb, { task: 'T1', arquivos: '../fora.txt' }));
+    assert.match(fora.j.mensagem, /caminho inv.lido: \.\.\/fora\.txt/);
+    assert.deepEqual(bytesDoDiario(amb), antes);
+    const ok = amb.cli(proporArgs(amb, { task: 'T1', arquivos: './src/x.txt,src/y.txt' }));
+    assert.equal(ok.rc, 0, ok.out);
+    assert.deepEqual(emendasDoDiario(amb)[0].dados.arquivos, ['./src/x.txt', 'src/y.txt']);
+  });
+
+  test('propor-colide-sem-dep-recusa: arquivo de outra task sem dependência ⇒ recusa com a task e nada gravado', () => {
+    const amb = ambReq();
+    const r = amb.cli(proporArgs(amb, { task: 'T1', arquivos: 'src/t2.txt' }));
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.ok, false);
+    assert.match(r.j.mensagem, /arquivo src\/t2\.txt colide com T2 sem dependência/);
+    assert.equal(emendasDoDiario(amb).length, 0);
+    const dep = amb.cli(proporArgs(amb, { task: 'T3', req: 'REQ-C-1', arquivos: 'src/t1.txt' }));
+    assert.equal(dep.rc, 0, 'T3 depende de T1: o arquivo dela não colide');
+  });
+
+  test('propor-req-desconhecido-recusa: sem --task, REQ fora de toda task e da spec; REQ na spec ou em task vale', () => {
+    const amb = ambReq();
+    const antes = bytesDoDiario(amb);
+    const r = amb.cli(proporArgs(amb, { req: 'REQ-ZZ-9' }));
+    assert.equal(r.j.erro, 'req_desconhecido');
+    assert.equal(r.rc, 1);
+    assert.deepEqual(bytesDoDiario(amb), antes);
+    assert.equal(amb.cli(proporArgs(amb, { req: 'REQ-A-1' })).rc, 0, 'REQ de task');
+    writeFileSync(join(amb.dir, 'docs', 'spec.md'), '# Spec\n\n**REQ-A-1** a.\n\n**REQ-ZZ-9** só na spec.\n');
+    assert.equal(amb.cli(proporArgs(amb, { req: 'REQ-ZZ-9' })).rc, 0, 'REQ só na spec');
+    const semSpec = ambiente({ plano: { ...PLANO_REQ, spec: undefined } });
+    assert.equal(semSpec.cli(proporArgs(semSpec, { req: 'REQ-ZZ-9' })).j.erro, 'req_desconhecido', 'sem spec não há como provar o REQ');
+  });
+
+  test('propor-plano-e-diario-ruins: plano ausente, diário ilegível e diário fora da tabela ⇒ recusa sem gravar', () => {
+    const semPlano = ambiente({ plano: null });
+    assert.equal(semPlano.cli(proporArgs(semPlano)).j.erro, 'plano_ausente');
+    const amb = ambReq();
+    writeFileSync(join(amb.entregas, 'events.loop.jsonl'), 'lixo\n');
+    assert.equal(amb.cli(proporArgs(amb)).j.erro, 'diario_ilegivel');
+    const torto = ambReq();
+    torto.semear([['task.concluida', { task: 'T1', sha: 'a'.repeat(40) }]]);
+    assert.equal(torto.cli(proporArgs(torto)).j.erro, 'diario_invalido');
+    assert.equal(emendasDoDiario(torto).length, 0);
+  });
+
+  const comJulga = (amb) => comOrigin(amb, { sombra: { julga_emendas: true } });
+  const propor = (amb, extra) => assert.equal(amb.cli(proporArgs(amb, extra)).rc, 0);
+
+  test('julgar-sombra-sem-flag-recusa: sem origin e com origin sem a chave, nada gravado', () => {
+    const amb = ambReq();
+    propor(amb);
+    const antes = bytesDoDiario(amb);
+    for (const preparar of [() => {}, () => comOrigin(amb, { sombra: { teto: 9 } }), () => comOrigin(amb, { sombra: { julga_emendas: 'true' } })]) {
+      preparar();
+      const r = amb.cli(['emenda', 'julgar', '1', 'aprovar']);
+      assert.equal(r.rc, 1, r.out);
+      assert.equal(r.j.erro, 'julga_emendas_desligado');
+      assert.deepEqual(bytesDoDiario(amb), antes);
+    }
+  });
+
+  test('julgar-sombra-flag-so-local-recusa: julga_emendas true só no config local não vale', () => {
+    const amb = ambReq({ config: { ...CONFIG_PADRAO, sombra: { julga_emendas: true } } });
+    propor(amb);
+    comOrigin(amb, { entrega: {} });
+    const antes = bytesDoDiario(amb);
+    const r = amb.cli(['emenda', 'julgar', '1', 'aprovar']);
+    assert.equal(r.j.erro, 'julga_emendas_desligado');
+    assert.deepEqual(bytesDoDiario(amb), antes);
+  });
+
+  test('julgar-origin-invalida-recusa: JSON ilegível em origin ⇒ recusa citando o motivo', () => {
+    const amb = ambReq();
+    propor(amb);
+    comOrigin(amb, '{quebrado');
+    const r = amb.cli(['emenda', 'julgar', '1', 'aprovar']);
+    assert.equal(r.j.erro, 'julga_emendas_desligado');
+    assert.match(r.j.mensagem, /JSON ileg.vel/);
+  });
+
+  test('julgar-sombra-com-flag-origin: grava spec.emendada origem sombra, relida; rejeitar grava emenda.rejeitada; a 2ª vez ⇒ proposta já julgada', () => {
+    const amb = ambReq();
+    comJulga(amb);
+    propor(amb);
+    propor(amb, { req: 'REQ-B-1' });
+    const a = amb.cli(['emenda', 'julgar', '1', 'aprovar']);
+    assert.equal(a.rc, 0, a.out + a.err);
+    assert.deepEqual([a.j.seq, a.j.req, a.j.tipo, a.j.origem], [1, 'REQ-A-1', 'spec.emendada', 'sombra']);
+    const julg = amb.eventos().filter((e) => e.tipo === 'spec.emendada');
+    assert.deepEqual(julg.map((e) => [e.sessao, e.dados]), [['loop', { proposta_seq: 1, origem: 'sombra' }]]);
+    const rj = amb.cli(['emenda', 'julgar', '2', 'rejeitar', '--sessao', 'sombra-j']);
+    assert.equal(rj.rc, 0, rj.out);
+    assert.deepEqual(amb.eventos().filter((e) => e.tipo === 'emenda.rejeitada').map((e) => [e.sessao, e.dados]), [['sombra-j', { proposta_seq: 2, origem: 'sombra' }]]);
+    const dois = amb.cli(['emenda', 'julgar', '1', 'rejeitar']);
+    assert.equal(dois.j.erro, 'ja_julgada');
+    assert.match(dois.j.mensagem, /proposta já julgada/);
+    assert.equal(amb.eventos().filter((e) => e.tipo === 'emenda.rejeitada').length, 1);
+    const ne = amb.cli(['emenda', 'julgar', '9', 'aprovar']);
+    assert.equal(ne.j.erro, 'proposta_inexistente');
+    assert.equal(amb.cli(['proxima', '--vivos', '0']).j.acao.itens.find((i) => i.task === 'T1').emendas[0].proposta_seq, 1, 'costura: o julgamento descongela e chega ao item');
+  });
+
+  test('julgar-seq-forma-invalida: 0, 03, -1, 3.0 e decisão fora do enum ⇒ argumento_invalido sem gravar', () => {
+    const amb = ambReq();
+    comJulga(amb);
+    propor(amb);
+    const antes = bytesDoDiario(amb);
+    for (const args of [['0', 'aprovar'], ['03', 'aprovar'], ['-1', 'aprovar'], ['3.0', 'aprovar'], ['1234567890', 'aprovar'], ['1', 'Aprovar'], ['1', 'ok']]) {
+      const r = amb.cli(['emenda', 'julgar', ...args]);
+      assert.equal(r.j?.erro, 'argumento_invalido', args.join(' '));
+    }
+    assert.equal(amb.cli(['emenda', 'julgar', '1']).rc, 2);
+    assert.equal(amb.cli(['emenda', 'julgar', '1', 'aprovar', '--origem', 'dono']).rc, 2, 'nenhum argumento produz origem dono');
+    assert.equal(amb.cli(['emenda', 'julgar', '1', 'aprovar', '--req', 'REQ-A-1']).rc, 2, 'flags de propor não valem em julgar');
+    assert.deepEqual(bytesDoDiario(amb), antes);
+  });
+
+  test('desvio-grava: task, req, evidencia, arquivos normalizados e causa no diário (sessão loop, ou --sessao)', () => {
+    const amb = ambReq();
+    const r = amb.cli(['desvio', 'T1', '--req', 'REQ-A-1', '--evidencia', 'a API não pagina', '--arquivos', './src/t1.txt,src/x.txt', '--causa', 'tecnica']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const e = amb.eventos().at(-1);
+    assert.equal(e.tipo, 'desvio');
+    assert.equal(e.sessao, 'loop');
+    assert.deepEqual(e.dados, { task: 'T1', req: 'REQ-A-1', evidencia: 'a API não pagina', arquivos: ['src/t1.txt', 'src/x.txt'], causa: 'tecnica' });
+    const s = amb.cli(['desvio', 'T1', '--req', 'REQ-A-1', '--evidencia', 'x', '--arquivos', '', '--causa', 'regra_negocio', '--sessao', 'outra']);
+    assert.equal(s.rc, 0, s.out);
+    assert.deepEqual(amb.eventos().at(-1).dados.arquivos, [], 'lista vazia explícita vale');
+    assert.equal(amb.eventos().at(-1).sessao, 'outra');
+  });
+
+  test('desvio-sem-evidencia-recusa: flag ausente é uso (rc 2); evidência vazia, causa e arquivos inválidos são recusa sem gravar', () => {
+    const amb = ambReq();
+    const base = ['desvio', 'T1', '--req', 'REQ-A-1', '--evidencia', 'ev', '--arquivos', 'src/t1.txt', '--causa', 'tecnica'];
+    const sem = (flag) => { const i = base.indexOf(`--${flag}`); return [...base.slice(0, i), ...base.slice(i + 2)]; };
+    for (const f of ['req', 'evidencia', 'arquivos', 'causa']) assert.equal(amb.cli(sem(f)).rc, 2, f);
+    const troca = (flag, v) => { const i = base.indexOf(`--${flag}`); return [...base.slice(0, i + 1), v, ...base.slice(i + 2)]; };
+    assert.equal(amb.cli(troca('evidencia', '  ')).j.erro, 'argumento_invalido');
+    assert.equal(amb.cli(troca('causa', 'preguica')).j.erro, 'argumento_invalido');
+    assert.equal(amb.cli(troca('arquivos', '/abs/x')).j.erro, 'caminho_invalido');
+    assert.equal(amb.cli(troca('arquivos', 'a,,b')).j.erro, 'caminho_invalido');
+    assert.equal(amb.cli(troca('evidencia', 'y'.repeat(2001))).j.erro, 'proposta_longa');
+    assert.equal(amb.cli(troca('evidencia', `ghp_${'a1'.repeat(18)}`)).j.erro, 'segredo_na_proposta');
+    assert.equal(amb.eventos().length, 0);
+  });
+
+  test('desvio-task-fora-do-plano e desvio-req-fora-da-task: task sem o REQ (ou sem `reqs`) recusa', () => {
+    const amb = ambReq();
+    const base = (t, req) => ['desvio', t, '--req', req, '--evidencia', 'ev', '--arquivos', '', '--causa', 'tecnica'];
+    assert.equal(amb.cli(base('T9', 'REQ-A-1')).j.erro, 'task_fora_do_plano');
+    assert.equal(amb.cli(base('T1', 'REQ-B-1')).j.erro, 'req_fora_da_task');
+    const sem = ambiente();
+    assert.equal(sem.cli(base('T1', 'REQ-A-1')).j.erro, 'req_fora_da_task', 'task sem `reqs`');
+    assert.equal(amb.eventos().length + sem.eventos().length, 0);
+  });
+
+  test('descoberta-grava e descoberta-recusa: evidencia e causa; canário e limite como em propor', () => {
+    const amb = ambReq();
+    const r = amb.cli(['descoberta', '--evidencia', 'tabela sem índice', '--causa', 'tecnica']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(amb.eventos().at(-1), { ...amb.eventos().at(-1), tipo: 'descoberta', dados: { evidencia: 'tabela sem índice', causa: 'tecnica' } });
+    assert.equal(amb.cli(['descoberta', '--evidencia', 'x']).rc, 2);
+    assert.equal(amb.cli(['descoberta', '--evidencia', 'x', '--causa', 'nada']).j.erro, 'argumento_invalido');
+    assert.equal(amb.cli(['descoberta', '--evidencia', 'z'.repeat(2001), '--causa', 'tecnica']).j.erro, 'proposta_longa');
+    assert.equal(amb.cli(['descoberta', '--evidencia', `ghp_${'a1'.repeat(18)}`, '--causa', 'tecnica']).j.erro, 'segredo_na_proposta');
+    assert.equal(amb.eventos().length, 1);
+  });
+
+  test('ci-alvo-homolog: --alvo homolog grava {verde, alvo}; sem a flag, só {verde}', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['ci', 'verde', '--alvo', 'homolog']).rc, 0);
+    assert.deepEqual(amb.eventos().at(-1).dados, { verde: true, alvo: 'homolog' });
+    assert.equal(amb.cli(['ci', 'vermelho']).rc, 0);
+    assert.deepEqual(amb.eventos().at(-1).dados, { verde: false });
+  });
+
+  test('ci-alvo-fora-recusa: prod, Homolog e vazio ⇒ argumento_invalido sem gravar', () => {
+    const amb = ambiente();
+    for (const alvo of ['prod', 'Homolog', 'homolog ', '']) {
+      const r = amb.cli(['ci', 'vermelho', '--alvo', alvo]);
+      assert.equal(r.j.erro, 'argumento_invalido', JSON.stringify(alvo));
+      assert.equal(r.rc, 1);
+    }
+    assert.equal(amb.eventos().length, 0);
+  });
+});
+
+describe('E3 T10: integrar com o escopo das emendas', () => {
+  const PLANO_INT = { entrega: 'GM-10', tasks: [{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], reqs: ['REQ-A-1'] }] };
+
+  test('integrar-escopo-com-emenda-aprovada-passa-gate: o gate real aceita o arquivo da emenda e reprova sem ela', () => {
+    const semEmenda = ambiente({ plano: PLANO_INT });
+    semEmenda.aprovar('T1', 'src/t1.txt', [['src/extra.txt', 'extra\n']]);
+    const rep = semEmenda.cli(['integrar', 'T1']);
+    assert.equal(rep.j.erro, 'gate_reprovado', rep.out);
+    assert.deepEqual(rep.j.merge, false);
+
+    const amb = ambiente({ plano: PLANO_INT });
+    comOrigin(amb, { sombra: { julga_emendas: true } });
+    amb.aprovar('T1', 'src/t1.txt', [['src/extra.txt', 'extra\n']]);
+    const p = amb.cli(proporArgs(amb, { task: 'T1', arquivos: 'src/extra.txt' }));
+    assert.equal(p.rc, 0, p.out);
+    const aberta = amb.cli(['integrar', 'T1']);
+    assert.equal(aberta.j.erro, 'nao_integravel', 'proposta aberta congela a integração');
+    assert.equal(amb.cli(['emenda', 'julgar', '1', 'aprovar']).rc, 0);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.merge, true);
+    assert.ok(existsSync(join(amb.dir, 'src/extra.txt')));
+  });
+
+  test('integrar-escopo-da-emenda-rejeitada-ou-de-outra-task-nao-vale', () => {
+    const amb = ambiente({ plano: { entrega: 'GM-10', tasks: [...PLANO_INT.tasks, { id: 'T2', deps: [], arquivos: ['src/t2.txt'], reqs: ['REQ-B-1'] }] } });
+    comOrigin(amb, { sombra: { julga_emendas: true } });
+    amb.aprovar('T1', 'src/t1.txt', [['src/extra.txt', 'extra\n']]);
+    assert.equal(amb.cli(proporArgs(amb, { task: 'T2', req: 'REQ-B-1', arquivos: 'src/extra.txt' })).rc, 0);
+    assert.equal(amb.cli(['emenda', 'julgar', '1', 'aprovar']).rc, 0);
+    assert.equal(amb.cli(['integrar', 'T1']).j.erro, 'gate_reprovado', 'a emenda de T2 não alarga o escopo de T1');
+  });
+
+  test('integrar-sem-emenda-files-igual-e2: `./arquivo` e diretório do plano seguem valendo como na E2', () => {
+    const plano = { entrega: 'GM-10', tasks: [{ id: 'T1', deps: [], arquivos: ['./src/t1.txt', 'src/dir'] }] };
+    const amb = ambiente({ plano });
+    amb.aprovar('T1', 'src/t1.txt', [['src/dir/fundo/a.txt', 'a\n']]);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const fora = ambiente({ plano });
+    fora.aprovar('T1', 'src/t1.txt', [['src/dirfora.txt', 'a\n']]);
+    assert.equal(fora.cli(['integrar', 'T1']).j.erro, 'gate_reprovado', 'diretório não aprova arquivo de nome parecido');
   });
 });

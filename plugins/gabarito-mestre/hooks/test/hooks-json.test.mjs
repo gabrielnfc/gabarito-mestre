@@ -4,7 +4,8 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { HOOKS, PLUGIN } from './_comum.mjs';
@@ -102,14 +103,16 @@ describe('hooks.json — registro dos hooks (T16)', () => {
     assert.equal(re.test('gabarito-mestre:emenda'), true);
     for (const n of ['gabarito-mestre:emendaX', 'gabarito-mestre:emenda ', 'x:gabarito-mestre:emenda', 'emenda', 'gabarito-mestre:liberar']) assert.equal(re.test(n), false, n);
   });
-  test('emenda-dono-stub-bloqueia: o comando da emenda sai com block e "nada foi gravado"; outro comando e stdin ruim', () => {
+  test('emenda-dono-bloqueia-sem-repo: o comando da emenda fora de repositório sai com block e "nada foi gravado"; outro comando e stdin ruim (T10 implementou o hook: o stub saiu)', () => {
     const rodar = (input) => spawnSync(process.execPath, [join(PLUGIN, 'gates', 'scripts', 'emenda-dono.mjs')], { input, encoding: 'utf8' });
-    const r = rodar(JSON.stringify({ hook_event_name: 'UserPromptExpansion', command_name: 'gabarito-mestre:emenda', command_args: 'aprovar 3' }));
+    const fora = mkdtempSync(join(tmpdir(), 'emenda-sem-repo-'));
+    const r = rodar(JSON.stringify({ hook_event_name: 'UserPromptExpansion', command_name: 'gabarito-mestre:emenda', command_args: 'aprovar 3', cwd: fora }));
     assert.equal(r.status, 0);
     const o = JSON.parse(r.stdout);
     assert.equal(o.decision, 'block');
-    assert.match(o.reason, /não implementado; nada foi gravado/);
-    // outro comando: silêncio total (o stub só age no matcher do próprio comando)
+    assert.match(o.reason, /fora_de_repo/);
+    assert.match(o.reason, /Emenda recusada/);
+    // outro comando: silêncio total (o hook só age no matcher do próprio comando)
     const outro = rodar(JSON.stringify({ hook_event_name: 'UserPromptExpansion', command_name: 'gabarito-mestre:liberar', command_args: 'T1' }));
     assert.equal(outro.status, 0);
     assert.equal(outro.stdout, '');

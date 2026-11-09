@@ -1,0 +1,9 @@
+{
+  "entrega": "GM-99",
+  "spec": "docs/spec.md",
+  "tasks": [
+    { "id": "T1", "deps": [], "arquivos": ["src/a.mjs"], "reqs": ["REQ-A-1"] },
+    { "id": "T2", "deps": [], "arquivos": ["src/b.mjs"], "reqs": ["REQ-B-1"] },
+    { "id": "T3", "deps": ["T1"], "arquivos": ["src/c.mjs"], "reqs": ["REQ-C-1"] }
+  ]
+}
