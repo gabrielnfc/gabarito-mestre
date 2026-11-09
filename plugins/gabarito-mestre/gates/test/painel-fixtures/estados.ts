@@ -53,7 +53,7 @@ function base(): EstadoPainel {
 }
 
 function agente(nome: string, papel: AgentePainel['papel'], taskId: string, estadoTask: EstadoTask, extra: Partial<AgentePainel> = {}): AgentePainel {
-  return { nome, papel, task: taskId, estadoTask, modelo: 'sonnet', ctxPct: 31, ctxTok: 62_000, tok: 118_000, desdeS: 540, cor: 'claude', ...extra };
+  return { nome, papel, task: taskId, estadoTask, modelo: 'sonnet', ctxPct: 31, ctxTok: 62_000, tok: 118_000, desdeS: 540, cor: 'claude', vivo: true, ...extra };
 }
 
 function parou(motivo: MotivoParar, texto: string, acoes: Acao[], emVoo: string[], alteracoes: number): NonNullable<EstadoPainel['parar']> {

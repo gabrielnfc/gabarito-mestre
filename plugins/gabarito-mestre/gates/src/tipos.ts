@@ -167,7 +167,8 @@ export type EntradaPainel = {
   contexto: { percent: number | null; tokens: number | null; window: number | null };
   limites: { h5: number | null; d7: number | null };
   x: number;
-  agentes: AgenteVivo[];
+  /** `null` = sem mod (CLI sem `--agentes`): sem linha `◌ sem agente` e `agentes —`. `[]` = mod presente e nenhum vivo. */
+  agentes: AgenteVivo[] | null;
   pacote: PacoteNomes;
   notificacao: { ts: string } | { motivo: string } | null;
   agoraMs: number;
@@ -190,6 +191,8 @@ export type TaskPainel = { id: string; titulo?: string; estado: EstadoTask; glif
 export type AgentePainel = {
   nome: string | null; papel: Papel | null; task?: string; estadoTask: EstadoTask | null; modelo: string | null;
   ctxPct: number | null; ctxTok: number | null; tok: number | null; desdeS: number | null; cor: CorTema;
+  /** `true` = agente vivo (`●`); `false` = task em voo sem agente de papel compatível (`◌ sem agente`). */
+  vivo: boolean;
 };
 export type EstadoPainel = {
   id: string; titulo: string | null; pacote: string;
