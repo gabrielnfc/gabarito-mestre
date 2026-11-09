@@ -43,8 +43,8 @@ describe('ehRepoDoPlugin — cópia instalada sob um pai com marketplace.json al
 });
 
 describe('gates/package.json 1.1.0', () => {
-  test('version é 2.0.0-alpha.2 (canal next)', () => {
-    assert.equal(pkg.version, '2.0.0-alpha.2');
+  test('version é 2.0.0-alpha.3 (canal next)', () => {
+    assert.equal(pkg.version, '2.0.0-alpha.3');
   });
   test('versao-manifestos: plugin.json, gates, marketplace (se trouxer versão) e CHANGELOG dizem a mesma versão', { skip: fora }, () => {
     const v = ler(PLUGIN_JSON).version;
@@ -54,10 +54,10 @@ describe('gates/package.json 1.1.0', () => {
     const primeira = /^## \[(\d[^\]]*)\]/m.exec(changelog.replace(/^## \[Unreleased\][\s\S]*?(?=^## \[\d)/m, ''));
     assert.equal(primeira?.[1], v, 'a 1ª seção versionada do CHANGELOG é a do plugin');
   });
-  test('skill gabarito-loop: ≤ 60 linhas, frontmatter, ponteiro ao CLI, sem cópia de spec nem hatch', { skip: fora }, () => {
+  test('skill gabarito-loop: ≤ 80 linhas, frontmatter, ponteiro ao CLI, sem cópia de spec nem hatch', { skip: fora }, () => {
     const f = join(RAIZ, 'plugins', 'gabarito-mestre', 'skills', 'gabarito-loop', 'SKILL.md');
     const t = readFileSync(f, 'utf8');
-    assert.ok(t.split('\n').length - 1 <= 60, `${t.split('\n').length - 1} linhas`);
+    assert.ok(t.split('\n').length - 1 <= 80, `${t.split('\n').length - 1} linhas`);
     assert.match(t, /^---\nname: gabarito-loop\ndescription: .{40,}\n(allowed-tools: .+\n)?---\n/);
     assert.match(t, /gates\/scripts\/loop\.mjs/);
     assert.doesNotMatch(t, /^\*\*REQ-/m, 'definição de requisito é da spec; a skill só aponta');

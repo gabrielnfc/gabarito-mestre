@@ -26,12 +26,30 @@ Use sempre o comando inteiro, sem variável: em zsh, `$VAR` com argumentos dá e
    - O implementador volta com o commit: `concluir <task>`. O revisor grava os achados em `<worktree>/.tmp-gabarito/review-r<rodada>.md`
      (ignorado pelo git; `fechar` remove) e o veredito vira `veredito <task> APROVADO|REPROVADO <rodada> <blocker> <major>`.
      `REPROVADO` sem esse arquivo não vazio: `ok:false achados_ausentes`, nada gravado; mande gravar e repita. Rodada errada: `rodada esperada: N`.
-   - `integrar` (`tasks[]`): `integrar <task>` (gate, rebase, ff-only do sha aprovado; ele mesmo fecha a worktree).
+   - `integrar` (`tasks[]`): `integrar <task>` (gate, rebase, ff-only do sha aprovado; ele mesmo fecha a worktree). Verde com `relato` não vazio:
+     repasse as linhas `desvio:`/`aviso:` ao dono e ao revisor da entrega; `[]` não prova zero desvios sem ler o `aviso:`.
    - `esperar`: agentes vivos ou slots ocupados; não despache. `pousar` nunca vem do CLI (`percent` nulo): o mod pousa ao fim do turno (sem mod, ver abaixo).
    - `parar{motivo}`: pare e **escale ao dono** com o motivo e o diário. Não reabra o que a regra manda escalar. `teto_rodadas`: diga o comando exato, só dele: `/gabarito-mestre:liberar <task>` (recomeça em `pendente`); você não o invoca.
-   - `concluir`: tudo integrado. Rode a suíte inteira e o CI antes de dizer "pronto".
+   - `esperar{emenda}`: há proposta de emenda aberta; avise o dono (`/gabarito-mestre:emenda aprovar|rejeitar <seq>`) e pare o turno.
+   - `concluir`: tudo integrado. Rode a suíte inteira e o CI antes de dizer "pronto"; depois, **Entrega** abaixo.
 2. CI da entrega: `ci verde|vermelho`. Falha que você não consegue resolver: `parar nao_conseguiu`.
 3. Volte a `proxima` depois de cada evento. `reabrir <task>` só recomeça a task (origem `retomada`); o teto de rodadas só o dono libera.
+
+## Dúvida, desvio e emenda
+
+- Dúvida de regra: `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/sombra.mjs" perguntar (--req <REQ> | --task <id>) --pergunta <texto>`. Leia o `aviso`, se vier.
+  Despache `gabarito-sombra` **só com o `prompt` devolvido** (a guarda nega o resto); a resposta vai por `sombra.mjs" registrar <hash> <resposta.json>`.
+  `pendente`: a consulta está aberta; siga outra task, não repergunte.
+- Desvio ou descoberta no meio da task: `loop.mjs" desvio <task> --req … --evidencia … --arquivos … --causa …` e `loop.mjs" descoberta --evidencia … --causa …`.
+- Mudança de spec: `loop.mjs" emenda propor …` devolve `proposta_seq`; quem julga é a Sombra ou o dono, nunca você.
+
+## Entrega
+
+`node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/entrega.mjs" decidir` depois de `concluir`; a decisão é do CLI:
+- `subir`: `entrega.mjs" executar`. Falhas esperadas: `checkout_sujo`, `entrega_em_curso`, `ancora_nao_gravada`: pare e diga a causa.
+- `release_pr`: push da branch e PR para a `base` que ele devolve; **nunca merge**.
+- `agendar`: informe o `quando` ao dono. `esperar{homolog}`: informe o dono (com o `aviso`, se houver) e pare o turno.
+- `entregue`: nada a fazer. `parar{motivo}`: escale ao dono.
 
 ## Slots
 
