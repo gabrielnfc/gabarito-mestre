@@ -348,7 +348,31 @@ function rodarComando(argv, cwd, timeoutS) {
   });
 }
 
-const redigir = (texto) => texto.split('\n').map((l) => (diario.recusaCanario(l) === null ? l : '[redigido]')).join('\n');
+const PEM_BEGIN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*-----/;
+const PEM_END = /-----END [A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*-----/;
+
+/**
+ * Redação por linha pelo canário do diário, mais o BLOCO de chave PEM inteiro: de `-----BEGIN ... PRIVATE KEY-----` até o `-----END`
+ * (inclusive) as linhas são o corpo da chave e o canário não as reconhece. Sem `END` o bloco vai até o fim da saída; `END` sem `BEGIN`
+ * (o anel cortou o começo) redige do início da saída até ele.
+ */
+const redigir = (texto) => {
+  const linhas = texto.split('\n');
+  const oculta = linhas.map(() => false);
+  let dentro = false;
+  linhas.forEach((l, i) => {
+    if (!dentro && PEM_BEGIN.test(l)) {
+      oculta[i] = true;
+      dentro = !PEM_END.test(l);
+    } else if (!dentro && PEM_END.test(l)) {
+      for (let j = 0; j <= i; j++) oculta[j] = true;
+    } else if (dentro) {
+      oculta[i] = true;
+      if (PEM_END.test(l)) dentro = false;
+    }
+  });
+  return linhas.map((l, i) => ((l !== '' && oculta[i]) || diario.recusaCanario(l) !== null ? '[redigido]' : l)).join('\n');
+};
 
 /** `executar` em processo. `opts`: `{ entrega, sessao, agoraMs, append }`. Devolve a saída; nunca lança. */
 export async function executarEntrega(cwd, opts = {}) {

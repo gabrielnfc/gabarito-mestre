@@ -7,7 +7,7 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, realpathSync, appendFileSync, renameSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, realpathSync, appendFileSync, renameSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
@@ -931,5 +931,135 @@ describe('costura (P9): CLI, diário real e núcleo', { concurrency: 4 }, () => 
     assert.deepEqual(dec.json.decisao, { tipo: 'parar', motivo: 'smoke' });
     assert.equal(rodar(m, 'executar').json.erro, 'nao_subiu');
     assert.equal(execLog(m).length, 3, 'deploy, smoke e rollback: nada roda de novo');
+  });
+});
+
+describe('r2: diário adulterado, ordem do lock, sinal e chave PEM', { concurrency: 4 }, () => {
+  const semEfeito = (m, antes, json, erro) => {
+    assert.equal(json.ok, false);
+    assert.equal(json.erro, erro);
+    assert.equal(execLog(m).length, 0, 'nenhum comando rodou');
+    assert.equal(eventos(m).length, antes, 'nada foi gravado');
+  };
+  const arqDiario = (m) => join(m.dir, 'events.loop.jsonl');
+  const reescrever = (m, filtro) => {
+    const linhas = readFileSync(arqDiario(m), 'utf8').split('\n').filter(Boolean);
+    writeFileSync(arqDiario(m), `${linhas.filter(filtro).join('\n')}\n`);
+  };
+
+  test('diario-linha-do-meio-apagada-nao-roda-nada', () => {
+    // T1 integrada e homolog verde; depois um `entrega.inicio` órfão e outro `ci.resultado`; apagar só o `inicio` é a saída óbvia para "destravar"
+    const m = montar();
+    ev(m, 'entrega.inicio', { politica: 'continua' });
+    ev(m, 'ci.resultado', { verde: true, alvo: 'homolog' });
+    const antes = eventos(m).length;
+    const r0 = rodar(m, 'executar');
+    assert.equal(r0.json.erro, 'nao_subiu', 'com o `inicio` órfão no diário a decisão é parar');
+    assert.equal(execLog(m).length, 0, 'com o `inicio` órfão no diário nada roda');
+    reescrever(m, (l) => JSON.parse(l).tipo !== 'entrega.inicio');
+    const depois = eventos(m).length;
+    assert.equal(depois, antes - 1);
+    const { rc, json } = rodar(m, 'executar');
+    assert.equal(rc, 1);
+    semEfeito(m, depois, json, 'diario_ilegivel');
+    assert.match(json.mensagem, /cadeia de hash quebrada/);
+    assert.equal(marca(m, 'deploy'), false);
+    const d = rodar(m, 'decidir');
+    assert.equal(d.json.erro, 'diario_ilegivel');
+  });
+
+  for (const [nome, linha] of [['array', '[]'], ['numero', '1'], ['null', 'null']]) {
+    test(`diario-linha-nao-objeto-${nome}-nao-roda-nada`, () => {
+      const m = montar();
+      appendFileSync(arqDiario(m), `${linha}\n`);
+      const antes = eventos(m).length;
+      const { rc, json } = rodar(m, 'executar');
+      assert.equal(rc, 1);
+      semEfeito(m, antes, json, 'diario_ilegivel');
+      assert.match(json.mensagem, /não é um objeto/);
+    });
+  }
+
+  test('diario-arquivo-nao-regular-symlink-nao-roda-nada', () => {
+    const m = montar();
+    const vazio = join(m.base, 'vazio.jsonl');
+    writeFileSync(vazio, '');
+    symlinkSync(vazio, join(m.dir, 'events.x.jsonl'));
+    const antes = eventos(m).length;
+    const { rc, json } = rodar(m, 'executar');
+    assert.equal(rc, 1);
+    semEfeito(m, antes, json, 'diario_ilegivel');
+    assert.match(json.mensagem, /events\.x\.jsonl: não é arquivo regular/);
+  });
+
+  test('lock-vem-antes-de-ler-o-diario', () => {
+    // D8-2: o lock é pego ANTES de ler o diário. Com lock alheio E diário torto o erro é o do lock; se o lock viesse depois, seria `diario_ilegivel`
+    const m = montar();
+    appendFileSync(arqDiario(m), 'lixo que não é json\n');
+    writeFileSync(join(m.dir, 'entrega.lock'), 'de outro processo\n');
+    const antes = eventos(m).length;
+    const { rc, json } = rodar(m, 'executar');
+    assert.equal(rc, 1);
+    assert.equal(execLog(m).length, 0);
+    assert.equal(json.erro, 'entrega_em_curso');
+    assert.equal(eventos(m).length, antes);
+    assert.equal(readFileSync(join(m.dir, 'entrega.lock'), 'utf8'), 'de outro processo\n');
+  });
+
+  test('lock-vem-antes-do-checkout-sujo', () => {
+    const m = montar();
+    writeFileSync(join(m.repo, 'README.md'), 'mudou\n');
+    writeFileSync(join(m.dir, 'entrega.lock'), 'de outro processo\n');
+    const { json } = rodar(m, 'executar');
+    assert.equal(json.erro, 'entrega_em_curso');
+  });
+
+  test('etapa-morta-por-sinal-e-falha-sinal-com-rollback', () => {
+    const m = montar({ scripts: { deploy: 'kill -KILL $$' } });
+    const { rc, json } = rodar(m, 'executar');
+    assert.equal(rc, 1);
+    assert.equal(json.erro, 'etapa_falhou');
+    assert.deepEqual(json.etapas.map((e) => [e.etapa, e.ok]), [['deploy', false], ['rollback', true]]);
+    assert.equal(json.etapas[0].falha, 'sinal');
+    assert.equal(marca(m, 'rollback'), true);
+  });
+
+  const CHAVE = (n, tam = 64) => Array.from({ length: n }, (_, i) => `CORPO${String(i).padStart(2, '0')}${'k'.repeat(tam - 7)}`);
+  const imprimir = (linhas) => linhas.map((l) => `echo '${l}'`).join('\n');
+
+  test('chave-pem-inteira-redigida-corpo-e-end', () => {
+    const corpo = CHAVE(4);
+    const m = montar({ scripts: { deploy: imprimir(['antes', '-----BEGIN OPENSSH PRIVATE KEY-----', ...corpo, '-----END OPENSSH PRIVATE KEY-----', 'depois']) } });
+    const { rc, json, stdout } = rodar(m, 'executar');
+    assert.equal(rc, 0, JSON.stringify(json));
+    assert.equal(json.etapas[0].saida, `antes\n${'[redigido]\n'.repeat(6)}depois\n`);
+    assert.equal(stdout.includes('CORPO'), false);
+    assert.equal(textoDoDiario(m).includes('CORPO'), false);
+  });
+
+  test('chave-pem-cortada-no-anel-sem-begin-redigida-ate-o-end', () => {
+    // 40 linhas de 65 caracteres: o anel de 2.000 perde o BEGIN e as primeiras linhas do corpo; o END e o resto do corpo ficam
+    const corpo = CHAVE(40);
+    const m = montar({ scripts: { deploy: imprimir(['-----BEGIN RSA PRIVATE KEY-----', ...corpo, '-----END RSA PRIVATE KEY-----', 'depois']) } });
+    const { rc, json, stdout } = rodar(m, 'executar');
+    assert.equal(rc, 0, JSON.stringify(json));
+    const saida = json.etapas[0].saida;
+    assert.ok(saida.endsWith('\n[redigido]\ndepois\n'), saida.slice(-60));
+    assert.equal(saida.includes('CORPO'), false);
+    assert.equal(saida.includes('-----END'), false);
+    assert.equal(stdout.includes('CORPO'), false);
+    assert.equal(textoDoDiario(m).includes('CORPO'), false);
+  });
+
+  test('chave-pem-sem-end-redigida-ate-o-fim', () => {
+    const m = montar({ scripts: { deploy: imprimir(['antes', '-----BEGIN PRIVATE KEY-----', ...CHAVE(3)]) } });
+    const { json } = rodar(m, 'executar');
+    assert.equal(json.etapas[0].saida, `antes\n${'[redigido]\n'.repeat(4)}`);
+  });
+
+  test('chave-pem-nao-redige-o-que-vem-depois-do-end', () => {
+    const m = montar({ scripts: { deploy: imprimir(['-----BEGIN PRIVATE KEY-----', ...CHAVE(2), '-----END PRIVATE KEY-----', 'visivel-1', 'visivel-2']) } });
+    const { json } = rodar(m, 'executar');
+    assert.equal(json.etapas[0].saida, `${'[redigido]\n'.repeat(4)}visivel-1\nvisivel-2\n`);
   });
 });
