@@ -39,7 +39,7 @@ Legenda: **(a)** medido/lido · **(b)** a medir · **(c)** decisão do dono, do 
 
 **REQ-PNL-1 Projeção.** `projetarPainel(plano, eventos, entrada)` ⇒ `EstadoPainel`.
 
-Entrada: `decisaoEntrega`, `pausado`, `contexto{percent, tokens, window}`, `limites{h5, d7}`, `x`, `agentes[{id, type, description, status, uso{contexto, tok, modelo}|null}]`, `pacote`, `notificacao{ts|motivo}|null`, `agoraMs`, `titulo`, `politica`.
+Entrada: `decisaoEntrega`, `pausado`, `contexto{percent, tokens, window}`, `limites{h5, d7}`, `x`, `agentes[{id, type, description, status, uso{contexto, tok, modelo}|null}]`, `pacote`, `notificacao{ts|motivo}|null`, `agoraMs`, `fuso`, `titulo`, `politica`, `base`, `entregaId`, `modeloSessao`, `specSha` (sha256 atual de `plano.spec`, ou null), `tetoSombra` (`sombra.teto` de origin, 26 padrão). Os seis últimos, e `fuso`, vêm do CLI, nunca do mod; `modeloSessao` = último `custo.medicao.modelo` do orquestrador (D11). *(emenda Sombra 2026-11-09, sombra-plano.md)*
 
 Saída:
 - **plano:** `tasks{id, titulo?, estado, glifo, nome?, papel?, modelo?, desdeS?, deps}`, `feitas`, `total`, `%`, `eta{hora, restanteS, maisMenosS, n}|null`, `rodadaMedia`, `medianaS`.
@@ -104,7 +104,7 @@ O resto do preset segue abaixo. Tabela fechada (B7), só comandos que existem; s
 **REQ-PNL-5 Equipe.** Árvore líder ⇒ agentes (`├─`/`└─`).
 - **Líder:** `<LÍDER> orquestra · <modelo>`; ctx em barra `█░` com `pouso em X%`; `tok`; `5h`/`7d` em barras (ausente ⇒ linha omitida); `▶` com a narrativa em modelo de texto fixo a partir de `agora`.
 - **Agente vivo:** `● <NOME> <estado da task> · <modelo> <task> ctx <barra> N% <tok> · <tempo>`. O estado é `implementando`, `em revisão` ou `corrigindo`, sem RED/GREEN (dono). Sem % ⇒ só tokens (D11). Sem uso lido ⇒ `ctx —`.
-- **Revisor aguardando:** `◐ <NOME> revisa aguarda <task>`, com `N mutações do gate hoje, M mortas` (REQ-PNL-14).
+- **Revisor aguardando:** task em `concluida` (o revisor do par ainda não foi despachado; `em_revisao` sem agente vivo é `◌ sem agente`, D3). Linha `◐ <NOME> revisa aguarda <task>` quando o par (task, revisor) já tem nome (D10); senão `◐ revisor aguarda <task>`. Sufixo `N mutações do gate hoje, M mortas` (REQ-PNL-14), omitido sem integração de hoje com `mutacoes`. "Hoje" = data civil de `agoraMs` no fuso local do CLI; hora fora de hoje sai `dd/mm hh:mm`. *(emenda Sombra 2026-11-09, sombra-plano.md)*
 - **Sombra:** sempre presente, `○ <SÁBIO> aconselha · <modelo>` com `N decisões · #<seq> <resposta cortada> (<1ª fonte>)`.
 
 Ramos concluídos colapsam. Cabeçalho: `agentes N vivos`.
@@ -125,9 +125,9 @@ Sorteio no `session.start`: hash do `$.session.id` sobre os pacotes, sem o de `$
 - `task.integrada` ⇒ "✓ T07 integrada · N mutações mortas";
 - `decisao.sombra` ⇒ "◆ ELROND decidiu #seq · <resposta>";
 - `producao.acesso`/`operacao.destrutiva` ⇒ "▲ <NOME> leu|alterou PRODUÇÃO · <alvo> · <faixa>";
-- frases próprias também para `ci.resultado`, `emenda.*`, `spec.emendada`, `spec.aprovada`, `loop.parar`, `loop.pausa`, `sessao.pouso`/`retomada` e `entrega.*`.
+- frases próprias também para `ci.resultado`, `emenda.*`, `spec.emendada`, `spec.aprovada`, `loop.parar`, `loop.pausa {estado}` (`{negado}` da guarda é log de ferramenta e não aparece), `task.reaberta {origem:'dono'}` ("▶ dono liberou <task>"), `sessao.pouso`/`retomada` e `entrega.*`. *(emenda Sombra 2026-11-09, sombra-plano.md)*
 
-O resto (`custo.medicao`, `guarda.*`, `diario.recusa`, `sombra.consulta`) não aparece. Entram as mais recentes que cabem; o resto conta em `▼ N eventos`. `narracao: false` esconde o histórico.
+Tabela fechada: qualquer outro tipo não aparece (entre eles `custo.medicao`, `guarda.*`, `diario.recusa`, `sombra.consulta`, `task.concluida`, `task.reaberta {origem:'retomada'}`, `desvio`, `descoberta`, `sessao.inicio`); `dados` fora da forma ⇒ não aparece. *(emenda Sombra 2026-11-09, sombra-plano.md)* Entram as mais recentes que cabem; o resto conta em `▼ N eventos`. `narracao: false` esconde o histórico.
 
 **REQ-PNL-8 Aprovação da spec.** `/gabarito-mestre:aprovar` é uma skill com `disable-model-invocation: true` mais o hook `UserPromptExpansion` `gates/scripts/aprovar-spec.mjs`. Grava `spec.aprovada {spec, sha256}` com o caminho de `plano.spec` e o sha256 atual. Recusa com block e motivo, sem gravar nada: subagent, plano sem `spec`, arquivo ausente, sha256 já aprovado. O evento entra em `TipoEvento` com forma validada. "Aguardando" = nenhuma aprovação com o sha256 atual. Não trava o loop.
 
