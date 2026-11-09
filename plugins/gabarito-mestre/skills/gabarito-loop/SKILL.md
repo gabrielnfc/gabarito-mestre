@@ -46,7 +46,7 @@ Use sempre o comando inteiro, sem variável: em zsh, `$VAR` com argumentos dá e
 ## Entrega
 
 `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/entrega.mjs" decidir` depois de `concluir`; a decisão é do CLI:
-- `subir`: `entrega.mjs" executar`. Falhas esperadas: `checkout_sujo`, `entrega_em_curso`, `ancora_nao_gravada`: pare e diga a causa.
+- `subir`: `entrega.mjs" executar`. Falhas esperadas: `checkout_sujo`, `entrega_em_curso`, `ancora_nao_gravada`: pare e diga a causa. Negado pelo modo de permissão (o `auto` classifica como deploy de produção): não contorne nem tente outro caminho; diga ao dono que o deploy é dele, com o comando exato `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/entrega.mjs" executar`, e pare o turno.
 - `release_pr`: push da branch e PR para a `base` que ele devolve; **nunca merge**.
 - `agendar`: informe o `quando` ao dono. `esperar{homolog}`: informe o dono (com o `aviso`, se houver) e pare o turno.
 - `entregue`: nada a fazer. `parar{motivo}`: escale ao dono.

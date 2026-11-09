@@ -290,6 +290,11 @@ describe('T14 skill gabarito-loop — ponteiros aos CLIs da E3', () => {
     assert.doesNotMatch(plano, /despache a Sombra de novo/i);
   });
 
+  test('skill-loop-instrucao-subir-negado: deploy negado pelo modo ⇒ NÃO contorna, devolve ao dono com o comando exato e PARA o turno', () => {
+    assert.match(plano, /- `subir`: `entrega\.mjs" executar`\. Falhas esperadas: `checkout_sujo`, `entrega_em_curso`, `ancora_nao_gravada`: pare e diga a causa\. Negado pelo modo de permissão \(o `auto` classifica como deploy de produção\): não contorne nem tente outro caminho; diga ao dono que o deploy é dele, com o comando exato `node "\$\{CLAUDE_PLUGIN_ROOT\}\/gates\/scripts\/entrega\.mjs" executar`, e pare o turno\./);
+    assert.doesNotMatch(plano, /tente outro caminho(?!;)|contorne o bloqueio|rode (?:o )?deploy (?:você|por outro)/i);
+  });
+
   test('skill-loop-limite: ≤ 80 linhas e sem cópia de requisito', () => {
     assert.ok(skill.split('\n').length - 1 <= 80, `${skill.split('\n').length - 1} linhas`);
     assert.doesNotMatch(skill, /^\*\*REQ-/m);
