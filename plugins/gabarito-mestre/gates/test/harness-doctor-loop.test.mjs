@@ -201,6 +201,14 @@ describe('T14 doctor — modelos-por-papel (REQ-MOD-1): só aviso', () => {
     assert.equal(a, 'modelos-por-papel: implementador: declarado haiku < recomendado sonnet; revisor: declarado sonnet < recomendado opus');
   });
 
+  test('doctor-papel-herdado-do-prototipo: papel `constructor`/`toString` no config ⇒ aviso de papel desconhecido (guarda por Object.hasOwn)', () => {
+    for (const papel of ['constructor', 'toString', 'hasOwnProperty']) {
+      const [a, ...resto] = avisosDe(comModelos({ [papel]: 'haiku' }));
+      assert.deepEqual(resto, [], papel);
+      assert.match(a, new RegExp(`^modelos-por-papel: ${papel}: papel desconhecido \\(sem modelo recomendado\\)$`), a);
+    }
+  });
+
   test('doctor-sem-modelos-silencio: sem orquestracao.modelos (ou vazio) ⇒ nenhum aviso, check verde', () => {
     for (const cfg of [{}, { orquestracao: {} }, { orquestracao: { modelos: {} } }]) {
       const dir = repoComGit({ 'AGENTS.md': agents(1), 'harness.config.json': JSON.stringify(cfg) });
@@ -256,6 +264,30 @@ describe('T14 skill gabarito-loop — ponteiros aos CLIs da E3', () => {
     assert.match(skill, /relato/);
     assert.match(skill, /`desvio:`\/`aviso:`/);
     assert.match(skill, /`\[\]` não prova/);
+  });
+
+  // Instrução, não token: o texto é normalizado (quebra de linha + recuo ⇒ 1 espaço) e a frase inteira de cada ramo é presa,
+  // com verbo e destinatário. Inverter o verbo (ignore, siga despachando, rode executar, despache de novo) derruba o teste.
+  const plano = skill.replace(/\s*\n\s*/g, ' ');
+
+  test('skill-loop-instrucao-relato: integrar verde com relato ⇒ REPASSE ao dono e ao revisor; nunca ignorar', () => {
+    assert.match(plano, /`integrar` \(`tasks\[\]`\): `integrar <task>` .*? Verde com `relato` não vazio: repasse as linhas `desvio:`\/`aviso:` ao dono e ao revisor da entrega; `\[\]` não prova zero desvios sem ler o `aviso:`\./);
+    assert.doesNotMatch(plano, /ignore as linhas/i);
+  });
+
+  test('skill-loop-instrucao-esperar-emenda: avisa o dono do comando e PARA o turno', () => {
+    assert.match(plano, /`esperar\{emenda\}`: há proposta de emenda aberta; avise o dono \(`\/gabarito-mestre:emenda aprovar\|rejeitar <seq>`\) e pare o turno\./);
+    assert.doesNotMatch(plano, /esperar\{emenda\}[^-]*siga despachando/);
+  });
+
+  test('skill-loop-instrucao-esperar-homolog: informa o dono (com o aviso) e PARA o turno; não executa', () => {
+    assert.match(plano, /`esperar\{homolog\}`: informe o dono \(com o `aviso`, se houver\) e pare o turno\./);
+    assert.doesNotMatch(plano, /esperar\{homolog\}[^.]*rode executar/);
+  });
+
+  test('skill-loop-instrucao-pendente: consulta aberta ⇒ segue outra task e NÃO repergunta nem redespacha a Sombra', () => {
+    assert.match(plano, /`pendente`: a consulta está aberta; siga outra task, não repergunte\./);
+    assert.doesNotMatch(plano, /despache a Sombra de novo/i);
   });
 
   test('skill-loop-limite: ≤ 80 linhas e sem cópia de requisito', () => {
