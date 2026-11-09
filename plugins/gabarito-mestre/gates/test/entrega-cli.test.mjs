@@ -305,6 +305,26 @@ describe('executar: etapas e desfechos', { concurrency: 4 }, () => {
     assert.ok(saida.endsWith(`${filler}\n`));
   });
 
+  const SEM_QUEBRA = (cauda) => `{ head -c 2000000 /dev/zero | tr '\\0' x; printf 'ghp_'; head -c 36 /dev/zero | tr '\\0' B; ${cauda}; }`;
+
+  test('saida-linha-unica-gigante-com-segredo-cortado-nao-vaza', () => {
+    // 2 MiB numa linha só, sem `\n` nem espaço: o anel começa 20 caracteres dentro do token; sem prefixo o canário não casa
+    const m = montar({ scripts: { deploy: SEM_QUEBRA(`head -c 1980 /dev/zero | tr '\\0' z`) } });
+    const { rc, json, stdout } = rodar(m, 'executar');
+    assert.equal(rc, 0, JSON.stringify(json));
+    assert.equal(json.etapas[0].saida, '[cortado]');
+    assert.equal(stdout.includes('BBBBBBBB'), false);
+    assert.equal(textoDoDiario(m).includes('BBBBBBBB'), false);
+  });
+
+  test('saida-linha-unica-gigante-descarta-ate-o-primeiro-espaco', () => {
+    const m = montar({ scripts: { deploy: SEM_QUEBRA(`head -c 1973 /dev/zero | tr '\\0' z; printf ' fim-ok'`) } });
+    const { rc, json, stdout } = rodar(m, 'executar');
+    assert.equal(rc, 0, JSON.stringify(json));
+    assert.equal(json.etapas[0].saida, 'fim-ok');
+    assert.equal(stdout.includes('BBBBBBBB'), false);
+  });
+
   test('comando-com-segredo-redigido', () => {
     const t = token();
     const m = montar({ extraArgv: [t] });
@@ -388,7 +408,10 @@ describe('executar: pré-condições (nada roda, nada se grava)', { concurrency:
     const { rc, json } = rodar(m, 'executar');
     assert.equal(rc, 1);
     semEfeito(m, antes, json, 'entrega_incompleta');
-    assert.deepEqual(json.propostas, [eventos(m).find((e) => e.tipo === 'emenda.proposta').seq]);
+    // a única barreira é a do núcleo (`proximaAcao`), exercida pela borda: a mensagem carrega a ação do loop
+    assert.equal(json.acao.tipo, 'esperar');
+    assert.equal(json.acao.motivo, 'emenda');
+    assert.deepEqual(json.acao.propostas.map((p) => p.seq), [eventos(m).find((e) => e.tipo === 'emenda.proposta').seq]);
   });
 
   test('executar-pausado-recusa', () => {
@@ -449,6 +472,51 @@ describe('executar: pré-condições (nada roda, nada se grava)', { concurrency:
     assert.notEqual(g(m.repo, 'status', '--porcelain', '--untracked-files=no').trim(), '', 'preparo: o diário rastreado está modificado');
     const { rc, json } = rodar(m, 'executar');
     assert.equal(rc, 0, JSON.stringify(json));
+  });
+
+  /** versiona (`-f`) a pasta da entrega e commita: o diário e o plano passam a ser arquivos rastreados. */
+  const versionarEntregas = (m) => {
+    g(m.repo, 'add', '-f', '.harness/entregas');
+    g(m.repo, 'commit', '-q', '-m', 'entregas');
+  };
+
+  test('executar-script-rastreado-sob-entregas-alterado-e-sujo', () => {
+    // o comando declarado em origin aponta para um script versionado sob `.harness/entregas/<id>/`: alterado sem commit, não roda (D8-5)
+    const m = montar({ deployArgv: (base) => ['bash', join(base, 'repo com espaço', '.harness', 'entregas', ENTREGA, 'deploy.sh')] });
+    writeFileSync(join(m.dir, 'deploy.sh'), `M='${m.marcas}'\ntouch "$M/deploy"\n`);
+    versionarEntregas(m);
+    appendFileSync(join(m.dir, 'deploy.sh'), 'touch "$M/malicioso"\n');
+    const antes = eventos(m).length;
+    const { rc, json } = rodar(m, 'executar');
+    assert.equal(rc, 1);
+    semEfeito(m, antes, json, 'checkout_sujo');
+    assert.equal(marca(m, 'malicioso'), false);
+    assert.equal(marca(m, 'deploy'), false);
+  });
+
+  test('executar-plano-rastreado-alterado-e-sujo', () => {
+    // `plano.json` decide `concluir` e aperta a política: alterado sem commit conta como sujo
+    const m = montar();
+    versionarEntregas(m);
+    writeFileSync(join(m.dir, 'plano.json'), `${readFileSync(join(m.dir, 'plano.json'), 'utf8')}\n`);
+    const antes = eventos(m).length;
+    const { rc, json } = rodar(m, 'executar');
+    assert.equal(rc, 1);
+    semEfeito(m, antes, json, 'checkout_sujo');
+    assert.match(json.mensagem, /plano\.json/);
+  });
+
+  test('executar-arquivo-de-diario-em-subpasta-alterado-e-sujo', () => {
+    // só `events.*.jsonl` direto na pasta da entrega fica de fora: o mesmo nome numa subpasta é arquivo comum
+    const m = montar();
+    mkdirSync(join(m.dir, 'sub'));
+    writeFileSync(join(m.dir, 'sub', 'events.x.jsonl'), 'a\n');
+    versionarEntregas(m);
+    appendFileSync(join(m.dir, 'sub', 'events.x.jsonl'), 'b\n');
+    const antes = eventos(m).length;
+    const { rc, json } = rodar(m, 'executar');
+    assert.equal(rc, 1);
+    semEfeito(m, antes, json, 'checkout_sujo');
   });
 
   test('executar-lock-existente-recusa', () => {

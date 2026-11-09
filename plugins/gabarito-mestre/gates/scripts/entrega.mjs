@@ -12,7 +12,7 @@
  *
  * PRÉ-CONDIÇÕES de `executar`, na ordem, sem efeito até a decisão: uso · lock `<dirEntrega>/entrega.lock` (`wx`; órfão NÃO é quebrado: o estado de
  * produção é desconhecido) · `.harness/PAUSAR` · plano e diário legíveis · entrega completa (`proximaAcao` = `concluir` e nenhuma proposta de emenda
- * aberta) · política efetiva (o plano só aperta) · checkout principal sem mudança rastreada · decisão `subir`. `decidir` repete as de `PAUSAR` a política,
+ * aberta, pelo núcleo) · política efetiva (o plano só aperta) · checkout principal sem mudança rastreada · decisão `subir`. `decidir` repete as de `PAUSAR` a política,
  * sem lock e sem conferir o checkout.
  *
  * EXECUÇÃO. `producao.acesso` ANTES de `entrega.inicio` (falha de append antes do deploy aborta sem rodar nada e sem `inicio` órfão); depois do
@@ -30,7 +30,6 @@ import { createHash } from 'node:crypto';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import { lerConfigOrigin } from '../lib/config.mjs';
 import * as diario from '../dist/diario.js';
-import { projetarEmendas } from '../dist/emenda.js';
 import { decidirEntrega, lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { ordenar, proximaAcao } from '../dist/loop.js';
 import { validarPlano } from '../dist/plano.js';
@@ -183,11 +182,6 @@ function preparar(c, agoraMs) {
   if (acao.tipo !== 'concluir') {
     throw new Falha('entrega_incompleta', `a entrega só sobe com todas as tasks integradas (próxima ação do loop: ${acao.tipo}${acao.motivo ? ` — ${acao.motivo}` : ''})`, { acao });
   }
-  const emendas = projetarEmendas(eventos);
-  if (emendas.invalido !== undefined) throw new Falha('diario_invalido', `emendas: ${emendas.invalido}; nada foi feito`);
-  if (emendas.abertas.length > 0) {
-    throw new Falha('entrega_incompleta', `há proposta de emenda aberta (seq ${emendas.abertas.map((p) => p.seq).join(', ')}): o dono julga antes de entregar`, { propostas: emendas.abertas.map((p) => p.seq) });
-  }
   const origin = lerConfigOrigin(c.raiz);
   const config = lerConfigEntrega(origin.cfg);
   const avisos = [];
@@ -268,11 +262,11 @@ function soltarLock(arq) {
   try { unlinkSync(arq); } catch { /* o próximo `executar` verá o lock: lado seguro */ }
 }
 
-/** `git status` rastreado do principal, sem o diário (que é versionado na branch e muda a cada evento). */
+/** `git status` rastreado do principal, sem os arquivos do diário (`events.*.jsonl`: versionados na branch, mudam a cada evento); `plano.json` e o resto contam. */
 function conferirCheckout(c) {
   let saida;
   try {
-    saida = git(c.raiz, 'status', '--porcelain', '--untracked-files=no', '--', '.', ':(exclude).harness/entregas');
+    saida = git(c.raiz, 'status', '--porcelain', '--untracked-files=no', '--', '.', ':(exclude,glob).harness/entregas/*/events.*.jsonl');
   } catch (e) {
     throw new Falha('git_falhou', `não consegui conferir o checkout principal (${e.message}); nada foi feito`);
   }
@@ -309,7 +303,14 @@ function rodarComando(argv, cwd, timeoutS) {
       child?.stderr?.destroy();
       let saida = anel;
       // anel cheio: a 1ª linha pode ter perdido o começo (e o prefixo do segredo com ele); descarta o pedaço
-      if (saida.length >= ANEL_MAX && saida.includes('\n')) saida = saida.slice(saida.indexOf('\n') + 1);
+      // sem `\n` (linha única gigante): descarta até o 1º espaço em branco; sem nenhum, nada do anel é confiável
+      if (saida.length >= ANEL_MAX) {
+        if (saida.includes('\n')) saida = saida.slice(saida.indexOf('\n') + 1);
+        else {
+          const ws = saida.search(/\s/);
+          saida = ws === -1 ? '[cortado]' : saida.slice(ws + 1);
+        }
+      }
       resolve({ ok: veredito.falha === undefined, ...(veredito.falha === undefined ? {} : { falha: veredito.falha }), saida });
     };
     try {
