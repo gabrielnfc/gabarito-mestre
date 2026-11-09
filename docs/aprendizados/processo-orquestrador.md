@@ -50,3 +50,8 @@ Rode cada item como sonda sua e relate o resultado:
 
 - Contexto inicial de subagent: mediana 41.532 tokens no 1º turno (R13), pago por agente. Medir o que entra nele.
 - X3, mutações em paralelo: gate pesa pouco (90 min de 7h30). Só depois de X7.
+
+## E3 → E4 (2026-11-09, medido)
+- **Duração da E3:** 1º commit 11:03, merge 18:51 = 7h48 para 16 tasks + T14b + T14c (git log). Única medição confiável de entrega inteira; E1/E2 em squash não mostram início. Base das estimativas da E4/E5.
+- **Teste de tempo em runner compartilhado:** `bench-guarda` p95 153,9 ms × teto 150 no macOS do CI, piso do runner lento (p95 75,6 ms); passou no rerun e no commit anterior com o mesmo código. Hipótese M: teto sem folga para o runner; medir N execuções antes de mudar.
+- **Fixtures que chamam git real** precisam de identidade explícita: macOS deriva identidade do sistema, Linux do runner não (R44 GM-11). Reproduzir com HOME vazio + `user.useConfigOnly=true`.
