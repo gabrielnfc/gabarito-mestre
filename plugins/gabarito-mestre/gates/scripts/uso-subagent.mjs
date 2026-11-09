@@ -28,6 +28,7 @@ import { git, raizPorFs } from '../lib/git.mjs';
 export const PASSO_MS = 40;
 export const TETO_ESPERA_MS = 200;
 export const TETO_BYTES = 8 * 1024 * 1024;
+export const CAUDA_BYTES = 256 * 1024; // acima do teto, só para achar o último modelo real no fim do arquivo
 const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const ID_ENTREGA_RE = /[A-Z]+-\d+/;
 const CAMPOS = [
@@ -100,7 +101,21 @@ function lerLinhas(real) {
     }
     let texto = buf.toString('utf8', 0, lido);
     if (parcial) texto = texto.slice(0, texto.lastIndexOf('\n') + 1); // descarta a linha cortada pelo teto
-    return { linhas: texto.split('\n'), parcial, tamanho: st.size };
+    let cauda = null;
+    if (parcial) {
+      // a cauda (últimos CAUDA_BYTES) serve só ao modelo: o último real é o do fim do arquivo, não o do começo lido
+      const ini = st.size - CAUDA_BYTES;
+      const cb = Buffer.alloc(CAUDA_BYTES);
+      let lc = 0;
+      while (lc < CAUDA_BYTES) {
+        const k = readSync(fd, cb, lc, CAUDA_BYTES - lc, ini + lc);
+        if (k <= 0) break;
+        lc += k;
+      }
+      const t = cb.toString('utf8', 0, lc);
+      cauda = t.slice(t.indexOf('\n') + 1).split('\n'); // descarta a primeira linha, cortada no meio
+    }
+    return { linhas: texto.split('\n'), cauda, parcial, tamanho: st.size };
   } catch {
     return { linhas: [], parcial: false, tamanho: -1 };
   } finally {
@@ -110,7 +125,7 @@ function lerLinhas(real) {
 
 /** Soma `message.usage` por `message.id` (maior valor por campo); só números entram no mapa. Devolve `{parcial, tamanho, modelo}`. */
 function acumular(real, porId) {
-  const { linhas, parcial, tamanho } = lerLinhas(real);
+  const { linhas, cauda, parcial, tamanho } = lerLinhas(real);
   for (const l of linhas) {
     if (l === '' || !l.includes('"usage"')) continue;
     let o;
@@ -126,7 +141,7 @@ function acumular(real, porId) {
     }
     porId.set(id, atual);
   }
-  return { parcial, tamanho, modelo: modeloDoTranscript(linhas) };
+  return { parcial, tamanho, modelo: modeloDoTranscript(cauda ?? linhas) ?? (cauda === null ? null : modeloDoTranscript(linhas)) };
 }
 
 /**

@@ -397,7 +397,7 @@ test('arquivo-acima-do-teto-parcial: acima do teto lê só o teto, marca parcial
   const c = cenario();
   const { TETO_BYTES } = await import(pathToFileURL(SCRIPT).href);
   const p = join(c.projetos, 'grande.jsonl');
-  const um = `${msg('m0', U(1, 1))}\n`;
+  const um = `${msg('m0', U(1, 1), { model: 'modelo-do-inicio' })}\n`;
   writeFileSync(p, um);
   // enche até passar o teto com mensagens de ids distintos, cada uma valendo 1 input
   const bloco = Array.from({ length: 2000 }, (_, i) => msg(`g${i}`, U(1, 0))).join('\n') + '\n';
@@ -406,12 +406,15 @@ test('arquivo-acima-do-teto-parcial: acima do teto lê só o teto, marca parcial
     appendFileSync(p, bloco);
     tam = statSync(p).size;
   }
-  appendFileSync(p, `${msg('ultima-depois-do-teto', U(1000000, 0))}\n`);
-  const r = rodar(c, { agent_transcript_path: p });
+  appendFileSync(p, `${msg('ultima-depois-do-teto', U(1000000, 0), { model: 'modelo-do-fim' })}\n`);
+  const r = rodar(c, { agent_transcript_path: p, agent_type: 'gabarito-mestre:gabarito-revisor' });
   assert.equal(r.status, 0);
   const [m] = medicoes(c);
   assert.ok(m, 'registrou');
   assert.equal(m.dados.parcial, true);
+  // GM-11 T9 r2: o ramo parcial carrega papel e modelo; o modelo vale o do fim do arquivo (último real), não o do começo lido
+  assert.equal(m.dados.papel, 'revisor');
+  assert.equal(m.dados.modelo, 'modelo-do-fim');
   assert.ok(m.dados.input_tokens < 1000000, 'não leu a mensagem depois do teto');
   assert.ok(m.dados.mensagens > 1000);
 });

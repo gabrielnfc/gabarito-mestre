@@ -1198,6 +1198,10 @@ test('mod-custo-tem-modelo: custo.medicao traz modelo (valor ou null, a chave nu
   await m.turno({ agentId: 'ag3', usage: { ...USO, model: '<synthetic>' } })
   await m.turno({ agentId: 'ag4', usage: { ...USO, model: '' } })
   await m.turno({ usage: { ...USO, model: 'claude-opus-4-7' } })
+  // o orquestrador tem o mesmo filtro: <synthetic>, vazio e ausente viram null
+  await m.turno({ usage: { ...USO, model: '<synthetic>' } })
+  await m.turno({ usage: { ...USO, model: '' } })
+  await m.turno({ usage: { ...USO, model: undefined } })
   const g = m.grav.filter((x) => x.tipo === 'custo.medicao')
   expect(g.map((x) => [x.agente, x.dados.modelo])).toEqual([
     ['subagent:ag1', 'claude-sonnet-5-5'],
@@ -1205,6 +1209,9 @@ test('mod-custo-tem-modelo: custo.medicao traz modelo (valor ou null, a chave nu
     ['subagent:ag3', null],
     ['subagent:ag4', null],
     ['orquestrador', 'claude-opus-4-7'],
+    ['orquestrador', null],
+    ['orquestrador', null],
+    ['orquestrador', null],
   ])
   for (const x of g) expect('modelo' in x.dados).toBe(true)
 })
