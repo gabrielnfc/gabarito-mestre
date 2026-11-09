@@ -1,7 +1,7 @@
 /**
  * Testes do núcleo de emendas (GM-11 T3, REQ-EME-1, EME-2). Mutações prescritas (task-3-mut.json):
  *  M3a último julgamento vence · M3b proposta de qualquer sessão · M3c ordenar falha ⇒ estado vazio sem `invalido`
- *  M3d passada única · M3e versaoDoReq conta rejeitada · M3f reqsCongelados inclui aprovadas · M3g escopo soma abertas
+ *  M3d passada única (R1 do review) · M3e versaoDoReq conta rejeitada · M3f reqsCongelados inclui aprovadas · M3g escopo soma abertas
  *  M3h colisão só contra task.arquivos · M3i dependência só direta · M3j sem normalizar caminho · M3k J3 removido (M-EME1)
  *  M3l escopo sem aprovadas (escopo-soma-arquivos-aprovados) · M3m V4 removido · M3n J5 removido
  */
@@ -258,4 +258,17 @@ test('julgar-seq-nao-inteiro-recusa', () => {
 
 test('julgar-origem-fora-do-enum-recusa', () => {
   assert.match(validarJulgamento(projetarEmendas([prop(1)]), 1, 'x' as never, true) ?? '', /origem/);
+});
+
+test('proposta-projetada-com-todos-os-campos', () => {
+  // P15: cada campo da proposta projetada é lido, aberta e aprovada; diff, fato e causa distintos para trocar um pelo outro cair.
+  const p1 = prop(1, { diff: 'DIFF-1', fato: 'FATO-1', causa: 'regra_negocio', task: 't1', arquivos: ['./src//a.ts'] }, SESSAO_EMENDAS, 10);
+  const p2 = prop(2, { diff: 'DIFF-2', fato: 'FATO-2', causa: 'tecnica', req: 'REQ-B-1' }, SESSAO_EMENDAS, 20);
+  const est = projetarEmendas([p1, p2, aprova('s', 1, 1, 'sombra', 30)]);
+  assert.deepEqual(est.aprovadas, [{ seq: 1, req: 'REQ-EME-1', task: 't1', diff: 'DIFF-1', arquivos: ['src/a.ts'], causa: 'regra_negocio', ts: ts(10), origem: 'sombra' }]);
+  assert.deepEqual(est.abertas, [{ seq: 2, req: 'REQ-B-1', diff: 'DIFF-2', arquivos: [], causa: 'tecnica', ts: ts(20) }]);
+  const rej = projetarEmendas([p1, rejeita('s', 1, 1, 'dono', 30)]);
+  assert.deepEqual(rej.rejeitadas, [{ seq: 1, req: 'REQ-EME-1', task: 't1', diff: 'DIFF-1', arquivos: ['src/a.ts'], causa: 'regra_negocio', ts: ts(10) }]);
+  assert.equal(rej.invalido, undefined);
+  assert.equal(est.invalido, undefined);
 });
