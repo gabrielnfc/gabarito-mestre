@@ -4,11 +4,13 @@
  *
  * Contrato de falha (D1, nunca adivinha): evento cuja forma `formaInvalida` recusa é ignorado pela projeção; diário cuja ordem não
  * se sustenta (`seq` não crescente dentro da sessão, `ts` ilegível) não vira decisão: as projeções devolvem vazio e `diarioEmOrdem`
- * diz `false`, para o CLI recusar com motivo em vez de tratar "não sei" como "não há". Ausente e corrompido são casos distintos:
- * lista vazia = sem decisão; evento sem `dados` ou com `dados` que não é objeto = evento recusado pela forma, nunca exceção.
+ * diz `false`, para o CLI recusar com motivo em vez de tratar "não sei" como "não há". `contarConsultas` é a exceção deliberada: conta as
+ * consultas válidas mesmo fora de ordem (subcontar afrouxaria o teto; o CLI recusa antes por `diarioEmOrdem`).
+ * Ausente e corrompido são casos distintos: lista vazia = sem decisão; evento sem `dados` ou com `dados` que não é objeto = evento recusado pela forma, nunca exceção.
  */
 import { createHash } from 'node:crypto';
 import { formaInvalida, REQ_RE } from './formas.ts';
+import { ordenar } from './loop.ts';
 import type { Evento, TaskPlano } from './tipos.ts';
 
 export type Ancora = { req: string } | { task: string };
@@ -17,8 +19,6 @@ export type DecisaoSombra = {
   fontes?: string[]; medicao?: string; fora_da_regra?: true; emenda_seq?: number; pergunta_enviesada: boolean;
   sessao: string; seq: number; ts: string;
 };
-
-const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /** NFC, minúsculas, `trim` e qualquer sequência de espaço (inclui quebra de linha e NBSP) vira um espaço. NFC de novo ao fim: caixa pode decompor. */
 export function normalizarPergunta(p: string): string {
@@ -43,26 +43,14 @@ export function hashPergunta(ancora: string, versao: number, pergunta: string): 
   return createHash('sha256').update(`${ancora}\n${versao}\n${norm}`).digest('hex');
 }
 
-type Ordenado = { e: Evento; ms: number };
-
 /**
- * Ordem total `(ts, sessao, seq)` ou `null` se o diário não se sustenta: `ts`/`sessao`/`seq` ilegíveis ou `seq` que não cresce
- * dentro da sessão (mesma regra de `ordenar` do loop, que vale só por `seq` dentro da sessão).
+ * Ordem do diário = a de `ordenar` do loop (única fonte): `seq` dentro da sessão, `(ts, sessao)` entre sessões, `ts` no formato do
+ * diário. `null` se o diário não se sustenta (`seq` que não cresce na sessão, `ts`/`sessao`/`seq` ilegíveis, não é lista).
  */
-function ordenado(eventos: Evento[]): Ordenado[] | null {
+function ordenado(eventos: Evento[]): Evento[] | null {
   if (!Array.isArray(eventos)) return null;
-  const ultimo = new Map<string, number>();
-  const saida: Ordenado[] = [];
-  for (const e of eventos) {
-    if (e === null || typeof e !== 'object' || typeof e.sessao !== 'string' || !Number.isInteger(e.seq) || typeof e.ts !== 'string') return null;
-    const ms = Date.parse(e.ts);
-    if (Number.isNaN(ms)) return null;
-    const antes = ultimo.get(e.sessao);
-    if (antes !== undefined && e.seq <= antes) return null;
-    ultimo.set(e.sessao, e.seq);
-    saida.push({ e, ms });
-  }
-  return saida.sort((a, b) => a.ms - b.ms || cmp(a.e.sessao, b.e.sessao) || a.e.seq - b.e.seq);
+  const o = ordenar(eventos);
+  return o.ok ? o.eventos : null;
 }
 
 /** `false` quando o diário está fora de ordem ou ilegível: o CLI recusa com motivo em vez de decidir sobre ele. */
@@ -87,33 +75,60 @@ function paraDecisao(e: Evento): DecisaoSombra {
   return dec;
 }
 
+type Vigente = { dec: DecisaoSombra; pos: number };
+
 /**
- * Decisão vigente por hash: entre as `decisao.sombra` de forma válida do mesmo hash, a mais recente por `(ts, sessao)`
- * (desempate por `seq`). `substitui` é registro, não muda a escolha: a existência do alvo é conferida no CLI (T7).
+ * Vigentes por hash, com a posição na ordem do diário. Entre as `decisao.sombra` de forma válida do mesmo hash:
+ * 1. `substitui {sessao, seq}` que aponta uma decisão válida do MESMO hash tira o alvo da disputa, independente de `ts`
+ *    (relógio defasado não desfaz a substituição); vale em cadeia (A←B←C: vence C). Alvo inexistente, de outro tipo, de forma
+ *    inválida, de outro hash ou a própria decisão: o `substitui` é ignorado.
+ * 2. Entre as que sobraram, vence a mais recente pela ordem do diário. Se todas foram substituídas (ciclo forjado, que o CLI
+ *    nunca grava), vale a mais recente de todas: decisão gravada nunca some.
  * Diário fora de ordem ⇒ mapa vazio (ver cabeçalho).
  */
-export function projetarDecisoes(eventos: Evento[]): Map<string, DecisaoSombra> {
+function vigentes(eventos: Evento[]): Map<string, Vigente> {
   const ord = ordenado(eventos);
-  const mapa = new Map<string, DecisaoSombra>();
-  if (ord === null) return mapa;
-  for (const { e } of ord) {
-    if (!valido(e, 'decisao.sombra')) continue;
-    const dec = paraDecisao(e);
-    mapa.set(dec.hash, dec); // ordem crescente: a última vence
+  const saida = new Map<string, Vigente>();
+  if (ord === null) return saida;
+  const porHash = new Map<string, { e: Evento; pos: number }[]>();
+  ord.forEach((e, pos) => {
+    if (!valido(e, 'decisao.sombra')) return;
+    const h = (e.dados as { pergunta_hash: string }).pergunta_hash;
+    const lista = porHash.get(h) ?? [];
+    lista.push({ e, pos });
+    porHash.set(h, lista);
+  });
+  for (const [h, lista] of porHash) {
+    const substituidas = new Set<Evento>();
+    for (const { e } of lista) {
+      const s = (e.dados as { substitui?: { sessao: string; seq: number } }).substitui;
+      if (s === undefined) continue;
+      const alvo = lista.find((c) => c.e.sessao === s.sessao && c.e.seq === s.seq);
+      if (alvo !== undefined && alvo.e !== e) substituidas.add(alvo.e);
+    }
+    const livres = lista.filter((c) => !substituidas.has(c.e));
+    const disputa = livres.length > 0 ? livres : lista;
+    const escolhida = disputa[disputa.length - 1];
+    saida.set(h, { dec: paraDecisao(escolhida.e), pos: escolhida.pos });
   }
-  return mapa;
+  return saida;
+}
+
+/** Decisão vigente por hash (regra em `vigentes`). */
+export function projetarDecisoes(eventos: Evento[]): Map<string, DecisaoSombra> {
+  return new Map([...vigentes(eventos)].map(([h, v]) => [h, v.dec]));
 }
 
 /** Hashes de `sombra.consulta` válida, na ordem em que aparecem, sem decisão vigente. Sem repetir hash. */
 export function consultasAbertas(eventos: Evento[]): string[] {
   const ord = ordenado(eventos);
   if (ord === null) return [];
-  const vigentes = projetarDecisoes(eventos);
+  const fechadas = vigentes(eventos);
   const vistos = new Set<string>();
-  for (const { e } of ord) {
+  for (const e of ord) {
     if (!valido(e, 'sombra.consulta')) continue;
     const h = (e.dados as { pergunta_hash: string }).pergunta_hash;
-    if (!vigentes.has(h)) vistos.add(h);
+    if (!fechadas.has(h)) vistos.add(h);
   }
   return [...vistos];
 }
@@ -126,26 +141,25 @@ export function contarConsultas(eventos: Evento[]): number {
   return n;
 }
 
-/** Decisões vigentes ancoradas nos REQs pedidos: na ordem dos `reqs` e, dentro de cada um, a mais recente primeiro. */
+/** Decisões vigentes ancoradas nos REQs pedidos: na ordem dos `reqs` e, dentro de cada um, a mais recente (ordem do diário) primeiro. */
 export function decisoesDosReqs(eventos: Evento[], reqs: string[]): DecisaoSombra[] {
-  const vigentes = [...projetarDecisoes(eventos).values()];
+  const todas = [...vigentes(eventos).values()];
   const saida: DecisaoSombra[] = [];
   for (const req of new Set(Array.isArray(reqs) ? reqs : [])) {
-    const dosReq = vigentes.filter((d) => d.req === req);
-    dosReq.sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts) || cmp(b.sessao, a.sessao) || b.seq - a.seq);
-    saida.push(...dosReq);
+    const dosReq = todas.filter((v) => v.dec.req === req).sort((a, b) => b.pos - a.pos);
+    saida.push(...dosReq.map((v) => v.dec));
   }
   return saida;
 }
 
 /**
- * Parágrafo do REQ: da linha que começa com `**<req> ` até a linha antes do próximo `**REQ-` ou cabeçalho `#`. Casa o id inteiro
- * (o espaço depois do id impede `REQ-A-1` de casar `REQ-A-10`). `null` se o id não tem a forma de REQ ou não está na spec.
+ * Parágrafo do REQ: da linha que começa com `**<req> ` ou `**<req>**` até a linha antes do próximo `**REQ-` ou cabeçalho `#`. Casa o id inteiro
+ * (o espaço ou `**` depois do id impede `REQ-A-1` de casar `REQ-A-10`). `null` se o id não tem a forma de REQ ou não está na spec.
  */
 export function trechoDoReq(spec: string, req: string): string | null {
   if (typeof spec !== 'string' || typeof req !== 'string' || !REQ_RE.test(req)) return null;
   const linhas = spec.split(/\r?\n/u);
-  const inicio = linhas.findIndex((l) => l.startsWith(`**${req} `));
+  const inicio = linhas.findIndex((l) => l.startsWith(`**${req} `) || l.startsWith(`**${req}**`));
   if (inicio < 0) return null;
   let fim = linhas.length;
   for (let i = inicio + 1; i < linhas.length; i += 1) {
@@ -167,7 +181,7 @@ export function montarBrief(e: {
   pergunta: string; ancora: string; spec: string; trechos: { req: string; texto: string }[];
   emendas: { proposta_seq: number; req: string; diff: string }[]; task?: TaskPlano;
 }): string {
-  const partes: string[] = ['# Brief da Sombra', '', '## Pergunta', '', e.pergunta.trim(), '', '## Âncora', '', e.ancora, '', '## Spec', '', e.spec];
+  const partes: string[] = ['# Brief da Sombra', '', '## Pergunta', '', e.pergunta.replace(/\s+/gu, ' ').trim(), '', '## Âncora', '', e.ancora, '', '## Spec', '', e.spec];
   if (e.task !== undefined) {
     const t = e.task;
     partes.push('', '## Task do plano', '', `- id: ${t.id}`, `- deps: ${t.deps.length > 0 ? t.deps.join(', ') : '(nenhuma)'}`,
