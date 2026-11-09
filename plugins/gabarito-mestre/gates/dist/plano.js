@@ -17,7 +17,7 @@ const ehObjeto = (v         )                               => v !== null && typ
 const ehListaDeTexto = (v         )                => Array.isArray(v) && v.every((x) => typeof x === 'string');
 
 /**
- * Caminho relativo normalizado (`./a` = `a`, `a//b` = `a/b`) ou `null` se vazio, absoluto, com NUL ou que escapa da raiz. Mesma regra de `validarPlano`.
+ * Caminho relativo normalizado (`./a` = `a`, `a//b` = `a/b`) ou `null` se vazio, absoluto, com NUL ou que escapa da raiz, ou cuja forma normalizada começa com `X:` (idempotente: `n(n(x)) === n(x)`). Mesma regra de `validarPlano`.
  * Sem `node:path`: o núcleo é carregado pelo mod como módulo de hook, que não importa módulo embutido do Node (pilha de segmentos própria).
  * A barra invertida vira `/` ANTES do teste de absoluto: `\a` e `\\srv\x` são absolutos e são recusados.
  */
@@ -33,6 +33,8 @@ export function normalizarCaminho(c        )                {
   }
   const n = pilha.join('/');
   if (n === '' || n === '.' || n === '..' || n.startsWith('../')) return null;
+  // `X:` vale também para a SAÍDA (`./a:b` → `a:b`): sem isto a função não é idempotente e `escopoDaTask`, que re-normaliza, descartaria o escopo.
+  if (/^[A-Za-z]:/.test(n)) return null;
   return n;
 }
 

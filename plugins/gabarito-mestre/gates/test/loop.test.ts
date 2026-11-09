@@ -192,6 +192,11 @@ test('tabela-J-motivo-e-da-task-em-voo: outra task no teto não troca o motivo p
   const evs = diario(...noTeto('a'), ini('b'));
   assert.deepEqual(proximaAcao(plano(['a'], ['b']), evs, NX()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'b' });
 });
+test('tabela-9b-antes-de-9c: no_teto vence task em voo quando o percent não manda pousar (r2 MINOR)', () => {
+  const evs = diario(...noTeto('a'), ini('b'));
+  assert.deepEqual(proximaAcao(plano(['a'], ['b']), evs, sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['b'], ['a']), diario(ini('b'), ...noTeto('a')), sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'a' });
+});
 test('tabela-K-aprovada-nao-integrada-pousa', () => {
   assert.deepEqual(proximaAcao(plano(['a']), diario(...aprovada('a')), NX()), { tipo: 'pousar' });
 });
@@ -1171,6 +1176,9 @@ test('dist-loop-nao-importa-node-nem-modulo-que-importe', () => {
     visto.add(nome);
     const js = readFileSync(join(GATES, 'dist', nome), 'utf8');
     assert.doesNotMatch(js, /from\s+['"]node:|import\s+['"]node:|require\(/, `dist/${nome} importa node:*`);
+    assert.deepEqual([...js.matchAll(/\b(?:from|import)\s+['"]([^'"]+)['"]/g)].map((m) => m[1]).filter((m) => !m.startsWith('./')), [], `dist/${nome}: só import relativo (inclui 'path', 'fs' sem prefixo)`);
+    const ts = readFileSync(join(GATES, 'src', nome.replace(/\.js$/, '.ts')), 'utf8');
+    assert.deepEqual([...ts.matchAll(/\b(?:from|import)\s+['"]([^'"]+)['"]/g)].map((m) => m[1]).filter((m) => !m.startsWith('./')), [], `src/${nome}: só import relativo`);
     for (const m of js.matchAll(/\bfrom\s+['"]\.\/([^'"]+\.js)['"]/g)) visita(m[1]);
   };
   visita('loop.js');

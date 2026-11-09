@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { projetarEmendas, versaoDoReq, reqsCongelados, escopoDaTask, validarProposta, validarJulgamento, SESSAO_EMENDAS } from '../src/emenda.ts';
 import type { EstadoEmendas } from '../src/emenda.ts';
-import { normalizarCaminho } from '../src/plano.ts';
+import { normalizarCaminho, validarPlano } from '../src/plano.ts';
 import type { Evento, Plano } from '../src/tipos.ts';
 
 let relogio = 0;
@@ -166,6 +166,17 @@ test('normalizacao-igual-a-do-plano', () => {
     const est = projetarEmendas([prop(1, { task: 't1', arquivos: [c] }), aprova('s', 1, 1)]);
     const esperado = normalizarCaminho(c);
     assert.deepEqual(escopoDaTask(p, est, 't1'), esperado === null ? [] : [esperado], c);
+  }
+});
+
+test('colisao-com-nome-de-unidade-nao-escapa (r2 MAJOR 1, repro .claude-tmp/review-t6/colisao.mjs)', () => {
+  for (const bruto of ['./a:b', './C:\\x']) {
+    // o plano não guarda caminho cuja forma normalizada seria descartada na re-normalização de `escopoDaTask`
+    const r = validarPlano(plano(T('T1', [], [bruto]), T('T2', [], ['z'])));
+    assert.equal(r.ok, false, `plano com ${bruto} deve ser recusado`);
+    // e a proposta que toca o mesmo caminho não passa em silêncio
+    const p2 = plano(T('T1', [], ['q']), T('T2', [], ['z']));
+    assert.notEqual(validarProposta(p2, vazio, dadosProp({ task: 'T2', arquivos: [bruto] })), null, bruto);
   }
 });
 

@@ -261,13 +261,21 @@ test('barra-invertida-absoluta-recusa: `\\a` e `\\\\srv\\x` são absolutos depoi
 
 test('normaliza-igual-posix-no-relativo: sem `node:path` no núcleo, o oráculo vive só aqui', () => {
   const alfabeto = ['a', '.', '..', '/', '\\', '', 'C:'];
-  const ehRelativoSimples = (o: string, c: string): boolean => !c.includes('\0') && !/^[A-Za-z]:/.test(c) && !o.startsWith('/') && o !== '' && o !== '.' && o !== '..' && !o.startsWith('../');
+  const ehRelativoSimples = (o: string, c: string): boolean => !c.includes('\0') && !/^[A-Za-z]:/.test(c) && !/^[A-Za-z]:/.test(o) && !o.startsWith('/') && o !== '' && o !== '.' && o !== '..' && !o.startsWith('../');
   let comparados = 0;
+  let escapam = 0;
   const gera = (prefixo: string[], fundo: number): void => {
     const c = prefixo.join('');
     const oraculo = posix.normalize(c.replace(/\\/g, '/') || '.').replace(/\/+$/, '');
+    const n = normalizarCaminho(c);
+    // idempotência: o que sai normalizado entra normalizado (escopoDaTask re-normaliza `arquivos` já guardados)
+    if (n !== null) assert.equal(normalizarCaminho(n), n, `n(n(x)) != n(x) para ${JSON.stringify(c)}`);
+    if (!c.includes('\0') && !c.replace(/\\/g, '/').startsWith('/') && oraculo.startsWith('../')) {
+      assert.equal(n, null, `escapa da raiz: ${JSON.stringify(c)}`);
+      escapam++;
+    }
     if (ehRelativoSimples(oraculo, c)) {
-      assert.equal(normalizarCaminho(c), oraculo, JSON.stringify(c));
+      assert.equal(n, oraculo, JSON.stringify(c));
       comparados++;
     } else if (c.replace(/\\/g, '/').startsWith('/')) {
       assert.equal(normalizarCaminho(c), null, `absoluto: ${JSON.stringify(c)}`);
@@ -277,4 +285,20 @@ test('normaliza-igual-posix-no-relativo: sem `node:path` no núcleo, o oráculo 
   };
   gera([], 5);
   assert.ok(comparados > 500, `comparou só ${comparados}`);
+  assert.ok(escapam > 500, `só ${escapam} entradas que escapam da raiz`);
+});
+
+test('normaliza-idempotente-com-prefixo-de-unidade: `X:` vale para a SAÍDA, não só a entrada (r2 MAJOR 1)', () => {
+  assert.equal(normalizarCaminho('./a:b'), normalizarCaminho('a:b'));
+  assert.equal(normalizarCaminho('./a:b'), null);
+  for (const c of ['./C:\\x', 'd/../c:x', './x:', 'a/../b:/c', 'C:/../a', 'c:/x/../..']) {
+    assert.equal(normalizarCaminho(c), null, JSON.stringify(c));
+  }
+  assert.equal(normalizarCaminho('./ab:c'), 'ab:c', 'só uma letra seguida de `:` é unidade');
+  assert.equal(normalizarCaminho('x/a:b'), 'x/a:b', 'dois-pontos fora do começo é nome');
+});
+
+test('ponto-ponto-nao-desempilha-ponto-ponto: a guarda da pilha defende a raiz (r2 MAJOR 2)', () => {
+  for (const c of ['../../a', '../../../a', 'a/../../../b', '../a/../../b']) assert.equal(normalizarCaminho(c), null, JSON.stringify(c));
+  assert.equal(normalizarCaminho('a/../b'), 'b');
 });
