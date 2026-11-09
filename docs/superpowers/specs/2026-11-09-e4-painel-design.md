@@ -98,7 +98,8 @@ O resto do preset segue abaixo. Tabela fechada (B7), só comandos que existem; s
   - Entrega; Previsão `hoje hh:mm (±N min, n medições)`; Tasks `integradas · em curso · na fila`;
   - Qualidade `N rodada/review · M mutações mortas` (contagem, B11; sem dados ⇒ `sem dados`);
   - CI `estado · N execuções hoje`; Produção; Contexto; Limites; linha depende.
-  - Sem nomes, narração ou histórico.
+  - Agora (dono, 2026-11-09): agentes em trabalho por papel genérico, sem nome: `N implementando (<tasks>) · N revisando <task> · Sombra: N decisões`; com largura, ctx % por task (`T08 44%`). Mesma fonte da EQUIPE (REQ-PNL-5).
+  - Sem nomes de pacote, narração ou histórico.
 
 **REQ-PNL-5 Equipe.** Árvore líder ⇒ agentes (`├─`/`└─`).
 - **Líder:** `<LÍDER> orquestra · <modelo>`; ctx em barra `█░` com `pouso em X%`; `tok`; `5h`/`7d` em barras (ausente ⇒ linha omitida); `▶` com a narrativa em modelo de texto fixo a partir de `agora`.
