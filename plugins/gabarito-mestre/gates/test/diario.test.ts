@@ -879,4 +879,57 @@ describe('append: forma de dados por tipo (GM-11 T5)', () => {
     assert.match(r.erro, /^forma_invalida: emenda\.proposta: /);
     assert.equal(existsSync(join(dir, 'events.s1.jsonl')), false);
   });
+
+  test('append-forma-nao-toma-o-lock: lock alheio fresco ⇒ volta na hora e o lock fica intacto', () => {
+    const dir = tmp();
+    const lock = join(dir, 'events.s1.jsonl.lock');
+    writeFileSync(lock, 'outro-dono');
+    const t0 = Date.now();
+    const r = append(dir, 's1', invalida());
+    const ms = Date.now() - t0;
+    assert.equal(r.ok, false);
+    assert.match((r as { erro: string }).erro, /^forma_invalida: /);
+    assert.ok(ms < 500, `esperou o lock: ${ms} ms`);
+    assert.equal(readFileSync(lock, 'utf8'), 'outro-dono', 'lock alheio tocado');
+    assert.equal(existsSync(join(dir, 'events.s1.jsonl')), false);
+  });
+
+  test('append-forma-nao-quebra-lock-velho: lock alheio velho continua lá', () => {
+    const dir = tmp();
+    const lock = join(dir, 'events.s1.jsonl.lock');
+    writeFileSync(lock, 'outro-dono');
+    const r = append(dir, 's1', invalida(), { agora: () => Date.now() + 60_000 });
+    assert.equal(r.ok, false);
+    assert.match((r as { erro: string }).erro, /^forma_invalida: /);
+    assert.equal(readFileSync(lock, 'utf8'), 'outro-dono', 'lock alheio apagado');
+  });
+
+  test('append-forma-lock-alheio-pelo-dist: o mesmo pelo dist', async () => {
+    const dist = await import(join(AQUI, '..', 'dist', 'diario.js'));
+    const dir = tmp();
+    const lock = join(dir, 'events.s1.jsonl.lock');
+    writeFileSync(lock, 'outro-dono');
+    const t0 = Date.now();
+    const r = dist.append(dir, 's1', invalida());
+    assert.equal(r.ok, false);
+    assert.ok(Date.now() - t0 < 500, 'dist esperou o lock');
+    assert.equal(readFileSync(lock, 'utf8'), 'outro-dono');
+  });
+
+  test('append-erro-sem-segredo: o valor secreto no motivo vira [redigido]', () => {
+    const dir = tmp();
+    const r = append(dir, 's1', ev('emenda.proposta', { req: SEGREDOS.ghp, diff: 'x' })) as { ok: false; erro: string };
+    assert.equal(r.ok, false);
+    assert.match(r.erro, /^forma_invalida: /);
+    assert.ok(!r.erro.includes(SEGREDOS.ghp), 'segredo voltou no erro');
+    assert.ok(r.erro.includes('[redigido]'));
+  });
+
+  test('append-erro-cortado: valor gigante ⇒ erro com no máximo 300 caracteres', () => {
+    const dir = tmp();
+    const r = append(dir, 's1', ev('desvio', { task: 'T1', req: 'x'.repeat(200000) })) as { ok: false; erro: string };
+    assert.equal(r.ok, false);
+    assert.match(r.erro, /^forma_invalida: /);
+    assert.equal(r.erro.length, 300);
+  });
 });

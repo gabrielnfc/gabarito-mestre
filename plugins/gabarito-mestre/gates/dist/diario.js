@@ -28,6 +28,7 @@ const CANARIO                                           = [
   ['jwt', /eyJ[\w-]{20,}\.eyJ[\w-]{20,}/],
 ];
 
+const ERRO_MAX = 300;
 const LOCK_MAX_IDADE_MS = 2000;
 const LOCK_ESPERA_MS = 10;
 // Abaixo do `timeout: 5` do hook e acima dos 2 s da quebra de lock órfão.
@@ -145,7 +146,11 @@ export function append(
 
     // GM-11 T5: forma de `dados` por tipo ANTES do canário; forma inválida não toca arquivo, lock nem linha.
     const forma = formaInvalida(ev.tipo, ev.dados);
-    if (forma !== null) return { ok: false, erro: `forma_invalida: ${forma}` };
+    if (forma !== null) {
+      // o motivo ecoa o valor bruto: passa pelo canário e é cortado (um segredo nunca volta no erro).
+      const motivo = recusaCanario(forma) === null ? forma : '[redigido]';
+      return { ok: false, erro: `forma_invalida: ${motivo}`.slice(0, ERRO_MAX) };
+    }
 
     // canário ANTES do lock; linha grande é recusada sem rodar regex.
     const padrao = JSON.stringify(ev).length > LINHA_MAX ? 'tamanho' : varrer(ev);
