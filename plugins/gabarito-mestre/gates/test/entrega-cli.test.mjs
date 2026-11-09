@@ -7,12 +7,13 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, realpathSync, appendFileSync, renameSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, realpathSync, appendFileSync, renameSync, symlinkSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import * as diario from '../dist/diario.js';
 import { decidirEntrega } from '../dist/entrega.js';
 import { decidirAgora, executarEntrega, rcDe } from '../scripts/entrega.mjs';
@@ -1061,5 +1062,194 @@ describe('r2: diário adulterado, ordem do lock, sinal e chave PEM', { concurren
     const m = montar({ scripts: { deploy: imprimir(['-----BEGIN PRIVATE KEY-----', ...CHAVE(2), '-----END PRIVATE KEY-----', 'visivel-1', 'visivel-2']) } });
     const { json } = rodar(m, 'executar');
     assert.equal(json.etapas[0].saida, `${'[redigido]\n'.repeat(4)}visivel-1\nvisivel-2\n`);
+  });
+});
+
+describe('r3: âncora do entrega.inicio contra a cauda apagada', { concurrency: 4 }, () => {
+  const ANCORA = 'entrega.ancora';
+  const sha256 = (t) => createHash('sha256').update(t).digest('hex');
+  const arqDiario = (m, sessao = 'loop') => join(m.dir, `events.${sessao}.jsonl`);
+  const linhas = (m, sessao = 'loop') => readFileSync(arqDiario(m, sessao), 'utf8').split('\n').filter(Boolean);
+  const gravarLinhas = (m, ls) => writeFileSync(arqDiario(m), `${ls.join('\n')}\n`);
+  const limparMarcas = (m) => { for (const n of ['deploy', 'smoke', 'rollback', 'exec.log']) if (existsSync(join(m.marcas, n))) unlinkSync(join(m.marcas, n)); };
+  const semEfeito = (m, antes, json, erro) => {
+    assert.equal(json.ok, false);
+    assert.equal(json.erro, erro);
+    assert.equal(execLog(m).length, 0, 'nenhum comando rodou');
+    assert.equal(marca(m, 'deploy'), false, 'o deploy não rodou');
+    assert.equal(eventos(m).length, antes, 'nada foi gravado');
+  };
+  /** O estado que a morte do orquestrador deixa: o diário termina em `producao.acesso, entrega.inicio`, com a âncora gravada pelo `executar` real. */
+  const inicioSemFim = async (m) => {
+    const r = await executarEntrega(m.repo, { entrega: ENTREGA, append: appendQueFalha((e) => e.tipo !== 'producao.acesso' && e.tipo !== 'entrega.inicio') });
+    assert.equal(r.erro, 'evento_nao_gravado', 'preparo: smoke, fim e o resto não foram gravados');
+    assert.deepEqual(eventos(m).slice(-2).map((e) => e.tipo), ['producao.acesso', 'entrega.inicio']);
+    limparMarcas(m);
+  };
+
+  test('cauda-apagada-com-inicio-nao-roda-deploy', async () => {
+    const m = montar();
+    await inicioSemFim(m);
+    const antes = eventos(m).length;
+    const intacto = rodar(m, 'executar');
+    semEfeito(m, antes, intacto.json, 'nao_subiu');
+    assert.deepEqual(intacto.json.decisao, { tipo: 'parar', motivo: 'nao_conseguiu' });
+    gravarLinhas(m, linhas(m).slice(0, -2));
+    const depois = eventos(m).length;
+    assert.equal(depois, antes - 2);
+    const { rc, json } = rodar(m, 'executar');
+    assert.equal(rc, 1);
+    semEfeito(m, depois, json, 'diario_ilegivel');
+    assert.match(json.mensagem, /a âncora aponta para o entrega\.inicio loop\/\d+, que não está no diário: cauda apagada ou diário trocado; nada foi feito/);
+    const d = rodar(m, 'decidir');
+    assert.equal(d.json.erro, 'diario_ilegivel', 'a decisão também confere a âncora');
+  });
+
+  test('diario-restaurado-a-prefixo-nao-roda-deploy', () => {
+    const m = montar();
+    const copia = readFileSync(arqDiario(m), 'utf8');
+    const ok = rodar(m, 'executar');
+    assert.equal(ok.rc, 0, JSON.stringify(ok.json));
+    assert.equal(execLog(m).length, 2);
+    writeFileSync(arqDiario(m), copia);
+    limparMarcas(m);
+    const antes = eventos(m).length;
+    const { rc, json } = rodar(m, 'executar');
+    assert.equal(rc, 1);
+    semEfeito(m, antes, json, 'diario_ilegivel');
+  });
+
+  test('ancora-hash-diferente-no-mesmo-seq-e-ilegivel', async () => {
+    // a cadeia continua válida (a linha trocada é a última), com o mesmo seq e conteúdo diferente: só o hash da âncora pega
+    const m = montar();
+    await inicioSemFim(m);
+    const ls = linhas(m);
+    const ultima = JSON.parse(ls.at(-1));
+    gravarLinhas(m, [...ls.slice(0, -1), JSON.stringify({ ...ultima, ts: '2000-01-01T00:00:00.000Z' })]);
+    const antes = eventos(m).length;
+    const { json } = rodar(m, 'executar');
+    semEfeito(m, antes, json, 'diario_ilegivel');
+  });
+
+  test('ancora-nao-gravada-nao-roda-deploy', async () => {
+    const m = montar();
+    mkdirSync(join(m.dir, 'entrega.ancora.tmp')); // o tmp da escrita atômica é uma pasta: a escrita falha de verdade
+    const antes = eventos(m).length;
+    const { rc, json } = rodar(m, 'executar');
+    assert.equal(rc, 1);
+    assert.equal(json.ok, false);
+    assert.equal(json.erro, 'ancora_nao_gravada');
+    assert.equal(execLog(m).length, 0, 'nenhum comando rodou');
+    assert.equal(marca(m, 'deploy'), false);
+    assert.equal(existsSync(join(m.dir, ANCORA)), false, 'nenhuma âncora');
+    assert.equal(existsSync(join(m.dir, 'entrega.lock')), false, 'o lock foi solto');
+    assert.deepEqual(tiposDesde(m, antes), ['producao.acesso', 'entrega.inicio'], 'o inicio fica sem fim');
+    const d = rodar(m, 'decidir');
+    assert.deepEqual(d.json.decisao, { tipo: 'parar', motivo: 'nao_conseguiu' });
+  });
+
+  test('ancora-gravada-antes-do-deploy', () => {
+    const alvo = '$M/../repo com espaço/.harness/entregas/GM-10/entrega.ancora';
+    const m = montar({ scripts: { deploy: `[ -s "${alvo}" ] && touch "$M/ancora-existia"\necho ola-deploy\ntouch "$M/deploy"` } });
+    const { rc, json } = rodar(m, 'executar');
+    assert.equal(rc, 0, JSON.stringify(json));
+    assert.equal(marca(m, 'ancora-existia'), true, 'a âncora já existia quando o deploy rodou');
+  });
+
+  test('ancora-grava-sessao-seq-e-hash-do-inicio', () => {
+    const m = montar();
+    const { rc } = rodar(m, 'executar', ['--sessao', 's2']);
+    assert.equal(rc, 0);
+    const ancora = JSON.parse(readFileSync(join(m.dir, ANCORA), 'utf8'));
+    assert.deepEqual(Object.keys(ancora).sort(), ['hash', 'seq', 'sessao']);
+    assert.equal(ancora.sessao, 's2');
+    const linha = linhas(m, 's2').find((l) => JSON.parse(l).seq === ancora.seq);
+    assert.equal(JSON.parse(linha).tipo, 'entrega.inicio');
+    assert.equal(ancora.hash, sha256(linha));
+    assert.equal(readdirSync(m.dir).includes('entrega.ancora.tmp'), false, 'o tmp foi renomeado');
+    // âncora intacta não barra nada: a decisão seguinte é `entregue`
+    const de = rodar(m, 'decidir');
+    assert.deepEqual(de.json.decisao, { tipo: 'entregue' });
+    const ex = rodar(m, 'executar');
+    assert.equal(ex.rc, 0);
+    assert.deepEqual(ex.json.decisao, { tipo: 'entregue' });
+  });
+
+  test('ancora-sobrescreve-a-anterior-na-nova-tentativa', () => {
+    const m = montar({ tasks: ['T1', 'T2', 'T3'], integradas: ['T1', 'T2'] });
+    ev(m, 'entrega.inicio', { politica: 'continua' });
+    ev(m, 'entrega.smoke', { ok: false });
+    ev(m, 'entrega.rollback', { ok: true });
+    ev(m, 'entrega.fim', { ok: false, motivo: 'smoke' });
+    ev(m, 'loop.parar', { motivo: 'smoke' });
+    integrar(m, 'T3');
+    ev(m, 'ci.resultado', { verde: true, alvo: 'homolog' });
+    const { rc } = rodar(m, 'executar');
+    assert.equal(rc, 0);
+    const ancora = JSON.parse(readFileSync(join(m.dir, ANCORA), 'utf8'));
+    const iniciosNoDiario = linhas(m).filter((l) => JSON.parse(l).tipo === 'entrega.inicio');
+    assert.equal(iniciosNoDiario.length, 2);
+    assert.equal(ancora.hash, sha256(iniciosNoDiario[1]), 'a âncora é a do ÚLTIMO inicio');
+    assert.equal(ancora.seq, JSON.parse(iniciosNoDiario[1]).seq);
+  });
+
+  test('diario-primeira-linha-apagada', () => {
+    // MINOR-3 da r2: a guarda de hash vale para a 1ª linha do arquivo também (a linha 2 aponta para o hash da 1ª)
+    const m = montar();
+    gravarLinhas(m, linhas(m).slice(1));
+    const antes = eventos(m).length;
+    const { rc, json } = rodar(m, 'executar');
+    assert.equal(rc, 1);
+    semEfeito(m, antes, json, 'diario_ilegivel');
+    assert.match(json.mensagem, /linha 1: cadeia de hash quebrada/);
+  });
+
+  describe('âncora inválida é ilegível; ausente sobe', () => {
+    const invalida = (nome, preparar, mensagem) => test(`ancora-corrompida-${nome}`, async () => {
+      const m = montar();
+      await preparar(m);
+      const antes = eventos(m).length;
+      const { rc, json } = rodar(m, 'executar');
+      assert.equal(rc, 1);
+      semEfeito(m, antes, json, 'diario_ilegivel');
+      assert.match(json.mensagem, mensagem);
+      assert.equal(rodar(m, 'decidir').json.erro, 'diario_ilegivel');
+    });
+    const escrever = (conteudo) => (m) => writeFileSync(join(m.dir, ANCORA), typeof conteudo === 'string' ? conteudo : JSON.stringify(conteudo));
+    const FORMA = /fora da forma \{sessao, seq, hash\}/;
+    invalida('array', escrever('[]'), FORMA);
+    invalida('nao-json', escrever('lixo'), /não é JSON/);
+    invalida('objeto-vazio', escrever({}), FORMA);
+    invalida('seq-nao-inteiro', escrever({ sessao: 'loop', seq: '1', hash: 'a'.repeat(64) }), FORMA);
+    invalida('sessao-fora-da-forma', escrever({ sessao: '../x', seq: 1, hash: 'a'.repeat(64) }), FORMA);
+    invalida('hash-curto', escrever({ sessao: 'loop', seq: 1, hash: 'abc' }), FORMA);
+    invalida('symlink-para-ancora-valida', async (m) => {
+      // o alvo é uma âncora VÁLIDA do diário: só a checagem de arquivo regular a recusa
+      await inicioSemFim(m);
+      const alvo = join(m.base, 'alvo.json');
+      renameSync(join(m.dir, ANCORA), alvo);
+      symlinkSync(alvo, join(m.dir, ANCORA));
+    }, /entrega\.ancora não é arquivo regular/);
+    invalida('pasta', (m) => mkdirSync(join(m.dir, ANCORA)), /entrega\.ancora não é arquivo regular/);
+
+    // cada campo é lido: trocar um por outro valor plausível derruba a conferência
+    const ancoraReal = () => {
+      const m = montar();
+      assert.equal(rodar(m, 'executar').rc, 0);
+      return { m, a: JSON.parse(readFileSync(join(m.dir, ANCORA), 'utf8')) };
+    };
+    const flip = (h) => `${h[0] === 'a' ? 'b' : 'a'}${h.slice(1)}`;
+    for (const [campo, troca] of [['seq', (a) => ({ ...a, seq: a.seq + 1 })], ['hash', (a) => ({ ...a, hash: flip(a.hash) })], ['sessao', (a) => ({ ...a, sessao: 'outra' })]]) {
+      test(`ancora-campo-${campo}-trocado-e-ilegivel`, () => {
+        const { m, a } = ancoraReal();
+        writeFileSync(join(m.dir, ANCORA), JSON.stringify(troca(a)));
+        limparMarcas(m);
+        const { rc, json } = rodar(m, 'executar');
+        assert.equal(rc, 1);
+        assert.equal(json.erro, 'diario_ilegivel');
+        assert.match(json.mensagem, /que não está no diário/);
+        assert.equal(execLog(m).length, 0);
+      });
+    }
   });
 });

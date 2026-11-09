@@ -21,10 +21,19 @@
  * nem quem ignora SIGTERM). `comando` e `saida` só no stdout (a `saida`, últimos 2.000 caracteres, redigida por linha pelo canário do diário);
  * o diário nunca os recebe.
  *
+ * ÂNCORA (REQ-ENT-2, emenda da Sombra). Cadeia de hash sem âncora externa não detecta truncamento no FIM: apagar `producao.acesso, entrega.inicio`
+ * (ou repor um prefixo do diário) faria a decisão voltar a `subir` e o deploy rodar de novo sobre produção em estado desconhecido. Por isso,
+ * depois do `append` de `entrega.inicio` e ANTES do deploy, `executar` grava `<dirEntrega>/entrega.ancora` = `{sessao, seq, hash}` (hash = sha256 da
+ * linha do `inicio`; tmp `entrega.ancora.tmp` + rename, sobrescreve a anterior; fora do diário, não versionada). Falhou ⇒ o deploy NÃO roda
+ * (`ancora_nao_gravada`, rc 1; o `inicio` fica sem `fim` e a próxima decisão é `parar`). `executar` e `decidir` conferem a âncora logo depois de
+ * ler o diário: ela existe e a linha não está lá (ou o hash difere), ou ela não é arquivo regular com essa forma ⇒ `diario_ilegivel`. Ausente é ok
+ * (entrega que nunca subiu). LIMITE DECLARADO: apagar a âncora JUNTO com a cauda não é detectado; isso pede escrita deliberada em `.harness/`
+ * (o anel de integridade cobre o agente; humano e `git clean` ficam como limite).
+ *
  * Relógio: `agoraMs` só entra por `opts`; o CLI usa `Date.now()` uma vez, no início. Tudo que toca git vai por `execFileSync` com argv, sem shell.
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeSync, constants } from 'node:fs';
 import { basename, dirname, join, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 import { ehEntrypoint } from '../lib/cli.mjs';
@@ -128,7 +137,7 @@ const sha = (s) => createHash('sha256').update(s).digest('hex');
  * Leitura estrita: `diario.ler` descarta linha corrompida em silêncio, o que aqui viraria deploy sobre dado perdido. Pasta ausente é `[]`;
  * linha que não é objeto JSON, cadeia de hash quebrada e arquivo que não é regular ⇒ `diario_ilegivel`.
  */
-function lerDiarioEstrito(dir) {
+function lerDiarioEstrito(dir, linhasPorArquivo = new Map()) {
   let nomes;
   try {
     nomes = readdirSync(dir);
@@ -147,6 +156,8 @@ function lerDiarioEstrito(dir) {
       throw new Falha('diario_ilegivel', `${nome}: ${e.message}`);
     }
     let anterior = null;
+    const doArquivo = [];
+    linhasPorArquivo.set(nome, doArquivo);
     for (const [i, linha] of texto.split('\n').entries()) {
       if (linha === '') continue;
       let o;
@@ -154,10 +165,63 @@ function lerDiarioEstrito(dir) {
       if (o === null || typeof o !== 'object' || Array.isArray(o)) throw new Falha('diario_ilegivel', `${nome}, linha ${i + 1}: não é um objeto`);
       if (o.hash_anterior !== (anterior === null ? null : sha(anterior))) throw new Falha('diario_ilegivel', `${nome}, linha ${i + 1}: cadeia de hash quebrada`);
       anterior = linha;
+      doArquivo.push(linha);
       eventos.push(o);
     }
   }
   return eventos;
+}
+
+// ─────────────────────────────────────────────────────────────── âncora do `entrega.inicio`
+
+const ANCORA = 'entrega.ancora';
+const ANCORA_TMP = 'entrega.ancora.tmp';
+const SEM_ANCORA = (detalhe) => new Falha('diario_ilegivel', detalhe);
+
+/** A âncora, se existir, tem que apontar para uma linha que está no diário (`linhasPorArquivo` vem de `lerDiarioEstrito`). Ausente é ok. */
+function conferirAncora(c, linhasPorArquivo) {
+  const arq = join(c.dirEntrega, ANCORA);
+  let texto;
+  try {
+    if (!lstatSync(arq).isFile()) throw SEM_ANCORA(`${ANCORA} não é arquivo regular`);
+    texto = readFileSync(arq, 'utf8');
+  } catch (e) {
+    if (e instanceof Falha) throw e;
+    if (e.code === 'ENOENT') return;
+    throw SEM_ANCORA(`${ANCORA} ilegível (${e.code ?? e.message})`);
+  }
+  let a;
+  try { a = JSON.parse(texto); } catch { throw SEM_ANCORA(`${ANCORA} não é JSON`); }
+  const forma = a !== null && typeof a === 'object' && !Array.isArray(a)
+    && typeof a.sessao === 'string' && SESSAO_RE.test(a.sessao)
+    && Number.isSafeInteger(a.seq) && a.seq >= 1
+    && typeof a.hash === 'string' && /^[0-9a-f]{64}$/.test(a.hash);
+  if (!forma) throw SEM_ANCORA(`${ANCORA} fora da forma {sessao, seq, hash}`);
+  const achou = (linhasPorArquivo.get(`events.${a.sessao}.jsonl`) ?? []).some((l) => JSON.parse(l).seq === a.seq && sha(l) === a.hash);
+  if (!achou) {
+    throw SEM_ANCORA(`a âncora aponta para o entrega.inicio ${a.sessao}/${a.seq}, que não está no diário: cauda apagada ou diário trocado; nada foi feito`);
+  }
+}
+
+/** Grava a âncora do `inicio` que acabou de entrar no diário da sessão: a última linha do arquivo. Atômica (tmp + rename); falha ⇒ `ancora_nao_gravada`. */
+function gravarAncora(c) {
+  const tmp = join(c.dirEntrega, ANCORA_TMP);
+  let fd = null;
+  try {
+    const ls = readFileSync(join(c.dirEntrega, `events.${c.sessao}.jsonl`), 'utf8').split('\n').filter((l) => l !== '');
+    const linha = ls.at(-1);
+    const o = JSON.parse(linha);
+    if (o.tipo !== 'entrega.inicio' || !Number.isSafeInteger(o.seq)) throw new Error('a última linha do diário não é o entrega.inicio');
+    fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o644);
+    writeSync(fd, `${JSON.stringify({ sessao: c.sessao, seq: o.seq, hash: sha(linha) })}\n`);
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = null;
+    renameSync(tmp, join(c.dirEntrega, ANCORA));
+  } catch (e) {
+    if (fd !== null) try { closeSync(fd); } catch { /* já fechado */ }
+    throw new Falha('ancora_nao_gravada', `${ANCORA} não gravada (${e.code ?? e.message}): o deploy NÃO rodou; o entrega.inicio ficou sem fim e a próxima decisão é parar`);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────── pré-condições comuns
@@ -175,7 +239,9 @@ function pausado(c) {
 function preparar(c, agoraMs) {
   if (pausado(c)) throw new Falha('pausado', '.harness/PAUSAR presente: nada roda');
   const plano = carregarPlano(c);
-  const eventos = lerDiarioEstrito(c.dirEntrega);
+  const linhasPorArquivo = new Map();
+  const eventos = lerDiarioEstrito(c.dirEntrega, linhasPorArquivo);
+  conferirAncora(c, linhasPorArquivo);
   if (!ordenar(eventos).ok) throw new Falha('diario_invalido', 'o diário da entrega não pôde ser ordenado; nada foi feito');
   const acao = proximaAcao(plano, eventos, SINAIS_NEUTROS);
   if (acao.tipo === 'parar' && acao.motivo === 'diario_invalido') throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições; nada foi feito');
@@ -403,6 +469,7 @@ async function subir(c, p, opts, decisao) {
   // E0 e E1: antes do deploy. Falha de append aborta; nada rodou e não fica `inicio` órfão (a ordem é o contrato)
   gravar(c, opts, 'producao.acesso', { ambiente: 'prod', acao: 'escrita', alvo: 'entrega:deploy' });
   gravar(c, opts, 'entrega.inicio', { politica: p.efetiva.politica });
+  gravarAncora(c); // falha ⇒ o deploy não roda; o `inicio` fica sem `fim` (próxima decisão: parar)
   // depois do `inicio` nenhuma falha de append interrompe a sequência de comandos
   const avisos = [];
   const reg = (tipo, dados) => {
