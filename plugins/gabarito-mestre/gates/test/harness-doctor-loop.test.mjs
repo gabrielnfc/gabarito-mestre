@@ -295,6 +295,15 @@ describe('T14 skill gabarito-loop — ponteiros aos CLIs da E3', () => {
     assert.doesNotMatch(plano, /tente outro caminho(?!;)|contorne o bloqueio|rode (?:o )?deploy (?:você|por outro)/i);
   });
 
+  test('skill-loop-instrucao-ci-homolog: CI de homolog após a última integração grava `ci --alvo homolog`; sem ele fica em esperar{homolog}', () => {
+    assert.match(plano, /2\. CI da entrega: `ci verde\|vermelho`\. CI de homolog após a última integração: `ci verde\|vermelho --alvo homolog` \(sem ele `continua` e `janela` ficam em `esperar\{homolog\}`\)\. Falha que você não consegue resolver: `parar nao_conseguiu`\./);
+  });
+
+  test('skill-loop-instrucao-item-modelo-emendas: o item traz modelo, decisoes e emendas e a skill manda usá-los', () => {
+    assert.match(plano, /`despachar` \(`itens\[\{task,papel,spec\?,achados\?,modelo,decisoes,emendas\}\]`\)/);
+    assert.match(plano, /`Agent` recebe o `modelo` do item; `decisoes` e `emendas` \(diff aprovado da spec\) vão ao agente como ponteiro\./);
+  });
+
   test('skill-loop-limite: ≤ 80 linhas e sem cópia de requisito', () => {
     assert.ok(skill.split('\n').length - 1 <= 80, `${skill.split('\n').length - 1} linhas`);
     assert.doesNotMatch(skill, /^\*\*REQ-/m);
