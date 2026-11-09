@@ -147,9 +147,14 @@ export function append(
     // GM-11 T5: forma de `dados` por tipo ANTES do canário; forma inválida não toca arquivo, lock nem linha.
     const forma = formaInvalida(ev.tipo, ev.dados);
     if (forma !== null) {
-      // o motivo ecoa o valor bruto: passa pelo canário e é cortado (um segredo nunca volta no erro).
-      const motivo = recusaCanario(forma) === null ? forma : '[redigido]';
-      return { ok: false, erro: `forma_invalida: ${motivo}`.slice(0, ERRO_MAX) };
+      // o motivo ecoa o valor bruto. Limite ANTES de qualquer regex: `dados` acima de LINHA_MAX não roda canário e é
+      // redigido; a janela do erro tem ERRO_MAX + CAMPO_MAX. Canário sobre os valores crus (o escape do JSON não esconde
+      // o segredo) e sobre a janela (segredo que só se forma entre folhas); casou ⇒ [redigido]; só então o corte.
+      let grande: boolean;
+      try { grande = (JSON.stringify(ev.dados) ?? '').length > LINHA_MAX; } catch { grande = true; }
+      const janela = `forma_invalida: ${forma}`.slice(0, ERRO_MAX + CAMPO_MAX);
+      const limpo = !grande && varrer(ev.dados) === null && recusaCanario(janela) === null;
+      return { ok: false, erro: limpo ? janela.slice(0, ERRO_MAX) : 'forma_invalida: [redigido]' };
     }
 
     // canário ANTES do lock; linha grande é recusada sem rodar regex.

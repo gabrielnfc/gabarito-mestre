@@ -925,11 +925,76 @@ describe('append: forma de dados por tipo (GM-11 T5)', () => {
     assert.ok(r.erro.includes('[redigido]'));
   });
 
-  test('append-erro-cortado: valor gigante ⇒ erro com no máximo 300 caracteres', () => {
+  test('append-erro-cortado: valor longo abaixo de LINHA_MAX ⇒ erro com exatamente 300 caracteres', () => {
     const dir = tmp();
-    const r = append(dir, 's1', ev('desvio', { task: 'T1', req: 'x'.repeat(200000) })) as { ok: false; erro: string };
+    const r = append(dir, 's1', ev('desvio', { task: 'T1', req: 'x'.repeat(1000) })) as { ok: false; erro: string };
     assert.equal(r.ok, false);
-    assert.match(r.erro, /^forma_invalida: /);
+    assert.match(r.erro, /^forma_invalida: desvio: campo `req` inválido: "x{100}/);
     assert.equal(r.erro.length, 300);
+  });
+
+  const TOK = 'abcdefghijklmnopqrstuvwxyz';
+  type Erro = { ok: false; erro: string };
+  const semSegredo = (r: unknown, seg: string, nome: string): void => {
+    const e = r as Erro;
+    assert.equal(e.ok, false, nome);
+    assert.equal(e.erro, 'forma_invalida: [redigido]', nome);
+    assert.ok(!e.erro.includes(seg), `${nome}: segredo voltou`);
+  };
+
+  test('r3-erro-200kb-sem-regex: dados acima de LINHA_MAX ⇒ redigido, sem regex, sem tocar arquivo', () => {
+    for (const req of ['://a:'.repeat(40000), 'x'.repeat(200000), 'Bearer\n' + TOK + 'x'.repeat(200000)]) {
+      const dir = tmp();
+      const t0 = Date.now();
+      const r = append(dir, 's1', ev('desvio', { task: 'T1', req })) as Erro;
+      const ms = Date.now() - t0;
+      assert.ok(ms < 500, `regex sobre texto sem limite: ${ms} ms`);
+      assert.equal(r.erro, 'forma_invalida: [redigido]');
+      assert.ok(!r.erro.includes(TOK));
+      assert.equal(existsSync(join(dir, 'events.s1.jsonl')), false);
+    }
+    const r = append(tmp(), 's1', ev('desvio', { task: 'T1', req: 'x', evidencia: '://a:'.repeat(40000) })) as Erro;
+    assert.equal(r.erro, 'forma_invalida: [redigido]');
+  });
+
+  test('r3-erro-segredo-escapado: controle antes do segredo não escapa do canário (valor e chave)', () => {
+    const casos: [string, Record<string, unknown>, string][] = [
+      ['Bearer\\n', { req: 'Bearer\n' + TOK }, TOK],
+      ['\\tAKIA', { req: '\tAKIAABCDEFGHIJKLMNOP' }, 'AKIAABCDEFGHIJKLMNOP'],
+      ['\\nsk-', { req: '\nsk-' + TOK }, 'sk-' + TOK],
+      ['\\rghs_', { req: '\rghs_' + TOK }, 'ghs_' + TOK],
+      ['\\u0001sk-', { req: '\u0001sk-' + TOK }, 'sk-' + TOK],
+      ['chave Bearer\\n', { req: { ['Bearer\n' + TOK]: 1 } }, TOK],
+    ];
+    for (const [nome, dados, seg] of casos) semSegredo(append(tmp(), 's1', ev('emenda.proposta', dados)), seg, nome);
+    semSegredo(append(tmp(), 's1', ev('sombra.consulta', { pergunta_hash: 'a'.repeat(64), req: 'Bearer\t' + TOK })), TOK, 'consulta');
+  });
+
+  test('r3-erro-segredo-entre-folhas: url-credencial formada no eco, inclusive cruzando o corte', () => {
+    semSegredo(append(tmp(), 's1', ev('emenda.proposta', { req: ['://a', ':segredo@'] })), 'segredo', 'curto');
+    semSegredo(append(tmp(), 's1', ev('emenda.proposta', { req: ['y'.repeat(200), '://hostlongo', ':' + 'p'.repeat(60) + '@'] })), 'pppp', 'no corte');
+  });
+
+  test('r3-erro-segredo-no-corte: token que cruza o caractere 300 não sai pela metade', () => {
+    semSegredo(append(tmp(), 's1', ev('emenda.proposta', { req: 'y'.repeat(229) + 'ghp_' + TOK + 'ABCD' })), 'ghp_abcdefghijk', 'ghp');
+  });
+
+  test('r3-erro-nunca-lanca: dados que JSON.stringify não serializa ⇒ forma_invalida redigida', () => {
+    const r = append(tmp(), 's1', ev('emenda.proposta', { req: 'REQ-A-1', diff: 1n } as unknown as Record<string, unknown>)) as Erro;
+    assert.equal(r.erro, 'forma_invalida: [redigido]');
+  });
+
+  test('r3-erro-diagnostico-preservado: sem segredo e curto, o motivo volta inteiro', () => {
+    const r = append(tmp(), 's1', ev('emenda.proposta', { req: 'REQ-a-1', diff: 'x' })) as Erro;
+    assert.equal(r.erro, 'forma_invalida: emenda.proposta: campo `req` inválido: "REQ-a-1" não casa REQ-<ÁREA>-<n>');
+  });
+
+  test('r3-erro-pelo-dist: escape e 200 KB pelo dist', async () => {
+    const dist = await import(join(AQUI, '..', 'dist', 'diario.js'));
+    semSegredo(dist.append(tmp(), 's1', ev('emenda.proposta', { req: 'Bearer\n' + TOK })), TOK, 'dist escape');
+    const t0 = Date.now();
+    const r = dist.append(tmp(), 's1', ev('desvio', { task: 'T1', req: '://a:'.repeat(40000) }));
+    assert.ok(Date.now() - t0 < 500, 'dist roda regex sem limite');
+    assert.equal(r.erro, 'forma_invalida: [redigido]');
   });
 });
