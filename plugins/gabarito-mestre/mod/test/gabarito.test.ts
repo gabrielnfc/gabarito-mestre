@@ -1186,9 +1186,27 @@ test('medicao-por-agente: turn.complete de subagent grava custo.medicao só com 
   await m.inicio()
   await m.turno({ agentId: 'ag1', usage: USO, answer: 'rm -rf SENTINELA-CRUA' })
   const g = m.grav.filter((x) => x.tipo === 'custo.medicao')
-  expect(g).toEqual([{ agente: 'subagent:ag1', tipo: 'custo.medicao', dados: { input_tokens: 100, output_tokens: 20, cache_read: 5, cache_creation: 7 } }])
+  expect(g).toEqual([{ agente: 'subagent:ag1', tipo: 'custo.medicao', dados: { input_tokens: 100, output_tokens: 20, cache_read: 5, cache_creation: 7, modelo: 'm' } }])
   expect(JSON.stringify(m.pedidos)).not.toContain('SENTINELA-CRUA')
   expect(m.pedidos.find((p) => p.op === 'append')?.unicoPorAgente).toBe(true)
+})
+test('mod-custo-tem-modelo: custo.medicao traz modelo (valor ou null, a chave nunca falta), de subagent e de orquestrador', async ($, on) => {
+  const m = mundo($, on, { percent: 5 })
+  await m.inicio()
+  await m.turno({ agentId: 'ag1', usage: { ...USO, model: 'claude-sonnet-5-5' } })
+  await m.turno({ agentId: 'ag2', usage: { ...USO, model: undefined } })
+  await m.turno({ agentId: 'ag3', usage: { ...USO, model: '<synthetic>' } })
+  await m.turno({ agentId: 'ag4', usage: { ...USO, model: '' } })
+  await m.turno({ usage: { ...USO, model: 'claude-opus-4-7' } })
+  const g = m.grav.filter((x) => x.tipo === 'custo.medicao')
+  expect(g.map((x) => [x.agente, x.dados.modelo])).toEqual([
+    ['subagent:ag1', 'claude-sonnet-5-5'],
+    ['subagent:ag2', null],
+    ['subagent:ag3', null],
+    ['subagent:ag4', null],
+    ['orquestrador', 'claude-opus-4-7'],
+  ])
+  for (const x of g) expect('modelo' in x.dados).toBe(true)
 })
 test('medicao-sem-usage-ou-invalido: nada gravado', async ($, on) => {
   const m = mundo($, on)
@@ -1216,8 +1234,8 @@ test('mede-orquestrador: turno principal grava custo.medicao {agente: orquestrad
   await m.turno({ usage: { ...USO, input_tokens: 40 } })
   const g = m.grav.filter((x) => x.tipo === 'custo.medicao')
   expect(g).toEqual([
-    { agente: 'orquestrador', tipo: 'custo.medicao', dados: { input_tokens: 100, output_tokens: 20, cache_read: 5, cache_creation: 7 } },
-    { agente: 'orquestrador', tipo: 'custo.medicao', dados: { input_tokens: 40, output_tokens: 20, cache_read: 5, cache_creation: 7 } },
+    { agente: 'orquestrador', tipo: 'custo.medicao', dados: { input_tokens: 100, output_tokens: 20, cache_read: 5, cache_creation: 7, modelo: 'm' } },
+    { agente: 'orquestrador', tipo: 'custo.medicao', dados: { input_tokens: 40, output_tokens: 20, cache_read: 5, cache_creation: 7, modelo: 'm' } },
   ])
   expect(JSON.stringify(m.pedidos)).not.toContain('SENTINELA-CRUA')
   expect(m.pedidos.filter((p) => p.op === 'append').every((p) => p.unicoPorAgente !== true)).toBe(true)
