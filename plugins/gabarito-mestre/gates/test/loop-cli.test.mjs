@@ -2741,6 +2741,33 @@ describe('E3 T10: proxima, modelo, decisões, emendas e avisos', () => {
     assert.equal(amb.eventos().length, 0, 'nada gravado');
   });
 
+  test('proxima-afrouxada-com-autonomia-confronta: origin janela COM autonomia, plano continua ⇒ politica_afrouxada pelo confronto (não pelo rebaixamento)', () => {
+    const plano = { ...PLANO_PADRAO, politica_entrega: { exige_prod: false, politica: 'continua' } };
+    const amb = ambiente({ plano });
+    comOrigin(amb, { entrega: { politica: 'janela', autonomia: true, janela: { dias: [1], inicio: '09:00', fim: '10:00', fuso: 'UTC' } } });
+    const r = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'politica_afrouxada');
+    assert.match(r.j.mensagem, /"continua", mais frouxo que o config \("janela"\)/);
+    assert.doesNotMatch(r.j.mensagem, /sem entrega\.autonomia/, 'sem rebaixamento a mensagem não cita autonomia');
+  });
+
+  test('proxima-autonomia-politica-efetiva-no-loop: origin continua SEM autonomia + exige_prod ⇒ parar{janela_ausente}; COM autonomia true ⇒ não para (costura loop ⇒ politicaEfetiva ⇒ proximaAcao 4b)', () => {
+    const plano = { ...PLANO_PADRAO, politica_entrega: { exige_prod: true } };
+    for (const entrega of [{ politica: 'continua' }, { politica: 'continua', autonomia: false }]) {
+      const sem = ambiente({ plano });
+      comOrigin(sem, { entrega });
+      const j = sem.cli(['proxima', '--vivos', '0']).j;
+      assert.deepEqual(j.acao, { tipo: 'parar', motivo: 'janela_ausente' }, JSON.stringify(entrega));
+    }
+    const com = ambiente({ plano });
+    comOrigin(com, { entrega: { politica: 'continua', autonomia: true } });
+    const j = com.cli(['proxima', '--vivos', '0']).j;
+    assert.equal(j.ok, true);
+    assert.notDeepEqual(j.acao, { tipo: 'parar', motivo: 'janela_ausente' }, 'autonomia true mantém a continua declarada');
+    assert.equal(j.acao.tipo, 'despachar', JSON.stringify(j.acao));
+  });
+
   test('proxima-janela-ausente: exige_prod e política sob_demanda ⇒ parar{janela_ausente}; o motivo é gravável por `parar`', () => {
     const plano = { ...PLANO_PADRAO, politica_entrega: { exige_prod: true } };
     const amb = ambiente({ plano });
