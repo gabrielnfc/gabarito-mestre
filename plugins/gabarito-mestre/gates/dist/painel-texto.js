@@ -27,7 +27,41 @@ export function barra(pct        , largura        , cheio           , vazio 
 
 const colunasDaLinha = (l       )         => l.reduce((n, s) => n + colunas(s.texto), 0);
 
-/** Corta a linha em `max` colunas: o último segmento que estoura é cortado (`…`), os seguintes caem. Linha que cabe volta igual. */
+/** Token numérico solto (127, 62k, 1.2M, 64%, 9m, 2h, 10/11, 09:00) no fim do texto; ids como `T8`, `E4` e `GM-12` não contam. */
+const NUMERO_NO_FIM = /(?<![A-Za-z0-9_-])[0-9][0-9/:.,]*(?:k|M|%|m|h)?$/;
+const SEPARADOR_NO_FIM = /[\s·,(\[±#:;/|]+$/;
+
+/**
+ * Número nunca é cortado (P1c D-R6, T14b): se a reticência do corte cai logo depois de um token numérico, o token inteiro cede junto com os
+ * separadores que o ligavam ao texto (`…hoje, 1…` ⇒ `…hoje…`). O que cede é sempre texto à direita do último que ficou; a linha só encolhe.
+ */
+function recuarNumero(saida       )        {
+  const fim = saida[saida.length - 1];
+  if (fim === undefined || !fim.texto.endsWith('…')) return saida;
+  const s = [...saida];
+  let texto = fim.texto.slice(0, -1);
+  let mudou = false;
+  for (;;) {
+    if (mudou) texto = texto.replace(SEPARADOR_NO_FIM, '');
+    const m = NUMERO_NO_FIM.exec(texto);
+    if (m) {
+      texto = texto.slice(0, m.index);
+      mudou = true;
+      continue;
+    }
+    if (texto === '' && mudou && s.length > 1) {
+      s.pop();
+      texto = s[s.length - 1].texto;
+      continue;
+    }
+    break;
+  }
+  if (!mudou) return saida;
+  s[s.length - 1] = { ...s[s.length - 1], texto: `${texto}…` };
+  return s;
+}
+
+/** Corta a linha em `max` colunas: o último segmento que estoura é cortado (`…`), os seguintes caem; número nunca fica cortado (`recuarNumero`). Linha que cabe volta igual. */
 export function cortarLinha(l       , max        )        {
   if (typeof max !== 'number' || !Number.isFinite(max) || Math.floor(max) <= 0) return [];
   const limite = Math.floor(max);
@@ -48,9 +82,36 @@ export function cortarLinha(l       , max        )        {
       const ult = saida[saida.length - 1];
       saida[saida.length - 1] = { ...ult, texto: cortar(`${ult.texto}…`, Math.max(1, colunas(ult.texto))) };
     }
-    return saida;
+    return recuarNumero(saida);
   }
   return saida;
+}
+
+// ───────────────────────────── densidade por altura (T14b, emenda D-R4) ─────────────────────────────
+
+/** Linha com a classe de corte a que pertence (`tag`); `trocar` (só a 1ª linha da classe) substitui a linha em vez de removê-la. `vivo` = linha de agente vivo (nunca cortada). */
+                                                                     
+
+/** `altura` válida: número finito ≥ 1 (arredondado para baixo); qualquer outra coisa vale ausente. */
+export const alturaValida = (v         )                     => (typeof v === 'number' && Number.isFinite(v) && Math.floor(v) >= 1 ? Math.floor(v) : undefined);
+
+/**
+ * `altura` ausente (ou inválida) ⇒ as linhas, sem mexer em nenhuma. Presente e a última linha `vivo` fora das `altura` primeiras ⇒ cada classe de `ordem`
+ * cai inteira (a parte dela que está acima do agente), uma de cada vez, até a última linha `vivo` caber ou a lista de classes acabar. Linha sem classe em `ordem` (e a `vivo`) nunca cai.
+ */
+export function cortarPorAltura(ls                , altura         , ordem          )          {
+  const alt = alturaValida(altura);
+  let cur = ls;
+  if (alt !== undefined) {
+    const ultimoVivo = (xs                )         => xs.reduce((i, x, k) => (x.tag === 'vivo' ? k : i), -1);
+    for (const classe of ordem) {
+      const i = ultimoVivo(cur);
+      if (i < 0 || i < alt) break;
+      // só cai linha ACIMA do último agente vivo: o que fica abaixo dele não se corta, rola
+      cur = cur.flatMap((x, k) => (x.tag !== classe || k > i ? [x] : x.trocar === undefined ? [] : [{ ...x, l: x.trocar, trocar: undefined }]));
+    }
+  }
+  return cur.map((x) => x.l);
 }
 
 // ───────────────────────────── topo (depende de você / PAROU) ─────────────────────────────

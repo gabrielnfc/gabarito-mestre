@@ -217,4 +217,6 @@ export type EstadoPainel = {
   /** Já convertida por `horaLocal`: o render não conhece o fuso. */
   notificacao: { hora: string } | { motivo: string } | null; qualidade: { rodadaMedia: number | null; mortas: number | null };
 };
-export type OpcoesRender = { preset: 'esquadrao' | 'executivo'; tema: 'color' | 'mono'; narracao: boolean; largura: number };
+export type OpcoesRender = { preset: 'esquadrao' | 'executivo'; tema: 'color' | 'mono'; narracao: boolean; largura: number;
+  /** T14b: linhas que a superfície dá ao corpo (`props.scroll.bodyRows` da Pane). Ausente ⇒ saída byte a byte igual à sem altura; presente e menor que o desenho ⇒ densidade por altura (REQ-PNL-9, emenda D-R4). */
+  altura?: number };

@@ -8,7 +8,8 @@
  */
 
 import { colunas, cortar, limpar } from './painel-largura.ts';
-import { barra, blocoTopo, cortarLinha } from './painel-texto.ts';
+import { barra, blocoTopo, cortarLinha, cortarPorAltura } from './painel-texto.ts';
+import type { LinhaMarcada } from './painel-texto.ts';
 import { alinhar, corEstadoTask, fmtPct, fmtTempo, fmtTok, num, previsao, separador } from './painel-formato.ts';
 import type { AgentePainel, CorTema, EstadoPainel, Linha, OpcoesRender, Segmento } from './tipos.ts';
 
@@ -53,6 +54,9 @@ export function renderExecutivo(e: EstadoPainel, o: OpcoesRender): Linha[] {
   const w = larguraValida(o?.largura);
   const curto = w < FAIXA_ROTULO_LONGO;
   const linhas: Linha[] = [];
+  // classe de corte por altura (índice de `linhas` ⇒ marca): separadores, Limites, Contexto, Produção; ver `cortarPorAltura`
+  const marcas = new Map<number, string>();
+  const marca = (tag: string): void => { marcas.set(linhas.length - 1, tag); };
 
   // Cabeçalho: `GABARITO · <id> <título>` + `executivo` à direita.
   const titulo = texto(e.titulo);
@@ -61,7 +65,7 @@ export function renderExecutivo(e: EstadoPainel, o: OpcoesRender): Linha[] {
 
   // Topo (depende de você / PAROU): o mesmo bloco do Esquadrão, colado sem alteração.
   linhas.push(...blocoTopo(e, w));
-  linhas.push(separador(w));
+  linhas.push(separador(w)); marca('sep');
 
   const tasks = Array.isArray(e.plano?.tasks) ? e.plano.tasks : [];
 
@@ -114,32 +118,35 @@ export function renderExecutivo(e: EstadoPainel, o: OpcoesRender): Linha[] {
     alt === null ? `${MDASH} alterações` : plural(alt, 'alteração', 'alterações'),
     ...(politica === '' ? [] : [politica]),
   ];
-  linhas.push(linhaDado('producao', curto, [seg(partesP.join(' · '))]));
+  linhas.push(linhaDado('producao', curto, [seg(partesP.join(' · '))])); marca('prod');
 
   // Contexto do líder
   const ctx = naoNeg(e.equipe?.lider?.ctx);
-  linhas.push(linhaDado('contexto', curto, ctx === null ? [seg(MDASH)] : [seg(barra(ctx, clamp(w - 19, 5, 29), '█', '░'), 'success'), seg(` ${fmtPct(ctx)}`)]));
+  linhas.push(linhaDado('contexto', curto, ctx === null ? [seg(MDASH)] : [seg(barra(ctx, clamp(w - 19, 5, 29), '█', '░'), 'success'), seg(` ${fmtPct(ctx)}`)])); marca('ctx');
 
   // Limites (cada um omitido se ausente; os dois ausentes ⇒ a linha some)
   const h5 = naoNeg(e.equipe?.lider?.h5);
   const d7 = naoNeg(e.equipe?.lider?.d7);
   const lim = [...(h5 === null ? [] : [`5h ${fmtPct(h5)}`]), ...(d7 === null ? [] : [`7d ${fmtPct(d7)}`])];
-  if (lim.length > 0) linhas.push(linhaDado('limites', curto, [seg(lim.join(' · '))]));
+  if (lim.length > 0) { linhas.push(linhaDado('limites', curto, [seg(lim.join(' · '))])); marca('lim'); }
 
   // Agentes em voo, por papel (sem nome de ninguém)
-  linhas.push(separador(w));
+  linhas.push(separador(w)); marca('sep');
   const vivos = inteiro(e.equipe?.vivos);
   linhas.push(alinhar([seg('Agentes em voo')], [seg(vivos === null ? MDASH : `${vivos} ${vivos === 1 ? 'vivo' : 'vivos'}`, 'inactive')], w));
-  linhas.push(...blocoAgentes(e, tasks, w));
+  const bloco = blocoAgentes(e, tasks, w);
+  bloco.linhas.forEach((l, i) => { linhas.push(l); if (i < bloco.vivos) marca('vivo'); });
 
-  return linhas.map((l) => cortarLinha(l, w));
+  const marcadas = linhas.map((l, i): LinhaMarcada => ({ l: cortarLinha(l, w), tag: marcas.get(i) ?? '' }));
+  return cortarPorAltura(marcadas, o.altura, ['sep', 'lim', 'ctx', 'prod']);
 }
 
 type Rotulado = { glifo: string; cor: CorTema; nome: string; resto: Linha; dir: Linha };
 
 const GENERICO = { implementador: 'implementador', correcao: 'implementador', revisor: 'revisor' } as const;
 
-function blocoAgentes(e: EstadoPainel, tasks: EstadoPainel['plano']['tasks'], w: number): Linha[] {
+/** `vivos` = quantas das primeiras `linhas` são agentes vivos (os itens vêm antes de revisor aguardando e Sombra). */
+function blocoAgentes(e: EstadoPainel, tasks: EstadoPainel['plano']['tasks'], w: number): { linhas: Linha[]; vivos: number } {
   const longa = w >= FAIXA_AGENTE_LONGA;
   const agentes: AgentePainel[] = Array.isArray(e.equipe?.agentes) ? e.equipe.agentes : [];
   const contagem: Record<string, number> = {};
@@ -207,5 +214,5 @@ function blocoAgentes(e: EstadoPainel, tasks: EstadoPainel['plano']['tasks'], w:
     corpo = ult === null ? decTxt : `${decTxt} · ${seq === null ? '#—' : `#${seq}`}${resposta === '' ? '' : ` ${resposta}`}`;
   }
   out.push([seg('○', 'inactive'), seg(' '), seg('Sombra', 'planMode'), seg(`${' '.repeat(longa ? largNome - 'Sombra'.length : 0)}  ${corpo}`)]);
-  return out;
+  return { linhas: out, vivos: itens.length };
 }

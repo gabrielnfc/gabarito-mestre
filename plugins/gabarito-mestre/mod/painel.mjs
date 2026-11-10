@@ -191,7 +191,7 @@ const seg = (texto, cor, tema) => (tema === 'mono' || cor === undefined ? { text
 const comSufixo = (base, sufixo, larg) => (sufixo === '' ? cortar(limpar(base), larg) : cortar(limpar(base), Math.max(1, larg - colunas(sufixo))) + sufixo);
 
 /**
- * Linhas da Pane: `renderPainel` do `dist/` na largura pedida (`max(1, bodyColumns)`), cada segmento por `limpar`. `extra`: `falha` (linha de erro em `warning`
+ * Linhas da Pane: `renderPainel` do `dist/` na largura pedida (`max(1, bodyColumns)`), cada segmento por `limpar`. `extra`: `altura` (`scroll.bodyRows` da Pane; ausente ⇒ sem corte por altura), `falha` (linha de erro em `warning`
  * no topo e o resto em `inactive`, menos os `error` do PAROU), `avisos` (1 linha `warning`, `(+N)`), `semLoop`. `render` que lança ⇒ 1 linha `warning`.
  */
 export function linhasDaPane(estado, prefs, largura, extra = {}) {
@@ -211,7 +211,10 @@ export function linhasDaPane(estado, prefs, largura, extra = {}) {
   }
   let corpo;
   try {
-    corpo = renderPainel(estado, { preset, tema, narracao: p.narracao !== false, largura: larg });
+    // T14b: `altura` = linhas da superfície menos as que `falha`/`avisos` já ocuparam; inteiro ≥ 1, senão ausente (o núcleo não corta nada)
+    const bruta = extra.altura;
+    const altura = Number.isInteger(bruta) && bruta >= 1 ? Math.max(1, bruta - linhas.length) : undefined;
+    corpo = renderPainel(estado, { preset, tema, narracao: p.narracao !== false, largura: larg, ...(altura === undefined ? {} : { altura }) });
     if (!Array.isArray(corpo)) throw new Error('render sem linhas');
   } catch {
     return [...linhas, [seg('painel: não consegui desenhar', 'warning', tema)]];
@@ -635,7 +638,7 @@ export function registrarPainel(on) {
     }
     let linhas;
     try {
-      linhas = linhasDaPane(S.estado, S.prefs, colunasDe(e.props), { falha: S.falha, avisos: S.avisos, semLoop: S.semLoop });
+      linhas = linhasDaPane(S.estado, S.prefs, colunasDe(e.props), { falha: S.falha, avisos: S.avisos, semLoop: S.semLoop, altura: e.props?.scroll?.bodyRows });
     } catch {
       linhas = [[{ texto: 'painel: não consegui desenhar', cor: 'warning' }]];
     }

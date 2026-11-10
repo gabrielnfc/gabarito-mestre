@@ -2161,6 +2161,58 @@ test('pane-desenha-o-renderPainel: o líder e o PAROU aparecem em Text aninhado 
   expect(arvore).toContain('"color":"error"')
   await ui.unmount()
 })
+// T14b (D2 da Sombra): a Pane passa `scroll.bodyRows` como altura; o agente do aceite 4 (180x50) fica nas primeiras linhas
+const estadoAceite4 = () => {
+  const t = (id: string, estado: string, glifo: string, extra: Record<string, any> = {}) => ({ id, titulo: `Task ${id}`, estado, glifo, deps: [], ...extra })
+  const integradas = Array.from({ length: 7 }, (_, i) => t(`T${i + 1}`, 'integrada', '✓'))
+  const tasks = [...integradas, t('T8', 'implementando', '●', { nome: 'RONY', papel: 'implementador', modelo: 'sonnet', desdeS: 540 }), t('T9', 'pendente', '○'), t('T10', 'pendente', '○')]
+  return estadoPainel({
+    plano: { tasks, feitas: 7, total: 10, pct: 70, eta: { hora: '17:42', restanteS: 3600, maisMenosS: 600, n: 3 }, rodadaMedia: 1.4, medianaS: 1080 },
+    equipe: {
+      lider: { nome: 'GANDALF', modelo: 'opus', ctx: 36, x: 50, tok: 412000, h5: 42, d7: 18, narrativa: 'esperando o loop' },
+      agentes: [{ nome: 'RONY', papel: 'implementador', task: 'T8', estadoTask: 'implementando', modelo: 'sonnet', ctxPct: 31, ctxTok: 62000, tok: 118000, desdeS: 540, cor: 'claude', vivo: true }],
+      vivos: 1, revisoresAguardando: [], sombra: { nome: 'ELROND', modelo: 'opus', decisoes: 0, ultima: null },
+    },
+  })
+}
+const linhasDaPane = async (m: ReturnType<typeof mundo>, $: any, scroll: Record<string, unknown>) => {
+  const ui = await $.ui.mount({ plugin: 'gabarito-mestre', surface: 'terminal', component: 'Pane', requestId: ID_PAINEL, props: { ...propsPane(178), scroll } })
+  const arvore = await ui.drawn()
+  const linhas = (arvore.children ?? []).map((l: any) => JSON.stringify(l))
+  await ui.unmount()
+  return linhas as string[]
+}
+test('pane-passa-bodyRows-como-altura: com bodyRows 14 o agente vivo está nas 14 primeiras linhas; sem bodyRows o desenho é o de sempre (agente depois da 14ª)', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoAceite4() })
+  await arrancar(m)
+  const com = await linhasDaPane(m, $, { offset: 0, bodyRows: 14 })
+  const iCom = com.findIndex((l) => l.includes('RONY') && l.includes('ctx'))
+  expect(iCom).toBeGreaterThanOrEqual(0)
+  expect(iCom).toBeLessThan(14)
+  const sem = await linhasDaPane(m, $, { offset: 0 })
+  const iSem = sem.findIndex((l) => l.includes('RONY') && l.includes('ctx'))
+  expect(iSem).toBeGreaterThanOrEqual(14)
+  expect(com.length).toBeLessThan(sem.length)
+})
+test('pane-bodyRows-desconta-as-linhas-de-aviso: o aviso do alto ocupa 1 das bodyRows; para toda janela que comporta o agente, ele fica dentro dela', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoAceite4(), avisos: ['spec: ausente'] })
+  await arrancar(m)
+  const posicao = async (bodyRows: number) => {
+    const linhas = await linhasDaPane(m, $, { offset: 0, bodyRows })
+    expect(linhas[0]).toContain('painel: aviso: spec: ausente')
+    return linhas.findIndex((l) => l.includes('RONY') && l.includes('ctx'))
+  }
+  const minimo = await posicao(1) // todos os cortes: a menor posição possível do agente
+  expect(minimo).toBeGreaterThan(0)
+  let vistos = 0
+  for (let b = minimo + 1; b <= minimo + 12; b++) {
+    const i = await posicao(b)
+    expect(i).toBeGreaterThanOrEqual(0)
+    expect(i).toBeLessThan(b)
+    vistos++
+  }
+  expect(vistos).toBe(12)
+})
 test('pane-sem-loop: `sem loop nesta branch` em inactive', async ($, on) => {
   const m = comPainel($, on, { modo: 'sem_loop' })
   await arrancar(m)

@@ -12,7 +12,8 @@
 import { alinhar, corEstadoTask, faixaIds, fmtPct, fmtTempo, fmtTok, num, previsao, separador, textoDoPapel, textoEstadoTask } from './painel-formato.ts';
 import type { Previsao } from './painel-formato.ts';
 import { colunas, cortar, limpar } from './painel-largura.ts';
-import { barra, blocoTopo, cortarLinha } from './painel-texto.ts';
+import { barra, blocoTopo, cortarLinha, cortarPorAltura } from './painel-texto.ts';
+import type { LinhaMarcada } from './painel-texto.ts';
 import type { AgentePainel, CorTema, EstadoPainel, Linha, OpcoesRender, Segmento, TaskPainel } from './tipos.ts';
 
 const seg = (texto: string, cor?: CorTema): Segmento => (cor === undefined ? { texto } : { texto, cor });
@@ -86,6 +87,9 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
   const aberta = (id: string): boolean => e.plano.tasks.find((x) => x.id === id)?.estado !== 'integrada';
 
   const saida: Linha[] = [];
+  // classe de corte por altura de cada linha de `saida` (índice ⇒ marca); ver `cortarPorAltura`
+  const marcas = new Map<number, { tag: string; trocar?: Linha }>();
+  const marca = (tag: string, trocar?: Linha): void => { marcas.set(saida.length - 1, trocar === undefined ? { tag } : { tag, trocar }); };
 
   // ───────── < 44: topo, 1 linha de plano e as tasks em voo ─────────
   if (minima) {
@@ -105,7 +109,7 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
     saida.push(cortarLinha([seg(t(e.id)), seg(' '), ...barraSegs(nn(e.plano.pct), 12, '▰', '▱', 'success'), seg(` ${pctTxt} `), ...prevSegs(prev, true)], w));
   }
   saida.push(...topo);
-  saida.push(sep);
+  saida.push(sep); marca('sep');
 
   // ───────── PLANO ─────────
   if (larga) {
@@ -121,7 +125,7 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
       if (r !== null) partes.push(`${r.toFixed(1)} rodada média`);
       const m = nn(e.plano.medianaS);
       if (m !== null) partes.push(`mediana ${Math.round(m / 60)} min`);
-      saida.push(cortarLinha([seg('  '), seg('✓', 'success'), seg(` ${t(faixaIds(integradas, ordem))}   `), seg(partes.join(' · '), 'inactive')], w));
+      saida.push(cortarLinha([seg('  '), seg('✓', 'success'), seg(` ${t(faixaIds(integradas, ordem))}   `), seg(partes.join(' · '), 'inactive')], w)); marca('faixa');
     }
   }
 
@@ -152,7 +156,12 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
         seg(recuo), seg('○', 'inactive'), seg(` ${pad(t(primeira.id), idW)}  `, 'inactive'), ...colTitulo(primeira, 'inactive'),
         seg(deps.length > 0 ? `fila · depende de ${deps.join(' ')}` : 'fila', 'inactive'),
       ]), w));
-      if (fila.length > 1) saida.push(cortarLinha([seg(recuo), seg(`○ ${t(faixaIds(fila.slice(1).map((x) => x.id), ordem))}  fila`, 'inactive')], w));
+      if (fila.length > 1) {
+        // 2 linhas de fila: com pouca altura viram uma só (`○ T10–T12  fila`); a 2ª cai
+        const junta = cortarLinha([seg(recuo), seg(`○ ${t(faixaIds(fila.map((x) => x.id), ordem))}  fila`, 'inactive')], w);
+        marca('fila', junta);
+        saida.push(cortarLinha([seg(recuo), seg(`○ ${t(faixaIds(fila.slice(1).map((x) => x.id), ordem))}  fila`, 'inactive')], w)); marca('fila');
+      }
     }
   } else {
     for (const x of emVoo) {
@@ -165,7 +174,7 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
     if (fila.length > 0) saida.push(cortarLinha([seg(`○ ${t(faixaIds(fila.map((x) => x.id), ordem))} fila`, 'inactive')], w));
   }
   // plano vazio em 44–59 (sem linha de PLANO): sem task a mostrar, o bloco some e não deixa 2 separadores colados
-  if (larga || saida.length > antesTasks) saida.push(sep);
+  if (larga || saida.length > antesTasks) { saida.push(sep); marca('sep'); }
 
   // ───────── EQUIPE ─────────
   const eq = e.equipe;
@@ -188,9 +197,9 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
     ], w));
     if (h5 !== null || d7 !== null) {
       const lim = (rot: string, v: number | null): Linha => (v === null ? [] : [seg(`${rot} `), ...barraSegs(v, 10, '█', '░', 'success'), seg(` ${fmtPct(v)}`)]);
-      saida.push(cortarLinha([seg('│', 'inactive'), seg('  '), ...lim('5h', h5), ...(h5 !== null && d7 !== null ? [seg('   ')] : []), ...lim('7d', d7)], w));
+      saida.push(cortarLinha([seg('│', 'inactive'), seg('  '), ...lim('5h', h5), ...(h5 !== null && d7 !== null ? [seg('   ')] : []), ...lim('7d', d7)], w)); marca('lim');
     }
-    if (narracao && w >= 72 && t(lider.narrativa) !== '') saida.push(cortarLinha([seg('│', 'inactive'), seg('  '), seg('▶', 'success'), seg(` ${t(lider.narrativa)}`)], w));
+    if (narracao && w >= 72 && t(lider.narrativa) !== '') saida.push(cortarLinha([seg('│', 'inactive'), seg('  '), seg('▶', 'success'), seg(` ${t(lider.narrativa)}`)], w)); marca('narr');
   } else {
     saida.push(cortarLinha([seg(t(lider.nome)), seg(' ctx '), ...(lctx === null ? [seg('—')] : [...barraSegs(lctx, 19, '█', '░', 'success'), seg(` ${fmtPct(lctx)}`)])], w));
     const partes = [...(h5 !== null ? [`5h ${fmtPct(h5)}`] : []), ...(d7 !== null ? [`7d ${fmtPct(d7)}`] : []), tokL];
@@ -219,7 +228,7 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
           nwUsado = Math.max(1, nw - sobra);
         }
       }
-      for (const l of montar(nivel)) saida.push(cortarLinha(l, w));
+      montar(nivel).forEach((l, i) => { saida.push(cortarLinha(l, w)); if (eq.agentes[i].vivo) marca('vivo'); });
     }
     for (const r of eq.revisoresAguardando) {
       const nome = t(r.nome);
@@ -254,13 +263,13 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
     const fim = ult && seq !== null ? `#${Math.round(seq)}` : dec === null ? '' : `${Math.round(dec)} dec`;
     saida.push(cortarLinha(aparar([seg(PREFIXO(true, false), 'inactive'), seg('○', 'inactive'), seg(' '), seg(t(s.nome), 'planMode'), seg(` ${fim}`, 'inactive')]), w));
   }
-  saida.push(sep);
+  saida.push(sep); marca('sep');
 
   // ───────── ATENÇÃO ─────────
   const atencao = (Array.isArray(e.atencao) ? e.atencao : []).map(t).filter((x) => x !== '');
   if (atencao.length > 0) {
     saida.push(cortarLinha(larga ? [seg('◆ ATENÇÃO', 'warning'), seg(`  ${atencao.join(' · ')}`)] : [seg('◆', 'warning'), seg(` ${atencao.join(' · ')}`)], w));
-    if (larga) saida.push(sep);
+    if (larga) { saida.push(sep); marca('sep'); }
   }
 
   // ───────── histórico e rodapé ─────────
@@ -286,7 +295,7 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
   } else {
     saida.push(cortarLinha([seg('CI '), seg('●', ciCor), seg(` ${ciTxt}  PROD ${leu}/${alt}`), ...(k > 0 ? [seg(`  ▼ ${k}`, 'inactive')] : [])], w));
   }
-  return saida;
+  return cortarPorAltura(saida.map((l, i): LinhaMarcada => ({ l, tag: marcas.get(i)?.tag ?? '', ...(marcas.get(i)?.trocar === undefined ? {} : { trocar: marcas.get(i)?.trocar }) })), o.altura, ['sep', 'narr', 'lim', 'fila', 'faixa']);
 }
 
 /** Linha de agente: vivo (`●`), `sem task`, ou `◌ sem agente` (task em voo sem agente de papel compatível). */
