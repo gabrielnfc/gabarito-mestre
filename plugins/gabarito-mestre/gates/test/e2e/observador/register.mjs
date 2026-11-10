@@ -61,6 +61,14 @@ export const register = (on) => {
     await log($, { ev: 'command.run', comando: e.command, args: typeof e.args === 'string' ? e.args.slice(0, 40) : null, origem: e.origin?.kind ?? e.origin ?? null });
     return next(e);
   });
+  on('ui.close', async ($, e, next) => { await log($, { ev: 'ui.close', id: e?.id ?? null, origem: e?.origin?.kind ?? null }); return next(e); });
+  // T14 r2: altura que o motor dá ao corpo da Pane (props.scroll.bodyRows); só números, só quando muda
+  let ultimoRender = '';
+  on('ui.render', { component: 'Pane' }, async ($, e, next) => {
+    const chave = JSON.stringify([e.requestId ?? null, e.props?.scroll?.bodyRows ?? null, e.props?.bodyColumns ?? null]);
+    if (chave !== ultimoRender) { ultimoRender = chave; await log($, { ev: 'pane.render', id: e.requestId ?? null, bodyRows: e.props?.scroll?.bodyRows ?? null, bodyColumns: e.props?.bodyColumns ?? null, offset: e.props?.scroll?.offset ?? null }); }
+    return next(e);
+  });
   on('tool.call', async ($, e, next) => {
     const sub = e.agentId !== undefined;
     const ctx = sub ? null : await contexto($);

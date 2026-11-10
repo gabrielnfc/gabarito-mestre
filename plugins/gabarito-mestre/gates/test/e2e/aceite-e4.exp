@@ -67,7 +67,8 @@ cd $repo
 log_user 0
 log_file -a $rundir/tty.raw
 set stty_init "rows $rows cols $cols"
-spawn claude --plugin-dir $plugin --plugin-dir $obs --setting-sources project --strict-mcp-config \
+if {[info exists env(T14_OBS_PRIMEIRO)]} { set dirs [list --plugin-dir $obs --plugin-dir $plugin] } else { set dirs [list --plugin-dir $plugin --plugin-dir $obs] }
+spawn claude {*}$dirs --setting-sources project --strict-mcp-config \
   --model claude-haiku-5-5 --permission-mode auto --allowedTools "Bash(sleep *)" Read --debug-file $rundir/debug.log
 set t0 [clock seconds]
 nota "inicio modo=$modo cols=$cols"
@@ -162,6 +163,26 @@ if {$modo eq "parou"} {
   nota "PAROU total=[cont PAROU] osc9: [raw osc9 PAROU] turn.complete=[obs_n turn.complete] prompt.submit=[obs_n prompt.submit]"
   sair CONCLUIDO
 }
+if {$modo eq "reabrir"} {
+  # T14 r2: o dono fecha a Pane, o relógio de 30 s NÃO a reabre, `/gabarito painel` a traz de volta. Nada vai ao modelo.
+  nota "reabrir: ui.close antes=[obs_n ui.close]"
+  # `ctrl+x tab` anda entre os sites (a faixa, depois a Pane): o debug.log diz onde o foco caiu (`ui.focus ... onto ...`)
+  foreach tentativa {sem-foco foco-1 foco-2} {
+    if {$tentativa ne "sem-foco"} { sends "ctrl+x tab"; send "\030"; after 400; send "\t"; drenar 2 }
+    sends "ctrl+x x ($tentativa)"; send "\030"; after 400; send "x"; drenar 3
+    snap fechada-$tentativa
+    nota "reabrir: tentativa $tentativa ui.close=[obs_n ui.close] caixa=[cont {GABARITO · GM-99}]"
+    if {[obs_n ui.close] > 0} { break }
+  }
+  drenar 36
+  snap fechada-depois-do-relogio
+  digitar "/gabarito painel"
+  drenar 5
+  snap reaberta
+  drenar 36
+  snap reaberta-depois-do-relogio
+  sair CONCLUIDO
+}
 if {$modo eq "agente"} {
   # o store é do plugin e sobrevive entre sessões: força o preset do aceite
   digitar "/gabarito painel esquadrao"
@@ -169,7 +190,7 @@ if {$modo eq "agente"} {
   sends prompt
   set prompt "Use a ferramenta Agent exatamente uma vez, com description \"T8 implementador\", subagent_type \"general-purpose\" e este prompt: Faça exatamente 3 chamadas SEPARADAS da ferramenta Bash, uma de cada vez, cada uma com o comando sleep 20, depois leia o arquivo README.md e responda só com a primeira linha dele. Depois que o agente voltar, responda apenas: feito. Não faça mais nada além disso."
   send -- $prompt; after 2500; send "\r"
-  for {set i 0} {$i < 16} {incr i} {
+  for {set i 0} {$i < 14} {incr i} {
     drenar 5
     snap ag-[format %02d $i]
     catch {exec node $avaliar agente $rundir > $rundir/agente-[format %02d $i].json}
