@@ -57,7 +57,7 @@ function agente(nome: string, papel: AgentePainel['papel'], taskId: string, esta
 }
 
 function parou(motivo: MotivoParar, texto: string, acoes: Acao[], emVoo: string[], alteracoes: number): NonNullable<EstadoPainel['parar']> {
-  return { motivo, texto, acoes, hora: '14:07', emVoo, alteracoes };
+  return { motivo, texto, acoes, hora: '14:07', chave: 'parar:s1:7', emVoo, alteracoes };
 }
 
 function emVoo712(): EstadoPainel {
@@ -112,7 +112,7 @@ function parouTeto(): EstadoPainel {
   e.parado = true;
   e.parar = p;
   e.depende = [{ nivel: 'parar', motivo: p.texto, acoes: p.acoes }];
-  e.notificacao = { ts: '2026-11-09T14:07:30.000Z' };
+  e.notificacao = { hora: '14:07' };
   e.historico = [{ glifo: '■', texto: 'PAROU · teto de rodadas de review em T9', hora: '14:07', cor: 'error' }, ...e.historico];
   return e;
 }
@@ -126,7 +126,7 @@ function parouDiario(): EstadoPainel {
   e.parado = true;
   e.parar = p;
   e.depende = [{ nivel: 'parar', motivo: p.texto, acoes }];
-  e.notificacao = { motivo: 'sem mod' };
+  e.notificacao = null; // sem mod a linha é omitida (spec REQ-PNL-3)
   e.rodape.prod = { leituras: 1, alteracoes: 2 };
   return e;
 }

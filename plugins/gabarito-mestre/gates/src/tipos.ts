@@ -208,10 +208,12 @@ export type EstadoPainel = {
     sombra: { nome: string; modelo: string | null; decisoes: number; ultima: { seq: number; resposta: string; fonte: string | null } | null };
   };
   parado: boolean;
-  parar: { motivo: MotivoParar; texto: string; acoes: Acao[]; hora: string; emVoo: string[]; alteracoes: number } | null;
+  /** `chave` identifica a ocorrência do Parar (o mod avisa 1× por chave); `hora` é `hh:mm`, `dd/mm hh:mm` ou `--:--` (sem evento com hora legível). */
+  parar: { motivo: MotivoParar; texto: string; acoes: Acao[]; hora: string; chave: string; emVoo: string[]; alteracoes: number } | null;
   depende: ItemDepende[]; atencao: string[];
   historico: { glifo: string; texto: string; hora: string; cor: CorTema }[]; ocultos: number;
   rodape: { ci: { verde: boolean | null; execucoesHoje: number }; prod: { leituras: number; alteracoes: number }; politica: string };
-  notificacao: EntradaPainel['notificacao']; qualidade: { rodadaMedia: number | null; mortas: number | null };
+  /** Já convertida por `horaLocal`: o render não conhece o fuso. */
+  notificacao: { hora: string } | { motivo: string } | null; qualidade: { rodadaMedia: number | null; mortas: number | null };
 };
 export type OpcoesRender = { preset: 'esquadrao' | 'executivo'; tema: 'color' | 'mono'; narracao: boolean; largura: number };
