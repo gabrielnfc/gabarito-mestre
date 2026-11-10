@@ -6,12 +6,14 @@
 // O mod carrega `dist/loop.js` como módulo de hook: só import relativo e, no fecho inteiro, nenhum módulo embutido do Node (por isso `plano.ts` normaliza caminho por conta própria).
 // A projeção das propostas abertas é UMA só, a de `emenda.ts`; `emenda.ts` importa `ordenar` daqui (ciclo medido nos runners).
 import { projetarEmendas } from './emenda.js';
+import { PAPEIS } from './formas.js';
                                                                                          
 
                                                                                          
 
 const TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
-const PAPEIS                     = ['implementador', 'revisor', 'correcao'];
+/** Papéis de task do loop; a lista mora em `formas.ts` (a forma do aprendizado a usa e `loop.ts` já depende de `formas.ts` por `emenda.ts`). */
+export { PAPEIS };
 export const TIPOS_DE_TASK                    = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
 /**
  * Progresso (REQ-LOOP-5): os eventos que `proximaAcao` consome, TIPOS_DE_TASK, `ci.resultado` e o julgamento de emenda (descongela).
@@ -107,7 +109,7 @@ function chaveDe(e        , rodada        , estado            )                 
   const dados = e.dados ?? {};
   switch (e.tipo) {
     case 'task.iniciada':
-      if (!PAPEIS.includes(dados.papel)) return 'papel inválido';
+      if (!(PAPEIS                      ).includes(dados.papel)) return 'papel inválido';
       return { chave: `iniciada.${dados.papel         }`               , rodada: null };
     case 'task.concluida':
       return { chave: 'task.concluida', rodada: null };

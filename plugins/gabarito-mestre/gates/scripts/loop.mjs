@@ -55,8 +55,11 @@ import { estadoDe, ordenar, podeIntegrar, proximaAcao, tasksCongeladas } from '.
 import { normalizarCaminho, validarPlano } from '../dist/plano.js';
 import { contarConsultas, projetarDecisoes, trechoDoReq } from '../dist/sombra.js';
 import { avaliar } from './gate-task.mjs';
+import * as loopAprendizado from './loop-aprendizado.mjs';
 import { clonar, nomeBanco, soltar, validarDb } from './db-template.mjs';
 
+/** Subcomandos do aprendizado, do pouso e do registro: implementados em `loop-aprendizado.mjs` com dependências injetadas. */
+const CMDS_E5 = ['aprendizado', 'aprendizados', 'pousar', 'registro'];
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
 const ENTREGA_RE = /^[A-Z]+-\d+$/;
 const SESSAO_RE = /^[A-Za-z0-9._-]{1,128}$/;
@@ -145,9 +148,14 @@ function lerArgs(argv) {
     ci: { pos: 1, flags: ['entrega', 'sessao', 'alvo'] },
     desvio: { pos: 1, flags: ['entrega', 'sessao', 'req', 'evidencia', 'arquivos', 'causa'], obrig: ['req', 'evidencia', 'arquivos', 'causa'] },
     descoberta: { pos: 0, flags: ['entrega', 'sessao', 'evidencia', 'causa'], obrig: ['evidencia', 'causa'] },
+    // E5a (GM-13): fiação; os argumentos de cada um chegam com a task dona (T8, T11, T12). Aqui qualquer posicional e as flags comuns.
+    aprendizado: { pos: null, flags: ['entrega', 'sessao'] },
+    aprendizados: { pos: null, flags: ['entrega', 'sessao'] },
+    pousar: { pos: null, flags: ['entrega', 'sessao'] },
+    registro: { pos: null, flags: ['entrega', 'sessao'] },
     emenda: { pos: null, flags: ['entrega', 'sessao', 'req', 'task', 'diff', 'fato', 'alternativa', 'evidencia', 'causa', 'arquivos'] },
   };
-  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | iniciar <task> <papel> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar>  [--entrega GM-10]';
+  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | iniciar <task> <papel> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | aprendizado | aprendizados | pousar | registro  [--entrega GM-10]';
   if (typeof cmd !== 'string' || !Object.hasOwn(ESPEC, cmd)) throw new Falha('uso', `comando desconhecido ou ausente. ${uso}`, {}, 2);
   const esp = ESPEC[cmd];
   const pos = [];
@@ -179,7 +187,7 @@ function lerArgs(argv) {
     if (falta !== undefined) throw new Falha('uso', `emenda propor exige --${falta}. ${uso}`, {}, 2);
     return { cmd, pos, flags };
   }
-  if (pos.length !== esp.pos) throw new Falha('uso', `${cmd} espera ${esp.pos} argumento(s) posicional(is), veio ${pos.length}. ${uso}`, {}, 2);
+  if (esp.pos !== null && pos.length !== esp.pos) throw new Falha('uso', `${cmd} espera ${esp.pos} argumento(s) posicional(is), veio ${pos.length}. ${uso}`, {}, 2);
   const falta = (esp.obrig ?? []).find((n) => !Object.hasOwn(flags, n));
   if (falta !== undefined) throw new Falha('uso', `${cmd} exige --${falta}. ${uso}`, {}, 2);
   return { cmd, pos, flags };
@@ -281,6 +289,7 @@ function prepararProposta(cwd, flags) {
 function validarForma(cmd, pos, flags) {
   if (flags.entrega !== undefined && !ENTREGA_RE.test(flags.entrega)) throw new Falha('entrega_invalida', `--entrega "${flags.entrega}" fora da forma ${ENTREGA_RE}`);
   if (flags.sessao !== undefined && !SESSAO_RE.test(flags.sessao)) throw new Falha('argumento_invalido', `--sessao fora da forma ${SESSAO_RE}`);
+  if (CMDS_E5.includes(cmd)) return {};
   if (cmd === 'proxima') {
     if (flags.vivos !== undefined && !NUM_RE.test(flags.vivos)) throw new Falha('argumento_invalido', `--vivos "${flags.vivos}": esperado inteiro >= 0`);
     return {};
@@ -1398,6 +1407,8 @@ async function executar(argv, cwd) {
       if (forma.sub === 'propor') return propor(c, plano, propostaPronta);
       return julgarComoSombra(c, plano, forma.seq, forma.decisao);
     case 'proxima': return proxima(c, plano, flags);
+    case 'aprendizado': case 'aprendizados': case 'pousar': case 'registro':
+      return loopAprendizado[cmd]({ c, plano, gravar, lerDiarioEstrito, Falha, git }, pos, flags);
     case 'abrir': return abrir(c, plano, task);
     case 'fechar': tarefa(plano, task); return fechar(c, task);
     case 'integrar': return integrar(c, plano, task);

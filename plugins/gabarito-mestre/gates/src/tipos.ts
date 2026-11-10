@@ -44,7 +44,11 @@ export type TipoEvento =
   | 'entrega.agendada'
   // E4 (GM-12): painel
   | 'spec.aprovada'
-  | 'entrega.devolvida';
+  | 'entrega.devolvida'
+  // E5a (GM-13): aprendizado, fechamento sem regra e mensagem do dono
+  | 'aprendizado'
+  | 'aprendizado.nada'
+  | 'dono.mensagem';
 export type Fonte = 'origin' | 'local';
 export type AmbienteDecl = {
   hosts?: string[];
@@ -140,6 +144,17 @@ export type MotivoParar =
   | 'smoke'
   | 'rollback'
   | 'janela_ausente';
+// E5a (GM-13): aprendizado. `substitui.entrega` casa `^[A-Z]+-\d+$` (D-4); ausente = entrega corrente.
+export type RefEvento = { sessao: string; seq: number };
+export type RefAprendizado = RefEvento & { entrega?: string };
+export type DadosAprendizado = {
+  tipo: 'E' | 'A'; status: 'D' | 'M'; gatilho: RefEvento | null;
+  evidencia: { eventos?: RefEvento[]; medicao?: { fonte: string; numero: number } };
+  regra: string; entra_em: string[]; substitui?: RefAprendizado;
+};
+export type TipoGatilho = 'review' | 'parar' | 'fechamento' | 'dono';
+export type Pendencia = RefEvento & { tipo: TipoGatilho };
+export type PerfilModelo = 'economia' | 'padrao' | 'qualidade';
 /** Proposta de emenda aberta: `seq` na sessão fixa `emendas` e o REQ que ela congela. */
 export type PropostaAberta = { seq: number; req: string };
 /** Papel de custo/modelo (REQ-MOD-1); distinto de `Papel`, que é o papel de uma task do loop. */
@@ -149,6 +164,7 @@ export type AcaoLoop =
   | { tipo: 'integrar'; tasks: string[] }
   | { tipo: 'esperar'; motivo: string; propostas?: PropostaAberta[] }
   | { tipo: 'pousar' }
+  | { tipo: 'aprender'; pendencias: Pendencia[] }
   | { tipo: 'parar'; motivo: MotivoParar; task?: string }
   | { tipo: 'concluir' };
 
