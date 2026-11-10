@@ -278,6 +278,28 @@ describe('T14 doctor — modelos-por-papel (REQ-MOD-1): só aviso', () => {
     assert.deepEqual(avisosDe(comPerfil({ modelos: { revisor: 'opus' } })), []);
   });
 
+  test('doctor-perfil-invalido-sem-modelos: perfil inválido SEM orquestracao.modelos ⇒ aviso, found:false, nível não muda, compara com padrao', () => {
+    const dir = comPerfil({ perfil: 'luxo' });
+    const c = check(dir);
+    assert.equal(c.found, false);
+    assert.equal(c.evidence, 'orquestracao.perfil inválido ("luxo"): esperado economia, padrao ou qualidade; comparo com o padrão');
+    assert.deepEqual(avisosDe(dir), ['modelos-por-papel: ' + c.evidence]);
+    const j = (d) => JSON.parse(spawnSync(process.execPath, [SCRIPT, '--json'], { cwd: d, encoding: 'utf8' }).stdout);
+    assert.notEqual(j(dir).alcancado, undefined);
+    assert.equal(j(dir).alcancado, j(comPerfil({})).alcancado);
+    assert.deepEqual(avisosDe(comPerfil({ perfil: 'padrao' })), []);
+  });
+
+  test('doctor-qualidade-sem-modelos-cita-tabela: evidência cita o perfil efetivo, não os padrões da visão', () => {
+    for (const orq of [{ perfil: 'qualidade' }, { perfil: 'qualidade', modelos: {} }]) {
+      const c = check(comPerfil(orq));
+      assert.equal(c.found, true);
+      assert.match(c.evidence, /vale a tabela do perfil qualidade/, JSON.stringify(orq));
+      assert.doesNotMatch(c.evidence, /padrões da visão/);
+    }
+    assert.match(check(comPerfil({})).evidence, /valem os padrões da visão/);
+  });
+
   test('doctor-modelos-pela-borda: CLI real imprime o aviso na seção de avisos e no --json', () => {
     const dir = comModelos({ revisor: 'sonnet' });
     const r = spawnSync(process.execPath, [SCRIPT], { cwd: dir, encoding: 'utf8' });

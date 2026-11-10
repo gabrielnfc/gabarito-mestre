@@ -36,7 +36,7 @@
 import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, renameSync, lstatSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'node:fs';
 import { join, relative, sep, dirname } from 'node:path';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { lerGuarda, DENY_GUARDA, CHAVES_MORTAS, ORDEM_MODELO, PERFIS_MODELO } from '../lib/config.mjs';
+import { lerGuarda, DENY_GUARDA, CHAVES_MORTAS, ORDEM_MODELO, PERFIS_MODELO, resolverPerfil } from '../lib/config.mjs';
 import { diasEntre } from '../lib/datas.mjs';
 import { execFileSync } from 'node:child_process';
 import { checar, DEFAULTS as VERSIONAMENTO_DEFAULTS } from './versionamento-check.mjs';
@@ -688,15 +688,14 @@ export const CHECKS = [
       if (orq === null || typeof orq !== 'object' || Array.isArray(orq)) return { found: false, evidence: 'orquestracao inválido (não é um objeto)' };
       // Perfil (E5a): o recomendado é a tabela do perfil escolhido; inválido ⇒ aviso e vale `padrao` (ausente não avisa).
       const avisos = [];
-      let perfil = 'padrao';
-      if (Object.hasOwn(orq, 'perfil')) {
-        if (typeof orq.perfil === 'string' && Object.hasOwn(PERFIS_MODELO, orq.perfil)) perfil = orq.perfil;
-        else avisos.push(`orquestracao.perfil inválido (${JSON.stringify(orq.perfil)}): esperado economia, padrao ou qualidade; comparo com o padrão`);
-      }
+      const rp = resolverPerfil(orq);
+      const perfil = rp.perfil;
+      if (rp.aviso !== undefined) avisos.push(`${rp.aviso}; comparo com o padrão`);
+      const valem = perfil === 'padrao' ? 'valem os padrões da visão' : `vale a tabela do perfil ${perfil}`;
       const tabela = PERFIS_MODELO[perfil];
       const info = perfil === 'economia' ? 'perfil economia: review de task e spike em sonnet, review final em opus' : null;
       const modelos = orq.modelos;
-      if (modelos === undefined) return avisos.length ? { found: false, evidence: avisos.join('; ') } : { found: true, evidence: info ?? 'sem orquestracao.modelos: valem os padrões da visão' };
+      if (modelos === undefined) return avisos.length ? { found: false, evidence: avisos.join('; ') } : { found: true, evidence: info ?? `sem orquestracao.modelos: ${valem}` };
       if (modelos === null || typeof modelos !== 'object' || Array.isArray(modelos)) return { found: false, evidence: [...avisos, 'orquestracao.modelos inválido (não é um objeto)'].join('; ') };
       for (const [papel, e] of Object.entries(modelos)) {
         if (!Object.hasOwn(tabela, papel)) { avisos.push(`${papel}: papel desconhecido (sem modelo recomendado)`); continue; }
@@ -708,7 +707,7 @@ export const CHECKS = [
       }
       return avisos.length
         ? { found: false, evidence: avisos.join('; ') }
-        : { found: true, evidence: info ?? (Object.keys(modelos).length ? 'nenhum papel abaixo do recomendado' : 'orquestracao.modelos vazio: valem os padrões da visão') };
+        : { found: true, evidence: info ?? (Object.keys(modelos).length ? 'nenhum papel abaixo do recomendado' : `orquestracao.modelos vazio: ${valem}`) };
     },
   },
   {

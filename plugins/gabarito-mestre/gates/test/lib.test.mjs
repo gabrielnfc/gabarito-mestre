@@ -596,6 +596,10 @@ describe('T4b perfis de modelo (E5a, Sombra r3): PERFIS_MODELO e resolverModelo'
       assert.deepEqual([r.modelo, r.esforco, r.fonte], ['sonnet', 'high', 'padrao']);
       assert.match(r.aviso, /`orquestracao` em harness\.config\.json não é um objeto/);
     }
+    // perfil inválido + explícito válido: aviso completo (sem "usei " solto), modelo explícito vale
+    const t = resolverModelo({ perfil: 'xyz', modelos: { revisor: 'opus' } }, 'revisor');
+    assert.deepEqual([t.modelo, t.fonte], ['opus', 'explicito']);
+    assert.equal(t.aviso, 'orquestracao.perfil inválido ("xyz"): esperado economia, padrao ou qualidade; usei o explícito opus');
     // perfil inválido não impede o explícito de valer
     assert.deepEqual(resolverModelo({ perfil: 'luxo', modelos: { revisor: 'haiku' } }, 'revisor').modelo, 'haiku');
   });
