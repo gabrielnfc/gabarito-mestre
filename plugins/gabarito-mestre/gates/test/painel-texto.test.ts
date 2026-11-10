@@ -93,6 +93,30 @@ test('glifos-largura-1', () => {
   assert.equal(colunas('▶'), 1);
 });
 
+test('colunas-modificador-de-pele-bandeira-keycap-e-largura-zero (T4 MINOR 3)', () => {
+  assert.equal(colunas('👍'), 2);
+  assert.equal(colunas('👍🏽'), 2, 'o modificador de pele cola na base e vale 0');
+  assert.equal(colunas('👍🏽👍🏿'), 4);
+  assert.equal(colunas('🇧🇷'), 2, 'bandeira = 2 indicadores regionais = 2 colunas');
+  assert.equal(colunas('1\ufe0f\u20e3'), 2, 'keycap = 2 colunas');
+  assert.equal(colunas('▶\ufe0f'), 2, '▶ com seletor de emoji (VS16) é desenhado em 2 colunas');
+  assert.equal(colunas('❤\ufe0f'), 2, 'pictográfico já vale 2: o VS16 não soma de novo');
+  for (const zw of ['\u200b', '\u200c', '\u200e', '\u200f', '\u2060', '\ufeff', '\u061c']) assert.equal(colunas(`a${zw}b`), 2, `U+${zw.codePointAt(0)!.toString(16)} vale 0`);
+});
+
+test('cortar-nao-parte-modificador-bandeira-nem-keycap (T4 MINOR 3)', () => {
+  assert.equal(cortar('👍🏽abc', 3), '👍🏽…', 'a base e o modificador saem juntos');
+  assert.equal(cortar('👍🏽abc', 4), '👍🏽a…');
+  assert.equal(cortar('👍🏽abc', 2), '…', 'não cabe a base inteira: nada de base sem modificador');
+  assert.equal(cortar('🇧🇷abc', 3), '🇧🇷…', 'a bandeira sai inteira');
+  assert.equal(cortar('🇧🇷abc', 2), '…', 'nunca um indicador regional solto');
+  assert.equal(cortar('🇧🇷🇺🇸abc', 5), '🇧🇷🇺🇸…', 'dois pares: a fronteira cai entre pares');
+  assert.equal(cortar('🇧🇷🇺🇸abc', 4), '🇧🇷…', 'não corta no meio do 2º par');
+  assert.equal(cortar('1\ufe0f\u20e3abc', 3), '1\ufe0f\u20e3…');
+  assert.equal(cortar('1\ufe0f\u20e3abc', 2), '…', 'o keycap não se parte');
+  for (const t of ['👍🏽abc', '🇧🇷🇺🇸abc', '1\ufe0f\u20e3abc', 'a\u200bbcdef']) for (let m = 1; m <= 8; m++) assert.ok(colunas(cortar(t, m)) <= m, `${JSON.stringify(t)} em ${m}`);
+});
+
 test('cortar-cabe-devolve-limpo', () => {
   assert.equal(cortar('abcd', 4), 'abcd', 'colunas = max cabe');
   assert.equal(cortar('ab\x1bcd', 5), 'ab cd');
@@ -220,8 +244,8 @@ test('topo-parou-error-tres-linhas', () => {
   e.notificacao = { hora: '14:07' } as unknown as EstadoPainel['notificacao'];
   assert.deepEqual(topo(e, 100), [
     '■ PAROU 14:07  teto de rodadas de review em T9',
-    'aprovar  /gabarito-mestre:liberar T9   recusar  deixe a task parada e emende a spec',
-    'T8 continua · produção: 0 alterações nesta entrega · notificação enviada 14:07',
+    '  aprovar  /gabarito-mestre:liberar T9   recusar  deixe a task parada e emende a spec',
+    '  T8 continua · produção: 0 alterações nesta entrega · notificação enviada 14:07',
   ]);
   const l = blocoTopo(e, 100);
   assert.deepEqual(l[0][0], { texto: '■ PAROU 14:07', cor: 'error' });
@@ -236,25 +260,53 @@ test('topo-parar-acoes-em-linhas-proprias-quando-nao-cabe', () => {
   const e = estado('parou-teto');
   const l = topo(e, 60);
   assert.deepEqual(l.slice(1, 3), ['    aprovar  /gabarito-mestre:liberar T9', '    recusar  deixe a task parada e emende a spec']);
+  assert.match(l[3], /^  T8 continua · /, 'a L3 mantém o recuo de 2 mesmo com as ações quebradas');
   assert.ok(l.every((x) => colunas(x) <= 60));
+});
+
+test('topo-parar-recuo-de-2-colunas-nas-linhas-2-e-3 (mockup APROVADO, mockup-painel.html:90-91; T4 MINOR 2)', () => {
+  const l = topo(estado('parou-teto'), 100);
+  assert.ok(!l[0].startsWith(' '), 'a L1 não tem recuo');
+  assert.ok(l[1].startsWith('  aprovar') && !l[1].startsWith('   '), 'L2: exatamente 2 colunas');
+  assert.ok(l[2].startsWith('  T8 continua') && !l[2].startsWith('   '), 'L3: exatamente 2 colunas');
+  const d = estado('parou-diario');
+  const m = topo(d, 100);
+  assert.equal(m[1], '  confira o diário; nada segue até ele ser válido', 'ação sem comando também recuada');
+});
+
+test('topo-parar-comando-que-cabe-sozinho-nao-e-cortado (T4 MINOR 1; spec: comando nunca cortado)', () => {
+  const e = estado('parou-teto');
+  const comando = `node ${'x'.repeat(59)}`; // 64 colunas
+  assert.equal(colunas(comando), 64);
+  e.parar!.acoes = [{ rotulo: 'subir a entrega', comando }];
+  const l = topo(e, 80);
+  assert.ok(l.every((x) => colunas(x) <= 80), JSON.stringify(l));
+  assert.ok(l.some((x) => x.trim() === comando), `o comando de 64 colunas cabe sozinho em 80 e sai inteiro: ${JSON.stringify(l)}`);
+  assert.ok(l.some((x) => x.trim() === 'subir a entrega'), 'o rótulo vai na linha de cima, também inteiro');
+  assert.equal(l.filter((x) => x.includes('…')).length, 0, 'nada foi cortado');
+  // comando que não cabe nem sozinho: cortado só no fim
+  e.parar!.acoes = [{ rotulo: 'subir', comando: `node ${'y'.repeat(95)}` }];
+  const g = topo(e, 80);
+  assert.ok(g.every((x) => colunas(x) <= 80));
+  assert.ok(g.some((x) => x.endsWith('…') && x.trim().startsWith('node yyy')), 'cortado só no fim');
 });
 
 test('topo-acao-sem-comando-dois-espacos', () => {
   const e = estado('parou-diario');
-  assert.equal(topo(e, 100)[1], 'confira o diário; nada segue até ele ser válido', 'sem `: `, o rótulo vai como está');
+  assert.equal(topo(e, 100)[1], '  confira o diário; nada segue até ele ser válido', 'sem `: `, o rótulo vai como está');
   e.parar!.acoes = [{ rotulo: 'recusar: deixe a task parada: e emende', comando: null }];
-  assert.equal(topo(e, 100)[1], 'recusar  deixe a task parada: e emende', 'só o 1º `: ` vira dois espaços');
+  assert.equal(topo(e, 100)[1], '  recusar  deixe a task parada: e emende', 'só o 1º `: ` vira dois espaços');
   e.parar!.acoes = [];
   assert.equal(topo(e, 100).length, 2, 'sem ações, sem linha de ações');
 });
 
 test('topo-continua-singular', () => {
   const e = estado('parou-teto');
-  assert.match(topo(e, 100)[2], /^T8 continua · /);
+  assert.match(topo(e, 100)[2], /^  T8 continua · /);
   e.parar!.emVoo = ['T8', 'T9'];
-  assert.match(topo(e, 100)[2], /^T8 T9 continuam · /);
+  assert.match(topo(e, 100)[2], /^  T8 T9 continuam · /);
   e.parar!.emVoo = [];
-  assert.match(topo(e, 100)[2], /^nada continua · /);
+  assert.match(topo(e, 100)[2], /^  nada continua · /);
 });
 
 test('topo-alteracao-singular', () => {
@@ -269,10 +321,10 @@ test('topo-notificacao-ausente-omitida', () => {
   const e = estado('parou-teto');
   for (const n of [null, { ts: '2026-11-09T14:07:30.000Z' }, {}, { hora: '' }, 'x', 7]) {
     e.notificacao = n as EstadoPainel['notificacao'];
-    assert.equal(topo(e, 100)[2], 'T8 continua · produção: 0 alterações nesta entrega', JSON.stringify(n));
+    assert.equal(topo(e, 100)[2], '  T8 continua · produção: 0 alterações nesta entrega', JSON.stringify(n));
   }
   e.notificacao = { motivo: 'sem mod' };
-  assert.equal(topo(e, 100)[2], 'T8 continua · produção: 0 alterações nesta entrega · não enviada: sem mod');
+  assert.equal(topo(e, 100)[2], '  T8 continua · produção: 0 alterações nesta entrega · não enviada: sem mod');
   e.notificacao = { motivo: 'x'.repeat(500) };
   const l3 = topo(e, 100)[2];
   assert.ok(l3.endsWith(`não enviada: ${'x'.repeat(29)}…`), l3);
@@ -282,10 +334,10 @@ test('topo-notificacao-ausente-omitida', () => {
 test('topo-l3-cai-da-direita', () => {
   const e = estado('parou-teto');
   e.notificacao = { hora: '14:07' } as unknown as EstadoPainel['notificacao'];
-  assert.equal(ultima(e, 78), 'T8 continua · produção: 0 alterações nesta entrega · notificação enviada 14:07');
-  assert.equal(ultima(e, 77), 'T8 continua · produção: 0 alterações nesta entrega', 'cai a notificação');
-  assert.equal(ultima(e, 49), 'T8 continua', 'cai a produção');
-  assert.equal(ultima(e, 6), 'T8 co…', 'a 1ª parte é cortada no fim');
+  assert.equal(ultima(e, 80), '  T8 continua · produção: 0 alterações nesta entrega · notificação enviada 14:07');
+  assert.equal(ultima(e, 79), '  T8 continua · produção: 0 alterações nesta entrega', 'cai a notificação');
+  assert.equal(ultima(e, 51), '  T8 continua', 'cai a produção');
+  assert.equal(ultima(e, 8), '  T8 co…', 'a 1ª parte é cortada no fim');
 });
 
 test('topo-parou-mais-dono', () => {
@@ -472,9 +524,18 @@ test('historico-prod-homolog', () => {
   assert.equal(t('homolog'), 'GANDALF leu HOMOLOG · a · permitido');
   assert.equal(t('desconhecido'), 'GANDALF leu ambiente desconhecido · a · permitido');
   assert.equal(t(undefined), 'GANDALF leu ambiente desconhecido · a · permitido');
+  assert.equal(t('teste'), 'GANDALF leu TESTE · a · permitido', 'ambiente `teste` existe (decidir.ts:68-73, faixa log): não é "desconhecido" (T4 MINOR 4)');
+  assert.equal(t('teste', 'operacao.destrutiva'), 'GANDALF leu TESTE · a · destrutiva');
   assert.equal(t('prod', 'operacao.destrutiva'), 'GANDALF leu PRODUÇÃO · a · destrutiva');
   const vazio = fraseHistorico(ev('operacao.destrutiva', { ambiente: 'prod', acao: 'escrita', alvo: '' }), CTX) as { texto: string };
   assert.equal(vazio.texto, 'GANDALF alterou PRODUÇÃO · — · destrutiva');
+});
+
+test('historico-parar-textoParar-recebe-a-task-do-evento', () => {
+  const texto = (dados: unknown) => (fraseHistorico(ev('loop.parar', dados), { ...CTX, textoParar: (m, t) => `${m}|${String(t)}` }) as { texto: string }).texto;
+  assert.equal(texto({ motivo: 'teto_rodadas', task: 'T9' }), 'PAROU · teto_rodadas|T9');
+  assert.equal(texto({ motivo: 'teto_rodadas' }), 'PAROU · teto_rodadas|null', 'sem task ⇒ null, nunca undefined');
+  assert.equal(texto({ motivo: 'teto_rodadas', task: 7 }), 'PAROU · teto_rodadas|null', 'task que não é texto ⇒ null');
 });
 
 test('historico-quem-orquestrador-lider', () => {

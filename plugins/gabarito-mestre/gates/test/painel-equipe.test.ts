@@ -108,6 +108,16 @@ test('pacote-largo-recusa', () => {
   recusa({ ...valido(), nome: '李'.repeat(11) }); // 22 colunas
 });
 
+test('pacote-nome-mede-com-a-colunas-do-painel (T4 desvio 4)', () => {
+  const ok = (nome: string) => assert.equal(validarPacote({ ...valido(), nome }).ok, true, JSON.stringify(nome));
+  ok('x'.repeat(20) + '\u0301'); // marca vale 0
+  ok('x'.repeat(20) + '\u200b'); // ZWSP vale 0
+  ok('👍🏽'.repeat(10)); // 10 × 2
+  recusa({ ...valido(), nome: '👍🏽'.repeat(11) }); // 22
+  recusa({ ...valido(), nome: `x${'\u202e'}y` }); // bidi: controle recusado
+  recusa({ ...valido(), nome: 'a\u009bb' }); // C1
+});
+
 test('pacote-forma-recusa', () => {
   for (const ruim of [null, undefined, 'x', 42, [], [valido()]]) recusa(ruim, /objeto/);
   recusa({ ...valido(), nome: '' });
@@ -443,6 +453,16 @@ test('pct-modelo-diferente-null', () => {
   assert.equal(semModelo.agentes[0].ctxPct, null);
 });
 
+test('pct-janela-1m-limite-declarado (D11, T3): o id do modelo com sufixo de janela não casa ⇒ null; o resto é limite (b) para o spike', () => {
+  const eventos = diario(ini('T07', 'implementador'));
+  const pct = (modeloSessao: string, modeloAgente: string) =>
+    projetarEquipe(PLANO, eventos, entrada({ modeloSessao, agentes: [ag('T07 implementador', { uso: uso(88_000, modeloAgente) })] })).agentes[0].ctxPct;
+  assert.equal(pct('claude-opus-4-8[1m]', 'claude-opus-4-8'), null, 'sessão em 1M × agente no id puro: a janela é outra, o % some em vez de mentir');
+  assert.equal(pct('claude-opus-4-8', 'claude-opus-4-8[1m]'), null);
+  assert.equal(pct('claude-opus-4-8', 'claude-opus-4-8'), 44, 'mesmo id exato: janela da sessão (200k) ⇒ 44 %');
+  // LIMITE (b), não resolvido aqui: se o CLI entregar `modeloSessao` SEM o sufixo mesmo com a sessão em 1M e o agente em 200k, o % (sobre a janela da sessão) sai 5× menor que o real.
+});
+
 test('pct-modelo-sessao-null', () => {
   const eventos = diario(ini('T07', 'implementador'));
   const eq = projetarEquipe(PLANO, eventos, entrada({ modeloSessao: null, agentes: [ag('T07 implementador', { uso: uso(88_000, null) })] }));
@@ -523,6 +543,21 @@ test('uso-ausente-x-corrompido', () => {
   assert.deepEqual(u, { contexto: 3, tok: 7, modelo: 'a' });
   // não texto
   assert.equal(usoDoTranscript([42, null, {}] as unknown as string[]), null);
+});
+
+test('agente-uso-tok-ausente-ou-corrompido-nunca-0 (T3 MINOR 1)', () => {
+  const tok = (u: unknown) => projetarEquipe(PLANO, diario(ini('T07', 'implementador')), entrada({ agentes: [ag('T07 implementador', { uso: u as AgenteVivo['uso'] })] })).agentes[0];
+  for (const ruim of ['lixo', undefined, null, -1, NaN, Infinity, '12', {}]) {
+    const a = tok({ contexto: 5000, tok: ruim, modelo: 'claude-opus-4-8' });
+    assert.equal(a.tok, null, `tok=${String(ruim)} ⇒ null, nunca 0`);
+    assert.equal(a.ctxTok, 5000, 'o contexto válido segue');
+  }
+  assert.equal(tok({ contexto: 5000, modelo: 'claude-opus-4-8' }).tok, null, 'sem o campo');
+  assert.equal(tok({ contexto: 5000, tok: 0, modelo: 'claude-opus-4-8' }).tok, 0, 'medido zero é 0');
+  assert.equal(tok({ contexto: 5000, tok: 1234, modelo: 'claude-opus-4-8' }).tok, 1234);
+  // agente sem task casada (sem task) segue a mesma regra
+  const semTask = projetarEquipe(PLANO, [], entrada({ agentes: [ag('sombra x', { uso: { contexto: 10, tok: 'lixo', modelo: null } as unknown as AgenteVivo['uso'] })] })).agentes[0];
+  assert.equal(semTask.tok, null);
 });
 
 test('uso-campo-invalido-descarta-linha', () => {
@@ -681,6 +716,21 @@ test('sombra-sempre-presente', () => {
   const a = ev('task.iniciada', { task: 'T07', papel: 'implementador' });
   const b: Evento = { ...ev('task.iniciada', { task: 'T08', papel: 'implementador' }), seq: a.seq };
   assert.deepEqual(projetarEquipe(PLANO, [a, b], entrada()).sombra, { nome: 'ELROND', modelo: null, decisoes: 0, ultima: null });
+});
+
+test('sombra-ultima-desempate-por-sessao (T3 MINOR 2): mesmo ts em sessões diferentes ⇒ a de sessao maior; mesma sessão ⇒ seq maior', () => {
+  const mesmoTs = '2026-11-09T12:00:00.000Z';
+  const d = (sessao: string, seq: number, hash: string, resposta: string): Evento =>
+    ({ ...ev('decisao.sombra', dec(hash, resposta)[1], mesmoTs, sessao), seq });
+  const ultima = (...evs: Evento[]) => projetarEquipe(PLANO, evs, entrada()).sombra.ultima;
+  // `seq` maior na sessão menor: se o desempate fosse por seq, ganharia 'sa'
+  assert.deepEqual(ultima(d('sa', 9, hashA, 'da sa'), d('sb', 1, hashB, 'da sb')), { seq: 1, resposta: 'da sb', fonte: 'spec:164' });
+  assert.deepEqual(ultima(d('sb', 1, hashB, 'da sb'), d('sa', 9, hashA, 'da sa')), { seq: 1, resposta: 'da sb', fonte: 'spec:164' }, 'a ordem de chegada não decide');
+  // mesma sessão e mesmo ts: o seq maior
+  assert.deepEqual(ultima(d('sa', 2, hashA, 'dois'), d('sa', 3, hashB, 'tres')), { seq: 3, resposta: 'tres', fonte: 'spec:164' });
+  // o ts decide antes da sessão
+  const antes = { ...d('sz', 5, hashA, 'cedo'), ts: '2026-11-09T11:00:00.000Z' };
+  assert.equal(ultima(antes, d('sa', 1, hashB, 'tarde'))?.resposta, 'tarde');
 });
 
 test('sombra-ultima-fonte-medicao-e-null', () => {

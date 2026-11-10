@@ -6,12 +6,13 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { dependeDeVoce, etaDe, projetarPainel, TABELA_PARAR } from '../src/painel.ts';
 import { renderPainel } from '../src/painel.ts';
-import { duracoes, mediana } from '../src/diario.ts';
+import { append, duracoes, lerEstrito, mediana } from '../src/diario.ts';
 import { contarConsultas } from '../src/sombra.ts';
 import { tokensDe } from '../src/pouso.ts';
 import { projetarEquipe } from '../src/painel-equipe.ts';
@@ -23,7 +24,7 @@ const T0 = Date.parse('2026-11-09T12:00:00Z');
 const iso = (min: number): string => new Date(T0 + min * 60_000).toISOString();
 const AGORA = T0 + 3 * 3_600_000; // 15:00Z
 
-type Item = { t: number; tipo: TipoEvento; dados?: unknown; sessao?: string; seq?: number };
+type Item = { t: number; tipo: TipoEvento; dados?: unknown; sessao?: string; seq?: number; agente?: string };
 const e = (t: number, tipo: TipoEvento, dados: unknown = {}, sessao = 's1'): Item => ({ t, tipo, dados, sessao });
 
 /** Ordena por instante (estável) e numera `seq` por sessão: o diário que a guarda gravaria. */
@@ -36,7 +37,7 @@ function D(itens: Item[]): Evento[] {
       const sessao = x.sessao ?? 's1';
       const seq = x.seq ?? (seqs.get(sessao) ?? 0) + 1;
       seqs.set(sessao, seq);
-      return { seq, ts: iso(x.t), autor: 't', sessao, agente: 'orquestrador', tipo: x.tipo, dados: x.dados, hash_anterior: null } as unknown as Evento;
+      return { seq, ts: iso(x.t), autor: 't', sessao, agente: x.agente ?? 'orquestrador', tipo: x.tipo, dados: x.dados, hash_anterior: null } as unknown as Evento;
     });
 }
 
@@ -788,11 +789,143 @@ test('fuso-invalido-utc: fuso desconhecido cai em UTC sem lançar', () => {
 test('forma-completa: todas as chaves de EstadoPainel, com os campos que outras tasks preenchem vazios mas presentes', () => {
   const s = proj(P('T1'), []);
   assert.deepEqual(Object.keys(s).sort(), ['atencao', 'depende', 'equipe', 'historico', 'id', 'notificacao', 'ocultos', 'parado', 'parar', 'pacote', 'plano', 'qualidade', 'rodape', 'titulo'].sort());
-  assert.deepEqual(s.historico, []);
+  assert.deepEqual(s.historico, [], 'diário vazio: nada a contar');
   assert.equal(s.ocultos, 0);
   assert.equal(s.equipe.lider.nome, 'GANDALF');
+  assert.equal(s.equipe.lider.narrativa, 'aguarda o próximo despacho', 'narrativa preenchida pela tabela N (T2b), nunca vazia');
   assert.deepEqual(Object.keys(s.plano).sort(), ['eta', 'feitas', 'medianaS', 'pct', 'rodadaMedia', 'tasks', 'total']);
   assert.deepEqual(Object.keys(proj(P('T1'), D([parar(0)])).parar ?? {}).sort(), ['acoes', 'alteracoes', 'chave', 'emVoo', 'hora', 'motivo', 'texto']);
+});
+
+// ---------------------------------------------------------------- fiação (GM-12 T2b): nome/papel da task, histórico e narrativa do líder
+
+test('nome-na-task-igual-ao-da-equipe: TaskPainel.nome/papel vêm de nomesPorPapel, do par certo (trabalho × revisor), com e sem mod', () => {
+  // pares nomeados na ordem do 1º task.iniciada: T1:trabalho = A, T2:trabalho = B, T2:revisor = C
+  const evs = D([ini(0, 'T1'), ini(1, 'T2'), con(2, 'T2'), ini(3, 'T2', 'revisor')]);
+  const plano3 = P('T1', 'T2', 'T3');
+  for (const agentes of [[vivo('T1 implementador'), vivo('T2 revisor')], null, []] as (AgenteVivo[] | null)[]) {
+    const s = proj(plano3, evs, { agentes });
+    const [t1, t2, t3] = s.plano.tasks;
+    assert.deepEqual([t1.estado, t1.nome, t1.papel], ['implementando', 'A', 'implementador']);
+    assert.deepEqual([t2.estado, t2.nome, t2.papel], ['em_revisao', 'C', 'revisor'], 'em revisão: o nome do REVISOR, não o do implementador B');
+    assert.equal('nome' in t3 || 'papel' in t3, false, 'pendente: sem nome nem papel');
+  }
+  const s = proj(plano3, evs, { agentes: [vivo('T1 implementador'), vivo('T2 revisor')] });
+  for (const t of s.plano.tasks.filter((x) => x.nome !== undefined)) {
+    const ag = s.equipe.agentes.find((a) => a.task === t.id);
+    assert.equal(t.nome, ag?.nome, `${t.id}: o nome na task é o da equipe`);
+    assert.equal(t.papel, ag?.papel);
+  }
+});
+
+test('nome-na-task-so-em-trabalho: corrigindo usa o par de trabalho; concluída, reprovada, aprovada, no teto e integrada ficam sem nome', () => {
+  // T9 é despachada antes e fica com o 1º nome (A): o par de T1 é o 2º (B)
+  const nomeDe = (estado: string) => proj(P('T9', 'T1'), D([ini(-100, 'T9'), ...ATE[estado]])).plano.tasks.find((x) => x.id === 'T1');
+  const corr = nomeDe('corrigindo');
+  assert.deepEqual([corr?.estado, corr?.nome, corr?.papel], ['corrigindo', 'B', 'correcao'], 'o par de trabalho de T1 (T9 foi nomeado A antes)');
+  for (const estado of ['concluida', 'reprovada', 'aprovada', 'no_teto', 'integrada', 'pendente']) {
+    const t = nomeDe(estado);
+    assert.equal(t !== undefined && ('nome' in t || 'papel' in t), false, estado);
+  }
+});
+
+test('nome-na-task-diario-invalido: sem estado de task não há nome (e nada lança)', () => {
+  assert.deepEqual(proj(P('T1'), null).plano.tasks, []);
+});
+
+const T1_CICLO = D(ciclo('T1', 0, 10)); // 12:00 despachou A · 12:02 despachou B · 12:10 B aprovou · 12:11 T1 integrada
+
+test('historico-mais-recente-primeiro: frases do diário, a mais nova no topo, com nomes reais do par e a hora no fuso', () => {
+  const s = proj(P('T1', 'T2'), T1_CICLO);
+  assert.deepEqual(s.historico.map((h) => [h.hora, h.glifo, h.texto, h.cor]), [
+    ['12:11', '✓', 'T1 integrada', 'success'],
+    ['12:10', '✓', 'B aprovou T1 · 8 min', 'success'],
+    ['12:02', '▶', 'despachou B em T1', 'success'],
+    ['12:00', '▶', 'despachou A em T1', 'success'],
+  ]);
+  assert.equal(s.ocultos, 0);
+  // o fuso e o "hoje" do estado chegam ao histórico: 09:11 em São Paulo; um evento de ontem leva dd/mm
+  const sp = proj(P('T1'), D([...ciclo('T1', 0, 10), e(-1500, 'sessao.retomada')]), { fuso: 'America/Sao_Paulo' });
+  assert.deepEqual(sp.historico.map((h) => h.hora), ['09:11', '09:10', '09:02', '09:00', '08/11 08:00']);
+});
+
+test('historico-hist-max: 20 itens e o resto em `ocultos` (21 ⇒ 1; 20 ⇒ 0; 25 ⇒ 5)', () => {
+  const dev = (n: number) => D(Array.from({ length: n }, (_, i) => e(i, 'entrega.devolvida', { motivo: `m${i}` })));
+  const s25 = proj(P('T1'), dev(25));
+  assert.equal(s25.historico.length, 20);
+  assert.equal(s25.ocultos, 5);
+  assert.equal(s25.historico[0].texto, 'deploy devolvido ao dono · m24', 'o mais recente primeiro');
+  assert.equal(s25.historico[19].texto, 'deploy devolvido ao dono · m5');
+  assert.deepEqual([proj(P('T1'), dev(20)).ocultos, proj(P('T1'), dev(21)).ocultos, proj(P('T1'), dev(3)).historico.length], [0, 1, 3]);
+});
+
+test('historico-diario-ilegivel-ou-fora-de-ordem-vazio: o PAROU diario_invalido avisa, o histórico não inventa', () => {
+  for (const evs of [null, [{ ...D([ini(0, 'T1')])[0], seq: 2 }, { ...D([ini(1, 'T1')])[0], seq: 1 }] as Evento[]]) {
+    const s = proj(P('T1'), evs);
+    assert.deepEqual([s.historico, s.ocultos, s.parar?.motivo], [[], 0, 'diario_invalido']);
+  }
+});
+
+test('historico-parar-usa-TABELA_PARAR: texto da tabela, com a task só se for id do plano (nunca `<task>` literal)', () => {
+  const texto = (dados: Record<string, unknown>) => proj(P('T1', 'T2'), D([parar(0, dados.motivo, dados)])).historico[0].texto;
+  assert.equal(texto({ motivo: 'teto_rodadas', task: 'T2' }), 'PAROU · teto de rodadas de review em T2');
+  assert.equal(texto({ motivo: 'teto_rodadas', task: 'T99' }), 'PAROU · teto de rodadas de review', 'task fora do plano não vira texto');
+  assert.equal(texto({ motivo: 'teto_rodadas' }), 'PAROU · teto de rodadas de review');
+  assert.equal(texto({ motivo: 'teto_rodadas', task: '<task>' }), 'PAROU · teto de rodadas de review');
+  assert.equal(texto({ motivo: 'ci_vermelho' }), 'PAROU · CI vermelho 2× depois da última integração');
+  assert.equal(texto({ motivo: 'inventado' }), 'PAROU', 'motivo fora da tabela: só PAROU');
+  for (const motivo of Object.keys(TABELA_PARAR) as MotivoParar[]) {
+    const h = texto({ motivo });
+    assert.equal(h.startsWith('PAROU · '), true, motivo);
+    assert.equal(h.includes('<task>'), false, motivo);
+  }
+});
+
+test('historico-quem: orquestrador ⇒ líder; agente vivo casado ⇒ nome do par; encerrado, sem task ou desconhecido ⇒ agente; sábio vem do pacote', () => {
+  const evs = (agente: string) => D([ini(0, 'T1'), { ...e(1, 'producao.acesso', { ambiente: 'prod', acao: 'leitura', alvo: 'users' }), agente }]);
+  const quem = (agente: string, agentes: AgenteVivo[]) => proj(P('T1'), evs(agente), { agentes }).historico[0].texto;
+  const id = (d: string) => `subagent:a-${d}`;
+  assert.equal(quem('orquestrador', []), 'GANDALF leu PRODUÇÃO · users · permitido');
+  assert.equal(quem(id('T1 implementador'), [vivo('T1 implementador')]), 'A leu PRODUÇÃO · users · permitido');
+  assert.equal(quem(id('T1 implementador'), [vivo('T1 implementador', 'completed')]), 'agente leu PRODUÇÃO · users · permitido', 'encerrado não nomeia');
+  assert.equal(quem(id('T1 implementador'), []), 'agente leu PRODUÇÃO · users · permitido');
+  assert.equal(quem(id('T1 implementador'), null as unknown as AgenteVivo[]), 'agente leu PRODUÇÃO · users · permitido', 'sem mod');
+  assert.equal(quem(id('sombra x'), [vivo('sombra x')]), 'agente leu PRODUÇÃO · users · permitido', 'vivo sem task: sem nome');
+  assert.equal(quem('subagent:outro', [vivo('T1 implementador')]), 'agente leu PRODUÇÃO · users · permitido');
+  const dec = proj(P('T1'), D([e(0, 'decisao.sombra', { pergunta_hash: SHA_A, req: 'REQ-PNL-5', resposta: 'seguir', arquivo: 'sombra.md', pergunta_enviesada: false, fontes: ['spec:1'] })]), { pacote: { ...entrada().pacote, sabio: 'YODA' } });
+  assert.equal(dec.historico[0].texto, 'YODA decidiu #1 · seguir');
+});
+
+/** Narrativa do líder (tabela N, sombra-p1a §T2): 1ª linha que casar. */
+const narr = (plano: Plano, itens: Item[] | null, extra: Partial<EntradaPainel> = {}) => proj(plano, itens === null ? null : D(itens), extra).equipe.lider.narrativa;
+
+test('narrativa-tabela: parar ▸ pausado ▸ em voo ▸ todas integradas ▸ aguarda', () => {
+  const plano = P('T1', 'T2', 'T3', 'T4');
+  // parado: tasks em voo na ordem do plano, singular/plural, ou "nada continua"
+  assert.equal(narr(plano, [ini(0, 'T1'), parar(1)]), 'parado · T1 continua');
+  assert.equal(narr(plano, [ini(0, 'T2'), ini(1, 'T1'), parar(2)]), 'parado · T1 T2 continuam', 'na ordem do plano');
+  assert.equal(narr(plano, [parar(0)]), 'parado · nada continua');
+  assert.equal(narr(plano, null), 'parado · nada continua', 'diário inválido também é Parar');
+  // pausado, e o Parar vence a pausa
+  assert.equal(narr(plano, [ini(0, 'T1')], { pausado: true }), 'pausado, nada novo é despachado');
+  assert.equal(narr(plano, [ini(0, 'T1'), parar(1)], { pausado: true }), 'parado · T1 continua');
+  // em voo: 1, 2, 3 e 4+, na ordem do último task.iniciada
+  assert.equal(narr(plano, [ini(0, 'T1')]), 'despachou T1');
+  assert.equal(narr(plano, [ini(0, 'T1'), ini(5, 'T2')]), 'despachou T1 e T2 em paralelo');
+  assert.equal(narr(plano, [ini(0, 'T2'), ini(5, 'T1')]), 'despachou T2 e T1 em paralelo', 'ordem do despacho, não a do plano');
+  assert.equal(narr(plano, [ini(0, 'T1'), ini(1, 'T2'), ini(2, 'T3')]), 'despachou T1, T2 e mais 1 em paralelo');
+  assert.equal(narr(plano, [ini(0, 'T1'), ini(1, 'T2'), ini(2, 'T3'), ini(3, 'T4')]), 'despachou T1, T2 e mais 2 em paralelo');
+  // o ÚLTIMO task.iniciada da task decide a ordem (T1 volta a ser despachada depois de T2)
+  assert.equal(narr(plano, [ini(0, 'T1'), con(1, 'T1'), ini(2, 'T1', 'revisor'), ver(3, 'T1', false, 1, 1), ini(4, 'T2'), ini(5, 'T1', 'correcao')]), 'despachou T2 e T1 em paralelo');
+  // aguarda revisão: tasks em `concluida`, só quando há task em voo
+  assert.equal(narr(plano, [ini(0, 'T1'), ini(1, 'T2'), con(2, 'T2')]), 'despachou T1 · aguarda revisão de T2');
+  assert.equal(narr(plano, [ini(0, 'T1'), ini(1, 'T2'), con(2, 'T2'), ini(3, 'T3'), con(4, 'T3')]), 'despachou T1 · aguarda revisão de T2 e T3');
+  assert.equal(narr(plano, [ini(0, 'T2'), con(1, 'T2')]), 'aguarda o próximo despacho', 'só concluída, nada em voo');
+  // todas integradas, e o resto
+  assert.equal(narr(P('T1'), ciclo('T1', 0, 10)), 'todas as tasks integradas');
+  assert.equal(narr(P('T1', 'T2'), ciclo('T1', 0, 10)), 'aguarda o próximo despacho');
+  assert.equal(narr(P(), []), 'aguarda o próximo despacho', 'plano vazio não é "todas integradas"');
+  assert.equal(narr(plano, []), 'aguarda o próximo despacho');
 });
 
 // ---------------------------------------------------------------- costura (P9) e fecho do módulo
@@ -809,23 +942,128 @@ test('costura-P9: projetarPainel do dist (o artefato que o CLI e o mod carregam)
   assert.deepEqual(doSrc.plano.eta && [doSrc.plano.eta.restanteS, doSrc.plano.eta.n], [1200, 3]); // restantes 3, p 2 ⇒ ⌈3/2⌉ = 2 × 600 s (floor daria 1)
   assert.equal(doSrc.parar?.acoes[0].comando, '/gabarito-mestre:liberar T4');
   assert.deepEqual(dist.TABELA_PARAR, TABELA_PARAR);
+  // a fiação (T2b) chega pelo dist: histórico com a frase do PAROU da tabela, narrativa e nomes na task
+  assert.ok(doDist.historico.some((h) => h.texto === 'PAROU · teto de rodadas de review em T4'), JSON.stringify(doDist.historico.slice(0, 3)));
+  assert.equal(doDist.equipe.lider.narrativa, 'parado · nada continua');
+  assert.equal(doDist.plano.tasks.every((t) => t.nome === undefined), true, 'nenhuma task em trabalho: nenhuma com nome');
   for (const preset of ['esquadrao', 'executivo'] as const) {
     const linhas = renderPainel(doSrc, { preset, tema: 'mono', narracao: true, largura: 80 });
     assert.ok(Array.isArray(linhas) && linhas.length > 0, preset);
   }
 });
 
-test('fecho-sem-node: dist/painel.js e tudo que ele importa (relativo) não usam node:* nem import() dinâmico (o mod carrega o dist)', () => {
+/**
+ * Especificadores de módulo (`import ... from 'x'`, `export ... from 'x'`, `import 'x'`) de um JS, lidos por varredura de tokens: comentário, string,
+ * template (com `${}` aninhado) e regex não contam como código, então texto de string que PARECE import não casa e import em várias linhas casa (T2 r3 MINOR).
+ * Um especificador é a string logo depois da palavra `from` ou `import`. `import(` dinâmico não é daqui (outra checagem).
+ */
+function especificadores(js: string): string[] {
+  const saida: string[] = [];
+  const REGEX_APOS = new Set(['', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>', '~', '^', 'return', 'typeof', 'case', 'in', 'of', 'delete', 'void', 'throw', 'new', 'else', 'do']);
+  const ident = /[A-Za-z0-9_$\u00a0-\uffff]/;
+  function varrer(i: number, dentro: boolean): number {
+    let ultimo = '';
+    let prof = 0;
+    while (i < js.length) {
+      const c = js[i];
+      if (c === ' ' || c === '\t' || c === '\n' || c === '\r') { i++; continue; }
+      if (c === '/' && js[i + 1] === '/') { while (i < js.length && js[i] !== '\n') i++; continue; }
+      if (c === '/' && js[i + 1] === '*') { const f = js.indexOf('*/', i + 2); i = f < 0 ? js.length : f + 2; continue; }
+      if (c === "'" || c === '"') {
+        let j = i + 1;
+        while (j < js.length && js[j] !== c) j += js[j] === '\\' ? 2 : 1;
+        if (ultimo === 'from' || ultimo === 'import') saida.push(js.slice(i + 1, j));
+        ultimo = '"'; i = j + 1; continue;
+      }
+      if (c === '`') {
+        let j = i + 1;
+        while (j < js.length && js[j] !== '`') {
+          if (js[j] === '\\') j += 2;
+          else if (js[j] === '$' && js[j + 1] === '{') j = varrer(j + 2, true);
+          else j++;
+        }
+        ultimo = '`'; i = j + 1; continue;
+      }
+      if (c === '/' && REGEX_APOS.has(ultimo)) {
+        let j = i + 1;
+        let classe = false;
+        while (j < js.length && (classe || js[j] !== '/') && js[j] !== '\n') {
+          if (js[j] === '\\') j++;
+          else if (js[j] === '[') classe = true;
+          else if (js[j] === ']') classe = false;
+          j++;
+        }
+        j++;
+        while (j < js.length && /[a-z]/.test(js[j])) j++;
+        ultimo = '/'; i = j; continue;
+      }
+      if (ident.test(c)) {
+        let j = i;
+        while (j < js.length && ident.test(js[j])) j++;
+        ultimo = js.slice(i, j); i = j; continue;
+      }
+      if (dentro && c === '{') prof++;
+      if (dentro && c === '}') { if (prof === 0) return i + 1; prof--; }
+      ultimo = c; i++;
+    }
+    return i;
+  }
+  varrer(0, false);
+  return saida;
+}
+
+test('costura-fiacao-diario-real: append e lerEstrito reais ⇒ projetarPainel do dist ⇒ blocoTopo e paraTexto reais, com nome, histórico e narrativa', async () => {
+  const dist = (await import(join(AQUI, '..', 'dist', 'painel.js'))) as typeof import('../src/painel.ts');
+  const texto = (await import(join(AQUI, '..', 'dist', 'painel-texto.js'))) as typeof import('../src/painel-texto.ts');
+  const dir = mkdtempSync(join(tmpdir(), 'gm-painel-fiacao-'));
+  const g = (ts: string, tipo: Evento['tipo'], dados: Record<string, unknown>) => {
+    const r = append(dir, 'sessao1', { ts, autor: 'a@b.c', sessao: 'sessao1', agente: 'orquestrador', tipo, dados });
+    assert.equal(r.ok, true, JSON.stringify(r));
+  };
+  g('2026-11-09T12:00:00.000Z', 'task.iniciada', { task: 'T1', papel: 'implementador' });
+  g('2026-11-09T12:05:00.000Z', 'task.iniciada', { task: 'T2', papel: 'implementador' });
+  g('2026-11-09T12:06:00.000Z', 'task.concluida', { task: 'T2' });
+  g('2026-11-09T12:30:00.000Z', 'loop.parar', { motivo: 'sem_progresso' });
+  const lido = lerEstrito(dir);
+  assert.equal(lido.ok, true);
+  if (!lido.ok) return;
+  const st = dist.projetarPainel(P('T1', 'T2', 'T3'), lido.eventos, entrada({ agentes: [vivo('T1 implementador')] }));
+  assert.deepEqual(st.plano.tasks.map((t) => [t.id, t.nome ?? null, t.papel ?? null]), [['T1', 'A', 'implementador'], ['T2', null, null], ['T3', null, null]]);
+  assert.deepEqual(st.historico.map((h) => `${h.hora} ${h.glifo} ${h.texto}`), ['12:30 ■ PAROU · 3 paradas sem progresso', '12:05 ▶ despachou B em T2', '12:00 ▶ despachou A em T1']);
+  assert.equal(st.equipe.lider.narrativa, 'parado · T1 continua');
+  const topo = texto.paraTexto(texto.blocoTopo(st, 100), 'mono').split('\n');
+  assert.match(topo[0], /^■ PAROU 12:30  3 paradas sem progresso$/);
+  assert.equal(topo[2], '  T1 continua · produção: 0 alterações nesta entrega', 'o topo lê o `emVoo` projetado, com o recuo do mockup');
+  const hist = dist.renderPainel(st, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 80 });
+  assert.ok(Array.isArray(hist));
+});
+
+test('fecho-especificadores: import em várias linhas casa; texto de string, template, comentário e regex que parece import não casa', () => {
+  assert.deepEqual(especificadores("import {\n  a,\n  b\n} from 'node:fs';"), ['node:fs'], 'várias linhas');
+  assert.deepEqual(especificadores("import fs\n  from\n  'node:fs'"), ['node:fs'], 'from em outra linha');
+  assert.deepEqual(especificadores("export * from 'node:os'; export { a } from './a.js'; import 'node:test';"), ['node:os', './a.js', 'node:test']);
+  assert.deepEqual(especificadores("const t = `\nimport x from 'node:fs'\n`;"), [], 'template');
+  assert.deepEqual(especificadores("const s = \"import x from 'node:fs'\"; import z from './z.js';"), ['./z.js'], 'string');
+  assert.deepEqual(especificadores("// import x from 'node:fs'\n/* import y from 'node:os' */ import w from './w.js';"), ['./w.js'], 'comentários');
+  assert.deepEqual(especificadores("const r = /['\"]/g; import q from 'node:path';"), ['node:path'], 'regex com aspas não abre string');
+  assert.deepEqual(especificadores("const o = { from: 'node:fs' }; Array.from('node:x');"), [], '`from` que não é import');
+  assert.deepEqual(especificadores("const x = `a${ `b${'node:fs'}` }`; import w from 'node:os';"), ['node:os'], 'template aninhado');
+  assert.deepEqual(especificadores("import a from 'fs';"), ['fs'], 'builtin sem prefixo também aparece');
+  assert.deepEqual(especificadores("const t = `a${'`'}\nimport x from 'node:fs'`; import k from './k.js';"), ['./k.js'], 'crase dentro de string dentro de ${} não fecha o template');
+});
+
+test('fecho-sem-node: dist/painel.js e tudo que ele importa (relativo) só importam módulo relativo (nem node:* nem builtin nu), sem import() dinâmico (o mod carrega o dist)', () => {
   const vistos = new Set<string>();
   const visitar = (arquivo: string): void => {
     if (vistos.has(arquivo)) return;
     vistos.add(arquivo);
     assert.ok(existsSync(arquivo), `dist ausente: ${arquivo}`);
     const js = readFileSync(arquivo, 'utf8');
-    assert.equal(/^\s*(?:import|export)\b[^'"\n]*?\bfrom\s*['"]node:|^\s*import\s*['"]node:/m.test(js), false, `${arquivo} importa node:*`);
+    const specs = especificadores(js);
+    assert.deepEqual(specs.filter((x) => !x.startsWith('./') && !x.startsWith('../')), [], `${arquivo} importa módulo que não é relativo (node:*)`);
     assert.equal(/\bimport\s*\(/.test(js), false, `${arquivo} usa import() dinâmico`);
     assert.equal(/\brequire\s*\(/.test(js), false, `${arquivo} usa require`);
-    for (const m of js.matchAll(/\bfrom\s*['"](\.{1,2}\/[^'"]+)['"]/g)) visitar(join(dirname(arquivo), m[1]));
+    for (const m of specs) visitar(join(dirname(arquivo), m));
   };
   visitar(join(AQUI, '..', 'dist', 'painel.js'));
   assert.ok(vistos.size >= 5, [...vistos].join(','));

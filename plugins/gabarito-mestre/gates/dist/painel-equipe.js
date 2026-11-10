@@ -11,6 +11,7 @@ import { formaInvalida } from './formas.js';
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.js';
                                             
 import { dataCivil } from './painel-hora.js';
+import { colunas, limpar } from './painel-texto.js';
 import { tokensDe } from './pouso.js';
                                                                                                                                                
 
@@ -34,21 +35,10 @@ export function casarAgente(description        , plano       )                  
 
 /** Caixa alta, largura 1 por construção e ≤ 10 colunas: não depende de `colunas` (T4). */
 const NOME_RE = /^[A-Z0-9ÀÁÂÃÄÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜ'-]{1,10}$/u;
-const LARGO_RE = /[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹯＀-｠￠-￦\u{1F000}-\u{1FAFF}\u{20000}-\u{3FFFD}]/u;
 const NOME_MAX_COLUNAS = 20;
 
 const ehObjeto = (v         )                               => v !== null && typeof v === 'object' && !Array.isArray(v);
 const nomeOk = (v         )              => typeof v === 'string' && NOME_RE.test(v);
-
-/** Colunas do rótulo exibido do pacote (`terra média`): largo vale 2; controle é `-1` (recusado). */
-function colunasDoRotulo(s        )         {
-  let n = 0;
-  for (const c of s) {
-    if (/\p{Cc}/u.test(c)) return -1;
-    n += LARGO_RE.test(c) ? 2 : 1;
-  }
-  return n;
-}
 
 /**
  * Valida um pacote de nomes (REQ-PNL-6). `nomes`, `lider` e `sabio` seguem `NOME_RE`; `nomes` tem ≥ 8, sem repetidos e sem `lider`/`sabio`;
@@ -59,8 +49,8 @@ export function validarPacote(bruto         )                                   
   if (!ehObjeto(bruto)) return erro('pacote não é objeto');
   const { nome, lider, sabio, nomes } = bruto;
   if (typeof nome !== 'string' || nome.trim() === '') return erro('`nome` ausente ou vazio');
-  const cols = colunasDoRotulo(nome);
-  if (cols < 0) return erro('`nome` com caractere de controle');
+  if (limpar(nome) !== nome) return erro('`nome` com caractere de controle');
+  const cols = colunas(nome); // a mesma medida do render (`painel-texto.ts`)
   if (cols > NOME_MAX_COLUNAS) return erro(`\`nome\` com ${cols} colunas, máximo ${NOME_MAX_COLUNAS}`);
   if (!nomeOk(lider)) return erro('`lider` ausente ou fora do padrão (caixa alta, até 10 colunas)');
   if (!nomeOk(sabio)) return erro('`sabio` ausente ou fora do padrão (caixa alta, até 10 colunas)');
@@ -103,7 +93,8 @@ export function sortearPacote(sessionId        , nomes          , anterior      
 // ---------- nome por papel ----------
 
 const PAPEIS                    = ['implementador', 'revisor', 'correcao'];
-const chaveDoPar = (task        , papel        )         => `${task}:${papel === 'revisor' ? 'revisor' : 'trabalho'}`;
+/** Chave do par nomeado: implementador e correção dividem `<task>:trabalho`; o revisor é `<task>:revisor`. */
+export const chaveDoPar = (task        , papel        )         => `${task}:${papel === 'revisor' ? 'revisor' : 'trabalho'}`;
 const ordemSegura = (eventos         )                  => {
   if (!Array.isArray(eventos)) return null;
   const o = ordenar(eventos            );
@@ -226,8 +217,10 @@ const vivoDe = (a         )          => {
   return !(typeof s === 'string' && ENCERRADO.has(s));
 };
 
-const usoValido = (u         )                   =>
-  ehObjeto(u) && CAMPO_VALIDO(u.contexto) ? { contexto: u.contexto, tok: CAMPO_VALIDO(u.tok) ? u.tok : 0, modelo: typeof u.modelo === 'string' ? u.modelo : null } : null;
+/** `tok` ausente ou corrompido é `null` (nunca 0: zero é medida, e ausente não é medida); o `contexto` válido segue valendo. */
+                                                                               
+const usoValido = (u         )                 =>
+  ehObjeto(u) && CAMPO_VALIDO(u.contexto) ? { contexto: u.contexto, tok: CAMPO_VALIDO(u.tok) ? u.tok : null, modelo: typeof u.modelo === 'string' ? u.modelo : null } : null;
 
 function estadosDasTasks(plano       , ord                 )                          {
   const estados = new Map                    ();
@@ -283,7 +276,7 @@ export function projetarEquipe(plano       , eventos                 , entrada  
     return i < 0 ? 'inactive' : ORDEM_COR[i % ORDEM_COR.length];
   };
   const janela = entrada.contexto?.window;
-  const pctDe = (uso                  )                =>
+  const pctDe = (uso                )                =>
     uso !== null && typeof uso.modelo === 'string' && typeof entrada.modeloSessao === 'string' && uso.modelo === entrada.modeloSessao
       && typeof janela === 'number' && Number.isFinite(janela) && janela > 0
       ? Math.round((uso.contexto / janela) * 100)

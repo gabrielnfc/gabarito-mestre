@@ -137,3 +137,11 @@ test('fuso-por-fuso-nao-reaproveita-formatador-alheio', () => {
   assert.equal(dataCivil(ms, 'UTC'), '2026-11-10');
   assert.equal(dataCivil(ms, SP), '2026-11-09');
 });
+
+test('hora-mesmo-dia-e-mes-de-outro-ano-mostra-dd/mm (T1b MINOR; MR-1: comparar só mês e dia)', () => {
+  const agora = t('2026-11-09T15:00:00Z');
+  assert.equal(horaLocal(t('2025-11-09T10:05:00Z'), agora, 'UTC'), '09/11 10:05', 'um ano antes, mesmo dia e mês: não é "hoje"');
+  assert.equal(horaLocal(t('2027-11-09T10:05:00Z'), agora, 'UTC'), '09/11 10:05', 'um ano depois também');
+  assert.equal(horaLocal(t('2026-11-09T10:05:00Z'), agora, 'UTC'), '10:05', 'o mesmo dia de verdade segue só hh:mm');
+  assert.equal(horaLocal(t('2025-11-09T10:05:00Z'), agora, SP), '09/11 07:05');
+});

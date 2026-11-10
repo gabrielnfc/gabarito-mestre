@@ -12,8 +12,9 @@ import { estadoDe, ordenar, proximaAcao, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK } fro
                                             
 import { formaInvalida } from './formas.js';
 import { renderEsquadrao } from './painel-esquadrao.js';
+import { historicoDe } from './painel-texto.js';
 import { renderExecutivo } from './painel-executivo.js';
-import { casarAgente, projetarEquipe } from './painel-equipe.js';
+import { casarAgente, chaveDoPar, nomesPorPapel, projetarEquipe } from './painel-equipe.js';
 import { dataCivil, fusoValido, horaLocal } from './painel-hora.js';
                                                                                                                                                                                     
 
@@ -394,16 +395,51 @@ function montarAtencao(c         )           {
   return atencao;
 }
 
+/** `A`, `A e B`, `A, B e C`. */
+function listaE(xs          )         {
+  return xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} e ${xs[xs.length - 1]}`;
+}
+
+/**
+ * Narrativa do líder (tabela N, 1ª linha que casar): Parar ▸ pausa ▸ tasks em voo (na ordem do último `task.iniciada` de cada uma, mais as que aguardam
+ * revisão) ▸ todas integradas ▸ aguarda o próximo despacho. Texto fixo, só com ids do plano.
+ */
+function narrativaDo(c         , feitas        )         {
+  const { plano, entrada, ord, estados, emVoo, parar } = c;
+  if (parar !== null) {
+    const v = parar.emVoo;
+    return `parado · ${v.length === 0 ? 'nada continua' : v.length === 1 ? `${v[0]} continua` : `${v.join(' ')} continuam`}`;
+  }
+  if (entrada.pausado === true) return 'pausado, nada novo é despachado';
+  if (emVoo.length > 0) {
+    const ultimo = new Map                ();
+    (ord ?? []).forEach((ev, i) => {
+      if (ev.tipo === 'task.iniciada') {
+        const t = taskDe(ev);
+        if (t !== null) ultimo.set(t, i);
+      }
+    });
+    const ids = [...emVoo].sort((a, b) => (ultimo.get(a) ?? 0) - (ultimo.get(b) ?? 0));
+    const quem = ids.length === 1 ? ids[0] : ids.length === 2 ? `${ids[0]} e ${ids[1]} em paralelo` : `${ids[0]}, ${ids[1]} e mais ${ids.length - 2} em paralelo`;
+    const aguardam = plano.tasks.filter((t) => estados.get(t.id)?.estado === 'concluida').map((t) => t.id);
+    return `despachou ${quem}${aguardam.length > 0 ? ` · aguarda revisão de ${listaE(aguardam)}` : ''}`;
+  }
+  if (plano.tasks.length > 0 && feitas === plano.tasks.length) return 'todas as tasks integradas';
+  return 'aguarda o próximo despacho';
+}
+
 /**
  * Projeta o estado do painel. `eventos === null`: diário ilegível ou cadeia quebrada (PAROU `diario_invalido`); `[]`: pasta ausente (estado vazio).
  * Determinística: a ordem de chegada entre sessões não muda nada; o painel não reordena `seq` dentro da sessão (como o loop).
- * `historico`/`ocultos`, `TaskPainel.nome`/`papel` e `equipe.lider.narrativa` são da T2b (fiação com T3 e T4).
+ * T2b (fiação): `TaskPainel.nome`/`papel` por `nomesPorPapel` (T3), `historico`/`ocultos` por `historicoDe` (T4, com o texto real de `TABELA_PARAR`) e
+ * `equipe.lider.narrativa` pela tabela N (sombra-p1a.md, "Tabela N").
  */
 export function projetarPainel(plano       , eventos                 , entrada               )               {
   const c = calcular(plano, eventos, entrada);
   const { fuso, estados, ord, lista, valido } = c;
   const agentes = Array.isArray(entrada.agentes) ? entrada.agentes.filter(vivoDe) : null;
   const agora = entrada.agoraMs;
+  const nomes = nomesPorPapel(lista, entrada.pacote);
 
   const tasks               = [];
   for (const t of plano.tasks) {
@@ -411,11 +447,15 @@ export function projetarPainel(plano       , eventos                 , entrada  
     if (r === undefined) continue;
     const ms = msDe(r.ultimo);
     const desdeS = Number.isFinite(agora) && Number.isFinite(ms) ? Math.max(0, Math.floor((agora - ms) / 1000)) : undefined;
+    const papel = PAPEL_DO_ESTADO[r.estado];
+    const nome = papel === undefined ? undefined : nomes.get(chaveDoPar(t.id, papel));
     tasks.push({
       id: t.id,
       ...(typeof t.titulo === 'string' ? { titulo: t.titulo } : {}),
       estado: r.estado,
       glifo: glifoDe({ id: t.id, estado: r.estado }, plano, agentes),
+      ...(papel !== undefined ? { papel } : {}),
+      ...(nome !== undefined ? { nome } : {}),
       ...(r.modelo !== undefined ? { modelo: r.modelo } : {}),
       ...(desdeS !== undefined && r.estado !== 'pendente' && r.estado !== 'integrada' ? { desdeS } : {}),
       deps: [...t.deps],
@@ -439,6 +479,20 @@ export function projetarPainel(plano       , eventos                 , entrada  
   const notificacao                              =
     ehObj(notif) && 'ts' in notif ? { hora: horaLocal(typeof notif.ts === 'string' ? Date.parse(notif.ts) : Number.NaN, agora, fuso) } : ehObj(notif) && typeof notif.motivo === 'string' ? { motivo: notif.motivo } : null;
   const titulo = typeof entrada.titulo === 'string' && entrada.titulo.trim() !== '' ? entrada.titulo : null;
+  // histórico: agente vivo casado ⇒ nome do par (`subagent:<id>` é o `agente` que a guarda grava); o texto do PAROU é o da TABELA_PARAR, com a task só se for do plano
+  const porAgente = new Map                ();
+  for (const a of agentes ?? []) {
+    const casado = ehObj(a) && typeof a.id === 'string' ? casarAgente(a.description, plano) : null;
+    const nome = casado === null ? undefined : nomes.get(chaveDoPar(casado.task, casado.papel));
+    if (nome !== undefined) porAgente.set(`subagent:${a.id}`, nome);
+  }
+  const textoParar = (motivo        , task               )                =>
+    ehMotivo(motivo) ? linhaDaTabela(motivo, task !== null && plano.tasks.some((t) => t.id === task) ? task : null).texto : null;
+  const hist = ord === null
+    ? { itens: [], ocultos: 0 }
+    : historicoDe(lista, { nomes, lider: entrada.pacote.lider, sabio: entrada.pacote.sabio, porAgente, fuso, agoraMs: agora, textoParar });
+  const equipe = projetarEquipe(plano, lista, entrada);
+  equipe.lider.narrativa = narrativaDo(c, feitas);
 
   return {
     id: plano.entrega,
@@ -450,13 +504,13 @@ export function projetarPainel(plano       , eventos                 , entrada  
       rodadaMedia,
       medianaS: medidas.length >= 3 ? mediana(medidas) : null,
     },
-    equipe: projetarEquipe(plano, lista, entrada),
+    equipe,
     parado: c.parar !== null || entrada.pausado === true,
     parar: c.parar,
     depende: montarDepende(c),
     atencao: montarAtencao(c),
-    historico: [],
-    ocultos: 0,
+    historico: hist.itens,
+    ocultos: hist.ocultos,
     rodape: { ci: rod.ci, prod: rod.prod, politica },
     notificacao,
     qualidade: { rodadaMedia, mortas },

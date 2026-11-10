@@ -37,31 +37,63 @@ function largo(p        )          {
   );
 }
 
-/** Colunas de um ponto de código (já sem controle). `aposZwj`: o ponto anterior foi ZWJ. */
-function medida(c        , p        , aposZwj         )         {
-  if (p >= 0x20 && p <= 0x7e) return 1; // caminho rápido: ASCII imprimível
-  if (CONTROLE_1.test(c)) return 1; // vira espaço
-  if (p === ZWJ || p === 0xfe0e || p === 0xfe0f || MARCA_1.test(c)) return 0;
-  if (PICTO_1.test(c)) return aposZwj ? 0 : GLIFOS_LARGURA_1.has(p) ? 1 : 2;
-  return largo(p) ? 2 : 1;
+/** Formato de largura 0 que não é marca: ZWSP, ZWNJ, LRM, RLM, word joiner e invisíveis, BOM e ALM. (ZWJ, VS e marcas têm tratamento próprio.) */
+const ZERO_FORMATO                      = new Set([0x200b, 0x200c, 0x200e, 0x200f, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0xfeff, 0x061c]);
+const ehModificador = (p        )          => p >= 0x1f3fb && p <= 0x1f3ff;
+const ehIndicadorRegional = (p        )          => p >= 0x1f1e6 && p <= 0x1f1ff;
+const ehTag = (p        )          => p === 0xe0001 || (p >= 0xe0020 && p <= 0xe007f);
+
+/** Memória de um passo ao outro da varredura: o ponto anterior, se ele foi pictográfico (e de 1 coluna) e se há indicador regional aberto. */
+                                                                                     
+const inicio = ()            => ({ ant: 0, picto: false, picto1: false, riAberto: false });
+
+/**
+ * Colunas de um ponto de código (já sem controle) e se ele COLA no anterior (não é fronteira de corte): depois de ZWJ, modificador de pele
+ * depois de pictográfico, keycap (U+20E3 depois de VS16), tag, 2º indicador regional do par (a bandeira). `v` é atualizado.
+ */
+function passo(c        , p        , v           )                               {
+  const ant = v.ant;
+  let w        ;
+  let cola = ant === ZWJ;
+  let picto = false;
+  let picto1 = false;
+  let riAberto = false;
+  if (p >= 0x20 && p <= 0x7e) w = 1; // caminho rápido: ASCII imprimível
+  else if (CONTROLE_1.test(c)) w = 1; // vira espaço
+  else if (p === 0xfe0f) w = v.picto1 ? 1 : 0; // VS16 transforma o glifo de 1 coluna (▶) em emoji de 2
+  else if (p === 0x20e3 && ant === 0xfe0f) { w = 1; cola = true; } // keycap: dígito + VS16 + U+20E3 = 2 colunas
+  else if (p === ZWJ || p === 0xfe0e || MARCA_1.test(c) || ZERO_FORMATO.has(p)) w = 0;
+  else if (ehTag(p)) { w = 0; cola = true; }
+  else if (ehModificador(p)) {
+    if (v.picto) { w = 0; cola = true; } else { w = 2; picto = true; }
+  } else if (ehIndicadorRegional(p)) {
+    w = 1;
+    if (v.riAberto) cola = true;
+    else riAberto = true;
+  } else if (PICTO_1.test(c)) {
+    w = ant === ZWJ ? 0 : GLIFOS_LARGURA_1.has(p) ? 1 : 2;
+    picto = true;
+    picto1 = w === 1;
+  } else w = largo(p) ? 2 : 1;
+  v.ant = p;
+  v.picto = picto;
+  v.picto1 = picto1;
+  v.riAberto = riAberto;
+  return { w, cola };
 }
 
-/** Colunas de terminal do texto já limpo. Marca, ZWJ e seletor de variação valem 0; pictográfico após ZWJ vale 0; Wide e pictográfico 2; resto 1. Linear. */
+/** Colunas de terminal do texto já limpo. Marca, ZWJ, seletor, formato invisível e modificador de pele valem 0; pictográfico após ZWJ vale 0; Wide e pictográfico 2; bandeira e keycap 2; resto 1. Linear. */
 export function colunas(s        )         {
   if (typeof s !== 'string') return 0;
   let n = 0;
-  let aposZwj = false;
-  for (const c of s) {
-    const p = c.codePointAt(0)          ;
-    n += medida(c, p, aposZwj);
-    aposZwj = p === ZWJ;
-  }
+  const v = inicio();
+  for (const c of s) n += passo(c, c.codePointAt(0)          , v).w;
   return n;
 }
 
 /**
  * Corta por coluna, com `…` no fim quando corta. `max` não finito ou ≤ 0 ⇒ `''`; `max` não inteiro ⇒ `floor`; cabe ⇒ `limpar(s)`; `max === 1` ⇒ `…`.
- * O prefixo tem no máximo `max − 1` colunas, nunca parte par substituto, nunca separa marca ou ZWJ da base; caractere de 2 colunas que não cabe sai inteiro.
+ * O prefixo tem no máximo `max − 1` colunas, nunca parte par substituto, nunca separa marca, ZWJ, modificador de pele, bandeira ou keycap da base; caractere de 2 colunas que não cabe sai inteiro.
  * Para no 1º excesso (não varre o resto de um texto enorme).
  */
 export function cortar(s        , max        )         {
@@ -71,15 +103,14 @@ export function cortar(s        , max        )         {
   let w = 0;
   let corte = 0;
   let idx = 0;
-  let aposZwj = false;
+  const v = inicio();
   for (const c of s) {
     const p = c.codePointAt(0)          ;
-    const mw = medida(c, p, aposZwj);
-    // fronteira de grupo: só antes de um ponto que ocupa coluna e que não está colado a um ZWJ
-    if (!aposZwj && mw > 0 && w <= m - 1) corte = idx;
+    const { w: mw, cola } = passo(c, p, v);
+    // fronteira de grupo: só antes de um ponto que ocupa coluna e que não está colado ao anterior
+    if (!cola && mw > 0 && w <= m - 1) corte = idx;
     w += mw;
     if (w > m) return m === 1 ? '…' : `${limpar(s.slice(0, corte))}…`;
-    aposZwj = p === ZWJ;
     idx += c.length;
   }
   return limpar(s);
@@ -158,15 +189,20 @@ function acoesDe(v         )             {
 /** Ação sem comando: o rótulo com o 1º `: ` trocado por dois espaços. */
 const instrucao = (rotulo        )         => rotulo.replace(': ', '  ');
 
-/** Texto de cada ação, na ordem; a partir da 2ª o comando perde o prefixo que repete o do 1º. */
-function corposDas(acoes            , comRotulo         )           {
+                                                                  
+
+/** Cada ação em partes: rótulo, comando (a partir da 2ª sem o prefixo que repete o do 1º) e o corpo `rótulo  comando` ou a instrução. */
+function pecasDas(acoes            , comRotulo         )         {
   const primeiro = acoes[0]?.comando ?? null;
   return acoes.map((a, i) => {
-    if (a.comando === null) return instrucao(a.rotulo);
+    if (a.comando === null) return { rotulo: a.rotulo, cmd: null, corpo: instrucao(a.rotulo) };
     const cmd = i > 0 && primeiro !== null ? semPrefixoComum(primeiro, a.comando) : a.comando;
-    return comRotulo ? `${a.rotulo}  ${cmd}` : cmd;
+    return { rotulo: a.rotulo, cmd, corpo: comRotulo ? `${a.rotulo}  ${cmd}` : cmd };
   });
 }
+
+/** Texto de cada ação, na ordem; a partir da 2ª o comando perde o prefixo que repete o do 1º. */
+const corposDas = (acoes            , comRotulo         )           => pecasDas(acoes, comRotulo).map((p) => p.corpo);
 
 /** Cada texto em linha própria, indentada em 4 (menos se só assim ele cabe); maior que a largura sozinho ⇒ cortado só no fim. */
 function linhasProprias(textos          , largura        )          {
@@ -192,6 +228,17 @@ function notificacaoDe(n         )                {
   return null;
 }
 
+const RECUO = 2;
+
+/**
+ * Ação do PAROU em linha própria (a L2 não coube junta). `rótulo  comando` inteiro se cabe; senão o rótulo numa linha e o comando noutra:
+ * o comando nunca é cortado quando cabe sozinho (só no fim, se nem sozinho cabe). Instrução sem comando: cortada no fim.
+ */
+function linhasDaAcaoParar(p      , largura        )          {
+  if (p.cmd === null || 4 + colunas(p.corpo) <= largura) return linhasProprias([p.corpo], largura);
+  return [...linhasProprias([p.rotulo], largura), ...linhasProprias([p.cmd], largura)];
+}
+
 function blocoParar(p                                    , notificacao         , largura        )          {
   const cabeca = `■ PAROU ${limpar(typeof p.hora === 'string' ? p.hora : '--:--')}`;
   const texto = limpar(typeof p.texto === 'string' ? p.texto : '');
@@ -199,11 +246,12 @@ function blocoParar(p                                    , notificacao         ,
   const l1        = [seg(cabeca, 'error'), seg(`  ${disp >= Math.min(MOTIVO_MIN, colunas(texto)) ? cortar(texto, disp) : texto}`)];
   const linhas          = [l1];
 
-  const acoes = corposDas(acoesDe(p.acoes), true);
-  if (acoes.length > 0) {
-    const juntas = acoes.join('   ');
-    if (colunas(juntas) <= largura) linhas.push([seg(juntas)]);
-    else linhas.push(...linhasProprias(acoes, largura));
+  // L2 e L3 recuadas em 2 colunas, como no mockup aprovado pelo dono (mockup-painel.html:90-91)
+  const pecas = pecasDas(acoesDe(p.acoes), true);
+  if (pecas.length > 0) {
+    const juntas = pecas.map((x) => x.corpo).join('   ');
+    if (RECUO + colunas(juntas) <= largura) linhas.push([seg(`${' '.repeat(RECUO)}${juntas}`)]);
+    else for (const x of pecas) linhas.push(...linhasDaAcaoParar(x, largura));
   }
 
   const emVoo = Array.isArray(p.emVoo) ? p.emVoo.filter(txt).map(limpar) : [];
@@ -215,8 +263,9 @@ function blocoParar(p                                    , notificacao         ,
   const notif = notificacaoDe(notificacao);
   if (notif !== null) partes.push(notif);
   // as partes caem da direita para a esquerda; a 1ª, se sozinha estoura, é cortada no fim
-  while (partes.length > 1 && colunas(partes.join(SEP_ACOES)) > largura) partes.pop();
-  linhas.push([seg(cortar(partes.join(SEP_ACOES), largura), 'inactive')]);
+  const recuo = Math.min(RECUO, Math.max(0, largura - 1));
+  while (partes.length > 1 && recuo + colunas(partes.join(SEP_ACOES)) > largura) partes.pop();
+  linhas.push([seg(`${' '.repeat(recuo)}${cortar(partes.join(SEP_ACOES), largura - recuo)}`, 'inactive')]);
   return linhas;
 }
 
@@ -253,7 +302,8 @@ export function blocoTopo(e              , largura        )          {
                                  
                
                   
-                                                
+                                                                                                                                     
+                                                                     
                                                                                            
                            
   
@@ -317,7 +367,7 @@ export function fraseHistorico(ev        , ctx              )                   
       const verbo = acao === 'leitura' ? 'leu' : acao === 'escrita' ? 'alterou' : acao === 'execucao' ? 'executou em' : null;
       if (verbo === null || typeof alvo !== 'string') return null;
       const amb = d('ambiente');
-      const ambiente = amb === 'prod' ? 'PRODUÇÃO' : amb === 'homolog' ? 'HOMOLOG' : 'ambiente desconhecido';
+      const ambiente = amb === 'prod' ? 'PRODUÇÃO' : amb === 'homolog' ? 'HOMOLOG' : amb === 'teste' ? 'TESTE' : 'ambiente desconhecido';
       const quem = ev.agente === 'orquestrador' ? ctx.lider : typeof ev.agente === 'string' ? (ctx.porAgente?.get(ev.agente) ?? 'agente') : 'agente';
       const sufixo = ev.tipo === 'producao.acesso' ? 'permitido' : 'destrutiva';
       return frase('▲', 'warning', `${quem} ${verbo} ${ambiente} · ${alvo.trim() === '' ? '—' : alvo} · ${sufixo}`);
@@ -344,7 +394,7 @@ export function fraseHistorico(ev        , ctx              )                   
       return frase('✓', 'success', 'spec aprovada');
     case 'loop.parar': {
       const motivo = d('motivo');
-      const t = typeof motivo === 'string' ? ctx.textoParar(motivo) : null;
+      const t = typeof motivo === 'string' ? ctx.textoParar(motivo, typeof task === 'string' ? task : null) : null;
       return frase('■', 'error', t === null || t === undefined ? 'PAROU' : `PAROU · ${t}`);
     }
     case 'loop.pausa': {
