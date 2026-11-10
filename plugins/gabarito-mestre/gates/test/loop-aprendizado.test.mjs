@@ -987,7 +987,7 @@ describe('pousar: sem mod (GM-13 T12, REQ-POU-3)', () => {
       assert.equal(r.rc, 0, `${JSON.stringify(valor)}: ${r.out}${r.err}`);
       assert.equal(pousos(amb)[0].dados.x, esperado, JSON.stringify(valor));
       assert.equal(r.j.evento.x, esperado, JSON.stringify(valor));
-      if (esperado === 50 && valor !== '') assert.match(r.j.aviso[0], /GABARITO_POUSO_X inválido/, JSON.stringify(valor));
+      if (esperado === 50) assert.match(r.j.aviso[0], /GABARITO_POUSO_X inválido/, JSON.stringify(valor));
       if (valor === '40' || valor === '2.5') assert.equal(r.j.aviso, undefined, JSON.stringify(valor));
     }
   });
@@ -1048,5 +1048,30 @@ describe('pousar: sem mod (GM-13 T12, REQ-POU-3)', () => {
     assert.equal(r.rc, 0, r.out + r.err);
     assert.match(r.j.instantaneo, /^Aprendizados \(1\):/m);
     assert.match(r.j.instantaneo, /^E rode o build antes do teste$/m);
+  });
+
+  test('pousar-corrigindo-recusa: task em corrigindo (REPROVADO e correção iniciada) está em voo ⇒ task_em_voo citando T1, rc 1 e nada gravado', () => {
+    const amb = ambiente();
+    amb.semear([IMPL, CONCL, REVISOR, ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, blocker: 1, major: 0 }], ['task.iniciada', { task: 'T1', papel: 'correcao' }]]);
+    const antes = semEfeito(amb);
+    const r = amb.cli(['pousar']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.ok, false);
+    assert.equal(r.j.erro, 'task_em_voo', r.out);
+    assert.match(r.j.mensagem, /T1/);
+    assert.match(r.j.mensagem, /nada foi gravado/);
+    assert.deepEqual(pousos(amb), []);
+    assert.equal(semEfeito(amb), antes, 'nada gravado');
+  });
+
+  test('pousar-aviso-de-aprendizado-ilegivel-no-instantaneo: entrega vizinha torta ⇒ o instantâneo impresso traz a linha de aviso (I4), e o pouso grava', () => {
+    const amb = ambiente();
+    amb.vizinhaTorta('GM-1');
+    amb.semear([IMPL, CONCL]);
+    const r = amb.cli(['pousar']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(pousos(amb).length, 1, 'gravou o pouso');
+    assert.match(r.j.instantaneo, /^Aprendizados: 1 entrega\(s\) ilegível\(is\); veja loop\.mjs aprendizados$/m);
+    assert.equal(r.j.evento.tipo, 'sessao.pouso');
   });
 });
