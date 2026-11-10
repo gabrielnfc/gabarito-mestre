@@ -20,15 +20,18 @@ type Obj = Record<string, unknown>;
 const ehObjeto = (v: unknown): v is Obj => v !== null && typeof v === 'object' && !Array.isArray(v);
 const campo = (o: unknown, k: string): unknown => (ehObjeto(o) && Object.hasOwn(o, k) ? o[k] : undefined);
 
-/** Controle vira espaço, espaços se juntam, corte por ponto de código com `…`. Nunca devolve quebra de linha. */
+/**
+ * Todo texto do diário que o registro escreve passa por aqui, números inclusive. Controle vira espaço, espaços se juntam, corte por ponto de
+ * código com `…`. Nunca devolve quebra de linha. O canário de segredo NÃO fica aqui: roda antes, sobre o texto inteiro (CLI), nunca sobre o já cortado.
+ */
 function limpa(valor: unknown, max = TEXTO_MAX): string {
   const t = String(valor ?? '').replace(CONTROLE, ' ').replace(/ {2,}/g, ' ').trim();
   const cps = [...t];
   return cps.length > max ? `${cps.slice(0, max).join('')}…` : t;
 }
 
-const ref = (e: Evento): string => `${limpa(e.sessao, 128)}:${e.seq}`;
-const refDe = (r: unknown): string => `${limpa(campo(r, 'sessao'), 128)}:${campo(r, 'seq')}`;
+const ref = (e: Evento): string => `${limpa(e.sessao, 128)}:${limpa(e.seq, 16)}`;
+const refDe = (r: unknown): string => `${limpa(campo(r, 'sessao'), 128)}:${limpa(campo(r, 'seq'), 16)}`;
 
 function exigirValido(e: Evento): void {
   const motivo = formaInvalida(e.tipo, e.dados);
@@ -68,7 +71,7 @@ export function montarRegistro(entrega: string, eventos: Evento[], specSha: stri
     const partes = [`- ${ref(e)} · ${ancora} · ${limpa(campo(d, 'resposta'))}`];
     if (Array.isArray(fontes)) partes.push(`fontes: ${fontes.map((f) => limpa(f, 200)).join(', ')}`);
     if (campo(d, 'medicao') !== undefined) partes.push(`medição: ${limpa(campo(d, 'medicao'), 200)}`);
-    if (campo(d, 'fora_da_regra') === true) partes.push(`fora da regra (emenda #${campo(d, 'emenda_seq')})`);
+    if (campo(d, 'fora_da_regra') === true) partes.push(`fora da regra (emenda #${limpa(campo(d, 'emenda_seq'), 16)})`);
     const subst = campo(d, 'substitui');
     if (subst !== undefined) partes.push(`substitui ${refDe(subst)}`);
     return partes.join(' · ');
@@ -89,10 +92,10 @@ export function montarRegistro(entrega: string, eventos: Evento[], specSha: stri
     const j = fechamento.get(p.seq);
     const estado = j === undefined ? 'aberta' : `${j.tipo === 'spec.emendada' ? 'aprovada' : 'rejeitada'} por ${limpa(campo(j.dados, 'origem'), 16)}`;
     const task = campo(p.dados, 'task') !== undefined ? ` · task ${limpa(campo(p.dados, 'task'), 64)}` : '';
-    linhasEmendas.push(`- #${p.seq} · ${limpa(campo(p.dados, 'req'), 64)}${task} · ${limpa(campo(p.dados, 'causa'), 32)} · ${estado} · fato: ${limpa(campo(p.dados, 'fato'))} · diff: ${limpa(campo(p.dados, 'diff'))}`);
+    linhasEmendas.push(`- #${limpa(p.seq, 16)} · ${limpa(campo(p.dados, 'req'), 64)}${task} · ${limpa(campo(p.dados, 'causa'), 32)} · ${estado} · fato: ${limpa(campo(p.dados, 'fato'))} · diff: ${limpa(campo(p.dados, 'diff'))}`);
   }
   for (const [seq, j] of fechamento) {
-    if (!propostas.some((p) => p.seq === seq)) linhasEmendas.push(`- #${seq} · julgamento sem proposta no diário · ${j.tipo === 'spec.emendada' ? 'aprovada' : 'rejeitada'} por ${limpa(campo(j.dados, 'origem'), 16)}`);
+    if (!propostas.some((p) => p.seq === seq)) linhasEmendas.push(`- #${limpa(seq, 16)} · julgamento sem proposta no diário · ${j.tipo === 'spec.emendada' ? 'aprovada' : 'rejeitada'} por ${limpa(campo(j.dados, 'origem'), 16)}`);
   }
 
   // 4. Liberações de teto: só `task.reaberta` com origem `dono` (a retomada não libera teto)
@@ -124,7 +127,7 @@ export function montarRegistro(entrega: string, eventos: Evento[], specSha: stri
     const eventosEv = campo(ev, 'eventos');
     const med = campo(ev, 'medicao');
     const partes = [`- ${ref(e)} · ${limpa(campo(d, 'tipo'), 1)} · ${limpa(campo(d, 'regra'))}`, `entra em: ${(campo(d, 'entra_em') as unknown[]).map((x) => limpa(x, 64)).join(', ')}`];
-    if (ehObjeto(med)) partes.push(`fonte: ${limpa(campo(med, 'fonte'), 200)} · número: ${campo(med, 'numero')}`);
+    if (ehObjeto(med)) partes.push(`fonte: ${limpa(campo(med, 'fonte'), 200)} · número: ${limpa(campo(med, 'numero'), 64)}`);
     else partes.push('sem medição');
     if (Array.isArray(eventosEv)) partes.push(`eventos: ${eventosEv.map(refDe).join(', ')}`);
     const g = campo(d, 'gatilho');

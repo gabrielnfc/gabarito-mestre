@@ -170,6 +170,23 @@ export function aprendizados(deps, pos, flags) {
 }
 
 export const pousar = stub('pousar', 'T12');
+/** Canário em cada string folha dos eventos, sem corte nem limpeza (chave de objeto não vai ao registro). Nome do padrão, ou `null`. */
+function canarioNasFolhas(eventos) {
+  const pilha = [eventos];
+  while (pilha.length > 0) {
+    const x = pilha.pop();
+    if (typeof x === 'string') {
+      const r = recusaCanario(x);
+      if (r !== null) return r;
+    } else if (Array.isArray(x)) {
+      for (const y of x) pilha.push(y);
+    } else if (x !== null && typeof x === 'object') {
+      for (const y of Object.values(x)) pilha.push(y);
+    }
+  }
+  return null;
+}
+
 /**
  * `loop.mjs registro` (REQ-REG-1): `<dirEntrega>/registro.md` a partir do diário, determinístico (mesmo diário ⇒ mesmo byte).
  * Diário AUSENTE (sem eventos) ⇒ registro com as seções em `- nenhum`; ILEGÍVEL (linha torta, cadeia quebrada, fora de ordem, evento fora
@@ -187,7 +204,8 @@ export function registro(deps, pos, flags) {
   } catch (e) {
     throw new Falha('diario_ilegivel', `${e instanceof Error ? e.message : String(e)}; nada foi gravado`);
   }
-  const padrao = recusaCanario(texto);
+  // O canário roda sobre o texto INTEIRO de cada campo do diário (o corte de 240 do registro poderia partir um segredo e escondê-lo) e, por segurança, sobre o resultado.
+  const padrao = canarioNasFolhas(eventos) ?? recusaCanario(texto);
   if (padrao !== null) throw new Falha('segredo_no_registro', `o registro casaria o canário de segredo (${padrao}); nada foi gravado`);
   const destino = join(c.dirEntrega, 'registro.md');
   const tmp = join(c.dirEntrega, `.registro.md.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);

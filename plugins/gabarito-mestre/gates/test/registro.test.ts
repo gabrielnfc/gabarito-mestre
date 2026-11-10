@@ -171,3 +171,73 @@ describe('montarRegistro: texto limpo e falha fechada', () => {
     for (const titulo of TITULOS) assert.deepEqual(corpo(v, titulo), ['- nenhum'], titulo);
   });
 });
+
+/** Cópia de `dados` com `valor` no caminho (ex.: `['arquivos', 0]`). */
+function com(dados: unknown, caminho: Array<string | number>, valor: string): unknown {
+  const copia = structuredClone(dados) as Record<string, unknown>;
+  let alvo: any = copia;
+  for (const k of caminho.slice(0, -1)) alvo = alvo[k];
+  alvo[caminho[caminho.length - 1]] = valor;
+  return copia;
+}
+
+describe('montarRegistro: limpa em CADA campo de texto (P15)', () => {
+  const SUJO = 'ant\n## Desvios\r\n\tdep\u0000fim\u2028x';
+  const LIMPO = 'ant ## Desvios dep fim x';
+  const FORMATADOS = new Set(['sombra.req', 'emenda.req', 'desvio.req', 'aprendizado.entra_em[0]', 'aprendizado.medicao.fonte']);
+  // [nome, evento-base, caminho do campo]
+  const CAMPOS: Array<[string, Evento, Array<string | number>]> = [
+    ['aprovacao.spec', APROVA, ['spec']],
+    ['sombra.req', SOMBRA, ['req']],
+    ['sombra.resposta', SOMBRA, ['resposta']],
+    ['sombra.fontes[0]', SOMBRA, ['fontes', 0]],
+    ['sombra.medicao', ev('loop', 2, 'decisao.sombra', { pergunta_hash: HASH, req: 'REQ-REG-1', resposta: 'r', arquivo: 'a.md', pergunta_enviesada: false, fontes: ['a.md'], medicao: 'm' }, t(2)), ['medicao']],
+    ['sombra.task', ev('loop', 2, 'decisao.sombra', { pergunta_hash: HASH, task: 'T9', resposta: 'r', arquivo: 'a.md', pergunta_enviesada: false, fontes: ['a.md'] }, t(2)), ['task']],
+    ['emenda.req', PROP, ['req']],
+    ['emenda.task', PROP, ['task']],
+    ['emenda.fato', PROP, ['fato']],
+    ['emenda.diff', PROP, ['diff']],
+    ['teto.task', TETO, ['task']],
+    ['desvio.task', DESVIO, ['task']],
+    ['desvio.req', DESVIO, ['req']],
+    ['desvio.evidencia', DESVIO, ['evidencia']],
+    ['desvio.arquivos[0]', DESVIO, ['arquivos', 0]],
+    ['descoberta.evidencia', DESCOB, ['evidencia']],
+    ['aprendizado.regra', APR_D, ['regra']],
+    ['aprendizado.entra_em[0]', APR_D, ['entra_em', 0]],
+    ['aprendizado.medicao.fonte', APR_M, ['evidencia', 'medicao', 'fonte']],
+  ];
+  for (const [nome, base, caminho] of CAMPOS) {
+    test(`registro-limpa-campo ${nome}: controle vira espaço e nenhuma linha/seção nasce do texto`, () => {
+      const suja = { ...base, dados: com(base.dados, caminho, SUJO) } as Evento;
+      // os demais eventos do diário completam a emenda/aprendizado; o sujo substitui o de mesma identidade
+      const lista = TODOS.map((e) => (e.sessao === suja.sessao && e.seq === suja.seq ? suja : e));
+      // campos de formato fixo (REQ, entra_em, fonte): a forma do contrato recusa o controle ANTES; o registro lança em vez de escrever
+      if (FORMATADOS.has(nome)) {
+        assert.throws(() => montarRegistro('GM-13', lista, SHA), /não tem a forma do contrato/, nome);
+        return;
+      }
+      const r = montarRegistro('GM-13', lista, SHA);
+      assert.doesNotMatch(r, /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028\u2029]/, nome);
+      assert.deepEqual([...r.matchAll(/^## (.+)$/gm)].map((m) => m[1]), TITULOS, nome);
+      assert.ok(r.includes(LIMPO.slice(0, 240)) || r.includes(LIMPO.slice(0, 64)) || r.includes(LIMPO.slice(0, 16)) || r.includes(LIMPO.slice(0, 3)), `${nome}: o texto limpo aparece`);
+    });
+  }
+
+  test('registro-limpa-nome-da-entrega-e-sessao: cabeçalho e referência sem controle', () => {
+    const r = montarRegistro('GM\n-1', [ev('lo\no\u0000p', 1, 'descoberta', { evidencia: 'a', causa: 'tecnica' }, t(1))], null);
+    assert.doesNotMatch(r, /[\u0000-\u0009\u000b-\u001f]/);
+    assert.match(r, /^# Registro de decisões — GM -1\n/);
+  });
+});
+
+describe('montarRegistro: corte por ponto de código', () => {
+  test('registro-corte-nao-parte-emoji: emoji na fronteira dos 240 sai inteiro, sem surrogate solto', () => {
+    const d = ev('loop', 1, 'descoberta', { evidencia: `${'x'.repeat(239)}😀yyy`, causa: 'tecnica' }, t(1));
+    const l = corpo(montarRegistro('GM-13', [d], null), 'Descobertas')[0];
+    assert.equal(l, `- loop:1 · tecnica · ${'x'.repeat(239)}😀…`);
+    assert.doesNotMatch(l, /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/);
+    const curto = ev('loop', 1, 'descoberta', { evidencia: `${'x'.repeat(238)}😀`, causa: 'tecnica' }, t(1));
+    assert.equal(corpo(montarRegistro('GM-13', [curto], null), 'Descobertas')[0], `- loop:1 · tecnica · ${'x'.repeat(238)}😀`, 'no limite exato não corta');
+  });
+});

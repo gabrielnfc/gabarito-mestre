@@ -694,11 +694,13 @@ describe('estrutura (preso por teste)', () => {
 
   test('aprendizado-nao-le-o-diario-por-fora: a validação roda só dentro do `antes`, com os eventos que o gravar leu (sem 2ª leitura)', () => {
     const todo = readFileSync(FONTE_APR, 'utf8');
-    // T11: `registro` lê o diário de propósito (subcomando só de leitura); a regra vale para a função `aprendizado`.
-    const ini = todo.indexOf('export function aprendizado(');
-    const fim = todo.indexOf('export function aprendizados(');
-    assert.ok(ini >= 0 && fim > ini, 'achou o corpo de `aprendizado`');
-    const fonte = todo.slice(ini, fim);
+    // T11: `registro` lê o diário de propósito (subcomando só de leitura). A regra vale para TODO o arquivo MENOS o corpo de `registro`:
+    // helper chamado por `aprendizado` (ex.: `versionada`) que lesse o diário por fora também é pego.
+    const ini = todo.indexOf('export function registro(');
+    assert.ok(ini >= 0, 'achou o corpo de `registro`');
+    const proximo = todo.indexOf('\nexport ', ini + 1);
+    const fonte = todo.slice(0, ini) + (proximo < 0 ? '' : todo.slice(proximo));
+    assert.ok(fonte.includes('export function aprendizado(') && fonte.includes('function versionada('), 'o recorte ainda contém `aprendizado` e os helpers');
     assert.equal(/lerDiarioEstrito\s*\(/.test(fonte), false, 'nenhuma leitura própria do diário da entrega');
     assert.equal((fonte.match(/validarAprendizado\(/g) ?? []).length, 1, 'uma só chamada de validarAprendizado');
     assert.match(fonte, /antes\s*=\s*\(candidato,\s*eventos\)|\(candidato,\s*eventos\)\s*=>/);
@@ -795,6 +797,97 @@ describe('registro: CLI grava registro.md determinístico (REQ-REG-1)', () => {
     assert.equal(r.j.erro, 'segredo_no_registro');
     assert.equal(r.out.includes(TOKEN), false, 'o segredo não volta na saída');
     assert.deepEqual(arquivosDe(amb), antes);
+  });
+
+  test('registro-segredo-partido-pelo-corte: token que o corte de 240 partiria é recusado pelo CLI, em cada campo de texto que entra no registro', () => {
+    const ts = (n) => new Date(Date.UTC(2026, 0, 1, 0, 0, n)).toISOString();
+    const H = 'b'.repeat(64);
+    const crua = (n, tipo, dados, sessao = 'loop') => ({ seq: 1, ts: ts(n), sessao, tipo, dados });
+    const BASES = {
+      aprovacao: crua(1, 'spec.aprovada', { spec: 'docs/spec.md', sha256: SHA }),
+      sombra: crua(1, 'decisao.sombra', { pergunta_hash: H, req: 'REQ-REG-1', resposta: 'r', arquivo: 'a.md', pergunta_enviesada: false, fontes: ['a.md'], medicao: 'm' }),
+      sombraTask: crua(1, 'decisao.sombra', { pergunta_hash: H, task: 'T9', resposta: 'r', arquivo: 'a.md', pergunta_enviesada: false, fontes: ['a.md'] }),
+      emenda: crua(1, 'emenda.proposta', { req: 'REQ-APR-1', diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'tecnica', task: 'T4' }, 'emendas'),
+      teto: crua(1, 'task.reaberta', { task: 'T7', origem: 'dono' }),
+      desvio: crua(1, 'desvio', { task: 'T3', req: 'REQ-DIA-1', evidencia: 'e', arquivos: ['a.ts'], causa: 'tecnica' }),
+      descoberta: crua(1, 'descoberta', { evidencia: 'e', causa: 'tecnica' }),
+      aprendizado: crua(1, 'aprendizado', { tipo: 'A', status: 'D', gatilho: null, evidencia: { medicao: { fonte: 'docs/m.md', numero: 1 } }, regra: 'r', entra_em: ['spec'] }),
+    };
+    const CAMPOS = [
+      ['aprovacao', ['spec'], 200], ['sombra', ['resposta'], 240], ['sombra', ['fontes', 0], 200], ['sombra', ['medicao'], 200], ['sombraTask', ['task'], 64],
+      ['emenda', ['fato'], 240], ['emenda', ['diff'], 240], ['emenda', ['task'], 64], ['teto', ['task'], 64],
+      ['desvio', ['evidencia'], 240], ['desvio', ['arquivos', 0], 200], ['desvio', ['task'], 64], ['descoberta', ['evidencia'], 240], ['aprendizado', ['regra'], 240],
+    ];
+    for (const [chave, caminho, max] of CAMPOS) {
+      const nome = `${chave}.${caminho.join('.')}`;
+      const evento = structuredClone(BASES[chave]);
+      // o token começa antes da fronteira do corte e termina depois dela: o texto cortado ficaria com ghp_ + menos de 20 caracteres
+      let alvo = evento.dados;
+      for (const k of caminho.slice(0, -1)) alvo = alvo[k];
+      const pos = max - 'ghp_'.length - 19;
+      alvo[caminho[caminho.length - 1]] = `${'x'.repeat(pos - 1)} ${TOKEN}`;
+      const amb = ambiente();
+      const linha = JSON.stringify({ autor: 't@t', agente: 'orquestrador', hash_anterior: null, ...evento });
+      writeFileSync(join(amb.entregas, `events.${evento.sessao}.jsonl`), `${linha}\n`);
+      writeFileSync(join(amb.entregas, 'registro.md'), 'VELHO\n');
+      const antes = arquivosDe(amb);
+      const r = amb.cli(['registro']);
+      assert.equal(r.rc, 1, `${nome}: ${r.out}${r.err}`);
+      assert.equal(r.j.erro, 'segredo_no_registro', `${nome}: ${r.out}`);
+      assert.equal(r.out.includes('ghp_'), false, `${nome}: nem parte do segredo volta na saída`);
+      assert.equal(readFileSync(join(amb.entregas, 'registro.md'), 'utf8'), 'VELHO\n', `${nome}: registro antigo intacto`);
+      assert.deepEqual(arquivosDe(amb), antes, `${nome}: nem tmp sobrando`);
+    }
+  });
+
+  test('registro-segredo-no-corte-sem-o-canario-final: o texto gerado NÃO casa o canário (só o campo inteiro casa) e o CLI recusa mesmo assim', () => {
+    const amb = ambiente();
+    cru(amb, [{ seq: 1, ts: new Date(Date.UTC(2026, 0, 1)).toISOString(), tipo: 'descoberta', dados: { evidencia: `${'x'.repeat(216)} ${TOKEN}`, causa: 'tecnica' } }]);
+    assert.equal(diario.recusaCanario(`${'x'.repeat(216)} ${TOKEN}`.slice(0, 240)), null, 'premissa: o corte esconde o token do canário');
+    const r = amb.cli(['registro']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'segredo_no_registro');
+    assert.equal(existsSync(join(amb.entregas, 'registro.md')), false);
+  });
+
+  test('registro-segredo-em-lista-e-em-evento-posterior: o token no 2º evento e no 2º item de lista é achado; o que só o texto gerado revelaria (NUL vira espaço) também', () => {
+    const ts = (n) => new Date(Date.UTC(2026, 0, 1, 0, 0, n)).toISOString();
+    const ok = { seq: 1, ts: ts(1), tipo: 'descoberta', dados: { evidencia: 'limpa', causa: 'tecnica' } };
+    const casos = {
+      'evento-posterior': [ok, { seq: 2, ts: ts(2), tipo: 'descoberta', dados: { evidencia: `${'x'.repeat(216)} ${TOKEN}`, causa: 'tecnica' } }],
+      'lista-2o-item': [ok, { seq: 2, ts: ts(2), tipo: 'desvio', dados: { task: 'T1', req: 'REQ-DIA-1', evidencia: 'e', arquivos: ['a.ts', `${'y'.repeat(190)} ${TOKEN}`], causa: 'tecnica' } }],
+      'so-o-texto-gerado': [{ seq: 1, ts: ts(1), tipo: 'descoberta', dados: { evidencia: `Bearer\u0000${'A'.repeat(20)}`, causa: 'tecnica' } }],
+    };
+    for (const [nome, eventos] of Object.entries(casos)) {
+      const amb = ambiente();
+      cru(amb, eventos);
+      const r = amb.cli(['registro']);
+      assert.equal(r.rc, 1, `${nome}: ${r.out}${r.err}`);
+      assert.equal(r.j.erro, 'segredo_no_registro', `${nome}: ${r.out}`);
+      assert.equal(existsSync(join(amb.entregas, 'registro.md')), false, nome);
+    }
+  });
+
+  test('registro-corte-por-ponto-de-codigo-no-cli: emoji na fronteira dos 240 sai inteiro no registro.md gravado', () => {
+    const amb = ambiente();
+    cru(amb, [{ seq: 1, ts: new Date(Date.UTC(2026, 0, 1)).toISOString(), tipo: 'descoberta', dados: { evidencia: `${'x'.repeat(239)}😀yyy`, causa: 'tecnica' } }]);
+    const r = amb.cli(['registro']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const t = readFileSync(join(amb.entregas, 'registro.md'), 'utf8');
+    assert.ok(t.includes(`${'x'.repeat(239)}😀…\n`));
+    assert.equal(/[\ud800-\udbff](?![\udc00-\udfff])/.test(t), false, 'sem surrogate solto');
+  });
+
+  test('registro-falha-na-escrita-sem-tmp: registro.md que é diretório ⇒ registro_nao_gravado, nenhum tmp sobra e o destino não é tocado', () => {
+    const amb = ambiente();
+    amb.semear([CI, DESC]);
+    mkdirSync(join(amb.entregas, 'registro.md'));
+    const antes = arquivosDe(amb);
+    const r = amb.cli(['registro']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'registro_nao_gravado');
+    assert.deepEqual(arquivosDe(amb), antes, 'nem tmp sobrando');
+    assert.deepEqual(arquivosDe(amb).filter((f) => f.includes('tmp')), []);
   });
 
   test('registro-spec-atual-vem-do-disco: o sha da spec do plano entra (confere × difere) pelo CLI real', () => {
