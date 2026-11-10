@@ -14,6 +14,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { posix, join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { cpSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { validarPlano, temDependencia, normalizarCaminho } from '../src/plano.ts';
 import { EM_TRABALHO, duracoes, mediana } from '../src/diario.ts';
@@ -344,9 +346,14 @@ test('plano-titulo-usa-a-mesma-colunas-do-painel (T4 desvio 4): marca, modificad
   assert.equal(com('🇧🇷'.repeat(21)).ok, false);
 });
 
-test('ciclo-plano-painel-texto-carrega-de-qualquer-entrada: dist de plano, loop, emenda, painel-texto e painel carrega sozinho, sem TDZ', () => {
+test('plano-carrega-sozinho-com-formas-e-painel-largura: dist/plano.js numa pasta só com formas.js e painel-largura.js valida título; as demais entradas carregam sem TDZ', () => {
   const dist = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist');
-  for (const m of ['plano', 'loop', 'emenda', 'painel-texto', 'painel-equipe', 'painel']) {
+  const so = mkdtempSync(join(tmpdir(), 'plano-so-'));
+  for (const n of ['plano.js', 'formas.js', 'painel-largura.js']) cpSync(join(dist, n), join(so, n));
+  const isolado = execFileSync(process.execPath, ['--input-type=module', '-e',
+    `const { validarPlano } = await import(${JSON.stringify(join(so, 'plano.js'))}); const t = (titulo) => validarPlano({ entrega: 'X', tasks: [{ id: 'a', deps: [], arquivos: [], titulo }] }).ok; console.log(t('x'.repeat(40) + '\\u0301'), t('x'.repeat(41)))`], { encoding: 'utf8' });
+  assert.equal(isolado.trim(), 'true false', 'título medido em colunas pela painel-largura isolada');
+  for (const m of ['plano', 'loop', 'emenda', 'painel-largura', 'painel-texto', 'painel-equipe', 'painel']) {
     const out = execFileSync(process.execPath, ['--input-type=module', '-e', `const m = await import(${JSON.stringify(join(dist, `${m}.js`))}); console.log(Object.keys(m).length)`], { encoding: 'utf8' });
     assert.ok(Number(out.trim()) > 0, m);
   }

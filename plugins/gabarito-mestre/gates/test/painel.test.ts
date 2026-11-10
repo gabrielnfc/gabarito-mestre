@@ -1116,6 +1116,21 @@ test('fecho-sem-diario-sombra: o fecho de dist/painel.js tem diario-puro.js e n�
   assert.equal(vistos.some((v) => v.endsWith('diario-puro.js')), true, vistos.join(','));
 });
 
+test('fecho-plano-sem-ciclo: dist/plano.js não importa, direto ou transitivo, painel-texto.js nem loop.js (o Stop carrega plano antes de loop e diario)', () => {
+  const vistos: string[] = [];
+  const visitar = (arq: string): void => {
+    if (vistos.includes(arq)) return;
+    vistos.push(arq);
+    assert.ok(existsSync(arq), `dist ausente: ${arq}`);
+    const specs = especificadores(readFileSync(arq, 'utf8'));
+    for (const m of specs) if (m.startsWith('./') || m.startsWith('../')) visitar(join(dirname(arq), m));
+  };
+  visitar(join(AQUI, '..', 'dist', 'plano.js'));
+  const nomes = vistos.map((v) => v.split(/[\\/]/).at(-1)).sort();
+  assert.deepEqual(nomes, ['formas.js', 'painel-largura.js', 'plano.js'], nomes.join(','));
+  assert.equal(nomes.some((n) => n === 'painel-texto.js' || n === 'loop.js'), false, nomes.join(','));
+});
+
 // ---------------------------------------------------------------- cronômetro: regras do módulo puro lidas pelo painel (GM-12 T2 r3)
 // O painel usa `duracoes` de `diario-puro.ts` (a mesma de `diario.ts`). Estes casos leem o número que sai no painel, para que uma
 // mutação na regra do cronômetro caia também aqui (R-M1: intervalo com ts anterior ao início; R-M2: reabertura do dono zera a soma).

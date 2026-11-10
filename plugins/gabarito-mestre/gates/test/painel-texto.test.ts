@@ -766,3 +766,18 @@ test('topo-mono-mantem-o-parou', () => {
   assert.ok(mono(blocoTopo(e, 100)).includes('■ PAROU 14:07'));
   assert.ok(paraTexto(blocoTopo(e, 100), 'color').includes('\x1b[31m■ PAROU 14:07\x1b[0m'));
 });
+
+test('topo-parar-acao-fronteira-da-folga-de-4 (review T2b MINOR 2, R3): corpo ≤ largura < 4 + corpo quebra rótulo e comando; 4 + corpo = largura junta', () => {
+  const corpo = 'aprovar  /gabarito-mestre:liberar T9';
+  assert.equal(colunas(corpo), 36);
+  for (const w of [36, 37, 38, 39]) {
+    assert.deepEqual(topo(estado('parou-teto'), w).slice(1, 3), ['    aprovar', '    /gabarito-mestre:liberar T9'], `largura ${w}`);
+  }
+  assert.equal(topo(estado('parou-teto'), 40)[1], `    ${corpo}`, 'largura 40: cabe com o recuo de 4');
+});
+
+test('topo-parar-L3-largura-minima (review T2b MINOR 2, R4): com largura ≤ 2 o recuo encolhe e a L3 mostra `…`, nunca só espaços', () => {
+  assert.equal(ultima(estado('parou-teto'), 2), ' …');
+  assert.equal(ultima(estado('parou-teto'), 1), '…');
+  assert.equal(ultima(estado('parou-teto'), 3), '  …');
+});

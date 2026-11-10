@@ -8,7 +8,7 @@
  */
 
 import { REQ_RE } from './formas.js';
-import { colunas } from './painel-texto.js';
+import { colunas } from './painel-largura.js';
                                                                           
 
                                                                                       
@@ -130,7 +130,7 @@ function validar(bruto         )                 {
     if (t.titulo !== undefined) {
       if (typeof t.titulo !== 'string' || t.titulo.trim() === '') return recusa(`task ${t.id}: \`titulo\` deve ser texto não vazio`);
       if (CONTROLE_RE.test(t.titulo)) return recusa(`task ${t.id}: \`titulo\` com caractere de controle`);
-      const cols = colunas(t.titulo); // a mesma medida do render (`painel-texto.ts`)
+      const cols = colunas(t.titulo); // a mesma medida do render (`painel-largura.ts`)
       if (cols > TITULO_MAX_COLUNAS) return recusa(`task ${t.id}: \`titulo\` com ${cols} colunas, máximo ${TITULO_MAX_COLUNAS}`);
     }
     if ('spec' in t) return recusa(`task ${t.id}: \`spec\` é campo do plano (topo), não da task`);

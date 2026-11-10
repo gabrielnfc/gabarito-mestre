@@ -11,7 +11,7 @@ import { formaInvalida } from './formas.js';
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.js';
                                             
 import { dataCivil } from './painel-hora.js';
-import { colunas, limpar } from './painel-texto.js';
+import { colunas, limpar } from './painel-largura.js';
 import { tokensDe } from './pouso.js';
                                                                                                                                                
 
@@ -50,7 +50,7 @@ export function validarPacote(bruto         )                                   
   const { nome, lider, sabio, nomes } = bruto;
   if (typeof nome !== 'string' || nome.trim() === '') return erro('`nome` ausente ou vazio');
   if (limpar(nome) !== nome) return erro('`nome` com caractere de controle');
-  const cols = colunas(nome); // a mesma medida do render (`painel-texto.ts`)
+  const cols = colunas(nome); // a mesma medida do render (`painel-largura.ts`)
   if (cols > NOME_MAX_COLUNAS) return erro(`\`nome\` com ${cols} colunas, máximo ${NOME_MAX_COLUNAS}`);
   if (!nomeOk(lider)) return erro('`lider` ausente ou fora do padrão (caixa alta, até 10 colunas)');
   if (!nomeOk(sabio)) return erro('`sabio` ausente ou fora do padrão (caixa alta, até 10 colunas)');

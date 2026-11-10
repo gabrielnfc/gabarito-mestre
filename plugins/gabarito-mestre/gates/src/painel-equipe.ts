@@ -11,7 +11,7 @@ import { formaInvalida } from './formas.ts';
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.ts';
 import type { EstadoTask } from './loop.ts';
 import { dataCivil } from './painel-hora.ts';
-import { colunas, limpar } from './painel-texto.ts';
+import { colunas, limpar } from './painel-largura.ts';
 import { tokensDe } from './pouso.ts';
 import type { AgentePainel, AgenteVivo, CorTema, EntradaPainel, EstadoPainel, Evento, PacoteNomes, Papel, Plano, UsoAgente } from './tipos.ts';
 
@@ -50,7 +50,7 @@ export function validarPacote(bruto: unknown): { ok: true; pacote: PacoteNomes }
   const { nome, lider, sabio, nomes } = bruto;
   if (typeof nome !== 'string' || nome.trim() === '') return erro('`nome` ausente ou vazio');
   if (limpar(nome) !== nome) return erro('`nome` com caractere de controle');
-  const cols = colunas(nome); // a mesma medida do render (`painel-texto.ts`)
+  const cols = colunas(nome); // a mesma medida do render (`painel-largura.ts`)
   if (cols > NOME_MAX_COLUNAS) return erro(`\`nome\` com ${cols} colunas, máximo ${NOME_MAX_COLUNAS}`);
   if (!nomeOk(lider)) return erro('`lider` ausente ou fora do padrão (caixa alta, até 10 colunas)');
   if (!nomeOk(sabio)) return erro('`sabio` ausente ou fora do padrão (caixa alta, até 10 colunas)');
