@@ -380,34 +380,63 @@ test('esq-historico-orcamento-e-ordem: 4/3/1/0 por faixa, a mais antiga no alto;
   assert.ok(render(velho, 80).includes('08/11 23:50 ✓ ontem'));
 });
 
-test('esq-ocultos-somados: ▼ K = ocultos + não mostradas; K = 0 omitido; só ocultos não basta; o rodapé corta o ▼ primeiro', () => {
-  // política curta: o rodapé de 72 colunas cabe com o ▼ (com `janela [seg ter qua qui sex]` ele cai, pela regra de cortar da direita)
-  const e = clone(EXTRAS['historico-cheio']);
-  e.rodape.politica = 'continua';
+test('esq-ocultos-somados: ▼ K = ocultos + não mostradas; K = 0 omitido; só ocultos não basta; a política cede, o ▼ nunca', () => {
+  const e = clone(EXTRAS['historico-cheio']); // política REAL da projeção: `janela [seg ter qua qui sex]`
+  assert.equal(e.rodape.politica, 'janela [seg ter qua qui sex]');
   assert.ok(render(e, 72).some((l) => l.endsWith('▼ 21 eventos')), render(e, 72).join('\n'));
   assert.ok(render(e, 80).some((l) => l.endsWith('▼ 21 eventos')));
   assert.ok(render(e, 50).some((l) => l.endsWith('▼ 24')), '44–59: 1 mostrada, 19 + 5');
   const zero = voo();
   zero.ocultos = 0; // 3 itens, todos cabem em 72
-  zero.rodape.politica = 'continua';
   assert.equal(render(zero, 72).some((l) => l.includes('▼')), false, 'K = 0 ⇒ omitido');
   const so = clone(e);
   so.ocultos = 0;
   assert.ok(render(so, 72).some((l) => l.endsWith('▼ 16 eventos')), 'sem ocultos, as 16 não mostradas contam');
   const ocu = voo();
   ocu.ocultos = 9;
-  ocu.rodape.politica = 'continua';
   assert.ok(render(ocu, 72).some((l) => l.endsWith('▼ 9 eventos')), 'só ocultos, tudo cabe');
   assert.equal(render(ocu, 72, { narracao: false }).some((l) => l.includes('▼')), false, 'narração off ⇒ sem ▼');
-  const longa = clone(EXTRAS['historico-cheio']); // política de 5 dias: o rodapé de 60 estoura e o ▼ é o que cai
-  const r60 = render(longa, 60).find((l) => l.startsWith('CI'))!;
-  assert.ok(colunas(r60) <= 60 && !r60.includes('▼') && r60.includes('PROD leu'), r60);
-}
-);
+});
+
+test('esq-rodape-por-largura: historico-cheio com a política real, 60..89 ⇒ `▼ K eventos` inteiro (21 a partir de 72) à direita, CI e PROD inteiros, política cortada com …; nunca meia contagem', () => {
+  const e = clone(EXTRAS['historico-cheio']);
+  for (let w = 60; w <= 89; w++) {
+    const r = render(e, w).find((l) => l.startsWith('CI '))!;
+    assert.ok(colunas(r) <= w, `w=${w}: ${r}`);
+    assert.ok(w < 72 ? /▼ 22 eventos$/.test(r) : r.endsWith('▼ 21 eventos'), `w=${w}: ${r}`); // 60–71 mostram 3 (22), 72+ mostram 4 (21)
+    assert.ok(r.includes('PROD leu') && r.includes('alterou'), `w=${w}: ${r}`);
+    const pol = 'política janela [seg ter qua qui sex]';
+    assert.ok(r.includes(pol) || r.includes('…'), `w=${w}: política inteira ou cortada com …: ${r}`);
+    assert.equal(/▼ \d*…/.test(r), false, `w=${w}: contagem cortada`);
+  }
+  assert.ok(render(e, 72).find((l) => l.startsWith('CI '))!.includes('…'), '72: a política cede');
+  const larga = render(e, 120).find((l) => l.startsWith('CI '))!;
+  assert.ok(larga.includes('política janela [seg ter qua qui sex]') && !larga.includes('…') && larga.endsWith('▼ 21 eventos'), larga);
+});
+
+test('esq-singular: 1 vivo, 1 evento, 1 mutação/1 morta, 1 decisão; 0 e 2 no plural', () => {
+  for (const [n, txt] of [[0, 'agentes 0 vivos'], [1, 'agentes 1 vivo'], [2, 'agentes 2 vivos']] as const) {
+    const e = voo();
+    e.equipe.vivos = n;
+    assert.ok(render(e, 80).some((l) => l.endsWith(txt)), `vivos=${n}`);
+  }
+  for (const [n, txt] of [[1, '▼ 1 evento'], [2, '▼ 2 eventos']] as const) {
+    const e = voo();
+    e.historico = [];
+    e.ocultos = n;
+    assert.ok(render(e, 80).some((l) => l.endsWith(txt)), `K=${n}: ${render(e, 80).join('\n')}`);
+  }
+  for (const [m, k, txt] of [[0, 0, '0 mutações do gate hoje, 0 mortas'], [1, 1, '1 mutação do gate hoje, 1 morta'], [2, 2, '2 mutações do gate hoje, 2 mortas']] as const) {
+    const e = voo();
+    e.equipe.revisoresAguardando = [{ nome: 'GIMLI', task: 'T10', mutacoesHoje: m, mortasHoje: k }];
+    assert.ok(render(e, 100).some((l) => l.endsWith(txt)), `mut=${m}: ${render(e, 100).join('\n')}`);
+  }
+});
 
 test('esq-rodape: CI verde/vermelho/—, PROD leu N · alterou M, política; vermelho não usa error', () => {
   const ls = renderEsquadrao(voo(), op(100));
-  assert.equal(TEXTO(ls[ls.length - 1]), 'CI ● verde   PROD leu 2 · alterou 0   política janela [seg ter qua qui sex]   ▼ 9 eventos');
+  const esq = 'CI ● verde   PROD leu 2 · alterou 0   política janela [seg ter qua qui sex]';
+  assert.equal(TEXTO(ls[ls.length - 1]), esq + ' '.repeat(100 - esq.length - '▼ 9 eventos'.length) + '▼ 9 eventos');
   const e = voo();
   e.rodape.ci.verde = false;
   const l = renderEsquadrao(e, op(100));
@@ -614,6 +643,6 @@ test('costura-P9: diário e projetarPainel reais (src) ⇒ renderPainel do dist 
     const ls = render(st, 100);
     assert.ok(ls.some((l) => /T08 .*implementando/.test(l)), ls.join('\n'));
     if (agentes === null) assert.ok(ls.some((l) => /agentes —$/.test(l)), 'sem mod: traço');
-    else assert.ok(ls.some((l) => /agentes 1 vivos$/.test(l)) && ls.some((l) => /^├─ ◌ .*sem agente · T07/.test(l)), ls.join('\n'));
+    else assert.ok(ls.some((l) => /agentes 1 vivo$/.test(l)) && ls.some((l) => /^├─ ◌ .*sem agente · T07/.test(l)), ls.join('\n'));
   }
 });

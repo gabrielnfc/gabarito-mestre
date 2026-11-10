@@ -73,7 +73,6 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
   const w = Math.floor(w0);
   const narracao = o.narracao === true;
   const larga = w >= 60; // desenho completo (A–C)
-  const compacta = w >= 44 && w < 60;
   const minima = w < 44;
 
   const topo = blocoTopo(e, w);
@@ -171,7 +170,7 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
   // ───────── EQUIPE ─────────
   const eq = e.equipe;
   const vivos = nn(eq.vivos);
-  if (larga) saida.push(cortarLinha(alinhar([seg('EQUIPE')], [seg(vivos === null ? 'agentes —' : `agentes ${Math.round(vivos)} vivos`, 'inactive')], w), w));
+  if (larga) saida.push(cortarLinha(alinhar([seg('EQUIPE')], [seg(vivos === null ? 'agentes —' : `agentes ${Math.round(vivos)} ${Math.round(vivos) === 1 ? 'vivo' : 'vivos'}`, 'inactive')], w), w));
 
   const lider = eq.lider;
   const lctx = nn(lider.ctx);
@@ -212,7 +211,7 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
       const nome = t(r.nome);
       const m = nn(r.mutacoesHoje);
       const k = nn(r.mortasHoje);
-      const sufixo = m !== null && k !== null ? ` · ${Math.round(m)} mutações do gate hoje, ${Math.round(k)} mortas` : '';
+      const sufixo = m !== null && k !== null ? ` · ${Math.round(m)} ${Math.round(m) === 1 ? 'mutação' : 'mutações'} do gate hoje, ${Math.round(k)} ${Math.round(k) === 1 ? 'morta' : 'mortas'}` : '';
       if (larga) {
         saida.push(cortarLinha(aparar([
           seg(PREFIXO(false, true), 'inactive'), seg('◐', 'warning'), seg(' '),
@@ -266,10 +265,10 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
   const ciTxt = ci === true ? 'verde' : ci === false ? 'vermelho' : '—';
   const ciCor: CorTema = ci === true ? 'success' : ci === false ? 'warning' : 'inactive';
   if (larga) {
-    saida.push(cortarLinha([
-      seg('CI '), seg('●', ciCor), seg(` ${ciTxt}   PROD leu ${leu} · alterou ${alt}   política ${t(e.rodape.politica)}`),
-      ...(k > 0 ? [seg(`   ▼ ${k} eventos`, 'inactive')] : []),
-    ], w));
+    // `▼ K eventos` encostado à direita e sempre inteiro; quem cede é a política (cortada com `…`), nunca o contador
+    saida.push(cortarLinha(alinhar(
+      [seg('CI '), seg('●', ciCor), seg(` ${ciTxt}   PROD leu ${leu} · alterou ${alt}   política ${t(e.rodape.politica)}`)],
+      k > 0 ? [seg(`▼ ${k} ${k === 1 ? 'evento' : 'eventos'}`, 'inactive')] : [], w), w));
   } else {
     saida.push(cortarLinha([seg('CI '), seg('●', ciCor), seg(` ${ciTxt}  PROD ${leu}/${alt}`), ...(k > 0 ? [seg(`  ▼ ${k}`, 'inactive')] : [])], w));
   }
