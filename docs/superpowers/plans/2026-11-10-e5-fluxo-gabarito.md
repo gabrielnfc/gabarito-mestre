@@ -248,7 +248,7 @@ Mapa fato → chave (D-6, Sombra): `tipo_repo` ⇒ `perfil` na raiz, só `repo-s
 
 **Produces:** Stop: a pendência é avaliada **antes** da regra "loop.parar ⇒ silêncio". O estado fica em `.harness/stop-aprender.json {entrega, avisados: string[]}` (`"sessao:seq"`), gravado por tmp + rename. Pendência não avisada ⇒ `{decision:'block', reason}`, com `reason` = `Loop da entrega <e> tem aprendizado pendente: <tipo> <sessao:seq>, …. Feche com loop.mjs aprendizado <E|A> <D|M> --gatilho <sessao:seq> --regra <t> --entra-em <a> ou loop.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>.`. Todas já avisadas ⇒ `systemMessage` com o mesmo comando, sem block. Estado ausente ⇒ vazio; corrompido ⇒ recomeça com causa no aviso; não grava ⇒ aviso, sem block.
 
-- [ ] **Step 1: Testes:** `dois-stops-block-depois-aviso`, `aprender-apos-loop-parar-ainda-block`, `stop-aprender-ausente-x-corrompido`, `parar-sem-progresso-do-stop-sem-pendencia`. Mutação **M-APR2d** (`block` sempre).
+- [ ] **Step 1: Testes:** `dois-stops-block-depois-aviso`, `aprender-apos-loop-parar-ainda-block`, `stop-aprender-ausente-x-corrompido`, `parar-sem-progresso-do-stop-sem-pendencia`. Mutação **M-APR2t** (era M-APR2d, colide com a T3) (`block` sempre).
 - [ ] **Step 2: RED. Step 3: Implementar. Step 4: GREEN;** `npm test` e hooks. **Step 5: P2 + Commit** `feat(GM-13): Stop avisa aprendizado pendente`.
 
 ### Task 8: CLI do aprendizado e aprendizados no despacho
@@ -303,7 +303,7 @@ Cartão: origem `clear|resume|startup` e `pousoSemRetomada` ⇒ `retomada = 'Loo
 - `executarPouso`: submit falho depois do `/clear` ⇒ aviso exato das Global Constraints, `store` limpo, nenhum `loop.parar`; sucesso ⇒ `sessao.retomada {via:'mod', chars}`.
 - `tool.call Agent` não revisor com porta `permitir`: lê diário e plano e nega se `pendenciasAprendizado(...)` não for vazio, com o texto `aprendizado pendente: feche antes de despachar`. O motivo de negação do mod (`mod/gabarito.mjs:230-233`) usa o mesmo texto, nunca `aprender` cru (Sombra 2d.4).
 
-- [ ] **Step 1: Testes** (mod): `so-composer-grava` (origens `composer`, `peer`, `plugin`, `scheduled-trigger`, `composer`+`command` ⇒ 1 evento), `bridge-grava`, `origem-ausente-nao-grava`, `texto-vazio-nao-grava`, `mensagem-nunca-o-texto` (sentinela ausente de todo jsonl), `sem-loop-nao-grava`, `submit-pos-clear-falha-sem-parar` (0 `loop.parar`, 1 `sessao.pouso`, aviso exato), `falha-antes-do-clear-sem-pouso`, `retomada-via-mod`, `um-so-clear`, `agent-negado-com-pendencia-abaixo-de-x`, `revisor-passa-com-pendencia`, `ponte-mensagem-ausente-x-corrompida`. Mutações **M-APR2e** (aceita `peer`) e **M-POU3b** (submit pós-`/clear` grava `loop.parar`), por `cd .. && bash scripts/test/mod-test.sh`.
+- [ ] **Step 1: Testes** (mod): `so-composer-grava` (origens `composer`, `peer`, `plugin`, `scheduled-trigger`, `composer`+`command` ⇒ 1 evento), `bridge-grava`, `origem-ausente-nao-grava`, `texto-vazio-nao-grava`, `mensagem-nunca-o-texto` (sentinela ausente de todo jsonl), `sem-loop-nao-grava`, `submit-pos-clear-falha-sem-parar` (0 `loop.parar`, 1 `sessao.pouso`, aviso exato), `falha-antes-do-clear-sem-pouso`, `retomada-via-mod`, `um-so-clear`, `agent-negado-com-pendencia-abaixo-de-x`, `revisor-passa-com-pendencia`, `ponte-mensagem-ausente-x-corrompida`. Mutações **M-APR2w** (aceita `peer`) e **M-POU3b** (submit pós-`/clear` grava `loop.parar`), por `cd .. && bash scripts/test/mod-test.sh`.
 - [ ] **Step 2: RED. Step 3: Implementar;** `build.mjs`. **Step 4: GREEN;** `mod-test.sh`; `claude plugin validate .`. **Step 5: P2 + Commit** `feat(GM-13): mod grava mensagem do dono e retoma pelo contexto`.
 
 ### Task 11: Registro de decisões
@@ -407,7 +407,7 @@ Conformidade: ao conferir spec nova, `loop.mjs aprendizados --para spec`, listan
 | REQ | Task(s) | Teste âncora | Mutação |
 |---|---|---|---|
 | APR-1 | T1 (forma), T2 (existência), T8 (CLI) | `forma-aprendizado-brief-sombra-recusa`, `aprendizado-fonte-inexistente-recusa`, `forma-aprendizado-numero-texto-e-nan-recusa`, `forma-substitui-entrega-invalida` | M-APR1c D sem evidência (T1); M-APR1b pular `ls-files` (T8) |
-| APR-2 | T1, T3, T7a, T7b, T8, T10 | `tres-integradas-aprender-com-terceiro`, `cinco-mensagens-uma-pendencia`, `dois-stops-block-depois-aviso`, `so-composer-grava`, `nada-sem-pendencia-recusa`, `painel-parar-segue-depois-de-aprendizado` | M-APR2a despachar (T7a), 2b âncora (T3), 2c 1/mensagem (T3), 2d `block` sempre (T7b), 2e `peer` (T10), 2f chave extra (T1), 2g `LIMPA_PARAR` (T7a), M-T7h ajuste aditivo (T7a) |
+| APR-2 | T1, T3, T7a, T7b, T8, T10 | `tres-integradas-aprender-com-terceiro`, `cinco-mensagens-uma-pendencia`, `dois-stops-block-depois-aviso`, `so-composer-grava`, `nada-sem-pendencia-recusa`, `painel-parar-segue-depois-de-aprendizado` | M-APR2a despachar (T7a), 2b âncora (T3), 2c 1/mensagem (T3), 2t/2u/2v `block` sempre e extras (T7b; 2d/2e são da T3), 2w `peer` (T10), 2f chave extra (T1), 2g `LIMPA_PARAR` (T7a), M-T7h ajuste aditivo (T7a) |
 | APR-3 | T2, T8, T9, T15 | `proxima-item-revisor-sem-implementador`, `cartao-cheio-com-retomada-ate-4329-linha-presente` | M-APR3a M no brief (T8), 3b linha cortada (T9) |
 | APR-4 | T13 | `m-tres-entregas-depois-avisa`, `m-substituido-por-outra-entrega-silencio` | M-APR4 `>= 2` |
 | REG-1 | T11, T15 | `registro-mesmo-diario-mesmo-byte` | M-REG1 ordem de chegada |
