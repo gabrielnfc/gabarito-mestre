@@ -14,6 +14,7 @@ import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { saidaParaAcao } from '../scripts/stop-loop.mjs';
 import { TIPOS_DE_PROGRESSO } from '../dist/loop.js';
+import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
 
 const aqui = dirname(fileURLToPath(import.meta.url));
 const GATES = join(aqui, '..');
@@ -288,6 +289,7 @@ test('stop-evento-depois-do-parar-religa', () => {
   const raiz = repo();
   plano(raiz);
   diario(raiz, 'S1', [ev('S1', 1, 'loop.parar', { motivo: 'sem_progresso' })]);
+  fecharPendenciasNoDiario(entregaDir(raiz), PLANO); // REQ-APR-2 muda a ordem: `loop.parar` sem os `stops` do Stop abre pendência `parar`
   mudo(stop(raiz));
   diario(raiz, 'humano', [ev('humano', 1, 'task.reaberta', { task: 'T1', origem: 'dono' })]);
   bloqueia(stop(raiz), /T1/);
@@ -649,7 +651,7 @@ test('stop-dist-loop-ausente-avisa-sem-excecao', () => {
 test('stop-dist-diario-ausente-avisa-sem-excecao', () => {
   const raiz = repo();
   plano(raiz);
-  const r = stop(raiz, {}, { script: copiaSemDist(false, ['plano.js', 'formas.js', 'painel-largura.js', 'emenda.js', 'loop.js']) });
+  const r = stop(raiz, {}, { script: copiaSemDist(false, ['plano.js', 'formas.js', 'painel-largura.js', 'emenda.js', 'loop.js', 'pendencias.js']) });
   avisa(r, /dist\/diario\.js/);
   assert.equal(r.stderr, '');
 });
@@ -719,7 +721,7 @@ test('stop-linha-corrompida-nao-zera: nem derruba o hook', () => {
 });
 
 // GM-11 T6: o julgamento de emenda (descongela) também é progresso; a `emenda.proposta` não.
-const LISTA_REQ_LOOP_5 = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'ci.resultado', 'spec.emendada', 'emenda.rejeitada'];
+const LISTA_REQ_LOOP_5 = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'ci.resultado', 'spec.emendada', 'emenda.rejeitada', 'aprendizado', 'aprendizado.nada'];
 
 test('stop-lista-progresso-igual-loop: a lista única é a que proximaAcao consome (REQ-LOOP-5)', () => {
   const fonte = readFileSync(join(GATES, 'src', 'loop.ts'), 'utf8');
@@ -727,7 +729,7 @@ test('stop-lista-progresso-igual-loop: a lista única é a que proximaAcao conso
   assert.ok(m, 'loop.ts perdeu TIPOS_DE_TASK');
   const deTask = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
   assert.ok(/e\.tipo === 'ci\.resultado'/.test(fonte), 'loop.ts deixou de consumir ci.resultado');
-  assert.deepEqual([...TIPOS_DE_PROGRESSO].sort(), [...deTask, 'ci.resultado', 'spec.emendada', 'emenda.rejeitada'].sort());
+  assert.deepEqual([...TIPOS_DE_PROGRESSO].sort(), [...deTask, 'ci.resultado', 'spec.emendada', 'emenda.rejeitada', 'aprendizado', 'aprendizado.nada'].sort());
   // tirar qualquer tipo da fonte reprova: a lista é a da spec, item a item
   assert.deepEqual([...TIPOS_DE_PROGRESSO].sort(), [...LISTA_REQ_LOOP_5].sort());
 });
@@ -743,7 +745,7 @@ test('stop-e-mod-nao-tem-lista-propria: stop-loop.mjs e mod/gabarito.mjs não re
 test('stop-loop-sem-lista-de-progresso-avisa-sem-block: nunca conta com lista vazia', () => {
   const raiz = repo();
   plano(raiz);
-  const script = copiaSemDist(false, ['plano.js', 'formas.js', 'emenda.js', 'diario.js', 'diario-puro.js', 'sombra.js', 'painel-largura.js']);
+  const script = copiaSemDist(false, ['plano.js', 'formas.js', 'emenda.js', 'diario.js', 'diario-puro.js', 'sombra.js', 'painel-largura.js', 'pendencias.js']);
   const dist = join(dirname(dirname(script)), 'dist');
   const js = readFileSync(join(GATES, 'dist', 'loop.js'), 'utf8').replace(/^export const TIPOS_DE_PROGRESSO\b.*$/m, '');
   assert.ok(!/export const TIPOS_DE_PROGRESSO/.test(js), 'preparo: export removido');
@@ -952,6 +954,7 @@ function emTudoIntegradoComPropostas(reqs, branch = 'wt/GM-10-8') {
   const raiz = repo(branch);
   plano(raiz);
   diario(raiz, 's', [...TASK_APROVADA(), ev('s', 4, 'task.integrada', { task: 'T1' })]);
+  fecharPendenciasNoDiario(entregaDir(raiz), PLANO); // REQ-APR-2 muda a ordem: tudo integrado abre o fechamento antes do `esperar{emenda}`
   diario(raiz, 'emendas', reqs.map((req, i) => ev('emendas', i + 1, 'emenda.proposta', { req, ...DADOS_PROPOSTA })));
   return raiz;
 }
@@ -1026,6 +1029,7 @@ test('stop-esperar-emenda-via-dist: diário real (append) com proposta aberta, p
   grava('s', 'task.concluida', { task: 'T1' });
   grava('s', 'review.veredito', { task: 'T1', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 });
   grava('s', 'task.integrada', { task: 'T1' });
+  fecharPendenciasNoDiario(entregaDir(raiz), PLANO); // REQ-APR-2 muda a ordem: tudo integrado abre o fechamento antes do `esperar{emenda}`
   grava('emendas', 'emenda.proposta', { req: 'REQ-A-1', ...DADOS_PROPOSTA });
   const acao = proximaAcao(PLANO, ler(entregaDir(raiz)), {
     slots: 1, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false,

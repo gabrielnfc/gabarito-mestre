@@ -7,6 +7,7 @@
 // A projeção das propostas abertas é UMA só, a de `emenda.ts`; `emenda.ts` importa `ordenar` daqui (ciclo medido nos runners).
 import { projetarEmendas } from './emenda.ts';
 import { PAPEIS } from './formas.ts';
+import { pendenciasAprendizado } from './pendencias.ts';
 import type { AcaoLoop, Evento, Papel, Plano, PropostaAberta, Sinais } from './tipos.ts';
 
 export type { AcaoLoop, MotivoParar, Papel, Plano, Sinais, TaskPlano } from './tipos.ts';
@@ -20,7 +21,7 @@ export const TIPOS_DE_TASK: readonly string[] = ['task.iniciada', 'task.concluid
  * Fonte única: o hook Stop (contador de Stops) e o mod (marcador de pouso pendente) importam esta lista; guarda, sessão, custo,
  * pouso, pausa e a própria `emenda.proposta` (só um pedido) não contam.
  */
-export const TIPOS_DE_PROGRESSO: readonly string[] = [...TIPOS_DE_TASK, 'ci.resultado', 'spec.emendada', 'emenda.rejeitada'];
+export const TIPOS_DE_PROGRESSO: readonly string[] = [...TIPOS_DE_TASK, 'ci.resultado', 'spec.emendada', 'emenda.rejeitada', 'aprendizado', 'aprendizado.nada'];
 
 /** Comparação por código, nunca por localidade: a ordem não pode depender da máquina. */
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -258,6 +259,10 @@ export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais): Ac
   if (plano.politica_entrega?.exige_prod === true && sinais.politica === 'sob_demanda') {
     return { tipo: 'parar', motivo: 'janela_ausente' };
   }
+  // (4c) REQ-APR-2: pendência de aprendizado aberta vence tudo que vem depois (plano vazio, pouso, integração, despacho, concluir). A (1) já
+  // barrou o diário fora da tabela: `pendenciasAprendizado` devolve `[]` nele e nunca é lido como "sem pendência".
+  const pendencias = pendenciasAprendizado(plano, ord.eventos);
+  if (pendencias.length > 0) return { tipo: 'aprender', pendencias };
   // Plano vazio não é sucesso: nada foi entregue.
   if (plano.tasks.length === 0) return { tipo: 'parar', motivo: 'nao_conseguiu' };
 

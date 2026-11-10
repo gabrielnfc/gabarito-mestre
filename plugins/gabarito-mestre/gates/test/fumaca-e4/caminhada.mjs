@@ -14,10 +14,12 @@
  */
 import { spawnSync, execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, copyFileSync, mkdtempSync, realpathSync, existsSync, rmSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as diario from '../../dist/diario.js';
+import { fecharPendenciasNoDiario } from '../_adaptador-helpers.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SCRIPTS = join(AQUI, '..', '..', 'scripts');
@@ -160,6 +162,8 @@ function caminhada(a, opcoes) {
   opcoes.aposMontar?.(a);
   const loop = (...args) => a.rodar('loop.mjs', args);
   const painel = (args, input) => a.rodar('painel.mjs', args, input);
+  /** REQ-APR-2 muda a ordem: fecha o que `pendenciasAprendizado` do `dist/` devolve (review, parar, fechamento), como o modelo faria antes de `proxima`/`decidir`. */
+  const fechar = () => fecharPendenciasNoDiario(a.entregas, JSON.parse(readFileSync(join(a.entregas, 'plano.json'), 'utf8')));
   const obs = { dir: a.dir, base: a.base, entregas: a.entregas };
 
   // transcript do agente vivo na forma `<abs>/subagents/agent-<id>.jsonl`
@@ -194,8 +198,10 @@ function caminhada(a, opcoes) {
   obs.estadoEmenda = ok(painel(['estado', '--agentes'], entradaDoMod(transcript)), 'estado emenda');
 
   // 3. o loop decide parar por teto de rodadas em T2 e grava; o painel, nos dois presets, com o agente vivo (transcript de fixture)
+  fechar();
   obs.proximaTeto = ok(loop('proxima', '--vivos', '0'), 'proxima teto');
   obs.parar = ok(loop('parar', 'teto_rodadas'), 'parar');
+  fechar();
   obs.estadoParou = ok(painel(['estado', '--agentes'], entradaDoMod(transcript)), 'estado parou');
   obs.textoEsquadrao = painel(['texto', '--preset', 'esquadrao', '--largura', '80', '--tema', 'mono', '--agentes'], entradaDoMod(transcript));
   obs.textoExecutivo = painel(['texto', '--preset', 'executivo', '--largura', '80', '--tema', 'mono', '--agentes'], entradaDoMod(transcript));
@@ -212,8 +218,10 @@ function caminhada(a, opcoes) {
   entregar(a, 'T3', 'src/c.mjs');
   for (const p of [['iniciar', 'T3', 'revisor'], ['veredito', 'T3', 'APROVADO', '1', '0', '0']]) ok(loop(...p), p.join(' '));
   obs.integrarT3 = ok(loop('integrar', 'T3'), 'integrar T3');
+  fechar();
   obs.proximaFim = ok(loop('proxima', '--vivos', '0'), 'proxima fim');
   ok(loop('ci', 'verde', '--alvo', 'homolog'), 'ci verde homolog');
+  fechar();
   obs.decidir = ok(a.rodar('entrega.mjs', ['decidir', '--entrega', ENTREGA]), 'decidir');
   obs.devolver = a.rodar('entrega.mjs', ['devolver', '--motivo', 'quero revisar antes de subir', '--entrega', ENTREGA]);
   obs.estadoDevolvido = ok(painel(['estado', '--agentes'], entradaDoMod(transcript, false)), 'estado devolvido');

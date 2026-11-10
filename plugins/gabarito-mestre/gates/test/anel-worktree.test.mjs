@@ -19,6 +19,7 @@ import { join, dirname, basename } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { rodarBruto, sessaoNova } from './_adaptador-helpers.mjs';
+import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const LOOP = join(AQUI, '..', 'scripts', 'loop.mjs');
@@ -349,6 +350,7 @@ describe('T20: achados do revisor atravessam guarda, veredito e proxima (costura
     const ab = cli(R, ['abrir', 'T1']);
     assert.equal(ab.rc, 0, ab.out + ab.err);
     assert.equal(ab.j.ja_aberta, true);
+    fecharPendenciasNoDiario(join(R, '.harness', 'entregas', 'GM-99'), PLANO); // REQ-APR-2 muda a ordem: o MAJOR do REPROVADO abre pendência antes da correção
     const p = cli(R, ['proxima', '--vivos', '0']);
     const item = p.j.acao.itens.find((i) => i.task === 'T1');
     assert.equal(item.papel, 'correcao');

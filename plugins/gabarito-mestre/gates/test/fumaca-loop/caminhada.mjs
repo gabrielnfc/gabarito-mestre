@@ -18,6 +18,7 @@ import {
 import { hostname } from 'node:os';
 import { join, dirname } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
+import { fecharPendenciasNoDiario } from '../_adaptador-helpers.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 export const PLUGIN = join(AQUI, '..', '..', '..'); // plugins/gabarito-mestre
@@ -147,8 +148,11 @@ export async function caminhar(opcoes) {
     const r = spawnSync('bash', ['-c', cmd], { cwd: REAL, encoding: 'utf8', env: ambiente(envBase) });
     return { rc: r.status, out: r.stdout, err: r.stderr };
   }
+  /** REQ-APR-2: fecha só o que `pendenciasAprendizado` do `dist/` devolve (review, parar, fechamento). */
+  const fechar = () => fecharPendenciasNoDiario(DIR, JSON.parse(readFileSync(join(DIR, 'plano.json'), 'utf8')));
   /** CLI do loop pela guarda. `previsto(j)` diz se um ok:false é parte do caminho (então não é defeito). */
   function cli(args, previsto = () => false) {
+    fechar(); // REQ-APR-2 muda a ordem: o modelo que a skill descreve fecha o aprendizado pedido (T8 dá o CLI) antes de seguir
     const r = bash(`node "${LOOP}" ${args.join(' ')}`);
     let j = null;
     try { j = JSON.parse(r.out); } catch { /* sem JSON */ }
@@ -557,6 +561,7 @@ export async function caminhar(opcoes) {
     if (e.tipo === 'review.veredito') desde++;
     if (e.tipo === 'sessao.pouso') { if (desde === 0) pousosSemVeredito.push(e.ts); desde = 0; }
   });
+  fechar();
   const final = spawnSync(NODE, [LOOP, 'proxima', '--vivos', '0'], { cwd: REAL, encoding: 'utf8', env: ambiente(envBase) });
   let acaoFinal = null;
   try { acaoFinal = JSON.parse(final.stdout).acao; } catch { def('proxima final sem JSON'); }

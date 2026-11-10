@@ -6,12 +6,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { CHAVES_DE_EVENTO, estadoDe, ordenar, podeIntegrar, proximaAcao, tasksCongeladas, TIPOS_DE_PROGRESSO, TRANSICOES } from '../src/loop.ts';
+import { CHAVES_DE_EVENTO, estadoDe, ordenar, podeIntegrar, proximaAcao as proximaAcaoNucleo, tasksCongeladas, TIPOS_DE_PROGRESSO, TRANSICOES } from '../src/loop.ts';
+import { fecharPendencias } from './_adaptador-helpers.mjs';
 import * as diarioFs from '../src/diario.ts';
 import { projetarEmendas, reqsCongelados, SESSAO_EMENDAS } from '../src/emenda.ts';
 import type { ChaveEvento, EstadoTask } from '../src/loop.ts';
 import { analisarFronteira, negaDespacho } from '../src/pouso.ts';
 import type { Evento, Plano, Sinais, TipoEvento } from '../src/tipos.ts';
+
+/**
+ * REQ-APR-2 muda a ordem: pendência de aprendizado aberta (MAJOR/BLOCKER, `loop.parar`, tudo integrado) vence pouso, integração, despacho e `concluir`.
+ * Os testes desta tabela, de antes da E5a, provam as outras cláusulas: eles passam por aqui, com o que a máquina abriu já fechado
+ * (só o que `pendenciasAprendizado` do `dist/` devolve). Os testes de `aprender` chamam `proximaAcaoNucleo`, sem fechar nada.
+ */
+const proximaAcao = (p: Plano, evs: Evento[], s: Sinais) => proximaAcaoNucleo(p, [...evs, ...fecharPendencias(p, evs)], s);
 
 const plano = (...tasks: [string, string[]?][]): Plano => ({
   entrega: 'GM-10',
@@ -1168,6 +1176,98 @@ test('proposta-de-outra-sessao-nao-congela-no-loop', () => {
   const propria = [...diarioT(...aprovada('T1')), prop(1, 'REQ-A-1')];
   assert.deepEqual([...tasksCongeladas(p, propria)], ['T1']);
 });
+
+// ===================================================================================================================
+// GM-13 T7a (REQ-APR-2): `aprender` logo depois de (4b), antes de "plano vazio", pouso, integração, despacho e `concluir`.
+// Estes testes chamam `proximaAcaoNucleo`: nada é fechado por trás. Pendência = `{sessao, seq, tipo}` do gatilho.
+// ===================================================================================================================
+const nada = (sessao: string, seq: number): [TipoEvento, Record<string, unknown>] => ['aprendizado.nada', { gatilho: { sessao, seq }, motivo: 'sem lição nova' }];
+const reprovaMajor = (t: string): [TipoEvento, Record<string, unknown>] => ver(t, 'REPROVADO', 1, 1);
+const PEND_REVIEW_3 = [{ sessao: 's1', seq: 3, tipo: 'review' }];
+const pararEv = (motivo: string): [TipoEvento, Record<string, unknown>] => ['loop.parar', { motivo }];
+
+test('tres-integradas-aprender-com-terceiro: tudo integrado abre o fechamento, ancorado no 3º task.integrada (seq 12), e o núcleo manda aprender', () => {
+  const p = plano(['a'], ['b'], ['c']);
+  const evs = diario(...pronta('a'), ...pronta('b'), ...pronta('c'));
+  assert.deepEqual(proximaAcaoNucleo(p, evs, sinais()), { tipo: 'aprender', pendencias: [{ sessao: 's1', seq: 12, tipo: 'fechamento' }] });
+  // só 2 de 3 integradas: sem fechamento
+  assert.notEqual(proximaAcaoNucleo(p, diario(...pronta('a'), ...pronta('b')), sinais()).tipo, 'aprender');
+});
+test('aprender-fechado-concluir: o aprendizado.nada com o gatilho do fechamento devolve `concluir`; gatilho de outro par não fecha', () => {
+  const p = plano(['a'], ['b'], ['c']);
+  const base = [...pronta('a'), ...pronta('b'), ...pronta('c')];
+  assert.deepEqual(proximaAcaoNucleo(p, diario(...base, nada('s1', 12)), sinais()), { tipo: 'concluir' });
+  assert.deepEqual(proximaAcaoNucleo(p, diario(...base, nada('s1', 11)), sinais()), { tipo: 'aprender', pendencias: [{ sessao: 's1', seq: 12, tipo: 'fechamento' }] });
+  assert.deepEqual(proximaAcaoNucleo(p, diario(...base, nada('outra', 12)), sinais()), { tipo: 'aprender', pendencias: [{ sessao: 's1', seq: 12, tipo: 'fechamento' }] });
+});
+test('aprender-fechado-com-emenda-aberta-espera: fechado o fechamento, a proposta aberta segue valendo (`esperar emenda`, nunca `concluir`)', () => {
+  const p = plano(['a']);
+  const evs = [...diario(...pronta('a'), nada('s1', 4)), prop(1, 'REQ-A-1', {}, 100)];
+  assert.deepEqual(proximaAcaoNucleo(p, evs, sinais()), { tipo: 'esperar', motivo: 'emenda', propostas: [{ seq: 1, req: 'REQ-A-1' }] });
+});
+test('major-acima-de-x-aprender-nao-pousar: REPROVADO com MAJOR e percent ≥ X dá aprender, nunca pousar; fechado, volta a pousar', () => {
+  const p = plano(['a']);
+  const base = [ini('a'), con('a'), reprovaMajor('a')];
+  assert.deepEqual(proximaAcaoNucleo(p, diario(...base), NX()), { tipo: 'aprender', pendencias: PEND_REVIEW_3 });
+  assert.deepEqual(proximaAcaoNucleo(p, diario(...base, nada('s1', 3)), NX()), { tipo: 'pousar' });
+});
+test('aprender-depois-de-4b: pausa, teto de tokens, CI vermelho ×2 e janela ausente (4b) vencem a pendência', () => {
+  const p = plano(['a']);
+  const aberta = diario(ini('a'), con('a'), reprovaMajor('a'));
+  assert.deepEqual(proximaAcaoNucleo(p, aberta, sinais({ pausado: true })), { tipo: 'esperar', motivo: 'pausado' });
+  assert.deepEqual(proximaAcaoNucleo(p, aberta, sinais({ tokens: 9, tetoTokens: 1 })), { tipo: 'parar', motivo: 'teto_tokens' });
+  assert.deepEqual(proximaAcaoNucleo(p, diario(ini('a'), con('a'), reprovaMajor('a'), ci(false), ci(false)), sinais()), { tipo: 'parar', motivo: 'ci_vermelho' });
+  const prod: Plano = { ...p, politica_entrega: { politica: 'continua', exige_prod: true } };
+  assert.deepEqual(proximaAcaoNucleo(prod, aberta, sinais({ politica: 'sob_demanda' })), { tipo: 'parar', motivo: 'janela_ausente' });
+  assert.equal(proximaAcaoNucleo(prod, aberta, sinais({ politica: 'continua' })).tipo, 'aprender', 'sem 4b a pendência vale');
+});
+test('despachar-bloqueado-com-pendencia: há task pendente que seria despachada, e o núcleo manda aprender', () => {
+  const p = plano(['a'], ['b']);
+  const evs = diario(ini('a'), con('a'), reprovaMajor('a'));
+  assert.deepEqual(proximaAcaoNucleo(p, evs, sinais({ percent: 10 })), { tipo: 'aprender', pendencias: PEND_REVIEW_3 });
+  assert.equal(proximaAcaoNucleo(p, diario(ini('a'), con('a'), reprovaMajor('a'), nada('s1', 3)), sinais({ percent: 10 })).tipo, 'despachar');
+  for (const a of [proximaAcaoNucleo(p, evs, sinais({ percent: 10 }))]) assert.equal(negaDespacho(a, false), true);
+});
+test('aprender-antes-de-integrar: com uma task aprovada pronta para integrar, a pendência de outra vem antes; fechada, integra', () => {
+  const p = plano(['a'], ['b']);
+  const base = [ini('a'), con('a'), reprovaMajor('a'), ...aprovada('b')];
+  assert.deepEqual(proximaAcaoNucleo(p, diario(...base), sinais()), { tipo: 'aprender', pendencias: PEND_REVIEW_3 });
+  assert.deepEqual(proximaAcaoNucleo(p, diario(...base, nada('s1', 3)), sinais()), { tipo: 'integrar', tasks: ['b'] });
+});
+test('aprender-plano-vazio-com-parar: plano sem tasks e um loop.parar manual dão aprender (a pendência vem antes de nao_conseguiu)', () => {
+  const p = plano();
+  assert.deepEqual(proximaAcaoNucleo(p, diario(pararEv('nao_conseguiu')), sinais()), { tipo: 'aprender', pendencias: [{ sessao: 's1', seq: 1, tipo: 'parar' }] });
+  assert.deepEqual(proximaAcaoNucleo(p, [], sinais()), { tipo: 'parar', motivo: 'nao_conseguiu' }, 'sem pendência, plano vazio segue em nao_conseguiu');
+});
+test('aprender-com-agentes-vivos: o agente em voo segue, o núcleo ainda manda aprender (não espera, não mata)', () => {
+  const p = plano(['a'], ['b']);
+  const evs = diario(ini('a'), con('a'), reprovaMajor('a'), ini('b'));
+  assert.deepEqual(proximaAcaoNucleo(p, evs, sinais({ vivos: 1 })), { tipo: 'aprender', pendencias: PEND_REVIEW_3 });
+});
+test('diario-fora-da-tabela-vence-pendencia: a (1) para antes; `[]` de pendenciasAprendizado nunca é lido como "sem pendência"', () => {
+  const p = plano(['a']);
+  const fora = [ev(2, '2026-11-03T00:00:01.000Z', 's1', ...reprovaMajor('a')), ev(1, '2026-11-03T00:00:02.000Z', 's1', ...ini('a'))];
+  assert.deepEqual(proximaAcaoNucleo(p, fora, sinais()), invalido);
+  const taskFora = diario(reprovaMajor('zz'));
+  assert.deepEqual(proximaAcaoNucleo(p, taskFora, sinais()), invalido);
+});
+test('proxima-pendencias-ausente-x-corrompido: sem pendência o fluxo é o de hoje; diário corrompido não vira nem aprender nem sem pendência', () => {
+  const p = plano(['a']);
+  assert.deepEqual(proximaAcaoNucleo(p, [], sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'implementador' }] });
+  assert.deepEqual(proximaAcaoNucleo(p, diario(ini('a'), con('a'), ver('a', 'APROVADO', 1)), sinais({ percent: 10 })), { tipo: 'integrar', tasks: ['a'] });
+  assert.deepEqual(proximaAcaoNucleo(p, [{ ...ev(1, 'ontem', 's1', ...reprovaMajor('a')) }], sinais()), invalido);
+});
+test('negaDespacho-aprender-sempre: com ou sem fronteira consumida; concluir e integrar continuam livres', () => {
+  const aprender = { tipo: 'aprender', pendencias: [{ sessao: 's1', seq: 3, tipo: 'review' }] } as const;
+  assert.equal(negaDespacho(aprender, true), true);
+  assert.equal(negaDespacho(aprender, false), true);
+  assert.equal(negaDespacho({ tipo: 'concluir' }, true), false);
+  assert.equal(negaDespacho({ tipo: 'integrar', tasks: ['a'] }, false), false);
+});
+test('progresso-inclui-aprendizado: aprendizado e aprendizado.nada contam como progresso (REQ-APR-2)', () => {
+  assert.ok(TIPOS_DE_PROGRESSO.includes('aprendizado'));
+  assert.ok(TIPOS_DE_PROGRESSO.includes('aprendizado.nada'));
+});
 test('dist-loop-nao-importa-node-nem-modulo-que-importe', () => {
   // o mod carrega `dist/loop.js` como módulo de hook: só import relativo e, transitivamente, nenhum `node:*` (medido: `claude plugin test`)
   const visto = new Set<string>();
@@ -1185,4 +1285,6 @@ test('dist-loop-nao-importa-node-nem-modulo-que-importe', () => {
   assert.ok(visto.has('formas.js'));
   // `loop.js` consome a projeção de `emenda.js` (fonte única, que usa `plano.js`): entram no fecho, e nenhum deles importa `node:*`
   assert.ok(visto.has('emenda.js') && visto.has('plano.js'), 'loop.js deve importar emenda.js (sem cópia da projeção)');
+  // REQ-APR-2: a cláusula `aprender` usa a projeção de `pendencias.js` (sem cópia), que entra no fecho e também não importa `node:*`
+  assert.ok(visto.has('pendencias.js'), 'loop.js deve importar pendencias.js (sem cópia da projeção)');
 });

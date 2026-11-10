@@ -18,6 +18,7 @@ import { marcaPronto } from '../scripts/db-template.mjs';
 import { integrarComGate, slotsDaCapacidade } from '../scripts/loop.mjs';
 import { casarAgente } from '../dist/painel-equipe.js';
 import * as diario from '../dist/diario.js';
+import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(AQUI, '..', 'scripts', 'loop.mjs');
@@ -132,6 +133,12 @@ function ambiente({ branch = 'enabler/GM-10-loop', config = CONFIG_PADRAO, plano
     },
     eventos: () => diario.ler(entregas),
     tipos: () => diario.ler(entregas).map((e) => e.tipo),
+    /** REQ-APR-2 muda a ordem: fecha o que `pendenciasAprendizado` do `dist/` devolve (MAJOR, fechamento, parar) para o teste seguir ao que ele prova. Plano ilegível: nada a fechar. */
+    fechar() {
+      let plano;
+      try { plano = JSON.parse(readFileSync(join(entregas, 'plano.json'), 'utf8')); } catch { return 0; }
+      return fecharPendenciasNoDiario(entregas, plano);
+    },
     semear(lista) {
       for (const [tipo, dados] of lista) {
         seq += 1;
@@ -139,6 +146,7 @@ function ambiente({ branch = 'enabler/GM-10-loop', config = CONFIG_PADRAO, plano
         const r = diario.append(entregas, 'loop', { ts, autor: 't@t', sessao: 'loop', agente: 'orquestrador', tipo, dados });
         assert.ok(r.ok && r.gravado === 'evento', JSON.stringify(r));
       }
+      amb.fechar();
     },
     commitNaWt(t, arquivo, conteudo = 'x\n', msg = 'feat(GM-10): trabalho') {
       const w = join(dir, '.harness', 'worktrees', t);
@@ -963,6 +971,7 @@ describe('integrar', () => {
     assert.ok(existsSync(join(amb.dir, 'src/t2.txt')));
     amb.aprovar('T3');
     assert.equal(amb.cli(['integrar', 'T3']).rc, 0);
+    amb.fechar(); // REQ-APR-2 muda a ordem: tudo integrado abre o fechamento antes do `concluir`
     const p = amb.cli(['proxima']);
     assert.equal(p.j.acao.tipo, 'concluir');
   });
@@ -2173,6 +2182,7 @@ describe('T20: abrir idempotente, achados do revisor e spec', () => {
     writeFileSync(achadosDe(amb, t, 1), '- MAJOR 1: falta teste de X (src/t1.txt:1)\n');
     const r = amb.cli(['veredito', t, 'REPROVADO', '1', '0', '1']);
     assert.equal(r.rc, 0, r.out + r.err);
+    amb.fechar(); // REQ-APR-2 muda a ordem: o MAJOR do REPROVADO abre pendência antes da correção
   };
 
   test('abrir-duas-vezes-ok: o mesmo retorno com ja_aberta, sem tocar no trabalho', () => {
@@ -2522,6 +2532,7 @@ function grava(amb, rel, lista) {
     const [sessao, tipo, dados] = it.length === 3 ? it : ['loop', ...it];
     escreve(amb, sessao, tipo, dados, rel());
   }
+  amb.fechar(); // REQ-APR-2 muda a ordem
 }
 const bytesDoDiario = (amb) => Object.fromEntries(readdirSync(amb.entregas).filter((n) => n.startsWith('events.')).sort().map((n) => [n, readFileSync(join(amb.entregas, n), 'utf8')]));
 const ambReq = (opts = {}) => {

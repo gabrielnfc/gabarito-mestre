@@ -108,3 +108,41 @@ export const eventosDe = (repo) => {
     .map((f) => ({ arquivo: join(dir, f), texto: readFileSync(join(dir, f), 'utf8') }));
 };
 
+
+// ── REQ-APR-2 (GM-13 T7a): `proximaAcao` aprende antes de integrar, pousar ou concluir ──────────────────────────────────────────
+// Teste de entrega que integra tudo ou grava MAJOR passa a ter pendência aberta. Estes helpers a fecham, e só o que
+// `pendenciasAprendizado` do `dist/` devolve: nunca um `aprendizado.nada` cego, de gatilho fixo.
+import * as pendenciasDist from '../dist/pendencias.js';
+import * as diarioDist from '../dist/diario.js';
+
+/**
+ * PURO. Eventos `aprendizado.nada`, um por par `(sessao, seq)` aberto em `pendenciasAprendizado(plano, eventos)`, na sessão
+ * própria (seq a partir do próximo livre dela, `ts` ≥ o maior do diário). Não grava nada e não muda `eventos`.
+ */
+export function fecharPendencias(plano, eventos, { sessao = 'aprendiz', ts } = {}) {
+  const abertas = pendenciasDist.pendenciasAprendizado(plano, eventos);
+  const maior = eventos.reduce((m, e) => Math.max(m, Date.parse(e.ts) || 0), 0);
+  const quando = ts ?? new Date(maior).toISOString();
+  let seq = eventos.filter((e) => e.sessao === sessao).reduce((m, e) => Math.max(m, e.seq), 0);
+  return abertas.map((p) => ({
+    seq: ++seq,
+    ts: quando,
+    autor: 'teste',
+    sessao,
+    agente: 'orquestrador',
+    tipo: 'aprendizado.nada',
+    dados: { gatilho: { sessao: p.sessao, seq: p.seq }, motivo: `teste: fecha ${p.tipo}` },
+    hash_anterior: null,
+  }));
+}
+
+/** Lê o diário de `dir`, calcula o que está aberto e grava os `aprendizado.nada` pelo `append` do `dist/diario.js`. Devolve quantos gravou. */
+export function fecharPendenciasNoDiario(dir, plano, { sessao = 'aprendiz' } = {}) {
+  const lidos = diarioDist.ler(dir);
+  const novos = fecharPendencias(plano, lidos, { sessao });
+  for (const e of novos) {
+    const r = diarioDist.append(dir, sessao, { ts: e.ts, autor: e.autor, sessao, agente: e.agente, tipo: e.tipo, dados: e.dados });
+    assert.equal(r.ok, true, `fecharPendencias: ${r.erro}`);
+  }
+  return novos.length;
+}

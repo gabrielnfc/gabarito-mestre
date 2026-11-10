@@ -72,6 +72,17 @@ test('nega-despacho-diario-invalido-nunca-passa: sem veredito a fronteira é con
   assert.equal(negaDespacho({ tipo: 'parar', motivo: 'diario_invalido' }, false), true);
 });
 
+test('nega-com-aprender-mesmo-consumida: pendência de aprendizado nega o despacho com ou sem fronteira consumida (REQ-APR-2)', () => {
+  const aprender = { tipo: 'aprender', pendencias: [{ sessao: 's1', seq: 3, tipo: 'review' }] } as const;
+  assert.equal(negaDespacho(aprender, true), true);
+  assert.equal(negaDespacho(aprender, false), true);
+  assert.equal(negaDespacho({ tipo: 'aprender', pendencias: [] }, true), true, 'a ação aprender nega por ser aprender, não pelo conteúdo');
+  // controles: o resto da tabela não mudou
+  assert.equal(negaDespacho({ tipo: 'concluir' }, true), false);
+  assert.equal(negaDespacho({ tipo: 'integrar', tasks: ['a'] }, false), false);
+  assert.equal(negaDespacho({ tipo: 'pousar' }, true), false);
+});
+
 // ---- já parou / tokens (sinais do núcleo) ----
 test('ja-parou: termina em loop.parar sem trabalho depois (medição não conta); trabalho depois reabre', () => {
   assert.equal(jaParou(diario(ini('a'), ['loop.parar', { motivo: 'teto_rodadas', task: 'a' }])), true);

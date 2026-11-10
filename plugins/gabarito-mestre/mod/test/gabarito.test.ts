@@ -1,5 +1,6 @@
 /** Testes do mod de pouso (GM-10 T9, REQ-POU-1/2, REQ-OBS-1) por `claude plugin test`. Mutações: task-9-mut.json. */
 import { expect, mock, test } from 'claude-code/testing'
+import { pendenciasAprendizado } from '../../gates/dist/pendencias.js'
 
 const RAIZ = '/repo'
 const DIR = '/repo/.harness/entregas/PBI-7'
@@ -85,6 +86,22 @@ const NO_TETO = [
   EV(6, 'review.veredito', { task: 'a', veredito: 'REPROVADO', rodada: 2, major: 1, blocker: 0 }),
 ]
 
+
+/**
+ * REQ-APR-2 muda a ordem: pendência de aprendizado aberta (MAJOR, `loop.parar`, tudo integrado) vence pouso e despacho no núcleo.
+ * Os testes de antes da E5a, que provam as outras cláusulas, fecham o que a máquina abriu: só os pares que `pendenciasAprendizado`
+ * do `dist/` devolve, em `aprendizado.nada` na sessão `aprendiz`. (Cópia do `fecharPendencias` de gates/test/_adaptador-helpers.mjs:
+ * o runner do mod só importa arquivos relativos sem `node:*`.)
+ */
+const fecharPendencias = (plano: any, eventos: any[]) => {
+  const abertas = pendenciasAprendizado(plano, eventos)
+  const ts = new Date(eventos.reduce((m, e) => Math.max(m, Date.parse(e.ts) || 0), 0)).toISOString()
+  let seq = eventos.filter((e) => e.sessao === 'aprendiz').reduce((m, e) => Math.max(m, e.seq), 0)
+  return abertas.map((p) => ({ seq: ++seq, ts, autor: 'teste', sessao: 'aprendiz', agente: 'orquestrador', tipo: 'aprendizado.nada', dados: { gatilho: { sessao: p.sessao, seq: p.seq }, motivo: `teste: fecha ${p.tipo}` }, hash_anterior: null }))
+}
+
+/** Fecha, no diário em memória do `mundo`, o que está aberto no plano dado (o do teste, ou o padrão). */
+const fecharEm = (m: { evs: any[] }, plano: any = PLANO) => { m.evs.push(...fecharPendencias(plano, m.evs)) }
 
 // O mundo debaixo do mod: tudo em memória, com um log único de chamadas na ordem em que acontecem.
 function mundo($: any, on: any, o: Opc = {}) {
@@ -500,6 +517,7 @@ test('em-voo-sem-agente-para-nao-conseguiu: três turnos sem evento novo viram l
   expect(parou(m)).toHaveLength(0)
   await m.turno(); await m.clock.settle()
   expect(parou(m)).toHaveLength(1)
+  fecharEm(m) // REQ-APR-2 muda a ordem: o `loop.parar` do mod abre pendência `parar`
   expect((await m.agent('gabarito-implementador')).deny).toMatch(/nao_conseguiu/) // r8: Agent negado conta como negação; só depois do parar, para não reabrir a task em voo
   expect(parou(m)[0].dados).toEqual({ motivo: 'nao_conseguiu', task: 'a' })
   expect(m.toasts.some((t) => t.includes('nao_conseguiu'))).toBe(true)
@@ -604,6 +622,7 @@ const CASOS_AGENT: [string, Opc, 'nega' | 'passa'][] = [
 for (const [nome, opc, esperado] of CASOS_AGENT) {
   test(`agent-nega-so-se-5-dispara: ${nome} ⇒ ${esperado}`, async ($, on) => {
     const m = mundo($, on, opc)
+    fecharEm(m, opc.plano_json) // REQ-APR-2 muda a ordem: tudo integrado e MAJOR abrem pendência antes da (5)
     const r = await m.agent('gabarito-implementador')
     if (esperado === 'nega') expect(r.deny).toMatch(/pouso/)
     else expect(r.deny).toBeUndefined()
@@ -618,6 +637,7 @@ test('tudo-integrado-conclui-sem-pousar (L, 5d): nenhum pouso e nenhuma parada',
 })
 test('so-no-teto-para-teto-rodadas-uma-vez (M, 5d): sem pouso; loop.parar com o motivo do núcleo, uma vez só', async ($, on) => {
   const m = mundo($, on, { plano_json: { entrega: 'PBI-7', tasks: [PLANO.tasks[0]] }, eventos: NO_TETO })
+  fecharEm(m, { entrega: 'PBI-7', tasks: [PLANO.tasks[0]] }) // REQ-APR-2 muda a ordem: o MAJOR do teto abre pendência antes do `parar`
   await m.inicio()
   for (let i = 0; i < 4; i++) { await m.turno(); await m.clock.settle() }
   expect(m.est.clears).toBe(0)
@@ -836,6 +856,7 @@ test('desistiu-ate-descer: falha antes de gastar a fronteira só volta a tentar 
   const m = mundo($, on, o)
   await pousar(m)
   expect(m.est.clears).toBe(0)
+  fecharEm(m) // REQ-APR-2 muda a ordem: a falha do pouso gravou `loop.parar`, que abre pendência `parar`
   o.storeSetFalha = false
   m.est.percent = 70
   await m.turno(); await m.clock.settle() // ainda desistiu: percent não caiu
@@ -1415,6 +1436,7 @@ test('negado-reabre-e-pousa: Agent negado com a task iniciada ⇒ no fim do turn
 })
 test('negado-corrigindo-volta-a-reprovada: a correção negada reabre a task reprovada e o pouso acontece', async ($, on) => {
   const m = mundo($, on, { eventos: aposB(A_INI, A_CON, A_VER_REP, A_COR) })
+  fecharEm(m) // REQ-APR-2 muda a ordem: o MAJOR do REPROVADO abre pendência antes do pouso
   await m.inicio()
   await m.agent('gabarito-implementador')
   await m.turno(); await m.clock.settle()
@@ -1518,6 +1540,7 @@ naoDecide('erro-api', { reason: 'error' })
 test('lote-correcao-revisor (achado 1): correção negada + revisor aceito, revisor vivo ⇒ nada reaberto; com vivos 0 só a correção, antes do pouso', async ($, on) => {
   const o: Opc = { eventos: aposB(A_INI, A_CON, A_VER_REP, A_COR, C_INI, C_CON, C_REV), plano_json: PLANO5, agentes: VIVO }
   const m = mundo($, on, o)
+  fecharEm(m, PLANO5) // REQ-APR-2 muda a ordem: o MAJOR do REPROVADO abre pendência antes do pouso
   await m.inicio()
   expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/)
   expect((await m.agent('gabarito-revisor')).deny).toBeUndefined()
@@ -1938,6 +1961,7 @@ const naoReabre = (m: ReturnType<typeof mundo>) => {
 
 test('orfa-teto-rodadas-nao-reabre: T1 no teto e outra órfã ⇒ grava parar teto_rodadas com aviso, 0 reabertas, 0 turnos', async ($, on) => {
   const m = mundo($, on, { eventos: EM_TETO_A_E_B_ORFA, plano_json: PLANO_AB })
+  fecharEm(m, PLANO_AB) // REQ-APR-2 muda a ordem: o MAJOR do teto abre pendência antes do `parar`
   await m.inicio()
   await recuperar(m)
   naoReabre(m)

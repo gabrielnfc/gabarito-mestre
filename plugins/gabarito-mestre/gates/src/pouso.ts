@@ -59,6 +59,7 @@ export function portaDoPouso(a: EntradaPouso): LinhaPouso {
  */
 export function negaDespacho(acao: AcaoLoop, consumida: boolean): boolean {
   if (acao.tipo === 'parar' && acao.motivo === 'diario_invalido') return true; // diário fora da tabela nunca libera, nem sem fronteira
+  if (acao.tipo === 'aprender') return true; // pendência aberta nega sempre, mesmo com a fronteira consumida (REQ-APR-2)
   return consumida !== true && acao.tipo !== 'integrar' && acao.tipo !== 'concluir';
 }
 
