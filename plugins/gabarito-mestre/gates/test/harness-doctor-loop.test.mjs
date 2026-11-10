@@ -538,7 +538,7 @@ describe('T13 doctor — aprendizado sem destino, onboarding não detectado, sem
 
   test('doctor-sem-fase-no-texto: label e fix dos checks apontam um item real do onboarding, nunca "fase N"', () => {
     const out = doctor.run(base());
-    const esperado = { versionamento: 'versionamento', 'modelo-resolvido': 'orquestracao' };
+    const esperado = { versionamento: 'versionamento', 'modelo-resolvido': 'orquestracao', 'iniciativa-resolvida': 'iniciativa' };
     for (const [id, item] of Object.entries(esperado)) {
       const r = achado(out, id);
       assert.match(r.fix, new RegExp(`gabarito-instalar \\(trocar ${item}\\)`), `${id}: ${r.fix}`);
@@ -554,8 +554,10 @@ describe('T13 doctor — aprendizado sem destino, onboarding não detectado, sem
   test('doctor-item-citado-existe: todo `trocar <item>` de label, fix e evidência é um item de ORDEM_ITENS (onboarding.mjs)', () => {
     const itens = new Set();
     for (const c of doctor.CHECKS) for (const m of `${c.label} ${c.fix}`.matchAll(/trocar ([a-z_]+)/g)) itens.add(m[1]);
-    assert.deepEqual([...itens].sort(), ['orquestracao', 'versionamento'], 'o teste enxerga os itens citados (não é vacuamente verde)');
-    for (const item of itens) assert.ok(ORDEM_ITENS.includes(item), `"trocar ${item}" não é item do onboarding (${ORDEM_ITENS.join(', ')})`);
+    assert.deepEqual([...itens].sort(), ['iniciativa', 'orquestracao', 'versionamento'], 'o teste enxerga os itens citados (não é vacuamente verde)');
+    // FX4 D3: `iniciativa` não é pergunta (D-3): é o `trocar iniciativa` da skill, fora de ORDEM_ITENS
+    const FORA_DAS_PERGUNTAS = ['settings', 'codeowners', 'apendice', 'iniciativa', 'contenda'];
+    for (const item of itens) assert.ok(ORDEM_ITENS.includes(item) || FORA_DAS_PERGUNTAS.includes(item), `"trocar ${item}" não é item do onboarding (${ORDEM_ITENS.join(', ')})`);
     // a evidência cita o item que o onboarding gravou, um por linha, para todos os itens reais
     const out = doctor.run(repoComGit({ 'AGENTS.md': agents(1), ...cfgComOnboarding({ onboarding: { naoDetectado: [...ORDEM_ITENS] } }) }));
     const citados = avisosDe(out, 'onboarding-nao-detectado').map((a) => /\(trocar ([a-z_]+)\)/.exec(a)?.[1]);

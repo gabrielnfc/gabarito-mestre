@@ -970,7 +970,7 @@ describe('perguntas', () => {
     const raiz = fixtureComGit('monorepo', 'main');
     const it = itensLista(raiz, { claude: SEM_MCP });
     const ps = perguntas(it, existenteDe(raiz, { claude: SEM_MCP }));
-    assert.deepEqual(idsDe(ps), ['politica', 'autonomia', 'perfil', 'tipo_repo', 'ambientes']);
+    assert.deepEqual(idsDe(ps), ['politica', 'autonomia', 'perfil', 'tipo_repo', 'planejamento'], 'ambientes não tem opção: é fato, não pergunta (FX4 D1)');
     assert.equal(ps.length, 5, 'teto 5');
     const tipo = ps[3];
     assert.deepEqual(tipo.opcoes.map((o) => o.valor), ['app', 'repo-sem-app']);
@@ -978,9 +978,9 @@ describe('perguntas', () => {
     const fonteTipo = it.find((i) => i.item === 'tipo_repo').fonte;
     assert.ok(tipo.texto.startsWith('tipo_repo:') && tipo.texto.includes(fonteTipo), tipo.texto);
     assert.deepEqual(tipo.opcoes.map((o) => o.rotulo), ['app', 'repo-sem-app']);
-    const r = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', ambientes: null }, { claude: SEM_MCP });
+    const r = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', planejamento: null }, { claude: SEM_MCP });
     assert.equal(r.ok, true, JSON.stringify(r));
-    assert.deepEqual(r.naoDetectado, ['ambientes', 'planejamento'], 'o 3º fato (planejamento) fica não detectado');
+    assert.deepEqual(r.naoDetectado, ['ambientes', 'planejamento'], 'ambientes (sem opção) e planejamento (respondido null) ficam não detectados');
     const cfg = cfgDe(raiz);
     assert.equal(cfg.fluxo.ferramenta, undefined, 'sem valor gravado para o 3º fato');
     assert.deepEqual(cfg.fluxo, { resolvidoEm: HOJE });
@@ -993,19 +993,18 @@ describe('perguntas', () => {
     const raiz = repoVazio('main'); // sem CI e sem conector
     const it = itensLista(raiz, { claude: SEM_MCP });
     const ps = perguntas(it, null);
-    assert.deepEqual(idsDe(ps), ['politica', 'autonomia', 'perfil', 'ambientes', 'planejamento']);
-    const amb = ps[3];
-    assert.deepEqual(amb.opcoes, [{ valor: null, rotulo: 'deixar não detectado (trocar ambientes depois)' }]);
-    assert.equal(amb.default, null);
-    const pla = ps[4];
+    // FX4 D1: `ambientes` sem candidato teria 1 opção (o AskUserQuestion a rejeita): é fato, não pergunta
+    assert.deepEqual(idsDe(ps), ['politica', 'autonomia', 'perfil', 'planejamento']);
+    for (const p of ps) assert.ok(p.opcoes.length >= 2, `${p.id} com ${p.opcoes.length} opção`);
+    const pla = ps[3];
     assert.deepEqual(pla.opcoes.map((o) => o.valor), ['arquivos', null], 'planejamento sem candidato ⇒ arquivos (regra da 1.1)');
     assert.equal(pla.opcoes[1].rotulo, 'deixar não detectado (trocar planejamento depois)');
     assert.equal(pla.default, 'arquivos');
     // resposta `null` ⇒ naoDetectado e nada gravado; 'arquivos' ⇒ fluxo.ferramenta
-    const a = gravarCom(raiz, { ...FIXAS, ambientes: null, planejamento: null }, { claude: SEM_MCP });
+    const a = gravarCom(raiz, { ...FIXAS, planejamento: null }, { claude: SEM_MCP });
     assert.deepEqual(a.naoDetectado, ['ambientes', 'planejamento']);
     assert.equal(cfgDe(raiz).fluxo.ferramenta, undefined);
-    const b = gravarCom(raiz, { ...FIXAS, ambientes: null, planejamento: 'arquivos' }, { claude: SEM_MCP });
+    const b = gravarCom(raiz, { ...FIXAS, planejamento: 'arquivos' }, { claude: SEM_MCP });
     assert.deepEqual(b.naoDetectado, ['ambientes']);
     assert.equal(cfgDe(raiz).fluxo.ferramenta, 'arquivos');
   });
@@ -1065,10 +1064,15 @@ describe('previa', () => {
 
   test('previa-fato-acima-do-teto-fica-nao-detectado', () => {
     const raiz = fixtureComGit('monorepo', 'main');
+    criarBase(raiz, 'staging', 'main');
+    mergear(raiz, 'main', '2025-06-10');
+    for (const d of ['2025-06-05', '2025-06-12', '2025-06-20']) mergear(raiz, 'staging', d);
     const it = itensLista(raiz, { claude: SEM_MCP });
     const texto = previa(it, perguntas(it, null), { fuso: FUSO });
-    assert.match(texto, /- planejamento: .*fica nao_detectado \(acima do teto de 5 perguntas\)/);
-    assert.ok(!/- ambientes: .*acima do teto/.test(texto));
+    assert.match(texto, /- versionamento: .*fica nao_detectado \(acima do teto de 5 perguntas\)/);
+    assert.ok(!/- ambientes: .*acima do teto/.test(texto), 'ambientes não tem opção: não é teto');
+    assert.match(texto, /- ambientes: sem opção para escolher; fica nao_detectado/);
+    assert.ok(!/- ambientes: pergunto/.test(texto));
   });
 });
 
@@ -1148,7 +1152,7 @@ describe('gravar', () => {
 
   test('gravar-perfil-so-repo-sem-app', () => {
     const raiz = fixtureComGit('monorepo', 'main');
-    const r = gravarCom(raiz, { ...FIXAS, tipo_repo: 'repo-sem-app', ambientes: null }, { claude: SEM_MCP });
+    const r = gravarCom(raiz, { ...FIXAS, tipo_repo: 'repo-sem-app', planejamento: null }, { claude: SEM_MCP });
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.equal(cfgDe(raiz).perfil, 'repo-sem-app');
     assert.ok(!r.naoDetectado.includes('tipo_repo'));
@@ -1156,7 +1160,7 @@ describe('gravar', () => {
 
   test('gravar-app-nao-grava-perfil', () => {
     const raiz = fixtureComGit('monorepo', 'main');
-    const r = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', ambientes: null }, { claude: SEM_MCP });
+    const r = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', planejamento: null }, { claude: SEM_MCP });
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.equal('perfil' in cfgDe(raiz), false, 'nada na raiz para `app`');
     assert.ok(!r.naoDetectado.includes('tipo_repo'));
@@ -1183,10 +1187,10 @@ describe('gravar', () => {
 
   test('gravar-respostas-fora-das-opcoes', () => {
     const raiz = fixtureComGit('monorepo', 'main');
-    const boas = { ...FIXAS, tipo_repo: 'app', ambientes: null };
+    const boas = { ...FIXAS, tipo_repo: 'app', planejamento: null };
     const ruins = [
       { politica: 'rapida' }, { politica: null }, { politica: 1 }, { perfil: 'turbo' }, { perfil: 'Padrao' },
-      { autonomia: 'sim' }, { autonomia: 'não' }, { autonomia: 'true' }, { autonomia: 'false' }, { autonomia: 1 }, { autonomia: null }, { tipo_repo: 'outro' }, { ambientes: 'production' },
+      { autonomia: 'sim' }, { autonomia: 'não' }, { autonomia: 'true' }, { autonomia: 'false' }, { autonomia: 1 }, { autonomia: null }, { tipo_repo: 'outro' }, { planejamento: 'jira' },
     ];
     for (const r of ruins) {
       const out = gravarCom(raiz, { ...boas, ...r }, { claude: SEM_MCP });
@@ -1214,7 +1218,7 @@ describe('gravar', () => {
     const mono = fixtureComGit('monorepo', 'main');
     const d = gravarCom(mono, { ...FIXAS, tipo_repo: 'app' }, { claude: SEM_MCP });
     assert.deepEqual([d.ok, d.erro], [false, 'deteccao_mudou']);
-    assert.match(d.motivo, /ambientes/);
+    assert.match(d.motivo, /planejamento/);
     const { perfil: _, ...semPerfil } = FIXAS;
     const e = gravarCom(raiz, semPerfil);
     assert.equal(e.erro, 'deteccao_mudou');
@@ -1223,24 +1227,30 @@ describe('gravar', () => {
   });
 
   test('gravar-deteccao-mudou-acima-do-teto-nao-escreve', () => {
-    // monorepo: tipo_repo ambiguo + ambientes nao_detectado; com ClickUp o planejamento é detectado (o 3º fato aberto, se falhar, cai acima do teto)
+    // monorepo: tipo_repo ambíguo + versionamento ambíguo (staging 3 × main 1); com ClickUp o planejamento é detectado.
+    // Se o conector cair no gravar, o planejamento vira pergunta e empurra o versionamento para acima do teto: a detecção mudou.
     const falha = { rc: 1, stdout: '', stderr: '', motivo: null };
-    const raiz = fixtureComGit('monorepo', 'main');
+    const monta = () => {
+      const d = fixtureComGit('monorepo', 'main');
+      criarBase(d, 'staging', 'main');
+      mergear(d, 'main', '2025-06-10');
+      for (const dia of ['2025-06-05', '2025-06-12', '2025-06-20']) mergear(d, 'staging', dia);
+      return d;
+    };
+    const raiz = monta();
     const previaPs = perguntas(itensLista(raiz), existenteDe(raiz));
-    assert.deepEqual(idsDe(previaPs), ['politica', 'autonomia', 'perfil', 'tipo_repo', 'ambientes']);
+    assert.deepEqual(idsDe(previaPs), ['politica', 'autonomia', 'perfil', 'tipo_repo', 'versionamento']);
     assert.equal(itensDe(raiz).planejamento.estado, 'detectado', 'a prévia viu o clickup');
-    const r = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', ambientes: null }, { claude: falha, previaClaude: CLICKUP });
-    // as perguntas são as mesmas (planejamento caiu acima do teto), mas o fato mudou
-    assert.deepEqual(idsDe(perguntas(itensLista(raiz, { claude: falha }), existenteDe(raiz))), idsDe(previaPs));
+    const r = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', planejamento: null }, { claude: falha, previaClaude: CLICKUP });
     assert.deepEqual([r.ok, r.erro], [false, 'deteccao_mudou']);
     assert.match(r.motivo, /planejamento/);
     assert.equal(temCfg(raiz), false, 'nada escrito');
     // controle: a mesma resposta com a prévia igual grava (o claude que falha no gravar é o único defeito)
-    const igual = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', ambientes: null }, { claude: falha, previaClaude: falha });
-    assert.equal(igual.ok, true);
-    // outros fatos: versionamento detectado que vira outro valor acima do teto, e valor (não só estado) que muda
-    const outro = fixtureComGit('monorepo', 'main');
-    const v = gravarCom(outro, { ...FIXAS, tipo_repo: 'app', ambientes: null }, { claude: SEM_MCP, previaClaude: CLICKUP });
+    const igual = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', planejamento: null }, { claude: falha, previaClaude: falha });
+    assert.equal(igual.ok, true, JSON.stringify(igual));
+    // o fato acima do teto (versionamento) que muda de valor também derruba a gravação
+    const outro = monta();
+    const v = gravarCom(outro, { ...FIXAS, tipo_repo: 'app', planejamento: null }, { claude: SEM_MCP, previaClaude: CLICKUP });
     assert.deepEqual([v.ok, v.erro], [false, 'deteccao_mudou']);
     assert.equal(temCfg(outro), false);
   });
@@ -1333,8 +1343,8 @@ describe('gravar', () => {
     for (const d of ['2025-06-05', '2025-06-12', '2025-06-20']) mergear(raiz, 'staging', d);
     const it = itensLista(raiz, { claude: SEM_MCP });
     assert.deepEqual(it.map((i) => i.estado), ['ambiguo', 'nao_detectado', 'nao_detectado', 'ambiguo', 'detectado']);
-    assert.deepEqual(idsDe(perguntas(it, null)), ['politica', 'autonomia', 'perfil', 'tipo_repo', 'ambientes']);
-    const r = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', ambientes: null }, { claude: SEM_MCP });
+    assert.deepEqual(idsDe(perguntas(it, null)), ['politica', 'autonomia', 'perfil', 'tipo_repo', 'planejamento']);
+    const r = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', planejamento: null }, { claude: SEM_MCP });
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.deepEqual(r.naoDetectado, ['ambientes', 'planejamento', 'versionamento']);
     const cfg = cfgDe(raiz);
@@ -1438,7 +1448,7 @@ describe('gravar', () => {
     const p = perguntas(it, null).find((q) => q.id === 'planejamento');
     assert.deepEqual(p.opcoes.map((o) => o.valor), ['linear', 'clickup'], 'default = o do .mcp.json do repo');
     assert.equal(p.default, 'linear');
-    const r = gravarCom(raiz, { ...FIXAS, ambientes: null, planejamento: 'clickup' });
+    const r = gravarCom(raiz, { ...FIXAS, planejamento: 'clickup' });
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.deepEqual(cfgDe(raiz).fluxo, { resolvidoEm: HOJE, ferramenta: 'clickup' });
     assert.ok(!r.naoDetectado.includes('planejamento'));

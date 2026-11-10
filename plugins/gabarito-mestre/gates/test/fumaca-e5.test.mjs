@@ -131,7 +131,8 @@ test('fumaca-onboarding-respostas: respostas montadas das perguntas REAIS de `de
     const ids = d.perguntas.map((p) => p.id);
     for (const f of FIXAS) assert.ok(ids.includes(f), `${nome}: falta a pergunta fixa ${f}`);
     // condicionais: 1 por fato aberto, no máximo até 5 perguntas no total
-    const abertos = d.itens.filter((i) => i.estado !== 'detectado').map((i) => i.item);
+    // FX4 D1: item sem escolha real (só "deixar não detectado") é fato, não pergunta
+    const abertos = d.itens.filter((i) => i.estado !== 'detectado' && (i.estado === 'ambiguo' || i.candidatos.length > 0 || i.item === 'planejamento')).map((i) => i.item);
     const condicionais = ids.filter((id) => !FIXAS.includes(id));
     assert.ok(ids.length <= 5, `${nome}: ${ids.length} perguntas`);
     assert.deepEqual(condicionais, abertos.slice(0, 5 - FIXAS.length), `${nome}: uma pergunta por fato aberto, na ordem dos itens`);
@@ -161,14 +162,15 @@ test('fumaca-onboarding-respostas: respostas montadas das perguntas REAIS de `de
   assert.equal(cfg.orquestracao.perfil, c.respostas.perfil);
   assert.deepEqual(cfg.onboarding.naoDetectado, []);
   assert.equal(cfg.fluxo.mcp, 'claude.ai ClickUp');
-  // monorepo: 3 fixas + os 2 primeiros fatos abertos; o 3º aberto não é perguntado, fica nao_detectado e nada é gravado para ele
+  // monorepo: 3 fixas + tipo_repo + planejamento (arquivos|deixar); ambientes não tem opção (FX4 D1): não é perguntado, fica nao_detectado e nada é gravado para ele
   const m = o.onboarding.monorepo;
   assert.equal(m.detectar.j.perguntas.length, 5);
   assert.deepEqual(m.detectar.j.itens.map((i) => [i.item, i.estado]), [['tipo_repo', 'ambiguo'], ['ambientes', 'nao_detectado'], ['planejamento', 'nao_detectado'], ['versionamento', 'detectado'], ['orquestracao', 'detectado']]);
   const mc = JSON.parse(m.depois);
   assert.equal(mc.perfil, 'repo-sem-app', 'tipo_repo respondido com o candidato que não é o default');
-  assert.deepEqual(mc.onboarding.naoDetectado, ['ambientes', 'planejamento']);
-  assert.equal(mc.fluxo.ferramenta, undefined, 'planejamento não resolvido: nada gravado para ele');
+  assert.deepEqual(mc.onboarding.naoDetectado, ['ambientes']);
+  assert.equal(mc.fluxo.ferramenta, 'arquivos', 'planejamento respondido com o default (regra da 1.1)');
+  assert.equal('fatos' in mc.onboarding, false, 'ambientes sem opção: nada gravado para ele');
 });
 
 test('fumaca-onboarding-config-1-1-x-como-default: config da 1.1.x ⇒ respostas default preservam a política, ligam a autonomia e não mexem no que é do dono', () => {

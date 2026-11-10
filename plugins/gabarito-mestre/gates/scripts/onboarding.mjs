@@ -236,13 +236,27 @@ function contarIntegracao(rodar, raiz, nome, desde) {
   return n;
 }
 
+const BASES_LOCAIS = ['main', 'master', 'trunk'];
+
+/** FX4 D2 (repo sem remoto): candidatos a base = `main`/`master`/`trunk` que existem localmente; senão a branch atual. */
+function branchesLocais(rodar, raiz) {
+  const r = rodar('git', ['-C', raiz, 'for-each-ref', '--format=%(refname:short)', 'refs/heads'], {});
+  if (!deuCerto(r)) return [];
+  const todas = String(r.stdout).split('\n').map((x) => x.trim()).filter(Boolean);
+  const bases = BASES_LOCAIS.filter((n) => todas.includes(n));
+  if (bases.length > 0) return bases;
+  const atual = rodar('git', ['-C', raiz, 'symbolic-ref', '--short', '-q', 'HEAD'], {});
+  const nome = deuCerto(atual) ? atual.stdout.trim() : '';
+  return nome !== '' && todas.includes(nome) ? [nome] : [];
+}
+
 function coletarGit(raiz, rodar, hoje) {
   const desde = desdeDe(hoje);
   const dentro = rodar('git', ['-C', raiz, 'rev-parse', '--is-inside-work-tree'], {});
   if (!deuCerto(dentro) || dentro.stdout.trim() !== 'true') return { originHead: null, integracao: null, motivoOrigin: 'sem git', motivoIntegracao: 'sem git' };
   const head = rodar('git', ['-C', raiz, 'symbolic-ref', '-q', `${prefixoOrigin}HEAD`], {});
   const ref = deuCerto(head) ? head.stdout.trim() : '';
-  if (!ref.startsWith(prefixoOrigin)) return { originHead: null, integracao: null, motivoOrigin: 'sem origin/HEAD', motivoIntegracao: 'sem origin/HEAD' };
+  if (!ref.startsWith(prefixoOrigin)) return { originHead: null, integracao: null, motivoOrigin: 'sem origin/HEAD', motivoIntegracao: 'sem origin/HEAD', branchesLocais: branchesLocais(rodar, raiz) };
   const originHead = ref.slice(prefixoOrigin.length);
   const refs = rodar('git', ['-C', raiz, 'for-each-ref', '--format=%(refname)', prefixoOrigin.slice(0, -1)], {});
   if (!deuCerto(refs)) return { originHead, integracao: null, motivoOrigin: null, motivoIntegracao: 'git for-each-ref falhou' };
@@ -342,6 +356,7 @@ export function coletarFatos(raiz, { rodar = rodarReal, hoje = hojeISO() } = {})
     mcpRepo: repo.mcpRepo,
     originHead: g.originHead,
     integracao: g.integracao,
+    branchesLocais: g.branchesLocais ?? [],
     configExistente,
     ferramentas: lerFerramentas(),
     textos: { config: cfg.texto ?? null, packageJson: pj.texto ?? null },
@@ -453,7 +468,11 @@ function casaFerramenta(f, nomeServidor) {
 function detectarVersionamento(f) {
   const erro = configErro(f);
   if (erro) return naoDet('versionamento', 'harness.config.json ilegível', 'harness.config.json');
-  if (f.originHead === null) return naoDet('versionamento', f.motivos.originHead ?? 'sem origin/HEAD', 'git symbolic-ref refs/remotes/origin/HEAD');
+  if (f.originHead === null) {
+    const locais = f.branchesLocais ?? [];
+    const fonte = locais.length > 0 ? 'git for-each-ref refs/heads (sem origin/HEAD: base escolhida entre as branches locais)' : 'git symbolic-ref refs/remotes/origin/HEAD';
+    return naoDet('versionamento', f.motivos.originHead ?? 'sem origin/HEAD', fonte, locais);
+  }
   if (f.integracao === null) return naoDet('versionamento', f.motivos.integracao ?? 'git log falhou', `origin/${f.originHead}`);
   const head = f.originHead;
   const cont = f.integracao;
@@ -633,6 +652,8 @@ function perguntaDeItem(i, cfg) {
   return { id: i.item, texto: `${i.item}: ${ref} (fonte: ${i.fonte}). Qual usar?`, opcoes, default: padrao };
 }
 
+const semEscolha = (i, cfg) => perguntaDeItem(i, cfg).opcoes.length < 2;
+
 /** D-T14-1: o default vem primeiro (Enter no `AskUserQuestion` escolhe a 1ª opção); as demais ficam na ordem original. */
 const defaultPrimeiro = (p) => {
   const k = p.opcoes.findIndex((o) => o.valor === p.default);
@@ -648,7 +669,8 @@ const defaultPrimeiro = (p) => {
 export function perguntas(itens, existente) {
   const fixas = perguntasFixas(existente);
   const cfg = configLegivel(existente);
-  const abertos = [...itens].filter((i) => i.estado !== 'detectado').sort((a, b) => ordemDe(a.item) - ordemDe(b.item));
+  // FX4 D1: o `AskUserQuestion` rejeita pergunta com < 2 opções; item sem escolha real é fato (fica não detectado), não pergunta.
+  const abertos = [...itens].filter((i) => i.estado !== 'detectado' && !semEscolha(i, cfg)).sort((a, b) => ordemDe(a.item) - ordemDe(b.item));
   return [...fixas, ...abertos.slice(0, MAX_PERGUNTAS - fixas.length).map((i) => perguntaDeItem(i, cfg))].map(defaultPrimeiro);
 }
 
@@ -664,7 +686,7 @@ function efetivaDe(politica, autonomia, fuso) {
  * Prévia em texto: `detectei:` com 1 fato por linha (estado e fonte), as 3 decisões com default, a política efetiva quando
  * difere da escolhida, a janela padrão e a linha `trocar <item>`. `fuso` entra na janela padrão (CLI: o do `Intl`).
  */
-export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal(), calibracao = [] } = {}) {
+export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal(), calibracao = [], existente } = {}) {
   const ps = Object.fromEntries(perguntasDoOnboarding.map((p) => [p.id, p]));
   const linhas = ['detectei:'];
   for (const i of itens) {
@@ -686,6 +708,14 @@ export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal(), calib
     const ef = efetivaDe(pol, aut, fuso);
     if (ef !== null && ef !== pol) linhas.push(`- política efetiva: ${ef} (escolhida ${pol}, mas a autonomia está ${aut ? 'sim' : 'não'}: só a autonomia libera a política)`);
   }
+  // FX4 item 5 (Sombra): a troca do alias do orquestrador aparece antes de gravar, não só depois.
+  const orqAtual = ehObjeto(configLegivel(existente).orquestracao) ? configLegivel(existente).orquestracao : {};
+  const aliasAntigo = ehObjeto(orqAtual.modelo) ? orqAtual.modelo.alias : undefined;
+  const perfilEscolhido = ps.perfil?.default;
+  if (typeof aliasAntigo === 'string' && aliasAntigo !== '' && typeof perfilEscolhido === 'string') {
+    const novo = resolverModelo({ ...orqAtual, perfil: perfilEscolhido }, 'revisor_final').modelo;
+    if (novo !== aliasAntigo) linhas.push(`- modelo do orquestrador: ${aliasAntigo} ⇒ ${novo} (vem do perfil ${perfilEscolhido}; para manter ${aliasAntigo}: perfil economia ou modelos.revisor_final)`);
+  }
   const j = janelaPadrao(fuso);
   linhas.push(`- janela padrão, se a política for "janela" e o config não tiver uma: dias ${j.dias.join(',')}, ${j.inicio}-${j.fim}, fuso ${j.fuso}`);
   const abertos = itens.filter((i) => i.estado !== 'detectado');
@@ -694,6 +724,7 @@ export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal(), calib
     for (const i of [...abertos].sort((a, b) => ordemDe(a.item) - ordemDe(b.item))) {
       const p = ps[i.item];
       if (p) linhas.push(`- ${i.item}: pergunto (default ${valorTexto(p.default) || 'deixar não detectado'})`);
+      else if (semEscolha(i, {})) linhas.push(`- ${i.item}: sem opção para escolher; fica nao_detectado e nada é gravado para ele (trocar ${i.item} depois)`);
       else linhas.push(`- ${i.item}: fica nao_detectado (acima do teto de ${MAX_PERGUNTAS} perguntas); nada é gravado para ele`);
     }
   }
@@ -875,7 +906,7 @@ function main(argv) {
     const recal = argv.includes('--recalibrar') ? previaRecalibracao(par, hoje) : null;
     const nova = recal === null && semCalibracao(par) ? calibracaoDaMaquina(hoje) : null;
     const calibracao = recal !== null ? [recal.texto] : nova !== null ? [`o paralelismo será calibrado para esta máquina (${nova.cores} núcleos): ${textoParalelismo(nova.paralelismo)}`] : [];
-    saida({ ok: true, itens, perguntas: ps, previa: previa(itens, ps, { fuso, calibracao }), ...(recal !== null ? { recalibrar: { antes: recal.antes, depois: recal.depois, cores: recal.cores } } : {}) });
+    saida({ ok: true, itens, perguntas: ps, previa: previa(itens, ps, { fuso, calibracao, existente: fatos.configExistente }), ...(recal !== null ? { recalibrar: { antes: recal.antes, depois: recal.depois, cores: recal.cores } } : {}) });
     return 0;
   } catch (e) {
     saida({ ok: false, erro: 'falha', motivo: String(e.message).split('\n')[0] });

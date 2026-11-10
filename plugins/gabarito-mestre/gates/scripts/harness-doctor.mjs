@@ -545,7 +545,7 @@ export const CHECKS = [
     level: 2,
     kind: 'attest',
     label: 'Iniciativa confirmada na ferramenta — existe ≠ ativa (I10)',
-    fix: 'confirme a Iniciativa no onboarding e ateste iniciativa-resolvida em .harness/attest.json',
+    fix: 'a Iniciativa fica fora das perguntas do onboarding: peça ao Claude gabarito-instalar (trocar iniciativa), que lê a ferramenta com o seu ok, e ateste iniciativa-resolvida em .harness/attest.json',
   },
   {
     id: 'versionamento',
@@ -553,7 +553,7 @@ export const CHECKS = [
     level: 2,
     kind: 'scan',
     label: 'versionamento configurado e histórico recente conforme (20 commits de primeiro pai)',
-    fix: 'rode gabarito-instalar (trocar versionamento) e corrija os commits apontados pela checagem de versionamento',
+    fix: 'peça ao Claude gabarito-instalar (trocar versionamento) e corrija os commits apontados pela checagem de versionamento',
     detect: (ix, cfg) => {
       const em = cfg.versionamento?.resolvidoEm;
       if (!em) return { found: false, evidence: cfg.configInvalido ? 'harness.config.json inválido' : 'sem versionamento.resolvidoEm' };
