@@ -199,7 +199,10 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
       const lim = (rot: string, v: number | null): Linha => (v === null ? [] : [seg(`${rot} `), ...barraSegs(v, 10, '█', '░', 'success'), seg(` ${fmtPct(v)}`)]);
       saida.push(cortarLinha([seg('│', 'inactive'), seg('  '), ...lim('5h', h5), ...(h5 !== null && d7 !== null ? [seg('   ')] : []), ...lim('7d', d7)], w)); marca('lim');
     }
-    if (narracao && w >= 72 && t(lider.narrativa) !== '') saida.push(cortarLinha([seg('│', 'inactive'), seg('  '), seg('▶', 'success'), seg(` ${t(lider.narrativa)}`)], w)); marca('narr');
+    if (narracao && w >= 72 && t(lider.narrativa) !== '') {
+      saida.push(cortarLinha([seg('│', 'inactive'), seg('  '), seg('▶', 'success'), seg(` ${t(lider.narrativa)}`)], w));
+      marca('narr'); // só com a linha empurrada: fora do bloco reetiquetava a linha anterior (ctx do líder ou 5h/7d)
+    }
   } else {
     saida.push(cortarLinha([seg(t(lider.nome)), seg(' ctx '), ...(lctx === null ? [seg('—')] : [...barraSegs(lctx, 19, '█', '░', 'success'), seg(` ${fmtPct(lctx)}`)])], w));
     const partes = [...(h5 !== null ? [`5h ${fmtPct(h5)}`] : []), ...(d7 !== null ? [`7d ${fmtPct(d7)}`] : []), tokL];

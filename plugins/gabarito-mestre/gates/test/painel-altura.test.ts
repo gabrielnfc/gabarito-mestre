@@ -152,3 +152,130 @@ test('alt-sem-agente-vivo-nao-corta: sem agente vivo não há o que proteger, a 
     }
   }
 });
+
+// ───────────── r2: propriedade das classes de corte (review r1, MAJOR 1: `marca('narr')` fora do `if` retroetiquetava a linha anterior) ─────────────
+
+/** Oráculo INDEPENDENTE do código: classifica as linhas do desenho inteiro (sem altura) por texto e aplica a ordem da Sombra (sombra-t14.md §D2 item 1). */
+const CLASSES_ESQ = ['sep', 'narr', 'lim', 'fila', 'faixa'] as const;
+function classeEsq(ls: string[], i: number): string {
+  const l = ls[i];
+  if (/^─+$/.test(l)) return 'sep';
+  if (/^│ {2}▶ /.test(l)) return 'narr';
+  if (/^│ {2}(5h|7d) /.test(l)) return 'lim';
+  if (/^ {2}✓ /.test(l)) return 'faixa';
+  // duas linhas de fila seguidas (`  ○ Tn … fila` e `  ○ Tn  fila`): a 1ª vira a junta, a 2ª cai
+  if (/^ {2}○ \S+ .*fila/.test(l) && i + 1 < ls.length && /^ {2}○ \S+ +fila$/.test(ls[i + 1])) return 'fila1';
+  if (/^ {2}○ \S+ +fila$/.test(l) && i > 0 && /^ {2}○ \S+ .*fila/.test(ls[i - 1])) return 'fila2';
+  return '';
+}
+function oraculoEsq(inteiro: string[], alt: number): (string | null)[] {
+  let cur: (string | null)[] = [...inteiro];
+  const cls = inteiro.map((_, i) => classeEsq(inteiro, i));
+  let idx = cur.map((_, i) => i);
+  const vivo = (i: number): boolean => ehAgente('esquadrao')(inteiro[i]);
+  for (const c of CLASSES_ESQ) {
+    const ultimo = idx.reduce((u, k, pos) => (vivo(k) ? pos : u), -1);
+    if (ultimo < 0 || ultimo < alt) break;
+    const novo: number[] = [];
+    const novoCur: (string | null)[] = [];
+    idx.forEach((k, pos) => {
+      const t = cls[k];
+      const da = t === c || (c === 'fila' && (t === 'fila1' || t === 'fila2'));
+      if (!da || pos > ultimo) { novo.push(k); novoCur.push(cur[pos]); return; }
+      if (c === 'fila' && t === 'fila1') { novo.push(k); novoCur.push(null); } // a junta: texto não conferido aqui (teste da ordem confere)
+    });
+    idx = novo; cur = novoCur;
+  }
+  return cur;
+}
+
+test('alt-classes-nunca-saem-fora-da-vez (propriedade, Esquadrão): narração on/off/vazia × com/sem 5h/7d × fila 0/1/2 × larguras 20..200 × alturas 1..30 ⇒ saída = oráculo; líder, ctx do líder, PLANO, tasks em voo e todo agente vivo ficam', () => {
+  let casos = 0;
+  const variantes: [string, (e: EstadoPainel) => void][] = [
+    ['base', () => {}],
+    ['sem-5h7d', (e) => { e.equipe.lider.h5 = null; e.equipe.lider.d7 = null; }],
+    ['so-5h', (e) => { e.equipe.lider.d7 = null; }],
+    ['narrativa-vazia', (e) => { e.equipe.lider.narrativa = ''; }],
+    ['narrativa-vazia-sem-5h7d', (e) => { e.equipe.lider.narrativa = ''; e.equipe.lider.h5 = null; e.equipe.lider.d7 = null; }],
+    ['fila-0', (e) => { e.plano.tasks = e.plano.tasks.filter((x) => x.estado !== 'pendente'); }],
+    ['fila-1', (e) => { let n = 0; e.plano.tasks = e.plano.tasks.filter((x) => x.estado !== 'pendente' || n++ < 1); }],
+    ['fila-0-sem-5h7d', (e) => { e.plano.tasks = e.plano.tasks.filter((x) => x.estado !== 'pendente'); e.equipe.lider.h5 = null; e.equipe.lider.d7 = null; }],
+  ];
+  for (const [nome, mexe] of variantes) {
+    for (const narracao of [true, false]) {
+      const mk = (): EstadoPainel => { const e = comVivos(3); mexe(e); return e; };
+      for (let w = 20; w <= 200; w++) {
+        const o = (altura?: number): OpcoesRender => ({ preset: 'esquadrao', tema: 'mono', narracao, largura: w, ...(altura === undefined ? {} : { altura }) });
+        const inteiro = renderPainel(mk(), o()).map(TEXTO);
+        if (w >= 72 && w % 8 === 0) {
+          for (const re of [/^GANDALF {2}orquestra/, /^│ {2}ctx .*36%/, /^PLANO/, /● T8 /, /^├─ ● /]) assert.ok(inteiro.some((l) => re.test(l)), `${nome} n=${narracao} ${w}: o desenho inteiro não tem ${String(re)}`);
+        }
+        for (let alt = 1; alt <= 30; alt++) {
+          const got = renderPainel(mk(), o(alt)).map(TEXTO);
+          const esp = oraculoEsq(inteiro, alt);
+          casos++;
+          assert.equal(got.length, esp.length, `${nome} n=${narracao} ${w}x${alt}: ${got.length} linhas, o oráculo espera ${esp.length}\n${got.join('\n')}`);
+          esp.forEach((l, i) => { if (l !== null) assert.equal(got[i], l, `${nome} n=${narracao} ${w}x${alt}: linha ${i}`); });
+          // as classes protegidas são as que o oráculo NUNCA remove: toda linha sem classe do desenho inteiro está na saída cortada
+          const protegidas = inteiro.filter((_, i) => classeEsq(inteiro, i) === '');
+          let j = 0;
+          for (const l of got) if (l === protegidas[j]) j++;
+          assert.equal(j, protegidas.length, `${nome} n=${narracao} ${w}x${alt}: linha protegida saiu (${protegidas[j]})`);
+        }
+      }
+    }
+  }
+  assert.ok(casos > 20_000, `a propriedade viu ${casos} casos`);
+});
+
+test('alt-ordem-sem-narrativa: sem narrativa (narração off, 60–71 col ou vazia) 5h/7d cai no passo 3 e a linha de ctx do líder fica mesmo sem 5h/7d, a 1 linha de altura', () => {
+  const tem = (ls: string[], re: RegExp): boolean => ls.some((l) => re.test(l));
+  for (const [rotulo, w, narracao, narr] of [['narração off', 80, false, 'esperando o loop'], ['65 col', 65, true, 'esperando o loop'], ['narrativa vazia', 80, true, '']] as const) {
+    const mk = (limites: boolean): EstadoPainel => { const e = voo(); e.equipe.lider.narrativa = narr; if (!limites) { e.equipe.lider.h5 = null; e.equipe.lider.d7 = null; } return e; };
+    const ro = (e: EstadoPainel, altura: number): string[] => renderPainel(e, { preset: 'esquadrao', tema: 'mono', narracao, largura: w, altura }).map(TEXTO);
+    const inteiro = ro(mk(true), 1000);
+    const ultimo = inteiro.reduce((u, l, i) => (ehAgente('esquadrao')(l) ? i : u), -1);
+    // exige só os separadores (passo 1): 5h/7d tem de ficar
+    const semSep = inteiro.length - inteiro.slice(0, ultimo).filter((l) => /^─+$/.test(l)).length;
+    assert.ok(tem(ro(mk(true), ultimo), /^│ {2}5h /), `${rotulo}: 5h/7d caiu no passo 1/2`);
+    assert.equal(ro(mk(true), ultimo).length, semSep, `${rotulo}: só os separadores deviam cair`);
+    assert.ok(tem(ro(mk(true), 1), /^│ {2}ctx .*36%/) && tem(ro(mk(false), 1), /^│ {2}ctx .*36%/), `${rotulo}: a linha de ctx do líder caiu`);
+    assert.ok(tem(ro(mk(false), 1), /^GANDALF {2}orquestra/), `${rotulo}: líder caiu`);
+  }
+});
+
+test('alt-classes-nunca-saem-fora-da-vez (propriedade, Executivo): com/sem Limites × com/sem ctx × larguras 20..200 × alturas 1..30 ⇒ saída = oráculo; só sep → Limites → Contexto → Produção caem, agentes e o resto ficam', () => {
+  const CL = ['sep', 'lim', 'ctx', 'prod'] as const;
+  const classe = (l: string): string => (/^─+$/.test(l) ? 'sep' : /^(Limites|Lim) /.test(l) ? 'lim' : /^(Contexto|Ctx) /.test(l) ? 'ctx' : /^(Produção|Prd) /.test(l) ? 'prod' : '');
+  let casos = 0;
+  const variantes: [string, (e: EstadoPainel) => void][] = [
+    ['base', () => {}],
+    ['sem-limites', (e) => { e.equipe.lider.h5 = null; e.equipe.lider.d7 = null; }],
+    ['sem-ctx', (e) => { e.equipe.lider.ctx = null; }],
+    ['sem-nada', (e) => { e.equipe.lider.h5 = null; e.equipe.lider.d7 = null; e.equipe.lider.ctx = null; }],
+  ];
+  for (const [nome, mexe] of variantes) {
+    for (const narracao of [true, false]) {
+      const mk = (): EstadoPainel => { const e = comVivos(3); mexe(e); return e; };
+      for (let w = 20; w <= 200; w++) {
+        const o = (altura?: number): OpcoesRender => ({ preset: 'executivo', tema: 'mono', narracao, largura: w, ...(altura === undefined ? {} : { altura }) });
+        const inteiro = renderPainel(mk(), o()).map(TEXTO);
+        const cls = inteiro.map(classe);
+        const vivo = inteiro.map(ehAgente('executivo'));
+        for (let alt = 1; alt <= 30; alt++) {
+          let idx = inteiro.map((_, i) => i);
+          for (const c of CL) {
+            const ultimo = idx.reduce((u, k, pos) => (vivo[k] ? pos : u), -1);
+            if (ultimo < 0 || ultimo < alt) break;
+            idx = idx.filter((k, pos) => cls[k] !== c || pos > ultimo);
+          }
+          const got = renderPainel(mk(), o(alt)).map(TEXTO);
+          casos++;
+          assert.deepEqual(got, idx.map((k) => inteiro[k]), `${nome} n=${narracao} ${w}x${alt}`);
+          assert.equal(got.filter(ehAgente('executivo')).length, vivo.filter(Boolean).length, `${nome} ${w}x${alt}: agente saiu`);
+        }
+      }
+    }
+  }
+  assert.ok(casos > 10_000, `a propriedade viu ${casos} casos`);
+});
