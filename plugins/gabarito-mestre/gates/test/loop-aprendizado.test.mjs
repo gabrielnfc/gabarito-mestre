@@ -49,11 +49,12 @@ function ambiente({ branch = 'enabler/GM-10-loop', plano = PLANO } = {}) {
   if (plano !== null) writeFileSync(join(entregas, 'plano.json'), typeof plano === 'string' ? plano : JSON.stringify(plano));
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (/^GIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR)/.test(k)) delete env[k];
+  delete env.GABARITO_POUSO_X;
   let n = 0;
   const amb = {
     dir, entregas, arvore: join(dir, '.harness', 'entregas'),
-    cli(args, { cwd = dir } = {}) {
-      const r = spawnSync(process.execPath, [SCRIPT, ...args], { cwd, encoding: 'utf8', env });
+    cli(args, { cwd = dir, env: extra = {} } = {}) {
+      const r = spawnSync(process.execPath, [SCRIPT, ...args], { cwd, encoding: 'utf8', env: { ...env, ...extra } });
       let j = null;
       try { j = JSON.parse(r.stdout.trim()); } catch { /* fica null */ }
       return { rc: r.status, j, out: r.stdout, err: r.stderr };
@@ -914,5 +915,138 @@ describe('registro: CLI grava registro.md determinístico (REQ-REG-1)', () => {
     const r = amb.cli(['registro', 'extra']);
     assert.notEqual(r.rc, 0, r.out + r.err);
     assert.equal(existsSync(join(amb.entregas, 'registro.md')), false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────── GM-13 T12: pousar sem mod (REQ-POU-3)
+
+describe('pousar: sem mod (GM-13 T12, REQ-POU-3)', () => {
+  const IMPL = ['task.iniciada', { task: 'T1', papel: 'implementador' }];
+  const CONCL = ['task.concluida', { task: 'T1', sha: 'b'.repeat(40) }];
+  const REVISOR = ['task.iniciada', { task: 'T1', papel: 'revisor' }];
+  const RETOMADA = 'Loop da entrega GM-10 em pouso: rode loop.mjs proxima e siga.';
+  const pousos = (amb) => amb.eventos().filter((e) => e.tipo === 'sessao.pouso');
+  const CARTAO = join(AQUI, '..', 'scripts', 'cartao-sessao.mjs');
+  /** `SessionStart` real (cartão) sobre o repositório da entrega, origem `source`. Devolve o texto do cartão. */
+  function cartao(dir, source) {
+    const e = { ...process.env, GABARITO_INSTALLED_PLUGINS: '/nao/existe.json' };
+    delete e.CLAUDE_PROJECT_DIR;
+    for (const k of Object.keys(e)) if (/^GIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR)/.test(k)) delete e[k];
+    const r = spawnSync(process.execPath, [CARTAO, '--hook', '--root', dir, '--plugin-root', dir, '--agora', '2026-11-10T12:00:00Z'], {
+      cwd: dir, input: JSON.stringify({ session_id: `s-${source}-${Math.random().toString(36).slice(2)}`, source }), encoding: 'utf8', env: e, timeout: 8000,
+    });
+    return JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
+  }
+
+  test('pousar-com-task-implementando-recusa: task iniciada e não concluída ⇒ task_em_voo citando T1, rc 1 e linhas byte a byte', () => {
+    const amb = ambiente();
+    amb.semear([IMPL]);
+    const antes = semEfeito(amb);
+    const r = amb.cli(['pousar']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.ok, false);
+    assert.equal(r.j.erro, 'task_em_voo');
+    assert.match(r.j.mensagem, /T1/);
+    assert.match(r.j.mensagem, /nada foi gravado/);
+    assert.equal(semEfeito(amb), antes, 'nada gravado');
+  });
+
+  test('pousar-em-revisao-recusa: task em em_revisao também está em voo', () => {
+    const amb = ambiente();
+    amb.semear([IMPL, CONCL, REVISOR]);
+    const r = amb.cli(['pousar']);
+    assert.equal(r.j.erro, 'task_em_voo', r.out);
+    assert.match(r.j.mensagem, /T1/);
+    assert.deepEqual(pousos(amb), []);
+  });
+
+  test('pousar-na-fronteira-grava: task concluída (fora de voo) ⇒ sessao.pouso {percent null, x 50, via dono} e o evento devolvido traz os mesmos valores', () => {
+    const amb = ambiente();
+    amb.semear([IMPL, CONCL]);
+    const r = amb.cli(['pousar']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.ok, true);
+    const p = pousos(amb);
+    assert.equal(p.length, 1);
+    assert.deepEqual(p[0].dados, { percent: null, x: 50, via: 'dono' });
+    assert.equal(p[0].sessao, 'loop');
+    assert.equal(r.j.evento.tipo, 'sessao.pouso');
+    assert.equal(r.j.evento.percent, null);
+    assert.equal(r.j.evento.x, 50);
+    assert.equal(r.j.evento.via, 'dono');
+    assert.equal(r.j.aviso, undefined, 'X ausente não avisa');
+    assert.match(r.j.instantaneo, /^Diário: \d+ evento\(s\)/);
+    assert.match(r.j.instantaneo, /sessao\.pouso/);
+  });
+
+  test('pousar-x-do-ambiente: GABARITO_POUSO_X=40 e 2.5 valem; 0, 101, abc, 1e1 e vazio ⇒ 50 com aviso, nunca erro', () => {
+    for (const [valor, esperado] of [['40', 40], ['2.5', 2.5], ['0', 50], ['101', 50], ['abc', 50], ['1e1', 50], ['', 50]]) {
+      const amb = ambiente();
+      amb.semear([IMPL, CONCL]);
+      const r = amb.cli(['pousar'], { env: { GABARITO_POUSO_X: valor } });
+      assert.equal(r.rc, 0, `${JSON.stringify(valor)}: ${r.out}${r.err}`);
+      assert.equal(pousos(amb)[0].dados.x, esperado, JSON.stringify(valor));
+      assert.equal(r.j.evento.x, esperado, JSON.stringify(valor));
+      if (esperado === 50 && valor !== '') assert.match(r.j.aviso[0], /GABARITO_POUSO_X inválido/, JSON.stringify(valor));
+      if (valor === '40' || valor === '2.5') assert.equal(r.j.aviso, undefined, JSON.stringify(valor));
+    }
+  });
+
+  test('pousar-nunca-grava-retomada: pousar grava só sessao.pouso (sem sessao.retomada nem loop.parar)', () => {
+    const amb = ambiente();
+    amb.semear([IMPL, CONCL]);
+    const r = amb.cli(['pousar']);
+    assert.equal(r.rc, 0, r.out);
+    assert.deepEqual(amb.tipos(), ['task.iniciada', 'task.concluida', 'sessao.pouso']);
+    assert.equal(amb.eventos().some((e) => e.tipo === 'sessao.retomada' || e.tipo === 'loop.parar'), false);
+  });
+
+  test('pousar-diario-ausente-x-ilegivel (1/2, ausente): sem diário nenhuma task está em voo ⇒ grava e cria o arquivo', () => {
+    const amb = ambiente();
+    assert.deepEqual(readdirSync(amb.entregas).sort(), ['plano.json']);
+    const r = amb.cli(['pousar']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(amb.tipos(), ['sessao.pouso']);
+  });
+
+  test('pousar-diario-ausente-x-ilegivel (2/2, ilegível): linha torta ⇒ diario_ilegivel e o arquivo fica byte a byte', () => {
+    const amb = ambiente();
+    const arq = join(amb.entregas, 'events.loop.jsonl');
+    writeFileSync(arq, 'isto nao e json\n');
+    const antes = readFileSync(arq, 'utf8');
+    const r = amb.cli(['pousar']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'diario_ilegivel', r.out);
+    assert.equal(readFileSync(arq, 'utf8'), antes);
+    assert.deepEqual(readdirSync(amb.entregas).sort(), ['events.loop.jsonl', 'plano.json']);
+  });
+
+  test('pousar-com-posicional-recusa: argumento sobrando é uso (rc 2) e nada é gravado', () => {
+    const amb = ambiente();
+    amb.semear([IMPL, CONCL]);
+    const r = amb.cli(['pousar', 'extra']);
+    assert.equal(r.rc, 2, r.out + r.err);
+    assert.equal(pousos(amb).length, 0);
+  });
+
+  test('pousar-cartao-traz-linha (P9): pousar real ⇒ cartão clear traz a linha de retomada; progresso depois dele apaga a linha', () => {
+    const amb = ambiente();
+    writeFileSync(join(amb.dir, 'harness.config.json'), JSON.stringify({ fluxo: { ferramenta: 'arquivos', resolvidoEm: '2026-11-10' } }));
+    amb.semear([IMPL, CONCL]);
+    const r = amb.cli(['pousar']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(cartao(amb.dir, 'clear').split('\n')[0], RETOMADA);
+    diario.append(amb.entregas, 'loop', { ts: new Date(Date.now() + 60000).toISOString(), autor: 't@t', sessao: 'loop', agente: 'orquestrador', tipo: 'ci.resultado', dados: { verde: true } });
+    assert.doesNotMatch(cartao(amb.dir, 'clear'), /Loop da entrega/, 'progresso depois do pouso: a retomada já aconteceu');
+  });
+
+  test('pousar-instantaneo-traz-aprendizado-d: D com instantaneo de outra entrega sai no instantâneo impresso, com a regra lida', () => {
+    const amb = ambiente();
+    amb.vizinha('GM-9', [['aprendizado', { tipo: 'E', status: 'D', gatilho: null, evidencia: { eventos: [{ sessao: 'loop', seq: 1 }] }, regra: 'rode o build antes do teste', entra_em: ['instantaneo'] }]]);
+    amb.semear([IMPL, CONCL]);
+    const r = amb.cli(['pousar']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.match(r.j.instantaneo, /^Aprendizados \(1\):/m);
+    assert.match(r.j.instantaneo, /^E rode o build antes do teste$/m);
   });
 });

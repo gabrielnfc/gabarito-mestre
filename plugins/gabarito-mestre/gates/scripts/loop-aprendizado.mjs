@@ -1,6 +1,6 @@
 /**
  * Subcomandos do aprendizado, do pouso e do registro de `loop.mjs` (GM-13). T8 entrega `aprendizado` e `aprendizados`;
- * `registro` é da T11; `pousar` (T12) segue respondendo `nao_implementado` (rc 1) sem gravar nada.
+ * `registro` é da T11; `pousar` é da T12 (sem mod).
  * As dependências vêm injetadas por `loop.mjs` (`{ c, plano, gravar, lerDiarioEstrito, Falha, git, raizPrincipal, cwd, pronto }`): este módulo não importa `loop.mjs`.
  *
  *   loop.mjs aprendizado <E|A> <D|M> --regra <t> --entra-em <a,b> [--gatilho <sessao:seq>] [--eventos <s:q,…>] [--fonte <f> --numero <n>] [--substitui [<entrega>/]<sessao:seq>]
@@ -18,14 +18,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { aprendizadosVigentes, paraDestino, validarAprendizado } from '../dist/aprendizado.js';
-import { lerAprendizados, recusaCanario } from '../dist/diario.js';
+import { lerAprendizados, projetar, recusaCanario } from '../dist/diario.js';
 import { formaInvalida, PAPEIS } from '../dist/formas.js';
 import { pendenciasAprendizado } from '../dist/pendencias.js';
 import { montarRegistro } from '../dist/registro.js';
-
-const stub = (nome, task) => (deps) => {
-  throw new deps.Falha('nao_implementado', `loop.mjs ${nome}: ainda não implementado (${task} da E5a); nada foi gravado`);
-};
+import { lerX, tasksEmVoo } from '../dist/pouso.js';
 
 const USO = 'uso: loop.mjs aprendizado <E|A> <D|M> --regra <t> --entra-em <a,b> [--gatilho <sessao:seq>] [--eventos <s:q,…>] [--fonte <f> --numero <n>] [--substitui [<entrega>/]<sessao:seq>] [--entrega GM-10] [--sessao <id>] | aprendizado nada --gatilho <sessao:seq> --motivo <t> | aprendizados [--para <instantaneo|spec|brief:<papel>>]';
 const SESSAO_RE = /^[A-Za-z0-9._-]{1,128}$/;
@@ -169,7 +166,37 @@ export function aprendizados(deps, pos, flags) {
   };
 }
 
-export const pousar = stub('pousar', 'T12');
+/**
+ * `loop.mjs pousar` (REQ-POU-3, sem mod; GM-13 T12): grava `sessao.pouso {percent: null, x, via: 'dono'}` só na fronteira, isto é, com 0 tasks em
+ * `implementando|corrigindo|em_revisao` (`tasksEmVoo`, núcleo). A conferência roda DENTRO do `antes` do `gravar`, sobre os eventos que ele leu:
+ * sem 2ª leitura. Diário ausente (sem eventos) não tem task em voo ⇒ grava; ilegível, fora de ordem ou fora da tabela ⇒ erro e nada gravado.
+ * `x` vem só de `GABARITO_POUSO_X`, pelo `lerX` do mod (inválido ⇒ 50 com `aviso`). Não grava `sessao.retomada` nem `loop.parar`.
+ * Devolve o instantâneo que o `SessionStart` mostra agora (mesmas opções do cartão: aprendizados D de `instantaneo`, REQ-APR-3).
+ */
+export function pousar(deps, pos, flags) {
+  const { c, plano, gravar, Falha } = deps;
+  if (pos.length !== 0) throw new Falha('uso', 'pousar não tem posicionais; nada foi gravado', {}, 2);
+  const { x, aviso } = lerX(process.env.GABARITO_POUSO_X);
+  let lidos = null;
+  let candidato = null;
+  const antes = (cand, eventos) => {
+    lidos = eventos;
+    candidato = cand;
+    const voo = tasksEmVoo(plano, eventos);
+    if (!voo.ok) {
+      const codigo = voo.motivo === 'plano ilegível' ? 'plano_ilegivel' : 'diario_ilegivel';
+      throw new Falha(codigo, `${voo.motivo}; nada foi gravado`);
+    }
+    if (voo.tasks.length > 0) {
+      throw new Falha('task_em_voo', `task em voo: ${voo.tasks.join(', ')} (implementando, corrigindo ou em revisão); pouse depois que ela sair de voo; nada foi gravado`);
+    }
+  };
+  const evento = gravar(c, plano, 'sessao.pouso', { percent: null, x, via: 'dono' }, antes);
+  const arvore = lerAprendizados(join(c.raiz, '.harness', 'entregas'));
+  const aprendizados = paraDestino(aprendizadosVigentes(arvore.porEntrega), 'instantaneo');
+  const { instantaneo } = projetar([...lidos, candidato], { aprendizados, avisosAprendizados: arvore.avisos });
+  return { evento, instantaneo, ...(aviso !== null ? { aviso: [aviso] } : {}) };
+}
 /** Canário em cada string folha dos eventos, sem corte nem limpeza (chave de objeto não vai ao registro). Nome do padrão, ou `null`. */
 function canarioNasFolhas(eventos) {
   const pilha = [eventos];

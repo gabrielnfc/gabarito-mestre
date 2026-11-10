@@ -3518,18 +3518,13 @@ describe('E4 T7: dados do painel no loop (iniciar, integrar, proxima)', () => {
     assert.deepEqual(casarAgente(ci.descricao, plano), { task: 'T1', papel: 'correcao' });
   });
 
-  test('subcomandos-e5-stub-nao-implementado: pousar responde nao_implementado (rc 1) e não grava nada (`aprendizado`/`aprendizados` são da T8, `registro` da T11)', () => {
+  test('subcomandos-e5-sem-stub: pousar (T12, REQ-POU-3) já não responde nao_implementado; grava só sessao.pouso e não cria registro.md (registro é da T11)', () => {
     const amb = ambiente();
     const antes = amb.tipos();
-    const chamadas = [['pousar']];
-    for (const args of chamadas) {
-      const r = amb.cli(args);
-      assert.equal(r.rc, 1, `${args.join(' ')}: ${r.out}${r.err}`);
-      assert.equal(r.j.ok, false, args.join(' '));
-      assert.equal(r.j.erro, 'nao_implementado', `${args.join(' ')}: ${r.out}`);
-      assert.match(r.j.mensagem, /\S/);
-    }
-    assert.deepEqual(amb.tipos(), antes);
+    const r = amb.cli(['pousar']);
+    assert.notEqual(r.j?.erro, 'nao_implementado', `${r.out}${r.err}`);
+    assert.equal(r.rc, 0, `${r.out}${r.err}`);
+    assert.deepEqual(amb.tipos(), [...antes, 'sessao.pouso']);
     assert.equal(existsSync(join(amb.entregas, 'registro.md')), false);
   });
 });
