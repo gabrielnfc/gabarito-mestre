@@ -5,6 +5,25 @@ Usuários do plugin só recebem atualização quando `version` muda.
 
 ## [Unreleased]
 
+## [2.0.0-alpha.5] — 2026-11-10
+
+Canal `next`: o agente passa a aprender com a entrega e a registrar as decisões dela. Contrato e requisitos na spec; aqui só o que o usuário vê.
+
+### Adicionado
+
+- **Aprendizado do orquestrador**: ao fim de um erro ou de um acerto, o orquestrador registra a regra com `loop.mjs aprendizado` (ou `aprendizado nada`, quando não há regra). As regras comprovadas voltam sozinhas ao cartão de início de sessão, ao instantâneo, ao brief de cada papel e à conferência de spec nova.
+- **Pouso de contexto sem o mod**: `loop.mjs pousar` marca o ponto em que o contexto pode ser limpo, sem tarefa em andamento. Depois do `/clear`, o cartão de início de sessão traz a linha de retomada e o loop segue de onde parou. O agente pede ao dono, em uma linha, que digite `/clear`.
+- **Registro de decisões**: `loop.mjs registro` gera o `registro.md` da entrega, sempre igual para o mesmo histórico. Ele traz a aprovação da spec, as decisões da Sombra, as emendas, as liberações de teto, os desvios, as descobertas e os aprendizados. A skill o commita ao concluir a entrega.
+- **Conferência de spec**: a conformidade lista as regras aprendidas que a spec nova deveria tratar e marca as que ela não trata.
+- **Doctor**: avisa quando um aprendizado não tem destino.
+- **Onboarding em uma fase só**: o onboarding detecta o que dá para detectar, mostra uma prévia e faz no máximo três perguntas de decisão: política de entrega, autonomia em produção e perfil de modelos. Não há mais passos a colar no terminal.
+- **Perfis de modelo**: o perfil escolhido na instalação (economia, padrão ou qualidade) define o modelo de cada papel.
+- **Fluxo Gabarito**: o onboarding grava a organização do trabalho (Iniciativa, Epic e PBI), e a conformidade confere cards e specs contra ela.
+
+### Alterado
+
+- Versão `2.0.0-alpha.5` no plugin e em `gates/package.json`.
+
 ## [2.0.0-alpha.4] — 2026-11-10
 
 E4 do canal `next` (GM-12): painel de status do loop. Contrato e requisitos na spec da E4; aqui só o que o usuário vê.

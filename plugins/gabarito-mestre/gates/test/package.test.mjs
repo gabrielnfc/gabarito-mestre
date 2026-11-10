@@ -43,8 +43,8 @@ describe('ehRepoDoPlugin — cópia instalada sob um pai com marketplace.json al
 });
 
 describe('gates/package.json 1.1.0', () => {
-  test('version é 2.0.0-alpha.4 (canal next)', () => {
-    assert.equal(pkg.version, '2.0.0-alpha.4');
+  test('version é 2.0.0-alpha.5 (canal next)', () => {
+    assert.equal(pkg.version, '2.0.0-alpha.5');
   });
   test('versao-manifestos: plugin.json, gates, marketplace (se trouxer versão) e CHANGELOG dizem a mesma versão', { skip: fora }, () => {
     const v = ler(PLUGIN_JSON).version;
@@ -54,10 +54,9 @@ describe('gates/package.json 1.1.0', () => {
     const primeira = /^## \[(\d[^\]]*)\]/m.exec(changelog.replace(/^## \[Unreleased\][\s\S]*?(?=^## \[\d)/m, ''));
     assert.equal(primeira?.[1], v, 'a 1ª seção versionada do CHANGELOG é a do plugin');
   });
-  test('skill gabarito-loop: ≤ 80 linhas, frontmatter, ponteiro ao CLI, sem cópia de spec nem hatch', { skip: fora }, () => {
+  test('skill gabarito-loop: frontmatter, ponteiro ao CLI, sem cópia de spec nem hatch', { skip: fora }, () => {
     const f = join(RAIZ, 'plugins', 'gabarito-mestre', 'skills', 'gabarito-loop', 'SKILL.md');
     const t = readFileSync(f, 'utf8');
-    assert.ok(t.split('\n').length - 1 <= 80, `${t.split('\n').length - 1} linhas`);
     assert.match(t, /^---\nname: gabarito-loop\ndescription: .{40,}\n(allowed-tools: .+\n)?---\n/);
     assert.match(t, /gates\/scripts\/loop\.mjs/);
     assert.doesNotMatch(t, /^\*\*REQ-/m, 'definição de requisito é da spec; a skill só aponta');
@@ -78,9 +77,10 @@ describe('gates/package.json 1.1.0', () => {
     const r = spawnSync(process.execPath, [join(GATES, 'scripts', 'entrega.mjs'), 'devolver', '--motivo', 'teste'], { cwd: repo, encoding: 'utf8' });
     assert.notEqual(JSON.parse(r.stdout.trim().split('\n').pop()).erro, 'uso', r.stdout);
   });
-  test('skill-loop-79-linhas: teto de 80 mantido e 79 com as três regras de T13', { skip: fora }, () => {
+  test('skill-loop-ate-95-linhas: teto de 95 linhas (GM-13 T15, contado aqui; o teto de 80 do doctor segue em harness-doctor-loop)', { skip: fora }, () => {
     const t = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'skills', 'gabarito-loop', 'SKILL.md'), 'utf8');
-    assert.equal(t.split('\n').length - 1, 79);
+    const linhas = t.split('\n').length - 1;
+    assert.ok(linhas <= 95, `${linhas} linhas`);
   });
   test('agente gabarito-spike: lista fechada do que cria e config isolada (A5, A6)', { skip: fora }, () => {
     const t = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'agents', 'gabarito-spike.md'), 'utf8');

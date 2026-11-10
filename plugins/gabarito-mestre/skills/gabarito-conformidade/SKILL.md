@@ -1,7 +1,7 @@
 ---
 name: gabarito-conformidade
 description: Confere um artefato — design, spec, plano, ADR, card de fluxo (Iniciativa, Epic, PBI de qualquer tipo) — contra a anatomia do harness e o Fluxo Gabarito, e devolve o que falta com a emenda proposta. Use quando o usuário pedir para "conferir o design", "validar o plano", "checar a spec", "revisar o ADR", "conferir o card", "o Epic está completo?", "o PBI está pronto (DoR)?", "está conforme?", "confere contra o gabarito", "o plano está completo?", "valida este documento", "check this plan/spec/design/card" ou depois que superpowers produzir um design ou plano. Não escreve o artefato — superpowers escreve; esta skill confere.
-allowed-tools: Read, Glob, Grep, Bash(git diff:*), Bash(git log:*), Bash(git rev-parse:*), Bash(wc:*)
+allowed-tools: Read, Glob, Grep, Bash(git diff:*), Bash(git log:*), Bash(git rev-parse:*), Bash(wc:*), Bash(node:*)
 ---
 
 # gabarito-conformidade
@@ -87,6 +87,10 @@ Tipo lido de `tipo:` no frontmatter ou do título. Card vindo de ferramenta (Cli
 | **Bug** (FL1) | descrição com **onde** / **desde quando** / **afetando quem** · **reprodução** passo a passo · **esperado** × observado | sem reprodução · sem "desde" · sem esperado |
 
 Movimento e bloqueio (`fluxo.md §4`): card "bloqueado" é **marcação com data, motivo e dono do desbloqueio**, não coluna; card parado além de `fluxo.envelhecimentoDias` sem movimento é pauta do nível acima — aponte, não reprove.
+
+## Aprendizados D ao conferir spec nova
+
+Rode `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" aprendizados --para spec` (lê a árvore da raiz principal; não precisa de entrega). Liste cada D devolvido (`regra`, `entrega`, `sessao:seq`) e marque `AVISO` os que a spec não trata. Lista vazia é "nenhum D para spec"; erro ou `ok:false` é "aprendizados indisponíveis: <erro>", nunca "nenhum". M não entra nessa lista.
 
 ## Checklist — ADR
 

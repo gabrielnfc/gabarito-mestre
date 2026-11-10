@@ -63,7 +63,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
-const FONTES = ['skills/gabarito-loop/SKILL.md', 'commands/gabarito.md'];
+const FONTES = ['skills/gabarito-loop/SKILL.md', 'skills/gabarito-conformidade/SKILL.md', 'commands/gabarito.md'];
 const CMD_LOOP = /node "?\$\{CLAUDE_PLUGIN_ROOT\}\/gates\/scripts\/loop\.mjs"?[^`\n]*/g;
 
 /** Todo `node ${CLAUDE_PLUGIN_ROOT}/gates/scripts/<x>.mjs` das fontes: o caminho precisa estar entre aspas. */
@@ -71,7 +71,9 @@ function extrairComandosLoop() {
   const out = [];
   for (const rel of FONTES) {
     for (const m of readFileSync(join(PLUGIN, rel), 'utf8').matchAll(CMD_LOOP)) {
-      const cmd = m[0].replace(/\s+#.*$/, '').replace(/<n>/g, '1').replace(/<task>/g, 'T1').trim();
+      // Placeholders viram valores de forma válida (`<E|A>` ⇒ E); o que sobrar vira `x`, senão `<`/`>` são redirecionamento no shell.
+      const cmd = m[0].replace(/\s+#.*$/, '').replace(/<E\|A>/g, 'E').replace(/<D\|M>/g, 'D').replace(/<sessao>:<seq>/g, '1:1')
+        .replace(/<n>/g, '1').replace(/<task>/g, 'T1').replace(/<[^<>]*>/g, 'x').trim();
       out.push({ rel, cmd });
     }
   }
@@ -137,4 +139,51 @@ test('comando-do-painel-da-skill-roda-em-bash-e-zsh', () => {
     const ultima = r.stdout.trim().split('\n').pop() ?? '';
     if (ultima.startsWith('{')) assert.notEqual(JSON.parse(ultima).erro, 'uso', `flag caiu em uso\n${ctx}`);
   }
+});
+
+// ---- GM-13 T15: a skill do loop cita o aprendizado, o pouso sem mod e o registro; a conformidade lista os D da spec.
+const SKILL_LOOP = join(PLUGIN, 'skills/gabarito-loop/SKILL.md');
+const SKILL_CONF = join(PLUGIN, 'skills/gabarito-conformidade/SKILL.md');
+
+test('skill-loop-cita-aprender-pousar-registro-loop-dinamico', () => {
+  const t = readFileSync(SKILL_LOOP, 'utf8');
+  // (a) aprender ⇒ fechar cada pendência antes de despachar, com os dois comandos reais
+  assert.match(t, /`aprender` \(`pendencias\[\{tipo,sessao,seq\}\]`\): antes de qualquer despacho, feche cada uma/);
+  assert.match(t, /loop\.mjs" aprendizado <E\|A> <D\|M> --regra <t> --entra-em instantaneo,brief:implementador --gatilho <sessao>:<seq>`/);
+  assert.match(t, /loop\.mjs" aprendizado nada --gatilho <sessao>:<seq> --motivo <t>`/);
+  // (b) aprendizados[] do item vão no brief
+  assert.match(t, /`aprendizados\[\]` do item vão no brief/);
+  // (c) pouso sem mod: pousar + pedir /clear ao dono em 1 linha; repassa o aviso
+  assert.match(t, /rode `node "\$\{CLAUDE_PLUGIN_ROOT\}\/gates\/scripts\/loop\.mjs" pousar`/);
+  assert.match(t, /peça ao dono, em 1 linha, que digite `\/clear`/);
+  assert.match(t, /repasse o `aviso` do JSON/);
+  assert.match(t, /\(`task_em_voo` ⇒ ainda não\)/);
+  // cláusula negativa (P15): o agente nunca diz que roda /clear; se o texto disser, este teste cai
+  // Cláusula negativa: nenhuma frase que menciona /clear atribui ao agente o comando ("você roda", "o agente digita"), salvo se a frase nega.
+  // `\b` é ASCII no JS: depois de "você" (ê) não serve, por isso o sujeito vai sem fronteira à direita.
+  const frasesComClear = t.split(/(?<=[.!?])\s+|\n/).filter((f) => f.includes('/clear'));
+  const afirmam = frasesComClear.filter((f) => /(?:você|agente|eu|a skill)[^.\n]{0,30}\b(?:rode|roda|rodar|executa|executar|digita|digitar|manda|mandar)\b/i.test(f) && !/nunca|não/i.test(f));
+  assert.deepEqual(afirmam, [], 'frase que atribui o /clear ao agente');
+  assert.ok(frasesComClear.length >= 2, 'o texto precisa citar o /clear (pedido ao dono e negação)');
+  // (d) concluir ⇒ registro, commit só do registro.md, depois Entrega
+  assert.match(t, /loop\.mjs" registro`; commite só o `registro\.md` que ele devolve \(`git add` pelo caminho\); então \*\*Entrega\*\* abaixo\./);
+  // (e) loop dinâmico (S3)
+  assert.match(t, /sob `\/loop` dinâmico \(sem intervalo\)/);
+});
+
+test('skill-conformidade-lista-d-com-spec: allowed-tools com node, comando real, D marcados AVISO, erro não vira "nenhum"', () => {
+  const t = readFileSync(SKILL_CONF, 'utf8');
+  assert.match(t, /^allowed-tools: .*Bash\(node:\*\)$/m);
+  assert.match(t, /node "\$\{CLAUDE_PLUGIN_ROOT\}\/gates\/scripts\/loop\.mjs" aprendizados --para spec`/);
+  assert.match(t, /marque `AVISO` os que a spec não trata/);
+  assert.match(t, /Liste cada D devolvido \(`regra`, `entrega`, `sessao:seq`\)/);
+  assert.match(t, /M não entra nessa lista\./);
+  assert.match(t, /erro ou `ok:false` é "aprendizados indisponíveis: <erro>", nunca "nenhum"/);
+  // cláusula "não precisa de entrega" (REQ-APR-3): o comando real responde ok em repositório sem entrega
+  const repo = mkdtempSync(join(tmpdir(), 'skill-conf-aprendizados-'));
+  assert.equal(spawnSync('git', ['init', '-q', repo]).status, 0);
+  const r = spawnSync(process.execPath, [join(PLUGIN, 'gates', 'scripts', 'loop.mjs'), 'aprendizados', '--para', 'spec'], { cwd: repo, encoding: 'utf8' });
+  assert.equal(JSON.parse(r.stdout.trim().split('\n').pop()).ok, true, r.stdout + r.stderr);
+  // comando real: roda em bash e zsh na costura (o extrator de FONTES cobre este arquivo)
+  assert.ok(extrairComandosLoop().some((c) => c.rel === 'skills/gabarito-conformidade/SKILL.md' && /aprendizados --para spec/.test(c.cmd)), 'o comando não entrou na costura');
 });
