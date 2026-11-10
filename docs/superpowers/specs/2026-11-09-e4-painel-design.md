@@ -39,7 +39,7 @@ Legenda: **(a)** medido/lido · **(b)** a medir · **(c)** decisão do dono, do 
 
 **REQ-PNL-1 Projeção.** `projetarPainel(plano, eventos, entrada)` ⇒ `EstadoPainel`.
 
-Entrada: `decisaoEntrega`, `pausado`, `contexto{percent, tokens, window}`, `limites{h5, d7}`, `x`, `agentes[{id, type, description, status, uso{contexto, tok, modelo}|null}]`, `pacote`, `notificacao{ts|motivo}|null`, `agoraMs`, `fuso`, `titulo`, `politica`, `base`, `entregaId`, `modeloSessao`, `specSha` (sha256 atual de `plano.spec`, ou null), `tetoSombra` (`sombra.teto` de origin, 26 padrão). Os seis últimos, e `fuso`, vêm do CLI, nunca do mod; `modeloSessao` = último `custo.medicao.modelo` do orquestrador (D11). *(emenda Sombra 2026-11-09, sombra-plano.md)*
+Entrada: `decisaoEntrega`, `pausado`, `contexto{percent, tokens, window}`, `limites{h5, d7}`, `x`, `agentes[{id, type, description, status, uso{contexto, tok, modelo}|null}]`, `pacote`, `notificacao{ts|motivo}|null`, `agoraMs`, `fuso`, `titulo`, `politica`, `entregaId`, `modeloSessao`, `specSha` (sha256 atual de `plano.spec`, ou null), `tetoSombra` (`sombra.teto` de origin, 26 padrão). Os seis últimos, e `fuso`, vêm do CLI, nunca do mod; `modeloSessao` = último `custo.medicao.modelo` do orquestrador (D11). *(emenda Sombra 2026-11-09, sombra-plano.md)*
 
 Saída:
 - **plano:** `tasks{id, titulo?, estado, glifo, nome?, papel?, modelo?, desdeS?, deps}`, `feitas`, `total`, `%`, `eta{hora, restanteS, maisMenosS, n}|null`, `rodadaMedia`, `medianaS`.
