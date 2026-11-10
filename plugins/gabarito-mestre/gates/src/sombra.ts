@@ -9,16 +9,14 @@
  * Ausente e corrompido são casos distintos: lista vazia = sem decisão; evento sem `dados` ou com `dados` que não é objeto = evento recusado pela forma, nunca exceção.
  */
 import { createHash } from 'node:crypto';
-import { formaInvalida, REQ_RE } from './formas.ts';
-import { ordenar } from './loop.ts';
+import { REQ_RE } from './formas.ts';
+import { contarConsultas, diarioEmOrdem, ordenado, projetarDecisoes, valido, vigentes } from './diario-puro.ts';
+import type { Ancora, DecisaoSombra } from './diario-puro.ts';
 import type { Evento, TaskPlano } from './tipos.ts';
 
-export type Ancora = { req: string } | { task: string };
-export type DecisaoSombra = {
-  hash: string; req?: string; task?: string; resposta: string; arquivo: string;
-  fontes?: string[]; medicao?: string; fora_da_regra?: true; emenda_seq?: number; pergunta_enviesada: boolean;
-  sessao: string; seq: number; ts: string;
-};
+// A projeção das decisões vive em `diario-puro.ts` (sem `node:*`, o painel a usa); os nomes públicos continuam aqui.
+export { contarConsultas, diarioEmOrdem, projetarDecisoes };
+export type { Ancora, DecisaoSombra };
 
 /** NFC, minúsculas, `trim` e qualquer sequência de espaço (inclui quebra de linha e NBSP) vira um espaço. NFC de novo ao fim: caixa pode decompor. */
 export function normalizarPergunta(p: string): string {
@@ -43,82 +41,6 @@ export function hashPergunta(ancora: string, versao: number, pergunta: string): 
   return createHash('sha256').update(`${ancora}\n${versao}\n${norm}`).digest('hex');
 }
 
-/**
- * Ordem do diário = a de `ordenar` do loop (única fonte): `seq` dentro da sessão, `(ts, sessao)` entre sessões, `ts` no formato do
- * diário. `null` se o diário não se sustenta (`seq` que não cresce na sessão, `ts`/`sessao`/`seq` ilegíveis, não é lista).
- */
-function ordenado(eventos: Evento[]): Evento[] | null {
-  if (!Array.isArray(eventos)) return null;
-  const o = ordenar(eventos);
-  return o.ok ? o.eventos : null;
-}
-
-/** `false` quando o diário está fora de ordem ou ilegível: o CLI recusa com motivo em vez de decidir sobre ele. */
-export function diarioEmOrdem(eventos: Evento[]): boolean {
-  return ordenado(eventos) !== null;
-}
-
-const valido = (e: Evento, tipo: string): boolean => e.tipo === tipo && formaInvalida(e.tipo, e.dados) === null;
-
-function paraDecisao(e: Evento): DecisaoSombra {
-  const d = e.dados as Record<string, unknown>;
-  const dec: DecisaoSombra = {
-    hash: d.pergunta_hash as string, resposta: d.resposta as string, arquivo: d.arquivo as string,
-    pergunta_enviesada: d.pergunta_enviesada as boolean, sessao: e.sessao, seq: e.seq, ts: e.ts,
-  };
-  if (d.req !== undefined) dec.req = d.req as string;
-  if (d.task !== undefined) dec.task = d.task as string;
-  if (d.fontes !== undefined) dec.fontes = d.fontes as string[];
-  if (d.medicao !== undefined) dec.medicao = d.medicao as string;
-  if (d.fora_da_regra === true) dec.fora_da_regra = true;
-  if (d.emenda_seq !== undefined) dec.emenda_seq = d.emenda_seq as number;
-  return dec;
-}
-
-type Vigente = { dec: DecisaoSombra; pos: number };
-
-/**
- * Vigentes por hash, com a posição na ordem do diário. Entre as `decisao.sombra` de forma válida do mesmo hash:
- * 1. `substitui {sessao, seq}` que aponta uma decisão válida do MESMO hash tira o alvo da disputa, independente de `ts`
- *    (relógio defasado não desfaz a substituição); vale em cadeia (A←B←C: vence C). Alvo inexistente, de outro tipo, de forma
- *    inválida, de outro hash ou a própria decisão: o `substitui` é ignorado.
- * 2. Entre as que sobraram, vence a mais recente pela ordem do diário. Se todas foram substituídas (ciclo forjado, que o CLI
- *    nunca grava), vale a mais recente de todas: decisão gravada nunca some.
- * Diário fora de ordem ⇒ mapa vazio (ver cabeçalho).
- */
-function vigentes(eventos: Evento[]): Map<string, Vigente> {
-  const ord = ordenado(eventos);
-  const saida = new Map<string, Vigente>();
-  if (ord === null) return saida;
-  const porHash = new Map<string, { e: Evento; pos: number }[]>();
-  ord.forEach((e, pos) => {
-    if (!valido(e, 'decisao.sombra')) return;
-    const h = (e.dados as { pergunta_hash: string }).pergunta_hash;
-    const lista = porHash.get(h) ?? [];
-    lista.push({ e, pos });
-    porHash.set(h, lista);
-  });
-  for (const [h, lista] of porHash) {
-    const substituidas = new Set<Evento>();
-    for (const { e } of lista) {
-      const s = (e.dados as { substitui?: { sessao: string; seq: number } }).substitui;
-      if (s === undefined) continue;
-      const alvo = lista.find((c) => c.e.sessao === s.sessao && c.e.seq === s.seq);
-      if (alvo !== undefined && alvo.e !== e) substituidas.add(alvo.e);
-    }
-    const livres = lista.filter((c) => !substituidas.has(c.e));
-    const disputa = livres.length > 0 ? livres : lista;
-    const escolhida = disputa[disputa.length - 1];
-    saida.set(h, { dec: paraDecisao(escolhida.e), pos: escolhida.pos });
-  }
-  return saida;
-}
-
-/** Decisão vigente por hash (regra em `vigentes`). */
-export function projetarDecisoes(eventos: Evento[]): Map<string, DecisaoSombra> {
-  return new Map([...vigentes(eventos)].map(([h, v]) => [h, v.dec]));
-}
-
 /** Hashes de `sombra.consulta` válida, na ordem em que aparecem, sem decisão vigente. Sem repetir hash. */
 export function consultasAbertas(eventos: Evento[]): string[] {
   const ord = ordenado(eventos);
@@ -131,14 +53,6 @@ export function consultasAbertas(eventos: Evento[]): string[] {
     if (!fechadas.has(h)) vistos.add(h);
   }
   return [...vistos];
-}
-
-/** Consultas ao agente = `sombra.consulta` de forma válida. Decisão e acerto de cache não contam (REQ-SOM-4). */
-export function contarConsultas(eventos: Evento[]): number {
-  if (!Array.isArray(eventos)) return 0;
-  let n = 0;
-  for (const e of eventos) if (e !== null && typeof e === 'object' && valido(e, 'sombra.consulta')) n += 1;
-  return n;
 }
 
 /** Decisões vigentes ancoradas nos REQs pedidos: na ordem dos `reqs` e, dentro de cada um, a mais recente (ordem do diário) primeiro. */

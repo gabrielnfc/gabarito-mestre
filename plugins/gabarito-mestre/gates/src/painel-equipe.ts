@@ -1,14 +1,17 @@
 /**
  * Equipe do painel (E4, T3): pacotes de nomes, sorteio, nome por papel, uso do transcript e a projeção `equipe` do `EstadoPainel`.
  * Puro: sem `fs`, `process`, `Date.now()` nem `node:*` (o mod importa o `dist/`, que não tem Node; ver `loop.ts`). Por isso o sorteio usa FNV-1a
- * em TS e este módulo não importa `sombra.ts` (que traz `node:crypto`): as decisões vigentes da Sombra são recontadas aqui (`decisoesVigentes`),
- * e o teste `sombra-vigentes-igual-projetarDecisoes` prende a cópia ao original.
+ * em TS e este módulo não importa `sombra.ts` (que traz `node:crypto`): as decisões vigentes da Sombra vêm de `projetarDecisoes` em
+ * `diario-puro.ts` (a mesma de `sombra.ts`), e `tokensDe` vem de `pouso.ts` (puro, o mod já o carrega).
  */
 
+import { projetarDecisoes } from './diario-puro.ts';
+import type { DecisaoSombra } from './diario-puro.ts';
 import { formaInvalida } from './formas.ts';
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.ts';
 import type { EstadoTask } from './loop.ts';
 import { dataCivil } from './painel-hora.ts';
+import { tokensDe } from './pouso.ts';
 import type { AgentePainel, AgenteVivo, CorTema, EntradaPainel, EstadoPainel, Evento, PacoteNomes, Papel, Plano, UsoAgente } from './tipos.ts';
 
 const DESCRICAO_RE = /^(\S+) (implementador|revisor|correcao)$/;
@@ -191,44 +194,11 @@ export function usoDoTranscript(linhas: string[]): UsoAgente | null {
 
 // ---------- Sombra (decisões vigentes) ----------
 
-type Decisao = { e: Evento; pos: number };
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-/**
- * Decisão vigente por hash, mesma regra de `sombra.ts` (`vigentes`): entre as `decisao.sombra` de forma válida do mesmo hash, o `substitui`
- * que aponta uma decisão válida do mesmo hash tira o alvo da disputa; das que sobram vence a mais recente na ordem do diário; todas
- * substituídas (ciclo forjado) ⇒ a mais recente de todas. Diário que não ordena ⇒ vazio.
- */
-function decisoesVigentes(eventos: unknown): Evento[] {
-  const ord = ordemSegura(eventos);
-  if (ord === null) return [];
-  const porHash = new Map<string, Decisao[]>();
-  ord.forEach((e, pos) => {
-    if (e.tipo !== 'decisao.sombra' || formaInvalida(e.tipo, e.dados) !== null) return;
-    const h = (e.dados as { pergunta_hash: string }).pergunta_hash;
-    const lista = porHash.get(h) ?? [];
-    lista.push({ e, pos });
-    porHash.set(h, lista);
-  });
-  const vigentes: Evento[] = [];
-  for (const lista of porHash.values()) {
-    const substituidas = new Set<Evento>();
-    for (const { e } of lista) {
-      const s = (e.dados as { substitui?: { sessao: string; seq: number } }).substitui;
-      if (s === undefined) continue;
-      const alvo = lista.find((c) => c.e.sessao === s.sessao && c.e.seq === s.seq);
-      if (alvo !== undefined && alvo.e !== e) substituidas.add(alvo.e);
-    }
-    const livres = lista.filter((c) => !substituidas.has(c.e));
-    const disputa = livres.length > 0 ? livres : lista;
-    vigentes.push(disputa[disputa.length - 1].e);
-  }
-  return vigentes;
-}
-
 /** Mais recente por `(ts, sessao, seq)`, a ordem de `diario.ts` e do bloco da Sombra. */
-function maisRecente(eventos: Evento[]): Evento | null {
-  let melhor: Evento | null = null;
+function maisRecente(eventos: DecisaoSombra[]): DecisaoSombra | null {
+  let melhor: DecisaoSombra | null = null;
   for (const e of eventos) {
     if (melhor === null) { melhor = e; continue; }
     const d = Date.parse(e.ts) - Date.parse(melhor.ts) || cmp(e.sessao, melhor.sessao) || e.seq - melhor.seq;
@@ -238,26 +208,6 @@ function maisRecente(eventos: Evento[]): Evento | null {
 }
 
 // ---------- projeção ----------
-
-/**
- * Cópia fiel de `tokensDe` de `pouso.ts` (que importa `node:*` pelo fecho e quebraria o mod): entrada + saída + criação de cache de todo
- * `custo.medicao`, sem leitura de cache; contagem inválida ⇒ `ok: false`; sem medição ⇒ `tokens: null`. O teste `tokens-igual-ao-pouso` as compara.
- */
-function tokensDe(eventos: Evento[]): { ok: true; tokens: number | null } | { ok: false } {
-  let tokens: number | null = null;
-  for (const e of eventos) {
-    if (e?.tipo !== 'custo.medicao') continue;
-    let soma = 0;
-    for (const campo of ['input_tokens', 'output_tokens', 'cache_creation', 'cache_read']) {
-      const n = (e.dados ?? {})[campo];
-      if (n === undefined) continue;
-      if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return { ok: false };
-      if (campo !== 'cache_read') soma += n;
-    }
-    tokens = (tokens ?? 0) + soma;
-  }
-  return { ok: true, tokens };
-}
 
 const ENCERRADO: ReadonlySet<string> = new Set(['idle', 'completed', 'failed', 'killed']);
 const ORDEM_COR: readonly CorTema[] = ['claude', 'suggestion', 'autoAccept', 'ide', 'remember'];
@@ -391,12 +341,12 @@ export function projetarEquipe(plano: Plano, eventos: Evento[] | null, entrada: 
     .map((t) => ({ nome: nomes.get(chaveDoPar(t.id, 'revisor')) ?? null, task: t.id, mutacoesHoje: hoje?.total ?? null, mortasHoje: hoje?.mortas ?? null }));
 
   // Sombra
-  const vigentes = decisoesVigentes(todos);
-  const ultimaEv = maisRecente(vigentes);
-  const ultima = ultimaEv === null ? null : (() => {
-    const d = ultimaEv.dados as { resposta: string; fontes?: string[]; medicao?: string };
+  const vigentes = [...projetarDecisoes(todos).values()];
+  const ultimaDec = maisRecente(vigentes);
+  const ultima = ultimaDec === null ? null : (() => {
+    const d = ultimaDec;
     const fonte = Array.isArray(d.fontes) && d.fontes.length > 0 ? d.fontes[0] : d.medicao !== undefined ? 'medicao' : null;
-    return { seq: ultimaEv.seq, resposta: d.resposta, fonte };
+    return { seq: d.seq, resposta: d.resposta, fonte };
   })();
   const dasSombra = medicoes.filter((e) => ehObjeto(e.dados) && e.dados.papel === 'sombra');
   const ultimaSombra = dasSombra.length > 0 ? dasSombra[dasSombra.length - 1] : null;

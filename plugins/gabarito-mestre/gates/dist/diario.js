@@ -2,16 +2,17 @@ import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { formaInvalida } from './formas.js';
-import { estadoDe, ordenar } from './loop.js';
-import { diarioEmOrdem, projetarDecisoes } from './sombra.js';
-                                                 
-                                            
+import { cmp, diarioEmOrdem, duracoes, ehObjeto, mediana, projetarDecisoes } from './diario-puro.js';
+                                                      
                                          
 
 /**
  * Diário mínimo (REQ-DIA-1): um arquivo `events.<sessao>.jsonl` por sessão, cadeia de hash,
  * lock `wx`, canário de segredo e projeção curta. Puro: só `node:` embutido.
  */
+
+// Cronômetro das durações: vive em `diario-puro.ts` (sem `node:*`, o painel o usa); os nomes públicos continuam aqui.
+export { duracoes, EM_TRABALHO, mediana } from './diario-puro.js';
 
 // As 10 alternativas de REQ-DIA-1 (E1:72), literais e na ordem da spec.
 const CANARIO                                           = [
@@ -271,82 +272,11 @@ export function lerEstrito(dir        )                 {
   return { ok: true, eventos: out };
 }
 
-const cmp = (a        , b        )         => (a < b ? -1 : a > b ? 1 : 0);
-
 /** Corta em `n` unidades e não deixa meio par substituto no fim. */
 function corta(s        , n        )         {
   const c = s.slice(0, n);
   const u = c.charCodeAt(c.length - 1);
   return c.length === n && u >= 0xd800 && u <= 0xdbff ? c.slice(0, -1) : c;
-}
-
-const ehObjeto = (x         )                               => x !== null && typeof x === 'object' && !Array.isArray(x);
-
-/** Task com trabalho em curso: o cronômetro anda enquanto o estado da T2 está aqui. */
-export const EM_TRABALHO                          = new Set            (['implementando', 'concluida', 'em_revisao', 'corrigindo']);
-const TIPOS_DE_TASK                      = new Set(['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta']);
-
-/**
- * Duração de UMA task aprovada (REQ-OBS-1), seguindo a transição da T2 (`estadoDe`) e nunca lendo
- * `tipo`/`papel`/`origem` por conta própria. Soma dos intervalos em trabalho que terminaram em veredito;
- * tentativa abandonada por retomada não entra; voltar a `pendente` recomeça do zero. `null`: task não
- * aprovada, ou sequência que a T2 rejeita (a projeção não inventa número).
- */
-function duracaoDaTask(fila          )                {
-  // `ordenar` da T2 só aceita cada sessão em ordem de `seq`; a ordem de entrada daqui não é garantida.
-  const porSeq = [...fila].sort((a, b) => cmp(String(a.sessao), String(b.sessao)) || Number(a.seq) - Number(b.seq));
-  const ord = ordenar(porSeq);
-  if (!ord.ok) return null;
-  let aberta                    ;
-  let acumulado                    ;
-  let feita                = null;
-  let antes             = 'pendente';
-  for (let i = 0; i < ord.eventos.length; i++) {
-    const r = estadoDe(ord.eventos.slice(0, i + 1));
-    if ('invalido' in r) return null;
-    const e = ord.eventos[i];
-    const t = Date.parse(e.ts); // `ordenar` já barrou ts inválido
-    const depois = r.estado;
-    if (depois === 'pendente' && antes !== 'pendente') {
-      aberta = undefined;
-      acumulado = undefined;
-    } else if (!EM_TRABALHO.has(antes) && EM_TRABALHO.has(depois)) {
-      aberta = t;
-    } else if (EM_TRABALHO.has(antes) && !EM_TRABALHO.has(depois)) {
-      const ini = aberta;
-      aberta = undefined;
-      // saída por reabertura = tentativa abandonada, não soma; saída por veredito soma o intervalo (se for coerente)
-      if (e.tipo === 'review.veredito') {
-        if (ini !== undefined && t >= ini) acumulado = (acumulado ?? 0) + (t - ini);
-        if (depois === 'aprovada' && acumulado !== undefined) feita = acumulado / 1000;
-      }
-    }
-    antes = depois;
-  }
-  return feita;
-}
-
-/** Duração por task aprovada: agrupa por task e delega a cada uma o `duracaoDaTask`. */
-export function duracoes(eventos          )           {
-  const porTask = new Map                  ();
-  for (const e of eventos) {
-    if (!TIPOS_DE_TASK.has(e.tipo) || !ehObjeto(e.dados) || typeof e.dados.task !== 'string') continue;
-    const fila = porTask.get(e.dados.task) ?? [];
-    fila.push(e);
-    porTask.set(e.dados.task, fila);
-  }
-  const feitas           = [];
-  for (const fila of porTask.values()) {
-    const d = duracaoDaTask(fila);
-    if (d !== null) feitas.push(d);
-  }
-  return feitas;
-}
-
-export function mediana(xs          )         {
-  const o = [...xs].sort((a, b) => a - b);
-  const m = o.length >> 1;
-  return o.length % 2 === 1 ? o[m] : (o[m - 1] + o[m]) / 2;
 }
 
 const CONTROLE = /[\u0000-\u001f\u007f\u2028\u2029]+/g;

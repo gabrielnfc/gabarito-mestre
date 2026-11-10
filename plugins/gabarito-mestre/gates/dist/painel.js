@@ -1,12 +1,13 @@
 /**
  * Painel (E4, GM-12): núcleo puro. `projetarPainel(plano, eventos, entrada)` ⇒ `EstadoPainel` (T2) e o despacho do render por preset (T1).
  * Puro: relógio só por `entrada.agoraMs`, fuso só por `entrada.fuso` (via `painel-hora`); sem `fs`, `process` nem `Date.now()`.
- * O fecho de imports não tem `node:*` (o mod carrega o `dist/`): por isso o cronômetro das durações e a contagem de consultas da Sombra são
- * cópias fiéis das de `diario.ts` e `sombra.ts` (que importam `node:fs`/`node:crypto`), e o teste `duracoes-igual-ao-diario` as mantém iguais.
+ * O fecho de imports não tem `node:*` (o mod carrega o `dist/`): o cronômetro das durações e a contagem de consultas da Sombra vêm de
+ * `diario-puro.ts`, a MESMA implementação que `diario.ts` e `sombra.ts` reexportam (sem cópia); o teste `duracoes-igual-ao-diario` prova a fiação.
  * Decisões: `.superpowers/sdd/2026-11-09-e4-painel/sombra-p1a.md` §0 (D-A a D-C) e "Task 2".
  */
 
 import { projetarEmendas } from './emenda.js';
+import { cmp, contarConsultas, duracoes, EM_TRABALHO, mediana } from './diario-puro.js';
 import { estadoDe, ordenar, proximaAcao, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK } from './loop.js';
                                             
 import { formaInvalida } from './formas.js';
@@ -71,12 +72,10 @@ function linhaDaTabela(motivo             , task               )                
 const ehObj = (x         )                               => x !== null && typeof x === 'object' && !Array.isArray(x);
 const dadosDe = (ev         )                          => (ehObj(ev) && ehObj(ev.dados) ? ev.dados : {});
 const tipoDe = (ev         )                => (ehObj(ev) && typeof ev.tipo === 'string' ? ev.tipo : null);
-const cmp = (a        , b        )         => (a < b ? -1 : a > b ? 1 : 0);
 const msDe = (ev         )         => (ehObj(ev) && typeof ev.ts === 'string' ? Date.parse(ev.ts) : Number.NaN);
 const HEX64 = /^[0-9a-f]{64}$/;
 const DIAS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
 const ENCERRADO                       = new Set(['idle', 'completed', 'failed', 'killed']);
-const EM_TRABALHO                          = new Set            (['implementando', 'concluida', 'em_revisao', 'corrigindo']);
 const EM_VOO                        = ['implementando', 'em_revisao', 'corrigindo'];
 const PAPEL_DO_ESTADO                                     = { implementando: 'implementador', corrigindo: 'correcao', em_revisao: 'revisor' };
 const SEGUNDA_RODADA                        = ['reprovada', 'corrigindo', 'concluida', 'em_revisao'];
@@ -89,65 +88,6 @@ const taskDe = (ev         )                => {
   const t = dadosDe(ev).task;
   return typeof t === 'string' ? t : null;
 };
-
-// ---------------------------------------------------------------------------------------------------------------------------------
-// Cronômetro das durações e ETA. Cópia fiel de `duracoes`/`mediana` de `diario.ts` (ver o cabeçalho): mesma regra de EM_TRABALHO.
-
-function duracaoDaTask(fila          )                {
-  const porSeq = [...fila].sort((a, b) => cmp(String(a.sessao), String(b.sessao)) || Number(a.seq) - Number(b.seq));
-  const ord = ordenar(porSeq);
-  if (!ord.ok) return null;
-  let aberta                    ;
-  let acumulado                    ;
-  let feita                = null;
-  let antes             = 'pendente';
-  for (let i = 0; i < ord.eventos.length; i++) {
-    const r = estadoDe(ord.eventos.slice(0, i + 1));
-    if ('invalido' in r) return null;
-    const ev = ord.eventos[i];
-    const t = Date.parse(ev.ts);
-    const depois = r.estado;
-    if (depois === 'pendente' && antes !== 'pendente') {
-      aberta = undefined;
-      acumulado = undefined;
-    } else if (!EM_TRABALHO.has(antes) && EM_TRABALHO.has(depois)) {
-      aberta = t;
-    } else if (EM_TRABALHO.has(antes) && !EM_TRABALHO.has(depois)) {
-      const inicio = aberta;
-      aberta = undefined;
-      if (ev.tipo === 'review.veredito') {
-        if (inicio !== undefined && t >= inicio) acumulado = (acumulado ?? 0) + (t - inicio);
-        if (depois === 'aprovada' && acumulado !== undefined) feita = acumulado / 1000;
-      }
-    }
-    antes = depois;
-  }
-  return feita;
-}
-
-/** Duração em segundos por task aprovada (REQ-OBS-1); sequência que `estadoDe` recusa não vira número. */
-function duracoesDe(eventos          )           {
-  const porTask = new Map                  ();
-  for (const ev of eventos) {
-    const t = taskDe(ev);
-    if (!ehObj(ev) || !TIPOS_TASK.has(String(ev.tipo)) || t === null) continue;
-    const fila = porTask.get(t) ?? [];
-    fila.push(ev);
-    porTask.set(t, fila);
-  }
-  const feitas           = [];
-  for (const fila of porTask.values()) {
-    const d = duracaoDaTask(fila);
-    if (d !== null) feitas.push(d);
-  }
-  return feitas;
-}
-
-function mediana(xs          )         {
-  const o = [...xs].sort((a, b) => a - b);
-  const m = o.length >> 1;
-  return o.length % 2 === 1 ? o[m] : (o[m - 1] + o[m]) / 2;
-}
 
 /** Quantil por interpolação linear, tipo 7 (`pos = (n − 1)·q`). `xs` ordenado e não vazio. */
 function quantil(xs          , q        )         {
@@ -185,7 +125,7 @@ function paralelismo(eventos          )         {
  * n < 3 ⇒ `null` (antes de `restantes = 0`). `restantes ≤ 0` ou não finito ⇒ 0 e 0. A hora nunca fica antes de `agoraMs`. O render arredonda para minutos.
  */
 export function etaDe(eventos          , restantes        , agoraMs        , fuso        )                               {
-  const ds = duracoesDe(eventos);
+  const ds = duracoes(eventos.filter(ehObj));
   if (ds.length < 3) return null;
   const falta = Number.isFinite(restantes) && restantes > 0 ? restantes : 0;
   const ondas = Math.ceil(falta / paralelismo(eventos));
@@ -346,13 +286,6 @@ function ciVermelhos(ord          )         {
   return n;
 }
 
-/** Consultas à Sombra = `sombra.consulta` de forma válida (cópia de `contarConsultas`, sombra.ts:137, que importa `node:crypto`). */
-function contarConsultas(lista          )         {
-  let n = 0;
-  for (const ev of lista) if (tipoDe(ev) === 'sombra.consulta' && formaInvalida('sombra.consulta', ev.dados) === null) n += 1;
-  return n;
-}
-
 const vivoDe = (a         )                  => ehObj(a) && !ENCERRADO.has(a.status);
 
 function glifoDe(t                                    , plano       , agentes                     )            {
@@ -492,7 +425,7 @@ export function projetarPainel(plano       , eventos                 , entrada  
   const total = plano.tasks.length;
   const integradas = [...estados.values()].filter((r) => r.estado === 'integrada');
   const rodadaMedia = integradas.length === 0 ? null : Math.round((integradas.reduce((s, r) => s + r.rodada, 0) / integradas.length) * 10) / 10;
-  const duracoes = ord === null ? [] : duracoesDe(ord);
+  const medidas = ord === null ? [] : duracoes(ord);
   let mortas                = null;
   for (const ev of lista) {
     if (tipoDe(ev) !== 'task.integrada') continue;
@@ -515,7 +448,7 @@ export function projetarPainel(plano       , eventos                 , entrada  
       tasks, feitas, total, pct: total === 0 ? 0 : Math.round((feitas / total) * 100),
       eta: valido ? etaDe(ord            , total - feitas, agora, fuso) : null,
       rodadaMedia,
-      medianaS: duracoes.length >= 3 ? mediana(duracoes) : null,
+      medianaS: medidas.length >= 3 ? mediana(medidas) : null,
     },
     equipe: projetarEquipe(plano, lista, entrada),
     parado: c.parar !== null || entrada.pausado === true,

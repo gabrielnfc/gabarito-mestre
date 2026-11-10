@@ -822,7 +822,7 @@ test('fecho-sem-node: dist/painel.js e tudo que ele importa (relativo) não usam
     vistos.add(arquivo);
     assert.ok(existsSync(arquivo), `dist ausente: ${arquivo}`);
     const js = readFileSync(arquivo, 'utf8');
-    assert.equal(/\b(?:from|import)\s*['"]node:/.test(js), false, `${arquivo} importa node:*`);
+    assert.equal(/^\s*(?:import|export)\b[^'"\n]*?\bfrom\s*['"]node:|^\s*import\s*['"]node:/m.test(js), false, `${arquivo} importa node:*`);
     assert.equal(/\bimport\s*\(/.test(js), false, `${arquivo} usa import() dinâmico`);
     assert.equal(/\brequire\s*\(/.test(js), false, `${arquivo} usa require`);
     for (const m of js.matchAll(/\bfrom\s*['"](\.{1,2}\/[^'"]+)['"]/g)) visitar(join(dirname(arquivo), m[1]));
@@ -866,7 +866,7 @@ test('tokens-igual-ao-pouso: o tok do líder (cópia sem node:*) = tokensDe de p
   void med;
 });
 
-test('fecho-sem-node-pouso: nenhum arquivo do fecho de dist/painel.js é pouso.js nem importa node:*', () => {
+test('fecho-sem-diario-sombra: o fecho de dist/painel.js tem diario-puro.js e não tem diario.js nem sombra.js (esses importam node:*)', () => {
   const vistos: string[] = [];
   const visitar = (arq: string): void => {
     if (vistos.includes(arq)) return;
@@ -874,5 +874,40 @@ test('fecho-sem-node-pouso: nenhum arquivo do fecho de dist/painel.js é pouso.j
     for (const m of readFileSync(arq, 'utf8').matchAll(/\bfrom\s*['"](\.{1,2}\/[^'"]+)['"]/g)) visitar(join(dirname(arq), m[1]));
   };
   visitar(join(AQUI, '..', 'dist', 'painel.js'));
-  assert.equal(vistos.some((v) => v.endsWith('pouso.js') || v.endsWith('diario.js') || v.endsWith('sombra.js')), false, vistos.join(','));
+  assert.equal(vistos.some((v) => v.endsWith('diario.js') || v.endsWith('sombra.js')), false, vistos.join(','));
+  assert.equal(vistos.some((v) => v.endsWith('diario-puro.js')), true, vistos.join(','));
 });
+
+// ---------------------------------------------------------------- cronômetro: regras do módulo puro lidas pelo painel (GM-12 T2 r3)
+// O painel usa `duracoes` de `diario-puro.ts` (a mesma de `diario.ts`). Estes casos leem o número que sai no painel, para que uma
+// mutação na regra do cronômetro caia também aqui (R-M1: intervalo com ts anterior ao início; R-M2: reabertura do dono zera a soma).
+{
+  const rawT0 = Date.UTC(2026, 10, 3, 10, 0, 0);
+  const rawTs = (s: number | string): string => (typeof s === 'number' ? new Date(rawT0 + s * 1000).toISOString() : s);
+  const R = (seq: number, s: number | string, tipo: TipoEvento, dados: Record<string, unknown>): Evento =>
+    ({ seq, ts: rawTs(s), autor: 'a', sessao: 's1', agente: 'orquestrador', tipo, dados, hash_anterior: null }) as unknown as Evento;
+  const rIni = (n: number, s: number | string, task: string, papel = 'implementador') => R(n, s, 'task.iniciada', { task, papel });
+  const rCon = (n: number, s: number | string, task: string) => R(n, s, 'task.concluida', { task });
+  const rVer = (n: number, s: number | string, task: string, veredito = 'APROVADO', rodada = 1, major = 0) =>
+    R(n, s, 'review.veredito', { task, veredito, blocker: 0, major, rodada });
+  const rReab = (n: number, s: number | string, task: string, origem: 'dono' | 'retomada') => R(n, s, 'task.reaberta', { task, origem });
+  const rCiclo = (b: number, task: string, a: number | string, f: number | string, veredito = 'APROVADO'): Evento[] =>
+    [rIni(b * 10, a, task), rCon(b * 10 + 1, a, task), rIni(b * 10 + 2, a, task, 'revisor'), rVer(b * 10 + 3, f, task, veredito)];
+  const duas = (a: number, b: number): Evento[] => [...rCiclo(1, 'T1', 1000, 1000 + a), ...rCiclo(3, 'T2', 3000, 3000 + b)];
+
+  test('cronometro-veredito-antes-do-inicio-nao-soma-negativo: o intervalo com ts anterior ao início é descartado e a task segue na amostra (R-M1)', () => {
+    const t3 = [...rCiclo(5, 'T3', '2026-11-03T20:00:00.000Z', '2026-11-03T19:00:00.000Z', 'REPROVADO'),
+      rIni(60, 30000, 'T3', 'correcao'), rCon(61, 30010, 'T3'), rIni(62, 30020, 'T3', 'revisor'), rVer(63, 30300, 'T3', 'APROVADO', 2)];
+    const s = proj(P('T1', 'T2', 'T3'), [...duas(100, 900), ...t3]);
+    assert.equal(s.plano.medianaS, 300);
+    assert.deepEqual(s.plano.eta && s.plano.eta.n, 3);
+  });
+
+  test('cronometro-dono-reabre-zera-a-soma: task.reaberta do dono volta a pendente e as rodadas anteriores não entram (R-M2)', () => {
+    const t3 = [...rCiclo(5, 'T3', 10000, 10400, 'REPROVADO'),
+      rIni(60, 10410, 'T3', 'correcao'), rCon(61, 10420, 'T3'), rIni(62, 10430, 'T3', 'revisor'), rVer(63, 10900, 'T3', 'REPROVADO', 2, 1),
+      rReab(64, 12000, 'T3', 'dono'),
+      rIni(65, 13000, 'T3'), rCon(66, 13010, 'T3'), rIni(67, 13020, 'T3', 'revisor'), rVer(68, 13100, 'T3', 'APROVADO', 1)];
+    assert.equal(proj(P('T1', 'T2', 'T3'), [...duas(50, 1000), ...t3]).plano.medianaS, 100);
+  });
+}
