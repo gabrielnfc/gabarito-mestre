@@ -97,13 +97,13 @@ O resto do preset segue abaixo. Tabela fechada (B7), só comandos que existem; s
 - **Executivo:**
   - Entrega; Previsão `hoje hh:mm (±N min, n medições)`; Tasks `integradas · em curso · na fila`;
   - Qualidade `N rodada/review · M mutações mortas` (contagem, B11; sem dados ⇒ `sem dados`);
-  - CI `estado · N execuções hoje`; Produção; Contexto; Limites; linha depende.
-  - Agentes em voo (dono, 2026-11-09): bloco ao fim, uma linha por agente vivo com papel genérico numerado, sem nome de pacote: `● implementador N  <task> <título> [(<estado>)]  ctx% tok · tempo`; `◐ revisor aguarda <task>`; `○ Sombra N decisões · #seq <resposta>`; cabeçalho `N vivos`. Mesma fonte da EQUIPE (REQ-PNL-5); em < 60 colunas, só papel, task e ctx%.
+  - CI `estado · N execuções hoje`; Produção; Contexto; Limites. O topo (depende/PAROU) é o mesmo `blocoTopo` do Esquadrão, só no alto.
+  - Agentes em voo (dono, 2026-11-09): bloco ao fim, uma linha por agente vivo com papel genérico numerado, sem nome de pacote: `● implementador N  <task> <título> [(<estado>)]  <ctxPct>% <ctxTok> · tempo`; `◐ revisor aguarda <task>`; `○ Sombra N decisões · #seq <resposta>`; cabeçalho `N vivos`. Mesma fonte da EQUIPE (REQ-PNL-5); em < 60 colunas, só papel, task e ctx%.
   - Sem nomes de pacote, narração ou histórico.
 
 **REQ-PNL-5 Equipe.** Árvore líder ⇒ agentes (`├─`/`└─`).
 - **Líder:** `<LÍDER> orquestra · <modelo>`; ctx em barra `█░` com `pouso em X%`; `tok`; `5h`/`7d` em barras (ausente ⇒ linha omitida); `▶` com a narrativa em modelo de texto fixo a partir de `agora`.
-- **Agente vivo:** `● <NOME> <estado da task> · <modelo> <task> ctx <barra> N% <tok> · <tempo>`. O estado é `implementando`, `em revisão` ou `corrigindo`, sem RED/GREEN (dono). Sem % ⇒ só tokens (D11). Sem uso lido ⇒ `ctx —`.
+- **Agente vivo:** `● <NOME> <estado da task> · <modelo> <task> ctx <barra> N% <ctxTok> · <tempo>`; `tok` (soma) fica no estado e não é desenhado. O estado é `implementando`, `em revisão` ou `corrigindo`, sem RED/GREEN (dono). Sem % ⇒ só tokens (D11). Sem uso lido ⇒ `ctx —`.
 - **Revisor aguardando:** task em `concluida` (o revisor do par ainda não foi despachado; `em_revisao` sem agente vivo é `◌ sem agente`, D3). Linha `◐ <NOME> revisa aguarda <task>` quando o par (task, revisor) já tem nome (D10); senão `◐ revisor aguarda <task>`. Sufixo `N mutações do gate hoje, M mortas` (REQ-PNL-14), omitido sem integração de hoje com `mutacoes`. "Hoje" = data civil de `agoraMs` no fuso local do CLI; hora fora de hoje sai `dd/mm hh:mm`. *(emenda Sombra 2026-11-09, sombra-plano.md)*
 - **Sombra:** sempre presente, `○ <SÁBIO> aconselha · <modelo>` com `N decisões · #<seq> <resposta cortada> (<1ª fonte>)`.
 
@@ -133,12 +133,12 @@ Tabela fechada: qualquer outro tipo não aparece (entre eles `custo.medicao`, `g
 
 **REQ-PNL-9 Densidade por largura.** Nada passa da largura nem quebra; corte com `…`. Só glifos de largura 1 em locale não-CJK (`▰ ▱ █ ░ ✓ ● ◐ ○ ◌ ✗ ■ ◆ ▲ ▼ ▶ ─ │ ├ └ ·`; ambíguos em CJK são limite declarado).
 - **Esquadrão:**
-  - ≥ 80: o desenho de 72 com título e alvo mais longos;
+  - ≥ 80: o desenho de 72 com título mais longo (coluna do título `min(40, w − 48)`; 24 em 72–79); o histórico só é cortado no fim da linha;
   - 72–79: o desenho de 72;
   - 60–71: sem título de task e sem narrativa do líder;
   - 44–59: o desenho de 44;
   - < 44: depende/PAROU, `N/M · ETA` e tasks em voo.
-- **Executivo:** ≥ 50 é o desenho; abaixo, rótulos de 3 letras.
+- **Executivo:** ≥ 50 é o desenho; abaixo, rótulos de 3 letras (`Ent Prv Tsk Qld CI Prd Ctx Lim`).
 
 Depende/PAROU usa a largura antes do resto e nunca é cortado antes do comando. `color` e `mono` dão o mesmo texto.
 
