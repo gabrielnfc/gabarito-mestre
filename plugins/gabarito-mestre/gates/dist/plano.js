@@ -8,6 +8,7 @@
  */
 
 import { REQ_RE } from './formas.js';
+import { colunas } from './painel-texto.js';
                                                                           
 
                                                                                       
@@ -41,23 +42,6 @@ export function normalizarCaminho(c        )                {
 const TITULO_MAX_COLUNAS = 40;
 /** Controle C0, DEL, C1 e separadores de linha/parágrafo: nunca em título. */
 const CONTROLE_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
-
-/**
- * Colunas de terminal de um título: East Asian Wide/Fullwidth e emoji = 2, o resto 1. Cópia mínima da regra de `colunas` do painel
- * (T4, `painel-texto.ts`): o plano valida o título antes de o painel existir e não importa o render.
- */
-function colunasDoTitulo(s        )         {
-  let n = 0;
-  for (const c of s) {
-    const p = c.codePointAt(0)          ;
-    const largo =
-      (p >= 0x1100 && p <= 0x115f) || (p >= 0x2e80 && p <= 0xa4cf) || (p >= 0xac00 && p <= 0xd7a3) || (p >= 0xf900 && p <= 0xfaff) ||
-      (p >= 0xfe30 && p <= 0xfe6f) || (p >= 0xff00 && p <= 0xff60) || (p >= 0xffe0 && p <= 0xffe6) || (p >= 0x1f300 && p <= 0x1f64f) ||
-      (p >= 0x1f900 && p <= 0x1f9ff) || (p >= 0x20000 && p <= 0x3fffd);
-    n += largo ? 2 : 1;
-  }
-  return n;
-}
 
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const POLITICAS                     = ['continua', 'janela', 'sob_demanda'];
@@ -146,7 +130,7 @@ function validar(bruto         )                 {
     if (t.titulo !== undefined) {
       if (typeof t.titulo !== 'string' || t.titulo.trim() === '') return recusa(`task ${t.id}: \`titulo\` deve ser texto não vazio`);
       if (CONTROLE_RE.test(t.titulo)) return recusa(`task ${t.id}: \`titulo\` com caractere de controle`);
-      const cols = colunasDoTitulo(t.titulo);
+      const cols = colunas(t.titulo); // a mesma medida do render (`painel-texto.ts`)
       if (cols > TITULO_MAX_COLUNAS) return recusa(`task ${t.id}: \`titulo\` com ${cols} colunas, máximo ${TITULO_MAX_COLUNAS}`);
     }
     if ('spec' in t) return recusa(`task ${t.id}: \`spec\` é campo do plano (topo), não da task`);

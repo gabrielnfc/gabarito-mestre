@@ -12,7 +12,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { posix } from 'node:path';
+import { posix, join, dirname } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { validarPlano, temDependencia, normalizarCaminho } from '../src/plano.ts';
 import { EM_TRABALHO, duracoes, mediana } from '../src/diario.ts';
 import { casarAgente } from '../src/painel-equipe.ts';
@@ -329,6 +331,29 @@ test('plano-titulo-41-colunas: 40 cabe, 41 recusa; coluna não é caractere (CJK
   assert.equal(com('x'.repeat(38) + '漢').ok, true, '38 + 1 largo = 40');
   assert.equal(com('😀'.repeat(20)).ok, true, '20 emoji = 40 colunas');
   assert.equal(com('😀'.repeat(21)).ok, false, '21 emoji = 42 colunas');
+});
+
+test('plano-titulo-usa-a-mesma-colunas-do-painel (T4 desvio 4): marca, modificador de pele e invisível valem 0; ▶ vale 1', () => {
+  const com = (titulo: unknown) => validarPlano(plano({ ...t('a'), titulo }));
+  assert.equal(com('x'.repeat(40) + '\u0301').ok, true, '40 colunas + marca combinante (0) = 40');
+  assert.equal(com('x'.repeat(40) + '\u200b').ok, true, 'ZWSP vale 0');
+  assert.equal(com('👍🏽'.repeat(20)).ok, true, '20 × (base 2 + modificador 0) = 40');
+  assert.equal(com('👍🏽'.repeat(21)).ok, false, '42');
+  assert.equal(com('▶'.repeat(40)).ok, true, '▶ é glifo de 1 coluna (exceção declarada)');
+  assert.equal(com('🇧🇷'.repeat(20)).ok, true, 'bandeira = 2: 20 bandeiras = 40');
+  assert.equal(com('🇧🇷'.repeat(21)).ok, false);
+});
+
+test('ciclo-plano-painel-texto-carrega-de-qualquer-entrada: dist de plano, loop, emenda, painel-texto e painel carrega sozinho, sem TDZ', () => {
+  const dist = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist');
+  for (const m of ['plano', 'loop', 'emenda', 'painel-texto', 'painel-equipe', 'painel']) {
+    const out = execFileSync(process.execPath, ['--input-type=module', '-e', `const m = await import(${JSON.stringify(join(dist, `${m}.js`))}); console.log(Object.keys(m).length)`], { encoding: 'utf8' });
+    assert.ok(Number(out.trim()) > 0, m);
+  }
+  // o plano de verdade valida título com a `colunas` do painel, carregando só `plano.js` (a entrada do ciclo)
+  const r = execFileSync(process.execPath, ['--input-type=module', '-e',
+    `const { validarPlano } = await import(${JSON.stringify(join(dist, 'plano.js'))}); console.log(validarPlano({ entrega: 'X', tasks: [{ id: 'a', deps: [], arquivos: [], titulo: 'x'.repeat(40) + '\\u0301' }] }).ok)`], { encoding: 'utf8' });
+  assert.equal(r.trim(), 'true');
 });
 
 test('plano-titulo-controle: caractere de controle recusa, e titulo vazio ou que não é texto também', () => {

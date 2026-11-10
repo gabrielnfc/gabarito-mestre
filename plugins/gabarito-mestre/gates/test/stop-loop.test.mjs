@@ -743,7 +743,7 @@ test('stop-e-mod-nao-tem-lista-propria: stop-loop.mjs e mod/gabarito.mjs não re
 test('stop-loop-sem-lista-de-progresso-avisa-sem-block: nunca conta com lista vazia', () => {
   const raiz = repo();
   plano(raiz);
-  const script = copiaSemDist(false, ['plano.js', 'formas.js', 'emenda.js', 'diario.js', 'diario-puro.js', 'sombra.js']);
+  const script = copiaSemDist(false, ['plano.js', 'formas.js', 'emenda.js', 'diario.js', 'diario-puro.js', 'sombra.js', 'painel-texto.js', 'painel-hora.js']);
   const dist = join(dirname(dirname(script)), 'dist');
   const js = readFileSync(join(GATES, 'dist', 'loop.js'), 'utf8').replace(/^export const TIPOS_DE_PROGRESSO\b.*$/m, '');
   assert.ok(!/export const TIPOS_DE_PROGRESSO/.test(js), 'preparo: export removido');
