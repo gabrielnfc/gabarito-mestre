@@ -331,9 +331,17 @@
    ],
    "arquivos": [
     "plugins/gabarito-mestre/skills/gabarito-instalar/SKILL.md",
+    "plugins/gabarito-mestre/skills/gabarito-instalar/trocar.md",
     "plugins/gabarito-mestre/scripts/test/texto.test.sh",
+    "plugins/gabarito-mestre/scripts/test/texto-nom.test.sh",
+    "plugins/gabarito-mestre/scripts/test/instalar.test.sh",
+    "plugins/gabarito-mestre/scripts/instalar.sh",
     "plugins/gabarito-mestre/reference/adocao.md",
-    "plugins/gabarito-mestre/gates/test/onboarding-skill.test.mjs"
+    "plugins/gabarito-mestre/commands/gabarito-doctor.md",
+    "plugins/gabarito-mestre/gates/scripts/onboarding.mjs",
+    "plugins/gabarito-mestre/gates/test/onboarding.test.mjs",
+    "plugins/gabarito-mestre/gates/test/onboarding-skill.test.mjs",
+    "README.md"
    ],
    "reqs": [
     "REQ-ONB-1"

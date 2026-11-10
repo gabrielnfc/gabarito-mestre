@@ -57,7 +57,7 @@ put_ref() { # put_ref <origem> <destino-rel> — referência do harness e gates:
 emendar_gitignore() { # garante as linhas exatas; nunca remove; respeita arquivo sem \n final
   local gi="$DEST/.gitignore" l add=0
   [ -e "$gi" ] || : > "$gi"
-  for l in '.harness/doctor-cache.json' '.harness/fluxo-cache.json' '.harness/entregas/_sem-id/' '.harness/heartbeat.json' '*.novo' '*.bak'; do
+  for l in '.harness/doctor-cache.json' '.harness/fluxo-cache.json' '.harness/entregas/_sem-id/' '.harness/heartbeat.json' '.claude-tmp/' '*.novo' '*.bak'; do
     if ! grep -qxF -- "$l" "$gi"; then
       if [ -s "$gi" ] && [ -n "$(tail -c1 "$gi")" ]; then printf '\n' >> "$gi"; fi
       printf '%s\n' "$l" >> "$gi"; add=$((add+1))

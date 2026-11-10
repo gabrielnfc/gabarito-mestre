@@ -790,9 +790,10 @@ describe('perguntas', () => {
     const ps = perguntas(itensLista(raiz), existenteDe(raiz));
     assert.deepEqual(idsDe(ps), ['politica', 'autonomia', 'perfil']);
     assert.deepEqual(ps.map((p) => p.default), [FIXAS.politica, FIXAS.autonomia, FIXAS.perfil]);
-    assert.deepEqual(ps[0].opcoes.map((o) => o.valor), ['continua', 'janela', 'sob_demanda']);
-    assert.deepEqual(ps[1].opcoes.map((o) => o.valor), [true, false]);
-    assert.deepEqual(ps[2].opcoes.map((o) => o.valor), ['economia', 'padrao', 'qualidade']);
+    // D-T14-1: o default vem primeiro; as demais opções ficam na ordem original
+    assert.deepEqual(ps[0].opcoes.map((o) => o.valor), ['sob_demanda', 'continua', 'janela']);
+    assert.deepEqual(ps[1].opcoes.map((o) => o.valor), [false, true]);
+    assert.deepEqual(ps[2].opcoes.map((o) => o.valor), ['padrao', 'economia', 'qualidade']);
     for (const p of ps) {
       assert.ok(p.texto.length > 0 && p.opcoes.every((o) => o.rotulo.length > 0), p.id);
       assert.ok(p.opcoes.some((o) => o.valor === p.default), `${p.id}: o default é uma das opções`);
@@ -806,6 +807,56 @@ describe('perguntas', () => {
     assert.match(ps[1].opcoes.find((o) => o.valor === true).rotulo, /^sim/);
     // o rótulo de cada perfil vem de PERFIS_MODELO, não de outra tabela
     for (const o of ps[2].opcoes) assert.ok(o.rotulo.includes(PERFIS_MODELO[o.valor].revisor_final.modelo), o.rotulo);
+  });
+
+  test('perguntas-default-primeiro', () => {
+    // Enter no AskUserQuestion escolhe a 1ª opção: ela TEM de ser o default (autonomia `sim` liberaria deploy sem pedido)
+    const raiz = fixtureComGit('completa', 'trunk');
+    const sem = perguntas(itensLista(raiz), existenteDe(raiz));
+    assert.deepEqual(sem.map((p) => p.opcoes[0].valor), ['sob_demanda', false, 'padrao']);
+    for (const p of sem) assert.equal(p.opcoes[0].valor, p.default, p.id);
+    const cont = perguntas(itensLista(raiz), { entrega: { politica: 'continua' }, orquestracao: { perfil: 'qualidade' } });
+    assert.deepEqual(cont.map((p) => p.opcoes[0].valor), ['continua', true, 'qualidade']);
+    assert.deepEqual(cont[0].opcoes.map((o) => o.valor), ['continua', 'janela', 'sob_demanda'], 'o resto na ordem original');
+    // condicionais: o default também vai primeiro
+    const wf = (nome) => `name: deploy-${nome}\non:\n  push:\n    branches: [main]\njobs:\n  d:\n    environment: ${nome}\n`;
+    const r2 = repoCom({ 'package.json': '{"name":"x"}', '.github/workflows/a.yml': wf('staging'), '.github/workflows/b.yml': wf('homolog') });
+    const amb = perguntas(itensLista(r2), { onboarding: { fatos: { ambientes: { producao: 'homolog', outros: ['staging'] } } } }).find((q) => q.id === 'ambientes');
+    assert.deepEqual(amb.opcoes.map((o) => o.valor), ['homolog', 'staging']);
+    assert.equal(amb.default, 'homolog');
+  });
+
+  test('trocar-preserva-resposta-condicional', () => {
+    // versionamento ambíguo: 2ª execução (trocar perfil) não pode voltar a `candidatos[0]` e regravar entrega.base
+    const raiz = repoCom({ 'package.json': '{"name":"x"}', '.github/workflows/d.yml': 'name: deploy-producao\non:\n  push:\n    branches: [main]\njobs:\n  d:\n    environment: producao\n' });
+    criarBase(raiz, 'staging', 'main');
+    mergear(raiz, 'main', '2025-06-10');
+    for (const d of ['2025-06-05', '2025-06-12', '2025-06-20']) mergear(raiz, 'staging', d);
+    assert.equal(perguntas(itensLista(raiz), null).find((q) => q.id === 'versionamento').default, 'staging', 'sem resposta gravada: candidatos[0]');
+    assert.equal(gravarCom(raiz, { ...FIXAS, versionamento: 'main' }).ok, true);
+    assert.equal(cfgDe(raiz).entrega.base, 'main');
+    const ps = perguntas(itensLista(raiz), existenteDe(raiz));
+    const v = ps.find((q) => q.id === 'versionamento');
+    assert.equal(v.default, 'main', 'o valor gravado vira o default');
+    assert.equal(v.opcoes[0].valor, 'main');
+    const resp = Object.fromEntries(ps.map((p) => [p.id, p.default]));
+    const r = gravarCom(raiz, { ...resp, perfil: 'qualidade' });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(cfgDe(raiz).entrega.base, 'main', 'trocar perfil não regrava entrega.base');
+    assert.equal(cfgDe(raiz).orquestracao.perfil, 'qualidade');
+    // valor gravado que não está entre os candidatos não vence a detecção
+    assert.equal(perguntas(itensLista(raiz), { entrega: { base: 'inexistente' } }).find((q) => q.id === 'versionamento').default, 'staging');
+    // ambientes
+    const wf = (nome) => `name: deploy-${nome}\non:\n  push:\n    branches: [main]\njobs:\n  d:\n    environment: ${nome}\n`;
+    const r2 = repoCom({ 'package.json': '{"name":"x"}', '.github/workflows/a.yml': wf('staging'), '.github/workflows/b.yml': wf('homolog') });
+    assert.equal(gravarCom(r2, { ...FIXAS, ambientes: 'homolog' }).ok, true);
+    const a = perguntas(itensLista(r2), existenteDe(r2)).find((q) => q.id === 'ambientes');
+    assert.equal(a.default, 'homolog');
+    // tipo_repo: monorepo respondido `app` volta `app`; sem onboarding gravado, nada muda
+    const mono = fixtureComGit('monorepo', 'main');
+    const tipo = (cfg) => perguntas(itensLista(mono, { claude: SEM_MCP }), cfg).find((q) => q.id === 'tipo_repo');
+    assert.equal(tipo({ onboarding: { resolvidoEm: HOJE } }).default, 'app');
+    assert.equal(tipo(null).default, 'app');
   });
 
   test('default-de-config-110', () => {

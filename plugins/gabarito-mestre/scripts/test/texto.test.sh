@@ -15,7 +15,8 @@
 #  B2  DISPATCH diverge entre prompts.md e referencia.md; hatch citado no AGENTS.md sem uso em hooks/
 #  B3  apagar "opcional" de tag-semver; remover o passo 9 de prompts.md
 #  B4  trocar um `uses:` de SHA por `@v4`
-#  B5  desalinhar a tabela de fases 2-4 ou a frase "já existia" do SKILL.md de instalar
+#  B5  voltar a tabela/seções de fases ("## Fase N") ou tirar `## Fluxo`/`## Modo --vincular`/`## Proibido` do SKILL.md de instalar
+#  FASE grep de "fase 2-4"/"(fase"/"quatro fases" em skills, reference, commands, gates/scripts e README (caso plantado: texto-nom.test.sh)
 #  B6  remover "Ela DELEGA e depois CONFERE" ou a frase do Emenda #7 do SKILL.md de conformidade
 #  B7  desalinhar cache/Apêndice/fluxo.md/Isolamento/CODEOWNERS entre os arquivos que têm de casar
 #  B8  PR_TEMPLATE.md listar tipo que não está em tiposComEscopoDePbi/tiposLivres (DEFAULTS)
@@ -61,12 +62,26 @@ NOM_ACHADOS=$(nom_achados)
 check "NOM-1: nenhum nome antigo fora das exceções de REQ-NOM-1" '[ -z "$NOM_ACHADOS" ]' "fora das exceções: $(printf '%s' "$NOM_ACHADOS" | tr '\n' ' ')"
 [ "${1:-}" = "--nom" ] && { [ "$falhas" -eq 0 ]; exit $?; }
 
+# ── FASE (REQ-ONB-1, T14) — o onboarding é uma etapa só: nenhum texto fala de "fase 2-4" ──────────
+# Escopo: skills, reference, commands, gates/scripts e README. Exceções por TEXTO EXATO (grep -vF): o marcador TIM-1 do CODEOWNERS
+# (byte a byte: reconhece o arquivo da 1.1.x) e "fase 2 do Fluxo Gabarito" (etapa do Flight Levels, não do onboarding); linha com
+# RULING (comentário de ruling); linhas `| M1x |` do README (medição histórica da 1.1.0). Caso plantado: texto-nom.test.sh.
+fase_achados() {
+  git grep -niE 'fases? [2-4]|\(fase|(quatro|4) fases' -- plugins/gabarito-mestre/gates/scripts plugins/gabarito-mestre/reference plugins/gabarito-mestre/skills plugins/gabarito-mestre/commands README.md 2>/dev/null |
+    grep -vF -e '(gabarito-instalar, fase 2). Uma linha por área:' -e 'fase 2 do Fluxo Gabarito' -e 'RULING' |
+    grep -vE '^README\.md:[0-9]+:\| M[0-9]+ \|'
+}
+FASE_ACHADOS=$(fase_achados)
+check "FASE: nenhum texto de onboarding fala de fases 2-4 (fora das exceções exatas)" '[ -z "$FASE_ACHADOS" ]' "achados: $(printf '%s' "$FASE_ACHADOS" | cut -c1-120 | tr '\n' ' ')"
+[ "${1:-}" = "--fase" ] && { [ "$falhas" -eq 0 ]; exit $?; }
+
 A="$P/reference/AGENTS.md"
 R="$P/reference/referencia.md"
 D="$P/reference/adocao.md"
 Q="$P/reference/prompts.md"
 F="$P/reference/fluxo.md"
 SI="$P/skills/gabarito-instalar/SKILL.md"
+ST="$P/skills/gabarito-instalar/trocar.md"
 SC="$P/skills/gabarito-conformidade/SKILL.md"
 AG="$P/agents/gabarito-implementador.md"
 IS="$P/scripts/instalar.sh"
@@ -172,10 +187,12 @@ NAO_PINADO=$(grep -n 'uses:' "$P/templates/gabarito.yml" "$ROOT"/.github/workflo
 check "todo 'uses:' pinado por SHA de 40 hex" '[ -z "$NAO_PINADO" ]' "$NAO_PINADO"
 
 # ── B5 (handoff §B.5, F5-R10) — skills/gabarito-instalar/SKILL.md ─────────────────────
-echo "── B5: SKILL.md de gabarito-instalar — tabela de fases e frase 'já existia'"
-N5=$(grep -cE '^\| (2 — fluxo \| `fluxo|3 — versionamento \| `versionamento|4 — orquestração \| `orquestracao\.modelo)\.resolvidoEm` \|' "$SI")
-check "3 linhas da tabela de fases 2–4 com \`.resolvidoEm\`" '[ "'"$N5"'" -eq 3 ]' "achei $N5, esperado 3"
-check "frase 'já existia** ... não edite (R2)'" "grep -qF 'já existia** (saída \`mantido\`, ou a fase 1 não rodou nesta execução) → **não edite** (R2)' '$SI'" "frase ausente/mudou"
+echo "── B5: SKILL.md de gabarito-instalar — onboarding em uma etapa (sem fases)"
+for sec in '## Fluxo' '## Trocar um item' '## Modo --vincular' '## Proibido'; do
+  check "SKILL.md instalar tem a seção '$sec'" "grep -q '^$sec' '$SI'" "seção ausente"
+done
+N5=$(grep -ci '^## Fase ' "$SI")
+check "SKILL.md instalar sem seção '## Fase ' (sem caixa)" '[ "'"$N5"'" -eq 0 ]' "achei $N5 seção(ões) de fase"
 
 # ── B6 (handoff §B.6, F5-R11) — skills/gabarito-conformidade/SKILL.md ─────────────────
 echo "── B6: SKILL.md de gabarito-conformidade"
@@ -188,8 +205,8 @@ echo "── B7: cinco contratos entre arquivos (GM-5 MINOR-6)"
 # (a) chaves do cache que a skill grava == chaves que cartao-sessao.mjs lê
 check "(a) skill grava epic/iniciativa/titulo/em" "grep -q 'c\[pbi\] = { epic, iniciativa, titulo, em:' '$SI'" "objeto do cache mudou de forma na skill"
 check "(a) cartao-sessao.mjs lê c.epic, c.iniciativa, c.em" "grep -q 'c\.epic' '$CS' && grep -q 'c\.iniciativa' '$CS' && grep -q 'c\.em' '$CS'" "leitura do cache mudou em cartao-sessao.mjs"
-# (b) as SEIS linhas do Apêndice que o onboarding (fases 2-4) preenche — rótulo em AGENTS.md ==
-# rótulo citado na skill (as demais linhas do Apêndice são preenchidas à mão na fase 1, fora do onboarding).
+# (b) as SEIS linhas do Apêndice que `trocar apendice` preenche — rótulo em AGENTS.md ==
+# rótulo citado na skill (SKILL.md ou trocar.md; as demais linhas do Apêndice são preenchidas à mão, fora do onboarding).
 b7b_falhou=0
 ROTULOS_ONBOARDING=(
   'Fluxo: ferramenta · Iniciativa padrão (ID · nome) · escrita autorizada por `____` em `____` (ADR-FLX-2)'
@@ -201,7 +218,7 @@ ROTULOS_ONBOARDING=(
 )
 for rotulo in "${ROTULOS_ONBOARDING[@]}"; do
   grep -qF "$rotulo" "$A" || { falha "B7(b): rótulo do Apêndice" "'$rotulo' sumiu de AGENTS.md"; b7b_falhou=1; }
-  grep -qF "$rotulo" "$SI" || { falha "B7(b): rótulo do Apêndice" "'$rotulo' não aparece na skill de instalar"; b7b_falhou=1; }
+  grep -qF "$rotulo" "$SI" "$ST" || { falha "B7(b): rótulo do Apêndice" "'$rotulo' não aparece na skill de instalar (SKILL.md nem trocar.md)"; b7b_falhou=1; }
 done
 [ "$b7b_falhou" -eq 0 ] && ok "(b) as 6 linhas do Apêndice que o onboarding preenche batem AGENTS.md × skill de instalar"
 # (c) §N de fluxo.md citados pela conformidade estão dentro de 1..7
@@ -216,7 +233,7 @@ BLOCO_PROMPTS=$(sed -n '/^Isolamento: porta <3000+n>/,/referencia\.md §3\.1/p' 
 check "(d) bloco Isolamento idêntico entre agente e prompts.md" '[ "$BLOCO_AGENTE" = "$BLOCO_PROMPTS" ] && [ -n "$BLOCO_AGENTE" ]' "diff não vazio ou bloco não encontrado"
 # (e) marcador do CODEOWNERS igual entre a skill e instalar.sh
 MARCADOR='# Áreas e donos (TIM-1) — preenchido pelo onboarding (gabarito-instalar, fase 2). Uma linha por área:'
-check "(e) marcador CODEOWNERS igual na skill e em instalar.sh" "grep -qF '$MARCADOR' '$SI' && grep -qF '$MARCADOR' '$IS'" "marcador ausente/diferente"
+check "(e) marcador CODEOWNERS igual em trocar.md e em instalar.sh (byte a byte: reconhece o CODEOWNERS da 1.1.x)" "grep -qF '$MARCADOR' '$ST' && grep -qF '$MARCADOR' '$IS'" "marcador ausente/diferente"
 
 # ── B8 (handoff §B.8) — PR_TEMPLATE lista exatamente os tipos de versionamento-check.mjs ──
 echo "── B8: PULL_REQUEST_TEMPLATE.md lista tiposComEscopoDePbi/tiposLivres do DEFAULTS"
@@ -238,9 +255,9 @@ check "gabarito-implementador.md: 'Isolamento: porta'" "grep -q 'Isolamento: por
 echo "── skills — allowed-tools e checklists"
 check "SKILL.md instalar: AskUserQuestion no allowed-tools"  "sed -n '/^allowed-tools:/p' '$SI' | grep -q 'AskUserQuestion'" "ausente"
 check "SKILL.md instalar: Edit no allowed-tools"              "sed -n '/^allowed-tools:/p' '$SI' | grep -q 'Edit'" "ausente"
-check "SKILL.md instalar: Bash(claude mcp list:*)"            "sed -n '/^allowed-tools:/p' '$SI' | grep -q 'Bash(claude mcp list:\*)'" "ausente"
+check "SKILL.md instalar: sem Bash(claude mcp list:*) (o detectar roda o claude mcp list por dentro; menor privilégio)" "! sed -n '/^allowed-tools:/p' '$SI' | grep -q 'claude mcp list'" "permissão sobrando"
 check "SKILL.md instalar: nenhum mcp__ no allowed-tools"      '[ "$(sed -n "/^allowed-tools:/p" "'"$SI"'" | grep -c "mcp__")" -eq 0 ]' "mcp__ apareceu no allowed-tools"
-check "SKILL.md instalar: 4 seções '## Fase '"                '[ "$(grep -c "^## Fase " "'"$SI"'")" -eq 4 ]' "contagem de fases ≠ 4"
+check "SKILL.md instalar: 0 seções '## Fase '"                '[ "$(grep -ci "^## Fase " "'"$SI"'")" -eq 0 ]' "ainda há seção de fase"
 check "SKILL.md conformidade: fio condutor · contenda (R21) · Epic: PBIs" "grep -q 'fio condutor' '$SC' && grep -q 'contenda (R21)' '$SC' && grep -q 'Epic: PBIs (fluxo.md §2)' '$SC'" "algum dos três ausente"
 
 # ── pacote — versões, hooks (F6-R7), 77 testes, nomes da 1.0.1 (PKG-1, PKG-2) ─────────
@@ -307,10 +324,8 @@ check "skill gabarito-instalar não promete squash-titulo-pr no attest.json (tem
 CAP="$P/gates/scripts/capacidade.mjs"
 MISTURA=$(grep -n -e '--calibrar' "$SKILL_I" "$P/reference/adocao.md" "$ROOT/README.md" | grep -E 'simultaneos|teto|calibradoEm|--json' | wc -l | tr -d ' ')
 check "skill, adocao.md e README não mandam --calibrar esperando simultaneos/teto/calibradoEm/--json (é --sugerir)" '[ "'"$MISTURA"'" -eq 0 ]' "$MISTURA linha(s) com --calibrar e campos da fórmula por núcleos"
-check "skill gabarito-instalar chama capacidade.mjs --sugerir --json na fase 4.3" 'grep -qE "capacidade\.mjs\" --root \. --sugerir --json" "$SKILL_I"' "fase 4.3 sem o comando novo"
+check "skill gabarito-instalar NÃO chama capacidade.mjs (a orquestração vem do detectar)" '! grep -q "capacidade\.mjs" "$SKILL_I" "'"$ST"'"' "a skill voltou a chamar capacidade.mjs"
 SUG_JSON=$(cd "$ROOT" && node "$CAP" --root "$ROOT" --sugerir --json 2>/dev/null)
-SUG_CHAVES=$(printf '%s' "$SUG_JSON" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const o=JSON.parse(s);process.stdout.write(["simultaneos","teto","limites","calibradoEm"].every(k=>k in o)?"ok":"falta")}catch{process.stdout.write("invalido")}})')
-check "texto da skill 4.3 (simultaneos, teto, limites, calibradoEm) confere com a saída real de --sugerir --json" '[ "'"$SUG_CHAVES"'" = ok ]' "saída real de --sugerir --json: $SUG_CHAVES"
 
 echo "── $falhas falha(s)"
 [ "$falhas" -eq 0 ]

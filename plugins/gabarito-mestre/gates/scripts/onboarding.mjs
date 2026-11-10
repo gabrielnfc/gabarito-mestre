@@ -564,26 +564,48 @@ function perguntasFixas(existente) {
   ];
 }
 
-function perguntaDeItem(i) {
+/**
+ * Valor já gravado numa resposta anterior (D-T14-2): "trocar" não desfaz a resposta condicional. `undefined` = nada gravado.
+ * `tipo_repo` não precisa de ramo: o `app` gravado já é `candidatos[0]` (e `repo-sem-app` volta como fato detectado, sem pergunta).
+ */
+function respostaGravada(item, cfg) {
+  const ent = ehObjeto(cfg.entrega) ? cfg.entrega : {};
+  const onb = ehObjeto(cfg.onboarding) ? cfg.onboarding : {};
+  if (item === 'versionamento') return ent.base;
+  if (item === 'ambientes') return ehObjeto(onb.fatos?.ambientes) ? onb.fatos.ambientes.producao : undefined;
+  return undefined;
+}
+
+function perguntaDeItem(i, cfg) {
   const asked = i.estado === 'ambiguo';
   let cands = [...i.candidatos];
   if (!asked && cands.length === 0 && i.item === 'planejamento') cands = ['arquivos']; // regra da 1.1 (ferramentas-mcp.json, _comment)
   const opcoes = cands.map((c) => ({ valor: c, rotulo: String(c) }));
   if (!asked) opcoes.push({ valor: null, rotulo: rotuloNulo(i.item) });
-  const padrao = asked ? i.valor : (cands[0] ?? null);
+  let padrao = asked ? i.valor : (cands[0] ?? null);
+  const gravada = respostaGravada(i.item, cfg);
+  if (gravada !== undefined && cands.includes(gravada)) padrao = gravada;
   const ref = i.motivo ? `${i.estado}, ${i.motivo}` : i.estado;
   return { id: i.item, texto: `${i.item}: ${ref} (fonte: ${i.fonte}). Qual usar?`, opcoes, default: padrao };
 }
+
+/** D-T14-1: o default vem primeiro (Enter no `AskUserQuestion` escolhe a 1ª opção); as demais ficam na ordem original. */
+const defaultPrimeiro = (p) => {
+  const k = p.opcoes.findIndex((o) => o.valor === p.default);
+  return k <= 0 ? p : { ...p, opcoes: [p.opcoes[k], ...p.opcoes.slice(0, k), ...p.opcoes.slice(k + 1)] };
+};
 
 /**
  * Perguntas do onboarding: as 3 fixas (política, autonomia, perfil) e 1 por fato `ambiguo` ou `nao_detectado`, na ordem de
  * `ORDEM_ITENS`. Teto `MAX_PERGUNTAS`: o que não cabe fica sem pergunta (e sem valor: `configDasRespostas` o põe em `naoDetectado`).
  * Fato detectado nunca é perguntado. `existente` = `configExistente` dos fatos (ausente/corrompido ⇒ defaults do produto).
+ * Em cada pergunta o default é a 1ª opção (D-T14-1).
  */
 export function perguntas(itens, existente) {
   const fixas = perguntasFixas(existente);
+  const cfg = configLegivel(existente);
   const abertos = [...itens].filter((i) => i.estado !== 'detectado').sort((a, b) => ordemDe(a.item) - ordemDe(b.item));
-  return [...fixas, ...abertos.slice(0, MAX_PERGUNTAS - fixas.length).map(perguntaDeItem)];
+  return [...fixas, ...abertos.slice(0, MAX_PERGUNTAS - fixas.length).map((i) => perguntaDeItem(i, cfg))].map(defaultPrimeiro);
 }
 
 const valorTexto = (v) => (v === null || v === undefined ? '' : typeof v === 'string' ? v : JSON.stringify(v));
