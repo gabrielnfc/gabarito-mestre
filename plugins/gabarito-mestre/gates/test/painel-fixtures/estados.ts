@@ -4,7 +4,8 @@
  * Nomes de pessoa são os do pacote de fábrica Terra Média (T3 cria o JSON); o líder é GANDALF e o sábio, ELROND.
  */
 
-import type { Acao, AgentePainel, EstadoPainel, EstadoTask, GlifoTask, MotivoParar, TaskPainel } from '../../src/tipos.ts';
+import { colunas } from '../../src/painel-largura.ts';
+import type { Acao, AgentePainel, CorTema, EstadoPainel, EstadoTask, GlifoTask, MotivoParar, TaskPainel } from '../../src/tipos.ts';
 
 export const NOMES_ESTADOS = [
   'vazio', 'em-voo-7-12', 'emenda-aberta', 'pausado', 'parou-teto', 'parou-diario', 'concluir-release', 'deploy-devolvido', 'spec-aguardando', 'sem-limites-sem-uso',
@@ -43,7 +44,7 @@ function base(): EstadoPainel {
     plano: planoDe([]),
     equipe: {
       lider: { nome: 'GANDALF', modelo: 'opus', ctx: 36, x: 50, tok: 412_000, h5: 42, d7: 18, narrativa: 'esperando o loop' },
-      agentes: [], revisoresAguardando: [],
+      agentes: [], vivos: 0, revisoresAguardando: [],
       sombra: { nome: 'ELROND', modelo: 'opus', decisoes: 0, ultima: null },
     },
     parado: false, parar: null, depende: [], atencao: [], historico: [], ocultos: 0,
@@ -75,16 +76,17 @@ function emVoo712(): EstadoPainel {
     agente('GIMLI', 'implementador', 'T8', 'implementando', { desdeS: 540 }),
     agente('LEGOLAS', 'revisor', 'T9', 'em_revisao', { modelo: 'opus', ctxPct: 18, ctxTok: 36_000, tok: 54_000, desdeS: 210, cor: 'suggestion' }),
   ];
+  e.equipe.vivos = 2;
   e.equipe.revisoresAguardando = [{ nome: null, task: 'T10', mutacoesHoje: 14, mortasHoje: 14 }];
   e.equipe.sombra = { nome: 'ELROND', modelo: 'opus', decisoes: 3, ultima: { seq: 41, resposta: 'seguir com a forma opcional', fonte: 'spec:164' } };
   e.atencao = ['T9 na 2ª rodada de review', 'loop segue em T8 T9 T10'];
   e.historico = [
     { glifo: '✓', texto: 'LEGOLAS aprovou T7 · 18 min', hora: '14:02', cor: 'success' },
     { glifo: '▶', texto: 'despachou LEGOLAS em T9', hora: '13:58', cor: 'success' },
-    { glifo: '◆', texto: 'ELROND decidiu #41 · seguir com a forma opcional', hora: '13:40', cor: 'success' },
+    { glifo: '◆', texto: 'ELROND decidiu #41 · seguir com a forma opcional', hora: '13:40', cor: 'planMode' },
   ];
   e.ocultos = 9;
-  e.rodape = { ci: { verde: true, execucoesHoje: 4 }, prod: { leituras: 2, alteracoes: 0 }, politica: 'janela [1-5]' };
+  e.rodape = { ci: { verde: true, execucoesHoje: 4 }, prod: { leituras: 2, alteracoes: 0 }, politica: 'janela [seg ter qua qui sex]' };
   e.qualidade = { rodadaMedia: 1.4, mortas: 61 };
   return e;
 }
@@ -180,4 +182,112 @@ export const ESTADOS: Record<NomeEstado, EstadoPainel> = {
   'deploy-devolvido': deployDevolvido(),
   'spec-aguardando': specAguardando(),
   'sem-limites-sem-uso': semLimitesSemUso(),
+};
+
+// ───────────────────────────── extras (T4c, D-R5) ─────────────────────────────
+// Fora dos 10 acima: a propriedade de T12 fixa esses 10 (spec:224). Cada extra cobre um caso de borda que os render (T5, T6) precisam provar.
+
+export const NOMES_EXTRAS = [
+  'sem-mod', 'sem-agente', 'sem-task', 'pct-so-tokens', 'eta-outro-dia', 'no-teto', 'titulos-hostis', 'numeros-corrompidos', 'historico-cheio', 'zeros',
+] as const;
+export type NomeExtra = (typeof NOMES_EXTRAS)[number];
+
+function semMod(): EstadoPainel {
+  const e = emVoo712();
+  e.equipe.agentes = [];
+  e.equipe.vivos = null;
+  return e;
+}
+
+/** T8 `implementando` sem agente de papel compatível: `◌ sem agente` (glifo `◐`, `vivo: false`). */
+function semAgente(): EstadoPainel {
+  const e = base();
+  e.plano = planoDe(tasksDe(0, 2, [task('T8', 'implementando', { nome: 'GIMLI', papel: 'implementador', desdeS: 300, vivo: false })], [task('T9', 'pendente', { deps: ['T8'] })]));
+  e.equipe.agentes = [agente('GIMLI', 'implementador', 'T8', 'implementando', { vivo: false, ctxPct: null, ctxTok: null, tok: null, desdeS: 300 })];
+  e.equipe.vivos = 0;
+  return e;
+}
+
+/** Vivo que não casa com task do plano: `nome`, `papel` e `task` ausentes (o render escreve `sem task`). */
+function semTask(): EstadoPainel {
+  const e = emVoo712();
+  e.equipe.agentes.push({ nome: null, papel: null, estadoTask: null, modelo: 'sonnet', ctxPct: 12, ctxTok: 24_000, tok: 30_000, desdeS: null, cor: 'inactive', vivo: true });
+  e.equipe.vivos = 3;
+  return e;
+}
+
+/** Só tokens do contexto: sem janela conhecida o `%` é `null` e o render desenha `88k` sem barra. */
+function pctSoTokens(): EstadoPainel {
+  const e = emVoo712();
+  e.equipe.agentes = e.equipe.agentes.map((a) => ({ ...a, ctxPct: null, ctxTok: 88_000 }));
+  return e;
+}
+
+function etaOutroDia(): EstadoPainel {
+  const e = emVoo712();
+  e.plano.eta = { hora: '10/11 09:00', restanteS: 54_000, maisMenosS: 540, n: 7 };
+  return e;
+}
+
+function noTeto(): EstadoPainel {
+  const e = emVoo712();
+  e.plano.tasks = e.plano.tasks.map((t) => (t.id === 'T9' ? task('T9', 'no_teto') : t));
+  e.equipe.agentes = e.equipe.agentes.filter((a) => a.task !== 'T9');
+  e.equipe.vivos = 1;
+  return e;
+}
+
+/** Título de 40 colunas com CJK, emoji ZWJ e sequência de escape; id de 10 caracteres. */
+function titulosHostis(): EstadoPainel {
+  const e = emVoo712();
+  const cru = '漢字漢字👨\u200d👩\u200d👧\x1b[2J';
+  const titulo = cru + 'x'.repeat(40 - colunas(cru));
+  e.id = 'GM-12-ABCD';
+  e.titulo = titulo;
+  e.plano.tasks = e.plano.tasks.map((t) => ({ ...t, titulo }));
+  return e;
+}
+
+function numerosCorrompidos(): EstadoPainel {
+  const e = emVoo712();
+  e.equipe.agentes[0] = { ...e.equipe.agentes[0], ctxPct: NaN, tok: -1, desdeS: Infinity };
+  e.plano.pct = NaN;
+  return e;
+}
+
+function historicoCheio(): EstadoPainel {
+  const e = emVoo712();
+  const glifos: [string, CorTema][] = [['✓', 'success'], ['▶', 'success'], ['◆', 'planMode'], ['■', 'error'], ['●', 'warning']];
+  e.historico = Array.from({ length: 20 }, (_, i) => {
+    const [glifo, cor] = glifos[i % glifos.length];
+    const minutos = 14 * 60 + 2 - i * 3;
+    const hora = i === 19 ? '08/11 23:50' : `${String(Math.floor(minutos / 60)).padStart(2, '0')}:${String(minutos % 60).padStart(2, '0')}`;
+    return { glifo, texto: `evento ${i + 1} do histórico`, hora, cor };
+  });
+  e.ocultos = 5;
+  return e;
+}
+
+/** Zero é zero, nunca ausente: o render escreve `0`, não omite nem escreve `—`. */
+function zeros(): EstadoPainel {
+  const e = emVoo712();
+  e.equipe.lider = { ...e.equipe.lider, h5: 0, tok: 0 };
+  e.equipe.agentes = e.equipe.agentes.map((a) => ({ ...a, tok: 0 }));
+  e.equipe.revisoresAguardando = [{ nome: null, task: 'T10', mutacoesHoje: 0, mortasHoje: 0 }];
+  e.rodape.ci = { verde: true, execucoesHoje: 0 };
+  e.qualidade = { rodadaMedia: 1, mortas: 0 };
+  return e;
+}
+
+export const EXTRAS: Record<NomeExtra, EstadoPainel> = {
+  'sem-mod': semMod(),
+  'sem-agente': semAgente(),
+  'sem-task': semTask(),
+  'pct-so-tokens': pctSoTokens(),
+  'eta-outro-dia': etaOutroDia(),
+  'no-teto': noTeto(),
+  'titulos-hostis': titulosHostis(),
+  'numeros-corrompidos': numerosCorrompidos(),
+  'historico-cheio': historicoCheio(),
+  'zeros': zeros(),
 };

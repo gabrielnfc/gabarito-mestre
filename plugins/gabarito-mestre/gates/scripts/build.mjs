@@ -24,7 +24,7 @@ process.emitWarning = (aviso, ...resto) => {
   return emitOriginal.call(process, aviso, ...resto);
 };
 
-export const MODULOS = ['aneis', 'classificar-alvo', 'decidir', 'diario-puro', 'diario', 'guarda', 'plano', 'loop', 'pouso', 'formas', 'sombra', 'emenda', 'entrega', 'painel', 'painel-equipe', 'painel-largura', 'painel-texto', 'painel-esquadrao', 'painel-executivo', 'painel-hora'];
+export const MODULOS = ['aneis', 'classificar-alvo', 'decidir', 'diario-puro', 'diario', 'guarda', 'plano', 'loop', 'pouso', 'formas', 'sombra', 'emenda', 'entrega', 'painel', 'painel-equipe', 'painel-largura', 'painel-formato', 'painel-texto', 'painel-esquadrao', 'painel-executivo', 'painel-hora'];
 
 export function reescreverImports(js) {
   return js

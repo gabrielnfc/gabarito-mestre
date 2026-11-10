@@ -203,6 +203,7 @@ function maisRecente(eventos: DecisaoSombra[]): DecisaoSombra | null {
 const ENCERRADO: ReadonlySet<string> = new Set(['idle', 'completed', 'failed', 'killed']);
 const ORDEM_COR: readonly CorTema[] = ['claude', 'suggestion', 'autoAccept', 'ide', 'remember'];
 const FAMILIA_RE = /haiku|sonnet|opus|fable/;
+const PAPEIS_ORDEM: readonly Papel[] = ['implementador', 'correcao', 'revisor'];
 const PAPEL_DO_ESTADO: Partial<Record<EstadoTask, Papel>> = { implementando: 'implementador', corrigindo: 'correcao', em_revisao: 'revisor' };
 
 const familia = (modelo: unknown): string | null => {
@@ -327,6 +328,16 @@ export function projetarEquipe(plano: Plano, eventos: Evento[] | null, entrada: 
     }
   }
 
+  // D-R2: ordem estável, independente da ordem em que o mod lista os agentes: (índice da task no plano, papel, vivo antes de ◌); `sem task` no fim, na ordem de entrada
+  const indiceDaTask = new Map(plano.tasks.map((t, i) => [t.id, i]));
+  const chaveDeOrdem = (a: AgentePainel): [number, number, number] =>
+    a.task === undefined || !indiceDaTask.has(a.task) ? [Infinity, 0, 0] : [indiceDaTask.get(a.task) as number, a.papel === null ? 3 : PAPEIS_ORDEM.indexOf(a.papel), a.vivo ? 0 : 1];
+  const ordenados = agentes
+    .map((a, i) => ({ a, i, k: chaveDeOrdem(a) }))
+    .sort((x, y) => (x.k[0] === y.k[0] ? 0 : x.k[0] < y.k[0] ? -1 : 1) || x.k[1] - y.k[1] || x.k[2] - y.k[2] || x.i - y.i)
+    .map((x) => x.a);
+  const vivos = entrada.agentes === null ? null : ordenados.filter((a) => a.vivo).length;
+
   // revisores aguardando (task em `concluida`); mutações de hoje somam a entrega, não a task
   const hoje = mutacoesDeHoje(ord, entrada);
   const revisoresAguardando = plano.tasks
@@ -348,5 +359,5 @@ export function projetarEquipe(plano: Plano, eventos: Evento[] | null, entrada: 
     decisoes: vigentes.length, ultima,
   };
 
-  return { lider, agentes, revisoresAguardando, sombra };
+  return { lider, agentes: ordenados, vivos, revisoresAguardando, sombra };
 }

@@ -475,7 +475,7 @@ test('fixtures-do-painel: 10 estados nomeados, cada um com a forma completa de E
     const e = ESTADOS[n];
     assert.deepEqual(Object.keys(e).sort(), [...CHAVES].sort(), n);
     assert.deepEqual(Object.keys(e.plano).sort(), ['eta', 'feitas', 'medianaS', 'pct', 'rodadaMedia', 'tasks', 'total'], n);
-    assert.deepEqual(Object.keys(e.equipe).sort(), ['agentes', 'lider', 'revisoresAguardando', 'sombra'], n);
+    assert.deepEqual(Object.keys(e.equipe).sort(), ['agentes', 'lider', 'revisoresAguardando', 'sombra', 'vivos'], n);
     assert.deepEqual(Object.keys(e.equipe.lider).sort(), ['ctx', 'd7', 'h5', 'modelo', 'narrativa', 'nome', 'tok', 'x'], n);
     assert.deepEqual(Object.keys(e.rodape).sort(), ['ci', 'politica', 'prod'], n);
     assert.equal(e.plano.total, e.plano.tasks.length, `${n}: total = tasks`);

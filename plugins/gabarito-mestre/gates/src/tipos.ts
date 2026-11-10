@@ -203,6 +203,8 @@ export type EstadoPainel = {
   equipe: {
     lider: { nome: string; modelo: string | null; ctx: number | null; x: number; tok: number | null; h5: number | null; d7: number | null; narrativa: string };
     agentes: AgentePainel[];
+    /** `null` = sem mod (`entrada.agentes === null`); senão o nº de `agentes` com `vivo: true` (inclui `sem task`, exclui `◌ sem agente`). */
+    vivos: number | null;
     /** Sombra 6: `nome` null antes do 1º despacho do par (task, revisor); `mutacoesHoje`/`mortasHoje` null sem integração de hoje com `mutacoes`. */
     revisoresAguardando: { nome: string | null; task: string; mutacoesHoje: number | null; mortasHoje: number | null }[];
     sombra: { nome: string; modelo: string | null; decisoes: number; ultima: { seq: number; resposta: string; fonte: string | null } | null };
