@@ -1164,3 +1164,28 @@ test('fecho-plano-sem-ciclo: dist/plano.js não importa, direto ou transitivo, p
     assert.equal(proj(P('T1', 'T2', 'T3'), [...duas(50, 1000), ...t3]).plano.medianaS, 100);
   });
 }
+
+// ---------------------------------------------------------------- T6b: ausente ≠ zero e notificação do PAROU vigente
+
+test('qualidade-mortas-total-zero-e-ausente: task.integrada com mutacoes {total: 0} = o gate não mediu nada ⇒ não soma; 0 medido de verdade (total > 0) é 0', () => {
+  const naoMediu = proj(P('T1'), D(ciclo('T1', 0, 10, { mutacoes: { total: 0, mortas: 0 } })));
+  assert.equal(naoMediu.qualidade.mortas, null, 'total 0 ⇒ ausente, não "0 mutações mortas"');
+  const misto = proj(P('T1', 'T2'), D([...ciclo('T1', 0, 10, { mutacoes: { total: 0, mortas: 0 } }), ...ciclo('T2', 20, 30, { mutacoes: { total: 5, mortas: 3 } })]));
+  assert.equal(misto.qualidade.mortas, 3, 'a task sem medição não entra na soma');
+  assert.equal(proj(P('T1'), D(ciclo('T1', 0, 10, { mutacoes: { total: 4, mortas: 0 } }))).qualidade.mortas, 0, '0 medido ≠ ausente');
+  assert.equal(proj(P('T1', 'T2'), D([...ciclo('T1', 0, 10, { mutacoes: { total: 4, mortas: 4 } }), ...ciclo('T2', 20, 30, { mutacoes: { total: 6, mortas: 6 } })])).qualidade.mortas, 10);
+});
+
+test('notificacao-so-do-parar-vigente: ts anterior ao loop.parar vigente é de um Parar antigo ⇒ omitida; igual ou posterior ⇒ mostrada; sem Parar ⇒ mostrada', () => {
+  const evs = D([ini(0, 'T1'), parar(10)]);
+  const n = (ts: number, itens: Evento[] = evs) => proj(P('T1'), itens, { notificacao: { ts: iso(ts) } }).notificacao;
+  assert.equal(n(5), null, 'de um Parar anterior: não aparece sob o PAROU atual');
+  assert.deepEqual(n(10), { hora: '12:10' }, 'no mesmo instante do Parar: é a dele');
+  assert.deepEqual(n(11), { hora: '12:11' }, 'depois do Parar: é a dele');
+  assert.deepEqual(proj(P('T1'), evs, { notificacao: { motivo: 'sem mod' } }).notificacao, { motivo: 'sem mod' }, 'motivo não tem hora: não é comparável, fica');
+  assert.deepEqual(n(5, D([ini(0, 'T1')])), { hora: '12:05' }, 'sem PAROU vigente a notificação não é filtrada');
+  // o 1º loop.parar da sequência é o PAROU vigente (a hora dele é a do 1º)
+  const seq = D([ini(0, 'T1'), parar(10), parar(20)]);
+  assert.deepEqual(n(15, seq), { hora: '12:15' });
+  assert.equal(n(9, seq), null);
+});

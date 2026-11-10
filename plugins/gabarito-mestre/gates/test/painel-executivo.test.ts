@@ -491,3 +491,19 @@ test('exe-cabecalho-26-a-35: o título é cortado antes de "executivo" cair; o i
   }
   assert.equal(linhas(e, 30)[0], 'GABARITO · GM-12 E4… executivo');
 });
+
+// ───────────────────────────── T6b: concordância (achado 1 do review da T12) ─────────────────────────────
+
+test('exe-singular-0-1-2: "N vivo(s)" e "N integrada(s)" concordam com o número (0 e 2 no plural, 1 no singular)', () => {
+  for (const [n, vivos, integradas] of [[0, '0 vivos', '0 integradas'], [1, '1 vivo', '1 integrada'], [2, '2 vivos', '2 integradas']] as const) {
+    const e = clone('em-voo-7-12');
+    e.equipe.vivos = n;
+    e.plano.feitas = n;
+    const t = linhas(e);
+    assert.match(t.find((l) => l.startsWith('Agentes em voo')) ?? '', new RegExp(`\\s${vivos}$`), `vivos ${n}`);
+    assert.ok((t.find((l) => l.startsWith('Tasks')) ?? '').includes(`${integradas} ·`), `integradas ${n}`);
+  }
+  const e = clone('em-voo-7-12');
+  e.plano.feitas = 1;
+  assert.ok(linhas(e, 44).some((l) => l.startsWith('Tsk 1 integrada ·')), 'faixa curta também concorda');
+});

@@ -2,12 +2,12 @@ GABARITO · GM-99 Spec de fumaça da E4                    esquadrão · terra m
 ■ PAROU 12:25  teto de rodadas de review em T2
     aprovar  /gabarito-mestre:liberar T2
     recusar  deixe a task parada e emende a spec
-  T3 continua · produção: 0 alterações nesta entrega · notificação enviada 12:12
+  T3 continua · produção: 0 alterações nesta entrega · notificação enviada 12:26
 ◆ DEPENDE DE VOCÊ  1 item
   emenda #1 em REQ-C-1  /gabarito-mestre:emenda aprovar 1 · rejeitar 1
 ────────────────────────────────────────────────────────────────────────────────
 PLANO   ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱  33%  1/3 tasks                        loop parado
-  ✓ T1   integradas · 1.0 rodada média
+  ✓ T1   integrada · 1.0 rodada média
   ✗ T2  Agentes vivos    no teto             8m
   ● T3  Depende de você  implementando  SAM  6m
 ────────────────────────────────────────────────────────────────────────────────

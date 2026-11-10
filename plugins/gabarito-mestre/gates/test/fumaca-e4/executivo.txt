@@ -2,19 +2,19 @@ GABARITO · GM-99 Spec de fumaça da E4                                  executi
 ■ PAROU 12:25  teto de rodadas de review em T2
     aprovar  /gabarito-mestre:liberar T2
     recusar  deixe a task parada e emende a spec
-  T3 continua · produção: 0 alterações nesta entrega · notificação enviada 12:12
+  T3 continua · produção: 0 alterações nesta entrega · notificação enviada 12:26
 ◆ DEPENDE DE VOCÊ  1 item
   emenda #1 em REQ-C-1  /gabarito-mestre:emenda aprovar 1 · rejeitar 1
 ────────────────────────────────────────────────────────────────────────────────
 Entrega      ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 33%
 Previsão     loop parado
-Tasks        1 integradas · 2 em curso · 0 na fila
-Qualidade    1.0 rodada/review · 0 mutações mortas
+Tasks        1 integrada · 2 em curso · 0 na fila
+Qualidade    1.0 rodada/review
 CI           sem dados
 Produção     0 leituras · 0 alterações · continua
 Contexto     █████████████░░░░░░░░░░░░░░░░ 46%
 Limites      5h 12% · 7d 5%
 ────────────────────────────────────────────────────────────────────────────────
-Agentes em voo                                                           1 vivos
+Agentes em voo                                                            1 vivo
 ● implementador 1  T3 Depende de você                                   93k · 7m
 ○ Sombra           0 decisões

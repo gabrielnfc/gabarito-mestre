@@ -116,7 +116,7 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
     saida.push(cortarLinha(alinhar(esq, previsaoSegs, w), w));
 
     if (integradas.length > 0) {
-      const partes = ['integradas'];
+      const partes = [integradas.length === 1 ? 'integrada' : 'integradas'];
       const r = nn(e.plano.rodadaMedia);
       if (r !== null) partes.push(`${r.toFixed(1)} rodada média`);
       const m = nn(e.plano.medianaS);
@@ -206,7 +206,13 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
     const modelos = eq.agentes.filter((a) => a.vivo).map((a) => (t(a.modelo) !== '' ? ` · ${t(a.modelo)}` : ''));
     const mw = maxCol(modelos);
     const tw = maxCol(eq.agentes.map((a) => t(a.task)));
-    if (vivos !== null) for (const a of eq.agentes) saida.push(cortarLinha(linhaAgente(a, larga, nw, vw, mw, tw), w));
+    if (vivos !== null) {
+      // número nunca é cortado (P1c D-R6): se a linha mais larga não cabe, TODAS cedem juntas, texto primeiro (nível 1: sem modelo), depois o tempo inteiro (nível 2)
+      let nivel = 0;
+      const montar = (n: number): Linha[] => eq.agentes.map((a) => linhaAgente(a, larga, nw, vw, n === 0 ? mw : 0, tw, n));
+      while (nivel < 2 && larga && montar(nivel).some((l) => larg(l) > w)) nivel++;
+      for (const l of montar(nivel)) saida.push(cortarLinha(l, w));
+    }
     for (const r of eq.revisoresAguardando) {
       const nome = t(r.nome);
       const m = nn(r.mutacoesHoje);
@@ -276,7 +282,7 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
 }
 
 /** Linha de agente: vivo (`●`), `sem task`, ou `◌ sem agente` (task em voo sem agente de papel compatível). */
-function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw: number, tw: number): Linha {
+function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw: number, tw: number, nivel = 0): Linha {
   const pre = seg(PREFIXO(false, larga), 'inactive');
   const nome = t(a.nome ?? a.papel);
   if (!a.vivo) {
@@ -293,8 +299,8 @@ function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw
   const ctx: Linha = pct !== null
     ? [seg('ctx '), ...barraSegs(pct, 10, '█', '░', 'success'), seg(` ${fmtPct(pct)}`)]
     : [seg(tok !== null ? `ctx ${fmtTok(tok)}` : 'ctx —')];
-  const cauda = [...(pct !== null && tok !== null ? [fmtTok(tok)] : []), ...(tempoDe(a.desdeS) !== '' ? [tempoDe(a.desdeS)] : [])];
-  const modelo = t(a.modelo) !== '' ? ` · ${t(a.modelo)}` : '';
+  const cauda = [...(pct !== null && tok !== null ? [fmtTok(tok)] : []), ...(nivel < 2 && tempoDe(a.desdeS) !== '' ? [tempoDe(a.desdeS)] : [])];
+  const modelo = nivel === 0 && t(a.modelo) !== '' ? ` · ${t(a.modelo)}` : '';
   const fim = cauda.length > 0 ? [seg(`  ${cauda.join(' · ')}`, 'inactive')] : [];
   if (semTask) return aparar([pre, seg('●', gc), seg(' '), seg('sem task', 'inactive'), seg(modelo, 'inactive'), seg('  '), ...ctx, ...fim]);
   return aparar([

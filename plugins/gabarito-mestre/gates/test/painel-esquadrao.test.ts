@@ -646,3 +646,32 @@ test('costura-P9: diário e projetarPainel reais (src) ⇒ renderPainel do dist 
     else assert.ok(ls.some((l) => /agentes 1 vivo$/.test(l)) && ls.some((l) => /^├─ ◌ .*sem agente · T07/.test(l)), ls.join('\n'));
   }
 });
+
+// ───────────────────────────── T6b (review da T12, achados 1 e 4) ─────────────────────────────
+
+test('esq-faixa-integradas-singular: 1 task integrada ⇒ "integrada"; 2 ou mais ⇒ "integradas"', () => {
+  const e = voo();
+  const faixa = (n: number): string => {
+    e.plano.tasks = e.plano.tasks.map((t, i) => ({ ...t, estado: i < n ? 'integrada' : 'pendente' })) as typeof e.plano.tasks;
+    return achar(render(e, 80), /^\s*✓/);
+  };
+  assert.match(faixa(1), /^\s*✓ T1\s+integrada( |$)/);
+  assert.match(faixa(2), /^\s*✓ T1.T2\s+integradas( |$)/);
+});
+
+test('esq-numero-nunca-cortado-60-69: a linha do agente em 60-69 colunas cede texto (modelo) e depois o tempo inteiro, nunca corta número no meio', () => {
+  for (let w = 60; w <= 80; w++) {
+    const ls = render(voo(), w);
+    for (const l of ls.filter((x) => x.startsWith('├─ ● '))) {
+      assert.ok(colunas(l) <= w, `${w}: estourou`);
+      assert.doesNotMatch(l, /[0-9]k?…/, `${w}: número cortado em "${l}"`);
+      assert.match(l, /ctx [█░]+ \d+%/, `${w}: o % do ctx fica inteiro`);
+      assert.doesNotMatch(l, /…/, `${w}: a linha do agente cabe sem reticências`);
+    }
+  }
+  const ls = render(voo(), 60);
+  assert.equal(achar(ls, /^├─ ● GIMLI/), '├─ ● GIMLI    implementando  T8  ctx ███░░░░░░░ 31%  62k', 'em 60: cai o modelo e depois o tempo; o % e os tokens ficam');
+  assert.equal(achar(render(voo(), 70), /^├─ ● GIMLI/), '├─ ● GIMLI    implementando · sonnet  T8  ctx ███░░░░░░░ 31%  62k · 9m', 'com folga nada cai');
+  // todas as linhas de agente da MESMA largura caem juntas (colunas alinhadas): LEGOLAS acompanha GIMLI
+  assert.equal(achar(ls, /^├─ ● LEGOLAS/), '├─ ● LEGOLAS  em revisão     T9  ctx ██░░░░░░░░ 18%  36k');
+});

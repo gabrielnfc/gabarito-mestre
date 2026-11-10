@@ -470,14 +470,21 @@ export function projetarPainel(plano       , eventos                 , entrada  
   for (const ev of lista) {
     if (tipoDe(ev) !== 'task.integrada') continue;
     const m = dadosDe(ev).mutacoes;
-    if (ehObj(m) && formaInvalida('task.integrada', ev.dados) === null) mortas = (mortas ?? 0) + (m.mortas          );
+    // `total: 0` = o gate não mediu mutação nenhuma (loop.mjs grava `{total: 0, mortas: 0}` sem `mutacoes`): ausente, nunca "0 mortas"
+    if (ehObj(m) && formaInvalida('task.integrada', ev.dados) === null && (m.total          ) > 0) mortas = (mortas ?? 0) + (m.mortas          );
   }
   const rod = contarRodape(lista, ord, agora, fuso);
   const dias = entrada.politica?.dias;
   const politica = `${entrada.politica?.politica}${Array.isArray(dias) ? ` [${dias.map((d) => DIAS[d] ?? String(d)).join(' ')}]` : ''}`;
   const notif = entrada.notificacao;
+  // a notificação é o resultado da transição para o Parar (REQ-PNL-12): `ts` anterior ao PAROU vigente é de um Parar antigo e não aparece sob o atual
+  const vigente = ord === null ? null : pararVigente(ord);
+  const inicioParar = vigente === null ? Number.NaN : msDe(vigente.primeiro);
+  const notifTs = ehObj(notif) && typeof notif.ts === 'string' ? Date.parse(notif.ts) : Number.NaN;
   const notificacao                              =
-    ehObj(notif) && 'ts' in notif ? { hora: horaLocal(typeof notif.ts === 'string' ? Date.parse(notif.ts) : Number.NaN, agora, fuso) } : ehObj(notif) && typeof notif.motivo === 'string' ? { motivo: notif.motivo } : null;
+    ehObj(notif) && 'ts' in notif
+      ? Number.isFinite(inicioParar) && Number.isFinite(notifTs) && notifTs < inicioParar ? null : { hora: horaLocal(notifTs, agora, fuso) }
+      : ehObj(notif) && typeof notif.motivo === 'string' ? { motivo: notif.motivo } : null;
   const titulo = typeof entrada.titulo === 'string' && entrada.titulo.trim() !== '' ? entrada.titulo : null;
   // histórico: agente vivo casado ⇒ nome do par (`subagent:<id>` é o `agente` que a guarda grava); o texto do PAROU é o da TABELA_PARAR, com a task só se for do plano
   const porAgente = new Map                ();

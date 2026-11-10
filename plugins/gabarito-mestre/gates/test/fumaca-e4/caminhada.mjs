@@ -13,9 +13,9 @@
  * NÃO COBRE: o mod desenhando o texto (T10/T11 têm teste próprio), o dono digitando no TUI, a sessão real com LLM.
  */
 import { spawnSync, execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, copyFileSync, mkdtempSync, realpathSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, copyFileSync, mkdtempSync, realpathSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as diario from '../../dist/diario.js';
 
@@ -115,9 +115,10 @@ function aprovar(a, task, arquivo, { jaIniciada = false } = {}) {
 }
 
 /** O JSON do mod em stdin de `painel.mjs --agentes`: sessão com contexto e limites, um subagente vivo com o transcript da fixture na forma exigida. */
-function entradaDoMod(transcript, vivo = true) {
+function entradaDoMod(transcript, vivo = true, notificacaoPasso = 26) {
+  // a notificação é a do Parar (12:25, passo 25): o mod a envia logo depois, então o ts do passo 26 é dela; um ts ANTERIOR ao Parar é de um Parar antigo
   return JSON.stringify({
-    sessao: { percent: 46, tokens: 92_000, window: 200_000, h5: 12, d7: 5, x: 50, notificacao: { ts: new Date(T0 + 12 * PASSO_MS).toISOString() }, pacote: 'terra-media' },
+    sessao: { percent: 46, tokens: 92_000, window: 200_000, h5: 12, d7: 5, x: 50, notificacao: { ts: new Date(T0 + notificacaoPasso * PASSO_MS).toISOString() }, pacote: 'terra-media' },
     agentes: vivo ? [{ id: 'aFUM1', type: 'implementador', description: 'T3 implementador', status: 'running', transcript }] : [],
   });
 }
@@ -148,7 +149,7 @@ export function caminhar() {
   const a = montar();
   const loop = (...args) => a.rodar('loop.mjs', args);
   const painel = (args, input) => a.rodar('painel.mjs', args, input);
-  const obs = { dir: a.dir, entregas: a.entregas };
+  const obs = { dir: a.dir, base: a.base, entregas: a.entregas };
 
   // transcript do agente vivo na forma `<abs>/subagents/agent-<id>.jsonl`
   const subagents = join(a.base, 'sessao', 'subagents');
@@ -187,6 +188,8 @@ export function caminhar() {
   obs.estadoParou = ok(painel(['estado', '--agentes'], entradaDoMod(transcript)), 'estado parou');
   obs.textoEsquadrao = painel(['texto', '--preset', 'esquadrao', '--largura', '80', '--tema', 'mono', '--agentes'], entradaDoMod(transcript));
   obs.textoExecutivo = painel(['texto', '--preset', 'executivo', '--largura', '80', '--tema', 'mono', '--agentes'], entradaDoMod(transcript));
+  // notificação de um Parar ANTERIOR (12:12 < 12:25): o estado a omite sob o PAROU vigente
+  obs.estadoNotificacaoAntiga = ok(painel(['estado', '--agentes'], entradaDoMod(transcript, true, 12)), 'estado com notificação antiga');
 
   // 4. o dono aprova a emenda e libera T2 pelos hooks reais; T2 e T3 integram; CI homolog verde; o dono devolve o deploy
   obs.hookEmenda = a.rodar('emenda-dono.mjs', [], stdinTui(a.dir, 'gabarito-mestre:emenda', 'aprovar 1'));
@@ -210,7 +213,17 @@ export function caminhar() {
   return obs;
 }
 
+/** Apaga o diretório temporário que `montar` criou (`<tmp>/fumaca-e4-*`: o repo descartável e o bare). Recusa qualquer outro caminho. */
+export function limpar(obs) {
+  if (typeof obs?.base !== 'string' || !basename(obs.base).startsWith('fumaca-e4-') || realpathSync(dirname(obs.base)) !== realpathSync(tmpdir())) throw new Error(`recuso apagar fora do temporário da fumaça: ${String(obs?.base)}`);
+  rmSync(obs.base, { recursive: true, force: true });
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const o = caminhar();
-  process.stdout.write(`${JSON.stringify({ esquadrao: o.textoEsquadrao.out, executivo: o.textoExecutivo.out })}\n`);
+  try {
+    process.stdout.write(`${JSON.stringify({ esquadrao: o.textoEsquadrao.out, executivo: o.textoExecutivo.out })}\n`);
+  } finally {
+    limpar(o);
+  }
 }

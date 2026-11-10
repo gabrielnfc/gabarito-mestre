@@ -8,18 +8,21 @@
  *
  * MUTAÇÕES PRESCRITAS: task-12-mut.json da entrega.
  */
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { caminhar } from './fumaca-e4/caminhada.mjs';
+import { caminhar, limpar } from './fumaca-e4/caminhada.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const lido = (nome) => readFileSync(join(AQUI, 'fumaca-e4', nome), 'utf8');
 
 const o = caminhar();
+// a caminhada cria um repo git e um bare em `<tmp>/fumaca-e4-*`: nada fica depois do `npm test`
+after(() => { limpar(o); });
 const tipos = (t) => o.eventos.filter((e) => e.tipo === t);
 
 test('fumaca-spec-aprovada-pelo-hook: aguardando ⇒ aprova (sha256 dos bytes) ⇒ painel sem pendência; a 2ª aprovação do mesmo sha é recusada sem gravar', () => {
@@ -70,7 +73,8 @@ test('fumaca-teto-de-rodadas-e-parou: T2 reprovada 2× ⇒ no_teto ⇒ proxima d
   // PAROU primeiro, depois a emenda (nivel dono); o `parar` não se repete
   assert.deepEqual(e.depende.map((d) => d.nivel), ['parar', 'dono']);
   assert.equal(e.depende[1].motivo, 'emenda #1 em REQ-C-1');
-  assert.deepEqual(e.notificacao, { hora: '12:12' }, 'notificação do mod, em UTC');
+  assert.deepEqual(e.notificacao, { hora: '12:26' }, 'notificação do mod, em UTC, logo depois do PAROU (12:25)');
+  assert.equal(o.estadoNotificacaoAntiga.j.estado.notificacao, null, 'ts 12:12 é anterior ao PAROU das 12:25: de um Parar antigo, não aparece sob o atual');
 });
 
 test('fumaca-painel-e4: painel.mjs texto, nos dois presets, é byte a byte o texto de fumaca-e4/*.txt (stdout só o texto, stderr vazio)', () => {
@@ -87,7 +91,7 @@ test('fumaca-painel-e4: painel.mjs texto, nos dois presets, é byte a byte o tex
   for (const t of [esq, exe]) {
     assert.match(t, /^■ PAROU 12:25  teto de rodadas de review em T2$/m);
     assert.match(t, /^ +aprovar  \/gabarito-mestre:liberar T2$/m);
-    assert.match(t, /^ +T3 continua · produção: 0 alterações nesta entrega · notificação enviada 12:12$/m);
+    assert.match(t, /^ +T3 continua · produção: 0 alterações nesta entrega · notificação enviada 12:26$/m);
     assert.match(t, /^◆ DEPENDE DE VOCÊ  1 item$/m);
     assert.match(t, /emenda #1 em REQ-C-1  \/gabarito-mestre:emenda aprovar 1 · rejeitar 1$/m);
     assert.match(t, /93k/, 'o ctx do transcript de fixture (92.762 ⇒ 93k) está na tela');
@@ -97,7 +101,7 @@ test('fumaca-painel-e4: painel.mjs texto, nos dois presets, é byte a byte o tex
   assert.match(esq, /^PLANO +▰+▱+ +33% +1\/3 tasks +loop parado$/m);
   assert.match(esq, /^ +✗ T2 +Agentes vivos +no teto +8m$/m);
   assert.match(esq, /^ +● T3 +Depende de você +implementando +[A-Z]+ +6m$/m);
-  assert.match(exe, /^Tasks +1 integradas · 2 em curso · 0 na fila$/m);
+  assert.match(exe, /^Tasks +1 integrada · 2 em curso · 0 na fila$/m);
   assert.match(exe, /^Previsão +loop parado$/m);
   assert.ok(!/ARAGORN|SAM|FRODO|GANDALF|ELROND/.test(exe), 'o Executivo não tem nome de pacote');
   // o PAROU tem as MESMAS linhas nos dois presets
@@ -129,4 +133,15 @@ test('fumaca-devolver-sem-rodar-comando: hooks do dono + conclusão ⇒ decisão
   assert.match(o.textoDevolvido.out, /^◆ DEPENDE DE VOCÊ  1 item$/m);
   assert.match(o.textoDevolvido.out, /node <plugin>\/gates\/scripts\/entrega\.mjs executar --entrega GM-99$/m, 'o comando vai inteiro, no fim da linha');
   assert.ok(!/■ PAROU/.test(o.textoDevolvido.out));
+});
+
+test('fumaca-limpa-o-temporario: o diretório da caminhada existe durante os testes; limpar() o apaga e recusa qualquer outro caminho', () => {
+  assert.ok(existsSync(o.base), 'o repo descartável existe enquanto os testes rodam');
+  const falso = mkdtempSync(join(tmpdir(), 'fumaca-e4-limpeza-'));
+  writeFileSync(join(falso, 'x'), 'x');
+  limpar({ base: falso });
+  assert.equal(existsSync(falso), false, 'apagado');
+  assert.throws(() => limpar({ base: AQUI }), /recuso apagar/, 'a pasta de testes nunca é apagada');
+  assert.throws(() => limpar({ base: join(tmpdir(), 'qualquer-coisa') }), /recuso apagar/, 'nome fora do padrão fumaca-e4-*');
+  assert.ok(existsSync(AQUI));
 });

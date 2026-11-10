@@ -2,9 +2,11 @@
  * Goldens, propriedade de largura e PAROU idêntico do painel (E4, GM-12, T12). Sem código de produto: defeito volta à task dona.
  *
  * GOLDENS. `painel-golden/<preset>-<largura>.txt` é o texto `mono` do estado `em-voo-7-12` (7 de 12 integradas, T8 implementando, T9 em revisão,
- * T10 concluída aguardando revisor) nas larguras 44, 60, 72 e 80, nos dois presets. O arquivo é CONTRATO ESCRITO À MÃO a partir da spec
- * (REQ-PNL-4, REQ-PNL-5, REQ-PNL-9; vocabulário do produto: `integradas`, nunca "pousadas"; sem os itens cortados de spec:189): o teste NUNCA grava
- * o golden, só o lê. Golden ausente falha (RED); divergência de 1 byte falha. Mudou o desenho de propósito? Edite o `.txt` e diga na revisão por quê.
+ * T10 concluída aguardando revisor) nas larguras 44, 60, 72 e 80, nos dois presets. Os arquivos foram GERADOS do próprio render e depois CONFERIDOS contra o
+ * mockup, a spec (REQ-PNL-4, REQ-PNL-5, REQ-PNL-9; vocabulário do produto: `integradas`, nunca "pousadas"; sem os itens cortados de spec:189) e a tabela da P1c,
+ * pela T12 e pelo review: NÃO são um oráculo independente (o review da T12 achou defeitos congelados aqui: singular, 0 sem medição, notificação antiga,
+ * número cortado). O teste NUNCA grava o golden, só o lê. Golden ausente falha (RED); divergência de 1 byte falha. Mudou o desenho de propósito? Edite o `.txt`
+ * e diga na revisão por quê, conferindo o texto novo contra a spec, não só contra o render.
  *
  * PROPRIEDADE. Larguras 20 a 200 × 2 presets × 2 temas × 10 estados de `estados.ts` (os 10 fixos de spec:224; os EXTRAS não entram).
  *

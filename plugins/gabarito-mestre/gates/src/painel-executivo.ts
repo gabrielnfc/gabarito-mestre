@@ -87,7 +87,7 @@ export function renderExecutivo(e: EstadoPainel, o: OpcoesRender): Linha[] {
   const feitas = inteiro(e.plano?.feitas);
   const emCurso = tasks.filter((t) => t.estado !== 'integrada' && t.estado !== 'pendente').length;
   const fila = tasks.filter((t) => t.estado === 'pendente').length;
-  linhas.push(linhaDado('tasks', curto, [seg(`${feitas === null ? MDASH : feitas} integradas · ${emCurso} em curso · ${fila} na fila`)]));
+  linhas.push(linhaDado('tasks', curto, [seg(`${feitas === null ? MDASH : feitas} ${feitas === 1 ? 'integrada' : 'integradas'} · ${emCurso} em curso · ${fila} na fila`)]));
 
   // Qualidade: contagem de mutações mortas, nunca %.
   const rodada = naoNeg(e.qualidade?.rodadaMedia);
@@ -129,7 +129,7 @@ export function renderExecutivo(e: EstadoPainel, o: OpcoesRender): Linha[] {
   // Agentes em voo, por papel (sem nome de ninguém)
   linhas.push(separador(w));
   const vivos = inteiro(e.equipe?.vivos);
-  linhas.push(alinhar([seg('Agentes em voo')], [seg(vivos === null ? MDASH : `${vivos} vivos`, 'inactive')], w));
+  linhas.push(alinhar([seg('Agentes em voo')], [seg(vivos === null ? MDASH : `${vivos} ${vivos === 1 ? 'vivo' : 'vivos'}`, 'inactive')], w));
   linhas.push(...blocoAgentes(e, tasks, w));
 
   return linhas.map((l) => cortarLinha(l, w));
