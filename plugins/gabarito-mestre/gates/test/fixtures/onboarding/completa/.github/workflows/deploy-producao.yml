@@ -1,0 +1,11 @@
+name: deploy-producao
+on:
+  push:
+    branches: [trunk]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # environment: nao-conta
+    environment: production
+    steps:
+      - run: echo deploy
