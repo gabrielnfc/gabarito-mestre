@@ -9,7 +9,8 @@
  */
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, rmSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
@@ -692,9 +693,133 @@ describe('estrutura (preso por teste)', () => {
   });
 
   test('aprendizado-nao-le-o-diario-por-fora: a validação roda só dentro do `antes`, com os eventos que o gravar leu (sem 2ª leitura)', () => {
-    const fonte = readFileSync(FONTE_APR, 'utf8');
+    const todo = readFileSync(FONTE_APR, 'utf8');
+    // T11: `registro` lê o diário de propósito (subcomando só de leitura); a regra vale para a função `aprendizado`.
+    const ini = todo.indexOf('export function aprendizado(');
+    const fim = todo.indexOf('export function aprendizados(');
+    assert.ok(ini >= 0 && fim > ini, 'achou o corpo de `aprendizado`');
+    const fonte = todo.slice(ini, fim);
     assert.equal(/lerDiarioEstrito\s*\(/.test(fonte), false, 'nenhuma leitura própria do diário da entrega');
     assert.equal((fonte.match(/validarAprendizado\(/g) ?? []).length, 1, 'uma só chamada de validarAprendizado');
     assert.match(fonte, /antes\s*=\s*\(candidato,\s*eventos\)|\(candidato,\s*eventos\)\s*=>/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────── T11: registro (REQ-REG-1)
+
+describe('registro: CLI grava registro.md determinístico (REQ-REG-1)', () => {
+  const sha256 = (b) => createHash('sha256').update(b).digest('hex');
+  const arquivosDe = (amb) => readdirSync(amb.entregas).sort();
+  const DESC = ['descoberta', { evidencia: 'A5 é medido', causa: 'tecnica' }];
+  /** Linhas cruas encadeadas (o `append` recusa o que o registro tem de enfrentar: segredo e seq fora de ordem). */
+  const cru = (amb, eventos) => {
+    let anterior = null;
+    const linhas = eventos.map((e) => {
+      const l = JSON.stringify({ autor: 't@t', agente: 'orquestrador', sessao: 'loop', hash_anterior: anterior === null ? null : sha256(anterior), ...e });
+      anterior = l;
+      return l;
+    });
+    writeFileSync(join(amb.entregas, 'events.loop.jsonl'), `${linhas.join('\n')}\n`);
+  };
+
+  test('registro-cli-grava-e-relê: {ok, arquivo, sha256}; o arquivo no disco tem esse sha e o texto do diário; 2 rodadas, mesmo byte; sem tmp', () => {
+    const amb = ambiente();
+    amb.semear([CI, DESC]);
+    const r1 = amb.cli(['registro']);
+    assert.equal(r1.rc, 0, r1.out + r1.err);
+    assert.equal(r1.j.ok, true);
+    assert.equal(r1.j.arquivo, '.harness/entregas/GM-10/registro.md');
+    const bytes1 = readFileSync(join(amb.entregas, 'registro.md'));
+    assert.equal(r1.j.sha256, sha256(bytes1));
+    assert.match(bytes1.toString('utf8'), /^# Registro de decisões — GM-10\n/);
+    assert.match(bytes1.toString('utf8'), /- loop:2 · tecnica · A5 é medido/);
+    const r2 = amb.cli(['registro']);
+    assert.equal(r2.j.sha256, r1.j.sha256);
+    assert.deepEqual(readFileSync(join(amb.entregas, 'registro.md')), bytes1);
+    assert.deepEqual(arquivosDe(amb).filter((f) => f.includes('tmp') || f.startsWith('.registro')), [], 'nenhum temporário sobrou');
+    assert.deepEqual(amb.tipos(), ['ci.resultado', 'descoberta'], 'registro não grava evento no diário');
+  });
+
+  test('registro-costura-aprendizado-real (P9): `aprendizado` real grava, `registro` real lista em Aprendizados D, e o M só em M', () => {
+    const amb = ambiente();
+    amb.semear([CI]);
+    assert.equal(amb.cli(['aprendizado', 'A', 'D', '--regra', 'rode o build antes', '--entra-em', 'instantaneo', '--eventos', 'loop:1']).rc, 0);
+    assert.equal(amb.cli(['aprendizado', 'E', 'M', '--regra', 'suspeita sem medida', '--entra-em', 'spec']).rc, 0);
+    const r = amb.cli(['registro']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const t = readFileSync(join(amb.entregas, 'registro.md'), 'utf8');
+    const d = t.split('## Aprendizados D\n')[1].split('## Aprendizados M')[0];
+    const m = t.split('## Aprendizados M\n')[1];
+    assert.match(d, /- loop:2 · A · rode o build antes · entra em: instantaneo · sem medição · eventos: loop:1/);
+    assert.doesNotMatch(d, /suspeita/);
+    assert.match(m, /- loop:3 · E · suspeita sem medida/);
+  });
+
+  test('registro-diario-ausente-x-ilegivel: ausente ⇒ seções `- nenhum` e grava; torto, cadeia quebrada ou fora de ordem ⇒ diario_ilegivel, nada gravado e o registro antigo fica', () => {
+    const ausente = ambiente();
+    const ok = ausente.cli(['registro']);
+    assert.equal(ok.rc, 0, ok.out + ok.err);
+    const t = readFileSync(join(ausente.entregas, 'registro.md'), 'utf8');
+    assert.equal([...t.matchAll(/^- nenhum$/gm)].length, 8);
+
+    const ts = (n) => new Date(Date.UTC(2026, 0, 1, 0, 0, n)).toISOString();
+    const casos = {
+      torto: (amb) => writeFileSync(join(amb.entregas, 'events.loop.jsonl'), 'isto nao e json\n'),
+      'cadeia-quebrada': (amb) => writeFileSync(join(amb.entregas, 'events.loop.jsonl'), `${JSON.stringify({ seq: 1, ts: ts(1), sessao: 'loop', tipo: 'ci.resultado', dados: { verde: true }, hash_anterior: SHA })}\n`),
+      'fora-de-ordem': (amb) => cru(amb, [
+        { seq: 2, ts: ts(2), tipo: 'descoberta', dados: { evidencia: 'a', causa: 'tecnica' } },
+        { seq: 1, ts: ts(1), tipo: 'descoberta', dados: { evidencia: 'b', causa: 'tecnica' } },
+      ]),
+      'evento-fora-da-forma': (amb) => cru(amb, [{ seq: 1, ts: ts(1), tipo: 'desvio', dados: { task: 'T1' } }]),
+    };
+    for (const [nome, monta] of Object.entries(casos)) {
+      const amb = ambiente();
+      writeFileSync(join(amb.entregas, 'registro.md'), 'VELHO\n');
+      monta(amb);
+      const antes = arquivosDe(amb);
+      const r = amb.cli(['registro']);
+      assert.equal(r.rc, 1, `${nome}: ${r.out}${r.err}`);
+      assert.equal(r.j.ok, false, nome);
+      assert.equal(r.j.erro, 'diario_ilegivel', `${nome}: ${r.out}`);
+      assert.equal(readFileSync(join(amb.entregas, 'registro.md'), 'utf8'), 'VELHO\n', `${nome}: o registro antigo não é tocado`);
+      assert.deepEqual(arquivosDe(amb), antes, `${nome}: nem tmp sobrando`);
+    }
+  });
+
+  test('registro-segredo-no-diario-nao-grava: canário no texto renderizado ⇒ segredo_no_registro, nada gravado', () => {
+    const amb = ambiente();
+    cru(amb, [{ seq: 1, ts: new Date(Date.UTC(2026, 0, 1)).toISOString(), tipo: 'descoberta', dados: { evidencia: `achei ${TOKEN}`, causa: 'tecnica' } }]);
+    const antes = arquivosDe(amb);
+    const r = amb.cli(['registro']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'segredo_no_registro');
+    assert.equal(r.out.includes(TOKEN), false, 'o segredo não volta na saída');
+    assert.deepEqual(arquivosDe(amb), antes);
+  });
+
+  test('registro-spec-atual-vem-do-disco: o sha da spec do plano entra (confere × difere) pelo CLI real', () => {
+    const amb = ambiente({ plano: { ...PLANO, spec: 'README.md' } });
+    amb.semear([['spec.aprovada', { spec: 'README.md', sha256: sha256('x\n') }]]);
+    assert.equal(amb.cli(['registro']).rc, 0);
+    const ler = () => readFileSync(join(amb.entregas, 'registro.md'), 'utf8');
+    assert.match(ler(), new RegExp(`- sha256 atual da spec: ${sha256('x\n')} \\(confere com a última aprovação\\)`));
+    writeFileSync(join(amb.dir, 'README.md'), 'y\n');
+    assert.equal(amb.cli(['registro']).rc, 0);
+    assert.match(ler(), new RegExp(`- sha256 atual da spec: ${sha256('y\n')} \\(difere da última aprovação\\)`));
+  });
+
+  test('registro-tmp-no-mesmo-diretorio-e-rename: a fonte escreve em dirEntrega e troca por renameSync (preso por teste)', () => {
+    const todo = readFileSync(FONTE_APR, 'utf8');
+    const corpo = todo.slice(todo.indexOf('export function registro('));
+    assert.match(corpo, /const tmp = join\(c\.dirEntrega,/);
+    assert.match(corpo, /renameSync\(tmp, destino\)/);
+    assert.equal(/Date\.now|toLocale|new Date\(/.test(corpo), false, 'sem relógio nem localidade');
+  });
+
+  test('registro-uso: posicional sobrando é recusado e nada é gravado', () => {
+    const amb = ambiente();
+    const r = amb.cli(['registro', 'extra']);
+    assert.notEqual(r.rc, 0, r.out + r.err);
+    assert.equal(existsSync(join(amb.entregas, 'registro.md')), false);
   });
 });

@@ -1,6 +1,6 @@
 /**
  * Subcomandos do aprendizado, do pouso e do registro de `loop.mjs` (GM-13). T8 entrega `aprendizado` e `aprendizados`;
- * `pousar` (T12) e `registro` (T11) seguem respondendo `nao_implementado` (rc 1) sem gravar nada.
+ * `registro` é da T11; `pousar` (T12) segue respondendo `nao_implementado` (rc 1) sem gravar nada.
  * As dependências vêm injetadas por `loop.mjs` (`{ c, plano, gravar, lerDiarioEstrito, Falha, git, raizPrincipal, cwd, pronto }`): este módulo não importa `loop.mjs`.
  *
  *   loop.mjs aprendizado <E|A> <D|M> --regra <t> --entra-em <a,b> [--gatilho <sessao:seq>] [--eventos <s:q,…>] [--fonte <f> --numero <n>] [--substitui [<entrega>/]<sessao:seq>]
@@ -14,11 +14,14 @@
  *   as referências (e a pendência do `nada`) sobre os MESMOS eventos que o `gravar` leu: sem 2ª leitura, sem janela entre validar e gravar.
  * CONTRATO DE FALHA. Ausente (diário sem eventos, árvore sem a pasta) ≠ corrompido (linha torta, cadeia quebrada); nunca vira "0" calado.
  */
-import { join } from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
+import { closeSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { aprendizadosVigentes, paraDestino, validarAprendizado } from '../dist/aprendizado.js';
 import { lerAprendizados, recusaCanario } from '../dist/diario.js';
 import { formaInvalida, PAPEIS } from '../dist/formas.js';
 import { pendenciasAprendizado } from '../dist/pendencias.js';
+import { montarRegistro } from '../dist/registro.js';
 
 const stub = (nome, task) => (deps) => {
   throw new deps.Falha('nao_implementado', `loop.mjs ${nome}: ainda não implementado (${task} da E5a); nada foi gravado`);
@@ -167,4 +170,37 @@ export function aprendizados(deps, pos, flags) {
 }
 
 export const pousar = stub('pousar', 'T12');
-export const registro = stub('registro', 'T11');
+/**
+ * `loop.mjs registro` (REQ-REG-1): `<dirEntrega>/registro.md` a partir do diário, determinístico (mesmo diário ⇒ mesmo byte).
+ * Diário AUSENTE (sem eventos) ⇒ registro com as seções em `- nenhum`; ILEGÍVEL (linha torta, cadeia quebrada, fora de ordem, evento fora
+ * da forma) ⇒ `diario_ilegivel` e nada gravado, nem arquivo temporário. Segredo no texto renderizado ⇒ `segredo_no_registro`, nada gravado.
+ * Escrita por tmp no mesmo diretório + rename, e releitura do arquivo: o `sha256` devolvido é o dos bytes que estão no disco.
+ */
+export function registro(deps, pos, flags) {
+  const { c, plano, lerDiarioEstrito, Falha } = deps;
+  if (pos.length !== 0) throw uso(Falha, 'registro não tem posicionais');
+  const eventos = lerDiarioEstrito(c.dirEntrega);
+  const spec = deps.shaDaSpec(c.raiz, plano);
+  let texto;
+  try {
+    texto = montarRegistro(c.entrega, eventos, spec.ok ? spec.sha256 : null);
+  } catch (e) {
+    throw new Falha('diario_ilegivel', `${e instanceof Error ? e.message : String(e)}; nada foi gravado`);
+  }
+  const padrao = recusaCanario(texto);
+  if (padrao !== null) throw new Falha('segredo_no_registro', `o registro casaria o canário de segredo (${padrao}); nada foi gravado`);
+  const destino = join(c.dirEntrega, 'registro.md');
+  const tmp = join(c.dirEntrega, `.registro.md.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
+  try {
+    const fd = openSync(tmp, 'wx', 0o644);
+    try { writeSync(fd, texto); } finally { closeSync(fd); }
+    renameSync(tmp, destino);
+  } catch (e) {
+    try { unlinkSync(tmp); } catch { /* nunca chegou a existir */ }
+    throw new Falha('registro_nao_gravado', `registro.md não foi gravado (${e.code ?? e.message})`);
+  }
+  const sha256 = createHash('sha256').update(texto).digest('hex');
+  const lido = createHash('sha256').update(readFileSync(destino)).digest('hex');
+  if (lido !== sha256) throw new Falha('registro_sem_efeito', 'o registro.md relido não tem os bytes gerados: confira o disco');
+  return { arquivo: relative(c.raiz, destino), sha256 };
+}

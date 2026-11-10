@@ -1412,7 +1412,7 @@ async function executar(argv, cwd) {
       return julgarComoSombra(c, plano, forma.seq, forma.decisao);
     case 'proxima': return proxima(c, plano, flags);
     case 'aprendizado': case 'pousar': case 'registro':
-      return loopAprendizado[cmd]({ c, plano, gravar, lerDiarioEstrito, Falha, git, pronto: aprendizadoPronto }, pos, flags);
+      return loopAprendizado[cmd]({ c, plano, gravar, lerDiarioEstrito, Falha, git, shaDaSpec, pronto: aprendizadoPronto }, pos, flags);
     case 'abrir': return abrir(c, plano, task);
     case 'fechar': tarefa(plano, task); return fechar(c, task);
     case 'integrar': return integrar(c, plano, task);

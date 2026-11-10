@@ -3518,10 +3518,10 @@ describe('E4 T7: dados do painel no loop (iniciar, integrar, proxima)', () => {
     assert.deepEqual(casarAgente(ci.descricao, plano), { task: 'T1', papel: 'correcao' });
   });
 
-  test('subcomandos-e5-stub-nao-implementado: pousar e registro respondem nao_implementado (rc 1) e não gravam nada (`aprendizado` e `aprendizados` são da T8)', () => {
+  test('subcomandos-e5-stub-nao-implementado: pousar responde nao_implementado (rc 1) e não grava nada (`aprendizado`/`aprendizados` são da T8, `registro` da T11)', () => {
     const amb = ambiente();
     const antes = amb.tipos();
-    const chamadas = [['pousar'], ['registro'], ['registro', '--sessao', 'loop']];
+    const chamadas = [['pousar']];
     for (const args of chamadas) {
       const r = amb.cli(args);
       assert.equal(r.rc, 1, `${args.join(' ')}: ${r.out}${r.err}`);
