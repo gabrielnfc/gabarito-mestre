@@ -16,6 +16,8 @@
  *       grava SEMPRE em `events.emendas.jsonl` (`--sessao` é ignorada: o seq da proposta é o dela) e devolve `{proposta_seq, req, task?, congeladas}`;
  *       `proposta_seq` vem da RELEITURA estrita do arquivo (a única `emenda.proposta` com o `ts` e os `dados` gravados), nunca do candidato de `gravar`.
  *   loop.mjs emenda julgar <seq> <aprovar|rejeitar>   origem `sombra`: recusa sem `sombra.julga_emendas: true` em `origin/HEAD` (o config local não conta)
+ *   loop.mjs aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>]
+ *       (GM-13 T8; contrato e ordem de recusa em `loop-aprendizado.mjs`; `aprendizados` não exige entrega na branch).
  *   todos aceitam --entrega <GM-10> (senão vem da branch); os que gravam aceitam --sessao <id> (padrão `loop`).
  *
  * CONTRATO DE FALHA. Saída é UMA linha de JSON em stdout, sempre com `ok`; falha traz `erro` (código) e `mensagem`.
@@ -47,6 +49,7 @@ import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import { lerConfigOrigin, resolverModelo } from '../lib/config.mjs';
+import { aprendizadosVigentes, paraDestino } from '../dist/aprendizado.js';
 import * as diario from '../dist/diario.js';
 import { escopoDaTask, projetarEmendas, SESSAO_EMENDAS, validarJulgamento, validarProposta } from '../dist/emenda.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
@@ -147,14 +150,14 @@ function lerArgs(argv) {
     ci: { pos: 1, flags: ['entrega', 'sessao', 'alvo'] },
     desvio: { pos: 1, flags: ['entrega', 'sessao', 'req', 'evidencia', 'arquivos', 'causa'], obrig: ['req', 'evidencia', 'arquivos', 'causa'] },
     descoberta: { pos: 0, flags: ['entrega', 'sessao', 'evidencia', 'causa'], obrig: ['evidencia', 'causa'] },
-    // E5a (GM-13): fiação; os argumentos de cada um chegam com a task dona (T8, T11, T12). Aqui qualquer posicional e as flags comuns.
-    aprendizado: { pos: null, flags: ['entrega', 'sessao'] },
-    aprendizados: { pos: null, flags: ['entrega', 'sessao'] },
+    // E5a (GM-13): `aprendizado` confere os posicionais e as flags por tipo em `loop-aprendizado.mjs` (uso, rc 2); `aprendizados` lê a árvore, sem entrega (T8).
+    aprendizado: { pos: null, flags: ['entrega', 'sessao', 'regra', 'entra-em', 'gatilho', 'eventos', 'fonte', 'numero', 'substitui', 'motivo'] },
+    aprendizados: { pos: 0, flags: ['para'] },
     pousar: { pos: null, flags: ['entrega', 'sessao'] },
     registro: { pos: null, flags: ['entrega', 'sessao'] },
     emenda: { pos: null, flags: ['entrega', 'sessao', 'req', 'task', 'diff', 'fato', 'alternativa', 'evidencia', 'causa', 'arquivos'] },
   };
-  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | iniciar <task> <papel> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | aprendizado | aprendizados | pousar | registro  [--entrega GM-10]';
+  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | iniciar <task> <papel> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | pousar | registro  [--entrega GM-10]';
   if (typeof cmd !== 'string' || !Object.hasOwn(ESPEC, cmd)) throw new Falha('uso', `comando desconhecido ou ausente. ${uso}`, {}, 2);
   const esp = ESPEC[cmd];
   const pos = [];
@@ -1159,8 +1162,21 @@ function proxima(c, plano, flags) {
   const consultas = contarConsultas(eventos);
   if (consultas > teto) aviso.push(`Atenção: ${consultas} consultas à Sombra, teto ${teto}`);
   aviso.push(...avisosDeEmenda(plano, ordenados, est));
-  const extra = { cfg, ordenados, est, decisoes: projetarDecisoes(eventos) };
+  // A árvore de aprendizados é lida UMA vez por chamada (nunca por item); só quando há o que despachar.
+  const extra = { cfg, ordenados, est, decisoes: projetarDecisoes(eventos), vigentes: acao.tipo === 'despachar' ? aprendizadosDaArvore(c, aviso) : [] };
   return { acao: acao.tipo === 'despachar' ? { ...acao, itens: acao.itens.map((i) => enriquecer(c, plano, eventos, i, aviso, extra)) } : acao, sinais, ...(aviso.length ? { aviso } : {}) };
+}
+
+/** Aprendizados vigentes da árvore (todas as entregas). Entrega ilegível vira aviso; falha na leitura nunca derruba o despacho (lista vazia e aviso). */
+function aprendizadosDaArvore(c, aviso) {
+  try {
+    const { porEntrega, avisos } = diario.lerAprendizados(join(c.raiz, '.harness', 'entregas'));
+    aviso.push(...avisos);
+    return aprendizadosVigentes(porEntrega);
+  } catch (e) {
+    aviso.push(`aprendizados: leitura da árvore falhou (${e instanceof Error ? e.message : String(e)}); itens despachados sem aprendizados`);
+    return [];
+  }
 }
 
 /** Decisões vigentes do item: as dos REQs da task e as da âncora `task:<id>`, sem as de consulta anterior à última emenda de um REQ da âncora; mais recente primeiro. */
@@ -1187,7 +1203,7 @@ function decisoesDoItem(c, plano, item, reqs, extra) {
 }
 
 /**
- * O item de despacho carrega o que o /clear apaga: `spec` (ponteiro do topo do plano), `modelo`, `decisoes` e `emendas` (as aprovadas dos REQs da task: o
+ * O item de despacho carrega o que o /clear apaga: `spec` (ponteiro do topo do plano), `modelo`, `decisoes`, `aprendizados` (regras D do brief deste papel) e `emendas` (as aprovadas dos REQs da task: o
  * arquivo da spec nunca é editado pela emenda, então o implementador, a correção e o revisor leem o diff aqui) e, na `correcao`, `achados` (caminho do
  * arquivo da rodada reprovada). Arquivo de achados ausente ou vazio não vira caminho: `achados: null` e aviso (o orquestrador não manda corrigir às cegas).
  */
@@ -1202,6 +1218,8 @@ function enriquecer(c, plano, eventos, item, aviso, extra) {
     modelo: modeloDoItem(extra.cfg, item.papel, aviso),
     decisoes: decisoesDoItem(c, plano, item, reqs, extra),
     emendas: extra.est.aprovadas.filter((p) => reqs.includes(p.req)).map((p) => ({ proposta_seq: p.seq, req: p.req, diff: p.diff })),
+    // E5a (GM-13): as regras D vigentes que entram no brief DESTE papel (`brief:<papel>` exato; M nunca entra).
+    aprendizados: paraDestino(extra.vigentes, `brief:${item.papel}`).map((a) => a.regra),
   };
   if (item.papel !== 'correcao') return saida;
   const ord = ordenar(eventos);
@@ -1365,6 +1383,10 @@ export function julgarEmendaDono(cwd, seq, decisao, sessao, opcoes = {}) {
 async function executar(argv, cwd) {
   const { cmd, pos, flags } = lerArgs(argv);
   const forma = validarForma(cmd, pos, flags);
+  // `aprendizados` lê a árvore da raiz principal: não depende da entrega da branch nem de plano (D-P1c-5), então desvia ANTES de `contexto` e `carregarPlano`.
+  if (cmd === 'aprendizados') return loopAprendizado.aprendizados({ cwd, raizPrincipal, Falha }, pos, flags);
+  // Uso, conversão e canário do `aprendizado` só dependem dos argumentos: conferidos antes de abrir entrega, plano e diário.
+  const aprendizadoPronto = cmd === 'aprendizado' ? loopAprendizado.preparar(Falha, pos, flags) : undefined;
   const c = contexto(cwd, cmd === 'emenda' && forma.sub === 'propor' ? { ...flags, sessao: SESSAO_EMENDAS } : flags);
   if (cmd === 'parar') return { ...gravarSemPlano(c, 'loop.parar', { motivo: forma.motivo }) };
   // Tudo que só depende dos argumentos (diff, tamanho, canário, caminhos) é conferido antes de abrir o plano e o diário.
@@ -1389,8 +1411,8 @@ async function executar(argv, cwd) {
       if (forma.sub === 'propor') return propor(c, plano, propostaPronta);
       return julgarComoSombra(c, plano, forma.seq, forma.decisao);
     case 'proxima': return proxima(c, plano, flags);
-    case 'aprendizado': case 'aprendizados': case 'pousar': case 'registro':
-      return loopAprendizado[cmd]({ c, plano, gravar, lerDiarioEstrito, Falha, git }, pos, flags);
+    case 'aprendizado': case 'pousar': case 'registro':
+      return loopAprendizado[cmd]({ c, plano, gravar, lerDiarioEstrito, Falha, git, pronto: aprendizadoPronto }, pos, flags);
     case 'abrir': return abrir(c, plano, task);
     case 'fechar': tarefa(plano, task); return fechar(c, task);
     case 'integrar': return integrar(c, plano, task);

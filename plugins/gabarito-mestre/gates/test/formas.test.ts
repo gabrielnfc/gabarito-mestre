@@ -402,6 +402,16 @@ test('forma-aprendizado-d-sem-evidencia-grave-como-m: D só com a evidência da 
   ok('aprendizado', aprD({ eventos: [{ sessao: 'loop', seq: 1 }] }));
 });
 
+test('forma-aprendizado-d-sem-campo-evidencia-ausente-nao-corrompido: D sem a chave `evidencia` diz "ausente" (nunca "dados corrompido")', () => {
+  const { evidencia: _fora, ...semEvidencia } = apr({ status: 'D' });
+  for (const dados of [semEvidencia, { ...semEvidencia, evidencia: undefined }]) {
+    const motivo = formaInvalida('aprendizado', dados) as string;
+    assert.match(motivo, /campo `evidencia` ausente/);
+    assert.doesNotMatch(motivo, /corrompido|ilegível/);
+  }
+  ruim('aprendizado', apr({ status: 'D', evidencia: 'texto' }), /campo `evidencia` inválido/);
+});
+
 test('forma-aprendizado-m-sem-evidencia-ok', () => {
   ok('aprendizado', apr({ status: 'M', evidencia: {} }));
 });

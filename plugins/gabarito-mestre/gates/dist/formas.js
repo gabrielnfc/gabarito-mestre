@@ -233,7 +233,9 @@ function substituiDoAprendizado(o     )                {
 /** D só com evidência da máquina: sem `eventos` nem `medicao`, o motivo manda gravar como M. */
 function dSemEvidencia(o     )                {
   if (campo(o, 'status') !== 'D') return null;
-  const ev = campo(o, 'evidencia')       ;
+  // `primeiro` avalia todos os argumentos: sem a chave (ou com tipo errado) a regra de `evidencia` já recusa; aqui nunca lança.
+  const ev = campo(o, 'evidencia');
+  if (!ehObjeto(ev)) return null;
   return campo(ev, 'eventos') === undefined && campo(ev, 'medicao') === undefined ? 'status `D` sem evidência da máquina (`eventos` ou `medicao`): grave como M' : null;
 }
 

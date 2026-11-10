@@ -1,0 +1,700 @@
+/**
+ * `loop.mjs aprendizado` e `aprendizados` pela borda (GM-13 T8, REQ-APR-1, REQ-APR-2, REQ-APR-3): CLI real, repositório git temporário por caso.
+ * Ordem do CLI (Sombra P1-c): uso (rc 2) → conversão (`argumento_invalido`) → canário (`segredo_no_aprendizado`, antes de qualquer leitura:
+ * `append` com canário GRAVA `diario.recusa`) → forma → `ls-files` literal → leitura da árvore → `gravar(…, antes)`.
+ * Contrato de falha: ausente (diário sem eventos, árvore sem a pasta) ≠ corrompido (linha torta, cadeia quebrada).
+ *
+ * MUTAÇÕES PRESCRITAS (task-8-mut.json): M-APR1b pula `ls-files` · M-T8a canário depois do `gravar` · M-T8b sem `--literal-pathspecs`
+ * · M-T8c `nada` aceita evento existente · M-APR3a (em loop-cli.test.mjs) M no brief · M-APR1c (formas) D sem evidência.
+ */
+import { test, describe, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { spawnSync, execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import * as diario from '../dist/diario.js';
+import { PAPEIS } from '../dist/formas.js';
+
+const AQUI = dirname(fileURLToPath(import.meta.url));
+const SCRIPT = join(AQUI, '..', 'scripts', 'loop.mjs');
+const FONTE_LOOP = join(AQUI, '..', 'scripts', 'loop.mjs');
+const FONTE_APR = join(AQUI, '..', 'scripts', 'loop-aprendizado.mjs');
+
+const raizes = [];
+after(() => { for (const d of raizes) rmSync(d, { recursive: true, force: true }); });
+const novoTmp = () => { const d = realpathSync(mkdtempSync(join(tmpdir(), 'loop-apr-'))); raizes.push(d); return d; };
+const g = (dir, ...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+
+const PLANO = { entrega: 'GM-10', tasks: [{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }] };
+const TOKEN = `ghp_${'A1b2C3d4E5'.repeat(4).slice(0, 36)}`;
+const SHA = 'a'.repeat(64);
+
+/** Repositório com a branch de PBI, `README.md` e `gates/src/x.ts` versionados e `plano.json` da GM-10. */
+function ambiente({ branch = 'enabler/GM-10-loop', plano = PLANO } = {}) {
+  const dir = novoTmp();
+  g(dir, 'init', '-q', '-b', branch);
+  g(dir, 'config', 'user.email', 't@t');
+  g(dir, 'config', 'user.name', 't');
+  g(dir, 'config', 'commit.gpgsign', 'false');
+  mkdirSync(join(dir, 'gates', 'src'), { recursive: true });
+  writeFileSync(join(dir, 'README.md'), 'x\n');
+  writeFileSync(join(dir, 'gates', 'src', 'x.ts'), 'x\n');
+  g(dir, 'add', '-A');
+  g(dir, 'commit', '-q', '-m', 'chore: base');
+  const entregas = join(dir, '.harness', 'entregas', 'GM-10');
+  mkdirSync(entregas, { recursive: true });
+  if (plano !== null) writeFileSync(join(entregas, 'plano.json'), typeof plano === 'string' ? plano : JSON.stringify(plano));
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) if (/^GIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR)/.test(k)) delete env[k];
+  let n = 0;
+  const amb = {
+    dir, entregas, arvore: join(dir, '.harness', 'entregas'),
+    cli(args, { cwd = dir } = {}) {
+      const r = spawnSync(process.execPath, [SCRIPT, ...args], { cwd, encoding: 'utf8', env });
+      let j = null;
+      try { j = JSON.parse(r.stdout.trim()); } catch { /* fica null */ }
+      return { rc: r.status, j, out: r.stdout, err: r.stderr };
+    },
+    eventos: () => diario.ler(entregas),
+    tipos: () => diario.ler(entregas).map((e) => e.tipo),
+    /** Todas as linhas de todos os jsonl da entrega (inclui `diario.recusa`, que `diario.ler` também devolve). */
+    linhas: () => readdirSync(entregas).filter((f) => /^events\..+\.jsonl$/.test(f)).flatMap((f) => readFileSync(join(entregas, f), 'utf8').split('\n').filter(Boolean)),
+    semear(lista, { dirEntrega = entregas, sessao = 'loop' } = {}) {
+      for (const [tipo, dados, s = sessao] of lista) {
+        n += 1;
+        const ts = new Date(Date.UTC(2026, 0, 1, 0, 0, n)).toISOString();
+        const r = diario.append(dirEntrega, s, { ts, autor: 't@t', sessao: s, agente: 'orquestrador', tipo, dados });
+        assert.ok(r.ok && r.gravado === 'evento', JSON.stringify(r));
+      }
+    },
+    /** Entrega vizinha na árvore (`GM-<n>`), com diário legível. */
+    vizinha(id, lista) {
+      const d = join(dir, '.harness', 'entregas', id);
+      mkdirSync(d, { recursive: true });
+      amb.semear(lista, { dirEntrega: d });
+      return d;
+    },
+    /** Entrega vizinha com diário torto (linha que não é JSON). */
+    vizinhaTorta(id) {
+      const d = join(dir, '.harness', 'entregas', id);
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, 'events.loop.jsonl'), 'isto nao e json\n');
+      return d;
+    },
+  };
+  return amb;
+}
+
+const CI = ['ci.resultado', { verde: true }];
+const PARAR = ['loop.parar', { motivo: 'ci_vermelho' }];
+const DONO = ['dono.mensagem', { sha256: SHA, chars: 3 }, 'dono'];
+const BASE = ['E', 'D', '--regra', 'rode o build antes do teste', '--entra-em', 'instantaneo', '--eventos', 'loop:1'];
+const apr = (...extra) => ['aprendizado', ...BASE, ...extra];
+const semEfeito = (amb) => amb.linhas().join('\n');
+
+describe('aprendizado: grava', () => {
+  test('aprendizado-d-com-evento-grava: o que foi digitado é o que fica no diário (lido campo a campo)', () => {
+    const amb = ambiente();
+    amb.semear([CI]);
+    const r = amb.cli(['aprendizado', 'A', 'D', '--regra', 'confira o gate antes de integrar', '--entra-em', 'instantaneo,brief:revisor', '--eventos', 'loop:1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.ok, true);
+    const e = amb.eventos().find((x) => x.tipo === 'aprendizado');
+    assert.ok(e, 'gravou');
+    assert.deepEqual(e.dados, {
+      tipo: 'A', status: 'D', gatilho: null, evidencia: { eventos: [{ sessao: 'loop', seq: 1 }] },
+      regra: 'confira o gate antes de integrar', entra_em: ['instantaneo', 'brief:revisor'],
+    });
+    assert.equal(e.sessao, 'loop');
+    assert.equal(e.seq, 2);
+    assert.equal(r.j.evento.regra, 'confira o gate antes de integrar');
+    assert.equal(r.j.evento.tipo_evento, 'aprendizado');
+  });
+
+  test('aprendizado-m-sem-evidencia-grava: M não precisa de evidência (evidencia {})', () => {
+    const amb = ambiente();
+    const r = amb.cli(['aprendizado', 'E', 'M', '--regra', 'suspeita sem medida', '--entra-em', 'spec']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const e = amb.eventos().find((x) => x.tipo === 'aprendizado');
+    assert.equal(e.dados.status, 'M');
+    assert.deepEqual(e.dados.evidencia, {});
+    assert.equal(e.dados.gatilho, null);
+    assert.deepEqual(e.dados.entra_em, ['spec']);
+  });
+
+  test('aprendizado-gatilho-sessao-seq-e-sessao-propria: --gatilho, --sessao, --eventos com 2 itens e --substitui', () => {
+    const amb = ambiente();
+    amb.semear([CI, PARAR]);
+    const antes = amb.cli(['aprendizado', 'E', 'D', '--regra', 'primeira', '--entra-em', 'spec', '--eventos', 'loop:1']);
+    assert.equal(antes.rc, 0, antes.out);
+    const r = amb.cli(['aprendizado', 'E', 'D', '--regra', 'segunda', '--entra-em', 'brief:implementador,spec', '--gatilho', 'loop:2', '--eventos', 'loop:1,loop:2',
+      '--substitui', 'loop:3', '--sessao', 'aprendiz']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const e = amb.eventos().find((x) => x.tipo === 'aprendizado' && x.sessao === 'aprendiz');
+    assert.ok(e, 'gravou na sessão pedida');
+    assert.equal(e.seq, 1);
+    assert.deepEqual(e.dados.gatilho, { sessao: 'loop', seq: 2 });
+    assert.deepEqual(e.dados.evidencia.eventos, [{ sessao: 'loop', seq: 1 }, { sessao: 'loop', seq: 2 }]);
+    assert.deepEqual(e.dados.substitui, { sessao: 'loop', seq: 3 });
+    assert.deepEqual(e.dados.entra_em, ['brief:implementador', 'spec']);
+  });
+
+  test('aprendizado-substitui-com-entrega: GM-11/loop:2 aponta para a outra entrega e lê o valor', () => {
+    const amb = ambiente();
+    amb.semear([CI]);
+    amb.vizinha('GM-11', [CI, ['aprendizado', { tipo: 'E', status: 'M', gatilho: null, evidencia: {}, regra: 'velha', entra_em: ['spec'] }]]);
+    const r = amb.cli(['aprendizado', 'E', 'D', '--regra', 'nova', '--entra-em', 'spec', '--eventos', 'loop:1', '--substitui', 'GM-11/loop:2']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const e = amb.eventos().find((x) => x.tipo === 'aprendizado');
+    assert.deepEqual(e.dados.substitui, { sessao: 'loop', seq: 2, entrega: 'GM-11' });
+    const l = amb.cli(['aprendizados']);
+    assert.deepEqual(l.j.aprendizados.map((a) => a.regra), ['nova'], 'o substituído sai da vigência');
+  });
+
+  test('aprendizado-medicao-fonte-versionada-grava: --fonte README.md --numero 3 (e 2,5; -1)', () => {
+    const amb = ambiente();
+    for (const [num, esperado] of [['3', 3], ['2.5', 2.5], ['-1', -1], ['0', 0]]) {
+      const r = amb.cli(['aprendizado', 'A', 'D', '--regra', `mede ${num}`, '--entra-em', 'spec', '--fonte', 'README.md', '--numero', num]);
+      assert.equal(r.rc, 0, `${num}: ${r.out}`);
+      const e = amb.eventos().filter((x) => x.tipo === 'aprendizado').at(-1);
+      assert.deepEqual(e.dados.evidencia, { medicao: { fonte: 'README.md', numero: esperado } }, num);
+    }
+  });
+
+  test('aprendizado-fonte-so-no-indice-passa: `git add` sem commit já é versionado (conhecido do índice)', () => {
+    const amb = ambiente();
+    writeFileSync(join(amb.dir, 'novo.md'), 'n\n');
+    g(amb.dir, 'add', 'novo.md');
+    const r = amb.cli(['aprendizado', 'E', 'D', '--regra', 'x', '--entra-em', 'spec', '--fonte', 'novo.md', '--numero', '1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(amb.tipos().includes('aprendizado'), true);
+  });
+
+  test('aprendizado-fonte-evento-pula-ls-files: evento:<s>:<q> existente grava sem arquivo', () => {
+    const amb = ambiente();
+    amb.semear([CI]);
+    const r = amb.cli(['aprendizado', 'E', 'D', '--regra', 'x', '--entra-em', 'spec', '--fonte', 'evento:loop:1', '--numero', '7']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(amb.eventos().find((x) => x.tipo === 'aprendizado').dados.evidencia, { medicao: { fonte: 'evento:loop:1', numero: 7 } });
+  });
+
+  test('aprendizado-diario-ausente-x-ilegivel (1/2, ausente): sem eventos grava e cria o arquivo; com gatilho é gatilho_inexistente; `nada` é pendencia_inexistente', () => {
+    const amb = ambiente();
+    assert.deepEqual(readdirSync(amb.entregas), ['plano.json']);
+    const g1 = amb.cli(['aprendizado', 'E', 'M', '--regra', 'x', '--entra-em', 'spec', '--gatilho', 'loop:1']);
+    assert.equal(g1.j.erro, 'gatilho_inexistente', g1.out);
+    const g2 = amb.cli(['aprendizado', 'nada', '--gatilho', 'loop:1', '--motivo', 'nada a aprender']);
+    assert.equal(g2.j.erro, 'pendencia_inexistente', g2.out);
+    assert.deepEqual(readdirSync(amb.entregas), ['plano.json'], 'as duas recusas não criaram arquivo');
+    const ok = amb.cli(['aprendizado', 'E', 'M', '--regra', 'x', '--entra-em', 'spec']);
+    assert.equal(ok.rc, 0, ok.out);
+    assert.deepEqual(amb.tipos(), ['aprendizado']);
+  });
+
+  test('aprendizado-diario-ausente-x-ilegivel (2/2, ilegível): linha torta recusa com diario_ilegivel e o arquivo fica byte a byte', () => {
+    const amb = ambiente();
+    const arq = join(amb.entregas, 'events.loop.jsonl');
+    writeFileSync(arq, 'isto nao e json\n');
+    const r = amb.cli(['aprendizado', 'E', 'M', '--regra', 'x', '--entra-em', 'spec']);
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'diario_ilegivel', r.out);
+    assert.equal(readFileSync(arq, 'utf8'), 'isto nao e json\n');
+    const l = amb.cli(['aprendizados']);
+    assert.equal(l.rc, 0, l.out);
+    assert.deepEqual(l.j.aprendizados, []);
+    assert.equal(l.j.avisos.length, 1);
+    assert.match(l.j.avisos[0], /GM-10 ilegível/);
+  });
+
+  test('aprendizado-outra-entrega-ilegivel-grava: a árvore torta de outra entrega não impede gravar (só `substitui` para ela impede)', () => {
+    const amb = ambiente();
+    amb.vizinhaTorta('GM-1');
+    const r = amb.cli(['aprendizado', 'E', 'M', '--regra', 'x', '--entra-em', 'spec']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(amb.tipos(), ['aprendizado']);
+  });
+});
+
+describe('aprendizado: uso (rc 2) e argumentos (argumento_invalido)', () => {
+  const USO = [
+    [['aprendizado'], 'sem posicionais'],
+    [['aprendizado', 'E'], 'um posicional só'],
+    [['aprendizado', 'X', 'D', '--regra', 'x', '--entra-em', 'spec'], 'tipo fora de E|A'],
+    [['aprendizado', 'E', 'X', '--regra', 'x', '--entra-em', 'spec'], 'status fora de D|M'],
+    [['aprendizado', 'E', 'M', '--entra-em', 'spec'], 'falta --regra'],
+    [['aprendizado', 'E', 'M', '--regra', 'x'], 'falta --entra-em'],
+    [['aprendizado', 'E', 'M', '--regra', 'x', '--entra-em', 'spec', '--motivo', 'm'], '--motivo no E|A'],
+    [['aprendizado', 'E', 'M', '--regra', 'x', '--entra-em', 'spec', '--fonte', 'README.md'], '--fonte sem --numero'],
+    [['aprendizado', 'E', 'M', '--regra', 'x', '--entra-em', 'spec', '--numero', '1'], '--numero sem --fonte'],
+    [['aprendizado', 'E', 'M', '--regra', 'x', '--entra-em', 'spec', '--regra', 'y'], '--regra repetida'],
+    [['aprendizado', 'E', 'M', '--regra', 'x', '--entra-em', 'spec', '--desconhecida', 'y'], 'flag desconhecida'],
+    [['aprendizado', 'nada', '--gatilho', 'loop:1'], 'nada sem --motivo'],
+    [['aprendizado', 'nada', '--motivo', 'm'], 'nada sem --gatilho'],
+    [['aprendizado', 'nada', '--gatilho', 'loop:1', '--motivo', 'm', '--regra', 'r'], 'nada com --regra'],
+    [['aprendizado', 'nada', '--gatilho', 'loop:1', '--motivo', 'm', '--eventos', 'loop:1'], 'nada com --eventos'],
+    [['aprendizado', 'nada', 'D', '--gatilho', 'loop:1', '--motivo', 'm'], 'nada com posicional a mais'],
+    [['aprendizados', 'E'], 'aprendizados com posicional'],
+    [['aprendizados', '--entrega', 'GM-10'], 'aprendizados não aceita --entrega'],
+    [['aprendizados', '--para'], '--para sem valor'],
+  ];
+  for (const [args, rotulo] of USO) {
+    test(`uso-rc2: ${rotulo}`, () => {
+      const amb = ambiente();
+      amb.semear([CI]);
+      const antes = semEfeito(amb);
+      const r = amb.cli(args);
+      assert.equal(r.rc, 2, `${args.join(' ')}: ${r.out}`);
+      assert.equal(r.j.ok, false);
+      assert.equal(r.j.erro, 'uso');
+      assert.equal(semEfeito(amb), antes, 'nada gravado');
+    });
+  }
+
+  const INVALIDOS = [
+    [['--gatilho', 'loop'], 'gatilho sem ":"'],
+    [['--gatilho', 'loop:0'], 'seq 0'],
+    [['--gatilho', 'loop:abc'], 'seq texto'],
+    [['--gatilho', 'loop:01'], 'seq com zero à esquerda'],
+    [['--gatilho', ':1'], 'sessão vazia'],
+    [['--gatilho', 'lo op:1'], 'sessão com espaço'],
+    [['--eventos', 'loop:1,'], 'lista com item vazio no fim'],
+    [['--eventos', ',loop:1'], 'lista com item vazio no começo'],
+    [['--eventos', ''], 'lista vazia'],
+    [['--eventos', 'loop'], 'item sem seq'],
+    [['--substitui', '../GM-1/loop:1'], 'entrega ../GM-1'],
+    [['--substitui', 'gm-1/loop:1'], 'entrega em minúscula'],
+    [['--substitui', '/loop:1'], 'entrega vazia'],
+    [['--substitui', 'loop'], 'substitui sem seq'],
+  ];
+  for (const [extra, rotulo] of INVALIDOS) {
+    test(`argumento-invalido: ${rotulo}`, () => {
+      const amb = ambiente();
+      amb.semear([CI]);
+      const antes = semEfeito(amb);
+      const r = amb.cli(['aprendizado', 'E', 'M', '--regra', 'x', '--entra-em', 'spec', ...extra]);
+      assert.equal(r.rc, 1, `${extra.join(' ')}: ${r.out}`);
+      assert.equal(r.j.erro, 'argumento_invalido', r.out);
+      assert.equal(semEfeito(amb), antes);
+    });
+  }
+
+  test('numero-vazio-e-hex-recusa: "" não vira 0, " 12 " não vira 12, 0x10 não vira 16; NaN, Infinity, 1e3, 01, "+1" e "1." também', () => {
+    const amb = ambiente();
+    const antes = semEfeito(amb);
+    for (const n of ['', ' 12 ', '0x10', 'NaN', 'Infinity', '1e3', '01', '+1', '1.', '.5', 'abc', '12abc', '0b1']) {
+      const r = amb.cli(['aprendizado', 'E', 'D', '--regra', 'x', '--entra-em', 'spec', '--fonte', 'README.md', '--numero', n]);
+      assert.equal(r.j.erro, 'argumento_invalido', `--numero ${JSON.stringify(n)}: ${r.out}`);
+      assert.equal(r.rc, 1);
+    }
+    assert.equal(semEfeito(amb), antes, 'nada gravado');
+  });
+
+  test('numero-vazio-sem-fonte-tambem-recusa-uso: --numero sem --fonte é uso, antes de olhar o valor', () => {
+    const amb = ambiente();
+    const r = amb.cli(['aprendizado', 'E', 'M', '--regra', 'x', '--entra-em', 'spec', '--numero', '']);
+    assert.equal(r.rc, 2, r.out);
+    assert.equal(r.j.erro, 'uso');
+  });
+});
+
+describe('aprendizado: forma (T1) e entra-em sem trim', () => {
+  test('entra-em-com-espaco-recusa: "instantaneo, brief:revisor" não vira trim silencioso', () => {
+    const amb = ambiente();
+    amb.semear([CI]);
+    const antes = semEfeito(amb);
+    const r = amb.cli(['aprendizado', 'E', 'D', '--regra', 'x', '--entra-em', 'instantaneo, brief:revisor', '--eventos', 'loop:1']);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'forma_invalida', r.out);
+    assert.match(r.j.mensagem, /entra_em/);
+    assert.equal(semEfeito(amb), antes);
+    const vazio = amb.cli(['aprendizado', 'E', 'M', '--regra', 'x', '--entra-em', '']);
+    assert.equal(vazio.j.erro, 'forma_invalida', vazio.out);
+  });
+
+  test('aprendizado-d-sem-evidencia-grave-como-m: D sem --eventos nem medição recusa e a mensagem manda gravar como M', () => {
+    const amb = ambiente();
+    const r = amb.cli(['aprendizado', 'E', 'D', '--regra', 'x', '--entra-em', 'instantaneo']);
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'forma_invalida');
+    assert.match(r.j.mensagem, /grave como M/);
+    assert.deepEqual(amb.tipos(), []);
+  });
+
+  test('aprendizado-brief-sombra-recusa: brief:sombra e brief: fora de PAPEIS recusam (forma_invalida)', () => {
+    const amb = ambiente();
+    amb.semear([CI]);
+    for (const destino of ['brief:sombra', 'brief:', 'brief:revisor,brief:revisor', 'outro']) {
+      const r = amb.cli(['aprendizado', 'E', 'D', '--regra', 'x', '--entra-em', destino, '--eventos', 'loop:1']);
+      assert.equal(r.j.erro, 'forma_invalida', `${destino}: ${r.out}`);
+    }
+    assert.deepEqual(amb.tipos(), ['ci.resultado']);
+  });
+
+  test('aprendizado-regra-301-recusa: 300 caracteres grava, 301 recusa', () => {
+    const amb = ambiente();
+    const ok = amb.cli(['aprendizado', 'E', 'M', '--regra', 'a'.repeat(300), '--entra-em', 'spec']);
+    assert.equal(ok.rc, 0, ok.out);
+    const ruim = amb.cli(['aprendizado', 'E', 'M', '--regra', 'a'.repeat(301), '--entra-em', 'spec']);
+    assert.equal(ruim.j.erro, 'forma_invalida', ruim.out);
+    assert.equal(amb.tipos().length, 1);
+  });
+
+  test('aprendizado-fonte-absoluta-e-ponto-ponto-recusam: forma antes do ls-files', () => {
+    const amb = ambiente();
+    for (const f of ['/etc/passwd', '../README.md', 'a//b']) {
+      const r = amb.cli(['aprendizado', 'E', 'D', '--regra', 'x', '--entra-em', 'spec', '--fonte', f, '--numero', '1']);
+      assert.equal(r.j.erro, 'forma_invalida', `${f}: ${r.out}`);
+    }
+  });
+});
+
+describe('aprendizado: ls-files literal (REQ-APR-1)', () => {
+  const comFonte = (amb, fonte) => amb.cli(['aprendizado', 'E', 'D', '--regra', 'x', '--entra-em', 'spec', '--fonte', fonte, '--numero', '1']);
+
+  test('aprendizado-fonte-nao-versionada-recusa: arquivo criado e não adicionado', () => {
+    const amb = ambiente();
+    writeFileSync(join(amb.dir, 'solto.md'), 's\n');
+    const r = comFonte(amb, 'solto.md');
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'fonte_nao_versionada', r.out);
+    assert.match(r.j.mensagem, /grave como M/);
+    assert.deepEqual(amb.tipos(), []);
+  });
+
+  test('aprendizado-fonte-inexistente-recusa', () => {
+    const amb = ambiente();
+    const r = comFonte(amb, 'nao/existe.md');
+    assert.equal(r.j.erro, 'fonte_nao_versionada', r.out);
+    assert.match(r.j.mensagem, /grave como M/);
+    assert.deepEqual(amb.tipos(), []);
+  });
+
+  test('fonte-glob-recusa: `*.md` não casa como pathspec mesmo com README.md versionado; `?`, `[a]` e `:(top)x` também', () => {
+    const amb = ambiente();
+    for (const f of ['*.md', 'READM?.md', 'README.[m]d', 'gates/*/x.ts']) {
+      const r = comFonte(amb, f);
+      assert.equal(r.j.erro, 'fonte_nao_versionada', `${f}: ${r.out}`);
+    }
+    assert.deepEqual(amb.tipos(), []);
+  });
+
+  test('fonte-com-nome-literalmente-glob-passa: arquivo versionado chamado `*.md` é aceito como ele mesmo (pathspec literal), com README.md ao lado', () => {
+    const amb = ambiente();
+    writeFileSync(join(amb.dir, '*.md'), 'g\n');
+    g(amb.dir, 'add', '--', '*.md');
+    const r = comFonte(amb, '*.md');
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(amb.eventos().find((x) => x.tipo === 'aprendizado').dados.evidencia, { medicao: { fonte: '*.md', numero: 1 } });
+  });
+
+  test('fonte-diretorio-recusa: diretório versionado (gates/src) não é arquivo', () => {
+    const amb = ambiente();
+    for (const f of ['gates/src', 'gates']) {
+      const r = comFonte(amb, f);
+      assert.equal(r.j.erro, 'fonte_nao_versionada', `${f}: ${r.out}`);
+    }
+    assert.deepEqual(amb.tipos(), []);
+    assert.equal(comFonte(amb, 'gates/src/x.ts').rc, 0, 'o arquivo dentro dele passa');
+  });
+
+  test('fonte-lida-da-raiz-principal-de-qualquer-worktree: cwd num subdiretório e numa worktree de outra branch', () => {
+    const amb = ambiente();
+    const wt = join(novoTmp(), 'wt');
+    g(amb.dir, 'worktree', 'add', '-q', '-b', 'wt/GM-10-T1', wt);
+    writeFileSync(join(amb.dir, 'so-na-principal.md'), 'p\n');
+    g(amb.dir, 'add', 'so-na-principal.md');
+    // na worktree o arquivo não existe, mas a fonte é conferida na raiz principal (índice dela)
+    const r = amb.cli(['aprendizado', 'E', 'D', '--regra', 'x', '--entra-em', 'spec', '--fonte', 'so-na-principal.md', '--numero', '1', '--entrega', 'GM-10'], { cwd: wt });
+    assert.equal(r.rc, 0, r.out + r.err);
+    const sub = amb.cli(['aprendizado', 'E', 'D', '--regra', 'y', '--entra-em', 'spec', '--fonte', 'README.md', '--numero', '2'], { cwd: join(amb.dir, 'gates', 'src') });
+    assert.equal(sub.rc, 0, sub.out + sub.err);
+  });
+});
+
+describe('aprendizado: referências (validarAprendizado no antes)', () => {
+  test('gatilho-evento-e-fonte-inexistentes: o código é o prefixo do motivo', () => {
+    const amb = ambiente();
+    amb.semear([CI]);
+    const antes = semEfeito(amb);
+    const gat = amb.cli(['aprendizado', 'E', 'D', '--regra', 'x', '--entra-em', 'spec', '--eventos', 'loop:1', '--gatilho', 'loop:99']);
+    assert.equal(gat.j.erro, 'gatilho_inexistente', gat.out);
+    const evt = amb.cli(['aprendizado', 'E', 'D', '--regra', 'x', '--entra-em', 'spec', '--eventos', 'loop:99']);
+    assert.equal(evt.j.erro, 'evento_inexistente', evt.out);
+    const fonte = amb.cli(['aprendizado', 'E', 'D', '--regra', 'x', '--entra-em', 'spec', '--fonte', 'evento:loop:99', '--numero', '1']);
+    assert.equal(fonte.j.erro, 'evento_inexistente', fonte.out);
+    const outra = amb.cli(['aprendizado', 'E', 'D', '--regra', 'x', '--entra-em', 'spec', '--eventos', 'outra:1']);
+    assert.equal(outra.j.erro, 'evento_inexistente', 'a identidade é o par (sessao, seq), nunca seq sozinho');
+    assert.equal(semEfeito(amb), antes);
+  });
+
+  test('substitui-inexistente-e-auto-referencia: alvo que não existe, ou o próprio seq que seria gravado, recusa (nada de ciclo de 1)', () => {
+    const amb = ambiente();
+    amb.semear([CI]);
+    const antes = semEfeito(amb);
+    const r1 = amb.cli(apr('--substitui', 'loop:99'));
+    assert.equal(r1.j.erro, 'substitui_inexistente', r1.out);
+    const proximo = amb.eventos().filter((e) => e.sessao === 'loop').length + 1;
+    const r2 = amb.cli(apr('--substitui', `loop:${proximo}`));
+    assert.equal(r2.j.erro, 'substitui_inexistente', r2.out);
+    const r3 = amb.cli(apr('--substitui', 'loop:1'));
+    assert.equal(r3.j.erro, 'substitui_inexistente', 'o alvo existe mas não é um aprendizado');
+    assert.equal(semEfeito(amb), antes);
+  });
+
+  test('substitui-entrega-ilegivel-diario-ilegivel: GM-1 torta ⇒ diario_ilegivel citando a pasta, não substitui_inexistente; GM-2 ausente ⇒ substitui_inexistente', () => {
+    const amb = ambiente();
+    amb.semear([CI]);
+    amb.vizinhaTorta('GM-1');
+    const antes = semEfeito(amb);
+    const r = amb.cli(apr('--substitui', 'GM-1/loop:1'));
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'diario_ilegivel', r.out);
+    assert.match(r.j.mensagem, /GM-1\b/);
+    const ausente = amb.cli(apr('--substitui', 'GM-2/loop:1'));
+    assert.equal(ausente.j.erro, 'substitui_inexistente', ausente.out);
+    assert.equal(semEfeito(amb), antes);
+  });
+
+  test('substitui-entrega-corrente-explicita: GM-10/loop:2 vale como loop:2', () => {
+    const amb = ambiente();
+    amb.semear([CI]);
+    assert.equal(amb.cli(apr()).rc, 0);
+    const ok = amb.cli(['aprendizado', 'E', 'D', '--regra', 'segunda', '--entra-em', 'spec', '--eventos', 'loop:1', '--substitui', 'GM-10/loop:2']);
+    assert.equal(ok.rc, 0, ok.out);
+    assert.deepEqual(amb.eventos().at(-1).dados.substitui, { sessao: 'loop', seq: 2, entrega: 'GM-10' });
+  });
+});
+
+describe('aprendizado nada: só com pendência aberta (D-5)', () => {
+  test('nada-fecha-pendencia-aberta-grava: aprendizado.nada {gatilho, motivo} e nada mais', () => {
+    const amb = ambiente();
+    amb.semear([CI, PARAR]);
+    const r = amb.cli(['aprendizado', 'nada', '--gatilho', 'loop:2', '--motivo', 'nada a aprender com a parada']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const e = amb.eventos().at(-1);
+    assert.equal(e.tipo, 'aprendizado.nada');
+    assert.deepEqual(e.dados, { gatilho: { sessao: 'loop', seq: 2 }, motivo: 'nada a aprender com a parada' });
+    assert.equal(r.j.evento.motivo, 'nada a aprender com a parada');
+    assert.equal(r.j.evento.tipo_evento, 'aprendizado.nada');
+  });
+
+  test('nada-sem-pendencia-recusa: evento que existe mas não é pendência não vale', () => {
+    const amb = ambiente();
+    amb.semear([CI]);
+    const antes = semEfeito(amb);
+    const r = amb.cli(['aprendizado', 'nada', '--gatilho', 'loop:1', '--motivo', 'm']);
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'pendencia_inexistente', r.out);
+    const longe = amb.cli(['aprendizado', 'nada', '--gatilho', 'loop:99', '--motivo', 'm']);
+    assert.equal(longe.j.erro, 'pendencia_inexistente', longe.out);
+    assert.equal(semEfeito(amb), antes);
+  });
+
+  test('nada-gatilho-ja-fechado-recusa: fechado por `nada` ou por aprendizado, não reabre nem repete', () => {
+    const amb = ambiente();
+    amb.semear([CI, PARAR]);
+    assert.equal(amb.cli(['aprendizado', 'nada', '--gatilho', 'loop:2', '--motivo', 'm']).rc, 0);
+    const antes = semEfeito(amb);
+    const de_novo = amb.cli(['aprendizado', 'nada', '--gatilho', 'loop:2', '--motivo', 'm2']);
+    assert.equal(de_novo.j.erro, 'pendencia_inexistente', de_novo.out);
+    // fechado por aprendizado
+    const amb2 = ambiente();
+    amb2.semear([CI, PARAR]);
+    assert.equal(amb2.cli(apr('--gatilho', 'loop:2')).rc, 0);
+    const antes2 = semEfeito(amb2);
+    const r = amb2.cli(['aprendizado', 'nada', '--gatilho', 'loop:2', '--motivo', 'm']);
+    assert.equal(r.j.erro, 'pendencia_inexistente', r.out);
+    assert.equal(semEfeito(amb), antes);
+    assert.equal(semEfeito(amb2), antes2);
+  });
+
+  test('nada-dono-anterior-a-ancora-recusa: a pendência dono é ancorada na mensagem mais recente; a anterior não é pendência', () => {
+    const amb = ambiente();
+    amb.semear([DONO, DONO, DONO]);
+    const antes = semEfeito(amb);
+    const velha = amb.cli(['aprendizado', 'nada', '--gatilho', 'dono:2', '--motivo', 'm']);
+    assert.equal(velha.j.erro, 'pendencia_inexistente', velha.out);
+    assert.equal(semEfeito(amb), antes);
+    const ancora = amb.cli(['aprendizado', 'nada', '--gatilho', 'dono:3', '--motivo', 'm']);
+    assert.equal(ancora.rc, 0, ancora.out);
+    assert.deepEqual(amb.eventos().filter((e) => e.tipo === 'aprendizado.nada').at(-1).dados.gatilho, { sessao: 'dono', seq: 3 });
+  });
+});
+
+describe('aprendizado nada: identidade da pendência', () => {
+  test('nada-identidade-e-o-par-sessao-seq: `dono:2` não vale só porque `loop:2` (parar) é pendência de mesmo seq', () => {
+    const amb = ambiente();
+    amb.semear([CI, PARAR]);
+    amb.semear([['loop.parar', { motivo: 'ci_vermelho' }, 'outra']], {});
+    const antes = semEfeito(amb);
+    const r = amb.cli(['aprendizado', 'nada', '--gatilho', 'dono:2', '--motivo', 'm']);
+    assert.equal(r.j.erro, 'pendencia_inexistente', r.out);
+    assert.equal(semEfeito(amb), antes);
+    const certo = amb.cli(['aprendizado', 'nada', '--gatilho', 'outra:1', '--motivo', 'm']);
+    assert.equal(certo.rc, 0, certo.out);
+  });
+});
+
+describe('aprendizado: canário antes de qualquer gravação (D-P1c-6)', () => {
+  test('regra-canario-recusa + tipos iguais: segredo na regra ⇒ segredo_no_aprendizado, e NENHUMA linha nova em nenhum jsonl (nem diario.recusa)', () => {
+    const amb = ambiente();
+    amb.semear([CI]);
+    const antes = semEfeito(amb);
+    const r = amb.cli(['aprendizado', 'E', 'D', '--regra', `token ${TOKEN}`, '--entra-em', 'spec', '--eventos', 'loop:1']);
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'segredo_no_aprendizado', r.out);
+    assert.match(r.j.mensagem, /regra/);
+    assert.match(r.j.mensagem, /nada foi gravado/);
+    assert.equal(r.out.includes(TOKEN), false, 'a mensagem cita o campo e o padrão, nunca o valor');
+    assert.equal(semEfeito(amb), antes);
+    assert.equal(amb.tipos().includes('diario.recusa'), false);
+  });
+
+  test('canario em motivo, fonte, entra-em e gatilho: cada campo recusa sem gravar', () => {
+    const amb = ambiente();
+    amb.semear([CI, PARAR]);
+    const antes = semEfeito(amb);
+    const casos = [
+      [['aprendizado', 'nada', '--gatilho', 'loop:2', '--motivo', `senha ${TOKEN}`], /motivo/],
+      [['aprendizado', 'E', 'D', '--regra', 'x', '--entra-em', 'spec', '--fonte', `docs/${TOKEN}.md`, '--numero', '1'], /fonte/],
+      [['aprendizado', 'E', 'M', '--regra', 'x', '--entra-em', `spec,${TOKEN}`], /entra-em/],
+    ];
+    for (const [args, campo] of casos) {
+      const r = amb.cli(args);
+      assert.equal(r.j.erro, 'segredo_no_aprendizado', `${args.join(' ')}: ${r.out}`);
+      assert.match(r.j.mensagem, campo);
+      assert.equal(r.out.includes(TOKEN), false);
+    }
+    assert.equal(semEfeito(amb), antes);
+  });
+
+  test('canario-antes-da-forma-e-do-ls-files: com forma inválida E segredo, vale o segredo (nada leu a árvore nem o git)', () => {
+    const amb = ambiente();
+    const r = amb.cli(['aprendizado', 'E', 'D', '--regra', `x ${TOKEN}`, '--entra-em', 'brief:sombra', '--fonte', 'nao/existe.md', '--numero', '1']);
+    assert.equal(r.j.erro, 'segredo_no_aprendizado', r.out);
+  });
+});
+
+describe('aprendizados: lista D vigentes da árvore, sem exigir entrega nem plano (D-P1c-5)', () => {
+  const D = (regra, entra_em, extra = {}) => ['aprendizado', { tipo: 'E', status: 'D', gatilho: null, evidencia: { eventos: [{ sessao: 'loop', seq: 1 }] }, regra, entra_em, ...extra }];
+  const M = (regra, entra_em) => ['aprendizado', { tipo: 'E', status: 'M', gatilho: null, evidencia: {}, regra, entra_em }];
+
+  test('aprendizados-sem-entrega-na-branch: branch main, sem plano, sem pasta da entrega ⇒ rc 0 com a lista da árvore', () => {
+    const amb = ambiente({ branch: 'main', plano: null });
+    amb.vizinha('GM-3', [CI, D('regra da GM-3', ['instantaneo', 'brief:revisor'])]);
+    const r = amb.cli(['aprendizados']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.ok, true);
+    assert.deepEqual(r.j.avisos, []);
+    assert.equal(r.j.aprendizados.length, 1);
+    const a = r.j.aprendizados[0];
+    assert.equal(a.entrega, 'GM-3');
+    assert.equal(a.sessao, 'loop');
+    assert.equal(a.seq, 2);
+    assert.equal(a.tipo, 'E');
+    assert.equal(a.regra, 'regra da GM-3');
+    assert.deepEqual(a.entra_em, ['instantaneo', 'brief:revisor']);
+    assert.equal(a.ts, diario.ler(join(amb.arvore, 'GM-3')).find((e) => e.tipo === 'aprendizado').ts);
+    assert.deepEqual(Object.keys(a).sort(), ['entra_em', 'entrega', 'regra', 'seq', 'sessao', 'tipo', 'ts']);
+  });
+
+  test('aprendizados-sem-plano-rc0 e plano corrompido rc0: o caminho nem abre a entrega (não há plano_ausente nem plano_invalido)', () => {
+    const semPlano = ambiente({ plano: null });
+    semPlano.vizinha('GM-3', [CI, D('x', ['spec'])]);
+    const a = semPlano.cli(['aprendizados']);
+    assert.equal(a.rc, 0, a.out);
+    assert.equal(a.j.aprendizados.length, 1);
+    const torto = ambiente({ plano: '{ isto nao e json' });
+    torto.vizinha('GM-3', [CI, D('y', ['spec'])]);
+    const b = torto.cli(['aprendizados']);
+    assert.equal(b.rc, 0, b.out);
+    assert.deepEqual(b.j.aprendizados.map((x) => x.regra), ['y']);
+  });
+
+  test('aprendizados-arvore-ausente-x-corrompida: sem .harness/entregas ⇒ listas vazias, sem aviso; com pasta torta ⇒ aviso citando a pasta e a lista das legíveis', () => {
+    const vazio = ambiente({ plano: null });
+    rmSync(join(vazio.dir, '.harness'), { recursive: true, force: true });
+    const a = vazio.cli(['aprendizados']);
+    assert.equal(a.rc, 0, a.out);
+    assert.deepEqual(a.j.aprendizados, []);
+    assert.deepEqual(a.j.avisos, []);
+    const amb = ambiente();
+    amb.semear([CI, D('legivel', ['spec'])]);
+    amb.vizinhaTorta('GM-1');
+    const r = amb.cli(['aprendizados']);
+    assert.equal(r.rc, 0, r.out);
+    assert.deepEqual(r.j.aprendizados.map((x) => x.regra), ['legivel']);
+    assert.equal(r.j.avisos.length, 1);
+    assert.match(r.j.avisos[0], /GM-1 ilegível/);
+  });
+
+  test('aprendizados-m-nunca-sai e --para filtra por destino exato', () => {
+    const amb = ambiente();
+    amb.semear([
+      CI, D('so-instantaneo', ['instantaneo']), D('so-revisor', ['brief:revisor']), D('impl-e-spec', ['brief:implementador', 'spec']),
+      M('m-no-revisor', ['brief:revisor', 'instantaneo']),
+    ]);
+    const todos = amb.cli(['aprendizados']);
+    assert.deepEqual(todos.j.aprendizados.map((a) => a.regra).sort(), ['impl-e-spec', 'so-instantaneo', 'so-revisor']);
+    const rev = amb.cli(['aprendizados', '--para', 'brief:revisor']);
+    assert.deepEqual(rev.j.aprendizados.map((a) => a.regra), ['so-revisor']);
+    const inst = amb.cli(['aprendizados', '--para', 'instantaneo']);
+    assert.deepEqual(inst.j.aprendizados.map((a) => a.regra), ['so-instantaneo']);
+    const spec = amb.cli(['aprendizados', '--para', 'spec']);
+    assert.deepEqual(spec.j.aprendizados.map((a) => a.regra), ['impl-e-spec']);
+    const corr = amb.cli(['aprendizados', '--para', 'brief:correcao']);
+    assert.deepEqual(corr.j.aprendizados, []);
+  });
+
+  test('aprendizados-ordem-e-substituido: mais recente primeiro; o alvo de substitui sai', () => {
+    const amb = ambiente();
+    amb.semear([CI, D('antiga', ['spec']), D('meio', ['spec']), D('nova', ['spec'], { substitui: { sessao: 'loop', seq: 2 } })]);
+    const r = amb.cli(['aprendizados']);
+    assert.deepEqual(r.j.aprendizados.map((a) => a.regra), ['nova', 'meio']);
+  });
+
+  test('aprendizados-para-invalido-recusa: fora de instantaneo|spec|brief:<PAPEIS> ⇒ argumento_invalido (não lista nada)', () => {
+    const amb = ambiente();
+    amb.semear([CI, D('x', ['spec'])]);
+    for (const p of ['sombra', 'brief:sombra', 'brief:', 'Instantaneo', '', 'brief:revisor,spec', 'brief:implementador ']) {
+      const r = amb.cli(['aprendizados', '--para', p]);
+      assert.equal(r.rc, 1, `--para ${JSON.stringify(p)}: ${r.out}`);
+      assert.equal(r.j.erro, 'argumento_invalido');
+    }
+  });
+
+  test('aprendizados-de-qualquer-cwd: de uma worktree irmã lê a árvore da raiz principal', () => {
+    const amb = ambiente();
+    amb.semear([CI, D('da-principal', ['spec'])]);
+    const wt = join(novoTmp(), 'wt');
+    g(amb.dir, 'worktree', 'add', '-q', '-b', 'sem-id-na-branch', wt);
+    const r = amb.cli(['aprendizados'], { cwd: wt });
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.aprendizados.map((a) => a.regra), ['da-principal']);
+  });
+
+  test('aprendizados-fora-de-repo-falha: não é repositório ⇒ fora_de_repo (rc 1), nunca lista vazia', () => {
+    const amb = ambiente();
+    const r = amb.cli(['aprendizados'], { cwd: novoTmp() });
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'fora_de_repo');
+  });
+});
+
+describe('estrutura (preso por teste)', () => {
+  test('PAPEIS de loop.mjs é a mesma lista de formas.ts (fonte única do dist), na mesma ordem', () => {
+    const m = /^const PAPEIS = \[([^\]]*)\];$/m.exec(readFileSync(FONTE_LOOP, 'utf8'));
+    assert.ok(m, 'achou a declaração de PAPEIS em loop.mjs');
+    const lista = m[1].split(',').map((s) => s.trim().replace(/^'|'$/g, ''));
+    assert.deepEqual(lista, [...PAPEIS]);
+  });
+
+  test('aprendizado-nao-le-o-diario-por-fora: a validação roda só dentro do `antes`, com os eventos que o gravar leu (sem 2ª leitura)', () => {
+    const fonte = readFileSync(FONTE_APR, 'utf8');
+    assert.equal(/lerDiarioEstrito\s*\(/.test(fonte), false, 'nenhuma leitura própria do diário da entrega');
+    assert.equal((fonte.match(/validarAprendizado\(/g) ?? []).length, 1, 'uma só chamada de validarAprendizado');
+    assert.match(fonte, /antes\s*=\s*\(candidato,\s*eventos\)|\(candidato,\s*eventos\)\s*=>/);
+  });
+});
