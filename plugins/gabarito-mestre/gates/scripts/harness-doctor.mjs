@@ -39,7 +39,23 @@ import { ehEntrypoint } from '../lib/cli.mjs';
 import { lerGuarda, DENY_GUARDA, CHAVES_MORTAS, ORDEM_MODELO, PERFIS_MODELO, resolverPerfil } from '../lib/config.mjs';
 import { diasEntre } from '../lib/datas.mjs';
 import { execFileSync } from 'node:child_process';
-import { checar, DEFAULTS as VERSIONAMENTO_DEFAULTS } from './versionamento-check.mjs';
+import { checar, validarBranch, DEFAULTS as VERSIONAMENTO_DEFAULTS } from './versionamento-check.mjs';
+
+/** Igual a `MOTIVO_BRANCHPADRAO` de onboarding.mjs (D-1); cópia para o doctor não depender do onboarding (teste de igualdade em harness-doctor-loop). */
+export const MOTIVO_BRANCHPADRAO = 'branchPadrao é nome de branch (guarda), não regex (R20)';
+
+/**
+ * Núcleo do aprendizado (dist/). Import dinâmico no topo: cópia do doctor sem `dist/` (plugin parcial) não derruba o doctor inteiro;
+ * o check `aprendizado-sem-destino` avisa que não leu (ferramenta ausente nunca vira "tudo certo").
+ */
+let nucleo = null;
+let nucleoErro = '';
+try {
+  const [diario, aprendizado, plano, loop] = await Promise.all([import('../dist/diario.js'), import('../dist/aprendizado.js'), import('../dist/plano.js'), import('../dist/loop.js')]);
+  nucleo = { lerEstrito: diario.lerEstrito, avisosAprendizado: aprendizado.avisosAprendizado, validarPlano: plano.validarPlano, PAPEIS: loop.PAPEIS };
+} catch (e) {
+  nucleoErro = e instanceof Error ? e.message : 'erro desconhecido';
+}
 import { validarDb } from './db-template.mjs';
 
 const SKIP_DIRS = new Set([
@@ -260,6 +276,60 @@ export function tamanhoAgents(texto) {
  * kind  'scan'   → provado por varredura (a)
  *       'attest' → atestado nominal e datado (c)
  */
+/**
+ * Lê a árvore `.harness/entregas/<id>/` para o aviso de aprendizado: diário (`lerEstrito`) e `plano.json` (`validarPlano`).
+ * Só lê arquivo REGULAR (lstat): FIFO ou symlink no lugar do diário ou do plano vira aviso, nunca trava o doctor. Pasta das
+ * entregas ausente ⇒ vazio e calado; ilegível ⇒ aviso. Nunca lança.
+ */
+function lerArvoreDeAprendizados(root) {
+  const dir = join(root, '.harness', 'entregas');
+  const porEntrega = new Map();
+  const planos = new Map();
+  const avisos = [];
+  const regular = (c) => { try { return lstatSync(c).isFile(); } catch { return false; } };
+  let nomes;
+  try {
+    nomes = readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
+  } catch (e) {
+    if (e?.code !== 'ENOENT') avisos.push(`aprendizados: ${dir} ilegível (pasta das entregas não lista)`);
+    return { porEntrega, planos, avisos };
+  }
+  for (const nome of nomes) {
+    const pasta = join(dir, nome);
+    try {
+      const naoRegular = readdirSync(pasta).filter((n) => /^events\..+\.jsonl$/.test(n) && !regular(join(pasta, n)));
+      if (naoRegular.length > 0) { avisos.push(`aprendizados: ${nome} ilegível (${naoRegular[0]} não é arquivo regular — diário não lido)`); continue; }
+      const r = nucleo.lerEstrito(pasta);
+      if (!r.ok) { avisos.push(`aprendizados: ${nome} ilegível (${r.motivo})`); continue; }
+      porEntrega.set(nome, r.eventos);
+      const arqPlano = join(pasta, 'plano.json');
+      try { lstatSync(arqPlano); } catch { continue; } // sem plano: sem âncora, calado
+      if (!regular(arqPlano)) { avisos.push(`aprendizados: ${nome}/plano.json inválido (não é arquivo regular); pendências não conferidas`); continue; }
+      let v;
+      try { v = nucleo.validarPlano(JSON.parse(readFileSync(arqPlano, 'utf8'))); } catch (e) { v = { ok: false, erro: e instanceof Error ? e.message : 'ilegível' }; }
+      if (v.ok) planos.set(nome, v.plano);
+      else avisos.push(`aprendizados: ${nome}/plano.json inválido (${v.erro}); pendências não conferidas`);
+    } catch (e) {
+      avisos.push(`aprendizados: ${nome} ilegível (${e instanceof Error ? e.message : 'erro desconhecido'})`);
+    }
+  }
+  return { porEntrega, planos, avisos };
+}
+
+/**
+ * D-1 (Sombra): `versionamento.branchPadrao` com valor que reprova uma branch de PBI no R20 (nome de branch da guarda, ou regex ilegível).
+ * Sem `branchPadrao` (valem os DEFAULTS) ⇒ falso.
+ */
+function branchPadraoNaoEhRegex(cfg) {
+  const bp = cfg.versionamento?.branchPadrao;
+  if (bp === undefined) return false;
+  try {
+    return !validarBranch('feat/ABC-1-x', { branchPadrao: bp }).ok;
+  } catch {
+    return true;
+  }
+}
+
 export const CHECKS = [
   // ── Nível 1 — segurança
   {
@@ -476,8 +546,8 @@ export const CHECKS = [
     rule: 'R19 / FLX-2',
     level: 2,
     kind: 'scan',
-    label: 'fluxo configurado (onboarding da fase 2 concluído)',
-    fix: 'rode gabarito-instalar — a fase 2 grava fluxo.resolvidoEm em harness.config.json',
+    label: 'fluxo configurado (onboarding concluído)',
+    fix: 'rode gabarito-instalar (trocar fluxo) — grava fluxo.resolvidoEm em harness.config.json',
     detect: (ix, cfg) => {
       const em = cfg.fluxo?.resolvidoEm;
       if (typeof em === 'string' && ISO_DATA.test(em)) return { found: true, evidence: `fluxo.resolvidoEm = ${em}` };
@@ -498,7 +568,7 @@ export const CHECKS = [
     level: 2,
     kind: 'scan',
     label: 'versionamento configurado e histórico recente conforme (20 commits de primeiro pai)',
-    fix: 'rode gabarito-instalar (fase 3) e corrija os commits apontados por versionamento-check.mjs',
+    fix: 'rode gabarito-instalar (trocar versionamento) e corrija os commits apontados por versionamento-check.mjs',
     detect: (ix, cfg) => {
       const em = cfg.versionamento?.resolvidoEm;
       if (!em) return { found: false, evidence: cfg.configInvalido ? 'harness.config.json inválido' : 'sem versionamento.resolvidoEm' };
@@ -662,7 +732,7 @@ export const CHECKS = [
     level: 'warn',
     kind: 'scan',
     label: 'modelo do orquestrador resolvido há menos de validadeDias',
-    fix: 'revalide o modelo com gabarito-instalar (fase 4) — é aviso: não muda o nível nem quebra o CI',
+    fix: 'revalide o modelo com gabarito-instalar (trocar orquestracao) — é aviso: não muda o nível nem quebra o CI',
     detect: (ix, cfg) => {
       const m = cfg.orquestracao?.modelo;
       if (!m?.resolvidoEm) return { found: false, evidence: 'sem orquestracao.modelo.resolvidoEm' };
@@ -672,6 +742,44 @@ export const CHECKS = [
       return d <= v
         ? { found: true, evidence: `${m.alias || '?'} resolvido em ${m.resolvidoEm} (${Math.round(v - d)} d restantes)` }
         : { found: false, evidence: `VENCIDO há ${Math.round(d - v)} d (${m.alias || '?'}, resolvido em ${m.resolvidoEm}) — revalide` };
+    },
+  },
+  {
+    id: 'aprendizado-sem-destino',
+    rule: 'REQ-APR-4',
+    level: 'warn',
+    kind: 'scan',
+    label: 'aprendizado com destino: sem pendência esquecida, sem papel removido, sem M envelhecido',
+    fix: 'rode o comando que cada aviso cita (loop.mjs aprendizado …; --entrega <id> fora da branch da entrega) — é aviso: não muda o nível nem quebra o CI',
+    detect: (ix) => {
+      // Diário gravado em disco pelo loop (R1 não se aplica: não é arquivo de projeto). Ausente = calado; ilegível = aviso, nunca "0 aprendizados".
+      if (nucleo === null) return { found: false, evidence: `dist/ do núcleo não carregou (${nucleoErro}): aprendizado não conferido; rode node scripts/build.mjs` };
+      const { porEntrega, planos, avisos } = lerArvoreDeAprendizados(ix.root);
+      avisos.push(...nucleo.avisosAprendizado(porEntrega, planos, nucleo.PAPEIS));
+      return avisos.length === 0
+        ? { found: true, evidence: `${porEntrega.size} entrega(s) lida(s), nada sem destino` }
+        : { found: false, evidence: avisos.map((a) => a.replace(/\s+/g, ' ')).join('\n') };
+    },
+  },
+  {
+    id: 'onboarding-nao-detectado',
+    rule: 'REQ-ONB-1',
+    level: 'warn',
+    kind: 'scan',
+    label: 'itens do onboarding que a máquina não detectou nem o dono respondeu',
+    fix: 'rode gabarito-instalar (trocar <item>) para cada item citado — é aviso: não muda o nível nem quebra o CI',
+    detect: (ix, cfg) => {
+      if (cfg.configInvalido) return { found: false, evidence: 'harness.config.json inválido: não li onboarding.naoDetectado' };
+      const ob = cfg.onboarding;
+      if (ob === undefined) return { found: true, evidence: 'sem onboarding gravado' };
+      if (ob === null || typeof ob !== 'object' || Array.isArray(ob)) return { found: false, evidence: 'onboarding ilegível (não é um objeto)' };
+      const nd = ob.naoDetectado;
+      if (nd === undefined) return { found: true, evidence: 'sem onboarding.naoDetectado' };
+      if (!Array.isArray(nd) || nd.some((i) => typeof i !== 'string' || i === '')) {
+        return { found: false, evidence: 'onboarding.naoDetectado ilegível (esperado lista de itens não vazios)' };
+      }
+      if (nd.length === 0) return { found: true, evidence: 'todos os itens detectados ou respondidos' };
+      return { found: false, evidence: nd.map((item) => `${item}: gabarito-instalar (trocar ${item})${item === 'versionamento' && branchPadraoNaoEhRegex(cfg) ? ` — ${MOTIVO_BRANCHPADRAO}` : ''}`).join('\n') };
     },
   },
   {
@@ -1115,7 +1223,8 @@ export function run(root = process.cwd(), overrides = {}) {
   const novasFaltando = resultados
     .filter((r) => NOVAS_1_1_0.includes(r.id) && r.level !== 'warn' && !r.opcional && !r.found)
     .map((r) => r.id);
-  const avisos = resultados.filter((r) => r.level === 'warn' && !r.found).map((r) => `${r.id}: ${r.evidence ?? ''}`);
+  // Um aviso por linha de evidência (ex.: 1 por item de `onboarding.naoDetectado`).
+  const avisos = resultados.filter((r) => r.level === 'warn' && !r.found).flatMap((r) => String(r.evidence ?? '').split('\n').map((l) => `${r.id}: ${l}`));
 
   const camada = camadaDe(root, Date.now(), ix.guarda());
 
@@ -1160,7 +1269,7 @@ function render(out, explain) {
     linhas.push('── Avisos (não contam no nível)');
     for (const r of avisos) {
       linhas.push(`${r.found ? '  ok ' : ' warn'} ${r.rule.padEnd(10)} ${r.label}`);
-      if (r.evidence) linhas.push(`        ↳ ${r.evidence}`);
+      if (r.evidence) for (const l of String(r.evidence).split('\n')) linhas.push(`        ↳ ${l}`);
       if (explain && !r.found) linhas.push(`        → ${r.fix}`);
     }
     linhas.push('');
@@ -1170,7 +1279,7 @@ function render(out, explain) {
   linhas.push(`Camada de guarda: ${c.estado}${c.estado === 'ativa' ? quente : ''}${c.estado !== 'ativa' && c.heartbeatHa !== null ? ` · último heartbeat local há ${Math.round(c.heartbeatHa)} h` : ''}${c.estado !== 'ativa' && c.diario ? ` · diário com heartbeat há ${Math.round(c.diario.ha)} h (${c.diario.autor})` : ''}${c.fonte ? ` · fonte ${c.fonte}` : ''}${c.divergente ? ' · DIVERGENTE (árvore ≠ origin/HEAD; vale o origin)' : ''}`);
   linhas.push(`Ambientes declarados: ${c.ambientes.length ? c.ambientes.join(', ') : '(nenhum)'}`);
   if (out.perfil) linhas.push(`Perfil: ${out.perfil}`);
-  linhas.push(out.loop.mod ? `loop: mod ativo (custo.medicao do orquestrador há ${Math.round(out.loop.ha)} h)` : 'loop: sem mod (sem pouso automático)');
+  linhas.push(out.loop.mod ? `loop: mod ativo (custo.medicao do orquestrador há ${Math.round(out.loop.ha)} h)` : 'loop: sem mod (sem pouso automático) · sem gatilho de mensagem do dono');
   linhas.push(out.db.estado === 'declarado' || out.db.estado === 'n/a' ? `db: ${out.db.estado}` : `db: ${out.db.estado} (${out.db.erro})`);
   linhas.push('');
   linhas.push(`Nível alcançado: ${out.alcancado}   ·   declarado no AGENTS.md: ${out.declarado ?? '(não declarado)'}`);

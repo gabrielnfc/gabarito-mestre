@@ -5,7 +5,9 @@
  */
 import { formaInvalida } from './formas.js';
 import { cmp, ehObjeto } from './diario-puro.js';
-                                                                      
+import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.js';
+import { pendenciasAprendizado } from './pendencias.js';
+                                                                             
 
                                                                                                                  
 
@@ -103,4 +105,86 @@ export function aprendizadosVigentes(porEntrega                       )         
 /** Só D, com `entra_em` incluindo o destino (comparação exata: `brief:revisor` não traz `brief:implementador`). */
 export function paraDestino(v                      , destino        )                       {
   return v.filter((a) => a.status === 'D' && a.entra_em.includes(destino));
+}
+
+/** Entregas posteriores (menor `ts` > `ts` do M) a partir das quais um M sem substituto vira aviso: `> 2` (REQ-APR-4). */
+const ENTREGAS_PARA_ENVELHECER = 2;
+const UMA_LINHA = /[\u0000-\u001f\u007f\u2028\u2029]+/g;
+const linha = (t        )         => t.replace(UMA_LINHA, ' ');
+
+/** Menor `ts` válido da entrega, em ms, ou `null` (sem evento com `ts` legível). */
+function menorTs(eventos          )                {
+  let menor                = null;
+  for (const e of eventos) {
+    const n = ehObjeto(e) && typeof e.ts === 'string' ? Date.parse(e.ts) : NaN;
+    if (!Number.isNaN(n) && (menor === null || n < menor)) menor = n;
+  }
+  return menor;
+}
+
+/** Todas as tasks do plano integradas (plano sem task não tem âncora, como em `pendenciasAprendizado`). */
+function todasIntegradas(plano       , eventos          )          {
+  const tasks = Array.isArray(plano?.tasks) ? plano.tasks : [];
+  if (tasks.length === 0) return false;
+  return tasks.every((t) => {
+    const id = ehObjeto(t) ? t.id : undefined;
+    if (typeof id !== 'string') return false;
+    const fila = eventos.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && ehObjeto(e.dados) && e.dados.task === id);
+    const r = estadoDe(fila);
+    return !('invalido' in r) && r.estado === 'integrada';
+  });
+}
+
+const refTexto = (a                                                  )         => `${a.entrega}/${a.sessao}:${a.seq}`;
+const comandoSubstitui = (a                    )         =>
+  `loop.mjs aprendizado ${a.tipo} D --regra <texto> --entra-em <destinos válidos> --substitui ${refTexto(a)}`;
+
+/**
+ * Avisos do doctor sobre aprendizado sem destino (GM-13, REQ-APR-4). Cada aviso traz o comando que fecha.
+ *  (1) pendência aberta numa entrega com todas as tasks integradas (`planos` sem a entrega ⇒ sem âncora, silêncio; entrega
+ *      com plano e diário que não lê ou não ordena ⇒ aviso de leitura: a pendência não pôde ser conferida);
+ *  (2) `brief:<papel>` de D vigente com papel fora de `papeis` (comparação exata);
+ *  (3) M vigente com MAIS DE 2 entregas cujo menor `ts` é posterior ao dele (lido de `aprendizadosVigentes`: o M substituído,
+ *      aqui ou em outra entrega, não está lá e não avisa).
+ * Pura e determinística; nunca lança (o que não lê vira aviso, nunca silêncio).
+ */
+export function avisosAprendizado(porEntrega                       , planos                    , papeis                   )           {
+  const avisos           = [];
+  const entregas = [...porEntrega.keys()].sort(cmp);
+  for (const entrega of entregas) {
+    const eventos = porEntrega.get(entrega);
+    const ilegivel = (motivo        )       => { avisos.push(linha(`aprendizados: ${entrega} ilegível (${motivo}); pendências não conferidas`)); };
+    if (!Array.isArray(eventos)) { ilegivel('diário não é uma lista de eventos'); continue; }
+    const plano = planos.get(entrega);
+    if (plano === undefined) continue;
+    try {
+      if (!ordenar(eventos).ok) { ilegivel('diário fora de ordem'); continue; }
+      if (!todasIntegradas(plano, eventos)) continue;
+      for (const p of pendenciasAprendizado(plano, eventos)) {
+        avisos.push(linha(`aprendizados: entrega ${entrega} com todas as tasks integradas e pendência de aprendizado aberta (${p.tipo} ${p.sessao}:${p.seq}); feche com: loop.mjs aprendizado nada --gatilho ${p.sessao}:${p.seq} --motivo <texto> --entrega ${entrega}`));
+      }
+    } catch (e) {
+      ilegivel(e instanceof Error ? e.message : 'erro desconhecido');
+    }
+  }
+
+  const vigentes = aprendizadosVigentes(porEntrega);
+  for (const a of vigentes) {
+    if (a.status !== 'D') continue;
+    for (const d of a.entra_em) {
+      if (d.startsWith('brief:') && !papeis.includes(d.slice(6))) {
+        avisos.push(linha(`aprendizados: ${refTexto(a)} entra em ${d}, papel que não existe mais (papéis: ${papeis.join(', ')}); substitua: ${comandoSubstitui(a)}`));
+      }
+    }
+  }
+
+  const inicios = entregas.map((e) => ({ e, ms: Array.isArray(porEntrega.get(e)) ? menorTs(porEntrega.get(e)            ) : null }));
+  for (const a of vigentes) {
+    if (a.status !== 'M') continue;
+    const depois = inicios.filter((i) => i.ms !== null && i.ms > ts(a)).length;
+    if (depois > ENTREGAS_PARA_ENVELHECER) {
+      avisos.push(linha(`aprendizados: M ${refTexto(a)} sem substituto há ${depois} entregas; promova ou substitua: ${comandoSubstitui(a)}`));
+    }
+  }
+  return avisos;
 }

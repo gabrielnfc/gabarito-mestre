@@ -9,10 +9,13 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { symlinkSync, writeFileSync, readFileSync } from 'node:fs';
+import { symlinkSync, writeFileSync, readFileSync, rmSync, mkdtempSync, mkdirSync, copyFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import * as doctor from '../scripts/harness-doctor.mjs';
+import { MOTIVO_BRANCHPADRAO } from '../scripts/onboarding.mjs';
+import * as diario from '../dist/diario.js';
 import { repo, agents, SCRIPT, git, repoComGit, AGORA, horasAtras, arq, heartbeatLocal, ARQ_DIARIO } from './_doctor-helpers.mjs';
 
 const medicao = (ts, extra = {}) => JSON.stringify({ seq: 2, ts, autor: 'a@b.c', sessao: 's1', agente: 'orquestrador', tipo: 'custo.medicao', dados: { input_tokens: 10, output_tokens: 5, cache_read: 0 }, hash_anterior: null, ...extra });
@@ -29,7 +32,7 @@ describe('T12 doctor — loop: mod ativo | sem mod', () => {
     const dir = repoComGit({ 'AGENTS.md': agents(1) });
     assert.deepEqual(modDe(dir), { mod: false });
     const r = spawnSync(process.execPath, [SCRIPT], { cwd: dir, encoding: 'utf8' });
-    assert.match(r.stdout, /^loop: sem mod \(sem pouso automático\)$/m, r.stdout);
+    assert.match(r.stdout, /^loop: sem mod \(sem pouso automático\) · sem gatilho de mensagem do dono$/m, r.stdout);
     assert.doesNotMatch(r.stdout, /mod ativo/);
     assert.equal(JSON.parse(spawnSync(process.execPath, [SCRIPT, '--json'], { cwd: dir, encoding: 'utf8' }).stdout).loop.mod, false);
   });
@@ -366,5 +369,180 @@ describe('T14 skill gabarito-loop — ponteiros aos CLIs da E3', () => {
   test('skill-loop-limite: ≤ 80 linhas e sem cópia de requisito', () => {
     assert.ok(skill.split('\n').length - 1 <= 80, `${skill.split('\n').length - 1} linhas`);
     assert.doesNotMatch(skill, /^\*\*REQ-/m);
+  });
+});
+
+// ── T13 (GM-13, REQ-APR-4 e ONB-1): avisos de aprendizado sem destino, itens não detectados e texto sem "fase N" ──────────────────
+describe('T13 doctor — aprendizado sem destino, onboarding não detectado, sem fase', () => {
+  const t = (min) => new Date(Date.UTC(2026, 10, 10, 10, min, 0)).toISOString();
+  const grava = (dir, entrega, sessao, tipo, dados, min) => {
+    const r = diario.append(join(dir, '.harness', 'entregas', entrega), sessao, { ts: t(min), autor: 'a@x', sessao, agente: 'orquestrador', tipo, dados });
+    assert.equal(r.ok, true, JSON.stringify(r));
+  };
+  const planoDe = (dir, entrega, ids) => arq(dir, `.harness/entregas/${entrega}/plano.json`, JSON.stringify({ entrega, tasks: ids.map((id) => ({ id, deps: [], arquivos: [`${id}.ts`], reqs: ['REQ-APR-4'] })) }));
+  const integrar = (dir, entrega, id, min) => {
+    grava(dir, entrega, 'loop', 'task.iniciada', { task: id, papel: 'implementador' }, min);
+    grava(dir, entrega, 'loop', 'task.concluida', { task: id }, min + 1);
+    grava(dir, entrega, 'loop', 'task.iniciada', { task: id, papel: 'revisor' }, min + 2);
+    grava(dir, entrega, 'loop', 'review.veredito', { task: id, veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, min + 3);
+    grava(dir, entrega, 'loop', 'task.integrada', { task: id }, min + 4);
+  };
+  const cfgComOnboarding = (extra = {}) => ({ 'harness.config.json': JSON.stringify({ fluxo: { resolvidoEm: '2026-11-10' }, ...extra }) });
+  const achado = (out, id) => out.resultados.find((r) => r.id === id);
+  const avisosDe = (out, id) => out.avisos.filter((a) => a.startsWith(`${id}: `));
+  const base = () => repoComGit({ 'AGENTS.md': agents(1) });
+
+  test('doctor-sem-mod-cita-mensagem: só o `sem mod` ganha o trecho; `mod ativo` não', () => {
+    const dir = base();
+    const sem = spawnSync(process.execPath, [SCRIPT], { cwd: dir, encoding: 'utf8' }).stdout;
+    assert.match(sem, /^loop: sem mod \(sem pouso automático\) · sem gatilho de mensagem do dono$/m, sem);
+    const agora = Date.now();
+    const com = repoComGit({ 'AGENTS.md': agents(1) });
+    const ts = new Date(agora - 3_600_000).toISOString();
+    arq(com, ARQ_DIARIO, `${JSON.stringify({ seq: 1, ts, autor: 'a@b.c', sessao: 's1', agente: 'orquestrador', tipo: 'guarda.heartbeat', dados: { fonte: 'local' }, hash_anterior: null })}\n${medicao(new Date(agora - 1_800_000).toISOString())}\n`);
+    arq(com, '.harness/heartbeat.json', JSON.stringify({ ts, sessao: 's1', arquivo: ARQ_DIARIO, autor: 'a@b.c', fonte: 'local', divergente: false }));
+    const ativo = spawnSync(process.execPath, [SCRIPT], { cwd: com, encoding: 'utf8' }).stdout;
+    assert.match(ativo, /^loop: mod ativo/m, ativo);
+    assert.doesNotMatch(ativo, /sem gatilho de mensagem do dono/);
+  });
+
+  test('doctor-nao-detectado-avisa-sem-bloquear: 1 aviso por item com `trocar <item>`, nível e checagens obrigatórias iguais', () => {
+    const sem = doctor.run(repoComGit({ 'AGENTS.md': agents(1), ...cfgComOnboarding({ onboarding: { resolvidoEm: '2026-11-10', naoDetectado: [] } }) }));
+    const com = doctor.run(repoComGit({ 'AGENTS.md': agents(1), ...cfgComOnboarding({ onboarding: { resolvidoEm: '2026-11-10', naoDetectado: ['tipo_repo', 'orquestracao'] } }) }));
+    assert.deepEqual(avisosDe(com, 'onboarding-nao-detectado').length, 2);
+    assert.match(avisosDe(com, 'onboarding-nao-detectado')[0], /^onboarding-nao-detectado: tipo_repo: gabarito-instalar \(trocar tipo_repo\)$/);
+    assert.match(avisosDe(com, 'onboarding-nao-detectado')[1], /^onboarding-nao-detectado: orquestracao: gabarito-instalar \(trocar orquestracao\)$/);
+    assert.equal(achado(com, 'onboarding-nao-detectado').level, 'warn');
+    assert.equal(achado(com, 'onboarding-nao-detectado').found, false);
+    assert.deepEqual(avisosDe(sem, 'onboarding-nao-detectado'), []);
+    assert.equal(com.alcancado, sem.alcancado);
+    assert.deepEqual(com.novasFaltando, sem.novasFaltando);
+    const rc = (d) => spawnSync(process.execPath, [SCRIPT], { cwd: d, encoding: 'utf8' }).status;
+    assert.equal(rc(repoComGit({ 'AGENTS.md': agents(1), ...cfgComOnboarding({ onboarding: { naoDetectado: ['tipo_repo'] } }) })), rc(repoComGit({ 'AGENTS.md': agents(1) })));
+  });
+
+  test('onboarding-nao-detectado-motivo-branchpadrao: só o item `versionamento` com branchPadrao que reprova `feat/<ID>-1-x` traz o motivo (D-1)', () => {
+    const run = (cfg, itens) => doctor.run(repoComGit({ 'AGENTS.md': agents(1), ...cfgComOnboarding({ ...cfg, onboarding: { naoDetectado: itens } }) }));
+    const nome = avisosDe(run({ versionamento: { branchPadrao: 'main' } }, ['versionamento', 'tipo_repo']), 'onboarding-nao-detectado');
+    assert.equal(nome[0], `onboarding-nao-detectado: versionamento: gabarito-instalar (trocar versionamento) — ${MOTIVO_BRANCHPADRAO}`);
+    assert.equal(nome[1], 'onboarding-nao-detectado: tipo_repo: gabarito-instalar (trocar tipo_repo)', 'outro item não herda o motivo');
+    // regex que aceita a branch de PBI ⇒ sem motivo; sem branchPadrao ⇒ sem motivo
+    assert.doesNotMatch(avisosDe(run({ versionamento: { branchPadrao: '^feat/[A-Z]+-\\d+-[a-z]$' } }, ['versionamento']), 'onboarding-nao-detectado')[0], /branchPadrao/);
+    assert.doesNotMatch(avisosDe(run({}, ['versionamento']), 'onboarding-nao-detectado')[0], /branchPadrao/);
+    // regex ilegível também não casa nada: motivo (e nunca exceção)
+    assert.match(avisosDe(run({ versionamento: { branchPadrao: '(' } }, ['versionamento']), 'onboarding-nao-detectado')[0], /branchPadrao é nome de branch/);
+  });
+
+  test('motivo-branchpadrao-igual-ao-do-onboarding: a cópia do doctor não deriva do texto do onboarding', () => {
+    assert.equal(doctor.MOTIVO_BRANCHPADRAO, MOTIVO_BRANCHPADRAO);
+  });
+
+  test('aprendizado-sem-destino-sem-dist: cópia do doctor sem dist/ não cai e avisa que não conferiu', () => {
+    const plug = mkdtempSync(join(tmpdir(), 'doctor-sem-dist-'));
+    mkdirSync(join(plug, 'scripts'), { recursive: true });
+    mkdirSync(join(plug, 'lib'), { recursive: true });
+    for (const f of ['harness-doctor.mjs', 'versionamento-check.mjs', 'db-template.mjs']) copyFileSync(join(dirname(SCRIPT), f), join(plug, 'scripts', f));
+    for (const f of ['cli', 'config', 'git', 'datas']) copyFileSync(join(dirname(SCRIPT), '..', 'lib', `${f}.mjs`), join(plug, 'lib', `${f}.mjs`));
+    const r = spawnSync(process.execPath, [join(plug, 'scripts', 'harness-doctor.mjs'), '--json'], { cwd: base(), encoding: 'utf8', timeout: 20000 });
+    assert.equal(r.status === 0 || r.status === 1, true, r.stderr);
+    const av = JSON.parse(r.stdout).avisos.filter((a) => a.startsWith('aprendizado-sem-destino: '));
+    assert.equal(av.length, 1);
+    assert.match(av[0], /dist\/ do núcleo não carregou/);
+  });
+
+  test('onboarding-ausente-x-corrompido: ausente calado; corrompido e config inválida avisam a leitura', () => {
+    const calado = [{}, { onboarding: {} }, { onboarding: { naoDetectado: [] } }];
+    for (const extra of calado) {
+      const r = achado(doctor.run(repoComGit({ 'AGENTS.md': agents(1), ...cfgComOnboarding(extra) })), 'onboarding-nao-detectado');
+      assert.equal(r.found, true, JSON.stringify(extra));
+    }
+    const tortos = [{ onboarding: null }, { onboarding: 'x' }, { onboarding: [] }, { onboarding: { naoDetectado: 'tipo_repo' } }, { onboarding: { naoDetectado: {} } }, { onboarding: { naoDetectado: [1] } }, { onboarding: { naoDetectado: [''] } }, { onboarding: { naoDetectado: ['tipo_repo', null] } }];
+    for (const extra of tortos) {
+      const out = doctor.run(repoComGit({ 'AGENTS.md': agents(1), ...cfgComOnboarding(extra) }));
+      assert.equal(achado(out, 'onboarding-nao-detectado').found, false, JSON.stringify(extra));
+      assert.match(avisosDe(out, 'onboarding-nao-detectado')[0], /ilegível/, JSON.stringify(extra));
+    }
+    const invalida = doctor.run(repoComGit({ 'AGENTS.md': agents(1), 'harness.config.json': '{ torto' }));
+    assert.equal(achado(invalida, 'onboarding-nao-detectado').found, false);
+    assert.match(avisosDe(invalida, 'onboarding-nao-detectado')[0], /harness\.config\.json inválido/);
+  });
+
+  test('aprendizado-sem-destino-ausente-calado: sem .harness/entregas nada a avisar', () => {
+    const out = doctor.run(base());
+    assert.equal(achado(out, 'aprendizado-sem-destino').found, true);
+    assert.equal(achado(out, 'aprendizado-sem-destino').level, 'warn');
+    assert.deepEqual(avisosDe(out, 'aprendizado-sem-destino'), []);
+  });
+
+  test('aprendizado-sem-destino-costura-real: diário gravado pelo adaptador real ⇒ aviso com o comando; fechar some; nível não muda', () => {
+    const dir = base();
+    const antes = doctor.run(dir);
+    planoDe(dir, 'GM-9', ['T1']);
+    integrar(dir, 'GM-9', 'T1', 0);
+    const out = doctor.run(dir);
+    const av = avisosDe(out, 'aprendizado-sem-destino');
+    assert.equal(av.length, 1, av.join('\n'));
+    assert.match(av[0], /entrega GM-9 .*fechamento loop:5/);
+    assert.match(av[0], /loop\.mjs aprendizado nada --gatilho loop:5 --motivo <texto> --entrega GM-9/);
+    assert.equal(achado(out, 'aprendizado-sem-destino').level, 'warn');
+    assert.equal(out.alcancado, antes.alcancado);
+    assert.deepEqual(out.novasFaltando, antes.novasFaltando);
+    grava(dir, 'GM-9', 'loop', 'aprendizado.nada', { gatilho: { sessao: 'loop', seq: 5 }, motivo: 'nada a registrar' }, 10);
+    const depois = doctor.run(dir);
+    assert.deepEqual(avisosDe(depois, 'aprendizado-sem-destino'), []);
+    assert.equal(achado(depois, 'aprendizado-sem-destino').found, true);
+  });
+
+  test('aprendizado-sem-destino-m-envelhecido-pela-arvore: M com 3 entregas depois avisa; 2 não', () => {
+    const dir = base();
+    grava(dir, 'GM-1', 'loop', 'loop.iniciar', {}, 0);
+    grava(dir, 'GM-1', 'loop', 'aprendizado', { tipo: 'E', status: 'M', gatilho: null, evidencia: { eventos: [{ sessao: 'loop', seq: 1 }] }, regra: 'confira o build', entra_em: ['instantaneo'] }, 1);
+    grava(dir, 'GM-2', 'loop', 'loop.iniciar', {}, 10);
+    grava(dir, 'GM-3', 'loop', 'loop.iniciar', {}, 20);
+    assert.deepEqual(avisosDe(doctor.run(dir), 'aprendizado-sem-destino'), [], 'exatamente 2 entregas depois: silêncio');
+    grava(dir, 'GM-4', 'loop', 'loop.iniciar', {}, 30);
+    const av = avisosDe(doctor.run(dir), 'aprendizado-sem-destino');
+    assert.equal(av.length, 1);
+    assert.match(av[0], /M GM-1\/loop:2 sem substituto há 3 entregas/);
+  });
+
+  test('aprendizado-sem-destino-corrompido: diário ilegível e plano ilegível avisam, nunca calam', () => {
+    const dir = base();
+    arq(dir, '.harness/entregas/GM-8/events.s1.jsonl', '{ isto não é json\n');
+    const out = doctor.run(dir);
+    assert.equal(achado(out, 'aprendizado-sem-destino').found, false);
+    assert.match(avisosDe(out, 'aprendizado-sem-destino')[0], /GM-8 ilegível/);
+    const dir2 = base();
+    grava(dir2, 'GM-7', 'loop', 'loop.iniciar', {}, 0);
+    arq(dir2, '.harness/entregas/GM-7/plano.json', '{ torto');
+    const out2 = doctor.run(dir2);
+    assert.equal(achado(out2, 'aprendizado-sem-destino').found, false);
+    assert.match(avisosDe(out2, 'aprendizado-sem-destino')[0], /GM-7\/plano\.json inválido/);
+  });
+
+  test('aprendizado-sem-destino-fifo: FIFO no lugar do plano ou do diário não trava o doctor e vira aviso', () => {
+    for (const nome of ['plano.json', 'events.s1.jsonl']) {
+      const dir = base();
+      grava(dir, 'GM-6', 'loop', 'loop.iniciar', {}, 0);
+      const alvo = join(dir, '.harness/entregas/GM-6', nome);
+      if (nome !== 'plano.json') rmSync(alvo, { force: true });
+      execFileSync('mkfifo', [alvo]);
+      const r = spawnSync(process.execPath, [SCRIPT, '--json'], { cwd: dir, encoding: 'utf8', timeout: 4000 });
+      assert.equal(r.status === null, false, `${nome}: doctor travou (${r.error?.code})`);
+      const av = JSON.parse(r.stdout).avisos.filter((a) => a.startsWith('aprendizado-sem-destino: '));
+      assert.equal(av.length, 1, `${nome}: ${av}`);
+      assert.match(av[0], /GM-6.*não é arquivo regular/);
+    }
+  });
+
+  test('doctor-sem-fase-no-texto: label e fix dos 4 checks apontam `gabarito-instalar (trocar <item>)`, nunca "fase N"', () => {
+    const out = doctor.run(base());
+    const esperado = { 'fluxo-configurado': 'fluxo', versionamento: 'versionamento', 'modelo-resolvido': 'orquestracao' };
+    for (const [id, item] of Object.entries(esperado)) {
+      const r = achado(out, id);
+      assert.match(r.fix, new RegExp(`gabarito-instalar \\(trocar ${item}\\)`), `${id}: ${r.fix}`);
+      assert.doesNotMatch(`${r.label} ${r.fix}`, /fase/i, id);
+    }
+    assert.doesNotMatch(readFileSync(SCRIPT, 'utf8').split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n'), /\bfase [234]\b|\(fase /);
   });
 });

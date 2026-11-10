@@ -9,10 +9,10 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { aprendizadosVigentes, paraDestino, validarAprendizado } from '../src/aprendizado.ts';
+import { aprendizadosVigentes, avisosAprendizado, paraDestino, validarAprendizado } from '../src/aprendizado.ts';
 import type { AprendizadoVigente } from '../src/aprendizado.ts';
 import { append, lerAprendizados } from '../src/diario.ts';
-import type { DadosAprendizado, Evento } from '../src/tipos.ts';
+import type { DadosAprendizado, Evento, Plano } from '../src/tipos.ts';
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'gm-aprend-'));
 const dado = (extra: Partial<DadosAprendizado> = {}): DadosAprendizado => ({
@@ -305,5 +305,124 @@ describe('lerAprendizados (árvore real)', () => {
       assert.equal(r.porEntrega.size, 0);
       assert.match(r.avisos[0] ?? '', /^aprendizados: GM-1 ilegível \(pasta do diário ilegível\)/);
     } finally { chmodSync(join(raiz, 'GM-1'), 0o755); }
+  });
+});
+
+// ── avisosAprendizado (T13, REQ-APR-4): o que o doctor mostra, cada aviso com o comando que fecha ───────────────────────────────
+describe('avisosAprendizado', () => {
+  const PAPEIS = ['implementador', 'revisor', 'correcao'];
+  const t = (min: number): string => new Date(Date.UTC(2026, 10, 10, 10, min, 0)).toISOString();
+  const marco = (sessao: string, seq: number, min: number): Evento => ev(sessao, seq, 'loop.iniciar', {}, t(min));
+  const M = (sessao: string, seq: number, min: number, extra: Partial<DadosAprendizado> = {}): Evento =>
+    apr(sessao, seq, { status: 'M', entra_em: ['instantaneo'], ...extra }, t(min));
+  /** Entrega que só começa no minuto `min` (o menor `ts` dela). */
+  const depois = (min: number): Evento[] => [marco('loop', 1, min), marco('loop', 2, min + 1)];
+  const semPlanos = new Map<string, Plano>();
+  const plano = (...ids: string[]): Plano => ({ entrega: 'GM-9', tasks: ids.map((id) => ({ id, deps: [], arquivos: [`${id}.ts`], reqs: ['REQ-APR-4'] })) });
+  const integrada = (id: string, seq: number, min: number): Evento[] => [
+    ev('loop', seq, 'task.iniciada', { task: id, papel: 'implementador' }, t(min)),
+    ev('loop', seq + 1, 'task.concluida', { task: id }, t(min + 1)),
+    ev('loop', seq + 2, 'task.iniciada', { task: id, papel: 'revisor' }, t(min + 2)),
+    ev('loop', seq + 3, 'review.veredito', { task: id, veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, t(min + 3)),
+    ev('loop', seq + 4, 'task.integrada', { task: id }, t(min + 4)),
+  ];
+  const veredito = (seq: number, min: number, major: number): Evento =>
+    ev('loop', seq, 'review.veredito', { task: 'T0', veredito: 'REPROVADO', rodada: 1, major, blocker: 0 }, t(min));
+
+  test('m-tres-entregas-depois-avisa', () => {
+    const porEntrega = mapa({ 'GM-1': [marco('loop', 1, 0), M('loop', 2, 1)], 'GM-2': depois(10), 'GM-3': depois(20), 'GM-4': depois(30) });
+    const r = avisosAprendizado(porEntrega, semPlanos, PAPEIS);
+    assert.equal(r.length, 1);
+    assert.match(r[0], /GM-1\/loop:2/);
+    assert.match(r[0], /3 entregas/);
+    assert.match(r[0], /loop\.mjs aprendizado E D .*--substitui GM-1\/loop:2/);
+  });
+  test('m-duas-entregas-silencio', () => {
+    // a borda é > 2: exatamente 2 entregas depois não avisa
+    const porEntrega = mapa({ 'GM-1': [marco('loop', 1, 0), M('loop', 2, 1)], 'GM-2': depois(10), 'GM-3': depois(20) });
+    assert.deepEqual(avisosAprendizado(porEntrega, semPlanos, PAPEIS), []);
+  });
+  test('m-conta-entregas-cujo-menor-ts-e-posterior', () => {
+    // GM-2 começa ANTES do M (só termina depois): não conta. Sobram 2 depois do M ⇒ silêncio; a 3ª posterior faz avisar.
+    const base = { 'GM-1': [marco('loop', 1, 0), M('loop', 2, 5)], 'GM-2': [marco('loop', 1, 2), marco('loop', 2, 50)], 'GM-3': depois(10), 'GM-4': depois(20) };
+    assert.deepEqual(avisosAprendizado(mapa(base), semPlanos, PAPEIS), []);
+    // empate de ts com o M não é "posterior"
+    assert.deepEqual(avisosAprendizado(mapa({ ...base, 'GM-5': [marco('loop', 1, 5)] }), semPlanos, PAPEIS), []);
+    assert.equal(avisosAprendizado(mapa({ ...base, 'GM-5': depois(30) }), semPlanos, PAPEIS).length, 1);
+  });
+  test('m-substituido-por-outra-entrega-silencio', () => {
+    // o D de GM-5 substitui o M de GM-1 (D-4): o M sai dos vigentes e não avisa; o D (não é M) também não
+    const subst = apr('loop', 3, { status: 'D', substitui: { entrega: 'GM-1', sessao: 'loop', seq: 2 } }, t(40));
+    const porEntrega = mapa({ 'GM-1': [marco('loop', 1, 0), M('loop', 2, 1)], 'GM-2': depois(10), 'GM-3': depois(20), 'GM-4': depois(30), 'GM-5': [marco('loop', 1, 35), marco('loop', 2, 36), subst] });
+    assert.deepEqual(avisosAprendizado(porEntrega, semPlanos, PAPEIS), []);
+    // sem o substitui, o mesmo cenário avisa o M (prova que o silêncio vem do vigente)
+    const sem = apr('loop', 3, { status: 'D' }, t(40));
+    const r = avisosAprendizado(mapa({ 'GM-1': [marco('loop', 1, 0), M('loop', 2, 1)], 'GM-2': depois(10), 'GM-3': depois(20), 'GM-4': depois(30), 'GM-5': [marco('loop', 1, 35), marco('loop', 2, 36), sem] }), semPlanos, PAPEIS);
+    assert.equal(r.length, 1);
+  });
+  test('d-antigo-nao-avisa', () => {
+    // só M envelhece: D (mesmo com 3 entregas depois) não gera aviso
+    const porEntrega = mapa({ 'GM-1': [marco('loop', 1, 0), apr('loop', 2, { status: 'D' }, t(1))], 'GM-2': depois(10), 'GM-3': depois(20), 'GM-4': depois(30) });
+    assert.deepEqual(avisosAprendizado(porEntrega, semPlanos, PAPEIS), []);
+  });
+  test('pendencia-em-entrega-concluida-avisa', () => {
+    const eventos = [...integrada('T1', 1, 0), veredito(6, 10, 1)];
+    const r = avisosAprendizado(mapa({ 'GM-9': eventos }), new Map([['GM-9', plano('T1')]]), PAPEIS);
+    // 2 pendências abertas: o major (loop:6) e o fechamento (âncora = último task.integrada, loop:5)
+    assert.equal(r.length, 2);
+    assert.match(r[0], /GM-9/);
+    assert.match(r[0], /pendência/);
+    assert.match(r[0], /fechamento loop:5/);
+    assert.match(r[0], /loop\.mjs aprendizado nada --gatilho loop:5 --motivo <texto> --entrega GM-9/);
+    assert.match(r[1], /review loop:6/);
+    assert.match(r[1], /loop\.mjs aprendizado nada --gatilho loop:6 --motivo <texto> --entrega GM-9/);
+    // fechadas (aprendizado.nada com o gatilho de cada uma) ⇒ some tudo
+    const fecha = (seq: number, g: number, min: number): Evento => ev('loop', seq, 'aprendizado.nada', { gatilho: { sessao: 'loop', seq: g }, motivo: 'nada a registrar' }, t(min));
+    const meio = [...eventos, fecha(7, 6, 11)];
+    const resto = avisosAprendizado(mapa({ 'GM-9': meio }), new Map([['GM-9', plano('T1')]]), PAPEIS);
+    assert.equal(resto.length, 1);
+    assert.match(resto[0], /fechamento loop:5/);
+    assert.deepEqual(avisosAprendizado(mapa({ 'GM-9': [...meio, fecha(8, 5, 12)] }), new Map([['GM-9', plano('T1')]]), PAPEIS), []);
+  });
+  test('pendencia-em-entrega-em-andamento-silencio', () => {
+    // T1 integrada, T2 ainda não: a entrega não está concluída ⇒ a pendência (do major) não é "esquecida", segue na fila do loop
+    const eventos = [...integrada('T1', 1, 0), veredito(6, 10, 1)];
+    assert.deepEqual(avisosAprendizado(mapa({ 'GM-9': eventos }), new Map([['GM-9', plano('T1', 'T2')]]), PAPEIS), []);
+  });
+  test('papel-removido-avisa', () => {
+    const d = apr('loop', 2, { entra_em: ['instantaneo', 'brief:revisor'] }, t(1));
+    const porEntrega = mapa({ 'GM-1': [marco('loop', 1, 0), d] });
+    const r = avisosAprendizado(porEntrega, semPlanos, ['implementador', 'correcao']);
+    assert.equal(r.length, 1);
+    assert.match(r[0], /GM-1\/loop:2/);
+    assert.match(r[0], /brief:revisor/);
+    assert.match(r[0], /loop\.mjs aprendizado E D .*--substitui GM-1\/loop:2/);
+    assert.deepEqual(avisosAprendizado(porEntrega, semPlanos, PAPEIS), []); // papel válido ⇒ nada
+    // M nunca entra em brief: um M com `brief:revisor` fora dos papéis não gera este aviso
+    const m = mapa({ 'GM-1': [marco('loop', 1, 0), M('loop', 2, 1, { entra_em: ['brief:revisor'] })] });
+    assert.deepEqual(avisosAprendizado(m, semPlanos, ['implementador']), []);
+    // `brief:implementador` com `implementador` fora da lista também avisa (comparação exata, não por prefixo)
+    const outro = mapa({ 'GM-1': [marco('loop', 1, 0), apr('loop', 2, { entra_em: ['brief:implementador'] }, t(1))] });
+    assert.equal(avisosAprendizado(outro, semPlanos, ['implementador-x']).length, 1);
+  });
+  test('avisos-ausente-x-corrompido', () => {
+    // ausente: entrega sem plano, mapas vazios ⇒ silêncio (nada a avisar, nada ilegível)
+    assert.deepEqual(avisosAprendizado(mapa({}), semPlanos, PAPEIS), []);
+    assert.deepEqual(avisosAprendizado(mapa({ 'GM-1': [veredito(1, 0, 1)] }), semPlanos, PAPEIS), []);
+    // corrompido: eventos que não são lista, ou diário que não ordena numa entrega COM plano ⇒ aviso de leitura, nunca silêncio
+    const r1 = avisosAprendizado(mapa({ 'GM-1': 'lixo' as unknown as Evento[] }), semPlanos, PAPEIS);
+    assert.equal(r1.length, 1);
+    assert.match(r1[0], /GM-1 ilegível/);
+    const fora = [ev('loop', 2, 'loop.iniciar', {}, t(0)), ev('loop', 1, 'loop.iniciar', {}, t(1))];
+    const r2 = avisosAprendizado(mapa({ 'GM-9': fora }), new Map([['GM-9', plano('T1')]]), PAPEIS);
+    assert.equal(r2.length, 1);
+    assert.match(r2[0], /GM-9 ilegível/);
+    assert.notEqual(r2[0], '');
+  });
+  test('avisos-uma-linha-sem-controle', () => {
+    // o aviso vai para o terminal: entrega vinda do diário não injeta quebra de linha
+    const r = avisosAprendizado(mapa({ ['GM-1\nX']: 'lixo' as unknown as Evento[] }), semPlanos, PAPEIS);
+    assert.equal(r.length, 1);
+    assert.doesNotMatch(r[0], /[\u0000-\u001f]/);
   });
 });
