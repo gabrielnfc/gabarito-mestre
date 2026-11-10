@@ -1,6 +1,6 @@
 {
   "name": "gabarito-gates",
-  "version": "2.0.0-alpha.3",
+  "version": "2.0.0-alpha.4",
   "description": "Gates executáveis do Gabarito Mestre — as regras que a máquina lembra, para que ninguém precise.",
   "type": "module",
   "license": "MIT",

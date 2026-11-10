@@ -112,3 +112,29 @@ test('comando-da-skill-roda-de-verdade-em-bash-e-zsh', () => {
     }
   }
 });
+
+// ---- Costura (P9, GM-12 T13): o comando do painel que a skill manda rodar no topo do status resolve e executa.
+test('comando-do-painel-da-skill-roda-em-bash-e-zsh', () => {
+  const cmd = readFileSync(join(PLUGIN, 'skills/gabarito-loop/SKILL.md'), 'utf8')
+    .match(/node "\$\{CLAUDE_PLUGIN_ROOT\}\/gates\/scripts\/painel\.mjs" texto[^`\n]*/)?.[0];
+  assert.ok(cmd, 'a skill não cita `painel.mjs texto`');
+  const base = mkdtempSync(join(tmpdir(), 'skills-painel-'));
+  const raiz = join(base, 'raiz com espaco');
+  mkdirSync(raiz);
+  symlinkSync(PLUGIN, join(raiz, 'plugin'));
+  const repo = join(base, 'repo');
+  mkdirSync(repo);
+  assert.equal(spawnSync('git', ['init', '-q', repo]).status, 0);
+  for (const sh of shellsDisponiveis()) {
+    const r = spawnSync(sh, ['-c', cmd], {
+      cwd: repo, encoding: 'utf8',
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: join(raiz, 'plugin') },
+    });
+    const ctx = `${sh}: ${cmd}\nrc=${r.status} stdout=${r.stdout} stderr=${r.stderr}`;
+    assert.notEqual(r.status, 127, `comando não encontrado\n${ctx}`);
+    assert.ok(!/Cannot find module/.test(r.stderr), `script não achado\n${ctx}`);
+    // Sem entrega inferida o CLI responde JSON com erro; o que não pode é cair em uso (flag mal formada).
+    const ultima = r.stdout.trim().split('\n').pop() ?? '';
+    if (ultima.startsWith('{')) assert.notEqual(JSON.parse(ultima).erro, 'uso', `flag caiu em uso\n${ctx}`);
+  }
+});

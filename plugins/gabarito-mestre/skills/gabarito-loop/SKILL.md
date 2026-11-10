@@ -16,12 +16,13 @@ node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" proxima --vivos <n>   # n = 
 Use sempre o comando inteiro, sem variável: em zsh, `$VAR` com argumentos dá exit 127. Sem o plugin, o script é `tools/gabarito-gates/scripts/loop.mjs`.
 
 ## Ciclo
+Status ao dono: comece por `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/painel.mjs" texto --preset executivo --largura 80`.
 
 1. `proxima` devolve `acao.tipo`. Siga-o, nada além dele:
    - `despachar` (`itens[{task,papel,spec?,achados?,modelo,decisoes,emendas}]`): por item, `abrir <task>` **sempre**, antes de `implementador` e `correcao`
      (idempotente: worktree já aberta volta com `ja_aberta:true`; após um `/clear` só o CLI sabe), `iniciar <task> <papel>` e o
      agente (`implementador` e `correcao`: `gabarito-implementador`; `revisor`: `gabarito-revisor`, sempre **novo**), só com
-     **ponteiros**: plano, `spec` do item, arquivos, porta/schema/namespace da worktree e o `env.TMPDIR` que `abrir` devolveu (fora da worktree; o agente o exporta em todo Bash de teste, senão o `TMPDIR` próprio não vale; ao revisor, o mesmo: `abrir` repetido devolve o mesmo caminho); ao revisor, a rodada; à `correcao`, o `achados`. O `Agent` recebe o `modelo` do item; `decisoes` e `emendas` (diff aprovado da spec) vão ao agente como ponteiro.
+     **ponteiros**: plano, `spec` do item, arquivos, porta/schema/namespace da worktree e o `env.TMPDIR` que `abrir` devolveu (fora da worktree; o agente o exporta em todo Bash de teste, senão o `TMPDIR` próprio não vale; ao revisor, o mesmo: `abrir` repetido devolve o mesmo caminho); ao revisor, a rodada; à `correcao`, o `achados`. O `Agent` recebe o `modelo` do item; `decisoes` e `emendas` (diff aprovado da spec) vão ao agente como ponteiro. A `description` do `Agent` é a `descricao` do item, sem mudar.
      `Agent` logo depois de `iniciar`, mesmo com hand-back no meio (trate-o depois); `--vivos` conta só agente lançado e não devolvido.
    - O implementador volta com o commit: `concluir <task>`. O revisor grava os achados em `<worktree>/.tmp-gabarito/review-r<rodada>.md`
      (ignorado pelo git; `fechar` remove) e o veredito vira `veredito <task> APROVADO|REPROVADO <rodada> <blocker> <major>`.
@@ -46,7 +47,7 @@ Use sempre o comando inteiro, sem variável: em zsh, `$VAR` com argumentos dá e
 ## Entrega
 
 `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/entrega.mjs" decidir` depois de `concluir`; a decisão é do CLI:
-- `subir`: `entrega.mjs" executar`. Falhas esperadas: `checkout_sujo`, `entrega_em_curso`, `ancora_nao_gravada`: pare e diga a causa. Negado pelo modo de permissão (o `auto` classifica como deploy de produção): não contorne nem tente outro caminho; diga ao dono que o deploy é dele, com o comando exato `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/entrega.mjs" executar`, e pare o turno.
+- `subir`: `entrega.mjs" executar`. Falhas esperadas: `checkout_sujo`, `entrega_em_curso`, `ancora_nao_gravada`: pare e diga a causa. Negado pelo modo de permissão (o `auto` classifica como deploy de produção): não contorne nem tente outro caminho; diga ao dono que o deploy é dele, com o comando exato `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/entrega.mjs" executar`, e pare o turno. Antes de parar, `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/entrega.mjs" devolver --motivo <t>` (grava `entrega.devolvida`; o painel mostra o comando ao dono).
 - `release_pr`: push da branch e PR para a `base` que ele devolve; **nunca merge**.
 - `agendar`: informe o `quando` ao dono. `esperar{homolog}`: informe o dono (com o `aviso`, se houver) e pare o turno.
 - `entregue`: nada a fazer. `parar{motivo}`: escale ao dono.

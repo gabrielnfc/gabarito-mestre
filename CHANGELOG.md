@@ -5,6 +5,19 @@ Usuários do plugin só recebem atualização quando `version` muda.
 
 ## [Unreleased]
 
+## [2.0.0-alpha.4] — 2026-11-10
+
+E4 do canal `next` (GM-12): painel de status do loop. Contrato e requisitos na spec da E4; aqui só o que o usuário vê.
+
+### Adicionado (GM-12 T13)
+
+- **Painel `painel.mjs texto`**: status do loop em texto, com os presets `executivo` e `esquadrao` e `--largura` (padrão 80).
+- **Skill `gabarito-loop`** (79 linhas): comando do painel no topo de todo status ao dono; `entrega.mjs devolver --motivo` antes de parar quando o dono pedir devolução; a `description` do `Agent` é a `descricao` do item.
+
+### Alterado (GM-12 T13)
+
+- Versão `2.0.0-alpha.4` no plugin e em `gates/package.json`.
+
 ## [2.0.0-alpha.3] — 2026-11-09
 
 E3 do canal `next` (GM-11): Sombra, emendas à spec, entrega e modelo por papel. Contrato e requisitos na spec da E3; aqui só o que o usuário vê.
