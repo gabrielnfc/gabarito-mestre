@@ -36,7 +36,7 @@
 import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, renameSync, lstatSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'node:fs';
 import { join, relative, sep, dirname } from 'node:path';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { lerGuarda, DENY_GUARDA, CHAVES_MORTAS, MODELOS_PADRAO, ORDEM_MODELO } from '../lib/config.mjs';
+import { lerGuarda, DENY_GUARDA, CHAVES_MORTAS, ORDEM_MODELO, PERFIS_MODELO } from '../lib/config.mjs';
 import { diasEntre } from '../lib/datas.mjs';
 import { execFileSync } from 'node:child_process';
 import { checar, DEFAULTS as VERSIONAMENTO_DEFAULTS } from './versionamento-check.mjs';
@@ -680,27 +680,35 @@ export const CHECKS = [
     level: 'warn',
     kind: 'scan',
     label: 'modelo de cada papel em orquestracao.modelos não está abaixo do recomendado',
-    fix: 'ajuste orquestracao.modelos em harness.config.json (haiku < sonnet < opus < fable) — é aviso: não muda o nível nem quebra o CI',
+    fix: 'ajuste orquestracao.modelos (ou orquestracao.perfil: economia, padrao, qualidade) em harness.config.json (haiku < sonnet < opus < fable) — é aviso: não muda o nível nem quebra o CI',
     detect: (ix, cfg) => {
       if (cfg.configInvalido) return { found: false, evidence: 'harness.config.json inválido: não li orquestracao.modelos' };
       const orq = cfg.orquestracao;
       if (orq === undefined) return { found: true, evidence: 'sem orquestracao.modelos: valem os padrões da visão' };
       if (orq === null || typeof orq !== 'object' || Array.isArray(orq)) return { found: false, evidence: 'orquestracao inválido (não é um objeto)' };
-      const modelos = orq.modelos;
-      if (modelos === undefined) return { found: true, evidence: 'sem orquestracao.modelos: valem os padrões da visão' };
-      if (modelos === null || typeof modelos !== 'object' || Array.isArray(modelos)) return { found: false, evidence: 'orquestracao.modelos inválido (não é um objeto)' };
+      // Perfil (E5a): o recomendado é a tabela do perfil escolhido; inválido ⇒ aviso e vale `padrao` (ausente não avisa).
       const avisos = [];
+      let perfil = 'padrao';
+      if (Object.hasOwn(orq, 'perfil')) {
+        if (typeof orq.perfil === 'string' && Object.hasOwn(PERFIS_MODELO, orq.perfil)) perfil = orq.perfil;
+        else avisos.push(`orquestracao.perfil inválido (${JSON.stringify(orq.perfil)}): esperado economia, padrao ou qualidade; comparo com o padrão`);
+      }
+      const tabela = PERFIS_MODELO[perfil];
+      const info = perfil === 'economia' ? 'perfil economia: review de task e spike em sonnet, review final em opus' : null;
+      const modelos = orq.modelos;
+      if (modelos === undefined) return avisos.length ? { found: false, evidence: avisos.join('; ') } : { found: true, evidence: info ?? 'sem orquestracao.modelos: valem os padrões da visão' };
+      if (modelos === null || typeof modelos !== 'object' || Array.isArray(modelos)) return { found: false, evidence: [...avisos, 'orquestracao.modelos inválido (não é um objeto)'].join('; ') };
       for (const [papel, e] of Object.entries(modelos)) {
-        if (!Object.hasOwn(MODELOS_PADRAO, papel)) { avisos.push(`${papel}: papel desconhecido (sem modelo recomendado)`); continue; }
+        if (!Object.hasOwn(tabela, papel)) { avisos.push(`${papel}: papel desconhecido (sem modelo recomendado)`); continue; }
         const nome = typeof e === 'string' ? e : e !== null && typeof e === 'object' && !Array.isArray(e) && typeof e.modelo === 'string' ? e.modelo : undefined;
         const familia = nome === undefined ? undefined : Object.keys(ORDEM_MODELO).find((f) => nome.toLowerCase().includes(f));
         if (familia === undefined) { avisos.push(`${papel}: desconhecido (${JSON.stringify(nome ?? e)}): não é haiku, sonnet, opus nem fable`); continue; }
-        const recomendado = MODELOS_PADRAO[papel].modelo;
+        const recomendado = tabela[papel].modelo;
         if (ORDEM_MODELO[familia] < ORDEM_MODELO[recomendado]) avisos.push(`${papel}: declarado ${familia} < recomendado ${recomendado}`);
       }
       return avisos.length
         ? { found: false, evidence: avisos.join('; ') }
-        : { found: true, evidence: Object.keys(modelos).length ? 'nenhum papel abaixo do recomendado' : 'orquestracao.modelos vazio: valem os padrões da visão' };
+        : { found: true, evidence: info ?? (Object.keys(modelos).length ? 'nenhum papel abaixo do recomendado' : 'orquestracao.modelos vazio: valem os padrões da visão') };
     },
   },
   {

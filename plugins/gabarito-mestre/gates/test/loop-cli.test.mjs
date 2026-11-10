@@ -2608,6 +2608,29 @@ describe('E3 T10: proxima, modelo, decisões, emendas e avisos', () => {
     }
   });
 
+  test('proxima-item-modelo-do-perfil: o perfil escolhe a família do item; o explícito vence; perfil inválido avisa e vale o padrão', () => {
+    const itens = (orq) => {
+      const amb = ambiente({ config: { ...CONFIG_PADRAO, orquestracao: orq } });
+      amb.semear([...IMPL_E('T1'), ...IMPL_E('T3')]);
+      const p = amb.cli(['proxima', '--vivos', '0']);
+      return { p, rev: p.j.acao.itens.find((i) => i.papel === 'revisor'), amb };
+    };
+    const e = itens({ perfil: 'economia' });
+    assert.deepEqual(e.rev.modelo, { modelo: 'sonnet' });
+    assert.ok(!(e.p.j.aviso ?? []).some((a) => /modelo/i.test(a)), JSON.stringify(e.p.j.aviso));
+    assert.deepEqual(itens({ perfil: 'qualidade' }).rev.modelo, { modelo: 'opus' });
+    const imp = ambiente({ config: { ...CONFIG_PADRAO, orquestracao: { perfil: 'economia' } } }).cli(['proxima', '--vivos', '0']).j.acao.itens[0];
+    assert.deepEqual(imp.modelo, { modelo: 'sonnet', esforco: 'medium' });
+    const q = ambiente({ config: { ...CONFIG_PADRAO, orquestracao: { perfil: 'qualidade' } } }).cli(['proxima', '--vivos', '0']).j.acao.itens[0];
+    assert.deepEqual(q.modelo, { modelo: 'opus', esforco: 'high' });
+    assert.deepEqual(itens({ perfil: 'economia', modelos: { revisor: 'haiku' } }).rev.modelo, { modelo: 'haiku' });
+    const inv = itens({ perfil: 'luxo' });
+    assert.deepEqual(inv.rev.modelo, { modelo: 'opus' });
+    assert.ok(inv.p.j.aviso.some((a) => /modelo do papel revisor: orquestracao\.perfil inválido/.test(a)), JSON.stringify(inv.p.j.aviso));
+    assert.equal(inv.p.j.acao.itens.filter((i) => i.papel === 'revisor').length, 2, 'dois itens do mesmo papel');
+    assert.equal(inv.p.j.aviso.filter((a) => /modelo do papel revisor: .*perfil inválido/.test(a)).length, 1, 'o aviso não se repete por item do mesmo papel');
+  });
+
   test('item-implementador-traz-decisoes-do-req, item-traz-decisao-ancora-task e item-decisao-arquivo-absoluto', () => {
     const amb = ambReq();
     const rel = relogioDe();
@@ -3299,6 +3322,19 @@ describe('E4 T7: dados do painel no loop (iniciar, integrar, proxima)', () => {
     assert.equal(v.rc, 0, v.out + v.err);
     assert.equal(iniciada(amb).dados.modelo, 'opus');
     assert.equal(v.j.evento.modelo, 'opus');
+  });
+
+  test('iniciar-grava-modelo-do-perfil: task.iniciada e a saída trazem a família do perfil (costura config real -> evento)', () => {
+    const amb = comConfig({ perfil: 'economia' });
+    amb.cli(['abrir', 'T1']);
+    const r = amb.cli(['iniciar', 'T1', 'implementador']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(iniciada(amb).dados.modelo, 'sonnet');
+    amb.cli(['concluir', 'T1']);
+    const v = amb.cli(['iniciar', 'T1', 'revisor']);
+    assert.equal(v.rc, 0, v.out + v.err);
+    assert.equal(iniciada(amb).dados.modelo, 'sonnet', 'economia: revisor de task em sonnet');
+    assert.equal(v.j.evento.modelo, 'sonnet');
   });
 
   test('iniciar-correcao-usa-chave-implementador e iniciar-revisor-usa-chave-revisor: a família vem da chave do papel', () => {

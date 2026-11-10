@@ -164,6 +164,78 @@ export const MODELOS_PADRAO = Object.freeze({
 /** Ordem das famílias de modelo; o esforço não entra na comparação (Sombra D5). */
 export const ORDEM_MODELO = Object.freeze({ haiku: 0, sonnet: 1, opus: 2, fable: 3 });
 
+const congela = (t) => Object.freeze(Object.fromEntries(Object.entries(t).map(([k, v]) => [k, Object.freeze({ ...v })])));
+
+/**
+ * Perfis de modelo (E5a, Sombra r3): `orquestracao.perfil` escolhe a tabela por papel. `padrao` é `MODELOS_PADRAO`; Fable só no review final em todo perfil
+ * (`qualidade`). `orquestracao.modelos.<papel>` explícito vence o perfil (`resolverModelo`).
+ */
+export const PERFIS_MODELO = Object.freeze({
+  economia: congela({
+    implementador: { modelo: 'sonnet', esforco: 'medium' },
+    revisor: { modelo: 'sonnet' },
+    sombra: { modelo: 'opus' },
+    revisor_final: { modelo: 'opus' },
+    spike: { modelo: 'sonnet' },
+    basico: { modelo: 'haiku' },
+  }),
+  padrao: MODELOS_PADRAO,
+  qualidade: congela({
+    implementador: { modelo: 'opus', esforco: 'high' },
+    revisor: { modelo: 'opus' },
+    sombra: { modelo: 'opus' },
+    revisor_final: { modelo: 'fable' },
+    spike: { modelo: 'opus' },
+    basico: { modelo: 'sonnet' },
+  }),
+});
+
+/**
+ * Modelo de um papel: `orquestracao.modelos.<papel>` (texto ou `{modelo, esforco?}`; família = 1ª de haiku|sonnet|opus|fable contida no nome em caixa baixa)
+ * > tabela do `orquestracao.perfil` > `MODELOS_PADRAO`. `fonte`: `explicito`, `perfil` (economia|qualidade) ou `padrao`. Ausente ≠ corrompido: `orquestracao`,
+ * `perfil` ou `modelos` ausentes ⇒ padrão sem aviso; presentes e que não se entendem ⇒ o valor do perfil (ou padrão) com `aviso`. Papel fora da tabela lança.
+ */
+export function resolverModelo(orquestracao, papel) {
+  if (!Object.hasOwn(MODELOS_PADRAO, papel)) throw new TypeError(`papel desconhecido: ${JSON.stringify(papel)}`);
+  const familias = Object.keys(ORDEM_MODELO);
+  const avisos = [];
+  let perfil = 'padrao';
+  const orq = orquestracao;
+  const orqOk = orq !== null && typeof orq === 'object' && !Array.isArray(orq);
+  if (orq !== undefined && !orqOk) avisos.push('`orquestracao` em harness.config.json não é um objeto');
+  if (orqOk && Object.hasOwn(orq, 'perfil')) {
+    if (typeof orq.perfil === 'string' && Object.hasOwn(PERFIS_MODELO, orq.perfil)) perfil = orq.perfil;
+    else avisos.push(`orquestracao.perfil inválido (${JSON.stringify(orq.perfil)}): esperado economia, padrao ou qualidade`);
+  }
+  const base = () => {
+    const t = PERFIS_MODELO[perfil][papel];
+    const fonte = perfil === 'padrao' ? 'padrao' : 'perfil';
+    return { modelo: t.modelo, ...(t.esforco !== undefined ? { esforco: t.esforco } : {}), fonte, nome: perfil === 'padrao' ? `o padrão ${t.modelo}` : `o do perfil ${perfil} (${t.modelo})` };
+  };
+  const saida = (r) => {
+    const { nome, ...resto } = r;
+    const aviso = avisos.length ? avisos.map((a) => (a.includes('usei') ? a : `${a}; usei ${nome}`)).join('; ') : undefined;
+    return { ...resto, ...(aviso !== undefined ? { aviso } : {}) };
+  };
+  const cai = (m) => { avisos.push(m); return saida(base()); };
+  if (!orqOk) return saida(base());
+  const modelos = orq.modelos;
+  if (modelos === undefined) return saida(base());
+  if (modelos === null || typeof modelos !== 'object' || Array.isArray(modelos)) return cai('orquestracao.modelos inválido (não é um objeto)');
+  if (!Object.hasOwn(modelos, papel)) return saida(base());
+  const e = modelos[papel];
+  let nome;
+  let esforco;
+  if (typeof e === 'string') nome = e;
+  else if (e !== null && typeof e === 'object' && !Array.isArray(e) && typeof e.modelo === 'string' && (e.esforco === undefined || (typeof e.esforco === 'string' && e.esforco !== ''))) {
+    nome = e.modelo;
+    esforco = e.esforco;
+  } else return cai(`orquestracao.modelos.${papel} inválido (esperado texto ou {modelo, esforco?})`);
+  const familia = familias.find((f) => nome.toLowerCase().includes(f));
+  if (familia === undefined) return cai(`orquestracao.modelos.${papel} ${JSON.stringify(nome)} não é haiku, sonnet, opus nem fable`);
+  return saida({ modelo: familia, ...(esforco !== undefined ? { esforco } : {}), fonte: 'explicito', nome: '' });
+}
+
 /** `permissions.deny` da 2ª camada da guarda (REQ-GRD-5). Sem `./` (profundidade qualquer) e nunca `Write(…)`. */
 export const DENY_GUARDA = [
   'Read(.env*)',

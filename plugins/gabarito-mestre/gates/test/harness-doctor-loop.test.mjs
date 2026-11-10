@@ -241,6 +241,43 @@ describe('T14 doctor — modelos-por-papel (REQ-MOD-1): só aviso', () => {
     assert.equal(rc(com), rc(sem));
   });
 
+  const comPerfil = (orq) => repoComGit({ 'AGENTS.md': agents(1), 'harness.config.json': JSON.stringify({ orquestracao: orq }) });
+
+  test('doctor-economia-nao-avisa-abaixo-do-padrao: com economia o recomendado é a tabela do perfil, não MODELOS_PADRAO', () => {
+    const dir = comPerfil({ perfil: 'economia', modelos: { revisor: 'sonnet', spike: 'sonnet', revisor_final: 'opus', implementador: { modelo: 'sonnet', esforco: 'medium' } } });
+    assert.deepEqual(avisosDe(dir), []);
+    assert.equal(check(dir).found, true);
+    // o mesmo declarado, sem perfil, é abaixo do padrão
+    assert.match(avisosDe(comModelos({ revisor: 'sonnet' }))[0], /revisor: declarado sonnet < recomendado opus/);
+  });
+
+  test('doctor-economia-abaixo-do-perfil-avisa: haiku onde a economia recomenda sonnet; qualidade recomenda opus', () => {
+    assert.equal(avisosDe(comPerfil({ perfil: 'economia', modelos: { revisor: 'haiku' } })).join('|'), 'modelos-por-papel: revisor: declarado haiku < recomendado sonnet');
+    assert.equal(avisosDe(comPerfil({ perfil: 'qualidade', modelos: { basico: 'haiku', revisor_final: 'opus' } })).join('|'), 'modelos-por-papel: basico: declarado haiku < recomendado sonnet; revisor_final: declarado opus < recomendado fable');
+  });
+
+  test('doctor-economia-linha-informar: economia ⇒ 1 linha informativa na evidência (found, sem aviso); outros perfis não a trazem', () => {
+    const LINHA = 'perfil economia: review de task e spike em sonnet, review final em opus';
+    for (const orq of [{ perfil: 'economia' }, { perfil: 'economia', modelos: {} }]) {
+      const dir = comPerfil(orq);
+      assert.equal(check(dir).evidence, LINHA);
+      assert.equal(check(dir).found, true);
+      assert.deepEqual(avisosDe(dir), []);
+    }
+    for (const orq of [{ perfil: 'padrao' }, { perfil: 'qualidade' }, {}]) assert.doesNotMatch(check(comPerfil(orq)).evidence ?? '', /perfil economia/, JSON.stringify(orq));
+    const r = spawnSync(process.execPath, [SCRIPT], { cwd: comPerfil({ perfil: 'economia' }), encoding: 'utf8' });
+    assert.ok(r.stdout.includes(`↳ ${LINHA}`), r.stdout);
+  });
+
+  test('doctor-perfil-invalido-aviso: perfil inválido ⇒ aviso e compara com o padrão; ausente não avisa (distintos)', () => {
+    const dir = comPerfil({ perfil: 'luxo', modelos: { revisor: 'sonnet' } });
+    const a = avisosDe(dir).join('|');
+    assert.match(a, /orquestracao\.perfil inválido \("luxo"\)/);
+    assert.match(a, /revisor: declarado sonnet < recomendado opus/);
+    assert.equal(check(dir).found, false);
+    assert.deepEqual(avisosDe(comPerfil({ modelos: { revisor: 'opus' } })), []);
+  });
+
   test('doctor-modelos-pela-borda: CLI real imprime o aviso na seção de avisos e no --json', () => {
     const dir = comModelos({ revisor: 'sonnet' });
     const r = spawnSync(process.execPath, [SCRIPT], { cwd: dir, encoding: 'utf8' });

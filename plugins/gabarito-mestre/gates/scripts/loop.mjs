@@ -46,7 +46,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { lerConfigOrigin, MODELOS_PADRAO } from '../lib/config.mjs';
+import { lerConfigOrigin, resolverModelo } from '../lib/config.mjs';
 import * as diario from '../dist/diario.js';
 import { escopoDaTask, projetarEmendas, SESSAO_EMENDAS, validarJulgamento, validarProposta } from '../dist/emenda.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
@@ -76,7 +76,6 @@ const DIFF_MAX = 4000;
 const ARQUIVOS_MAX = 50;
 const DADOS_MAX = 12000;
 const TETO_SOMBRA_PADRAO = 26;
-const FAMILIAS = ['haiku', 'sonnet', 'opus', 'fable'];
 const SEQ_RE = /^[1-9]\d{0,8}$/;
 const SINAIS_NEUTROS = { slots: 1, percent: null, x: X_PADRAO, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false };
 const GIT_REDIRECIONA = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_NAMESPACE'];
@@ -1056,31 +1055,14 @@ export function tetoDaSombra(origin) {
 /**
  * Modelo do papel do item: `implementador` e `correcao` usam a chave `implementador`, `revisor` a `revisor`. Fonte: `orquestracao.modelos` do config LOCAL
  * (a mesma de `orquestracao.modelo`; não decide produção), texto ou `{modelo, esforco?}`. Família = 1ª de haiku|sonnet|opus|fable contida no nome em caixa
- * baixa (`claude-opus-5-5` ⇒ `opus`): os agentes têm `model: inherit`, então o que o `Agent` recebe é esta família. Ausente ⇒ `MODELOS_PADRAO`;
- * entrada que não se entende ⇒ o padrão e um aviso (ausente ≠ corrompido).
+ * baixa (`claude-opus-5-5` ⇒ `opus`): os agentes têm `model: inherit`, então o que o `Agent` recebe é esta família. Resolução em `resolverModelo`
+ * (`lib/config.mjs`): explícito > `orquestracao.perfil` > `MODELOS_PADRAO`; entrada que não se entende ⇒ o perfil e um aviso (ausente ≠ corrompido).
  */
 function modeloDoItem(cfg, papel, aviso) {
   const chave = papel === 'revisor' ? 'revisor' : 'implementador';
-  const padrao = { ...MODELOS_PADRAO[chave] };
-  const avisa = (m) => { const t = `modelo do papel ${chave}: ${m}; usei o padrão ${padrao.modelo}`; if (!aviso.includes(t)) aviso.push(t); return padrao; };
-  const orq = cfg?.orquestracao;
-  if (orq === undefined) return padrao;
-  if (orq === null || typeof orq !== 'object' || Array.isArray(orq)) return avisa('`orquestracao` em harness.config.json não é um objeto');
-  const modelos = orq.modelos;
-  if (modelos === undefined) return padrao;
-  if (modelos === null || typeof modelos !== 'object' || Array.isArray(modelos)) return avisa('orquestracao.modelos inválido (não é um objeto)');
-  if (!Object.hasOwn(modelos, chave)) return padrao;
-  const e = modelos[chave];
-  let nome;
-  let esforco;
-  if (typeof e === 'string') nome = e;
-  else if (e !== null && typeof e === 'object' && !Array.isArray(e) && typeof e.modelo === 'string' && (e.esforco === undefined || (typeof e.esforco === 'string' && e.esforco !== ''))) {
-    nome = e.modelo;
-    esforco = e.esforco;
-  } else return avisa(`orquestracao.modelos.${chave} inválido (esperado texto ou {modelo, esforco?})`);
-  const familia = FAMILIAS.find((f) => nome.toLowerCase().includes(f));
-  if (familia === undefined) return avisa(`orquestracao.modelos.${chave} ${JSON.stringify(nome)} não é haiku, sonnet, opus nem fable`);
-  return { modelo: familia, ...(esforco !== undefined ? { esforco } : {}) };
+  const { modelo, esforco, aviso: a } = resolverModelo(cfg?.orquestracao, chave);
+  if (a !== undefined) { const t = `modelo do papel ${chave}: ${a}`; if (!aviso.includes(t)) aviso.push(t); }
+  return { modelo, ...(esforco !== undefined ? { esforco } : {}) };
 }
 
 /**
