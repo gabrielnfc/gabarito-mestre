@@ -741,7 +741,7 @@ describe('spec, título, pausa, teto e política', { timeout: 60_000 }, () => {
   });
 
   test('política e base da origem: rodape.politica e o merge da release usam entrega.politica e entrega.base', () => {
-    const m = montar({ origem: { entrega: { politica: 'janela', base: 'release-x', janela: { dias: [1, 3], inicio: '02:00', fim: '04:00', fuso: 'UTC' }, comandos: { deploy: { argv: ['true'], timeout_s: 5 } } } } });
+    const m = montar({ origem: { entrega: { politica: 'janela', autonomia: true, base: 'release-x', janela: { dias: [1, 3], inicio: '02:00', fim: '04:00', fuso: 'UTC' }, comandos: { deploy: { argv: ['true'], timeout_s: 5 } } } } });
     assert.equal(estado(m).estado.rodape.politica, 'janela [seg qua]');
     const sem = montar({ origem: {} });
     assert.equal(estado(sem).estado.rodape.politica, 'sob_demanda');

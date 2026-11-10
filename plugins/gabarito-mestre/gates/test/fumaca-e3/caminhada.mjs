@@ -147,7 +147,7 @@ export function caminharEntregaFalha() {
   for (const [nome, corpo] of Object.entries(corpos)) writeFileSync(join(repo, 'fake', `${nome}.sh`), `M='${marcas}'\necho "$0|$PWD" >> "$M/exec.log"\n${corpo}\n`);
   const comandos = {};
   for (const nome of ['deploy', 'smoke', 'rollback']) comandos[nome] = { argv: ['bash', join(repo, 'fake', `${nome}.sh`), ...(nome === 'deploy' ? [sentinela] : [])], timeout_s: 20 };
-  writeFileSync(join(repo, 'harness.config.json'), `${JSON.stringify({ gates: { suites: ["echo '# pass 1'"] }, loop: { slots: 2 }, entrega: { politica: 'continua', base: 'enabler/GM-99-fumaca', comandos } })}\n`);
+  writeFileSync(join(repo, 'harness.config.json'), `${JSON.stringify({ gates: { suites: ["echo '# pass 1'"] }, loop: { slots: 2 }, entrega: { politica: 'continua', autonomia: true, base: 'enabler/GM-99-fumaca', comandos } })}\n`);
   git(repo, 'add', '-A');
   git(repo, 'commit', '-q', '-m', 'chore: base');
   const bare = join(dir, 'origin.git');

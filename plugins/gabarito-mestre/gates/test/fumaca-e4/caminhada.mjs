@@ -71,7 +71,7 @@ function montar() {
     writeFileSync(join(dir, 'fake', `${nome}.sh`), `touch '${join(base, `RODOU-${nome}`)}'\n`);
     comandos[nome] = { argv: ['bash', join(dir, 'fake', `${nome}.sh`)], timeout_s: 20 };
   }
-  writeFileSync(join(dir, 'harness.config.json'), `${JSON.stringify({ gates: { suites: ["echo '# pass 1'"] }, loop: { slots: 3 }, entrega: { politica: 'continua', base: BRANCH, comandos } })}\n`);
+  writeFileSync(join(dir, 'harness.config.json'), `${JSON.stringify({ gates: { suites: ["echo '# pass 1'"] }, loop: { slots: 3 }, entrega: { politica: 'continua', autonomia: true, base: BRANCH, comandos } })}\n`);
   git(dir, 'add', '-A');
   git(dir, 'commit', '-q', '-m', 'chore: base');
   git(bare, 'init', '-q', '--bare', '-b', BRANCH);

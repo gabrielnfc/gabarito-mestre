@@ -2748,7 +2748,7 @@ describe('E3 T10: proxima, modelo, decisões, emendas e avisos', () => {
     assert.deepEqual(j.acao, { tipo: 'parar', motivo: 'janela_ausente' });
     assert.equal(amb.cli(['parar', 'janela_ausente']).rc, 0);
     const abre = ambiente({ plano: { ...PLANO_PADRAO, politica_entrega: { exige_prod: true, politica: 'janela' } } });
-    comOrigin(abre, { entrega: { politica: 'continua' } }); // o plano aperta continua → janela, mas não traz a janela
+    comOrigin(abre, { entrega: { politica: 'continua', autonomia: true } }); // o plano aperta continua → janela, mas não traz a janela
     const r = abre.cli(['proxima', '--vivos', '0']);
     assert.equal(r.j.erro, 'janela_ausente', 'janela pedida sem janela declarada recusa com a causa');
     assert.equal(r.rc, 1);

@@ -337,7 +337,7 @@ test('janela-nao-lanca-com-fuso-ruim: total', () => {
 
 // ---------------------------------------------------------------- política efetiva
 
-const cfg = (politica: PoliticaEntrega, janela: Janela | null): ConfigEntrega => ({ politica, base: 'main', janela, comandos: {}, erros: [] });
+const cfg = (politica: PoliticaEntrega, janela: Janela | null, autonomia = true): ConfigEntrega => ({ politica, base: 'main', janela, comandos: {}, autonomia, erros: [] });
 const JC: Janela = { dias: [1], inicio: '01:00', fim: '02:00', fuso: 'UTC' };
 const JP: Janela = { dias: [2], inicio: '03:00', fim: '04:00', fuso: 'UTC' };
 
@@ -394,7 +394,7 @@ test('p-janela-sem-politica-nao-aperta', () => {
 
 // ---------------------------------------------------------------- lerConfigEntrega
 
-const DEFAULT = { politica: 'sob_demanda', base: 'main', janela: null, comandos: {}, erros: [] };
+const DEFAULT = { politica: 'sob_demanda', base: 'main', janela: null, comandos: {}, autonomia: false, erros: [] };
 
 test('config-ausente-x-corrompida', () => {
   assert.deepEqual(lerConfigEntrega(null), DEFAULT);
@@ -494,6 +494,154 @@ test('config-comandos-validos: timeout default 600, chave desconhecida ignorada'
   assert.ok(lerConfigEntrega({ entrega: { comandos: 'x' } }).erros.length > 0);
 });
 
+// ---------------------------------------------------------------- autonomia em produção (GM-13 T4a, REQ-AUT-1)
+// M-AUT1a  lê `autonomia` do config local ⇒ config-local-autonomia-ignorada (entrega-cli.test.mjs)
+// M-AUT1b  ausente ⇒ `true` ⇒ continua-autonomia-ausente-false-e-sim-texto-sob-demanda, autonomia-ausente-x-corrompida
+// M-AUT1c  autonomia só no ramo sem pedido ⇒ plano-continua-autonomia-false-afrouxada, janela-autonomia-false-sob-demanda
+
+const AUT_CORROMPIDA: unknown[] = ['sim', 'true', 1, 0, null, {}, []];
+const efetiva = (c: ConfigEntrega, p?: Parameters<typeof politicaEfetiva>[1]) => politicaEfetiva(c, p);
+
+test('continua-autonomia-ausente-false-e-sim-texto-sob-demanda', () => {
+  const casos: unknown[] = [undefined, false, 'sim'];
+  for (const autonomia of casos) {
+    const bruto = { entrega: { politica: 'continua', ...(autonomia === undefined ? {} : { autonomia }) } };
+    const c = lerConfigEntrega(bruto);
+    assert.equal(c.autonomia, false, String(autonomia));
+    const r = efetiva(c);
+    assert.deepEqual(r, { ok: true, politica: 'sob_demanda', janela: null }, String(autonomia));
+    assert.ok(r.ok);
+    assert.deepEqual(
+      dec(diario(INT, HV), { politica: r.politica, janela: r.janela, comandos: TODOS }),
+      { tipo: 'release_pr', base: 'main' }, String(autonomia),
+    );
+  }
+});
+
+test('continua-autonomia-true-sobe', () => {
+  const c = lerConfigEntrega({ entrega: { politica: 'continua', autonomia: true } });
+  assert.equal(c.autonomia, true);
+  const r = efetiva(c);
+  assert.deepEqual(r, { ok: true, politica: 'continua', janela: null });
+  assert.ok(r.ok);
+  assert.deepEqual(dec(diario(INT, HV), { politica: r.politica, janela: r.janela }), { tipo: 'subir' });
+});
+
+test('plano-continua-autonomia-false-afrouxada', () => {
+  for (const politica of ['continua', 'janela'] as const) {
+    const r = efetiva(cfg(politica, JC, false), { exige_prod: false, politica: 'continua' });
+    assert.equal(r.ok, false, politica);
+    if (!r.ok) assert.equal(r.erro, 'politica_afrouxada', politica);
+  }
+  const j = efetiva(cfg('continua', JC, false), { exige_prod: false, politica: 'janela', janela: JP });
+  assert.equal(j.ok, false);
+  if (!j.ok) assert.equal(j.erro, 'politica_afrouxada');
+  assert.deepEqual(efetiva(cfg('continua', JC, false), { exige_prod: false, politica: 'sob_demanda' }), { ok: true, politica: 'sob_demanda', janela: null });
+});
+
+test('janela-autonomia-false-sob-demanda', () => {
+  assert.deepEqual(efetiva(cfg('janela', JC, false)), { ok: true, politica: 'sob_demanda', janela: null });
+  assert.deepEqual(efetiva(cfg('janela', JC, false), { exige_prod: false }), { ok: true, politica: 'sob_demanda', janela: null });
+  assert.deepEqual(efetiva(cfg('janela', JC, true)), { ok: true, politica: 'janela', janela: JC });
+});
+
+test('autonomia-ausente-x-corrompida: ausente sem erro, corrompida com exatamente 1 erro', () => {
+  assert.deepEqual(lerConfigEntrega({ entrega: { politica: 'continua' } }).erros, []);
+  assert.deepEqual(lerConfigEntrega({ entrega: { politica: 'continua', autonomia: undefined } }).erros, []);
+  for (const v of AUT_CORROMPIDA) {
+    const c = lerConfigEntrega({ entrega: { politica: 'continua', autonomia: v } });
+    assert.equal(c.autonomia, false, JSON.stringify(v));
+    assert.deepEqual(c.erros, ['entrega.autonomia: esperado booleano'], JSON.stringify(v));
+  }
+  assert.deepEqual(lerConfigEntrega({ entrega: { autonomia: false } }).erros, []);
+  assert.equal(lerConfigEntrega({ entrega: { autonomia: true } }).autonomia, true);
+});
+
+test('ler-config-sem-entrega-valida: cfg nula, vazia, sem entrega e entrega torta ⇒ autonomia false', () => {
+  for (const cfgBruto of [null, undefined, {}, { entrega: 'x' }, 'x', { entrega: [] }]) {
+    assert.equal(lerConfigEntrega(cfgBruto).autonomia, false, JSON.stringify(cfgBruto));
+    assert.equal(lerConfigEntrega(cfgBruto).politica, 'sob_demanda', JSON.stringify(cfgBruto));
+  }
+  assert.deepEqual(lerConfigEntrega({ entrega: 'x' }).erros, ['entrega: esperado objeto']);
+});
+
+test('ler-config-preserva-politica-com-autonomia: a declarada nunca é reescrita', () => {
+  assert.deepEqual(lerConfigEntrega({ entrega: { politica: 'continua' } }), { ...DEFAULT, politica: 'continua' });
+  assert.deepEqual(lerConfigEntrega({ entrega: { politica: 'continua', autonomia: false } }), { ...DEFAULT, politica: 'continua' });
+  assert.deepEqual(lerConfigEntrega({ entrega: { politica: 'continua', autonomia: true } }), { ...DEFAULT, politica: 'continua', autonomia: true });
+  const j = lerConfigEntrega({ entrega: { politica: 'janela', janela: UTC_JANELA, autonomia: 'sim' } });
+  assert.equal(j.politica, 'janela');
+  assert.deepEqual(j.janela, UTC_JANELA);
+});
+
+test('autonomia-null-e-texto-erro-unico: null não é ausente; um erro só, sem duplicar outro campo', () => {
+  const c = lerConfigEntrega({ entrega: { politica: 'continua', autonomia: null } });
+  assert.equal(c.erros.length, 1);
+  assert.equal(c.erros[0], 'entrega.autonomia: esperado booleano');
+  const d = lerConfigEntrega({ entrega: { politica: 'x', autonomia: 'sim' } });
+  assert.equal(d.erros.filter((e) => e.startsWith('entrega.autonomia')).length, 1);
+  assert.equal(d.erros.length, 2);
+});
+
+test('politica-efetiva-nao-muta-config', () => {
+  const c = cfg('continua', JC, false);
+  const antes = JSON.parse(JSON.stringify(c));
+  efetiva(c);
+  efetiva(c, { exige_prod: true, politica: 'continua' });
+  efetiva(c, { exige_prod: false, politica: 'sob_demanda' });
+  assert.deepEqual(c, antes);
+  assert.equal(c.politica, 'continua');
+});
+
+test('exige-prod-autonomia-ausente-janela-ausente: efetiva sob_demanda ⇒ decidirEntrega para (r3, item 2)', () => {
+  const c = lerConfigEntrega({ entrega: { politica: 'continua' } });
+  const r = efetiva(c);
+  assert.ok(r.ok);
+  assert.equal(r.politica, 'sob_demanda');
+  assert.deepEqual(
+    dec(diario(INT, HV), { politica: r.politica, janela: r.janela, exigeProd: true }),
+    { tipo: 'parar', motivo: 'janela_ausente' },
+  );
+  const com = efetiva(lerConfigEntrega({ entrega: { politica: 'continua', autonomia: true } }));
+  assert.ok(com.ok);
+  assert.deepEqual(dec(diario(INT, HV), { politica: com.politica, janela: com.janela, exigeProd: true }), { tipo: 'subir' }, 'com autonomia a política declarada vale (igual a hoje)');
+});
+
+test('autonomia-true-sob-demanda-nao-afrouxa', () => {
+  assert.deepEqual(efetiva(cfg('sob_demanda', null, true)), { ok: true, politica: 'sob_demanda', janela: null });
+  for (const pedida of ['continua', 'janela'] as const) {
+    const r = efetiva(cfg('sob_demanda', null, true), { exige_prod: false, politica: pedida, janela: JP });
+    assert.equal(r.ok, false, pedida);
+    if (!r.ok) assert.equal(r.erro, 'politica_afrouxada', pedida);
+  }
+  assert.deepEqual(efetiva(cfg('continua', JC, true), { exige_prod: false, politica: 'janela' }), { ok: true, politica: 'janela', janela: JC });
+});
+
+test('autonomia-undefined-no-objeto-a-mao-vale-false', () => {
+  const c = { politica: 'continua', base: 'main', janela: null, comandos: {}, erros: [] } as unknown as ConfigEntrega;
+  assert.deepEqual(efetiva(c), { ok: true, politica: 'sob_demanda', janela: null });
+  for (const autonomia of [1, 'true', null, {}]) {
+    assert.deepEqual(efetiva({ ...c, autonomia } as unknown as ConfigEntrega), { ok: true, politica: 'sob_demanda', janela: null }, String(autonomia));
+  }
+});
+
+test('afrouxada-mensagem-cita-autonomia', () => {
+  const rebaixada = efetiva(cfg('continua', null, false), { exige_prod: false, politica: 'continua' });
+  assert.equal(rebaixada.ok, false);
+  if (!rebaixada.ok) {
+    assert.equal(
+      rebaixada.mensagem,
+      'o plano pede "continua", mais frouxo que o config ("continua", efetiva "sob_demanda" sem entrega.autonomia): o plano só aperta',
+    );
+  }
+  const direta = efetiva(cfg('janela', JC, true), { exige_prod: false, politica: 'continua' });
+  assert.equal(direta.ok, false);
+  if (!direta.ok) assert.equal(direta.mensagem, 'o plano pede "continua", mais frouxo que o config ("janela"): o plano só aperta');
+  const sobDemanda = efetiva(cfg('sob_demanda', null, false), { exige_prod: false, politica: 'janela', janela: JP });
+  assert.equal(sobDemanda.ok, false);
+  if (!sobDemanda.ok) assert.equal(sobDemanda.mensagem, 'o plano pede "janela", mais frouxo que o config ("sob_demanda"): o plano só aperta');
+});
+
 // ---------------------------------------------------------------- estático e costura
 
 test('entrega-sem-relogio', () => {
@@ -505,7 +653,7 @@ test('entrega-sem-relogio', () => {
 test('costura: config bruto de origin atravessa lerConfigEntrega, politicaEfetiva e decidirEntrega', () => {
   const bruto = JSON.parse(JSON.stringify({
     entrega: {
-      politica: 'janela', base: 'release',
+      politica: 'janela', base: 'release', autonomia: true,
       janela: { dias: [1], inicio: '22:00', fim: '23:00', fuso: 'UTC' },
       comandos: { deploy: { argv: ['./d'] }, smoke: { argv: ['./s'] }, rollback: { argv: ['./r'] } },
     },

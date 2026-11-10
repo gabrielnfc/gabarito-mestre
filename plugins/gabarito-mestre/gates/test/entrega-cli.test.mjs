@@ -40,7 +40,7 @@ const PLANO_PADRAO = ['T1', 'T2'];
  * `true`/`false`/`null` (sem resultado).
  */
 function montar({
-  politica = 'continua', janela, origem, semOrigin = false, local, scripts = {}, timeouts = {}, extraArgv = [], deployArgv, comandos = ['deploy', 'smoke', 'rollback'],
+  politica = 'continua', autonomia = true, semAutonomia = false, janela, origem, semOrigin = false, local, scripts = {}, timeouts = {}, extraArgv = [], deployArgv, comandos = ['deploy', 'smoke', 'rollback'],
   tasks = PLANO_PADRAO, integradas = tasks, homolog = true, planoExtra = {},
 } = {}) {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'entrega cli ')));
@@ -61,7 +61,7 @@ function montar({
     const argv = nome === 'deploy' && deployArgv ? deployArgv(base) : ['bash', join(repo, 'fake', `${nome}.sh`), ...(nome === 'deploy' ? extraArgv : [])];
     cmds[nome] = { argv, timeout_s: timeouts[nome] ?? 20 };
   }
-  const entrega = { politica, base: 'main', comandos: cmds, ...(janela ? { janela } : {}) };
+  const entrega = { politica, ...(semAutonomia ? {} : { autonomia }), base: 'main', comandos: cmds, ...(janela ? { janela } : {}) };
   const cfgOrigem = origem === undefined ? { entrega } : origem;
   if (cfgOrigem !== false) writeFileSync(join(repo, 'harness.config.json'), typeof cfgOrigem === 'string' ? cfgOrigem : JSON.stringify(cfgOrigem));
   writeFileSync(join(repo, 'README.md'), 'x\n');
@@ -635,6 +635,44 @@ describe('executar: pré-condições (nada roda, nada se grava)', { concurrency:
     assert.equal(ex.rc, 1);
     assert.equal(ex.json.erro, 'nao_subiu');
     assert.equal(execLog(m).length, 0);
+  });
+
+  test('config-local-autonomia-ignorada', () => {
+    // local `autonomia: true` (commitado só no local); origin `continua` sem a chave: a autonomia é de origin/HEAD (M-AUT1a)
+    const origem = { entrega: { politica: 'continua', comandos: {} } };
+    const m = montar({ origem, local: { entrega: { politica: 'continua', autonomia: true, comandos: {} } } });
+    const dec = rodar(m, 'decidir');
+    assert.equal(dec.rc, 0, JSON.stringify(dec.json));
+    assert.deepEqual(dec.json.decisao, { tipo: 'release_pr', base: 'main' });
+    assert.equal(dec.json.politica, 'sob_demanda');
+    assert.equal(execLog(m).length, 0);
+  });
+
+  test('autonomia-de-origin-sobe-e-ausente-ou-corrompida-nao', () => {
+    // costura: config bruto de origin/HEAD pelo CLI real ⇒ lerConfigEntrega ⇒ politicaEfetiva ⇒ decidirEntrega
+    const sobe = rodar(montar({ autonomia: true }), 'decidir');
+    assert.deepEqual(sobe.json.decisao, { tipo: 'subir' });
+    assert.equal(sobe.json.politica, 'continua');
+    const ausente = rodar(montar({ semAutonomia: true }), 'decidir').json;
+    assert.deepEqual(ausente.decisao, { tipo: 'release_pr', base: 'main' });
+    assert.equal(ausente.politica, 'sob_demanda');
+    assert.equal('aviso' in ausente, false, 'ausente não é corrompido: sem aviso');
+    const texto = rodar(montar({ autonomia: 'sim' }), 'decidir').json;
+    assert.deepEqual(texto.decisao, { tipo: 'release_pr', base: 'main' });
+    assert.equal(texto.politica, 'sob_demanda');
+    assert.match(texto.aviso, /entrega\.autonomia: esperado booleano/);
+  });
+
+  test('plano-continua-autonomia-ausente-afrouxada: o plano que pede continua não sobe sem entrega.autonomia', () => {
+    const m = montar({ semAutonomia: true, planoExtra: { politica_entrega: { politica: 'continua', exige_prod: false } } });
+    const antes = eventos(m).length;
+    const dec = rodar(m, 'decidir');
+    assert.equal(dec.rc, 1);
+    assert.equal(dec.json.erro, 'politica_afrouxada');
+    assert.match(dec.json.mensagem ?? JSON.stringify(dec.json), /sem entrega\.autonomia/);
+    const { rc, json } = rodar(m, 'executar');
+    assert.equal(rc, 1);
+    semEfeito(m, antes, json, 'politica_afrouxada');
   });
 
   test('sem-origin-sob-demanda', () => {

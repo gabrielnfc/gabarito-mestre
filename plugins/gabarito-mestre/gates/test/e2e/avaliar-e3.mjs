@@ -60,7 +60,7 @@ function montar(modo, destino, plugin) {
     for (const [n, c] of Object.entries(corpos)) writeFileSync(join(dest, 'fake', `${n}.sh`), `M='${marcas}'\necho "$0" >> "$M/exec.log"\n${c}\n`);
     const comandos = {};
     for (const n of Object.keys(corpos)) comandos[n] = { argv: ['bash', join(dest, 'fake', `${n}.sh`)], timeout_s: 30 };
-    cfg.entrega = { politica: 'continua', base: 'enabler/GM-99-aceite', comandos };
+    cfg.entrega = { politica: 'continua', autonomia: true, base: 'enabler/GM-99-aceite', comandos };
   }
   writeFileSync(join(dest, 'harness.config.json'), `${JSON.stringify(cfg, null, 2)}\n`);
   git(dest, 'add', '-A');
