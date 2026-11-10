@@ -8,8 +8,11 @@
  *   plano ilegível/inválido ........ systemMessage, nunca block
  *   subagent vivo ................. silêncio (shell em background não conta)
  *   .harness/PAUSAR ............... silêncio (na raiz ou no checkout principal)
- *   loop.parar sem task depois .... silêncio
  *   diário ilegível ............... systemMessage, nunca vira `concluir`
+ *   proximaAcao parar diario_invalido ... systemMessage (não consulta pendência: o CLI do aprendizado não fecharia nada)
+ *   aprendizado pendente (T7b, REQ-APR-2) ... calculado à parte (`pendenciasAprendizado`, nunca de acao.tipo === 'aprender': ci_vermelho,
+ *                                  teto_rodadas e nao_conseguiu vencem o `aprender`): não avisada ⇒ block uma vez por gatilho; já avisada ⇒ systemMessage
+ *   loop.parar sem task depois .... silêncio
  *   proximaAcao: esperar ......... silêncio (exceto `emenda`: systemMessage com as propostas abertas, sem block e sem contador); parar: systemMessage; despachar/integrar: block
  *   concluir ...................... silêncio, ou systemMessage listando as liberações do dono (`task.reaberta` origem `dono`; REQ-LOOP-2)
  * Pouso pendente (T18): `.harness/pouso-pendente.json {entrega, linhas}`, gravado pelo mod ao negar `Agent` porque a ação é `pousar`.
@@ -34,6 +37,8 @@ const SESSAO_DO_HOOK = 'stop-loop';
 const PLANO_MAX = 1024 * 1024;
 const STOPS_MAX = 1_000_000;
 const ITENS_NO_MOTIVO = 6;
+const PENDENCIAS_NO_MOTIVO = 6;
+const COMANDO_APRENDIZADO = 'Feche com loop.mjs aprendizado <E|A> <D|M> --gatilho <sessao:seq> --regra <t> --entra-em <a> ou loop.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>.';
 const PAPEL = { implementador: 'implementador', revisor: 'revisor', correcao: 'correção' };
 const MOTIVO = {
   teto_rodadas: 'teto de rodadas de review',
@@ -211,6 +216,46 @@ function tentarApagar(caminho) {
   }
 }
 
+/**
+ * Estado `{entrega, avisados: string[]}` (`"sessao:seq"`). Ausente ou de outra entrega ⇒ vazio e calado; ilegível, não JSON ou de forma
+ * errada ⇒ vazio com `causa`. A forma é validada: `avisados` de texto faria `.includes` casar substring.
+ */
+function lerAvisados(caminho, entrega) {
+  let bruto;
+  try {
+    bruto = readFileSync(caminho, 'utf8');
+  } catch (e) {
+    if (e?.code === 'ENOENT') return { avisados: new Set(), causa: null };
+    return { avisados: new Set(), causa: `Loop: estado do aviso de aprendizado ilegível (${e?.code ?? 'erro'}); recomeçou` };
+  }
+  const corrompido = { avisados: new Set(), causa: 'Loop: estado do aviso de aprendizado corrompido; recomeçou' };
+  let o;
+  try {
+    o = JSON.parse(bruto);
+  } catch {
+    return corrompido;
+  }
+  if (o === null || typeof o !== 'object' || Array.isArray(o) || typeof o.entrega !== 'string'
+    || !Array.isArray(o.avisados) || !o.avisados.every((c) => typeof c === 'string')) return corrompido;
+  return { avisados: o.entrega === entrega ? new Set(o.avisados) : new Set(), causa: null };
+}
+
+/** Aviso de aprendizado pendente. Todas já avisadas ⇒ só systemMessage; alguma nova ⇒ block, depois de gravar o estado (block sem estado seria infinito). */
+function avisoAprendizado(raiz, entrega, abertas) {
+  const caminho = join(raiz, '.harness', 'stop-aprender.json');
+  const chaves = abertas.map((p) => `${p.sessao}:${p.seq}`);
+  const { avisados, causa } = lerAvisados(caminho, entrega);
+  const novas = chaves.some((c) => !avisados.has(c));
+  const lista = abertas.slice(0, PENDENCIAS_NO_MOTIVO).map((p) => `${limpo(p.tipo)} ${limpo(p.sessao)}:${limpo(p.seq)}`);
+  const resto = abertas.length - lista.length;
+  const texto = `Loop da entrega ${limpo(entrega)} tem aprendizado pendente: ${lista.join(', ')}${resto > 0 ? ` e mais ${resto}` : ''}. ${COMANDO_APRENDIZADO}`;
+  const igual = causa === null && chaves.length === avisados.size && chaves.every((c) => avisados.has(c));
+  const falha = igual ? null : gravarContador(caminho, { entrega, avisados: chaves }); // poda: fica só o que ainda está aberto
+  if (falha !== null) return aviso(`${texto} O estado do aviso não grava (${falha}); sem ele o bloqueio não teria fim, então não bloqueio.`);
+  if (!novas) return aviso(texto);
+  return causa === null ? { decision: 'block', reason: texto } : { decision: 'block', reason: texto, systemMessage: causa };
+}
+
 function pausado(raiz) {
   if (existsSync(join(raiz, '.harness', 'PAUSAR'))) return true;
   const comum = git(raiz, ['rev-parse', '--git-common-dir']);
@@ -309,19 +354,33 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   const { eventos } = lido;
 
   const ord = dl.mod.ordenar(eventos);
-  if (ord.ok) {
-    const iParar = ord.eventos.map((e) => e.tipo).lastIndexOf('loop.parar');
-    if (iParar >= 0 && !ord.eventos.slice(iParar + 1).some((e) => TIPOS_DE_TASK.includes(e.tipo))) return null;
-  }
-
   let acao;
+  let falhaAcao = null;
   try {
     acao = dl.mod.proximaAcao(plano, eventos, {
       slots: 1, percent: null, x: X_PADRAO, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false,
     });
   } catch (e) {
-    return aviso(`Loop: proximaAcao falhou (${curto(e?.name ?? 'erro', 60)}); nada decidido`);
+    falhaAcao = aviso(`Loop: proximaAcao falhou (${curto(e?.name ?? 'erro', 60)}); nada decidido`);
   }
+  // Diário que a `proximaAcao` recusa: aviso de sempre, sem pendência (calculada sobre ele, o CLI do aprendizado não a fecharia).
+  if (acao?.tipo === 'parar' && acao.motivo === 'diario_invalido') return saidaParaAcao(acao, entrega);
+
+  // Pendência à parte: `parar` por ci_vermelho/teto_rodadas/nao_conseguiu vence o `aprender`, e o `loop.parar` do mod abre pendência `parar`.
+  if (ord.ok) {
+    const dpend = await carregar('pendencias');
+    if (!dpend.ok) return dpend.aviso;
+    let abertas;
+    try {
+      abertas = dpend.mod.pendenciasAprendizado(plano, eventos);
+    } catch (e) {
+      return aviso(`Loop: pendenciasAprendizado falhou (${curto(e?.name ?? 'erro', 60)}); nada decidido`);
+    }
+    if (Array.isArray(abertas) && abertas.length > 0) return avisoAprendizado(raiz, entrega, abertas);
+    const iParar = ord.eventos.map((e) => e.tipo).lastIndexOf('loop.parar');
+    if (iParar >= 0 && !ord.eventos.slice(iParar + 1).some((e) => TIPOS_DE_TASK.includes(e.tipo))) return null;
+  }
+  if (falhaAcao !== null) return falhaAcao;
   if (acao.tipo === 'concluir') return avisoLiberacoes(eventos, entrega);
   if (acao.tipo !== 'despachar' && acao.tipo !== 'integrar') return saidaParaAcao(acao, entrega);
 
