@@ -1,0 +1,18 @@
+{
+  "entrega": "GM-99",
+  "spec": "docs/spec.md",
+  "tasks": [
+    { "id": "T1", "titulo": "Núcleo do plano", "deps": [], "arquivos": ["src/t1.mjs"], "reqs": ["REQ-A-1"] },
+    { "id": "T2", "titulo": "Ordem de chegada", "deps": [], "arquivos": ["src/t2.mjs"], "reqs": ["REQ-A-2"] },
+    { "id": "T3", "titulo": "Agentes vivos", "deps": [], "arquivos": ["src/t3.mjs"], "reqs": ["REQ-A-3"] },
+    { "id": "T4", "titulo": "Histórico", "deps": ["T1"], "arquivos": ["src/t4.mjs"], "reqs": ["REQ-A-4"] },
+    { "id": "T5", "titulo": "Esquadrão", "deps": ["T1"], "arquivos": ["src/t5.mjs"], "reqs": ["REQ-A-5"] },
+    { "id": "T6", "titulo": "Executivo", "deps": ["T1"], "arquivos": ["src/t6.mjs"], "reqs": ["REQ-A-6"] },
+    { "id": "T7", "titulo": "Largura", "deps": ["T2"], "arquivos": ["src/t7.mjs"], "reqs": ["REQ-A-7"] },
+    { "id": "T8", "titulo": "Depende de você", "deps": ["T3"], "arquivos": ["src/t8.mjs"], "reqs": ["REQ-A-8"] },
+    { "id": "T9", "titulo": "Pane", "deps": ["T5"], "arquivos": ["src/t9.mjs"], "reqs": ["REQ-A-9"] },
+    { "id": "T10", "titulo": "Faixa", "deps": ["T5"], "arquivos": ["src/t10.mjs"], "reqs": ["REQ-A-10"] },
+    { "id": "T11", "titulo": "Comando", "deps": ["T6"], "arquivos": ["src/t11.mjs"], "reqs": ["REQ-A-11"] },
+    { "id": "T12", "titulo": "Aceites", "deps": ["T9", "T10", "T11"], "arquivos": ["src/t12.mjs"], "reqs": ["REQ-A-12"] }
+  ]
+}
