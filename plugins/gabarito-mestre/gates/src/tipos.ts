@@ -159,7 +159,7 @@ export type Linha = Segmento[];
 export type PacoteNomes = { nome: string; lider: string; sabio: string; nomes: string[] };
 export type UsoAgente = { contexto: number; tok: number; modelo: string | null };
 export type AgenteVivo = { id: string; type: string; description: string; status: string; uso: UsoAgente | null };
-/** `fuso`, `base`, `entregaId`, `modeloSessao`, `specSha` e `tetoSombra` só o CLI preenche (Sombra 5); o mod nunca. */
+/** `fuso`, `entregaId`, `modeloSessao`, `specSha` e `tetoSombra` só o CLI preenche (Sombra 5); o mod nunca. */
 export type EntradaPainel = {
   /** Só preenchida pelo CLI com o loop em `concluir` (toda task integrada e sem proposta aberta). */
   decisaoEntrega: DecisaoEntrega | null;
@@ -175,7 +175,6 @@ export type EntradaPainel = {
   fuso: string;
   titulo: string | null;
   politica: { politica: PoliticaEntrega; dias: number[] | null };
-  base: string;
   entregaId: string;
   modeloSessao: string | null;
   /** sha256 atual de `plano.spec`. */

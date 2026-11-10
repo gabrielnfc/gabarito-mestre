@@ -15,7 +15,7 @@ import { join, dirname } from 'node:path';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as diario from '../dist/diario.js';
 import { renderPainel } from '../dist/painel.js';
 import { paraTexto } from '../dist/painel-texto.js';
@@ -30,6 +30,9 @@ const FIXTURE = join(AQUI, 'fixtures', 'transcript-agente.jsonl');
 const ENTREGA = 'GM-12';
 const AGORA = Date.UTC(2026, 10, 9, 15, 0, 0);
 const raizes = [];
+/** Toda chamada em processo de `main` sem `--agentes` recebe um stdin que LANÇA: ler o stdin sem a flag falha em ms, nunca trava. */
+const SEM_STDIN = () => { throw new Error('stdin lido sem --agentes'); };
+const IO = (extra) => ({ aviso: () => {}, agoraMs: AGORA, stdin: SEM_STDIN, ...extra });
 const novoTmp = (p) => { const d = realpathSync(mkdtempSync(join(tmpdir(), p))); raizes.push(d); return d; };
 after(() => { /* os temporários vivem no TMPDIR do sistema; nada a apagar daqui (R2) */ });
 
@@ -116,7 +119,7 @@ function hashArvore(raiz) {
   return h.digest('hex');
 }
 
-describe('forma do estado e do texto', () => {
+describe('forma do estado e do texto', { timeout: 60_000 }, () => {
   test('estado-json-forma: uma linha, ok:true, e cada campo lido', () => {
     const m = montar({ ...comEventos([...INTEGRAR('T1'), ['task.iniciada', { task: 'T2', papel: 'implementador', modelo: 'sonnet' }]]) });
     const r = cli(m, ['estado']);
@@ -142,22 +145,22 @@ describe('forma do estado e do texto', () => {
   test('texto-padrao-80-esquadrao-mono: o texto é paraTexto(renderPainel(estado)) com 80 colunas, esquadrao, mono, e PAROU vem do diário', () => {
     const m = montar({ ...comEventos([...INTEGRAR('T1'), PARAR]) });
     const saidas = [];
-    const rc = main(['texto'], m.repo, { saida: (t) => saidas.push(t), aviso: () => {}, agoraMs: AGORA });
+    const rc = main(['texto'], m.repo, IO({ saida: (t) => saidas.push(t) }));
     assert.equal(rc, 0);
     const e = estado(m).estado;
     const esperado = paraTexto(renderPainel(e, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 80 }), 'mono');
     assert.equal(saidas.join(''), `${esperado}\n`);
     assert.ok(!saidas.join('').includes('\x1b['), 'mono: sem SGR');
     assert.equal(e.parar.motivo, 'sem_progresso');
-    // o Esquadrão (T5) é outra task: o PAROU do texto é conferido pelo preset que já existe
+    assert.match(saidas.join(''), /PAROU/, 'Esquadrão: o PAROU vem do diário');
     const exe = [];
-    assert.equal(main(['texto', '--preset', 'executivo'], m.repo, { saida: (t) => exe.push(t), aviso: () => {}, agoraMs: AGORA }), 0);
+    assert.equal(main(['texto', '--preset', 'executivo'], m.repo, IO({ saida: (t) => exe.push(t) })), 0);
     assert.match(exe.join(''), /PAROU/);
   });
 
   test('texto-opcoes: --preset executivo --largura 60 --tema color chegam ao render (cada uma lida)', () => {
     const m = montar({ ...comEventos([...INTEGRAR('T1'), PARAR]) });
-    const roda = (args) => { const s = []; assert.equal(main(['texto', ...args], m.repo, { saida: (t) => s.push(t), aviso: () => {}, agoraMs: AGORA }), 0); return s.join(''); };
+    const roda = (args) => { const s = []; assert.equal(main(['texto', ...args], m.repo, IO({ saida: (t) => s.push(t) })), 0); return s.join(''); };
     const e = estado(m).estado;
     const cor = roda(['--preset', 'executivo', '--largura', '60', '--tema', 'color']);
     assert.equal(cor, `${paraTexto(renderPainel(e, { preset: 'executivo', tema: 'color', narracao: true, largura: 60 }), 'color')}\n`);
@@ -176,7 +179,7 @@ describe('forma do estado e do texto', () => {
   });
 });
 
-describe('uso errado (rc 2) e falhas de contexto (rc 1)', () => {
+describe('uso errado (rc 2) e falhas de contexto (rc 1)', { timeout: 60_000 }, () => {
   const USO_RUIM = [
     [[], 'sem subcomando'],
     [['xpto'], 'subcomando desconhecido'],
@@ -251,7 +254,7 @@ describe('uso errado (rc 2) e falhas de contexto (rc 1)', () => {
   });
 });
 
-describe('só lê', () => {
+describe('só lê', { timeout: 60_000 }, () => {
   test('cli-so-le: com janela fechada, política janela e o loop em `concluir`, .harness, todo events.*.jsonl e git status não mudam', () => {
     const fechada = new Date(Date.now() + 6 * 3600_000);
     const hh = (d) => `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
@@ -294,7 +297,7 @@ describe('só lê', () => {
   });
 });
 
-describe('cauda do transcript', () => {
+describe('cauda do transcript', { timeout: 60_000 }, () => {
   const linhasDe = (n) => Array.from({ length: n }, (_, i) => `linha-${String(i).padStart(4, '0')}`);
   const arquivo = (texto) => { const d = novoTmp('painel cauda '); const p = join(d, 'agent-x.jsonl'); writeFileSync(p, texto); return p; };
 
@@ -345,7 +348,7 @@ describe('cauda do transcript', () => {
   });
 });
 
-describe('transcript e agentes (stdin)', () => {
+describe('transcript e agentes (stdin)', { timeout: 60_000 }, () => {
   const comAgente = (m, caminho, extra = {}) => ({ sessao: { window: 200000 }, agentes: [{ id: 'aANON1', type: 'implementador', description: 'T1 implementador', status: 'running', transcript: caminho, ...extra }] });
   const copiaFixture = (id = 'aANON1') => {
     const d = join(novoTmp('painel tr '), 'sessao', 'subagents');
@@ -414,17 +417,27 @@ describe('transcript e agentes (stdin)', () => {
     assert.equal(doAgente(estado(m, { agentes: comAgente(m, ok) })).ctxTok, 92762, 'a forma certa abre');
   });
 
-  test('transcript-fifo-nao-trava: um FIFO no lugar do arquivo ⇒ uso null em menos de 2 s', () => {
+  test('transcript-fifo-nao-trava: um FIFO no lugar do arquivo ⇒ uso null em menos de 2 s, num processo filho morto por SIGKILL aos 5 s', () => {
     const m = montar({ ...comEventos([['task.iniciada', { task: 'T1', papel: 'implementador' }]]) });
     const d = join(novoTmp('painel fifo '), 'subagents');
     mkdirSync(d);
     const fifo = join(d, 'agent-aANON1.jsonl');
     execFileSync('mkfifo', [fifo]);
+    // processo filho: se as defesas regredirem, o `open` bloqueia e o filho é morto (o teste falha em 5 s, nunca trava o runner)
+    const codigo = `import { estadoDoPainel, lerCauda } from ${JSON.stringify(pathToFileURL(SCRIPT).href)};
+      const fifo = ${JSON.stringify(fifo)};
+      const r = estadoDoPainel(${JSON.stringify(m.repo)}, { agoraMs: ${AGORA}, agentes: { sessao: { window: 200000 }, agentes: [{ id: 'aANON1', type: 'implementador', description: 'T1 implementador', status: 'running', transcript: fifo }] } });
+      process.stdout.write(JSON.stringify({ ok: r.ok, ctx: (r.estado.equipe.agentes.find((a) => a.task === 'T1' && a.vivo) ?? { ctxTok: 'sem' }).ctxTok, cauda: lerCauda(fifo) }));`;
     const t0 = performance.now();
-    const a = doAgente(estado(m, { agentes: comAgente(m, fifo) }));
-    assert.ok(performance.now() - t0 < 2000);
-    assert.equal(a.ctxTok, null);
-    assert.equal(lerCauda(fifo), null);
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', codigo], { encoding: 'utf8', timeout: 5000, killSignal: 'SIGKILL' });
+    const ms = performance.now() - t0;
+    assert.equal(r.error, undefined, `o filho travou no FIFO (morto após ${Math.round(ms)} ms): ${r.error?.message}`);
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(ms < 2000 + 1000, `demorou ${Math.round(ms)} ms`);
+    const o = JSON.parse(r.stdout);
+    assert.equal(o.ok, true);
+    assert.equal(o.cauda, null);
+    assert.equal(o.ctx, null);
   });
 
   test('modelo-sessao-do-diario-nao-do-stdin: o modelo da sessão é o do diário; `sessao.modelo` do stdin é ignorado (ctxPct só casa com o do diário)', () => {
@@ -446,7 +459,7 @@ describe('transcript e agentes (stdin)', () => {
   });
 });
 
-describe('stdin (--agentes)', () => {
+describe('stdin (--agentes)', { timeout: 60_000 }, () => {
   test('stdin-forma-completa (P15): cada campo trocado muda o estado', () => {
     const m = montar({ ...comEventos([['task.iniciada', { task: 'T1', papel: 'implementador' }]]) });
     const base = { sessao: { percent: 40, tokens: 50000, window: 200000, h5: 10, d7: 20, x: 70, notificacao: { ts: new Date(AGORA - 60_000).toISOString() }, pacote: 'galaxia' }, agentes: [{ id: 'a1', type: 'implementador', description: 'T1 implementador', status: 'running' }] };
@@ -557,7 +570,7 @@ describe('stdin (--agentes)', () => {
   });
 });
 
-describe('diário estável (D-M2)', () => {
+describe('diário estável (D-M2)', { timeout: 60_000 }, () => {
   test('diario-vazio-x-ilegivel-x-em-escrita: sem events.* ⇒ estado vazio, rc 0; cadeia quebrada estável ⇒ PAROU diario_invalido, rc 0; instável 3× ⇒ diario_em_escrita rc 1', () => {
     const vazio = montar();
     const r0 = cli(vazio, ['estado']);
@@ -637,7 +650,7 @@ describe('diário estável (D-M2)', () => {
   });
 });
 
-describe('spec, título, pausa, teto e política', () => {
+describe('spec, título, pausa, teto e política', { timeout: 60_000 }, () => {
   test('titulo-do-h1-mesmos-bytes: título do 1º H1 e specSha do MESMO arquivo; H2 e sem H1 ⇒ título null', () => {
     const m = montar({ spec: 'preâmbulo\n\n## não é H1\n# Meu H1 real\n# outro\n' });
     const r = estado(m).estado;
@@ -759,7 +772,7 @@ describe('spec, título, pausa, teto e política', () => {
   });
 });
 
-describe('fuso e pacote', () => {
+describe('fuso e pacote', { timeout: 60_000 }, () => {
   test('fuso-invalido-utc-com-aviso: fuso inválido ou ausente ⇒ UTC + aviso; válido vale (a hora do PAROU muda)', () => {
     const m = montar({ ...comEventos([PARAR]) }); // ts 12:00:01 UTC
     const hora = (fuso) => estado(m, { fuso }).estado.parar.hora;
@@ -814,7 +827,7 @@ describe('fuso e pacote', () => {
   });
 });
 
-describe('decisão de entrega sem efeito (prepararLeitura)', () => {
+describe('decisão de entrega sem efeito (prepararLeitura)', { timeout: 60_000 }, () => {
   const origemContinua = { entrega: { politica: 'continua', base: 'main', comandos: { deploy: { argv: ['true'], timeout_s: 5 }, smoke: { argv: ['true'], timeout_s: 5 }, rollback: { argv: ['true'], timeout_s: 5 } } } };
   const concluido = [...INTEGRAR('T1'), ...INTEGRAR('T2'), ['ci.resultado', { verde: true, alvo: 'homolog' }]];
 
@@ -876,7 +889,7 @@ describe('decisão de entrega sem efeito (prepararLeitura)', () => {
   });
 });
 
-describe('plano grande e tamanho da saída', () => {
+describe('plano grande e tamanho da saída', { timeout: 60_000 }, () => {
   test('plano com 60 tasks e histórico: o stdout fica abaixo de 4 MiB', () => {
     const tasks = Array.from({ length: 60 }, (_, i) => ({ id: `T${i + 1}`, titulo: `Task número ${i + 1}`, deps: [], arquivos: [`src/t${i + 1}.txt`] }));
     const eventos = [];
@@ -889,7 +902,7 @@ describe('plano grande e tamanho da saída', () => {
   });
 });
 
-describe('costura: os CLIs reais do loop alimentam o painel', () => {
+describe('costura: os CLIs reais do loop alimentam o painel', { timeout: 60_000 }, () => {
   test('costura-loop-modelo-mutacoes (P9): `loop.mjs iniciar` grava `modelo`, `integrar` grava `mutacoes`, e `painel.mjs estado` os mostra', () => {
     const base = novoTmp('painel costura ');
     const repo = join(base, 'repo');

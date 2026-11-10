@@ -326,7 +326,7 @@ export function estadoDoPainel(cwd, opts = {}) {
       if (s.ok) { specSha = s.sha256; titulo = tituloDe(s.bytes); } else avisos.push(`spec: ${s.erro} (${s.mensagem})`);
     }
 
-    // origem: teto da Sombra, política e base
+    // origem: teto da Sombra e política
     const origin = lerConfigOrigin(c.raiz);
     if (origin.invalida === true) avisos.push(`config de origin/HEAD inválida (${origin.motivo})`);
     const teto = tetoDaSombra(origin);
@@ -388,7 +388,6 @@ export function estadoDoPainel(cwd, opts = {}) {
       fuso,
       titulo,
       politica,
-      base: config.base,
       entregaId: c.entrega,
       modeloSessao: modeloDoDiario(eventos),
       specSha,
