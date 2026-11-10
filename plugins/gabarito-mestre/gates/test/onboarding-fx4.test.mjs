@@ -128,3 +128,58 @@ test('SKILL passo 4: item de 1 opcao nao e perguntado nem reformulado; pergunta 
   assert.match(skill, /Item com uma opção só nunca chega em `perguntas`[^\n]*não o pergunte, não o reformule e não o conte/);
   assert.match(skill, /Toda pergunta do script tem 2 ou mais opções/);
 });
+
+// ── FX4 r2
+test('r2 alias: a dica "para manter" so cita perfil que resolve para o alias antigo (sonnet nao e economia)', () => {
+  const sonnet = previa(itensMin, perg('padrao'), { fuso: 'UTC', existente: { orquestracao: { modelo: { alias: 'sonnet' } } } });
+  assert.match(sonnet, /modelo do orquestrador: sonnet ⇒ fable/);
+  assert.match(sonnet, /para manter sonnet: modelos\.revisor_final\)/);
+  assert.doesNotMatch(sonnet, /perfil economia/);
+});
+
+// MUT-fx4-r2-preferencia / MUT-fx4-r2-guarda-sem-commit
+test('r2 D2 sem remoto em feature/x com main existente: default = main, Enter grava entrega.base main, doctor sem FALTA', () => {
+  const raiz = casos['sem remoto']();
+  G(raiz, ['checkout', '-q', '-b', 'feature/x']);
+  const env = ENV();
+  const det = detectar(raiz, env);
+  const p = det.perguntas.find((x) => x.id === 'versionamento');
+  assert.ok(p, 'versionamento perguntado');
+  assert.equal(p.default, 'main');
+  assert.deepEqual(p.opcoes.map((o) => o.valor).filter((v) => v !== null), ['main']);
+  assert.ok(p.opcoes.length >= 2);
+  const g = gravar(raiz, det, env);
+  assert.equal(g.ok, true, JSON.stringify(g));
+  const cfg = JSON.parse(readFileSync(join(raiz, 'harness.config.json'), 'utf8'));
+  assert.equal(cfg.entrega.base, 'main');
+  G(raiz, ['checkout', '-q', 'main']); // o doctor julga a branch em que o repo está; a base gravada é a que vale
+  const v = doctor(raiz).resultados.find((r) => r.id === 'versionamento');
+  assert.equal(v.found, true, JSON.stringify(v));
+});
+
+test('r2 D2 branch atual sem commit nao vira candidata a base (nada gravado para versionamento)', () => {
+  const raiz = repo({ arquivos: { 'package.json': '{"name":"a"}' }, git: false });
+  G(raiz, ['init', '-q', '-b', 'main']);
+  const env = ENV();
+  const det = detectar(raiz, env);
+  assert.equal(det.perguntas.some((x) => x.id === 'versionamento'), false);
+  const it = det.itens.find((i) => i.item === 'versionamento');
+  assert.deepEqual(it.candidatos, []);
+  const g = gravar(raiz, det, env);
+  assert.equal(g.ok, true, JSON.stringify(g));
+  assert.ok(g.naoDetectado.includes('versionamento'));
+});
+
+// MUT-fx4-r2-rode-*: o regex é o de gates/test/e2e/avaliar-onboarding.mjs:222 (`cmd`), replicado
+test('r2 nenhum fix dos itens que o onboarding grava casa o regex de comando do avaliador (avaliar-onboarding.mjs:222)', () => {
+  const cmd = /\b(node|bash|npm|npx|git)\b[^\n]*|\.mjs\b|\.sh\b|\brode\b/i;
+  const raiz = repo({ arquivos: { 'package.json': '{"name":"a"}' }, git: false });
+  const rs = doctor(raiz).resultados;
+  for (const id of ['fluxo-configurado', 'paralelismo-calibrado', 'modelo-resolvido', 'versionamento', 'onboarding-nao-detectado']) {
+    const r = rs.find((x) => x.id === id);
+    assert.ok(r, id);
+    assert.ok(typeof r.fix === 'string' && r.fix.length > 0, `${id} sem fix`);
+    assert.doesNotMatch(`${r.fix} ${r.label}`, cmd, id);
+    assert.match(r.fix, id === 'modelo-resolvido' ? /gabarito-instalar/ : /^peça ao Claude gabarito-instalar/, id);
+  }
+});

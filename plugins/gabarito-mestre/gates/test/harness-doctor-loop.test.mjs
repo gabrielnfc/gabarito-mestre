@@ -546,7 +546,7 @@ describe('T13 doctor — aprendizado sem destino, onboarding não detectado, sem
     }
     // `fluxo-configurado` falha quando o onboarding nunca rodou: o remédio é a skill inteira, não um `trocar <item>` que não existe
     const fluxo = achado(out, 'fluxo-configurado');
-    assert.match(fluxo.fix, /^rode gabarito-instalar \(o onboarding nunca rodou aqui\)/);
+    assert.match(fluxo.fix, /^peça ao Claude gabarito-instalar \(o onboarding nunca rodou aqui\)/);
     assert.doesNotMatch(`${fluxo.label} ${fluxo.fix}`, /fase|trocar/i);
     assert.doesNotMatch(readFileSync(SCRIPT, 'utf8').split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n'), /\bfase [234]\b|\(fase /);
   });

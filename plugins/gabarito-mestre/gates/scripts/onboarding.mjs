@@ -714,7 +714,10 @@ export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal(), calib
   const perfilEscolhido = ps.perfil?.default;
   if (typeof aliasAntigo === 'string' && aliasAntigo !== '' && typeof perfilEscolhido === 'string') {
     const novo = resolverModelo({ ...orqAtual, perfil: perfilEscolhido }, 'revisor_final').modelo;
-    if (novo !== aliasAntigo) linhas.push(`- modelo do orquestrador: ${aliasAntigo} ⇒ ${novo} (vem do perfil ${perfilEscolhido}; para manter ${aliasAntigo}: perfil economia ou modelos.revisor_final)`);
+    // FX4 r2 MINOR-1: só cita um perfil que de fato resolve para o alias antigo (o `economia` não é `opus` para quem tinha `sonnet`).
+    const mantem = ['padrao', 'economia', 'qualidade'].filter((pf) => resolverModelo({ ...orqAtual, perfil: pf }, 'revisor_final').modelo === aliasAntigo);
+    const como = mantem.length > 0 ? `perfil ${mantem.join(' ou ')} ou modelos.revisor_final` : 'modelos.revisor_final';
+    if (novo !== aliasAntigo) linhas.push(`- modelo do orquestrador: ${aliasAntigo} ⇒ ${novo} (vem do perfil ${perfilEscolhido}; para manter ${aliasAntigo}: ${como})`);
   }
   const j = janelaPadrao(fuso);
   linhas.push(`- janela padrão, se a política for "janela" e o config não tiver uma: dias ${j.dias.join(',')}, ${j.inicio}-${j.fim}, fuso ${j.fuso}`);

@@ -532,7 +532,7 @@ export const CHECKS = [
     level: 2,
     kind: 'scan',
     label: 'fluxo configurado (onboarding concluído)',
-    fix: 'rode gabarito-instalar (o onboarding nunca rodou aqui) — ele grava fluxo.resolvidoEm em harness.config.json',
+    fix: 'peça ao Claude gabarito-instalar (o onboarding nunca rodou aqui) — ele grava fluxo.resolvidoEm em harness.config.json',
     detect: (ix, cfg) => {
       const em = cfg.fluxo?.resolvidoEm;
       if (typeof em === 'string' && ISO_DATA.test(em)) return { found: true, evidence: `fluxo.resolvidoEm = ${em}` };
@@ -696,7 +696,7 @@ export const CHECKS = [
     level: 3,
     kind: 'scan',
     label: 'paralelismo calibrado nesta máquina (≤ 180 d, teto ≥ simultaneos ≥ 1)',
-    fix: 'rode gabarito-instalar (trocar orquestracao) — ele calibra o paralelismo desta máquina (mostra o de hoje e o novo e só grava com o seu ok) e grava orquestracao.paralelismo.calibradoEm',
+    fix: 'peça ao Claude gabarito-instalar (trocar orquestracao) — ele calibra o paralelismo desta máquina (mostra o de hoje e o novo e só grava com o seu ok) e grava orquestracao.paralelismo.calibradoEm',
     detect: (ix, cfg) => {
       const p = cfg.orquestracao?.paralelismo;
       if (!p?.calibradoEm) return { found: false, evidence: 'sem orquestracao.paralelismo.calibradoEm' };
@@ -752,7 +752,7 @@ export const CHECKS = [
     level: 'warn',
     kind: 'scan',
     label: 'itens do onboarding que a máquina não detectou nem o dono respondeu',
-    fix: 'rode gabarito-instalar com o item de cada linha citada (trocar <item>) — é aviso: não muda o nível nem quebra o CI',
+    fix: 'peça ao Claude gabarito-instalar com o item de cada linha citada (trocar <item>) — é aviso: não muda o nível nem quebra o CI',
     detect: (ix, cfg) => {
       if (cfg.configInvalido) return { found: false, evidence: 'harness.config.json inválido: não li onboarding.naoDetectado' };
       const ob = cfg.onboarding;

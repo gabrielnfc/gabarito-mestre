@@ -1248,11 +1248,24 @@ describe('gravar', () => {
     // controle: a mesma resposta com a prévia igual grava (o claude que falha no gravar é o único defeito)
     const igual = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', planejamento: null }, { claude: falha, previaClaude: falha });
     assert.equal(igual.ok, true, JSON.stringify(igual));
-    // o fato acima do teto (versionamento) que muda de valor também derruba a gravação
-    const outro = monta();
-    const v = gravarCom(outro, { ...FIXAS, tipo_repo: 'app', planejamento: null }, { claude: SEM_MCP, previaClaude: CLICKUP });
+    // o fato ABERTO acima do teto muda de valor e as perguntas são as MESMAS antes e depois (FX4 r2, MAJOR-1; MUT-fx4-r2-teto):
+    // sem conector, tipo_repo e planejamento ocupam as 2 vagas e o versionamento (ambíguo) fica acima do teto.
+    const acima = monta();
+    const antes = itensLista(acima, { claude: SEM_MCP });
+    const psAntes = perguntas(antes, existenteDe(acima, { claude: SEM_MCP }));
+    assert.deepEqual(idsDe(psAntes), ['politica', 'autonomia', 'perfil', 'tipo_repo', 'planejamento']);
+    const verAntes = antes.find((i) => i.item === 'versionamento');
+    assert.equal(verAntes.estado, 'ambiguo', 'o versionamento é fato aberto acima do teto');
+    for (const dia of ['2025-06-21', '2025-06-22']) mergear(acima, 'main', dia); // main empata com staging (3): segue ambíguo, o valor passa de staging a main
+    const depois = itensLista(acima, { claude: SEM_MCP });
+    assert.deepEqual(idsDe(perguntas(depois, existenteDe(acima, { claude: SEM_MCP }))), idsDe(psAntes), 'as perguntas não mudaram');
+    const verDepois = depois.find((i) => i.item === 'versionamento');
+    assert.equal(verDepois.estado, 'ambiguo', 'segue aberto');
+    assert.notDeepEqual(verDepois.valor, verAntes.valor, 'o valor do fato acima do teto mudou');
+    const v = gravarCom(acima, { ...FIXAS, tipo_repo: 'app', planejamento: null }, { claude: SEM_MCP, bruto: { ...FIXAS, tipo_repo: 'app', planejamento: null, _previa: JSON.parse(JSON.stringify(antes)) } });
     assert.deepEqual([v.ok, v.erro], [false, 'deteccao_mudou']);
-    assert.equal(temCfg(outro), false);
+    assert.match(v.motivo, /versionamento/);
+    assert.equal(temCfg(acima), false, 'nada escrito');
   });
 
   test('gravar-deteccao-mudou-valor-abaixo-do-teto', () => {

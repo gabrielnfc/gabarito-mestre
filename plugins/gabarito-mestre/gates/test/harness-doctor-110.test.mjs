@@ -199,7 +199,7 @@ describe('doctor 1.1.0 — render', () => {
     assert.equal(r.status, 1);
     assert.match(r.stdout, /checagens novas da 1\.1\.0: rode o onboarding ou declare o nível medido/);
     assert.match(r.stdout, /FALTA .*fluxo configurado/);
-    assert.match(r.stdout, /→ rode gabarito-instalar/);
+    assert.match(r.stdout, /→ peça ao Claude gabarito-instalar/);
   });
   test('modelo vencido aparece como "warn" numa seção de avisos e não altera o exit', () => {
     const dir = repoComGit(fixtureNivel2_110(2, { orquestracao: { modelo: { alias: 'fable', resolvidoEm: diasAtras(91), validadeDias: 90 } } }));
