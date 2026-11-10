@@ -101,6 +101,7 @@ function modSemReabrir(dir) {
   mkdirSync(join(dir, 'mod'), { recursive: true });
   mkdirSync(join(dir, 'gates/dist'), { recursive: true });
   copyFileSync(join(PLUGIN, 'mod/gabarito.mjs'), join(dir, 'mod/gabarito.mjs'));
+  copyFileSync(join(PLUGIN, 'mod/painel.mjs'), join(dir, 'mod/painel.mjs')); // E4 T10: o gabarito.mjs importa o painel por caminho relativo
   for (const n of readdirSync(join(PLUGIN, 'gates/dist'))) {
     if (n === 'pouso.js') continue;
     symlinkSync(realpathSync(join(PLUGIN, 'gates/dist', n)), join(dir, 'gates/dist', n));

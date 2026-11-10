@@ -634,23 +634,23 @@ test('stop-dist-plano-ausente-avisa-sem-excecao', () => {
   const raiz = repo();
   plano(raiz);
   const r = stop(raiz, {}, { script: copiaSemDist(true) });
-  avisa(r, /dist/);
+  avisa(r, /dist\/plano\.js/);
   assert.equal(r.stderr, '');
 });
 
 test('stop-dist-loop-ausente-avisa-sem-excecao', () => {
   const raiz = repo();
   plano(raiz);
-  const r = stop(raiz, {}, { script: copiaSemDist(false, ['plano.js', 'formas.js', 'diario.js']) });
-  avisa(r, /dist/);
+  const r = stop(raiz, {}, { script: copiaSemDist(false, ['plano.js', 'formas.js', 'painel-largura.js', 'diario.js']) });
+  avisa(r, /dist\/loop\.js/);
   assert.equal(r.stderr, '');
 });
 
 test('stop-dist-diario-ausente-avisa-sem-excecao', () => {
   const raiz = repo();
   plano(raiz);
-  const r = stop(raiz, {}, { script: copiaSemDist(false, ['plano.js', 'formas.js', 'emenda.js', 'loop.js']) });
-  avisa(r, /dist/);
+  const r = stop(raiz, {}, { script: copiaSemDist(false, ['plano.js', 'formas.js', 'painel-largura.js', 'emenda.js', 'loop.js']) });
+  avisa(r, /dist\/diario\.js/);
   assert.equal(r.stderr, '');
 });
 
@@ -743,7 +743,7 @@ test('stop-e-mod-nao-tem-lista-propria: stop-loop.mjs e mod/gabarito.mjs não re
 test('stop-loop-sem-lista-de-progresso-avisa-sem-block: nunca conta com lista vazia', () => {
   const raiz = repo();
   plano(raiz);
-  const script = copiaSemDist(false, ['plano.js', 'formas.js', 'emenda.js', 'diario.js', 'sombra.js']);
+  const script = copiaSemDist(false, ['plano.js', 'formas.js', 'emenda.js', 'diario.js', 'diario-puro.js', 'sombra.js', 'painel-largura.js']);
   const dist = join(dirname(dirname(script)), 'dist');
   const js = readFileSync(join(GATES, 'dist', 'loop.js'), 'utf8').replace(/^export const TIPOS_DE_PROGRESSO\b.*$/m, '');
   assert.ok(!/export const TIPOS_DE_PROGRESSO/.test(js), 'preparo: export removido');

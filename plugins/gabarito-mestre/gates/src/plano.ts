@@ -8,6 +8,7 @@
  */
 
 import { REQ_RE } from './formas.ts';
+import { colunas } from './painel-largura.ts';
 import type { Janela, Plano, PoliticaPlano, TaskPlano } from './tipos.ts';
 
 export type ResultadoPlano = { ok: true; plano: Plano } | { ok: false; erro: string };
@@ -37,6 +38,10 @@ export function normalizarCaminho(c: string): string | null {
   if (/^[A-Za-z]:/.test(n)) return null;
   return n;
 }
+
+const TITULO_MAX_COLUNAS = 40;
+/** Controle C0, DEL, C1 e separadores de linha/parágrafo: nunca em título. */
+const CONTROLE_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const POLITICAS: readonly unknown[] = ['continua', 'janela', 'sob_demanda'];
@@ -122,11 +127,18 @@ function validar(bruto: unknown): ResultadoPlano {
     }
     if (t.teste_afetado !== undefined && typeof t.teste_afetado !== 'string') return recusa(`task ${t.id}: \`teste_afetado\` não é texto`);
     if (t.mutacoes !== undefined && typeof t.mutacoes !== 'string') return recusa(`task ${t.id}: \`mutacoes\` não é texto`);
+    if (t.titulo !== undefined) {
+      if (typeof t.titulo !== 'string' || t.titulo.trim() === '') return recusa(`task ${t.id}: \`titulo\` deve ser texto não vazio`);
+      if (CONTROLE_RE.test(t.titulo)) return recusa(`task ${t.id}: \`titulo\` com caractere de controle`);
+      const cols = colunas(t.titulo); // a mesma medida do render (`painel-largura.ts`)
+      if (cols > TITULO_MAX_COLUNAS) return recusa(`task ${t.id}: \`titulo\` com ${cols} colunas, máximo ${TITULO_MAX_COLUNAS}`);
+    }
     if ('spec' in t) return recusa(`task ${t.id}: \`spec\` é campo do plano (topo), não da task`);
     const nova: TaskPlano = { id: t.id, deps: [...deps], arquivos };
     if (reqs !== undefined) nova.reqs = reqs;
     if (t.teste_afetado !== undefined) nova.teste_afetado = t.teste_afetado;
     if (t.mutacoes !== undefined) nova.mutacoes = t.mutacoes;
+    if (t.titulo !== undefined) nova.titulo = t.titulo;
     tasks.set(t.id, nova);
   }
 

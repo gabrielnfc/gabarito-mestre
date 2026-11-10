@@ -43,8 +43,8 @@ describe('ehRepoDoPlugin — cópia instalada sob um pai com marketplace.json al
 });
 
 describe('gates/package.json 1.1.0', () => {
-  test('version é 2.0.0-alpha.3 (canal next)', () => {
-    assert.equal(pkg.version, '2.0.0-alpha.3');
+  test('version é 2.0.0-alpha.4 (canal next)', () => {
+    assert.equal(pkg.version, '2.0.0-alpha.4');
   });
   test('versao-manifestos: plugin.json, gates, marketplace (se trouxer versão) e CHANGELOG dizem a mesma versão', { skip: fora }, () => {
     const v = ler(PLUGIN_JSON).version;
@@ -62,6 +62,25 @@ describe('gates/package.json 1.1.0', () => {
     assert.match(t, /gates\/scripts\/loop\.mjs/);
     assert.doesNotMatch(t, /^\*\*REQ-/m, 'definição de requisito é da spec; a skill só aponta');
     assert.equal(t.includes(HATCH), false);
+  });
+  test('skill-loop-cita-descricao-devolver-painel: (a) description do Agent, (b) devolver, (c) texto do painel no Ciclo (REQ-PNL-10)', { skip: fora }, () => {
+    const t = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'skills', 'gabarito-loop', 'SKILL.md'), 'utf8');
+    assert.ok(t.includes(' A `description` do `Agent` é a `descricao` do item, sem mudar.'), '(a) ausente');
+    assert.ok(t.includes(' Antes de parar, `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/entrega.mjs" devolver --motivo <t>` (grava `entrega.devolvida`; o painel mostra o comando ao dono).'), '(b) ausente');
+    assert.ok(t.includes('\nStatus ao dono: comece por `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/painel.mjs" texto --preset executivo --largura 80`.\n'), '(c) ausente');
+    const loop = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'gates', 'scripts', 'loop.mjs'), 'utf8');
+    assert.ok(loop.includes('descricao: `${item.task} ${item.papel}`'), 'descricao do item mudou: a skill (a) aponta para ela');
+    const ent = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'gates', 'scripts', 'entrega.mjs'), 'utf8');
+    assert.ok(ent.includes('devolver --motivo <texto>'), 'uso de entrega.mjs sem devolver');
+    // Comportamento: o subcomando que a skill (b) cita é aceito pelo CLI (não cai em 'uso'); o erro de entrega não inferida é o esperado num repo sem branch de entrega.
+    const repo = mkdtempSync(join(tmpdir(), 'skill-devolver-'));
+    assert.equal(spawnSync('git', ['init', '-q', repo]).status, 0);
+    const r = spawnSync(process.execPath, [join(GATES, 'scripts', 'entrega.mjs'), 'devolver', '--motivo', 'teste'], { cwd: repo, encoding: 'utf8' });
+    assert.notEqual(JSON.parse(r.stdout.trim().split('\n').pop()).erro, 'uso', r.stdout);
+  });
+  test('skill-loop-79-linhas: teto de 80 mantido e 79 com as três regras de T13', { skip: fora }, () => {
+    const t = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'skills', 'gabarito-loop', 'SKILL.md'), 'utf8');
+    assert.equal(t.split('\n').length - 1, 79);
   });
   test('agente gabarito-spike: lista fechada do que cria e config isolada (A5, A6)', { skip: fora }, () => {
     const t = readFileSync(join(RAIZ, 'plugins', 'gabarito-mestre', 'agents', 'gabarito-spike.md'), 'utf8');

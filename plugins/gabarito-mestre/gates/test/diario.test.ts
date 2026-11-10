@@ -23,6 +23,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { append, ler, lerEstrito, projetar, recusaCanario, dirEntrega } from '../src/diario.ts';
 import { estadoDe } from '../src/loop.ts';
+import { contarConsultas } from '../src/sombra.ts';
 import type { Evento, TipoEvento } from '../src/tipos.ts';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -1198,5 +1199,17 @@ describe('instantâneo com decisões da Sombra (GM-11 T11)', () => {
     const t = pouso.textoRetomada(p.instantaneo);
     assert.notEqual(t, null);
     assert.ok(t.includes('Decisões da Sombra (30):'));
+  });
+});
+
+describe('contagem de consultas da Sombra (diario-puro, GM-12 T2 r3)', () => {
+  const med = (seq: number, tipo: TipoEvento, dados: unknown): Evento =>
+    ({ seq, ts: '2026-11-03T10:00:00.000Z', autor: 'a', sessao: 's1', agente: 'o', tipo, dados, hash_anterior: null }) as unknown as Evento;
+  test('contarConsultas-so-forma-valida: consulta de forma inválida não conta; decisão não conta; lista que não é lista dá 0', () => {
+    const ok = { pergunta_hash: 'a'.repeat(64), req: 'REQ-PNL-1' };
+    const es = [med(1, 'sombra.consulta', ok), med(2, 'sombra.consulta', { pergunta_hash: 'curto', req: 'REQ-PNL-1' }), med(3, 'sombra.consulta', 'texto'),
+      med(4, 'sombra.consulta', { ...ok, pergunta_hash: 'b'.repeat(64) }), med(5, 'guarda.deny', {})];
+    assert.equal(contarConsultas(es), 2);
+    assert.equal(contarConsultas(null as unknown as Evento[]), 0);
   });
 });

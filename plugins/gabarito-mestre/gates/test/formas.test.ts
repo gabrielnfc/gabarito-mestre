@@ -235,3 +235,90 @@ test('forma-invalida-por-tipo-novo: {} é recusado em todo tipo novo com campo o
   for (const tipo of ['sombra.consulta', 'decisao.sombra', 'desvio', 'descoberta', 'emenda.proposta', 'spec.emendada', 'emenda.rejeitada', 'entrega.inicio',
     'entrega.smoke', 'entrega.rollback', 'entrega.fim', 'entrega.agendada']) ruim(tipo, {});
 });
+
+// ---- E4 (GM-12 T1): spec.aprovada, entrega.devolvida e os campos opcionais novos de task.iniciada e task.integrada.
+// Mutações prescritas (.superpowers/sdd/2026-11-09-e4-painel/task-1-mut.json): MUT-T1-F1 a F7.
+
+test('forma-spec-aprovada-sha-curto: spec texto não vazio e sha256 hex minúsculo de 64', () => {
+  ok('spec.aprovada', { spec: 'docs/superpowers/specs/x.md', sha256: H });
+  ok('spec.aprovada', { spec: 'x.md', sha256: '0123456789abcdef'.repeat(4) });
+  ruim('spec.aprovada', { spec: 'x.md', sha256: 'a'.repeat(63) }, /sha256/);
+  ruim('spec.aprovada', { spec: 'x.md', sha256: 'a'.repeat(65) }, /sha256/);
+  ruim('spec.aprovada', { spec: 'x.md', sha256: 'A'.repeat(64) }, /sha256/);
+  ruim('spec.aprovada', { spec: 'x.md', sha256: `${'a'.repeat(63)}g` }, /sha256/);
+  ruim('spec.aprovada', { spec: 'x.md', sha256: 'abc' }, /sha256/);
+  ruim('spec.aprovada', { spec: 'x.md', sha256: 7 }, /sha256/);
+  ruim('spec.aprovada', { spec: '', sha256: H }, /spec/);
+  ruim('spec.aprovada', { spec: '   ', sha256: H }, /spec/);
+  ruim('spec.aprovada', { spec: 7, sha256: H }, /spec/);
+});
+
+test('forma-devolvida-motivo-vazio: motivo de 1 a 200 caracteres', () => {
+  ok('entrega.devolvida', { motivo: 'x' });
+  ok('entrega.devolvida', { motivo: 'm'.repeat(200) });
+  ok('entrega.devolvida', { motivo: 'ç'.repeat(200) });
+  ruim('entrega.devolvida', { motivo: '' }, /motivo/);
+  ruim('entrega.devolvida', { motivo: '  \n ' }, /motivo/);
+  ruim('entrega.devolvida', { motivo: 'm'.repeat(201) }, /motivo/);
+  ruim('entrega.devolvida', { motivo: 'ç'.repeat(201) }, /motivo/);
+  ruim('entrega.devolvida', { motivo: 12 }, /motivo/);
+  ruim('entrega.devolvida', { motivo: null }, /motivo/);
+  // o comando nunca vai ao diário (tipos.ts): campo extra não é recusado, mas o motivo continua obrigatório
+  ruim('entrega.devolvida', { comando: 'node entrega.mjs executar' }, /motivo/);
+});
+
+test('forma-iniciada-modelo-fora: modelo opcional, só haiku|sonnet|opus|fable', () => {
+  for (const m of ['haiku', 'sonnet', 'opus', 'fable']) ok('task.iniciada', { task: 'T1', papel: 'implementador', modelo: m });
+  for (const m of ['gpt', 'Sonnet', 'opus ', '', null, 5, ['opus']]) ruim('task.iniciada', { task: 'T1', papel: 'implementador', modelo: m }, /modelo/);
+});
+
+test('forma-integrada-mortas-maior-que-total: mutacoes {total, mortas} inteiros ≥ 0 com mortas ≤ total', () => {
+  ok('task.integrada', { task: 'T1', mutacoes: { total: 5, mortas: 5 } });
+  ok('task.integrada', { task: 'T1', mutacoes: { total: 5, mortas: 0 } });
+  ok('task.integrada', { task: 'T1', mutacoes: { total: 0, mortas: 0 } });
+  ruim('task.integrada', { task: 'T1', mutacoes: { total: 5, mortas: 6 } }, /mutacoes/);
+  ruim('task.integrada', { task: 'T1', mutacoes: { total: 0, mortas: 1 } }, /mutacoes/);
+  ruim('task.integrada', { task: 'T1', mutacoes: { total: -1, mortas: 0 } }, /mutacoes/);
+  ruim('task.integrada', { task: 'T1', mutacoes: { total: 5, mortas: -1 } }, /mutacoes/);
+  ruim('task.integrada', { task: 'T1', mutacoes: { total: 5.5, mortas: 1 } }, /mutacoes/);
+  ruim('task.integrada', { task: 'T1', mutacoes: { total: 5, mortas: 1.5 } }, /mutacoes/);
+  ruim('task.integrada', { task: 'T1', mutacoes: { total: '5', mortas: 1 } }, /mutacoes/);
+  ruim('task.integrada', { task: 'T1', mutacoes: { total: 5 } }, /mutacoes/);
+  ruim('task.integrada', { task: 'T1', mutacoes: { mortas: 1 } }, /mutacoes/);
+  ruim('task.integrada', { task: 'T1', mutacoes: {} }, /mutacoes/);
+});
+
+test('forma-campos-novos-ausentes-ok: eventos da E3 sem os campos novos seguem válidos, inclusive dados que não é objeto', () => {
+  ok('task.iniciada', { task: 'T1', papel: 'revisor' });
+  ok('task.integrada', { task: 'T1' });
+  ok('task.iniciada', { task: 'T1', papel: 'revisor', modelo: undefined });
+  ok('task.integrada', { task: 'T1', mutacoes: undefined });
+  for (const tipo of ['task.iniciada', 'task.integrada']) for (const d of [undefined, null, 'texto', 7, [], [1]]) ok(tipo, d);
+});
+
+test('forma-ausente-x-corrompida (E4): spec.aprovada e entrega.devolvida distinguem dados ausente, dados corrompido, campo ausente e campo inválido', () => {
+  for (const tipo of ['spec.aprovada', 'entrega.devolvida']) {
+    ruim(tipo, undefined, /dados ausente/);
+    for (const d of [null, 'x', 7, [], [{ motivo: 'x' }]]) ruim(tipo, d, /dados corrompido/);
+    ruim(tipo, {}, /ausente/);
+    assert.doesNotMatch(formaInvalida(tipo, {}) as string, /corrompido/);
+  }
+  ruim('spec.aprovada', { sha256: H }, /campo `spec` ausente/);
+  ruim('spec.aprovada', { spec: 'x.md' }, /campo `sha256` ausente/);
+  ruim('spec.aprovada', { spec: 'x.md', sha256: 'abc' }, /campo `sha256` inválido/);
+  ruim('entrega.devolvida', {}, /campo `motivo` ausente/);
+  ruim('entrega.devolvida', { motivo: '' }, /campo `motivo` inválido/);
+  // campo opcional corrompido não é o mesmo que campo ausente (ausente é ok; corrompido é recusado)
+  ok('task.integrada', { task: 'T1' });
+  ruim('task.integrada', { task: 'T1', mutacoes: 'muitas' }, /mutacoes/);
+  ruim('task.integrada', { task: 'T1', mutacoes: null }, /mutacoes/);
+  ruim('task.integrada', { task: 'T1', mutacoes: [] }, /mutacoes/);
+  // proto herdado não conta
+  ruim('spec.aprovada', Object.create({ spec: 'x.md', sha256: H }), /campo `spec` ausente/);
+  ok('task.iniciada', Object.create({ task: 'T1', papel: 'revisor', modelo: 'gpt' }));
+  for (const tipo of ['spec.aprovada', 'entrega.devolvida', 'task.iniciada', 'task.integrada']) {
+    for (const d of [null, undefined, [], 'x', Object.create(null), { get spec(): never { throw new Error('boom'); }, get modelo(): never { throw new Error('boom'); } }]) {
+      assert.doesNotThrow(() => formaInvalida(tipo, d), tipo);
+    }
+  }
+});

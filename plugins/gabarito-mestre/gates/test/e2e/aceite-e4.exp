@@ -1,0 +1,201 @@
+#!/usr/bin/expect -f
+# Aceites 1 a 4 da E4 (GM-12 T14). FORA de `npm test`: abre uma TUI real do Claude Code (haiku) em repo descartável sob .claude-tmp/t14/, gasta tokens.
+#
+#   aceite-e4.exp <modo> <rundir> <repo> <plugin-root> <observador> <avaliar-e4.mjs> <cols> [rows]
+#     modo: painel (aceites 1 e 2, mais /clear) | parou (aceite 3) | agente (aceite 4)
+#
+# O pty é gravado em <rundir>/tty.raw (bytes e SGR são a evidência; layout visto NÃO é provado). O que se lê da tela passa por `avaliar-e4.mjs tela`
+# (emulador pyte sobre os mesmos bytes). O .exp digita só o que está em sends.log. Observador (gates/test/e2e/observador) em <rundir>/obs.
+# Pergunta de permissão é registrada e nunca respondida. SEM unset de CLAUDE_CONFIG_DIR (a conta é a do ambiente).
+lassign $argv modo rundir repo plugin obs avaliar cols rows
+if {$rows eq ""} { set rows 50 }
+set env(TERM) xterm-256color
+set env(OBS_DIR) $rundir/obs
+foreach v {CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION} { set env($v) false }
+set env(CLAUDE_CODE_DISABLE_AUTO_MEMORY) 1
+set env(CLAUDE_CODE_FORCE_SESSION_PERSISTENCE) 1
+file mkdir $rundir/obs
+
+proc sends {tag} { global rundir; set f [open $rundir/sends.log a]; puts $f "[clock seconds] $tag"; close $f }
+proc nota {txt} { global rundir; set f [open $rundir/exp.log a]; puts $f "[clock seconds] $txt"; close $f }
+# mantém o pty drenado (senão o filho bloqueia) por <s> segundos
+proc drenar {s} {
+  set fim [expr {[clock seconds] + $s}]
+  set timeout 1
+  while {[clock seconds] < $fim} {
+    expect {
+      -re {Do you want to|Allow this|Esc to cancel} { nota "PERGUNTA-DE-PERMISSAO na tela" }
+      -re {.+} {}
+      timeout {}
+      eof { nota "EOF"; return 0 }
+    }
+  }
+  return 1
+}
+proc raw {sub args} { global avaliar rundir; if {[catch {exec node $avaliar $sub $rundir {*}$args} out]} { return "ERRO $out" }; return $out }
+proc snap {tag} {
+  global avaliar rundir cols rows
+  catch {exec node $avaliar tela $rundir $cols $rows > $rundir/tela-$tag.json}
+  nota "snap $tag"
+}
+proc cont {texto} { if {[regexp {"n":([0-9]+)} [raw contar $texto] -> n]} { return $n }; return -1 }
+proc esperar_texto {texto max} {
+  set t0 [clock seconds]
+  while {[clock seconds] - $t0 < $max} {
+    if {[cont $texto] > 0} { return [expr {[clock seconds] - $t0}] }
+    if {![drenar 1]} { return -1 }
+  }
+  return -2
+}
+proc clicar {x y} { sends "clique $x $y"; send "\033\[<0;${x};${y}M"; after 120; send "\033\[<0;${x};${y}m" }
+proc digitar {txt} { sends "digitar $txt"; send -- $txt; after 1200; send "\r" }
+proc obs_n {ev} { global rundir; if {[catch {exec sh -c "grep -c '\"ev\":\"$ev\"' $rundir/obs/mod.jsonl"} n]} { return 0 }; return $n }
+proc sair {status} {
+  global rundir
+  nota "fim status=$status"
+  set f [open $rundir/exp.status w]; puts $f $status; close $f
+  sends exit
+  send "/exit\r"; after 2500; send "\r"
+  set timeout 15
+  expect { eof {} timeout { nota "nao saiu; Ctrl-C"; send "\003"; after 500; send "\003" } }
+  catch {close}; catch {wait}
+  puts "exp done $status"
+  exit 0
+}
+
+cd $repo
+log_user 0
+log_file -a $rundir/tty.raw
+set stty_init "rows $rows cols $cols"
+if {[info exists env(T14_OBS_PRIMEIRO)]} { set dirs [list --plugin-dir $obs --plugin-dir $plugin] } else { set dirs [list --plugin-dir $plugin --plugin-dir $obs] }
+spawn claude {*}$dirs --setting-sources project --strict-mcp-config \
+  --model claude-haiku-5-5 --permission-mode auto --allowedTools "Bash(sleep *)" Read --debug-file $rundir/debug.log
+set t0 [clock seconds]
+nota "inicio modo=$modo cols=$cols"
+
+set timeout 15
+expect {
+  -re {Enter.*confirm|trust this folder} { after 500; sends trust; send "\033\[B"; after 400; send "\r"; after 4000 }
+  -re {login|Log in|API key} { nota "LOGIN: nao respondo"; set f [open $rundir/exp.status w]; puts $f NAO_PROVADO_LOGIN; close $f; catch {close}; catch {wait}; exit 3 }
+  timeout {}
+  eof { nota "EOF cedo"; exit 1 }
+}
+# diálogo de imports externos de CLAUDE.md: padrão "No, disable" (Enter), nunca "Yes"
+set timeout 20
+expect {
+  -re {external.{0,40}imports|CLAUDE\.md} { after 600; sends imports-no; send "\r"; after 2500 }
+  timeout {}
+  eof { nota "EOF cedo 2"; exit 1 }
+}
+drenar 4
+if {![catch {exec grep -c -E "dependency-unsatisfied|is not installed" $rundir/debug.log}]} {
+  nota "PLUGIN NAO CARREGOU"
+  set f [open $rundir/exp.status w]; puts $f NAO_PROVADO_PLUGIN; close $f
+  send "\003"; after 500; send "\003"; catch {close}; catch {wait}; exit 3
+}
+
+# a primeira leitura do painel: Pane (>= 144 colunas) ou só a faixa (60 colunas)
+set marca [expr {$cols >= 144 ? "GM-99: entrega" : "depende de você"}]
+set tpane [esperar_texto $marca 60]
+nota "primeiro desenho do painel (marca '$marca') em ${tpane}s"
+drenar 3
+snap inicio
+
+if {$modo eq "painel"} {
+  # Aceite 1: botão põe o comando no prompt SEM enviar
+  set b [exec node $avaliar tela $rundir $cols $rows]
+  set rot ""; set x 0; set y 0
+  set achou [regexp {"rotulo": "([^"]+)", "x": ([0-9]+), "y": ([0-9]+)} $b -> rot x y]
+  nota "botao achado=$achou rotulo=$rot x=$x y=$y"
+  # o TUI não liga o mouse (`?1000h` ausente em tty.raw): o botão é acionado pelo foco do site (ctrl+x tab) e Enter
+  if {$achou} {
+    sends "ctrl+x tab"; send "\030"; after 400; send "\t"; drenar 2
+    snap foco
+    sends "enter"; send "\r"
+    drenar 3
+    snap pos-clique
+  }
+  nota "prompt.submit apos clique: [obs_n prompt.submit]"
+  # limpa o prompt (Ctrl-U) sem enviar
+  send "\025"; drenar 1
+  # Aceite 2: troca de preset sem reabrir; resposta de 1 linha
+  set c0 [cont "executivo"]
+  digitar "/gabarito painel executivo"
+  drenar 5
+  snap executivo
+  set n1 [obs_n command.run]
+  nota "command.run=$n1"
+  digitar "/gabarito painel esquadrao"
+  drenar 5
+  snap esquadrao-de-volta
+  # medida: session.start dispara no /clear?
+  set s0 [obs_n session.start]
+  digitar "/clear"
+  drenar 6
+  nota "session.start antes=$s0 depois=[obs_n session.start]"
+  snap pos-clear
+  sair CONCLUIDO
+}
+
+if {$modo eq "parou"} {
+  # Aceite 3: nada digitado. loop.parar gravado por fora; o relógio (30 s) do mod deve desenhar o PAROU.
+  set sem0 [cont "PAROU"]
+  nota "PAROU antes=$sem0 turnos=[obs_n turn.complete] submits=[obs_n prompt.submit]"
+  set tg [clock seconds]
+  catch {exec node $avaliar parar $repo $plugin} outp
+  nota "parar gravado: $outp"
+  set visto -1
+  for {set i 0} {$i < 25} {incr i} {
+    drenar 2
+    if {[cont "PAROU"] > $sem0} { set visto [expr {[clock seconds] - $tg}]; break }
+  }
+  nota "PAROU visto em ${visto}s depois da gravação"
+  drenar 3
+  snap parou-esquadrao
+  nota "osc9: [raw osc9 PAROU]"
+  # mesmo PAROU no outro preset, sem reabrir
+  digitar "/gabarito painel executivo"
+  drenar 5
+  snap parou-executivo
+  # um refresh de 30 s depois: toast e notify continuam 1x
+  drenar 36
+  snap parou-depois
+  nota "PAROU total=[cont PAROU] osc9: [raw osc9 PAROU] turn.complete=[obs_n turn.complete] prompt.submit=[obs_n prompt.submit]"
+  sair CONCLUIDO
+}
+if {$modo eq "reabrir"} {
+  # T14 r2: o dono fecha a Pane, o relógio de 30 s NÃO a reabre, `/gabarito painel` a traz de volta. Nada vai ao modelo.
+  nota "reabrir: ui.close antes=[obs_n ui.close]"
+  # `ctrl+x tab` anda entre os sites (a faixa, depois a Pane): o debug.log diz onde o foco caiu (`ui.focus ... onto ...`)
+  foreach tentativa {sem-foco foco-1 foco-2} {
+    if {$tentativa ne "sem-foco"} { sends "ctrl+x tab"; send "\030"; after 400; send "\t"; drenar 2 }
+    sends "ctrl+x x ($tentativa)"; send "\030"; after 400; send "x"; drenar 3
+    snap fechada-$tentativa
+    nota "reabrir: tentativa $tentativa ui.close=[obs_n ui.close] caixa=[cont {GABARITO · GM-99}]"
+    if {[obs_n ui.close] > 0} { break }
+  }
+  drenar 36
+  snap fechada-depois-do-relogio
+  digitar "/gabarito painel"
+  drenar 5
+  snap reaberta
+  drenar 36
+  snap reaberta-depois-do-relogio
+  sair CONCLUIDO
+}
+if {$modo eq "agente"} {
+  # o store é do plugin e sobrevive entre sessões: força o preset do aceite
+  digitar "/gabarito painel esquadrao"
+  drenar 4
+  sends prompt
+  set prompt "Use a ferramenta Agent exatamente uma vez, com description \"T8 implementador\", subagent_type \"general-purpose\" e este prompt: Faça exatamente 3 chamadas SEPARADAS da ferramenta Bash, uma de cada vez, cada uma com o comando sleep 20, depois leia o arquivo README.md e responda só com a primeira linha dele. Depois que o agente voltar, responda apenas: feito. Não faça mais nada além disso."
+  send -- $prompt; after 2500; send "\r"
+  for {set i 0} {$i < 14} {incr i} {
+    drenar 5
+    snap ag-[format %02d $i]
+    catch {exec node $avaliar agente $rundir > $rundir/agente-[format %02d $i].json}
+    nota "obs agentes: [obs_n agentes] turn.complete=[obs_n turn.complete]"
+    if {$i > 8 && [cont "feito"] > 3} { break }
+  }
+  sair CONCLUIDO
+}

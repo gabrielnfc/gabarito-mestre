@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import * as diario from '../dist/diario.js';
 import { decidirEntrega } from '../dist/entrega.js';
-import { decidirAgora, executarEntrega, rcDe } from '../scripts/entrega.mjs';
+import { decidirAgora, decisaoDe, executarEntrega, prepararLeitura, rcDe } from '../scripts/entrega.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(AQUI, '..', 'scripts', 'entrega.mjs');
@@ -1251,5 +1251,383 @@ describe('r3: âncora do entrega.inicio contra a cauda apagada', { concurrency: 
         assert.equal(execLog(m).length, 0);
       });
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────── E4 T7: devolver, prepararLeitura, decisaoDe
+
+/** sha256 de TODO o conteúdo de uma pasta (nomes e bytes), em ordem estável: o que "nada foi escrito" quer dizer. */
+function hashDaPasta(dir) {
+  const h = createHash('sha256');
+  const anda = (d) => {
+    for (const n of readdirSync(d, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const p = join(d, n.name);
+      h.update(`${p.slice(dir.length)}\0${n.isDirectory() ? 'D' : 'F'}\0`);
+      if (n.isDirectory()) anda(p); else h.update(readFileSync(p));
+    }
+  };
+  anda(dir);
+  return h.digest('hex');
+}
+const hashHarness = (m) => hashDaPasta(join(m.repo, '.harness'));
+const lockDe = (m) => join(m.dir, 'entrega.lock');
+const devolver = (m, motivo, extra = [], opts) => rodar(m, 'devolver', ['--motivo', motivo, ...extra], opts);
+/** Janela UTC de 1 h que não contém o agora (a 4 h ou mais): `agendar` com `quando` inédito, sem depender da hora da máquina. */
+function janelaFechada() {
+  const h = new Date().getUTCHours();
+  const hh = String(h <= 15 ? h + 4 : h - 6).padStart(2, '0');
+  const fim = String(Number(hh) + 1).padStart(2, '0');
+  return { dias: [0, 1, 2, 3, 4, 5, 6], inicio: `${hh}:00`, fim: `${fim}:00`, fuso: 'UTC' };
+}
+/** Evento com `ts` escolhido (relógio de outra sessão). */
+function evEm(m, sessao, ts, tipo, dados) {
+  const r = diario.append(m.dir, sessao, { ts, autor: 't', sessao, agente: 'orquestrador', tipo, dados });
+  assert.equal(r.ok, true, `preparo: ${tipo}: ${r.erro}`);
+}
+
+describe('E4 T7: entrega devolver', { concurrency: 4 }, () => {
+  test('devolver-grava-motivo: o evento tem só {motivo}, lido pelo valor; a saída traz o mesmo', () => {
+    const m = montar();
+    const antes = eventos(m).length;
+    const motivo = 'revisão: "não deu" ç';
+    const { rc, json } = devolver(m, motivo);
+    assert.equal(rc, 0, JSON.stringify(json));
+    assert.deepEqual(json, { ok: true, gravado: true, evento: { tipo: 'entrega.devolvida', motivo } });
+    const novos = eventos(m).slice(antes);
+    assert.equal(novos.length, 1);
+    assert.equal(novos[0].tipo, 'entrega.devolvida');
+    assert.deepEqual(novos[0].dados, { motivo });
+    assert.equal(novos[0].agente, 'orquestrador');
+  });
+
+  test('devolver-sem-comando-no-diario: a sentinela do argv de deploy não entra no diário e nada roda', () => {
+    const m = montar({ extraArgv: [SENTINELA] });
+    const { rc } = devolver(m, 'npm run deploy');
+    assert.equal(rc, 0);
+    assert.ok(!textoDoDiario(m).includes(SENTINELA));
+    assert.ok(textoDoDiario(m).includes('npm run deploy'), 'o diário só tem o texto passado');
+    assert.deepEqual(execLog(m), [], 'nenhum comando de entrega rodou');
+    assert.equal(marca(m, 'deploy'), false);
+    assert.equal(Object.hasOwn(eventos(m).at(-1).dados, 'comando'), false);
+  });
+
+  test('devolver-motivo-ausente-uso-rc2: sem --motivo, flag sem valor, posicional, e --motivo em decidir/executar', () => {
+    const m = montar();
+    const h = hashHarness(m);
+    for (const argv of [['devolver'], ['devolver', '--motivo'], ['devolver', 'solto'], ['devolver', '--motivo', 'a', '--motivo', 'b'], ['devolver', '--nada', 'x'], ['decidir', '--motivo', 'a'], ['executar', '--motivo', 'a']]) {
+      const r = spawnSync(process.execPath, [SCRIPT, ...argv, '--entrega', ENTREGA], { cwd: m.repo, encoding: 'utf8' });
+      const j = JSON.parse(r.stdout.trim());
+      assert.equal(r.status, 2, argv.join(' '));
+      assert.equal(j.erro, 'uso', argv.join(' '));
+    }
+    assert.equal(hashHarness(m), h);
+  });
+
+  test('devolver-forma-de-entrega-e-sessao: recusadas antes de tudo, rc 1', () => {
+    const m = montar();
+    const h = hashHarness(m);
+    assert.equal(devolver(m, 'x', [], { entrega: 'gm 1' }).json.erro, 'entrega_invalida');
+    const s = devolver(m, 'x', ['--sessao', 'a b']);
+    assert.equal(s.json.erro, 'argumento_invalido');
+    assert.equal(s.rc, 1);
+    assert.equal(hashHarness(m), h);
+  });
+
+  test('devolver-motivo-espacos-vazio: vazio e só espaços ⇒ motivo_vazio, nada gravado', () => {
+    const m = montar();
+    const h = hashHarness(m);
+    for (const motivo of ['', '   ', ' \u00a0 ']) {
+      const { rc, json } = devolver(m, motivo);
+      assert.equal(rc, 1, JSON.stringify(motivo));
+      assert.equal(json.erro, 'motivo_vazio', JSON.stringify(motivo));
+    }
+    assert.equal(hashHarness(m), h);
+  });
+
+  test('devolver-200-code-points-com-emoji-aceito: a régua é code point, a mesma de formas.ts; 201 recusa', () => {
+    const m = montar();
+    const emoji = '\u{1F600}'.repeat(200);
+    assert.equal(emoji.length, 400);
+    const ok = devolver(m, emoji);
+    assert.equal(ok.rc, 0, JSON.stringify(ok.json));
+    assert.equal(eventos(m).at(-1).dados.motivo, emoji);
+    const h = hashHarness(m);
+    const longo = devolver(m, `${emoji}\u{1F600}`);
+    assert.equal(longo.rc, 1);
+    assert.equal(longo.json.erro, 'motivo_longo');
+    const a201 = devolver(m, 'a'.repeat(201));
+    assert.equal(a201.json.erro, 'motivo_longo');
+    assert.equal(devolver(m, 'a'.repeat(200)).rc, 0);
+    assert.equal(hashHarness(m) === h, false, 'o de 200 caracteres foi gravado');
+  });
+
+  test('devolver-controle-recusado: quebra de linha, tab e BEL ⇒ motivo_invalido, nada gravado', () => {
+    const m = montar();
+    const h = hashHarness(m);
+    for (const motivo of ['a\nb', 'a\tb', 'a\u0007b', 'a\rb']) {
+      const { rc, json } = devolver(m, motivo);
+      assert.equal(rc, 1, JSON.stringify(motivo));
+      assert.equal(json.erro, 'motivo_invalido', JSON.stringify(motivo));
+    }
+    assert.equal(hashHarness(m), h);
+  });
+
+  test('devolver-canario-zero-bytes: motivo com segredo ⇒ motivo_recusado e 0 bytes (nem diario.recusa)', () => {
+    const m = montar();
+    const h = hashHarness(m);
+    for (const motivo of [token(), `AKIA${'A'.repeat(16)}`, `chave ${token()} no meio`]) {
+      const { rc, json } = devolver(m, motivo);
+      assert.equal(rc, 1);
+      assert.equal(json.erro, 'motivo_recusado');
+      assert.ok(!JSON.stringify(json).includes(token()), 'o segredo não volta na saída');
+    }
+    assert.equal(hashHarness(m), h);
+    assert.ok(!eventos(m).some((e) => e.tipo === 'diario.recusa'));
+  });
+
+  test('devolver-ordem-motivo-antes-do-lock: lock presente e motivo vazio ⇒ motivo_vazio (a recusa mais barata vem antes)', () => {
+    const m = montar();
+    writeFileSync(lockDe(m), `${process.pid} x\n`);
+    assert.equal(devolver(m, '').json.erro, 'motivo_vazio');
+    assert.equal(devolver(m, 'a\nb').json.erro, 'motivo_invalido');
+  });
+
+  test('devolver-nao-subiu-nada-gravado: decisão `agendar` (janela fechada) e `esperar` não viram botão', () => {
+    const fechada = montar({ politica: 'janela', janela: janelaFechada() });
+    const h = hashHarness(fechada);
+    const r = devolver(fechada, 'subir agora');
+    assert.equal(r.rc, 1);
+    assert.equal(r.json.erro, 'nao_subiu');
+    assert.equal(r.json.decisao.tipo, 'agendar');
+    assert.equal(hashHarness(fechada), h, 'nem entrega.agendada nem devolvida');
+    assert.ok(!eventos(fechada).some((e) => e.tipo === 'entrega.agendada' || e.tipo === 'entrega.devolvida'));
+    const espera = montar({ homolog: null });
+    const e = devolver(espera, 'x');
+    assert.equal(e.json.erro, 'nao_subiu');
+    assert.equal(e.json.decisao.tipo, 'esperar');
+    const pr = montar({ politica: 'sob_demanda' });
+    const p = devolver(pr, 'x');
+    assert.equal(p.json.erro, 'nao_subiu');
+    assert.equal(p.json.decisao.tipo, 'release_pr');
+  });
+
+  test('devolver-entrega-incompleta: loop fora de `concluir` ⇒ entrega_incompleta, nada gravado', () => {
+    const m = montar({ integradas: ['T1'] });
+    const h = hashHarness(m);
+    const r = devolver(m, 'x');
+    assert.equal(r.rc, 1);
+    assert.equal(r.json.erro, 'entrega_incompleta');
+    assert.equal(hashHarness(m), h);
+  });
+
+  test('devolver-plano-ausente-x-invalido: dois casos, dois códigos; nunca sem_plano', () => {
+    const a = montar();
+    unlinkSync(join(a.dir, 'plano.json'));
+    const ha = hashHarness(a);
+    assert.equal(devolver(a, 'x').json.erro, 'plano_ausente');
+    assert.equal(hashHarness(a), ha);
+    const b = montar();
+    writeFileSync(join(b.dir, 'plano.json'), '{');
+    const hb = hashHarness(b);
+    assert.equal(devolver(b, 'x').json.erro, 'plano_invalido');
+    assert.equal(hashHarness(b), hb);
+  });
+
+  test('devolver-diario-ilegivel-e-pausado: erros de preparar passam com o código deles, nada gravado', () => {
+    const m = montar();
+    appendFileSync(join(m.dir, 'events.loop.jsonl'), 'lixo\n');
+    const h = hashHarness(m);
+    assert.equal(devolver(m, 'x').json.erro, 'diario_ilegivel');
+    assert.equal(hashHarness(m), h);
+    const p = montar();
+    mkdirSync(join(p.repo, '.harness'), { recursive: true });
+    writeFileSync(join(p.repo, '.harness', 'PAUSAR'), '');
+    assert.equal(devolver(p, 'x').json.erro, 'pausado');
+  });
+
+  test('devolver-lock-em-curso: lock presente ⇒ entrega_em_curso, o lock alheio fica, nada gravado', () => {
+    const m = montar();
+    writeFileSync(lockDe(m), `${process.pid} x\n`);
+    const h = hashHarness(m);
+    const r = devolver(m, 'x');
+    assert.equal(r.rc, 1);
+    assert.equal(r.json.erro, 'entrega_em_curso');
+    assert.equal(existsSync(lockDe(m)), true, 'o lock que não é meu não é solto');
+    assert.equal(hashHarness(m), h);
+    // o lock vem antes das pré-condições do preparar: com a entrega incompleta, a causa é o lock
+    const inc = montar({ integradas: ['T1'] });
+    writeFileSync(lockDe(inc), `${process.pid} x\n`);
+    assert.equal(devolver(inc, 'x').json.erro, 'entrega_em_curso');
+  });
+
+  test('devolver-solta-lock: em sucesso e em recusa depois do lock, o lock some', () => {
+    const m = montar();
+    assert.equal(devolver(m, 'um').rc, 0);
+    assert.equal(existsSync(lockDe(m)), false);
+    const n = montar({ homolog: null });
+    assert.equal(devolver(n, 'x').json.erro, 'nao_subiu');
+    assert.equal(existsSync(lockDe(n)), false);
+    const k = montar({ integradas: ['T1'] });
+    assert.equal(devolver(k, 'x').json.erro, 'entrega_incompleta');
+    assert.equal(existsSync(lockDe(k)), false);
+  });
+
+  test('devolver-idempotente-mesmo-motivo: 2ª vez ok sem gravar; outro motivo grava; A, B, A grava o A de novo', () => {
+    const m = montar();
+    const n0 = eventos(m).length;
+    assert.equal(devolver(m, 'A').json.gravado, true);
+    const h = hashHarness(m);
+    const segunda = devolver(m, 'A');
+    assert.equal(segunda.rc, 0);
+    assert.deepEqual(segunda.json, { ok: true, gravado: false });
+    assert.equal(hashHarness(m), h);
+    assert.equal(eventos(m).length, n0 + 1);
+    assert.equal(devolver(m, 'B').json.gravado, true);
+    const terceira = devolver(m, 'A');
+    assert.equal(terceira.json.gravado, true, 'o último vigente é B: o A de novo é outro pedido');
+    assert.deepEqual(eventos(m).slice(n0).map((e) => e.dados.motivo), ['A', 'B', 'A']);
+  });
+
+  test('devolver-nao-confere-checkout: árvore rastreada suja não impede (só `executar` confere)', () => {
+    const m = montar();
+    appendFileSync(join(m.repo, 'README.md'), 'sujo\n');
+    const r = devolver(m, 'x');
+    assert.equal(r.rc, 0, JSON.stringify(r.json));
+    assert.equal(executarEntregaSujo(m), 'checkout_sujo', 'o mesmo checkout impede o executar: o teste distingue');
+  });
+  function executarEntregaSujo(m) {
+    const r = rodar(m, 'executar');
+    return r.json.erro;
+  }
+
+  test('devolver-relogio-do-diario: um entrega.inicio com relógio à frente põe o candidato antes dele ⇒ relogio_do_diario, nada gravado', () => {
+    const m = montar({ integradas: [], homolog: null });
+    const F = (n) => new Date(Date.UTC(2099, 0, 1, 0, 0, n)).toISOString();
+    let n = 0;
+    const e = (tipo, dados) => evEm(m, 'outra', F(++n), tipo, dados);
+    for (const task of ['T1']) {
+      e('task.iniciada', { task, papel: 'implementador' });
+      e('task.concluida', { task, sha: 'a'.repeat(40) });
+      e('review.veredito', { task, veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 });
+      e('task.integrada', { task, sha: 'b'.repeat(40) });
+    }
+    e('entrega.inicio', { politica: 'continua' });
+    e('entrega.fim', { ok: true });
+    e('task.iniciada', { task: 'T2', papel: 'implementador' });
+    e('task.concluida', { task: 'T2', sha: 'a'.repeat(40) });
+    e('review.veredito', { task: 'T2', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 });
+    e('task.integrada', { task: 'T2', sha: 'b'.repeat(40) });
+    e('ci.resultado', { verde: true, alvo: 'homolog' });
+    const d = decidirAgora(m.repo, { entrega: ENTREGA, agoraMs: Date.now() });
+    assert.deepEqual(d.decisao, { tipo: 'subir' }, 'o preparo chega a `subir`; só o relógio impede');
+    const h = hashHarness(m);
+    const r = devolver(m, 'x');
+    assert.equal(r.rc, 1);
+    assert.equal(r.json.erro, 'relogio_do_diario');
+    assert.equal(hashHarness(m), h);
+  });
+});
+
+describe('E4 T7: prepararLeitura e decisaoDe', { concurrency: 4 }, () => {
+  const ler = (m, extra = {}) => prepararLeitura(m.repo, { entrega: ENTREGA, agoraMs: Date.now(), ...extra });
+
+  test('decisao-de-exportada-nao-grava: janela fechada e `quando` inédito ⇒ agendar, sem lock, sem entrega.agendada, `.harness/` igual', () => {
+    const m = montar({ politica: 'janela', janela: janelaFechada() });
+    const h = hashHarness(m);
+    const r = ler(m);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const d = decisaoDe(r.p);
+    assert.equal(d.tipo, 'agendar');
+    assert.equal(typeof d.quando, 'string');
+    assert.equal(hashHarness(m), h, 'nenhum byte em .harness/');
+    assert.equal(existsSync(lockDe(m)), false);
+    assert.ok(!eventos(m).some((e) => e.tipo === 'entrega.agendada'));
+    // o contraste: `decidirAgora` grava a agendada nesse mesmo cenário, então o hash acima distingue
+    assert.equal(decidirAgora(m.repo, { entrega: ENTREGA }).decisao.tipo, 'agendar');
+    assert.notEqual(hashHarness(m), h);
+  });
+
+  test('preparar-leitura-ignora-pausa: PAUSAR não decide nada aqui, a decisão segue; `decidirAgora` continua recusando', () => {
+    const m = montar();
+    mkdirSync(join(m.repo, '.harness'), { recursive: true });
+    writeFileSync(join(m.repo, '.harness', 'PAUSAR'), '');
+    const r = ler(m);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(decisaoDe(r.p), { tipo: 'subir' });
+    assert.equal(decidirAgora(m.repo, { entrega: ENTREGA }).erro, 'pausado');
+  });
+
+  test('preparar-leitura-lock-pid-vivo-em-curso: inicio sem fim + lock do processo vivo ⇒ entrega_em_curso (e não PAROU)', () => {
+    const m = montar();
+    ev(m, 'entrega.inicio', { politica: 'continua' });
+    writeFileSync(lockDe(m), `${process.pid} ${new Date().toISOString()}\n`);
+    const h = hashHarness(m);
+    const r = ler(m);
+    assert.equal(r.ok, false);
+    assert.equal(r.erro, 'entrega_em_curso');
+    assert.equal(typeof r.mensagem, 'string');
+    assert.equal(hashHarness(m), h, 'o lock alheio não é tocado');
+    // EPERM também é vivo (pid 1 não é do usuário); sem erro (root) também
+    writeFileSync(lockDe(m), '1 x\n');
+    assert.equal(ler(m).erro, 'entrega_em_curso');
+  });
+
+  test('preparar-leitura-lock-orfao-decide: pid morto, sem pid, vazio e ilegível seguem para a decisão (PAROU nao_conseguiu é a verdade)', () => {
+    const m = montar();
+    ev(m, 'entrega.inicio', { politica: 'continua' });
+    const morto = spawnSync(process.execPath, ['-e', '']).pid;
+    for (const corpo of [`${morto} x\n`, 'sem-pid\n', '', '\u0000\u0001', '-5 x\n', '0 x\n']) {
+      writeFileSync(lockDe(m), corpo);
+      const r = ler(m);
+      assert.equal(r.ok, true, `${JSON.stringify(corpo)}: ${JSON.stringify(r)}`);
+      assert.deepEqual(decisaoDe(r.p), { tipo: 'parar', motivo: 'nao_conseguiu' }, JSON.stringify(corpo));
+    }
+  });
+
+  test('preparar-leitura-lock-ilegivel-e-pasta: um `entrega.lock` que é diretório também segue para a decisão', () => {
+    const m = montar();
+    mkdirSync(lockDe(m));
+    const r = ler(m);
+    assert.equal(r.ok, true, JSON.stringify(r));
+  });
+
+  test('preparar-leitura-diario-ilegivel-nao-lanca: cadeia quebrada ⇒ {ok:false, erro:diario_ilegivel}', () => {
+    const m = montar();
+    appendFileSync(join(m.dir, 'events.loop.jsonl'), 'lixo\n');
+    const r = ler(m);
+    assert.equal(r.ok, false);
+    assert.equal(r.erro, 'diario_ilegivel');
+    assert.equal(typeof r.mensagem, 'string');
+  });
+
+  test('preparar-leitura-ausente-x-corrompido: plano ausente, plano torto, entrega incompleta, forma e fora de repo: sempre {ok:false}, sem lançar', () => {
+    const a = montar();
+    unlinkSync(join(a.dir, 'plano.json'));
+    assert.equal(ler(a).erro, 'plano_ausente');
+    const b = montar();
+    writeFileSync(join(b.dir, 'plano.json'), '{');
+    assert.equal(ler(b).erro, 'plano_invalido');
+    const c = montar({ integradas: ['T1'] });
+    const rc = ler(c);
+    assert.equal(rc.ok, false);
+    assert.equal(rc.erro, 'entrega_incompleta');
+    assert.equal(ler(montar(), { entrega: 'gm 1' }).erro, 'entrega_invalida');
+    const fora = realpathSync(mkdtempSync(join(tmpdir(), 'fora-de-repo ')));
+    assert.equal(prepararLeitura(fora, { entrega: ENTREGA }).erro, 'fora_de_repo');
+  });
+
+  test('preparar-leitura-sem-diario-e-integracao: pasta sem diário ⇒ entrega_incompleta (ausente), não diario_ilegivel', () => {
+    const m = montar({ integradas: [], homolog: null });
+    const r = ler(m);
+    assert.equal(r.erro, 'entrega_incompleta');
+  });
+
+  test('preparar-leitura-p-igual-ao-de-preparar: o `p` entrega política, eventos e plano que a decisão usa', () => {
+    const m = montar();
+    const r = ler(m, { agoraMs: 12345 });
+    assert.equal(r.p.agoraMs, 12345);
+    assert.equal(r.p.efetiva.politica, 'continua');
+    assert.equal(r.p.eventos.length, eventos(m).length);
+    assert.equal(r.p.plano.entrega, ENTREGA);
   });
 });

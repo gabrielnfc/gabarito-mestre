@@ -4,6 +4,7 @@
  *
  *   entrega.mjs decidir  [--entrega GM-10] [--sessao <id>]   a decisão (`subir|agendar|release_pr|esperar|entregue|parar`); só `agendar` grava
  *   entrega.mjs executar [--entrega GM-10] [--sessao <id>]   só roda com a decisão `subir`: deploy, smoke e, se falhar, rollback
+ *   entrega.mjs devolver --motivo <texto> [--entrega GM-10] [--sessao <id>]   grava `entrega.devolvida {motivo}` (o dono pediu para devolver), só com a decisão `subir`; nunca roda comando
  *
  * CONTRATO DE FALHA. Saída é UMA linha de JSON em stdout, sempre com `ok`; falha traz `erro` (código) e `mensagem`. rc 0 só com o efeito feito
  * (`entrega.fim {ok:true}` gravado nesta execução, ou decisão `entregue` sem gravar nada); decisão que não é `subir` nem `entregue` ⇒ `nao_subiu`,
@@ -49,7 +50,8 @@ const ANEL_MAX = 2000;
 const GRACA_MS = 500;
 const GIT_REDIRECIONA = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_NAMESPACE'];
 const SINAIS_NEUTROS = { slots: 1, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false };
-const USO = 'uso: entrega.mjs decidir|executar [--entrega GM-10] [--sessao <id>]';
+const USO = 'uso: entrega.mjs decidir|executar [--entrega GM-10] [--sessao <id>] | devolver --motivo <texto> [--entrega GM-10] [--sessao <id>]';
+const MOTIVO_MAX = 200; // code points, a mesma régua de `formas.ts` (`entrega.devolvida`)
 
 /** Falha com código: vira `{ok:false, erro, mensagem, ...extra}` e rc 1 (ou 2 para uso). */
 class Falha extends Error {
@@ -226,7 +228,8 @@ function gravarAncora(c) {
 
 // ─────────────────────────────────────────────────────────────── pré-condições comuns
 
-function pausado(c) {
+/** `.harness/PAUSAR` na raiz principal ou no topo da worktree. Exportada para o painel (E4, T9): a mesma regra, sem 3ª cópia. */
+export function pausado(c) {
   if (existsSync(join(c.raiz, '.harness', 'PAUSAR'))) return true;
   try {
     return existsSync(join(git(c.cwd, 'rev-parse', '--show-toplevel'), '.harness', 'PAUSAR'));
@@ -236,8 +239,8 @@ function pausado(c) {
 }
 
 /** P3 a P6: pausa, plano, diário, entrega completa e política efetiva. Nada gravado. */
-function preparar(c, agoraMs) {
-  if (pausado(c)) throw new Falha('pausado', '.harness/PAUSAR presente: nada roda');
+function preparar(c, agoraMs, { conferirPausa = true } = {}) {
+  if (conferirPausa && pausado(c)) throw new Falha('pausado', '.harness/PAUSAR presente: nada roda');
   const plano = carregarPlano(c);
   const linhasPorArquivo = new Map();
   const eventos = lerDiarioEstrito(c.dirEntrega, linhasPorArquivo);
@@ -261,7 +264,7 @@ function preparar(c, agoraMs) {
   };
 }
 
-const decisaoDe = (p) => decidirEntrega({
+export const decisaoDe = (p) => decidirEntrega({
   politica: p.efetiva.politica,
   janela: p.efetiva.janela,
   exigeProd: p.plano.politica_entrega?.exige_prod === true,
@@ -272,12 +275,12 @@ const decisaoDe = (p) => decidirEntrega({
 });
 
 /** Grava um evento do contexto. `append` pode ser trocado por `opts.append` (falha injetada). Lança `Falha('evento_nao_gravado')`. */
-function gravar(c, opts, tipo, dados) {
+function gravar(c, opts, tipo, dados, ts = new Date().toISOString()) {
   let autor = 'desconhecido';
   try { autor = git(c.raiz, 'config', 'user.email') || autor; } catch { /* sem user.email: o diário aceita "desconhecido" */ }
   let r;
   try {
-    r = (opts.append ?? diario.append)(c.dirEntrega, c.sessao, { ts: new Date().toISOString(), autor, sessao: c.sessao, agente: 'orquestrador', tipo, dados });
+    r = (opts.append ?? diario.append)(c.dirEntrega, c.sessao, { ts, autor, sessao: c.sessao, agente: 'orquestrador', tipo, dados });
   } catch (e) {
     throw new Falha('evento_nao_gravado', `${tipo} não gravado: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -301,6 +304,100 @@ export function decidirAgora(cwd, opts = {}) {
     return { ok: true, decisao, politica: p.efetiva.politica, ...(p.aviso !== undefined ? { aviso: p.aviso } : {}) };
   } catch (e) {
     return aSaida(e);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────── leitura sem efeito (painel) e devolver
+
+/**
+ * O pid do `entrega.lock` está vivo? `process.kill(pid, 0)` sem erro, ou `EPERM` (existe, é de outro usuário). Lock sem pid legível, pasta no lugar do
+ * arquivo ou ilegível ⇒ `false`: o painel segue para a decisão (lock órfão com `inicio` sem `fim` é produção em estado desconhecido: PAROU é a verdade).
+ */
+function lockVivo(dirEntrega) {
+  let texto;
+  try { texto = readFileSync(join(dirEntrega, 'entrega.lock'), 'utf8'); } catch { return false; }
+  const m = /^(\d{1,10})(?:\s|$)/.exec(texto);
+  const pid = m === null ? NaN : Number(m[1]);
+  if (!Number.isSafeInteger(pid) || pid < 1) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e?.code === 'EPERM';
+  }
+}
+
+/**
+ * `preparar` SEM efeito, para quem só lê (o painel). Nunca lança e nunca escreve (sem lock, sem append, sem âncora): `{ok:true, p}` (o mesmo `p` de
+ * `preparar`) ou `{ok:false, erro, mensagem}`. Difere de `preparar` em três pontos: `.harness/PAUSAR` é ignorado (o painel mostra a pausa à parte; pular a
+ * decisão esconderia um `parar` enquanto o loop está pausado); `entrega.lock` com pid vivo ⇒ `entrega_em_curso` (durante o deploy o `inicio` ainda não tem
+ * `fim` e a decisão seria `parar nao_conseguiu`: o painel não pode acusar PAROU no meio de um deploy saudável); `acao ≠ concluir` ⇒ `entrega_incompleta`.
+ */
+export function prepararLeitura(cwd, opts = {}) {
+  try {
+    const agoraMs = opts.agoraMs ?? Date.now();
+    validarForma({ entrega: opts.entrega, sessao: opts.sessao });
+    const c = contexto(cwd, { entrega: opts.entrega, sessao: opts.sessao });
+    if (lockVivo(c.dirEntrega)) {
+      return { ok: false, erro: 'entrega_em_curso', mensagem: 'entrega.lock com processo vivo: a entrega está em curso; nada a decidir agora' };
+    }
+    return { ok: true, p: preparar(c, agoraMs, { conferirPausa: false }) };
+  } catch (e) {
+    return aSaida(e);
+  }
+}
+
+/** Texto do `--motivo` (sem tocar disco): a 1ª recusa decide. Mesma régua de `formas.ts` e do canário do diário. */
+function conferirMotivo(motivo) {
+  if (typeof motivo !== 'string' || motivo.trim() === '') throw new Falha('motivo_vazio', '--motivo vazio: diga por que a entrega volta');
+  const n = [...motivo].length;
+  if (n > MOTIVO_MAX) throw new Falha('motivo_longo', `--motivo com ${n} caracteres: máximo ${MOTIVO_MAX}`);
+  if (/\p{Cc}/u.test(motivo)) throw new Falha('motivo_invalido', '--motivo com caractere de controle (quebra de linha, tab…): uma linha de texto');
+  // sem este pré-teste, `append` gravaria um `diario.recusa` (o canário recusa o evento mas grava a recusa): aqui são 0 bytes
+  if (diario.recusaCanario(motivo) !== null) throw new Falha('motivo_recusado', '--motivo parece conter segredo: nada foi gravado (e o texto não é repetido aqui)');
+}
+
+/**
+ * `devolver` em processo: o dono mandou a entrega de volta (botão do painel). Grava `entrega.devolvida {motivo}` e NADA mais: não roda `config.comandos`,
+ * não confere o checkout, nunca escreve `comando` (o comando é remontado pelo id da entrega). Só com a decisão `subir`: só o deploy que `executar` rodaria
+ * vira botão. Mesmo motivo vigente (depois do último `entrega.inicio`) ⇒ `ok:true, gravado:false`. Recusa com `ok:false` e 0 bytes, na ordem: forma de
+ * `--entrega`/`--sessao` · motivo (vazio, longo, controle, canário) · lock · erros de `preparar` · `nao_subiu` · relógio. `opts`: `{motivo, entrega, sessao, agoraMs, append}`.
+ */
+export function devolverEntrega(cwd, opts = {}) {
+  let lock = null;
+  try {
+    const agoraMs = opts.agoraMs ?? Date.now();
+    validarForma({ entrega: opts.entrega, sessao: opts.sessao });
+    conferirMotivo(opts.motivo);
+    const { motivo } = opts;
+    const c = contexto(cwd, { entrega: opts.entrega, sessao: opts.sessao });
+    lock = pegarLock(c.dirEntrega);
+    const p = preparar(c, agoraMs);
+    const decisao = decisaoDe(p);
+    const base = p.aviso !== undefined ? { aviso: p.aviso } : {};
+    if (decisao.tipo !== 'subir') {
+      return { ok: false, erro: 'nao_subiu', mensagem: `a decisão é "${decisao.tipo}", não "subir": só o deploy que \`executar\` rodaria pode ser devolvido; nada foi gravado`, decisao, ...base };
+    }
+    const ord = ordenar(p.eventos);
+    if (!ord.ok) throw new Falha('diario_invalido', 'o diário da entrega não pôde ser ordenado; nada foi gravado');
+    const iInicio = ord.eventos.reduce((a, e, i) => (e.tipo === 'entrega.inicio' ? i : a), -1);
+    const ultima = ord.eventos.slice(iInicio + 1).filter((e) => e.tipo === 'entrega.devolvida').at(-1);
+    if (ultima !== undefined && ultima.dados?.motivo === motivo) return { ok: true, gravado: false, ...base };
+    // o candidato na ORDEM REAL do diário: relógio de outra sessão à frente o poria antes do `entrega.inicio`, e o pedido não valeria para a decisão de agora
+    const ts = new Date().toISOString();
+    const minhas = p.eventos.filter((e) => e.sessao === c.sessao).map((e) => e.seq);
+    const candidato = { seq: (minhas.length > 0 ? Math.max(...minhas) : 0) + 1, ts, autor: 'x', sessao: c.sessao, agente: 'orquestrador', tipo: 'entrega.devolvida', dados: { motivo }, hash_anterior: null };
+    const comCandidato = ordenar([...p.eventos, candidato]);
+    if (!comCandidato.ok) throw new Falha('diario_invalido', 'o diário ficaria fora de ordem com o pedido; nada foi gravado');
+    if (comCandidato.eventos.indexOf(candidato) < comCandidato.eventos.reduce((a, e, i) => (e.tipo === 'entrega.inicio' ? i : a), -1)) {
+      throw new Falha('relogio_do_diario', 'um evento do diário tem relógio à frente do agora: na ordem do diário o pedido cairia antes do último entrega.inicio e não valeria; nada foi gravado');
+    }
+    gravar(c, opts, 'entrega.devolvida', { motivo }, ts);
+    return { ok: true, gravado: true, evento: { tipo: 'entrega.devolvida', motivo }, ...base };
+  } catch (e) {
+    return aSaida(e);
+  } finally {
+    soltarLock(lock);
   }
 }
 
@@ -529,19 +626,20 @@ async function subir(c, p, opts, decisao) {
 
 function lerArgs(argv) {
   const [cmd, ...resto] = argv;
-  if (cmd !== 'decidir' && cmd !== 'executar') throw new Falha('uso', `comando desconhecido ou ausente. ${USO}`);
+  if (cmd !== 'decidir' && cmd !== 'executar' && cmd !== 'devolver') throw new Falha('uso', `comando desconhecido ou ausente. ${USO}`);
   const flags = {};
   for (let i = 0; i < resto.length; i++) {
     const a = resto[i];
     if (!a.startsWith('--')) throw new Falha('uso', `${cmd} não aceita argumento posicional ("${a}"). ${USO}`);
     const nome = a.slice(2);
-    if (nome !== 'entrega' && nome !== 'sessao') throw new Falha('uso', `argumento desconhecido para ${cmd}: ${a}. ${USO}`);
+    if (nome !== 'entrega' && nome !== 'sessao' && !(cmd === 'devolver' && nome === 'motivo')) throw new Falha('uso', `argumento desconhecido para ${cmd}: ${a}. ${USO}`);
     const v = resto[i + 1];
     if (v === undefined || v.startsWith('--')) throw new Falha('uso', `${a} sem valor. ${USO}`);
     if (Object.hasOwn(flags, nome)) throw new Falha('uso', `${a} repetido. ${USO}`);
     flags[nome] = v;
     i++;
   }
+  if (cmd === 'devolver' && !Object.hasOwn(flags, 'motivo')) throw new Falha('uso', `devolver exige --motivo. ${USO}`);
   return { cmd, flags };
 }
 
@@ -549,7 +647,7 @@ export async function main(argv, cwd = process.cwd()) {
   let saida;
   try {
     const { cmd, flags } = lerArgs(argv);
-    saida = cmd === 'decidir' ? decidirAgora(cwd, flags) : await executarEntrega(cwd, flags);
+    saida = cmd === 'decidir' ? decidirAgora(cwd, flags) : cmd === 'devolver' ? devolverEntrega(cwd, flags) : await executarEntrega(cwd, flags);
   } catch (e) {
     saida = aSaida(e);
   }

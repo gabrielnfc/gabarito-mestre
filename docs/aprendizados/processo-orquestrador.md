@@ -50,3 +50,11 @@ Rode cada item como sonda sua e relate o resultado:
 
 - Contexto inicial de subagent: mediana 41.532 tokens no 1º turno (R13), pago por agente. Medir o que entra nele.
 - X3, mutações em paralelo: gate pesa pouco (90 min de 7h30). Só depois de X7.
+
+## E3 → E4 (2026-11-09, medido)
+- **Duração da E3:** 1º commit 11:03, merge 18:51 = 7h48 para 16 tasks + T14b + T14c (git log). Única medição confiável de entrega inteira; E1/E2 em squash não mostram início. Base das estimativas da E4/E5.
+- **Teste de tempo em runner compartilhado:** `bench-guarda` p95 153,9 ms × teto 150 no macOS do CI, piso do runner lento (p95 75,6 ms); passou no rerun e no commit anterior com o mesmo código. Hipótese M: teto sem folga para o runner; medir N execuções antes de mudar.
+- **Fixtures que chamam git real** precisam de identidade explícita: macOS deriva identidade do sistema, Linux do runner não (R44 GM-11). Reproduzir com HOME vazio + `user.useConfigOnly=true`.
+- **ALERTA "tempo ~zero" do gate é falso positivo quando a suíte toda é rápida** (T1 E4, 2026-11-09): `formas.test.ts` inteira roda em 65 ms; 12 mutações mortas em 0,09 s dispararam alerta. MUT-T1-F1 aplicada à mão: 2 testes caem (morte real). Hipótese M: limiar do alerta relativo ao tempo da suíte base, não absoluto; medir antes de mudar o gate.
+- **Gate da junção pega o que o gate isolado não pega** (E4 onda 1, 2026-11-09): T2 e T3 verdes sozinhas; após rebase da T2 sobre a T3, o fecho `dist/painel.js` passou a importar `pouso.js` (node:*) e `eventos:null` quebrou código da T3. Regra (D, medido): task paralela que toca o mesmo módulo de saída integra com gate sobre a branch já com a irmã, nunca sobre a base antiga.
+- **Agente tipo `Plan` é só leitura** (E5 planejador, 2026-11-10): não grava arquivo nem por Bash, mesmo com o brief autorizando; devolveu o plano inline (≈ 400 linhas) e o orquestrador extraiu do transcript por script. Regra (D, medido 1×): planejador/redator que grava arquivo vai como `general-purpose`, nunca `Plan`.
