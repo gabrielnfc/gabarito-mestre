@@ -15,7 +15,8 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { marcaPronto } from '../scripts/db-template.mjs';
-import { slotsDaCapacidade } from '../scripts/loop.mjs';
+import { integrarComGate, slotsDaCapacidade } from '../scripts/loop.mjs';
+import { casarAgente } from '../dist/painel-equipe.js';
 import * as diario from '../dist/diario.js';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -495,7 +496,7 @@ describe('comandos que gravam', () => {
     const e = amb.eventos();
     assert.equal(e.length, 1);
     assert.equal(e[0].tipo, 'task.iniciada');
-    assert.deepEqual(e[0].dados, { task: 'T1', papel: 'implementador' });
+    assert.deepEqual(e[0].dados, { task: 'T1', papel: 'implementador', modelo: 'sonnet' });
     assert.equal(e[0].agente, 'orquestrador');
   });
 
@@ -709,7 +710,7 @@ describe('integrar', () => {
     assert.ok(existsSync(join(amb.dir, 'src/t1.txt')), 'o trabalho entrou na branch do PBI');
     assert.equal(amb.topo(), amb.topo('wt/GM-10-T1'));
     assert.equal(amb.eventos().at(-1).tipo, 'task.integrada');
-    assert.deepEqual(amb.eventos().at(-1).dados, { task: 'T1', sha: amb.topo() });
+    assert.deepEqual(amb.eventos().at(-1).dados, { task: 'T1', sha: amb.topo(), mutacoes: { total: 0, mortas: 0 } });
     assert.ok(!existsSync(w), 'worktree removida');
     assert.equal(g(amb.dir, 'status', '--short').trim(), '');
   });
@@ -1206,7 +1207,7 @@ describe('proxima', () => {
     assert.equal(r.rc, 0, r.out + r.err);
     assert.equal(r.j.ok, true);
     // E3 (T10): todo item leva `modelo`, `decisoes` e `emendas` (vazias sem Sombra nem emenda)
-    const item = (task) => ({ task, papel: 'implementador', modelo: { modelo: 'sonnet', esforco: 'high' }, decisoes: [], emendas: [] });
+    const item = (task) => ({ task, papel: 'implementador', descricao: `${task} implementador`, modelo: { modelo: 'sonnet', esforco: 'high' }, decisoes: [], emendas: [] });
     assert.deepEqual(r.j.acao, { tipo: 'despachar', itens: [item('T1'), item('T3')] });
     assert.deepEqual(r.j.sinais, { slots: 2, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false });
     assert.equal(r.j.aviso, undefined);
@@ -3241,5 +3242,205 @@ describe('E3 T16: integrar repassa desvio e aviso do gate no verde', () => {
     assert.ok(r.j.relato.some((l) => /^FALHA /.test(l)), 'FALHA continua no relato');
     assert.ok(r.j.relato.some((l) => /^ok {5}/.test(l)), 'o relato completo (com ok) segue na reprovação');
     assert.ok(r.j.relato.includes('desvio: REQ-A-1 a.ts (tecnica)'));
+  });
+});
+
+describe('E4 T7: dados do painel no loop (iniciar, integrar, proxima)', () => {
+  const comConfig = (orq) => ambiente({ config: { ...CONFIG_PADRAO, orquestracao: orq } });
+  const iniciada = (amb) => amb.eventos().filter((e) => e.tipo === 'task.iniciada').at(-1);
+  const integradaDe = (amb) => amb.eventos().find((e) => e.tipo === 'task.integrada');
+
+  test('iniciar-forma-posicional-mantida: `--papel` do plano antigo é uso rc 2, nada gravado', () => {
+    const amb = ambiente();
+    amb.cli(['abrir', 'T1']);
+    const r = amb.cli(['iniciar', 'T1', '--papel', 'implementador']);
+    assert.equal(r.rc, 2);
+    assert.equal(r.j.erro, 'uso');
+    assert.equal(amb.eventos().length, 0);
+  });
+
+  test('iniciar-grava-modelo-padrao: sem `orquestracao`, o modelo é o padrão do papel e a saída traz o mesmo valor', () => {
+    const amb = ambiente();
+    amb.cli(['abrir', 'T1']);
+    const r = amb.cli(['iniciar', 'T1', 'implementador']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(iniciada(amb).dados.modelo, 'sonnet');
+    assert.equal(r.j.evento.modelo, 'sonnet');
+    assert.equal(r.j.aviso, undefined, 'config válida sem `orquestracao` não avisa');
+    amb.cli(['concluir', 'T1']);
+    const v = amb.cli(['iniciar', 'T1', 'revisor']);
+    assert.equal(v.rc, 0, v.out + v.err);
+    assert.equal(iniciada(amb).dados.modelo, 'opus');
+    assert.equal(v.j.evento.modelo, 'opus');
+  });
+
+  test('iniciar-correcao-usa-chave-implementador e iniciar-revisor-usa-chave-revisor: a família vem da chave do papel', () => {
+    const amb = comConfig({ modelos: { implementador: 'opus', revisor: 'haiku' } });
+    amb.semear([...IMPL_E('T1'), ['task.iniciada', { task: 'T1', papel: 'revisor' }], REPROVA_E('T1')]);
+    amb.cli(['abrir', 'T1']);
+    const c = amb.cli(['iniciar', 'T1', 'correcao']);
+    assert.equal(c.rc, 0, c.out + c.err);
+    assert.equal(iniciada(amb).dados.modelo, 'opus', 'correcao usa a chave implementador');
+    assert.equal(c.j.evento.modelo, 'opus');
+    amb.semear([['task.concluida', { task: 'T1', sha: 'b'.repeat(40) }]]);
+    const v = amb.cli(['iniciar', 'T1', 'revisor']);
+    assert.equal(v.rc, 0, v.out + v.err);
+    assert.equal(iniciada(amb).dados.modelo, 'haiku', 'revisor usa a chave revisor, nunca a do implementador');
+    assert.equal(v.j.evento.modelo, 'haiku');
+  });
+
+  test('iniciar-config-objeto-e-id-completo: `{modelo}` e id completo viram a família', () => {
+    const amb = comConfig({ modelos: { implementador: { modelo: 'claude-opus-5-5', esforco: 'low' } } });
+    amb.cli(['abrir', 'T1']);
+    const r = amb.cli(['iniciar', 'T1', 'implementador']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(iniciada(amb).dados.modelo, 'opus');
+    assert.equal(r.j.aviso, undefined);
+  });
+
+  test('iniciar-chave-invalida-padrao-com-aviso: o que o item levou ao Agent é o padrão', () => {
+    for (const valor of [42, 'gpt', {}]) {
+      const amb = comConfig({ modelos: { implementador: valor } });
+      amb.cli(['abrir', 'T1']);
+      const r = amb.cli(['iniciar', 'T1', 'implementador']);
+      assert.equal(r.rc, 0, r.out + r.err);
+      assert.equal(iniciada(amb).dados.modelo, 'sonnet', JSON.stringify(valor));
+      assert.equal(r.j.aviso.length, 1);
+      assert.match(r.j.aviso[0], /modelo do papel implementador/);
+    }
+  });
+
+  test('iniciar-config-corrompida-sem-modelo-com-aviso: ausente e corrompido são casos distintos, cada um com o seu lado', () => {
+    // corrompida (JSON quebrado e raiz que não é objeto): evento sem a chave `modelo`, aviso, rc 0
+    for (const texto of ['{', '[1]', 'null']) {
+      const amb = ambiente();
+      amb.cli(['abrir', 'T1']);
+      writeFileSync(join(amb.dir, 'harness.config.json'), texto);
+      const r = amb.cli(['iniciar', 'T1', 'implementador']);
+      assert.equal(r.rc, 0, `${texto}: ${r.out}`);
+      assert.equal(Object.hasOwn(iniciada(amb).dados, 'modelo'), false, `${texto}: nenhum modelo é inventado`);
+      assert.deepEqual(iniciada(amb).dados, { task: 'T1', papel: 'implementador' });
+      assert.equal(Object.hasOwn(r.j.evento, 'modelo'), false);
+      assert.equal(r.j.aviso.length, 1);
+      assert.match(r.j.aviso[0], /^config_invalida: .*; task\.iniciada sem modelo$/);
+    }
+    // ausente: o padrão, com o aviso de ausência
+    const amb = ambiente();
+    amb.cli(['abrir', 'T1']);
+    rmSync(join(amb.dir, 'harness.config.json'));
+    const r = amb.cli(['iniciar', 'T1', 'implementador']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(iniciada(amb).dados.modelo, 'sonnet');
+    assert.deepEqual(r.j.aviso, ['harness.config.json ausente']);
+  });
+
+  test('iniciar-recusa-antes-da-config: com a config corrompida o motivo da recusa não muda', () => {
+    const corrompe = (amb) => writeFileSync(join(amb.dir, 'harness.config.json'), '{');
+    const a = ambiente();
+    corrompe(a);
+    assert.equal(a.cli(['iniciar', 'T9', 'implementador']).j.erro, 'task_fora_do_plano');
+    const b = ambiente();
+    corrompe(b);
+    assert.equal(b.cli(['iniciar', 'T1', 'implementador']).j.erro, 'worktree_ausente');
+    const c = ambiente();
+    c.cli(['abrir', 'T1']);
+    assert.equal(c.cli(['iniciar', 'T1', 'implementador']).rc, 0);
+    corrompe(c);
+    const t = c.cli(['iniciar', 'T1', 'implementador']);
+    assert.equal(t.j.erro, 'transicao_invalida');
+    assert.equal(c.eventos().length, 1, 'a recusa não grava nada');
+  });
+
+  const GATE_MUT = [
+    { nome: 'lenta', arquivo: 'src/t1.txt', de: 'x', para: 'y', teste: 'sleep 0.4; test "$(cat src/t1.txt)" = x' },
+    { nome: 'rapida', arquivo: 'src/t1.txt', de: 'x', para: 'y', teste: 'grep -q x src/t1.txt' },
+  ];
+  const ambMut = (lista) => {
+    const amb = ambiente({
+      config: { gates: { suites: ["echo '# pass 1'"] } },
+      plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], ...(lista === undefined ? {} : { mutacoes: 'mut.json' }) }]),
+    });
+    if (lista !== undefined) writeFileSync(join(amb.dir, 'mut.json'), JSON.stringify(lista));
+    amb.aprovar('T1');
+    return amb;
+  };
+
+  test('integrar-mutacoes-na-saida: gate real, uma morta devagar e uma em tempo ~zero (ALERTA, não conta) ⇒ {2,1} no diário e na saída', () => {
+    const amb = ambMut(GATE_MUT);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.mutacoes, { total: 2, mortas: 1 });
+    assert.deepEqual(integradaDe(amb).dados.mutacoes, { total: 2, mortas: 1 });
+    assert.equal(integradaDe(amb).dados.sha, amb.topo());
+  });
+
+  test('integrar-mutacoes-todas-mortas: total e mortas lidos (2 e 2)', () => {
+    const amb = ambMut([GATE_MUT[0], { ...GATE_MUT[0], nome: 'lenta2' }]);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.mutacoes, { total: 2, mortas: 2 });
+    assert.deepEqual(integradaDe(amb).dados.mutacoes, { total: 2, mortas: 2 });
+  });
+
+  test('integrar-sem-mutacoes-zero: sem `mutacoes` no plano o gate mediu zero, valor presente e não ausente', () => {
+    const amb = ambMut(undefined);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.mutacoes, { total: 0, mortas: 0 });
+    assert.deepEqual(integradaDe(amb).dados.mutacoes, { total: 0, mortas: 0 });
+  });
+
+  test('integrar-mutacao-viva-reprova-sem-evento: nenhum task.integrada, base inalterada', () => {
+    const amb = ambMut([{ nome: 'viva', arquivo: 'src/t1.txt', de: 'x', para: 'y', teste: 'true' }]);
+    const base = amb.topo();
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.j.erro, 'gate_reprovado');
+    assert.equal(integradaDe(amb), undefined);
+    assert.equal(amb.topo(), base);
+  });
+
+  test('integrar-forma-mutacoes-antes-do-merge: mortas > total ⇒ gate_erro, sem merge nem evento, base inalterada', async () => {
+    const amb = ambMut(undefined);
+    const base = amb.topo();
+    const avaliarTorto = async () => ({ reprova: 0, alertas: 0, relato: [], suites: 1, testes: 1, mutacoes: 3, semContagem: 0 });
+    const r = await integrarComGate(amb.dir, 'T1', { avaliar: avaliarTorto });
+    assert.equal(r.ok, false);
+    assert.equal(r.erro, 'gate_erro');
+    assert.match(r.mensagem, /mutacoes.*mortas ≤ total/);
+    assert.equal(r.merge, false);
+    assert.equal(r.evento, false);
+    assert.equal(amb.topo(), base, 'o merge não aconteceu');
+    assert.equal(integradaDe(amb), undefined);
+    assert.ok(existsSync(amb.wt('T1')), 'a worktree continua');
+  });
+
+  test('integrar-com-avaliador-injetado-bom: o mesmo caminho com mortas == total grava e mescla (o teste acima não passa por outro motivo)', async () => {
+    const amb = ambMut(undefined);
+    const ok = async () => ({ reprova: 0, alertas: 0, relato: [], suites: 1, testes: 1, mutacoes: 0, semContagem: 0 });
+    const r = await integrarComGate(amb.dir, 'T1', { avaliar: ok });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(r.mutacoes, { total: 0, mortas: 0 });
+    assert.deepEqual(integradaDe(amb).dados.mutacoes, { total: 0, mortas: 0 });
+  });
+
+  test('proxima-descricao-casa-com-casarAgente (P9): os três papéis, pelo CLI real e o `dist/painel-equipe.js`', () => {
+    const amb = ambiente();
+    const plano = JSON.parse(readFileSync(join(amb.entregas, 'plano.json'), 'utf8'));
+    const impl = amb.cli(['proxima', '--vivos', '0']).j.acao.itens;
+    assert.ok(impl.length >= 1);
+    for (const i of impl) {
+      assert.equal(i.descricao, `${i.task} implementador`);
+      assert.deepEqual(casarAgente(i.descricao, plano), { task: i.task, papel: 'implementador' });
+    }
+    const rev = ambiente();
+    rev.semear(IMPL_E('T1'));
+    const ri = rev.cli(['proxima', '--vivos', '0']).j.acao.itens.find((i) => i.papel === 'revisor');
+    assert.equal(ri.descricao, 'T1 revisor');
+    assert.deepEqual(casarAgente(ri.descricao, plano), { task: 'T1', papel: 'revisor' });
+    const cor = ambiente();
+    cor.semear([...IMPL_E('T1'), REPROVA_E('T1')]);
+    const ci = cor.cli(['proxima', '--vivos', '0']).j.acao.itens.find((i) => i.papel === 'correcao');
+    assert.equal(ci.descricao, 'T1 correcao');
+    assert.deepEqual(casarAgente(ci.descricao, plano), { task: 'T1', papel: 'correcao' });
   });
 });

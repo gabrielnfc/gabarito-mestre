@@ -829,7 +829,7 @@ function devolver(c, wt, branch, revisado, alvo, e) {
   return e;
 }
 
-async function integrar(c, plano, task) {
+async function integrar(c, plano, task, opcoes = {}) {
   const t = tarefa(plano, task);
   const eventos = lerDiarioEstrito(c.dirEntrega);
   if (diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições; integrar recusado');
@@ -839,6 +839,7 @@ async function integrar(c, plano, task) {
   if (sujo.length > 0) throw new Falha('worktree_suja', `a worktree ${task} tem trabalho não commitado ou não rastreado; nada foi feito: ${sujo.slice(0, 10).join(' | ')}`, { merge: false, evento: false });
   const branch = ramo(c, task);
   const nada = { merge: false, evento: false };
+  let mutacoesMedidas;
   let relatoVerde = []; // só `desvio:`/`aviso:` do gate (T16); o relato completo fica no ramo reprovado
 
   // O que o gate aprova é exatamente o que entra: a base vem do `abrir`, o HEAD é a branch da task e o commit é o que o revisor viu.
@@ -883,7 +884,7 @@ async function integrar(c, plano, task) {
     process.env.TMPDIR = tmp;
     let r;
     try {
-      r = await avaliar({ wt, base: `refs/heads/${base}`, card: c.entrega, files: escopo(wt, escopoDaTask(plano, projetarEmendas(eventos), task)), mutacoes, suites: suitesDaTask(wt, t) });
+      r = await (opcoes.avaliar ?? avaliar)({ wt, base: `refs/heads/${base}`, card: c.entrega, files: escopo(wt, escopoDaTask(plano, projetarEmendas(eventos), task)), mutacoes, suites: suitesDaTask(wt, t) });
     } catch (e) {
       throw new Falha('gate_erro', `o gate falhou ao rodar: ${e.message}; sem merge nem evento`, nada);
     } finally {
@@ -894,6 +895,11 @@ async function integrar(c, plano, task) {
     if (r.reprova > 0) {
       throw new Falha('gate_reprovado', `gate reprovado (${r.reprova}); sem merge nem evento`, { ...nada, relato: r.relato });
     }
+    // `task.integrada.mutacoes` (E4): o que o gate mediu. `mortas < total` só com ALERTA de tempo ~zero (a mutação VIVA reprova antes). A forma é conferida
+    // AQUI, antes do merge: depois dele, o dado torto viraria "merge ENTROU, evento NÃO gravado".
+    mutacoesMedidas = { total: mutacoes === undefined ? 0 : mutacoes.length, mortas: r.mutacoes };
+    const tortura = formaInvalida('task.integrada', { task, sha: alvo, mutacoes: mutacoesMedidas });
+    if (tortura !== null) throw new Falha('gate_erro', `o gate devolveu mutações fora da forma (${tortura}); sem merge nem evento`, nada);
     if (git(wt, 'rev-parse', 'HEAD') !== alvo || git(wt, 'rev-parse', `refs/heads/${branch}`) !== alvo) {
       throw new Falha('head_mudou', `o HEAD da ${branch} mudou entre o gate (${alvo.slice(0, 12)}) e o merge: o gate não viu o que entraria; sem merge nem evento`, nada);
     }
@@ -920,7 +926,7 @@ async function integrar(c, plano, task) {
   }
 
   try {
-    gravar(c, plano, 'task.integrada', { task, sha: alvo });
+    gravar(c, plano, 'task.integrada', { task, sha: alvo, mutacoes: mutacoesMedidas });
   } catch (e) {
     const causa = e instanceof Falha ? `${e.erro}: ${e.message}` : String(e.message ?? e);
     throw new Falha('evento_nao_gravado', `o merge da ${branch} ENTROU em ${base}, mas o evento task.integrada NÃO foi gravado (${causa}); fechar não foi chamado`, { merge: true, evento: false });
@@ -932,7 +938,7 @@ async function integrar(c, plano, task) {
     const causa = e instanceof Falha ? `${e.erro}: ${e.message}` : String(e.message ?? e);
     throw new Falha('fechar_falhou', `o merge entrou e o evento task.integrada foi gravado, mas fechar falhou (${causa})`, { merge: true, evento: true, causa: e.erro });
   }
-  return { task, branch, base, merge: true, evento: true, fechada: true, banco: fechada.banco, ignorados_removidos: fechada.ignorados_removidos, relato: relatoVerde };
+  return { task, branch, base, merge: true, evento: true, fechada: true, banco: fechada.banco, ignorados_removidos: fechada.ignorados_removidos, mutacoes: mutacoesMedidas, relato: relatoVerde };
 }
 
 // ─────────────────────────────────────────────────────────────── proxima
@@ -1066,6 +1072,28 @@ function modeloDoItem(cfg, papel, aviso) {
   return { modelo: familia, ...(esforco !== undefined ? { esforco } : {}) };
 }
 
+/**
+ * `modelo` de `task.iniciada` (E4, REQ-PNL-14): a família que `proxima` daria ao item deste papel (`modeloDoItem`), lida do config LOCAL no momento do
+ * `iniciar` (depois de `tarefa` e `worktreeViva`, para que a config não mude o motivo de nenhuma recusa). Config ausente ⇒ o padrão do papel e aviso;
+ * config ilegível (`config_invalida`) ⇒ SEM `modelo` e aviso, rc 0: `proxima` não daria item com essa config, então nenhum modelo é inventado.
+ * Ausente e corrompido são casos distintos. Qualquer outra falha segue como falha.
+ */
+function modeloDaInicio(c, papel) {
+  const aviso = [];
+  let cfg;
+  try {
+    ({ cfg } = lerConfig(c.raiz));
+  } catch (e) {
+    if (e instanceof Falha && e.erro === 'config_invalida') {
+      aviso.push(`${e.erro}: ${e.message}; task.iniciada sem modelo`);
+      return { modelo: undefined, aviso };
+    }
+    throw e;
+  }
+  if (cfg === null) aviso.push('harness.config.json ausente');
+  return { modelo: modeloDoItem(cfg, papel, aviso).modelo, aviso };
+}
+
 /** Os julgamentos que aprovaram: o 1º julgamento válido de cada proposta (aprovar ou rejeitar) a fecha; só `spec.emendada` entra, com a posição em `ordenar`. */
 function julgamentosAprovados(ord, est) {
   const aprovadas = new Map(est.aprovadas.map((p) => [p.seq, p]));
@@ -1176,6 +1204,8 @@ function enriquecer(c, plano, eventos, item, aviso, extra) {
   const saida = {
     ...item,
     ...(typeof plano.spec === 'string' ? { spec: plano.spec } : {}),
+    // `description` do `Agent` (E4): `"<task> <papel>"` exato; é a ligação do agente vivo com a task em `casarAgente` (painel-equipe.ts).
+    descricao: `${item.task} ${item.papel}`,
     modelo: modeloDoItem(extra.cfg, item.papel, aviso),
     decisoes: decisoesDoItem(c, plano, item, reqs, extra),
     emendas: extra.est.aprovadas.filter((p) => reqs.includes(p.req)).map((p) => ({ proposta_seq: p.seq, req: p.req, diff: p.diff })),
@@ -1323,10 +1353,12 @@ async function executar(argv, cwd) {
     case 'abrir': return abrir(c, plano, task);
     case 'fechar': tarefa(plano, task); return fechar(c, task);
     case 'integrar': return integrar(c, plano, task);
-    case 'iniciar':
+    case 'iniciar': {
       tarefa(plano, task);
       worktreeViva(c, task);
-      return { evento: gravar(c, plano, 'task.iniciada', { task, papel: forma.papel }) };
+      const { modelo, aviso } = modeloDaInicio(c, forma.papel);
+      return { evento: gravar(c, plano, 'task.iniciada', { task, papel: forma.papel, ...(modelo !== undefined ? { modelo } : {}) }), ...(aviso.length > 0 ? { aviso } : {}) };
+    }
     case 'concluir': {
       tarefa(plano, task);
       const wt = worktreeViva(c, task);
@@ -1437,6 +1469,21 @@ function gravarSemPlano(c, tipo, dados) {
   if (!r.ok) throw new Falha('evento_nao_gravado', `${tipo} não gravado: ${r.erro}`);
   if (r.gravado !== 'evento') throw new Falha('evento_nao_gravado', `${tipo} recusado pelo canário do diário`);
   return { evento: { tipo, ...dados } };
+}
+
+/**
+ * `integrar` em processo, com o avaliador do gate injetável (`opcoes.avaliar`): só o teste usa, para dar ao gate uma resposta que o `gate-task` real
+ * não dá (mortas > total). Mesma saída do CLI (`{ok, ...}`); nunca lança.
+ */
+export async function integrarComGate(cwd, task, opcoes = {}) {
+  try {
+    const forma = validarForma('integrar', [task], {});
+    const c = contexto(cwd, { sessao: opcoes.sessao, entrega: opcoes.entrega });
+    return { ok: true, ...(await integrar(c, carregarPlano(c), forma.task, opcoes)) };
+  } catch (e) {
+    if (e instanceof Falha) return { ok: false, erro: e.erro, mensagem: e.message, ...e.extra };
+    return { ok: false, erro: 'excecao', mensagem: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 export async function main(argv, cwd = process.cwd()) {
