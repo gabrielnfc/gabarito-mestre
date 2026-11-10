@@ -32,7 +32,9 @@ import { DENY_GUARDA, CHAVES_MORTAS } from '../lib/config.mjs';
 
 export { raizDoRepo }; // API pública: antes definida aqui, agora vem de lib/git
 
-export const SECOES = ['fluxo', 'versionamento', 'orquestracao', 'contexto'];
+export const SECOES = ['fluxo', 'versionamento', 'orquestracao', 'contexto', 'entrega', 'onboarding'];
+/** Valores de `perfil` na raiz que o onboarding grava (E5a T6b): `app` é o default do produto e nunca é escrito. */
+export const PERFIS_RAIZ = ['repo-sem-app'];
 export const CONFIG_FILE = 'harness.config.json';
 export const SETTINGS_FILE = '.claude/settings.json';
 
@@ -120,6 +122,33 @@ export function aplicar(root, secao, patch, opts = {}) {
   if (!SECOES.includes(secao)) throw new RangeError(`seção desconhecida: ${secao} (use ${SECOES.join('|')})`);
   const { patch: limpo, removidas } = removerMortas(secao, patch);
   return { ...aplicarEm(join(root, CONFIG_FILE), { [secao]: limpo }, opts), removidas };
+}
+
+function perfilValido(valor) {
+  if (!PERFIS_RAIZ.includes(valor)) throw new RangeError(`perfil não gravável: ${JSON.stringify(valor)} (use ${PERFIS_RAIZ.join('|')})`);
+  return valor;
+}
+
+/** `perfil` na raiz (E5a T6b, D-6): só `repo-sem-app`. Mesmo `aplicarEm`: merge, diff, tmp + rename, dry-run. */
+export function aplicarPerfil(root, valor, opts = {}) {
+  return aplicarEm(join(root, CONFIG_FILE), { perfil: perfilValido(valor) }, opts);
+}
+
+/**
+ * Várias seções (e `perfil`) numa ÚNICA escrita de `harness.config.json`: `secoes` = `{ [secao]: patch }`, cada uma validada e
+ * sem chave morta (`removerMortas`); `perfil` validado como em `aplicarPerfil`. Validação falha ⇒ lança antes de escrever.
+ */
+export function aplicarConfig(root, { secoes = {}, perfil } = {}, opts = {}) {
+  const patch = {};
+  const removidas = [];
+  for (const [secao, p] of Object.entries(secoes)) {
+    if (!SECOES.includes(secao)) throw new RangeError(`seção desconhecida: ${secao} (use ${SECOES.join('|')})`);
+    const limpo = removerMortas(secao, p);
+    patch[secao] = limpo.patch;
+    removidas.push(...limpo.removidas);
+  }
+  if (perfil !== undefined) patch.perfil = perfilValido(perfil);
+  return { ...aplicarEm(join(root, CONFIG_FILE), patch, opts), removidas };
 }
 
 export function aplicarSettings(root, patch, opts = {}) {
@@ -229,7 +258,7 @@ function main(argv) {
   const iSet = argv.indexOf('--set');
   const settings = arg(argv, 'settings');
   if (iSet === -1 && settings === undefined) {
-    console.error("uso: onboarding-config.mjs [--root <dir>] --set <fluxo|versionamento|orquestracao|contexto> '<json>' | --settings '<json>' | --deny-guarda [--dry-run]");
+    console.error("uso: onboarding-config.mjs [--root <dir>] --set <fluxo|versionamento|orquestracao|contexto|entrega|onboarding> '<json>' | --settings '<json>' | --deny-guarda [--dry-run]");
     process.exit(1);
   }
   const bruto = iSet !== -1 ? argv[iSet + 2] : settings;

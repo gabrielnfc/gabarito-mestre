@@ -17,7 +17,11 @@ import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { ORDEM_ITENS, coletarFatos, detectar, rodarReal, lerWorkflow, TIMEOUT_MCP_MS } from '../scripts/onboarding.mjs';
+import { ORDEM_ITENS, coletarFatos, detectar, rodarReal, lerWorkflow, TIMEOUT_MCP_MS, perguntas, previa, configDasRespostas, gravar, MOTIVO_BRANCHPADRAO } from '../scripts/onboarding.mjs';
+import { coletar as coletarCartao } from '../scripts/cartao-sessao.mjs';
+import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
+import { PERFIS_MODELO } from '../lib/config.mjs';
+import * as capacidade from '../scripts/capacidade.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const CLI = join(AQUI, '..', 'scripts', 'onboarding.mjs');
@@ -685,19 +689,38 @@ describe('orquestracao', () => {
     }
   });
 
-  test('orquestracao-campo-invalido-default-por-campo', () => {
-    const cfg = '{\n  "orquestracao": {\n    "paralelismo": {\n      "simultaneos": "3",\n      "teto": 8\n    }\n  }\n}';
-    const o = itensDe(raizCom({ 'harness.config.json': cfg })).orquestracao;
-    assert.equal(o.estado, 'detectado');
-    assert.deepEqual(o.valor, { simultaneos: 2, teto: 8 });
-    assert.equal(o.fonte, 'simultaneos DEFAULTS; teto config:5');
-    for (const ruim of ['null', '-1', '0', '"abc"', 'true', '[]']) {
-      const r = itensDe(raizCom({ 'harness.config.json': `{"orquestracao":{"paralelismo":{"simultaneos":${ruim},"teto":${ruim}}}}` })).orquestracao;
-      assert.deepEqual(r.valor, { simultaneos: 2, teto: 4 }, ruim);
-      assert.equal(r.fonte, 'simultaneos DEFAULTS; teto DEFAULTS', ruim);
+  // T6a MINOR-1 (review): a detecção usa a MESMA régua do runtime (`calcularSlots`), caso a caso.
+  test('orquestracao-mesma-regua-do-calcularSlots', () => {
+    const casos = [
+      // [simultaneos, teto (JSON), simultaneos efetivo, teto efetivo]
+      ['"3"', '8', 3, 8],
+      ['0.5', '4', 1, 4],
+      ['-1', '4', 1, 4],
+      ['10', '4', 4, 4],
+      ['3.9', '8', 3, 8],
+      ['"abc"', '8', 2, 8],
+      ['true', '8', 2, 8],
+      ['null', '8', 2, 8],
+      ['2', '"5"', 2, 5],
+      ['2', '0.5', 1, 1],
+      ['2', 'null', 2, 4],
+    ];
+    for (const [s, t, esperadoS, esperadoT] of casos) {
+      const cfg = `{"orquestracao":{"paralelismo":{"simultaneos":${s},"teto":${t}}}}`;
+      const o = itensDe(raizCom({ 'harness.config.json': cfg })).orquestracao;
+      assert.deepEqual(o.valor, { simultaneos: esperadoS, teto: esperadoT }, `${s}/${t}`);
+      const runtime = capacidade.calcularSlots(JSON.parse(cfg).orquestracao.paralelismo, {}, {});
+      assert.equal(o.valor.simultaneos, runtime.slots, `${s}/${t}: igual ao calcularSlots`);
     }
-    const frac = itensDe(raizCom({ 'harness.config.json': '{"orquestracao":{"paralelismo":{"simultaneos":3.9,"teto":8}}}' })).orquestracao;
-    assert.equal(frac.valor.simultaneos, 3, 'inteiro, como o calcularSlots');
+  });
+
+  test('orquestracao-fonte-diz-o-efetivo', () => {
+    const cfg = '{\n  "orquestracao": {\n    "paralelismo": {\n      "simultaneos": 10,\n      "teto": 4\n    }\n  }\n}';
+    assert.equal(itensDe(raizCom({ 'harness.config.json': cfg })).orquestracao.fonte, 'simultaneos config:4 (efetivo 4); teto config:5');
+    const so = '{\n  "orquestracao": {\n    "paralelismo": {\n      "teto": 8\n    }\n  }\n}';
+    const o = itensDe(raizCom({ 'harness.config.json': so })).orquestracao;
+    assert.deepEqual(o.valor, { simultaneos: 2, teto: 8 });
+    assert.equal(o.fonte, 'simultaneos DEFAULTS; teto config:4');
   });
 });
 
@@ -728,6 +751,652 @@ describe('costura', () => {
     const ruim = spawnSync(process.execPath, [CLI, 'detectar', '--root', raiz, '--hoje', 'ontem'], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
     assert.equal(ruim.status, 1);
     assert.equal(JSON.parse(ruim.stdout).ok, false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────── T6b: perguntas, prévia e gravação
+
+const FIXAS = { politica: 'sob_demanda', autonomia: false, perfil: 'padrao' };
+const SEM_MCP = 'No MCP servers configured.\n';
+const FUSO = 'America/Sao_Paulo';
+const cfgDe = (raiz) => JSON.parse(readFileSync(join(raiz, 'harness.config.json'), 'utf8'));
+const textoCfg = (raiz) => readFileSync(join(raiz, 'harness.config.json'), 'utf8');
+const temCfg = (raiz) => existsSync(join(raiz, 'harness.config.json'));
+const repoCom = (arquivos, trunk = 'main') => montarRepo(raizCom(arquivos), trunk);
+const comConfig = (raiz, cfg) => {
+  writeFileSync(join(raiz, 'harness.config.json'), typeof cfg === 'string' ? cfg : JSON.stringify(cfg, null, 2));
+  return raiz;
+};
+const arquivoResp = (conteudo) => {
+  const f = join(novoDir('gm-onb-resp-'), 'respostas.json');
+  if (conteudo !== undefined) writeFileSync(f, typeof conteudo === 'string' ? conteudo : JSON.stringify(conteudo));
+  return f;
+};
+/** `gravar` pelo núcleo, com o `claude` falso e o git real. */
+const gravarCom = (raiz, respostas, { claude = CLICKUP, hoje = HOJE, fuso = FUSO, dryRun = false, bruto } = {}) =>
+  gravar(raiz, arquivoResp(bruto ?? respostas), { rodar: rodarCom(claude), hoje, fuso, dryRun });
+const itensLista = (raiz, opts) => detectar(fatosDe(raiz, opts));
+const idsDe = (ps) => ps.map((p) => p.id);
+const existenteDe = (raiz, opts) => fatosDe(raiz, opts).configExistente;
+
+describe('perguntas', () => {
+  test('fixa-ordem-e-defaults', () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    const ps = perguntas(itensLista(raiz), existenteDe(raiz));
+    assert.deepEqual(idsDe(ps), ['politica', 'autonomia', 'perfil']);
+    assert.deepEqual(ps.map((p) => p.default), [FIXAS.politica, FIXAS.autonomia, FIXAS.perfil]);
+    assert.deepEqual(ps[0].opcoes.map((o) => o.valor), ['continua', 'janela', 'sob_demanda']);
+    assert.deepEqual(ps[1].opcoes.map((o) => o.valor), [true, false]);
+    assert.deepEqual(ps[2].opcoes.map((o) => o.valor), ['economia', 'padrao', 'qualidade']);
+    for (const p of ps) {
+      assert.ok(p.texto.length > 0 && p.opcoes.every((o) => o.rotulo.length > 0), p.id);
+      assert.ok(p.opcoes.some((o) => o.valor === p.default), `${p.id}: o default é uma das opções`);
+      assert.equal('aviso' in p, false, `${p.id}: config ausente não gera aviso`);
+    }
+    assert.match(ps[0].texto, /Política de entrega/);
+    assert.match(ps[1].texto, /Autonomia em produção/);
+    assert.match(ps[2].texto, /Perfil de modelos/);
+    assert.match(ps[0].opcoes.find((o) => o.valor === 'sob_demanda').rotulo, /PR de release/);
+    assert.match(ps[0].opcoes.find((o) => o.valor === 'janela').rotulo, /janela de horário/);
+    assert.match(ps[1].opcoes.find((o) => o.valor === true).rotulo, /^sim/);
+    // o rótulo de cada perfil vem de PERFIS_MODELO, não de outra tabela
+    for (const o of ps[2].opcoes) assert.ok(o.rotulo.includes(PERFIS_MODELO[o.valor].revisor_final.modelo), o.rotulo);
+  });
+
+  test('default-de-config-110', () => {
+    const ps = perguntas(itensLista(repoVazio()), { entrega: { politica: 'janela' }, orquestracao: { perfil: 'qualidade' } });
+    assert.deepEqual(ps.slice(0, 3).map((p) => p.default), ['janela', true, 'qualidade']);
+    const ps2 = perguntas(itensLista(repoVazio()), { entrega: { politica: 'continua', autonomia: true }, orquestracao: { perfil: 'economia' } });
+    assert.deepEqual(ps2.slice(0, 3).map((p) => p.default), ['continua', true, 'economia']);
+  });
+
+  test('autonomia-default-sim-com-continua-legada', () => {
+    const it = itensLista(repoVazio());
+    const aut = (entrega) => perguntas(it, { entrega })[1].default;
+    assert.equal(aut({ politica: 'continua' }), true, 'continua legada sem autonomia ⇒ sim');
+    assert.equal(aut({ politica: 'janela' }), true, 'janela legada sem autonomia ⇒ sim');
+    assert.equal(aut({ politica: 'continua', autonomia: false }), false, 'o não explícito vale');
+    assert.equal(aut({ politica: 'sob_demanda' }), false);
+    assert.equal(aut({ politica: 'sob_demanda', autonomia: true }), true);
+    assert.equal(aut(undefined), false);
+  });
+
+  test('rotulo-nao-com-continua', () => {
+    const it = itensLista(repoVazio());
+    const nao = (entrega) => perguntas(it, { entrega })[1].opcoes.find((o) => o.valor === false).rotulo;
+    const FRASE = 'a entrega vira sob demanda: PR de release, você faz merge e deploy';
+    assert.equal(nao({ politica: 'continua' }), FRASE);
+    assert.equal(nao({ politica: 'janela' }), FRASE);
+    assert.notEqual(nao({ politica: 'sob_demanda' }), FRASE);
+    assert.notEqual(nao(undefined), FRASE);
+  });
+
+  test('default-invalido-na-config-cai-no-produto', () => {
+    const it = itensLista(repoVazio());
+    const ruim = { entrega: { politica: 'rapida', autonomia: 'sim' }, orquestracao: { perfil: 'turbo' } };
+    const ps = perguntas(it, ruim);
+    assert.deepEqual(ps.slice(0, 3).map((p) => p.default), ['sob_demanda', false, 'padrao']);
+    assert.match(ps[0].aviso, /config tinha "rapida" inválido/);
+    assert.match(ps[1].aviso, /config tinha "sim" inválido/);
+    assert.match(ps[2].aviso, /config tinha "turbo" inválido/);
+    const p = previa(it, ps, { fuso: FUSO });
+    for (const v of ['"rapida"', '"sim"', '"turbo"']) assert.ok(p.includes(`config tinha ${v} inválido`), `a prévia cita ${v}`);
+    // config sã: nenhum aviso em lugar nenhum
+    const sa = perguntas(it, { entrega: { politica: 'continua', autonomia: true }, orquestracao: { perfil: 'qualidade' } });
+    assert.ok(sa.every((q) => !('aviso' in q)));
+    assert.ok(!previa(it, sa, { fuso: FUSO }).includes('inválido'));
+  });
+
+  test('config-corrompida-nao-vira-default-silencioso', () => {
+    const it = itensLista(repoVazio());
+    // `{erro}` é o formato de configExistente corrompido: perguntas não tira default de dado ilegível
+    assert.deepEqual(perguntas(it, { erro: 'x' }).slice(0, 3).map((p) => p.default), ['sob_demanda', false, 'padrao']);
+    assert.deepEqual(perguntas(it, null).slice(0, 3).map((p) => p.default), ['sob_demanda', false, 'padrao']);
+  });
+
+  test('fixture-completa-tudo-detectado-3-perguntas', () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    comConfig(raiz, { perfil: 'app', $schema: 'x' });
+    const ps = perguntas(itensLista(raiz), existenteDe(raiz));
+    assert.equal(ps.length, 3, 'tudo detectado: só as 3 fixas');
+    const r = gravarCom(raiz, FIXAS);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const cfg = cfgDe(raiz);
+    assert.equal(cfg.entrega.base, 'trunk');
+    assert.equal(cfg.versionamento.branchPadrao, undefined, 'D-1: branchPadrao nunca é escrito');
+    assert.equal('branchPadrao' in cfg.versionamento, false);
+    assert.equal(cfg.versionamento.resolvidoEm, HOJE);
+    assert.deepEqual(cfg.entrega, { politica: 'sob_demanda', autonomia: false, base: 'trunk' });
+    assert.equal(cfg.perfil, 'app', 'chaves do dono ficam');
+    assert.equal(cfg.orquestracao.perfil, 'padrao', 'grava a escolhida, inclusive padrao (o doctor compara com o escolhido)');
+    assert.equal(cfg.$schema, 'x');
+    assert.deepEqual(r.naoDetectado, []);
+    assert.equal('dryRun' in r, false);
+    assert.deepEqual(cfg.fluxo, { ferramenta: 'clickup', mcp: 'claude.ai ClickUp', resolvidoEm: HOJE });
+  });
+
+  test('fixture-monorepo-5-perguntas', () => {
+    const raiz = fixtureComGit('monorepo', 'main');
+    const it = itensLista(raiz, { claude: SEM_MCP });
+    const ps = perguntas(it, existenteDe(raiz, { claude: SEM_MCP }));
+    assert.deepEqual(idsDe(ps), ['politica', 'autonomia', 'perfil', 'tipo_repo', 'ambientes']);
+    assert.equal(ps.length, 5, 'teto 5');
+    const tipo = ps[3];
+    assert.deepEqual(tipo.opcoes.map((o) => o.valor), ['app', 'repo-sem-app']);
+    assert.equal(tipo.default, 'app');
+    const fonteTipo = it.find((i) => i.item === 'tipo_repo').fonte;
+    assert.ok(tipo.texto.startsWith('tipo_repo:') && tipo.texto.includes(fonteTipo), tipo.texto);
+    assert.deepEqual(tipo.opcoes.map((o) => o.rotulo), ['app', 'repo-sem-app']);
+    const r = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', ambientes: null }, { claude: SEM_MCP });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(r.naoDetectado, ['ambientes', 'planejamento'], 'o 3º fato (planejamento) fica não detectado');
+    const cfg = cfgDe(raiz);
+    assert.equal(cfg.fluxo.ferramenta, undefined, 'sem valor gravado para o 3º fato');
+    assert.deepEqual(cfg.fluxo, { resolvidoEm: HOJE });
+    assert.deepEqual(cfg.onboarding.naoDetectado, ['ambientes', 'planejamento']);
+    assert.equal('fatos' in cfg.onboarding, false, 'ambientes não resolvido não vira fato');
+    assert.equal('perfil' in cfg, false);
+  });
+
+  test('pergunta-nao-detectado-sem-candidato', () => {
+    const raiz = repoVazio('main'); // sem CI e sem conector
+    const it = itensLista(raiz, { claude: SEM_MCP });
+    const ps = perguntas(it, null);
+    assert.deepEqual(idsDe(ps), ['politica', 'autonomia', 'perfil', 'ambientes', 'planejamento']);
+    const amb = ps[3];
+    assert.deepEqual(amb.opcoes, [{ valor: null, rotulo: 'deixar não detectado (trocar ambientes depois)' }]);
+    assert.equal(amb.default, null);
+    const pla = ps[4];
+    assert.deepEqual(pla.opcoes.map((o) => o.valor), ['arquivos', null], 'planejamento sem candidato ⇒ arquivos (regra da 1.1)');
+    assert.equal(pla.opcoes[1].rotulo, 'deixar não detectado (trocar planejamento depois)');
+    assert.equal(pla.default, 'arquivos');
+    // resposta `null` ⇒ naoDetectado e nada gravado; 'arquivos' ⇒ fluxo.ferramenta
+    const a = gravarCom(raiz, { ...FIXAS, ambientes: null, planejamento: null }, { claude: SEM_MCP });
+    assert.deepEqual(a.naoDetectado, ['ambientes', 'planejamento']);
+    assert.equal(cfgDe(raiz).fluxo.ferramenta, undefined);
+    const b = gravarCom(raiz, { ...FIXAS, ambientes: null, planejamento: 'arquivos' }, { claude: SEM_MCP });
+    assert.deepEqual(b.naoDetectado, ['ambientes']);
+    assert.equal(cfgDe(raiz).fluxo.ferramenta, 'arquivos');
+  });
+
+  test('planejamento-nao-detectado-com-candidatos-do-repo', () => {
+    // `claude mcp list` falhou, mas o .mcp.json do repo sabe a ferramenta: candidatos = ela + null
+    const raiz = repoCom({ 'package.json': '{"name":"x"}', '.mcp.json': '{"mcpServers":{"linear":{"command":"x"}}}', '.github/workflows/d.yml': 'name: deploy\non:\n  push:\n    branches: [main]\n' });
+    const it = itensLista(raiz, { claude: { rc: 1, stdout: '', stderr: '', motivo: null } });
+    const p = perguntas(it, null).find((q) => q.id === 'planejamento');
+    assert.deepEqual(p.opcoes.map((o) => o.valor), ['linear', null]);
+    assert.equal(p.default, 'linear');
+  });
+});
+
+describe('previa', () => {
+  test('previa-todo-item-tem-fonte', () => {
+    for (const [nome, trunk, claude] of [['completa', 'trunk', CLICKUP], ['monorepo', 'main', SEM_MCP]]) {
+      const raiz = fixtureComGit(nome, trunk);
+      const it = itensLista(raiz, { claude });
+      const texto = previa(it, perguntas(it, null), { fuso: FUSO });
+      const linhas = texto.split('\n');
+      for (const i of it) {
+        const linha = linhas.find((l) => l.startsWith(`- ${i.item}:`));
+        assert.ok(linha, `${nome}/${i.item}: sem linha`);
+        assert.ok(linha.includes(i.fonte), `${nome}/${i.item}: a linha não cita a fonte (${i.fonte})`);
+        assert.ok(linha.includes(i.estado), `${nome}/${i.item}: a linha não diz o estado`);
+      }
+      assert.ok(texto.startsWith('detectei:'));
+      assert.match(texto, /trocar <item>|trocar tipo_repo/);
+    }
+  });
+
+  test('previa-ambientes-e-informativo', () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    const it = itensLista(raiz);
+    const linha = previa(it, perguntas(it, null), { fuso: FUSO }).split('\n').find((l) => l.startsWith('- ambientes:'));
+    assert.ok(linha.includes('ambientes: informativo; a guarda usa guarda.ambientes'), linha);
+    const outra = previa(it, perguntas(it, null), { fuso: FUSO }).split('\n').find((l) => l.startsWith('- tipo_repo:'));
+    assert.ok(!outra.includes('informativo'));
+  });
+
+  test('previa-mostra-efetiva', () => {
+    const it = itensLista(repoVazio());
+    const com = previa(it, perguntas(it, { entrega: { politica: 'continua', autonomia: false } }), { fuso: FUSO });
+    assert.match(com, /política efetiva: sob_demanda/);
+    assert.match(com, /continua/);
+    const igual = previa(it, perguntas(it, { entrega: { politica: 'continua', autonomia: true } }), { fuso: FUSO });
+    assert.ok(!igual.includes('política efetiva'), 'sem divergência, sem a linha');
+    const nada = previa(it, perguntas(it, null), { fuso: FUSO });
+    assert.ok(!nada.includes('política efetiva'));
+    // as 3 decisões com default, e a janela padrão com o fuso recebido
+    assert.match(nada, /política de entrega: sob_demanda/);
+    assert.match(nada, /autonomia em produção: não/);
+    assert.match(nada, /perfil de modelos: padrao/);
+    assert.ok(nada.includes(FUSO) && nada.includes('09:00') && nada.includes('17:00'));
+  });
+
+  test('previa-fato-acima-do-teto-fica-nao-detectado', () => {
+    const raiz = fixtureComGit('monorepo', 'main');
+    const it = itensLista(raiz, { claude: SEM_MCP });
+    const texto = previa(it, perguntas(it, null), { fuso: FUSO });
+    assert.match(texto, /- planejamento: .*fica nao_detectado \(acima do teto de 5 perguntas\)/);
+    assert.ok(!/- ambientes: .*acima do teto/.test(texto));
+  });
+});
+
+describe('gravar', () => {
+  test('gravar-dry-run-nao-escreve', () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    const antes = readdirSync(raiz).sort();
+    const r = gravarCom(raiz, FIXAS, { dryRun: true });
+    assert.equal(r.ok, true);
+    assert.ok(r.diff.length > 0 && r.diff.join('\n').includes('"base":"trunk"'), 'o diff mostra o que gravaria');
+    assert.equal(r.dryRun, true);
+    assert.equal(temCfg(raiz), false, '0 bytes escritos');
+    assert.deepEqual(readdirSync(raiz).sort(), antes);
+    // com config existente, os bytes ficam iguais
+    comConfig(raiz, '{"fluxo": {"x":   1}}\n');
+    const b = textoCfg(raiz);
+    gravarCom(raiz, FIXAS, { dryRun: true });
+    assert.equal(textoCfg(raiz), b);
+  });
+
+  test('gravar-resolvidoEm-uma-execucao', () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    const r = gravarCom(raiz, { ...FIXAS, perfil: 'economia' }, { hoje: '2025-06-30' });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const cfg = cfgDe(raiz);
+    const datas = [cfg.fluxo.resolvidoEm, cfg.versionamento.resolvidoEm, cfg.orquestracao.modelo.resolvidoEm, cfg.onboarding.resolvidoEm];
+    assert.deepEqual(datas, Array(4).fill('2025-06-30'));
+    assert.equal(cfg.orquestracao.modelo.alias, 'opus', 'revisor_final do perfil economia');
+    assert.equal(cfg.orquestracao.modelo.politica, 'mais-potente');
+    assert.equal(cfg.orquestracao.modelo.validadeDias, 90);
+    assert.equal(cfg.orquestracao.perfil, 'economia');
+    // outra data ⇒ as 4 mudam juntas
+    const r2 = gravarCom(raiz, { ...FIXAS, perfil: 'qualidade' }, { hoje: '2025-07-01' });
+    assert.equal(r2.ok, true);
+    const c2 = cfgDe(raiz);
+    assert.deepEqual([c2.fluxo.resolvidoEm, c2.versionamento.resolvidoEm, c2.orquestracao.modelo.resolvidoEm, c2.onboarding.resolvidoEm], Array(4).fill('2025-07-01'));
+    assert.equal(c2.orquestracao.modelo.alias, 'fable');
+  });
+
+  test('gravar-alias-explicito-e-modelo-existente-ficam', () => {
+    const raiz = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { modelos: { revisor_final: 'claude-opus-9' }, modelo: { politica: 'fixo', validadeDias: 30 } } });
+    const r = gravarCom(raiz, { ...FIXAS, perfil: 'qualidade' });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const m = cfgDe(raiz).orquestracao;
+    assert.equal(m.modelo.alias, 'opus', 'o explícito vence o perfil (resolverModelo)');
+    assert.equal(m.modelo.politica, 'fixo');
+    assert.equal(m.modelo.validadeDias, 30);
+    assert.deepEqual(m.modelos, { revisor_final: 'claude-opus-9' });
+  });
+
+  test('gravar-cartao-sai-do-sem-onboarding', () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    const plugin = raizCom({ '.claude-plugin/plugin.json': '{"name":"gabarito-mestre","version":"2.0.0"}' });
+    const opts = { agora: '2025-06-30T12:00:00Z', installedPlugins: join(novoDir(), 'instalados.json') };
+    assert.equal(coletarCartao(raiz, plugin, opts).semOnboarding, true, 'antes do gravar, sem onboarding');
+    const r = gravarCom(raiz, FIXAS);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const depois = coletarCartao(raiz, plugin, opts);
+    assert.equal(depois.semOnboarding, false);
+    assert.equal(depois.config.fluxo.ferramenta, 'clickup');
+  });
+
+  test('gravar-nunca-toca-guarda', () => {
+    const guarda = { ambientes: { prod: { branches: ['main'], rotulo: 'x' } }, outra: [1, 2] };
+    const raiz = comConfig(fixtureComGit('completa', 'trunk'), { guarda, perfil: 'app' });
+    const antes = JSON.stringify(cfgDe(raiz).guarda);
+    const r = gravarCom(raiz, FIXAS);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(JSON.stringify(cfgDe(raiz).guarda), antes, 'guarda igual pelo objeto');
+    assert.deepEqual(cfgDe(raiz).onboarding.fatos.ambientes, { producao: 'production', outros: ['staging'] }, 'ambientes só informativo');
+    // sem guarda no config, nenhuma é criada
+    const so = fixtureComGit('completa', 'trunk');
+    gravarCom(so, FIXAS);
+    assert.equal('guarda' in cfgDe(so), false);
+    assert.ok(!JSON.stringify(cfgDe(so)).includes('guarda'));
+  });
+
+  test('gravar-perfil-so-repo-sem-app', () => {
+    const raiz = fixtureComGit('monorepo', 'main');
+    const r = gravarCom(raiz, { ...FIXAS, tipo_repo: 'repo-sem-app', ambientes: null }, { claude: SEM_MCP });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(cfgDe(raiz).perfil, 'repo-sem-app');
+    assert.ok(!r.naoDetectado.includes('tipo_repo'));
+  });
+
+  test('gravar-app-nao-grava-perfil', () => {
+    const raiz = fixtureComGit('monorepo', 'main');
+    const r = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', ambientes: null }, { claude: SEM_MCP });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal('perfil' in cfgDe(raiz), false, 'nada na raiz para `app`');
+    assert.ok(!r.naoDetectado.includes('tipo_repo'));
+    // tipo_repo detectado como app (sem monorepo) também não grava
+    const so = fixtureComGit('completa', 'trunk');
+    gravarCom(so, FIXAS);
+    assert.equal('perfil' in cfgDe(so), false);
+  });
+
+  test('gravar-respostas-ausente-x-corrompidas', () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    const ausente = gravar(raiz, join(novoDir(), 'nao-existe.json'), { rodar: rodarCom(CLICKUP), hoje: HOJE, fuso: FUSO });
+    assert.deepEqual([ausente.ok, ausente.erro], [false, 'respostas_ausentes']);
+    const semFlag = gravar(raiz, undefined, { rodar: rodarCom(CLICKUP), hoje: HOJE, fuso: FUSO });
+    assert.equal(semFlag.erro, 'respostas_ausentes');
+    for (const torto of ['', 'não é json', '[1,2]', '"x"', 'null', '42', '{"politica":']) {
+      const r = gravarCom(raiz, null, { bruto: torto });
+      assert.deepEqual([r.ok, r.erro], [false, 'respostas_invalidas'], JSON.stringify(torto));
+    }
+    assert.notEqual(ausente.erro, 'respostas_invalidas');
+    assert.ok(typeof ausente.motivo === 'string' && typeof gravarCom(raiz, null, { bruto: '[1]' }).motivo === 'string');
+    assert.equal(temCfg(raiz), false, 'nada escrito em nenhum caso');
+  });
+
+  test('gravar-respostas-fora-das-opcoes', () => {
+    const raiz = fixtureComGit('monorepo', 'main');
+    const boas = { ...FIXAS, tipo_repo: 'app', ambientes: null };
+    const ruins = [
+      { politica: 'rapida' }, { politica: null }, { politica: 1 }, { perfil: 'turbo' }, { perfil: 'Padrao' },
+      { autonomia: 'sim' }, { autonomia: 'não' }, { autonomia: 'true' }, { autonomia: 'false' }, { autonomia: 1 }, { autonomia: null }, { tipo_repo: 'outro' }, { ambientes: 'production' },
+    ];
+    for (const r of ruins) {
+      const out = gravarCom(raiz, { ...boas, ...r }, { claude: SEM_MCP });
+      assert.deepEqual([out.ok, out.erro], [false, 'resposta_fora_das_opcoes'], JSON.stringify(r));
+      assert.ok(out.motivo.includes(Object.keys(r)[0]), 'o motivo cita a pergunta');
+    }
+    assert.equal(temCfg(raiz), false);
+    assert.equal(gravarCom(raiz, boas, { claude: SEM_MCP }).ok, true, 'as boas passam');
+  });
+
+  test('gravar-deteccao-mudou-nao-escreve', () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    // (1) resposta para fato detectado
+    const a = gravarCom(raiz, { ...FIXAS, versionamento: 'main' });
+    assert.deepEqual([a.ok, a.erro], [false, 'deteccao_mudou']);
+    assert.match(a.motivo, /versionamento/);
+    const b = gravarCom(raiz, { ...FIXAS, planejamento: 'jira' });
+    assert.equal(b.erro, 'deteccao_mudou');
+    // (2) `claude mcp list` falha só no gravar: o planejamento passa a ser pergunta e falta a resposta
+    const c = gravarCom(raiz, FIXAS, { claude: { rc: 1, stdout: '', stderr: '', motivo: null } });
+    assert.deepEqual([c.ok, c.erro], [false, 'deteccao_mudou']);
+    assert.match(c.motivo, /planejamento/);
+    assert.equal(temCfg(raiz), false, 'nada escrito');
+    // (3) pergunta sem resposta (fixa e condicional)
+    const mono = fixtureComGit('monorepo', 'main');
+    const d = gravarCom(mono, { ...FIXAS, tipo_repo: 'app' }, { claude: SEM_MCP });
+    assert.deepEqual([d.ok, d.erro], [false, 'deteccao_mudou']);
+    assert.match(d.motivo, /ambientes/);
+    const { perfil: _, ...semPerfil } = FIXAS;
+    const e = gravarCom(raiz, semPerfil);
+    assert.equal(e.erro, 'deteccao_mudou');
+    assert.match(e.motivo, /perfil/);
+    assert.equal(temCfg(mono), false);
+  });
+
+  test('gravar-config-corrompida-nao-escreve', () => {
+    for (const ruim of ['{"entrega":', '[]', '"x"', '{"a":1}}']) {
+      const raiz = comConfig(fixtureComGit('completa', 'trunk'), ruim);
+      const antes = textoCfg(raiz);
+      const r = gravarCom(raiz, FIXAS);
+      assert.deepEqual([r.ok, r.erro], [false, 'config_invalida'], ruim);
+      assert.match(r.motivo, /harness\.config\.json ilegível/);
+      assert.equal(textoCfg(raiz), antes, 'byte a byte igual');
+    }
+  });
+
+  test('gravar-acima-do-teto-nao-grava-base', () => {
+    // monorepo (tipo_repo ambíguo), sem CI útil e sem conector, e versionamento ambíguo (staging 3 × main 1)
+    const raiz = fixtureComGit('monorepo', 'main');
+    criarBase(raiz, 'staging', 'main');
+    mergear(raiz, 'main', '2025-06-10');
+    for (const d of ['2025-06-05', '2025-06-12', '2025-06-20']) mergear(raiz, 'staging', d);
+    const it = itensLista(raiz, { claude: SEM_MCP });
+    assert.deepEqual(it.map((i) => i.estado), ['ambiguo', 'nao_detectado', 'nao_detectado', 'ambiguo', 'detectado']);
+    assert.deepEqual(idsDe(perguntas(it, null)), ['politica', 'autonomia', 'perfil', 'tipo_repo', 'ambientes']);
+    const r = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', ambientes: null }, { claude: SEM_MCP });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(r.naoDetectado, ['ambientes', 'planejamento', 'versionamento']);
+    const cfg = cfgDe(raiz);
+    assert.equal('base' in cfg.entrega, false, 'nem o default (staging) é gravado acima do teto');
+    assert.equal('versionamento' in cfg, false);
+    assert.equal(cfg.fluxo.ferramenta, undefined);
+  });
+
+  test('gravar-versionamento-ambiguo-resposta-vira-base', () => {
+    const raiz = repoCom({ 'package.json': '{"name":"x"}', '.github/workflows/d.yml': 'name: deploy-producao\non:\n  push:\n    branches: [main]\njobs:\n  d:\n    environment: producao\n' });
+    criarBase(raiz, 'staging', 'main');
+    mergear(raiz, 'main', '2025-06-10');
+    for (const d of ['2025-06-05', '2025-06-12', '2025-06-20']) mergear(raiz, 'staging', d);
+    const ps = perguntas(itensLista(raiz), null);
+    assert.deepEqual(idsDe(ps), ['politica', 'autonomia', 'perfil', 'versionamento']);
+    assert.deepEqual(ps[3].opcoes.map((o) => o.valor), ['staging', 'main'], 'ambíguo: candidatos, sem opção null');
+    assert.equal(ps[3].default, 'staging');
+    const r = gravarCom(raiz, { ...FIXAS, versionamento: 'main' });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(cfgDe(raiz).entrega.base, 'main');
+    assert.equal(cfgDe(raiz).versionamento.resolvidoEm, HOJE);
+    assert.deepEqual(r.naoDetectado, []);
+  });
+
+  test('gravar-nao-detectado-lista-vazia-explicita', () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    const a = gravarCom(raiz, { ...FIXAS, planejamento: null }, { claude: SEM_MCP });
+    assert.equal(a.ok, true, JSON.stringify(a));
+    assert.deepEqual(cfgDe(raiz).onboarding.naoDetectado, ['planejamento']);
+    const b = gravarCom(raiz, FIXAS); // agora o ClickUp aparece: tudo detectado
+    assert.equal(b.ok, true, JSON.stringify(b));
+    assert.deepEqual(b.naoDetectado, []);
+    assert.ok('naoDetectado' in cfgDe(raiz).onboarding, 'a chave existe');
+    assert.deepEqual(cfgDe(raiz).onboarding.naoDetectado, [], 'a lista velha some');
+  });
+
+  test('branchpadrao-literal-resposta-so-base', () => {
+    const raiz = comConfig(fixtureComGit('completa', 'trunk'), { versionamento: { branchPadrao: 'trunk' } });
+    const it = itensLista(raiz);
+    assert.equal(it[3].estado, 'nao_detectado');
+    assert.equal(it[3].motivo, MOTIVO_BRANCHPADRAO);
+    const ps = perguntas(it, existenteDe(raiz));
+    assert.deepEqual(idsDe(ps), ['politica', 'autonomia', 'perfil', 'versionamento'], 'perguntado como não detectado');
+    assert.deepEqual(ps[3].opcoes.map((o) => o.valor), ['trunk', null]);
+    const r = gravarCom(raiz, { ...FIXAS, versionamento: 'trunk' });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const cfg = cfgDe(raiz);
+    assert.equal(cfg.entrega.base, 'trunk', 'a resposta grava entrega.base');
+    assert.equal('resolvidoEm' in cfg.versionamento, false, 'nunca versionamento.resolvidoEm');
+    assert.equal(cfg.versionamento.branchPadrao, 'trunk', 'o branchPadrao do dono fica');
+    assert.deepEqual(r.naoDetectado, ['versionamento'], 'o item segue não detectado');
+    // resposta `null`: nada de base
+    const raiz2 = comConfig(fixtureComGit('completa', 'trunk'), { versionamento: { branchPadrao: 'trunk' } });
+    const r2 = gravarCom(raiz2, { ...FIXAS, versionamento: null });
+    assert.equal(r2.ok, true);
+    assert.equal('base' in cfgDe(raiz2).entrega, false);
+    assert.deepEqual(r2.naoDetectado, ['versionamento']);
+  });
+
+  test('gravar-preserva-branchpadrao-regex', () => {
+    const regex = '^feat/[a-z0-9]{9,11}-\\d+-.+$';
+    const raiz = comConfig(fixtureComGit('completa', 'trunk'), { versionamento: { branchPadrao: regex, tiposComEscopoDePbi: ['feat'] } });
+    const r = gravarCom(raiz, FIXAS);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const v = cfgDe(raiz).versionamento;
+    assert.equal(v.branchPadrao, regex, 'a regex do dono não é reescrita');
+    assert.deepEqual(v.tiposComEscopoDePbi, ['feat']);
+    assert.equal(v.resolvidoEm, HOJE);
+    assert.equal(cfgDe(raiz).entrega.base, 'trunk');
+  });
+
+  test('gravar-versionamento-sem-chave-morta', () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    const r = gravarCom(raiz, FIXAS);
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.removidas, [], 'nenhuma chave morta enviada ao aplicar');
+    assert.deepEqual(Object.keys(cfgDe(raiz).versionamento), ['resolvidoEm']);
+    assert.ok(!r.diff.some((l) => l.includes('versionamento.modelo')));
+  });
+
+  test('gravar-ambientes-ambiguo-resposta-vira-fato-informativo', () => {
+    const wf = (nome) => `name: deploy-${nome}\non:\n  push:\n    branches: [main]\njobs:\n  d:\n    environment: ${nome}\n`;
+    const raiz = repoCom({ 'package.json': '{"name":"x"}', '.github/workflows/a.yml': wf('staging'), '.github/workflows/b.yml': wf('homolog') });
+    const it = itensLista(raiz);
+    assert.equal(it[1].estado, 'ambiguo');
+    const ps = perguntas(it, null);
+    const p = ps.find((q) => q.id === 'ambientes');
+    assert.deepEqual(p.opcoes.map((o) => o.valor), ['staging', 'homolog']);
+    assert.equal(p.default, 'staging');
+    const r = gravarCom(raiz, { ...FIXAS, ambientes: 'homolog' });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(cfgDe(raiz).onboarding.fatos, { ambientes: { producao: 'homolog', outros: ['staging'] } });
+    assert.ok(!r.naoDetectado.includes('ambientes'));
+    assert.equal('guarda' in cfgDe(raiz), false);
+  });
+
+  test('gravar-planejamento-ambiguo-resposta-vira-ferramenta', () => {
+    const raiz = repoCom({ 'package.json': '{"name":"x"}', '.mcp.json': '{"mcpServers":{"linear":{"command":"x"}}}' });
+    const it = itensLista(raiz); // ClickUp na conta + Linear no repo
+    assert.equal(it[2].estado, 'ambiguo');
+    const p = perguntas(it, null).find((q) => q.id === 'planejamento');
+    assert.deepEqual(p.opcoes.map((o) => o.valor), ['linear', 'clickup'], 'default = o do .mcp.json do repo');
+    assert.equal(p.default, 'linear');
+    const r = gravarCom(raiz, { ...FIXAS, ambientes: null, planejamento: 'clickup' });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(cfgDe(raiz).fluxo, { resolvidoEm: HOJE, ferramenta: 'clickup' });
+    assert.ok(!r.naoDetectado.includes('planejamento'));
+  });
+
+  test('gravar-planejamento-da-config-sem-mcp-nao-grava-mcp-vazio', () => {
+    const raiz = comConfig(fixtureComGit('completa', 'trunk'), { fluxo: { ferramenta: 'jira' } });
+    const r = gravarCom(raiz, FIXAS, { claude: SEM_MCP });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const f = cfgDe(raiz).fluxo;
+    assert.equal(f.ferramenta, 'jira');
+    assert.equal('mcp' in f, false, 'sem servidor conhecido, nenhum fluxo.mcp (nem null)');
+    assert.equal(f.resolvidoEm, HOJE);
+  });
+
+  test('gravar-escrita-falha-nao-vira-sucesso', { skip: process.getuid?.() === 0 ? 'root escreve em pasta read-only' : false }, () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    chmodSync(raiz, 0o555);
+    try {
+      const r = gravarCom(raiz, FIXAS);
+      assert.deepEqual([r.ok, r.erro], [false, 'falha']);
+      assert.ok(r.motivo.length > 0);
+      assert.equal('diff' in r, false);
+    } finally {
+      chmodSync(raiz, 0o755);
+    }
+    assert.equal(temCfg(raiz), false, 'nada escrito');
+    assert.deepEqual(readdirSync(raiz).filter((f) => f.includes('.tmp')), []);
+  });
+
+  test('gravar-orquestracao-defaults-nao-fixa', () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    const r = gravarCom(raiz, FIXAS);
+    assert.equal(r.ok, true);
+    assert.equal('paralelismo' in cfgDe(raiz).orquestracao, false, 'o default 2/4 não é congelado');
+    // com paralelismo do dono, fica como está
+    const raiz2 = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { paralelismo: { simultaneos: 3, teto: 6, modo: 'auto' } } });
+    const r2 = gravarCom(raiz2, FIXAS);
+    assert.equal(r2.ok, true);
+    assert.deepEqual(cfgDe(raiz2).orquestracao.paralelismo, { simultaneos: 3, teto: 6, modo: 'auto' });
+  });
+
+  test('gravar-efetiva-quando-difere', () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    const a = gravarCom(raiz, { politica: 'continua', autonomia: false, perfil: 'padrao' });
+    assert.equal(a.ok, true, JSON.stringify(a));
+    assert.equal(a.efetiva, 'sob_demanda');
+    assert.equal(cfgDe(raiz).entrega.politica, 'continua', 'grava a escolhida');
+    assert.equal(cfgDe(raiz).entrega.autonomia, false);
+    // a efetiva vem da função do produto sobre o config gravado
+    const ef = politicaEfetiva(lerConfigEntrega(cfgDe(raiz)));
+    assert.equal(ef.politica, a.efetiva);
+    const b = gravarCom(raiz, { politica: 'continua', autonomia: true, perfil: 'padrao' });
+    assert.equal('efetiva' in b, false, 'igual à escolhida: sem efetiva');
+    const c = gravarCom(raiz, { politica: 'sob_demanda', autonomia: true, perfil: 'padrao' });
+    assert.equal('efetiva' in c, false);
+    const d = gravarCom(raiz, { politica: 'janela', autonomia: false, perfil: 'padrao' }, { dryRun: true });
+    assert.equal(d.efetiva, 'sob_demanda', 'dry-run também diz a efetiva');
+  });
+
+  test('janela-padrao-valida', () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    const r = gravarCom(raiz, { politica: 'janela', autonomia: true, perfil: 'padrao' });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const cfg = cfgDe(raiz);
+    assert.deepEqual(cfg.entrega.janela, { dias: [1, 2, 3, 4, 5], inicio: '09:00', fim: '17:00', fuso: FUSO });
+    assert.equal(cfg.entrega.autonomia, true);
+    assert.equal(typeof cfg.entrega.autonomia, 'boolean');
+    const lido = lerConfigEntrega(cfg);
+    assert.deepEqual(lido.erros, []);
+    assert.equal(lido.politica, 'janela');
+    assert.deepEqual(lido.janela, cfg.entrega.janela);
+    assert.equal(r.efetiva, undefined);
+    // janela do dono não é trocada; política que não é janela não grava janela
+    const dono = { dias: [6], inicio: '02:00', fim: '04:00', fuso: 'UTC' };
+    const raiz2 = comConfig(fixtureComGit('completa', 'trunk'), { entrega: { janela: dono } });
+    gravarCom(raiz2, { politica: 'janela', autonomia: true, perfil: 'padrao' });
+    assert.deepEqual(cfgDe(raiz2).entrega.janela, dono);
+    const raiz3 = fixtureComGit('completa', 'trunk');
+    gravarCom(raiz3, { politica: 'continua', autonomia: true, perfil: 'padrao' });
+    assert.equal('janela' in cfgDe(raiz3).entrega, false);
+    // janela do dono inválida com política janela: troca pela padrão (senão a entrega cairia em sob_demanda)
+    const raiz4 = comConfig(fixtureComGit('completa', 'trunk'), { entrega: { janela: { dias: [] } } });
+    gravarCom(raiz4, { politica: 'janela', autonomia: true, perfil: 'padrao' });
+    assert.deepEqual(lerConfigEntrega(cfgDe(raiz4)).erros, []);
+  });
+
+  test('configDasRespostas-pura-nao-escreve-nem-muta', () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    const it = itensLista(raiz);
+    const existente = { entrega: { politica: 'continua' }, fluxo: { idPadrao: 'x' } };
+    const copia = structuredClone(existente);
+    const r = configDasRespostas(it, FIXAS, existente, HOJE, { fuso: FUSO });
+    assert.deepEqual(existente, copia, 'não muta o existente');
+    assert.deepEqual(Object.keys(r.patches).sort(), ['entrega', 'fluxo', 'onboarding', 'orquestracao', 'versionamento']);
+    assert.equal(r.perfil, undefined);
+    assert.deepEqual(r.naoDetectado, []);
+    assert.deepEqual(r.patches.onboarding, { resolvidoEm: HOJE, naoDetectado: [], fatos: { ambientes: { producao: 'production', outros: ['staging'] } } });
+  });
+});
+
+describe('gravar costura', () => {
+  test('cli-gravar-atravessa-adaptador-real', () => {
+    const bin = novoDir('gm-onb-bin-');
+    writeFileSync(join(bin, 'claude'), '#!/bin/sh\necho \'claude.ai ClickUp: https://x.test/mcp?t=SEGREDO - ✔ Connected\'\n');
+    chmodSync(join(bin, 'claude'), 0o755);
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+    const raiz = fixtureComGit('completa', 'trunk');
+    const det = spawnSync(process.execPath, [CLI, 'detectar', '--root', raiz, '--hoje', HOJE, '--fuso', FUSO], { encoding: 'utf8', env });
+    assert.equal(det.status, 0, det.stderr);
+    const saida = JSON.parse(det.stdout);
+    assert.equal(saida.ok, true);
+    assert.deepEqual(idsDe(saida.perguntas), ['politica', 'autonomia', 'perfil']);
+    assert.ok(typeof saida.previa === 'string' && saida.previa.startsWith('detectei:'));
+    assert.ok(!det.stdout.includes('SEGREDO'));
+    const resp = arquivoResp(FIXAS);
+    const seco = spawnSync(process.execPath, [CLI, 'gravar', '--root', raiz, '--respostas', resp, '--hoje', HOJE, '--fuso', FUSO, '--dry-run'], { encoding: 'utf8', env });
+    assert.equal(seco.status, 0, seco.stderr);
+    assert.equal(JSON.parse(seco.stdout).ok, true);
+    assert.equal(temCfg(raiz), false);
+    const g = spawnSync(process.execPath, [CLI, 'gravar', '--root', raiz, '--respostas', resp, '--hoje', HOJE, '--fuso', FUSO], { encoding: 'utf8', env });
+    assert.equal(g.status, 0, g.stderr);
+    const out = JSON.parse(g.stdout);
+    assert.equal(out.ok, true);
+    assert.deepEqual(out.naoDetectado, []);
+    assert.ok(out.diff.join('\n').includes('"base":"trunk"'));
+    assert.equal(cfgDe(raiz).entrega.base, 'trunk');
+    assert.ok(!g.stdout.includes('SEGREDO') && !textoCfg(raiz).includes('SEGREDO'));
+    assert.deepEqual(readdirSync(raiz).filter((f) => f.includes('.tmp')), []);
+    // erros: exit 1, JSON no stdout, nada escrito
+    const raiz2 = fixtureComGit('completa', 'trunk');
+    for (const [args, erro] of [[['--respostas', join(novoDir(), 'x.json')], 'respostas_ausentes'], [[], 'respostas_ausentes'], [['--respostas', arquivoResp('[1]')], 'respostas_invalidas'], [['--respostas', arquivoResp({ ...FIXAS, perfil: 'turbo' })], 'resposta_fora_das_opcoes']]) {
+      const e = spawnSync(process.execPath, [CLI, 'gravar', '--root', raiz2, ...args, '--hoje', HOJE], { encoding: 'utf8', env });
+      assert.equal(e.status, 1, erro);
+      assert.deepEqual([JSON.parse(e.stdout).ok, JSON.parse(e.stdout).erro], [false, erro]);
+    }
+    assert.equal(temCfg(raiz2), false);
+    const ruim = spawnSync(process.execPath, [CLI, 'gravar', '--root', raiz2, '--respostas', resp, '--hoje', 'ontem'], { encoding: 'utf8', env });
+    assert.equal(ruim.status, 1);
+    assert.equal(JSON.parse(ruim.stdout).ok, false);
+    assert.equal(temCfg(raiz2), false);
   });
 });
 
