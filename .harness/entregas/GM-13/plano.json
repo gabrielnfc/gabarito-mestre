@@ -1,0 +1,433 @@
+{
+ "entrega": "GM-13",
+ "spec": "docs/superpowers/specs/2026-11-10-e5-fluxo-gabarito-design.md",
+ "tasks": [
+  {
+   "id": "T1",
+   "titulo": "Contratos, forma do diário e fiação",
+   "deps": [],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/src/tipos.ts",
+    "plugins/gabarito-mestre/gates/src/formas.ts",
+    "plugins/gabarito-mestre/gates/src/loop.ts",
+    "plugins/gabarito-mestre/gates/dist/formas.js",
+    "plugins/gabarito-mestre/gates/dist/loop.js",
+    "plugins/gabarito-mestre/gates/scripts/build.mjs",
+    "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+    "plugins/gabarito-mestre/gates/src/aprendizado.ts",
+    "plugins/gabarito-mestre/gates/src/pendencias.ts",
+    "plugins/gabarito-mestre/gates/src/registro.ts",
+    "plugins/gabarito-mestre/gates/dist/aprendizado.js",
+    "plugins/gabarito-mestre/gates/dist/pendencias.js",
+    "plugins/gabarito-mestre/gates/dist/registro.js",
+    "plugins/gabarito-mestre/gates/scripts/loop-aprendizado.mjs",
+    "plugins/gabarito-mestre/gates/test/formas.test.ts",
+    "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs"
+   ],
+   "reqs": [
+    "REQ-APR-1",
+    "REQ-APR-2"
+   ]
+  },
+  {
+   "id": "T2",
+   "titulo": "Núcleo do aprendizado",
+   "deps": [
+    "T1"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/src/aprendizado.ts",
+    "plugins/gabarito-mestre/gates/dist/aprendizado.js",
+    "plugins/gabarito-mestre/gates/src/diario.ts",
+    "plugins/gabarito-mestre/gates/dist/diario.js",
+    "plugins/gabarito-mestre/gates/test/aprendizado.test.ts"
+   ],
+   "reqs": [
+    "REQ-APR-1",
+    "REQ-APR-3"
+   ]
+  },
+  {
+   "id": "T3",
+   "titulo": "Pendências de aprendizado",
+   "deps": [
+    "T1"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/src/pendencias.ts",
+    "plugins/gabarito-mestre/gates/dist/pendencias.js",
+    "plugins/gabarito-mestre/gates/test/pendencias.test.ts"
+   ],
+   "reqs": [
+    "REQ-APR-2"
+   ]
+  },
+  {
+   "id": "T4a",
+   "titulo": "Autonomia em produção",
+   "deps": [
+    "T1"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/src/entrega.ts",
+    "plugins/gabarito-mestre/gates/dist/entrega.js",
+    "plugins/gabarito-mestre/gates/test/entrega.test.ts",
+    "plugins/gabarito-mestre/gates/test/entrega-cli.test.mjs"
+   ],
+   "reqs": [
+    "REQ-ONB-1"
+   ]
+  },
+  {
+   "id": "T4b",
+   "titulo": "Perfis de modelo",
+   "deps": [
+    "T1"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/lib/config.mjs",
+    "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+    "plugins/gabarito-mestre/gates/scripts/harness-doctor.mjs",
+    "plugins/gabarito-mestre/gates/test/lib.test.mjs",
+    "plugins/gabarito-mestre/gates/test/harness-doctor-loop.test.mjs",
+    "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs"
+   ],
+   "reqs": [
+    "REQ-ONB-1"
+   ]
+  },
+  {
+   "id": "T5",
+   "titulo": "Fluxo Gabarito (NOM-1)",
+   "deps": [
+    "T4b"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/scripts/test/texto.test.sh",
+    "plugins/gabarito-mestre/scripts/test/texto-nom.test.sh",
+    "plugins/gabarito-mestre/.claude-plugin/plugin.json",
+    "plugins/gabarito-mestre/reference/fluxo.md",
+    "plugins/gabarito-mestre/reference/ferramentas-mcp.json",
+    "plugins/gabarito-mestre/skills/gabarito-conformidade/SKILL.md",
+    "plugins/gabarito-mestre/skills/gabarito-instalar/SKILL.md",
+    "plugins/gabarito-mestre/gates/scripts/harness-doctor.mjs",
+    ".claude-plugin/marketplace.json",
+    "README.md",
+    "docs/backlog.md"
+   ],
+   "reqs": [
+    "REQ-NOM-1"
+   ]
+  },
+  {
+   "id": "T6a",
+   "titulo": "Coleta e detecção do onboarding",
+   "deps": [
+    "T1"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/scripts/onboarding.mjs",
+    "plugins/gabarito-mestre/gates/test/onboarding.test.mjs",
+    "plugins/gabarito-mestre/gates/test/fixtures/onboarding"
+   ],
+   "reqs": [
+    "REQ-ONB-1"
+   ]
+  },
+  {
+   "id": "T6b",
+   "titulo": "Perguntas e gravação do onboarding",
+   "deps": [
+    "T6a",
+    "T4b"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/scripts/onboarding.mjs",
+    "plugins/gabarito-mestre/gates/scripts/onboarding-config.mjs",
+    "plugins/gabarito-mestre/gates/test/onboarding.test.mjs"
+   ],
+   "reqs": [
+    "REQ-ONB-1"
+   ]
+  },
+  {
+   "id": "T7a",
+   "titulo": "aprender no loop e mod-nega",
+   "deps": [
+    "T3",
+    "T4a",
+    "T4b"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/src/loop.ts",
+    "plugins/gabarito-mestre/gates/dist/loop.js",
+    "plugins/gabarito-mestre/gates/src/pouso.ts",
+    "plugins/gabarito-mestre/gates/dist/pouso.js",
+    "plugins/gabarito-mestre/gates/src/painel.ts",
+    "plugins/gabarito-mestre/gates/dist/painel.js",
+    "plugins/gabarito-mestre/gates/test/_adaptador-helpers.mjs",
+    "plugins/gabarito-mestre/gates/test/loop.test.ts",
+    "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+    "plugins/gabarito-mestre/gates/test/pouso.test.ts",
+    "plugins/gabarito-mestre/gates/test/painel.test.ts",
+    "plugins/gabarito-mestre/gates/test/fumaca-loop",
+    "plugins/gabarito-mestre/gates/test/fumaca-loop.test.mjs",
+    "plugins/gabarito-mestre/gates/test/fumaca-e3",
+    "plugins/gabarito-mestre/gates/test/fumaca-e3.test.mjs",
+    "plugins/gabarito-mestre/gates/test/fumaca-e4",
+    "plugins/gabarito-mestre/gates/test/fumaca-e4.test.mjs",
+    "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
+    "plugins/gabarito-mestre/gates/test/painel-costura.test.mjs",
+    "plugins/gabarito-mestre/gates/test/entrega-cli.test.mjs",
+    "plugins/gabarito-mestre/gates/test/liberar-teto.test.mjs",
+    "plugins/gabarito-mestre/gates/test/anel-worktree.test.mjs",
+    "plugins/gabarito-mestre/gates/test/avaliar-aceite0.test.mjs",
+    "plugins/gabarito-mestre/gates/test/avaliar-aceite5.test.mjs",
+    "plugins/gabarito-mestre/gates/test/avaliar-e3.test.mjs",
+    "plugins/gabarito-mestre/gates/test/avaliar-estado.test.mjs",
+    "plugins/gabarito-mestre/gates/test/avaliar-liberar.test.mjs",
+    "plugins/gabarito-mestre/gates/test/avaliar-relatorio1.test.mjs",
+    "plugins/gabarito-mestre/gates/test/e2e/avaliar.mjs",
+    "plugins/gabarito-mestre/gates/test/e2e/avaliar-e3.mjs",
+    "plugins/gabarito-mestre/gates/test/e2e/avaliar-e4.mjs"
+   ],
+   "reqs": [
+    "REQ-APR-2"
+   ]
+  },
+  {
+   "id": "T7b",
+   "titulo": "Stop avisa pendência",
+   "deps": [
+    "T7a"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/scripts/stop-loop.mjs",
+    "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs",
+    ".gitignore"
+   ],
+   "reqs": [
+    "REQ-APR-2"
+   ]
+  },
+  {
+   "id": "T8",
+   "titulo": "CLI do aprendizado e despacho",
+   "deps": [
+    "T2",
+    "T4b",
+    "T7a"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/scripts/loop-aprendizado.mjs",
+    "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+    "plugins/gabarito-mestre/gates/test/loop-aprendizado.test.mjs",
+    "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs"
+   ],
+   "reqs": [
+    "REQ-APR-1",
+    "REQ-APR-2",
+    "REQ-APR-3"
+   ]
+  },
+  {
+   "id": "T9",
+   "titulo": "Instantâneo, cartão e retomada",
+   "deps": [
+    "T2"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/src/diario.ts",
+    "plugins/gabarito-mestre/gates/dist/diario.js",
+    "plugins/gabarito-mestre/gates/scripts/cartao-sessao.mjs",
+    "plugins/gabarito-mestre/gates/test/diario.test.ts",
+    "plugins/gabarito-mestre/gates/test/cartao-sessao.test.mjs"
+   ],
+   "reqs": [
+    "REQ-APR-3",
+    "REQ-POU-3",
+    "REQ-ONB-1"
+   ]
+  },
+  {
+   "id": "T10",
+   "titulo": "Mod: mensagem, retomada, negação",
+   "deps": [
+    "T7a",
+    "T9"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/mod/gabarito.mjs",
+    "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
+    "plugins/gabarito-mestre/gates/src/pouso.ts",
+    "plugins/gabarito-mestre/gates/dist/pouso.js",
+    "plugins/gabarito-mestre/gates/test/pouso.test.ts"
+   ],
+   "reqs": [
+    "REQ-APR-2",
+    "REQ-POU-3"
+   ]
+  },
+  {
+   "id": "T11",
+   "titulo": "Registro de decisões",
+   "deps": [
+    "T8"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/src/registro.ts",
+    "plugins/gabarito-mestre/gates/dist/registro.js",
+    "plugins/gabarito-mestre/gates/scripts/loop-aprendizado.mjs",
+    "plugins/gabarito-mestre/gates/test/registro.test.ts",
+    "plugins/gabarito-mestre/gates/test/loop-aprendizado.test.mjs"
+   ],
+   "reqs": [
+    "REQ-REG-1"
+   ]
+  },
+  {
+   "id": "T12",
+   "titulo": "Pouso sem mod",
+   "deps": [
+    "T8",
+    "T11"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/scripts/loop-aprendizado.mjs",
+    "plugins/gabarito-mestre/gates/test/loop-aprendizado.test.mjs"
+   ],
+   "reqs": [
+    "REQ-POU-3"
+   ]
+  },
+  {
+   "id": "T13",
+   "titulo": "Doctor sem destino",
+   "deps": [
+    "T2",
+    "T4b",
+    "T5",
+    "T6b"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/src/aprendizado.ts",
+    "plugins/gabarito-mestre/gates/dist/aprendizado.js",
+    "plugins/gabarito-mestre/gates/scripts/harness-doctor.mjs",
+    "plugins/gabarito-mestre/gates/test/aprendizado.test.ts",
+    "plugins/gabarito-mestre/gates/test/harness-doctor-loop.test.mjs"
+   ],
+   "reqs": [
+    "REQ-APR-4",
+    "REQ-ONB-1"
+   ]
+  },
+  {
+   "id": "T14",
+   "titulo": "gabarito-instalar em fase única",
+   "deps": [
+    "T5",
+    "T6b",
+    "T13"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/skills/gabarito-instalar/SKILL.md",
+    "plugins/gabarito-mestre/skills/gabarito-instalar/trocar.md",
+    "plugins/gabarito-mestre/scripts/test/texto.test.sh",
+    "plugins/gabarito-mestre/scripts/test/texto-nom.test.sh",
+    "plugins/gabarito-mestre/scripts/test/instalar.test.sh",
+    "plugins/gabarito-mestre/scripts/instalar.sh",
+    "plugins/gabarito-mestre/reference/adocao.md",
+    "plugins/gabarito-mestre/commands/gabarito-doctor.md",
+    "plugins/gabarito-mestre/gates/scripts/onboarding.mjs",
+    "plugins/gabarito-mestre/gates/test/onboarding.test.mjs",
+    "plugins/gabarito-mestre/gates/test/onboarding-skill.test.mjs",
+    "README.md"
+   ],
+   "reqs": [
+    "REQ-ONB-1"
+   ]
+  },
+  {
+   "id": "T15",
+   "titulo": "Skills do loop, versão alpha.5",
+   "deps": [
+    "T8",
+    "T11",
+    "T12",
+    "T14"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/skills/gabarito-loop/SKILL.md",
+    "plugins/gabarito-mestre/skills/gabarito-conformidade/SKILL.md",
+    "plugins/gabarito-mestre/.claude-plugin/plugin.json",
+    "plugins/gabarito-mestre/scripts/test/texto.test.sh",
+    "plugins/gabarito-mestre/gates/package.json",
+    "plugins/gabarito-mestre/gates/test/package.test.mjs",
+    "plugins/gabarito-mestre/gates/test/skills-shell.test.mjs",
+    "CHANGELOG.md"
+   ],
+   "reqs": [
+    "REQ-APR-3",
+    "REQ-REG-1",
+    "REQ-POU-3"
+   ]
+  },
+  {
+   "id": "T16",
+   "titulo": "Fumaça sem LLM",
+   "deps": [
+    "T6b",
+    "T10",
+    "T11",
+    "T12",
+    "T13"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/test/fumaca-e5.test.mjs",
+    "plugins/gabarito-mestre/gates/test/fumaca-e5"
+   ],
+   "reqs": [
+    "REQ-APR-2",
+    "REQ-APR-3",
+    "REQ-REG-1",
+    "REQ-ONB-1"
+   ]
+  },
+  {
+   "id": "T17",
+   "titulo": "Aceites TUI, S4 real e dogfooding",
+   "deps": [
+    "T1",
+    "T2",
+    "T3",
+    "T4a",
+    "T4b",
+    "T5",
+    "T6a",
+    "T6b",
+    "T7a",
+    "T7b",
+    "T8",
+    "T9",
+    "T10",
+    "T11",
+    "T12",
+    "T13",
+    "T14",
+    "T15",
+    "T16"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/test/e2e/aceite-e5.exp",
+    "plugins/gabarito-mestre/gates/test/e2e/plano-e5.json",
+    "plugins/gabarito-mestre/gates/test/e2e/avaliar-e5.mjs",
+    "harness.config.json",
+    "docs/ledgers/GM-13.md",
+    ".harness/entregas/GM-13/registro.md"
+   ],
+   "reqs": [
+    "REQ-DOG-1"
+   ]
+  }
+ ]
+}

@@ -25,7 +25,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { arg, ehEntrypoint } from '../lib/cli.mjs';
-import { lerJson, lerGuarda, lerConfigOrigin, MODELOS_PADRAO, ORDEM_MODELO } from '../lib/config.mjs';
+import { lerJson, lerGuarda, lerConfigOrigin, MODELOS_PADRAO, ORDEM_MODELO, PERFIS_MODELO, resolverModelo } from '../lib/config.mjs';
 import { raizPorFs, inferirPbi, PADROES } from '../lib/git.mjs';
 import { hojeISO, diasEntre } from '../lib/datas.mjs';
 
@@ -396,7 +396,20 @@ describe('lib/config lerConfigOrigin (GM-11 T1)', () => {
     }
   });
 
-  test('config-origin-sem-origin-ignora-local: com harness.config.json local presente, sem origin nunca lê a árvore local (sem remoto, sem arquivo na ref, symref pendurado)', () => {
+  test('config-origin-raiz-nao-string-ignora-cwd: raiz undefined/null/vazia/número/objeto nunca lê o origin/HEAD do cwd do processo (o teste não depende do checkout que o roda)', () => {
+    // cwd do processo = repo de teste COM origin/HEAD e config válida: se a raiz inválida caísse no cwd, viria `fonte: 'origin'`
+    const cwd = repo(JSON.stringify({ entrega: { politica: 'continua' } }));
+    const script = `import { lerConfigOrigin } from ${JSON.stringify(join(AQUI, '..', 'lib', 'config.mjs'))};
+      const r = [undefined, null, '', 5, {}].map((x) => { const o = lerConfigOrigin(x); return [o.cfg, o.fonte, o.invalida]; });
+      process.stdout.write(JSON.stringify(r));`;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd, encoding: 'utf8', timeout: 15_000 });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout), [[null, 'nenhuma', false], [null, 'nenhuma', false], [null, 'nenhuma', false], [null, 'nenhuma', false], [null, 'nenhuma', false]]);
+    // controle: a mesma chamada com a raiz do repo lê a ref (o repo de teste não é vazio por engano)
+    assert.equal(lerConfigOrigin(cwd).fonte, 'origin');
+  });
+
+  test('config-origin-sem-origin-ignora-local:com harness.config.json local presente, sem origin nunca lê a árvore local (sem remoto, sem arquivo na ref, symref pendurado)', () => {
     const local = JSON.stringify({ entrega: { politica: 'continua', comandos: { deploy: 'rm -rf x' } } });
     const semRemoto = novo();
     writeFileSync(join(semRemoto, 'harness.config.json'), local);
@@ -511,5 +524,101 @@ describe('lib/config lerConfigOrigin (GM-11 T1)', () => {
     assert.deepEqual(ORDEM_MODELO, { haiku: 0, sonnet: 1, opus: 2, fable: 3 });
     assert.equal(Object.isFrozen(MODELOS_PADRAO) && Object.isFrozen(ORDEM_MODELO), true);
     for (const p of Object.values(MODELOS_PADRAO)) assert.equal(Object.isFrozen(p), true);
+  });
+});
+
+describe('T4b perfis de modelo (E5a, Sombra r3): PERFIS_MODELO e resolverModelo', () => {
+  const PAPEIS = ['implementador', 'revisor', 'sombra', 'revisor_final', 'spike', 'basico'];
+
+  test('perfis-tabelas: economia, padrao (= MODELOS_PADRAO) e qualidade, congeladas, com os valores da Sombra r3', () => {
+    assert.deepEqual(PERFIS_MODELO.economia, {
+      implementador: { modelo: 'sonnet', esforco: 'medium' }, revisor: { modelo: 'sonnet' }, sombra: { modelo: 'opus' },
+      revisor_final: { modelo: 'opus' }, spike: { modelo: 'sonnet' }, basico: { modelo: 'haiku' },
+    });
+    assert.equal(PERFIS_MODELO.padrao, MODELOS_PADRAO);
+    assert.deepEqual(PERFIS_MODELO.qualidade, {
+      implementador: { modelo: 'opus', esforco: 'high' }, revisor: { modelo: 'opus' }, sombra: { modelo: 'opus' },
+      revisor_final: { modelo: 'fable' }, spike: { modelo: 'opus' }, basico: { modelo: 'sonnet' },
+    });
+    assert.deepEqual(Object.keys(PERFIS_MODELO), ['economia', 'padrao', 'qualidade']);
+    for (const t of Object.values(PERFIS_MODELO)) {
+      assert.equal(Object.isFrozen(t), true);
+      for (const v of Object.values(t)) assert.equal(Object.isFrozen(v), true);
+    }
+  });
+
+  test('economia-revisor-final-opus: Fable só no review final, e só em qualidade/padrao; economia resolve cada papel pela tabela', () => {
+    assert.deepEqual(resolverModelo({ perfil: 'economia' }, 'revisor_final'), { modelo: 'opus', fonte: 'perfil' });
+    assert.deepEqual(resolverModelo({ perfil: 'economia' }, 'implementador'), { modelo: 'sonnet', esforco: 'medium', fonte: 'perfil' });
+    assert.deepEqual(resolverModelo({ perfil: 'economia' }, 'revisor'), { modelo: 'sonnet', fonte: 'perfil' });
+    assert.deepEqual(resolverModelo({ perfil: 'economia' }, 'spike'), { modelo: 'sonnet', fonte: 'perfil' });
+    assert.deepEqual(resolverModelo({ perfil: 'economia' }, 'sombra'), { modelo: 'opus', fonte: 'perfil' });
+    assert.deepEqual(resolverModelo({ perfil: 'economia' }, 'basico'), { modelo: 'haiku', fonte: 'perfil' });
+    for (const perfil of ['economia', 'padrao', 'qualidade']) {
+      for (const papel of PAPEIS) {
+        const fable = resolverModelo({ perfil }, papel).modelo === 'fable';
+        assert.equal(fable, papel === 'revisor_final' && perfil !== 'economia', `${perfil}/${papel}`);
+      }
+    }
+  });
+
+  test('qualidade-basico-sonnet: qualidade resolve cada papel pela tabela', () => {
+    assert.deepEqual(resolverModelo({ perfil: 'qualidade' }, 'basico'), { modelo: 'sonnet', fonte: 'perfil' });
+    assert.deepEqual(resolverModelo({ perfil: 'qualidade' }, 'implementador'), { modelo: 'opus', esforco: 'high', fonte: 'perfil' });
+    assert.deepEqual(resolverModelo({ perfil: 'qualidade' }, 'revisor_final'), { modelo: 'fable', fonte: 'perfil' });
+    assert.deepEqual(resolverModelo({ perfil: 'qualidade' }, 'spike'), { modelo: 'opus', fonte: 'perfil' });
+  });
+
+  test('explicito-vence-perfil: orquestracao.modelos.<papel> ganha da tabela; os outros papéis seguem o perfil; família normalizada', () => {
+    const o = { perfil: 'economia', modelos: { revisor: 'opus', implementador: { modelo: 'Claude-Haiku-5-5', esforco: 'low' } } };
+    assert.deepEqual(resolverModelo(o, 'revisor'), { modelo: 'opus', fonte: 'explicito' });
+    assert.deepEqual(resolverModelo(o, 'implementador'), { modelo: 'haiku', esforco: 'low', fonte: 'explicito' });
+    assert.deepEqual(resolverModelo(o, 'spike'), { modelo: 'sonnet', fonte: 'perfil' });
+    assert.deepEqual(resolverModelo({ perfil: 'qualidade', modelos: { revisor_final: 'sonnet' } }, 'revisor_final'), { modelo: 'sonnet', fonte: 'explicito' });
+  });
+
+  test('explicito-torto-cai-no-perfil-com-aviso: entrada que não se entende vale o perfil (não o padrão) e avisa', () => {
+    for (const e of ['gpt-4', 42, { esforco: 'low' }, null, ['x']]) {
+      const r = resolverModelo({ perfil: 'economia', modelos: { revisor: e } }, 'revisor');
+      assert.deepEqual([r.modelo, r.fonte], ['sonnet', 'perfil'], JSON.stringify(e));
+      assert.match(r.aviso, /orquestracao\.modelos\.revisor .*usei o do perfil economia \(sonnet\)/, JSON.stringify(e));
+    }
+    const r = resolverModelo({ modelos: ['x'] }, 'revisor');
+    assert.deepEqual([r.modelo, r.fonte], ['opus', 'padrao']);
+    assert.match(r.aviso, /orquestracao\.modelos inválido \(não é um objeto\); usei o padrão opus/);
+  });
+
+  test('perfil-ausente-padrao: sem orquestracao, sem perfil ou perfil padrao ⇒ MODELOS_PADRAO, sem aviso', () => {
+    for (const o of [undefined, {}, { modelos: {} }, { perfil: 'padrao' }]) {
+      for (const papel of PAPEIS) {
+        const r = resolverModelo(o, papel);
+        assert.deepEqual(r, { ...MODELOS_PADRAO[papel], fonte: 'padrao' }, `${JSON.stringify(o)}/${papel}`);
+        assert.equal('aviso' in r, false);
+      }
+    }
+  });
+
+  test('perfil-invalido-aviso: inválido (≠ ausente) vale o padrão e avisa; orquestracao que não é objeto também', () => {
+    for (const perfil of ['luxo', '', 'Economia', 7, null, ['economia'], {}]) {
+      const r = resolverModelo({ perfil }, 'revisor_final');
+      assert.deepEqual([r.modelo, r.fonte], ['fable', 'padrao'], JSON.stringify(perfil));
+      assert.match(r.aviso, /orquestracao\.perfil inválido .*economia, padrao ou qualidade; usei o padrão fable/, JSON.stringify(perfil));
+    }
+    for (const o of [null, 'x', 7, ['a']]) {
+      const r = resolverModelo(o, 'implementador');
+      assert.deepEqual([r.modelo, r.esforco, r.fonte], ['sonnet', 'high', 'padrao']);
+      assert.match(r.aviso, /`orquestracao` em harness\.config\.json não é um objeto/);
+    }
+    // perfil inválido + explícito válido: aviso completo (sem "usei " solto), modelo explícito vale
+    const t = resolverModelo({ perfil: 'xyz', modelos: { revisor: 'opus' } }, 'revisor');
+    assert.deepEqual([t.modelo, t.fonte], ['opus', 'explicito']);
+    assert.equal(t.aviso, 'orquestracao.perfil inválido ("xyz"): esperado economia, padrao ou qualidade; usei o explícito opus');
+    // perfil inválido não impede o explícito de valer
+    assert.deepEqual(resolverModelo({ perfil: 'luxo', modelos: { revisor: 'haiku' } }, 'revisor').modelo, 'haiku');
+  });
+
+  test('resolver-papel-desconhecido-lanca: papel fora da tabela não vira padrão calado', () => {
+    assert.throws(() => resolverModelo({}, 'correcao'), /papel desconhecido/);
+    assert.throws(() => resolverModelo({}, 'toString'), /papel desconhecido/);
   });
 });

@@ -122,7 +122,8 @@ describe('doctor 1.1.0 — fixtures 1.0.1 e 1.1.0 (DOC-1)', () => {
     assert.equal(run(repo({ 'AGENTS.md': agents(0), 'harness.config.json': cfg({ simultaneos: 2, teto: 4, calibradoEm: diasAtras(181) }) })).resultados.find((r) => r.id === id).found, false);
     assert.equal(run(repo({ 'AGENTS.md': agents(0), 'harness.config.json': cfg({ simultaneos: 5, teto: 4, calibradoEm: hoje }) })).resultados.find((r) => r.id === id).found, false);
     assert.equal(CHECKS.find((c) => c.id === id).level, 3);
-    assert.match(CHECKS.find((c) => c.id === id).fix, /--sugerir/, "o fix aponta --sugerir (T11: --calibrar virou a escada)");
+    assert.match(CHECKS.find((c) => c.id === id).fix, /gabarito-instalar \(trocar orquestracao\)/, 'o fix aponta a skill (FX3: nenhum comando para colar)');
+    assert.doesNotMatch(CHECKS.find((c) => c.id === id).fix, /--sugerir/);
     assert.doesNotMatch(CHECKS.find((c) => c.id === id).fix, /--calibrar/);
   });
 });
@@ -198,7 +199,7 @@ describe('doctor 1.1.0 — render', () => {
     assert.equal(r.status, 1);
     assert.match(r.stdout, /checagens novas da 1\.1\.0: rode o onboarding ou declare o nível medido/);
     assert.match(r.stdout, /FALTA .*fluxo configurado/);
-    assert.match(r.stdout, /→ rode gabarito-instalar/);
+    assert.match(r.stdout, /→ peça ao Claude gabarito-instalar/);
   });
   test('modelo vencido aparece como "warn" numa seção de avisos e não altera o exit', () => {
     const dir = repoComGit(fixtureNivel2_110(2, { orquestracao: { modelo: { alias: 'fable', resolvidoEm: diasAtras(91), validadeDias: 90 } } }));

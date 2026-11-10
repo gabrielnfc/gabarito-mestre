@@ -4,6 +4,9 @@ import { join } from 'node:path';
 import { formaInvalida } from './formas.ts';
 import { cmp, diarioEmOrdem, duracoes, ehObjeto, mediana, projetarDecisoes } from './diario-puro.ts';
 import type { DecisaoSombra } from './diario-puro.ts';
+// Namespace, não nomeado: um `dist/loop.js` sem a lista de progresso não pode derrubar o import inteiro do `diario.js` (o Stop avisa sem `block`, `stop-loop.test.mjs:743`).
+import * as loop from './loop.ts';
+import type { AprendizadoVigente } from './aprendizado.ts';
 import type { Evento } from './tipos.ts';
 
 /**
@@ -42,6 +45,9 @@ const INSTANTANEO_MAX = 3200;
 const DECISOES_MAX = 1600;
 const DECISAO_ANCORA_MAX = 64;
 const DECISAO_RESPOSTA_MAX = 160;
+// Bloco de aprendizados (GM-13 T9): 800 no bloco, 160 na linha inteira (`<E|A> ` + regra em 158).
+const APRENDIZADOS_MAX = 800;
+const APRENDIZADO_LINHA_MAX = 160;
 const LINHA_MAX = 16384;
 const CAMPO_MAX = 256;
 const ALVO_MAX = 300;
@@ -272,6 +278,39 @@ export function lerEstrito(dir: string): LeituraEstrita {
   return { ok: true, eventos: out };
 }
 
+/**
+ * Árvore de aprendizados (GM-13 T2): `<dirEntregas>/<entrega>/events.*.jsonl` por `lerEstrito`. Entrega ilegível fica fora e
+ * gera o aviso `aprendizados: <entrega> ilegível (<motivo>)`; pasta ausente ⇒ mapa vazio sem aviso (ausente ≠ corrompido);
+ * pasta que existe mas não lista ⇒ aviso. Só lê arquivo REGULAR (lstat): FIFO ou symlink no lugar de um `events.*.jsonl` vira
+ * aviso e a entrega fica fora, nunca trava o leitor nem segue link (fonte única: doctor, loop e cartão chamam esta). Nunca lança.
+ */
+export function lerAprendizados(dirEntregas: string): { porEntrega: Map<string, Evento[]>; avisos: string[] } {
+  const porEntrega = new Map<string, Evento[]>();
+  const avisos: string[] = [];
+  let nomes: string[];
+  try {
+    nomes = readdirSync(dirEntregas, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException | null)?.code !== 'ENOENT') avisos.push(`aprendizados: ${dirEntregas} ilegível (pasta das entregas não lista)`);
+    return { porEntrega, avisos };
+  }
+  const regular = (c: string): boolean => { try { return lstatSync(c).isFile(); } catch { return false; } };
+  for (const nome of nomes) {
+    try {
+      const pasta = join(dirEntregas, nome);
+      let naoRegular: string[] = [];
+      try { naoRegular = readdirSync(pasta).filter((n) => /^events\..+\.jsonl$/.test(n) && !regular(join(pasta, n))); } catch { /* pasta ilegível: `lerEstrito` abaixo dá o motivo */ }
+      if (naoRegular.length > 0) { avisos.push(`aprendizados: ${nome} ilegível (${naoRegular[0]} não é arquivo regular — diário não lido)`); continue; }
+      const r = lerEstrito(pasta);
+      if (r.ok) porEntrega.set(nome, r.eventos);
+      else avisos.push(`aprendizados: ${nome} ilegível (${r.motivo})`);
+    } catch (e) {
+      avisos.push(`aprendizados: ${nome} ilegível (${e instanceof Error ? e.message : 'erro desconhecido'})`);
+    }
+  }
+  return { porEntrega, avisos };
+}
+
 /** Corta em `n` unidades e não deixa meio par substituto no fim. */
 function corta(s: string, n: number): string {
   const c = s.slice(0, n);
@@ -311,7 +350,38 @@ function blocoDecisoes(entrada: Evento[]): { linhas: string[]; decisoes: number 
   return { linhas: [cabecalho, ...linhas, ...(fora > 0 ? [rodapeDecisoes(fora)] : [])], decisoes: vigentes.length };
 }
 
-export function projetar(eventos: Evento[]): { instantaneo: string; resumo: Record<string, number>; eta: { medianaS: number; n: number } | null; decisoes: number } {
+const CONTROLE_APR = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
+const rodapeAprendizados = (fora: number): string => `... ${fora} aprendizado(s) fora`;
+const avisoArvore = (k: number): string => `Aprendizados: ${k} entrega(s) ilegível(is); veja loop.mjs aprendizados`;
+
+/** D com `instantaneo`, de forma própria: `projetar` não confia no chamador (M nunca entra, item torto não lança). */
+function aprendizadosDoInstantaneo(lista: unknown): AprendizadoVigente[] {
+  if (!Array.isArray(lista)) return [];
+  return lista.filter((a): a is AprendizadoVigente => ehObjeto(a) && a.status === 'D' && Array.isArray(a.entra_em) && a.entra_em.includes('instantaneo')
+    && typeof a.regra === 'string' && (a.tipo === 'E' || a.tipo === 'A'));
+}
+
+/**
+ * Bloco de aprendizados D (REQ-APR-3): depois das decisões. Cabeçalho, aviso da árvore e rodapé do pior caso reservados antes da 1ª linha;
+ * o bloco final tem ≤ APRENDIZADOS_MAX. Sem D e sem aviso ⇒ sem bloco (saída da E4 byte a byte).
+ */
+function blocoAprendizados(lista: AprendizadoVigente[], avisos: string[]): string[] {
+  if (lista.length === 0 && avisos.length === 0) return [];
+  const cabecalho = `Aprendizados (${lista.length}):`;
+  const aviso = avisos.length > 0 ? [avisoArvore(avisos.length)] : [];
+  let usado = cabecalho.length + 1 + aviso.reduce((n, l) => n + l.length + 1, 0) + rodapeAprendizados(lista.length).length + 1;
+  const linhas: string[] = [];
+  for (const a of lista) {
+    const linha = `${a.tipo} ${corta(a.regra.replace(CONTROLE_APR, ' '), APRENDIZADO_LINHA_MAX - 2)}`;
+    if (usado + linha.length + 1 > APRENDIZADOS_MAX) break;
+    linhas.push(linha);
+    usado += linha.length + 1;
+  }
+  const fora = lista.length - linhas.length;
+  return [cabecalho, ...aviso, ...linhas, ...(fora > 0 ? [rodapeAprendizados(fora)] : [])];
+}
+
+export function projetar(eventos: Evento[], opcoes?: { aprendizados?: AprendizadoVigente[]; avisosAprendizados?: string[] }): { instantaneo: string; resumo: Record<string, number>; eta: { medianaS: number; n: number } | null; decisoes: number; aprendizados: number } {
   const validos = eventos.filter((e) => e !== null && typeof e === 'object');
   const resumo: Record<string, number> = {};
   for (const e of validos) resumo[e.tipo] = (resumo[e.tipo] ?? 0) + 1;
@@ -327,10 +397,14 @@ export function projetar(eventos: Evento[]): { instantaneo: string; resumo: Reco
   // a entrada vai para (sessao, seq) antes de projetar decisões, como em `duracaoDaTask`: a ordem de chegada não pode mudar a saída
   const porSeq = [...validos].sort((a, b) => cmp(String(a.sessao), String(b.sessao)) || Number(a.seq) - Number(b.seq));
   const bloco = blocoDecisoes(porSeq);
+  const doInstantaneo = aprendizadosDoInstantaneo(opcoes?.aprendizados);
+  const avisos = Array.isArray(opcoes?.avisosAprendizados) ? opcoes.avisosAprendizados : [];
+  const blocoApr = blocoAprendizados(doInstantaneo, avisos);
 
   const linhas: string[] = [];
   // orçamento: cabeçalho + ETA + bloco de decisões + rodapé do pior caso + quebras, reservados antes dos eventos
-  let usado = cabecalho.length + linhaEta.length + rodape(validos.length).length + 3 + (bloco.linhas.length > 0 ? bloco.linhas.join('\n').length + 1 : 0);
+  let usado = cabecalho.length + linhaEta.length + rodape(validos.length).length + 3 + (bloco.linhas.length > 0 ? bloco.linhas.join('\n').length + 1 : 0)
+    + (blocoApr.length > 0 ? blocoApr.join('\n').length + 1 : 0);
   for (const e of ordenados) {
     const alvo = corta(String(ehObjeto(e.dados) ? (e.dados.alvo ?? '-') : '-').replace(/[\r\n]+/g, ' '), ALVO_MAX);
     const linha = `${corta(String(e.ts), 40)} ${corta(String(e.tipo), 64)} ${alvo}`;
@@ -339,9 +413,27 @@ export function projetar(eventos: Evento[]): { instantaneo: string; resumo: Reco
     usado += linha.length + 1;
   }
   const omitidos = validos.length - linhas.length;
-  const partes = [cabecalho, linhaEta, ...bloco.linhas, ...linhas];
+  const partes = [cabecalho, linhaEta, ...bloco.linhas, ...blocoApr, ...linhas];
   if (omitidos > 0) partes.push(rodape(omitidos));
-  return { instantaneo: partes.join('\n'), resumo, eta, decisoes: bloco.decisoes };
+  return { instantaneo: partes.join('\n'), resumo, eta, decisoes: bloco.decisoes, aprendizados: doInstantaneo.length };
+}
+
+/**
+ * Pouso que ninguém retomou (REQ-POU-3, Sombra P1-c D-P1c-4): o último `sessao.pouso`, na ordem de `ordenar` (nunca a do arquivo), sem
+ * `sessao.retomada`, `loop.parar` nem evento de progresso depois. Puro; vazio, não array, sem pouso ou ordem inválida ⇒ `false`.
+ */
+export function pousoSemRetomada(eventos: Evento[]): boolean {
+  if (!Array.isArray(eventos)) return false;
+  try {
+    const o = loop.ordenar(eventos);
+    if (!o.ok) return false;
+    let ultimo = -1;
+    o.eventos.forEach((e, i) => { if (e.tipo === 'sessao.pouso') ultimo = i; });
+    if (ultimo < 0) return false;
+    return !o.eventos.slice(ultimo + 1).some((e) => e.tipo === 'sessao.retomada' || e.tipo === 'loop.parar' || loop.TIPOS_DE_PROGRESSO.includes(e.tipo));
+  } catch {
+    return false;
+  }
 }
 
 export function dirEntrega(raiz: string, pbi: string | null): string {

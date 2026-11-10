@@ -17,6 +17,7 @@
 #  M14 T6: --guarda sobrescreve JSON inválido       ⇒ settings-deny-recusa
 #  M15 T6: .gitignore sem `.harness/entregas/_sem-id/` ⇒ gitignore-sem-id
 #  M20 T6 r1: `Write(.env*)` (ou entrada a menos) na linha para colar de instalar.sh ⇒ linha-colavel-igual-ao-deny
+#  M-T14  tirar `.claude-tmp/` da lista de emendar_gitignore ⇒ gitignore-claude-tmp
 #  M19 T6 r1: .gitignore sem `.harness/heartbeat.json` ⇒ gitignore-heartbeat-local
 #  M16 T6: --atualizar sobrescreve gate editado     ⇒ atualizar-nao-sobrescreve-gate
 set -eu
@@ -74,6 +75,7 @@ check "instalador-conjunto-exato: o que foi instalado é exatamente o esperado, 
 check "instalador-nao-copia-test: sem test/, sem README, sem .hashes-anteriores, sem manifesto" \
   '[ ! -e "$R/$GATES/test" ] && [ ! -e "$R/$GATES/README.md" ] && [ ! -e "$R/$GATES/.hashes-anteriores" ] && [ ! -e "$R/$GATES/.instalado.json" ]'
 check ".gitignore com as 6 linhas"                '[ "$(grep -cxF -e ".harness/doctor-cache.json" -e ".harness/fluxo-cache.json" -e ".harness/entregas/_sem-id/" -e ".harness/heartbeat.json" -e "*.novo" -e "*.bak" "$R/.gitignore")" -eq 6 ]'
+check "gitignore-claude-tmp: .claude-tmp/ ignorado (as respostas do onboarding não entram no git add . do adotante)" 'grep -qxF ".claude-tmp/" "$R/.gitignore"'
 check "gitignore-heartbeat-local: .harness/heartbeat.json ignorado (nao viaja pelo git)" 'grep -qxF ".harness/heartbeat.json" "$R/.gitignore"'
 check "gitignore-sem-id: .harness/entregas/_sem-id/ ignorado" 'grep -qxF ".harness/entregas/_sem-id/" "$R/.gitignore"'
 check "template de CI instalado não tem o job gates-tests (test/ não vai junto)" '! grep -q "gates-tests" "$R/.github/workflows/gabarito.yml" && ! grep -q "npm test" "$R/.github/workflows/gabarito.yml"'

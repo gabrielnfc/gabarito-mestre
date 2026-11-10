@@ -1,0 +1,91 @@
+#!/usr/bin/expect -f
+# Aceite do onboarding com adotante simulado (GM-13 T17b). FORA de `npm test`: abre uma TUI real do Claude Code (haiku, pty 180x50, sem mouse) em repo descartável sob .claude-tmp/t17b/; gasta tokens.
+#
+#   aceite-onboarding.exp <rundir> <repo> <plugin-root> <avaliar-onboarding.mjs> [<observador>]
+#
+# O adotante simulado pede "instale o gabarito" e responde TODA pergunta (AskUserQuestion) só com Enter: o .exp aperta Enter enquanto o transcript tem pergunta
+# pendente (e só então), até a pergunta ser respondida. Pergunta de permissão é registrada e nunca respondida. A evidência vem do transcript, da config e do doctor,
+# lidos DEPOIS por `avaliar-onboarding.mjs relatorio`; a tela nunca é evidência. SEM unset de CLAUDE_CONFIG_DIR.
+lassign $argv rundir repo plugin avaliar obs
+set cols 180; set rows 50
+set env(TERM) xterm-256color
+set env(CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION) false
+set env(CLAUDE_CODE_DISABLE_AUTO_MEMORY) 1
+set env(CLAUDE_CODE_FORCE_SESSION_PERSISTENCE) 1
+file mkdir $rundir
+
+proc sends {tag} { global rundir; set f [open $rundir/sends.log a]; puts $f "[clock seconds] $tag"; close $f }
+proc nota {txt} { global rundir; set f [open $rundir/exp.log a]; puts $f "[clock seconds] $txt"; close $f }
+proc drenar {s} {
+  set fim [expr {[clock seconds] + $s}]
+  set timeout 1
+  while {[clock seconds] < $fim} {
+    expect {
+      -re {Allow.{0,12}external|external.{0,40}imports} { after 600; sends imports-no; send "\r"; nota "imports externos: No (padrao)" }
+      -re {Do you want to|Allow this|Esc to cancel} { nota "PERGUNTA-DE-PERMISSAO na tela" }
+      -re {.+} {}
+      timeout {}
+      eof { nota "EOF"; return 0 }
+    }
+  }
+  return 1
+}
+proc estado {} { global avaliar repo; if {[catch {exec node $avaliar estado $repo} o]} { return "" }; return $o }
+proc campo {s nome} { if {[regexp "\"$nome\":(\[^,\}\]+)" $s -> v]} { return $v }; return -1 }
+proc sair {status} {
+  global rundir
+  nota "fim status=$status estado=[estado]"
+  set f [open $rundir/exp.status w]; puts $f $status; close $f
+  sends exit
+  send "/exit\r"; after 2500; send "\r"
+  set timeout 15
+  expect { eof {} timeout { nota "nao saiu; Ctrl-C"; send "\003"; after 500; send "\003" } }
+  catch {close}; catch {wait}
+  puts "exp done $status"
+  exit 0
+}
+
+cd $repo
+log_user 0
+log_file -a $rundir/tty.raw
+set stty_init "rows $rows cols $cols"
+set dirs [list --plugin-dir $plugin]
+if {$obs ne ""} { lappend dirs --plugin-dir $obs; set env(OBS_DIR) $rundir/obs; file mkdir $rundir/obs }
+spawn claude {*}$dirs --setting-sources project --strict-mcp-config \
+  --model claude-haiku-5-5 --permission-mode auto --allowedTools "Bash(node *)" Read --debug-file $rundir/debug.log
+nota "inicio"
+
+set timeout 15
+expect {
+  -re {Enter.*confirm|trust this folder|Quick.{0,20}safety} { after 500; sends trust; send "\033\[B"; after 400; send "\r"; after 4000 }
+  -re {login|Log in|API key} { nota "LOGIN: nao respondo"; set f [open $rundir/exp.status w]; puts $f NAO_PROVADO_LOGIN; close $f; catch {close}; catch {wait}; exit 3 }
+  timeout {}
+  eof { nota "EOF cedo"; exit 1 }
+}
+# o TUI só aceita digitação depois de carregar os plugins: espera o prompt do compositor (até 40 s) e mais 8 s
+drenar 20
+drenar 8
+if {![catch {exec grep -c -E "dependency-unsatisfied|is not installed" $rundir/debug.log}]} {
+  nota "PLUGIN NAO CARREGOU"
+  set f [open $rundir/exp.status w]; puts $f NAO_PROVADO_PLUGIN; close $f
+  send "\003"; after 500; send "\003"; catch {close}; catch {wait}; exit 3
+}
+
+sends "digitar instale o gabarito neste repositorio"
+send -- "instale o gabarito neste repositorio"; after 1200; send "\r"
+
+# adotante: só Enter, só com pergunta pendente no transcript; teto de 900 s; fim = doctor rodou, a sessão ficou ociosa e sem pergunta pendente
+set t0 [clock seconds]
+set ultimo 0
+set status NAO_PROVADO_TETO
+while {[clock seconds] - $t0 < 900} {
+  if {![drenar 2]} { set status NAO_PROVADO_EOF; break }
+  set s [estado]
+  if {$s eq ""} { continue }
+  if {[campo $s asks_pendentes] > 0 && [clock seconds] - $ultimo >= 3} {
+    sends enter-pergunta; send "\r"; set ultimo [clock seconds]
+  }
+  if {[campo $s fim] == 1} { set status CONCLUIDO; break }
+}
+nota "adotante em [expr {[clock seconds] - $t0}]s status=$status"
+sair $status

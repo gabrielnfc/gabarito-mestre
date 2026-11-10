@@ -82,7 +82,7 @@ const PAPEL_DO_ESTADO: Partial<Record<EstadoTask, Papel>> = { implementando: 'im
 const SEGUNDA_RODADA: readonly EstadoTask[] = ['reprovada', 'corrigindo', 'concluida', 'em_revisao'];
 const TIPOS_TASK: ReadonlySet<string> = new Set(TIPOS_DE_TASK);
 /** Fim do Parar vigente: o progresso do loop e o início de uma entrega (sombra-p1a.md, "Parar vigente"). `jaParou` não serve: `sessao.inicio` o apaga. */
-const LIMPA_PARAR: ReadonlySet<string> = new Set([...TIPOS_DE_PROGRESSO, 'entrega.inicio']);
+const LIMPA_PARAR: ReadonlySet<string> = new Set([...TIPOS_DE_PROGRESSO.filter((t) => t !== 'aprendizado' && t !== 'aprendizado.nada'), 'entrega.inicio']);
 const SINAIS_NEUTROS: Sinais = { slots: 0, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false };
 
 const taskDe = (ev: unknown): string | null => {

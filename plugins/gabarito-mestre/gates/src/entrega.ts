@@ -15,6 +15,8 @@ export type ConfigEntrega = {
   base: string;
   janela: Janela | null;
   comandos: ComandosEntrega;
+  /** `true` só com o booleano `true` em `entrega.autonomia`; sem ele a política do config vale `sob_demanda` (REQ-AUT-1). */
+  autonomia: boolean;
   erros: string[];
 };
 export type DecisaoEntrega =
@@ -88,7 +90,7 @@ function lerComando(nome: string, bruto: unknown, erros: string[]): ComandoEntre
  * Ausente (sem erro) e corrompido (com erro) são casos distintos.
  */
 export function lerConfigEntrega(cfg: unknown): ConfigEntrega {
-  const saida: ConfigEntrega = { politica: 'sob_demanda', base: 'main', janela: null, comandos: {}, erros: [] };
+  const saida: ConfigEntrega = { politica: 'sob_demanda', base: 'main', janela: null, comandos: {}, autonomia: false, erros: [] };
   if (cfg === null || cfg === undefined) return saida;
   if (!ehObjeto(cfg)) {
     saida.erros.push('config: esperado objeto');
@@ -117,6 +119,11 @@ export function lerConfigEntrega(cfg: unknown): ConfigEntrega {
     }
   }
   saida.politica = politica;
+  // `politica` fica como declarada: quem rebaixa é `politicaEfetiva`. Só o booleano `true` liga; qualquer outro valor desliga e avisa.
+  if (bruto.autonomia !== undefined) {
+    if (typeof bruto.autonomia === 'boolean') saida.autonomia = bruto.autonomia;
+    else saida.erros.push('entrega.autonomia: esperado booleano');
+  }
   if (bruto.base !== undefined) {
     const b = bruto.base;
     if (typeof b === 'string' && BASE_RE.test(b) && !b.includes('..')) saida.base = b;
@@ -135,18 +142,26 @@ export function lerConfigEntrega(cfg: unknown): ConfigEntrega {
   return saida;
 }
 
-/** Política efetiva: o plano só aperta (`continua` → `janela` → `sob_demanda`); afrouxar é recusado. */
+/**
+ * Política efetiva: o plano só aperta (`continua` → `janela` → `sob_demanda`); afrouxar é recusado. Sem `autonomia === true`
+ * a política do config vale `sob_demanda` (REQ-AUT-1): a autonomia só libera, nunca afrouxa por si. `c` não é mutado.
+ */
 export function politicaEfetiva(
   c: ConfigEntrega,
   p?: PoliticaPlano,
 ): { ok: true; politica: PoliticaEntrega; janela: Janela | null } | { ok: false; erro: 'politica_afrouxada' | 'janela_ausente'; mensagem: string } {
+  const base: PoliticaEntrega = c.autonomia === true ? c.politica : 'sob_demanda';
   const pedida = p?.politica;
-  if (pedida === undefined || !POLITICAS.includes(pedida)) return resolver(c.politica, c.janela);
-  if (RANK[pedida] < RANK[c.politica]) {
-    return { ok: false, erro: 'politica_afrouxada', mensagem: `o plano pede "${pedida}", mais frouxo que o config ("${c.politica}"): o plano só aperta` };
+  if (pedida === undefined || !POLITICAS.includes(pedida)) return resolver(base, c.janela);
+  if (RANK[pedida] < RANK[base]) {
+    const rebaixada = base !== c.politica;
+    const mensagem = rebaixada
+      ? `o plano pede "${pedida}", mais frouxo que o config ("${c.politica}", efetiva "sob_demanda" sem entrega.autonomia): o plano só aperta`
+      : `o plano pede "${pedida}", mais frouxo que o config ("${c.politica}"): o plano só aperta`;
+    return { ok: false, erro: 'politica_afrouxada', mensagem };
   }
   // `janela` do config vence quando o config já é `janela`; o plano que aperta `continua` → `janela` traz a dele
-  const janela = c.politica === 'janela' ? c.janela : (p?.janela ?? c.janela);
+  const janela = base === 'janela' ? c.janela : (p?.janela ?? c.janela);
   return resolver(pedida, janela);
 }
 

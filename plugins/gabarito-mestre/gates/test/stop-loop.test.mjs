@@ -14,6 +14,8 @@ import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { saidaParaAcao } from '../scripts/stop-loop.mjs';
 import { TIPOS_DE_PROGRESSO } from '../dist/loop.js';
+import { append as anexar } from '../dist/diario.js';
+import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
 
 const aqui = dirname(fileURLToPath(import.meta.url));
 const GATES = join(aqui, '..');
@@ -281,6 +283,7 @@ test('stop-parar-gravado-sai', () => {
   const raiz = repo();
   plano(raiz);
   diario(raiz, 'S1', [ev('S1', 1, 'loop.parar', { motivo: 'teto_rodadas' })]);
+  fecharPendenciasNoDiario(entregaDir(raiz), PLANO); // REQ-APR-2 muda a ordem: `loop.parar`/fechamento abre pendência e o Stop a avisa antes do silêncio
   mudo(stop(raiz));
 });
 
@@ -288,6 +291,7 @@ test('stop-evento-depois-do-parar-religa', () => {
   const raiz = repo();
   plano(raiz);
   diario(raiz, 'S1', [ev('S1', 1, 'loop.parar', { motivo: 'sem_progresso' })]);
+  fecharPendenciasNoDiario(entregaDir(raiz), PLANO); // REQ-APR-2 muda a ordem: `loop.parar` sem os `stops` do Stop abre pendência `parar`
   mudo(stop(raiz));
   diario(raiz, 'humano', [ev('humano', 1, 'task.reaberta', { task: 'T1', origem: 'dono' })]);
   bloqueia(stop(raiz), /T1/);
@@ -298,6 +302,7 @@ test('stop-evento-que-nao-e-de-task-depois-do-parar-nao-religa', () => {
   plano(raiz);
   diario(raiz, 'S1', [ev('S1', 1, 'loop.parar', { motivo: 'sem_progresso' })]);
   linhaAvulsa(raiz);
+  fecharPendenciasNoDiario(entregaDir(raiz), PLANO); // REQ-APR-2 muda a ordem: `loop.parar`/fechamento abre pendência e o Stop a avisa antes do silêncio
   mudo(stop(raiz));
 });
 
@@ -308,6 +313,7 @@ test('stop-evento-de-task-antes-do-parar-nao-religa', () => {
     ev('S1', 1, 'task.iniciada', { task: 'T1', papel: 'implementador' }),
     ev('S1', 2, 'loop.parar', { motivo: 'nao_conseguiu' }),
   ]);
+  fecharPendenciasNoDiario(entregaDir(raiz), PLANO); // REQ-APR-2 muda a ordem: `loop.parar`/fechamento abre pendência e o Stop a avisa antes do silêncio
   mudo(stop(raiz));
 });
 
@@ -360,6 +366,7 @@ test('stop-concluir-sai', () => {
   const raiz = repo();
   plano(raiz);
   diario(raiz, 's', [...TASK_APROVADA(), ev('s', 4, 'task.integrada', { task: 'T1' })]);
+  fecharPendenciasNoDiario(entregaDir(raiz), PLANO); // REQ-APR-2 muda a ordem: `loop.parar`/fechamento abre pendência e o Stop a avisa antes do silêncio
   mudo(stop(raiz));
   assert.equal(existsSync(contadorDe(raiz)), false, 'concluir não grava contador');
 });
@@ -649,7 +656,7 @@ test('stop-dist-loop-ausente-avisa-sem-excecao', () => {
 test('stop-dist-diario-ausente-avisa-sem-excecao', () => {
   const raiz = repo();
   plano(raiz);
-  const r = stop(raiz, {}, { script: copiaSemDist(false, ['plano.js', 'formas.js', 'painel-largura.js', 'emenda.js', 'loop.js']) });
+  const r = stop(raiz, {}, { script: copiaSemDist(false, ['plano.js', 'formas.js', 'painel-largura.js', 'emenda.js', 'loop.js', 'pendencias.js']) });
   avisa(r, /dist\/diario\.js/);
   assert.equal(r.stderr, '');
 });
@@ -719,7 +726,7 @@ test('stop-linha-corrompida-nao-zera: nem derruba o hook', () => {
 });
 
 // GM-11 T6: o julgamento de emenda (descongela) também é progresso; a `emenda.proposta` não.
-const LISTA_REQ_LOOP_5 = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'ci.resultado', 'spec.emendada', 'emenda.rejeitada'];
+const LISTA_REQ_LOOP_5 = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'ci.resultado', 'spec.emendada', 'emenda.rejeitada', 'aprendizado', 'aprendizado.nada'];
 
 test('stop-lista-progresso-igual-loop: a lista única é a que proximaAcao consome (REQ-LOOP-5)', () => {
   const fonte = readFileSync(join(GATES, 'src', 'loop.ts'), 'utf8');
@@ -727,7 +734,7 @@ test('stop-lista-progresso-igual-loop: a lista única é a que proximaAcao conso
   assert.ok(m, 'loop.ts perdeu TIPOS_DE_TASK');
   const deTask = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
   assert.ok(/e\.tipo === 'ci\.resultado'/.test(fonte), 'loop.ts deixou de consumir ci.resultado');
-  assert.deepEqual([...TIPOS_DE_PROGRESSO].sort(), [...deTask, 'ci.resultado', 'spec.emendada', 'emenda.rejeitada'].sort());
+  assert.deepEqual([...TIPOS_DE_PROGRESSO].sort(), [...deTask, 'ci.resultado', 'spec.emendada', 'emenda.rejeitada', 'aprendizado', 'aprendizado.nada'].sort());
   // tirar qualquer tipo da fonte reprova: a lista é a da spec, item a item
   assert.deepEqual([...TIPOS_DE_PROGRESSO].sort(), [...LISTA_REQ_LOOP_5].sort());
 });
@@ -743,7 +750,7 @@ test('stop-e-mod-nao-tem-lista-propria: stop-loop.mjs e mod/gabarito.mjs não re
 test('stop-loop-sem-lista-de-progresso-avisa-sem-block: nunca conta com lista vazia', () => {
   const raiz = repo();
   plano(raiz);
-  const script = copiaSemDist(false, ['plano.js', 'formas.js', 'emenda.js', 'diario.js', 'diario-puro.js', 'sombra.js', 'painel-largura.js']);
+  const script = copiaSemDist(false, ['plano.js', 'formas.js', 'emenda.js', 'diario.js', 'diario-puro.js', 'sombra.js', 'painel-largura.js', 'pendencias.js']);
   const dist = join(dirname(dirname(script)), 'dist');
   const js = readFileSync(join(GATES, 'dist', 'loop.js'), 'utf8').replace(/^export const TIPOS_DE_PROGRESSO\b.*$/m, '');
   assert.ok(!/export const TIPOS_DE_PROGRESSO/.test(js), 'preparo: export removido');
@@ -952,6 +959,7 @@ function emTudoIntegradoComPropostas(reqs, branch = 'wt/GM-10-8') {
   const raiz = repo(branch);
   plano(raiz);
   diario(raiz, 's', [...TASK_APROVADA(), ev('s', 4, 'task.integrada', { task: 'T1' })]);
+  fecharPendenciasNoDiario(entregaDir(raiz), PLANO); // REQ-APR-2 muda a ordem: tudo integrado abre o fechamento antes do `esperar{emenda}`
   diario(raiz, 'emendas', reqs.map((req, i) => ev('emendas', i + 1, 'emenda.proposta', { req, ...DADOS_PROPOSTA })));
   return raiz;
 }
@@ -1026,6 +1034,7 @@ test('stop-esperar-emenda-via-dist: diário real (append) com proposta aberta, p
   grava('s', 'task.concluida', { task: 'T1' });
   grava('s', 'review.veredito', { task: 'T1', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 });
   grava('s', 'task.integrada', { task: 'T1' });
+  fecharPendenciasNoDiario(entregaDir(raiz), PLANO); // REQ-APR-2 muda a ordem: tudo integrado abre o fechamento antes do `esperar{emenda}`
   grava('emendas', 'emenda.proposta', { req: 'REQ-A-1', ...DADOS_PROPOSTA });
   const acao = proximaAcao(PLANO, ler(entregaDir(raiz)), {
     slots: 1, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false,
@@ -1034,4 +1043,291 @@ test('stop-esperar-emenda-via-dist: diário real (append) com proposta aberta, p
   const r = stop(raiz);
   avisa(r, /#1 REQ-A-1/);
   assert.equal(r.json.systemMessage, saidaParaAcao(acao, 'GM-10').systemMessage, 'o hook diz o que a função pura diz da ação real');
+});
+
+// ------------------------------------------------------------------------------------- T7b: aprendizado pendente (REQ-APR-2)
+
+const aprenderDe = (raiz) => join(raiz, '.harness', 'stop-aprender.json');
+const estadoAprender = (raiz) => JSON.parse(readFileSync(aprenderDe(raiz), 'utf8'));
+const REVIEW_MAJOR = (sessao = 's', seq = 3, task = 'T1') => ev(sessao, seq, 'review.veredito', { task, veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 });
+const INICIO_T1 = (sessao = 's') => [
+  ev(sessao, 1, 'task.iniciada', { task: 'T1', papel: 'implementador' }),
+  ev(sessao, 2, 'task.concluida', { task: 'T1' }),
+];
+/** Entrega com 1 pendência de review aberta (`s:3`). */
+function comPendenciaReview(raiz) {
+  plano(raiz);
+  diario(raiz, 's', [...INICIO_T1(), REVIEW_MAJOR()]);
+}
+const COMANDO = /loop\.mjs aprendizado <E\|A> D .*--eventos <sessao:seq>.*--fonte <arquivo> --numero <n>.*loop\.mjs aprendizado <E\|A> M .*loop\.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>/;
+
+test('dois-stops-block-depois-aviso: o 1º Stop bloqueia com o comando, o 2º só avisa, e o estado guarda a chave', () => {
+  const raiz = repo();
+  comPendenciaReview(raiz);
+  const r1 = stop(raiz);
+  bloqueia(r1, /^Loop da entrega GM-10 tem aprendizado pendente: review s:3\. Feche com /);
+  assert.match(r1.json.reason, COMANDO);
+  assert.equal(r1.json.systemMessage, undefined, 'estado ausente não é corrompido');
+  assert.deepEqual(estadoAprender(raiz), { entrega: 'GM-10', avisados: ['s:3'] });
+  const r2 = stop(raiz);
+  avisa(r2, /aprendizado pendente: review s:3/);
+  assert.match(r2.json.systemMessage, COMANDO);
+  assert.deepEqual(estadoAprender(raiz), { entrega: 'GM-10', avisados: ['s:3'] });
+  const r3 = stop(raiz);
+  avisa(r3, /review s:3/);
+});
+
+test('aprender-apos-loop-parar-ainda-block: loop.parar do mod abre pendência e o Stop ainda bloqueia uma vez', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 's', [...INICIO_T1(), REVIEW_MAJOR()]);
+  diario(raiz, 'mod', [ev('mod', 1, 'loop.parar', { motivo: 'teto_rodadas', task: 'T1' })]);
+  const r1 = stop(raiz);
+  bloqueia(r1, /aprendizado pendente: .*parar mod:1/);
+  assert.match(r1.json.reason, /review s:3/);
+  avisa(stop(raiz), /parar mod:1/);
+});
+
+test('ci-vermelho-com-parar-ainda-block: acao=parar(ci_vermelho) não esconde a pendência (cálculo à parte)', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 's', [ev('s', 1, 'ci.resultado', { verde: false }), ev('s', 2, 'ci.resultado', { verde: false })]);
+  diario(raiz, 'mod', [ev('mod', 1, 'loop.parar', { motivo: 'ci_vermelho' })]);
+  bloqueia(stop(raiz), /aprendizado pendente: parar mod:1/);
+});
+
+test('diario-fora-da-tabela-sem-block: diário que ordena mas a proximaAcao recusa avisa e não consulta pendência', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 's', [...INICIO_T1(), ev('s', 3, 'review.veredito', { task: 'T1', veredito: 'APROVADO', rodada: 1, major: 2, blocker: 0 })]);
+  const r = stop(raiz);
+  avisa(r, /diário inválido/);
+  assert.equal(existsSync(aprenderDe(raiz)), false, 'nada gravado');
+});
+
+test('stop-aprender-ausente-x-corrompido: ausente bloqueia calado; corrompido bloqueia com causa e reescreve', () => {
+  const a = repo();
+  comPendenciaReview(a);
+  const ra = stop(a);
+  bloqueia(ra);
+  assert.equal(ra.json.systemMessage, undefined);
+
+  const c = repo();
+  comPendenciaReview(c);
+  mkdirSync(join(c, '.harness'), { recursive: true });
+  writeFileSync(aprenderDe(c), '{nao json');
+  const rc = stop(c);
+  bloqueia(rc, /review s:3/);
+  assert.equal(rc.json.systemMessage, 'Loop: estado do aviso de aprendizado corrompido; recomeçou');
+  assert.deepEqual(estadoAprender(c), { entrega: 'GM-10', avisados: ['s:3'] });
+});
+
+test('estado-forma-invalida-recomeca: avisados que não é lista de strings recomeça com causa, nunca "includes" de texto', () => {
+  for (const ruim of [{ entrega: 'GM-10', avisados: 's:3' }, { entrega: 'GM-10', avisados: [3] }, { entrega: 'GM-10' }, [], null, { entrega: 7, avisados: [] }]) {
+    const raiz = repo();
+    comPendenciaReview(raiz);
+    mkdirSync(join(raiz, '.harness'), { recursive: true });
+    writeFileSync(aprenderDe(raiz), JSON.stringify(ruim));
+    const r = stop(raiz);
+    bloqueia(r, /review s:3/);
+    assert.match(r.json.systemMessage, /corrompido; recomeçou/, JSON.stringify(ruim));
+  }
+});
+
+test('estado-de-outra-entrega-recomeca-calado: block sem aviso de corrupção e estado reescrito', () => {
+  const raiz = repo();
+  comPendenciaReview(raiz);
+  mkdirSync(join(raiz, '.harness'), { recursive: true });
+  writeFileSync(aprenderDe(raiz), JSON.stringify({ entrega: 'GM-99', avisados: ['s:3'] }));
+  const r = stop(raiz);
+  bloqueia(r, /review s:3/);
+  assert.equal(r.json.systemMessage, undefined);
+  assert.deepEqual(estadoAprender(raiz), { entrega: 'GM-10', avisados: ['s:3'] });
+});
+
+test('estado-nao-grava-sem-block: sem como gravar o estado o Stop só avisa com a causa e o comando', () => {
+  const raiz = repo();
+  comPendenciaReview(raiz);
+  mkdirSync(aprenderDe(raiz), { recursive: true }); // diretório no lugar do arquivo: nem lê nem recebe o rename
+  const r = stop(raiz);
+  avisa(r, /não grava/);
+  assert.match(r.json.systemMessage, /review s:3/);
+  assert.match(r.json.systemMessage, COMANDO);
+});
+
+test('pendencia-nao-toca-contador: o ramo da pendência não lê nem grava stop-contador nem pouso-pendente', () => {
+  const raiz = repo();
+  comPendenciaReview(raiz);
+  mkdirSync(join(raiz, '.harness'), { recursive: true });
+  const cont = JSON.stringify({ entrega: 'GM-10', linhas: 0, stops: 2 });
+  const marc = JSON.stringify({ entrega: 'GM-10', linhas: 0 });
+  writeFileSync(contadorDe(raiz), cont);
+  writeFileSync(join(raiz, '.harness', 'pouso-pendente.json'), marc);
+  bloqueia(stop(raiz));
+  avisa(stop(raiz), /review s:3/);
+  assert.equal(readFileSync(contadorDe(raiz), 'utf8'), cont);
+  assert.equal(readFileSync(join(raiz, '.harness', 'pouso-pendente.json'), 'utf8'), marc);
+  assert.deepEqual(linhasDoDiario(raiz).filter((e) => e.tipo === 'loop.parar'), [], 'e não grava loop.parar');
+  const limpa = repo();
+  comPendenciaReview(limpa);
+  bloqueia(stop(limpa));
+  assert.equal(existsSync(contadorDe(limpa)), false, 'não cria contador');
+});
+
+test('avisados-poda-fechadas: só as abertas ficam no estado; uma nova bloqueia de novo com todas', () => {
+  const raiz = repo();
+  comPendenciaReview(raiz);
+  mkdirSync(join(raiz, '.harness'), { recursive: true });
+  writeFileSync(aprenderDe(raiz), JSON.stringify({ entrega: 'GM-10', avisados: ['s:3', 'velha:9'] }));
+  avisa(stop(raiz), /review s:3/);
+  assert.deepEqual(estadoAprender(raiz), { entrega: 'GM-10', avisados: ['s:3'] });
+  diario(raiz, 'mod', [ev('mod', 1, 'loop.parar', { motivo: 'teto_rodadas', task: 'T1' })]);
+  const r = stop(raiz);
+  bloqueia(r, /review s:3, parar mod:1|parar mod:1, review s:3/);
+  assert.deepEqual(estadoAprender(raiz).avisados.sort(), ['mod:1', 's:3']);
+});
+
+test('subagent-vivo-silencio-com-pendencia: subagent vivo e PAUSAR calam antes da pendência', () => {
+  const raiz = repo();
+  comPendenciaReview(raiz);
+  mudo(stop(raiz, { background_tasks: [{ type: 'subagent' }] }));
+  assert.equal(existsSync(aprenderDe(raiz)), false);
+  mkdirSync(join(raiz, '.harness'), { recursive: true });
+  writeFileSync(join(raiz, '.harness', 'PAUSAR'), '');
+  mudo(stop(raiz));
+  assert.equal(existsSync(aprenderDe(raiz)), false);
+});
+
+test('parar-sem-progresso-do-stop-sem-pendencia: loop.parar sem_progresso do próprio hook segue em silêncio', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'stop-loop', [ev('stop-loop', 1, 'loop.parar', { motivo: 'sem_progresso', stops: 3 })]);
+  mudo(stop(raiz));
+  assert.equal(existsSync(aprenderDe(raiz)), false);
+});
+
+test('reason-lista-ate-6-com-resto-e-sem-controle: "e mais N", sessão com escape não vaza', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'x', [ev('m\u001bX', 1, 'loop.parar', { motivo: 'teto_rodadas', task: 'T1' })]); // a 1ª da lista: o escape tem de aparecer no reason
+  for (let i = 1; i <= 8; i++) diario(raiz, `m${i}`, [ev(`m${i}`, 1, 'loop.parar', { motivo: 'teto_rodadas', task: 'T1' })]);
+  const r = stop(raiz);
+  bloqueia(r, /e mais 3\./);
+  assert.equal((r.json.reason.match(/parar /g) ?? []).length, 6);
+  assert.doesNotMatch(r.json.reason, /\u001b/);
+  assert.equal(estadoAprender(raiz).avisados.length, 9, 'o estado guarda todas, não só as listadas');
+});
+
+test('duas-pendencias-por-proximaAcao-e-pelo-stop: a ação lista as 2 e o Stop cita as 2 (MINOR T7a)', async () => {
+  const { proximaAcao } = await import(pathToFileURL(join(GATES, 'dist', 'loop.js')).href);
+  const raiz = repo();
+  plano(raiz);
+  const evs = [...INICIO_T1(), REVIEW_MAJOR('s', 3), ev('mod', 1, 'loop.parar', { motivo: 'teto_rodadas', task: 'T1' })];
+  diario(raiz, 's', evs.filter((e) => e.sessao === 's'));
+  diario(raiz, 'mod', evs.filter((e) => e.sessao === 'mod'));
+  const acao = proximaAcao(PLANO, evs, { slots: 1, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false });
+  assert.equal(acao.tipo, 'aprender');
+  assert.deepEqual(acao.pendencias.map((p) => `${p.tipo} ${p.sessao}:${p.seq}`), ['review s:3', 'parar mod:1']);
+  const r = stop(raiz);
+  bloqueia(r, /review s:3/);
+  assert.match(r.json.reason, /parar mod:1/);
+});
+
+test('fechada-a-pendencia-o-stop-volta-ao-normal: sem pendência concluir lista as liberações do dono', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 's', [
+    ...INICIO_T1(),
+    ev('s', 3, 'review.veredito', { task: 'T1', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }),
+    ev('s', 4, 'task.integrada', { task: 'T1' }),
+    ev('s', 5, 'task.reaberta', { task: 'T1', origem: 'dono' }),
+  ]);
+  const antes = stop(raiz);
+  bloqueia(antes, /aprendizado pendente/);
+  fecharPendenciasNoDiario(entregaDir(raiz), PLANO);
+  avisa(stop(raiz), /Liberações do teto: T1 /);
+});
+
+// ------------------------------------------------------------------------------------- FX2: o comando do Stop roda de verdade (P9)
+
+const LOOP_CLI = join(GATES, 'scripts', 'loop.mjs');
+const gitOk = (cwd, ...a) => { const r = git(cwd, ...a); assert.equal(r.status, 0, r.stderr); };
+
+/** Repo com commit (a fonte precisa ser versionada), plano e review MAJOR real no diário (pendência `review s:3`), via `append` real. */
+function repoComPendenciaReal() {
+  const dir = mkdtempSync(join(tmpdir(), 'stop-fx2-'));
+  gitOk(dir, 'init', '-q', '-b', 'enabler/GM-10-loop');
+  writeFileSync(join(dir, 'README.md'), 'x\n');
+  gitOk(dir, 'add', '-A');
+  gitOk(dir, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'chore: base');
+  plano(dir);
+  const ed = entregaDir(dir);
+  let n = 0;
+  for (const [tipo, dados] of [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1' }],
+    ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 }]]) {
+    n += 1;
+    const r = anexar(ed, 's', { ts: new Date(Date.UTC(2026, 0, 1, 0, 0, n)).toISOString(), autor: 't@t', sessao: 's', agente: 'orquestrador', tipo, dados });
+    assert.ok(r.ok && r.gravado === 'evento', JSON.stringify(r));
+  }
+  return dir;
+}
+
+/** Comandos entre crases do texto do Stop, com os placeholders trocados por valores do repo de teste. */
+function comandosDoTexto(texto, valores) {
+  const crus = [...texto.matchAll(/`(loop\.mjs [^`]+)`/g)].map((m) => m[1]);
+  return crus.map((c) => {
+    let t = c;
+    for (const [k, v] of Object.entries(valores)) t = t.split(k).join(v);
+    assert.doesNotMatch(t, /<[^>]+>/, `placeholder sem valor em: ${t}`);
+    return t.split(' ').slice(1);
+  });
+}
+
+test('stop-comando-aprendizado-roda-de-verdade: cada comando citado pelo Stop grava ok:true E fecha a pendência que o Stop cobra', () => {
+  const dir = repoComPendenciaReal();
+  const r1 = stop(dir);
+  bloqueia(r1, /aprendizado pendente: review s:3/);
+  const texto = r1.json.reason;
+  const PENDENTE = /aprendizado pendente: review s:3/;
+  const base = { '<sessao:seq>': 's:3', '<t>': 'regra-de-teste', '<a>': 'instantaneo', '<arquivo>': 'README.md', '<n>': '3', '<E|A>': 'E' };
+  const saida = (r) => `${r.json?.reason ?? ''}\n${r.json?.systemMessage ?? ''}`;
+  // roda o comando numa cópia do repo e depois o Stop na MESMA cópia: a pendência citada tem de sumir
+  const rodar = (args) => {
+    const copia = mkdtempSync(join(tmpdir(), 'stop-fx2c-'));
+    cpSync(dir, copia, { recursive: true });
+    assert.match(saida(stop(copia)), PENDENTE, 'antes do comando a pendência existe na cópia');
+    const r = spawnSync(process.execPath, [LOOP_CLI, ...args], { cwd: copia, encoding: 'utf8', env: env() });
+    let j = null;
+    try { j = JSON.parse(r.stdout.trim()); } catch { /* fica null */ }
+    return { j, out: r.stdout + r.stderr, depois: saida(stop(copia)) };
+  };
+  const fecha = (args, quem) => {
+    const r = rodar(args);
+    assert.equal(r.j?.ok, true, `${quem}: ${r.out}`);
+    assert.doesNotMatch(r.depois, PENDENTE, `${quem}: o comando gravou mas a pendência continua aberta`);
+  };
+  const cmds = comandosDoTexto(texto, base);
+  const d = cmds.filter((a) => a[1] === 'E' && a[2] === 'D');
+  const m = cmds.filter((a) => a[1] === 'E' && a[2] === 'M');
+  const nada = cmds.filter((a) => a[1] === 'nada');
+  assert.equal(d.length + m.length + nada.length, cmds.length, 'todo comando citado é D, M ou nada');
+  assert.equal(d.length, 1);
+  assert.equal(m.length, 1);
+  assert.equal(nada.length, 1);
+  assert.ok(d[0].includes('--eventos'), 'D cita --eventos');
+  assert.ok(!m[0].includes('--eventos') && !m[0].includes('--fonte'), 'M sem evidência');
+  // a forma --fonte/--numero vem do texto (trecho entre crases), não montada aqui
+  const trechoFonte = texto.match(/`(--fonte [^`]+)`/);
+  assert.ok(trechoFonte, 'o texto cita a forma --fonte/--numero entre crases');
+  let fonte = trechoFonte[1];
+  for (const [k, v] of Object.entries(base)) fonte = fonte.split(k).join(v);
+  assert.doesNotMatch(fonte, /<[^>]+>/);
+  const semEventos = d[0].filter((x, i, arr) => x !== '--eventos' && arr[i - 1] !== '--eventos');
+  const comFonte = [...semEventos, ...fonte.split(' ')];
+  fecha(d[0], 'D com --eventos');
+  fecha(comFonte, 'D com --fonte/--numero');
+  fecha(m[0], 'M');
+  fecha(nada[0], 'nada');
+  // O Stop 2 só avisa, com o mesmo texto: o aviso também chega ao agente
+  avisa(stop(dir), COMANDO);
 });

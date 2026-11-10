@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as diario from '../../dist/diario.js';
+import { fecharPendenciasNoDiario } from '../_adaptador-helpers.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SCRIPTS = join(AQUI, '..', '..', 'scripts');
@@ -59,6 +60,8 @@ export function montarRepo() {
 }
 
 const loop = (r, ...args) => cli('loop.mjs', r.dir, args);
+/** REQ-APR-2 muda a ordem: fecha o que `pendenciasAprendizado` do `dist/` devolve (fechamento, parar), como o modelo faria antes de `proxima`/`decidir`. */
+const fechar = (r) => fecharPendenciasNoDiario(r.entregas, JSON.parse(readFileSync(join(r.entregas, 'plano.json'), 'utf8')));
 const sombra = (r, ...args) => cli('sombra.mjs', r.dir, args);
 
 /** abrir → iniciar → commit → concluir → revisor → APROVADO: a skill `gabarito-loop` ao pé da letra. */
@@ -113,6 +116,7 @@ export function caminhar() {
   obs.proxima4 = ok(loop(r, 'proxima', '--vivos', '0'), 'proxima 4');
   aprovar(r, 'T3', 'src/c.mjs');
   obs.integrarT3 = ok(loop(r, 'integrar', 'T3'), 'integrar T3');
+  fechar(r);
   obs.final = ok(loop(r, 'proxima', '--vivos', '0'), 'proxima final');
   obs.eventos = diario.ler(r.entregas);
   obs.temaPlano = JSON.parse(readFileSync(join(r.entregas, 'plano.json'), 'utf8')).tasks.length;
@@ -147,7 +151,7 @@ export function caminharEntregaFalha() {
   for (const [nome, corpo] of Object.entries(corpos)) writeFileSync(join(repo, 'fake', `${nome}.sh`), `M='${marcas}'\necho "$0|$PWD" >> "$M/exec.log"\n${corpo}\n`);
   const comandos = {};
   for (const nome of ['deploy', 'smoke', 'rollback']) comandos[nome] = { argv: ['bash', join(repo, 'fake', `${nome}.sh`), ...(nome === 'deploy' ? [sentinela] : [])], timeout_s: 20 };
-  writeFileSync(join(repo, 'harness.config.json'), `${JSON.stringify({ gates: { suites: ["echo '# pass 1'"] }, loop: { slots: 2 }, entrega: { politica: 'continua', base: 'enabler/GM-99-fumaca', comandos } })}\n`);
+  writeFileSync(join(repo, 'harness.config.json'), `${JSON.stringify({ gates: { suites: ["echo '# pass 1'"] }, loop: { slots: 2 }, entrega: { politica: 'continua', autonomia: true, base: 'enabler/GM-99-fumaca', comandos } })}\n`);
   git(repo, 'add', '-A');
   git(repo, 'commit', '-q', '-m', 'chore: base');
   const bare = join(dir, 'origin.git');
@@ -166,6 +170,7 @@ export function caminharEntregaFalha() {
   aprovar(r, 'T1', 'src/a.mjs');
   ok(loop(r, 'integrar', 'T1'), 'integrar T1');
   ok(loop(r, 'ci', 'verde', '--alvo', 'homolog'), 'ci verde homolog');
+  fechar(r);
   const obs = { sentinela, dir: repo };
   obs.decidirAntes = entrega('decidir');
   const antes = diario.ler(entregas).length;
@@ -178,6 +183,7 @@ export function caminharEntregaFalha() {
   const arquivosDiario = readdirSync(entregas).filter((n) => /^events\..+\.jsonl$/.test(n));
   obs.textoDiario = arquivosDiario.map((n) => readFileSync(join(entregas, n), 'utf8')).join('\n');
   obs.linhaInicio = readFileSync(join(entregas, 'events.loop.jsonl'), 'utf8').split('\n').filter(Boolean).find((l) => JSON.parse(l).tipo === 'entrega.inicio');
+  fechar(r);
   obs.proximaDepois = ok(loop(r, 'proxima', '--vivos', '0'), 'proxima depois');
   obs.segundo = entrega('executar');
   obs.decidirDepois = entrega('decidir');

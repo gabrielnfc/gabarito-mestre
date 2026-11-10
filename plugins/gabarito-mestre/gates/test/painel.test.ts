@@ -416,6 +416,20 @@ test('parar-entrega-inicio-limpa: entrega.inicio depois do loop.parar apaga o PA
   assert.equal(s.parado, false);
 });
 
+test('painel-parar-segue-depois-de-aprendizado: aprendizado e aprendizado.nada fecham a pendência do loop.parar mas NÃO apagam o PAROU (REQ-APR-2, D-5)', () => {
+  const apr = { tipo: 'E', status: 'M', gatilho: { sessao: 's1', seq: 1 }, evidencia: { fonte: 'docs/x.md', numero: 3 }, regra: 'confira antes de pousar', entra_em: ['spec'] };
+  for (const [tipo, dados] of [['aprendizado.nada', { gatilho: { sessao: 's1', seq: 1 }, motivo: 'sem lição' }], ['aprendizado', apr]] as [TipoEvento, unknown][]) {
+    const s = proj(P('T1'), D([parar(0, 'nao_conseguiu', { task: 'T1' }), e(1, tipo, dados)]));
+    assert.equal(s.parar?.motivo, 'nao_conseguiu', tipo);
+    assert.equal(s.parar?.chave, 'parar:s1:1', tipo);
+    assert.equal(s.parar?.hora, '12:00', tipo);
+    assert.equal(s.parado, true, tipo);
+  }
+  // o que limpa continua limpando: progresso de task e entrega.inicio
+  assert.equal(proj(P('T1'), D([parar(0, 'nao_conseguiu', { task: 'T1' }), e(1, 'ci.resultado', { verde: true })])).parar, null);
+  assert.equal(proj(P('T1'), D([parar(0, 'smoke'), e(1, 'aprendizado.nada', { gatilho: { sessao: 's1', seq: 1 }, motivo: 'm' }), e(2, 'entrega.inicio', { politica: 'continua' })])).parar, null);
+});
+
 test('parar-some-apos-liberar: PAROU por teto_rodadas liberado pelo dono (task.reaberta dono) volta a "depende de você" sem PAROU residual', () => {
   const noTeto = ATE.no_teto;
   const parado = proj(P('T1'), D([...noTeto, parar(10, 'teto_rodadas', { task: 'T1' })]));

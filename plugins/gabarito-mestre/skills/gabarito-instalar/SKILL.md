@@ -1,374 +1,120 @@
 ---
 name: gabarito-instalar
-description: Instala o harness Gabarito Mestre neste repositório e faz o onboarding do fluxo em quatro fases (instalação determinística, fluxo, versionamento, orquestração). Use quando o usuário pedir para "instalar o gabarito", "instalar o harness", "adotar o gabarito-mestre", "configurar AGENTS.md", "setup do harness", "colocar os gates neste repo", "bootstrap do gabarito", "install gabarito", "fazer o onboarding", "refazer onboarding", "vincular PBI-<n>" ou "gabarito-instalar --vincular <PBI>". Cria AGENTS.md, CLAUDE.md (só o import), docs/harness/, tools/gabarito-gates/, harness.config.json, .harness/attest.json e o workflow de CI; grava as seções fluxo, versionamento e orquestracao do harness.config.json via onboarding-config.mjs; roda o doctor ao fim. Nunca declara o nível de adoção.
-allowed-tools: Bash(bash:*), Bash(node:*), Bash(ls:*), Bash(cat:*), Bash(cp:*), Bash(mkdir:*), Bash(test:*), Bash(grep:*), Bash(git status:*), Bash(git rev-parse:*), Bash(claude mcp list:*), Read, Glob, Grep, Edit, AskUserQuestion
+description: Instala o harness Gabarito Mestre neste repositório e faz o onboarding de uma vez só: detecta o que o repo já mostra, pergunta 3 decisões (política de entrega, autonomia, perfil de modelos) mais as dúvidas que a detecção não resolve, grava a config e mede com o doctor. Use quando o usuário pedir para "instalar o gabarito", "instalar o harness", "adotar o gabarito-mestre", "configurar AGENTS.md", "setup do harness", "colocar os gates neste repo", "bootstrap do gabarito", "install gabarito", "fazer o onboarding", "refazer onboarding", "trocar <item> do onboarding", "vincular PBI-<n>" ou "gabarito-instalar --vincular <PBI>". Cria AGENTS.md, CLAUDE.md (só o import), docs/harness/, tools/gabarito-gates/, harness.config.json, .harness/attest.json e o workflow de CI. Nunca declara o nível de adoção.
+allowed-tools: Bash(bash:*), Bash(node:*), Bash(ls:*), Bash(cat:*), Bash(cp:*), Bash(mkdir:*), Bash(test:*), Bash(grep:*), Bash(git status:*), Bash(git rev-parse:*), Read, Write, Glob, Grep, Edit, AskUserQuestion
 ---
 
 # gabarito-instalar
 
-Instala o harness e faz o **onboarding do fluxo** (Workflow TRUE: Flight Levels + Kanban, `docs/harness/fluxo.md`). **Instalar não é adotar**: ao fim, o nível de adoção fica `____` e é o doctor quem mede.
+Instala o harness e configura o fluxo numa passada só. **Instalar não é adotar**: o nível de adoção fica `____` e quem mede é o doctor. Para subir de nível, o planejamento é feito com `superpowers:brainstorming` e depois `superpowers:writing-plans`; esta skill não planeja. Sem superpowers a instalação segue: avise em uma linha.
 
-Quatro fases, nesta ordem: **(1)** instalação determinística · **(2)** fluxo · **(3)** versionamento · **(4)** orquestração. As fases 2–4 gravam em `harness.config.json` via `onboarding-config.mjs` (merge chave a chave, nunca remove, imprime o diff) e no Apêndice do `AGENTS.md` via `Edit` — **sempre mostrando o bloco antes de aplicar**.
+Estas instruções são para você. Ao falar com o usuário, use frases curtas, sem siglas internas (R20, D-3, nomes de regra) e sem pedir que ele rode comandos.
 
-## Divisão de trabalho (`${CLAUDE_PLUGIN_ROOT}/reference/AGENTS.md §9`)
+**Um comando por chamada.** Cada bloco `bash` é um comando simples. Não encadeie com `;`, `&&`, `||`, `if` nem `[ … ]`: composto não casa com as permissões. Decida em prosa, pelo exit e pelo stdout.
 
-- **superpowers CONDUZ** — planejar a subida de nível depois da instalação é `superpowers:brainstorming` → `superpowers:writing-plans`. Esta skill não planeja.
-- **ui-ux-pro-max DESENHA** — não participa.
-- **gabarito-mestre MANDA** — o que entra no repo, o que vai para a config, e o fato de que o nível não é declarado por ninguém além do doctor.
+## Fluxo
 
-**Fail-open declarado (G9):** superpowers ausente não impede nada aqui (instalação e onboarding são determinísticos). Avise em uma linha: `superpowers não está instalado — a instalação segue; o planejamento da subida de nível ficará sem a maquinaria de brainstorm/plano.`
-
-**Sessão sem `AskUserQuestion`** (headless `claude -p`, ou ferramenta indisponível): **não invente respostas.** Use o default de cada pergunta, marque cada valor como **(b)** e liste todos no fechamento ("o que ficou (b)"). Escrita na ferramenta (`fluxo.escrita`) **nunca** fica `true` sem resposta explícita.
-
-**Um comando por chamada.** Cada bloco `bash` abaixo é um comando simples, coberto pelo `allowed-tools`; rode-o como está. Não encadeie com `;`, `&&`, `||`, `if` ou `[ … ]` — composto não casa com as permissões e, em sessão headless, para pedindo aprovação. A decisão (existe / não existe, esqueleto / próprio) é sua, em prosa, a partir do exit e do stdout.
-
-## Como ler a saída de `onboarding-config.mjs`
-
-Decida pelo **stdout** (a primeira linha diz o que aconteceu); o stderr só explica. Vale para `--set` (alvo `harness.config.json`) e `--settings` (alvo `.claude/settings.json`):
-
-| stdout | exit | O que fazer |
-|---|---|---|
-| `[ONB-7] harness.config.json atualizado` + linhas `+`/`~` | 0 | gravou — cole o diff e siga |
-| `[ONB-7] harness.config.json sem mudanças` | 0 | nada mudou (valores iguais aos atuais) — siga |
-| `[ONB-7] dry-run — <alvo> não foi escrito` + diff | 0 | só mostrou (§4.2); nada gravado |
-| `[ONB-7] harness.config.json NÃO escrito — JSON inválido (fail-open declarado, G9)` | 0 | o arquivo **existente** está inválido: **pare**, mostre o stderr ao usuário e não avance até ele consertar o arquivo; depois repita a mesma chamada |
-| vazio (stderr: `uso: …`, `[ONB-7] JSON inválido no argumento: …`, `seção desconhecida`, `o patch precisa ser um objeto JSON`) | 1 | o erro é do **seu** JSON ou argumento: mostre o stderr, corrija e repita |
-
-Nunca conte "exit 0" como sucesso sozinho: exit 0 com `NÃO escrito` é falha declarada.
-
-## Gatilho por fase
-
-1. Raiz do repo: `git rev-parse --show-toplevel` (fallback: diretório atual). Não instale em subpasta sem o usuário pedir.
-2. Se `harness.config.json` existe, leia-o (`Read`). Decida por chave:
-
-| Fase | Roda quando falta | Chave |
-|---|---|---|
-| 2 — fluxo | `fluxo.resolvidoEm` | `AAAA-MM-DD` |
-| 3 — versionamento | `versionamento.resolvidoEm` | idem |
-| 4 — orquestração | `orquestracao.modelo.resolvidoEm` | idem |
-
-3. Os três presentes e o pedido foi "instala": roda **só a fase 1** e diga: `onboarding já feito em <maior das três datas>; para refazer, peça "refazer onboarding".`
-4. Pedido "refazer onboarding": rodam as fases 2–4 inteiras, com os valores atuais como default de cada pergunta.
-5. Pedido "vincular <PBI>" / "--vincular <PBI>": vá direto ao **Modo `--vincular`** (exige `fluxo.resolvidoEm`; sem ele, rode a fase 2 primeiro).
-6. Onboarding interrompido retoma da primeira fase cuja chave falta — nunca refaz o que já tem data.
-
-## Fase 1 — instalação determinística
-
-Rode o instalador — ele **nunca sobrescreve nem apaga**; arquivo existente é mantido e reportado:
-
-```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/instalar.sh" .
-```
-
-Antes de rodar, meça o que já existe:
-
-```bash
-test -d tools/gabarito-gates
-```
-Exit 0 = existe; exit 1 = não existe. O instalador 2.0 **não grava manifesto nem versão** em `tools/gabarito-gates/`: a versão instalada não se lê de um arquivo. O único resquício legível é o `.instalado.json` que a **1.1.x** deixou (a 2.0 não o apaga nem o atualiza):
-```bash
-if [ -f tools/gabarito-gates/.instalado.json ]; then node -e 'console.log("instalado", JSON.parse(require("fs").readFileSync("tools/gabarito-gates/.instalado.json","utf8")).versao)'; else echo "sem .instalado.json"; fi
-```
-Com o arquivo, é instalação 1.1.x (use a `versao` impressa). Sem o arquivo, com `tools/gabarito-gates/` presente, é 1.0.x **ou** 2.0 — o `--atualizar` abaixo resolve sem precisar saber: ele compara arquivo a arquivo e imprime `igual` ou `novo`.
-
-Se `tools/gabarito-gates/` existe, o repo já tem harness de uma versão anterior (ou da atual): **pergunte** por `AskUserQuestion` se roda `instalar.sh . --atualizar` (opções: `--atualizar` · só instalar o que falta, sem `--atualizar`). `bash "${CLAUDE_PLUGIN_ROOT}/scripts/instalar.sh" . --atualizar` grava `<arquivo>.novo` + `diff --stat` para `AGENTS.md`, `docs/harness/*.md` e os gates em `tools/gabarito-gates/` que diferem do plugin (nunca sobrescreve, nunca apaga) e avisa que **R19–R21 agora são do harness; regras de projeto passam a R30+**. O usuário aplica os `.novo` à mão. Com `--atualizar` o doctor **não** roda ao fim — o usuário ainda vai aplicar os `.novo`.
-
-O que o instalador cria (de `${CLAUDE_PLUGIN_ROOT}/reference/` e `templates/`):
-
-| Destino | Origem | Observação |
-|---|---|---|
-| `AGENTS.md` | `reference/AGENTS.md` | núcleo (≤ 17.291 B, lido sempre); Apêndice em branco (≤ 4.096 B) |
-| `CLAUDE.md` | `templates/CLAUDE.md` | **APENAS** `@AGENTS.md`. Os docs de referência **não** são importados — são sob demanda, de propósito |
-| `docs/harness/{referencia,gates,adocao,prompts,fluxo}.md` | `reference/` | consultados por ponteiro; `fluxo.md` é a fonte normativa do Workflow TRUE |
-| `tools/gabarito-gates/` | `gates/` | gates e scripts, zero dependências, Node ≥ 22.18; sem `test/`, `README.md` nem manifesto de versão |
-| `harness.config.json` | `templates/` | template — as seções `fluxo`, `versionamento`, `orquestracao` **não** vêm nele: nascem no onboarding |
-| `.harness/attest.json` | `templates/` | tudo `confirmado: false` — atestar é ato nominal e datado (inclui `iniciativa-resolvida`) |
-| `.github/workflows/gabarito.yml` | `templates/` | doctor + testes dos gates + versionamento (`fetch-depth: 0`) + guarda de migrations (guarda de migrations desligada por padrão — `gates.md §4`) |
-| `.gitignore` (emenda) | — | garante `.harness/doctor-cache.json`, `.harness/fluxo-cache.json`, `.harness/entregas/_sem-id/`, `.harness/heartbeat.json`, `*.novo`, `*.bak`; nada removido |
-
-Cole a saída do instalador. **Anote** se ela tem a linha `criado   .github/workflows/gabarito.yml` (o arquivo nasceu nesta execução) ou `mantido` — a fase 3 decide por isso se pode ajustar o trunk no workflow. Se nenhuma fase 2–4 for rodar, cole também a do doctor e vá ao **Fechamento**.
-
-## Fase 2 — fluxo (roda se falta `fluxo.resolvidoEm`)
-
-### 2.1 Detectar a ferramenta de planejamento
-
-1. Liste as ferramentas `mcp__<servidor>__<tool>` visíveis nesta sessão (plugins aparecem como `mcp__plugin_<plugin>_<servidor>__`). Complemente com:
+1. **Raiz e instalação.** `git rev-parse --show-toplevel` dá a raiz; use-a por extenso em todo comando (abaixo, `<raiz>`) e nunca `.`. Fora de repo git, a raiz é o diretório atual. Existe `tools/gabarito-gates/`, `harness.config.json` ou `AGENTS.md` (`test -e`, um por vez)? Então já há um harness anterior:
    ```bash
-   claude mcp list
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/instalar.sh" "<raiz>" --atualizar
    ```
-2. Conte os servidores distintos e avise **em uma linha, com o número**: `<N> servidores MCP conectados — cada um custa contexto em toda sessão; recomendo escopo de projeto (.mcp.json) só com o necessário (docs/harness/adocao.md §4, "MCP demais").`
-3. Leia `${CLAUDE_PLUGIN_ROOT}/reference/ferramentas-mcp.json` (`ferramentas[]`) e, para cada `<server>` extraído de `mcp__<server>__<tool>`, teste cada entrada com `new RegExp(padraoServidor, 'i').test(server)` — primeiro match vence. Match → proponha `ferramenta` e `mcp: <server>` (ex.: `mcp__claude_ai_ClickUp__*` → `ferramenta: clickup`, `mcp: claude_ai_ClickUp`) e peça confirmação por `AskUserQuestion` (opções: a proposta · outra da lista · `arquivos` · nome livre de servidor). Entrada com `confirmadoEm: null` é sugestão (b): diga isso em uma linha.
-4. Sem match: proponha `arquivos` **ou** nome livre de servidor que o usuário informe (grava como está; a lista do plugin cresce por PR — diga isso em uma linha).
-
-### 2.2 Ler a Iniciativa na ferramenta (só com ok)
-
-Antes de qualquer chamada `mcp__*` de leitura, diga **em uma linha** e espere o ok:
-`vou LER na ferramenta <X> para confirmar a Iniciativa; ferramenta de planejamento não é produção de terceiro por padrão, mas é sistema vivo — ok?`
-
-Com ok: pergunte o ID ou nome da Iniciativa e busque conforme `comoBuscarIniciativa` da entrada casada em `ferramentas-mcp.json` (é instrução para o agente, em prosa; sem entrada casada — nome livre — pergunte ao usuário como buscar). Regras:
-- **I10 — existe ≠ ativa.** Leia o status e confirme com o usuário que é a Iniciativa ativa deste repo.
-- **I4 — vazio não é prova.** Busca sem resultado: não grave; pergunte de novo (nome alternativo, outro espaço). Se o usuário insistir, grave com `"nome"` prefixado por `(b) ` e liste no fechamento.
-- Leia `nome` e `url`. **URL sem token, nunca** — se a URL da ferramenta carregar `token=`, `key=` ou `sig=`, corte a query string.
-- Uma só chamada de leitura por pergunta. Nenhuma escrita nesta fase, em nenhum caso.
-
-Sem ferramenta (`arquivos`): pergunte ID e nome da Iniciativa; `url` fica `""`.
-
-### 2.3 Perguntas fechadas (`AskUserQuestion`, uma por vez)
-
-| # | Pergunta | Default |
-|---|---|---|
-| 1 | Onde vivem FL3 / FL2 / FL1 na hierarquia da ferramenta? | `hierarquiaSugerida` (`FL3`/`FL2`/`FL1`) da entrada casada; em `arquivos`: `docs/fluxo/iniciativa.md` / `docs/fluxo/epics/` / `docs/fluxo/pbis/` |
-| 2 | Nomes dos status FL2 (Epic) para as chaves `preparado` · `em_execucao` · `em_validacao` · `concluido` | `statusSugerido.FL2` da entrada casada (os nomes que a ferramenta mostra); em `arquivos`: os **nomes de coluna** de `fluxo.md §4` — `Preparado`, `Em execução`, `Em validação`, `Concluído` (FL2 tem ainda `Backlog` e `Em refinamento`, que não são chaves do harness) |
-| 3 | Nomes dos status FL1 (PBI) para as chaves `preparado` · `em_execucao` · `revisao` · `pronto` · `concluido` | `statusSugerido.FL1` da entrada casada; em `arquivos`: `Preparado`, `Em execução`, `Revisão e teste`, `Pronto para liberar`, `Concluído` |
-| 4 | Formato de ID (regex) | `^[A-Z]+-\d+$` |
-| 5 | Como o PBI aponta para o Epic: `tipo` (`campo` · `relacionamento` · `frontmatter`) e `nome` na ferramenta — **só com ferramenta MCP**; em `arquivos` não se pergunta (ver nota abaixo) | com ferramenta: o vínculo que `hierarquiaSugerida.FL1`/`comoBuscarIniciativa` citam (custom field → `campo`; relation, link ou lista-pai → `relacionamento`), com o nome que a ferramenta mostra |
-| 6 | **Escrita autorizada na ferramenta?** (ADR-FLX-2) | **não** — só vira `true` com resposta explícita; anote quem e quando |
-| 7 | Áreas do repo e dono de cada uma (TIM-1) | uma área: `*` → o usuário |
-
-Em `arquivos`, o vínculo é sempre `{ "tipo": "frontmatter", "nome": "epic" }` — **não pergunte** a pergunta 5; diga em uma linha: `o cartão de sessão lê `epic:` no frontmatter do PBI`.
-
-As **chaves** de `fluxo.status` (`preparado`, `em_execucao`, …) nunca mudam — são o que `MOVIMENTO` e o cartão usam; só os **valores** variam por ferramenta. Em `arquivos`, o valor é o que vai em `status:` no frontmatter de `docs/fluxo/**/*.md`.
-
-### 2.4 Gravar `fluxo`
-
-Monte o JSON e grave (o script faz merge, preserva `_comment` e chaves desconhecidas, e imprime o diff — cole o diff):
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding-config.mjs" --root . --set fluxo '{
-  "ferramenta": "<clickup|jira|linear|notion|trello|asana|monday|arquivos|nome livre>",
-  "mcp": <"nome do servidor" ou null sem aspas — nunca grave a string "null">,
-  "iniciativa": { "id": "<ID>", "nome": "<nome>", "url": "<url sem token ou vazio>" },
-  "mapeamento": { "FL3": "<resposta 1>", "FL2": "<resposta 1>", "FL1": "<resposta 1>" },
-  "status": {
-    "FL2": { "preparado": "<…>", "em_execucao": "<…>", "em_validacao": "<…>", "concluido": "<…>" },
-    "FL1": { "preparado": "<…>", "em_execucao": "<…>", "revisao": "<…>", "pronto": "<…>", "concluido": "<…>" }
-  },
-  "vinculoPbiEpic": { "tipo": "<arquivos: sempre `frontmatter` · com ferramenta: resposta 5 (`campo`|`relacionamento`)>", "nome": "<arquivos: sempre `epic` · com ferramenta: resposta 5>" },
-  "escrita": false,
-  "idPadrao": "<resposta 4>",
-  "ledgerDir": "docs/ledgers",
-  "envelhecimentoDias": 3,
-  "resolvidoEm": "<AAAA-MM-DD de hoje>"
-}'
-```
-
-`escrita: true` só se a resposta 6 foi sim; nesse caso o Apêndice recebe `escrita autorizada por <quem> em <data>`. Decida pela saída (**Como ler a saída de `onboarding-config.mjs`**): só avance para 2.5 com `atualizado` ou `sem mudanças`; `NÃO escrito` ou exit 1 → pare, mostre o stderr, corrija e repita. Não edite `harness.config.json` à mão.
-
-### 2.5 Áreas e donos → `CODEOWNERS`
-
-Três casos, decididos por medição (não por memória da fase 1). Rode um comando por vez:
-
-```bash
-test -e .github/CODEOWNERS
-```
-Exit 1 → **ausente**. Exit 0 → conte as linhas que não são comentário nem vazias, e o marcador do esqueleto:
-```bash
-grep -c -v '^[[:space:]]*\(#.*\)\?$' .github/CODEOWNERS
-```
-```bash
-grep -c '^# Áreas e donos (TIM-1) — preenchido pelo onboarding' .github/CODEOWNERS
-```
-(`grep -c` imprime `0` e sai com exit 1 quando não há linha — leia o número, não o exit.) Primeiro `0` **e** segundo `≥ 1` → **esqueleto**; qualquer outra combinação → **próprio**.
-
-- **ausente** → crie com uma linha por área (`<padrão de caminho> <@dono>`), mostrando o conteúdo antes. `flag: "wx"` recusa se o arquivo passou a existir (R2):
-  ```bash
-  mkdir -p .github
-  ```
-  ```bash
-  node -e 'require("fs").writeFileSync(".github/CODEOWNERS", process.argv[1], { flag: "wx" }); console.log("criado .github/CODEOWNERS")' '# Áreas e donos — gerado pelo onboarding do gabarito-mestre em <AAAA-MM-DD>. Fonte: AGENTS.md, Apêndice "Áreas e donos".
-  <padrão> <@dono>
-  '
-  ```
-- **esqueleto** (só comentários, e o primeiro é o marcador que `instalar.sh --codeowners` escreve: `# Áreas e donos (TIM-1) — preenchido pelo onboarding (gabarito-instalar, fase 2). Uma linha por área:`) → **preencha**: mantenha o marcador, troque a linha `# <caminho/>  @<dono>` pelas linhas reais (`Edit`, mostrando o diff antes).
-- **próprio** (qualquer linha não comentada, ou comentário que não é o marcador) → **não toque**; diga em uma linha que o Apêndice vai citar o arquivo existente.
-
-### 2.6 Sem ferramenta: `docs/fluxo/` (FLX-5)
-
-Só com `ferramenta: arquivos`. Crie **apenas o que não existe** — um comando por vez:
-
-```bash
-mkdir -p docs/fluxo/epics docs/fluxo/pbis
-```
-
-Para cada par abaixo, primeiro `test -e <destino>`; **só com exit 1** rode o `cp -n` (o `-n` é a segunda trava: nunca sobrescreve). Exit 0 → mantido; diga em uma linha.
-
-| Teste | Cópia (só se o teste deu exit 1) |
-|---|---|
-| `test -e docs/fluxo/iniciativa.md` | `cp -n "${CLAUDE_PLUGIN_ROOT}/templates/fluxo/iniciativa.md" docs/fluxo/iniciativa.md` |
-| `test -e docs/fluxo/epics/EPIC-EXEMPLO.md` | `cp -n "${CLAUDE_PLUGIN_ROOT}/templates/fluxo/epic.md" docs/fluxo/epics/EPIC-EXEMPLO.md` |
-| `test -e docs/fluxo/pbis/PBI-EXEMPLO.md` | `cp -n "${CLAUDE_PLUGIN_ROOT}/templates/fluxo/us.md" docs/fluxo/pbis/PBI-EXEMPLO.md` |
-
-Depois, com `Edit`, preencha no frontmatter de `docs/fluxo/iniciativa.md` o `id` e o nome da Iniciativa; em `EPIC-EXEMPLO.md` o `iniciativa: <ID>`; em `PBI-EXEMPLO.md` o `epic: EPIC-EXEMPLO`. Os outros templates (`enabler`, `tech-debt`, `spike`, `bug`, `tarefa`) ficam no plugin: quem abre um card copia de `${CLAUDE_PLUGIN_ROOT}/templates/fluxo/<tipo>.md` — diga isso em uma linha. `docs/backlog.md` continua sendo o backlog do harness (R17), não um nível do fluxo.
-
-### 2.7 Apêndice do `AGENTS.md`
-
-Mostre o bloco, peça ok, aplique com `Edit` preenchendo a **segunda célula** (vazia) da linha existente — o rótulo fica como está (as linhas existem desde a 1.1.0; num `AGENTS.md` 1.0.x, **acrescente** a linha inteira, com o rótulo abaixo, ao fim da tabela — nunca remova nada):
-
-```
-| Fluxo: ferramenta · Iniciativa padrão (ID · nome) · escrita autorizada por `____` em `____` (ADR-FLX-2) | ferramenta <x> · MCP <nome ou —> · Iniciativa <ID> "<nome>" (<url ou sem url>) · FL3/FL2/FL1 = <a> / <b> / <c> · vínculo PBI→Epic: <tipo> `<nome>` · escrita: <não autorizada, ou autorizada por <quem> em <data>> · (b): <o que não foi confirmado na ferramenta> · resolvido em <AAAA-MM-DD> |
-| Áreas e donos (`.github/CODEOWNERS`) | <área> → <@dono> · <área> → <@dono> (fonte: .github/CODEOWNERS) |
-```
-
-Com escrita autorizada, troque também os dois `____` do rótulo da linha Fluxo por quem e data. O Apêndice tem orçamento de **4.096 bytes** (`contexto.apendiceMaxBytes`, doctor `agents-tamanho`): uma linha por item, sem prosa.
-
-## Fase 3 — versionamento (roda se falta `versionamento.resolvidoEm`)
-
-1. Meça o trunk:
+   Nenhum dos três existe? Instale sem a opção:
    ```bash
-   git rev-parse --abbrev-ref origin/HEAD
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/instalar.sh" "<raiz>"
    ```
-   Saída `origin/<trunk>`. Falhou (sem remoto, ou `origin/HEAD` não configurado) → pergunte o trunk por `AskUserQuestion` (default `main`, marcado (b)).
-2. Confirme por `AskUserQuestion` o modelo **trunk-based** (D2): `<trunk>` protegida · branch curta por PBI · Conventional Commits com escopo do PBI · SemVer · CHANGELOG na PR · tag por release · squash-merge com título CC. Opções: `sim` (default) · `não`. Com `não`: **não grave** `versionamento` (o hook R20 fica fail-open), registre a decisão do usuário no Apêndice como (b) e siga para a fase 4.
-3. **Trunk ≠ `main`:** o `.github/workflows/gabarito.yml` do template roda `versionamento-check.mjs --base origin/main` e reprovaria toda PR. Localize a linha (`Grep` por `--base origin/main` no arquivo) e mostre a troca de `--base origin/main` por `--base origin/<trunk>`:
-   - arquivo **criado pela fase 1 desta mesma execução** (a saída do instalador teve `criado   .github/workflows/gabarito.yml`) → peça ok por `AskUserQuestion` e aplique com `Edit` **só com ok**. Sem ok, ou sessão sem `AskUserQuestion`: não aplique; o item vai para a lista (b).
-   - arquivo que **já existia** (saída `mantido`, ou a fase 1 não rodou nesta execução) → **não edite** (R2); avise em uma linha qual linha trocar e em qual arquivo.
-4. Mostre o mapa tipo de PBI → prefixo de branch e peça ok: US→`feat` · Bug→`fix` (hotfix é `fix` com PBI de Bug) · Enabler→`enabler` · TechDebt→`debt` · Spike→`spike` · Tarefa→`task`; sem PBI: `chore|docs|ci|build|test/<slug>`; worktree de implementador: `wt/<PBI>-<n>`.
-5. Instale **só o que não existe** (ONB-4; nenhum arquivo pré-existente é alterado) — um comando por vez:
-   ```bash
-   mkdir -p .github docs
-   ```
-   Para cada par, primeiro o teste; **só com exit 1** a cópia (`cp -n`: segunda trava, nunca sobrescreve). Exit 0 → mantido.
+   O instalador nunca sobrescreve nem apaga: o que difere vira `<arquivo>.novo`. Mostre a linha `── N criado(s)…`, a lista de `.novo` e cada linha que começa com `AVISO:`, uma frase simples por aviso, sem o comando que ela sugere. Não repasse as outras linhas: algumas mandam o usuário executar comando.
+   Aviso de que os hooks do git de versionamento não foram instalados: diga que a trava de versionamento ainda não está ligada no git e que, depois de aplicar o `versionamento-check.mjs.novo`, a instalação precisa ser pedida de novo. Com `--atualizar`, diga também que as regras R19 a R21 do `AGENTS.md` antigo agora são do harness e que as regras do projeto passam a R30 em diante (renumere ao aplicar o `AGENTS.md.novo`).
+   Sem perguntar, para cada arquivo abaixo rode `test -e "<raiz>/<destino>"` e, só com exit 1, o `cp -n` para `"<raiz>/<destino>"` (nunca sobrescreve):
 
-   | Teste | Cópia (só se o teste deu exit 1) |
+   | Destino (dentro da raiz) | Origem em `${CLAUDE_PLUGIN_ROOT}/templates/` |
    |---|---|
-   | `test -e .github/PULL_REQUEST_TEMPLATE.md` | `cp -n "${CLAUDE_PLUGIN_ROOT}/templates/PULL_REQUEST_TEMPLATE.md" .github/PULL_REQUEST_TEMPLATE.md` |
-   | `test -e CHANGELOG.md` | `cp -n "${CLAUDE_PLUGIN_ROOT}/templates/CHANGELOG.md" CHANGELOG.md` |
-   | `test -e docs/backlog.md` | `cp -n "${CLAUDE_PLUGIN_ROOT}/templates/backlog.md" docs/backlog.md` |
+   | `.github/PULL_REQUEST_TEMPLATE.md` | `PULL_REQUEST_TEMPLATE.md` |
+   | `CHANGELOG.md` | `CHANGELOG.md` |
+   | `docs/backlog.md` | `backlog.md` |
 
-   Se o `PULL_REQUEST_TEMPLATE.md` já existia, avise em uma linha quais itens do template do gabarito faltam nele (título `tipo(PBI-n): assunto`, PBI, Epic, requisito, migration compatível, plano de volta, janela, teardown, revisor humano) — **não edite**.
-6. Grave:
+   Anote se a saída do instalador trouxe `criado   .github/workflows/gabarito.yml`.
+2. **Detectar.**
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding-config.mjs" --root . --set versionamento '{
-     "modelo": "trunk",
-     "branchPadrao": "^(feat|fix|enabler|debt|spike|task|perf|refactor)/[A-Z]+-\\d+(-[a-z0-9-]+)?$|^(chore|docs|ci|build|test)/[a-z0-9-]+$",
-     "branchWorktree": "^wt/[A-Z]+-\\d+-\\d+$",
-     "commit": "conventional",
-     "tiposComEscopoDePbi": ["feat","fix","enabler","debt","spike","task","perf","refactor"],
-     "tiposLivres": ["chore","docs","ci","build","test","release","revert"],
-     "tag": "^v\\d+\\.\\d+\\.\\d+$",
-     "changelog": "CHANGELOG.md",
-     "resolvidoEm": "<AAAA-MM-DD de hoje>"
-   }'
+   node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding.mjs" detectar --root "<raiz>"
    ```
-   Se `fluxo.idPadrao` não for `^[A-Z]+-\d+$`, substitua `[A-Z]+-\d+` em `branchPadrao` e `branchWorktree` pelo padrão do usuário (sem âncoras) e mostre o resultado antes de gravar. Decida pela saída (**Como ler a saída de `onboarding-config.mjs`**): `NÃO escrito` ou exit 1 → pare, mostre o stderr e não siga para o passo 7.
-7. Apêndice (mostrar, ok, `Edit` na segunda célula da linha existente):
+   Sempre o script do plugin, nunca o de `tools/`. A saída é JSON: `{ok, itens, perguntas, previa}`. `ok:false` com `config_invalida`: pare, mostre o `motivo`, diga "conserte o JSON de harness.config.json e peça o onboarding de novo" e vá ao passo 7. `ok:false` com `falha`, ou saída que não é JSON: pare com o motivo em uma linha e vá ao passo 7. Nunca detecte à mão nem improvise outro caminho.
+3. **Prévia.** Mostre o campo `previa` como veio, numa tela. Não reescreva nem resuma.
+4. **Perguntas.** Pergunte só as `perguntas` que o `detectar` devolveu, na ordem dele: primeiro `politica`, `autonomia` e `perfil`, depois as condicionais. Fato detectado nunca é perguntado e nenhuma pergunta é inventada. Item com uma opção só nunca chega em `perguntas` (o script já o trata como fato, na prévia, sem gravar nada): não o pergunte, não o reformule e não o conte. Toda pergunta do script tem 2 ou mais opções; se alguma vier com menos, pare e diga "detecção inválida". Use `AskUserQuestion` em até 2 chamadas (1ª: as 3 fixas; 2ª: as condicionais), com no máximo 4 perguntas por chamada. Mostre as opções na ordem do script, sem reordenar (o default vem primeiro, então Enter o confirma), com o `rotulo` literal; ao default acrescente ` (default)`. Resposta que é o rótulo de uma opção vale o `valor` dela, com o tipo JSON (`true`, `false`, `null`; nunca "sim", "não" nem "null" em texto). "Other" ou texto livre vale se for igual a um `valor`; senão, repergunte 1 vez e, na 2ª falha, pare sem gravar. Pergunta com mais de 4 opções: as 4 primeiras viram opção; as demais ficam no texto da pergunta e valem como "Other" exato.
+   Sessão sem `AskUserQuestion` (headless): use o default de cada pergunta, rode o passo 6 com `--dry-run`, mostre o diff e não grave. No fechamento, diga "rode numa sessão com perguntas": consentimento não tem default.
+5. **Respostas.** Escreva `<raiz>/.claude-tmp/onboarding-respostas.json`. Se o arquivo já existe, `Read` antes do `Write` (o `Write` falha sem `Read`); se o `Write` falhar, pare: nunca rode o passo 6 com o arquivo antigo. Só estas chaves, exatamente (`_recalibrar` só entra no `trocar orquestracao`, conforme `trocar.md`): `_previa` (o array `itens` do `detectar`, copiado sem mudar nada, na mesma ordem de chaves) e uma chave por `id` de pergunta (as 3 fixas e o nome do item de cada condicional). Chave a mais ou a menos faz o `gravar` recusar.
+   ```json
+   {
+     "_previa": "<array itens do detectar, copiado sem mudar>",
+     "politica": "sob_demanda",
+     "autonomia": false,
+     "perfil": "padrao",
+     "versionamento": "staging"
+   }
    ```
-   | Versionamento: modelo · prefixos de branch · resolvido em (R20) | trunk-based (D2), trunk <trunk> · branch tipo/<PBI>-slug · worktree wt/<PBI>-<n> · Conventional Commits com escopo do PBI · SemVer · CHANGELOG na PR · tag vX.Y.Z · squash com título CC · resolvido em <AAAA-MM-DD> |
-   ```
-8. Diga em uma linha: a partir de agora os hooks git `commit-msg` e `pre-push` (R20, instalados por `instalar.sh`) barram commit e push fora do padrão.
-
-## Fase 4 — orquestração (roda se falta `orquestracao.modelo.resolvidoEm`)
-
-### 4.1 Modelo
-
-Mostre os aliases conhecidos (`fable`, `opus`, `sonnet`, `haiku` — M2) e pergunte por `AskUserQuestion`: **qual família é a mais potente hoje na sua conta?** Fonte: `/model` na UI do Claude Code — **não existe API para enumerar**; a resposta é **(b)** do usuário e é gravada com a data de hoje. Opções: `fable` (default) · `opus` · `sonnet` · outro alias. Validade: 90 dias; vencido, o cartão de sessão e o doctor (`warn modelo-resolvido`) cobram revalidação.
-
-### 4.2 `.claude/settings.json` — dois oks separados
-
-1. Gere o diff **sem gravar**:
+6. **Gravar.**
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding-config.mjs" --root . --dry-run --settings '{
-     "model": "<alias>",
-     "enabledPlugins": { "gabarito-mestre@gabarito-mestre": true },
-     "extraKnownMarketplaces": { "gabarito-mestre": { "source": { "source": "github", "repo": "gabrielnfc/gabarito-mestre" } } }
-   }'
+   node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding.mjs" gravar --respostas "<raiz>/.claude-tmp/onboarding-respostas.json" --root "<raiz>"
    ```
-   Cole o diff. Chaves existentes (`permissions`, `env`, `hooks`…) ficam **byte a byte** — o script emenda chave a chave (R2). Saída `.claude/settings.json NÃO escrito — JSON inválido` → o settings do usuário está inválido: pare e mostre o stderr, como na tabela de saída.
-2. Pergunte, **separadamente**, por `AskUserQuestion`:
-   - (i) gravar `model: <alias>` para o **time inteiro**? (settings de projeto > user: afeta o custo de todos que clonam) — `sim` / `não`.
-   - (ii) registrar o marketplace do gabarito e habilitar o plugin (`enabledPlugins` + `extraKnownMarketplaces`)? Isto liga **hooks PreToolUse de terceiro** para quem clonar — é o ponto de consentimento. `sim` / `não`.
-3. Grave **só o confirmado**, em uma chamada, sem `--dry-run`, com o JSON reduzido ao que recebeu `sim`; sucesso é `[ONB-7] .claude/settings.json atualizado` (ou `sem mudanças`). Nenhum `sim` → não grave nada e diga por quê. **Sessão sem `AskUserQuestion`: (i) e (ii) valem `não`** — consentimento não tem default `sim`; o diff fica na saída e o item vai para a lista (b).
-4. Diga em uma linha: **cada pessoa instala o plugin uma vez** (`claude plugin install gabarito-mestre@gabarito-mestre`); `enabledPlugins` só o habilita para quem já instalou (M3).
-
-### 4.3 Máquina e paralelismo
-
-1. Calibre:
+   `ok:true`: mostre o `diff`, a `efetiva` (se veio: é a política que vale de fato) e cada `naoDetectado` com `trocar <item>`. `ok:false`, pelo campo `erro`:
+   - `respostas_ausentes`, `respostas_invalidas`, `previa_ausente`: reescreva o arquivo 1 vez e rode de novo; na 2ª, pare com o motivo. Nada foi gravado.
+   - `deteccao_mudou` (algo mudou entre a prévia e a gravação, como um servidor MCP que oscilou): volte ao passo 2 e pergunte só o que mudou ou é novo. No máximo 2 voltas; na 3ª, pare com "detecção instável: <itens>".
+   - `resposta_fora_das_opcoes`: repergunte só aquele id, 1 vez.
+   - `config_invalida`, `falha`: pare com o motivo. Nunca edite o `harness.config.json` à mão.
+7. **Doctor** (sempre, também depois de erro). Ele acha a raiz do git a partir do diretório atual, então não precisa de `cd`:
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/capacidade.mjs" --root . --sugerir --json
+   node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/harness-doctor.mjs" --explain
    ```
-   Não use `--calibrar` aqui: é a escada medida, que roda a suíte do repo e grava `.harness/capacidade.json`.
-   A saída traz `simultaneos`, `teto`, `limites` e `calibradoEm`. Fórmula (contrato): `simultaneos = clamp(floor(cores/4), 1, 3)`; `teto = clamp(floor(cores/2), 2, 8)`. Para mostrar cores, load, memória disponível e disco, rode também `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/capacidade.mjs" --root . --json` (objeto `medidas`: `cores`, `load1`, `memDisponivelMB`, `discoLivreGB`) e mostre-os junto dos valores sugeridos.
-2. Pergunte `simultaneos` e `teto` com os medidos como default (`teto ≥ simultaneos ≥ 1`).
-3. Proponha `arquivosDeContenda` a partir do que existe no repo — verifique com `ls`/`Glob`: lockfile detectado (`package-lock.json` · `pnpm-lock.yaml` · `yarn.lock` · `bun.lockb` · `Cargo.lock` · `poetry.lock` · `go.sum`), `prisma/` se existir, `src/index.ts` se existir, e **sempre** `docs/fluxo/`. Usuário confirma a lista.
-4. Grave:
-   ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding-config.mjs" --root . --set orquestracao '{
-     "modelo": { "politica": "mais-potente", "alias": "<alias>", "resolvidoEm": "<AAAA-MM-DD de hoje>", "validadeDias": 90 },
-     "sempreSubagente": true,
-     "lembretePorPrompt": false,
-     "paralelismo": {
-       "modo": "auto",
-       "simultaneos": <n>,
-       "teto": <n>,
-       "limites": { "loadPorCoreMax": 1.5, "memDisponivelMinMB": 2048, "discoLivreMinGB": 5 },
-       "arquivosDeContenda": [<lista confirmada>],
-       "isolamentoWorktree": { "porta": "3000+n", "dbSchema": "wt_{n}", "namespace": "wt-{n}" },
-       "rodadasAntesDeEscalar": 2,
-       "calibradoEm": "<AAAA-MM-DD de hoje>"
-     }
-   }'
-   ```
-   Se o projeto usa outra porta base ou outro prefixo de schema/namespace, pergunte e ajuste `isolamentoWorktree` antes de gravar. `lembretePorPrompt` fica `false` (default); diga que `true` liga uma linha "R21: despache, não implemente" a cada prompt. Decida pela saída (**Como ler a saída de `onboarding-config.mjs`**): `NÃO escrito` ou exit 1 → pare, mostre o stderr e não siga para o passo 5.
-5. Apêndice (mostrar, ok, `Edit` na segunda célula de cada linha existente):
-   ```
-   | Modelo do orquestrador: política · alias · resolvido em (validade 90 d) | política mais-potente · alias <alias> · resolvido em <AAAA-MM-DD> (b — fonte: /model do usuário) · validade 90 d |
-   | Paralelismo: simultaneos · teto · calibrado em | simultaneos <n> · teto <n> · calibrado em <AAAA-MM-DD> (<cores> cores) |
-   | Arquivos de contenda (serial, sem override) | <lista confirmada> |
-   | Isolamento de worktree: porta · schema · namespace por `n` | porta 3000+n · schema wt_{n} · namespace wt-{n} (n = índice de wt/<PBI>-<n>) |
-   ```
+   É o doctor do plugin, da mesma versão do `onboarding.mjs`. Mostre `Nível alcançado` e as linhas `FALTA` do nível seguinte: é o que falta para subir um nível. Com `.novo` pendente, diga em uma linha que o doctor mediu antes de aplicá-los.
+8. **Fechamento.** Diga o que ficou instalado, o nível que o doctor mediu e que falta preencher o Apêndice do `AGENTS.md` (stack, fronteiras e comandos do projeto). Diga também, em uma linha, que para mudar algo depois basta pedir "trocar" e o assunto (por exemplo, trocar perfil). Só se o usuário pedir a lista: `trocar <item>` serve para os 5 fatos (`tipo_repo`, `ambientes`, `planejamento`, `versionamento`, `orquestracao`), as 3 decisões (`politica`, `autonomia`, `perfil`) e o que fica fora das perguntas (`settings`, `codeowners`, `apendice`, `iniciativa`, `contenda`). Mostre `git status` e pare, sem commit.
+   Base diferente de `main` e `gabarito.yml` criado agora: troque com `Edit` `--base origin/main` por `--base origin/<base>` sem perguntar (o arquivo é nosso) e diga em uma linha. Se ele já existia (`mantido`), só diga a linha a trocar.
 
-## Fechamento (toda execução termina aqui)
+## Trocar um item
 
-1. **Lista "o que ficou (b)"** — uma linha por item: Iniciativa não confirmada na ferramenta · status não lidos da ferramenta · alias do modelo (sempre (b)) · trunk não medido, ou `gabarito.yml` ainda com `--base origin/main` num trunk ≠ `main` · respostas por default em sessão sem `AskUserQuestion` · qualquer arquivo pré-existente que impediu instalação (PR template, CHANGELOG, CODEOWNERS).
-2. Rode o doctor e cole a saída inteira. **Não interprete o nível como "pretendido"**: o que vale é `Nível alcançado`. Linhas `warn` (ex.: `modelo-resolvido`) são aviso, não falta.
-   ```bash
-   node tools/gabarito-gates/scripts/harness-doctor.mjs --explain
-   ```
-3. Diga ao usuário, nesta ordem: preencher o resto do **Apêndice** (stack, fronteiras, tenant, comandos) — sem ele o documento é teoria · declarar no `§0.2` **o nível que o doctor mediu** (repo novo: `0`) · **antes de ligar qualquer gate, calibrar** (`docs/harness/adocao.md §3`) · marcar no Apêndice o que é inaplicável (R7, G7, G8) em vez de fingir · abrir a primeira branch de PBI já com `gabarito-instalar --vincular <PBI>`.
-4. `git status` — mostre e **pare**. Não commite (R1).
+Pedido "trocar `<item>`": rode os passos 1 (só a raiz) e 2 (`detectar`). Item fora das listas do passo 8: diga as listas e pare.
+- `<item>` está nas `perguntas`: pergunte só ele; as outras respostas são o `default` de cada pergunta (o script garante que o default é o valor já gravado); siga os passos 5 a 7.
+- `<item>` não está nas `perguntas` (fato detectado): não há o que perguntar. Diga a fonte (`itens[].fonte`) e que o valor muda quando o repo mudar. Não grave.
+- `orquestracao`: recalibra o paralelismo desta máquina (quantos implementadores trabalham ao mesmo tempo). Mostra antes e depois e só grava com o ok do usuário; leia `${CLAUDE_PLUGIN_ROOT}/skills/gabarito-instalar/trocar.md` e siga só a seção `orquestracao`. Para mudar só o modelo, é `trocar perfil`.
+- `settings`, `codeowners`, `apendice`, `iniciativa`, `contenda`: leia `${CLAUDE_PLUGIN_ROOT}/skills/gabarito-instalar/trocar.md` e siga só a seção daquele item.
 
-## Modo `--vincular <PBI>` (ORQ-6)
+## Modo --vincular <PBI>
 
-Registra o vínculo PBI → Epic → Iniciativa no cache local que os hooks leem. Roda ao abrir a branch do PBI; **só leitura** na ferramenta, mesmo com `fluxo.escrita: true`.
-
-1. Exige `fluxo.resolvidoEm` (senão: fase 2 primeiro). Valide `<PBI>` contra `fluxo.idPadrao`; não casa → pare e diga o padrão.
-2. Leia o card:
-   - **Com MCP** (`fluxo.mcp` ≠ null): a linha de ok da §2.2 (uma vez por sessão), depois busque o card pelo ID conforme `comoBuscarIniciativa` da entrada de `ferramentas-mcp.json` cujo `padraoServidor` casa `fluxo.mcp` (mesma busca, agora pelo ID do PBI); leia `titulo`, o Epic pelo vínculo `fluxo.vinculoPbiEpic` (o `campo` ou `relacionamento` chamado `vinculoPbiEpic.nome`), e a Iniciativa do Epic (ausente → `fluxo.iniciativa.id`, marcado (b)). Card não encontrado: **I4** — não grave; pergunte o ID de novo.
-   - **`arquivos`**: `Read docs/fluxo/pbis/<PBI>.md`; o Epic é a chave `vinculoPbiEpic.nome` do frontmatter (default `epic:`); `iniciativa:` do `docs/fluxo/epics/<epic>.md` (ausente → `fluxo.iniciativa.id`). Arquivo ausente: não grave; ofereça criar de `${CLAUDE_PLUGIN_ROOT}/templates/fluxo/<tipo>.md` e vincular depois.
-3. Grave o cache (merge por chave; formato do contrato; escrita atômica):
+Registra o vínculo PBI, Epic e Iniciativa no cache local que os hooks leem. Só leitura na ferramenta, mesmo com `fluxo.escrita: true`. Raiz como no passo 1 do Fluxo.
+1. Leia `harness.config.json`. Sem `fluxo.resolvidoEm`, faça o onboarding antes. Valide `<PBI>` contra `fluxo.idPadrao`; não casa: pare e diga o padrão.
+2. Leia o card. Com MCP (`fluxo.mcp` ≠ null): a linha de ok de `trocar.md`, seção `iniciativa` (uma vez por sessão), depois busque pelo ID conforme `comoBuscarIniciativa` da entrada de `${CLAUDE_PLUGIN_ROOT}/reference/ferramentas-mcp.json` que casa `fluxo.mcp`; leia `titulo`, o Epic (vínculo `fluxo.vinculoPbiEpic`) e a Iniciativa do Epic (ausente: `fluxo.iniciativa.id`, marcado (b)). Card não encontrado: não grave; pergunte o ID de novo. Em `arquivos`: `Read docs/fluxo/pbis/<PBI>.md`; o Epic é a chave `vinculoPbiEpic.nome` do frontmatter; `iniciativa:` vem de `docs/fluxo/epics/<epic>.md`. Arquivo ausente: não grave; ofereça criar de `${CLAUDE_PLUGIN_ROOT}/templates/fluxo/<tipo>.md`.
+3. Grave o cache (merge por chave, escrita atômica):
    ```bash
    node -e '
    const fs = require("fs"); const p = ".harness/fluxo-cache.json";
    const [pbi, epic, iniciativa, titulo] = process.argv.slice(1);
    let c = {}; try { c = JSON.parse(fs.readFileSync(p, "utf8")); } catch {}
-   const dataLocal = (d) => { const p2 = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; }; // F2-R10: local, não toISOString() (UTC)
+   const dataLocal = (d) => { const p2 = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; }; // local, não toISOString() (UTC)
    c[pbi] = { epic, iniciativa, titulo, em: dataLocal(new Date()) };
    fs.mkdirSync(".harness", { recursive: true });
    fs.writeFileSync(p + ".tmp", JSON.stringify(c, null, 2) + "\n"); fs.renameSync(p + ".tmp", p);
    console.log("fluxo-cache:", pbi, "→", epic, "→", iniciativa);
    ' "<PBI>" "<EPIC>" "<INI>" "<título do card>"
    ```
-4. Ledger `<fluxo.ledgerDir>/<PBI>.md`: se não existe, crie com o cabeçalho de `docs/harness/referencia.md §2.3` (plano: `(b) ainda sem plano`); depois acrescente a linha `VINCULO` (não é lida por script; é rastro). Criação com `flag: "wx"` — ledger existente nunca é sobrescrito, só recebe a linha no fim:
+4. Ledger `<fluxo.ledgerDir>/<PBI>.md`: crie com o cabeçalho de `docs/harness/referencia.md §2.3` se não existe (plano: `(b) ainda sem plano`) e acrescente a linha `VINCULO <PBI> epic=<EPIC> iniciativa=<INI> <AAAA-MM-DD> fonte=<ferramenta|arquivo>`. Criação com `flag: "wx"`: ledger existente só recebe a linha no fim.
    ```bash
    node -e '
    const fs = require("fs"); const [arq, cabecalho, linha] = process.argv.slice(1);
    fs.mkdirSync(require("path").dirname(arq), { recursive: true });
    try { fs.writeFileSync(arq, cabecalho, { flag: "wx" }); console.log("ledger criado:", arq); } catch (e) { if (e.code !== "EEXIST") throw e; }
    fs.appendFileSync(arq, linha + "\n"); console.log("ledger +", linha);
-   ' "<ledgerDir>/<PBI>.md" "<cabeçalho de referencia.md §2.3, terminado em \n>" "VINCULO <PBI> epic=<EPIC> iniciativa=<INI> <AAAA-MM-DD> fonte=<ferramenta|arquivo>"
+   ' "<ledgerDir>/<PBI>.md" "<cabeçalho de referencia.md §2.3, terminado em \n>" "<linha VINCULO>"
    ```
-5. Com `fluxo.escrita: false`, se o card na ferramenta ainda não está em "em execução", avise **em uma linha**: `ferramenta não atualizada (escrita não autorizada) — mova <PBI> à mão ou autorize escrita no onboarding` (FLX-6). Nunca escreva.
+5. Com `fluxo.escrita: false` e card fora de "em execução", avise em uma linha: `ferramenta não atualizada (escrita não autorizada) — mova <PBI> à mão ou use trocar iniciativa para autorizar`. Nunca escreva.
 6. Mostre `cat .harness/fluxo-cache.json` e `git status`; pare. O cache é gitignored; o ledger é versionado.
 
 ## Proibido
 
-- Declarar nível de adoção. A skill deixa `____`. Nível é medido, nunca presumido.
+- Declarar nível de adoção: fica `____`; nível é medido, nunca presumido.
 - Importar `docs/harness/*.md` no `CLAUDE.md`.
-- Sobrescrever ou apagar qualquer arquivo do usuário (R2). O instalador não faz isso; `onboarding-config.mjs` só emenda; você também não. Sem exceção: nem `tools/gabarito-gates/` — o que difere vira `<arquivo>.novo`.
-- Editar `harness.config.json` ou `.claude/settings.json` à mão — só via `onboarding-config.mjs`.
-- Tratar exit 0 de `onboarding-config.mjs` como sucesso sem ler o stdout (`NÃO escrito` é falha declarada).
-- Escrever na ferramenta de planejamento sem `fluxo.escrita: true` (ADR-FLX-2). `--vincular` **nunca** escreve.
-- Chamar qualquer `mcp__*` antes do ok em uma linha (§2.2), ou pôr `mcp__*` no `allowed-tools`.
-- Gravar URL com token, ou qualquer segredo, em config, cache, ledger ou Apêndice.
-- Inventar resposta em sessão sem `AskUserQuestion` — default marcado (b), sempre.
-- Commitar (R1). Mostre o `git status` e pare.
+- Sobrescrever ou apagar arquivo do usuário (R2), nem em `tools/gabarito-gates/`: o que difere vira `<arquivo>.novo`.
+- Editar `harness.config.json` ou `.claude/settings.json` à mão: só pelos scripts. Tratar exit 0 como sucesso sem ler o stdout.
+- Mandar o usuário colar, copiar ou digitar comando: a skill roda o que precisa.
+- Escrever na ferramenta de planejamento sem `fluxo.escrita: true` (ADR-FLX-2). `--vincular` nunca escreve.
+- Chamar `mcp__*` antes do ok em uma linha, ou pôr `mcp__*` no `allowed-tools`.
+- Gravar URL com token ou segredo em config, cache, ledger ou Apêndice.
+- Inventar resposta em sessão sem `AskUserQuestion`: só `--dry-run`.
+- Commitar (R1): mostre o `git status` e pare.

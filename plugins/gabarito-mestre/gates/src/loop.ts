@@ -6,19 +6,22 @@
 // O mod carrega `dist/loop.js` como módulo de hook: só import relativo e, no fecho inteiro, nenhum módulo embutido do Node (por isso `plano.ts` normaliza caminho por conta própria).
 // A projeção das propostas abertas é UMA só, a de `emenda.ts`; `emenda.ts` importa `ordenar` daqui (ciclo medido nos runners).
 import { projetarEmendas } from './emenda.ts';
+import { PAPEIS } from './formas.ts';
+import { pendenciasAprendizado } from './pendencias.ts';
 import type { AcaoLoop, Evento, Papel, Plano, PropostaAberta, Sinais } from './tipos.ts';
 
 export type { AcaoLoop, MotivoParar, Papel, Plano, Sinais, TaskPlano } from './tipos.ts';
 
 const TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
-const PAPEIS: readonly unknown[] = ['implementador', 'revisor', 'correcao'];
+/** Papéis de task do loop; a lista mora em `formas.ts` (a forma do aprendizado a usa e `loop.ts` já depende de `formas.ts` por `emenda.ts`). */
+export { PAPEIS };
 export const TIPOS_DE_TASK: readonly string[] = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
 /**
  * Progresso (REQ-LOOP-5): os eventos que `proximaAcao` consome, TIPOS_DE_TASK, `ci.resultado` e o julgamento de emenda (descongela).
  * Fonte única: o hook Stop (contador de Stops) e o mod (marcador de pouso pendente) importam esta lista; guarda, sessão, custo,
  * pouso, pausa e a própria `emenda.proposta` (só um pedido) não contam.
  */
-export const TIPOS_DE_PROGRESSO: readonly string[] = [...TIPOS_DE_TASK, 'ci.resultado', 'spec.emendada', 'emenda.rejeitada'];
+export const TIPOS_DE_PROGRESSO: readonly string[] = [...TIPOS_DE_TASK, 'ci.resultado', 'spec.emendada', 'emenda.rejeitada', 'aprendizado', 'aprendizado.nada'];
 
 /** Comparação por código, nunca por localidade: a ordem não pode depender da máquina. */
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -107,7 +110,7 @@ function chaveDe(e: Evento, rodada: number, estado: EstadoTask): { chave: ChaveE
   const dados = e.dados ?? {};
   switch (e.tipo) {
     case 'task.iniciada':
-      if (!PAPEIS.includes(dados.papel)) return 'papel inválido';
+      if (!(PAPEIS as readonly unknown[]).includes(dados.papel)) return 'papel inválido';
       return { chave: `iniciada.${dados.papel as Papel}` as ChaveEvento, rodada: null };
     case 'task.concluida':
       return { chave: 'task.concluida', rodada: null };
@@ -256,6 +259,10 @@ export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais): Ac
   if (plano.politica_entrega?.exige_prod === true && sinais.politica === 'sob_demanda') {
     return { tipo: 'parar', motivo: 'janela_ausente' };
   }
+  // (4c) REQ-APR-2: pendência de aprendizado aberta vence tudo que vem depois (plano vazio, pouso, integração, despacho, concluir). A (1) já
+  // barrou o diário fora da tabela: `pendenciasAprendizado` devolve `[]` nele e nunca é lido como "sem pendência".
+  const pendencias = pendenciasAprendizado(plano, ord.eventos);
+  if (pendencias.length > 0) return { tipo: 'aprender', pendencias };
   // Plano vazio não é sucesso: nada foi entregue.
   if (plano.tasks.length === 0) return { tipo: 'parar', motivo: 'nao_conseguiu' };
 

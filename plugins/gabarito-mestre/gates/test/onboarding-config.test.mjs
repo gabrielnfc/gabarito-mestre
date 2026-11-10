@@ -24,7 +24,7 @@ import { join, dirname, resolve } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as onb from '../scripts/onboarding-config.mjs'; // namespace: o RED da T6 falha por teste, não pelo import
-import { mergeDeep, aplicar, aplicarSettings, diffChaves, lerJson, ArquivoInvalido, SECOES, escreverAtomico, raizDoRepo } from '../scripts/onboarding-config.mjs';
+import { mergeDeep, aplicar, aplicarConfig, aplicarPerfil, aplicarSettings, diffChaves, lerJson, ArquivoInvalido, SECOES, escreverAtomico, raizDoRepo } from '../scripts/onboarding-config.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(here, '..', 'scripts', 'onboarding-config.mjs');
@@ -108,9 +108,47 @@ describe('aplicar — harness.config.json', () => {
     assert.throws(() => aplicar(dir, 'fluxo', { ferramenta: 'arquivos' }), ArquivoInvalido);
     assert.equal(readFileSync(join(dir, 'harness.config.json'), 'utf8'), '{"docsDir": ');
   });
-  test('seção desconhecida é RangeError; as quatro do contrato existem', () => {
-    assert.deepEqual(SECOES, ['fluxo', 'versionamento', 'orquestracao', 'contexto']);
+  test('seção desconhecida é RangeError; as seis do contrato existem (E5a T6b: entrega e onboarding entram)', () => {
+    assert.deepEqual(SECOES, ['fluxo', 'versionamento', 'orquestracao', 'contexto', 'entrega', 'onboarding']);
     assert.throws(() => aplicar(repo(), 'quality', {}), RangeError);
+  });
+  test('entrega e onboarding são seções graváveis, e o CLI --set as aceita', () => {
+    const dir = repo({ 'harness.config.json': '{"entrega":{"comandos":{"deploy":{"argv":["x"]}}}}' });
+    aplicar(dir, 'entrega', { politica: 'janela', autonomia: true });
+    assert.deepEqual(lerCfg(dir).entrega, { comandos: { deploy: { argv: ['x'] } }, politica: 'janela', autonomia: true });
+    aplicar(dir, 'onboarding', { resolvidoEm: '2025-06-30', naoDetectado: [] });
+    assert.deepEqual(lerCfg(dir).onboarding, { resolvidoEm: '2025-06-30', naoDetectado: [] });
+    const r = spawnSync(process.execPath, [SCRIPT, '--root', dir, '--set', 'onboarding', '{"resolvidoEm":"2025-07-01"}'], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(lerCfg(dir).onboarding.resolvidoEm, '2025-07-01');
+  });
+  test('aplicarPerfil: só repo-sem-app, mesmo merge/diff/dry-run; outro valor é RangeError sem escrever', () => {
+    const dir = repo({ 'harness.config.json': '{"fluxo":{"ferramenta":"clickup"}}' });
+    const antes = readFileSync(join(dir, 'harness.config.json'), 'utf8');
+    for (const ruim of ['app', 'turbo', '', null, undefined, 1]) assert.throws(() => aplicarPerfil(dir, ruim), RangeError, String(ruim));
+    assert.equal(readFileSync(join(dir, 'harness.config.json'), 'utf8'), antes);
+    const seco = aplicarPerfil(dir, 'repo-sem-app', { dryRun: true });
+    assert.deepEqual(seco.diff, ['+ perfil = "repo-sem-app"']);
+    assert.equal(readFileSync(join(dir, 'harness.config.json'), 'utf8'), antes);
+    const r = aplicarPerfil(dir, 'repo-sem-app');
+    assert.deepEqual(r.diff, ['+ perfil = "repo-sem-app"']);
+    assert.deepEqual(lerCfg(dir), { fluxo: { ferramenta: 'clickup' }, perfil: 'repo-sem-app' });
+    assert.deepEqual(readdirSync(dir).filter((f) => f.includes('.tmp')), []);
+    const ruimDir = repo({ 'harness.config.json': '{"a":' });
+    assert.throws(() => aplicarPerfil(ruimDir, 'repo-sem-app'), ArquivoInvalido);
+  });
+  test('aplicarConfig: várias seções + perfil numa escrita só, sem chave morta, sem seção inventada', () => {
+    const dir = repo({ 'harness.config.json': '{"versionamento":{"branchPadrao":"^x$"}}' });
+    const r = aplicarConfig(dir, { secoes: { versionamento: { modelo: 'trunk', resolvidoEm: 'd' }, fluxo: { resolvidoEm: 'd' }, entrega: { base: 'main' } }, perfil: 'repo-sem-app' });
+    assert.deepEqual(r.removidas, ['versionamento.modelo']);
+    assert.deepEqual(lerCfg(dir), { versionamento: { branchPadrao: '^x$', resolvidoEm: 'd' }, fluxo: { resolvidoEm: 'd' }, entrega: { base: 'main' }, perfil: 'repo-sem-app' });
+    const antes = readFileSync(join(dir, 'harness.config.json'), 'utf8');
+    assert.throws(() => aplicarConfig(dir, { secoes: { fluxo: { a: 1 }, quality: {} } }), RangeError);
+    assert.throws(() => aplicarConfig(dir, { secoes: {}, perfil: 'app' }), RangeError);
+    assert.equal(readFileSync(join(dir, 'harness.config.json'), 'utf8'), antes, 'erro de validação não escreve nada');
+    const seco = aplicarConfig(dir, { secoes: { fluxo: { x: 1 } } }, { dryRun: true });
+    assert.deepEqual(seco.diff, ['+ fluxo.x = 1']);
+    assert.equal(readFileSync(join(dir, 'harness.config.json'), 'utf8'), antes);
   });
   test('escrita atômica: nenhum .tmp sobra e o arquivo termina em newline', () => {
     const dir = repo({ 'harness.config.json': TEMPLATE });

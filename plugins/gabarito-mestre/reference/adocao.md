@@ -52,7 +52,7 @@ Aqui o trabalho passa a ser reproduzível por outro agente ou outra pessoa.
 - [ ] Lanes de teste declaradas, com a partição hermética × não-hermética em **fonte única**, e quais são obrigatórias.
 - [ ] Jobs obrigatórios no ruleset, incluindo a **guarda de migrations** (G8).
 - [ ] Ciclo RED→GREEN registrado no ledger *(R13)*.
-- [ ] **Onboarding feito**: `harness.config.json` com `fluxo.resolvidoEm` e `versionamento.resolvidoEm` (`gabarito-instalar`; doctor `fluxo-configurado`, `versionamento`). `orquestracao.modelo.resolvidoEm` vencido (> `validadeDias`) é **`warn` (`modelo-resolvido`), não conta nível** — revalide no onboarding (fase 4).
+- [ ] **Onboarding feito**: `harness.config.json` com `fluxo.resolvidoEm` e `versionamento.resolvidoEm` (`gabarito-instalar`; doctor `fluxo-configurado`, `versionamento`). `orquestracao.modelo.resolvidoEm` vencido (> `validadeDias`) é **`warn` (`modelo-resolvido`), não conta nível** — revalide com `gabarito-instalar (trocar orquestracao)`.
 - [ ] **Iniciativa ativa** atestada em `.harness/attest.json` (`iniciativa-resolvida`, 180 d) — existe ≠ ativa (I10).
 - [ ] `CHANGELOG.md` em Keep a Changelog com `[Unreleased]` (doctor `changelog`); ruleset com squash de título CC **atestado** em `.harness/attest.json` (`squash-titulo-pr`) — atestado, sem checagem automática (b) *(R20)*.
 - [ ] Núcleo do `AGENTS.md` ≤ 17.291 B e Apêndice ≤ 4.096 B (doctor `agents-tamanho`; ADR-CTX-1).
@@ -126,7 +126,7 @@ Este harness assume **orquestração por pessoa, com ownership por área**: cada
 
 O que ele dá a um time:
 
-- **Áreas e donos** — tabela no Apêndice do `AGENTS.md` e `.github/CODEOWNERS`, gerado na fase 2 do onboarding a partir das áreas informadas (se já existe, não é tocado; `instalar.sh --codeowners` cria o esqueleto se ausente (marcador `# Áreas e donos (TIM-1) — preenchido pelo onboarding`)).
+- **Áreas e donos** — tabela no Apêndice do `AGENTS.md` e `.github/CODEOWNERS`, gerado por `gabarito-instalar (trocar codeowners)` a partir das áreas informadas (se já existe, não é tocado; `instalar.sh --codeowners` cria o esqueleto se ausente (marcador `# Áreas e donos (TIM-1) — preenchido pelo onboarding`)).
 - **Revisor humano obrigatório na PR**, além do review adversarial — campo do `PULL_REQUEST_TEMPLATE.md`; o dono da área revisa o que entra nela. Review adversarial prova o código; o humano responde pela área.
 - **Um fluxo compartilhado** (`fluxo.md`): mesmos níveis, mesmos cards, mesmo WIP por coluna; o cartão de sessão mostra a todos o mesmo estado, o ledger é o mesmo handoff para qualquer pessoa.
 - **Versionamento como gate** (R20), igual para todo mundo — o hook não sabe quem está no teclado.

@@ -22,6 +22,7 @@ import { paraTexto } from '../dist/painel-texto.js';
 import { estadoDoPainel, lerArgs, lerCauda, lerDiarioEstavel, lerEntradaAgentes, main } from '../scripts/painel.mjs';
 import { tetoDaSombra } from '../scripts/loop.mjs';
 import { prepararLeitura as prepararLeituraReal } from '../scripts/entrega.mjs';
+import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(AQUI, '..', 'scripts', 'painel.mjs');
@@ -88,6 +89,8 @@ function ev(m, tipo, dados, { sessao = 'loop', agente = 'orquestrador', ts } = {
 }
 const INTEGRAR = (t) => [['task.iniciada', { task: t, papel: 'implementador' }], ['task.concluida', { task: t, sha: 'a'.repeat(40) }], ['review.veredito', { task: t, veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }], ['task.integrada', { task: t, sha: 'b'.repeat(40), mutacoes: { total: 3, mortas: 3 } }]];
 const comEventos = (lista) => ({ eventos: lista });
+/** REQ-APR-2 muda a ordem: tudo integrado abre o fechamento; a decisão de entrega só nasce com `concluir`. Fecha só o que `pendenciasAprendizado` do `dist/` devolve. */
+const fechar = (m) => fecharPendenciasNoDiario(m.dir, JSON.parse(readFileSync(join(m.dir, 'plano.json'), 'utf8')));
 const PARAR = ['loop.parar', { motivo: 'sem_progresso' }];
 
 /** Roda o CLI de verdade. `input` ausente ⇒ stdin fechado. */
@@ -741,7 +744,7 @@ describe('spec, título, pausa, teto e política', { timeout: 60_000 }, () => {
   });
 
   test('política e base da origem: rodape.politica e o merge da release usam entrega.politica e entrega.base', () => {
-    const m = montar({ origem: { entrega: { politica: 'janela', base: 'release-x', janela: { dias: [1, 3], inicio: '02:00', fim: '04:00', fuso: 'UTC' }, comandos: { deploy: { argv: ['true'], timeout_s: 5 } } } } });
+    const m = montar({ origem: { entrega: { politica: 'janela', autonomia: true, base: 'release-x', janela: { dias: [1, 3], inicio: '02:00', fim: '04:00', fuso: 'UTC' }, comandos: { deploy: { argv: ['true'], timeout_s: 5 } } } } });
     assert.equal(estado(m).estado.rodape.politica, 'janela [seg qua]');
     const sem = montar({ origem: {} });
     assert.equal(estado(sem).estado.rodape.politica, 'sob_demanda');
@@ -833,6 +836,7 @@ describe('decisão de entrega sem efeito (prepararLeitura)', { timeout: 60_000 }
 
   test('preparar-leitura-em-curso-sem-parou: entrega.inicio sem fim + entrega.lock com pid vivo ⇒ sem PAROU; sem o lock ⇒ PAROU', () => {
     const m = montar({ origem: origemContinua, ...comEventos([...concluido, ['producao.acesso', { ambiente: 'prod', acao: 'escrita', alvo: 'entrega:deploy' }], ['entrega.inicio', { politica: 'continua' }]]) });
+    fechar(m);
     const semLock = estado(m).estado;
     assert.equal(semLock.parar?.motivo, 'nao_conseguiu', 'lock órfão: produção em estado desconhecido é PAROU');
     writeFileSync(join(m.dir, 'entrega.lock'), `${process.pid} 2026-11-09T12:00:00.000Z\n`);
@@ -846,6 +850,7 @@ describe('decisão de entrega sem efeito (prepararLeitura)', { timeout: 60_000 }
     const incompleto = montar({ origem: origemContinua, ...comEventos([...INTEGRAR('T1')]) });
     assert.equal(estado(incompleto).avisos.filter((a) => /decisão de entrega/.test(a)).length, 0);
     const afrouxada = montar({ origem: { entrega: { politica: 'janela', base: 'main', janela: { dias: [1], inicio: '02:00', fim: '04:00', fuso: 'UTC' }, comandos: { deploy: { argv: ['true'], timeout_s: 5 } } } }, plano: { politica_entrega: { politica: 'continua', exige_prod: false } }, ...comEventos(concluido) });
+    fechar(afrouxada);
     const r = estado(afrouxada);
     assert.equal(r.estado.parar, null);
     assert.ok(r.avisos.some((a) => /decisão de entrega não lida: politica_afrouxada/.test(a)), JSON.stringify(r.avisos));
@@ -863,10 +868,12 @@ describe('decisão de entrega sem efeito (prepararLeitura)', { timeout: 60_000 }
 
   test('release_pr: a decisão da entrega vira "merge da release para <base>" (campo base lido)', () => {
     const m = montar({ origem: { entrega: { politica: 'continua', base: 'release-9', comandos: { deploy: { argv: ['true'], timeout_s: 5 } } } }, ...comEventos(concluido) });
+    fechar(m);
     const item = estado(m).estado.depende.find((d) => /merge da release/.test(d.motivo));
     assert.ok(item !== undefined, 'faltam comandos ⇒ release_pr');
     assert.equal(item.motivo, 'merge da release para release-9');
     const sob = montar({ origem: { entrega: { politica: 'sob_demanda', base: 'trunk' } }, ...comEventos(concluido) });
+    fechar(sob);
     assert.equal(estado(sob).estado.depende.find((d) => /merge da release/.test(d.motivo))?.motivo, 'merge da release para trunk');
   });
 
@@ -877,9 +884,11 @@ describe('decisão de entrega sem efeito (prepararLeitura)', { timeout: 60_000 }
     estado(incompleto, { preparar: espia });
     assert.equal(chamadas, 0);
     const pronto = montar({ origem: origemContinua, ...comEventos(concluido) });
+    fechar(pronto);
     estado(pronto, { preparar: espia });
     assert.equal(chamadas, 1);
     const quebrado = montar({ origem: origemContinua, ...comEventos(concluido) });
+    fechar(quebrado);
     appendFileSync(join(quebrado.dir, 'events.loop.jsonl'), '{lixo\n');
     estado(quebrado, { preparar: espia });
     assert.equal(chamadas, 1, 'diário inválido não chama');

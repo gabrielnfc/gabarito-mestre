@@ -16,6 +16,8 @@
  *       grava SEMPRE em `events.emendas.jsonl` (`--sessao` é ignorada: o seq da proposta é o dela) e devolve `{proposta_seq, req, task?, congeladas}`;
  *       `proposta_seq` vem da RELEITURA estrita do arquivo (a única `emenda.proposta` com o `ts` e os `dados` gravados), nunca do candidato de `gravar`.
  *   loop.mjs emenda julgar <seq> <aprovar|rejeitar>   origem `sombra`: recusa sem `sombra.julga_emendas: true` em `origin/HEAD` (o config local não conta)
+ *   loop.mjs aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>]
+ *       (GM-13 T8; contrato e ordem de recusa em `loop-aprendizado.mjs`; `aprendizados` não exige entrega na branch).
  *   todos aceitam --entrega <GM-10> (senão vem da branch); os que gravam aceitam --sessao <id> (padrão `loop`).
  *
  * CONTRATO DE FALHA. Saída é UMA linha de JSON em stdout, sempre com `ok`; falha traz `erro` (código) e `mensagem`.
@@ -46,7 +48,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { lerConfigOrigin, MODELOS_PADRAO } from '../lib/config.mjs';
+import { lerConfigOrigin, resolverModelo } from '../lib/config.mjs';
+import { aprendizadosVigentes, paraDestino } from '../dist/aprendizado.js';
 import * as diario from '../dist/diario.js';
 import { escopoDaTask, projetarEmendas, SESSAO_EMENDAS, validarJulgamento, validarProposta } from '../dist/emenda.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
@@ -55,8 +58,11 @@ import { estadoDe, ordenar, podeIntegrar, proximaAcao, tasksCongeladas } from '.
 import { normalizarCaminho, validarPlano } from '../dist/plano.js';
 import { contarConsultas, projetarDecisoes, trechoDoReq } from '../dist/sombra.js';
 import { avaliar } from './gate-task.mjs';
+import * as loopAprendizado from './loop-aprendizado.mjs';
 import { clonar, nomeBanco, soltar, validarDb } from './db-template.mjs';
 
+/** Subcomandos do aprendizado, do pouso e do registro: implementados em `loop-aprendizado.mjs` com dependências injetadas. */
+const CMDS_E5 = ['aprendizado', 'aprendizados', 'pousar', 'registro'];
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
 const ENTREGA_RE = /^[A-Z]+-\d+$/;
 const SESSAO_RE = /^[A-Za-z0-9._-]{1,128}$/;
@@ -73,7 +79,6 @@ const DIFF_MAX = 4000;
 const ARQUIVOS_MAX = 50;
 const DADOS_MAX = 12000;
 const TETO_SOMBRA_PADRAO = 26;
-const FAMILIAS = ['haiku', 'sonnet', 'opus', 'fable'];
 const SEQ_RE = /^[1-9]\d{0,8}$/;
 const SINAIS_NEUTROS = { slots: 1, percent: null, x: X_PADRAO, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false };
 const GIT_REDIRECIONA = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_NAMESPACE'];
@@ -145,9 +150,14 @@ function lerArgs(argv) {
     ci: { pos: 1, flags: ['entrega', 'sessao', 'alvo'] },
     desvio: { pos: 1, flags: ['entrega', 'sessao', 'req', 'evidencia', 'arquivos', 'causa'], obrig: ['req', 'evidencia', 'arquivos', 'causa'] },
     descoberta: { pos: 0, flags: ['entrega', 'sessao', 'evidencia', 'causa'], obrig: ['evidencia', 'causa'] },
+    // E5a (GM-13): `aprendizado` confere os posicionais e as flags por tipo em `loop-aprendizado.mjs` (uso, rc 2); `aprendizados` lê a árvore, sem entrega (T8).
+    aprendizado: { pos: null, flags: ['entrega', 'sessao', 'regra', 'entra-em', 'gatilho', 'eventos', 'fonte', 'numero', 'substitui', 'motivo'] },
+    aprendizados: { pos: 0, flags: ['para'] },
+    pousar: { pos: null, flags: ['entrega', 'sessao'] },
+    registro: { pos: null, flags: ['entrega', 'sessao'] },
     emenda: { pos: null, flags: ['entrega', 'sessao', 'req', 'task', 'diff', 'fato', 'alternativa', 'evidencia', 'causa', 'arquivos'] },
   };
-  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | iniciar <task> <papel> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar>  [--entrega GM-10]';
+  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | iniciar <task> <papel> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | pousar | registro  [--entrega GM-10]';
   if (typeof cmd !== 'string' || !Object.hasOwn(ESPEC, cmd)) throw new Falha('uso', `comando desconhecido ou ausente. ${uso}`, {}, 2);
   const esp = ESPEC[cmd];
   const pos = [];
@@ -179,7 +189,7 @@ function lerArgs(argv) {
     if (falta !== undefined) throw new Falha('uso', `emenda propor exige --${falta}. ${uso}`, {}, 2);
     return { cmd, pos, flags };
   }
-  if (pos.length !== esp.pos) throw new Falha('uso', `${cmd} espera ${esp.pos} argumento(s) posicional(is), veio ${pos.length}. ${uso}`, {}, 2);
+  if (esp.pos !== null && pos.length !== esp.pos) throw new Falha('uso', `${cmd} espera ${esp.pos} argumento(s) posicional(is), veio ${pos.length}. ${uso}`, {}, 2);
   const falta = (esp.obrig ?? []).find((n) => !Object.hasOwn(flags, n));
   if (falta !== undefined) throw new Falha('uso', `${cmd} exige --${falta}. ${uso}`, {}, 2);
   return { cmd, pos, flags };
@@ -281,6 +291,7 @@ function prepararProposta(cwd, flags) {
 function validarForma(cmd, pos, flags) {
   if (flags.entrega !== undefined && !ENTREGA_RE.test(flags.entrega)) throw new Falha('entrega_invalida', `--entrega "${flags.entrega}" fora da forma ${ENTREGA_RE}`);
   if (flags.sessao !== undefined && !SESSAO_RE.test(flags.sessao)) throw new Falha('argumento_invalido', `--sessao fora da forma ${SESSAO_RE}`);
+  if (CMDS_E5.includes(cmd)) return {};
   if (cmd === 'proxima') {
     if (flags.vivos !== undefined && !NUM_RE.test(flags.vivos)) throw new Falha('argumento_invalido', `--vivos "${flags.vivos}": esperado inteiro >= 0`);
     return {};
@@ -1047,31 +1058,14 @@ export function tetoDaSombra(origin) {
 /**
  * Modelo do papel do item: `implementador` e `correcao` usam a chave `implementador`, `revisor` a `revisor`. Fonte: `orquestracao.modelos` do config LOCAL
  * (a mesma de `orquestracao.modelo`; não decide produção), texto ou `{modelo, esforco?}`. Família = 1ª de haiku|sonnet|opus|fable contida no nome em caixa
- * baixa (`claude-opus-5-5` ⇒ `opus`): os agentes têm `model: inherit`, então o que o `Agent` recebe é esta família. Ausente ⇒ `MODELOS_PADRAO`;
- * entrada que não se entende ⇒ o padrão e um aviso (ausente ≠ corrompido).
+ * baixa (`claude-opus-5-5` ⇒ `opus`): os agentes têm `model: inherit`, então o que o `Agent` recebe é esta família. Resolução em `resolverModelo`
+ * (`lib/config.mjs`): explícito > `orquestracao.perfil` > `MODELOS_PADRAO`; entrada que não se entende ⇒ o perfil e um aviso (ausente ≠ corrompido).
  */
 function modeloDoItem(cfg, papel, aviso) {
   const chave = papel === 'revisor' ? 'revisor' : 'implementador';
-  const padrao = { ...MODELOS_PADRAO[chave] };
-  const avisa = (m) => { const t = `modelo do papel ${chave}: ${m}; usei o padrão ${padrao.modelo}`; if (!aviso.includes(t)) aviso.push(t); return padrao; };
-  const orq = cfg?.orquestracao;
-  if (orq === undefined) return padrao;
-  if (orq === null || typeof orq !== 'object' || Array.isArray(orq)) return avisa('`orquestracao` em harness.config.json não é um objeto');
-  const modelos = orq.modelos;
-  if (modelos === undefined) return padrao;
-  if (modelos === null || typeof modelos !== 'object' || Array.isArray(modelos)) return avisa('orquestracao.modelos inválido (não é um objeto)');
-  if (!Object.hasOwn(modelos, chave)) return padrao;
-  const e = modelos[chave];
-  let nome;
-  let esforco;
-  if (typeof e === 'string') nome = e;
-  else if (e !== null && typeof e === 'object' && !Array.isArray(e) && typeof e.modelo === 'string' && (e.esforco === undefined || (typeof e.esforco === 'string' && e.esforco !== ''))) {
-    nome = e.modelo;
-    esforco = e.esforco;
-  } else return avisa(`orquestracao.modelos.${chave} inválido (esperado texto ou {modelo, esforco?})`);
-  const familia = FAMILIAS.find((f) => nome.toLowerCase().includes(f));
-  if (familia === undefined) return avisa(`orquestracao.modelos.${chave} ${JSON.stringify(nome)} não é haiku, sonnet, opus nem fable`);
-  return { modelo: familia, ...(esforco !== undefined ? { esforco } : {}) };
+  const { modelo, esforco, aviso: a } = resolverModelo(cfg?.orquestracao, chave);
+  if (a !== undefined) { const t = `modelo do papel ${chave}: ${a}`; if (!aviso.includes(t)) aviso.push(t); }
+  return { modelo, ...(esforco !== undefined ? { esforco } : {}) };
 }
 
 /**
@@ -1168,8 +1162,21 @@ function proxima(c, plano, flags) {
   const consultas = contarConsultas(eventos);
   if (consultas > teto) aviso.push(`Atenção: ${consultas} consultas à Sombra, teto ${teto}`);
   aviso.push(...avisosDeEmenda(plano, ordenados, est));
-  const extra = { cfg, ordenados, est, decisoes: projetarDecisoes(eventos) };
+  // A árvore de aprendizados é lida UMA vez por chamada (nunca por item); só quando há o que despachar.
+  const extra = { cfg, ordenados, est, decisoes: projetarDecisoes(eventos), vigentes: acao.tipo === 'despachar' ? aprendizadosDaArvore(c, aviso) : [] };
   return { acao: acao.tipo === 'despachar' ? { ...acao, itens: acao.itens.map((i) => enriquecer(c, plano, eventos, i, aviso, extra)) } : acao, sinais, ...(aviso.length ? { aviso } : {}) };
+}
+
+/** Aprendizados vigentes da árvore (todas as entregas). Entrega ilegível vira aviso; falha na leitura nunca derruba o despacho (lista vazia e aviso). */
+function aprendizadosDaArvore(c, aviso) {
+  try {
+    const { porEntrega, avisos } = diario.lerAprendizados(join(c.raiz, '.harness', 'entregas'));
+    aviso.push(...avisos);
+    return aprendizadosVigentes(porEntrega);
+  } catch (e) {
+    aviso.push(`aprendizados: leitura da árvore falhou (${e instanceof Error ? e.message : String(e)}); itens despachados sem aprendizados`);
+    return [];
+  }
 }
 
 /** Decisões vigentes do item: as dos REQs da task e as da âncora `task:<id>`, sem as de consulta anterior à última emenda de um REQ da âncora; mais recente primeiro. */
@@ -1196,7 +1203,7 @@ function decisoesDoItem(c, plano, item, reqs, extra) {
 }
 
 /**
- * O item de despacho carrega o que o /clear apaga: `spec` (ponteiro do topo do plano), `modelo`, `decisoes` e `emendas` (as aprovadas dos REQs da task: o
+ * O item de despacho carrega o que o /clear apaga: `spec` (ponteiro do topo do plano), `modelo`, `decisoes`, `aprendizados` (regras D do brief deste papel) e `emendas` (as aprovadas dos REQs da task: o
  * arquivo da spec nunca é editado pela emenda, então o implementador, a correção e o revisor leem o diff aqui) e, na `correcao`, `achados` (caminho do
  * arquivo da rodada reprovada). Arquivo de achados ausente ou vazio não vira caminho: `achados: null` e aviso (o orquestrador não manda corrigir às cegas).
  */
@@ -1211,6 +1218,8 @@ function enriquecer(c, plano, eventos, item, aviso, extra) {
     modelo: modeloDoItem(extra.cfg, item.papel, aviso),
     decisoes: decisoesDoItem(c, plano, item, reqs, extra),
     emendas: extra.est.aprovadas.filter((p) => reqs.includes(p.req)).map((p) => ({ proposta_seq: p.seq, req: p.req, diff: p.diff })),
+    // E5a (GM-13): as regras D vigentes que entram no brief DESTE papel (`brief:<papel>` exato; M nunca entra).
+    aprendizados: paraDestino(extra.vigentes, `brief:${item.papel}`).map((a) => a.regra),
   };
   if (item.papel !== 'correcao') return saida;
   const ord = ordenar(eventos);
@@ -1374,6 +1383,10 @@ export function julgarEmendaDono(cwd, seq, decisao, sessao, opcoes = {}) {
 async function executar(argv, cwd) {
   const { cmd, pos, flags } = lerArgs(argv);
   const forma = validarForma(cmd, pos, flags);
+  // `aprendizados` lê a árvore da raiz principal: não depende da entrega da branch nem de plano (D-P1c-5), então desvia ANTES de `contexto` e `carregarPlano`.
+  if (cmd === 'aprendizados') return loopAprendizado.aprendizados({ cwd, raizPrincipal, Falha }, pos, flags);
+  // Uso, conversão e canário do `aprendizado` só dependem dos argumentos: conferidos antes de abrir entrega, plano e diário.
+  const aprendizadoPronto = cmd === 'aprendizado' ? loopAprendizado.preparar(Falha, pos, flags) : undefined;
   const c = contexto(cwd, cmd === 'emenda' && forma.sub === 'propor' ? { ...flags, sessao: SESSAO_EMENDAS } : flags);
   if (cmd === 'parar') return { ...gravarSemPlano(c, 'loop.parar', { motivo: forma.motivo }) };
   // Tudo que só depende dos argumentos (diff, tamanho, canário, caminhos) é conferido antes de abrir o plano e o diário.
@@ -1398,6 +1411,8 @@ async function executar(argv, cwd) {
       if (forma.sub === 'propor') return propor(c, plano, propostaPronta);
       return julgarComoSombra(c, plano, forma.seq, forma.decisao);
     case 'proxima': return proxima(c, plano, flags);
+    case 'aprendizado': case 'pousar': case 'registro':
+      return loopAprendizado[cmd]({ c, plano, gravar, lerDiarioEstrito, Falha, git, shaDaSpec, pronto: aprendizadoPronto }, pos, flags);
     case 'abrir': return abrir(c, plano, task);
     case 'fechar': tarefa(plano, task); return fechar(c, task);
     case 'integrar': return integrar(c, plano, task);

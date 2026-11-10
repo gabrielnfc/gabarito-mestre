@@ -1,5 +1,5 @@
 {
-  "_comment": "Servidor MCP → ferramenta de planejamento → hierarquia e status sugeridos para o Workflow TRUE (docs/harness/fluxo.md §1, §4). padraoServidor é testado com new RegExp(p, 'i') sobre o segmento <server> de mcp__<server>__<tool>. Nomes observados em 2026-09-24 (a): claude_ai_ClickUp, plugin_productivity_clickup, plugin_design_atlassian, plugin_design_linear, plugin_design_notion, plugin_design_asana, plugin_productivity_monday. Hierarquia e status são sugestão (b) até um onboarding confirmar; então grave confirmadoEm. Sem match: ferramenta 'arquivos' ou nome livre informado pelo usuário. A lista cresce por PR.",
+  "_comment": "Servidor MCP → ferramenta de planejamento → hierarquia e status sugeridos para o Fluxo Gabarito (docs/harness/fluxo.md §1, §4). padraoServidor é testado com new RegExp(p, 'i') sobre o segmento <server> de mcp__<server>__<tool>. Nomes observados em 2026-09-24 (a): claude_ai_ClickUp, plugin_productivity_clickup, plugin_design_atlassian, plugin_design_linear, plugin_design_notion, plugin_design_asana, plugin_productivity_monday. Hierarquia e status são sugestão (b) até um onboarding confirmar; então grave confirmadoEm. Sem match: ferramenta 'arquivos' ou nome livre informado pelo usuário. A lista cresce por PR.",
   "versao": 1,
   "ferramentas": [
     {

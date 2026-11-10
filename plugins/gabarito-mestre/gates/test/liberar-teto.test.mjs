@@ -17,6 +17,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as diario from '../dist/diario.js';
 import { jaParou } from '../dist/pouso.js';
+import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const GATES = join(AQUI, '..');
@@ -53,6 +54,8 @@ function repo({ plano = PLANO, semear = [], branch = 'enabler/GM-10-teste', init
         const r = diario.append(entregas, sessao, { ts: new Date(relogioDe()).toISOString(), autor: 't@t', sessao, agente: 'orquestrador', tipo, dados });
         assert.ok(r.ok && r.gravado === 'evento', JSON.stringify(r));
       }
+      // REQ-APR-2 muda a ordem: o MAJOR do teto abre pendência de aprendizado antes do `parar`; o que a máquina pede fica fechado (só plano legível)
+      if (plano !== null && typeof plano === 'object') fecharPendenciasNoDiario(entregas, plano);
     },
     eventos: () => diario.ler(entregas),
     bytes: () => Object.fromEntries(readdirSync(entregas).sort().map((n) => [n, readFileSync(join(entregas, n), 'utf8')])),
@@ -362,6 +365,7 @@ test('D1-costura: hook real libera; o REPROVADO do ciclo novo exige arquivo do r
   writeFileSync(achadosDe(amb, 1), '- MAJOR 1: achado NOVO (a.ts:1)\n');
   const ok = loop(amb.dir, 'veredito', 'T1', 'REPROVADO', '1', '0', '1');
   assert.equal(ok.rc, 0, ok.out + ok.err);
+  fecharPendenciasNoDiario(amb.entregas, PLANO); // REQ-APR-2 muda a ordem: o MAJOR do veredito novo abre pendência antes da correção
   const p = loop(amb.dir, 'proxima', '--vivos', '0').j.acao;
   assert.equal(p.tipo, 'despachar');
   assert.equal(p.itens[0].papel, 'correcao');

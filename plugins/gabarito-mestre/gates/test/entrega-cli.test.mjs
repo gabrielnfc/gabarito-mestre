@@ -17,6 +17,7 @@ import { createHash } from 'node:crypto';
 import * as diario from '../dist/diario.js';
 import { decidirEntrega } from '../dist/entrega.js';
 import { decidirAgora, decisaoDe, executarEntrega, prepararLeitura, rcDe } from '../scripts/entrega.mjs';
+import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(AQUI, '..', 'scripts', 'entrega.mjs');
@@ -40,7 +41,7 @@ const PLANO_PADRAO = ['T1', 'T2'];
  * `true`/`false`/`null` (sem resultado).
  */
 function montar({
-  politica = 'continua', janela, origem, semOrigin = false, local, scripts = {}, timeouts = {}, extraArgv = [], deployArgv, comandos = ['deploy', 'smoke', 'rollback'],
+  politica = 'continua', autonomia = true, semAutonomia = false, janela, origem, semOrigin = false, local, scripts = {}, timeouts = {}, extraArgv = [], deployArgv, comandos = ['deploy', 'smoke', 'rollback'],
   tasks = PLANO_PADRAO, integradas = tasks, homolog = true, planoExtra = {},
 } = {}) {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'entrega cli ')));
@@ -61,7 +62,7 @@ function montar({
     const argv = nome === 'deploy' && deployArgv ? deployArgv(base) : ['bash', join(repo, 'fake', `${nome}.sh`), ...(nome === 'deploy' ? extraArgv : [])];
     cmds[nome] = { argv, timeout_s: timeouts[nome] ?? 20 };
   }
-  const entrega = { politica, base: 'main', comandos: cmds, ...(janela ? { janela } : {}) };
+  const entrega = { politica, ...(semAutonomia ? {} : { autonomia }), base: 'main', comandos: cmds, ...(janela ? { janela } : {}) };
   const cfgOrigem = origem === undefined ? { entrega } : origem;
   if (cfgOrigem !== false) writeFileSync(join(repo, 'harness.config.json'), typeof cfgOrigem === 'string' ? cfgOrigem : JSON.stringify(cfgOrigem));
   writeFileSync(join(repo, 'README.md'), 'x\n');
@@ -85,6 +86,7 @@ function montar({
   writeFileSync(join(dir, 'plano.json'), JSON.stringify(plano));
   const m = { base, repo, marcas, dir };
   for (const id of integradas) integrar(m, id);
+  fechar(m); // REQ-APR-2 muda a ordem: o fechamento abre pendência de aprendizado antes do `concluir`
   if (homolog !== null) ev(m, 'ci.resultado', { verde: homolog, alvo: 'homolog' });
   return m;
 }
@@ -99,6 +101,8 @@ function integrar(m, task) {
   ev(m, 'review.veredito', { task, veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 });
   ev(m, 'task.integrada', { task, sha: 'b'.repeat(40) });
 }
+/** REQ-APR-2 muda a ordem: fecha o que está aberto (fechamento, MAJOR, parar) para o teste seguir ao que ele prova. Só o que `pendenciasAprendizado` devolve. */
+const fechar = (m) => fecharPendenciasNoDiario(m.dir, JSON.parse(readFileSync(join(m.dir, 'plano.json'), 'utf8')));
 const eventos = (m) => diario.ler(m.dir);
 const tiposDesde = (m, n) => eventos(m).slice(n).map((e) => e.tipo);
 const marca = (m, nome) => existsSync(join(m.marcas, nome));
@@ -575,10 +579,32 @@ describe('executar: pré-condições (nada roda, nada se grava)', { concurrency:
     assert.deepEqual(json.decisao, { tipo: 'parar', motivo: 'nao_conseguiu' });
   });
 
+  test('entrega-recusa-com-pendencia: tudo integrado e homolog verde, mas o aprendizado do fechamento está aberto ⇒ entrega_incompleta citando `aprender`, nada roda, nada se grava; fechado, sobe', () => {
+    const m = montar();
+    // o fechamento que `montar` fechou segue fechado; uma mensagem do dono (hash e tamanho, nunca o texto) abre a pendência `dono`
+    ev(m, 'dono.mensagem', { sha256: 'a'.repeat(64), chars: 12 }, 'dono');
+    const antes = eventos(m).length;
+    for (const cmd of ['decidir', 'executar']) {
+      const { rc, json } = rodar(m, cmd);
+      assert.equal(rc, 1, cmd);
+      assert.equal(json.ok, false, cmd);
+      assert.equal(json.erro, 'entrega_incompleta', cmd);
+      assert.match(json.mensagem, /próxima ação do loop: aprender/, cmd);
+      assert.equal(json.acao.tipo, 'aprender', cmd);
+      assert.deepEqual(json.acao.pendencias, [{ sessao: 'dono', seq: 1, tipo: 'dono' }], cmd);
+    }
+    assert.equal(execLog(m).length, 0, 'nenhum comando rodou');
+    assert.equal(eventos(m).length, antes, 'nada foi gravado');
+    fechar(m);
+    ev(m, 'ci.resultado', { verde: true, alvo: 'homolog' });
+    assert.deepEqual(rodar(m, 'decidir').json.decisao, { tipo: 'subir' });
+  });
+
   test('inicio-orfao-antigo-ainda-para-mesmo-com-integracao-nova', () => {
     const m = montar({ tasks: ['T1', 'T2', 'T3'], integradas: ['T1', 'T2'] });
     ev(m, 'entrega.inicio', { politica: 'continua' });
     integrar(m, 'T3');
+    fechar(m);
     ev(m, 'ci.resultado', { verde: true, alvo: 'homolog' });
     const antes = eventos(m).length;
     const { json } = rodar(m, 'executar');
@@ -597,6 +623,7 @@ describe('executar: pré-condições (nada roda, nada se grava)', { concurrency:
     // sem a correção integrada, a decisão continua `parar{smoke}` (T3 pendente ⇒ entrega incompleta)
     assert.equal(rodar(m, 'executar').json.erro, 'entrega_incompleta');
     integrar(m, 'T3');
+    fechar(m);
     ev(m, 'ci.resultado', { verde: true, alvo: 'homolog' });
     const { rc, json } = rodar(m, 'executar');
     assert.equal(rc, 0, JSON.stringify(json));
@@ -635,6 +662,44 @@ describe('executar: pré-condições (nada roda, nada se grava)', { concurrency:
     assert.equal(ex.rc, 1);
     assert.equal(ex.json.erro, 'nao_subiu');
     assert.equal(execLog(m).length, 0);
+  });
+
+  test('config-local-autonomia-ignorada', () => {
+    // local `autonomia: true` (commitado só no local); origin `continua` sem a chave: a autonomia é de origin/HEAD (M-AUT1a)
+    const origem = { entrega: { politica: 'continua', comandos: {} } };
+    const m = montar({ origem, local: { entrega: { politica: 'continua', autonomia: true, comandos: {} } } });
+    const dec = rodar(m, 'decidir');
+    assert.equal(dec.rc, 0, JSON.stringify(dec.json));
+    assert.deepEqual(dec.json.decisao, { tipo: 'release_pr', base: 'main' });
+    assert.equal(dec.json.politica, 'sob_demanda');
+    assert.equal(execLog(m).length, 0);
+  });
+
+  test('autonomia-de-origin-sobe-e-ausente-ou-corrompida-nao', () => {
+    // costura: config bruto de origin/HEAD pelo CLI real ⇒ lerConfigEntrega ⇒ politicaEfetiva ⇒ decidirEntrega
+    const sobe = rodar(montar({ autonomia: true }), 'decidir');
+    assert.deepEqual(sobe.json.decisao, { tipo: 'subir' });
+    assert.equal(sobe.json.politica, 'continua');
+    const ausente = rodar(montar({ semAutonomia: true }), 'decidir').json;
+    assert.deepEqual(ausente.decisao, { tipo: 'release_pr', base: 'main' });
+    assert.equal(ausente.politica, 'sob_demanda');
+    assert.equal('aviso' in ausente, false, 'ausente não é corrompido: sem aviso');
+    const texto = rodar(montar({ autonomia: 'sim' }), 'decidir').json;
+    assert.deepEqual(texto.decisao, { tipo: 'release_pr', base: 'main' });
+    assert.equal(texto.politica, 'sob_demanda');
+    assert.match(texto.aviso, /entrega\.autonomia: esperado booleano/);
+  });
+
+  test('plano-continua-autonomia-ausente-afrouxada: o plano que pede continua não sobe sem entrega.autonomia', () => {
+    const m = montar({ semAutonomia: true, planoExtra: { politica_entrega: { politica: 'continua', exige_prod: false } } });
+    const antes = eventos(m).length;
+    const dec = rodar(m, 'decidir');
+    assert.equal(dec.rc, 1);
+    assert.equal(dec.json.erro, 'politica_afrouxada');
+    assert.match(dec.json.mensagem ?? JSON.stringify(dec.json), /sem entrega\.autonomia/);
+    const { rc, json } = rodar(m, 'executar');
+    assert.equal(rc, 1);
+    semEfeito(m, antes, json, 'politica_afrouxada');
   });
 
   test('sem-origin-sob-demanda', () => {
@@ -928,6 +993,7 @@ describe('costura (P9): CLI, diário real e núcleo', { concurrency: 4 }, () => 
   test('smoke-falho-fica-parado-ate-nova-integracao', () => {
     const m = montar({ scripts: { smoke: 'exit 1' } });
     assert.equal(rodar(m, 'executar').rc, 1);
+    fechar(m);
     const dec = rodar(m, 'decidir');
     assert.deepEqual(dec.json.decisao, { tipo: 'parar', motivo: 'smoke' });
     assert.equal(rodar(m, 'executar').json.erro, 'nao_subiu');
@@ -1183,6 +1249,7 @@ describe('r3: âncora do entrega.inicio contra a cauda apagada', { concurrency: 
     ev(m, 'entrega.fim', { ok: false, motivo: 'smoke' });
     ev(m, 'loop.parar', { motivo: 'smoke' });
     integrar(m, 'T3');
+    fechar(m);
     ev(m, 'ci.resultado', { verde: true, alvo: 'homolog' });
     const { rc } = rodar(m, 'executar');
     assert.equal(rc, 0);
@@ -1517,6 +1584,7 @@ describe('E4 T7: entrega devolver', { concurrency: 4 }, () => {
     e('task.concluida', { task: 'T2', sha: 'a'.repeat(40) });
     e('review.veredito', { task: 'T2', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 });
     e('task.integrada', { task: 'T2', sha: 'b'.repeat(40) });
+    fechar(m);
     e('ci.resultado', { verde: true, alvo: 'homolog' });
     const d = decidirAgora(m.repo, { entrega: ENTREGA, agoraMs: Date.now() });
     assert.deepEqual(d.decisao, { tipo: 'subir' }, 'o preparo chega a `subir`; só o relógio impede');

@@ -18,6 +18,7 @@ import {
 import { hostname } from 'node:os';
 import { join, dirname } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
+import { fecharPendenciasNoDiario } from '../_adaptador-helpers.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 export const PLUGIN = join(AQUI, '..', '..', '..'); // plugins/gabarito-mestre
@@ -133,7 +134,7 @@ export async function caminhar(opcoes) {
   function guarda(tool_name, tool_input, agente) {
     contagem.guarda++;
     const entrada = { hook_event_name: 'PreToolUse', session_id: 'S1', cwd: REAL, tool_name, tool_input, ...(agente ? { agent_id: agente.id, agent_type: agente.tipo } : {}) };
-    const r = spawnSync(NODE, [join(PLUGIN, 'gates/dist/guarda.js')], { input: JSON.stringify(entrada), encoding: 'utf8', env: ambiente({ ...envBase, CLAUDE_PROJECT_DIR: REAL }) });
+    const r = spawnSync(NODE, [join(PLUGIN, 'gates/dist/guarda.js')], { cwd: REAL, input: JSON.stringify(entrada), encoding: 'utf8', env: ambiente({ ...envBase, CLAUDE_PROJECT_DIR: REAL }) });
     if (r.status !== 0) def(`guarda rc ${r.status}`);
     let d = null;
     try { d = r.stdout.trim() === '' ? null : JSON.parse(r.stdout).hookSpecificOutput?.permissionDecision ?? null; } catch { def('guarda saída não JSON'); }
@@ -147,8 +148,11 @@ export async function caminhar(opcoes) {
     const r = spawnSync('bash', ['-c', cmd], { cwd: REAL, encoding: 'utf8', env: ambiente(envBase) });
     return { rc: r.status, out: r.stdout, err: r.stderr };
   }
+  /** REQ-APR-2: fecha só o que `pendenciasAprendizado` do `dist/` devolve (review, parar, fechamento). */
+  const fechar = () => fecharPendenciasNoDiario(DIR, JSON.parse(readFileSync(join(DIR, 'plano.json'), 'utf8')));
   /** CLI do loop pela guarda. `previsto(j)` diz se um ok:false é parte do caminho (então não é defeito). */
   function cli(args, previsto = () => false) {
+    fechar(); // REQ-APR-2 muda a ordem: o modelo que a skill descreve fecha o aprendizado pedido (T8 dá o CLI) antes de seguir
     const r = bash(`node "${LOOP}" ${args.join(' ')}`);
     let j = null;
     try { j = JSON.parse(r.out); } catch { /* sem JSON */ }
@@ -192,7 +196,7 @@ export async function caminhar(opcoes) {
   function stop() {
     const vivos = mundo.agentes.filter((a) => a.status === 'running');
     const entrada = { session_id: 'S1', cwd: REAL, hook_event_name: 'Stop', background_tasks: vivos.map((a) => ({ type: 'subagent', id: a.id })) };
-    const r = spawnSync(NODE, [join(PLUGIN, 'gates/scripts/stop-loop.mjs')], { input: JSON.stringify(entrada), encoding: 'utf8', env: ambiente({ CLAUDE_PROJECT_DIR: REAL }) });
+    const r = spawnSync(NODE, [join(PLUGIN, 'gates/scripts/stop-loop.mjs')], { cwd: REAL, input: JSON.stringify(entrada), encoding: 'utf8', env: ambiente({ CLAUDE_PROJECT_DIR: REAL }) });
     if (r.status !== 0) def(`stop-loop rc ${r.status}: ${String(r.stderr).slice(0, 120)}`);
     let j = null;
     try { j = r.stdout.trim() ? JSON.parse(r.stdout) : null; } catch { def('stop-loop saída não JSON'); }
@@ -250,6 +254,7 @@ export async function caminhar(opcoes) {
     const wt = wtDe(ag.task);
     for (const l of LEITURAS_REVISOR) {
       const r = spawnSync(NODE, [join(PLUGIN, 'gates/dist/guarda.js')], {
+        cwd: REAL,
         input: JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 'S1', cwd: REAL, tool_name: 'Bash', tool_input: { command: `cd "${wt}" && ${l}` }, agent_id: ag.id, agent_type: ag.tipo }),
         encoding: 'utf8', env: ambiente({ ...envBase, CLAUDE_PROJECT_DIR: REAL }),
       });
@@ -417,7 +422,7 @@ export async function caminhar(opcoes) {
   /** Depois do /clear: a memória do modelo vai embora e o cartão de sessão é o que resta. */
   function aposClear(percent) {
     memoria.rodada = {};
-    const c = spawnSync('bash', [join(PLUGIN, 'hooks/session-card.sh')], { input: JSON.stringify({ source: 'clear', session_id: 'S1', cwd: REAL }), encoding: 'utf8', env: ambiente({ CLAUDE_PROJECT_DIR: REAL, CLAUDE_PLUGIN_ROOT: PLUGIN }) });
+    const c = spawnSync('bash', [join(PLUGIN, 'hooks/session-card.sh')], { cwd: REAL, input: JSON.stringify({ source: 'clear', session_id: 'S1', cwd: REAL }), encoding: 'utf8', env: ambiente({ CLAUDE_PROJECT_DIR: REAL, CLAUDE_PLUGIN_ROOT: PLUGIN }) });
     if (c.status !== 0) def(`cartão de sessão rc ${c.status}`);
     trilha.push(`  /clear, cartão ${(c.stdout ?? '').length} chars`);
     mundo.percent = percent; // depois do /clear o contexto é pequeno
@@ -557,6 +562,7 @@ export async function caminhar(opcoes) {
     if (e.tipo === 'review.veredito') desde++;
     if (e.tipo === 'sessao.pouso') { if (desde === 0) pousosSemVeredito.push(e.ts); desde = 0; }
   });
+  fechar();
   const final = spawnSync(NODE, [LOOP, 'proxima', '--vivos', '0'], { cwd: REAL, encoding: 'utf8', env: ambiente(envBase) });
   let acaoFinal = null;
   try { acaoFinal = JSON.parse(final.stdout).acao; } catch { def('proxima final sem JSON'); }

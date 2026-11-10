@@ -57,7 +57,7 @@ Em conflito, **o gabarito vence** (item 1 da ordem de autoridade). As skills do 
 
 ```
 plugins/gabarito-mestre/
-  skills/    gabarito-instalar (4 fases + --vincular) · gabarito-conformidade (anatomia + cards + fio condutor) · gabarito-review · gabarito-spike
+  skills/    gabarito-instalar (onboarding numa etapa · trocar <item> · --vincular) · gabarito-conformidade (anatomia + cards + fio condutor) · gabarito-review · gabarito-spike
   agents/    gabarito-implementador (com Isolamento) · gabarito-revisor · gabarito-spike
   commands/  /gabarito-doctor
   hooks/     hooks.json: guarda de ambiente (R2/R3, `gates/dist/guarda.js`, 3 matchers) · session-card.sh (cartão de sessão) · remind-orchestrator.sh (R21, opcional); R20 é hook git, instalado por instalar.sh
@@ -67,13 +67,13 @@ plugins/gabarito-mestre/
   scripts/   instalar.sh (--atualizar · --guarda · --codeowners) · test/instalar.test.sh
 ```
 
-Depois de instalar o plugin, **instale o harness no seu repositório**: diga "instala o gabarito" (skill `gabarito-instalar`) ou rode `bash <plugin-root>/scripts/instalar.sh .`. A fase 1 cria `AGENTS.md`, `CLAUDE.md` (só a linha `@AGENTS.md`), `docs/harness/` (com `fluxo.md`), `tools/gabarito-gates/`, `harness.config.json`, `.harness/attest.json`, `.github/workflows/gabarito.yml` e emenda o `.gitignore`; nunca sobrescreve nem apaga. As fases 2–4 (só pela skill) fazem o onboarding do fluxo, do versionamento e da orquestração. **O nível de adoção fica `____`** — é o doctor quem mede (`/gabarito-doctor`).
+Depois de instalar o plugin, **instale o harness no seu repositório**: diga "instala o gabarito" (skill `gabarito-instalar`) ou rode `bash <plugin-root>/scripts/instalar.sh .`. O instalador cria `AGENTS.md`, `CLAUDE.md` (só a linha `@AGENTS.md`), `docs/harness/` (com `fluxo.md`), `tools/gabarito-gates/`, `harness.config.json`, `.harness/attest.json`, `.github/workflows/gabarito.yml` e emenda o `.gitignore`; nunca sobrescreve nem apaga. O onboarding (só pela skill) detecta o fluxo, o versionamento e a orquestração do repo e pergunta o que não dá para detectar. **O nível de adoção fica `____`** — é o doctor quem mede (`/gabarito-doctor`).
 
 ---
 
-## Fluxo (Workflow TRUE)
+## Fluxo (Fluxo Gabarito)
 
-A 1.1.0 põe o harness sob o **Workflow TRUE** — Flight Levels com Kanban: **FL3 Iniciativa** (propósito, horizonte, patrocinador) → **FL2 Epic** (narrativa, RN, CA, lista de PBIs; **um design por Epic**) → **FL1 PBI** (concluível em poucos dias; **um plano, uma branch, uma PR, um ledger por PBI** — ADR-FLX-1). Oito tipos de card: Iniciativa, Epic, US, Enabler, TechDebt, Tarefa, Spike, Bug — templates em `templates/fluxo/`. A fonte normativa versionada é `reference/fluxo.md` (instalado em `docs/harness/fluxo.md`, sete seções: níveis · tipos de card · políticas · movimento · propagação · compromisso/WIP/vazão · métricas), e é ela que a conformidade cita — não o HTML de origem.
+A 1.1.0 põe o harness sob o **Fluxo Gabarito** — Flight Levels com Kanban: **FL3 Iniciativa** (propósito, horizonte, patrocinador) → **FL2 Epic** (narrativa, RN, CA, lista de PBIs; **um design por Epic**) → **FL1 PBI** (concluível em poucos dias; **um plano, uma branch, uma PR, um ledger por PBI** — ADR-FLX-1). Oito tipos de card: Iniciativa, Epic, US, Enabler, TechDebt, Tarefa, Spike, Bug — templates em `templates/fluxo/`. A fonte normativa versionada é `reference/fluxo.md` (instalado em `docs/harness/fluxo.md`, sete seções: níveis · tipos de card · políticas · movimento · propagação · compromisso/WIP/vazão · métricas), e é ela que a conformidade cita — não o HTML de origem.
 
 Três regras novas no `AGENTS.md`, todas com gate:
 
@@ -93,16 +93,11 @@ Regras de projeto no Apêndice passam de `R19+` a **`R30+`** — `instalar.sh --
 
 ## Onboarding
 
-`gabarito-instalar` tem **quatro fases**; cada uma das fases 2–4 roda quando o seu `resolvidoEm` falta em `harness.config.json` (`fluxo.resolvidoEm` · `versionamento.resolvidoEm` · `orquestracao.modelo.resolvidoEm`) ou quando você pede "refazer onboarding". Onboarding interrompido retoma da fase que falta; repo com os três preenchidos roda só a fase 1 e diz "onboarding já feito em <data>".
+`gabarito-instalar` faz o onboarding numa etapa só. Instala o harness (`instalar.sh`: determinístico, nunca sobrescreve; com um harness anterior, `--atualizar`), detecta o que o repo já mostra (tipo de repo, ambientes, ferramenta de planejamento, versionamento, orquestração), mostra uma prévia e pergunta 3 decisões (política de entrega, autonomia, perfil de modelos) mais uma pergunta por fato que a detecção não resolve (no máximo 5 no total). O default de cada pergunta vem primeiro: Enter o confirma. Grava `harness.config.json` e termina com o doctor e o que falta para o próximo nível. Se o instalador avisa que algo ficou de fora (por exemplo, os hooks do git de versionamento, quando o gate instalado é da 1.1.0), a skill repassa o aviso em uma frase, sem comando para você digitar.
 
-| Fase | O que faz | Grava |
-|---|---|---|
-| **1 — instalação** | `instalar.sh` (determinístico; nunca sobrescreve) e, se o harness já existe em versão anterior, `--atualizar` | arquivos da tabela acima, `.gitignore` |
-| **2 — fluxo** | lista os servidores MCP da sessão (`mcp__<servidor>__*` + `claude mcp list`), cruza com `reference/ferramentas-mcp.json`, avisa em uma linha **quantos servidores MCP** estão conectados e o custo de contexto (`adocao.md §4`); pede ok em uma linha antes de **ler** a Iniciativa na ferramenta (existe ≠ ativa — confirma status; busca vazia não é prova); perguntas fechadas (`AskUserQuestion`): hierarquia FL3/FL2/FL1, nomes de status, formato de ID, campo PBI→Epic, **escrita autorizada? (default não)**, áreas e donos; sem ferramenta, cria `docs/fluxo/` | `fluxo` (via `onboarding-config.mjs`), `.github/CODEOWNERS` (se ausente), Apêndice "Fluxo" e "Áreas e donos" |
-| **3 — versionamento** | confirma trunk-based e o mapa tipo de PBI → prefixo (US→`feat`, Bug→`fix`, Enabler→`enabler`, TechDebt→`debt`, Spike→`spike`, Tarefa→`task`; sem PBI: `chore|docs|ci|build|test/<slug>`; worktree `wt/<PBI>-<n>`); instala **se ausentes** `.github/PULL_REQUEST_TEMPLATE.md` (título `tipo(PBI-n): assunto` — é o que vira commit de squash —, PBI, Epic, requisito, migration compatível, plano de volta, janela, teardown, revisor humano), `CHANGELOG.md` (Keep a Changelog, `Unreleased`) e `docs/backlog.md` | `versionamento`, Apêndice "Versionamento" |
-| **4 — orquestração** | pergunta **qual família de modelo é a mais potente hoje na sua conta** (fonte: `/model` na UI — não há API para enumerar; a resposta é **(b)** do usuário, gravada com data e validade de 90 dias); mostra o **diff** de `.claude/settings.json` e pede **dois oks separados**: `model` para o time inteiro (afeta custo de todos) e `enabledPlugins` + `extraKnownMarketplaces` do gabarito (liga hooks PreToolUse de terceiro para quem clonar — ponto de consentimento); calibra a máquina (`capacidade.mjs --sugerir`) e confirma `simultaneos`, `teto` e `arquivosDeContenda` (lockfile, `prisma/`, `src/index.ts`, `docs/fluxo/`) | `orquestracao`, `.claude/settings.json` (só o confirmado; chaves existentes intactas), Apêndice "Modelo", "Paralelismo", "Isolamento" |
+Para mudar algo depois: `gabarito-instalar (trocar <item>)`. Os itens são `tipo_repo`, `ambientes`, `planejamento`, `versionamento`, `orquestracao`, `politica`, `autonomia` e `perfil`; e também `settings`, `codeowners`, `apendice`, `iniciativa` e `contenda`, que a etapa única não grava (cada um tem o seu procedimento, com o ok do usuário). A ferramenta de planejamento só é lida com ok em uma linha, e `settings.json` só muda com dois oks separados.
 
-Termina com o doctor e a lista **"o que ficou (b)"**. Sessão sem `AskUserQuestion` (headless): defaults marcados (b), consentimento de `settings.json` vale **não**.
+Sessão sem `AskUserQuestion` (headless): só mostra o que gravaria (`--dry-run`) e não grava.
 
 **Cada pessoa instala o plugin uma vez.** `enabledPlugins` e `extraKnownMarketplaces` no `.claude/settings.json` do projeto deixam o plugin habilitado para quem clona, mas **não instalam nada**: cada pessoa roda `claude plugin install gabarito-mestre@gabarito-mestre` na própria máquina (M3, medido em `settings-example` da doc oficial). Tools MCP **não** entram no `allowed-tools` da skill — pedem permissão por chamada, de propósito (R3).
 
@@ -176,8 +171,8 @@ bash <plugin-root>/scripts/instalar.sh . --atualizar   # reference/ e tools/gaba
 
 - `--atualizar`: para `AGENTS.md`, `docs/harness/*.md` e os gates de `tools/gabarito-gates/` já existentes que diferem do plugin, grava `<nome>.novo` e imprime `diff --stat` — você aplica o que quiser à mão (R2). Avisa: "R19–R21 agora são do harness (fluxo · versionamento · orquestração); regras de projeto passam a R30+ — renumere no Apêndice ao aplicar o AGENTS.md.novo." O doctor **não** roda ao fim (você ainda vai aplicar os `.novo`).
 - Não existe mais `--gates-substituir` nem manifesto `.instalado.json` (2.0): nada em `tools/gabarito-gates/` é trocado pelo instalador. O `.instalado.json` que a 1.1.x deixou fica onde está, sem uso.
-- `.gitignore` recebe, sem duplicar e sem remover, `.harness/doctor-cache.json`, `.harness/fluxo-cache.json`, `.harness/entregas/_sem-id/`, `.harness/heartbeat.json`, `*.novo`, `*.bak`.
-- Depois: `gabarito-instalar` faz o onboarding (fases 2–4). Até lá o doctor num repo nível 2 ou 3 **cai para 1** e diz `checagens novas da 1.1.0: rode o onboarding ou declare o nível medido` — repo em nível 0 ou 1 não muda de nível. Hooks de versionamento, cartão e conformidade ficam **fail-open** até o onboarding.
+- `.gitignore` recebe, sem duplicar e sem remover, `.harness/doctor-cache.json`, `.harness/fluxo-cache.json`, `.harness/entregas/_sem-id/`, `.harness/heartbeat.json`, `.claude-tmp/`, `*.novo`, `*.bak`.
+- Depois: `gabarito-instalar` faz o onboarding (uma etapa só). Até lá o doctor num repo nível 2 ou 3 **cai para 1** e diz `checagens novas da 1.1.0: rode o onboarding ou declare o nível medido` — repo em nível 0 ou 1 não muda de nível. Hooks de versionamento, cartão e conformidade ficam **fail-open** até o onboarding.
 
 Nomes da 1.0.1 que continuam existindo (PKG-2, conferido por grep no CI): 4 skills, 3 agents, 1 command, 2 hooks, 7 gates, R1–R18, G1–G9, I1–I12. `plugin.json` continua **sem** chave `hooks`.
 

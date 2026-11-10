@@ -57,7 +57,7 @@ put_ref() { # put_ref <origem> <destino-rel> — referência do harness e gates:
 emendar_gitignore() { # garante as linhas exatas; nunca remove; respeita arquivo sem \n final
   local gi="$DEST/.gitignore" l add=0
   [ -e "$gi" ] || : > "$gi"
-  for l in '.harness/doctor-cache.json' '.harness/fluxo-cache.json' '.harness/entregas/_sem-id/' '.harness/heartbeat.json' '*.novo' '*.bak'; do
+  for l in '.harness/doctor-cache.json' '.harness/fluxo-cache.json' '.harness/entregas/_sem-id/' '.harness/heartbeat.json' '.claude-tmp/' '*.novo' '*.bak'; do
     if ! grep -qxF -- "$l" "$gi"; then
       if [ -s "$gi" ] && [ -n "$(tail -c1 "$gi")" ]; then printf '\n' >> "$gi"; fi
       printf '%s\n' "$l" >> "$gi"; add=$((add+1))
@@ -119,7 +119,7 @@ if [ "$GUARDA" -eq 1 ]; then instalar_guarda; fi
 if [ "$CODEOWNERS" -eq 1 ]; then
   if [ -e "$DEST/.github/CODEOWNERS" ]; then echo "  mantido  .github/CODEOWNERS"; mantidos=$((mantidos+1)); else
     mkdir -p "$DEST/.github"
-    printf '# Áreas e donos (TIM-1) — preenchido pelo onboarding (gabarito-instalar, fase 2). Uma linha por área:\n# <caminho/>  @<dono>\n' > "$DEST/.github/CODEOWNERS"
+    printf '# Áreas e donos (TIM-1) — preenchido pelo onboarding (gabarito-instalar). Uma linha por área:\n# <caminho/>  @<dono>\n' > "$DEST/.github/CODEOWNERS"
     echo "  criado   .github/CODEOWNERS (esqueleto)"; criados=$((criados+1)); fi
 fi
 

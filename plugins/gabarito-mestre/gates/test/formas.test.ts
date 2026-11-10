@@ -322,3 +322,154 @@ test('forma-ausente-x-corrompida (E4): spec.aprovada e entrega.devolvida disting
     }
   }
 });
+
+// ── E5a (GM-13 T1): aprendizado, aprendizado.nada, dono.mensagem ───────────────────────────────────────────────────────────────
+const apr = (extra: Record<string, unknown> = {}) => ({
+  tipo: 'E', status: 'M', gatilho: { sessao: 'loop', seq: 3 }, evidencia: {}, regra: 'feche o aprendizado antes de concluir', entra_em: ['instantaneo'], ...extra,
+});
+const aprD = (ev: Record<string, unknown> = { eventos: [{ sessao: 'loop', seq: 3 }] }, extra: Record<string, unknown> = {}) => apr({ status: 'D', evidencia: ev, ...extra });
+
+test('forma-aprendizado-campos-validos-lidos: cada campo aceito tem seu valor lido pela regra', () => {
+  ok('aprendizado', apr());
+  ok('aprendizado', apr({ gatilho: null }));
+  ok('aprendizado', apr({ tipo: 'A' }));
+  ok('aprendizado', aprD());
+  ok('aprendizado', apr({ entra_em: ['instantaneo', 'spec', 'brief:implementador', 'brief:revisor', 'brief:correcao'] }));
+  ruim('aprendizado', apr({ tipo: 'X' }), /`tipo`/);
+  ruim('aprendizado', apr({ tipo: 'e' }), /`tipo`/);
+  ruim('aprendizado', apr({ status: 'X' }), /`status`/);
+  ruim('aprendizado', apr({ gatilho: { sessao: 'loop', seq: 0 } }), /`gatilho`/);
+  ruim('aprendizado', apr({ gatilho: { sessao: 'a/b', seq: 1 } }), /`gatilho`/);
+  ruim('aprendizado', apr({ gatilho: { sessao: 'loop', seq: 1.5 } }), /`gatilho`/);
+  ruim('aprendizado', apr({ gatilho: 'loop:3' }), /`gatilho`/);
+  ruim('aprendizado', apr({ evidencia: 'x' }), /`evidencia`/);
+  ruim('aprendizado', apr({ evidencia: [] }), /`evidencia`/);
+  ruim('aprendizado', apr({ regra: '' }), /`regra`/);
+  ruim('aprendizado', apr({ regra: 7 }), /`regra`/);
+  ruim('aprendizado', apr({ entra_em: 'instantaneo' }), /`entra_em`/);
+});
+
+test('forma-aprendizado-brief-sombra-recusa: brief só com os papéis do loop', () => {
+  ok('aprendizado', apr({ entra_em: ['brief:correcao'] }));
+  ruim('aprendizado', apr({ entra_em: ['brief:sombra'] }), /`entra_em`/);
+  ruim('aprendizado', apr({ entra_em: ['brief:'] }), /`entra_em`/);
+  ruim('aprendizado', apr({ entra_em: ['cartao'] }), /`entra_em`/);
+  ruim('aprendizado', apr({ entra_em: [] }), /`entra_em`/);
+});
+
+test('forma-aprendizado-entra-em-repetido: lista com repetição recusa', () => {
+  ruim('aprendizado', apr({ entra_em: ['spec', 'spec'] }), /`entra_em`/);
+  ruim('aprendizado', apr({ entra_em: ['brief:revisor', 'instantaneo', 'brief:revisor'] }), /`entra_em`/);
+});
+
+test('forma-aprendizado-numero-texto-e-nan-recusa', () => {
+  ok('aprendizado', aprD({ medicao: { fonte: 'docs/x.md', numero: 12 } }));
+  ok('aprendizado', aprD({ medicao: { fonte: 'docs/x.md', numero: 0 } }));
+  ok('aprendizado', aprD({ medicao: { fonte: 'docs/x.md', numero: -3.5 } }));
+  for (const numero of ['12', Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, null, undefined]) {
+    ruim('aprendizado', aprD({ medicao: { fonte: 'docs/x.md', numero } }), /`evidencia`/);
+  }
+  ruim('aprendizado', aprD({ medicao: { numero: 1 } }), /`evidencia`/);
+  ruim('aprendizado', aprD({ medicao: 'x' }), /`evidencia`/);
+});
+
+test('forma-aprendizado-fonte-absoluta-e-ponto-ponto: fonte é relativa e fica na árvore', () => {
+  for (const fonte of ['docs/x.md', 'a.txt', 'a/b/c.json']) ok('aprendizado', aprD({ medicao: { fonte, numero: 1 } }));
+  for (const fonte of ['/etc/passwd', '../x', 'a/../../x', 'a/..', '..', '', '  ', '\\x', 'a\\..\\x', 'a\nb', 'C:\\x', 'a//b', 'a/']) {
+    ruim('aprendizado', aprD({ medicao: { fonte, numero: 1 } }), /`evidencia`/);
+  }
+});
+
+test('forma-aprendizado-fonte-evento-ok: evento:<sessao>:<seq>', () => {
+  ok('aprendizado', aprD({ medicao: { fonte: 'evento:loop:12', numero: 1 } }));
+  for (const fonte of ['evento:loop', 'evento::3', 'evento:loop:0', 'evento:loop:x', 'evento:a/b:3', 'evento:loop:3:4']) {
+    ruim('aprendizado', aprD({ medicao: { fonte, numero: 1 } }), /`evidencia`/);
+  }
+});
+
+test('forma-aprendizado-eventos-evidencia: lista não vazia de RefEvento', () => {
+  ok('aprendizado', aprD({ eventos: [{ sessao: 'loop', seq: 1 }, { sessao: 'emendas', seq: 2 }] }));
+  ruim('aprendizado', aprD({ eventos: [] }), /`evidencia`/);
+  ruim('aprendizado', aprD({ eventos: [{ sessao: 'loop', seq: 0 }] }), /`evidencia`/);
+  ruim('aprendizado', aprD({ eventos: 'loop:1' }), /`evidencia`/);
+  ruim('aprendizado', aprD({ eventos: [null] }), /`evidencia`/);
+});
+
+test('forma-aprendizado-d-sem-evidencia-grave-como-m: D só com a evidência da máquina', () => {
+  ruim('aprendizado', aprD({}), /grave como M/);
+  ruim('aprendizado', apr({ status: 'D' }), /grave como M/);
+  ok('aprendizado', aprD({ medicao: { fonte: 'docs/x.md', numero: 1 } }));
+  ok('aprendizado', aprD({ eventos: [{ sessao: 'loop', seq: 1 }] }));
+});
+
+test('forma-aprendizado-d-sem-campo-evidencia-ausente-nao-corrompido: D sem a chave `evidencia` diz "ausente" (nunca "dados corrompido")', () => {
+  const { evidencia: _fora, ...semEvidencia } = apr({ status: 'D' });
+  for (const dados of [semEvidencia, { ...semEvidencia, evidencia: undefined }]) {
+    const motivo = formaInvalida('aprendizado', dados) as string;
+    assert.match(motivo, /campo `evidencia` ausente/);
+    assert.doesNotMatch(motivo, /corrompido|ilegível/);
+  }
+  ruim('aprendizado', apr({ status: 'D', evidencia: 'texto' }), /campo `evidencia` inválido/);
+});
+
+test('forma-aprendizado-m-sem-evidencia-ok', () => {
+  ok('aprendizado', apr({ status: 'M', evidencia: {} }));
+});
+
+test('forma-aprendizado-regra-301: 300 passa, 301 recusa, contado em caracteres', () => {
+  ok('aprendizado', apr({ regra: 'a'.repeat(300) }));
+  ok('aprendizado', apr({ regra: 'ç'.repeat(300) }));
+  ok('aprendizado', apr({ regra: '😀'.repeat(300) }));
+  ruim('aprendizado', apr({ regra: 'a'.repeat(301) }), /`regra`/);
+  ruim('aprendizado', apr({ regra: '😀'.repeat(301) }), /`regra`/);
+});
+
+test('forma-substitui-entrega-invalida: entrega só casa ENTREGA_RE, ausente = corrente', () => {
+  ok('aprendizado', apr({ substitui: { sessao: 'loop', seq: 1 } }));
+  ok('aprendizado', apr({ substitui: { sessao: 'loop', seq: 1, entrega: 'GM-12' } }));
+  for (const entrega of ['../GM-1', 'gm-1', '', 'GM-1/x', 'GM-', 'GM-1\n', 'GM 1', 7]) {
+    ruim('aprendizado', apr({ substitui: { sessao: 'loop', seq: 1, entrega } }), /`substitui`/);
+  }
+  ruim('aprendizado', apr({ substitui: { sessao: 'loop', seq: 0 } }), /`substitui`/);
+  ruim('aprendizado', apr({ substitui: { sessao: 'a/b', seq: 1 } }), /`substitui`/);
+  ruim('aprendizado', apr({ substitui: 'x' }), /`substitui`/);
+});
+
+test('forma-nada-sem-motivo: gatilho obrigatório (evento) e motivo 1..300', () => {
+  ok('aprendizado.nada', { gatilho: { sessao: 'loop', seq: 4 }, motivo: 'nada a registrar' });
+  ok('aprendizado.nada', { gatilho: { sessao: 'loop', seq: 4 }, motivo: 'a'.repeat(300) });
+  ruim('aprendizado.nada', { gatilho: { sessao: 'loop', seq: 4 } }, /`motivo` ausente/);
+  ruim('aprendizado.nada', { gatilho: { sessao: 'loop', seq: 4 }, motivo: '' }, /`motivo`/);
+  ruim('aprendizado.nada', { gatilho: { sessao: 'loop', seq: 4 }, motivo: 'a'.repeat(301) }, /`motivo`/);
+  ruim('aprendizado.nada', { motivo: 'x' }, /`gatilho` ausente/);
+  ruim('aprendizado.nada', { gatilho: null, motivo: 'x' }, /`gatilho`/);
+  ruim('aprendizado.nada', { gatilho: { sessao: 'loop', seq: 0 }, motivo: 'x' }, /`gatilho`/);
+});
+
+test('forma-dono-mensagem-chave-extra-recusa: só {sha256, chars}; nunca o texto', () => {
+  ok('dono.mensagem', { sha256: H, chars: 0 });
+  ok('dono.mensagem', { sha256: H, chars: 120 });
+  ruim('dono.mensagem', { sha256: H, chars: 5, texto: 'oi' }, /texto/);
+  ruim('dono.mensagem', { sha256: H, chars: 5, outra: 1 }, /outra/);
+  ruim('dono.mensagem', { sha256: H, chars: 5, mensagem: 'x' }, /mensagem/);
+  ruim('dono.mensagem', { sha256: 'abc', chars: 5 }, /`sha256`/);
+  ruim('dono.mensagem', { sha256: 'A'.repeat(64), chars: 5 }, /`sha256`/);
+  ruim('dono.mensagem', { sha256: H, chars: -1 }, /`chars`/);
+  ruim('dono.mensagem', { sha256: H, chars: 1.5 }, /`chars`/);
+  ruim('dono.mensagem', { sha256: H, chars: '5' }, /`chars`/);
+  ruim('dono.mensagem', { chars: 5 }, /`sha256` ausente/);
+  ruim('dono.mensagem', { sha256: H }, /`chars` ausente/);
+});
+
+test('forma-novos-ausente-x-corrompido: dados ausente e dados corrompido têm motivos distintos, por tipo novo', () => {
+  for (const tipo of ['aprendizado', 'aprendizado.nada', 'dono.mensagem']) {
+    assert.match(formaInvalida(tipo, undefined) as string, /dados ausente/, tipo);
+    for (const d of [null, [], 'x', 7, true]) assert.match(formaInvalida(tipo, d) as string, /dados corrompido/, `${tipo} ${JSON.stringify(d)}`);
+    assert.match(formaInvalida(tipo, {}) as string, /campo `\w+` ausente/, tipo);
+    assert.notEqual(formaInvalida(tipo, undefined), formaInvalida(tipo, null));
+    const hostil = { get tipo(): never { throw new Error('boom'); }, get gatilho(): never { throw new Error('boom'); }, get sha256(): never { throw new Error('boom'); } };
+    assert.doesNotThrow(() => formaInvalida(tipo, hostil), tipo);
+    assert.match(formaInvalida(tipo, hostil) as string, /corrompido/, tipo);
+  }
+  assert.equal(formaInvalida('aprendizado', Object.create({ tipo: 'E' })) !== null, true);
+});

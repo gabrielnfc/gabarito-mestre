@@ -5,6 +5,25 @@ Usuários do plugin só recebem atualização quando `version` muda.
 
 ## [Unreleased]
 
+## [2.0.0-alpha.5] — 2026-11-10
+
+Canal `next`: o agente passa a aprender com a entrega e a registrar as decisões dela. Contrato e requisitos na spec; aqui só o que o usuário vê.
+
+### Adicionado
+
+- **Aprendizado do agente**: ao fim de um erro ou de um acerto, o agente que conduz a entrega registra a regra (ou registra que não há regra a tirar). As regras comprovadas (com evidência) voltam sozinhas ao resumo de início de sessão, às instruções do papel a que a regra se destina e à conferência de spec nova.
+- **Pouso de contexto**: `loop.mjs pousar` marca o ponto em que o contexto pode ser limpo; recusa enquanto houver tarefa em andamento. Depois do `/clear`, o resumo de início de sessão traz a linha de retomada e o loop segue de onde parou. Com o painel instalado (o mod), o pouso e o `/clear` são automáticos; sem ele, o agente roda `loop.mjs pousar` e pede ao dono, em uma linha, que digite `/clear`.
+- **Registro de decisões**: `loop.mjs registro` gera o `registro.md` da entrega, sempre igual para o mesmo histórico. Ele traz a aprovação da spec, as decisões da Sombra (o agente que responde dúvidas do loop a partir da spec, sem incomodar o dono), as emendas à spec, as vezes em que o dono liberou o limite de rodadas de revisão, os desvios do plano, as descobertas e os aprendizados. A skill do loop manda commitá-lo ao concluir a entrega.
+- **Conferência de spec**: a conformidade lista as regras aprendidas que a spec nova deveria tratar e marca as que ela não trata.
+- **Doctor**: avisa quando um aprendizado ficou pendente sem ser fechado, quando é para um papel que não existe mais ou quando uma hipótese ficou velha.
+- **Onboarding em uma fase só**: o onboarding detecta o que dá para detectar, mostra uma prévia e faz no máximo cinco perguntas: três de decisão (política de entrega, autonomia em produção e perfil de modelos) e até duas só para o que a detecção não resolveu (o que não couber fica registrado como não detectado). Não há mais passos a colar no terminal.
+- **Perfis de modelo**: o perfil escolhido na instalação (economia, padrão ou qualidade) define o modelo de cada papel.
+- **Fluxo Gabarito**: é o nome da organização do trabalho (Iniciativa, Epic e PBI) em todos os textos. O onboarding grava só a ferramenta de planejamento que detectou (e o conector dela); a Iniciativa, o Epic e o PBI são vinculados depois, por "trocar iniciativa" ou "vincular PBI-<n>" no `gabarito-instalar`. A conformidade confere cards e specs contra o fluxo.
+
+### Alterado
+
+- Versão `2.0.0-alpha.5` no plugin e em `gates/package.json`.
+
 ## [2.0.0-alpha.4] — 2026-11-10
 
 E4 do canal `next` (GM-12): painel de status do loop. Contrato e requisitos na spec da E4; aqui só o que o usuário vê.

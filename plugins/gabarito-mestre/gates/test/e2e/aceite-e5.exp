@@ -1,0 +1,120 @@
+#!/usr/bin/expect -f
+# Aceites 1 e 2 da E5a (GM-13 T17). FORA de `npm test`: abre uma TUI real do Claude Code (haiku, pty 180x50, sem mouse) em repo descartável sob .claude-tmp/t17/; gasta tokens.
+#
+#   aceite-e5.exp <modo> <rundir> <repo> <plugin-root> <observador> <avaliar-e5.mjs> [<mod-falha>]
+#     modo: pouso  (aceite 1: /clear e retomada sem digitar; depois uma mensagem digitada)
+#           falha  (aceite 2: o submit do pouso é recusado pelo <mod-falha>; o wakeup do /loop reabre o turno)
+#
+# O .exp digita só o que está em sends.log. A evidência vem do diário, do observador (obs/mod.jsonl) e dos transcripts, lidos DEPOIS pelo `avaliar-e5.mjs relatorio`;
+# a tela nunca é evidência. Pergunta de permissão é registrada e nunca respondida. GABARITO_POUSO_X=1 (o `percent` de qualquer turno passa); SEM unset de CLAUDE_CONFIG_DIR.
+lassign $argv modo rundir repo plugin obs avaliar falha
+set cols 180; set rows 50
+set env(TERM) xterm-256color
+set env(OBS_DIR) $rundir/obs
+set env(GABARITO_POUSO_X) 1
+set env(CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION) false
+set env(CLAUDE_CODE_DISABLE_AUTO_MEMORY) 1
+set env(CLAUDE_CODE_FORCE_SESSION_PERSISTENCE) 1
+file mkdir $rundir/obs
+
+proc sends {tag} { global rundir; set f [open $rundir/sends.log a]; puts $f "[clock seconds] $tag"; close $f }
+proc nota {txt} { global rundir; set f [open $rundir/exp.log a]; puts $f "[clock seconds] $txt"; close $f }
+proc drenar {s} {
+  set fim [expr {[clock seconds] + $s}]
+  set timeout 1
+  while {[clock seconds] < $fim} {
+    expect {
+      -re {Allow.{0,12}external|external.{0,40}imports} { after 600; sends imports-no; send "\r"; nota "imports externos: No (padrao)" }
+      -re {Do you want to|Allow this|Esc to cancel} { nota "PERGUNTA-DE-PERMISSAO na tela" }
+      -re {.+} {}
+      timeout {}
+      eof { nota "EOF"; return 0 }
+    }
+  }
+  return 1
+}
+proc estado {} { global avaliar repo rundir; if {[catch {exec node $avaliar estado $repo $rundir} o]} { return "" }; return $o }
+proc campo {s nome} { if {[regexp "\"$nome\":(\[^,\}\]+)" $s -> v]} { return $v }; return -1 }
+# espera até `campo >= n` (ou teto em s). Devolve os segundos gastos, -1 em EOF, -2 em teto
+proc esperar {nome n max} {
+  set t0 [clock seconds]
+  while {[clock seconds] - $t0 < $max} {
+    set s [estado]
+    if {$s ne "" && [campo $s $nome] >= $n} { return [expr {[clock seconds] - $t0}] }
+    if {![drenar 2]} { return -1 }
+  }
+  return -2
+}
+proc digitar {txt} { sends "digitar $txt"; send -- $txt; after 1200; send "\r" }
+proc sair {status} {
+  global rundir
+  nota "fim status=$status estado=[estado]"
+  set f [open $rundir/exp.status w]; puts $f $status; close $f
+  sends exit
+  send "/exit\r"; after 2500; send "\r"
+  set timeout 15
+  expect { eof {} timeout { nota "nao saiu; Ctrl-C"; send "\003"; after 500; send "\003" } }
+  catch {close}; catch {wait}
+  puts "exp done $status"
+  exit 0
+}
+
+cd $repo
+log_user 0
+log_file -a $rundir/tty.raw
+set stty_init "rows $rows cols $cols"
+set dirs [list --plugin-dir $plugin --plugin-dir $obs]
+if {$modo eq "falha"} { lappend dirs --plugin-dir $falha }
+spawn claude {*}$dirs --setting-sources project --strict-mcp-config \
+  --model claude-haiku-5-5 --permission-mode auto --allowedTools "Bash(node *)" Read ScheduleWakeup --debug-file $rundir/debug.log
+nota "inicio modo=$modo X=1"
+
+set timeout 15
+expect {
+  -re {Enter.*confirm|trust this folder|Quick.{0,20}safety} { after 500; sends trust; send "\033\[B"; after 400; send "\r"; after 4000 }
+  -re {login|Log in|API key} { nota "LOGIN: nao respondo"; set f [open $rundir/exp.status w]; puts $f NAO_PROVADO_LOGIN; close $f; catch {close}; catch {wait}; exit 3 }
+  timeout {}
+  eof { nota "EOF cedo"; exit 1 }
+}
+# o TUI só aceita digitação depois de carregar os mods: espera o `session.start` do observador (até 90 s) e mais 6 s
+set t0 [clock seconds]
+while {[clock seconds] - $t0 < 90} {
+  if {![catch {exec grep -c {"ev":"session.start"} $rundir/obs/mod.jsonl} n] && $n > 0} { break }
+  if {![drenar 2]} { exit 1 }
+}
+drenar 6
+if {![catch {exec grep -c -E "dependency-unsatisfied|is not installed" $rundir/debug.log}]} {
+  nota "PLUGIN NAO CARREGOU"
+  set f [open $rundir/exp.status w]; puts $f NAO_PROVADO_PLUGIN; close $f
+  send "\003"; after 500; send "\003"; catch {close}; catch {wait}; exit 3
+}
+
+if {$modo eq "pouso"} {
+  # turno de modelo que NÃO é mensagem do dono (comando do repo): o pouso não depende de mensagem digitada
+  digitar "/ok"
+  set t [esperar pouso 1 240]
+  nota "pouso em ${t}s"
+  if {$t < 0} { sair NAO_PROVADO_SEM_POUSO }
+  set t [esperar retomada 1 120]
+  nota "retomada em ${t}s"
+  drenar 40
+  # a mensagem do dono: digitada no compositor, origem composer
+  digitar "Responda apenas: ok"
+  set t [esperar dono 1 90]
+  nota "dono.mensagem em ${t}s"
+  drenar 20
+  sair CONCLUIDO
+}
+if {$modo eq "falha"} {
+  # /loop dinâmico: cada tick roda `loop.mjs ci verde` (evento de progresso) e agenda o próximo em 60 s
+  digitar "/loop rode o comando Bash: node $plugin/gates/scripts/loop.mjs ci verde ; depois diga apenas: tick (agende o proximo com 60 segundos)"
+  set t [esperar pouso 1 240]
+  nota "pouso em ${t}s"
+  if {$t < 0} { sair NAO_PROVADO_SEM_POUSO }
+  drenar 5
+  set t [esperar progresso_depois 1 240]
+  nota "progresso depois do pouso em ${t}s"
+  drenar 20
+  sair CONCLUIDO
+}
+sair NAO_PROVADO_MODO

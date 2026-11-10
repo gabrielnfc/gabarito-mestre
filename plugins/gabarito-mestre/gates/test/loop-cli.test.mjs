@@ -18,6 +18,7 @@ import { marcaPronto } from '../scripts/db-template.mjs';
 import { integrarComGate, slotsDaCapacidade } from '../scripts/loop.mjs';
 import { casarAgente } from '../dist/painel-equipe.js';
 import * as diario from '../dist/diario.js';
+import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(AQUI, '..', 'scripts', 'loop.mjs');
@@ -132,6 +133,12 @@ function ambiente({ branch = 'enabler/GM-10-loop', config = CONFIG_PADRAO, plano
     },
     eventos: () => diario.ler(entregas),
     tipos: () => diario.ler(entregas).map((e) => e.tipo),
+    /** REQ-APR-2 muda a ordem: fecha o que `pendenciasAprendizado` do `dist/` devolve (MAJOR, fechamento, parar) para o teste seguir ao que ele prova. Plano ilegível: nada a fechar. */
+    fechar() {
+      let plano;
+      try { plano = JSON.parse(readFileSync(join(entregas, 'plano.json'), 'utf8')); } catch { return 0; }
+      return fecharPendenciasNoDiario(entregas, plano);
+    },
     semear(lista) {
       for (const [tipo, dados] of lista) {
         seq += 1;
@@ -139,6 +146,7 @@ function ambiente({ branch = 'enabler/GM-10-loop', config = CONFIG_PADRAO, plano
         const r = diario.append(entregas, 'loop', { ts, autor: 't@t', sessao: 'loop', agente: 'orquestrador', tipo, dados });
         assert.ok(r.ok && r.gravado === 'evento', JSON.stringify(r));
       }
+      amb.fechar();
     },
     commitNaWt(t, arquivo, conteudo = 'x\n', msg = 'feat(GM-10): trabalho') {
       const w = join(dir, '.harness', 'worktrees', t);
@@ -963,6 +971,7 @@ describe('integrar', () => {
     assert.ok(existsSync(join(amb.dir, 'src/t2.txt')));
     amb.aprovar('T3');
     assert.equal(amb.cli(['integrar', 'T3']).rc, 0);
+    amb.fechar(); // REQ-APR-2 muda a ordem: tudo integrado abre o fechamento antes do `concluir`
     const p = amb.cli(['proxima']);
     assert.equal(p.j.acao.tipo, 'concluir');
   });
@@ -1206,8 +1215,8 @@ describe('proxima', () => {
     const r = amb.cli(['proxima', '--vivos', '0']);
     assert.equal(r.rc, 0, r.out + r.err);
     assert.equal(r.j.ok, true);
-    // E3 (T10): todo item leva `modelo`, `decisoes` e `emendas` (vazias sem Sombra nem emenda)
-    const item = (task) => ({ task, papel: 'implementador', descricao: `${task} implementador`, modelo: { modelo: 'sonnet', esforco: 'high' }, decisoes: [], emendas: [] });
+    // E3 (T10): todo item leva `modelo`, `decisoes` e `emendas` (vazias sem Sombra nem emenda); E5a (T8): e `aprendizados` (vazio sem aprendizado D na árvore)
+    const item = (task) => ({ task, papel: 'implementador', descricao: `${task} implementador`, modelo: { modelo: 'sonnet', esforco: 'high' }, decisoes: [], emendas: [], aprendizados: [] });
     assert.deepEqual(r.j.acao, { tipo: 'despachar', itens: [item('T1'), item('T3')] });
     assert.deepEqual(r.j.sinais, { slots: 2, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false });
     assert.equal(r.j.aviso, undefined);
@@ -2173,6 +2182,7 @@ describe('T20: abrir idempotente, achados do revisor e spec', () => {
     writeFileSync(achadosDe(amb, t, 1), '- MAJOR 1: falta teste de X (src/t1.txt:1)\n');
     const r = amb.cli(['veredito', t, 'REPROVADO', '1', '0', '1']);
     assert.equal(r.rc, 0, r.out + r.err);
+    amb.fechar(); // REQ-APR-2 muda a ordem: o MAJOR do REPROVADO abre pendência antes da correção
   };
 
   test('abrir-duas-vezes-ok: o mesmo retorno com ja_aberta, sem tocar no trabalho', () => {
@@ -2522,6 +2532,7 @@ function grava(amb, rel, lista) {
     const [sessao, tipo, dados] = it.length === 3 ? it : ['loop', ...it];
     escreve(amb, sessao, tipo, dados, rel());
   }
+  amb.fechar(); // REQ-APR-2 muda a ordem
 }
 const bytesDoDiario = (amb) => Object.fromEntries(readdirSync(amb.entregas).filter((n) => n.startsWith('events.')).sort().map((n) => [n, readFileSync(join(amb.entregas, n), 'utf8')]));
 const ambReq = (opts = {}) => {
@@ -2606,6 +2617,29 @@ describe('E3 T10: proxima, modelo, decisões, emendas e avisos', () => {
       assert.deepEqual(p.j.acao.itens.find((i) => i.papel === 'revisor').modelo, { modelo: 'opus' }, JSON.stringify(modelos));
       assert.ok(p.j.aviso.some((a) => aviso.test(a) && /modelo/i.test(a)), `${JSON.stringify(modelos)} ⇒ ${JSON.stringify(p.j.aviso)}`);
     }
+  });
+
+  test('proxima-item-modelo-do-perfil: o perfil escolhe a família do item; o explícito vence; perfil inválido avisa e vale o padrão', () => {
+    const itens = (orq) => {
+      const amb = ambiente({ config: { ...CONFIG_PADRAO, orquestracao: orq } });
+      amb.semear([...IMPL_E('T1'), ...IMPL_E('T3')]);
+      const p = amb.cli(['proxima', '--vivos', '0']);
+      return { p, rev: p.j.acao.itens.find((i) => i.papel === 'revisor'), amb };
+    };
+    const e = itens({ perfil: 'economia' });
+    assert.deepEqual(e.rev.modelo, { modelo: 'sonnet' });
+    assert.ok(!(e.p.j.aviso ?? []).some((a) => /modelo/i.test(a)), JSON.stringify(e.p.j.aviso));
+    assert.deepEqual(itens({ perfil: 'qualidade' }).rev.modelo, { modelo: 'opus' });
+    const imp = ambiente({ config: { ...CONFIG_PADRAO, orquestracao: { perfil: 'economia' } } }).cli(['proxima', '--vivos', '0']).j.acao.itens[0];
+    assert.deepEqual(imp.modelo, { modelo: 'sonnet', esforco: 'medium' });
+    const q = ambiente({ config: { ...CONFIG_PADRAO, orquestracao: { perfil: 'qualidade' } } }).cli(['proxima', '--vivos', '0']).j.acao.itens[0];
+    assert.deepEqual(q.modelo, { modelo: 'opus', esforco: 'high' });
+    assert.deepEqual(itens({ perfil: 'economia', modelos: { revisor: 'haiku' } }).rev.modelo, { modelo: 'haiku' });
+    const inv = itens({ perfil: 'luxo' });
+    assert.deepEqual(inv.rev.modelo, { modelo: 'opus' });
+    assert.ok(inv.p.j.aviso.some((a) => /modelo do papel revisor: orquestracao\.perfil inválido/.test(a)), JSON.stringify(inv.p.j.aviso));
+    assert.equal(inv.p.j.acao.itens.filter((i) => i.papel === 'revisor').length, 2, 'dois itens do mesmo papel');
+    assert.equal(inv.p.j.aviso.filter((a) => /modelo do papel revisor: .*perfil inválido/.test(a)).length, 1, 'o aviso não se repete por item do mesmo papel');
   });
 
   test('item-implementador-traz-decisoes-do-req, item-traz-decisao-ancora-task e item-decisao-arquivo-absoluto', () => {
@@ -2741,6 +2775,33 @@ describe('E3 T10: proxima, modelo, decisões, emendas e avisos', () => {
     assert.equal(amb.eventos().length, 0, 'nada gravado');
   });
 
+  test('proxima-afrouxada-com-autonomia-confronta: origin janela COM autonomia, plano continua ⇒ politica_afrouxada pelo confronto (não pelo rebaixamento)', () => {
+    const plano = { ...PLANO_PADRAO, politica_entrega: { exige_prod: false, politica: 'continua' } };
+    const amb = ambiente({ plano });
+    comOrigin(amb, { entrega: { politica: 'janela', autonomia: true, janela: { dias: [1], inicio: '09:00', fim: '10:00', fuso: 'UTC' } } });
+    const r = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'politica_afrouxada');
+    assert.match(r.j.mensagem, /"continua", mais frouxo que o config \("janela"\)/);
+    assert.doesNotMatch(r.j.mensagem, /sem entrega\.autonomia/, 'sem rebaixamento a mensagem não cita autonomia');
+  });
+
+  test('proxima-autonomia-politica-efetiva-no-loop: origin continua SEM autonomia + exige_prod ⇒ parar{janela_ausente}; COM autonomia true ⇒ não para (costura loop ⇒ politicaEfetiva ⇒ proximaAcao 4b)', () => {
+    const plano = { ...PLANO_PADRAO, politica_entrega: { exige_prod: true } };
+    for (const entrega of [{ politica: 'continua' }, { politica: 'continua', autonomia: false }]) {
+      const sem = ambiente({ plano });
+      comOrigin(sem, { entrega });
+      const j = sem.cli(['proxima', '--vivos', '0']).j;
+      assert.deepEqual(j.acao, { tipo: 'parar', motivo: 'janela_ausente' }, JSON.stringify(entrega));
+    }
+    const com = ambiente({ plano });
+    comOrigin(com, { entrega: { politica: 'continua', autonomia: true } });
+    const j = com.cli(['proxima', '--vivos', '0']).j;
+    assert.equal(j.ok, true);
+    assert.notDeepEqual(j.acao, { tipo: 'parar', motivo: 'janela_ausente' }, 'autonomia true mantém a continua declarada');
+    assert.equal(j.acao.tipo, 'despachar', JSON.stringify(j.acao));
+  });
+
   test('proxima-janela-ausente: exige_prod e política sob_demanda ⇒ parar{janela_ausente}; o motivo é gravável por `parar`', () => {
     const plano = { ...PLANO_PADRAO, politica_entrega: { exige_prod: true } };
     const amb = ambiente({ plano });
@@ -2748,7 +2809,7 @@ describe('E3 T10: proxima, modelo, decisões, emendas e avisos', () => {
     assert.deepEqual(j.acao, { tipo: 'parar', motivo: 'janela_ausente' });
     assert.equal(amb.cli(['parar', 'janela_ausente']).rc, 0);
     const abre = ambiente({ plano: { ...PLANO_PADRAO, politica_entrega: { exige_prod: true, politica: 'janela' } } });
-    comOrigin(abre, { entrega: { politica: 'continua' } }); // o plano aperta continua → janela, mas não traz a janela
+    comOrigin(abre, { entrega: { politica: 'continua', autonomia: true } }); // o plano aperta continua → janela, mas não traz a janela
     const r = abre.cli(['proxima', '--vivos', '0']);
     assert.equal(r.j.erro, 'janela_ausente', 'janela pedida sem janela declarada recusa com a causa');
     assert.equal(r.rc, 1);
@@ -3274,6 +3335,19 @@ describe('E4 T7: dados do painel no loop (iniciar, integrar, proxima)', () => {
     assert.equal(v.j.evento.modelo, 'opus');
   });
 
+  test('iniciar-grava-modelo-do-perfil: task.iniciada e a saída trazem a família do perfil (costura config real -> evento)', () => {
+    const amb = comConfig({ perfil: 'economia' });
+    amb.cli(['abrir', 'T1']);
+    const r = amb.cli(['iniciar', 'T1', 'implementador']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(iniciada(amb).dados.modelo, 'sonnet');
+    amb.cli(['concluir', 'T1']);
+    const v = amb.cli(['iniciar', 'T1', 'revisor']);
+    assert.equal(v.rc, 0, v.out + v.err);
+    assert.equal(iniciada(amb).dados.modelo, 'sonnet', 'economia: revisor de task em sonnet');
+    assert.equal(v.j.evento.modelo, 'sonnet');
+  });
+
   test('iniciar-correcao-usa-chave-implementador e iniciar-revisor-usa-chave-revisor: a família vem da chave do papel', () => {
     const amb = comConfig({ modelos: { implementador: 'opus', revisor: 'haiku' } });
     amb.semear([...IMPL_E('T1'), ['task.iniciada', { task: 'T1', papel: 'revisor' }], REPROVA_E('T1')]);
@@ -3442,5 +3516,123 @@ describe('E4 T7: dados do painel no loop (iniciar, integrar, proxima)', () => {
     const ci = cor.cli(['proxima', '--vivos', '0']).j.acao.itens.find((i) => i.papel === 'correcao');
     assert.equal(ci.descricao, 'T1 correcao');
     assert.deepEqual(casarAgente(ci.descricao, plano), { task: 'T1', papel: 'correcao' });
+  });
+
+  test('subcomandos-e5-sem-stub: pousar (T12, REQ-POU-3) já não responde nao_implementado; grava só sessao.pouso e não cria registro.md (registro é da T11)', () => {
+    const amb = ambiente();
+    const antes = amb.tipos();
+    const r = amb.cli(['pousar']);
+    assert.notEqual(r.j?.erro, 'nao_implementado', `${r.out}${r.err}`);
+    assert.equal(r.rc, 0, `${r.out}${r.err}`);
+    assert.deepEqual(amb.tipos(), [...antes, 'sessao.pouso']);
+    assert.equal(existsSync(join(amb.entregas, 'registro.md')), false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────── E5a T8: aprendizados no despacho (REQ-APR-3)
+
+describe('E5a T8: proxima leva os aprendizados D do papel no item despachar', () => {
+  const EV1 = ['descoberta', { evidencia: 'fato medido', causa: 'tecnica' }];
+  const D = (regra, entra_em, extra = {}) => ['aprendizado', { tipo: 'E', status: 'D', gatilho: null, evidencia: { eventos: [{ sessao: 'loop', seq: 1 }] }, regra, entra_em, ...extra }];
+  const M = (regra, entra_em) => ['aprendizado', { tipo: 'E', status: 'M', gatilho: null, evidencia: {}, regra, entra_em }];
+  const itemDe = (r, task, papel) => r.j.acao.itens.find((i) => i.task === task && i.papel === papel);
+
+  test('proxima-item-revisor-sem-implementador: o revisor leva só `brief:revisor`; o implementador, só `brief:implementador`', () => {
+    const amb = ambiente();
+    amb.semear([EV1, D('so-implementador', ['brief:implementador']), D('so-revisor', ['brief:revisor']), D('os-dois', ['brief:implementador', 'brief:revisor'])]);
+    const impl = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(impl.rc, 0, impl.out + impl.err);
+    assert.deepEqual(itemDe(impl, 'T1', 'implementador').aprendizados, ['os-dois', 'so-implementador'], 'mais recente primeiro; nada de brief:revisor');
+    assert.deepEqual(itemDe(impl, 'T3', 'implementador').aprendizados, ['os-dois', 'so-implementador']);
+    const rev = ambiente();
+    rev.semear([...IMPL_E('T1'), ['descoberta', { evidencia: 'e', causa: 'tecnica' }], D('so-implementador', ['brief:implementador'], { evidencia: { eventos: [{ sessao: 'loop', seq: 3 }] } }),
+      D('so-revisor', ['brief:revisor'], { evidencia: { eventos: [{ sessao: 'loop', seq: 3 }] } })]);
+    const r = rev.cli(['proxima', '--vivos', '0']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(itemDe(r, 'T1', 'revisor').aprendizados, ['so-revisor']);
+  });
+
+  test('item-correcao-so-brief-correcao: `brief:revisor` e `brief:implementador` não entram na correção; `brief:correcao` entra', () => {
+    const amb = ambiente();
+    amb.semear([...IMPL_E('T1'), REPROVA_E('T1'), ['descoberta', { evidencia: 'e', causa: 'tecnica' }],
+      D('do-revisor', ['brief:revisor'], { evidencia: { eventos: [{ sessao: 'loop', seq: 4 }] } }),
+      D('do-implementador', ['brief:implementador'], { evidencia: { eventos: [{ sessao: 'loop', seq: 4 }] } }),
+      D('da-correcao', ['brief:correcao'], { evidencia: { eventos: [{ sessao: 'loop', seq: 4 }] } })]);
+    const r = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const cor = itemDe(r, 'T1', 'correcao');
+    assert.ok(cor, 'há item de correção');
+    assert.deepEqual(cor.aprendizados, ['da-correcao']);
+  });
+
+  test('proxima-m-nunca-no-item: M com brief:implementador não aparece (M-APR3a)', () => {
+    const amb = ambiente();
+    amb.semear([EV1, M('so-hipotese', ['brief:implementador', 'instantaneo']), D('medida', ['brief:implementador'])]);
+    const r = amb.cli(['proxima', '--vivos', '0']);
+    assert.deepEqual(itemDe(r, 'T1', 'implementador').aprendizados, ['medida']);
+    assert.equal(JSON.stringify(r.j).includes('so-hipotese'), false, 'M não vaza em nenhum campo');
+  });
+
+  test('proxima-aprendizados-de-outra-entrega-entram: o D da GM-3 chega ao brief da GM-10 (a árvore inteira)', () => {
+    const amb = ambiente();
+    const d3 = join(amb.dir, '.harness', 'entregas', 'GM-3');
+    mkdirSync(d3, { recursive: true });
+    for (const [tipo, dados] of [EV1, D('regra da GM-3', ['brief:implementador'])]) {
+      const ts = new Date(Date.UTC(2026, 0, 1, 0, 0, 5)).toISOString();
+      assert.ok(diario.append(d3, 'loop', { ts, autor: 't@t', sessao: 'loop', agente: 'orquestrador', tipo, dados }).ok);
+    }
+    const r = amb.cli(['proxima', '--vivos', '0']);
+    assert.deepEqual(itemDe(r, 'T1', 'implementador').aprendizados, ['regra da GM-3']);
+    assert.equal(r.j.aviso, undefined);
+  });
+
+  test('proxima-outra-entrega-corrompida-aviso: rc 0, os D das legíveis seguem e o aviso cita a pasta (nunca "0" calado nem rc 1)', () => {
+    const amb = ambiente();
+    amb.semear([EV1, D('da-gm-10', ['brief:implementador'])]);
+    const torta = join(amb.dir, '.harness', 'entregas', 'GM-1');
+    mkdirSync(torta, { recursive: true });
+    writeFileSync(join(torta, 'events.loop.jsonl'), 'isto nao e json\n');
+    const r = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(itemDe(r, 'T1', 'implementador').aprendizados, ['da-gm-10']);
+    assert.equal(r.j.aviso.filter((a) => /GM-1 ilegível/.test(a)).length, 1, 'um aviso só, não um por item');
+  });
+
+  test('proxima-diario-da-entrega-ilegivel-para-antes: o item nunca sai com aprendizados vazios por causa do diário torto', () => {
+    const amb = ambiente();
+    writeFileSync(join(amb.entregas, 'events.loop.jsonl'), 'isto nao e json\n');
+    const r = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'diario_ilegivel', r.out);
+  });
+
+  test('proxima-sem-aprendizado-no-diario-ausente: árvore sem a pasta das outras entregas ⇒ `aprendizados: []` e nenhum aviso', () => {
+    const amb = ambiente();
+    const r = amb.cli(['proxima', '--vivos', '0']);
+    for (const i of r.j.acao.itens) assert.deepEqual(i.aprendizados, []);
+    assert.equal(r.j.aviso, undefined);
+  });
+
+  test('aprendizado-cli-chega-no-brief (P9, costura pelo adaptador real): `aprendizado` grava e o `proxima` do mesmo CLI entrega a regra ao implementador', () => {
+    const amb = ambiente();
+    amb.semear([EV1]);
+    const g1 = amb.cli(['aprendizado', 'E', 'D', '--regra', 'rode o gate antes de concluir', '--entra-em', 'brief:implementador,brief:revisor', '--eventos', 'loop:1']);
+    assert.equal(g1.rc, 0, g1.out + g1.err);
+    const r = amb.cli(['proxima', '--vivos', '0']);
+    assert.deepEqual(itemDe(r, 'T1', 'implementador').aprendizados, ['rode o gate antes de concluir']);
+    const l = amb.cli(['aprendizados', '--para', 'brief:revisor']);
+    assert.deepEqual(l.j.aprendizados.map((a) => a.regra), ['rode o gate antes de concluir']);
+  });
+
+  test('nada-fecha-e-proxima-segue: com a mensagem do dono a pendência abre (`aprender`); `aprendizado nada` fecha e o `proxima` volta a despachar', () => {
+    const amb = ambiente();
+    assert.ok(diario.append(amb.entregas, 'dono', { ts: '2026-01-01T00:00:01.000Z', autor: 't@t', sessao: 'dono', agente: 'orquestrador', tipo: 'dono.mensagem', dados: { sha256: 'b'.repeat(64), chars: 4 } }).ok);
+    const antes = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(antes.j.acao.tipo, 'aprender', antes.out);
+    assert.deepEqual(antes.j.acao.pendencias, [{ sessao: 'dono', seq: 1, tipo: 'dono' }]);
+    const nada = amb.cli(['aprendizado', 'nada', '--gatilho', 'dono:1', '--motivo', 'mensagem sem regra a tirar']);
+    assert.equal(nada.rc, 0, nada.out + nada.err);
+    const depois = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(depois.j.acao.tipo, 'despachar', depois.out);
   });
 });
