@@ -272,6 +272,33 @@ export function lerEstrito(dir: string): LeituraEstrita {
   return { ok: true, eventos: out };
 }
 
+/**
+ * Árvore de aprendizados (GM-13 T2): `<dirEntregas>/<entrega>/events.*.jsonl` por `lerEstrito`. Entrega ilegível fica fora e
+ * gera o aviso `aprendizados: <entrega> ilegível (<motivo>)`; pasta ausente ⇒ mapa vazio sem aviso (ausente ≠ corrompido);
+ * pasta que existe mas não lista ⇒ aviso. Nunca lança.
+ */
+export function lerAprendizados(dirEntregas: string): { porEntrega: Map<string, Evento[]>; avisos: string[] } {
+  const porEntrega = new Map<string, Evento[]>();
+  const avisos: string[] = [];
+  let nomes: string[];
+  try {
+    nomes = readdirSync(dirEntregas, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException | null)?.code !== 'ENOENT') avisos.push(`aprendizados: ${dirEntregas} ilegível (pasta das entregas não lista)`);
+    return { porEntrega, avisos };
+  }
+  for (const nome of nomes) {
+    try {
+      const r = lerEstrito(join(dirEntregas, nome));
+      if (r.ok) porEntrega.set(nome, r.eventos);
+      else avisos.push(`aprendizados: ${nome} ilegível (${r.motivo})`);
+    } catch (e) {
+      avisos.push(`aprendizados: ${nome} ilegível (${e instanceof Error ? e.message : 'erro desconhecido'})`);
+    }
+  }
+  return { porEntrega, avisos };
+}
+
 /** Corta em `n` unidades e não deixa meio par substituto no fim. */
 function corta(s: string, n: number): string {
   const c = s.slice(0, n);
