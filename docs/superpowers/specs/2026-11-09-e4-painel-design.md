@@ -117,7 +117,7 @@ Ramos concluídos colapsam. Cabeçalho: `agentes N vivos`.
 
 Pacote próprio em `.harness/temas/nomes/<pacote>.json`, validado; inválido ⇒ fábrica com aviso. Nomes em caixa alta, ≤ 10 colunas, só largura 1.
 
-Sorteio no `session.start`: hash do `$.session.id` sobre os pacotes, sem o de `$.store['painel:pacote']`, que é regravado. Sem mod: `--pacote`, padrão `terra-media`. Atribuição por D10.
+Sorteio entre os 4 de fábrica, 1× por `session.id` (`session.start` repetido mantém); pacote próprio só por `nomes`. Sem mod: `--pacote`, padrão `terra-media`. Atribuição por D10.
 
 **REQ-PNL-7 Histórico em linguagem natural.** Tabela fechada evento ⇒ frase com nome, glifo e hora local:
 - `review.veredito` ⇒ "✓ GIMLI aprovou T07 · 18 min" ou "✗ … reprovou · N achados";
@@ -152,11 +152,11 @@ Falha ⇒ uma linha de JSON com `ok:false`. Nunca escreve: diário, `.harness/` 
 - **Abertura:** no `session.start` com `plano.json`, o mod abre a Pane, que desenha na `bodyColumns`. Com `isPlaced: false`, a faixa carrega o essencial.
 - **Faixa** (`AbovePrompt`, 1 linha, cede a `hasSurvey`): PAROU em `error` ou "depende de você" em `warning`, com botão que põe o comando no prompt por `$.prompt.fill` e nunca envia. Com nada pendente: some se a Pane está aberta; com a Pane fechada, mostra `<id> N/M · ETA` em `inactive`.
 - **Atualização:** a cada `turn.complete` e a cada 30 s enquanto existir `plano.json`, inclusive depois de Parar (B6). Uma chamada de `painel.mjs estado` por vez, com 5 s de timeout.
-- **Falha:** linha de erro no topo; os números anteriores ficam em `inactive`.
+- **Falha:** linha de erro no topo em `warning` (D6); os números anteriores ficam em `inactive`, e os segmentos `error` do PAROU anterior mantêm a cor.
 
-**REQ-PNL-12 Parar nunca em silêncio.** Na transição para Parar (chave = motivo + `seq`): toast 1× e `$.ui.notify` 1×. `isSent: false` ou rejeição ⇒ só toast e faixa, sem repetir. O resultado vira `entrada.notificacao`. Sem som.
+**REQ-PNL-12 Parar nunca em silêncio.** Na transição para Parar (chave = `parar.chave` do estado, prefixada pelo id da entrega no mod; sombra-p1a.md, sombra-p1d D-M5): toast 1× e `$.ui.notify` 1×. `isSent: false` ou rejeição ⇒ só toast e faixa, sem repetir. O resultado vira `entrada.notificacao`. Sem som.
 
-**REQ-PNL-13 Comando.** `/gabarito painel` abre ou foca a Pane. `/gabarito painel esquadrao|executivo|color|mono|narracao on|off|nomes <pacote>|ligar|desligar` grava em `$.store['painel:prefs']` e invalida (troca a quente). A resposta `{text}` é sempre **uma linha** de confirmação, nunca o render (B9, F6). O texto completo só pelo CLI `painel.mjs texto`. `pausar|retomar` seguem como hoje.
+**REQ-PNL-13 Comando.** `/gabarito painel` abre ou foca a Pane. `/gabarito painel esquadrao|executivo|color|mono|narracao on|off|nomes <pacote>|ligar|desligar` grava em `$.store['painel:prefs']` e invalida (troca a quente). A resposta `{text}` é sempre **uma linha** de confirmação, nunca o render (B9, F6). O texto completo só pelo CLI `painel.mjs texto`. `pausar|retomar` seguem como hoje. `desligar` fecha a Pane e tira a faixa, menos o PAROU; atualização e aviso de Parar seguem. `ligar` reabre.
 
 **REQ-PNL-14 Dados novos.** Só campos opcionais; nada antigo passa a ser recusado.
 - `task.iniciada.modelo`: família, gravada por `loop.mjs iniciar` via `modeloDoItem` (`loop.mjs:1045`).
