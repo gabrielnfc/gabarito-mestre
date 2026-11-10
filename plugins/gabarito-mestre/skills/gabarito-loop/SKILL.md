@@ -19,7 +19,7 @@ Use sempre o comando inteiro, sem variável: em zsh, `$VAR` com argumentos dá e
 Status ao dono: comece por `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/painel.mjs" texto --preset executivo --largura 80`.
 
 1. `proxima` devolve `acao.tipo`. Siga-o, nada além dele:
-   - `aprender` (`pendencias[{tipo,sessao,seq}]`): antes de qualquer despacho, feche cada uma: `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" aprendizado <E|A> <D|M> --regra <t> --entra-em instantaneo,brief:implementador --gatilho <sessao>:<seq>`; sem regra, `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" aprendizado nada --gatilho <sessao>:<seq> --motivo <t>`. E = erro, A = acerto; D = com medição, M = hipótese.
+   - `aprender` (`pendencias[{tipo,sessao,seq}]`): antes de qualquer despacho, feche cada uma. M (hipótese): `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" aprendizado <E|A> M --regra <t> --entra-em instantaneo,brief:implementador --gatilho <sessao>:<seq>`; D (medido): `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" aprendizado <E|A> D --regra <t> --entra-em instantaneo,brief:implementador --gatilho <sessao>:<seq> --eventos <sessao>:<seq>` (ou `--fonte <arquivo> --numero <n>` no lugar de `--eventos`; D sem evidência o CLI recusa); sem regra, `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" aprendizado nada --gatilho <sessao>:<seq> --motivo <t>`. E = erro, A = acerto.
    - `despachar` (`itens[{task,papel,spec?,achados?,modelo,decisoes,emendas}]`): por item, `abrir <task>` **sempre**, antes de `implementador` e `correcao`
      (idempotente: worktree já aberta volta com `ja_aberta:true`; após um `/clear` só o CLI sabe), `iniciar <task> <papel>` e o
      agente (`implementador` e `correcao`: `gabarito-implementador`; `revisor`: `gabarito-revisor`, sempre **novo**), só com
@@ -35,7 +35,7 @@ Status ao dono: comece por `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/painel.mjs
    - `esperar{emenda}`: há proposta de emenda aberta; avise o dono (`/gabarito-mestre:emenda aprovar|rejeitar <seq>`) e pare o turno.
    - `concluir`: tudo integrado. Rode a suíte inteira e o CI antes de dizer "pronto". Depois: `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" registro`; commite só o `registro.md` que ele devolve (`git add` pelo caminho); então **Entrega** abaixo.
 2. CI da entrega: `ci verde|vermelho`. CI de homolog após a última integração: `ci verde|vermelho --alvo homolog` (sem ele `continua` e `janela` ficam em `esperar{homolog}`). Falha que você não consegue resolver: `parar nao_conseguiu`.
-3. Volte a `proxima` depois de cada evento. `reabrir <task>` só recomeça a task (origem `retomada`); o teto de rodadas só o dono libera. Rode a entrega sob `/loop` dinâmico (sem intervalo): o wakeup retoma o turno depois do `/clear`; sem ele ativo, peça ao dono, em 1 linha, que o inicie.
+3. Volte a `proxima` depois de cada evento. `reabrir <task>` só recomeça a task (origem `retomada`); o teto de rodadas só o dono libera. Rode a entrega sob `/loop` dinâmico (sem intervalo): o wakeup deve retomar o turno depois do `/clear` (ainda em verificação); sem ele ativo, peça ao dono, em 1 linha, que o inicie.
 
 ## Dúvida, desvio e emenda
 
