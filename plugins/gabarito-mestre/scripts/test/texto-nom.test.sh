@@ -27,7 +27,7 @@ caso() {
 
 echo "── NOM-1 (texto-nom.test.sh): checagem de nome em repo fixture"
 caso nom-plantado-no-plugin-falha 1 plugins/gabarito-mestre/README.md "x $NOME_ANTIGO"
-caso nom-sem-caixa-e-separador-falha 1 plugins/gabarito-mestre/README.md "x workflow_true"
+caso nom-sem-caixa-e-separador-falha 1 plugins/gabarito-mestre/README.md "x work""flow_true"
 caso nom-em-ledger-passa 0 docs/ledgers/GM-1.md "x $NOME_ANTIGO"
 caso nom-em-aprendizado-passa 0 docs/aprendizados/loop-e1.md "x $NOME_ANTIGO"
 caso nom-em-references-passa 0 docs/references/x.md "x $NOME_ANTIGO"
