@@ -7,7 +7,7 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, copyFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
@@ -15,7 +15,8 @@ import { fileURLToPath } from 'node:url';
 import * as diario from '../dist/diario.js';
 import { renderPainel } from '../dist/painel.js';
 import {
-  chaveMod, classeDaFalha, comandoParaPrompt, faixaCortada, faixaDe, interpretarSaida, linhasDaPane, montarPedido, textoDaFalha, textoDoAviso,
+  caminhoDoTranscript, chaveMod, classeDaFalha, comandoParaPrompt, faixaCortada, faixaDe, inserirComTeto, interpretarSaida, linhasDaPane, montarPedido, PACOTES_FABRICA,
+  prefsValidas, PREFS_PADRAO, TETO_TRANSCRIPTS, textoDaFalha, textoDoAviso, umaLinha, USO_GABARITO,
 } from '../../mod/painel.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -416,5 +417,67 @@ describe('linhasDaPane', () => {
     const l = linhasDaPane({ id: 'x' }, prefs(), 80);
     assert.deepEqual(l, [[{ texto: 'painel: não consegui desenhar', cor: 'warning' }]]);
     assert.deepEqual(linhasDaPane({ id: 'x' }, prefs({ tema: 'mono' }), 80), [[{ texto: 'painel: não consegui desenhar' }]]);
+  });
+});
+
+// ─── T11: comando, sorteio e transcripts (o que só o node prova) ───
+describe('T11: pacotes de fábrica e funções puras do comando', () => {
+  test('pacotes-fabrica-igual-ao-diretorio: PACOTES_FABRICA = mod/temas/nomes/*.json', () => {
+    const dir = readdirSync(join(AQUI, '..', '..', 'mod', 'temas', 'nomes')).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)).sort();
+    assert.deepEqual([...PACOTES_FABRICA].sort(), dir);
+  });
+
+  test('caminhoDoTranscript: forma exata e recusa de dado torto', () => {
+    const ok = { agent_id: 'ag-1', session_id: 'abc-123', transcript_path: '/h/proj/abc-123.jsonl' };
+    assert.equal(caminhoDoTranscript(ok), '/h/proj/abc-123/subagents/agent-ag-1.jsonl');
+    assert.equal(caminhoDoTranscript({ ...ok, transcript_path: '/x.jsonl' }), '/abc-123/subagents/agent-ag-1.jsonl');
+    for (const torto of [{ agent_id: '../../x' }, { agent_id: 'a/b' }, { agent_id: '' }, { agent_id: 'x'.repeat(129) }, { agent_id: 5 }, { session_id: '../s' }, { session_id: 'a.b' }, { session_id: 's'.repeat(129) },
+      { session_id: undefined }, { transcript_path: 'rel/x' }, { transcript_path: '' }, { transcript_path: null }, { transcript_path: 3 }, { transcript_path: undefined }]) {
+      assert.equal(caminhoDoTranscript({ ...ok, ...torto }), null, JSON.stringify(torto));
+    }
+    assert.equal(caminhoDoTranscript(null), null);
+    assert.equal(caminhoDoTranscript('x'), null);
+    assert.equal(caminhoDoTranscript({ ...ok, agent_id: 'a.b_c-D9' }), '/h/proj/abc-123/subagents/agent-a.b_c-D9.jsonl');
+  });
+
+  test('inserirComTeto: teto de 64, sai o mais antigo, reinserir mantém a posição', () => {
+    assert.equal(TETO_TRANSCRIPTS, 64);
+    const m = new Map();
+    for (let i = 0; i < 70; i++) inserirComTeto(m, `a${i}`, `/c${i}`);
+    assert.equal(m.size, 64);
+    assert.deepEqual([...m.keys()].slice(0, 2), ['a6', 'a7']);
+    assert.equal([...m.keys()].at(-1), 'a69');
+    inserirComTeto(m, 'a6', '/novo');
+    assert.equal(m.get('a6'), '/novo');
+    assert.equal([...m.keys()][0], 'a6');
+    assert.equal(m.size, 64);
+    const p = new Map([['x', '1'], ['y', '2']]);
+    inserirComTeto(p, 'z', '3', 2);
+    assert.deepEqual([...p.keys()], ['y', 'z']);
+  });
+
+  test('prefsValidas: ausente, corrompido e campo a campo', () => {
+    assert.deepEqual(prefsValidas(undefined), { prefs: PREFS_PADRAO, estado: 'ausente' });
+    for (const ruim of [7, 'x', null, [], true]) assert.deepEqual(prefsValidas(ruim), { prefs: PREFS_PADRAO, estado: 'corrompido' }, String(ruim));
+    assert.deepEqual(prefsValidas({}), { prefs: PREFS_PADRAO, estado: 'ok' });
+    const cheio = { preset: 'executivo', tema: 'mono', narracao: false, ligado: false, pacote: 'herois' };
+    assert.deepEqual(prefsValidas(cheio), { prefs: cheio, estado: 'ok' });
+    assert.deepEqual(prefsValidas({ ...cheio, preset: 'xx' }).prefs, { ...cheio, preset: 'esquadrao' });
+    assert.deepEqual(prefsValidas({ ...cheio, tema: 'xx' }).prefs, { ...cheio, tema: 'color' });
+    assert.deepEqual(prefsValidas({ ...cheio, narracao: 'sim' }).prefs, { ...cheio, narracao: true });
+    assert.deepEqual(prefsValidas({ ...cheio, ligado: 0 }).prefs, { ...cheio, ligado: true });
+    assert.deepEqual(prefsValidas({ ...cheio, pacote: '../x' }).prefs, { ...cheio, pacote: null });
+    assert.deepEqual(prefsValidas({ ...cheio, pacote: 9 }).prefs, { ...cheio, pacote: null });
+  });
+
+  test('umaLinha: sem controle nem quebra, ≤ 200 colunas', () => {
+    assert.equal(umaLinha('a\nb').includes('\n'), false);
+    assert.equal(/[\r\n\x1b\u2028\u2029]/.test(umaLinha('x\r\ny\u2028z\x1b[2Jw')), false);
+    assert.ok([...umaLinha('z'.repeat(500))].length <= 200);
+    assert.equal(umaLinha('painel: color'), 'painel: color');
+  });
+
+  test('USO_GABARITO: texto exato e uma linha', () => {
+    assert.equal(USO_GABARITO, 'Uso: /gabarito painel [esquadrao|executivo|color|mono|narracao on|off|nomes <pacote>|ligar|desligar] | pausar | retomar');
   });
 });

@@ -46,6 +46,9 @@ type Opc = {
   fillIsFilled?: boolean
   rateLimits?: unknown
   agentesPainel?: unknown
+  sessaoId?: string
+  sessaoIdFalha?: boolean
+  existsPacoteFalha?: boolean
 }
 type PainelOpc = {
   modo?: 'ok' | 'sem_loop' | 'erro' | 'torto' | 'trunca' | 'rejeita' | 'timeout' | 'pendente'
@@ -99,7 +102,7 @@ function mundo($: any, on: any, o: Opc = {}) {
     // painel (T10)
     painel: { ...(o.painel ?? {}) } as PainelOpc, painelStdins: [] as any[], painelArgv: [] as string[][], painelInit: [] as any[], painelFlight: 0, painelLibera: [] as (() => void)[],
     opens: [] as any[], panes: (o.panes ?? []) as any, openResult: (o.openResult ?? { isPlaced: true }) as any, notifies: [] as string[], fills: [] as any[], statuses: [] as (string | undefined)[],
-    ordem: [] as string[], notifyModo: (o.notify ?? 'ok') as string, rateLimits: (o.rateLimits === undefined ? [] : o.rateLimits) as any, fillIsFilled: o.fillIsFilled !== false,
+    subStarts: [] as any[], logs: [] as string[], closes: [] as any[], registros: [] as any[], sessaoId: o.sessaoId ?? 'sess-1', ordem: [] as string[], notifyModo: (o.notify ?? 'ok') as string, rateLimits: (o.rateLimits === undefined ? [] : o.rateLimits) as any, fillIsFilled: o.fillIsFilled !== false,
   }
 
   // o diário em memória: tudo que o mod grava volta na próxima leitura, com seq e ts válidos para a T2
@@ -114,7 +117,7 @@ function mundo($: any, on: any, o: Opc = {}) {
   }
 
   on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
-  on('session.id', () => ({ value: 'sess-1' }))
+  on('session.id', () => (o.sessaoIdFalha ? { deny: 'sem id' } : { value: est.sessaoId }))
   on('session.root', () => ({ value: RAIZ }))
   on('session.repo', () => ({ value: { root: PRINCIPAL, remote: null, internal: false } }))
   on('env.get', (_: any, e: any) => ({ value: e.name === 'GABARITO_POUSO_X' ? o.x : undefined }))
@@ -133,8 +136,10 @@ function mundo($: any, on: any, o: Opc = {}) {
     return { value: est.notifyModo === 'nao-enviou' ? { isSent: false, reason: 'no-channel' } : { isSent: true, channel: 'iterm2' } }
   })
   on('prompt.fill', (_: any, e: any) => { est.fills.push(e); return { isFilled: est.fillIsFilled, text: est.fillIsFilled ? e.text : '' } })
-  on('ui.log', () => ({ value: undefined }))
-  on('command.register', (_: any, e: any) => { log.push(`register:${e.name}`); return { value: { command: e.name } } })
+  on('ui.log', (_: any, e: any) => { est.logs.push(e.text); return { value: undefined } })
+  on('ui.close', (_: any, e: any) => { est.closes.push(e.id); return { value: undefined } })
+  on('classic.SubagentStart', (_: any, e: any) => { est.subStarts.push(e); return {} })
+  on('command.register', (_: any, e: any) => { log.push(`register:${e.name}`); est.registros.push(e); return { value: { command: e.name } } })
   on('store.get', (_: any, e: any) => ({ value: store.get(e.key) }))
   on('store.set', (_: any, e: any) => {
     log.push(`store.set:${e.key}:${(e.value as any)?.estado ?? ''}`)
@@ -146,7 +151,7 @@ function mundo($: any, on: any, o: Opc = {}) {
   })
   on('store.delete', (_: any, e: any) => { log.push(`store.delete:${e.key}`); store.delete(e.key); return { value: undefined } })
   on('state.set', () => { log.push('state.set'); return { value: { isSet: true, version: 1 } } })
-  on('fs.exists', (_: any, e: any) => (o.existsPlanoFalha && e.path.endsWith('plano.json') ? { deny: 'fs fora do ar' } : o.existsFalha && e.path.endsWith('PAUSAR') ? { deny: 'fs fora do ar' } : { value: arquivos.has(e.path) || (e.path === `${est.dir}/plano.json` && est.plano) }))
+  on('fs.exists', (_: any, e: any) => (o.existsPlanoFalha && e.path.endsWith('plano.json') ? { deny: 'fs fora do ar' } : o.existsPacoteFalha && e.path.includes('/temas/nomes/') ? { deny: 'fs fora do ar' } : o.existsFalha && e.path.endsWith('PAUSAR') ? { deny: 'fs fora do ar' } : { value: arquivos.has(e.path) || (e.path === `${est.dir}/plano.json` && est.plano) }))
   on('fs.write', (_: any, e: any) => {
     if (o.writeFalha) return { deny: 'disco cheio' }
     if (!o.escritaNaoAparece) arquivos.add(e.path)
@@ -241,7 +246,7 @@ const pousar = async (m: ReturnType<typeof mundo>) => { await m.inicio(); await 
 test('pousa-na-ordem: store antes do clear, evento e instantâneo antes, retomada por último', async ($, on) => {
   const m = mundo($, on)
   await pousar(m)
-  const ordem = m.log.filter((l) => /^(store\.set|append|instantaneo|clear|submit|store\.delete)/.test(l))
+  const ordem = m.log.filter((l) => /^(store\.set:pouso|append|instantaneo|clear|submit|store\.delete)/.test(l))
   expect(ordem).toEqual([
     `store.set:${CHAVE}:pousando`,
     'append:sessao.pouso',
@@ -2557,4 +2562,399 @@ test('usage-falha-nao-derruba: usage lançando ⇒ percent/tokens/window null e 
   await arrancar(m)
   expect(m.est.painelStdins[0].sessao.percent).toBeNull()
   expect(m.est.painelStdins[0].sessao.window).toBeNull()
+})
+
+// ======================================================================================================================================
+// ---- painel (E4, T11): comando, sorteio de nomes e transcripts. Mutações: task-11-mut.json ----
+// ======================================================================================================================================
+const USO_ESPERADO = 'Uso: /gabarito painel [esquadrao|executivo|color|mono|narracao on|off|nomes <pacote>|ligar|desligar] | pausar | retomar'
+const FABRICA = ['galaxia', 'herois', 'hogwarts', 'terra-media']
+const PREFS_STORE = 'painel:prefs'
+const PACOTE_STORE = 'painel:pacote'
+const TRANSCRIPTS_STORE = 'painel:transcripts'
+const stdinsPainel = (m: ReturnType<typeof mundo>) => m.est.painelStdins
+const ultimoStdin = (m: ReturnType<typeof mundo>) => m.est.painelStdins[m.est.painelStdins.length - 1]
+const setsDe = (m: ReturnType<typeof mundo>, chave: string) => m.est.ordem.filter((o) => o === `store.set:${chave}`).length
+const novaSessao = async (m: ReturnType<typeof mundo>, id: string) => { m.est.sessaoId = id; await m.inicio(); await drena(m) }
+const subStart = ($: any, extra: Record<string, unknown> = {}) =>
+  $.classic.SubagentStart({ agent_id: 'ag-1', agent_type: 'general-purpose', session_id: 'abc-123', transcript_path: '/h/proj/abc-123.jsonl', ...extra })
+const textoDaPane = async ($: any, cols = 80) => { const ui = await montarPane($, cols); const t = JSON.stringify(await ui.drawn()); await ui.unmount(); return t }
+
+// ---- /gabarito: respostas e efeitos ----
+test('comando-registro: description e argumentHint novos', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  const r = m.est.registros.find((x: any) => x.name === 'gabarito')
+  expect(r.description).toBe('Painel, pausa e retomada do loop')
+  expect(r.argumentHint).toBe('painel …|pausar|retomar')
+})
+test('comando-uso: vazio, desconhecido e painel malformado devolvem a linha de Uso exata', async ($, on) => {
+  const m = comPainel($, on)
+  await arrancar(m)
+  for (const a of ['', 'x', 'painel foo', 'painel nomes', 'painel narracao talvez', 'painel esquadrao extra', 'painel narracao on off', '   ']) {
+    expect((await m.cmd(a)).text).toBe(USO_ESPERADO)
+  }
+})
+test('painel-abre-com-focus: `/gabarito painel` abre com focus e responde `painel aberto`', async ($, on) => {
+  const m = comPainel($, on, {}, { interativo: true })
+  await arrancar(m)
+  m.est.opens.length = 0
+  const r = await m.cmd('painel')
+  expect(r.text).toBe('painel aberto')
+  expect(m.est.opens).toHaveLength(1)
+  expect(m.est.opens[0].id).toBe(ID_PAINEL)
+  expect(m.est.opens[0].focus).toBe(true)
+})
+test('painel-nao-coube: isPlaced false ⇒ o motivo na resposta', async ($, on) => {
+  const m = comPainel($, on, {}, { openResult: { isPlaced: false, reason: 'terminal estreito' } })
+  await arrancar(m)
+  expect((await m.cmd('painel')).text).toBe('painel não coube: terminal estreito')
+})
+test('comando-troca-a-quente-sem-reabrir: preset, tema e narração redesenham a Pane montada, sem ui.open e sem ponte; prefs gravadas', async ($, on) => {
+  const m = comPainel($, on)
+  await arrancar(m)
+  const ui = await montarPane($, 80)
+  const base = JSON.stringify(await ui.drawn())
+  expect(base).toContain('esperando o loop')
+  expect(base).toContain('"color"')
+  const opens = m.est.opens.length, pontes = stdinsPainel(m).length
+  expect((await m.cmd('painel executivo')).text).toBe('painel: executivo')
+  const exec = JSON.stringify(await ui.drawn())
+  expect(exec).not.toBe(base)
+  expect(await m.store.get(PREFS_STORE)).toEqual({ preset: 'executivo', tema: 'color', narracao: true, ligado: true, pacote: null })
+  expect((await m.cmd('painel esquadrao')).text).toBe('painel: esquadrao')
+  expect((await m.cmd('painel mono')).text).toBe('painel: mono')
+  const mono = JSON.stringify(await ui.drawn())
+  expect(mono).not.toContain('"color"')
+  expect((await m.cmd('painel color')).text).toBe('painel: color')
+  expect(JSON.stringify(await ui.drawn())).toContain('"color"')
+  expect((await m.cmd('painel narracao off')).text).toBe('painel: narração desligada')
+  expect(JSON.stringify(await ui.drawn())).not.toContain('esperando o loop')
+  expect((await m.cmd('painel narracao on')).text).toBe('painel: narração ligada')
+  expect(JSON.stringify(await ui.drawn())).toContain('esperando o loop')
+  expect(m.est.opens.length).toBe(opens)
+  expect(stdinsPainel(m).length).toBe(pontes)
+  await ui.unmount()
+})
+test('comando-preset-sem-ponte: com a Pane aberta, `painel executivo` = 0 ui.open e 0 process.run do painel', async ($, on) => {
+  const m = comPainel($, on)
+  await arrancar(m)
+  const opens = m.est.opens.length, pontes = stdinsPainel(m).length
+  await m.cmd('painel executivo'); await drena(m)
+  expect(m.est.opens.length).toBe(opens)
+  expect(stdinsPainel(m).length).toBe(pontes)
+})
+test('comando-pacote-invalido-uma-linha-de-erro: fora do padrão ⇒ erro, prefs intactas, sem ponte', async ($, on) => {
+  const m = comPainel($, on)
+  await arrancar(m)
+  const pontes = stdinsPainel(m).length
+  for (const p of ['../../etc', 'MAIUSCULA', 'a'.repeat(33), 'x_y']) {
+    const t = (await m.cmd(`painel nomes ${p}`)).text
+    expect(t.startsWith('pacote inválido: ')).toBe(true)
+    expect(t.endsWith('(fábrica: galaxia herois hogwarts terra-media)')).toBe(true)
+    expect(t.includes('\n')).toBe(false)
+  }
+  await drena(m)
+  expect(m.store.has(PREFS_STORE)).toBe(false)
+  expect(stdinsPainel(m).length).toBe(pontes)
+})
+test('comando-nomes-dispara-ponte: pacote de fábrica ⇒ 1 process.run com sessao.pacote, prefs gravadas', async ($, on) => {
+  const m = comPainel($, on)
+  await arrancar(m)
+  const antes = stdinsPainel(m).length
+  expect((await m.cmd('painel nomes herois')).text).toBe('painel: nomes herois')
+  await drena(m)
+  expect(stdinsPainel(m).length).toBe(antes + 1)
+  expect(ultimoStdin(m).sessao.pacote).toBe('herois')
+  expect((await m.store.get(PREFS_STORE) as any).pacote).toBe('herois')
+})
+test('comando-nomes-proprio: existe em .harness/temas/nomes ⇒ aceito; inexistente ⇒ não encontrado e nada muda', async ($, on) => {
+  const m = comPainel($, on, {}, { arquivos: ['/main/.harness/temas/nomes/meu-time.json'] })
+  await arrancar(m)
+  const antes = stdinsPainel(m).length
+  expect((await m.cmd('painel nomes meu-time')).text).toBe('painel: nomes meu-time')
+  await drena(m)
+  expect(ultimoStdin(m).sessao.pacote).toBe('meu-time')
+  const depois = stdinsPainel(m).length
+  expect(depois).toBe(antes + 1)
+  expect((await m.cmd('painel nomes fantasma')).text).toBe('pacote não encontrado: fantasma')
+  await drena(m)
+  expect(stdinsPainel(m).length).toBe(depois)
+  expect((await m.store.get(PREFS_STORE) as any).pacote).toBe('meu-time')
+})
+test('comando-nomes-fs-falha-nao-vira-existe: fs.exists falhando ⇒ não consegui verificar, prefs intactas', async ($, on) => {
+  const m = comPainel($, on, {}, { existsPacoteFalha: true })
+  await arrancar(m)
+  expect((await m.cmd('painel nomes meu')).text).toBe('não consegui verificar o pacote: meu')
+  expect(m.store.has(PREFS_STORE)).toBe(false)
+})
+test('comando-desligar-ligar: desligar fecha, grava ligado:false e não cancela o relógio; ligar reabre com focus', async ($, on) => {
+  const m = comPainel($, on)
+  await arrancar(m)
+  expect((await m.cmd('painel desligar')).text).toBe('painel desligado (PAROU ainda avisa)')
+  expect(m.est.closes).toEqual([ID_PAINEL])
+  expect((await m.store.get(PREFS_STORE) as any).ligado).toBe(false)
+  const n = stdinsPainel(m).length
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(stdinsPainel(m).length).toBe(n + 1)
+  m.est.opens.length = 0
+  expect((await m.cmd('painel ligar')).text).toBe('painel ligado')
+  expect(m.est.opens).toHaveLength(1)
+  expect(m.est.opens[0].focus).toBe(true)
+  expect((await m.store.get(PREFS_STORE) as any).ligado).toBe(true)
+})
+test('desligar-parou-ainda-avisa: painel desligado + PAROU ⇒ Pane não reabre, toast e notify 1×, faixa PAROU', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on)
+  await arrancar(m)
+  await m.cmd('painel desligar')
+  m.est.opens.length = 0
+  m.est.painel.estado = pararP()
+  await m.clock.advance(PERIODO); await drena(m)
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(m.est.opens).toHaveLength(0)
+  expect(m.toasts.filter((t) => t.startsWith(PAROU_PREFIXO))).toEqual([TOAST_PAROU])
+  expect(m.est.notifies).toEqual([TOAST_PAROU])
+  const faixa = await montarFaixa($)
+  expect(JSON.stringify(await faixa.drawn())).toContain('PAROU')
+  await faixa.unmount()
+})
+test('desligar-sem-parou-faixa-some: desligado e sem PAROU, a faixa cede ao motor', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on)
+  await arrancar(m)
+  m.est.panes = []
+  await m.cmd('painel desligar')
+  const faixa = await montarFaixa($)
+  expect((await todosTextos(faixa)).join('|')).toBe('motor')
+  await faixa.unmount()
+})
+test('comando-store-nega-vale-na-sessao: store.set rejeita ⇒ a troca vale e a resposta avisa que não gravou', async ($, on) => {
+  const m = comPainel($, on, {}, { storeSetFalha: true })
+  await arrancar(m)
+  const ui = await montarPane($, 80)
+  const t = (await m.cmd('painel narracao off')).text
+  expect(t).toBe('painel: narração desligada (só nesta sessão: não gravei a preferência)')
+  expect(JSON.stringify(await ui.drawn())).not.toContain('esperando o loop')
+  expect((await m.cmd('painel mono')).text).toBe('painel: mono (só nesta sessão: não gravei a preferência)')
+  await ui.unmount()
+})
+test('comando-resposta-uma-linha: todas as variantes, inclusive erro e store negando, sem \\n e ≤ 200 colunas', async ($, on) => {
+  const m = comPainel($, on, {}, { openResult: { isPlaced: false, reason: 'linha 1\nlinha 2\r\n' + 'z'.repeat(400) }, storeSetFalha: true, arquivos: [] })
+  await arrancar(m)
+  const args = ['', 'x', 'pausar', 'retomar', 'painel', 'painel esquadrao', 'painel executivo', 'painel color', 'painel mono', 'painel narracao on', 'painel narracao off', 'painel nomes herois', 'painel nomes ../x', 'painel nomes zzz', 'painel ligar', 'painel desligar', 'painel \x1b[2J', 'painel nomes \x1b[2Jabc', 'painel\nnomes\nherois']
+  for (const a of args) {
+    const t = (await m.cmd(a)).text
+    expect(typeof t).toBe('string')
+    expect(/[\n\r\x1b\u2028\u2029]/.test(t)).toBe(false)
+    expect([...t].length).toBeLessThanOrEqual(200)
+  }
+})
+test('pausar-retomar-inalterado: o texto de pausar/retomar não passou pelo painel', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  const p = await m.cmd('pausar')
+  expect(p.text).not.toBe(USO_ESPERADO)
+  expect(p.text.startsWith('painel')).toBe(false)
+  const r = await m.cmd('  retomar  ')
+  expect(r.text).not.toBe(USO_ESPERADO)
+})
+
+// ---- prefs ----
+test('store-ausente-x-corrompido: prefs ausentes ⇒ padrão sem aviso; prefs não objeto ⇒ padrão e 1 aviso por processo', async ($, on) => {
+  const a = comPainel($, on)
+  await arrancar(a)
+  expect(a.est.logs.filter((l) => l.includes('preferências'))).toHaveLength(0)
+  expect(await textoDaPane($)).toContain('esperando o loop')
+})
+test('prefs-corrompidas-aviso-1x: prefs = 7 ⇒ padrão e 1 ui.log mesmo com 2 starts', async ($, on) => {
+  const m = comPainel($, on, {}, { storeInicial: { [PREFS_STORE]: 7 } })
+  await arrancar(m)
+  await arrancar(m)
+  expect(m.est.logs.filter((l) => l.includes('preferências do painel estavam corrompidas'))).toHaveLength(1)
+  expect(await textoDaPane($)).toContain('"color"')
+})
+test('prefs-campo-invalido-so-ele: preset inválido volta ao padrão e tema mono vale', async ($, on) => {
+  const m = comPainel($, on, {}, { storeInicial: { [PREFS_STORE]: { preset: 'xx', tema: 'mono' } } })
+  await arrancar(m)
+  const t = await textoDaPane($)
+  expect(t).not.toContain('"color"')
+  expect(t).toContain('esperando o loop')
+})
+test('prefs-campo-invalido-igual-ao-so-tema: {preset inválido, tema mono} desenha igual a {tema mono}', async ($, on) => {
+  const m = comPainel($, on, {}, { storeInicial: { [PREFS_STORE]: { tema: 'mono' } } })
+  await arrancar(m)
+  const ref = await textoDaPane($)
+  expect(ref).toContain('esperando o loop')
+  expect(ref).not.toContain('"color"')
+})
+test('prefs-preset: executivo vindo do store muda o desenho (sem narrativa do Esquadrão)', async ($, on) => {
+  const m = comPainel($, on, {}, { storeInicial: { [PREFS_STORE]: { preset: 'executivo' } } })
+  await arrancar(m)
+  expect(await textoDaPane($)).not.toContain('esperando o loop')
+})
+test('prefs-narracao: narracao false vinda do store tira a narrativa', async ($, on) => {
+  const m = comPainel($, on, {}, { storeInicial: { [PREFS_STORE]: { narracao: false } } })
+  await arrancar(m)
+  expect(await textoDaPane($)).not.toContain('esperando o loop')
+})
+test('prefs-ligado: ligado false vindo do store ⇒ nenhuma abertura', async ($, on) => {
+  const m = comPainel($, on, {}, { storeInicial: { [PREFS_STORE]: { ligado: false } } })
+  await arrancar(m)
+  expect(m.est.opens).toHaveLength(0)
+})
+test('prefs-pacote: pacote vindo do store vai no stdin', async ($, on) => {
+  const m = comPainel($, on, {}, { storeInicial: { [PREFS_STORE]: { pacote: 'hogwarts' } } })
+  await arrancar(m)
+  expect(ultimoStdin(m).sessao.pacote).toBe('hogwarts')
+})
+
+// ---- sorteio ----
+test('sorteio-grava-nome-e-sessao: 1ª sessão sorteia um de fábrica e grava {nome, sessao}', async ($, on) => {
+  const m = comPainel($, on)
+  await arrancar(m)
+  const v = (await m.store.get(PACOTE_STORE)) as any
+  expect(FABRICA).toContain(v.nome)
+  expect(v.sessao).toBe('sess-1')
+  expect(ultimoStdin(m).sessao.pacote).toBe(v.nome)
+})
+test('sorteio-sem-repetir-entre-sessoes: cada sessão nova sorteia um pacote diferente do anterior', async ($, on) => {
+  const m = comPainel($, on)
+  await arrancar(m)
+  let anterior = ((await m.store.get(PACOTE_STORE)) as any).nome
+  for (const id of ['s-b', 's-c', 's-d', 's-e', 's-f', 's-g']) {
+    await novaSessao(m, id)
+    const v = (await m.store.get(PACOTE_STORE)) as any
+    expect(v.sessao).toBe(id)
+    expect(FABRICA).toContain(v.nome)
+    expect(v.nome).not.toBe(anterior)
+    expect(ultimoStdin(m).sessao.pacote).toBe(v.nome)
+    anterior = v.nome
+  }
+})
+test('sorteio-mesma-sessao-mantem: session.start repetido na mesma sessão mantém o pacote e não regrava', async ($, on) => {
+  const m = comPainel($, on, {}, { storeInicial: { [PACOTE_STORE]: { nome: 'galaxia', sessao: 'sess-1' } } })
+  await arrancar(m)
+  await arrancar(m)
+  expect(((await m.store.get(PACOTE_STORE)) as any)).toEqual({ nome: 'galaxia', sessao: 'sess-1' })
+  expect(setsDe(m, PACOTE_STORE)).toBe(0)
+  expect(ultimoStdin(m).sessao.pacote).toBe('galaxia')
+})
+test('sorteio-mesma-sessao-mantem-sorteado: 2 starts da mesma sessão ⇒ o mesmo nome e 1 gravação', async ($, on) => {
+  const n = comPainel($, on)
+  await arrancar(n)
+  const nome = ((await n.store.get(PACOTE_STORE)) as any).nome
+  await arrancar(n)
+  expect(((await n.store.get(PACOTE_STORE)) as any).nome).toBe(nome)
+  expect(setsDe(n, PACOTE_STORE)).toBe(1)
+})
+test('pacote-legado-string-vira-anterior: string no store é o anterior; o novo difere e vai em {nome, sessao}', async ($, on) => {
+  const m = comPainel($, on, {}, { storeInicial: { [PACOTE_STORE]: 'herois' } })
+  await arrancar(m)
+  const v = (await m.store.get(PACOTE_STORE)) as any
+  expect(v.nome).not.toBe('herois')
+  expect(FABRICA).toContain(v.nome)
+  expect(v.sessao).toBe('sess-1')
+  expect(m.est.logs.filter((l) => l.includes('corrompido'))).toHaveLength(0)
+})
+test('pacote-corrompido-sorteia-e-avisa-1x: valor que não é objeto nem string ⇒ sorteia, grava, 1 ui.log', async ($, on) => {
+  const m = comPainel($, on, {}, { storeInicial: { [PACOTE_STORE]: 42 } })
+  await arrancar(m)
+  const v = (await m.store.get(PACOTE_STORE)) as any
+  expect(FABRICA).toContain(v.nome)
+  expect(v.sessao).toBe('sess-1')
+  expect(m.est.logs.filter((l) => l.includes('pacote de nomes do painel estava corrompido'))).toHaveLength(1)
+})
+test('prefs-pacote-vence-sorteio: com prefs.pacote, nada é sorteado nem gravado', async ($, on) => {
+  const m = comPainel($, on, {}, { storeInicial: { [PREFS_STORE]: { pacote: 'herois' } } })
+  await arrancar(m)
+  expect(ultimoStdin(m).sessao.pacote).toBe('herois')
+  expect(setsDe(m, PACOTE_STORE)).toBe(0)
+  expect(m.store.has(PACOTE_STORE)).toBe(false)
+})
+test('sorteio-id-lanca: session.id falhando ⇒ terra-media, sem gravar', async ($, on) => {
+  const m = comPainel($, on, {}, { sessaoIdFalha: true })
+  await arrancar(m)
+  expect(ultimoStdin(m).sessao.pacote).toBe('terra-media')
+  expect(m.store.has(PACOTE_STORE)).toBe(false)
+})
+
+// ---- transcripts dos agentes ----
+test('subagent-start-grava-caminho: transcript do agente = <dirname>/<session_id>/subagents/agent-<id>.jsonl', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await subStart($)
+  expect(await m.store.get(TRANSCRIPTS_STORE)).toEqual({ 'ag-1': '/h/proj/abc-123/subagents/agent-ag-1.jsonl' })
+})
+test('vivos-vao-com-caminho: o vivo de agent.list leva o caminho no stdin; sem registro, null', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [{ id: 'ag-1', type: 't', description: 'T2 implementador', status: 'running' }, { id: 'ag-2', type: 't', description: 'T3', status: 'running' }] })
+  await m.inicio()
+  await subStart($)
+  await drena(m)
+  await m.turno(); await drena(m)
+  const ag = ultimoStdin(m).agentes
+  expect(ag.find((a: any) => a.id === 'ag-1').transcript).toBe('/h/proj/abc-123/subagents/agent-ag-1.jsonl')
+  expect(ag.find((a: any) => a.id === 'ag-2').transcript).toBeNull()
+})
+test('subagent-start-id-invalido: agent_id ou session_id fora da forma ⇒ nenhuma entrada', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  for (const extra of [{ agent_id: '../../x' }, { agent_id: 'a/b' }, { agent_id: '' }, { agent_id: 'x'.repeat(129) }, { agent_id: 7 }, { session_id: '../s' }, { session_id: 'a.b' }, { session_id: '' }, { session_id: 's'.repeat(129) }, { session_id: undefined }]) {
+    await subStart($, extra as any)
+  }
+  expect(m.store.has(TRANSCRIPTS_STORE)).toBe(false)
+})
+test('subagent-start-path-relativo: transcript_path ausente, não string ou relativo ⇒ nenhuma entrada', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  for (const tp of ['rel/x.jsonl', '', 'x.jsonl', undefined, 5, null]) await subStart($, { transcript_path: tp } as any)
+  expect(m.store.has(TRANSCRIPTS_STORE)).toBe(false)
+})
+test('transcripts-teto-64: 70 inícios ⇒ 64 entradas; saem as 6 mais antigas', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  for (let i = 0; i < 70; i++) await subStart($, { agent_id: `ag-${i}` })
+  const v = (await m.store.get(TRANSCRIPTS_STORE)) as Record<string, string>
+  const chaves = Object.keys(v)
+  expect(chaves).toHaveLength(64)
+  for (let i = 0; i < 6; i++) expect(chaves).not.toContain(`ag-${i}`)
+  expect(chaves[0]).toBe('ag-6')
+  expect(chaves[63]).toBe('ag-69')
+})
+test('transcripts-preserva-o-que-ja-estava-no-store: entradas anteriores entram no mapa e no teto', async ($, on) => {
+  const m = mundo($, on, { storeInicial: { [TRANSCRIPTS_STORE]: { velho: '/v/s/subagents/agent-velho.jsonl', '': 'x', ok: 5 } } })
+  await m.inicio()
+  await subStart($)
+  expect(await m.store.get(TRANSCRIPTS_STORE)).toEqual({ velho: '/v/s/subagents/agent-velho.jsonl', 'ag-1': '/h/proj/abc-123/subagents/agent-ag-1.jsonl' })
+})
+test('subagent-start-store-falha-segue: store.set rejeitando ⇒ o hook não lança, repassa, e o vivo ainda leva o caminho', async ($, on) => {
+  const m = comPainel($, on, {}, { storeSetFalha: true, agentesPainel: [{ id: 'ag-1', type: 't', description: 'd', status: 'running' }] })
+  await m.inicio()
+  const r = await subStart($)
+  expect(r).toBeDefined()
+  await drena(m)
+  await m.turno(); await drena(m)
+  expect(ultimoStdin(m).agentes[0].transcript).toBe('/h/proj/abc-123/subagents/agent-ag-1.jsonl')
+})
+test('subagent-start-repassa-next: o hook de baixo recebe o evento, válido ou não', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await subStart($)
+  await subStart($, { agent_id: '../x' })
+  expect(m.est.subStarts.map((x: any) => x.agent_id)).toEqual(['ag-1', '../x'])
+  expect(Object.keys((await m.store.get(TRANSCRIPTS_STORE)) as object)).toEqual(['ag-1'])
+})
+test('comando-espacos-colapsados: espaços múltiplos e bordas valem como um só', async ($, on) => {
+  const m = comPainel($, on)
+  await arrancar(m)
+  expect((await m.cmd('  painel   nomes    herois  ')).text).toBe('painel: nomes herois')
+  expect((await m.cmd('painel\tmono')).text).toBe('painel: mono')
+})
+test('comando-nao-painel-nao-toca-prefs: pausar e Uso não gravam prefs nem abrem Pane', async ($, on) => {
+  const m = comPainel($, on)
+  await arrancar(m)
+  const opens = m.est.opens.length
+  await m.cmd('x'); await m.cmd('')
+  expect(m.store.has(PREFS_STORE)).toBe(false)
+  expect(m.est.opens.length).toBe(opens)
 })

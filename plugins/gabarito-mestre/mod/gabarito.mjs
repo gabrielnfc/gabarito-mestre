@@ -18,10 +18,9 @@ import * as nucleo from '../gates/dist/loop.js'; // `nucleo.TIPOS_DE_PROGRESSO`:
 import {
   analisarFronteira, codigoPonte, dadosMedicao, ehRevisor, jaParou, lerX, marcaDeProgresso, negaDespacho, portaDoPouso, tasksDoNegado, tasksEmVoo, textoRetomada, tokensDe, vivosDe,
 } from '../gates/dist/pouso.js';
-import { iniciarPainel, registrarPainel, turnoDoPainel } from './painel.mjs'; // E4 T10: Pane, faixa, atualização e aviso do PAROU (nada do pouso depende dele)
+import { comandoPainel, iniciarPainel, registrarPainel, turnoDoPainel, USO_GABARITO } from './painel.mjs'; // E4 T10: Pane, faixa, atualização e aviso do PAROU (nada do pouso depende dele)
 
 const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
-const USO = 'Uso: /gabarito pausar | /gabarito retomar';
 
 // Variáveis do módulo recomeçam num reload; o que precisa sobreviver está no store.
 let interativo = true;
@@ -516,7 +515,7 @@ export const register = (on) => {
     iniciarPainel($, e);
     try {
       await $.command.register({
-        name: 'gabarito', description: 'Pausa ou retoma o loop do plano', argumentHint: 'pausar|retomar', immediate: true,
+        name: 'gabarito', description: 'Painel, pausa e retomada do loop', argumentHint: 'painel …|pausar|retomar', immediate: true,
       });
     } catch { /* sem comando: o caminho sem mod (/<plugin>:gabarito) segue valendo */ }
     try {
@@ -583,8 +582,9 @@ export const register = (on) => {
   });
 
   on('command.run', { command: 'gabarito' }, async ($, e) => {
-    const acao = typeof e.args === 'string' ? e.args.trim() : '';
-    if (acao !== 'pausar' && acao !== 'retomar') return { text: USO };
+    const acao = typeof e.args === 'string' ? e.args.trim().replace(/\s+/g, ' ') : '';
+    if (acao === 'painel' || acao.startsWith('painel ')) return { text: await comandoPainel($, acao.split(' ').slice(1)) };
+    if (acao !== 'pausar' && acao !== 'retomar') return { text: USO_GABARITO };
     try {
       return await comandoPausa($, acao);
     } catch {

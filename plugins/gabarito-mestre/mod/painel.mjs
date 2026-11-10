@@ -18,6 +18,7 @@
  */
 import { renderPainel } from '../gates/dist/painel.js';
 import { colunas, cortar, limpar } from '../gates/dist/painel-largura.js';
+import { sortearPacote } from '../gates/dist/painel-equipe.js';
 import { lerX } from '../gates/dist/pouso.js';
 
 export const ID_PANE = 'gabarito-painel';
@@ -25,6 +26,17 @@ export const ID_PANE = 'gabarito-painel';
 export const INTERVALO_MS = 30000;
 export const TIMEOUT_MS = 5000;
 export const CHAVE_NOTIFICADO = 'painel:notificado';
+export const CHAVE_PREFS = 'painel:prefs';
+export const CHAVE_PACOTE = 'painel:pacote';
+export const CHAVE_TRANSCRIPTS = 'painel:transcripts';
+/** Teto de transcripts no `$.store` (D-M5: o store tem 4 MiB e `pouso:<dir>` divide o arquivo). Ao passar, sai o mais antigo (ordem de inserção). */
+export const TETO_TRANSCRIPTS = 64;
+/** Os pacotes de fábrica (`mod/temas/nomes/`). O mod não lê diretório sem `node:fs`: um teste em `gates/` compara esta lista com o diretório. */
+export const PACOTES_FABRICA = Object.freeze(['galaxia', 'herois', 'hogwarts', 'terra-media']);
+export const USO_GABARITO = 'Uso: /gabarito painel [esquadrao|executivo|color|mono|narracao on|off|nomes <pacote>|ligar|desligar] | pausar | retomar';
+const PACOTE_RE = /^[a-z0-9-]{1,32}$/;
+const AGENTE_RE = /^[A-Za-z0-9._-]{1,128}$/;
+const SESSAO_RE = /^[A-Za-z0-9-]{1,128}$/;
 export const PREFS_PADRAO = Object.freeze({ preset: 'esquadrao', tema: 'color', narracao: true, ligado: true, pacote: null });
 
 const SEM_LOOP = new Set(['plano_ausente', 'entrega_nao_inferida', 'fora_de_repo']);
@@ -232,7 +244,57 @@ const S = {
   notificadoLido: false,
   limpoNoStore: false,
   prefs: PREFS_PADRAO,
+  preparando: null, // promessa de `preparar` (prefs + sorteio): uma por `session.start`
+  pacoteSorteado: null,
+  transcripts: new Map(), // agent_id → caminho, em ordem de inserção (espelho do store, com teto)
+  transcriptsLido: false,
+  logados: new Set(), // avisos de `ui.log` já dados neste processo (1× por tipo)
 };
+
+/** Uma linha só: sem controle nem quebra, no máximo 200 colunas (REQ-PNL-13: a resposta do comando nunca vira bloco). */
+export function umaLinha(texto) {
+  return cortar(limpar(String(texto)).replace(/[\p{Cc}\u2028\u2029]+/gu, ' ').trim(), 200);
+}
+
+/**
+ * `painel:prefs` do store ⇒ `{prefs, estado}`. Ausente ⇒ padrão, `estado: 'ausente'` (sem aviso). Não objeto ⇒ padrão, `'corrompido'`. Objeto com campo
+ * inválido ⇒ só ESSE campo volta ao padrão; `'ok'`.
+ */
+export function prefsValidas(v) {
+  if (v === undefined) return { prefs: PREFS_PADRAO, estado: 'ausente' };
+  if (!ehObj(v)) return { prefs: PREFS_PADRAO, estado: 'corrompido' };
+  const d = PREFS_PADRAO;
+  return {
+    estado: 'ok',
+    prefs: {
+      preset: PRESETS.includes(v.preset) ? v.preset : d.preset,
+      tema: TEMAS.includes(v.tema) ? v.tema : d.tema,
+      narracao: typeof v.narracao === 'boolean' ? v.narracao : d.narracao,
+      ligado: typeof v.ligado === 'boolean' ? v.ligado : d.ligado,
+      pacote: typeof v.pacote === 'string' && PACOTE_RE.test(v.pacote) ? v.pacote : d.pacote,
+    },
+  };
+}
+
+/**
+ * Caminho do transcript de um subagente a partir do `SubagentStart` (sem `node:path`): `<dirname(transcript_path)>/<session_id>/subagents/agent-<agent_id>.jsonl`.
+ * `agent_id` e `session_id` entram no caminho, então são validados (path traversal). Qualquer dado fora da forma ⇒ `null` (`ctx —`).
+ */
+export function caminhoDoTranscript(e) {
+  if (!ehObj(e)) return null;
+  const { agent_id: id, session_id: sessao, transcript_path: tp } = e;
+  if (typeof id !== 'string' || !AGENTE_RE.test(id)) return null;
+  if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) return null;
+  if (typeof tp !== 'string' || !tp.startsWith('/')) return null;
+  return `${tp.slice(0, tp.lastIndexOf('/'))}/${sessao}/subagents/agent-${id}.jsonl`;
+}
+
+/** Insere com teto: passou de `TETO_TRANSCRIPTS`, saem as mais antigas. Reinserir o mesmo id atualiza o caminho e mantém a posição. */
+export function inserirComTeto(mapa, id, caminho, teto = TETO_TRANSCRIPTS) {
+  mapa.set(id, caminho);
+  while (mapa.size > teto) mapa.delete(mapa.keys().next().value);
+  return mapa;
+}
 
 async function agora($) {
   try { const t = await $.clock.now(); return typeof t === 'number' ? t : 0; } catch { return 0; }
@@ -290,7 +352,8 @@ async function pedidoDoMod($) {
   try { bruto = await $.env.get('GABARITO_POUSO_X'); } catch { bruto = undefined; }
   await carregarNotificado($);
   return montarPedido({
-    usage, agentes, x: lerX(bruto).x, notificacao: S.notificado?.resultado ?? null, pacote: S.prefs.pacote ?? null, transcripts: {},
+    usage, agentes, x: lerX(bruto).x, notificacao: S.notificado?.resultado ?? null, pacote: S.prefs.pacote ?? S.pacoteSorteado ?? null,
+    transcripts: Object.fromEntries(await mapaTranscripts($)),
   });
 }
 
@@ -327,6 +390,7 @@ export async function avisarParar($, estado) {
 }
 
 async function uma($, motivo) {
+  await preparar($);
   let cwd;
   try { cwd = await $.session.root(); } catch { cwd = null; }
   let s;
@@ -379,6 +443,151 @@ export async function atualizar($, motivo) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────── prefs, sorteio, transcripts e comando (E4 T11)
+
+function logUma($, tipo, texto) {
+  if (S.logados.has(tipo)) return;
+  S.logados.add(tipo);
+  try { $.ui.log(texto, { to: 'transcript' }); } catch { /* sem transcript */ }
+}
+
+async function carregarPrefs($) {
+  let v;
+  try { v = await $.store.get(CHAVE_PREFS); } catch { logUma($, 'prefs-store', 'gabarito: não consegui ler as preferências do painel; uso o padrão.'); return; }
+  const r = prefsValidas(v);
+  S.prefs = r.prefs;
+  if (r.estado === 'corrompido') logUma($, 'prefs-corrompidas', 'gabarito: as preferências do painel estavam corrompidas; uso o padrão.');
+}
+
+/** Pacote da sessão (sombra-p1d T11): `prefs.pacote` vence; senão `{nome, sessao}` do store; mesma sessão ⇒ mantém; outra ⇒ sorteia sem repetir o anterior. */
+async function escolherPacote($) {
+  if (S.prefs.pacote !== null) return;
+  let id;
+  try { id = await $.session.id(); } catch { id = null; }
+  if (typeof id !== 'string' || id === '') { S.pacoteSorteado = 'terra-media'; return; }
+  let v;
+  try { v = await $.store.get(CHAVE_PACOTE); } catch { v = undefined; }
+  let anterior = null;
+  if (ehObj(v) && typeof v.nome === 'string' && PACOTE_RE.test(v.nome)) {
+    if (v.sessao === id) { S.pacoteSorteado = v.nome; return; }
+    anterior = v.nome;
+  } else if (typeof v === 'string' && PACOTE_RE.test(v)) {
+    anterior = v; // formato legado: string
+  } else if (v !== undefined) {
+    logUma($, 'pacote-corrompido', 'gabarito: o pacote de nomes do painel estava corrompido; sorteei outro.');
+  }
+  const nome = sortearPacote(id, [...PACOTES_FABRICA], anterior);
+  S.pacoteSorteado = nome;
+  try { await $.store.set(CHAVE_PACOTE, { nome, sessao: id }); } catch { /* vale nesta sessão */ }
+}
+
+/** Prefs e sorteio, 1× por `session.start`. Nunca lança. */
+export function preparar($) {
+  if (S.preparando === null) {
+    S.preparando = (async () => {
+      try { await carregarPrefs($); } catch { /* padrão */ }
+      try { await escolherPacote($); } catch { /* sem pacote sorteado: o CLI usa a fábrica */ }
+    })();
+  }
+  return S.preparando;
+}
+
+async function mapaTranscripts($) {
+  if (!S.transcriptsLido) {
+    S.transcriptsLido = true;
+    try {
+      const v = await $.store.get(CHAVE_TRANSCRIPTS);
+      if (ehObj(v)) {
+        for (const [k, c] of Object.entries(v)) if (AGENTE_RE.test(k) && typeof c === 'string' && !S.transcripts.has(k)) inserirComTeto(S.transcripts, k, c);
+      }
+    } catch { /* store fora do ar: só a memória */ }
+  }
+  return S.transcripts;
+}
+
+/** `classic.SubagentStart`: guarda o caminho do transcript do agente (teto de 64). Dado fora da forma ⇒ nada. Nunca lança. */
+export async function registrarSubagente($, e) {
+  const caminho = caminhoDoTranscript(e);
+  if (caminho === null) return;
+  try {
+    const mapa = await mapaTranscripts($);
+    inserirComTeto(mapa, e.agent_id, caminho);
+    await $.store.set(CHAVE_TRANSCRIPTS, Object.fromEntries(mapa));
+  } catch { /* a memória do módulo basta nesta sessão */ }
+}
+
+async function gravarPrefs($, mudanca) {
+  S.prefs = { ...S.prefs, ...mudanca };
+  try { await $.store.set(CHAVE_PREFS, { ...S.prefs }); return true; } catch { return false; }
+}
+
+const SO_NA_SESSAO = ' (só nesta sessão: não gravei a preferência)';
+
+async function abrirPeloDono($, rotulo = 'painel aberto') {
+  S.fechadaPeloDono = false;
+  const gravou = S.prefs.ligado === true ? true : await gravarPrefs($, { ligado: true });
+  let r;
+  try { r = await $.ui.open({ id: ID_PANE, title: 'gabarito', focus: true }); } catch { r = { isPlaced: false, reason: 'falhou' }; }
+  S.aberta = true;
+  void atualizar($, 'painel');
+  const base = r?.isPlaced === true ? rotulo : `painel não coube: ${typeof r?.reason === 'string' && r.reason !== '' ? r.reason : 'sem motivo'}`;
+  return base + (gravou ? '' : SO_NA_SESSAO);
+}
+
+async function comandoPainelBruto($, partes) {
+  await preparar($);
+  const [a, b] = partes;
+  if (partes.length === 0) return abrirPeloDono($);
+  const troca = async (mudanca, texto) => {
+    const gravou = await gravarPrefs($, mudanca);
+    redesenhar($);
+    return texto + (gravou ? '' : SO_NA_SESSAO);
+  };
+  if (partes.length === 1) {
+    if (PRESETS.includes(a)) return troca({ preset: a }, `painel: ${a}`);
+    if (TEMAS.includes(a)) return troca({ tema: a }, `painel: ${a}`);
+    if (a === 'ligar') return abrirPeloDono($, 'painel ligado');
+    if (a === 'desligar') {
+      const gravou = await gravarPrefs($, { ligado: false });
+      S.aberta = false;
+      try { await $.ui.close({ id: ID_PANE }); } catch { /* já fechada */ }
+      redesenhar($);
+      return 'painel desligado (PAROU ainda avisa)' + (gravou ? '' : SO_NA_SESSAO);
+    }
+    return USO_GABARITO;
+  }
+  if (partes.length === 2) {
+    if (a === 'narracao' && (b === 'on' || b === 'off')) return troca({ narracao: b === 'on' }, `painel: narração ${b === 'on' ? 'ligada' : 'desligada'}`);
+    if (a === 'nomes') return nomesDoPainel($, b);
+  }
+  return USO_GABARITO;
+}
+
+async function nomesDoPainel($, p) {
+  if (!PACOTE_RE.test(p)) return `pacote inválido: ${cortar(limpar(p), 40)} (fábrica: ${PACOTES_FABRICA.join(' ')})`;
+  if (!PACOTES_FABRICA.includes(p)) {
+    let raiz = null;
+    try { raiz = (await $.session.repo())?.root ?? null; } catch { raiz = null; }
+    if (typeof raiz !== 'string') { try { raiz = await $.session.root(); } catch { raiz = null; } }
+    if (typeof raiz !== 'string' || raiz === '') return `pacote não encontrado: ${p}`;
+    let existe;
+    try { existe = await $.fs.exists(`${raiz}/.harness/temas/nomes/${p}.json`); } catch { return `não consegui verificar o pacote: ${p}`; }
+    if (existe !== true) return `pacote não encontrado: ${p}`;
+  }
+  const gravou = await gravarPrefs($, { pacote: p });
+  void atualizar($, 'prefs');
+  return `painel: nomes ${p}` + (gravou ? '' : SO_NA_SESSAO);
+}
+
+/** `/gabarito painel …` (`partes` = o que vem depois de `painel`). A resposta é SEMPRE uma linha (`umaLinha`). Nunca lança. */
+export async function comandoPainel($, partes) {
+  try {
+    return umaLinha(await comandoPainelBruto($, Array.isArray(partes) ? partes : []));
+  } catch {
+    return 'painel: erro inesperado';
+  }
+}
+
 // ─────────────────────────────────────────────────────────────── desenho (hooks)
 
 const colunasDe = (props) => larguraDe(props?.bodyColumns);
@@ -398,6 +607,7 @@ function arvoreDeLinhas($, e, linhas) {
 export function iniciarPainel($, e) {
   S.interativo = e?.isInteractive === true && e?.surface !== null && e?.surface !== undefined;
   if (!S.interativo) return;
+  S.preparando = null; // cada `session.start` relê as prefs e confere o sorteio (mesma sessão ⇒ mantém)
   try { $.clock.after(0, () => { void atualizar($, 'inicio'); }); } catch { /* sem relógio */ }
 }
 
@@ -409,6 +619,11 @@ export async function turnoDoPainel($) {
 
 /** Registra os hooks de desenho do painel (`ui.close`, `ui.render`). Chamado no começo de `register` de `gabarito.mjs`. */
 export function registrarPainel(on) {
+  on('classic.SubagentStart', async ($, e, next) => {
+    try { await registrarSubagente($, e); } catch { /* o painel não derruba o hook */ }
+    return next(e);
+  });
+
   on('ui.close', async ($, e, next) => {
     if (e?.id === ID_PANE && e?.origin?.kind === 'person') S.fechadaPeloDono = true;
     return next(e);
