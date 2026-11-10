@@ -297,7 +297,7 @@ const IMPORT_DINAMICO = 'import';
 
 /**
  * Programa que o mod passa a `node --input-type=module -e` (o ambiente do mod não tem `node:`). Lê UM objeto JSON no stdin
- * (`{op, …}`), escreve UM JSON no stdout e sempre sai 0. Dados nunca entram no programa: só o caminho do `diario.js`.
+ * (`{op, …}`), escreve UM JSON no stdout e sempre sai 0. Dados nunca entram no programa: só o caminho do `diario.js`. Stdin que não é JSON ⇒ `{ ok: false, erro: 'pedido inválido' }` (nunca um trecho do stdin).
  * Ops: `dir` (raiz, pasta da entrega, `plano.json`), `ler` (estrita: `lerEstrito`), `plano` (`plano.json` validado pela T1 e
  * `loop.slots`/`loop.tetoTokens` de `harness.config.json`; ilegível ou inválido ⇒ `ok: false`), `instantaneo`,
  * `append` (`unicoPorAgente` não repete o par tipo+agente), `mensagem` (`dono.mensagem {sha256, chars}` na sessão `dono`; o texto
@@ -318,7 +318,8 @@ export function codigoPonte(
     `const out = (o) => process.stdout.write(JSON.stringify(o));`,
     `const git = (a, cwd) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();`,
     `try {`,
-    `  const e = JSON.parse(readFileSync(0, 'utf8'));`,
+    `  let e;`,
+    `  try { e = JSON.parse(readFileSync(0, 'utf8')); } catch { throw new Error('pedido inválido'); }`,
     `  if (e.op === 'dir') {`,
     `    const raiz = git(['rev-parse', '--show-toplevel'], e.cwd);`,
     `    let pbi = null;`,

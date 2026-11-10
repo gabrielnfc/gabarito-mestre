@@ -6,7 +6,8 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { montarRepo } from './fumaca-loop/caminhada.mjs';
 import {
   analisarFronteira, CABECALHO, codigoPonte, marcaDeProgresso, dadosMedicao, ehMensagemDoDono, ehRevisor, INSTANTANEO_MAX, jaParou, lerX, negaDespacho, portaDoPouso, PROMPT_RECUPERACAO, PROMPT_RETOMADA,
   tasksDoNegado, tasksEmVoo, textoPendencia, textoPendenciaNaoVerificada, textoRetomada, tokensDe, vivosDe,
@@ -677,20 +678,29 @@ test('ponte-instantaneo-sem-aprendizados-igual-ao-de-antes: sem D e sem aviso, n
   const i = ponte({ op: 'instantaneo', dir }, d);
   assert.doesNotMatch(i.texto, /Aprendizados/);
 });
-test('ponte-instantaneo-aprendizado-js-quebrado-segue: import que falha tira só o bloco; ok:true com avisos, nunca ok:false', () => {
+test('ponte-instantaneo-aprendizado-js-quebrado-segue: aprendizado.js PRESENTE e quebrado (sintaxe inválida, throw no topo) ou ausente tira só o bloco; ok:true com avisos, nunca ok:false', () => {
   const { d, dir } = comAprendizados(['rode o build antes do teste']);
   const url = 'file://' + encodeURI(join(GATES, 'dist', 'diario.js'));
-  const quebrado = 'file://' + encodeURI(join(d, 'nao-existe.js'));
-  const r = spawnSync('node', ['--input-type=module', '-e', codigoPonte(url, undefined, quebrado)], { input: JSON.stringify({ op: 'instantaneo', dir }), encoding: 'utf8', cwd: d });
-  assert.equal(r.status, 0, r.stderr);
-  const o = JSON.parse(r.stdout);
-  assert.equal(o.ok, true);
-  assert.deepEqual(o.avisos, ['aprendizados indisponíveis']);
-  assert.match(o.texto, /^Diário: /);
-  assert.doesNotMatch(o.texto, /Aprendizados \(/);
-  // as outras ops seguem de pé com o import quebrado
-  const l = spawnSync('node', ['--input-type=module', '-e', codigoPonte(url, undefined, quebrado)], { input: JSON.stringify({ op: 'ler', dir }), encoding: 'utf8', cwd: d });
-  assert.equal(JSON.parse(l.stdout).ok, true);
+  const variantes: Record<string, string | null> = {
+    'sintaxe-invalida': 'export const x = ;\n',
+    'throw-no-topo': "throw new Error('quebrou no import');\nexport const x = 1;\n",
+    ausente: null,
+  };
+  for (const [nome, conteudo] of Object.entries(variantes)) {
+    const arq = join(d, `${nome}.js`);
+    if (conteudo !== null) { writeFileSync(arq, conteudo); assert.ok(existsSync(arq), `${nome} presente`); } else assert.ok(!existsSync(arq), `${nome} ausente`);
+    const quebrado = 'file://' + encodeURI(arq);
+    const r = spawnSync('node', ['--input-type=module', '-e', codigoPonte(url, undefined, quebrado)], { input: JSON.stringify({ op: 'instantaneo', dir }), encoding: 'utf8', cwd: d });
+    assert.equal(r.status, 0, `${nome}: ${r.stderr}`);
+    const o = JSON.parse(r.stdout);
+    assert.equal(o.ok, true, nome);
+    assert.deepEqual(o.avisos, ['aprendizados indisponíveis'], nome);
+    assert.match(o.texto, /^Diário: /, nome);
+    assert.doesNotMatch(o.texto, /Aprendizados \(/, nome);
+    // as outras ops seguem de pé com o import quebrado
+    const l = spawnSync('node', ['--input-type=module', '-e', codigoPonte(url, undefined, quebrado)], { input: JSON.stringify({ op: 'ler', dir }), encoding: 'utf8', cwd: d });
+    assert.equal(JSON.parse(l.stdout).ok, true, nome);
+  }
 });
 test('ponte-instantaneo-cheio-ate-3200: 30 aprendizados D de 300 caracteres e muitos eventos ainda cabem em INSTANTANEO_MAX e o pouso não vira sem_pouso', () => {
   const { d, dir } = comAprendizados(Array.from({ length: 30 }, (_, i) => `${i}`.padEnd(300, 'x')));
@@ -699,4 +709,89 @@ test('ponte-instantaneo-cheio-ate-3200: 30 aprendizados D de 300 caracteres e mu
   assert.equal(i.ok, true);
   assert.ok(i.texto.length <= INSTANTANEO_MAX, String(i.texto.length));
   assert.ok(textoRetomada(i.texto) !== null);
+});
+
+// ---- r2 (T10): erro da ponte sem eco do stdin e costura mod real ⇒ ponte real ⇒ diário ----
+test('ponte-stdin-invalido-erro-fixo-sem-eco: JSON.parse que falha devolve `pedido inválido` e nenhum trecho do stdin', () => {
+  const d = repoTemp();
+  const url = 'file://' + encodeURI(join(GATES, 'dist', 'diario.js'));
+  const sentinela = `SENTINELA-STDIN-${Math.random().toString(36).slice(2)}`;
+  const entradas = [
+    `{"op":"mensagem","texto":${sentinela}ghp_${'Z'.repeat(36)}}`, // valor sem aspas
+    `{"op":"mensagem","texto":"${sentinela} ghp_${'Z'.repeat(36)}`, // string não terminada
+    `{"op":"mensagem" "texto":"${sentinela}"}`, // vírgula faltando
+    `${sentinela}`, // não é JSON
+    '',
+  ];
+  for (const entrada of entradas) {
+    const r = spawnSync('node', ['--input-type=module', '-e', codigoPonte(url)], { input: entrada, encoding: 'utf8', cwd: d });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout), { ok: false, erro: 'pedido inválido' }, entrada.slice(0, 30));
+    assert.ok(!r.stdout.includes(sentinela) && !r.stdout.includes('ghp_') && !r.stderr.includes(sentinela), 'a saída não cita o stdin');
+  }
+});
+
+/** Host mínimo do mod (o `$` da fumaça-loop): REAIS são o mod `gabarito.mjs`, a ponte (`node` + `dist/diario.js`) e o git; só o host é simulado. */
+async function modReal(raiz: string, percent: number | null) {
+  const { register } = await import(pathToFileURL(join(PLUGIN, 'mod', 'gabarito.mjs')).href);
+  const H: Record<string, (...a: unknown[]) => Promise<any>> = {};
+  register((ev: string, a: unknown, b: unknown) => { H[ev] = (b ?? a) as (...a: unknown[]) => Promise<any>; });
+  const agendados: (() => unknown)[] = [];
+  const avisos: string[] = [];
+  const mundo = { percent };
+  const $ = {
+    plugin: { root: PLUGIN },
+    session: { root: async () => raiz, repo: async () => ({ root: raiz }), id: async () => 'S1', usage: async () => ({ context: mundo.percent === null ? {} : { percent: mundo.percent } }) },
+    env: { get: async (k: string) => (k === 'GABARITO_POUSO_X' ? '50' : undefined) },
+    store: { get: async () => undefined, set: async () => {}, delete: async () => {} },
+    ui: { toast: async (t: string) => { avisos.push(t); }, log: () => {} },
+    process: { run: async (argv: string[], op: { cwd?: string; stdin?: string } = {}) => { const r = spawnSync(argv[0], argv.slice(1), { cwd: op.cwd, input: op.stdin, encoding: 'utf8' }); return { exitCode: r.status, stdout: r.stdout, stderr: r.stderr }; } },
+    fs: { exists: async (p: string) => existsSync(p), write: async () => {} },
+    clock: { now: async () => Date.now(), after: (_ms: number, fn: () => unknown) => { agendados.push(fn); }, every: () => {} },
+    command: { register: async () => {}, run: async () => {} },
+    prompt: { submit: async () => ({}) },
+    agent: { list: async () => [] },
+  };
+  await H['session.start']($, { isInteractive: true }, async (e: unknown) => e);
+  const drenar = async () => { while (agendados.length > 0) { await agendados.shift()!(); await new Promise((r) => setTimeout(r, 50)); } await new Promise((r) => setTimeout(r, 300)); };
+  return { H, $, drenar, avisos, mundo };
+}
+test('costura-mensagem-do-dono: prompt.submit do composer no mod real grava events.dono.jsonl na pasta da entrega (nunca na raiz) e o Agent seguinte é negado pela pendência dono', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'gm-costura-dono-'));
+  const repo = join(base, 'repo');
+  montarRepo(repo, join(aqui, 'fumaca-loop', 'planos', 'uma.json'));
+  const raiz = realpathSync(repo);
+  spawnSync('git', ['config', 'user.email', 'costura@teste.local'], { cwd: raiz });
+  const dir = join(raiz, '.harness', 'entregas', 'GM-99');
+  const { H, $, drenar, mundo } = await modReal(raiz, 6);
+  const sentinela = `SENTINELA-COSTURA-${Math.random().toString(36).slice(2)}`;
+  const texto = `${sentinela} ghp_${'b'.repeat(36)}`;
+  const r = await H['prompt.submit']($, { origin: { kind: 'composer' }, command: null, isMeta: false, text: texto }, async (e: unknown) => e);
+  assert.ok((r as { text: string }).text.startsWith(sentinela), 'o prompt do dono segue intacto');
+  await drenar();
+  // diário: exatamente 1 dono.mensagem, na pasta da entrega certa, só com hash e tamanho
+  const arq = join(dir, 'events.dono.jsonl');
+  assert.ok(existsSync(arq), 'events.dono.jsonl na pasta da entrega');
+  const dono = readFileSync(arq, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(dono.length, 1);
+  assert.equal(dono[0].tipo, 'dono.mensagem');
+  assert.equal(dono[0].sessao, 'dono');
+  assert.equal(dono[0].agente, 'dono');
+  assert.equal(dono[0].autor, 'costura@teste.local', 'o autor vem do git do cwd da sessão');
+  assert.deepEqual(dono[0].dados, { sha256: sha(texto), chars: texto.length });
+  // nunca na raiz do repositório nem solto em .harness/
+  assert.ok(!existsSync(join(raiz, 'events.dono.jsonl')), 'nada na raiz do repositório');
+  assert.ok(!existsSync(join(raiz, '.harness', 'events.dono.jsonl')), 'nada solto em .harness/');
+  const todos = todosOsArquivos(join(raiz, '.harness')).filter((a) => a.endsWith('events.dono.jsonl'));
+  assert.deepEqual(todos, [arq]);
+  for (const a of todosOsArquivos(join(raiz, '.harness'))) assert.ok(!readFileSync(a, 'utf8').includes(sentinela), a);
+  // com a mensagem aberta, o Agent não revisor é negado pelo texto único da pendência `dono` (também com percent nulo); o revisor passa
+  const ok = async () => ({ ok: true });
+  const a = await H['tool.call']($, { tool: 'Agent', subagent_type: 'gabarito-implementador' }, ok);
+  assert.match(a?.deny ?? '', /^gabarito: aprendizado pendente: feche antes de despachar \(dono dono:1\)\. .*Só o revisor passa\.$/);
+  assert.doesNotMatch(a.deny, /encerre o turno/);
+  mundo.percent = null;
+  const a2 = await H['tool.call']($, { tool: 'Agent', subagent_type: 'gabarito-implementador' }, ok);
+  assert.match(a2?.deny ?? '', /\(dono dono:1\)/);
+  assert.equal((await H['tool.call']($, { tool: 'Agent', subagent_type: 'gabarito-revisor' }, ok)).ok, true);
 });
