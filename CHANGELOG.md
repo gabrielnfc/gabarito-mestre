@@ -11,14 +11,14 @@ Canal `next`: o agente passa a aprender com a entrega e a registrar as decisões
 
 ### Adicionado
 
-- **Aprendizado do agente**: ao fim de um erro ou de um acerto, o agente que conduz a entrega registra a regra (ou registra que não há regra a tirar). As regras comprovadas voltam sozinhas ao cartão de início de sessão, às instruções de cada papel e à conferência de spec nova.
-- **Pouso de contexto sem o mod**: `loop.mjs pousar` marca o ponto em que o contexto pode ser limpo, sem tarefa em andamento. Depois do `/clear`, o cartão de início de sessão traz a linha de retomada e o loop segue de onde parou. O agente pede ao dono, em uma linha, que digite `/clear`.
-- **Registro de decisões**: `loop.mjs registro` gera o `registro.md` da entrega, sempre igual para o mesmo histórico. Ele traz a aprovação da spec, as decisões da Sombra, as emendas, as liberações de teto, os desvios, as descobertas e os aprendizados. A skill o commita ao concluir a entrega.
+- **Aprendizado do agente**: ao fim de um erro ou de um acerto, o agente que conduz a entrega registra a regra (ou registra que não há regra a tirar). As regras comprovadas (com evidência) voltam sozinhas ao resumo de início de sessão, às instruções do papel a que a regra se destina e à conferência de spec nova.
+- **Pouso de contexto**: `loop.mjs pousar` marca o ponto em que o contexto pode ser limpo; recusa enquanto houver tarefa em andamento. Depois do `/clear`, o resumo de início de sessão traz a linha de retomada e o loop segue de onde parou. Com o painel instalado (o mod), o pouso e o `/clear` são automáticos; sem ele, o agente roda `loop.mjs pousar` e pede ao dono, em uma linha, que digite `/clear`.
+- **Registro de decisões**: `loop.mjs registro` gera o `registro.md` da entrega, sempre igual para o mesmo histórico. Ele traz a aprovação da spec, as decisões da Sombra (o agente que responde dúvidas do loop a partir da spec, sem incomodar o dono), as emendas à spec, as vezes em que o dono liberou o limite de rodadas de revisão, os desvios do plano, as descobertas e os aprendizados. A skill do loop manda commitá-lo ao concluir a entrega.
 - **Conferência de spec**: a conformidade lista as regras aprendidas que a spec nova deveria tratar e marca as que ela não trata.
-- **Doctor**: avisa quando um aprendizado não tem destino.
-- **Onboarding em uma fase só**: o onboarding detecta o que dá para detectar, mostra uma prévia e faz no máximo três perguntas de decisão: política de entrega, autonomia em produção e perfil de modelos. Não há mais passos a colar no terminal.
+- **Doctor**: avisa quando um aprendizado ficou pendente sem ser fechado, quando é para um papel que não existe mais ou quando uma hipótese ficou velha.
+- **Onboarding em uma fase só**: o onboarding detecta o que dá para detectar, mostra uma prévia e faz no máximo cinco perguntas: três de decisão (política de entrega, autonomia em produção e perfil de modelos) e até duas só para o que a detecção não resolveu (o que não couber fica registrado como não detectado). Não há mais passos a colar no terminal.
 - **Perfis de modelo**: o perfil escolhido na instalação (economia, padrão ou qualidade) define o modelo de cada papel.
-- **Fluxo Gabarito**: o onboarding grava a organização do trabalho (Iniciativa, Epic e PBI), e a conformidade confere cards e specs contra ela.
+- **Fluxo Gabarito**: é o nome da organização do trabalho (Iniciativa, Epic e PBI) em todos os textos. O onboarding grava só a ferramenta de planejamento que detectou (e o conector dela); a Iniciativa, o Epic e o PBI são vinculados depois, por "trocar iniciativa" ou "vincular PBI-<n>" no `gabarito-instalar`. A conformidade confere cards e specs contra o fluxo.
 
 ### Alterado
 

@@ -31,7 +31,7 @@ const AQUI = dirname(fileURLToPath(import.meta.url));
 const PLUGIN = join(AQUI, '..', '..');
 const SKILL = readFileSync(join(PLUGIN, 'skills', 'gabarito-instalar', 'SKILL.md'), 'utf8');
 const TROCAR = readFileSync(join(PLUGIN, 'skills', 'gabarito-instalar', 'trocar.md'), 'utf8');
-const MARCADOR_TIM1 = '(gabarito-instalar, fase 2). Uma linha por área:'; // byte a byte: reconhece o CODEOWNERS da 1.1.x
+const MARCADOR_TIM1 = '(gabarito-instalar). Uma linha por área:'; // byte a byte: o que `instalar.sh --codeowners` escreve; sem texto de fase
 const EXTRAS = ['settings', 'codeowners', 'apendice', 'iniciativa', 'contenda'];
 
 // ────────────────────────────────────────────────────────────── funções puras
@@ -69,8 +69,7 @@ const prefixoDoPlugin = '${CLAUDE_PLUGIN_ROOT}/gates/scripts/';
 /** Regras que valem para SKILL.md e trocar.md. */
 function violacoesComuns(texto) {
   const v = [];
-  const semMarcador = texto.replaceAll(MARCADOR_TIM1, '');
-  for (const [i, l] of semMarcador.split('\n').entries()) if (/\bfases?\b/i.test(l)) v.push(`fase: linha ${i + 1}: ${l.trim().slice(0, 60)}`);
+  for (const [i, l] of texto.split('\n').entries()) if (/\bfases?\b/i.test(l)) v.push(`fase: linha ${i + 1}: ${l.trim().slice(0, 60)}`);
   for (const { l, i, proibido } of linhasDeProsa(texto)) {
     if (!proibido && /\b(cole|copie|copiar|colar|digite|digitar)\b/i.test(l)) v.push(`comando-para-colar: linha ${i + 1}: ${l.trim().slice(0, 60)}`);
     if (/--set(?![a-z])/.test(l)) v.push(`--set fora de bloco: linha ${i + 1}`);
@@ -213,8 +212,9 @@ test('skill-sem-fase', () => {
     assert.ok(r.some((x) => x.startsWith('fase:')), `${c} => ${JSON.stringify(r)}`);
   }
   assert.ok(violacoesSkill(`${SKILL}\n## Fase 1\n`).includes('secao-fase'));
-  // o marcador do CODEOWNERS da 1.1.x é a única exceção, por texto exato
+  // sem exceção de texto: o marcador do CODEOWNERS não fala de fase, e o texto antigo ("fase 2") agora é violação
   assert.deepEqual(violacoesComuns(`x ${MARCADOR_TIM1}`), []);
+  assert.ok(violacoesComuns('x (gabarito-instalar, fase 2). Uma linha por área:').some((x) => x.startsWith('fase:')));
   assert.ok(violacoesComuns(`x ${MARCADOR_TIM1} e a fase 3`).some((x) => x.startsWith('fase:')));
   assert.ok(violacoesTrocar(TROCAR.replace(MARCADOR_TIM1, '(gabarito-instalar, fase 3). Outro')).some((x) => x.startsWith('fase:')));
 });
@@ -280,7 +280,7 @@ test('skill-fora-das-perguntas-so-no-trocar', () => {
   assert.ok(violacoesTrocar(planta(TROCAR, 'sem default `sim`', 'com default `sim`')).includes('settings-sem-dois-consentimentos'));
   assert.ok(violacoesTrocar(planta(TROCAR, 'Antes de qualquer chamada `mcp__*`', 'Depois de ler')).includes('iniciativa-sem-ok-antes-do-mcp'));
   assert.ok(violacoesTrocar(planta(TROCAR, 'default **não**', 'default **sim**')).includes('iniciativa-escrita-sem-default-nao'));
-  assert.ok(violacoesTrocar(TROCAR.replace(MARCADOR_TIM1, '(gabarito-instalar). Uma linha por área:')).includes('codeowners-sem-marcador-tim1'));
+  assert.ok(violacoesTrocar(TROCAR.replace(MARCADOR_TIM1, '(gabarito-instalar). Outra coisa:')).includes('codeowners-sem-marcador-tim1'));
 });
 
 test('skill-raiz-do-git', () => {

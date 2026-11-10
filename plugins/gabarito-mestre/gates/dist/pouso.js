@@ -275,7 +275,7 @@ export function ehMensagemDoDono(e         )          {
 export function textoPendencia(pendencias                                                          )         {
   const itens = pendencias.slice(0, 6).map((p) => `${p.tipo} ${p.sessao}:${p.seq}`);
   if (pendencias.length > 6) itens.push(`e mais ${pendencias.length - 6}`);
-  return `gabarito: aprendizado pendente: feche antes de despachar (${itens.join(', ')}). Feche com loop.mjs aprendizado … --gatilho <sessao:seq> ou loop.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>. Só o revisor passa.`;
+  return `gabarito: aprendizado pendente: feche antes de despachar (${itens.join(', ')}). Feche com \`loop.mjs aprendizado <E|A> D --regra <t> --entra-em <a> --gatilho <sessao:seq> --eventos <sessao:seq>\`, \`loop.mjs aprendizado <E|A> M --regra <t> --entra-em <a> --gatilho <sessao:seq>\` ou \`loop.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>\`. Só o revisor passa.`;
 }
 
 /** Negação quando não deu para saber se há pendência (leitura, plano, diário ou núcleo de pendências falhou). */

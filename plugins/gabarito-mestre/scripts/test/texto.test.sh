@@ -63,12 +63,11 @@ check "NOM-1: nenhum nome antigo fora das exceções de REQ-NOM-1" '[ -z "$NOM_A
 [ "${1:-}" = "--nom" ] && { [ "$falhas" -eq 0 ]; exit $?; }
 
 # ── FASE (REQ-ONB-1, T14) — o onboarding é uma etapa só: nenhum texto fala de "fase 2-4" ──────────
-# Escopo: skills, reference, commands, gates/scripts e README. Exceções por TEXTO EXATO (grep -vF): o marcador TIM-1 do CODEOWNERS
-# (byte a byte: reconhece o arquivo da 1.1.x) e "fase 2 do Fluxo Gabarito" (etapa do Flight Levels, não do onboarding); linha com
+# Escopo: skills, reference, commands, gates/scripts, scripts/instalar.sh (o que ele escreve no repo do adotante) e README. Exceções por TEXTO EXATO (grep -vF): "fase 2 do Fluxo Gabarito" (etapa do Flight Levels, não do onboarding); linha com
 # RULING (comentário de ruling); linhas `| M1x |` do README (medição histórica da 1.1.0). Caso plantado: texto-nom.test.sh.
 fase_achados() {
-  git grep -niE 'fases? [2-4]|\(fase|(quatro|4) fases' -- plugins/gabarito-mestre/gates/scripts plugins/gabarito-mestre/reference plugins/gabarito-mestre/skills plugins/gabarito-mestre/commands README.md 2>/dev/null |
-    grep -vF -e '(gabarito-instalar, fase 2). Uma linha por área:' -e 'fase 2 do Fluxo Gabarito' -e 'RULING' |
+  git grep -niE 'fases? [2-4]|\(fase|(quatro|4) fases' -- plugins/gabarito-mestre/gates/scripts plugins/gabarito-mestre/reference plugins/gabarito-mestre/skills plugins/gabarito-mestre/commands plugins/gabarito-mestre/scripts/instalar.sh README.md 2>/dev/null |
+    grep -vF -e 'fase 2 do Fluxo Gabarito' -e 'RULING' |
     grep -vE '^README\.md:[0-9]+:\| M[0-9]+ \|'
 }
 FASE_ACHADOS=$(fase_achados)
@@ -232,8 +231,8 @@ BLOCO_AGENTE=$(sed -n '/^Isolamento: porta <3000+n>/,/referencia\.md §3\.1/p' "
 BLOCO_PROMPTS=$(sed -n '/^Isolamento: porta <3000+n>/,/referencia\.md §3\.1/p' "$Q")
 check "(d) bloco Isolamento idêntico entre agente e prompts.md" '[ "$BLOCO_AGENTE" = "$BLOCO_PROMPTS" ] && [ -n "$BLOCO_AGENTE" ]' "diff não vazio ou bloco não encontrado"
 # (e) marcador do CODEOWNERS igual entre a skill e instalar.sh
-MARCADOR='# Áreas e donos (TIM-1) — preenchido pelo onboarding (gabarito-instalar, fase 2). Uma linha por área:'
-check "(e) marcador CODEOWNERS igual em trocar.md e em instalar.sh (byte a byte: reconhece o CODEOWNERS da 1.1.x)" "grep -qF '$MARCADOR' '$ST' && grep -qF '$MARCADOR' '$IS'" "marcador ausente/diferente"
+MARCADOR='# Áreas e donos (TIM-1) — preenchido pelo onboarding (gabarito-instalar). Uma linha por área:'
+check "(e) marcador CODEOWNERS igual em trocar.md e em instalar.sh (byte a byte)" "grep -qF '$MARCADOR' '$ST' && grep -qF '$MARCADOR' '$IS'" "marcador ausente/diferente"
 
 # ── B8 (handoff §B.8) — PR_TEMPLATE lista exatamente os tipos de versionamento-check.mjs ──
 echo "── B8: PULL_REQUEST_TEMPLATE.md lista tiposComEscopoDePbi/tiposLivres do DEFAULTS"

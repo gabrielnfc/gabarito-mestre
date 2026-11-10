@@ -396,7 +396,20 @@ describe('lib/config lerConfigOrigin (GM-11 T1)', () => {
     }
   });
 
-  test('config-origin-sem-origin-ignora-local: com harness.config.json local presente, sem origin nunca lê a árvore local (sem remoto, sem arquivo na ref, symref pendurado)', () => {
+  test('config-origin-raiz-nao-string-ignora-cwd: raiz undefined/null/vazia/número/objeto nunca lê o origin/HEAD do cwd do processo (o teste não depende do checkout que o roda)', () => {
+    // cwd do processo = repo de teste COM origin/HEAD e config válida: se a raiz inválida caísse no cwd, viria `fonte: 'origin'`
+    const cwd = repo(JSON.stringify({ entrega: { politica: 'continua' } }));
+    const script = `import { lerConfigOrigin } from ${JSON.stringify(join(AQUI, '..', 'lib', 'config.mjs'))};
+      const r = [undefined, null, '', 5, {}].map((x) => { const o = lerConfigOrigin(x); return [o.cfg, o.fonte, o.invalida]; });
+      process.stdout.write(JSON.stringify(r));`;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd, encoding: 'utf8', timeout: 15_000 });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout), [[null, 'nenhuma', false], [null, 'nenhuma', false], [null, 'nenhuma', false], [null, 'nenhuma', false], [null, 'nenhuma', false]]);
+    // controle: a mesma chamada com a raiz do repo lê a ref (o repo de teste não é vazio por engano)
+    assert.equal(lerConfigOrigin(cwd).fonte, 'origin');
+  });
+
+  test('config-origin-sem-origin-ignora-local:com harness.config.json local presente, sem origin nunca lê a árvore local (sem remoto, sem arquivo na ref, symref pendurado)', () => {
     const local = JSON.stringify({ entrega: { politica: 'continua', comandos: { deploy: 'rm -rf x' } } });
     const semRemoto = novo();
     writeFileSync(join(semRemoto, 'harness.config.json'), local);

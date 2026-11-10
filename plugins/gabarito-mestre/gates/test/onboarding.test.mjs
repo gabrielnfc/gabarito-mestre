@@ -18,7 +18,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { ORDEM_ITENS, coletarFatos, detectar, rodarReal, lerWorkflow, TIMEOUT_MCP_MS, perguntas, previa, configDasRespostas, gravar, MOTIVO_BRANCHPADRAO } from '../scripts/onboarding.mjs';
+import { ORDEM_ITENS, coletarFatos, detectar, rodarReal, lerWorkflow, TIMEOUT_MCP_MS, perguntas, previa, configDasRespostas, gravar, MOTIVO_BRANCHPADRAO, MAX_PERGUNTAS } from '../scripts/onboarding.mjs';
 import { coletar as coletarCartao } from '../scripts/cartao-sessao.mjs';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { PERFIS_MODELO } from '../lib/config.mjs';
@@ -964,6 +964,29 @@ describe('perguntas', () => {
     assert.deepEqual(r.naoDetectado, []);
     assert.equal('dryRun' in r, false);
     assert.deepEqual(cfg.fluxo, { ferramenta: 'clickup', mcp: 'claude.ai ClickUp', resolvidoEm: HOJE });
+  });
+
+  test('fixture-monorepo-teto-sexta-pergunta: a fixture monorepo com base ambígua teria 6 perguntas; o teto de 5 corta a 6ª (versionamento) e ela vira nao_detectado', () => {
+    // âncora da spec ONB-1 (:104) que EXERCITA o teto: 3 fixas + tipo_repo + versionamento + planejamento = 6 potenciais
+    const raiz = fixtureComGit('monorepo', 'main');
+    criarBase(raiz, 'staging', 'main');
+    mergear(raiz, 'main', '2025-06-10');
+    for (const d of ['2025-06-05', '2025-06-12', '2025-06-20']) mergear(raiz, 'staging', d);
+    const it = itensLista(raiz, { claude: SEM_MCP });
+    const por = Object.fromEntries(it.map((i) => [i.item, i]));
+    assert.deepEqual(it.map((i) => i.estado), ['ambiguo', 'nao_detectado', 'nao_detectado', 'ambiguo', 'detectado']);
+    assert.ok(por.tipo_repo.candidatos.length >= 2 && por.versionamento.candidatos.length >= 2, 'tipo_repo e versionamento têm escolha real');
+    // sem teto: 3 fixas + tipo_repo + versionamento + planejamento = 6 (ambientes não tem opção: fato, não pergunta)
+    assert.equal(por.versionamento.estado, 'ambiguo');
+    assert.ok(por.versionamento.candidatos.length >= 2);
+    const ps = perguntas(it, null);
+    assert.equal(ps.length, MAX_PERGUNTAS);
+    assert.equal(MAX_PERGUNTAS, 5);
+    assert.deepEqual(idsDe(ps), ['politica', 'autonomia', 'perfil', 'tipo_repo', 'planejamento'], 'a 6ª potencial (versionamento) não é perguntada');
+    const r = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', planejamento: null }, { claude: SEM_MCP });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.ok(r.naoDetectado.includes('versionamento'), 'a pergunta cortada fica nao_detectado');
+    assert.equal('versionamento' in cfgDe(raiz), false);
   });
 
   test('fixture-monorepo-5-perguntas', () => {

@@ -3063,7 +3063,7 @@ test('comando-nao-painel-nao-toca-prefs: pausar e Uso não gravam prefs nem abre
 // ---- T10 (GM-13): mensagem do dono, retomada e negação por pendência ----
 const msgsDo = (m: ReturnType<typeof mundo>) => m.evs.filter((e) => e.tipo === 'dono.mensagem')
 const PEDIDOS_DE = (m: ReturnType<typeof mundo>, op: string) => m.pedidos.filter((q) => q.op === op)
-const TEXTO_PENDENCIA = /gabarito: aprendizado pendente: feche antes de despachar \(.*\)\. Feche com loop\.mjs aprendizado … --gatilho <sessao:seq> ou loop\.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>\. Só o revisor passa\./
+const TEXTO_PENDENCIA = /gabarito: aprendizado pendente: feche antes de despachar \(.*\)\. Feche com `loop\.mjs aprendizado <E\|A> D --regra <t> --entra-em <a> --gatilho <sessao:seq> --eventos <sessao:seq>`, `loop\.mjs aprendizado <E\|A> M --regra <t> --entra-em <a> --gatilho <sessao:seq>` ou `loop\.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>`\. Só o revisor passa\./
 const PARAR_ABERTO = [...B_FEITA, EV(5, 'loop.parar', { motivo: 'teto_rodadas', task: 'b' })]
 
 test('so-composer-grava: composer sem comando grava; peer, plugin, scheduled-trigger e composer com comando não', async ($, on) => {

@@ -119,7 +119,7 @@ if [ "$GUARDA" -eq 1 ]; then instalar_guarda; fi
 if [ "$CODEOWNERS" -eq 1 ]; then
   if [ -e "$DEST/.github/CODEOWNERS" ]; then echo "  mantido  .github/CODEOWNERS"; mantidos=$((mantidos+1)); else
     mkdir -p "$DEST/.github"
-    printf '# Áreas e donos (TIM-1) — preenchido pelo onboarding (gabarito-instalar, fase 2). Uma linha por área:\n# <caminho/>  @<dono>\n' > "$DEST/.github/CODEOWNERS"
+    printf '# Áreas e donos (TIM-1) — preenchido pelo onboarding (gabarito-instalar). Uma linha por área:\n# <caminho/>  @<dono>\n' > "$DEST/.github/CODEOWNERS"
     echo "  criado   .github/CODEOWNERS (esqueleto)"; criados=$((criados+1)); fi
 fi
 

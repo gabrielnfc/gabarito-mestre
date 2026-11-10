@@ -90,6 +90,8 @@ function paraGuarda(raw, { zerarPermitidos }) {
  * própria. Nunca lança. `raw` é o que o JSON for (objeto ou array): quem chama decide o que aceita.
  */
 function lerRawOrigin(raiz) {
+  // raiz que não é caminho: nunca cai no cwd do processo (o repo de quem roda não é o repo consultado)
+  if (typeof raiz !== 'string') return { raw: null, invalida: false, motivo: 'sem refs/remotes/origin/HEAD' };
   let sha;
   try {
     const linhas = gitSeguro(['for-each-ref', '--format=%(refname) %(objectname)', REF_ORIGIN], raiz)

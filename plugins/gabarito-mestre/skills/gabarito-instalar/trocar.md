@@ -69,7 +69,7 @@ grep -c '^# Áreas e donos (TIM-1) — preenchido pelo onboarding' "<raiz>/.gith
   <padrão> <@dono>
   ' "<raiz>"
   ```
-- **esqueleto** (só comentários, e o primeiro é o marcador que `instalar.sh --codeowners` escreve: `# Áreas e donos (TIM-1) — preenchido pelo onboarding (gabarito-instalar, fase 2). Uma linha por área:`): preencha. Mantenha o marcador, troque a linha `# <caminho/>  @<dono>` pelas linhas reais (`Edit`, mostrando o diff antes).
+- **esqueleto** (só comentários, e o primeiro é o marcador que `instalar.sh --codeowners` escreve: `# Áreas e donos (TIM-1) — preenchido pelo onboarding (gabarito-instalar). Uma linha por área:`; o arquivo de uma versão anterior começa igual, só muda o fim da linha, e conta como esqueleto): preencha. Mantenha o marcador, troque a linha `# <caminho/>  @<dono>` pelas linhas reais (`Edit`, mostrando o diff antes).
 - **próprio** (qualquer linha não comentada, ou comentário que não é o marcador): não toque; diga em uma linha que o Apêndice vai citar o arquivo existente.
 
 ## apendice

@@ -582,11 +582,12 @@ test('texto-pendencia: texto único com tipo, sessão e seq; até 6 itens, depoi
   const p = (n: number) => Array.from({ length: n }, (_, i) => ({ tipo: 'parar', sessao: 's0', seq: i + 1 }));
   assert.equal(
     textoPendencia([{ tipo: 'review', sessao: 's0', seq: 3 }]),
-    'gabarito: aprendizado pendente: feche antes de despachar (review s0:3). Feche com loop.mjs aprendizado … --gatilho <sessao:seq> ou loop.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>. Só o revisor passa.',
+    'gabarito: aprendizado pendente: feche antes de despachar (review s0:3). Feche com `loop.mjs aprendizado <E|A> D --regra <t> --entra-em <a> --gatilho <sessao:seq> --eventos <sessao:seq>`, `loop.mjs aprendizado <E|A> M --regra <t> --entra-em <a> --gatilho <sessao:seq>` ou `loop.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>`. Só o revisor passa.',
   );
   assert.match(textoPendencia(p(6)), /\(parar s0:1, parar s0:2, parar s0:3, parar s0:4, parar s0:5, parar s0:6\)\./);
   assert.match(textoPendencia(p(9)), /parar s0:6, e mais 3\)\./);
   assert.doesNotMatch(textoPendencia(p(2)), /\baprender\b/);
+  assert.doesNotMatch(textoPendencia(p(2)), /…/, 'comando inteiro, sem elipse (como o Stop)');
   assert.doesNotMatch(textoPendencia(p(2)), /encerre o turno/);
   assert.equal(textoPendenciaNaoVerificada('diário fora de ordem'), 'gabarito: não consegui verificar pendência de aprendizado (diário fora de ordem). Sem despacho novo; só o revisor passa.');
 });
