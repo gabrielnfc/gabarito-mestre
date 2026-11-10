@@ -228,7 +228,8 @@ function gravarAncora(c) {
 
 // ─────────────────────────────────────────────────────────────── pré-condições comuns
 
-function pausado(c) {
+/** `.harness/PAUSAR` na raiz principal ou no topo da worktree. Exportada para o painel (E4, T9): a mesma regra, sem 3ª cópia. */
+export function pausado(c) {
   if (existsSync(join(c.raiz, '.harness', 'PAUSAR'))) return true;
   try {
     return existsSync(join(git(c.cwd, 'rev-parse', '--show-toplevel'), '.harness', 'PAUSAR'));

@@ -320,7 +320,8 @@ function validarForma(cmd, pos, flags) {
 
 // ─────────────────────────────────────────────────────────────── contexto, plano, config, diário
 
-function contexto(cwd, flags) {
+/** Exportada para o painel (E4, T9): a MESMA regra de raiz principal, entrega por branch ou `--entrega`. */
+export function contexto(cwd, flags) {
   const raiz = raizPrincipal(cwd);
   let entrega = flags.entrega;
   if (entrega === undefined) {
@@ -337,7 +338,8 @@ function contexto(cwd, flags) {
 
 const normalizadoDb = (id) => id.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-function carregarPlano(c) {
+/** Exportada para o painel (E4, T9). Lança `Falha` (`.erro`, `.message`). */
+export function carregarPlano(c) {
   const arq = join(c.dirEntrega, 'plano.json');
   const rel = relative(c.raiz, arq);
   let texto;
@@ -397,7 +399,7 @@ const sha = (s) => createHash('sha256').update(s).digest('hex');
  * Leitura estrita: `diario.ler` descarta linha corrompida em silêncio, o que aqui viraria `concluir` sobre dado perdido.
  * Linha que não é objeto JSON, cadeia de hash quebrada e arquivo que não é regular ⇒ `diario_ilegivel`.
  */
-function lerDiarioEstrito(dir) {
+export function lerDiarioEstrito(dir) {
   let nomes;
   try {
     nomes = readdirSync(dir);
@@ -1032,7 +1034,7 @@ function sinaisDe(c, cfg, eventos, flags) {
 }
 
 /** `sombra.teto` de `origin/HEAD`: ausente ⇒ 26; inteiro >= 1 vale; qualquer outra coisa ⇒ 26 e aviso (a origem corrompida já foi avisada à parte). */
-function tetoDaSombra(origin) {
+export function tetoDaSombra(origin) {
   if (origin.fonte !== 'origin') return { teto: TETO_SOMBRA_PADRAO };
   const s = origin.cfg.sombra;
   if (s === undefined) return { teto: TETO_SOMBRA_PADRAO };
@@ -1253,12 +1255,21 @@ function caminhoDaSpec(raiz, plano) {
  * `{ok:true, spec, sha256}` ou `{ok:false, erro, mensagem}`, `erro` ∈ `sem_spec`, `spec_fora_da_raiz`, `spec_ausente`, `spec_ilegivel`, `spec_vazia`.
  */
 export function shaDaSpec(raiz, plano) {
+  const r = lerSpec(raiz, plano);
+  return r.ok ? { ok: true, spec: r.spec, sha256: r.sha256 } : r;
+}
+
+/**
+ * Os bytes da spec e o sha256 deles (E4, T9): o painel tira o título (H1) dos MESMOS bytes que deram o sha. Mesma resolução de `shaDaSpec`.
+ * `{ok:true, spec, sha256, bytes}` ou `{ok:false, erro, mensagem}`. Nunca lança.
+ */
+export function lerSpec(raiz, plano) {
   const r = caminhoDaSpec(raiz, plano);
   if (!r.ok) return r;
   try {
     const bytes = readFileSync(r.real);
     if (bytes.length === 0) return { ok: false, erro: 'spec_vazia', mensagem: `a spec ${JSON.stringify(r.spec)} tem 0 bytes` };
-    return { ok: true, spec: r.spec, sha256: createHash('sha256').update(bytes).digest('hex') };
+    return { ok: true, spec: r.spec, sha256: createHash('sha256').update(bytes).digest('hex'), bytes };
   } catch (e) {
     if (e?.code === 'ENOENT') return { ok: false, erro: 'spec_ausente', mensagem: `a spec ${JSON.stringify(r.spec)} não existe` };
     return { ok: false, erro: 'spec_ilegivel', mensagem: `a spec ${JSON.stringify(r.spec)} está ilegível (${e?.code ?? e?.message})` };

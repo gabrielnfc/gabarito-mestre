@@ -30,6 +30,7 @@ import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFil
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import { lerConfigOrigin } from '../lib/config.mjs';
+import { tetoDaSombra } from './loop.mjs';
 import * as diario from '../dist/diario.js';
 import { projetarEmendas } from '../dist/emenda.js';
 import { formaInvalida, REQ_RE } from '../dist/formas.js';
@@ -208,18 +209,11 @@ function validarFlagsComuns(flags) {
   if (flags.sessao !== undefined && !SESSAO_RE.test(flags.sessao)) throw new Falha('argumento_invalido', `--sessao fora da forma ${SESSAO_RE}`, {}, 2);
 }
 
-/** `sombra.teto` de `origin/HEAD`: ausente ⇒ 26 sem aviso; presente e inválido, ou config de origin corrompida ⇒ 26 com `aviso` (ausente ≠ corrompido). */
+/** `sombra.teto` de `origin/HEAD`: ausente ⇒ 26 sem aviso; presente e inválido, ou config de origin corrompida ⇒ 26 com `aviso` (ausente ≠ corrompido). A regra do teto é `tetoDaSombra` de `loop.mjs` (E4, T9: sem terceira cópia). */
 function tetoDe(raiz) {
   const o = lerConfigOrigin(raiz);
-  if (o.fonte !== 'origin') {
-    return o.invalida === true ? { teto: TETO_PADRAO, aviso: `config de origin/HEAD inválida (${o.motivo}): teto ${TETO_PADRAO}` } : { teto: TETO_PADRAO };
-  }
-  const s = o.cfg.sombra;
-  if (s === undefined) return { teto: TETO_PADRAO };
-  if (s === null || typeof s !== 'object' || Array.isArray(s)) return { teto: TETO_PADRAO, aviso: `sombra.teto inválido em origin/HEAD (\`sombra\` não é objeto): teto ${TETO_PADRAO}` };
-  if (!Object.hasOwn(s, 'teto')) return { teto: TETO_PADRAO };
-  if (typeof s.teto !== 'number' || !Number.isInteger(s.teto) || s.teto < 1) return { teto: TETO_PADRAO, aviso: `sombra.teto inválido em origin/HEAD (${JSON.stringify(s.teto)}): esperado inteiro ≥ 1; teto ${TETO_PADRAO}` };
-  return { teto: s.teto };
+  if (o.fonte !== 'origin' && o.invalida === true) return { teto: TETO_PADRAO, aviso: `config de origin/HEAD inválida (${o.motivo}): teto ${TETO_PADRAO}` };
+  return tetoDaSombra(o);
 }
 
 /** Caminho do brief, LITERAL: a mesma string que a guarda monta (T12); nunca `relative` de `realpath`. */
