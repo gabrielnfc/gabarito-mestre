@@ -9,7 +9,6 @@ import { formaInvalida } from './formas.ts';
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.ts';
 import type { EstadoTask } from './loop.ts';
 import { dataCivil } from './painel-hora.ts';
-import { tokensDe } from './pouso.ts';
 import type { AgentePainel, AgenteVivo, CorTema, EntradaPainel, EstadoPainel, Evento, PacoteNomes, Papel, Plano, UsoAgente } from './tipos.ts';
 
 const DESCRICAO_RE = /^(\S+) (implementador|revisor|correcao)$/;
@@ -240,6 +239,26 @@ function maisRecente(eventos: Evento[]): Evento | null {
 
 // ---------- projeção ----------
 
+/**
+ * Cópia fiel de `tokensDe` de `pouso.ts` (que importa `node:*` pelo fecho e quebraria o mod): entrada + saída + criação de cache de todo
+ * `custo.medicao`, sem leitura de cache; contagem inválida ⇒ `ok: false`; sem medição ⇒ `tokens: null`. O teste `tokens-igual-ao-pouso` as compara.
+ */
+function tokensDe(eventos: Evento[]): { ok: true; tokens: number | null } | { ok: false } {
+  let tokens: number | null = null;
+  for (const e of eventos) {
+    if (e?.tipo !== 'custo.medicao') continue;
+    let soma = 0;
+    for (const campo of ['input_tokens', 'output_tokens', 'cache_creation', 'cache_read']) {
+      const n = (e.dados ?? {})[campo];
+      if (n === undefined) continue;
+      if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return { ok: false };
+      if (campo !== 'cache_read') soma += n;
+    }
+    tokens = (tokens ?? 0) + soma;
+  }
+  return { ok: true, tokens };
+}
+
 const ENCERRADO: ReadonlySet<string> = new Set(['idle', 'completed', 'failed', 'killed']);
 const ORDEM_COR: readonly CorTema[] = ['claude', 'suggestion', 'autoAccept', 'ide', 'remember'];
 const FAMILIA_RE = /haiku|sonnet|opus|fable/;
@@ -289,12 +308,12 @@ function mutacoesDeHoje(ord: Evento[] | null, entrada: EntradaPainel): { total: 
  * `entrada.agentes === null` (CLI sem mod) ⇒ nenhuma linha de agente e nenhum `◌`; `[]` ⇒ `◌ sem agente` para toda task em voo.
  * Diário que não ordena ⇒ nomes `null`, sem estado de task e sem `◌`: quem sinaliza é o PAROU (T2).
  */
-export function projetarEquipe(plano: Plano, eventos: Evento[], entrada: EntradaPainel): EstadoPainel['equipe'] {
+export function projetarEquipe(plano: Plano, eventos: Evento[] | null, entrada: EntradaPainel): EstadoPainel['equipe'] {
   const todos: Evento[] = Array.isArray(eventos) ? eventos : [];
   const ord = ordemSegura(todos);
   const nomes = nomesPorPapel(todos, entrada.pacote);
   const estados = estadosDasTasks(plano, ord);
-  const base = ord ?? todos;
+  const base = ord ?? todos.filter(ehObjeto); // lixo na lista (null) não derruba a projeção
 
   const iniciada = (task: string, papel: Papel): Evento | null => {
     const chave = chaveDoPar(task, papel);

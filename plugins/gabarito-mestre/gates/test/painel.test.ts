@@ -13,6 +13,8 @@ import { dependeDeVoce, etaDe, projetarPainel, TABELA_PARAR } from '../src/paine
 import { renderPainel } from '../src/painel.ts';
 import { duracoes, mediana } from '../src/diario.ts';
 import { contarConsultas } from '../src/sombra.ts';
+import { tokensDe } from '../src/pouso.ts';
+import { projetarEquipe } from '../src/painel-equipe.ts';
 import { horaLocal } from '../src/painel-hora.ts';
 import type { AgenteVivo, EntradaPainel, EstadoPainel, Evento, MotivoParar, Plano, TipoEvento } from '../src/tipos.ts';
 
@@ -829,4 +831,48 @@ test('fecho-sem-node: dist/painel.js e tudo que ele importa (relativo) não usam
   assert.ok(vistos.size >= 5, [...vistos].join(','));
   const fonte = readFileSync(join(AQUI, '..', 'src', 'painel.ts'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   assert.equal(/\bDate\.now\s*\(|from\s*['"]node:|process\.|new Date\s*\(\s*\)|Intl\.Segmenter/.test(fonte), false, 'painel.ts: relógio, node:* ou Segmenter');
+});
+
+test('equipe-com-lixo-e-null: eventos null ou com elemento null chegam a projetarEquipe sem lançar; a equipe sai e o PAROU vem do painel', () => {
+  for (const evs of [null, [null as unknown as Evento], [undefined as unknown as Evento, ...D([ini(0, 'T1')])]]) {
+    assert.doesNotThrow(() => projetarEquipe(P('T1'), evs, entrada()));
+    const eq = projetarEquipe(P('T1'), evs, entrada());
+    assert.equal(eq.lider.nome, 'GANDALF');
+    assert.equal(eq.lider.tok, null);
+    assert.equal(eq.sombra.nome, 'ELROND');
+    const s = proj(P('T1'), evs);
+    assert.equal(s.parar?.motivo, 'diario_invalido');
+    assert.equal(s.equipe.lider.nome, 'GANDALF');
+  }
+});
+
+test('tokens-igual-ao-pouso: o tok do líder (cópia sem node:*) = tokensDe de pouso.ts, com medição, sem medição e com contagem inválida', () => {
+  const med = (t: number, dados: Record<string, unknown>, agente = 'orquestrador') => ({ ...e(t, 'custo.medicao', dados), agente });
+  const casos: Evento[][] = [
+    [],
+    D([ini(0, 'T1')]),
+    D([e(0, 'custo.medicao', { agente: 'orquestrador', input_tokens: 10, output_tokens: 5, cache_creation: 3, cache_read: 1000 })]),
+    D([e(0, 'custo.medicao', { agente: 'orquestrador', input_tokens: 10 }), e(1, 'custo.medicao', { agente: 'orquestrador', output_tokens: 7 })]),
+    D([e(0, 'custo.medicao', { agente: 'orquestrador', input_tokens: -1 })]),
+    D([e(0, 'custo.medicao', { agente: 'orquestrador', input_tokens: '9' })]),
+  ];
+  for (const evs of casos) {
+    const doOrq = evs.map((x) => ({ ...x, agente: 'orquestrador' })) as Evento[];
+    const esperado = tokensDe(doOrq.filter((x) => x.tipo === 'custo.medicao'));
+    const tok = projetarEquipe(P('T1'), doOrq, entrada()).lider.tok;
+    assert.equal(tok, esperado.ok ? esperado.tokens : null, JSON.stringify(evs.map((x) => x.dados)));
+  }
+  assert.equal(projetarEquipe(P('T1'), D([e(0, 'custo.medicao', { input_tokens: 10, output_tokens: 5, cache_creation: 3, cache_read: 1000 })]).map((x) => ({ ...x, agente: 'orquestrador' })) as Evento[], entrada()).lider.tok, 18);
+  void med;
+});
+
+test('fecho-sem-node-pouso: nenhum arquivo do fecho de dist/painel.js é pouso.js nem importa node:*', () => {
+  const vistos: string[] = [];
+  const visitar = (arq: string): void => {
+    if (vistos.includes(arq)) return;
+    vistos.push(arq);
+    for (const m of readFileSync(arq, 'utf8').matchAll(/\bfrom\s*['"](\.{1,2}\/[^'"]+)['"]/g)) visitar(join(dirname(arq), m[1]));
+  };
+  visitar(join(AQUI, '..', 'dist', 'painel.js'));
+  assert.equal(vistos.some((v) => v.endsWith('pouso.js') || v.endsWith('diario.js') || v.endsWith('sombra.js')), false, vistos.join(','));
 });
