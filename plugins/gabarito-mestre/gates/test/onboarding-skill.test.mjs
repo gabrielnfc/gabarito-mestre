@@ -257,7 +257,11 @@ test('skill-cita-trocar', () => {
   const cmdId = /modelo-resolvido[^\n]*gabarito-instalar \(trocar (\w+)\)/.exec(cmd)?.[1];
   assert.ok(doctorId && cmdId, `doctor=${doctorId} comando=${cmdId}`);
   assert.equal(cmdId, doctorId, 'doctor e comando dão o mesmo nome para a mesma ação');
-  assert.ok(SKILL.includes(`\`${doctorId}\`: o que se decide ali é o \`perfil\``), 'a skill trata esse nome como trocar perfil');
+  // FX3 r2: `orquestracao` deixou de ser "trocar perfil" (regra mudou): recalibra o paralelismo, com prévia e ok, na seção `orquestracao` do trocar.md
+  assert.ok(SKILL.includes(`\`${doctorId}\`: recalibra o paralelismo desta máquina`), 'a skill descreve o que o doctor manda fazer');
+  assert.match(TROCAR, /^## orquestracao\b/m);
+  assert.match(TROCAR, /"_recalibrar": true/);
+  assert.match(TROCAR, /sem default `sim`/);
   assert.doesNotMatch(cmd, /\(fase \d/);
 });
 

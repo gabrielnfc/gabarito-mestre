@@ -13,7 +13,7 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, cpSync, realpathSync, rmSync, chmodSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
+import { tmpdir, homedir, availableParallelism } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -1490,17 +1490,90 @@ describe('gravar', () => {
       const r2 = gravarCom(raiz2, FIXAS);
       assert.equal(r2.ok, true);
       assert.deepEqual(cfgDe(raiz2).orquestracao.paralelismo, { simultaneos: 3, teto: 6, modo: 'auto' });
-      // calibração em dia (≤ 180 d) fica como está; vencida (181 d) é refeita com a data de hoje
+      // calibração em dia fica como está
       const emDia = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { paralelismo: { simultaneos: 1, teto: 5, calibradoEm: '2025-01-01' } } });
       assert.equal(gravarCom(emDia, FIXAS).ok, true);
       assert.deepEqual(cfgDe(emDia).orquestracao.paralelismo, { simultaneos: 1, teto: 5, calibradoEm: '2025-01-01' });
-      // calibração com data NO FUTURO não vale (relógio errado ou config forjada): refeita
-      const futura = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { paralelismo: { simultaneos: 1, teto: 5, calibradoEm: '2099-01-01' } } });
-      assert.equal(gravarCom(futura, FIXAS).ok, true);
-      assert.equal(cfgDe(futura).orquestracao.paralelismo.calibradoEm, HOJE);
-      const vencida = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { paralelismo: { simultaneos: 1, teto: 5, calibradoEm: '2024-12-31' } } });
-      assert.equal(gravarCom(vencida, FIXAS).ok, true);
-      assert.deepEqual([cfgDe(vencida).orquestracao.paralelismo.teto, cfgDe(vencida).orquestracao.paralelismo.calibradoEm], [2, HOJE]);
+      // FX3 r2 (MAJOR-1): vencida (181 d), futura e inválida do dono NUNCA são sobrescritas por um `gravar` comum (onboarding repetido, trocar perfil):
+      // valores E `limites` ficam; só o doctor avisa. A sonda do revisor: 1/2 vencido + trocar perfil ⇒ 1/2 e limites intactos.
+      const limites = { loadPorCoreMax: 0.8, memDisponivelMinMB: 8192, discoLivreMinGB: 20 };
+      for (const cal of ['2024-12-31', '2099-01-01', 'ontem', '2026-02-30']) {
+        const dono = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { paralelismo: { simultaneos: 1, teto: 2, limites, calibradoEm: cal } } });
+        assert.equal(gravarCom(dono, { ...FIXAS, perfil: 'economia' }).ok, true);
+        assert.deepEqual(cfgDe(dono).orquestracao.paralelismo, { simultaneos: 1, teto: 2, limites, calibradoEm: cal }, `calibradoEm ${cal}: o gravar comum não toca no paralelismo do dono`);
+        assert.equal(cfgDe(dono).orquestracao.perfil, 'economia', 'o perfil trocou');
+      }
+      // em dia mas teto < simultaneos também fica (o doctor avisa; só `trocar orquestracao` conserta)
+      const inv = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { paralelismo: { simultaneos: 5, teto: 4, calibradoEm: '2025-06-01' } } });
+      assert.equal(gravarCom(inv, FIXAS).ok, true);
+      assert.deepEqual(cfgDe(inv).orquestracao.paralelismo, { simultaneos: 5, teto: 4, calibradoEm: '2025-06-01' });
+      // só um dos campos à mão (teto sem simultaneos, sem data): é do dono, `gravar` comum não toca (MINOR-4 R2)
+      const soTeto = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { paralelismo: { teto: 6 } } });
+      assert.equal(gravarCom(soTeto, FIXAS).ok, true);
+      assert.deepEqual(cfgDe(soTeto).orquestracao.paralelismo, { teto: 6 });
+      // calibrado hoje e em dia: um `gravar` comum não refaz (R3)
+      const hojeOk = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { paralelismo: { simultaneos: 1, teto: 3, calibradoEm: HOJE } } });
+      assert.equal(gravarCom(hojeOk, FIXAS).ok, true);
+      assert.deepEqual(cfgDe(hojeOk).orquestracao.paralelismo, { simultaneos: 1, teto: 3, calibradoEm: HOJE });
+      // só `arquivosDeContenda` (sem nenhum campo de calibração) conta como ausente: calibra e preserva a lista
+      const so = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { paralelismo: { arquivosDeContenda: ['x.lock'] } } });
+      assert.equal(gravarCom(so, FIXAS).ok, true);
+      assert.deepEqual([cfgDe(so).orquestracao.paralelismo.teto, cfgDe(so).orquestracao.paralelismo.calibradoEm, cfgDe(so).orquestracao.paralelismo.arquivosDeContenda], [2, HOJE, ['x.lock']]); // 4 núcleos ⇒ teto 2
+      // núcleos reais sem GABARITO_CAP_CORES (MINOR-4 R1): a conta usa os do SO
+      delete process.env.GABARITO_CAP_CORES;
+      const real = fixtureComGit('completa', 'trunk');
+      assert.equal(gravarCom(real, FIXAS).ok, true);
+      const nuc = availableParallelism();
+      assert.deepEqual([cfgDe(real).orquestracao.paralelismo.simultaneos, cfgDe(real).orquestracao.paralelismo.teto], [Math.min(3, Math.max(1, Math.floor(nuc / 4))), Math.min(8, Math.max(2, Math.floor(nuc / 2)))]);
+    } finally {
+      if (antes === undefined) delete process.env.GABARITO_CAP_CORES; else process.env.GABARITO_CAP_CORES = antes;
+    }
+  });
+
+  test('trocar-orquestracao-recalibra-com-previa (FX3 r2)', () => {
+    const antes = process.env.GABARITO_CAP_CORES;
+    try {
+      process.env.GABARITO_CAP_CORES = '16';
+      const limites = { loadPorCoreMax: 0.8, memDisponivelMinMB: 8192, discoLivreMinGB: 20 };
+      const estados = {
+        vencido: { simultaneos: 1, teto: 2, limites, calibradoEm: '2024-12-31' },
+        invalido: { simultaneos: 1, teto: 2, limites, calibradoEm: 'ontem' },
+        futuro: { simultaneos: 1, teto: 2, limites, calibradoEm: '2099-01-01' },
+        'teto<simultaneos': { simultaneos: 5, teto: 4, limites, calibradoEm: '2025-06-01' },
+        'a mão': { simultaneos: 1, teto: 2, limites },
+      };
+      for (const [nome, par] of Object.entries(estados)) {
+        const raiz = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { paralelismo: { ...par, arquivosDeContenda: ['x.lock'] } } });
+        // a prévia (CLI real) mostra antes ⇒ depois e não escreve
+        const cli = spawnSync(process.execPath, [join(AQUI, '../scripts/onboarding.mjs'), 'detectar', '--recalibrar', '--root', raiz, '--hoje', HOJE], { encoding: 'utf8', env: { ...process.env, GABARITO_CAP_CORES: '16' } });
+        const j = JSON.parse(cli.stdout);
+        assert.deepEqual(j.recalibrar.antes, JSON.parse(JSON.stringify({ simultaneos: par.simultaneos, teto: par.teto, limites, calibradoEm: par.calibradoEm })), nome);
+        assert.deepEqual([j.recalibrar.depois.simultaneos, j.recalibrar.depois.teto, j.recalibrar.depois.calibradoEm, j.recalibrar.cores], [3, 8, HOJE, 16]);
+        assert.match(j.previa, /calibração do paralelismo:\n- recalibrar o paralelismo desta máquina \(16 núcleos\):/);
+        assert.ok(j.previa.includes(`simultaneos ${par.simultaneos}, teto ${par.teto}, limites carga 0.8/memória 8192 MB/disco 20 GB ⇒ simultaneos 3, teto 8, limites carga 1.5/memória 2048 MB/disco 5 GB`), j.previa);
+        assert.equal(cfgDe(raiz).orquestracao.paralelismo.simultaneos, par.simultaneos, 'a prévia não grava');
+        // sem o ok (`_recalibrar`) nada muda; com ele, recalibra e mantém o resto do paralelismo
+        assert.equal(gravarCom(raiz, FIXAS).ok, true);
+        assert.deepEqual(cfgDe(raiz).orquestracao.paralelismo.limites, limites, `${nome}: sem confirmação, limites intactos`);
+        assert.equal(gravarCom(raiz, FIXAS, { dryRun: true }).ok, true);
+        assert.equal(gravarCom(raiz, { ...FIXAS, _recalibrar: true }).ok, true);
+        const par2 = cfgDe(raiz).orquestracao.paralelismo;
+        assert.deepEqual([par2.simultaneos, par2.teto, par2.calibradoEm, par2.limites, par2.arquivosDeContenda], [3, 8, HOJE, { loadPorCoreMax: 1.5, memDisponivelMinMB: 2048, discoLivreMinGB: 5 }, ['x.lock']], nome);
+      }
+      // `_recalibrar` só vale `true`
+      const raiz = fixtureComGit('completa', 'trunk');
+      for (const ruim of [false, 'sim', 1, null]) {
+        const r = gravarCom(raiz, { ...FIXAS, _recalibrar: ruim });
+        assert.equal(r.ok, false);
+        assert.equal(r.erro, 'respostas_invalidas');
+      }
+      // onboarding de 1ª vez: a prévia já diz o que será gravado
+      const nova = spawnSync(process.execPath, [join(AQUI, '../scripts/onboarding.mjs'), 'detectar', '--root', raiz, '--hoje', HOJE], { encoding: 'utf8', env: { ...process.env, GABARITO_CAP_CORES: '16' } });
+      assert.match(JSON.parse(nova.stdout).previa, /o paralelismo será calibrado para esta máquina \(16 núcleos\): simultaneos 3, teto 8/);
+      // com paralelismo do dono, o `detectar` comum não promete calibração
+      const dono = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { paralelismo: estados.vencido } });
+      const c2 = spawnSync(process.execPath, [join(AQUI, '../scripts/onboarding.mjs'), 'detectar', '--root', dono, '--hoje', HOJE], { encoding: 'utf8' });
+      assert.doesNotMatch(JSON.parse(c2.stdout).previa, /calibra/);
     } finally {
       if (antes === undefined) delete process.env.GABARITO_CAP_CORES; else process.env.GABARITO_CAP_CORES = antes;
     }

@@ -681,20 +681,26 @@ describe('T13 doctor — aprendizado sem destino, onboarding não detectado, sem
 const COMANDO_PARA_COLAR = /capacidade\.mjs|onboarding-config\.mjs|--set|node |\.mjs/;
 const semClaude = (cmd, args, opts) => (cmd === 'claude' ? { rc: 0, stdout: 'No MCP servers configured.\n', stderr: '', motivo: null } : rodarReal(cmd, args, opts));
 
-/** Onboarding REAL (detectar → perguntas no default → gravar, sem `claude` de verdade) num repo de teste e doctor --json pela borda. */
-function onboardingEDoctor(arquivos = {}, hoje = new Date().toISOString().slice(0, 10)) {
-  const dir = repoComGit({ 'AGENTS.md': agents(0), 'package.json': '{"name":"x"}', ...arquivos });
+/** Onboarding REAL (detectar → perguntas no default → gravar, sem `claude` de verdade) num repo de teste e doctor --json pela borda.
+ *  `recalibrar` = o item `trocar orquestracao` depois do ok do dono (`_recalibrar: true`). */
+function onboardingNoRepo(dir, { recalibrar = false, hoje = new Date().toISOString().slice(0, 10) } = {}) {
   const fatos = coletarFatos(dir, { rodar: semClaude, hoje });
   const itens = detectar(fatos);
-  const resp = { _previa: JSON.parse(JSON.stringify(itens)) };
+  const resp = { _previa: JSON.parse(JSON.stringify(itens)), ...(recalibrar ? { _recalibrar: true } : {}) };
   for (const p of perguntas(itens, fatos.configExistente)) resp[p.id] = p.default;
   const arqResp = join(mkdtempSync(join(tmpdir(), 'fx3-resp-')), 'respostas.json');
   writeFileSync(arqResp, JSON.stringify(resp));
   const g = gravar(dir, arqResp, { rodar: semClaude, hoje, fuso: 'UTC' });
   assert.equal(g.ok, true, JSON.stringify(g));
-  const out = JSON.parse(spawnSync(process.execPath, [SCRIPT, '--json'], { cwd: dir, encoding: 'utf8' }).stdout);
-  return { dir, out, cfg: JSON.parse(readFileSync(join(dir, 'harness.config.json'), 'utf8')) };
+  return doctorDe(dir);
 }
+const doctorDe = (dir) => {
+  const out = JSON.parse(spawnSync(process.execPath, [SCRIPT, '--json'], { cwd: dir, encoding: 'utf8' }).stdout);
+  let cfg = null;
+  try { cfg = JSON.parse(readFileSync(join(dir, 'harness.config.json'), 'utf8')); } catch { /* config ausente ou torta: o doctor é que avisa */ }
+  return { dir, out, cfg };
+};
+const onboardingEDoctor = (arquivos = {}, opts) => onboardingNoRepo(repoComGit({ 'AGENTS.md': agents(0), 'package.json': '{"name":"x"}', ...arquivos }), opts);
 const textos = (r) => [r.label, r.fix, r.evidence].filter((t) => typeof t === 'string');
 
 describe('FX3 doctor — nenhum comando para colar depois do onboarding', () => {
@@ -724,14 +730,84 @@ describe('FX3 doctor — nenhum comando para colar depois do onboarding', () => 
     assert.ok(cfg.orquestracao.paralelismo.simultaneos >= 1 && cfg.orquestracao.paralelismo.teto >= cfg.orquestracao.paralelismo.simultaneos);
   });
 
-  test('doctor-trocar-orquestracao-renova (P9): calibração vencida + gravar real ⇒ PAR-1 volta a passar; valor posto à mão sem data fica', () => {
-    const velho = { orquestracao: { paralelismo: { simultaneos: 1, teto: 2, calibradoEm: '2020-01-01' } } };
-    const { out, cfg } = onboardingEDoctor({ 'harness.config.json': JSON.stringify(velho) });
-    assert.equal(out.resultados.find((r) => r.id === 'paralelismo-calibrado').found, true);
-    assert.notEqual(cfg.orquestracao.paralelismo.calibradoEm, '2020-01-01');
+  test('doctor-trocar-orquestracao-renova (P9): gravar comum NUNCA recalibra (o doctor segue avisando); `trocar orquestracao` (com `_recalibrar`) recalibra e o PAR-1 passa', () => {
+    const limites = { loadPorCoreMax: 0.8, memDisponivelMinMB: 8192, discoLivreMinGB: 20 };
+    const velho = { orquestracao: { paralelismo: { simultaneos: 1, teto: 2, limites, calibradoEm: '2020-01-01' } } };
+    const comum = onboardingEDoctor({ 'harness.config.json': JSON.stringify(velho) });
+    assert.deepEqual(comum.cfg.orquestracao.paralelismo, velho.orquestracao.paralelismo, 'onboarding repetido não toca nos valores nem nos limites do dono');
+    assert.equal(comum.out.resultados.find((r) => r.id === 'paralelismo-calibrado').found, false, 'o doctor segue avisando');
+    const troca = onboardingNoRepo(comum.dir, { recalibrar: true });
+    assert.equal(troca.out.resultados.find((r) => r.id === 'paralelismo-calibrado').found, true);
+    assert.notEqual(troca.cfg.orquestracao.paralelismo.calibradoEm, '2020-01-01');
+    assert.notDeepEqual(troca.cfg.orquestracao.paralelismo.limites, limites, 'o item explícito recalibra também os limites (a prévia mostrou)');
     const aMao = { orquestracao: { paralelismo: { simultaneos: 7, teto: 9 } } };
     const m = onboardingEDoctor({ 'harness.config.json': JSON.stringify(aMao) });
-    assert.deepEqual([m.cfg.orquestracao.paralelismo.simultaneos, m.cfg.orquestracao.paralelismo.teto], [7, 9], 'valor do dono nunca é sobrescrito');
+    assert.deepEqual([m.cfg.orquestracao.paralelismo.simultaneos, m.cfg.orquestracao.paralelismo.teto], [7, 9], 'valor do dono nunca é sobrescrito por gravar comum');
     assert.equal(m.cfg.orquestracao.paralelismo.calibradoEm, undefined, 'sem medição não há data');
+  });
+
+  test('doctor-par1-laco-fecha (P9): em TODO estado que o PAR-1 reprova, seguir o fix do doctor (`trocar orquestracao` real) faz o PAR-1 passar', () => {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const estados = {
+      ausente: {},
+      vencido: { simultaneos: 1, teto: 2, calibradoEm: '2020-01-01' },
+      invalido: { simultaneos: 1, teto: 2, calibradoEm: 'ontem' },
+      futuro: { simultaneos: 1, teto: 2, calibradoEm: '2099-01-01' },
+      'teto<simultaneos (em dia)': { simultaneos: 5, teto: 4, calibradoEm: hoje },
+      'a mão sem data': { simultaneos: 7, teto: 9 },
+      'sem simultaneos': { teto: 4, calibradoEm: hoje },
+    };
+    const fixDoDoctor = doctor.CHECKS.find((c) => c.id === 'paralelismo-calibrado').fix;
+    assert.match(fixDoDoctor, /gabarito-instalar \(trocar orquestracao\)/);
+    for (const [nome, par] of Object.entries(estados)) {
+      const dir = repoComGit({ 'AGENTS.md': agents(0), 'package.json': '{"name":"x"}', ...(nome === 'ausente' ? {} : { 'harness.config.json': JSON.stringify({ orquestracao: { paralelismo: par } }) }) });
+      const antes = doctorDe(dir).out.resultados.find((r) => r.id === 'paralelismo-calibrado');
+      // data no futuro: o PAR-1 do doctor a aceita hoje (só mede `> 180 d`); o onboarding é que não a trata como calibração. Segue passando depois.
+      assert.equal(antes.found, nome === 'futuro', `${nome}: premissa do estado`);
+      const trocou = onboardingNoRepo(dir, { recalibrar: true });
+      const par1 = trocou.out.resultados.find((r) => r.id === 'paralelismo-calibrado');
+      assert.equal(par1.found, true, `${nome}: o fix do doctor não fecha o PAR-1: ${par1.evidence}`);
+      assert.equal(trocou.cfg.orquestracao.paralelismo.calibradoEm, hoje, nome);
+    }
+  });
+
+  test('doctor-avisos-dinamicos-sem-comando: o texto que o doctor REAL imprime (evidência/aviso de cada check de aviso, em estados que os produzem) não manda colar comando', () => {
+    // única exceção declarada: o comando de fechamento do aprendizado é do orquestrador (loop.mjs), exigido pelo REQ-APR-4 e fixado pelos testes do T13.
+    const EXCECAO_APRENDIZADO = /^aprendizado-sem-destino: .*\bloop\.mjs aprendizado\b/;
+    const velho = '2020-01-01';
+    const estados = [
+      { 'harness.config.json': JSON.stringify({ orquestracao: { modelo: { alias: 'opus', resolvidoEm: velho, validadeDias: 90 }, modelos: { implementador: 'haiku', revisor: 'desconhecido', fantasma: 'opus' }, perfil: 'nao-existe' } }) },
+      { 'harness.config.json': JSON.stringify({ orquestracao: { modelo: { resolvidoEm: 'x' }, modelos: 'torto' } }) },
+      { 'harness.config.json': JSON.stringify({ orquestracao: 'torto', onboarding: { naoDetectado: ['versionamento', 'orquestracao', 'tipo_repo'] }, versionamento: { branchPadrao: 'main' } }) },
+      { 'harness.config.json': JSON.stringify({ onboarding: { naoDetectado: 'x' }, versionamento: { resolvidoEm: velho } }) },
+      { 'harness.config.json': JSON.stringify({ orquestracao: { modelo: {} }, onboarding: null }) },
+      { 'harness.config.json': '{ torto' },
+      { 'harness.config.json': JSON.stringify({ guarda: { ambientes: {} } }) },
+    ];
+    let vistos = 0;
+    const varre = (out, rotulo) => {
+      for (const r of out.resultados.filter((x) => x.level === 'warn' && !x.found)) {
+        for (const t of [r.evidence, r.fix, r.label].filter((x) => typeof x === 'string')) {
+          if (COMANDO_PARA_COLAR.test(t)) assert.match(`${r.id}: ${t}`, EXCECAO_APRENDIZADO, `${rotulo}: ${r.id}: ${t}`);
+          vistos += 1;
+        }
+      }
+      for (const a of out.avisos) {
+        if (COMANDO_PARA_COLAR.test(a)) assert.match(a, EXCECAO_APRENDIZADO, `${rotulo}: aviso: ${a}`);
+        vistos += 1;
+      }
+    };
+    estados.forEach((arquivos, i) => varre(doctorDe(repoComGit({ 'AGENTS.md': agents(1), ...arquivos })).out, `estado ${i}`));
+    // aprendizado: pendência real (a exceção), diário ilegível e plano ilegível (sem comando); sem dist/ do núcleo (sem comando)
+    const dir = repoComGit({ 'AGENTS.md': agents(1) });
+    arq(dir, '.harness/entregas/GM-9/plano.json', '{ torto');
+    arq(dir, '.harness/entregas/GM-8/events.s1.jsonl', '{ torto\n');
+    const o = doctorDe(dir).out;
+    assert.ok(o.avisos.some((a) => a.startsWith('aprendizado-sem-destino: ')), 'premissa: o estado produz aviso de aprendizado');
+    varre(o, 'aprendizado ilegível');
+    assert.ok(vistos > 10, `a varredura viu poucos textos (${vistos})`);
+    // o planejamento da exceção: o comando do aprendizado EXISTE no aviso de pendência real (senão a exceção seria letra morta)
+    assert.match('aprendizado-sem-destino: feche com: loop.mjs aprendizado nada', EXCECAO_APRENDIZADO);
+    assert.doesNotMatch('modelo-resolvido: rode node x.mjs', EXCECAO_APRENDIZADO);
   });
 });

@@ -495,23 +495,43 @@ function detectarOrquestracao(f) {
 /** Validade da calibração do paralelismo; igual a `ATTEST_TTL_DAYS` do doctor (checagem `paralelismo-calibrado`). */
 const VALIDADE_CALIBRACAO_DIAS = 180;
 
+/** Calibração por núcleos desta máquina: a de `capacidade.calibrar` (a mesma de `--sugerir`); `GABARITO_CAP_CORES` vale como em `medir`. */
+export function calibracaoDaMaquina(hoje) {
+  const env = Number(process.env.GABARITO_CAP_CORES);
+  const cores = Number.isFinite(env) && env > 0 ? env : availableParallelism();
+  const { simultaneos, teto, limites } = capacidade.calibrar({ cores });
+  return { cores, paralelismo: { simultaneos, teto, limites, calibradoEm: hoje } };
+}
+
+/** Sem nenhum campo de calibração (config nova, ou só `arquivosDeContenda`): é o onboarding de 1ª vez para o paralelismo. */
+const semCalibracao = (par) => !ehObjeto(par) || ['simultaneos', 'teto', 'limites', 'calibradoEm'].every((k) => par[k] === undefined);
+
 /**
- * FX3 (GM-13): quem calibra é o script, nunca o usuário colando comando. Sem `orquestracao.paralelismo` (o onboarding detectou os DEFAULTS)
- * ou com `calibradoEm` vencido/inválido, grava a calibração por núcleos de `capacidade.calibrar` (a mesma de `--sugerir`; `GABARITO_CAP_CORES`
- * vale como em `medir`). `simultaneos`/`teto` que o dono pôs à mão, sem data, ficam: nunca viram "calibrado" sem medição. Pura além da leitura de núcleos.
+ * FX3 r2 (GM-13): quem calibra é o script, nunca o usuário colando comando, e nunca por cima do que o dono tem sem ele ver.
+ * Só grava a calibração quando (1) o paralelismo está AUSENTE (onboarding de 1ª vez) ou (2) o item `trocar orquestracao` pediu
+ * (`recalibrar`, depois de a prévia mostrar antes ⇒ depois e o dono confirmar). Vencido, inválido, teto < simultaneos ou posto à mão
+ * ficam como estão em qualquer outro `gravar`: o doctor segue avisando. Pura além da leitura de núcleos.
  */
-function paralelismoCalibrado(par, hoje) {
-  const atual = ehObjeto(par) ? par : {};
-  const cal = atual.calibradoEm;
-  const aMao = cal === undefined && (atual.simultaneos !== undefined || atual.teto !== undefined);
-  if (aMao) return {};
-  if (cal !== undefined) {
-    const d = diasEntre(String(cal), hoje);
-    if (Number.isFinite(d) && d >= 0 && d <= VALIDADE_CALIBRACAO_DIAS) return {};
-  }
-  const cores = Number(process.env.GABARITO_CAP_CORES);
-  const { simultaneos, teto, limites } = capacidade.calibrar({ cores: Number.isFinite(cores) && cores > 0 ? cores : availableParallelism() });
-  return { paralelismo: { simultaneos, teto, limites, calibradoEm: hoje } };
+function paralelismoCalibrado(par, hoje, recalibrar) {
+  if (!recalibrar && !semCalibracao(par)) return {};
+  return { paralelismo: calibracaoDaMaquina(hoje).paralelismo };
+}
+
+const textoParalelismo = (p) => {
+  const l = ehObjeto(p?.limites) ? p.limites : {};
+  return `simultaneos ${p?.simultaneos ?? '—'}, teto ${p?.teto ?? '—'}, limites carga ${l.loadPorCoreMax ?? '—'}/memória ${l.memDisponivelMinMB ?? '—'} MB/disco ${l.discoLivreMinGB ?? '—'} GB`;
+};
+
+/** Prévia do item `trocar orquestracao`: o que está gravado ⇒ o que será gravado (nada é escrito aqui). */
+export function previaRecalibracao(par, hoje) {
+  const { cores, paralelismo } = calibracaoDaMaquina(hoje);
+  const antes = ehObjeto(par) && !semCalibracao(par) ? par : null;
+  return {
+    antes: antes === null ? null : { simultaneos: antes.simultaneos, teto: antes.teto, limites: antes.limites, calibradoEm: antes.calibradoEm },
+    depois: paralelismo,
+    cores,
+    texto: `recalibrar o paralelismo desta máquina (${cores} núcleos): ${antes === null ? 'hoje sem calibração gravada' : textoParalelismo(antes)} ⇒ ${textoParalelismo(paralelismo)}; só grava com o seu ok`,
+  };
 }
 
 /** Os 5 itens, na `ORDEM_ITENS`. Pura: só lê `fatos`. */
@@ -644,7 +664,7 @@ function efetivaDe(politica, autonomia, fuso) {
  * Prévia em texto: `detectei:` com 1 fato por linha (estado e fonte), as 3 decisões com default, a política efetiva quando
  * difere da escolhida, a janela padrão e a linha `trocar <item>`. `fuso` entra na janela padrão (CLI: o do `Intl`).
  */
-export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal() } = {}) {
+export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal(), calibracao = [] } = {}) {
   const ps = Object.fromEntries(perguntasDoOnboarding.map((p) => [p.id, p]));
   const linhas = ['detectei:'];
   for (const i of itens) {
@@ -677,6 +697,7 @@ export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal() } = {}
       else linhas.push(`- ${i.item}: fica nao_detectado (acima do teto de ${MAX_PERGUNTAS} perguntas); nada é gravado para ele`);
     }
   }
+  if (calibracao.length > 0) linhas.push('', 'calibração do paralelismo:', ...calibracao.map((l) => `- ${l}`));
   linhas.push('', `Para trocar um item depois: trocar <item> (${ORDEM_ITENS.join(', ')}).`);
   return linhas.join('\n');
 }
@@ -686,7 +707,7 @@ export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal() } = {}
  * resposta usa o default dela. `fuso` entra só na janela padrão. → `{ patches: { [secao]: object }, perfil?: 'repo-sem-app', naoDetectado }`.
  * Resolvido = detectado ou perguntado e respondido (≠ null); o resto vai a `naoDetectado` na ordem de `ORDEM_ITENS` e nada dele é gravado.
  */
-export function configDasRespostas(itens, respostas, existente, hoje, { fuso = 'UTC' } = {}) {
+export function configDasRespostas(itens, respostas, existente, hoje, { fuso = 'UTC', recalibrar = false } = {}) {
   const cfg = configLegivel(existente);
   const ps = Object.fromEntries(perguntas(itens, existente).map((p) => [p.id, p]));
   const dado = respostas ?? {};
@@ -730,7 +751,7 @@ export function configDasRespostas(itens, respostas, existente, hoje, { fuso = '
   const orq = ehObjeto(cfg.orquestracao) ? cfg.orquestracao : {};
   const modeloAtual = ehObjeto(orq.modelo) ? orq.modelo : {};
   patches.orquestracao = {
-    ...paralelismoCalibrado(orq.paralelismo, hoje),
+    ...paralelismoCalibrado(orq.paralelismo, hoje, recalibrar),
     perfil,
     modelo: {
       alias: resolverModelo({ ...orq, perfil }, 'revisor_final').modelo,
@@ -778,7 +799,8 @@ export function gravar(raiz, caminhoRespostas, { rodar = rodarReal, hoje = hojeI
   if (cfg.erro) return falha('config_invalida', `harness.config.json ilegível (${cfg.erro})`);
   const lidas = lerRespostas(caminhoRespostas);
   if (lidas.ok === false) return lidas;
-  const { _previa: previaVista, ...respostas } = lidas.respostas;
+  const { _previa: previaVista, _recalibrar: recalibrarPedido, ...respostas } = lidas.respostas;
+  if (recalibrarPedido !== undefined && recalibrarPedido !== true) return falha('respostas_invalidas', '`_recalibrar` só vale `true` (o item `trocar orquestracao` depois do ok do dono)');
   if (!Array.isArray(previaVista)) return falha('previa_ausente', 'respostas sem `_previa` (copie `itens` da saída de `detectar`); sem a prévia não há como saber se a detecção mudou');
   if (!previaVista.every((i) => ehObjeto(i) && typeof i.item === 'string' && typeof i.estado === 'string')) return falha('respostas_invalidas', '`_previa` precisa ser a lista `itens` de `detectar` ({ item, estado, valor })');
   let fatos;
@@ -810,7 +832,7 @@ export function gravar(raiz, caminhoRespostas, { rodar = rodarReal, hoje = hojeI
       return falha('resposta_fora_das_opcoes', `${p.id}: ${JSON.stringify(respostas[p.id])} fora das opções (${p.opcoes.map((o) => JSON.stringify(o.valor)).join(', ')})`);
     }
   }
-  const { patches, perfil, naoDetectado } = configDasRespostas(itens, respostas, fatos.configExistente, hoje, { fuso });
+  const { patches, perfil, naoDetectado } = configDasRespostas(itens, respostas, fatos.configExistente, hoje, { fuso, recalibrar: recalibrarPedido === true });
   let r;
   try {
     r = aplicarConfig(raiz, { secoes: patches, perfil }, { dryRun });
@@ -828,7 +850,7 @@ export function gravar(raiz, caminhoRespostas, { rodar = rodarReal, hoje = hojeI
 function main(argv) {
   const sub = argv[0];
   if (sub !== 'detectar' && sub !== 'gravar') {
-    process.stderr.write('uso: onboarding.mjs detectar [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] | gravar --respostas <arquivo.json> [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] [--dry-run]\n');
+    process.stderr.write('uso: onboarding.mjs detectar [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] [--recalibrar] | gravar --respostas <arquivo.json> [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] [--dry-run]\n');
     return 2;
   }
   const raiz = arg(argv, 'root', null) ?? raizDoRepo(process.cwd());
@@ -849,7 +871,11 @@ function main(argv) {
     const fatos = coletarFatos(raiz, { rodar: rodarReal, hoje });
     const itens = detectar(fatos);
     const ps = perguntas(itens, fatos.configExistente);
-    saida({ ok: true, itens, perguntas: ps, previa: previa(itens, ps, { fuso }) });
+    const par = configLegivel(fatos.configExistente).orquestracao?.paralelismo;
+    const recal = argv.includes('--recalibrar') ? previaRecalibracao(par, hoje) : null;
+    const nova = recal === null && semCalibracao(par) ? calibracaoDaMaquina(hoje) : null;
+    const calibracao = recal !== null ? [recal.texto] : nova !== null ? [`o paralelismo será calibrado para esta máquina (${nova.cores} núcleos): ${textoParalelismo(nova.paralelismo)}`] : [];
+    saida({ ok: true, itens, perguntas: ps, previa: previa(itens, ps, { fuso, calibracao }), ...(recal !== null ? { recalibrar: { antes: recal.antes, depois: recal.depois, cores: recal.cores } } : {}) });
     return 0;
   } catch (e) {
     saida({ ok: false, erro: 'falha', motivo: String(e.message).split('\n')[0] });

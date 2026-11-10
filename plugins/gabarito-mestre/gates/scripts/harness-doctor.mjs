@@ -696,7 +696,7 @@ export const CHECKS = [
     level: 3,
     kind: 'scan',
     label: 'paralelismo calibrado nesta máquina (≤ 180 d, teto ≥ simultaneos ≥ 1)',
-    fix: 'rode gabarito-instalar (trocar orquestracao) — ele calibra o paralelismo desta máquina e grava orquestracao.paralelismo.calibradoEm',
+    fix: 'rode gabarito-instalar (trocar orquestracao) — ele calibra o paralelismo desta máquina (mostra o de hoje e o novo e só grava com o seu ok) e grava orquestracao.paralelismo.calibradoEm',
     detect: (ix, cfg) => {
       const p = cfg.orquestracao?.paralelismo;
       if (!p?.calibradoEm) return { found: false, evidence: 'sem orquestracao.paralelismo.calibradoEm' };

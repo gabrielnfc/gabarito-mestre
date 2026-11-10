@@ -1,6 +1,6 @@
 # gabarito-instalar: trocar um item que não é pergunta do onboarding
 
-Carregado só quando o usuário pede `trocar settings`, `trocar codeowners`, `trocar apendice`, `trocar iniciativa` ou `trocar contenda`. Siga só a seção do item pedido. `<raiz>` é a raiz do git (passo 1 do Fluxo em `SKILL.md`). Antes de qualquer gravação, mostre o bloco e peça ok.
+Carregado só quando o usuário pede `trocar orquestracao`, `trocar settings`, `trocar codeowners`, `trocar apendice`, `trocar iniciativa` ou `trocar contenda`. Siga só a seção do item pedido. `<raiz>` é a raiz do git (passo 1 do Fluxo em `SKILL.md`). Antes de qualquer gravação, mostre o bloco e peça ok.
 
 Os dois scripts de config (`onboarding-config.mjs`) fazem merge chave a chave, nunca removem e imprimem o diff. Decida pelo **stdout** (a primeira linha diz o que aconteceu); o stderr só explica:
 
@@ -13,6 +13,17 @@ Os dois scripts de config (`onboarding-config.mjs`) fazem merge chave a chave, n
 | vazio (stderr: `uso: …`, `JSON inválido no argumento`, `seção desconhecida`) | 1 | o erro é do seu JSON: mostre o stderr, corrija e repita |
 
 Exit 0 não é sucesso sozinho: exit 0 com `NÃO escrito` é falha declarada.
+
+## orquestracao
+
+Recalibra o paralelismo desta máquina: quantos implementadores trabalham ao mesmo tempo, o teto e os limites de carga, memória e disco. Só este item troca esses números; um onboarding repetido ou `trocar perfil` nunca mexe neles. O usuário vê antes e depois e decide.
+
+1. Detecte com a prévia da recalibração, no lugar do `detectar` comum:
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding.mjs" detectar --recalibrar --root "<raiz>"
+   ```
+2. Mostre a seção `calibração do paralelismo:` do campo `previa` (hoje ⇒ depois). Pergunte por `AskUserQuestion`, sem default `sim`: "Gravar a nova calibração do paralelismo?" com `sim` e `não`. `não`, ou sessão sem `AskUserQuestion`: não grave, diga que nada mudou e que o doctor continua avisando.
+3. Com `sim`: passos 5 a 7 do Fluxo, com as respostas no `default` de cada pergunta e uma chave a mais no arquivo de respostas, `"_recalibrar": true`. O `gravar` calibra pelos núcleos desta máquina, mantém o resto de `paralelismo` (como `arquivosDeContenda`) e também renova a data do modelo. Depois mostre o diff e a linha do doctor sobre o paralelismo.
 
 ## settings
 

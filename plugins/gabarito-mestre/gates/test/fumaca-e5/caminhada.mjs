@@ -293,7 +293,13 @@ export function configEsperada(antes, itens, perguntas, respostas) {
   const rotulo = ps.perfil.opcoes.find((o) => o.valor === perfil).rotulo;
   const alias = /revisão final (.+)$/.exec(rotulo)[1];
   const modeloAntes = antes.orquestracao?.modelo ?? {};
-  patch.orquestracao = { perfil, modelo: { alias, politica: modeloAntes.politica ?? 'mais-potente', validadeDias: modeloAntes.validadeDias ?? 90, resolvidoEm: HOJE } };
+  // FX3 r2: 1º onboarding (paralelismo sem nenhum campo de calibração) grava a calibração por núcleos; com valor do dono, não mexe.
+  // Conta escrita aqui, sem o código do onboarding: simultaneos = clamp(⌊n/4⌋, 1, 3), teto = clamp(⌊n/2⌋, 2, 8), limites = padrão, data de hoje.
+  const parAntes = antes.orquestracao?.paralelismo;
+  const calibrado = ehObj(parAntes) && ['simultaneos', 'teto', 'limites', 'calibradoEm'].some((k) => parAntes[k] !== undefined);
+  const nuc = 8; // os núcleos que o ambiente congelado da caminhada declara (GABARITO_CAP_CORES: '8', `ambiente` acima)
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  patch.orquestracao = { ...(calibrado ? {} : { paralelismo: { simultaneos: clamp(Math.floor(nuc / 4), 1, 3), teto: clamp(Math.floor(nuc / 2), 2, 8), limites: { loadPorCoreMax: 1.5, memDisponivelMinMB: 2048, discoLivreMinGB: 5 }, calibradoEm: HOJE } }), perfil, modelo: { alias, politica: modeloAntes.politica ?? 'mais-potente', validadeDias: modeloAntes.validadeDias ?? 90, resolvidoEm: HOJE } };
   const naoDetectado = itens.map((i) => i.item).filter((item) => resolvido[item] === undefined);
   patch.onboarding = { resolvidoEm: HOJE, naoDetectado };
   const amb = resolvido.ambientes;
