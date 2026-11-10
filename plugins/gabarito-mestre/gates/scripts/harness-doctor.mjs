@@ -470,7 +470,7 @@ export const CHECKS = [
     fix: 'marque os checks como obrigatórios e ateste em .harness/attest.json',
   },
 
-  // ── Nível 2 — 1.1.0 (Workflow TRUE, versionamento, contexto)
+  // ── Nível 2 — 1.1.0 (Fluxo Gabarito, versionamento, contexto)
   {
     id: 'fluxo-configurado',
     rule: 'R19 / FLX-2',

@@ -1,6 +1,6 @@
-# Fluxo — Workflow TRUE no harness
+# Fluxo — Fluxo Gabarito no harness
 
-Fonte normativa do fluxo de trabalho (Flight Levels + Kanban, fase 1: TI e Desenvolvimento). Transcrita de `docs/workflow-true.html` (Flow Management Office, 80.550 bytes, sem data no documento); onde este arquivo e o HTML divergirem, **este arquivo vence** e o HTML deve ser corrigido por quem o mantém. Instalado em `docs/harness/fluxo.md`; não é importado no `CLAUDE.md` — é consultado sob demanda por quem escreve design, plano, card ou conformidade.
+Fonte normativa do fluxo de trabalho (Flight Levels + Kanban, fase 1: TI e Desenvolvimento). Transcrita de documento HTML do Flow Management Office, local do dono (80.550 bytes, sem data no documento); onde este arquivo e o HTML divergirem, **este arquivo vence** e o HTML deve ser corrigido por quem o mantém. Instalado em `docs/harness/fluxo.md`; não é importado no `CLAUDE.md` — é consultado sob demanda por quem escreve design, plano, card ou conformidade.
 
 Como o harness usa os termos: **Iniciativa = FL3** · **Epic = FL2 = documento de design** · **PBI = FL1 = plano, branch e PR** (ADR-FLX-1: um plano por PBI). Task de plano não é card: é fatia de um PBI. `tipo` de um PBI ∈ {`US`, `Enabler`, `TechDebt`, `Spike`, `Bug`, `Tarefa`}.
 
@@ -387,4 +387,4 @@ Iniciativa em Preparado ainda é opção, mesmo pronta — tratar item não prio
 
 Lead time, cycle time, throughput (vazão) e envelhecimento (idade do item na coluna atual) são propriedades do **item** e do **sistema**. Servem para calcular prazo (percentil 85 da distribuição), expor gargalo (coluna onde o WIP acumula) e revisar políticas (§3.5). Não servem para avaliar indivíduos: métrica de fluxo usada em avaliação de pessoa deixa de medir o fluxo no dia seguinte.
 
-O que o harness registra hoje: movimento (`MOVIMENTO` no ledger, §5), bloqueio (`BLOQUEADA`, §4.4) e envelhecimento por PBI (cartão de sessão, §4.4). Cálculo agregado de lead time e throughput **não** está no harness 1.1.0 — é item de `docs/backlog.md` do plugin, gatilho "fase 2 do Workflow TRUE" (b).
+O que o harness registra hoje: movimento (`MOVIMENTO` no ledger, §5), bloqueio (`BLOQUEADA`, §4.4) e envelhecimento por PBI (cartão de sessão, §4.4). Cálculo agregado de lead time e throughput **não** está no harness 1.1.0 — é item de `docs/backlog.md` do plugin, gatilho "fase 2 do Fluxo Gabarito" (b).

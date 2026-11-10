@@ -6,7 +6,7 @@ allowed-tools: Bash(bash:*), Bash(node:*), Bash(ls:*), Bash(cat:*), Bash(cp:*), 
 
 # gabarito-instalar
 
-Instala o harness e faz o **onboarding do fluxo** (Workflow TRUE: Flight Levels + Kanban, `docs/harness/fluxo.md`). **Instalar não é adotar**: ao fim, o nível de adoção fica `____` e é o doctor quem mede.
+Instala o harness e faz o **onboarding do fluxo** (Fluxo Gabarito: Flight Levels + Kanban, `docs/harness/fluxo.md`). **Instalar não é adotar**: ao fim, o nível de adoção fica `____` e é o doctor quem mede.
 
 Quatro fases, nesta ordem: **(1)** instalação determinística · **(2)** fluxo · **(3)** versionamento · **(4)** orquestração. As fases 2–4 gravam em `harness.config.json` via `onboarding-config.mjs` (merge chave a chave, nunca remove, imprime o diff) e no Apêndice do `AGENTS.md` via `Edit` — **sempre mostrando o bloco antes de aplicar**.
 
@@ -79,7 +79,7 @@ O que o instalador cria (de `${CLAUDE_PLUGIN_ROOT}/reference/` e `templates/`):
 |---|---|---|
 | `AGENTS.md` | `reference/AGENTS.md` | núcleo (≤ 17.291 B, lido sempre); Apêndice em branco (≤ 4.096 B) |
 | `CLAUDE.md` | `templates/CLAUDE.md` | **APENAS** `@AGENTS.md`. Os docs de referência **não** são importados — são sob demanda, de propósito |
-| `docs/harness/{referencia,gates,adocao,prompts,fluxo}.md` | `reference/` | consultados por ponteiro; `fluxo.md` é a fonte normativa do Workflow TRUE |
+| `docs/harness/{referencia,gates,adocao,prompts,fluxo}.md` | `reference/` | consultados por ponteiro; `fluxo.md` é a fonte normativa do Fluxo Gabarito |
 | `tools/gabarito-gates/` | `gates/` | gates e scripts, zero dependências, Node ≥ 22.18; sem `test/`, `README.md` nem manifesto de versão |
 | `harness.config.json` | `templates/` | template — as seções `fluxo`, `versionamento`, `orquestracao` **não** vêm nele: nascem no onboarding |
 | `.harness/attest.json` | `templates/` | tudo `confirmado: false` — atestar é ato nominal e datado (inclui `iniciativa-resolvida`) |

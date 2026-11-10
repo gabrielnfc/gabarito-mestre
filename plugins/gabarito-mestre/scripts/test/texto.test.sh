@@ -37,6 +37,30 @@ falha() { falhas=$((falhas+1)); echo "  FALHA $1: $2" >&2; }
 # check "<nome>" '<expressão bash>' "<motivo se falhar>"
 check() { if eval "$2"; then ok "$1"; else falha "$1" "$3"; fi; }
 
+# ── NOM-1 (REQ-NOM-1) — nome "Fluxo Gabarito"; o nome antigo só nas exceções ──────────
+# Escopo: plugins/**, marketplace, README, CHANGELOG, docs/**. Exceções: docs/ledgers, docs/aprendizados,
+# docs/references; specs e planos datados até 2026-11-10 inclusive; CHANGELOG a partir do 1º "## [1.".
+# Casos com fixture em texto-nom.test.sh. `--nom` roda só esta checagem (o fixture usa o caminho real).
+nom_achados() {
+  git grep -nIiE 'workflow[ _-]?true' -- plugins/gabarito-mestre .claude-plugin/marketplace.json README.md CHANGELOG.md docs 2>/dev/null |
+  while IFS= read -r hit; do
+    arq="${hit%%:*}"; resto="${hit#*:}"; ln="${resto%%:*}"
+    case "$arq" in
+      docs/ledgers/*|docs/aprendizados/*|docs/references/*) continue ;;
+      CHANGELOG.md)
+        ln1=$(grep -n -m1 '^## \[1\.' CHANGELOG.md | cut -d: -f1)
+        [ -n "$ln1" ] && [ "$ln" -ge "$ln1" ] && continue ;;
+      docs/superpowers/specs/*|docs/superpowers/plans/*)
+        d="${arq##*/}"; d="${d:0:10}"
+        if printf '%s' "$d" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' && [[ ! "$d" > "2026-11-10" ]]; then continue; fi ;;
+    esac
+    printf '%s\n' "$hit"
+  done
+}
+NOM_ACHADOS=$(nom_achados)
+check "NOM-1: nenhum nome antigo fora das exceções de REQ-NOM-1" '[ -z "$NOM_ACHADOS" ]' "fora das exceções: $(printf '%s' "$NOM_ACHADOS" | tr '\n' ' ')"
+[ "${1:-}" = "--nom" ] && { [ "$falhas" -eq 0 ]; exit $?; }
+
 A="$P/reference/AGENTS.md"
 R="$P/reference/referencia.md"
 D="$P/reference/adocao.md"

@@ -71,9 +71,9 @@ Depois de instalar o plugin, **instale o harness no seu repositório**: diga "in
 
 ---
 
-## Fluxo (Workflow TRUE)
+## Fluxo (Fluxo Gabarito)
 
-A 1.1.0 põe o harness sob o **Workflow TRUE** — Flight Levels com Kanban: **FL3 Iniciativa** (propósito, horizonte, patrocinador) → **FL2 Epic** (narrativa, RN, CA, lista de PBIs; **um design por Epic**) → **FL1 PBI** (concluível em poucos dias; **um plano, uma branch, uma PR, um ledger por PBI** — ADR-FLX-1). Oito tipos de card: Iniciativa, Epic, US, Enabler, TechDebt, Tarefa, Spike, Bug — templates em `templates/fluxo/`. A fonte normativa versionada é `reference/fluxo.md` (instalado em `docs/harness/fluxo.md`, sete seções: níveis · tipos de card · políticas · movimento · propagação · compromisso/WIP/vazão · métricas), e é ela que a conformidade cita — não o HTML de origem.
+A 1.1.0 põe o harness sob o **Fluxo Gabarito** — Flight Levels com Kanban: **FL3 Iniciativa** (propósito, horizonte, patrocinador) → **FL2 Epic** (narrativa, RN, CA, lista de PBIs; **um design por Epic**) → **FL1 PBI** (concluível em poucos dias; **um plano, uma branch, uma PR, um ledger por PBI** — ADR-FLX-1). Oito tipos de card: Iniciativa, Epic, US, Enabler, TechDebt, Tarefa, Spike, Bug — templates em `templates/fluxo/`. A fonte normativa versionada é `reference/fluxo.md` (instalado em `docs/harness/fluxo.md`, sete seções: níveis · tipos de card · políticas · movimento · propagação · compromisso/WIP/vazão · métricas), e é ela que a conformidade cita — não o HTML de origem.
 
 Três regras novas no `AGENTS.md`, todas com gate:
 
