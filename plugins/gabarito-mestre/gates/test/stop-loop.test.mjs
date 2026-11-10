@@ -1283,45 +1283,51 @@ function comandosDoTexto(texto, valores) {
   });
 }
 
-test('stop-comando-aprendizado-roda-de-verdade: os comandos citados pelo Stop gravam ok:true para D (eventos e fonte), M e nada', () => {
+test('stop-comando-aprendizado-roda-de-verdade: cada comando citado pelo Stop grava ok:true E fecha a pendência que o Stop cobra', () => {
   const dir = repoComPendenciaReal();
   const r1 = stop(dir);
   bloqueia(r1, /aprendizado pendente: review s:3/);
   const texto = r1.json.reason;
-  const base = { '<sessao:seq>': 's:3', '<t>': 'regra-de-teste', '<a>': 'instantaneo', '<arquivo>': 'README.md', '<n>': '3' };
-  const rodar = (args, ajuste) => {
+  const PENDENTE = /aprendizado pendente: review s:3/;
+  const base = { '<sessao:seq>': 's:3', '<t>': 'regra-de-teste', '<a>': 'instantaneo', '<arquivo>': 'README.md', '<n>': '3', '<E|A>': 'E' };
+  const saida = (r) => `${r.json?.reason ?? ''}\n${r.json?.systemMessage ?? ''}`;
+  // roda o comando numa cópia do repo e depois o Stop na MESMA cópia: a pendência citada tem de sumir
+  const rodar = (args) => {
     const copia = mkdtempSync(join(tmpdir(), 'stop-fx2c-'));
     cpSync(dir, copia, { recursive: true });
-    const a = args.map((x) => ajuste(x));
-    const r = spawnSync(process.execPath, [LOOP_CLI, ...a], { cwd: copia, encoding: 'utf8', env: env() });
+    assert.match(saida(stop(copia)), PENDENTE, 'antes do comando a pendência existe na cópia');
+    const r = spawnSync(process.execPath, [LOOP_CLI, ...args], { cwd: copia, encoding: 'utf8', env: env() });
     let j = null;
     try { j = JSON.parse(r.stdout.trim()); } catch { /* fica null */ }
-    return { rc: r.status, j, out: r.stdout + r.stderr };
+    return { j, out: r.stdout + r.stderr, depois: saida(stop(copia)) };
   };
-  const cmds = comandosDoTexto(texto, { ...base, '<E|A>': 'E' });
-  const porForma = (pred) => cmds.filter(pred);
-  const d = porForma((a) => a[1] === 'E' && a[2] === 'D');
-  const m = porForma((a) => a[1] === 'E' && a[2] === 'M');
-  const nada = porForma((a) => a[1] === 'nada');
+  const fecha = (args, quem) => {
+    const r = rodar(args);
+    assert.equal(r.j?.ok, true, `${quem}: ${r.out}`);
+    assert.doesNotMatch(r.depois, PENDENTE, `${quem}: o comando gravou mas a pendência continua aberta`);
+  };
+  const cmds = comandosDoTexto(texto, base);
+  const d = cmds.filter((a) => a[1] === 'E' && a[2] === 'D');
+  const m = cmds.filter((a) => a[1] === 'E' && a[2] === 'M');
+  const nada = cmds.filter((a) => a[1] === 'nada');
   assert.equal(d.length + m.length + nada.length, cmds.length, 'todo comando citado é D, M ou nada');
   assert.equal(d.length, 1);
   assert.equal(m.length, 1);
   assert.equal(nada.length, 1);
-  // D: a forma com --eventos (valor real: o evento s:3 existe) e a forma --fonte/--numero (o texto cita as duas; a 2ª troca a evidência)
-  const id = (x) => x;
-  const rd = rodar(d[0], id);
-  assert.equal(rd.j?.ok, true, rd.out);
   assert.ok(d[0].includes('--eventos'), 'D cita --eventos');
-  const semEventos = d[0].filter((x, i, arr) => x !== '--eventos' && arr[i - 1] !== '--eventos');
-  const comFonte = [...semEventos, '--fonte', 'README.md', '--numero', '3'];
-  assert.match(texto, /--fonte <arquivo> --numero <n>/);
-  const rf = rodar(comFonte, id);
-  assert.equal(rf.j?.ok, true, rf.out);
   assert.ok(!m[0].includes('--eventos') && !m[0].includes('--fonte'), 'M sem evidência');
-  const rm = rodar(m[0], id);
-  assert.equal(rm.j?.ok, true, rm.out);
-  const rn = rodar(nada[0], id);
-  assert.equal(rn.j?.ok, true, rn.out);
+  // a forma --fonte/--numero vem do texto (trecho entre crases), não montada aqui
+  const trechoFonte = texto.match(/`(--fonte [^`]+)`/);
+  assert.ok(trechoFonte, 'o texto cita a forma --fonte/--numero entre crases');
+  let fonte = trechoFonte[1];
+  for (const [k, v] of Object.entries(base)) fonte = fonte.split(k).join(v);
+  assert.doesNotMatch(fonte, /<[^>]+>/);
+  const semEventos = d[0].filter((x, i, arr) => x !== '--eventos' && arr[i - 1] !== '--eventos');
+  const comFonte = [...semEventos, ...fonte.split(' ')];
+  fecha(d[0], 'D com --eventos');
+  fecha(comFonte, 'D com --fonte/--numero');
+  fecha(m[0], 'M');
+  fecha(nada[0], 'nada');
   // O Stop 2 só avisa, com o mesmo texto: o aviso também chega ao agente
   avisa(stop(dir), COMANDO);
 });

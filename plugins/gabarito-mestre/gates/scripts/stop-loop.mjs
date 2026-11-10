@@ -38,7 +38,7 @@ const PLANO_MAX = 1024 * 1024;
 const STOPS_MAX = 1_000_000;
 const ITENS_NO_MOTIVO = 6;
 const PENDENCIAS_NO_MOTIVO = 6;
-const COMANDO_APRENDIZADO = 'Feche com `loop.mjs aprendizado <E|A> D --regra <t> --entra-em <a> --gatilho <sessao:seq> --eventos <sessao:seq>` (D também aceita `--fonte <arquivo> --numero <n>` no lugar de --eventos), `loop.mjs aprendizado <E|A> M --regra <t> --entra-em <a> --gatilho <sessao:seq>` (M não leva evidência) ou `loop.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>`.';
+const COMANDO_APRENDIZADO = 'Feche com `loop.mjs aprendizado <E|A> D --regra <t> --entra-em <a> --gatilho <sessao:seq> --eventos <sessao:seq>` (D também aceita `--fonte <arquivo> --numero <n>`, arquivo versionado, no lugar de --eventos), `loop.mjs aprendizado <E|A> M --regra <t> --entra-em <a> --gatilho <sessao:seq>` (M não leva evidência) ou `loop.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>`.';
 const PAPEL = { implementador: 'implementador', revisor: 'revisor', correcao: 'correção' };
 const MOTIVO = {
   teto_rodadas: 'teto de rodadas de review',
