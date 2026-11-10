@@ -20,11 +20,11 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, realpathSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { ORDEM_ITENS, IDS_FIXAS, coletarFatos, detectar, perguntas, gravar, rodarReal } from '../scripts/onboarding.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -90,6 +90,8 @@ function violacoesComuns(texto) {
     }
   });
   if (/capacidade\.mjs/.test(texto)) v.push('chama-capacidade (a orquestração vem do detectar)');
+  // MINOR-5 (r2): comando de terminal para o usuário instalar plugin é comando para colar, mesmo sem o verbo
+  if (/claude plugin (install|add)/.test(texto)) v.push('comando-de-instalar-plugin');
   return v;
 }
 
@@ -118,7 +120,24 @@ function violacoesSkill(texto) {
   if (!/git rev-parse --show-toplevel/.test(fluxo)) v.push('sem-raiz-do-git');
   if (!/headless[^\n]*\n?[^\n]*--dry-run[\s\S]{0,200}não grave/.test(fluxo)) v.push('sem-headless-dry-run');
   if (!/deteccao_mudou[\s\S]{0,400}No máximo 2 voltas/.test(fluxo)) v.push('sem-teto-deteccao-mudou');
-  if (!/Mostre só a linha `── N criado\(s\)…`/.test(fluxo)) v.push('repassa-saida-do-instalador');
+  if (!/Mostre a linha `── N criado\(s\)…`, a lista de `\.novo` e cada linha que começa com `AVISO:`/.test(fluxo)) v.push('repassa-saida-do-instalador');
+  // MAJOR-2 (r2): o aviso de hooks git (R20) não instalados e a renumeração R19–R21 não podem virar silêncio
+  if (!/hooks do git de versionamento não foram instalados[\s\S]{0,200}aplicar o `versionamento-check\.mjs\.novo`/.test(fluxo)) v.push('sem-aviso-hooks-git');
+  if (!/passam a R30 em diante/.test(fluxo)) v.push('sem-aviso-renumeracao');
+  if (!/sem o comando que ela sugere/.test(fluxo)) v.push('aviso-com-comando');
+  // MAJOR-3 (r2): as opções saem na ordem do script, com o default primeiro: Enter o confirma
+  if (!/na ordem do script, sem reordenar \(o default vem primeiro, então Enter o confirma\)/.test(fluxo)) v.push('sem-default-primeiro');
+  // MINOR-4 (r2): teto por chamada, parar se o Write falha, sufixo (default)
+  if (!/com no máximo 4 perguntas por chamada/.test(fluxo)) v.push('sem-teto-4-por-chamada');
+  if (!/se o `Write` falhar, pare: nunca rode o passo 6 com o arquivo antigo/.test(fluxo)) v.push('sem-parar-se-write-falha');
+  if (!/ao default acrescente ` \(default\)`/.test(fluxo)) v.push('sem-sufixo-default');
+  // MINOR-1 (r2): o doctor acha a raiz sozinho (git rev-parse a partir do cwd): sem `cd` nem permissão de `cd`
+  if (/(^|[\s`])cd\s+"?<raiz>/m.test(fluxo)) v.push('cd-no-doctor');
+  // MINOR-7 (r2): fala para quem adota pela primeira vez; o fechamento não despeja jargão
+  if (!/frases curtas, sem siglas internas/.test(texto)) v.push('sem-regra-de-linguagem-simples');
+  const fechamento = fluxo.split('\n').find((l) => /^8\. \*\*Fechamento\.\*\*/.test(l)) ?? '';
+  if (/\bR\d+\b|esteira|§|docs\/harness|calibrar/.test(fechamento)) v.push(`jargao-no-fechamento: ${(/\bR\d+\b|esteira|§|docs\/harness|calibrar/.exec(fechamento) ?? [''])[0]}`);
+  if (/CONDUZ/.test(texto)) v.push('instrucao-ao-modelo-no-texto-do-usuario');
   if (!/copiado sem mudar/.test(fluxo) || !/mesma ordem de chaves/.test(fluxo)) v.push('previa-sem-copia-fiel');
   if (!/`Read` antes do `Write`/.test(fluxo)) v.push('sem-read-antes-do-write');
   if (!/com o tipo JSON/.test(fluxo)) v.push('sem-tipo-json');
@@ -131,6 +150,17 @@ function violacoesSkill(texto) {
   for (const t of ['Write', 'Bash(cp:*)', 'Bash(test:*)', 'Bash(git rev-parse:*)', 'AskUserQuestion', 'Edit']) if (!at.includes(t)) v.push(`allowed-tools sem ${t}`);
   if (at.includes('claude mcp list')) v.push('allowed-tools com claude mcp list');
   if (at.includes('mcp__')) v.push('allowed-tools com mcp__');
+  if (/Bash\(cd:/.test(at)) v.push('allowed-tools com cd');
+  return v;
+}
+
+/** MINOR-2 (r2): comando que toca arquivo do projeto usa `<raiz>/` por extenso; caminho relativo cai na subpasta da sessão. */
+function violacoesRaizRelativa(texto) {
+  const v = [];
+  texto.split('\n').forEach((l, i) => {
+    if (!/\b(test -e|mkdir -p|cp -n|grep|writeFileSync|rmSync)\b/.test(l)) return;
+    for (const m of l.matchAll(/(^|[\s"'(`])((?:\.github|\.harness|\.claude|docs)(?:\/[\w./<>-]*)?)(?![\w-])/g)) v.push(`raiz-relativa: linha ${i + 1}: ${m[2]}`);
+  });
   return v;
 }
 
@@ -143,6 +173,7 @@ function violacoesTrocar(texto) {
   if (!/Antes de qualquer chamada `mcp__\*`/.test(i)) v.push('iniciativa-sem-ok-antes-do-mcp');
   if (!/ADR-FLX-2/.test(i) || !/default \*\*não\*\*/.test(i)) v.push('iniciativa-escrita-sem-default-nao');
   if (!texto.includes(MARCADOR_TIM1)) v.push('codeowners-sem-marcador-tim1');
+  v.push(...violacoesRaizRelativa(texto));
   return v;
 }
 
@@ -221,7 +252,12 @@ test('skill-cita-trocar', () => {
   assert.ok(citados.length >= 3, `o doctor cita ids de trocar (${citados})`);
   for (const id of citados) assert.ok(validos.has(id), `doctor/comando cita "trocar ${id}", que a skill não conhece`);
   for (const id of citados) assert.ok(SKILL.includes(`\`${id}\``), `skill não menciona ${id}`);
-  assert.match(cmd, /gabarito-instalar \(trocar perfil\)/);
+  // MINOR-3 (r2): o doctor e o comando mandam o MESMO `trocar <item>` para o aviso `modelo-resolvido`
+  const doctorId = /modelo-resolvido[\s\S]{0,400}?gabarito-instalar \(trocar (\w+)\)/.exec(doctor)?.[1];
+  const cmdId = /modelo-resolvido[^\n]*gabarito-instalar \(trocar (\w+)\)/.exec(cmd)?.[1];
+  assert.ok(doctorId && cmdId, `doctor=${doctorId} comando=${cmdId}`);
+  assert.equal(cmdId, doctorId, 'doctor e comando dão o mesmo nome para a mesma ação');
+  assert.ok(SKILL.includes(`\`${doctorId}\`: o que se decide ali é o \`perfil\``), 'a skill trata esse nome como trocar perfil');
   assert.doesNotMatch(cmd, /\(fase \d/);
 });
 
@@ -270,7 +306,7 @@ test('skill-deteccao-mudou-teto', () => {
 
 test('skill-contrato-do-fluxo', () => {
   // cada cláusula do contrato tem caso plantado
-  assert.ok(violacoesSkill(planta(SKILL, 'Mostre só a linha `── N criado(s)…`', 'Mostre a saída')).includes('repassa-saida-do-instalador'));
+  assert.ok(violacoesSkill(planta(SKILL, 'Mostre a linha `── N criado(s)…`', 'Mostre a saída')).includes('repassa-saida-do-instalador'));
   assert.ok(violacoesSkill(planta(SKILL, 'copiado sem mudar', 'resumido')).includes('previa-sem-copia-fiel'));
   assert.ok(violacoesSkill(planta(SKILL, 'mesma ordem de chaves', 'qualquer ordem')).includes('previa-sem-copia-fiel'));
   assert.ok(violacoesSkill(planta(SKILL, '`Read` antes do `Write`', '`Write`')).includes('sem-read-antes-do-write'));
@@ -284,6 +320,100 @@ test('skill-contrato-do-fluxo', () => {
   assert.ok(violacoesSkill(`${SKILL}${'x\n'.repeat(60)}`).some((x) => x.startsWith('linhas:')));
   assert.ok(SKILL.split('\n').length <= 140, `SKILL.md tem ${SKILL.split('\n').length} linhas`);
   assert.ok(violacoesSkill(SKILL.replace('## Proibido', '## Outra')).includes('sem-secao: Proibido'));
+});
+
+test('skill-enter-confirma-o-default', () => {
+  // MAJOR-3 (r2): MR1 trocava "na ordem do script" por "ordem alfabética" e nada caía; em ordem alfabética o Enter grava `continua`/`economia`
+  const base = 'na ordem do script, sem reordenar (o default vem primeiro, então Enter o confirma)';
+  assert.ok(SKILL.includes(base));
+  for (const para of ['em ordem alfabética', 'na ordem do script, sem reordenar', 'ordenadas como achar melhor (o default vem primeiro, então Enter o confirma)', 'na ordem do script, sem reordenar (o default fica por último)']) {
+    assert.ok(violacoesSkill(planta(SKILL, base, para)).includes('sem-default-primeiro'), para);
+  }
+  // o script cumpre a metade dele: o default é a 1ª opção em TODAS as perguntas (o fato `onboarding.test.mjs` prende o resto)
+  const raiz = repoVersionamentoAmbiguo();
+  const ps = perguntas(detectar(coletarFatos(raiz, { rodar: rodarCom(CLICKUP), hoje: HOJE })), null);
+  for (const p of ps) assert.equal(p.opcoes[0].valor, p.default, `${p.id}: Enter confirma o default`);
+});
+
+test('skill-clausulas-de-contrato-plantadas', () => {
+  // MINOR-4 (r2): MR2, MR3, MR5 do revisor, e o resto do contrato novo, cada uma com o seu caso
+  assert.ok(violacoesSkill(planta(SKILL, ', com no máximo 4 perguntas por chamada', '')).includes('sem-teto-4-por-chamada'));
+  assert.ok(violacoesSkill(planta(SKILL, 'com no máximo 4 perguntas por chamada', 'com quantas perguntas quiser por chamada')).includes('sem-teto-4-por-chamada'));
+  assert.ok(violacoesSkill(planta(SKILL, '; se o `Write` falhar, pare: nunca rode o passo 6 com o arquivo antigo', '')).includes('sem-parar-se-write-falha'));
+  assert.ok(violacoesSkill(planta(SKILL, 'pare: nunca rode o passo 6 com o arquivo antigo', 'siga com o passo 6')).includes('sem-parar-se-write-falha'));
+  assert.ok(violacoesSkill(planta(SKILL, '; ao default acrescente ` (default)`', '')).includes('sem-sufixo-default'));
+  assert.ok(violacoesSkill(planta(SKILL, 'acrescente ` (default)`', 'acrescente ` (padrão)`')).includes('sem-sufixo-default'));
+  // linguagem de quem adota pela primeira vez
+  assert.ok(violacoesSkill(planta(SKILL, 'frases curtas, sem siglas internas', 'frases técnicas')).includes('sem-regra-de-linguagem-simples'));
+  const fecha = SKILL.split('\n').find((l) => /^8\. \*\*Fechamento\.\*\*/.test(l));
+  assert.ok(fecha, 'o passo 8 existe');
+  for (const jargao of ['R1', 'esteira padrão', 'docs/harness/adocao.md §3', 'calibrar antes de ligar']) {
+    assert.ok(violacoesSkill(planta(SKILL, fecha, `${fecha} ${jargao}`)).some((x) => x.startsWith('jargao-no-fechamento')), jargao);
+  }
+  assert.ok(violacoesSkill(planta(SKILL, 'Para subir de nível, o planejamento', 'superpowers CONDUZ o planejamento')).includes('instrucao-ao-modelo-no-texto-do-usuario'));
+  // o fechamento não despeja os 13 ids: só a linha opcional "se o usuário pedir a lista" os traz
+  assert.match(fecha, /Só se o usuário pedir a lista: `trocar <item>`/);
+  // MINOR-1: o doctor não precisa de `cd`
+  assert.ok(violacoesSkill(planta(SKILL, 'Bash(cp:*), ', 'Bash(cp:*), Bash(cd:*), ')).includes('allowed-tools com cd'));
+  assert.ok(violacoesSkill(planta(SKILL, 'então não precisa de `cd`:', 'então `cd "<raiz>"` antes:')).includes('cd-no-doctor'));
+  // MINOR-5: comando para o usuário instalar plugin
+  assert.ok(violacoesTrocar(`${TROCAR}\nRode claude plugin install gabarito-mestre@gabarito-mestre.\n`).includes('comando-de-instalar-plugin'));
+  assert.ok(violacoesSkill(`${SKILL}\nclaude plugin add x\n`).includes('comando-de-instalar-plugin'));
+});
+
+test('trocar-raiz-literal', () => {
+  // MINOR-2 (r2): trocar.md usa `<raiz>/` por extenso em todo comando que toca arquivo do projeto
+  assert.deepEqual(violacoesRaizRelativa(TROCAR), []);
+  for (const ruim of ['test -e .github/CODEOWNERS', "grep -c x .github/CODEOWNERS", 'mkdir -p .github', 'mkdir -p docs/fluxo/epics', 'cp -n a docs/fluxo/iniciativa.md', "node -e 'fs.writeFileSync(\".github/CODEOWNERS\", 1)'", 'test -e .harness/x.json']) {
+    assert.ok(violacoesRaizRelativa(ruim).length > 0, ruim);
+    assert.ok(violacoesTrocar(`${TROCAR}\n${ruim}\n`).some((x) => x.startsWith('raiz-relativa')), `trocar: ${ruim}`);
+  }
+  for (const bom of ['test -e "<raiz>/.github/CODEOWNERS"', 'mkdir -p "<raiz>/docs/fluxo/epics"', 'cp -n "${CLAUDE_PLUGIN_ROOT}/templates/fluxo/epic.md" "<raiz>/docs/fluxo/epics/EPIC-EXEMPLO.md"']) {
+    assert.deepEqual(violacoesRaizRelativa(bom), [], bom);
+  }
+  // o procedimento de CODEOWNERS e o de `arquivos` citam a raiz
+  assert.match(secao(TROCAR, 'codeowners'), /test -e "<raiz>\/\.github\/CODEOWNERS"/);
+  assert.match(secao(TROCAR, 'iniciativa'), /mkdir -p "<raiz>\/docs\/fluxo\/epics"/);
+});
+
+// ────────────────────────────────────────────────────────────── MAJOR-2 (r2): o aviso de hooks git chega ao usuário
+
+const INSTALAR = join(PLUGIN, 'scripts', 'instalar.sh');
+/** O que a skill manda mostrar do stdout do instalador (SKILL.md, passo 1): a linha `── N criado(s)…`, a lista de `.novo` e as linhas `AVISO:`. */
+function linhasQueASkillMostra(saida) {
+  return saida.split('\n').filter((l) => /^── \d+ criado\(s\)/.test(l) || /^\s+novo\s+\S+\.novo\b/.test(l) || /^\s*AVISO:/.test(l));
+}
+
+test('skill-repassa-aviso-de-hooks-git-da-110', () => {
+  // repo já instalado com o gate de versionamento da 1.1.x (sem --msg/--pre-push): `--atualizar` não instala os hooks e AVISA
+  const raiz = novoDir('gm-skill-110-');
+  G(raiz, ['init', '-q', '-b', 'main']);
+  mkdirSync(join(raiz, 'tools', 'gabarito-gates', 'scripts'), { recursive: true });
+  writeFileSync(join(raiz, 'tools', 'gabarito-gates', 'scripts', 'versionamento-check.mjs'), 'export const x = 1; // versionamento-check 1.1.x, sem o modo de hook\n');
+  writeFileSync(join(raiz, 'AGENTS.md'), '# AGENTS antigo da 1.1.x\n');
+  const r = spawnSync('bash', [INSTALAR, raiz, '--atualizar'], { encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const saida = r.stdout + r.stderr;
+  const mostradas = linhasQueASkillMostra(saida);
+  const aviso = mostradas.find((l) => /AVISO:/.test(l));
+  assert.ok(aviso, `o AVISO está na saída que a skill manda mostrar:\n${mostradas.join('\n')}`);
+  assert.match(aviso, /hooks git \(R20\) NÃO instalados/);
+  assert.match(aviso, /versionamento-check\.mjs instalado é anterior/);
+  assert.ok(mostradas.some((l) => /^── \d+ criado\(s\)/.test(l)), 'a linha-resumo aparece');
+  assert.ok(mostradas.some((l) => /AGENTS\.md\.novo/.test(l)), 'a lista de .novo aparece');
+  // a linha `Rode: …` que acompanha o aviso é comando para o usuário: a skill NÃO a repassa (e o filtro também não)
+  assert.ok(/^\s+Rode: instalar\.sh/m.test(saida), 'premissa: o instalador imprime a linha "Rode:"');
+  assert.equal(mostradas.some((l) => /Rode:/.test(l)), false);
+  // o hook não foi gravado (o aviso é verdadeiro)
+  assert.equal(existsSync(join(raiz, '.git', 'hooks', 'commit-msg')), false);
+  // a renumeração R19–R21 → R30+ existe na saída e a skill manda dizê-la, em palavras (a linha `──` não é repassada)
+  assert.match(saida, /R19–R21 agora são do harness[^\n]*R30\+/);
+  assert.match(secao(SKILL, 'Fluxo'), /Com `--atualizar`, diga também que as regras R19 a R21/);
+  // sem a cláusula na skill, o aviso se perde: caso plantado
+  assert.ok(violacoesSkill(planta(SKILL, 'e cada linha que começa com `AVISO:`', '')).includes('repassa-saida-do-instalador'));
+  assert.ok(violacoesSkill(planta(SKILL, 'não foram instalados', 'foram instalados')).includes('sem-aviso-hooks-git'));
+  assert.ok(violacoesSkill(planta(SKILL, 'passam a R30 em diante', 'continuam')).includes('sem-aviso-renumeracao'));
+  assert.ok(violacoesSkill(planta(SKILL, 'sem o comando que ela sugere', 'com o comando que ela sugere')).includes('aviso-com-comando'));
 });
 
 // ────────────────────────────────────────────────────────────── P9: o exemplo da skill passa pelo `gravar` real

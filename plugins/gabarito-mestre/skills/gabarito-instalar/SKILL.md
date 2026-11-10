@@ -1,12 +1,14 @@
 ---
 name: gabarito-instalar
 description: Instala o harness Gabarito Mestre neste repositório e faz o onboarding de uma vez só: detecta o que o repo já mostra, pergunta 3 decisões (política de entrega, autonomia, perfil de modelos) mais as dúvidas que a detecção não resolve, grava a config e mede com o doctor. Use quando o usuário pedir para "instalar o gabarito", "instalar o harness", "adotar o gabarito-mestre", "configurar AGENTS.md", "setup do harness", "colocar os gates neste repo", "bootstrap do gabarito", "install gabarito", "fazer o onboarding", "refazer onboarding", "trocar <item> do onboarding", "vincular PBI-<n>" ou "gabarito-instalar --vincular <PBI>". Cria AGENTS.md, CLAUDE.md (só o import), docs/harness/, tools/gabarito-gates/, harness.config.json, .harness/attest.json e o workflow de CI. Nunca declara o nível de adoção.
-allowed-tools: Bash(bash:*), Bash(node:*), Bash(ls:*), Bash(cat:*), Bash(cp:*), Bash(cd:*), Bash(mkdir:*), Bash(test:*), Bash(grep:*), Bash(git status:*), Bash(git rev-parse:*), Read, Write, Glob, Grep, Edit, AskUserQuestion
+allowed-tools: Bash(bash:*), Bash(node:*), Bash(ls:*), Bash(cat:*), Bash(cp:*), Bash(mkdir:*), Bash(test:*), Bash(grep:*), Bash(git status:*), Bash(git rev-parse:*), Read, Write, Glob, Grep, Edit, AskUserQuestion
 ---
 
 # gabarito-instalar
 
-Instala o harness e configura o fluxo numa passada só. **Instalar não é adotar**: o nível de adoção fica `____` e quem mede é o doctor. superpowers CONDUZ o planejamento da subida de nível (`superpowers:brainstorming`, depois `superpowers:writing-plans`); esta skill não planeja. Sem superpowers a instalação segue: avise em uma linha.
+Instala o harness e configura o fluxo numa passada só. **Instalar não é adotar**: o nível de adoção fica `____` e quem mede é o doctor. Para subir de nível, o planejamento é feito com `superpowers:brainstorming` e depois `superpowers:writing-plans`; esta skill não planeja. Sem superpowers a instalação segue: avise em uma linha.
+
+Estas instruções são para você. Ao falar com o usuário, use frases curtas, sem siglas internas (R20, D-3, nomes de regra) e sem pedir que ele rode comandos.
 
 **Um comando por chamada.** Cada bloco `bash` é um comando simples. Não encadeie com `;`, `&&`, `||`, `if` nem `[ … ]`: composto não casa com as permissões. Decida em prosa, pelo exit e pelo stdout.
 
@@ -20,10 +22,11 @@ Instala o harness e configura o fluxo numa passada só. **Instalar não é adota
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/instalar.sh" "<raiz>"
    ```
-   O instalador nunca sobrescreve nem apaga: o que difere vira `<arquivo>.novo`. Mostre só a linha `── N criado(s)…` e a lista de `.novo`. Não repasse as outras linhas: algumas mandam o usuário executar comando.
-   Sem perguntar, para cada arquivo abaixo rode `test -e <destino>` e, só com exit 1, o `cp -n` (nunca sobrescreve):
+   O instalador nunca sobrescreve nem apaga: o que difere vira `<arquivo>.novo`. Mostre a linha `── N criado(s)…`, a lista de `.novo` e cada linha que começa com `AVISO:`, uma frase simples por aviso, sem o comando que ela sugere. Não repasse as outras linhas: algumas mandam o usuário executar comando.
+   Aviso de que os hooks do git de versionamento não foram instalados: diga que a trava de versionamento ainda não está ligada no git e que, depois de aplicar o `versionamento-check.mjs.novo`, a instalação precisa ser pedida de novo. Com `--atualizar`, diga também que as regras R19 a R21 do `AGENTS.md` antigo agora são do harness e que as regras do projeto passam a R30 em diante (renumere ao aplicar o `AGENTS.md.novo`).
+   Sem perguntar, para cada arquivo abaixo rode `test -e "<raiz>/<destino>"` e, só com exit 1, o `cp -n` para `"<raiz>/<destino>"` (nunca sobrescreve):
 
-   | Destino | Origem em `${CLAUDE_PLUGIN_ROOT}/templates/` |
+   | Destino (dentro da raiz) | Origem em `${CLAUDE_PLUGIN_ROOT}/templates/` |
    |---|---|
    | `.github/PULL_REQUEST_TEMPLATE.md` | `PULL_REQUEST_TEMPLATE.md` |
    | `CHANGELOG.md` | `CHANGELOG.md` |
@@ -36,7 +39,7 @@ Instala o harness e configura o fluxo numa passada só. **Instalar não é adota
    ```
    Sempre o script do plugin, nunca o de `tools/`. A saída é JSON: `{ok, itens, perguntas, previa}`. `ok:false` com `config_invalida`: pare, mostre o `motivo`, diga "conserte o JSON de harness.config.json e peça o onboarding de novo" e vá ao passo 7. `ok:false` com `falha`, ou saída que não é JSON: pare com o motivo em uma linha e vá ao passo 7. Nunca detecte à mão nem improvise outro caminho.
 3. **Prévia.** Mostre o campo `previa` como veio, numa tela. Não reescreva nem resuma.
-4. **Perguntas.** Pergunte só as `perguntas` que o `detectar` devolveu, na ordem dele: primeiro `politica`, `autonomia` e `perfil`, depois as condicionais. Fato detectado nunca é perguntado e nenhuma pergunta é inventada. Use `AskUserQuestion` em até 2 chamadas (1ª: as 3 fixas; 2ª: as condicionais), com no máximo 4 perguntas por chamada. Mostre as opções na ordem do script (o default vem primeiro, então Enter o confirma), com o `rotulo` literal; ao default acrescente ` (default)`. Resposta que é o rótulo de uma opção vale o `valor` dela, com o tipo JSON (`true`, `false`, `null`; nunca "sim", "não" nem "null" em texto). "Other" ou texto livre vale se for igual a um `valor`; senão, repergunte 1 vez e, na 2ª falha, pare sem gravar. Pergunta com mais de 4 opções: as 4 primeiras viram opção; as demais ficam no texto da pergunta e valem como "Other" exato.
+4. **Perguntas.** Pergunte só as `perguntas` que o `detectar` devolveu, na ordem dele: primeiro `politica`, `autonomia` e `perfil`, depois as condicionais. Fato detectado nunca é perguntado e nenhuma pergunta é inventada. Use `AskUserQuestion` em até 2 chamadas (1ª: as 3 fixas; 2ª: as condicionais), com no máximo 4 perguntas por chamada. Mostre as opções na ordem do script, sem reordenar (o default vem primeiro, então Enter o confirma), com o `rotulo` literal; ao default acrescente ` (default)`. Resposta que é o rótulo de uma opção vale o `valor` dela, com o tipo JSON (`true`, `false`, `null`; nunca "sim", "não" nem "null" em texto). "Other" ou texto livre vale se for igual a um `valor`; senão, repergunte 1 vez e, na 2ª falha, pare sem gravar. Pergunta com mais de 4 opções: as 4 primeiras viram opção; as demais ficam no texto da pergunta e valem como "Other" exato.
    Sessão sem `AskUserQuestion` (headless): use o default de cada pergunta, rode o passo 6 com `--dry-run`, mostre o diff e não grave. No fechamento, diga "rode numa sessão com perguntas": consentimento não tem default.
 5. **Respostas.** Escreva `<raiz>/.claude-tmp/onboarding-respostas.json`. Se o arquivo já existe, `Read` antes do `Write` (o `Write` falha sem `Read`); se o `Write` falhar, pare: nunca rode o passo 6 com o arquivo antigo. Só estas chaves, exatamente: `_previa` (o array `itens` do `detectar`, copiado sem mudar nada, na mesma ordem de chaves) e uma chave por `id` de pergunta (as 3 fixas e o nome do item de cada condicional). Chave a mais ou a menos faz o `gravar` recusar.
    ```json
@@ -57,12 +60,12 @@ Instala o harness e configura o fluxo numa passada só. **Instalar não é adota
    - `deteccao_mudou` (algo mudou entre a prévia e a gravação, como um servidor MCP que oscilou): volte ao passo 2 e pergunte só o que mudou ou é novo. No máximo 2 voltas; na 3ª, pare com "detecção instável: <itens>".
    - `resposta_fora_das_opcoes`: repergunte só aquele id, 1 vez.
    - `config_invalida`, `falha`: pare com o motivo. Nunca edite o `harness.config.json` à mão.
-7. **Doctor** (sempre, também depois de erro). `cd "<raiz>"` e depois:
+7. **Doctor** (sempre, também depois de erro). Ele acha a raiz do git a partir do diretório atual, então não precisa de `cd`:
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/harness-doctor.mjs" --explain
    ```
-   É o doctor do plugin, da mesma versão do `onboarding.mjs`. Mostre `Nível alcançado` e as linhas `FALTA` do nível seguinte: é a distância até a esteira padrão. Com `.novo` pendente, diga em uma linha que o doctor mediu antes de aplicá-los.
-8. **Fechamento.** Uma linha: `trocar <item>` serve para os 5 fatos (`tipo_repo`, `ambientes`, `planejamento`, `versionamento`, `orquestracao`), as 3 decisões (`politica`, `autonomia`, `perfil`) e o que fica fora das perguntas (`settings`, `codeowners`, `apendice`, `iniciativa`, `contenda`). Diga que falta preencher o resto do Apêndice do `AGENTS.md` (stack, fronteiras, comandos) e calibrar antes de ligar qualquer gate (`docs/harness/adocao.md §3`). Mostre `git status` e pare (R1: não commite).
+   É o doctor do plugin, da mesma versão do `onboarding.mjs`. Mostre `Nível alcançado` e as linhas `FALTA` do nível seguinte: é o que falta para subir um nível. Com `.novo` pendente, diga em uma linha que o doctor mediu antes de aplicá-los.
+8. **Fechamento.** Diga o que ficou instalado, o nível que o doctor mediu e que falta preencher o Apêndice do `AGENTS.md` (stack, fronteiras e comandos do projeto). Diga também, em uma linha, que para mudar algo depois basta pedir "trocar" e o assunto (por exemplo, trocar perfil). Só se o usuário pedir a lista: `trocar <item>` serve para os 5 fatos (`tipo_repo`, `ambientes`, `planejamento`, `versionamento`, `orquestracao`), as 3 decisões (`politica`, `autonomia`, `perfil`) e o que fica fora das perguntas (`settings`, `codeowners`, `apendice`, `iniciativa`, `contenda`). Mostre `git status` e pare, sem commit.
    Base diferente de `main` e `gabarito.yml` criado agora: troque com `Edit` `--base origin/main` por `--base origin/<base>` sem perguntar (o arquivo é nosso) e diga em uma linha. Se ele já existia (`mantido`), só diga a linha a trocar.
 
 ## Trocar um item

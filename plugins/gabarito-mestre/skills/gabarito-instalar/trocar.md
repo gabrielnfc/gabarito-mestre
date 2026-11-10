@@ -31,32 +31,32 @@ Grava `.claude/settings.json` do projeto. Não existe default `sim`: consentimen
    - (i) gravar `model: <alias>` para o time inteiro? Settings de projeto vencem os do usuário e mudam o custo de todos que clonam. `sim` / `não`.
    - (ii) registrar o marketplace do gabarito e habilitar o plugin (`enabledPlugins` + `extraKnownMarketplaces`)? Isso liga hooks de terceiro para quem clonar. `sim` / `não`.
 3. Grave só o confirmado, em uma chamada, sem `--dry-run`, com o JSON reduzido ao que recebeu `sim` (mesmo comando do item 1, sem `--dry-run`). Nenhum `sim`: não grave e diga por quê. Sessão sem `AskUserQuestion`: (i) e (ii) valem `não`; o diff fica na saída.
-4. Diga em uma linha: cada pessoa instala o plugin uma vez (`claude plugin install gabarito-mestre@gabarito-mestre`); `enabledPlugins` só o habilita para quem já instalou.
+4. Diga em uma linha: cada pessoa do time instala o plugin `gabarito-mestre` uma vez, pelo menu `/plugin` do Claude Code; `enabledPlugins` só o habilita para quem já instalou.
 
 ## codeowners
 
 Áreas do repo e o dono de cada uma (`.github/CODEOWNERS`). Três casos, decididos por medição, um comando por vez:
 
 ```bash
-test -e .github/CODEOWNERS
+test -e "<raiz>/.github/CODEOWNERS"
 ```
 Exit 1: **ausente**. Exit 0: conte as linhas que não são comentário nem vazias e o marcador do esqueleto:
 ```bash
-grep -c -v '^[[:space:]]*\(#.*\)\?$' .github/CODEOWNERS
+grep -c -v '^[[:space:]]*\(#.*\)\?$' "<raiz>/.github/CODEOWNERS"
 ```
 ```bash
-grep -c '^# Áreas e donos (TIM-1) — preenchido pelo onboarding' .github/CODEOWNERS
+grep -c '^# Áreas e donos (TIM-1) — preenchido pelo onboarding' "<raiz>/.github/CODEOWNERS"
 ```
 (`grep -c` imprime `0` e sai com exit 1 quando não há linha: leia o número, não o exit.) Primeiro `0` e segundo `≥ 1`: **esqueleto**; qualquer outra combinação: **próprio**.
 
 - **ausente**: pergunte as áreas e os donos (padrão de caminho e `@dono`; uma área `*` com o usuário serve) e crie o arquivo mostrando o conteúdo antes. `flag: "wx"` recusa se o arquivo passou a existir (R2):
   ```bash
-  mkdir -p .github
+  mkdir -p "<raiz>/.github"
   ```
   ```bash
-  node -e 'require("fs").writeFileSync(".github/CODEOWNERS", process.argv[1], { flag: "wx" }); console.log("criado .github/CODEOWNERS")' '# Áreas e donos — gerado pelo onboarding do gabarito-mestre em <AAAA-MM-DD>. Fonte: AGENTS.md, Apêndice "Áreas e donos".
+  node -e 'const f = process.argv[2] + "/.github/CODEOWNERS"; require("fs").writeFileSync(f, process.argv[1], { flag: "wx" }); console.log("criado", f)' '# Áreas e donos — gerado pelo onboarding do gabarito-mestre em <AAAA-MM-DD>. Fonte: AGENTS.md, Apêndice "Áreas e donos".
   <padrão> <@dono>
-  '
+  ' "<raiz>"
   ```
 - **esqueleto** (só comentários, e o primeiro é o marcador que `instalar.sh --codeowners` escreve: `# Áreas e donos (TIM-1) — preenchido pelo onboarding (gabarito-instalar, fase 2). Uma linha por área:`): preencha. Mantenha o marcador, troque a linha `# <caminho/>  @<dono>` pelas linhas reais (`Edit`, mostrando o diff antes).
 - **próprio** (qualquer linha não comentada, ou comentário que não é o marcador): não toque; diga em uma linha que o Apêndice vai citar o arquivo existente.
@@ -115,9 +115,9 @@ Lê a Iniciativa na ferramenta de planejamento e grava `fluxo` na config. A ferr
    }'
    ```
    `escrita: true` só se a resposta 6 foi sim; então o Apêndice recebe `escrita autorizada por <quem> em <data>` (item `apendice`). Sessão sem `AskUserQuestion`: `escrita` fica `false`.
-5. Em `arquivos`, crie só o que não existe, um comando por vez: `mkdir -p docs/fluxo/epics docs/fluxo/pbis`; depois, para cada par, `test -e <destino>` e, só com exit 1, `cp -n`:
+5. Em `arquivos`, crie só o que não existe, um comando por vez: `mkdir -p "<raiz>/docs/fluxo/epics" "<raiz>/docs/fluxo/pbis"`; depois, para cada par, `test -e "<raiz>/<destino>"` e, só com exit 1, `cp -n` para `"<raiz>/<destino>"`:
 
-   | Destino | Origem em `${CLAUDE_PLUGIN_ROOT}/templates/fluxo/` |
+   | Destino (dentro da raiz) | Origem em `${CLAUDE_PLUGIN_ROOT}/templates/fluxo/` |
    |---|---|
    | `docs/fluxo/iniciativa.md` | `iniciativa.md` |
    | `docs/fluxo/epics/EPIC-EXEMPLO.md` | `epic.md` |

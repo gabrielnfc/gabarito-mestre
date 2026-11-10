@@ -93,11 +93,11 @@ Regras de projeto no Apêndice passam de `R19+` a **`R30+`** — `instalar.sh --
 
 ## Onboarding
 
-`gabarito-instalar` faz o onboarding numa etapa só. Instala o harness (`instalar.sh`: determinístico, nunca sobrescreve; com um harness anterior, `--atualizar`), detecta o que o repo já mostra (tipo de repo, ambientes, ferramenta de planejamento, versionamento, orquestração), mostra uma prévia e pergunta 3 decisões (política de entrega, autonomia, perfil de modelos) mais uma pergunta por fato que a detecção não resolve (no máximo 5 no total). O default de cada pergunta vem primeiro: Enter o confirma. Grava `harness.config.json` e termina com o doctor e a distância até a esteira padrão.
+`gabarito-instalar` faz o onboarding numa etapa só. Instala o harness (`instalar.sh`: determinístico, nunca sobrescreve; com um harness anterior, `--atualizar`), detecta o que o repo já mostra (tipo de repo, ambientes, ferramenta de planejamento, versionamento, orquestração), mostra uma prévia e pergunta 3 decisões (política de entrega, autonomia, perfil de modelos) mais uma pergunta por fato que a detecção não resolve (no máximo 5 no total). O default de cada pergunta vem primeiro: Enter o confirma. Grava `harness.config.json` e termina com o doctor e o que falta para o próximo nível. Se o instalador avisa que algo ficou de fora (por exemplo, os hooks do git de versionamento, quando o gate instalado é da 1.1.0), a skill repassa o aviso em uma frase, sem comando para você digitar.
 
 Para mudar algo depois: `gabarito-instalar (trocar <item>)`. Os itens são `tipo_repo`, `ambientes`, `planejamento`, `versionamento`, `orquestracao`, `politica`, `autonomia` e `perfil`; e também `settings`, `codeowners`, `apendice`, `iniciativa` e `contenda`, que a etapa única não grava (cada um tem o seu procedimento, com o ok do usuário). A ferramenta de planejamento só é lida com ok em uma linha, e `settings.json` só muda com dois oks separados.
 
-Termina com a lista **"o que ficou (b)"**. Sessão sem `AskUserQuestion` (headless): só mostra o que gravaria (`--dry-run`) e não grava.
+Sessão sem `AskUserQuestion` (headless): só mostra o que gravaria (`--dry-run`) e não grava.
 
 **Cada pessoa instala o plugin uma vez.** `enabledPlugins` e `extraKnownMarketplaces` no `.claude/settings.json` do projeto deixam o plugin habilitado para quem clona, mas **não instalam nada**: cada pessoa roda `claude plugin install gabarito-mestre@gabarito-mestre` na própria máquina (M3, medido em `settings-example` da doc oficial). Tools MCP **não** entram no `allowed-tools` da skill — pedem permissão por chamada, de propósito (R3).
 
@@ -171,7 +171,7 @@ bash <plugin-root>/scripts/instalar.sh . --atualizar   # reference/ e tools/gaba
 
 - `--atualizar`: para `AGENTS.md`, `docs/harness/*.md` e os gates de `tools/gabarito-gates/` já existentes que diferem do plugin, grava `<nome>.novo` e imprime `diff --stat` — você aplica o que quiser à mão (R2). Avisa: "R19–R21 agora são do harness (fluxo · versionamento · orquestração); regras de projeto passam a R30+ — renumere no Apêndice ao aplicar o AGENTS.md.novo." O doctor **não** roda ao fim (você ainda vai aplicar os `.novo`).
 - Não existe mais `--gates-substituir` nem manifesto `.instalado.json` (2.0): nada em `tools/gabarito-gates/` é trocado pelo instalador. O `.instalado.json` que a 1.1.x deixou fica onde está, sem uso.
-- `.gitignore` recebe, sem duplicar e sem remover, `.harness/doctor-cache.json`, `.harness/fluxo-cache.json`, `.harness/entregas/_sem-id/`, `.harness/heartbeat.json`, `*.novo`, `*.bak`.
+- `.gitignore` recebe, sem duplicar e sem remover, `.harness/doctor-cache.json`, `.harness/fluxo-cache.json`, `.harness/entregas/_sem-id/`, `.harness/heartbeat.json`, `.claude-tmp/`, `*.novo`, `*.bak`.
 - Depois: `gabarito-instalar` faz o onboarding (uma etapa só). Até lá o doctor num repo nível 2 ou 3 **cai para 1** e diz `checagens novas da 1.1.0: rode o onboarding ou declare o nível medido` — repo em nível 0 ou 1 não muda de nível. Hooks de versionamento, cartão e conformidade ficam **fail-open** até o onboarding.
 
 Nomes da 1.0.1 que continuam existindo (PKG-2, conferido por grep no CI): 4 skills, 3 agents, 1 command, 2 hooks, 7 gates, R1–R18, G1–G9, I1–I12. `plugin.json` continua **sem** chave `hooks`.

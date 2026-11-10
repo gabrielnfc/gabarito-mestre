@@ -859,6 +859,41 @@ describe('perguntas', () => {
     assert.equal(tipo(null).default, 'app');
   });
 
+  test('trocar-respeita-nao-detectado', () => {
+    // MAJOR-1 (r2): "deixar não detectado" (null) é resposta. "trocar perfil" com os demais no default não a desfaz.
+    const opts = { claude: SEM_MCP };
+    const raiz = repoCom({ 'package.json': '{"name":"x"}' });
+    const ps0 = perguntas(itensLista(raiz, opts), null);
+    const defaults0 = Object.fromEntries(ps0.map((p) => [p.id, p.default]));
+    const antes = ps0.find((q) => q.id === 'planejamento');
+    assert.deepEqual(antes.opcoes.map((o) => o.valor), ['arquivos', null], 'sem resposta gravada: arquivos primeiro');
+    assert.equal(antes.default, 'arquivos');
+    const r1 = gravarCom(raiz, { ...defaults0, planejamento: null }, opts);
+    assert.equal(r1.ok, true, JSON.stringify(r1));
+    assert.ok(cfgDe(raiz).onboarding.naoDetectado.includes('planejamento'), 'a recusa fica em onboarding.naoDetectado');
+    assert.equal(cfgDe(raiz).fluxo?.ferramenta, undefined, 'recusado: nada gravado em fluxo.ferramenta');
+    const ps = perguntas(itensLista(raiz, opts), existenteDe(raiz, opts));
+    const pl = ps.find((q) => q.id === 'planejamento');
+    assert.equal(pl.default, null, 'o default é a recusa anterior');
+    assert.equal(pl.opcoes[0].valor, null, 'default primeiro: Enter mantém a recusa');
+    assert.deepEqual(pl.opcoes.map((o) => o.valor), [null, 'arquivos']);
+    const resp = Object.fromEntries(ps.map((p) => [p.id, p.default]));
+    const r2 = gravarCom(raiz, { ...resp, perfil: 'qualidade' }, opts);
+    assert.equal(r2.ok, true, JSON.stringify(r2));
+    const c = cfgDe(raiz);
+    assert.equal(c.orquestracao.perfil, 'qualidade', 'trocar perfil gravou o perfil');
+    assert.equal(c.fluxo?.ferramenta, undefined, 'trocar perfil não regrava fluxo.ferramenta');
+    assert.ok(c.onboarding.naoDetectado.includes('planejamento'), 'planejamento continua não detectado');
+    assert.ok(r2.naoDetectado.includes('planejamento'));
+    // quem tinha escolhido `arquivos` continua com `arquivos`; só a recusa vira null
+    const raiz2 = repoCom({ 'package.json': '{"name":"x"}' });
+    assert.equal(gravarCom(raiz2, { ...defaults0, planejamento: 'arquivos' }, opts).ok, true);
+    const pl2 = perguntas(itensLista(raiz2, opts), existenteDe(raiz2, opts)).find((q) => q.id === 'planejamento');
+    assert.equal(pl2?.default ?? 'arquivos', 'arquivos');
+    // naoDetectado só de OUTRO item não muda o default de planejamento
+    assert.equal(perguntas(itensLista(repoCom({ 'package.json': '{"name":"x"}' }), opts), { onboarding: { naoDetectado: ['ambientes'] } }).find((q) => q.id === 'planejamento').default, 'arquivos');
+  });
+
   test('default-de-config-110', () => {
     const ps = perguntas(itensLista(repoVazio()), { entrega: { politica: 'janela' }, orquestracao: { perfil: 'qualidade' } });
     assert.deepEqual(ps.slice(0, 3).map((p) => p.default), ['janela', true, 'qualidade']);

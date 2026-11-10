@@ -585,6 +585,8 @@ function perguntaDeItem(i, cfg) {
   let padrao = asked ? i.valor : (cands[0] ?? null);
   const gravada = respostaGravada(i.item, cfg);
   if (gravada !== undefined && cands.includes(gravada)) padrao = gravada;
+  // MAJOR-1 (r2): "deixar não detectado" é resposta gravada em `onboarding.naoDetectado`; `trocar` de outro item não a desfaz.
+  else if (!asked && gravada === undefined && Array.isArray(cfg.onboarding?.naoDetectado) && cfg.onboarding.naoDetectado.includes(i.item)) padrao = null;
   const ref = i.motivo ? `${i.estado}, ${i.motivo}` : i.estado;
   return { id: i.item, texto: `${i.item}: ${ref} (fonte: ${i.fonte}). Qual usar?`, opcoes, default: padrao };
 }

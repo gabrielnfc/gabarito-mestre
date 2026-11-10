@@ -52,7 +52,7 @@ Aqui o trabalho passa a ser reproduzível por outro agente ou outra pessoa.
 - [ ] Lanes de teste declaradas, com a partição hermética × não-hermética em **fonte única**, e quais são obrigatórias.
 - [ ] Jobs obrigatórios no ruleset, incluindo a **guarda de migrations** (G8).
 - [ ] Ciclo RED→GREEN registrado no ledger *(R13)*.
-- [ ] **Onboarding feito**: `harness.config.json` com `fluxo.resolvidoEm` e `versionamento.resolvidoEm` (`gabarito-instalar`; doctor `fluxo-configurado`, `versionamento`). `orquestracao.modelo.resolvidoEm` vencido (> `validadeDias`) é **`warn` (`modelo-resolvido`), não conta nível** — revalide com `gabarito-instalar (trocar perfil)`.
+- [ ] **Onboarding feito**: `harness.config.json` com `fluxo.resolvidoEm` e `versionamento.resolvidoEm` (`gabarito-instalar`; doctor `fluxo-configurado`, `versionamento`). `orquestracao.modelo.resolvidoEm` vencido (> `validadeDias`) é **`warn` (`modelo-resolvido`), não conta nível** — revalide com `gabarito-instalar (trocar orquestracao)`.
 - [ ] **Iniciativa ativa** atestada em `.harness/attest.json` (`iniciativa-resolvida`, 180 d) — existe ≠ ativa (I10).
 - [ ] `CHANGELOG.md` em Keep a Changelog com `[Unreleased]` (doctor `changelog`); ruleset com squash de título CC **atestado** em `.harness/attest.json` (`squash-titulo-pr`) — atestado, sem checagem automática (b) *(R20)*.
 - [ ] Núcleo do `AGENTS.md` ≤ 17.291 B e Apêndice ≤ 4.096 B (doctor `agents-tamanho`; ADR-CTX-1).
