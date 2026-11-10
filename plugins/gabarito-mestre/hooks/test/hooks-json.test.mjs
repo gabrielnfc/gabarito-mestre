@@ -2,9 +2,9 @@
  * Testes do registro de hooks em hooks.json (T16) — separados de guards.test.mjs (GM-9 T1a).
  * Helpers em ./_comum.mjs; corpora em ./corpus. Mutações prescritas: ver o cabeçalho histórico em git (guards.test.mjs, antes do GM-9 T1a).
  */
-import { test, describe } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, mkdtempSync, readdirSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -80,13 +80,30 @@ describe('hooks.json — registro dos hooks (T16)', () => {
     assert.equal(bruto.modules.length, 1);
     assert.ok(existsSync(join(HOOKS, bruto.modules[0])), bruto.modules[0]);
   });
-  test('E2: stubs de Stop e SubagentStop saem 0 sem imprimir nada', () => {
+  // Sem contexto de loop = cwd fora de qualquer repo (mkdtemp, sem git) e sem CLAUDE_PROJECT_DIR herdado:
+  // o stub nunca depende da branch nem do .harness do checkout que roda a suite.
+  let vazio;
+  before(() => { vazio = mkdtempSync(join(tmpdir(), 'stubs-stop-')); });
+  after(() => { rmSync(vazio, { recursive: true, force: true }); });
+  const rodarStub = (script) => {
+    const { CLAUDE_PROJECT_DIR: _fora, ...env } = process.env;
+    return spawnSync(process.execPath, [join(PLUGIN, 'gates', 'scripts', script)], { input: '{"hook_event_name":"Stop"}', encoding: 'utf8', cwd: vazio, env });
+  };
+  test('E2: stubs de Stop e SubagentStop saem 0 sem imprimir nada (sem contexto de loop)', () => {
     for (const script of ['stop-loop.mjs', 'uso-subagent.mjs']) {
-      const r = spawnSync(process.execPath, [join(PLUGIN, 'gates', 'scripts', script)], { input: '{"hook_event_name":"Stop"}', encoding: 'utf8' });
+      const r = rodarStub(script);
       assert.equal(r.status, 0, script);
       assert.equal(r.stdout, '', script);
       assert.equal(r.stderr, '', script);
     }
+  });
+  test('E2: rodar os stubs não grava nada no cwd real (nem no .harness do checkout) nem no cwd isolado', () => {
+    const harness = join(PLUGIN, '..', '..', '.harness');
+    const ls = () => (existsSync(harness) ? readdirSync(harness, { recursive: true }).map(String).sort() : []);
+    const antes = ls();
+    for (const script of ['stop-loop.mjs', 'uso-subagent.mjs']) rodarStub(script);
+    assert.deepEqual(ls(), antes);
+    assert.deepEqual(readdirSync(vazio), []);
   });
   test('emenda-user-prompt-expansion-onfailure-block: matcher ancorado, node, timeout 10, onFailure block; liberar intacto', () => {
     const grupos = cfg.UserPromptExpansion;
