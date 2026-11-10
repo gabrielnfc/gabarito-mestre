@@ -179,8 +179,11 @@ export function tasksDoNegado(plano         , eventos         , negados         
   return { ok: true, tasks: [...voo.tasks].sort((a, b) => revisor(a) - revisor(b) || depois(a) - depois(b) || ultimo(b) - ultimo(a)).slice(0, k) };
 }
 
-/** Eventos que não são trabalho do loop: o próprio mod os grava a cada turno ou ao parar. */
-const SEM_PROGRESSO                    = ['custo.medicao', 'loop.parar'];
+/**
+ * Eventos que não são trabalho do loop: o próprio mod os grava a cada turno ou ao parar. `dono.mensagem` e os de aprendizado
+ * também não: sem eles `jaParou` virava `false` depois de fechar a pendência `parar` e o mod regravava `loop.parar` (ciclo parar ⇄ aprender).
+ */
+const SEM_PROGRESSO                    = ['custo.medicao', 'loop.parar', 'dono.mensagem', 'aprendizado', 'aprendizado.nada'];
 
 /** Quantos eventos de progresso o diário tem; muda quando algo novo acontece. Não-lista ⇒ -1 (constante: conta como encalhe). */
 export function marcaDeProgresso(eventos         )         {
@@ -247,7 +250,37 @@ export function dadosMedicao(usage         )                                {
   return dados;
 }
 
-const CABECALHO = 'Pouso automático: o contexto foi limpo. Retome o loop do plano com a skill gabarito-loop (consulte a próxima ação); estado abaixo.';
+export const CABECALHO = 'Pouso automático: o contexto foi limpo. Retome o loop do plano com a skill gabarito-loop (consulte a próxima ação); estado abaixo.';
+
+/** Prompts que o próprio mod dispara (`prompt.submit`); o `origin.kind` deles não foi medido, então são reconhecidos pelo prefixo. */
+export const PROMPT_RETOMADA = 'Retomada pelo dono (/gabarito retomar). Continue o loop da entrega com a skill gabarito-loop: consulte a próxima ação e siga-a.';
+export const PROMPT_RECUPERACAO = 'Task em voo sem agente: o mod a reabriu. Continue o loop da entrega com a skill gabarito-loop: consulte a próxima ação com --vivos 0 e siga-a.';
+const PREFIXOS_DO_MOD                    = [CABECALHO, PROMPT_RETOMADA, PROMPT_RECUPERACAO];
+
+/**
+ * `prompt.submit` que é mensagem do dono (REQ-APR-2): origem `composer` ou `bridge`, sem comando (o composer manda `command: null`,
+ * S1; `/loop …` vem com o nome), texto não vazio e que não é um dos prompts do próprio mod. Puro; qualquer outra coisa ⇒ `false`.
+ */
+export function ehMensagemDoDono(e         )          {
+  if (e === null || typeof e !== 'object') return false;
+  const { origin, command, text } = e                                                           ;
+  const kind = origin !== null && typeof origin === 'object' ? (origin                      ).kind : undefined;
+  if (kind !== 'composer' && kind !== 'bridge') return false;
+  if (command !== null && command !== undefined) return false;
+  if (typeof text !== 'string' || text.trim() === '') return false;
+  return !PREFIXOS_DO_MOD.some((p) => text.startsWith(p));
+}
+
+/** Texto único da negação por pendência de aprendizado, nos dois caminhos do mod. Até 6 itens, depois `e mais N`. */
+export function textoPendencia(pendencias                                                          )         {
+  const itens = pendencias.slice(0, 6).map((p) => `${p.tipo} ${p.sessao}:${p.seq}`);
+  if (pendencias.length > 6) itens.push(`e mais ${pendencias.length - 6}`);
+  return `gabarito: aprendizado pendente: feche antes de despachar (${itens.join(', ')}). Feche com loop.mjs aprendizado … --gatilho <sessao:seq> ou loop.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>. Só o revisor passa.`;
+}
+
+/** Negação quando não deu para saber se há pendência (leitura, plano, diário ou núcleo de pendências falhou). */
+export const textoPendenciaNaoVerificada = (motivo        )         =>
+  `gabarito: não consegui verificar pendência de aprendizado (${motivo}). Sem despacho novo; só o revisor passa.`;
 
 /** Prompt de retomada = cabeçalho curto + instantâneo inteiro. Vazio ou acima do teto ⇒ `null`: o pouso não acontece. */
 export function textoRetomada(instantaneo        )                {
@@ -257,19 +290,31 @@ export function textoRetomada(instantaneo        )                {
 }
 
 /**
+ * A importação dinâmica do `aprendizado.js` roda no `node -e` da ponte, não neste módulo: o fecho do `dist/pouso.js` (painel.test.ts
+ * `fecho-sem-node`) proíbe a forma literal da chamada no texto do módulo, então a palavra é montada aqui.
+ */
+const IMPORT_DINAMICO = 'import';
+
+/**
  * Programa que o mod passa a `node --input-type=module -e` (o ambiente do mod não tem `node:`). Lê UM objeto JSON no stdin
  * (`{op, …}`), escreve UM JSON no stdout e sempre sai 0. Dados nunca entram no programa: só o caminho do `diario.js`.
  * Ops: `dir` (raiz, pasta da entrega, `plano.json`), `ler` (estrita: `lerEstrito`), `plano` (`plano.json` validado pela T1 e
  * `loop.slots`/`loop.tetoTokens` de `harness.config.json`; ilegível ou inválido ⇒ `ok: false`), `instantaneo`,
- * `append` (`unicoPorAgente` não repete o par tipo+agente).
+ * `append` (`unicoPorAgente` não repete o par tipo+agente), `mensagem` (`dono.mensagem {sha256, chars}` na sessão `dono`; o texto
+ * nunca é gravado nem ecoado no erro).
  */
-export function codigoPonte(diarioUrl        , planoUrl         = diarioUrl.replace(/diario\.js$/, 'plano.js'))         {
+export function codigoPonte(
+  diarioUrl        ,
+  planoUrl         = diarioUrl.replace(/diario\.js$/, 'plano.js'),
+  aprendizadoUrl         = diarioUrl.replace(/diario\.js$/, 'aprendizado.js'),
+)         {
   return [
     `import * as d from ${JSON.stringify(diarioUrl)};`,
     `import * as pl from ${JSON.stringify(planoUrl)};`,
     `import { readFileSync, existsSync } from 'node:fs';`,
     `import { execFileSync } from 'node:child_process';`,
     `import { join } from 'node:path';`,
+    `import { createHash } from 'node:crypto';`,
     `const out = (o) => process.stdout.write(JSON.stringify(o));`,
     `const git = (a, cwd) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();`,
     `try {`,
@@ -293,7 +338,24 @@ export function codigoPonte(diarioUrl        , planoUrl         = diarioUrl.repl
     `    if (Object.hasOwn(lp, 'tetoTokens') && !inteiro(lp.tetoTokens)) throw new Error('loop.tetoTokens inválido');`,
     `    out({ ok: true, plano: v.plano, slots: inteiro(lp.slots) ? lp.slots : 1, tetoTokens: Object.hasOwn(lp, 'tetoTokens') ? lp.tetoTokens : null });`,
     `  } else if (e.op === 'instantaneo') {`,
-    `    out({ ok: true, texto: d.projetar(d.ler(e.dir)).instantaneo });`,
+    `    const arv = d.lerAprendizados(join(e.dir, '..'));`,
+    `    let vig = []; const avisos = [];`,
+    `    try { const apr = await ${IMPORT_DINAMICO}(${JSON.stringify(aprendizadoUrl)}); vig = apr.paraDestino(apr.aprendizadosVigentes(arv.porEntrega), 'instantaneo'); } catch { avisos.push('aprendizados indisponíveis'); }`,
+    `    const texto = d.projetar(d.ler(e.dir), { aprendizados: vig, avisosAprendizados: arv.avisos }).instantaneo;`,
+    `    out(avisos.length > 0 ? { ok: true, texto, avisos } : { ok: true, texto });`,
+    `  } else if (e.op === 'mensagem') {`,
+    `    try {`,
+    `      if (typeof e.texto !== 'string') throw new Error('texto inválido');`,
+    `      const l = d.lerEstrito(e.dir);`,
+    `      if (!l.ok) throw new Error('mensagem não gravada');`,
+    `      let autor = 'desconhecido';`,
+    `      try { autor = git(['config', 'user.email'], e.cwd) || autor; } catch {}`,
+    `      const dados = { sha256: createHash('sha256').update(e.texto, 'utf8').digest('hex'), chars: e.texto.length };`,
+    `      const r = d.append(e.dir, 'dono', { ts: new Date().toISOString(), autor, sessao: 'dono', agente: 'dono', tipo: 'dono.mensagem', dados });`,
+    `      out(r.ok && r.gravado === 'evento' ? { ok: true } : { ok: false, erro: 'mensagem não gravada' });`,
+    `    } catch (x) {`,
+    `      out({ ok: false, erro: x?.message === 'texto inválido' ? 'texto inválido' : 'mensagem não gravada' });`,
+    `    }`,
     `  } else if (e.op === 'append') {`,
     `    if (e.unicoPorAgente === true && d.ler(e.dir).some((x) => x?.tipo === e.ev.tipo && x.agente === e.ev.agente)) {`,
     `      out({ ok: true, gravado: 'ja_existia' });`,

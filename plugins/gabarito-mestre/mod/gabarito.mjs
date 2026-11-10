@@ -14,9 +14,11 @@
  * Sem mod, loop e kill switch seguem (D1): nada aqui é pré-requisito dos hooks clássicos.
  */
 import { proximaAcao } from '../gates/dist/loop.js';
+import { pendenciasAprendizado } from '../gates/dist/pendencias.js';
 import * as nucleo from '../gates/dist/loop.js'; // `nucleo.TIPOS_DE_PROGRESSO`: fonte única da lista (lida só em marcarPousoPendente)
 import {
-  analisarFronteira, codigoPonte, dadosMedicao, ehRevisor, jaParou, lerX, marcaDeProgresso, negaDespacho, portaDoPouso, tasksDoNegado, tasksEmVoo, textoRetomada, tokensDe, vivosDe,
+  analisarFronteira, codigoPonte, dadosMedicao, ehMensagemDoDono, ehRevisor, jaParou, lerX, marcaDeProgresso, negaDespacho, portaDoPouso, PROMPT_RECUPERACAO, PROMPT_RETOMADA,
+  tasksDoNegado, tasksEmVoo, textoPendencia, textoPendenciaNaoVerificada, textoRetomada, tokensDe, vivosDe,
 } from '../gates/dist/pouso.js';
 import { comandoPainel, iniciarPainel, registrarPainel, turnoDoPainel, USO_GABARITO } from './painel.mjs'; // E4 T10: Pane, faixa, atualização e aviso do PAROU (nada do pouso depende dele)
 
@@ -146,6 +148,7 @@ async function executarPouso($, c, percent, x) {
     const inst = await ponte($, { op: 'instantaneo', dir: c.dir, cwd: c.cwd });
     const texto = inst.ok === true ? textoRetomada(inst.texto) : null;
     if (texto === null) return await falharPouso($, c, 'instantaneo');
+    if (Array.isArray(inst.avisos) && inst.avisos.length > 0) await avisarAprendizados($); // só o bloco de aprendizados some; o pouso segue
     try {
       await $.command.run({ command: 'clear' }); // fora de sessão (`-p`) lança (S7 P1); lançar é a única forma de falha
     } catch {
@@ -157,12 +160,26 @@ async function executarPouso($, c, percent, x) {
       const r = await $.prompt.submit({ text: texto });
       enviado = r !== null && typeof r === 'object' && r.drop === undefined;
     } catch { /* cai abaixo */ }
-    if (!enviado) return await falharPouso($, c, 'submit');
-    await gravar($, c, { agente: 'orquestrador', tipo: 'sessao.retomada', dados: { chars: texto.length } });
+    if (!enviado) {
+      // REQ-POU-3: depois do /clear o contexto já está limpo e a fronteira consumida; o submit falho NÃO é `sem_pouso`. Sem `loop.parar`,
+      // `desistiu` intocado e nenhum segundo /clear; o wakeup do /loop ou a próxima mensagem do dono reabre o turno.
+      try { await $.store.delete(chave); } catch { /* sessão seguinte reinicia o estado */ }
+      await avisar($, 'gabarito: retomada pelo contexto; o wakeup do /loop ou sua próxima mensagem reabre o turno');
+      return;
+    }
+    const gravou = await gravar($, c, { agente: 'orquestrador', tipo: 'sessao.retomada', dados: { via: 'mod', chars: texto.length } });
     try { await $.store.delete(chave); } catch { /* sessão seguinte reinicia o estado */ }
+    if (!gravou) await avisar($, 'gabarito: retomada aconteceu mas sessao.retomada não gravou; o próximo cartão pode repetir a linha de pouso.');
   } finally {
     ocupado = false;
   }
+}
+
+let aprendizadosAvisado = false;
+async function avisarAprendizados($) {
+  if (aprendizadosAvisado) return;
+  aprendizadosAvisado = true;
+  await avisar($, 'gabarito: aprendizados indisponíveis; o instantâneo do pouso segue sem o bloco de aprendizados.');
 }
 
 async function iniciarPouso($, c, percent, x) {
@@ -227,6 +244,7 @@ function descrever(r) {
   if (r.mundo === null) return 'diário ou plano ilegíveis';
   if (r.acao === null) return 'núcleo sem resposta';
   const a = r.acao;
+  if (a.tipo === 'aprender') return 'aprendizado pendente: feche antes de despachar'; // nunca `aprender` cru (Sombra 2d.4)
   if (a.tipo === 'pousar') return 'pouso pendente';
   if (a.tipo === 'esperar') return `esperar (${a.motivo})`;
   if (a.tipo === 'parar') return `loop parado (${a.motivo})`;
@@ -326,8 +344,6 @@ async function desfazerNegados($) {
     }
   }
 }
-
-const PROMPT_RECUPERACAO = 'Task em voo sem agente: o mod a reabriu. Continue o loop da entrega com a skill gabarito-loop: consulte a próxima ação com --vivos 0 e siga-a.';
 
 /**
  * REQ-LOOP-5, task em voo sem agente (Q-T13F D1): `iniciar` sem `Agent` (um hand-back entrou entre os dois). No fim normal do turno, com
@@ -462,9 +478,6 @@ async function comandoPausa($, acao) {
   return { text: texto };
 }
 
-/** Prompt do turno aberto por `/gabarito retomar`: o modelo não digita nada, a skill diz o resto. */
-const PROMPT_RETOMADA = 'Retomada pelo dono (/gabarito retomar). Continue o loop da entrega com a skill gabarito-loop: consulte a próxima ação e siga-a.';
-
 /**
  * Depois de remover PAUSAR (tabela de transições de `/gabarito retomar`, T15): com vivos 0 reabre cada task em voo (origem
  * `retomada`, o que `proxima` não faz sozinho) e abre um turno. Vivos > 0, vivos não medidos, plano ou diário ilegível, ou
@@ -508,6 +521,44 @@ function abrirTurno($, texto = PROMPT_RETOMADA) {
   }
 }
 
+let mensagemAvisada = null; // causa do último aviso de mensagem do dono não registrada (não repete)
+async function avisarMensagem($, causa) {
+  if (mensagemAvisada === causa) return;
+  mensagemAvisada = causa;
+  await avisar($, `gabarito: mensagem do dono não registrada (${causa}); o gatilho de aprendizado desta mensagem não abre.`);
+}
+
+/** REQ-APR-2: grava `dono.mensagem` (só hash e tamanho; a ponte calcula). Nunca bloqueia nem altera o prompt; falha avisa. */
+async function registrarMensagemDoDono($, texto) {
+  let causa = null;
+  try {
+    const { c, falha } = await loopAtivo($);
+    await avisarLeitura($, falha);
+    if (c === null) return;
+    const r = await ponte($, { op: 'mensagem', dir: c.dir, cwd: c.cwd, texto });
+    if (r.ok !== true) causa = typeof r.erro === 'string' ? r.erro : 'ponte falhou';
+  } catch {
+    causa = 'erro inesperado';
+  }
+  if (causa !== null) await avisarMensagem($, causa);
+}
+
+/**
+ * Porta `permitir` (inclui `percent` ausente): o núcleo não roda, então a pendência de aprendizado é lida aqui. Texto de negação, ou `null`
+ * quando não há pendência. Dúvida (leitura, plano, ordem do diário ou núcleo de pendências) NEGA: com loop ativo o mod não presume que está tudo certo.
+ */
+async function negaPorPendencia($, c) {
+  const l = await ponte($, { op: 'ler', dir: c.dir, cwd: c.cwd });
+  if (l.ok !== true || !Array.isArray(l.eventos)) return textoPendenciaNaoVerificada(typeof l.erro === 'string' ? l.erro : 'leitura falhou');
+  const p = await ponte($, { op: 'plano', dir: c.dir, raiz: c.raiz, cwd: c.cwd });
+  if (p.ok !== true || p.plano === null || typeof p.plano !== 'object') return textoPendenciaNaoVerificada(typeof p.erro === 'string' ? p.erro : 'plano ilegível');
+  const voo = tasksEmVoo(p.plano, l.eventos); // diário fora de ordem, fora da tabela ou task fora do plano: `pendenciasAprendizado` devolveria [] e passaria
+  if (!voo.ok) return textoPendenciaNaoVerificada(voo.motivo);
+  let pendencias;
+  try { pendencias = pendenciasAprendizado(p.plano, l.eventos); } catch { return textoPendenciaNaoVerificada('núcleo de pendências falhou'); }
+  return pendencias.length > 0 ? textoPendencia(pendencias) : null;
+}
+
 export const register = (on) => {
   registrarPainel(on);
   on('session.start', async ($, e, next) => {
@@ -535,6 +586,11 @@ export const register = (on) => {
   // hand-back de subagent (S7): chega como `prompt.submit` de origem `peer`. Só contado, nunca alterado.
   on('prompt.submit', async ($, e, next) => {
     if (e?.origin?.kind === 'peer') recebidos += 1;
+    if (ehMensagemDoDono(e)) {
+      // a ponte custa 2 `node` (até 5 s cada): o prompt do dono nunca espera por ela
+      const texto = e.text;
+      try { $.clock.after(0, () => { registrarMensagemDoDono($, texto).catch(() => {}); }); } catch { avisarMensagem($, 'clock').catch(() => {}); }
+    }
     return next(e);
   });
 
@@ -570,11 +626,19 @@ export const register = (on) => {
       await avisarLeitura($, falha);
       if (c !== null) {
         const r = await avaliar($, c);
-        if (r.negar) {
+        const negou = () => {
           negados += 1;
           try { negadoAte = new Date().toISOString(); } catch { negadoAte = null; } // parede: o diário grava `new Date()`, o `$.clock` dos testes não
+        };
+        if (r.negar) {
+          negou();
           if (r.acao?.tipo === 'pousar' && r.mundo !== null) await marcarPousoPendente($, c, r.mundo.eventos);
+          if (r.acao?.tipo === 'aprender') return { deny: textoPendencia(r.acao.pendencias) }; // texto único: nunca `aprender` cru nem "encerre o turno"
           return { deny: `pouso: contexto em ${r.percent}% (X=${r.x}%), ${descrever(r)}. Sem despacho novo; só o revisor passa. Não tente de novo: encerre o turno.` };
+        }
+        if (r.porta.despacho === 'permitir') {
+          const motivo = await negaPorPendencia($, c);
+          if (motivo !== null) { negou(); return { deny: motivo }; }
         }
       }
     } catch { /* o mod não prende a sessão */ }

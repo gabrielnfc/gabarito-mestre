@@ -1,6 +1,7 @@
 /** Testes do mod de pouso (GM-10 T9, REQ-POU-1/2, REQ-OBS-1) por `claude plugin test`. Mutações: task-9-mut.json. */
 import { expect, mock, test } from 'claude-code/testing'
 import { pendenciasAprendizado } from '../../gates/dist/pendencias.js'
+import { CABECALHO, PROMPT_RECUPERACAO, PROMPT_RETOMADA } from '../../gates/dist/pouso.js'
 
 const RAIZ = '/repo'
 const DIR = '/repo/.harness/entregas/PBI-7'
@@ -50,6 +51,14 @@ type Opc = {
   sessaoId?: string
   sessaoIdFalha?: boolean
   existsPacoteFalha?: boolean
+  /** ponte `mensagem` (T10): resposta `ok:false` */
+  mensagemFalha?: boolean
+  /** ponte `mensagem` (T10): fica presa até `est.mensagemLibera` */
+  mensagemPendente?: boolean
+  /** ponte `instantaneo` (T10): devolve `avisos` */
+  instantaneoAvisos?: string[]
+  /** gravação de `sessao.retomada` (T10) falha */
+  retomadaFalha?: boolean
 }
 type PainelOpc = {
   modo?: 'ok' | 'sem_loop' | 'erro' | 'torto' | 'trunca' | 'rejeita' | 'timeout' | 'pendente'
@@ -120,6 +129,7 @@ function mundo($: any, on: any, o: Opc = {}) {
     painel: { ...(o.painel ?? {}) } as PainelOpc, painelStdins: [] as any[], painelArgv: [] as string[][], painelInit: [] as any[], painelFlight: 0, painelLibera: [] as (() => void)[],
     opens: [] as any[], panes: (o.panes ?? []) as any, openResult: (o.openResult ?? { isPlaced: true }) as any, notifies: [] as string[], fills: [] as any[], statuses: [] as (string | undefined)[],
     subStarts: [] as any[], logs: [] as string[], closes: [] as any[], registros: [] as any[], sessaoId: o.sessaoId ?? 'sess-1', ordem: [] as string[], notifyModo: (o.notify ?? 'ok') as string, rateLimits: (o.rateLimits === undefined ? [] : o.rateLimits) as any, fillIsFilled: o.fillIsFilled !== false,
+    msgs: [] as { sha256: string; chars: number }[], mensagemLibera: [] as (() => void)[],
   }
 
   // o diário em memória: tudo que o mod grava volta na próxima leitura, com seq e ts válidos para a T2
@@ -209,11 +219,21 @@ function mundo($: any, on: any, o: Opc = {}) {
       if (q.op === 'instantaneo') {
         log.push('instantaneo')
         const t = o.instantaneo ?? 'Diário: 3 evento(s)\nETA: sem dados'
-        return ok(JSON.stringify(t === 'falha' ? { ok: false, erro: 'x' } : { ok: true, texto: t }))
+        return ok(JSON.stringify(t === 'falha' ? { ok: false, erro: 'x' } : { ok: true, texto: t, ...(o.instantaneoAvisos ? { avisos: o.instantaneoAvisos } : {}) }))
+      }
+      if (q.op === 'mensagem') {
+        log.push('mensagem')
+        if (o.mensagemPendente) await new Promise<void>((r) => { est.mensagemLibera.push(r) })
+        if (o.mensagemFalha) return ok(JSON.stringify({ ok: false, erro: 'mensagem não gravada' }))
+        // o hash real é da ponte (testada em gates/test/pouso.test.ts); o mock guarda só o que o diário guardaria: hash e tamanho
+        const dados = { sha256: 'f'.repeat(64), chars: q.texto.length }
+        est.msgs.push(dados)
+        add('dono', 'dono.mensagem', dados, 'dono')
+        return ok(JSON.stringify({ ok: true }))
       }
       if (q.op === 'append') {
         log.push(`append:${q.ev.tipo}`)
-        if (o.appendFalha?.includes(q.ev.tipo)) return ok(JSON.stringify({ ok: false, erro: 'x' }))
+        if (o.appendFalha?.includes(q.ev.tipo) || (o.retomadaFalha && q.ev.tipo === 'sessao.retomada')) return ok(JSON.stringify({ ok: false, erro: 'x' }))
         grav.push({ agente: q.ev.agente, tipo: q.ev.tipo, dados: q.ev.dados })
         add(q.ev.agente, q.ev.tipo, q.ev.dados, 'sess-1')
         return ok(JSON.stringify({ ok: true, gravado: 'evento' }))
@@ -254,7 +274,9 @@ function mundo($: any, on: any, o: Opc = {}) {
   const inicio = (interativo = o.interativo ?? true) => $.session.start({ cwd: RAIZ, surface: interativo ? 'terminal' : null, isInteractive: interativo })
   const cmd = (args: string) => $.command.run({ command: 'gabarito', args })
   const tipos = () => grav.map((g) => g.tipo)
-  return { log, grav, toasts, escritas, pedidos, store, arquivos, est, clock, turno, peer, agent, inicio, cmd, tipos, evs, add }
+  /** mensagem digitada pelo dono: o composer real manda `command: null` (S1) */
+  const dono = (extra: Record<string, unknown> = {}) => $.prompt.submit({ text: 'mensagem do dono', origin: { kind: 'composer' }, command: null, isMeta: false, ...extra })
+  return { log, grav, toasts, escritas, pedidos, store, arquivos, est, clock, turno, peer, agent, inicio, cmd, tipos, evs, add, dono }
 }
 
 const pousar = async (m: ReturnType<typeof mundo>) => { await m.inicio(); await m.turno(); await m.clock.settle() }
@@ -876,13 +898,15 @@ test('falha-depois-do-pouso-gasta-a-fronteira: clear que falha grava sessao.pous
   await m.turno(); await m.clock.settle()
   expect(m.est.clears).toBe(1)
 })
-test('submit-falha: sem_pouso, aviso, ocioso', async ($, on) => {
+test('submit-pos-clear-falha-sem-parar: submit que falha depois do /clear não é sem_pouso (REQ-POU-3): 0 loop.parar, 1 sessao.pouso, aviso exato, store limpo', async ($, on) => {
   const m = mundo($, on, { submitFalha: true })
   await pousar(m)
   expect(m.est.clears).toBe(1)
-  expect(parou(m)[0].dados).toEqual({ motivo: 'sem_pouso', causa: 'submit' })
+  expect(parou(m)).toHaveLength(0)
+  expect(m.grav.filter((g) => g.tipo === 'sessao.pouso')).toHaveLength(1)
   expect(m.grav.some((g) => g.tipo === 'sessao.retomada')).toBe(false)
-  expect(m.toasts.some((t) => t.includes('sem_pouso'))).toBe(true)
+  expect(m.toasts).toContain('gabarito: retomada pelo contexto; o wakeup do /loop ou sua próxima mensagem reabre o turno')
+  expect(m.toasts.some((t) => t.includes('sem_pouso'))).toBe(false)
   expect(m.store.has(CHAVE)).toBe(false)
 })
 test('instantaneo-falha: sem clear', async ($, on) => {
@@ -3033,4 +3057,269 @@ test('comando-nao-painel-nao-toca-prefs: pausar e Uso não gravam prefs nem abre
   await m.cmd('x'); await m.cmd('')
   expect(m.store.has(PREFS_STORE)).toBe(false)
   expect(m.est.opens.length).toBe(opens)
+})
+
+
+// ---- T10 (GM-13): mensagem do dono, retomada e negação por pendência ----
+const msgsDo = (m: ReturnType<typeof mundo>) => m.evs.filter((e) => e.tipo === 'dono.mensagem')
+const PEDIDOS_DE = (m: ReturnType<typeof mundo>, op: string) => m.pedidos.filter((q) => q.op === op)
+const TEXTO_PENDENCIA = /gabarito: aprendizado pendente: feche antes de despachar \(.*\)\. Feche com loop\.mjs aprendizado … --gatilho <sessao:seq> ou loop\.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>\. Só o revisor passa\./
+const PARAR_ABERTO = [...B_FEITA, EV(5, 'loop.parar', { motivo: 'teto_rodadas', task: 'b' })]
+
+test('so-composer-grava: composer sem comando grava; peer, plugin, scheduled-trigger e composer com comando não', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  for (const origin of [{ kind: 'peer' }, { kind: 'plugin' }, { kind: 'scheduled-trigger' }, { kind: 'composer' }]) {
+    await m.dono({ origin, command: origin.kind === 'composer' ? { name: 'loop' } : null })
+  }
+  await m.dono({ origin: { kind: 'composer' }, command: 'loop' })
+  await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(0)
+  await m.dono()
+  await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(1)
+  expect(msgsDo(m)[0]).toMatchObject({ sessao: 'dono', agente: 'dono', dados: { sha256: 'f'.repeat(64), chars: 'mensagem do dono'.length } })
+})
+test('peer-segue-contando: o hand-back de subagent continua somando em recebidos, e não grava', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await m.peer(); await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(0)
+  expect(PEDIDOS_DE(m, 'mensagem')).toHaveLength(0)
+})
+test('bridge-grava: origem bridge e command ausente (não só null) também são mensagem do dono', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await $.prompt.submit({ text: 'via bridge', origin: { kind: 'bridge' } })
+  await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(1)
+  expect(msgsDo(m)[0].dados.chars).toBe('via bridge'.length)
+})
+test('origem-ausente-nao-grava', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await $.prompt.submit({ text: 'sem origem' })
+  await $.prompt.submit({ text: 'origem sem kind', origin: {} })
+  await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(0)
+})
+test('texto-vazio-nao-grava: vazio, só espaço ou quebra e não-string', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  for (const text of ['', '   ', ' \n\t ']) await m.dono({ text }) // não-string: o runner nem deixa o `next` passar; coberto em pouso.test.ts
+  await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(0)
+  expect(PEDIDOS_DE(m, 'mensagem')).toHaveLength(0)
+})
+test('mensagem-nunca-o-texto: o texto não aparece em nenhum evento do diário nem em aviso', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  const sentinela = 'SENTINELA-T10-4711'
+  await m.dono({ text: `${sentinela} ghp_${'a'.repeat(30)}` })
+  await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(1)
+  expect(JSON.stringify(m.evs)).not.toContain(sentinela)
+  expect(JSON.stringify(m.grav)).not.toContain(sentinela)
+  expect(m.toasts.join(' ')).not.toContain(sentinela)
+})
+test('sem-loop-nao-grava: sem plano.json nenhuma mensagem, nenhum aviso', async ($, on) => {
+  const m = mundo($, on, { plano: false })
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  expect(PEDIDOS_DE(m, 'mensagem')).toHaveLength(0)
+  expect(m.toasts).toHaveLength(0)
+})
+test('leitura-falha-nao-grava-e-avisa: loop sem confirmação ⇒ sem gravar, avisarLeitura', async ($, on) => {
+  const m = mundo($, on, { existsPlanoFalha: true })
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  expect(PEDIDOS_DE(m, 'mensagem')).toHaveLength(0)
+  expect(m.toasts.join(' ')).toMatch(/não consegui ler se há loop/)
+})
+test('mensagem-falha-avisa-uma-vez-e-o-prompt-segue: a ponte recusa; mesmo aviso não repete; o prompt nunca é bloqueado', async ($, on) => {
+  const m = mundo($, on, { mensagemFalha: true })
+  await m.inicio()
+  const r1 = await m.dono(); await m.clock.settle()
+  const r2 = await m.dono(); await m.clock.settle()
+  expect(r1).toEqual({ text: 'mensagem do dono' })
+  expect(r2).toEqual({ text: 'mensagem do dono' })
+  const avisos = m.toasts.filter((t) => t.startsWith('gabarito: mensagem do dono não registrada'))
+  expect(avisos).toEqual(['gabarito: mensagem do dono não registrada (mensagem não gravada); o gatilho de aprendizado desta mensagem não abre.'])
+  expect(msgsDo(m)).toHaveLength(0)
+})
+test('mensagem-nao-espera-ponte: com a ponte presa o prompt volta; liberada, grava', async ($, on) => {
+  const m = mundo($, on, { mensagemPendente: true })
+  await m.inicio()
+  const r = await m.dono() // se o handler esperasse a ponte, isto nunca resolveria
+  expect(r).toEqual({ text: 'mensagem do dono' })
+  await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(0)
+  m.est.mensagemLibera.forEach((f) => f()); await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(1)
+})
+test('submit-proprio-prefixo-nao-grava: os 3 prompts do próprio mod, mesmo com origem composer, não são mensagem do dono', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  for (const text of [PROMPT_RETOMADA, PROMPT_RECUPERACAO, `${CABECALHO}\n\nDiário: 1 evento(s)`]) await m.dono({ text })
+  await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(0)
+  await m.dono({ text: `${PROMPT_RETOMADA} e mais algo do dono` }); await m.clock.settle() // o prefixo vale; o que não começa por ele é do dono
+  expect(msgsDo(m)).toHaveLength(0)
+  await m.dono({ text: `por favor ${PROMPT_RETOMADA}` }); await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(1)
+})
+test('retomada-via-mod: sessao.retomada leva via mod e o tamanho do prompt enviado', async ($, on) => {
+  const m = mundo($, on)
+  await pousar(m)
+  expect(m.grav.find((g) => g.tipo === 'sessao.retomada')).toEqual({ agente: 'orquestrador', tipo: 'sessao.retomada', dados: { via: 'mod', chars: m.est.submits[0].length } })
+})
+test('retomada-gravacao-falha-avisa-sem-parar: sessao.retomada que não grava avisa, não para e limpa o store', async ($, on) => {
+  const m = mundo($, on, { retomadaFalha: true })
+  await pousar(m)
+  expect(parou(m)).toHaveLength(0)
+  expect(m.toasts).toContain('gabarito: retomada aconteceu mas sessao.retomada não gravou; o próximo cartão pode repetir a linha de pouso.')
+  expect(m.store.has(CHAVE)).toBe(false)
+})
+test('falha-antes-do-clear-sem-pouso: instantâneo que falha continua sendo sem_pouso, sem /clear', async ($, on) => {
+  const m = mundo($, on, { instantaneo: 'falha' })
+  await pousar(m)
+  expect(m.est.clears).toBe(0)
+  expect(parou(m)[0].dados).toEqual({ motivo: 'sem_pouso', causa: 'instantaneo' })
+})
+test('falha-antes-do-clear-sem-pouso-diario: sessao.pouso que não grava continua sendo sem_pouso, sem /clear', async ($, on) => {
+  const m = mundo($, on, { appendFalha: ['sessao.pouso'] })
+  await pousar(m)
+  expect(m.est.clears).toBe(0)
+  expect(parou(m)[0].dados).toEqual({ motivo: 'sem_pouso', causa: 'diario' })
+})
+test('um-so-clear: submit que falhou depois do /clear não repete o /clear em turno seguinte com percent alto', async ($, on) => {
+  const m = mundo($, on, { submitFalha: true })
+  await pousar(m)
+  expect(m.est.clears).toBe(1)
+  m.est.percent = 70
+  await m.turno(); await m.clock.settle()
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(1)
+  expect(parou(m)).toHaveLength(0)
+})
+test('aprendizados-indisponiveis-avisa-e-pousa: a ponte devolve avisos, o pouso segue e o aviso vem uma vez', async ($, on) => {
+  const m = mundo($, on, { instantaneoAvisos: ['aprendizados indisponíveis'] })
+  await pousar(m)
+  expect(m.est.clears).toBe(1)
+  expect(m.toasts.filter((t) => t.includes('aprendizados indisponíveis'))).toHaveLength(1)
+  expect(parou(m)).toHaveLength(0)
+})
+
+// Agent, porta `permitir` (abaixo de X ou percent ausente): a pendência de aprendizado nega sem o núcleo
+test('agent-negado-com-pendencia-abaixo-de-x: loop.parar aberto nega o despacho com o texto único; o revisor passa', async ($, on) => {
+  const m = mundo($, on, { percent: 49, eventos: PARAR_ABERTO })
+  const r = await m.agent('gabarito-implementador')
+  expect(r.deny).toMatch(TEXTO_PENDENCIA)
+  expect(r.deny).toContain('(parar s0:5)')
+  expect(r.deny).not.toMatch(/\baprender\b/)
+  expect(r.deny).not.toMatch(/encerre o turno/)
+})
+test('revisor-passa-com-pendencia: o revisor passa sem nenhum pedido de ponte', async ($, on) => {
+  const m = mundo($, on, { percent: 49, eventos: PARAR_ABERTO })
+  expect((await m.agent('gabarito-revisor')).deny).toBeUndefined()
+  expect((await m.agent('gabarito-mestre:gabarito-revisor')).deny).toBeUndefined()
+  expect(m.pedidos).toHaveLength(0)
+})
+test('agent-negado-com-pendencia-percent-null: percent ausente (usage fora do ar) também nega', async ($, on) => {
+  const m = mundo($, on, { percent: null, eventos: PARAR_ABERTO })
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(TEXTO_PENDENCIA)
+})
+test('agent-negado-com-pendencia-usage-fora-do-ar', async ($, on) => {
+  const m = mundo($, on, { usageFalha: true, eventos: PARAR_ABERTO })
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(TEXTO_PENDENCIA)
+})
+test('agent-passa-diario-ausente: 0 eventos não é corrompido', async ($, on) => {
+  expect((await mundo($, on, { percent: 49, eventos: [] }).agent('gabarito-implementador')).deny).toBeUndefined()
+})
+test('agent-passa-sem-pendencia: diário íntegro sem pendência passa (percent ausente também)', async ($, on) => {
+  expect((await mundo($, on, { percent: null }).agent('gabarito-implementador')).deny).toBeUndefined()
+})
+test('agent-passa-apos-nada-fechar: a pendência fechada por aprendizado.nada libera o despacho', async ($, on) => {
+  const m = mundo($, on, { percent: 49, eventos: PARAR_ABERTO })
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(TEXTO_PENDENCIA)
+  fecharEm(m)
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+})
+test('agent-negado-com-mensagem-do-dono-aberta: dono.mensagem sem aprendizado nega; a lista traz tipo, sessão e seq', async ($, on) => {
+  const m = mundo($, on, { percent: 49 })
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  const r = await m.agent('gabarito-implementador')
+  expect(r.deny).toMatch(TEXTO_PENDENCIA)
+  expect(r.deny).toMatch(/\(dono dono:1\)/)
+})
+test('agent-negado-diario-corrompido-abaixo-de-x: leitura que falha nega, com o motivo', async ($, on) => {
+  const a = mundo($, on, { percent: 49, lerFalha: true, lerErro: 'cadeia quebrada na linha 3' })
+  expect((await a.agent('gabarito-implementador')).deny).toBe('gabarito: não consegui verificar pendência de aprendizado (cadeia quebrada na linha 3). Sem despacho novo; só o revisor passa.')
+})
+test('agent-negado-diario-fora-de-ordem-abaixo-de-x: eventos fora de ordem negam em vez de virar pendências []', async ($, on) => {
+  const fora = [EV(2, 'task.iniciada', { task: 'a', papel: 'implementador' }), EV(1, 'task.concluida', { task: 'a', sha: 'x' })]
+  const b = mundo($, on, { percent: 49, eventos: fora })
+  expect((await b.agent('gabarito-implementador')).deny).toMatch(/não consegui verificar pendência de aprendizado \(diário fora (de ordem|da tabela de transições)/)
+})
+test('agent-negado-plano-ilegivel-abaixo-de-x: plano que não lê nega', async ($, on) => {
+  const m = mundo($, on, { percent: 49, plano_json: 'falha' })
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/não consegui verificar pendência de aprendizado \(plano\.json inválido: x\)/)
+})
+test('agent-negado-task-fora-do-plano-abaixo-de-x: evento de task que o plano não tem nega, não vira pendências []', async ($, on) => {
+  const m = mundo($, on, { percent: 49, eventos: [...B_FEITA, EV(5, 'task.iniciada', { task: 'zzz', papel: 'implementador' })] })
+  expect((await m.agent('gabarito-implementador')).deny).toBe('gabarito: não consegui verificar pendência de aprendizado (evento de task fora do plano). Sem despacho novo; só o revisor passa.')
+})
+test('agent-negado-por-pendencia-conta-negado: o iniciar do despacho negado é reaberto no fim do turno (D1)', async ($, on) => {
+  const m = mundo($, on, { percent: 49, eventos: [...aposB(A_INI), EV(6, 'loop.parar', { motivo: 'teto_rodadas', task: 'b' })] })
+  await m.inicio()
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(TEXTO_PENDENCIA)
+  await m.turno(); await m.clock.settle()
+  expect(reabertas(m)).toEqual([ORQ_RETOMADA])
+})
+test('deny-pendencia-acima-de-x-sem-aprender-cru: com o núcleo (percent ≥ X) o texto é o mesmo, sem `aprender` nem "encerre o turno"', async ($, on) => {
+  const m = mundo($, on, { percent: 60, eventos: PARAR_ABERTO })
+  const r = await m.agent('gabarito-implementador')
+  expect(r.deny).toMatch(TEXTO_PENDENCIA)
+  expect(r.deny).toContain('(parar s0:5)')
+  expect(r.deny).not.toMatch(/\baprender\b/)
+  expect(r.deny).not.toMatch(/encerre o turno/)
+  expect((await m.agent('gabarito-revisor')).deny).toBeUndefined()
+})
+test('deny-pendencia-lista-ate-6: 8 pendências ⇒ 6 itens e `e mais 2`', async ($, on) => {
+  const parares = Array.from({ length: 8 }, (_, i) => EV(5 + i, 'loop.parar', { motivo: 'teto_rodadas', task: 'b' }))
+  const m = mundo($, on, { percent: 49, eventos: [...B_FEITA, ...parares] })
+  const r = await m.agent('gabarito-implementador')
+  expect(r.deny).toContain('(parar s0:5, parar s0:6, parar s0:7, parar s0:8, parar s0:9, parar s0:10, e mais 2)')
+})
+test('parar-nao-repete-apos-aprendizado: loop.parar, aprendizado que o fecha e o turno seguinte NÃO regravam loop.parar', async ($, on) => {
+  const m = mundo($, on, { eventos: EM_TETO_A_E_B_ORFA, plano_json: PLANO_AB })
+  fecharEm(m, PLANO_AB)
+  await m.inicio()
+  await recuperar(m)
+  expect(parou(m)).toHaveLength(1)
+  fecharEm(m, PLANO_AB) // o `loop.parar` abriu pendência `parar`; o aprendiz a fecha
+  await recuperar(m)
+  expect(parou(m)).toHaveLength(1)
+  await m.dono(); await m.clock.settle() // e a mensagem do dono também não zera o "já parou"
+  fecharEm(m, PLANO_AB)
+  await recuperar(m)
+  expect(parou(m)).toHaveLength(1)
+})
+test('parar-nao-repete-apos-aprendizado-evento: fechar a pendência `parar` com `aprendizado` (não só `aprendizado.nada`) também não regrava loop.parar', async ($, on) => {
+  const m = mundo($, on, { eventos: EM_TETO_A_E_B_ORFA, plano_json: PLANO_AB })
+  fecharEm(m, PLANO_AB)
+  await m.inicio()
+  await recuperar(m)
+  expect(parou(m)).toHaveLength(1)
+  const abertas = pendenciasAprendizado(PLANO_AB, m.evs)
+  expect(abertas.length).toBeGreaterThan(0)
+  const ult = m.evs.reduce((n, e) => Math.max(n, e.sessao === 'aprendiz' ? e.seq : 0), 0)
+  abertas.forEach((p, i) => m.evs.push({
+    seq: ult + 1 + i, ts: '2026-11-04T00:00:00.000Z', autor: 'teste', sessao: 'aprendiz', agente: 'orquestrador', tipo: 'aprendizado',
+    dados: { tipo: 'E', status: 'M', gatilho: { sessao: p.sessao, seq: p.seq }, evidencia: { eventos: [{ sessao: p.sessao, seq: p.seq }] }, regra: 'regra do teste', entra_em: ['instantaneo'] }, hash_anterior: null,
+  }))
+  expect(pendenciasAprendizado(PLANO_AB, m.evs)).toHaveLength(0)
+  await recuperar(m)
+  expect(parou(m)).toHaveLength(1)
 })

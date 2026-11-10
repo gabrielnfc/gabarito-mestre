@@ -2,12 +2,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  analisarFronteira, codigoPonte, marcaDeProgresso, dadosMedicao, ehRevisor, INSTANTANEO_MAX, jaParou, lerX, negaDespacho, portaDoPouso, tasksDoNegado, tasksEmVoo, textoRetomada, tokensDe, vivosDe,
+  analisarFronteira, CABECALHO, codigoPonte, marcaDeProgresso, dadosMedicao, ehMensagemDoDono, ehRevisor, INSTANTANEO_MAX, jaParou, lerX, negaDespacho, portaDoPouso, PROMPT_RECUPERACAO, PROMPT_RETOMADA,
+  tasksDoNegado, tasksEmVoo, textoPendencia, textoPendenciaNaoVerificada, textoRetomada, tokensDe, vivosDe,
 } from '../src/pouso.ts';
 import type { Evento, TipoEvento } from '../src/tipos.ts';
 
@@ -524,4 +526,177 @@ test('ponte-plano-dado-ruim-nao-e-plano: plano inválido, JSON ilegível, config
   const sem = repoTemp();
   assert.equal(ponte({ op: 'plano', dir: join(sem, 'nao-existe'), raiz: sem }, sem).ok, false);
   assert.equal(ponte({ op: 'plano', dir: join(sem, 'x') }, sem).ok, false);
+});
+
+
+// ---- T10 (GM-13): mensagem do dono, ciclo parar ⇄ aprender, texto único da pendência ----
+// Os 7 `prompt.submit` crus do S1 (.claude-tmp/e5-spike/out): o composer manda `command: null`; `/loop` digitado vem com o nome; o resto é peer ou agendado.
+const S1 = [
+  { origin: { kind: 'composer' }, command: null, isMeta: false, text: 'Use a ferramenta Agent com run', dono: true },
+  { origin: { kind: 'peer' }, command: null, isMeta: true, text: '<agent-message from="a4a39fe49', dono: false },
+  { origin: { kind: 'composer' }, command: 'loop', isMeta: false, text: '/loop diga apenas: tick (agend', dono: false },
+  { origin: { kind: 'scheduled-trigger' }, command: 'loop', isMeta: true, text: '/loop diga apenas: tick (agend', dono: false },
+  { origin: { kind: 'scheduled-trigger' }, command: 'loop', isMeta: true, text: '/loop diga apenas: tick (agend', dono: false },
+  { origin: { kind: 'scheduled-trigger' }, command: 'loop', isMeta: true, text: '/loop diga apenas: tick (agend', dono: false },
+  { origin: { kind: 'composer' }, command: null, isMeta: false, text: 'Use a ferramenta Agent com run', dono: true },
+];
+test('eh-mensagem-do-dono-eventos-do-s1: só o composer sem comando é mensagem do dono', () => {
+  for (const { dono, ...e } of S1) assert.equal(ehMensagemDoDono(e), dono, JSON.stringify(e));
+});
+test('eh-mensagem-do-dono-bordas: bridge e command ausente valem; peer, plugin, comando objeto, vazio e não-objeto não', () => {
+  assert.equal(ehMensagemDoDono({ origin: { kind: 'bridge' }, text: 'oi' }), true);
+  assert.equal(ehMensagemDoDono({ origin: { kind: 'composer' }, text: 'oi' }), true);
+  assert.equal(ehMensagemDoDono({ origin: { kind: 'composer' }, command: null, text: ' a ' }), true);
+  for (const e of [
+    { origin: { kind: 'plugin' }, command: null, text: 'oi' }, { origin: { kind: 'peer' }, text: 'oi' },
+    { origin: { kind: 'composer' }, command: { name: 'loop' }, text: 'oi' }, { origin: { kind: 'composer' }, command: 'loop', text: 'oi' },
+    { origin: { kind: 'composer' }, text: '' }, { origin: { kind: 'composer' }, text: '  \n\t' }, { origin: { kind: 'composer' }, text: 7 },
+    { origin: { kind: 'composer' } }, { text: 'oi' }, { origin: 'composer', text: 'oi' }, { origin: {}, text: 'oi' }, null, undefined, 'oi', 7,
+  ]) assert.equal(ehMensagemDoDono(e), false, JSON.stringify(e));
+});
+test('eh-mensagem-do-dono-prefixo-do-mod: os 3 prompts do próprio mod não são mensagem; o prefixo só vale no começo', () => {
+  const o = { origin: { kind: 'composer' }, command: null };
+  assert.equal(ehMensagemDoDono({ ...o, text: PROMPT_RETOMADA }), false);
+  assert.equal(ehMensagemDoDono({ ...o, text: PROMPT_RECUPERACAO }), false);
+  assert.equal(ehMensagemDoDono({ ...o, text: textoRetomada('Diário: 1 evento(s)') }), false);
+  assert.equal(ehMensagemDoDono({ ...o, text: `${CABECALHO}\n\nx` }), false);
+  assert.equal(ehMensagemDoDono({ ...o, text: `${PROMPT_RETOMADA} e mais` }), false);
+  assert.equal(ehMensagemDoDono({ ...o, text: `oi ${PROMPT_RETOMADA}` }), true);
+  assert.equal(ehMensagemDoDono({ ...o, text: PROMPT_RETOMADA.slice(0, 20) }), true);
+});
+test('japarou-apos-aprendizado-e-mensagem: aprendizado, aprendizado.nada e dono.mensagem depois de loop.parar não o reabrem (ciclo parar ⇄ aprender)', () => {
+  const parar: [TipoEvento, Record<string, unknown>] = ['loop.parar', { motivo: 'teto_rodadas', task: 'a' }];
+  const g = { gatilho: { sessao: 's9', seq: 2 } };
+  assert.equal(jaParou(diario(ini('a'), parar, ['aprendizado.nada', { ...g, motivo: 'nada' }])), true);
+  assert.equal(jaParou(diario(ini('a'), parar, ['aprendizado', { tipo: 'E', status: 'M', ...g, evidencia: { eventos: [{ sessao: 's9', seq: 1 }] }, regra: 'r', entra_em: ['instantaneo'] }])), true);
+  assert.equal(jaParou(diario(ini('a'), parar, ['dono.mensagem', { sha256: 'a'.repeat(64), chars: 3 }])), true);
+  assert.equal(jaParou(diario(ini('a'), parar, ['dono.mensagem', { sha256: 'a'.repeat(64), chars: 3 }], con('a'))), false);
+});
+test('marca-de-progresso-ignora-aprendizado-e-mensagem: não zeram a espera de nao_conseguiu', () => {
+  const base = diario(ini('a'));
+  const com = diario(ini('a'), ['dono.mensagem', { sha256: 'a'.repeat(64), chars: 3 }], ['aprendizado.nada', { gatilho: { sessao: 's9', seq: 1 }, motivo: 'x' }]);
+  assert.equal(marcaDeProgresso(com), marcaDeProgresso(base));
+});
+test('texto-pendencia: texto único com tipo, sessão e seq; até 6 itens, depois `e mais N`; sem `aprender` cru', () => {
+  const p = (n: number) => Array.from({ length: n }, (_, i) => ({ tipo: 'parar', sessao: 's0', seq: i + 1 }));
+  assert.equal(
+    textoPendencia([{ tipo: 'review', sessao: 's0', seq: 3 }]),
+    'gabarito: aprendizado pendente: feche antes de despachar (review s0:3). Feche com loop.mjs aprendizado … --gatilho <sessao:seq> ou loop.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>. Só o revisor passa.',
+  );
+  assert.match(textoPendencia(p(6)), /\(parar s0:1, parar s0:2, parar s0:3, parar s0:4, parar s0:5, parar s0:6\)\./);
+  assert.match(textoPendencia(p(9)), /parar s0:6, e mais 3\)\./);
+  assert.doesNotMatch(textoPendencia(p(2)), /\baprender\b/);
+  assert.doesNotMatch(textoPendencia(p(2)), /encerre o turno/);
+  assert.equal(textoPendenciaNaoVerificada('diário fora de ordem'), 'gabarito: não consegui verificar pendência de aprendizado (diário fora de ordem). Sem despacho novo; só o revisor passa.');
+});
+
+// ponte `mensagem` (node real, dist real)
+const todosOsArquivos = (raiz: string): string[] => readdirSync(raiz, { withFileTypes: true }).flatMap((x) => (x.isDirectory() ? todosOsArquivos(join(raiz, x.name)) : [join(raiz, x.name)]));
+const sha = (t: string) => createHash('sha256').update(t, 'utf8').digest('hex');
+test('ponte-mensagem-ausente-x-corrompida: sem events.dono.jsonl grava seq 1; cadeia quebrada ⇒ ok:false e nada novo', () => {
+  const { d, dir, arq } = diarioDe([ini('a')]);
+  const ok = ponte({ op: 'mensagem', dir, cwd: d, texto: 'oi' }, d);
+  assert.equal(ok.ok, true);
+  const dono = readFileSync(join(dir, 'events.dono.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(dono.length, 1);
+  assert.equal(dono[0].seq, 1);
+  assert.equal(dono[0].tipo, 'dono.mensagem');
+  assert.equal(dono[0].sessao, 'dono');
+  assert.equal(dono[0].agente, 'dono');
+  assert.deepEqual(dono[0].dados, { sha256: sha('oi'), chars: 2 });
+  // diário corrompido (hash_anterior quebrado): a ponte recusa e não escreve
+  const ls = readFileSync(arq, 'utf8').split('\n');
+  const o = JSON.parse(ls[0]); o.hash_anterior = '0'.repeat(64); ls[0] = JSON.stringify(o);
+  const o2 = { ...o, seq: 2, hash_anterior: '1'.repeat(64) };
+  writeFileSync(arq, [JSON.stringify(o), JSON.stringify(o2), ''].join('\n'));
+  const antes = readFileSync(join(dir, 'events.dono.jsonl'), 'utf8');
+  const r = ponte({ op: 'mensagem', dir, cwd: d, texto: 'outra' }, d);
+  assert.deepEqual(r, { ok: false, erro: 'mensagem não gravada' });
+  assert.equal(readFileSync(join(dir, 'events.dono.jsonl'), 'utf8'), antes);
+});
+test('ponte-mensagem-sentinela-em-nenhum-arquivo: o texto não vai a nenhum arquivo sob .harness/ (events, lock, tmp)', () => {
+  const { d, dir } = diarioDe([ini('a')]);
+  const sentinela = `SENTINELA-T10-${Math.random().toString(36).slice(2)}`;
+  assert.equal(ponte({ op: 'mensagem', dir, cwd: d, texto: `${sentinela} segredo` }, d).ok, true);
+  const arquivos = todosOsArquivos(join(d, '.harness'));
+  assert.ok(arquivos.some((a) => a.endsWith('events.dono.jsonl')));
+  for (const a of arquivos) assert.ok(!readFileSync(a, 'utf8').includes(sentinela), a);
+});
+test('ponte-mensagem-canario-grava-hash: texto com segredo grava só o hash (o canário não roda sobre o texto)', () => {
+  const { d, dir } = diarioDe([ini('a')]);
+  const texto = `ghp_${'a'.repeat(30)}`;
+  const r = ponte({ op: 'mensagem', dir, cwd: d, texto }, d);
+  assert.equal(r.ok, true);
+  const l = ponte({ op: 'ler', dir }, d).eventos.filter((e: Evento) => e.tipo === 'dono.mensagem');
+  assert.equal(l.length, 1);
+  assert.deepEqual(l[0].dados, { sha256: sha(texto), chars: texto.length });
+});
+test('ponte-mensagem-hash-cru-e-chars-utf16: o hash é do texto cru (sem trim) e chars conta unidades UTF-16', () => {
+  const { d, dir } = diarioDe([ini('a')]);
+  const texto = ' a😀 ';
+  assert.equal(ponte({ op: 'mensagem', dir, cwd: d, texto }, d).ok, true);
+  const e = ponte({ op: 'ler', dir }, d).eventos.find((x: Evento) => x.tipo === 'dono.mensagem');
+  assert.deepEqual(e.dados, { sha256: sha(' a😀 '), chars: 5 });
+  assert.notEqual(e.dados.sha256, sha('a😀'));
+});
+test('ponte-mensagem-texto-invalido: não string ⇒ ok:false com erro fixo e nada gravado', () => {
+  const { d, dir } = diarioDe([ini('a')]);
+  for (const texto of [undefined, null, 7, ['x'], { a: 1 }]) {
+    assert.deepEqual(ponte({ op: 'mensagem', dir, cwd: d, texto }, d), { ok: false, erro: 'texto inválido' });
+  }
+  assert.equal(existsSync(join(dir, 'events.dono.jsonl')), false);
+});
+test('ponte-mensagem-pasta-ausente-nao-grava: sem a pasta da entrega nada é criado nem inventado', () => {
+  const d = repoTemp();
+  const dir = join(d, '.harness', 'entregas', 'PBI-7');
+  assert.deepEqual(ponte({ op: 'mensagem', dir, cwd: d, texto: 'oi' }, d), { ok: false, erro: 'mensagem não gravada' });
+  assert.equal(existsSync(dir), false);
+});
+
+// ponte `instantaneo` com aprendizados
+const aprendizadoEv = (regra: string, extra: Record<string, unknown> = {}) => ({ tipo: 'E', status: 'D', gatilho: null, evidencia: { eventos: [{ sessao: 's9', seq: 1 }] }, regra, entra_em: ['instantaneo'], ...extra });
+function comAprendizados(regras: string[]) {
+  const { d, dir } = diarioDe([ini('a')]);
+  for (const r of regras) assert.equal(ponte({ op: 'append', dir, cwd: d, sessao: 'aprendiz', ev: { agente: 'orquestrador', tipo: 'aprendizado', dados: aprendizadoEv(r) } }, d).ok, true);
+  return { d, dir };
+}
+test('ponte-instantaneo-com-aprendizados-e-aviso: o bloco de aprendizados D da árvore entra e a entrega vizinha corrompida vira linha de aviso', () => {
+  const { d, dir } = comAprendizados(['rode o build antes do teste']);
+  const viz = join(d, '.harness', 'entregas', 'PBI-8');
+  mkdirSync(viz, { recursive: true });
+  writeFileSync(join(viz, 'events.s1.jsonl'), 'lixo\n');
+  const i = ponte({ op: 'instantaneo', dir }, d);
+  assert.equal(i.ok, true);
+  assert.match(i.texto, /Aprendizados \(1\):/);
+  assert.match(i.texto, /E rode o build antes do teste/);
+  assert.match(i.texto, /Aprendizados: 1 entrega\(s\) ilegível\(is\)/);
+  assert.equal(i.avisos, undefined);
+});
+test('ponte-instantaneo-sem-aprendizados-igual-ao-de-antes: sem D e sem aviso, nenhum bloco', () => {
+  const { d, dir } = diarioDe([ini('a')]);
+  const i = ponte({ op: 'instantaneo', dir }, d);
+  assert.doesNotMatch(i.texto, /Aprendizados/);
+});
+test('ponte-instantaneo-aprendizado-js-quebrado-segue: import que falha tira só o bloco; ok:true com avisos, nunca ok:false', () => {
+  const { d, dir } = comAprendizados(['rode o build antes do teste']);
+  const url = 'file://' + encodeURI(join(GATES, 'dist', 'diario.js'));
+  const quebrado = 'file://' + encodeURI(join(d, 'nao-existe.js'));
+  const r = spawnSync('node', ['--input-type=module', '-e', codigoPonte(url, undefined, quebrado)], { input: JSON.stringify({ op: 'instantaneo', dir }), encoding: 'utf8', cwd: d });
+  assert.equal(r.status, 0, r.stderr);
+  const o = JSON.parse(r.stdout);
+  assert.equal(o.ok, true);
+  assert.deepEqual(o.avisos, ['aprendizados indisponíveis']);
+  assert.match(o.texto, /^Diário: /);
+  assert.doesNotMatch(o.texto, /Aprendizados \(/);
+  // as outras ops seguem de pé com o import quebrado
+  const l = spawnSync('node', ['--input-type=module', '-e', codigoPonte(url, undefined, quebrado)], { input: JSON.stringify({ op: 'ler', dir }), encoding: 'utf8', cwd: d });
+  assert.equal(JSON.parse(l.stdout).ok, true);
+});
+test('ponte-instantaneo-cheio-ate-3200: 30 aprendizados D de 300 caracteres e muitos eventos ainda cabem em INSTANTANEO_MAX e o pouso não vira sem_pouso', () => {
+  const { d, dir } = comAprendizados(Array.from({ length: 30 }, (_, i) => `${i}`.padEnd(300, 'x')));
+  for (let i = 0; i < 40; i++) ponte({ op: 'append', dir, cwd: d, sessao: 's9', ev: { agente: 'orquestrador', tipo: 'sessao.pouso', dados: { percent: 60, x: 50 } } }, d);
+  const i = ponte({ op: 'instantaneo', dir }, d);
+  assert.equal(i.ok, true);
+  assert.ok(i.texto.length <= INSTANTANEO_MAX, String(i.texto.length));
+  assert.ok(textoRetomada(i.texto) !== null);
 });
