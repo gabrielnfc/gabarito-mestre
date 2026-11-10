@@ -27,3 +27,7 @@ docs/workflow-true.html
 # material de apresentação local do dono (visão e Horizon), fora do repositório público
 docs/fluxo-gabarito-visao.pdf
 docs/references/
+
+# gerado pelo Claude Code ao carregar o plugin por --plugin-dir (T0a GM-13)
+plugins/gabarito-mestre/tsconfig.json
+plugins/gabarito-mestre/gates/test/e2e/observador/tsconfig.json
