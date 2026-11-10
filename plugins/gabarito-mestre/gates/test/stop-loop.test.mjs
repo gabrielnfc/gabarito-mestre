@@ -14,6 +14,7 @@ import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { saidaParaAcao } from '../scripts/stop-loop.mjs';
 import { TIPOS_DE_PROGRESSO } from '../dist/loop.js';
+import { append as anexar } from '../dist/diario.js';
 import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
 
 const aqui = dirname(fileURLToPath(import.meta.url));
@@ -1058,7 +1059,7 @@ function comPendenciaReview(raiz) {
   plano(raiz);
   diario(raiz, 's', [...INICIO_T1(), REVIEW_MAJOR()]);
 }
-const COMANDO = /loop\.mjs aprendizado <E\|A> <D\|M> --gatilho <sessao:seq> --regra <t> --entra-em <a> ou loop\.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>/;
+const COMANDO = /loop\.mjs aprendizado <E\|A> D .*--eventos <sessao:seq>.*--fonte <arquivo> --numero <n>.*loop\.mjs aprendizado <E\|A> M .*loop\.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>/;
 
 test('dois-stops-block-depois-aviso: o 1º Stop bloqueia com o comando, o 2º só avisa, e o estado guarda a chave', () => {
   const raiz = repo();
@@ -1245,4 +1246,82 @@ test('fechada-a-pendencia-o-stop-volta-ao-normal: sem pendência concluir lista 
   bloqueia(antes, /aprendizado pendente/);
   fecharPendenciasNoDiario(entregaDir(raiz), PLANO);
   avisa(stop(raiz), /Liberações do teto: T1 /);
+});
+
+// ------------------------------------------------------------------------------------- FX2: o comando do Stop roda de verdade (P9)
+
+const LOOP_CLI = join(GATES, 'scripts', 'loop.mjs');
+const gitOk = (cwd, ...a) => { const r = git(cwd, ...a); assert.equal(r.status, 0, r.stderr); };
+
+/** Repo com commit (a fonte precisa ser versionada), plano e review MAJOR real no diário (pendência `review s:3`), via `append` real. */
+function repoComPendenciaReal() {
+  const dir = mkdtempSync(join(tmpdir(), 'stop-fx2-'));
+  gitOk(dir, 'init', '-q', '-b', 'enabler/GM-10-loop');
+  writeFileSync(join(dir, 'README.md'), 'x\n');
+  gitOk(dir, 'add', '-A');
+  gitOk(dir, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'chore: base');
+  plano(dir);
+  const ed = entregaDir(dir);
+  let n = 0;
+  for (const [tipo, dados] of [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1' }],
+    ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 }]]) {
+    n += 1;
+    const r = anexar(ed, 's', { ts: new Date(Date.UTC(2026, 0, 1, 0, 0, n)).toISOString(), autor: 't@t', sessao: 's', agente: 'orquestrador', tipo, dados });
+    assert.ok(r.ok && r.gravado === 'evento', JSON.stringify(r));
+  }
+  return dir;
+}
+
+/** Comandos entre crases do texto do Stop, com os placeholders trocados por valores do repo de teste. */
+function comandosDoTexto(texto, valores) {
+  const crus = [...texto.matchAll(/`(loop\.mjs [^`]+)`/g)].map((m) => m[1]);
+  return crus.map((c) => {
+    let t = c;
+    for (const [k, v] of Object.entries(valores)) t = t.split(k).join(v);
+    assert.doesNotMatch(t, /<[^>]+>/, `placeholder sem valor em: ${t}`);
+    return t.split(' ').slice(1);
+  });
+}
+
+test('stop-comando-aprendizado-roda-de-verdade: os comandos citados pelo Stop gravam ok:true para D (eventos e fonte), M e nada', () => {
+  const dir = repoComPendenciaReal();
+  const r1 = stop(dir);
+  bloqueia(r1, /aprendizado pendente: review s:3/);
+  const texto = r1.json.reason;
+  const base = { '<sessao:seq>': 's:3', '<t>': 'regra-de-teste', '<a>': 'instantaneo', '<arquivo>': 'README.md', '<n>': '3' };
+  const rodar = (args, ajuste) => {
+    const copia = mkdtempSync(join(tmpdir(), 'stop-fx2c-'));
+    cpSync(dir, copia, { recursive: true });
+    const a = args.map((x) => ajuste(x));
+    const r = spawnSync(process.execPath, [LOOP_CLI, ...a], { cwd: copia, encoding: 'utf8', env: env() });
+    let j = null;
+    try { j = JSON.parse(r.stdout.trim()); } catch { /* fica null */ }
+    return { rc: r.status, j, out: r.stdout + r.stderr };
+  };
+  const cmds = comandosDoTexto(texto, { ...base, '<E|A>': 'E' });
+  const porForma = (pred) => cmds.filter(pred);
+  const d = porForma((a) => a[1] === 'E' && a[2] === 'D');
+  const m = porForma((a) => a[1] === 'E' && a[2] === 'M');
+  const nada = porForma((a) => a[1] === 'nada');
+  assert.equal(d.length + m.length + nada.length, cmds.length, 'todo comando citado é D, M ou nada');
+  assert.equal(d.length, 1);
+  assert.equal(m.length, 1);
+  assert.equal(nada.length, 1);
+  // D: a forma com --eventos (valor real: o evento s:3 existe) e a forma --fonte/--numero (o texto cita as duas; a 2ª troca a evidência)
+  const id = (x) => x;
+  const rd = rodar(d[0], id);
+  assert.equal(rd.j?.ok, true, rd.out);
+  assert.ok(d[0].includes('--eventos'), 'D cita --eventos');
+  const semEventos = d[0].filter((x, i, arr) => x !== '--eventos' && arr[i - 1] !== '--eventos');
+  const comFonte = [...semEventos, '--fonte', 'README.md', '--numero', '3'];
+  assert.match(texto, /--fonte <arquivo> --numero <n>/);
+  const rf = rodar(comFonte, id);
+  assert.equal(rf.j?.ok, true, rf.out);
+  assert.ok(!m[0].includes('--eventos') && !m[0].includes('--fonte'), 'M sem evidência');
+  const rm = rodar(m[0], id);
+  assert.equal(rm.j?.ok, true, rm.out);
+  const rn = rodar(nada[0], id);
+  assert.equal(rn.j?.ok, true, rn.out);
+  // O Stop 2 só avisa, com o mesmo texto: o aviso também chega ao agente
+  avisa(stop(dir), COMANDO);
 });
