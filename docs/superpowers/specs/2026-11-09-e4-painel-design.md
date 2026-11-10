@@ -53,7 +53,7 @@ Outras regras:
 - `feitas` = `integrada`.
 - Título = H1 de `plano.spec` (B5), senão só o id.
 - `tok` do líder = soma dos `custo.medicao` com `agente: 'orquestrador'`.
-- `prod.alteracoes` = `producao.acesso {acao: escrita}` + `operacao.destrutiva` em prod.
+- `prod.alteracoes` = `producao.acesso {acao: escrita}` + `operacao.destrutiva` em prod. **Emenda (review final, MINOR 3):** o código (`gates/src/painel.ts:260-264`) também conta `producao.acesso {acao: execucao}` em prod e cada `entrega.inicio`; alargamento conservador (conta mais, nunca menos), fixado por `prod-alteracoes-so-escrita-prod`.
 - Diário recusado por `ordenar`/`estadoDe` ⇒ Parar `diario_invalido`.
 - Determinística: a ordem de chegada não muda nada.
 
@@ -138,6 +138,7 @@ Tabela fechada: qualquer outro tipo não aparece (entre eles `custo.medicao`, `g
   - 60–71: sem título de task e sem narrativa do líder;
   - 44–59: o desenho de 44;
   - < 44: depende/PAROU, `N/M · ETA` e tasks em voo.
+  - **Emenda D-R4 (Sombra T14, D2): densidade por altura.** `OpcoesRender.altura?: number` opcional. Ausente (CLI, goldens) ⇒ saída byte a byte igual à de hoje. Presente e o desenho maior que ela ⇒ tiram-se linhas que ficam acima do 1º agente vivo, nesta ordem, até o último agente vivo caber em `altura` ou a lista acabar. Esquadrão: (1) separadores `─`; (2) narrativa `▶` do líder; (3) linha `5h/7d`; (4) as linhas `○` da fila viram uma só `○ Tx–Ty fila`; (5) a faixa `✓ … integradas`. Executivo: (1) separadores; (2) Limites; (3) Contexto; (4) Produção. Nunca saem: cabeçalho, depende/PAROU inteiro, PLANO, tasks em voo, EQUIPE/"Agentes em voo" (cabeçalho), líder e sua linha de ctx, linhas de agente vivo. O que fica abaixo dos agentes (revisor, Sombra, ATENÇÃO, histórico, rodapé) não é cortado: rola. O mod passa `altura = props.scroll.bodyRows` (inteiro ≥ 1) à Pane, inline e dock (T14b).
 - **Executivo:** ≥ 50 é o desenho; abaixo, rótulos de 3 letras (`Ent Prv Tsk Qld CI Prd Ctx Lim`).
 
 Depende/PAROU usa a largura antes do resto e nunca é cortado antes do comando. `color` e `mono` dão o mesmo texto.
@@ -156,7 +157,7 @@ Falha ⇒ uma linha de JSON com `ok:false`. Nunca escreve: diário, `.harness/` 
 
 **REQ-PNL-12 Parar nunca em silêncio.** Na transição para Parar (chave = `parar.chave` do estado, prefixada pelo id da entrega no mod; sombra-p1a.md, sombra-p1d D-M5): toast 1× e `$.ui.notify` 1×. `isSent: false` ou rejeição ⇒ só toast e faixa, sem repetir. O resultado vira `entrada.notificacao`. Sem som.
 
-**REQ-PNL-13 Comando.** `/gabarito painel` abre ou foca a Pane. `/gabarito painel esquadrao|executivo|color|mono|narracao on|off|nomes <pacote>|ligar|desligar` grava em `$.store['painel:prefs']` e invalida (troca a quente). A resposta `{text}` é sempre **uma linha** de confirmação, nunca o render (B9, F6). O texto completo só pelo CLI `painel.mjs texto`. `pausar|retomar` seguem como hoje. `desligar` fecha a Pane e tira a faixa, menos o PAROU; atualização e aviso de Parar seguem. `ligar` reabre.
+**REQ-PNL-13 Comando.** `/gabarito painel` abre ou foca a Pane. `/gabarito painel esquadrao|executivo|color|mono|narracao on|off|nomes <pacote>|ligar|desligar` grava em `$.store['painel:prefs']` e invalida (troca a quente). A resposta `{text}` é sempre **uma linha** de confirmação, nunca o render (B9, F6). O texto completo só pelo CLI `painel.mjs texto`. `pausar|retomar` seguem como hoje. `desligar` fecha a Pane e tira a faixa, menos o PAROU; atualização e aviso de Parar seguem. `ligar` reabre. As preferências valem para todas as sessões e repositórios deste plugin até a próxima troca.
 
 **REQ-PNL-14 Dados novos.** Só campos opcionais; nada antigo passa a ser recusado.
 - `task.iniciada.modelo`: família, gravada por `loop.mjs iniciar` via `modeloDoItem` (`loop.mjs:1045`).
@@ -229,7 +230,7 @@ Outros itens fora:
 **Fumaça sem LLM em `npm test`:** repo descartável, plano de 3 tasks com título e spec ligada gravado por `loop.mjs`; aprovação pelo hook com stdin de fixture, emenda aberta, `entrega.devolvida`, transcript de fixture (o de F7, anonimizado), depois `loop.parar {teto_rodadas}`; `painel.mjs texto` nos dois presets igual ao golden.
 
 **Aceites com TUI** (pty 180×50 e 60 colunas, haiku):
-- **Aceite 1:** fixture 7/12 com emenda; Esquadrão na Pane, faixa amarela, botão põe o comando no prompt sem enviar.
+- **Aceite 1:** fixture 7/12 com emenda; Esquadrão na Pane, faixa amarela, botão põe o comando no prompt sem enviar. No pty o botão é acionado por ctrl+x tab + Enter (o TUI sem tela cheia não liga mouse); o clique fica na captura do review final.
 - **Aceite 2:** `/gabarito painel executivo` troca sem reabrir e responde 1 linha.
 - **Aceite 3:** `loop.parar` gravado por fora ⇒ em ≤ 30 s, sem turno, PAROU igual nos dois, toast e notify 1×.
 - **Aceite 4:** um subagent real (haiku, tarefa de leitura) ⇒ a linha dele mostra ctx e tokens iguais aos da última linha do transcript.

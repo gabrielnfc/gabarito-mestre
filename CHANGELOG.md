@@ -9,12 +9,21 @@ Usuários do plugin só recebem atualização quando `version` muda.
 
 E4 do canal `next` (GM-12): painel de status do loop. Contrato e requisitos na spec da E4; aqui só o que o usuário vê.
 
-### Adicionado (GM-12 T13)
+### Adicionado (GM-12)
 
-- **Painel `painel.mjs texto`**: status do loop em texto, com os presets `executivo` e `esquadrao` e `--largura` (padrão 80).
-- **Skill `gabarito-loop`** (79 linhas): comando do painel no topo de todo status ao dono; `entrega.mjs devolver --motivo` antes de parar quando o dono pedir devolução; a `description` do `Agent` é a `descricao` do item.
+- **Pane e faixa do painel no terminal** (mod `painel.mjs`): a Pane mostra o loop da entrega em dois presets, `esquadrao` (padrão: plano, equipe com ctx/tokens por agente, histórico) e `executivo`, em `color` ou `mono`; a faixa acima do prompt traz o "depende de você" com o comando inteiro e um botão que só põe o comando no prompt, sem enviar. Quando o loop PAROU, o aviso aparece na faixa, em toast e em notify, 1 vez por parada. O dado vem do diário e dos subagentes vivos; o que não foi medido aparece como `—`, nunca como zero. Atualiza a cada turno e por relógio.
+- **Comando `/gabarito painel ...`**: abre ou foca a Pane; `esquadrao|executivo`, `color|mono`, `narracao on|off`, `nomes <pacote>` (pacote de nomes dos agentes, de fábrica ou em `.harness/temas/nomes/`), `ligar|desligar` (desligar fecha a Pane e tira a faixa, menos o PAROU). A resposta é uma linha; a preferência vale para todas as sessões e repositórios do plugin até a próxima troca.
+- **CLI `gates/scripts/painel.mjs`**: `estado` (JSON) e `texto [--largura N] [--preset ...] [--tema ...]` (padrão 80 colunas). Só lê; não grava nada em `.harness/`.
+- **`/gabarito-mestre:aprovar`**: o dono aprova a spec da entrega e o diário grava `spec.aprovada` (com o sha da spec; mudou a spec, aprova de novo).
+- **`entrega.mjs devolver --motivo <t>`**: registra `entrega.devolvida`; o painel passa a mostrar ao dono o comando do deploy.
+- **Campo opcional `titulo` por task no `plano.json`** (até 40 colunas); sem ele, o painel usa o H1 da spec ligada ou só o id.
+- **Skill `gabarito-loop`** (79 linhas): comando do painel no topo de todo status ao dono; `entrega.mjs devolver --motivo` quando `executar` for negado pelo modo de permissão; a `description` do `Agent` é a `descricao` do item.
 
-### Alterado (GM-12 T13)
+### Corrigido (GM-12)
+
+- **Gatilho da devolução do deploy**: a skill devolve quando `entrega.mjs executar` é negado pelo modo de permissão (o `auto` trata como deploy de produção) e para o turno com o comando exato para o dono; não é "quando o dono pedir".
+
+### Alterado (GM-12)
 
 - Versão `2.0.0-alpha.4` no plugin e em `gates/package.json`.
 
