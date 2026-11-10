@@ -73,7 +73,7 @@ A visão (§9.5) mais as decisões do dono somam ~16 requisitos: não cabem em 1
 - (trocável) a prévia e o fechamento dizem em 1 linha como trocar qualquer item depois (pedir "trocar <item>" à skill, que regrava sem refazer o resto).
 Com harness anterior (1.1.x), a config existente vira default e o instalador roda `--atualizar` (D8). Respostas viram JSON por script puro testável (`onboarding-config.mjs`).
 
-**REQ-NOM-1 Fluxo Gabarito.** Job `texto` do CI (`scripts/test/texto.test.sh`) falha com `workflow[ _-]?true` (sem caixa) em `plugins/gabarito-mestre/**`, `.claude-plugin/marketplace.json`, `README.md`, `CHANGELOG.md` (fora das seções ≤ 1.1.x) e `docs/**`; exceções: `docs/ledgers/**`, `docs/aprendizados/**`, `docs/references/**`, specs e planos datados antes de 2026-11-10.
+**REQ-NOM-1 Fluxo Gabarito.** Job `texto` do CI (`scripts/test/texto.test.sh`) falha com `workflow[ _-]?true` (sem caixa) em `plugins/gabarito-mestre/**`, `.claude-plugin/marketplace.json`, `README.md`, `CHANGELOG.md` (fora das seções ≤ 1.1.x) e `docs/**`; exceções: `docs/ledgers/**`, `docs/aprendizados/**`, `docs/references/**`, specs e planos datados até 2026-11-10, inclusive (a spec e o plano da E5 descrevem a troca; emenda do orquestrador na T5, 2026-11-10).
 
 **REQ-DOG-1 Dogfooding.** A E5a roda pelo `gabarito-loop` do `gabarito-mestre-next` instalado (E4) desde a 1ª task. A última task roda, com o código da branch, o onboarding novo neste repo e `loop.mjs registro` da GM-13; o `registro.md` commitado é a prova. Aprendizados do orquestrador seguem em `docs/aprendizados/` até a virada. Dogfooding é aceite do fim, não de cada task.
 
