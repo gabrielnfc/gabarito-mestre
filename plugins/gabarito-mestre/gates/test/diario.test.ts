@@ -21,7 +21,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, utimesSync, chmodS
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { append, ler, lerEstrito, projetar, recusaCanario, dirEntrega } from '../src/diario.ts';
+import { append, ler, lerEstrito, projetar, pousoSemRetomada, recusaCanario, dirEntrega } from '../src/diario.ts';
+import type { AprendizadoVigente } from '../src/aprendizado.ts';
 import { estadoDe } from '../src/loop.ts';
 import { contarConsultas } from '../src/sombra.ts';
 import type { Evento, TipoEvento } from '../src/tipos.ts';
@@ -1025,8 +1026,8 @@ describe('instantâneo com decisões da Sombra (GM-11 T11)', () => {
     const es = [guarda(1, 'a-fim'), guarda(2, 'b-fim')];
     const p = projetar(es);
     assert.equal(p.instantaneo, `Diário: 2 evento(s)\nETA: sem dados\n${iso(2)} guarda.deny b-fim\n${iso(1)} guarda.deny a-fim`);
-    assert.deepEqual(p, { instantaneo: p.instantaneo, resumo: { 'guarda.deny': 2 }, eta: null, decisoes: 0 });
-    assert.deepEqual(projetar([]), { instantaneo: 'Diário: 0 evento(s)\nETA: sem dados', resumo: {}, eta: null, decisoes: 0 });
+    assert.deepEqual(p, { instantaneo: p.instantaneo, resumo: { 'guarda.deny': 2 }, eta: null, decisoes: 0, aprendizados: 0 });
+    assert.deepEqual(projetar([]), { instantaneo: 'Diário: 0 evento(s)\nETA: sem dados', resumo: {}, eta: null, decisoes: 0, aprendizados: 0 });
   });
 
   test('instantaneo-decisoes-ate-1600: 30 decisões de 200 caracteres, rodapé do pior caso reservado', () => {
@@ -1211,5 +1212,174 @@ describe('contagem de consultas da Sombra (diario-puro, GM-12 T2 r3)', () => {
       med(4, 'sombra.consulta', { ...ok, pergunta_hash: 'b'.repeat(64) }), med(5, 'guarda.deny', {})];
     assert.equal(contarConsultas(es), 2);
     assert.equal(contarConsultas(null as unknown as Evento[]), 0);
+  });
+});
+
+describe('aprendizados no instantâneo e pouso sem retomada (GM-13 T9, REQ-APR-3, REQ-POU-3)', () => {
+  const hx = (i: number): string => createHash('sha256').update(`h${i}`).digest('hex');
+  const iso = (i: number): string => new Date(Date.UTC(2026, 10, 10, 10, 0, 0) + i * 1000).toISOString();
+  const evD = (seq: number, ts: string, sessao: string, tipo: string, dados: unknown = {}): Evento =>
+    ({ seq, ts, autor: 'a', sessao, agente: 'o', tipo, dados, hash_anterior: null }) as unknown as Evento;
+  const guarda = (seq: number, alvo = 'x-fim', sessao = 's1'): Evento => evD(seq, iso(seq), sessao, 'guarda.deny', { alvo });
+  const dec = (seq: number, hash: string, resposta: string): Evento =>
+    evD(seq, iso(seq), 's1', 'decisao.sombra', { pergunta_hash: hash, req: 'REQ-A-1', resposta, arquivo: `sombra/${hash}.resposta.md`, pergunta_enviesada: false, fontes: ['spec:1'] });
+  const apr = (regra: string, extra: Partial<AprendizadoVigente> = {}): AprendizadoVigente =>
+    ({ tipo: 'E', status: 'D', gatilho: null, evidencia: {}, regra, entra_em: ['instantaneo'], entrega: 'GM-1', sessao: 'loop', seq: 1, ts: iso(1), ...extra });
+  const linhas = (s: string): string[] => s.split('\n');
+  /** O bloco de aprendizados: do cabeçalho até a linha anterior ao 1º evento (ts) ou ao fim. */
+  const blocoApr = (s: string): string[] => {
+    const l = linhas(s);
+    const i = l.findIndex((x) => x.startsWith('Aprendizados ('));
+    if (i < 0) return [];
+    let f = i + 1;
+    while (f < l.length && !/^20\d\d-/.test(l[f]) && !l[f].startsWith('... ') || (f < l.length && /aprendizado\(s\) fora$/.test(l[f]))) f++;
+    return l.slice(i, f);
+  };
+
+  test('instantaneo-aprendizados-ate-800: 20 D de 300 caracteres ⇒ 4 linhas, 16 fora, bloco de 689 (número do S4)', () => {
+    const regras = Array.from({ length: 20 }, () => apr('x'.repeat(300)));
+    const p = projetar([guarda(1)], { aprendizados: regras });
+    const b = blocoApr(p.instantaneo);
+    assert.equal(p.aprendizados, 20);
+    assert.equal(b[0], 'Aprendizados (20):');
+    assert.equal(b.length, 6);
+    assert.equal(b.at(-1), '... 16 aprendizado(s) fora');
+    assert.equal(b.join('\n').length, 689);
+    assert.ok(b.join('\n').length <= 800);
+  });
+  test('instantaneo-linha-160: a linha inteira tem 160, `<E|A> ` mais 158 da regra', () => {
+    const b = blocoApr(projetar([guarda(1)], { aprendizados: [apr('x'.repeat(300)), apr('y'.repeat(300), { tipo: 'A' })] }).instantaneo);
+    assert.equal(b[1], `E ${'x'.repeat(158)}`);
+    assert.equal(b[1].length, 160);
+    assert.equal(b[2], `A ${'y'.repeat(158)}`);
+    assert.equal(blocoApr(projetar([], { aprendizados: [apr('curta')] }).instantaneo)[1], 'E curta');
+  });
+  test('instantaneo-linha-160-emoji-na-borda: par substituto na posição 158 não deixa metade solta', () => {
+    const b = blocoApr(projetar([guarda(1)], { aprendizados: [apr(`${'x'.repeat(157)}😀resto`)] }).instantaneo);
+    assert.equal(b[1], `E ${'x'.repeat(157)}`);
+    assert.equal(b[1].length, 159);
+    assert.doesNotMatch(b[1], /[\ud800-\udbff]$/);
+  });
+  test('instantaneo-conta-fora: rodapé só quando algo fica fora, com a conta exata', () => {
+    const tres = projetar([guarda(1)], { aprendizados: [apr('a'), apr('b'), apr('c')] });
+    assert.deepEqual(blocoApr(tres.instantaneo), ['Aprendizados (3):', 'E a', 'E b', 'E c']);
+    assert.ok(!tres.instantaneo.includes('aprendizado(s) fora'));
+    const seis = projetar([guarda(1)], { aprendizados: Array.from({ length: 6 }, () => apr('z'.repeat(300))) });
+    assert.equal(blocoApr(seis.instantaneo).at(-1), '... 2 aprendizado(s) fora');
+  });
+  test('instantaneo-total-3200-com-decisoes-1600: com 30 decisões, 20 D e 200 eventos, o bloco de decisões não perde linha e o total fica ≤ 3200', () => {
+    const es = [...Array.from({ length: 30 }, (_, i) => dec(i + 1, hx(i), 'r'.repeat(200))), ...Array.from({ length: 200 }, (_, i) => guarda(100 + i, `a-${i}`))];
+    const sem = projetar(es).instantaneo;
+    const com = projetar(es, { aprendizados: Array.from({ length: 20 }, () => apr('x'.repeat(300))) });
+    const decisoes = (s: string): string[] => { const l = linhas(s); const i = l.findIndex((x) => x.startsWith('Decisões da Sombra')); return l.slice(i, l.findIndex((x) => x.startsWith('Aprendizados (') || /^20\d\d-/.test(x))); };
+    assert.deepEqual(decisoes(com.instantaneo), decisoes(sem));
+    assert.ok(decisoes(com.instantaneo).join('\n').length <= 1600);
+    assert.ok(com.instantaneo.length <= 3200, String(com.instantaneo.length));
+    assert.equal(com.decisoes, 30);
+    assert.ok(com.instantaneo.indexOf('Decisões da Sombra') < com.instantaneo.indexOf('Aprendizados ('));
+    assert.ok(com.instantaneo.indexOf('Aprendizados (') < com.instantaneo.indexOf('guarda.deny'));
+  });
+  test('instantaneo-sem-d-igual-e4: sem D (ausente, vazio, não-array ou só M) o texto é o da E4 byte a byte e `aprendizados: 0`', () => {
+    const es = [guarda(1), guarda(2), dec(3, hx(1), 'sim')];
+    const base = projetar(es);
+    assert.equal(base.aprendizados, 0);
+    for (const opcoes of [undefined, {}, { aprendizados: [] }, { aprendizados: 'x' as unknown as AprendizadoVigente[] }, { aprendizados: [apr('m', { status: 'M' })] }]) {
+      const p = projetar(es, opcoes);
+      assert.equal(p.instantaneo, base.instantaneo);
+      assert.equal(p.aprendizados, 0);
+    }
+  });
+  test('instantaneo-m-nunca: M com `instantaneo` passado direto a projetar não aparece (o filtro não é só do chamador)', () => {
+    const p = projetar([guarda(1)], { aprendizados: [apr('regra-medida-so-m', { status: 'M' }), apr('regra-d-visivel')] });
+    assert.ok(!p.instantaneo.includes('regra-medida-so-m'));
+    assert.deepEqual(blocoApr(p.instantaneo), ['Aprendizados (1):', 'E regra-d-visivel']);
+    assert.equal(p.aprendizados, 1);
+  });
+  test('instantaneo-destino: D sem `instantaneo` em entra_em não aparece', () => {
+    const p = projetar([guarda(1)], { aprendizados: [apr('so-no-brief', { entra_em: ['brief:revisor', 'spec'] })] });
+    assert.ok(!p.instantaneo.includes('so-no-brief'));
+    assert.equal(p.aprendizados, 0);
+  });
+  test('regra-com-controle-uma-linha: \\n, \\r, \\t, \\u0085 e \\u2028 viram 1 espaço e a linha segue uma só', () => {
+    const b = blocoApr(projetar([guarda(1)], { aprendizados: [apr('a\nb\r\nc\td\u0085e\u2028f\u2029g'), apr('p\u0085q r')] }).instantaneo);
+    assert.equal(b[1], 'E a b c d e f g');
+    assert.equal(b[2], 'E p q r');
+    assert.equal(b.length, 3);
+  });
+  test('regra-com-c1-e-2028-uma-linha: o canal das decisões não muda (semControle das decisões fica como na E4)', () => {
+    const d = dec(1, hx(1), 'u\u0085v');
+    assert.ok(projetar([d]).instantaneo.includes('u\u0085v'));
+  });
+  test('projetar-item-torto-nao-lanca: item nulo, sem entra_em, regra não texto ou tipo fora de E|A é ignorado', () => {
+    const tortos = [null, {}, { status: 'D' }, { ...apr('a'), entra_em: 'instantaneo' }, { ...apr('b'), regra: 7 }, { ...apr('c'), tipo: 'X' }, { ...apr('d'), entra_em: null }] as unknown as AprendizadoVigente[];
+    let p!: ReturnType<typeof projetar>;
+    assert.doesNotThrow(() => { p = projetar([guarda(1)], { aprendizados: [...tortos, apr('inteiro-ok')] }); });
+    assert.deepEqual(blocoApr(p.instantaneo), ['Aprendizados (1):', 'E inteiro-ok']);
+    assert.equal(projetar([guarda(1)], { aprendizados: tortos }).aprendizados, 0);
+  });
+  test('instantaneo-aviso-arvore-ilegivel: aviso da árvore faz o bloco existir sem D, com a linha exata e k certo', () => {
+    const avisos = ['aprendizados: GM-1 ilegível (x)', 'aprendizados: GM-2 ilegível (y)'];
+    const sem = projetar([guarda(1)], { avisosAprendizados: avisos });
+    assert.deepEqual(blocoApr(sem.instantaneo), ['Aprendizados (0):', 'Aprendizados: 2 entrega(s) ilegível(is); veja loop.mjs aprendizados']);
+    const com = projetar([guarda(1)], { aprendizados: [apr('r1')], avisosAprendizados: avisos.slice(0, 1) });
+    assert.deepEqual(blocoApr(com.instantaneo), ['Aprendizados (1):', 'Aprendizados: 1 entrega(s) ilegível(is); veja loop.mjs aprendizados', 'E r1']);
+    assert.equal(projetar([guarda(1)], { avisosAprendizados: [] }).instantaneo, projetar([guarda(1)]).instantaneo);
+  });
+  test('instantaneo-aviso-ficam-nos-800: aviso + 20 D de 300 seguem ≤ 800', () => {
+    const p = projetar([guarda(1)], { aprendizados: Array.from({ length: 20 }, () => apr('x'.repeat(300))), avisosAprendizados: ['a'] });
+    const b = blocoApr(p.instantaneo).join('\n');
+    assert.ok(b.length <= 800 && b.length > 600, String(b.length));
+    assert.match(b, /aprendizado\(s\) fora$/);
+  });
+  test('instantaneo-orcamento-reserva-rodape: 20 D de 127 caracteres ⇒ o rodapé do pior caso está reservado e o bloco fica ≤ 800', () => {
+    const b = blocoApr(projetar([guarda(1)], { aprendizados: Array.from({ length: 20 }, () => apr('x'.repeat(127))) }).instantaneo);
+    assert.ok(b.join('\n').length <= 800, String(b.join('\n').length));
+    assert.equal(b.at(-1), '... 15 aprendizado(s) fora');
+    assert.equal(b.length, 1 + 5 + 1);
+  });
+  test('instantaneo-diario-vazio-com-d: projetar([]) com D mostra o bloco (entrega nova)', () => {
+    assert.deepEqual(blocoApr(projetar([], { aprendizados: [apr('vale-na-entrega-nova')] }).instantaneo), ['Aprendizados (1):', 'E vale-na-entrega-nova']);
+  });
+
+  const pouso = (seq: number, ts = iso(seq), sessao = 's1'): Evento => evD(seq, ts, sessao, 'sessao.pouso', { percent: 61 });
+  const mk = (seq: number, tipo: string, dados: unknown = {}, ts = iso(seq), sessao = 's1'): Evento => evD(seq, ts, sessao, tipo, dados);
+  test('pouso-sem-retomada-e-com-retomada: pouso sozinho ou só com sessao.inicio, heartbeat e dono.mensagem depois ⇒ true; com sessao.retomada (qualquer dados) ⇒ false', () => {
+    assert.equal(pousoSemRetomada([pouso(1)]), true);
+    assert.equal(pousoSemRetomada([pouso(1), mk(2, 'sessao.inicio', { origem: 'clear' }), mk(3, 'guarda.heartbeat', {}), mk(4, 'dono.mensagem', { sha256: 'a'.repeat(64), chars: 3 })]), true);
+    assert.equal(pousoSemRetomada([pouso(1), mk(2, 'sessao.retomada', { via: 'mod', chars: 9 })]), false);
+    assert.equal(pousoSemRetomada([pouso(1), mk(2, 'sessao.retomada', { chars: 120 })]), false, 'legado {chars}');
+  });
+  test('pouso-com-parar-depois-nao-traz: loop.parar depois, de qualquer motivo, termina o pouso', () => {
+    assert.equal(pousoSemRetomada([pouso(1), mk(2, 'loop.parar', { motivo: 'sem_pouso' })]), false);
+    assert.equal(pousoSemRetomada([pouso(1), mk(2, 'loop.parar', {})]), false);
+  });
+  test('pouso-com-progresso-depois-nao-traz: cada tipo de TIPOS_DE_PROGRESSO depois do pouso termina o pouso', () => {
+    for (const t of ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'ci.resultado', 'spec.emendada', 'emenda.rejeitada']) {
+      assert.equal(pousoSemRetomada([pouso(1), mk(2, t)]), false, t);
+    }
+    assert.equal(pousoSemRetomada([pouso(1), mk(2, 'emenda.proposta')]), true, 'proposta não é progresso');
+  });
+  test('pouso-vale-o-ultimo: pouso, retomada, pouso ⇒ true; progresso ANTES do pouso não conta', () => {
+    assert.equal(pousoSemRetomada([pouso(1), mk(2, 'sessao.retomada', {}), pouso(3)]), true);
+    assert.equal(pousoSemRetomada([mk(1, 'task.iniciada'), pouso(2)]), true);
+  });
+  test('pouso-entre-sessoes-por-ordenar: o loop.parar de outra sessão com ts anterior ao do pouso não o termina (ordem de ordenar, não do arquivo)', () => {
+    const a = pouso(1, '2026-11-10T10:05:00.000Z', 'A');
+    const b = mk(1, 'loop.parar', { motivo: 'x' }, '2026-11-10T10:00:00.000Z', 'B');
+    assert.equal(pousoSemRetomada([a, b]), true);
+    assert.equal(pousoSemRetomada([b, a]), true);
+    const depois = mk(1, 'loop.parar', { motivo: 'x' }, '2026-11-10T10:10:00.000Z', 'B');
+    assert.equal(pousoSemRetomada([a, depois]), false);
+  });
+  test('pouso-nunca-lanca: vazio, não array, sem pouso, ordem inválida ou item nulo ⇒ false', () => {
+    assert.equal(pousoSemRetomada([]), false);
+    assert.equal(pousoSemRetomada(null as unknown as Evento[]), false);
+    assert.equal(pousoSemRetomada([guarda(1)]), false);
+    assert.equal(pousoSemRetomada([pouso(2), pouso(1)]), false, 'seq fora de ordem na sessão');
+    assert.equal(pousoSemRetomada([null as unknown as Evento, pouso(1)]), false);
+  });
+  test('diario-sem-import-runtime-de-aprendizado: diario.ts só faz `import type` de aprendizado.ts', () => {
+    const fonte = readFileSync(DIARIO_TS, 'utf8');
+    assert.doesNotMatch(fonte, /^import (?!type)[^\n]*aprendizado\.ts/m);
   });
 });

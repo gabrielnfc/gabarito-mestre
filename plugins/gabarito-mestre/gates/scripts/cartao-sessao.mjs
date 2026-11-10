@@ -295,7 +295,7 @@ export function montarCartao(ctx) {
     const estado = restantes !== null && restantes >= 0 ? `${restantes} d restantes` : 'VENCIDO — revalide com gabarito-instalar';
     L.push(`Modelo: ${m.politica} · alias ${m.alias || '?'} · resolvido ${m.resolvidoEm} (${estado})`);
   } else {
-    L.push('Modelo: (b) não resolvido — gabarito-instalar (fase 4)');
+    L.push('Modelo: (b) não resolvido — gabarito-instalar (trocar orquestracao)');
   }
 
   L.push(`Branch: ${ctx.branch} @ ${ctx.sha}`);
@@ -327,7 +327,7 @@ export function montarCartao(ctx) {
   L.push(`Plugins: superpowers ${ctx.superpowers}`);
 
   // Sem `orquestracao` na config o cartão não fica mudo: diz que está em defaults (mesma frase de capacidade.mjs).
-  if (ctx.orquestracaoAusente) L.push('Config: defaults (orquestracao ausente) — gabarito-instalar (fase 4)');
+  if (ctx.orquestracaoAusente) L.push('Config: defaults (orquestracao ausente) — gabarito-instalar (trocar orquestracao)');
 
   if (ctx.avisosLedger?.length) L.push(`Avisos: ${ctx.avisosLedger.slice(0, 3).join(' · ')}${ctx.avisosLedger.length > 3 ? ` +${ctx.avisosLedger.length - 3}` : ''}`);
 
@@ -338,6 +338,8 @@ export function montarCartao(ctx) {
 // ────────────────────────────────────────────────────────────── hook SessionStart (T7)
 
 const ORIGENS = new Set(['startup', 'resume', 'clear', 'compact']);
+/** Origens em que o loop pousado volta a ser lembrado: `compact` reinjeta contexto na mesma sessão, não é retomada. */
+const ORIGENS_DE_RETOMADA = new Set(['startup', 'resume', 'clear']);
 
 /** Lê o JSON de SessionStart; qualquer defeito (vazio, inválido, não-objeto) devolve entrada vazia. */
 export function interpretarEntrada(texto) {
@@ -411,6 +413,27 @@ export function ajustarAoLimite(texto, max) {
   while (linhas.length > 1 && [...linhas, marca].join('\n').length > max) linhas.pop();
   const saida = [...linhas, marca].join('\n');
   return saida.length <= max ? saida : '';
+}
+
+/**
+ * Contexto do SessionStart (REQ-APR-3, REQ-POU-3). Ordem no texto: retomada, cartão, instantâneo. Ordem de corte (inverte a da E4):
+ * o cartão perde linhas inteiras primeiro (`cortarCartao`), depois o instantâneo perde linhas do fim (`ajustarAoLimite`); a retomada
+ * nunca, salvo se ela sozinha passa do limite. Sem `cortar` final: a conta já sai ≤ `limite`, e cabendo tudo a saída é a da E4.
+ */
+export function montarContexto({ cartao, instantaneo, retomada }, limite = LIMITE_CONTEXTO) {
+  const r = retomada ?? '';
+  if (r.length > limite) return cortar(r, limite);
+  const prefixo = r ? r.length + 1 : 0;
+  const i = instantaneo ?? '';
+  let c = cartao ?? '';
+  let inst = i;
+  const espacoCartao = limite - prefixo - (i ? i.length + 1 : 0);
+  if (c && c.length > espacoCartao) c = espacoCartao > 0 ? cortarCartao(c.split('\n'), espacoCartao) : '';
+  if (!c && i) {
+    const sobra = limite - prefixo - 1;
+    inst = sobra > 0 ? ajustarAoLimite(i, sobra) : '';
+  }
+  return [r, c, inst].filter((x) => x !== '').join('\n');
 }
 
 /**
@@ -513,6 +536,7 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
   }
 
   let instantaneo = '';
+  let retomada = null;
   let diarioOk = false;
   if (diario && !ctx.semOnboarding && !ctx.erro) {
     // Sem onboarding (ou cartão indisponível) o hook não escreve nada: o instalador ainda não ignorou `.harness/` (F1, Q20).
@@ -524,8 +548,25 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
         const naoRegular = arquivosNaoRegulares(dir);
         if (naoRegular.length > 0) throw new Error(`${naoRegular[0]} não é arquivo regular — diário não lido`);
         const eventos = diario.ler(dir);
-        if (eventos.length > 0) {
-          instantaneo = diario.projetar(eventos).instantaneo.split('\n').map((l) => semSegredo(limparLinha(l), recusa)).join('\n');
+        // Aprendizados D da árvore inteira (REQ-APR-3): módulo próprio, para que a falha dele não derrube o diário (Sombra P1-c).
+        let aprendizados = [];
+        let avisosAprendizados = [];
+        try {
+          const apr = await import('../dist/aprendizado.js');
+          const arvore = diario.lerAprendizados(join(raiz, '.harness', 'entregas'));
+          aprendizados = apr.paraDestino(apr.aprendizadosVigentes(arvore.porEntrega), 'instantaneo');
+          avisosAprendizados = arvore.avisos;
+        } catch {
+          falhas.push('aprendizados indisponíveis');
+        }
+        if (eventos.length > 0 || aprendizados.length > 0 || avisosAprendizados.length > 0) {
+          instantaneo = diario.projetar(eventos, { aprendizados, avisosAprendizados }).instantaneo.split('\n').map((l) => semSegredo(limparLinha(l), recusa)).join('\n');
+        }
+        // Pouso sem retomada (REQ-POU-3): decidido só sobre a leitura ESTRITA; ausente ≠ corrompido. O hook não grava `sessao.retomada`.
+        if (pbi !== null && ORIGENS_DE_RETOMADA.has(entrada.origem) && existsSync(dir)) {
+          const estrito = diario.lerEstrito(dir);
+          if (!estrito.ok) falhas.push(`retomada não avaliada: ${estrito.motivo}`);
+          else if (diario.pousoSemRetomada(estrito.eventos)) retomada = `Loop da entrega ${pbi} em pouso: rode loop.mjs proxima e siga.`;
         }
       } catch (e) {
         falhas.push(`leitura do diário falhou: ${String(e?.message ?? e).split('\n')[0]}`);
@@ -566,13 +607,11 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
     }
   }
 
-  let texto = cortarCartao(linhas.map((l) => semSegredo(limparLinha(l), recusa)), LIMITE_CONTEXTO);
-  if (instantaneo) {
-    const sobra = LIMITE_CONTEXTO - texto.length - 1;
-    const cabe = sobra > 0 ? ajustarAoLimite(instantaneo, sobra) : '';
-    if (cabe) texto += `\n${cabe}`;
-  }
-  texto = cortar(texto, LIMITE_CONTEXTO);
+  const texto = montarContexto({
+    cartao: linhas.map((l) => semSegredo(limparLinha(l), recusa)).join('\n'),
+    instantaneo,
+    retomada: retomada === null ? null : semSegredo(limparLinha(retomada), recusa),
+  });
 
   const mensagem = [
     ctx.semOnboarding ? 'GABARITO · harness sem onboarding' : `GABARITO · ${branch}${pbi ? ` · ${pbi}` : ''}`,

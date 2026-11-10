@@ -23,10 +23,10 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { append, ler, dirEntrega } from '../dist/diario.js';
+import { append, ler, dirEntrega, projetar } from '../dist/diario.js';
 import {
   montarCartao, inferirPbi, coletar, lerLedger, lerFrontmatter, normalizarEstado, MAX_LINHAS, LINHA_SEM_ONBOARDING, DEFAULTS,
-  LIMITE_CONTEXTO, cortarCartao,
+  LIMITE_CONTEXTO, cortarCartao, montarContexto,
 } from '../scripts/cartao-sessao.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -366,7 +366,7 @@ describe('coletar — repo git real', () => {
     const ctx = coletar(repoGit({ 'harness.config.json': semOrq }), pluginFalso(), opts());
     assert.equal(ctx.orquestracaoAusente, true);
     assert.equal(ctx.capacidade.slots >= 1, true, 'defaults de capacidade continuam valendo');
-    assert.equal(linha(montarCartao(ctx), 'Config:'), 'Config: defaults (orquestracao ausente) — gabarito-instalar (fase 4)');
+    assert.equal(linha(montarCartao(ctx), 'Config:'), 'Config: defaults (orquestracao ausente) — gabarito-instalar (trocar orquestracao)');
     const com = coletar(repoGit(), pluginFalso(), opts());
     assert.equal(com.orquestracaoAusente, false);
     assert.equal(linha(montarCartao(com), 'Config:'), undefined);
@@ -903,5 +903,185 @@ describe('T11 · teto de contexto de 2k tokens (R28, item 12)', () => {
   });
   test('máximo minúsculo: respeita o limite mesmo assim', () => {
     for (const max of [0, 1, 5, 20]) assert.ok(cortarCartao(L, max).length <= max, String(max));
+  });
+});
+
+describe('T9 · aprendizados, linha de retomada e ordem de corte (GM-13, REQ-APR-3, REQ-POU-3)', () => {
+  const RETOMADA = 'Loop da entrega PBI-123 em pouso: rode loop.mjs proxima e siga.';
+  const hook = (dir, entrada, { env = {}, scripts = SCRIPT } = {}) => {
+    const e = { ...process.env, GABARITO_INSTALLED_PLUGINS: '/nao/existe.json' };
+    delete e.CLAUDE_PROJECT_DIR;
+    Object.assign(e, env);
+    const r = spawnSync(process.execPath, [scripts, '--hook', '--root', dir, '--plugin-root', pluginFalso(), '--agora', AGORA], { cwd: dir, input: JSON.stringify(entrada), encoding: 'utf8', env: e, timeout: 8000 });
+    let j = null;
+    try { j = JSON.parse(r.stdout); } catch { /* o teste assere */ }
+    return { code: r.status, stderr: r.stderr, ctx: j?.hookSpecificOutput?.additionalContext };
+  };
+  const ev = (sessao, tipo, dados, ts = '2026-09-24T11:00:00.000Z') => ({ ts, autor: 'a@b.dev', sessao, agente: 'orquestrador', tipo, dados });
+  const eventosDe = (dir, pbi = 'PBI-123') => ler(dirEntrega(dir, pbi));
+  const comPouso = (extra = []) => {
+    const dir = repoGit({ ...CACHE_123 });
+    const d = dirEntrega(dir, 'PBI-123');
+    append(d, 'antiga', ev('antiga', 'sessao.pouso', { percent: 61 }));
+    for (const [t, dados] of extra) append(d, 'antiga', ev('antiga', t, dados, '2026-09-24T11:05:00.000Z'));
+    return dir;
+  };
+  const dadosApr = (regra, extra = {}) => ({ tipo: 'E', status: 'D', gatilho: null, evidencia: { eventos: [{ sessao: 'loop', seq: 1 }] }, regra, entra_em: ['instantaneo'], ...extra });
+  const gravaApr = (dir, entrega, regra, extra) => {
+    const r = append(dirEntrega(dir, entrega), 'loop', ev('loop', 'aprendizado', dadosApr(regra, extra)));
+    assert.equal(r.ok, true, r.erro);
+  };
+
+  test('cartao-clear-traz-linha: clear, resume e startup com pouso aberto trazem a linha exata na 1ª posição', () => {
+    for (const source of ['clear', 'resume', 'startup']) {
+      const r = hook(comPouso(), { session_id: `s-${source}`, source });
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(r.ctx.split('\n')[0], RETOMADA, source);
+    }
+  });
+  test('cartao-compact-sem-linha: compact e origem desconhecida não trazem a linha', () => {
+    for (const source of ['compact', 'outra']) {
+      const r = hook(comPouso(), { session_id: `s-${source}`, source });
+      assert.doesNotMatch(r.ctx, /Loop da entrega/, source);
+    }
+    assert.doesNotMatch(hook(comPouso(), { session_id: 's-sem-source' }).ctx, /Loop da entrega/);
+  });
+  test('cartao-sem-pouso-sem-linha: sem sessao.pouso nada de linha', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    append(dirEntrega(dir, 'PBI-123'), 'antiga', ev('antiga', 'guarda.deny', { alvo: 'x' }));
+    assert.doesNotMatch(hook(dir, { session_id: 's', source: 'clear' }).ctx, /Loop da entrega/);
+  });
+  test('pouso-com-parar-e-retomada-nao-traz: retomada, parar ou progresso depois do pouso ⇒ sem linha', () => {
+    for (const extra of [[['sessao.retomada', { via: 'mod', chars: 5 }]], [['loop.parar', { motivo: 'sem_pouso' }]], [['task.iniciada', { task: 'T1', papel: 'implementador' }]]]) {
+      assert.doesNotMatch(hook(comPouso(extra), { session_id: 's', source: 'clear' }).ctx, /Loop da entrega/, extra[0][0]);
+    }
+  });
+  test('hook-grava-zero-sessao-retomada: o hook só grava sessao.inicio e guarda.heartbeat, e o pouso segue aberto no clear seguinte', () => {
+    const dir = comPouso();
+    const antes = eventosDe(dir).length;
+    for (const sid of ['s1', 's2']) {
+      const r = hook(dir, { session_id: sid, source: 'clear' });
+      assert.equal(r.ctx.split('\n')[0], RETOMADA, `${sid}: a linha não pode ser consumida pelo hook`);
+    }
+    const novos = eventosDe(dir).slice(antes);
+    assert.equal(novos.filter((e) => e.tipo === 'sessao.retomada').length, 0);
+    assert.deepEqual(novos.map((e) => e.tipo).sort(), ['guarda.heartbeat', 'guarda.heartbeat', 'sessao.inicio', 'sessao.inicio']);
+  });
+  test('cartao-diario-ausente-x-corrompido: pasta ausente ⇒ sem linha e sem falha; linha torta ⇒ sem linha e falha `retomada não avaliada`', () => {
+    const ausente = hook(repoGit({ ...CACHE_123 }), { session_id: 's', source: 'clear' });
+    assert.doesNotMatch(ausente.ctx, /Loop da entrega/);
+    assert.doesNotMatch(ausente.stderr, /retomada não avaliada/);
+    const dir = comPouso();
+    writeFileSync(join(dirEntrega(dir, 'PBI-123'), 'events.torta.jsonl'), '{isto nao e json\n');
+    const r = hook(dir, { session_id: 's', source: 'clear' });
+    assert.doesNotMatch(r.ctx, /Loop da entrega/);
+    assert.match(r.stderr, /retomada não avaliada: /);
+  });
+  test('cartao-pouso-diario-corrompido-sem-linha-com-falha: loop.parar torto depois do pouso não faz a linha reaparecer', () => {
+    const dir = comPouso();
+    const arq = join(dirEntrega(dir, 'PBI-123'), 'events.antiga.jsonl');
+    writeFileSync(arq, `${readFileSync(arq, 'utf8')}{"seq":2,"tipo":"loop.parar"\n`);
+    const r = hook(dir, { session_id: 's', source: 'clear' });
+    assert.doesNotMatch(r.ctx, /Loop da entrega/, '`ler` descartaria a linha torta e a retomada apareceria');
+    assert.match(r.stderr, /retomada não avaliada/);
+  });
+  test('cartao-cheio-com-retomada-ate-4329-linha-presente: cartão, instantâneo de 3.200 e retomada ⇒ ≤ 4329, retomada 1ª, instantâneo inteiro, cartão perde linhas', () => {
+    const dir = repoGit({ 'harness.config.json': CONFIG({ orquestracao: { modelo: { politica: 'mais-potente', alias: 'a'.repeat(900), resolvidoEm: '2026-09-01', validadeDias: 90 } } }), ...CACHE_123 });
+    const d = dirEntrega(dir, 'PBI-123');
+    append(d, 'antiga', ev('antiga', 'sessao.pouso', { percent: 61 }));
+    for (let i = 0; i < 80; i++) append(d, 'antiga', ev('antiga', 'guarda.deny', { alvo: `caminho/${'x'.repeat(200)}/${i}` }, `2026-09-24T11:${String(10 + (i % 40)).padStart(2, '0')}:00.000Z`));
+    const esperado = projetar(ler(d)).instantaneo;
+    assert.ok(esperado.length > 3000, String(esperado.length));
+    const r = hook(dir, { session_id: 's', source: 'clear' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(r.ctx.length <= LIMITE_CONTEXTO, String(r.ctx.length));
+    assert.equal(r.ctx.split('\n')[0], RETOMADA);
+    assert.ok(r.ctx.endsWith(esperado), 'o instantâneo tem de sair inteiro, no fim');
+    assert.match(r.ctx, /linha\(s\) do cartão omitida/);
+    assert.doesNotMatch(r.ctx, /instantâneo truncado/);
+    assert.match(r.ctx, /^GABARITO · cartão de sessão/m, 'a 1ª linha do cartão é a última a sair');
+  });
+  test('cartao-clear-traz-aprendizado: D de qualquer entrega com `instantaneo` entra no contexto; M nunca; a regra com quebra de linha vira 1 linha', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    append(dirEntrega(dir, 'PBI-123'), 'antiga', ev('antiga', 'guarda.deny', { alvo: 'x' }));
+    gravaApr(dir, 'PBI-9', 'rode o build\nantes do teste');
+    gravaApr(dir, 'PBI-9', 'regra-so-medida-m', { status: 'M' });
+    const r = hook(dir, { session_id: 's', source: 'startup' });
+    assert.match(r.ctx, /^Aprendizados \(1\):$/m);
+    assert.match(r.ctx, /^E rode o build antes do teste$/m);
+    assert.doesNotMatch(r.ctx, /regra-so-medida-m/);
+  });
+  test('cartao-diario-vazio-com-d-traz-bloco: entrega corrente sem diário e D na árvore ⇒ o bloco existe', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    gravaApr(dir, 'PBI-9', 'vale na entrega nova');
+    const r = hook(dir, { session_id: 's', source: 'startup' });
+    assert.match(r.ctx, /^Diário: 0 evento\(s\)$/m);
+    assert.match(r.ctx, /^E vale na entrega nova$/m);
+  });
+  test('cartao-arvore-ilegivel-avisa: entrega com linha torta ⇒ aviso exato no instantâneo e falha nenhuma calada', () => {
+    const dir = repoGit({ ...CACHE_123 });
+    append(dirEntrega(dir, 'PBI-123'), 'antiga', ev('antiga', 'guarda.deny', { alvo: 'x' }));
+    mkdirSync(dirEntrega(dir, 'PBI-8'), { recursive: true });
+    writeFileSync(join(dirEntrega(dir, 'PBI-8'), 'events.x.jsonl'), 'lixo\n');
+    const r = hook(dir, { session_id: 's', source: 'startup' });
+    assert.match(r.ctx, /^Aprendizados: 1 entrega\(s\) ilegível\(is\); veja loop\.mjs aprendizados$/m);
+  });
+  test('aprendizados-indisponiveis: sem dist/aprendizado.js o hook segue, sem bloco, com a falha `aprendizados indisponíveis`', () => {
+    const raiz = mkdtempSync(join(tmpdir(), 'gates-sem-apr-'));
+    for (const sub of ['scripts', 'lib', 'dist']) {
+      mkdirSync(join(raiz, sub), { recursive: true });
+      for (const f of readdirSync(join(here, '..', sub))) if (f !== 'aprendizado.js' && lstatSync(join(here, '..', sub, f)).isFile()) copyFileSync(join(here, '..', sub, f), join(raiz, sub, f));
+    }
+    const dir = repoGit({ ...CACHE_123 });
+    append(dirEntrega(dir, 'PBI-123'), 'antiga', ev('antiga', 'guarda.deny', { alvo: 'x' }));
+    gravaApr(dir, 'PBI-9', 'nao-aparece-sem-modulo');
+    const r = hook(dir, { session_id: 's', source: 'startup' }, { scripts: join(raiz, 'scripts', 'cartao-sessao.mjs') });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stderr, /aprendizados indisponíveis/);
+    assert.doesNotMatch(r.ctx, /Aprendizados \(/);
+    assert.match(r.ctx, /Diário: 1 evento\(s\)/);
+  });
+
+  test('montarContexto-ordem-e-corte: retomada, cartão, instantâneo; estourando, o cartão perde linhas inteiras e o instantâneo fica', () => {
+    const cartao = ['GABARITO · cartão', ...Array.from({ length: 30 }, (_, i) => `Linha ${i} ${'c'.repeat(40)}`)].join('\n');
+    const inst = ['Diário: 9 evento(s)', ...Array.from({ length: 60 }, (_, i) => `2026-11-10T10:00:${String(i).padStart(2, '0')}.000Z guarda.deny ${'i'.repeat(40)}`)].join('\n');
+    const r = 'RETOMADA';
+    const cabe = montarContexto({ cartao, instantaneo: inst, retomada: r }, 100_000);
+    assert.equal(cabe, `${r}\n${cartao}\n${inst}`);
+    const limite = r.length + 1 + 300 + 1 + inst.length;
+    const cortado = montarContexto({ cartao, instantaneo: inst, retomada: r }, limite);
+    assert.ok(cortado.length <= limite);
+    assert.ok(cortado.startsWith(`${r}\nGABARITO · cartão\n`));
+    assert.ok(cortado.endsWith(inst), 'instantâneo inteiro');
+    assert.match(cortado, /linha\(s\) do cartão omitida/);
+    assert.deepEqual(montarContexto({ cartao, instantaneo: '', retomada: null }, 100_000), cartao);
+  });
+  test('montarContexto-sem-retomada-cabendo-igual-e4: sem retomada e cabendo, só o cartão e o instantâneo, na ordem da E4', () => {
+    assert.equal(montarContexto({ cartao: 'A\nB', instantaneo: 'I', retomada: null }, 4329), 'A\nB\nI');
+  });
+  test('montarContexto-cartao-zera-depois-instantaneo: com o instantâneo maior que o espaço, o cartão sai e o instantâneo perde linhas do fim; retomada nunca', () => {
+    const inst = ['Diário: 9 evento(s)', ...Array.from({ length: 40 }, (_, i) => `linha-${i}-${'i'.repeat(60)}`)].join('\n');
+    const r = 'Loop da entrega X-1 em pouso: rode loop.mjs proxima e siga.';
+    const out = montarContexto({ cartao: 'GABARITO\nModelo: x', instantaneo: inst, retomada: r }, 500);
+    assert.ok(out.length <= 500, String(out.length));
+    assert.ok(out.startsWith(`${r}\n`));
+    assert.match(out, /instantâneo truncado$/);
+    assert.doesNotMatch(out, /^GABARITO$/m);
+  });
+  test('montarContexto-retomada-maior-que-o-limite: único caso em que a retomada é cortada', () => {
+    const out = montarContexto({ cartao: 'A', instantaneo: 'I', retomada: 'R'.repeat(200) }, 50);
+    assert.equal(out, 'R'.repeat(50));
+  });
+});
+
+describe('T9 · texto "fase N" do cartão (Sombra 2d.2)', () => {
+  test('modelo sem resolvidoEm: "(b) não resolvido — gabarito-instalar (trocar orquestracao)" e ainda casa PENDENTE', () => {
+    const cfg = JSON.parse(CONFIG());
+    delete cfg.orquestracao.modelo.resolvidoEm;
+    const ctx = coletar(repoGit({ 'harness.config.json': JSON.stringify(cfg) }), pluginFalso(), opts());
+    const l = linha(montarCartao(ctx), 'Modelo:');
+    assert.equal(l, 'Modelo: (b) não resolvido — gabarito-instalar (trocar orquestracao)');
+    const cortado = cortarCartao(['T', 'Branch: b', `Plugins: ${'s'.repeat(60)}`, l], l.length + 'T'.length + 70);
+    assert.ok(cortado.split('\n').includes(l), 'linha pendente sobrevive ao corte');
   });
 });
