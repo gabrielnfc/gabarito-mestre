@@ -720,8 +720,9 @@ function lerRespostas(caminho) {
 }
 
 /**
- * Grava a config do onboarding. SEMPRE redetecta (fonte única): se o que há para perguntar mudou desde a prévia, falha fechado
- * (`deteccao_mudou`) e pede rodar `detectar` de novo. Falha ⇒ `{ ok:false, erro, motivo }` e nada escrito. Sucesso ⇒
+ * Grava a config do onboarding. SEMPRE redetecta (fonte única) e compara com a prévia que o dono viu (`_previa` no arquivo de
+ * respostas = `itens` de `detectar`): estado ou valor de QUALQUER fato diferente, abaixo ou acima do teto de perguntas, ou
+ * pergunta que mudou ⇒ falha fechado (`deteccao_mudou`) e pede rodar `detectar` de novo. Sem `_previa` ⇒ `previa_ausente`. Falha ⇒ `{ ok:false, erro, motivo }` e nada escrito. Sucesso ⇒
  * `{ ok:true, diff, naoDetectado, removidas, efetiva? }` com UMA escrita de `harness.config.json` (tmp + rename); `efetiva` só quando a
  * política efetiva (função do produto, sobre a config gravada) difere da escolhida. `dryRun` não escreve.
  */
@@ -730,7 +731,9 @@ export function gravar(raiz, caminhoRespostas, { rodar = rodarReal, hoje = hojeI
   if (cfg.erro) return falha('config_invalida', `harness.config.json ilegível (${cfg.erro})`);
   const lidas = lerRespostas(caminhoRespostas);
   if (lidas.ok === false) return lidas;
-  const { respostas } = lidas;
+  const { _previa: previaVista, ...respostas } = lidas.respostas;
+  if (!Array.isArray(previaVista)) return falha('previa_ausente', 'respostas sem `_previa` (copie `itens` da saída de `detectar`); sem a prévia não há como saber se a detecção mudou');
+  if (!previaVista.every((i) => ehObjeto(i) && typeof i.item === 'string' && typeof i.estado === 'string')) return falha('respostas_invalidas', '`_previa` precisa ser a lista `itens` de `detectar` ({ item, estado, valor })');
   let fatos;
   try {
     fatos = coletarFatos(raiz, { rodar, hoje });
@@ -738,6 +741,13 @@ export function gravar(raiz, caminhoRespostas, { rodar = rodarReal, hoje = hojeI
     return falha('falha', String(e.message).split('\n')[0]);
   }
   const itens = detectar(fatos);
+  // Fato que mudou desde a prévia (estado ou valor), abaixo OU acima do teto de perguntas: falha fechado (P1 T6b, MAJOR-1 da r1).
+  const visto = new Map(previaVista.map((i) => [i.item, i]));
+  const mudou = itens.filter((i) => {
+    const v = visto.get(i.item);
+    return !v || v.estado !== i.estado || JSON.stringify(v.valor ?? null) !== JSON.stringify(i.valor ?? null);
+  }).map((i) => i.item);
+  if (mudou.length > 0) return falha('deteccao_mudou', `fato mudou desde a prévia: ${mudou.join(', ')}; rode detectar de novo`);
   const ps = perguntas(itens, fatos.configExistente);
   const ids = new Set(ps.map((p) => p.id));
   const semPergunta = Object.keys(respostas).filter((k) => !ids.has(k));

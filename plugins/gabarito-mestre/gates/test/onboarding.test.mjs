@@ -16,6 +16,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, exist
 import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { ORDEM_ITENS, coletarFatos, detectar, rodarReal, lerWorkflow, TIMEOUT_MCP_MS, perguntas, previa, configDasRespostas, gravar, MOTIVO_BRANCHPADRAO } from '../scripts/onboarding.mjs';
 import { coletar as coletarCartao } from '../scripts/cartao-sessao.mjs';
@@ -23,6 +24,7 @@ import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { PERFIS_MODELO } from '../lib/config.mjs';
 import * as capacidade from '../scripts/capacidade.mjs';
 
+const require = createRequire(import.meta.url);
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const CLI = join(AQUI, '..', 'scripts', 'onboarding.mjs');
 const FIX = join(AQUI, 'fixtures', 'onboarding');
@@ -773,8 +775,11 @@ const arquivoResp = (conteudo) => {
   return f;
 };
 /** `gravar` pelo núcleo, com o `claude` falso e o git real. */
-const gravarCom = (raiz, respostas, { claude = CLICKUP, hoje = HOJE, fuso = FUSO, dryRun = false, bruto } = {}) =>
-  gravar(raiz, arquivoResp(bruto ?? respostas), { rodar: rodarCom(claude), hoje, fuso, dryRun });
+const gravarCom = (raiz, respostas, { claude = CLICKUP, previaClaude = claude, hoje = HOJE, fuso = FUSO, dryRun = false, bruto, semPrevia = false } = {}) => {
+  // `_previa` = `itens` de `detectar` como o dono os viu (o `claude` da prévia pode diferir do do gravar).
+  const com = semPrevia || respostas === null ? respostas : { ...respostas, _previa: JSON.parse(JSON.stringify(detectar(fatosDe(raiz, { claude: previaClaude })))) };
+  return gravar(raiz, arquivoResp(bruto ?? com), { rodar: rodarCom(claude), hoje, fuso, dryRun });
+};
 const itensLista = (raiz, opts) => detectar(fatosDe(raiz, opts));
 const idsDe = (ps) => ps.map((p) => p.id);
 const existenteDe = (raiz, opts) => fatosDe(raiz, opts).configExistente;
@@ -1131,6 +1136,98 @@ describe('gravar', () => {
     assert.equal(temCfg(mono), false);
   });
 
+  test('gravar-deteccao-mudou-acima-do-teto-nao-escreve', () => {
+    // monorepo: tipo_repo ambiguo + ambientes nao_detectado; com ClickUp o planejamento é detectado (o 3º fato aberto, se falhar, cai acima do teto)
+    const falha = { rc: 1, stdout: '', stderr: '', motivo: null };
+    const raiz = fixtureComGit('monorepo', 'main');
+    const previaPs = perguntas(itensLista(raiz), existenteDe(raiz));
+    assert.deepEqual(idsDe(previaPs), ['politica', 'autonomia', 'perfil', 'tipo_repo', 'ambientes']);
+    assert.equal(itensDe(raiz).planejamento.estado, 'detectado', 'a prévia viu o clickup');
+    const r = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', ambientes: null }, { claude: falha, previaClaude: CLICKUP });
+    // as perguntas são as mesmas (planejamento caiu acima do teto), mas o fato mudou
+    assert.deepEqual(idsDe(perguntas(itensLista(raiz, { claude: falha }), existenteDe(raiz))), idsDe(previaPs));
+    assert.deepEqual([r.ok, r.erro], [false, 'deteccao_mudou']);
+    assert.match(r.motivo, /planejamento/);
+    assert.equal(temCfg(raiz), false, 'nada escrito');
+    // controle: a mesma resposta com a prévia igual grava (o claude que falha no gravar é o único defeito)
+    const igual = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', ambientes: null }, { claude: falha, previaClaude: falha });
+    assert.equal(igual.ok, true);
+    // outros fatos: versionamento detectado que vira outro valor acima do teto, e valor (não só estado) que muda
+    const outro = fixtureComGit('monorepo', 'main');
+    const v = gravarCom(outro, { ...FIXAS, tipo_repo: 'app', ambientes: null }, { claude: SEM_MCP, previaClaude: CLICKUP });
+    assert.deepEqual([v.ok, v.erro], [false, 'deteccao_mudou']);
+    assert.equal(temCfg(outro), false);
+  });
+
+  test('gravar-deteccao-mudou-valor-abaixo-do-teto', () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    // mesmo estado (detectado), outro valor: o planejamento era clickup, agora é outro MCP
+    const outro = 'claude.ai Linear: https://mcp.linear.app/mcp - ✔ Connected\n';
+    assert.equal(itensDe(raiz, { claude: outro }).planejamento.estado, 'detectado');
+    assert.notDeepEqual(itensDe(raiz, { claude: outro }).planejamento.valor, itensDe(raiz).planejamento.valor);
+    const r = gravarCom(raiz, FIXAS, { claude: outro, previaClaude: CLICKUP });
+    assert.deepEqual([r.ok, r.erro], [false, 'deteccao_mudou']);
+    assert.match(r.motivo, /planejamento/);
+    assert.equal(temCfg(raiz), false);
+    // mesmo valor, outro estado (a prévia dizia ambiguo, hoje é detectado): também é mudança
+    const viu = JSON.parse(JSON.stringify(detectar(fatosDe(raiz))));
+    viu.find((i) => i.item === 'versionamento').estado = 'ambiguo';
+    const e = gravarCom(raiz, { ...FIXAS, _previa: viu }, { semPrevia: true });
+    assert.deepEqual([e.ok, e.erro], [false, 'deteccao_mudou']);
+    assert.match(e.motivo, /versionamento/);
+    // prévia ausente ou torta: falha fechado, distinta
+    const sem = gravarCom(raiz, FIXAS, { semPrevia: true });
+    assert.deepEqual([sem.ok, sem.erro], [false, 'previa_ausente']);
+    const torta = gravarCom(raiz, { ...FIXAS, _previa: [1] }, { semPrevia: true });
+    assert.deepEqual([torta.ok, torta.erro], [false, 'respostas_invalidas']);
+    assert.equal(temCfg(raiz), false);
+  });
+
+  test('gravar-escreve-1-vez-por-arquivo', () => {
+    // conta as escritas de verdade: 1 write do tmp + 1 rename para o destino (S: "1 escrita por arquivo, tmp + rename")
+    const fs = require('node:fs');
+    const { syncBuiltinESMExports } = require('node:module');
+    const escritas = [];
+    const renames = [];
+    const w = fs.writeFileSync;
+    const rn = fs.renameSync;
+    const raiz = fixtureComGit('completa', 'trunk');
+    const respostas = arquivoResp({ ...FIXAS, _previa: JSON.parse(JSON.stringify(detectar(fatosDe(raiz)))) });
+    fs.writeFileSync = (c, ...r) => { if (String(c).startsWith(raiz)) escritas.push(String(c)); return w(c, ...r); };
+    fs.renameSync = (a, b) => { if (String(a).startsWith(raiz)) renames.push([String(a), String(b)]); return rn(a, b); };
+    syncBuiltinESMExports();
+    let r;
+    try {
+      r = gravar(raiz, respostas, { rodar: rodarCom(CLICKUP), hoje: HOJE, fuso: FUSO });
+    } finally {
+      fs.writeFileSync = w;
+      fs.renameSync = rn;
+      syncBuiltinESMExports();
+    }
+    assert.equal(r.ok, true);
+    assert.equal(escritas.length, 1, `1 escrita, houve: ${escritas.join(' | ')}`);
+    assert.equal(renames.length, 1);
+    assert.equal(renames[0][1], join(raiz, 'harness.config.json'));
+    assert.equal(escritas[0], renames[0][0], 'o rename promove o tmp escrito');
+    assert.ok(!existsSync(renames[0][0]), 'tmp não sobra');
+    assert.equal(cfgDe(raiz).entrega.politica, 'sob_demanda');
+  });
+
+  test('detectar-orquestracao-ignora-env-do-ambiente', () => {
+    // GABARITO_PARALELISMO no shell do dono nunca vira o "valor da config" na prévia
+    const cfg = '{"orquestracao":{"paralelismo":{"simultaneos":3,"teto":6}}}';
+    const antes = process.env.GABARITO_PARALELISMO;
+    process.env.GABARITO_PARALELISMO = '1';
+    try {
+      const o = itensDe(raizCom({ 'harness.config.json': cfg })).orquestracao;
+      assert.deepEqual(o.valor, { simultaneos: 3, teto: 6 });
+      assert.equal(capacidade.calcularSlots({ simultaneos: 3, teto: 6 }, {}).slots, 1, 'controle: o runtime com o env do ambiente daria 1');
+    } finally {
+      if (antes === undefined) delete process.env.GABARITO_PARALELISMO;
+      else process.env.GABARITO_PARALELISMO = antes;
+    }
+  });
+
   test('gravar-config-corrompida-nao-escreve', () => {
     for (const ruim of ['{"entrega":', '[]', '"x"', '{"a":1}}']) {
       const raiz = comConfig(fixtureComGit('completa', 'trunk'), ruim);
@@ -1371,7 +1468,7 @@ describe('gravar costura', () => {
     assert.deepEqual(idsDe(saida.perguntas), ['politica', 'autonomia', 'perfil']);
     assert.ok(typeof saida.previa === 'string' && saida.previa.startsWith('detectei:'));
     assert.ok(!det.stdout.includes('SEGREDO'));
-    const resp = arquivoResp(FIXAS);
+    const resp = arquivoResp({ ...FIXAS, _previa: saida.itens }); // a skill copia `itens` da saída de `detectar`
     const seco = spawnSync(process.execPath, [CLI, 'gravar', '--root', raiz, '--respostas', resp, '--hoje', HOJE, '--fuso', FUSO, '--dry-run'], { encoding: 'utf8', env });
     assert.equal(seco.status, 0, seco.stderr);
     assert.equal(JSON.parse(seco.stdout).ok, true);
@@ -1387,7 +1484,7 @@ describe('gravar costura', () => {
     assert.deepEqual(readdirSync(raiz).filter((f) => f.includes('.tmp')), []);
     // erros: exit 1, JSON no stdout, nada escrito
     const raiz2 = fixtureComGit('completa', 'trunk');
-    for (const [args, erro] of [[['--respostas', join(novoDir(), 'x.json')], 'respostas_ausentes'], [[], 'respostas_ausentes'], [['--respostas', arquivoResp('[1]')], 'respostas_invalidas'], [['--respostas', arquivoResp({ ...FIXAS, perfil: 'turbo' })], 'resposta_fora_das_opcoes']]) {
+    for (const [args, erro] of [[['--respostas', join(novoDir(), 'x.json')], 'respostas_ausentes'], [[], 'respostas_ausentes'], [['--respostas', arquivoResp('[1]')], 'respostas_invalidas'], [['--respostas', arquivoResp({ ...FIXAS, perfil: 'turbo', _previa: saida.itens })], 'resposta_fora_das_opcoes'], [['--respostas', arquivoResp(FIXAS)], 'previa_ausente']]) {
       const e = spawnSync(process.execPath, [CLI, 'gravar', '--root', raiz2, ...args, '--hoje', HOJE], { encoding: 'utf8', env });
       assert.equal(e.status, 1, erro);
       assert.deepEqual([JSON.parse(e.stdout).ok, JSON.parse(e.stdout).erro], [false, erro]);
