@@ -38,6 +38,19 @@ type Opc = {
   config?: { slots?: number; tetoTokens?: number | null }
   existsFalha?: boolean
   existsPlanoFalha?: boolean
+  /** painel (T10): resposta do `painel.mjs estado --agentes`; ausente ⇒ o mock nega o argv (todo teste de pouso fica inerte) */
+  painel?: PainelOpc
+  panes?: { id: string; isPlaced: boolean; isShown: boolean }[] | 'falha'
+  openResult?: { isPlaced: boolean; reason?: string }
+  notify?: 'ok' | 'nao-enviou' | 'rejeita'
+  fillIsFilled?: boolean
+  rateLimits?: unknown
+  agentesPainel?: unknown
+}
+type PainelOpc = {
+  modo?: 'ok' | 'sem_loop' | 'erro' | 'torto' | 'trunca' | 'rejeita' | 'timeout' | 'pendente'
+  estado?: any
+  avisos?: string[]
 }
 
 const FRONT = [
@@ -81,7 +94,13 @@ function mundo($: any, on: any, o: Opc = {}) {
   let relogio = 0
   const store = new Map<string, unknown>(Object.entries(o.storeInicial ?? {}))
   const arquivos = new Set<string>(o.arquivos ?? [])
-  const est = { dir: DIR, plano: o.plano !== false, percent: o.percent === undefined ? 60 : o.percent, clears: 0, submits: [] as string[], liberar: null as null | (() => void) }
+  const est = {
+    dir: DIR, plano: o.plano !== false, percent: o.percent === undefined ? 60 : o.percent, clears: 0, submits: [] as string[], liberar: null as null | (() => void),
+    // painel (T10)
+    painel: { ...(o.painel ?? {}) } as PainelOpc, painelStdins: [] as any[], painelArgv: [] as string[][], painelInit: [] as any[], painelFlight: 0, painelLibera: [] as (() => void)[],
+    opens: [] as any[], panes: (o.panes ?? []) as any, openResult: (o.openResult ?? { isPlaced: true }) as any, notifies: [] as string[], fills: [] as any[], statuses: [] as (string | undefined)[],
+    ordem: [] as string[], notifyModo: (o.notify ?? 'ok') as string, rateLimits: (o.rateLimits === undefined ? [] : o.rateLimits) as any, fillIsFilled: o.fillIsFilled !== false,
+  }
 
   // o diário em memória: tudo que o mod grava volta na próxima leitura, com seq e ts válidos para a T2
   const seqs = new Map<string, number>()
@@ -101,16 +120,25 @@ function mundo($: any, on: any, o: Opc = {}) {
   on('env.get', (_: any, e: any) => ({ value: e.name === 'GABARITO_POUSO_X' ? o.x : undefined }))
   on('session.usage', () => {
     if (o.usageFalha) return { deny: 'usage fora do ar' }
-    return { value: { startedAt: 0, context: { window: 1_000_000, percent: est.percent ?? undefined, tokens: 1 }, rateLimits: [] } }
+    return { value: { startedAt: 0, context: { window: 1_000_000, percent: est.percent ?? undefined, tokens: 1 }, rateLimits: est.rateLimits } }
   })
-  on('agent.list', () => (o.agentes === 'falha' ? { deny: 'sem sessão' } : o.agentes === 'lixo' ? { value: 'não é lista' } : { value: o.agentes ?? [] }))
-  on('ui.toast', (_: any, e: any) => { toasts.push(e.text); log.push('toast'); return { value: undefined } })
-  on('ui.status', () => ({ value: undefined }))
+  on('agent.list', () => (o.agentesPainel !== undefined ? { value: o.agentesPainel } : o.agentes === 'falha' ? { deny: 'sem sessão' } : o.agentes === 'lixo' ? { value: 'não é lista' } : { value: o.agentes ?? [] }))
+  on('ui.toast', (_: any, e: any) => { toasts.push(e.text); log.push('toast'); est.ordem.push('toast'); return { value: undefined } })
+  on('ui.status', (_: any, e: any) => { est.statuses.push(e.text); return { value: undefined } })
+  on('ui.open', (_: any, e: any) => { est.opens.push(e); est.ordem.push('open'); return { value: est.openResult } })
+  on('ui.panes', () => (est.panes === 'falha' ? { deny: 'sem panes' } : { value: est.panes }))
+  on('ui.notify', (_: any, e: any) => {
+    est.ordem.push('notify'); est.notifies.push(e.text)
+    if (est.notifyModo === 'rejeita') return { deny: 'canal fora do ar' }
+    return { value: est.notifyModo === 'nao-enviou' ? { isSent: false, reason: 'no-channel' } : { isSent: true, channel: 'iterm2' } }
+  })
+  on('prompt.fill', (_: any, e: any) => { est.fills.push(e); return { isFilled: est.fillIsFilled, text: est.fillIsFilled ? e.text : '' } })
   on('ui.log', () => ({ value: undefined }))
   on('command.register', (_: any, e: any) => { log.push(`register:${e.name}`); return { value: { command: e.name } } })
   on('store.get', (_: any, e: any) => ({ value: store.get(e.key) }))
   on('store.set', (_: any, e: any) => {
     log.push(`store.set:${e.key}:${(e.value as any)?.estado ?? ''}`)
+    if (e.key.startsWith('painel:')) est.ordem.push(`store.set:${e.key}`)
     if (o.storeSetFalha) return { deny: 'store fora do ar' }
     if (o.storeGravaOutro) store.set(e.key, { estado: 'ocioso' })
     else if (!o.storeNaoGrava) store.set(e.key, e.value)
@@ -126,9 +154,25 @@ function mundo($: any, on: any, o: Opc = {}) {
     log.push(`fs.write:${e.path}`)
     return { value: undefined }
   })
-  on('process.run', (_: any, e: any) => {
+  on('process.run', async (_: any, e: any) => {
     const argv: string[] = e.argv
     const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    if (o.painel !== undefined && argv[0] === 'node' && String(argv[1]).endsWith('/gates/scripts/painel.mjs')) {
+      est.painelArgv.push(argv); est.painelInit.push(e.init); est.painelStdins.push(JSON.parse(e.init?.stdin ?? 'null')); est.painelFlight += 1
+      try {
+        const p = est.painel
+        if (p.modo === 'pendente') await new Promise<void>((r) => { est.painelLibera.push(r) })
+        const linha = (v: unknown) => `${JSON.stringify(v)}\n`
+        const cru = (stdout: string, exitCode = 0, trunc = false) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: trunc, isStderrTruncated: false } })
+        if (p.modo === 'rejeita') return { deny: 'node não iniciou' }
+        if (p.modo === 'timeout') { await clock.sleep(5000); return { deny: 'timeout' } }
+        if (p.modo === 'torto') return cru('isto não é json')
+        if (p.modo === 'trunca') return cru(linha({ ok: true, estado: p.estado, avisos: [] }).slice(0, -3), 0, true)
+        if (p.modo === 'sem_loop') return cru(linha({ ok: false, erro: 'plano_ausente', mensagem: 'sem plano' }), 1)
+        if (p.modo === 'erro') return cru(linha({ ok: false, erro: 'diario_em_escrita', mensagem: 'o diário mudou' }), 1)
+        return cru(linha({ ok: true, estado: p.estado ?? estadoPainel(), avisos: p.avisos ?? [] }))
+      } finally { est.painelFlight -= 1 }
+    }
     if (argv[0] === 'node' && argv.includes('--input-type=module')) {
       const q = JSON.parse(e.init?.stdin ?? '{}')
       pedidos.push(q)
@@ -1988,4 +2032,529 @@ test('orfa-liberar-zera-so-a-task-liberada: liberar a não recomeça a conta esg
   expect(parou(m)).toHaveLength(1)
   expect(parou(m)[0].dados).toEqual({ motivo: 'nao_conseguiu', task: 'c' })
   expect(reabertas(m)).toHaveLength(4)
+})
+
+// ======================================================================================================================================
+// ---- painel (E4, T10): Pane, faixa, atualização e Parar. Mutações: task-10-mut.json ----
+// ======================================================================================================================================
+const ID_PAINEL = 'gabarito-painel'
+const acaoP = (rotulo: string, comando: string | null) => ({ rotulo, comando })
+function estadoPainel(o: Record<string, any> = {}) {
+  return {
+    id: 'GM-12', titulo: 'E4 Painel', pacote: 'Terra Média',
+    plano: { tasks: [{ id: 'T1', titulo: 'a', estado: 'integrada', glifo: '✓', deps: [] }, { id: 'T2', titulo: 'b', estado: 'pendente', glifo: '○', deps: ['T1'] }], feitas: 1, total: 2, pct: 50, eta: { hora: '17:42', restanteS: 3600, maisMenosS: 600, n: 3 }, rodadaMedia: null, medianaS: null },
+    equipe: { lider: { nome: 'GANDALF', modelo: 'opus', ctx: 36, x: 50, tok: 412000, h5: null, d7: 18, narrativa: 'esperando o loop' }, agentes: [], vivos: 0, revisoresAguardando: [], sombra: { nome: 'ELROND', modelo: 'opus', decisoes: 0, ultima: null } },
+    parado: false, parar: null, depende: [], atencao: [], historico: [], ocultos: 0,
+    rodape: { ci: { verde: null, execucoesHoje: 0 }, prod: { leituras: 0, alteracoes: 0 }, politica: 'continua' },
+    notificacao: null, qualidade: { rodadaMedia: null, mortas: null },
+    ...o,
+  }
+}
+const pararP = (chave = 'parar:s1:7', texto = 'teto de rodadas de review em T2', acoes = [acaoP('aprovar', '/gabarito-mestre:liberar T2'), acaoP('recusar', null)]) =>
+  estadoPainel({ parado: true, parar: { motivo: 'teto_rodadas', texto, acoes, hora: '14:05', chave, emVoo: [], alteracoes: 0 } })
+const PAROU_PREFIXO = 'gabarito: PAROU'
+const TOAST_PAROU = 'gabarito: PAROU GM-12 · teto de rodadas de review em T2'
+
+const propsPane = (cols = 80) => ({ title: 'gabarito', isFocused: false, bodyColumns: cols, placement: 'inline', scroll: { offset: 0, bodyRows: 20 }, view: {} }) as any
+const propsFaixa = (extra: Record<string, unknown> = {}) => ({ hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 100, scroll: { offset: 0, bodyRows: 9 }, view: {}, ...extra }) as any
+const montarPane = ($: any, cols = 80) => $.ui.mount({ plugin: 'gabarito-mestre', surface: 'terminal', component: 'Pane', requestId: ID_PAINEL, props: propsPane(cols) })
+const montarFaixa = ($: any, extra: Record<string, unknown> = {}) => $.ui.mount({ plugin: 'gabarito-mestre', surface: 'terminal', component: 'AbovePrompt', requestId: 'faixa', props: propsFaixa(extra) })
+const drena = async (m: ReturnType<typeof mundo>) => { for (let i = 0; i < 8; i++) await m.clock.settle() }
+const PERIODO = 30000
+const comPainel = ($: any, on: any, painel: PainelOpc = {}, o: Opc = {}) => mundo($, on, { painel: { modo: 'ok', ...painel }, ...o })
+const arrancar = async (m: ReturnType<typeof mundo>) => { await m.inicio(); await drena(m) }
+const todosTextos = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text as string)
+const sobreOMotor = (on: any) => on('ui.render', ($: any, e: any) => { const { Text } = $.ui.resolve(e); return h(Text, null, 'motor') })
+
+// ---- abertura da Pane ----
+test('pane-abre-com-plano: resposta ok ⇒ ui.open do painel sem focus, com título', async ($, on) => {
+  const m = comPainel($, on)
+  await arrancar(m)
+  expect(m.est.opens).toHaveLength(1)
+  expect(m.est.opens[0].id).toBe(ID_PAINEL)
+  expect(m.est.opens[0].title).toBe('gabarito')
+  expect(m.est.opens[0].focus).toBeUndefined()
+})
+test('pane-argv-cwd-timeout: node <raiz>/gates/scripts/painel.mjs estado --agentes, cwd da sessão, 5 s', async ($, on) => {
+  const m = comPainel($, on)
+  await arrancar(m)
+  const argv = m.est.painelArgv[0]
+  expect(argv[0]).toBe('node')
+  expect(argv[1].endsWith('/gates/scripts/painel.mjs')).toBe(true)
+  expect(argv.slice(2)).toEqual(['estado', '--agentes'])
+  expect(m.est.painelInit[0].cwd).toBe(RAIZ)
+  expect(m.est.painelInit[0].timeoutMs).toBe(5000)
+})
+test('sem-plano-nada-abre: sem loop ⇒ 0 ui.open, e o relógio é cancelado (sem-loop-cancela-relogio)', async ($, on) => {
+  const m = comPainel($, on, { modo: 'sem_loop' })
+  await arrancar(m)
+  expect(m.est.opens).toHaveLength(0)
+  expect(m.est.painelStdins).toHaveLength(1)
+  await m.clock.advance(PERIODO * 3)
+  await drena(m)
+  expect(m.est.painelStdins).toHaveLength(1)
+})
+test('nao-interativo-sem-painel: -p ⇒ 0 ponte do painel, 0 ui.open, 0 faixa', async ($, on) => {
+  const m = comPainel($, on, {}, { interativo: false })
+  await m.inicio()
+  await m.turno()
+  await m.clock.advance(PERIODO * 2)
+  await drena(m)
+  expect(m.est.painelStdins).toHaveLength(0)
+  expect(m.est.opens).toHaveLength(0)
+  expect(m.est.notifies).toHaveLength(0)
+})
+const semTela = async ($: any, on: any, interativo: boolean, surface: string | null) => {
+  const m = comPainel($, on)
+  await $.session.start({ cwd: RAIZ, surface, isInteractive: interativo })
+  await m.turno()
+  await m.clock.advance(PERIODO * 2)
+  await drena(m)
+  expect(m.est.painelStdins).toHaveLength(0)
+  expect(m.est.opens).toHaveLength(0)
+}
+test('sem-tela-sem-painel: isInteractive true com surface null ⇒ nada do painel', async ($, on) => { await semTela($, on, true, null) })
+test('sem-interativo-sem-painel: isInteractive false com tela ⇒ nada do painel', async ($, on) => { await semTela($, on, false, 'terminal') })
+test('loop-aparece-no-turno-abre: sem loop no início; o plano aparece e o turno abre a Pane e recria o relógio', async ($, on) => {
+  const m = comPainel($, on, { modo: 'sem_loop' })
+  await arrancar(m)
+  expect(m.est.opens).toHaveLength(0)
+  m.est.painel.modo = 'ok'
+  await m.turno()
+  await drena(m)
+  expect(m.est.opens).toHaveLength(1)
+  const antes = m.est.painelStdins.length
+  await m.clock.advance(PERIODO)
+  await drena(m)
+  expect(m.est.painelStdins.length).toBe(antes + 1)
+})
+test('fechada-pelo-dono-nao-reabre: a Pane que sumiu de `$.ui.panes()` depois de aberta nunca é reaberta por refresh; o relógio segue', async ($, on) => {
+  const m = comPainel($, on)
+  await arrancar(m)
+  expect(m.est.opens).toHaveLength(1)
+  m.est.panes = [] // o dono fechou (o motor não deixa o teste levantar `ui.close` de pessoa: este é o sinal que o kit alcança)
+  await m.turno()
+  await m.clock.advance(PERIODO * 2)
+  await drena(m)
+  expect(m.est.opens).toHaveLength(1)
+  expect(m.est.painelStdins.length).toBeGreaterThan(2)
+})
+test('pane-ja-listada-nao-reabre: Pane de pé em `$.ui.panes()` (módulo recarregado) ⇒ nenhum ui.open', async ($, on) => {
+  const m = comPainel($, on, {}, { panes: [{ id: ID_PAINEL, isPlaced: true, isShown: true }] })
+  await arrancar(m)
+  expect(m.est.opens).toHaveLength(0)
+})
+
+// ---- a Pane desenhada ----
+test('pane-desenha-o-renderPainel: o líder e o PAROU aparecem em Text aninhado com color (S-E4 iii); largura = bodyColumns', async ($, on) => {
+  const m = comPainel($, on, { estado: pararP() })
+  await arrancar(m)
+  const ui = await montarPane($, 80)
+  const arvore = JSON.stringify(await ui.drawn())
+  expect(arvore).toContain('GANDALF')
+  expect(arvore).toContain('PAROU')
+  expect(arvore).toContain('"color":"error"')
+  await ui.unmount()
+})
+test('pane-sem-loop: `sem loop nesta branch` em inactive', async ($, on) => {
+  const m = comPainel($, on, { modo: 'sem_loop' })
+  await arrancar(m)
+  const ui = await montarPane($, 80)
+  expect((await todosTextos(ui)).join('|')).toContain('sem loop nesta branch')
+  expect(JSON.stringify(await ui.drawn())).toContain('"color":"inactive"')
+  await ui.unmount()
+})
+test('sem-esc-no-text: ESC no título e no motivo nunca chega a um filho de Text, na Pane nem na faixa', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: pararP('parar:s1:7', 'x\x1b[2Jy') })
+  await arrancar(m)
+  const pane = await montarPane($, 80)
+  expect(JSON.stringify(await pane.drawn())).not.toContain('\\u001b')
+  const faixa = await montarFaixa($)
+  expect(JSON.stringify(await faixa.drawn())).not.toContain('\\u001b')
+  expect(JSON.stringify(await faixa.drawn())).toContain('PAROU')
+  await pane.unmount(); await faixa.unmount()
+})
+test('pane-avisos-uma-linha-warning: avisos do CLI viram 1 linha warning no alto (+N)', async ($, on) => {
+  const m = comPainel($, on, { avisos: ['spec: ausente', 'fuso inválido'] })
+  await arrancar(m)
+  const ui = await montarPane($, 80)
+  const textos = await todosTextos(ui)
+  expect(textos.some((t) => t.includes('painel: aviso: spec: ausente (+1)'))).toBe(true)
+  await ui.unmount()
+})
+
+test('pane-redesenha-ao-atualizar: o refresh invalida o desenho; a Pane montada mostra o estado novo', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoPainel({ id: 'VELHO-1' }) })
+  await arrancar(m)
+  const ui = await montarPane($, 80)
+  expect(JSON.stringify(await ui.drawn())).toContain('VELHO-1')
+  m.est.painel.estado = estadoPainel({ id: 'NOVO-1' })
+  await m.turno(); await drena(m)
+  const depois = JSON.stringify(await ui.drawn())
+  expect(depois).toContain('NOVO-1')
+  expect(depois).not.toContain('VELHO-1')
+  await ui.unmount()
+})
+test('loop-some-pane-mostra-sem-loop: depois de um estado, a resposta "sem loop" troca a Pane e tira a faixa', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: pararP() }, { panes: [] })
+  await arrancar(m)
+  m.est.painel.modo = 'sem_loop'
+  await m.turno(); await drena(m)
+  const rodadas = m.est.painelStdins.length
+  await m.clock.advance(PERIODO * 3); await drena(m)
+  expect(m.est.painelStdins.length, 'o relógio que existia foi cancelado').toBe(rodadas)
+  const ui = await montarPane($, 80)
+  const t = (await todosTextos(ui)).join('|')
+  expect(t).toContain('sem loop nesta branch')
+  expect(t).not.toContain('GANDALF')
+  await ui.unmount()
+  const faixa = await montarFaixa($)
+  expect(await todosTextos(faixa)).toEqual(['motor'])
+  await faixa.unmount()
+})
+
+// ---- falhas da ponte ----
+test('ponte-falha-x-json-torto: timeout × não iniciou × saída não JSON ⇒ linhas distintas; números anteriores em inactive; PAROU segue error', async ($, on) => {
+  const m = comPainel($, on, { estado: pararP() })
+  await arrancar(m)
+  const rodar = async (modo: PainelOpc['modo']) => { m.est.painel.modo = modo; await m.turno(); await drena(m); if (modo === 'timeout') { await m.clock.advance(5000); await drena(m) }; const ui = await montarPane($, 80); const t = (await todosTextos(ui)).join('|'); const arv = JSON.stringify(await ui.drawn()); await ui.unmount(); return { t, arv } }
+  const timeout = await rodar('timeout')
+  expect(timeout.t).toContain('painel: leitura passou de 5 s')
+  const naoIniciou = await rodar('rejeita')
+  expect(naoIniciou.t).toContain('painel: node não iniciou')
+  expect(naoIniciou.t).not.toContain('passou de 5 s')
+  const torto = await rodar('torto')
+  expect(torto.t).toContain('painel: resposta ilegível')
+  expect(torto.t).toContain('GANDALF')
+  expect(torto.arv).toContain('"color":"inactive"')
+  expect(torto.arv).toContain('"color":"error"')
+  const bom = await rodar('ok')
+  expect(bom.t).not.toContain('painel: ')
+})
+test('linha-de-erro-warning + falha-mantem-parou-em-error: a linha de erro nunca é `error`; o PAROU anterior mantém a cor', async ($, on) => {
+  const m = comPainel($, on, { estado: pararP() })
+  await arrancar(m)
+  m.est.painel.modo = 'erro'
+  await m.turno(); await drena(m)
+  const ui = await montarPane($, 80)
+  const nos = await ui.findAll({ type: 'Text', text: /painel: diario_em_escrita: o diário mudou/ })
+  expect(nos.length).toBeGreaterThan(0)
+  const arv = JSON.stringify(await ui.drawn())
+  const linha = arv.slice(Math.max(0, arv.indexOf('painel: diario_em_escrita') - 80), arv.indexOf('painel: diario_em_escrita'))
+  expect(linha).toContain('"color":"warning"')
+  expect(linha).not.toContain('"color":"error"')
+  expect(arv).toContain('PAROU')
+  await ui.unmount()
+})
+test('stdout-truncado-ilegivel: JSON válido truncado ⇒ `resposta ilegível`, nunca estado', async ($, on) => {
+  const m = comPainel($, on, { modo: 'trunca', estado: estadoPainel({ id: 'NOVO-1' }) })
+  await arrancar(m)
+  const ui = await montarPane($, 80)
+  const t = (await todosTextos(ui)).join('|')
+  expect(t).toContain('painel: resposta ilegível')
+  expect(t).not.toContain('NOVO-1')
+  await ui.unmount()
+})
+test('falha-nunca-vira-toast: falha da ponte não faz toast, status nem log', async ($, on) => {
+  const m = comPainel($, on, { modo: 'rejeita' })
+  await arrancar(m)
+  await m.turno(); await drena(m)
+  expect(m.toasts).toEqual([])
+  expect(m.est.notifies).toEqual([])
+})
+
+// ---- uma ponte por vez, o turno não espera ----
+test('turno-nao-espera-a-ponte: o hook de turn.complete resolve com a ponte pendente', async ($, on) => {
+  const m = comPainel($, on, { modo: 'pendente' })
+  await m.inicio()
+  await m.turno()
+  await drena(m)
+  expect(m.est.painelFlight).toBe(1)
+  m.est.painelLibera.splice(0).forEach((r) => r())
+  await drena(m)
+})
+test('uma-ponte-por-vez + coalesce-um-pendente: 3 turnos e 30 s com a ponte pendente ⇒ 1 em voo; ao liberar, mais 1; total 2', async ($, on) => {
+  const m = comPainel($, on, { modo: 'pendente' })
+  await m.inicio()
+  await drena(m)
+  expect(m.est.painelFlight).toBe(1)
+  await m.turno(); await m.turno(); await m.turno()
+  await m.clock.advance(PERIODO)
+  await drena(m)
+  expect(m.est.painelFlight).toBe(1)
+  expect(m.est.painelStdins).toHaveLength(1)
+  m.est.painel.modo = 'ok'
+  m.est.painelLibera.splice(0).forEach((r) => r())
+  await drena(m)
+  expect(m.est.painelStdins).toHaveLength(2)
+  expect(m.est.painelFlight).toBe(0)
+})
+test('relogio-unico-em-dois-starts: 2 session.start ⇒ um relógio só (advance 30 s ⇒ 1 execução)', async ($, on) => {
+  const m = comPainel($, on)
+  await m.inicio()
+  await drena(m)
+  await m.inicio()
+  await drena(m)
+  const antes = m.est.painelStdins.length
+  await m.clock.advance(PERIODO)
+  await drena(m)
+  expect(m.est.painelStdins.length - antes).toBe(1)
+})
+test('refresh-30s-depois-de-parar: o relógio segue depois do PAROU (B6)', async ($, on) => {
+  const m = comPainel($, on, { estado: pararP() })
+  await arrancar(m)
+  const n0 = m.est.painelStdins.length
+  await m.clock.advance(PERIODO); await drena(m)
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(m.est.painelStdins.length - n0).toBe(2)
+})
+
+// ---- Pane visível × faixa ----
+test('isplaced-false-so-faixa: open ⇒ não posta ⇒ faixa `<id> N/M · ETA` em inactive (sobre o motor)', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, {}, { openResult: { isPlaced: false, reason: 'estreito' }, panes: [{ id: ID_PAINEL, isPlaced: false, isShown: false }] })
+  await arrancar(m)
+  const ui = await montarFaixa($)
+  const t = await todosTextos(ui)
+  expect(t.some((x) => x.includes('GM-12 1/2 · ETA 17:42'))).toBe(true)
+  expect(JSON.stringify(await ui.drawn())).toContain('"color":"inactive"')
+  await ui.unmount()
+})
+test('pane-visivel-por-panes: a faixa lê `$.ui.panes()`, nunca o retorno de open', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, {}, { openResult: { isPlaced: false, reason: 'estreito' }, panes: [{ id: ID_PAINEL, isPlaced: false, isShown: false }] })
+  await arrancar(m)
+  let ui = await montarFaixa($)
+  expect((await todosTextos(ui)).join('|')).toContain('GM-12 1/2')
+  await ui.unmount()
+  m.est.panes = [{ id: ID_PAINEL, isPlaced: true, isShown: true }] // o dono alargou o terminal; o open (já respondido) continua dizendo false
+  await m.turno(); await drena(m)
+  ui = await montarFaixa($)
+  const t = (await todosTextos(ui)).join('|')
+  expect(t).not.toContain('GM-12 1/2')
+  expect(t).toContain('motor')
+  await ui.unmount()
+})
+const paneInvisivel = async ($: any, on: any, par: { isPlaced: boolean; isShown: boolean }) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, {}, { panes: [{ id: ID_PAINEL, ...par }] })
+  await arrancar(m)
+  const ui = await montarFaixa($)
+  expect((await todosTextos(ui)).join('|')).toContain('GM-12 1/2')
+  await ui.unmount()
+}
+test('pane-visivel-exige-posta: isShown sem isPlaced é Pane invisível', async ($, on) => { await paneInvisivel($, on, { isPlaced: false, isShown: true }) })
+test('pane-visivel-exige-mostrada: isPlaced sem isShown (aba atrás de outra) é Pane invisível', async ($, on) => { await paneInvisivel($, on, { isPlaced: true, isShown: false }) })
+test('faixa-some-com-pane-e-nada: Pane posta e nada pendente ⇒ a faixa cede ao motor', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, {}, { panes: [{ id: ID_PAINEL, isPlaced: true, isShown: true }] })
+  await arrancar(m)
+  const ui = await montarFaixa($)
+  expect(await todosTextos(ui)).toEqual(['motor'])
+  await ui.unmount()
+})
+test('faixa-inactive-pane-fechada: Pane fechada ⇒ `<id> N/M · ETA hh:mm`; sem ETA ⇒ `<id> N/M`', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoPainel({ plano: { ...estadoPainel().plano, eta: null } }) }, { panes: [] })
+  await arrancar(m)
+  const ui = await montarFaixa($)
+  const t = (await todosTextos(ui)).join('|')
+  expect(t).toContain('GM-12 1/2')
+  expect(t).not.toContain('ETA')
+  await ui.unmount()
+})
+test('has-survey-cede: com survey a faixa passa, mesmo com PAROU', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: pararP() })
+  await arrancar(m)
+  const ui = await montarFaixa($, { hasSurvey: true })
+  expect(await todosTextos(ui)).toEqual(['motor'])
+  expect(await ui.find({ type: 'Button' })).toBeUndefined()
+  await ui.unmount()
+})
+test('faixa-parou: ■ PAROU com hora e motivo, botão com o rótulo da ação', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: pararP() })
+  await arrancar(m)
+  const ui = await montarFaixa($)
+  expect((await todosTextos(ui)).join('|')).toContain('■ PAROU 14:05 teto de rodadas de review em T2')
+  expect(JSON.stringify(await ui.drawn())).toContain('"color":"error"')
+  expect(JSON.stringify(await ui.drawn())).toContain('aprovar')
+  await ui.unmount()
+})
+test('faixa-depende: `depende de você: <motivo> (+N)` em warning', async ($, on) => {
+  sobreOMotor(on)
+  const dep = estadoPainel({ depende: [{ nivel: 'dono', motivo: 'emenda #7 em REQ-PNL-4', acoes: [acaoP('aprovar', '/gabarito-mestre:emenda aprovar 7')] }, { nivel: 'dono', motivo: 'loop pausado', acoes: [] }] })
+  const m = comPainel($, on, { estado: dep })
+  await arrancar(m)
+  const ui = await montarFaixa($)
+  expect((await todosTextos(ui)).join('|')).toContain('depende de você: emenda #7 em REQ-PNL-4 (+1)')
+  expect(JSON.stringify(await ui.drawn())).toContain('"color":"warning"')
+  await ui.unmount()
+})
+
+// ---- botão ----
+test('botao-fill-nunca-submit: o botão põe o comando no prompt (replace) e nunca envia', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: pararP() })
+  await arrancar(m)
+  const ui = await montarFaixa($)
+  await ui.press({ key: 'painel-acao' })
+  expect(m.est.fills).toHaveLength(1)
+  expect(m.est.fills[0].text).toBe('/gabarito-mestre:liberar T2')
+  expect(m.est.fills[0].mode).toBe('replace')
+  expect(m.est.submits).toEqual([])
+  expect(m.est.statuses.filter((s) => s !== undefined)).toEqual([])
+  await ui.unmount()
+})
+test('botao-comando-node-com-raiz: `node <plugin>/…` vira `! node "<raiz>/…"`', async ($, on) => {
+  sobreOMotor(on)
+  const dev = estadoPainel({ depende: [{ nivel: 'dono', motivo: 'deploy devolvido ao dono: x', acoes: [acaoP('executar', 'node <plugin>/gates/scripts/entrega.mjs executar --entrega GM-12')] }] })
+  const m = comPainel($, on, { estado: dev })
+  await arrancar(m)
+  const ui = await montarFaixa($)
+  await ui.press({ key: 'painel-acao' })
+  expect(m.est.fills[0].text.startsWith('! node "')).toBe(true)
+  expect(m.est.fills[0].text.endsWith('/gates/scripts/entrega.mjs" executar --entrega GM-12')).toBe(true)
+  expect(m.est.submits).toEqual([])
+  await ui.unmount()
+})
+test('fill-isfilled-false-status: prompt.fill recusado (diálogo) ⇒ status, sem toast e sem envio', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: pararP() }, { fillIsFilled: false })
+  await arrancar(m)
+  const toastsAntes = m.toasts.length
+  const ui = await montarFaixa($)
+  await ui.press({ key: 'painel-acao' })
+  expect(m.est.statuses).toContain('gabarito: não consegui pôr o comando no prompt')
+  expect(m.toasts.length).toBe(toastsAntes)
+  expect(m.est.submits).toEqual([])
+  await ui.unmount()
+})
+
+// ---- aviso do PAROU ----
+const toastsParou = (m: ReturnType<typeof mundo>) => m.toasts.filter((t) => t.startsWith(PAROU_PREFIXO))
+test('toast-notify-1x-em-3-refresh: o mesmo PAROU em 3 refresh ⇒ 1 toast e 1 notify, com o texto da tabela', async ($, on) => {
+  const m = comPainel($, on, { estado: pararP() })
+  await arrancar(m)
+  for (let i = 0; i < 3; i++) { await m.clock.advance(PERIODO); await drena(m) }
+  expect(toastsParou(m)).toEqual([TOAST_PAROU])
+  expect(m.est.notifies).toEqual([TOAST_PAROU])
+})
+test('notify-isSent-false-sem-repetir: sem canal ⇒ 1 notify e 1 toast; o stdin seguinte leva `notificacao: {motivo}`', async ($, on) => {
+  const m = comPainel($, on, { estado: pararP() }, { notify: 'nao-enviou' })
+  await arrancar(m)
+  for (let i = 0; i < 3; i++) { await m.clock.advance(PERIODO); await drena(m) }
+  expect(m.est.notifies).toHaveLength(1)
+  expect(toastsParou(m)).toHaveLength(1)
+  expect(m.est.painelStdins.at(-1).sessao.notificacao).toEqual({ motivo: 'no-channel' })
+})
+test('notify-rejeita: rejeição ⇒ {motivo:"falhou"}, 1 só vez', async ($, on) => {
+  const m = comPainel($, on, { estado: pararP() }, { notify: 'rejeita' })
+  await arrancar(m)
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(m.est.notifies).toHaveLength(1)
+  expect(m.est.painelStdins.at(-1).sessao.notificacao).toEqual({ motivo: 'falhou' })
+})
+test('notificacao-vai-no-stdin: notify enviado ⇒ o refresh imediato leva `{ts}` ISO do relógio; antes dele, null', async ($, on) => {
+  const m = comPainel($, on, { estado: pararP() })
+  await arrancar(m)
+  expect(m.est.painelStdins[0].sessao.notificacao).toBeNull()
+  const ultimo = m.est.painelStdins.at(-1).sessao.notificacao
+  expect(m.est.painelStdins.length).toBeGreaterThan(1)
+  expect(typeof ultimo?.ts).toBe('string')
+  expect(new Date(ultimo.ts).toISOString()).toBe(ultimo.ts)
+  expect(m.store.get('painel:notificado')).toEqual({ chave: 'GM-12|parar:s1:7', resultado: { ts: ultimo.ts } })
+})
+test('store-falha-notify-1x: store.set negado + 3 refresh ⇒ 1 toast e 1 notify (a memória segura)', async ($, on) => {
+  const m = comPainel($, on, { estado: pararP() }, { storeSetFalha: true })
+  await arrancar(m)
+  for (let i = 0; i < 3; i++) { await m.clock.advance(PERIODO); await drena(m) }
+  expect(toastsParou(m)).toHaveLength(1)
+  expect(m.est.notifies).toHaveLength(1)
+})
+test('store-antes-do-notify: `store.set` do painel precede o notify', async ($, on) => {
+  const m = comPainel($, on, { estado: pararP() })
+  await arrancar(m)
+  const ordem = m.est.ordem.filter((x) => x.startsWith('store.set:painel:notificado') || x === 'notify' || x === 'toast')
+  expect(ordem.indexOf('store.set:painel:notificado')).toBeGreaterThanOrEqual(0)
+  expect(ordem.indexOf('store.set:painel:notificado')).toBeLessThan(ordem.indexOf('notify'))
+})
+test('chave-com-id-da-entrega: o store tem a mesma chave do núcleo de OUTRA entrega ⇒ esta notifica; gravado `<id>|<chave>`', async ($, on) => {
+  const m = comPainel($, on, { estado: pararP('computado:diario_invalido') }, { storeInicial: { 'painel:notificado': { chave: 'GM-99|computado:diario_invalido', resultado: null } } })
+  await arrancar(m)
+  expect(m.est.notifies).toHaveLength(1)
+  expect((m.store.get('painel:notificado') as any).chave).toBe('GM-12|computado:diario_invalido')
+})
+test('mesma-chave-no-store: outra janela já avisou ⇒ nada (1 janela, 1 aviso por chave)', async ($, on) => {
+  const m = comPainel($, on, { estado: pararP() }, { storeInicial: { 'painel:notificado': { chave: 'GM-12|parar:s1:7', resultado: { ts: '2026-11-09T17:00:00.000Z' } } } })
+  await arrancar(m)
+  expect(m.est.notifies).toHaveLength(0)
+  expect(toastsParou(m)).toHaveLength(0)
+  expect(m.est.painelStdins.at(-1).sessao.notificacao).toEqual({ ts: '2026-11-09T17:00:00.000Z' })
+})
+test('parar-volta-com-outra-chave: liberado apaga a marca; novo PAROU com outra chave avisa de novo', async ($, on) => {
+  const m = comPainel($, on, { estado: pararP('parar:s1:7') })
+  await arrancar(m)
+  expect(m.est.notifies).toHaveLength(1)
+  m.est.painel.estado = estadoPainel()
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(m.store.has('painel:notificado')).toBe(false)
+  m.est.painel.estado = pararP('parar:s1:9')
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(m.est.notifies).toHaveLength(2)
+  expect(toastsParou(m)).toHaveLength(2)
+  expect((m.store.get('painel:notificado') as any).chave).toBe('GM-12|parar:s1:9')
+})
+test('sem-parar-sem-aviso: sem PAROU ⇒ 0 toast, 0 notify, store limpo', async ($, on) => {
+  const m = comPainel($, on, {}, { storeInicial: { 'painel:notificado': { chave: 'GM-12|velha', resultado: null } } })
+  await arrancar(m)
+  expect(m.est.notifies).toHaveLength(0)
+  expect(m.store.has('painel:notificado')).toBe(false)
+})
+
+// ---- o stdin ----
+test('x-e-limites-no-stdin (P15): percent, window, tokens, h5, d7 e x chegam ao CLI; rateLimits sem five_hour ⇒ h5 null', async ($, on) => {
+  const m = comPainel($, on, {}, { x: '35', rateLimits: [{ kind: 'seven_day', percentUsed: 9 }], percent: 37 })
+  await arrancar(m)
+  const s = m.est.painelStdins[0].sessao
+  expect(s.percent).toBe(37)
+  expect(s.window).toBe(1_000_000)
+  expect(s.tokens).toBe(1)
+  expect(s.d7).toBe(9)
+  expect(s.h5).toBeNull()
+  expect(s.x).toBe(35)
+  expect(Object.keys(s).sort()).toEqual(['d7', 'h5', 'notificacao', 'pacote', 'percent', 'tokens', 'window', 'x'])
+  m.est.rateLimits = [{ kind: 'five_hour', percentUsed: 11 }, { kind: 'seven_day', percentUsed: 64 }]
+  await m.turno(); await drena(m)
+  expect(m.est.painelStdins.at(-1).sessao.h5).toBe(11)
+  expect(m.est.painelStdins.at(-1).sessao.d7).toBe(64)
+})
+test('x-padrao-50: sem GABARITO_POUSO_X o stdin leva 50', async ($, on) => {
+  const m = comPainel($, on)
+  await arrancar(m)
+  expect(m.est.painelStdins[0].sessao.x).toBe(50)
+})
+test('agent-list-falha-agentes-null: lista que falha ou não é lista ⇒ `agentes: null`; lista vazia ⇒ []; vivos com campos', async ($, on) => {
+  const falha = comPainel($, on, {}, { agentes: 'falha' })
+  await arrancar(falha)
+  expect(falha.est.painelStdins[0].agentes).toBeNull()
+})
+test('agent-list-lixo-agentes-null: valor que não é lista ⇒ null', async ($, on) => {
+  const m = comPainel($, on, {}, { agentes: 'lixo' })
+  await arrancar(m)
+  expect(m.est.painelStdins[0].agentes).toBeNull()
+})
+test('agent-list-vivos-no-stdin: cada agente com id, type, description, status e transcript null (T11 preenche)', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [{ id: 'a1', type: 'implementador', description: 'T2 implementador', status: 'running' }] })
+  await arrancar(m)
+  expect(m.est.painelStdins[0].agentes).toEqual([{ id: 'a1', type: 'implementador', description: 'T2 implementador', status: 'running', transcript: null }])
+})
+test('usage-falha-nao-derruba: usage lançando ⇒ percent/tokens/window null e a ponte roda', async ($, on) => {
+  const m = comPainel($, on, {}, { usageFalha: true })
+  await arrancar(m)
+  expect(m.est.painelStdins[0].sessao.percent).toBeNull()
+  expect(m.est.painelStdins[0].sessao.window).toBeNull()
 })

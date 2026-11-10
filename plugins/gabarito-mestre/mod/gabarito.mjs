@@ -18,6 +18,7 @@ import * as nucleo from '../gates/dist/loop.js'; // `nucleo.TIPOS_DE_PROGRESSO`:
 import {
   analisarFronteira, codigoPonte, dadosMedicao, ehRevisor, jaParou, lerX, marcaDeProgresso, negaDespacho, portaDoPouso, tasksDoNegado, tasksEmVoo, textoRetomada, tokensDe, vivosDe,
 } from '../gates/dist/pouso.js';
+import { iniciarPainel, registrarPainel, turnoDoPainel } from './painel.mjs'; // E4 T10: Pane, faixa, atualização e aviso do PAROU (nada do pouso depende dele)
 
 const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const USO = 'Uso: /gabarito pausar | /gabarito retomar';
@@ -509,8 +510,10 @@ function abrirTurno($, texto = PROMPT_RETOMADA) {
 }
 
 export const register = (on) => {
+  registrarPainel(on);
   on('session.start', async ($, e, next) => {
     interativo = e.isInteractive === true;
+    iniciarPainel($, e);
     try {
       await $.command.register({
         name: 'gabarito', description: 'Pausa ou retoma o loop do plano', argumentHint: 'pausar|retomar', immediate: true,
@@ -537,6 +540,7 @@ export const register = (on) => {
   });
 
   on('turn.complete', async ($, e, next) => {
+    await turnoDoPainel($); // agenda e volta: o turno nunca espera a ponte do painel
     const r = await next(e);
     try {
       if (e.agentId !== undefined) { terminados += 1; await medir($, e); }
