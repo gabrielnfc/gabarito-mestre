@@ -628,6 +628,31 @@ describe('T13 doctor — aprendizado sem destino, onboarding não detectado, sem
     assert.equal(out.alcancado, doctor.run(dir).alcancado);
   });
 
+  test('aprendizado-sem-destino-papel-removido-comando-do-aviso-fecha: o `--substitui` do texto do aviso, rodado pelo loop.mjs real, é aceito e o doctor fica calado', () => {
+    for (const semPrefixo of [false, true]) {
+      const dir = base();
+      planoDe(dir, 'GM-1', ['T1']);
+      grava(dir, 'GM-1', 'loop', 'loop.iniciar', {}, 0);
+      const loopReal = join(dirname(SCRIPT), 'loop.mjs');
+      const roda = (loopMjs, args) => spawnSync(process.execPath, [loopMjs, 'aprendizado', 'E', 'D', '--entrega', 'GM-1', '--regra', 'confira o build', '--eventos', 'loop:1', ...args], { cwd: dir, encoding: 'utf8', timeout: 30000 });
+      const grav = roda(loopReal, ['--entra-em', 'brief:correcao']);
+      assert.equal(grav.status, 0, grav.stdout + grav.stderr);
+      const copia = doctorSemPapel();
+      const antes = rodaCopia(copia, dir);
+      assert.equal(antes.resultados.find((r) => r.id === 'aprendizado-sem-destino').found, false);
+      const aviso = antes.avisos.find((a) => a.startsWith('aprendizado-sem-destino: '));
+      const ref = /--substitui (\S+)/.exec(aviso)?.[1];
+      assert.equal(ref, 'GM-1/loop:2', aviso);
+      const fecha = roda(join(dirname(copia), 'loop.mjs'), ['--entra-em', 'brief:revisor', '--substitui', semPrefixo ? ref.replace(/^GM-1\//, '') : ref]);
+      assert.equal(fecha.status, 0, `o comando do aviso foi recusado: ${fecha.stdout}${fecha.stderr}`);
+      const depois = rodaCopia(copia, dir);
+      const c = depois.resultados.find((r) => r.id === 'aprendizado-sem-destino');
+      assert.equal(c.found, true, `${c.evidence}`);
+      assert.match(c.evidence, /nada sem destino/);
+      assert.deepEqual(depois.avisos.filter((a) => a.startsWith('aprendizado-sem-destino: ')), []);
+    }
+  });
+
   test('aprendizado-sem-destino-fifo-nao-trava-loop-nem-cartao: FIFO em outra entrega não pendura loop.mjs aprendizados nem o hook do cartão', () => {
     const aqui = join(dirname(SCRIPT));
     const dir = repoComGit({ 'AGENTS.md': agents(1), 'harness.config.json': JSON.stringify({ fluxo: { resolvidoEm: '2026-11-10' } }) });

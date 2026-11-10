@@ -46,7 +46,8 @@ function aprendizadoValidoModuloPapel(e: unknown): e is Evento {
 /**
  * Motivo de recusa ou `null`. Erros: `gatilho_inexistente`, `evento_inexistente` (cada `evidencia.eventos[]` e `fonte`
  * `evento:<sessao>:<seq>`, na entrega corrente), `substitui_inexistente` (procura em `substitui.entrega ?? entrega`; o alvo
- * tem de ser um `aprendizado` de forma válida). Forma inválida de `dados` também recusa (ausente ≠ corrompido vem de `formaInvalida`).
+ * tem de ser um `aprendizado` de forma válida MÓDULO PAPEL: o D gravado quando o papel existia continua substituível, é o comando
+ * que o aviso de papel removido manda rodar; a forma do substituto segue estrita). Forma inválida de `dados` também recusa (ausente ≠ corrompido vem de `formaInvalida`).
  */
 export function validarAprendizado(eventosDaEntrega: Evento[], dados: DadosAprendizado, entrega: string, porEntrega: Map<string, Evento[]>): string | null {
   try {
@@ -70,7 +71,7 @@ export function validarAprendizado(eventosDaEntrega: Evento[], dados: DadosApren
       const alvoEntrega = s.entrega ?? entrega;
       const daEntrega = s.entrega === undefined || s.entrega === entrega ? eventosDaEntrega : (porEntrega.get(alvoEntrega) ?? []);
       const alvo = Array.isArray(daEntrega) ? daEntrega.find((e) => ehObjeto(e) && e.sessao === s.sessao && e.seq === s.seq) : undefined;
-      if (alvo === undefined || !aprendizadoValido(alvo)) {
+      if (alvo === undefined || !aprendizadoValidoModuloPapel(alvo)) {
         return `substitui_inexistente: aprendizado ${alvoEntrega}:${s.sessao}:${s.seq} não existe`;
       }
     }

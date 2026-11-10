@@ -89,6 +89,19 @@ describe('validarAprendizado', () => {
     const torto = [loop1, ev('loop', 2, 'aprendizado', { tipo: 'X' })];
     assert.match(validarAprendizado(torto, dado({ substitui: { sessao: 'loop', seq: 2 } }), 'GM-1', mapa({})) ?? '', /^substitui_inexistente/);
   });
+  test('validar-substitui-alvo-com-papel-removido: o alvo tolera SÓ o papel (D gravado quando o papel existia); o substituto segue estrito', () => {
+    assert.equal(PAPEIS_REAIS.includes('arquitetura' as never), false);
+    const subs = (alvo: Evento, extra: Partial<DadosAprendizado> = {}): string | null =>
+      validarAprendizado([loop1, alvo], dado({ substitui: { sessao: 'loop', seq: 2 }, ...extra }), 'GM-1', mapa({}));
+    assert.equal(subs(apr('loop', 2, { entra_em: ['brief:arquitetura'] })), null);
+    assert.equal(subs(apr('loop', 2, { entra_em: ['instantaneo', 'brief:arquitetura'] })), null);
+    // alvo inválido por OUTRO motivo continua inexistente
+    for (const extra of [{ regra: '' }, { entra_em: ['brief:arquitetura', 'brief:arquitetura'] }, { entra_em: ['brief:'] }, { entra_em: [] }]) {
+      assert.match(subs(apr('loop', 2, extra as Partial<DadosAprendizado>)) ?? '', /^substitui_inexistente/, JSON.stringify(extra));
+    }
+    // o substituto com papel desconhecido segue recusado (gravação estrita), mesmo com alvo tolerado
+    assert.match(subs(apr('loop', 2, { entra_em: ['brief:arquitetura'] }), { entra_em: ['brief:arquitetura'] }) ?? '', /entra_em/);
+  });
   test('substitui-entre-entregas', () => {
     const outra = [loop1, apr('loop', 2)];
     const subs = { sessao: 'loop', seq: 2, entrega: 'GM-2' };
@@ -460,9 +473,11 @@ describe('avisosAprendizado', () => {
       assert.deepEqual(avisosAprendizado(porEntrega, semPlanos, PAPEIS_REAIS), [], JSON.stringify(extra));
     }
   });
-  test('papel-removido-substituido-nao-avisa: o D que o substitui fecha o aviso', () => {
+  test('papel-removido-substituido-nao-avisa: o D que o substitui (validado pela gravação) fecha o aviso', () => {
     const velho = apr('loop', 2, { entra_em: ['brief:arquitetura'] }, t(1));
-    const novo = apr('loop', 3, { entra_em: ['brief:revisor'], substitui: { sessao: 'loop', seq: 2 } }, t(2));
+    const dadosNovo = dado({ entra_em: ['brief:revisor'], substitui: { sessao: 'loop', seq: 2 } });
+    assert.equal(validarAprendizado([marco('loop', 1, 0), velho], dadosNovo, 'GM-1', mapa({ 'GM-1': [marco('loop', 1, 0), velho] })), null);
+    const novo = ev('loop', 3, 'aprendizado', dadosNovo, t(2));
     assert.equal(avisosAprendizado(mapa({ 'GM-1': [marco('loop', 1, 0), velho] }), semPlanos, PAPEIS_REAIS).length, 1);
     assert.deepEqual(avisosAprendizado(mapa({ 'GM-1': [marco('loop', 1, 0), velho, novo] }), semPlanos, PAPEIS_REAIS), []);
   });
