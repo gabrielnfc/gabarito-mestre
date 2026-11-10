@@ -281,7 +281,8 @@ export function lerEstrito(dir: string): LeituraEstrita {
 /**
  * Árvore de aprendizados (GM-13 T2): `<dirEntregas>/<entrega>/events.*.jsonl` por `lerEstrito`. Entrega ilegível fica fora e
  * gera o aviso `aprendizados: <entrega> ilegível (<motivo>)`; pasta ausente ⇒ mapa vazio sem aviso (ausente ≠ corrompido);
- * pasta que existe mas não lista ⇒ aviso. Nunca lança.
+ * pasta que existe mas não lista ⇒ aviso. Só lê arquivo REGULAR (lstat): FIFO ou symlink no lugar de um `events.*.jsonl` vira
+ * aviso e a entrega fica fora, nunca trava o leitor nem segue link (fonte única: doctor, loop e cartão chamam esta). Nunca lança.
  */
 export function lerAprendizados(dirEntregas: string): { porEntrega: Map<string, Evento[]>; avisos: string[] } {
   const porEntrega = new Map<string, Evento[]>();
@@ -293,9 +294,14 @@ export function lerAprendizados(dirEntregas: string): { porEntrega: Map<string, 
     if ((e as NodeJS.ErrnoException | null)?.code !== 'ENOENT') avisos.push(`aprendizados: ${dirEntregas} ilegível (pasta das entregas não lista)`);
     return { porEntrega, avisos };
   }
+  const regular = (c: string): boolean => { try { return lstatSync(c).isFile(); } catch { return false; } };
   for (const nome of nomes) {
     try {
-      const r = lerEstrito(join(dirEntregas, nome));
+      const pasta = join(dirEntregas, nome);
+      let naoRegular: string[] = [];
+      try { naoRegular = readdirSync(pasta).filter((n) => /^events\..+\.jsonl$/.test(n) && !regular(join(pasta, n))); } catch { /* pasta ilegível: `lerEstrito` abaixo dá o motivo */ }
+      if (naoRegular.length > 0) { avisos.push(`aprendizados: ${nome} ilegível (${naoRegular[0]} não é arquivo regular — diário não lido)`); continue; }
+      const r = lerEstrito(pasta);
       if (r.ok) porEntrega.set(nome, r.eventos);
       else avisos.push(`aprendizados: ${nome} ilegível (${r.motivo})`);
     } catch (e) {

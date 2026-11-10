@@ -6,12 +6,15 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, symlinkSync } from 'node:fs';
+import { spawnSync, execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { aprendizadosVigentes, avisosAprendizado, paraDestino, validarAprendizado } from '../src/aprendizado.ts';
 import type { AprendizadoVigente } from '../src/aprendizado.ts';
 import { append, lerAprendizados } from '../src/diario.ts';
+import { PAPEIS as PAPEIS_REAIS } from '../src/formas.ts';
 import type { DadosAprendizado, Evento, Plano } from '../src/tipos.ts';
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), 'gm-aprend-'));
@@ -29,6 +32,13 @@ describe('validarAprendizado', () => {
   const eventos = [loop1, ev('loop', 2, 'review.resultado', {}), apr('loop', 3)];
   test('validar-ok-devolve-null', () => {
     assert.equal(validarAprendizado(eventos, dado({ gatilho: { sessao: 'loop', seq: 2 } }), 'GM-1', mapa({ 'GM-1': eventos })), null);
+  });
+  test('validar-grava-estrito-papel-desconhecido-recusado: a gravação não herda a tolerância do doctor', () => {
+    for (const entra of [['brief:arquitetura'], ['instantaneo', 'brief:arquitetura']]) {
+      const r = validarAprendizado(eventos, dado({ entra_em: entra }), 'GM-1', mapa({}));
+      assert.match(r ?? '', /entra_em/, entra.join(','));
+    }
+    assert.equal(validarAprendizado(eventos, dado({ entra_em: ['brief:revisor'] }), 'GM-1', mapa({})), null);
   });
   test('validar-gatilho-inexistente', () => {
     const r = validarAprendizado(eventos, dado({ gatilho: { sessao: 'loop', seq: 99 } }), 'GM-1', mapa({}));
@@ -296,6 +306,31 @@ describe('lerAprendizados (árvore real)', () => {
     assert.deepEqual(paraDestino(vig, 'instantaneo').map((x) => x.seq), [3]);
     assert.deepEqual(paraDestino(vig, 'brief:revisor'), []);
   });
+  test('ler-aprendizados-symlink-no-diario-avisa-e-nao-segue', () => {
+    // R1: o diário que é symlink (mesmo para arquivo regular válido) não é lido; a entrega fica fora e vira aviso
+    const raiz = tmp();
+    grava(raiz, 'GM-1', 'loop', 'loop.iniciar', {});
+    const real = join(raiz, 'GM-1', 'events.loop.jsonl');
+    const fora = join(raiz, 'fora.jsonl');
+    writeFileSync(fora, readFileSync(real, 'utf8'));
+    mkdirSync(join(raiz, 'GM-2'));
+    symlinkSync(fora, join(raiz, 'GM-2', 'events.link.jsonl'));
+    const { porEntrega, avisos } = lerAprendizados(raiz);
+    assert.deepEqual([...porEntrega.keys()], ['GM-1']);
+    assert.deepEqual(avisos, ['aprendizados: GM-2 ilegível (events.link.jsonl não é arquivo regular — diário não lido)']);
+  });
+  test('ler-aprendizados-fifo-nao-trava-e-avisa', () => {
+    // o filho trava (e o timeout o mata) se a leitura abrir a FIFO; processo separado para o teste nunca pendurar
+    const raiz = tmp();
+    grava(raiz, 'GM-1', 'loop', 'loop.iniciar', {});
+    mkdirSync(join(raiz, 'GM-2'));
+    execFileSync('mkfifo', [join(raiz, 'GM-2', 'events.s1.jsonl')]);
+    const diarioTs = fileURLToPath(new URL('../src/diario.ts', import.meta.url));
+    const r = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', '--input-type=module', '-e',
+      `import { lerAprendizados } from ${JSON.stringify(diarioTs)}; const r = lerAprendizados(${JSON.stringify(raiz)}); console.log(JSON.stringify({ k: [...r.porEntrega.keys()], a: r.avisos }));`], { encoding: 'utf8', timeout: 4000 });
+    assert.equal(r.error, undefined, `travou na FIFO: ${r.error?.message}`);
+    assert.deepEqual(JSON.parse(r.stdout), { k: ['GM-1'], a: ['aprendizados: GM-2 ilegível (events.s1.jsonl não é arquivo regular — diário não lido)'] });
+  });
   test('ler-aprendizados-sem-permissao-avisa-nao-lanca', { skip: process.getuid?.() === 0 }, () => {
     const raiz = tmp();
     grava(raiz, 'GM-1', 'loop', 'loop.iniciar', {});
@@ -390,20 +425,53 @@ describe('avisosAprendizado', () => {
     assert.deepEqual(avisosAprendizado(mapa({ 'GM-9': eventos }), new Map([['GM-9', plano('T1', 'T2')]]), PAPEIS), []);
   });
   test('papel-removido-avisa', () => {
-    const d = apr('loop', 2, { entra_em: ['instantaneo', 'brief:revisor'] }, t(1));
+    // `arquitetura` não está em PAPEIS: a forma estrita recusa o evento, mas o aviso o enxerga (o mesmo PAPEIS da validação)
+    assert.equal(PAPEIS_REAIS.includes('arquitetura' as never), false);
+    const d = apr('loop', 2, { entra_em: ['instantaneo', 'brief:arquitetura'] }, t(1));
     const porEntrega = mapa({ 'GM-1': [marco('loop', 1, 0), d] });
-    const r = avisosAprendizado(porEntrega, semPlanos, ['implementador', 'correcao']);
+    assert.deepEqual(aprendizadosVigentes(porEntrega), [], 'a vigência estrita segue recusando a forma (brief e gravação não mudam)');
+    const r = avisosAprendizado(porEntrega, semPlanos, PAPEIS_REAIS);
     assert.equal(r.length, 1);
     assert.match(r[0], /GM-1\/loop:2/);
-    assert.match(r[0], /brief:revisor/);
+    assert.match(r[0], /brief:arquitetura/);
+    assert.match(r[0], /papéis: implementador, revisor, correcao/);
     assert.match(r[0], /loop\.mjs aprendizado E D .*--substitui GM-1\/loop:2/);
-    assert.deepEqual(avisosAprendizado(porEntrega, semPlanos, PAPEIS), []); // papel válido ⇒ nada
-    // M nunca entra em brief: um M com `brief:revisor` fora dos papéis não gera este aviso
-    const m = mapa({ 'GM-1': [marco('loop', 1, 0), M('loop', 2, 1, { entra_em: ['brief:revisor'] })] });
-    assert.deepEqual(avisosAprendizado(m, semPlanos, ['implementador']), []);
-    // `brief:implementador` com `implementador` fora da lista também avisa (comparação exata, não por prefixo)
-    const outro = mapa({ 'GM-1': [marco('loop', 1, 0), apr('loop', 2, { entra_em: ['brief:implementador'] }, t(1))] });
-    assert.equal(avisosAprendizado(outro, semPlanos, ['implementador-x']).length, 1);
+    // papel válido pela forma e fora da lista passada também avisa; com a lista certa, nada
+    const v = mapa({ 'GM-1': [marco('loop', 1, 0), apr('loop', 2, { entra_em: ['brief:revisor'] }, t(1))] });
+    assert.deepEqual(avisosAprendizado(v, semPlanos, PAPEIS_REAIS), []);
+    assert.equal(avisosAprendizado(v, semPlanos, ['implementador', 'correcao']).length, 1);
+    // M nunca entra em brief: um M com papel removido não gera este aviso
+    const m = mapa({ 'GM-1': [marco('loop', 1, 0), M('loop', 2, 1, { entra_em: ['brief:arquitetura'] })] });
+    assert.deepEqual(avisosAprendizado(m, semPlanos, PAPEIS_REAIS), []);
+    // comparação exata, não por prefixo: `implementador-x` não passa por `implementador`
+    const outro = mapa({ 'GM-1': [marco('loop', 1, 0), apr('loop', 2, { entra_em: ['brief:implementador-x'] }, t(1))] });
+    assert.equal(avisosAprendizado(outro, semPlanos, PAPEIS_REAIS).length, 1);
+  });
+  test('papel-removido-so-tolera-o-papel: forma inválida por outro motivo não vira aviso de papel', () => {
+    const torto = [
+      { entra_em: ['brief:arquitetura', 'brief:arquitetura'] }, // repetição
+      { entra_em: ['brief:'] }, // papel vazio
+      { entra_em: [] },
+      { entra_em: ['brief:arquitetura', 42] },
+      { entra_em: ['brief:arquitetura'], regra: '' }, // resto da forma inválido
+    ];
+    for (const extra of torto) {
+      const porEntrega = mapa({ 'GM-1': [marco('loop', 1, 0), apr('loop', 2, extra as Partial<DadosAprendizado>, t(1))] });
+      assert.deepEqual(avisosAprendizado(porEntrega, semPlanos, PAPEIS_REAIS), [], JSON.stringify(extra));
+    }
+  });
+  test('papel-removido-substituido-nao-avisa: o D que o substitui fecha o aviso', () => {
+    const velho = apr('loop', 2, { entra_em: ['brief:arquitetura'] }, t(1));
+    const novo = apr('loop', 3, { entra_em: ['brief:revisor'], substitui: { sessao: 'loop', seq: 2 } }, t(2));
+    assert.equal(avisosAprendizado(mapa({ 'GM-1': [marco('loop', 1, 0), velho] }), semPlanos, PAPEIS_REAIS).length, 1);
+    assert.deepEqual(avisosAprendizado(mapa({ 'GM-1': [marco('loop', 1, 0), velho, novo] }), semPlanos, PAPEIS_REAIS), []);
+  });
+  test('m-entrega-sem-ts-legivel-nao-conta-como-posterior', () => {
+    // R4: entrega sem evento (só plano.json) ou com `ts` torto não tem início conhecido: não é "posterior"
+    const base = { 'GM-1': [marco('loop', 1, 0), M('loop', 2, 1)], 'GM-2': depois(10), 'GM-3': depois(20) };
+    assert.deepEqual(avisosAprendizado(mapa({ ...base, 'GM-4': [] }), semPlanos, PAPEIS), []);
+    assert.deepEqual(avisosAprendizado(mapa({ ...base, 'GM-4': [ev('loop', 1, 'loop.iniciar', {}, 'torto')] }), semPlanos, PAPEIS), []);
+    assert.equal(avisosAprendizado(mapa({ ...base, 'GM-4': depois(30) }), semPlanos, PAPEIS).length, 1, 'com início legível, passa a contar');
   });
   test('avisos-ausente-x-corrompido', () => {
     // ausente: entrega sem plano, mapas vazios ⇒ silêncio (nada a avisar, nada ilegível)

@@ -52,7 +52,7 @@ let nucleo = null;
 let nucleoErro = '';
 try {
   const [diario, aprendizado, plano, loop] = await Promise.all([import('../dist/diario.js'), import('../dist/aprendizado.js'), import('../dist/plano.js'), import('../dist/loop.js')]);
-  nucleo = { lerEstrito: diario.lerEstrito, avisosAprendizado: aprendizado.avisosAprendizado, validarPlano: plano.validarPlano, PAPEIS: loop.PAPEIS };
+  nucleo = { lerAprendizados: diario.lerAprendizados, avisosAprendizado: aprendizado.avisosAprendizado, validarPlano: plano.validarPlano, PAPEIS: loop.PAPEIS };
 } catch (e) {
   nucleoErro = e instanceof Error ? e.message : 'erro desconhecido';
 }
@@ -277,40 +277,25 @@ export function tamanhoAgents(texto) {
  *       'attest' → atestado nominal e datado (c)
  */
 /**
- * Lê a árvore `.harness/entregas/<id>/` para o aviso de aprendizado: diário (`lerEstrito`) e `plano.json` (`validarPlano`).
- * Só lê arquivo REGULAR (lstat): FIFO ou symlink no lugar do diário ou do plano vira aviso, nunca trava o doctor. Pasta das
- * entregas ausente ⇒ vazio e calado; ilegível ⇒ aviso. Nunca lança.
+ * Lê a árvore `.harness/entregas/` para o aviso de aprendizado. Diário: `lerAprendizados` do núcleo (fonte única, só arquivo
+ * regular, ausente calado, ilegível = aviso). `plano.json` de cada entrega lida: só arquivo REGULAR (lstat) e válido; sem plano
+ * = sem âncora, calado; FIFO, symlink ou torto = aviso. Nunca lança.
  */
 function lerArvoreDeAprendizados(root) {
   const dir = join(root, '.harness', 'entregas');
-  const porEntrega = new Map();
+  const { porEntrega, avisos } = nucleo.lerAprendizados(dir);
   const planos = new Map();
-  const avisos = [];
-  const regular = (c) => { try { return lstatSync(c).isFile(); } catch { return false; } };
-  let nomes;
-  try {
-    nomes = readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
-  } catch (e) {
-    if (e?.code !== 'ENOENT') avisos.push(`aprendizados: ${dir} ilegível (pasta das entregas não lista)`);
-    return { porEntrega, planos, avisos };
-  }
-  for (const nome of nomes) {
-    const pasta = join(dir, nome);
+  for (const nome of porEntrega.keys()) {
+    const arqPlano = join(dir, nome, 'plano.json');
     try {
-      const naoRegular = readdirSync(pasta).filter((n) => /^events\..+\.jsonl$/.test(n) && !regular(join(pasta, n)));
-      if (naoRegular.length > 0) { avisos.push(`aprendizados: ${nome} ilegível (${naoRegular[0]} não é arquivo regular — diário não lido)`); continue; }
-      const r = nucleo.lerEstrito(pasta);
-      if (!r.ok) { avisos.push(`aprendizados: ${nome} ilegível (${r.motivo})`); continue; }
-      porEntrega.set(nome, r.eventos);
-      const arqPlano = join(pasta, 'plano.json');
       try { lstatSync(arqPlano); } catch { continue; } // sem plano: sem âncora, calado
-      if (!regular(arqPlano)) { avisos.push(`aprendizados: ${nome}/plano.json inválido (não é arquivo regular); pendências não conferidas`); continue; }
+      if (!lstatSync(arqPlano).isFile()) { avisos.push(`aprendizados: ${nome}/plano.json inválido (não é arquivo regular); pendências não conferidas`); continue; }
       let v;
       try { v = nucleo.validarPlano(JSON.parse(readFileSync(arqPlano, 'utf8'))); } catch (e) { v = { ok: false, erro: e instanceof Error ? e.message : 'ilegível' }; }
       if (v.ok) planos.set(nome, v.plano);
       else avisos.push(`aprendizados: ${nome}/plano.json inválido (${v.erro}); pendências não conferidas`);
     } catch (e) {
-      avisos.push(`aprendizados: ${nome} ilegível (${e instanceof Error ? e.message : 'erro desconhecido'})`);
+      avisos.push(`aprendizados: ${nome}/plano.json ilegível (${e instanceof Error ? e.message : 'erro desconhecido'})`);
     }
   }
   return { porEntrega, planos, avisos };
@@ -547,7 +532,7 @@ export const CHECKS = [
     level: 2,
     kind: 'scan',
     label: 'fluxo configurado (onboarding concluído)',
-    fix: 'rode gabarito-instalar (trocar fluxo) — grava fluxo.resolvidoEm em harness.config.json',
+    fix: 'rode gabarito-instalar (o onboarding nunca rodou aqui) — ele grava fluxo.resolvidoEm em harness.config.json',
     detect: (ix, cfg) => {
       const em = cfg.fluxo?.resolvidoEm;
       if (typeof em === 'string' && ISO_DATA.test(em)) return { found: true, evidence: `fluxo.resolvidoEm = ${em}` };
@@ -767,7 +752,7 @@ export const CHECKS = [
     level: 'warn',
     kind: 'scan',
     label: 'itens do onboarding que a máquina não detectou nem o dono respondeu',
-    fix: 'rode gabarito-instalar (trocar <item>) para cada item citado — é aviso: não muda o nível nem quebra o CI',
+    fix: 'rode gabarito-instalar com o item de cada linha citada (trocar <item>) — é aviso: não muda o nível nem quebra o CI',
     detect: (ix, cfg) => {
       if (cfg.configInvalido) return { found: false, evidence: 'harness.config.json inválido: não li onboarding.naoDetectado' };
       const ob = cfg.onboarding;

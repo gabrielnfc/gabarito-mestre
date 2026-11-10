@@ -9,12 +9,12 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { symlinkSync, writeFileSync, readFileSync, rmSync, mkdtempSync, mkdirSync, copyFileSync } from 'node:fs';
+import { symlinkSync, writeFileSync, readFileSync, rmSync, mkdtempSync, mkdirSync, copyFileSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import * as doctor from '../scripts/harness-doctor.mjs';
-import { MOTIVO_BRANCHPADRAO } from '../scripts/onboarding.mjs';
+import { MOTIVO_BRANCHPADRAO, ORDEM_ITENS } from '../scripts/onboarding.mjs';
 import * as diario from '../dist/diario.js';
 import { repo, agents, SCRIPT, git, repoComGit, AGORA, horasAtras, arq, heartbeatLocal, ARQ_DIARIO } from './_doctor-helpers.mjs';
 
@@ -535,14 +535,116 @@ describe('T13 doctor — aprendizado sem destino, onboarding não detectado, sem
     }
   });
 
-  test('doctor-sem-fase-no-texto: label e fix dos 4 checks apontam `gabarito-instalar (trocar <item>)`, nunca "fase N"', () => {
+  test('doctor-sem-fase-no-texto: label e fix dos checks apontam um item real do onboarding, nunca "fase N"', () => {
     const out = doctor.run(base());
-    const esperado = { 'fluxo-configurado': 'fluxo', versionamento: 'versionamento', 'modelo-resolvido': 'orquestracao' };
+    const esperado = { versionamento: 'versionamento', 'modelo-resolvido': 'orquestracao' };
     for (const [id, item] of Object.entries(esperado)) {
       const r = achado(out, id);
       assert.match(r.fix, new RegExp(`gabarito-instalar \\(trocar ${item}\\)`), `${id}: ${r.fix}`);
       assert.doesNotMatch(`${r.label} ${r.fix}`, /fase/i, id);
     }
+    // `fluxo-configurado` falha quando o onboarding nunca rodou: o remédio é a skill inteira, não um `trocar <item>` que não existe
+    const fluxo = achado(out, 'fluxo-configurado');
+    assert.match(fluxo.fix, /^rode gabarito-instalar \(o onboarding nunca rodou aqui\)/);
+    assert.doesNotMatch(`${fluxo.label} ${fluxo.fix}`, /fase|trocar/i);
     assert.doesNotMatch(readFileSync(SCRIPT, 'utf8').split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n'), /\bfase [234]\b|\(fase /);
+  });
+
+  test('doctor-item-citado-existe: todo `trocar <item>` de label, fix e evidência é um item de ORDEM_ITENS (onboarding.mjs)', () => {
+    const itens = new Set();
+    for (const c of doctor.CHECKS) for (const m of `${c.label} ${c.fix}`.matchAll(/trocar ([a-z_]+)/g)) itens.add(m[1]);
+    assert.deepEqual([...itens].sort(), ['orquestracao', 'versionamento'], 'o teste enxerga os itens citados (não é vacuamente verde)');
+    for (const item of itens) assert.ok(ORDEM_ITENS.includes(item), `"trocar ${item}" não é item do onboarding (${ORDEM_ITENS.join(', ')})`);
+    // a evidência cita o item que o onboarding gravou, um por linha, para todos os itens reais
+    const out = doctor.run(repoComGit({ 'AGENTS.md': agents(1), ...cfgComOnboarding({ onboarding: { naoDetectado: [...ORDEM_ITENS] } }) }));
+    const citados = avisosDe(out, 'onboarding-nao-detectado').map((a) => /\(trocar ([a-z_]+)\)/.exec(a)?.[1]);
+    assert.deepEqual(citados, ORDEM_ITENS);
+  });
+
+  test('doctor-saida-humana-uma-seta-por-linha: 2+ itens não detectados saem cada um em `↳` próprio', () => {
+    const dir = repoComGit({ 'AGENTS.md': agents(1), ...cfgComOnboarding({ onboarding: { naoDetectado: ['tipo_repo', 'orquestracao'] } }) });
+    const out = spawnSync(process.execPath, [SCRIPT], { cwd: dir, encoding: 'utf8' }).stdout;
+    const linhas = out.split('\n');
+    const i = linhas.findIndex((l) => l.includes('↳ tipo_repo: gabarito-instalar (trocar tipo_repo)'));
+    assert.notEqual(i, -1, out);
+    assert.equal(linhas[i + 1].trim(), '↳ orquestracao: gabarito-instalar (trocar orquestracao)', 'a 2ª linha da evidência tem o próprio `↳`');
+    assert.match(linhas[i + 1], /^ {8}↳ /, 'e o mesmo recuo');
+  });
+
+  test('aprendizado-sem-destino-symlink: diário ou plano.json que é symlink não é lido e vira aviso', () => {
+    const dir = base();
+    grava(dir, 'GM-5', 'loop', 'loop.iniciar', {}, 0);
+    const alvo = join(dir, '.harness/entregas/GM-5/events.loop.jsonl');
+    const fora = join(dir, 'fora.jsonl');
+    writeFileSync(fora, readFileSync(alvo, 'utf8'));
+    rmSync(alvo, { force: true });
+    symlinkSync(fora, alvo);
+    const av = avisosDe(doctor.run(dir), 'aprendizado-sem-destino');
+    assert.equal(av.length, 1, av.join('\n'));
+    assert.match(av[0], /GM-5 ilegível \(events\.loop\.jsonl não é arquivo regular/);
+    const dir2 = base();
+    grava(dir2, 'GM-4', 'loop', 'loop.iniciar', {}, 0);
+    planoDe(dir2, 'GM-3', ['T1']); // plano real fora da entrega, para o symlink apontar a um arquivo válido
+    symlinkSync(join(dir2, '.harness/entregas/GM-3/plano.json'), join(dir2, '.harness/entregas/GM-4/plano.json'));
+    const av2 = avisosDe(doctor.run(dir2), 'aprendizado-sem-destino').filter((a) => a.includes('GM-4'));
+    assert.equal(av2.length, 1, av2.join('\n'));
+    assert.match(av2[0], /GM-4\/plano\.json inválido \(não é arquivo regular\)/);
+  });
+
+  // Cópia do núcleo + doctor com `loop.PAPEIS` sem `correcao`: o mesmo que acontece quando um papel sai de PAPEIS num release.
+  const doctorSemPapel = () => {
+    const gates = join(dirname(SCRIPT), '..');
+    const plug = mkdtempSync(join(tmpdir(), 'doctor-sem-papel-'));
+    for (const d of ['scripts', 'lib', 'dist']) cpSync(join(gates, d), join(plug, d), { recursive: true });
+    copyFileSync(join(gates, 'package.json'), join(plug, 'package.json'));
+    const formas = join(plug, 'dist', 'formas.js');
+    const src = readFileSync(formas, 'utf8');
+    const novo = src.replace("['implementador', 'revisor', 'correcao']", "['implementador', 'revisor']");
+    assert.notEqual(novo, src, 'a cópia tem de perder o papel `correcao` (a lista de PAPEIS mudou de forma?)');
+    writeFileSync(formas, novo);
+    return join(plug, 'scripts', 'harness-doctor.mjs');
+  };
+  const rodaCopia = (script, dir) => {
+    const r = spawnSync(process.execPath, [script, '--json'], { cwd: dir, encoding: 'utf8', timeout: 30000 });
+    assert.equal(r.status === 0 || r.status === 1, true, r.stderr);
+    return JSON.parse(r.stdout);
+  };
+
+  test('aprendizado-sem-destino-papel-removido-costura-real: D gravado por diario.append com papel que existia; doctor real sem esse papel em PAPEIS ⇒ aviso com o comando', () => {
+    const dir = base();
+    grava(dir, 'GM-1', 'loop', 'loop.iniciar', {}, 0);
+    grava(dir, 'GM-1', 'loop', 'aprendizado', { tipo: 'E', status: 'D', gatilho: null, evidencia: { eventos: [{ sessao: 'loop', seq: 1 }] }, regra: 'confira o build', entra_em: ['brief:correcao'] }, 1);
+    // controle: com os PAPEIS de hoje o papel existe e nada avisa
+    assert.deepEqual(avisosDe(doctor.run(dir), 'aprendizado-sem-destino'), []);
+    const out = rodaCopia(doctorSemPapel(), dir);
+    const c = out.resultados.find((r) => r.id === 'aprendizado-sem-destino');
+    const av = out.avisos.filter((a) => a.startsWith('aprendizado-sem-destino: '));
+    assert.equal(c.found, false, 'o D com papel removido não some calado: "nada sem destino" seria mentira');
+    assert.equal(c.level, 'warn');
+    assert.equal(av.length, 1, av.join('\n'));
+    assert.match(av[0], /GM-1\/loop:2 entra em brief:correcao, papel que não existe mais \(papéis: implementador, revisor\)/);
+    assert.match(av[0], /loop\.mjs aprendizado E D --regra <texto> --entra-em <destinos válidos> --substitui GM-1\/loop:2/);
+    // o doctor não muda o nível por causa do aviso
+    assert.equal(out.alcancado, doctor.run(dir).alcancado);
+  });
+
+  test('aprendizado-sem-destino-fifo-nao-trava-loop-nem-cartao: FIFO em outra entrega não pendura loop.mjs aprendizados nem o hook do cartão', () => {
+    const aqui = join(dirname(SCRIPT));
+    const dir = repoComGit({ 'AGENTS.md': agents(1), 'harness.config.json': JSON.stringify({ fluxo: { resolvidoEm: '2026-11-10' } }) });
+    grava(dir, 'GM-6', 'loop', 'loop.iniciar', {}, 0);
+    mkdirSync(join(dir, '.harness/entregas/GM-7'), { recursive: true });
+    execFileSync('mkfifo', [join(dir, '.harness/entregas/GM-7/events.s1.jsonl')]);
+    const env = { ...process.env, GABARITO_INSTALLED_PLUGINS: '/nao/existe.json' };
+    const loop = spawnSync(process.execPath, [join(aqui, 'loop.mjs'), 'aprendizados'], { cwd: dir, encoding: 'utf8', timeout: 4000, env });
+    assert.equal(loop.error, undefined, `loop.mjs travou na FIFO: ${loop.error?.message}`);
+    assert.match(JSON.parse(loop.stdout).avisos.join('\n'), /GM-7 ilegível \(events\.s1\.jsonl não é arquivo regular/);
+    execFileSync('git', ['checkout', '-q', '-b', 'feat/GM-6-x'], { cwd: dir });
+    const plug = mkdtempSync(join(tmpdir(), 'plug-cartao-'));
+    mkdirSync(join(plug, '.claude-plugin'));
+    writeFileSync(join(plug, '.claude-plugin/plugin.json'), JSON.stringify({ name: 'gabarito-mestre', version: '1.1.0' }));
+    const cartao = spawnSync(process.execPath, [join(aqui, 'cartao-sessao.mjs'), '--hook', '--root', dir, '--plugin-root', plug, '--agora', '2026-11-10T12:00:00Z'], { cwd: dir, input: JSON.stringify({ session_id: 's1' }), encoding: 'utf8', timeout: 8000, env });
+    assert.equal(cartao.error, undefined, `cartão travou na FIFO: ${cartao.error?.message}`);
+    assert.equal(cartao.status, 0, cartao.stderr);
+    assert.match(cartao.stdout, /Aprendizados: 1 entrega\(s\) ilegível\(is\)/, 'a entrega com FIFO vira aviso no cartão, nunca "0" calado');
   });
 });

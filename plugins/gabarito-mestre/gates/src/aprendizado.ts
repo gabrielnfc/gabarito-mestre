@@ -3,7 +3,7 @@
  * Puro: sem I/O (a leitura da árvore é `lerAprendizados` em `diario.ts`). Contrato de falha: forma inválida ou ref sem alvo
  * nunca vira aprendizado válido; o que não é válido fica fora dos vigentes, nunca entra "mudo".
  */
-import { formaInvalida } from './formas.ts';
+import { formaInvalida, PAPEIS } from './formas.ts';
 import { cmp, ehObjeto } from './diario-puro.ts';
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.ts';
 import { pendenciasAprendizado } from './pendencias.ts';
@@ -20,6 +20,27 @@ const existe = (eventos: Evento[], r: RefEvento): boolean =>
 function aprendizadoValido(e: unknown): e is Evento {
   return ehObjeto(e) && e.tipo === 'aprendizado' && typeof e.sessao === 'string' && typeof e.seq === 'number'
     && Number.isInteger(e.seq) && typeof e.ts === 'string' && formaInvalida('aprendizado', e.dados) === null;
+}
+
+/**
+ * Forma válida, ou válida SÓ porque `entra_em` cita `brief:<papel>` de um papel que saiu de `PAPEIS` (o diário foi gravado
+ * quando o papel existia). A gravação continua estrita (`validarAprendizado`); isto serve só ao doctor, para o D com papel
+ * removido chegar a `avisosAprendizado` em vez de sumir calado dos vigentes. Sem hardcode dos destinos fixos: cada entrada
+ * é validada sozinha pela própria `formaInvalida`, e o resto da forma com um papel que existe no lugar de `entra_em`.
+ */
+function formaValidaModuloPapel(d: unknown): boolean {
+  if (formaInvalida('aprendizado', d) === null) return true;
+  if (!ehObjeto(d) || !Array.isArray(d.entra_em)) return false;
+  const lista: unknown[] = d.entra_em;
+  if (lista.length === 0 || new Set(lista).size !== lista.length) return false;
+  const entradaOk = (x: unknown): boolean =>
+    typeof x === 'string' && ((x.startsWith('brief:') && x.length > 6) || formaInvalida('aprendizado', { ...d, entra_em: [x] }) === null);
+  return lista.every(entradaOk) && formaInvalida('aprendizado', { ...d, entra_em: [`brief:${PAPEIS[0]}`] }) === null;
+}
+
+function aprendizadoValidoModuloPapel(e: unknown): e is Evento {
+  return ehObjeto(e) && e.tipo === 'aprendizado' && typeof e.sessao === 'string' && typeof e.seq === 'number'
+    && Number.isInteger(e.seq) && typeof e.ts === 'string' && formaValidaModuloPapel(e.dados);
 }
 
 /**
@@ -70,12 +91,16 @@ const maisRecenteAntes = (a: AprendizadoVigente, b: AprendizadoVigente): number 
  * (o mais recente do ciclo vale, nada some). Ordem: mais recente primeiro.
  */
 export function aprendizadosVigentes(porEntrega: Map<string, Evento[]>): AprendizadoVigente[] {
+  return projetarVigentes(porEntrega, aprendizadoValido);
+}
+
+function projetarVigentes(porEntrega: Map<string, Evento[]>, valido: (e: unknown) => e is Evento): AprendizadoVigente[] {
   const todos = new Map<string, AprendizadoVigente>();
   const alvoDe = new Map<string, string>();
   for (const [entrega, eventos] of porEntrega) {
     if (!Array.isArray(eventos)) continue;
     for (const e of eventos) {
-      if (!aprendizadoValido(e)) continue;
+      if (!valido(e)) continue;
       const d = e.dados as unknown as DadosAprendizado;
       const k = chave(entrega, e.sessao, e.seq);
       todos.set(k, { ...d, entrega, sessao: e.sessao, seq: e.seq, ts: e.ts });
@@ -143,7 +168,8 @@ const comandoSubstitui = (a: AprendizadoVigente): string =>
  * Avisos do doctor sobre aprendizado sem destino (GM-13, REQ-APR-4). Cada aviso traz o comando que fecha.
  *  (1) pendência aberta numa entrega com todas as tasks integradas (`planos` sem a entrega ⇒ sem âncora, silêncio; entrega
  *      com plano e diário que não lê ou não ordena ⇒ aviso de leitura: a pendência não pôde ser conferida);
- *  (2) `brief:<papel>` de D vigente com papel fora de `papeis` (comparação exata);
+ *  (2) `brief:<papel>` de D vigente com papel fora de `papeis` (comparação exata). Os vigentes aqui toleram SÓ o papel removido
+ *      (`formaValidaModuloPapel`): com a validação estrita o D sumiria antes de chegar a esta cláusula, e o doctor diria "nada sem destino";
  *  (3) M vigente com MAIS DE 2 entregas cujo menor `ts` é posterior ao dele (lido de `aprendizadosVigentes`: o M substituído,
  *      aqui ou em outra entrega, não está lá e não avisa).
  * Pura e determinística; nunca lança (o que não lê vira aviso, nunca silêncio).
@@ -168,7 +194,7 @@ export function avisosAprendizado(porEntrega: Map<string, Evento[]>, planos: Map
     }
   }
 
-  const vigentes = aprendizadosVigentes(porEntrega);
+  const vigentes = projetarVigentes(porEntrega, aprendizadoValidoModuloPapel);
   for (const a of vigentes) {
     if (a.status !== 'D') continue;
     for (const d of a.entra_em) {
