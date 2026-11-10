@@ -1,0 +1,26 @@
+GABARITO · GM-12 E4 Painel           esquadrão · terra média
+depende de você: nada
+────────────────────────────────────────────────────────────
+PLANO   ▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱  58%  7/12 tasks   ETA 17:42 ±9m
+  ✓ T1–T7   integradas · 1.4 rodada média · mediana 18 min
+  ● T8   implementando    GIMLI    9m
+  ● T9   em revisão       LEGOLAS  3m
+  ◐ T10  aguarda revisão
+  ○ T11  fila · depende de T8
+  ○ T12  fila
+────────────────────────────────────────────────────────────
+EQUIPE                                       agentes 2 vivos
+GANDALF  orquestra · opus
+│  ctx ███████░░░░░░░░░░░░ 36% · pouso em 50%   tok 412k
+│  5h ████░░░░░░ 42%   7d ██░░░░░░░░ 18%
+├─ ● GIMLI    implementando · sonnet  T8  ctx ███░░░░░░░ 31…
+├─ ● LEGOLAS  em revisão    · opus    T9  ctx ██░░░░░░░░ 18…
+├─ ◐ revisor aguarda T10 · 14 mutações do gate hoje, 14 mor…
+└─ ○ ELROND  aconselha · opus  3 decisões · #41 seguir com …
+────────────────────────────────────────────────────────────
+◆ ATENÇÃO  T9 na 2ª rodada de review · loop segue em T8 T9 …
+────────────────────────────────────────────────────────────
+13:40 ◆ ELROND decidiu #41 · seguir com a forma opcional
+13:58 ▶ despachou LEGOLAS em T9
+14:02 ✓ LEGOLAS aprovou T7 · 18 min
+CI ● verde   PROD leu 2 · alterou 0   política … ▼ 9 eventos

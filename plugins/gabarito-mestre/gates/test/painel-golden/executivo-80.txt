@@ -1,0 +1,17 @@
+GABARITO · GM-12 E4 Painel                                             executivo
+depende de você: nada
+────────────────────────────────────────────────────────────────────────────────
+Entrega      ▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 58%
+Previsão     hoje 17:42 (±9 min, 7 medições)
+Tasks        7 integradas · 3 em curso · 2 na fila
+Qualidade    1.4 rodada/review · 61 mutações mortas
+CI           verde · 4 execuções hoje
+Produção     2 leituras · 0 alterações · janela [seg ter qua qui sex]
+Contexto     ██████████░░░░░░░░░░░░░░░░░░░ 36%
+Limites      5h 42% · 7d 18%
+────────────────────────────────────────────────────────────────────────────────
+Agentes em voo                                                           2 vivos
+● implementador 1  T8 Task T8                                       31% 62k · 9m
+● revisor 1        T9 Task T9                                       18% 36k · 3m
+◐ revisor          aguarda T10
+○ Sombra           3 decisões · #41 seguir com a forma opcional

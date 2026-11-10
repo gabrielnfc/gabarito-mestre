@@ -1,0 +1,26 @@
+GABARITO · GM-99 Spec de fumaça da E4                    esquadrão · terra média
+■ PAROU 12:25  teto de rodadas de review em T2
+    aprovar  /gabarito-mestre:liberar T2
+    recusar  deixe a task parada e emende a spec
+  T3 continua · produção: 0 alterações nesta entrega · notificação enviada 12:12
+◆ DEPENDE DE VOCÊ  1 item
+  emenda #1 em REQ-C-1  /gabarito-mestre:emenda aprovar 1 · rejeitar 1
+────────────────────────────────────────────────────────────────────────────────
+PLANO   ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱  33%  1/3 tasks                        loop parado
+  ✓ T1   integradas · 1.0 rodada média
+  ✗ T2  Agentes vivos    no teto             8m
+  ● T3  Depende de você  implementando  SAM  6m
+────────────────────────────────────────────────────────────────────────────────
+EQUIPE                                                            agentes 1 vivo
+GANDALF  orquestra
+│  ctx █████████████░░░░░░░░░░░░░░░░ 46% · pouso em 50%   tok —
+│  5h █░░░░░░░░░ 12%   7d █░░░░░░░░░ 5%
+│  ▶ parado · T3 continua
+├─ ● SAM  implementando · haiku  T3  ctx 93k  6m
+└─ ○ ELROND  aconselha  0 decisões
+────────────────────────────────────────────────────────────────────────────────
+12:19 ✗ FRODO reprovou T2 · 1 achado
+12:21 ▶ despachou SAM em T3
+12:22 ◆ emenda #1 proposta em REQ-C-1
+12:25 ■ PAROU · teto de rodadas de review
+CI ● —   PROD leu 0 · alterou 0   política continua                 ▼ 10 eventos

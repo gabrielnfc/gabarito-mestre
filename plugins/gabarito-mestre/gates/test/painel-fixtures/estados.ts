@@ -167,6 +167,7 @@ function semLimitesSemUso(): EstadoPainel {
   e.equipe.sombra = { ...e.equipe.sombra, modelo: null };
   e.rodape.ci = { verde: null, execucoesHoje: 0 };
   e.plano.eta = null;
+  e.plano.rodadaMedia = null; // o mesmo valor nos dois campos (painel.ts:504/516)
   e.qualidade = { rodadaMedia: null, mortas: null };
   return e;
 }
@@ -275,6 +276,8 @@ function zeros(): EstadoPainel {
   e.equipe.agentes = e.equipe.agentes.map((a) => ({ ...a, tok: 0 }));
   e.equipe.revisoresAguardando = [{ nome: null, task: 'T10', mutacoesHoje: 0, mortasHoje: 0 }];
   e.rodape.ci = { verde: true, execucoesHoje: 0 };
+  // a projeção real grava o MESMO valor nos dois (painel.ts:504/516): plano.rodadaMedia e qualidade.rodadaMedia nunca diferem
+  e.plano.rodadaMedia = 1;
   e.qualidade = { rodadaMedia: 1, mortas: 0 };
   return e;
 }

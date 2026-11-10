@@ -1,0 +1,17 @@
+GABARITO · GM-12 E4 Painel         executivo
+depende de você: nada
+────────────────────────────────────────────
+Ent ▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 58%
+Prv hoje 17:42 (±9 min, 7 medições)
+Tsk 7 integradas · 3 em curso · 2 na fila
+Qld 1.4 rodada/review · 61 mutações mortas
+CI  verde · 4 execuções hoje
+Prd 2 leituras · 0 alterações · janela [seg…
+Ctx █████████░░░░░░░░░░░░░░░░ 36%
+Lim 5h 42% · 7d 18%
+────────────────────────────────────────────
+Agentes em voo                       2 vivos
+● implementador 1  T8  31%
+● revisor 1  T9  18%
+◐ revisor  aguarda T10
+○ Sombra  3 dec
