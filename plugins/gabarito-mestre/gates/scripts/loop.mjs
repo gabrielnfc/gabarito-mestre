@@ -1223,17 +1223,54 @@ function enriquecer(c, plano, eventos, item, aviso, extra) {
 
 const CODIGO_JULGAMENTO = { 'diário fora de ordem': 'diario_invalido', 'proposta já julgada': 'ja_julgada', 'proposta inexistente': 'proposta_inexistente' };
 
+/**
+ * Caminho real da spec do plano, com contenção léxica E por `realpath` na raiz (symlink dentro da raiz que aponta para fora é recusado).
+ * Base única de `reqNaSpec` e `shaDaSpec`: a spec que prova um REQ é a mesma que o dono aprova. Nunca lança.
+ * `erro` ∈ `sem_spec`, `spec_fora_da_raiz`, `spec_ausente` (ENOENT), `spec_ilegivel` (outro erro, diretório, não regular).
+ */
+function caminhoDaSpec(raiz, plano) {
+  const spec = plano?.spec;
+  if (typeof spec !== 'string' || spec === '') return { ok: false, erro: 'sem_spec', mensagem: 'o plano não tem `spec` (texto não vazio): não há spec a aprovar' };
+  const fora = { ok: false, erro: 'spec_fora_da_raiz', mensagem: `a spec ${JSON.stringify(spec)} está fora da raiz do repositório` };
+  try {
+    const abs = resolve(raiz, spec);
+    const rel = relative(raiz, abs);
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return fora;
+    const real = realpathSync(abs);
+    const relReal = relative(realpathSync(raiz), real);
+    if (relReal.startsWith('..') || isAbsolute(relReal)) return fora;
+    if (!statSync(real).isFile()) return { ok: false, erro: 'spec_ilegivel', mensagem: `a spec ${JSON.stringify(spec)} não é um arquivo regular` };
+    return { ok: true, spec, real };
+  } catch (e) {
+    if (e?.code === 'ENOENT') return { ok: false, erro: 'spec_ausente', mensagem: `a spec ${JSON.stringify(spec)} não existe` };
+    return { ok: false, erro: 'spec_ilegivel', mensagem: `a spec ${JSON.stringify(spec)} está ilegível (${e?.code ?? e?.message})` };
+  }
+}
+
+/**
+ * O sha256 único da spec (D-P2): "aguardando" no painel (T9) e "já aprovada" no hook (T8) comparam este número.
+ * São os BYTES do arquivo na raiz PRINCIPAL (`raizPrincipal`), sem decodificar. Nunca lança.
+ * `{ok:true, spec, sha256}` ou `{ok:false, erro, mensagem}`, `erro` ∈ `sem_spec`, `spec_fora_da_raiz`, `spec_ausente`, `spec_ilegivel`, `spec_vazia`.
+ */
+export function shaDaSpec(raiz, plano) {
+  const r = caminhoDaSpec(raiz, plano);
+  if (!r.ok) return r;
+  try {
+    const bytes = readFileSync(r.real);
+    if (bytes.length === 0) return { ok: false, erro: 'spec_vazia', mensagem: `a spec ${JSON.stringify(r.spec)} tem 0 bytes` };
+    return { ok: true, spec: r.spec, sha256: createHash('sha256').update(bytes).digest('hex') };
+  } catch (e) {
+    if (e?.code === 'ENOENT') return { ok: false, erro: 'spec_ausente', mensagem: `a spec ${JSON.stringify(r.spec)} não existe` };
+    return { ok: false, erro: 'spec_ilegivel', mensagem: `a spec ${JSON.stringify(r.spec)} está ilegível (${e?.code ?? e?.message})` };
+  }
+}
+
 /** REQ com trecho na spec do plano. Spec ausente, ilegível ou fora da raiz ⇒ `false` (sem a spec não há como provar o REQ). */
 function reqNaSpec(c, plano, req) {
-  if (typeof plano.spec !== 'string' || plano.spec === '') return false;
+  const r = caminhoDaSpec(c.raiz, plano);
+  if (!r.ok) return false;
   try {
-    const abs = resolve(c.raiz, plano.spec);
-    const rel = relative(c.raiz, abs);
-    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return false;
-    const real = realpathSync(abs);
-    const relReal = relative(realpathSync(c.raiz), real);
-    if (relReal.startsWith('..') || isAbsolute(relReal)) return false;
-    return trechoDoReq(readFileSync(real, 'utf8'), req) !== null;
+    return trechoDoReq(readFileSync(r.real, 'utf8'), req) !== null;
   } catch {
     return false;
   }
@@ -1455,6 +1492,43 @@ export function liberarTeto(cwd, task, sessao) {
       throw new Falha('liberacao_sem_efeito', `o evento de ${task} foi gravado mas o diário relido não mostra a task fora do teto (estado ${depois.estado}, liberações ${antes.donos} → ${depois.donos}); confira o diário`);
     }
     return { ok: true, task, entrega: c.entrega, estado: depois.estado };
+  } catch (e) {
+    if (e instanceof Falha) return { ok: false, erro: e.erro, mensagem: e.message };
+    return { ok: false, erro: 'excecao', mensagem: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * REQ-PNL-8: a ÚNICA gravação de `spec.aprovada {spec, sha256}`. Fora de `ESPEC` de propósito: nenhum argumento do CLI chega aqui, só o
+ * hook `UserPromptExpansion` (`aprovar-spec.mjs`), disparado pelo comando que o dono digita. O sha é o de `shaDaSpec` (bytes, raiz principal).
+ * "Já aprovada" = existe `spec.aprovada` de forma válida com o sha atual, sem ordem e sem olhar `spec` (a régua do painel): não entra em
+ * transição nem depende de relógio. Nunca lança: `{ok:true, spec, sha256, entrega}` só com o evento gravado E relido (a contagem com esse sha
+ * subiu, não "+1 exato": sem lock, duas sessões juntas gravam dois eventos iguais, limite do `gravar`); senão `{ok:false, erro, mensagem}`.
+ * `opcoes.antes` e `opcoes.depois` são injeção de teste: `antes` roda logo antes de reler o sha e gravar, `depois` entre o append e a releitura.
+ */
+export function aprovarSpec(cwd, sessao, opcoes = {}) {
+  try {
+    if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) throw new Falha('argumento_invalido', `sessão fora da forma ${SESSAO_RE}`);
+    const c = contexto(cwd, { sessao });
+    const plano = carregarPlano(c);
+    const atual = shaDaSpec(c.raiz, plano);
+    if (!atual.ok) throw new Falha(atual.erro, `${atual.mensagem}; nada foi gravado`);
+    const contar = (eventos) => eventos.filter((e) => e.tipo === 'spec.aprovada' && formaInvalida('spec.aprovada', e.dados) === null && e.dados.sha256 === atual.sha256).length;
+    let antesN = 0;
+    const conferir = (_candidato, eventos) => {
+      antesN = contar(eventos);
+      if (antesN > 0) throw new Falha('ja_aprovada', `a spec com o sha256 ${atual.sha256.slice(0, 12)}… já foi aprovada; só uma spec que mudou se aprova de novo. Nada foi gravado`);
+      opcoes.antes?.();
+      const de_novo = shaDaSpec(c.raiz, plano);
+      if (!de_novo.ok || de_novo.sha256 !== atual.sha256) throw new Falha('spec_mudou', 'a spec mudou entre o cálculo do sha256 e a gravação; aprove de novo. Nada foi gravado');
+    };
+    gravar(c, plano, 'spec.aprovada', { spec: atual.spec, sha256: atual.sha256 }, conferir);
+    opcoes.depois?.();
+    // O que só o disco revela: reler e conferir que a aprovação com este sha subiu.
+    if (contar(lerDiarioEstrito(c.dirEntrega)) <= antesN) {
+      throw new Falha('aprovacao_sem_efeito', `o evento foi gravado mas o diário relido não mostra a aprovação do sha256 ${atual.sha256.slice(0, 12)}…; confira o diário`);
+    }
+    return { ok: true, spec: atual.spec, sha256: atual.sha256, entrega: c.entrega };
   } catch (e) {
     if (e instanceof Falha) return { ok: false, erro: e.erro, mensagem: e.message };
     return { ok: false, erro: 'excecao', mensagem: e instanceof Error ? e.message : String(e) };

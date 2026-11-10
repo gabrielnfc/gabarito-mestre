@@ -144,21 +144,23 @@ describe('hooks.json — registro dos hooks (T16)', () => {
     assert.equal(grupos[0].hooks[0].onFailure, 'block');
     assert.equal(grupos[1].hooks[0].onFailure, 'block');
   });
-  test('aprovar-stub-bloqueia: o stub da T1 bloqueia sempre, com "não implementado; nada foi gravado", e não grava diário (T8 o implementa)', () => {
+  test('aprovar-hook-real-nao-e-mais-stub: o hook da T8 recusa fora de repo com a causa (fora_de_repo), não com "não implementado"; entrada de outro comando fica em silêncio; nada é criado', () => {
     const rodar = (input, cwd) => spawnSync(process.execPath, [join(PLUGIN, 'gates', 'scripts', 'aprovar-spec.mjs')], { input, encoding: 'utf8', cwd });
-    const fora = mkdtempSync(join(tmpdir(), 'aprovar-stub-'));
-    const entradas = [
-      JSON.stringify({ hook_event_name: 'UserPromptExpansion', command_name: 'gabarito-mestre:aprovar', command_args: '', cwd: fora }),
-      JSON.stringify({ hook_event_name: 'UserPromptExpansion', command_name: 'gabarito-mestre:liberar', command_args: 'T1', cwd: fora }),
-      '', 'não é json', '[]', 'null',
-    ];
-    for (const input of entradas) {
-      const r = rodar(input, fora);
-      assert.equal(r.status, 0, input);
-      assert.equal(r.stderr, '', input);
-      const o = JSON.parse(r.stdout);
-      assert.equal(o.decision, 'block', input);
-      assert.match(o.reason, /não implementado; nada foi gravado/, input);
+    const fora = mkdtempSync(join(tmpdir(), 'aprovar-hook-'));
+    const r = rodar(JSON.stringify({ hook_event_name: 'UserPromptExpansion', command_name: 'gabarito-mestre:aprovar', command_args: '', cwd: fora }), fora);
+    assert.equal(r.status, 0);
+    assert.equal(r.stderr, '');
+    const o = JSON.parse(r.stdout);
+    assert.equal(o.decision, 'block');
+    assert.match(o.reason, /fora_de_repo/);
+    assert.doesNotMatch(o.reason, /não implementado/);
+    const outro = rodar(JSON.stringify({ hook_event_name: 'UserPromptExpansion', command_name: 'gabarito-mestre:liberar', command_args: 'T1', cwd: fora }), fora);
+    assert.equal(outro.status, 0);
+    assert.equal(outro.stdout, '');
+    for (const input of ['', 'não é json', '[]', 'null']) {
+      const x = rodar(input, fora);
+      assert.equal(x.status, 0, input);
+      assert.equal(JSON.parse(x.stdout).decision, 'block', input);
     }
     assert.deepEqual(readdirSync(fora), [], 'nada foi criado no cwd');
   });
