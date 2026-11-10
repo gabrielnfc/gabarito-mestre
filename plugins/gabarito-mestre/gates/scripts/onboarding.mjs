@@ -24,12 +24,12 @@
 
 import { readFileSync, readdirSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, dirname, basename, extname } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, availableParallelism } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { arg, ehEntrypoint } from '../lib/cli.mjs';
 import { raizDoRepo } from '../lib/git.mjs';
-import { hojeISO } from '../lib/datas.mjs';
+import { hojeISO, diasEntre } from '../lib/datas.mjs';
 import * as capacidade from './capacidade.mjs';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { PERFIS_MODELO, resolverModelo } from '../lib/config.mjs';
@@ -492,6 +492,28 @@ function detectarOrquestracao(f) {
   return det('orquestracao', { simultaneos, teto }, `${campo('simultaneos', simultaneos)}; ${campo('teto', teto)}`);
 }
 
+/** Validade da calibração do paralelismo; igual a `ATTEST_TTL_DAYS` do doctor (checagem `paralelismo-calibrado`). */
+const VALIDADE_CALIBRACAO_DIAS = 180;
+
+/**
+ * FX3 (GM-13): quem calibra é o script, nunca o usuário colando comando. Sem `orquestracao.paralelismo` (o onboarding detectou os DEFAULTS)
+ * ou com `calibradoEm` vencido/inválido, grava a calibração por núcleos de `capacidade.calibrar` (a mesma de `--sugerir`; `GABARITO_CAP_CORES`
+ * vale como em `medir`). `simultaneos`/`teto` que o dono pôs à mão, sem data, ficam: nunca viram "calibrado" sem medição. Pura além da leitura de núcleos.
+ */
+function paralelismoCalibrado(par, hoje) {
+  const atual = ehObjeto(par) ? par : {};
+  const cal = atual.calibradoEm;
+  const aMao = cal === undefined && (atual.simultaneos !== undefined || atual.teto !== undefined);
+  if (aMao) return {};
+  if (cal !== undefined) {
+    const d = diasEntre(String(cal), hoje);
+    if (Number.isFinite(d) && d >= 0 && d <= VALIDADE_CALIBRACAO_DIAS) return {};
+  }
+  const cores = Number(process.env.GABARITO_CAP_CORES);
+  const { simultaneos, teto, limites } = capacidade.calibrar({ cores: Number.isFinite(cores) && cores > 0 ? cores : availableParallelism() });
+  return { paralelismo: { simultaneos, teto, limites, calibradoEm: hoje } };
+}
+
 /** Os 5 itens, na `ORDEM_ITENS`. Pura: só lê `fatos`. */
 export function detectar(fatos) {
   return [detectarTipoRepo(fatos), detectarAmbientes(fatos), detectarPlanejamento(fatos), detectarVersionamento(fatos), detectarOrquestracao(fatos)];
@@ -708,6 +730,7 @@ export function configDasRespostas(itens, respostas, existente, hoje, { fuso = '
   const orq = ehObjeto(cfg.orquestracao) ? cfg.orquestracao : {};
   const modeloAtual = ehObjeto(orq.modelo) ? orq.modelo : {};
   patches.orquestracao = {
+    ...paralelismoCalibrado(orq.paralelismo, hoje),
     perfil,
     modelo: {
       alias: resolverModelo({ ...orq, perfil }, 'revisor_final').modelo,

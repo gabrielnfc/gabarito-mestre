@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import * as doctor from '../scripts/harness-doctor.mjs';
-import { MOTIVO_BRANCHPADRAO, ORDEM_ITENS } from '../scripts/onboarding.mjs';
+import { MOTIVO_BRANCHPADRAO, ORDEM_ITENS, coletarFatos, detectar, perguntas, gravar, rodarReal } from '../scripts/onboarding.mjs';
 import * as diario from '../dist/diario.js';
 import { repo, agents, SCRIPT, git, repoComGit, AGORA, horasAtras, arq, heartbeatLocal, ARQ_DIARIO } from './_doctor-helpers.mjs';
 
@@ -448,6 +448,7 @@ describe('T13 doctor — aprendizado sem destino, onboarding não detectado, sem
     const av = JSON.parse(r.stdout).avisos.filter((a) => a.startsWith('aprendizado-sem-destino: '));
     assert.equal(av.length, 1);
     assert.match(av[0], /dist\/ do núcleo não carregou/);
+    assert.doesNotMatch(av[0].split('aprendizado não conferido;')[1], /node |\.mjs/, 'a orientação da evidência também não manda colar comando (FX3)');
   });
 
   test('onboarding-ausente-x-corrompido: ausente calado; corrompido e config inválida avisam a leitura', () => {
@@ -671,5 +672,66 @@ describe('T13 doctor — aprendizado sem destino, onboarding não detectado, sem
     assert.equal(cartao.error, undefined, `cartão travou na FIFO: ${cartao.error?.message}`);
     assert.equal(cartao.status, 0, cartao.stderr);
     assert.match(cartao.stdout, /Aprendizados: 1 entrega\(s\) ilegível\(is\)/, 'a entrega com FIFO vira aviso no cartão, nunca "0" calado');
+  });
+});
+
+// ────────────────────────────────────────────────────────────── FX3 (GM-13): o doctor não manda colar comando
+
+/** Comando para o usuário colar: script do gate, flag de config ou `node `. Nenhum fix/label/evidência de item que não passou pode ter. */
+const COMANDO_PARA_COLAR = /capacidade\.mjs|onboarding-config\.mjs|--set|node |\.mjs/;
+const semClaude = (cmd, args, opts) => (cmd === 'claude' ? { rc: 0, stdout: 'No MCP servers configured.\n', stderr: '', motivo: null } : rodarReal(cmd, args, opts));
+
+/** Onboarding REAL (detectar → perguntas no default → gravar, sem `claude` de verdade) num repo de teste e doctor --json pela borda. */
+function onboardingEDoctor(arquivos = {}, hoje = new Date().toISOString().slice(0, 10)) {
+  const dir = repoComGit({ 'AGENTS.md': agents(0), 'package.json': '{"name":"x"}', ...arquivos });
+  const fatos = coletarFatos(dir, { rodar: semClaude, hoje });
+  const itens = detectar(fatos);
+  const resp = { _previa: JSON.parse(JSON.stringify(itens)) };
+  for (const p of perguntas(itens, fatos.configExistente)) resp[p.id] = p.default;
+  const arqResp = join(mkdtempSync(join(tmpdir(), 'fx3-resp-')), 'respostas.json');
+  writeFileSync(arqResp, JSON.stringify(resp));
+  const g = gravar(dir, arqResp, { rodar: semClaude, hoje, fuso: 'UTC' });
+  assert.equal(g.ok, true, JSON.stringify(g));
+  const out = JSON.parse(spawnSync(process.execPath, [SCRIPT, '--json'], { cwd: dir, encoding: 'utf8' }).stdout);
+  return { dir, out, cfg: JSON.parse(readFileSync(join(dir, 'harness.config.json'), 'utf8')) };
+}
+const textos = (r) => [r.label, r.fix, r.evidence].filter((t) => typeof t === 'string');
+
+describe('FX3 doctor — nenhum comando para colar depois do onboarding', () => {
+  test('doctor-fix-sem-comando: varredura estática de TODOS os checks (fix e label)', () => {
+    const sujos = doctor.CHECKS.filter((c) => textos(c).some((t) => COMANDO_PARA_COLAR.test(t))).map((c) => c.id);
+    assert.deepEqual(sujos, [], 'fix/label cita script ou flag para colar');
+    // a regex pega o padrão antigo (caso plantado)
+    assert.ok(COMANDO_PARA_COLAR.test('rode capacidade.mjs --sugerir e grave orquestracao.paralelismo via onboarding-config.mjs'));
+    assert.ok(COMANDO_PARA_COLAR.test('rode node scripts/build.mjs'));
+  });
+
+  test('doctor-par1-cita-trocar-orquestracao: o fix do PAR-1 manda para gabarito-instalar (trocar orquestracao)', () => {
+    const c = doctor.CHECKS.find((x) => x.id === 'paralelismo-calibrado');
+    assert.match(c.fix, /gabarito-instalar \(trocar orquestracao\)/);
+    assert.match(c.label, /paralelismo calibrado nesta máquina/);
+  });
+
+  test('doctor-pos-onboarding-sem-comando (P9): onboarding real ⇒ doctor --json sem comando em item que falta/avisa, e o PAR-1 passa', () => {
+    const { out, cfg } = onboardingEDoctor();
+    const pendentes = out.resultados.filter((r) => !r.found);
+    assert.ok(pendentes.length > 0, 'premissa: ainda há itens que faltam');
+    for (const r of pendentes) for (const t of textos(r)) assert.doesNotMatch(t, COMANDO_PARA_COLAR, `${r.id}: ${t}`);
+    const par = out.resultados.find((r) => r.id === 'paralelismo-calibrado');
+    assert.equal(par.found, true, JSON.stringify(par));
+    assert.match(par.evidence, new RegExp(`calibrado ${new Date().toISOString().slice(0, 10)}`));
+    assert.equal(cfg.orquestracao.paralelismo.calibradoEm, new Date().toISOString().slice(0, 10));
+    assert.ok(cfg.orquestracao.paralelismo.simultaneos >= 1 && cfg.orquestracao.paralelismo.teto >= cfg.orquestracao.paralelismo.simultaneos);
+  });
+
+  test('doctor-trocar-orquestracao-renova (P9): calibração vencida + gravar real ⇒ PAR-1 volta a passar; valor posto à mão sem data fica', () => {
+    const velho = { orquestracao: { paralelismo: { simultaneos: 1, teto: 2, calibradoEm: '2020-01-01' } } };
+    const { out, cfg } = onboardingEDoctor({ 'harness.config.json': JSON.stringify(velho) });
+    assert.equal(out.resultados.find((r) => r.id === 'paralelismo-calibrado').found, true);
+    assert.notEqual(cfg.orquestracao.paralelismo.calibradoEm, '2020-01-01');
+    const aMao = { orquestracao: { paralelismo: { simultaneos: 7, teto: 9 } } };
+    const m = onboardingEDoctor({ 'harness.config.json': JSON.stringify(aMao) });
+    assert.deepEqual([m.cfg.orquestracao.paralelismo.simultaneos, m.cfg.orquestracao.paralelismo.teto], [7, 9], 'valor do dono nunca é sobrescrito');
+    assert.equal(m.cfg.orquestracao.paralelismo.calibradoEm, undefined, 'sem medição não há data');
   });
 });

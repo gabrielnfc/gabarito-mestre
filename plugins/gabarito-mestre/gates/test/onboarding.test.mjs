@@ -1470,15 +1470,40 @@ describe('gravar', () => {
   });
 
   test('gravar-orquestracao-defaults-nao-fixa', () => {
-    const raiz = fixtureComGit('completa', 'trunk');
-    const r = gravarCom(raiz, FIXAS);
-    assert.equal(r.ok, true);
-    assert.equal('paralelismo' in cfgDe(raiz).orquestracao, false, 'o default 2/4 não é congelado');
-    // com paralelismo do dono, fica como está
-    const raiz2 = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { paralelismo: { simultaneos: 3, teto: 6, modo: 'auto' } } });
-    const r2 = gravarCom(raiz2, FIXAS);
-    assert.equal(r2.ok, true);
-    assert.deepEqual(cfgDe(raiz2).orquestracao.paralelismo, { simultaneos: 3, teto: 6, modo: 'auto' });
+    // FX3 (GM-13): o default 2/4 continua não congelado, mas o gravar CALIBRA por núcleos (capacidade.calibrar) e carimba `calibradoEm`:
+    // é o que faz o PAR-1 do doctor passar sem o usuário colar comando. 16 núcleos ⇒ 3/8; 4 núcleos ⇒ 1/2 (a conta é a de --sugerir).
+    const antes = process.env.GABARITO_CAP_CORES;
+    try {
+      process.env.GABARITO_CAP_CORES = '16';
+      const raiz = fixtureComGit('completa', 'trunk');
+      const r = gravarCom(raiz, FIXAS);
+      assert.equal(r.ok, true);
+      const par = cfgDe(raiz).orquestracao.paralelismo;
+      assert.deepEqual([par.simultaneos, par.teto, par.calibradoEm], [3, 8, HOJE]);
+      assert.notDeepEqual([par.simultaneos, par.teto], [2, 4], 'não é o default 2/4 congelado');
+      process.env.GABARITO_CAP_CORES = '4';
+      const raiz4 = fixtureComGit('completa', 'trunk');
+      assert.equal(gravarCom(raiz4, FIXAS).ok, true);
+      assert.deepEqual([cfgDe(raiz4).orquestracao.paralelismo.simultaneos, cfgDe(raiz4).orquestracao.paralelismo.teto], [1, 2]);
+      // com paralelismo do dono sem data, fica como está (nunca vira "calibrado" sem medição)
+      const raiz2 = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { paralelismo: { simultaneos: 3, teto: 6, modo: 'auto' } } });
+      const r2 = gravarCom(raiz2, FIXAS);
+      assert.equal(r2.ok, true);
+      assert.deepEqual(cfgDe(raiz2).orquestracao.paralelismo, { simultaneos: 3, teto: 6, modo: 'auto' });
+      // calibração em dia (≤ 180 d) fica como está; vencida (181 d) é refeita com a data de hoje
+      const emDia = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { paralelismo: { simultaneos: 1, teto: 5, calibradoEm: '2025-01-01' } } });
+      assert.equal(gravarCom(emDia, FIXAS).ok, true);
+      assert.deepEqual(cfgDe(emDia).orquestracao.paralelismo, { simultaneos: 1, teto: 5, calibradoEm: '2025-01-01' });
+      // calibração com data NO FUTURO não vale (relógio errado ou config forjada): refeita
+      const futura = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { paralelismo: { simultaneos: 1, teto: 5, calibradoEm: '2099-01-01' } } });
+      assert.equal(gravarCom(futura, FIXAS).ok, true);
+      assert.equal(cfgDe(futura).orquestracao.paralelismo.calibradoEm, HOJE);
+      const vencida = comConfig(fixtureComGit('completa', 'trunk'), { orquestracao: { paralelismo: { simultaneos: 1, teto: 5, calibradoEm: '2024-12-31' } } });
+      assert.equal(gravarCom(vencida, FIXAS).ok, true);
+      assert.deepEqual([cfgDe(vencida).orquestracao.paralelismo.teto, cfgDe(vencida).orquestracao.paralelismo.calibradoEm], [2, HOJE]);
+    } finally {
+      if (antes === undefined) delete process.env.GABARITO_CAP_CORES; else process.env.GABARITO_CAP_CORES = antes;
+    }
   });
 
   test('gravar-efetiva-quando-difere', () => {

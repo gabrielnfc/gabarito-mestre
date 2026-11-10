@@ -505,7 +505,7 @@ export const CHECKS = [
     level: 2,
     kind: 'scan',
     label: 'guarda de migrations ligada no CI',
-    fix: 'rode migrations-guard.mjs num job obrigatório de PR',
+    fix: 'ligue a guarda de migrations (migrations-guard) num job obrigatório de PR',
     detect: (ix, cfg) => {
       // Só código é evidência: um `.md` que MENCIONA a guarda não a instala (T6, REQ-INF-2).
       const script = ix.grep(/DESTRUCTIVE_PATTERN|migrations-guard/, (r) => ix.isSource(r));
@@ -553,7 +553,7 @@ export const CHECKS = [
     level: 2,
     kind: 'scan',
     label: 'versionamento configurado e histórico recente conforme (20 commits de primeiro pai)',
-    fix: 'rode gabarito-instalar (trocar versionamento) e corrija os commits apontados por versionamento-check.mjs',
+    fix: 'rode gabarito-instalar (trocar versionamento) e corrija os commits apontados pela checagem de versionamento',
     detect: (ix, cfg) => {
       const em = cfg.versionamento?.resolvidoEm;
       if (!em) return { found: false, evidence: cfg.configInvalido ? 'harness.config.json inválido' : 'sem versionamento.resolvidoEm' };
@@ -696,7 +696,7 @@ export const CHECKS = [
     level: 3,
     kind: 'scan',
     label: 'paralelismo calibrado nesta máquina (≤ 180 d, teto ≥ simultaneos ≥ 1)',
-    fix: 'rode capacidade.mjs --sugerir e grave orquestracao.paralelismo via onboarding-config.mjs',
+    fix: 'rode gabarito-instalar (trocar orquestracao) — ele calibra o paralelismo desta máquina e grava orquestracao.paralelismo.calibradoEm',
     detect: (ix, cfg) => {
       const p = cfg.orquestracao?.paralelismo;
       if (!p?.calibradoEm) return { found: false, evidence: 'sem orquestracao.paralelismo.calibradoEm' };
@@ -735,10 +735,10 @@ export const CHECKS = [
     level: 'warn',
     kind: 'scan',
     label: 'aprendizado com destino: sem pendência esquecida, sem papel removido, sem M envelhecido',
-    fix: 'rode o comando que cada aviso cita (loop.mjs aprendizado …; --entrega <id> fora da branch da entrega) — é aviso: não muda o nível nem quebra o CI',
+    fix: 'resolva cada pendência que o aviso cita (ele diz como; fora da branch da entrega, peça ao orquestrador o aprendizado dessa entrega) — é aviso: não muda o nível nem quebra o CI',
     detect: (ix) => {
       // Diário gravado em disco pelo loop (R1 não se aplica: não é arquivo de projeto). Ausente = calado; ilegível = aviso, nunca "0 aprendizados".
-      if (nucleo === null) return { found: false, evidence: `dist/ do núcleo não carregou (${nucleoErro}): aprendizado não conferido; rode node scripts/build.mjs` };
+      if (nucleo === null) return { found: false, evidence: `dist/ do núcleo não carregou (${nucleoErro}): aprendizado não conferido; reconstrua o dist/ do plugin` };
       const { porEntrega, planos, avisos } = lerArvoreDeAprendizados(ix.root);
       avisos.push(...nucleo.avisosAprendizado(porEntrega, planos, nucleo.PAPEIS));
       return avisos.length === 0
