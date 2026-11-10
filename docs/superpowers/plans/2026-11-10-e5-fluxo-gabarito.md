@@ -415,7 +415,7 @@ Conformidade: ao conferir spec nova, `loop.mjs aprendizados --para spec`, listan
 | ONB-1 | T4b (perfis), T6a, T6b, T9/T13/T14 (texto "fase N"), T13, T14 | `fixture-monorepo-5-perguntas`, `fixture-completa-tudo-detectado-3-perguntas`, `branchpadrao-nome-de-branch-nao-resolve`, `skill-3-fixas-na-ordem` | M-ONB2 (T6a), M-ONB1/3/4/5/7 (T6b), M-ONB6 (T14), M-ONB-p1–p3 (T4b) |
 | AUT-1 | T4a | `continua-autonomia-ausente-false-e-sim-texto-sob-demanda` | M-AUT1a–c |
 | NOM-1 | T5 | `nom-plantado-no-plugin-falha`, `nom-em-ledger-passa` | remover o caso ⇒ `nom-plantado` passa |
-| DOG-1 | T0 (plano.json), T17 | `registro.md` commitado | — |
+| DOG-1 | T0 (plano.json), T17 (onboarding) + D13 item 4 (`registro.md`) | onboarding neste repo; `registro.md` no aceite do dono (emenda Sombra, sombra-dog1.md) | — |
 | VIR-1 | T18 (bloqueada) | CI verde + merge do dono | — |
 | S1–S6 | T0 (S1, S3, S4 sint., S5, S6), T17 (S2, S4 real) | relatórios | — |
 
