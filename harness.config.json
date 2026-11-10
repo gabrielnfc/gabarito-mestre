@@ -1,10 +1,43 @@
 {
   "_comment": "Config do próprio repositório do plugin (dogfooding mínimo, E1/T6). `perfil: repo-sem-app` marca G3 e teardown como n/a no doctor — este repo não tem aplicação nem banco; R3, segredo e atestados seguem valendo. Sem `versionamento.resolvidoEm` de propósito: guard-versioning e o check de versionamento ficam em fail-open declarado (G9) até o onboarding da fase 3.",
   "perfil": "repo-sem-app",
-  "versionamento": { "branchPadrao": "main" },
+  "versionamento": {
+    "branchPadrao": "main"
+  },
   "guarda": {
     "ambientes": {
-      "teste": { "hosts": ["127.0.0.1", "localhost"] }
+      "teste": {
+        "hosts": [
+          "127.0.0.1",
+          "localhost"
+        ]
+      }
     }
+  },
+  "entrega": {
+    "politica": "sob_demanda",
+    "autonomia": false,
+    "base": "next"
+  },
+  "fluxo": {
+    "resolvidoEm": "2026-11-10",
+    "ferramenta": "clickup",
+    "mcp": "claude.ai ClickUp"
+  },
+  "orquestracao": {
+    "perfil": "padrao",
+    "modelo": {
+      "alias": "fable",
+      "politica": "mais-potente",
+      "validadeDias": 90,
+      "resolvidoEm": "2026-11-10"
+    }
+  },
+  "onboarding": {
+    "resolvidoEm": "2026-11-10",
+    "naoDetectado": [
+      "ambientes",
+      "versionamento"
+    ]
   }
 }
