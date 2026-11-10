@@ -208,9 +208,17 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
     const tw = maxCol(eq.agentes.map((a) => t(a.task)));
     if (vivos !== null) {
       // número nunca é cortado (P1c D-R6): se a linha mais larga não cabe, TODAS cedem juntas, texto primeiro (nível 1: sem modelo), depois o tempo inteiro (nível 2)
+      // níveis: 0 tudo · 1 sem modelo · 2 sem tempo · 3 sem o verbo do papel · 4 nome encurtado com `…` (texto, nunca número)
       let nivel = 0;
-      const montar = (n: number): Linha[] => eq.agentes.map((a) => linhaAgente(a, larga, nw, vw, n === 0 ? mw : 0, tw, n));
-      while (nivel < 2 && larga && montar(nivel).some((l) => larg(l) > w)) nivel++;
+      let nwUsado = nw;
+      const montar = (n: number): Linha[] => eq.agentes.map((a) => linhaAgente(a, larga, nwUsado, n >= 3 ? 0 : vw, n === 0 ? mw : 0, tw, n));
+      while (nivel < 4 && larga && montar(nivel).some((l) => larg(l) > w)) {
+        nivel++;
+        if (nivel === 4) {
+          const sobra = Math.max(...montar(3).map(larg)) - w;
+          nwUsado = Math.max(1, nw - sobra);
+        }
+      }
       for (const l of montar(nivel)) saida.push(cortarLinha(l, w));
     }
     for (const r of eq.revisoresAguardando) {
@@ -304,7 +312,7 @@ function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw
   const fim = cauda.length > 0 ? [seg(`  ${cauda.join(' · ')}`, 'inactive')] : [];
   if (semTask) return aparar([pre, seg('●', gc), seg(' '), seg('sem task', 'inactive'), seg(modelo, 'inactive'), seg('  '), ...ctx, ...fim]);
   return aparar([
-    pre, seg('●', gc), seg(' '), seg(pad(nome, nw), a.cor), seg('  '), seg(pad(textoDoPapel(a.papel), vw)), seg(pad(modelo, mw), 'inactive'),
+    pre, seg('●', gc), seg(' '), seg(pad(nivel >= 4 ? cortar(nome, nw) : nome, nw), a.cor), seg('  '), ...(vw > 0 ? [seg(pad(textoDoPapel(a.papel), vw))] : []), seg(pad(modelo, mw), 'inactive'),
     seg('  '), seg(pad(t(a.task), tw)), seg('  '), ...ctx, ...fim,
   ]);
 }

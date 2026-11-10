@@ -567,6 +567,7 @@ test('historico-integrada-sem-mutacoes-sem-sufixo', () => {
   assert.equal(t(undefined), 'T7 integrada');
   assert.equal(t({ total: 5, mortas: 5 }), 'T7 integrada · 5 mutações mortas');
   assert.equal(t({ total: 9, mortas: 0 }), 'T7 integrada · 0 mutações mortas');
+  assert.equal(t({ total: 0, mortas: 0 }), 'T7 integrada', 'total 0 = o gate não mediu: sem sufixo (ausente ≠ zero)');
   assert.equal(t({ total: 5, mortas: 1 }), 'T7 integrada · 1 mutação morta');
   for (const ruim of [{ total: 5, mortas: 6 }, { total: 5 }, { mortas: 5 }, { total: '5', mortas: '5' }, { total: 5, mortas: -1 }, { total: 5.5, mortas: 2 }, 'x', 3, null, []]) {
     assert.equal(t(ruim), 'T7 integrada', JSON.stringify(ruim));

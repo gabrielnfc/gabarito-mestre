@@ -242,6 +242,7 @@ function mutacoesDeHoje(ord                 , entrada               )           
     if (e.tipo !== 'task.integrada' || formaInvalida(e.tipo, e.dados) !== null || !ehObjeto(e.dados) || !ehObjeto(e.dados.mutacoes)) continue;
     if (dataCivil(Date.parse(e.ts), entrada.fuso) !== hoje) continue;
     const { total, mortas } = e.dados.mutacoes                                     ;
+    if (total === 0) continue; // o gate não mediu nada: ausente ≠ zero (Global Constraint)
     achou = { total: (achou?.total ?? 0) + total, mortas: (achou?.mortas ?? 0) + mortas };
   }
   return achou;

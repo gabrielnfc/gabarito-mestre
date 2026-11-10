@@ -249,7 +249,7 @@ export function fraseHistorico(ev: Evento, ctx: CtxHistorico): FraseHistorico | 
       if (!txt(task)) return null;
       const m = d('mutacoes');
       let sufixo = '';
-      if (ehObj(m) && inteiroNaoNeg(m.total) && inteiroNaoNeg(m.mortas) && m.mortas <= m.total) {
+      if (ehObj(m) && inteiroNaoNeg(m.total) && inteiroNaoNeg(m.mortas) && m.total > 0 && m.mortas <= m.total) {
         sufixo = ` · ${m.mortas} ${m.mortas === 1 ? 'mutação morta' : 'mutações mortas'}`;
       }
       return frase('✓', 'success', `${task} integrada${sufixo}`);

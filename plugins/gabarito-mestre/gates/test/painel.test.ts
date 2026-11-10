@@ -1189,3 +1189,22 @@ test('notificacao-so-do-parar-vigente: ts anterior ao loop.parar vigente é de u
   assert.deepEqual(n(15, seq), { hora: '12:15' });
   assert.equal(n(9, seq), null);
 });
+
+// ───────────────────────────── T6b r2: ausente ≠ zero vale para TODOS os presets (Global Constraint) ─────────────────────────────
+
+test('mortas-total-zero-igual-nos-presets: task integrada com mutacoes {total: 0} ⇒ nenhum preset escreve "0 mutações" nem "0 mortas"; medido (total > 0, 0 mortas) escreve 0 nos dois', () => {
+  const quadro = (mutacoes: { total: number; mortas: number }): Record<'esquadrao' | 'executivo', string> => {
+    const st = proj(P('T1', 'T2'), D([...ciclo('T1', 0, 10, { mutacoes }), ini(20, 'T2'), con(21, 'T2')]), { agoraMs: T0 + 30 * 60_000 });
+    const por = (preset: 'esquadrao' | 'executivo') => renderPainel(st, { preset, tema: 'mono', narracao: true, largura: 100 }).map((l) => l.map((s) => s.texto).join('')).join('\n');
+    return { esquadrao: por('esquadrao'), executivo: por('executivo') };
+  };
+  const nao = quadro({ total: 0, mortas: 0 });
+  assert.match(nao.esquadrao, /aguarda T2/, 'o cenário tem o revisor aguardando');
+  assert.match(nao.esquadrao, /T1 integrada/, 'e o histórico da integração');
+  for (const preset of ['esquadrao', 'executivo'] as const) assert.doesNotMatch(nao[preset], /\b0 (mutaç|mortas?\b|mutações)/, `${preset}: total 0 é "não mediu", não "0 mortas"\n${nao[preset]}`);
+  for (const preset of ['esquadrao', 'executivo'] as const) assert.doesNotMatch(nao[preset], /mutaç/, `${preset}: nenhuma menção a mutações`);
+  const medido = quadro({ total: 4, mortas: 0 });
+  assert.match(medido.esquadrao, /4 mutações do gate hoje, 0 mortas/, 'esquadrão: 0 medido continua 0');
+  assert.match(medido.esquadrao, /T1 integrada · 0 mutações mortas/);
+  assert.match(medido.executivo, /0 mutações mortas/, 'executivo: 0 medido continua 0');
+});

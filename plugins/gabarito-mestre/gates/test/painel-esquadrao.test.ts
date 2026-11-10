@@ -4,6 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderEsquadrao } from '../src/painel-esquadrao.ts';
@@ -674,4 +675,48 @@ test('esq-numero-nunca-cortado-60-69: a linha do agente em 60-69 colunas cede te
   assert.equal(achar(render(voo(), 70), /^├─ ● GIMLI/), '├─ ● GIMLI    implementando · sonnet  T8  ctx ███░░░░░░░ 31%  62k · 9m', 'com folga nada cai');
   // todas as linhas de agente da MESMA largura caem juntas (colunas alinhadas): LEGOLAS acompanha GIMLI
   assert.equal(achar(ls, /^├─ ● LEGOLAS/), '├─ ● LEGOLAS  em revisão     T9  ctx ██░░░░░░░░ 18%  36k');
+});
+
+// ───────────────────────────── T6b r2 (review r1, achado 1: número nunca cortado em NENHUM caso) ─────────────────────────────
+
+test('esq-numero-nunca-cortado-propriedade: todos os nomes de pacote × ids de task × ctx × larguras 44..200 ⇒ nenhum token numérico cortado em linha de agente', () => {
+  const nomes = new Set<string>();
+  for (const arq of ['galaxia', 'herois', 'hogwarts', 'terra-media']) {
+    const p = JSON.parse(readFileSync(join(AQUI, '..', '..', 'mod', 'temas', 'nomes', `${arq}.json`), 'utf8')) as PacoteNomes;
+    for (const n of [p.lider, p.sabio, ...p.nomes]) nomes.add(n);
+  }
+  assert.ok(nomes.has('DUMBLEDORE'), 'o pacote hogwarts entra');
+  const ids = ['T1', 'T10', 'T99', 'T123456789'];
+  const ctxs: (number | null)[] = [0, 999, 62_000, 128_000, 1_200_000, null];
+  let linhas = 0;
+  for (const nome of nomes) {
+    for (const id of ids) {
+      for (const tok of ctxs) {
+        const e = voo();
+        e.equipe.agentes = e.equipe.agentes.slice(0, 2).map((a, i) => ({ ...a, nome: i === 0 ? nome : `${nome}X`.slice(0, 10), task: id, ctxTok: tok, ctxPct: tok === null ? null : 64, desdeS: 5400 }));
+        e.equipe.vivos = 2;
+        for (let w = 44; w <= 200; w += w < 80 ? 1 : 7) {
+          for (const l of render(e, w).filter((x) => /^├─ [●◌] /.test(x) || /^└─ [●◌] /.test(x))) {
+            linhas++;
+            assert.ok(colunas(l) <= w, `${w}: estourou em "${l}"`);
+            assert.doesNotMatch(l, /\d+(k|M|%|m)?…/, `${w} ${nome} ${id} ${tok}: número cortado em "${l}"`);
+          }
+        }
+      }
+    }
+  }
+  assert.ok(linhas > 10_000, `a propriedade viu ${linhas} linhas`);
+  // o caso do review: DUMBLEDORE, T10, 128k em 60 colunas
+  const e = voo();
+  e.equipe.agentes = [{ ...e.equipe.agentes[0], nome: 'DUMBLEDORE', task: 'T10', ctxTok: 128_000, ctxPct: 64 }];
+  assert.match(achar(render(e, 60), /^├─ ● DUMBLEDORE/), /ctx █+░* 64%  128k$/);
+  // nome comprido (pacote de terceiro) + id de 10 caracteres: quando nem sem o verbo cabe, o NOME cede com `…`, o número não
+  e.equipe.agentes = [{ ...e.equipe.agentes[0], nome: 'NOMEMUITOCOMPRIDODOPACOTE', task: 'T123456789', ctxTok: 128_000, ctxPct: 64 }];
+  for (let w = 60; w <= 80; w++) {
+    const l = achar(render(e, w), /^├─ ● /);
+    assert.ok(colunas(l) <= w, `${w}: estourou`);
+    assert.match(l, /ctx █+░* 64%  128k$/, `${w}: ${l}`);
+    if (w < 70) assert.match(l, /^├─ ● NOME\S*…/, `${w}: o nome é que cede, com …: ${l}`);
+    else assert.match(l, /^├─ ● NOMEMUITOCOMPRIDODOPACOTE /, `${w}: com folga o nome fica inteiro: ${l}`);
+  }
 });

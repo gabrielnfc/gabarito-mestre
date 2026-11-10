@@ -145,8 +145,19 @@ function reprovar(a, task, rodada) {
  * de rodadas), T3 em voo com o agente vivo, proposta de emenda aberta na REQ de T3; (3) `loop.parar teto_rodadas` ⇒ o painel nos dois presets (os `.txt` da
  * pasta); (4) o dono aprova a emenda e libera T2, o loop conclui, o CI homolog fica verde e `entrega.mjs devolver` grava o pedido do dono ⇒ o painel mostra o comando.
  */
-export function caminhar() {
+export function caminhar(opcoes = {}) {
   const a = montar();
+  try {
+    return caminhada(a, opcoes);
+  } catch (erro) {
+    // a caminhada falhou no meio: o temporário não fica para trás (e a falha original é a que sobe)
+    limparSemLancar({ base: a.base });
+    throw erro;
+  }
+}
+
+function caminhada(a, opcoes) {
+  opcoes.aposMontar?.(a);
   const loop = (...args) => a.rodar('loop.mjs', args);
   const painel = (args, input) => a.rodar('painel.mjs', args, input);
   const obs = { dir: a.dir, base: a.base, entregas: a.entregas };
@@ -217,6 +228,11 @@ export function caminhar() {
 export function limpar(obs) {
   if (typeof obs?.base !== 'string' || !basename(obs.base).startsWith('fumaca-e4-') || realpathSync(dirname(obs.base)) !== realpathSync(tmpdir())) throw new Error(`recuso apagar fora do temporário da fumaça: ${String(obs?.base)}`);
   rmSync(obs.base, { recursive: true, force: true });
+}
+
+/** `limpar` para o `after` da suíte: nunca lança (um `after` que lança vira falha que esconde a causa). */
+export function limparSemLancar(obs) {
+  try { limpar(obs); } catch { /* o que a suíte reporta é a asserção que falhou, não a limpeza */ }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

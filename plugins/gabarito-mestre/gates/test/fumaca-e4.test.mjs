@@ -11,18 +11,18 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { caminhar, limpar } from './fumaca-e4/caminhada.mjs';
+import { caminhar, limpar, limparSemLancar } from './fumaca-e4/caminhada.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const lido = (nome) => readFileSync(join(AQUI, 'fumaca-e4', nome), 'utf8');
 
 const o = caminhar();
 // a caminhada cria um repo git e um bare em `<tmp>/fumaca-e4-*`: nada fica depois do `npm test`
-after(() => { limpar(o); });
+after(() => { limparSemLancar(o); });
 const tipos = (t) => o.eventos.filter((e) => e.tipo === t);
 
 test('fumaca-spec-aprovada-pelo-hook: aguardando ⇒ aprova (sha256 dos bytes) ⇒ painel sem pendência; a 2ª aprovação do mesmo sha é recusada sem gravar', () => {
@@ -144,4 +144,18 @@ test('fumaca-limpa-o-temporario: o diretório da caminhada existe durante os tes
   assert.throws(() => limpar({ base: AQUI }), /recuso apagar/, 'a pasta de testes nunca é apagada');
   assert.throws(() => limpar({ base: join(tmpdir(), 'qualquer-coisa') }), /recuso apagar/, 'nome fora do padrão fumaca-e4-*');
   assert.ok(existsSync(AQUI));
+});
+
+test('fumaca-limpa-o-temporario-quando-a-caminhada-falha: erro no meio ⇒ a falha original sobe e nenhum <tmp>/fumaca-e4-* novo fica', () => {
+  const sobras = () => readdirSync(tmpdir()).filter((n) => n.startsWith('fumaca-e4-'));
+  const antes = new Set(sobras());
+  assert.throws(() => caminhar({ aposMontar: () => { throw new Error('falha injetada'); } }), /falha injetada/);
+  assert.deepEqual(sobras().filter((n) => !antes.has(n)), [], 'o temporário da caminhada que falhou foi removido');
+});
+
+test('fumaca-limpar-sem-lancar: limpar recusa o que não é da fumaça; limparSemLancar engole a recusa (o after nunca lança)', () => {
+  for (const ruim of [undefined, {}, { base: tmpdir() }, { base: join(tmpdir(), 'outra-coisa') }]) {
+    assert.throws(() => limpar(ruim), /recuso apagar/);
+    assert.doesNotThrow(() => limparSemLancar(ruim));
+  }
 });

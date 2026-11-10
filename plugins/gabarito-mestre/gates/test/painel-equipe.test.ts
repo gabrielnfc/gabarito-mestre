@@ -651,6 +651,18 @@ test('mutacoes-hoje-fuso-virada-do-dia', () => {
   assert.equal(por([]).mortasHoje, null);
 });
 
+test('mutacoes-hoje-total-zero-e-ausente: total 0 = o gate não mediu ⇒ não soma (null, nunca 0); 0 medido (total > 0) é 0', () => {
+  SEQ = 0;
+  const conc = [ev('task.iniciada', { task: 'T07', papel: 'implementador' }, '2026-11-09T10:00:00.000Z'), ev('task.concluida', { task: 'T07' }, '2026-11-09T10:01:00.000Z')];
+  const por = (extra: Evento[]) => projetarEquipe(PLANO, [...conc, ...extra], entrada()).revisoresAguardando[0];
+  const vazia = por([integrada('T09', '2026-11-09T11:00:00.000Z', { total: 0, mortas: 0 })]);
+  assert.deepEqual([vazia.mutacoesHoje, vazia.mortasHoje], [null, null]);
+  const mista = por([integrada('T08', '2026-11-09T11:00:00.000Z', { total: 0, mortas: 0 }), integrada('T09', '2026-11-09T11:30:00.000Z', { total: 4, mortas: 3 })]);
+  assert.deepEqual([mista.mutacoesHoje, mista.mortasHoje], [4, 3], 'a integração sem medição não entra na soma');
+  const medido = por([integrada('T09', '2026-11-09T11:00:00.000Z', { total: 4, mortas: 0 })]);
+  assert.deepEqual([medido.mutacoesHoje, medido.mortasHoje], [4, 0], '0 medido ≠ ausente');
+});
+
 test('mutacoes-hoje-em-toda-linha', () => {
   SEQ = 0;
   const eventos = [
