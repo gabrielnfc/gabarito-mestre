@@ -24,7 +24,7 @@ Versão estável da 2.0. Quem está na 1.1.x: leia `docs/virada-2.0.md` (como at
 - **Catálogo de ferramentas de planejamento**: entrada da **Mesa**, gerenciador local de projetos com servidor MCP (`mcp__mesa__*`), com card de Iniciativa e de Epic e busca do card pelo `cardTaskId`. Contribuição de Allan Rolli (PR #12).
 - **Doctor**: linhas `loop: mod ativo | sem mod` e `db: declarado | n/a`; "mod ativo" exige prova da sessão, não basta o mod existir.
 - **Base do PR da entrega**: o PR vai para a base escolhida no onboarding. Se a `main` remota ainda não tem essa escolha, a base é lida do `harness.config.json` commitado na branch, e a entrega avisa de onde ela veio. Só a base é lida da branch: as regras de produção continuam vindo da `main` remota.
-- **Push e PR sem pedir de novo**: a regra R1 do `AGENTS.md` ganha uma exceção. Com entrega por PR, a spec aprovada vale como ok para o push da branch e para abrir o PR. Merge, deploy, release e tag continuam pedindo ok.
+- **Push e PR sem pedir de novo**: a regra R1 do `AGENTS.md` ganha uma exceção. Com entrega por PR, a spec aprovada vale como ok para o push da branch e para abrir o PR. Merge, deploy, release e tag continuam pedindo ok. Limite: um repositório com o `AGENTS.md` da 1.1.0 só ganha a exceção ao aplicar o `AGENTS.md.novo` da 2.0.0; até lá o loop para antes do push e do PR e dá ao dono os comandos. Push e PR no modo `auto` não foram medidos.
 
 ### Alterado (quebra de comportamento em relação à 1.1)
 

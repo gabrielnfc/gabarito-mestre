@@ -338,5 +338,24 @@ check "skill, adocao.md e README não mandam --calibrar esperando simultaneos/te
 check "skill gabarito-instalar NÃO chama capacidade.mjs (a orquestração vem do detectar)" '! grep -q "capacidade\.mjs" "$SKILL_I" "'"$ST"'"' "a skill voltou a chamar capacidade.mjs"
 SUG_JSON=$(cd "$ROOT" && node "$CAP" --root "$ROOT" --sugerir --json 2>/dev/null)
 
+# GM-13 T18 r2: nota da virada e CHANGELOG [2.0.0] só citam comando `claude plugin …` MEDIDO (lista fechada: spike t17da + --help lido
+# na T18 r2), sem o nome antigo do fluxo e sem o `#next` como caminho do adotante.
+VIRADA="$ROOT/docs/virada-2.0.md"
+NOME_ANTIGO="Workflow"" TRUE"   # montado em dois pedaços: NOM-1 varre este arquivo
+CL2=$(sed -n '/^## \[2\.0\.0\]/,/^## \[1\./p' "$ROOT/CHANGELOG.md" | sed '$d')
+check "CHANGELOG tem a seção [2.0.0] com conteúdo" '[ "$(printf "%s" "$CL2" | wc -l | tr -d " ")" -gt 10 ]' "seção [2.0.0] vazia ou ausente"
+check "nota da virada não diz o nome antigo do fluxo" '! grep -q "$NOME_ANTIGO" "$VIRADA"' "termo antigo na nota"
+check "CHANGELOG [2.0.0] não diz o nome antigo do fluxo" '! printf "%s" "$CL2" | grep -q "$NOME_ANTIGO"' "termo antigo no CHANGELOG [2.0.0]"
+check "nota da virada não manda usar o #next (nem disable) como caminho do adotante" '! grep -qE "#next|plugin disable" "$VIRADA"' "passo do #next/disable voltou"
+CMDS_OK='claude plugin marketplace update gabarito-mestre
+claude plugin update gabarito-mestre@gabarito-mestre
+claude plugin uninstall gabarito-mestre@gabarito-mestre-next --scope project
+claude plugin marketplace remove gabarito-mestre-next
+claude plugin list'
+CMDS_NOTA=$( { grep -oE 'claude plugin [^`]+' "$VIRADA"; printf "%s" "$CL2" | grep -oE 'claude plugin [^`]+'; } | sort -u)
+CMDS_FORA=$(printf "%s\n" "$CMDS_NOTA" | grep -vxF -f <(printf "%s\n" "$CMDS_OK") | grep . | wc -l | tr -d ' ')
+check "nota e CHANGELOG [2.0.0]: todo 'claude plugin …' está na lista fechada de comandos medidos" '[ "$CMDS_FORA" -eq 0 ]' "$CMDS_FORA comando(s) fora da lista medida"
+check "nota da virada cita os 5 comandos medidos (nenhum sumiu)" '[ "$(printf "%s\n" "$CMDS_NOTA" | grep -cxF -f <(printf "%s\n" "$CMDS_OK"))" -eq 5 ]' "comando medido ausente da nota"
+
 echo "── $falhas falha(s)"
 [ "$falhas" -eq 0 ]
