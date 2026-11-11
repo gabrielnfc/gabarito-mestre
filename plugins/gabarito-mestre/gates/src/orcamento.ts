@@ -28,20 +28,29 @@ export function orcamentoDe(h: number | undefined, maxRows: number): number {
 const pesoDe = (p: unknown): number => (typeof p === 'number' && !Number.isNaN(p) ? Math.max(p, 1) : Number.POSITIVE_INFINITY);
 const ordemDe = (o: unknown): number => (typeof o === 'number' && !Number.isNaN(o) ? o : Number.POSITIVE_INFINITY);
 
+export type Cortadas = { linhas: Linha[]; cortadas: number; cortadasTopo: number };
+
 /**
- * Linhas de prioridade 1..k, na ordem de exibição (`ordem`), até `orcamento`. Prioridade 1 (o topo) nunca sai: se há mais
- * linhas de topo que o orçamento (PAROU + `(+N)` com orçamento 1), todas ficam e nada de prioridade maior entra. Entre
- * prioridades iguais corta as de maior `ordem`; empate total, pela posição na entrada. Não altera a entrada.
- * Orçamento inválido (`NaN`, ≤ 0) conta como 1; fração, piso.
+ * Linhas de prioridade 1..k, na ordem de exibição (`ordem`), SEMPRE no máximo `orcamento` (spec D15: nunca passa dele).
+ * O corte é por prioridade e, entre iguais, por `ordem` (as de maior `ordem` saem); empate total, pela posição na entrada.
+ * Com várias linhas de prioridade 1 e orçamento menor, ficam as de menor `ordem` (PAROU vence a pergunta) e as demais saem,
+ * contadas em `cortadasTopo` para o `(+N)` do chamador (T17). `cortadas` conta toda linha que saiu. Não altera a entrada.
+ * Orçamento inválido (`NaN`, ≤ 0) conta como 1; fração, piso. Prioridade `NaN`/não número é a última a entrar; < 1 é topo.
  */
-export function porPrioridade(ls: LinhaPrioridade[], orcamento: number): Linha[] {
+export function cortarPorPrioridade(ls: LinhaPrioridade[], orcamento: number): Cortadas {
   const limite = typeof orcamento === 'number' && !Number.isNaN(orcamento) ? Math.max(1, Math.floor(orcamento)) : 1;
   const indexadas = ls.map((x, i) => ({ x, i, p: pesoDe(x.prioridade), o: ordemDe(x.ordem) }));
   const porCorte = [...indexadas].sort((a, b) => a.p - b.p || a.o - b.o || a.i - b.i);
-  const topo = porCorte.filter((e) => e.p <= 1).length;
-  const ficam = new Set(porCorte.slice(0, Math.max(topo, limite)));
-  return indexadas
+  const ficam = new Set(porCorte.slice(0, limite));
+  const linhas = indexadas
     .filter((e) => ficam.has(e))
     .sort((a, b) => a.o - b.o || a.i - b.i)
     .map((e) => e.x.l);
+  const fora = porCorte.slice(limite);
+  return { linhas, cortadas: fora.length, cortadasTopo: fora.filter((e) => e.p <= 1).length };
+}
+
+/** Só as linhas de `cortarPorPrioridade`: no máximo `orcamento`. */
+export function porPrioridade(ls: LinhaPrioridade[], orcamento: number): Linha[] {
+  return cortarPorPrioridade(ls, orcamento).linhas;
 }

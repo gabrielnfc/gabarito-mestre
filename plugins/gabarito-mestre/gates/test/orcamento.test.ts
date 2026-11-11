@@ -5,14 +5,15 @@
  *  M13     orçamento = maxRows (sem o teto por H)        ⇒ `orcamento-tela-cheia`, `orcamento-sem-tela-cheia` falham
  *  M17     H desconhecido ⇒ maxRows                      ⇒ `orcamento-h-ausente`, `orcamento-h-invalido-x-ausente` falham
  *  M-T2a   corte por `ordem` em vez de prioridade        ⇒ `corte-por-prioridade-nao-por-ordem` falha
- *  M-T2b   topo cortado pelo orçamento                   ⇒ `topo-2-linhas-orcamento-1-ficam-as-duas` falha
+ *  M-T2b   topo passa do orçamento (`Math.max(topo, limite)`) ⇒ `topo-multiplo-nunca-passa-do-orcamento`, `nunca-mais-que-orcamento` falham
+ *  (M-T2a do plano, histórico prio 6 cortado antes da equipe, só existe onde a prioridade é atribuída: passa para a T17)
  *  M-T2c   piso 1 trocado por piso 0                     ⇒ `orcamento-piso-1` falha
  *  M-T2d   H infinito tratado como conhecido             ⇒ `orcamento-h-invalido-x-ausente` falha
  *  M-T2e   maxRows fracionário aceito                    ⇒ `orcamento-max-rows-invalido` falha
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { orcamentoDe, porPrioridade, type LinhaPrioridade } from '../src/orcamento.ts';
+import { cortarPorPrioridade, orcamentoDe, porPrioridade, type LinhaPrioridade } from '../src/orcamento.ts';
 import type { Linha } from '../src/tipos.ts';
 
 const linha = (texto: string): Linha => [{ texto }];
@@ -115,10 +116,15 @@ test('nunca-mais-que-orcamento', () => {
   // várias linhas de mesma prioridade (histórico até 5): empate por `ordem`, corta as últimas
   const hist = [lp(1, 1, 'topo'), lp(6, 2, 'h1'), lp(6, 3, 'h2'), lp(6, 4, 'h3')];
   assert.deepEqual(textos(porPrioridade(hist, 3)), ['topo', 'h1', 'h2']);
+  // várias linhas de prioridade 1 (topo múltiplo): também nunca passa do orçamento
+  const topos = [lp(1, 1, 'PAROU'), lp(1, 2, 'pergunta'), lp(1, 3, 'depende'), lp(2, 4, 'trilha')];
+  for (let orc = 1; orc <= 6; orc++) assert.ok(porPrioridade(topos, orc).length <= orc, `topo múltiplo, orçamento ${orc}`);
+  assert.equal(porPrioridade(topos, 1).length, 1);
+  assert.equal(porPrioridade(topos, 2).length, 2);
 });
 
 test('topo-nunca-sai-orcamento-1', () => {
-  // orçamento 1: a linha de prioridade 1 fica e o resto sai
+  // orçamento 1: a linha de prioridade 1 fica (é a que entra antes das outras) e o resto sai
   const ls = [lp(2, 2, 'trilha'), lp(1, 1, 'PAROU'), lp(3, 3, 'progresso')];
   assert.deepEqual(textos(porPrioridade(ls, 1)), ['PAROU']);
   // orçamento inválido (0, negativo, NaN, Infinity) ⇒ trata como 1, sem lançar
@@ -127,16 +133,33 @@ test('topo-nunca-sai-orcamento-1', () => {
   assert.equal(porPrioridade(ls, 2.9).length, 2); // fração: piso
 });
 
-test('topo-2-linhas-orcamento-1-ficam-as-duas', () => {
-  // P1 da Sombra: prioridade 1 com 2+ linhas (PAROU + "(+1)" da pergunta) e orçamento 1.
-  // Decisão: o topo é uma unidade, nada some em silêncio. Todas as de prioridade 1 ficam, mesmo acima do orçamento;
-  // as de prioridade maior só entram no que sobra (aqui, nada).
-  const ls = [lp(1, 1, 'PAROU'), lp(1, 2, '(+1)'), lp(2, 3, 'trilha'), lp(3, 4, 'progresso')];
-  assert.deepEqual(textos(porPrioridade(ls, 1)), ['PAROU', '(+1)']);
-  assert.deepEqual(textos(porPrioridade(ls, 2)), ['PAROU', '(+1)']);
-  // orçamento 3: topo (2) + 1 do que sobra, a de menor prioridade numérica
-  assert.deepEqual(textos(porPrioridade(ls, 3)), ['PAROU', '(+1)', 'trilha']);
-  assert.deepEqual(textos(porPrioridade(ls, 4)), ['PAROU', '(+1)', 'trilha', 'progresso']);
+test('topo-multiplo-nunca-passa-do-orcamento', () => {
+  // D15: nunca passa do orçamento, nem com várias linhas de prioridade 1. Ficam as de menor `ordem` (PAROU vence a pergunta);
+  // o que saiu é contado em `cortadasTopo` para o `(+N)` da T17.
+  const ls = [lp(1, 2, 'pergunta'), lp(1, 1, 'PAROU'), lp(2, 3, 'trilha'), lp(3, 4, 'progresso')];
+  const r1 = cortarPorPrioridade(ls, 1);
+  assert.deepEqual(textos(r1.linhas), ['PAROU']);
+  assert.equal(r1.cortadas, 3);
+  assert.equal(r1.cortadasTopo, 1);
+  const r2 = cortarPorPrioridade(ls, 2);
+  assert.deepEqual(textos(r2.linhas), ['PAROU', 'pergunta']);
+  assert.deepEqual([r2.cortadas, r2.cortadasTopo], [2, 0]);
+  const r3 = cortarPorPrioridade(ls, 3);
+  assert.deepEqual(textos(r3.linhas), ['PAROU', 'pergunta', 'trilha']);
+  assert.deepEqual([r3.cortadas, r3.cortadasTopo], [1, 0]);
+  assert.deepEqual(cortarPorPrioridade(ls, 4), { linhas: [ls[1].l, ls[0].l, ls[2].l, ls[3].l], cortadas: 0, cortadasTopo: 0 });
+  // porPrioridade é só as linhas, mesmas do corte
+  assert.deepEqual(porPrioridade(ls, 1), r1.linhas);
+});
+
+test('cortadas-conta-o-que-saiu', () => {
+  const ls = [lp(1, 1, 'a'), lp(1, 2, 'b'), lp(1, 3, 'c'), lp(2, 4, 'd'), lp(6, 5, 'e')];
+  for (let orc = 1; orc <= 6; orc++) {
+    const r = cortarPorPrioridade(ls, orc);
+    assert.equal(r.linhas.length + r.cortadas, ls.length, `orçamento ${orc}`);
+    assert.equal(r.cortadasTopo, Math.max(0, 3 - orc), `orçamento ${orc}`);
+  }
+  assert.deepEqual(cortarPorPrioridade([], 3), { linhas: [], cortadas: 0, cortadasTopo: 0 });
 });
 
 test('porPrioridade-total-e-pura', () => {
