@@ -1,0 +1,518 @@
+{
+ "entrega": "GM-14",
+ "spec": "docs/superpowers/specs/2026-11-11-gm14-clareza-design.md",
+ "tasks": [
+  {
+   "id": "T0",
+   "titulo": "Spikes pré-construção",
+   "deps": [],
+   "arquivos": [
+    ".superpowers/sdd/2026-11-11-proxima/t0-relatorio.md"
+   ],
+   "reqs": [
+    "REQ-GLB-1"
+   ]
+  },
+  {
+   "id": "T1",
+   "titulo": "Contratos, formas e fiação",
+   "deps": [],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/src/tipos.ts",
+    "plugins/gabarito-mestre/gates/src/formas.ts",
+    "plugins/gabarito-mestre/gates/scripts/build.mjs",
+    "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+    "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+    "plugins/gabarito-mestre/gates/scripts/onboarding.mjs",
+    "plugins/gabarito-mestre/gates/src/orcamento.ts",
+    "plugins/gabarito-mestre/gates/src/trilha.ts",
+    "plugins/gabarito-mestre/gates/src/perguntas.ts",
+    "plugins/gabarito-mestre/gates/src/depende.ts",
+    "plugins/gabarito-mestre/gates/src/origem.ts",
+    "plugins/gabarito-mestre/gates/src/ferramentas.ts",
+    "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
+    "plugins/gabarito-mestre/gates/scripts/responder.mjs",
+    "plugins/gabarito-mestre/gates/scripts/onboarding-herdar.mjs",
+    "plugins/gabarito-mestre/gates/scripts/onboarding-foco.mjs",
+    "plugins/gabarito-mestre/gates/scripts/onboarding-resposta.mjs",
+    "plugins/gabarito-mestre/gates/test/formas.test.ts",
+    "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs"
+   ],
+   "reqs": [
+    "REQ-CHT-1",
+    "REQ-DEP-1",
+    "REQ-DIA-1",
+    "REQ-DIA-2",
+    "REQ-GLB-1",
+    "REQ-LNG-1",
+    "REQ-ONB-2",
+    "REQ-ONB-3",
+    "REQ-PRG-1",
+    "REQ-TRI-1"
+   ]
+  },
+  {
+   "id": "T2",
+   "titulo": "Orçamento e prioridade de linhas",
+   "deps": [
+    "T1"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/src/orcamento.ts",
+    "plugins/gabarito-mestre/gates/test/orcamento.test.ts"
+   ],
+   "reqs": [
+    "REQ-GLB-1"
+   ]
+  },
+  {
+   "id": "T3",
+   "titulo": "Trilha, fase e progresso",
+   "deps": [
+    "T1",
+    "T0"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/src/trilha.ts",
+    "plugins/gabarito-mestre/gates/test/trilha.test.ts",
+    "plugins/gabarito-mestre/gates/test/fixtures/trilha/"
+   ],
+   "reqs": [
+    "REQ-TRI-1"
+   ]
+  },
+  {
+   "id": "T4",
+   "titulo": "Origem, normalização e regex técnica",
+   "deps": [
+    "T1"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/src/origem.ts",
+    "plugins/gabarito-mestre/gates/test/origem.test.ts"
+   ],
+   "reqs": [
+    "REQ-LNG-1"
+   ]
+  },
+  {
+   "id": "T5",
+   "titulo": "Linha de ferramenta natural",
+   "deps": [
+    "T1",
+    "T0"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/src/ferramentas.ts",
+    "plugins/gabarito-mestre/mod/gabarito.mjs",
+    "command.run",
+    "plugins/gabarito-mestre/mod/chat.mjs",
+    "plugins/gabarito-mestre/mod/test/chat.test.ts",
+    "plugins/gabarito-mestre/gates/test/ferramentas.test.ts"
+   ],
+   "reqs": [
+    "REQ-CHT-1"
+   ]
+  },
+  {
+   "id": "T6",
+   "titulo": "`loop.mjs anotar`",
+   "deps": [
+    "T1"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+    "plugins/gabarito-mestre/gates/test/loop-anotar.test.mjs"
+   ],
+   "reqs": [
+    "REQ-DIA-2"
+   ]
+  },
+  {
+   "id": "T7",
+   "titulo": "Onboarding em linguagem simples",
+   "deps": [
+    "T1"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/scripts/onboarding.mjs",
+    "plugins/gabarito-mestre/gates/lib/glossario.mjs",
+    "plugins/gabarito-mestre/gates/test/onboarding-texto.test.mjs",
+    "plugins/gabarito-mestre/gates/test/fixtures/onboarding/golden-perguntas-2.0.0.json"
+   ],
+   "reqs": [
+    "REQ-ONB-2"
+   ]
+  },
+  {
+   "id": "T8",
+   "titulo": "Herança da 1.x, coleta",
+   "deps": [
+    "T1",
+    "T0"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/scripts/onboarding-herdar.mjs",
+    "plugins/gabarito-mestre/gates/test/onboarding-herdar.test.mjs",
+    "plugins/gabarito-mestre/gates/test/fixtures/onboarding/repo-110/"
+   ],
+   "reqs": [
+    "REQ-ONB-3"
+   ]
+  },
+  {
+   "id": "T9",
+   "titulo": "Oferta do modo foco",
+   "deps": [
+    "T1",
+    "T0"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/scripts/onboarding-foco.mjs",
+    "plugins/gabarito-mestre/gates/test/onboarding-foco.test.mjs"
+   ],
+   "reqs": [
+    "REQ-ONB-2"
+   ]
+  },
+  {
+   "id": "T10",
+   "titulo": "Instalador ignora `_onboarding/`",
+   "deps": [
+    "T1"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/scripts/instalar.sh",
+    "'.harness/entregas/_onboarding/'",
+    "'.harness/painel-medir.json'",
+    "plugins/gabarito-mestre/scripts/test/instalar.test.sh"
+   ],
+   "reqs": [
+    "REQ-ONB-3"
+   ]
+  },
+  {
+   "id": "T11",
+   "titulo": "`painel.mjs medir`",
+   "deps": [
+    "T3"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
+    "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs",
+    "plugins/gabarito-mestre/gates/test/fixtures/gh/"
+   ],
+   "reqs": [
+    "REQ-DIA-1"
+   ]
+  },
+  {
+   "id": "T12",
+   "titulo": "Perguntas abertas",
+   "deps": [
+    "T3"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/src/perguntas.ts",
+    "plugins/gabarito-mestre/gates/test/perguntas.test.ts"
+   ],
+   "reqs": [
+    "REQ-PRG-1"
+   ]
+  },
+  {
+   "id": "T13",
+   "titulo": "\"Depende de você\" fora do loop",
+   "deps": [
+    "T3"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/src/depende.ts",
+    "plugins/gabarito-mestre/gates/test/depende.test.ts"
+   ],
+   "reqs": [
+    "REQ-DEP-1"
+   ]
+  },
+  {
+   "id": "T14",
+   "titulo": "Hook `responder`",
+   "deps": [
+    "T12"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/scripts/responder.mjs",
+    "plugins/gabarito-mestre/hooks/hooks.json",
+    "plugins/gabarito-mestre/skills/responder/SKILL.md",
+    "plugins/gabarito-mestre/skills/aprovar",
+    "plugins/gabarito-mestre/gates/test/responder.test.mjs"
+   ],
+   "reqs": [
+    "REQ-PRG-1"
+   ]
+  },
+  {
+   "id": "T15",
+   "titulo": "`idDaBranch` no loop e aprovar sem plano",
+   "deps": [
+    "T3",
+    "T6"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+    "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+    "plugins/gabarito-mestre/gates/test/aprovar-spec.test.mjs"
+   ],
+   "reqs": [
+    "REQ-TRI-1"
+   ]
+  },
+  {
+   "id": "T16",
+   "titulo": "Núcleo da herança e instantâneo",
+   "deps": [
+    "T1",
+    "T0"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/src/aprendizado.ts",
+    "plugins/gabarito-mestre/gates/src/diario.ts",
+    "plugins/gabarito-mestre/gates/test/aprendizado.test.ts",
+    "plugins/gabarito-mestre/gates/test/diario.test.ts"
+   ],
+   "reqs": [
+    "REQ-ONB-3"
+   ]
+  },
+  {
+   "id": "T17",
+   "titulo": "Painel no núcleo: estado e linguagem",
+   "deps": [
+    "T2",
+    "T3",
+    "T4",
+    "T12",
+    "T13"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/src/painel.ts",
+    "plugins/gabarito-mestre/gates/src/painel-texto.ts",
+    "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
+    "plugins/gabarito-mestre/gates/src/painel-executivo.ts",
+    "plugins/gabarito-mestre/gates/src/tipos.ts",
+    "plugins/gabarito-mestre/gates/test/painel-altura.test.ts",
+    "plugins/gabarito-mestre/gates/test/painel-equipe.test.ts",
+    "plugins/gabarito-mestre/gates/test/painel-esquadrao.test.ts",
+    "plugins/gabarito-mestre/gates/test/painel-executivo.test.ts",
+    "plugins/gabarito-mestre/gates/test/painel-formato.test.ts",
+    "plugins/gabarito-mestre/gates/test/painel-golden.test.ts",
+    "plugins/gabarito-mestre/gates/test/painel-hora.test.ts",
+    "plugins/gabarito-mestre/gates/test/painel-numero-inteiro.test.ts",
+    "plugins/gabarito-mestre/gates/test/painel-presets.test.ts",
+    "plugins/gabarito-mestre/gates/test/painel-texto.test.ts",
+    "plugins/gabarito-mestre/gates/test/painel.test.ts",
+    "plugins/gabarito-mestre/gates/test/painel-golden/",
+    "plugins/gabarito-mestre/gates/test/painel-lng.test.ts"
+   ],
+   "reqs": [
+    "REQ-GLB-1",
+    "REQ-DEP-1",
+    "REQ-LNG-1"
+   ]
+  },
+  {
+   "id": "T18",
+   "titulo": "`painel.mjs estado` em toda fase",
+   "deps": [
+    "T11",
+    "T15",
+    "T17"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+    "painel-medir.json",
+    "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
+    "plugins/gabarito-mestre/gates/test/painel-costura.test.mjs"
+   ],
+   "reqs": [
+    "REQ-GLB-1"
+   ]
+  },
+  {
+   "id": "T19",
+   "titulo": "Hook da herança",
+   "deps": [
+    "T8",
+    "T14",
+    "T16"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/scripts/onboarding-resposta.mjs",
+    "plugins/gabarito-mestre/hooks/hooks.json",
+    "plugins/gabarito-mestre/gates/test/onboarding-resposta.test.mjs"
+   ],
+   "reqs": [
+    "REQ-ONB-3"
+   ]
+  },
+  {
+   "id": "T20",
+   "titulo": "Mod: um painel acima do input",
+   "deps": [
+    "T18",
+    "T11",
+    "T0"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/mod/painel.mjs",
+    "ui.close",
+    "turn.complete",
+    "plugins/gabarito-mestre/mod/test/gabarito.test.ts"
+   ],
+   "reqs": [
+    "REQ-GLB-1",
+    "REQ-PRG-1"
+   ]
+  },
+  {
+   "id": "T21",
+   "titulo": "Skill instalar: simples, herança, foco",
+   "deps": [
+    "T7",
+    "T8",
+    "T9",
+    "T19"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/skills/gabarito-instalar/SKILL.md",
+    "plugins/gabarito-mestre/skills/gabarito-instalar/trocar.md",
+    "plugins/gabarito-mestre/gates/test/onboarding-skill.test.mjs"
+   ],
+   "reqs": [
+    "REQ-ONB-2",
+    "REQ-ONB-3"
+   ]
+  },
+  {
+   "id": "T22",
+   "titulo": "Skill do loop, anotar e nota da 2.1.0",
+   "deps": [
+    "T5",
+    "T6",
+    "T14",
+    "T16",
+    "T0"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/skills/gabarito-loop/SKILL.md",
+    "plugins/gabarito-mestre/reference/AGENTS.md",
+    "plugins/gabarito-mestre/commands/gabarito.md",
+    "plugins/gabarito-mestre/scripts/test/texto.test.sh",
+    "plugins/gabarito-mestre/gates/test/skills-shell.test.mjs",
+    "plugins/gabarito-mestre/docs/virada-2.1.md"
+   ],
+   "reqs": [
+    "REQ-DIA-2"
+   ]
+  },
+  {
+   "id": "T23",
+   "titulo": "Fumaça sem LLM (P9)",
+   "deps": [
+    "T11",
+    "T14",
+    "T18",
+    "T19"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/test/fumaca-gm14.test.mjs",
+    "plugins/gabarito-mestre/gates/test/fumaca-gm14/caminhada.mjs",
+    "plugins/gabarito-mestre/gates/test/fumaca-gm14/spec.md",
+    "dist/"
+   ],
+   "reqs": [
+    "REQ-CHT-1",
+    "REQ-DEP-1",
+    "REQ-DIA-1",
+    "REQ-DIA-2",
+    "REQ-GLB-1",
+    "REQ-LNG-1",
+    "REQ-ONB-2",
+    "REQ-ONB-3",
+    "REQ-PRG-1",
+    "REQ-TRI-1"
+   ]
+  },
+  {
+   "id": "T24",
+   "titulo": "Runner do A1 e guarda das falas",
+   "deps": [
+    "T20",
+    "T22",
+    "T23"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/pontos.json",
+    "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/rodar-a1.mjs",
+    "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/a1.exp",
+    "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/gh-fixture/",
+    "plugins/gabarito-mestre/gates/test/conversa-pontos.test.mjs"
+   ],
+   "reqs": [
+    "REQ-LNG-1",
+    "REQ-GLB-1"
+   ]
+  },
+  {
+   "id": "T25",
+   "titulo": "Aceites A1 e A3, alpha e PR",
+   "deps": [
+    "T1",
+    "T2",
+    "T3",
+    "T4",
+    "T5",
+    "T6",
+    "T7",
+    "T8",
+    "T9",
+    "T10",
+    "T11",
+    "T12",
+    "T13",
+    "T14",
+    "T15",
+    "T16",
+    "T17",
+    "T18",
+    "T19",
+    "T20",
+    "T21",
+    "T22",
+    "T23",
+    "T24"
+   ],
+   "arquivos": [
+    "plugins/gabarito-mestre/.claude-plugin/plugin.json",
+    "plugins/gabarito-mestre/gates/package.json",
+    "plugins/gabarito-mestre/gates/test/package.test.mjs",
+    "plugins/gabarito-mestre/scripts/test/texto.test.sh",
+    "2.1.0-alpha.1",
+    "CHANGELOG.md",
+    "docs/ledgers/GM-14.md"
+   ],
+   "reqs": [
+    "REQ-CHT-1",
+    "REQ-DEP-1",
+    "REQ-DIA-1",
+    "REQ-DIA-2",
+    "REQ-GLB-1",
+    "REQ-LNG-1",
+    "REQ-ONB-2",
+    "REQ-ONB-3",
+    "REQ-PRG-1",
+    "REQ-TRI-1"
+   ]
+  }
+ ]
+}
