@@ -178,7 +178,10 @@ export type Segmento = { texto: string; cor?: CorTema };
 export type Linha = Segmento[];
 export type PacoteNomes = { nome: string; lider: string; sabio: string; nomes: string[] };
 export type UsoAgente = { contexto: number; tok: number; modelo: string | null };
-export type AgenteVivo = { id: string; type: string; description: string; status: string; uso: UsoAgente | null };
+/** `nome`/`vistoEm` (GM-14 FIEL-3 d): vêm de `nomes` do stdin de `--agentes` (o `$.store` do mod); ausentes no CLI e na 2.0.0. */
+export type AgenteVivo = { id: string; type: string; description: string; status: string; uso: UsoAgente | null; nome?: string; vistoEm?: number };
+/** stdin de `painel.mjs estado|texto --agentes`, campo `nomes` (GM-14 FIEL-3 d): `agent_id` ⇒ nome estável e 1ª vez que o mod o viu (ms). Teto 64. */
+export type NomesAgentes = { [agentId: string]: { nome: string; vistoEm: number } };
 /** `fuso`, `entregaId`, `modeloSessao`, `specSha` e `tetoSombra` só o CLI preenche (Sombra 5); o mod nunca. */
 export type EntradaPainel = {
   /** Só preenchida pelo CLI com o loop em `concluir` (toda task integrada e sem proposta aberta). */
@@ -212,6 +215,10 @@ export type AgentePainel = {
   ctxPct: number | null; ctxTok: number | null; tok: number | null; desdeS: number | null; cor: CorTema;
   /** `true` = agente vivo (`●`); `false` = task em voo sem agente de papel compatível (`◌ sem agente`). */
   vivo: boolean;
+  /** GM-14 FIEL-3 b: `description` do despacho, já higienizada (token técnico ⇒ "…"); `null` sem vivo. */
+  descricao: string | null;
+  /** GM-14 FIEL-3 a: papel mostrado (antigo > tipo > `correcao` em `corrigindo` > estado > tipo sem task); `null` sem papel. */
+  papelExibido: 'implementador' | 'revisor' | 'correcao' | 'spike' | 'sombra' | null;
 };
 export type EstadoPainel = {
   id: string; titulo: string | null; pacote: string;
@@ -226,7 +233,10 @@ export type EstadoPainel = {
     vivos: number | null;
     /** Sombra 6: `nome` null antes do 1º despacho do par (task, revisor); `mutacoesHoje`/`mortasHoje` null sem integração de hoje com `mutacoes`. */
     revisoresAguardando: { nome: string | null; task: string; mutacoesHoje: number | null; mortasHoje: number | null }[];
-    sombra: { nome: string; modelo: string | null; decisoes: number; ultima: { seq: number; resposta: string; fonte: string | null } | null };
+    /** GM-14 FIEL-6 b: tasks em `implementando`/`corrigindo`/`em_revisao` sem vivo casado ("esperando o orquestrador" no PLANO). */
+    esperando: string[];
+    /** GM-14 FIEL-7: `consultasAbertas` = consultas (`contarConsultas`) além das decisões registradas; 0 quando não passa. */
+    sombra: { nome: string; modelo: string | null; decisoes: number; ultima: { seq: number; resposta: string; fonte: string | null } | null; consultasAbertas: number };
   };
   parado: boolean;
   /** `chave` identifica a ocorrência do Parar (o mod avisa 1× por chave); `hora` é `hh:mm`, `dd/mm hh:mm` ou `--:--` (sem evento com hora legível). */

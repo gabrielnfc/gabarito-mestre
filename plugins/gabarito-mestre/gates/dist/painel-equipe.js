@@ -13,7 +13,7 @@ import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.js';
 import { dataCivil } from './painel-hora.js';
 import { colunas, limpar } from './painel-largura.js';
 import { tokensDe } from './pouso.js';
-                                                                                                                                               
+                                                                                                                                                             
 
 const DESCRICAO_RE = /^(\S+) (implementador|revisor|correcao)$/;
 
@@ -66,6 +66,45 @@ export function validarPacote(bruto         )                                   
     vistos.add(n);
   }
   return { ok: true, pacote: { nome, lider, sabio, nomes: [...(nomes            )] } };
+}
+
+// ---------- `nomes` do stdin de `--agentes` (GM-14 FIEL-3 d) ----------
+
+/** Nome de vivo: `NOME_RE`, ou até 10 colunas + sufixo 2..9 (pacote esgotado), ou `agente` depois do 9 (MINOR-8). */
+const NOME_VIVO_RE = /^(?:[A-Z0-9ÀÁÂÃÄÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜ'-]{1,10}[2-9]?|agente)$/u;
+/** O mesmo `AGENTE_RE` de `mod/painel.mjs` (o id entra em caminho de transcript). */
+const AGENT_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
+/** Teto do `painel:nomes` no `$.store` (o mod tira o mais antigo antes de passar). */
+export const TETO_NOMES = 64;
+
+/**
+ * Valida `nomes` do stdin de `--agentes` (`{agent_id: {nome, vistoEm}}`, T1b; o uso no render é da T29). Ausente (`undefined`, stdin da 2.0.0
+ * ou CLI) ⇒ `{}`; qualquer outra forma fora do contrato ⇒ `ok: false` com "`nomes` corrompido: …", nunca `{}` calado. Só chaves próprias;
+ * entrada com campo a mais recusa; mais de `TETO_NOMES` recusa. Devolve cópia. Nunca lança.
+ */
+export function validarNomesAgentes(bruto         )                                                                  {
+  const erro = (e        )                              => ({ ok: false, erro: `\`nomes\` corrompido: ${e}` });
+  if (bruto === undefined) return { ok: true, nomes: {} };
+  try {
+    if (!ehObjeto(bruto)) return erro('não é objeto');
+    const ids = Object.keys(bruto);
+    if (ids.length > TETO_NOMES) return erro(`${ids.length} entradas, teto ${TETO_NOMES}`);
+    const nomes               = {};
+    for (const id of ids) {
+      if (!AGENT_ID_RE.test(id)) return erro(`agent_id fora do padrão: ${JSON.stringify(id.slice(0, 40))}`);
+      const v          = bruto[id];
+      if (!ehObjeto(v)) return erro(`${id} não é objeto`);
+      const extra = Object.keys(v).find((k) => k !== 'nome' && k !== 'vistoEm');
+      if (extra !== undefined) return erro(`${id} com campo a mais: ${extra}`);
+      const { nome, vistoEm } = v;
+      if (typeof nome !== 'string' || !NOME_VIVO_RE.test(nome)) return erro(`${id}.nome fora do padrão`);
+      if (typeof vistoEm !== 'number' || !Number.isSafeInteger(vistoEm) || vistoEm < 0) return erro(`${id}.vistoEm não é inteiro ≥ 0`);
+      nomes[id] = { nome, vistoEm };
+    }
+    return { ok: true, nomes };
+  } catch {
+    return erro('leitura falhou');
+  }
 }
 
 /** FNV-1a de 32 bits sobre as unidades UTF-16: determinístico, sem `node:crypto`. */
