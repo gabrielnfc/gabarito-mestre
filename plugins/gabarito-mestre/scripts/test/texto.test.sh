@@ -122,8 +122,12 @@ BYTES_OUT=$(node -e "
 RC_BYTES=$?
 echo "  $BYTES_OUT"
 check "R1 tem a exceção de release_pr (GM-13 R41)" "grep -E '^\\*\\*R1 ' '$A' | grep -q 'release_pr'" "R1 sem a exceção"
-# r2: a frase da exceção por igualdade (independe do teto de bytes): merge/deploy/release/tag/outra branch não entram nela
-check "R1: exceção exata (só push da branch e PR; merge segue sem exceção)" "[ \"\$(grep -E '^\\*\\*R1 ' '$A' | grep -oE 'Exceção:[^.]*\\.')\" = 'Exceção: quando o \`decidir\` da entrega dá \`release_pr\`, a spec aprovada é o ok para o push da branch e o PR à base dele.' ]" "a frase da exceção da R1 mudou"
+# r3: a linha R1 INTEIRA por igualdade (texto exato de 4d24d8f): qualquer palavra a mais, a menos ou trocada falha
+R1_ESPERADA=$(cat <<'R1EOF'
+**R1 — Nada de `push`, PR, merge, deploy, release ou tag sem ok explícito** para aquele ato. Exceção: quando o `decidir` da entrega dá `release_pr`, a spec aprovada é o ok para o push da branch e o PR à base dele. Pré-checks são do orquestrador; o ato é do dono.
+R1EOF
+)
+check "R1: linha inteira igual ao texto aprovado (exceção só push da branch e PR; merge sem exceção)" '[ "$(grep -E "^\*\*R1 " "'"$A"'")" = "$R1_ESPERADA" ]' "a linha R1 de AGENTS.md mudou"
 check "R1: merge segue na lista sem exceção" "grep -E '^\\*\\*R1 ' '$A' | grep -q 'PR, merge, deploy, release ou tag sem ok explícito'" "merge saiu da lista sem exceção"
 check "núcleo ≤ 17.417 B · apêndice ≤ 4.096 B" '[ "$RC_BYTES" -eq 0 ]' "teto de bytes estourado"
 

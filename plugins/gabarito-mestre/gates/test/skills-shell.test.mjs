@@ -274,17 +274,6 @@ test('skill-loop-release_pr-empurra-e-abre-o-pr', () => {
   assert.match(linha, /gh pr create --base/);
   assert.match(linha, /não rode `executar`/i);
   assert.match(linha, /Nunca merge/);
-  // GM-13 FX9: AGENTS.md do projeto sem a exceção (R1 da 1.1.0): a skill não passa por cima, dá as 2 linhas e para
-  // r2: ancorado na FRASE NOVA (de "não passe por cima" até o fim dela), não na linha inteira
-  const i = linha.indexOf('não passe por cima');
-  assert.ok(i >= 0, 'frase "não passe por cima" ausente');
-  const frase = linha.slice(i, linha.indexOf('. **Nunca merge', i));
-  assert.ok(frase.length > 0 && !/mesmo assim/i.test(frase), 'frase invertida ou sem fim');
-  assert.ok(/\(R1 da 1\.1\.0\), $/.test(linha.slice(0, i)), 'a frase nova tem de seguir "(R1 da 1.1.0), " sem prefixo invertendo');
-  assert.match(frase, /^não passe por cima: dê ao dono as 2 linhas completas/);
-  assert.ok(frase.includes('`git push -u origin HEAD`'), 'falta o push na frase nova');
-  assert.ok(frase.includes('`gh pr create --base <base> --head <branch>'), 'falta o gh pr create na frase nova');
-  assert.ok(frase.includes('--body-file <registro.md>`'), 'falta --body-file na frase nova');
-  assert.ok(frase.includes('`gabarito-instalar --atualizar`'), 'falta --atualizar na frase nova');
-  assert.match(frase, /, e pare o turno$/);
+  // GM-13 FX9 r3: o bullet INTEIRO por igualdade com o texto aprovado (4d24d8f); qualquer palavra trocada falha
+  assert.equal(linha, "- `release_pr`: `git push -u origin HEAD` e `gh pr create --base <base> --head <branch> --title \"<entrega>: …\" --body-file <registro.md>`. Push de branch e PR não são deploy. Não rode `executar` nem `devolver`: só valem para `subir` e aqui dão `nao_subiu`. A base é a do `decidir`, mesmo que a doc do projeto diga outra; repasse o `aviso`, se vier. Negado pelo modo de permissão: dê ao dono os 2 comandos exatos e pare o turno. Se o `AGENTS.md` do projeto pedir ok para push/PR sem essa exceção (R1 da 1.1.0), não passe por cima: dê ao dono as 2 linhas completas, já preenchidas (`git push -u origin HEAD` e `gh pr create --base <base> --head <branch> --title \"…\" --body-file <registro.md>`), diga que `gabarito-instalar --atualizar` traz a R1 nova, e pare o turno. **Nunca merge.**", 'o bullet release_pr mudou');
 });
