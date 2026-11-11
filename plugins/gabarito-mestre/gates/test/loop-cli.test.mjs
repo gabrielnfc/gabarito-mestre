@@ -4213,8 +4213,6 @@ describe('GM-14: subcomandos novos ainda sem implementação', () => {
       ['painel.mjs medir', () => rodarNode(amb, PAINEL, ['medir'])],
       ['onboarding.mjs herdar', () => rodarNode(amb, ONBOARDING, ['herdar', '--root', amb.dir])],
       ['onboarding.mjs herdar --gravar', () => rodarNode(amb, ONBOARDING, ['herdar', '--root', amb.dir, '--gravar'])],
-      ['onboarding.mjs foco', () => rodarNode(amb, ONBOARDING, ['foco', '--root', amb.dir])],
-      ['onboarding.mjs foco --sim', () => rodarNode(amb, ONBOARDING, ['foco', '--root', amb.dir, '--sim'])],
     ];
     for (const [nome, rodar] of casos) {
       const antes = foto(amb.dir);
