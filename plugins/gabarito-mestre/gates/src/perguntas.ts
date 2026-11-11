@@ -3,12 +3,13 @@
  *
  * Gatilhos e âncoras (a âncora é o evento cujo `<sessao>:<seq>` vira o id da pergunta):
  * - (a) `nota assunto` com a trilha sem entrega identificada ⇒ âncora = a nota.
- * - (b) sessão atual com trabalho (`fato.medido` ou `nota` que não é âncora de outra pergunta) e trilha sem entrega identificada
- *   ⇒ âncora = o 1º trabalho DA SESSÃO
+ * - (b) sessão atual com trabalho e trilha sem entrega identificada ⇒ âncora = `ancoraDaPerguntaB` de `trilha.ts` (regra única,
+ *   importada: 1º `fato.medido` ou `nota` sem pergunta própria DA SESSÃO; por isso (b) nunca divide id com (a)/(d)/pendência)
  *   (DP-2 ajuste 1: por sessão, não por repositório; sessão nova volta a perguntar; retomada não reabre).
  * - (c) trilha com 2+ specs ambíguas ⇒ âncora = o `fato.medido spec` que completou o conjunto (entrada da última delas, a mesma
  *   referência de `trilha.ts`); edição de spec não reabre, conjunto novo reabre (DP-2 ajuste 2).
- * - (d) `nota duvida` ⇒ âncora = a nota, opções da nota. `nota pendencia` ⇒ opção única "feito".
+ * - (d) `nota duvida` ⇒ âncora = a nota, opções da nota. Pendência ⇒ opção única "feito", aberta pela `pendenciaAberta` de
+ *   `depende.ts` (regra única, importada: forma válida e sem `dono.resposta` com rótulo depois da nota).
  * Fechada só por `dono.resposta` na forma `{pergunta, opcao, rotulo}`; `{sha256, chars}` não fecha (DP-2).
  * Opções de (a) e (b) congeladas pela âncora: só pontos de atividade com data ≤ ts da âncora (DP-2 ajuste 3), para painel e hook
  * verem a mesma lista. Rótulo de entrega = ID cru, nunca `nomeNatural` (DP-4): é o rótulo que `trilha.ts` usa para ligar a sessão.
@@ -16,10 +17,11 @@
  * (`rotuloCasaSpec`): (c) sempre abre com 2+ specs; só deixa de abrir se nenhum rótulo resolver (caminhos com o mesmo final de 59 caracteres).
  * Id que não casa `ID_PERGUNTA_RE` (sessão com `.` ou `_`) seria irrespondível pelo hook: não vira pergunta.
  */
+import { pendenciaAberta } from './depende.ts';
 import { ID_PERGUNTA_RE } from './formas.ts';
 import { ordenar } from './loop.ts';
 import type { Evento, IdPergunta } from './tipos.ts';
-import { rotuloCasaSpec } from './trilha.ts';
+import { ancoraDaPerguntaB, rotuloCasaSpec } from './trilha.ts';
 import type { Trilha } from './trilha.ts';
 
 export type Pergunta = { id: IdPergunta; gatilho: 'a' | 'b' | 'c' | 'd' | 'pendencia'; texto: string; opcoes: string[] };
@@ -34,8 +36,6 @@ const NOVA = 'uma nova';
 const AVULSA = 'conversa avulsa';
 const IDEIA = 'ideia para a próxima';
 const FEITO = 'feito';
-/** Notas que já são âncora de pergunta própria: (b) não se ancora nelas, para dois gatilhos nunca dividirem um id. */
-const COM_PERGUNTA: ReadonlySet<string> = new Set(['assunto', 'duvida', 'pendencia']);
 
 const obj = (v: unknown): Record<string, unknown> => (v !== null && typeof v === 'object' ? (v as Record<string, unknown>) : {});
 const lista = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
@@ -104,9 +104,9 @@ export function perguntasAbertas(eventos: Evento[], trilha: Trilha, ctx: Context
   const semEntrega = t.identificada !== true;
   const achadas: { pos: number; p: Pergunta }[] = [];
   const pos = new Map(evs.map((e, i) => [e, i]));
-  const abrir = (ancora: Evento, gatilho: Pergunta['gatilho'], texto: string, opcoes: string[]) => {
+  const abrir = (ancora: Evento, gatilho: Pergunta['gatilho'], texto: string, opcoes: string[], jaFiltrada = false) => {
     const id = idDe(ancora);
-    if (!ID_PERGUNTA_RE.test(id) || fechadas.has(id) || opcoes.length === 0) return;
+    if (!ID_PERGUNTA_RE.test(id) || (!jaFiltrada && fechadas.has(id)) || opcoes.length === 0) return;
     achadas.push({ pos: pos.get(ancora) as number, p: { id, gatilho, texto, opcoes } });
   };
 
@@ -121,14 +121,16 @@ export function perguntasAbertas(eventos: Evento[], trilha: Trilha, ctx: Context
       abrir(e, 'a', texto, ultima !== undefined ? [ultima, IDEIA, AVULSA] : [IDEIA, AVULSA]);
     } else if (d.tipo === 'duvida' && umaLinha(d.texto)) {
       abrir(e, 'd', d.texto, lista<unknown>(d.opcoes).filter(cabe));
-    } else if (d.tipo === 'pendencia' && umaLinha(d.texto)) {
-      abrir(e, 'pendencia', d.texto, [FEITO]);
+    } else {
+      const pendencia = pendenciaAberta(evs, e);
+      if (pendencia !== null) abrir(e, 'pendencia', pendencia.texto, [FEITO], true);
     }
   }
 
   const sessao = sessaoAtual(evs, c);
   if (semEntrega && sessao !== null) {
-    const ancora = evs.find((e) => e.sessao === sessao && (e.tipo === 'fato.medido' || (e.tipo === 'nota' && !COM_PERGUNTA.has(obj(e.dados).tipo as string))));
+    const idB = ancoraDaPerguntaB(evs, sessao);
+    const ancora = idB === null ? undefined : evs.find((e) => idDe(e) === idB);
     if (ancora !== undefined) {
       const candidato = cabe(t.candidato) ? t.candidato : null;
       if (candidato !== null) abrir(ancora, 'b', `Esta conversa é da entrega ${candidato}?`, [candidato, NOVA, AVULSA]);

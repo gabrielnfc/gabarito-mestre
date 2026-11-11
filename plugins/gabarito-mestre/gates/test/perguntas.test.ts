@@ -12,7 +12,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { perguntasAbertas, respostaValida } from '../src/perguntas.ts';
 import type { Pergunta } from '../src/perguntas.ts';
-import { trilhaDe } from '../src/trilha.ts';
+import { ancoraDaPerguntaB, trilhaDe } from '../src/trilha.ts';
+import { pendenciaAberta } from '../src/depende.ts';
 import type { FatosTrilha, SpecFato, Trilha } from '../src/trilha.ts';
 import { formaInvalida } from '../src/formas.ts';
 import type { Evento, TipoEvento } from '../src/tipos.ts';
@@ -160,6 +161,9 @@ test('b-nova-sessao-em-main-volta-a-perguntar', () => {
   assert.equal(ps.length, 1);
   assert.equal(ps[0].id, 's2:2');
   assert.equal(ps[0].gatilho, 'b');
+  // Seqs diferentes nas duas sessões (s1 retomada antes do 1º trabalho): a âncora é o 1º trabalho DA s2, não o seq do 1º da s1.
+  const desalinhado = expandir([inicio('s1'), inicio('s1'), branch('s1'), resp('s1:3', 2, 'conversa avulsa'), inicio('s2'), notaDe('ideia', 'outra', 's2')]);
+  assert.deepEqual(perguntasAbertas(desalinhado, trilha(), { sessao: 's2' }).map((p) => [p.gatilho, p.id]), [['b', 's2:2']]);
 });
 
 test('b-sessao-padrao-e-a-do-ultimo-inicio', () => {
@@ -352,6 +356,73 @@ test('b-nao-se-ancora-em-assunto-nem-pendencia', () => {
     const ids = perguntasAbertas(evs, trilha(), { sessao: 's1' }).map((p) => p.id);
     assert.equal(new Set(ids).size, ids.length);
   }
+});
+
+test('perguntas-usa-a-ancora-da-trilha', () => {
+  // P9 (MAJOR r3): atravessa as duas camadas. Sessão cuja 1ª nota é pergunta própria: o id de (b) é o de `ancoraDaPerguntaB` real,
+  // não o da nota, e responder (b) liga a trilha (a resposta não é aceita e descartada em silêncio).
+  const fatos: FatosTrilha = { sessao: 's1', branch: 'main', idPadrao: '[A-Z]+-\\d+', specs: [], plano: null, ledger: false, gh: 'ok', ultimas: [{ id: 'GM-13', data: '2026-10-30' }] };
+  const variantes: Compacto[] = [notaDe('duvida', 'qual?', 's1', ['x', 'y']), notaDe('assunto', 'outro', 's1'), notaDe('pendencia', 'token', 's1')];
+  for (const nota of variantes) {
+    const base: Compacto[] = [inicio('s1'), nota, branch('s1')];
+    const evs = expandir(base);
+    const t0 = trilhaDe(fatos, evs);
+    assert.equal(t0.identificada, false);
+    const b = perguntasAbertas(evs, t0, { sessao: 's1', ultimas: fatos.ultimas }).find((p) => p.gatilho === 'b');
+    assert.ok(b !== undefined, String(nota.d.tipo));
+    assert.equal(b.id, ancoraDaPerguntaB(evs, 's1'));
+    assert.equal(b.id, 's1:3');
+    assert.deepEqual(respostaValida([b], b.id, 1), { ok: true, rotulo: 'GM-13' });
+    const ligado = expandir([...base, resp(b.id, 1, 'GM-13')]);
+    const t1 = trilhaDe(fatos, ligado);
+    assert.equal(t1.identificada, true, String(nota.d.tipo));
+    assert.equal(t1.entrega, 'GM-13');
+    assert.equal(perguntasAbertas(ligado, t1, { sessao: 's1', ultimas: fatos.ultimas }).some((p) => p.gatilho === 'b'), false);
+  }
+});
+
+test('b-e-d-nunca-mesmo-id', () => {
+  // Propriedade: toda sequência de até 4 eventos de trabalho numa sessão sem entrega ⇒ ids de `perguntasAbertas` distintos.
+  const pecas: Compacto[] = [notaDe('duvida', 'qual?', 's1', ['x', 'y']), notaDe('pendencia', 'p', 's1'), notaDe('assunto', 'a', 's1'),
+    notaDe('ideia', 'i', 's1'), branch('s1')];
+  let casos = 0;
+  let comB = 0;
+  const gerar = (prefixo: Compacto[]): void => {
+    if (prefixo.length > 0) {
+      const ps = perguntasAbertas(expandir([inicio('s1'), ...prefixo]), trilha(), { sessao: 's1' });
+      const ids = ps.map((p) => p.id);
+      assert.equal(new Set(ids).size, ids.length, JSON.stringify(ps.map((p) => [p.gatilho, p.id])));
+      casos++;
+      if (ps.some((p) => p.gatilho === 'b')) comB++;
+    }
+    if (prefixo.length < 4) for (const p of pecas) gerar([...prefixo, p]);
+  };
+  gerar([]);
+  assert.equal(casos, 5 + 25 + 125 + 625);
+  assert.ok(comB > 0 && comB < casos);
+});
+
+test('perguntas-usa-a-pendencia-do-depende', () => {
+  // Regra única (Sombra 4ad3f283): a pendência do painel é a `pendenciaAberta` de depende.ts. Cada cláusula com caso:
+  const casos: { nome: string; evs: Compacto[]; abre: boolean }[] = [
+    { nome: 'aberta', evs: [inicio('s1'), notaDe('pendencia', 'criar o token', 's1')], abre: true },
+    { nome: 'forma inválida (opções em pendência)', evs: [inicio('s1'), notaDe('pendencia', 'criar o token', 's1', ['a', 'b'])], abre: false },
+    { nome: 'texto acima de 160', evs: [inicio('s1'), notaDe('pendencia', 'x'.repeat(161), 's1')], abre: false },
+    { nome: 'fechada por rótulo', evs: [inicio('s1'), notaDe('pendencia', 'criar o token', 's1'), resp('s1:2', 1, 'feito')], abre: false },
+    { nome: 'hash não fecha', evs: [inicio('s1'), notaDe('pendencia', 'criar o token', 's1'), respHash('s1:2')], abre: true },
+  ];
+  for (const c of casos) {
+    const evs = expandir(c.evs);
+    const ps = perguntasAbertas(evs, identificada(), { sessao: 's1' }).filter((p) => p.gatilho === 'pendencia');
+    const nota = evs.find((e) => e.tipo === 'nota') as Evento;
+    assert.equal(ps.length, c.abre ? 1 : 0, c.nome);
+    assert.equal(pendenciaAberta(evs, nota) !== null, c.abre, `depende concorda: ${c.nome}`);
+    if (c.abre) confere(ps[0], { id: 's1:2', gatilho: 'pendencia', texto: 'criar o token', opcoes: ['feito'] });
+  }
+  // Resposta com timestamp anterior à nota não fecha (o depende exige a resposta depois da nota).
+  const evs = expandir([inicio('s1'), notaDe('pendencia', 'criar o token', 's1')]);
+  const antes: Evento = { ...expandir([resp('s1:2', 1, 'feito')])[0], ts: '2026-10-31T00:00:00.000Z' };
+  assert.equal(perguntasAbertas([antes, ...evs], identificada(), { sessao: 's1' }).filter((p) => p.gatilho === 'pendencia').length, 1);
 });
 
 // ── (d) nota duvida e pendência ─────────────────────────────────────────────────────────────────────────────────────────────

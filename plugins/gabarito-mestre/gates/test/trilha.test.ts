@@ -413,9 +413,26 @@ test('resposta-so-da-pergunta-b-da-sessao-atual', () => {
   }
   // Âncora exportada (o painel e o hook usam a mesma).
   assert.equal(ancoraDaPerguntaB(expandir([resp('x', 'z:1', 'outra'), ancoraB(), duvida]), s), `${s}:1`);
-  assert.equal(ancoraDaPerguntaB(expandir([duvida, ancoraB()]), s), `${s}:1`, 'nota também é trabalho');
+  assert.equal(ancoraDaPerguntaB(expandir([duvida, ancoraB()]), s), `${s}:2`, 'nota duvida não é âncora de (b) (Emenda 2)');
   assert.equal(ancoraDaPerguntaB(expandir([resp('x', 'z:1')]), s), null, 'resposta não é trabalho');
   assert.equal(ancoraDaPerguntaB(expandir(respostaB('GM-21')), null), null);
+});
+
+test('ancora-b-pula-duvida-pendencia-assunto', () => {
+  // Emenda 2 consolidada: (b) nunca divide id com (a)/(d)/pendência; nota de outro tipo e fato medido seguem sendo trabalho.
+  const s = 'sessao-b';
+  const nota = (tipo: string, extra: Record<string, unknown> = {}): Compacto => ({ t: 'nota', s, d: { tipo, texto: 'x', ...extra } });
+  const duvida = nota('duvida', { opcoes: ['sim', 'não'] });
+  for (const [nome, n] of [['duvida', duvida], ['pendencia', nota('pendencia')], ['assunto', nota('assunto')]] as const) {
+    assert.equal(ancoraDaPerguntaB(expandir([n, ancoraB()]), s), `${s}:2`, `pula ${nome}`);
+    assert.equal(ancoraDaPerguntaB(expandir([n]), s), null, `só ${nome} ⇒ sem âncora`);
+  }
+  assert.equal(ancoraDaPerguntaB(expandir([duvida, nota('pendencia'), nota('assunto'), nota('ideia')]), s), `${s}:4`, 'ideia é trabalho');
+  assert.equal(ancoraDaPerguntaB(expandir([nota('desvio'), duvida]), s), `${s}:1`, 'desvio é trabalho');
+  // Responder (b) depois de uma dúvida liga a sessão (resposta à âncora real, não à nota).
+  const ligada = trilhaDe(fatos({ branch: 'main' }), expandir([duvida, ancoraB(), { t: 'dono.resposta', s, d: { pergunta: `${s}:2`, opcao: 1, rotulo: 'GM-21' } }]));
+  assert.equal(ligada.identificada, true);
+  assert.equal(ligada.entrega, 'GM-21');
 });
 
 test('resposta-c-rotulo-de-duas-specs-segue-ambigua', () => {

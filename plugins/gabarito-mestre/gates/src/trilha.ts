@@ -65,13 +65,18 @@ export function idDaBranch(branch: string | null, idPadrao: string): string | nu
 const fatoMedido = (e: Evento, chave: string): Record<string, unknown> | null =>
   e.tipo === 'fato.medido' && obj(e.dados).chave === chave ? obj(obj(e.dados).valor) : null;
 
+/** Notas que já são âncora de pergunta própria do painel ((a), (d), pendência): nunca são a âncora de (b) (Emenda 2 consolidada). */
+const NOTA_COM_PERGUNTA: ReadonlySet<unknown> = new Set(['assunto', 'duvida', 'pendencia']);
+
 /**
- * Âncora da pergunta (b) da sessão (DP-2 ajuste 1): `<sessao>:<seq>` do 1º evento de trabalho (`fato.medido` ou `nota`) dela.
- * O `sessao.inicio` é o 1º evento da sessão (seq), então todo trabalho dela já é posterior a ele. Sem sessão ou sem trabalho ⇒ `null`.
+ * Âncora da pergunta (b) da sessão (DP-2 ajuste 1): `<sessao>:<seq>` do 1º evento de trabalho dela — `fato.medido` ou `nota` que
+ * não é pergunta própria (`assunto`, `duvida`, `pendencia`), para (b) nunca dividir id com outra pergunta. REGRA ÚNICA: `perguntas.ts`
+ * importa esta função. O `sessao.inicio` é o 1º evento da sessão (seq). Sem sessão ou sem trabalho ⇒ `null`.
  */
 export function ancoraDaPerguntaB(eventos: Evento[], sessao: string | null): string | null {
   if (typeof sessao !== 'string' || sessao === '' || !Array.isArray(eventos)) return null;
-  const e = eventos.find((x) => x?.sessao === sessao && (x.tipo === 'fato.medido' || x.tipo === 'nota'));
+  const e = eventos.find((x) => x?.sessao === sessao
+    && (x.tipo === 'fato.medido' || (x.tipo === 'nota' && !NOTA_COM_PERGUNTA.has(obj(x.dados).tipo))));
   return e !== undefined ? `${sessao}:${e.seq}` : null;
 }
 
