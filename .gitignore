@@ -34,3 +34,8 @@ plugins/gabarito-mestre/gates/test/e2e/observador/tsconfig.json
 
 # E5 (GM-13): estado do aviso de aprendizado pendente do hook Stop (o tmp <arq>.<pid>.tmp entra no glob)
 .harness/stop-aprender.json*
+
+# GM-14 (2.1.0): estado local do painel (medição por entrega) e da herança do onboarding; doctor-cache do harness
+.harness/painel-medir.json
+.harness/entregas/_onboarding/
+.harness/doctor-cache.json
