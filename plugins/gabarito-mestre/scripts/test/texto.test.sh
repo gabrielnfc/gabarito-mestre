@@ -371,11 +371,14 @@ claude plugin marketplace remove gabarito-mestre
 claude plugin marketplace add gabrielnfc/gabarito-mestre
 claude plugin install gabarito-mestre@gabarito-mestre"
 check "nota da virada: 'Como voltar' tem os 6 passos medidos, na ordem" '[ "$VOLTAR" = "$VOLTAR_ESPERADO" ]' "passos de 'Como voltar' diferem dos medidos"
-# GM-13 T18 proj (spike t17dh): a seção de atualização traz o passo por projeto e a conferência pelo cartão
+# GM-13 T18 proj r3 (spike t17dh + sombra-t18proj): passo por projeto sem condição user/project; conferência pelo installed_plugins.json (não pelo `plugin list`)
 ATUALIZAR=$(sed -n '/^## Como atualizar/,/^## Rode o onboarding/p' "$VIRADA")
-check "nota da virada: o passo '--scope project' manda rodar 'dentro de cada repo'" 'printf "%s" "$ATUALIZAR" | grep -E "dentro de cada repo" | grep -q "plugin update gabarito-mestre@gabarito-mestre --scope project"' "passo por projeto sem 'dentro de cada repo'"
-check "nota da virada: conferência da versão pelo installed_plugins.json, não pelo cartão" 'printf "%s" "$ATUALIZAR" | grep -q "installed_plugins.json" && printf "%s" "$ATUALIZAR" | grep -q "\"version\": \"2.0.0\"" && ! printf "%s" "$ATUALIZAR" | grep -qi "cartão"' "conferência da versão fora do installed_plugins.json"
-check "nota da virada: 'continua na 1.1.0' condicionado a instalação no usuário e no projeto" 'printf "%s" "$ATUALIZAR" | grep -q "instalado no usuário e também em algum projeto"' "condição do passo por projeto ausente"
+check "nota da virada: 'em cada repo onde o gabarito foi instalado por projeto', 'dentro dele' e '--scope project' na mesma linha" 'printf "%s" "$ATUALIZAR" | grep -iE "em cada repo onde o gabarito foi instalado por projeto" | grep -E "dentro dele" | grep -q "plugin update gabarito-mestre@gabarito-mestre --scope project"' "passo por projeto sem as três partes na mesma linha"
+check "nota da virada: o passo por projeto não tem condição nem promete que o passo 2 basta" '! printf "%s" "$ATUALIZAR" | grep -q "já é atualizado" && ! printf "%s" "$ATUALIZAR" | grep -q "instalado no usuário e também"' "condição user/project ou 'já é atualizado' voltou"
+check "nota da virada: conferência pelo installed_plugins.json com \"version\": \"2.0.0\", sem cartão" 'printf "%s" "$ATUALIZAR" | grep -q "installed_plugins.json" && printf "%s" "$ATUALIZAR" | grep -q "\"version\": \"2.0.0\"" && ! printf "%s" "$ATUALIZAR" | grep -qi "cartão"' "conferência da versão fora do installed_plugins.json"
+check "nota da virada: na linha do passo 3, 'plugin list' só aparece em 'pode mostrar' (não é a forma de conferir)" 'L3=$(printf "%s\n" "$ATUALIZAR" | grep -E "^3\."); printf "%s" "$L3" | grep -q "plugin list. pode mostrar" && ! printf "%s" "$L3" | sed "s/plugin list. pode mostrar//" | grep -q "plugin list"' "passo 3 confere pelo plugin list"
+PASSO5=$(printf "%s\n" "$ATUALIZAR" | grep -E "^5\.")
+check "nota da virada: o passo 5 não exige 'um só' e confere o catálogo gabarito-mestre-next" '[ -n "$PASSO5" ] && ! printf "%s" "$PASSO5" | grep -q "um só" && printf "%s" "$PASSO5" | grep -q "gabarito-mestre-next"' "passo 5 com 'um só' ou sem gabarito-mestre-next"
 
 echo "── $falhas falha(s)"
 [ "$falhas" -eq 0 ]
