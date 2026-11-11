@@ -92,7 +92,8 @@
     },
     "ledger": false,
     "gh": "ok",
-    "ultimas": []
+    "ultimas": [],
+    "sessao": "sessao-dono"
    },
    "eventos": [
     {
@@ -129,6 +130,17 @@
        "numero": 11,
        "estado": "mergeado",
        "branch": "enabler/GM-11-sombra-emendas"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "s": "sessao-dono",
+     "d": {
+      "chave": "branch",
+      "fonte": "git",
+      "valor": {
+       "nome": "enabler/GM-11-sombra-emendas"
       }
      }
     },
@@ -277,7 +289,8 @@
     },
     "ledger": false,
     "gh": "ok",
-    "ultimas": []
+    "ultimas": [],
+    "sessao": "sessao-dono"
    },
    "eventos": [
     {
@@ -314,6 +327,17 @@
        "numero": 13,
        "estado": "mergeado",
        "branch": "enabler/GM-12-painel"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "s": "sessao-dono",
+     "d": {
+      "chave": "branch",
+      "fonte": "git",
+      "valor": {
+       "nome": "enabler/GM-12-painel"
       }
      }
     },
@@ -420,7 +444,8 @@
     },
     "ledger": false,
     "gh": "ok",
-    "ultimas": []
+    "ultimas": [],
+    "sessao": "sessao-dono"
    },
    "eventos": [
     {
@@ -457,6 +482,17 @@
        "numero": 14,
        "estado": "mergeado",
        "branch": "enabler/GM-13-fluxo"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "s": "sessao-dono",
+     "d": {
+      "chave": "branch",
+      "fonte": "git",
+      "valor": {
+       "nome": "enabler/GM-13-fluxo"
       }
      }
     },
@@ -666,7 +702,8 @@
     },
     "ledger": false,
     "gh": "ok",
-    "ultimas": []
+    "ultimas": [],
+    "sessao": "sessao-dono"
    },
    "eventos": [
     {
@@ -727,6 +764,17 @@
        "numero": 15,
        "estado": "mergeado",
        "branch": "enabler/GM-13-virada"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "s": "sessao-dono",
+     "d": {
+      "chave": "branch",
+      "fonte": "git",
+      "valor": {
+       "nome": "enabler/GM-13-virada"
       }
      }
     },
@@ -793,7 +841,8 @@
     "plano": null,
     "ledger": false,
     "gh": "nunca",
-    "ultimas": []
+    "ultimas": [],
+    "sessao": "sessao-dono"
    },
    "eventos": [
     {
@@ -801,6 +850,17 @@
      "d": {
       "spec": "docs/superpowers/specs/2026-09-30-sherlock-2a-design.md",
       "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+     }
+    },
+    {
+     "t": "fato.medido",
+     "s": "sessao-dono",
+     "d": {
+      "chave": "branch",
+      "fonte": "git",
+      "valor": {
+       "nome": "Developer"
+      }
      }
     },
     {
@@ -866,7 +926,8 @@
     "plano": null,
     "ledger": false,
     "gh": "nunca",
-    "ultimas": []
+    "ultimas": [],
+    "sessao": "sessao-dono"
    },
    "eventos": [
     {
@@ -874,6 +935,17 @@
      "d": {
       "spec": "docs/superpowers/specs/2026-09-30-sherlock-2a-design.md",
       "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+     }
+    },
+    {
+     "t": "fato.medido",
+     "s": "sessao-dono",
+     "d": {
+      "chave": "branch",
+      "fonte": "git",
+      "valor": {
+       "nome": "Developer"
+      }
      }
     },
     {
@@ -939,7 +1011,8 @@
     "plano": null,
     "ledger": false,
     "gh": "nunca",
-    "ultimas": []
+    "ultimas": [],
+    "sessao": "sessao-dono"
    },
    "eventos": [
     {
@@ -947,6 +1020,17 @@
      "d": {
       "spec": "docs/superpowers/specs/2026-09-30-sherlock-2a-design.md",
       "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+     }
+    },
+    {
+     "t": "fato.medido",
+     "s": "sessao-dono",
+     "d": {
+      "chave": "branch",
+      "fonte": "git",
+      "valor": {
+       "nome": "Developer"
+      }
      }
     },
     {

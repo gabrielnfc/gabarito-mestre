@@ -2,7 +2,8 @@
  * Trilha da entrega: 7 fases, marcas e progresso (GM-14, REQ-TRI-1 e FIEL-1 b). Núcleo puro: sem E/S, sem relógio, nunca lança.
  *
  * Regras (spec REQ-TRI-1; S3b de `t0b.md`, plano B como regra):
- * - Entrega identificada = `dono.resposta` cujo rótulo é um ID (casa `idPadrao` ancorado; o mais recente vale), ou o ID de
+ * - Entrega identificada = a `dono.resposta` mais recente à pergunta (b) DA SESSÃO ATUAL (`fatos.sessao`), se o rótulo é um ID
+ *   (casa `idPadrao` ancorado); sem sessão atual nunca liga por resposta (DP-2 ajuste 1, plano T3). Ou o ID de
  *   `idDaBranch` com 2º fato (spec com `PBI: <ID>`, `plano.json`, ledger). A pasta da entrega e o diário com evento não são 2º fato.
  *   FIEL-1 b: a branch sozinha não identifica entrega com PR `✓` (último mergeado, nenhum aberto); PR `?` (gh falhou) identifica.
  * - Fato próprio por fase; anterior a fase com fato = `✓`, menos aprovação sem `spec.aprovada` ⇒ `?` "não achei o registro da
@@ -21,6 +22,8 @@ export type SpecFato = { caminho: string; pbi: string | null; sha256: string; se
 export type FatosTrilha = {
   branch: string | null; idPadrao: string; specs: SpecFato[]; plano: { tasks: string[] } | null;
   ledger: boolean; gh: 'ok' | 'falhou' | 'nunca'; ultimas: { id: string; data: string }[];
+  /** `session_id` da sessão que lê (DP-2 ajuste 1): só a resposta à pergunta (b) dela liga a entrega. Ausente ⇒ não liga por resposta. */
+  sessao?: string | null;
 };
 export type Trilha = {
   entrega: string | null; identificada: boolean; candidato: string | null; marcas: Marca[]; motivos: (string | null)[];
@@ -62,12 +65,26 @@ export function idDaBranch(branch: string | null, idPadrao: string): string | nu
 const fatoMedido = (e: Evento, chave: string): Record<string, unknown> | null =>
   e.tipo === 'fato.medido' && obj(e.dados).chave === chave ? obj(obj(e.dados).valor) : null;
 
-/** Rótulo da `dono.resposta` mais recente que é um ID de entrega. */
-function ligadaPorResposta(evs: Evento[], re: RegExp | null): string | null {
-  if (re === null) return null;
-  for (let i = evs.length - 1; i >= 0; i--) {
-    const rotulo = evs[i].tipo === 'dono.resposta' ? obj(evs[i].dados).rotulo : undefined;
-    if (typeof rotulo === 'string' && re.test(rotulo)) return rotulo;
+/**
+ * Âncora da pergunta (b) da sessão (DP-2 ajuste 1): `<sessao>:<seq>` do 1º evento de trabalho (`fato.medido` ou `nota`) dela.
+ * O `sessao.inicio` é o 1º evento da sessão (seq), então todo trabalho dela já é posterior a ele. Sem sessão ou sem trabalho ⇒ `null`.
+ */
+export function ancoraDaPerguntaB(eventos: Evento[], sessao: string | null): string | null {
+  if (typeof sessao !== 'string' || sessao === '' || !Array.isArray(eventos)) return null;
+  const e = eventos.find((x) => x?.sessao === sessao && (x.tipo === 'fato.medido' || x.tipo === 'nota'));
+  return e !== undefined ? `${sessao}:${e.seq}` : null;
+}
+
+/** Rótulo da `dono.resposta` mais recente à pergunta (b) da sessão, posterior à âncora; só vale se é um ID de entrega. */
+function ligadaPorResposta(evs: Evento[], re: RegExp | null, sessao: unknown): string | null {
+  if (re === null || typeof sessao !== 'string') return null;
+  const ancora = ancoraDaPerguntaB(evs, sessao);
+  if (ancora === null) return null;
+  const desde = evs.findIndex((e) => e.sessao === sessao && `${sessao}:${e.seq}` === ancora);
+  for (let i = evs.length - 1; i > desde; i--) {
+    if (evs[i].tipo !== 'dono.resposta' || obj(evs[i].dados).pergunta !== ancora) continue;
+    const rotulo = obj(evs[i].dados).rotulo;
+    return typeof rotulo === 'string' && re.test(rotulo) ? rotulo : null;
   }
   return null;
 }
@@ -153,7 +170,7 @@ export function trilhaDe(fatos: FatosTrilha, eventos: Evento[]): Trilha {
   const evs = ord.ok ? ord.eventos : [];
   const re = ancorada(f.idPadrao);
   const daBranch = idDaBranch(f.branch, f.idPadrao);
-  const ligada = ligadaPorResposta(evs, re);
+  const ligada = ligadaPorResposta(evs, re, f.sessao);
   const candidato = ligada ?? daBranch;
   if (candidato === null) return naoIdentificada(f, evs, null);
 

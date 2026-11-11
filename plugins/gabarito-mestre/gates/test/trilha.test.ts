@@ -9,11 +9,12 @@
  *  M-F1b  PR mergeado identifica pela branch                   ⇒ entrega-publicada-nao-identifica-pela-branch
  *  M-T3c  depois de fase sem fonte, inferência continua        ⇒ s3b-celulas
  *  M-T3d  resposta de (c) vale mesmo antes de a spec nova entrar ⇒ resposta-c-consumida
+ *  M-T3f  qualquer resposta com rótulo de ID liga (outra pergunta, outra sessão) ⇒ resposta-liga-sessao
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { FASES, idDaBranch, trilhaDe } from '../src/trilha.ts';
+import { ancoraDaPerguntaB, FASES, idDaBranch, trilhaDe } from '../src/trilha.ts';
 import type { FatosTrilha, SpecFato, Trilha } from '../src/trilha.ts';
 import { formaInvalida } from '../src/formas.ts';
 import type { Evento, TipoEvento } from '../src/tipos.ts';
@@ -56,11 +57,15 @@ const A = 'a'.repeat(64);
 const B = 'b'.repeat(64);
 const specFato = (extra: Partial<SpecFato> = {}): SpecFato => ({ caminho: SPEC, pbi: 'GM-20', sha256: A, secoes: 6, titulo: 'Trilha da GM-20', ...extra });
 const fatos = (extra: Partial<FatosTrilha> = {}): FatosTrilha => ({
-  branch: 'feat/GM-20-trilha', idPadrao: '[A-Z]+-\\d+', specs: [specFato()], plano: null, ledger: false, gh: 'ok', ultimas: [], ...extra,
+  branch: 'feat/GM-20-trilha', idPadrao: '[A-Z]+-\\d+', specs: [specFato()], plano: null, ledger: false, gh: 'ok', ultimas: [], sessao: 'sessao-b', ...extra,
 });
 const aprovada = (sha256 = A, spec = SPEC): Compacto => ({ t: 'spec.aprovada', d: { spec, sha256 } });
 const pr = (numero: number, estado: string): Compacto => ({ t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: 'feat/GM-20-trilha' } } });
 const resposta = (rotulo: string, sessao = 'sessao-b'): Compacto => ({ t: 'dono.resposta', s: sessao, d: { pergunta: `${sessao}:1`, opcao: 1, rotulo } });
+/** Âncora da pergunta (b) da sessão (DP-2 ajuste 1): o 1º evento de trabalho dela (aqui, `fato.medido branch`). */
+const ancoraB = (sessao = 'sessao-b'): Compacto => ({ t: 'fato.medido', s: sessao, d: { chave: 'branch', fonte: 'git', valor: { nome: 'main' } } });
+/** Âncora + resposta à pergunta (b) da sessão (`<sessao>:1` = a âncora). */
+const respostaB = (rotulo: string, sessao = 'sessao-b'): Compacto[] => [ancoraB(sessao), resposta(rotulo, sessao)];
 const specMedida = (caminho: string): Compacto => ({ t: 'fato.medido', d: { chave: 'spec', fonte: 'arquivo', valor: { caminho, sha256: A, secoes: 3 } } });
 
 function confereFixture(nome: string, f: { fatos: FatosTrilha; eventos: Compacto[]; esperado: Record<string, unknown> }) {
@@ -204,7 +209,7 @@ test('pr-14-mergeado-15-aberto-bolinha', () => {
   assert.equal(t.progresso, 'pedido de revisão #15 aberto');
   assert.equal(t.identificada, true);
   // Troca de valor: #15 mergeado também ⇒ PR ✓ (e a branch sozinha não identifica mais).
-  const ambos = trilhaDe(f.fatos, expandir([...ate, pr(15, 'aberto'), pr(14, 'aberto'), pr(14, 'mergeado'), pr(15, 'mergeado'), resposta('GM-20')]));
+  const ambos = trilhaDe({ ...f.fatos, sessao: 'sessao-b' }, expandir([...ate, pr(15, 'aberto'), pr(14, 'aberto'), pr(14, 'mergeado'), pr(15, 'mergeado'), ...respostaB('GM-20')]));
   assert.equal(ambos.marcas[5], '✓');
   assert.equal(ambos.progresso, 'pedido de revisão #15 aceito · aguardando publicação');
   // Último mergeado mas outro aberto ⇒ não é ✓.
@@ -317,7 +322,7 @@ test('trilha-diario-ausente-x-corrompido', () => {
   assert.equal(invalido.marcas[4], '?');
   assert.equal(invalido.motivos[4], 'não consegui conferir a execução');
   // Corrompido não liga sessão por resposta.
-  const r = expandir([resposta('GM-21')]);
+  const r = expandir(respostaB('GM-21'));
   assert.equal(trilhaDe(fatos({ branch: 'main' }), [...r, { ...r[0] }]).identificada, false);
 });
 
@@ -352,7 +357,7 @@ test('fato-duplicado-idempotente', () => {
 });
 
 test('resposta-liga-sessao', () => {
-  const t = trilhaDe(fatos({ branch: 'main', specs: [] }), expandir([resposta('GM-21')]));
+  const t = trilhaDe(fatos({ branch: 'main', specs: [] }), expandir(respostaB('GM-21')));
   assert.equal(t.identificada, true);
   assert.equal(t.entrega, 'GM-21');
   // Branch sem o ID da entrega: plano e PR sem fonte ⇒ `?`, nada inferido depois.
@@ -360,13 +365,99 @@ test('resposta-liga-sessao', () => {
   assert.equal(t.motivos[3], 'não consegui conferir o plano');
   assert.equal(t.motivos[5], 'não consegui conferir o pedido de revisão');
   // Resposta vence a branch.
-  assert.equal(trilhaDe(fatos({ ledger: true }), expandir([resposta('GM-21')])).entrega, 'GM-21');
+  assert.equal(trilhaDe(fatos({ ledger: true }), expandir(respostaB('GM-21'))).entrega, 'GM-21');
   // Rótulo que não é ID (caixa trocada, opção avulsa) não liga.
   for (const r of ['gm-21', 'Gm-21', 'conversa avulsa', 'GM-21 ']) {
-    assert.equal(trilhaDe(fatos({ branch: 'main' }), expandir([resposta(r)])).identificada, false, r);
+    assert.equal(trilhaDe(fatos({ branch: 'main' }), expandir(respostaB(r))).identificada, false, r);
   }
-  // A mais recente vale.
-  assert.equal(trilhaDe(fatos({ branch: 'main' }), expandir([resposta('GM-21'), resposta('GM-22', 'sessao-c')])).entrega, 'GM-22');
+  // A mais recente à pergunta (b) da sessão vale, e ela decide (rótulo avulso depois desfaz).
+  const s = 'sessao-b';
+  const resp = (rotulo: string, pergunta = `${s}:1`, sessao = s): Compacto => ({ t: 'dono.resposta', s: sessao, d: { pergunta, opcao: 1, rotulo } });
+  assert.equal(trilhaDe(fatos({ branch: 'main' }), expandir([ancoraB(), resp('GM-21'), resp('GM-22')])).entrega, 'GM-22');
+  assert.equal(trilhaDe(fatos({ branch: 'main' }), expandir([ancoraB(), resp('GM-21'), resp('conversa avulsa')])).identificada, false);
+});
+
+test('resposta-so-da-pergunta-b-da-sessao-atual', () => {
+  // DP-2 ajuste 1 / plano T3: só a resposta à pergunta (b) da sessão atual liga.
+  const s = 'sessao-b';
+  const resp = (rotulo: string, pergunta: string, sessao = s): Compacto => ({ t: 'dono.resposta', s: sessao, d: { pergunta, opcao: 1, rotulo } });
+  // Resposta "GM-13" de outra sessão não vence a branch feat/GM-20-x (que identifica com a spec GM-20).
+  const velha = expandir(respostaB('GM-13', 'velha'));
+  const p2 = trilhaDe(fatos({ branch: 'feat/GM-20-x' }), velha);
+  assert.equal(p2.identificada, true);
+  assert.equal(p2.entrega, 'GM-20');
+  assert.equal(p2.candidato, 'GM-20');
+  // Nem liga sozinha, sem branch.
+  assert.equal(trilhaDe(fatos({ branch: 'main' }), velha).identificada, false);
+  // Troca de valor: na própria sessão "velha" a mesma resposta liga.
+  assert.equal(trilhaDe(fatos({ branch: 'feat/GM-20-x', sessao: 'velha' }), velha).entrega, 'GM-13');
+  // Resposta "confirmar" a outra pergunta (dúvida) da mesma sessão não identifica, nem com `idPadrao` frouxo.
+  const idPadrao = '[0-9a-z]{9,11}';
+  const duvida: Compacto = { t: 'nota', s, d: { tipo: 'duvida', texto: 'seguir?', opcoes: ['confirmar', 'cancelar'] } };
+  const outra = trilhaDe(fatos({ branch: null, idPadrao, specs: [] }), expandir([ancoraB(), duvida, resp('confirmar', `${s}:2`)]));
+  assert.equal(outra.identificada, false);
+  assert.equal(outra.entrega, null);
+  assert.equal(outra.candidato, null);
+  // Troca de valor: a mesma resposta à âncora (b) liga.
+  assert.equal(trilhaDe(fatos({ branch: null, idPadrao, specs: [] }), expandir([ancoraB(), duvida, resp('confirmar', `${s}:1`)])).entrega, 'confirmar');
+  // Pergunta inexistente na sessão não liga.
+  assert.equal(trilhaDe(fatos({ branch: 'main' }), expandir([ancoraB(), resp('GM-21', `${s}:9`)])).identificada, false);
+  // Âncora que não é o 1º evento de trabalho da sessão não é a (b).
+  assert.equal(trilhaDe(fatos({ branch: 'main' }), expandir([ancoraB(), ancoraB(), resp('GM-21', `${s}:2`)])).identificada, false);
+  // Resposta anterior à âncora (não respondia a ela) não liga.
+  assert.equal(trilhaDe(fatos({ branch: 'main' }), expandir([resp('GM-21', `${s}:1`, 'outra'), ancoraB()])).identificada, false);
+  // Sem sessão atual nos fatos ⇒ nunca liga por resposta (falha fechada).
+  for (const sessao of [null, undefined, 42]) {
+    const f = { ...fatos({ branch: 'main' }), sessao } as unknown as FatosTrilha;
+    assert.equal(trilhaDe(f, expandir(respostaB('GM-21'))).identificada, false, String(sessao));
+  }
+  // Âncora exportada (o painel e o hook usam a mesma).
+  assert.equal(ancoraDaPerguntaB(expandir([resp('x', 'z:1', 'outra'), ancoraB(), duvida]), s), `${s}:1`);
+  assert.equal(ancoraDaPerguntaB(expandir([duvida, ancoraB()]), s), `${s}:1`, 'nota também é trabalho');
+  assert.equal(ancoraDaPerguntaB(expandir([resp('x', 'z:1')]), s), null, 'resposta não é trabalho');
+  assert.equal(ancoraDaPerguntaB(expandir(respostaB('GM-21')), null), null);
+});
+
+test('resposta-c-rotulo-de-duas-specs-segue-ambigua', () => {
+  const base: Compacto[] = [specMedida(SPEC)];
+  // Mesmo título nas duas: o rótulo não escolhe.
+  const s2 = specFato({ caminho: 'docs/superpowers/specs/2026-11-21-gm20-v2-design.md', sha256: B });
+  base.push(specMedida(s2.caminho));
+  const t = trilhaDe(fatos({ specs: [specFato(), s2] }), expandir([...base, resposta('Trilha da GM-20')]));
+  assert.equal(t.ambigua.length, 2);
+  assert.equal(t.marcas[1], '?');
+  // Título de uma = caminho da outra: o rótulo casa as 2.
+  const s3 = specFato({ caminho: 'docs/superpowers/specs/2026-11-21-gm20-v2-design.md', sha256: B, titulo: 'Outra' });
+  const s1 = specFato({ titulo: s3.caminho });
+  const u = trilhaDe(fatos({ specs: [s1, s3] }), expandir([...base, resposta(s3.caminho)]));
+  assert.equal(u.ambigua.length, 2);
+  assert.equal(u.marcas[1], '?');
+  // Troca de valor: rótulo de exatamente 1 escolhe.
+  const v = trilhaDe(fatos({ specs: [s1, s3] }), expandir([...base, resposta('Outra')]));
+  assert.deepEqual(v.ambigua, []);
+  assert.equal(v.marcas[1], '✓');
+});
+
+test('plano-medido-sem-plano-json-nao-interroga', () => {
+  // Ligada por resposta, branch sem o ID; o plano já foi medido (`fato.medido plano`) e o plano.json saiu: fonte existe ⇒ sem `?`.
+  const medido: Compacto = { t: 'fato.medido', d: { chave: 'plano', fonte: 'arquivo', valor: { tasks: 2 } } };
+  const t = trilhaDe(fatos({ branch: 'main' }), expandir([aprovada(), medido, ...respostaB('GM-20')]));
+  assert.equal(marcas(t), '✓✓✓●○??');
+  assert.equal(t.motivos[3], null);
+  assert.equal(t.motivos[4], null);
+  // Troca de valor: sem o fato do plano, a fase plano é `?` e propaga.
+  const sem = trilhaDe(fatos({ branch: 'main' }), expandir([aprovada(), ...respostaB('GM-20')]));
+  assert.equal(marcas(sem), '✓✓✓????');
+  assert.equal(sem.motivos[3], 'não consegui conferir o plano');
+});
+
+test('plano-sem-tasks-execucao-nao-check', () => {
+  const t = trilhaDe(fatos({ plano: { tasks: [] } }), expandir([aprovada()]));
+  assert.equal(marcas(t), '✓✓✓✓●○○');
+  assert.equal(t.fase, 5);
+  assert.equal(t.progresso, 'spec com 6 seções');
+  // Troca de valor: 1 task integrada ⇒ execução ✓.
+  assert.equal(marcas(trilhaDe(fatos({ plano: { tasks: ['T1'] } }), expandir([aprovada(), { integradas: ['T1'] }]))), '✓✓✓✓✓●○');
 });
 
 test('progresso-e-motivos-sem-linha-tecnica', () => {
