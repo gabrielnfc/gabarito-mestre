@@ -52,7 +52,8 @@
       },
       {
         "nome": "mod-e-texto",
-        "cmd": "cd plugins/gabarito-mestre && bash scripts/test/mod-test.sh && bash scripts/test/texto.test.sh"
+        "cmd": "cd plugins/gabarito-mestre && bash scripts/test/mod-test.sh && bash scripts/test/texto.test.sh",
+        "semContagem": true
       }
     ]
   }
