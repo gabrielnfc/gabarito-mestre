@@ -33,7 +33,7 @@ Status ao dono: comece por `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/painel.mjs
    - `esperar`: agentes vivos ou slots ocupados; não despache. `pousar` nunca vem do CLI (`percent` nulo): o mod pousa ao fim do turno (sem mod, ver abaixo).
    - `parar{motivo}`: pare e **escale ao dono** com o motivo e o diário. Não reabra o que a regra manda escalar. `teto_rodadas`: diga o comando exato, só dele: `/gabarito-mestre:liberar <task>` (recomeça em `pendente`); você não o invoca.
    - `esperar{emenda}`: há proposta de emenda aberta; avise o dono (`/gabarito-mestre:emenda aprovar|rejeitar <seq>`) e pare o turno.
-   - `concluir`: tudo integrado. Rode a suíte inteira e o CI antes de dizer "pronto". Depois: `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" registro`; commite só o `registro.md` que ele devolve (`git add` pelo caminho); então **Entrega** abaixo.
+   - `concluir`: tudo integrado. Rode a suíte inteira e o CI antes de dizer "pronto". Depois: `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" registro`, que gera e commita o registro (não commite à mão); então **Entrega** abaixo.
 2. CI da entrega: `ci verde|vermelho`. CI de homolog após a última integração: `ci verde|vermelho --alvo homolog` (sem ele `continua` e `janela` ficam em `esperar{homolog}`). Falha que você não consegue resolver: `parar nao_conseguiu`.
 3. Volte a `proxima` depois de cada evento. `reabrir <task>` só recomeça a task (origem `retomada`); o teto de rodadas só o dono libera. Rode a entrega sob `/loop` dinâmico (sem intervalo): o wakeup deve retomar o turno depois do `/clear` (ainda em verificação); sem ele ativo, peça ao dono, em 1 linha, que o inicie.
 
@@ -49,7 +49,7 @@ Status ao dono: comece por `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/painel.mjs
 
 `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/entrega.mjs" decidir` depois de `concluir`; a decisão é do CLI:
 - `subir`: `entrega.mjs" executar`. Falhas esperadas: `checkout_sujo`, `entrega_em_curso`, `ancora_nao_gravada`: pare e diga a causa. Negado pelo modo de permissão (o `auto` classifica como deploy de produção): não contorne nem tente outro caminho; diga ao dono que o deploy é dele, com o comando exato `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/entrega.mjs" executar`, e pare o turno. Antes de parar, `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/entrega.mjs" devolver --motivo <t>` (grava `entrega.devolvida`; o painel mostra o comando ao dono).
-- `release_pr`: push da branch e PR para a `base` que ele devolve; **nunca merge**.
+- `release_pr`: `git push -u origin HEAD` e `gh pr create --base <base> --head <branch> --title "<entrega>: …" --body-file <registro.md>`. Push de branch e PR não são deploy. Não rode `executar` nem `devolver`: só valem para `subir` e aqui dão `nao_subiu`. A base é a do `decidir`, mesmo que a doc do projeto diga outra; repasse o `aviso`, se vier. Negado pelo modo de permissão: dê ao dono os 2 comandos exatos e pare o turno. Se o `AGENTS.md` do projeto pedir ok para push/PR sem essa exceção (R1 da 1.1.0), não passe por cima: dê ao dono as 2 linhas completas, já preenchidas (`git push -u origin HEAD` e `gh pr create --base <base> --head <branch> --title "…" --body-file <registro.md>`), diga que `gabarito-instalar --atualizar` traz a R1 nova, e pare o turno. **Nunca merge.**
 - `agendar`: informe o `quando` ao dono. `esperar{homolog}`: informe o dono (com o `aviso`, se houver) e pare o turno.
 - `entregue`: nada a fazer. `parar{motivo}`: escale ao dono.
 

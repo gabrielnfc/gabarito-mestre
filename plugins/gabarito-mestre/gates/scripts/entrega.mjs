@@ -40,7 +40,7 @@ import { createHash } from 'node:crypto';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import { lerConfigOrigin } from '../lib/config.mjs';
 import * as diario from '../dist/diario.js';
-import { decidirEntrega, lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
+import { decidirEntrega, lerConfigEntrega, politicaEfetiva, resolverBaseEntrega } from '../dist/entrega.js';
 import { ordenar, proximaAcao } from '../dist/loop.js';
 import { validarPlano } from '../dist/plano.js';
 
@@ -82,6 +82,16 @@ function git(cwd, ...args) {
   } catch (e) {
     const texto = String(e.stderr ?? '').trim() || String(e.stdout ?? '').trim() || e.message;
     throw new Error(texto.split('\n').filter(Boolean).slice(-3).join(' / '));
+  }
+}
+
+/** `harness.config.json` COMMITADO no HEAD (objeto do git, nunca a worktree); `null` se ausente ou ilegível. Só a base da entrega cai para ele. */
+function lerConfigHead(cwd) {
+  try {
+    const raw = JSON.parse(git(cwd, 'show', 'HEAD:harness.config.json'));
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
+  } catch {
+    return null;
   }
 }
 
@@ -238,6 +248,22 @@ export function pausado(c) {
   }
 }
 
+/** REQ-REG-1: `registro.md` rastreado e igual ao HEAD; senão `registro_nao_commitado` com o comando que o gera e commita. */
+function conferirRegistro(c) {
+  const caminho = relative(c.raiz, join(c.dirEntrega, 'registro.md'));
+  const falha = (porque) => new Falha('registro_nao_commitado', `${caminho} ${porque}: rode \`loop.mjs registro --entrega ${c.entrega}\` (gera e commita só ele); a entrega não sobe sem o registro no HEAD`);
+  try {
+    git(c.raiz, '--literal-pathspecs', 'ls-files', '--error-unmatch', '--', caminho);
+  } catch {
+    throw falha('não está no git');
+  }
+  try {
+    git(c.raiz, '--literal-pathspecs', 'diff', '--quiet', 'HEAD', '--', caminho);
+  } catch {
+    throw falha('tem mudança sem commit');
+  }
+}
+
 /** P3 a P6: pausa, plano, diário, entrega completa e política efetiva. Nada gravado. */
 function preparar(c, agoraMs, { conferirPausa = true } = {}) {
   if (conferirPausa && pausado(c)) throw new Falha('pausado', '.harness/PAUSAR presente: nada roda');
@@ -251,11 +277,16 @@ function preparar(c, agoraMs, { conferirPausa = true } = {}) {
   if (acao.tipo !== 'concluir') {
     throw new Falha('entrega_incompleta', `a entrega só sobe com todas as tasks integradas (próxima ação do loop: ${acao.tipo}${acao.motivo ? ` — ${acao.motivo}` : ''})`, { acao });
   }
+  conferirRegistro(c);
   const origin = lerConfigOrigin(c.raiz);
   const config = lerConfigEntrega(origin.cfg);
   const avisos = [];
   if (origin.invalida) avisos.push(`config de origin inválida: ${origin.motivo}`);
   avisos.push(...config.erros);
+  const origemDeclarou = origin.cfg?.entrega?.base !== undefined;
+  const resolvida = resolverBaseEntrega(config, origemDeclarou, lerConfigHead(c.raiz));
+  config.base = resolvida.base;
+  if (resolvida.aviso !== undefined) avisos.push(resolvida.aviso);
   const efetiva = politicaEfetiva(config, plano.politica_entrega);
   if (!efetiva.ok) throw new Falha(efetiva.erro, efetiva.mensagem);
   return {

@@ -116,11 +116,20 @@ BYTES_OUT=$(node -e "
   const i=t.search(/^## Apêndice/m); const nucleo=Buffer.byteLength(i<0?t:t.slice(0,i));
   const ap=i<0?0:Buffer.byteLength(t.slice(i));
   console.log('núcleo', nucleo, 'B · apêndice', ap, 'B');
-  if(nucleo>17291){console.error('núcleo acima do teto 17.291');process.exit(1)}
+  // R1 com exceção de release_pr (GM-13 R41): teto 17.291 + 126 B
+  if(nucleo>17417){console.error('núcleo acima do teto 17.417');process.exit(1)}
   if(ap>4096){console.error('apêndice acima de 4.096');process.exit(1)}")
 RC_BYTES=$?
 echo "  $BYTES_OUT"
-check "núcleo ≤ 17.291 B · apêndice ≤ 4.096 B" '[ "$RC_BYTES" -eq 0 ]' "teto de bytes estourado"
+check "R1 tem a exceção de release_pr (GM-13 R41)" "grep -E '^\\*\\*R1 ' '$A' | grep -q 'release_pr'" "R1 sem a exceção"
+# r3: a linha R1 INTEIRA por igualdade (texto exato de 4d24d8f): qualquer palavra a mais, a menos ou trocada falha
+R1_ESPERADA=$(cat <<'R1EOF'
+**R1 — Nada de `push`, PR, merge, deploy, release ou tag sem ok explícito** para aquele ato. Exceção: quando o `decidir` da entrega dá `release_pr`, a spec aprovada é o ok para o push da branch e o PR à base dele. Pré-checks são do orquestrador; o ato é do dono.
+R1EOF
+)
+check "R1: linha inteira igual ao texto aprovado (exceção só push da branch e PR; merge sem exceção)" '[ "$(grep -E "^\*\*R1 " "'"$A"'")" = "$R1_ESPERADA" ]' "a linha R1 de AGENTS.md mudou"
+check "R1: merge segue na lista sem exceção" "grep -E '^\\*\\*R1 ' '$A' | grep -q 'PR, merge, deploy, release ou tag sem ok explícito'" "merge saiu da lista sem exceção"
+check "núcleo ≤ 17.417 B · apêndice ≤ 4.096 B" '[ "$RC_BYTES" -eq 0 ]' "teto de bytes estourado"
 
 # ── B1 (handoff §B.1) — conteúdo mínimo de R1–R21/I1–I12, scripts citados existem ─────
 echo "── B1: conteúdo mínimo das regras (não só o rótulo) e scripts citados existem"
@@ -192,6 +201,9 @@ for sec in '## Fluxo' '## Trocar um item' '## Modo --vincular' '## Proibido'; do
 done
 N5=$(grep -ci '^## Fase ' "$SI")
 check "SKILL.md instalar sem seção '## Fase ' (sem caixa)" '[ "'"$N5"'" -eq 0 ]' "achei $N5 seção(ões) de fase"
+check "SKILL.md instalar apresenta o painel ao fim do onboarding" "grep -qF 'Quando uma entrega começar, o painel abre sozinho ao lado (em terminal largo); \`/gabarito\` mostra as opções.' '$SI'" "linha do painel ausente"
+CG="$P/commands/gabarito.md"
+check "commands/gabarito.md (sem mod) explica pausar, retomar e que o painel precisa do mod" "grep -qF '/gabarito pausar   para o trabalho automático da entrega' '$CG' && grep -qF '/gabarito retomar  continua de onde parou' '$CG' && grep -qxF 'O painel precisa do mod; sem ele não há o painel.' '$CG'" "ajuda sem mod ausente"
 
 # ── B6 (handoff §B.6, F5-R11) — skills/gabarito-conformidade/SKILL.md ─────────────────
 echo "── B6: SKILL.md de gabarito-conformidade"
@@ -263,7 +275,7 @@ check "SKILL.md conformidade: fio condutor · contenda (R21) · Epic: PBIs" "gre
 echo "── pacote — versões, sem hooks em plugin.json, sem 77 testes, nomes da 1.0.1"
 v1=$(node -p "require('$P/.claude-plugin/plugin.json').version" 2>/dev/null)
 v3=$(node -p "require('$P/gates/package.json').version" 2>/dev/null)
-check "version plugin == gates == 2.0.0-alpha.5 (achei '$v1' '$v3')" '[ "$v1" = "$v3" ] && [ "$v1" = "2.0.0-alpha.5" ]' "versões divergem ou ≠ 2.0.0-alpha.5"
+check "version plugin == gates == 2.0.0 (achei '$v1' '$v3')" '[ "$v1" = "$v3" ] && [ "$v1" = "2.0.0" ]' "versões divergem ou ≠ 2.0.0"
 # RULING F6-R7 (2): o grep do plano `grep -c '"hooks"'` é sempre verdadeiro — a keyword do array já
 # conta 1. A checagem correta ancora na FORMA DE CHAVE JSON: `"hooks"` seguido de `:` (com ou sem espaço).
 HOOKS_KEY=$(grep -c '"hooks"[[:space:]]*:' "$P/.claude-plugin/plugin.json")
@@ -325,6 +337,48 @@ MISTURA=$(grep -n -e '--calibrar' "$SKILL_I" "$P/reference/adocao.md" "$ROOT/REA
 check "skill, adocao.md e README não mandam --calibrar esperando simultaneos/teto/calibradoEm/--json (é --sugerir)" '[ "'"$MISTURA"'" -eq 0 ]' "$MISTURA linha(s) com --calibrar e campos da fórmula por núcleos"
 check "skill gabarito-instalar NÃO chama capacidade.mjs (a orquestração vem do detectar)" '! grep -q "capacidade\.mjs" "$SKILL_I" "'"$ST"'"' "a skill voltou a chamar capacidade.mjs"
 SUG_JSON=$(cd "$ROOT" && node "$CAP" --root "$ROOT" --sugerir --json 2>/dev/null)
+
+# GM-13 T18 r2: nota da virada e CHANGELOG [2.0.0] só citam comando `claude plugin …` MEDIDO (lista fechada: spike t17da + --help lido
+# na T18 r2), sem o nome antigo do fluxo e sem o `#next` como caminho do adotante.
+VIRADA="$ROOT/docs/virada-2.0.md"
+NOME_ANTIGO="Workflow"" TRUE"   # montado em dois pedaços: NOM-1 varre este arquivo
+CL2=$(sed -n '/^## \[2\.0\.0\]/,/^## \[1\./p' "$ROOT/CHANGELOG.md" | sed '$d')
+check "CHANGELOG tem a seção [2.0.0] com conteúdo" '[ "$(printf "%s" "$CL2" | wc -l | tr -d " ")" -gt 10 ]' "seção [2.0.0] vazia ou ausente"
+check "nota da virada não diz o nome antigo do fluxo" '! grep -q "$NOME_ANTIGO" "$VIRADA"' "termo antigo na nota"
+check "CHANGELOG [2.0.0] não diz o nome antigo do fluxo" '! printf "%s" "$CL2" | grep -q "$NOME_ANTIGO"' "termo antigo no CHANGELOG [2.0.0]"
+check "nota da virada não manda usar o #next (nem disable) como caminho do adotante" '! grep -qE "#next|plugin disable" "$VIRADA"' "passo do #next/disable voltou"
+CMDS_OK='claude plugin marketplace update gabarito-mestre
+claude plugin update gabarito-mestre@gabarito-mestre
+claude plugin uninstall gabarito-mestre@gabarito-mestre-next --scope project
+claude plugin marketplace remove gabarito-mestre-next
+claude plugin list
+claude plugin marketplace remove gabarito-mestre
+claude plugin marketplace add '"'"'gabrielnfc/gabarito-mestre#gabarito-mestre--v1.1.0'"'"'
+claude plugin marketplace add gabrielnfc/gabarito-mestre
+claude plugin install gabarito-mestre@gabarito-mestre
+claude plugin update gabarito-mestre@gabarito-mestre --scope project
+claude plugin install gabarito-mestre@gabarito-mestre --scope project'
+CMDS_NOTA=$( { grep -oE 'claude plugin [^`]+' "$VIRADA"; printf "%s" "$CL2" | grep -oE 'claude plugin [^`]+'; } | sort -u)
+CMDS_FORA=$(printf "%s\n" "$CMDS_NOTA" | grep -vxF -f <(printf "%s\n" "$CMDS_OK") | grep . | wc -l | tr -d ' ')
+check "nota e CHANGELOG [2.0.0]: todo 'claude plugin …' está na lista fechada de comandos medidos" '[ "$CMDS_FORA" -eq 0 ]' "$CMDS_FORA comando(s) fora da lista medida"
+check "nota da virada cita os 11 comandos medidos (nenhum sumiu)" '[ "$(printf "%s\n" "$CMDS_NOTA" | grep -cxF -f <(printf "%s\n" "$CMDS_OK"))" -eq 11 ]' "comando medido ausente da nota"
+# GM-13 T18 m3: "Como voltar" traz os passos medidos na ordem (1.1.0: remove, add com tag, install; 2.0: remove, add sem tag, install)
+VOLTAR=$(sed -n '/^## Como voltar/,$p' "$VIRADA" | grep -oE '^[0-9]\. `claude plugin [^`]+' | sed -E 's/^[0-9]\. `//')
+VOLTAR_ESPERADO="claude plugin marketplace remove gabarito-mestre
+claude plugin marketplace add 'gabrielnfc/gabarito-mestre#gabarito-mestre--v1.1.0'
+claude plugin install gabarito-mestre@gabarito-mestre
+claude plugin marketplace remove gabarito-mestre
+claude plugin marketplace add gabrielnfc/gabarito-mestre
+claude plugin install gabarito-mestre@gabarito-mestre"
+check "nota da virada: 'Como voltar' tem os 6 passos medidos, na ordem" '[ "$VOLTAR" = "$VOLTAR_ESPERADO" ]' "passos de 'Como voltar' diferem dos medidos"
+# GM-13 T18 proj r3 (spike t17dh + sombra-t18proj): passo por projeto sem condição user/project; conferência pelo installed_plugins.json (não pelo `plugin list`)
+ATUALIZAR=$(sed -n '/^## Como atualizar/,/^## Rode o onboarding/p' "$VIRADA")
+check "nota da virada: 'em cada repo onde o gabarito foi instalado por projeto', 'dentro dele' e '--scope project' na mesma linha" 'printf "%s" "$ATUALIZAR" | grep -iE "em cada repo onde o gabarito foi instalado por projeto" | grep -E "dentro dele" | grep -q "plugin update gabarito-mestre@gabarito-mestre --scope project"' "passo por projeto sem as três partes na mesma linha"
+check "nota da virada: o passo por projeto não tem condição nem promete que o passo 2 basta" '! printf "%s" "$ATUALIZAR" | grep -q "já é atualizado" && ! printf "%s" "$ATUALIZAR" | grep -q "instalado no usuário e também"' "condição user/project ou 'já é atualizado' voltou"
+check "nota da virada: conferência pelo installed_plugins.json com \"version\": \"2.0.0\", sem cartão" 'printf "%s" "$ATUALIZAR" | grep -q "installed_plugins.json" && printf "%s" "$ATUALIZAR" | grep -q "\"version\": \"2.0.0\"" && ! printf "%s" "$ATUALIZAR" | grep -qi "cartão"' "conferência da versão fora do installed_plugins.json"
+check "nota da virada: na linha do passo 3, 'plugin list' só aparece em 'pode mostrar' (não é a forma de conferir)" 'L3=$(printf "%s\n" "$ATUALIZAR" | grep -E "^3\."); printf "%s" "$L3" | grep -q "plugin list. pode mostrar" && ! printf "%s" "$L3" | sed "s/plugin list. pode mostrar//" | grep -q "plugin list"' "passo 3 confere pelo plugin list"
+PASSO5=$(printf "%s\n" "$ATUALIZAR" | grep -E "^5\.")
+check "nota da virada: o passo 5 não exige 'um só' e confere o catálogo gabarito-mestre-next" '[ -n "$PASSO5" ] && ! printf "%s" "$PASSO5" | grep -q "um só" && printf "%s" "$PASSO5" | grep -q "gabarito-mestre-next"' "passo 5 com 'um só' ou sem gabarito-mestre-next"
 
 echo "── $falhas falha(s)"
 [ "$falhas" -eq 0 ]

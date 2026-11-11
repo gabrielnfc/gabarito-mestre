@@ -64,6 +64,15 @@
                           "FL1": { "preparado": "Preparado", "em_execucao": "Working on it", "revisao": "Revisão e teste", "pronto": "Pronto para liberar", "concluido": "Done" } },
       "comoBuscarIniciativa": "Peça ok para LER. Liste boards, localize 'Portfólio' e busque o item pelo nome; a coluna Status é o status. Grave id, nome e URL sem token. Pergunte qual coluna Connect boards liga PBI→Epic; grave em vinculoPbiEpic.",
       "confirmadoEm": null
+    },
+    {
+      "padraoServidor": "^mesa$",
+      "ferramenta": "mesa",
+      "hierarquiaSugerida": { "FL3": "Pasta (uma Iniciativa por Pasta), com card de tipo Iniciativa", "FL2": "Lista (um Epic por Lista), com card de tipo Epic", "FL1": "Tarefa na Lista do Epic (subtarefa = task do plano, opcional)" },
+      "statusSugerido": { "FL2": { "preparado": "preparado", "em_execucao": "em execução", "em_validacao": "em validação", "concluido": "concluído" },
+                          "FL1": { "preparado": "preparado", "em_execucao": "em execução", "revisao": "revisão e teste", "pronto": "pronto para liberar", "concluido": "concluído" } },
+      "comoBuscarIniciativa": "Peça ok para LER. Use mesa_hierarchy e procure a Pasta pelo nome; o card da Iniciativa é o cardTaskId dela, lido com mesa_get_tasks. Para um PBI ou Epic pelo ID, use mesa_get_tasks com a chave (sem diferenciar maiúsculas). O Epic de um PBI é o card (cardTaskId) da Lista em que ele está; a Iniciativa é o card da Pasta dessa Lista. hidden: true na resposta = item na lixeira: existir não é estar ativo (I10). Grave id e nome; url fica vazia (a Mesa é local). Vazio não é prova: pergunte de novo antes de gravar. Vínculo PBI→Epic: vinculoPbiEpic { tipo: relacionamento, nome: Lista }.",
+      "confirmadoEm": null
     }
   ]
 }

@@ -74,7 +74,7 @@ function montar() {
   mkdirSync(join(dir, 'src'));
   copyFileSync(join(AQUI, 'spec.md'), join(dir, 'docs', 'spec.md'));
   writeFileSync(join(dir, 'src', '.gitkeep'), '');
-  writeFileSync(join(dir, '.gitignore'), '.harness/\n');
+  writeFileSync(join(dir, '.gitignore'), '.harness/*\n!.harness/entregas/\n.harness/entregas/*/*\n!.harness/entregas/*/registro.md\n');
   writeFileSync(join(dir, 'AGENTS.md'), '# AGENTS.md\n\n**Nível de adoção declarado: `1`**\n');
   // `fluxo.resolvidoEm` é o que o cartão exige para ler o diário (sem onboarding o hook não escreve nada)
   writeFileSync(join(dir, 'harness.config.json'), `${JSON.stringify({
@@ -96,7 +96,7 @@ function montar() {
   // plugin falso só para o cartão (`--plugin-root`): versão e nada mais; o doctor do cartão não roda
   const plugin = join(base, 'plugin-falso');
   mkdirSync(join(plugin, '.claude-plugin'), { recursive: true });
-  writeFileSync(join(plugin, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'gabarito-mestre', version: '2.0.0-alpha.5' }));
+  writeFileSync(join(plugin, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'gabarito-mestre', version: '2.0.0' }));
 
   let agora = T0;
   const rodarCom = (script, args, { input, env = {}, congelar = true } = {}) => {

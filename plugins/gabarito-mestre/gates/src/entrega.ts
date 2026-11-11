@@ -85,6 +85,29 @@ function lerComando(nome: string, bruto: unknown, erros: string[]): ComandoEntre
   return { argv: argv as string[], timeout_s: timeout === undefined ? TIMEOUT_PADRAO_S : (timeout as number) };
 }
 
+const baseValida = (b: unknown): b is string => typeof b === 'string' && BASE_RE.test(b) && !b.includes('..');
+
+/**
+ * REQ-ENT-1: a base do PR sai de `entrega.base` de origin/HEAD; ausente lá, da do config commitado no HEAD (`cfgHead`, já lido do objeto, nunca da
+ * worktree); senão `main`. SÓ a base cai para o HEAD: política, janela, comandos e autonomia governam o deploy e ficam só de origin. A base do HEAD
+ * passa pela mesma validação. `origemDeclarou`: origin trouxe `entrega.base` (válida ou não; inválida já avisou em `erros`).
+ */
+export function resolverBaseEntrega(origem: ConfigEntrega, origemDeclarou: boolean, cfgHead: unknown): { base: string; aviso?: string } {
+  const e = ehObjeto(cfgHead) && ehObjeto(cfgHead.entrega) ? cfgHead.entrega : null;
+  const declaradaNoHead = e !== null && e.base !== undefined;
+  if (origemDeclarou) {
+    if (declaradaNoHead && baseValida(e.base) && e.base !== origem.base && origem.erros.length === 0) {
+      return { base: origem.base, aviso: `base divergente: origin/HEAD declara "${origem.base}" e o HEAD declara "${e.base}"; vale a de origin/HEAD` };
+    }
+    return { base: origem.base };
+  }
+  if (declaradaNoHead) {
+    if (baseValida(e.base)) return { base: e.base, aviso: 'base do HEAD: origin/HEAD sem entrega.base' };
+    return { base: 'main', aviso: 'entrega.base do HEAD: nome de branch inválido (usa main)' };
+  }
+  return { base: 'main', aviso: 'nenhuma base declarada (origin/HEAD e HEAD sem entrega.base): usa main' };
+}
+
 /**
  * Lê `entrega` do config de `origin/HEAD`. Campo inválido ⇒ default do campo + texto em `erros`; nunca lança.
  * Ausente (sem erro) e corrompido (com erro) são casos distintos.

@@ -238,8 +238,8 @@ test('skill-loop-cita-aprender-pousar-registro-loop-dinamico', () => {
   const frasesComClear = t.split(/(?<=[.!?])\s+|\n/).filter((f) => f.includes('/clear'));
   assert.deepEqual(atribuiClearAoAgente(t), [], 'frase que atribui o /clear ao agente');
   assert.ok(frasesComClear.length >= 2, 'o texto precisa citar o /clear (pedido ao dono e negação)');
-  // (d) concluir ⇒ registro, commit só do registro.md, depois Entrega
-  assert.match(t, /loop\.mjs" registro`; commite só o `registro\.md` que ele devolve \(`git add` pelo caminho\); então \*\*Entrega\*\* abaixo\./);
+  // (d) concluir ⇒ registro (gera e commita; FX6/D1), depois Entrega
+  assert.match(t, /loop\.mjs" registro`, que gera e commita o registro \(não commite à mão\); então \*\*Entrega\*\* abaixo\./);
   // (c2) MINORs do review r1: pouso só na fronteira; /clear só se o pousar passou; commit só do registro, sem `git add` largo
   assert.match(t, /na fronteira \(contexto perto de 50 %, entre tasks\), rode/);
   assert.match(t, /\(`task_em_voo` ⇒ ainda não\); se passar, peça ao dono/);
@@ -264,4 +264,16 @@ test('skill-conformidade-lista-d-com-spec: allowed-tools com node, comando real,
   assert.equal(JSON.parse(r.stdout.trim().split('\n').pop()).ok, true, r.stdout + r.stderr);
   // comando real: roda em bash e zsh na costura (o extrator de FONTES cobre este arquivo)
   assert.ok(extrairComandosLoop().some((c) => c.rel === 'skills/gabarito-conformidade/SKILL.md' && /aprendizados --para spec/.test(c.cmd)), 'o comando não entrou na costura');
+});
+
+// ---- GM-13 FX8 (t6): o bullet `release_pr` da skill do loop manda o comando exato e proíbe `executar`.
+test('skill-loop-release_pr-empurra-e-abre-o-pr', () => {
+  const linha = readFileSync(SKILL_LOOP, 'utf8').split('\n').find((l) => l.startsWith('- `release_pr`'));
+  assert.ok(linha, 'bullet release_pr ausente');
+  assert.match(linha, /git push -u origin/);
+  assert.match(linha, /gh pr create --base/);
+  assert.match(linha, /não rode `executar`/i);
+  assert.match(linha, /Nunca merge/);
+  // GM-13 FX9 r3: o bullet INTEIRO por igualdade com o texto aprovado (4d24d8f); qualquer palavra trocada falha
+  assert.equal(linha, "- `release_pr`: `git push -u origin HEAD` e `gh pr create --base <base> --head <branch> --title \"<entrega>: …\" --body-file <registro.md>`. Push de branch e PR não são deploy. Não rode `executar` nem `devolver`: só valem para `subir` e aqui dão `nao_subiu`. A base é a do `decidir`, mesmo que a doc do projeto diga outra; repasse o `aviso`, se vier. Negado pelo modo de permissão: dê ao dono os 2 comandos exatos e pare o turno. Se o `AGENTS.md` do projeto pedir ok para push/PR sem essa exceção (R1 da 1.1.0), não passe por cima: dê ao dono as 2 linhas completas, já preenchidas (`git push -u origin HEAD` e `gh pr create --base <base> --head <branch> --title \"…\" --body-file <registro.md>`), diga que `gabarito-instalar --atualizar` traz a R1 nova, e pare o turno. **Nunca merge.**", 'o bullet release_pr mudou');
 });

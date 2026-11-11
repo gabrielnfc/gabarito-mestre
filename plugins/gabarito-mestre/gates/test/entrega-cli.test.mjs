@@ -42,7 +42,7 @@ const PLANO_PADRAO = ['T1', 'T2'];
  */
 function montar({
   politica = 'continua', autonomia = true, semAutonomia = false, janela, origem, semOrigin = false, local, scripts = {}, timeouts = {}, extraArgv = [], deployArgv, comandos = ['deploy', 'smoke', 'rollback'],
-  tasks = PLANO_PADRAO, integradas = tasks, homolog = true, planoExtra = {},
+  tasks = PLANO_PADRAO, integradas = tasks, homolog = true, planoExtra = {}, registro = true,
 } = {}) {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'entrega cli ')));
   const repo = join(base, 'repo com espaço');
@@ -87,8 +87,16 @@ function montar({
   const m = { base, repo, marcas, dir };
   for (const id of integradas) integrar(m, id);
   fechar(m); // REQ-APR-2 muda a ordem: o fechamento abre pendência de aprendizado antes do `concluir`
+  if (registro) commitarRegistro(m); // REQ-REG-1: `decidir`/`preparar` com `concluir` exigem o registro.md no HEAD
   if (homolog !== null) ev(m, 'ci.resultado', { verde: homolog, alvo: 'homolog' });
   return m;
+}
+
+/** Registro de fixture commitado só pelo caminho (o CLI real é coberto em `registro-real-…`). */
+function commitarRegistro(m, texto = 'registro de fixture\n') {
+  writeFileSync(join(m.dir, 'registro.md'), texto);
+  g(m.repo, 'add', '--', '.harness/entregas/GM-10/registro.md');
+  g(m.repo, 'commit', '-q', '-m', 'docs(GM-10): registro da entrega', '--', '.harness/entregas/GM-10/registro.md');
 }
 
 function ev(m, tipo, dados, sessao = 'loop') {
@@ -132,6 +140,57 @@ const appendQueFalha = (quando, erro = 'forma_invalida: falha injetada') => {
 };
 
 const JANELA_UTC = { dias: [0, 1, 2, 3, 4, 5, 6], inicio: '02:00', fim: '04:00', fuso: 'UTC' };
+
+describe('registro commitado (REQ-REG-1, FX6/D1)', () => {
+  const LOOP = join(AQUI, '..', 'scripts', 'loop.mjs');
+  const REG = '.harness/entregas/GM-10/registro.md';
+
+  test('registro-nao-rastreado (t3): decidir recusa com registro_nao_commitado e o comando; nada gravado no diário', () => {
+    const m = montar({ registro: false });
+    writeFileSync(join(m.dir, 'registro.md'), 'gerado, nunca commitado\n'); // existe no disco: só existsSync passaria
+    const antes = eventos(m).length;
+    const { rc, json } = rodar(m, 'decidir');
+    assert.equal(json.ok, false);
+    assert.equal(json.erro, 'registro_nao_commitado');
+    assert.notEqual(rc, 0);
+    assert.match(json.mensagem, /loop\.mjs registro --entrega GM-10/);
+    assert.equal(eventos(m).length, antes);
+  });
+
+  test('registro-ausente: sem arquivo algum ⇒ o mesmo erro', () => {
+    const m = montar({ registro: false });
+    assert.equal(rodar(m, 'decidir').json.erro, 'registro_nao_commitado');
+  });
+
+  test('registro-alterado-sem-commit (t4): rastreado, mas diferente do HEAD ⇒ registro_nao_commitado', () => {
+    const m = montar();
+    writeFileSync(join(m.dir, 'registro.md'), 'editado depois do commit\n');
+    const { json } = rodar(m, 'decidir');
+    assert.equal(json.erro, 'registro_nao_commitado');
+    assert.match(json.mensagem, /mudança sem commit/);
+  });
+
+  test('registro-commitado (t5): decidir segue como antes (decisão `subir` com a política continua)', () => {
+    const m = montar();
+    const { rc, json } = rodar(m, 'decidir');
+    assert.equal(rc, 0, JSON.stringify(json));
+    assert.equal(json.ok, true);
+    assert.deepEqual(json.decisao, { tipo: 'subir' });
+  });
+
+  test('registro-real-costura: `loop.mjs registro` real commita e `decidir` real passa; mexer no diário e não regerar não derruba (registro é o do HEAD)', () => {
+    const m = montar({ registro: false });
+    assert.equal(rodar(m, 'decidir').json.erro, 'registro_nao_commitado');
+    const r = spawnSync(process.execPath, [LOOP, 'registro', '--entrega', ENTREGA], { cwd: m.repo, encoding: 'utf8' });
+    const j = JSON.parse(r.stdout.trim());
+    assert.equal(j.ok, true, r.stdout + r.stderr);
+    assert.equal(typeof j.commit, 'string');
+    assert.equal(g(m.repo, 'ls-tree', '--name-only', 'HEAD', REG).trim(), REG);
+    const d = rodar(m, 'decidir');
+    assert.equal(d.json.ok, true, JSON.stringify(d.json));
+    assert.deepEqual(d.json.decisao, { tipo: 'subir' });
+  });
+});
 
 describe('executar: etapas e desfechos', { concurrency: 4 }, () => {
   test('sucesso-entregue', async () => {
@@ -708,7 +767,8 @@ describe('executar: pré-condições (nada roda, nada se grava)', { concurrency:
     assert.equal(dec.rc, 0);
     assert.deepEqual(dec.json.decisao, { tipo: 'release_pr', base: 'main' });
     assert.equal(dec.json.politica, 'sob_demanda');
-    assert.equal('aviso' in dec.json, false, 'ausente não é corrompido: sem aviso');
+    assert.match(dec.json.aviso, /^base do HEAD: origin\/HEAD sem entrega\.base/, 'ausente não é corrompido: só o aviso de base (FX8; o HEAD da fixture declara main), sem "inválida"');
+    assert.doesNotMatch(dec.json.aviso, /inválid/);
     assert.equal(rodar(m, 'executar').json.erro, 'nao_subiu');
   });
 });
@@ -718,7 +778,8 @@ describe('ausente x corrompido', { concurrency: 4 }, () => {
     // 1) origin sem o arquivo; 2) JSON inválido; 3) `entrega` de forma errada; 4) raiz que não é objeto: quatro saídas, nenhuma sucesso
     const semArquivo = rodar(montar({ origem: false }), 'decidir').json;
     assert.deepEqual(semArquivo.decisao, { tipo: 'release_pr', base: 'main' });
-    assert.equal('aviso' in semArquivo, false);
+    assert.match(semArquivo.aviso, /^nenhuma base declarada/);
+    assert.doesNotMatch(semArquivo.aviso, /inválid/);
     const invalida = rodar(montar({ origem: '{não é json' }), 'decidir').json;
     assert.deepEqual(invalida.decisao, { tipo: 'release_pr', base: 'main' });
     assert.equal(invalida.politica, 'sob_demanda');
@@ -1697,5 +1758,49 @@ describe('E4 T7: prepararLeitura e decisaoDe', { concurrency: 4 }, () => {
     assert.equal(r.p.efetiva.politica, 'continua');
     assert.equal(r.p.eventos.length, eventos(m).length);
     assert.equal(r.p.plano.entrega, ENTREGA);
+  });
+});
+
+// ---- GM-13 FX8 (REQ-ENT-1): só `entrega.base` cai para o config commitado no HEAD; o resto governa o deploy e fica só em origin.
+describe('base da entrega com fallback do HEAD (FX8)', () => {
+  const decidir = (m) => rodar(m, 'decidir').json;
+
+  test('t1: origin sem entrega, HEAD com base staging ⇒ release_pr staging + aviso', () => {
+    const j = decidir(montar({ origem: {}, local: { entrega: { base: 'staging' } } }));
+    assert.deepEqual(j.decisao, { tipo: 'release_pr', base: 'staging' });
+    assert.match(j.aviso, /base do HEAD: origin\/HEAD sem entrega\.base/);
+  });
+
+  test('t2: origin main, HEAD staging ⇒ origin vence, aviso cita as duas', () => {
+    const j = decidir(montar({ origem: { entrega: { base: 'main' } }, local: { entrega: { base: 'staging' } } }));
+    assert.deepEqual(j.decisao, { tipo: 'release_pr', base: 'main' });
+    assert.match(j.aviso, /main/);
+    assert.match(j.aviso, /staging/);
+    assert.match(j.aviso, /diverg/);
+  });
+
+  test('t3: HEAD sem base e worktree com base x não commitada ⇒ main (lê o objeto commitado)', () => {
+    const m = montar({ origem: {}, local: { entrega: { politica: 'sob_demanda' } } });
+    writeFileSync(join(m.repo, 'harness.config.json'), JSON.stringify({ entrega: { base: 'x' } }));
+    const j = decidir(m);
+    assert.deepEqual(j.decisao, { tipo: 'release_pr', base: 'main' });
+    assert.match(j.aviso, /nenhuma base declarada/);
+  });
+
+  test('t4: política e comandos do HEAD não valem; origin sem entrega segue release_pr sob_demanda', () => {
+    const cmds = { deploy: { argv: ['bash', '-c', 'true'], timeout_s: 5 } };
+    const j = decidir(montar({ origem: {}, local: { entrega: { politica: 'continua', autonomia: true, base: 'staging', comandos: cmds } } }));
+    assert.equal(j.decisao.tipo, 'release_pr');
+    assert.equal(j.politica, 'sob_demanda');
+    assert.equal(j.decisao.base, 'staging');
+    assert.equal(j.decisao.aviso, undefined, 'sem aviso de comandos ausentes só se vier de origin');
+  });
+
+  test('t5: base inválida no HEAD ⇒ main + aviso', () => {
+    for (const ruim of ['../x', 'a..b', '-rf', 'a b', 7]) {
+      const j = decidir(montar({ origem: {}, local: { entrega: { base: ruim } } }));
+      assert.deepEqual(j.decisao, { tipo: 'release_pr', base: 'main' }, String(ruim));
+      assert.match(j.aviso, /entrega\.base.*inv/, String(ruim));
+    }
   });
 });
