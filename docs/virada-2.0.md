@@ -39,4 +39,21 @@ Quem tem a 1.1.x roda `gabarito-instalar` outra vez. Ele detecta o que o reposit
 
 ## Como voltar
 
-A 1.1.0 continua publicada na tag `gabarito-mestre--v1.1.0` do repositório. Não há comando medido para fixar o plugin nessa versão pelo catálogo: o ponto de volta é o código dessa tag. Depois de voltar, rode `claude plugin list` e confira que há um só `gabarito-mestre` habilitado.
+A 1.1.0 continua publicada na tag `gabarito-mestre--v1.1.0` do repositório. Para voltar a ela, na ordem:
+
+1. `claude plugin marketplace remove gabarito-mestre` (isso também desinstala o plugin)
+2. `claude plugin marketplace add 'gabrielnfc/gabarito-mestre#gabarito-mestre--v1.1.0'`
+3. `claude plugin install gabarito-mestre@gabarito-mestre`
+
+Reinicie o Claude Code e rode `claude plugin list`: deve aparecer um só `gabarito-mestre`, na versão 1.1.0, habilitado.
+
+Para voltar à 2.0, na ordem:
+
+1. `claude plugin marketplace remove gabarito-mestre`
+2. `claude plugin marketplace add gabrielnfc/gabarito-mestre`
+3. `claude plugin install gabarito-mestre@gabarito-mestre`
+
+Avisos:
+
+- Não pule o `remove`: com o mesmo nome e outra fonte, o `add` falha.
+- Não use outro nome de catálogo: o plugin ficaria instalado duas vezes, com o mesmo nome.
