@@ -107,7 +107,17 @@ function prs(evs          )           {
   return { ultimo, aberto, total: por.size };
 }
 
-/** Escolha da pergunta (c): resposta com título ou caminho de exatamente 1 das specs, depois da entrada da última delas. */
+/**
+ * O rótulo (já sem caixa e aparado) que aceita 1 spec como "a spec": título, caminho, nome do arquivo, ou `…` + final do caminho
+ * (rótulo gravável de ≤ 60 caracteres quando título e caminho não cabem ou se repetem; `perguntas.ts` escolhe o que cabe).
+ */
+export function rotuloCasaSpec(s                                       , r        )          {
+  if (r === '') return false;
+  const caminho = chaveTexto(semPonto(s.caminho));
+  return chaveTexto(s.titulo) === r || caminho === r || caminho.split('/').pop() === r || (r.startsWith('…') && r.length > 1 && caminho.endsWith(r.slice(1)));
+}
+
+/** Escolha da pergunta (c): resposta cujo rótulo (título, caminho, nome do arquivo ou `…`+final do caminho: `rotuloCasaSpec`) casa com exatamente 1 das specs, depois da entrada da última delas. */
 function escolhaDaSpec(evs          , specs            )                  {
   const caminhos = new Set(specs.map((s) => semPonto(s.caminho)));
   const vistos = new Set        ();
@@ -123,7 +133,7 @@ function escolhaDaSpec(evs          , specs            )                  {
     if (evs[i].tipo !== 'dono.resposta') continue;
     const r = chaveTexto(obj(evs[i].dados).rotulo);
     if (r === '') continue;
-    const casam = specs.filter((s) => chaveTexto(s.titulo) === r || chaveTexto(semPonto(s.caminho)) === r);
+    const casam = specs.filter((s) => rotuloCasaSpec(s, r));
     if (casam.length === 1) return casam[0];
   }
   return null;

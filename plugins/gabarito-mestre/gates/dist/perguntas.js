@@ -12,12 +12,14 @@
  * Fechada só por `dono.resposta` na forma `{pergunta, opcao, rotulo}`; `{sha256, chars}` não fecha (DP-2).
  * Opções de (a) e (b) congeladas pela âncora: só pontos de atividade com data ≤ ts da âncora (DP-2 ajuste 3), para painel e hook
  * verem a mesma lista. Rótulo de entrega = ID cru, nunca `nomeNatural` (DP-4): é o rótulo que `trilha.ts` usa para ligar a sessão.
- * Rótulo de (c) = título, ou o caminho quando o título repete (sem caixa) ou passa de 60: `trilha.ts` escolhe por um ou outro.
+ * Rótulo de (c) = o 1º entre título, caminho, nome do arquivo e `…`+final do caminho que cabe em 60 e que `trilha.ts` casa com 1 só spec
+ * (`rotuloCasaSpec`): (c) sempre abre com 2+ specs; só deixa de abrir se nenhum rótulo resolver (caminhos com o mesmo final de 59 caracteres).
  * Id que não casa `ID_PERGUNTA_RE` (sessão com `.` ou `_`) seria irrespondível pelo hook: não vira pergunta.
  */
 import { ID_PERGUNTA_RE } from './formas.js';
 import { ordenar } from './loop.js';
                                                      
+import { rotuloCasaSpec } from './trilha.js';
                                           
 
                                                                                                                          
@@ -139,13 +141,14 @@ export function perguntasAbertas(eventos          , trilha        , ctx         
     const caminhos = ambigua.map((s) => semPonto(s.caminho));
     const ancora = ancoraC(evs, new Set(caminhos));
     if (ancora !== null) {
-      const chave = (s         ) => (typeof s === 'string' ? s.trim().toLowerCase() : '');
       const opcoes           = [];
       for (const [i, s] of ambigua.slice(0, 4).entries()) {
         const titulo = typeof s.titulo === 'string' ? s.titulo.trim() : '';
-        const repetido = ambigua.some((o, j) => j !== i && (chave(o.titulo) === chave(titulo) || chave(semPonto(o.caminho)) === chave(titulo)));
-        if (cabe(titulo) && !repetido) opcoes.push(titulo);
-        else if (cabe(caminhos[i])) opcoes.push(caminhos[i]);
+        const caminho = caminhos[i];
+        // 1º rótulo gravável (≤ 60) que `trilha.ts` casa com exatamente 1 das specs: título, caminho, nome do arquivo, final do caminho.
+        const candidatos = [titulo, caminho, caminho.split('/').pop() ?? '', `…${[...caminho].slice(-(OPCAO_MAX - 1)).join('')}`];
+        const rotulo = candidatos.find((r) => cabe(r) && ambigua.filter((o) => rotuloCasaSpec(o, r.trim().toLowerCase())).length === 1);
+        if (rotulo !== undefined) opcoes.push(rotulo);
       }
       if (opcoes.length >= 2) abrir(ancora, 'c', `Qual destas é a spec da ${t.entrega}?`, opcoes);
     }

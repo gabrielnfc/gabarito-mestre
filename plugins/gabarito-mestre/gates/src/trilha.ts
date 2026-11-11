@@ -117,7 +117,7 @@ export function rotuloCasaSpec(s: { caminho: unknown; titulo: unknown }, r: stri
   return chaveTexto(s.titulo) === r || caminho === r || caminho.split('/').pop() === r || (r.startsWith('…') && r.length > 1 && caminho.endsWith(r.slice(1)));
 }
 
-/** Escolha da pergunta (c): resposta com título ou caminho de exatamente 1 das specs, depois da entrada da última delas. */
+/** Escolha da pergunta (c): resposta cujo rótulo (título, caminho, nome do arquivo ou `…`+final do caminho: `rotuloCasaSpec`) casa com exatamente 1 das specs, depois da entrada da última delas. */
 function escolhaDaSpec(evs: Evento[], specs: SpecFato[]): SpecFato | null {
   const caminhos = new Set(specs.map((s) => semPonto(s.caminho)));
   const vistos = new Set<string>();

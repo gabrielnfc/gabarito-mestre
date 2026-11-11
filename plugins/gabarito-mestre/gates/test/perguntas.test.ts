@@ -265,6 +265,9 @@ test('c-sempre-abre-titulo-repetido-e-caminho-longo', () => {
   const P2 = 'docs/superpowers/specs/2026-11-10-e5-fluxo-gabarito-design-parte-2.md';
   assert.ok([...P1].length > 60 && [...P2].length > 60);
   for (const n of [1, 2]) cResolve(['Design', 'design'], [P1, P2], n);
+  // Caminho > 60 com nome de arquivo curto: o rótulo é o nome do arquivo (antes do `…`+final do caminho).
+  const pn = cResolve(['Design', 'design'], [P1, P2], 1);
+  assert.deepEqual(pn.opcoes, ['2026-11-09-e3-sombra-emendas-entrega-design.md', '2026-11-10-e5-fluxo-gabarito-design-parte-2.md']);
   // Título de 70 caracteres + 'Outra': a 1ª opção não é o título (não cabe) e ainda resolve.
   for (const n of [1, 2]) cResolve(['T'.repeat(70), 'Outra'], [P1, P2], n);
   // Até o nome do arquivo passa de 60 e só o fim difere: sobra o final do caminho com reticências.
