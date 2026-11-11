@@ -13,7 +13,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formaInvalida, REQ_RE } from '../src/formas.ts';
+import { readFileSync } from 'node:fs';
+import { formaInvalida, ID_PERGUNTA_RE, MOTIVOS_PARAR, REQ_RE, TIPOS_EVENTO } from '../src/formas.ts';
 
 const H = 'a'.repeat(64);
 const ok = (tipo: string, dados: unknown) => assert.equal(formaInvalida(tipo, dados), null, `${tipo} ${JSON.stringify(dados)}`);
@@ -472,4 +473,196 @@ test('forma-novos-ausente-x-corrompido: dados ausente e dados corrompido têm mo
     assert.match(formaInvalida(tipo, hostil) as string, /corrompido/, tipo);
   }
   assert.equal(formaInvalida('aprendizado', Object.create({ tipo: 'E' })) !== null, true);
+});
+
+// ── GM-14 T1: fato.medido, nota, dono.resposta, confirmacao, listas runtime ────────────────────────────────────────────────────
+// Mutações prescritas (.superpowers/sdd/2026-11-11-proxima/task-1-mut.json):
+//  M-T1a  `fato.medido` aceita campo extra no `valor` ⇒ `forma-fato-campo-extra-recusa` falha
+//  M-T1b  `dono.resposta` aceita `texto` ⇒ `forma-resposta-com-texto-recusa` falha
+//  M-T1c  `IdPergunta` volta a aceitar `herdar:<n>` (índice, não id estável; DP-6) ⇒ `forma-resposta-herdar-ok` falha
+//  M-T1d  `opcao` aceita 0 ⇒ `forma-resposta-duas-formas-recusa` falha
+
+const VALORES: Record<string, { fonte: string; valor: Record<string, unknown> }> = {
+  branch: { fonte: 'git', valor: { nome: 'enabler/GM-14-clareza' } },
+  spec: { fonte: 'arquivo', valor: { caminho: 'docs/superpowers/specs/x.md', sha256: H, secoes: 7 } },
+  plano: { fonte: 'arquivo', valor: { tasks: 26 } },
+  pr: { fonte: 'gh', valor: { numero: 14, estado: 'aberto', branch: 'enabler/GM-14-clareza' } },
+  release: { fonte: 'gh', valor: { tag: 'gabarito-mestre--v2.0.0' } },
+  agente: { fonte: 'mod', valor: { id: 'a1', papel: 'implementador', estado: 'running' } },
+};
+const fato = (chave: string, valor: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) =>
+  ({ chave, fonte: VALORES[chave].fonte, valor: { ...VALORES[chave].valor, ...valor }, ...extra });
+
+test('forma-fato-campo-extra-recusa: cada uma das 6 chaves aceita a forma exata e recusa campo a mais, a menos ou de outra chave', () => {
+  assert.deepEqual(Object.keys(VALORES).sort(), ['agente', 'branch', 'plano', 'pr', 'release', 'spec']);
+  for (const chave of Object.keys(VALORES)) {
+    ok('fato.medido', fato(chave));
+    ruim('fato.medido', fato(chave, { extra: 1 }), /`extra`/);
+    ruim('fato.medido', fato(chave, {}, { extra: 1 }), /`extra`/);
+    // Cada campo do valor é lido: sem ele, recusa citando o campo.
+    for (const k of Object.keys(VALORES[chave].valor)) {
+      const { [k]: _fora, ...sem } = VALORES[chave].valor;
+      ruim('fato.medido', { chave, fonte: VALORES[chave].fonte, valor: sem }, new RegExp(`\`${k}\``));
+    }
+    // Sombra P1 T1 (2): `chave` válida com o `valor` de outra chave.
+    for (const outra of Object.keys(VALORES)) {
+      if (outra === chave) continue;
+      ruim('fato.medido', { chave, fonte: VALORES[chave].fonte, valor: VALORES[outra].valor });
+    }
+  }
+  ruim('fato.medido', { fonte: 'git', valor: { nome: 'x' } }, /`chave` ausente/);
+  ruim('fato.medido', { chave: 'branch', valor: { nome: 'x' } }, /`fonte` ausente/);
+  ruim('fato.medido', { chave: 'branch', fonte: 'git' }, /`valor` ausente/);
+  ruim('fato.medido', { chave: 'commit', fonte: 'git', valor: { nome: 'x' } }, /`chave`/);
+  ruim('fato.medido', fato('branch', {}, { fonte: 'web' }), /`fonte`/);
+  for (const f of ['git', 'gh', 'arquivo', 'mod']) ok('fato.medido', fato('branch', {}, { fonte: f }));
+  for (const v of [null, [], 'x', 7]) ruim('fato.medido', { chave: 'branch', fonte: 'git', valor: v }, /`valor`/);
+});
+
+test('forma-fato-valores: inteiros, sha, caminho relativo e textos de cada chave', () => {
+  for (const n of [0, -1, 1.5, '14', NaN]) ruim('fato.medido', fato('pr', { numero: n }), /`numero`/);
+  ok('fato.medido', fato('pr', { numero: 1 }));
+  for (const s of ['abc', 'A'.repeat(64), `${H}0`]) ruim('fato.medido', fato('spec', { sha256: s }), /`sha256`/);
+  for (const n of [-1, 1.5, '3']) ruim('fato.medido', fato('spec', { secoes: n }), /`secoes`/);
+  ok('fato.medido', fato('spec', { secoes: 0 }));
+  for (const n of [-1, 1.5, '3']) ruim('fato.medido', fato('plano', { tasks: n }), /`tasks`/);
+  ok('fato.medido', fato('plano', { tasks: 0 }));
+  for (const c of ['/abs/x.md', '../x.md', 'a/../x.md', 'a//x.md', 'a\\x.md', '', 'a\nb.md']) ruim('fato.medido', fato('spec', { caminho: c }), /`caminho`/);
+  ok('fato.medido', fato('spec', { caminho: 'docs/specs/decisões antigas.md' }));
+  for (const [chave, k] of [['branch', 'nome'], ['pr', 'branch'], ['release', 'tag'], ['agente', 'id'], ['agente', 'papel'], ['agente', 'estado']]) {
+    for (const v of ['', '   ', 7, null, 'a\nb']) ruim('fato.medido', fato(chave, { [k]: v }), new RegExp(`\`${k}\``));
+  }
+});
+
+test('forma-fato-pr-estado-fora: estado só aberto, mergeado ou fechado', () => {
+  for (const e of ['aberto', 'mergeado', 'fechado']) ok('fato.medido', fato('pr', { estado: e }));
+  for (const e of ['merged', 'open', 'Aberto', '', null]) ruim('fato.medido', fato('pr', { estado: e }), /`estado`/);
+});
+
+test('forma-nota-texto-161: texto de 1 a 160 caracteres (por caractere, não byte), uma linha', () => {
+  for (const t of ['x', 'a'.repeat(160), 'ç'.repeat(160), '😀'.repeat(160)]) ok('nota', { tipo: 'ideia', texto: t });
+  for (const t of ['a'.repeat(161), '😀'.repeat(161), '', '   ', 'a\nb', 'a\tb', 7, null]) ruim('nota', { tipo: 'ideia', texto: t }, /`texto`/);
+  ruim('nota', { tipo: 'ideia' }, /`texto` ausente/);
+  ruim('nota', { texto: 'x' }, /`tipo` ausente/);
+  for (const t of ['ideia', 'desvio', 'assunto', 'pendencia']) ok('nota', { tipo: t, texto: 'x' });
+  ok('nota', { tipo: 'duvida', texto: 'x', opcoes: ['a', 'b'] });
+  for (const t of ['nota', 'Ideia', '', 'decisao']) ruim('nota', { tipo: t, texto: 'x' }, /`tipo`/);
+  ruim('nota', { tipo: 'ideia', texto: 'x', entrega: 'GM-14' }, /`entrega`/);
+});
+
+test('forma-nota-duvida-1-opcao-recusa: dúvida exige 2 a 4 opções de 1 a 60, sem repetição', () => {
+  ruim('nota', { tipo: 'duvida', texto: 'x' }, /`opcoes` ausente/);
+  for (const o of [[], ['a'], ['a', 'b', 'c', 'd', 'e'], 'a,b', null]) ruim('nota', { tipo: 'duvida', texto: 'x', opcoes: o }, /`opcoes`/);
+  for (const o of [['a', 'b'], ['a', 'b', 'c'], ['a', 'b', 'c', 'd'], ['a'.repeat(60), 'b']]) ok('nota', { tipo: 'duvida', texto: 'x', opcoes: o });
+  // Repetição: igual, ou igual a menos de caixa e espaço nas pontas (dois botões "Sim" e "sim" não se distinguem).
+  for (const o of [['a', 'a'], ['Sim', 'sim'], ['sim', ' sim ']]) ruim('nota', { tipo: 'duvida', texto: 'x', opcoes: o }, /`opcoes`/);
+  for (const item of ['a'.repeat(61), '', '  ', 7, 'a\nb']) ruim('nota', { tipo: 'duvida', texto: 'x', opcoes: ['ok', item] }, /`opcoes`/);
+});
+
+test('forma-nota-opcoes-fora-de-duvida-recusa: só dúvida leva opções; pendência sem opções', () => {
+  for (const t of ['ideia', 'desvio', 'assunto', 'pendencia']) ruim('nota', { tipo: t, texto: 'x', opcoes: ['a', 'b'] }, /`opcoes`/);
+  ok('nota', { tipo: 'pendencia', texto: 'renovar o domínio' });
+});
+
+const resp = (extra: Record<string, unknown> = {}) => ({ pergunta: 'sess-1:4', opcao: 2, rotulo: 'GM-14', ...extra });
+const respHash = (extra: Record<string, unknown> = {}) => ({ pergunta: 'sess-1:4', sha256: H, chars: 12, ...extra });
+
+test('forma-resposta-duas-formas-recusa: exatamente uma das formas; opção 1..4; rótulo 1..60', () => {
+  ok('dono.resposta', resp());
+  ok('dono.resposta', respHash());
+  // Sombra P1 T1 (1): formas misturadas.
+  ruim('dono.resposta', resp({ sha256: H, chars: 3 }));
+  ruim('dono.resposta', resp({ sha256: H }));
+  ruim('dono.resposta', respHash({ rotulo: 'x' }));
+  ruim('dono.resposta', respHash({ opcao: 1 }));
+  ruim('dono.resposta', { pergunta: 'sess-1:4', opcao: 1, sha256: H });
+  ruim('dono.resposta', { pergunta: 'sess-1:4', rotulo: 'x', chars: 1 });
+  ruim('dono.resposta', { pergunta: 'sess-1:4' });
+  ruim('dono.resposta', { opcao: 1, rotulo: 'x' }, /`pergunta` ausente/);
+  ruim('dono.resposta', { pergunta: 'sess-1:4', opcao: 1 }, /`rotulo` ausente/);
+  ruim('dono.resposta', { pergunta: 'sess-1:4', rotulo: 'x' }, /`opcao` ausente/);
+  ruim('dono.resposta', { pergunta: 'sess-1:4', sha256: H }, /`chars` ausente/);
+  ruim('dono.resposta', { pergunta: 'sess-1:4', chars: 1 }, /`sha256` ausente/);
+  for (const n of [1, 2, 3, 4]) ok('dono.resposta', resp({ opcao: n }));
+  for (const n of [0, 5, -1, 1.5, '1', null]) ruim('dono.resposta', resp({ opcao: n }), /`opcao`/);
+  for (const r of ['a', 'a'.repeat(60), 'não, obrigado']) ok('dono.resposta', resp({ rotulo: r }));
+  for (const r of ['', '  ', 'a'.repeat(61), 'a\nb', 7]) ruim('dono.resposta', resp({ rotulo: r }), /`rotulo`/);
+  for (const s of ['abc', 'A'.repeat(64)]) ruim('dono.resposta', respHash({ sha256: s }), /`sha256`/);
+  for (const c of [-1, 1.5, '3']) ruim('dono.resposta', respHash({ chars: c }), /`chars`/);
+  ok('dono.resposta', respHash({ chars: 0 }));
+});
+
+test('forma-resposta-com-texto-recusa: chave `texto` (ou qualquer outra) nunca entra, nas duas formas', () => {
+  ruim('dono.resposta', resp({ texto: 'o dono disse isto' }), /`texto`/);
+  ruim('dono.resposta', respHash({ texto: 'o dono disse isto' }), /`texto`/);
+  ruim('dono.resposta', resp({ args: '3:4 2' }), /`args`/);
+});
+
+test('forma-resposta-herdar-ok: IdPergunta é <sessao>:<seq> ou herdar:<id estável em hex> (DP-6)', () => {
+  const herdar = 'herdar:' + '0123456789abcdef';
+  for (const p of [herdar, `herdar:${H}`, 'herdar:0a1b2c3d', 'sess-1:1', 'a:999', `${'s'.repeat(128)}:3`, '1081797f-d12e-4ff9-af39-438ea50fa8f3:12']) {
+    ok('dono.resposta', resp({ pergunta: p }));
+    assert.equal(ID_PERGUNTA_RE.test(p), true, p);
+  }
+  // `herdar:<n>` (índice de lista) não é id estável; hex fora de 8..64, maiúscula, e as formas quebradas de sessão.
+  for (const p of ['herdar:5', 'herdar:12', 'herdar:0a1b2c3', `herdar:${H}0`, 'herdar:0A1B2C3D', 'herdar:', 'herdar:xyz12345',
+    ':7', 'abc:0', 'abc:07', 'abc', 'a b:1', 'abc:1\n', 'a.b:1', 'a_b:1', `${'s'.repeat(129)}:3`, 'abc:-1', 'abc:1:2', '', 7]) {
+    ruim('dono.resposta', resp({ pergunta: p }), /`pergunta`/);
+    if (typeof p === 'string') assert.equal(ID_PERGUNTA_RE.test(p), false, JSON.stringify(p));
+  }
+});
+
+const aprConf = (evidencia: Record<string, unknown>, status = 'M') => ({ tipo: 'A', status, gatilho: null, evidencia, regra: 'r', entra_em: ['instantaneo'] });
+const conf = (extra: Record<string, unknown> = {}) => ({ fonte: 'docs/ledgers/GM-7.md:12', resposta: { sessao: 'dono', seq: 3 }, ...extra });
+
+test('forma-confirmacao-fonte-absoluta: fonte relativa <arquivo>:<linha ≥ 1>, resposta {sessao, seq}', () => {
+  ok('aprendizado', aprConf({ confirmacao: conf() }));
+  ok('aprendizado', aprConf({ confirmacao: conf({ fonte: 'docs/decisões antigas.md:4' }) }));
+  ok('aprendizado', aprConf({ confirmacao: conf({ fonte: 'AGENTS.md:1' }) }));
+  for (const f of ['/abs/x.md:3', '../x.md:3', 'a/../x.md:3', 'a//x.md:3', 'x.md', 'x.md:0', 'x.md:-1', 'x.md:abc', 'x.md:01', ':3', 'C:\\x.md:3', 'a\\b.md:3', '', 'a\nb.md:3', 7]) {
+    ruim('aprendizado', aprConf({ confirmacao: conf({ fonte: f }) }), /confirmacao/);
+  }
+  for (const r of [undefined, null, { sessao: 'dono', seq: 0 }, { sessao: '', seq: 1 }, { sessao: 'a b', seq: 1 }, 'dono:3']) {
+    ruim('aprendizado', aprConf({ confirmacao: conf({ resposta: r }) }), /confirmacao/);
+  }
+  ruim('aprendizado', aprConf({ confirmacao: conf({ extra: 1 }) }), /confirmacao/);
+  for (const c of [null, [], 'x', {}]) ruim('aprendizado', aprConf({ confirmacao: c }), /confirmacao/);
+});
+
+test('forma-confirmacao-conta-como-evidencia-de-d: D herdado só com confirmacao passa na forma; D sem nada segue recusado', () => {
+  ok('aprendizado', aprConf({ confirmacao: conf() }, 'D'));
+  ruim('aprendizado', aprConf({}, 'D'), /grave como M/);
+  ruim('aprendizado', aprConf({ confirmacao: conf({ fonte: '/x:1' }) }, 'D'), /confirmacao/);
+});
+
+test('forma-gm14-ausente-x-corrompido: dados ausente, corrompido e {} distintos nos 3 tipos novos; getter hostil não lança', () => {
+  const primeiros: Record<string, string> = { 'fato.medido': 'chave', nota: 'tipo', 'dono.resposta': 'pergunta' };
+  for (const [tipo, k] of Object.entries(primeiros)) {
+    assert.match(formaInvalida(tipo, undefined) as string, /dados ausente/, tipo);
+    for (const d of [null, [], 'x', 7, true]) assert.match(formaInvalida(tipo, d) as string, /dados corrompido/, `${tipo} ${JSON.stringify(d)}`);
+    assert.match(formaInvalida(tipo, {}) as string, new RegExp(`\`${k}\` ausente`), tipo);
+    const hostil = Object.defineProperty({}, k, { enumerable: true, get(): never { throw new Error('boom'); } });
+    assert.doesNotThrow(() => formaInvalida(tipo, hostil), tipo);
+    assert.match(formaInvalida(tipo, hostil) as string, /corrompido/, tipo);
+    assert.notEqual(formaInvalida(tipo, Object.create({ [k]: 'x' })), null, `${tipo}: prototype não conta`);
+  }
+});
+
+/** Literais da união `export type <nome> = | 'a' | 'b' ...;` lidos do fonte de `tipos.ts` (strip-types não confere `satisfies`). */
+function uniaoDoFonte(nome: string): string[] {
+  const fonte = readFileSync(new URL('../src/tipos.ts', import.meta.url), 'utf8');
+  const m = new RegExp(`export type ${nome} =([^;]*);`).exec(fonte);
+  assert.ok(m, `tipo ${nome} não achado em tipos.ts`);
+  return [...m[1].replace(/\/\/[^\n]*/g, '').matchAll(/'([^']+)'/g)].map((x) => x[1]);
+}
+
+test('tipos-evento-cobre-a-uniao: TIPOS_EVENTO e MOTIVOS_PARAR são exatamente as uniões de tipos.ts, sem repetição', () => {
+  const tipos = uniaoDoFonte('TipoEvento');
+  assert.equal(new Set(TIPOS_EVENTO).size, TIPOS_EVENTO.length);
+  assert.deepEqual([...TIPOS_EVENTO].sort(), [...tipos].sort());
+  for (const novo of ['fato.medido', 'nota', 'dono.resposta']) assert.ok(TIPOS_EVENTO.includes(novo as never), novo);
+  const motivos = uniaoDoFonte('MotivoParar');
+  assert.equal(new Set(MOTIVOS_PARAR).size, MOTIVOS_PARAR.length);
+  assert.deepEqual([...MOTIVOS_PARAR].sort(), [...motivos].sort());
+  assert.equal(Object.isFrozen(TIPOS_EVENTO) && Object.isFrozen(MOTIVOS_PARAR), true);
 });
