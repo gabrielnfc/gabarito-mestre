@@ -238,6 +238,60 @@ test('c-titulo-repetido-ou-longo-usa-o-caminho', () => {
   assert.deepEqual(perguntasAbertas(evs, t2, { sessao: 's1' })[0].opcoes, ['Trilha', 'pAINEL']);
 });
 
+/** Atravessa T3: abre (c) com `trilhaDe` real, responde a opção `n` e confere que a trilha acata (1 spec escolhida, sem ambiguidade). */
+function cResolve(titulos: string[], caminhos: string[], escolhida: number) {
+  const specs = caminhos.map((c, i) => spec(c, titulos[i], String.fromCharCode(97 + i).repeat(64)));
+  const fatos: FatosTrilha = { branch: 'feat/GM-20-x', idPadrao: '[A-Z]+-\\d+', specs, plano: null, ledger: false, gh: 'ok', ultimas: [] };
+  const medidas = caminhos.map((c, i) => specMedida(c, String.fromCharCode(97 + i).repeat(64), 's1'));
+  const base = expandir([inicio('s1'), ...medidas]);
+  const t0 = trilhaDe(fatos, base);
+  assert.equal(t0.ambigua.length, caminhos.length);
+  const ps = perguntasAbertas(base, t0, { sessao: 's1' });
+  assert.equal(ps.length, 1, 'a pergunta (c) abre');
+  rotulosGravaveis(ps);
+  assert.ok(ps[0].opcoes.length >= 2);
+  const r = respostaValida(ps, ps[0].id, escolhida);
+  assert.ok(r.ok);
+  const depois = expandir([inicio('s1'), ...medidas, resp(ps[0].id, escolhida, r.ok ? r.rotulo : '')]);
+  const t1 = trilhaDe(fatos, depois);
+  assert.deepEqual(t1.ambigua, [], `o rótulo ${r.ok ? r.rotulo : ''} resolve a spec`);
+  assert.equal(t1.marcas[1], '✓');
+  return ps[0];
+}
+
+test('c-sempre-abre-titulo-repetido-e-caminho-longo', () => {
+  // Medido pelo revisor: 'Design'/'design' (mesmo título sem caixa) com caminhos de 69 e 70 caracteres.
+  const P1 = 'docs/superpowers/specs/2026-11-09-e3-sombra-emendas-entrega-design.md';
+  const P2 = 'docs/superpowers/specs/2026-11-10-e5-fluxo-gabarito-design-parte-2.md';
+  assert.ok([...P1].length > 60 && [...P2].length > 60);
+  for (const n of [1, 2]) cResolve(['Design', 'design'], [P1, P2], n);
+  // Título de 70 caracteres + 'Outra': a 1ª opção não é o título (não cabe) e ainda resolve.
+  for (const n of [1, 2]) cResolve(['T'.repeat(70), 'Outra'], [P1, P2], n);
+  // Até o nome do arquivo passa de 60 e só o fim difere: sobra o final do caminho com reticências.
+  const longo = 'z'.repeat(70);
+  const p = cResolve(['Design', 'design'], [`docs/a/${longo}-a.md`, `docs/b/${longo}-b.md`], 1);
+  assert.ok(p.opcoes.every((o) => [...o].length <= 60));
+});
+
+test('c-com-uma-so-opcao-que-resolve-nao-abre', () => {
+  // Limite conhecido: duas specs cujos caminhos acabam igual (59+ caracteres) e só uma tem título usável ⇒ 1 rótulo só; pergunta
+  // de 1 opção não decide nada e `formas.ts` a recusaria (2 a 4 opções).
+  const cauda = `${'y'.repeat(60)}.md`;
+  const [a, b] = [`docs/a/${cauda}`, `docs/b/${cauda}`];
+  const evs = expandir([inicio('s1'), specMedida(a, A, 's1'), specMedida(b, B, 's1')]);
+  const t = identificada({ ambigua: [spec(a, 'Alpha'), spec(b, 'T'.repeat(70), B)] });
+  assert.deepEqual(perguntasAbertas(evs, t, { sessao: 's1' }), []);
+});
+
+test('c-mais-de-4-specs-so-4-opcoes', () => {
+  const caminhos = [1, 2, 3, 4, 5, 6].map((n) => `docs/superpowers/specs/2026-11-2${n}-gm20-parte-${n}.md`);
+  const evs = expandir([inicio('s1'), ...caminhos.map((c, i) => specMedida(c, String.fromCharCode(97 + i).repeat(64), 's1'))]);
+  const t = identificada({ ambigua: caminhos.map((c, i) => spec(c, `Parte ${i + 1}`, String.fromCharCode(97 + i).repeat(64))) });
+  const [p] = perguntasAbertas(evs, t, { sessao: 's1' });
+  assert.deepEqual(p.opcoes, ['Parte 1', 'Parte 2', 'Parte 3', 'Parte 4']);
+  rotulosGravaveis([p]);
+});
+
 test('c-nao-reabre-com-edicao-de-spec', () => {
   // Âncora = entrada da última spec do conjunto (s1:3). Editar a spec (novo `fato.medido spec`) não reabre.
   const evs = expandir([
@@ -283,6 +337,18 @@ test('c-sem-fato-medido-da-spec-nao-abre', () => {
   // Sem o evento que criou a ambiguidade não há âncora (id) possível.
   const t = identificada({ ambigua: [spec(SPEC1, 'Trilha'), spec(SPEC2, 'Painel', B)] });
   assert.deepEqual(perguntasAbertas(expandir([inicio('s1')]), t, { sessao: 's1' }).filter((p) => p.gatilho === 'c'), []);
+});
+
+test('b-nao-se-ancora-em-assunto-nem-pendencia', () => {
+  // Cada nota com pergunta própria (a)/(d) é âncora só dela: (b) pula para o 1º trabalho seguinte e os ids nunca se repetem.
+  const assunto = expandir([inicio('s1'), notaDe('assunto', 'x', 's1'), branch('s1')]);
+  assert.deepEqual(perguntasAbertas(assunto, trilha(), { sessao: 's1' }).map((p) => [p.gatilho, p.id]), [['a', 's1:2'], ['b', 's1:3']]);
+  const pendencia = expandir([inicio('s1'), notaDe('pendencia', 'y', 's1'), branch('s1')]);
+  assert.deepEqual(perguntasAbertas(pendencia, trilha(), { sessao: 's1' }).map((p) => [p.gatilho, p.id]), [['pendencia', 's1:2'], ['b', 's1:3']]);
+  for (const evs of [assunto, pendencia]) {
+    const ids = perguntasAbertas(evs, trilha(), { sessao: 's1' }).map((p) => p.id);
+    assert.equal(new Set(ids).size, ids.length);
+  }
 });
 
 // ── (d) nota duvida e pendência ─────────────────────────────────────────────────────────────────────────────────────────────
