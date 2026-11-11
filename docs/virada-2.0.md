@@ -13,7 +13,7 @@ Para quem usa o Gabarito Mestre. O que mudou está no `CHANGELOG.md`, seção `[
 
 1. `claude plugin marketplace update gabarito-mestre`
 2. `claude plugin update gabarito-mestre@gabarito-mestre`, e reinicie o Claude Code. A atualização automática vem desligada para catálogo de terceiros: sem esses comandos, nada muda.
-3. Quem instalou por projeto (escopo project) roda também, dentro de cada repo: `claude plugin update gabarito-mestre@gabarito-mestre --scope project`. Sem isso o projeto continua na 1.1.0, e o `claude plugin list` pode mostrar 2.0.0 mesmo assim (medido): confira abrindo uma sessão no repo e lendo `plugin 2.0.0` no cartão de início de sessão.
+3. Só vale para quem tem o plugin instalado no usuário e também em algum projeto (escopo project). Nesse caso rode também, dentro de cada repo: `claude plugin update gabarito-mestre@gabarito-mestre --scope project`. Sem isso esse projeto continua na 1.1.0, e o `claude plugin list` pode mostrar 2.0.0 mesmo assim (medido). Para conferir, abra o arquivo `installed_plugins.json`, na pasta `plugins/` da configuração do Claude Code (normalmente `~/.claude/plugins/installed_plugins.json`; quem usa outra pasta de configuração abre o lugar equivalente), e veja `"version": "2.0.0"` em cada entrada de `gabarito-mestre`. Quem instalou só por projeto já é atualizado pelo passo 2.
 4. Só quem instalou a pré-versão (o catálogo `gabarito-mestre-next`): `claude plugin uninstall gabarito-mestre@gabarito-mestre-next --scope project` e `claude plugin marketplace remove gabarito-mestre-next`. Senão ficam dois plugins com o mesmo nome, e a documentação do Claude Code diz que os hooks de um deles são deixados de fora, sem dizer qual.
 5. Rode `claude plugin list`: deve aparecer um só `gabarito-mestre` habilitado.
 

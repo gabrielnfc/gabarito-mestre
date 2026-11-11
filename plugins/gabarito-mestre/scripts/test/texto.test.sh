@@ -373,7 +373,9 @@ claude plugin install gabarito-mestre@gabarito-mestre"
 check "nota da virada: 'Como voltar' tem os 6 passos medidos, na ordem" '[ "$VOLTAR" = "$VOLTAR_ESPERADO" ]' "passos de 'Como voltar' diferem dos medidos"
 # GM-13 T18 proj (spike t17dh): a seção de atualização traz o passo por projeto e a conferência pelo cartão
 ATUALIZAR=$(sed -n '/^## Como atualizar/,/^## Rode o onboarding/p' "$VIRADA")
-check "nota da virada: atualização tem o passo '--scope project' e a conferência 'plugin 2.0.0' no cartão" 'printf "%s" "$ATUALIZAR" | grep -q "plugin update gabarito-mestre@gabarito-mestre --scope project" && printf "%s" "$ATUALIZAR" | grep -q "plugin 2.0.0"' "passo por projeto ausente da atualização"
+check "nota da virada: o passo '--scope project' manda rodar 'dentro de cada repo'" 'printf "%s" "$ATUALIZAR" | grep -E "dentro de cada repo" | grep -q "plugin update gabarito-mestre@gabarito-mestre --scope project"' "passo por projeto sem 'dentro de cada repo'"
+check "nota da virada: conferência da versão pelo installed_plugins.json, não pelo cartão" 'printf "%s" "$ATUALIZAR" | grep -q "installed_plugins.json" && printf "%s" "$ATUALIZAR" | grep -q "\"version\": \"2.0.0\"" && ! printf "%s" "$ATUALIZAR" | grep -qi "cartão"' "conferência da versão fora do installed_plugins.json"
+check "nota da virada: 'continua na 1.1.0' condicionado a instalação no usuário e no projeto" 'printf "%s" "$ATUALIZAR" | grep -q "instalado no usuário e também em algum projeto"' "condição do passo por projeto ausente"
 
 echo "── $falhas falha(s)"
 [ "$falhas" -eq 0 ]
