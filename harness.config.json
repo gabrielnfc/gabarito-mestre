@@ -39,5 +39,21 @@
       "ambientes",
       "versionamento"
     ]
+  },
+  "gates": {
+    "suites": [
+      {
+        "nome": "gates",
+        "cmd": "cd plugins/gabarito-mestre/gates && npm test"
+      },
+      {
+        "nome": "hooks",
+        "cmd": "cd plugins/gabarito-mestre/hooks && node --test test/*.test.mjs"
+      },
+      {
+        "nome": "mod-e-texto",
+        "cmd": "cd plugins/gabarito-mestre && bash scripts/test/mod-test.sh && bash scripts/test/texto.test.sh"
+      }
+    ]
   }
 }
