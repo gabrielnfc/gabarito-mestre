@@ -60,7 +60,7 @@ O que nenhuma varredura prova — proteção de branch, backup testado, checks o
 
 Nenhum destes acontece por iniciativa de agente. Valem para pessoas e para **todo agente e subagente**, sem exceção, nem "só um teste", nem "é rápido".
 
-**R1 — Nada de `push`, PR, merge, deploy, release ou tag sem ok explícito** para aquele ato. Pré-checks são do orquestrador; o ato é do dono.
+**R1 — Nada de `push`, PR, merge, deploy, release ou tag sem ok explícito** para aquele ato. Exceção: quando o `decidir` da entrega dá `release_pr`, a spec aprovada é o ok para o push da branch e o PR à base dele. Pré-checks são do orquestrador; o ato é do dono.
 
 **R2 — Nenhum delete sem permissão explícita, em nenhum ambiente.** Local, staging e produção.
 > **Abrange:** `DELETE` · `TRUNCATE` · `DROP` · qualquer mutação em massa · SQL cru destrutivo · reset de migrations · remoção de volume ou container · exclusão de objeto em bucket · exclusão no sistema externo fora do teardown da própria suíte.

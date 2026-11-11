@@ -274,4 +274,7 @@ test('skill-loop-release_pr-empurra-e-abre-o-pr', () => {
   assert.match(linha, /gh pr create --base/);
   assert.match(linha, /não rode `executar`/i);
   assert.match(linha, /Nunca merge/);
+  // GM-13 FX9: AGENTS.md do projeto sem a exceção (R1 da 1.1.0): a skill não passa por cima, dá as 2 linhas e para
+  assert.match(linha, /não passe por cima/);
+  assert.match(linha, /pare/i);
 });

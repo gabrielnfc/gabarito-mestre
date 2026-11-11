@@ -116,11 +116,14 @@ BYTES_OUT=$(node -e "
   const i=t.search(/^## Apêndice/m); const nucleo=Buffer.byteLength(i<0?t:t.slice(0,i));
   const ap=i<0?0:Buffer.byteLength(t.slice(i));
   console.log('núcleo', nucleo, 'B · apêndice', ap, 'B');
-  if(nucleo>17291){console.error('núcleo acima do teto 17.291');process.exit(1)}
+  // R1 com exceção de release_pr (GM-13 R41): teto 17.291 + 126 B
+  if(nucleo>17417){console.error('núcleo acima do teto 17.417');process.exit(1)}
   if(ap>4096){console.error('apêndice acima de 4.096');process.exit(1)}")
 RC_BYTES=$?
 echo "  $BYTES_OUT"
-check "núcleo ≤ 17.291 B · apêndice ≤ 4.096 B" '[ "$RC_BYTES" -eq 0 ]' "teto de bytes estourado"
+check "R1 tem a exceção de release_pr (GM-13 R41)" "grep -E '^\\*\\*R1 ' '$A' | grep -q 'release_pr'" "R1 sem a exceção"
+check "R1: merge segue sem exceção" "grep -E '^\\*\\*R1 ' '$A' | grep -q 'PR, merge, deploy, release ou tag sem ok explícito'" "merge saiu da lista sem exceção"
+check "núcleo ≤ 17.417 B · apêndice ≤ 4.096 B" '[ "$RC_BYTES" -eq 0 ]' "teto de bytes estourado"
 
 # ── B1 (handoff §B.1) — conteúdo mínimo de R1–R21/I1–I12, scripts citados existem ─────
 echo "── B1: conteúdo mínimo das regras (não só o rótulo) e scripts citados existem"
