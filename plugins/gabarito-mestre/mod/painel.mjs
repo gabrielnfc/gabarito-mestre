@@ -35,8 +35,9 @@ export const TETO_TRANSCRIPTS = 64;
 export const PACOTES_FABRICA = Object.freeze(['galaxia', 'herois', 'hogwarts', 'terra-media']);
 /** Ajuda do `/gabarito` (sem argumento ou desconhecido): linguagem do adotante, ≤ 14 linhas, ≤ 80 colunas. Multilinha de propósito (não passa por `umaLinha`). */
 export const USO_GABARITO = [
-  'Uso: o painel abre sozinho ao lado quando uma entrega começa.',
-  '/gabarito painel            abre o painel ou o traz de volta',
+  'Uso: o painel abre sozinho ao lado, em terminal largo, quando uma entrega',
+  'começa.',
+  '/gabarito painel            abre ou traz de volta; volta a abrir sozinho',
   '/gabarito painel esquadrao  detalhado: plano, equipe (contexto e tokens',
   '                            de cada agente) e histórico',
   '/gabarito painel executivo  resumido: só o essencial da entrega',
@@ -44,7 +45,8 @@ export const USO_GABARITO = [
   '/gabarito painel narracao on|off   liga ou desliga a narração',
   '/gabarito painel nomes <pacote>    troca os nomes da equipe',
   '/gabarito painel ligar      volta a abrir sozinho',
-  '/gabarito painel desligar   não abre mais sozinho (os avisos continuam)',
+  '/gabarito painel desligar   fecha e não abre sozinho; só o aviso de PAROU',
+  '                            continua',
   '/gabarito pausar            para o trabalho automático da entrega',
   '/gabarito retomar           continua de onde parou',
 ].join('\n');

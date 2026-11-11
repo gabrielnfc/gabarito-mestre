@@ -482,15 +482,15 @@ describe('T11: pacotes de fábrica e funções puras do comando', () => {
     assert.ok(linhas.length <= 14, `linhas: ${linhas.length}`);
     for (const l of linhas) assert.ok([...l].length <= 80, `larga (${[...l].length}): ${l}`);
     const achar = (re) => linhas.find((l) => re.test(l)) ?? assert.fail(`sem linha ${re}`);
-    assert.match(linhas[0], /^Uso: o painel abre sozinho ao lado quando uma entrega começa\.$/);
-    assert.match(achar(/^\/gabarito painel {12}/), /abre o painel ou o traz de volta/);
+    assert.match(`${linhas[0]} ${linhas[1]}`, /^Uso: o painel abre sozinho ao lado, em terminal largo, quando uma entrega começa\.$/);
+    assert.match(achar(/^\/gabarito painel {12}/), /abre ou traz de volta; volta a abrir sozinho$/);
     assert.match(USO_GABARITO, /esquadrao {2}detalhado: plano, equipe \(contexto e tokens\n {28}de cada agente\) e histórico/);
     assert.match(achar(/painel executivo/), /executivo {2}resumido/);
     assert.match(achar(/painel color/), /color {6}com cores {2}\(ou: mono, sem cores\)/);
     assert.match(achar(/narracao/), /narracao on\|off {3}liga ou desliga a narração/);
     assert.match(achar(/nomes/), /nomes <pacote> {4}troca os nomes da equipe/);
     assert.match(achar(/painel ligar/), /volta a abrir sozinho/);
-    assert.match(achar(/painel desligar/), /não abre mais sozinho \(os avisos continuam\)/);
+    assert.match(USO_GABARITO, /desligar {3}fecha e não abre sozinho; só o aviso de PAROU\n {28}continua\n/);
     assert.match(achar(/\/gabarito pausar/), /para o trabalho automático da entrega/);
     assert.match(achar(/\/gabarito retomar/), /continua de onde parou/);
     assert.doesNotMatch(USO_GABARITO, new RegExp(['Pane', '\\bmod\\b', 'preset', 'Sombra', 'Workflow' + ' TRUE', 'loop'].join('|'), 'i'));

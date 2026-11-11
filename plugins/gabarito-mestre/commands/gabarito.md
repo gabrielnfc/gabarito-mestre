@@ -11,7 +11,7 @@ Argumento recebido: `$ARGUMENTS`. Aceite só `pausar` ou `retomar`; qualquer out
 Uso sem o mod:
 /gabarito pausar   para o trabalho automático da entrega
 /gabarito retomar  continua de onde parou
-O painel precisa do mod; sem ele não há `/gabarito painel`.
+O painel precisa do mod; sem ele não há o painel.
 ```
 
 A pausa é o arquivo `.harness/PAUSAR` na raiz do checkout principal. Com ele, a guarda nega `Agent` a todos e toda

@@ -1254,8 +1254,8 @@ for (const args of ['', 'foo', 'pausar x', 'PAUSAR', 'retomar tudo', ' ']) {
     const m = mundo($, on)
     await m.inicio()
     const r = await m.cmd(args)
-    expect(r.text).toMatch(/^Uso: o painel abre sozinho/)
-    expect(r.text).toContain('/gabarito painel desligar   não abre mais sozinho')
+    expect(r.text).toMatch(/^Uso: o painel abre sozinho ao lado, em terminal largo/)
+    expect(r.text).toContain('/gabarito painel desligar   fecha e não abre sozinho; só o aviso de PAROU')
     expect(r.text.split('\n').length).toBeLessThanOrEqual(14)
     expect(m.arquivos.size).toBe(0)
     expect(m.tipos()).toEqual([])
@@ -2670,8 +2670,9 @@ test('usage-falha-nao-derruba: usage lançando ⇒ percent/tokens/window null e 
 // ---- painel (E4, T11): comando, sorteio de nomes e transcripts. Mutações: task-11-mut.json ----
 // ======================================================================================================================================
 const USO_ESPERADO = [
-  'Uso: o painel abre sozinho ao lado quando uma entrega começa.',
-  '/gabarito painel            abre o painel ou o traz de volta',
+  'Uso: o painel abre sozinho ao lado, em terminal largo, quando uma entrega',
+  'começa.',
+  '/gabarito painel            abre ou traz de volta; volta a abrir sozinho',
   '/gabarito painel esquadrao  detalhado: plano, equipe (contexto e tokens',
   '                            de cada agente) e histórico',
   '/gabarito painel executivo  resumido: só o essencial da entrega',
@@ -2679,7 +2680,8 @@ const USO_ESPERADO = [
   '/gabarito painel narracao on|off   liga ou desliga a narração',
   '/gabarito painel nomes <pacote>    troca os nomes da equipe',
   '/gabarito painel ligar      volta a abrir sozinho',
-  '/gabarito painel desligar   não abre mais sozinho (os avisos continuam)',
+  '/gabarito painel desligar   fecha e não abre sozinho; só o aviso de PAROU',
+  '                            continua',
   '/gabarito pausar            para o trabalho automático da entrega',
   '/gabarito retomar           continua de onde parou',
 ].join('\n')

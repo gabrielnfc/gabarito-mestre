@@ -192,9 +192,9 @@ for sec in '## Fluxo' '## Trocar um item' '## Modo --vincular' '## Proibido'; do
 done
 N5=$(grep -ci '^## Fase ' "$SI")
 check "SKILL.md instalar sem seção '## Fase ' (sem caixa)" '[ "'"$N5"'" -eq 0 ]' "achei $N5 seção(ões) de fase"
-check "SKILL.md instalar apresenta o painel ao fim do onboarding" "grep -qF 'Quando uma entrega começar, o painel abre sozinho ao lado; \`/gabarito\` mostra as opções.' '$SI'" "linha do painel ausente"
+check "SKILL.md instalar apresenta o painel ao fim do onboarding" "grep -qF 'Quando uma entrega começar, o painel abre sozinho ao lado (em terminal largo); \`/gabarito\` mostra as opções.' '$SI'" "linha do painel ausente"
 CG="$P/commands/gabarito.md"
-check "commands/gabarito.md (sem mod) explica pausar, retomar e que o painel precisa do mod" "grep -qF '/gabarito pausar   para o trabalho automático da entrega' '$CG' && grep -qF '/gabarito retomar  continua de onde parou' '$CG' && grep -qF 'O painel precisa do mod' '$CG'" "ajuda sem mod ausente"
+check "commands/gabarito.md (sem mod) explica pausar, retomar e que o painel precisa do mod" "grep -qF '/gabarito pausar   para o trabalho automático da entrega' '$CG' && grep -qF '/gabarito retomar  continua de onde parou' '$CG' && grep -qxF 'O painel precisa do mod; sem ele não há o painel.' '$CG'" "ajuda sem mod ausente"
 
 # ── B6 (handoff §B.6, F5-R11) — skills/gabarito-conformidade/SKILL.md ─────────────────
 echo "── B6: SKILL.md de gabarito-conformidade"
