@@ -41,9 +41,10 @@ const copia = (i: ItemDepende): ItemDepende => ({ nivel: i.nivel, motivo: i.moti
 function prAberto(evs: Evento[]): number | null {
   const por = new Map<number, string>();
   for (const e of evs) {
-    if (e.tipo !== 'fato.medido' || formaInvalida('fato.medido', e.dados) !== null || e.dados.chave !== 'pr') continue;
-    const v = obj(e.dados.valor);
-    por.set(v.numero as number, v.estado as string);
+    if (e.tipo !== 'fato.medido' || obj(e.dados).chave !== 'pr') continue;
+    const v = obj(obj(e.dados).valor);
+    // mesmo critério de prs() da trilha (trilha.ts:95): número inteiro e estado texto, sem exigir a forma exata do fato.
+    if (Number.isInteger(v.numero) && typeof v.estado === 'string') por.set(v.numero as number, v.estado);
   }
   let aberto: number | null = null;
   for (const [numero, estado] of por) if (estado === 'aberto' && (aberto === null || numero > aberto)) aberto = numero;
@@ -69,17 +70,30 @@ function tasksNoTeto(evs: Evento[]): string[] {
   });
 }
 
-/** Pendências abertas: `nota pendencia` válida sem `dono.resposta` (de opção, não digitada) posterior ao id `<sessao>:<seq>` dela. Só o dono fecha. */
-function pendenciasAbertas(evs: Evento[]): { id: string; texto: string }[] {
-  const abertas: { id: string; texto: string }[] = [];
-  evs.forEach((e, i) => {
-    if (e.tipo !== 'nota' || formaInvalida('nota', e.dados) !== null || e.dados.tipo !== 'pendencia') return;
-    const id = `${e.sessao}:${e.seq}`;
-    if (!ID_PERGUNTA_RE.test(id)) return;
-    const fechada = evs.some((r, j) => j > i && r.tipo === 'dono.resposta' && formaInvalida('dono.resposta', r.dados) === null && r.dados.pergunta === id && 'rotulo' in r.dados);
-    if (!fechada) abertas.push({ id, texto: e.dados.texto as string });
-  });
-  return abertas;
+/**
+ * REGRA ÚNICA de "pendência aberta" (Sombra 4ad3f283; a T12 importa esta função). `nota` é a nota do diário `evs` (em ordem).
+ * Aberta = `nota` de tipo pendência com forma válida (texto ≤ 160; nota maior nunca foi pendência) sem `dono.resposta` POSTERIOR a ela,
+ * de forma válida e na forma com `rotulo` (a digitada {sha256, chars} NÃO fecha), cuja `pergunta` é o id `<sessao>:<seq>` da nota.
+ * Resposta anterior à nota, de forma inválida ou de outro id não fecha. Id fora de ID_PERGUNTA_RE ⇒ não é pendência. Nunca lança.
+ */
+export function pendenciaAberta(evs: Evento[], nota: Evento): { id: string; texto: string } | null {
+  if (!Array.isArray(evs) || obj(nota).tipo !== 'nota' || formaInvalida('nota', obj(nota).dados) !== null || obj(obj(nota).dados).tipo !== 'pendencia') return null;
+  const id = `${nota.sessao}:${nota.seq}`;
+  if (!ID_PERGUNTA_RE.test(id)) return null;
+  const i = evs.indexOf(nota);
+  if (i < 0) return null;
+  const fechada = evs.some((r, j) => j > i && r.tipo === 'dono.resposta' && formaInvalida('dono.resposta', r.dados) === null && r.dados.pergunta === id && 'rotulo' in r.dados);
+  return fechada ? null : { id, texto: nota.dados.texto as string };
+}
+
+const pendenciasAbertas = (evs: Evento[]): { id: string; texto: string }[] =>
+  evs.flatMap((e) => { const p = pendenciaAberta(evs, e); return p === null ? [] : [p]; });
+
+/** Texto do dono/modelo no motivo: sem marca técnica (REQ-LNG-1): crase, "--", "/x", snake_case, "a.b", extensão e "node". */
+function higienizar(texto: string): string {
+  const t = texto.replace(/`/g, '').replace(/--+/g, ' ').replace(/\/[a-z]/g, (m) => ` ${m[1]}`).replace(/\bnode\b/g, 'no')
+    .replace(/([A-Za-z0-9])[_.]([A-Za-z0-9])/g, '$1 $2').replace(/([A-Za-z0-9])[_.]([A-Za-z0-9])/g, '$1 $2').replace(/\s+/g, ' ').trim();
+  return t === '' ? 'uma pendência' : t;
 }
 
 const nItens = (n: number, um: string, varios: string): string => (n === 1 ? um : varios);
@@ -109,8 +123,10 @@ export function dependeDe(
   // (6) pouso pendente
   const limpar = pousoPendente === true ? [item('limpar a conversa', [{ rotulo: 'limpar', comando: '/clear' }])] : [];
 
-  // (5) task no limite de revisões
-  const limite = tasksNoTeto(evs).map((id) => (TASK_SEGURA.test(id)
+  // (5) task no limite de revisões; a base (PAROU de teto, REQ-PNL-3) já traz o mesmo botão `liberar <task>`: não repete.
+  const jaNaBase = (id: string): boolean => (Array.isArray(base) ? base : []).some((b) => Array.isArray(b?.acoes) && b.acoes.some((a) => a?.comando === `/gabarito-mestre:liberar ${id}`)
+    || b?.motivo === `teto de rodadas de review em ${id}` || (!TASK_SEGURA.test(id) && typeof b?.motivo === 'string' && b.motivo.startsWith('teto de rodadas de review')));
+  const limite = tasksNoTeto(evs).filter((id) => !jaNaBase(id)).map((id) => (TASK_SEGURA.test(id)
     ? item(`decidir a ${id}: chegou ao limite de revisões`, [{ rotulo: 'liberar mais uma rodada', comando: `/gabarito-mestre:liberar ${id}` }])
     : item('decidir uma task: chegou ao limite de revisões')));
 
@@ -132,7 +148,7 @@ export function dependeDe(
   const revisar = aberto !== null ? [item(`revisar e aceitar o pedido de revisão #${aberto}`)] : [];
 
   // (3) pendências abertas, com o botão "feito"
-  const pendencias = pendenciasAbertas(evs).map((p) => item(p.texto, [{ rotulo: 'feito', comando: `/gabarito-mestre:responder ${p.id} 1` }]));
+  const pendencias = pendenciasAbertas(evs).map((p) => item(higienizar(p.texto), [{ rotulo: 'feito', comando: `/gabarito-mestre:responder ${p.id} 1` }]));
 
   // (4) ideias para a próxima entrega
   const ideias = evs.filter((e) => e.tipo === 'nota' && formaInvalida('nota', e.dados) === null && e.dados.tipo === 'ideia').length;

@@ -10,7 +10,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dependeDe } from '../src/depende.ts';
+import { dependeDe, pendenciaAberta } from '../src/depende.ts';
+import { dependeDeVoce } from '../src/painel.ts';
 import { trilhaDe } from '../src/trilha.ts';
 import type { FatosTrilha, Trilha } from '../src/trilha.ts';
 import { formaInvalida } from '../src/formas.ts';
@@ -315,4 +316,79 @@ test('P9: trilhaDe real ⇒ dependeDe: spec sem aprovação na branch da entrega
 test('fixtures do teste são eventos válidos do diário (forma conferida pela T1)', () => {
   const evs = expandir([nota('ideia', 'a'), nota('pendencia', 'b'), pr(7, 'aberto'), ...noTeto('T12'), emendaProposta(), feito('sessao-a:2'), { t: 'task.reaberta', d: { task: 'T12', origem: 'dono' } }]);
   for (const e of evs) assert.equal(formaInvalida(e.tipo, e.dados), null, `${e.tipo} fora da forma`);
+});
+
+// ── correção r1 (review r1 da T13) ───────────────────────────────────────────────────────────────────────────────────────────
+
+test('item (5) não repete o PAROU de teto da base real (MAJOR-1): 1 item por task, com o mesmo botão', () => {
+  const evs = expandir([...noTeto('T12'), { t: 'loop.parar', d: { motivo: 'teto_rodadas', task: 'T12' } }]);
+  const entrada = { decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: null, pacote: 'x', notificacao: null, agoraMs: Date.UTC(2026, 10, 11, 13), fuso: 'UTC', titulo: null, politica: { politica: 'pr', dias: null }, entregaId: 'GM-14', specSha: null, tetoSombra: 10 };
+  const base = dependeDeVoce({ tasks: [{ id: 'T12', deps: [] }] } as never, evs, entrada as never);
+  assert.ok(base.some((b) => b.acoes.some((a) => a.comando === '/gabarito-mestre:liberar T12')), 'a base traz o botão de liberar');
+  const r = dependeDe(APROVADA, evs, base, OK, false, GIT);
+  assert.equal(r.filter((i) => i.acoes.some((a) => a.comando === '/gabarito-mestre:liberar T12')).length, 1, 'um só item com o botão de liberar T12');
+  assert.equal(r.filter((i) => /T12/.test(i.motivo)).length, 1, 'uma só decisão sobre a T12');
+  // sem base trazendo o teto, o item (5) segue; outra task no teto não é coberta pela base da T12
+  assert.equal(motivos(dependeDe(APROVADA, expandir([...noTeto('T12'), ...noTeto('T13')]), base, OK, false, GIT)).filter((m) => /T13/.test(m)).length, 1);
+  // task de id inseguro: a base sem botão (motivo de teto) também cobre
+  const baseSem: ItemDepende[] = [{ nivel: 'parar', motivo: 'teto de rodadas de review em a b', acoes: [] }];
+  assert.equal(chamar(APROVADA, noTeto('a b'), baseSem).filter((i) => /limite de revisões/.test(i.motivo)).length, 0);
+  assert.equal(chamar(APROVADA, noTeto('a b')).filter((i) => /limite de revisões/.test(i.motivo)).length, 1);
+  const baseGenerica: ItemDepende[] = [{ nivel: 'parar', motivo: 'teto de rodadas de review em task não identificada', acoes: [] }];
+  assert.equal(chamar(APROVADA, noTeto('a b'), baseGenerica).filter((i) => /limite de revisões/.test(i.motivo)).length, 0, 'id inseguro: o PAROU genérico da base cobre');
+  assert.equal(chamar(APROVADA, noTeto('T12'), baseGenerica).filter((i) => /limite de revisões/.test(i.motivo)).length, 1, 'id seguro: o genérico não cobre');
+  const baseSemBotao: ItemDepende[] = [{ nivel: 'parar', motivo: 'teto de rodadas de review em T12', acoes: [] }];
+  assert.equal(chamar(APROVADA, noTeto('T12'), baseSemBotao).filter((i) => /limite de revisões/.test(i.motivo)).length, 0, 'id seguro: motivo exato da base, sem botão');
+});
+
+test('pendenciaAberta: regra única e cada borda decidida 1x (MAJOR-2)', () => {
+  const f = (cs: C[], k = 0) => { const evs = expandir(cs); return pendenciaAberta(evs, evs[k]); };
+  const pend = nota('pendencia', 'renovar o certificado');
+  assert.deepEqual(f([pend]), { id: 'sessao-a:1', texto: 'renovar o certificado' });
+  assert.equal(f([pend, feito('sessao-a:1')]), null, 'fecha com resposta de opção posterior ao id exato');
+  assert.equal(f([feito('sessao-a:1'), pend], 1) !== null, true, 'resposta anterior à nota não fecha');
+  assert.notEqual(f([pend, { t: 'dono.resposta', s: 'sessao-dono', d: { pergunta: 'sessao-a:1', sha256: hash, chars: 5 } }]), null, 'digitada {sha256, chars} não fecha');
+  assert.notEqual(f([pend, { t: 'dono.resposta', s: 'sessao-dono', d: { pergunta: 'sessao-a:1', opcao: 1, rotulo: 'x'.repeat(200) } }]), null, 'forma inválida não fecha');
+  assert.notEqual(f([pend, { t: 'dono.resposta', s: 'sessao-dono', d: { pergunta: 'sessao-a:1', opcao: 9, rotulo: 'feito' } }]), null, 'opção fora de 1 a 4 não fecha');
+  assert.notEqual(f([pend, feito('sessao-a:2')]), null, 'outro id não fecha');
+  assert.equal(f([nota('pendencia', 'x'.repeat(161))]), null, 'nota de 161 caracteres não é pendência');
+  assert.notEqual(f([nota('pendencia', 'x'.repeat(160))]), null, 'nota de 160 caracteres é');
+  assert.equal(f([nota('ideia', 'a')]), null, 'só tipo pendência');
+  assert.equal(f([nota('pendencia', 'a', 'sessao com espaço')]), null, 'id fora do formato de pergunta não é pendência');
+  assert.equal(f([nota('pendencia', 'a', 'a.b')]), null, 'sessão com ponto também não');
+  const evs = expandir([pend]);
+  assert.equal(pendenciaAberta(evs, { ...evs[0] }), null, 'nota fora do diário dado não é aberta');
+  assert.equal(pendenciaAberta(null as never, evs[0]), null);
+  // o item (3) é a mesma regra: tudo acima visto pela saída
+  assert.deepEqual(motivos(chamar(APROVADA, [pend, feito('sessao-a:1')])), ['depende de você: nada']);
+  assert.deepEqual(motivos(chamar(APROVADA, [nota('pendencia', 'a', 'a.b'), nota('pendencia', 'b', 'x y')])), ['depende de você: nada']);
+  assert.equal(chamar(APROVADA, [pend, { t: 'dono.resposta', s: 'sessao-dono', d: { pergunta: 'sessao-a:1', opcao: 1, rotulo: 'x'.repeat(200) } }])[0].motivo, 'renovar o certificado');
+});
+
+test('cláusulas negativas (MAJOR-3): entrega de id inseguro, pedido de revisão sem forma, resposta inválida', () => {
+  // ENTREGA_SEGURA: entrega com crase/espaço vira "desta entrega", sem o id no texto
+  const estranha = trilha({ entrega: 'GM 14`x', marcas: ['✓', '✓', '●', '○', '○', '○', '○'] });
+  const r = chamar(estranha, [], [], { git: { branch: 'x', idPadrao: ID_PADRAO } });
+  assert.equal(r[0].motivo, 'aprovar a spec desta entrega: abra a conversa na branch da entrega para aprovar');
+  assert.equal(chamar(trilha({ entrega: 'GM-14' }), [], [], { git: { branch: 'x', idPadrao: ID_PADRAO } })[0].motivo.includes('da GM-14'), true);
+  // pedido de revisão: mesmo critério da trilha (número inteiro, estado texto)
+  for (const v of [{ numero: '7', estado: 'aberto' }, { numero: 7.5, estado: 'aberto' }, { numero: 7, estado: 1 }, { numero: 7 }, 'x', null]) {
+    assert.deepEqual(motivos(chamar(APROVADA, [{ t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: v } }])), ['depende de você: nada'], JSON.stringify(v));
+  }
+  assert.deepEqual(motivos(chamar(APROVADA, [pr(7, 'aberto'), pr(7, 'mergeado')])), ['depende de você: nada']);
+  assert.deepEqual(motivos(chamar(APROVADA, [pr(7, 'aberto'), { t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 1 } } }])), ['revisar e aceitar o pedido de revisão #7'], 'leitura sem estado texto não derruba o último válido');
+  assert.deepEqual(motivos(chamar(trilha({ ...APROVADA, entrega: null, identificada: false }), [pr(7, 'aberto')])), ['depende de você: nada']);
+});
+
+test('texto da pendência é higienizado (MINOR-2, REQ-LNG-1): nada técnico no motivo; o id do botão segue exato', () => {
+  const hostis = ['rodar `npm test` --fix', 'abrir docs/plano.md e ver x.json', 'chamar node scripts/a.mjs', 'ajustar loop_parar_teto', 'ver a.b.c', '`', '--', 'rodar /clear agora'];
+  const evs = hostis.map((t, i) => nota('pendencia', t, `s${i}`));
+  const r = chamar(APROVADA, evs);
+  assert.equal(r.length, hostis.length);
+  r.forEach((i, k) => {
+    assert.equal(REGEX_TECNICA.test(i.motivo), false, `motivo técnico: ${i.motivo}`);
+    assert.equal(i.acoes[0].comando, `/gabarito-mestre:responder s${k}:1 1`);
+  });
+  assert.equal(r[5].motivo, 'uma pendência');
+  assert.equal(chamar(APROVADA, [nota('pendencia', 'renovar o certificado')])[0].motivo, 'renovar o certificado', 'texto limpo passa intacto');
 });
