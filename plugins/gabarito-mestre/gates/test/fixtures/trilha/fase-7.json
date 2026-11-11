@@ -1,0 +1,16 @@
+{
+ "nome": "fase 7: pedido de revisão #20 aceito, versão publicada; ligada pela resposta do dono (FIEL-1 b: PR aceito não identifica só pela branch)",
+ "fatos": { "branch": "feat/GM-20-trilha", "idPadrao": "[A-Z]+-\\d+",
+  "specs": [ { "caminho": "docs/superpowers/specs/2026-11-20-gm20-design.md", "pbi": "GM-20", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "secoes": 6, "titulo": "Trilha da GM-20" } ],
+  "plano": { "tasks": [ "T1", "T2", "T3" ] }, "ledger": false, "gh": "ok", "ultimas": [] },
+ "eventos": [
+  { "t": "spec.aprovada", "d": { "spec": "docs/superpowers/specs/2026-11-20-gm20-design.md", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } },
+  { "integradas": [ "T1", "T2", "T3" ] },
+  { "t": "fato.medido", "d": { "chave": "pr", "fonte": "gh", "valor": { "numero": 20, "estado": "aberto", "branch": "feat/GM-20-trilha" } } },
+  { "t": "fato.medido", "d": { "chave": "pr", "fonte": "gh", "valor": { "numero": 20, "estado": "mergeado", "branch": "feat/GM-20-trilha" } } },
+  { "t": "fato.medido", "d": { "chave": "release", "fonte": "gh", "valor": { "tag": "gabarito-mestre--v2.1.0" } } },
+  { "t": "dono.resposta", "s": "sessao-b", "d": { "pergunta": "sessao-b:1", "opcao": 1, "rotulo": "GM-20" } }
+ ],
+ "esperado": { "marcas": "✓✓✓✓✓✓●", "identificada": true, "entrega": "GM-20", "candidato": "GM-20", "fase": 7,
+  "progresso": "pedido de revisão #20 aceito · versão 2.1.0 publicada", "mudouDepois": false, "ultimaConhecida": null }
+}

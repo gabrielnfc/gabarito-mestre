@@ -1,0 +1,395 @@
+/**
+ * Testes de `trilha.ts` (GM-14 T3, REQ-TRI-1 e FIEL-1 b). Núcleo puro: fatos + eventos ⇒ trilha.
+ * Mutações (.superpowers/sdd/2026-11-11-proxima/task-3-mut.json):
+ *  M1     sha não comparado (mudouDepois sempre falso)        ⇒ spec-editada-apos-aprovar-check-e-mudou-depois
+ *  M11    aprovação regride com sha novo                       ⇒ spec-editada-apos-aprovar-check-e-mudou-depois
+ *  M19    pasta da entrega (diário com evento) conta como 2º fato ⇒ anotar-entrega-x-sem-outro-fato-nao-identificada
+ *  M-T3a  1º PR mergeado basta                                 ⇒ pr-14-mergeado-15-aberto-bolinha
+ *  M-T3b  `gh` falho vira `○`                                  ⇒ gh-falho-pr-interrogacao
+ *  M-F1b  PR mergeado identifica pela branch                   ⇒ entrega-publicada-nao-identifica-pela-branch
+ *  M-T3c  depois de fase sem fonte, inferência continua        ⇒ s3b-celulas
+ *  M-T3d  resposta de (c) vale mesmo antes de a spec nova entrar ⇒ resposta-c-consumida
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { FASES, idDaBranch, trilhaDe } from '../src/trilha.ts';
+import type { FatosTrilha, SpecFato, Trilha } from '../src/trilha.ts';
+import { formaInvalida } from '../src/formas.ts';
+import type { Evento, TipoEvento } from '../src/tipos.ts';
+
+const FIX = new URL('./fixtures/trilha/', import.meta.url);
+const ler = (nome: string) => JSON.parse(readFileSync(new URL(nome, FIX), 'utf8'));
+/** Literal das Global Constraints do plano (REQ-LNG-1). */
+const REGEX_TECNICA = /[`]|--|\/[a-z]|\bnode\b|\.(json|mjs|md)\b|[a-z]+_[a-z_]+|[a-z]+\.[a-z]+\b/;
+
+type Compacto = { t: TipoEvento; d: Record<string, unknown>; s?: string } | { integradas: string[] };
+
+/** Expande eventos compactos em `Evento` com `seq` por sessão e `ts` crescente; `integradas` vira o ciclo completo de cada task. */
+function expandir(compactos: Compacto[]): Evento[] {
+  const seqs = new Map<string, number>();
+  const saida: Evento[] = [];
+  let min = 0;
+  const push = (tipo: TipoEvento, dados: Record<string, unknown>, sessao = 'sessao-a') => {
+    const seq = (seqs.get(sessao) ?? 0) + 1;
+    seqs.set(sessao, seq);
+    const ts = new Date(Date.UTC(2026, 10, 1, 0, min++)).toISOString();
+    saida.push({ seq, ts, autor: 'teste', sessao, agente: 'orquestrador', tipo, dados, hash_anterior: null });
+  };
+  for (const c of compactos) {
+    if ('integradas' in c) {
+      for (const task of c.integradas) {
+        push('task.iniciada', { task, papel: 'implementador' });
+        push('task.concluida', { task });
+        push('task.iniciada', { task, papel: 'revisor' });
+        push('review.veredito', { task, veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 });
+        push('task.integrada', { task });
+      }
+    } else push(c.t, c.d, c.s);
+  }
+  return saida;
+}
+
+const marcas = (t: Trilha) => t.marcas.join('');
+const SPEC = 'docs/superpowers/specs/2026-11-20-gm20-design.md';
+const A = 'a'.repeat(64);
+const B = 'b'.repeat(64);
+const specFato = (extra: Partial<SpecFato> = {}): SpecFato => ({ caminho: SPEC, pbi: 'GM-20', sha256: A, secoes: 6, titulo: 'Trilha da GM-20', ...extra });
+const fatos = (extra: Partial<FatosTrilha> = {}): FatosTrilha => ({
+  branch: 'feat/GM-20-trilha', idPadrao: '[A-Z]+-\\d+', specs: [specFato()], plano: null, ledger: false, gh: 'ok', ultimas: [], ...extra,
+});
+const aprovada = (sha256 = A, spec = SPEC): Compacto => ({ t: 'spec.aprovada', d: { spec, sha256 } });
+const pr = (numero: number, estado: string): Compacto => ({ t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: 'feat/GM-20-trilha' } } });
+const resposta = (rotulo: string, sessao = 'sessao-b'): Compacto => ({ t: 'dono.resposta', s: sessao, d: { pergunta: `${sessao}:1`, opcao: 1, rotulo } });
+const specMedida = (caminho: string): Compacto => ({ t: 'fato.medido', d: { chave: 'spec', fonte: 'arquivo', valor: { caminho, sha256: A, secoes: 3 } } });
+
+function confereFixture(nome: string, f: { fatos: FatosTrilha; eventos: Compacto[]; esperado: Record<string, unknown> }) {
+  const evs = expandir(f.eventos);
+  for (const e of evs) assert.equal(formaInvalida(e.tipo, e.dados), null, `${nome}: evento ${e.tipo} fora da forma do diário`);
+  const t = trilhaDe(f.fatos, evs);
+  const esp = f.esperado;
+  assert.equal(marcas(t), esp.marcas, `${nome}: marcas`);
+  assert.equal(t.marcas.length, 7, `${nome}: 7 marcas`);
+  assert.equal(t.motivos.length, 7, `${nome}: 7 motivos`);
+  assert.deepEqual(t.motivos, Array(7).fill(null), `${nome}: sem motivo`);
+  assert.equal(t.identificada, esp.identificada, `${nome}: identificada`);
+  assert.equal(t.entrega, esp.entrega, `${nome}: entrega`);
+  assert.equal(t.candidato, esp.candidato, `${nome}: candidato`);
+  assert.equal(t.fase, esp.fase, `${nome}: fase`);
+  assert.equal(t.progresso, esp.progresso, `${nome}: progresso`);
+  assert.equal(t.mudouDepois, esp.mudouDepois, `${nome}: mudouDepois`);
+  assert.equal(t.ultimaConhecida, esp.ultimaConhecida, `${nome}: ultimaConhecida`);
+  assert.deepEqual(t.ambigua, [], `${nome}: ambigua`);
+}
+
+for (let n = 1; n <= 7; n++) {
+  test(`fase-${n}-fixture`, () => confereFixture(`fase-${n}`, ler(`fase-${n}.json`)));
+}
+
+test('fases-sao-as-7-da-spec', () => {
+  assert.deepEqual([...FASES], ['ideia', 'spec', 'aprovacao', 'plano', 'execucao', 'pr', 'uso']);
+});
+
+test('gh-falho-pr-interrogacao', () => {
+  const f = ler('fase-6.json');
+  const ok = trilhaDe(f.fatos, expandir(f.eventos));
+  assert.equal(marcas(ok), '✓✓✓✓✓●○', 'troca de valor: gh ok ⇒ ●');
+  const t = trilhaDe({ ...f.fatos, gh: 'falhou' }, expandir(f.eventos));
+  assert.equal(marcas(t), '✓✓✓✓✓??', 'PR `?` e nada depois inferido');
+  assert.equal(t.motivos[5], 'não consegui conferir o pedido de revisão');
+  assert.equal(t.motivos[6], 'não consegui conferir o uso');
+  assert.deepEqual(t.motivos.slice(0, 5), [null, null, null, null, null]);
+  assert.equal(t.fase, null, 'sem ● não há fase atual');
+  assert.equal(t.identificada, true);
+  // Fato antigo de PR mergeado não vence a fonte que falhou agora.
+  const merg = trilhaDe({ ...f.fatos, gh: 'falhou' }, expandir([...f.eventos, pr(20, 'mergeado')]));
+  assert.equal(merg.marcas[5], '?');
+  assert.notEqual(merg.marcas[5], '○');
+});
+
+test('gh-falho-identifica-pela-branch-com-aviso', () => {
+  const f = ler('fase-7.json');
+  const semDono = f.eventos.filter((e: Compacto) => !('t' in e && e.t === 'dono.resposta'));
+  const t = trilhaDe({ ...f.fatos, gh: 'falhou' }, expandir(semDono));
+  assert.equal(t.identificada, true);
+  assert.equal(t.entrega, 'GM-20');
+  assert.equal(t.marcas[5], '?');
+  assert.equal(t.motivos[5], 'não consegui conferir o pedido de revisão');
+  // Troca de valor: com gh ok o PR aceito desidentifica (FIEL-1 b).
+  const ok = trilhaDe(f.fatos, expandir(semDono));
+  assert.equal(ok.identificada, false);
+});
+
+test('entrega-publicada-nao-identifica-pela-branch', () => {
+  const cel = ler('s3b-celulas.json').celulas.filter((c: { celula: string; variante: string }) => c.celula === 'GM-13 10/11' && c.variante === 'branch')[0];
+  const t = trilhaDe(cel.fatos, expandir(cel.eventos));
+  assert.equal(t.identificada, false);
+  assert.equal(t.entrega, null);
+  assert.equal(t.candidato, 'GM-13', 'a pergunta (b) usa o candidato: "Esta conversa é da entrega GM-13?"');
+  assert.equal(marcas(t), '●○○○○○○');
+  assert.equal(t.fase, 1);
+  // Troca de valor: com um PR aberto da entrega, a branch identifica.
+  const aberto = trilhaDe(cel.fatos, expandir([...cel.eventos, { t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: { numero: 15, estado: 'aberto', branch: 'enabler/GM-13-virada' } } }]));
+  assert.equal(aberto.identificada, true);
+  assert.equal(aberto.entrega, 'GM-13');
+  // Fechado (sem merge) como último PR também não é "publicada": identifica.
+  const fechado = trilhaDe(cel.fatos, expandir([...cel.eventos, { t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: { numero: 15, estado: 'fechado', branch: 'enabler/GM-13-virada' } } }]));
+  assert.equal(fechado.identificada, true);
+  assert.equal(fechado.marcas[5], '●');
+});
+
+test('duas-specs-ambigua', () => {
+  const s2 = specFato({ caminho: 'docs/superpowers/specs/2026-11-21-gm20-v2-design.md', sha256: B, secoes: 9, titulo: 'Trilha da GM-20 v2' });
+  const outra = specFato({ caminho: 'docs/superpowers/specs/x.md', pbi: 'GM-21', titulo: 'outra' });
+  const t = trilhaDe(fatos({ specs: [specFato(), s2, outra] }), []);
+  assert.equal(t.identificada, true, 'spec com PBI é 2º fato, mesmo ambígua');
+  assert.deepEqual(t.ambigua.map((s) => s.caminho), [SPEC, s2.caminho], 'só as specs da entrega');
+  assert.equal(t.marcas[1], '?');
+  assert.equal(t.motivos[1], 'achei mais de uma spec desta entrega');
+  assert.equal(marcas(t), '✓?○○○○○', 'a fase atual é a dúvida: sem ●, e ela não propaga `?`');
+  assert.equal(t.fase, null);
+  // Troca de valor: 1 spec da entrega ⇒ sem ambiguidade.
+  const uma = trilhaDe(fatos({ specs: [specFato(), outra] }), []);
+  assert.deepEqual(uma.ambigua, []);
+  assert.equal(uma.marcas[1], '✓');
+});
+
+test('resposta-c-consumida', () => {
+  const s2 = specFato({ caminho: 'docs/superpowers/specs/2026-11-21-gm20-v2-design.md', sha256: B, secoes: 9, titulo: 'Trilha da GM-20 v2' });
+  const f = fatos({ specs: [specFato(), s2] });
+  const base: Compacto[] = [specMedida(SPEC), specMedida(s2.caminho)];
+  // Título, em caixa mista e com espaço nas pontas, escolhe a v2.
+  const t = trilhaDe(f, expandir([...base, resposta('  trilha da gm-20 V2 ')]));
+  assert.deepEqual(t.ambigua, []);
+  assert.equal(t.marcas[1], '✓');
+  assert.equal(t.motivos[1], null);
+  assert.equal(t.progresso, 'spec com 9 seções · falta aprovar', 'a spec escolhida é "a spec"');
+  // Caminho também escolhe; a aprovação da escolhida conta e a da outra não.
+  const pc = trilhaDe(f, expandir([...base, resposta(SPEC), aprovada(A, s2.caminho)]));
+  assert.equal(pc.progresso, 'spec com 6 seções · falta aprovar');
+  assert.equal(pc.marcas[2], '●');
+  // Rótulo que não é de nenhuma das specs não fecha.
+  const nada = trilhaDe(f, expandir([...base, resposta('conversa avulsa')]));
+  assert.equal(nada.ambigua.length, 2);
+  assert.equal(nada.marcas[1], '?');
+  // Conjunto mudou depois da resposta (3ª spec entrou): a resposta perde a validade.
+  const s3 = specFato({ caminho: 'docs/superpowers/specs/2026-11-22-gm20-v3-design.md', titulo: 'Trilha v3' });
+  const mudou = trilhaDe(fatos({ specs: [specFato(), s2, s3] }), expandir([...base, resposta('Trilha da GM-20 v2'), specMedida(s3.caminho)]));
+  assert.equal(mudou.ambigua.length, 3);
+  assert.equal(mudou.marcas[1], '?');
+  // Edição de uma spec já conhecida (mesmo caminho) não reabre.
+  const editada = trilhaDe(f, expandir([...base, resposta('Trilha da GM-20 v2'), specMedida(SPEC)]));
+  assert.deepEqual(editada.ambigua, []);
+});
+
+test('spec-editada-apos-aprovar-check-e-mudou-depois', () => {
+  const evs = expandir([aprovada(A)]);
+  const t = trilhaDe(fatos({ specs: [specFato({ sha256: B })] }), evs);
+  assert.equal(marcas(t), '✓✓✓●○○○', 'aprovação não regride');
+  assert.equal(t.mudouDepois, true);
+  assert.doesNotMatch(t.progresso, /mudou/);
+  assert.equal(t.progresso, 'spec com 6 seções');
+  // Troca de valor: sha igual ⇒ não mudou.
+  assert.equal(trilhaDe(fatos(), evs).mudouDepois, false);
+  // Reaprovada com o sha novo ⇒ não mudou; a mais recente vale.
+  assert.equal(trilhaDe(fatos({ specs: [specFato({ sha256: B })] }), expandir([aprovada(A), aprovada(B)])).mudouDepois, false);
+  assert.equal(trilhaDe(fatos(), expandir([aprovada(A), aprovada(B)])).mudouDepois, true, 'voltou ao conteúdo antigo depois da 2ª aprovação');
+});
+
+test('pr-14-mergeado-15-aberto-bolinha', () => {
+  const f = ler('fase-6.json');
+  const ate = f.eventos.slice(0, 2);
+  const t = trilhaDe(f.fatos, expandir([...ate, pr(15, 'aberto'), pr(14, 'aberto'), pr(14, 'mergeado')]));
+  assert.equal(t.marcas[5], '●', 'o último PR (maior número) está aberto');
+  assert.equal(t.progresso, 'pedido de revisão #15 aberto');
+  assert.equal(t.identificada, true);
+  // Troca de valor: #15 mergeado também ⇒ PR ✓ (e a branch sozinha não identifica mais).
+  const ambos = trilhaDe(f.fatos, expandir([...ate, pr(15, 'aberto'), pr(14, 'aberto'), pr(14, 'mergeado'), pr(15, 'mergeado'), resposta('GM-20')]));
+  assert.equal(ambos.marcas[5], '✓');
+  assert.equal(ambos.progresso, 'pedido de revisão #15 aceito · aguardando publicação');
+  // Último mergeado mas outro aberto ⇒ não é ✓.
+  const outroAberto = trilhaDe(f.fatos, expandir([...ate, pr(13, 'aberto'), pr(14, 'mergeado')]));
+  assert.equal(outroAberto.marcas[5], '●');
+  assert.equal(outroAberto.progresso, 'pedido de revisão #13 aberto');
+});
+
+test('afterclick-sem-segundo-fato-nao-identificada', () => {
+  const idPadrao = '^[0-9a-z]{9,11}$';
+  assert.equal(idDaBranch('feat/afterclick-x', idPadrao), 'afterclick');
+  const t = trilhaDe(fatos({ branch: 'feat/afterclick-x', idPadrao, specs: [] }), []);
+  assert.equal(t.candidato, 'afterclick');
+  assert.equal(t.identificada, false);
+  assert.equal(t.entrega, null);
+  // Troca de valor: com plano.json (2º fato) identifica.
+  const comPlano = trilhaDe(fatos({ branch: 'feat/afterclick-x', idPadrao, specs: [], plano: { tasks: ['T1'] } }), []);
+  assert.equal(comPlano.identificada, true);
+  assert.equal(comPlano.entrega, 'afterclick');
+});
+
+test('anotar-entrega-x-sem-outro-fato-nao-identificada', () => {
+  // `anotar --entrega GM-20` criou a pasta e o diário com uma nota: nenhum dos dois é 2º fato.
+  const evs = expandir([{ t: 'nota', d: { tipo: 'ideia', texto: 'algo' } }, { t: 'nota', d: { tipo: 'desvio', texto: 'outro' } }]);
+  const t = trilhaDe(fatos({ specs: [] }), evs);
+  assert.equal(t.identificada, false);
+  assert.equal(t.candidato, 'GM-20');
+  assert.equal(t.progresso, '1 ideia anotada');
+  // Spec de outra entrega também não é 2º fato.
+  assert.equal(trilhaDe(fatos({ specs: [specFato({ pbi: 'GM-21' })] }), evs).identificada, false);
+  // Troca de valor: ledger da entrega é 2º fato.
+  assert.equal(trilhaDe(fatos({ specs: [], ledger: true }), evs).identificada, true);
+});
+
+test('aprovacao-sem-evento-interrogacao', () => {
+  const t = trilhaDe(fatos({ plano: { tasks: ['T1'] } }), []);
+  assert.equal(marcas(t), '✓✓?✓●○○');
+  assert.equal(t.motivos[2], 'não achei o registro da aprovação');
+  assert.deepEqual(t.motivos.filter((m) => m !== null), ['não achei o registro da aprovação'], 'não propaga');
+  // Aprovação de outro arquivo (plano.spec diferente da aprovada) não vale (DP-3 ajuste 5).
+  assert.equal(trilhaDe(fatos({ plano: { tasks: ['T1'] } }), expandir([aprovada(A, 'docs/superpowers/specs/outra.md')])).marcas[2], '?');
+  // Troca de valor: com o evento, ✓.
+  assert.equal(trilhaDe(fatos({ plano: { tasks: ['T1'] } }), expandir([aprovada()])).marcas[2], '✓');
+  assert.equal(trilhaDe(fatos({ plano: { tasks: ['T1'] } }), expandir([aprovada(A, `./${SPEC}`)])).marcas[2], '✓', 'caminho com ./ é o mesmo arquivo');
+  // Sem fato depois, aprovação pendente é ●, não `?`.
+  assert.equal(trilhaDe(fatos(), []).marcas[2], '●');
+});
+
+test('interrogacao-nao-vira-barra', () => {
+  const t = trilhaDe(fatos({ plano: { tasks: ['T1', 'T2'] } }), expandir([{ integradas: ['T1'] }]));
+  assert.equal(marcas(t), '✓✓?✓●○○');
+  assert.equal(t.marcas.filter((m) => m === '✓').length, 3, '`?` não conta como feito');
+  assert.equal(t.fase, 5, 'fase = posição do ●');
+  assert.equal(t.progresso, '1 de 2 tasks integradas');
+});
+
+test('s3b-celulas', () => {
+  const { celulas } = ler('s3b-celulas.json');
+  assert.equal(new Set(celulas.map((c: { celula: string }) => c.celula)).size, 9, '8 células do S3b + a intradia das 13h');
+  let erradas = 0;
+  let interrog = 0;
+  for (const c of celulas) {
+    const evs = expandir(c.eventos);
+    for (const e of evs) assert.equal(formaInvalida(e.tipo, e.dados), null, `${c.celula}: ${e.tipo}`);
+    const t = trilhaDe(c.fatos, evs);
+    const rotulo = `${c.celula} (${c.variante})`;
+    if (c.esperado === null) {
+      assert.equal(t.identificada, false, `${rotulo}: pergunta, não fase`);
+      continue;
+    }
+    assert.equal(t.identificada, true, rotulo);
+    assert.equal(marcas(t), c.esperado, rotulo);
+    t.marcas.forEach((m, i) => {
+      if (m === '?') return interrog++;
+      const real = i < c.real ? '✓' : i === c.real ? '●' : '○';
+      if (m !== real) erradas++;
+    });
+  }
+  assert.equal(erradas, 0, '0 fase errada (plano B do S3b)');
+  assert.equal(interrog, 12, '12 `?`, como medido (só nas células do Sherlock)');
+});
+
+test('sem-entrega-ultima-conhecida', () => {
+  const ultimas = [{ id: 'GM-18', data: '2026-11-15T10:00:00Z' }, { id: 'GM-19', data: '2026-11-18T10:00:00Z' }, { id: 'GM-17', data: '2026-11-01T10:00:00Z' }];
+  for (const branch of ['main', null, 'feat/sem-id']) {
+    const t = trilhaDe(fatos({ branch, ultimas }), []);
+    assert.equal(t.identificada, false, String(branch));
+    assert.equal(t.entrega, null);
+    assert.equal(t.candidato, null);
+    assert.equal(t.ultimaConhecida, 'GM-19', 'a mais recente, não a 1ª da lista');
+  }
+  assert.equal(trilhaDe(fatos({ branch: 'main', ultimas: [] }), []).ultimaConhecida, null);
+  // Identificada ⇒ sem "última conhecida".
+  assert.equal(trilhaDe(fatos({ ultimas }), []).ultimaConhecida, null);
+});
+
+test('trilha-diario-ausente-x-corrompido', () => {
+  const f = fatos({ plano: { tasks: ['T1'] } });
+  const ausente = trilhaDe(f, []);
+  assert.equal(marcas(ausente), '✓✓?✓●○○', 'ausente: sem evento, só os fatos do repo');
+  assert.equal(ausente.motivos[2], 'não achei o registro da aprovação');
+  const evs = expandir([aprovada()]);
+  const corrompido = trilhaDe(f, [...evs, { ...evs[0] }]); // seq repetido na sessão: não ordena
+  assert.equal(marcas(corrompido), '✓✓?✓???');
+  assert.equal(corrompido.motivos[2], 'não consegui conferir a aprovação');
+  assert.equal(corrompido.motivos[4], 'não consegui conferir a execução');
+  assert.equal(corrompido.identificada, true, 'branch + plano ainda identificam');
+  // Ciclo de task impossível (integrada sem aprovação) ⇒ execução `?`, não ●.
+  const invalido = trilhaDe(f, expandir([aprovada(), { t: 'task.integrada', d: { task: 'T1' } }]));
+  assert.equal(invalido.marcas[4], '?');
+  assert.equal(invalido.motivos[4], 'não consegui conferir a execução');
+  // Corrompido não liga sessão por resposta.
+  const r = expandir([resposta('GM-21')]);
+  assert.equal(trilhaDe(fatos({ branch: 'main' }), [...r, { ...r[0] }]).identificada, false);
+});
+
+test('id-da-branch', () => {
+  const p = '[A-Z]+-\\d+';
+  assert.equal(idDaBranch('enabler/GM-14-clareza', p), 'GM-14', 'idPadrao do config sem âncora (guarda.ts:28)');
+  assert.equal(idDaBranch('enabler/GM-14-clareza', '^[A-Z]+-\\d+$'), 'GM-14', 'ancorado (versionamento-check.mjs:39)');
+  assert.equal(idDaBranch('GM-14', p), 'GM-14');
+  assert.equal(idDaBranch('a/b/GM-7-x-y', p), 'GM-7', 'último segmento');
+  assert.equal(idDaBranch('GM-7/feat-x', p), null, 'só o último segmento');
+  assert.equal(idDaBranch('feat/xGM-14-a', p), null, 'ancorado: não pega no meio do token');
+  assert.equal(idDaBranch('feat/gm-14-a', p), null, 'minúscula não casa padrão maiúsculo');
+  assert.equal(idDaBranch('feat/Gm-14-a', p), null, 'caixa mista');
+  assert.equal(idDaBranch('feat/abc', '^[a-z]+$'), 'abc', '1 token');
+  assert.equal(idDaBranch('feat/abc-def', '[a-z]+(-[a-z]+)?'), 'abc', 'o 1º candidato (1 token) vence');
+  assert.equal(idDaBranch('feat/ab-12-x', '[a-z]+-\\d+|zz'), 'ab-12', 'alternância fica dentro da âncora');
+  assert.equal(idDaBranch(null, p), null);
+  assert.equal(idDaBranch('main', p), null);
+  assert.equal(idDaBranch('main', '^[a-z]{4}$'), null, 'main nunca é entrega');
+  assert.equal(idDaBranch('feat/', '.*'), null, 'token vazio');
+  assert.equal(idDaBranch('', '.*'), null);
+  assert.equal(idDaBranch('feat/GM-14-x', '('), null, 'regex inválida não lança');
+  assert.equal(idDaBranch('feat/GM-14-x', 42 as unknown as string), null);
+});
+
+test('fato-duplicado-idempotente', () => {
+  // Duas sessões medindo juntas gravam o mesmo fato: a trilha é a mesma.
+  const f = ler('fase-6.json');
+  const um = trilhaDe(f.fatos, expandir(f.eventos));
+  const dois = trilhaDe(f.fatos, expandir([...f.eventos, { ...f.eventos[2], s: 'sessao-c' }, aprovada(), aprovada()]));
+  assert.deepEqual(dois, um);
+});
+
+test('resposta-liga-sessao', () => {
+  const t = trilhaDe(fatos({ branch: 'main', specs: [] }), expandir([resposta('GM-21')]));
+  assert.equal(t.identificada, true);
+  assert.equal(t.entrega, 'GM-21');
+  // Branch sem o ID da entrega: plano e PR sem fonte ⇒ `?`, nada inferido depois.
+  assert.equal(marcas(t), '✓●○????');
+  assert.equal(t.motivos[3], 'não consegui conferir o plano');
+  assert.equal(t.motivos[5], 'não consegui conferir o pedido de revisão');
+  // Resposta vence a branch.
+  assert.equal(trilhaDe(fatos({ ledger: true }), expandir([resposta('GM-21')])).entrega, 'GM-21');
+  // Rótulo que não é ID (caixa trocada, opção avulsa) não liga.
+  for (const r of ['gm-21', 'Gm-21', 'conversa avulsa', 'GM-21 ']) {
+    assert.equal(trilhaDe(fatos({ branch: 'main' }), expandir([resposta(r)])).identificada, false, r);
+  }
+  // A mais recente vale.
+  assert.equal(trilhaDe(fatos({ branch: 'main' }), expandir([resposta('GM-21'), resposta('GM-22', 'sessao-c')])).entrega, 'GM-22');
+});
+
+test('progresso-e-motivos-sem-linha-tecnica', () => {
+  const casos: Trilha[] = [];
+  for (let n = 1; n <= 7; n++) {
+    const f = ler(`fase-${n}.json`);
+    casos.push(trilhaDe(f.fatos, expandir(f.eventos)), trilhaDe({ ...f.fatos, gh: 'falhou' }, expandir(f.eventos)));
+  }
+  for (const c of ler('s3b-celulas.json').celulas) casos.push(trilhaDe(c.fatos, expandir(c.eventos)));
+  casos.push(trilhaDe(fatos({ plano: { tasks: ['T1'] } }), []));
+  for (const t of casos) {
+    for (const linha of [t.progresso, ...t.motivos.filter((m): m is string => m !== null)]) {
+      assert.doesNotMatch(linha, REGEX_TECNICA, linha);
+    }
+  }
+  // Singular e plural.
+  assert.equal(trilhaDe(fatos({ plano: { tasks: ['T1'] } }), expandir([aprovada()])).progresso, '1 task');
+  assert.equal(trilhaDe(fatos({ plano: { tasks: ['T1', 'T2'] } }), expandir([aprovada()])).progresso, '2 tasks');
+  assert.equal(trilhaDe(fatos({ specs: [specFato({ secoes: 1 })] }), []).progresso, 'spec com 1 seção · falta aprovar');
+});
+
+test('fatos-malformados-nao-lancam', () => {
+  const t = trilhaDe({ branch: 'feat/GM-20-x', idPadrao: '(', specs: null, plano: null, ledger: false, gh: 'ok', ultimas: null } as unknown as FatosTrilha, null as unknown as Evento[]);
+  assert.equal(t.identificada, false);
+  assert.equal(t.candidato, null);
+});

@@ -1,0 +1,11 @@
+{
+ "nome": "fase 1: sem entrega identificada (branch main), só ideias anotadas",
+ "fatos": { "branch": "main", "idPadrao": "[A-Z]+-\\d+", "specs": [], "plano": null, "ledger": false, "gh": "nunca",
+  "ultimas": [ { "id": "GM-19", "data": "2026-11-18T10:00:00Z" }, { "id": "GM-18", "data": "2026-11-15T10:00:00Z" } ] },
+ "eventos": [
+  { "t": "nota", "d": { "tipo": "ideia", "texto": "botao para pausar o loop" } },
+  { "t": "nota", "d": { "tipo": "ideia", "texto": "mostrar o custo do dia" } }
+ ],
+ "esperado": { "marcas": "●○○○○○○", "identificada": false, "entrega": null, "candidato": null, "fase": 1,
+  "progresso": "2 ideias anotadas", "mudouDepois": false, "ultimaConhecida": "GM-19" }
+}

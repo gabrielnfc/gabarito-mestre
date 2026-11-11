@@ -1,0 +1,9 @@
+{
+ "nome": "fase 2: entrega identificada pela branch e o ledger (2º fato), sem spec",
+ "fatos": { "branch": "feat/GM-20-trilha", "idPadrao": "[A-Z]+-\\d+", "specs": [], "plano": null, "ledger": true, "gh": "ok", "ultimas": [] },
+ "eventos": [
+  { "t": "nota", "d": { "tipo": "ideia", "texto": "trilha de sete fases" } }
+ ],
+ "esperado": { "marcas": "✓●○○○○○", "identificada": true, "entrega": "GM-20", "candidato": "GM-20", "fase": 2,
+  "progresso": "1 ideia anotada", "mudouDepois": false, "ultimaConhecida": null }
+}
