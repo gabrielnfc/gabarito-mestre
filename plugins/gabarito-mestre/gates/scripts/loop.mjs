@@ -18,6 +18,8 @@
  *   loop.mjs emenda julgar <seq> <aprovar|rejeitar>   origem `sombra`: recusa sem `sombra.julga_emendas: true` em `origin/HEAD` (o config local não conta)
  *   loop.mjs aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>]
  *       (GM-13 T8; contrato e ordem de recusa em `loop-aprendizado.mjs`; `aprendizados` não exige entrega na branch).
+ *   loop.mjs anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--entrega <ID>] [--opcao <r>]…   (GM-14 REQ-DIA-2; sem plano. A T1 só
+ *       liga o despacho: devolve `nao_implementado`, rc 1, nada gravado; a T6 implementa)
  *   todos aceitam --entrega <GM-10> (senão vem da branch); os que gravam aceitam --sessao <id> (padrão `loop`).
  *
  * CONTRATO DE FALHA. Saída é UMA linha de JSON em stdout, sempre com `ok`; falha traz `erro` (código) e `mensagem`.
@@ -1380,7 +1382,14 @@ export function julgarEmendaDono(cwd, seq, decisao, sessao, opcoes = {}) {
 
 // ─────────────────────────────────────────────────────────────── despacho
 
+/** `anotar` (GM-14, REQ-DIA-2): só o despacho; a T6 implementa, sem `carregarPlano`. Nada é lido nem gravado. */
+function anotar(_argv, _cwd) {
+  throw new Falha('nao_implementado', 'loop.mjs anotar: ainda não implementado (GM-14)');
+}
+
 async function executar(argv, cwd) {
+  // Desvia antes de `lerArgs`: `--opcao` se repete (2–4), o que o leitor comum recusa como flag repetida.
+  if (argv[0] === 'anotar') return anotar(argv.slice(1), cwd);
   const { cmd, pos, flags } = lerArgs(argv);
   const forma = validarForma(cmd, pos, flags);
   // `aprendizados` lê a árvore da raiz principal: não depende da entrega da branch nem de plano (D-P1c-5), então desvia ANTES de `contexto` e `carregarPlano`.

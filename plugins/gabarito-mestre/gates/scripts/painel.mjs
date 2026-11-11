@@ -4,13 +4,15 @@
  *
  *   painel.mjs estado [--agentes] [--pacote <nome>] [--entrega <ID>]
  *   painel.mjs texto  [--largura N] [--preset esquadrao|executivo] [--tema color|mono] [--pacote <nome>] [--agentes] [--entrega <ID>]
+ *   painel.mjs medir  [--agentes]   (GM-14 REQ-DIA-1: o ÚNICO subcomando que grava, e só `fato.medido`; em `painel-medir.mjs`. A T1 só liga o
+ *                                    despacho: devolve `nao_implementado`, rc 1, nada lido do stdin nem gravado; a T11 implementa)
  *
  * `--agentes`: JSON em stdin `{sessao:{percent,tokens,window,h5,d7,x,notificacao,pacote}, agentes:[{id,type,description,status,transcript}]|null}`
  * (sombra-p1d D-M3). SEM `--agentes` o stdin NUNCA é lido (a skill chama pelo Bash com stdin herdado: o CLI travaria).
  * `estado` imprime `{ok:true, estado, avisos}`; `texto` imprime `paraTexto(renderPainel(...))` (padrão: 80 colunas, esquadrao, mono).
  * Falha: UMA linha JSON `{ok:false, erro, mensagem}`, rc 1; uso errado rc 2. `texto` falha com a mesma linha JSON.
  *
- * SÓ LÊ. Nada de `decidirAgora`, lock, âncora, `append` ou `.harness/` criado: o painel pode rodar a cada 30 s, durante um deploy, com a janela fechada.
+ * `estado` e `texto` SÓ LEEM (D8). Nada de `decidirAgora`, lock, âncora, `append` ou `.harness/` criado: o painel pode rodar a cada 30 s, durante um deploy, com a janela fechada.
  * A decisão de entrega vem de `prepararLeitura` + `decisaoDe` (entrega.mjs), só com o loop em `concluir`.
  *
  * LEITURA ESTÁVEL DO DIÁRIO (D-M2). O diário são vários `events.<sessao>.jsonl` de processos diferentes; lidos em sequência, uma linha em gravação
@@ -36,6 +38,7 @@ import { paraTexto } from '../dist/painel-texto.js';
 import { lerX } from '../dist/pouso.js';
 import { carregarPlano, contexto, lerDiarioEstrito, lerSpec, tetoDaSombra } from './loop.mjs';
 import { decisaoDe, pausado, prepararLeitura } from './entrega.mjs';
+import { medir } from './painel-medir.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const MOD_NOMES = join(AQUI, '..', '..', 'mod', 'temas', 'nomes');
@@ -50,7 +53,7 @@ const STDIN_MAX = 4 * 1024 * 1024;
 const TENTATIVAS = 3;
 const INTERVALO_MS = 50;
 const SINAIS_NEUTROS = { slots: 1, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false };
-const USO = 'uso: painel.mjs estado [--agentes] [--pacote <nome>] [--entrega <ID>] | painel.mjs texto [--largura N] [--preset esquadrao|executivo] [--tema color|mono] [--pacote <nome>] [--agentes] [--entrega <ID>]';
+const USO = 'uso: painel.mjs estado [--agentes] [--pacote <nome>] [--entrega <ID>] | painel.mjs texto [--largura N] [--preset esquadrao|executivo] [--tema color|mono] [--pacote <nome>] [--agentes] [--entrega <ID>] | painel.mjs medir [--agentes]';
 
 /** Falha com código: vira `{ok:false, erro, mensagem}` (rc 1; uso é 2). */
 class Falha extends Error {
@@ -69,8 +72,8 @@ const numero = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
 /** Estrito: subcomando, flag desconhecida, repetida, sem valor, valor fora da forma e posicional a mais são uso (rc 2). */
 export function lerArgs(argv) {
   const [cmd, ...resto] = argv;
-  if (cmd !== 'estado' && cmd !== 'texto') throw new Falha('uso', `subcomando ${JSON.stringify(cmd ?? null)}: esperado estado ou texto. ${USO}`, 2);
-  const COM_VALOR = cmd === 'texto' ? ['largura', 'preset', 'tema', 'pacote', 'entrega'] : ['pacote', 'entrega'];
+  if (cmd !== 'estado' && cmd !== 'texto' && cmd !== 'medir') throw new Falha('uso', `subcomando ${JSON.stringify(cmd ?? null)}: esperado estado, texto ou medir. ${USO}`, 2);
+  const COM_VALOR = cmd === 'texto' ? ['largura', 'preset', 'tema', 'pacote', 'entrega'] : cmd === 'medir' ? [] : ['pacote', 'entrega'];
   const flags = {};
   for (let i = 0; i < resto.length; i++) {
     const a = resto[i];
@@ -413,6 +416,12 @@ export function main(argv, cwd = process.cwd(), io = {}) {
   };
   try {
     const { cmd, flags } = lerArgs(argv);
+    if (cmd === 'medir') {
+      // GM-14 T1: só o despacho. A T11 lê o stdin de `--agentes` e grava; o stub lança antes de qualquer leitura ou escrita.
+      const r = medir(cwd, { agentes: flags.agentes === true });
+      saida(`${JSON.stringify(r)}\n`);
+      return r?.ok === true ? 0 : 1;
+    }
     const agentes = flags.agentes === true ? lerEntradaAgentes((io.stdin ?? lerStdin)()) : undefined;
     const r = estadoDoPainel(cwd, { agentes, pacote: flags.pacote, entrega: flags.entrega, agoraMs: io.agoraMs });
     if (!r.ok) return falha(new Falha(r.erro, r.mensagem));
