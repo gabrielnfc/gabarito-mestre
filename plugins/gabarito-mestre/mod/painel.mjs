@@ -33,7 +33,21 @@ export const CHAVE_TRANSCRIPTS = 'painel:transcripts';
 export const TETO_TRANSCRIPTS = 64;
 /** Os pacotes de fábrica (`mod/temas/nomes/`). O mod não lê diretório sem `node:fs`: um teste em `gates/` compara esta lista com o diretório. */
 export const PACOTES_FABRICA = Object.freeze(['galaxia', 'herois', 'hogwarts', 'terra-media']);
-export const USO_GABARITO = 'Uso: /gabarito painel [esquadrao|executivo|color|mono|narracao on|off|nomes <pacote>|ligar|desligar] | pausar | retomar';
+/** Ajuda do `/gabarito` (sem argumento ou desconhecido): linguagem do adotante, ≤ 14 linhas, ≤ 80 colunas. Multilinha de propósito (não passa por `umaLinha`). */
+export const USO_GABARITO = [
+  'Uso: o painel abre sozinho ao lado quando uma entrega começa.',
+  '/gabarito painel            abre o painel ou o traz de volta',
+  '/gabarito painel esquadrao  detalhado: plano, equipe (contexto e tokens',
+  '                            de cada agente) e histórico',
+  '/gabarito painel executivo  resumido: só o essencial da entrega',
+  '/gabarito painel color      com cores  (ou: mono, sem cores)',
+  '/gabarito painel narracao on|off   liga ou desliga a narração',
+  '/gabarito painel nomes <pacote>    troca os nomes da equipe',
+  '/gabarito painel ligar      volta a abrir sozinho',
+  '/gabarito painel desligar   não abre mais sozinho (os avisos continuam)',
+  '/gabarito pausar            para o trabalho automático da entrega',
+  '/gabarito retomar           continua de onde parou',
+].join('\n');
 const PACOTE_RE = /^[a-z0-9-]{1,32}$/;
 const AGENTE_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const SESSAO_RE = /^[A-Za-z0-9-]{1,128}$/;
@@ -582,10 +596,11 @@ async function nomesDoPainel($, p) {
   return `painel: nomes ${p}` + (gravou ? '' : SO_NA_SESSAO);
 }
 
-/** `/gabarito painel …` (`partes` = o que vem depois de `painel`). A resposta é SEMPRE uma linha (`umaLinha`). Nunca lança. */
+/** `/gabarito painel …` (`partes` = o que vem depois de `painel`). A resposta é uma linha (`umaLinha`), salvo a ajuda (`USO_GABARITO`). Nunca lança. */
 export async function comandoPainel($, partes) {
   try {
-    return umaLinha(await comandoPainelBruto($, Array.isArray(partes) ? partes : []));
+    const r = await comandoPainelBruto($, Array.isArray(partes) ? partes : []);
+    return r === USO_GABARITO ? r : umaLinha(r);
   } catch {
     return 'painel: erro inesperado';
   }

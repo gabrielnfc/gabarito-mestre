@@ -1254,7 +1254,9 @@ for (const args of ['', 'foo', 'pausar x', 'PAUSAR', 'retomar tudo', ' ']) {
     const m = mundo($, on)
     await m.inicio()
     const r = await m.cmd(args)
-    expect(r.text).toMatch(/^Uso:/)
+    expect(r.text).toMatch(/^Uso: o painel abre sozinho/)
+    expect(r.text).toContain('/gabarito painel desligar   não abre mais sozinho')
+    expect(r.text.split('\n').length).toBeLessThanOrEqual(14)
     expect(m.arquivos.size).toBe(0)
     expect(m.tipos()).toEqual([])
   })
@@ -2667,7 +2669,20 @@ test('usage-falha-nao-derruba: usage lançando ⇒ percent/tokens/window null e 
 // ======================================================================================================================================
 // ---- painel (E4, T11): comando, sorteio de nomes e transcripts. Mutações: task-11-mut.json ----
 // ======================================================================================================================================
-const USO_ESPERADO = 'Uso: /gabarito painel [esquadrao|executivo|color|mono|narracao on|off|nomes <pacote>|ligar|desligar] | pausar | retomar'
+const USO_ESPERADO = [
+  'Uso: o painel abre sozinho ao lado quando uma entrega começa.',
+  '/gabarito painel            abre o painel ou o traz de volta',
+  '/gabarito painel esquadrao  detalhado: plano, equipe (contexto e tokens',
+  '                            de cada agente) e histórico',
+  '/gabarito painel executivo  resumido: só o essencial da entrega',
+  '/gabarito painel color      com cores  (ou: mono, sem cores)',
+  '/gabarito painel narracao on|off   liga ou desliga a narração',
+  '/gabarito painel nomes <pacote>    troca os nomes da equipe',
+  '/gabarito painel ligar      volta a abrir sozinho',
+  '/gabarito painel desligar   não abre mais sozinho (os avisos continuam)',
+  '/gabarito pausar            para o trabalho automático da entrega',
+  '/gabarito retomar           continua de onde parou',
+].join('\n')
 const FABRICA = ['galaxia', 'herois', 'hogwarts', 'terra-media']
 const PREFS_STORE = 'painel:prefs'
 const PACOTE_STORE = 'painel:pacote'
@@ -2688,7 +2703,7 @@ test('comando-registro: description e argumentHint novos', async ($, on) => {
   expect(r.description).toBe('Painel, pausa e retomada do loop')
   expect(r.argumentHint).toBe('painel …|pausar|retomar')
 })
-test('comando-uso: vazio, desconhecido e painel malformado devolvem a linha de Uso exata', async ($, on) => {
+test('comando-uso: vazio, desconhecido e painel malformado devolvem a ajuda exata', async ($, on) => {
   const m = comPainel($, on)
   await arrancar(m)
   for (const a of ['', 'x', 'painel foo', 'painel nomes', 'painel narracao talvez', 'painel esquadrao extra', 'painel narracao on off', '   ']) {
@@ -2839,13 +2854,17 @@ test('comando-store-nega-vale-na-sessao: store.set rejeita ⇒ a troca vale e a 
   expect((await m.cmd('painel mono')).text).toBe('painel: mono (só nesta sessão: não gravei a preferência)')
   await ui.unmount()
 })
-test('comando-resposta-uma-linha: todas as variantes, inclusive erro e store negando, sem \\n e ≤ 200 colunas', async ($, on) => {
+test('comando-resposta-uma-linha: todas as variantes (menos a ajuda), inclusive erro e store negando, sem \\n e ≤ 200 colunas', async ($, on) => {
   const m = comPainel($, on, {}, { openResult: { isPlaced: false, reason: 'linha 1\nlinha 2\r\n' + 'z'.repeat(400) }, storeSetFalha: true, arquivos: [] })
   await arrancar(m)
   const args = ['', 'x', 'pausar', 'retomar', 'painel', 'painel esquadrao', 'painel executivo', 'painel color', 'painel mono', 'painel narracao on', 'painel narracao off', 'painel nomes herois', 'painel nomes ../x', 'painel nomes zzz', 'painel ligar', 'painel desligar', 'painel \x1b[2J', 'painel nomes \x1b[2Jabc', 'painel\nnomes\nherois']
   for (const a of args) {
     const t = (await m.cmd(a)).text
     expect(typeof t).toBe('string')
+    if (t === USO_ESPERADO) { // a ajuda é a única resposta de várias linhas: cada linha ≤ 80 colunas
+      for (const l of t.split('\n')) expect([...l].length).toBeLessThanOrEqual(80)
+      continue
+    }
     expect(/[\n\r\x1b\u2028\u2029]/.test(t)).toBe(false)
     expect([...t].length).toBeLessThanOrEqual(200)
   }

@@ -5,7 +5,14 @@ allowed-tools: Read, Bash(node:*)
 ---
 
 Caminho **sem mod** do kill switch (com o mod, `/gabarito pausar|retomar` faz o mesmo e grava `loop.pausa` no diário).
-Argumento recebido: `$ARGUMENTS`. Aceite só `pausar` ou `retomar`; qualquer outra coisa (inclusive vazio): diga o uso e pare.
+Argumento recebido: `$ARGUMENTS`. Aceite só `pausar` ou `retomar`; qualquer outra coisa (inclusive vazio): responda só com estas linhas e pare.
+
+```
+Uso sem o mod:
+/gabarito pausar   para o trabalho automático da entrega
+/gabarito retomar  continua de onde parou
+O painel precisa do mod; sem ele não há `/gabarito painel`.
+```
 
 A pausa é o arquivo `.harness/PAUSAR` na raiz do checkout principal. Com ele, a guarda nega `Agent` a todos e toda
 ferramenta a subagent ("pausado"). Uma ferramenta já em curso termina; a pausa vale do próximo despacho em diante.
