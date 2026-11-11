@@ -238,12 +238,18 @@
       "id": "T11",
       "titulo": "`painel.mjs medir`",
       "deps": [
-        "T3"
+        "T3",
+        "T27",
+        "T33"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
         "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs",
-        "plugins/gabarito-mestre/gates/test/fixtures/gh/"
+        "plugins/gabarito-mestre/gates/test/fixtures/gh/",
+        "plugins/gabarito-mestre/gates/src/pouso.ts",
+        "plugins/gabarito-mestre/gates/dist/pouso.js",
+        "plugins/gabarito-mestre/gates/test/pouso.test.ts",
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs"
       ],
       "reqs": [
         "REQ-DIA-1"
@@ -253,14 +259,16 @@
       "id": "T12",
       "titulo": "Perguntas abertas",
       "deps": [
-        "T3"
+        "T3",
+        "T13"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/perguntas.ts",
         "plugins/gabarito-mestre/gates/test/perguntas.test.ts",
         "plugins/gabarito-mestre/gates/dist/perguntas.js",
         "plugins/gabarito-mestre/gates/src/trilha.ts",
-        "plugins/gabarito-mestre/gates/dist/trilha.js"
+        "plugins/gabarito-mestre/gates/dist/trilha.js",
+        "plugins/gabarito-mestre/gates/test/trilha.test.ts"
       ],
       "reqs": [
         "REQ-PRG-1"
@@ -304,7 +312,8 @@
         "T3",
         "T6",
         "T27",
-        "T33"
+        "T33",
+        "T11"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/loop.mjs",
