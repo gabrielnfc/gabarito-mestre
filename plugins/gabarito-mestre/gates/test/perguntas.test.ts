@@ -193,7 +193,7 @@ test('b-opcoes-congeladas-pela-ancora', () => {
 
 test('b-resposta-com-id-liga-a-trilha-e-avulsa-nao', () => {
   // Atravessa T3: o rótulo que (b) grava é o que `trilhaDe` lê para ligar a sessão.
-  const fatos: FatosTrilha = { branch: 'main', idPadrao: '[A-Z]+-\\d+', specs: [], plano: null, ledger: false, gh: 'ok', ultimas: [{ id: 'GM-13', data: '2026-10-30' }] };
+  const fatos: FatosTrilha = { sessao: 's1', branch: 'main', idPadrao: '[A-Z]+-\\d+', specs: [], plano: null, ledger: false, gh: 'ok', ultimas: [{ id: 'GM-13', data: '2026-10-30' }] };
   const base = expandir([inicio('s1'), branch('s1')]);
   const t0 = trilhaDe(fatos, base);
   assert.equal(t0.identificada, false);
