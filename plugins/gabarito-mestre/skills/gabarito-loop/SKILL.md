@@ -49,7 +49,7 @@ Status ao dono: comece por `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/painel.mjs
 
 `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/entrega.mjs" decidir` depois de `concluir`; a decisão é do CLI:
 - `subir`: `entrega.mjs" executar`. Falhas esperadas: `checkout_sujo`, `entrega_em_curso`, `ancora_nao_gravada`: pare e diga a causa. Negado pelo modo de permissão (o `auto` classifica como deploy de produção): não contorne nem tente outro caminho; diga ao dono que o deploy é dele, com o comando exato `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/entrega.mjs" executar`, e pare o turno. Antes de parar, `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/entrega.mjs" devolver --motivo <t>` (grava `entrega.devolvida`; o painel mostra o comando ao dono).
-- `release_pr`: push da branch e PR para a `base` que ele devolve; **nunca merge**.
+- `release_pr`: `git push -u origin HEAD` e `gh pr create --base <base> --head <branch> --title "<entrega>: …" --body-file <registro.md>`. Push de branch e PR não são deploy. Não rode `executar` nem `devolver`: só valem para `subir` e aqui dão `nao_subiu`. A base é a do `decidir`, mesmo que a doc do projeto diga outra; repasse o `aviso`, se vier. Negado pelo modo de permissão: dê ao dono os 2 comandos exatos e pare o turno. **Nunca merge.**
 - `agendar`: informe o `quando` ao dono. `esperar{homolog}`: informe o dono (com o `aviso`, se houver) e pare o turno.
 - `entregue`: nada a fazer. `parar{motivo}`: escale ao dono.
 

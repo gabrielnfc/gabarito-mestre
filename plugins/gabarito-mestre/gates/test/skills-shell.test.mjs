@@ -265,3 +265,13 @@ test('skill-conformidade-lista-d-com-spec: allowed-tools com node, comando real,
   // comando real: roda em bash e zsh na costura (o extrator de FONTES cobre este arquivo)
   assert.ok(extrairComandosLoop().some((c) => c.rel === 'skills/gabarito-conformidade/SKILL.md' && /aprendizados --para spec/.test(c.cmd)), 'o comando não entrou na costura');
 });
+
+// ---- GM-13 FX8 (t6): o bullet `release_pr` da skill do loop manda o comando exato e proíbe `executar`.
+test('skill-loop-release_pr-empurra-e-abre-o-pr', () => {
+  const linha = readFileSync(SKILL_LOOP, 'utf8').split('\n').find((l) => l.startsWith('- `release_pr`'));
+  assert.ok(linha, 'bullet release_pr ausente');
+  assert.match(linha, /git push -u origin/);
+  assert.match(linha, /gh pr create --base/);
+  assert.match(linha, /não rode `executar`/i);
+  assert.match(linha, /Nunca merge/);
+});

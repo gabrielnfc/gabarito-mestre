@@ -317,7 +317,7 @@ describe('T14 skill gabarito-loop — ponteiros aos CLIs da E3', () => {
   const skill = readFileSync(join(RAIZ_PLUGIN, 'skills', 'gabarito-loop', 'SKILL.md'), 'utf8');
 
   test('skill-loop-cita-sombra-emenda-entrega: os três CLIs e as interfaces reais', () => {
-    for (const re of [/sombra\.mjs" perguntar/, /sombra\.mjs" registrar/, /gabarito-sombra/, /`prompt`/, /`aviso`/, /`pendente`/, /loop\.mjs" desvio/, /descoberta/, /emenda propor/, /proposta_seq/, /esperar\{emenda\}/, /entrega\.mjs" decidir/, /entrega\.mjs" executar/, /checkout_sujo/, /entrega_em_curso/, /ancora_nao_gravada/, /release_pr/, /nunca merge/, /agendar/, /`quando`/, /esperar\{homolog\}/]) {
+    for (const re of [/sombra\.mjs" perguntar/, /sombra\.mjs" registrar/, /gabarito-sombra/, /`prompt`/, /`aviso`/, /`pendente`/, /loop\.mjs" desvio/, /descoberta/, /emenda propor/, /proposta_seq/, /esperar\{emenda\}/, /entrega\.mjs" decidir/, /entrega\.mjs" executar/, /checkout_sujo/, /entrega_em_curso/, /ancora_nao_gravada/, /release_pr/, /nunca merge/i, /agendar/, /`quando`/, /esperar\{homolog\}/]) {
       assert.match(skill, re);
     }
   });

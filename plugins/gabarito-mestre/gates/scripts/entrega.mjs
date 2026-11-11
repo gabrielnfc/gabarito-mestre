@@ -40,7 +40,7 @@ import { createHash } from 'node:crypto';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import { lerConfigOrigin } from '../lib/config.mjs';
 import * as diario from '../dist/diario.js';
-import { decidirEntrega, lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
+import { decidirEntrega, lerConfigEntrega, politicaEfetiva, resolverBaseEntrega } from '../dist/entrega.js';
 import { ordenar, proximaAcao } from '../dist/loop.js';
 import { validarPlano } from '../dist/plano.js';
 
@@ -82,6 +82,16 @@ function git(cwd, ...args) {
   } catch (e) {
     const texto = String(e.stderr ?? '').trim() || String(e.stdout ?? '').trim() || e.message;
     throw new Error(texto.split('\n').filter(Boolean).slice(-3).join(' / '));
+  }
+}
+
+/** `harness.config.json` COMMITADO no HEAD (objeto do git, nunca a worktree); `null` se ausente ou ilegível. Só a base da entrega cai para ele. */
+function lerConfigHead(cwd) {
+  try {
+    const raw = JSON.parse(git(cwd, 'show', 'HEAD:harness.config.json'));
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
+  } catch {
+    return null;
   }
 }
 
@@ -273,6 +283,10 @@ function preparar(c, agoraMs, { conferirPausa = true } = {}) {
   const avisos = [];
   if (origin.invalida) avisos.push(`config de origin inválida: ${origin.motivo}`);
   avisos.push(...config.erros);
+  const origemDeclarou = origin.cfg?.entrega?.base !== undefined;
+  const resolvida = resolverBaseEntrega(config, origemDeclarou, lerConfigHead(c.raiz));
+  config.base = resolvida.base;
+  if (resolvida.aviso !== undefined) avisos.push(resolvida.aviso);
   const efetiva = politicaEfetiva(config, plano.politica_entrega);
   if (!efetiva.ok) throw new Falha(efetiva.erro, efetiva.mensagem);
   return {
