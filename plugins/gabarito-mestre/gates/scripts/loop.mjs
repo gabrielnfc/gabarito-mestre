@@ -873,6 +873,13 @@ async function integrar(c, plano, task, opcoes = {}) {
   if (typeof revisado !== 'string' || revisado !== atual) {
     throw new Falha('commit_nao_revisado', `o HEAD de ${branch} (${atual.slice(0, 12)}) não é o commit de task.concluida (${typeof revisado === 'string' ? revisado.slice(0, 12) : 'sem sha'}): há commit que ninguém revisou; nada foi feito`, nada);
   }
+  // (a6) FIEL-9: o sha aprovado (`revisado`, lido 1 vez do último task.concluida e já comparado com o HEAD em (a5)) já está na base?
+  // 0 ⇒ caminho "já na base"; 1 ⇒ caminho normal; qualquer outro código ⇒ não sei, nada é feito.
+  const naBase = (opcoes.ancestral ?? ehAncestral)(c.raiz, revisado, `refs/heads/${base}`);
+  if (naBase === 0) return integrarJaNaBase(c, plano, ord.ok ? ord.eventos : [], task, branch, base, revisado);
+  if (naBase !== 1) {
+    throw new Falha('ancestral_indeterminado', `git merge-base --is-ancestor ${revisado.slice(0, 12)} ${base} saiu com ${naBase === null ? 'sinal ou erro' : `código ${naBase}`}: não sei se o commit aprovado já está na base; nada foi feito`, nada);
+  }
   const mutacoes = carregarMutacoes(c, t);
   let alvo;
   try {
@@ -954,6 +961,51 @@ async function integrar(c, plano, task, opcoes = {}) {
     throw new Falha('fechar_falhou', `o merge entrou e o evento task.integrada foi gravado, mas fechar falhou (${causa})`, { merge: true, evento: true, causa: e.erro });
   }
   return { task, branch, base, merge: true, evento: true, fechada: true, banco: fechada.banco, ignorados_removidos: fechada.ignorados_removidos, mutacoes: mutacoesMedidas, relato: relatoVerde };
+}
+
+/** `git merge-base --is-ancestor`: o código de saída (0 é ancestral, 1 não é), `null` se o git nem rodou ou morreu por sinal. */
+function ehAncestral(cwd, ancestral, descendente) {
+  const r = spawnSync('git', ['-C', cwd, 'merge-base', '--is-ancestor', ancestral, descendente], { stdio: 'ignore', env: ambienteGit() });
+  return r.error ? null : r.status;
+}
+
+/**
+ * FIEL-9 (b4): o que já verificou o commit que entrou direto na base. (i) a 1ª integração com gate (sem `ja_na_base`) cujo sha descende dele;
+ * senão (ii) o próximo integrar, só se resta task do plano fora de `integrada`; senão (iii) a CI do pedido de revisão. Nunca promete integração que não virá.
+ */
+function coberturaJaNaBase(c, plano, ord, task, alvo) {
+  const cobriu = ord.find((e) => e.tipo === 'task.integrada' && e.dados?.ja_na_base !== true && typeof e.dados?.sha === 'string' && ehAncestral(c.raiz, alvo, e.dados.sha) === 0);
+  if (cobriu !== undefined) return `o gate da integração de ${cobriu.dados.task} já rodou sobre ele`;
+  const integrada = (id) => {
+    const r = estadoDe(ord.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === id));
+    return !('invalido' in r) && r.estado === 'integrada';
+  };
+  const resta = plano.tasks.some((t) => t.id !== task && !integrada(t.id));
+  return resta
+    ? 'nenhum gate rodou sobre ele ainda; o próximo integrar roda sobre ele'
+    : 'nenhum gate rodou sobre ele e não há outro integrar: a CI do pedido de revisão é a 1ª verificação, e o merge espera ela verde';
+}
+
+/**
+ * FIEL-9 (b): o commit aprovado já é ancestral da base. Sem rebase, sem gate, sem merge: a branch e a base não se movem. Grava `task.integrada`
+ * com o MESMO `alvo` que (a5) comparou e (a6) testou (nada é relido) e fecha a worktree como o caminho normal.
+ */
+function integrarJaNaBase(c, plano, ord, task, branch, base, alvo) {
+  const aviso = `aviso: ${task} já estava na base (${alvo.slice(0, 12)} é ancestral de ${base}): integrada sem merge, sem rebase e sem gate; ${coberturaJaNaBase(c, plano, ord, task, alvo)}`;
+  try {
+    gravar(c, plano, 'task.integrada', { task, sha: alvo, ja_na_base: true });
+  } catch (e) {
+    const causa = e instanceof Falha ? `${e.erro}: ${e.message}` : String(e.message ?? e);
+    throw new Falha('evento_nao_gravado', `${task} já estava na base, mas o evento task.integrada NÃO foi gravado (${causa}); nada foi movido e fechar não foi chamado`, { merge: false, evento: false });
+  }
+  let fechada;
+  try {
+    fechada = fechar(c, task);
+  } catch (e) {
+    const causa = e instanceof Falha ? `${e.erro}: ${e.message}` : String(e.message ?? e);
+    throw new Falha('fechar_falhou', `${task} já estava na base e o evento task.integrada foi gravado, mas fechar falhou (${causa})`, { merge: false, evento: true, causa: e.erro });
+  }
+  return { task, branch, base, merge: false, ja_na_base: true, evento: true, fechada: true, banco: fechada.banco, ignorados_removidos: fechada.ignorados_removidos, relato: [aviso] };
 }
 
 // ─────────────────────────────────────────────────────────────── proxima

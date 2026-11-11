@@ -455,6 +455,12 @@ const REGRAS_OPCIONAIS                             = new Map               ([
     'task.integrada',
     (o) => {
       const m = campo(o, 'mutacoes');
+      // GM-14 T32 (FIEL-9 e): `ja_na_base` opcional, só o literal `true`; o caminho "já na base" não roda gate, então nunca carrega `mutacoes`.
+      const jaNaBase = campo(o, 'ja_na_base');
+      if (jaNaBase !== undefined) {
+        if (jaNaBase !== true) return 'campo `ja_na_base` inválido: só o literal true ou ausente';
+        if (m !== undefined) return 'campo `ja_na_base` não convive com `mutacoes`: o caminho já na base não roda gate';
+      }
       if (m === undefined) return null;
       const invalido = 'campo `mutacoes` inválido: esperado {total, mortas} inteiros ≥ 0 com mortas ≤ total';
       if (!ehObjeto(m)) return invalido;

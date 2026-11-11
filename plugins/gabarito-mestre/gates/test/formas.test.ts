@@ -289,6 +289,16 @@ test('forma-integrada-mortas-maior-que-total: mutacoes {total, mortas} inteiros 
   ruim('task.integrada', { task: 'T1', mutacoes: {} }, /mutacoes/);
 });
 
+// ---- GM-14 T32 (Emenda 3, FIEL-9 e): `ja_na_base` opcional, só o literal `true`, nunca junto de `mutacoes`. Mutação M-F9i.
+test('forma-task-integrada-ja-na-base: ausente válido; true válido; false, "sim", 1 e afins recusados; true com mutacoes recusado', () => {
+  ok('task.integrada', { task: 'T1', sha: 'a'.repeat(40) });
+  ok('task.integrada', { task: 'T1', sha: 'a'.repeat(40), ja_na_base: true });
+  ok('task.integrada', { task: 'T1', sha: 'a'.repeat(40), mutacoes: { total: 2, mortas: 2 } });
+  for (const v of [false, 'sim', 'true', 1, 0, null, [], {}]) ruim('task.integrada', { task: 'T1', sha: 'a'.repeat(40), ja_na_base: v }, /ja_na_base/);
+  ruim('task.integrada', { task: 'T1', sha: 'a'.repeat(40), ja_na_base: true, mutacoes: { total: 0, mortas: 0 } }, /ja_na_base/);
+  ruim('task.integrada', { task: 'T1', sha: 'a'.repeat(40), ja_na_base: true, mutacoes: { total: 3, mortas: 3 } }, /ja_na_base/);
+});
+
 test('forma-campos-novos-ausentes-ok: eventos da E3 sem os campos novos seguem válidos, inclusive dados que não é objeto', () => {
   ok('task.iniciada', { task: 'T1', papel: 'revisor' });
   ok('task.integrada', { task: 'T1' });

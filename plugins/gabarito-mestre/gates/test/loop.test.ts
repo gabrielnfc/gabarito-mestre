@@ -297,6 +297,29 @@ test('podeIntegrar-exige-dep-integrada', () => {
   assert.deepEqual(proximaAcao(p, evs, sinais()), { tipo: 'integrar', tasks: ['a'] });
   assert.equal(podeIntegrar(p, diario(...pronta('a'), ...aprovada('b')), 'b'), true);
 });
+// GM-14 T32 (Emenda 3, FIEL-9 e): `task.integrada {ja_na_base: true}` é integração para o núcleo, sem código novo (C7, C8). Regressão.
+const intNaBase = (task: string): [TipoEvento, Record<string, unknown>] => ['task.integrada', { task, sha: 'abc', ja_na_base: true }];
+test('integrada-ja-na-base-libera-concluir: T0 aprovada e o resto integrado ⇒ integrar; com o evento ja_na_base ⇒ concluir', () => {
+  const p = plano(['T0'], ['T1'], ['T2', ['T1']]);
+  const antes = [...aprovada('T0'), ...pronta('T1'), ...pronta('T2')];
+  assert.deepEqual(proximaAcao(p, diario(...antes), sinais()), { tipo: 'integrar', tasks: ['T0'] });
+  assert.deepEqual(proximaAcao(p, diario(...antes, intNaBase('T0')), sinais()), { tipo: 'concluir' });
+  assert.equal(podeIntegrar(p, diario(...antes, intNaBase('T0')), 'T0'), false, 'integrada não é integrável de novo');
+  // a forma é guardada na escrita do diário (o núcleo não muda, FIEL-9 e): `ja_na_base` fora do literal true nunca vira linha
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'loop-ja-na-base-')));
+  const grava = (dados: Record<string, unknown>) =>
+    diarioFs.append(dir, 's1', { ts: '2026-11-11T00:00:00.000Z', autor: 't@t', sessao: 's1', agente: 'orquestrador', tipo: 'task.integrada', dados } as never);
+  const r = grava({ task: 'T0', sha: 'abc', ja_na_base: 'sim' });
+  assert.equal(r.ok, false);
+  assert.match((r as { erro: string }).erro, /ja_na_base/);
+  assert.deepEqual(diarioFs.ler(dir), []);
+  assert.deepEqual(grava({ task: 'T0', sha: 'abc', ja_na_base: true }), { ok: true, gravado: 'evento' });
+});
+test('integrada-ja-na-base-libera-despacho: T0 aprovada e T2 pendente sem dependência ⇒ integrar; com o evento ⇒ despachar T2', () => {
+  const p = plano(['T0'], ['T2']);
+  assert.deepEqual(proximaAcao(p, diario(...aprovada('T0')), sinais()), { tipo: 'integrar', tasks: ['T0'] });
+  assert.deepEqual(proximaAcao(p, diario(...aprovada('T0'), intNaBase('T0')), sinais()), { tipo: 'despachar', itens: [{ task: 'T2', papel: 'implementador' }] });
+});
 test('podeIntegrar-casos-falsos', () => {
   const p = plano(['a']);
   assert.equal(podeIntegrar(p, [], 'a'), false, 'sem veredito');
