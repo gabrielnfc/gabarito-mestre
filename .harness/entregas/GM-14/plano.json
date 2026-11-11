@@ -145,7 +145,8 @@
         "plugins/gabarito-mestre/mod/chat.mjs",
         "plugins/gabarito-mestre/mod/test/chat.test.ts",
         "plugins/gabarito-mestre/gates/test/ferramentas.test.ts",
-        "plugins/gabarito-mestre/gates/dist/ferramentas.js"
+        "plugins/gabarito-mestre/gates/dist/ferramentas.js",
+        "plugins/gabarito-mestre/gates/test/fumaca-loop/caminhada.mjs"
       ],
       "reqs": [
         "REQ-CHT-1"
