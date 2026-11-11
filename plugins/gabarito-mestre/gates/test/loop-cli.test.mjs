@@ -4210,10 +4210,10 @@ describe('GM-14: subcomandos novos ainda sem implementação', () => {
     return { rc: r.status, j, out: r.stdout, err: r.stderr };
   };
 
-  test('subcomandos-gm14-stub-nao-implementado: painel medir, onboarding herdar|foco ⇒ rc 1, erro nao_implementado, nada gravado', () => {
+  test('subcomandos-gm14-stub-nao-implementado: onboarding herdar|foco ⇒ rc 1, erro nao_implementado, nada gravado', () => {
     const amb = ambiente();
     const casos = [
-      ['painel.mjs medir', () => rodarNode(amb, PAINEL, ['medir'])],
+      // `painel.mjs medir` saiu daqui na T11: tem teste próprio em painel-medir.test.mjs.
       ['onboarding.mjs herdar', () => rodarNode(amb, ONBOARDING, ['herdar', '--root', amb.dir])],
       ['onboarding.mjs herdar --gravar', () => rodarNode(amb, ONBOARDING, ['herdar', '--root', amb.dir, '--gravar'])],
     ];

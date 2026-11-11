@@ -315,6 +315,20 @@ test('marca-de-progresso: custo.medicao e loop.parar não contam; qualquer outro
   assert.equal(marcaDeProgresso('x'), -1);
 });
 
+test('sem-progresso-gm14: fato.medido, nota e dono.resposta depois de loop.parar não desfazem o já-parou nem somam à marca', () => {
+  const parar: [TipoEvento, Record<string, unknown>] = ['loop.parar', { motivo: 'teto_rodadas' }];
+  const fato: [TipoEvento, Record<string, unknown>] = ['fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'x' } }];
+  const nota: [TipoEvento, Record<string, unknown>] = ['nota', { tipo: 'assunto', texto: 'algo' }];
+  const resp: [TipoEvento, Record<string, unknown>] = ['dono.resposta', { pergunta: 's:1', opcao: 1, rotulo: 'sim' }];
+  assert.equal(jaParou(diario(ini('a'), parar, fato)), true);
+  assert.equal(jaParou(diario(ini('a'), parar, nota)), true);
+  assert.equal(jaParou(diario(ini('a'), parar, resp)), true);
+  assert.equal(jaParou(diario(ini('a'), parar, fato, nota, resp, con('a'))), false);
+  assert.equal(marcaDeProgresso(diario(ini('a'), con('a'))), 2);
+  assert.equal(marcaDeProgresso(diario(ini('a'), con('a'), fato, nota, resp)), 2);
+  assert.equal(marcaDeProgresso(diario(ini('a'), con('a'), fato, nota, resp, ver('a'))), 3);
+});
+
 // ---- revisor ----
 test('revisor-nome-real: o nome da constante é o do frontmatter em agents/', () => {
   const md = readFileSync(join(PLUGIN, 'agents', 'gabarito-revisor.md'), 'utf8');

@@ -1,0 +1,26 @@
+#!/bin/bash
+# gh falso (GM-14 T11). Modo em GH_MODO: ok | rc1 | rc4 | dorme | parcial | lixo | pr-vazio | pr-aberto | estado-minusculo | estado-novo | release-rc1 (pr ok, release rc 1).
+# Registra cada chamada em $GH_LOG (uma linha por chamada) quando definido.
+[ -n "$GH_LOG" ] && printf '%s\n' "$*" >> "$GH_LOG"
+sub="$1 $2"
+case "$GH_MODO" in
+  rc1) echo "falha de rede" >&2; exit 1 ;;
+  rc4) echo "gh auth login" >&2; exit 4 ;;
+  dorme) exec sleep 10 ;;
+  parcial) printf '[{"number":7,"state":"MER'; exit 0 ;;
+  lixo) printf '[{"number":"sete","state":"MERGED"}]'; exit 0 ;;
+esac
+case "$sub" in
+  "pr list")
+    case "$GH_MODO" in
+      pr-vazio) printf '[]' ;;
+      estado-minusculo) printf '[{"number":7,"state":"merged"}]' ;;
+      estado-novo) printf '[{"number":7,"state":"DRAFT"}]' ;;
+      pr-aberto) printf '[{"number":7,"state":"OPEN"}]' ;;
+      *) printf '[{"number":7,"state":"MERGED"},{"number":8,"state":"OPEN"}]' ;;
+    esac ;;
+  "release list")
+    [ "$GH_MODO" = release-rc1 ] && { echo "falha" >&2; exit 1; }
+    printf '[{"tagName":"v2.0.0"}]' ;;
+  *) echo "gh falso: $*" >&2; exit 2 ;;
+esac
