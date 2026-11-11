@@ -48,7 +48,7 @@ export function montarRepo() {
   mkdirSync(join(dir, 'src'));
   copyFileSync(join(AQUI, 'spec.md'), join(dir, 'docs', 'spec.md'));
   writeFileSync(join(dir, 'src', '.gitkeep'), '');
-  writeFileSync(join(dir, '.gitignore'), '.harness/\n');
+  writeFileSync(join(dir, '.gitignore'), '.harness/*\n!.harness/entregas/\n.harness/entregas/*/*\n!.harness/entregas/*/registro.md\n');
   writeFileSync(join(dir, 'harness.config.json'), `${JSON.stringify({ gates: { suites: ["echo '# pass 1'"] }, loop: { slots: 2 } })}\n`);
   git(dir, 'add', '-A');
   git(dir, 'commit', '-q', '-m', 'chore: base');
@@ -141,7 +141,7 @@ export function caminharEntregaFalha() {
   mkdirSync(join(repo, 'src'));
   mkdirSync(join(repo, 'fake'));
   writeFileSync(join(repo, 'src', '.gitkeep'), '');
-  writeFileSync(join(repo, '.gitignore'), '.harness/\n');
+  writeFileSync(join(repo, '.gitignore'), '.harness/*\n!.harness/entregas/\n.harness/entregas/*/*\n!.harness/entregas/*/registro.md\n');
   const ancora = join(repo, '.harness', 'entregas', 'GM-99', 'entrega.ancora');
   const corpos = {
     deploy: `cp '${ancora}' "$M/ancora-no-deploy.json"\ntouch "$M/deploy"`,
@@ -171,6 +171,7 @@ export function caminharEntregaFalha() {
   ok(loop(r, 'integrar', 'T1'), 'integrar T1');
   ok(loop(r, 'ci', 'verde', '--alvo', 'homolog'), 'ci verde homolog');
   fechar(r);
+  ok(loop(r, 'registro'), 'registro'); // REQ-REG-1: o CLI gera e commita; `decidir` o exige no HEAD
   const obs = { sentinela, dir: repo };
   obs.decidirAntes = entrega('decidir');
   const antes = diario.ler(entregas).length;

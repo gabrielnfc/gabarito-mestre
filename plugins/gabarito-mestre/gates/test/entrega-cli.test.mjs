@@ -42,7 +42,7 @@ const PLANO_PADRAO = ['T1', 'T2'];
  */
 function montar({
   politica = 'continua', autonomia = true, semAutonomia = false, janela, origem, semOrigin = false, local, scripts = {}, timeouts = {}, extraArgv = [], deployArgv, comandos = ['deploy', 'smoke', 'rollback'],
-  tasks = PLANO_PADRAO, integradas = tasks, homolog = true, planoExtra = {},
+  tasks = PLANO_PADRAO, integradas = tasks, homolog = true, planoExtra = {}, registro = true,
 } = {}) {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'entrega cli ')));
   const repo = join(base, 'repo com espaço');
@@ -87,8 +87,16 @@ function montar({
   const m = { base, repo, marcas, dir };
   for (const id of integradas) integrar(m, id);
   fechar(m); // REQ-APR-2 muda a ordem: o fechamento abre pendência de aprendizado antes do `concluir`
+  if (registro) commitarRegistro(m); // REQ-REG-1: `decidir`/`preparar` com `concluir` exigem o registro.md no HEAD
   if (homolog !== null) ev(m, 'ci.resultado', { verde: homolog, alvo: 'homolog' });
   return m;
+}
+
+/** Registro de fixture commitado só pelo caminho (o CLI real é coberto em `registro-real-…`). */
+function commitarRegistro(m, texto = 'registro de fixture\n') {
+  writeFileSync(join(m.dir, 'registro.md'), texto);
+  g(m.repo, 'add', '--', '.harness/entregas/GM-10/registro.md');
+  g(m.repo, 'commit', '-q', '-m', 'docs(GM-10): registro da entrega', '--', '.harness/entregas/GM-10/registro.md');
 }
 
 function ev(m, tipo, dados, sessao = 'loop') {
@@ -132,6 +140,57 @@ const appendQueFalha = (quando, erro = 'forma_invalida: falha injetada') => {
 };
 
 const JANELA_UTC = { dias: [0, 1, 2, 3, 4, 5, 6], inicio: '02:00', fim: '04:00', fuso: 'UTC' };
+
+describe('registro commitado (REQ-REG-1, FX6/D1)', () => {
+  const LOOP = join(AQUI, '..', 'scripts', 'loop.mjs');
+  const REG = '.harness/entregas/GM-10/registro.md';
+
+  test('registro-nao-rastreado (t3): decidir recusa com registro_nao_commitado e o comando; nada gravado no diário', () => {
+    const m = montar({ registro: false });
+    writeFileSync(join(m.dir, 'registro.md'), 'gerado, nunca commitado\n'); // existe no disco: só existsSync passaria
+    const antes = eventos(m).length;
+    const { rc, json } = rodar(m, 'decidir');
+    assert.equal(json.ok, false);
+    assert.equal(json.erro, 'registro_nao_commitado');
+    assert.notEqual(rc, 0);
+    assert.match(json.mensagem, /loop\.mjs registro --entrega GM-10/);
+    assert.equal(eventos(m).length, antes);
+  });
+
+  test('registro-ausente: sem arquivo algum ⇒ o mesmo erro', () => {
+    const m = montar({ registro: false });
+    assert.equal(rodar(m, 'decidir').json.erro, 'registro_nao_commitado');
+  });
+
+  test('registro-alterado-sem-commit (t4): rastreado, mas diferente do HEAD ⇒ registro_nao_commitado', () => {
+    const m = montar();
+    writeFileSync(join(m.dir, 'registro.md'), 'editado depois do commit\n');
+    const { json } = rodar(m, 'decidir');
+    assert.equal(json.erro, 'registro_nao_commitado');
+    assert.match(json.mensagem, /mudança sem commit/);
+  });
+
+  test('registro-commitado (t5): decidir segue como antes (decisão `subir` com a política continua)', () => {
+    const m = montar();
+    const { rc, json } = rodar(m, 'decidir');
+    assert.equal(rc, 0, JSON.stringify(json));
+    assert.equal(json.ok, true);
+    assert.deepEqual(json.decisao, { tipo: 'subir' });
+  });
+
+  test('registro-real-costura: `loop.mjs registro` real commita e `decidir` real passa; mexer no diário e não regerar não derruba (registro é o do HEAD)', () => {
+    const m = montar({ registro: false });
+    assert.equal(rodar(m, 'decidir').json.erro, 'registro_nao_commitado');
+    const r = spawnSync(process.execPath, [LOOP, 'registro', '--entrega', ENTREGA], { cwd: m.repo, encoding: 'utf8' });
+    const j = JSON.parse(r.stdout.trim());
+    assert.equal(j.ok, true, r.stdout + r.stderr);
+    assert.equal(typeof j.commit, 'string');
+    assert.equal(g(m.repo, 'ls-tree', '--name-only', 'HEAD', REG).trim(), REG);
+    const d = rodar(m, 'decidir');
+    assert.equal(d.json.ok, true, JSON.stringify(d.json));
+    assert.deepEqual(d.json.decisao, { tipo: 'subir' });
+  });
+});
 
 describe('executar: etapas e desfechos', { concurrency: 4 }, () => {
   test('sucesso-entregue', async () => {

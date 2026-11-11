@@ -219,6 +219,7 @@ function canarioNasFolhas(eventos) {
  * Diário AUSENTE (sem eventos) ⇒ registro com as seções em `- nenhum`; ILEGÍVEL (linha torta, cadeia quebrada, fora de ordem, evento fora
  * da forma) ⇒ `diario_ilegivel` e nada gravado, nem arquivo temporário. Segredo no texto renderizado ⇒ `segredo_no_registro`, nada gravado.
  * Escrita por tmp no mesmo diretório + rename, e releitura do arquivo: o `sha256` devolvido é o dos bytes que estão no disco.
+ * Depois de gravar, commita só o `registro.md` (`commit:<sha>`; `null` se o HEAD já o tem igual).
  */
 export function registro(deps, pos, flags) {
   const { c, plano, lerDiarioEstrito, Falha } = deps;
@@ -247,5 +248,30 @@ export function registro(deps, pos, flags) {
   const sha256 = createHash('sha256').update(texto).digest('hex');
   const lido = createHash('sha256').update(readFileSync(destino)).digest('hex');
   if (lido !== sha256) throw new Falha('registro_sem_efeito', 'o registro.md relido não tem os bytes gerados: confira o disco');
-  return { arquivo: relative(c.raiz, destino), sha256 };
+  const arquivo = relative(c.raiz, destino);
+  return { arquivo, sha256, commit: commitarRegistro(deps, arquivo) };
+}
+
+/**
+ * Commita SÓ o `registro.md` no checkout principal (REQ-REG-1): `git add -- <caminho>` + `git commit -m … -- <caminho>` (semântica `--only`: nada mais
+ * do índice entra). Idempotente: rastreado e igual ao HEAD ⇒ não commita e devolve `null`. Commit que falha (hook do adotante) ⇒ `registro_nao_commitado`
+ * com o stderr cortado; o arquivo fica gravado. Nunca `-a`, `add -A` nem `--no-verify`.
+ */
+function commitarRegistro(deps, arquivo) {
+  const { c, Falha, git } = deps;
+  const falha = (e) => new Falha('registro_nao_commitado', `registro.md gravado, mas não commitado (${String(e.message ?? e).slice(0, 300)}); resolva e rode loop.mjs registro de novo`);
+  try {
+    let rastreado = true;
+    try { git(c.raiz, '--literal-pathspecs', 'ls-files', '--error-unmatch', '--', arquivo); } catch { rastreado = false; }
+    if (rastreado) {
+      let igual = true;
+      try { git(c.raiz, '--literal-pathspecs', 'diff', '--quiet', 'HEAD', '--', arquivo); } catch { igual = false; }
+      if (igual) return null;
+    }
+    git(c.raiz, '--literal-pathspecs', 'add', '--', arquivo);
+    git(c.raiz, '--literal-pathspecs', 'commit', '-q', '-m', `docs(${c.entrega}): registro da entrega`, '--', arquivo);
+    return git(c.raiz, 'rev-parse', 'HEAD');
+  } catch (e) {
+    throw falha(e);
+  }
 }

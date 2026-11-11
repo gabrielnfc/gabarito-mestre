@@ -238,8 +238,8 @@ test('skill-loop-cita-aprender-pousar-registro-loop-dinamico', () => {
   const frasesComClear = t.split(/(?<=[.!?])\s+|\n/).filter((f) => f.includes('/clear'));
   assert.deepEqual(atribuiClearAoAgente(t), [], 'frase que atribui o /clear ao agente');
   assert.ok(frasesComClear.length >= 2, 'o texto precisa citar o /clear (pedido ao dono e negação)');
-  // (d) concluir ⇒ registro, commit só do registro.md, depois Entrega
-  assert.match(t, /loop\.mjs" registro`; commite só o `registro\.md` que ele devolve \(`git add` pelo caminho\); então \*\*Entrega\*\* abaixo\./);
+  // (d) concluir ⇒ registro (gera e commita; FX6/D1), depois Entrega
+  assert.match(t, /loop\.mjs" registro`, que gera e commita o registro \(não commite à mão\); então \*\*Entrega\*\* abaixo\./);
   // (c2) MINORs do review r1: pouso só na fronteira; /clear só se o pousar passou; commit só do registro, sem `git add` largo
   assert.match(t, /na fronteira \(contexto perto de 50 %, entre tasks\), rode/);
   assert.match(t, /\(`task_em_voo` ⇒ ainda não\); se passar, peça ao dono/);

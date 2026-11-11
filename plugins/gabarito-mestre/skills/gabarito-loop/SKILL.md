@@ -33,7 +33,7 @@ Status ao dono: comece por `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/painel.mjs
    - `esperar`: agentes vivos ou slots ocupados; não despache. `pousar` nunca vem do CLI (`percent` nulo): o mod pousa ao fim do turno (sem mod, ver abaixo).
    - `parar{motivo}`: pare e **escale ao dono** com o motivo e o diário. Não reabra o que a regra manda escalar. `teto_rodadas`: diga o comando exato, só dele: `/gabarito-mestre:liberar <task>` (recomeça em `pendente`); você não o invoca.
    - `esperar{emenda}`: há proposta de emenda aberta; avise o dono (`/gabarito-mestre:emenda aprovar|rejeitar <seq>`) e pare o turno.
-   - `concluir`: tudo integrado. Rode a suíte inteira e o CI antes de dizer "pronto". Depois: `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" registro`; commite só o `registro.md` que ele devolve (`git add` pelo caminho); então **Entrega** abaixo.
+   - `concluir`: tudo integrado. Rode a suíte inteira e o CI antes de dizer "pronto". Depois: `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" registro`, que gera e commita o registro (não commite à mão); então **Entrega** abaixo.
 2. CI da entrega: `ci verde|vermelho`. CI de homolog após a última integração: `ci verde|vermelho --alvo homolog` (sem ele `continua` e `janela` ficam em `esperar{homolog}`). Falha que você não consegue resolver: `parar nao_conseguiu`.
 3. Volte a `proxima` depois de cada evento. `reabrir <task>` só recomeça a task (origem `retomada`); o teto de rodadas só o dono libera. Rode a entrega sob `/loop` dinâmico (sem intervalo): o wakeup deve retomar o turno depois do `/clear` (ainda em verificação); sem ele ativo, peça ao dono, em 1 linha, que o inicie.
 

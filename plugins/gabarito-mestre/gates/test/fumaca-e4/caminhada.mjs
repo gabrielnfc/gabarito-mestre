@@ -66,7 +66,7 @@ function montar() {
   mkdirSync(join(dir, 'fake'));
   copyFileSync(join(AQUI, 'spec.md'), join(dir, 'docs', 'spec.md'));
   writeFileSync(join(dir, 'src', '.gitkeep'), '');
-  writeFileSync(join(dir, '.gitignore'), '.harness/\n');
+  writeFileSync(join(dir, '.gitignore'), '.harness/*\n!.harness/entregas/\n.harness/entregas/*/*\n!.harness/entregas/*/registro.md\n');
   // deploy, smoke e rollback existem só para o config ser válido: `devolver` NUNCA roda comando (um marcador no disco provaria o contrário)
   const comandos = {};
   for (const nome of ['deploy', 'smoke', 'rollback']) {
@@ -222,6 +222,7 @@ function caminhada(a, opcoes) {
   obs.proximaFim = ok(loop('proxima', '--vivos', '0'), 'proxima fim');
   ok(loop('ci', 'verde', '--alvo', 'homolog'), 'ci verde homolog');
   fechar();
+  ok(loop('registro'), 'registro'); // REQ-REG-1: o CLI gera e commita; `decidir` o exige no HEAD
   obs.decidir = ok(a.rodar('entrega.mjs', ['decidir', '--entrega', ENTREGA]), 'decidir');
   obs.devolver = a.rodar('entrega.mjs', ['devolver', '--motivo', 'quero revisar antes de subir', '--entrega', ENTREGA]);
   obs.estadoDevolvido = ok(painel(['estado', '--agentes'], entradaDoMod(transcript, false)), 'estado devolvido');

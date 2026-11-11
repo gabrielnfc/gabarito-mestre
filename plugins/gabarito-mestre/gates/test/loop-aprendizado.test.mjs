@@ -758,6 +758,59 @@ describe('registro: CLI grava registro.md determinístico (REQ-REG-1)', () => {
     assert.match(m, /- loop:3 · E · suspeita sem medida/);
   });
 
+  test('registro-commita-so-o-registro (t1, FX6/D1): HEAD tem o registro.md com o sha devolvido; arquivo alheio modificado e outro staged seguem sem commit', () => {
+    const amb = ambiente();
+    amb.semear([CI, DESC]);
+    writeFileSync(join(amb.dir, 'README.md'), 'alterado\n'); // rastreado, modificado, fora do registro
+    writeFileSync(join(amb.dir, 'staged.txt'), 's\n');
+    g(amb.dir, 'add', 'staged.txt');
+    const antes = g(amb.dir, 'rev-parse', 'HEAD').trim();
+    const r = amb.cli(['registro']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const head = g(amb.dir, 'rev-parse', 'HEAD').trim();
+    assert.notEqual(head, antes, 'houve commit');
+    assert.equal(r.j.commit, head, 'a saída traz o sha do commit');
+    assert.equal(g(amb.dir, 'rev-list', '--count', `${antes}..HEAD`).trim(), '1');
+    const disco = join(amb.entregas, 'registro.md');
+    assert.equal(r.j.sha256, sha256(readFileSync(disco)));
+    assert.equal(g(amb.dir, 'rev-parse', 'HEAD:.harness/entregas/GM-10/registro.md').trim(), g(amb.dir, 'hash-object', disco).trim(), 'o registro no HEAD tem os bytes do disco');
+    assert.equal(g(amb.dir, 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD').trim(), '.harness/entregas/GM-10/registro.md', 'o commit tem SÓ o registro');
+    assert.equal(g(amb.dir, 'log', '-1', '--format=%s').trim(), 'docs(GM-10): registro da entrega');
+    const sujo = g(amb.dir, 'status', '--porcelain', '--untracked-files=no').split('\n').filter(Boolean).sort();
+    assert.deepEqual(sujo, [' M README.md', 'A  staged.txt'], 'arquivo alheio continua sem commit, o staged continua staged');
+  });
+
+  test('registro-idempotente (t2, FX6/D1): 2ª chamada com o HEAD já igual ⇒ nenhum commit novo e commit:null', () => {
+    const amb = ambiente();
+    amb.semear([CI, DESC]);
+    const r1 = amb.cli(['registro']);
+    assert.equal(typeof r1.j.commit, 'string');
+    const n1 = g(amb.dir, 'rev-list', '--count', 'HEAD').trim();
+    const r2 = amb.cli(['registro']);
+    assert.equal(r2.rc, 0, r2.out + r2.err);
+    assert.equal(r2.j.commit, null);
+    assert.equal(g(amb.dir, 'rev-list', '--count', 'HEAD').trim(), n1);
+    // diário mudou ⇒ registro diferente ⇒ commit novo (a idempotência é por bytes, não por existência)
+    amb.semear([['descoberta', { evidencia: 'outra', causa: 'tecnica' }]]);
+    const r3 = amb.cli(['registro']);
+    assert.equal(typeof r3.j.commit, 'string');
+    assert.equal(g(amb.dir, 'rev-list', '--count', 'HEAD').trim(), String(Number(n1) + 1));
+  });
+
+  test('registro-commit-recusado (FX6/D1): hook de pre-commit falha ⇒ registro_nao_commitado, rc!=0, arquivo gravado, HEAD intacto', () => {
+    const amb = ambiente();
+    amb.semear([CI, DESC]);
+    writeFileSync(join(amb.dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\necho "bloqueado pelo hook do adotante" >&2\nexit 1\n', { mode: 0o755 });
+    const antes = g(amb.dir, 'rev-parse', 'HEAD').trim();
+    const r = amb.cli(['registro']);
+    assert.notEqual(r.rc, 0);
+    assert.equal(r.j.ok, false);
+    assert.equal(r.j.erro, 'registro_nao_commitado');
+    assert.match(r.j.mensagem, /bloqueado pelo hook do adotante/);
+    assert.equal(existsSync(join(amb.entregas, 'registro.md')), true, 'o arquivo fica gravado');
+    assert.equal(g(amb.dir, 'rev-parse', 'HEAD').trim(), antes);
+  });
+
   test('registro-diario-ausente-x-ilegivel: ausente ⇒ seções `- nenhum` e grava; torto, cadeia quebrada ou fora de ordem ⇒ diario_ilegivel, nada gravado e o registro antigo fica', () => {
     const ausente = ambiente();
     const ok = ausente.cli(['registro']);

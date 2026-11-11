@@ -90,7 +90,13 @@ function ev(m, tipo, dados, { sessao = 'loop', agente = 'orquestrador', ts } = {
 const INTEGRAR = (t) => [['task.iniciada', { task: t, papel: 'implementador' }], ['task.concluida', { task: t, sha: 'a'.repeat(40) }], ['review.veredito', { task: t, veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }], ['task.integrada', { task: t, sha: 'b'.repeat(40), mutacoes: { total: 3, mortas: 3 } }]];
 const comEventos = (lista) => ({ eventos: lista });
 /** REQ-APR-2 muda a ordem: tudo integrado abre o fechamento; a decisão de entrega só nasce com `concluir`. Fecha só o que `pendenciasAprendizado` do `dist/` devolve. */
-const fechar = (m) => fecharPendenciasNoDiario(m.dir, JSON.parse(readFileSync(join(m.dir, 'plano.json'), 'utf8')));
+const fechar = (m) => {
+  fecharPendenciasNoDiario(m.dir, JSON.parse(readFileSync(join(m.dir, 'plano.json'), 'utf8')));
+  // REQ-REG-1: com `concluir`, a decisão de entrega exige o registro.md no HEAD (versionado: o `.gitignore` do fixture ignora só `entregas/` além dele)
+  writeFileSync(join(m.dir, 'registro.md'), 'registro de fixture\n');
+  g(m.repo, 'add', '-f', '--', `.harness/entregas/${ENTREGA}/registro.md`);
+  g(m.repo, 'commit', '-q', '-m', 'docs: registro da entrega', '--', `.harness/entregas/${ENTREGA}/registro.md`);
+};
 const PARAR = ['loop.parar', { motivo: 'sem_progresso' }];
 
 /** Roda o CLI de verdade. `input` ausente ⇒ stdin fechado. */

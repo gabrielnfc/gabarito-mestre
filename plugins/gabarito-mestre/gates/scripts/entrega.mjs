@@ -238,6 +238,22 @@ export function pausado(c) {
   }
 }
 
+/** REQ-REG-1: `registro.md` rastreado e igual ao HEAD; senão `registro_nao_commitado` com o comando que o gera e commita. */
+function conferirRegistro(c) {
+  const caminho = relative(c.raiz, join(c.dirEntrega, 'registro.md'));
+  const falha = (porque) => new Falha('registro_nao_commitado', `${caminho} ${porque}: rode \`loop.mjs registro --entrega ${c.entrega}\` (gera e commita só ele); a entrega não sobe sem o registro no HEAD`);
+  try {
+    git(c.raiz, '--literal-pathspecs', 'ls-files', '--error-unmatch', '--', caminho);
+  } catch {
+    throw falha('não está no git');
+  }
+  try {
+    git(c.raiz, '--literal-pathspecs', 'diff', '--quiet', 'HEAD', '--', caminho);
+  } catch {
+    throw falha('tem mudança sem commit');
+  }
+}
+
 /** P3 a P6: pausa, plano, diário, entrega completa e política efetiva. Nada gravado. */
 function preparar(c, agoraMs, { conferirPausa = true } = {}) {
   if (conferirPausa && pausado(c)) throw new Falha('pausado', '.harness/PAUSAR presente: nada roda');
@@ -251,6 +267,7 @@ function preparar(c, agoraMs, { conferirPausa = true } = {}) {
   if (acao.tipo !== 'concluir') {
     throw new Falha('entrega_incompleta', `a entrega só sobe com todas as tasks integradas (próxima ação do loop: ${acao.tipo}${acao.motivo ? ` — ${acao.motivo}` : ''})`, { acao });
   }
+  conferirRegistro(c);
   const origin = lerConfigOrigin(c.raiz);
   const config = lerConfigEntrega(origin.cfg);
   const avisos = [];
