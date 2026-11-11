@@ -122,20 +122,34 @@ export function rotuloCasaSpec(s                                       , r      
   return chaveTexto(s.titulo) === r || caminho === r || caminho.split('/').pop() === r || (r.startsWith('…') && r.length > 1 && caminho.endsWith(r.slice(1)));
 }
 
-/** Escolha da pergunta (c): resposta cujo rótulo (título, caminho, nome do arquivo ou `…`+final do caminho: `rotuloCasaSpec`) casa com exatamente 1 das specs, depois da entrada da última delas. */
-function escolhaDaSpec(evs          , specs            )                  {
-  const caminhos = new Set(specs.map((s) => semPonto(s.caminho)));
+/**
+ * Âncora da pergunta (c) (REGRA ÚNICA: `perguntas.ts` importa esta função e `escolhaDaSpec` só aceita resposta a este id):
+ * `<sessao>:<seq>` da 1ª entrada do caminho que completou o conjunto de `caminhos`; sem entrada medida de todos ⇒ `null`.
+ */
+export function ancoraDaPerguntaC(eventos          , caminhos          )                {
+  const alvo = new Set(caminhos.map(semPonto));
   const vistos = new Set        ();
-  let entrada = -1;
-  evs.forEach((e, i) => {
+  let ancora                = null;
+  for (const e of eventos) {
     const c = semPonto(fatoMedido(e, 'spec')?.caminho);
-    if (caminhos.has(c) && !vistos.has(c)) {
+    if (alvo.has(c) && !vistos.has(c)) {
       vistos.add(c);
-      entrada = i;
+      ancora = e;
     }
-  });
+  }
+  return ancora !== null && vistos.size === alvo.size ? `${ancora.sessao}:${ancora.seq}` : null;
+}
+
+/**
+ * Escolha da pergunta (c): resposta À PERGUNTA (c) (`pergunta` = âncora de `ancoraDaPerguntaC`) cujo rótulo (título, caminho, nome do
+ * arquivo ou `…`+final do caminho: `rotuloCasaSpec`) casa com exatamente 1 das specs. Resposta a outra pergunta não resolve.
+ */
+function escolhaDaSpec(evs          , specs            )                  {
+  const id = ancoraDaPerguntaC(evs, specs.map((s) => s.caminho          ));
+  if (id === null) return null;
+  const entrada = evs.findIndex((e) => `${e.sessao}:${e.seq}` === id);
   for (let i = evs.length - 1; i > entrada; i--) {
-    if (evs[i].tipo !== 'dono.resposta') continue;
+    if (evs[i].tipo !== 'dono.resposta' || obj(evs[i].dados).pergunta !== id) continue;
     const r = chaveTexto(obj(evs[i].dados).rotulo);
     if (r === '') continue;
     const casam = specs.filter((s) => rotuloCasaSpec(s, r));

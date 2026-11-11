@@ -21,7 +21,7 @@ import { pendenciaAberta } from './depende.js';
 import { ID_PERGUNTA_RE } from './formas.js';
 import { ordenar } from './loop.js';
                                                      
-import { ancoraDaPerguntaB, rotuloCasaSpec } from './trilha.js';
+import { ancoraDaPerguntaB, ancoraDaPerguntaC, rotuloCasaSpec } from './trilha.js';
                                           
 
                                                                                                                          
@@ -80,21 +80,6 @@ function sessaoAtual(evs          , ctx                   )                {
   return null;
 }
 
-/** Âncora de (c): 1ª entrada do caminho que completou o conjunto ambíguo; sem entrada medida de todos ⇒ `null`. */
-function ancoraC(evs          , caminhos             )                {
-  const vistos = new Set        ();
-  let ancora                = null;
-  for (const e of evs) {
-    const d = obj(e.dados);
-    const c = e.tipo === 'fato.medido' && d.chave === 'spec' ? semPonto(obj(d.valor).caminho) : '';
-    if (caminhos.has(c) && !vistos.has(c)) {
-      vistos.add(c);
-      ancora = e;
-    }
-  }
-  return vistos.size === caminhos.size ? ancora : null;
-}
-
 /** Perguntas abertas, a mais antiga (pela âncora) primeiro. */
 export function perguntasAbertas(eventos          , trilha        , ctx                    = {})             {
   const t = obj(trilha)          ;
@@ -141,8 +126,9 @@ export function perguntasAbertas(eventos          , trilha        , ctx         
   const ambigua = lista                                       (t.ambigua).filter((s) => s !== null && typeof s === 'object');
   if (t.identificada === true && ambigua.length >= 2 && typeof t.entrega === 'string') {
     const caminhos = ambigua.map((s) => semPonto(s.caminho));
-    const ancora = ancoraC(evs, new Set(caminhos));
-    if (ancora !== null) {
+    const idC = ancoraDaPerguntaC(evs, caminhos);
+    const ancora = idC === null ? undefined : evs.find((e) => idDe(e) === idC);
+    if (ancora !== undefined) {
       const opcoes           = [];
       for (const [i, s] of ambigua.slice(0, 4).entries()) {
         const titulo = typeof s.titulo === 'string' ? s.titulo.trim() : '';

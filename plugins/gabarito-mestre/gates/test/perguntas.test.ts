@@ -12,7 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { perguntasAbertas, respostaValida } from '../src/perguntas.ts';
 import type { Pergunta } from '../src/perguntas.ts';
-import { ancoraDaPerguntaB, trilhaDe } from '../src/trilha.ts';
+import { ancoraDaPerguntaB, ancoraDaPerguntaC, trilhaDe } from '../src/trilha.ts';
 import { pendenciaAberta } from '../src/depende.ts';
 import type { FatosTrilha, SpecFato, Trilha } from '../src/trilha.ts';
 import { formaInvalida } from '../src/formas.ts';
@@ -338,6 +338,39 @@ test('c-resposta-resolve-a-trilha', () => {
   const r2 = respostaValida([p2], p2.id, 1);
   const d2 = expandir([inicio('s1'), specMedida(SPEC1, A, 's1'), specMedida(SPEC2, B, 's1'), resp(p2.id, 1, r2.ok ? r2.rotulo : '')]);
   assert.deepEqual(trilhaDe(f2, d2).ambigua, []);
+});
+
+test('c-resposta-a-outra-pergunta-nao-resolve-a-ambiguidade', () => {
+  // Sonda do review: (d) com opções = nomes das specs; a resposta a (d) não é a escolha da spec (resposta só fecha a pergunta cujo id cita).
+  const specs = [spec(SPEC1, 'Trilha'), spec(SPEC2, 'Painel', B)];
+  const fatos: FatosTrilha = { branch: 'feat/GM-20-x', idPadrao: '[A-Z]+-\\d+', specs, plano: null, ledger: false, gh: 'ok', ultimas: [] };
+  const base = expandir([inicio('s1'), specMedida(SPEC1, A, 's1'), specMedida(SPEC2, B, 's1'),
+    notaDe('duvida', 'Começo por qual?', 's1', ['2026-11-21-gm20-painel.md', '2026-11-20-gm20-design.md'])]);
+  const t0 = trilhaDe(fatos, base);
+  const abertas0 = perguntasAbertas(base, t0, { sessao: 's1' });
+  assert.deepEqual(abertas0.map((p) => [p.gatilho, p.id]), [['c', 's1:3'], ['d', 's1:4']]);
+  const depois = expandir([inicio('s1'), specMedida(SPEC1, A, 's1'), specMedida(SPEC2, B, 's1'),
+    notaDe('duvida', 'Começo por qual?', 's1', ['2026-11-21-gm20-painel.md', '2026-11-20-gm20-design.md']),
+    resp('s1:4', 1, '2026-11-21-gm20-painel.md')]);
+  const t1 = trilhaDe(fatos, depois);
+  assert.equal(t1.ambigua.length, 2, 'resposta a (d) não resolve (c)');
+  assert.deepEqual(perguntasAbertas(depois, t1, { sessao: 's1' }).map((p) => [p.gatilho, p.id]), [['c', 's1:3']]);
+  // Resposta à âncora de (c) com o mesmo rótulo resolve.
+  const certa = expandir([inicio('s1'), specMedida(SPEC1, A, 's1'), specMedida(SPEC2, B, 's1'),
+    notaDe('duvida', 'Começo por qual?', 's1', ['2026-11-21-gm20-painel.md', '2026-11-20-gm20-design.md']),
+    resp('s1:3', 1, '2026-11-21-gm20-painel.md')]);
+  assert.deepEqual(trilhaDe(fatos, certa).ambigua, []);
+});
+
+test('c-ancora-vem-da-regra-unica-de-trilha', () => {
+  // `ancoraDaPerguntaC` (trilha.ts) é a âncora que `perguntasAbertas` usa e a que `trilhaDe` exige: o id da pergunta aberta é o dela.
+  const specs = [spec(SPEC1, 'Trilha'), spec(SPEC2, 'Painel', B)];
+  const evs = expandir([inicio('s1'), specMedida(SPEC1, A, 's1'), notaDe('ideia', 'x', 's1'), specMedida(SPEC2, B, 's1'), specMedida(SPEC1, C, 's1')]);
+  const fatos: FatosTrilha = { branch: 'feat/GM-20-x', idPadrao: '[A-Z]+-\\d+', specs, plano: null, ledger: false, gh: 'ok', ultimas: [] };
+  const a = ancoraDaPerguntaC(evs, specs.map((s) => s.caminho));
+  assert.equal(a, 's1:4');
+  assert.equal(perguntasAbertas(evs, trilhaDe(fatos, evs), { sessao: 's1' })[0].id, a);
+  assert.equal(ancoraDaPerguntaC(evs, [SPEC1, SPEC3]), null, 'sem medição de todos ⇒ null');
 });
 
 test('c-sem-fato-medido-da-spec-nao-abre', () => {

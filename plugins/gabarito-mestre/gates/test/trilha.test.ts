@@ -14,7 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { ancoraDaPerguntaB, FASES, idDaBranch, trilhaDe } from '../src/trilha.ts';
+import { ancoraDaPerguntaB, ancoraDaPerguntaC, FASES, idDaBranch, trilhaDe } from '../src/trilha.ts';
 import type { FatosTrilha, SpecFato, Trilha } from '../src/trilha.ts';
 import { formaInvalida } from '../src/formas.ts';
 import type { Evento, TipoEvento } from '../src/tipos.ts';
@@ -61,7 +61,9 @@ const fatos = (extra: Partial<FatosTrilha> = {}): FatosTrilha => ({
 });
 const aprovada = (sha256 = A, spec = SPEC): Compacto => ({ t: 'spec.aprovada', d: { spec, sha256 } });
 const pr = (numero: number, estado: string): Compacto => ({ t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: 'feat/GM-20-trilha' } } });
-const resposta = (rotulo: string, sessao = 'sessao-b'): Compacto => ({ t: 'dono.resposta', s: sessao, d: { pergunta: `${sessao}:1`, opcao: 1, rotulo } });
+const resposta = (rotulo: string, sessao = 'sessao-b', pergunta = `${sessao}:1`): Compacto => ({ t: 'dono.resposta', s: sessao, d: { pergunta, opcao: 1, rotulo } });
+/** Resposta à pergunta (c) com as 2 specs de `base` (SPEC e a 2ª, ambas na `sessao-a`): a âncora é a 2ª entrada, `sessao-a:2`. */
+const respostaC = (rotulo: string): Compacto => resposta(rotulo, 'sessao-b', 'sessao-a:2');
 /** Âncora da pergunta (b) da sessão (DP-2 ajuste 1): o 1º evento de trabalho dela (aqui, `fato.medido branch`). */
 const ancoraB = (sessao = 'sessao-b'): Compacto => ({ t: 'fato.medido', s: sessao, d: { chave: 'branch', fonte: 'git', valor: { nome: 'main' } } });
 /** Âncora + resposta à pergunta (b) da sessão (`<sessao>:1` = a âncora). */
@@ -164,27 +166,49 @@ test('resposta-c-consumida', () => {
   const f = fatos({ specs: [specFato(), s2] });
   const base: Compacto[] = [specMedida(SPEC), specMedida(s2.caminho)];
   // Título, em caixa mista e com espaço nas pontas, escolhe a v2.
-  const t = trilhaDe(f, expandir([...base, resposta('  trilha da gm-20 V2 ')]));
+  const t = trilhaDe(f, expandir([...base, respostaC('  trilha da gm-20 V2 ')]));
   assert.deepEqual(t.ambigua, []);
   assert.equal(t.marcas[1], '✓');
   assert.equal(t.motivos[1], null);
   assert.equal(t.progresso, 'spec com 9 seções · falta aprovar', 'a spec escolhida é "a spec"');
   // Caminho também escolhe; a aprovação da escolhida conta e a da outra não.
-  const pc = trilhaDe(f, expandir([...base, resposta(SPEC), aprovada(A, s2.caminho)]));
+  const pc = trilhaDe(f, expandir([...base, respostaC(SPEC), aprovada(A, s2.caminho)]));
   assert.equal(pc.progresso, 'spec com 6 seções · falta aprovar');
   assert.equal(pc.marcas[2], '●');
   // Rótulo que não é de nenhuma das specs não fecha.
-  const nada = trilhaDe(f, expandir([...base, resposta('conversa avulsa')]));
+  const nada = trilhaDe(f, expandir([...base, respostaC('conversa avulsa')]));
   assert.equal(nada.ambigua.length, 2);
   assert.equal(nada.marcas[1], '?');
   // Conjunto mudou depois da resposta (3ª spec entrou): a resposta perde a validade.
   const s3 = specFato({ caminho: 'docs/superpowers/specs/2026-11-22-gm20-v3-design.md', titulo: 'Trilha v3' });
-  const mudou = trilhaDe(fatos({ specs: [specFato(), s2, s3] }), expandir([...base, resposta('Trilha da GM-20 v2'), specMedida(s3.caminho)]));
+  const mudou = trilhaDe(fatos({ specs: [specFato(), s2, s3] }), expandir([...base, respostaC('Trilha da GM-20 v2'), specMedida(s3.caminho)]));
   assert.equal(mudou.ambigua.length, 3);
   assert.equal(mudou.marcas[1], '?');
   // Edição de uma spec já conhecida (mesmo caminho) não reabre.
-  const editada = trilhaDe(f, expandir([...base, resposta('Trilha da GM-20 v2'), specMedida(SPEC)]));
+  const editada = trilhaDe(f, expandir([...base, respostaC('Trilha da GM-20 v2'), specMedida(SPEC)]));
   assert.deepEqual(editada.ambigua, []);
+});
+
+test('resposta-c-so-vale-para-a-pergunta-c', () => {
+  // Resposta à pergunta de outro id (ex.: (d) com nomes de spec) não escolhe a spec, mesmo com rótulo que casa com exatamente 1.
+  const s2 = specFato({ caminho: 'docs/superpowers/specs/2026-11-21-gm20-v2-design.md', sha256: B, secoes: 9, titulo: 'Trilha da GM-20 v2' });
+  const f = fatos({ specs: [specFato(), s2] });
+  const base: Compacto[] = [specMedida(SPEC), specMedida(s2.caminho)];
+  for (const pergunta of ['sessao-a:3', 'sessao-a:1', 'sessao-b:1', 'sessao-a:2 ']) {
+    const t = trilhaDe(f, expandir([...base, resposta('Trilha da GM-20 v2', 'sessao-b', pergunta)]));
+    assert.equal(t.ambigua.length, 2, `pergunta ${pergunta}`);
+    assert.equal(t.marcas[1], '?');
+  }
+  assert.deepEqual(trilhaDe(f, expandir([...base, respostaC('Trilha da GM-20 v2')])).ambigua, [], 'a âncora certa resolve');
+});
+
+test('ancora-c-regra-unica', () => {
+  const s = [SPEC, 'docs/superpowers/specs/2026-11-21-gm20-v2-design.md'];
+  const evs = expandir([specMedida(s[0]), { t: 'nota', d: { tipo: 'ideia', texto: 'x' } }, specMedida(s[1]), specMedida(s[0])]);
+  assert.equal(ancoraDaPerguntaC(evs, s), 'sessao-a:3', '1ª entrada do caminho que completou o conjunto');
+  assert.equal(ancoraDaPerguntaC(evs, ['./' + s[0], s[1]]), 'sessao-a:3', 'ignora ./');
+  assert.equal(ancoraDaPerguntaC(evs, [s[0], 'docs/x.md']), null, 'sem medição de todos ⇒ null');
+  assert.equal(ancoraDaPerguntaC([], s), null);
 });
 
 test('spec-editada-apos-aprovar-check-e-mudou-depois', () => {
@@ -440,17 +464,17 @@ test('resposta-c-rotulo-de-duas-specs-segue-ambigua', () => {
   // Mesmo título nas duas: o rótulo não escolhe.
   const s2 = specFato({ caminho: 'docs/superpowers/specs/2026-11-21-gm20-v2-design.md', sha256: B });
   base.push(specMedida(s2.caminho));
-  const t = trilhaDe(fatos({ specs: [specFato(), s2] }), expandir([...base, resposta('Trilha da GM-20')]));
+  const t = trilhaDe(fatos({ specs: [specFato(), s2] }), expandir([...base, respostaC('Trilha da GM-20')]));
   assert.equal(t.ambigua.length, 2);
   assert.equal(t.marcas[1], '?');
   // Título de uma = caminho da outra: o rótulo casa as 2.
   const s3 = specFato({ caminho: 'docs/superpowers/specs/2026-11-21-gm20-v2-design.md', sha256: B, titulo: 'Outra' });
   const s1 = specFato({ titulo: s3.caminho });
-  const u = trilhaDe(fatos({ specs: [s1, s3] }), expandir([...base, resposta(s3.caminho)]));
+  const u = trilhaDe(fatos({ specs: [s1, s3] }), expandir([...base, respostaC(s3.caminho)]));
   assert.equal(u.ambigua.length, 2);
   assert.equal(u.marcas[1], '?');
   // Troca de valor: rótulo de exatamente 1 escolhe.
-  const v = trilhaDe(fatos({ specs: [s1, s3] }), expandir([...base, resposta('Outra')]));
+  const v = trilhaDe(fatos({ specs: [s1, s3] }), expandir([...base, respostaC('Outra')]));
   assert.deepEqual(v.ambigua, []);
   assert.equal(v.marcas[1], '✓');
 });
