@@ -5,6 +5,10 @@ Usuários do plugin só recebem atualização quando `version` muda.
 
 ## [Unreleased]
 
+### Adicionado
+
+- Catálogo de ferramentas de planejamento: entrada da **Mesa**, gerenciador local de projetos com servidor MCP (`mcp__mesa__*`). Hierarquia Pasta/Lista/Tarefa com card de Iniciativa e de Epic, status do Fluxo Gabarito e busca do card pelo `cardTaskId`. Sem ela, `gabarito-instalar --vincular` não sabe buscar o card quando o servidor é `mesa`. Contribuição de Allan Rolli (PR #12).
+
 ## [2.0.0-alpha.5] — 2026-11-10
 
 Canal `next`: o agente passa a aprender com a entrega e a registrar as decisões dela. Contrato e requisitos na spec; aqui só o que o usuário vê.
