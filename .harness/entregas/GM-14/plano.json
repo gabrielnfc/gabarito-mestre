@@ -60,6 +60,23 @@
       ]
     },
     {
+      "id": "T1b",
+      "titulo": "Contratos do painel fiel",
+      "deps": [
+        "T1"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/tipos.ts",
+        "plugins/gabarito-mestre/gates/src/painel-equipe.ts",
+        "plugins/gabarito-mestre/gates/test/tipos-fiel.test.ts",
+        "plugins/gabarito-mestre/gates/dist/tipos.js",
+        "plugins/gabarito-mestre/gates/dist/painel-equipe.js"
+      ],
+      "reqs": [
+        "REQ-GLB-1"
+      ]
+    },
+    {
       "id": "T2",
       "titulo": "Orçamento e prioridade de linhas",
       "deps": [
@@ -308,7 +325,8 @@
         "T3",
         "T4",
         "T12",
-        "T13"
+        "T13",
+        "T1b"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel.ts",
@@ -382,7 +400,8 @@
       "deps": [
         "T18",
         "T11",
-        "T0"
+        "T0",
+        "T1b"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/mod/painel.mjs",
@@ -422,7 +441,8 @@
         "T6",
         "T14",
         "T16",
-        "T0"
+        "T0",
+        "T28"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/skills/gabarito-loop/SKILL.md",
@@ -470,7 +490,9 @@
       "deps": [
         "T20",
         "T22",
-        "T23"
+        "T23",
+        "T29",
+        "T30"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/pontos.json",
@@ -482,6 +504,82 @@
       "reqs": [
         "REQ-LNG-1",
         "REQ-GLB-1"
+      ]
+    },
+    {
+      "id": "T27",
+      "titulo": "Dono só barra pousar e concluir",
+      "deps": [
+        "T1"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/loop.ts",
+        "plugins/gabarito-mestre/gates/test/loop.test.ts",
+        "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs",
+        "plugins/gabarito-mestre/gates/dist/loop.js"
+      ],
+      "reqs": [
+        "REQ-DIA-1"
+      ]
+    },
+    {
+      "id": "T28",
+      "titulo": "iniciar --modelo e recusa do spike",
+      "deps": [
+        "T15"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs"
+      ],
+      "reqs": [
+        "REQ-DIA-2",
+        "REQ-GLB-1"
+      ]
+    },
+    {
+      "id": "T29",
+      "titulo": "Casamento, nome e vivos da equipe",
+      "deps": [
+        "T1b",
+        "T17",
+        "T18"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/painel-equipe.ts",
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/src/tipos.ts",
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-equipe.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-golden/",
+        "plugins/gabarito-mestre/gates/dist/painel-equipe.js",
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/dist/tipos.js"
+      ],
+      "reqs": [
+        "REQ-GLB-1",
+        "REQ-LNG-1"
+      ]
+    },
+    {
+      "id": "T30",
+      "titulo": "Mod: entrega certa e sem negar conversa",
+      "deps": [
+        "T3",
+        "T5",
+        "T20",
+        "T27",
+        "T1b"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/pouso.ts",
+        "plugins/gabarito-mestre/mod/gabarito.mjs",
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
+        "plugins/gabarito-mestre/gates/dist/pouso.js"
+      ],
+      "reqs": [
+        "REQ-DIA-1",
+        "REQ-TRI-1"
       ]
     },
     {
@@ -511,7 +609,12 @@
         "T21",
         "T22",
         "T23",
-        "T24"
+        "T24",
+        "T1b",
+        "T27",
+        "T28",
+        "T29",
+        "T30"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/.claude-plugin/plugin.json",
