@@ -1088,6 +1088,53 @@ test('aprender-apos-loop-parar-ainda-block: loop.parar do mod abre pendência e 
   avisa(stop(raiz), /parar mod:1/);
 });
 
+// GM-14 T27 (FIEL-2 b): `proximaAcao` já não trava despacho por `dono`; o Stop segue cobrando (1 block por gatilho). Mutação M-F2c.
+const HASH_DONO = 'b'.repeat(64);
+const MENSAGEM = (sessao, seq) => ev(sessao, seq, 'dono.mensagem', { sha256: HASH_DONO, chars: 9 });
+const NADA = (sessao, seq, g) => ev(sessao, seq, 'aprendizado.nada', { gatilho: g, motivo: 'só conversa' });
+
+test('pendencia-dono-bloqueia-stop-uma-vez: com a ação sendo despachar, a `dono` aberta bloqueia o 1º Stop, avisa o 2º e o 3º', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'dono', [MENSAGEM('dono', 1)]);
+  const r1 = stop(raiz);
+  bloqueia(r1, /^Loop da entrega GM-10 tem aprendizado pendente: dono dono:1\. Feche com /);
+  assert.match(r1.json.reason, COMANDO);
+  assert.deepEqual(estadoAprender(raiz), { entrega: 'GM-10', avisados: ['dono:1'] });
+  avisa(stop(raiz), /aprendizado pendente: dono dono:1/);
+  avisa(stop(raiz), /aprendizado pendente: dono dono:1/);
+  assert.deepEqual(estadoAprender(raiz), { entrega: 'GM-10', avisados: ['dono:1'] });
+});
+
+test('segunda-mensagem-novo-block: fechada a 1ª, a 2ª mensagem do dono é gatilho novo e bloqueia de novo; sem fechar, também', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'dono', [MENSAGEM('dono', 1)]);
+  bloqueia(stop(raiz), /dono dono:1/);
+  avisa(stop(raiz), /dono dono:1/);
+  // a 1ª fecha; sem pendência o Stop volta ao fluxo de sempre (despachar), sem falar de aprendizado
+  diario(raiz, 'loop', [NADA('loop', 1, { sessao: 'dono', seq: 1 })]);
+  const livre = stop(raiz);
+  assert.ok(!/aprendizado pendente/.test(`${livre.json?.reason ?? ''}${livre.json?.systemMessage ?? ''}`), 'fechada, o Stop não cobra aprendizado');
+  // a 2ª mensagem: novo gatilho, novo block
+  diario(raiz, 'dono', [MENSAGEM('dono', 2)]);
+  bloqueia(stop(raiz), /dono dono:2/);
+  assert.deepEqual(estadoAprender(raiz), { entrega: 'GM-10', avisados: ['dono:2'] });
+  avisa(stop(raiz), /dono dono:2/);
+  // sem fechar a 2ª, uma 3ª ancora na mais recente: outro gatilho, outro block
+  diario(raiz, 'dono', [MENSAGEM('dono', 3)]);
+  bloqueia(stop(raiz), /dono dono:3/);
+});
+
+test('pendencia-dono-nao-esconde-review: `dono` e review abertas, o Stop cita as duas numa só mensagem', () => {
+  const raiz = repo();
+  comPendenciaReview(raiz);
+  diario(raiz, 'dono', [MENSAGEM('dono', 1)]);
+  const r = stop(raiz);
+  bloqueia(r, /review s:3, dono dono:1/);
+  assert.deepEqual(estadoAprender(raiz), { entrega: 'GM-10', avisados: ['s:3', 'dono:1'] });
+});
+
 test('ci-vermelho-com-parar-ainda-block: acao=parar(ci_vermelho) não esconde a pendência (cálculo à parte)', () => {
   const raiz = repo();
   plano(raiz);

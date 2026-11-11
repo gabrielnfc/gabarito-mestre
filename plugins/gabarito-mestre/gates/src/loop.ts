@@ -266,8 +266,12 @@ export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais): Ac
   }
   // (4c) REQ-APR-2: pendência de aprendizado aberta vence tudo que vem depois (plano vazio, pouso, integração, despacho, concluir). A (1) já
   // barrou o diário fora da tabela: `pendenciasAprendizado` devolve `[]` nele e nunca é lido como "sem pendência".
+  // GM-14 T27 (FIEL-2 b): a pendência `dono` (conversa) não trava despacho nem integração; só `pousar` e `concluir` a esperam, porque o diário
+  // guarda hash e tamanho, nunca o texto, e depois do `/clear` ela só fecharia às cegas. O filtro mora aqui, nunca em `pendenciasAprendizado`.
   const pendencias = pendenciasAprendizado(plano, ord.eventos);
-  if (pendencias.length > 0) return { tipo: 'aprender', pendencias };
+  const aprender = (): AcaoLoop => ({ tipo: 'aprender', pendencias });
+  if (pendencias.some((p) => p.tipo !== 'dono')) return aprender();
+  const donoAberto = pendencias.length > 0;
   // Plano vazio não é sucesso: nada foi entregue.
   if (plano.tasks.length === 0) return { tipo: 'parar', motivo: 'nao_conseguiu' };
 
@@ -291,7 +295,8 @@ export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais): Ac
     // (5d) Pousar só se resta trabalho que não espera um teto: task fora de {integrada, no_teto} e sem ancestral em `no_teto`.
     // Sem resto, o loop conclui (8) ou para no teto (9) antes de qualquer pouso.
     if (plano.tasks.some((t) => !SEM_RESTO.includes(est(t.id).estado) && !ancestrais(plano, t.id).some((a) => de(estados, a) === 'no_teto'))) {
-      return sinais.podePousar ? { tipo: 'pousar' } : { tipo: 'parar', motivo: 'sem_pouso' };
+      if (!sinais.podePousar) return { tipo: 'parar', motivo: 'sem_pouso' };
+      return donoAberto ? aprender() : { tipo: 'pousar' };
     }
   }
 
@@ -313,7 +318,10 @@ export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais): Ac
 
   // (8) Tudo integrado: com proposta aberta a spec está em disputa, então nem `concluir` nem entrega (REQ-EME-2).
   const esperaEmenda = (): AcaoLoop => ({ tipo: 'esperar', motivo: 'emenda', propostas: abertas });
-  if (ids.every((id) => est(id).estado === 'integrada')) return abertas.length === 0 ? { tipo: 'concluir' } : esperaEmenda();
+  if (ids.every((id) => est(id).estado === 'integrada')) {
+    if (abertas.length > 0) return esperaEmenda();
+    return donoAberto ? aprender() : { tipo: 'concluir' };
+  }
 
   // (9)
   if (sinais.vivos > 0) return { tipo: 'esperar', motivo: 'agentes vivos' };

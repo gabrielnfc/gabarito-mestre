@@ -12,6 +12,7 @@ import * as diarioFs from '../src/diario.ts';
 import { projetarEmendas, reqsCongelados, SESSAO_EMENDAS } from '../src/emenda.ts';
 import type { ChaveEvento, EstadoTask } from '../src/loop.ts';
 import { analisarFronteira, negaDespacho } from '../src/pouso.ts';
+import { pendenciasAprendizado } from '../src/pendencias.ts';
 import type { Evento, Plano, Sinais, TipoEvento } from '../src/tipos.ts';
 
 /**
@@ -1289,6 +1290,93 @@ test('proxima-pendencias-ausente-x-corrompido: sem pendência o fluxo é o de ho
   assert.deepEqual(proximaAcaoNucleo(p, diario(ini('a'), con('a'), ver('a', 'APROVADO', 1)), sinais({ percent: 10 })), { tipo: 'integrar', tasks: ['a'] });
   assert.deepEqual(proximaAcaoNucleo(p, [{ ...ev(1, 'ontem', 's1', ...reprovaMajor('a')) }], sinais()), invalido);
 });
+// ===================================================================================================================
+// GM-14 T27 (FIEL-2 b; Sombra `sombra-fiel2.md`): a pendência `dono` só barra `pousar` e `concluir`. Despacho e integração seguem.
+// Pendência de review, de parar e de fechamento continuam barrando tudo. O filtro é de `proximaAcao`, nunca de `pendenciasAprendizado`.
+// Mutações (task-27-mut.json): M-F2b `dono` volta a barrar despacho · M-F2e `dono` deixa de barrar `concluir` · M-F2f `dono` deixa de barrar
+// `pousar` · M-F2g o filtro vai para dentro de `pendenciasAprendizado` · M-F2h `dono` solta a pendência de review junto.
+// ===================================================================================================================
+const HASH_DONO = 'a'.repeat(64);
+const mensagemDono = (): [TipoEvento, Record<string, unknown>] => ['dono.mensagem', { sha256: HASH_DONO, chars: 12 }];
+const PEND_DONO = (seq: number) => [{ sessao: 's1', seq, tipo: 'dono' }];
+
+test('pendencia-dono-nao-nega-agent: com `dono` aberta o núcleo despacha, com `percent` presente e ausente; negaDespacho não nega', () => {
+  const p = plano(['a']);
+  const evs = diario(mensagemDono());
+  for (const percent of [10, null]) {
+    const acao = proximaAcaoNucleo(p, evs, sinais({ percent }));
+    assert.deepEqual(acao, { tipo: 'despachar', itens: [{ task: 'a', papel: 'implementador' }] }, `percent=${percent}`);
+    assert.equal(negaDespacho(acao, true), false, 'fronteira consumida (o mod passa `percent: null`): o `Agent` não é negado');
+  }
+  // a pendência segue existindo na projeção (Stop, painel e doctor leem a mesma): o filtro não está em `pendenciasAprendizado`
+  assert.deepEqual(pendenciasAprendizado(p, evs), PEND_DONO(1));
+});
+test('pendencia-dono-nao-nega-correcao-e-revisor: correção e revisor também despacham com `dono` aberta', () => {
+  const p = plano(['a'], ['b']);
+  const corr = diario(ini('a'), con('a'), ver('a', 'REPROVADO', 1), mensagemDono());
+  assert.deepEqual(pendenciasAprendizado(p, corr).map((x) => x.tipo), ['dono'], 'MINOR sem MAJOR: só a `dono` abre');
+  assert.deepEqual(proximaAcaoNucleo(p, corr, sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'correcao' }, { task: 'b', papel: 'implementador' }] });
+  const rev = diario(ini('a'), con('a'), mensagemDono());
+  assert.deepEqual(proximaAcaoNucleo(p, rev, sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'revisor' }, { task: 'b', papel: 'implementador' }] });
+});
+test('pendencia-dono-nao-barra-integrar: task aprovada com `dono` aberta integra; fechada a mensagem, integra igual', () => {
+  const p = plano(['a']);
+  const base = [...aprovada('a'), mensagemDono()];
+  assert.deepEqual(proximaAcaoNucleo(p, diario(...base), sinais()), { tipo: 'integrar', tasks: ['a'] });
+  assert.deepEqual(proximaAcaoNucleo(p, diario(...base, nada('s1', 4)), sinais()), { tipo: 'integrar', tasks: ['a'] });
+  assert.equal(negaDespacho({ tipo: 'integrar', tasks: ['a'] }, false), false);
+});
+test('pendencia-dono-barra-pousar: percent ≥ X com trabalho restante e `dono` aberta ⇒ aprender, nunca pousar; fechada, pousa', () => {
+  const p = plano(['a']);
+  const evs = diario(mensagemDono());
+  assert.deepEqual(proximaAcaoNucleo(p, evs, NX()), { tipo: 'aprender', pendencias: PEND_DONO(1) });
+  assert.deepEqual(proximaAcaoNucleo(p, diario(mensagemDono(), nada('s1', 1)), NX()), { tipo: 'pousar' });
+  // abaixo de X não há pouso a barrar: despacha
+  assert.equal(proximaAcaoNucleo(p, evs, sinais({ percent: 10 })).tipo, 'despachar');
+  // sem pouso possível a ação é `parar sem_pouso`, e o `dono` não a esconde (parar não é pousar)
+  assert.deepEqual(proximaAcaoNucleo(p, evs, NX({ podePousar: false })), { tipo: 'parar', motivo: 'sem_pouso' });
+});
+test('pendencia-dono-nao-barra-revisor-antes-do-pouso: o revisor da fronteira despacha com `dono` aberta (só o pouso espera)', () => {
+  const p = plano(['a']);
+  assert.deepEqual(proximaAcaoNucleo(p, diario(ini('a'), con('a'), mensagemDono()), NX()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'revisor' }] });
+});
+test('pendencia-dono-x-concluir: tudo integrado, fechamento já fechado, `dono` aberta ⇒ aprender; fechada ⇒ concluir', () => {
+  const p = plano(['a']);
+  const base = [...pronta('a'), nada('s1', 4)];
+  assert.deepEqual(proximaAcaoNucleo(p, diario(...base), sinais()), { tipo: 'concluir' }, 'sem `dono`, concluir');
+  assert.deepEqual(proximaAcaoNucleo(p, diario(...base, mensagemDono()), sinais()), { tipo: 'aprender', pendencias: PEND_DONO(6) });
+  assert.deepEqual(proximaAcaoNucleo(p, diario(...base, mensagemDono(), nada('s1', 6)), sinais()), { tipo: 'concluir' });
+  assert.equal(negaDespacho({ tipo: 'aprender', pendencias: PEND_DONO(6) }, false), true, 'a ação aprender segue nada despachável');
+});
+test('pendencia-dono-x-concluir-com-emenda: com proposta aberta a `dono` não muda `esperar emenda` (só vale onde concluiria)', () => {
+  const p = plano(['a']);
+  const evs = [...diario(...pronta('a'), nada('s1', 4), mensagemDono()), prop(1, 'REQ-A-1', {}, 100)];
+  assert.deepEqual(proximaAcaoNucleo(p, evs, sinais()), { tipo: 'esperar', motivo: 'emenda', propostas: [{ seq: 1, req: 'REQ-A-1' }] });
+});
+test('pendencia-review-ainda-nega: review, parar e fechamento barram tudo, com ou sem `dono` junto; a lista leva as duas', () => {
+  const p = plano(['a'], ['b']);
+  // review (MAJOR) + dono: aprender com as 2, nunca despachar
+  const rv = diario(ini('a'), con('a'), reprovaMajor('a'), mensagemDono());
+  assert.deepEqual(proximaAcaoNucleo(p, rv, sinais()), { tipo: 'aprender', pendencias: [{ sessao: 's1', seq: 3, tipo: 'review' }, { sessao: 's1', seq: 4, tipo: 'dono' }] });
+  // fechada a `dono`, a review ainda barra
+  assert.deepEqual(proximaAcaoNucleo(p, diario(ini('a'), con('a'), reprovaMajor('a'), mensagemDono(), nada('s1', 4)), sinais()), { tipo: 'aprender', pendencias: PEND_REVIEW_3 });
+  // integrar e pousar também seguem barrados pela review
+  assert.equal(proximaAcaoNucleo(p, diario(ini('a'), con('a'), reprovaMajor('a'), ...aprovada('b'), mensagemDono()), sinais()).tipo, 'aprender');
+  assert.equal(proximaAcaoNucleo(plano(['a']), diario(ini('a'), con('a'), reprovaMajor('a'), mensagemDono()), NX()).tipo, 'aprender');
+  // parar manual + dono
+  assert.deepEqual(proximaAcaoNucleo(p, diario(pararEv('nao_conseguiu'), mensagemDono()), sinais()), { tipo: 'aprender', pendencias: [{ sessao: 's1', seq: 1, tipo: 'parar' }, { sessao: 's1', seq: 2, tipo: 'dono' }] });
+  // fechamento (tudo integrado, ainda aberto) + dono
+  const t = plano(['a']);
+  assert.deepEqual(proximaAcaoNucleo(t, diario(...pronta('a'), mensagemDono()), sinais()), { tipo: 'aprender', pendencias: [{ sessao: 's1', seq: 4, tipo: 'fechamento' }, { sessao: 's1', seq: 5, tipo: 'dono' }] });
+});
+test('pendencia-dono-nao-esconde-parar-nem-espera: pausa, teto de tokens e CI vermelho seguem acima; plano vazio com `dono` é nao_conseguiu', () => {
+  const p = plano(['a']);
+  const evs = diario(mensagemDono());
+  assert.deepEqual(proximaAcaoNucleo(p, evs, sinais({ pausado: true })), { tipo: 'esperar', motivo: 'pausado' });
+  assert.deepEqual(proximaAcaoNucleo(plano(), evs, sinais()), { tipo: 'parar', motivo: 'nao_conseguiu' });
+  assert.deepEqual(proximaAcaoNucleo(p, diario(ci(false), ci(false), mensagemDono()), sinais()), { tipo: 'parar', motivo: 'ci_vermelho' });
+});
+
 test('negaDespacho-aprender-sempre: com ou sem fronteira consumida; concluir e integrar continuam livres', () => {
   const aprender = { tipo: 'aprender', pendencias: [{ sessao: 's1', seq: 3, tipo: 'review' }] } as const;
   assert.equal(negaDespacho(aprender, true), true);
