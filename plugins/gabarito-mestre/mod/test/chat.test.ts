@@ -114,7 +114,7 @@ test('chat-prefs-ausente-x-corrompida: ausente ⇒ natural sem aviso; corrompida
   expect(await desenha($, [chamada('Bash')])).toEqual(['motor'])
   expect(ausente.logs).toHaveLength(1)
   expect(ausente.logs[0]).toContain('chat')
-  for (const torta of [{ modo: 'talvez' }, { natural: true }, { modo: 'natural', extra: 1 }, 42, ['cru']]) {
+  for (const torta of [{ modo: 'talvez' }, { natural: true }, { modo: 'natural', extra: 1 }, 42, ['cru'], null]) {
     ausente.store.set(CHAVE, torta)
     expect(await desenha($, [chamada('Bash')])).toEqual(['motor'])
   }

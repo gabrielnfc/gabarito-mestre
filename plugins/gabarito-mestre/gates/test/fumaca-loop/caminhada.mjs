@@ -95,7 +95,7 @@ export function montarRepo(dest, planoArquivo, { suiteSemGit = false } = {}) {
 }
 
 /**
- * Cópia do mod em que `tasksDoNegado` devolve lista vazia (controle positivo do item 6): `gabarito.mjs` copiado (o Node segue
+ * Cópia do mod em que `tasksDoNegado` devolve lista vazia (controle positivo do item 6): `gabarito.mjs`, `painel.mjs` e `chat.mjs` copiados (o Node segue
  * symlink, então o mod não pode ser link) e `gates/dist` de links, menos `pouso.js`, copiado e adulterado.
  */
 function modSemReabrir(dir) {
@@ -103,6 +103,7 @@ function modSemReabrir(dir) {
   mkdirSync(join(dir, 'gates/dist'), { recursive: true });
   copyFileSync(join(PLUGIN, 'mod/gabarito.mjs'), join(dir, 'mod/gabarito.mjs'));
   copyFileSync(join(PLUGIN, 'mod/painel.mjs'), join(dir, 'mod/painel.mjs')); // E4 T10: o gabarito.mjs importa o painel por caminho relativo
+  copyFileSync(join(PLUGIN, 'mod/chat.mjs'), join(dir, 'mod/chat.mjs')); // GM-14 T5: o gabarito.mjs importa o chat por caminho relativo
   for (const n of readdirSync(join(PLUGIN, 'gates/dist'))) {
     if (n === 'pouso.js') continue;
     symlinkSync(realpathSync(join(PLUGIN, 'gates/dist', n)), join(dir, 'gates/dist', n));
