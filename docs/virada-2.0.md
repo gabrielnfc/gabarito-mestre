@@ -21,7 +21,7 @@ A versão 1.1.0 antiga continua no disco depois da atualização (`cache/gabarit
 
 ## Rode o onboarding de novo
 
-Quem tem a 1.1.x roda `gabarito-instalar` outra vez. Ele detecta o que o repositório já mostra, faz uma prévia e pergunta no máximo cinco coisas. A Iniciativa, o Epic e o PBI são vinculados depois, por "trocar iniciativa" ou "vincular PBI-<n>" no mesmo `gabarito-instalar`.
+Quem tem a 1.1.x roda `gabarito-instalar` outra vez. Ele detecta o que o repositório já mostra, faz uma prévia e pergunta no máximo cinco coisas. Rode também `gabarito-instalar --atualizar`, que grava o `AGENTS.md.novo` ao lado do seu `AGENTS.md`: revise e aceite (a regra R1 nova vem nele). A Iniciativa, o Epic e o PBI são vinculados depois, por "trocar iniciativa" ou "vincular PBI-<n>" no mesmo `gabarito-instalar`.
 
 ## O painel
 
@@ -36,6 +36,7 @@ Quem tem a 1.1.x roda `gabarito-instalar` outra vez. Ele detecta o que o reposit
 - Os aprendizados e o `registro.md` ficam no repositório local e não chegam a um clone novo.
 - A integração com ClickUp e o modo automático não foram ensaiados de ponta a ponta.
 - Não foi medido, numa sessão real, qual hook ou skill vence quando 1.1.x e 2.0 ficam instaladas juntas: deixe uma só.
+- Repo com o `AGENTS.md` da 1.1.0 (R1 sem a exceção de `release_pr`): o loop para antes do push e do PR e dá ao dono as 2 linhas exatas (`git push -u origin HEAD`; `gh pr create --base <base> --head <branch> …`). O PR sai com um ok do dono. Aplicar o `AGENTS.md.novo` da 2.0.0 (`gabarito-instalar --atualizar`) remove essa parada. Push e PR no modo `auto` ainda não foram medidos. Se o modo negar, o loop dá as mesmas 2 linhas e para. Merge nunca é do loop.
 
 ## Como voltar
 
