@@ -19,6 +19,7 @@ import { integrarComGate, slotsDaCapacidade } from '../scripts/loop.mjs';
 import { casarAgente } from '../dist/painel-equipe.js';
 import { estadoDe as estadoNucleo, ordenar as ordenarNucleo } from '../dist/loop.js';
 import * as diario from '../dist/diario.js';
+import { pendenciasAprendizado } from '../dist/pendencias.js';
 import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -4169,16 +4170,18 @@ describe('E5a T8: proxima leva os aprendizados D do papel no item despachar', ()
     assert.deepEqual(l.j.aprendizados.map((a) => a.regra), ['rode o gate antes de concluir']);
   });
 
-  test('nada-fecha-e-proxima-segue: com a mensagem do dono a pendência abre (`aprender`); `aprendizado nada` fecha e o `proxima` volta a despachar', () => {
+  test('nada-fecha-e-proxima-segue: com a mensagem do dono a pendência abre na projeção e o `proxima` segue despachando (GM-14 FIEL-2 b); `aprendizado nada` fecha a pendência', () => {
     const amb = ambiente();
     assert.ok(diario.append(amb.entregas, 'dono', { ts: '2026-01-01T00:00:01.000Z', autor: 't@t', sessao: 'dono', agente: 'orquestrador', tipo: 'dono.mensagem', dados: { sha256: 'b'.repeat(64), chars: 4 } }).ok);
     const antes = amb.cli(['proxima', '--vivos', '0']);
-    assert.equal(antes.j.acao.tipo, 'aprender', antes.out);
-    assert.deepEqual(antes.j.acao.pendencias, [{ sessao: 'dono', seq: 1, tipo: 'dono' }]);
+    assert.equal(antes.j.acao.tipo, 'despachar', antes.out);
+    const abertas = () => pendenciasAprendizado(JSON.parse(readFileSync(join(amb.entregas, 'plano.json'), 'utf8')), diario.ler(amb.entregas));
+    assert.deepEqual(abertas(), [{ sessao: 'dono', seq: 1, tipo: 'dono' }]);
     const nada = amb.cli(['aprendizado', 'nada', '--gatilho', 'dono:1', '--motivo', 'mensagem sem regra a tirar']);
     assert.equal(nada.rc, 0, nada.out + nada.err);
     const depois = amb.cli(['proxima', '--vivos', '0']);
     assert.equal(depois.j.acao.tipo, 'despachar', depois.out);
+    assert.deepEqual(abertas(), []);
   });
 });
 
