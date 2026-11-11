@@ -21,6 +21,7 @@ import {
   tasksDoNegado, tasksEmVoo, textoPendencia, textoPendenciaNaoVerificada, textoRetomada, tokensDe, vivosDe,
 } from '../gates/dist/pouso.js';
 import { comandoPainel, iniciarPainel, registrarPainel, turnoDoPainel, USO_GABARITO } from './painel.mjs'; // E4 T10: Pane, faixa, atualização e aviso do PAROU (nada do pouso depende dele)
+import { comandoChat, registrarChat } from './chat.mjs'; // GM-14 T5: linha de ferramenta em linguagem natural (`ToolGroup`) e `/gabarito chat cru|natural`
 
 const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 
@@ -561,6 +562,7 @@ async function negaPorPendencia($, c) {
 
 export const register = (on) => {
   registrarPainel(on);
+  registrarChat(on);
   on('session.start', async ($, e, next) => {
     interativo = e.isInteractive === true;
     iniciarPainel($, e);
@@ -648,6 +650,7 @@ export const register = (on) => {
   on('command.run', { command: 'gabarito' }, async ($, e) => {
     const acao = typeof e.args === 'string' ? e.args.trim().replace(/\s+/g, ' ') : '';
     if (acao === 'painel' || acao.startsWith('painel ')) return { text: await comandoPainel($, acao.split(' ').slice(1)) };
+    if (acao === 'chat' || acao.startsWith('chat ')) return { text: await comandoChat($, acao.split(' ').slice(1)) };
     if (acao !== 'pausar' && acao !== 'retomar') return { text: USO_GABARITO };
     try {
       return await comandoPausa($, acao);
