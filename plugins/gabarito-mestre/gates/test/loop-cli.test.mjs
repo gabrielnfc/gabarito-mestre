@@ -4207,11 +4207,9 @@ describe('GM-14: subcomandos novos ainda sem implementação', () => {
     return { rc: r.status, j, out: r.stdout, err: r.stderr };
   };
 
-  test('subcomandos-gm14-stub-nao-implementado: anotar, painel medir, onboarding herdar|foco ⇒ rc 1, erro nao_implementado, nada gravado', () => {
+  test('subcomandos-gm14-stub-nao-implementado: painel medir, onboarding herdar|foco ⇒ rc 1, erro nao_implementado, nada gravado', () => {
     const amb = ambiente();
     const casos = [
-      ['loop.mjs anotar', () => amb.cli(['anotar', '--tipo', 'ideia', '--texto', 'uma ideia'])],
-      ['loop.mjs anotar duvida', () => amb.cli(['anotar', '--tipo', 'duvida', '--texto', 'e agora?', '--opcao', 'sim', '--opcao', 'não', '--entrega', 'GM-10'])],
       ['painel.mjs medir', () => rodarNode(amb, PAINEL, ['medir'])],
       ['onboarding.mjs herdar', () => rodarNode(amb, ONBOARDING, ['herdar', '--root', amb.dir])],
       ['onboarding.mjs herdar --gravar', () => rodarNode(amb, ONBOARDING, ['herdar', '--root', amb.dir, '--gravar'])],
@@ -4233,6 +4231,7 @@ describe('GM-14: subcomandos novos ainda sem implementação', () => {
   test('subcomandos-gm14-vizinhos: subcomando desconhecido segue uso (rc 2) nos três CLIs', () => {
     const amb = ambiente();
     assert.equal(amb.cli(['anota']).rc, 2);
+    assert.equal(amb.cli(['anotar']).rc, 2, 'anotar sem --tipo/--texto é uso');
     assert.equal(rodarNode(amb, PAINEL, ['medi']).rc, 2);
     assert.equal(rodarNode(amb, ONBOARDING, ['herda']).rc, 2);
   });

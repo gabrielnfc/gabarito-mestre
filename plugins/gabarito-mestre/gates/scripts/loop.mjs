@@ -18,8 +18,8 @@
  *   loop.mjs emenda julgar <seq> <aprovar|rejeitar>   origem `sombra`: recusa sem `sombra.julga_emendas: true` em `origin/HEAD` (o config local não conta)
  *   loop.mjs aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>]
  *       (GM-13 T8; contrato e ordem de recusa em `loop-aprendizado.mjs`; `aprendizados` não exige entrega na branch).
- *   loop.mjs anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--entrega <ID>] [--opcao <r>]…   (GM-14 REQ-DIA-2; sem plano. A T1 só
- *       liga o despacho: devolve `nao_implementado`, rc 1, nada gravado; a T6 implementa)
+ *   loop.mjs anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--entrega <ID>] [--sessao <id>] [--opcao <r>]…   (GM-14 REQ-DIA-2; sem plano)
+ *       grava `nota` (forma da T1) e devolve `{ok, evento:{tipo:'nota', dados}, entrega, sessao}`; entrega = `--entrega`, senão a da branch, senão `_sem-id`.
  *   todos aceitam --entrega <GM-10> (senão vem da branch); os que gravam aceitam --sessao <id> (padrão `loop`).
  *
  * CONTRATO DE FALHA. Saída é UMA linha de JSON em stdout, sempre com `ok`; falha traz `erro` (código) e `mensagem`.
@@ -28,7 +28,7 @@
  * QUEM GRAVA NO DIÁRIO. Só `iniciar` (task.iniciada), `concluir` (task.concluida), `veredito` (review.veredito),
  * `desvio`, `descoberta`, `emenda propor` (emenda.proposta) e `emenda julgar` (spec.emendada ou emenda.rejeitada, origem `sombra`; a origem `dono` sai só de
  * `julgarEmendaDono`, que o hook `emenda-dono.mjs` chama), `reabrir` (task.reaberta, SÓ origem `retomada`: nenhum argumento produz `dono`; `dono` sai só de `liberarTeto`, que o hook do comando humano `/gabarito-mestre:liberar` chama), `integrar` (task.integrada),
- * `ci` (ci.resultado) e `parar` (loop.parar). `concluir` e `integrar` gravam o `sha`. `abrir` não grava no diário (grava o nome da base em `branch.<branch>.gabaritoBase` e o sha dela em `branch.<branch>.gabaritoBaseSha`)
+ * `ci` (ci.resultado), `parar` (loop.parar) e `anotar` (nota, GM-14: sem plano, sem tabela de transições; confere só a forma, o canário e a legibilidade do diário). `concluir` e `integrar` gravam o `sha`. `abrir` não grava no diário (grava o nome da base em `branch.<branch>.gabaritoBase` e o sha dela em `branch.<branch>.gabaritoBaseSha`)
  * e é idempotente: worktree registrada com HEAD na branch da task devolve o mesmo resultado com `ja_aberta: true`; qualquer outro estado recusa. Todo evento de task é conferido contra `TRANSICOES` ANTES de gravar:
  * o CLI nunca produz um diário que o núcleo recuse.
  *
@@ -159,7 +159,7 @@ function lerArgs(argv) {
     registro: { pos: null, flags: ['entrega', 'sessao'] },
     emenda: { pos: null, flags: ['entrega', 'sessao', 'req', 'task', 'diff', 'fato', 'alternativa', 'evidencia', 'causa', 'arquivos'] },
   };
-  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | concluir <task> --motivo <gate|sombra|dono> | iniciar <task> <papel> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | pousar | registro  [--entrega GM-10]';
+  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | concluir <task> --motivo <gate|sombra|dono> | iniciar <task> <papel> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | pousar | registro | anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--opcao <r>]…  [--entrega GM-10]';
   if (typeof cmd !== 'string' || !Object.hasOwn(ESPEC, cmd)) throw new Falha('uso', `comando desconhecido ou ausente. ${uso}`, {}, 2);
   const esp = ESPEC[cmd];
   const pos = [];
@@ -1520,9 +1520,73 @@ export function julgarEmendaDono(cwd, seq, decisao, sessao, opcoes = {}) {
 
 // ─────────────────────────────────────────────────────────────── despacho
 
-/** `anotar` (GM-14, REQ-DIA-2): só o despacho; a T6 implementa, sem `carregarPlano`. Nada é lido nem gravado. */
-function anotar(_argv, _cwd) {
-  throw new Falha('nao_implementado', 'loop.mjs anotar: ainda não implementado (GM-14)');
+/**
+ * `sessao` de `anotar`: a mesma forma do `<sessao>` de `IdPergunta` (`[A-Za-z0-9-]{1,128}`, sem `.` nem `_`, que o `SESSAO_RE` do diário aceita) e
+ * diferente de `herdar` (`herdar:<n>` é a forma do id herdado). Uma `duvida` gravada numa sessão fora disso viraria pergunta que ninguém responde.
+ */
+const SESSAO_PERGUNTA_RE = /^[A-Za-z0-9-]{1,128}$/;
+
+/** Leitor de `anotar`: `--opcao` se repete (2–4 na `duvida`), as demais flags não; sem posicional. Uso errado sai 2. */
+function lerArgsAnotar(argv) {
+  const uso = 'uso: loop.mjs anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--entrega <ID>] [--sessao <id>] [--opcao <r>]…';
+  const flags = {};
+  const opcoes = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a.startsWith('--')) throw new Falha('uso', `anotar não tem argumento posicional (${JSON.stringify(a)}). ${uso}`, {}, 2);
+    const nome = a.slice(2);
+    if (!['tipo', 'texto', 'entrega', 'sessao', 'opcao'].includes(nome)) throw new Falha('uso', `argumento desconhecido para anotar: ${a}. ${uso}`, {}, 2);
+    const v = argv[i + 1];
+    if (v === undefined || v.startsWith('--')) throw new Falha('uso', `${a} sem valor. ${uso}`, {}, 2);
+    if (nome === 'opcao') opcoes.push(v);
+    else if (Object.hasOwn(flags, nome)) throw new Falha('uso', `${a} repetido. ${uso}`, {}, 2);
+    else flags[nome] = v;
+    i++;
+  }
+  for (const nome of ['tipo', 'texto']) if (!Object.hasOwn(flags, nome)) throw new Falha('uso', `anotar exige --${nome}. ${uso}`, {}, 2);
+  return { flags, opcoes };
+}
+
+/**
+ * Destino: `--entrega`; senão a entrega da branch (a regra de `contexto`); senão `_sem-id`. `--entrega` diferente da branch grava nela e só nela:
+ * a nota não identifica entrega (quem identifica é o painel, por um 2º fato). Fora de repositório falha: sem raiz não há diário.
+ */
+function destinoDeAnotar(cwd, flags) {
+  try {
+    return contexto(cwd, flags);
+  } catch (e) {
+    if (!(e instanceof Falha) || e.erro !== 'entrega_nao_inferida') throw e;
+    const raiz = raizPrincipal(cwd);
+    return { cwd, raiz, entrega: '_sem-id', dirEntrega: diario.dirEntrega(raiz, null), sessao: flags.sessao ?? 'loop' };
+  }
+}
+
+/**
+ * `anotar` (GM-14, REQ-DIA-2): grava `nota` sem plano. Ordem: uso (2) ⇒ forma da T1 (tipo, 1 linha, até 160 CARACTERES, opções 2–4 só na `duvida`)
+ * ⇒ canário no texto e em cada opção ⇒ entrega e raiz ⇒ diário legível ⇒ `diario.append`. Recusa em qualquer passo: rc 1, `erro` com o motivo
+ * (nunca o valor), nada gravado. Diário ausente cria a pasta; diário com linha ilegível ou cadeia quebrada recusa (`diario_ilegivel`): anotar não piora o que já quebrou.
+ */
+function anotar(argv, cwd) {
+  const { flags, opcoes } = lerArgsAnotar(argv);
+  if (flags.entrega !== undefined && !ENTREGA_RE.test(flags.entrega)) throw new Falha('entrega_invalida', `--entrega "${flags.entrega}" fora da forma ${ENTREGA_RE}`);
+  if (flags.sessao !== undefined && (!SESSAO_PERGUNTA_RE.test(flags.sessao) || flags.sessao === 'herdar')) {
+    throw new Falha('argumento_invalido', `--sessao fora da forma ${SESSAO_PERGUNTA_RE} (ou "herdar"): a pergunta da nota se chamaria <sessao>:<n> e ninguém a responderia`);
+  }
+  const dados = { tipo: flags.tipo, texto: flags.texto, ...(opcoes.length > 0 ? { opcoes } : {}) };
+  const invalida = formaInvalida('nota', dados);
+  if (invalida !== null) throw new Falha('forma_invalida', `${invalida}; nada foi gravado`);
+  for (const [nome, v] of [['texto', flags.texto], ...opcoes.map((o, i) => [`opcao ${i + 1}`, o])]) {
+    const padrao = diario.recusaCanario(v);
+    if (padrao !== null) throw new Falha('segredo_na_nota', `${nome} casa o canário de segredo (${padrao}); nada foi gravado`);
+  }
+  const c = destinoDeAnotar(cwd, flags);
+  lerDiarioEstrito(c.dirEntrega);
+  let autor = 'desconhecido';
+  try { autor = git(c.raiz, 'config', 'user.email') || autor; } catch { /* sem user.email: o diário aceita "desconhecido" */ }
+  const r = diario.append(c.dirEntrega, c.sessao, { ts: new Date().toISOString(), autor, sessao: c.sessao, agente: 'orquestrador', tipo: 'nota', dados });
+  if (!r.ok) throw new Falha(/^forma_invalida: /.test(r.erro) ? 'forma_invalida' : 'evento_nao_gravado', `nota não gravada: ${r.erro}`);
+  if (r.gravado !== 'evento') throw new Falha('evento_nao_gravado', 'nota recusada pelo diário (canário ou tamanho)');
+  return { evento: { tipo: 'nota', dados }, entrega: c.entrega, sessao: c.sessao };
 }
 
 async function executar(argv, cwd) {
