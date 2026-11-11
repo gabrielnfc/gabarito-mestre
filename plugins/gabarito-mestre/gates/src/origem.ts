@@ -42,8 +42,8 @@ export function origemDe(ev: Evento): string | null {
 }
 
 const escapar = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-/** Tipo de `TipoEvento` ou `MotivoParar` como palavra inteira (letras, dígitos e `_` não encostam), em minúsculas como no contrato. */
-const PALAVRA_DE_TIPO: RegExp = new RegExp(`(?<![\\p{L}\\p{N}_])(?:${[...new Set<string>([...TIPOS_EVENTO, ...MOTIVOS_PARAR])].map(escapar).join('|')})(?![\\p{L}\\p{N}_])`, 'u');
+/** Tipo de `TipoEvento` ou `MotivoParar` como palavra inteira (letras, dígitos e `_` não encostam), em qualquer caixa (`Smoke`, `NOTA`). */
+const PALAVRA_DE_TIPO: RegExp = new RegExp(`(?<![\\p{L}\\p{N}_])(?:${[...new Set<string>([...TIPOS_EVENTO, ...MOTIVOS_PARAR])].map(escapar).join('|')})(?![\\p{L}\\p{N}_])`, 'iu');
 
 /**
  * Identificador com ponto e camelCase (`loop.tetoTokens`): a regex literal não pega (`\b` falha entre `o` e `T`, medido), o plano exige `true`.

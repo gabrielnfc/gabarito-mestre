@@ -5,6 +5,7 @@
  *  M-T4b  tipo novo cai em `(automático)`              ⇒ `tipo-fora-da-tabela-null` falha
  *  M-T4c  `nomeNatural` troca todo `.` por espaço      ⇒ `nome-natural-ponto-so-antes-de-letra` falha (DP-4)
  *  M-T4d  `linhaTecnica` ignora TipoEvento/MotivoParar ⇒ `linha-tecnica-tipo-e-motivo-como-palavra` falha
+ *  M-T4j  palavra de tipo sensível a caixa (sem flag `i`) ⇒ `palavra-tipo-qualquer-caixa` falha
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -208,6 +209,20 @@ test('linha-tecnica-tipo-e-motivo-como-palavra', () => {
   assert.equal(linhaTecnica('denota'), false);
   assert.equal(linhaTecnica('notação'), false);
   assert.equal(linhaTecnica('smoking'), false);
+});
+
+test('palavra-tipo-qualquer-caixa', () => {
+  // Review r1 MAJOR 1: a caixa não libera a palavra de tipo/motivo.
+  for (const t of ['Smoke verde', 'Rollback falhou', 'Nota do orquestrador', 'NOTA', 'TETO_TOKENS', 'Desvio de rota', 'APRENDIZADO registrado', 'sMoKe']) {
+    assert.equal(linhaTecnica(t), true, t);
+  }
+  // Vizinho que continua não sendo a palavra, em qualquer caixa.
+  for (const t of ['Smokes', 'NOTAÇÃO', 'Denota', 'ROLLBACK1']) assert.equal(linhaTecnica(t), false, t);
+});
+
+test('tag-pre-release-fica-so-com-xyz', () => {
+  // Review r1 MINOR 4: decisão fixada (sufixo de pré-release é ignorado), não acidente.
+  assert.equal(tagNatural('v2.1.0-rc.1'), '2.1.0');
 });
 
 // ── costura: o que o resto consome é o `dist/` ────────────────────────────────────────────────────────────────────────────────
