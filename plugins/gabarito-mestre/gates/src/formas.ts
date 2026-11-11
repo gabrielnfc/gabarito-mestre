@@ -8,7 +8,30 @@
  * `custo.medicao` e (E4) `task.iniciada.modelo` e `task.integrada.mutacoes`; para eles, `dados` que não é objeto segue aceito (é o que o diário aceita hoje: nenhum evento existente passa a ser recusado).
  */
 
-import type { Papel } from './tipos.ts';
+import type { MotivoParar, Papel, TipoEvento } from './tipos.ts';
+
+/** Lista runtime da união `TipoEvento` (GM-14): o teste `tipos-evento-cobre-a-uniao` confere contra o fonte de `tipos.ts`. */
+export const TIPOS_EVENTO: readonly TipoEvento[] = Object.freeze([
+  'producao.acesso', 'operacao.destrutiva', 'guarda.deny', 'guarda.ask', 'sessao.inicio', 'guarda.heartbeat', 'diario.recusa',
+  'task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'ci.resultado', 'loop.parar', 'loop.pausa',
+  'custo.medicao', 'sessao.pouso', 'sessao.retomada',
+  'sombra.consulta', 'decisao.sombra', 'desvio', 'descoberta', 'emenda.proposta', 'spec.emendada', 'emenda.rejeitada',
+  'entrega.inicio', 'entrega.smoke', 'entrega.rollback', 'entrega.fim', 'entrega.agendada',
+  'spec.aprovada', 'entrega.devolvida',
+  'aprendizado', 'aprendizado.nada', 'dono.mensagem',
+  'fato.medido', 'nota', 'dono.resposta',
+] as const satisfies readonly TipoEvento[]);
+
+/** Lista runtime da união `MotivoParar` (GM-14), conferida do mesmo jeito. */
+export const MOTIVOS_PARAR: readonly MotivoParar[] = Object.freeze([
+  'teto_rodadas', 'ci_vermelho', 'teto_tokens', 'sem_pouso', 'sem_progresso', 'diario_invalido', 'nao_conseguiu', 'smoke', 'rollback', 'janela_ausente',
+] as const satisfies readonly MotivoParar[]);
+
+/**
+ * `IdPergunta` (GM-14): `<sessao>:<seq>` (sessão `[A-Za-z0-9-]{1,128}`, seq ≥ 1) ou `herdar:<id>`, com o id ESTÁVEL do candidato herdado em hex
+ * minúsculo 8..64 (DP-6: derivado de origem + sha256 do trecho; índice de lista não serve). A sessão `herdar` não entra na 1ª forma.
+ */
+export const ID_PERGUNTA_RE: RegExp = /^(?:(?!herdar:)[A-Za-z0-9-]{1,128}:[1-9]\d{0,14}|herdar:[0-9a-f]{8,64})$/;
 
 /** `REQ-<ÁREA>-<n>`, padrão inteiro (âncoras): `REQ-A-1x` e minúscula não casam. */
 export const REQ_RE: RegExp = /^REQ-[A-Z0-9]+-\d+$/;
@@ -30,6 +53,12 @@ const ENTREGA_RE = /^[A-Z]+-\d+$/;
 const REGRA_MAX = 300;
 const DESTINOS_FIXOS: readonly string[] = ['instantaneo', 'spec'];
 const EVENTO_FONTE_RE = /^evento:([A-Za-z0-9._-]{1,128}):([1-9]\d*)$/;
+const NOTA_MAX = 160;
+const OPCAO_MAX = 60;
+const TIPOS_NOTA: readonly string[] = ['ideia', 'desvio', 'assunto', 'duvida', 'pendencia'];
+const FONTES_FATO: readonly string[] = ['git', 'gh', 'arquivo', 'mod'];
+const ESTADOS_PR: readonly string[] = ['aberto', 'mergeado', 'fechado'];
+const CONFIRMACAO_FONTE_RE = /^(.+):([1-9]\d{0,8})$/;
 
 type Obj = Record<string, unknown>;
 const ehObjeto = (v: unknown): v is Obj => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -171,13 +200,29 @@ const refEvento = (v: unknown): boolean => ehObjeto(v) && typeof campo(v, 'sessa
 const contar = (t: string): number => [...t].length;
 const temControle = (t: string): boolean => [...t].some((ch) => { const c = ch.codePointAt(0) as number; return c < 0x20 || c === 0x7f; });
 
-/** Fonte da medição: caminho relativo sem `..` (nunca absoluto, nunca barra invertida) ou `evento:<sessao>:<seq>`. */
-function fonteValida(f: unknown): boolean {
+/** Caminho relativo que fica na árvore: sem `..`, nunca absoluto, nunca barra invertida nem letra de unidade, sem controle. */
+function caminhoRelativo(f: unknown): f is string {
   if (typeof f !== 'string' || f.trim() === '' || temControle(f)) return false;
-  if (f.startsWith('evento:')) return EVENTO_FONTE_RE.test(f);
   if (f.includes('\\') || /^[A-Za-z]:/.test(f)) return false;
   // `/` inicial, `a//b` e `a/` viram segmento vazio: recusados junto com `..`.
   return f.split('/').every((seg) => seg !== '..' && seg !== '');
+}
+
+/** Fonte da medição: caminho relativo sem `..` (nunca absoluto, nunca barra invertida) ou `evento:<sessao>:<seq>`. */
+function fonteValida(f: unknown): boolean {
+  if (typeof f === 'string' && f.startsWith('evento:')) return !temControle(f) && EVENTO_FONTE_RE.test(f);
+  return caminhoRelativo(f);
+}
+
+/** `confirmacao` (GM-14, D11): exatamente `{fonte: '<arquivo relativo>:<linha ≥ 1>', resposta: {sessao, seq}}`. Só forma; o resto é de `validarAprendizado`. */
+function confirmacaoInvalida(c: unknown): string | null {
+  if (!ehObjeto(c)) return '`confirmacao` esperado {fonte, resposta}';
+  const extra = Object.keys(c).find((k) => k !== 'fonte' && k !== 'resposta');
+  if (extra !== undefined) return `\`confirmacao.${extra}\` não permitido: só {fonte, resposta}`;
+  const fonte = campo(c, 'fonte');
+  const m = typeof fonte === 'string' ? CONFIRMACAO_FONTE_RE.exec(fonte) : null;
+  if (m === null || !caminhoRelativo(m[1])) return '`confirmacao.fonte` esperado `<arquivo relativo sem ..>:<linha ≥ 1>`';
+  return refEvento(campo(c, 'resposta')) ? null : '`confirmacao.resposta` esperado {sessao: texto da forma de sessão, seq: inteiro ≥ 1}';
 }
 
 /** Obrigatório e do tipo `RefEvento`; `permiteNulo` aceita `null` (gatilho do aprendizado sem pendência). */
@@ -210,6 +255,11 @@ function evidenciaDoAprendizado(o: Obj): string | null {
     if (typeof numero !== 'number' || !Number.isFinite(numero)) return invalida('`medicao.numero` esperado número finito');
     if (!fonteValida(campo(medicao, 'fonte'))) return invalida('`medicao.fonte` esperado caminho relativo sem `..` ou `evento:<sessao>:<seq>`');
   }
+  const confirmacao = campo(v, 'confirmacao');
+  if (confirmacao !== undefined) {
+    const m = confirmacaoInvalida(confirmacao);
+    if (m !== null) return invalida(m);
+  }
   return null;
 }
 
@@ -230,13 +280,15 @@ function substituiDoAprendizado(o: Obj): string | null {
   return entrega === undefined || (typeof entrega === 'string' && ENTREGA_RE.test(entrega)) ? null : invalido;
 }
 
-/** D só com evidência da máquina: sem `eventos` nem `medicao`, o motivo manda gravar como M. */
+/** D só com evidência: sem `eventos`, `medicao` nem `confirmacao` (D herdado, GM-14), o motivo manda gravar como M. */
 function dSemEvidencia(o: Obj): string | null {
   if (campo(o, 'status') !== 'D') return null;
   // `primeiro` avalia todos os argumentos: sem a chave (ou com tipo errado) a regra de `evidencia` já recusa; aqui nunca lança.
   const ev = campo(o, 'evidencia');
   if (!ehObjeto(ev)) return null;
-  return campo(ev, 'eventos') === undefined && campo(ev, 'medicao') === undefined ? 'status `D` sem evidência da máquina (`eventos` ou `medicao`): grave como M' : null;
+  return campo(ev, 'eventos') === undefined && campo(ev, 'medicao') === undefined && campo(ev, 'confirmacao') === undefined
+    ? 'status `D` sem evidência da máquina (`eventos` ou `medicao`) nem `confirmacao`: grave como M'
+    : null;
 }
 
 const aprendizado: Regra = (o) => primeiro(
@@ -252,6 +304,93 @@ const donoMensagem: Regra = (o) => {
   const charsErro = chars === undefined ? obrigatorio('chars') : typeof chars === 'number' && Number.isInteger(chars) && chars >= 0 ? null : 'campo `chars` inválido: esperado inteiro ≥ 0';
   const extra = Object.keys(o).find((k) => k !== 'sha256' && k !== 'chars');
   return primeiro(exigirSha256(o), charsErro, extra === undefined ? null : `campo \`${extra}\` não permitido: \`dono.mensagem\` carrega só {sha256, chars}`);
+};
+
+// ── GM-14 T1: fato.medido, nota, dono.resposta ────────────────────────────────────────────────────────────────────────────────
+
+/** Primeira chave fora de `permitidas`, como motivo; `null` se todas pertencem à forma. */
+function chaveExtra(o: Obj, permitidas: readonly string[], forma: string): string | null {
+  const extra = Object.keys(o).find((k) => !permitidas.includes(k));
+  return extra === undefined ? null : `campo \`${extra}\` não permitido: ${forma}`;
+}
+
+/** Texto de 1 linha (sem controle), não vazio e com no máximo `max` caracteres (por caractere, não byte); sem `max`, só os demais. */
+function textoLinha(o: Obj, nome: string, max?: number): string | null {
+  const v = campo(o, nome);
+  if (v === undefined) return obrigatorio(nome);
+  if (typeof v !== 'string' || v.trim() === '' || temControle(v)) return `campo \`${nome}\` inválido: esperado texto não vazio de 1 linha`;
+  const n = contar(v);
+  return max !== undefined && n > max ? `campo \`${nome}\` inválido: ${n} caracteres, máximo ${max}` : null;
+}
+
+function inteiroNaoNegativo(o: Obj, nome: string): string | null {
+  const v = campo(o, nome);
+  if (v === undefined) return obrigatorio(nome);
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0 ? null : `campo \`${nome}\` inválido: esperado inteiro ≥ 0`;
+}
+
+function exigirCaminho(o: Obj, nome: string): string | null {
+  const v = campo(o, nome);
+  if (v === undefined) return obrigatorio(nome);
+  return caminhoRelativo(v) ? null : `campo \`${nome}\` inválido: esperado caminho relativo sem \`..\``;
+}
+
+/** Forma exata do `valor` por `chave`: cada campo com a sua regra; nenhum a mais. */
+const FORMAS_FATO: ReadonlyMap<string, Readonly<Record<string, (o: Obj, nome: string) => string | null>>> = new Map([
+  ['branch', { nome: (o, n) => textoLinha(o, n) }],
+  ['spec', { caminho: exigirCaminho, sha256: (o) => exigirSha256(o), secoes: inteiroNaoNegativo }],
+  ['plano', { tasks: inteiroNaoNegativo }],
+  ['pr', { numero: inteiroPos, estado: (o, n) => exigirEnum(o, n, ESTADOS_PR), branch: (o, n) => textoLinha(o, n) }],
+  ['release', { tag: (o, n) => textoLinha(o, n) }],
+  ['agente', { id: (o, n) => textoLinha(o, n), papel: (o, n) => textoLinha(o, n), estado: (o, n) => textoLinha(o, n) }],
+]);
+
+const fatoMedido: Regra = (o) => {
+  const base = primeiro(
+    chaveExtra(o, ['chave', 'fonte', 'valor'], '`fato.medido` carrega só {chave, fonte, valor}'),
+    exigirEnum(o, 'chave', [...FORMAS_FATO.keys()]), exigirEnum(o, 'fonte', FONTES_FATO),
+  );
+  if (base !== null) return base;
+  const valor = campo(o, 'valor');
+  if (valor === undefined) return obrigatorio('valor');
+  if (!ehObjeto(valor)) return 'campo `valor` inválido: esperado objeto';
+  const chave = campo(o, 'chave') as string;
+  const forma = FORMAS_FATO.get(chave) as Readonly<Record<string, (o: Obj, nome: string) => string | null>>;
+  const campos = Object.keys(forma);
+  const erro = primeiro(chaveExtra(valor, campos, `\`valor\` de \`${chave}\` carrega só {${campos.join(', ')}}`), ...campos.map((k) => forma[k](valor, k)));
+  return erro === null ? null : `valor de \`${chave}\`: ${erro}`;
+};
+
+function opcoesDaNota(o: Obj): string | null {
+  const v = campo(o, 'opcoes');
+  if (campo(o, 'tipo') !== 'duvida') return v === undefined ? null : 'campo `opcoes` não permitido: só `duvida` leva opções';
+  if (v === undefined) return obrigatorio('opcoes');
+  const invalido = `campo \`opcoes\` inválido: esperado 2 a 4 textos de 1 linha com 1 a ${OPCAO_MAX} caracteres, sem repetição`;
+  if (!Array.isArray(v) || v.length < 2 || v.length > 4) return invalido;
+  if (!v.every((x) => typeof x === 'string' && x.trim() !== '' && !temControle(x) && contar(x) <= OPCAO_MAX)) return invalido;
+  return new Set(v.map((x: string) => x.trim().toLowerCase())).size === v.length ? null : invalido;
+}
+
+const nota: Regra = (o) => primeiro(
+  chaveExtra(o, ['tipo', 'texto', 'opcoes'], '`nota` carrega só {tipo, texto, opcoes?}'),
+  exigirEnum(o, 'tipo', TIPOS_NOTA), textoLinha(o, 'texto', NOTA_MAX), opcoesDaNota(o),
+);
+
+/** `dono.resposta`: `{pergunta, opcao, rotulo}` OU `{pergunta, sha256, chars}`; misturar, ou qualquer outra chave (`texto`), recusa. */
+const donoResposta: Regra = (o) => {
+  const porOpcao = campo(o, 'opcao') !== undefined || campo(o, 'rotulo') !== undefined;
+  const porHash = campo(o, 'sha256') !== undefined || campo(o, 'chars') !== undefined;
+  if (porOpcao && porHash) return 'formas misturadas: exatamente uma de {pergunta, opcao, rotulo} ou {pergunta, sha256, chars}';
+  const pergunta = campo(o, 'pergunta');
+  const perguntaErro = pergunta === undefined
+    ? obrigatorio('pergunta')
+    : typeof pergunta === 'string' && ID_PERGUNTA_RE.test(pergunta) ? null : 'campo `pergunta` inválido: esperado `<sessao>:<seq>` ou `herdar:<id em hex>`';
+  if (porHash) {
+    return primeiro(chaveExtra(o, ['pergunta', 'sha256', 'chars'], '`dono.resposta` digitada carrega só {pergunta, sha256, chars}'), perguntaErro, exigirSha256(o), inteiroNaoNegativo(o, 'chars'));
+  }
+  const opcao = campo(o, 'opcao');
+  const opcaoErro = opcao === undefined ? obrigatorio('opcao') : typeof opcao === 'number' && Number.isInteger(opcao) && opcao >= 1 && opcao <= 4 ? null : 'campo `opcao` inválido: esperado inteiro de 1 a 4';
+  return primeiro(chaveExtra(o, ['pergunta', 'opcao', 'rotulo'], '`dono.resposta` carrega só {pergunta, opcao, rotulo}'), perguntaErro, opcaoErro, textoLinha(o, 'rotulo', OPCAO_MAX));
 };
 
 const REGRAS: ReadonlyMap<string, Regra> = new Map<string, Regra>([
@@ -286,6 +425,10 @@ const REGRAS: ReadonlyMap<string, Regra> = new Map<string, Regra>([
   ['aprendizado', aprendizado],
   ['aprendizado.nada', aprendizadoNada],
   ['dono.mensagem', donoMensagem],
+  // GM-14: fato medido (forma exata por chave), anotação do orquestrador e resposta do dono por botão.
+  ['fato.medido', fatoMedido],
+  ['nota', nota],
+  ['dono.resposta', donoResposta],
 ]);
 
 /** Tipos da E1/E2 que ganharam só campos opcionais: `dados` que não é objeto segue aceito (nada que existe hoje passa a ser recusado). */

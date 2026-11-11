@@ -48,7 +48,11 @@ export type TipoEvento =
   // E5a (GM-13): aprendizado, fechamento sem regra e mensagem do dono
   | 'aprendizado'
   | 'aprendizado.nada'
-  | 'dono.mensagem';
+  | 'dono.mensagem'
+  // GM-14: fato medido, anotação do orquestrador e resposta do dono por botão
+  | 'fato.medido'
+  | 'nota'
+  | 'dono.resposta';
 export type Fonte = 'origin' | 'local';
 export type AmbienteDecl = {
   hosts?: string[];
@@ -149,7 +153,7 @@ export type RefEvento = { sessao: string; seq: number };
 export type RefAprendizado = RefEvento & { entrega?: string };
 export type DadosAprendizado = {
   tipo: 'E' | 'A'; status: 'D' | 'M'; gatilho: RefEvento | null;
-  evidencia: { eventos?: RefEvento[]; medicao?: { fonte: string; numero: number } };
+  evidencia: { eventos?: RefEvento[]; medicao?: { fonte: string; numero: number }; confirmacao?: Confirmacao };
   regra: string; entra_em: string[]; substitui?: RefAprendizado;
 };
 export type TipoGatilho = 'review' | 'parar' | 'fechamento' | 'dono';
@@ -236,3 +240,23 @@ export type EstadoPainel = {
 export type OpcoesRender = { preset: 'esquadrao' | 'executivo'; tema: 'color' | 'mono'; narracao: boolean; largura: number;
   /** T14b: linhas que a superfície dá ao corpo (`props.scroll.bodyRows` da Pane). Ausente ⇒ saída byte a byte igual à sem altura; presente e menor que o desenho ⇒ densidade por altura (REQ-PNL-9, emenda D-R4). */
   altura?: number };
+
+// GM-14 (2.1.0): fato medido, nota, resposta do dono e confirmação de regra herdada. Formas fechadas, conferidas por `formaInvalida` no `append`.
+export type ChaveFato = 'branch' | 'spec' | 'plano' | 'pr' | 'release' | 'agente';
+/**
+ * `valor` tem exatamente as chaves da forma de `chave` (campo a mais ⇒ recusa). O `sessao` do evento que carrega um `fato.medido` de sessão
+ * é o `session_id` do mod (DP-2): a pergunta (b) se ancora por sessão.
+ */
+export type DadosFato = { chave: ChaveFato; fonte: 'git' | 'gh' | 'arquivo' | 'mod'; valor:
+  { nome: string } | { caminho: string; sha256: string; secoes: number } | { tasks: number } |
+  { numero: number; estado: 'aberto' | 'mergeado' | 'fechado'; branch: string } | { tag: string } |
+  { id: string; papel: string; estado: string } };
+export type TipoNota = 'ideia' | 'desvio' | 'assunto' | 'duvida' | 'pendencia';
+/** `texto` 1..160 caracteres, 1 linha; `opcoes` só (e sempre) com `duvida`: 2..4 de 1..60, sem repetição (caixa e espaço das pontas não distinguem). */
+export type DadosNota = { tipo: TipoNota; texto: string; opcoes?: string[] };
+/** `<sessao>:<seq>` (`ID_PERGUNTA_RE`) ou `herdar:<id>`, id estável do candidato herdado em hex 8..64 (DP-6: origem + sha256 do trecho, nunca índice). */
+export type IdPergunta = string;
+/** Uma das duas, nunca as duas: rótulo das opções, ou só `{sha256, chars}` do que foi digitado (o texto do dono nunca vai ao diário). */
+export type DadosResposta = { pergunta: IdPergunta; opcao: number; rotulo: string } | { pergunta: IdPergunta; sha256: string; chars: number };
+/** `fonte` = `<arquivo relativo>:<linha ≥ 1>`; `resposta` aponta a `dono.resposta` que confirmou (D11). */
+export type Confirmacao = { fonte: string; resposta: RefEvento };

@@ -3636,3 +3636,59 @@ describe('E5a T8: proxima leva os aprendizados D do papel no item despachar', ()
     assert.equal(depois.j.acao.tipo, 'despachar', depois.out);
   });
 });
+
+// ─────────────────────────────────────────────────────────────── GM-14 T1: fiação dos subcomandos novos (stubs)
+
+describe('GM-14: subcomandos novos ainda sem implementação', () => {
+  const PAINEL = join(AQUI, '..', 'scripts', 'painel.mjs');
+  const ONBOARDING = join(AQUI, '..', 'scripts', 'onboarding.mjs');
+  /** Fotografia do que o subcomando poderia gravar: toda a árvore fora de `.git` (caminho, tamanho e sha256) e o `git status`. */
+  const foto = (dir) => {
+    const lista = [];
+    const andar = (d) => {
+      for (const n of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, n.name);
+        if (n.name === '.git') continue;
+        if (n.isDirectory()) { lista.push(`${p}/`); andar(p); } else lista.push(`${p} ${createHash('sha256').update(readFileSync(p)).digest('hex')}`);
+      }
+    };
+    andar(dir);
+    return { arvore: lista.sort(), status: g(dir, 'status', '--porcelain', '--untracked-files=all') };
+  };
+  const rodarNode = (amb, script, args) => {
+    const r = spawnSync(process.execPath, [script, ...args], { cwd: amb.dir, encoding: 'utf8', env: amb.env, input: '' });
+    let j = null;
+    try { j = JSON.parse(r.stdout.trim()); } catch { /* fica null */ }
+    return { rc: r.status, j, out: r.stdout, err: r.stderr };
+  };
+
+  test('subcomandos-gm14-stub-nao-implementado: anotar, painel medir, onboarding herdar|foco ⇒ rc 1, erro nao_implementado, nada gravado', () => {
+    const amb = ambiente();
+    const casos = [
+      ['loop.mjs anotar', () => amb.cli(['anotar', '--tipo', 'ideia', '--texto', 'uma ideia'])],
+      ['loop.mjs anotar duvida', () => amb.cli(['anotar', '--tipo', 'duvida', '--texto', 'e agora?', '--opcao', 'sim', '--opcao', 'não', '--entrega', 'GM-10'])],
+      ['painel.mjs medir', () => rodarNode(amb, PAINEL, ['medir'])],
+      ['onboarding.mjs herdar', () => rodarNode(amb, ONBOARDING, ['herdar', '--root', amb.dir])],
+      ['onboarding.mjs herdar --gravar', () => rodarNode(amb, ONBOARDING, ['herdar', '--root', amb.dir, '--gravar'])],
+      ['onboarding.mjs foco', () => rodarNode(amb, ONBOARDING, ['foco', '--root', amb.dir])],
+      ['onboarding.mjs foco --sim', () => rodarNode(amb, ONBOARDING, ['foco', '--root', amb.dir, '--sim'])],
+    ];
+    for (const [nome, rodar] of casos) {
+      const antes = foto(amb.dir);
+      const r = rodar();
+      assert.equal(r.rc, 1, `${nome}: ${r.out}${r.err}`);
+      assert.ok(r.j !== null, `${nome}: saída não é 1 linha JSON: ${r.out}`);
+      assert.equal(r.j.ok, false, nome);
+      assert.equal(r.j.erro, 'nao_implementado', `${nome}: ${r.out}`);
+      assert.deepEqual(foto(amb.dir), antes, `${nome}: gravou algo`);
+    }
+    assert.equal(amb.eventos().length, 0);
+  });
+
+  test('subcomandos-gm14-vizinhos: subcomando desconhecido segue uso (rc 2) nos três CLIs', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['anota']).rc, 2);
+    assert.equal(rodarNode(amb, PAINEL, ['medi']).rc, 2);
+    assert.equal(rodarNode(amb, ONBOARDING, ['herda']).rc, 2);
+  });
+});
