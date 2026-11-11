@@ -1,5 +1,5 @@
 #!/bin/bash
-# gh falso (GM-14 T11). Modo em GH_MODO: ok | rc1 | rc4 | dorme | parcial | lixo | pr-vazio | pr-aberto | estado-minusculo | estado-novo | release-rc1 (pr ok, release rc 1).
+# gh falso (GM-14 T11). Modo em GH_MODO: ok | rc1 | rc4 | dorme | parcial | lixo | pr-vazio | pr-aberto | estado-minusculo | estado-novo | release-rc1 (pr ok, release rc 1) | release-tag-invalida (tagName não é texto).
 # Registra cada chamada em $GH_LOG (uma linha por chamada) quando definido.
 [ -n "$GH_LOG" ] && printf '%s\n' "$*" >> "$GH_LOG"
 sub="$1 $2"
@@ -21,6 +21,7 @@ case "$sub" in
     esac ;;
   "release list")
     [ "$GH_MODO" = release-rc1 ] && { echo "falha" >&2; exit 1; }
+    [ "$GH_MODO" = release-tag-invalida ] && { printf '[{"tagName":123}]'; exit 0; }
     printf '[{"tagName":"v2.0.0"}]' ;;
   *) echo "gh falso: $*" >&2; exit 2 ;;
 esac

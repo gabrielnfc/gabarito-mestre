@@ -1,5 +1,6 @@
 /**
- * `painel.mjs medir` (GM-14, REQ-DIA-1): o ÚNICO que grava `fato.medido`, e só quando o valor muda.
+ * `painel.mjs medir` (GM-14, REQ-DIA-1): o ÚNICO que grava `fato.medido`, e só quando o valor muda DENTRO DA SESSÃO (a 1ª medição de cada sessão
+ * grava: é o que dá à sessão nova a âncora da pergunta (b)).
  *
  * Fatos e fontes: branch (git), spec (`docs/superpowers/specs/*.md` do checkout da sessão com `PBI: <ID>` no cabeçalho), plano (`plano.json` da
  * entrega), pr e release (`gh`, timeout de 5 s), agente (stdin do mod). Entrega = `idDaBranch` (a MESMA regra da trilha, T3); sem ela tudo vai a `_sem-id`.
@@ -18,7 +19,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { isatty } from 'node:tty';
 import { join } from 'node:path';
-import { append, dirEntrega, lerEstrito } from '../dist/diario.js';
+import { append, dirEntrega, lerEstrito, recusaCanario } from '../dist/diario.js';
 import { idDaBranch } from '../dist/trilha.js';
 import { lerConfigOrigin } from '../lib/config.mjs';
 import { contexto } from './loop.mjs';
@@ -80,18 +81,42 @@ const canonico = (v) => JSON.stringify(v, (_k, x) => (x !== null && typeof x ===
 /** Identidade do fato dentro da chave: o mesmo `numero`/`caminho`/`id` é o mesmo fato (valor novo = evento novo). */
 const IDENTIDADE = { spec: 'caminho', pr: 'numero', agente: 'id' };
 
-/** Último `valor` medido da mesma chave (e identidade); `undefined` se nunca. */
-function ultimoValor(eventos, chave, valor) {
+/** Último `valor` medido da mesma chave (e identidade) NESTA sessão; `undefined` se nunca. */
+function ultimoValor(eventos, sessao, chave, valor) {
   const campo = IDENTIDADE[chave];
   let achado;
   for (const e of eventos) {
-    if (e?.tipo !== 'fato.medido' || e.dados?.chave !== chave) continue;
+    if (e?.tipo !== 'fato.medido' || e.sessao !== sessao || e.dados?.chave !== chave) continue;
     const v = e.dados.valor;
     if (v === null || typeof v !== 'object') continue;
     if (campo !== undefined && v[campo] !== valor[campo]) continue;
     achado = v;
   }
   return achado;
+}
+
+const LINHA_MAX = 16384;
+
+/** Padrão que o `append` recusaria (mesma varredura: chaves e folhas; linha grande = 'tamanho'), ou `null`. Serve para não repetir a recusa. */
+function padraoDeRecusa(ev) {
+  if (JSON.stringify(ev).length > LINHA_MAX) return 'tamanho';
+  const pilha = [ev];
+  while (pilha.length > 0) {
+    const x = pilha.pop();
+    if (typeof x === 'string') {
+      const r = recusaCanario(x);
+      if (r !== null) return r;
+    } else if (Array.isArray(x)) {
+      for (const y of x) pilha.push(y);
+    } else if (x !== null && typeof x === 'object') {
+      for (const [k, y] of Object.entries(x)) {
+        const r = recusaCanario(k);
+        if (r !== null) return r;
+        pilha.push(y);
+      }
+    }
+  }
+  return null;
 }
 
 /** `idPadrao` da chave que a guarda lê (`fluxo.idPadrao`, origin/HEAD); ausente, não texto ou inválido ⇒ padrão. */
@@ -304,12 +329,19 @@ export function medir(cwd, opcoes = {}) {
     }
 
     for (const f of fatos) {
-      const antes = ultimoValor(eventos, f.chave, f.valor);
+      const antes = ultimoValor(eventos, sessao, f.chave, f.valor);
       if (antes !== undefined && canonico(antes) === canonico(f.valor)) continue;
       const ev = { ts: new Date(agora()).toISOString(), autor: 'painel', sessao, agente: 'painel', tipo: 'fato.medido', dados: { chave: f.chave, fonte: f.fonte, valor: f.valor } };
+      // recusa (canário/tamanho): `diario.recusa` só quando o motivo muda dentro da sessão (1 por sessão por motivo); não é progresso.
+      const padrao = padraoDeRecusa(ev);
+      if (padrao !== null && eventos.some((e) => e?.tipo === 'diario.recusa' && e.sessao === sessao && e.dados?.padrao === padrao)) { falhas.push(`recusado: ${f.chave}`); continue; }
       const r = append(dir, sessao, ev);
       if (!r.ok) { falhas.push(`nao_gravou: ${f.chave}: ${String(r.erro).slice(0, 160)}`); continue; }
-      if (r.gravado !== 'evento') { falhas.push(`recusado: ${f.chave}`); continue; }
+      if (r.gravado !== 'evento') {
+        eventos = [...eventos, { ts: ev.ts, autor: ev.autor, sessao, agente: ev.agente, tipo: 'diario.recusa', dados: { tipo: 'fato.medido', padrao: padrao ?? 'desconhecido' }, seq: 0, hash_anterior: null }];
+        falhas.push(`recusado: ${f.chave}`);
+        continue;
+      }
       eventos = [...eventos, { ...ev, seq: 0, hash_anterior: null }];
       gravados.push(f.chave);
     }

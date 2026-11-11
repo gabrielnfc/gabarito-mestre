@@ -13,7 +13,8 @@ import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { append, ler } from '../dist/diario.js';
-import { trilhaDe } from '../dist/trilha.js';
+import { trilhaDe, ancoraDaPerguntaB } from '../dist/trilha.js';
+import { marcaDeProgresso, jaParou } from '../dist/pouso.js';
 import { medir } from '../scripts/painel-medir.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -374,6 +375,125 @@ describe('medir: specs e plano da entrega', () => {
     writeFileSync(join(dirDe(d), 'plano.json'), JSON.stringify({ tasks: [{}, {}] }));
     assert.deepEqual(rodarMedir(d).gravados, ['plano']);
     assert.equal(fatos(d, 'GM-14', 'plano')[0].dados.valor.tasks, 2);
+  });
+});
+
+describe('medir: dedupe por sessao (BLOCKER r1) e recusa do canario (MAJOR r1, REQ-DIA-1 emenda)', () => {
+  test('nova-sessao-em-main-grava-e-tem-ancora-b: a 1a medicao de cada sessao grava; repetir na mesma sessao nao', () => {
+    const d = repo('main');
+    const A = rodarMedir(d);
+    assert.deepEqual(A.gravados, ['branch', 'release']);
+    const B = medir(d, { rodar: rodarCom('ok'), agentes: entrada([], 'sessao-2'), agora: () => Date.parse('2026-11-11T20:05:00Z') });
+    assert.deepEqual(B.gravados, ['branch', 'release']);
+    const B2 = medir(d, { rodar: rodarCom('ok'), agentes: entrada([], 'sessao-2'), agora: () => Date.parse('2026-11-11T20:06:00Z') });
+    assert.deepEqual(B2.gravados, []);
+    const ev = ler(dirDe(d, '_sem-id'));
+    assert.equal(ancoraDaPerguntaB(ev, SID), `${SID}:1`);
+    assert.equal(ancoraDaPerguntaB(ev, 'sessao-2'), 'sessao-2:1');
+    assert.equal(ev.filter((e) => e.sessao === 'sessao-2' && e.tipo === 'fato.medido').length, 2);
+  });
+
+  const CANARIO_A = 'feat/GM-14-AKIAABCDEFGHIJKLMNOP';
+  const CANARIO_B = 'feat/GM-14-ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+  const recusas = (d) => ler(dirDe(d)).filter((e) => e.tipo === 'diario.recusa');
+
+  test('recusa-uma-vez-por-sessao-por-motivo: 3 medicoes com o mesmo canario => 1 recusa; motivo novo => nova recusa; falha segue ok:false', () => {
+    const d = repo(CANARIO_A);
+    const falhas = [];
+    for (let i = 0; i < 3; i++) falhas.push(rodarMedir(d, 'pr-vazio').falhas);
+    assert.deepEqual(falhas, [['recusado: branch'], ['recusado: branch'], ['recusado: branch']]);
+    assert.equal(recusas(d).length, 1);
+    assert.deepEqual(recusas(d)[0].dados, { tipo: 'fato.medido', padrao: 'AKIA' });
+    assert.equal(recusas(d)[0].sessao, SID);
+    // outro motivo na MESMA sessão => nova recusa
+    git(d, 'checkout', '-q', '-b', CANARIO_B);
+    rodarMedir(d, 'pr-vazio');
+    rodarMedir(d, 'pr-vazio');
+    assert.deepEqual(recusas(d).map((e) => e.dados.padrao), ['AKIA', 'ghp']);
+    // sessão nova, mesmo motivo => 1 recusa dela
+    medir(d, { rodar: rodarCom('pr-vazio'), agentes: entrada([], 'sessao-2'), agora: () => Date.parse('2026-11-11T21:00:00Z') });
+    medir(d, { rodar: rodarCom('pr-vazio'), agentes: entrada([], 'sessao-2'), agora: () => Date.parse('2026-11-11T21:01:00Z') });
+    assert.deepEqual(recusas(d).map((e) => `${e.sessao}:${e.dados.padrao}`), [`${SID}:AKIA`, `${SID}:ghp`, 'sessao-2:ghp']);
+  });
+
+  test('recusa-na-mesma-medicao: branch e 2 PRs (mesmo canario) numa so medicao => 1 recusa, e a falha de cada fato recusado segue', () => {
+    const d = repo(CANARIO_A);
+    const r = rodarMedir(d, 'ok');
+    assert.deepEqual(r.falhas, ['recusado: branch', 'recusado: pr', 'recusado: pr']);
+    assert.equal(recusas(d).length, 1);
+    assert.deepEqual(fatos(d, 'GM-14', 'release').length, 1);
+  });
+
+  test('recusa-por-tamanho: linha acima de 16 KiB (agente com id enorme) => 1 recusa "tamanho" por sessao, nao uma por medicao', () => {
+    const d = repo();
+    const ags = [{ id: 'x'.repeat(20000), type: 'impl', status: 'running' }];
+    for (let i = 0; i < 3; i++) rodarMedir(d, 'ok', { agentes: ags });
+    assert.deepEqual(recusas(d).map((e) => e.dados.padrao), ['tamanho']);
+  });
+
+  test('recusa-nao-e-progresso: a marca de progresso nao muda com recusas, e jaParou nao se desfaz', () => {
+    const d = repo(CANARIO_A);
+    rodarMedir(d, 'pr-vazio');
+    const antes = marcaDeProgresso(ler(dirDe(d)));
+    for (let i = 0; i < 3; i++) rodarMedir(d, 'pr-vazio');
+    git(d, 'checkout', '-q', '-b', CANARIO_B);
+    rodarMedir(d, 'pr-vazio');
+    const ev = ler(dirDe(d));
+    assert.ok(ev.some((e) => e.tipo === 'diario.recusa'));
+    assert.equal(marcaDeProgresso(ev), antes);
+    assert.equal(marcaDeProgresso(ev), 0);
+    const parar = append(dirDe(d), 'loop', { ts: '2026-11-11T20:10:00.000Z', autor: 'loop', sessao: 'loop', agente: 'loop', tipo: 'loop.parar', dados: { motivo: 'teto_rodadas' } });
+    assert.equal(parar.ok, true, parar.erro);
+    rodarMedir(d, 'pr-vazio');
+    assert.equal(jaParou(ler(dirDe(d))), true);
+  });
+});
+
+describe('medir -> consumidores reais (P9): CLI grava, trilhaDe e pouso leem o que foi gravado', () => {
+  const PAINEL = join(AQUI, '..', 'scripts', 'painel.mjs');
+  const cli = (d, input) => spawnSync(process.execPath, [PAINEL, 'medir', '--agentes'], { cwd: d, input, encoding: 'utf8', env: { ...process.env, PATH: `${FAKE_GH}:${process.env.PATH}`, GH_MODO: 'pr-aberto' } });
+
+  test('cli-medir-alimenta-trilha-e-ancora: PR aberto medido vira "aberto" na trilha; marca de progresso fica 0; ancora (b) da sessao nova vem do medir', () => {
+    const d = repo();
+    assert.equal(cli(d, JSON.stringify(entrada([], 'sessao-1'))).status, 0);
+    assert.equal(cli(d, JSON.stringify(entrada([], 'sessao-2'))).status, 0);
+    const ev = ler(dirDe(d));
+    const t = trilhaDe({ branch: 'enabler/GM-14-clareza', idPadrao: '[A-Z]+-\\d+', specs: [], plano: null, ledger: false, gh: 'ok', ultimas: [], sessao: 'sessao-2' }, ev);
+    assert.equal(t.identificada, false); // sem spec/plano a trilha não se afirma; o PR medido só entra com 2º fato (regra da trilha)
+    assert.equal(ancoraDaPerguntaB(ev, 'sessao-2'), `sessao-2:${ev.find((e) => e.sessao === 'sessao-2').seq}`);
+    assert.equal(marcaDeProgresso(ev), 0);
+    // com um plano medido (2º fato) a trilha usa o PR que o medir gravou: aberto => fase PR não é ✓
+    mkdirSync(dirDe(d), { recursive: true });
+    writeFileSync(join(dirDe(d), 'plano.json'), JSON.stringify({ tasks: [{ id: 'T1' }] }));
+    assert.equal(cli(d, JSON.stringify(entrada([], 'sessao-3'))).status, 0);
+    const ev2 = ler(dirDe(d));
+    const t2 = trilhaDe({ branch: 'enabler/GM-14-clareza', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['T1'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 'sessao-3' }, ev2);
+    assert.equal(t2.identificada, true);
+    assert.equal(t2.entrega, 'GM-14');
+    assert.equal(t2.marcas[5], '○'); // PR aberto (não mergeado) medido pelo CLI: a fase PR não está concluída
+    assert.equal(jaParou(ev2), false);
+  });
+});
+
+describe('medir: tetos e validacao de release (R1, R2, R4 do revisor)', () => {
+  test('release-tag-nao-texto: tagName 123 => falha, nenhum fato de gh', () => {
+    const d = repo();
+    const r = rodarMedir(d, 'release-tag-invalida');
+    assert.deepEqual(r.falhas, ['gh_json_invalido: release list']);
+    assert.equal(fatos(d, 'GM-14', 'release').length + fatos(d, 'GM-14', 'pr').length, 0);
+  });
+  test('teto-de-agentes: 60 agentes => 50 gravados', () => {
+    const d = repo();
+    const ags = Array.from({ length: 60 }, (_, i) => ({ id: `a${i}`, type: 'implementador', status: 'running' }));
+    rodarMedir(d, 'ok', { agentes: ags });
+    assert.equal(fatos(d, 'GM-14', 'agente').length, 50);
+  });
+  test('teto-de-spec: spec com mais de 1 MiB falha (spec_grande) e nao e lida', () => {
+    const d = repo();
+    spec(d, 'grande.md', 'PBI: GM-14', `## S\n${'x'.repeat(1024 * 1024 + 1)}\n`);
+    const r = rodarMedir(d);
+    assert.ok(r.falhas.includes('spec_grande: grande.md'), JSON.stringify(r.falhas));
+    assert.equal(fatos(d, 'GM-14', 'spec').length, 0);
   });
 });
 

@@ -181,9 +181,9 @@ export function tasksDoNegado(plano         , eventos         , negados         
 
 /**
  * Eventos que não são trabalho do loop: o próprio mod os grava a cada turno ou ao parar. `dono.mensagem` e os de aprendizado
- * também não, nem os do painel (GM-14: `fato.medido`, `nota`, `dono.resposta`; o mod mede a cada turno): sem eles `jaParou` virava `false` depois de fechar a pendência `parar` e o mod regravava `loop.parar` (ciclo parar ⇄ aprender).
+ * também não, nem os do painel (GM-14: `fato.medido`, `nota`, `dono.resposta`, `diario.recusa` do canário; o mod mede a cada turno): sem eles `jaParou` virava `false` depois de fechar a pendência `parar` e o mod regravava `loop.parar` (ciclo parar ⇄ aprender).
  */
-const SEM_PROGRESSO                    = ['custo.medicao', 'loop.parar', 'dono.mensagem', 'aprendizado', 'aprendizado.nada', 'fato.medido', 'nota', 'dono.resposta'];
+const SEM_PROGRESSO                    = ['custo.medicao', 'loop.parar', 'dono.mensagem', 'aprendizado', 'aprendizado.nada', 'fato.medido', 'nota', 'dono.resposta', 'diario.recusa'];
 
 /** Quantos eventos de progresso o diário tem; muda quando algo novo acontece. Não-lista ⇒ -1 (constante: conta como encalhe). */
 export function marcaDeProgresso(eventos         )         {

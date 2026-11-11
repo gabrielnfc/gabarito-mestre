@@ -320,6 +320,9 @@ test('sem-progresso-gm14: fato.medido, nota e dono.resposta depois de loop.parar
   const fato: [TipoEvento, Record<string, unknown>] = ['fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'x' } }];
   const nota: [TipoEvento, Record<string, unknown>] = ['nota', { tipo: 'assunto', texto: 'algo' }];
   const resp: [TipoEvento, Record<string, unknown>] = ['dono.resposta', { pergunta: 's:1', opcao: 1, rotulo: 'sim' }];
+  const recusa: [TipoEvento, Record<string, unknown>] = ['diario.recusa', { tipo: 'fato.medido', padrao: 'AKIA' }];
+  assert.equal(jaParou(diario(ini('a'), parar, recusa)), true);
+  assert.equal(marcaDeProgresso(diario(ini('a'), con('a'), recusa, recusa)), 2);
   assert.equal(jaParou(diario(ini('a'), parar, fato)), true);
   assert.equal(jaParou(diario(ini('a'), parar, nota)), true);
   assert.equal(jaParou(diario(ini('a'), parar, resp)), true);
