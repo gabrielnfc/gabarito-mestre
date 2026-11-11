@@ -355,11 +355,13 @@ claude plugin list
 claude plugin marketplace remove gabarito-mestre
 claude plugin marketplace add '"'"'gabrielnfc/gabarito-mestre#gabarito-mestre--v1.1.0'"'"'
 claude plugin marketplace add gabrielnfc/gabarito-mestre
-claude plugin install gabarito-mestre@gabarito-mestre'
+claude plugin install gabarito-mestre@gabarito-mestre
+claude plugin update gabarito-mestre@gabarito-mestre --scope project
+claude plugin install gabarito-mestre@gabarito-mestre --scope project'
 CMDS_NOTA=$( { grep -oE 'claude plugin [^`]+' "$VIRADA"; printf "%s" "$CL2" | grep -oE 'claude plugin [^`]+'; } | sort -u)
 CMDS_FORA=$(printf "%s\n" "$CMDS_NOTA" | grep -vxF -f <(printf "%s\n" "$CMDS_OK") | grep . | wc -l | tr -d ' ')
 check "nota e CHANGELOG [2.0.0]: todo 'claude plugin …' está na lista fechada de comandos medidos" '[ "$CMDS_FORA" -eq 0 ]' "$CMDS_FORA comando(s) fora da lista medida"
-check "nota da virada cita os 9 comandos medidos (nenhum sumiu)" '[ "$(printf "%s\n" "$CMDS_NOTA" | grep -cxF -f <(printf "%s\n" "$CMDS_OK"))" -eq 9 ]' "comando medido ausente da nota"
+check "nota da virada cita os 11 comandos medidos (nenhum sumiu)" '[ "$(printf "%s\n" "$CMDS_NOTA" | grep -cxF -f <(printf "%s\n" "$CMDS_OK"))" -eq 11 ]' "comando medido ausente da nota"
 # GM-13 T18 m3: "Como voltar" traz os passos medidos na ordem (1.1.0: remove, add com tag, install; 2.0: remove, add sem tag, install)
 VOLTAR=$(sed -n '/^## Como voltar/,$p' "$VIRADA" | grep -oE '^[0-9]\. `claude plugin [^`]+' | sed -E 's/^[0-9]\. `//')
 VOLTAR_ESPERADO="claude plugin marketplace remove gabarito-mestre
@@ -369,6 +371,9 @@ claude plugin marketplace remove gabarito-mestre
 claude plugin marketplace add gabrielnfc/gabarito-mestre
 claude plugin install gabarito-mestre@gabarito-mestre"
 check "nota da virada: 'Como voltar' tem os 6 passos medidos, na ordem" '[ "$VOLTAR" = "$VOLTAR_ESPERADO" ]' "passos de 'Como voltar' diferem dos medidos"
+# GM-13 T18 proj (spike t17dh): a seção de atualização traz o passo por projeto e a conferência pelo cartão
+ATUALIZAR=$(sed -n '/^## Como atualizar/,/^## Rode o onboarding/p' "$VIRADA")
+check "nota da virada: atualização tem o passo '--scope project' e a conferência 'plugin 2.0.0' no cartão" 'printf "%s" "$ATUALIZAR" | grep -q "plugin update gabarito-mestre@gabarito-mestre --scope project" && printf "%s" "$ATUALIZAR" | grep -q "plugin 2.0.0"' "passo por projeto ausente da atualização"
 
 echo "── $falhas falha(s)"
 [ "$falhas" -eq 0 ]

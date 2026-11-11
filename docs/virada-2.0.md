@@ -13,8 +13,9 @@ Para quem usa o Gabarito Mestre. O que mudou está no `CHANGELOG.md`, seção `[
 
 1. `claude plugin marketplace update gabarito-mestre`
 2. `claude plugin update gabarito-mestre@gabarito-mestre`, e reinicie o Claude Code. A atualização automática vem desligada para catálogo de terceiros: sem esses comandos, nada muda.
-3. Só quem instalou a pré-versão (o catálogo `gabarito-mestre-next`): `claude plugin uninstall gabarito-mestre@gabarito-mestre-next --scope project` e `claude plugin marketplace remove gabarito-mestre-next`. Senão ficam dois plugins com o mesmo nome, e a documentação do Claude Code diz que os hooks de um deles são deixados de fora, sem dizer qual.
-4. Rode `claude plugin list`: deve aparecer um só `gabarito-mestre` habilitado.
+3. Quem instalou por projeto (escopo project) roda também, dentro de cada repo: `claude plugin update gabarito-mestre@gabarito-mestre --scope project`. Sem isso o projeto continua na 1.1.0, e o `claude plugin list` pode mostrar 2.0.0 mesmo assim (medido): confira abrindo uma sessão no repo e lendo `plugin 2.0.0` no cartão de início de sessão.
+4. Só quem instalou a pré-versão (o catálogo `gabarito-mestre-next`): `claude plugin uninstall gabarito-mestre@gabarito-mestre-next --scope project` e `claude plugin marketplace remove gabarito-mestre-next`. Senão ficam dois plugins com o mesmo nome, e a documentação do Claude Code diz que os hooks de um deles são deixados de fora, sem dizer qual.
+5. Rode `claude plugin list`: deve aparecer um só `gabarito-mestre` habilitado.
 
 A versão 1.1.0 antiga continua no disco depois da atualização (`cache/gabarito-mestre/gabarito-mestre/1.1.0/`), sem ser carregada.
 
@@ -52,6 +53,8 @@ Para voltar à 2.0, na ordem:
 1. `claude plugin marketplace remove gabarito-mestre`
 2. `claude plugin marketplace add gabrielnfc/gabarito-mestre`
 3. `claude plugin install gabarito-mestre@gabarito-mestre`
+
+Para manter a versão por projeto, rode dentro do repo: `claude plugin install gabarito-mestre@gabarito-mestre --scope project`.
 
 Avisos:
 
