@@ -43,8 +43,12 @@ describe('ehRepoDoPlugin — cópia instalada sob um pai com marketplace.json al
 });
 
 describe('gates/package.json 1.1.0', () => {
-  test('version é 2.0.0-alpha.5 (canal next)', () => {
-    assert.equal(pkg.version, '2.0.0-alpha.5');
+  test('version é 2.0.0 (virada: estável, sem sufixo de pré-versão)', () => {
+    assert.equal(pkg.version, '2.0.0');
+    assert.doesNotMatch(pkg.version, /alpha|beta|rc|-/);
+  });
+  test('sem-alpha: plugin.json e gates não carregam sufixo de pré-versão', { skip: noPlugin }, () => {
+    for (const v of [ler(PLUGIN_JSON).version, pkg.version]) assert.match(v, /^\d+\.\d+\.\d+$/, `versão com sufixo: ${v}`);
   });
   test('versao-manifestos: plugin.json, gates, marketplace (se trouxer versão) e CHANGELOG dizem a mesma versão', { skip: fora }, () => {
     const v = ler(PLUGIN_JSON).version;
@@ -125,8 +129,8 @@ describe('gates/package.json 1.1.0', () => {
   test('version do plugin.json igual à dos gates', { skip: noPlugin }, () => {
     assert.equal(ler(PLUGIN_JSON).version, pkg.version);
   });
-  test('marketplace-name-next: catálogo do canal next não conflita com o gabarito-mestre estável', { skip: noMkt }, () => {
-    assert.equal(ler(MKT_JSON).name, 'gabarito-mestre-next');
+  test('marketplace-name: na virada o catálogo se chama gabarito-mestre (quem atualiza usa gabarito-mestre@gabarito-mestre)', { skip: noMkt }, () => {
+    assert.equal(ler(MKT_JSON).name, 'gabarito-mestre');
   });
   test('versão só no plugin.json (doc oficial); entrada do marketplace não duplica', { skip: noMkt }, () => {
     assert.equal(ler(MKT_JSON).plugins[0].version, undefined);

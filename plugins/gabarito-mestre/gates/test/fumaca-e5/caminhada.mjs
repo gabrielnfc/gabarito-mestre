@@ -96,7 +96,7 @@ function montar() {
   // plugin falso só para o cartão (`--plugin-root`): versão e nada mais; o doctor do cartão não roda
   const plugin = join(base, 'plugin-falso');
   mkdirSync(join(plugin, '.claude-plugin'), { recursive: true });
-  writeFileSync(join(plugin, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'gabarito-mestre', version: '2.0.0-alpha.5' }));
+  writeFileSync(join(plugin, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'gabarito-mestre', version: '2.0.0' }));
 
   let agora = T0;
   const rodarCom = (script, args, { input, env = {}, congelar = true } = {}) => {

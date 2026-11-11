@@ -5,94 +5,38 @@ Usuários do plugin só recebem atualização quando `version` muda.
 
 ## [Unreleased]
 
-### Adicionado
+## [2.0.0] — 2026-11-11
 
-- Catálogo de ferramentas de planejamento: entrada da **Mesa**, gerenciador local de projetos com servidor MCP (`mcp__mesa__*`). Hierarquia Pasta/Lista/Tarefa com card de Iniciativa e de Epic, status do Fluxo Gabarito e busca do card pelo `cardTaskId`. Sem ela, `gabarito-instalar --vincular` não sabe buscar o card quando o servidor é `mesa`. Contribuição de Allan Rolli (PR #12).
-
-## [2.0.0-alpha.5] — 2026-11-10
-
-Canal `next`: o agente passa a aprender com a entrega e a registrar as decisões dela. Contrato e requisitos na spec; aqui só o que o usuário vê.
+Versão estável da 2.0. Quem está na 1.1.x: leia `docs/virada-2.0.md` (como atualizar, o que rodar de novo e como voltar). Resumo do que muda para quem usa:
 
 ### Adicionado
 
-- **Aprendizado do agente**: ao fim de um erro ou de um acerto, o agente que conduz a entrega registra a regra (ou registra que não há regra a tirar). As regras comprovadas (com evidência) voltam sozinhas ao resumo de início de sessão, às instruções do papel a que a regra se destina e à conferência de spec nova.
-- **Pouso de contexto**: `loop.mjs pousar` marca o ponto em que o contexto pode ser limpo; recusa enquanto houver tarefa em andamento. Depois do `/clear`, o resumo de início de sessão traz a linha de retomada e o loop segue de onde parou. Com o painel instalado (o mod), o pouso e o `/clear` são automáticos; sem ele, o agente roda `loop.mjs pousar` e pede ao dono, em uma linha, que digite `/clear`.
-- **Registro de decisões**: `loop.mjs registro` gera o `registro.md` da entrega, sempre igual para o mesmo histórico. Ele traz a aprovação da spec, as decisões da Sombra (o agente que responde dúvidas do loop a partir da spec, sem incomodar o dono), as emendas à spec, as vezes em que o dono liberou o limite de rodadas de revisão, os desvios do plano, as descobertas e os aprendizados. A skill do loop manda commitá-lo ao concluir a entrega.
-- **Conferência de spec**: a conformidade lista as regras aprendidas que a spec nova deveria tratar e marca as que ela não trata.
-- **Doctor**: avisa quando um aprendizado ficou pendente sem ser fechado, quando é para um papel que não existe mais ou quando uma hipótese ficou velha.
-- **Onboarding em uma fase só**: o onboarding detecta o que dá para detectar, mostra uma prévia e faz no máximo cinco perguntas: três de decisão (política de entrega, autonomia em produção e perfil de modelos) e até duas só para o que a detecção não resolveu (o que não couber fica registrado como não detectado). Não há mais passos a colar no terminal.
-- **Perfis de modelo**: o perfil escolhido na instalação (economia, padrão ou qualidade) define o modelo de cada papel.
-- **Fluxo Gabarito**: é o nome da organização do trabalho (Iniciativa, Epic e PBI) em todos os textos. O onboarding grava só a ferramenta de planejamento que detectou (e o conector dela); a Iniciativa, o Epic e o PBI são vinculados depois, por "trocar iniciativa" ou "vincular PBI-<n>" no `gabarito-instalar`. A conformidade confere cards e specs contra o fluxo.
+- **Fluxo Gabarito**: é o nome da organização do trabalho (Iniciativa, Epic e PBI) em todos os textos. A conformidade confere cards e specs contra esse fluxo.
+- **Instalação e onboarding em uma fase só**: `gabarito-instalar` detecta o que o repositório já mostra, faz uma prévia e pergunta no máximo cinco coisas (política de entrega, autonomia em produção, perfil de modelos e até duas dúvidas que a detecção não resolveu). Não há mais passos a colar no terminal. Quem veio da 1.1.x roda de novo.
+- **Perfis de modelo**: o perfil escolhido na instalação (economia, padrão ou qualidade) define o modelo de cada papel (implementador, revisor etc.). O doctor avisa quando um papel fica abaixo do recomendado.
+- **Entrega conduzida em loop** (skill `gabarito-loop`): a partir de um plano (`plano.json`), o agente despacha uma task por vez em uma worktree própria, exige review adversarial com mutações, integra e confere o CI, e registra tudo num diário da entrega. O número de tasks em paralelo vem da medição da máquina (`capacidade.mjs`); sem medição, 1.
+- **Sombra**: um agente que responde às dúvidas do loop só a partir da spec, citando a fonte, para não interromper o dono. Regra de negócio sem fonte na spec não é inventada: vira proposta de emenda, que o dono aprova ou rejeita.
+- **Spec aprovada pelo dono**: `/gabarito-mestre:aprovar` grava a aprovação (com o sha da spec; se a spec mudar, aprova de novo). Mudança de spec no meio da entrega entra por emenda (`/gabarito-mestre:emenda aprovar|rejeitar <n>`), e o limite de rodadas de review só o dono libera (`/gabarito-mestre:liberar <task>`).
+- **Painel no terminal** (precisa do mod do Claude Code): abre sozinho ao lado, em terminal largo, quando uma entrega começa. Mostra o plano, a equipe (contexto e tokens de cada agente) e o histórico, e a faixa acima do prompt traz o que depende do dono, com o comando inteiro. O que não foi medido aparece como `—`, nunca como zero. `/gabarito` lista as opções: `painel esquadrao` (detalhado), `painel executivo` (resumido), `color`/`mono`, `narracao on|off`, `nomes <pacote>`, `ligar`/`desligar`, `pausar` e `retomar`. Sem o mod, `pausar` e `retomar` continuam valendo e o painel não existe.
+- **Pouso de contexto**: o agente marca o ponto em que dá para limpar o contexto; depois do `/clear`, o resumo de início de sessão traz a linha de retomada e o loop segue de onde parou. Com o painel, isso é automático; sem ele, o agente pede ao dono, em uma linha, que digite `/clear`.
+- **Aprendizado do agente**: ao fim de um erro ou de um acerto, o agente registra a regra (ou registra que não há regra a tirar). Regras comprovadas voltam sozinhas ao resumo de início de sessão, às instruções do papel a que se destinam e à conferência de spec nova. O doctor avisa de aprendizado pendente, de papel que não existe mais e de hipótese velha.
+- **Registro de decisões**: `loop.mjs registro` gera o `registro.md` da entrega (aprovação da spec, decisões da Sombra, emendas, liberações do dono, desvios, descobertas e aprendizados), sempre igual para o mesmo histórico.
+- **Catálogo de ferramentas de planejamento**: entrada da **Mesa**, gerenciador local de projetos com servidor MCP (`mcp__mesa__*`), com card de Iniciativa e de Epic e busca do card pelo `cardTaskId`. Contribuição de Allan Rolli (PR #12).
+- **Doctor**: linhas `loop: mod ativo | sem mod` e `db: declarado | n/a`; "mod ativo" exige prova da sessão, não basta o mod existir.
 
-### Alterado
+### Alterado (quebra de comportamento em relação à 1.1)
 
-- Versão `2.0.0-alpha.5` no plugin e em `gates/package.json`.
+- **Hook único da guarda** (`gates/dist/guarda.js`) substitui `guard-destructive.sh` e `guard-production.sh`. Ele só pede confirmação (`ask`) ou nega (`deny`) em segredo, integridade do harness e escrita em produção; comando destrutivo local vira evento no diário, sem barrar. Nunca devolve `allow`.
+- **Escape hatch removido**: as variáveis `GABARITO_ALLOW_*` deixaram de existir e nenhuma mensagem explica contorno. Para rotina de produção autorizada, use `guarda.producao.permitidos` em `harness.config.json` (lido de `origin/HEAD`).
+- **`gate-task.mjs`** confere a árvore de trabalho com arquivos novos e ignorados, independente da configuração local do git.
+- **Nome do catálogo**: o catálogo é `gabarito-mestre` (na pré-versão era `gabarito-mestre-next`). Quem testou a pré-versão deve remover o catálogo antigo (veja `docs/virada-2.0.md`).
+- Versão `2.0.0` no plugin e em `gates/package.json`.
 
-## [2.0.0-alpha.4] — 2026-11-10
+### Limites conhecidos
 
-E4 do canal `next` (GM-12): painel de status do loop. Contrato e requisitos na spec da E4; aqui só o que o usuário vê.
-
-### Adicionado (GM-12)
-
-- **Pane e faixa do painel no terminal** (mod `painel.mjs`): a Pane mostra o loop da entrega em dois presets, `esquadrao` (padrão: plano, equipe com ctx/tokens por agente, histórico) e `executivo`, em `color` ou `mono`; a faixa acima do prompt traz o "depende de você" com o comando inteiro e um botão que só põe o comando no prompt, sem enviar. Quando o loop PAROU, o aviso aparece na faixa, em toast e em notify, 1 vez por parada. O dado vem do diário e dos subagentes vivos; o que não foi medido aparece como `—`, nunca como zero. Atualiza a cada turno e por relógio.
-- **Comando `/gabarito painel ...`**: abre ou foca a Pane; `esquadrao|executivo`, `color|mono`, `narracao on|off`, `nomes <pacote>` (pacote de nomes dos agentes, de fábrica ou em `.harness/temas/nomes/`), `ligar|desligar` (desligar fecha a Pane e tira a faixa, menos o PAROU). A resposta é uma linha; a preferência vale para todas as sessões e repositórios do plugin até a próxima troca.
-- **CLI `gates/scripts/painel.mjs`**: `estado` (JSON) e `texto [--largura N] [--preset ...] [--tema ...]` (padrão 80 colunas). Só lê; não grava nada em `.harness/`.
-- **`/gabarito-mestre:aprovar`**: o dono aprova a spec da entrega e o diário grava `spec.aprovada` (com o sha da spec; mudou a spec, aprova de novo).
-- **`entrega.mjs devolver --motivo <t>`**: registra `entrega.devolvida`; o painel passa a mostrar ao dono o comando do deploy.
-- **Campo opcional `titulo` por task no `plano.json`** (até 40 colunas); sem ele, o painel usa o H1 da spec ligada ou só o id.
-- **Skill `gabarito-loop`** (79 linhas): comando do painel no topo de todo status ao dono; `entrega.mjs devolver --motivo` quando `executar` for negado pelo modo de permissão; a `description` do `Agent` é a `descricao` do item.
-
-### Corrigido (GM-12)
-
-- **Gatilho da devolução do deploy**: a skill devolve quando `entrega.mjs executar` é negado pelo modo de permissão (o `auto` trata como deploy de produção) e para o turno com o comando exato para o dono; não é "quando o dono pedir".
-
-### Alterado (GM-12)
-
-- Versão `2.0.0-alpha.4` no plugin e em `gates/package.json`.
-
-## [2.0.0-alpha.3] — 2026-11-09
-
-E3 do canal `next` (GM-11): Sombra, emendas à spec, entrega e modelo por papel. Contrato e requisitos na spec da E3; aqui só o que o usuário vê.
-
-### Adicionado (GM-11 T14)
-
-- **Doctor, aviso `modelos-por-papel`**: papel de `orquestracao.modelos` abaixo do recomendado (`haiku < sonnet < opus < fable`; esforço fora da comparação) ou com nome desconhecido vira aviso. Não muda o nível, não quebra o CI e nunca compara um papel com outro. Config ausente fica em silêncio; corrompida avisa.
-- **Skill `gabarito-loop`** (≤ 80 linhas): ponteiros a `sombra.mjs`, a `loop.mjs desvio|descoberta|emenda propor` e a `entrega.mjs decidir|executar`; `integrar` verde repassa o `relato` (`desvio:`/`aviso:`).
-
-### Alterado (GM-11 T14)
-
-- Versão `2.0.0-alpha.3` no plugin e em `gates/package.json`.
-
-## [2.0.0-alpha.2] — 2026-11-03
-
-E2 do canal `next` (GM-10): loop de implementação com pouso de contexto, e a guarda da E1 (GM-9 T4) que estava em `Unreleased`.
-
-### Adicionado (GM-10 T12)
-
-- **Skill `gabarito-loop`** (≤ 60 linhas): o ciclo e os ponteiros ao CLI `gates/scripts/loop.mjs`; a decisão é do CLI e o estado, do diário da entrega.
-- **Comando `/<plugin>:gabarito pausar|retomar`**: kill switch sem o mod. Avisa o usuário de que escrever ou remover `.harness/PAUSAR` pelo modelo cai no anel de integridade da guarda (`ask`). O estado e o `alvo` vêm de `gates/scripts/pausa.mjs`, só leitura, com as funções da guarda (vale de subdiretório e de worktree de task); o relato vem da reconsulta. Limite declarado: `CLAUDE_PROJECT_DIR` não chega ao Bash, então `cd` para outro repositório desvia o `alvo`.
-- **Doctor**: linhas `loop: mod ativo | sem mod (sem pouso automático)` e `db: declarado | n/a`. `mod ativo` exige prova (marcador local do heartbeat e `custo.medicao` do orquestrador da mesma sessão, ≤ 24 h); o mod existir no repo não basta. `db` com bloco inválido mostra `inválido`, nunca `declarado`.
-- **Agente `gabarito-spike`**: o brief traz a lista fechada do que o spike pode criar e um diretório de config isolado; o agente não grava config global.
-- **CI**: job `mod` roda `scripts/test/mod-test.sh` (`claude plugin test .` com os `*.test.ts` de `gates/` fora da conta).
-
-### Alterado (GM-10 T12, quebra de comportamento no canal `next`)
-
-- **`loop.mjs proxima`**: os slots vêm de `capacidade.mjs --medido`. Sem calibração, medição falhando ou saída inválida: 1 slot e aviso. `loop.slots` do `harness.config.json` deixou de ser a fonte: só **reduz** a medição; valor inválido vale 1 slot.
-- **`gate-task.mjs`**: a árvore é conferida com `status --untracked-files=normal --ignored`, independente da config local do git (`status.showUntrackedFiles=no` não esconde mais arquivo novo). Mesma regra no início, depois das suítes e depois das mutações: rastreado alterado ou não rastreado novo reprova; ignorado nunca reprova e é relatado (execução que falha gera artefato próprio). Limite declarado: verde que depende de ignorado e arquivo novo coberto por exclude local do git; a rede é o CI em `concluir`.
-
-### Alterado (GM-9 T4, quebra de comportamento no canal `next`)
-
-- **Hook único da guarda** (`gates/dist/guarda.js`, matchers `Bash`, `Edit|Write|Read|Grep`, `mcp__.*`) substitui `guard-destructive.sh` e `guard-production.sh`. Classifica o alvo por ambiente declarado (config lida de `origin/HEAD`) e só pede (`ask`/`deny`) em segredo, integridade do harness e escrita em produção; destrutivo local vira evento no diário. Nunca devolve `allow`.
-- **Escape hatch removido**: as variáveis `GABARITO_ALLOW_*` deixaram de existir e nenhuma mensagem explica contorno. Para rotina de produção, `guarda.producao.permitidos` em `harness.config.json` (lido de `origin/HEAD`).
-- `gates/scripts/bench-guarda.mjs` mede o p95 do hook (local ≤ 60 ms; CI ≤ 150 ms, job `hooks`).
-
-## [2.0.0-alpha.1] — 2026-11-02
-
-Primeira pré-versão do canal `next` (GM-9, E1). Catálogo `gabarito-mestre-next` (o Claude Code não tem conceito de
-canal de release e não aceita o mesmo plugin duas vezes num `marketplace.json`: dois canais são dois catálogos com `name`
-diferente). Instalação: `claude plugin marketplace add gabrielnfc/gabarito-mestre#next`. A versão fica só no
-`plugin.json`; a entrada do `marketplace.json` deixa de repeti-la. `plugins/gabarito-mestre/medido-em.json` registra a versão do Claude Code
-em que os spikes foram medidos; o job `versao-medida` do CI avisa (`::warning`) quando a instalada difere, sem falhar.
+- Os aprendizados e o `registro.md` ficam no repositório local; não chegam a um clone novo (previsto para a próxima versão).
+- A integração com ClickUp e o modo automático não foram ensaiados de ponta a ponta antes desta versão.
+- Quando 1.1.x e 2.0 ficam instaladas ao mesmo tempo com o mesmo nome, a documentação do Claude Code diz que os hooks de um deles são deixados de fora, sem dizer qual: deixe uma só.
 
 ## [1.1.0] — 2026-09-25
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "gabarito-mestre-next",
+  "name": "gabarito-mestre",
   "description": "Marketplace do Gabarito Mestre — o molde contra o qual todo o resto é conferido.",
   "owner": {
     "name": "Gabriel Nascimento",
