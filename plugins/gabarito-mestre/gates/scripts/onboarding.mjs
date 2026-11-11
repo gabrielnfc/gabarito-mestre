@@ -39,6 +39,7 @@ import { PERFIS_MODELO, resolverModelo } from '../lib/config.mjs';
 import { aplicarConfig, ArquivoInvalido } from './onboarding-config.mjs';
 import { herdar } from './onboarding-herdar.mjs';
 import { gravarFoco, ofertaFoco } from './onboarding-foco.mjs';
+import { explicarPrimeira, previaSimples } from '../lib/glossario.mjs';
 
 export const ORDEM_ITENS = ['tipo_repo', 'ambientes', 'planejamento', 'versionamento', 'orquestracao'];
 export const JANELA_DIAS = 60;
@@ -570,23 +571,26 @@ export const IDS_FIXAS = ['politica', 'autonomia', 'perfil'];
 const POLITICAS = ['continua', 'janela', 'sob_demanda'];
 const PERFIS = Object.keys(PERFIS_MODELO);
 const PRODUTO = { politica: 'sob_demanda', autonomia: false, perfil: 'padrao' };
+// GM-14 T7 (REQ-ONB-2): rótulos pela consequência, em palavras de quem não programa; os VALORES seguem os da 2.0.0.
 const ROTULO_POLITICA = {
-  continua: 'continua: a entrega sobe sozinha quando fica pronta',
-  janela: 'janela: a entrega sobe sozinha só dentro de uma janela de horário',
-  sob_demanda: 'sob demanda: PR de release; você faz o merge e o deploy',
+  continua: 'Publique sozinha assim que os testes passarem',
+  janela: 'Publique sozinha, só dentro do horário combinado',
+  sob_demanda: 'Só abra o pedido de revisão; eu publico',
 };
-const ROTULO_NAO_COM_POLITICA_FROUXA = 'a entrega vira sob demanda: PR de release, você faz merge e deploy';
+const ROTULO_NAO_COM_POLITICA_FROUXA = 'Espere o meu "pode": só abra o pedido de revisão';
+const ROTULO_PERFIL = {
+  economia: 'Gastar menos, mesmo que erre um pouco mais',
+  padrao: 'Equilibrar: nem o mais barato nem o mais cuidadoso',
+  qualidade: 'Errar menos, mesmo que gaste mais',
+};
 const fusoLocal = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 export const janelaPadrao = (fuso) => ({ dias: [1, 2, 3, 4, 5], inicio: '09:00', fim: '17:00', fuso });
 const configLegivel = (existente) => (ehObjeto(existente) && typeof existente.erro !== 'string' ? existente : {});
 const ordemDe = (item) => ORDEM_ITENS.indexOf(item);
-const rotuloNulo = (item) => `deixar não detectado (trocar ${item} depois)`;
+const rotuloNulo = () => 'Deixar em aberto por enquanto';
 
-function rotuloPerfil(nome) {
-  const t = PERFIS_MODELO[nome];
-  const impl = `${t.implementador.modelo}${t.implementador.esforco ? `/${t.implementador.esforco}` : ''}`;
-  return `${nome}: implementador ${impl}, revisor ${t.revisor.modelo}, revisão final ${t.revisor_final.modelo}`;
-}
+/** Perfil nunca inventado aqui: a chave vem de `PERFIS_MODELO`; perfil novo sem frase própria cai no nome dele. */
+const rotuloPerfil = (nome) => ROTULO_PERFIL[nome] ?? nome;
 
 /** As 3 decisões fixas, com o default tirado da config existente (valor inválido ⇒ default do produto + `aviso`). */
 function perguntasFixas(existente) {
@@ -616,17 +620,17 @@ function perguntasFixas(existente) {
   }
   const com = (p, aviso) => (aviso ? { ...p, aviso } : p);
   return [
-    com({ id: 'politica', texto: 'Política de entrega: como o loop leva a entrega pronta até a produção?', opcoes: POLITICAS.map((v) => ({ valor: v, rotulo: ROTULO_POLITICA[v] })), default: politica }, avisoPol),
+    com({ id: 'politica', texto: 'Com a entrega pronta, a IA abre um pedido de revisão, ou publica sozinha se os testes passarem?', opcoes: POLITICAS.map((v) => ({ valor: v, rotulo: ROTULO_POLITICA[v] })), default: politica }, avisoPol),
     com({
       id: 'autonomia',
-      texto: 'Autonomia em produção: o loop pode subir sozinho dentro da política escolhida?',
+      texto: 'Posso publicar sozinha, ou espero o seu "pode" a cada vez?',
       opcoes: [
-        { valor: true, rotulo: 'sim: sobe sozinho dentro da política escolhida' },
-        { valor: false, rotulo: politica !== 'sob_demanda' ? ROTULO_NAO_COM_POLITICA_FROUXA : 'não: a entrega segue sob demanda' },
+        { valor: true, rotulo: 'Pode publicar sozinha, dentro da regra escolhida' },
+        { valor: false, rotulo: politica !== 'sob_demanda' ? ROTULO_NAO_COM_POLITICA_FROUXA : 'Espere o meu "pode" antes de publicar' },
       ],
       default: autonomia,
     }, avisoAut),
-    com({ id: 'perfil', texto: 'Perfil de modelos: qual equilíbrio entre custo e qualidade?', opcoes: PERFIS.map((v) => ({ valor: v, rotulo: rotuloPerfil(v) })), default: perfil }, avisoPerfil),
+    com({ id: 'perfil', texto: 'Entre gastar menos e errar menos, o que pesa mais para você?', opcoes: PERFIS.map((v) => ({ valor: v, rotulo: rotuloPerfil(v) })), default: perfil }, avisoPerfil),
   ];
 }
 
@@ -642,19 +646,33 @@ function respostaGravada(item, cfg) {
   return undefined;
 }
 
+// GM-14 T7: a pergunta de cada fato fala do projeto (sem fonte, estado nem motivo técnico: isso fica na prévia técnica).
+const TEXTO_DO_ITEM = {
+  tipo_repo: 'O projeto tem um aplicativo ou site para publicar, ou só código de apoio e documentos?',
+  ambientes: 'Qual destes é a versão que as pessoas usam de verdade?',
+  planejamento: 'Onde vocês anotam o que precisa ser feito?',
+  versionamento: 'Em qual linha de trabalho as mudanças aprovadas se juntam?',
+  orquestracao: 'Quantas frentes de trabalho a IA pode tocar ao mesmo tempo?',
+};
+const ROTULO_CANDIDATO = {
+  tipo_repo: { app: 'Tem um aplicativo ou site', 'repo-sem-app': 'Não, só código de apoio e documentos' },
+  planejamento: { arquivos: 'Em arquivos dentro do próprio projeto' },
+};
+/** O nome vindo do projeto (ambiente, ferramenta, linha de trabalho) vai como está; só os valores do produto ganham frase. */
+const rotuloDeCandidato = (item, c) => ROTULO_CANDIDATO[item]?.[c] ?? String(c);
+
 function perguntaDeItem(i, cfg) {
   const asked = i.estado === 'ambiguo';
   let cands = [...i.candidatos];
   if (!asked && cands.length === 0 && i.item === 'planejamento') cands = ['arquivos']; // regra da 1.1 (ferramentas-mcp.json, _comment)
-  const opcoes = cands.map((c) => ({ valor: c, rotulo: String(c) }));
-  if (!asked) opcoes.push({ valor: null, rotulo: rotuloNulo(i.item) });
+  const opcoes = cands.map((c) => ({ valor: c, rotulo: rotuloDeCandidato(i.item, c) }));
+  if (!asked) opcoes.push({ valor: null, rotulo: rotuloNulo() });
   let padrao = asked ? i.valor : (cands[0] ?? null);
   const gravada = respostaGravada(i.item, cfg);
   if (gravada !== undefined && cands.includes(gravada)) padrao = gravada;
   // MAJOR-1 (r2): "deixar não detectado" é resposta gravada em `onboarding.naoDetectado`; `trocar` de outro item não a desfaz.
   else if (!asked && gravada === undefined && Array.isArray(cfg.onboarding?.naoDetectado) && cfg.onboarding.naoDetectado.includes(i.item)) padrao = null;
-  const ref = i.motivo ? `${i.estado}, ${i.motivo}` : i.estado;
-  return { id: i.item, texto: `${i.item}: ${ref} (fonte: ${i.fonte}). Qual usar?`, opcoes, default: padrao };
+  return { id: i.item, texto: TEXTO_DO_ITEM[i.item] ?? 'Qual destas opções vale para o projeto?', opcoes, default: padrao };
 }
 
 const semEscolha = (i, cfg) => perguntaDeItem(i, cfg).opcoes.length < 2;
@@ -676,7 +694,10 @@ export function perguntas(itens, existente) {
   const cfg = configLegivel(existente);
   // FX4 D1: o `AskUserQuestion` rejeita pergunta com < 2 opções; item sem escolha real é fato (fica não detectado), não pergunta.
   const abertos = [...itens].filter((i) => i.estado !== 'detectado' && !semEscolha(i, cfg)).sort((a, b) => ordemDe(a.item) - ordemDe(b.item));
-  return [...fixas, ...abertos.slice(0, MAX_PERGUNTAS - fixas.length).map((i) => perguntaDeItem(i, cfg))].map(defaultPrimeiro);
+  const ordenadas = [...fixas, ...abertos.slice(0, MAX_PERGUNTAS - fixas.length).map((i) => perguntaDeItem(i, cfg))].map(defaultPrimeiro);
+  // GM-14 T7: a 1ª ocorrência de cada termo do glossário, na ordem em que o dono lê (pergunta e depois as opções), leva a explicação
+  const vistos = new Set();
+  return ordenadas.map((p) => ({ ...p, texto: explicarPrimeira(p.texto, vistos), opcoes: p.opcoes.map((o) => ({ ...o, rotulo: explicarPrimeira(o.rotulo, vistos) })) }));
 }
 
 const valorTexto = (v) => (v === null || v === undefined ? '' : typeof v === 'string' ? v : JSON.stringify(v));
@@ -927,7 +948,7 @@ function main(argv) {
     const recal = argv.includes('--recalibrar') ? previaRecalibracao(par, hoje) : null;
     const nova = recal === null && semCalibracao(par) ? calibracaoDaMaquina(hoje) : null;
     const calibracao = recal !== null ? [recal.texto] : nova !== null ? [`o paralelismo será calibrado para esta máquina (${nova.cores} núcleos): ${textoParalelismo(nova.paralelismo)}`] : [];
-    saida({ ok: true, itens, perguntas: ps, previa: previa(itens, ps, { fuso, calibracao, existente: fatos.configExistente }), ...(recal !== null ? { recalibrar: { antes: recal.antes, depois: recal.depois, cores: recal.cores } } : {}) });
+    saida({ ok: true, itens, perguntas: ps, previaSimples: previaSimples(itens, ps), previa: previa(itens, ps, { fuso, calibracao, existente: fatos.configExistente }), ...(recal !== null ? { recalibrar: { antes: recal.antes, depois: recal.depois, cores: recal.cores } } : {}) });
     return 0;
   } catch (e) {
     saida({ ok: false, erro: 'falha', motivo: String(e.message).split('\n')[0] });
