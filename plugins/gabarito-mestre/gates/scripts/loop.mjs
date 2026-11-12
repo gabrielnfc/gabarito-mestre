@@ -55,7 +55,7 @@ import { aprendizadosVigentes, paraDestino } from '../dist/aprendizado.js';
 import * as diario from '../dist/diario.js';
 import { escopoDaTask, projetarEmendas, SESSAO_EMENDAS, validarJulgamento, validarProposta } from '../dist/emenda.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
-import { formaInvalida, REQ_RE } from '../dist/formas.js';
+import { formaInvalida, MOTIVOS_REENTREGA, REQ_RE } from '../dist/formas.js';
 import { estadoDe, ordenar, podeIntegrar, proximaAcao, tasksCongeladas } from '../dist/loop.js';
 import { normalizarCaminho, validarPlano } from '../dist/plano.js';
 import { contarConsultas, projetarDecisoes, trechoDoReq } from '../dist/sombra.js';
@@ -145,7 +145,7 @@ function lerArgs(argv) {
     fechar: { pos: 1, flags: ['entrega'] },
     integrar: { pos: 1, flags: ['entrega', 'sessao'] },
     iniciar: { pos: 2, flags: ['entrega', 'sessao'] },
-    concluir: { pos: 1, flags: ['entrega', 'sessao'] },
+    concluir: { pos: 1, flags: ['entrega', 'sessao', 'motivo'] },
     reabrir: { pos: 1, flags: ['entrega', 'sessao'] },
     veredito: { pos: 5, flags: ['entrega', 'sessao'] },
     parar: { pos: 1, flags: ['entrega', 'sessao'] },
@@ -159,7 +159,7 @@ function lerArgs(argv) {
     registro: { pos: null, flags: ['entrega', 'sessao'] },
     emenda: { pos: null, flags: ['entrega', 'sessao', 'req', 'task', 'diff', 'fato', 'alternativa', 'evidencia', 'causa', 'arquivos'] },
   };
-  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | iniciar <task> <papel> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | pousar | registro  [--entrega GM-10]';
+  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | concluir <task> --motivo <gate|sombra|dono> | iniciar <task> <papel> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | pousar | registro  [--entrega GM-10]';
   if (typeof cmd !== 'string' || !Object.hasOwn(ESPEC, cmd)) throw new Falha('uso', `comando desconhecido ou ausente. ${uso}`, {}, 2);
   const esp = ESPEC[cmd];
   const pos = [];
@@ -318,6 +318,13 @@ function validarForma(cmd, pos, flags) {
     const arquivos = listaDeCaminhos(flags.arquivos);
     return { task, req: flags.req, dados: { task, req: flags.req, ...evid, arquivos, causa }, textos: { evidencia: flags.evidencia, arquivos: arquivos.join(',') } };
   }
+  if (cmd === 'concluir') {
+    // FIEL-8 b6: o motivo da reentrega é forma; fora dos 3 literais recusa antes de abrir plano ou diário.
+    if (flags.motivo !== undefined && !MOTIVOS_REENTREGA.includes(flags.motivo)) {
+      throw new Falha('argumento_invalido', `--motivo ${JSON.stringify(flags.motivo)}: esperado um de ${MOTIVOS_REENTREGA.join(' | ')}; nada foi gravado`);
+    }
+    return { task, motivo: flags.motivo };
+  }
   if (cmd === 'iniciar' && !PAPEIS.includes(pos[1])) throw new Falha('papel_invalido', `papel "${pos[1]}" fora da lista: ${PAPEIS.join(', ')}`);
   if (cmd === 'veredito') {
     const [, v, rodada, blocker, major] = pos;
@@ -451,6 +458,22 @@ const diarioInvalido = (plano, eventos) => {
   return a.tipo === 'parar' && a.motivo === 'diario_invalido';
 };
 
+/** FIEL-8 b3/b4: o que a recusa da tabela diz ao orquestrador sobre `concluir` (entrega e reentrega). */
+const DICA_REENTREGA = {
+  em_revisao: 'revisor em voo: espere o veredito',
+  reprovada: 'o caminho é a correção',
+  no_teto: 'só o dono tira do teto',
+};
+function dicaDaTabela(tipo, dados, invalido) {
+  if (tipo !== 'task.concluida') return '';
+  const m = /^(task\.concluida|concluida\.reentrega) em (\w+)$/.exec(invalido);
+  if (m === null) return '';
+  if (m[1] === 'task.concluida' && (m[2] === 'concluida' || m[2] === 'aprovada')) {
+    return ` (commit novo depois do concluir: \`concluir ${dados.task} --motivo <gate|sombra|dono>\`)`;
+  }
+  return m[1] === 'concluida.reentrega' && Object.hasOwn(DICA_REENTREGA, m[2]) ? ` (${DICA_REENTREGA[m[2]]})` : '';
+}
+
 /**
  * Confere o evento contra a tabela e SÓ ENTÃO grava. O diário atual já inválido recusa (nada piora um diário quebrado);
  * a transição que a tabela não aceita recusa com a causa. Limite declarado: sem lock em volta do par ler+gravar, dois
@@ -471,7 +494,7 @@ function gravar(c, plano, tipo, dados, antes = () => {}) {
     if ('invalido' in r) {
       // Depois do /clear a rodada não está em lugar nenhum além do diário: a mensagem diz qual o diário espera.
       const esperada = r.invalido === 'rodada fora de sequência' ? estadoDe(fila) : null;
-      const dica = esperada !== null && !('invalido' in esperada) ? ` (rodada esperada: ${esperada.rodada + 1})` : '';
+      const dica = esperada !== null && !('invalido' in esperada) ? ` (rodada esperada: ${esperada.rodada + 1})` : dicaDaTabela(tipo, dados, r.invalido);
       throw new Falha('transicao_invalida', `${tipo} não cabe na tabela para a task ${dados.task}: ${r.invalido}${dica}; nada foi gravado`);
     }
     if (diarioInvalido(plano, [...eventos, candidato])) throw new Falha('transicao_invalida', `${tipo} tornaria o diário inválido; nada foi gravado`);
@@ -1291,6 +1314,25 @@ function decisoesDoItem(c, plano, item, reqs, extra) {
 }
 
 /**
+ * FIEL-8 b8: o revisor revê o diff INTEIRO, `<gabaritoBase>...<sha do último task.concluida>`, nunca `<sha anterior>..<sha novo>`;
+ * se esse último foi reentrega, `reentrega: <motivo>`. Sem base gravada ou sem sha: `diff: null` e aviso (nunca inventa base nem diff parcial).
+ */
+function diffDoRevisor(c, eventos, task, aviso) {
+  const ord = ordenar(eventos);
+  const ultimo = (ord.ok ? ord.eventos : []).filter((e) => e.tipo === 'task.concluida' && e.dados?.task === task).at(-1);
+  const branch = ramo(c, task);
+  let base = '';
+  try { base = git(c.raiz, 'config', '--get', `branch.${branch}.gabaritoBase`); } catch { /* ausente */ }
+  const sha = ultimo?.dados?.sha;
+  const reentrega = typeof ultimo?.dados?.motivo === 'string' ? { reentrega: ultimo.dados.motivo } : {};
+  if (base === '' || typeof sha !== 'string' || sha === '') {
+    aviso.push(`diff da task ${task} indeterminado (${base === '' ? `sem branch.${branch}.gabaritoBase` : 'último task.concluida sem sha'}): o revisor lê o diff inteiro desde a base da worktree`);
+    return { diff: null, ...reentrega };
+  }
+  return { diff: `${base}...${sha}`, ...reentrega };
+}
+
+/**
  * O item de despacho carrega o que o /clear apaga: `spec` (ponteiro do topo do plano), `modelo`, `decisoes`, `aprendizados` (regras D do brief deste papel) e `emendas` (as aprovadas dos REQs da task: o
  * arquivo da spec nunca é editado pela emenda, então o implementador, a correção e o revisor leem o diff aqui) e, na `correcao`, `achados` (caminho do
  * arquivo da rodada reprovada). Arquivo de achados ausente ou vazio não vira caminho: `achados: null` e aviso (o orquestrador não manda corrigir às cegas).
@@ -1309,6 +1351,7 @@ function enriquecer(c, plano, eventos, item, aviso, extra) {
     // E5a (GM-13): as regras D vigentes que entram no brief DESTE papel (`brief:<papel>` exato; M nunca entra).
     aprendizados: paraDestino(extra.vigentes, `brief:${item.papel}`).map((a) => a.regra),
   };
+  if (item.papel === 'revisor') return { ...saida, ...diffDoRevisor(c, eventos, item.task, aviso) };
   if (item.papel !== 'correcao') return saida;
   const ord = ordenar(eventos);
   const reprovado = (ord.ok ? ord.eventos : []).filter((e) => e.tipo === 'review.veredito' && e.dados?.task === item.task && e.dados?.veredito === 'REPROVADO').at(-1);
@@ -1521,7 +1564,13 @@ async function executar(argv, cwd) {
       tarefa(plano, task);
       const wt = worktreeViva(c, task);
       const sha = git(wt, 'rev-parse', `refs/heads/${ramo(c, task)}`);
-      return { evento: gravar(c, plano, 'task.concluida', { task, sha }) };
+      // FIEL-8 b5 (e 4.i do P1, PROVISÓRIO): o sha do último task.concluida da task já foi entregue; sem commit novo não há o que revisar.
+      const shaIgual = (_candidato, eventos) => {
+        const ord = ordenar(eventos);
+        const ultimo = (ord.ok ? ord.eventos : []).filter((e) => e.tipo === 'task.concluida' && e.dados?.task === task).at(-1);
+        if (ultimo?.dados?.sha === sha) throw new Falha('sha_igual', `o sha ${sha.slice(0, 12)} é o do último task.concluida de ${task}: faça o commit novo antes de concluir; nada foi gravado`);
+      };
+      return { evento: gravar(c, plano, 'task.concluida', { task, sha, ...(forma.motivo !== undefined ? { motivo: forma.motivo } : {}) }, shaIgual) };
     }
     case 'ci': return { evento: gravar(c, plano, 'ci.resultado', { verde: forma.verde, ...(forma.alvo !== undefined ? { alvo: forma.alvo } : {}) }) };
     case 'veredito': {

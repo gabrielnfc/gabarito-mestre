@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { marcaPronto } from '../scripts/db-template.mjs';
 import { integrarComGate, slotsDaCapacidade } from '../scripts/loop.mjs';
 import { casarAgente } from '../dist/painel-equipe.js';
+import { estadoDe as estadoNucleo, ordenar as ordenarNucleo } from '../dist/loop.js';
 import * as diario from '../dist/diario.js';
 import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
 
@@ -4234,5 +4235,210 @@ describe('GM-14: subcomandos novos ainda sem implementação', () => {
     assert.equal(amb.cli(['anota']).rc, 2);
     assert.equal(rodarNode(amb, PAINEL, ['medi']).rc, 2);
     assert.equal(rodarNode(amb, ONBOARDING, ['herda']).rc, 2);
+  });
+});
+
+// ─────────────────────────────────────────────── GM-14 T31 (Emenda 2, FIEL-8 b, c): reentrega com motivo pela borda
+// P1 da Sombra (.superpowers/sdd/2026-11-11-proxima/t31-sombra-p1.md): cada transição e cada ataque com teste nomeado. Mutações: task-31-mut.json.
+describe('reentrega (concluir --motivo)', () => {
+  const BASE = 'enabler/GM-10-loop';
+  const MOTIVOS_R = ['gate', 'sombra', 'dono'];
+  /** Bytes de todo o diário da entrega: recusa = nada gravado, byte a byte. */
+  const fotoDiario = (amb) => readdirSync(amb.entregas).filter((f) => f.endsWith('.jsonl')).sort().map((f) => `${f}\n${readFileSync(join(amb.entregas, f), 'utf8')}`).join('\n');
+  const estadoT = (amb, t) => {
+    const ord = ordenarNucleo(amb.eventos());
+    assert.ok(ord.ok);
+    return estadoNucleo(ord.eventos.filter((e) => ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'].includes(e.tipo) && e.dados?.task === t));
+  };
+  const vereditos = (amb) => amb.eventos().filter((e) => e.tipo === 'review.veredito').length;
+  /** Evento de outra sessão com `ts` escolhido: o relógio de outra máquina (ou de antes do /clear) no diário. */
+  const doFuturo = (amb, sessao, lista) => {
+    lista.forEach(([tipo, dados], i) => {
+      const ts = new Date(Date.UTC(2099, 0, 1, 0, 0, i + 1)).toISOString();
+      const r = diario.append(amb.entregas, sessao, { ts, autor: 't@t', sessao, agente: 'orquestrador', tipo, dados });
+      assert.ok(r.ok && r.gravado === 'evento', JSON.stringify(r));
+    });
+  };
+  const recusa = (amb, args, erro, msg) => {
+    const antes = fotoDiario(amb);
+    const r = amb.cli(args);
+    assert.equal(r.rc, 1, `${args.join(' ')} ${r.out}${r.err}`);
+    assert.equal(r.j?.ok, false);
+    assert.equal(r.j.erro, erro, r.out);
+    if (msg) assert.match(r.j.mensagem, msg);
+    assert.equal(fotoDiario(amb), antes, `${args.join(' ')}: nada gravado`);
+    return r;
+  };
+
+  test('reentrega-aprovada-grava-motivo-e-volta-a-concluida (b2, b7, P15): lê tipo, task, sha, motivo e rodada; 0 veredito novo', () => {
+    for (const m of MOTIVOS_R) {
+      const amb = ambiente();
+      amb.aprovar('T1');
+      assert.deepEqual(estadoT(amb, 'T1'), { estado: 'aprovada', rodada: 1 });
+      const nVer = vereditos(amb);
+      amb.commitNaWt('T1', 'src/t1.txt', 'y\n', 'fix(GM-10): depois do gate');
+      const sha = amb.topo('wt/GM-10-T1');
+      const r = amb.cli(['concluir', 'T1', '--motivo', m]);
+      assert.equal(r.rc, 0, r.out + r.err);
+      const e = amb.eventos().at(-1);
+      assert.equal(e.tipo, 'task.concluida');
+      assert.deepEqual(e.dados, { task: 'T1', sha, motivo: m });
+      assert.equal(e.dados.motivo, m);
+      assert.equal(e.dados.sha, sha);
+      assert.equal(e.dados.task, 'T1');
+      assert.deepEqual(r.j.evento, { tipo: 'task.concluida', task: 'T1', sha, motivo: m });
+      assert.equal(vereditos(amb), nVer, 'a reentrega não grava review.veredito');
+      assert.deepEqual(estadoT(amb, 'T1'), { estado: 'concluida', rodada: 0 }, 'rodada − 1: o APROVADO anulado não conta');
+    }
+  });
+
+  test('reentrega-concluida-mantem-rodada (b1, b7): não gasta rodada nem grava veredito; o veredito seguinte é a rodada 1', () => {
+    for (const m of MOTIVOS_R) {
+      const amb = ambiente();
+      for (const a of [['abrir', 'T1'], ['iniciar', 'T1', 'implementador']]) assert.equal(amb.cli(a).rc, 0);
+      amb.commitNaWt('T1', 'src/t1.txt');
+      assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+      amb.commitNaWt('T1', 'src/t1.txt', 'y\n');
+      const r = amb.cli(['concluir', 'T1', '--motivo', m]);
+      assert.equal(r.rc, 0, r.out);
+      assert.equal(vereditos(amb), 0);
+      assert.deepEqual(estadoT(amb, 'T1'), { estado: 'concluida', rodada: 0 });
+      assert.equal(amb.cli(['iniciar', 'T1', 'revisor']).rc, 0);
+      assert.equal(amb.cli(['veredito', 'T1', 'APROVADO', '1', '0', '0']).rc, 0);
+    }
+  });
+
+  test('reentrega-motivo-invalido-recusa-antes-de-ler (b6, ataque 3): rc 1 argumento_invalido, nada lido nem gravado; sem valor é uso', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    amb.commitNaWt('T1', 'src/t1.txt', 'y\n');
+    for (const m of ['x', 'GATE', '', ' gate', 'dono ']) recusa(amb, ['concluir', 'T1', '--motivo', m], 'argumento_invalido', /--motivo/);
+    const semPlano = ambiente({ plano: null });
+    const r = semPlano.cli(['concluir', 'T1', '--motivo', 'x']);
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'argumento_invalido', 'forma antes do plano e do diário');
+    const u = amb.cli(['concluir', 'T1', '--motivo']);
+    assert.equal(u.rc, 2);
+    assert.equal(u.j.erro, 'uso');
+    assert.deepEqual(estadoT(amb, 'T1'), { estado: 'aprovada', rodada: 1 });
+  });
+
+  test('reentrega-mesmo-sha-recusa (b5, ataque 4): aprovada e concluida + R com o sha do último task.concluida => sha_igual', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    for (const m of MOTIVOS_R) recusa(amb, ['concluir', 'T1', '--motivo', m], 'sha_igual', /sha/);
+    assert.deepEqual(estadoT(amb, 'T1'), { estado: 'aprovada', rodada: 1 }, 'segue aprovada, rodada intacta');
+    amb.commitNaWt('T1', 'src/t1.txt', 'y\n');
+    assert.equal(amb.cli(['concluir', 'T1', '--motivo', 'gate']).rc, 0);
+    recusa(amb, ['concluir', 'T1', '--motivo', 'sombra'], 'sha_igual');
+    assert.deepEqual(estadoT(amb, 'T1'), { estado: 'concluida', rodada: 0 });
+  });
+
+  test('concluir-sem-motivo-mesmo-sha-recusa (4.i): correção sem commit novo não tem o que revisar', () => {
+    const amb = ambiente();
+    for (const a of [['abrir', 'T1'], ['iniciar', 'T1', 'implementador']]) assert.equal(amb.cli(a).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'revisor']).rc, 0);
+    writeFileSync(join(amb.wt('T1'), '.tmp-gabarito', 'review-r1.md'), '- MAJOR 1: x\n');
+    assert.equal(amb.cli(['veredito', 'T1', 'REPROVADO', '1', '0', '1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'correcao']).rc, 0);
+    recusa(amb, ['concluir', 'T1'], 'sha_igual');
+    amb.commitNaWt('T1', 'src/t1.txt', 'y\n');
+    assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+  });
+
+  test('concluir-sem-motivo-em-concluida-e-aprovada-cita-motivo (b4, ataque 13)', () => {
+    const amb = ambiente();
+    for (const a of [['abrir', 'T1'], ['iniciar', 'T1', 'implementador']]) assert.equal(amb.cli(a).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt', 'y\n');
+    recusa(amb, ['concluir', 'T1'], 'transicao_invalida', /--motivo <gate\|sombra\|dono>/);
+    const apr = ambiente();
+    apr.aprovar('T1');
+    apr.commitNaWt('T1', 'src/t1.txt', 'y\n');
+    recusa(apr, ['concluir', 'T1'], 'transicao_invalida', /--motivo <gate\|sombra\|dono>/);
+  });
+
+  // b3 (ataque 12): um teste por estado, nos 3 motivos; sha sempre novo, para só a tabela decidir.
+  const VELHO = 'b'.repeat(40);
+  const PREFIXOS = {
+    pendente: [],
+    implementando: [['task.iniciada', { task: 'T1', papel: 'implementador' }]],
+    em_revisao: [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: VELHO }], ['task.iniciada', { task: 'T1', papel: 'revisor' }]],
+    reprovada: [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: VELHO }], ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, blocker: 0, major: 1 }]],
+    corrigindo: [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: VELHO }], ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, blocker: 0, major: 1 }], ['task.iniciada', { task: 'T1', papel: 'correcao' }]],
+    no_teto: [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: VELHO }], ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, blocker: 0, major: 1 }], ['task.iniciada', { task: 'T1', papel: 'correcao' }], ['task.concluida', { task: 'T1', sha: 'c'.repeat(40) }], ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 2, blocker: 0, major: 1 }]],
+  };
+  const DICAS = { em_revisao: /espere o veredito/, reprovada: /caminho é a correção/, no_teto: /só o dono tira/ };
+  for (const [estado, prefixo] of Object.entries(PREFIXOS)) {
+    test(`reentrega-em-${estado}-recusa (b3): transicao_invalida, nada gravado, estado igual`, () => {
+      const amb = ambiente();
+      assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+      if (prefixo.length > 0) amb.semear(prefixo);
+      amb.commitNaWt('T1', 'src/t1.txt', 'novo\n');
+      const antes = estadoT(amb, 'T1');
+      assert.equal(antes.estado, estado);
+      for (const m of MOTIVOS_R) recusa(amb, ['concluir', 'T1', '--motivo', m], 'transicao_invalida', DICAS[estado] ?? /concluida\.reentrega em /);
+      assert.deepEqual(estadoT(amb, 'T1'), antes, estado === 'no_teto' ? 'a reentrega não tira do teto' : 'estado igual');
+    });
+  }
+
+  test('reentrega-em-integrada-recusa (ataque 2): worktree fechada => worktree_ausente, nada gravado, nunca reabre', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    assert.equal(amb.cli(['integrar', 'T1']).rc, 0);
+    for (const m of MOTIVOS_R) recusa(amb, ['concluir', 'T1', '--motivo', m], 'worktree_ausente');
+    assert.equal(estadoT(amb, 'T1').estado, 'integrada');
+  });
+
+  test('reentrega-costura-integrar (c, P9, ataque 5): aprovada => R => integrar recusa sem APROVADO novo; revisor + APROVADO da rodada anulada => integra o sha da R', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    amb.commitNaWt('T1', 'src/t1.txt', 'reentregue\n');
+    const shaR = amb.topo('wt/GM-10-T1');
+    assert.equal(amb.cli(['concluir', 'T1', '--motivo', 'gate']).rc, 0);
+    const antes = semEfeito(amb);
+    const n = amb.cli(['integrar', 'T1']);
+    assert.equal(n.rc, 1, n.out);
+    assert.equal(n.j.erro, 'nao_integravel');
+    assert.deepEqual(semEfeito(amb), antes, 'sem merge nem evento');
+    const p = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(p.j.acao.tipo, 'despachar', p.out);
+    assert.deepEqual(p.j.acao.itens.map((i) => [i.task, i.papel]).filter(([t]) => t === 'T1'), [['T1', 'revisor']], 'a R não pula review');
+    recusa(amb, ['veredito', 'T1', 'APROVADO', '2', '0', '0'], 'transicao_invalida', /rodada esperada: 1/);
+    assert.equal(amb.cli(['iniciar', 'T1', 'revisor']).rc, 0);
+    recusa(amb, ['veredito', 'T1', 'APROVADO', '2', '0', '0'], 'transicao_invalida', /rodada esperada: 1/);
+    assert.equal(amb.cli(['veredito', 'T1', 'APROVADO', '1', '0', '0']).rc, 0);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(amb.eventos().at(-1).tipo, 'task.integrada');
+    assert.equal(amb.eventos().at(-1).dados.sha, shaR);
+    assert.equal(readFileSync(join(amb.dir, 'src/t1.txt'), 'utf8'), 'reentregue\n', 'o commit da reentrega entrou');
+  });
+
+  test('reentrega-revisor-ve-diff-inteiro (b8, ataque 14): diff <base>...<sha da R> e reentrega; sem R, diff sem reentrega; sem base, diff null e aviso', () => {
+    const amb = ambiente();
+    for (const a of [['abrir', 'T1'], ['iniciar', 'T1', 'implementador']]) assert.equal(amb.cli(a).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    const shaP = amb.topo('wt/GM-10-T1');
+    assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+    const semR = amb.cli(['proxima', '--vivos', '0']).j.acao.itens.find((i) => i.task === 'T1' && i.papel === 'revisor');
+    assert.equal(semR.diff, `${BASE}...${shaP}`);
+    assert.ok(!Object.hasOwn(semR, 'reentrega'), JSON.stringify(semR));
+    amb.commitNaWt('T1', 'src/t1.txt', 'y\n');
+    const shaR = amb.topo('wt/GM-10-T1');
+    assert.equal(amb.cli(['concluir', 'T1', '--motivo', 'sombra']).rc, 0);
+    const comR = amb.cli(['proxima', '--vivos', '0']).j.acao.itens.find((i) => i.task === 'T1' && i.papel === 'revisor');
+    assert.equal(comR.diff, `${BASE}...${shaR}`, 'diff inteiro desde a base, nunca <sha anterior>..<sha novo>');
+    assert.ok(!comR.diff.includes(shaP));
+    assert.equal(comR.reentrega, 'sombra');
+    const solto = ambiente();
+    solto.semear([['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: VELHO }]]);
+    const p = solto.cli(['proxima', '--vivos', '0']);
+    const it = p.j.acao.itens.find((i) => i.task === 'T1' && i.papel === 'revisor');
+    assert.equal(it.diff, null, 'sem base gravada não inventa diff');
+    assert.ok((p.j.aviso ?? []).some((a) => /T1/.test(a) && /gabaritoBase/.test(a)), JSON.stringify(p.j.aviso));
   });
 });
