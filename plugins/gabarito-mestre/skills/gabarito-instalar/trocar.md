@@ -22,7 +22,7 @@ Recalibra o paralelismo desta máquina: quantos implementadores trabalham ao mes
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding.mjs" detectar --recalibrar --root "<raiz>"
    ```
-2. Mostre a seção `calibração do paralelismo:` do campo `previa` (hoje ⇒ depois). Pergunte por `AskUserQuestion`, sem default `sim`: "Gravar a nova calibração do paralelismo?" com `sim` e `não`. `não`, ou sessão sem `AskUserQuestion`: não grave, diga que nada mudou e que o doctor continua avisando.
+2. Mostre a seção `calibração do paralelismo:` do campo `previa` (hoje ⇒ depois). Pergunte por `AskUserQuestion`, sem default `sim`: "Gravar a nova calibração do paralelismo?" com `não` em 1º e `sim` em 2º, para o Enter confirmar o padrão. `não`, ou sessão sem `AskUserQuestion`: não grave, diga que nada mudou e que o doctor continua avisando.
 3. Com `sim`: passos 5 a 7 do Fluxo, com as respostas no `default` de cada pergunta e uma chave a mais no arquivo de respostas, `"_recalibrar": true`. O `gravar` calibra pelos núcleos desta máquina, mantém o resto de `paralelismo` (como `arquivosDeContenda`) e também renova a data do modelo. Depois mostre o diff e a linha do doctor sobre o paralelismo.
 
 ## settings
@@ -38,9 +38,9 @@ Grava `.claude/settings.json` do projeto. Não existe default `sim`: consentimen
    }'
    ```
    Chaves que o usuário já tem (`permissions`, `env`, `hooks`…) ficam byte a byte.
-2. Pergunte por `AskUserQuestion` em dois oks separados, sem default `sim`:
-   - (i) gravar `model: <alias>` para o time inteiro? Settings de projeto vencem os do usuário e mudam o custo de todos que clonam. `sim` / `não`.
-   - (ii) registrar o marketplace do gabarito e habilitar o plugin (`enabledPlugins` + `extraKnownMarketplaces`)? Isso liga hooks de terceiro para quem clonar. `sim` / `não`.
+2. Pergunte por `AskUserQuestion` em dois oks separados, sem default `sim`, cada um com `não` em 1º e `sim` em 2º, para o Enter confirmar o padrão:
+   - (i) gravar `model: <alias>` para o time inteiro? Settings de projeto vencem os do usuário e mudam o custo de todos que clonam. `não` / `sim`.
+   - (ii) registrar o marketplace do gabarito e habilitar o plugin (`enabledPlugins` + `extraKnownMarketplaces`)? Isso liga hooks de terceiro para quem clonar. `não` / `sim`.
 3. Grave só o confirmado, em uma chamada, sem `--dry-run`, com o JSON reduzido ao que recebeu `sim` (mesmo comando do item 1, sem `--dry-run`). Nenhum `sim`: não grave e diga por quê. Sessão sem `AskUserQuestion`: (i) e (ii) valem `não`; o diff fica na saída.
 4. Diga em uma linha: cada pessoa do time instala o plugin `gabarito-mestre` uma vez, pelo menu `/plugin` do Claude Code; `enabledPlugins` só o habilita para quem já instalou.
 
@@ -106,7 +106,7 @@ Lê a Iniciativa na ferramenta de planejamento e grava `fluxo` na config. A ferr
    | 3 | Nomes dos status FL1: `preparado`, `em_execucao`, `revisao`, `pronto`, `concluido` | `statusSugerido.FL1`; em `arquivos`: `Preparado`, `Em execução`, `Revisão e teste`, `Pronto para liberar`, `Concluído` |
    | 4 | Formato de ID (regex) | `^[A-Z]+-\d+$` |
    | 5 | Como o PBI aponta para o Epic: `tipo` (`campo`, `relacionamento`, `frontmatter`) e `nome` (só com ferramenta MCP) | o vínculo que a entrada cita; em `arquivos` não se pergunta: é `frontmatter` / `epic` |
-   | 6 | **Escrita autorizada na ferramenta?** (ADR-FLX-2) | default **não**: só vira `true` com resposta explícita; anote quem e quando |
+   | 6 | **Escrita autorizada na ferramenta?** (ADR-FLX-2) | default **não**, listado em 1º e `sim` em 2º, para o Enter confirmar o padrão: só vira `true` com resposta explícita; anote quem e quando |
 
    As chaves de `fluxo.status` nunca mudam; só os valores variam por ferramenta.
 4. Grave (o script preserva o que já existe e imprime o diff). Em `arquivos`, `mcp` é `null` sem aspas, nunca a string `"null"`:

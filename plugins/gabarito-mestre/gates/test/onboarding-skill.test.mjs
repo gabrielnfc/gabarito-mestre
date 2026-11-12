@@ -171,7 +171,7 @@ function violacoesSkill(texto) {
   if (!/fora do teto de perguntas/.test(fluxo)) v.push('ofertas-dentro-do-teto');
   if (!/foco[\s\S]{0,500}`--sim`/.test(fluxo)) v.push('foco-sem-sim');
   if (!/Gravou\?[^\n]*sem `AskUserQuestion` \(headless\), nenhuma: consentimento não tem default/.test(fluxo)) v.push('ofertas-sem-headless-nenhuma');
-  const linhaFoco = fluxo.split('\n').find((l) => /^\s*Pergunte o `texto`, com `opcoes`/.test(l) && l.includes('--sim')) ?? '';
+  const linhaFoco = fluxo.split('\n').find((l) => /^\s*Pergunte o `texto`, com `/.test(l) && l.includes('--sim')) ?? '';
   if (!linhaFoco.includes('com `não, obrigado` (o `default`) em 1º e `sim` em 2º, para o Enter confirmar o padrão')) v.push('foco-ordem-padrao-fora-da-oferta');
   if (!/--local lateral` ou `--local acima`/.test(fluxo)) v.push('local-sem-valores');
   if (/\bR(19|2[01]|30)\b|como veio/.test(texto)) v.push(`r19-ou-como-veio: ${(/\bR(19|2[01]|30)\b|como veio/.exec(texto) ?? [''])[0]}`);
@@ -205,6 +205,11 @@ function violacoesTrocar(texto) {
   const i = secao(texto, 'iniciativa');
   if (!/Antes de qualquer chamada `mcp__\*`/.test(i)) v.push('iniciativa-sem-ok-antes-do-mcp');
   if (!/ADR-FLX-2/.test(i) || !/default \*\*não\*\*/.test(i)) v.push('iniciativa-escrita-sem-default-nao');
+  // GM-14 T21 (r5): consentimento nunca por Enter; a 1ª opção é a do Enter (SKILL.md, passo 4), então `não` vem em 1º
+  for (const [id, marca] of [['orquestracao', 'com `não` em 1º e `sim` em 2º, para o Enter confirmar o padrão'], ['settings', 'cada um com `não` em 1º e `sim` em 2º, para o Enter confirmar o padrão'], ['iniciativa', 'default **não**, listado em 1º e `sim` em 2º, para o Enter confirmar o padrão']]) {
+    const sec = secao(texto, id);
+    if (!sec.includes(marca) || /`sim` (\/|e) `não`|`sim` em 1º|`sim`, `não`/.test(sec)) v.push(`consentimento-sim-primeiro: ${id}`);
+  }
   if (!texto.includes(MARCADOR_TIM1)) v.push('codeowners-sem-marcador-tim1');
   v.push(...violacoesRaizRelativa(texto));
   v.push(...violacoesLocal(texto, 'TROCAR'));
@@ -315,6 +320,15 @@ test('skill-fora-das-perguntas-so-no-trocar', () => {
   assert.ok(violacoesTrocar(planta(TROCAR, 'sem default `sim`', 'com default `sim`')).includes('settings-sem-dois-consentimentos'));
   assert.ok(violacoesTrocar(planta(TROCAR, 'Antes de qualquer chamada `mcp__*`', 'Depois de ler')).includes('iniciativa-sem-ok-antes-do-mcp'));
   assert.ok(violacoesTrocar(planta(TROCAR, 'default **não**', 'default **sim**')).includes('iniciativa-escrita-sem-default-nao'));
+});
+
+test('trocar-consentimento-nao-em-1o', () => {
+  // MAJOR-3 (r4 da T21): "sem default `sim`" com `sim` listado em 1º é consentimento por Enter
+  assert.deepEqual(violacoesTrocar(TROCAR).filter((x) => x.startsWith('consentimento-')), []);
+  assert.ok(violacoesTrocar(planta(TROCAR, 'com `não` em 1º e `sim` em 2º', 'com `sim` em 1º e `não` em 2º')).includes('consentimento-sim-primeiro: orquestracao'), 'orquestracao: sim em 1º cai');
+  assert.ok(violacoesTrocar(planta(TROCAR, '`não` / `sim`.', '`sim` / `não`.')).includes('consentimento-sim-primeiro: settings'), 'settings: sim / não cai');
+  assert.ok(violacoesTrocar(planta(TROCAR, 'cada um com `não` em 1º e `sim` em 2º, para o Enter confirmar o padrão', 'cada um com `sim` e `não`')).includes('consentimento-sim-primeiro: settings'), 'settings: sem a marca cai');
+  assert.ok(violacoesTrocar(planta(TROCAR, 'default **não**, listado em 1º e `sim` em 2º, para o Enter confirmar o padrão', 'default **não**, com `sim` em 1º')).includes('consentimento-sim-primeiro: iniciativa'), 'iniciativa: sim em 1º cai');
   assert.ok(violacoesTrocar(TROCAR.replace(MARCADOR_TIM1, '(gabarito-instalar). Outra coisa:')).includes('codeowners-sem-marcador-tim1'));
 });
 
