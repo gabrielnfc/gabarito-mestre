@@ -25,6 +25,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { ofertaLocal } from '../scripts/onboarding-painel.mjs';
 import { ORDEM_ITENS, IDS_FIXAS, coletarFatos, detectar, perguntas, gravar, rodarReal } from '../scripts/onboarding.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -32,7 +33,7 @@ const PLUGIN = join(AQUI, '..', '..');
 const SKILL = readFileSync(join(PLUGIN, 'skills', 'gabarito-instalar', 'SKILL.md'), 'utf8');
 const TROCAR = readFileSync(join(PLUGIN, 'skills', 'gabarito-instalar', 'trocar.md'), 'utf8');
 const MARCADOR_TIM1 = '(gabarito-instalar). Uma linha por área:'; // byte a byte: o que `instalar.sh --codeowners` escreve; sem texto de fase
-const EXTRAS = ['settings', 'codeowners', 'apendice', 'iniciativa', 'contenda'];
+const EXTRAS = ['settings', 'codeowners', 'apendice', 'iniciativa', 'contenda', 'painel'];
 
 // ────────────────────────────────────────────────────────────── funções puras
 
@@ -71,7 +72,8 @@ function violacoesComuns(texto) {
   const v = [];
   for (const [i, l] of texto.split('\n').entries()) if (/\bfases?\b/i.test(l)) v.push(`fase: linha ${i + 1}: ${l.trim().slice(0, 60)}`);
   for (const { l, i, proibido } of linhasDeProsa(texto)) {
-    if (!proibido && /\b(cole|copie|copiar|colar|digite|digitar)\b/i.test(l)) v.push(`comando-para-colar: linha ${i + 1}: ${l.trim().slice(0, 60)}`);
+    // "linha de digitar" é o nome do local do painel (REQ-ONB-2), não o pedido de digitar comando
+    if (!proibido && /\b(cole|copie|copiar|colar|digite|digitar)\b/i.test(l.replaceAll('linha de digitar', ''))) v.push(`comando-para-colar: linha ${i + 1}: ${l.trim().slice(0, 60)}`);
     if (/--set(?![a-z])/.test(l)) v.push(`--set fora de bloco: linha ${i + 1}`);
   }
   if (/--tudo/.test(texto)) v.push('--tudo');
@@ -91,6 +93,18 @@ function violacoesComuns(texto) {
   if (/capacidade\.mjs/.test(texto)) v.push('chama-capacidade (a orquestração vem do detectar)');
   // MINOR-5 (r2): comando de terminal para o usuário instalar plugin é comando para colar, mesmo sem o verbo
   if (/claude plugin (install|add)/.test(texto)) v.push('comando-de-instalar-plugin');
+  return v;
+}
+
+/** O limite do painel em palavras de spec:70 (decisão Sombra 91a18fea): é a única frase em que "ao lado" e "acima" ficam soltos. */
+const LIMITE = 'fica ao lado em tela cheia com 110 colunas ou mais, senão o Claude Code o põe acima da linha de digitar';
+/** REQ-ONB-2: nenhum "ao lado" sem "da conversa" e nenhum "acima" sem "da linha de digitar" fora da frase do limite. */
+function violacoesLocal(texto, nome) {
+  const v = [];
+  // o valor gravado (`acima`, `--local acima`) é código, não texto para o usuário
+  const sem = texto.replaceAll(LIMITE, '').replaceAll('--local acima', '').replaceAll('`acima`', '');
+  for (const m of sem.matchAll(/\bao lado\b(?! da conversa)/gi)) v.push(`${nome}: "ao lado" sozinho: ${sem.slice(Math.max(0, m.index - 15), m.index + 20).replace(/\n/g, ' ')}`);
+  for (const m of sem.matchAll(/\bacima\b(?! da linha de digitar)/gi)) v.push(`${nome}: "acima" sozinho: ${sem.slice(Math.max(0, m.index - 15), m.index + 20).replace(/\n/g, ' ')}`);
   return v;
 }
 
@@ -120,9 +134,8 @@ function violacoesSkill(texto) {
   if (!/headless[^\n]*\n?[^\n]*--dry-run[\s\S]{0,200}não grave/.test(fluxo)) v.push('sem-headless-dry-run');
   if (!/deteccao_mudou[\s\S]{0,400}No máximo 2 voltas/.test(fluxo)) v.push('sem-teto-deteccao-mudou');
   if (!/Mostre a linha `── N criado\(s\)…`, a lista de `\.novo` e cada linha que começa com `AVISO:`/.test(fluxo)) v.push('repassa-saida-do-instalador');
-  // MAJOR-2 (r2): o aviso de hooks git (R20) não instalados e a renumeração R19–R21 não podem virar silêncio
+  // MAJOR-2 (r2): o aviso de hooks git não instalados não pode virar silêncio (a renumeração R19–R21 saiu na GM-14 T21: `skill-sem-r19`)
   if (!/hooks do git de versionamento não foram instalados[\s\S]{0,200}aplicar o `versionamento-check\.mjs\.novo`/.test(fluxo)) v.push('sem-aviso-hooks-git');
-  if (!/passam a R30 em diante/.test(fluxo)) v.push('sem-aviso-renumeracao');
   if (!/sem o comando que ela sugere/.test(fluxo)) v.push('aviso-com-comando');
   // MAJOR-3 (r2): as opções saem na ordem do script, com o default primeiro: Enter o confirma
   if (!/na ordem do script, sem reordenar \(o default vem primeiro, então Enter o confirma\)/.test(fluxo)) v.push('sem-default-primeiro');
@@ -144,6 +157,23 @@ function violacoesSkill(texto) {
   if (!/harness-doctor\.mjs" --explain/.test(fluxo)) v.push('sem-doctor');
   if (!/--base origin\/<base>/.test(fluxo)) v.push('sem-base-do-gabarito.yml');
   for (const arq of ['PULL_REQUEST_TEMPLATE.md', 'CHANGELOG.md', 'backlog.md']) if (!fluxo.includes(arq)) v.push(`sem-instalar-${arq}`);
+  // GM-14 T21 (r4): prévia simples por padrão, foco e local do painel depois de gravar, local com o limite, sem R19 nem "como veio"
+  const passo3 = fluxo.split('\n').find((l) => /^3\. \*\*Prévia\.\*\*/.test(l)) ?? '';
+  const iSimples = passo3.indexOf('`previaSimples`');
+  const iDetalhes = passo3.indexOf('"mostrar detalhes"');
+  if (!(iSimples >= 0 && iDetalhes > iSimples && passo3.indexOf('`previa`', iDetalhes) > iDetalhes)) v.push('sem-previa-simples-padrao');
+  const iGravar = fluxo.indexOf('onboarding.mjs" gravar');
+  const iFoco = fluxo.indexOf('onboarding.mjs" foco --root');
+  const iPainel = fluxo.indexOf('onboarding.mjs" painel --root');
+  if (!(iGravar >= 0 && iFoco > iGravar)) v.push('foco-fora-de-lugar');
+  if (!(iFoco >= 0 && iPainel > iFoco)) v.push('local-fora-de-lugar');
+  if (!/fora do teto de perguntas/.test(fluxo)) v.push('ofertas-dentro-do-teto');
+  if (!/foco[\s\S]{0,500}`--sim`/.test(fluxo)) v.push('foco-sem-sim');
+  if (!/--local lateral` ou `--local acima`/.test(fluxo)) v.push('local-sem-valores');
+  if (/\bR(19|2[01]|30)\b|como veio/.test(texto)) v.push(`r19-ou-como-veio: ${(/\bR(19|2[01]|30)\b|como veio/.exec(texto) ?? [''])[0]}`);
+  v.push(...violacoesLocal(texto, 'SKILL'));
+  if (!fechamento.includes(LIMITE)) v.push('fechamento-sem-limite');
+  if (!/sempre um só local|um só por vez/.test(fechamento)) v.push('fechamento-sem-um-so-local');
   // allowed-tools
   const at = (texto.match(/^allowed-tools:.*$/m) ?? [''])[0];
   for (const t of ['Write', 'Bash(cp:*)', 'Bash(test:*)', 'Bash(git rev-parse:*)', 'AskUserQuestion', 'Edit']) if (!at.includes(t)) v.push(`allowed-tools sem ${t}`);
@@ -173,6 +203,7 @@ function violacoesTrocar(texto) {
   if (!/ADR-FLX-2/.test(i) || !/default \*\*não\*\*/.test(i)) v.push('iniciativa-escrita-sem-default-nao');
   if (!texto.includes(MARCADOR_TIM1)) v.push('codeowners-sem-marcador-tim1');
   v.push(...violacoesRaizRelativa(texto));
+  v.push(...violacoesLocal(texto, 'TROCAR'));
   return v;
 }
 
@@ -410,13 +441,13 @@ test('skill-repassa-aviso-de-hooks-git-da-110', () => {
   assert.equal(mostradas.some((l) => /Rode:/.test(l)), false);
   // o hook não foi gravado (o aviso é verdadeiro)
   assert.equal(existsSync(join(raiz, '.git', 'hooks', 'commit-msg')), false);
-  // a renumeração R19–R21 → R30+ existe na saída e a skill manda dizê-la, em palavras (a linha `──` não é repassada)
+  // GM-14 T21: a renumeração R19–R21 → R30+ continua na saída do instalador, mas a linha `──` não é repassada e a skill não a diz (sem siglas)
   assert.match(saida, /R19–R21 agora são do harness[^\n]*R30\+/);
-  assert.match(secao(SKILL, 'Fluxo'), /Com `--atualizar`, diga também que as regras R19 a R21/);
+  assert.equal(mostradas.some((l) => /R19–R21/.test(l)), false);
+  assert.doesNotMatch(SKILL, /R19|R21|R30/);
   // sem a cláusula na skill, o aviso se perde: caso plantado
   assert.ok(violacoesSkill(planta(SKILL, 'e cada linha que começa com `AVISO:`', '')).includes('repassa-saida-do-instalador'));
   assert.ok(violacoesSkill(planta(SKILL, 'não foram instalados', 'foram instalados')).includes('sem-aviso-hooks-git'));
-  assert.ok(violacoesSkill(planta(SKILL, 'passam a R30 em diante', 'continuam')).includes('sem-aviso-renumeracao'));
   assert.ok(violacoesSkill(planta(SKILL, 'sem o comando que ela sugere', 'com o comando que ela sugere')).includes('aviso-com-comando'));
 });
 
@@ -524,4 +555,81 @@ test('skill-exemplo-recusado-quando-quebrado', () => {
   const { _previa, ...semPrevia } = ex;
   const sem = gravarExemplo(raiz, semPrevia, CLICKUP);
   assert.deepEqual([sem.ok, sem.erro], [false, 'previa_ausente']);
+});
+
+// ────────────────────────────────────────────────────────────── GM-14 T21 (r4): onboarding para quem nunca programou
+
+test('skill-previa-simples-padrao', () => {
+  const passo3 = SKILL.split('\n').find((l) => /^3\. \*\*Prévia\.\*\*/.test(l));
+  assert.ok(passo3?.includes('`previaSimples`'));
+  assert.ok(violacoesSkill(planta(SKILL, 'mostre o campo `previa`', 'mostre o campo `previaSimples`')).includes('sem-previa-simples-padrao'), 'detalhes tem de mostrar `previa`');
+  assert.ok(violacoesSkill(planta(SKILL, 'Mostre o campo `previaSimples`', 'Mostre o campo `previa`')).includes('sem-previa-simples-padrao'), 'o padrão é a simples');
+  assert.ok(violacoesSkill(planta(SKILL, '"mostrar detalhes"', '"ver mais"')).includes('sem-previa-simples-padrao'));
+  // o `detectar` real entrega os dois campos que a skill manda mostrar
+  assert.match(SKILL, /\{ok, itens, perguntas, previaSimples, previa\}/);
+});
+
+test('skill-foco-depois-de-gravar', () => {
+  const fluxo = secao(SKILL, 'Fluxo');
+  assert.ok(fluxo.indexOf('onboarding.mjs" gravar') < fluxo.indexOf('onboarding.mjs" foco --root'), 'o foco vem depois do gravar');
+  assert.ok(violacoesSkill(planta(SKILL, 'onboarding.mjs" foco --root', 'onboarding.mjs" detectar --root')).includes('foco-fora-de-lugar'));
+  // oferta antes do gravar (foco trocado de posição com o gravar) cai
+  const trocado = SKILL.replace('onboarding.mjs" gravar', 'onboarding.mjs" GRAVAR').replace('onboarding.mjs" foco --root', 'onboarding.mjs" gravar --root').replace('onboarding.mjs" GRAVAR', 'onboarding.mjs" foco --root');
+  assert.ok(violacoesSkill(trocado).includes('foco-fora-de-lugar'));
+  assert.ok(violacoesSkill(planta(SKILL, 'fora do teto de perguntas', 'dentro do teto de perguntas')).includes('ofertas-dentro-do-teto'));
+  assert.ok(violacoesSkill(planta(SKILL, '`--sim` no fim', '`--ok` no fim')).includes('foco-sem-sim'));
+});
+
+test('skill-local-depois-do-foco', () => {
+  const fluxo = secao(SKILL, 'Fluxo');
+  assert.ok(fluxo.indexOf('onboarding.mjs" foco --root') < fluxo.indexOf('onboarding.mjs" painel --root'), 'o local vem depois do foco');
+  assert.ok(violacoesSkill(planta(SKILL, 'onboarding.mjs" painel --root', 'onboarding.mjs" detectar --root')).includes('local-fora-de-lugar'));
+  const trocado = SKILL.replace('onboarding.mjs" foco --root', 'onboarding.mjs" FOCO').replace('onboarding.mjs" painel --root', 'onboarding.mjs" foco --root').replace('onboarding.mjs" FOCO', 'onboarding.mjs" painel --root');
+  assert.ok(violacoesSkill(trocado).includes('local-fora-de-lugar'));
+  assert.ok(violacoesSkill(planta(SKILL, '`--local lateral` ou `--local acima`', '`--local meio`')).includes('local-sem-valores'));
+  // o fechamento diz o local e o limite, em um só local
+  assert.ok(violacoesSkill(planta(SKILL, LIMITE, 'fica ao lado em tela cheia')).includes('fechamento-sem-limite'));
+  assert.ok(violacoesSkill(planta(SKILL, 'um só por vez', 'dois ao mesmo tempo')).includes('fechamento-sem-um-so-local'));
+});
+
+test('skill-local-nos-dois-textos', () => {
+  // 0 "ao lado" sozinho e 0 "acima" sozinho, em SKILL.md, trocar.md e no texto que o script oferece; só a frase do limite os solta
+  assert.deepEqual(violacoesLocal(SKILL, 'SKILL'), []);
+  assert.deepEqual(violacoesLocal(TROCAR, 'TROCAR'), []);
+  assert.deepEqual(violacoesLocal(ofertaLocal(novoDir('gm-skill-local-')).texto, 'OFERTA'), []);
+  for (const [nome, texto, f] of [['SKILL', SKILL, violacoesSkill], ['TROCAR', TROCAR, violacoesTrocar]]) {
+    for (const ruim of ['o painel abre ao lado', 'Ao Lado em terminal largo', 'AO LADO', 'fica acima do prompt', 'Acima da conversa', 'ACIMA']) {
+      assert.ok(f(`${texto}\n${ruim}\n`).some((x) => /sozinho/.test(x)), `${nome}: ${ruim}`);
+    }
+    for (const bom of ['ao lado da conversa', 'acima da linha de digitar', 'Ao lado da conversa']) assert.equal(f(`${texto}\n${bom}\n`).some((x) => /sozinho/.test(x)), false, bom);
+  }
+  // a frase do limite é a única exceção, e só inteira
+  assert.deepEqual(violacoesLocal(`x ${LIMITE} y`, 'T'), []);
+  assert.ok(violacoesLocal('x fica ao lado em tela cheia com 110 colunas ou mais y', 'T').length > 0);
+});
+
+test('skill-sem-r19', () => {
+  assert.doesNotMatch(SKILL, /\bR(19|2[01]|30)\b/);
+  assert.doesNotMatch(SKILL, /como veio/);
+  for (const ruim of ['As regras R19 a R21 agora são do harness.', 'passam a R30 em diante', 'Mostre como veio.', 'r21 saiu']) {
+    const r = violacoesSkill(`${SKILL}\n${ruim}\n`);
+    if (/r21/.test(ruim)) assert.equal(r.some((x) => x.startsWith('r19-ou-como-veio')), false, 'minúscula não é regra');
+    else assert.ok(r.some((x) => x.startsWith('r19-ou-como-veio')), ruim);
+  }
+  // a regra de linguagem continua dando exemplo de sigla interna (R20), no texto para o modelo: só R19, R21 e R30 são vetados
+  assert.match(SKILL, /sem siglas internas/);
+});
+
+test('trocar-painel-no-trocar-md', () => {
+  const s = secao(TROCAR, 'painel');
+  assert.match(s, /onboarding\.mjs" painel --root "<raiz>"/);
+  assert.match(s, /--local <valor>/);
+  assert.ok(violacoesTrocar(TROCAR.replace(/^## painel\b/m, '## xpainel')).includes('sem-secao: painel'));
+  assert.ok(SKILL.includes('`painel`: leia'), 'a skill manda ler a seção painel do trocar.md');
+});
+
+test('skill-linha-de-digitar-nao-e-comando-para-colar', () => {
+  assert.deepEqual(violacoesComuns('o painel fica acima da linha de digitar'), []);
+  assert.ok(violacoesComuns('Digite isto na linha de digitar').some((x) => x.startsWith('comando-para-colar')), 'o verbo solto ainda é violação');
+  assert.ok(violacoesComuns('acima da linha de digitar. Digite o comando').some((x) => x.startsWith('comando-para-colar')));
 });

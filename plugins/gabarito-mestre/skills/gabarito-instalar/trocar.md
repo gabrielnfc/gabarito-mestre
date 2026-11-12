@@ -1,6 +1,6 @@
 # gabarito-instalar: trocar um item que não é pergunta do onboarding
 
-Carregado só quando o usuário pede `trocar orquestracao`, `trocar settings`, `trocar codeowners`, `trocar apendice`, `trocar iniciativa` ou `trocar contenda`. Siga só a seção do item pedido. `<raiz>` é a raiz do git (passo 1 do Fluxo em `SKILL.md`). Antes de qualquer gravação, mostre o bloco e peça ok.
+Carregado só quando o usuário pede `trocar orquestracao`, `trocar settings`, `trocar codeowners`, `trocar apendice`, `trocar iniciativa`, `trocar contenda` ou `trocar painel`. Siga só a seção do item pedido. `<raiz>` é a raiz do git (passo 1 do Fluxo em `SKILL.md`). Antes de qualquer gravação, mostre o bloco e peça ok.
 
 Os dois scripts de config (`onboarding-config.mjs`) fazem merge chave a chave, nunca removem e imprimem o diff. Decida pelo **stdout** (a primeira linha diz o que aconteceu); o stderr só explica:
 
@@ -145,3 +145,19 @@ node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding-config.mjs" --root "<raiz>"
 ```
 
 Depois, no Apêndice (`trocar apendice`), a linha `Arquivos de contenda (serial, sem override)` recebe a lista, na segunda célula.
+
+## painel
+
+Troca o local do painel: ao lado da conversa (padrão) ou acima da linha de digitar. Grava só `painel.local` em `harness.config.json`, sem tocar nas outras chaves. O painel fica ao lado da conversa só se vale o limite: fica ao lado em tela cheia com 110 colunas ou mais, senão o Claude Code o põe acima da linha de digitar.
+
+1. Veja o que está gravado:
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding.mjs" painel --root "<raiz>"
+   ```
+   `oferecer:false` com `motivo` `ja_gravado`: o campo `atual` é o local de hoje (`lateral` = ao lado da conversa, `acima` = acima da linha de digitar); diga-o. `config_corrompido`: pare e diga "conserte o JSON de harness.config.json e peça de novo".
+2. Pergunte por `AskUserQuestion` o `texto` do passo 1, com os `rotulo` das `opcoes`; sem `AskUserQuestion`, não grave e diga que nada mudou.
+3. Grave o `valor` escolhido (`lateral` ou `acima`) e mostre a `frase`:
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding.mjs" painel --root "<raiz>" --local <valor>
+   ```
+   `ok:false`: mostre o `motivo`; nada foi gravado.

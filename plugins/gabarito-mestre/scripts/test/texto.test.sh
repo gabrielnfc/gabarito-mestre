@@ -201,7 +201,7 @@ for sec in '## Fluxo' '## Trocar um item' '## Modo --vincular' '## Proibido'; do
 done
 N5=$(grep -ci '^## Fase ' "$SI")
 check "SKILL.md instalar sem seção '## Fase ' (sem caixa)" '[ "'"$N5"'" -eq 0 ]' "achei $N5 seção(ões) de fase"
-check "SKILL.md instalar apresenta o painel ao fim do onboarding" "grep -qF 'Quando uma entrega começar, o painel abre sozinho ao lado (em terminal largo); \`/gabarito\` mostra as opções.' '$SI'" "linha do painel ausente"
+check "SKILL.md instalar diz o local do painel e o limite ao fim do onboarding (GM-14 T21)" "grep -qF 'fica ao lado em tela cheia com 110 colunas ou mais, senão o Claude Code o põe acima da linha de digitar' '$SI'" "linha do painel ausente"
 CG="$P/commands/gabarito.md"
 check "commands/gabarito.md (sem mod) explica pausar, retomar e que o painel precisa do mod" "grep -qF '/gabarito pausar   para o trabalho automático da entrega' '$CG' && grep -qF '/gabarito retomar  continua de onde parou' '$CG' && grep -qxF 'O painel precisa do mod; sem ele não há o painel.' '$CG'" "ajuda sem mod ausente"
 

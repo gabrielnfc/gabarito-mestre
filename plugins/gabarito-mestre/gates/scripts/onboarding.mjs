@@ -22,6 +22,7 @@
  *     respostas_ausentes | respostas_invalidas | config_invalida | deteccao_mudou | resposta_fora_das_opcoes | falha.
  *   node onboarding.mjs herdar --root <d> [--gravar]    (GM-14 REQ-ONB-3 a; `onboarding-herdar.mjs`, T8)
  *   node onboarding.mjs foco --root <d> [--sim]         (GM-14 REQ-ONB-2 foco; `onboarding-foco.mjs`, T9)
+ *   node onboarding.mjs painel --root <d> [--local lateral|acima]   (GM-14 REQ-ONB-2 local do painel; `onboarding-painel.mjs`, T21)
  *     A T1 só liga o despacho: { ok:false, erro:'nao_implementado', motivo }, exit 1, nada escrito.
  */
 
@@ -39,6 +40,7 @@ import { PERFIS_MODELO, resolverModelo } from '../lib/config.mjs';
 import { aplicarConfig, ArquivoInvalido } from './onboarding-config.mjs';
 import { herdar } from './onboarding-herdar.mjs';
 import { gravarFoco, ofertaFoco } from './onboarding-foco.mjs';
+import { gravarLocal, ofertaLocal } from './onboarding-painel.mjs';
 import { explicarPrimeira, previaSimples } from '../lib/glossario.mjs';
 
 export const ORDEM_ITENS = ['tipo_repo', 'ambientes', 'planejamento', 'versionamento', 'orquestracao'];
@@ -909,18 +911,20 @@ export function gravar(raiz, caminhoRespostas, { rodar = rodarReal, hoje = hojeI
 
 function main(argv) {
   const sub = argv[0];
-  if (!['detectar', 'gravar', 'herdar', 'foco'].includes(sub)) {
-    process.stderr.write('uso: onboarding.mjs detectar [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] [--recalibrar] | gravar --respostas <arquivo.json> [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] [--dry-run] | herdar --root <d> [--gravar] | foco --root <d> [--sim]\n');
+  if (!['detectar', 'gravar', 'herdar', 'foco', 'painel'].includes(sub)) {
+    process.stderr.write('uso: onboarding.mjs detectar [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] [--recalibrar] | gravar --respostas <arquivo.json> [--root <d>] [--hoje AAAA-MM-DD] [--fuso <IANA>] [--dry-run] | herdar --root <d> [--gravar] | foco --root <d> [--sim] | painel --root <d> [--local lateral|acima]\n');
     return 2;
   }
   const raiz = arg(argv, 'root', null) ?? raizDoRepo(process.cwd());
   const saida = (obj) => process.stdout.write(`${JSON.stringify(obj)}\n`);
-  if (sub === 'herdar' || sub === 'foco') {
+  if (sub === 'herdar' || sub === 'foco' || sub === 'painel') {
     // GM-14 T1: só o despacho (T8 herdar, T9 foco). Falha com código vira `{ok:false, erro, motivo}`, exit 1.
     try {
       const r = sub === 'herdar'
         ? herdar(raiz, { rodar: rodarReal, gravar: argv.includes('--gravar') })
-        : argv.includes('--sim') ? gravarFoco(raiz, { rodar: rodarReal }) : ofertaFoco(raiz);
+        : sub === 'painel'
+          ? (argv.includes('--local') ? gravarLocal(raiz, arg(argv, 'local', null)) : ofertaLocal(raiz))
+          : argv.includes('--sim') ? gravarFoco(raiz, { rodar: rodarReal }) : ofertaFoco(raiz);
       saida({ ok: true, ...r });
       return 0;
     } catch (e) {
