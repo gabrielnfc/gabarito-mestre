@@ -5,6 +5,8 @@
  * MUTAÇÕES PRESCRITAS:
  *  A1  converter também o anel `segredo` ⇒ `autonomia-segredo-continua-ask` falha
  *  A2  converter também o `deny` do subagent ⇒ `autonomia-subagent-continua-deny` falha
+ *  A4  converter também o teto (Q17) ⇒ `autonomia-ligada-teto-continua-ask` falha
+ *  A5  converter a escrita no interruptor ⇒ `autonomia-escrita-no-interruptor-nunca-passa` falha
  *  A3  `lerAutonomia` aceitar qualquer valor truthy ⇒ `autonomia-arquivo-invalido-vale-ask` falha
  */
 
@@ -37,11 +39,26 @@ describe('autonomia do orquestrador', () => {
     assert.equal(JSON.stringify(d.evento).includes('remote add'), false, 'nunca o comando');
   });
 
-  test('autonomia-ligada-teto-passa-com-evento', () => {
+  test('autonomia-ligada-teto-continua-ask', () => {
     const d = decidir(bash(`echo ${'a'.repeat(TETO_COMANDO + 1)}`), null, CTX, true);
-    assert.equal(d.faixa, 'silencio');
-    assert.equal(d.evento?.tipo, 'guarda.autonomia');
+    assert.equal(d.faixa, 'ask');
+    assert.equal(d.evento?.tipo, 'guarda.ask');
     assert.equal(d.evento?.dados.motivo, 'teto');
+  });
+
+  test('autonomia-ligada-teto-com-anel-no-prefixo-continua-ask', () => {
+    const d = decidir(bash(`git remote add x y; echo ${'a'.repeat(TETO_COMANDO + 1)}`), null, CTX, true);
+    assert.equal(d.faixa, 'ask', 'o resto do comando não foi lido: pode haver segredo');
+  });
+
+  test('autonomia-escrita-no-interruptor-nunca-passa', () => {
+    const alvo = '~/.claude/gabarito-autonomia.json';
+    const escrita: EntradaHook = { tool_name: 'Write', tool_input: { file_path: '/home/u/.claude/gabarito-autonomia.json', content: '{}' }, permission_mode: 'default', session_id: 's', cwd: '/repo' };
+    for (const e of [bash(`echo x > ${alvo}`), bash(`git remote add x y; echo x > ${alvo}`), escrita]) {
+      const d = decidir(e, null, CTX, true);
+      assert.equal(d.faixa, 'ask');
+      assert.equal(d.evento?.tipo, 'guarda.ask');
+    }
   });
 
   test('autonomia-segredo-continua-ask', () => {

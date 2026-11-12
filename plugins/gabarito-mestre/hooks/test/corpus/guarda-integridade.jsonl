@@ -129,3 +129,14 @@
 {"nome":"fetch-orq-refmap","req":"GRD-5","tool":"Bash","input":{"command":"git fetch --refmap=x origin"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"fetch-orq-upload-pack","req":"GRD-5","tool":"Bash","input":{"command":"git fetch --upload-pack=x origin"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"fetch-orq-set-upstream","req":"GRD-5","tool":"Bash","input":{"command":"git fetch --set-upstream origin"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-arquivo-write-orq","req":"GRD-5","tool":"Write","input":{"file_path":"/home/u/.claude/gabarito-autonomia.json","content":"{}"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-arquivo-edit-til-orq","req":"GRD-5","tool":"Edit","input":{"file_path":"~/.claude/gabarito-autonomia.json","old_string":"a","new_string":"b"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-arquivo-redir-orq","req":"GRD-5","tool":"Bash","input":{"command":"echo x > ~/.claude/gabarito-autonomia.json"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-arquivo-tee-orq","req":"GRD-5","tool":"Bash","input":{"command":"echo x | tee /home/u/.claude/gabarito-autonomia.json"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-arquivo-write-sub","req":"GRD-5","tool":"Write","input":{"file_path":"/home/u/.claude/gabarito-autonomia.json","content":"{}"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-arquivo-edit-til-sub","req":"GRD-5","tool":"Edit","input":{"file_path":"~/.claude/gabarito-autonomia.json","old_string":"a","new_string":"b"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-arquivo-redir-sub","req":"GRD-5","tool":"Bash","input":{"command":"echo x > ~/.claude/gabarito-autonomia.json"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-arquivo-tee-sub","req":"GRD-5","tool":"Bash","input":{"command":"echo x | tee /home/u/.claude/gabarito-autonomia.json"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-arquivo-cp-orq","req":"GRD-5","tool":"Bash","input":{"command":"cp a.json ~/.claude/gabarito-autonomia.json"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-arquivo-mv-orq","req":"GRD-5","tool":"Bash","input":{"command":"mv a.json /home/u/.claude/gabarito-autonomia.json"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-arquivo-leitura-orq","req":"GRD-5","tool":"Read","input":{"file_path":"/home/u/.claude/gabarito-autonomia.json"},"agente":"orq","esperado":{"faixa":"silencio"}}
