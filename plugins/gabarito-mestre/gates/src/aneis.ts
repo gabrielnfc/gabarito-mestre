@@ -576,6 +576,20 @@ const GIT_PERMITIDOS = new Set([
 const GIT_OUTPUT = /^--output(?:=|$)/;
 // Q16: o orquestrador só é interrompido por estes; todo outro `git` segue o prompt nativo.
 const GIT_PEDE_ORQUESTRADOR = new Set(['remote', 'fetch', 'pull', 'update-ref', 'symbolic-ref', 'config']);
+// Fetch comum do orquestrador (decisão do dono, 2026-11-12): no máximo um remoto por nome simples (nada de URL, caminho ou ponto)
+// seguido de nomes de branch; sem refspec (dois-pontos, mais, prefixo refs); só flags de uma allowlist. Qualquer outra forma cai no anel (fail-closed).
+const FETCH_FLAGS = /^(?:-q|--quiet|-v|--verbose|-p|--prune|--all|--tags|--no-tags|--dry-run|--depth=\d+)$/;
+const FETCH_REMOTO = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
+const FETCH_BRANCH = /^[A-Za-z0-9_@][A-Za-z0-9_@./-]*$/;
+function fetchSeguro(resto: string[]): boolean {
+  const pos: string[] = [];
+  for (const a of resto) {
+    if (a.startsWith('-')) {
+      if (!FETCH_FLAGS.test(a)) return false;
+    } else pos.push(a);
+  }
+  return pos.every((p, i) => p !== '.' && p !== '..' && (i === 0 ? FETCH_REMOTO.test(p) : FETCH_BRANCH.test(p) && !p.startsWith('refs/')));
+}
 // Leitura por forma (T24): `worktree` só com `list` em 1º; `hash-object` sem `-…w` e sem `--stdin-*` (o git abrevia, `--stdin-p` vale).
 function gitLeituraPorForma(sub: string, resto: string[]): boolean {
   if (sub === 'worktree') return resto[0] === 'list';
@@ -767,7 +781,7 @@ export function anelDeBash(segmentos: Segmento[], contexto: Contexto, cwd?: stri
         if (!(subagent ? pushPermitido(g.resto) : pushSemRefsRemotes(g.resto))) integridade ??= { anel: 'integridade', alvo: 'refs/remotes', escrita: true };
       } else if (g.resto.some((a) => GIT_OUTPUT.test(a))) {
         integridade ??= { anel: 'integridade', alvo: '.git', escrita: true };
-      } else if (subagent ? !GIT_PERMITIDOS.has(g.sub) && !gitLeituraPorForma(g.sub, g.resto) : GIT_PEDE_ORQUESTRADOR.has(g.sub)) {
+      } else if (subagent ? !GIT_PERMITIDOS.has(g.sub) && !gitLeituraPorForma(g.sub, g.resto) : GIT_PEDE_ORQUESTRADOR.has(g.sub) && !(g.sub === 'fetch' && g.dirs.length === 0 && fetchSeguro(g.resto))) {
         const alvo = g.sub === 'remote' || g.sub === 'config' ? '.git/config' : g.sub === 'fetch' || g.sub === 'pull' || g.sub === 'update-ref' || g.sub === 'symbolic-ref' ? 'refs/remotes' : '.git';
         integridade ??= { anel: 'integridade', alvo, escrita: true };
       }
