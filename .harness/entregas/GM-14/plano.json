@@ -292,6 +292,26 @@
       ]
     },
     {
+      "id": "T13b",
+      "titulo": "Ideias com botão visto (Emenda 5)",
+      "deps": [
+        "T13",
+        "T12",
+        "T14"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/depende.ts",
+        "plugins/gabarito-mestre/gates/dist/depende.js",
+        "plugins/gabarito-mestre/gates/test/depende.test.ts",
+        "plugins/gabarito-mestre/gates/src/perguntas.ts",
+        "plugins/gabarito-mestre/gates/dist/perguntas.js",
+        "plugins/gabarito-mestre/gates/test/perguntas.test.ts"
+      ],
+      "reqs": [
+        "REQ-DEP-1"
+      ]
+    },
+    {
       "id": "T14",
       "titulo": "Hook `responder`",
       "deps": [
@@ -301,7 +321,11 @@
         "plugins/gabarito-mestre/gates/scripts/responder.mjs",
         "plugins/gabarito-mestre/hooks/hooks.json",
         "plugins/gabarito-mestre/skills/responder/SKILL.md",
-        "plugins/gabarito-mestre/gates/test/responder.test.mjs"
+        "plugins/gabarito-mestre/gates/test/responder.test.mjs",
+        "plugins/gabarito-mestre/gates/test/liberar-teto.test.mjs",
+        "plugins/gabarito-mestre/gates/src/trilha.ts",
+        "plugins/gabarito-mestre/gates/dist/trilha.js",
+        "plugins/gabarito-mestre/gates/test/trilha.test.ts"
       ],
       "reqs": [
         "REQ-PRG-1"
@@ -335,6 +359,7 @@
         "T4",
         "T12",
         "T13",
+        "T13b",
         "T1b"
       ],
       "arquivos": [
@@ -359,7 +384,8 @@
         "plugins/gabarito-mestre/gates/dist/painel.js",
         "plugins/gabarito-mestre/gates/dist/painel-texto.js",
         "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
-        "plugins/gabarito-mestre/gates/dist/painel-executivo.js"
+        "plugins/gabarito-mestre/gates/dist/painel-executivo.js",
+        "plugins/gabarito-mestre/gates/test/painel-blocos.test.ts"
       ],
       "reqs": [
         "REQ-GLB-1",
@@ -714,6 +740,7 @@
         "T11",
         "T12",
         "T13",
+        "T13b",
         "T14",
         "T15",
         "T17",
