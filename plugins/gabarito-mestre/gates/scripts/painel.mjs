@@ -23,20 +23,24 @@
  * LIMITES DECLARADOS. (1) `prepararLeitura` relê o diário (2ª fotografia); só alimenta `decisaoEntrega`. (2) `AgentePainel.tok` = soma com dedupe da
  * CAUDA lida (≤ 256 KB), não do transcript inteiro (MINOR, backlog: nenhum render o lê).
  */
+import { execFileSync } from 'node:child_process';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readFileSync, readdirSync } from 'node:fs';
 import { isatty } from 'node:tty';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import { lerConfigOrigin } from '../lib/config.mjs';
+import { PADROES } from '../lib/git.mjs';
+import { dirEntrega, lerEstrito } from '../dist/diario.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
-import { ordenar, proximaAcao } from '../dist/loop.js';
+import { estadoDe, ordenar, proximaAcao, TIPOS_DE_TASK } from '../dist/loop.js';
 import { projetarPainel, renderPainel } from '../dist/painel.js';
 import { validarPacote, usoDoTranscript } from '../dist/painel-equipe.js';
 import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
 import { lerX } from '../dist/pouso.js';
-import { carregarPlano, contexto, lerDiarioEstrito, lerSpec, tetoDaSombra } from './loop.mjs';
+import { idDaBranch } from '../dist/trilha.js';
+import { carregarPlano, contexto, lerDiarioEstrito, lerSpec, lerSpecs, tetoDaSombra } from './loop.mjs';
 import { decisaoDe, pausado, prepararLeitura } from './entrega.mjs';
 import { medir } from './painel-medir.mjs';
 
@@ -248,7 +252,7 @@ function lerPacoteDe(arquivo) {
 /** `mod/temas/nomes/<p>.json`, senão `<raiz>/.harness/temas/nomes/<p>.json`; inválido ou inexistente ⇒ `terra-media` e aviso. */
 function carregarPacote(nome, raiz, avisos) {
   const motivos = [];
-  for (const arquivo of [join(MOD_NOMES, `${nome}.json`), join(raiz, '.harness', 'temas', 'nomes', `${nome}.json`)]) {
+  for (const arquivo of [join(MOD_NOMES, `${nome}.json`), ...(raiz === null ? [] : [join(raiz, '.harness', 'temas', 'nomes', `${nome}.json`)])]) {
     const r = lerPacoteDe(arquivo);
     if (r.ok) return r.pacote;
     motivos.push(r.erro);
@@ -306,37 +310,182 @@ function modeloDoDiario(eventos) {
   return modelo;
 }
 
+// ─────────────────────────────────────────────────────────────── fatos da trilha (GM-14 T18)
+
+/** Nomes naturais das fontes (D-P13): o render os mostra em "não consegui ler <fonte>"; nunca nome de arquivo nem código. */
+const FONTE = Object.freeze({ specs: 'as specs', medir: 'o registro de medição do painel', gh: 'o GitHub', entregas: 'a lista de entregas', diarioDe: (id) => `o diário da ${id}` });
+const ausenteFs = (e) => e?.code === 'ENOENT' || e?.code === 'ENOTDIR';
+
+/** Branch do checkout da sessão; HEAD solto ou erro ⇒ `null` (não há branch a ler). */
+function branchDe(cwd) {
+  try {
+    return execFileSync('git', ['symbolic-ref', '--short', '-q', 'HEAD'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** `fluxo.idPadrao` de origin/HEAD, a mesma regra de `loop.mjs` (`idPadraoDe`, não exportada): ausente, longa ou inválida ⇒ o padrão. */
+function idPadraoDe(cfg) {
+  const v = cfg?.fluxo?.idPadrao;
+  if (typeof v !== 'string' || v.length === 0 || v.length > 200) return PADROES.idPadrao;
+  try { new RegExp(v); } catch { return PADROES.idPadrao; }
+  return v;
+}
+
+/** `<ledgerDir>/<ID>.md` (padrão `docs/ledgers`), a mesma regra do `responder.mjs`. */
+function temLedger(raiz, id, ledgerDir) {
+  const dir = typeof ledgerDir === 'string' && ledgerDir !== '' && !ledgerDir.startsWith('/') && !ledgerDir.split('/').includes('..') ? ledgerDir : 'docs/ledgers';
+  try { return lstatSync(join(raiz, dir, `${id}.md`)).isFile(); } catch { return false; }
+}
+
+/** Estado da entrega em palavras, só com fato: `N de M tasks integradas` | `tasks todas integradas`; sem `plano.json` legível ⇒ `null`. */
+function estadoEmPalavras(dir, eventos) {
+  let tasks;
+  try {
+    const j = JSON.parse(readFileSync(join(dir, 'plano.json'), 'utf8'));
+    if (!ehObj(j) || !Array.isArray(j.tasks)) return null;
+    tasks = j.tasks.map((t) => t?.id).filter((x) => typeof x === 'string');
+  } catch {
+    return null;
+  }
+  if (tasks.length === 0) return null;
+  let n = 0;
+  for (const id of tasks) {
+    const r = estadoDe(eventos.filter((e) => TIPOS_DE_TASK.includes(e?.tipo) && e?.dados?.task === id));
+    if (!('invalido' in r) && r.estado === 'integrada') n++;
+  }
+  return n === tasks.length ? 'tasks todas integradas' : `${n} de ${tasks.length} tasks integradas`;
+}
+
+/**
+ * Pontos de atividade `{id, data}` (pendência T14/T15: a MESMA regra do `responder.mjs`): 1 por `ts` distinto de cada entrega de
+ * `.harness/entregas/` fora das pastas `_*`. Diário ilegível ⇒ a fonte entra em `fontes` (nunca lista vazia calada). `ultima` = a de `ts` mais recente.
+ */
+function atividades(raiz, fontes) {
+  const base = join(raiz, '.harness', 'entregas');
+  let nomes;
+  try {
+    nomes = readdirSync(base).filter((n) => !n.startsWith('_')).sort();
+  } catch (e) {
+    if (!ausenteFs(e)) fontes.push(FONTE.entregas);
+    return { ultimas: [], ultima: null };
+  }
+  const ultimas = [];
+  let ultima = null;
+  for (const id of nomes) {
+    const dir = join(base, id);
+    try { if (!lstatSync(dir).isDirectory()) continue; } catch { continue; }
+    const lido = lerEstrito(dir);
+    if (!lido.ok) { fontes.push(FONTE.diarioDe(id)); continue; }
+    const vistos = new Set();
+    let maior = null;
+    for (const e of lido.eventos) {
+      if (typeof e?.ts !== 'string' || vistos.has(e.ts)) continue;
+      vistos.add(e.ts);
+      ultimas.push({ id, data: e.ts });
+      if (maior === null || e.ts > maior) maior = e.ts;
+    }
+    if (maior !== null && (ultima === null || maior > ultima.data)) ultima = { id, data: maior, dir, eventos: lido.eventos };
+  }
+  return { ultimas, ultima: ultima === null ? null : { id: ultima.id, estado: estadoEmPalavras(ultima.dir, ultima.eventos) } };
+}
+
+/** `gh` da entrega pelo `.harness/painel-medir.json` (T11; `estado` só lê): ausente ⇒ `nunca`; corrompido ⇒ `nunca` + fonte que falhou; `falhou` ⇒ o GitHub. */
+function ghDe(raiz, chave, fontes) {
+  let texto;
+  try {
+    texto = readFileSync(join(raiz, '.harness', 'painel-medir.json'), 'utf8');
+  } catch (e) {
+    if (!ausenteFs(e)) fontes.push(FONTE.medir);
+    return 'nunca';
+  }
+  let j;
+  try { j = JSON.parse(texto); } catch { fontes.push(FONTE.medir); return 'nunca'; }
+  if (!ehObj(j)) { fontes.push(FONTE.medir); return 'nunca'; }
+  const it = j[chave];
+  if (it === undefined) return 'nunca';
+  if (!ehObj(it) || (it.gh !== 'ok' && it.gh !== 'falhou')) { fontes.push(FONTE.medir); return 'nunca'; }
+  if (it.gh === 'falhou') fontes.push(FONTE.gh);
+  return it.gh;
+}
+
+/** `session_id` do mod (stdin de `--agentes`), a mesma leitura do `medir`; sem ele a trilha nunca liga por resposta (falha fechada). */
+function sessaoDoMod(agentes) {
+  const s = agentes?.session_id ?? agentes?.sessao?.session_id;
+  return typeof s === 'string' && s !== '' ? s : null;
+}
+
 /**
  * Monta o estado do painel. `opts`: `agentes` (objeto do stdin; ausente = sem `--agentes`, equipe só do diário), `pacote`, `entrega`, `agoraMs`
  * (um só `Date.now()` por execução), `env` (padrão `process.env`), `fuso`, `diario` (deps de `lerDiarioEstavel`) e `preparar` (troca `prepararLeitura`, para contar chamadas). Nunca lança: `{ok:true, estado, avisos}`
  * ou `{ok:false, erro, mensagem}`.
+ *
+ * GM-14 T18 (REQ-GLB-1, FIEL-10 b/e): num repo git NUNCA devolve `sem_loop`/`plano_ausente`/`entrega_nao_inferida`. Sem plano ⇒ FASE pela trilha;
+ * branch sem ID ⇒ diário de `_sem-id`; fora de repo ⇒ `modo: 'fora'`. Sempre passa `fatos` (FatosTrilha: branch, idPadrao, specs de `lerSpecs`,
+ * plano, ledger, gh de `painel-medir.json`, `ultimas`, `sessao` do stdin) a `projetarPainel` e as fontes que falharam em `fontesFalhas`.
  */
 export function estadoDoPainel(cwd, opts = {}) {
   const avisos = [];
   try {
     const agoraMs = opts.agoraMs ?? Date.now();
     const env = opts.env ?? process.env;
-    const c = contexto(cwd, { entrega: opts.entrega });
-    const plano = carregarPlano(c);
-    const lido = lerDiarioEstavel(c.dirEntrega, opts.diario);
+    const fontes = [];
+
+    // raiz e entrega: fora de repo ⇒ `fora`; branch sem ID ⇒ `_sem-id` (a mesma regra de raiz do loop)
+    let raiz = null;
+    try {
+      raiz = contexto(cwd, { entrega: opts.entrega ?? '_sem-id' }).raiz;
+    } catch (e) {
+      if (e?.erro !== 'fora_de_repo') throw e;
+    }
+    const origin = raiz === null ? { cfg: null, fonte: 'nenhuma', invalida: false } : lerConfigOrigin(raiz);
+    if (origin.invalida === true) avisos.push(`config de origin/HEAD inválida (${origin.motivo})`);
+    const idPadrao = idPadraoDe(origin.cfg);
+    const branch = raiz === null ? null : branchDe(cwd);
+    const id = opts.entrega ?? idDaBranch(branch, idPadrao);
+    const c = raiz === null ? null : { cwd, raiz, entrega: id ?? '_sem-id', dirEntrega: dirEntrega(raiz, id ?? null), sessao: 'loop' };
+
+    let plano = null;
+    if (c !== null && id !== null) {
+      try {
+        plano = carregarPlano(c);
+      } catch (e) {
+        if (e?.erro !== 'plano_ausente') throw e;
+      }
+    }
+    const lido = c === null ? { eventos: [] } : lerDiarioEstavel(c.dirEntrega, opts.diario);
     const eventos = lido.eventos;
 
-    // spec: sha e título dos MESMOS bytes
+    let specs = [];
+    if (raiz !== null) {
+      try { specs = lerSpecs(raiz); } catch (e) { if (typeof e?.erro !== 'string') throw e; fontes.push(FONTE.specs); }
+    }
+    const ativ = raiz === null ? { ultimas: [], ultima: null } : atividades(raiz, fontes);
+    const gh = raiz === null ? 'nunca' : ghDe(raiz, id !== null && c.dirEntrega.endsWith(id) ? id : '_sem-id', fontes);
+    const sessaoMod = sessaoDoMod(opts.agentes);
+    const fatos = {
+      branch, idPadrao, specs, plano: plano === null ? null : { tasks: plano.tasks.map((t) => t.id) },
+      ledger: raiz !== null && id !== null && temLedger(raiz, id, origin.cfg?.fluxo?.ledgerDir), gh, ultimas: ativ.ultimas, sessao: sessaoMod,
+    };
+
+    // spec: sha e título dos MESMOS bytes (com plano: `plano.spec`; sem plano: a única de `lerSpecs` com o PBI da entrega)
     let specSha = null;
     let titulo = null;
-    if (typeof plano.spec === 'string' && plano.spec !== '') {
+    if (plano !== null && typeof plano.spec === 'string' && plano.spec !== '') {
       const s = lerSpec(c.raiz, plano);
       if (s.ok) { specSha = s.sha256; titulo = tituloDe(s.bytes); } else avisos.push(`spec: ${s.erro} (${s.mensagem})`);
+    } else if (id !== null) {
+      const daEntrega = specs.filter((s) => s.pbi === id);
+      if (daEntrega.length === 1 && daEntrega[0].titulo !== '') titulo = daEntrega[0].titulo;
     }
 
     // origem: teto da Sombra e política
-    const origin = lerConfigOrigin(c.raiz);
-    if (origin.invalida === true) avisos.push(`config de origin/HEAD inválida (${origin.motivo})`);
     const teto = tetoDaSombra(origin);
     if (teto.aviso !== undefined) avisos.push(teto.aviso);
     const config = lerConfigEntrega(origin.cfg);
     avisos.push(...config.erros);
-    const efetiva = politicaEfetiva(config, plano.politica_entrega);
+    const efetiva = politicaEfetiva(config, plano?.politica_entrega);
     if (!efetiva.ok) avisos.push(`política de entrega: ${efetiva.mensagem}`);
     const politica = efetiva.ok
       ? { politica: efetiva.politica, dias: efetiva.janela?.dias ?? null }
@@ -365,11 +514,11 @@ export function estadoDoPainel(cwd, opts = {}) {
       if (PACOTE_RE.test(sessao.pacote)) nomePacote = sessao.pacote;
       else avisos.push(`sessao.pacote ${JSON.stringify(sessao.pacote.slice(0, 40))} fora da forma: usando ${PACOTE_PADRAO}`);
     }
-    const pacote = carregarPacote(nomePacote, c.raiz, avisos);
+    const pacote = carregarPacote(nomePacote, raiz, avisos);
 
-    // decisão de entrega: só com o loop em `concluir` (custo); sem efeito
+    // decisão de entrega: só com plano e o loop em `concluir` (custo); sem efeito
     let decisaoEntrega = null;
-    if (eventos !== null && eventos.length > 0) {
+    if (plano !== null && eventos !== null && eventos.length > 0) {
       const ord = ordenar(eventos);
       if (ord.ok && proximaAcao(plano, eventos, SINAIS_NEUTROS).tipo === 'concluir') {
         const r = (opts.preparar ?? prepararLeitura)(cwd, { entrega: c.entrega, agoraMs });
@@ -380,7 +529,7 @@ export function estadoDoPainel(cwd, opts = {}) {
 
     const entrada = {
       decisaoEntrega,
-      pausado: pausado(c),
+      pausado: c === null ? false : pausado(c),
       contexto: { percent: numero(sessao.percent), tokens: numero(sessao.tokens), window: numero(sessao.window) },
       limites: { h5: numero(sessao.h5), d7: numero(sessao.d7) },
       x: x.x,
@@ -391,10 +540,14 @@ export function estadoDoPainel(cwd, opts = {}) {
       fuso,
       titulo,
       politica,
-      entregaId: c.entrega,
+      entregaId: plano !== null ? c.entrega : id,
       modeloSessao: modeloDoDiario(eventos),
       specSha,
       tetoSombra: teto.teto,
+      fatos,
+      fontesFalhas: fontes,
+      fora: raiz === null,
+      ultima: ativ.ultima,
     };
     return { ok: true, estado: projetarPainel(plano, eventos, entrada), avisos };
   } catch (e) {
