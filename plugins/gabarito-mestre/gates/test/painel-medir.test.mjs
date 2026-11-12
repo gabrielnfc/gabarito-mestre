@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { append, ler, padraoDeRecusa } from '../dist/diario.js';
+import { append, ler, lerEstrito, lerAprendizados, exportarAprendizados, padraoDeRecusa } from '../dist/diario.js';
 import { trilhaDe, ancoraDaPerguntaB } from '../dist/trilha.js';
 import { marcaDeProgresso, jaParou } from '../dist/pouso.js';
 import { medir } from '../scripts/painel-medir.mjs';
@@ -490,6 +490,31 @@ describe('medir -> consumidores reais (P9): CLI grava, trilhaDe e pouso leem o q
     assert.equal(t2.entrega, 'GM-14');
     assert.equal(t2.marcas[5], '○'); // PR aberto (não mergeado) medido pelo CLI: a fase PR não está concluída
     assert.equal(jaParou(ev2), false);
+  });
+
+  test('medicao-e-aprendizado-no-mesmo-diario: fato.medido e diario.recusa do medir real + aprendizado => extrato so com aprendizado, sem aviso, leitura estrita ok', () => {
+    const d = repo();
+    const recusas = () => ler(dirDe(d)).filter((e) => e.tipo === 'diario.recusa');
+    // caminho real da medição: fato.medido (branch) e o agente enorme vira 1 diario.recusa 'tamanho'
+    rodarMedir(d, 'ok', { agentes: [{ id: 'x'.repeat(20000), type: 'impl', status: 'running' }] });
+    rodarMedir(d, 'ok', { agentes: [{ id: 'x'.repeat(20000), type: 'impl', status: 'running' }] });
+    assert.ok(fatos(d).length >= 1, 'a medição gravou fato.medido');
+    assert.deepEqual(recusas().map((e) => e.dados.padrao), ['tamanho']);
+    const dados = { tipo: 'E', status: 'D', gatilho: null, evidencia: { eventos: [{ sessao: 'loop', seq: 1 }] }, regra: 'regra medicao e aprendizado', entra_em: ['instantaneo'] };
+    const r = append(dirDe(d), 'loop', { ts: '2026-11-11T20:05:00.000Z', autor: 't@t', sessao: 'loop', agente: 'orquestrador', tipo: 'aprendizado', dados });
+    assert.equal(r.ok, true, r.erro);
+    assert.equal(r.gravado, 'evento');
+    assert.deepEqual([...new Set(ler(dirDe(d)).map((e) => e.tipo))].sort(), ['aprendizado', 'diario.recusa', 'fato.medido']);
+    const le = lerAprendizados(join(d, '.harness', 'entregas'));
+    assert.deepEqual(le.avisos, []);
+    assert.ok(le.porEntrega.get('GM-14').some((e) => e.tipo === 'aprendizado'));
+    assert.deepEqual(exportarAprendizados(d), { ok: true, linhas: 1, fora: 0, avisos: [] });
+    const texto = readFileSync(join(d, '.harness', 'aprendizados.jsonl'), 'utf8');
+    const extrato = texto.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    assert.deepEqual(extrato.map((l) => l.evento.tipo), ['aprendizado']);
+    assert.equal(extrato[0].entrega, 'GM-14');
+    assert.ok(!texto.includes('xxxxxxxxxx'));
+    assert.equal(lerEstrito(dirDe(d)).ok, true);
   });
 });
 
