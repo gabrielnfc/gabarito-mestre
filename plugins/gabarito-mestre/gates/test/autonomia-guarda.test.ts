@@ -51,6 +51,20 @@ describe('autonomia do orquestrador', () => {
     assert.equal(d.faixa, 'ask', 'o resto do comando não foi lido: pode haver segredo');
   });
 
+  test('autonomia-cd-perdido-continua-ask', () => {
+    const e = bash(`${'cd a;'.repeat(2100)} cd /repo/.git; echo x > config`);
+    assert.equal(decidir(e, null, CTX).faixa, 'ask');
+    const d = decidir(e, null, CTX, true);
+    assert.equal(d.classificacao.cdPerdido, true);
+    assert.equal(d.faixa, 'ask', 'a guarda perdeu o diretório: não leu tudo');
+  });
+
+  test('autonomia-interruptor-ignora-caixa-do-diretorio', () => {
+    const e: EntradaHook = { tool_name: 'Write', tool_input: { file_path: '/home/u/.CLAUDE/gabarito-autonomia.json', content: '{}' }, permission_mode: 'default', session_id: 's', cwd: '/repo' };
+    assert.equal(decidir(e, null, CTX, true).faixa, 'ask');
+    assert.equal(decidir({ ...e, tool_input: { file_path: '/home/u/.claude/GABARITO-AUTONOMIA.JSON', content: '{}' } }, null, CTX, true).faixa, 'ask');
+  });
+
   test('autonomia-escrita-no-interruptor-nunca-passa', () => {
     const alvo = '~/.claude/gabarito-autonomia.json';
     const escrita: EntradaHook = { tool_name: 'Write', tool_input: { file_path: '/home/u/.claude/gabarito-autonomia.json', content: '{}' }, permission_mode: 'default', session_id: 's', cwd: '/repo' };
