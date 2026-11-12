@@ -1172,6 +1172,7 @@ async function abrirPeloDono($, rotulo = 'painel aberto') {
   S.aberta = true;
   guardarRazao(r);
   await lerPanes($);
+  S.interativo = true; // quem digitou `/gabarito painel` está à frente, inclusive no app desktop (o SDK chega com `isInteractive: false`)
   void atualizar($, 'painel');
   const base = r?.isPlaced === true ? rotulo : `painel não coube: ${typeof r?.reason === 'string' && r.reason !== '' ? r.reason : 'sem motivo'}`;
   return base + (gravou ? '' : SO_NA_SESSAO);
@@ -1312,6 +1313,16 @@ export function iniciarPainel($, e) {
   try { $.clock.after(0, () => { void atualizar($, 'inicio'); }); } catch { /* sem relógio */ }
 }
 
+/** Alguma superfície desenha a sessão? (`$.session.surfaces()`: vazio em `-p`; no app desktop o SDK chega sem tela no `session.start` e ela aparece em `session.attach`.) Nunca lança. */
+async function temSuperficie($) {
+  try {
+    const l = await $.session.surfaces();
+    return Array.isArray(l) && l.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** `turn.complete` do painel (qualquer `agentId`): o turno não espera a ponte (até 5 s), `atualizar` roda num timer. */
 export async function turnoDoPainel($) {
   if (!S.interativo) return;
@@ -1344,12 +1355,21 @@ export function registrarPainel(on) {
     return next(e);
   });
 
+  on('session.attach', async ($, e, next) => {
+    try {
+      S.interativo = true; // há uma superfície anexada (app desktop, celular): tem gente olhando
+      $.clock.after(0, () => { void atualizar($, 'attach'); });
+    } catch { /* o painel não derruba o hook */ }
+    return next(e);
+  });
+
   on('ui.close', async ($, e, next) => {
     if (e?.id === ID_PANE && e?.origin?.kind === 'person') S.fechadaPeloDono = true;
     return next(e);
   });
 
   on('ui.render', { component: 'Pane', requestId: ID_PANE }, async ($, e) => {
+    if (!S.interativo && await temSuperficie($)) S.interativo = true; // alguém desenha a Pane: a sessão tem tela
     if (S.interativo && S.relogio === null && !S.semLoop) { // módulo recarregado com a Pane de pé: recomeça o ciclo (uma vez: o relógio passa a existir)
       try { $.clock.after(0, () => { void atualizar($, 'render'); }); } catch { /* sem relógio */ }
     }

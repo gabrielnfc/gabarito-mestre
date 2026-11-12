@@ -5,6 +5,10 @@ Usuários do plugin só recebem atualização quando `version` muda.
 
 ## [Unreleased]
 
+### Corrigido
+
+- **Painel no app desktop**: ficava em "painel: lendo…" para sempre, porque o app hospeda o Claude Code via SDK (`session.start` com `isInteractive: false` e sem superfície). O painel agora passa a ler quando uma superfície se anexa (`session.attach`) ou quando a pessoa digita `/gabarito painel`. Em `-p` sem superfície nada muda: não lê.
+
 ## [2.1.0-alpha.1] — 2026-11-14
 
 Pré-versão da 2.1.0 (clareza para quem usa). Não é a versão estável: a 2.1.0 só sai depois do aceite de quem nunca programou (A2) e da publicação pelo dono (`next` para `main`).

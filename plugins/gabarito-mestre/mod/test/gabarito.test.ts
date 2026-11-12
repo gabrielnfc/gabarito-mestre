@@ -185,6 +185,7 @@ function mundo($: any, on: any, o: Opc = {}) {
   }
 
   on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
+  on('session.attach', (_: any, e: any) => ({ clientId: e.clientId }))
   on('session.id', () => (o.sessaoIdFalha ? { deny: 'sem id' } : { value: est.sessaoId }))
   on('session.root', () => ({ value: RAIZ }))
   on('session.repo', () => ({ value: { root: PRINCIPAL, remote: null, internal: false } }))
@@ -2309,6 +2310,43 @@ const semTela = async ($: any, on: any, interativo: boolean, surface: string | n
 }
 test('sem-tela-sem-painel: isInteractive true com surface null ⇒ nada do painel', async ($, on) => { await semTela($, on, true, null) })
 test('sem-interativo-sem-painel: isInteractive false com tela ⇒ nada do painel', async ($, on) => { await semTela($, on, false, 'terminal') })
+
+// ---- app desktop (SDK): session.start chega com isInteractive false e surface null; a tela aparece depois, em session.attach ----
+const startSdk = ($: any) => $.session.start({ cwd: RAIZ, surface: null, isInteractive: false })
+test('desktop-attach-le: start SDK sem tela, depois session.attach desktop ⇒ painel.mjs estado roda e abre a Pane', async ($, on) => {
+  const m = comPainel($, on)
+  await startSdk($)
+  await drena(m)
+  expect(m.est.painelStdins).toHaveLength(0)
+  await $.session.attach({ surface: 'desktop', clientId: 'desktop:default' })
+  await drena(m)
+  expect(m.est.painelArgv.length).toBeGreaterThan(0)
+  expect(m.est.painelArgv[0].slice(2)).toEqual(['estado', '--agentes'])
+  expect(m.est.opens).toHaveLength(1)
+  const antes = m.est.painelStdins.length
+  await m.clock.advance(PERIODO)
+  await drena(m)
+  expect(m.est.painelStdins.length).toBeGreaterThan(antes)
+})
+test('desktop-comando-painel-le: /gabarito painel em sessão SDK sem tela ⇒ lê e abre', async ($, on) => {
+  const m = comPainel($, on)
+  await startSdk($)
+  await drena(m)
+  expect(m.est.painelStdins).toHaveLength(0)
+  await m.cmd('painel')
+  await drena(m)
+  expect(m.est.painelStdins.length).toBeGreaterThan(0)
+  expect(m.est.opens).toHaveLength(1)
+})
+test('sdk-sem-tela-sem-attach-nao-le: -p sem superfície e sem attach ⇒ 0 ponte, 0 ui.open', async ($, on) => {
+  const m = comPainel($, on)
+  await startSdk($)
+  await m.turno()
+  await m.clock.advance(PERIODO * 3)
+  await drena(m)
+  expect(m.est.painelStdins).toHaveLength(0)
+  expect(m.est.opens).toHaveLength(0)
+})
 test('loop-aparece-no-turno-abre: sem loop no início; o plano aparece e o turno abre a Pane e recria o relógio', async ($, on) => {
   const m = comPainel($, on, { modo: 'sem_loop' })
   await arrancar(m)
