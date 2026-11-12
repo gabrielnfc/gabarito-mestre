@@ -47,6 +47,8 @@ const MOTIVO_DEVOLVIDA_MAX = 200;
 const MODELOS_TASK                    = ['haiku', 'sonnet', 'opus', 'fable'];
 /** Papéis de task do loop (fonte única: `loop.ts` reexporta; aqui porque `loop.ts` já importa `formas.ts` via `emenda.ts`). */
 export const PAPEIS                   = ['implementador', 'revisor', 'correcao'];
+/** GM-14 T31 (FIEL-8 b): motivos da reentrega (`concluir --motivo`); fonte única para a forma, o núcleo e a borda. */
+export const MOTIVOS_REENTREGA                    = Object.freeze(['gate', 'sombra', 'dono']);
 const SESSAO_RE = /^[A-Za-z0-9._-]{1,128}$/;
 /** Mesmo padrão de `ENTREGA_RE` em `scripts/loop.mjs`: chave de mapa, nunca caminho. */
 const ENTREGA_RE = /^[A-Z]+-\d+$/;
@@ -468,6 +470,16 @@ const REGRAS_OPCIONAIS                             = new Map               ([
       const mortas = campo(m, 'mortas');
       const inteiroNaoNegativo = (v         )              => typeof v === 'number' && Number.isInteger(v) && v >= 0;
       return inteiroNaoNegativo(total) && inteiroNaoNegativo(mortas) && mortas <= total ? null : invalido;
+    },
+  ],
+  [
+    // GM-14 T31 (FIEL-8 b6): `motivo` opcional marca a reentrega (`concluir --motivo`); dado da 2.0.0 sem o campo segue válido.
+    'task.concluida',
+    (o) => {
+      const motivo = campo(o, 'motivo');
+      return motivo === undefined || (typeof motivo === 'string' && MOTIVOS_REENTREGA.includes(motivo))
+        ? null
+        : `campo \`motivo\` inválido: esperado um de ${MOTIVOS_REENTREGA.join(' | ')}`;
     },
   ],
   [

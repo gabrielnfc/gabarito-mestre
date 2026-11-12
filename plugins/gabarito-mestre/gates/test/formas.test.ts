@@ -299,6 +299,18 @@ test('forma-task-integrada-ja-na-base: ausente válido; true válido; false, "si
   ruim('task.integrada', { task: 'T1', sha: 'a'.repeat(40), ja_na_base: true, mutacoes: { total: 3, mortas: 3 } }, /ja_na_base/);
 });
 
+// ---- GM-14 T31 (Emenda 2, FIEL-8 b6): `motivo` opcional em `task.concluida`, só gate | sombra | dono. Mutação M-F8f.
+test('forma-task-concluida-motivo: ausente válido (2.0.0); gate, sombra e dono válidos; x, null, vazio, número e caixa trocada recusados', () => {
+  ok('task.concluida', { task: 'T1', sha: 'a'.repeat(40) });
+  ok('task.concluida', { task: 'T1' });
+  ok('task.concluida', { task: 'T1', sha: 'a'.repeat(40), motivo: undefined });
+  for (const m of ['gate', 'sombra', 'dono']) ok('task.concluida', { task: 'T1', sha: 'a'.repeat(40), motivo: m });
+  for (const v of ['x', null, '', ' gate', 'Gate', 'GATE', 1, 0, true, [], {}, ['gate']]) {
+    const r = formaInvalida('task.concluida', { task: 'T1', sha: 'a'.repeat(40), motivo: v });
+    assert.ok(typeof r === 'string' && /`motivo`/.test(r) && /gate \| sombra \| dono/.test(r), `${JSON.stringify(v)} => ${r}`);
+  }
+});
+
 test('forma-campos-novos-ausentes-ok: eventos da E3 sem os campos novos seguem válidos, inclusive dados que não é objeto', () => {
   ok('task.iniciada', { task: 'T1', papel: 'revisor' });
   ok('task.integrada', { task: 'T1' });
