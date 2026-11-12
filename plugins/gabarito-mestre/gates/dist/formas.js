@@ -433,6 +433,13 @@ const REGRAS                             = new Map               ([
   ['dono.resposta', donoResposta],
 ]);
 
+const SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+function opcionalSha(o     )                {
+  const v = campo(o, 'sha');
+  if (v === undefined) return null;
+  return typeof v === 'string' && SHA_RE.test(v) ? null : 'campo `sha` inválido: esperado sha de commit (40 ou 64 hex minúsculos)';
+}
+
 /** Tipos da E1/E2 que ganharam só campos opcionais: `dados` que não é objeto segue aceito (nada que existe hoje passa a ser recusado). */
 const REGRAS_OPCIONAIS                             = new Map               ([
   [
@@ -447,11 +454,17 @@ const REGRAS_OPCIONAIS                             = new Map               ([
     'task.iniciada',
     (o) => {
       const modelo = campo(o, 'modelo');
-      return modelo === undefined || (typeof modelo === 'string' && MODELOS_TASK.includes(modelo))
-        ? null
-        : `campo \`modelo\` inválido: esperado um de ${MODELOS_TASK.join(' | ')}`;
+      return primeiro(
+        modelo === undefined || (typeof modelo === 'string' && MODELOS_TASK.includes(modelo))
+          ? null
+          : `campo \`modelo\` inválido: esperado um de ${MODELOS_TASK.join(' | ')}`,
+        // GM-14 T31 Emenda 12: `sha` do `iniciar revisor` (o do diff despachado); na leitura, ausente = diário 2.0.0.
+        opcionalSha(o),
+      );
     },
   ],
+  // GM-14 T31 Emenda 12 (anexos C a5): o APROVADO carrega o `sha` que o revisor viu; na leitura, ausente = diário 2.0.0.
+  ['review.veredito', (o) => opcionalSha(o)],
   [
     // E4: `mutacoes {total, mortas}` opcional (contagem do gate de mutação desta task); `mortas ≤ total`.
     'task.integrada',
@@ -512,5 +525,21 @@ export function formaInvalida(tipo        , dados         )                {
     return motivo === null ? null : `${tipo}: ${motivo}`;
   } catch (e) {
     return `${typeof tipo === 'string' ? tipo : 'evento'}: dados corrompido (ilegível: ${e instanceof Error ? e.message : 'erro desconhecido'})`;
+  }
+}
+
+/**
+ * GM-14 T31 Emenda 12: forma exigida na GRAVAÇÃO (a borda nova), além da de leitura. `iniciar <task> revisor` e o APROVADO gravam `sha`
+ * sempre; `formaInvalida` segue aceitando a ausência porque o diário da 2.0.0 é lido com ela. Total: nunca lança.
+ */
+export function formaNaGravacao(tipo        , dados         )                {
+  const leitura = formaInvalida(tipo, dados);
+  if (leitura !== null) return leitura;
+  try {
+    if (!ehObjeto(dados)) return null;
+    const exige = (tipo === 'task.iniciada' && campo(dados, 'papel') === 'revisor') || (tipo === 'review.veredito' && campo(dados, 'veredito') === 'APROVADO');
+    return exige && campo(dados, 'sha') === undefined ? `${tipo}: ${obrigatorio('sha')} (gravação nova sempre leva o sha revisado)` : null;
+  } catch (e) {
+    return `${tipo}: dados corrompido (ilegível: ${e instanceof Error ? e.message : 'erro desconhecido'})`;
   }
 }

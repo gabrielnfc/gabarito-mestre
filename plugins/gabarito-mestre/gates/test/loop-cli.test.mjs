@@ -553,7 +553,7 @@ describe('comandos que gravam', () => {
     amb.aprovar('T1');
     const v = amb.eventos().at(-1);
     assert.equal(v.tipo, 'review.veredito');
-    assert.deepEqual(v.dados, { task: 'T1', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 });
+    assert.deepEqual(v.dados, { task: 'T1', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0, sha: amb.topo('wt/GM-10-T1') });
   });
 
   test('veredito-argumentos-invalidos-recusa', () => {
@@ -4441,4 +4441,105 @@ describe('reentrega (concluir --motivo)', () => {
     assert.equal(it.diff, null, 'sem base gravada não inventa diff');
     assert.ok((p.j.aviso ?? []).some((a) => /T1/.test(a) && /gabaritoBase/.test(a)), JSON.stringify(p.j.aviso));
   });
+
+  // ── Emenda 12 (anexos C a5, FIEL-8 c): o sha que o revisor viu vai no `iniciar revisor` e o APROVADO o copia; `integrar` compara.
+  const em = (amb, sessao, ts, tipo, dados) => {
+    const r = diario.append(amb.entregas, sessao, { ts, autor: 't@t', sessao, agente: 'orquestrador', tipo, dados });
+    assert.ok(r.ok && r.gravado === 'evento', JSON.stringify(r));
+  };
+  const T = (s) => new Date(Date.UTC(2026, 0, 1, 0, 0, 0, s)).toISOString();
+
+  test('iniciar-revisor-grava-sha-do-ultimo-concluida: o mesmo do diff despachado; sem sha no concluida (2.0.0), recusa', () => {
+    const amb = ambiente();
+    for (const a of [['abrir', 'T1'], ['iniciar', 'T1', 'implementador']]) assert.equal(amb.cli(a).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    const sha = amb.topo('wt/GM-10-T1');
+    assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+    const item = amb.cli(['proxima', '--vivos', '0']).j.acao.itens.find((i) => i.task === 'T1' && i.papel === 'revisor');
+    assert.equal(amb.cli(['iniciar', 'T1', 'revisor']).rc, 0);
+    const e = amb.eventos().at(-1);
+    assert.equal(e.tipo, 'task.iniciada');
+    assert.equal(e.dados.papel, 'revisor');
+    assert.equal(e.dados.sha, sha);
+    assert.equal(item.diff, `${BASE}...${e.dados.sha}`, 'o sha do iniciar é o <sha> do diff');
+    const velho = ambiente();
+    assert.equal(velho.cli(['abrir', 'T1']).rc, 0);
+    velho.semear([['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1' }]]);
+    recusa(velho, ['iniciar', 'T1', 'revisor'], 'forma_invalida', /sha/);
+  });
+
+  test('veredito-sha-diferente-do-head-recusa: commit depois do iniciar revisor => APROVADO recusado, nada gravado', () => {
+    const amb = ambiente();
+    for (const a of [['abrir', 'T1'], ['iniciar', 'T1', 'implementador']]) assert.equal(amb.cli(a).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    for (const a of [['concluir', 'T1'], ['iniciar', 'T1', 'revisor']]) assert.equal(amb.cli(a).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt', 'sem revisão\n');
+    recusa(amb, ['veredito', 'T1', 'APROVADO', '1', '0', '0'], 'sha_diferente', /HEAD/);
+    assert.equal(estadoT(amb, 'T1').estado, 'em_revisao');
+  });
+
+  test('veredito-aprovado-sem-sha-recusado-na-gravacao: iniciar revisor da 2.0.0 (sem sha) não recebe APROVADO (fail-closed)', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    const sha = amb.topo('wt/GM-10-T1');
+    amb.semear([['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha }], ['task.iniciada', { task: 'T1', papel: 'revisor' }]]);
+    recusa(amb, ['veredito', 'T1', 'APROVADO', '1', '0', '0'], 'forma_invalida', /`sha` ausente/);
+    assert.equal(estadoT(amb, 'T1').estado, 'em_revisao');
+  });
+
+  test('veredito-usa-sha-do-iniciar-com-reentrega-de-relogio-atras: R de outra sessão cai antes do iniciar; o APROVADO copia o sha do iniciar e recusa', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    const sha1 = amb.topo('wt/GM-10-T1');
+    amb.commitNaWt('T1', 'src/t1.txt', 'reentregue\n');
+    const sha2 = amb.topo('wt/GM-10-T1');
+    em(amb, 'A', T(1), 'task.iniciada', { task: 'T1', papel: 'implementador' });
+    em(amb, 'A', T(2), 'task.concluida', { task: 'T1', sha: sha1 });
+    em(amb, 'C', T(4), 'task.iniciada', { task: 'T1', papel: 'revisor', sha: sha1 });
+    em(amb, 'B', T(3), 'task.concluida', { task: 'T1', sha: sha2, motivo: 'gate' }); // relógio atrás: na ordem, antes do iniciar
+    amb.fechar();
+    assert.equal(estadoT(amb, 'T1').estado, 'em_revisao');
+    recusa(amb, ['veredito', 'T1', 'APROVADO', '1', '0', '0'], 'sha_diferente', new RegExp(sha1.slice(0, 12)));
+  });
+
+  test('integrar-recusa-aprovado-de-outro-sha: R com relógio atrás cai antes do APROVADO; o APROVADO é de outro sha => commit_nao_revisado', () => {
+    for (const empate of [false, true]) {
+      const amb = ambiente();
+      assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+      amb.commitNaWt('T1', 'src/t1.txt');
+      const sha1 = amb.topo('wt/GM-10-T1');
+      amb.commitNaWt('T1', 'src/t1.txt', 'reentregue\n');
+      const sha2 = amb.topo('wt/GM-10-T1');
+      em(amb, 'A', T(1), 'task.iniciada', { task: 'T1', papel: 'implementador' });
+      em(amb, 'A', T(2), 'task.concluida', { task: 'T1', sha: sha1 });
+      em(amb, 'A', T(4), 'task.iniciada', { task: 'T1', papel: 'revisor', sha: sha1 });
+      em(amb, 'A', T(5), 'review.veredito', { task: 'T1', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0, sha: sha1 });
+      // ts empatado com o iniciar: `ordenar` desempata pela sessão ('A' < 'B'), e a R ainda cairia depois; por isso o empate é com o concluida.
+      em(amb, 'B', empate ? T(2) : T(3), 'task.concluida', { task: 'T1', sha: sha2, motivo: 'gate' });
+      amb.fechar();
+      assert.deepEqual(estadoT(amb, 'T1'), { estado: 'aprovada', rodada: 1 }, 'a ordem torta projeta aprovada');
+      const antes = semEfeito(amb);
+      const r = amb.cli(['integrar', 'T1']);
+      assert.equal(r.rc, 1, r.out);
+      assert.equal(r.j.erro, 'commit_nao_revisado', r.out);
+      assert.deepEqual(semEfeito(amb), antes, 'nada gravado, nada integrado');
+    }
+  });
+
+  test('veredito-sem-sha-2-0-0-segue-ordem: diário da 2.0.0 (iniciar e APROVADO sem sha) integra pela guarda de ordem', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    const sha = amb.topo('wt/GM-10-T1');
+    amb.semear([
+      ['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha }],
+      ['task.iniciada', { task: 'T1', papel: 'revisor' }], ['review.veredito', { task: 'T1', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }],
+    ]);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(amb.eventos().at(-1).tipo, 'task.integrada');
+  });
+
 });

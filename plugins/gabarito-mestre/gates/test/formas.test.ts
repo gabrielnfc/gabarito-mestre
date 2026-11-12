@@ -14,7 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { formaInvalida, ID_PERGUNTA_RE, MOTIVOS_PARAR, REQ_RE, TIPOS_EVENTO } from '../src/formas.ts';
+import { formaInvalida, formaNaGravacao, ID_PERGUNTA_RE, MOTIVOS_PARAR, REQ_RE, TIPOS_EVENTO } from '../src/formas.ts';
 
 const H = 'a'.repeat(64);
 const ok = (tipo: string, dados: unknown) => assert.equal(formaInvalida(tipo, dados), null, `${tipo} ${JSON.stringify(dados)}`);
@@ -309,6 +309,29 @@ test('forma-task-concluida-motivo: ausente válido (2.0.0); gate, sombra e dono 
     const r = formaInvalida('task.concluida', { task: 'T1', sha: 'a'.repeat(40), motivo: v });
     assert.ok(typeof r === 'string' && /`motivo`/.test(r) && /gate \| sombra \| dono/.test(r), `${JSON.stringify(v)} => ${r}`);
   }
+});
+
+// ---- GM-14 T31 Emenda 12 (anexos C a5, FIEL-8 c): `sha` no `iniciar revisor` e no APROVADO. Ausente só na leitura (2.0.0). Mutações M-F8j e M-F8m.
+const SHA = 'a'.repeat(40);
+test('forma-review-veredito-sha: leitura aceita ausente; sha presente só hex de commit; gravação exige no APROVADO, não no REPROVADO', () => {
+  const v = (veredito: string, extra: Record<string, unknown> = {}) => ({ task: 'T1', veredito, rodada: 1, blocker: 0, major: 0, ...extra });
+  ok('review.veredito', v('APROVADO'));
+  ok('review.veredito', v('APROVADO', { sha: SHA }));
+  ok('review.veredito', v('APROVADO', { sha: 'b'.repeat(64) }));
+  for (const x of ['x', '', 'A'.repeat(40), 'a'.repeat(39), 1, null, [], {}]) ruim('review.veredito', v('APROVADO', { sha: x }), /sha/);
+  assert.match(formaNaGravacao('review.veredito', v('APROVADO')) as string, /`sha` ausente/);
+  assert.equal(formaNaGravacao('review.veredito', v('APROVADO', { sha: SHA })), null);
+  assert.equal(formaNaGravacao('review.veredito', v('REPROVADO', { major: 1 })), null, 'o REPROVADO não carrega sha');
+  assert.match(formaNaGravacao('review.veredito', v('APROVADO', { sha: 'x' })) as string, /sha/, 'a gravação também confere a forma de leitura');
+});
+test('forma-iniciar-revisor-sha: leitura aceita ausente; gravação exige sha só no papel revisor', () => {
+  ok('task.iniciada', { task: 'T1', papel: 'revisor' });
+  ok('task.iniciada', { task: 'T1', papel: 'revisor', sha: SHA });
+  for (const x of ['x', '', 7, null]) ruim('task.iniciada', { task: 'T1', papel: 'revisor', sha: x }, /sha/);
+  assert.match(formaNaGravacao('task.iniciada', { task: 'T1', papel: 'revisor' }) as string, /`sha` ausente/);
+  assert.equal(formaNaGravacao('task.iniciada', { task: 'T1', papel: 'revisor', sha: SHA }), null);
+  for (const papel of ['implementador', 'correcao']) assert.equal(formaNaGravacao('task.iniciada', { task: 'T1', papel }), null, papel);
+  assert.equal(formaNaGravacao('task.concluida', { task: 'T1', sha: SHA }), null, 'outros tipos: só a forma de leitura');
 });
 
 test('forma-campos-novos-ausentes-ok: eventos da E3 sem os campos novos seguem válidos, inclusive dados que não é objeto', () => {

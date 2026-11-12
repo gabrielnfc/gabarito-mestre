@@ -55,7 +55,7 @@ import { aprendizadosVigentes, paraDestino } from '../dist/aprendizado.js';
 import * as diario from '../dist/diario.js';
 import { escopoDaTask, projetarEmendas, SESSAO_EMENDAS, validarJulgamento, validarProposta } from '../dist/emenda.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
-import { formaInvalida, MOTIVOS_REENTREGA, REQ_RE } from '../dist/formas.js';
+import { formaInvalida, formaNaGravacao, MOTIVOS_REENTREGA, REQ_RE } from '../dist/formas.js';
 import { estadoDe, ordenar, podeIntegrar, proximaAcao, tasksCongeladas } from '../dist/loop.js';
 import { normalizarCaminho, validarPlano } from '../dist/plano.js';
 import { contarConsultas, projetarDecisoes, trechoDoReq } from '../dist/sombra.js';
@@ -499,6 +499,9 @@ function gravar(c, plano, tipo, dados, antes = () => {}) {
     }
     if (diarioInvalido(plano, [...eventos, candidato])) throw new Falha('transicao_invalida', `${tipo} tornaria o diário inválido; nada foi gravado`);
   }
+  // Emenda 12: a borda nova sempre grava `sha` no `iniciar revisor` e no APROVADO (a leitura da 2.0.0 aceita a ausência; a gravação, não).
+  const naGravacao = formaNaGravacao(tipo, dados);
+  if (naGravacao !== null) throw new Falha('forma_invalida', `${naGravacao}; nada foi gravado`);
   antes(candidato, eventos); // última conferência antes de gravar (depois da tabela: a causa mais fundamental vem primeiro)
   let autor = 'desconhecido';
   try { autor = git(c.raiz, 'config', 'user.email') || autor; } catch { /* sem user.email: o diário aceita "desconhecido" */ }
@@ -899,6 +902,12 @@ async function integrar(c, plano, task, opcoes = {}) {
   const atual = git(wt, 'rev-parse', `refs/heads/${branch}`);
   if (typeof revisado !== 'string' || revisado !== atual) {
     throw new Falha('commit_nao_revisado', `o HEAD de ${branch} (${atual.slice(0, 12)}) não é o commit de task.concluida (${typeof revisado === 'string' ? revisado.slice(0, 12) : 'sem sha'}): há commit que ninguém revisou; nada foi feito`, nada);
+  }
+  // Emenda 12 (FIEL-8 c): o último APROVADO na ordem precisa ser do `revisado`; ordem torta (relógio entre sessões) recusa, nunca integra.
+  // APROVADO sem `sha` (diário 2.0.0) segue só a guarda por ordem acima.
+  const aprovado = (ord.ok ? ord.eventos : []).filter((e) => e.tipo === 'review.veredito' && e.dados?.task === task && e.dados?.veredito === 'APROVADO').at(-1);
+  if (aprovado !== undefined && Object.hasOwn(aprovado.dados, 'sha') && aprovado.dados.sha !== revisado) {
+    throw new Falha('commit_nao_revisado', `o último APROVADO de ${task} é do commit ${String(aprovado.dados.sha).slice(0, 12)}, não do ${revisado.slice(0, 12)} que entraria: há commit que ninguém revisou; nada foi feito`, nada);
   }
   // (a6) FIEL-9: o sha aprovado (`revisado`, lido 1 vez do último task.concluida e já comparado com o HEAD em (a5)) já está na base?
   // 0 ⇒ caminho "já na base"; 1 ⇒ caminho normal; qualquer outro código ⇒ não sei, nada é feito.
@@ -1558,7 +1567,10 @@ async function executar(argv, cwd) {
       tarefa(plano, task);
       worktreeViva(c, task);
       const { modelo, aviso } = modeloDaInicio(c, forma.papel);
-      return { evento: gravar(c, plano, 'task.iniciada', { task, papel: forma.papel, ...(modelo !== undefined ? { modelo } : {}) }), ...(aviso.length > 0 ? { aviso } : {}) };
+      // Emenda 12: o revisor revê o sha do último task.concluida (o `<sha>` do diff do item, b8); o APROVADO copia este valor.
+      const sha = forma.papel === 'revisor' ? ultimoDaTask(c, task, (e) => e.tipo === 'task.concluida')?.dados?.sha : undefined;
+      const dados = { task, papel: forma.papel, ...(modelo !== undefined ? { modelo } : {}), ...(sha !== undefined ? { sha } : {}) };
+      return { evento: gravar(c, plano, 'task.iniciada', dados), ...(aviso.length > 0 ? { aviso } : {}) };
     }
     case 'concluir': {
       tarefa(plano, task);
@@ -1584,11 +1596,30 @@ async function executar(argv, cwd) {
           throw new Falha('achados_ausentes', `REPROVADO exige os achados em ${relative(c.raiz, arq)} (arquivo não vazio); grave-os e repita o veredito; nada foi gravado`, { achados: arq });
         }
       };
-      return { evento: gravar(c, plano, 'review.veredito', { task, veredito: forma.veredito, rodada: forma.rodada, blocker: forma.blocker, major: forma.major }, exigirAchados) };
+      // Emenda 12: o APROVADO COPIA o sha do último `iniciar revisor` (nunca recalcula do diário) e o HEAD da branch tem de ser ele.
+      const aprovado = forma.veredito === 'APROVADO';
+      const sha = aprovado ? ultimoDaTask(c, task, (e) => e.tipo === 'task.iniciada' && e.dados?.papel === 'revisor')?.dados?.sha : undefined;
+      const conferir = () => {
+        exigirAchados();
+        if (!aprovado || typeof sha !== 'string') return;
+        let head = '';
+        try { head = git(c.raiz, 'rev-parse', `refs/heads/${ramo(c, task)}`); } catch { /* sem branch */ }
+        if (head !== sha) {
+          throw new Falha('sha_diferente', `o HEAD de ${ramo(c, task)} (${head === '' ? 'ausente' : head.slice(0, 12)}) não é o sha ${sha.slice(0, 12)} que o revisor recebeu no iniciar: o APROVADO não vale para commit que ele não viu; nada foi gravado`);
+        }
+      };
+      const dados = { task, veredito: forma.veredito, rodada: forma.rodada, blocker: forma.blocker, major: forma.major, ...(sha !== undefined ? { sha } : {}) };
+      return { evento: gravar(c, plano, 'review.veredito', dados, conferir) };
     }
     case 'reabrir': tarefa(plano, task); return { evento: gravar(c, plano, 'task.reaberta', { task, origem: 'retomada' }) };
     default: throw new Falha('uso', `comando desconhecido: ${cmd}`, {}, 2);
   }
+}
+
+/** Último evento da task (na ordem do diário) que casa `filtro`; diário fora de ordem ⇒ nenhum (a tabela do `gravar` recusa depois). */
+function ultimoDaTask(c, task, filtro) {
+  const ord = ordenar(lerDiarioEstrito(c.dirEntrega));
+  return (ord.ok ? ord.eventos : []).filter((e) => e.dados?.task === task && filtro(e)).at(-1);
 }
 
 /** Estado da task segundo o núcleo, lendo o diário de forma estrita; diário que a tabela recusa ⇒ falha, nunca um estado inventado. */
