@@ -979,7 +979,6 @@ async function integrar(c, plano, task, opcoes = {}) {
   return { task, branch, base, merge: true, evento: true, fechada: true, banco: fechada.banco, ignorados_removidos: fechada.ignorados_removidos, mutacoes: mutacoesMedidas, relato: relatoVerde };
 }
 
-/** `git merge-base --is-ancestor`: o código de saída (0 é ancestral, 1 não é), `null` se o git nem rodou ou morreu por sinal. */
 /**
  * Emenda 3 (FIEL-9 a6): algum `desvio` da MESMA task cita o sha aprovado em `evidencia` ou num item de `arquivos`? Cita = um token hexadecimal
  * minúsculo isolado (fronteira de palavra, 7 a 40 caracteres) que é o sha completo, ou prefixo dele com >= 7 que o git resolve SÓ para ele
@@ -998,6 +997,7 @@ function desvioCitaSha(c, eventos, task, sha) {
   });
 }
 
+/** `git merge-base --is-ancestor`: o código de saída (0 é ancestral, 1 não é), `null` se o git nem rodou ou morreu por sinal. */
 function ehAncestral(cwd, ancestral, descendente) {
   const r = spawnSync('git', ['-C', cwd, 'merge-base', '--is-ancestor', ancestral, descendente], { stdio: 'ignore', env: ambienteGit() });
   return r.error ? null : r.status;

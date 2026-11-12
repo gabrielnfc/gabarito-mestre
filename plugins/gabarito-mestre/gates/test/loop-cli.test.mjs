@@ -2038,6 +2038,15 @@ exec "${GIT_REAL}" "$@"
     recusaZeroCommits(amb, w, aprovado);
   });
 
+  test('t0-evento-de-outro-tipo-da-mesma-task-citando-o-sha-recusa', () => {
+    // a exceção é SÓ do `desvio`: proposta de emenda (a rejeitada; a aceita reabriria a aprovação) da MESMA task, citando o sha em evidencia e em arquivos, não libera (b)
+    const { amb, w, aprovado } = topologiaT0();
+    const dados = PROPOSTA({ task: 'T1', evidencia: `T0 na base: ${aprovado}`, arquivos: [aprovado] });
+    escreve(amb, 'emendas', 'emenda.proposta', dados, '2026-02-01T00:00:01.000Z');
+    escreve(amb, 'dono', 'emenda.rejeitada', { proposta_seq: 1, origem: 'dono' }, '2026-02-01T00:00:02.000Z');
+    recusaZeroCommits(amb, w, aprovado);
+  });
+
   test('t0-desvio-da-task-citando-outro-sha-recusa', () => {
     const { amb, w, aprovado } = topologiaT0();
     const outro = amb.topo(BASE);
