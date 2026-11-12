@@ -1894,6 +1894,157 @@ exec "${GIT_REAL}" "$@"
     assert.ok(amb.gitChamadas().some((l) => / merge --ff-only /.test(l)), 'merge do caminho normal');
   });
 
+  /** abrir → iniciar → concluir SEM commit → revisor → APROVADO: o sha aprovado é a própria base do `abrir`. */
+  const aprovarSemCommit = (amb, t) => {
+    for (const a of [['abrir', t], ['iniciar', t, 'implementador'], ['concluir', t], ['iniciar', t, 'revisor'], ['veredito', t, 'APROVADO', '1', '0', '0']]) {
+      const r = amb.cli(a);
+      assert.equal(r.rc, 0, `${a.join(' ')} ${r.out}`);
+    }
+    return amb.wt(t);
+  };
+
+  test('abrir-grava-o-sha-da-base', () => {
+    const amb = ambiente();
+    const topo = amb.topo(BASE);
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    assert.equal(g(amb.dir, 'config', '--get', `branch.${BRANCH}.gabaritoBase`).trim(), BASE, 'gabaritoBase guarda o NOME da base');
+    assert.equal(g(amb.dir, 'config', '--get', `branch.${BRANCH}.gabaritoBaseSha`).trim(), topo, 'gabaritoBaseSha guarda o sha da base no abrir');
+  });
+
+  test('ja-na-base-sem-commit-proprio-recusa', () => {
+    // Emenda 2: sem commit próprio desde a base do `abrir`, o caminho (b) não vale; recusa como antes (A3: 0 commits contra a base)
+    for (const baseAnda of [true, false]) {
+      const amb = ambiente();
+      const w = aprovarSemCommit(amb, 'T1');
+      const aprovado = amb.topo(BRANCH);
+      if (baseAnda) commitNaBase(amb);
+      assert.equal(spawnSync(GIT_REAL, ['-C', amb.dir, 'merge-base', '--is-ancestor', aprovado, BASE]).status, 0, 'o aprovado é ancestral da base');
+      const topoBase = amb.topo(BASE);
+      const r = amb.cli(['integrar', 'T1']);
+      assert.equal(r.rc, 1, `${baseAnda} ${r.out}${r.err}`);
+      assert.equal(r.j.erro, 'gate_reprovado', r.out);
+      assert.ok(r.j.relato.some((l) => /0 commits contra a base/.test(l)), JSON.stringify(r.j.relato));
+      assert.equal(r.j.merge, false);
+      assert.equal(r.j.evento, false);
+      assert.ok(!('ja_na_base' in r.j));
+      assert.ok(!amb.tipos().includes('task.integrada'), 'sem task.integrada gravada');
+      assert.equal(amb.topo(BASE), topoBase, 'base intocada');
+      assert.equal(amb.topo(BRANCH), aprovado, 'a branch voltou ao commit revisado');
+      assert.ok(existsSync(w));
+    }
+  });
+
+  test('ja-na-base-sem-sha-da-base-gravado-segue-caminho-normal', () => {
+    // worktree aberta sem `gabaritoBaseSha` (versão anterior do abrir): não há prova de commit próprio, segue o caminho de antes
+    const amb = ambiente();
+    amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    commitNaBase(amb);
+    g(amb.dir, 'config', '--unset', `branch.${BRANCH}.gabaritoBaseSha`);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'gate_reprovado', r.out);
+    assert.ok(!amb.tipos().includes('task.integrada'));
+  });
+
+  test('ja-na-base-commit-proprio-indeterminado-recusa', async () => {
+    const amb = ambiente();
+    const w = amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    const baseAbrir = g(amb.dir, 'config', '--get', `branch.${BRANCH}.gabaritoBaseSha`).trim();
+    for (const codigo of [128, null]) {
+      const antes = semEfeito(amb);
+      const args = [];
+      let gate = false;
+      const r = await integrarComGate(amb.dir, 'T1', {
+        ancestral: (...a) => { args.push(a); return args.length === 1 ? 0 : codigo; },
+        avaliar: async () => { gate = true; return { reprova: 0, alertas: 0, relato: [], suites: 1, testes: 1, mutacoes: 0, semContagem: 0 }; },
+      });
+      assert.equal(r.ok, false, JSON.stringify(r));
+      assert.equal(r.erro, 'ancestral_indeterminado', String(codigo));
+      assert.equal(r.merge, false);
+      assert.equal(r.evento, false);
+      assert.equal(gate, false);
+      assert.deepEqual(args, [[amb.dir, aprovado, `refs/heads/${BASE}`], [amb.dir, aprovado, baseAbrir]]);
+      assert.deepEqual(semEfeito(amb), antes);
+      assert.ok(existsSync(w));
+    }
+  });
+
+  test('ja-na-base-erro-do-git-na-cobertura-nao-cobriu', () => {
+    // FIEL-9 (b4): `merge-base --is-ancestor` que falha na cobertura conta como "não cobriu", nunca como cobertura
+    const amb = ambiente();
+    amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    amb.aprovar('T3');
+    assert.equal(amb.cli(['integrar', 'T3']).rc, 0);
+    const shaT3 = amb.eventos().at(-1).dados.sha;
+    const bin = amb.env.PATH.split(':')[0];
+    writeFileSync(join(bin, 'git'), `#!/bin/bash
+echo "$*" >> "$GIT_LOG"
+if [[ "$*" == *"merge-base --is-ancestor ${aprovado} ${shaT3}" ]]; then echo "fatal: injetado" >&2; exit 128; fi
+exec "${GIT_REAL}" "$@"
+`, { mode: 0o755 });
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.ok(amb.gitChamadas().some((l) => l.endsWith(`merge-base --is-ancestor ${aprovado} ${shaT3}`)), 'a cobertura testou a integração de T3');
+    assert.deepEqual(r.j.relato, [aviso('T1', aprovado, COB_PROXIMO)]);
+  });
+
+  test('ja-na-base-cobertura-cita-a-primeira-integracao-do-diario', () => {
+    const amb = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }, { id: 'T3', deps: [], arquivos: ['src/t3.txt'] }, { id: 'T4', deps: [], arquivos: ['src/t4.txt'] }]) });
+    amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    for (const t of ['T3', 'T4']) {
+      amb.aprovar(t);
+      const ri = amb.cli(['integrar', t]);
+      assert.equal(ri.rc, 0, ri.out + ri.err);
+      assert.equal(ri.j.merge, true, `${t} integrou com gate`);
+    }
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.relato, [aviso('T1', aprovado, COB_GATE('T3'))]);
+  });
+
+  test('ja-na-base-evento-nao-gravado-nao-fecha', () => {
+    const amb = ambiente();
+    const w = amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    const topoBase = amb.topo(BASE);
+    chmodSync(amb.entregas, 0o555);
+    let r;
+    try { r = amb.cli(['integrar', 'T1']); } finally { chmodSync(amb.entregas, 0o755); }
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'evento_nao_gravado');
+    assert.equal(r.j.merge, false, 'nada foi movido');
+    assert.equal(r.j.evento, false);
+    assert.match(r.j.mensagem, /já estava na base/);
+    assert.ok(!amb.tipos().includes('task.integrada'));
+    assert.ok(existsSync(w), 'fechar não foi chamado');
+    assert.ok(!amb.gitChamadas().some((l) => /worktree remove/.test(l)));
+    assert.equal(amb.topo(BASE), topoBase);
+    assert.equal(amb.topo(BRANCH), aprovado);
+  });
+
+  test('ja-na-base-fechar-falha-relata-evento', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    const r = amb.cli(['integrar', 'T1'], { extra: { GIT_FALHAR: 'worktree remove' } });
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'fechar_falhou');
+    assert.equal(r.j.merge, false);
+    assert.equal(r.j.evento, true);
+    assert.match(r.j.mensagem, /já estava na base/);
+    assert.deepEqual(amb.eventos().at(-1).dados, { task: 'T1', sha: aprovado, ja_na_base: true });
+  });
+
   test('proxima-apos-ja-na-base', () => {
     // com pendente: antes integrar, depois despachar a dependente
     const amb = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }, { id: 'T2', deps: ['T1'], arquivos: ['src/t2.txt'] }]) });

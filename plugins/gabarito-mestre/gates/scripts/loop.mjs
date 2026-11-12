@@ -28,7 +28,7 @@
  * QUEM GRAVA NO DIÁRIO. Só `iniciar` (task.iniciada), `concluir` (task.concluida), `veredito` (review.veredito),
  * `desvio`, `descoberta`, `emenda propor` (emenda.proposta) e `emenda julgar` (spec.emendada ou emenda.rejeitada, origem `sombra`; a origem `dono` sai só de
  * `julgarEmendaDono`, que o hook `emenda-dono.mjs` chama), `reabrir` (task.reaberta, SÓ origem `retomada`: nenhum argumento produz `dono`; `dono` sai só de `liberarTeto`, que o hook do comando humano `/gabarito-mestre:liberar` chama), `integrar` (task.integrada),
- * `ci` (ci.resultado) e `parar` (loop.parar). `concluir` e `integrar` gravam o `sha`. `abrir` não grava no diário (grava a base em `branch.<branch>.gabaritoBase`)
+ * `ci` (ci.resultado) e `parar` (loop.parar). `concluir` e `integrar` gravam o `sha`. `abrir` não grava no diário (grava o nome da base em `branch.<branch>.gabaritoBase` e o sha dela em `branch.<branch>.gabaritoBaseSha`)
  * e é idempotente: worktree registrada com HEAD na branch da task devolve o mesmo resultado com `ja_aberta: true`; qualquer outro estado recusa. Todo evento de task é conferido contra `TRANSICOES` ANTES de gravar:
  * o CLI nunca produz um diário que o núcleo recuse.
  *
@@ -609,8 +609,10 @@ function abrir(c, plano, task) {
     throw new Falha('worktree_existe', `já existe ${relative(c.raiz, join(pasta, task))} (ou colide por caixa); abrir não toca no que existe`);
   }
   mkdirSync(pasta, { recursive: true });
+  let baseSha;
   try {
-    git(c.raiz, 'worktree', 'add', '-b', branch, caminho, git(c.raiz, 'rev-parse', 'HEAD'));
+    baseSha = git(c.raiz, 'rev-parse', 'HEAD');
+    git(c.raiz, 'worktree', 'add', '-b', branch, caminho, baseSha);
   } catch (e) {
     throw new Falha('worktree_falhou', `git worktree add falhou: ${e.message}`);
   }
@@ -626,6 +628,8 @@ function abrir(c, plano, task) {
     garantirTmp(caminho);
     ({ dir: tmp, criado: tmpCriado } = garantirTmpExterno(caminho));
     git(c.raiz, 'config', `branch.${branch}.gabaritoBase`, base);
+    // FIEL-9 (a6, Emenda 2): `gabaritoBase` guarda o NOME da base; o sha dela no abrir é o que separa "commit próprio" de "nada entregue".
+    git(c.raiz, 'config', `branch.${branch}.gabaritoBaseSha`, baseSha);
   } catch (e) {
     const restos = [];
     if (tmpCriado) {
@@ -875,7 +879,18 @@ async function integrar(c, plano, task, opcoes = {}) {
   }
   // (a6) FIEL-9: o sha aprovado (`revisado`, lido 1 vez do último task.concluida e já comparado com o HEAD em (a5)) já está na base?
   // 0 ⇒ caminho "já na base"; 1 ⇒ caminho normal; qualquer outro código ⇒ não sei, nada é feito.
-  const naBase = (opcoes.ancestral ?? ehAncestral)(c.raiz, revisado, `refs/heads/${base}`);
+  let naBase = (opcoes.ancestral ?? ehAncestral)(c.raiz, revisado, `refs/heads/${base}`);
+  // Emenda 2: o caminho (b) só vale com ao menos 1 commit próprio desde a base do `abrir` (o aprovado nem igual nem ancestral dela).
+  // Sem commit próprio, ou sem o sha da base gravado para provar, segue o caminho normal, que recusa como antes no gate (A3: 0 commits contra a base).
+  if (naBase === 0) {
+    let baseAbrir = '';
+    try { baseAbrir = git(c.raiz, 'config', '--get', `branch.${branch}.gabaritoBaseSha`); } catch { /* ausente: sem prova */ }
+    const proprio = baseAbrir === '' ? 0 : (opcoes.ancestral ?? ehAncestral)(c.raiz, revisado, baseAbrir);
+    if (proprio !== 0 && proprio !== 1) {
+      throw new Falha('ancestral_indeterminado', `git merge-base --is-ancestor ${revisado.slice(0, 12)} ${baseAbrir.slice(0, 12)} saiu com ${proprio === null ? 'sinal ou erro' : `código ${proprio}`}: não sei se ${task} tem commit próprio desde a base do abrir; nada foi feito`, nada);
+    }
+    if (proprio === 0) naBase = 1;
+  }
   if (naBase === 0) return integrarJaNaBase(c, plano, ord.ok ? ord.eventos : [], task, branch, base, revisado);
   if (naBase !== 1) {
     throw new Falha('ancestral_indeterminado', `git merge-base --is-ancestor ${revisado.slice(0, 12)} ${base} saiu com ${naBase === null ? 'sinal ou erro' : `código ${naBase}`}: não sei se o commit aprovado já está na base; nada foi feito`, nada);
