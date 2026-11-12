@@ -15,7 +15,8 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { marcaPronto } from '../scripts/db-template.mjs';
-import { integrarComGate, slotsDaCapacidade } from '../scripts/loop.mjs';
+import { contexto, integrarComGate, slotsDaCapacidade } from '../scripts/loop.mjs';
+import { idDaBranch, trilhaDe } from '../dist/trilha.js';
 import { casarAgente } from '../dist/painel-equipe.js';
 import { estadoDe as estadoNucleo, ordenar as ordenarNucleo } from '../dist/loop.js';
 import * as diario from '../dist/diario.js';
@@ -4542,4 +4543,58 @@ describe('reentrega (concluir --motivo)', () => {
     assert.equal(amb.eventos().at(-1).tipo, 'task.integrada');
   });
 
+});
+
+// ─────────────────────────────────────────────────────────────── T15 (REQ-TRI-1): uma regra de ID
+
+test('id-da-branch-igual-nos-dois-usos: contexto do loop e trilhaDe dão o mesmo ID nas mesmas 6 branches, com o idPadrao de origin', () => {
+  const amb = ambiente({ plano: null });
+  const doLoop = () => {
+    try { return contexto(amb.dir, {}).entrega; } catch (e) { assert.equal(e.erro, 'entrega_nao_inferida', e.message); return null; }
+  };
+  const daTrilha = (branch, idPadrao) => trilhaDe({ branch, idPadrao, specs: [], plano: null, ledger: false, gh: 'nunca', ultimas: [] }, []).candidato;
+  const casos = (idPadrao, esperado) => {
+    const branches = Object.keys(esperado);
+    assert.equal(branches.length, 6);
+    for (const b of branches) {
+      assert.equal(gOk(amb.dir, 'checkout', '-q', '-B', b).status, 0, b);
+      const loop = doLoop();
+      assert.equal(loop, esperado[b], `loop em ${b}`);
+      assert.equal(daTrilha(b, idPadrao), loop, `trilha em ${b}`);
+      assert.equal(idDaBranch(b, idPadrao), loop, `idDaBranch em ${b}`);
+    }
+  };
+  // sem origin: o padrão; "feat/x-GM-10" e "GM-10x" casam a regex antiga solta e não casam a regra única
+  casos('^[A-Z]+-\\d+$', {
+    'enabler/GM-10-loop': 'GM-10', 'wt/GM-10-T1': 'GM-10', 'GM-10': 'GM-10', 'feat/x-GM-10': null, 'main': null, 'feat/GM-10x-a': null,
+  });
+  // com origin: o idPadrao de fluxo.idPadrao vale no loop também
+  comOrigin(amb, { fluxo: { idPadrao: 'ABC-\\d+' } });
+  casos('ABC-\\d+', {
+    'enabler/ABC-7-loop': 'ABC-7', 'wt/ABC-7-T1': 'ABC-7', 'ABC-7': 'ABC-7', 'enabler/GM-10-loop': null, 'main': null, 'feat/x-ABC-7': null,
+  });
+  // origin corrompida cai no padrão (como a guarda e o painel), sem lançar outra coisa
+  comOrigin(amb, '{');
+  assert.equal(gOk(amb.dir, 'checkout', '-q', '-B', 'enabler/GM-10-loop').status, 0);
+  assert.equal(doLoop(), 'GM-10');
+  // --entrega explícito segue vencendo a branch
+  assert.equal(contexto(amb.dir, { entrega: 'GM-77' }).entrega, 'GM-77');
+});
+
+test('aprovar-sem-plano-pelo-cli-real (P9): o comando do dono, sem plano.json, grava pelo hook real e o loop segue sem plano', () => {
+  const amb = ambiente({ plano: null });
+  mkdirSync(join(amb.dir, 'docs', 'superpowers', 'specs'), { recursive: true });
+  const texto = '# Spec\n\nPBI: GM-10\n\n## A\n';
+  writeFileSync(join(amb.dir, 'docs', 'superpowers', 'specs', 's.md'), texto);
+  const hook = join(AQUI, '..', 'scripts', 'aprovar-spec.mjs');
+  const entrada = { session_id: 'S-dono', cwd: amb.dir, hook_event_name: 'UserPromptExpansion', command_name: 'gabarito-mestre:aprovar', command_args: '', command_source: 'plugin' };
+  const r = spawnSync(process.execPath, [hook], { input: JSON.stringify(entrada), encoding: 'utf8', cwd: amb.dir, env: amb.env });
+  assert.equal(r.status, 0, r.stderr);
+  const j = JSON.parse(r.stdout.trim());
+  assert.notEqual(j.decision, 'block', r.stdout);
+  const ev = amb.eventos().filter((e) => e.tipo === 'spec.aprovada');
+  assert.deepEqual(ev.map((e) => e.dados), [{ spec: 'docs/superpowers/specs/s.md', sha256: createHash('sha256').update(texto).digest('hex') }]);
+  // o loop sem plano continua dizendo plano_ausente (aprovar não inventa plano)
+  const p = amb.cli(['proxima', '--vivos', '0']);
+  assert.equal(p.j?.erro, 'plano_ausente', p.out);
 });

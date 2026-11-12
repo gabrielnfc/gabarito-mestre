@@ -20,7 +20,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import * as diario from '../dist/diario.js';
-import { aprovarSpec, shaDaSpec } from '../scripts/loop.mjs';
+import { aprovarSpec, lerSpecs, shaDaSpec } from '../scripts/loop.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const GATES = join(AQUI, '..');
@@ -285,8 +285,9 @@ test('aprovar-sessao: session_id fora da forma grava como `dono`; cwd ausente us
 test('aprovar-fora-de-repo-plano-ausente-plano-invalido: cada um bloqueia com a causa própria', () => {
   const fora = realpathSync(mkdtempSync(join(tmpdir(), 'aprovar-nrepo-')));
   bloqueou(hook(stdinTui(fora)), /fora_de_repo/);
+  // T15 (REQ-TRI-1): sem plano.json a spec vem de docs/superpowers/specs; sem nenhuma da entrega ⇒ spec_ausente, nada gravado
   const sem = repo({ plano: null });
-  recusa(sem, stdinTui(sem.dir), /plano_ausente/);
+  recusa(sem, stdinTui(sem.dir), /spec_ausente/);
   const ruim = repo({ plano: '{' });
   recusa(ruim, stdinTui(ruim.dir), /plano_invalido/);
 });
@@ -421,4 +422,97 @@ test('skill-aprovar-frontmatter: só do dono, sem argumento, sem citar painel.mj
   assert.match(t, /gabarito-loop/);
   assert.match(t, /Não grave nem edite o diário/);
   assert.doesNotMatch(t, /painel\.mjs/);
+});
+
+// ─────────────────────────────────────────────────────────────── T15 (REQ-TRI-1): aprovar antes do plano
+
+const DIR_SPECS = 'docs/superpowers/specs';
+/** Spec em `docs/superpowers/specs/<nome>` com cabeçalho `PBI: <pbi>` (null = sem cabeçalho). */
+function specPbi(amb, nome, pbi, corpo = '## Uma\n\n## Duas\n') {
+  mkdirSync(join(amb.dir, DIR_SPECS), { recursive: true });
+  const texto = `# Título ${nome}\n\n${pbi === null ? '' : `PBI: ${pbi}\n`}\n${corpo}`;
+  writeFileSync(join(amb.dir, DIR_SPECS, nome), texto);
+  return { caminho: `${DIR_SPECS}/${nome}`, bytes: Buffer.from(texto) };
+}
+
+test('aprovar-sem-plano-spec-unica-grava: sem plano.json, a única spec com PBI da entrega é aprovada (hook real → loop → diário)', () => {
+  const amb = repo({ plano: null, spec: null });
+  const alvo = specPbi(amb, 'a.md', 'GM-10');
+  specPbi(amb, 'b.md', 'GM-11'); // outra entrega não conta
+  specPbi(amb, 'c.md', null); // sem cabeçalho não conta
+  const r = hook(stdinTui(amb.dir));
+  assert.equal(r.rc, 0, r.err);
+  assert.notEqual(r.j?.decision, 'block', r.out);
+  const a = aprovadas(amb);
+  assert.equal(a.length, 1);
+  assert.deepEqual(a[0].dados, { spec: alvo.caminho, sha256: sha(alvo.bytes) });
+  assert.equal(a[0].sessao, 'S-dono');
+  assert.equal(r.j.systemMessage, `Spec ${alvo.caminho} aprovada pelo dono (sha256 ${sha(alvo.bytes).slice(0, 12)}…, entrega GM-10).`);
+  assert.equal(existsSync(join(amb.entregas, 'plano.json')), false, 'aprovar não cria plano');
+  // 2ª vez com o mesmo sha: ja_aprovada, nada gravado (a régua de sempre vale sem plano)
+  recusa(amb, stdinTui(amb.dir), /ja_aprovada/);
+  // a costura pela função: o mesmo resultado sem o hook, depois de editar a spec
+  writeFileSync(join(amb.dir, alvo.caminho), 'mudou\nPBI: GM-10\n');
+  assert.deepEqual(aprovarSpec(amb.dir, 'S-dono'), { ok: true, spec: alvo.caminho, sha256: sha(Buffer.from('mudou\nPBI: GM-10\n')), entrega: 'GM-10' });
+});
+
+test('aprovar-sem-plano-duas-specs-recusa: 2 specs da entrega ⇒ spec_ambigua; 0 ⇒ spec_ausente; nada gravado em nenhum dos dois', () => {
+  const duas = repo({ plano: null, spec: null });
+  specPbi(duas, 'a.md', 'GM-10');
+  specPbi(duas, 'b.md', 'GM-10');
+  recusa(duas, stdinTui(duas.dir), /spec_ambigua/);
+  assert.equal(aprovarSpec(duas.dir, 'S-dono').erro, 'spec_ambigua');
+  assert.equal(aprovadas(duas).length, 0);
+  assert.equal(existsSync(join(duas.entregas, 'plano.json')), false);
+  const nenhuma = repo({ plano: null, spec: null });
+  specPbi(nenhuma, 'b.md', 'GM-11');
+  recusa(nenhuma, stdinTui(nenhuma.dir), /spec_ausente/);
+  assert.equal(aprovarSpec(nenhuma.dir, 'S-dono').erro, 'spec_ausente');
+  assert.equal(aprovadas(nenhuma).length, 0);
+  // diretório de specs ausente também é 0 specs (não falha de leitura)
+  const semDir = repo({ plano: null, spec: null });
+  assert.equal(aprovarSpec(semDir.dir, 'S-dono').erro, 'spec_ausente');
+});
+
+test('aprovar-com-plano-inalterado: com plano.json vale plano.spec, mesmo com 2 specs da entrega em docs/superpowers/specs; plano.json intocado', () => {
+  const amb = repo({ spec: 'do plano\n' });
+  specPbi(amb, 'a.md', 'GM-10');
+  specPbi(amb, 'b.md', 'GM-10');
+  const planoAntes = readFileSync(join(amb.entregas, 'plano.json'), 'utf8');
+  const r = hook(stdinTui(amb.dir));
+  assert.notEqual(r.j?.decision, 'block', r.out);
+  assert.deepEqual(aprovadas(amb).map((e) => e.dados), [{ spec: SPEC, sha256: sha(Buffer.from('do plano\n')) }]);
+  assert.equal(readFileSync(join(amb.entregas, 'plano.json'), 'utf8'), planoAntes);
+  // plano presente e inválido não cai no caminho sem plano: segue plano_invalido
+  const ruim = repo({ plano: '{' });
+  specPbi(ruim, 'a.md', 'GM-10');
+  recusa(ruim, stdinTui(ruim.dir), /plano_invalido/);
+});
+
+test('ler-specs-ausente-x-ilegivel: diretório ausente ⇒ []; ilegível ⇒ lança specs_ilegiveis; cada campo vem do arquivo', () => {
+  const amb = repo({ plano: null, spec: null });
+  assert.deepEqual(lerSpecs(amb.dir), []);
+  const a = specPbi(amb, 'a.md', 'GM-10', '## Uma\n\n## Duas\n\n## Três\n');
+  specPbi(amb, 'z.md', null, '');
+  writeFileSync(join(amb.dir, DIR_SPECS, 'nao-md.txt'), 'PBI: GM-10\n');
+  mkdirSync(join(amb.dir, DIR_SPECS, 'pasta.md'));
+  // PBI só nas 15 primeiras linhas
+  writeFileSync(join(amb.dir, DIR_SPECS, 'tarde.md'), `# Tarde\n${'x\n'.repeat(15)}PBI: GM-10\n`);
+  assert.deepEqual(lerSpecs(amb.dir), [
+    { caminho: a.caminho, pbi: 'GM-10', sha256: sha(a.bytes), secoes: 3, titulo: 'Título a.md' },
+    { caminho: `${DIR_SPECS}/tarde.md`, pbi: null, sha256: sha(Buffer.from(`# Tarde\n${'x\n'.repeat(15)}PBI: GM-10\n`)), secoes: 0, titulo: 'Tarde' },
+    { caminho: `${DIR_SPECS}/z.md`, pbi: null, sha256: sha(Buffer.from('# Título z.md\n\n\n')), secoes: 0, titulo: 'Título z.md' },
+  ]);
+  if (!SEM_ROOT) {
+    chmodSync(join(amb.dir, DIR_SPECS), 0o000);
+    try {
+      assert.throws(() => lerSpecs(amb.dir), (e) => e.erro === 'specs_ilegiveis');
+      // e pela borda: ilegível não vira "sem spec" (spec_ausente), nada gravado
+      const r = aprovarSpec(amb.dir, 'S-dono');
+      assert.equal(r.erro, 'specs_ilegiveis');
+      assert.equal(aprovadas(amb).length, 0);
+    } finally {
+      chmodSync(join(amb.dir, DIR_SPECS), 0o755);
+    }
+  }
 });

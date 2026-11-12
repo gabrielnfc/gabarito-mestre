@@ -51,6 +51,7 @@ import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import { lerConfigOrigin, resolverModelo } from '../lib/config.mjs';
+import { PADROES } from '../lib/git.mjs';
 import { aprendizadosVigentes, paraDestino } from '../dist/aprendizado.js';
 import * as diario from '../dist/diario.js';
 import { escopoDaTask, projetarEmendas, SESSAO_EMENDAS, validarJulgamento, validarProposta } from '../dist/emenda.js';
@@ -59,6 +60,7 @@ import { formaInvalida, formaNaGravacao, MOTIVOS_REENTREGA, REQ_RE } from '../di
 import { estadoDe, ordenar, podeIntegrar, proximaAcao, tasksCongeladas } from '../dist/loop.js';
 import { normalizarCaminho, validarPlano } from '../dist/plano.js';
 import { contarConsultas, projetarDecisoes, trechoDoReq } from '../dist/sombra.js';
+import { idDaBranch } from '../dist/trilha.js';
 import { avaliar } from './gate-task.mjs';
 import * as loopAprendizado from './loop-aprendizado.mjs';
 import { clonar, nomeBanco, soltar, validarDb } from './db-template.mjs';
@@ -341,14 +343,28 @@ function validarForma(cmd, pos, flags) {
 
 // ─────────────────────────────────────────────────────────────── contexto, plano, config, diário
 
-/** Exportada para o painel (E4, T9): a MESMA regra de raiz principal, entrega por branch ou `--entrega`. */
+/**
+ * `fluxo.idPadrao` de `origin/HEAD`, a chave que a guarda e o painel leem (GM-14 T15, REQ-TRI-1): ausente, não texto, longo ou regex
+ * inválida ⇒ o padrão de `lib/git.mjs`. Nunca lança.
+ */
+function idPadraoDe(raiz) {
+  const v = lerConfigOrigin(raiz)?.cfg?.fluxo?.idPadrao;
+  if (typeof v !== 'string' || v.length === 0 || v.length > 200) return PADROES.idPadrao;
+  try { new RegExp(v); } catch { return PADROES.idPadrao; }
+  return v;
+}
+
+/**
+ * Exportada para o painel (E4, T9): a MESMA regra de raiz principal, entrega por branch ou `--entrega`.
+ * Da branch, a entrega é `idDaBranch` (T3, a mesma de `trilhaDe`); `ENTREGA_RE` segue valendo porque o ID vira diretório.
+ */
 export function contexto(cwd, flags) {
   const raiz = raizPrincipal(cwd);
   let entrega = flags.entrega;
   if (entrega === undefined) {
     let branch = '';
     try { branch = git(cwd, 'rev-parse', '--abbrev-ref', 'HEAD'); } catch { /* sem branch */ }
-    entrega = /[A-Z]+-\d+/.exec(branch)?.[0];
+    entrega = idDaBranch(branch, idPadraoDe(raiz)) ?? undefined;
     if (entrega === undefined || !ENTREGA_RE.test(entrega)) {
       throw new Falha('entrega_nao_inferida', `não achei a entrega na branch "${branch}"; passe --entrega <ID>`);
     }
@@ -482,7 +498,8 @@ function dicaDaTabela(tipo, dados, invalido) {
  */
 function gravar(c, plano, tipo, dados, antes = () => {}) {
   const eventos = lerDiarioEstrito(c.dirEntrega);
-  if (diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega já não passa na tabela de transições; nada foi gravado');
+  // `plano === null` só da aprovação antes do plano (T15): sem plano não há tabela; vale a leitura estrita, a forma e o canário.
+  if (plano !== null && diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega já não passa na tabela de transições; nada foi gravado');
   const ts = new Date().toISOString();
   const minhas = eventos.filter((e) => e.sessao === c.sessao).map((e) => e.seq);
   const candidato = {
@@ -1426,6 +1443,47 @@ export function lerSpec(raiz, plano) {
   }
 }
 
+const SPEC_MAX = 4 * 1024 * 1024;
+const ausenteFs = (e) => e?.code === 'ENOENT' || e?.code === 'ENOTDIR';
+
+/**
+ * GM-14 T15 (REQ-TRI-1): as specs de `docs/superpowers/specs/*.md` da raiz dada, em ordem de nome, como `SpecFato` de `trilha.ts`:
+ * `{caminho, pbi, sha256, secoes, titulo}`. `pbi` = `PBI: <ID>` nas 15 primeiras linhas (senão `null`); `sha256` dos bytes; `secoes` = linhas
+ * `## `; `titulo` = o 1º `# `. Não arquivo regular ou maior que 4 MiB fica de fora. Diretório ausente ⇒ `[]`; ilegível ⇒ lança
+ * `Falha('specs_ilegiveis')`: falha de leitura nunca vira "sem spec".
+ */
+export function lerSpecs(raiz) {
+  const dir = join(raiz, 'docs', 'superpowers', 'specs');
+  let nomes;
+  try {
+    nomes = readdirSync(dir).filter((n) => n.endsWith('.md')).sort();
+  } catch (e) {
+    if (ausenteFs(e)) return [];
+    throw new Falha('specs_ilegiveis', `não consegui listar as specs (${e.code ?? 'erro'})`);
+  }
+  const specs = [];
+  for (const nome of nomes) {
+    const arq = join(dir, nome);
+    let st;
+    try { st = lstatSync(arq); } catch (e) { throw new Falha('specs_ilegiveis', `não consegui ler ${nome} (${e.code ?? 'erro'})`); }
+    if (!st.isFile() || st.size > SPEC_MAX) continue;
+    let bytes;
+    try { bytes = readFileSync(arq); } catch (e) { throw new Falha('specs_ilegiveis', `não consegui ler ${nome} (${e.code ?? 'erro'})`); }
+    const linhas = bytes.toString('utf8').split('\n');
+    let pbi = null;
+    for (const l of linhas.slice(0, 15)) {
+      const m = /(?:^|[\s·|])PBI:\s*([A-Za-z0-9-]+)/.exec(l.slice(0, 400));
+      if (m) { pbi = m[1]; break; }
+    }
+    const t = linhas.find((l) => l.startsWith('# '));
+    specs.push({
+      caminho: `docs/superpowers/specs/${nome}`, pbi, sha256: createHash('sha256').update(bytes).digest('hex'),
+      secoes: linhas.filter((l) => l.startsWith('## ')).length, titulo: t === undefined ? '' : t.slice(2).trim(),
+    });
+  }
+  return specs;
+}
+
 /** REQ com trecho na spec do plano. Spec ausente, ilegível ou fora da raiz ⇒ `false` (sem a spec não há como provar o REQ). */
 function reqNaSpec(c, plano, req) {
   const r = caminhoDaSpec(c.raiz, plano);
@@ -1767,6 +1825,8 @@ export function liberarTeto(cwd, task, sessao) {
 /**
  * REQ-PNL-8: a ÚNICA gravação de `spec.aprovada {spec, sha256}`. Fora de `ESPEC` de propósito: nenhum argumento do CLI chega aqui, só o
  * hook `UserPromptExpansion` (`aprovar-spec.mjs`), disparado pelo comando que o dono digita. O sha é o de `shaDaSpec` (bytes, raiz principal).
+ * A spec é `plano.spec`; sem `plano.json` (GM-14 T15, a aprovação vem antes do plano) é a ÚNICA de `lerSpecs` com `PBI` da entrega: 0 ⇒
+ * `spec_ausente`, 2+ ⇒ `spec_ambigua`, specs ilegíveis ⇒ `specs_ilegiveis`; nada gravado em nenhum. Plano presente e inválido segue `plano_invalido`.
  * "Já aprovada" = existe `spec.aprovada` de forma válida com o sha atual, sem ordem e sem olhar `spec` (a régua do painel): não entra em
  * transição nem depende de relógio. Nunca lança: `{ok:true, spec, sha256, entrega}` só com o evento gravado E relido (a contagem com esse sha
  * subiu, não "+1 exato": sem lock, duas sessões juntas gravam dois eventos iguais, limite do `gravar`); senão `{ok:false, erro, mensagem}`.
@@ -1776,8 +1836,20 @@ export function aprovarSpec(cwd, sessao, opcoes = {}) {
   try {
     if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) throw new Falha('argumento_invalido', `sessão fora da forma ${SESSAO_RE}`);
     const c = contexto(cwd, { sessao });
-    const plano = carregarPlano(c);
-    const atual = shaDaSpec(c.raiz, plano);
+    // T15 (REQ-TRI-1): sem plano.json a aprovação vem antes do plano; a spec é a ÚNICA da entrega em lerSpecs.
+    let plano = null;
+    let alvo;
+    try {
+      plano = carregarPlano(c);
+      alvo = plano;
+    } catch (e) {
+      if (!(e instanceof Falha) || e.erro !== 'plano_ausente') throw e;
+      const daEntrega = lerSpecs(c.raiz).filter((s) => s.pbi === c.entrega);
+      if (daEntrega.length === 0) throw new Falha('spec_ausente', `sem plano.json e sem spec com \`PBI: ${c.entrega}\` em docs/superpowers/specs; nada foi gravado`);
+      if (daEntrega.length > 1) throw new Falha('spec_ambigua', `sem plano.json e com ${daEntrega.length} specs com \`PBI: ${c.entrega}\` (${daEntrega.map((s) => s.caminho).join(', ')}); deixe uma só. Nada foi gravado`);
+      alvo = { spec: daEntrega[0].caminho };
+    }
+    const atual = shaDaSpec(c.raiz, alvo);
     if (!atual.ok) throw new Falha(atual.erro, `${atual.mensagem}; nada foi gravado`);
     const contar = (eventos) => eventos.filter((e) => e.tipo === 'spec.aprovada' && formaInvalida('spec.aprovada', e.dados) === null && e.dados.sha256 === atual.sha256).length;
     let antesN = 0;
@@ -1785,7 +1857,7 @@ export function aprovarSpec(cwd, sessao, opcoes = {}) {
       antesN = contar(eventos);
       if (antesN > 0) throw new Falha('ja_aprovada', `a spec com o sha256 ${atual.sha256.slice(0, 12)}… já foi aprovada; só uma spec que mudou se aprova de novo. Nada foi gravado`);
       opcoes.antes?.();
-      const de_novo = shaDaSpec(c.raiz, plano);
+      const de_novo = shaDaSpec(c.raiz, alvo);
       if (!de_novo.ok || de_novo.sha256 !== atual.sha256) throw new Falha('spec_mudou', 'a spec mudou entre o cálculo do sha256 e a gravação; aprove de novo. Nada foi gravado');
     };
     gravar(c, plano, 'spec.aprovada', { spec: atual.spec, sha256: atual.sha256 }, conferir);
