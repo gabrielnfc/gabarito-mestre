@@ -675,7 +675,8 @@
         "plugins/gabarito-mestre/scripts/test/instalar.test.sh",
         "plugins/gabarito-mestre/gates/test/aprendizado-durabilidade.test.mjs",
         "plugins/gabarito-mestre/gates/test/fixtures/aprendizados-2.0.0/",
-        "plugins/gabarito-mestre/gates/dist/diario.js"
+        "plugins/gabarito-mestre/gates/dist/diario.js",
+        "plugins/gabarito-mestre/gates/test/diario.test.ts"
       ],
       "reqs": [
         "REQ-APR-5"
