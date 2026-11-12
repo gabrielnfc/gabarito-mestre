@@ -447,11 +447,11 @@ test('ancora-b-pula-duvida-pendencia-assunto', () => {
   const s = 'sessao-b';
   const nota = (tipo: string, extra: Record<string, unknown> = {}): Compacto => ({ t: 'nota', s, d: { tipo, texto: 'x', ...extra } });
   const duvida = nota('duvida', { opcoes: ['sim', 'não'] });
-  for (const [nome, n] of [['duvida', duvida], ['pendencia', nota('pendencia')], ['assunto', nota('assunto')]] as const) {
+  for (const [nome, n] of [['duvida', duvida], ['pendencia', nota('pendencia')], ['assunto', nota('assunto')], ['ideia', nota('ideia')]] as const) {
     assert.equal(ancoraDaPerguntaB(expandir([n, ancoraB()]), s), `${s}:2`, `pula ${nome}`);
     assert.equal(ancoraDaPerguntaB(expandir([n]), s), null, `só ${nome} ⇒ sem âncora`);
   }
-  assert.equal(ancoraDaPerguntaB(expandir([duvida, nota('pendencia'), nota('assunto'), nota('ideia')]), s), `${s}:4`, 'ideia é trabalho');
+  assert.equal(ancoraDaPerguntaB(expandir([duvida, nota('pendencia'), nota('assunto'), nota('ideia'), nota('desvio')]), s), `${s}:5`, 'ideia tem pergunta própria (T13b): não ancora (b)');
   assert.equal(ancoraDaPerguntaB(expandir([nota('desvio'), duvida]), s), `${s}:1`, 'desvio é trabalho');
   // `fato.medido spec` é âncora de (c), nunca de (b) (Sombra 7c74258a); sem outro trabalho ⇒ sem âncora.
   const spec: Compacto = { ...specMedida('docs/a.md'), s };

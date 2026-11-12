@@ -99,7 +99,7 @@ test('gatilho-a', () => {
   // Com entrega identificada não é "sem entrega": (a) não abre.
   assert.deepEqual(perguntasAbertas(evs, identificada(), { sessao: 'sessao-x' }), []);
   // Outros tipos de nota não são (a).
-  const ideia = expandir([inicio('sessao-a'), notaDe('ideia', 'painel com cores')]);
+  const ideia = expandir([inicio('sessao-a'), notaDe('desvio', 'painel com cores')]);
   assert.deepEqual(perguntasAbertas(ideia, trilha(), { sessao: 'sessao-x' }), []);
 });
 
@@ -150,20 +150,20 @@ test('b-sessao-sem-trabalho-nao-pergunta', () => {
   const outra = expandir([inicio('s1'), inicio('s2'), branch('s2')]);
   assert.deepEqual(perguntasAbertas(outra, trilha(), { sessao: 's1' }), []);
   // Nota também é trabalho.
-  const nota = expandir([inicio('s1'), notaDe('ideia', 'x', 's1')]);
+  const nota = expandir([inicio('s1'), notaDe('desvio', 'x', 's1')]);
   assert.equal(perguntasAbertas(nota, trilha(), { sessao: 's1' })[0].id, 's1:2');
 });
 
 test('b-nova-sessao-em-main-volta-a-perguntar', () => {
   // s1 em main: perguntou, dono respondeu "conversa avulsa". s2 (nova sessão, mesma branch, `medir` não regrava branch) volta a perguntar.
-  const evs = expandir([inicio('s1'), branch('s1'), resp('s1:2', 2, 'conversa avulsa'), inicio('s2'), notaDe('ideia', 'outra coisa', 's2')]);
+  const evs = expandir([inicio('s1'), branch('s1'), resp('s1:2', 2, 'conversa avulsa'), inicio('s2'), notaDe('desvio', 'outra coisa', 's2')]);
   assert.deepEqual(perguntasAbertas(evs, trilha(), { sessao: 's1' }), []);
   const ps = perguntasAbertas(evs, trilha(), { sessao: 's2' });
   assert.equal(ps.length, 1);
   assert.equal(ps[0].id, 's2:2');
   assert.equal(ps[0].gatilho, 'b');
   // Seqs diferentes nas duas sessões (s1 retomada antes do 1º trabalho): a âncora é o 1º trabalho DA s2, não o seq do 1º da s1.
-  const desalinhado = expandir([inicio('s1'), inicio('s1'), branch('s1'), resp('s1:3', 2, 'conversa avulsa'), inicio('s2'), notaDe('ideia', 'outra', 's2')]);
+  const desalinhado = expandir([inicio('s1'), inicio('s1'), branch('s1'), resp('s1:3', 2, 'conversa avulsa'), inicio('s2'), notaDe('desvio', 'outra', 's2')]);
   assert.deepEqual(perguntasAbertas(desalinhado, trilha(), { sessao: 's2' }).map((p) => [p.gatilho, p.id]), [['b', 's2:2']]);
 });
 
@@ -366,7 +366,7 @@ test('c-resposta-a-outra-pergunta-nao-resolve-a-ambiguidade', () => {
 test('c-ancora-vem-da-regra-unica-de-trilha', () => {
   // `ancoraDaPerguntaC` (trilha.ts) é a âncora que `perguntasAbertas` usa e a que `trilhaDe` exige: o id da pergunta aberta é o dela.
   const specs = [spec(SPEC1, 'Trilha'), spec(SPEC2, 'Painel', B)];
-  const evs = expandir([inicio('s1'), specMedida(SPEC1, A, 's1'), notaDe('ideia', 'x', 's1'), specMedida(SPEC2, B, 's1'), specMedida(SPEC1, C, 's1')]);
+  const evs = expandir([inicio('s1'), specMedida(SPEC1, A, 's1'), notaDe('desvio', 'x', 's1'), specMedida(SPEC2, B, 's1'), specMedida(SPEC1, C, 's1')]);
   const fatos: FatosTrilha = { branch: 'feat/GM-20-x', idPadrao: '[A-Z]+-\\d+', specs, plano: null, ledger: false, gh: 'ok', ultimas: [] };
   const a = ancoraDaPerguntaC(evs, specs.map((s) => s.caminho));
   assert.equal(a, 's1:4');
@@ -423,7 +423,7 @@ test('b-e-d-nunca-mesmo-id', () => {
     plano: null, ledger: false, gh: 'ok', ultimas: [{ id: 'GM-20', data: '2026-10-31T00:00:00Z' }] };
   const comC = identificada({ ambigua: [{ caminho: SPEC1, titulo: 'Trilha' }, { caminho: SPEC2, titulo: 'Painel' }] } as Partial<Trilha>);
   const pecas: Compacto[] = [notaDe('duvida', 'qual?', 's1', ['x', 'y']), notaDe('pendencia', 'p', 's1'), notaDe('assunto', 'a', 's1'),
-    notaDe('ideia', 'i', 's1'), branch('s1'), specMedida(SPEC1, A, 's1'), specMedida(SPEC2, B, 's1')];
+    notaDe('desvio', 'i', 's1'), branch('s1'), specMedida(SPEC1, A, 's1'), specMedida(SPEC2, B, 's1')];
   let casos = 0;
   const por: Record<string, number> = { b: 0, c: 0, bc: 0 };
   // Sessão anterior com ou sem a SPEC1 medida: com ela, a SPEC2 da sessão atual pode ser ao mesmo tempo o 1º trabalho e a âncora de (c).
@@ -533,7 +533,7 @@ test('pendencia-opcao-unica-feito', () => {
   confere(ps[0], { id: 's1:2', gatilho: 'pendencia', texto: 'criar o token do serviço de e-mail', opcoes: ['feito'] });
   rotulosGravaveis(ps);
   // Só `dono.resposta` fecha: nota do modelo dizendo "feito" e `aprendizado.nada` não fecham.
-  const naoFecha = expandir([inicio('s1'), notaDe('pendencia', 'criar o token', 's1'), notaDe('ideia', 'feito', 's1'),
+  const naoFecha = expandir([inicio('s1'), notaDe('pendencia', 'criar o token', 's1'), notaDe('desvio', 'feito', 's1'),
     { t: 'aprendizado.nada', d: { motivo: 'feito' }, s: 's1' }]);
   assert.deepEqual(perguntasAbertas(naoFecha, identificada(), { sessao: 's1' }).map((p) => p.id), ['s1:2']);
   const fecha = expandir([inicio('s1'), notaDe('pendencia', 'criar o token', 's1'), resp('s1:2', 1, 'feito')]);
@@ -659,11 +659,18 @@ test('ideias-abrem-pergunta-visto-e-responder-aceita', () => {
   confere(p, { id: 's1:4', gatilho: 'ideia', texto: 'decidir se a ideia vira a próxima entrega', opcoes: ['visto'] });
 });
 
-test('ideia-nao-divide-id-com-a-pergunta-b', () => {
-  // A única nota da sessão é uma ideia: ela é a âncora de (b); o botão "visto" responderia a (b). Nunca 2 perguntas com o mesmo id.
-  const evs = expandir([inicio('s1'), notaDe('ideia', 'a', 's1')]);
-  const ps = perguntasAbertas(evs, trilha(), { sessao: 's1' });
-  assert.deepEqual(ps.map((p) => [p.gatilho, p.id]), [['b', 's1:2']]);
-  assert.deepEqual(ideiasAbertas(evs), { id: null, n: 1 }, 'sem id respondível: o item fica sem botão');
-  assert.equal(new Set(perguntasAbertas(evs, trilha(), { sessao: 's1' }).map((p) => p.id)).size, 1);
+test('ideia-nao-divide-id-com-a-pergunta-b: sessão cuja 1ª nota é ideia, depois outro trabalho', () => {
+  // Atravessa trilha (âncora de (b)), perguntas e depende: a ideia tem pergunta própria e (b) ancora no trabalho seguinte.
+  const evs = expandir([inicio('s1'), notaDe('ideia', 'a', 's1'), branch('s1')]);
+  const t = trilhaDe({ branch: 'main', idPadrao: '[A-Z]+-\\d+', specs: [], plano: null, ledger: false, gh: 'nunca', ultimas: [{ id: 'GM-9', data: minuto(0) }], sessao: 's1' }, evs);
+  const ps = perguntasAbertas(evs, t, { sessao: 's1', ultimas: [{ id: 'GM-9', data: minuto(0) }] });
+  assert.deepEqual(ps.map((p) => [p.gatilho, p.id]), [['ideia', 's1:2'], ['b', 's1:3']]);
+  assert.equal(new Set(ps.map((p) => p.id)).size, 2, 'ids distintos');
+  assert.deepEqual(ideiasAbertas(evs), { id: 's1:2', n: 1 }, 'item 4 com o id da ideia (botão)');
+  assert.equal(ancoraDaPerguntaB(evs, 's1'), 's1:3');
+  // "visto" fecha a ideia e NÃO liga a sessão a uma entrega (rótulo "visto" não é ID de entrega); (b) segue aberta.
+  const visto = expandir([inicio('s1'), notaDe('ideia', 'a', 's1'), branch('s1'), resp('s1:2', 1, 'visto')]);
+  const t2 = trilhaDe({ branch: 'main', idPadrao: '[A-Z]+-\\d+', specs: [], plano: null, ledger: false, gh: 'nunca', ultimas: [], sessao: 's1' }, visto);
+  assert.equal(t2.identificada, false);
+  assert.deepEqual(perguntasAbertas(visto, t2, { sessao: 's1' }).map((p) => [p.gatilho, p.id]), [['b', 's1:3']]);
 });

@@ -155,7 +155,7 @@ test('responder-duplo-segunda-recusa: a 2ª resposta à mesma pergunta recusa co
 test('responder-pergunta-de-outro-diario: id que só existe no diário de OUTRA entrega ⇒ inexistente, 0 bytes em todos os diários', () => {
   const amb = repo({ branch: 'enabler/GM-10-x' });
   amb.semear('GM-99', [duvida('Pergunta da outra entrega?', ['sim senhor', 'não senhor'])]);
-  amb.semear('GM-10', [['nota', { tipo: 'ideia', texto: 'só para criar o diário' }]]);
+  amb.semear('GM-10', [['nota', { tipo: 'desvio', texto: 'só para criar o diário' }]]);
   recusa(amb, stdinTui(amb.dir, 'loop:1 1'), /inexistente/);
   // id que não existe em lugar nenhum
   recusa(amb, stdinTui(amb.dir, 'loop:77 1'), /inexistente/);
@@ -180,7 +180,7 @@ test('mesmo-id-em-dois-diarios-block: o mesmo <sessao>:<seq> aberto na entrega d
 
 test('herdar-nunca-aceito: <id> herdar:<hex> recusa, mesmo com a pergunta no diário _onboarding; 0 bytes novos (ataque 1)', () => {
   const amb = comDuvida();
-  amb.semear('_onboarding', [['nota', { tipo: 'ideia', texto: 'regra herdada' }]]);
+  amb.semear('_onboarding', [['nota', { tipo: 'desvio', texto: 'regra herdada' }]]);
   for (const a of ['herdar:0123456789abcdef 1', 'herdar:0123456789abcdef 1 extra', 'HERDAR:0123456789abcdef 1', 'herdar:xyz 1']) {
     recusa(amb, stdinTui(amb.dir, a), /herança|fora da forma/);
   }
@@ -402,7 +402,7 @@ test('botao-ideias-visto-responde (P9, T13b): botão do item 4 ⇒ hook real ⇒
 
 test('contexto-ultimas-no-hook: pergunta (a) mostra a última entrega nas opções; o hook usa as mesmas opções do painel (pendência T12)', () => {
   const amb = repo();
-  amb.semear('GM-9', [['nota', { tipo: 'ideia', texto: 'atividade antiga' }]]);
+  amb.semear('GM-9', [['nota', { tipo: 'desvio', texto: 'atividade antiga' }]]);
   amb.semear(null, [['nota', { tipo: 'assunto', texto: 'agora outro assunto' }]], 'S-nota');
   // opções do painel: [GM-9, ideia para a próxima, conversa avulsa]
   const r = hook(stdinTui(amb.dir, 'S-nota:1 1'));
@@ -410,13 +410,13 @@ test('contexto-ultimas-no-hook: pergunta (a) mostra a última entrega nas opçõ
   assert.deepEqual(respostas(amb)[0].dados, { pergunta: 'S-nota:1', opcao: 1, rotulo: 'GM-9' });
   // congelada pela âncora: atividade de OUTRA entrega depois da nota não entra nas opções (ctx.ultimas com data; M-T14c)
   const congelada = repo();
-  congelada.semear('GM-9', [['nota', { tipo: 'ideia', texto: 'atividade antiga' }]]);
+  congelada.semear('GM-9', [['nota', { tipo: 'desvio', texto: 'atividade antiga' }]]);
   congelada.semear(null, [['nota', { tipo: 'assunto', texto: 'agora outro assunto' }]], 'S-nota');
-  congelada.semear('GM-10', [['nota', { tipo: 'ideia', texto: 'atividade DEPOIS da pergunta' }]]);
+  congelada.semear('GM-10', [['nota', { tipo: 'desvio', texto: 'atividade DEPOIS da pergunta' }]]);
   assert.notEqual(hook(stdinTui(congelada.dir, 'S-nota:1 1')).j?.decision, 'block');
   assert.equal(respostas(congelada)[0].dados.rotulo, 'GM-9');
   const outro = repo();
-  outro.semear('GM-9', [['nota', { tipo: 'ideia', texto: 'atividade antiga' }]]);
+  outro.semear('GM-9', [['nota', { tipo: 'desvio', texto: 'atividade antiga' }]]);
   outro.semear(null, [['nota', { tipo: 'assunto', texto: 'agora outro assunto' }]], 'S-nota');
   assert.notEqual(hook(stdinTui(outro.dir, 'S-nota:1 3')).j?.decision, 'block');
   assert.equal(respostas(outro)[0].dados.rotulo, 'conversa avulsa');

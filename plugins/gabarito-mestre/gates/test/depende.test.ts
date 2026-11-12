@@ -457,11 +457,10 @@ test('ideia-anterior-a-resposta-nao-conta: sem ideia depois do visto o item some
   assert.equal(ideiasAbertas(null as unknown as Evento[]), null, 'nunca lança');
 });
 
-test('ideia-sem-id-respondivel-fica-sem-botao: id fora do formato ou âncora de (b) da sessão', () => {
-  const r = ideiasDe(chamar(APROVADA, [nota('ideia', 'a', 'sessao.a')]));
-  assert.equal(r.length, 1);
-  assert.deepEqual(r[0].acoes, [], 'sessão com ponto: irrespondível, sem botão (o texto segue)');
-  // a ideia é a âncora de (b) da sessão: o botão responderia a (b) ⇒ sem botão; com outra nota antes, tem botão
-  assert.deepEqual(ideiasDe(chamar(APROVADA, [nota('ideia', 'a')]))[0].acoes, []);
-  assert.deepEqual(ideiasDe(chamar(APROVADA, [abre, nota('ideia', 'a')]))[0].acoes, botao('sessao-a:2'));
+test('ideia-com-id-irrespondivel-falha-fechada: sessão com ponto ⇒ nada de botão que o hook recusa; a 1ª nota da sessão já é respondível', () => {
+  assert.equal(ideiasAbertas(expandir([nota('ideia', 'a', 'sessao.a')])), null);
+  assert.deepEqual(ideiasDe(chamar(APROVADA, [nota('ideia', 'a', 'sessao.a')])), []);
+  // a ideia é a 1ª nota da sessão e ainda assim tem botão (a âncora de (b) a pula; ver trilha.ts)
+  assert.deepEqual(ideiasDe(chamar(APROVADA, [nota('ideia', 'a')]))[0].acoes, botao('sessao-a:1'));
+  assert.deepEqual(ideiasAbertas(expandir([nota('ideia', 'a')])), { id: 'sessao-a:1', n: 1 });
 });

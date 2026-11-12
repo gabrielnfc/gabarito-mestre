@@ -13,7 +13,7 @@ import { projetarEmendas } from './emenda.js';
 import { formaInvalida, ID_PERGUNTA_RE } from './formas.js';
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.js';
                                                             
-import { ancoraDaPerguntaB, idDaBranch } from './trilha.js';
+import { idDaBranch } from './trilha.js';
                                           
 
 const CMD_APROVAR = '/gabarito-mestre:aprovar';
@@ -96,26 +96,20 @@ export const textoIdeias = (n        )         => `decidir se ${n === 1 ? 'a ide
 /**
  * REGRA ÚNICA de "ideias abertas" (REQ-DEP-1 item 4, Emenda 5; a T12 importa esta função). `n` = as `nota ideia` válidas POSTERIORES à
  * última `dono.resposta` de rótulo "visto" (sem caixa, sem espaço nas pontas, como a repetição de opção da T1; forma com `rotulo`, a digitada
- * não vale) cuja `pergunta` é o id de uma ideia anterior a ela; `id` = `<sessao>:<seq>` da última dessas ideias que pode ser respondida
- * (id casa ID_PERGUNTA_RE e não é a âncora da pergunta (b) da sessão: mesmo id ⇒ o botão responderia a (b)); sem ideia assim, `id` é `null`
- * (o item sai sem botão). Nota do modelo, resposta de outro rótulo e resposta a outro id não fecham. Sem ideia nova ⇒ `null`. Nunca lança.
+ * não vale) cuja `pergunta` é o id de uma ideia anterior a ela; `id` = `<sessao>:<seq>` da última dessas ideias. `nota ideia` tem pergunta
+ * própria: a âncora de (b) a pula (`trilha.ts`), então o id nunca é o de (b). Falha fechada: a última ideia nova com id fora de
+ * ID_PERGUNTA_RE (sessão com `.` ou `_`) é irrespondível ⇒ `null` inteiro (nada de botão que o hook recusa; a T12 também não a abre).
+ * Nota do modelo, resposta de outro rótulo e resposta a outro id não fecham. Sem ideia nova ⇒ `null`. Nunca lança.
  */
-export function ideiasAbertas(evs          )                                          {
+export function ideiasAbertas(evs          )                                   {
   if (!Array.isArray(evs)) return null;
-  const ancoras = new Map                       ();
-  const respondivel = (e        )                => {
-    const id = `${e.sessao}:${e.seq}`;
-    if (!ID_PERGUNTA_RE.test(id)) return null;
-    if (!ancoras.has(e.sessao)) ancoras.set(e.sessao, ancoraDaPerguntaB(evs, e.sessao));
-    return ancoras.get(e.sessao) === id ? null : id;
-  };
-  const ideias                                     = [];
+  const ideias                              = [];
   const posDoId = new Map                ();
   evs.forEach((e, i) => {
     if (obj(e).tipo !== 'nota' || formaInvalida('nota', e.dados) !== null || e.dados.tipo !== 'ideia') return;
-    const id = respondivel(e);
+    const id = `${e.sessao}:${e.seq}`;
     ideias.push({ i, id });
-    if (id !== null) posDoId.set(id, i);
+    if (ID_PERGUNTA_RE.test(id)) posDoId.set(id, i);
   });
   let desde = -1;
   evs.forEach((r, j) => {
@@ -125,9 +119,8 @@ export function ideiasAbertas(evs          )                                    
     if (p !== undefined && p < j) desde = j;
   });
   const novas = ideias.filter((x) => x.i > desde);
-  if (novas.length === 0) return null;
-  const ultimaComId = [...novas].reverse().find((x) => x.id !== null);
-  return { id: ultimaComId?.id ?? null, n: novas.length };
+  const ultima = novas[novas.length - 1];
+  return ultima !== undefined && ID_PERGUNTA_RE.test(ultima.id) ? { id: ultima.id, n: novas.length } : null;
 }
 
 /** Texto do dono/modelo no motivo: sem marca técnica (REQ-LNG-1): crase, "--", "/x", snake_case, "a.b", extensão e "node". */
@@ -192,7 +185,7 @@ export function dependeDe(
   // (4) ideias para a próxima entrega
   const ideias = ideiasAbertas(evs);
   const decidirIdeias = ideias !== null
-    ? [item(textoIdeias(ideias.n), ideias.id !== null ? [{ rotulo: VISTO, comando: `/gabarito-mestre:responder ${ideias.id} 1` }] : [])]
+    ? [item(textoIdeias(ideias.n), [{ rotulo: VISTO, comando: `/gabarito-mestre:responder ${ideias.id} 1` }])]
     : [];
 
   // (7) emendas abertas (os botões são os da E4)

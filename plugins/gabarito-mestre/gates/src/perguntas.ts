@@ -118,7 +118,7 @@ export function perguntasAbertas(eventos: Evento[], trilha: Trilha, ctx: Context
 
   // Ideias: opção única "visto", aberta pela `ideiasAbertas` de depende.ts (regra única, importada); âncora = a última ideia respondível.
   const ideias = ideiasAbertas(evs);
-  if (ideias !== null && ideias.id !== null) {
+  if (ideias !== null) {
     const ancora = evs.find((e) => idDe(e) === ideias.id);
     if (ancora !== undefined) abrir(ancora, 'ideia', textoIdeias(ideias.n), [VISTO], true);
   }

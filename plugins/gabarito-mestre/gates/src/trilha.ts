@@ -66,7 +66,7 @@ const fatoMedido = (e: Evento, chave: string): Record<string, unknown> | null =>
   e.tipo === 'fato.medido' && obj(e.dados).chave === chave ? obj(obj(e.dados).valor) : null;
 
 /** Notas que já são âncora de pergunta própria do painel ((a), (d), pendência): nunca são a âncora de (b) (Emenda 2 consolidada). */
-const NOTA_COM_PERGUNTA: ReadonlySet<unknown> = new Set(['assunto', 'duvida', 'pendencia']);
+const NOTA_COM_PERGUNTA: ReadonlySet<unknown> = new Set(['assunto', 'duvida', 'pendencia', 'ideia']);
 
 /**
  * Âncora da pergunta (b) da sessão (DP-2 ajuste 1; Sombra 7c74258a): `<sessao>:<seq>` do 1º evento de trabalho dela — `fato.medido`
