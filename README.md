@@ -191,11 +191,13 @@ Um `PreToolUse` só (`gates/dist/guarda.js`, `timeout 5`) em três matchers — 
 
 A config vem de `refs/remotes/origin/HEAD:harness.config.json`, **nunca da árvore local**: um subagent que reescreve o arquivo não muda o veredito. Sem essa ref, a árvore local vale com `permitidos` vazio, e a guarda avisa uma vez por sessão. Comando Bash acima de 64 KB não é lido inteiro e por isso pede. O diário (`.harness/entregas/<PBI>/events.<sessao>.jsonl`) guarda `ambiente`, `acao` e `alvo`, nunca o comando nem URL com credencial, e só existe em repo com onboarding.
 
-**Sem escape hatch.** Não há variável de ambiente, prefixo de comando nem mensagem que libere: o `ask` é o caminho para o humano autorizar, e `permitidos[]` (lido de `origin/HEAD`, portanto mudado só por merge revisado) é o caminho para a rotina de produção.
+**Sem escape hatch por agente.** Não há variável de ambiente, prefixo de comando nem mensagem que libere: o `ask` é o caminho para o humano autorizar, e `permitidos[]` (lido de `origin/HEAD`, portanto mudado só por merge revisado) é o caminho para a rotina de produção. A única exceção é o interruptor de autonomia (seção abaixo): é um arquivo no home do dono, não uma variável de ambiente, e a escrita nele (`Write`, `Edit`, `>`, `tee`, `cp`, `mv`) cai no anel integridade (`ask` ao orquestrador, `deny` ao subagent), mesmo com ele ligado.
 
 ### Autonomia do orquestrador (opt-in, decisão do dono em 2026-11-12)
 
-Se `~/.claude/gabarito-autonomia.json` contiver `{"orquestrador": true}`, todo `ask` da guarda ao orquestrador vira passagem silenciosa (integridade, produção, falha de classificação, comando acima do teto) e grava `guarda.autonomia` no diário, com os mesmos `dados` (anel, alvo, ação, ambiente) e nunca o comando. O anel `segredo` continua `ask`, e o subagent continua `deny`. Arquivo ausente, ilegível, JSON inválido ou valor diferente de `true` mantém o comportamento padrão (fail-closed). O arquivo é lido uma vez por chamada; o plugin nunca o cria.
+Se `~/.claude/gabarito-autonomia.json` contiver `{"orquestrador": true}`, o `ask` de integridade e de produção ao orquestrador vira passagem silenciosa e grava `guarda.autonomia` no diário, com os mesmos `dados` (anel, alvo, ação, ambiente) e nunca o comando. O subagent continua `deny`. Arquivo ausente, ilegível, JSON inválido ou valor diferente de `true` mantém o comportamento padrão (fail-closed). O arquivo é lido uma vez por chamada; o plugin nunca o cria. Continuam `ask` mesmo ligado: `segredo`, o comando acima do teto de 65.536 caracteres (a guarda não leu tudo e não vê segredo no resto), a exceção da própria guarda (Q21) e qualquer escrita no próprio interruptor.
+
+**Fetch do orquestrador sem prompt (2026-11-12).** `git fetch [remoto] [branch…]` com as flags `-q -v -p --all --tags --no-tags --dry-run --depth=N` não pede mais. Refspec (dois-pontos, `+`, prefixo `refs/`), URL, caminho, ponto, `-C` e qualquer outra flag continuam `ask`. Limitação (c): `git fetch <nome-que-não-é-remoto>` passa pela regra, por ser um nome simples, e só grava `FETCH_HEAD`.
 
 ### Fail-open declarado (G9)
 

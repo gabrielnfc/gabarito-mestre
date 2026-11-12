@@ -81,7 +81,7 @@ export function rodarBruto(stdin, { cwd, env = {}, repo = null, bin = GUARDA } =
     input: stdin,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
-    env: { ...process.env, ...(repo ? { CLAUDE_PROJECT_DIR: repo } : {}), CLAUDE_PLUGIN_ROOT: join(GATES, '..'), TMPDIR: tmp, ...env },
+    env: { ...process.env, ...(repo ? { CLAUDE_PROJECT_DIR: repo } : {}), CLAUDE_PLUGIN_ROOT: join(GATES, '..'), TMPDIR: tmp, HOME: mkdtempSync(join(tmp, 'home-')), ...env },
   });
   const saida = r.stdout.trim() === '' ? {} : JSON.parse(r.stdout);
   return {

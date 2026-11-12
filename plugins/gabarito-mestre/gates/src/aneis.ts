@@ -507,6 +507,9 @@ export function anelDeCaminho(caminho: string, contexto: Contexto, cwd?: string 
   // Kill switch: qualquer caminho terminado em `.harness/PAUSAR`, de qualquer raiz (o do checkout principal visto da worktree).
   // Sem distinção de caixa (APFS), como o resto dos anéis.
   if (segs.length >= 2 && segs[segs.length - 2].toLowerCase() === '.harness' && minusculo === 'pausar') return 'integridade';
+  // Interruptor de autonomia do orquestrador (`~/.claude/gabarito-autonomia.json`): o agente nunca o liga. Casa pelo fim do caminho
+  // (`~`, absoluto, qualquer home): na dúvida, pede. Leitura segue livre (quem chama só olha este anel em escrita).
+  if (segs.length >= 2 && segs[segs.length - 2].toLowerCase() === '.claude' && minusculo === 'gabarito-autonomia.json') return 'integridade';
   // O diretório `.harness` de cada raiz em que a pausa é lida (a lista de `guarda.ts`), não só o da raiz do cwd.
   const baixo = norm.toLowerCase();
   for (const r of raizesDePausa(contexto)) if (baixo === `${r}/.harness`) return 'integridade';
@@ -588,7 +591,7 @@ function fetchSeguro(resto: string[]): boolean {
       if (!FETCH_FLAGS.test(a)) return false;
     } else pos.push(a);
   }
-  return pos.every((p, i) => p !== '.' && p !== '..' && (i === 0 ? FETCH_REMOTO.test(p) : FETCH_BRANCH.test(p) && !p.startsWith('refs/')));
+  return pos.every((p, i) => (i === 0 ? FETCH_REMOTO.test(p) : FETCH_BRANCH.test(p) && !p.startsWith('refs/')));
 }
 // Leitura por forma (T24): `worktree` só com `list` em 1º; `hash-object` sem `-…w` e sem `--stdin-*` (o git abrevia, `--stdin-p` vale).
 function gitLeituraPorForma(sub: string, resto: string[]): boolean {

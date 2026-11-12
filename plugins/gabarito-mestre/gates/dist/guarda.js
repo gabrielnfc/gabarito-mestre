@@ -282,9 +282,6 @@ export function lerAutonomia(caminho         = join(homedir(), '.claude', 'gabar
   }
 }
 
-// Lido uma vez por chamada, no `principal`; o último recurso (Q21) o consulta sem reler o disco.
-let autonomiaLigada = false;
-
 function aviso(msg        )       {
   process.stderr.write(`gabarito-mestre: ${msg} (guarda sem decisão, fail-open declarado)\n`);
 }
@@ -363,7 +360,7 @@ function registrarExcecao(entrada             , erro        )       {
       autor,
       sessao,
       agente: sub ? `subagent:${entrada.agent_id}` : 'orquestrador',
-      tipo: sub ? 'guarda.deny' : autonomiaLigada ? 'guarda.autonomia' : 'guarda.ask',
+      tipo: sub ? 'guarda.deny' : 'guarda.ask',
       dados: { motivo: 'excecao', erro },
     });
   } catch { /* diário doente: a decisão já saiu */ }
@@ -377,13 +374,6 @@ function pedirPorExcecao(e         )       {
   const entrada = atual;
   if (entrada === null || jaEscreveu) return;
   const erro = limparErro(e, entrada);
-  if (autonomiaLigada && !ehSubagent(entrada) && !(escritos > 0 && pendente !== null)) {
-    // Autonomia do orquestrador: a falha de classificação passa em silêncio, registrada como `guarda.autonomia`.
-    process.stderr.write(`gabarito-mestre: guarda falhou depois de ler a chamada (${erro}); autonomia do orquestrador ligada, seguindo\n`);
-    jaEscreveu = true;
-    registrarExcecao(entrada, erro);
-    return;
-  }
   process.stderr.write(`gabarito-mestre: guarda falhou depois de ler a chamada (${erro}); pedindo\n`);
   try {
     emitir(escritos > 0 && pendente !== null ? pendente : ehSubagent(entrada) ? PEDIDO_SUB : PEDIDO_ORQ);
@@ -605,7 +595,6 @@ function principal()       {
   if (typeof entrada.tool_name !== 'string' || objeto(entrada.tool_input) === null) return aviso('payload sem tool_name ou tool_input');
   if (entrada.tool_name === 'Bash' && typeof entrada.tool_input.command !== 'string') return aviso('Bash sem command em texto');
   atual = entrada;
-  autonomiaLigada = lerAutonomia();
 
   const cwd = typeof entrada.cwd === 'string' && entrada.cwd !== '' ? entrada.cwd : process.cwd();
   const raizCwd = raizPorFs(cwd);
@@ -633,7 +622,7 @@ function principal()       {
   const guarda = raizSessao === null ? null : lerGuarda(raizSessao);
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..', '..');
   const contexto = montarContexto(entrada, raizCwd ?? raizSessao, cwd, pluginRoot, pausa.raizes, ancoraDaSessao(process.env.CLAUDE_PROJECT_DIR));
-  const r = decidir(entrada, guarda?.config ?? null, contexto, autonomiaLigada);
+  const r = decidir(entrada, guarda?.config ?? null, contexto, lerAutonomia());
 
   const sessao = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;
   const mensagens           = [];
