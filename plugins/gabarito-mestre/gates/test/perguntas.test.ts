@@ -415,24 +415,74 @@ test('perguntas-usa-a-ancora-da-trilha', () => {
 });
 
 test('b-e-d-nunca-mesmo-id', () => {
-  // Propriedade: toda sequência de até 4 eventos de trabalho numa sessão sem entrega ⇒ ids de `perguntasAbertas` distintos.
+  // Propriedade (Sombra 7c74258a): toda sequência de até 4 eventos de trabalho numa sessão ⇒ ids de `perguntasAbertas` distintos
+  // entre TODOS os gatilhos, incluindo (c). A trilha é a real (`trilhaDe`), sem ID na branch: (b) abre enquanto não há resposta,
+  // e com as 2 specs medidas a trilha fica ambígua; a trilha "identificada com ambígua" força (c) a disputar id com (b)/(d)/pendência.
+  const fatos: FatosTrilha = { sessao: 's1', branch: 'main', idPadrao: '[A-Z]+-\\d+', specs: [spec(SPEC1, 'Trilha', A), spec(SPEC2, 'Painel', B)],
+    plano: null, ledger: false, gh: 'ok', ultimas: [{ id: 'GM-20', data: '2026-10-31T00:00:00Z' }] };
+  const comC = identificada({ ambigua: [{ caminho: SPEC1, titulo: 'Trilha' }, { caminho: SPEC2, titulo: 'Painel' }] } as Partial<Trilha>);
   const pecas: Compacto[] = [notaDe('duvida', 'qual?', 's1', ['x', 'y']), notaDe('pendencia', 'p', 's1'), notaDe('assunto', 'a', 's1'),
-    notaDe('ideia', 'i', 's1'), branch('s1')];
+    notaDe('ideia', 'i', 's1'), branch('s1'), specMedida(SPEC1, A, 's1'), specMedida(SPEC2, B, 's1')];
   let casos = 0;
-  let comB = 0;
+  const por: Record<string, number> = { b: 0, c: 0, bc: 0 };
+  // Sessão anterior com ou sem a SPEC1 medida: com ela, a SPEC2 da sessão atual pode ser ao mesmo tempo o 1º trabalho e a âncora de (c).
+  const anteriores: Compacto[][] = [[], [inicio('s0'), specMedida(SPEC1, A, 's0')]];
   const gerar = (prefixo: Compacto[]): void => {
-    if (prefixo.length > 0) {
-      const ps = perguntasAbertas(expandir([inicio('s1'), ...prefixo]), trilha(), { sessao: 's1' });
-      const ids = ps.map((p) => p.id);
-      assert.equal(new Set(ids).size, ids.length, JSON.stringify(ps.map((p) => [p.gatilho, p.id])));
+    if (prefixo.length > 0) for (const antes of anteriores) {
+      const evs = expandir([...antes, inicio('s1'), ...prefixo]);
+      // (b) só abre sem entrega e (c) só com entrega: o id é o mesmo gatilho nas duas leituras, nunca de 2 gatilhos (senão a
+      // resposta a um fecharia o outro).
+      const gatilhoDe = new Map<string, string>();
+      for (const t of [trilhaDe(fatos, evs), comC]) {
+        const ps = perguntasAbertas(evs, t, { sessao: 's1', ultimas: fatos.ultimas });
+        const ids = ps.map((p) => p.id);
+        assert.equal(new Set(ids).size, ids.length, JSON.stringify(ps.map((p) => [p.gatilho, p.id])));
+        for (const p of ps) {
+          assert.equal(gatilhoDe.get(p.id) ?? p.gatilho, p.gatilho, `${p.id}: ${gatilhoDe.get(p.id)} × ${p.gatilho}`);
+          gatilhoDe.set(p.id, p.gatilho);
+        }
+      }
+      const gs = [...gatilhoDe.values()];
+      if (gs.includes('b')) por.b++;
+      if (gs.includes('c')) por.c++;
+      if (gs.includes('b') && gs.includes('c')) por.bc++;
       casos++;
-      if (ps.some((p) => p.gatilho === 'b')) comB++;
     }
     if (prefixo.length < 4) for (const p of pecas) gerar([...prefixo, p]);
   };
   gerar([]);
-  assert.equal(casos, 5 + 25 + 125 + 625);
-  assert.ok(comB > 0 && comB < casos);
+  assert.equal(casos, 2 * (7 + 49 + 343 + 2401));
+  assert.ok(por.b > 0 && por.c > 0 && por.bc > 0, JSON.stringify(por));
+});
+
+test('b-e-c-nunca-mesmo-id', () => {
+  // MAJOR 1 da r2 (sonda .claude-tmp/rev-t12-r2/sonda-colisao.ts): o 1º `fato.medido` da sessão é a spec que completa o conjunto
+  // ambíguo. (b) não se ancora nela (é âncora de (c)): ids diferentes, e responder (b) deixa (c) aberta.
+  const fatos: FatosTrilha = { sessao: 's1', branch: 'main', idPadrao: '[A-Z]+-\\d+', specs: [spec(SPEC1, 'Trilha', A), spec(SPEC2, 'Painel', B)],
+    plano: null, ledger: false, gh: 'ok', ultimas: [{ id: 'GM-20', data: '2026-10-31T00:00:00Z' }] };
+  const ctx = { sessao: 's1', ultimas: fatos.ultimas };
+  const base: Compacto[] = [inicio('s0'), specMedida(SPEC1, A, 's0'), inicio('s1'), specMedida(SPEC2, B, 's1'), branch('s1')];
+  const evs = expandir(base);
+  assert.equal(ancoraDaPerguntaC(evs, [SPEC1, SPEC2]), 's1:2');
+  assert.equal(ancoraDaPerguntaB(evs, 's1'), 's1:3', '(b) pula o fato.medido spec');
+  const t0 = trilhaDe(fatos, evs);
+  assert.equal(t0.identificada, false);
+  const b = perguntasAbertas(evs, t0, ctx).find((p) => p.gatilho === 'b');
+  assert.ok(b !== undefined);
+  assert.equal(b.id, 's1:3');
+  const k = b.opcoes.indexOf('GM-20') + 1;
+  assert.ok(k > 0);
+  const ligado = expandir([...base, resp(b.id, k, 'GM-20')]);
+  const t1 = trilhaDe(fatos, ligado);
+  assert.equal(t1.identificada, true);
+  assert.equal(t1.entrega, 'GM-20');
+  assert.equal(t1.ambigua.length, 2);
+  const p1 = perguntasAbertas(ligado, t1, ctx);
+  assert.deepEqual(p1.map((p) => [p.gatilho, p.id]), [['c', 's1:2']], '(c) segue aberta depois de responder (b)');
+  // Sessão só com spec medida: (b) fica sem âncora e não abre (falha fechada); (c) não é afetada.
+  const soSpec = expandir([inicio('s1'), specMedida(SPEC1, A, 's1'), specMedida(SPEC2, B, 's1')]);
+  assert.equal(ancoraDaPerguntaB(soSpec, 's1'), null);
+  assert.equal(perguntasAbertas(soSpec, trilhaDe(fatos, soSpec), ctx).some((p) => p.gatilho === 'b'), false);
 });
 
 test('perguntas-usa-a-pendencia-do-depende', () => {

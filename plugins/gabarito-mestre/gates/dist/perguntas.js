@@ -4,7 +4,8 @@
  * Gatilhos e âncoras (a âncora é o evento cujo `<sessao>:<seq>` vira o id da pergunta):
  * - (a) `nota assunto` com a trilha sem entrega identificada ⇒ âncora = a nota.
  * - (b) sessão atual com trabalho e trilha sem entrega identificada ⇒ âncora = `ancoraDaPerguntaB` de `trilha.ts` (regra única,
- *   importada: 1º `fato.medido` ou `nota` sem pergunta própria DA SESSÃO; por isso (b) nunca divide id com (a)/(d)/pendência)
+ *   importada: 1º `fato.medido` que não é `spec` ou `nota` sem pergunta própria DA SESSÃO; por isso (b) nunca divide id com
+ *   (a)/(c)/(d)/pendência)
  *   (DP-2 ajuste 1: por sessão, não por repositório; sessão nova volta a perguntar; retomada não reabre).
  * - (c) trilha com 2+ specs ambíguas ⇒ âncora = o `fato.medido spec` que completou o conjunto (entrada da última delas, a mesma
  *   referência de `trilha.ts`); edição de spec não reabre, conjunto novo reabre (DP-2 ajuste 2).

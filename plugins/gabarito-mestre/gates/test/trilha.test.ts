@@ -453,6 +453,10 @@ test('ancora-b-pula-duvida-pendencia-assunto', () => {
   }
   assert.equal(ancoraDaPerguntaB(expandir([duvida, nota('pendencia'), nota('assunto'), nota('ideia')]), s), `${s}:4`, 'ideia é trabalho');
   assert.equal(ancoraDaPerguntaB(expandir([nota('desvio'), duvida]), s), `${s}:1`, 'desvio é trabalho');
+  // `fato.medido spec` é âncora de (c), nunca de (b) (Sombra 7c74258a); sem outro trabalho ⇒ sem âncora.
+  const spec: Compacto = { ...specMedida('docs/a.md'), s };
+  assert.equal(ancoraDaPerguntaB(expandir([spec, ancoraB()]), s), `${s}:2`, 'pula spec');
+  assert.equal(ancoraDaPerguntaB(expandir([spec]), s), null, 'só spec ⇒ sem âncora');
   // Responder (b) depois de uma dúvida liga a sessão (resposta à âncora real, não à nota).
   const ligada = trilhaDe(fatos({ branch: 'main' }), expandir([duvida, ancoraB(), { t: 'dono.resposta', s, d: { pergunta: `${s}:2`, opcao: 1, rotulo: 'GM-21' } }]));
   assert.equal(ligada.identificada, true);
