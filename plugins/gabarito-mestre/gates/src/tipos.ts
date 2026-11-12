@@ -5,6 +5,8 @@
 
 import type { DecisaoEntrega } from './entrega.ts';
 import type { EstadoTask } from './loop.ts';
+import type { Pergunta } from './perguntas.ts';
+import type { Trilha } from './trilha.ts';
 
 export type Ambiente = 'teste' | 'homolog' | 'prod' | 'desconhecido';
 /** Ação da ferramenta sobre o alvo (guarda). `Acao` é o botão do painel (E4); este era `Acao` até GM-12 T1. */
@@ -242,14 +244,51 @@ export type EstadoPainel = {
   /** `chave` identifica a ocorrência do Parar (o mod avisa 1× por chave); `hora` é `hh:mm`, `dd/mm hh:mm` ou `--:--` (sem evento com hora legível). */
   parar: { motivo: MotivoParar; texto: string; acoes: Acao[]; hora: string; chave: string; emVoo: string[]; alteracoes: number } | null;
   depende: ItemDepende[]; atencao: string[];
-  historico: { glifo: string; texto: string; hora: string; cor: CorTema }[]; ocultos: number;
+  /** `origem` (GM-14 T17, REQ-LNG-1): a da tabela fechada de `origemDe`; `null` = tipo fora da tabela. */
+  historico: { glifo: string; texto: string; hora: string; cor: CorTema; origem?: string | null }[]; ocultos: number;
   rodape: { ci: { verde: boolean | null; execucoesHoje: number }; prod: { leituras: number; alteracoes: number }; politica: string };
   /** Já convertida por `horaLocal`: o render não conhece o fuso. */
   notificacao: { hora: string } | { motivo: string } | null; qualidade: { rodadaMedia: number | null; mortas: number | null };
+  // GM-14 T17 (REQ-GLB-1, FIEL-10..13): estado dos 5 blocos. Presentes só quando `projetarPainel` recebe `fatos`; sem eles o render é o da E4.
+  /** `entrega`: plano ou entrega identificada; `projeto`: repo sem entrega identificada; `fora`: fora de um repositório git. */
+  modo?: 'entrega' | 'projeto' | 'fora';
+  trilha?: Trilha | null;
+  /** 1ª pergunta aberta (a mais antiga), sem as pendências (que são itens de `depende`); `perguntasMais` = as outras abertas. */
+  pergunta?: Pergunta | null;
+  perguntasMais?: number;
+  /** FIEL-10 e: sem entrega em curso e nada pendente ⇒ o painel é 1 linha. `estado` em palavras, `null` = não conhecido. */
+  umaLinha?: { ultima: { id: string; estado: string | null } | null } | null;
+  /** FIEL-10 b, com plano: só integradas pintam; previsão só com ≥ 3 integradas nesta entrega (`base`). */
+  pronto?: { integradas: number; total: number; previsao: { hora: string; base: number } | null } | null;
+  /** FIEL-10 b, sem plano: a trilha em 1 linha. `motivo` = o do 1º `?`; `sufixo` = N17 b (fora da execução). */
+  fase?: { numero: number | null; marcas: string[]; motivo: string | null; progresso: string; sufixo: string[] } | null;
+  /** FIEL-11: `agentes` `null` = sem dados da sessão (CLI sem `--agentes`, FIEL-4); `contexto` `null` = não medido. */
+  agora?: {
+    orquestrador: { nome: string | null; contexto: number | null; estimado: boolean; pousar: boolean };
+    agentes: AgenteAgora[] | null; segundoPlano: AgenteAgora[];
+  };
+  /** FIEL-10 d: só resultados, mais novo primeiro (até 5; o render corta 2 acima do input). */
+  recente?: ItemRecente[];
+  /** FIEL-13 b: segundos desde a última leitura bem-sucedida do diário pelo mod; `null` = não medido. */
+  desatualizadoS?: number | null;
+  /** Fontes que falharam (nomes naturais), para o DEPENDE nunca dizer "nada" com falha. */
+  fontesFalhas?: string[];
 };
+/** Papel de quem aparece no AGORA e no RECENTE; o executivo troca o nome por `PAPEL_EXECUTIVO[papel]` (FIEL-12). */
+export type PapelPainel = 'orquestrador' | 'implementador' | 'correcao' | 'spike' | 'revisor' | 'sombra' | 'teste';
+/** `nome` = nome temático (só com dados da sessão; FIEL-4); `null` ⇒ o render usa o papel. */
+export type QuemPainel = { nome: string | null; papel: PapelPainel };
+/** Linha do AGORA: `acao` já higienizada (FIEL-3 b); `null` = sem fonte ("?"). */
+export type AgenteAgora = { quem: QuemPainel; task: string | null; acao: string | null; desdeS: number | null };
+/** Resultado do RECENTE: `quem` (se houver) vem antes do `texto`; `origem` da tabela de REQ-LNG-1. */
+export type ItemRecente = { hora: string; glifo: '✓' | '✗' | '●' | '○'; cor: CorTema; quem: QuemPainel | null; texto: string; origem: string };
 export type OpcoesRender = { preset: 'esquadrao' | 'executivo'; tema: 'color' | 'mono'; narracao: boolean; largura: number;
   /** T14b: linhas que a superfície dá ao corpo (`props.scroll.bodyRows` da Pane). Ausente ⇒ saída byte a byte igual à sem altura; presente e menor que o desenho ⇒ densidade por altura (REQ-PNL-9, emenda D-R4). */
-  altura?: number };
+  altura?: number;
+  /** GM-14 T17 (REQ-GLB-1): linhas que cabem (de `orcamentoDe`). Ausente ⇒ `altura`; sem os dois, sem corte (como a E4). Só no estado novo. */
+  orcamento?: number;
+  /** GM-14 T17: local do painel; o RECENTE mostra até 5 em `lateral` (padrão) e 2 em `acima`. */
+  local?: 'lateral' | 'acima' };
 
 // GM-14 (2.1.0): fato medido, nota, resposta do dono e confirmação de regra herdada. Formas fechadas, conferidas por `formaInvalida` no `append`.
 export type ChaveFato = 'branch' | 'spec' | 'plano' | 'pr' | 'release' | 'agente';

@@ -465,7 +465,7 @@ test('tabela-parar-10-motivos: chaves = MotivoParar; todo comando ∈ {liberar <
   assert.deepEqual(TABELA_PARAR.teto_rodadas.acoes, [{ rotulo: 'aprovar', comando: '/gabarito-mestre:liberar <task>' }, { rotulo: 'recusar: deixe a task parada e emende a spec', comando: null }]);
   assert.equal(TABELA_PARAR.ci_vermelho.texto, 'CI vermelho 2× depois da última integração');
   assert.equal(TABELA_PARAR.teto_tokens.texto, 'teto de tokens da entrega');
-  assert.deepEqual(TABELA_PARAR.teto_tokens.acoes, [{ rotulo: 'suba loop.tetoTokens no harness.config.json ou encerre a entrega', comando: null }]);
+  assert.deepEqual(TABELA_PARAR.teto_tokens.acoes, [{ rotulo: 'aumente o teto de tokens nas configurações ou encerre a entrega', comando: null }]); // GM-14 T17: REQ-LNG-1
   assert.deepEqual(TABELA_PARAR.ci_vermelho.acoes, [{ rotulo: 'veja o CI, corrija ou peça a correção, e diga ao loop para seguir', comando: null }]);
   assert.deepEqual(TABELA_PARAR.sem_pouso.acoes, [{ rotulo: 'digite uma mensagem para retomar pelo diário', comando: null }]);
   assert.deepEqual(TABELA_PARAR.sem_progresso.acoes, [{ rotulo: 'leia o diário e diga ao loop o que fazer', comando: null }]);
@@ -475,10 +475,10 @@ test('tabela-parar-10-motivos: chaves = MotivoParar; todo comando ∈ {liberar <
   assert.equal(TABELA_PARAR.sem_progresso.texto, '3 paradas sem progresso');
   assert.equal(TABELA_PARAR.diario_invalido.texto, 'diário fora da tabela de transições');
   assert.equal(TABELA_PARAR.nao_conseguiu.texto, 'sem próxima ação e sem agente vivo');
-  assert.equal(TABELA_PARAR.smoke.texto, 'smoke em produção falhou; rollback feito');
-  assert.equal(TABELA_PARAR.rollback.texto, 'rollback falhou: produção em estado desconhecido');
+  assert.equal(TABELA_PARAR.smoke.texto, 'a verificação em produção falhou e a versão anterior voltou');
+  assert.equal(TABELA_PARAR.rollback.texto, 'a volta à versão anterior falhou: produção em estado desconhecido');
   assert.equal(TABELA_PARAR.janela_ausente.texto, 'entrega exige produção sem janela ou comandos');
-  assert.deepEqual(TABELA_PARAR.janela_ausente.acoes, [{ rotulo: 'declare entrega.janela/entrega.comandos em origin', comando: null }]);
+  assert.deepEqual(TABELA_PARAR.janela_ausente.acoes, [{ rotulo: 'declare a janela e os comandos de entrega na configuração de origem', comando: null }]);
   assert.deepEqual(TABELA_PARAR.smoke.acoes, [{ rotulo: 'confira produção e a causa antes de nova entrega', comando: null }]);
   assert.deepEqual(TABELA_PARAR.rollback.acoes, [{ rotulo: 'aja em produção agora', comando: null }]);
   for (const m of esperadas.filter((x) => x !== 'teto_rodadas')) {

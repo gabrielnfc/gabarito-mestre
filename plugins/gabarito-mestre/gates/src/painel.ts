@@ -7,19 +7,26 @@
  */
 
 import { projetarEmendas } from './emenda.ts';
-import { cmp, contarConsultas, duracoes, EM_TRABALHO, mediana } from './diario-puro.ts';
+import { cmp, contarConsultas, duracoes, EM_TRABALHO, mediana, projetarDecisoes } from './diario-puro.ts';
+import { dependeDe } from './depende.ts';
+import { origemDe } from './origem.ts';
+import { perguntasAbertas } from './perguntas.ts';
+import { trilhaDe } from './trilha.ts';
+import type { FatosTrilha } from './trilha.ts';
 import { estadoDe, ordenar, proximaAcao, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK } from './loop.ts';
 import type { EstadoTask } from './loop.ts';
 import { formaInvalida } from './formas.ts';
-import { renderEsquadrao } from './painel-esquadrao.ts';
+import { renderBlocos, renderEsquadrao } from './painel-esquadrao.ts';
 import { historicoDe } from './painel-texto.ts';
 import { renderExecutivo } from './painel-executivo.ts';
 import { casarAgente, chaveDoPar, nomesPorPapel, projetarEquipe } from './painel-equipe.ts';
 import { dataCivil, fusoValido, horaLocal } from './painel-hora.ts';
-import type { Acao, AgenteVivo, EntradaPainel, EstadoPainel, Evento, GlifoTask, ItemDepende, Linha, MotivoParar, OpcoesRender, Papel, Plano, Sinais, TaskPainel } from './tipos.ts';
+import type { Acao, AgenteAgora, AgenteVivo, EntradaPainel, EstadoPainel, Evento, GlifoTask, ItemDepende, ItemRecente, Linha, MotivoParar, OpcoesRender, Papel, PapelPainel, Plano, QuemPainel, Sinais, TaskPainel } from './tipos.ts';
 
 /** Despacha para o render do preset. Preset desconhecido não vira sucesso: lança (quem chama é o CLI, que já validou a flag). */
 export function renderPainel(e: EstadoPainel, o: OpcoesRender): Linha[] {
+  // GM-14 T17: estado novo (projetado com `fatos`) ⇒ um renderizador só, os 5 blocos; o executivo é o mesmo sem lúdico (FIEL-12)
+  if (e !== null && typeof e === 'object' && e.modo !== undefined && (o?.preset === 'esquadrao' || o?.preset === 'executivo')) return renderBlocos(e, o);
   if (o.preset === 'esquadrao') return renderEsquadrao(e, o);
   if (o.preset === 'executivo') return renderExecutivo(e, o);
   throw new RangeError(`preset desconhecido: ${String(o.preset)} (esquadrao | executivo)`);
@@ -29,21 +36,24 @@ export function renderPainel(e: EstadoPainel, o: OpcoesRender): Linha[] {
 // Tabela do PAROU (REQ-PNL-3, B7): texto e ações fixos por motivo, só comandos que existem. `<task>` é preenchido na projeção.
 
 const MARCA_TASK = '<task>';
-/** A tabela da REQ-PNL-3. Texto copiado da spec (sem a formatação markdown); `<task>` só em `teto_rodadas`. */
+/**
+ * A tabela da REQ-PNL-3, reescrita em linguagem natural (GM-14 T17, REQ-LNG-1): texto e rótulo sem comando, sem marca técnica e sem palavra que é
+ * tipo de evento ou motivo de parada; o comando só vive em `Acao.comando` (o botão). `<task>` só em `teto_rodadas`.
+ */
 export const TABELA_PARAR: Record<MotivoParar, { texto: string; acoes: Acao[] }> = {
   teto_rodadas: {
     texto: `teto de rodadas de review em ${MARCA_TASK}`,
     acoes: [{ rotulo: 'aprovar', comando: `/gabarito-mestre:liberar ${MARCA_TASK}` }, { rotulo: 'recusar: deixe a task parada e emende a spec', comando: null }],
   },
   ci_vermelho: { texto: 'CI vermelho 2× depois da última integração', acoes: [{ rotulo: 'veja o CI, corrija ou peça a correção, e diga ao loop para seguir', comando: null }] },
-  teto_tokens: { texto: 'teto de tokens da entrega', acoes: [{ rotulo: 'suba loop.tetoTokens no harness.config.json ou encerre a entrega', comando: null }] },
+  teto_tokens: { texto: 'teto de tokens da entrega', acoes: [{ rotulo: 'aumente o teto de tokens nas configurações ou encerre a entrega', comando: null }] },
   sem_pouso: { texto: 'o pouso automático falhou', acoes: [{ rotulo: 'digite uma mensagem para retomar pelo diário', comando: null }] },
   sem_progresso: { texto: '3 paradas sem progresso', acoes: [{ rotulo: 'leia o diário e diga ao loop o que fazer', comando: null }] },
   diario_invalido: { texto: 'diário fora da tabela de transições', acoes: [{ rotulo: 'confira o diário; nada segue até ele ser válido', comando: null }] },
   nao_conseguiu: { texto: 'sem próxima ação e sem agente vivo', acoes: [{ rotulo: 'leia o diário e diga ao loop o que fazer', comando: null }] },
-  smoke: { texto: 'smoke em produção falhou; rollback feito', acoes: [{ rotulo: 'confira produção e a causa antes de nova entrega', comando: null }] },
-  rollback: { texto: 'rollback falhou: produção em estado desconhecido', acoes: [{ rotulo: 'aja em produção agora', comando: null }] },
-  janela_ausente: { texto: 'entrega exige produção sem janela ou comandos', acoes: [{ rotulo: 'declare entrega.janela/entrega.comandos em origin', comando: null }] },
+  smoke: { texto: 'a verificação em produção falhou e a versão anterior voltou', acoes: [{ rotulo: 'confira produção e a causa antes de nova entrega', comando: null }] },
+  rollback: { texto: 'a volta à versão anterior falhou: produção em estado desconhecido', acoes: [{ rotulo: 'aja em produção agora', comando: null }] },
+  janela_ausente: { texto: 'entrega exige produção sem janela ou comandos', acoes: [{ rotulo: 'declare a janela e os comandos de entrega na configuração de origem', comando: null }] },
 };
 
 const ehMotivo = (x: unknown): x is MotivoParar => typeof x === 'string' && Object.hasOwn(TABELA_PARAR, x);
@@ -369,8 +379,12 @@ function montarDepende(c: Calculo): ItemDepende[] {
   return itens;
 }
 
-/** Itens de "depende de você" na ordem fixa: Parar, spec, emendas, pausa, devolvida, release. `subir`, `agendar`, `esperar` e `entregue` nunca acendem. */
-export function dependeDeVoce(plano: Plano, eventos: Evento[] | null, entrada: EntradaPainel): ItemDepende[] {
+/**
+ * Itens de "depende de você" na ordem fixa: Parar, spec, emendas, pausa, devolvida, release. `subir`, `agendar`, `esperar` e `entregue` nunca acendem.
+ * GM-14 T17: com `fatos`, é o `depende` do estado novo, que passa por `dependeDe` (REQ-DEP-1) com estes itens como base.
+ */
+export function dependeDeVoce(plano: Plano, eventos: Evento[] | null, entrada: EntradaNova): ItemDepende[] {
+  if (ehObj(entrada?.fatos)) return projetarPainel(plano, eventos, entrada).depende;
   return montarDepende(calcular(plano, eventos, entrada));
 }
 
@@ -434,7 +448,14 @@ function narrativaDo(c: Calculo, feitas: number): string {
  * T2b (fiação): `TaskPainel.nome`/`papel` por `nomesPorPapel` (T3), `historico`/`ocultos` por `historicoDe` (T4, com o texto real de `TABELA_PARAR`) e
  * `equipe.lider.narrativa` pela tabela N (sombra-p1a.md, "Tabela N").
  */
-export function projetarPainel(plano: Plano, eventos: Evento[] | null, entrada: EntradaPainel): EstadoPainel {
+export function projetarPainel(planoOuNulo: Plano | null, eventos: Evento[] | null, entrada: EntradaNova): EstadoPainel {
+  const plano: Plano = planoOuNulo !== null && typeof planoOuNulo === 'object' ? planoOuNulo : { entrega: '', tasks: [] };
+  const legado = projetarLegado(plano, eventos, entrada);
+  if (!ehObj(entrada?.fatos)) return legado;
+  return projetarNovo(planoOuNulo !== null && typeof planoOuNulo === 'object' ? plano : null, eventos, entrada as EntradaNova & { fatos: FatosTrilha }, legado);
+}
+
+function projetarLegado(plano: Plano, eventos: Evento[] | null, entrada: EntradaPainel): EstadoPainel {
   const c = calcular(plano, eventos, entrada);
   const { fuso, estados, ord, lista, valido } = c;
   const agentes = Array.isArray(entrada.agentes) ? entrada.agentes.filter(vivoDe) : null;
@@ -521,5 +542,185 @@ export function projetarPainel(plano: Plano, eventos: Evento[] | null, entrada: 
     rodape: { ci: rod.ci, prod: rod.prod, politica },
     notificacao,
     qualidade: { rodadaMedia, mortas },
+  };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// GM-14 T17: estado dos 5 blocos (REQ-GLB-1, REQ-DEP-1, REQ-LNG-1; FIEL-3 b, FIEL-4, FIEL-6 b, FIEL-7, FIEL-10..13, N17 b).
+
+/**
+ * O que o CLI (T18) e o mod (T20) passam além da E4. Tudo opcional: ausente = não medido, nunca "ok".
+ * `fontesFalhas`: nomes naturais das fontes que não leram ("o GitHub"); `desatualizadoS`: segundos desde a última leitura do diário pelo mod;
+ * `ultima`: a última entrega e o estado em palavras (o núcleo não lê pastas); `fora`: fora de um repositório git.
+ */
+export type EntradaNova = EntradaPainel & {
+  fatos?: FatosTrilha; fontesFalhas?: string[]; pousoPendente?: boolean; desatualizadoS?: number | null; fora?: boolean;
+  ultima?: { id: string; estado: string | null } | null;
+};
+
+/** FIEL-13 b: limite de "desatualizado" (180 s provisório = 3 × o relógio do mod, até o valor do S15). */
+export const LIMITE_DESATUALIZADO_S = 180;
+const NADA = 'depende de você: nada';
+const DESATUALIZADO = 'depende de você: ? (o painel está sem ler o diário)';
+const ATIVO_FIM: ReadonlySet<unknown> = ENCERRADO;
+const PAPEL_DO_TIPO: [RegExp, PapelPainel][] = [[/revisor/i, 'revisor'], [/sombra/i, 'sombra'], [/spike/i, 'spike']];
+const ACAO_DO_PAPEL: Record<Papel, string> = { implementador: 'implementando', revisor: 'revisando', correcao: 'corrigindo' };
+const finitoNaoNeg = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+
+/** Papel de um vivo sem task casada: pelo `type` do despacho; sem pista, implementador (FIEL-3 a fica com a T29). */
+function papelDoTipo(tipo: unknown): PapelPainel {
+  const t = typeof tipo === 'string' ? tipo : '';
+  for (const [re, p] of PAPEL_DO_TIPO) if (re.test(t)) return p;
+  return 'implementador';
+}
+
+/** RECENTE (FIEL-10 d, D-P9): só resultados. `quem` antes do texto (o executivo troca por papel); origem da tabela de `origemDe`. */
+function recenteDe(ord: Evento[] | null, plano: Plano, entrada: EntradaPainel, nomes: Map<string, string>, comNomes: boolean, fuso: string,
+  textoParar: (motivo: string, task: string | null) => string | null): ItemRecente[] {
+  if (ord === null) return [];
+  const itens: ItemRecente[] = [];
+  const hora = (ev: Evento): string => horaLocal(Date.parse(ev.ts), entrada.agoraMs, fuso);
+  const nome = (n: string | null | undefined): string | null => (comNomes && typeof n === 'string' && n !== '' ? n : null);
+  // `loop.*` não está na tabela de origem; é gravado pelo próprio loop: `(automático)` (decisão do implementador, relatada)
+  const AUTO = '(automático)';
+  for (const ev of ord) {
+    const d = dadosDe(ev);
+    const task = taskDe(ev);
+    const origem = origemDe(ev);
+    let item: Omit<ItemRecente, 'hora' | 'origem'> | null = null;
+    if (ev.tipo === 'review.veredito' && formaInvalida(ev.tipo, ev.dados) === null && task !== null) {
+      const quem: QuemPainel = { nome: nome(nomes.get(chaveDoPar(task, 'revisor'))), papel: 'revisor' };
+      if (d.veredito === 'APROVADO') item = { glifo: '✓', cor: 'success', quem, texto: `aprovou ${task}` };
+      else if (d.veredito === 'REPROVADO') {
+        const n = (Number(d.major) || 0) + (Number(d.blocker) || 0);
+        item = { glifo: '✗', cor: 'warning', quem, texto: `reprovou ${task} · ${n} ${n === 1 ? 'achado' : 'achados'}` };
+      }
+    } else if (ev.tipo === 'task.integrada' && task !== null) {
+      item = { glifo: '✓', cor: 'success', quem: null, texto: `integrou ${task}${d.ja_na_base === true ? ' (já estava na base)' : ''}` };
+    } else if (ev.tipo === 'loop.parar') {
+      const t = typeof d.motivo === 'string' ? textoParar(d.motivo, task) : null;
+      item = { glifo: '✗', cor: 'error', quem: null, texto: t === null ? 'o loop travou' : `travou: ${t}` };
+    } else if (ev.tipo === 'decisao.sombra' && formaInvalida(ev.tipo, ev.dados) === null) {
+      item = { glifo: '●', cor: 'planMode', quem: { nome: nome(entrada.pacote?.sabio), papel: 'sombra' }, texto: `decidiu: ${String(d.resposta).trim()}` };
+    } else if (ev.tipo === 'spec.aprovada' && formaInvalida(ev.tipo, ev.dados) === null) {
+      item = { glifo: '✓', cor: 'success', quem: null, texto: 'spec aprovada' };
+    } else if (ev.tipo === 'task.reaberta' && d.origem === 'dono' && task !== null) {
+      item = { glifo: '●', cor: 'success', quem: null, texto: `${task} liberada para mais uma rodada` };
+    } else if (ev.tipo === 'dono.resposta' && origem !== null) {
+      item = { glifo: '●', cor: 'success', quem: null, texto: 'pergunta respondida' };
+    } else if (ev.tipo === 'loop.pausa' && (d.estado === 'pausado' || d.estado === 'retomado')) {
+      item = { glifo: '○', cor: 'inactive', quem: null, texto: d.estado === 'pausado' ? 'loop pausado' : 'loop retomado' };
+    }
+    if (item === null) continue;
+    const o = origem ?? (ev.tipo === 'loop.parar' || ev.tipo === 'loop.pausa' ? AUTO : null);
+    if (o === null) continue;
+    itens.push({ ...item, hora: hora(ev), origem: o });
+  }
+  void plano;
+  return itens.reverse().slice(0, 5);
+}
+
+function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: EntradaNova & { fatos: FatosTrilha }, legado: EstadoPainel): EstadoPainel {
+  const p: Plano = plano ?? { entrega: '', tasks: [] };
+  const c = calcular(p, eventos, entrada);
+  const { lista, ord, estados, fuso } = c;
+  const fatos = entrada.fatos;
+  const comNomes = entrada.agentes !== null; // FIEL-4: sem dados da sessão, nenhum nome sorteado
+  const nomes = nomesPorPapel(lista, entrada.pacote);
+
+  // fontes e diário
+  const fontes: string[] = (Array.isArray(entrada.fontesFalhas) ? entrada.fontesFalhas : []).filter((f): f is string => typeof f === 'string');
+  if (eventos === null && !fontes.includes('o diário')) fontes.push('o diário');
+  const desat = finitoNaoNeg(entrada.desatualizadoS);
+  const velho = desat !== null && desat > LIMITE_DESATUALIZADO_S;
+
+  // trilha, perguntas e "depende de você" pelas funções únicas (T3, T12, T13)
+  const trilha = trilhaDe(fatos, lista);
+  const abertas = perguntasAbertas(lista, trilha, { sessao: typeof fatos.sessao === 'string' ? fatos.sessao : null, ...(Array.isArray(fatos.ultimas) ? { ultimas: fatos.ultimas } : {}) })
+    .filter((q) => q.gatilho !== 'pendencia'); // pendência é item (3) de `dependeDe`, com o botão "feito"
+  const pergunta = abertas[0] ?? null;
+  let depende = dependeDe(trilha, lista, legado.depende, { falhou: fontes }, entrada.pousoPendente === true,
+    { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao });
+  if (pergunta !== null) depende = depende.filter((i) => i.motivo !== NADA);
+  if (velho) depende = depende.map((i) => (i.motivo === NADA ? { ...i, motivo: DESATUALIZADO } : i));
+
+  // AGORA: só ativos; casados ao plano pelo `casarAgente` da E4 (o casamento novo é da T29)
+  const ativos = entrada.agentes === null ? null : (Array.isArray(entrada.agentes) ? entrada.agentes : []).filter((a): a is AgenteVivo => ehObj(a) && !ATIVO_FIM.has(a.status));
+  const desdeIni = (task: string, papel: Papel): number | null => {
+    let ms = Number.NaN;
+    for (const ev of ord ?? []) if (ev.tipo === 'task.iniciada' && taskDe(ev) === task && chaveDoPar(task, String(dadosDe(ev).papel)) === chaveDoPar(task, papel)) ms = msDe(ev);
+    return Number.isFinite(ms) ? Math.max(0, Math.floor((entrada.agoraMs - ms) / 1000)) : null;
+  };
+  const cobertos = new Set<string>();
+  const agentes: AgenteAgora[] | null = ativos === null ? null : ativos.map((a) => {
+    const casado = casarAgente(a.description, p);
+    const descricao = typeof a.description === 'string' && a.description.trim() !== '' ? a.description : null;
+    if (casado === null) {
+      const visto = finitoNaoNeg(a.vistoEm);
+      return { quem: { nome: comNomes && typeof a.nome === 'string' && a.nome !== '' ? a.nome : null, papel: papelDoTipo(a.type) }, task: null, acao: descricao,
+        desdeS: visto === null ? null : Math.max(0, Math.floor((entrada.agoraMs - visto) / 1000)) };
+    }
+    cobertos.add(`${casado.task}:${casado.papel}`);
+    // a `description` casada é só "<task> <papel>": o que está fazendo vem do último fato registrado, o papel em palavras (FIEL-11 b, plano B)
+    return { quem: { nome: nomes.get(chaveDoPar(casado.task, casado.papel)) ?? null, papel: casado.papel }, task: casado.task,
+      acao: `${ACAO_DO_PAPEL[casado.papel]} (registrado)`, desdeS: desdeIni(casado.task, casado.papel) };
+  });
+
+  // ATENÇÃO (FIEL-10 c): só travado ou com problema
+  const atencao: string[] = [];
+  if (ativos !== null) {
+    for (const t of p.tasks) {
+      const estado = estados.get(t.id)?.estado;
+      const papel = estado === undefined ? undefined : PAPEL_DO_ESTADO[estado];
+      if (papel !== undefined && !cobertos.has(`${t.id}:${papel}`)) atencao.push(`${t.id} sem agente trabalhando`);
+    }
+  }
+  if (legado.rodape.ci.verde === false) atencao.push('CI vermelho na última execução');
+  const alt = c.prod.alteracoes;
+  if (alt > 0) atencao.push(`produção alterada ${alt} ${alt === 1 ? 'vez' : 'vezes'} nesta entrega`);
+  const semRegistro = contarConsultas(lista) - projetarDecisoes(lista).size;
+  if (semRegistro > 0) atencao.push(`${semRegistro} ${semRegistro === 1 ? 'consulta' : 'consultas'} à Sombra sem decisão registrada`);
+  if (velho) atencao.push(`painel sem ler o diário há ${Math.floor((desat as number) / 60)} min`);
+
+  // PRONTO (com plano) ou FASE (sem plano)
+  const feitas = legado.plano.feitas;
+  const total = p.tasks.length;
+  const pronto = plano !== null && total > 0
+    ? { integradas: feitas, total, previsao: feitas >= 3 && feitas < total && legado.plano.eta !== null ? { hora: legado.plano.eta.hora, base: feitas } : null }
+    : null;
+  const nAtivos = agentes?.length ?? 0;
+  const sufixo: string[] = [];
+  if (trilha.fase !== 5) {
+    if (nAtivos > 0) sufixo.push(`${nAtivos} ${nAtivos === 1 ? 'agente trabalhando' : 'agentes trabalhando'}: ${agentes?.[0]?.acao ?? '?'}`);
+    if (projetarEmendas(lista).abertas.length > 0) sufixo.push('emenda aguardando você');
+  }
+  const fase = pronto !== null ? null : {
+    numero: trilha.fase, marcas: [...trilha.marcas], motivo: trilha.motivos.find((m) => typeof m === 'string') ?? null, progresso: trilha.progresso, sufixo,
+  };
+
+  // modo e "uma linha" (FIEL-10 e)
+  const modo: EstadoPainel['modo'] = entrada.fora === true ? 'fora' : plano !== null || trilha.identificada ? 'entrega' : 'projeto';
+  const pendente = c.parar !== null || pergunta !== null || nAtivos > 0 || depende.some((i) => i.motivo !== NADA);
+  const ultima = ehObj(entrada.ultima) && typeof entrada.ultima.id === 'string'
+    ? { id: entrada.ultima.id, estado: typeof entrada.ultima.estado === 'string' ? entrada.ultima.estado : null }
+    : typeof trilha.ultimaConhecida === 'string' ? { id: trilha.ultimaConhecida, estado: null } : null;
+  const umaLinha = modo === 'projeto' && !pendente ? { ultima } : null;
+
+  const pct = finitoNaoNeg(entrada.contexto?.percent);
+  const textoParar = (motivo: string, task: string | null): string | null =>
+    ehMotivo(motivo) ? linhaDaTabela(motivo, task !== null && p.tasks.some((t) => t.id === task) ? task : null).texto : null;
+
+  return {
+    ...legado,
+    id: plano !== null ? p.entrega : (trilha.entrega ?? ''),
+    modo, trilha, pergunta, perguntasMais: Math.max(0, abertas.length - 1), umaLinha, pronto, fase,
+    depende, atencao,
+    agora: {
+      orquestrador: { nome: comNomes ? entrada.pacote?.lider ?? null : null, contexto: pct, estimado: false, pousar: pct !== null && pct >= entrada.x },
+      agentes, segundoPlano: [],
+    },
+    recente: recenteDe(ord, p, entrada, nomes, comNomes, fuso, textoParar),
+    desatualizadoS: desat,
+    fontesFalhas: fontes,
   };
 }

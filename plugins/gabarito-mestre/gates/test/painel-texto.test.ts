@@ -522,8 +522,9 @@ test('historico-prod-homolog', () => {
   const t = (ambiente: unknown, tipo = 'producao.acesso') => (fraseHistorico(ev(tipo, { ambiente, acao: 'leitura', alvo: 'a' }), CTX) as { texto: string }).texto;
   assert.equal(t('prod'), 'GANDALF leu PRODUÇÃO · a · permitido');
   assert.equal(t('homolog'), 'GANDALF leu HOMOLOG · a · permitido');
-  assert.equal(t('desconhecido'), 'GANDALF leu ambiente desconhecido · a · permitido');
-  assert.equal(t(undefined), 'GANDALF leu ambiente desconhecido · a · permitido');
+  // GM-14 T17 (FIEL-5 b): ambiente não conferido não diz "permitido"
+  assert.equal(t('desconhecido'), 'GANDALF leu a (não consegui conferir se é produção)');
+  assert.equal(t(undefined), 'GANDALF leu a (não consegui conferir se é produção)');
   assert.equal(t('teste'), 'GANDALF leu TESTE · a · permitido', 'ambiente `teste` existe (decidir.ts:68-73, faixa log): não é "desconhecido" (T4 MINOR 4)');
   assert.equal(t('teste', 'operacao.destrutiva'), 'GANDALF leu TESTE · a · destrutiva');
   assert.equal(t('prod', 'operacao.destrutiva'), 'GANDALF leu PRODUÇÃO · a · destrutiva');
@@ -608,7 +609,7 @@ test('historicoDe-ordem-e-hist-max', () => {
   assert.equal(r.ocultos, 5, 'só frases não nulas contam; custo.medicao fica fora');
   assert.equal(r.itens[0].hora, '10:24', 'mais recente primeiro');
   assert.equal(r.itens[19].hora, '10:05');
-  assert.deepEqual(r.itens[0], { glifo: '▶', texto: 'sessão retomada', hora: '10:24', cor: 'inactive' });
+  assert.deepEqual(r.itens[0], { glifo: '▶', texto: 'sessão retomada', hora: '10:24', cor: 'inactive', origem: '(automático)' });
   const desc = r.itens.map((i) => i.hora);
   assert.deepEqual(desc, [...desc].sort().reverse());
 });

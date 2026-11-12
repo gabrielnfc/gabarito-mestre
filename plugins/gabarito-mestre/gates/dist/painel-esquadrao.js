@@ -10,11 +10,15 @@
  */
 
 import { alinhar, corEstadoTask, faixaIds, fmtPct, fmtTempo, fmtTok, num, previsao, separador, textoDoPapel, textoEstadoTask } from './painel-formato.js';
+import { PAPEL_EXECUTIVO } from './painel-executivo.js';
+import { cortarPorPrioridade } from './orcamento.js';
+                                                      
+import { linhaTecnica, nomeNatural, tagNatural } from './origem.js';
                                                     
 import { colunas, cortar, limpar } from './painel-largura.js';
-import { barra, blocoTopo, cortarLinha, cortarPorAltura } from './painel-texto.js';
+import { alturaValida, barra, blocoTopo, cortarLinha, cortarPorAltura } from './painel-texto.js';
                                                       
-                                                                                                                 
+                                                                                                                                                
 
 const seg = (texto        , cor          )           => (cor === undefined ? { texto } : { texto, cor });
 const t = (v         )         => (typeof v === 'string' ? limpar(v) : '');
@@ -327,4 +331,201 @@ function linhaAgente(a              , larga         , nw        , vw        , mw
     pre, seg('●', gc), seg(' '), seg(pad(nivel >= 4 ? cortar(nome, nw) : nome, nw), a.cor), seg('  '), ...(vw > 0 ? [seg(pad(textoDoPapel(a.papel), vw))] : []), seg(pad(modelo, mw), 'inactive'),
     seg('  '), seg(pad(t(a.task), tw)), seg('  '), ...ctx, ...fim,
   ]);
+}
+
+// ───────────────────────────── GM-14 T17: os 5 blocos (REQ-GLB-1, REQ-LNG-1, FIEL-10..13) ─────────────────────────────
+//
+// Um renderizador só para os dois presets (FIEL-12): `ludico` (esquadrão) mostra o nome temático; o executivo, o papel de `PAPEL_EXECUTIVO`.
+// Blocos e prioridade de corte (D-P8): 1 DEPENDE DE VOCÊ (topo; PAROU, pergunta, itens) · 2 cabeçalho e PRONTO/FASE · 3 AGORA · 4 ATENÇÃO
+// · 5 RECENTE. Bloco vazio não ocupa linha; topo nunca cortado: o que dele não couber vira `(+N)` na última linha do topo que ficou.
+// REQ-LNG-1: todo texto que vem de dado passa por `natural` (marcação fora, sem emoji, token técnico normalizado ou "…"); o comando nunca
+// aparece (só o rótulo do botão, entre colchetes). Número nunca cortado (`cortarLinha`); a linha cortada nunca vira técnica (`cortarNatural`).
+
+/** Símbolo que vira emoji no terminal (FIEL-13 c): sai antes do render. */
+const EMOJI = /[\p{Extended_Pictographic}\uFE0F]/gu;
+
+/** Marcação de texto (D-P14): crase, `**`, `__` e `_ênfase_` saem; o texto fica. */
+const semMarcacao = (s        )         => s.replace(/`+|\*\*|__/g, '').replace(/(^|[\s(])_([^_\s][^_]*?)_(?=$|[\s).,:;!?])/g, '$1$2');
+
+/**
+ * Texto de dado em linguagem natural. `nome`: token técnico ⇒ tag `X.Y.Z` ou `nomeNatural` (`true_force` ⇒ `true force`), e o que ainda for técnico
+ * (`node`, palavra que é tipo de evento) ⇒ "…". `reticencia` (descrição de despacho, FIEL-3 b): token técnico ⇒ "…". ID de entrega (`GM-14`)
+ * não é técnico e nunca passa por `nomeNatural` (DP-4).
+ */
+function natural(v         , modo                        = 'nome')         {
+  const base = semMarcacao(limpar(typeof v === 'string' ? v : '')).replace(EMOJI, '');
+  const saida           = [];
+  for (const tok of base.split(/\s+/)) {
+    if (tok === '') continue;
+    if (!linhaTecnica(tok)) { saida.push(tok); continue; }
+    if (modo === 'reticencia') { saida.push('…'); continue; }
+    const tag = /\d+\.\d+\.\d+/.test(tok) ? tagNatural(tok) : null;
+    if (tag !== null) { saida.push(tag); continue; }
+    for (const w of nomeNatural(tok).split(' ')) if (w !== '') saida.push(linhaTecnica(w) ? '…' : w);
+  }
+  return saida.join(' ').replace(/…(\s+…)+/g, '…');
+}
+
+/** Título (FIEL-5 a, D-P14): sem o prefixo `<ID> —|–|-|:`, sem marcação, uma vez. */
+function tituloLimpo(titulo         , id        )         {
+  let t = semMarcacao(limpar(typeof titulo === 'string' ? titulo : '')).trim();
+  if (id !== '') {
+    if (t === id) return '';
+    if (t.startsWith(id)) {
+      const resto = t.slice(id.length);
+      const m = /^\s*[—–:-]\s*/.exec(resto);
+      if (m) t = resto.slice(m[0].length);
+    }
+  }
+  return natural(t);
+}
+
+const textoDe = (l       )         => l.map((x) => x.texto).join('');
+
+/** `cortarLinha` que nunca deixa técnica uma linha que não era (corte no meio de palavra: `notaria` ⇒ `nota…`): recua até não casar. */
+function cortarNatural(l       , w        )        {
+  const r = cortarLinha(l, w);
+  if (!linhaTecnica(textoDe(r)) || linhaTecnica(textoDe(l))) return r;
+  for (let k = w - 1; k >= 1; k--) {
+    const x = cortarLinha(l, k);
+    if (!linhaTecnica(textoDe(x))) return x;
+  }
+  return [];
+}
+
+/** Botões no texto: só o rótulo (`[aprovar a spec]`); ação sem comando é instrução (` · rótulo`). O comando fica em `Acao.comando`. */
+function botoes(acoes         )         {
+  if (!Array.isArray(acoes)) return '';
+  return (acoes          ).map((a) => {
+    if (a === null || typeof a !== 'object' || typeof a.rotulo !== 'string' || a.rotulo.trim() === '') return '';
+    const r = natural(a.rotulo);
+    return typeof a.comando === 'string' && a.comando !== '' ? ` [${r}]` : ` · ${r}`;
+  }).join('');
+}
+
+/** Hora sem leitura (`--:--` da E4) vira "?": `--` é marca técnica (REQ-LNG-1). */
+const horaDe = (h         )         => {
+  const t = limpar(typeof h === 'string' ? h : '');
+  return t === '' || t.includes('--') ? '?' : t;
+};
+
+const FASES_NOME = ['ideia', 'spec', 'aprovação', 'plano', 'execução', 'PR', 'uso'];
+const inteiroNaoNeg = (v         )                => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null);
+
+export function renderBlocos(e              , o              )          {
+  const w0 = o?.largura;
+  if (typeof w0 !== 'number' || !Number.isFinite(w0) || Math.floor(w0) < 1) throw new RangeError(`largura inválida: ${String(w0)} (número finito ≥ 1)`);
+  const w = Math.floor(w0);
+  const ludico = o.preset === 'esquadrao';
+  const id = limpar(typeof e.id === 'string' ? e.id : '');
+  const fim = (l       )        => cortarNatural(l, w);
+
+  if (e.modo === 'fora') return [fim([seg('GABARITO · fora de um projeto', 'inactive')])];
+  if (e.umaLinha !== null && e.umaLinha !== undefined) {
+    const u = e.umaLinha.ultima;
+    const ult = u === null || typeof u?.id !== 'string' ? '' : ` · última: ${limpar(u.id)}${typeof u.estado === 'string' && u.estado !== '' ? ` (${natural(u.estado)})` : ''}`;
+    return [fim([seg(`GABARITO · sem entrega em curso${ult}`, 'inactive')])];
+  }
+
+  const quemTexto = (q                               )         => {
+    if (q === null || q === undefined) return '';
+    if (ludico && typeof q.nome === 'string' && q.nome !== '') return natural(q.nome);
+    if (!ludico) return PAPEL_EXECUTIVO[q.papel] ?? 'Implementador';
+    return q.papel === 'orquestrador' ? 'orquestrador' : q.papel === 'sombra' ? 'Sombra' : (PAPEL_EXECUTIVO[q.papel] ?? 'Implementador');
+  };
+
+  const ls                    = [];
+  const topo = new Set       ();
+  let ordem = 0;
+  const por = (prioridade        , l       )        => { ls.push({ prioridade, ordem: ordem++, l }); return l; };
+
+  // cabeçalho (FIEL-10 f)
+  const titulo = id === '' ? '' : tituloLimpo(e.titulo, id); // sem entrega identificada, o título (da entrega) não se aplica
+  por(2, [seg(`GABARITO · ${id !== '' ? id : 'sem entrega identificada'}${titulo !== '' ? ` ${titulo}` : ''}`)]);
+
+  // 1 DEPENDE DE VOCÊ: PAROU, pergunta, demais itens
+  const itensTopo                                                     = [];
+  const p = e.parar;
+  if (p !== null && typeof p === 'object') {
+    itensTopo.push({ texto: `PAROU ${horaDe(p.hora)} · ${natural(p.texto)}${botoes(p.acoes)}`, cor: 'error', rotulo: false });
+  }
+  const q = e.pergunta;
+  if (q !== null && q !== undefined && typeof q.texto === 'string') {
+    const ops = (Array.isArray(q.opcoes) ? q.opcoes : []).map((x, i) => ` · ${i + 1} ${natural(x)}`).join('');
+    itensTopo.push({ texto: `${natural(q.texto)}${ops}`, cor: 'warning', rotulo: true });
+  }
+  const mais = inteiroNaoNeg(e.perguntasMais) ?? 0;
+  if (mais > 0) itensTopo.push({ texto: `mais ${mais} ${mais === 1 ? 'pergunta aberta' : 'perguntas abertas'}`, cor: 'warning', rotulo: true });
+  for (const i of Array.isArray(e.depende) ? e.depende : []) {
+    if (i === null || typeof i !== 'object' || (p !== null && i.nivel === 'parar')) continue;
+    const m = typeof i.motivo === 'string' ? i.motivo : '';
+    const proprio = /^depende de você:/.test(m);
+    itensTopo.push({ texto: proprio ? `depende de você:${natural(m.slice('depende de você:'.length)) === '' ? '' : ` ${natural(m.slice('depende de você:'.length))}`}` : `${natural(m)}${botoes(i.acoes)}`, cor: proprio && /nada$/.test(m) ? 'inactive' : 'warning', rotulo: !proprio });
+  }
+  let rotulado = false;
+  for (const it of itensTopo) {
+    const prefixo = it.rotulo ? (rotulado ? '  ' : 'depende de você: ') : '';
+    if (it.rotulo || /^depende de você:/.test(it.texto)) rotulado = true;
+    topo.add(por(1, [seg(`${prefixo}${it.texto}`, it.cor)]));
+  }
+
+  // 2 PRONTO ou FASE
+  const pr = e.pronto;
+  if (pr !== null && pr !== undefined) {
+    const integradas = inteiroNaoNeg(pr.integradas) ?? 0;
+    const total = inteiroNaoNeg(pr.total) ?? 0;
+    const prev = pr.previsao !== null && typeof pr.previsao?.hora === 'string'
+      ? ` · previsão ${limpar(pr.previsao.hora)} (base: ${inteiroNaoNeg(pr.previsao.base) ?? '?'} tasks desta entrega)` : '';
+    por(2, [seg('PRONTO '), ...barraSegs(total === 0 ? 0 : (integradas / total) * 100, 10, '▰', '▱', 'success'), seg(` ${integradas} de ${total} integradas${prev}`)]);
+  } else if (e.fase !== null && e.fase !== undefined) {
+    const f = e.fase;
+    const marcas = Array.isArray(f.marcas) ? f.marcas : [];
+    const n = inteiroNaoNeg(f.numero);
+    const barra7 = FASES_NOME.map((_, i) => (marcas[i] === '✓' ? '▰' : '▱')).join('');
+    const trilha = FASES_NOME.map((nome, i) => `${['✓', '●', '○', '?'].includes(marcas[i]) ? marcas[i] : '?'} ${nome}`).join(' › ');
+    const partes = [natural(f.progresso), ...(Array.isArray(f.sufixo) ? f.sufixo.map((x) => natural(x)) : []), ...(typeof f.motivo === 'string' ? [`? ${natural(f.motivo)}`] : [])].filter((x) => x !== '');
+    por(2, [seg(`FASE ${n === null ? '?' : n} de 7 `), seg(barra7, 'success'), seg(`${partes.map((x) => ` · ${x}`).join('')} · `), seg(trilha, 'inactive')]);
+  }
+
+  // 3 AGORA (FIEL-4, FIEL-11)
+  const ag = e.agora;
+  if (ag !== undefined && ag !== null) {
+    if (ag.agentes === null) por(3, [seg('AGORA · agentes e contexto: medidos só no painel da sessão', 'inactive')]);
+    else {
+      const or = ag.orquestrador;
+      const pct = inteiroNaoNeg(or?.contexto === null ? null : Math.round(Number(or?.contexto)));
+      const ctx = pct === null ? 'contexto ?' : or.estimado === true ? `contexto ~${pct} % (estimado)` : `contexto ${pct} %`;
+      por(3, [seg('AGORA · '), seg(`${quemTexto({ nome: or?.nome ?? null, papel: 'orquestrador' })} · ${ctx}${pct !== null && or.pousar === true ? ' · hora de pousar' : ''}`)]);
+      const linhaAgente = (a             , tarefaPadrao        )        => {
+        const tempo = inteiroNaoNeg(a.desdeS);
+        const acao = a.acao === null || a.acao === undefined ? '?' : natural(a.acao, 'reticencia') || '?';
+        return [seg(`  ${quemTexto(a.quem)} · ${a.task === null || a.task === undefined ? tarefaPadrao : limpar(a.task)} · ${acao}${tempo === null ? '' : ` · ${fmtTempo(tempo)}`}`)];
+      };
+      for (const a of ag.agentes) por(3, linhaAgente(a, 'sem task'));
+      for (const a of Array.isArray(ag.segundoPlano) ? ag.segundoPlano : []) por(3, linhaAgente({ ...a, quem: { nome: null, papel: 'teste' } }, 'orquestrador'));
+    }
+  }
+
+  // 4 ATENÇÃO
+  const atencao = (Array.isArray(e.atencao) ? e.atencao : []).map((x) => natural(x)).filter((x) => x !== '');
+  atencao.forEach((x, i) => por(4, [seg(i === 0 ? 'ATENÇÃO · ' : '  ', 'warning'), seg(x)]));
+
+  // 5 RECENTE (até 5 na lateral, 2 acima do input; mais novo no topo)
+  const cap = o.local === 'acima' ? 2 : 5;
+  const rec = (Array.isArray(e.recente) ? e.recente : []).slice(0, cap);
+  rec.forEach((r, i) => {
+    const quem = quemTexto(r.quem);
+    por(5, [seg(i === 0 ? 'RECENTE · ' : '  ', 'inactive'), seg(`${horaDe(r.hora)} `, 'inactive'), seg(r.glifo, r.cor), seg(` ${quem !== '' ? `${quem} ` : ''}${natural(r.texto)} `), seg(limpar(r.origem), 'inactive')]);
+  });
+
+  // corte por orçamento (REQ-GLB-1): `orcamento`, senão `altura`; sem os dois, sem corte
+  const orc = alturaValida(o.orcamento) ?? alturaValida(o.altura);
+  const { linhas, cortadasTopo } = orc === undefined ? { linhas: ls.map((x) => x.l), cortadasTopo: 0 } : cortarPorPrioridade(ls, orc);
+  const ultTopo = cortadasTopo > 0 ? linhas.reduce((k, l, i) => (topo.has(l) ? i : k), -1) : -1;
+  return linhas.map((l, i) => {
+    if (i !== ultTopo) return fim(l);
+    const mais2 = ` (+${cortadasTopo})`;
+    const cabe = Math.max(1, w - colunas(mais2));
+    return [...cortarNatural(l, cabe), seg(mais2, 'warning')];
+  });
 }
