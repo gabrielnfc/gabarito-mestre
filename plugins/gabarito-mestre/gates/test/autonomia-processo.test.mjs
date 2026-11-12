@@ -50,11 +50,28 @@ describe('autonomia: processo real', () => {
     assert.equal(rodar(repo, 'Read', { file_path: join(repo, '.env') }, {}, com(repo, home(LIGADO))).decisao, 'ask');
   });
 
-  test('ligado-escrita-no-interruptor-continua-ask', () => {
+  test('ligado-escrita-no-interruptor-passa-com-evento', () => {
     const repo = montar();
     const h = home(LIGADO);
-    const r = rodar(repo, 'Write', { file_path: join(h, '.claude', 'gabarito-autonomia.json'), content: '{}' }, {}, com(repo, h));
-    assert.equal(r.decisao, 'ask');
+    const alvo = join(h, '.claude', 'gabarito-autonomia.json');
+    const r = rodar(repo, 'Write', { file_path: alvo, content: '{}' }, {}, com(repo, h));
+    assert.equal(r.decisao, undefined);
+    assert.match(eventosDe(repo).map((e) => e.texto).join(''), /"tipo":"guarda\.autonomia"/);
+  });
+
+  test('desligado-escrita-no-interruptor-pede (o agente não liga a autonomia sozinho)', () => {
+    const repo = montar();
+    const h = home();
+    const alvo = join(h, '.claude', 'gabarito-autonomia.json');
+    assert.equal(rodar(repo, 'Write', { file_path: alvo, content: '{"orquestrador":true}' }, {}, com(repo, h)).decisao, 'ask');
+    assert.equal(rodar(repo, 'Bash', { command: `echo '{"orquestrador":true}' > ${alvo}` }, {}, com(repo, h)).decisao, 'ask');
+  });
+
+  test('ligado-escrita-no-interruptor-subagent-deny', () => {
+    const repo = montar();
+    const h = home(LIGADO);
+    const alvo = join(h, '.claude', 'gabarito-autonomia.json');
+    assert.equal(rodar(repo, 'Write', { file_path: alvo, content: '{}' }, SUB, com(repo, h)).decisao, 'deny');
   });
 
   test('sem-arquivo-ask-continua-ask', () => {

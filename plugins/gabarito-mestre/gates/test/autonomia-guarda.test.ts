@@ -6,8 +6,8 @@
  *  A1  converter também o anel `segredo` ⇒ `autonomia-segredo-continua-ask` falha
  *  A2  converter também o `deny` do subagent ⇒ `autonomia-subagent-continua-deny` falha
  *  A4  converter também o teto (Q17) ⇒ `autonomia-ligada-teto-continua-ask` falha
- *  A5  converter a escrita no interruptor ⇒ `autonomia-escrita-no-interruptor-nunca-passa` falha
- *  A6  `MARCA_INTERRUPTOR` sem `/i` ⇒ `autonomia-escapes-do-interruptor-continuam-ask` falha
+ *  A5  converter a escrita no interruptor com a autonomia DESLIGADA ⇒ `autonomia-escrita-no-interruptor-pede-desligada-e-passa-ligada` falha
+ *  A6  `MARCA_INTERRUPTOR` sem `/i` ⇒ `autonomia-escapes-do-interruptor` falha
  *  A7  `decidir` casar `'gabarito-autonomia'` em vez de `'gabarito-auto'` ⇒ idem
  *  A8  `cp` na lista de leitores simples ⇒ idem
  *  A3  `lerAutonomia` aceitar qualquer valor truthy ⇒ `autonomia-arquivo-invalido-vale-ask` falha
@@ -62,34 +62,60 @@ describe('autonomia do orquestrador', () => {
     assert.equal(d.faixa, 'ask', 'a guarda perdeu o diretório: não leu tudo');
   });
 
+  // Emenda da spec pelo dono (2026-11-12): com a autonomia LIGADA o orquestrador passa também nos casos do interruptor e da marca
+  // (com evento). Desligada, escrita no interruptor continua `ask`: é o que impede o agente de ligar a autonomia sozinho.
+  // O subagent é `deny` sempre.
   test('autonomia-interruptor-ignora-caixa-do-diretorio', () => {
-    const e: EntradaHook = { tool_name: 'Write', tool_input: { file_path: '/home/u/.CLAUDE/gabarito-autonomia.json', content: '{}' }, permission_mode: 'default', session_id: 's', cwd: '/repo' };
-    assert.equal(decidir(e, null, CTX, true).faixa, 'ask');
-    assert.equal(decidir({ ...e, tool_input: { file_path: '/home/u/.claude/GABARITO-AUTONOMIA.JSON', content: '{}' } }, null, CTX, true).faixa, 'ask');
+    const escrita = (file_path: string): EntradaHook => ({ tool_name: 'Write', tool_input: { file_path, content: '{}' }, permission_mode: 'default', session_id: 's', cwd: '/repo' });
+    for (const p of ['/home/u/.CLAUDE/gabarito-autonomia.json', '/home/u/.claude/GABARITO-AUTONOMIA.JSON']) {
+      assert.equal(decidir(escrita(p), null, CTX, false).faixa, 'ask', p);
+      assert.equal(decidir({ ...escrita(p), agent_id: 'a1' }, null, CTX, true).faixa, 'deny', p);
+      const d = decidir(escrita(p), null, CTX, true);
+      assert.equal(d.faixa, 'silencio', p);
+      assert.equal(d.evento?.tipo, 'guarda.autonomia', p);
+    }
   });
 
-  test('autonomia-escapes-do-interruptor-continuam-ask', () => {
+  test('autonomia-escapes-do-interruptor', () => {
     const casos = [
       `python3 -c "open('/home/u/.CLAUDE/GABARITO-AUTONOMIA.json','w').write('x')"`, // caixa trocada (A6, regex sem /i)
-      'echo x > ~/.claude/gabarito-auto*.json', // glob (A7, só 'gabarito-autonomia' no decidir)
+      'echo x > ~/.claude/gabarito-auto*.json', // glob (A7)
       'cd ~/.claude && cp a gabarito-autonomia.json', // cp não é leitor (A8)
     ];
     for (const c of casos) {
-      const d = decidir(bash(c), null, CTX, true);
-      assert.equal(d.faixa, 'ask', c);
-      assert.equal(d.evento?.tipo, 'guarda.ask', c);
+      const off = decidir(bash(c), null, CTX, false);
+      assert.equal(off.faixa, 'ask', c);
+      assert.equal(off.evento?.tipo, 'guarda.ask', c);
+      assert.equal(decidir(bash(c, true), null, CTX, false).faixa, 'deny', c);
       assert.equal(decidir(bash(c, true), null, CTX, true).faixa, 'deny', c);
+      const on = decidir(bash(c), null, CTX, true);
+      assert.equal(on.faixa, 'silencio', c);
+      assert.equal(on.evento?.tipo, 'guarda.autonomia', c);
     }
   });
 
-  test('autonomia-escrita-no-interruptor-nunca-passa', () => {
+  test('autonomia-escrita-no-interruptor-pede-desligada-e-passa-ligada', () => {
     const alvo = '~/.claude/gabarito-autonomia.json';
     const escrita: EntradaHook = { tool_name: 'Write', tool_input: { file_path: '/home/u/.claude/gabarito-autonomia.json', content: '{}' }, permission_mode: 'default', session_id: 's', cwd: '/repo' };
     for (const e of [bash(`echo x > ${alvo}`), bash(`git remote add x y; echo x > ${alvo}`), escrita]) {
-      const d = decidir(e, null, CTX, true);
-      assert.equal(d.faixa, 'ask');
-      assert.equal(d.evento?.tipo, 'guarda.ask');
+      const off = decidir(e, null, CTX, false);
+      assert.equal(off.faixa, 'ask');
+      assert.equal(off.evento?.tipo, 'guarda.ask');
+      const on = decidir(e, null, CTX, true);
+      assert.equal(on.faixa, 'silencio');
+      assert.equal(on.evento?.tipo, 'guarda.autonomia');
+      assert.equal(JSON.stringify(on.evento).includes('echo x'), false, 'nunca o comando');
     }
+  });
+
+  test('citar-o-nome-do-interruptor-passa-ligada-e-pede-desligada (falso positivo medido)', () => {
+    const edicao: EntradaHook = { tool_name: 'Edit', tool_input: { file_path: '/repo/CHANGELOG.md', old_string: 'a', new_string: 'o interruptor gabarito-autonomia.json' }, permission_mode: 'default', session_id: 's', cwd: '/repo' };
+    assert.equal(decidir(edicao, null, CTX, true).faixa, 'silencio');
+    assert.equal(decidir(edicao, null, CTX, false).faixa, 'silencio', 'texto citado em Edit nunca foi alvo: segue em silêncio');
+    const pr = bash('gh pr create --body "muda gabarito-autonomia.json"');
+    assert.equal(decidir(pr, null, CTX, true).faixa, 'silencio');
+    assert.equal(decidir(pr, null, CTX, false).faixa, 'ask');
+    assert.equal(decidir(bash('gh pr create --body "muda gabarito-autonomia.json"', true), null, CTX, true).faixa, 'deny');
   });
 
   test('autonomia-segredo-continua-ask', () => {
