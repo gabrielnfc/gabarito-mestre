@@ -81,13 +81,13 @@ export function ancoraDaPerguntaB(eventos: Evento[], sessao: string | null): str
   return e !== undefined ? `${sessao}:${e.seq}` : null;
 }
 
-/** Rótulo da `dono.resposta` mais recente à pergunta (b) da sessão, posterior à âncora; só vale se é um ID de entrega. */
+/** Rótulo da 1ª `dono.resposta` (a mais antiga vence: corrida entre sessões não troca a escolha) à pergunta (b) da sessão, posterior à âncora; só vale se é um ID de entrega. */
 function ligadaPorResposta(evs: Evento[], re: RegExp | null, sessao: unknown): string | null {
   if (re === null || typeof sessao !== 'string') return null;
   const ancora = ancoraDaPerguntaB(evs, sessao);
   if (ancora === null) return null;
   const desde = evs.findIndex((e) => e.sessao === sessao && `${sessao}:${e.seq}` === ancora);
-  for (let i = evs.length - 1; i > desde; i--) {
+  for (let i = desde + 1; i < evs.length; i++) {
     if (evs[i].tipo !== 'dono.resposta' || obj(evs[i].dados).pergunta !== ancora) continue;
     const rotulo = obj(evs[i].dados).rotulo;
     return typeof rotulo === 'string' && re.test(rotulo) ? rotulo : null;
@@ -149,7 +149,7 @@ function escolhaDaSpec(evs: Evento[], specs: SpecFato[]): SpecFato | null {
   const id = ancoraDaPerguntaC(evs, specs.map((s) => s.caminho as string));
   if (id === null) return null;
   const entrada = evs.findIndex((e) => `${e.sessao}:${e.seq}` === id);
-  for (let i = evs.length - 1; i > entrada; i--) {
+  for (let i = entrada + 1; i < evs.length; i++) {
     if (evs[i].tipo !== 'dono.resposta' || obj(evs[i].dados).pergunta !== id) continue;
     const r = chaveTexto(obj(evs[i].dados).rotulo);
     if (r === '') continue;

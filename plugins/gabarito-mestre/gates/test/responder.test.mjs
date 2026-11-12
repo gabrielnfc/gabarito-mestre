@@ -274,7 +274,51 @@ test('duas-sessoes-no-mesmo-instante: resposta que cai DEPOIS do append é detec
   const saida = await decidir(JSON.stringify(stdinTui(amb.dir, 'loop:1 1')), amb.dir, { depois });
   assert.equal(saida?.decision, 'block');
   assert.match(saida.reason, /recebeu 2 respostas/);
+  // MINOR 7: a resposta do dono ficou gravada; a mensagem não pode dizer que foi recusada nem que nada foi gravado
+  assert.doesNotMatch(saida.reason, /recusada|nada foi gravado|mais recente/i);
+  assert.match(saida.reason, /Resposta gravada/);
+  // a outra sessão tem ts anterior (relógio fictício do teste): ela é a 1ª na ordem do diário, não a do arquivo
+  assert.match(saida.reason, /vale a primeira \(caminho gama\)/);
   assert.equal(respostas(amb).length, 2, 'nada foi apagado (R2)');
+});
+
+test('corrida-primeira-resposta-vence-na-trilha: S-dono grava GM-1, S-outra grava GM-2 depois ⇒ a trilha liga a GM-1 (sonda do revisor; MAJOR 1)', async () => {
+  const amb = repo();
+  amb.semear('GM-1', [['fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'feat/GM-1-a' } }]], 'x');
+  amb.semear('GM-2', [['fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'feat/GM-2-a' } }]], 'x');
+  amb.semear(null, [['fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'main' } }]], 'S-dono');
+  const ultimas = [{ id: 'GM-1', data: '2026-11-01T00:01:00.000Z' }, { id: 'GM-2', data: '2026-11-01T00:02:00.000Z' }];
+  const fatos = { branch: 'main', idPadrao: IDPADRAO, specs: [], plano: null, ledger: false, gh: 'nunca', ultimas, sessao: 'S-dono' };
+  const ab = perguntasAbertas(amb.eventos(null), trilhaDe(fatos, amb.eventos(null)), { sessao: 'S-dono', ultimas });
+  assert.equal(ab.length, 1);
+  const ops = ab[0].opcoes.map((o) => o.rotulo ?? o);
+  const [i1, i2] = [ops.indexOf('GM-1') + 1, ops.indexOf('GM-2') + 1];
+  assert.ok(i1 > 0 && i2 > 0);
+  // ts depois do relógio real do hook: a ordem do diário é por ts, e a 2ª sessão grava DEPOIS da 1ª
+  const depois = () => {
+    const r = diario.append(amb.pasta('_sem-id'), 'S-outra', { ts: new Date(Date.now() + 5).toISOString(), autor: 't@t', sessao: 'S-outra', agente: 'orquestrador', tipo: 'dono.resposta', dados: { pergunta: ab[0].id, opcao: i2, rotulo: 'GM-2' } });
+    assert.ok(r.ok);
+  };
+  const saida = await decidir(JSON.stringify(stdinTui(amb.dir, `${ab[0].id} ${i1}`)), amb.dir, { depois });
+  assert.equal(saida?.decision, 'block');
+  assert.match(saida.reason, /vale a primeira \(GM-1\)/);
+  assert.deepEqual(respostas(amb).map((e) => [e.sessao, e.dados.rotulo]), [['S-dono', 'GM-1'], ['S-outra', 'GM-2']]);
+  assert.equal(trilhaDe(fatos, amb.eventos(null)).entrega, 'GM-1', 'a 1ª resposta vence na projeção');
+});
+
+test('releitura-confere-a-sessao: a única resposta relida é de outra sessão com a mesma opção e rótulo ⇒ falha, não "registrada" (P4)', async () => {
+  const amb = comDuvida();
+  const antes = () => {}; // sem corrida: a "minha" resposta é trocada por uma de outra sessão logo após gravar
+  const depois = () => {
+    const f = join(amb.pasta('_sem-id'), 'events.S-dono.jsonl');
+    const linhas = readFileSync(f, 'utf8').split('\n').filter((l) => l !== '');
+    const ult = JSON.parse(linhas.pop());
+    ult.sessao = 'S-intrusa';
+    writeFileSync(f, `${[...linhas, JSON.stringify(ult)].join('\n')}\n`);
+  };
+  const saida = await decidir(JSON.stringify(stdinTui(amb.dir, 'loop:1 1')), amb.dir, { antes, depois });
+  assert.equal(saida?.decision, 'block');
+  assert.match(saida.reason, /resposta_sem_efeito|releitura não mostra/);
 });
 
 test('stdin-ausente-x-nao-json: sem stdin, não JSON, array e escalar bloqueiam; outro comando sai calado sem gravar', () => {
@@ -374,6 +418,21 @@ test('spec-ambigua-c-usa-as-specs-do-repo: com 2 specs da entrega a pergunta (c)
   assert.deepEqual(respostas(amb, 'GM-10')[0].dados, { pergunta: 'S-med:2', opcao: 2, rotulo: 'Spec Beta' });
 });
 
+test('pbi-so-nas-primeiras-15-linhas: PBI citado na linha 20 de uma spec não a torna da entrega, logo não há ambiguidade nem pergunta (c) (P6)', () => {
+  const amb = repo({ branch: 'enabler/GM-10-x' });
+  amb.spec('a.md', '# Spec Alfa\n\nPBI: GM-10\n\n## s1\n');
+  amb.spec('b.md', `# Spec Beta\n${'\n'.repeat(18)}PBI: GM-10\n\n## s1\n`);
+  const h = 'a'.repeat(64);
+  amb.semear('GM-10', [
+    ['fato.medido', { chave: 'spec', fonte: 'arquivo', valor: { caminho: 'docs/superpowers/specs/a.md', sha256: h, secoes: 1 } }],
+    ['fato.medido', { chave: 'spec', fonte: 'arquivo', valor: { caminho: 'docs/superpowers/specs/b.md', sha256: h, secoes: 1 } }],
+  ], 'S-med');
+  const antes = amb.bytes();
+  const r = hook(stdinTui(amb.dir, 'S-med:2 2'));
+  assert.equal(r.j?.decision, 'block', r.out);
+  assert.deepEqual(amb.bytes(), antes, 'nada gravado: a pergunta (c) não abriu');
+});
+
 test('worktree-e-caminho-com-espaco: do worktree da entrega o hook grava no diário da raiz principal, pela branch do worktree; raiz com espaço no caminho', () => {
   const pai = realpathSync(mkdtempSync(join(tmpdir(), 'responder-esp-')));
   const raiz = join(pai, 'meu projeto');
@@ -393,4 +452,33 @@ test('worktree-e-caminho-com-espaco: do worktree da entrega o hook grava no diá
   assert.notEqual(r.j?.decision, 'block', r.out);
   assert.deepEqual(diario.ler(entrega).filter((e) => e.tipo === 'dono.resposta').map((e) => e.dados), [{ pergunta: 'loop:1', opcao: 2, rotulo: 'dois aqui' }]);
   assert.equal(existsSync(join(wt, '.harness')), false, 'nada gravado dentro do worktree');
+});
+
+const PLUGIN = join(AQUI, '..', '..');
+
+test('hooks-json-matcher-real-responder: matcher casa só gabarito-mestre:responder; onFailure block, timeout 10, comando do responder.mjs (P1/P3)', () => {
+  const hooks = JSON.parse(readFileSync(join(PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
+  const grupos = hooks.hooks.UserPromptExpansion.filter((g) => /responder\.mjs/.test(JSON.stringify(g)));
+  assert.equal(grupos.length, 1);
+  const g = grupos[0];
+  assert.equal(g.matcher, '^gabarito-mestre:responder$');
+  const re = new RegExp(g.matcher);
+  assert.equal(re.test(COMANDO), true);
+  for (const n of ['gabarito-mestre:responder2', 'gabarito-mestre:aprovar', 'gabarito-mestre:emenda', 'gabarito-mestre:liberar', 'x-gabarito-mestre:responder', 'responder', '']) assert.equal(re.test(n), false, n);
+  assert.equal(g.hooks.length, 1);
+  assert.equal(g.hooks[0].type, 'command');
+  assert.equal(g.hooks[0].onFailure, 'block');
+  assert.equal(g.hooks[0].timeout, 10);
+  assert.equal(g.hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/responder.mjs"');
+  assert.ok(existsSync(HOOK));
+});
+
+test('skill-responder-frontmatter: só do dono (disable-model-invocation: true), com argumento, sem Write/Edit (P2)', () => {
+  const t = readFileSync(join(PLUGIN, 'skills', 'responder', 'SKILL.md'), 'utf8');
+  const cab = /^---\n([\s\S]*?)\n---/.exec(t)?.[1] ?? '';
+  assert.match(cab, /^name: responder$/m);
+  assert.match(cab, /^disable-model-invocation: true$/m);
+  assert.match(cab, /^description: .+/m);
+  assert.match(cab, /^argument-hint: <pergunta> <n>$/m);
+  assert.doesNotMatch(cab, /allowed-tools:.*(Write|Edit)/);
 });

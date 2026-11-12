@@ -26,7 +26,7 @@
  * (a pergunta tem de ter sumido das abertas e a resposta ser a única).
  *
  * Limite declarado (como `aprovarSpec`, `loop.mjs`): sem lock entre sessões, duas sessões que respondem no mesmo instante podem gravar 2
- * respostas; o hook detecta pela releitura e devolve block dizendo que há 2 (a mais recente é a que `trilha.ts` usa para ligar a
+ * respostas; o hook detecta pela releitura e devolve block dizendo que há 2 (a primeira é a que `trilha.ts` usa para ligar a
  * entrega). Sob o mesmo usuário de SO, `node -e` com `diario.append` grava um evento válido; o núcleo não distingue (Q14).
  * O repositório vem do `cwd` do stdin, nunca de variável de ambiente.
  */
@@ -57,7 +57,7 @@ const ARGS_MAX = 2000;
 const OPCAO_RE = /^[1-9][0-9]{0,8}$/;
 const SPEC_MAX = 4 * 1024 * 1024;
 
-const bloquear = (reason) => ({ decision: 'block', reason: `Resposta recusada: ${reason}` });
+const bloquear = (reason, prefixo = 'Resposta recusada') => ({ decision: 'block', reason: `${prefixo}: ${reason}` });
 const ehObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const sha256 = (s) => createHash('sha256').update(s, 'utf8').digest('hex');
 const ausente = (e) => e?.code === 'ENOENT' || e?.code === 'ENOTDIR';
@@ -259,9 +259,10 @@ export async function decidir(texto, cwdProcesso = process.cwd(), opcoes = {}) {
     // O que só o disco revela: reler e conferir que a resposta subiu, é a única e a pergunta saiu das abertas.
     const lido = diario.lerEstrito(de_novo.dir);
     if (!lido.ok) throw new Falha('resposta_sem_efeito', `a resposta foi gravada mas o diário não relê (${lido.motivo}); confira o diário`);
-    const minhas = respostasDe(lido.eventos, id);
+    // ordem do diário (ts, sessao, seq): a mesma de `trilhaDe`, para "a primeira" daqui ser a que vale lá
+    const minhas = respostasDe(lido.eventos, id).sort((x, y) => Date.parse(x.ts) - Date.parse(y.ts) || (x.sessao < y.sessao ? -1 : x.sessao > y.sessao ? 1 : 0) || x.seq - y.seq);
     if (minhas.length !== 1) {
-      return bloquear(`a pergunta ${id} recebeu ${minhas.length} respostas ao mesmo tempo (outra sessão respondeu junto); a mais recente é a que vale — confira o painel`);
+      return bloquear(`a pergunta ${id} recebeu ${minhas.length} respostas ao mesmo tempo (outra sessão respondeu junto); a sua ficou no diário, mas vale a primeira (${minhas[0].dados.rotulo}) — confira o painel`, 'Resposta gravada');
     }
     if (avaliar(raiz, ctxHook, id, opcao).ok) throw new Falha('resposta_sem_efeito', `a pergunta ${id} continua aberta depois da resposta; confira o diário`);
     if (minhas[0].dados.opcao !== opcao || minhas[0].dados.rotulo !== de_novo.rotulo || minhas[0].sessao !== sessao) {

@@ -394,11 +394,11 @@ test('resposta-liga-sessao', () => {
   for (const r of ['gm-21', 'Gm-21', 'conversa avulsa', 'GM-21 ']) {
     assert.equal(trilhaDe(fatos({ branch: 'main' }), expandir(respostaB(r))).identificada, false, r);
   }
-  // A mais recente à pergunta (b) da sessão vale, e ela decide (rótulo avulso depois desfaz).
+  // T14 r1 (MAJOR 1, Sombra P1): a 1ª resposta à pergunta (b) da sessão vale (antes: a mais recente); ela decide (rótulo avulso 1º desfaz).
   const s = 'sessao-b';
   const resp = (rotulo: string, pergunta = `${s}:1`, sessao = s): Compacto => ({ t: 'dono.resposta', s: sessao, d: { pergunta, opcao: 1, rotulo } });
-  assert.equal(trilhaDe(fatos({ branch: 'main' }), expandir([ancoraB(), resp('GM-21'), resp('GM-22')])).entrega, 'GM-22');
-  assert.equal(trilhaDe(fatos({ branch: 'main' }), expandir([ancoraB(), resp('GM-21'), resp('conversa avulsa')])).identificada, false);
+  assert.equal(trilhaDe(fatos({ branch: 'main' }), expandir([ancoraB(), resp('GM-21'), resp('GM-22')])).entrega, 'GM-21');
+  assert.equal(trilhaDe(fatos({ branch: 'main' }), expandir([ancoraB(), resp('conversa avulsa'), resp('GM-21')])).identificada, false);
 });
 
 test('resposta-so-da-pergunta-b-da-sessao-atual', () => {
@@ -528,4 +528,16 @@ test('fatos-malformados-nao-lancam', () => {
   const t = trilhaDe({ branch: 'feat/GM-20-x', idPadrao: '(', specs: null, plano: null, ledger: false, gh: 'ok', ultimas: null } as unknown as FatosTrilha, null as unknown as Evento[]);
   assert.equal(t.identificada, false);
   assert.equal(t.candidato, null);
+});
+
+test('primeira-resposta-vence', () => {
+  // (b): duas respostas à mesma pergunta — a 1ª no diário liga a entrega, a 2ª (outra sessão, corrida) não a troca.
+  const f = fatos({ branch: 'main', idPadrao: '^GM-\\d+$', specs: [] });
+  const b = trilhaDe(f, expandir([ancoraB('sessao-b'), resposta('GM-20', 'sessao-b'), resposta('GM-21', 'sessao-c', 'sessao-b:1')]));
+  assert.equal(b.entrega, 'GM-20');
+  // (c): idem — a 1ª resposta que casa com 1 spec escolhe; a 2ª, com outra spec, não troca.
+  const s2 = specFato({ caminho: 'docs/superpowers/specs/2026-11-21-gm20-v2-design.md', sha256: B, secoes: 9, titulo: 'Trilha da GM-20 v2' });
+  const base: Compacto[] = [specMedida(SPEC), specMedida(s2.caminho)];
+  const c = trilhaDe(fatos({ specs: [specFato(), s2] }), expandir([...base, respostaC(SPEC), respostaC('Trilha da GM-20 v2')]));
+  assert.equal(c.progresso, 'spec com 6 seções · falta aprovar', 'a 1ª resposta (v1, 6 seções) vence');
 });
