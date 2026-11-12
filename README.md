@@ -193,6 +193,10 @@ A config vem de `refs/remotes/origin/HEAD:harness.config.json`, **nunca da árvo
 
 **Sem escape hatch.** Não há variável de ambiente, prefixo de comando nem mensagem que libere: o `ask` é o caminho para o humano autorizar, e `permitidos[]` (lido de `origin/HEAD`, portanto mudado só por merge revisado) é o caminho para a rotina de produção.
 
+### Autonomia do orquestrador (opt-in, decisão do dono em 2026-11-12)
+
+Se `~/.claude/gabarito-autonomia.json` contiver `{"orquestrador": true}`, todo `ask` da guarda ao orquestrador vira passagem silenciosa (integridade, produção, falha de classificação, comando acima do teto) e grava `guarda.autonomia` no diário, com os mesmos `dados` (anel, alvo, ação, ambiente) e nunca o comando. O anel `segredo` continua `ask`, e o subagent continua `deny`. Arquivo ausente, ilegível, JSON inválido ou valor diferente de `true` mantém o comportamento padrão (fail-closed). O arquivo é lido uma vez por chamada; o plugin nunca o cria.
+
 ### Fail-open declarado (G9)
 
 Payload que não é JSON, sem `tool_input` ou com `command` que não é texto: aviso em stderr, exit 0, sem decisão. `cwd` fora de repositório git: só os anéis de segredo e integridade valem. Diário indisponível (`.harness` somente leitura, `session_id` fora do padrão): a guarda segue e o `systemMessage` avisa; lock preso não atrasa a decisão, que sai antes da gravação. **Exceção da própria guarda depois de ler a chamada (Q21, proposta, aguarda o dono):** o que ela não conseguiu classificar, ela pede, em toda chamada: `ask` ao orquestrador, `deny` ao subagent, com saída constante que não depende do caminho que falhou; custo declarado: um bug na guarda vira `ask` em toda chamada até ser corrigido, ruidoso e visível, nunca silencioso. Envelope ilegível continua fail-open, como acima. `node` ausente é o único caso em que o hook nem sobe (shell devolve 127): pela documentação do Claude Code, saída diferente de 0 e 2 é erro não bloqueante; **não medido aqui**.
