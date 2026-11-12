@@ -107,7 +107,7 @@ describe('hooks.json — registro dos hooks (T16)', () => {
   });
   test('emenda-user-prompt-expansion-onfailure-block: matcher ancorado, node, timeout 10, onFailure block; liberar intacto', () => {
     const grupos = cfg.UserPromptExpansion;
-    assert.deepEqual(grupos.map((g) => g.matcher), ['^gabarito-mestre:liberar$', '^gabarito-mestre:emenda$', '^gabarito-mestre:aprovar$']);
+    assert.deepEqual(grupos.map((g) => g.matcher), ['^gabarito-mestre:liberar$', '^gabarito-mestre:emenda$', '^gabarito-mestre:aprovar$', '^gabarito-mestre:responder$']);
     const g = grupos[1];
     assert.equal(g.hooks.length, 1);
     assert.equal(g.hooks[0].type, 'command');
@@ -143,7 +143,7 @@ describe('hooks.json — registro dos hooks (T16)', () => {
   });
   test('hooks-json-aprovar-onfailure-block: matcher ancorado, node, timeout 10, onFailure block; liberar e emenda intactos (E4 T1)', () => {
     const grupos = cfg.UserPromptExpansion;
-    assert.equal(grupos.length, 3);
+    assert.equal(grupos.length, 4);
     const g = grupos[2];
     assert.equal(g.matcher, '^gabarito-mestre:aprovar$');
     assert.equal(g.hooks.length, 1);
@@ -160,6 +160,18 @@ describe('hooks.json — registro dos hooks (T16)', () => {
     assert.equal(grupos[1].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/emenda-dono.mjs"');
     assert.equal(grupos[0].hooks[0].onFailure, 'block');
     assert.equal(grupos[1].hooks[0].onFailure, 'block');
+    // o 4º grupo (REQ-PRG-1): responder, mesmas propriedades
+    const r4 = grupos[3];
+    assert.equal(r4.matcher, '^gabarito-mestre:responder$');
+    assert.equal(r4.hooks.length, 1);
+    assert.equal(r4.hooks[0].type, 'command');
+    assert.equal(r4.hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/responder.mjs"');
+    assert.equal(r4.hooks[0].timeout, 10);
+    assert.equal(r4.hooks[0].onFailure, 'block');
+    assert.ok(existsSync(join(PLUGIN, 'gates', 'scripts', 'responder.mjs')));
+    const re4 = new RegExp(r4.matcher);
+    assert.equal(re4.test('gabarito-mestre:responder'), true);
+    for (const n of ['gabarito-mestre:responderX', 'gabarito-mestre:responder ', 'x:gabarito-mestre:responder', 'responder', 'gabarito-mestre:aprovar']) assert.equal(re4.test(n), false, n);
   });
   test('aprovar-hook-real-nao-e-mais-stub: o hook da T8 recusa fora de repo com a causa (fora_de_repo), não com "não implementado"; entrada de outro comando fica em silêncio; nada é criado', () => {
     const rodar = (input, cwd) => spawnSync(process.execPath, [join(PLUGIN, 'gates', 'scripts', 'aprovar-spec.mjs')], { input, encoding: 'utf8', cwd });
