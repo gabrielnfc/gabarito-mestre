@@ -744,7 +744,9 @@ function empilhar(dest          , origem          )       {
 }
 
 export const MARCA_INTERRUPTOR = /gabarito-auto/i;
-const LEITORES_SIMPLES = new Set(['cat', 'head', 'tail', 'less', 'more', 'grep', 'ls', 'stat', 'jq']);
+// Escrita em `refs/remotes` ou `packed-refs` por interpretador (python3, node, perl): fora de `git`, cuja classificação é própria.
+const MARCA_REFS = /refs\/remotes|packed-refs/i;
+const LEITORES_SIMPLES =new Set(['cat', 'head', 'tail', 'less', 'more', 'grep', 'ls', 'stat', 'jq']);
 /** Leitor sem redirecionamento de saída (e `jq` sem `-i…`): a única forma de citar o interruptor sem pedir. */
 function leitorSimples(s          )          {
   return LEITORES_SIMPLES.has(s.cmd) && s.saidas.length === 0 && !(s.cmd === 'jq' && s.args.some((a) => /^-[^-]*i/.test(a)));
@@ -765,6 +767,7 @@ export function anelDeBash(segmentos            , contexto          , cwd       
     // interruptor, por qualquer meio (interpretador, glob, `cd` + nome relativo, `curl -o`). Falso positivo custa um prompt (I9).
     // Limite G9: nome montado por variável ou concatenação não é visto.
     if (MARCA_INTERRUPTOR.test(s.cru) && !leitorSimples(s)) integridade ??= { anel: 'integridade', alvo: '.claude/gabarito-autonomia.json', escrita: true };
+    if (s.cmd !== 'git' && MARCA_REFS.test(s.cru) && !leitorSimples(s)) integridade ??= { anel: 'integridade', alvo: 'refs/remotes', escrita: true };
     const escritas           = [...s.saidas];
     const leituras           = [...s.entradas];
     const remocoes           = [];
