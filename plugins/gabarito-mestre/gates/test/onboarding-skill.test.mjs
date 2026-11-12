@@ -172,7 +172,7 @@ function violacoesSkill(texto) {
   if (!/foco[\s\S]{0,500}`--sim`/.test(fluxo)) v.push('foco-sem-sim');
   if (!/Gravou\?[^\n]*sem `AskUserQuestion` \(headless\), nenhuma: consentimento não tem default/.test(fluxo)) v.push('ofertas-sem-headless-nenhuma');
   const linhaFoco = fluxo.split('\n').find((l) => /^\s*Pergunte o `texto`, com `opcoes`/.test(l) && l.includes('--sim')) ?? '';
-  if (!linhaFoco.includes('com `opcoes` na ordem em que vêm (`sim`, `não, obrigado`) e marque `não, obrigado`, o `default`, como o padrão')) v.push('foco-ordem-padrao-fora-da-oferta');
+  if (!linhaFoco.includes('com `não, obrigado` (o `default`) em 1º e `sim` em 2º, para o Enter confirmar o padrão')) v.push('foco-ordem-padrao-fora-da-oferta');
   if (!/--local lateral` ou `--local acima`/.test(fluxo)) v.push('local-sem-valores');
   if (/\bR(19|2[01]|30)\b|como veio/.test(texto)) v.push(`r19-ou-como-veio: ${(/\bR(19|2[01]|30)\b|como veio/.exec(texto) ?? [''])[0]}`);
   v.push(...violacoesLocal(texto, 'SKILL'));
@@ -589,12 +589,13 @@ test('skill-foco-casa-a-oferta-real', () => {
   const o = ofertaFoco(novoDir('gm-skill-foco-'));
   assert.deepEqual(o.opcoes, ['sim', 'não, obrigado']);
   assert.equal(o.default, 'não, obrigado');
-  const frase = `com \`opcoes\` na ordem em que vêm (${o.opcoes.map((x) => `\`${x}\``).join(', ')}) e marque \`${o.default}\`, o \`default\`, como o padrão`;
+  const outra = o.opcoes.find((x) => x !== o.default);
+  const frase = `com \`${o.default}\` (o \`default\`) em 1º e \`${outra}\` em 2º, para o Enter confirmar o padrão`;
   assert.ok(SKILL.includes(frase), 'a skill diz a ordem e o padrão que o ofertaFoco devolve');
   assert.deepEqual(violacoesSkill(SKILL).filter((x) => x.startsWith('foco-ordem')), []);
-  assert.ok(violacoesSkill(planta(SKILL, ', como o padrão', '')).includes('foco-ordem-padrao-fora-da-oferta'), 'R6: sem a marca do padrão cai');
-  assert.ok(violacoesSkill(planta(SKILL, '(`sim`, `não, obrigado`)', '(`não, obrigado`, `sim`)')).includes('foco-ordem-padrao-fora-da-oferta'), 'ordem trocada cai');
-  assert.ok(violacoesSkill(planta(SKILL, 'marque `não, obrigado`, o `default`', 'marque `sim`, o `default`')).includes('foco-ordem-padrao-fora-da-oferta'), 'padrão "sim" cai');
+  assert.ok(violacoesSkill(planta(SKILL, ', para o Enter confirmar o padrão', '')).includes('foco-ordem-padrao-fora-da-oferta'), 'R6: sem a marca do padrão cai');
+  assert.ok(violacoesSkill(planta(SKILL, 'com `não, obrigado` (o `default`) em 1º e `sim` em 2º', 'com `sim` em 1º e `não, obrigado` (o `default`) em 2º')).includes('foco-ordem-padrao-fora-da-oferta'), 'sim em 1º cai');
+  assert.ok(violacoesSkill(planta(SKILL, 'com `não, obrigado` (o `default`) em 1º', 'com `sim` (o `default`) em 1º')).includes('foco-ordem-padrao-fora-da-oferta'), 'padrão "sim" cai');
 });
 
 test('skill-ofertas-sem-headless', () => {
