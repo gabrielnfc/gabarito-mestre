@@ -24,7 +24,7 @@
  */
 
                                                                                                
-import { anelDeBash, anelDeCaminho, destinoDeRefspec, lerGit, posicionaisDePush, segmentar } from './aneis.js';
+import { anelDeBash, anelDeCaminho, MARCA_INTERRUPTOR, destinoDeRefspec, lerGit, posicionaisDePush, segmentar } from './aneis.js';
                                            
 
                                               
@@ -465,7 +465,7 @@ function classificarCaminho(entrada             , ctx          )                
   // `Grep` filtra por `glob`; `Glob` busca por `pattern`: ambos apontam para arquivos.
   const candidatos = [i.file_path, i.path, i.notebook_path, i.glob, nome === 'Glob' ? i.pattern : undefined].filter((v)              => typeof v === 'string' && v !== '');
   for (const alvo of candidatos) {
-    const anel = anelDeCaminho(alvo, ctx, cwd);
+    const anel = anelDeCaminho(alvo, ctx, cwd) ?? (escreve && MARCA_INTERRUPTOR.test(alvo) ? 'integridade' : null);
     if (anel === 'segredo' || (anel === 'integridade' && escreve)) return { ...NEUTRO, acao: escreve ? 'escrita' : 'leitura', alvo, anel };
   }
   return { ...NEUTRO, acao: escreve ? 'escrita' : 'leitura' };

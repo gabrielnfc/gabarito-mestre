@@ -106,7 +106,7 @@ export function decidir(entrada: EntradaHook, config: ConfigGuarda | null, conte
   if (!autonomia || d.faixa !== 'ask' || d.classificacao.anel === 'segredo') return d;
   const comando = entrada?.tool_name === 'Bash' && typeof entrada?.tool_input === 'object' && entrada.tool_input !== null ? entrada.tool_input.command : undefined;
   if (typeof comando === 'string' && (comando.length > TETO_COMANDO || d.classificacao.cdPerdido === true)) return d;
-  if (JSON.stringify(entrada?.tool_input ?? null).toLowerCase().includes('gabarito-autonomia')) return d;
+  if (JSON.stringify(entrada?.tool_input ?? null).toLowerCase().includes('gabarito-auto')) return d;
   const dados = d.evento?.dados ?? dadosDe(d.classificacao);
   return { classificacao: d.classificacao, faixa: 'silencio', evento: { tipo: 'guarda.autonomia', dados }, systemMessage: null, motivo: null };
 }

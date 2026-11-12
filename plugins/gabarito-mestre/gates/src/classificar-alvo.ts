@@ -24,7 +24,7 @@
  */
 
 import type { Ambiente, Classificacao, ConfigGuarda, Contexto, EntradaHook } from './tipos.ts';
-import { anelDeBash, anelDeCaminho, destinoDeRefspec, lerGit, posicionaisDePush, segmentar } from './aneis.ts';
+import { anelDeBash, anelDeCaminho, MARCA_INTERRUPTOR, destinoDeRefspec, lerGit, posicionaisDePush, segmentar } from './aneis.ts';
 import type { Segmento } from './aneis.ts';
 
 type Declarado = 'prod' | 'homolog' | 'teste';
@@ -465,7 +465,7 @@ function classificarCaminho(entrada: EntradaHook, ctx: Contexto): Classificacao 
   // `Grep` filtra por `glob`; `Glob` busca por `pattern`: ambos apontam para arquivos.
   const candidatos = [i.file_path, i.path, i.notebook_path, i.glob, nome === 'Glob' ? i.pattern : undefined].filter((v): v is string => typeof v === 'string' && v !== '');
   for (const alvo of candidatos) {
-    const anel = anelDeCaminho(alvo, ctx, cwd);
+    const anel = anelDeCaminho(alvo, ctx, cwd) ?? (escreve && MARCA_INTERRUPTOR.test(alvo) ? 'integridade' : null);
     if (anel === 'segredo' || (anel === 'integridade' && escreve)) return { ...NEUTRO, acao: escreve ? 'escrita' : 'leitura', alvo, anel };
   }
   return { ...NEUTRO, acao: escreve ? 'escrita' : 'leitura' };

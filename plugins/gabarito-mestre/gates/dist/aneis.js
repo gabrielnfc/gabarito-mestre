@@ -743,6 +743,13 @@ function empilhar(dest          , origem          )       {
   for (let i = 0; i < origem.length; i++) dest.push(origem[i]);
 }
 
+export const MARCA_INTERRUPTOR = /gabarito-auto/i;
+const LEITORES_SIMPLES = new Set(['cat', 'head', 'tail', 'less', 'more', 'grep', 'ls', 'stat', 'jq']);
+/** Leitor sem redirecionamento de saída (e `jq` sem `-i…`): a única forma de citar o interruptor sem pedir. */
+function leitorSimples(s          )          {
+  return LEITORES_SIMPLES.has(s.cmd) && s.saidas.length === 0 && !(s.cmd === 'jq' && s.args.some((a) => /^-[^-]*i/.test(a)));
+}
+
 /**
  * Procura o anel em todos os segmentos. Segredo vence integridade; dentro do mesmo anel vale o primeiro achado.
  * Retorna `null` se nenhum segmento toca um caminho de anel. `cwd` é o diretório da chamada; `cd` muda o corrente.
@@ -754,6 +761,10 @@ export function anelDeBash(segmentos            , contexto          , cwd       
   let cdPerdido = false;
 
   for (const s of segmentos) {
+    // Interruptor de autonomia: citar `gabarito-auto…` (qualquer caixa) num segmento que não seja leitor simples é escrita no
+    // interruptor, por qualquer meio (interpretador, glob, `cd` + nome relativo, `curl -o`). Falso positivo custa um prompt (I9).
+    // Limite G9: nome montado por variável ou concatenação não é visto.
+    if (MARCA_INTERRUPTOR.test(s.cru) && !leitorSimples(s)) integridade ??= { anel: 'integridade', alvo: '.claude/gabarito-autonomia.json', escrita: true };
     const escritas           = [...s.saidas];
     const leituras           = [...s.entradas];
     const remocoes           = [];
