@@ -7,13 +7,14 @@
  *  M-T12c  opções de (b) sem congelar pela âncora                      ⇒ b-opcoes-congeladas-pela-ancora
  *  M-T12d  âncora (c) = último `fato.medido spec` (reabre a cada edição) ⇒ c-nao-reabre-com-edicao-de-spec
  *  M-T12e  resposta `{sha256, chars}` fecha                            ⇒ resposta-hash-nao-fecha
+ *  T13b (task-13b-mut.json): ideia abre pergunta "visto" pela `ideiasAbertas` do depende ⇒ ideias-abrem-pergunta-visto-e-responder-aceita
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { perguntasAbertas, respostaValida } from '../src/perguntas.ts';
 import type { Pergunta } from '../src/perguntas.ts';
 import { ancoraDaPerguntaB, ancoraDaPerguntaC, trilhaDe } from '../src/trilha.ts';
-import { pendenciaAberta } from '../src/depende.ts';
+import { ideiasAbertas, pendenciaAberta } from '../src/depende.ts';
 import type { FatosTrilha, SpecFato, Trilha } from '../src/trilha.ts';
 import { formaInvalida } from '../src/formas.ts';
 import type { Evento, TipoEvento } from '../src/tipos.ts';
@@ -176,7 +177,7 @@ test('b-sessao-padrao-e-a-do-ultimo-inicio', () => {
 
 test('b-ancora-no-primeiro-trabalho-da-sessao-retomada-nao-reabre', () => {
   // A sessão retomada grava outro `sessao.inicio` com o mesmo id; a âncora segue no 1º trabalho, já respondido.
-  const evs = expandir([inicio('s1'), branch('s1'), resp('s1:2', 1, 'uma nova'), inicio('s1'), notaDe('ideia', 'x', 's1')]);
+  const evs = expandir([inicio('s1'), branch('s1'), resp('s1:2', 1, 'uma nova'), inicio('s1'), notaDe('desvio', 'x', 's1')]);
   assert.deepEqual(perguntasAbertas(evs, trilha(), { sessao: 's1' }), []);
 });
 
@@ -634,4 +635,35 @@ test('textos-fixos-sem-linha-tecnica-nem-palavra-tipo', async () => {
     assert.ok(!REGEX_TECNICA.test(t), `técnica: ${t}`);
     for (const w of palavras) assert.ok(!new RegExp(`\\b${w}\\b`, 'i').test(t), `palavra-tipo ${w}: ${t}`);
   }
+});
+
+// ── ideias com botão "visto" (T13b, REQ-DEP-1 item 4) ───────────────────────────────────────────────────────────────────────
+
+test('ideias-abrem-pergunta-visto-e-responder-aceita', () => {
+  const evs = expandir([inicio('s1'), notaDe('desvio', 'x', 's1'), notaDe('ideia', 'a', 's1'), notaDe('ideia', 'b', 's1')]);
+  const ps = perguntasAbertas(evs, identificada(), { sessao: 's1' });
+  assert.equal(ps.length, 1);
+  confere(ps[0], { id: 's1:4', gatilho: 'ideia', texto: 'decidir se as 2 ideias viram a próxima entrega', opcoes: ['visto'] });
+  rotulosGravaveis(ps);
+  assert.deepEqual(respostaValida(ps, 's1:4', 1), { ok: true, rotulo: 'visto' });
+  assert.deepEqual(respostaValida(ps, 's1:4', 2), { ok: false, erro: 'opcao_fora' });
+  assert.deepEqual(respostaValida(ps, 's1:3', 1), { ok: false, erro: 'inexistente' }, 'só a última ideia é a âncora');
+  // `ideiasAbertas` é a regra única: o painel e a pergunta concordam (mesmo id, mesma contagem).
+  assert.deepEqual(ideiasAbertas(evs), { id: 's1:4', n: 2 });
+  // visto fecha; ideia nova reabre contando só as novas, com o id da nova.
+  const fechada = expandir([inicio('s1'), notaDe('desvio', 'x', 's1'), notaDe('ideia', 'a', 's1'), notaDe('ideia', 'b', 's1'), resp('s1:4', 1, 'visto')]);
+  assert.deepEqual(perguntasAbertas(fechada, identificada(), { sessao: 's1' }), []);
+  assert.deepEqual(respostaValida([], 's1:4', 1, fechada), { ok: false, erro: 'respondida' });
+  const nova = expandir([inicio('s1'), notaDe('desvio', 'x', 's1'), notaDe('ideia', 'a', 's1'), resp('s1:3', 1, 'visto'), notaDe('ideia', 'b', 's1')]);
+  const [p] = perguntasAbertas(nova, identificada(), { sessao: 's1' });
+  confere(p, { id: 's1:4', gatilho: 'ideia', texto: 'decidir se a ideia vira a próxima entrega', opcoes: ['visto'] });
+});
+
+test('ideia-nao-divide-id-com-a-pergunta-b', () => {
+  // A única nota da sessão é uma ideia: ela é a âncora de (b); o botão "visto" responderia a (b). Nunca 2 perguntas com o mesmo id.
+  const evs = expandir([inicio('s1'), notaDe('ideia', 'a', 's1')]);
+  const ps = perguntasAbertas(evs, trilha(), { sessao: 's1' });
+  assert.deepEqual(ps.map((p) => [p.gatilho, p.id]), [['b', 's1:2']]);
+  assert.deepEqual(ideiasAbertas(evs), { id: null, n: 1 }, 'sem id respondível: o item fica sem botão');
+  assert.equal(new Set(perguntasAbertas(evs, trilha(), { sessao: 's1' }).map((p) => p.id)).size, 1);
 });

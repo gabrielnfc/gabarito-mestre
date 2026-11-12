@@ -11,6 +11,8 @@
  *   referência de `trilha.ts`); edição de spec não reabre, conjunto novo reabre (DP-2 ajuste 2).
  * - (d) `nota duvida` ⇒ âncora = a nota, opções da nota. Pendência ⇒ opção única "feito", aberta pela `pendenciaAberta` de
  *   `depende.ts` (regra única, importada: forma válida e sem `dono.resposta` com rótulo depois da nota).
+ * - Ideias: `nota ideia` ⇒ opção única "visto", aberta pela `ideiasAbertas` de `depende.ts` (regra única, importada; só as ideias depois da última
+ *   resposta "visto" contam).
  * Fechada só por `dono.resposta` na forma `{pergunta, opcao, rotulo}`; `{sha256, chars}` não fecha (DP-2).
  * Opções de (a) e (b) congeladas pela âncora: só pontos de atividade com data ≤ ts da âncora (DP-2 ajuste 3), para painel e hook
  * verem a mesma lista. Rótulo de entrega = ID cru, nunca `nomeNatural` (DP-4): é o rótulo que `trilha.ts` usa para ligar a sessão.
@@ -18,14 +20,14 @@
  * (`rotuloCasaSpec`): (c) sempre abre com 2+ specs; só deixa de abrir se nenhum rótulo resolver (caminhos com o mesmo final de 59 caracteres).
  * Id que não casa `ID_PERGUNTA_RE` (sessão com `.` ou `_`) seria irrespondível pelo hook: não vira pergunta.
  */
-import { pendenciaAberta } from './depende.ts';
+import { ideiasAbertas, pendenciaAberta, textoIdeias } from './depende.ts';
 import { ID_PERGUNTA_RE } from './formas.ts';
 import { ordenar } from './loop.ts';
 import type { Evento, IdPergunta } from './tipos.ts';
 import { ancoraDaPerguntaB, ancoraDaPerguntaC, rotuloCasaSpec } from './trilha.ts';
 import type { Trilha } from './trilha.ts';
 
-export type Pergunta = { id: IdPergunta; gatilho: 'a' | 'b' | 'c' | 'd' | 'pendencia'; texto: string; opcoes: string[] };
+export type Pergunta = { id: IdPergunta; gatilho: 'a' | 'b' | 'c' | 'd' | 'pendencia' | 'ideia'; texto: string; opcoes: string[] };
 /**
  * `sessao`: a sessão atual (o `session_id` do mod ou do hook); ausente ⇒ a do último `sessao.inicio`; nenhum ⇒ (b) não abre.
  * `ultimas`: pontos de atividade `{id, data}` das entregas (o mesmo id pode repetir); ausente ⇒ `trilha.ultimaConhecida`.
@@ -37,6 +39,7 @@ const NOVA = 'uma nova';
 const AVULSA = 'conversa avulsa';
 const IDEIA = 'ideia para a próxima';
 const FEITO = 'feito';
+const VISTO = 'visto';
 
 const obj = (v: unknown): Record<string, unknown> => (v !== null && typeof v === 'object' ? (v as Record<string, unknown>) : {});
 const lista = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
@@ -111,6 +114,13 @@ export function perguntasAbertas(eventos: Evento[], trilha: Trilha, ctx: Context
       const pendencia = pendenciaAberta(evs, e);
       if (pendencia !== null) abrir(e, 'pendencia', pendencia.texto, [FEITO], true);
     }
+  }
+
+  // Ideias: opção única "visto", aberta pela `ideiasAbertas` de depende.ts (regra única, importada); âncora = a última ideia respondível.
+  const ideias = ideiasAbertas(evs);
+  if (ideias !== null && ideias.id !== null) {
+    const ancora = evs.find((e) => idDe(e) === ideias.id);
+    if (ancora !== undefined) abrir(ancora, 'ideia', textoIdeias(ideias.n), [VISTO], true);
   }
 
   const sessao = sessaoAtual(evs, c);

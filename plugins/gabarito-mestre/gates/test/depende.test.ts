@@ -7,10 +7,14 @@
  *  M-T13b  aprovação ausente e "mudou depois" duplicam o item                      ⇒ mudou-depois-e-ausente-nao-duplicam
  *  M-T13c  resposta digitada (só hash) fecha a pendência                           ⇒ resposta-que-nao-e-opcao-nao-fecha
  *  M-T13d  `liberar` montado para task em qualquer estado                          ⇒ no-teto-no-depende
+ * T13b (task-13b-mut.json):
+ *  M-T13b-a  `visto` fecha sem `dono.resposta` (nota do modelo basta)             ⇒ visto-fecha-so-com-dono-resposta-rotulo-visto
+ *  M-T13b-b  reabre contando todas as ideias                                       ⇒ ideia-posterior-reabre-contando-so-novas
+ *  M-T13b-c  aceita rótulo diferente de "visto"                                    ⇒ visto-fecha-so-com-dono-resposta-rotulo-visto
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dependeDe, pendenciaAberta } from '../src/depende.ts';
+import { dependeDe, ideiasAbertas, pendenciaAberta } from '../src/depende.ts';
 import { dependeDeVoce } from '../src/painel.ts';
 import { trilhaDe } from '../src/trilha.ts';
 import type { FatosTrilha, Trilha } from '../src/trilha.ts';
@@ -81,7 +85,7 @@ test('ordem-1-a-4: base primeiro, depois aprovar, pedido de revisão, pendência
   assert.deepEqual(r[2].acoes, [{ rotulo: 'aprovar a spec', comando: '/gabarito-mestre:aprovar' }]);
   assert.deepEqual(r[3].acoes, [], 'pedido de revisão: sem botão');
   assert.deepEqual(r[4].acoes, [{ rotulo: 'feito', comando: '/gabarito-mestre:responder sessao-a:2 1' }]);
-  assert.deepEqual(r[5].acoes, [], 'ideias: sem botão');
+  assert.deepEqual(r[5].acoes, [{ rotulo: 'visto', comando: '/gabarito-mestre:responder sessao-a:4 1' }], 'ideias: botão "visto" com o id da última ideia');
   assert.ok(r.slice(2).every((i) => i.nivel === 'dono'));
 });
 
@@ -391,4 +395,73 @@ test('texto da pendência é higienizado (MINOR-2, REQ-LNG-1): nada técnico no 
   });
   assert.equal(r[5].motivo, 'uma pendência');
   assert.equal(chamar(APROVADA, [nota('pendencia', 'renovar o certificado')])[0].motivo, 'renovar o certificado', 'texto limpo passa intacto');
+});
+
+// ── ideias com botão "visto" (T13b, REQ-DEP-1 item 4, Emenda 5) ─────────────────────────────────────────────────────────────
+// `abre` (sessao-a:1) é o 1º trabalho da sessão, âncora da pergunta (b): as ideias vêm depois, com id respondível (sessao-a:2, :3, …).
+const abre = nota('desvio', 'abre a sessão');
+const visto = (pergunta: string, rotulo = 'visto'): C => ({ t: 'dono.resposta', s: 'sessao-dono', d: { pergunta, opcao: 1, rotulo } });
+const ideiasDe = (r: ItemDepende[]) => r.filter((i) => /ideia/.test(i.motivo));
+const botao = (id: string) => [{ rotulo: 'visto', comando: `/gabarito-mestre:responder ${id} 1` }];
+
+test('ideias-botao-visto-opcao-unica: o item 4 tem 1 ação "visto" para o id da última ideia', () => {
+  const r = ideiasDe(chamar(APROVADA, [abre, nota('ideia', 'a'), nota('desvio', 'x'), nota('ideia', 'b')]));
+  assert.equal(r.length, 1);
+  assert.equal(r[0].nivel, 'dono');
+  assert.equal(r[0].motivo, 'decidir se as 2 ideias viram a próxima entrega');
+  assert.deepEqual(r[0].acoes, botao('sessao-a:4'));
+  assert.doesNotMatch(r[0].motivo, REGEX_TECNICA, 'o texto não tem marca técnica; o comando só em acoes');
+  assert.deepEqual(chamar(APROVADA, [abre, nota('ideia', 'só uma')])[0].acoes, botao('sessao-a:2'));
+  assert.deepEqual(ideiasAbertas(expandir([abre, nota('ideia', 'a'), nota('ideia', 'b')])), { id: 'sessao-a:3', n: 2 });
+});
+
+test('visto-fecha-so-com-dono-resposta-rotulo-visto: nota, outro rótulo, outro id, hash e resposta anterior não fecham', () => {
+  const ideia = nota('ideia', 'usar cores');
+  const aberta = (evs: C[]) => ideiasDe(chamar(APROVADA, [abre, ...evs])).length === 1;
+  assert.equal(aberta([ideia]), true);
+  assert.equal(aberta([ideia, visto('sessao-a:2')]), false, 'dono.resposta "visto" ao id fecha');
+  assert.equal(aberta([ideia, nota('desvio', 'visto'), nota('pendencia', 'visto'), nota('duvida', 'visto', 'sessao-a', { opcoes: ['visto', 'não'] })]), true, 'nota do modelo não fecha');
+  assert.equal(aberta([ideia, { t: 'decisao.sombra', d: { pergunta: 'sessao-a:2', resposta: 'visto' } }]), true, 'decisão da Sombra não fecha');
+  assert.equal(aberta([ideia, visto('sessao-a:2', 'feito')]), true, 'rótulo diferente de "visto" não fecha');
+  assert.equal(aberta([ideia, visto('sessao-a:2', 'vistos')]), true);
+  assert.equal(aberta([ideia, visto('sessao-x:1')]), true, 'resposta a outro id não fecha');
+  assert.equal(aberta([ideia, { t: 'dono.resposta', s: 'sessao-dono', d: { pergunta: 'sessao-a:2', sha256: hash, chars: 5 } }]), true, 'a digitada não fecha');
+  assert.equal(aberta([visto('sessao-a:2'), ideia]), true, 'resposta anterior à ideia não fecha');
+  // resposta que cita uma ideia AINDA NÃO escrita (id futuro) não fecha nem as anteriores, nem a que vem depois
+  const futuro = ideiasDe(chamar(APROVADA, [abre, nota('ideia', 'a'), visto('sessao-a:3'), nota('ideia', 'b')]));
+  assert.equal(futuro[0].motivo, 'decidir se as 2 ideias viram a próxima entrega');
+  assert.equal(aberta([nota('pendencia', 'p'), ideia, visto('sessao-a:2')]), true, '"visto" a uma pendência (id que não é de ideia) não fecha as ideias');
+  // sem caixa e sem espaço nas pontas (a regra de comparação de opção da T1)
+  assert.equal(aberta([ideia, visto('sessao-a:2', ' Visto ')]), false);
+  assert.equal(aberta([ideia, visto('sessao-a:2', 'VISTO')]), false);
+});
+
+test('ideia-posterior-reabre-contando-so-novas: 2 ideias, visto, 1 ideia ⇒ "a ideia vira" com o id da nova', () => {
+  const r = ideiasDe(chamar(APROVADA, [abre, nota('ideia', 'a'), nota('ideia', 'b'), visto('sessao-a:3'), nota('ideia', 'c')]));
+  assert.equal(r.length, 1);
+  assert.equal(r[0].motivo, 'decidir se a ideia vira a próxima entrega');
+  assert.deepEqual(r[0].acoes, botao('sessao-a:4'));
+  const duas = ideiasDe(chamar(APROVADA, [abre, nota('ideia', 'a'), visto('sessao-a:2'), nota('ideia', 'b'), nota('ideia', 'c')]));
+  assert.equal(duas[0].motivo, 'decidir se as 2 ideias viram a próxima entrega');
+  const terceira = ideiasDe(chamar(APROVADA, [abre, nota('ideia', 'a'), visto('sessao-a:2'), nota('ideia', 'b'), visto('sessao-a:3'), nota('ideia', 'c')]));
+  assert.equal(terceira[0].motivo, 'decidir se a ideia vira a próxima entrega');
+  assert.deepEqual(terceira[0].acoes, botao('sessao-a:4'));
+});
+
+test('ideia-anterior-a-resposta-nao-conta: sem ideia depois do visto o item some', () => {
+  assert.deepEqual(chamar(APROVADA, [abre, nota('ideia', 'a'), nota('ideia', 'b'), visto('sessao-a:3')]), nada);
+  // visto ao id de uma ideia mais antiga também fecha tudo que veio ANTES da resposta (conta o que vem depois dela)
+  assert.deepEqual(chamar(APROVADA, [abre, nota('ideia', 'a'), nota('ideia', 'b'), visto('sessao-a:2')]), nada);
+  assert.equal(ideiasAbertas(expandir([nota('desvio', 'x')])), null);
+  assert.equal(ideiasAbertas([] as Evento[]), null);
+  assert.equal(ideiasAbertas(null as unknown as Evento[]), null, 'nunca lança');
+});
+
+test('ideia-sem-id-respondivel-fica-sem-botao: id fora do formato ou âncora de (b) da sessão', () => {
+  const r = ideiasDe(chamar(APROVADA, [nota('ideia', 'a', 'sessao.a')]));
+  assert.equal(r.length, 1);
+  assert.deepEqual(r[0].acoes, [], 'sessão com ponto: irrespondível, sem botão (o texto segue)');
+  // a ideia é a âncora de (b) da sessão: o botão responderia a (b) ⇒ sem botão; com outra nota antes, tem botão
+  assert.deepEqual(ideiasDe(chamar(APROVADA, [nota('ideia', 'a')]))[0].acoes, []);
+  assert.deepEqual(ideiasDe(chamar(APROVADA, [abre, nota('ideia', 'a')]))[0].acoes, botao('sessao-a:2'));
 });

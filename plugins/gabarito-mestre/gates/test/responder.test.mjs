@@ -368,6 +368,38 @@ test('botao-do-depende-responde (P9): dependeDe real ⇒ comando do botão ⇒ h
   recusa(amb, stdinTui(amb.dir, resto.join(' ')), /respondida/);
 });
 
+test('botao-ideias-visto-responde (P9, T13b): botão do item 4 ⇒ hook real ⇒ item some; ideia nova volta contando só as novas', () => {
+  const amb = repo();
+  const nota = (tipo, texto) => ['nota', { tipo, texto }];
+  amb.semear(null, [nota('desvio', 'abre a sessão'), nota('ideia', 'usar cores'), nota('ideia', 'outra ideia')]);
+  const fatos = { branch: 'main', idPadrao: IDPADRAO, specs: [], plano: null, ledger: false, gh: 'nunca', ultimas: [], sessao: 'S-dono' };
+  const ler = () => diario.ler(amb.pasta('_sem-id'));
+  const depende = () => dependeDe(trilhaDe(fatos, ler()), ler(), [], { falhou: [] }, false, { branch: 'main', idPadrao: IDPADRAO });
+  const ideias = () => depende().find((i) => /ideia/.test(i.motivo));
+  const abertas = () => perguntasAbertas(ler(), trilhaDe(fatos, ler()), { sessao: 'S-dono' }).filter((p) => p.gatilho === 'ideia');
+  assert.equal(ideias().motivo, 'decidir se as 2 ideias viram a próxima entrega');
+  assert.equal(abertas().length, 1);
+  const comando = ideias().acoes[0].comando;
+  assert.equal(comando, '/gabarito-mestre:responder loop:3 1');
+  const args = comando.split(' ').slice(1).join(' ');
+  const r = hook(stdinTui(amb.dir, args));
+  assert.notEqual(r.j?.decision, 'block', r.out);
+  assert.deepEqual(respostas(amb)[0].dados, { pergunta: 'loop:3', opcao: 1, rotulo: 'visto' });
+  assert.equal(ideias(), undefined, 'o item 4 sumiu do depende');
+  assert.deepEqual(abertas(), [], 'a pergunta fechou');
+  recusa(amb, stdinTui(amb.dir, args), /respondida/);
+  // ideia nova depois do visto: volta contando só as novas, com o botão da nova
+  // o hook grava com o relógio real: a ideia nova leva um ts depois da resposta
+  const g = diario.append(amb.pasta('_sem-id'), 'loop', { ts: new Date(Date.now() + 1).toISOString(), autor: 't@t', sessao: 'loop', agente: 'orquestrador', tipo: 'nota', dados: { tipo: 'ideia', texto: 'terceira ideia' } });
+  assert.ok(g.ok && g.gravado === 'evento', JSON.stringify(g));
+  assert.equal(ideias().motivo, 'decidir se a ideia vira a próxima entrega');
+  assert.equal(ideias().acoes[0].comando, '/gabarito-mestre:responder loop:4 1');
+  const r2 = hook(stdinTui(amb.dir, 'loop:4 1'));
+  assert.notEqual(r2.j?.decision, 'block', r2.out);
+  assert.equal(ideias(), undefined);
+  assert.equal(respostas(amb).length, 2);
+});
+
 test('contexto-ultimas-no-hook: pergunta (a) mostra a última entrega nas opções; o hook usa as mesmas opções do painel (pendência T12)', () => {
   const amb = repo();
   amb.semear('GM-9', [['nota', { tipo: 'ideia', texto: 'atividade antiga' }]]);

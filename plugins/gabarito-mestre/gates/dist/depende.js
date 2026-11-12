@@ -13,7 +13,7 @@ import { projetarEmendas } from './emenda.js';
 import { formaInvalida, ID_PERGUNTA_RE } from './formas.js';
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.js';
                                                             
-import { idDaBranch } from './trilha.js';
+import { ancoraDaPerguntaB, idDaBranch } from './trilha.js';
                                           
 
 const CMD_APROVAR = '/gabarito-mestre:aprovar';
@@ -89,14 +89,53 @@ export function pendenciaAberta(evs          , nota        )                    
 const pendenciasAbertas = (evs          )                                  =>
   evs.flatMap((e) => { const p = pendenciaAberta(evs, e); return p === null ? [] : [p]; });
 
+const VISTO = 'visto';
+/** Texto do item (4) e da pergunta de ideias (T13b): uma frase só, para painel e hook dizerem o mesmo. */
+export const textoIdeias = (n        )         => `decidir se ${n === 1 ? 'a ideia vira' : `as ${n} ideias viram`} a próxima entrega`;
+
+/**
+ * REGRA ÚNICA de "ideias abertas" (REQ-DEP-1 item 4, Emenda 5; a T12 importa esta função). `n` = as `nota ideia` válidas POSTERIORES à
+ * última `dono.resposta` de rótulo "visto" (sem caixa, sem espaço nas pontas, como a repetição de opção da T1; forma com `rotulo`, a digitada
+ * não vale) cuja `pergunta` é o id de uma ideia anterior a ela; `id` = `<sessao>:<seq>` da última dessas ideias que pode ser respondida
+ * (id casa ID_PERGUNTA_RE e não é a âncora da pergunta (b) da sessão: mesmo id ⇒ o botão responderia a (b)); sem ideia assim, `id` é `null`
+ * (o item sai sem botão). Nota do modelo, resposta de outro rótulo e resposta a outro id não fecham. Sem ideia nova ⇒ `null`. Nunca lança.
+ */
+export function ideiasAbertas(evs          )                                          {
+  if (!Array.isArray(evs)) return null;
+  const ancoras = new Map                       ();
+  const respondivel = (e        )                => {
+    const id = `${e.sessao}:${e.seq}`;
+    if (!ID_PERGUNTA_RE.test(id)) return null;
+    if (!ancoras.has(e.sessao)) ancoras.set(e.sessao, ancoraDaPerguntaB(evs, e.sessao));
+    return ancoras.get(e.sessao) === id ? null : id;
+  };
+  const ideias                                     = [];
+  const posDoId = new Map                ();
+  evs.forEach((e, i) => {
+    if (obj(e).tipo !== 'nota' || formaInvalida('nota', e.dados) !== null || e.dados.tipo !== 'ideia') return;
+    const id = respondivel(e);
+    ideias.push({ i, id });
+    if (id !== null) posDoId.set(id, i);
+  });
+  let desde = -1;
+  evs.forEach((r, j) => {
+    if (obj(r).tipo !== 'dono.resposta' || formaInvalida('dono.resposta', r.dados) !== null || !('rotulo' in r.dados)) return;
+    if (String(r.dados.rotulo).trim().toLowerCase() !== VISTO) return;
+    const p = posDoId.get(r.dados.pergunta          );
+    if (p !== undefined && p < j) desde = j;
+  });
+  const novas = ideias.filter((x) => x.i > desde);
+  if (novas.length === 0) return null;
+  const ultimaComId = [...novas].reverse().find((x) => x.id !== null);
+  return { id: ultimaComId?.id ?? null, n: novas.length };
+}
+
 /** Texto do dono/modelo no motivo: sem marca técnica (REQ-LNG-1): crase, "--", "/x", snake_case, "a.b", extensão e "node". */
 function higienizar(texto        )         {
   const t = texto.replace(/`/g, '').replace(/--+/g, ' ').replace(/\/[a-z]/g, (m) => ` ${m[1]}`).replace(/\bnode\b/g, 'no')
     .replace(/([A-Za-z0-9])[_.]([A-Za-z0-9])/g, '$1 $2').replace(/([A-Za-z0-9])[_.]([A-Za-z0-9])/g, '$1 $2').replace(/\s+/g, ' ').trim();
   return t === '' ? 'uma pendência' : t;
 }
-
-const nItens = (n        , um        , varios        )         => (n === 1 ? um : varios);
 
 export function dependeDe(
   trilha        , eventos          , base               ,
@@ -151,8 +190,10 @@ export function dependeDe(
   const pendencias = pendenciasAbertas(evs).map((p) => item(higienizar(p.texto), [{ rotulo: 'feito', comando: `/gabarito-mestre:responder ${p.id} 1` }]));
 
   // (4) ideias para a próxima entrega
-  const ideias = evs.filter((e) => e.tipo === 'nota' && formaInvalida('nota', e.dados) === null && e.dados.tipo === 'ideia').length;
-  const decidirIdeias = ideias > 0 ? [item(`decidir se ${nItens(ideias, 'a ideia vira', `as ${ideias} ideias viram`)} a próxima entrega`)] : [];
+  const ideias = ideiasAbertas(evs);
+  const decidirIdeias = ideias !== null
+    ? [item(textoIdeias(ideias.n), ideias.id !== null ? [{ rotulo: VISTO, comando: `/gabarito-mestre:responder ${ideias.id} 1` }] : [])]
+    : [];
 
   // (7) emendas abertas (os botões são os da E4)
   const emendas = ord.ok ? projetarEmendas(evs).abertas : [];
