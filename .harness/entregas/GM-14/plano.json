@@ -249,7 +249,9 @@
         "plugins/gabarito-mestre/gates/src/pouso.ts",
         "plugins/gabarito-mestre/gates/dist/pouso.js",
         "plugins/gabarito-mestre/gates/test/pouso.test.ts",
-        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs"
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/src/diario.ts",
+        "plugins/gabarito-mestre/gates/dist/diario.js"
       ],
       "reqs": [
         "REQ-DIA-1"
