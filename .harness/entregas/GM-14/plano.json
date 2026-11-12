@@ -157,7 +157,8 @@
       "titulo": "`loop.mjs anotar`",
       "deps": [
         "T1",
-        "T32"
+        "T32",
+        "T31"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/loop.mjs",
@@ -208,7 +209,8 @@
       "deps": [
         "T1",
         "T0",
-        "T6"
+        "T6",
+        "T31"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/onboarding-foco.mjs",
@@ -240,7 +242,8 @@
       "deps": [
         "T3",
         "T27",
-        "T33"
+        "T33",
+        "T31"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
@@ -325,7 +328,8 @@
         "plugins/gabarito-mestre/gates/test/liberar-teto.test.mjs",
         "plugins/gabarito-mestre/gates/src/trilha.ts",
         "plugins/gabarito-mestre/gates/dist/trilha.js",
-        "plugins/gabarito-mestre/gates/test/trilha.test.ts"
+        "plugins/gabarito-mestre/gates/test/trilha.test.ts",
+        "plugins/gabarito-mestre/hooks/test/hooks-json.test.mjs"
       ],
       "reqs": [
         "REQ-PRG-1"
@@ -339,7 +343,8 @@
         "T6",
         "T27",
         "T33",
-        "T11"
+        "T11",
+        "T31"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/loop.mjs",
@@ -458,7 +463,8 @@
         "T28",
         "T31",
         "T33",
-        "T34"
+        "T34",
+        "T27"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/skills/gabarito-loop/SKILL.md",
@@ -530,7 +536,8 @@
       "deps": [
         "T1",
         "T9",
-        "T32"
+        "T32",
+        "T31"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/loop.ts",
@@ -547,7 +554,8 @@
       "id": "T28",
       "titulo": "iniciar --modelo e recusa do spike",
       "deps": [
-        "T15"
+        "T15",
+        "T31"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/loop.mjs",
@@ -567,7 +575,9 @@
         "T17",
         "T18",
         "T31",
-        "T32"
+        "T32",
+        "T27",
+        "T28"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel-equipe.ts",
@@ -609,8 +619,6 @@
       "id": "T31",
       "titulo": "Reentrega com motivo",
       "deps": [
-        "T27",
-        "T28",
         "T32"
       ],
       "arquivos": [
@@ -652,7 +660,8 @@
       "deps": [
         "T1",
         "T6",
-        "T10"
+        "T10",
+        "T31"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/diario.ts",
@@ -678,7 +687,9 @@
         "T31",
         "T32",
         "T33",
-        "T10"
+        "T10",
+        "T27",
+        "T28"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/pouso-pendente.ts",
