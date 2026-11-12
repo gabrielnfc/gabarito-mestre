@@ -7,6 +7,7 @@
  *  R1  tirar `packed-refs` da marca ⇒ `refs-interpretador-packed-pede` falha
  *  R2  marca sem `/i` ⇒ `refs-interpretador-caixa-pede` falha
  *  R3  tratar `python3` como leitor ⇒ `refs-interpretador-pede` falha
+ *  R4  tirar a isenção de `git` da marca ⇒ `refs-leitores-git-do-subagent-em-silencio` falha
  */
 
 import { test, describe } from 'node:test';
@@ -42,6 +43,13 @@ describe('escrita em refs por interpretador', () => {
     assert.equal(d.faixa, 'silencio');
     assert.equal(d.evento?.tipo, 'guarda.autonomia');
     assert.equal(decidir(bash(c, true), null, CTX, true).faixa, 'deny');
+  });
+
+  test('refs-leitores-git-do-subagent-em-silencio (R4: sem a isenção de git, falha)', () => {
+    for (const c of ['git show-ref', 'git for-each-ref', `git log ${REF}/origin/main`, 'git show origin/main:harness.config.json']) {
+      assert.equal(decidir(bash(c, true), null, CTX).faixa, 'silencio', c);
+      assert.equal(decidir(bash(c), null, CTX).faixa, 'silencio', c);
+    }
   });
 
   test('refs-leitores-continuam-em-silencio', () => {

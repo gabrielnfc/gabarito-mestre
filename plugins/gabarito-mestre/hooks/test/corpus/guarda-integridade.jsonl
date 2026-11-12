@@ -178,3 +178,31 @@
 {"nome":"refs-leitor-for-each-ref-orq","req":"GRD-5","tool":"Bash","input":{"command":"git for-each-ref"},"agente":"orq","esperado":{"faixa":"silencio"}}
 {"nome":"refs-leitor-for-each-ref-sub","req":"GRD-5","tool":"Bash","input":{"command":"git for-each-ref"},"agente":"sub","esperado":{"faixa":"silencio"}}
 {"nome":"refs-leitor-grep-remotes-orq","req":"GRD-5","tool":"Bash","input":{"command":"grep -r abc .git/refs/remotes"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"branch-remota-dr-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch -dr origin/HEAD"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"branch-remota-dr-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch -dr origin/HEAD"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"branch-remota-Dr-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch -Dr origin/main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"branch-remota-Dr-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch -Dr origin/main"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"branch-remota-d-r-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch -d -r origin/x"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"branch-remota-d-r-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch -d -r origin/x"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"branch-remota-delete-remotes-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch --delete --remotes origin/x"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"branch-remota-delete-remotes-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch --delete --remotes origin/x"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"branch-remota-m-remotes-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch -m remotes/origin/main x"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"branch-remota-m-remotes-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch -m remotes/origin/main x"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"branch-remota-M-r-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch -M -r origin/main x"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"branch-remota-M-r-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch -M -r origin/main x"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"branch-leitor-a-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch -a"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"branch-leitor-a-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch -a"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"branch-leitor-r-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch -r"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"branch-leitor-r-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch -r"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"branch-leitor-d-local-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch -d feat/x"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"branch-leitor-d-local-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch -d feat/x"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"git-exec-rebase-x-packed-orq","req":"GRD-5","tool":"Bash","input":{"command":"git rebase -x 'echo x > .git/packed-refs' main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-exec-rebase-x-packed-sub","req":"GRD-5","tool":"Bash","input":{"command":"git rebase -x 'echo x > .git/packed-refs' main"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"git-exec-rebase-exec-ref-orq","req":"GRD-5","tool":"Bash","input":{"command":"git rebase --exec 'python3 -c \"open(\\\".git/refs/remotes/o\\\",\\\"w\\\")\"' main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-exec-rebase-exec-ref-sub","req":"GRD-5","tool":"Bash","input":{"command":"git rebase --exec 'python3 -c \"open(\\\".git/refs/remotes/o\\\",\\\"w\\\")\"' main"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"git-exec-alias-interruptor-orq","req":"GRD-5","tool":"Bash","input":{"command":"git -c alias.zz='!echo x > ~/.claude/gabarito-autonomia.json' zz"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-exec-alias-interruptor-sub","req":"GRD-5","tool":"Bash","input":{"command":"git -c alias.zz='!echo x > ~/.claude/gabarito-autonomia.json' zz"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"git-alias-benigno-orq","req":"GRD-5","tool":"Bash","input":{"command":"git -c alias.zz='!ls' zz"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"git-alias-benigno-sub","req":"GRD-5","tool":"Bash","input":{"command":"git -c alias.zz='!ls' zz"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"git-rebase-x-benigno-orq","req":"GRD-5","tool":"Bash","input":{"command":"git rebase -x 'make test' main"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"git-rebase-x-benigno-sub","req":"GRD-5","tool":"Bash","input":{"command":"git rebase -x 'make test' main"},"agente":"sub","esperado":{"faixa":"silencio"}}
