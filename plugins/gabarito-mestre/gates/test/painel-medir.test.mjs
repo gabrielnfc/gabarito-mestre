@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { append, ler } from '../dist/diario.js';
+import { append, ler, padraoDeRecusa } from '../dist/diario.js';
 import { trilhaDe, ancoraDaPerguntaB } from '../dist/trilha.js';
 import { marcaDeProgresso, jaParou } from '../dist/pouso.js';
 import { medir } from '../scripts/painel-medir.mjs';
@@ -429,6 +429,24 @@ describe('medir: dedupe por sessao (BLOCKER r1) e recusa do canario (MAJOR r1, R
     const ags = [{ id: 'x'.repeat(20000), type: 'impl', status: 'running' }];
     for (let i = 0; i < 3; i++) rodarMedir(d, 'ok', { agentes: ags });
     assert.deepEqual(recusas(d).map((e) => e.dados.padrao), ['tamanho']);
+  });
+
+  test('recusa-duas-camadas: o padrao que a medicao usa e o que o append aplica (mesma funcao); id de 5000 chars (sonda r2) e mais 3 tamanhos => no maximo 1 recusa por sessao e igual ao veredito do append', () => {
+    assert.equal(typeof padraoDeRecusa, 'function');
+    for (const n of [100, 5000, 16000, 20000]) {
+      const d = repo();
+      const ags = [{ id: 'x'.repeat(n), type: 'impl', status: 'running' }];
+      for (let i = 0; i < 3; i++) rodarMedir(d, 'ok', { agentes: ags });
+      // o mesmo evento direto no append (sessão própria): o veredito do append é o que a medição precisa prever
+      const ev = { ts: '2026-11-11T20:00:00.000Z', autor: 'painel', sessao: 'gemea', agente: 'painel', tipo: 'fato.medido', dados: { chave: 'agente', fonte: 'mod', valor: { id: 'x'.repeat(n), papel: 'impl', estado: 'running' } } };
+      const g = join(d, 'gemea');
+      const r = append(g, 'gemea', ev);
+      assert.equal(r.ok, true);
+      const recusou = r.gravado === 'recusa';
+      assert.equal(padraoDeRecusa(ev) !== null, recusou, `n=${n}`);
+      const rec = recusas(d).filter((e) => e.sessao === SID);
+      assert.equal(rec.length, recusou ? 1 : 0, `n=${n}: recusas da medição`);
+    }
   });
 
   test('recusa-nao-e-progresso: a marca de progresso nao muda com recusas, e jaParou nao se desfaz', () => {

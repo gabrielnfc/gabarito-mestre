@@ -89,6 +89,11 @@ function varrer(valor: unknown): string | null {
   return null;
 }
 
+/** Padrão que o `append` recusa para este evento: 'tamanho' (linha acima de LINHA_MAX), senão o da varredura, senão `null`. Fonte única da regra (a medição do painel importa esta). */
+export function padraoDeRecusa(ev: unknown): string | null {
+  return JSON.stringify(ev).length > LINHA_MAX ? 'tamanho' : varrer(ev);
+}
+
 const sha = (s: string): string => createHash('sha256').update(s).digest('hex');
 
 function dormir(ms: number): void {
@@ -177,7 +182,7 @@ export function append(
     }
 
     // canário ANTES do lock; linha grande é recusada sem rodar regex.
-    const padrao = JSON.stringify(ev).length > LINHA_MAX ? 'tamanho' : varrer(ev);
+    const padrao = padraoDeRecusa(ev);
 
     mkdirSync(dir, { recursive: true });
     const arquivo = join(dir, `events.${sessao}.jsonl`);

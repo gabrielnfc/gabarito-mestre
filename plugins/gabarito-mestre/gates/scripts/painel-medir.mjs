@@ -19,7 +19,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { isatty } from 'node:tty';
 import { join } from 'node:path';
-import { append, dirEntrega, lerEstrito, recusaCanario } from '../dist/diario.js';
+import { append, dirEntrega, lerEstrito, padraoDeRecusa } from '../dist/diario.js';
 import { idDaBranch } from '../dist/trilha.js';
 import { lerConfigOrigin } from '../lib/config.mjs';
 import { contexto } from './loop.mjs';
@@ -93,30 +93,6 @@ function ultimoValor(eventos, sessao, chave, valor) {
     achado = v;
   }
   return achado;
-}
-
-const LINHA_MAX = 16384;
-
-/** Padrão que o `append` recusaria (mesma varredura: chaves e folhas; linha grande = 'tamanho'), ou `null`. Serve para não repetir a recusa. */
-function padraoDeRecusa(ev) {
-  if (JSON.stringify(ev).length > LINHA_MAX) return 'tamanho';
-  const pilha = [ev];
-  while (pilha.length > 0) {
-    const x = pilha.pop();
-    if (typeof x === 'string') {
-      const r = recusaCanario(x);
-      if (r !== null) return r;
-    } else if (Array.isArray(x)) {
-      for (const y of x) pilha.push(y);
-    } else if (x !== null && typeof x === 'object') {
-      for (const [k, y] of Object.entries(x)) {
-        const r = recusaCanario(k);
-        if (r !== null) return r;
-        pilha.push(y);
-      }
-    }
-  }
-  return null;
 }
 
 /** `idPadrao` da chave que a guarda lê (`fluxo.idPadrao`, origin/HEAD); ausente, não texto ou inválido ⇒ padrão. */
