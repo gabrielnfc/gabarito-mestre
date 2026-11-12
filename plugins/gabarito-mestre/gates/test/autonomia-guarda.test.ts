@@ -7,6 +7,9 @@
  *  A2  converter também o `deny` do subagent ⇒ `autonomia-subagent-continua-deny` falha
  *  A4  converter também o teto (Q17) ⇒ `autonomia-ligada-teto-continua-ask` falha
  *  A5  converter a escrita no interruptor ⇒ `autonomia-escrita-no-interruptor-nunca-passa` falha
+ *  A6  `MARCA_INTERRUPTOR` sem `/i` ⇒ `autonomia-escapes-do-interruptor-continuam-ask` falha
+ *  A7  `decidir` casar `'gabarito-autonomia'` em vez de `'gabarito-auto'` ⇒ idem
+ *  A8  `cp` na lista de leitores simples ⇒ idem
  *  A3  `lerAutonomia` aceitar qualquer valor truthy ⇒ `autonomia-arquivo-invalido-vale-ask` falha
  */
 
@@ -63,6 +66,20 @@ describe('autonomia do orquestrador', () => {
     const e: EntradaHook = { tool_name: 'Write', tool_input: { file_path: '/home/u/.CLAUDE/gabarito-autonomia.json', content: '{}' }, permission_mode: 'default', session_id: 's', cwd: '/repo' };
     assert.equal(decidir(e, null, CTX, true).faixa, 'ask');
     assert.equal(decidir({ ...e, tool_input: { file_path: '/home/u/.claude/GABARITO-AUTONOMIA.JSON', content: '{}' } }, null, CTX, true).faixa, 'ask');
+  });
+
+  test('autonomia-escapes-do-interruptor-continuam-ask', () => {
+    const casos = [
+      `python3 -c "open('/home/u/.CLAUDE/GABARITO-AUTONOMIA.json','w').write('x')"`, // caixa trocada (A6, regex sem /i)
+      'echo x > ~/.claude/gabarito-auto*.json', // glob (A7, só 'gabarito-autonomia' no decidir)
+      'cd ~/.claude && cp a gabarito-autonomia.json', // cp não é leitor (A8)
+    ];
+    for (const c of casos) {
+      const d = decidir(bash(c), null, CTX, true);
+      assert.equal(d.faixa, 'ask', c);
+      assert.equal(d.evento?.tipo, 'guarda.ask', c);
+      assert.equal(decidir(bash(c, true), null, CTX, true).faixa, 'deny', c);
+    }
   });
 
   test('autonomia-escrita-no-interruptor-nunca-passa', () => {
