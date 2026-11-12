@@ -581,8 +581,9 @@ function recenteDe(ord: Evento[] | null, plano: Plano, entrada: EntradaPainel, n
   const itens: ItemRecente[] = [];
   const hora = (ev: Evento): string => horaLocal(Date.parse(ev.ts), entrada.agoraMs, fuso);
   const nome = (n: string | null | undefined): string | null => (comNomes && typeof n === 'string' && n !== '' ? n : null);
-  // `loop.*` não está na tabela de origem; é gravado pelo próprio loop: `(automático)` (decisão do implementador, relatada)
+  // Emenda 4 (REQ-LNG-1): `loop.pausa` é gravado pelo comando do dono (pausar ou retomar) ⇒ `(você)`; `loop.parar` é do loop ⇒ `(automático)`
   const AUTO = '(automático)';
+  const VOCE = '(você)';
   for (const ev of ord) {
     const d = dadosDe(ev);
     const task = taskDe(ev);
@@ -609,10 +610,10 @@ function recenteDe(ord: Evento[] | null, plano: Plano, entrada: EntradaPainel, n
     } else if (ev.tipo === 'dono.resposta' && origem !== null) {
       item = { glifo: '●', cor: 'success', quem: null, texto: 'pergunta respondida' };
     } else if (ev.tipo === 'loop.pausa' && (d.estado === 'pausado' || d.estado === 'retomado')) {
-      item = { glifo: '○', cor: 'inactive', quem: null, texto: d.estado === 'pausado' ? 'loop pausado' : 'loop retomado' };
+      item = { glifo: '○', cor: 'inactive', quem: null, texto: 'pausa' };
     }
     if (item === null) continue;
-    const o = origem ?? (ev.tipo === 'loop.parar' || ev.tipo === 'loop.pausa' ? AUTO : null);
+    const o = origem ?? (ev.tipo === 'loop.parar' ? AUTO : ev.tipo === 'loop.pausa' ? VOCE : null);
     if (o === null) continue;
     itens.push({ ...item, hora: hora(ev), origem: o });
   }

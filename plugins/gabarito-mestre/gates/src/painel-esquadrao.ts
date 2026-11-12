@@ -366,6 +366,10 @@ function natural(v: unknown, modo: 'nome' | 'reticencia' = 'nome'): string {
   return saida.join(' ').replace(/…(\s+…)+/g, '…');
 }
 
+/** ID de entrega (DP-4): cru só no formato `GM-14` (`^[A-Z]+-\d+$`); qualquer outro (`true_force`) vai por `nomeNatural`. */
+const ID_ENTREGA = /^[A-Z]+-\d+$/;
+const idNatural = (v: unknown): string => { const c = limpar(typeof v === 'string' ? v : ''); return ID_ENTREGA.test(c) ? c : natural(c); };
+
 /** Título (FIEL-5 a, D-P14): sem o prefixo `<ID> —|–|-|:`, sem marcação, uma vez. */
 function tituloLimpo(titulo: unknown, id: string): string {
   let t = semMarcacao(limpar(typeof titulo === 'string' ? titulo : '')).trim();
@@ -417,13 +421,13 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   if (typeof w0 !== 'number' || !Number.isFinite(w0) || Math.floor(w0) < 1) throw new RangeError(`largura inválida: ${String(w0)} (número finito ≥ 1)`);
   const w = Math.floor(w0);
   const ludico = o.preset === 'esquadrao';
-  const id = limpar(typeof e.id === 'string' ? e.id : '');
+  const id = idNatural(e.id);
   const fim = (l: Linha): Linha => cortarNatural(l, w);
 
   if (e.modo === 'fora') return [fim([seg('GABARITO · fora de um projeto', 'inactive')])];
   if (e.umaLinha !== null && e.umaLinha !== undefined) {
     const u = e.umaLinha.ultima;
-    const ult = u === null || typeof u?.id !== 'string' ? '' : ` · última: ${limpar(u.id)}${typeof u.estado === 'string' && u.estado !== '' ? ` (${natural(u.estado)})` : ''}`;
+    const ult = u === null || typeof u?.id !== 'string' ? '' : ` · última: ${idNatural(u.id)}${typeof u.estado === 'string' && u.estado !== '' ? ` (${natural(u.estado)})` : ''}`;
     return [fim([seg(`GABARITO · sem entrega em curso${ult}`, 'inactive')])];
   }
 

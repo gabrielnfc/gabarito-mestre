@@ -12,7 +12,7 @@ import { PAPEL_EXECUTIVO } from '../src/painel-executivo.ts';
 import { orcamentoDe } from '../src/orcamento.ts';
 import { linhaTecnica } from '../src/origem.ts';
 import type { FatosTrilha } from '../src/trilha.ts';
-import type { AgenteVivo, EntradaPainel, EstadoPainel, Evento, OpcoesRender, Plano, TipoEvento } from '../src/tipos.ts';
+import type { AgenteVivo, EntradaPainel, EstadoPainel, Evento, MotivoParar, OpcoesRender, Plano, TipoEvento } from '../src/tipos.ts';
 
 const T0 = Date.parse('2026-11-11T12:00:00Z');
 const iso = (min: number): string => new Date(T0 + min * 60_000).toISOString();
@@ -152,8 +152,8 @@ test('recente-5-lateral-2-acima e recente-so-resultados: só aprovou/reprovou/in
   };
   const r5 = rec(lat);
   assert.equal(r5.length, 5);
-  assert.match(r5[0], /loop retomado \(automático\)$/, 'mais novo no topo');
-  assert.match(r5[1], /loop pausado \(automático\)$/);
+  assert.match(r5[0], /pausa \(você\)$/, 'mais novo no topo; retomar do dono também é "pausa (você)"');
+  assert.match(r5[1], /pausa \(você\)$/);
   assert.match(r5[2], /ELROND decidiu: seguir com a T3 \(anotado pelo orquestrador\)$/);
   assert.match(r5[3], /reprovou T3 · 2 achados \(automático\)$/);
   assert.match(r5[4], /integrou T2 \(automático\)$/);
@@ -161,8 +161,8 @@ test('recente-5-lateral-2-acima e recente-so-resultados: só aprovou/reprovou/in
   assert.doesNotMatch(tudo, /despachou|iniciou|entregou/, 'despachou/iniciou/entregou fora');
   const r2 = rec(linhas(s, { local: 'acima' }));
   assert.equal(r2.length, 2);
-  assert.match(r2[0], /loop retomado/);
-  assert.match(r2[1], /loop pausado/);
+  assert.match(r2[0], /pausa \(você\)$/);
+  assert.match(r2[1], /pausa \(você\)$/);
   assert.equal(rec(linhas(s)).length, 5, 'local ausente = lateral');
 });
 
@@ -266,6 +266,53 @@ test('pergunta-real-pelo-projetar (P9): nota de dúvida vira pergunta no topo; r
   assert.equal(outra.perguntasMais, 0);
   const fechada = proj(P(...IDS), [...base, e(3, 'dono.resposta', { pergunta: 's1:1', opcao: 2, rotulo: 'aquele' }, 'dono')]);
   assert.equal(fechada.pergunta?.id, 's1:2');
+});
+
+const MOTIVOS = Object.keys(TABELA_PARAR) as MotivoParar[];
+const recenteDe = (itens: Item[], extra: Partial<Entrada> = {}): string[] => {
+  const l = linhas(proj(P(...IDS), itens, { agentes: null, ...extra }), { local: 'lateral' });
+  const i = l.findIndex((x) => /^RECENTE/.test(x));
+  return i < 0 ? [] : l.slice(i).filter((x, k) => k === 0 || /^  \d\d:\d\d/.test(x));
+};
+
+test('recente-origem-da-pausa (emenda 4): pausa e retomada do dono são "pausa (você)", nunca "(automático)"', () => {
+  for (const estado of ['pausado', 'retomado']) {
+    const r = recenteDe([e(1, 'loop.pausa', { estado })]).join('\n');
+    assert.match(r, /\d\d:\d\d \S pausa \(você\)$/m, estado);
+    assert.doesNotMatch(r, /pausa[^\n]*\(automático\)/, `${estado}: pausa nunca automática`);
+    assert.doesNotMatch(r, /loop pausado|loop retomado/, estado);
+  }
+});
+
+test('recente-travou-em-palavras-automatico: cada MotivoParar vira "travou: <palavras> (automático)", nunca técnico', () => {
+  for (const motivo of MOTIVOS) {
+    const r = recenteDe([e(1, 'loop.parar', { motivo, task: 'T1' })]).filter((x) => /travou/.test(x));
+    assert.equal(r.length, 1, motivo);
+    assert.match(r[0], /\d\d:\d\d \S travou: .+ \(automático\)$/, motivo);
+    assert.ok(!linhaTecnica(r[0]), `${motivo}: "${r[0]}"`);
+    assert.doesNotMatch(r[0], new RegExp(motivo), `${motivo}: motivo cru`);
+    assert.doesNotMatch(r[0], /\(você\)/, motivo);
+  }
+});
+
+test('id-de-entrega-natural-se-nao-casa: true_force em `ultima` e em e.id vai por nomeNatural; GM-13 fica cru', () => {
+  const ult = (id: string) => texto(proj(null, [], { fatos: fatos({ branch: 'main', plano: null }), ultima: { id, estado: 'publicada' } }));
+  assert.equal(ult('true_force'), 'GABARITO · sem entrega em curso · última: true force (publicada)');
+  assert.ok(!linhaTecnica(ult('true_force')));
+  assert.equal(ult('GM-13'), 'GABARITO · sem entrega em curso · última: GM-13 (publicada)');
+  const base = proj(P(...IDS), [], { titulo: null });
+  const cabecalho = linhas({ ...base, id: 'true_force' })[0];
+  assert.equal(cabecalho, 'GABARITO · true force');
+  assert.ok(!linhaTecnica(cabecalho));
+  assert.equal(linhas({ ...base, id: 'GM-14' })[0], 'GABARITO · GM-14');
+});
+
+test('pergunta-b-pela-sessao-do-fato: fatos.sessao abre a (b) com a opção GM-13 crua no render (R-X6)', () => {
+  const s = proj(null, [nota(1, 'ideia', 'usar o painel novo')], { fatos: fatos({ branch: 'main', plano: null, ultimas: [{ id: 'GM-13', data: iso(-60) }] }) });
+  assert.equal(s.pergunta?.gatilho, 'b');
+  assert.ok(s.pergunta?.opcoes?.some((o) => /GM-13/.test(JSON.stringify(o))), 'opção GM-13 crua no estado');
+  assert.match(texto(s), /GM-13/);
+  assert.doesNotMatch(texto(s), /GM 13/);
 });
 
 test('id-de-entrega-intacto: o ID cru aparece no cabeçalho e na pergunta (b), nunca naturalizado', () => {

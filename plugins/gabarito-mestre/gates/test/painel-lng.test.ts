@@ -56,9 +56,11 @@ const entrada = (extra: Record<string, unknown> = {}) => ({
   entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26, fatos: fatos(), ...extra,
 }) as unknown as EntradaPainel & { fatos: FatosTrilha };
 
-/** Os 10 estados (nomeados). */
+/** Os 12 estados (nomeados); 2 com ID de entrega técnico (`true_force`) no cabeçalho e na linha única (E49). */
 const ESTADOS: [string, () => EstadoPainel][] = [
   ['uma-linha', () => projetarPainel(null, D([]), entrada({ fatos: fatos({ branch: 'main', plano: null }), ultima: { id: 'GM-13', estado: 'publicada em gabarito-mestre--v2.0.0' } }))],
+  ['uma-linha-id-tecnico', () => projetarPainel(null, D([]), entrada({ fatos: fatos({ branch: 'main', plano: null }), ultima: { id: 'true_force', estado: 'publicada' } }))],
+  ['cabecalho-id-tecnico', () => projetarPainel({ ...P, entrega: 'true_force' }, D([ini(0, 'T1')]), entrada({ entregaId: 'true_force', titulo: 'true_force — painel' }))],
   ['fora', () => projetarPainel(null, D([]), entrada({ fatos: fatos({ branch: null, plano: null }), fora: true }))],
   ['projeto-pergunta-b', () => projetarPainel(null, D([nota(1, 'ideia', 'usar true_force no meu_app.config')]),
     entrada({ fatos: fatos({ branch: 'main', plano: null, ultimas: [{ id: 'GM-13', data: iso(-60) }, { id: 'true_force', data: iso(-90) }] }) }))],
@@ -86,7 +88,7 @@ const GLIFOS = new Set(['✓', '●', '○', '◐', '✗', '▰', '▱', '·', '
 const foraDaLista = (l: string): string[] => [...l].filter((c) => !/[\p{L}\p{N}\p{P}\s]/u.test(c) && !(c.codePointAt(0) as number <= 0xff) && !GLIFOS.has(c));
 const SGR = /\x1b\[[0-9;]*m/g;
 
-test('lng-propriedade: 10 estados × larguras 20..200 × 2 presets × 2 temas ⇒ 0 linha técnica, 0 emoji, glifos da lista, número inteiro, ID cru', () => {
+test('lng-propriedade: 12 estados × larguras 20..200 × 2 presets × 2 temas ⇒ 0 linha técnica, 0 emoji, glifos da lista, número inteiro, ID cru', () => {
   let linhas = 0;
   for (const [nome, fazer] of ESTADOS) {
     const s = fazer();
@@ -114,10 +116,10 @@ test('lng-propriedade: 10 estados × larguras 20..200 × 2 presets × 2 temas �
 });
 
 test('rotulo-com-ponto-e-sublinhado-normalizado: nome e título que a regex pega viram palavras; tag vira X.Y.Z (Review Focus 5)', () => {
-  const s = ESTADOS[4][1]();
+  const s = ESTADOS.find(([n]) => n === 'execucao-agentes')![1]();
   const l = paraTexto(renderPainel(s, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 200 }), 'mono').split('\n');
   assert.equal(l[0], 'GABARITO · GM-14 true force em 2.0.0 com meu app config e notas md');
-  const u = paraTexto(renderPainel(ESTADOS[0][1](), { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 200 }), 'mono');
+  const u = paraTexto(renderPainel(ESTADOS.find(([n]) => n === 'uma-linha')![1](), { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 200 }), 'mono');
   assert.equal(u, 'GABARITO · sem entrega em curso · última: GM-13 (publicada em 2.0.0)');
 });
 
