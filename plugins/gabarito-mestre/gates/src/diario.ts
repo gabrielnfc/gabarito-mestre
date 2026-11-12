@@ -446,6 +446,7 @@ export type Exportacao = { ok: true; linhas: number; fora: number; avisos: strin
  * ordenada por `(entrega, sessao, seq)`; as linhas recusadas na leitura (exceto canário) vêm depois, byte a byte, na ordem em que estavam.
  * Canário de novo em cada linha antes de escrever: acusa ⇒ fora com aviso (o evento segue no diário). Extrato corrompido ⇒ NÃO regrava
  * (provisório i). Escrita por tmp no mesmo diretório + rename; falha ⇒ extrato antigo intacto. Não grava evento. Nunca lança.
+ * `avisos` leva TODO aviso da leitura (entrega ilegível na árvore inclusive) e todo evento que ficou fora (`fora`): nada sai calado.
  */
 export function exportarAprendizados(raiz: string): Exportacao {
   const dirHarness = join(raiz, '.harness');
@@ -453,7 +454,7 @@ export function exportarAprendizados(raiz: string): Exportacao {
   let tmp: string | null = null;
   try {
     const { porEntrega, avisos: lidos, extrato } = juntar(join(dirHarness, 'entregas'), arquivo);
-    const avisos = lidos.filter((a) => a.startsWith(AVISO_EXTRATO));
+    const avisos = [...lidos]; // todo aviso da leitura (entrega ilegível inclusive): exportar o que leu nunca vira "ok, avisos: []" calado
     if (extrato.estado === 'corrompido') return { ok: false, motivo: 'extrato corrompido, não regravado', avisos };
     const saida: { entrega: string; e: Evento; linha: string }[] = [];
     let fora = 0;
@@ -461,10 +462,8 @@ export function exportarAprendizados(raiz: string): Exportacao {
       for (const e of eventos) {
         if (!ehObjeto(e) || e.tipo !== 'aprendizado') continue;
         const ref = `${entrega}/${String(e.sessao)}:${String(e.seq)}`;
-        if (recusaDaLinha({ entrega, evento: e }) !== null) {
-          if (!PBI_RE.test(entrega)) { fora += 1; avisos.push(`${AVISO_EXTRATO}sem ${ref} (entrega fora da forma: não versionada)`); }
-          continue;
-        }
+        const recusa = recusaDaLinha({ entrega, evento: e });
+        if (recusa !== null) { fora += 1; avisos.push(`${AVISO_EXTRATO}sem ${ref} (${recusa}: não versionada)`); continue; }
         const linha = JSON.stringify({ entrega, evento: e });
         const padrao = linha.length > EXTRATO_LINHA_MAX ? 'tamanho' : recusaCanario(linha);
         if (padrao !== null) { fora += 1; avisos.push(`${AVISO_EXTRATO}sem ${ref} (canário ${padrao}); o evento segue no diário`); continue; }

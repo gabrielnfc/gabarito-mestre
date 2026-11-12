@@ -607,6 +607,72 @@ describe('extrato: instantâneo e doctor', () => {
 
 // ─────────────────────────────────────────────────────────────── provisórios (sem regra na spec; vão ao dono)
 
+describe('extrato: a escrita não cala aviso nem guarda token (r2)', () => {
+  const ILEGIVEL_GM8 = 'aprendizados: GM-8 ilegível (linha 1 ilegível em events.loop.jsonl)';
+  const gm8Ilegivel = (amb) => { mkdirSync(join(amb.arvore, 'GM-8')); writeFileSync(join(amb.arvore, 'GM-8', 'events.loop.jsonl'), 'torto\n'); };
+
+  test('exportar-propaga-entrega-ilegivel: GM-8 ilegível ⇒ exporta o que leu, rc 0, aviso no extrato e no topo (nunca "ok, avisos: []")', () => {
+    const amb = ambiente();
+    amb.semear([DESCOBERTA, ['aprendizado', dadosD('gm10-lido')]]);
+    gm8Ilegivel(amb);
+    const r = amb.cli(['aprendizados', '--exportar']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.extrato, { ok: true, linhas: 1, fora: 0, avisos: [ILEGIVEL_GM8] });
+    assert.deepEqual(r.j.aviso, [ILEGIVEL_GM8]);
+    assert.deepEqual(amb.linhasX().map((l) => JSON.parse(l).evento.dados.regra), ['gm10-lido']);
+  });
+
+  test('aprendizado-propaga-entrega-ilegivel: GM-8 ilegível ⇒ o aprendizado em GM-10 grava, regrava X e mostra o aviso no extrato e no topo', () => {
+    const amb = ambiente();
+    amb.semear([DESCOBERTA]);
+    gm8Ilegivel(amb);
+    const r = amb.cli(aprCli('gm10-novo'));
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.extrato, { ok: true, linhas: 1, fora: 0, avisos: [ILEGIVEL_GM8] });
+    assert.deepEqual(r.j.aviso, [ILEGIVEL_GM8]);
+    assert.deepEqual(amb.linhasX().map((l) => JSON.parse(l).evento.dados.regra), ['gm10-novo']);
+  });
+
+  for (const via of ['aprendizado', 'exportar']) {
+    test(`extrato-token-a-mao-sai-na-regravacao-${via}: linha de X escrita à mão com token sai do extrato regravado, com aviso; a linha limpa fica`, () => {
+      const amb = ambiente();
+      amb.semear([DESCOBERTA]);
+      const limpa = linhaX('GM-7', evento(3, dadosD('ok-7')));
+      amb.escreverX([linhaX('GM-7', evento(2, dadosD(`vazou ${TOKEN}`))), limpa]);
+      const r = amb.cli(via === 'aprendizado' ? aprCli('nova') : ['aprendizados', '--exportar']);
+      assert.equal(r.rc, 0, r.out + r.err);
+      const AVISO = 'aprendizados: extrato linha 1 fora (canário ghp)';
+      assert.deepEqual(r.j.extrato.avisos, [AVISO]);
+      assert.deepEqual(r.j.aviso, [AVISO]);
+      assert.ok(!amb.lerX().includes(TOKEN), 'o token saiu do extrato');
+      assert.ok(!r.out.includes(TOKEN));
+      assert.ok(amb.linhasX().includes(limpa), 'a linha limpa fica, byte a byte');
+      assert.equal(amb.linhasX().length, via === 'aprendizado' ? 2 : 1);
+    });
+  }
+
+  test('exportar-sem-nada-nao-cria-x: repositório sem aprendizado e sem X ⇒ rc 0, linhas 0, sem aviso e nenhum X vazio criado', () => {
+    const amb = ambiente();
+    amb.semear([DESCOBERTA]);
+    const r = amb.cli(['aprendizados', '--exportar']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.extrato, { ok: true, linhas: 0, fora: 0, avisos: [] });
+    assert.equal(r.j.aviso, undefined);
+    assert.equal(existsSync(amb.extrato), false);
+  });
+
+  test('exportar-evento-da-arvore-de-forma-recusada-avisa: aprendizado do diário com dados em texto ⇒ fora de X, conta em `fora` e avisa', () => {
+    const amb = ambiente();
+    amb.diarioManual('GM-10', 'loop', [DESCOBERTA, ['aprendizado', 'dados em texto'], ['aprendizado', dadosD('boa')]]);
+    const r = amb.cli(['aprendizados', '--exportar']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const AVISO = 'aprendizados: extrato sem GM-10/loop:2 (dados não é objeto: não versionada)';
+    assert.deepEqual(r.j.extrato, { ok: true, linhas: 1, fora: 1, avisos: [AVISO] });
+    assert.deepEqual(r.j.aviso, [AVISO]);
+    assert.deepEqual(amb.linhasX().map((l) => JSON.parse(l).evento.dados.regra), ['boa']);
+  });
+});
+
 describe('extrato: provisórios conservadores', () => {
   test('extrato-corrompido-nao-regravado-provisorio: X corrompido ⇒ aprendizado grava no diário e não sobrescreve X; exportar recusa', () => {
     const amb = ambiente();

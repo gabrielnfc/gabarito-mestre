@@ -125,6 +125,9 @@ const codigoDe = (motivo) => {
   return CODIGOS_DE_REFERENCIA.includes(prefixo) ? prefixo : 'forma_invalida';
 };
 
+/** Regravação ok com aviso da leitura (entrega ilegível, linha fora, canário): o aviso sobe ao topo da saída; nunca sucesso calado. */
+const comAviso = (extrato) => (extrato.avisos.length > 0 ? { aviso: extrato.avisos } : {});
+
 export function aprendizado(deps, pos, flags) {
   const { c, plano, gravar, Falha } = deps;
   const { tipo, dados } = deps.pronto ?? preparar(Falha, pos, flags);
@@ -156,7 +159,7 @@ export function aprendizado(deps, pos, flags) {
   const evento = { ...gravar(c, plano, tipo, dados, antes), tipo_evento: tipo };
   if (tipo !== 'aprendizado') return { evento };
   const extrato = exportarAprendizados(c.raiz);
-  if (extrato.ok) return { evento, extrato };
+  if (extrato.ok) return { evento, extrato, ...comAviso(extrato) };
   // o que fazer depende da falha: extrato corrompido nunca é sobrescrito (exportar também recusa); falha de escrita passa com o exportar
   const passo = extrato.motivo.startsWith('extrato corrompido')
     ? 'confira .harness/aprendizados.jsonl (loop.mjs aprendizados diz o motivo) e, corrigido, rode loop.mjs aprendizados --exportar'
@@ -177,7 +180,7 @@ export function aprendizados(deps, pos, flags) {
       const codigo = extrato.motivo.startsWith('extrato corrompido') ? 'extrato_corrompido' : 'extrato_nao_gravado';
       throw new Falha(codigo, `${extrato.motivo}; nenhum evento gravado${extrato.avisos.length > 0 ? ` (${extrato.avisos.join('; ')})` : ''}`);
     }
-    return { extrato };
+    return { extrato, ...comAviso(extrato) };
   }
   const { porEntrega, avisos } = lerAprendizados(join(raiz, '.harness', 'entregas'));
   const vigentes = aprendizadosVigentes(porEntrega);
