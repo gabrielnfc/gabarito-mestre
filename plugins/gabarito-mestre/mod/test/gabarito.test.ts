@@ -19,6 +19,7 @@ type Opc = {
   percent?: number | null
   x?: string
   interativo?: boolean
+  surfaces?: string[]
   plano?: boolean
   agentes?: { id: string; status: string }[] | 'falha' | 'lixo'
   eventos?: any[]
@@ -160,7 +161,7 @@ function mundo($: any, on: any, o: Opc = {}) {
     dir: DIR, plano: o.plano !== false, percent: o.percent === undefined ? 60 : o.percent, clears: 0, submits: [] as string[], liberar: null as null | (() => void),
     // painel (T10)
     painel: { ...(o.painel ?? {}) } as PainelOpc, painelStdins: [] as any[], painelArgv: [] as string[][], painelInit: [] as any[], painelFlight: 0, painelLibera: [] as (() => void)[],
-    opens: [] as any[], panes: (o.panes ?? []) as any, openResult: (o.openResult ?? { isPlaced: true }) as any, notifies: [] as string[], fills: [] as any[], statuses: [] as (string | undefined)[],
+    surfaces: (o.surfaces ?? []) as string[], opens: [] as any[], panes: (o.panes ?? []) as any, openResult: (o.openResult ?? { isPlaced: true }) as any, notifies: [] as string[], fills: [] as any[], statuses: [] as (string | undefined)[],
     subStarts: [] as any[], logs: [] as string[], closes: [] as any[], registros: [] as any[], sessaoId: o.sessaoId ?? 'sess-1', ordem: [] as string[], notifyModo: (o.notify ?? 'ok') as string, rateLimits: (o.rateLimits === undefined ? [] : o.rateLimits) as any, fillIsFilled: o.fillIsFilled !== false,
     agoraMs: null as number | null,
     msgs: [] as { sha256: string; chars: number }[], mensagemLibera: [] as (() => void)[],
@@ -204,6 +205,7 @@ function mundo($: any, on: any, o: Opc = {}) {
     if (est.openResult?.isPlaced === false && Array.isArray(est.panes) && !est.panes.some((x: any) => x.id === e.id)) est.panes = [...est.panes, { id: e.id, isPlaced: false, isShown: false }]
     return { value: est.openResult }
   })
+  on('session.surfaces', () => ({ value: est.surfaces }))
   on('ui.panes', () => (est.panesLidas = (est.panesLidas ?? 0) + 1, est.panes === 'falha' ? { deny: 'sem panes' } : { value: est.panes }))
   on('ui.notify', (_: any, e: any) => {
     est.ordem.push('notify'); est.notifies.push(e.text)
@@ -2346,6 +2348,40 @@ test('sdk-sem-tela-sem-attach-nao-le: -p sem superfície e sem attach ⇒ 0 pont
   await drena(m)
   expect(m.est.painelStdins).toHaveLength(0)
   expect(m.est.opens).toHaveLength(0)
+})
+test('desktop-render-com-superficie-le: start SDK sem attach, Pane renderiza com surfaces() [desktop] ⇒ painel.mjs estado roda', async ($, on) => {
+  const m = comPainel($, on)
+  await startSdk($)
+  await drena(m)
+  expect(m.est.painelStdins).toHaveLength(0)
+  m.est.surfaces = ['desktop'] // a tela aparece depois do start, sem attach
+  const ui = await montarPane($, 80)
+  await drena(m)
+  expect(m.est.painelArgv.length).toBeGreaterThan(0)
+  expect(m.est.painelArgv[0].slice(2)).toEqual(['estado', '--agentes'])
+  await ui.unmount()
+})
+test('render-sem-superficie-nao-le: start SDK sem attach, Pane renderiza com surfaces() vazio ⇒ 0 ponte', async ($, on) => {
+  const m = comPainel($, on, {}, { surfaces: [] })
+  await startSdk($)
+  const ui = await montarPane($, 80)
+  await m.clock.advance(PERIODO * 2)
+  await drena(m)
+  expect(m.est.painelStdins).toHaveLength(0)
+  await ui.unmount()
+})
+test('start-depois-de-attach-nao-rebaixa: start SDK, attach, start de novo (reload do módulo) ⇒ continua lendo', async ($, on) => {
+  const m = comPainel($, on, {}, { surfaces: ['desktop'] })
+  await startSdk($)
+  await $.session.attach({ surface: 'desktop', clientId: 'desktop:default' })
+  await drena(m)
+  await startSdk($)
+  await drena(m)
+  const antes = m.est.painelStdins.length
+  expect(antes).toBeGreaterThan(0)
+  await m.clock.advance(PERIODO)
+  await drena(m)
+  expect(m.est.painelStdins.length).toBeGreaterThan(antes)
 })
 test('loop-aparece-no-turno-abre: sem loop no início; o plano aparece e o turno abre a Pane e recria o relógio', async ($, on) => {
   const m = comPainel($, on, { modo: 'sem_loop' })

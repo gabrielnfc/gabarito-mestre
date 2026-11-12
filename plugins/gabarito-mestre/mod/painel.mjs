@@ -1302,10 +1302,11 @@ function arvoreDeLinhas($, e, linhas, botoes = [], largura = 0) {
 
 /**
  * `session.start` do painel: chamado de dentro do hook que `gabarito.mjs` já tem (o motor recusa dois `on('session.start')` sem matcher). Não bloqueia:
- * `atualizar('inicio')` roda num timer. `-p` (`isInteractive: false` ou `surface: null`) ⇒ nada do painel.
+ * `atualizar('inicio')` roda num timer. `-p` (`isInteractive: false` ou `surface: null`) sem nenhuma superfície em `$.session.surfaces()` ⇒ nada do painel.
  */
-export function iniciarPainel($, e) {
+export async function iniciarPainel($, e) {
   S.interativo = e?.isInteractive === true && e?.surface !== null && e?.surface !== undefined;
+  if (!S.interativo && await temSuperficie($)) S.interativo = true; // start repetido (reload do módulo) depois de um attach: a tela segue lá, não rebaixa
   if (!S.interativo) return;
   if (typeof e?.transcript_path === 'string' && e.transcript_path.startsWith('/')) S.transcriptSessao = e.transcript_path;
   S.preparando = null; // cada `session.start` relê as prefs e confere o sorteio (mesma sessão ⇒ mantém)
