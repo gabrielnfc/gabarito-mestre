@@ -563,7 +563,7 @@ export const register = (on) => {
   registrarPainel(on);
   on('session.start', async ($, e, next) => {
     interativo = e.isInteractive === true;
-    iniciarPainel($, e);
+    await iniciarPainel($, e);
     try {
       await $.command.register({
         name: 'gabarito', description: 'Painel, pausa e retomada do loop', argumentHint: 'painel …|pausar|retomar', immediate: true,

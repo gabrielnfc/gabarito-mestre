@@ -5,6 +5,10 @@ Usuários do plugin só recebem atualização quando `version` muda.
 
 ## [Unreleased]
 
+### Corrigido
+
+- **Painel no app desktop**: ficava em "painel: lendo…" para sempre, porque o app hospeda o Claude Code via SDK (`session.start` com `isInteractive: false` e sem superfície). O painel agora passa a ler quando uma superfície se anexa (`session.attach`), quando a Pane é desenhada ou o `session.start` já enxerga uma superfície (`$.session.surfaces()`), ou quando a pessoa digita `/gabarito painel`. Em `-p` sem superfície nada muda: não lê.
+
 ## [2.0.0] — 2026-11-11
 
 Versão estável da 2.0. Quem está na 1.1.x: leia `docs/virada-2.0.md` (como atualizar, o que rodar de novo e como voltar). Resumo do que muda para quem usa:
