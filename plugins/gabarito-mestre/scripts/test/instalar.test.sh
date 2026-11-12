@@ -20,6 +20,7 @@
 #  M-T14  tirar `.claude-tmp/` da lista de emendar_gitignore ⇒ gitignore-claude-tmp
 #  M19 T6 r1: .gitignore sem `.harness/heartbeat.json` ⇒ gitignore-heartbeat-local
 #  M16 T6: --atualizar sobrescreve gate editado     ⇒ atualizar-nao-sobrescreve-gate
+#  M-A19 T33: .gitignore com `.harness/aprendizados.jsonl` (ou `.harness/*.jsonl`) ⇒ instalador-nao-ignora-extrato
 set -eu
 AQUI="$(cd "$(dirname "$0")" && pwd)"
 INSTALAR="$AQUI/../instalar.sh"
@@ -272,6 +273,18 @@ check "instalar-ignora-onboarding-e-medir: linha já presente com / inicial não
 RAIZ_GI="$REPO_ROOT/.gitignore"
 check "gitignore da raiz deste repo ignora _onboarding/, painel-medir.json e doctor-cache.json (dogfood, DP-1)" \
   'grep -qxF ".harness/entregas/_onboarding/" "$RAIZ_GI" && grep -qxF ".harness/painel-medir.json" "$RAIZ_GI" && grep -qxF ".harness/doctor-cache.json" "$RAIZ_GI"'
+
+echo "── cenário 13: instalador nunca ignora o extrato de aprendizados (GM-14 T33, REQ-APR-5 a; série T10 → T33)"
+R15="$(novo_repo)"; env $GITENV git -C "$R15" init -q
+if SAIDA15="$(env $GITENV bash "$INSTALAR" "$R15" 2>&1)"; then RC15=0; else RC15=$?; fi
+mkdir -p "$R15/.harness"; printf '{}\n' > "$R15/.harness/aprendizados.jsonl"
+check "instalador-nao-ignora-extrato: depois de instalar (com as linhas da T10), git check-ignore do extrato dá rc 1" \
+  '[ "$RC15" -eq 0 ] && grep -qxF ".harness/entregas/_onboarding/" "$R15/.gitignore" && grep -qxF ".harness/painel-medir.json" "$R15/.gitignore" && { env $GITENV git -C "$R15" check-ignore -q .harness/aprendizados.jsonl; [ $? -eq 1 ]; }'
+bash "$INSTALAR" "$R15" >/dev/null 2>&1 || true
+check "instalador-nao-ignora-extrato: 2ª execução segue sem ignorar o extrato" \
+  '{ env $GITENV git -C "$R15" check-ignore -q .harness/aprendizados.jsonl; [ $? -eq 1 ]; }'
+check "instalador-nao-ignora-extrato: o extrato deste repo também não é ignorado (dogfood)" \
+  '{ git -C "$REPO_ROOT" check-ignore -q .harness/aprendizados.jsonl; [ $? -eq 1 ]; }'
 
 echo "── $passou ok, $falhou falha(s)"
 [ "$falhou" -eq 0 ]

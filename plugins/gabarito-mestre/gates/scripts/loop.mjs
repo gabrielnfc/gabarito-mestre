@@ -154,7 +154,7 @@ function lerArgs(argv) {
     descoberta: { pos: 0, flags: ['entrega', 'sessao', 'evidencia', 'causa'], obrig: ['evidencia', 'causa'] },
     // E5a (GM-13): `aprendizado` confere os posicionais e as flags por tipo em `loop-aprendizado.mjs` (uso, rc 2); `aprendizados` lê a árvore, sem entrega (T8).
     aprendizado: { pos: null, flags: ['entrega', 'sessao', 'regra', 'entra-em', 'gatilho', 'eventos', 'fonte', 'numero', 'substitui', 'motivo'] },
-    aprendizados: { pos: 0, flags: ['para'] },
+    aprendizados: { pos: 0, flags: ['para', 'exportar'], semValor: ['exportar'] },
     pousar: { pos: null, flags: ['entrega', 'sessao'] },
     registro: { pos: null, flags: ['entrega', 'sessao'] },
     emenda: { pos: null, flags: ['entrega', 'sessao', 'req', 'task', 'diff', 'fato', 'alternativa', 'evidencia', 'causa', 'arquivos'] },
@@ -169,6 +169,7 @@ function lerArgs(argv) {
     if (a.startsWith('--')) {
       const nome = a.slice(2);
       if (!esp.flags.includes(nome)) throw new Falha('uso', `argumento desconhecido para ${cmd}: ${a}. ${uso}`, {}, 2);
+      if (esp.semValor?.includes(nome)) { if (Object.hasOwn(flags, nome)) throw new Falha('uso', `${a} repetido. ${uso}`, {}, 2); flags[nome] = true; continue; }
       const v = resto[i + 1];
       if (v === undefined || v.startsWith('--')) throw new Falha('uso', `${a} sem valor. ${uso}`, {}, 2);
       if (Object.hasOwn(flags, nome)) throw new Falha('uso', `${a} repetido. ${uso}`, {}, 2);

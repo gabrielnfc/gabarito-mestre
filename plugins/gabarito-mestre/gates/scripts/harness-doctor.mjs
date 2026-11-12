@@ -52,7 +52,10 @@ let nucleo = null;
 let nucleoErro = '';
 try {
   const [diario, aprendizado, plano, loop] = await Promise.all([import('../dist/diario.js'), import('../dist/aprendizado.js'), import('../dist/plano.js'), import('../dist/loop.js')]);
-  nucleo = { lerAprendizados: diario.lerAprendizados, avisosAprendizado: aprendizado.avisosAprendizado, validarPlano: plano.validarPlano, PAPEIS: loop.PAPEIS };
+  nucleo = {
+    lerAprendizados: diario.lerAprendizados, aprendizadosNoInstantaneo: diario.aprendizadosNoInstantaneo, avisosAprendizado: aprendizado.avisosAprendizado,
+    aprendizadosVigentes: aprendizado.aprendizadosVigentes, paraDestino: aprendizado.paraDestino, validarPlano: plano.validarPlano, PAPEIS: loop.PAPEIS,
+  };
 } catch (e) {
   nucleoErro = e instanceof Error ? e.message : 'erro desconhecido';
 }
@@ -299,6 +302,20 @@ function lerArvoreDeAprendizados(root) {
     }
   }
   return { porEntrega, planos, avisos };
+}
+
+/**
+ * REQ-APR-5 c (GM-14 T33): quantos D de `instantaneo` cabem nos 800 do instantâneo (N) de quantos há (M), pelo mesmo leitor e o mesmo bloco
+ * do cartão (`lerAprendizados` + `aprendizadosNoInstantaneo`): o corte nunca é silencioso. `dist/` ausente ⇒ `null` (a linha diz que não conferiu).
+ */
+export function aprendizadosNoInstantaneo(root) {
+  if (nucleo === null) return null;
+  try {
+    const { porEntrega, avisos } = nucleo.lerAprendizados(join(root, '.harness', 'entregas'));
+    return nucleo.aprendizadosNoInstantaneo(nucleo.paraDestino(nucleo.aprendizadosVigentes(porEntrega), 'instantaneo'), avisos);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1218,6 +1235,7 @@ export function run(root = process.cwd(), overrides = {}) {
     camada,
     loop: modDoLoop(root),
     db: estadoDb(fileCfg, configInvalido),
+    aprendizados: aprendizadosNoInstantaneo(root),
     perfil,
     alcancado,
     declarado,
@@ -1266,6 +1284,7 @@ function render(out, explain) {
   if (out.perfil) linhas.push(`Perfil: ${out.perfil}`);
   linhas.push(out.loop.mod ? `loop: mod ativo (custo.medicao do orquestrador há ${Math.round(out.loop.ha)} h)` : 'loop: sem mod (sem pouso automático) · sem gatilho de mensagem do dono');
   linhas.push(out.db.estado === 'declarado' || out.db.estado === 'n/a' ? `db: ${out.db.estado}` : `db: ${out.db.estado} (${out.db.erro})`);
+  linhas.push(out.aprendizados === null ? 'aprendizados: não conferidos (dist/ do núcleo não carregou)' : `aprendizados: ${out.aprendizados.n} no instantâneo de ${out.aprendizados.m}`);
   linhas.push('');
   linhas.push(`Nível alcançado: ${out.alcancado}   ·   declarado no AGENTS.md: ${out.declarado ?? '(não declarado)'}`);
   if (out.configInvalido) linhas.push('AVISO: harness.config.json inválido — checagens de config ficam FALTA (fail-open declarado (G9)).');
