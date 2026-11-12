@@ -30,7 +30,7 @@ const ID_PADRAO = '[A-Z]+-\\d+';
 const CHAVES_AMBIENTE: Array<keyof AmbienteDecl> = ['hosts', 'projetos', 'bancos', 'mcps', 'variaveis', 'branches'];
 
 type Fonte = 'origin' | 'local' | 'nenhuma';
-type Guarda = { config: ConfigGuarda | null; fonte: Fonte; divergente: boolean; localIgnorada: boolean; onboarding: boolean; idPadrao: string };
+type Guarda = { config: ConfigGuarda | null; fonte: Fonte; divergente: boolean; localIgnorada: boolean; onboarding: boolean; idPadrao: string; autonomia: boolean };
 
 // ---------------------------------------------------------------------------------------------------------------
 // fs e git
@@ -116,13 +116,15 @@ function lerGuarda(raiz: string): Guarda {
     const divergente = l !== null && l.assinatura !== o.assinatura;
     // D2: origin sem seção `guarda` vence mesmo que a árvore local a tenha; a árvore local é ignorada, e isso se avisa.
     const localIgnorada = o.config === null && l !== null && l.config !== null;
-    return { config: o.config, fonte: 'origin', divergente, localIgnorada, onboarding: true, idPadrao: o.idPadrao };
+    // Autonomia por projeto: só a config de origin/HEAD (mudada por merge) vale; a árvore local nunca liga. Só o valor exato liga.
+    const autonomia = objeto(origem.guarda)?.autonomia === 'orquestrador';
+    return { config: o.config, fonte: 'origin', divergente, localIgnorada, onboarding: true, idPadrao: o.idPadrao, autonomia };
   }
   if (local !== null) {
     const l = normalizar(local, 'local');
-    return { config: l.config, fonte: 'local', divergente: false, localIgnorada: false, onboarding: true, idPadrao: l.idPadrao };
+    return { config: l.config, fonte: 'local', divergente: false, localIgnorada: false, onboarding: true, idPadrao: l.idPadrao, autonomia: false };
   }
-  return { config: null, fonte: 'nenhuma', divergente: false, localIgnorada: false, onboarding: false, idPadrao: ID_PADRAO };
+  return { config: null, fonte: 'nenhuma', divergente: false, localIgnorada: false, onboarding: false, idPadrao: ID_PADRAO, autonomia: false };
 }
 
 /**
@@ -622,7 +624,7 @@ function principal(): void {
   const guarda = raizSessao === null ? null : lerGuarda(raizSessao);
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..', '..');
   const contexto = montarContexto(entrada, raizCwd ?? raizSessao, cwd, pluginRoot, pausa.raizes, ancoraDaSessao(process.env.CLAUDE_PROJECT_DIR));
-  const r = decidir(entrada, guarda?.config ?? null, contexto, lerAutonomia());
+  const r = decidir(entrada, guarda?.config ?? null, contexto, lerAutonomia() || guarda?.autonomia === true);
 
   const sessao = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;
   const mensagens: string[] = [];
