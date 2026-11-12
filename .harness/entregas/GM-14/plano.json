@@ -308,7 +308,11 @@
         "plugins/gabarito-mestre/gates/test/depende.test.ts",
         "plugins/gabarito-mestre/gates/src/perguntas.ts",
         "plugins/gabarito-mestre/gates/dist/perguntas.js",
-        "plugins/gabarito-mestre/gates/test/perguntas.test.ts"
+        "plugins/gabarito-mestre/gates/test/perguntas.test.ts",
+        "plugins/gabarito-mestre/gates/src/trilha.ts",
+        "plugins/gabarito-mestre/gates/dist/trilha.js",
+        "plugins/gabarito-mestre/gates/test/trilha.test.ts",
+        "plugins/gabarito-mestre/gates/test/responder.test.mjs"
       ],
       "reqs": [
         "REQ-DEP-1"
