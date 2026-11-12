@@ -6,7 +6,7 @@
 // O mod carrega `dist/loop.js` como módulo de hook: só import relativo e, no fecho inteiro, nenhum módulo embutido do Node (por isso `plano.ts` normaliza caminho por conta própria).
 // A projeção das propostas abertas é UMA só, a de `emenda.ts`; `emenda.ts` importa `ordenar` daqui (ciclo medido nos runners).
 import { projetarEmendas } from './emenda.js';
-import { PAPEIS } from './formas.js';
+import { MOTIVOS_REENTREGA, PAPEIS } from './formas.js';
 import { pendenciasAprendizado } from './pendencias.js';
                                                                                          
 
@@ -69,7 +69,7 @@ export const CHAVES_DE_EVENTO = [
   'iniciada.implementador', 'iniciada.revisor', 'iniciada.correcao', 'task.concluida',
   'veredito.aprovado', 'veredito.aprovado.com_achado',
   'veredito.reprovado.r1', 'veredito.reprovado.teto', 'veredito.reprovado.sem_achado',
-  'task.integrada', 'reaberta.retomada', 'reaberta.dono',
+  'task.integrada', 'reaberta.retomada', 'reaberta.dono', 'concluida.reentrega',
 ]         ;
                                                             
 
@@ -84,15 +84,17 @@ const VEREDITOS = {
  * Única fonte do estado de uma task: estado → evento → próximo estado. Par ausente é diário inválido.
  * `veredito.aprovado.com_achado` não aparece em nenhum estado de propósito (A11).
  * `reaberta.retomada` fora de agente em voo não muda nada: quem decide reabrir é o orquestrador, não esta tabela.
+ * `concluida.reentrega` (FIEL-8 b, `concluir --motivo`): commit novo depois do `concluir` só em `concluida` (b1, rodada igual) e em
+ * `aprovada` (b2, rodada − 1: o APROVADO anulado não conta); em qualquer outro estado é par ausente (b3). O motivo não dá poder: não tira do teto, não pula review.
  */
 export const TRANSICOES                                                               = {
   pendente: { 'iniciada.implementador': 'implementando', 'reaberta.retomada': 'pendente', 'reaberta.dono': 'pendente' },
   implementando: { 'task.concluida': 'concluida', 'reaberta.retomada': 'pendente', 'reaberta.dono': 'implementando' },
-  concluida: { 'iniciada.revisor': 'em_revisao', ...VEREDITOS, 'reaberta.retomada': 'concluida', 'reaberta.dono': 'concluida' },
+  concluida: { 'iniciada.revisor': 'em_revisao', ...VEREDITOS, 'reaberta.retomada': 'concluida', 'reaberta.dono': 'concluida', 'concluida.reentrega': 'concluida' },
   em_revisao: { ...VEREDITOS, 'reaberta.retomada': 'concluida', 'reaberta.dono': 'em_revisao' },
   reprovada: { 'iniciada.correcao': 'corrigindo', 'reaberta.retomada': 'reprovada', 'reaberta.dono': 'reprovada' },
   corrigindo: { 'task.concluida': 'concluida', 'reaberta.retomada': 'reprovada', 'reaberta.dono': 'corrigindo' },
-  aprovada: { 'task.integrada': 'integrada', 'reaberta.retomada': 'aprovada', 'reaberta.dono': 'aprovada' },
+  aprovada: { 'task.integrada': 'integrada', 'reaberta.retomada': 'aprovada', 'reaberta.dono': 'aprovada', 'concluida.reentrega': 'concluida' },
   // Autotransição: só o dono tira do teto; evento avulso não tira nem quebra. `task.integrada` fica de fora: integrar sem liberação é fraude.
   no_teto: {
     'iniciada.implementador': 'no_teto', 'iniciada.revisor': 'no_teto', 'iniciada.correcao': 'no_teto', 'task.concluida': 'no_teto',
@@ -113,7 +115,10 @@ function chaveDe(e        , rodada        , estado            )                 
       if (!(PAPEIS                      ).includes(dados.papel)) return 'papel inválido';
       return { chave: `iniciada.${dados.papel         }`               , rodada: null };
     case 'task.concluida':
-      return { chave: 'task.concluida', rodada: null };
+      // Sem `motivo` é a entrega da 2.0.0 (chave `task.concluida`); com ele, a reentrega (b), e só os 3 literais valem (b6).
+      if (dados.motivo === undefined) return { chave: 'task.concluida', rodada: null };
+      if (!(MOTIVOS_REENTREGA                      ).includes(dados.motivo)) return 'motivo inválido';
+      return { chave: 'concluida.reentrega', rodada: estado === 'aprovada' ? rodada - 1 : null };
     case 'task.integrada':
       return { chave: 'task.integrada', rodada: null };
     case 'task.reaberta':

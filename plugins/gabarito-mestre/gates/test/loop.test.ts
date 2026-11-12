@@ -414,6 +414,8 @@ test('dependente-de-bloqueada-nao-aprovada-espera', () => {
 const tetoDe = (t: string) => ({ tipo: 'parar', motivo: 'teto_rodadas', task: t });
 const dono = (task: string): [TipoEvento, Record<string, unknown>] => ['task.reaberta', { task, origem: 'dono' }];
 const retomada = (task: string): [TipoEvento, Record<string, unknown>] => ['task.reaberta', { task, origem: 'retomada' }];
+/** GM-14 T31 (FIEL-8 b): reentrega = `task.concluida` com `motivo`, sha novo. */
+const ree = (task: string, motivo: unknown = 'gate', sha = 'abc2'): [TipoEvento, Record<string, unknown>] => ['task.concluida', { task, sha, motivo }];
 const EVENTOS_AVULSOS: [string, [TipoEvento, Record<string, unknown>]][] = [
   ['iniciada.implementador', ini('a')], ['iniciada.revisor', ini('a', 'revisor')], ['iniciada.correcao', ini('a', 'correcao')],
   ['concluida', con('a')], ['aprovado r3', ver('a', 'APROVADO', 3)], ['aprovado r2 com achado', ver('a', 'APROVADO', 2, 1)],
@@ -629,6 +631,7 @@ function eventoDaChave(chave: ChaveEvento, rodadaAtual: number): Par {
     case 'veredito.reprovado.sem_achado': return ver('a', 'REPROVADO', proxima);
     case 'reaberta.retomada': return retomada('a');
     case 'reaberta.dono': return dono('a');
+    case 'concluida.reentrega': return ree('a');
   }
 }
 /** Oráculo independente: a tabela escrita por extenso, uma aresta por linha. Alterar `TRANSICOES` exige alterar isto. */
@@ -646,6 +649,7 @@ concluida veredito.reprovado.teto no_teto
 concluida veredito.reprovado.sem_achado reprovada
 concluida reaberta.retomada concluida
 concluida reaberta.dono concluida
+concluida concluida.reentrega concluida
 em_revisao veredito.aprovado aprovada
 em_revisao veredito.reprovado.r1 reprovada
 em_revisao veredito.reprovado.teto no_teto
@@ -661,6 +665,7 @@ corrigindo reaberta.dono corrigindo
 aprovada task.integrada integrada
 aprovada reaberta.retomada aprovada
 aprovada reaberta.dono aprovada
+aprovada concluida.reentrega concluida
 no_teto iniciada.implementador no_teto
 no_teto iniciada.revisor no_teto
 no_teto iniciada.correcao no_teto
@@ -700,7 +705,11 @@ for (const estado of Object.keys(TRANSICOES) as EstadoTask[]) {
       assert.equal('invalido' in chegou ? chegou.invalido : chegou.estado, estado, 'o prefixo leva ao estado');
       const r = estadoDe(diario(...evs, eventoDaChave(chave, rodada)));
       if (esperado === undefined) assert.ok('invalido' in r, JSON.stringify(r));
-      else assert.deepEqual(r, { estado: esperado, rodada: esperado === 'pendente' ? 0 : chave.startsWith('veredito.') && estado !== 'no_teto' ? rodada + 1 : rodada });
+      else {
+        // FIEL-8 b2: a reentrega sobre `aprovada` anula o APROVADO (rodada − 1); em `concluida` (b1) a rodada fica.
+        const anulada = chave === 'concluida.reentrega' && estado === 'aprovada';
+        assert.deepEqual(r, { estado: esperado, rodada: esperado === 'pendente' ? 0 : chave.startsWith('veredito.') && estado !== 'no_teto' ? rodada + 1 : anulada ? rodada - 1 : rodada });
+      }
     });
   }
 }
@@ -1310,4 +1319,93 @@ test('dist-loop-nao-importa-node-nem-modulo-que-importe', () => {
   assert.ok(visto.has('emenda.js') && visto.has('plano.js'), 'loop.js deve importar emenda.js (sem cópia da projeção)');
   // REQ-APR-2: a cláusula `aprender` usa a projeção de `pendencias.js` (sem cópia), que entra no fecho e também não importa `node:*`
   assert.ok(visto.has('pendencias.js'), 'loop.js deve importar pendencias.js (sem cópia da projeção)');
+});
+
+// ---- GM-14 T31 (Emenda 2, FIEL-8 b): reentrega com motivo. P1 da Sombra (t31-sombra-p1.md), ataques 1–15 no núcleo. Mutações M-F8a..g.
+const MOTIVOS_R = ['gate', 'sombra', 'dono'] as const;
+test('reentrega-concluida-mantem-rodada (b1): concluida + R => concluida, rodada igual, nos 3 motivos', () => {
+  for (const m of MOTIVOS_R) {
+    assert.deepEqual(estadoDe(diario(ini('a'), con('a'), ree('a', m))), { estado: 'concluida', rodada: 0 }, m);
+    const r1 = [ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), ini('a', 'correcao'), con('a')] as Par[];
+    assert.deepEqual(estadoDe(diario(...r1, ree('a', m))), { estado: 'concluida', rodada: 1 }, `${m} após r1`);
+  }
+});
+test('reentrega-aprovada-anula-o-aprovado (b2): aprovada + R => concluida, rodada − 1; o próximo veredito declara a rodada anulada', () => {
+  for (const m of MOTIVOS_R) {
+    assert.deepEqual(estadoDe(diario(...aprovada('a'), ree('a', m))), { estado: 'concluida', rodada: 0 }, m);
+    assert.deepEqual(estadoDe(diario(...aprovada('a'), ree('a', m), ver('a', 'APROVADO', 1))), { estado: 'aprovada', rodada: 1 }, `${m}: veredito 1 passa`);
+    assert.deepEqual(estadoDe(diario(...aprovada('a'), ree('a', m), ver('a', 'APROVADO', 2))), { invalido: 'rodada fora de sequência' }, `${m}: veredito 2 mente`);
+  }
+});
+test('reentrega-motivo-invalido (b6): motivo fora de gate|sombra|dono, null, vazio ou número => "motivo inválido"', () => {
+  for (const m of ['x', null, '', 3, 'GATE', true, ['gate']]) {
+    assert.deepEqual(estadoDe(diario(ini('a'), con('a'), ree('a', m))), { invalido: 'motivo inválido' }, JSON.stringify(m));
+    assert.deepEqual(estadoDe(diario(...aprovada('a'), ree('a', m))), { invalido: 'motivo inválido' }, JSON.stringify(m));
+    assert.deepEqual(proximaAcao(plano(['a']), diario(...aprovada('a'), ree('a', m)), sinais()), invalido, JSON.stringify(m));
+  }
+});
+test('reentrega-sem-motivo-e-a-chave-de-2-0-0: motivo ausente (ou undefined) = task.concluida, nunca reentrega', () => {
+  assert.deepEqual(estadoDe(diario(ini('a'), ['task.concluida', { task: 'a', sha: 'x', motivo: undefined }])), { estado: 'concluida', rodada: 0 });
+  assert.deepEqual(estadoDe(diario(...aprovada('a'), con('a'))), { invalido: 'task.concluida em aprovada' }, 'b4: P em aprovada segue inválido');
+  assert.deepEqual(estadoDe(diario(ini('a'), con('a'), con('a'))), { invalido: 'task.concluida em concluida' }, 'b4: P em concluida segue inválido');
+});
+test('reentrega-no-teto-invalida (ataque 1): R em no_teto é diário inválido e a proxima para, nos 3 motivos', () => {
+  for (const m of MOTIVOS_R) {
+    assert.deepEqual(estadoDe(diario(...noTeto('a'), ree('a', m))), { invalido: 'concluida.reentrega em no_teto' }, m);
+    assert.deepEqual(proximaAcao(plano(['a']), diario(...noTeto('a'), ree('a', m)), sinais()), invalido, m);
+  }
+  assert.deepEqual(estadoDe(diario(...noTeto('a'), con('a'))), { estado: 'no_teto', rodada: 2 }, 'P em no_teto segue autotransição');
+});
+test('reentrega-integrada-invalida (ataque 2): R depois de integrada nunca reabre', () => {
+  for (const m of MOTIVOS_R) assert.deepEqual(estadoDe(diario(...pronta('a'), ree('a', m))), { invalido: 'concluida.reentrega em integrada' }, m);
+});
+for (const [estado, evs] of [
+  ['pendente', []], ['implementando', [ini('a')]], ['em_revisao', [ini('a'), con('a'), ini('a', 'revisor')]],
+  ['reprovada', [ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1)]], ['corrigindo', [ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), ini('a', 'correcao')]],
+] as [EstadoTask, Par[]][]) {
+  test(`reentrega-em-${estado}-invalida (b3, ataque 12): par ausente nos 3 motivos`, () => {
+    for (const m of MOTIVOS_R) assert.deepEqual(estadoDe(diario(...evs, ree('a', m))), { invalido: `concluida.reentrega em ${estado}` }, m);
+  });
+}
+test('reentrega-duas-seguidas-rodada-nunca-negativa (ataque 6): − 1 só sai de aprovada', () => {
+  assert.deepEqual(estadoDe(diario(...aprovada('a'), ree('a', 'gate', 's1'), ree('a', 'sombra', 's2'))), { estado: 'concluida', rodada: 0 });
+  assert.deepEqual(estadoDe(diario(...aprovada('a'), ree('a', 'gate', 's1'), ree('a', 'dono', 's2'), ree('a', 'gate', 's3'))), { estado: 'concluida', rodada: 0 });
+});
+test('reentrega-r2-nao-foge-do-teto (ataque 7): aprovada em 2 => R => espera 2; REPROVADO 2 com achado => no_teto', () => {
+  const r2 = [ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), ini('a', 'correcao'), con('a'), ver('a', 'APROVADO', 2)] as Par[];
+  assert.deepEqual(estadoDe(diario(...r2)), { estado: 'aprovada', rodada: 2 });
+  assert.deepEqual(estadoDe(diario(...r2, ree('a'))), { estado: 'concluida', rodada: 1 });
+  assert.deepEqual(estadoDe(diario(...r2, ree('a'), ver('a', 'REPROVADO', 2, 1))), { estado: 'no_teto', rodada: 2 });
+  assert.deepEqual(estadoDe(diario(...r2, ree('a'), ver('a', 'REPROVADO', 3, 1))), { invalido: 'rodada fora de sequência' }, 'a R não abre rodada extra');
+});
+test('reentrega-determinismo (ataque 8a): reler o mesmo diário dá o mesmo estado e rodada', () => {
+  const evs = diario(...aprovada('a'), ree('a'));
+  const a = estadoDe(evs);
+  const b = estadoDe(structuredClone(evs));
+  assert.deepEqual(a, b);
+  assert.deepEqual(a, { estado: 'concluida', rodada: 0 }, 'r − 1 = 0 é valor, não ausência');
+});
+test('reentrega-diario-2-0-0-sem-motivo-projeta-igual (ataque 9): ciclo completo e r1 reprovada => correção => concluida', () => {
+  assert.deepEqual(estadoDe(diario(...pronta('a'))), { estado: 'integrada', rodada: 1 });
+  assert.deepEqual(estadoDe(diario(ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), ini('a', 'correcao'), con('a'))), { estado: 'concluida', rodada: 1 });
+  assert.deepEqual(estadoDe(diario(...aprovada('a'))), { estado: 'aprovada', rodada: 1 });
+});
+test('reentrega-nao-pula-review (ataque 11): depois da R a proxima despacha revisor, nunca integrar; podeIntegrar falso', () => {
+  const p = plano(['a']);
+  assert.deepEqual(proximaAcao(p, diario(...aprovada('a')), sinais()), { tipo: 'integrar', tasks: ['a'] });
+  for (const m of MOTIVOS_R) {
+    assert.deepEqual(proximaAcao(p, diario(...aprovada('a'), ree('a', m)), sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'revisor' }] }, m);
+    assert.equal(podeIntegrar(p, diario(...aprovada('a'), ree('a', m)), 'a'), false, m);
+    assert.equal(podeIntegrar(p, diario(...aprovada('a'), ree('a', m), ini('a', 'revisor'), ver('a', 'APROVADO', 1)), 'a'), true, `${m}: APROVADO novo libera`);
+  }
+});
+test('reentrega-relogio-voltando-o-nucleo-aceita (ataque 8b): a defesa mora na borda; o núcleo projeta pela ordem', () => {
+  const i = ev(1, '2026-11-03T00:00:01.000Z', 'A', ...ini('a'));
+  const c = ev(2, '2026-11-03T00:00:02.000Z', 'A', ...con('a'));
+  const rv = ev(3, '2026-11-03T00:00:05.000Z', 'A', ...ini('a', 'revisor'));
+  const v = ev(4, '2026-11-03T00:00:06.000Z', 'A', ...ver('a', 'APROVADO', 1));
+  const r = ev(1, '2026-11-03T00:00:03.000Z', 'B', ...ree('a'));
+  const ord = ordenar([i, c, rv, v, r]);
+  assert.ok(ord.ok);
+  assert.deepEqual(ord.eventos.map((e) => e.seq + e.sessao), ['1A', '2A', '1B', '3A', '4A'], 'R intercala antes do APROVADO');
 });
