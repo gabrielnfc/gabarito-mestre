@@ -746,7 +746,18 @@ function empilhar(dest: string[], origem: string[]): void {
 export const MARCA_INTERRUPTOR = /gabarito-auto/i;
 // Escrita em `refs/remotes` ou `packed-refs` por interpretador (python3, node, perl): fora de `git`, cuja classificação é própria.
 const MARCA_REFS = /refs\/remotes|packed-refs/i;
-const LEITORES_SIMPLES =new Set(['cat', 'head', 'tail', 'less', 'more', 'grep', 'ls', 'stat', 'jq']);
+const LEITORES_SIMPLES = new Set(['cat', 'head', 'tail', 'less', 'more', 'grep', 'ls', 'stat', 'jq']);
+/** `git branch` que apaga (`-d`, `-D`, `--delete`) ou renomeia (`-m`, `-M`, `--move`) ref remota (`-r`, `--remotes`, `remotes/…`, `origin/…`). */
+function branchMexeEmRemota(resto: string[]): boolean {
+  const curtas = resto.filter((a) => /^-[^-]/.test(a)).join('');
+  const longas = resto.filter((a) => a.startsWith('--'));
+  const apaga = /[dD]/.test(curtas) || longas.some((a) => a === '--delete');
+  const move = /[mM]/.test(curtas) || longas.some((a) => a === '--move');
+  const remota = /r/.test(curtas) || longas.some((a) => a === '--remotes');
+  const nomeRemoto = resto.some((a) => !a.startsWith('-') && /^(refs\/)?remotes\/|^origin\//.test(a));
+  return (apaga && remota) || (move && (remota || nomeRemoto));
+}
+
 /** Leitor sem redirecionamento de saída (e `jq` sem `-i…`): a única forma de citar o interruptor sem pedir. */
 function leitorSimples(s: Segmento): boolean {
   return LEITORES_SIMPLES.has(s.cmd) && s.saidas.length === 0 && !(s.cmd === 'jq' && s.args.some((a) => /^-[^-]*i/.test(a)));
@@ -794,6 +805,13 @@ export function anelDeBash(segmentos: Segmento[], contexto: Contexto, cwd?: stri
       const gitResto = candidatos(semTextoLivre('git', g.resto)).filter(ehCaminhoPlausivel);
       if (g.configs.some((c) => /^(remote\.|url\.|core\.hookspath)/i.test(c))) integridade ??= { anel: 'integridade', alvo: '.git/config', escrita: true };
       if (!subagent && gitResto.some((p) => dentroDeDotGit(p, contexto, atual))) integridade ??= { anel: 'integridade', alvo: '.git', escrita: true };
+      // `git branch -d|-D -r` e `-m|-M` sobre ref remota apagam ou movem `refs/remotes`: sem `origin/HEAD`, a guarda cai nos ambientes da árvore local.
+      if (g.sub === 'branch' && branchMexeEmRemota(g.resto)) integridade ??= { anel: 'integridade', alvo: 'refs/remotes', escrita: true };
+      // Execução escondida em `git`: `rebase -x|--exec` e `-c alias.*=!…` rodam comando arbitrário. Cita ref, `packed-refs` ou o interruptor ⇒ integridade;
+      // alias de shell, para o subagent, é sempre integridade.
+      const aliasShell = g.configs.some((c) => /^alias\.[^=]*=\s*!/i.test(c));
+      const rebaseExec = g.sub === 'rebase' && g.resto.some((a) => /^--exec(=|$)|^-[a-zA-Z]*x/.test(a));
+      if ((aliasShell || rebaseExec) && (MARCA_REFS.test(s.cru) || MARCA_INTERRUPTOR.test(s.cru) || (subagent && aliasShell))) integridade ??= { anel: 'integridade', alvo: 'refs/remotes', escrita: true };
       if (g.sub === 'push') {
         if (!(subagent ? pushPermitido(g.resto) : pushSemRefsRemotes(g.resto))) integridade ??= { anel: 'integridade', alvo: 'refs/remotes', escrita: true };
       } else if (g.resto.some((a) => GIT_OUTPUT.test(a))) {
