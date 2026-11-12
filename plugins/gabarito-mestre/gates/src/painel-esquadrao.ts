@@ -370,9 +370,13 @@ function natural(v: unknown, modo: 'nome' | 'reticencia' = 'nome'): string {
 const ID_ENTREGA = /^[A-Z]+-\d+$/;
 const idNatural = (v: unknown): string => { const c = limpar(typeof v === 'string' ? v : ''); return ID_ENTREGA.test(c) ? c : natural(c); };
 
-/** Título (FIEL-5 a, D-P14): sem o prefixo `<ID> —|–|-|:`, sem marcação, uma vez. */
-function tituloLimpo(titulo: unknown, id: string): string {
+/**
+ * Título (FIEL-5 a, D-P14): sem o prefixo `<ID> —|–|-|:`, sem marcação, uma vez. O prefixo sai comparando o título CRU (sem marcação) com o ID CRU
+ * (`true_force`, não `true force`); só depois o resto vira natural.
+ */
+function tituloLimpo(titulo: unknown, idCru: unknown): string {
   let t = semMarcacao(limpar(typeof titulo === 'string' ? titulo : '')).trim();
+  const id = limpar(typeof idCru === 'string' ? idCru : '').trim();
   if (id !== '') {
     if (t === id) return '';
     if (t.startsWith(id)) {
@@ -444,7 +448,7 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   const por = (prioridade: number, l: Linha): Linha => { ls.push({ prioridade, ordem: ordem++, l }); return l; };
 
   // cabeçalho (FIEL-10 f)
-  const titulo = id === '' ? '' : tituloLimpo(e.titulo, id); // sem entrega identificada, o título (da entrega) não se aplica
+  const titulo = id === '' ? '' : tituloLimpo(e.titulo, e.id); // sem entrega identificada, o título (da entrega) não se aplica
   por(2, [seg(`GABARITO · ${id !== '' ? id : 'sem entrega identificada'}${titulo !== '' ? ` ${titulo}` : ''}`)]);
 
   // 1 DEPENDE DE VOCÊ: PAROU, pergunta, demais itens

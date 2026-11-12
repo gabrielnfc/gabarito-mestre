@@ -11,6 +11,7 @@ import { fraseHistorico, historicoDe, paraTexto } from '../src/painel-texto.ts';
 import { PAPEL_EXECUTIVO } from '../src/painel-executivo.ts';
 import { orcamentoDe } from '../src/orcamento.ts';
 import { linhaTecnica } from '../src/origem.ts';
+import { colunas } from '../src/painel-largura.ts';
 import type { FatosTrilha } from '../src/trilha.ts';
 import type { AgenteVivo, EntradaPainel, EstadoPainel, Evento, MotivoParar, OpcoesRender, Plano, TipoEvento } from '../src/tipos.ts';
 
@@ -295,6 +296,14 @@ test('recente-travou-em-palavras-automatico: cada MotivoParar vira "travou: <pal
   }
 });
 
+test('recente-motivo-fora-de-MotivoParar-nunca-cru (r3, O4): "o loop travou", sem o motivo, sem técnico', () => {
+  const r = recenteDe([e(1, 'loop.parar', { motivo: 'motivo_inventado_xyz', task: 'T1' })]).filter((x) => /travou/.test(x));
+  assert.equal(r.length, 1);
+  assert.match(r[0], /\d\d:\d\d \S o loop travou \(automático\)$/);
+  assert.doesNotMatch(r[0], /motivo_inventado|inventado|xyz/);
+  assert.ok(!linhaTecnica(r[0]), r[0]);
+});
+
 test('id-de-entrega-natural-se-nao-casa: true_force em `ultima` e em e.id vai por nomeNatural; GM-13 fica cru', () => {
   const ult = (id: string) => texto(proj(null, [], { fatos: fatos({ branch: 'main', plano: null }), ultima: { id, estado: 'publicada' } }));
   assert.equal(ult('true_force'), 'GABARITO · sem entrega em curso · última: true force (publicada)');
@@ -308,11 +317,26 @@ test('id-de-entrega-natural-se-nao-casa: true_force em `ultima` e em e.id vai po
 });
 
 test('pergunta-b-pela-sessao-do-fato: fatos.sessao abre a (b) com a opção GM-13 crua no render (R-X6)', () => {
-  const s = proj(null, [nota(1, 'ideia', 'usar o painel novo')], { fatos: fatos({ branch: 'main', plano: null, ultimas: [{ id: 'GM-13', data: iso(-60) }] }) });
+  const s = proj(null, [nota(1, 'desvio', 'usar o painel novo')], { fatos: fatos({ branch: 'main', plano: null, ultimas: [{ id: 'GM-13', data: iso(-60) }] }) }); // ideia não ancora (b) desde a T13b
   assert.equal(s.pergunta?.gatilho, 'b');
   assert.ok(s.pergunta?.opcoes?.some((o) => /GM-13/.test(JSON.stringify(o))), 'opção GM-13 crua no estado');
   assert.match(texto(s), /GM-13/);
   assert.doesNotMatch(texto(s), /GM 13/);
+});
+
+test('pergunta-ideia-pelo-perguntasAbertas-real (r3, T13b): opção única "visto", render natural e sem linha técnica', () => {
+  const s = proj(P(...IDS), [nota(1, 'ideia', 'usar o painel novo'), nota(2, 'ideia', 'true_force no meu_app.config')]);
+  assert.equal(s.pergunta?.gatilho, 'ideia');
+  assert.deepEqual(s.pergunta?.opcoes, ['visto']);
+  const l = linhas(s);
+  const q = l.filter((x) => /visto/.test(x));
+  assert.ok(q.length >= 1, l.join('\n'));
+  assert.match(q[0], / · 1 visto/);
+  for (const x of l) assert.ok(!linhaTecnica(x), `técnica: "${x}"`);
+  for (const preset of ['esquadrao', 'executivo'] as const) for (const largura of [20, 40, 80, 120]) for (const x of linhas(s, { preset, largura })) {
+    assert.ok(!linhaTecnica(x), `técnica ${preset} ${largura}: "${x}"`);
+    assert.ok(colunas(x) <= largura, `passou da largura ${preset} ${largura}: "${x}"`);
+  }
 });
 
 test('id-de-entrega-intacto: o ID cru aparece no cabeçalho e na pergunta (b), nunca naturalizado', () => {
@@ -340,6 +364,18 @@ test('titulo-uma-vez-sem-marcacao: sem o prefixo do ID, sem crase, ** nem _ de �
     assert.equal(l[0], esperado, titulo);
     assert.equal((l.join('\n').match(/GM-14/g) ?? []).length, 1, `${titulo}: ID uma vez`);
   }
+});
+
+test('titulo-tira-o-id-cru-antes-de-naturalizar (r3): o prefixo é comparado com e.id CRU; o ID natural aparece uma vez', () => {
+  const cab = (id: string, titulo: string) => linhas({ ...proj(P(...IDS), [], { titulo: null }), id, titulo })[0];
+  for (const sep of ['—', '–', '-', ':']) {
+    assert.equal(cab('true_force', `true_force ${sep} painel novo`), 'GABARITO · true force painel novo', `separador ${sep}`);
+  }
+  assert.equal(cab('true_force', 'true_force: painel novo'), 'GABARITO · true force painel novo');
+  assert.equal(cab('true_force', 'true_force'), 'GABARITO · true force');
+  assert.equal(cab('minha_entrega', 'minha_entrega'), 'GABARITO · minha entrega');
+  assert.equal(cab('minha_entrega', '**minha_entrega** — `painel`'), 'GABARITO · minha entrega painel');
+  assert.equal(cab('GM-14', 'GM-14 — Clareza'), 'GABARITO · GM-14 Clareza');
 });
 
 // ───────────────────────────── AGORA (FIEL-3 b, FIEL-4, FIEL-11 a)

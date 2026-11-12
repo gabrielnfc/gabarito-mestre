@@ -62,7 +62,7 @@ const ESTADOS: [string, () => EstadoPainel][] = [
   ['uma-linha-id-tecnico', () => projetarPainel(null, D([]), entrada({ fatos: fatos({ branch: 'main', plano: null }), ultima: { id: 'true_force', estado: 'publicada' } }))],
   ['cabecalho-id-tecnico', () => projetarPainel({ ...P, entrega: 'true_force' }, D([ini(0, 'T1')]), entrada({ entregaId: 'true_force', titulo: 'true_force — painel' }))],
   ['fora', () => projetarPainel(null, D([]), entrada({ fatos: fatos({ branch: null, plano: null }), fora: true }))],
-  ['projeto-pergunta-b', () => projetarPainel(null, D([nota(1, 'ideia', 'usar true_force no meu_app.config')]),
+  ['projeto-pergunta-b', () => projetarPainel(null, D([nota(1, 'desvio', 'usar true_force no meu_app.config')]),
     entrada({ fatos: fatos({ branch: 'main', plano: null, ultimas: [{ id: 'GM-13', data: iso(-60) }, { id: 'true_force', data: iso(-90) }] }) }))],
   ['fase-spec-ambigua', () => projetarPainel(null, D([
     e(1, 'fato.medido', { chave: 'spec', fonte: 'arquivo', valor: { caminho: SPEC.caminho, sha256: SPEC.sha256, secoes: 6 } }),
@@ -106,6 +106,7 @@ test('lng-propriedade: 12 estados × larguras 20..200 × 2 presets × 2 temas �
             assert.doesNotMatch(l, /\d…/, `número cortado: ${onde}`);
             assert.doesNotMatch(l, /\b0 %|contexto 0\b/, `ausente virou zero: ${onde}`);
             assert.doesNotMatch(l, /GM 1[34]\b/, `ID naturalizado: ${onde}`);
+            assert.doesNotMatch(l, /\b(true force|minha entrega) \1\b/i, `ID repetido (título sem o prefixo, FIEL-5 a): ${onde}`);
             assert.ok(colunas(l) <= largura, `passou da largura: ${onde}`);
           }
         }
