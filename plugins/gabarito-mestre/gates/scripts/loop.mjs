@@ -889,7 +889,8 @@ async function integrar(c, plano, task, opcoes = {}) {
     if (proprio !== 0 && proprio !== 1) {
       throw new Falha('ancestral_indeterminado', `git merge-base --is-ancestor ${revisado.slice(0, 12)} ${baseAbrir.slice(0, 12)} saiu com ${proprio === null ? 'sinal ou erro' : `código ${proprio}`}: não sei se ${task} tem commit próprio desde a base do abrir; nada foi feito`, nada);
     }
-    if (proprio === 0) naBase = 1;
+    // Emenda 3: exceção DECLARADA, nunca implícita — um `desvio` da mesma task citando o sha aprovado (T0 commitada na base antes do `abrir`).
+    if (proprio === 0 && !desvioCitaSha(c, ord.ok ? ord.eventos : [], task, revisado)) naBase = 1;
   }
   if (naBase === 0) return integrarJaNaBase(c, plano, ord.ok ? ord.eventos : [], task, branch, base, revisado);
   if (naBase !== 1) {
@@ -979,6 +980,24 @@ async function integrar(c, plano, task, opcoes = {}) {
 }
 
 /** `git merge-base --is-ancestor`: o código de saída (0 é ancestral, 1 não é), `null` se o git nem rodou ou morreu por sinal. */
+/**
+ * Emenda 3 (FIEL-9 a6): algum `desvio` da MESMA task cita o sha aprovado em `evidencia` ou num item de `arquivos`? Cita = um token hexadecimal
+ * minúsculo isolado (fronteira de palavra, 7 a 40 caracteres) que é o sha completo, ou prefixo dele com >= 7 que o git resolve SÓ para ele
+ * (`rev-parse --verify` recusa prefixo ambíguo). Menos de 7, maiúsculas, colado a outra letra ou com caractere a mais: não cita.
+ */
+function desvioCitaSha(c, eventos, task, sha) {
+  const cita = (tok) => {
+    if (tok === sha) return true;
+    if (tok.length >= 40 || !sha.startsWith(tok)) return false;
+    try { return git(c.raiz, 'rev-parse', '--verify', '--quiet', '--end-of-options', tok) === sha; } catch { return false; }
+  };
+  return eventos.some((e) => {
+    if (e.tipo !== 'desvio' || e.dados?.task !== task) return false;
+    const textos = [e.dados.evidencia, ...(Array.isArray(e.dados.arquivos) ? e.dados.arquivos : [])].filter((t) => typeof t === 'string');
+    return textos.some((t) => (t.match(/(?<![0-9A-Za-z])[0-9a-f]{7,40}(?![0-9A-Za-z])/g) ?? []).some(cita));
+  });
+}
+
 function ehAncestral(cwd, ancestral, descendente) {
   const r = spawnSync('git', ['-C', cwd, 'merge-base', '--is-ancestor', ancestral, descendente], { stdio: 'ignore', env: ambienteGit() });
   return r.error ? null : r.status;

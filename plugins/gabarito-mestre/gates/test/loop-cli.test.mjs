@@ -1948,6 +1948,118 @@ exec "${GIT_REAL}" "$@"
     assert.ok(!amb.tipos().includes('task.integrada'));
   });
 
+  /**
+   * Emenda 3: a TOPOLOGIA EXATA da T0 real. O commit da task entrou na base ANTES do `abrir`: a branch nasce NELE ("Created from <sha>"),
+   * sem commit próprio, e a base anda depois. Só um `desvio` da MESMA task citando o sha aprovado libera o caminho (b); sem ele, recusa (A3).
+   */
+  const PLANO_DESVIO = planoDe([
+    { id: 'T1', deps: [], arquivos: ['src/t1.txt'], reqs: ['REQ-A-1'] },
+    { id: 'T2', deps: [], arquivos: ['src/t2.txt'], reqs: ['REQ-A-2'] },
+  ]);
+  const topologiaT0 = ({ semShaGravado = false } = {}) => {
+    const amb = ambiente({ plano: PLANO_DESVIO });
+    writeFileSync(join(amb.dir, 'src/t1.txt'), 't0 commitada direto na base\n');
+    g(amb.dir, 'add', 'src/t1.txt');
+    g(amb.dir, 'commit', '-q', '-m', 'docs(GM-10): T0 direto na base');
+    const aprovado = amb.topo(BASE);
+    const w = aprovarSemCommit(amb, 'T1');
+    commitNaBase(amb);
+    // fatos do git medidos, não presumidos: a branch nasceu no aprovado, sem commit próprio, e ele é ancestral da base
+    assert.equal(amb.topo(BRANCH), aprovado);
+    assert.match(g(amb.dir, 'reflog', 'show', '--format=%gs', BRANCH).trim().split('\n').at(-1), new RegExp(`^branch: Created from ${aprovado}$`));
+    assert.equal(g(amb.dir, 'merge-base', BRANCH, BASE).trim(), aprovado);
+    assert.equal(g(amb.dir, 'rev-list', '--count', `${aprovado}..${BRANCH}`).trim(), '0');
+    assert.equal(spawnSync(GIT_REAL, ['-C', amb.dir, 'merge-base', '--is-ancestor', aprovado, BASE]).status, 0);
+    if (semShaGravado) g(amb.dir, 'config', '--unset', `branch.${BRANCH}.gabaritoBaseSha`);
+    return { amb, w, aprovado };
+  };
+  const desvio = (amb, task, req, evidencia, arquivos = '') => {
+    const r = amb.cli(['desvio', task, '--req', req, '--evidencia', evidencia, '--arquivos', arquivos, '--causa', 'tecnica']);
+    assert.equal(r.rc, 0, r.out + r.err);
+  };
+  const recusaZeroCommits = (amb, w, aprovado) => {
+    const topoBase = amb.topo(BASE);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'gate_reprovado', r.out);
+    assert.ok(r.j.relato.some((l) => /0 commits contra a base/.test(l)), JSON.stringify(r.j.relato));
+    assert.equal(r.j.evento, false);
+    assert.ok(!('ja_na_base' in r.j));
+    assert.ok(!amb.tipos().includes('task.integrada'), 'nada gravado');
+    assert.equal(amb.topo(BASE), topoBase, 'base intocada');
+    assert.equal(amb.topo(BRANCH), aprovado, 'a branch voltou ao commit revisado');
+    assert.ok(existsSync(w));
+  };
+  const integraPorB = (amb, w, aprovado) => {
+    const topoBase = amb.topo(BASE);
+    writeFileSync(amb.gitLog, '');
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.ok, true);
+    assert.equal(r.j.merge, false);
+    assert.equal(r.j.ja_na_base, true);
+    assert.deepEqual(amb.eventos().at(-1).dados, { task: 'T1', sha: aprovado, ja_na_base: true });
+    assert.equal(amb.topo(BASE), topoBase, 'a base não se move');
+    assert.ok(!existsSync(w), 'worktree fechada');
+    semMover(amb);
+  };
+
+  test('t0-sem-desvio-recusa-zero-commits', () => {
+    for (const semShaGravado of [false, true]) {
+      const { amb, w, aprovado } = topologiaT0({ semShaGravado });
+      recusaZeroCommits(amb, w, aprovado);
+    }
+  });
+
+  test('t0-desvio-da-task-citando-o-sha-integra-por-b', () => {
+    for (const semShaGravado of [false, true]) {
+      // sha completo em `evidencia`; com e sem `gabaritoBaseSha` (abrir antigo)
+      const { amb, w, aprovado } = topologiaT0({ semShaGravado });
+      desvio(amb, 'T1', 'REQ-A-1', `T0 commitada na base antes do abrir: ${aprovado}`);
+      integraPorB(amb, w, aprovado);
+    }
+  });
+
+  test('t0-desvio-cita-sha-curto-inequivoco-integra-por-b', () => {
+    const { amb, w, aprovado } = topologiaT0();
+    desvio(amb, 'T1', 'REQ-A-1', `T0 na base (${aprovado.slice(0, 7)}), reflog Created from`);
+    integraPorB(amb, w, aprovado);
+  });
+
+  test('t0-desvio-cita-sha-em-arquivos-integra-por-b', () => {
+    const { amb, w, aprovado } = topologiaT0();
+    desvio(amb, 'T1', 'REQ-A-1', 'T0 commitada na base antes do abrir', `src/t1.txt,${aprovado.slice(0, 12)}`);
+    integraPorB(amb, w, aprovado);
+  });
+
+  test('t0-desvio-de-outra-task-citando-o-sha-recusa', () => {
+    const { amb, w, aprovado } = topologiaT0();
+    desvio(amb, 'T2', 'REQ-A-2', `T0 commitada na base antes do abrir: ${aprovado}`, aprovado);
+    recusaZeroCommits(amb, w, aprovado);
+  });
+
+  test('t0-desvio-da-task-citando-outro-sha-recusa', () => {
+    const { amb, w, aprovado } = topologiaT0();
+    const outro = amb.topo(BASE);
+    assert.notEqual(outro, aprovado);
+    desvio(amb, 'T1', 'REQ-A-1', `outro commit: ${outro}`, outro.slice(0, 12));
+    recusaZeroCommits(amb, w, aprovado);
+  });
+
+  test('t0-desvio-cita-sha-curto-demais-ou-ambiguo-recusa', () => {
+    // 6 hex não cita; prefixo que o git não resolve só para o aprovado (ambíguo) não cita; sha com 1 hex a mais (41) não cita; maiúsculas não são o texto exato
+    const { amb, w, aprovado } = topologiaT0();
+    desvio(amb, 'T1', 'REQ-A-1', `curto ${aprovado.slice(0, 6)} longo ${aprovado}0 caixa ${aprovado.toUpperCase()} colado x${aprovado.slice(0, 8)}`);
+    const bin = amb.env.PATH.split(':')[0];
+    writeFileSync(join(bin, 'git'), `#!/bin/bash
+echo "$*" >> "$GIT_LOG"
+if [[ "$*" == *"rev-parse --verify --quiet --end-of-options ${aprovado.slice(0, 7)}" ]]; then exit 128; fi
+exec "${GIT_REAL}" "$@"
+`, { mode: 0o755 });
+    desvio(amb, 'T1', 'REQ-A-1', `ambíguo ${aprovado.slice(0, 7)}`);
+    recusaZeroCommits(amb, w, aprovado);
+  });
+
   test('ja-na-base-commit-proprio-indeterminado-recusa', async () => {
     const amb = ambiente();
     const w = amb.aprovar('T1');
