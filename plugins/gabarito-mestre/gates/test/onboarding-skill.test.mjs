@@ -26,6 +26,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { ofertaLocal } from '../scripts/onboarding-painel.mjs';
+import { ofertaFoco } from '../scripts/onboarding-foco.mjs';
 import { ORDEM_ITENS, IDS_FIXAS, coletarFatos, detectar, perguntas, gravar, rodarReal } from '../scripts/onboarding.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -169,6 +170,9 @@ function violacoesSkill(texto) {
   if (!(iFoco >= 0 && iPainel > iFoco)) v.push('local-fora-de-lugar');
   if (!/fora do teto de perguntas/.test(fluxo)) v.push('ofertas-dentro-do-teto');
   if (!/foco[\s\S]{0,500}`--sim`/.test(fluxo)) v.push('foco-sem-sim');
+  if (!/Gravou\?[^\n]*sem `AskUserQuestion` \(headless\), nenhuma: consentimento não tem default/.test(fluxo)) v.push('ofertas-sem-headless-nenhuma');
+  const linhaFoco = fluxo.split('\n').find((l) => /^\s*Pergunte o `texto`, com `opcoes`/.test(l) && l.includes('--sim')) ?? '';
+  if (!linhaFoco.includes('com `opcoes` na ordem em que vêm (`sim`, `não, obrigado`) e marque `não, obrigado`, o `default`, como o padrão')) v.push('foco-ordem-padrao-fora-da-oferta');
   if (!/--local lateral` ou `--local acima`/.test(fluxo)) v.push('local-sem-valores');
   if (/\bR(19|2[01]|30)\b|como veio/.test(texto)) v.push(`r19-ou-como-veio: ${(/\bR(19|2[01]|30)\b|como veio/.exec(texto) ?? [''])[0]}`);
   v.push(...violacoesLocal(texto, 'SKILL'));
@@ -578,6 +582,26 @@ test('skill-foco-depois-de-gravar', () => {
   assert.ok(violacoesSkill(trocado).includes('foco-fora-de-lugar'));
   assert.ok(violacoesSkill(planta(SKILL, 'fora do teto de perguntas', 'dentro do teto de perguntas')).includes('ofertas-dentro-do-teto'));
   assert.ok(violacoesSkill(planta(SKILL, '`--sim` no fim', '`--ok` no fim')).includes('foco-sem-sim'));
+});
+
+test('skill-foco-casa-a-oferta-real', () => {
+  // MAJOR-1 (r1 da T21): a skill descreve a saída do `ofertaFoco`; o texto cruza com o produtor (spec REQ-ONB-2: "sim / não, obrigado; default não")
+  const o = ofertaFoco(novoDir('gm-skill-foco-'));
+  assert.deepEqual(o.opcoes, ['sim', 'não, obrigado']);
+  assert.equal(o.default, 'não, obrigado');
+  const frase = `com \`opcoes\` na ordem em que vêm (${o.opcoes.map((x) => `\`${x}\``).join(', ')}) e marque \`${o.default}\`, o \`default\`, como o padrão`;
+  assert.ok(SKILL.includes(frase), 'a skill diz a ordem e o padrão que o ofertaFoco devolve');
+  assert.deepEqual(violacoesSkill(SKILL).filter((x) => x.startsWith('foco-ordem')), []);
+  assert.ok(violacoesSkill(planta(SKILL, ', como o padrão', '')).includes('foco-ordem-padrao-fora-da-oferta'), 'R6: sem a marca do padrão cai');
+  assert.ok(violacoesSkill(planta(SKILL, '(`sim`, `não, obrigado`)', '(`não, obrigado`, `sim`)')).includes('foco-ordem-padrao-fora-da-oferta'), 'ordem trocada cai');
+  assert.ok(violacoesSkill(planta(SKILL, 'marque `não, obrigado`, o `default`', 'marque `sim`, o `default`')).includes('foco-ordem-padrao-fora-da-oferta'), 'padrão "sim" cai');
+});
+
+test('skill-ofertas-sem-headless', () => {
+  // MAJOR-2 (r1 da T21): consentimento não tem default; headless não faz oferta nenhuma
+  assert.ok(violacoesSkill(planta(SKILL, '; sem `AskUserQuestion` (headless), nenhuma: consentimento não tem default', '')).includes('ofertas-sem-headless-nenhuma'), 'R7');
+  assert.ok(violacoesSkill(planta(SKILL, 'headless), nenhuma:', 'headless), uma só:')).includes('ofertas-sem-headless-nenhuma'));
+  assert.deepEqual(violacoesSkill(SKILL).filter((x) => x.startsWith('ofertas-sem')), []);
 });
 
 test('skill-local-depois-do-foco', () => {

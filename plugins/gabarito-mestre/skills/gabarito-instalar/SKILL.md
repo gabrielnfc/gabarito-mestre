@@ -65,7 +65,7 @@ Estas instruções são para você. Ao falar com o usuário, use frases curtas, 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding.mjs" foco --root "<raiz>"
    ```
-   Pergunte o `texto`, com `opcoes` na ordem e o default `não, obrigado` primeiro. "sim": rode o mesmo comando com `--sim` no fim, mostre `frase` e `comoVoltar`. Não: nada.
+   Pergunte o `texto`, com `opcoes` na ordem em que vêm (`sim`, `não, obrigado`) e marque `não, obrigado`, o `default`, como o padrão: sem escolha deliberada nada é gravado. "sim": rode o mesmo comando com `--sim` no fim, mostre `frase` e `comoVoltar`. Não: nada.
    2. **Local do painel**, só depois do foco:
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding.mjs" painel --root "<raiz>"
