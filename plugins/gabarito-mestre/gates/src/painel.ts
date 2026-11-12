@@ -638,7 +638,7 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
   // trilha, perguntas e "depende de você" pelas funções únicas (T3, T12, T13)
   const trilha = trilhaDe(fatos, lista);
   const abertas = perguntasAbertas(lista, trilha, { sessao: typeof fatos.sessao === 'string' ? fatos.sessao : null, ...(Array.isArray(fatos.ultimas) ? { ultimas: fatos.ultimas } : {}) })
-    .filter((q) => q.gatilho !== 'pendencia'); // pendência é item (3) de `dependeDe`, com o botão "feito"
+    .filter((q) => q.gatilho !== 'pendencia' && q.gatilho !== 'ideia'); // pendência (3) e ideia (4) são itens de `dependeDe`, com o botão "feito"/"visto"
   const pergunta = abertas[0] ?? null;
   let depende = dependeDe(trilha, lista, legado.depende, { falhou: fontes }, entrada.pousoPendente === true,
     { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao });

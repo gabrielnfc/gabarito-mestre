@@ -326,17 +326,35 @@ test('pergunta-b-pela-sessao-do-fato: fatos.sessao abre a (b) com a opção GM-1
 
 test('pergunta-ideia-pelo-perguntasAbertas-real (r3, T13b): opção única "visto", render natural e sem linha técnica', () => {
   const s = proj(P(...IDS), [nota(1, 'ideia', 'usar o painel novo'), nota(2, 'ideia', 'true_force no meu_app.config')]);
-  assert.equal(s.pergunta?.gatilho, 'ideia');
-  assert.deepEqual(s.pergunta?.opcoes, ['visto']);
+  assert.equal(s.pergunta, null, 'a ideia não é pergunta aberta: é o item (4) do "depende de você"');
   const l = linhas(s);
-  const q = l.filter((x) => /visto/.test(x));
-  assert.ok(q.length >= 1, l.join('\n'));
-  assert.match(q[0], / · 1 visto/);
+  const q = l.filter((x) => /ideias? viram? a próxima/.test(x));
+  assert.deepEqual(q, ['depende de você: decidir se as 2 ideias viram a próxima entrega [visto]'], `a ideia sai 1 vez só (item (4)):\n${l.join('\n')}`);
   for (const x of l) assert.ok(!linhaTecnica(x), `técnica: "${x}"`);
   for (const preset of ['esquadrao', 'executivo'] as const) for (const largura of [20, 40, 80, 120]) for (const x of linhas(s, { preset, largura })) {
     assert.ok(!linhaTecnica(x), `técnica ${preset} ${largura}: "${x}"`);
     assert.ok(colunas(x) <= largura, `passou da largura ${preset} ${largura}: "${x}"`);
   }
+});
+
+test('ideia-so-no-depende (r2): spec por aprovar + ideia => "aprovar a spec" antes, ideia 1x; orçamento 2 não manda a spec para (+N); dúvida vence a ideia', () => {
+  const spec = { caminho: 'docs/superpowers/specs/x.md', pbi: 'GM-14', sha256: 'a'.repeat(64), secoes: 6, titulo: 'Clareza' };
+  const f = fatos({ plano: null, specs: [spec] });
+  const branch = e(1, 'fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'enabler/GM-14-clareza' } });
+  const s = proj(null, [branch, nota(2, 'ideia', 'usar o painel novo')], { fatos: f });
+  const l = linhas(s);
+  const iSpec = l.findIndex((x) => /aprovar a spec da GM-14/.test(x));
+  const iIdeia = l.findIndex((x) => /ideia vira a próxima/.test(x));
+  assert.ok(iSpec >= 0 && iIdeia > iSpec, `spec antes da ideia:\n${l.join('\n')}`);
+  assert.equal(l.filter((x) => /ideia vira a próxima/.test(x)).length, 1, l.join('\n'));
+  const curto = linhas(s, { orcamento: 2 });
+  assert.ok(curto.some((x) => /aprovar a spec da GM-14/.test(x)), `"aprovar a spec" não cai para (+N):\n${curto.join('\n')}`);
+  const comDuvida = proj(P(...IDS), [nota(1, 'ideia', 'usar o painel novo'), nota(2, 'duvida', 'qual caminho seguir?', { opcoes: ['este', 'aquele'] })]);
+  const ld = linhas(comDuvida);
+  const iD = ld.findIndex((x) => /qual caminho seguir/.test(x));
+  const iI = ld.findIndex((x) => /ideia vira a próxima/.test(x));
+  assert.ok(iD >= 0 && (iI < 0 || iD < iI), `dúvida antes da ideia:\n${ld.join('\n')}`);
+  assert.equal(comDuvida.pergunta?.gatilho, 'd');
 });
 
 test('id-de-entrega-intacto: o ID cru aparece no cabeçalho e na pergunta (b), nunca naturalizado', () => {
@@ -347,6 +365,7 @@ test('id-de-entrega-intacto: o ID cru aparece no cabeçalho e na pergunta (b), n
   assert.doesNotMatch(t, /GM 13/);
   const comId = proj(P(...IDS), [], { titulo: 'GM-14 — Clareza' });
   assert.match(texto(comId), /^GABARITO · GM-14 Clareza$/m);
+  assert.match(texto(proj(P(...IDS), [], { titulo: 'gm-14 — Clareza' })), /^GABARITO · GM-14 Clareza$/m, 'prefixo sem diferenciar caixa');
 });
 
 // ───────────────────────────── cabeçalho (FIEL-5 a, D-P14)

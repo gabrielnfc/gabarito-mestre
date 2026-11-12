@@ -378,8 +378,8 @@ function tituloLimpo(titulo         , idCru         )         {
   let t = semMarcacao(limpar(typeof titulo === 'string' ? titulo : '')).trim();
   const id = limpar(typeof idCru === 'string' ? idCru : '').trim();
   if (id !== '') {
-    if (t === id) return '';
-    if (t.startsWith(id)) {
+    if (t.toLowerCase() === id.toLowerCase()) return '';
+    if (t.toLowerCase().startsWith(id.toLowerCase())) {
       const resto = t.slice(id.length);
       const m = /^\s*[—–:-]\s*/.exec(resto);
       if (m) t = resto.slice(m[0].length);
