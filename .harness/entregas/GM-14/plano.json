@@ -784,7 +784,12 @@
         "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
         "plugins/gabarito-mestre/gates/test/loop.test.ts",
         "plugins/gabarito-mestre/gates/test/formas.test.ts",
-        "plugins/gabarito-mestre/skills/gabarito-loop/SKILL.md"
+        "plugins/gabarito-mestre/skills/gabarito-loop/SKILL.md",
+        "plugins/gabarito-mestre/gates/scripts/stop-loop.mjs",
+        "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs",
+        "plugins/gabarito-mestre/gates/test/origem.test.ts",
+        "plugins/gabarito-mestre/gates/test/liberar-teto.test.mjs",
+        "plugins/gabarito-mestre/gates/scripts/liberar-teto.mjs"
       ],
       "reqs": [
         "REQ-DIA-2",
