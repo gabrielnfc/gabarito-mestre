@@ -188,22 +188,6 @@
       ]
     },
     {
-      "id": "T8",
-      "titulo": "Herança da 1.x, coleta",
-      "deps": [
-        "T1",
-        "T0"
-      ],
-      "arquivos": [
-        "plugins/gabarito-mestre/gates/scripts/onboarding-herdar.mjs",
-        "plugins/gabarito-mestre/gates/test/onboarding-herdar.test.mjs",
-        "plugins/gabarito-mestre/gates/test/fixtures/onboarding/repo-110/"
-      ],
-      "reqs": [
-        "REQ-ONB-3"
-      ]
-    },
-    {
       "id": "T9",
       "titulo": "Oferta do modo foco",
       "deps": [
