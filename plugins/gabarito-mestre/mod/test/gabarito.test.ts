@@ -3357,7 +3357,7 @@ for (const percent of [null, 49]) {
     expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
   })
 }
-test('pendencia-dono-nao-tira-o-pouso-60: dono aberta + contexto 60 % (X=50) ⇒ Agent negado por POUSO, nunca por aprendizado; o /clear acontece como sem a mensagem (FIEL-2 b, guardas combinadas)', async ($, on) => {
+test('pendencia-dono-nao-pousa-com-conversa-aberta-60: dono aberta + contexto 60 % (X=50) ⇒ Agent negado pela regra de contexto (texto de pouso), nunca pela pendência; 0 /clear com a conversa aberta; fechada a dono, o pouso e o /clear acontecem (FIEL-2 b, núcleo loop.ts:269-302)', async ($, on) => {
   const m = mundo($, on, { percent: 60, eventos: B_FEITA })
   await m.inicio()
   await m.dono(); await m.clock.settle()
@@ -3366,6 +3366,10 @@ test('pendencia-dono-nao-tira-o-pouso-60: dono aberta + contexto 60 % (X=50) ⇒
   expect(r.deny).toMatch(/pouso: contexto em 60% \(X=50%\)/)
   expect(r.deny).not.toMatch(TEXTO_PENDENCIA)
   expect((await m.agent('gabarito-revisor')).deny).toBeUndefined()
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(0)
+  fecharEm(m)
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso: contexto em 60%/)
   await m.turno(); await m.clock.settle()
   expect(m.est.clears).toBe(1)
 })
@@ -3447,6 +3451,17 @@ test('mod-nao-grava-mensagem-sem-identificacao: sem entrega identificada o dono.
   expect(PEDIDOS_DE(m, 'mensagem')).toHaveLength(0)
   expect(msgsDo(m)).toHaveLength(0)
   expect(m.toasts).toEqual([])
+})
+test('mensagem-sem-entrega-nao-reserva-o-texto: o texto visto sem entrega identificada não fica reservado; identificada a entrega dentro de 120 s, o mesmo texto grava (N7)', async ($, on) => {
+  const o: any = { identificada: false }
+  const m = mundo($, on, o)
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(0)
+  o.identificada = true
+  await m.clock.advance(30_000)
+  await m.dono(); await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(1)
 })
 for (const modo of ['sem_loop', 'erro', 'torto'] as const) {
   test(`sem-estado-do-painel-pendencia-review-nega-${modo}: o painel ${modo} não muda a identificação; a pendência de review segue negando`, async ($, on) => {

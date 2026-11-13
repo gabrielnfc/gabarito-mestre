@@ -250,6 +250,7 @@ function descrever(r) {
   if (r.mundo === null) return 'diário ou plano ilegíveis';
   if (r.acao === null) return 'núcleo sem resposta';
   const a = r.acao;
+  if (a.tipo === 'aprender' && pendenciasQueBarram(a.pendencias).length === 0) return 'pouso pendente (conversa do dono aberta)';
   if (a.tipo === 'aprender') return 'aprendizado pendente: feche antes de despachar'; // nunca `aprender` cru (Sombra 2d.4)
   if (a.tipo === 'pousar') return 'pouso pendente';
   if (a.tipo === 'esperar') return `esperar (${a.motivo})`;
@@ -284,19 +285,19 @@ async function avaliar($, c) {
     return r;
   }
   if (!(r.acao.tipo === 'parar' && r.acao.motivo === 'diario_invalido')) diarioAvisado = null;
-  // FIEL-2 b: a pendência `dono` sai do cálculo; o resto (pouso, review, parar, fechamento) segue valendo. O núcleo devolve `aprender` no lugar
-  // de `pousar`/`concluir` quando só a `dono` está aberta: refaz-se a pergunta sem as `dono.mensagem`; se a resposta é `pousar`, o pouso vale
-  // (contexto acima de X nega e faz o /clear como sem a mensagem). `concluir` segue esperando a conversa.
-  if (r.acao.tipo === 'aprender' && pendenciasQueBarram(r.acao.pendencias).length === 0) {
+  // FIEL-2 b: o núcleo (loop.ts:269-302) já devolve `aprender` no lugar de `pousar` quando só a `dono` (conversa) está aberta. O mod não troca
+  // essa ação por `pousar`: iniciarPouso e /clear com a conversa aberta cortariam o dono. Acima de X o Agent segue negado pela regra de contexto
+  // (texto de pouso), abaixo de X a `dono` não nega nada; fechada a conversa, o núcleo devolve `pousar` e o pouso corre normal.
+  const soDono = r.acao.tipo === 'aprender' && pendenciasQueBarram(r.acao.pendencias).length === 0;
+  let pousariaSemDono = false; // só decide a negação do Agent; a ação do mod continua a do núcleo
+  if (soDono && !m.consumida && percent !== null && percent >= x) {
     try {
-      const sem = proximaAcao(m.plano, m.eventos.filter((e) => e?.tipo !== 'dono.mensagem'), {
-        slots: m.slots, percent: m.consumida ? null : percent, x, pausado: m.pausado, vivos: m.vivos,
-        tokens: m.tokens, tetoTokens: m.tetoTokens, podePousar: true,
-      });
-      if (sem.tipo === 'pousar') r.acao = sem;
-    } catch { /* fica `aprender` */ }
+      pousariaSemDono = proximaAcao(m.plano, m.eventos.filter((e) => e?.tipo !== 'dono.mensagem'), {
+        slots: m.slots, percent, x, pausado: m.pausado, vivos: m.vivos, tokens: m.tokens, tetoTokens: m.tetoTokens, podePousar: true,
+      }).tipo === 'pousar';
+    } catch { /* sem resposta: não nega por isto */ }
   }
-  r.negar = negaDespacho(r.acao, m.consumida) && !(r.acao.tipo === 'aprender' && pendenciasQueBarram(r.acao.pendencias).length === 0);
+  r.negar = soDono ? pousariaSemDono : negaDespacho(r.acao, m.consumida);
   return r;
 }
 
@@ -678,7 +679,7 @@ export const register = (on) => {
         if (r.negar) {
           negou();
           if (r.acao?.tipo === 'pousar' && r.mundo !== null) await marcarPousoPendente($, c, r.mundo.eventos);
-          if (r.acao?.tipo === 'aprender') return { deny: textoPendencia(pendenciasQueBarram(r.acao.pendencias)) }; // texto único: nunca `aprender` cru nem "encerre o turno"
+          if (r.acao?.tipo === 'aprender' && pendenciasQueBarram(r.acao.pendencias).length > 0) return { deny: textoPendencia(pendenciasQueBarram(r.acao.pendencias)) }; // texto único: nunca `aprender` cru nem "encerre o turno"
           return { deny: `pouso: contexto em ${r.percent}% (X=${r.x}%), ${descrever(r)}. Sem despacho novo; só o revisor passa. Não tente de novo: encerre o turno.` };
         }
         if (r.porta.despacho === 'permitir') {
