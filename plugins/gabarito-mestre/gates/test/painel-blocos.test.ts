@@ -6,6 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { projetarPainel, renderPainel, TABELA_PARAR } from '../src/painel.ts';
 import { fraseHistorico, historicoDe, paraTexto } from '../src/painel-texto.ts';
 import { PAPEL_EXECUTIVO } from '../src/painel-executivo.ts';
@@ -126,7 +127,9 @@ test('prioridades-por-h-e-maxrows: 9 pares de H × maxRows ⇒ ≤ orçamento, t
     assert.ok(l.every((x) => !/\bmore\b/.test(x)), 'sem "N more"');
     const maxPrio = Math.max(...l.map((x) => PRIO[blocoDe(x, l.indexOf(x), l)] ?? 9));
     const presentes = new Set(l);
-    cheio.forEach((x, i) => { if (prioCheio[i] < maxPrio) assert.ok(presentes.has(x) || /\(\+\d+\)/.test(l.join('\n')), `H ${h}: "${x}" (prio ${prioCheio[i]}) saiu antes de prio ${maxPrio}`); });
+    // exceção declarada (emenda 37, 2ª ao D-P8): com a decisão da Sombra, o AGORA encolhe para a linha-resumo `N agentes:` antes de o RECENTE sair
+    const resumido = l.some((x) => /^  \d+ agentes:/.test(x));
+    cheio.forEach((x, i) => { if (prioCheio[i] < maxPrio && !(resumido && /^  \S+ · .* · /.test(x) && prioCheio[i] === 3)) assert.ok(presentes.has(x) || /\(\+\d+\)/.test(l.join('\n')), `H ${h}: "${x}" (prio ${prioCheio[i]}) saiu antes de prio ${maxPrio}`); });
   }
 });
 
@@ -736,16 +739,129 @@ test('reserva-quando-recente-cortado-so-em-parte: se alguma linha do RECENTE sob
   assert.equal(l.filter(ehDecidiu).length, 1);
 });
 
-test('decisao-sombra-reservada-80x24-orcamento-real: orcamentoDe(24, 12) = 7 com 2 agentes vivos (blocos 1–3 = 6 linhas) ⇒ a decisão ocupa a 7ª linha', () => {
-  const s = proj(P(...IDS), [...EXECUCAO, ini(44, 'T6'), DEC(50, 'seguir com a T3')], { agentes: [vivo('T4 implementador'), vivo('T5 revisor')] });
-  const orc = orcamentoDe(24, 12);
-  assert.equal(orc, 7);
-  const b123 = blocos123(s, 'acima');
-  assert.ok(b123.length <= orc, `blocos 1–3 (${b123.length}) cabem em ${orc}`);
-  const l = cabe(s, { local: 'acima', orcamento: orc });
-  assert.ok(l.length <= orc);
-  for (const x of b123) assert.ok(l.includes(x), `bloco 1–3: "${x}"`);
-  assert.equal(b123.length, 6);
-  assert.equal(l.length, 7);
-  assert.match(l[6], /ELROND decidiu: seguir com a T3 \(anotado pelo orquestrador\)$/);
+// ───────────────────────────── T42 (emenda 37): AGORA compacta em 1 linha-resumo quando a reserva da Sombra não cabe
+
+/** ESTADO DO ROTEIRO do A1 (pontos.json, msgs 3–52): DEPENDE com 2 itens (2 linhas). Nunca um estado inventado: os motivos vêm do arquivo. */
+const PONTOS = JSON.parse(readFileSync(new URL('./e2e/conversa-2026-11-11/pontos.json', import.meta.url), 'utf8')) as { pontos: { msg: number; esperado: { depende: string[] } }[] };
+const DEPENDE_ROTEIRO = PONTOS.pontos.find((x) => x.msg === 3)!.esperado.depende;
+const doRoteiro = (s: EstadoPainel): EstadoPainel => ({ ...s, depende: DEPENDE_ROTEIRO.map((motivo) => ({ motivo, acoes: [], nivel: 'dono' })) }) as EstadoPainel;
+const VIVOS = ['T4 implementador', 'T5 revisor', 'T6 implementador'];
+const roteiro = (n: number, itens: Item[] = [DEC(50, 'seguir com a T3')], extra: Partial<Entrada> = {}): EstadoPainel =>
+  doRoteiro(proj(P(...IDS), [...EXECUCAO, ...itens], { agentes: VIVOS.slice(0, n).map((d) => vivo(d)), ...extra }));
+const ORC_ACIMA = orcamentoDe(24, 12);
+const linhasAgora = (l: string[]): string[] => l.filter((x) => /^AGORA|^  (\d+ agentes:|\S+ · )/.test(x) && !/decidiu:|^  \d\d:\d\d/.test(x));
+const resumoDe = (l: string[]): string[] => l.filter((x) => /^  \d+ agentes:/.test(x));
+
+test('roteiro-premissa: DEPENDE do roteiro tem 2 itens e orcamentoDe(24, 12) = 7', () => {
+  assert.equal(DEPENDE_ROTEIRO.length, 2);
+  assert.equal(ORC_ACIMA, 7);
+});
+
+for (const n of [2, 3]) {
+  test(`reserva-com-agora-compacto-acima-80x24-roteiro: ${n} vivos ⇒ "decidiu:" presente e AGORA em 2 linhas (orquestrador + "${n} agentes:")`, () => {
+    const s = roteiro(n);
+    const cheio = cabe(s, { local: 'acima', orcamento: 200 });
+    assert.ok(cheio.length > ORC_ACIMA && resumoDe(cheio).length === 0, 'premissa: sem aperto cada agente tem a sua linha');
+    const l = cabe(s, { local: 'acima', orcamento: ORC_ACIMA });
+    assert.ok(l.length <= ORC_ACIMA, l.join('|'));
+    assert.equal(l.filter(ehDecidiu).length, 1, `a decisão da Sombra fica: ${l.join('|')}`);
+    const agora = linhasAgora(l);
+    assert.equal(agora.length, 2, agora.join('|'));
+    assert.match(agora[0], /^AGORA · GANDALF · contexto 40 %/);
+    assert.match(agora[1], new RegExp(`^  ${n} agentes: .*T4`));
+    for (const x of DEPENDE_ROTEIRO) assert.ok(l.some((y) => y.includes(x)), `DEPENDE presente: ${x}`);
+    assert.ok(l.some((x) => /^PRONTO|^FASE/.test(x)) && l[0].startsWith('GABARITO'));
+    assert.ok(l.every((x) => colunas(x) <= 80));
+  });
+}
+
+test('linha-resumo: rótulo (nome temático) e task de cada agente; N = vivos; o segundo plano entra como item e não conta em N', () => {
+  const s = roteiro(3, [DEC(50, 'seguir com a T3')], { segundoPlano: [{ id: 'bg1', dono: 'orquestrador', texto: 'npm test', desde: AGORA - 30_000 }] });
+  assert.equal(s.agora?.segundoPlano.length, 1, 'premissa: 1 linha de segundo plano');
+  const [r] = resumoDe(cabe(s, { local: 'acima', orcamento: ORC_ACIMA }));
+  assert.ok(r !== undefined, 'compactou');
+  assert.match(r, /^  3 agentes: /, 'N conta só agentes');
+  const nomes = (s.agora?.agentes ?? []).map((a) => `${a.quem.nome} ${a.task}`);
+  assert.equal(nomes.length, 3);
+  for (const x of nomes) assert.ok(r.includes(x), `"${x}" na linha-resumo: ${r}`);
+  assert.match(r, /Teste orquestrador$/, 'o segundo plano é um item da linha');
+  assert.ok(!/implementando|revisando|\d+ ?s\b|lendo/.test(r), 'ação e tempo saem');
+});
+
+test('linha-resumo-truncada: "…" no fim, cabe em w, N segue = todos os vivos, itens visíveis inteiros', () => {
+  const s = roteiro(3);
+  const todos = (s.agora?.agentes ?? []).map((a) => `${a.quem.nome} ${a.task}`);
+  const completo = resumoDe(cabe(s, { local: 'acima', orcamento: ORC_ACIMA }))[0];
+  assert.ok(!completo.endsWith('…'), 'em 80 colunas cabem os 3');
+  const w = colunas(`  3 agentes: ${todos[0]} · ${todos[1]}`) + 2; // cabe 2 itens e o " …", não o 3º
+  // a largura estreita quebra o DEPENDE em mais linhas: o menor orçamento em que a decisão ainda cabe compactando
+  const orc = Array.from({ length: 30 }, (_, i) => i + 5).find((o) => resumoDe(cabe(s, { local: 'acima', orcamento: o, largura: w })).length === 1);
+  assert.ok(orc !== undefined, 'em algum orçamento o AGORA compacta');
+  const l = cabe(s, { local: 'acima', orcamento: orc, largura: w });
+  const [r] = resumoDe(l);
+  assert.ok(r !== undefined && colunas(r) <= w, `${r}`);
+  assert.ok(r.endsWith(' …'), r);
+  assert.match(r, /^  3 agentes: /, 'N = vivos, mesmo com 1 escondido pelo "…"');
+  assert.ok(r.includes(todos[0]) && r.includes(todos[1]) && !r.includes(todos[2]), r);
+  assert.equal(l.filter((x) => /decidiu:/.test(x)).length, 1);
+});
+
+test('sem-compactar-quando-cabe: com a reserva cabendo (180×50 sem corte, lateral com folga, orçamento b123+1) cada agente tem a sua linha', () => {
+  const s = roteiro(3);
+  for (const o of [{ local: 'lateral' as const, largura: 180 }, { local: 'lateral' as const, largura: 80, orcamento: 14 }, { local: 'acima' as const, largura: 80, orcamento: 14 }]) {
+    const l = cabe(s, o);
+    assert.equal(resumoDe(l).length, 0, `${JSON.stringify(o)}: ${l.join('|')}`);
+    assert.equal(l.filter((x) => /^  \S+ · T\d · /.test(x)).length, 3, '1 linha por agente');
+  }
+  // reserva cabendo SEM compactar: RECENTE cortado inteiro, blocos 1–3 completos (orquestrador + 3 agentes) + a reserva
+  const pleno = cabe(s, { local: 'acima', orcamento: 200 });
+  const b123 = pleno.findIndex((x) => /^(ATENÇÃO|RECENTE)/.test(x));
+  const l = cabe(s, { local: 'acima', orcamento: b123 + 1 });
+  assert.equal(resumoDe(l).length, 0, l.join('|'));
+  assert.equal(l.filter(ehDecidiu).length, 1);
+  assert.equal(l.filter((x) => /^  \S+ · T\d · /.test(x)).length, 3);
+});
+
+test('sem-decisao-nunca-compacta: sem decisao.sombra o AGORA não vira linha-resumo, mesmo apertado', () => {
+  for (const n of [2, 3]) {
+    const s = roteiro(n, [e(50, 'loop.pausa', { estado: 'pausado' })]);
+    for (const orc of [ORC_ACIMA, 6, 5, 4]) {
+      const l = cabe(s, { local: 'acima', orcamento: orc });
+      assert.equal(resumoDe(l).length, 0, `n=${n} orc=${orc}: ${l.join('|')}`);
+      assert.ok(!l.some((x) => /decidiu:/.test(x)));
+    }
+  }
+});
+
+test('reserva-cede-mesmo-compactado: blocos 1–2 + 2 linhas de AGORA + reserva > orçamento ⇒ a reserva cede e o AGORA fica como hoje', () => {
+  const s = roteiro(3);
+  const b12 = cabe(s, { local: 'acima', orcamento: 200 }).findIndex((x) => /^AGORA/.test(x));
+  assert.equal(b12, 4, 'blocos 1–2 do roteiro: GABARITO + 2 do DEPENDE + PRONTO');
+  const limiar = b12 + 2 + 1; // = 7: cabe compactado
+  const cabeLa = cabe(s, { local: 'acima', orcamento: limiar });
+  assert.equal(cabeLa.filter(ehDecidiu).length, 1);
+  assert.equal(resumoDe(cabeLa).length, 1);
+  const cede = cabe(s, { local: 'acima', orcamento: limiar - 1 });
+  assert.ok(!cede.some((x) => /decidiu:/.test(x)), cede.join('|'));
+  assert.equal(resumoDe(cede).length, 0, 'compactar não ajudou: o AGORA fica com 1 linha por agente');
+  assert.equal(cede.length, limiar - 1);
+  assert.ok(cede.some((x) => /^AGORA/.test(x)) && cede.some((x) => /^PRONTO/.test(x)));
+});
+
+test('reserva-compacta-uma-vez: 1 vivo sem segundo plano não ganha linha-resumo (não economiza linha)', () => {
+  const s = roteiro(1);
+  const l = cabe(s, { local: 'acima', orcamento: 5 });
+  assert.equal(resumoDe(l).length, 0, l.join('|'));
+});
+
+test('linha-resumo-executivo-igual-esquadrao-menos-nomes: o executivo usa o papel, o esquadrão o nome temático (FIEL-12)', () => {
+  const s = roteiro(3);
+  const esq = resumoDe(cabe(s, { local: 'acima', orcamento: ORC_ACIMA, preset: 'esquadrao' }))[0];
+  const exe = resumoDe(cabe(s, { local: 'acima', orcamento: ORC_ACIMA, preset: 'executivo' }))[0];
+  assert.ok(esq !== undefined && exe !== undefined);
+  let trocado = esq;
+  for (const a of s.agora?.agentes ?? []) trocado = trocado.split(a.quem.nome as string).join(PAPEL_EXECUTIVO[a.quem.papel]);
+  assert.equal(trocado, exe);
+  assert.notEqual(esq, exe);
+  assert.match(exe, /^  3 agentes: Implementador T4 · Revisor T5 · Implementador T6$/);
 });

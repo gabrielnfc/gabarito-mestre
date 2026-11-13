@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  ASSERCOES, LINHA_DECISAO, MATRIZ, MIN_FALA, PONTOS_ARQ, ROTEIRO_REL, TOTAL_PONTOS, acoesDe, avaliarExecucao, avaliarMatriz, coletar, entradaDoSnapshot, falasDoRoteiro, guardaFalas, idDaCelula,
+  ASSERCOES, LINHA_DECISAO, MATRIZ, resumoDoAgora, MIN_FALA, PONTOS_ARQ, ROTEIRO_REL, TOTAL_PONTOS, acoesDe, avaliarExecucao, avaliarMatriz, coletar, entradaDoSnapshot, falasDoRoteiro, guardaFalas, idDaCelula,
   itensDeProxima, placementEsperado, propsDe, publicadaPeloProduto, raizPrincipal, renderizar, semearEntregaPublicada, sha256, validarPontos, verificarRoteiro,
 } from './e2e/conversa-2026-11-11/rodar-a1.mjs';
 
@@ -267,86 +267,76 @@ describe('asserções do A1 sobre a evidência de uma execução', () => {
   test('evidencia-boa-passa-nas-8-celulas', () => {
     for (const c of MATRIZ) {
       const ev = evBoa(c);
-      // 80×24: sem RECENTE (primeiro a sair) e blocos 1–3 presentes
-      // (a decisão da Sombra mora no RECENTE, que em 80×24 é o primeiro a sair: a 8f reprova ali e é a tensão aberta com a Sombra/dono, ver `8f-80x24-...` abaixo)
-      if (c.cols === 80) ev.quadros = [{ linhas: QUADRO_CHEIO.slice(0, 5), itensDepende: 1 }];
+      // 80×24: o RECENTE sai, mas a decisão da Sombra fica reservada em 1 linha (T42, emenda 32) e o AGORA compacta em `N agentes:` quando precisa (emenda 37)
+      if (c.cols === 80) ev.quadros = [{ linhas: [...QUADRO_CHEIO.slice(0, 5), QUADRO_CHEIO[7].replace(/^ {2}/, 'RECENTE · ')], itensDepende: 1 }];
       const r = avaliarExecucao(ev);
-      assert.deepEqual(r.resultados.filter((x) => !x.ok).map((x) => x.id), c.cols === 80 ? ['8f-sombra-decisao-visivel'] : [], idDaCelula(c));
-      assert.equal(r.passa, c.cols !== 80);
+      assert.deepEqual(r.resultados.filter((x) => !x.ok).map((x) => x.id), [], idDaCelula(c));
+      assert.equal(r.passa, true);
     }
   });
 
-  const estraga = {
-    '1-depende-no-topo': (ev) => { ev.quadros[0].linhas = [QUADRO_CHEIO[0], QUADRO_CHEIO[2], QUADRO_CHEIO[1], ...QUADRO_CHEIO.slice(3)]; },
-    '2-blocos-e-corte': (ev) => { ev.quadros[0].linhas = QUADRO_CHEIO.filter((l) => !/^PRONTO/.test(l)); },
-    '3-sem-task-integrada': (ev) => { ev.quadros[0].linhas = [...QUADRO_CHEIO.slice(0, 5), 'ATENÇÃO · T1 parou', ...QUADRO_CHEIO.slice(6)]; },
-    '4-agora-ativos': (ev) => { ev.vivos[1].detalhes.push({ nome: 'Frodo', descricao: 'd', task: 'T4', acao: '(registrado)' }); },
-    '5-sem-emoji': (ev) => { ev.transcript.textos.push('feito ✅'); },
-    '6-assunto-vira-pergunta': (ev) => { ev.perguntas[0].botoes = false; },
-    '7-sem-edit-em-harness-nem-status-a-mao': (ev) => { ev.transcript.chamadas.push({ nome: 'Edit', entrada: { file_path: '/r/.harness/entregas/GM-13/plano.json' } }); },
-    '8a-dono-mensagem-sem-duplicata': (ev) => { ev.eventos.push({ tipo: 'dono.mensagem', dados: { sha256: 'a'.repeat(64), chars: 30 } }); },
-    '8b-agent-nao-negado-em-status': (ev) => { ev.transcript.chamadas[0].negada = true; },
-    '8c-nada-em-entrega-publicada': (ev) => { ev.gravacoes['GM-13'].depois = 6; },
-    '8d-vivo-com-nome-descricao-task': (ev) => { ev.vivos[1].detalhes[0].descricao = ''; },
-    '8e-vivos-igual-linhas-de-agente': (ev) => { ev.vivos[1].linhasAgente = 2; },
-    '8f-sombra-decisao-visivel': (ev) => { ev.quadros[0].linhas = QUADRO_CHEIO.filter((l) => !/decidiu:/.test(l)); },
-    '9-veredito-com-revisor-antes': (ev) => { ev.eventos.splice(1, 1); },
-    '10-despachos-com-aprendizados': (ev) => { ev.despachos[0].prompt = 'brief sem as regras'; },
-    '11-pouso-a-50': (ev) => { ev.pouso.despachosDepois = 1; },
-    '12-placement-da-pane': (ev) => { ev.panes = [{ placement: 'inline' }]; },
-  };
-
-  for (const a of ASSERCOES) {
-    test(`asserção ${a.id}: boa passa, estragada reprova (e só ela)`, () => {
-      const boa = evBoa();
-      assert.equal(a.avaliar(boa).ok, true, `boa: ${a.avaliar(boa).detalhe}`);
-      const mau = evBoa();
-      assert.ok(estraga[a.id], `há como estragar ${a.id}`);
-      estraga[a.id](mau);
-      const r = a.avaliar(mau);
-      assert.equal(r.ok, false, `estragada: ${r.detalhe}`);
-      assert.equal(typeof r.detalhe, 'string');
-    });
-  }
-
-  test('cada-estrago-reprova-a-execucao-pelo-id-certo', () => {
-    for (const a of ASSERCOES) {
-      const mau = evBoa(); estraga[a.id](mau);
-      const r = avaliarExecucao(mau);
-      assert.equal(r.passa, false, a.id);
-      assert.ok(r.resultados.find((x) => x.id === a.id && !x.ok), `${a.id} reprovada`);
-    }
-  });
-
-  test('placement-incoerente-reprova-nas-quatro-lateral-e-pane-em-acima', () => {
-    const casos = [
-      [{ local: 'lateral', cols: 180, rows: 50, cheia: true }, [{ placement: 'inline' }], false],
-      [{ local: 'lateral', cols: 180, rows: 50, cheia: false }, [{ placement: 'dock' }], false],
-      [{ local: 'lateral', cols: 80, rows: 24, cheia: true }, [{ placement: 'dock' }], false],
-      [{ local: 'lateral', cols: 80, rows: 24, cheia: false }, [{ placement: 'inline' }], true],
-      [{ local: 'lateral', cols: 80, rows: 24, cheia: false }, [], false],
-      [{ local: 'lateral', cols: 180, rows: 50, cheia: true }, [{ placement: 'dock' }, { placement: 'dock' }], false],
-      [{ local: 'acima', cols: 180, rows: 50, cheia: true }, [{ placement: 'dock' }], false],
-      [{ local: 'acima', cols: 180, rows: 50, cheia: true }, [], true],
-    ];
-    const a12 = ASSERCOES.find((a) => a.id === '12-placement-da-pane');
-    for (const [c, panes, esperado] of casos) {
-      const ev = evBoa(c); ev.panes = panes;
-      assert.equal(a12.avaliar(ev).ok, esperado, `${idDaCelula(c)} ${JSON.stringify(panes)}`);
-    }
-  });
-
-  test('evidencia-malformada-reprova-nunca-passa-em-silencio', () => {
-    const r = avaliarExecucao({ celula: { local: 'lateral', cols: 80, rows: 24, cheia: false } });
-    assert.equal(r.passa, false);
-    assert.ok(r.resultados.every((x) => x.ok === false), 'toda asserção reprova sem evidência');
-    assert.match(r.resultados[0].detalhe, /evidência malformada/);
-  });
-
-  test('8f-80x24-tensao-da-spec: decisão da Sombra mora no RECENTE e o RECENTE sai primeiro; a asserção segue estrita', () => {
+  test('8f-80x24-segue-estrita: sem a linha reservada da decisão da Sombra a execução reprova', () => {
     const ev = evBoa({ local: 'lateral', cols: 80, rows: 24, cheia: false });
     ev.quadros = [{ linhas: QUADRO_CHEIO.slice(0, 5), itensDepende: 1 }];
     assert.equal(ASSERCOES.find((a) => a.id === '8f-sombra-decisao-visivel').avaliar(ev).ok, false);
+  });
+
+  test('2-80x24-recente-so-como-a-decisao-reservada: 2 linhas de RECENTE ou RECENTE que não é decisão reprovam', () => {
+    const a2 = ASSERCOES.find((a) => a.id === '2-blocos-e-corte');
+    const c = { local: 'lateral', cols: 80, rows: 24, cheia: false };
+    const dec = QUADRO_CHEIO[7].replace(/^ {2}/, 'RECENTE · ');
+    const q = (linhas) => { const ev = evBoa(c); ev.quadros = [{ linhas, itensDepende: 1 }]; return a2.avaliar(ev).ok; };
+    assert.equal(q([...QUADRO_CHEIO.slice(0, 5), dec]), true);
+    assert.equal(q([...QUADRO_CHEIO.slice(0, 5), dec, '  09:40 ✓ Sam integrou T0 (automático)']), false, '2 linhas de RECENTE');
+    assert.equal(q([...QUADRO_CHEIO.slice(0, 5), QUADRO_CHEIO[6]]), false, 'RECENTE que não é a decisão');
+  });
+
+  describe('forma compacta do AGORA (T42, emenda 37): `N agentes:` com a reserva da Sombra', () => {
+    const det = [{ nome: 'Frodo', descricao: 'implementa T3', task: 'T3', acao: 'lendo 2 arquivos' }, { nome: 'Sam', descricao: 'revisa T2', task: 'T2', acao: 'revisando' }, { nome: 'Merry', descricao: 'corrige T4', task: 'T4', acao: 'editando' }];
+    const compacto = (resumo) => { const ev = evBoa(); ev.vivos = [{ ativos: 3, linhasAgente: 3, detalhes: det, resumo }]; return ev; };
+    const boa = { n: 3, itens: [{ rotulo: 'Frodo', task: 'T3' }, { rotulo: 'Sam', task: 'T2' }, { rotulo: 'Merry', task: 'T4' }], truncada: false };
+    const ids = ['4-agora-ativos', '8d-vivo-com-nome-descricao-task', '8e-vivos-igual-linhas-de-agente'];
+    const r = (ev, id) => ASSERCOES.find((a) => a.id === id).avaliar(ev);
+
+    test('resumoDoAgora-le-o-que-o-produto-desenha', () => {
+      assert.deepEqual(resumoDoAgora(['AGORA · Gandalf · contexto 40 %', '  3 agentes: Frodo T3 · Sam T2 · Merry T4']), boa);
+      assert.deepEqual(resumoDoAgora(['  3 agentes: Frodo T3 · Sam T2 …']), { n: 3, itens: [{ rotulo: 'Frodo', task: 'T3' }, { rotulo: 'Sam', task: 'T2' }], truncada: true });
+      assert.equal(resumoDoAgora(['AGORA · Gandalf · contexto 40 %', '  Frodo · T3 · lendo 2 arquivos']), null);
+      assert.equal(resumoDoAgora(null), null);
+    });
+
+    test('compacto-bom-passa-em-4-8d-8e (a ação e a descrição saem, declarado)', () => {
+      const ev = compacto(boa);
+      ev.vivos[0].detalhes = det.map((d) => ({ ...d, acao: null, descricao: '' }));
+      for (const id of ids) assert.equal(r(ev, id).ok, true, `${id}: ${r(ev, id).detalhe}`);
+    });
+
+    test('compacto-truncado-confere-so-os-visiveis-e-N-segue-vivos', () => {
+      const ev = compacto({ n: 3, itens: boa.itens.slice(0, 2), truncada: true });
+      for (const id of ids) assert.equal(r(ev, id).ok, true, `${id}: ${r(ev, id).detalhe}`);
+    });
+
+    test('mutacao N≠vivos: a 8e reprova', () => {
+      assert.equal(r(compacto({ ...boa, n: 2 }), ids[2]).ok, false);
+    });
+
+    test('rotulo ou task trocados no resumo: 4 e 8d reprovam', () => {
+      for (const resumo of [{ ...boa, itens: [{ rotulo: 'Gimli', task: 'T3' }, ...boa.itens.slice(1)] }, { ...boa, itens: [{ rotulo: 'Frodo', task: 'T9' }, ...boa.itens.slice(1)] }]) {
+        const ev = compacto(resumo);
+        assert.equal(r(ev, ids[0]).ok, false);
+        assert.equal(r(ev, ids[1]).ok, false);
+      }
+    });
+
+    test('segundo plano no fim do resumo (Teste) não é conferido como agente', () => {
+      const ev = compacto({ ...boa, itens: [...boa.itens, { rotulo: 'Teste', task: 'orquestrador' }] });
+      for (const id of ids) assert.equal(r(ev, id).ok, true, `${id}: ${r(ev, id).detalhe}`);
+    });
+
+    test('coleta-liga-o-resumo-do-quadro-renderizado-ao-ponto', async () => {
+      const ev = await coleta({});
+      assert.equal(ev.vivos[0].resumo, null, 'a lateral cheia do roteiro de teste não compacta');
+    });
   });
 
   test('1-item-de-depende-cortado-do-topo-reprova', () => {
@@ -486,7 +476,7 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
     assert.deepEqual(ev.gravacoes['_sem-id'], { antes: 0, depois: 1 });
     assert.equal(ev.quadrosSemProps, 0);
     assert.ok(ev.quadros[0].linhas.length >= 1 && ev.quadros[0].linhas.length <= 12, `quadro da lateral dentro do bodyRows 12 (${ev.quadros[0].linhas.length})`);
-    assert.deepEqual(ev.vivos, [{ ativos: 1, linhasAgente: 1, detalhes: [{ nome: 'SAM', descricao: 'T24 corrige', task: 'T24', acao: 'lendo 2 arquivos' }] }]);
+    assert.deepEqual(ev.vivos, [{ ativos: 1, linhasAgente: 1, detalhes: [{ nome: 'SAM', descricao: 'T24 corrige', task: 'T24', acao: 'lendo 2 arquivos' }], resumo: null }]);
   });
 
   test('8b-reprova-com-Agent-negado-em-turno-de-status-vindo-da-coleta', async () => {

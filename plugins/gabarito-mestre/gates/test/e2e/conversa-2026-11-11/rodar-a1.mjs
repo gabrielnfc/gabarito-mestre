@@ -150,6 +150,21 @@ export function blocosDe(linhas) {
 const ORDEM_CORTE = ['depende', 'fase', 'agora', 'atencao', 'recente'];
 const res = (ok, detalhe) => ({ ok, detalhe });
 /** Pelo menos um ponto da execução com agente vivo observado; sem isso as asserções de vivo não têm o que medir (nunca passam em vácuo). */
+/**
+ * Linha-resumo do AGORA que o PRODUTO desenha quando a reserva da Sombra não cabe (GM-14 T42, emenda 37): `  <N> agentes: <rótulo> <task> · <rótulo> <task> …`.
+ * Devolve `{ n, itens: [{ rotulo, task }], truncada }` ou `null` se o quadro não tem a forma compacta (a forma cheia, 1 linha por agente, segue medida como antes).
+ */
+export function resumoDoAgora(linhas) {
+  const l = (Array.isArray(linhas) ? linhas : []).find((x) => /^\s+\d+ agentes:( |$)/.test(x));
+  if (l === undefined) return null;
+  const m = /^\s+(\d+) agentes:\s*(.*)$/.exec(l);
+  const truncada = / …$/.test(m[2]);
+  const corpo = m[2].replace(/ …$/, '');
+  const itens = corpo === '' ? [] : corpo.split(' · ').map((it) => { const i = it.indexOf(' '); return i < 0 ? { rotulo: it, task: '' } : { rotulo: it.slice(0, i), task: it.slice(i + 1) }; });
+  return { n: Number(m[1]), itens, truncada };
+}
+/** Na forma compacta, os agentes visíveis (antes do "…"): rótulo e task iguais aos do AGORA do estado, na ordem; itens além dos agentes são segundo plano (`Teste`). */
+const visiveisBatem = (p) => p.resumo.itens.slice(0, p.detalhes.length).every((it, i) => it.rotulo === p.detalhes[i].nome && it.task === p.detalhes[i].task && it.rotulo !== '' && it.task !== '');
 const vivoObservado = (ev) => Array.isArray(ev.vivos) && ev.vivos.some((p) => p.ativos > 0);
 
 export const ASSERCOES = Object.freeze([
@@ -172,7 +187,11 @@ export const ASSERCOES = Object.freeze([
     const presentes = blocosDe(cheio.linhas);
     if (cols === 80 && rows === 24) {
       // blocos 1–3 presentes e o RECENTE é o primeiro a sair: o que sobra é prefixo da ordem de corte
-      const prefixo = presentes.every((b, i) => b === ORDEM_CORTE[i]);
+      // exceção declarada (emenda 32/37): o RECENTE pode voltar como 1 linha só, a decisão da Sombra reservada, depois do ATENÇÃO sair (D-P8, 1ª e 2ª exceções)
+      const recLinhas = cheio.linhas.filter((l) => /^(RECENTE ·|  \d\d:\d\d )/.test(l));
+      const reservada = presentes[presentes.length - 1] === 'recente' && recLinhas.length === 1 && LINHA_DECISAO.test(recLinhas[0]);
+      const base = reservada ? presentes.slice(0, -1) : presentes;
+      const prefixo = base.every((b, i) => b === ORDEM_CORTE[i]);
       const tres = ORDEM_CORTE.slice(0, 3).every((b) => presentes.includes(b));
       return res(tres && prefixo, `blocos ${presentes.join(',')}`);
     }
@@ -188,11 +207,14 @@ export const ASSERCOES = Object.freeze([
   } },
   { id: '4-agora-ativos', ref: 'A1 (4)', avaliar: (ev) => {
     if (!vivoObservado(ev)) return res(false, 'nenhum agente vivo observado em nenhum ponto: não medida');
+    // forma compacta (emenda 37, só com a reserva da Sombra): a ação e o tempo saem; vale rótulo e task de cada agente visível antes do "…"; nomes únicos (FIEL-3 d) seguem
     const ruins = ev.vivos.filter((p) => {
       const nomes = p.detalhes.map((v) => v.nome);
-      return !(p.detalhes.every((v) => v.nome && v.task && v.acao) && new Set(nomes).size === nomes.length);
+      const unicos = new Set(nomes).size === nomes.length;
+      return p.resumo != null ? !(visiveisBatem(p) && unicos) : !(p.detalhes.every((v) => v.nome && v.task && v.acao) && unicos);
     });
-    return res(ruins.length === 0, `${ev.vivos.length} pontos, ${ruins.length} com vivo sem nome/task/ação ou nome repetido`);
+    const compactos = ev.vivos.filter((p) => p.resumo != null).length;
+    return res(ruins.length === 0, `${ev.vivos.length} pontos (${compactos} na linha-resumo), ${ruins.length} com vivo sem nome/task/ação ou nome repetido`);
   } },
   { id: '5-sem-emoji', ref: 'A1 (5)', avaliar: (ev) => {
     const textos = [...ev.quadros.flatMap((q) => q.linhas), ...ev.transcript.textos];
@@ -230,13 +252,15 @@ export const ASSERCOES = Object.freeze([
   } },
   { id: '8d-vivo-com-nome-descricao-task', ref: 'A1 (8) Emenda 1', avaliar: (ev) => {
     if (!vivoObservado(ev)) return res(false, 'nenhum agente vivo observado em nenhum ponto: não medida');
-    const ruins = ev.vivos.flatMap((p) => p.detalhes).filter((v) => !(v.nome && v.descricao && v.task));
+    // forma compacta: a descrição sai (declarado, emenda 37); vale rótulo e task dos visíveis antes do "…" (os escondidos ficam cobertos pela 8e)
+    const ruins = ev.vivos.flatMap((p) => (p.resumo != null ? (visiveisBatem(p) ? [] : [p]) : p.detalhes.filter((v) => !(v.nome && v.descricao && v.task))));
     return res(ruins.length === 0, `${ruins.length} vivos sem nome, descrição ou task em ${ev.vivos.length} pontos`);
   } },
   { id: '8e-vivos-igual-linhas-de-agente', ref: 'A1 (8) Emenda 1', avaliar: (ev) => {
     if (!vivoObservado(ev)) return res(false, 'nenhum agente vivo observado em nenhum ponto: não medida');
-    const ruins = ev.vivos.filter((p) => p.ativos !== p.linhasAgente);
-    return res(ruins.length === 0, `${ruins.length} de ${ev.vivos.length} pontos com ativos ≠ linhas de agente (${ruins.map((p) => `${p.ativos}/${p.linhasAgente}`).join(' ')})`);
+    // forma compacta: "N agentes" = número de vivos (inclui os que o "…" esconde), numa linha só (emenda 37)
+    const ruins = ev.vivos.filter((p) => (p.resumo != null ? p.resumo.n !== p.ativos : p.ativos !== p.linhasAgente));
+    return res(ruins.length === 0, `${ruins.length} de ${ev.vivos.length} pontos com ativos ≠ linhas de agente (${ruins.map((p) => `${p.ativos}/${p.resumo != null ? p.resumo.n : p.linhasAgente}`).join(' ')})`);
   } },
   { id: '8f-sombra-decisao-visivel', ref: 'A1 (8) Emenda 1', avaliar: (ev) => {
     // a decisão que o PRODUTO desenha no RECENTE é `<sabio> decidiu: …` (painel.ts:592); a ATENÇÃO "N consultas à Sombra sem decisão registrada" (painel.ts:683) NÃO é decisão
@@ -635,8 +659,10 @@ export async function coletar(rundir, repo, celula, roteiro, { pasta = null, tot
   if (existsSync(join(rundir, 'snapshot-falhou.log'))) throw new Error(`snapshot falhou: ${readFileSync(join(rundir, 'snapshot-falhou.log'), 'utf8').trim().split('\n')[0]}`);
   if (snaps.length !== total) throw new Error(`${snaps.length} snapshots (esperado ${total})`);
   const quadros = []; let quadrosSemProps = 0;
+  const resumos = new Map(); // ponto → linha-resumo do AGORA que o produto desenhou (emenda 37), ou null
   for (const s of snaps) {
     const linhas = await renderizar(s.estado, s.props, celula);
+    resumos.set(s.n, linhas === null ? null : resumoDoAgora(linhas));
     if (linhas === null) { quadrosSemProps += 1; continue; }
     quadros.push({ linhas, itensDepende: (s.estado.depende ?? []).length + (s.estado.pergunta ? 1 : 0) + (s.estado.parar ? 1 : 0) });
   }
@@ -648,7 +674,7 @@ export async function coletar(rundir, repo, celula, roteiro, { pasta = null, tot
     const agora = Array.isArray(s.estado?.agora?.agentes) ? s.estado.agora.agentes : [];
     const equipe = Array.isArray(s.estado?.equipe?.agentes) ? s.estado.equipe.agentes : [];
     const detalhes = agora.map((l) => { const e = equipe.find((x) => x.nome === l.quem?.nome); return { nome: l.quem?.nome, descricao: e?.descricao, task: l.task ?? e?.task, acao: l.acao ?? null }; });
-    return { ativos: s.agentes.filter((a) => ATIVOS.has(a.status)).length, linhasAgente: agora.length, detalhes };
+    return { ativos: s.agentes.filter((a) => ATIVOS.has(a.status)).length, linhasAgente: agora.length, detalhes, resumo: resumos.get(s.n) ?? null };
   });
   // pouso (asserção 11): o `sessao.pouso` do diário, o "limpar a conversa" em algum quadro depois dele, os pushes do bare e os `Agent` entre o pouso e o próximo `sessao.inicio {origem: clear}`
   const pouso = eventos.find((e) => e.tipo === 'sessao.pouso');

@@ -443,6 +443,24 @@ function linhaReserva(r             , quemTexto                                 
   return folga >= 16 ? montar(cortar(t, folga)) : cortarNatural(inteira, w);
 }
 
+/**
+ * Linha-resumo do AGORA (T42, emenda 37): `  <N> agentes: <rótulo> <task> · <rótulo> <task> …`. N = TODOS os vivos (mesmo os que o "…" esconde);
+ * itens = agentes e linhas de segundo plano; ação e tempo saem. Corta em fronteira de item e termina em "…" quando algum não coube.
+ */
+function linhaResumo(n        , itens                            , w        )        {
+  const pre = `  ${n} agentes:`;
+  let txt = pre;
+  let todos = true;
+  for (let i = 0; i < itens.length; i++) {
+    const cand = `${txt}${i === 0 ? ' ' : ' · '}${itens[i].r} ${itens[i].t}`;
+    const cabeIt = colunas(cand) <= w && (i === itens.length - 1 || colunas(`${cand} …`) <= w);
+    if (!cabeIt) { todos = false; break; }
+    txt = cand;
+  }
+  if (txt === pre) return cortarNatural([seg(`${pre} ${itens.map((x) => `${x.r} ${x.t}`).join(' · ')}`)], w);
+  return [seg(todos ? txt : `${txt} …`)];
+}
+
 /** Botões no texto: só o rótulo (`[aprovar a spec]`); ação sem comando é instrução (` · rótulo`). O comando fica em `Acao.comando`. */
 function botoes(acoes         )         {
   if (!Array.isArray(acoes)) return '';
@@ -544,6 +562,9 @@ export function renderBlocos(e              , o              )          {
   }
 
   // 3 AGORA (FIEL-4, FIEL-11)
+  const agoraAgentes                    = []; // as linhas de agente e de segundo plano do AGORA (candidatas à linha-resumo, T42 emenda 37)
+  const resumo                             = [];
+  let nVivos = 0;
   const ag = e.agora;
   if (ag !== undefined && ag !== null) {
     if (ag.agentes === null) por(3, [seg('AGORA · agentes e contexto: medidos só no painel da sessão', 'inactive')]);
@@ -557,8 +578,12 @@ export function renderBlocos(e              , o              )          {
         const acao = a.acao === null || a.acao === undefined ? '?' : natural(a.acao, 'reticencia') || '?';
         return [seg(`  ${quemTexto(a.quem)} · ${a.task === null || a.task === undefined ? tarefaPadrao : limpar(a.task)} · ${acao}${tempo === null ? '' : ` · ${fmtTempo(tempo)}`}`)];
       };
-      for (const a of ag.agentes) por(3, linhaAgente(a, 'sem task'));
-      for (const a of Array.isArray(ag.segundoPlano) ? ag.segundoPlano : []) por(3, linhaAgente({ ...a, quem: { nome: null, papel: 'teste' } }, 'orquestrador'));
+      for (const a of ag.agentes) { por(3, linhaAgente(a, 'sem task')); agoraAgentes.push(ls[ls.length - 1]); resumo.push({ r: quemTexto(a.quem), t: a.task === null || a.task === undefined ? 'sem task' : limpar(a.task) }); }
+      for (const a of Array.isArray(ag.segundoPlano) ? ag.segundoPlano : []) {
+        por(3, linhaAgente({ ...a, quem: { nome: null, papel: 'teste' } }, 'orquestrador')); agoraAgentes.push(ls[ls.length - 1]);
+        resumo.push({ r: quemTexto({ nome: null, papel: 'teste' }), t: a.task === null || a.task === undefined ? 'orquestrador' : limpar(a.task) });
+      }
+      nVivos = ag.agentes.length;
     }
   }
 
@@ -580,7 +605,21 @@ export function renderBlocos(e              , o              )          {
 
   // corte por orçamento (REQ-GLB-1): `orcamento`, senão `altura`; sem os dois, sem corte
   const orc = alturaValida(o.orcamento) ?? alturaValida(o.altura);
-  const cortado = orc === undefined ? { linhas: ls.map((x) => x.l), cortadasTopo: 0 } : cortarComReserva(ls, orc, reserva);
+  let cortado                                            = orc === undefined ? { linhas: ls.map((x) => x.l), cortadasTopo: 0 } : cortarComReserva(ls, orc, reserva);
+  // Linha-resumo (T42, emenda 37): só quando há reserva da Sombra, ela NÃO coube e compactar o AGORA (agentes + segundo plano) em 1 linha a faz caber.
+  // Se mesmo compactado não couber, o AGORA fica como hoje e a reserva cede.
+  if (orc !== undefined && reserva !== null && !cortado.linhas.includes(reserva) && nVivos >= 1 && agoraAgentes.length >= 2) {
+    const recente = ls.filter((x) => x.prioridade === 5).map((x) => x.l);
+    if (recente.length > 0 && !recente.some((l) => cortado.linhas.includes(l))) {
+      const compacta = linhaResumo(nVivos, resumo, w);
+      const fora = new Set(agoraAgentes);
+      const ls2                    = [];
+      ls.forEach((x) => { if (x === agoraAgentes[0]) ls2.push({ ...x, l: compacta }); else if (!fora.has(x)) ls2.push(x); });
+      const c2 = cortarComReserva(ls2, orc, reserva);
+      // a decisão fica à vista: a reserva coube, ou o RECENTE (onde a decisão mais recente mora) voltou a ter linha — a mesma regra do corte sem compactar
+      if (c2.linhas.includes(reserva) || recente.some((l) => c2.linhas.includes(l))) cortado = c2;
+    }
+  }
   const ficou = new Set(cortado.linhas);
   // (+N) conta ITENS escondidos (spec:47), nunca linhas quebradas; o item que não coube inteiro sai inteiro.
   // LIMITE (spec não diz quem cede): o 1º item sozinho maior que o orçamento — D15 vence; fica o que cabe, a última linha termina em "…" (uma só). Mesma colisão: item que coube inteiro e é o último do topo perde o fim para o " (+N)" (D15 vence).
