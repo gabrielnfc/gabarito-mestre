@@ -54,3 +54,25 @@ export function cortarPorPrioridade(ls: LinhaPrioridade[], orcamento: number): C
 export function porPrioridade(ls: LinhaPrioridade[], orcamento: number): Linha[] {
   return cortarPorPrioridade(ls, orcamento).linhas;
 }
+
+/** Prioridade da linha reservada (GM-14 T42, emenda 32): depois dos blocos 1–3, antes do ATENÇÃO (4) e do resto do RECENTE (5). */
+export const PRIORIDADE_RESERVA = 3.5;
+/** Prioridade do RECENTE (bloco 5, D-P8): é ele que, cortado inteiro, aciona a reserva. */
+const PRIORIDADE_RECENTE = 5;
+
+/**
+ * `cortarPorPrioridade` com 1 linha reservada para a decisão da Sombra (REQ-GLB-1, emenda 32). Regra única das duas camadas (lateral e acima).
+ * Se há linha de RECENTE (prioridade 5) na entrada e o corte normal não deixou NENHUMA, `reserva` entra com `PRIORIDADE_RESERVA`: ela cede só às
+ * de prioridade ≤ 3 (nunca as empurra para fora) e vence o ATENÇÃO. `reserva` nula, ou RECENTE que sobreviveu em parte ou nem existe ⇒ corte de hoje.
+ * `reserva.ordem` é ignorada: a linha vai depois de tudo na exibição.
+ */
+export function cortarComReserva(ls: LinhaPrioridade[], orcamento: number, reserva: Linha | null): Cortadas {
+  const base = cortarPorPrioridade(ls, orcamento);
+  if (reserva === null) return base;
+  const temRecente = ls.some((x) => pesoDe(x.prioridade) === PRIORIDADE_RECENTE);
+  const sobrou = ls.some((x) => pesoDe(x.prioridade) === PRIORIDADE_RECENTE && base.linhas.includes(x.l));
+  if (!temRecente || sobrou) return base;
+  const fim = ls.reduce((m, x) => Math.max(m, ordemDe(x.ordem)), 0) + 1;
+  const comReserva = cortarPorPrioridade([...ls, { prioridade: PRIORIDADE_RESERVA, ordem: fim, l: reserva }], orcamento);
+  return comReserva;
+}

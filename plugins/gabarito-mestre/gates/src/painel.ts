@@ -563,9 +563,10 @@ const finitoNaoNeg = (v: unknown): number | null => (typeof v === 'number' && Nu
 
 /** RECENTE (FIEL-10 d, D-P9): só resultados. `quem` antes do texto (o executivo troca por papel); origem da tabela de `origemDe`. */
 function recenteDe(ord: Evento[] | null, plano: Plano, entrada: EntradaPainel, nomes: Map<string, string>, comNomes: boolean, fuso: string,
-  textoParar: (motivo: string, task: string | null) => string | null): ItemRecente[] {
-  if (ord === null) return [];
+  textoParar: (motivo: string, task: string | null) => string | null): { itens: ItemRecente[]; decisao: ItemRecente | null } {
+  if (ord === null) return { itens: [], decisao: null };
   const itens: ItemRecente[] = [];
+  let ultimaDecisao: ItemRecente | null = null; // a decisão da Sombra mais recente, mesmo fora dos 5 do RECENTE (reserva do T42, emenda 32)
   const hora = (ev: Evento): string => horaLocal(Date.parse(ev.ts), entrada.agoraMs, fuso);
   const nome = (n: string | null | undefined): string | null => (comNomes && typeof n === 'string' && n !== '' ? n : null);
   // Emenda 4 (REQ-LNG-1): `loop.pausa` é gravado pelo comando do dono (pausar ou retomar) ⇒ `(você)`; `loop.parar` é do loop ⇒ `(automático)`
@@ -605,10 +606,12 @@ function recenteDe(ord: Evento[] | null, plano: Plano, entrada: EntradaPainel, n
     if (item === null) continue;
     const o = origem ?? (ev.tipo === 'loop.parar' ? AUTO : ev.tipo === 'loop.pausa' ? VOCE : null);
     if (o === null) continue;
-    itens.push({ ...item, hora: hora(ev), origem: o });
+    const feito = { ...item, hora: hora(ev), origem: o };
+    if (ev.tipo === 'decisao.sombra') ultimaDecisao = feito;
+    itens.push(feito);
   }
   void plano;
-  return itens.reverse().slice(0, 5);
+  return { itens: itens.reverse().slice(0, 5), decisao: ultimaDecisao };
 }
 
 function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: EntradaNova & { fatos: FatosTrilha }, legado: EstadoPainel): EstadoPainel {
@@ -712,7 +715,8 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
     ehMotivo(motivo) ? linhaDaTabela(motivo, task !== null && p.tasks.some((t) => t.id === task) ? task : null).texto : null;
 
   // `pousoPendente {pendente, sessao, seq}` no estado (FIEL-14 d): a `chavePouso` do mod lê o `seq` do último `sessao.pouso` (pouso novo ⇒ chave nova ⇒ push novo).
-  const estado: EstadoPainel & { pousoPendente: ReturnType<typeof pousoPendente> } = {
+  const rec = recenteDe(ord, p, entrada, nomes, comNomes, fuso, textoParar);
+  const estado: EstadoPainel & { pousoPendente: ReturnType<typeof pousoPendente>; decisaoSombra: ItemRecente | null } = {
     ...legado,
     pousoPendente: pousoDe,
     id: plano !== null ? p.entrega : (trilha.entrega ?? ''),
@@ -722,7 +726,8 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
       orquestrador: { nome: comNomes ? entrada.pacote?.lider ?? null : null, contexto: pct, estimado: false, pousar: pct !== null && pct >= entrada.x },
       agentes, segundoPlano,
     },
-    recente: recenteDe(ord, p, entrada, nomes, comNomes, fuso, textoParar),
+    recente: rec.itens,
+    decisaoSombra: rec.decisao, // T42: o render reserva 1 linha dela quando o corte tiraria o RECENTE inteiro
     desatualizadoS: desat,
     fontesFalhas: fontes,
   };

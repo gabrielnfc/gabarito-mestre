@@ -11,14 +11,14 @@
 
 import { alinhar, corEstadoTask, faixaIds, fmtPct, fmtTempo, fmtTok, num, previsao, separador, textoDoPapel, textoEstadoTask } from './painel-formato.js';
 import { PAPEL_EXECUTIVO } from './painel-executivo.js';
-import { cortarPorPrioridade } from './orcamento.js';
+import { cortarComReserva, cortarPorPrioridade } from './orcamento.js';
                                                       
 import { linhaTecnica, nomeNatural, tagNatural } from './origem.js';
                                                     
 import { colunas, cortar, limpar } from './painel-largura.js';
 import { alturaValida, barra, blocoTopo, cortarLinha, cortarPorAltura } from './painel-texto.js';
                                                       
-                                                                                                                                                
+                                                                                                                                                             
 
 const seg = (texto        , cor          )           => (cor === undefined ? { texto } : { texto, cor });
 const t = (v         )         => (typeof v === 'string' ? limpar(v) : '');
@@ -426,6 +426,23 @@ function cortarNatural(l       , w        )        {
   return [];
 }
 
+/**
+ * Linha reservada da decisão da Sombra (T42, emenda 32): a mesma linha do RECENTE, truncada em `w` pelo TEXTO da decisão, para a origem
+ * (`(anotado pelo orquestrador)`, REQ-LNG-1) ficar à vista. Sem folga para o texto (< 16 colunas, o suficiente para dizer algo), o texto vence a origem: cai no corte comum da linha inteira.
+ */
+function linhaReserva(r             , quemTexto                                              , w        )        {
+  const quem = quemTexto(r.quem);
+  const antes = `RECENTE · ${horaDe(r.hora)} `;
+  const origem = limpar(r.origem);
+  const montar = (t        )        => [seg(antes.slice(0, 'RECENTE · '.length), 'inactive'), seg(antes.slice('RECENTE · '.length), 'inactive'), seg(r.glifo, r.cor), seg(` ${quem !== '' ? `${quem} ` : ''}${t} `), seg(origem, 'inactive')];
+  const t = natural(r.texto);
+  const inteira = montar(t);
+  if (colunas(textoDe(inteira)) <= w) return inteira;
+  const fixo = colunas(textoDe(montar('')));
+  const folga = w - fixo;
+  return folga >= 16 ? montar(cortar(t, folga)) : cortarNatural(inteira, w);
+}
+
 /** Botões no texto: só o rótulo (`[aprovar a spec]`); ação sem comando é instrução (` · rótulo`). O comando fica em `Acao.comando`. */
 function botoes(acoes         )         {
   if (!Array.isArray(acoes)) return '';
@@ -557,9 +574,13 @@ export function renderBlocos(e              , o              )          {
     por(5, [seg(i === 0 ? 'RECENTE · ' : '  ', 'inactive'), seg(`${horaDe(r.hora)} `, 'inactive'), seg(r.glifo, r.cor), seg(` ${quem !== '' ? `${quem} ` : ''}${natural(r.texto)} `), seg(limpar(r.origem), 'inactive')]);
   });
 
+  // Reserva (T42, emenda 32): a decisão da Sombra mais recente, na mesma linha do RECENTE; só entra se o corte tirar o RECENTE inteiro.
+  const dec = (e                                                         ).decisaoSombra;
+  const reserva               = dec === null || dec === undefined || typeof dec !== 'object' ? null : linhaReserva(dec, quemTexto, w);
+
   // corte por orçamento (REQ-GLB-1): `orcamento`, senão `altura`; sem os dois, sem corte
   const orc = alturaValida(o.orcamento) ?? alturaValida(o.altura);
-  const cortado = orc === undefined ? { linhas: ls.map((x) => x.l), cortadasTopo: 0 } : cortarPorPrioridade(ls, orc);
+  const cortado = orc === undefined ? { linhas: ls.map((x) => x.l), cortadasTopo: 0 } : cortarComReserva(ls, orc, reserva);
   const ficou = new Set(cortado.linhas);
   // (+N) conta ITENS escondidos (spec:47), nunca linhas quebradas; o item que não coube inteiro sai inteiro.
   // LIMITE (spec não diz quem cede): o 1º item sozinho maior que o orçamento — D15 vence; fica o que cabe, a última linha termina em "…" (uma só). Mesma colisão: item que coube inteiro e é o último do topo perde o fim para o " (+N)" (D15 vence).

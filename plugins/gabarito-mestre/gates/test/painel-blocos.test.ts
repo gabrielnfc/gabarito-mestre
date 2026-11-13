@@ -658,3 +658,94 @@ test('T37: linha truncada que ocupa exatamente a largura mantém uma reticência
   for (const ls of [sem, com]) assert.ok(ls.every((l) => colunas(l) <= 20 && !l.includes('……')), JSON.stringify(ls));
   assert.ok(sem[sem.length - 1].endsWith('…') && com[0].replace(/ \(\+\d+\)$/, '').endsWith('…'));
 });
+
+// ───────────────────────────── T42 (emenda 32): a decisão da Sombra fica reservada quando o corte tiraria o RECENTE inteiro
+
+const cabe = (s: EstadoPainel, o: Partial<OpcoesRender>): string[] => linhas(s, { largura: 80, ...o });
+const eRec = (xs: string[]): boolean => xs.some((x) => /^RECENTE|^  \d\d:\d\d/.test(x));
+const ehDecidiu = (x: string): boolean => /ELROND decidiu: seguir com a T3 \(anotado pelo orquestrador\)$/.test(x);
+const noVoo = (itens: Item[]): EstadoPainel => proj(P(...IDS), [...EXECUCAO, ...itens, e(60, 'ci.resultado', { verde: false, alvo: 'main' })], { agentes: [vivo('T4 implementador')] });
+/** Linhas dos blocos 1–3 (tudo menos ATENÇÃO e RECENTE) de um estado: o piso que a reserva nunca fura. */
+const blocos123 = (s: EstadoPainel, local: 'lateral' | 'acima'): string[] => {
+  const l = cabe(s, { local });
+  const i = l.findIndex((x) => /^(ATENÇÃO|RECENTE)/.test(x));
+  return i < 0 ? l : l.slice(0, i);
+};
+
+for (const local of ['lateral', 'acima'] as const) {
+  test(`decisao-sombra-reservada-80x24-${local}: orçamento que tiraria o RECENTE inteiro mantém 1 linha "decidiu:" e os blocos 1–3`, () => {
+    const s = noVoo([DEC(50, 'seguir com a T3')]);
+    const b123 = blocos123(s, local);
+    const sem = cabe(proj(P(...IDS), [...EXECUCAO, e(60, 'ci.resultado', { verde: false, alvo: 'main' })], { agentes: [vivo('T4 implementador')] }), { local, orcamento: b123.length + 1 });
+    assert.ok(!eRec(sem) && !sem.some(ehDecidiu), 'sem decisão, o orçamento b123+1 corta o RECENTE (premissa)');
+    const l = cabe(s, { local, orcamento: b123.length + 1 });
+    assert.ok(l.length <= b123.length + 1, 'nunca passa do orçamento');
+    assert.equal(l.filter(ehDecidiu).length, 1, `1 linha da decisão: ${l.join('|')}`);
+    for (const x of b123) assert.ok(l.includes(x), `bloco 1–3 presente: "${x}"`);
+    assert.ok(l.every((x) => colunas(x) <= 80));
+  });
+}
+
+test('decisao-sombra-reservada: a mais recente vence e a origem fica quando o texto é cortado', () => {
+  const s = noVoo([DEC(50, 'primeira resposta'), DEC(52, 'segunda resposta que é bem longa para estourar a largura de quarenta colunas')]);
+  const orc = blocos123(s, 'lateral').length + 1;
+  const l = cabe(s, { local: 'lateral', orcamento: orc, largura: 80 });
+  const d = l.filter((x) => /decidiu:/.test(x));
+  assert.equal(d.length, 1);
+  assert.match(d[0], /segunda resposta/);
+  assert.match(d[0], /…/);
+  assert.match(d[0], /\(anotado pelo orquestrador\)$/);
+  assert.ok(colunas(d[0]) <= 80);
+  const estreita = cabe(s, { local: 'lateral', orcamento: orc, largura: 44 }).filter((x) => /decidiu:/.test(x));
+  assert.equal(estreita.length, 1, 'em 44 colunas o texto vence a origem, e a linha ainda aparece');
+  assert.ok(colunas(estreita[0]) <= 44);
+});
+
+test('sem-decisao-sem-reserva: sem decisao.sombra o corte é o de hoje (nenhuma linha "decidiu:", RECENTE some)', () => {
+  const s = noVoo([e(50, 'loop.pausa', { estado: 'pausado' })]);
+  const orc = blocos123(s, 'lateral').length + 1;
+  const l = cabe(s, { local: 'lateral', orcamento: orc });
+  assert.ok(!eRec(l), 'RECENTE inteiro cortado como hoje');
+  assert.equal(l.length, orc, 'o orçamento sobra para o ATENÇÃO, não para uma reserva');
+  assert.ok(l.some((x) => /^ATENÇÃO/.test(x)));
+  assert.ok(!l.some((x) => /decidiu:/.test(x)));
+});
+
+test('reserva-cede-sem-espaco: orçamento menor que blocos 1–3 + 1 ⇒ blocos 1–3 vencem e a reserva sai', () => {
+  const s = noVoo([DEC(50, 'seguir com a T3')]);
+  const b123 = blocos123(s, 'lateral');
+  const l = cabe(s, { local: 'lateral', orcamento: b123.length });
+  assert.deepEqual(l, b123);
+  assert.ok(!l.some((x) => /decidiu:/.test(x)));
+});
+
+test('reserva-vence-atencao: com ATENÇÃO e decisão, no orçamento b123+1 a linha "decidiu:" fica e o ATENÇÃO sai antes dela', () => {
+  const s = noVoo([DEC(50, 'seguir com a T3')]);
+  const b123 = blocos123(s, 'lateral');
+  assert.ok(cabe(s, { local: 'lateral' }).some((x) => /^ATENÇÃO/.test(x)), 'premissa: há ATENÇÃO');
+  const l = cabe(s, { local: 'lateral', orcamento: b123.length + 1 });
+  assert.equal(l.filter(ehDecidiu).length, 1);
+  assert.ok(!l.some((x) => /^ATENÇÃO/.test(x)), 'ATENÇÃO saiu antes da reserva');
+  const maior = cabe(s, { local: 'lateral', orcamento: 200 });
+  assert.ok(maior.some((x) => /^ATENÇÃO/.test(x)) && maior.some(ehDecidiu), 'sem aperto, ATENÇÃO e RECENTE aparecem normais');
+});
+
+test('reserva-quando-recente-cortado-so-em-parte: se alguma linha do RECENTE sobrevive não há reserva extra (sem duplicar a decisão)', () => {
+  const s = noVoo([DEC(50, 'seguir com a T3')]);
+  const l = cabe(s, { local: 'lateral', orcamento: 200 });
+  assert.equal(l.filter(ehDecidiu).length, 1);
+});
+
+test('decisao-sombra-reservada-80x24-orcamento-real: orcamentoDe(24, 12) = 7 com 2 agentes vivos (blocos 1–3 = 6 linhas) ⇒ a decisão ocupa a 7ª linha', () => {
+  const s = proj(P(...IDS), [...EXECUCAO, ini(44, 'T6'), DEC(50, 'seguir com a T3')], { agentes: [vivo('T4 implementador'), vivo('T5 revisor')] });
+  const orc = orcamentoDe(24, 12);
+  assert.equal(orc, 7);
+  const b123 = blocos123(s, 'acima');
+  assert.ok(b123.length <= orc, `blocos 1–3 (${b123.length}) cabem em ${orc}`);
+  const l = cabe(s, { local: 'acima', orcamento: orc });
+  assert.ok(l.length <= orc);
+  for (const x of b123) assert.ok(l.includes(x), `bloco 1–3: "${x}"`);
+  assert.equal(b123.length, 6);
+  assert.equal(l.length, 7);
+  assert.match(l[6], /ELROND decidiu: seguir com a T3 \(anotado pelo orquestrador\)$/);
+});
