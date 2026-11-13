@@ -527,7 +527,8 @@
         "T29",
         "T30",
         "T34",
-        "T35"
+        "T35",
+        "T37"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/pontos.json",
@@ -792,6 +793,33 @@
       ]
     },
     {
+      "id": "T37",
+      "titulo": "Ajuste do render da T17",
+      "deps": [
+        "T17",
+        "T18",
+        "T29",
+        "T36"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
+        "plugins/gabarito-mestre/gates/src/painel-texto.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
+        "plugins/gabarito-mestre/gates/dist/painel-texto.js",
+        "plugins/gabarito-mestre/gates/test/painel-golden/",
+        "plugins/gabarito-mestre/gates/test/painel-golden.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-blocos.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-esquadrao.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-texto.test.ts",
+        "plugins/gabarito-mestre/gates/test/fumaca-e4.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-e4/"
+      ],
+      "reqs": [
+        "REQ-LNG-1",
+        "REQ-GLB-1"
+      ]
+    },
+    {
       "id": "T25",
       "titulo": "Aceites A1 e A3, alpha e PR",
       "deps": [
@@ -829,7 +857,8 @@
         "T33",
         "T34",
         "T35",
-        "T36"
+        "T36",
+        "T37"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/.claude-plugin/plugin.json",
