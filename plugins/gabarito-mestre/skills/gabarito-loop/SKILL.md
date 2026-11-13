@@ -11,27 +11,22 @@ O estado do loop vive no **diário** da entrega (`.harness/entregas/<id>/`); a d
 `${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs`. Requisitos: REQ-LOOP-1 a 5, REQ-SLOT-1, REQ-POU-1 e 2 da spec da entrega.
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" proxima --vivos <n>   # n = agentes seus ainda vivos; o diário não os conhece
+node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" proxima --vivos <n> --sessao <id>   # n = agentes seus ainda vivos; id = "sessão <id>" do cartão do SessionStart
 ```
-Use sempre o comando inteiro, sem variável: em zsh, `$VAR` com argumentos dá exit 127. Sem o plugin, o script é `tools/gabarito-gates/scripts/loop.mjs`.
+**Todo** `proxima` e todo `pousar` levam `--sessao <id>` (a sessão do Claude): é dela que o CLI lê o contexto e o pouso pendente. Sem a flag, `percent` nulo e nada pousa pelo contexto. Use sempre o comando inteiro, sem variável: em zsh, `$VAR` com argumentos dá exit 127. Sem o plugin, o script é `tools/gabarito-gates/scripts/loop.mjs`.
 
 ## Ciclo
+Com o painel visível (mod), **não cole** a saída de `painel.mjs texto` na conversa: o painel já a mostra; responda em 1 ou 2 linhas. Sem mod ou com o painel oculto (`/gabarito painel ocultar`):
 Status ao dono: comece por `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/painel.mjs" texto --preset executivo --largura 80`.
 
 1. `proxima` devolve `acao.tipo`. Siga-o, nada além dele:
    - `aprender` (`pendencias[{tipo,sessao,seq}]`): antes de qualquer despacho, feche cada uma. M (hipótese): `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" aprendizado <E|A> M --regra <t> --entra-em instantaneo,brief:implementador --gatilho <sessao>:<seq>`; D (medido): `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" aprendizado <E|A> D --regra <t> --entra-em instantaneo,brief:implementador --gatilho <sessao>:<seq> --eventos <sessao>:<seq>` (ou `--fonte <arquivo> --numero <n>` no lugar de `--eventos`; D sem evidência o CLI recusa); sem regra, `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" aprendizado nada --gatilho <sessao>:<seq> --motivo <t>`. E = erro, A = acerto.
-   - `despachar` (`itens[{task,papel,spec?,achados?,modelo,decisoes,emendas}]`): por item, `abrir <task>` **sempre**, antes de `implementador` e `correcao`
-     (idempotente: worktree já aberta volta com `ja_aberta:true`; após um `/clear` só o CLI sabe), `iniciar <task> <papel>` e o
-     agente (`implementador` e `correcao`: `gabarito-implementador`; `revisor`: `gabarito-revisor`, sempre **novo**), só com
-     **ponteiros**: plano, `spec` do item, arquivos, porta/schema/namespace da worktree e o `env.TMPDIR` que `abrir` devolveu (fora da worktree; o agente o exporta em todo Bash de teste, senão o `TMPDIR` próprio não vale; ao revisor, o mesmo: `abrir` repetido devolve o mesmo caminho); ao revisor, a rodada; à `correcao`, o `achados`. O `Agent` recebe o `modelo` do item; `decisoes` e `emendas` (diff aprovado da spec) vão ao agente como ponteiro. A `description` do `Agent` é a `descricao` do item, sem mudar. `aprendizados[]` do item vão no brief, como texto.
-     `Agent` logo depois de `iniciar`, mesmo com hand-back no meio (trate-o depois); `--vivos` conta só agente lançado e não devolvido.
-   - O implementador volta com o commit: `concluir <task>` no hand-back, antes do gate. Commit novo depois (gate, Sombra ou pedido do dono), task `concluida` sem revisor vivo ou `aprovada`: `concluir <task> --motivo <gate|sombra|dono>` (reentrega: anula o APROVADO; o próximo revisor revê o `diff` inteiro do item; mesmo sha recusa `sha_igual`). Nunca um REPROVADO fictício. O revisor grava os achados em `<worktree>/.tmp-gabarito/review-r<rodada>.md`
-     (ignorado pelo git; `fechar` remove) e o veredito vira `veredito <task> APROVADO|REPROVADO <rodada> <blocker> <major>`.
-     `REPROVADO` sem esse arquivo não vazio: `ok:false achados_ausentes`, nada gravado; mande gravar e repita. Rodada errada: `rodada esperada: N`.
-   - `integrar` (`tasks[]`): `integrar <task>` (gate, rebase, ff-only do sha aprovado; ele mesmo fecha a worktree). Verde com `relato` não vazio:
-     repasse as linhas `desvio:`/`aviso:` ao dono e ao revisor da entrega; `[]` não prova zero desvios sem ler o `aviso:`.
-   - `esperar`: agentes vivos ou slots ocupados; não despache. `pousar` nunca vem do CLI (`percent` nulo): o mod pousa ao fim do turno (sem mod, ver abaixo).
-   - `parar{motivo}`: pare e **escale ao dono** com o motivo e o diário. Não reabra o que a regra manda escalar. `teto_rodadas`: diga o comando exato, só dele: `/gabarito-mestre:liberar <task>` (recomeça em `pendente`); você não o invoca. Com `sombra.libera_teto: true` em `origin/HEAD`, a **1ª** liberação da task pode ser da Sombra: `sombra.mjs" perguntar --task <task> --libera-teto`, despache a Sombra com o `prompt`, registre com `libera: true` só se ela liberar, e então `loop.mjs" liberar <task> --origem sombra --hash <hash>`. Recusa (`libera_teto_desligado`, `teto_sombra_esgotado`, `fora_do_teto`, `hash_invalido`) nada grava: escale ao dono. A 2ª é sempre dele.
+   - `despachar` (`itens[{task,papel,spec?,achados?,modelo,decisoes,emendas}]`): por item, `abrir <task>` **sempre**, antes de `implementador` e `correcao` (idempotente: worktree já aberta volta com `ja_aberta:true`; após um `/clear` só o CLI sabe), `iniciar <task> <papel> --modelo <modelo do item>` (spike entra como `implementador`: `iniciar T0 spike` recusa) e o agente (`implementador` e `correcao`: `gabarito-implementador`; `revisor`: `gabarito-revisor`, sempre **novo**), só com **ponteiros**: plano, `spec` do item, arquivos, porta/schema/namespace da worktree e o `env.TMPDIR` que `abrir` devolveu (fora da worktree; o agente o exporta em todo Bash de teste, senão o `TMPDIR` próprio não vale; ao revisor, o mesmo: `abrir` repetido devolve o mesmo caminho); ao revisor, a rodada; à `correcao`, o `achados`. O `Agent` recebe o `modelo` do item; `decisoes` e `emendas` (diff aprovado da spec) vão ao agente como ponteiro. A `description` do `Agent` é a `descricao` do item, sem mudar. Ela é "<task> <resto>": o 1º token é o id da task. Despache **só** os itens de `proxima`, nada de cabeça. `aprendizados[]` do item vão no brief, como texto, colados por você (limite declarado: nada confere que foram colados). `Agent` logo depois de `iniciar`, mesmo com hand-back no meio (trate-o depois); `--vivos` conta só agente lançado e não devolvido.
+   - O implementador volta com o commit: `concluir <task>` no hand-back, antes do gate. Commit novo depois (gate, Sombra ou pedido do dono), task `concluida` sem revisor vivo ou `aprovada`: `concluir <task> --motivo <gate|sombra|dono>` (reentrega: anula o APROVADO; o próximo revisor revê o `diff` inteiro do item; mesmo sha recusa `sha_igual`). Nunca um REPROVADO fictício. O revisor grava os achados em `<worktree>/.tmp-gabarito/review-r<rodada>.md` (ignorado pelo git; `fechar` remove) e o veredito vira `veredito <task> APROVADO|REPROVADO <rodada> <blocker> <major>`. `REPROVADO` sem esse arquivo não vazio: `ok:false achados_ausentes`, nada gravado; mande gravar e repita. Rodada errada: `rodada esperada: N`.
+   - `integrar` (`tasks[]`): `integrar <task>` (gate, rebase, ff-only do sha aprovado; ele mesmo fecha a worktree). Verde com `relato` não vazio: repasse as linhas `desvio:`/`aviso:` ao dono e ao revisor da entrega; `[]` não prova zero desvios sem ler o `aviso:`.
+   - `esperar`: agentes vivos ou slots ocupados (ou `pouso_pendente`); não despache.
+   - `pousar` (com `--sessao`, a partir de `x`, 50 %): nesta ordem, `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" pousar --sessao <id>`; arme o wakeup do `/loop` com prompt autossuficiente, 1ª linha "retome a entrega <ID>: leia <arquivo de retomada>" e o `instantaneo` do JSON; peça ao dono, em 1 linha, que limpe a conversa e dê o push. Pouso pendente (`/clear` ainda não dado): **não despache nada novo**; `esperar` espera, `pousar` de novo repete o pedido. Sem onboarding nunca há pouso pendente.
+   - `parar{motivo}`: pare e **escale ao dono** com o motivo e o diário. Não reabra o que a regra manda escalar. `teto_rodadas`: diga o comando exato, só dele: `/gabarito-mestre:liberar <task>` (recomeça em `pendente`); você não o invoca. Com `sombra.libera_teto: true` em `origin/HEAD`, a **1ª** liberação da task pode ser da Sombra: `sombra.mjs" perguntar --task <task> --libera-teto`, despache a Sombra com o `prompt`, registre com `libera: true` só se ela liberar, e então `loop.mjs" liberar <task> --origem sombra --hash <hash>`. Recusa (`libera_teto_desligado`, `teto_sombra_esgotado`, `fora_do_teto`, `hash_invalido`, `sombra_nao_liberou`) nada grava: escale ao dono. A 2ª é sempre dele.
    - `esperar{emenda}`: há proposta de emenda aberta; avise o dono (`/gabarito-mestre:emenda aprovar|rejeitar <seq>`) e pare o turno.
    - `concluir`: tudo integrado. Rode a suíte inteira e o CI antes de dizer "pronto". Depois: `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" registro`, que gera e commita o registro (não commite à mão); então **Entrega** abaixo.
 2. CI da entrega: `ci verde|vermelho`. CI de homolog após a última integração: `ci verde|vermelho --alvo homolog` (sem ele `continua` e `janela` ficam em `esperar{homolog}`). Falha que você não consegue resolver: `parar nao_conseguiu`.
@@ -42,8 +37,12 @@ Status ao dono: comece por `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/painel.mjs
 - Dúvida de regra: `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/sombra.mjs" perguntar (--req <REQ> | --task <id>) --pergunta <texto>`. Leia o `aviso`, se vier.
   Despache `gabarito-sombra` **só com o `prompt` devolvido** (a guarda nega o resto); a resposta vai por `sombra.mjs" registrar <hash> <resposta.json>`.
   `pendente`: a consulta está aberta; siga outra task, não repergunte.
-- Desvio ou descoberta no meio da task: `loop.mjs" desvio <task> --req … --evidencia … --arquivos … --causa …` e `loop.mjs" descoberta --evidencia … --causa …`.
-- Mudança de spec: `loop.mjs" emenda propor …` devolve `proposta_seq`; quem julga é a Sombra ou o dono, nunca você.
+- Desvio ou descoberta no meio da task: `loop.mjs" desvio <task> --req … --evidencia … --arquivos … --causa …` e `loop.mjs" descoberta --evidencia … --causa …`; `--causa` só aceita `regra_negocio` ou `tecnica`.
+- Mudança de spec: `loop.mjs" emenda propor … --diff <arquivo> …` (`--diff` é o CAMINHO de um arquivo com o diff, não o texto) devolve `proposta_seq`; quem julga é a Sombra ou o dono, nunca você: `emenda julgar <seq> aprovar|rejeitar` com origem Sombra só vale com `sombra.julga_emendas: true` em `origin/HEAD`.
+
+## Anotar na hora
+
+Sem plano e sem pedir licença, em 1 linha e com as **suas** palavras (nunca a fala do dono copiada): `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" anotar --tipo <tipo> --texto <t> --sessao <id>`. Tipos: `ideia` (ideia nova), `desvio`, `assunto` (mudança de assunto), `duvida` (só o dono resolve: 2 a 4 `--opcao <rótulo>`), `pendencia` (tarefa do dono, fora daqui). Anote ao acontecer, antes de seguir o ciclo.
 
 ## Entrega
 
@@ -66,12 +65,12 @@ mostre o aviso e sugira `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/capacidade.mj
 **Retomar** remove o arquivo, e só isso: task em voo (`implementando`, `corrigindo`, `em_revisao`) continua em voo e o `proxima` a pula.
 Com o mod, `/gabarito retomar` já reabre cada task em voo (0 agentes vivos), grava `loop.pausa` e abre o turno: você recebe o prompt de retomada.
 Sem o mod, ou com task em voo sem agente por outro motivo, **você** chama `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" reabrir <task>` (origem `retomada`) por task em voo e só
-então `proxima --vivos <n>`. Nunca reabra com agente vivo: dois implementadores na mesma worktree. Diário ilegível ou `ok:false`: pare e diga a causa.
+então `proxima --vivos <n> --sessao <id>`. Nunca reabra com agente vivo: dois implementadores na mesma worktree. Diário ilegível ou `ok:false`: pare e diga a causa.
 
 ## Sem mod
 
 O doctor diz `loop: sem mod (sem pouso automático)`. O ciclo acima vale igual, e o hook `Stop` impede parar em silêncio; só o
-pouso de contexto, a medição do orquestrador e o `/gabarito` do mod faltam. Limpar o contexto é do dono: na fronteira (contexto perto de 50 %, entre tasks), rode `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" pousar` (`task_em_voo` ⇒ ainda não); se passar, peça ao dono, em 1 linha, que digite `/clear`, e repasse o `aviso` do JSON, se vier. Nunca diga que você roda `/clear`.
+pouso de contexto, a medição do orquestrador e o `/gabarito` do mod faltam. O `/clear` do pouso é feito pelo mod; sem mod é do dono: na fronteira (contexto perto de 50 %, entre tasks), rode `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" pousar --sessao <id>` (`task_em_voo` ⇒ ainda não); se passar, peça ao dono, em 1 linha, que digite `/clear`, e repasse o `aviso` do JSON, se vier. Nunca diga que você roda `/clear`.
 
 ## Não faça
 

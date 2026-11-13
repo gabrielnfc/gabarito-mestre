@@ -116,8 +116,8 @@ BYTES_OUT=$(node -e "
   const i=t.search(/^## Apêndice/m); const nucleo=Buffer.byteLength(i<0?t:t.slice(0,i));
   const ap=i<0?0:Buffer.byteLength(t.slice(i));
   console.log('núcleo', nucleo, 'B · apêndice', ap, 'B');
-  // R1 com exceção de release_pr (GM-13 R41): teto 17.291 + 126 B
-  if(nucleo>17417){console.error('núcleo acima do teto 17.417');process.exit(1)}
+  // R1 com exceção de release_pr (GM-13 R41): teto 17.291 + 126 B; GM-14 T22 (REQ-DIA-2, regra de anotar na hora): +343 B ⇒ 17.760
+  if(nucleo>17760){console.error('núcleo acima do teto 17.760');process.exit(1)}
   if(ap>4096){console.error('apêndice acima de 4.096');process.exit(1)}")
 RC_BYTES=$?
 echo "  $BYTES_OUT"
@@ -379,6 +379,22 @@ check "nota da virada: conferência pelo installed_plugins.json com \"version\":
 check "nota da virada: na linha do passo 3, 'plugin list' só aparece em 'pode mostrar' (não é a forma de conferir)" 'L3=$(printf "%s\n" "$ATUALIZAR" | grep -E "^3\."); printf "%s" "$L3" | grep -q "plugin list. pode mostrar" && ! printf "%s" "$L3" | sed "s/plugin list. pode mostrar//" | grep -q "plugin list"' "passo 3 confere pelo plugin list"
 PASSO5=$(printf "%s\n" "$ATUALIZAR" | grep -E "^5\.")
 check "nota da virada: o passo 5 não exige 'um só' e confere o catálogo gabarito-mestre-next" '[ -n "$PASSO5" ] && ! printf "%s" "$PASSO5" | grep -q "um só" && printf "%s" "$PASSO5" | grep -q "gabarito-mestre-next"' "passo 5 com 'um só' ou sem gabarito-mestre-next"
+
+# ── GM-14 T22 (REQ-DIA-2, REQ-GLB-1): nota da 2.1.0, local do painel com o limite, só frases que dizem os dois locais ──────────
+echo "── GM-14 T22: nota da 2.1.0, limite do local do painel"
+V21="$P/docs/virada-2.1.md"
+CMDG="$P/commands/gabarito.md"
+SKL="$P/skills/gabarito-loop/SKILL.md"
+LIMITE_LOCAL='Pane (lateral): ao lado só em tela cheia com ≥ 110 colunas; fora disso a própria plataforma a põe acima da linha de digitar — sempre um só local'
+check "texto-limite-do-local: a nota da 2.1.0 e o comando trazem a frase do limite, literal" '[ -f "$V21" ] && grep -qF "$LIMITE_LOCAL" "$V21" && grep -qF "$LIMITE_LOCAL" "$CMDG"' "frase do limite ausente da nota da virada ou do comando"
+# texto-local-nos-dois: linha com "ao lado" diz também "acima da linha de digitar" e vice-versa (nunca um local sozinho); skill, comando e nota
+local_sozinho() {
+  grep -nE 'ao lado|acima da linha de digitar' "$V21" "$CMDG" "$SKL" 2>/dev/null |
+    grep -vE 'ao lado.*acima da linha de digitar|acima da linha de digitar.*ao lado'
+}
+LOCAL_SOZINHO=$(local_sozinho)
+check "texto-local-nos-dois: nenhuma linha diz 'ao lado' ou 'acima da linha de digitar' sozinho (skills, comando, nota 2.1.0)" '[ -f "$V21" ] && [ -z "$LOCAL_SOZINHO" ]' "local sozinho: $(printf '%s' "$LOCAL_SOZINHO" | cut -c1-140 | tr '\n' ' ')"
+check "nota da 2.1.0: cita /reload-plugins, o foco reversível e a herança só na 2.2; não cita o nome antigo do fluxo" '[ -f "$V21" ] && grep -qF "/reload-plugins" "$V21" && grep -qF "viewMode" "$V21" && grep -qF "chega na 2.2" "$V21" && ! grep -q "$NOME_ANTIGO" "$V21"' "nota da 2.1.0 sem /reload-plugins, sem o foco reversível, sem a herança na 2.2 ou com o nome antigo"
 
 echo "── $falhas falha(s)"
 [ "$falhas" -eq 0 ]

@@ -40,9 +40,22 @@ Consulte o CLI antes de agir. `ilegivel:true`, ou `alvo` nulo com `pausado:false
   - **Sem o mod**, é você quem reabre. Depois de remover o arquivo, com 0 agentes seus vivos, leia o diário
     (`.harness/entregas/<id>/events.*.jsonl`) e chame, para cada task em voo,
     `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" reabrir <task>` (grava `task.reaberta`, origem `retomada`); só então
-    `loop.mjs proxima --vivos 0` e siga o ciclo da skill `gabarito-loop`. Com agente vivo, **não reabra**: dois implementadores na
+    `loop.mjs proxima --vivos 0 --sessao <id>` (o id do cartão do `SessionStart`) e siga o ciclo da skill `gabarito-loop`. Com agente vivo, **não reabra**: dois implementadores na
     mesma worktree não existem; espere o hand-back. Diário ilegível: não reabra e diga a causa.
 
 Depois, **reconsulte o CLI** e relate só o que ele mostra, sempre com o caminho absoluto: o `rc` do `printf` e do `rm` nunca decide o relato.
 "Pausado" só com `alvo` em `existentes`; "retomado" só com `pausado:false`. Comando negado (`ask` recusado): a reconsulta diz "não está pausado"
 ou "continua pausado". Reconsulta que falha: "não sei".
+
+## O que só o mod entende (não passa por este comando)
+
+Com o mod, o mesmo `/gabarito` aceita mais: `painel ocultar|mostrar` (menos o PAROU e a pergunta aberta, que ficam), `painel lateral|acima` (onde o painel fica) e `chat cru|natural` (as linhas de ferramenta do chat em linguagem natural, ou cruas). Sem o mod, nada disto existe.
+
+Local do painel, com o limite da plataforma: Pane (lateral): ao lado só em tela cheia com ≥ 110 colunas; fora disso a própria plataforma a põe acima da linha de digitar — sempre um só local. O mod nunca troca de local sozinho pela largura; o padrão é `lateral`.
+
+Limites declarados, sem medição que os feche:
+- S1c NÃO MEDIDO: `hasSurvey` não teve teste real (0 renders de pesquisa em 19,5 min); a faixa devolve o render padrão quando há pesquisa.
+- S2b: o `ToolUse` solo chegou como grupo de 1 em 6/6 medições, mas só a leitura (`Read`) foi medida; outra ferramenta solo pode aparecer crua.
+- N11: o contexto do orquestrador no mod depende de `usage.context.percent` (spike S10 a medir); se vier nulo, o painel diz "estimado" ou "?", nunca um número inventado.
+- S12 a S14 (agente ao vivo, fim de subagente, segundo plano): sem a confirmação, o AGORA mostra o último fato registrado, marcado "(registrado)", e o segundo plano não aparece.
+- `onboarding.mjs herdar` (regras herdadas da 1.x) chega na 2.2; não existe na 2.1.0.
