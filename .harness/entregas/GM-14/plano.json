@@ -744,6 +744,40 @@
       ]
     },
     {
+      "id": "T36",
+      "titulo": "Sombra libera o teto 1 vez por task (emenda 13, FIEL-15)",
+      "deps": [
+        "T28",
+        "T31"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+        "plugins/gabarito-mestre/gates/src/loop.ts",
+        "plugins/gabarito-mestre/gates/src/formas.ts",
+        "plugins/gabarito-mestre/gates/src/tipos.ts",
+        "plugins/gabarito-mestre/gates/src/origem.ts",
+        "plugins/gabarito-mestre/gates/src/registro.ts",
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/src/painel-texto.ts",
+        "plugins/gabarito-mestre/gates/dist/loop.js",
+        "plugins/gabarito-mestre/gates/dist/formas.js",
+        "plugins/gabarito-mestre/gates/dist/origem.js",
+        "plugins/gabarito-mestre/gates/dist/registro.js",
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/dist/painel-texto.js",
+        "plugins/gabarito-mestre/gates/scripts/sombra.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/loop.test.ts",
+        "plugins/gabarito-mestre/gates/test/formas.test.ts",
+        "plugins/gabarito-mestre/skills/gabarito-loop/SKILL.md"
+      ],
+      "reqs": [
+        "REQ-DIA-2",
+        "REQ-DEP-1",
+        "REQ-LNG-1"
+      ]
+    },
+    {
       "id": "T25",
       "titulo": "Aceites A1 e A3, alpha e PR",
       "deps": [
@@ -780,7 +814,8 @@
         "T32",
         "T33",
         "T34",
-        "T35"
+        "T35",
+        "T36"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/.claude-plugin/plugin.json",
