@@ -4,7 +4,7 @@
  *
  *   loop.mjs proxima [--vivos <n>]    slots = `capacidade.mjs --medido`; `loop.slots` do config só reduz (sem calibração: 1 slot e aviso)
  *   loop.mjs abrir <task> | fechar <task> | integrar <task>
- *   loop.mjs iniciar <task> <implementador|revisor|correcao> | concluir <task> | reabrir <task>
+ *   loop.mjs iniciar <task> <implementador|revisor|correcao> [--modelo <haiku|sonnet|opus|fable>] | concluir <task> | reabrir <task>
  *   loop.mjs veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major>
  *       REPROVADO exige achados não vazios em `<worktree>/.tmp-gabarito/review-r<rodada>.md` (senão `achados_ausentes`, nada gravado);
  *       `proxima` os aponta (`achados`) no item `correcao`: depois do /clear o arquivo é a única memória deles.
@@ -72,6 +72,7 @@ const ENTREGA_RE = /^[A-Z]+-\d+$/;
 const SESSAO_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const NUM_RE = /^(0|[1-9]\d{0,14})$/;
 const PAPEIS = ['implementador', 'revisor', 'correcao'];
+const MODELOS_INICIAR = ['haiku', 'sonnet', 'opus', 'fable'];
 const MOTIVOS = ['teto_rodadas', 'ci_vermelho', 'teto_tokens', 'sem_pouso', 'sem_progresso', 'diario_invalido', 'nao_conseguiu', 'smoke', 'rollback', 'janela_ausente'];
 const TIPOS_DE_TASK = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
 const GLOB = /[*?[\]{}]/;
@@ -146,7 +147,7 @@ function lerArgs(argv) {
     abrir: { pos: 1, flags: ['entrega'] },
     fechar: { pos: 1, flags: ['entrega'] },
     integrar: { pos: 1, flags: ['entrega', 'sessao'] },
-    iniciar: { pos: 2, flags: ['entrega', 'sessao'] },
+    iniciar: { pos: 2, flags: ['entrega', 'sessao', 'modelo'] },
     concluir: { pos: 1, flags: ['entrega', 'sessao', 'motivo'] },
     reabrir: { pos: 1, flags: ['entrega', 'sessao'] },
     veredito: { pos: 5, flags: ['entrega', 'sessao'] },
@@ -161,7 +162,7 @@ function lerArgs(argv) {
     registro: { pos: null, flags: ['entrega', 'sessao'] },
     emenda: { pos: null, flags: ['entrega', 'sessao', 'req', 'task', 'diff', 'fato', 'alternativa', 'evidencia', 'causa', 'arquivos'] },
   };
-  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | concluir <task> --motivo <gate|sombra|dono> | iniciar <task> <papel> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | aprendizados --exportar | pousar | registro | anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--opcao <r>]…  [--entrega GM-10]';
+  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | concluir <task> --motivo <gate|sombra|dono> | iniciar <task> <papel> [--modelo <haiku|sonnet|opus|fable>] | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | aprendizados --exportar | pousar | registro | anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--opcao <r>]…  [--entrega GM-10]';
   if (typeof cmd !== 'string' || !Object.hasOwn(ESPEC, cmd)) throw new Falha('uso', `comando desconhecido ou ausente. ${uso}`, {}, 2);
   const esp = ESPEC[cmd];
   const pos = [];
@@ -328,7 +329,16 @@ function validarForma(cmd, pos, flags) {
     }
     return { task, motivo: flags.motivo };
   }
-  if (cmd === 'iniciar' && !PAPEIS.includes(pos[1])) throw new Falha('papel_invalido', `papel "${pos[1]}" fora da lista: ${PAPEIS.join(', ')}`);
+  if (cmd === 'iniciar') {
+    // FIEL-3 (a): `spike` não é papel do diário; o spike entra como `implementador` (o papel visível vem do tipo da task).
+    if (pos[1] === 'spike') throw new Falha('papel_invalido', 'o papel "spike" não existe no diário: inicie o spike como `implementador`; nada foi gravado');
+    if (!PAPEIS.includes(pos[1])) throw new Falha('papel_invalido', `papel "${pos[1]}" fora da lista: ${PAPEIS.join(', ')}`);
+    // FIEL-3 (c): o modelo real do despacho; a lista é a da forma `task.iniciada.modelo` (MODELOS_TASK em formas.ts).
+    if (flags.modelo !== undefined && !MODELOS_INICIAR.includes(flags.modelo)) {
+      throw new Falha('argumento_invalido', `--modelo ${JSON.stringify(flags.modelo)}: esperado um de ${MODELOS_INICIAR.join(' | ')}; nada foi gravado`);
+    }
+    return { task, papel: pos[1], modelo: flags.modelo };
+  }
   if (cmd === 'veredito') {
     const [, v, rodada, blocker, major] = pos;
     if (v !== 'APROVADO' && v !== 'REPROVADO') throw new Falha('argumento_invalido', `veredito "${v}": esperado APROVADO ou REPROVADO`);
@@ -1696,7 +1706,9 @@ async function executar(argv, cwd) {
     case 'iniciar': {
       tarefa(plano, task);
       worktreeViva(c, task);
-      const { modelo, aviso } = modeloDaInicio(c, forma.papel);
+      // `--modelo` (o do despacho) vence o config; sem o flag, o da 2.0.0 (família do config para o papel).
+      const { modelo: doConfig, aviso } = modeloDaInicio(c, forma.papel);
+      const modelo = forma.modelo ?? doConfig;
       // Emenda 12: o revisor revê o sha do último task.concluida (o `<sha>` do diff do item, b8); o APROVADO copia este valor.
       const sha = forma.papel === 'revisor' ? ultimoDaTask(c, task, (e) => e.tipo === 'task.concluida')?.dados?.sha : undefined;
       const dados = { task, papel: forma.papel, ...(modelo !== undefined ? { modelo } : {}), ...(sha !== undefined ? { sha } : {}) };

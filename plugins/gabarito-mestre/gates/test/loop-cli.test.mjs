@@ -511,6 +511,67 @@ describe('comandos que gravam', () => {
     assert.equal(e[0].agente, 'orquestrador');
   });
 
+  test('iniciar-modelo-flag-vence-config', () => {
+    // config manda opus; o flag manda haiku; o diário grava o do flag (e a forma do evento fica a mesma)
+    const amb = ambiente({ config: { ...CONFIG_PADRAO, orquestracao: { modelos: { implementador: 'opus' } } } });
+    amb.cli(['abrir', 'T1']);
+    const r = amb.cli(['iniciar', 'T1', 'implementador', '--modelo', 'haiku']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const e = amb.eventos();
+    assert.equal(e.length, 1);
+    assert.equal(e[0].tipo, 'task.iniciada');
+    assert.deepEqual(e[0].dados, { task: 'T1', papel: 'implementador', modelo: 'haiku' });
+    // todos os valores da lista valem
+    for (const m of ['sonnet', 'opus', 'fable']) {
+      const a = ambiente();
+      a.cli(['abrir', 'T1']);
+      assert.equal(a.cli(['iniciar', 'T1', 'implementador', '--modelo', m]).rc, 0, m);
+      assert.equal(a.eventos()[0].dados.modelo, m);
+    }
+  });
+
+  test('iniciar-sem-flag-igual-2-0-0', () => {
+    // sem --modelo, o modelo é o do config (opus), como a 2.0.0; nenhum campo a mais no evento
+    const amb = ambiente({ config: { ...CONFIG_PADRAO, orquestracao: { modelos: { implementador: 'opus' } } } });
+    amb.cli(['abrir', 'T1']);
+    const r = amb.cli(['iniciar', 'T1', 'implementador']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const e = amb.eventos();
+    assert.equal(e.length, 1);
+    assert.deepEqual(e[0].dados, { task: 'T1', papel: 'implementador', modelo: 'opus' });
+    assert.deepEqual(Object.keys(e[0].dados), ['task', 'papel', 'modelo']);
+  });
+
+  test('iniciar-modelo-fora-da-lista-recusa', () => {
+    const amb = ambiente();
+    amb.cli(['abrir', 'T1']);
+    for (const m of ['gpt', 'Opus', 'claude-opus-5-5', '', 'spike']) {
+      const r = amb.cli(['iniciar', 'T1', 'implementador', '--modelo', m]);
+      assert.equal(r.rc, 1, `"${m}": ${r.out}${r.err}`);
+      assert.equal(r.j.erro, 'argumento_invalido', `${m}: recusa na borda, antes de tocar o diário`);
+      assert.match(r.j.mensagem, /haiku \| sonnet \| opus \| fable/, m);
+      assert.match(r.j.mensagem, /nada foi gravado/, m);
+    }
+    assert.equal(amb.eventos().length, 0, 'nada gravado no diário');
+    // o recusado não deixa estado: o iniciar válido seguinte grava o 1º e único evento
+    assert.equal(amb.cli(['iniciar', 'T1', 'implementador', '--modelo', 'opus']).rc, 0);
+    assert.equal(amb.eventos().length, 1);
+  });
+
+  test('iniciar-spike-recusa-com-frase', () => {
+    const amb = ambiente();
+    amb.cli(['abrir', 'T1']);
+    const r = amb.cli(['iniciar', 'T1', 'spike']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.match(r.j.mensagem, /implementador/);
+    assert.doesNotMatch(r.j.mensagem, /fora da lista/, 'frase própria, não a lista genérica');
+    assert.equal(amb.eventos().length, 0, 'nada gravado no diário');
+    // com --modelo também recusa, e o papel valido ao lado segue aceito
+    assert.equal(amb.cli(['iniciar', 'T1', 'spike', '--modelo', 'opus']).rc, 1);
+    assert.equal(amb.eventos().length, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'implementador']).rc, 0);
+  });
+
   test('iniciar-papel-invalido-recusa', () => {
     const amb = ambiente();
     amb.cli(['abrir', 'T1']);
