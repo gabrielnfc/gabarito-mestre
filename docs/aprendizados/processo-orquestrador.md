@@ -70,3 +70,6 @@ Rode cada item como sonda sua e relate o resultado:
 - **P3 em uso de novo:** dependente abre sobre o commit da dependência, sem esperar review/integração (T12 sobre T3). Só a integração respeita a ordem.
 - **P17c 7 agentes, 1 teste pesado por vez** (GM-14, 2026-11-11 ~19:05, dono: 'rodar no máximo respeitando o MacBook'). Medido antes: 5 agentes + 1 pesado ⇒ load 17 em 16 núcleos. Critério de volta a 5: load > 32 sustentado em gate ou 2 falsos vermelhos por carga.
 - P17c resultado (2026-11-11 ~19:20): load1 42,4 com integrar + 2–3 agentes ⇒ critério (> 32) atingido ⇒ volta a 5.
+- P16 (GM-14 23:13, M 1×): revisor sob P16 roda também testes que leem o arquivo tocado (git grep do nome em test/). T14 aprovada r2 quebrou hooks-json.test.mjs só no integrar. Métrica: integrar vermelho por teste de outro arquivo que lê arquivo da task.
+- P18 (GM-14 08:32, M 1×): antes de `concluir` correção/reentrega, orquestrador roda 1× os testes dos arquivos tocados. T21 correção relatou verde com 4 vermelhos. Métrica: review reprovado por teste vermelho no HEAD.
+- **Não commitar na base durante `integrar`** (GM-14 2026-11-12 22:45, M 1×): commit de plano.json em enabler com integrar T21 em curso ⇒ merge --ff-only falhou, integrar perdido (~15 min). Commits de plano só com `pgrep -f 'loop.mjs integrar'` vazio.
