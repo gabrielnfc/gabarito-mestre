@@ -62,7 +62,7 @@ const PRIORIDADE_RECENTE = 5;
 
 /**
  * `cortarPorPrioridade` com 1 linha reservada para a decisão da Sombra (REQ-GLB-1, emenda 32). Regra única das duas camadas (lateral e acima).
- * Há RECENTE (prioridade 5) na entrada e o corte normal o cortou (inteiro OU em parte) sem deixar a linha da decisão (`daDecisao`, as linhas de RECENTE que
+ * O corte normal por ORÇAMENTO tirou linhas do RECENTE (prioridade 5; inteiro OU em parte; sem corte por orçamento não há reserva) sem deixar a linha da decisão (`daDecisao`, as linhas de RECENTE que
  * são a decisão mais recente): `reserva` entra com `PRIORIDADE_RESERVA`. Cortado inteiro, ela cede só às de prioridade ≤ 3 e vence o ATENÇÃO; cortado em parte,
  * ela toma o lugar da ÚLTIMA linha de RECENTE que sobrou (o total de linhas não cresce). A decisão já entre as que sobraram, `reserva` nula ou sem RECENTE ⇒ corte de hoje.
  * `reserva.ordem` é ignorada: a linha vai depois de tudo na exibição.
@@ -70,9 +70,10 @@ const PRIORIDADE_RECENTE = 5;
 export function cortarComReserva(ls: LinhaPrioridade[], orcamento: number, reserva: Linha | null, daDecisao: Linha[] = []): Cortadas {
   const base = cortarPorPrioridade(ls, orcamento);
   if (reserva === null) return base;
-  const temRecente = ls.some((x) => pesoDe(x.prioridade) === PRIORIDADE_RECENTE);
-  const sobras = ls.filter((x) => pesoDe(x.prioridade) === PRIORIDADE_RECENTE).filter((x) => base.linhas.includes(x.l));
-  if (!temRecente || sobras.some((x) => daDecisao.includes(x.l))) return base;
+  const recente = ls.filter((x) => pesoDe(x.prioridade) === PRIORIDADE_RECENTE);
+  const sobras = recente.filter((x) => base.linhas.includes(x.l));
+  // sem corte por ORÇAMENTO no RECENTE (nada dele saiu) não há reserva: vale o RECENTE normal com o seu teto (emenda 32)
+  if (sobras.length === recente.length || sobras.some((x) => daDecisao.includes(x.l))) return base;
   // cortado em parte: a reserva (prioridade 3,5) entra e o corte seguinte tira a ÚLTIMA linha de RECENTE que sobrava (a de maior `ordem`), o total não cresce
   const fim = ls.reduce((m, x) => Math.max(m, ordemDe(x.ordem)), 0) + 1;
   return cortarPorPrioridade([...ls, { prioridade: PRIORIDADE_RESERVA, ordem: fim, l: reserva }], orcamento);

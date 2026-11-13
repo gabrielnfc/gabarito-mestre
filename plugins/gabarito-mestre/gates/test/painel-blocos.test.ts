@@ -915,7 +915,9 @@ test('reserva-varredura-decisao-visivel-em-toda-celula: decisão + 0/1/2 eventos
       assert.ok(l.length <= orc, `${rotulo}: passou do orçamento: ${l.join('|')}`);
       assert.ok(l.filter(ehDecidiu).length <= 1, `${rotulo}: decisão duplicada: ${l.join('|')}`);
       assert.deepEqual(l.slice(0, b12), cheio.slice(0, b12), `${rotulo}: blocos 1–2 intactos`);
-      if (orc >= b12 + 2 + 1) {
+      // a reserva só existe com corte por ORÇAMENTO no RECENTE (ciclo 3, emenda 32); sem corte, a decisão além do teto do local não aparece
+      const corte = JSON.stringify(l.filter((x) => /^RECENTE|^  \d\d:\d\d/.test(x))) !== JSON.stringify(cheio.filter((x) => /^RECENTE|^  \d\d:\d\d/.test(x)));
+      if (orc >= b12 + 2 + 1 && corte) {
         comPiso++;
         assert.equal(l.filter(ehDecidiu).length, 1, `${rotulo}: a decisão da Sombra some: ${l.join('|')}`);
         assert.ok(l.some((x) => /^AGORA/.test(x)), `${rotulo}: sem AGORA (bloco 3): ${l.join('|')}`);
@@ -925,7 +927,7 @@ test('reserva-varredura-decisao-visivel-em-toda-celula: decisão + 0/1/2 eventos
       }
     }
   }
-  assert.ok(casos >= 3 * 3 * 2 * 2 * 6 && comPiso > 100, `a varredura viu ${casos} casos (${comPiso} acima do piso)`);
+  assert.ok(casos >= 3 * 3 * 2 * 2 * 6 && comPiso > 20, `a varredura viu ${casos} casos (${comPiso} acima do piso)`);
 });
 
 test('reserva-parcial-toma-a-ultima-linha-do-recente: decisão + pausa, lateral, 2 vivos, orçamento 8 — 1 linha de RECENTE sobra e é a decisão, sem aumentar o total', () => {
@@ -937,4 +939,62 @@ test('reserva-parcial-toma-a-ultima-linha-do-recente: decisão + pausa, lateral,
     assert.ok(l.length <= orc);
   }
   assert.equal(l7.filter(ehDecidiu).length, 1, l7.join('|'));
+});
+
+// ───────────────────────────── T42 (ciclo 3, emenda 32): a reserva só existe com corte por ORÇAMENTO no RECENTE e toma o lugar da última linha, nunca soma
+
+const ehRec = (x: string): boolean => /^RECENTE|^  \d\d:\d\d/.test(x);
+const eventosApos = (k: number): Item[] => Array.from({ length: k }, (_, i) => e(55 + i, 'loop.pausa', { estado: i % 2 === 0 ? 'pausado' : 'retomado' }));
+
+test('reserva-varredura-teto-e-corte: decisão + 0–6 eventos × 1–3 vivos × orçamento 7–40 × lateral/acima × com/sem ATENÇÃO × largura 80/180', () => {
+  let casos = 0;
+  let comCorte = 0;
+  let semCorte = 0;
+  for (const k of [0, 1, 2, 3, 4, 5, 6]) for (const n of [1, 2, 3]) for (const local of ['lateral', 'acima'] as const) for (const atencao of [false, true]) for (const largura of [80, 180]) {
+    const base = roteiro(n, [DEC(50, 'seguir com a T3'), ...eventosApos(k)]);
+    const s = atencao ? ({ ...base, atencao: ['task em voo sem agente'] } as EstadoPainel) : base;
+    const cheio = cabe(s, { local, orcamento: 200, largura });
+    const b12 = cheio.findIndex((x) => /^AGORA/.test(x));
+    const teto = local === 'acima' ? 2 : 5;
+    assert.ok(b12 > 0 && cheio.filter(ehRec).length <= teto, `premissa: render cheio respeita o teto (k=${k} n=${n} ${local} w=${largura})`);
+    for (let orc = 7; orc <= 40; orc++) {
+      casos++;
+      const l = cabe(s, { local, orcamento: orc, largura });
+      const rotulo = `k=${k} n=${n} ${local} atencao=${atencao} w=${largura} orc=${orc}`;
+      assert.ok(l.length <= orc, `${rotulo}: passou do orçamento: ${l.join('|')}`);
+      assert.ok(l.filter(ehRec).length <= teto, `${rotulo}: RECENTE acima do teto ${teto}: ${l.join('|')}`);
+      assert.ok(l.filter(ehDecidiu).length <= 1, `${rotulo}: decisão duplicada: ${l.join('|')}`);
+      assert.deepEqual(l.slice(0, b12), cheio.slice(0, b12), `${rotulo}: blocos 1–2 intactos`);
+      const corte = JSON.stringify(l.filter(ehRec)) !== JSON.stringify(cheio.filter(ehRec));
+      if (!corte) {
+        semCorte++;
+        // sem corte por orçamento: o RECENTE normal, com o seu teto — a decisão só aparece se estava entre as linhas do teto
+        assert.equal(l.filter(ehDecidiu).length, cheio.filter(ehDecidiu).length, `${rotulo}: reserva sem corte por orçamento: ${l.join('|')}`);
+      } else {
+        comCorte++;
+        if (orc >= b12 + 2 + 1) assert.equal(l.filter(ehDecidiu).length, 1, `${rotulo}: corte por orçamento e a decisão some: ${l.join('|')}`);
+      }
+    }
+  }
+  assert.ok(casos === 7 * 3 * 2 * 2 * 2 * 34 && comCorte > 300 && semCorte > 300, `a varredura viu ${casos} casos (${comCorte} com corte, ${semCorte} sem)`);
+});
+
+test('reserva-sem-corte-nao-soma: largura 180, orçamento 40 — decisão seguida de 2 eventos (acima) tem 2 linhas de RECENTE, seguida de 5 (lateral) tem 5', () => {
+  const acima = cabe(roteiro(2, [DEC(50, 'seguir com a T3'), ...eventosApos(2)]), { local: 'acima', orcamento: 40, largura: 180 });
+  assert.equal(acima.filter(ehRec).length, 2, acima.join('|'));
+  const lateral = cabe(roteiro(2, [DEC(50, 'seguir com a T3'), ...eventosApos(5)]), { local: 'lateral', orcamento: 40, largura: 180 });
+  assert.equal(lateral.filter(ehRec).length, 5, lateral.join('|'));
+  assert.ok(!lateral.some(ehDecidiu), 'decisão antiga além do teto: comportamento normal do RECENTE, sem reserva');
+});
+
+test('reserva-reconhece-decisao-por-campos: estado serializado (cópia do item) com a decisão entre as sobras não ganha 2ª linha "decidiu:"', () => {
+  const s0 = roteiro(2, [e(40, 'loop.pausa', { estado: 'pausado' }), e(41, 'loop.pausa', { estado: 'retomado' }), e(42, 'loop.pausa', { estado: 'pausado' }), DEC(50, 'seguir com a T3')]);
+  const s = JSON.parse(JSON.stringify(s0)) as EstadoPainel;
+  let visto = 0;
+  for (let orc = 7; orc <= 14; orc++) {
+    const l = cabe(s, { local: 'lateral', orcamento: orc });
+    assert.ok(l.filter(ehDecidiu).length <= 1, `orc=${orc}: ${l.join('|')}`);
+    if (l.filter(ehDecidiu).length === 1 && l.filter(ehRec).length >= 2) visto++;
+  }
+  assert.ok(visto > 0, 'premissa: há orçamento com corte parcial e a decisão entre as sobras');
 });
