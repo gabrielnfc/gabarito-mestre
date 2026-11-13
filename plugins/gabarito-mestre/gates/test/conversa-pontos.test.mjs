@@ -275,6 +275,73 @@ describe('asserções do A1 sobre a evidência de uma execução', () => {
     }
   });
 
+  const estraga = {
+    '1-depende-no-topo': (ev) => { ev.quadros[0].linhas = [QUADRO_CHEIO[0], QUADRO_CHEIO[2], QUADRO_CHEIO[1], ...QUADRO_CHEIO.slice(3)]; },
+    '2-blocos-e-corte': (ev) => { ev.quadros[0].linhas = QUADRO_CHEIO.filter((l) => !/^PRONTO/.test(l)); },
+    '3-sem-task-integrada': (ev) => { ev.quadros[0].linhas = [...QUADRO_CHEIO.slice(0, 5), 'ATENÇÃO · T1 parou', ...QUADRO_CHEIO.slice(6)]; },
+    '4-agora-ativos': (ev) => { ev.vivos[1].detalhes.push({ nome: 'Frodo', descricao: 'd', task: 'T4', acao: '(registrado)' }); },
+    '5-sem-emoji': (ev) => { ev.transcript.textos.push('feito ✅'); },
+    '6-assunto-vira-pergunta': (ev) => { ev.perguntas[0].botoes = false; },
+    '7-sem-edit-em-harness-nem-status-a-mao': (ev) => { ev.transcript.chamadas.push({ nome: 'Edit', entrada: { file_path: '/r/.harness/entregas/GM-13/plano.json' } }); },
+    '8a-dono-mensagem-sem-duplicata': (ev) => { ev.eventos.push({ tipo: 'dono.mensagem', dados: { sha256: 'a'.repeat(64), chars: 30 } }); },
+    '8b-agent-nao-negado-em-status': (ev) => { ev.transcript.chamadas[0].negada = true; },
+    '8c-nada-em-entrega-publicada': (ev) => { ev.gravacoes['GM-13'].depois = 6; },
+    '8d-vivo-com-nome-descricao-task': (ev) => { ev.vivos[1].detalhes[0].descricao = ''; },
+    '8e-vivos-igual-linhas-de-agente': (ev) => { ev.vivos[1].linhasAgente = 2; },
+    '8f-sombra-decisao-visivel': (ev) => { ev.quadros[0].linhas = QUADRO_CHEIO.filter((l) => !/decidiu:/.test(l)); },
+    '9-veredito-com-revisor-antes': (ev) => { ev.eventos.splice(1, 1); },
+    '10-despachos-com-aprendizados': (ev) => { ev.despachos[0].prompt = 'brief sem as regras'; },
+    '11-pouso-a-50': (ev) => { ev.pouso.despachosDepois = 1; },
+    '12-placement-da-pane': (ev) => { ev.panes = [{ placement: 'inline' }]; },
+  };
+
+  for (const a of ASSERCOES) {
+    test(`asserção ${a.id}: boa passa, estragada reprova (e só ela)`, () => {
+      const boa = evBoa();
+      assert.equal(a.avaliar(boa).ok, true, `boa: ${a.avaliar(boa).detalhe}`);
+      const mau = evBoa();
+      assert.ok(estraga[a.id], `há como estragar ${a.id}`);
+      estraga[a.id](mau);
+      const r = a.avaliar(mau);
+      assert.equal(r.ok, false, `estragada: ${r.detalhe}`);
+      assert.equal(typeof r.detalhe, 'string');
+    });
+  }
+
+  test('cada-estrago-reprova-a-execucao-pelo-id-certo', () => {
+    for (const a of ASSERCOES) {
+      const mau = evBoa(); estraga[a.id](mau);
+      const r = avaliarExecucao(mau);
+      assert.equal(r.passa, false, a.id);
+      assert.ok(r.resultados.find((x) => x.id === a.id && !x.ok), `${a.id} reprovada`);
+    }
+  });
+
+  test('placement-incoerente-reprova-nas-quatro-lateral-e-pane-em-acima', () => {
+    const casos = [
+      [{ local: 'lateral', cols: 180, rows: 50, cheia: true }, [{ placement: 'inline' }], false],
+      [{ local: 'lateral', cols: 180, rows: 50, cheia: false }, [{ placement: 'dock' }], false],
+      [{ local: 'lateral', cols: 80, rows: 24, cheia: true }, [{ placement: 'dock' }], false],
+      [{ local: 'lateral', cols: 80, rows: 24, cheia: false }, [{ placement: 'inline' }], true],
+      [{ local: 'lateral', cols: 80, rows: 24, cheia: false }, [], false],
+      [{ local: 'lateral', cols: 180, rows: 50, cheia: true }, [{ placement: 'dock' }, { placement: 'dock' }], false],
+      [{ local: 'acima', cols: 180, rows: 50, cheia: true }, [{ placement: 'dock' }], false],
+      [{ local: 'acima', cols: 180, rows: 50, cheia: true }, [], true],
+    ];
+    const a12 = ASSERCOES.find((a) => a.id === '12-placement-da-pane');
+    for (const [c, panes, esperado] of casos) {
+      const ev = evBoa(c); ev.panes = panes;
+      assert.equal(a12.avaliar(ev).ok, esperado, `${idDaCelula(c)} ${JSON.stringify(panes)}`);
+    }
+  });
+
+  test('evidencia-malformada-reprova-nunca-passa-em-silencio', () => {
+    const r = avaliarExecucao({ celula: { local: 'lateral', cols: 80, rows: 24, cheia: false } });
+    assert.equal(r.passa, false);
+    assert.ok(r.resultados.every((x) => x.ok === false), 'toda asserção reprova sem evidência');
+    assert.match(r.resultados[0].detalhe, /evidência malformada/);
+  });
+
   test('8f-80x24-segue-estrita: sem a linha reservada da decisão da Sombra a execução reprova', () => {
     const ev = evBoa({ local: 'lateral', cols: 80, rows: 24, cheia: false });
     ev.quadros = [{ linhas: QUADRO_CHEIO.slice(0, 5), itensDepende: 1 }];

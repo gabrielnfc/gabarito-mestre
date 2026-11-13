@@ -11,7 +11,7 @@
 
 import { alinhar, corEstadoTask, faixaIds, fmtPct, fmtTempo, fmtTok, num, previsao, separador, textoDoPapel, textoEstadoTask } from './painel-formato.js';
 import { PAPEL_EXECUTIVO } from './painel-executivo.js';
-import { cortarComReserva, cortarPorPrioridade } from './orcamento.js';
+import { PRIORIDADE_RESERVA, cortarComReserva, cortarPorPrioridade } from './orcamento.js';
                                                       
 import { linhaTecnica, nomeNatural, tagNatural } from './origem.js';
                                                     
@@ -615,9 +615,12 @@ export function renderBlocos(e              , o              )          {
       const fora = new Set(agoraAgentes);
       const ls2                    = [];
       ls.forEach((x) => { if (x === agoraAgentes[0]) ls2.push({ ...x, l: compacta }); else if (!fora.has(x)) ls2.push(x); });
-      const c2 = cortarComReserva(ls2, orc, reserva);
-      // a decisão fica à vista: a reserva coube, ou o RECENTE (onde a decisão mais recente mora) voltou a ter linha — a mesma regra do corte sem compactar
-      if (c2.linhas.includes(reserva) || recente.some((l) => c2.linhas.includes(l))) cortado = c2;
+      // a linha livre que a compactação abre é da DECISÃO da Sombra mais recente (emenda 32), não do item mais recente do RECENTE: o RECENTE segue fora e a reserva entra
+      const semRecente = ls2.filter((x) => x.prioridade !== 5);
+      const fim = ls2.reduce((m, x) => Math.max(m, x.ordem), 0) + 1;
+      const c2 = cortarPorPrioridade([...semRecente, { prioridade: PRIORIDADE_RESERVA, ordem: fim, l: reserva }], orc);
+      // a compactação só vale com a decisão à vista (emenda 37): se a reserva ainda não coube, o AGORA fica como hoje
+      if (c2.linhas.includes(reserva)) cortado = { linhas: c2.linhas, cortadasTopo: c2.cortadasTopo };
     }
   }
   const ficou = new Set(cortado.linhas);

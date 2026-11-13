@@ -822,6 +822,23 @@ test('sem-compactar-quando-cabe: com a reserva cabendo (180×50 sem corte, later
   assert.equal(l.filter((x) => /^  \S+ · T\d · /.test(x)).length, 3);
 });
 
+test('reserva-cabe-sem-compactar-com-atencao: ATENÇÃO ocupa a linha do RECENTE, a reserva a toma e o AGORA fica com 1 linha por agente (D-P8 + emenda 32)', () => {
+  const s = roteiro(3, [DEC(50, 'seguir com a T3'), e(60, 'ci.resultado', { verde: false, alvo: 'main' })]);
+  const pleno = cabe(s, { local: 'acima', orcamento: 200 });
+  const b123 = pleno.findIndex((x) => /^(ATENÇÃO|RECENTE)/.test(x));
+  assert.match(pleno[b123], /^ATENÇÃO/, 'premissa: o ATENÇÃO vem antes do RECENTE');
+  const l = cabe(s, { local: 'acima', orcamento: b123 + 1 });
+  assert.equal(l.filter(ehDecidiu).length, 1, l.join('|'));
+  assert.equal(resumoDe(l).length, 0, l.join('|'));
+  assert.equal(l.filter((x) => /^  \S+ · T\d · /.test(x)).length, 3, '1 linha por agente');
+});
+
+test('decisao-com-folga-nao-duplica: reserva entra uma vez só mesmo com linha sobrando depois de compactar', () => {
+  const s = roteiro(3);
+  const l = cabe(s, { local: 'acima', orcamento: ORC_ACIMA + 1 });
+  assert.equal(l.filter(ehDecidiu).length, 1, l.join('|'));
+});
+
 test('sem-decisao-nunca-compacta: sem decisao.sombra o AGORA não vira linha-resumo, mesmo apertado', () => {
   for (const n of [2, 3]) {
     const s = roteiro(n, [e(50, 'loop.pausa', { estado: 'pausado' })]);
@@ -847,6 +864,15 @@ test('reserva-cede-mesmo-compactado: blocos 1–2 + 2 linhas de AGORA + reserva 
   assert.equal(cede.length, limiar - 1);
   assert.ok(cede.some((x) => /^AGORA/.test(x)) && cede.some((x) => /^PRONTO/.test(x)));
 });
+
+for (const n of [2, 3]) {
+  test(`decisao-nao-ultima-acima-80x24-roteiro: decisão seguida de loop.pausa, ${n} vivos ⇒ "decidiu:" presente (compactar só vale com a decisão à vista)`, () => {
+    const s = roteiro(n, [DEC(50, 'seguir com a T3'), e(55, 'loop.pausa', { estado: 'pausado' })]);
+    const l = cabe(s, { local: 'acima', orcamento: ORC_ACIMA });
+    assert.ok(l.length <= ORC_ACIMA, l.join('|'));
+    assert.equal(l.filter(ehDecidiu).length, 1, `a decisão da Sombra fica: ${l.join('|')}`);
+  });
+}
 
 test('reserva-compacta-uma-vez: 1 vivo sem segundo plano não ganha linha-resumo (não economiza linha)', () => {
   const s = roteiro(1);
