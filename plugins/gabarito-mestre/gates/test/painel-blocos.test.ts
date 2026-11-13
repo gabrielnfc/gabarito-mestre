@@ -639,3 +639,22 @@ test('topo-palavra-maior-que-a-largura: é partida em linhas, sem "…" e sem pe
   assert.ok(topo.length >= 2 && topo.every((x) => colunas(x) <= 80 && !x.includes('…')), JSON.stringify(topo));
   assert.equal(topo.join('').replace(/[^x]/g, '').length, 107, JSON.stringify(topo));
 });
+
+// T37 r4: linha truncada com EXATAMENTE `cabe` colunas (ramo colunas(l) === cabe em painel-esquadrao.ts).
+test('T37: linha truncada que ocupa exatamente a largura mantém uma reticência só e não passa da largura', () => {
+  const est = (texto: string, nd: number): EstadoPainel => ({
+    modo: 'loop', id: 'GM-14', titulo: 'x', parar: { hora: '12:25', texto, acoes: [] }, pergunta: null,
+    depende: Array.from({ length: nd }, () => ({ motivo: 'outro', acoes: [], nivel: 'x' })),
+    pronto: { integradas: 1, total: 3, previsao: null }, agora: null, atencao: [], recente: [], trilha: {},
+  }) as unknown as EstadoPainel;
+  const rende = (e: EstadoPainel, orcamento: number): string[] =>
+    renderBlocos(e, { largura: 20, preset: 'executivo', orcamento } as OpcoesRender).map((x) => x.map((s) => s.texto).join(''));
+  // sem "(+N)": a linha cortada tinha exatamente 20 colunas (cabe); abre mão de 1 coluna para a "…" caber e ser única
+  const sem = rende(est(`a ${'b'.repeat(200)}`, 0), 2);
+  assert.deepEqual(sem, ['PAROU 12:25 · a', `    ${'b'.repeat(14)}…`]);
+  // com "(+N)": mesma largura exata (cabe = 20 - 5 colunas do " (+1)" incluído); termina em "…" antes do "(+1)", sem "……"
+  const com = rende(est(`a ${'b'.repeat(200)}`, 1), 1);
+  assert.deepEqual(com, ['PAROU 12:25 ·… (+1)']);
+  for (const ls of [sem, com]) assert.ok(ls.every((l) => colunas(l) <= 20 && !l.includes('……')), JSON.stringify(ls));
+  assert.ok(sem[sem.length - 1].endsWith('…') && com[0].replace(/ \(\+\d+\)$/, '').endsWith('…'));
+});
