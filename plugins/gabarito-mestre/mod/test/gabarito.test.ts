@@ -4197,9 +4197,12 @@ test('subagentstop-sai-na-hora: a lista já diz completed ⇒ o stop reconsulta 
   const m = comPainel($, on, {}, { agentesPainel: lista })
   await arrancar(m)
   expect(ultimoStdin(m).encerrados).toEqual([])
-  lista[0].status = 'completed'
   const antes = stdinsPainel(m).length
-  await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [] }); await m.clock.advance(400); await drena(m) // 400 ms: ESPERA_STOP_MS, nunca o relógio de 60 s
+  await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [] }) // S13: no instante do stop a lista ainda diz running
+  await drena(m)
+  expect(ultimoStdin(m).encerrados).toEqual([])
+  await m.clock.advance(210); lista[0].status = 'completed'; await drena(m) // S13: completed ~210 ms depois do stop
+  await m.clock.advance(190); await drena(m) // 400 ms no total: ESPERA_STOP_MS, nunca o relógio de 60 s
   expect(stdinsPainel(m).length).toBeGreaterThan(antes)
   expect(ultimoStdin(m).encerrados).toEqual(['a1'])
 })
@@ -4234,9 +4237,41 @@ test('encerrado-perde-a-acao: a ação de quem terminou sai do stdin', async ($,
   await arrancar(m)
   await bash($, { agentId: 'a1' }); await drena(m)
   expect(Object.keys(ultimoStdin(m).acoes)).toEqual(['a1'])
-  lista[0].status = 'completed'
-  await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [] }); await m.clock.advance(400); await drena(m)
+  await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [] }); await drena(m) // S13: ainda running no stop
+  await m.clock.advance(210); lista[0].status = 'completed'; await drena(m)
+  await m.clock.advance(190); await drena(m)
   expect(ultimoStdin(m).acoes).toEqual({})
+})
+test('releitura-ao-vivo-nao-mede: rajada de tool.call refaz o estado mas não chama `painel.mjs medir` (gh) a cada chamada', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  const medirAntes = m.est.medirStdins.length
+  const estadosAntes = stdinsPainel(m).length
+  for (let i = 0; i < 30; i++) { await bash($, { agentId: 'a1', description: `passo ${i}` }); await m.clock.advance(500); await drena(m) } // 15 s de rajada
+  expect(stdinsPainel(m).length).toBeGreaterThan(estadosAntes + 3) // a releitura ao vivo continua refazendo o estado
+  expect(m.est.medirStdins.length - medirAntes).toBe(0)
+})
+test('medir-segue-no-ritmo-proprio: o relógio de 60 s ainda mede, mesmo com ações ao vivo no meio', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  const medirAntes = m.est.medirStdins.length
+  await bash($, { agentId: 'a1' }); await m.clock.advance(2000); await drena(m)
+  expect(m.est.medirStdins.length - medirAntes).toBe(0)
+  await m.clock.advance(60000); await drena(m)
+  expect(m.est.medirStdins.length - medirAntes).toBeGreaterThanOrEqual(1)
+})
+test('acao-e-segundo-plano-levam-a-hora-de-agora: em/desde = o relógio no momento do evento, não 0', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')], resultadoTool: (e: any) => (e.run_in_background === true ? { backgroundTaskId: 'bg9' } : {}) })
+  await arrancar(m)
+  await m.clock.advance(12345); await drena(m)
+  const t1 = (m.clock as any).now()
+  expect(t1).toBeGreaterThan(10000)
+  await bash($, { agentId: 'a1', description: 'agora' }); await drena(m)
+  expect(ultimoStdin(m).acoes.a1.em).toBe(Math.round(t1))
+  await m.clock.advance(7000)
+  const t2 = (m.clock as any).now()
+  await bash($, { run_in_background: true, description: 'fundo' }); await drena(m)
+  expect(ultimoStdin(m).segundoPlano[0].desde).toBe(Math.round(t2))
 })
 const turnoVia = async (m: ReturnType<typeof mundo>, $: any) => { await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't9', reason: 'answer' }); await drena(m) }
 
@@ -4311,6 +4346,7 @@ test('medir-recebe-o-mesmo-stdin: `medir --agentes` leva acoes, encerrados e seg
   const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
   await arrancar(m)
   await bash($, { agentId: 'a1' }); await drena(m)
+  await turnoVia(m, $) // a medição segue o ritmo próprio (turno), não a releitura ao vivo
   const med = m.est.medirStdins[m.est.medirStdins.length - 1].stdin
   expect(med.acoes.a1.texto).toBe('listar arquivos')
   expect(med.encerrados).toEqual([])

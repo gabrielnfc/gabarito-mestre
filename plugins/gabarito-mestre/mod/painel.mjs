@@ -553,6 +553,7 @@ const S = {
   acoesBase: new Map(), // agent_id → {base, n}: contagem de chamadas seguidas do mesmo tipo ("lendo 3 arquivos")
   encerrados: new Set(), // ids que a lista de agentes mostrou `completed`/`failed`/`killed`; sai se o id volta a ativo (S13: `completed` não é terminal)
   segundoPlano: new Map(), // backgroundTaskId → {id, dono, texto, desde}: entra pelo resultado do Bash, sai quando o Stop não o lista (S14)
+  medirPedida: false, // alguma leitura pedida desde a última medição não era `ao-vivo`
   acaoAgendada: false, // há uma releitura marcada para o fim da janela
   ultimaAcaoMs: null, // última vez que uma ação pediu releitura (o `tool.call` não dispara uma ponte por chamada)
 };
@@ -877,7 +878,7 @@ async function uma($, motivo) {
     s = { classe: 'erro', erro: 'sessao_sem_raiz', mensagem: 'a sessão não tem raiz' };
   } else {
     const pedido = await pedidoDoMod($, cwd, await agora($));
-    await medirAgora($, cwd, pedido); // antes do estado: o estado já lê o fato que acabou de mudar
+    if (S.medirPedida) { S.medirPedida = false; await medirAgora($, cwd, pedido); } // antes do estado: o estado já lê o fato que acabou de mudar; releitura ao vivo NÃO mede (gh a cada tool.call)
     const t0 = await agora($);
     try {
       const r = await $.process.run(['node', `${$.plugin.root}/gates/scripts/painel.mjs`, 'estado', '--agentes'], { cwd, stdin: JSON.stringify(pedido), timeoutMs: TIMEOUT_MS });
@@ -907,6 +908,7 @@ async function uma($, motivo) {
 /** Uma ponte por vez, com coalescência: o que chega com a ponte em voo vira 1 pendente (no máximo), rodado quando ela termina. Nunca lança. */
 export async function atualizar($, motivo) {
   if (!S.interativo) return;
+  if (motivo !== 'ao-vivo') S.medirPedida = true; // só a releitura ao vivo dispensa a medição externa (ritmo próprio: relógio, turno, painel)
   if (S.emVoo) { S.pendente = true; return; }
   S.emVoo = true;
   try {

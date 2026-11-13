@@ -22,6 +22,14 @@ function papelLimpo(p         )                {
   return t === '' ? null : t;
 }
 
+/** Papel para a ação ao vivo (spec FIEL-11 b: "chamando revisor"): sem o namespace do plugin (`x:`) e sem o prefixo `gabarito-`. */
+function papelCurto(p         )                {
+  const t = papelLimpo(p);
+  if (t === null) return null;
+  const c = t.replace(/^.*:/, '').replace(/^gabarito-(?=.)/, '').trim();
+  return c === '' ? t : c;
+}
+
 /** 1 linha para o grupo de chamadas; `null` ⇒ o mod devolve `next(e)`. */
 export function linhaDoGrupo(cs           )                {
   try {
@@ -68,7 +76,7 @@ export function acaoDe(c         , n = 1)                {
     if (LEITURA.has(c.nome)) return `lendo ${plural(k, 'arquivo', 'arquivos')}`;
     if (EDICAO.has(c.nome)) return `editando ${plural(k, 'arquivo', 'arquivos')}`;
     if (c.nome === 'Bash') return descricaoLimpa(c.descricao) ?? `rodando ${plural(k, 'comando', 'comandos')}`;
-    if (c.nome === 'Agent') return `chamando ${papelLimpo(c.papel) ?? 'um agente'}`;
+    if (c.nome === 'Agent') return `chamando ${papelCurto(c.papel) ?? 'um agente'}`;
     return null;
   } catch {
     return null;

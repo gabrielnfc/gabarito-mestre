@@ -85,6 +85,9 @@ test('acao-de-outra-ferramenta-no-presente', () => {
   assert.equal(acaoDe(c('Bash'), 4), 'rodando 4 comandos');
   assert.equal(acaoDe(c('Agent', { papel: 'revisor' })), 'chamando revisor');
   assert.equal(acaoDe(c('Agent')), 'chamando um agente');
+  assert.equal(acaoDe(c('Agent', { papel: 'gabarito-mestre:gabarito-revisor' })), 'chamando revisor');
+  assert.equal(acaoDe(c('Agent', { papel: 'gabarito-implementador' })), 'chamando implementador');
+  assert.equal(acaoDe(c('Agent', { papel: 'general-purpose' })), 'chamando general-purpose');
 });
 test('acao-bash-com-descricao-usa-a-descricao', () => {
   assert.equal(acaoDe({ nome: 'Bash', erro: false, descricao: '  listar arquivos  ' }), 'listar arquivos');
