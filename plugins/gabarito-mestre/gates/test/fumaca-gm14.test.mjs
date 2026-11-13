@@ -36,8 +36,6 @@ const ev = (lista, tipo) => lista.filter((e) => e.tipo === tipo);
 const fatos = (chave, sessao) => f.eventos.filter((e) => e.tipo === 'fato.medido' && e.dados.chave === chave && (sessao === undefined || e.sessao === sessao)).map((e) => e.dados);
 const topo = (p) => p.texto.split('\n');
 const ORIGENS = new Set(['(automático)', '(anotado pelo orquestrador)', '(você)']);
-// spec:53 diz "entrega não identificada"; o produto escreve "sem entrega identificada" nos passos sem entrega: as duas marcas valem
-const MARCA_SEM_ENTREGA = /^GABARITO · (sem entrega identificada|entrega não identificada)$/;
 const origemValida = (x) => ORIGENS.has(x) || /^\(você respondeu: .+\)$/.test(x);
 
 test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, o progresso, o que depende do dono e a origem (REQ-TRI-1, REQ-DEP-1, FIEL-10)', () => {
@@ -70,7 +68,7 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.match(topo(b)[1], /^depende de você: Esta conversa é da entrega GM-50\? · 1 GM-50 · 2 uma nova/);
   assert.deepEqual([b.estado.trilha.fase, b.estado.trilha.marcas], [1, ['●', '○', '○', '○', '○', '○', '○']], 'a branch sozinha não adianta fase (REQ-TRI-1)');
   assert.match(b.texto, /^FASE 1 de 7 ▱{7} · /m);
-  assert.match(topo(b)[0], MARCA_SEM_ENTREGA, 'a branch sozinha não liga a entrega: o cabeçalho não traz o ID nem o título (REQ-TRI-1)');
+  assert.ok(!/GM-50/.test(topo(b)[0]), 'a branch sozinha não liga a entrega: o cabeçalho não traz o ID nem o título (REQ-TRI-1)');
   assert.ok(!/GM-50 Spec/.test(b.texto));
 
   // (4) spec com `PBI:` no cabeçalho: entrega identificada, fase 3 (spec ✓, aprovação ●), falta aprovar, botão (REQ-TRI-1, REQ-DEP-1 (1))
@@ -190,11 +188,16 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.deepEqual([f.foraDeRepo.rc, f.foraDeRepo.out, f.foraDeRepo.err], [0, 'GABARITO · fora de um projeto\n', '']);
 });
 
+// DEFEITO DE PRODUTO (dono: T37, spec:53): o painel escreve "sem entrega identificada" (painel-esquadrao.js:452); a spec manda "entrega não identificada". Texto exato, um só.
+test('fumaca-marca-sem-entrega: a branch sozinha escreve exatamente "GABARITO · entrega não identificada" (spec:53)', { todo: 'defeito de produto, painel-esquadrao.js:452, dono T37 (spec:53)' }, () => {
+  assert.match(topo(P.soBranch)[0], /^GABARITO · entrega não identificada$/);
+});
+
 // DEFEITO DE PRODUTO (dono: T18, já avisada): com o PR mergeado e a branch sozinha, o painel liga a entrega ("GM-50 … PRONTO 2 de 2") em vez do que a spec manda.
 // Fica `todo`: a asserção é a da spec; sai do `todo` quando a T18 consertar.
 test('fumaca-pr-mergeado-sem-resposta: PR mergeado e a branch sozinha ⇒ "entrega não identificada" com "última entrega conhecida: <ID>", nunca liga a entrega (REQ-TRI-1, spec:53)', { todo: 'defeito de produto, T18 (spec:53)' }, () => {
   const pm = P.prMergeado;
-  assert.match(topo(pm)[0], MARCA_SEM_ENTREGA);
+  assert.match(topo(pm)[0], /^GABARITO · entrega não identificada$/);
   assert.match(pm.texto, /última entrega conhecida: GM-50/);
   assert.ok(!/^PRONTO/m.test(pm.texto), 'não liga a entrega: o PRONTO dela não aparece');
 });
