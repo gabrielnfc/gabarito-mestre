@@ -534,6 +534,7 @@ const S = {
   // GM-14 T20
   local: LOCAL_PADRAO, // lido de `harness.config.json` por `onboarding.mjs painel` (1× por `session.start`); o comando troca sem reiniciar
   sessaoId: null,
+  localAplicado: false, // o local resolvido já foi aplicado à Pane listada de antes (acima ⇒ fecha 1× por `session.start`/reload)
   ultimaOkMs: null, // hora da última leitura boa do estado (FIEL-13 b)
   semLerS: null, // segundos sem leitura boa, só enquanto a leitura falha
   transcriptSessao: null, // transcript da sessão (plano B do contexto), do `SubagentStart` ou do `session.start`
@@ -811,8 +812,22 @@ async function medirAgora($, cwd, pedido) {
   } catch { /* medir é melhor esforço */ }
 }
 
+/**
+ * Nunca os dois (REQ-GLB-1, review r1 T20): resolvido o local, `acima` FECHA a Pane que o motor ainda lista de antes (troca pelo onboarding ou
+ * no config, depois /clear ou reload). 1× por `session.start`/reload: o motor pode seguir listando a Pane fechada.
+ */
+async function aplicarLocal($, lista) {
+  if (S.localAplicado || !Array.isArray(lista)) return; // não li as Panes: tenta na próxima leitura
+  S.localAplicado = true;
+  if (S.local !== 'acima' || !lista.some((x) => x?.id === ID_PANE)) return;
+  S.aberta = false;
+  try { await $.ui.close({ id: ID_PANE }); } catch { /* já fechada */ }
+  await lerPanes($);
+}
+
 async function uma($, motivo) {
   await preparar($);
+  await aplicarLocal($, await lerPanes($));
   let cwd;
   try { cwd = await $.session.root(); } catch { cwd = null; }
   let s;
@@ -841,7 +856,7 @@ async function uma($, motivo) {
   S.estado = s.estado; S.avisos = s.avisos; S.falha = null; S.semLoop = false; S.ultimaOkMs = t1; S.semLerS = null;
   const lista = await lerPanes($);
   const jaListada = Array.isArray(lista) && lista.some((x) => x?.id === ID_PANE);
-  if (S.local === 'lateral' && !S.aberta && !S.fechadaPeloDono && !jaListada) { await abrirPainel($); await lerPanes($); } else if (jaListada) S.aberta = true;
+  if (S.local === 'lateral' && !S.aberta && !S.fechadaPeloDono && !jaListada) { await abrirPainel($); await lerPanes($); } else if (jaListada && S.local === 'lateral') S.aberta = true;
   redesenhar($);
   await avisarParar($, s.estado);
   await avisarPouso($, s.estado);
@@ -1028,6 +1043,7 @@ async function trocarLocal($, local) {
     } catch { gravou = false; }
   }
   S.local = local;
+  S.localAplicado = true; // a troca já aplica o local abaixo
   if (local === 'acima') {
     S.aberta = false;
     try { await $.ui.close({ id: ID_PANE }); } catch { /* já fechada */ }
@@ -1108,6 +1124,7 @@ export function iniciarPainel($, e) {
   if (!S.interativo) return;
   if (typeof e?.transcript_path === 'string' && e.transcript_path.startsWith('/')) S.transcriptSessao = e.transcript_path;
   S.preparando = null; // cada `session.start` relê as prefs e confere o sorteio (mesma sessão ⇒ mantém)
+  S.localAplicado = false; // e reaplica o local resolvido à Pane listada
   try { $.clock.after(0, () => { void atualizar($, 'inicio'); }); } catch { /* sem relógio */ }
 }
 
@@ -1132,6 +1149,10 @@ export function registrarPainel(on) {
   on('ui.render', { component: 'Pane', requestId: ID_PANE }, async ($, e) => {
     if (S.interativo && S.relogio === null && !S.semLoop) { // módulo recarregado com a Pane de pé: recomeça o ciclo (uma vez: o relógio passa a existir)
       try { $.clock.after(0, () => { void atualizar($, 'render'); }); } catch { /* sem relógio */ }
+    }
+    if (S.local !== 'lateral') { // nunca os dois: em `acima` o painel é a faixa; a Pane listada de antes não desenha (e `uma` a fecha)
+      const { Box } = $.ui.resolve(e);
+      return h(Box, null);
     }
     let linhas;
     let botoes = [];

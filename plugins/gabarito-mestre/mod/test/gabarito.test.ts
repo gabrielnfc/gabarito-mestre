@@ -66,6 +66,8 @@ type Opc = {
   gravarLocalFalha?: boolean
   /** GM-14 T20: tokens do último `message.usage` do transcript da sessão (plano B do contexto); 'falha' ⇒ a ponte nega */
   planoB?: number | 'falha'
+  /** GM-14 T20 (review r1): `usage.context.window`; ausente ⇒ 1.000.000; null ⇒ o motor não deu a janela */
+  janela?: number | null
   /** GM-14 T20: pacote lido pela ponte de nomes (`lider`, `sabio`, `nomes`); ausente ⇒ terra-media reduzido */
   pacoteNomes?: { lider: string; sabio: string; nomes: string[] } | 'falha'
 }
@@ -161,7 +163,7 @@ function mundo($: any, on: any, o: Opc = {}) {
   on('env.get', (_: any, e: any) => ({ value: e.name === 'GABARITO_POUSO_X' ? o.x : undefined }))
   on('session.usage', () => {
     if (o.usageFalha) return { deny: 'usage fora do ar' }
-    return { value: { startedAt: 0, context: { window: 1_000_000, percent: est.percent ?? undefined, tokens: 1 }, rateLimits: est.rateLimits } }
+    return { value: { startedAt: 0, context: { window: o.janela === undefined ? 1_000_000 : o.janela, percent: est.percent ?? undefined, tokens: 1 }, rateLimits: est.rateLimits } }
   })
   on('agent.list', () => (o.agentesPainel !== undefined ? { value: o.agentesPainel } : o.agentes === 'falha' ? { deny: 'sem sessão' } : o.agentes === 'lixo' ? { value: 'não é lista' } : { value: o.agentes ?? [] }))
   on('ui.toast', (_: any, e: any) => { toasts.push(e.text); log.push('toast'); est.ordem.push('toast'); return { value: undefined } })
@@ -3446,6 +3448,60 @@ test('nunca-os-dois: acima ⇒ 0 ui.open e a faixa desenha o painel inteiro; lat
   expect(t).toContain('PRONTO')
   await ui.unmount()
 })
+test('nunca-os-dois-pane-aberta-de-antes: acima com a Pane listada de antes ⇒ o reload a fecha 1×, a Pane não desenha o painel e a faixa desenha', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'acima', panes: PANE_VISIVEL })
+  await arrancar(m)
+  await m.turno(); await drena(m)
+  expect(m.est.closes.filter((id: any) => id === ID_PAINEL)).toHaveLength(1)
+  expect(m.est.opens).toHaveLength(0)
+  const pane = await montarPane($)
+  const tp = (await todosTextos(pane)).join('|')
+  expect(tp).not.toContain('GABARITO')
+  expect(tp).not.toContain('PRONTO')
+  await pane.unmount()
+  const ui = await montarFaixaH($, 50, 19)
+  const t = (await todosTextos(ui)).join('|')
+  expect(t).toContain('GABARITO')
+  expect(t).toContain('PRONTO')
+  await ui.unmount()
+})
+test('nunca-os-dois-pane-aberta-de-antes-com-falha: acima com a Pane listada e a leitura do estado falhando ⇒ a Pane fecha mesmo assim', async ($, on) => {
+  const m = comPainel($, on, { modo: 'erro' }, { local: 'acima', panes: PANE_VISIVEL })
+  await arrancar(m)
+  expect(m.est.closes.filter((id: any) => id === ID_PAINEL)).toHaveLength(1)
+  expect(m.est.opens).toHaveLength(0)
+})
+test('nunca-os-dois-clear-local-trocado: lateral com a Pane de pé, o config passa a acima (onboarding) e vem o /clear ⇒ a Pane fecha 1× e não desenha', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', panes: PANE_VISIVEL })
+  await arrancar(m)
+  expect(m.est.closes).toHaveLength(0)
+  m.est.local = 'acima' // gravado por fora (onboarding da T21) com a sessão aberta
+  await arrancar(m) // /clear ⇒ novo session.start
+  expect(m.est.closes.filter((id: any) => id === ID_PAINEL)).toHaveLength(1)
+  const pane = await montarPane($)
+  expect((await todosTextos(pane)).join('|')).not.toContain('GABARITO')
+  await pane.unmount()
+})
+test('nunca-os-dois-faixa-de-antes: lateral sem Pane (a faixa era o painel antes) ⇒ o reload abre a Pane e a faixa não desenha o painel multi-linha', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', panes: [] })
+  await arrancar(m)
+  expect(m.est.opens).toHaveLength(1)
+  expect(m.est.closes).toHaveLength(0)
+  let ui = await montarFaixaH($, 50, 19)
+  const t = (await todosTextos(ui)).join('|')
+  expect(t).not.toContain('GABARITO')
+  expect(t).not.toContain('PRONTO')
+  await ui.unmount()
+  m.est.panes = PANE_VISIVEL
+  ui = await montarFaixaH($, 50, 19)
+  expect(await todosTextos(ui)).toEqual(['motor'])
+  await ui.unmount()
+  const pane = await montarPane($)
+  expect((await todosTextos(pane)).join('|')).toContain('GABARITO')
+  await pane.unmount()
+})
 test('nunca-os-dois-lateral: lateral com a Pane posta ⇒ a faixa é a do motor mesmo com pergunta aberta', async ($, on) => {
   sobreOMotor(on)
   const m = comPainel($, on, { estado: estadoNovo({ pergunta: PERGUNTA }) }, { local: 'lateral', panes: PANE_VISIVEL })
@@ -3690,6 +3746,19 @@ test('contexto-plano-b-estimado: percent nulo ⇒ o transcript da sessão dá a 
   const s = ultimoStdin(m)
   expect(s.sessao.percent).toBeNull()
   expect(s.contexto).toEqual({ percent: 25, fonte: 'transcript', estimado: true })
+})
+test('contexto-plano-b-sem-janela: percent e window nulos com transcript ⇒ contexto nulo ("?"), nada gravado, nunca NaN', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: null, janela: null, planoB: 250000 })
+  await m.inicio()
+  await subStart($)
+  await drena(m)
+  await m.turno(); await drena(m)
+  expect(m.est.planosB.length).toBeGreaterThan(0) // o plano B rodou: é a janela nula que o barra
+  expect(m.est.contextos).toHaveLength(0)
+  const s = ultimoStdin(m)
+  expect(s.contexto).toBeNull()
+  expect(JSON.stringify(s)).not.toContain('NaN')
+  expect(JSON.stringify(s)).not.toContain('null,"fonte"')
 })
 test('contexto-sem-fonte-nada-gravado: percent nulo e sem transcript ⇒ nenhuma gravação e contexto nulo no stdin', async ($, on) => {
   const m = comPainel($, on, { estado: estadoNovo() }, { percent: null })
