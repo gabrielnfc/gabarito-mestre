@@ -41,6 +41,7 @@
     ]
   },
   "sombra": {
-    "julga_emendas": true
+    "julga_emendas": true,
+    "libera_teto": true
   }
 }
