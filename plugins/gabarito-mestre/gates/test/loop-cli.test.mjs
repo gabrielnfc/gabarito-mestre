@@ -5053,3 +5053,100 @@ describe('T36: a Sombra libera o teto', () => {
     assert.deepEqual(amb.eventos().filter((e) => e.tipo === 'task.reaberta').map((e) => [e.sessao, e.dados]), [['S-dono', { task: 'T1', origem: 'dono' }]]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────── GM-14 T38: spec do checkout da sessão (DP-3 aj. 4 e 5)
+
+describe('GM-14 T38: a spec se lê do checkout da sessão; o diário fica na principal', () => {
+  const PAINEL = join(AQUI, '..', 'scripts', 'painel.mjs');
+  const SPEC_A = 'docs/superpowers/specs/gm10-a.md';
+  const SPEC_B = 'docs/superpowers/specs/gm10-b.md';
+  const TEXTO_WT = '# GM-10 da worktree\n\nPBI: GM-10\n\n## Uma\n';
+  const TEXTO_PRINCIPAL = '# GM-10 da principal\n\nPBI: GM-10\n\n## Outra\n';
+  const sha = (t) => createHash('sha256').update(Buffer.from(t)).digest('hex');
+  const AGUARDANDO = 'spec aguardando aprovação';
+  /** Worktree REAL (`git worktree add`) na branch da entrega; a principal fica em `main`, sem ID. */
+  function comWorktree(plano) {
+    const amb = ambiente({ branch: 'main', plano });
+    const wt = join(amb.dir, '.harness', 'worktrees', 'S1');
+    g(amb.dir, 'worktree', 'add', '-q', '-b', 'wt/GM-10-S1', wt);
+    const escrever = (raiz, caminho, texto) => { mkdirSync(dirname(join(raiz, caminho)), { recursive: true }); writeFileSync(join(raiz, caminho), texto); };
+    return { amb, wt: realpathSync(wt), escrever };
+  }
+  const painelEstado = (amb, cwd) => {
+    const r = spawnSync(process.execPath, [PAINEL, 'estado'], { cwd, encoding: 'utf8', env: amb.env, input: '' });
+    let j = null;
+    try { j = JSON.parse(r.stdout.trim()); } catch { /* fica null */ }
+    assert.equal(j?.ok, true, `painel estado: ${r.stdout}${r.stderr}`);
+    return j;
+  };
+  const shaDoMedir = async (amb, cwd) => {
+    const { medir } = await import('../scripts/painel-medir.mjs');
+    const rodar = (cmd, args, o) => (cmd === 'git' ? spawnSync('git', args, { cwd: o.cwd, encoding: 'utf8' }) : { status: 1, stdout: '', stderr: 'sem gh' });
+    medir(cwd, { rodar, agentes: { session_id: 'S-medir', agentes: [] }, agora: () => Date.parse('2026-11-12T20:00:00Z') });
+    return amb.eventos().filter((e) => e.tipo === 'fato.medido' && e.dados.chave === 'spec').map((e) => [e.dados.valor.caminho, e.dados.valor.sha256]);
+  };
+
+  const TODO_PAINEL = 'painel.mjs:328 lê da raiz principal, correção na T18 (depende da T38)';
+
+  test('spec-na-worktree-da-sessao-com-plano: aprovarSpec, lerSpecs e medir dão o MESMO sha da spec da worktree; diário só na principal', async () => {
+    const { aprovarSpec, lerSpecs } = await import('../scripts/loop.mjs');
+    const { amb, wt, escrever } = comWorktree({ ...PLANO_PADRAO, spec: SPEC_A });
+    escrever(wt, SPEC_A, TEXTO_WT);
+    escrever(amb.dir, SPEC_A, TEXTO_PRINCIPAL); // a principal tem OUTRA versão: ler dela daria outro sha
+    const r = aprovarSpec(wt, 'S-dono');
+    assert.deepEqual(r, { ok: true, spec: SPEC_A, sha256: sha(TEXTO_WT), entrega: 'GM-10' });
+    const a = amb.eventos().filter((e) => e.tipo === 'spec.aprovada');
+    assert.deepEqual(a.map((e) => e.dados), [{ spec: SPEC_A, sha256: sha(TEXTO_WT) }], 'no diário da principal');
+    assert.equal(existsSync(join(wt, '.harness', 'entregas')), false, 'a worktree não ganhou diário');
+    // lerSpecs do checkout da sessão: o mesmo sha
+    assert.deepEqual(lerSpecs(wt).map((s) => [s.caminho, s.sha256]), [[SPEC_A, sha(TEXTO_WT)]]);
+    // medir (painel-medir) lê o mesmo arquivo do mesmo checkout: mesmo sha
+    assert.deepEqual(await shaDoMedir(amb, wt), [[SPEC_A, sha(TEXTO_WT)]]);
+    // garantias intactas com plano: 2ª vez ⇒ ja_aprovada; mudança entre o hash e o append ⇒ spec_mudou
+    assert.equal(aprovarSpec(wt, 'S-dono').erro, 'ja_aprovada');
+    escrever(wt, SPEC_A, `${TEXTO_WT}mais\n`);
+    const mudou = aprovarSpec(wt, 'S-dono', { antes: () => escrever(wt, SPEC_A, `${TEXTO_WT}outra\n`) });
+    assert.equal(mudou.erro, 'spec_mudou', JSON.stringify(mudou));
+    assert.equal(amb.eventos().filter((e) => e.tipo === 'spec.aprovada').length, 1);
+  });
+
+  test('spec-na-worktree-da-sessao-com-plano-painel: o painel estado da sessão vê a aprovação do sha da worktree', { todo: TODO_PAINEL }, async () => {
+    const { aprovarSpec } = await import('../scripts/loop.mjs');
+    const { amb, wt, escrever } = comWorktree({ ...PLANO_PADRAO, spec: SPEC_A });
+    escrever(wt, SPEC_A, TEXTO_WT);
+    escrever(amb.dir, SPEC_A, TEXTO_PRINCIPAL);
+    assert.equal(aprovarSpec(wt, 'S-dono').ok, true);
+    const depois = painelEstado(amb, wt);
+    assert.equal(JSON.stringify(depois.estado).includes(AGUARDANDO), false, JSON.stringify(depois.estado));
+  });
+
+  test('plano-spec-diferente-da-aprovada: aprovada sem plano (a.md) e o plano nasce com b.md ⇒ b.md falta aprovar (aprovarSpec grava, nunca ja_aprovada); com a.md ⇒ ja_aprovada', async () => {
+    const { aprovarSpec } = await import('../scripts/loop.mjs');
+    const textoB = '# GM-10 b\n\nsem cabeçalho de PBI, outro texto\n';
+    const { amb, wt, escrever } = comWorktree(null);
+    escrever(wt, SPEC_A, TEXTO_WT);
+    assert.deepEqual(aprovarSpec(wt, 'S-dono'), { ok: true, spec: SPEC_A, sha256: sha(TEXTO_WT), entrega: 'GM-10' });
+    escrever(wt, SPEC_B, textoB);
+    // plano com a.md: o mesmo arquivo aprovado não se aprova de novo
+    writeFileSync(join(amb.entregas, 'plano.json'), JSON.stringify({ ...PLANO_PADRAO, spec: SPEC_A }));
+    assert.equal(aprovarSpec(wt, 'S-dono').erro, 'ja_aprovada');
+    // plano com b.md: não herda o ✓ de a.md; a aprovação grava o sha de b.md
+    writeFileSync(join(amb.entregas, 'plano.json'), JSON.stringify({ ...PLANO_PADRAO, spec: SPEC_B }));
+    assert.deepEqual(aprovarSpec(wt, 'S-dono'), { ok: true, spec: SPEC_B, sha256: sha(textoB), entrega: 'GM-10' });
+    assert.deepEqual(amb.eventos().filter((e) => e.tipo === 'spec.aprovada').map((e) => e.dados), [
+      { spec: SPEC_A, sha256: sha(TEXTO_WT) }, { spec: SPEC_B, sha256: sha(textoB) },
+    ]);
+  });
+
+  test('plano-spec-diferente-da-aprovada-painel: o painel mostra b.md aguardando aprovação; com a.md não', { todo: TODO_PAINEL }, async () => {
+    const { aprovarSpec } = await import('../scripts/loop.mjs');
+    const { amb, wt, escrever } = comWorktree(null);
+    escrever(wt, SPEC_A, TEXTO_WT);
+    assert.equal(aprovarSpec(wt, 'S-dono').ok, true);
+    escrever(wt, SPEC_B, '# GM-10 b\n\noutro texto\n');
+    writeFileSync(join(amb.entregas, 'plano.json'), JSON.stringify({ ...PLANO_PADRAO, spec: SPEC_B }));
+    assert.ok(JSON.stringify(painelEstado(amb, wt).estado).includes(AGUARDANDO));
+    writeFileSync(join(amb.entregas, 'plano.json'), JSON.stringify({ ...PLANO_PADRAO, spec: SPEC_A }));
+    assert.equal(JSON.stringify(painelEstado(amb, wt).estado).includes(AGUARDANDO), false);
+  });
+});

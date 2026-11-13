@@ -150,6 +150,19 @@ function raizPrincipal(cwd) {
   return dirname(real);
 }
 
+/**
+ * GM-14 T38 (DP-3 aj. 4): raiz do checkout DA SESSÃO (`git rev-parse --show-toplevel` do `cwd`, por `realpath`). A spec se lê daqui
+ * (`lerSpecs`, `shaDaSpec`/`lerSpec`, `aprovarSpec`, REQ na spec), como `painel.mjs medir`; o diário segue na raiz principal (`raizPrincipal`).
+ * Um leitor numa raiz e outro noutra daria "mudou depois" falso. Fora de repositório ⇒ `Falha('fora_de_repo')`.
+ */
+export function checkoutDaSessao(cwd) {
+  try {
+    return realpathSync(git(cwd, 'rev-parse', '--show-toplevel'));
+  } catch (e) {
+    throw new Falha('fora_de_repo', `não é um checkout git (${e.message})`);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────── entrada
 
 /** Argumentos estritos. Flag desconhecida, sem valor ou repetida e posicional a mais ou a menos é uso (rc 2). */
@@ -1425,7 +1438,8 @@ const CODIGO_JULGAMENTO = { 'diário fora de ordem': 'diario_invalido', 'propost
 
 /**
  * Caminho real da spec do plano, com contenção léxica E por `realpath` na raiz (symlink dentro da raiz que aponta para fora é recusado).
- * Base única de `reqNaSpec` e `shaDaSpec`: a spec que prova um REQ é a mesma que o dono aprova. Nunca lança.
+ * Base única de `reqNaSpec` e `shaDaSpec`: a spec que prova um REQ é a mesma que o dono aprova. `raiz` = checkout da sessão
+ * (`checkoutDaSessao`, T38), nunca a principal. Nunca lança.
  * `erro` ∈ `sem_spec`, `spec_fora_da_raiz`, `spec_ausente` (ENOENT), `spec_ilegivel` (outro erro, diretório, não regular).
  */
 function caminhoDaSpec(raiz, plano) {
@@ -1449,7 +1463,7 @@ function caminhoDaSpec(raiz, plano) {
 
 /**
  * O sha256 único da spec (D-P2): "aguardando" no painel (T9) e "já aprovada" no hook (T8) comparam este número.
- * São os BYTES do arquivo na raiz PRINCIPAL (`raizPrincipal`), sem decodificar. Nunca lança.
+ * São os BYTES do arquivo no CHECKOUT DA SESSÃO (`checkoutDaSessao`, T38: DP-3 aj. 4), sem decodificar. Nunca lança.
  * `{ok:true, spec, sha256}` ou `{ok:false, erro, mensagem}`, `erro` ∈ `sem_spec`, `spec_fora_da_raiz`, `spec_ausente`, `spec_ilegivel`, `spec_vazia`.
  */
 export function shaDaSpec(raiz, plano) {
@@ -1522,7 +1536,7 @@ export function lerSpecs(raiz, idPadrao = idPadraoDe(raiz)) {
 
 /** REQ com trecho na spec do plano. Spec ausente, ilegível ou fora da raiz ⇒ `false` (sem a spec não há como provar o REQ). */
 function reqNaSpec(c, plano, req) {
-  const r = caminhoDaSpec(c.raiz, plano);
+  const r = caminhoDaSpec(checkoutDaSessao(c.cwd), plano);
   if (!r.ok) return false;
   try {
     return trechoDoReq(readFileSync(r.real, 'utf8'), req) !== null;
@@ -1718,7 +1732,9 @@ async function executar(argv, cwd) {
       return julgarComoSombra(c, plano, forma.seq, forma.decisao);
     case 'proxima': return proxima(c, plano, flags);
     case 'aprendizado': case 'pousar': case 'registro':
-      return loopAprendizado[cmd]({ c, plano, gravar, lerDiarioEstrito, Falha, git, shaDaSpec, pronto: aprendizadoPronto }, pos, flags);
+      // T38: a spec do registro é a do checkout da sessão, a mesma que `aprovarSpec` grava (o `raiz` que o módulo passa é ignorado).
+      const shaDoCheckout = (_raiz, p) => shaDaSpec(checkoutDaSessao(c.cwd), p);
+      return loopAprendizado[cmd]({ c, plano, gravar, lerDiarioEstrito, Falha, git, shaDaSpec: shaDoCheckout, pronto: aprendizadoPronto }, pos, flags);
     case 'abrir': return abrir(c, plano, task);
     case 'fechar': tarefa(plano, task); return fechar(c, task);
     case 'integrar': return integrar(c, plano, task);
@@ -1983,7 +1999,8 @@ function liberarComoSombra(c, plano, task, hash) {
 
 /**
  * REQ-PNL-8: a ÚNICA gravação de `spec.aprovada {spec, sha256}`. Fora de `ESPEC` de propósito: nenhum argumento do CLI chega aqui, só o
- * hook `UserPromptExpansion` (`aprovar-spec.mjs`), disparado pelo comando que o dono digita. O sha é o de `shaDaSpec` (bytes, raiz principal).
+ * hook `UserPromptExpansion` (`aprovar-spec.mjs`), disparado pelo comando que o dono digita. O sha é o de `shaDaSpec` (bytes, checkout da sessão: T38;
+ * o diário segue na raiz principal).
  * A spec é `plano.spec`; sem `plano.json` (GM-14 T15, a aprovação vem antes do plano) é a ÚNICA de `lerSpecs` com `PBI` da entrega: 0 ⇒
  * `spec_ausente`, 2+ ⇒ `spec_ambigua`, specs ilegíveis ⇒ `specs_ilegiveis`; nada gravado em nenhum. Plano presente e inválido segue `plano_invalido`.
  * "Já aprovada" = existe `spec.aprovada` de forma válida com o sha atual, sem ordem e sem olhar `spec` (a régua do painel): não entra em
@@ -1995,6 +2012,7 @@ export function aprovarSpec(cwd, sessao, opcoes = {}) {
   try {
     if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) throw new Falha('argumento_invalido', `sessão fora da forma ${SESSAO_RE}`);
     const c = contexto(cwd, { sessao });
+    const checkout = checkoutDaSessao(cwd);
     // T15 (REQ-TRI-1): sem plano.json a aprovação vem antes do plano; a spec é a ÚNICA da entrega em lerSpecs.
     let plano = null;
     let alvo;
@@ -2003,12 +2021,12 @@ export function aprovarSpec(cwd, sessao, opcoes = {}) {
       alvo = plano;
     } catch (e) {
       if (!(e instanceof Falha) || e.erro !== 'plano_ausente') throw e;
-      const daEntrega = lerSpecs(c.raiz).filter((s) => s.pbi === c.entrega);
+      const daEntrega = lerSpecs(checkout, idPadraoDe(c.raiz)).filter((s) => s.pbi === c.entrega);
       if (daEntrega.length === 0) throw new Falha('spec_ausente', `sem plano.json e sem spec com \`PBI: ${c.entrega}\` em docs/superpowers/specs; nada foi gravado`);
       if (daEntrega.length > 1) throw new Falha('spec_ambigua', `sem plano.json e com ${daEntrega.length} specs com \`PBI: ${c.entrega}\` (${daEntrega.map((s) => s.caminho).join(', ')}); deixe uma só. Nada foi gravado`);
       alvo = { spec: daEntrega[0].caminho };
     }
-    const atual = shaDaSpec(c.raiz, alvo);
+    const atual = shaDaSpec(checkout, alvo);
     if (!atual.ok) throw new Falha(atual.erro, `${atual.mensagem}; nada foi gravado`);
     const contar = (eventos) => eventos.filter((e) => e.tipo === 'spec.aprovada' && formaInvalida('spec.aprovada', e.dados) === null && e.dados.sha256 === atual.sha256).length;
     let antesN = 0;
@@ -2016,7 +2034,7 @@ export function aprovarSpec(cwd, sessao, opcoes = {}) {
       antesN = contar(eventos);
       if (antesN > 0) throw new Falha('ja_aprovada', `a spec com o sha256 ${atual.sha256.slice(0, 12)}… já foi aprovada; só uma spec que mudou se aprova de novo. Nada foi gravado`);
       opcoes.antes?.();
-      const de_novo = shaDaSpec(c.raiz, alvo);
+      const de_novo = shaDaSpec(checkout, alvo);
       if (!de_novo.ok || de_novo.sha256 !== atual.sha256) throw new Falha('spec_mudou', 'a spec mudou entre o cálculo do sha256 e a gravação; aprove de novo. Nada foi gravado');
     };
     gravar(c, plano, 'spec.aprovada', { spec: atual.spec, sha256: atual.sha256 }, conferir);

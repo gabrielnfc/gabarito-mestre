@@ -292,7 +292,7 @@ test('aprovar-fora-de-repo-plano-ausente-plano-invalido: cada um bloqueia com a 
   recusa(ruim, stdinTui(ruim.dir), /plano_invalido/);
 });
 
-test('aprovar-de-dentro-da-worktree-usa-principal: grava no diário da raiz principal, com o sha da spec da principal', () => {
+test('aprovar-de-dentro-da-worktree-spec-da-worktree: grava no diário da raiz principal, com o sha da spec da WORKTREE (T38, DP-3 aj. 4)', () => {
   const amb = repo({ spec: 'principal\n', branch: 'main' });
   const wt = join(amb.dir, '.harness', 'worktrees', 'T1');
   const r0 = git(amb.dir, 'worktree', 'add', '-q', '-b', 'wt/GM-10-T1', wt);
@@ -302,8 +302,8 @@ test('aprovar-de-dentro-da-worktree-usa-principal: grava no diário da raiz prin
   assert.notEqual(r.j?.decision, 'block', r.out);
   const a = aprovadas(amb);
   assert.equal(a.length, 1, 'no diário da principal');
-  assert.equal(a[0].dados.sha256, sha(Buffer.from('principal\n')));
-  assert.notEqual(a[0].dados.sha256, sha(Buffer.from('da worktree\n')));
+  assert.equal(a[0].dados.sha256, sha(Buffer.from('da worktree\n')));
+  assert.notEqual(a[0].dados.sha256, sha(Buffer.from('principal\n')));
   assert.equal(existsSync(join(wt, '.harness', 'entregas')), false, 'a worktree não ganhou diário');
 });
 
@@ -590,4 +590,44 @@ test('aprovar-sem-plano-sem-efeito: sem plano.json, evento gravado que o diário
   });
   assert.equal(r.ok, false);
   assert.equal(r.erro, 'aprovacao_sem_efeito');
+});
+
+test('spec-na-worktree-da-sessao-sem-plano: sem plano.json, a spec só na worktree REAL é aprovada; o medir da sessão dá o mesmo sha; garantias intactas', async () => {
+  const { medir } = await import('../scripts/painel-medir.mjs');
+  const amb = repo({ plano: null, spec: null, branch: 'main' });
+  const wtCru = join(amb.dir, '.harness', 'worktrees', 'S1');
+  const r0 = git(amb.dir, 'worktree', 'add', '-q', '-b', 'wt/GM-10-S1', wtCru);
+  assert.equal(r0.status, 0, r0.stderr);
+  const wt = realpathSync(wtCru);
+  // a spec da entrega SÓ na worktree; a principal tem outra spec da mesma entrega (lê-la daria outro sha ou spec_ambigua)
+  const texto = '# GM-10\n\nIniciativa: X · PBI: GM-10 (Enabler) · Data: hoje\n\n## Uma\n';
+  const caminho = `${DIR_SPECS}/gm10.md`;
+  mkdirSync(join(wt, DIR_SPECS), { recursive: true });
+  writeFileSync(join(wt, caminho), texto);
+  specPbi(amb, 'outra.md', 'GM-10');
+  // hook real de dentro da worktree
+  const r = hook(stdinTui(wt));
+  assert.equal(r.rc, 0, r.err);
+  assert.notEqual(r.j?.decision, 'block', r.out);
+  const a = aprovadas(amb);
+  assert.deepEqual(a.map((e) => e.dados), [{ spec: caminho, sha256: sha(Buffer.from(texto)) }], 'no diário da principal, sha da worktree');
+  assert.equal(existsSync(join(wt, '.harness', 'entregas')), false, 'a worktree não ganhou diário');
+  assert.equal(existsSync(join(amb.entregas, 'plano.json')), false, 'aprovar não cria plano');
+  // lerSpecs do checkout da sessão: o mesmo sha
+  assert.deepEqual(lerSpecs(wt).filter((s) => s.pbi === 'GM-10').map((s) => [s.caminho, s.sha256]), [[caminho, sha(Buffer.from(texto))]]);
+  // medir (painel-medir) da mesma sessão: o mesmo caminho e sha
+  const rodar = (cmd, args, o) => (cmd === 'git' ? spawnSync('git', args, { cwd: o.cwd, encoding: 'utf8' }) : { status: 1, stdout: '', stderr: 'sem gh' });
+  medir(wt, { rodar, agentes: { session_id: 'S-medir', agentes: [] }, agora: () => Date.parse('2026-11-12T20:00:00Z') });
+  const medidos = amb.eventos().filter((e) => e.tipo === 'fato.medido' && e.dados.chave === 'spec').map((e) => [e.dados.valor.caminho, e.dados.valor.sha256]);
+  assert.deepEqual(medidos, [[caminho, sha(Buffer.from(texto))]]);
+  // garantias sem plano (DP-3 aj. 2) seguem do checkout da sessão: ja_aprovada, spec_mudou, aprovacao_sem_efeito
+  const bytesAntes = amb.bytes();
+  assert.equal(aprovarSpec(wt, 'S-dono').erro, 'ja_aprovada');
+  writeFileSync(join(wt, caminho), `${texto}v2\n`);
+  assert.equal(aprovarSpec(wt, 'S-dono', { antes: () => writeFileSync(join(wt, caminho), `${texto}v3\n`) }).erro, 'spec_mudou');
+  assert.deepEqual(amb.bytes(), bytesAntes, 'recusas não gravam');
+  const semEfeito = aprovarSpec(wt, 'S-dono', {
+    depois: () => { for (const n of readdirSync(amb.entregas)) if (n.startsWith('events.')) writeFileSync(join(amb.entregas, n), ''); },
+  });
+  assert.equal(semEfeito.erro, 'aprovacao_sem_efeito');
 });
