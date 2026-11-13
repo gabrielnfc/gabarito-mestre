@@ -88,7 +88,9 @@ test('task-reaberta-dono-x-retomada', () => {
   assert.equal(r({ task: 'T1', origem: 'retomada' }), AUTO);
   assert.equal(r({ task: 'T1' }), AUTO); // sem origem declarada: nunca atribuir ao dono
   assert.equal(r({ task: 'T1', origem: 'Dono' }), AUTO);
-  assert.equal(r({ task: 'T1', origem: 'sombra' }), AUTO);
+  // GM-14 T36 (FIEL-15, furo 8): a liberação da Sombra sai como dela, nunca `(automático)` nem `(você)`
+  assert.equal(r({ task: 'T1', origem: 'sombra' }), '(Sombra)');
+  assert.equal(r({ task: 'T1', origem: 'sombra', hash: 'e'.repeat(64) }), '(Sombra)');
   // Só `task.reaberta` carrega `origem:'dono'` ⇒ `(você)`; as outras `task.*` ignoram o campo.
   assert.equal(origemDe(ev('task.integrada', { task: 'T1', origem: 'dono' })), AUTO);
   assert.equal(origemDe(ev('spec.aprovada', { origem: 'retomada' })), VOCE);

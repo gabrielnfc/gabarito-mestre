@@ -14,7 +14,8 @@
  *                                  teto_rodadas e nao_conseguiu vencem o `aprender`): não avisada ⇒ block uma vez por gatilho; já avisada ⇒ systemMessage
  *   loop.parar sem task depois .... silêncio
  *   proximaAcao: esperar ......... silêncio (exceto `emenda`: systemMessage com as propostas abertas, sem block e sem contador); parar: systemMessage; despachar/integrar: block
- *   concluir ...................... silêncio, ou systemMessage listando as liberações do dono (`task.reaberta` origem `dono`; REQ-LOOP-2)
+ *   concluir ...................... silêncio, ou systemMessage listando as liberações do teto (`task.reaberta` origem `dono`, REQ-LOOP-2, e
+ *                                   origem `sombra` como "a Sombra liberou a <task>", GM-14 T36 FIEL-15 c)
  * Pouso pendente (T18): `.harness/pouso-pendente.json {entrega, linhas}`, gravado pelo mod ao negar `Agent` porque a ação é `pousar`.
  * Marcador válido (mesma entrega e mesma contagem de progresso) ⇒ apaga marcador e contador, avisa e NÃO bloqueia, para o turno
  * terminar e o `turn.complete` pousar. Ausente, de outra contagem, ilegível ou que não apaga: regra normal, nunca silencia duas vezes.
@@ -288,12 +289,15 @@ function entregaDaBranch(raiz, branch) {
   }
 }
 
-/** `concluir` com liberação do dono no diário: lista task, hora e sessão (a forja pelo mesmo usuário de SO não é evitável, só visível). Nunca bloqueia. */
+/**
+ * `concluir` com liberação do teto no diário: lista task, hora e sessão (a forja pelo mesmo usuário de SO não é evitável, só visível). Nunca bloqueia.
+ * GM-14 T36 (FIEL-15 c): a liberação da Sombra entra na mesma lista como "a Sombra liberou a <task>"; a do dono segue como antes (só a task).
+ */
 function avisoLiberacoes(eventos, entrega) {
-  const donos = eventos.filter((e) => e?.tipo === 'task.reaberta' && e.dados?.origem === 'dono');
-  if (donos.length === 0) return null;
-  const lista = donos.slice(0, ITENS_NO_MOTIVO).map((e) => `${limpo(e.dados.task)} (${limpo(e.ts)}, ${limpo(e.sessao)})`);
-  const resto = donos.length - lista.length;
+  const liberacoes = eventos.filter((e) => e?.tipo === 'task.reaberta' && (e.dados?.origem === 'dono' || e.dados?.origem === 'sombra'));
+  if (liberacoes.length === 0) return null;
+  const lista = liberacoes.slice(0, ITENS_NO_MOTIVO).map((e) => `${e.dados.origem === 'sombra' ? 'a Sombra liberou a ' : ''}${limpo(e.dados.task)} (${limpo(e.ts)}, ${limpo(e.sessao)})`);
+  const resto = liberacoes.length - lista.length;
   return aviso(`Loop da entrega ${limpo(entrega)} concluído. Liberações do teto: ${lista.join(', ')}${resto > 0 ? ` e mais ${resto}` : ''}. Se não foi você, confira o diário.`);
 }
 

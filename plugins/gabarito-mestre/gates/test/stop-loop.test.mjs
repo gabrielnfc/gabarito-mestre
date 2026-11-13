@@ -1295,6 +1295,31 @@ test('fechada-a-pendencia-o-stop-volta-ao-normal: sem pendência concluir lista 
   avisa(stop(raiz), /Liberações do teto: T1 /);
 });
 
+test('t36-concluir-lista-a-sombra-e-o-dono (FIEL-15 c): cada liberação com quem liberou, task, hora e sessão; retomada não entra', () => {
+  const P2 = { entrega: 'GM-10', tasks: [{ id: 'T1', deps: [], arquivos: ['a.ts'] }, { id: 'T2', deps: [], arquivos: ['b.ts'] }] };
+  const raiz = repo();
+  plano(raiz, P2);
+  const teto = (s, n, t) => [
+    ev(s, n, 'task.iniciada', { task: t, papel: 'implementador' }), ev(s, n + 1, 'task.concluida', { task: t }),
+    ev(s, n + 2, 'review.veredito', { task: t, veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 }), ev(s, n + 3, 'task.iniciada', { task: t, papel: 'correcao' }),
+    ev(s, n + 4, 'task.concluida', { task: t }), ev(s, n + 5, 'review.veredito', { task: t, veredito: 'REPROVADO', rodada: 2, major: 1, blocker: 0 }),
+  ];
+  const fim = (s, n, t) => [
+    ev(s, n, 'task.iniciada', { task: t, papel: 'implementador' }), ev(s, n + 1, 'task.concluida', { task: t }),
+    ev(s, n + 2, 'review.veredito', { task: t, veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }), ev(s, n + 3, 'task.integrada', { task: t }),
+  ];
+  const lib = (s, n, t, origem) => ev(s, n, 'task.reaberta', { task: t, origem, ...(origem === 'sombra' ? { hash: 'e'.repeat(64) } : {}) });
+  const evs = [...teto('s', 1, 'T1'), lib('s', 7, 'T1', 'sombra'), ...fim('s', 8, 'T1'), ...teto('s', 12, 'T2'), lib('s', 18, 'T2', 'dono'), ...fim('s', 19, 'T2'), lib('s', 23, 'T2', 'retomada')];
+  diario(raiz, 's', evs);
+  fecharPendenciasNoDiario(entregaDir(raiz), P2);
+  const r = stop(raiz);
+  avisa(r, /concluído/);
+  const ts = (seq) => evs.find((e) => e.seq === seq).ts;
+  assert.match(r.json.systemMessage, new RegExp(`Liberações do teto: a Sombra liberou a T1 \\(${ts(7).replace(/\./g, '\\.')}, s\\), T2 \\(${ts(18).replace(/\./g, '\\.')}, s\\)\\. Se não foi você`));
+  assert.equal((r.json.systemMessage.match(/T2/g) ?? []).length, 1, 'a retomada não é liberação');
+  assert.doesNotMatch(r.json.systemMessage, /a Sombra liberou a T2/, 'a do dono não vira da Sombra');
+});
+
 // ------------------------------------------------------------------------------------- FX2: o comando do Stop roda de verdade (P9)
 
 const LOOP_CLI = join(GATES, 'scripts', 'loop.mjs');
