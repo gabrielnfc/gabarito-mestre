@@ -617,7 +617,19 @@ test('topo-1o-item-maior-que-o-orcamento (LIMITE, aguarda decisão): D15 vence; 
   assert.ok(o[0].startsWith('PAROU 12:25') && o[0].endsWith('…') && colunas(o[0]) <= 80 && !o[0].includes('(+'), o[0]);
   const c = topoMedido(PAROU_LONGO, [{ motivo: 'decidir a emenda 1' }], { orcamento: 1 });
   assert.equal(c.length, 1, JSON.stringify(c));
-  assert.ok(c[0].endsWith('… (+1)') && colunas(c[0]) <= 80, c[0]);
+  assert.ok(c[0].endsWith('… (+1)') && !c[0].includes('……') && colunas(c[0]) <= 80, c[0]);
+  // reticência única, linha inteira (com " (+N)") nunca passa da largura
+  const tres = topoMedido({ ...PAROU_LONGO, texto: `lon${'g'.repeat(200)}`, acoes: [] }, [{ motivo: 'decidir a emenda 1' }], { orcamento: 2 });
+  assert.ok(tres.every((l) => !l.includes('……') && colunas(l) <= 80) && tres[tres.length - 1].endsWith('… (+1)'), JSON.stringify(tres));
+  const est: any = { modo: 'loop', id: 'GM-14', titulo: 'x', parar: PAROU_LONGO, pergunta: null, depende: [{ motivo: 'decidir a emenda 1', acoes: [{ rotulo: 'aprovar', comando: 'y' }], nivel: 'x' }], pronto: { integradas: 1, total: 3, previsao: null }, agora: null, atencao: [], recente: [], trilha: {} };
+  const l20 = renderBlocos(est, { largura: 20, preset: 'executivo', orcamento: 1 } as any).map((x: any) => x.map((t: any) => t.texto).join(''));
+  assert.ok(l20.every((l: string) => !l.includes('……') && colunas(l) <= 20) && l20[0].endsWith('… (+1)'), JSON.stringify(l20));
+});
+
+test('topo-ultimo-item-inteiro-perde-o-fim-para-o-(+N) (LIMITE declarado, D15 vence)', () => {
+  const o = topoMedido({ ...PAROU_LONGO, texto: 'x'.repeat(60), acoes: [{ rotulo: 'aprovar', comando: 'x' }] }, [{ motivo: 'decidir a emenda 1' }], { orcamento: 1 });
+  assert.equal(o.length, 1, JSON.stringify(o));
+  assert.ok(o[0].endsWith('… (+1)') && !o[0].includes('……') && colunas(o[0]) <= 80 && !o[0].includes('[aprovar]'), o[0]);
 });
 
 test('topo-palavra-maior-que-a-largura: é partida em linhas, sem "…" e sem perder caractere (REQ-GLB-1)', () => {

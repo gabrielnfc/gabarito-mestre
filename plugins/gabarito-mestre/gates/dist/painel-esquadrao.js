@@ -562,7 +562,7 @@ export function renderBlocos(e              , o              )          {
   const cortado = orc === undefined ? { linhas: ls.map((x) => x.l), cortadasTopo: 0 } : cortarPorPrioridade(ls, orc);
   const ficou = new Set(cortado.linhas);
   // (+N) conta ITENS escondidos (spec:47), nunca linhas quebradas; o item que não coube inteiro sai inteiro.
-  // LIMITE (spec não diz quem cede): o 1º item sozinho maior que o orçamento — D15 vence; fica o que cabe, a última linha termina em "…".
+  // LIMITE (spec não diz quem cede): o 1º item sozinho maior que o orçamento — D15 vence; fica o que cabe, a última linha termina em "…" (uma só). Mesma colisão: item que coube inteiro e é o último do topo perde o fim para o " (+N)" (D15 vence).
   const sai = new Set       ();
   let escondidos = 0;
   let truncada               = null;
@@ -579,8 +579,10 @@ export function renderBlocos(e              , o              )          {
     const reticencia = l === truncada;
     if (i !== ultTopo && !reticencia) return fim(l);
     const mais2 = escondidos > 0 ? ` (+${escondidos})` : '';
-    const cabe = Math.max(1, w - colunas(mais2) - (reticencia ? 1 : 0));
-    const base = cortarNatural(l, cabe);
-    return [...base, ...(reticencia ? [seg('…', 'warning')] : []), ...(mais2 !== '' ? [seg(mais2, 'warning')] : [])];
+    const cabe = Math.max(1, w - colunas(mais2));
+    // reticência única: cortarLinha já termina em "…" ao cortar; só acrescenta quando a linha cabe inteira com folga
+    const folga = reticencia && colunas(textoDe(l)) < cabe;
+    const base = cortarNatural(l, reticencia && !folga ? (colunas(textoDe(l)) === cabe ? Math.max(1, cabe - 1) : cabe) : cabe);
+    return [...base, ...(folga ? [seg('…', 'warning')] : []), ...(mais2 !== '' ? [seg(mais2, 'warning')] : [])];
   });
 }
