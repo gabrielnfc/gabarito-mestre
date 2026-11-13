@@ -1,0 +1,37 @@
+import type { Evento } from './tipos.ts';
+
+/**
+ * Pouso pendente (GM-14 FIEL-14 e): a ÚNICA definição. `loop.mjs proxima` (via `proximaAcao`) e o painel (via `dependeDe`) a importam; nenhuma
+ * outra regra decide se a conversa ainda precisa ser limpa. Pura e sem `node:` (o mod a importa).
+ *
+ * Pendente = existe `sessao.pouso` e nenhum `sessao.inicio {origem: 'clear'}` posterior (por `ts`, estrito) de OUTRA sessão que a do pouso, nem
+ * `sessao.retomada {via: 'mod'}` posterior (o pouso automático do mod, FIEL-14 g, que só grava a retomada depois do `/clear` que ele mesmo deu).
+ * `startup` e `resume` (sessão paralela, retomada) nunca tiram o pendente. `ts` ilegível no início ⇒ ele não conta (falha para o lado de manter o pedido).
+ */
+export type PousoPendente = { pendente: boolean; sessao: string | null; seq: number | null };
+
+const msDe = (e: Evento): number => (typeof e?.ts === 'string' ? Date.parse(e.ts) : Number.NaN);
+
+export function pousoPendente(eventos: Evento[] | null | undefined): PousoPendente {
+  const nenhum: PousoPendente = { pendente: false, sessao: null, seq: null };
+  if (!Array.isArray(eventos)) return nenhum;
+  let ultimo: Evento | null = null;
+  let ms = Number.NEGATIVE_INFINITY;
+  for (const e of eventos) {
+    if (e?.tipo !== 'sessao.pouso') continue;
+    const t = msDe(e);
+    const m = Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY;
+    if (ultimo === null || m >= ms) { ultimo = e; ms = m; }
+  }
+  if (ultimo === null) return nenhum;
+  const limpou = eventos.some((e) => {
+    const t = msDe(e);
+    if (!Number.isFinite(t) || !Number.isFinite(ms) || t <= ms) return false;
+    const d = e?.dados as Record<string, unknown> | null | undefined;
+    if (d === null || typeof d !== 'object') return false;
+    // Retomada do MOD (FIEL-14 g): o mod só a grava depois que o `/clear` automático rodou, então o pouso já foi atendido por ele.
+    if (e.tipo === 'sessao.retomada') return d.via === 'mod';
+    return e.tipo === 'sessao.inicio' && e.sessao !== ultimo.sessao && d.origem === 'clear';
+  });
+  return limpou ? nenhum : { pendente: true, sessao: ultimo.sessao, seq: ultimo.seq };
+}

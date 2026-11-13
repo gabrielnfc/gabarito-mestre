@@ -2,7 +2,8 @@
 /**
  * REQ-LOOP-3 e REQ-LOOP-2 pela borda — `loop.mjs`: worktree por task, integração com gate e próxima ação.
  *
- *   loop.mjs proxima [--vivos <n>]    slots = `capacidade.mjs --medido`; `loop.slots` do config só reduz (sem calibração: 1 slot e aviso)
+ *   loop.mjs proxima [--vivos <n>] [--sessao <id>]    slots = `capacidade.mjs --medido`; `loop.slots` do config só reduz (sem calibração: 1 slot e aviso)
+ *       `--sessao` (GM-14 FIEL-14): `percent` vem de `.harness/contexto/<sessao>.json` (mod; `em` <= 120 s), senão nulo; pouso pendente ⇒ nada novo despacha.
  *   loop.mjs abrir <task> | fechar <task> | integrar <task>
  *   loop.mjs iniciar <task> <implementador|revisor|correcao> [--modelo <haiku|sonnet|opus|fable>] | concluir <task> | reabrir <task>
  *   loop.mjs veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major>
@@ -70,6 +71,7 @@ import { escopoDaTask, projetarEmendas, SESSAO_EMENDAS, validarJulgamento, valid
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { formaInvalida, formaNaGravacao, MOTIVOS_REENTREGA, REQ_RE } from '../dist/formas.js';
 import { estadoDe, ordenar, podeIntegrar, proximaAcao, tasksCongeladas } from '../dist/loop.js';
+import { pousoPendente } from '../dist/pouso-pendente.js';
 import { normalizarCaminho, validarPlano } from '../dist/plano.js';
 import { contarConsultas, hashPergunta, projetarDecisoes, textoAncora, trechoDoReq } from '../dist/sombra.js';
 import { vigentes } from '../dist/diario-puro.js';
@@ -169,7 +171,7 @@ export function checkoutDaSessao(cwd) {
 function lerArgs(argv) {
   const [cmd, ...resto] = argv;
   const ESPEC = {
-    proxima: { pos: 0, flags: ['entrega', 'vivos'] },
+    proxima: { pos: 0, flags: ['entrega', 'vivos', 'sessao'] },
     abrir: { pos: 1, flags: ['entrega'] },
     fechar: { pos: 1, flags: ['entrega'] },
     integrar: { pos: 1, flags: ['entrega', 'sessao'] },
@@ -1223,7 +1225,28 @@ function sinaisDe(c, cfg, eventos, flags) {
     if (existsSync(join(topo, '.harness', 'PAUSAR'))) pausado = true;
   } catch { /* o principal já foi conferido */ }
 
-  return { sinais: { slots, percent: null, x, pausado, vivos, tokens, tetoTokens, podePousar: false }, aviso };
+  const percent = percentDaSessao(c.raiz, flags.sessao);
+  // `podePousar`: o pouso sem mod é `loop.mjs pousar` (REQ-POU-3); a skill o executa quando `proxima` devolve `pousar` (GM-14 FIEL-14 c).
+  return { sinais: { slots, percent, x, pausado, vivos, tokens, tetoTokens, podePousar: true }, aviso };
+}
+
+const CONTEXTO_VALIDADE_MS = 120_000;
+/**
+ * GM-14 T34 (FIEL-14 b): `percent` da sessão do Claude, lido de `<raiz>/.harness/contexto/<sessao>.json` (`{percent, fonte, em}`, gravado pelo mod).
+ * Só o arquivo DESSA sessão conta; sem `--sessao`, arquivo ausente, ilegível, fora da forma, `em` velho (> 120 s) ou do futuro (> 5 s) ⇒ `null`
+ * (como na 2.0: `percent` nulo não pousa). Nunca lança.
+ */
+export function percentDaSessao(raiz, sessao, agoraMs = Date.now()) {
+  if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) return null;
+  let j;
+  try { j = JSON.parse(readFileSync(join(raiz, '.harness', 'contexto', `${sessao}.json`), 'utf8')); } catch { return null; }
+  if (j === null || typeof j !== 'object' || Array.isArray(j)) return null;
+  if (typeof j.percent !== 'number' || !Number.isFinite(j.percent) || j.percent < 0 || j.percent > 100) return null;
+  if (typeof j.em !== 'string') return null;
+  const em = Date.parse(j.em);
+  if (!Number.isFinite(em)) return null;
+  const idade = agoraMs - em;
+  return idade >= -5_000 && idade <= CONTEXTO_VALIDADE_MS ? j.percent : null;
 }
 
 /** `sombra.teto` de `origin/HEAD`: ausente ⇒ 26; inteiro >= 1 vale; qualquer outra coisa ⇒ 26 e aviso (a origem corrompida já foi avisada à parte). */
@@ -1332,7 +1355,8 @@ function proxima(c, plano, flags) {
   const { sinais, aviso } = sinaisDe(c, cfg, eventos, flags);
   aviso.push(...avisoOrigin);
   if (cfg === null) aviso.push('harness.config.json ausente');
-  const acao = proximaAcao(plano, eventos, { ...sinais, politica: pol.politica });
+  // FIEL-14 e: a regra única (`pouso-pendente.ts`), a mesma que o painel passa a `dependeDe`.
+  const acao = proximaAcao(plano, eventos, { ...sinais, politica: pol.politica, pousoPendente: pousoPendente(eventos).pendente });
   if (acao.tipo === 'parar' && acao.motivo === 'diario_invalido') {
     throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições (evento fora de ordem ou de task desconhecida)', { acao, sinais });
   }

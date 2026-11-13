@@ -1282,7 +1282,7 @@ describe('proxima', () => {
     // E3 (T10): todo item leva `modelo`, `decisoes` e `emendas` (vazias sem Sombra nem emenda); E5a (T8): e `aprendizados` (vazio sem aprendizado D na árvore)
     const item = (task) => ({ task, papel: 'implementador', descricao: `${task} implementador`, modelo: { modelo: 'sonnet', esforco: 'high' }, decisoes: [], emendas: [], aprendizados: [] });
     assert.deepEqual(r.j.acao, { tipo: 'despachar', itens: [item('T1'), item('T3')] });
-    assert.deepEqual(r.j.sinais, { slots: 2, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false });
+    assert.deepEqual(r.j.sinais, { slots: 2, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: true });
     assert.equal(r.j.aviso, undefined);
     assert.equal(r.out.trim().split('\n').length, 1, 'uma linha de JSON');
   });
@@ -5248,5 +5248,138 @@ describe('GM-14 T38: a spec se lê do checkout da sessão; o diário fica na pri
     assert.ok(JSON.stringify(painelEstado(amb, wt).estado).includes(AGUARDANDO));
     writeFileSync(join(amb.entregas, 'plano.json'), JSON.stringify({ ...PLANO_PADRAO, spec: SPEC_A }));
     assert.equal(JSON.stringify(painelEstado(amb, wt).estado).includes(AGUARDANDO), false);
+  });
+});
+
+describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
+  const PAINEL_CLI = join(AQUI, '..', 'scripts', 'painel.mjs');
+  const CONTEXTO = (amb, sessao) => join(amb.dir, '.harness', 'contexto', `${sessao}.json`);
+  const gravarCtx = (amb, sessao, obj, texto = null) => {
+    mkdirSync(join(amb.dir, '.harness', 'contexto'), { recursive: true });
+    writeFileSync(CONTEXTO(amb, sessao), texto ?? JSON.stringify(obj));
+  };
+  const agora = (deslocMs = 0) => new Date(Date.now() + deslocMs).toISOString();
+  /** Evento de OUTRA sessão com `ts` posterior ao último do diário (o clear/startup do `SessionStart`). */
+  const inicioDe = (amb, sessao, origem) => {
+    const ultimo = Math.max(...amb.eventos().map((e) => Date.parse(e.ts)));
+    const ts = new Date(ultimo + 5000).toISOString();
+    const r = diario.append(amb.entregas, sessao, { ts, autor: 't@t', sessao, agente: 'orquestrador', tipo: 'sessao.inicio', dados: { origem } });
+    assert.ok(r.ok, JSON.stringify(r));
+  };
+  const painel = (amb) => {
+    const r = spawnSync(process.execPath, [PAINEL_CLI, 'estado'], { cwd: amb.dir, encoding: 'utf8', env: amb.env, input: '' });
+    const j = JSON.parse(r.stdout.trim());
+    assert.equal(j.ok, true, r.stdout + r.stderr);
+    return JSON.stringify(j.estado.depende ?? []);
+  };
+  const plano1 = () => ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }]) });
+
+  test('pousar-a-partir-de-x-com-contexto-da-sessao: 55 % da sessão S1 ⇒ proxima --sessao S1 devolve pousar e mostra o percent', () => {
+    const amb = plano1();
+    gravarCtx(amb, 'S1', { percent: 55, fonte: 'mod', em: agora() });
+    const r = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.acao.tipo, 'pousar');
+    assert.equal(r.j.sinais.percent, 55);
+    // abaixo de x: despacha
+    gravarCtx(amb, 'S1', { percent: 20, fonte: 'mod', em: agora() });
+    assert.equal(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao.tipo, 'despachar');
+  });
+
+  test('contexto-de-outra-sessao-nao-conta: o arquivo da S2 não pousa a S1; sem --sessao o percent é nulo', () => {
+    const amb = plano1();
+    gravarCtx(amb, 'S2', { percent: 90, fonte: 'mod', em: agora() });
+    const a = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
+    assert.equal(a.j.sinais.percent, null);
+    assert.equal(a.j.acao.tipo, 'despachar');
+    const b = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(b.j.sinais.percent, null);
+    assert.equal(b.j.acao.tipo, 'despachar');
+  });
+
+  test('contexto-velho-ou-corrompido-e-nulo: > 120 s, futuro, JSON torto, percent fora da forma, em ausente ⇒ nulo e despacha', () => {
+    const amb = plano1();
+    const ruins = [
+      [{ percent: 90, fonte: 'mod', em: agora(-121_000) }, null],
+      [{ percent: 90, fonte: 'mod', em: agora(60_000) }, null],
+      [null, '{nao é json'],
+      [{ percent: '90', fonte: 'mod', em: agora() }, null],
+      [{ percent: 150, fonte: 'mod', em: agora() }, null],
+      [{ percent: 90, fonte: 'mod' }, null],
+      [{ percent: 90, fonte: 'mod', em: 'ontem' }, null],
+      [[90], null],
+    ];
+    for (const [obj, texto] of ruins) {
+      gravarCtx(amb, 'S1', obj, texto);
+      const r = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
+      assert.equal(r.rc, 0, r.out + r.err);
+      assert.equal(r.j.sinais.percent, null, JSON.stringify(obj ?? texto));
+      assert.equal(r.j.acao.tipo, 'despachar');
+    }
+    // 120 s exatos ainda vale (controle da fronteira)
+    gravarCtx(amb, 'S1', { percent: 90, fonte: 'mod', em: agora(-100_000) });
+    assert.equal(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao.tipo, 'pousar');
+  });
+
+  test('contexto-do-mod-chega-ao-proxima (P9): gravarContexto real da T20 grava 55 % e o loop.mjs proxima --sessao real devolve pousar', async () => {
+    const { gravarContexto } = await import('../../mod/painel.mjs');
+    const amb = plano1();
+    const g1 = gravarContexto({ sessao: 'S1', percent: 55, fonte: 'mod', emMs: Date.now() });
+    assert.ok(g1);
+    const rodou = spawnSync(g1.argv[0], g1.argv.slice(1), { cwd: amb.dir, input: g1.stdin, encoding: 'utf8', env: amb.env });
+    assert.equal(rodou.status, 0, rodou.stderr);
+    const r = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
+    assert.equal(r.j.acao.tipo, 'pousar', r.out);
+    assert.equal(r.j.sinais.percent, 55);
+  });
+
+  test('pousar-grava-sessao-do-claude: --sessao S1 vira o campo sessao do evento; sem --sessao fica "loop"', () => {
+    const amb = plano1();
+    const r = amb.cli(['pousar', '--sessao', 'S1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const pousos = amb.eventos().filter((e) => e.tipo === 'sessao.pouso');
+    assert.deepEqual(pousos.map((e) => e.sessao), ['S1']);
+    assert.equal(amb.cli(['pousar']).rc, 0);
+    assert.deepEqual(amb.eventos().filter((e) => e.tipo === 'sessao.pouso').map((e) => e.sessao).sort(), ['S1', 'loop']);
+  });
+
+  test('pouso-pendente-nao-despacha-nem-revisor, com-vivos-espera, sem-vivos-repete-sem-segunda-retomada: pelo CLI real', () => {
+    const amb = plano1();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'implementador']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao.tipo, 'despachar', 'controle: sem pouso, o revisor é despachado');
+    assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    const sem = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
+    assert.deepEqual(sem.j.acao, { tipo: 'pousar' });
+    const com = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '1']);
+    assert.deepEqual(com.j.acao, { tipo: 'esperar', motivo: 'pouso_pendente' });
+    // a skill repete o pousar (D-W3): novo sessao.pouso, nenhuma sessao.retomada gravada pelo CLI
+    assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    const tipos = amb.tipos();
+    assert.equal(tipos.filter((t) => t === 'sessao.pouso').length, 2);
+    assert.equal(tipos.filter((t) => t === 'sessao.retomada').length, 0);
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+  });
+
+  test('pouso-atravessa-cli-proxima-depende-painel (P9): pousar S1 ⇒ proxima sem despacho ⇒ painel real com "limpar a conversa" ⇒ clear de S2 tira ⇒ despacha; startup de S2 não tira', () => {
+    const amb = plano1();
+    assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    assert.match(painel(amb), /limpar a conversa/);
+    inicioDe(amb, 'S2', 'startup');
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    assert.match(painel(amb), /limpar a conversa/);
+    inicioDe(amb, 'S3', 'resume');
+    assert.match(painel(amb), /limpar a conversa/);
+    inicioDe(amb, 'S2', 'clear');
+    assert.equal(amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao.tipo, 'despachar');
+    assert.doesNotMatch(painel(amb), /limpar a conversa/);
+  });
+
+  test('instalar-ignora-contexto: o .gitignore da raiz ignora .harness/contexto/', () => {
+    const linhas = readFileSync(GITIGNORE_RAIZ, 'utf8').split('\n').map((l) => l.trim());
+    assert.ok(linhas.includes('.harness/contexto/'));
   });
 });

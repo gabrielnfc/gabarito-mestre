@@ -286,5 +286,21 @@ check "instalador-nao-ignora-extrato: 2ª execução segue sem ignorar o extrato
 check "instalador-nao-ignora-extrato: o extrato deste repo também não é ignorado (dogfood)" \
   '{ git -C "$REPO_ROOT" check-ignore -q .harness/aprendizados.jsonl; [ $? -eq 1 ]; }'
 
+echo "── cenário 14: instalador ignora o contexto por sessão (GM-14 T34, FIEL-14 b; série T10 → T33 → T34)"
+R16="$(novo_repo)"; env $GITENV git -C "$R16" init -q
+if SAIDA16="$(env $GITENV bash "$INSTALAR" "$R16" 2>&1)"; then RC16=0; else RC16=$?; fi
+mkdir -p "$R16/.harness/contexto"; printf '{}\n' > "$R16/.harness/contexto/S1.json"
+check "instalar-ignora-contexto: repo novo sai 0 e git check-ignore do arquivo de contexto dá rc 0" \
+  '[ "$RC16" -eq 0 ] && grep -qxF ".harness/contexto/" "$R16/.gitignore" && env $GITENV git -C "$R16" check-ignore -q .harness/contexto/S1.json'
+bash "$INSTALAR" "$R16" >/dev/null 2>&1 || true
+check "instalar-ignora-contexto: 2ª execução não duplica a linha" \
+  '[ "$(grep -cxF ".harness/contexto/" "$R16/.gitignore")" -eq 1 ]'
+R17="$(novo_repo)"; printf 'node_modules/' > "$R17/.gitignore"
+bash "$INSTALAR" "$R17" >/dev/null 2>&1 || true
+check "instalar-ignora-contexto: .gitignore sem \\n final recebe a linha em linha própria e nada é removido" \
+  'grep -qxF ".harness/contexto/" "$R17/.gitignore" && [ "$(head -n1 "$R17/.gitignore")" = "node_modules/" ]'
+check "gitignore da raiz deste repo ignora .harness/contexto/ (dogfood)" \
+  'grep -qxF ".harness/contexto/" "$RAIZ_GI"'
+
 echo "── $passou ok, $falhou falha(s)"
 [ "$falhou" -eq 0 ]

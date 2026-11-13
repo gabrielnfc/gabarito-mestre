@@ -248,7 +248,7 @@ function depLiberada(estados: Map<string, EstadoRodada>, dep: string): boolean {
 const EM_VOO: readonly EstadoTask[] = ['implementando', 'corrigindo', 'em_revisao'];
 const SEM_RESTO: readonly EstadoTask[] = ['integrada', 'no_teto'];
 
-export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais): AcaoLoop {
+export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais & { pousoPendente?: boolean }): AcaoLoop {
   // (1)
   const ord = ordenar(eventos);
   const proj = ord.ok ? projetar(plano, ord.eventos) : null;
@@ -287,9 +287,13 @@ export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais): Ac
   // Congelada não ganha revisor, correção, integração nem despacho novo; em voo ela termina (a tabela segue aceitando o evento).
   const revisores = ids.filter((id) => est(id).estado === 'concluida' && livre(id)).map((task) => ({ task, papel: 'revisor' as const }));
 
-  // (5) `percent` nulo não satisfaz a comparação.
-  if (sinais.percent !== null && sinais.percent >= sinais.x) {
-    if (revisores.length > 0 && capacidade >= 1) return despachar(revisores);
+  // (5) `percent` nulo não satisfaz a comparação. GM-14 T34 (FIEL-14 e, f): pouso pendente entra aqui como se o contexto estivesse acima de `x`, mas NÃO
+  // despacha revisor (revoga, só para o pendente, o despacho da 2.0): o que está em voo termina e nada novo começa. O sinal vem de quem lê o diário com a
+  // regra única de `pouso-pendente.ts` (`loop.mjs proxima`); o mod e o Stop não o passam e seguem como na 2.0 (eles têm o próprio controle do pouso).
+  const pendente = sinais.pousoPendente === true;
+  if (pendente || (sinais.percent !== null && sinais.percent >= sinais.x)) {
+    if (!pendente && revisores.length > 0 && capacidade >= 1) return despachar(revisores);
+    if (pendente && sinais.vivos > 0) return { tipo: 'esperar', motivo: 'pouso_pendente' };
     if (sinais.vivos > 0) return { tipo: 'esperar', motivo: 'agentes vivos antes do pouso' };
     // (5b) Sem agente vivo, task em voo não é fronteira (REQ-POU-1 exige `review.veredito`): o agente morreu. Não pousa.
     const emVoo = ids.find((id) => EM_VOO.includes(est(id).estado));

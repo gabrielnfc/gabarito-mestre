@@ -11,6 +11,7 @@ import { cmp, contarConsultas, duracoes, EM_TRABALHO, mediana, projetarDecisoes 
 import { dependeDe } from './depende.ts';
 import { origemDe } from './origem.ts';
 import { perguntasAbertas } from './perguntas.ts';
+import { pousoPendente } from './pouso-pendente.ts';
 import { trilhaDe } from './trilha.ts';
 import type { FatosTrilha } from './trilha.ts';
 import { estadoDe, ordenar, proximaAcao, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK } from './loop.ts';
@@ -629,7 +630,7 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
   const abertas = perguntasAbertas(lista, trilha, { sessao: typeof fatos.sessao === 'string' ? fatos.sessao : null, ...(Array.isArray(fatos.ultimas) ? { ultimas: fatos.ultimas } : {}) })
     .filter((q) => q.gatilho !== 'pendencia' && q.gatilho !== 'ideia'); // pendência (3) e ideia (4) são itens de `dependeDe`, com o botão "feito"/"visto"
   const pergunta = abertas[0] ?? null;
-  let depende = dependeDe(trilha, lista, legado.depende, { falhou: fontes }, entrada.pousoPendente === true,
+  let depende = dependeDe(trilha, lista, legado.depende, { falhou: fontes }, entrada.pousoPendente === true || pousoPendente(eventos).pendente,
     { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao });
   if (pergunta !== null) depende = depende.filter((i) => i.motivo !== NADA);
   if (velho) depende = depende.map((i) => (i.motivo === NADA ? { ...i, motivo: DESATUALIZADO } : i));

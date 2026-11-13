@@ -12,6 +12,7 @@ import * as diarioFs from '../src/diario.ts';
 import { projetarEmendas, reqsCongelados, SESSAO_EMENDAS } from '../src/emenda.ts';
 import type { ChaveEvento, EstadoTask } from '../src/loop.ts';
 import { analisarFronteira, negaDespacho } from '../src/pouso.ts';
+import { pousoPendente } from '../src/pouso-pendente.ts';
 import { pendenciasAprendizado } from '../src/pendencias.ts';
 import type { Evento, Plano, Sinais, TipoEvento } from '../src/tipos.ts';
 
@@ -1569,4 +1570,109 @@ test('t36-historico-e-recente-dizem-a-sombra-liberou', async () => {
   assert.equal(JSON.stringify(s.depende ?? []).includes('limite de revis'), false, JSON.stringify(s.depende));
   const preso = projetarPainel(p, diario(...noTeto('T1')), entrada as never);
   assert.equal(JSON.stringify(preso.depende ?? []).includes('T1'), true, 'controle: no teto, o item existe');
+});
+
+// ───────────────────────── GM-14 T34 (FIEL-14 e, f): pouso pendente é regra do produto
+/** Como `loop.mjs proxima`: o sinal vem da regra única `pousoPendente` (o núcleo só o consome). */
+const viaCli = (p: Plano, evs: Evento[], s: Sinais) => proximaAcaoNucleo(p, evs, { ...s, pousoPendente: pousoPendente(evs).pendente } as Sinais);
+const pouso = (seq: number, seg: number, sessao = 'S1'): Evento => ev(seq, new Date(Date.UTC(2026, 10, 3, 1, 0, seg)).toISOString(), sessao, 'sessao.pouso', { percent: 55, x: 50, via: 'dono' });
+const inicio = (seq: number, seg: number, sessao: string, origem: string): Evento => ev(seq, new Date(Date.UTC(2026, 10, 3, 1, 0, seg)).toISOString(), sessao, 'sessao.inicio', { origem });
+
+test('pouso-pendente-tabela: clear de outra sessão tira; startup, resume e clear da mesma sessão não; clear anterior ao pouso não', async () => {
+  const nada = { pendente: false, sessao: null, seq: null };
+  assert.deepEqual(pousoPendente([]), nada);
+  assert.deepEqual(pousoPendente(null), nada);
+  assert.deepEqual(pousoPendente([inicio(1, 1, 'S2', 'clear')]), nada);
+  assert.deepEqual(pousoPendente([pouso(1, 5)]), { pendente: true, sessao: 'S1', seq: 1 });
+  // clear-de-outra-sessao-tira-pendente
+  assert.deepEqual(pousoPendente([pouso(1, 5), inicio(1, 9, 'S2', 'clear')]), nada);
+  // sessao-paralela-startup-nao-tira-pendente / resume-nao-tira-pendente
+  assert.equal(pousoPendente([pouso(1, 5), inicio(1, 9, 'S2', 'startup')]).pendente, true);
+  assert.equal(pousoPendente([pouso(1, 5), inicio(1, 9, 'S2', 'resume')]).pendente, true);
+  assert.equal(pousoPendente([pouso(1, 5), inicio(1, 9, 'S2', 'compact')]).pendente, true);
+  // a mesma sessão não se limpa a si mesma; clear anterior ao pouso não vale; ts igual não é posterior
+  assert.equal(pousoPendente([pouso(1, 5), inicio(2, 9, 'S1', 'clear')]).pendente, true);
+  assert.equal(pousoPendente([inicio(1, 1, 'S2', 'clear'), pouso(2, 5)]).pendente, true);
+  assert.equal(pousoPendente([pouso(1, 5), inicio(1, 5, 'S2', 'clear')]).pendente, true);
+  // novo pouso depois do clear volta a pedir (D-W3); o seq devolvido é o do último
+  assert.deepEqual(pousoPendente([pouso(1, 5), inicio(1, 9, 'S2', 'clear'), pouso(2, 12, 'S2')]), { pendente: true, sessao: 'S2', seq: 2 });
+  // a ordem do array não manda: vale o ts
+  assert.deepEqual(pousoPendente([inicio(1, 9, 'S2', 'clear'), pouso(1, 5)]), nada);
+  // retomada do mod (pouso automático, FIEL-14 g) atende o pouso; retomada de outra via, anterior ao pouso ou sem `via` não
+  const ret = (seq: number, seg: number, dados: Record<string, unknown>) => ev(seq, new Date(Date.UTC(2026, 10, 3, 1, 0, seg)).toISOString(), 'S1', 'sessao.retomada', dados);
+  assert.deepEqual(pousoPendente([pouso(1, 5), ret(2, 9, { via: 'mod', chars: 5 })]), nada);
+  assert.equal(pousoPendente([pouso(1, 5), ret(2, 9, { via: 'dono' })]).pendente, true);
+  assert.equal(pousoPendente([pouso(1, 5), ret(2, 9, {})]).pendente, true);
+  assert.equal(pousoPendente([ret(1, 1, { via: 'mod' }), pouso(2, 5)]).pendente, true);
+  // origem fora da forma não limpa
+  assert.equal(pousoPendente([pouso(1, 5), ev(1, new Date(Date.UTC(2026, 10, 3, 1, 0, 9)).toISOString(), 'S2', 'sessao.inicio', {})]).pendente, true);
+});
+
+test('pouso-pendente-nao-despacha-nem-revisor: concluida com pouso pendente ⇒ pousar; sem pouso, revisor (controle)', () => {
+  const p = plano(['a']);
+  const base = diario(ini('a'), con('a'));
+  assert.equal(viaCli(p, base, sinais()).tipo, 'despachar');
+  assert.deepEqual(viaCli(p, [...base, pouso(10, 30)], sinais()), { tipo: 'pousar' });
+  // abaixo OU acima de x: o contexto não decide quando o pouso está pendente (M-W1: revisor despachado)
+  assert.deepEqual(viaCli(p, [...base, pouso(10, 30)], sinais({ percent: 80 })), { tipo: 'pousar' });
+  assert.deepEqual(viaCli(p, [...base, pouso(10, 30)], sinais({ percent: null })), { tipo: 'pousar' });
+});
+
+test('pouso-pendente-nao-despacha-task-nem-integra: pendente sem vivos ⇒ pousar, nunca integrar nem implementador', () => {
+  assert.deepEqual(viaCli(plano(['a'], ['b']), [...diario(...aprovada('a')), pouso(10, 30)], sinais()), { tipo: 'pousar' });
+  assert.deepEqual(viaCli(plano(['a']), [pouso(10, 30)], sinais()), { tipo: 'pousar' });
+});
+
+test('pouso-pendente-com-vivos-espera: agente ativo ⇒ esperar pouso_pendente, nada novo', () => {
+  const p = plano(['a']);
+  const evs = [...diario(ini('a'), con('a')), pouso(10, 30)];
+  assert.deepEqual(viaCli(p, evs, sinais({ vivos: 1 })), { tipo: 'esperar', motivo: 'pouso_pendente' });
+  assert.deepEqual(viaCli(plano(['a'], ['b']), [...diario(...aprovada('a')), pouso(10, 30)], sinais({ vivos: 1 })), { tipo: 'esperar', motivo: 'pouso_pendente' });
+});
+
+test('pouso-pendente-sem-vivos-repete-pousar: a cada chamada, e clear de outra sessão volta a despachar', () => {
+  const p = plano(['a']);
+  const evs = [...diario(ini('a'), con('a')), pouso(10, 30)];
+  assert.deepEqual(viaCli(p, evs, sinais()), { tipo: 'pousar' });
+  assert.deepEqual(viaCli(p, [...evs, pouso(11, 40)], sinais()), { tipo: 'pousar' });
+  assert.equal(viaCli(p, [...evs, inicio(1, 45, 'S2', 'clear')], sinais()).tipo, 'despachar');
+  assert.deepEqual(viaCli(p, [...evs, inicio(1, 45, 'S2', 'startup')], sinais()), { tipo: 'pousar' });
+});
+
+test('pouso-pendente-nao-vence-o-que-vem-antes: pausa, teto de tokens e podePousar falso mantêm as respostas deles', () => {
+  const p = plano(['a']);
+  const evs = [...diario(ini('a'), con('a')), pouso(10, 30)];
+  assert.deepEqual(viaCli(p, evs, sinais({ pausado: true })), { tipo: 'esperar', motivo: 'pausado' });
+  assert.deepEqual(viaCli(p, evs, sinais({ podePousar: false })), { tipo: 'parar', motivo: 'sem_pouso' });
+});
+
+test('pouso-pendente-regra-unica: o painel e o núcleo dão a mesma resposta para a mesma tabela, e as duas camadas importam a mesma função', async () => {
+  const { projetarPainel } = await import('../src/painel.ts');
+  const p: Plano = { entrega: 'GM-14', tasks: [{ id: 'a', deps: [], arquivos: [] }] };
+  const entrada = {
+    decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+    pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T03:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
+    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26,
+    fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['a'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 'S1' },
+  };
+  const casos: [string, Evento[]][] = [
+    ['sem pouso', []],
+    ['pouso', [pouso(10, 30)]],
+    ['clear de outra', [pouso(10, 30), inicio(1, 40, 'S2', 'clear')]],
+    ['startup', [pouso(10, 30), inicio(1, 40, 'S2', 'startup')]],
+    ['resume', [pouso(10, 30), inicio(1, 40, 'S2', 'resume')]],
+    ['clear e novo pouso', [pouso(10, 30), inicio(1, 40, 'S2', 'clear'), pouso(2, 50, 'S2')]],
+  ];
+  for (const [nome, extra] of casos) {
+    const evs = [...diario(ini('a'), con('a')), ...extra];
+    const noPainel = JSON.stringify(projetarPainel(p, evs, entrada as never).depende ?? []).includes('limpar a conversa');
+    const noNucleo = viaCli(plano(['a']), evs, sinais()).tipo === 'pousar';
+    assert.equal(noPainel, pousoPendente(evs).pendente, `painel: ${nome}`);
+    assert.equal(noNucleo, pousoPendente(evs).pendente, `núcleo: ${nome}`);
+  }
+  for (const f of ['../src/painel.ts', '../scripts/loop.mjs']) {
+    const fonte = readFileSync(fileURLToPath(new URL(f, import.meta.url)), 'utf8');
+    assert.match(fonte, /from '\.{1,2}\/(dist\/)?pouso-pendente\.(ts|js)'/, f);
+    assert.doesNotMatch(fonte, /origem\s*===?\s*'clear'/, `${f} não pode ter regra própria`);
+  }
 });

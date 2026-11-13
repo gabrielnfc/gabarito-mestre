@@ -506,6 +506,9 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
     linhas = [LINHA_INDISPONIVEL];
   }
   const raiz = ctx.root;
+  // GM-14 T34 (FIEL-14 a): a sessão corrente do Claude Code, para a skill passar `--sessao <id>` ao `loop.mjs`. 1 linha, logo após o cabeçalho;
+  // id fora da forma do diário (`[A-Za-z0-9._-]{1,128}`) não entra (nada do stdin vira linha de instrução sem filtro).
+  if (entrada.sessionId !== null && /^[A-Za-z0-9._-]{1,128}$/.test(entrada.sessionId)) linhas = [linhas[0], `sessão ${entrada.sessionId}`, ...linhas.slice(1)];
 
   let diario = null;
   try {
