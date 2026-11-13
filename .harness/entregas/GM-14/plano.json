@@ -885,7 +885,12 @@
       "titulo": "Decisão da Sombra reservada em 80x24",
       "deps": [
         "T17",
-        "T29"
+        "T29",
+        "T1",
+        "T2",
+        "T34",
+        "T36",
+        "T37"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
