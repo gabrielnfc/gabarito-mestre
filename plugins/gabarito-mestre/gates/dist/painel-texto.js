@@ -368,7 +368,9 @@ export function fraseHistorico(ev        , ctx              )                   
       return null; // `{negado}` e qualquer outra forma
     }
     case 'task.reaberta':
-      return txt(task) && d('origem') === 'dono' ? frase('▶', 'success', `dono liberou ${task}`) : null;
+      if (!txt(task)) return null;
+      // GM-14 T36 (FIEL-15 c): a liberação da Sombra aparece com o nome dela, nunca como do dono
+      return d('origem') === 'dono' ? frase('▶', 'success', `dono liberou ${task}`) : d('origem') === 'sombra' ? frase('▶', 'success', `a Sombra liberou a ${task}`) : null;
     case 'sessao.pouso': {
       const pct = d('percent');
       return typeof pct === 'number' && Number.isFinite(pct) ? frase('▼', 'inactive', `pouso da sessão em ${Math.round(pct)}%`) : null;

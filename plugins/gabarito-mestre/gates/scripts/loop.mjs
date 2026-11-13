@@ -16,6 +16,11 @@
  *       grava SEMPRE em `events.emendas.jsonl` (`--sessao` é ignorada: o seq da proposta é o dela) e devolve `{proposta_seq, req, task?, congeladas}`;
  *       `proposta_seq` vem da RELEITURA estrita do arquivo (a única `emenda.proposta` com o `ts` e os `dados` gravados), nunca do candidato de `gravar`.
  *   loop.mjs emenda julgar <seq> <aprovar|rejeitar>   origem `sombra`: recusa sem `sombra.julga_emendas: true` em `origin/HEAD` (o config local não conta)
+ *   loop.mjs liberar <task> --origem sombra --hash <h>   (GM-14 T36, FIEL-15) a Sombra tira a task do teto, 1 vez por task e só a 1ª liberação; exige
+ *       `sombra.libera_teto: true` em `origin/HEAD` (mesma leitura de `julga_emendas`), task `no_teto`, `<h>` = hash da PERGUNTA DE LIBERAÇÃO da task
+ *       (`sombra.mjs perguntar --task <t> --libera-teto`) com `decisao.sombra` vigente `libera: true`, sem `fora_da_regra`, depois do veredito do teto na
+ *       ordem do diário, com brief e resposta no disco. Recusa: `libera_teto_desligado`, `teto_sombra_esgotado`, `fora_do_teto`, `hash_invalido`
+ *       (e `relogio_do_diario`); nada gravado. `--origem` só aceita `sombra` (uso, rc 2): `dono` sai só de `liberarTeto`.
  *   loop.mjs aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>]
  *       (GM-13 T8; contrato e ordem de recusa em `loop-aprendizado.mjs`; `aprendizados` não exige entrega na branch).
  *   loop.mjs anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--entrega <ID>] [--sessao <id>] [--opcao <r>]…   (GM-14 REQ-DIA-2; sem plano)
@@ -27,7 +32,8 @@
  *
  * QUEM GRAVA NO DIÁRIO. Só `iniciar` (task.iniciada), `concluir` (task.concluida), `veredito` (review.veredito),
  * `desvio`, `descoberta`, `emenda propor` (emenda.proposta) e `emenda julgar` (spec.emendada ou emenda.rejeitada, origem `sombra`; a origem `dono` sai só de
- * `julgarEmendaDono`, que o hook `emenda-dono.mjs` chama), `reabrir` (task.reaberta, SÓ origem `retomada`: nenhum argumento produz `dono`; `dono` sai só de `liberarTeto`, que o hook do comando humano `/gabarito-mestre:liberar` chama), `integrar` (task.integrada),
+ * `julgarEmendaDono`, que o hook `emenda-dono.mjs` chama), `reabrir` (task.reaberta, SÓ origem `retomada`: nenhum argumento produz `dono`; `dono` sai só de `liberarTeto`, que o hook do comando humano `/gabarito-mestre:liberar` chama),
+ * `liberar` (task.reaberta, SÓ origem `sombra` com o `hash` da decisão; GM-14 T36), `integrar` (task.integrada),
  * `ci` (ci.resultado), `parar` (loop.parar) e `anotar` (nota, GM-14: sem plano, sem tabela de transições; confere só a forma, o canário e a legibilidade do diário). `concluir` e `integrar` gravam o `sha`. `abrir` não grava no diário (grava o nome da base em `branch.<branch>.gabaritoBase` e o sha dela em `branch.<branch>.gabaritoBaseSha`)
  * e é idempotente: worktree registrada com HEAD na branch da task devolve o mesmo resultado com `ja_aberta: true`; qualquer outro estado recusa. Todo evento de task é conferido contra `TRANSICOES` ANTES de gravar:
  * o CLI nunca produz um diário que o núcleo recuse.
@@ -36,6 +42,12 @@
  * Sombra: nada liga o julgamento a uma `decisao.sombra`; a opção é do dono, em origin. (2) A regra (4) de `proximaAcao` conta todo `ci.resultado`
  * (homolog e PR juntos): o lado é o seguro, para mais cedo. (3) Dois `emenda propor` simultâneos validam fora do lock; o `proposta_seq` devolvido é
  * sempre o da própria linha. (4) O aviso de emenda depende de "posterior" entre sessões: relógio atrasado no julgamento cala o aviso (falso negativo).
+ * (5) GM-14 T36 (furo 2): com `sombra.libera_teto: true` quem grava a prova é o orquestrador (`sombra.mjs registrar` transcreve a resposta da Sombra,
+ * limite (1) de `sombra.mjs`): `liberar` exige a pergunta de liberação da task (hash recalculado aqui), a `sombra.consulta` dela, o brief e a resposta no
+ * disco com o sha do texto e `libera: true` vigente; o que NÃO fecha é o orquestrador escrever ele mesmo a resposta "libera" sem ter despachado a Sombra.
+ * A opção é do dono, em origin; o registro e o painel mostram cada liberação como "a Sombra liberou a <task>". (6) GM-14 T36 (furo 7): nada
+ * distingue, no CLI, o orquestrador de um subagent que rode `loop.mjs liberar` (sem `agent_id` na borda, mesmo nível do Q14 de `liberar-teto.mjs`);
+ * o teto de 1 liberação por task e a ordem (só a 1ª) limitam o dano a um ciclo a mais, visível.
  *
  * Tudo que toca git vai por `execFileSync` com argv, sem shell. Nada é apagado por outro meio que `git worktree remove`
  * sem `--force`, `git branch -d` do que `abrir` acabou de criar e o `.tmp-gabarito` da própria worktree.
@@ -59,7 +71,8 @@ import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { formaInvalida, formaNaGravacao, MOTIVOS_REENTREGA, REQ_RE } from '../dist/formas.js';
 import { estadoDe, ordenar, podeIntegrar, proximaAcao, tasksCongeladas } from '../dist/loop.js';
 import { normalizarCaminho, validarPlano } from '../dist/plano.js';
-import { contarConsultas, projetarDecisoes, trechoDoReq } from '../dist/sombra.js';
+import { contarConsultas, hashPergunta, projetarDecisoes, textoAncora, trechoDoReq } from '../dist/sombra.js';
+import { vigentes } from '../dist/diario-puro.js';
 import { idDaBranch } from '../dist/trilha.js';
 import { avaliar } from './gate-task.mjs';
 import * as loopAprendizado from './loop-aprendizado.mjs';
@@ -150,6 +163,7 @@ function lerArgs(argv) {
     iniciar: { pos: 2, flags: ['entrega', 'sessao', 'modelo'] },
     concluir: { pos: 1, flags: ['entrega', 'sessao', 'motivo'] },
     reabrir: { pos: 1, flags: ['entrega', 'sessao'] },
+    liberar: { pos: 1, flags: ['entrega', 'sessao', 'origem', 'hash'], obrig: ['origem', 'hash'] },
     veredito: { pos: 5, flags: ['entrega', 'sessao'] },
     parar: { pos: 1, flags: ['entrega', 'sessao'] },
     ci: { pos: 1, flags: ['entrega', 'sessao', 'alvo'] },
@@ -162,7 +176,7 @@ function lerArgs(argv) {
     registro: { pos: null, flags: ['entrega', 'sessao'] },
     emenda: { pos: null, flags: ['entrega', 'sessao', 'req', 'task', 'diff', 'fato', 'alternativa', 'evidencia', 'causa', 'arquivos'] },
   };
-  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | concluir <task> --motivo <gate|sombra|dono> | iniciar <task> <papel> [--modelo <haiku|sonnet|opus|fable>] | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | aprendizados --exportar | pousar | registro | anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--opcao <r>]…  [--entrega GM-10]';
+  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | liberar <task> --origem sombra --hash <h> | concluir <task> --motivo <gate|sombra|dono> | iniciar <task> <papel> [--modelo <haiku|sonnet|opus|fable>] | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | aprendizados --exportar | pousar | registro | anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--opcao <r>]…  [--entrega GM-10]';
   if (typeof cmd !== 'string' || !Object.hasOwn(ESPEC, cmd)) throw new Falha('uso', `comando desconhecido ou ausente. ${uso}`, {}, 2);
   const esp = ESPEC[cmd];
   const pos = [];
@@ -321,6 +335,11 @@ function validarForma(cmd, pos, flags) {
     const evid = textoDe('evidencia', flags.evidencia);
     const arquivos = listaDeCaminhos(flags.arquivos);
     return { task, req: flags.req, dados: { task, req: flags.req, ...evid, arquivos, causa }, textos: { evidencia: flags.evidencia, arquivos: arquivos.join(',') } };
+  }
+  if (cmd === 'liberar') {
+    // GM-14 T36: a origem é só `sombra` (uso, rc 2): nenhum argumento produz `dono`. O hash fora da forma é motivo, não uso (FIEL-15 b).
+    if (flags.origem !== 'sombra') throw new Falha('uso', `liberar só aceita --origem sombra (a liberação do dono é o comando /gabarito-mestre:liberar); veio ${JSON.stringify(flags.origem)}`, {}, 2);
+    return { task, hash: flags.hash };
   }
   if (cmd === 'concluir') {
     // FIEL-8 b6: o motivo da reentrega é forma; fora dos 3 literais recusa antes de abrir plano ou diário.
@@ -1754,6 +1773,7 @@ async function executar(argv, cwd) {
       return { evento: gravar(c, plano, 'review.veredito', dados, conferir) };
     }
     case 'reabrir': tarefa(plano, task); return { evento: gravar(c, plano, 'task.reaberta', { task, origem: 'retomada' }) };
+    case 'liberar': return liberarComoSombra(c, plano, task, forma.hash);
     default: throw new Falha('uso', `comando desconhecido: ${cmd}`, {}, 2);
   }
 }
@@ -1771,7 +1791,9 @@ function estadoDaTask(c, task) {
   if (!ord.ok) throw new Falha('diario_invalido', 'o diário da entrega não está em ordem');
   const r = estadoDe(ord.eventos.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === task));
   if ('invalido' in r) throw new Falha('diario_invalido', `diário da task ${task} fora da tabela de transições: ${r.invalido}`);
-  return { estado: r.estado, donos: eventos.filter((e) => e.tipo === 'task.reaberta' && e.dados?.task === task && e.dados?.origem === 'dono').length };
+  const liberacoes = (origem) => eventos.filter((e) => e.tipo === 'task.reaberta' && e.dados?.task === task && e.dados?.origem === origem).length;
+  // GM-14 T36 (furo 10): as liberações da Sombra contam à parte; `donos` segue sendo só a do dono (a releitura do `liberarTeto` não muda).
+  return { estado: r.estado, donos: liberacoes('dono'), sombras: liberacoes('sombra') };
 }
 
 /**
@@ -1839,6 +1861,124 @@ export function liberarTeto(cwd, task, sessao) {
     if (e instanceof Falha) return { ok: false, erro: e.erro, mensagem: e.message };
     return { ok: false, erro: 'excecao', mensagem: e instanceof Error ? e.message : String(e) };
   }
+}
+
+// ─────────────────────────────────────────────────────────────── a Sombra libera o teto (GM-14 T36, FIEL-15)
+
+const HASH_RE = /^[0-9a-f]{64}$/;
+const RESPOSTA_RE = (entrega, h) => new RegExp(`^\\.harness/entregas/${entrega}/sombra/${h}\\.([0-9a-f]{12})\\.resposta\\.md$`);
+
+/** A PERGUNTA FECHADA de liberação (furo 3): texto fixo por task; `sombra.mjs perguntar --task <t> --libera-teto` a usa, e só ela vale para `liberar`. */
+export function perguntaDaLiberacao(task) {
+  return `A task ${task} chegou ao teto de rodadas de review. A spec e os achados sustentam liberar mais um ciclo de implementação e review (a Sombra libera 1 vez por task)?`;
+}
+
+/**
+ * Hash da pergunta de liberação da task com a versão da âncora de hoje (a mesma regra de `sombra.mjs perguntar`: `proposta_seq` da ÚLTIMA emenda
+ * aprovada dentre os REQs da task). Emenda aprovada depois da pergunta muda o hash: a decisão velha não libera. `null` = task fora do plano ou diário
+ * que não projeta. Exportada para `sombra.mjs` (registrar confere `libera`) e para o teste.
+ */
+export function hashDaLiberacao(plano, eventos, task) {
+  const t = plano?.tasks?.find((x) => x.id === task);
+  if (t === undefined) return null;
+  const est = projetarEmendas(eventos);
+  if (est.invalido !== undefined) return null;
+  const reqs = t.reqs ?? [];
+  const aprovadas = est.aprovadas.filter((p) => reqs.includes(p.req));
+  const versao = aprovadas.length === 0 ? 0 : aprovadas[aprovadas.length - 1].seq;
+  try { return hashPergunta(textoAncora({ task }), versao, perguntaDaLiberacao(task)); } catch { return null; }
+}
+
+const ehArquivoRegular = (p) => { try { return lstatSync(p).isFile(); } catch { return false; } };
+
+/**
+ * Tudo que o diário decide sobre a liberação da Sombra, na ordem dos motivos de FIEL-15 (b). Puro sobre `eventos` (mais a leitura do brief e da
+ * resposta no disco): roda antes de `gravar` e de novo DENTRO dele, sobre o diário que ele leu. Lança `Falha`; nada grava.
+ */
+function conferirLiberacao(c, plano, task, hash, eventos) {
+  const ord = ordenar(eventos);
+  if (!ord.ok) throw new Falha('diario_invalido', 'o diário da entrega não está em ordem; nada foi gravado');
+  const daTask = ord.eventos.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === task);
+  // furo 6: a Sombra só dá a 1ª liberação; qualquer liberação anterior (do dono ou dela) faz da próxima uma decisão do dono.
+  const anteriores = daTask.filter((e) => e.tipo === 'task.reaberta' && (e.dados?.origem === 'dono' || e.dados?.origem === 'sombra'));
+  if (anteriores.length > 0) {
+    const quem = anteriores.map((e) => (e.dados.origem === 'dono' ? 'o dono' : 'a Sombra')).join(' e ');
+    throw new Falha('teto_sombra_esgotado', `a task ${task} já foi liberada (${quem}): a Sombra só dá a 1ª liberação, a próxima é sempre do dono (/gabarito-mestre:liberar ${task}); nada foi gravado`);
+  }
+  const r = estadoDe(daTask);
+  if ('invalido' in r) throw new Falha('diario_invalido', `diário da task ${task} fora da tabela de transições: ${r.invalido}; nada foi gravado`);
+  if (r.estado !== 'no_teto') throw new Falha('fora_do_teto', `a task ${task} está em ${r.estado}: a Sombra só libera task no teto de rodadas; nada foi gravado`);
+  const invalido = (porque) => new Falha('hash_invalido', `o hash ${String(hash).slice(0, 12)}… não autoriza a liberação de ${task}: ${porque}; nada foi gravado`);
+  if (typeof hash !== 'string' || !HASH_RE.test(hash)) throw invalido('fora da forma sha256 em hex minúsculo (64)');
+  // furo 1 e 3: só a pergunta fechada de liberação desta task, na versão de hoje da âncora
+  if (hash !== hashDaLiberacao(plano, eventos, task)) throw invalido(`não é o hash da pergunta de liberação da task (sombra.mjs perguntar --task ${task} --libera-teto)`);
+  const consulta = ord.eventos.some((e) => e.tipo === 'sombra.consulta' && formaInvalida(e.tipo, e.dados) === null && e.dados.pergunta_hash === hash && e.dados.task === task);
+  if (!consulta) throw invalido('sem a sombra.consulta da pergunta de liberação no diário');
+  // furo 5: vale a decisão VIGENTE (a substituída não conta), na posição da ordem do diário
+  const v = vigentes(eventos).get(hash);
+  if (v === undefined) throw invalido('sem decisão da Sombra para a pergunta de liberação');
+  const d = ord.eventos[v.pos]?.dados ?? {};
+  if (d.task !== task) throw invalido('a decisão não é desta task');
+  if (d.fora_da_regra === true) throw invalido('a decisão está fora da regra (fora_da_regra)');
+  if (d.libera !== true) throw invalido('a decisão vigente não traz libera: true explícito');
+  // furo 4: "depois do veredito que levou ao teto" pela ORDEM do diário (`ordenar`), nunca pelo ts cru
+  let posTeto = -1;
+  for (let i = 0; i < daTask.length && posTeto < 0; i++) {
+    const p = estadoDe(daTask.slice(0, i + 1));
+    if (!('invalido' in p) && p.estado === 'no_teto') posTeto = ord.eventos.indexOf(daTask[i]);
+  }
+  if (v.pos <= posTeto) throw invalido('a decisão vem antes do teto na ordem do diário (só vale a dada depois do veredito que levou ao teto)');
+  // furo 2 (o que dá para fechar): o brief que `perguntar` gerou e a resposta que `registrar` gravou estão no disco, com o sha do texto
+  if (!ehArquivoRegular(join(c.dirEntrega, 'sombra', `${hash}.md`))) throw invalido('o brief da pergunta não está no disco');
+  const m = typeof d.arquivo === 'string' ? RESPOSTA_RE(c.entrega, hash).exec(d.arquivo) : null;
+  const arq = m === null ? null : join(c.dirEntrega, 'sombra', basename(d.arquivo));
+  let texto = null;
+  if (arq !== null && ehArquivoRegular(arq)) { try { texto = readFileSync(arq, 'utf8'); } catch { texto = null; } }
+  if (texto === null || sha(texto).slice(0, 12) !== m[1]) throw invalido('o arquivo de resposta da decisão está ausente, fora do lugar ou adulterado');
+  return { ord };
+}
+
+/**
+ * `loop.mjs liberar <task> --origem sombra --hash <h>`: a ÚNICA gravação de `task.reaberta {origem:"sombra", hash}` (FIEL-15). Repete o caminho de
+ * `liberarTeto` (furo 10): `no_teto`, projeção na ordem real (`relogio_do_diario`), achados arquivados por último e releitura. O caminho do dono não muda.
+ */
+function liberarComoSombra(c, plano, task, hash) {
+  tarefa(plano, task);
+  const o = lerConfigOrigin(c.raiz);
+  const liga = o.fonte === 'origin' && o.cfg.sombra !== null && typeof o.cfg.sombra === 'object' && o.cfg.sombra.libera_teto === true;
+  if (!liga) {
+    throw new Falha('libera_teto_desligado', o.invalida
+      ? `config de origin/HEAD inválida (${o.motivo}): sem sombra.libera_teto verdadeiro lá, a Sombra não libera o teto; nada foi gravado`
+      : 'sombra.libera_teto não é true em origin/HEAD (o config local não conta): a Sombra não libera o teto; nada foi gravado');
+  }
+  const eventos = lerDiarioEstrito(c.dirEntrega);
+  if (diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições; nada foi gravado');
+  conferirLiberacao(c, plano, task, hash, eventos);
+  // Projeta o candidato NA ORDEM REAL (relógio de outra sessão pode pô-lo antes do teto). Fora do teto `reaberta.sombra` é par ausente, então a tabela
+  // de `gravar` recusaria antes do gancho: a projeção roda aqui primeiro (com o candidato que `gravar` montaria) e de novo dentro dele.
+  const projetarNaOrdem = (candidato, lidos) => {
+    const ord = ordenar([...lidos, candidato]);
+    if (!ord.ok) throw new Falha('diario_invalido', `a liberação de ${task} deixaria o diário fora de ordem; nada foi gravado`);
+    const r = estadoDe(ord.eventos.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === task));
+    if ('invalido' in r || r.estado !== 'pendente') {
+      throw new Falha('relogio_do_diario', `a liberação de ${task} não tiraria a task do teto: na ordem do diário o evento cairia antes do teto (um evento do diário tem relógio à frente do agora; estado projetado ${'invalido' in r ? r.invalido : r.estado}). Nada foi gravado`);
+    }
+  };
+  const minhas = eventos.filter((e) => e.sessao === c.sessao).map((e) => e.seq);
+  const dados = { task, origem: 'sombra', hash };
+  projetarNaOrdem({ seq: (minhas.length ? Math.max(...minhas) : 0) + 1, ts: new Date().toISOString(), sessao: c.sessao, tipo: 'task.reaberta', dados }, eventos);
+  const antes = estadoDaTask(c, task);
+  const projetar = (candidato, lidos) => {
+    conferirLiberacao(c, plano, task, hash, lidos); // o diário que `gravar` leu (outra sessão pode ter gravado no meio)
+    projetarNaOrdem(candidato, lidos);
+    arquivarAchados(c, task); // última coisa antes do append: toda recusa acima deixa os achados onde estão
+  };
+  gravar(c, plano, 'task.reaberta', dados, projetar);
+  const depois = estadoDaTask(c, task);
+  if (depois.sombras !== antes.sombras + 1 || depois.estado !== 'pendente') {
+    throw new Falha('liberacao_sem_efeito', `o evento de ${task} foi gravado mas o diário relido não mostra a task fora do teto (estado ${depois.estado}, liberações da Sombra ${antes.sombras} → ${depois.sombras}); confira o diário`);
+  }
+  return { task, entrega: c.entrega, estado: depois.estado, origem: 'sombra', hash };
 }
 
 /**

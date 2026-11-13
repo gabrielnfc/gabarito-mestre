@@ -69,7 +69,7 @@ export const CHAVES_DE_EVENTO = [
   'iniciada.implementador', 'iniciada.revisor', 'iniciada.correcao', 'task.concluida',
   'veredito.aprovado', 'veredito.aprovado.com_achado',
   'veredito.reprovado.r1', 'veredito.reprovado.teto', 'veredito.reprovado.sem_achado',
-  'task.integrada', 'reaberta.retomada', 'reaberta.dono', 'concluida.reentrega',
+  'task.integrada', 'reaberta.retomada', 'reaberta.dono', 'reaberta.sombra', 'concluida.reentrega',
 ]         ;
                                                             
 
@@ -86,6 +86,8 @@ const VEREDITOS = {
  * `reaberta.retomada` fora de agente em voo não muda nada: quem decide reabrir é o orquestrador, não esta tabela.
  * `concluida.reentrega` (FIEL-8 b, `concluir --motivo`): commit novo depois do `concluir` só em `concluida` (b1, rodada igual) e em
  * `aprovada` (b2, rodada − 1: o APROVADO anulado não conta); em qualquer outro estado é par ausente (b3). O motivo não dá poder: não tira do teto, não pula review.
+ * `reaberta.sombra` (GM-14 T36, FIEL-15): SÓ em `no_teto` (⇒ `pendente`, rodada 0); em qualquer outro estado é par ausente: a Sombra nunca grava
+ * evento sem efeito que pareça liberação. "1 vez por task e só a 1ª liberação" é da borda (`loop.mjs liberar`), que conta no diário.
  */
 export const TRANSICOES                                                               = {
   pendente: { 'iniciada.implementador': 'implementando', 'reaberta.retomada': 'pendente', 'reaberta.dono': 'pendente' },
@@ -95,12 +97,12 @@ export const TRANSICOES                                                         
   reprovada: { 'iniciada.correcao': 'corrigindo', 'reaberta.retomada': 'reprovada', 'reaberta.dono': 'reprovada' },
   corrigindo: { 'task.concluida': 'concluida', 'reaberta.retomada': 'reprovada', 'reaberta.dono': 'corrigindo' },
   aprovada: { 'task.integrada': 'integrada', 'reaberta.retomada': 'aprovada', 'reaberta.dono': 'aprovada', 'concluida.reentrega': 'concluida' },
-  // Autotransição: só o dono tira do teto; evento avulso não tira nem quebra. `task.integrada` fica de fora: integrar sem liberação é fraude.
+  // Autotransição: só o dono (ou a Sombra, 1 vez, com o flag de origin: FIEL-15) tira do teto; evento avulso não tira nem quebra. `task.integrada` fica de fora: integrar sem liberação é fraude.
   no_teto: {
     'iniciada.implementador': 'no_teto', 'iniciada.revisor': 'no_teto', 'iniciada.correcao': 'no_teto', 'task.concluida': 'no_teto',
     'veredito.aprovado': 'no_teto', 'veredito.aprovado.com_achado': 'no_teto', 'veredito.reprovado.r1': 'no_teto',
     'veredito.reprovado.teto': 'no_teto', 'veredito.reprovado.sem_achado': 'no_teto',
-    'reaberta.retomada': 'no_teto', 'reaberta.dono': 'pendente',
+    'reaberta.retomada': 'no_teto', 'reaberta.dono': 'pendente', 'reaberta.sombra': 'pendente',
   },
   integrada: { 'reaberta.retomada': 'integrada', 'reaberta.dono': 'integrada' },
 };
@@ -122,7 +124,7 @@ function chaveDe(e        , rodada        , estado            )                 
     case 'task.integrada':
       return { chave: 'task.integrada', rodada: null };
     case 'task.reaberta':
-      if (dados.origem !== 'dono' && dados.origem !== 'retomada') return 'origem inválida';
+      if (dados.origem !== 'dono' && dados.origem !== 'retomada' && dados.origem !== 'sombra') return 'origem inválida';
       return { chave: `reaberta.${dados.origem}`               , rodada: null };
     case 'review.veredito': {
       const { veredito, rodada: declarada, major, blocker } = dados;

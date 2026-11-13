@@ -4,8 +4,11 @@
  *
  *   sombra.mjs perguntar (--req <REQ> | --task <id>) --pergunta <texto> [--entrega <GM-10>] [--sessao <id>]
  *       → {ok, hash, cache:true, decisao} | {ok, hash, pendente:true, brief, prompt} | {ok, hash, brief, prompt, consultas, teto}
+ *   sombra.mjs perguntar --task <id> --libera-teto [--entrega <GM-10>] [--sessao <id>]   (GM-14 T36, FIEL-15) a PERGUNTA FECHADA de liberação do
+ *       teto (texto fixo, `perguntaDaLiberacao` de `loop.mjs`); só o hash dela serve a `loop.mjs liberar --origem sombra`. Sem `--pergunta`.
  *   sombra.mjs registrar <hash> <resposta.json> [--entrega <GM-10>] [--sessao <id>]  → {ok, evento}
- *       resposta.json: { resposta, texto, pergunta_enviesada, fontes?, medicao?, fora_da_regra?, emenda_seq?, substitui?: {sessao, seq} }
+ *       resposta.json: { resposta, texto, pergunta_enviesada, fontes?, medicao?, fora_da_regra?, emenda_seq?, substitui?: {sessao, seq}, libera? }
+ *       `libera` (booleano, GM-14 T36): só na pergunta de liberação da task (`libera_fora_da_liberacao`); ausente, a decisão grava os campos de antes.
  *
  * CONTRATO DE FALHA. Saída é UMA linha de JSON em stdout, sempre com `ok`; falha traz `erro` (código) e `mensagem`, rc 1; uso errado e
  * argumento fora da forma saem 2 (contrato de `loop.mjs`). Dado ausente, corrompido ou ferramenta falhando nunca vira sucesso, e ausente ≠
@@ -30,7 +33,7 @@ import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFil
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import { lerConfigOrigin } from '../lib/config.mjs';
-import { tetoDaSombra } from './loop.mjs';
+import { hashDaLiberacao, perguntaDaLiberacao, tetoDaSombra } from './loop.mjs';
 import * as diario from '../dist/diario.js';
 import { projetarEmendas } from '../dist/emenda.js';
 import { formaInvalida, REQ_RE } from '../dist/formas.js';
@@ -172,13 +175,13 @@ function gravarEvento(c, tipo, dados) {
 
 // ─────────────────────────────────────────────────────────────── entrada
 
-const USO = 'uso: sombra.mjs perguntar (--req <REQ> | --task <id>) --pergunta <texto> [--entrega GM-10] [--sessao <id>] | registrar <hash> <resposta.json> [--entrega GM-10] [--sessao <id>]';
+const USO = 'uso: sombra.mjs perguntar (--req <REQ> | --task <id>) --pergunta <texto> [--entrega GM-10] [--sessao <id>] | perguntar --task <id> --libera-teto | registrar <hash> <resposta.json> [--entrega GM-10] [--sessao <id>]';
 
 /** Argumentos estritos. Flag desconhecida, sem valor ou repetida, e posicional a mais ou a menos é uso (rc 2). */
 function lerArgs(argv) {
   const [cmd, ...resto] = argv;
   const ESPEC = {
-    perguntar: { pos: 0, flags: ['req', 'task', 'pergunta', 'entrega', 'sessao'] },
+    perguntar: { pos: 0, flags: ['req', 'task', 'pergunta', 'entrega', 'sessao', 'libera-teto'], semValor: ['libera-teto'] },
     registrar: { pos: 2, flags: ['entrega', 'sessao'] },
   };
   if (typeof cmd !== 'string' || !Object.hasOwn(ESPEC, cmd)) throw new Falha('uso', `comando desconhecido ou ausente. ${USO}`, {}, 2);
@@ -190,6 +193,7 @@ function lerArgs(argv) {
     if (a.startsWith('--')) {
       const nome = a.slice(2);
       if (!esp.flags.includes(nome)) throw new Falha('uso', `argumento desconhecido para ${cmd}: ${a}. ${USO}`, {}, 2);
+      if (esp.semValor?.includes(nome)) { if (Object.hasOwn(flags, nome)) throw new Falha('uso', `${a} repetido. ${USO}`, {}, 2); flags[nome] = true; continue; }
       const v = resto[i + 1];
       // a pergunta é texto livre e pode começar com `--`; qualquer outra flag com valor que parece flag é uso.
       if (v === undefined || (nome !== 'pergunta' && v.startsWith('--'))) throw new Falha('uso', `${a} sem valor. ${USO}`, {}, 2);
@@ -255,7 +259,12 @@ function escreverBrief(c, hash, conteudo, { sobrescrever }) {
 }
 
 function perguntar(cwd, flags) {
-  const { req, task, pergunta } = flags;
+  const { req, task } = flags;
+  // GM-14 T36: `--libera-teto` é a pergunta fechada de liberação, ancorada na task; o texto é o de `loop.mjs`, nunca digitado.
+  if (flags['libera-teto'] === true && (task === undefined || req !== undefined || flags.pergunta !== undefined)) {
+    throw new Falha('uso', `perguntar --libera-teto exige --task e não aceita --req nem --pergunta. ${USO}`, {}, 2);
+  }
+  const pergunta = flags['libera-teto'] === true ? perguntaDaLiberacao(task) : flags.pergunta;
   if ((req === undefined) === (task === undefined) || pergunta === undefined) throw new Falha('uso', `perguntar exige exatamente um de --req/--task e --pergunta. ${USO}`, {}, 2);
   validarFlagsComuns(flags);
   if (req !== undefined && !REQ_RE.test(req)) throw new Falha('argumento_invalido', `--req "${req}" fora da forma REQ-<ÁREA>-<n>`, {}, 2);
@@ -343,6 +352,7 @@ function registrar(cwd, pos, flags) {
   if (typeof r.texto !== 'string' || r.texto.trim() === '') throw new Falha('resposta_invalida', 'campo `texto` ausente, vazio ou que não é texto');
   if (typeof r.pergunta_enviesada !== 'boolean') throw new Falha('resposta_invalida', 'campo `pergunta_enviesada` ausente ou que não é booleano');
   if (r.fora_da_regra !== undefined && typeof r.fora_da_regra !== 'boolean') throw new Falha('resposta_invalida', 'campo `fora_da_regra` que não é booleano');
+  if (r.libera !== undefined && typeof r.libera !== 'boolean') throw new Falha('resposta_invalida', 'campo `libera` que não é booleano');
   // mesma medida de `formaInvalida` (pontos de código); o diário recusaria depois, mas o CLI recusa antes de tocar qualquer arquivo
   const tamanho = [...r.resposta].length;
   if (tamanho > RESPOSTA_MAX) throw new Falha('resposta_longa', `\`resposta\` tem ${tamanho} caracteres, máximo ${RESPOSTA_MAX}: o texto inteiro vai em \`texto\``);
@@ -356,6 +366,10 @@ function registrar(cwd, pos, flags) {
   const consulta = eventos.find((e) => e.tipo === 'sombra.consulta' && formaInvalida(e.tipo, e.dados) === null && e.dados.pergunta_hash === hash);
   if (consulta === undefined) throw new Falha('sem_consulta', `nenhuma sombra.consulta do hash ${hash}: \`perguntar\` primeiro`);
   const ancora = consulta.dados.req !== undefined ? { req: consulta.dados.req } : { task: consulta.dados.task };
+  // GM-14 T36 (furo 3): `libera` só na pergunta de liberação da task (o mesmo hash que `loop.mjs liberar` recalcula); em outra, recusa antes de gravar.
+  if (r.libera !== undefined && (ancora.task === undefined || hashDaLiberacao(carregarPlano(c), eventos, ancora.task) !== hash)) {
+    throw new Falha('libera_fora_da_liberacao', '`libera` só vale na decisão da pergunta de liberação do teto (`perguntar --task <t> --libera-teto`); nenhum arquivo e nenhum evento foram gravados');
+  }
 
   // fontes e medição: ausente é ausente; presente e malformada é recusada (nunca gravada pela metade)
   let fontes;
@@ -412,6 +426,7 @@ function registrar(cwd, pos, flags) {
     ...(medicao !== undefined ? { medicao } : {}),
     ...(foraDaRegra ? { fora_da_regra: true, emenda_seq: r.emenda_seq } : {}),
     ...(substitui !== undefined ? { substitui } : {}),
+    ...(r.libera !== undefined ? { libera: r.libera } : {}),
   };
   gravarEvento(c, 'decisao.sombra', dados);
   return { evento: { tipo: 'decisao.sombra', ...dados } };

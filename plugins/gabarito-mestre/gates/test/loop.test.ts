@@ -415,6 +415,8 @@ test('dependente-de-bloqueada-nao-aprovada-espera', () => {
 const tetoDe = (t: string) => ({ tipo: 'parar', motivo: 'teto_rodadas', task: t });
 const dono = (task: string): [TipoEvento, Record<string, unknown>] => ['task.reaberta', { task, origem: 'dono' }];
 const retomada = (task: string): [TipoEvento, Record<string, unknown>] => ['task.reaberta', { task, origem: 'retomada' }];
+/** GM-14 T36 (FIEL-15): liberação pela Sombra, com o hash da decisão. */
+const sombraLib = (task: string): [TipoEvento, Record<string, unknown>] => ['task.reaberta', { task, origem: 'sombra', hash: 'e'.repeat(64) }];
 /** GM-14 T31 (FIEL-8 b): reentrega = `task.concluida` com `motivo`, sha novo. */
 const ree = (task: string, motivo: unknown = 'gate', sha = 'abc2'): [TipoEvento, Record<string, unknown>] => ['task.concluida', { task, sha, motivo }];
 const EVENTOS_AVULSOS: [string, [TipoEvento, Record<string, unknown>]][] = [
@@ -632,6 +634,7 @@ function eventoDaChave(chave: ChaveEvento, rodadaAtual: number): Par {
     case 'veredito.reprovado.sem_achado': return ver('a', 'REPROVADO', proxima);
     case 'reaberta.retomada': return retomada('a');
     case 'reaberta.dono': return dono('a');
+    case 'reaberta.sombra': return sombraLib('a');
     case 'concluida.reentrega': return ree('a');
   }
 }
@@ -678,6 +681,7 @@ no_teto veredito.reprovado.teto no_teto
 no_teto veredito.reprovado.sem_achado no_teto
 no_teto reaberta.retomada no_teto
 no_teto reaberta.dono pendente
+no_teto reaberta.sombra pendente
 integrada reaberta.retomada integrada
 integrada reaberta.dono integrada
 `.trim().split('\n').map((l) => l.split(' ') as [EstadoTask, ChaveEvento, EstadoTask]);
@@ -1496,4 +1500,73 @@ test('reentrega-relogio-voltando-o-nucleo-aceita (ataque 8b): a defesa mora na b
   const ord = ordenar([i, c, rv, v, r]);
   assert.ok(ord.ok);
   assert.deepEqual(ord.eventos.map((e) => e.seq + e.sessao), ['1A', '2A', '1B', '3A', '4A'], 'R intercala antes do APROVADO');
+});
+
+// ═══════════════════════════════════════ GM-14 T36 (FIEL-15, emenda 13): a Sombra libera o teto 1 vez por task
+// Núcleo: `reaberta.sombra` só tira do teto (no_teto ⇒ pendente, rodada 0); em qualquer outro estado é par ausente (diário inválido).
+// Vista: origem `(Sombra)` (REQ-LNG-1), RECENTE do painel, histórico e registro dizem "a Sombra liberou a <task>".
+test('t36-sombra-tira-do-teto-e-zera-a-rodada', () => {
+  assert.deepEqual(estadoDe(diario(...noTeto('a'), sombraLib('a'))), { estado: 'pendente', rodada: 0 });
+  // fora do teto é par ausente: a Sombra nunca grava evento sem efeito que parece liberação
+  for (const pre of [[], [ini('a')], [ini('a'), con('a')], [ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1)], aprovada('a'), pronta('a')]) {
+    assert.ok('invalido' in estadoDe(diario(...pre, sombraLib('a'))), JSON.stringify(pre));
+  }
+  // origem fora da lista segue inválida (a `sombra` não abre a porta para outra)
+  assert.ok('invalido' in estadoDe(diario(...noTeto('a'), ['task.reaberta', { task: 'a', origem: 'Sombra' }])));
+  // o loop segue: depois da Sombra, a task volta ao despacho
+  assert.deepEqual(proximaAcao(plano(['a']), diario(...noTeto('a'), sombraLib('a')), sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'implementador' }] });
+  // a 2ª é do dono: depois de novo teto, o dono tira do teto como sempre
+  assert.deepEqual(estadoDe(diario(...noTeto('a'), sombraLib('a'), ...noTeto('a'), dono('a'))), { estado: 'pendente', rodada: 0 });
+});
+
+test('t36-origem-da-sombra-e-sombra-nunca-automatico-nem-voce', async () => {
+  const { origemDe } = await import('../src/origem.ts');
+  const r = (dados: Record<string, unknown>) => origemDe(ev(1, '2026-11-03T00:00:00.000Z', 's1', 'task.reaberta', dados));
+  assert.equal(r({ task: 'T1', origem: 'sombra', hash: 'e'.repeat(64) }), '(Sombra)');
+  assert.equal(r({ task: 'T1', origem: 'dono' }), '(você)');
+  assert.equal(r({ task: 'T1', origem: 'retomada' }), '(automático)');
+  assert.equal(r({ task: 'T1', origem: 'Sombra' }), '(automático)');
+});
+
+test('t36-registro-lista-a-sombra-e-o-dono', async () => {
+  const { montarRegistro } = await import('../src/registro.ts');
+  const evs = diario(...noTeto('a'), sombraLib('a'), ...noTeto('a'), dono('a'));
+  const texto = montarRegistro('GM-10', evs, null);
+  const secao = texto.split('## Liberações de teto')[1].split('\n## ')[0];
+  const linhas = secao.split('\n').filter((l) => l.startsWith('- '));
+  assert.deepEqual(linhas, [
+    `- s1:7 · task a · a Sombra liberou a a · decisão ${'e'.repeat(12)}`,
+    '- s1:14 · task a · liberada pelo dono',
+  ]);
+  // retomada não é liberação
+  assert.doesNotMatch(montarRegistro('GM-10', diario(...noTeto('a'), retomada('a')), null), /Sombra liberou|liberada pelo dono/);
+});
+
+test('t36-historico-e-recente-dizem-a-sombra-liberou', async () => {
+  const { fraseHistorico } = await import('../src/painel-texto.ts');
+  const { linhaTecnica } = await import('../src/origem.ts');
+  const ctx = { nomes: new Map(), lider: 'L', sabio: 'S', porAgente: new Map(), fuso: 'UTC', agoraMs: Date.parse('2026-11-03T01:00:00Z'), textoParar: () => null };
+  const f = fraseHistorico(ev(1, '2026-11-03T00:00:00.000Z', 's1', ...sombraLib('T9')), ctx);
+  assert.deepEqual(f, { glifo: '▶', cor: 'success', texto: 'a Sombra liberou a T9' });
+  assert.equal(linhaTecnica(f!.texto), false);
+  assert.deepEqual(fraseHistorico(ev(1, '2026-11-03T00:00:00.000Z', 's1', ...dono('T9')), ctx), { glifo: '▶', cor: 'success', texto: 'dono liberou T9' });
+
+  const { projetarPainel } = await import('../src/painel.ts');
+  const p: Plano = { entrega: 'GM-14', tasks: [{ id: 'T1', deps: [], arquivos: [] }] };
+  const evs = diario(...noTeto('T1'), sombraLib('T1'));
+  const entrada = {
+    decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+    pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T01:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
+    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26,
+    fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['T1'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' },
+  };
+  const s = projetarPainel(p, evs, entrada as never);
+  const item = (s.recente ?? []).find((i) => /Sombra/.test(i.texto));
+  assert.ok(item, JSON.stringify(s.recente));
+  assert.equal(item.texto, 'a Sombra liberou a T1');
+  assert.equal(item.origem, '(Sombra)');
+  // DEPENDE (5): com a task fora do teto, o item do teto sai, como na liberação do dono
+  assert.equal(JSON.stringify(s.depende ?? []).includes('limite de revis'), false, JSON.stringify(s.depende));
+  const preso = projetarPainel(p, diario(...noTeto('T1')), entrada as never);
+  assert.equal(JSON.stringify(preso.depende ?? []).includes('T1'), true, 'controle: no teto, o item existe');
 });

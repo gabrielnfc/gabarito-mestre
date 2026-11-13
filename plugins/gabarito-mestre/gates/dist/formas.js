@@ -175,9 +175,12 @@ const decisaoSombra        = (o) => {
   const medicao = campo(o, 'medicao');
   const fontesErro = fontes === undefined ? null : listaDeTextos(o, 'fontes', { vazia: false });
   const medicaoErro = medicao === undefined ? null : texto(medicao) ? null : 'campo `medicao` inválido: esperado texto não vazio';
+  // GM-14 T36 (FIEL-15, furo 3): `libera` opcional; só `true` explícito libera o teto (ausente ou `false` nunca).
+  const libera = campo(o, 'libera');
+  const liberaErro = libera === undefined || typeof libera === 'boolean' ? null : 'campo `libera` inválido: esperado booleano';
   const base = primeiro(
     exigirHash(o), exigirReqOuTask(o), respostaErro, exigirTexto(o, 'arquivo'), exigirBooleano(o, 'pergunta_enviesada'),
-    fontesErro, medicaoErro, substErro, foraErro, emendaErro,
+    fontesErro, medicaoErro, substErro, foraErro, emendaErro, liberaErro,
   );
   if (base !== null) return base;
   if (fora === true) return emenda === undefined ? 'campo `emenda_seq` ausente: `fora_da_regra` exige a emenda que o cobre' : null;
@@ -465,6 +468,18 @@ const REGRAS_OPCIONAIS                             = new Map               ([
   ],
   // GM-14 T31 Emenda 12 (anexos C a5): o APROVADO carrega o `sha` que o revisor viu; na leitura, ausente = diário 2.0.0.
   ['review.veredito', (o) => opcionalSha(o)],
+  [
+    // GM-14 T36 (FIEL-15): a liberação da Sombra carrega o `hash` da decisão que a autorizou; só ela o tem (`dono`/`retomada` com `hash` recusa).
+    'task.reaberta',
+    (o) => {
+      const hash = campo(o, 'hash');
+      if (campo(o, 'origem') === 'sombra') {
+        if (hash === undefined) return 'campo `hash` ausente: a liberação da Sombra cita a decisão (sha256 em hex minúsculo)';
+        return typeof hash === 'string' && HASH_RE.test(hash) ? null : 'campo `hash` inválido: esperado sha256 em hex minúsculo (64)';
+      }
+      return hash === undefined ? null : 'campo `hash` só na liberação da Sombra (`origem: sombra`)';
+    },
+  ],
   [
     // E4: `mutacoes {total, mortas}` opcional (contagem do gate de mutação desta task); `mortas ≤ total`.
     'task.integrada',

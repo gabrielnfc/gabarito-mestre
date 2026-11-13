@@ -7,7 +7,7 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, lstatSync, statSync, symlinkSync, chmodSync, readdirSync, appendFileSync, rmSync,
+  mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, lstatSync, statSync, symlinkSync, chmodSync, readdirSync, appendFileSync, rmSync, renameSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, isAbsolute } from 'node:path';
@@ -15,7 +15,7 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { marcaPronto } from '../scripts/db-template.mjs';
-import { contexto, integrarComGate, slotsDaCapacidade } from '../scripts/loop.mjs';
+import { contexto, hashDaLiberacao, integrarComGate, liberarTeto, slotsDaCapacidade } from '../scripts/loop.mjs';
 import { idDaBranch, trilhaDe } from '../dist/trilha.js';
 import { casarAgente } from '../dist/painel-equipe.js';
 import { estadoDe as estadoNucleo, ordenar as ordenarNucleo } from '../dist/loop.js';
@@ -4679,4 +4679,377 @@ test('aprovar-sem-plano-pelo-cli-real (P9): o comando do dono, sem plano.json, g
   // o loop sem plano continua dizendo plano_ausente (aprovar não inventa plano)
   const p = amb.cli(['proxima', '--vivos', '0']);
   assert.equal(p.j?.erro, 'plano_ausente', p.out);
+});
+
+// ═══════════════════════════════════════════════════════════════ GM-14 T36: a Sombra libera o teto 1 vez por task (FIEL-15, emenda 13)
+// Ataques obrigatórios: furos 1–10 da Sombra e44cd3ef. Cada recusa relê o diário (bytes iguais) e confere que os achados ficaram no lugar.
+
+describe('T36: a Sombra libera o teto', () => {
+  const SOMBRA = join(AQUI, '..', 'scripts', 'sombra.mjs');
+  const sombra = (amb, args) => {
+    const r = spawnSync(process.execPath, [SOMBRA, ...args], { cwd: amb.dir, encoding: 'utf8', env: amb.env });
+    let j = null;
+    try { j = JSON.parse(r.stdout.trim()); } catch { /* fica null */ }
+    return { rc: r.status, j, out: r.stdout + r.stderr };
+  };
+  const comLibera = (amb, sombraCfg = { libera_teto: true }) => comOrigin(amb, { sombra: sombraCfg });
+  const ok = (amb, args) => { const r = amb.cli(args); assert.equal(r.rc, 0, `${args.join(' ')}: ${r.out}${r.err}`); return r; };
+  const achado = (amb, t, n) => { mkdirSync(join(amb.wt(t), '.tmp-gabarito'), { recursive: true }); writeFileSync(join(amb.wt(t), '.tmp-gabarito', `review-r${n}.md`), `achado r${n}\n`); };
+  /** Pelo CLI real: abrir, implementar, REPROVADO r1, corrigir, (antesDoTeto), REPROVADO r2 com achado ⇒ no_teto. */
+  function aoTeto(amb, t = 'T1', antesDoTeto = () => {}) {
+    ok(amb, ['abrir', t]);
+    ok(amb, ['iniciar', t, 'implementador']);
+    amb.commitNaWt(t, `src/${t.toLowerCase()}.txt`, 'a\n');
+    ok(amb, ['concluir', t]);
+    ok(amb, ['iniciar', t, 'revisor']);
+    achado(amb, t, 1);
+    ok(amb, ['veredito', t, 'REPROVADO', '1', '1', '0']);
+    ok(amb, ['iniciar', t, 'correcao']);
+    amb.commitNaWt(t, `src/${t.toLowerCase()}.txt`, 'b\n');
+    ok(amb, ['concluir', t]);
+    ok(amb, ['iniciar', t, 'revisor']);
+    antesDoTeto();
+    achado(amb, t, 2);
+    ok(amb, ['veredito', t, 'REPROVADO', '2', '1', '0']);
+  }
+  const estadoT = (amb, t = 'T1') => {
+    const o = ordenarNucleo(amb.eventos());
+    assert.ok(o.ok);
+    return estadoNucleo(o.eventos.filter((e) => ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'].includes(e.tipo) && e.dados?.task === t));
+  };
+  const respostaJson = (amb, obj, nome = `r-${Math.random().toString(16).slice(2)}.json`) => {
+    const f = join(amb.tmpSistema, nome);
+    writeFileSync(f, JSON.stringify(obj));
+    return f;
+  };
+  const BOA = { resposta: 'libera mais um ciclo', texto: 'a spec sustenta mais uma rodada', pergunta_enviesada: false, fontes: ['docs/spec.md:3'] };
+  /** Pergunta de liberação + decisão pelo CLI real da Sombra. Devolve o hash. */
+  function sombraDecide(amb, t = 'T1', extra = { libera: true }) {
+    const p = sombra(amb, ['perguntar', '--task', t, '--libera-teto']);
+    assert.equal(p.rc, 0, p.out);
+    const r = sombra(amb, ['registrar', p.j.hash, respostaJson(amb, { ...BOA, ...extra })]);
+    assert.equal(r.rc, 0, r.out);
+    return p.j.hash;
+  }
+  const liberar = (amb, t, h, extra = []) => amb.cli(['liberar', t, '--origem', 'sombra', '--hash', h, ...extra]);
+  const achadosNoLugar = (amb, t = 'T1') => existsSync(join(amb.wt(t), '.tmp-gabarito', 'review-r2.md'));
+  /** Recusa com o código, rc 1, 1 frase e NADA gravado (diário relido byte a byte) nem achado movido. */
+  function recusa(amb, t, h, erro, extra = []) {
+    const antes = bytesDoDiario(amb);
+    const r = liberar(amb, t, h, extra);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.ok, false);
+    assert.equal(r.j.erro, erro, r.out);
+    assert.equal(typeof r.j.mensagem, 'string');
+    assert.match(r.j.mensagem, /nada foi gravado/i);
+    assert.deepEqual(bytesDoDiario(amb), antes, 'nada gravado');
+    return r;
+  }
+  /** Evento escrito à mão (forja) com `ts` deslocado do agora; a sessão decide a ordem. */
+  const forja = (amb, sessao, tipo, dados, deslocMs = 0) => {
+    const r = diario.append(amb.entregas, sessao, { ts: new Date(Date.now() + deslocMs).toISOString(), autor: 't@t', sessao, agente: 'orquestrador', tipo, dados });
+    assert.ok(r.ok && r.gravado === 'evento', JSON.stringify(r));
+  };
+  /** Arquivos que `registrar` grava (brief e resposta), sem passar pelo CLI. */
+  const arquivosDaDecisao = (amb, h, texto = 'texto') => {
+    mkdirSync(join(amb.entregas, 'sombra'), { recursive: true });
+    writeFileSync(join(amb.entregas, 'sombra', `${h}.md`), 'brief\n');
+    const nome = `${h}.${createHash('sha256').update(texto).digest('hex').slice(0, 12)}.resposta.md`;
+    writeFileSync(join(amb.entregas, 'sombra', nome), texto);
+    return `.harness/entregas/GM-10/sombra/${nome}`;
+  };
+  const hashT = (amb, t = 'T1') => hashDaLiberacao(JSON.parse(readFileSync(join(amb.entregas, 'plano.json'), 'utf8')), amb.eventos(), t);
+
+  test('t36-p9-cli-real: no_teto ⇒ registrar libera:true ⇒ liberar --origem sombra ⇒ pendente r0 ⇒ registro e painel listam ⇒ 2ª recusa teto_sombra_esgotado', async () => {
+    const amb = ambReq();
+    comLibera(amb);
+    aoTeto(amb);
+    assert.deepEqual(estadoT(amb), { estado: 'no_teto', rodada: 2 });
+    const h = sombraDecide(amb);
+    const dec = amb.eventos().filter((e) => e.tipo === 'decisao.sombra');
+    assert.equal(dec.length, 1);
+    assert.equal(dec[0].dados.libera, true, 'o campo libera chega ao diário');
+    assert.equal(dec[0].dados.task, 'T1');
+    assert.equal(dec[0].dados.pergunta_hash, h);
+    assert.equal(h, hashT(amb), 'a pergunta de liberação tem o hash que o loop recalcula');
+    const antes = amb.eventos().length;
+    const r = liberar(amb, 'T1', h);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual([r.j.ok, r.j.task, r.j.entrega, r.j.estado, r.j.origem, r.j.hash], [true, 'T1', 'GM-10', 'pendente', 'sombra', h]);
+    const novos = amb.eventos().slice(antes);
+    assert.equal(novos.length, 1, 'um evento só');
+    assert.equal(novos[0].tipo, 'task.reaberta');
+    assert.deepEqual(novos[0].dados, { task: 'T1', origem: 'sombra', hash: h });
+    assert.equal(novos[0].sessao, 'loop');
+    assert.deepEqual(estadoT(amb), { estado: 'pendente', rodada: 0 });
+    // os achados do ciclo que terminou no teto saem do caminho (como na liberação do dono)
+    assert.equal(achadosNoLugar(amb), false);
+    assert.ok(existsSync(join(amb.wt('T1'), '.tmp-gabarito', 'ciclo-1', 'review-r2.md')));
+    // registro (o que o Stop de concluir e o registro.md mostram ao dono) e RECENTE do painel
+    const { montarRegistro } = await import('../dist/registro.js');
+    assert.match(montarRegistro('GM-10', amb.eventos(), null), /· task T1 · a Sombra liberou a T1 · decisão [0-9a-f]{12}/);
+    const { fraseHistorico } = await import('../dist/painel-texto.js');
+    const ctx = { nomes: new Map(), lider: 'L', sabio: 'S', porAgente: new Map(), fuso: 'UTC', agoraMs: Date.now(), textoParar: () => null };
+    assert.equal(fraseHistorico(novos[0], ctx)?.texto, 'a Sombra liberou a T1');
+    // 2ª tentativa: sempre do dono
+    const dois = recusa(amb, 'T1', h, 'teto_sombra_esgotado');
+    assert.match(dois.j.mensagem, /dono/);
+    assert.match(dois.j.mensagem, /gabarito-mestre:liberar/);
+  });
+
+  test('t36-sem-flag: sem origin, origin sem a chave, chave que não é true, só no config local e origin ilegível ⇒ libera_teto_desligado', () => {
+    const amb = ambReq({ config: { ...CONFIG_PADRAO, sombra: { libera_teto: true } } });
+    aoTeto(amb);
+    const h = sombraDecide(amb);
+    for (const preparar of [() => {}, () => comOrigin(amb, { sombra: { teto: 9 } }), () => comOrigin(amb, { sombra: { libera_teto: 'true' } }),
+      () => comOrigin(amb, { sombra: { julga_emendas: true } }), () => comOrigin(amb, { sombra: null }), () => comOrigin(amb, '{quebrado')]) {
+      preparar();
+      const r = recusa(amb, 'T1', h, 'libera_teto_desligado');
+      assert.match(r.j.mensagem, /origin\/HEAD/);
+      assert.ok(achadosNoLugar(amb), 'achados no lugar');
+    }
+    assert.deepEqual(estadoT(amb), { estado: 'no_teto', rodada: 2 });
+    // controle: o mesmo diário com o flag em origin libera
+    comLibera(amb);
+    assert.equal(liberar(amb, 'T1', h).rc, 0);
+  });
+
+  test('t36-sem-flag-comportamento-identico (FIEL-15 d): decisão sem `libera` grava os mesmos campos de antes; o dono libera como sempre', () => {
+    const amb = ambReq();
+    aoTeto(amb);
+    const p = sombra(amb, ['perguntar', '--task', 'T1', '--pergunta', 'a forma vale?']);
+    const reg = sombra(amb, ['registrar', p.j.hash, respostaJson(amb, BOA)]);
+    assert.equal(reg.rc, 0, reg.out);
+    const d = amb.eventos().filter((e) => e.tipo === 'decisao.sombra').at(-1).dados;
+    assert.deepEqual(Object.keys(d).sort(), ['arquivo', 'fontes', 'pergunta_enviesada', 'pergunta_hash', 'resposta', 'task']);
+    const r = liberarTeto(amb.dir, 'T1', 'S-dono');
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(amb.eventos().filter((e) => e.tipo === 'task.reaberta').map((e) => e.dados), [{ task: 'T1', origem: 'dono' }]);
+  });
+
+  test('t36-fora-do-teto: pendente, implementando e reprovada ⇒ fora_do_teto', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    const h0 = hashT(amb);
+    recusa(amb, 'T1', h0, 'fora_do_teto');
+    ok(amb, ['abrir', 'T1']);
+    ok(amb, ['iniciar', 'T1', 'implementador']);
+    const h = sombraDecide(amb);
+    recusa(amb, 'T1', h, 'fora_do_teto');
+    const antes = bytesDoDiario(amb);
+    assert.equal(liberar(amb, 'T9', h).j.erro, 'task_fora_do_plano');
+    assert.deepEqual(bytesDoDiario(amb), antes);
+  });
+
+  test('t36-uso: só --origem sombra; --hash e --origem obrigatórios; nenhum argumento produz dono; hash fora da forma ⇒ hash_invalido', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    aoTeto(amb);
+    const h = sombraDecide(amb);
+    const antes = bytesDoDiario(amb);
+    for (const a of [['liberar', 'T1', '--origem', 'dono', '--hash', h], ['liberar', 'T1', '--origem', 'retomada', '--hash', h], ['liberar', 'T1', '--hash', h],
+      ['liberar', 'T1', '--origem', 'sombra'], ['liberar', '--origem', 'sombra', '--hash', h], ['liberar', 'T1', '--origem', 'sombra', '--hash', h, '--dono', 'x']]) {
+      const r = amb.cli(a);
+      assert.equal(r.rc, 2, `${a.join(' ')}: ${r.out}`);
+      assert.equal(r.j.ok, false);
+    }
+    assert.deepEqual(bytesDoDiario(amb), antes);
+    for (const ruim of ['xyz', h.toUpperCase(), h.slice(1), `${h}0`]) recusa(amb, 'T1', ruim, 'hash_invalido');
+    assert.equal(amb.eventos().filter((e) => e.tipo === 'task.reaberta').length, 0);
+  });
+
+  test('t36-furo-1-3: só `decisao.sombra` vigente da PERGUNTA de liberação da task, com libera true explícito; outra pergunta, sem libera, libera false, de outra task ⇒ hash_invalido', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    aoTeto(amb);
+    // outra pergunta da mesma task (sem libera): qualquer decisão da task NÃO serve
+    const p = sombra(amb, ['perguntar', '--task', 'T1', '--pergunta', 'o teste cobre?']);
+    assert.equal(sombra(amb, ['registrar', p.j.hash, respostaJson(amb, BOA)]).rc, 0);
+    assert.match(recusa(amb, 'T1', p.j.hash, 'hash_invalido').j.mensagem, /pergunta de liberação/);
+    // pergunta de liberação de OUTRA task, com libera true
+    const h2 = sombraDecide(amb, 'T2');
+    recusa(amb, 'T1', h2, 'hash_invalido');
+    // a pergunta certa sem decisão ainda
+    const aberta = sombra(amb, ['perguntar', '--task', 'T1', '--libera-teto']);
+    assert.equal(aberta.j.hash, hashT(amb));
+    assert.match(recusa(amb, 'T1', aberta.j.hash, 'hash_invalido').j.mensagem, /decisão/);
+    // sem libera e com libera false
+    for (const extra of [{}, { libera: false }]) {
+      const amb2 = ambReq();
+      comLibera(amb2);
+      aoTeto(amb2);
+      const h = sombraDecide(amb2, 'T1', extra);
+      assert.match(recusa(amb2, 'T1', h, 'hash_invalido').j.mensagem, /libera/);
+    }
+  });
+
+  test('t36-furo-1: fora_da_regra true não libera', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    aoTeto(amb);
+    const h = hashT(amb);
+    forja(amb, 'forja', 'sombra.consulta', { pergunta_hash: h, task: 'T1' });
+    forja(amb, 'forja', 'decisao.sombra', { pergunta_hash: h, task: 'T1', resposta: 'r', arquivo: arquivosDaDecisao(amb, h), pergunta_enviesada: false, fora_da_regra: true, emenda_seq: 1, libera: true });
+    assert.match(recusa(amb, 'T1', h, 'hash_invalido').j.mensagem, /fora da regra/);
+    // controle: a mesma forja sem fora_da_regra libera (o que recusou foi o campo)
+    const amb2 = ambReq();
+    comLibera(amb2);
+    aoTeto(amb2);
+    forja(amb2, 'forja', 'sombra.consulta', { pergunta_hash: h, task: 'T1' });
+    forja(amb2, 'forja', 'decisao.sombra', { pergunta_hash: h, task: 'T1', resposta: 'r', arquivo: arquivosDaDecisao(amb2, h), pergunta_enviesada: false, fontes: ['s:1'], libera: true });
+    assert.equal(liberar(amb2, 'T1', h).rc, 0);
+  });
+
+  test('t36-furo-2: brief ausente, resposta ausente ou adulterada, decisão sem consulta ⇒ hash_invalido', () => {
+    const casos = {
+      brief: (amb, h) => renameSync(join(amb.entregas, 'sombra', `${h}.md`), join(amb.entregas, 'sombra', `${h}.md.fora`)),
+      resposta: (amb, h) => { const n = readdirSync(join(amb.entregas, 'sombra')).find((x) => x.startsWith(`${h}.`) && x.endsWith('.resposta.md')); renameSync(join(amb.entregas, 'sombra', n), join(amb.entregas, 'sombra', `${n}.fora`)); },
+      adulterada: (amb, h) => { const n = readdirSync(join(amb.entregas, 'sombra')).find((x) => x.startsWith(`${h}.`) && x.endsWith('.resposta.md')); writeFileSync(join(amb.entregas, 'sombra', n), 'outro texto'); },
+    };
+    for (const [nome, estragar] of Object.entries(casos)) {
+      const amb = ambReq();
+      comLibera(amb);
+      aoTeto(amb);
+      const h = sombraDecide(amb);
+      estragar(amb, h);
+      assert.match(recusa(amb, 'T1', h, 'hash_invalido').j.mensagem, /arquivo|brief|resposta/, nome);
+    }
+    // decisão forjada sem `sombra.consulta` da pergunta
+    const amb = ambReq();
+    comLibera(amb);
+    aoTeto(amb);
+    const h = hashT(amb);
+    forja(amb, 'forja', 'decisao.sombra', { pergunta_hash: h, task: 'T1', resposta: 'r', arquivo: arquivosDaDecisao(amb, h), pergunta_enviesada: false, fontes: ['s:1'], libera: true });
+    assert.match(recusa(amb, 'T1', h, 'hash_invalido').j.mensagem, /consulta/);
+    // arquivo da decisão que aponta para outro lugar
+    const amb3 = ambReq();
+    comLibera(amb3);
+    aoTeto(amb3);
+    forja(amb3, 'forja', 'sombra.consulta', { pergunta_hash: h, task: 'T1' });
+    arquivosDaDecisao(amb3, h);
+    forja(amb3, 'forja', 'decisao.sombra', { pergunta_hash: h, task: 'T1', resposta: 'r', arquivo: 'docs/spec.md', pergunta_enviesada: false, fontes: ['s:1'], libera: true });
+    recusa(amb3, 'T1', h, 'hash_invalido');
+  });
+
+  test('t36-furo-4: decisão anterior ao teto pela ORDEM do diário (não pelo ts cru) não vale', () => {
+    // (a) decisão real antes do 2º REPROVADO
+    const amb = ambReq();
+    comLibera(amb);
+    let h;
+    aoTeto(amb, 'T1', () => { h = sombraDecide(amb); });
+    assert.match(recusa(amb, 'T1', h, 'hash_invalido').j.mensagem, /antes do teto/);
+    // (b) mesma sessão do veredito, seq menor e ts 1 h À FRENTE: pelo ts cru seria "depois"; pela ordem do diário é antes
+    const amb2 = ambReq();
+    comLibera(amb2);
+    const h2 = hashT(amb2);
+    aoTeto(amb2, 'T1', () => {
+      forja(amb2, 'loop', 'sombra.consulta', { pergunta_hash: h2, task: 'T1' }, 3_600_000);
+      forja(amb2, 'loop', 'decisao.sombra', { pergunta_hash: h2, task: 'T1', resposta: 'r', arquivo: arquivosDaDecisao(amb2, h2), pergunta_enviesada: false, fontes: ['s:1'], libera: true }, 3_600_000);
+    });
+    const o = ordenarNucleo(amb2.eventos());
+    assert.ok(o.ok);
+    const pos = (f) => o.eventos.findIndex(f);
+    assert.ok(pos((e) => e.tipo === 'decisao.sombra') < pos((e) => e.tipo === 'review.veredito' && e.dados.rodada === 2), 'controle: na ordem, a decisão vem antes');
+    assert.ok(Date.parse(o.eventos[pos((e) => e.tipo === 'decisao.sombra')].ts) > Date.parse(o.eventos[pos((e) => e.tipo === 'review.veredito' && e.dados.rodada === 2)].ts), 'controle: pelo ts, depois');
+    assert.match(recusa(amb2, 'T1', h2, 'hash_invalido').j.mensagem, /antes do teto/);
+  });
+
+  test('t36-furo-4-relogio: liberação que cairia antes do teto na ordem real ⇒ relogio_do_diario, nada gravado', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    const h = hashT(amb);
+    // o teto inteiro numa sessão com relógio 1 h à frente: a liberação de agora cairia antes dele
+    ok(amb, ['abrir', 'T1']);
+    const fut = (tipo, dados, n) => forja(amb, 'futuro', tipo, dados, 3_600_000 + n * 1000);
+    [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: 'a'.repeat(40) }],
+      ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, blocker: 0, major: 1 }], ['task.iniciada', { task: 'T1', papel: 'correcao' }],
+      ['task.concluida', { task: 'T1', sha: 'b'.repeat(40) }], ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 2, blocker: 0, major: 1 }],
+      ['sombra.consulta', { pergunta_hash: h, task: 'T1' }],
+      ['decisao.sombra', { pergunta_hash: h, task: 'T1', resposta: 'r', arquivo: arquivosDaDecisao(amb, h), pergunta_enviesada: false, fontes: ['s:1'], libera: true }],
+    ].forEach(([tipo, dados], i) => fut(tipo, dados, i));
+    achado(amb, 'T1', 2);
+    amb.fechar();
+    assert.deepEqual(estadoT(amb), { estado: 'no_teto', rodada: 2 });
+    recusa(amb, 'T1', h, 'relogio_do_diario');
+    assert.ok(achadosNoLugar(amb), 'a recusa deixa os achados onde estão');
+  });
+
+  test('t36-furo-5: decisão substituída não vale; vale a vigente', () => {
+    // libera true substituída por libera false ⇒ recusa
+    const amb = ambReq();
+    comLibera(amb);
+    aoTeto(amb);
+    const h = sombraDecide(amb);
+    const a = amb.eventos().filter((e) => e.tipo === 'decisao.sombra').at(-1);
+    const sub = sombra(amb, ['registrar', h, respostaJson(amb, { ...BOA, texto: 'mudei de ideia', libera: false, substitui: { sessao: a.sessao, seq: a.seq } })]);
+    assert.equal(sub.rc, 0, sub.out);
+    assert.match(recusa(amb, 'T1', h, 'hash_invalido').j.mensagem, /libera/);
+    // libera false substituída por libera true ⇒ libera
+    const amb2 = ambReq();
+    comLibera(amb2);
+    aoTeto(amb2);
+    const h2 = sombraDecide(amb2, 'T1', { libera: false });
+    const b = amb2.eventos().filter((e) => e.tipo === 'decisao.sombra').at(-1);
+    assert.equal(sombra(amb2, ['registrar', h2, respostaJson(amb2, { ...BOA, texto: 'agora sim', libera: true, substitui: { sessao: b.sessao, seq: b.seq } })]).rc, 0);
+    const r = liberar(amb2, 'T1', h2);
+    assert.equal(r.rc, 0, r.out);
+  });
+
+  test('t36-furo-6: a Sombra só dá a 1ª liberação; depois do dono, mesmo no teto de novo, teto_sombra_esgotado; depois da Sombra, o dono libera', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    ok(amb, ['abrir', 'T1']);
+    const ciclo = [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: 'a'.repeat(40) }],
+      ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, blocker: 0, major: 1 }], ['task.iniciada', { task: 'T1', papel: 'correcao' }],
+      ['task.concluida', { task: 'T1', sha: 'b'.repeat(40) }], ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 2, blocker: 0, major: 1 }]];
+    amb.semear([...ciclo, ['task.reaberta', { task: 'T1', origem: 'dono' }], ...ciclo]);
+    assert.deepEqual(estadoT(amb), { estado: 'no_teto', rodada: 2 });
+    const h = sombraDecide(amb);
+    assert.match(recusa(amb, 'T1', h, 'teto_sombra_esgotado').j.mensagem, /dono/);
+    // a liberação da Sombra é aceita pela tabela e o dono tira do teto depois dela
+    const amb2 = ambReq();
+    ok(amb2, ['abrir', 'T1']);
+    amb2.semear([...ciclo, ['task.reaberta', { task: 'T1', origem: 'sombra', hash: 'e'.repeat(64) }], ...ciclo]);
+    assert.deepEqual(estadoT(amb2), { estado: 'no_teto', rodada: 2 });
+    comLibera(amb2);
+    recusa(amb2, 'T1', sombraDecide(amb2), 'teto_sombra_esgotado');
+    const d = liberarTeto(amb2.dir, 'T1', 'S-dono');
+    assert.equal(d.ok, true, JSON.stringify(d));
+    assert.deepEqual(estadoT(amb2), { estado: 'pendente', rodada: 0 });
+  });
+
+  test('t36-registrar-libera: não booleano ⇒ resposta_invalida; libera:true fora da pergunta de liberação ⇒ libera_fora_da_liberacao; nada gravado', () => {
+    const amb = ambReq();
+    aoTeto(amb);
+    const lib = sombra(amb, ['perguntar', '--task', 'T1', '--libera-teto']);
+    const outra = sombra(amb, ['perguntar', '--task', 'T1', '--pergunta', 'outra?']);
+    const doReq = sombra(amb, ['perguntar', '--req', 'REQ-A-1', '--pergunta', 'e o req?']);
+    const arquivos = () => readdirSync(join(amb.entregas, 'sombra')).sort();
+    const antes = [bytesDoDiario(amb), arquivos()];
+    for (const v of ['true', 1, null]) {
+      const r = sombra(amb, ['registrar', lib.j.hash, respostaJson(amb, { ...BOA, libera: v })]);
+      assert.equal(r.j.erro, 'resposta_invalida', r.out);
+      assert.match(r.j.mensagem, /libera/);
+    }
+    for (const hh of [outra.j.hash, doReq.j.hash]) {
+      const r = sombra(amb, ['registrar', hh, respostaJson(amb, { ...BOA, libera: true })]);
+      assert.equal(r.rc, 1, r.out);
+      assert.equal(r.j.erro, 'libera_fora_da_liberacao', r.out);
+    }
+    assert.deepEqual([bytesDoDiario(amb), arquivos()], antes, 'nada gravado: diário e arquivos iguais');
+    // `--libera-teto` exige --task e não aceita --pergunta
+    for (const a of [['perguntar', '--req', 'REQ-A-1', '--libera-teto'], ['perguntar', '--task', 'T1', '--libera-teto', '--pergunta', 'x?'], ['perguntar', '--libera-teto']]) {
+      assert.equal(sombra(amb, a).rc, 2, a.join(' '));
+    }
+  });
+
+  test('t36-dono-inalterado: com o flag ligado e decisão da Sombra presente, o caminho do dono grava origem dono e só ele', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    aoTeto(amb);
+    sombraDecide(amb);
+    const r = liberarTeto(amb.dir, 'T1', 'S-dono');
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(amb.eventos().filter((e) => e.tipo === 'task.reaberta').map((e) => [e.sessao, e.dados]), [['S-dono', { task: 'T1', origem: 'dono' }]]);
+  });
 });

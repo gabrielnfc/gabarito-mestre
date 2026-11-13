@@ -13,6 +13,8 @@ export const REGEX_TECNICA: RegExp = /[`]|--|\/[a-z]|\bnode\b|\.(json|mjs|md)\b|
 const AUTOMATICO = '(automático)';
 const ORQUESTRADOR = '(anotado pelo orquestrador)';
 const VOCE = '(você)';
+/** GM-14 T36 (FIEL-15, furo 8): a liberação da Sombra não é do dono nem automática. */
+const SOMBRA = '(Sombra)';
 
 /** `(automático)`: `fato.medido`, `task.*`, `review.veredito`, `ci.resultado`, `entrega.*`, `sessao.*` (os tipos do contrato, um a um). */
 const AUTOMATICOS: ReadonlySet<string> = new Set([
@@ -28,7 +30,10 @@ export function origemDe(ev: Evento): string | null {
   const tipo = ev.tipo as unknown;
   if (typeof tipo !== 'string') return null;
   const dados = ev.dados as unknown;
-  if (tipo === 'task.reaberta') return dados !== null && typeof dados === 'object' && (dados as Record<string, unknown>).origem === 'dono' ? VOCE : AUTOMATICO;
+  if (tipo === 'task.reaberta') {
+    const origem = dados !== null && typeof dados === 'object' ? (dados as Record<string, unknown>).origem : undefined;
+    return origem === 'dono' ? VOCE : origem === 'sombra' ? SOMBRA : AUTOMATICO;
+  }
   if (AUTOMATICOS.has(tipo)) return AUTOMATICO;
   if (tipo === 'nota' || tipo === 'decisao.sombra') return ORQUESTRADOR;
   if (tipo === 'spec.aprovada') return VOCE;

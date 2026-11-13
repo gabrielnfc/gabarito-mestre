@@ -607,6 +607,9 @@ function recenteDe(ord: Evento[] | null, plano: Plano, entrada: EntradaPainel, n
       item = { glifo: '✓', cor: 'success', quem: null, texto: 'spec aprovada' };
     } else if (ev.tipo === 'task.reaberta' && d.origem === 'dono' && task !== null) {
       item = { glifo: '●', cor: 'success', quem: null, texto: `${task} liberada para mais uma rodada` };
+    } else if (ev.tipo === 'task.reaberta' && d.origem === 'sombra' && task !== null) {
+      // GM-14 T36 (FIEL-15 c): origem `(Sombra)` vem de `origemDe`
+      item = { glifo: '●', cor: 'success', quem: null, texto: `a Sombra liberou a ${task}` };
     } else if (ev.tipo === 'dono.resposta' && origem !== null) {
       item = { glifo: '●', cor: 'success', quem: null, texto: 'pergunta respondida' };
     } else if (ev.tipo === 'loop.pausa' && (d.estado === 'pausado' || d.estado === 'retomado')) {

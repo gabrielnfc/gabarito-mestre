@@ -115,7 +115,8 @@ export type Evento = {
 };
 
 // E2 (GM-10): plano como dado e contratos do loop. `dados` do diário nunca carrega comando cru.
-// `task.reaberta`: `dados = {task, origem: 'dono' | 'retomada'}`; só `dono`, por comando humano, libera o teto.
+// `task.reaberta`: `dados = {task, origem: 'dono' | 'retomada'}` ou `{task, origem: 'sombra', hash}`. `dono`, por comando humano, libera o teto;
+// `sombra` (GM-14 T36, FIEL-15) libera 1 vez por task, só a 1ª liberação, com `sombra.libera_teto: true` em origin e a decisão `hash` com `libera: true`.
 export type Causa = 'regra_negocio' | 'tecnica';
 export type OrigemJulgamento = 'dono' | 'sombra';
 export type PoliticaEntrega = 'continua' | 'janela' | 'sob_demanda';

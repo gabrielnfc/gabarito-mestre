@@ -98,12 +98,14 @@ export function montarRegistro(entrega: string, eventos: Evento[], specSha: stri
     if (!propostas.some((p) => p.seq === seq)) linhasEmendas.push(`- #${limpa(seq, 16)} · julgamento sem proposta no diário · ${j.tipo === 'spec.emendada' ? 'aprovada' : 'rejeitada'} por ${limpa(campo(j.dados, 'origem'), 16)}`);
   }
 
-  // 4. Liberações de teto: só `task.reaberta` com origem `dono` (a retomada não libera teto)
-  const reabertas = lista.filter((e) => e.tipo === 'task.reaberta' && campo(e.dados, 'origem') === 'dono');
+  // 4. Liberações de teto: `task.reaberta` com origem `dono` ou `sombra` (GM-14 T36, FIEL-15 c); a retomada não libera teto
+  const reabertas = lista.filter((e) => e.tipo === 'task.reaberta' && (campo(e.dados, 'origem') === 'dono' || campo(e.dados, 'origem') === 'sombra'));
   const linhasTeto = reabertas.map((e) => {
     const task = campo(e.dados, 'task');
     if (typeof task !== 'string' || task === '') throw new Error(`evento ${ref(e)} (task.reaberta) sem \`task\`; o registro não omite liberação calado`);
-    return `- ${ref(e)} · task ${limpa(task, 64)} · liberada pelo dono`;
+    if (campo(e.dados, 'origem') === 'dono') return `- ${ref(e)} · task ${limpa(task, 64)} · liberada pelo dono`;
+    exigirValido(e); // a da Sombra cita a decisão: sem `hash` válido não vira linha "liberada" calada
+    return `- ${ref(e)} · task ${limpa(task, 64)} · a Sombra liberou a ${limpa(task, 64)} · decisão ${limpa(campo(e.dados, 'hash'), 64).slice(0, 12)}`;
   });
 
   // 5. Desvios e 6. Descobertas

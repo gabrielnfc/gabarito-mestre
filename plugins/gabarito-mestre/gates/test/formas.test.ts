@@ -711,3 +711,22 @@ test('tipos-evento-cobre-a-uniao: TIPOS_EVENTO e MOTIVOS_PARAR são exatamente a
   assert.deepEqual([...MOTIVOS_PARAR].sort(), [...motivos].sort());
   assert.equal(Object.isFrozen(TIPOS_EVENTO) && Object.isFrozen(MOTIVOS_PARAR), true);
 });
+
+// GM-14 T36 (FIEL-15, furo 3 e 10): `libera` opcional e booleano na decisão; `task.reaberta` da Sombra carrega o hash da decisão.
+test('t36-decisao-libera-opcional-e-booleano', () => {
+  ok('decisao.sombra', decisao({ libera: true }));
+  ok('decisao.sombra', decisao({ libera: false }));
+  ok('decisao.sombra', decisao()); // ausente: a forma de antes segue valendo
+  for (const v of ['true', 1, null, {}, []]) ruim('decisao.sombra', decisao({ libera: v }), /libera/);
+});
+test('t36-reaberta-da-sombra-exige-hash-e-so-ela-o-tem', () => {
+  ok('task.reaberta', { task: 'T1', origem: 'sombra', hash: H });
+  ok('task.reaberta', { task: 'T1', origem: 'dono' });
+  ok('task.reaberta', { task: 'T1', origem: 'retomada' });
+  ruim('task.reaberta', { task: 'T1', origem: 'sombra' }, /hash/);
+  for (const h of ['A'.repeat(64), 'a'.repeat(63), 7, '']) ruim('task.reaberta', { task: 'T1', origem: 'sombra', hash: h }, /hash/);
+  ruim('task.reaberta', { task: 'T1', origem: 'dono', hash: H }, /hash/);
+  ruim('task.reaberta', { task: 'T1', origem: 'retomada', hash: H }, /hash/);
+  // a gravação recusa igual (o append confere a forma)
+  assert.match(String(formaInvalida('task.reaberta', { task: 'T1', origem: 'sombra' })), /hash/);
+});
