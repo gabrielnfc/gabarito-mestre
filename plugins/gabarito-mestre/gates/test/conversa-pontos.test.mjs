@@ -502,7 +502,7 @@ function montarExecucao(v = {}) {
     ...(v.gravouNaPublicada === true ? [{ sessao: 'semente', seq: ++seq, ts: '2026-11-13T10:05:00.000Z', tipo: 'dono.mensagem', dados: { sha256: sha256(FALA_A), chars: 47 } }] : []),
   ]);
   // o que o painel grava na 1ª medição de cada sessão (painel-medir.mjs): `fato.medido` de branch, spec, plano, pr e release, depois do início
-  const medidos = ['branch', 'spec', 'plano', 'pr', 'release'].map((chave, i) => ({ sessao: 'painel-s1', seq: i + 1, ts: `2026-11-13T10:04:0${i}.000Z`, agente: 'painel', tipo: 'fato.medido', dados: { chave, fonte: 'gh', valor: chave === 'pr' ? { numero: 14, estado: 'mergeado', branch: 'enabler/GM-13-a1' } : { medido: true } } }));
+  const medidos = ['branch', 'spec', 'plano', 'pr', 'release'].map((chave, i) => ({ sessao: 'painel-s1', seq: i + 1, ts: `2026-11-13T10:04:0${i}.000Z`, autor: 'painel', agente: 'painel', tipo: 'fato.medido', dados: { chave, fonte: 'gh', valor: chave === 'pr' ? { numero: 14, estado: 'mergeado', branch: 'enabler/GM-13-a1' } : { medido: true } } }));
   if (v.painelMediuNaPublicada === true) jl(join(repo, '.harness', 'entregas', 'GM-13', 'events.painel-s1.jsonl'), medidos);
   if (v.painelMediuEmSemId === true) jl(join(repo, '.harness', 'entregas', '_sem-id', 'events.painel-s1.jsonl'), medidos);
   jl(join(repo, '.harness', 'entregas', '_sem-id', 'events.loop.jsonl'), [{ seq: 1, ts: '2026-11-13T10:02:00.000Z', tipo: 'dono.mensagem', dados: { sha256: sha256(FALA_A), chars: 47 } }]);
@@ -569,15 +569,18 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
     assert.equal(resultado(sem, '10-despachos-com-aprendizados').ok, false, 'sem aprendizado observado a asserção não mediu nada');
   });
 
-  test('8c-conta-o-fato-medido-do-painel-na-publicada-e-passa-quando-vai-a-_sem-id (REQ-DIA-1, FIEL-1 b; Sombra f97c7624)', async () => {
+  test('8c-ignora-o-fato-medido-do-painel-na-publicada-e-reprova-o-resto (REQ-DIA-1, emenda 38)', async () => {
     const id = '8c-nada-em-entrega-publicada';
     const painel = await coleta({ painelMediuNaPublicada: true });
     assert.deepEqual(painel.entregasPublicadas, ['GM-13'], 'a publicada continua publicada: o que o painel mede depois do início não a muda');
-    assert.deepEqual(painel.gravacoes['GM-13'], { antes: 2, depois: 7 }, '5 fato.medido do painel depois do início, no diário real da GM-13');
-    assert.equal(resultado(painel, id).ok, false, 'a 8c conta QUALQUER evento novo: o painel gravar fato.medido na entrega publicada reprova (defeito do produto, corrigido pela T43; até integrar, reprovar é o correto)');
+    assert.deepEqual(painel.gravacoes['GM-13'], { antes: 2, depois: 2 }, 'fato.medido autor painel não conta');
+    assert.equal(resultado(painel, id).ok, true, 'o painel gravar fato.medido no diário da branch publicada passa');
     const semId = await coleta({ painelMediuEmSemId: true });
     assert.deepEqual(semId.gravacoes['GM-13'], { antes: 2, depois: 2 });
-    assert.equal(resultado(semId, id).ok, true, 'o mesmo fato.medido em _sem-id (sem entrega identificada) passa');
+    assert.equal(resultado(semId, id).ok, true);
+    const msg = await coleta({ gravouNaPublicada: true, painelMediuNaPublicada: true });
+    assert.deepEqual(msg.gravacoes['GM-13'], { antes: 2, depois: 3 }, 'dono.mensagem conta mesmo com o fato.medido do painel junto');
+    assert.equal(resultado(msg, id).ok, false, 'dono.mensagem na publicada reprova');
   });
 
   test('8c-reprova-com-gravacao-na-publicada-e-sem-publicada-nenhuma', async () => {

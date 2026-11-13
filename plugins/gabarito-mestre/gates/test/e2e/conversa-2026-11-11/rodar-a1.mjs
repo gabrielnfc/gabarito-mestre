@@ -636,7 +636,9 @@ export async function coletar(rundir, repo, celula, roteiro, { pasta = null, tot
         for (const l of linhas) { try { eventos.push({ ...JSON.parse(l), _entrega: d }); } catch { throw new Error(`diário ilegível: ${d}/${a}`); } }
       }
       const dele = eventos.filter((e) => e._entrega === d);
-      gravacoes[d] = { antes: dele.filter((e) => e.ts <= inicio).length, depois: dele.length };
+      // 8c (emenda 38): o `fato.medido` do painel (âncora e medições da pergunta (b), FIEL-1 b/c) fica no diário da branch e não conta; qualquer outro evento novo conta
+      const conta = (e) => !(e.tipo === 'fato.medido' && e.autor === 'painel');
+      gravacoes[d] = { antes: dele.filter((e) => conta(e) && e.ts <= inicio).length, depois: dele.filter(conta).length };
       // publicada = o critério do produto sobre o que foi medido ANTES do início (a semente da cópia); o que a execução medir não vale
       if (await publicadaPeloProduto(dele, inicio, d)) publicadas.add(d);
     }

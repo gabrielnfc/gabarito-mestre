@@ -16,6 +16,7 @@ import { append, ler, lerEstrito, lerAprendizados, exportarAprendizados, padraoD
 import { trilhaDe, ancoraDaPerguntaB } from '../dist/trilha.js';
 import { marcaDeProgresso, jaParou } from '../dist/pouso.js';
 import { medir } from '../scripts/painel-medir.mjs';
+import { estadoDoPainel } from '../scripts/painel.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const FAKE_GH = join(AQUI, 'fixtures', 'gh');
@@ -34,9 +35,6 @@ function repo(branch = 'enabler/GM-14-clareza') {
   git(d, 'commit', '-q', '--allow-empty', '-m', 'ini');
   if (branch === null) git(d, 'checkout', '-q', '--detach');
   else if (branch !== 'main') git(d, 'checkout', '-q', '-b', branch);
-  // 2º fato da trilha (REQ-TRI-1): a branch sozinha não identifica entrega; o ledger não vira evento, então não muda as contagens.
-  const id = branch === null ? null : /^(?:.*\/)?([A-Z]+-\d+)(?:-|$)/.exec(branch)?.[1] ?? null;
-  if (id !== null) { mkdirSync(join(d, 'docs', 'ledgers'), { recursive: true }); writeFileSync(join(d, 'docs', 'ledgers', `${id}.md`), `# ${id}\n`); }
   raizes.push(d);
   return d;
 }
@@ -233,74 +231,8 @@ describe('medir: gh falha (nada gravado, motivo distinto, estado em painel-medir
 
   test('estado do PR sem distincao de caixa (merged, MERGED)', () => {
     const d = repo();
-    assert.equal(rodarMedir(d, 'pr-aberto-minusculo').ok, true);
-    assert.equal(fatos(d, 'GM-14', 'pr')[0].dados.valor.estado, 'aberto');
-    assert.equal(rodarMedir(d, 'estado-minusculo', { agora: () => Date.parse('2026-11-11T21:00:00Z'), resto: { sessao: 'sessao-2' } }).ok, true);
-    assert.equal(fatos(d, 'GM-14', 'pr').at(-1).dados.valor.estado, 'mergeado'); // a medição que traz o mergeado ainda é da entrega (T43)
-  });
-});
-
-describe('medir: entrega publicada nao recebe fato.medido (T43, FIEL-1 b/c, REQ-TRI-1, REQ-DIA-1)', () => {
-  const T0 = '2026-11-11T19:00:00.000Z';
-  const semear = (d, eventos) => { for (const e of eventos) assert.equal(append(dirDe(d, 'GM-14'), SID, { ts: T0, autor: 'painel', sessao: SID, agente: 'painel', ...e }).ok, true); };
-  const PR_MERGEADO = { tipo: 'fato.medido', dados: { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 'mergeado', branch: 'enabler/GM-14-clareza' } } };
-  const ANCORA = { tipo: 'fato.medido', dados: { chave: 'agente', fonte: 'mod', valor: { id: 'a1', papel: 'p', estado: 'e' } } };
-
-  test('medir-entrega-publicada-vai-a-sem-id: ultimo PR mergeado e nenhum aberto, sem dono.resposta => 0 eventos novos na entrega, fatos em _sem-id', () => {
-    const d = repo();
-    semear(d, [ANCORA, PR_MERGEADO]);
-    const antes = ler(dirDe(d, 'GM-14')).length;
-    const r = rodarMedir(d, 'estado-minusculo');
-    assert.equal(r.ok, true);
-    assert.equal(ler(dirDe(d, 'GM-14')).length, antes);
-    assert.deepEqual(fatos(d, '_sem-id').map((e) => e.dados.chave).sort(), ['branch', 'pr', 'release']);
-    assert.equal(ler(dirDe(d, 'GM-14')).filter((e) => e.sessao === SID && e.ts !== T0).length, 0, 'nenhum evento novo na entrega');
-    assert.equal(fatos(d, '_sem-id', 'pr')[0].dados.valor.estado, 'mergeado');
-  });
-
-  test('medir-publicada-com-dono-resposta-grava-na-entrega: a resposta (b) da sessao liga a entrega mesmo publicada', () => {
-    const d = repo();
-    semear(d, [ANCORA, PR_MERGEADO, { tipo: 'dono.resposta', autor: 'dono', dados: { pergunta: `${SID}:1`, opcao: 1, rotulo: 'GM-14' } }]);
-    const r = rodarMedir(d, 'estado-minusculo');
-    assert.equal(r.ok, true);
-    assert.deepEqual(fatos(d, 'GM-14').map((e) => e.dados.chave), ['agente', 'pr', 'branch', 'release']);
-    assert.equal(existsSync(dirDe(d, '_sem-id')), false);
-  });
-
-  test('medir-entrega-em-curso-grava-na-entrega: PR aberto (ou nenhum) com 2o fato => diario da entrega', () => {
-    for (const modo of ['pr-aberto', 'pr-vazio', 'ok']) {
-      const d = repo();
-      assert.equal(rodarMedir(d, modo).ok, true, modo);
-      assert.equal(fatos(d, 'GM-14', 'branch').length, 1, modo);
-      assert.equal(existsSync(dirDe(d, '_sem-id')), false, modo);
-    }
-  });
-
-  test('medir-gh-falhou-nao-vira-publicada: gh falhou => identifica por branch + 2o fato e nada de gh e gravado (nem na entrega, nem em _sem-id)', () => {
-    for (const modo of ['rc1', 'rc4', 'ausente']) {
-      const d = repo();
-      const r = rodarMedir(d, modo);
-      assert.equal(r.ok, false, modo);
-      assert.equal(fatos(d, 'GM-14', 'branch').length, 1, modo);
-      assert.equal(fatos(d, 'GM-14', 'pr').length, 0, modo);
-      assert.equal(existsSync(dirDe(d, '_sem-id')), false, modo);
-    }
-  });
-
-  test('medir-gh-falhou-com-pr-mergeado-ja-gravado: gh falhou nunca vira publicada, mesmo com o ultimo pr gravado mergeado => segue na entrega', () => {
-    const d = repo();
-    semear(d, [{ tipo: 'fato.medido', dados: { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 'mergeado', branch: 'enabler/GM-14-clareza' } } }]);
-    const r = rodarMedir(d, 'rc1');
-    assert.equal(r.ok, false);
-    assert.equal(fatos(d, 'GM-14', 'branch').length, 1);
-    assert.equal(existsSync(dirDe(d, '_sem-id')), false);
-  });
-
-  test('regra-unica: o medir identifica a entrega por trilhaDe e nao tem criterio proprio de publicada', () => {
-    const fonte = readFileSync(join(AQUI, '..', 'scripts', 'painel-medir.mjs'), 'utf8').split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
-    assert.match(fonte, /import \{[^}]*\btrilhaDe\b[^}]*\} from '\.\.\/dist\/trilha\.js'/);
-    assert.match(fonte, /trilhaDe\(/);
-    assert.doesNotMatch(fonte, /['"]mergeado['"]\s*(?:&&|\)|===|!==)|(?:===|!==)\s*['"]mergeado['"]|publicada/);
+    assert.equal(rodarMedir(d, 'estado-minusculo').ok, true);
+    assert.equal(fatos(d, 'GM-14', 'pr')[0].dados.valor.estado, 'mergeado');
   });
 });
 
@@ -630,5 +562,32 @@ describe('medir: pelo painel.mjs (CLI real)', () => {
     assert.deepEqual(JSON.parse(cli(d, ['medir', '--agentes'], '').stdout).falhas, ['stdin_ausente']);
     assert.deepEqual(JSON.parse(cli(d, ['medir', '--agentes'], 'x{').stdout).falhas, ['stdin_invalido']);
     assert.equal(existsSync(join(d, '.harness')), false);
+  });
+});
+
+describe('medir: entrega publicada segue gravando fato.medido na branch (T43, emenda 38, FIEL-1 b/c, REQ-DIA-1)', () => {
+  // a âncora da pergunta (b) é o 1º fato.medido da sessão, lido só do diário da branch: mandá-lo a _sem-id impede a pergunta de abrir
+  const medirAs = (d, sessao, modo, minuto) => medir(d, { rodar: rodarCom(modo), agentes: entrada([], sessao), timeoutMs: 5000, agora: () => Date.parse('2026-11-11T20:00:00Z') + minuto * 60000 });
+  const comLedger = () => { const d = repo(); mkdirSync(join(d, 'docs', 'ledgers'), { recursive: true }); writeFileSync(join(d, 'docs', 'ledgers', 'GM-14.md'), '# GM-14\n'); return d; };
+
+  test('medir-em-publicada-grava-na-branch: PR mergeado e nenhum aberto => fato.medido na entrega da branch, nada em _sem-id', () => {
+    const d = comLedger();
+    assert.equal(medirAs(d, 'sessao-1', 'pr-aberto', 1).ok, true);
+    assert.equal(medirAs(d, 'sessao-1', 'estado-minusculo', 2).ok, true);
+    const antes = fatos(d, 'GM-14').length;
+    assert.equal(medirAs(d, 'sessao-2', 'estado-minusculo', 3).ok, true);
+    assert.equal(fatos(d, 'GM-14', 'pr').at(-1).dados.valor.estado, 'mergeado');
+    assert.ok(fatos(d, 'GM-14').length > antes, 'a sessão nova grava na entrega mesmo com ela publicada');
+    assert.equal(existsSync(dirDe(d, '_sem-id')), false);
+  });
+
+  test('pergunta-b-abre-apos-publicacao: sessão nova depois do merge => estadoDoPainel com a pergunta (b) aberta', () => {
+    const d = comLedger();
+    assert.equal(medirAs(d, 'sessao-1', 'pr-aberto', 1).ok, true);
+    assert.equal(medirAs(d, 'sessao-1', 'estado-minusculo', 2).ok, true);
+    assert.equal(medirAs(d, 'sessao-2', 'estado-minusculo', 3).ok, true);
+    const r = estadoDoPainel(d, { agentes: entrada([], 'sessao-2'), fuso: 'UTC' });
+    assert.equal(r.ok, true);
+    assert.match(JSON.stringify(r), /Esta conversa é da entrega|De que entrega é esta conversa/);
   });
 });

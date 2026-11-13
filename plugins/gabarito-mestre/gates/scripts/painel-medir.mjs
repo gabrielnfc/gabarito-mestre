@@ -16,11 +16,11 @@
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { isatty } from 'node:tty';
 import { join } from 'node:path';
 import { append, dirEntrega, lerEstrito, padraoDeRecusa } from '../dist/diario.js';
-import { idDaBranch, trilhaDe } from '../dist/trilha.js';
+import { idDaBranch } from '../dist/trilha.js';
 import { lerConfigOrigin } from '../lib/config.mjs';
 import { contexto } from './loop.mjs';
 
@@ -102,16 +102,6 @@ function idPadraoDe(raiz) {
   if (typeof v !== 'string' || v.length === 0 || v.length > 200) return ID_PADRAO;
   try { new RegExp(v); } catch { return ID_PADRAO; }
   return v;
-}
-
-/** 2º fato da trilha: `<ledgerDir>/<ID>.md` (padrão `docs/ledgers`), a mesma leitura de `painel.mjs`/`responder.mjs`. */
-function ledgerPresente(raiz, id) {
-  let dir = 'docs/ledgers';
-  try {
-    const v = lerConfigOrigin(raiz)?.cfg?.fluxo?.ledgerDir;
-    if (typeof v === 'string' && v !== '' && !v.startsWith('/') && !v.split('/').includes('..')) dir = v;
-  } catch { /* config ilegível: padrão */ }
-  try { return lstatSync(join(raiz, dir, `${id}.md`)).isFile(); } catch { return false; }
 }
 
 /** `PBI: <ID>` só das linhas antes do 1º `## `; o corpo nunca conta (DP-3 ajuste 1). */
@@ -246,19 +236,16 @@ export function medir(cwd, opcoes = {}) {
     else if (rb.status === 0) branch = String(rb.stdout ?? '').trim() || null;
 
     const idPadrao = idPadraoDe(raiz);
-    // `id` é só o CANDIDATO da branch (`idDaBranch`); a entrega que recebe os fatos sai de `trilhaDe` (regra única, abaixo).
     const id = idDaBranch(branch, idPadrao);
     const dir = dirEntrega(raiz, id);
     const chaveGh = id !== null && dir.endsWith(id) ? id : '_sem-id';
 
-    let eventosDaBranch = [];
+    let eventos = [];
     if (existsSync(dir)) {
       const lido = lerEstrito(dir);
       if (!lido.ok) { falhas.push(`diario_corrompido: ${lido.motivo}`); return fim(); }
-      eventosDaBranch = lido.eventos;
+      eventos = lido.eventos;
     }
-
-    let eventos = eventosDaBranch;
 
     /** Candidatos `{chave, fonte, valor}` na ordem de gravação. */
     const fatos = [];
@@ -317,34 +304,6 @@ export function medir(cwd, opcoes = {}) {
       }
     }
 
-    // Entrega que recebe os fatos: a MESMA `trilhaDe` do painel, sobre o que o diário da branch JÁ tem (FIEL-1 b/c, REQ-TRI-1); REQ-DIA-1: entrega
-    // que a trilha já deu por concluída (último PR mergeado, nenhum aberto, sem `dono.resposta` da sessão) não recebe mais fato ⇒ `_sem-id`.
-    // A medição que traz o PR mergeado pela 1ª vez ainda entra na entrega (era "em curso" até ali; o fato é o que a trilha lê depois).
-    // gh falhou ⇒ vale o último `pr` já gravado, e a falha nunca desidentifica (PR `?` identifica). Branch sozinha SEM 2º fato continua no
-    // diário da branch: é onde a âncora da pergunta (b) mora.
-    let alvo = '_sem-id';
-    if (id !== null) {
-      const planoFato = fatos.find((x) => x.chave === 'plano');
-      const base = {
-        branch, idPadrao,
-        specs: fatos.filter((x) => x.chave === 'spec').map((x) => ({ caminho: x.valor.caminho, pbi: id, sha256: x.valor.sha256, secoes: x.valor.secoes, titulo: '' })),
-        plano: planoFato !== undefined ? { tasks: Array.from({ length: planoFato.valor.tasks }, (_, i) => String(i)) } : null,
-        ledger: ledgerPresente(raiz, id), ultimas: [], sessao,
-      };
-      const com = trilhaDe({ ...base, gh: falhaGh === null ? 'ok' : 'falhou' }, eventosDaBranch);
-      // desligada = só a PR `✓` tira a identificação (com o PR como `?`, a mesma trilha identifica a mesma entrega)
-      const desligada = com.identificada !== true && trilhaDe({ ...base, gh: 'falhou' }, eventosDaBranch).entrega === id;
-      alvo = desligada ? '_sem-id' : id;
-    }
-    const dirAlvo = dirEntrega(raiz, alvo === '_sem-id' ? null : alvo);
-    if (alvo === '_sem-id' && id !== null) {
-      eventos = [];
-      if (existsSync(dirAlvo)) {
-        const lido = lerEstrito(dirAlvo);
-        if (!lido.ok) { falhas.push(`diario_corrompido: ${lido.motivo}`); return fim(); }
-        eventos = lido.eventos;
-      }
-    }
     for (const f of fatos) {
       const antes = ultimoValor(eventos, sessao, f.chave, f.valor);
       if (antes !== undefined && canonico(antes) === canonico(f.valor)) continue;
@@ -352,7 +311,7 @@ export function medir(cwd, opcoes = {}) {
       // recusa (canário/tamanho): `diario.recusa` só quando o motivo muda dentro da sessão (1 por sessão por motivo); não é progresso.
       const padrao = padraoDeRecusa(ev);
       if (padrao !== null && eventos.some((e) => e?.tipo === 'diario.recusa' && e.sessao === sessao && e.dados?.padrao === padrao)) { falhas.push(`recusado: ${f.chave}`); continue; }
-      const r = append(dirAlvo, sessao, ev);
+      const r = append(dir, sessao, ev);
       if (!r.ok) { falhas.push(`nao_gravou: ${f.chave}: ${String(r.erro).slice(0, 160)}`); continue; }
       if (r.gravado !== 'evento') {
         eventos = [...eventos, { ts: ev.ts, autor: ev.autor, sessao, agente: ev.agente, tipo: 'diario.recusa', dados: { tipo: 'fato.medido', padrao: padrao ?? 'desconhecido' }, seq: 0, hash_anterior: null }];
