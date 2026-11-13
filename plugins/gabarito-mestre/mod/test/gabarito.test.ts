@@ -2,6 +2,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import { pendenciasAprendizado } from '../../gates/dist/pendencias.js'
 import { CABECALHO, PROMPT_RECUPERACAO, PROMPT_RETOMADA } from '../../gates/dist/pouso.js'
+import { faixaDe, gravarContexto, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
 
 const RAIZ = '/repo'
 const DIR = '/repo/.harness/entregas/PBI-7'
@@ -59,6 +60,14 @@ type Opc = {
   instantaneoAvisos?: string[]
   /** gravação de `sessao.retomada` (T10) falha */
   retomadaFalha?: boolean
+  /** GM-14 T20: `painel.local` que `onboarding.mjs painel` devolve; 'falha' ⇒ a ponte nega; 'corrompido' ⇒ `ok:true` sem `atual` */
+  local?: 'lateral' | 'acima' | 'falha' | 'corrompido' | 'ausente'
+  /** GM-14 T20: `onboarding.mjs painel --local` responde `ok:false` */
+  gravarLocalFalha?: boolean
+  /** GM-14 T20: tokens do último `message.usage` do transcript da sessão (plano B do contexto); 'falha' ⇒ a ponte nega */
+  planoB?: number | 'falha'
+  /** GM-14 T20: pacote lido pela ponte de nomes (`lider`, `sabio`, `nomes`); ausente ⇒ terra-media reduzido */
+  pacoteNomes?: { lider: string; sabio: string; nomes: string[] } | 'falha'
 }
 type PainelOpc = {
   modo?: 'ok' | 'sem_loop' | 'erro' | 'torto' | 'trunca' | 'rejeita' | 'timeout' | 'pendente'
@@ -130,6 +139,8 @@ function mundo($: any, on: any, o: Opc = {}) {
     opens: [] as any[], panes: (o.panes ?? []) as any, openResult: (o.openResult ?? { isPlaced: true }) as any, notifies: [] as string[], fills: [] as any[], statuses: [] as (string | undefined)[],
     subStarts: [] as any[], logs: [] as string[], closes: [] as any[], registros: [] as any[], sessaoId: o.sessaoId ?? 'sess-1', ordem: [] as string[], notifyModo: (o.notify ?? 'ok') as string, rateLimits: (o.rateLimits === undefined ? [] : o.rateLimits) as any, fillIsFilled: o.fillIsFilled !== false,
     msgs: [] as { sha256: string; chars: number }[], mensagemLibera: [] as (() => void)[],
+    // GM-14 T20: local, medir, contexto, plano B e pacote (cada ponte guarda o que recebeu)
+    local: (o.local ?? 'lateral') as string, locaisGravados: [] as string[], medirStdins: [] as any[], contextos: [] as any[], contextoInit: [] as any[], planosB: [] as any[], pacotesLidos: [] as any[],
   }
 
   // o diário em memória: tudo que o mod grava volta na próxima leitura, com seq e ts válidos para a T2
@@ -189,6 +200,40 @@ function mundo($: any, on: any, o: Opc = {}) {
   on('process.run', async (_: any, e: any) => {
     const argv: string[] = e.argv
     const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    const cru0 = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    // GM-14 T20: `onboarding.mjs painel [--local x]` (lê e grava `painel.local`)
+    if (argv[0] === 'node' && String(argv[1]).endsWith('/gates/scripts/onboarding.mjs') && argv[2] === 'painel') {
+      const i = argv.indexOf('--local')
+      if (i >= 0) {
+        if (o.gravarLocalFalha) return cru0(`${JSON.stringify({ ok: false, erro: 'config_corrompido', motivo: 'harness.config.json não é um JSON de objeto válido' })}\n`, 1)
+        est.locaisGravados.push(argv[i + 1]); est.local = argv[i + 1]
+        return cru0(`${JSON.stringify({ ok: true, local: argv[i + 1], mudou: true })}\n`)
+      }
+      if (est.local === 'falha') return { deny: 'node não iniciou' }
+      if (est.local === 'ausente') return cru0(`${JSON.stringify({ ok: true, oferecer: true, default: 'lateral' })}\n`)
+      if (est.local === 'corrompido') return cru0(`${JSON.stringify({ ok: true, oferecer: false, motivo: 'config_corrompido', default: 'lateral' })}\n`)
+      return cru0(`${JSON.stringify({ ok: true, oferecer: false, motivo: 'ja_gravado', atual: est.local, default: 'lateral' })}\n`)
+    }
+    // GM-14 T20: `painel.mjs medir --agentes` (só registra o stdin; o diário não muda aqui)
+    if (o.painel !== undefined && argv[0] === 'node' && String(argv[1]).endsWith('/gates/scripts/painel.mjs') && argv[2] === 'medir') {
+      est.medirStdins.push({ argv, stdin: JSON.parse(e.init?.stdin ?? 'null'), cwd: e.init?.cwd })
+      return cru0(`${JSON.stringify({ ok: true, gravados: [], falhas: [] })}\n`)
+    }
+    // GM-14 T20: pontes `node -e` do painel (contexto, plano B e pacote), reconhecidas pela marca no início do script
+    if (argv[0] === 'node' && argv[1] === '-e' && String(argv[2]).startsWith('/*gabarito:')) {
+      const q = JSON.parse(e.init?.stdin ?? 'null')
+      if (String(argv[2]).startsWith('/*gabarito:contexto*/')) { est.contextos.push(q); est.contextoInit.push(e.init); return cru0('') }
+      if (String(argv[2]).startsWith('/*gabarito:planob*/')) {
+        est.planosB.push(q)
+        if (o.planoB === undefined || o.planoB === 'falha') return { deny: 'sem transcript' }
+        return cru0(`${JSON.stringify({ ok: true, tokens: o.planoB })}\n`)
+      }
+      if (String(argv[2]).startsWith('/*gabarito:pacote*/')) {
+        est.pacotesLidos.push(q)
+        if (o.pacoteNomes === 'falha') return cru0(`${JSON.stringify({ ok: false })}\n`, 1)
+        return cru0(`${JSON.stringify({ ok: true, pacote: o.pacoteNomes ?? { lider: 'GANDALF', sabio: 'ELROND', nomes: ['GIMLI', 'LEGOLAS', 'ARAGORN'] } })}\n`)
+      }
+    }
     if (o.painel !== undefined && argv[0] === 'node' && String(argv[1]).endsWith('/gates/scripts/painel.mjs')) {
       est.painelArgv.push(argv); est.painelInit.push(e.init); est.painelStdins.push(JSON.parse(e.init?.stdin ?? 'null')); est.painelFlight += 1
       try {
@@ -2114,8 +2159,26 @@ const propsPane = (cols = 80) => ({ title: 'gabarito', isFocused: false, bodyCol
 const propsFaixa = (extra: Record<string, unknown> = {}) => ({ hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 100, scroll: { offset: 0, bodyRows: 9 }, view: {}, ...extra }) as any
 const montarPane = ($: any, cols = 80) => $.ui.mount({ plugin: 'gabarito-mestre', surface: 'terminal', component: 'Pane', requestId: ID_PAINEL, props: propsPane(cols) })
 const montarFaixa = ($: any, extra: Record<string, unknown> = {}) => $.ui.mount({ plugin: 'gabarito-mestre', surface: 'terminal', component: 'AbovePrompt', requestId: 'faixa', props: propsFaixa(extra) })
+/** GM-14 T20: AbovePrompt com H (`viewport.rows`, S1b) e `maxRows`; `h` null ⇒ sem viewport (H desconhecido) */
+const montarFaixaH = ($: any, h: number | null, maxRows: number, extra: Record<string, unknown> = {}) =>
+  $.ui.mount({ plugin: 'gabarito-mestre', surface: 'terminal', component: 'AbovePrompt', requestId: 'faixa', props: propsFaixa({ maxRows, ...extra }), ...(h === null ? {} : { viewport: { rows: h, columns: 100 } }) })
+/** GM-14 T20: o estado novo (T17/T18: `modo`, blocos), sobre o da E4 para manter `plano` e `equipe` */
+function estadoNovo(o: Record<string, any> = {}) {
+  return estadoPainel({
+    id: 'GM-14', titulo: 'Clareza', modo: 'entrega', trilha: null, pergunta: null, perguntasMais: 0, umaLinha: null,
+    pronto: { integradas: 2, total: 5, previsao: null }, fase: null,
+    agora: { orquestrador: { nome: 'GANDALF', contexto: 40, estimado: false, pousar: false }, agentes: [], segundoPlano: [] },
+    recente: [], desatualizadoS: null, fontesFalhas: [], atencao: [],
+    depende: [{ nivel: 'dono', motivo: 'depende de você: nada', acoes: [] }],
+    ...o,
+  })
+}
+const PERGUNTA = { id: 'sess-1:7', gatilho: 'd', texto: 'Qual caminho seguir agora', opcoes: ['manter', 'trocar'] }
+/** Muitas linhas de ATENÇÃO: o desenho passa de qualquer orçamento testado */
+const ATENCAO_LONGA = Array.from({ length: 30 }, (_, i) => `aviso numero ${i + 1}`)
+const linhasDesenhadas = async (ui: any) => { const a = await ui.drawn(); return Array.isArray(a?.children) ? a.children.length : 0 }
 const drena = async (m: ReturnType<typeof mundo>) => { for (let i = 0; i < 8; i++) await m.clock.settle() }
-const PERIODO = 30000
+const PERIODO = 60000 // GM-14 T20: relógio de 60 s (S15)
 const comPainel = ($: any, on: any, painel: PainelOpc = {}, o: Opc = {}) => mundo($, on, { painel: { modo: 'ok', ...painel }, ...o })
 const arrancar = async (m: ReturnType<typeof mundo>) => { await m.inicio(); await drena(m) }
 const todosTextos = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text as string)
@@ -2140,14 +2203,18 @@ test('pane-argv-cwd-timeout: node <raiz>/gates/scripts/painel.mjs estado --agent
   expect(m.est.painelInit[0].cwd).toBe(RAIZ)
   expect(m.est.painelInit[0].timeoutMs).toBe(5000)
 })
-test('sem-plano-nada-abre: sem loop ⇒ 0 ui.open, e o relógio é cancelado (sem-loop-cancela-relogio)', async ($, on) => {
+test('sem-loop-nao-esconde-nem-cancela-relogio (GM-14 T20, M-T20a): resposta "sem loop" é falha de leitura, não esconde o painel nem para o relógio', async ($, on) => {
   const m = comPainel($, on, { modo: 'sem_loop' })
   await arrancar(m)
-  expect(m.est.opens).toHaveLength(0)
   expect(m.est.painelStdins).toHaveLength(1)
   await m.clock.advance(PERIODO * 3)
   await drena(m)
-  expect(m.est.painelStdins).toHaveLength(1)
+  expect(m.est.painelStdins).toHaveLength(4)
+  const ui = await montarPane($, 80)
+  const t = (await todosTextos(ui)).join('|')
+  expect(t).toContain('painel: leitura falhou')
+  expect(t).not.toContain('sem loop nesta branch')
+  await ui.unmount()
 })
 test('nao-interativo-sem-painel: -p ⇒ 0 ponte do painel, 0 ui.open, 0 faixa', async ($, on) => {
   const m = comPainel($, on, {}, { interativo: false })
@@ -2263,12 +2330,13 @@ test('pane-bodyRows-desconta-as-linhas-de-aviso: o aviso do alto ocupa 1 das bod
   }
   expect(vistos).toBe(12)
 })
-test('pane-sem-loop: `sem loop nesta branch` em inactive', async ($, on) => {
+test('pane-sem-loop-e-falha: sem estado e resposta "sem loop" ⇒ a Pane diz que a leitura falhou, em warning, nunca "sem loop"', async ($, on) => {
   const m = comPainel($, on, { modo: 'sem_loop' })
   await arrancar(m)
   const ui = await montarPane($, 80)
-  expect((await todosTextos(ui)).join('|')).toContain('sem loop nesta branch')
-  expect(JSON.stringify(await ui.drawn())).toContain('"color":"inactive"')
+  expect((await todosTextos(ui)).join('|')).toContain('painel: leitura falhou')
+  expect((await todosTextos(ui)).join('|')).not.toContain('sem loop')
+  expect(JSON.stringify(await ui.drawn())).toContain('"color":"warning"')
   await ui.unmount()
 })
 test('sem-esc-no-text: ESC no título e no motivo nunca chega a um filho de Text, na Pane nem na faixa', async ($, on) => {
@@ -2303,7 +2371,7 @@ test('pane-redesenha-ao-atualizar: o refresh invalida o desenho; a Pane montada 
   expect(depois).not.toContain('VELHO-1')
   await ui.unmount()
 })
-test('loop-some-pane-mostra-sem-loop: depois de um estado, a resposta "sem loop" troca a Pane e tira a faixa', async ($, on) => {
+test('loop-some-pane-mantem-o-ultimo: depois de um estado, a resposta "sem loop" vira falha; o último estado e o PAROU ficam', async ($, on) => {
   sobreOMotor(on)
   const m = comPainel($, on, { estado: pararP() }, { panes: [] })
   await arrancar(m)
@@ -2311,14 +2379,14 @@ test('loop-some-pane-mostra-sem-loop: depois de um estado, a resposta "sem loop"
   await m.turno(); await drena(m)
   const rodadas = m.est.painelStdins.length
   await m.clock.advance(PERIODO * 3); await drena(m)
-  expect(m.est.painelStdins.length, 'o relógio que existia foi cancelado').toBe(rodadas)
+  expect(m.est.painelStdins.length, 'o relógio segue').toBe(rodadas + 3)
   const ui = await montarPane($, 80)
   const t = (await todosTextos(ui)).join('|')
-  expect(t).toContain('sem loop nesta branch')
-  expect(t).not.toContain('GANDALF')
+  expect(t).toContain('painel: leitura falhou')
+  expect(t).toContain('GANDALF')
   await ui.unmount()
   const faixa = await montarFaixa($)
-  expect(await todosTextos(faixa)).toEqual(['motor'])
+  expect((await todosTextos(faixa)).join('|')).toContain('PAROU')
   await faixa.unmount()
 })
 
@@ -2419,37 +2487,37 @@ test('refresh-30s-depois-de-parar: o relógio segue depois do PAROU (B6)', async
 })
 
 // ---- Pane visível × faixa ----
-test('isplaced-false-so-faixa: open ⇒ não posta ⇒ faixa `<id> N/M · ETA` em inactive (sobre o motor)', async ($, on) => {
+test('isplaced-false-so-faixa: open ⇒ não posta ⇒ a faixa mostra só o PAROU (lateral sem Pane visível), sobre o motor', async ($, on) => {
   sobreOMotor(on)
-  const m = comPainel($, on, {}, { openResult: { isPlaced: false, reason: 'estreito' }, panes: [{ id: ID_PAINEL, isPlaced: false, isShown: false }] })
+  const m = comPainel($, on, { estado: pararP() }, { openResult: { isPlaced: false, reason: 'estreito' }, panes: [{ id: ID_PAINEL, isPlaced: false, isShown: false }] })
   await arrancar(m)
   const ui = await montarFaixa($)
-  const t = await todosTextos(ui)
-  expect(t.some((x) => x.includes('GM-12 1/2 · ETA 17:42'))).toBe(true)
-  expect(JSON.stringify(await ui.drawn())).toContain('"color":"inactive"')
+  const t = (await todosTextos(ui)).join('|')
+  expect(t).toContain('PAROU')
+  expect(t).not.toContain('GM-12 1/2')
   await ui.unmount()
 })
 test('pane-visivel-por-panes: a faixa lê `$.ui.panes()`, nunca o retorno de open', async ($, on) => {
   sobreOMotor(on)
-  const m = comPainel($, on, {}, { openResult: { isPlaced: false, reason: 'estreito' }, panes: [{ id: ID_PAINEL, isPlaced: false, isShown: false }] })
+  const m = comPainel($, on, { estado: pararP() }, { openResult: { isPlaced: false, reason: 'estreito' }, panes: [{ id: ID_PAINEL, isPlaced: false, isShown: false }] })
   await arrancar(m)
   let ui = await montarFaixa($)
-  expect((await todosTextos(ui)).join('|')).toContain('GM-12 1/2')
+  expect((await todosTextos(ui)).join('|')).toContain('PAROU')
   await ui.unmount()
   m.est.panes = [{ id: ID_PAINEL, isPlaced: true, isShown: true }] // o dono alargou o terminal; o open (já respondido) continua dizendo false
   await m.turno(); await drena(m)
   ui = await montarFaixa($)
   const t = (await todosTextos(ui)).join('|')
-  expect(t).not.toContain('GM-12 1/2')
+  expect(t).not.toContain('PAROU')
   expect(t).toContain('motor')
   await ui.unmount()
 })
 const paneInvisivel = async ($: any, on: any, par: { isPlaced: boolean; isShown: boolean }) => {
   sobreOMotor(on)
-  const m = comPainel($, on, {}, { panes: [{ id: ID_PAINEL, ...par }] })
+  const m = comPainel($, on, { estado: pararP() }, { panes: [{ id: ID_PAINEL, ...par }] })
   await arrancar(m)
   const ui = await montarFaixa($)
-  expect((await todosTextos(ui)).join('|')).toContain('GM-12 1/2')
+  expect((await todosTextos(ui)).join('|')).toContain('PAROU')
   await ui.unmount()
 }
 test('pane-visivel-exige-posta: isShown sem isPlaced é Pane invisível', async ($, on) => { await paneInvisivel($, on, { isPlaced: false, isShown: true }) })
@@ -2462,14 +2530,12 @@ test('faixa-some-com-pane-e-nada: Pane posta e nada pendente ⇒ a faixa cede ao
   expect(await todosTextos(ui)).toEqual(['motor'])
   await ui.unmount()
 })
-test('faixa-inactive-pane-fechada: Pane fechada ⇒ `<id> N/M · ETA hh:mm`; sem ETA ⇒ `<id> N/M`', async ($, on) => {
+test('faixa-pane-fechada-sem-parou-cede: Pane fechada e nada no topo (sem PAROU nem pergunta) ⇒ a faixa cede ao motor (GM-14: nada de `<id> N/M`)', async ($, on) => {
   sobreOMotor(on)
-  const m = comPainel($, on, { estado: estadoPainel({ plano: { ...estadoPainel().plano, eta: null } }) }, { panes: [] })
+  const m = comPainel($, on, { estado: estadoPainel({ depende: [{ nivel: 'dono', motivo: 'loop pausado', acoes: [] }] }) }, { panes: [] })
   await arrancar(m)
   const ui = await montarFaixa($)
-  const t = (await todosTextos(ui)).join('|')
-  expect(t).toContain('GM-12 1/2')
-  expect(t).not.toContain('ETA')
+  expect(await todosTextos(ui)).toEqual(['motor'])
   await ui.unmount()
 })
 test('has-survey-cede: com survey a faixa passa, mesmo com PAROU', async ($, on) => {
@@ -2491,14 +2557,16 @@ test('faixa-parou: ■ PAROU com hora e motivo, botão com o rótulo da ação',
   expect(JSON.stringify(await ui.drawn())).toContain('aprovar')
   await ui.unmount()
 })
-test('faixa-depende: `depende de você: <motivo> (+N)` em warning', async ($, on) => {
+test('faixa-depende-acima: no local acima o "depende de você" sai no topo, em warning, com o botão do item', async ($, on) => {
   sobreOMotor(on)
-  const dep = estadoPainel({ depende: [{ nivel: 'dono', motivo: 'emenda #7 em REQ-PNL-4', acoes: [acaoP('aprovar', '/gabarito-mestre:emenda aprovar 7')] }, { nivel: 'dono', motivo: 'loop pausado', acoes: [] }] })
-  const m = comPainel($, on, { estado: dep })
+  const dep = estadoNovo({ depende: [{ nivel: 'dono', motivo: 'emenda 7 aguardando', acoes: [acaoP('aprovar', '/gabarito-mestre:emenda aprovar 7')] }, { nivel: 'dono', motivo: 'loop pausado', acoes: [] }] })
+  const m = comPainel($, on, { estado: dep }, { local: 'acima' })
   await arrancar(m)
-  const ui = await montarFaixa($)
-  expect((await todosTextos(ui)).join('|')).toContain('depende de você: emenda #7 em REQ-PNL-4 (+1)')
+  const ui = await montarFaixaH($, 50, 19)
+  expect((await todosTextos(ui)).join('|')).toContain('depende de você: emenda 7 aguardando')
   expect(JSON.stringify(await ui.drawn())).toContain('"color":"warning"')
+  await ui.press({ key: 'painel-acao' })
+  expect(m.est.fills.map((f) => f.text)).toEqual(['/gabarito-mestre:emenda aprovar 7'])
   await ui.unmount()
 })
 
@@ -2518,10 +2586,10 @@ test('botao-fill-nunca-submit: o botão põe o comando no prompt (replace) e nun
 })
 test('botao-comando-node-com-raiz: `node <plugin>/…` vira `! node "<raiz>/…"`', async ($, on) => {
   sobreOMotor(on)
-  const dev = estadoPainel({ depende: [{ nivel: 'dono', motivo: 'deploy devolvido ao dono: x', acoes: [acaoP('executar', 'node <plugin>/gates/scripts/entrega.mjs executar --entrega GM-12')] }] })
-  const m = comPainel($, on, { estado: dev })
+  const dev = estadoNovo({ depende: [{ nivel: 'dono', motivo: 'deploy devolvido ao dono', acoes: [acaoP('executar', 'node <plugin>/gates/scripts/entrega.mjs executar --entrega GM-12')] }] })
+  const m = comPainel($, on, { estado: dev }, { local: 'acima' })
   await arrancar(m)
-  const ui = await montarFaixa($)
+  const ui = await montarFaixaH($, 50, 19)
   await ui.press({ key: 'painel-acao' })
   expect(m.est.fills[0].text.startsWith('! node "')).toBe(true)
   expect(m.est.fills[0].text.endsWith('/gates/scripts/entrega.mjs" executar --entrega GM-12')).toBe(true)
@@ -3341,6 +3409,423 @@ test('parar-nao-repete-apos-aprendizado-evento: fechar a pendência `parar` com 
     dados: { tipo: 'E', status: 'M', gatilho: { sessao: p.sessao, seq: p.seq }, evidencia: { eventos: [{ sessao: p.sessao, seq: p.seq }] }, regra: 'regra do teste', entra_em: ['instantaneo'] }, hash_anterior: null,
   }))
   expect(pendenciasAprendizado(PLANO_AB, m.evs)).toHaveLength(0)
+  await recuperar(m)
+  expect(parou(m)).toHaveLength(1)
+})
+
+// ======================================================================================================================================
+// ---- painel (GM-14 T20): um painel no local escolhido (REQ-GLB-1, PRG-1, FIEL-10..14). Mutações: t20 (M-T20a/b, M13, M-P1, M-P2, M-P7, M-W4..6, M-F3f) ----
+// ======================================================================================================================================
+const PANE_VISIVEL = [{ id: ID_PAINEL, isPlaced: true, isShown: true }]
+const NOMES_STORE = 'painel:nomes'
+const POUSO_STORE = 'painel:notificado:pouso'
+const LIMPAR = { nivel: 'dono', motivo: 'limpar a conversa', acoes: [acaoP('limpar', '/clear')] }
+const comPouso = (seq: number) => estadoNovo({ depende: [LIMPAR], pousoPendente: { pendente: true, sessao: 's0', seq } })
+const TOAST_POUSO = 'gabarito: hora de limpar a conversa da GM-14'
+
+// ---- local: lateral (padrão) × acima, nunca os dois ----
+test('local-padrao-lateral: sem `painel.local` gravado ⇒ lateral: a Pane abre e a faixa cede ao motor com a Pane visível', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'ausente', panes: PANE_VISIVEL })
+  await arrancar(m)
+  await m.cmd('painel'); await drena(m)
+  expect(m.est.opens.length).toBeGreaterThanOrEqual(1)
+  const ui = await montarFaixaH($, 50, 19)
+  expect(await todosTextos(ui)).toEqual(['motor'])
+  await ui.unmount()
+})
+test('nunca-os-dois: acima ⇒ 0 ui.open e a faixa desenha o painel inteiro; lateral com a Pane visível ⇒ a faixa devolve next(e)', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'acima' })
+  await arrancar(m)
+  await m.turno(); await drena(m)
+  expect(m.est.opens).toHaveLength(0)
+  const ui = await montarFaixaH($, 50, 19)
+  const t = (await todosTextos(ui)).join('|')
+  expect(t).toContain('GABARITO')
+  expect(t).toContain('PRONTO')
+  await ui.unmount()
+})
+test('nunca-os-dois-lateral: lateral com a Pane posta ⇒ a faixa é a do motor mesmo com pergunta aberta', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo({ pergunta: PERGUNTA }) }, { local: 'lateral', panes: PANE_VISIVEL })
+  await arrancar(m)
+  const ui = await montarFaixaH($, 50, 19)
+  expect(await todosTextos(ui)).toEqual(['motor'])
+  await ui.unmount()
+})
+test('sem-pane-nem-ui-open: com local acima, nem início, nem turno, nem relógio, nem `/gabarito painel`/`mostrar` abrem a Pane', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'acima' })
+  await arrancar(m)
+  await m.turno(); await m.clock.advance(PERIODO * 2); await drena(m)
+  expect((await m.cmd('painel')).text).toBe('painel acima da linha de digitar')
+  await m.cmd('painel mostrar'); await drena(m)
+  expect(m.est.opens).toHaveLength(0)
+})
+test('lateral-pane-fechada-so-parou-e-pergunta: Pane fechada ⇒ 1 linha só com a pergunta (ou o PAROU); o resto do painel não aparece', async ($, on) => {
+  sobreOMotor(on)
+  const dep = { nivel: 'dono', motivo: 'aprovar a spec da GM-14', acoes: [acaoP('aprovar', '/gabarito-mestre:aprovar')] }
+  const m = comPainel($, on, { estado: estadoNovo({ pergunta: PERGUNTA, depende: [dep] }) }, { local: 'lateral', panes: [] })
+  await arrancar(m)
+  let ui = await montarFaixaH($, 50, 19)
+  let t = (await todosTextos(ui)).join('|')
+  expect(t).not.toContain('GABARITO')
+  expect(t).toContain('Qual caminho seguir agora')
+  expect(t).not.toContain('PRONTO')
+  expect(t).not.toContain('aprovar a spec')
+  expect((await ui.findAll({ type: 'Button' })).length).toBe(2)
+  await ui.unmount()
+  m.est.painel.estado = estadoNovo({ depende: [dep] })
+  await m.turno(); await drena(m)
+  ui = await montarFaixaH($, 50, 19)
+  expect(await todosTextos(ui)).toEqual(['motor'])
+  await ui.unmount()
+})
+test('comando-painel-troca-local-sem-reiniciar: `painel acima` grava pelo onboarding, fecha a Pane e a faixa vira o painel; `painel lateral` reabre a Pane', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', panes: PANE_VISIVEL })
+  await arrancar(m)
+  const inicios = m.est.opens.length
+  expect((await m.cmd('painel acima')).text).toBe('painel acima da linha de digitar')
+  expect(m.est.locaisGravados).toEqual(['acima'])
+  expect(m.est.closes).toContain(ID_PAINEL)
+  m.est.panes = []
+  let ui = await montarFaixaH($, 50, 19)
+  expect((await todosTextos(ui)).join('|')).toContain('GABARITO')
+  await ui.unmount()
+  expect(m.est.opens.length).toBe(inicios)
+  expect((await m.cmd('painel lateral')).text).toBe('painel ao lado da conversa')
+  expect(m.est.locaisGravados).toEqual(['acima', 'lateral'])
+  expect(m.est.opens.length).toBe(inicios + 1)
+  m.est.panes = PANE_VISIVEL
+  ui = await montarFaixaH($, 50, 19)
+  expect(await todosTextos(ui)).toEqual(['motor'])
+  await ui.unmount()
+})
+test('comando-painel-local-falha-vale-na-sessao: onboarding recusa ⇒ o local muda só nesta sessão e a resposta diz', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { gravarLocalFalha: true })
+  await arrancar(m)
+  expect((await m.cmd('painel acima')).text).toBe('painel acima da linha de digitar (só nesta sessão: não gravei a preferência)')
+  m.est.opens.length = 0
+  await m.turno(); await drena(m)
+  expect(m.est.opens).toHaveLength(0)
+})
+test('prefs-ausente-x-corrompida: local ausente ⇒ lateral sem aviso; config corrompido ⇒ lateral e 1 aviso; ponte que falha ⇒ lateral e outro aviso', async ($, on) => {
+  const ausente = comPainel($, on, { estado: estadoNovo() }, { local: 'ausente' })
+  await arrancar(ausente)
+  expect(ausente.est.opens.length).toBeGreaterThanOrEqual(1)
+  expect(ausente.est.logs.filter((l) => l.includes('local do painel'))).toEqual([])
+})
+test('prefs-corrompida-local: config corrompido ⇒ lateral e 1 aviso por processo', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'corrompido' })
+  await arrancar(m); await m.inicio(); await drena(m)
+  expect(m.est.opens.length).toBeGreaterThanOrEqual(1)
+  expect(m.est.logs.filter((l) => l.includes('local do painel'))).toEqual(['gabarito: a configuração do local do painel está corrompida; uso ao lado da conversa.'])
+})
+test('prefs-ponte-falha-local: onboarding não roda ⇒ lateral e o aviso de leitura (distinto do corrompido)', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'falha' })
+  await arrancar(m)
+  expect(m.est.opens.length).toBeGreaterThanOrEqual(1)
+  expect(m.est.logs.filter((l) => l.includes('local do painel'))).toEqual(['gabarito: não consegui ler o local do painel; uso ao lado da conversa.'])
+})
+
+// ---- orçamento: acima (H e maxRows) e lateral (bodyRows) ----
+test('faixa-respeita-orcamento: acima, pares do S1b (24/6, 50/19) e vizinhos (24/7, 50/20) ⇒ exatamente o orçamento, nunca mais', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo({ atencao: ATENCAO_LONGA }) }, { local: 'acima' })
+  await arrancar(m)
+  for (const [h, maxRows, esperado] of [[24, 6, 6], [50, 19, 19], [24, 7, 7], [50, 20, 20]]) {
+    const ui = await montarFaixaH($, h, maxRows)
+    expect(await linhasDesenhadas(ui), `H ${h} maxRows ${maxRows}`).toBe(esperado)
+    await ui.unmount()
+  }
+})
+test('viewport-rows-e-h: o H é `viewport.rows` (S1b): maxRows 19 com H 24 ⇒ 7 linhas; com H 50 ⇒ 19', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo({ atencao: ATENCAO_LONGA }) }, { local: 'acima' })
+  await arrancar(m)
+  let ui = await montarFaixaH($, 24, 19)
+  expect(await linhasDesenhadas(ui)).toBe(7)
+  await ui.unmount()
+  ui = await montarFaixaH($, 50, 19)
+  expect(await linhasDesenhadas(ui)).toBe(19)
+  await ui.unmount()
+})
+test('h-ausente-formula: sem viewport ⇒ maxRows ≤ 7 vale inteiro; acima, min(maxRows − 6, 7)', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo({ atencao: ATENCAO_LONGA }) }, { local: 'acima' })
+  await arrancar(m)
+  for (const [maxRows, esperado] of [[5, 5], [7, 7], [10, 4], [19, 7]]) {
+    const ui = await montarFaixaH($, null, maxRows)
+    expect(await linhasDesenhadas(ui), `maxRows ${maxRows}`).toBe(esperado)
+    await ui.unmount()
+  }
+})
+test('pane-respeita-body-rows: lateral, bodyRows 10 ⇒ 10 linhas; sem bodyRows ⇒ 7 (nunca rola)', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo({ atencao: ATENCAO_LONGA }) })
+  await arrancar(m)
+  expect((await linhasDaPane(m, $, { offset: 0, bodyRows: 10 })).length).toBe(10)
+  expect((await linhasDaPane(m, $, { offset: 0 })).length).toBe(7)
+})
+
+// ---- botões: só no topo; opção da pergunta põe o `responder` no input, nunca envia ----
+test('botao-pergunta-fill-responder: acima, cada opção é um botão `<n> <rótulo>` que põe `/gabarito-mestre:responder <id> <n>` (replace), sem enviar', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo({ pergunta: PERGUNTA }) }, { local: 'acima' })
+  await arrancar(m)
+  const ui = await montarFaixaH($, 50, 19)
+  const rotulos = (await ui.findAll({ type: 'Button' })).map((b: any) => b.props?.label ?? b.label)
+  expect(rotulos).toEqual(['1 manter', '2 trocar'])
+  await ui.press({ key: 'painel-acao' })
+  await ui.press({ key: 'painel-acao-2' })
+  expect(m.est.fills.map((f) => [f.text, f.mode])).toEqual([['/gabarito-mestre:responder sess-1:7 1', 'replace'], ['/gabarito-mestre:responder sess-1:7 2', 'replace']])
+  expect(m.est.submits).toEqual([])
+  await ui.unmount()
+})
+test('botao-so-no-topo: com pergunta no topo, o item seguinte do "depende de você" não ganha botão', async ($, on) => {
+  const dep = { nivel: 'dono', motivo: 'aprovar a spec da GM-14', acoes: [acaoP('aprovar', '/gabarito-mestre:aprovar')] }
+  const m = comPainel($, on, { estado: estadoNovo({ pergunta: PERGUNTA, depende: [dep] }) }, { local: 'acima' })
+  await arrancar(m)
+  const ui = await montarFaixaH($, 50, 19)
+  const botoes = await ui.findAll({ type: 'Button' })
+  expect(botoes.length).toBe(2)
+  const linhas = ((await ui.drawn()).children ?? []).map((l: any) => JSON.stringify(l))
+  const iTopo = linhas.findIndex((l: string) => l.includes('Qual caminho seguir agora'))
+  const comBotao = linhas.map((l: string, i: number) => [i, l.includes('"Button"') || l.includes('painel-acao')] as const).filter(([, b]) => b).map(([i]) => i)
+  expect(comBotao).toEqual([iTopo])
+  expect(linhas.some((l: string) => l.includes('aprovar a spec'))).toBe(true)
+  await ui.unmount()
+})
+test('has-survey-next: acima, com survey a faixa devolve next(e), mesmo com PAROU', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo({ parar: pararP().parar, pergunta: PERGUNTA }) }, { local: 'acima' })
+  await arrancar(m)
+  const ui = await montarFaixaH($, 50, 19, { hasSurvey: true })
+  expect(await todosTextos(ui)).toEqual(['motor'])
+  expect(await ui.find({ type: 'Button' })).toBeUndefined()
+  await ui.unmount()
+})
+
+// ---- ocultar | mostrar ----
+test('ocultar-mantem-parou-e-pergunta: oculto ⇒ só PAROU ou pergunta aberta, em 1 linha; sem os dois, a faixa cede; mostrar volta o painel', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'acima' })
+  await arrancar(m)
+  expect((await m.cmd('painel ocultar')).text).toBe('painel oculto (PAROU e perguntas continuam)')
+  let ui = await montarFaixaH($, 50, 19)
+  expect(await todosTextos(ui)).toEqual(['motor'])
+  await ui.unmount()
+  m.est.painel.estado = estadoNovo({ pergunta: PERGUNTA })
+  await m.turno(); await drena(m)
+  ui = await montarFaixaH($, 50, 19)
+  expect((await todosTextos(ui)).join('|')).not.toContain('GABARITO')
+  expect((await todosTextos(ui)).join('|')).toContain('Qual caminho seguir agora')
+  await ui.unmount()
+  m.est.painel.estado = pararP()
+  await m.turno(); await drena(m)
+  ui = await montarFaixaH($, 50, 19)
+  expect((await todosTextos(ui)).join('|')).toContain('PAROU')
+  await ui.unmount()
+  expect((await m.cmd('painel mostrar')).text).toBe('painel visível')
+  m.est.painel.estado = estadoNovo()
+  await m.turno(); await drena(m)
+  ui = await montarFaixaH($, 50, 19)
+  expect((await todosTextos(ui)).join('|')).toContain('GABARITO')
+  await ui.unmount()
+})
+test('ocultar-lateral-fecha-a-pane: lateral oculto fecha a Pane e não reabre no relógio', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() })
+  await arrancar(m)
+  await m.cmd('painel ocultar')
+  expect(m.est.closes).toContain(ID_PAINEL)
+  m.est.opens.length = 0
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(m.est.opens).toHaveLength(0)
+})
+
+// ---- medir: no turno e no relógio de 60 s ----
+test('medir-no-turno-e-relogio: `painel.mjs medir --agentes` com o session_id no início, a cada turno e a cada 60 s (nada aos 30 s)', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() })
+  await arrancar(m)
+  expect(m.est.medirStdins).toHaveLength(1)
+  expect(m.est.medirStdins[0].argv.slice(2)).toEqual(['medir', '--agentes'])
+  expect(m.est.medirStdins[0].stdin.session_id).toBe('sess-1')
+  expect(m.est.medirStdins[0].cwd).toBe(RAIZ)
+  await m.turno(); await drena(m)
+  expect(m.est.medirStdins).toHaveLength(2)
+  await m.clock.advance(PERIODO / 2); await drena(m)
+  expect(m.est.medirStdins).toHaveLength(2)
+  await m.clock.advance(PERIODO / 2); await drena(m)
+  expect(m.est.medirStdins).toHaveLength(3)
+})
+
+// ---- contexto do orquestrador (FIEL-11 a, FIEL-14 b) ----
+test('contexto-json-gravado: a leitura do mod vai a `.harness/contexto/<sessao>.json` pela ponte (tmp + rename), com fonte mod', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: 37 })
+  await arrancar(m)
+  expect(m.est.contextos.length).toBeGreaterThanOrEqual(1)
+  const c = m.est.contextos[0]
+  expect(c.sessao).toBe('sess-1')
+  expect(c.percent).toBe(37)
+  expect(c.fonte).toBe('mod')
+  expect(new Date(c.em).toISOString()).toBe(c.em)
+  expect(m.est.contextoInit[0].cwd).toBe(RAIZ)
+})
+test('contexto-gravar-pura: gravarContexto devolve argv de node -e com o script e o stdin; sessão fora da forma ou percent não número ⇒ null', () => {
+  const g = gravarContexto({ sessao: 'abc-1', percent: 55, fonte: 'mod', emMs: Date.UTC(2026, 10, 12) })
+  expect(g?.argv.slice(0, 2)).toEqual(['node', '-e'])
+  expect(String(g?.argv[2]).startsWith('/*gabarito:contexto*/')).toBe(true)
+  expect(String(g?.argv[2])).toContain('renameSync')
+  expect(JSON.parse(g!.stdin)).toEqual({ sessao: 'abc-1', percent: 55, fonte: 'mod', em: '2026-11-12T00:00:00.000Z' })
+  expect(gravarContexto({ sessao: '../x', percent: 55, fonte: 'mod', emMs: 0 })).toBeNull()
+  expect(gravarContexto({ sessao: 'abc-1', percent: null, fonte: 'mod', emMs: 0 })).toBeNull()
+  expect(gravarContexto({ sessao: 'abc-1', percent: 5, fonte: 'outra', emMs: 0 })).toBeNull()
+})
+test('contexto-plano-b-estimado: percent nulo ⇒ o transcript da sessão dá a estimativa (tokens ÷ janela), gravada com fonte transcript; o stdin não a finge medida', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: null, planoB: 250000 })
+  await m.inicio()
+  await subStart($)
+  await drena(m)
+  await m.turno(); await drena(m)
+  expect(m.est.planosB.at(-1)?.caminho).toBe('/h/proj/abc-123.jsonl')
+  const c = m.est.contextos.at(-1)
+  expect([c?.percent, c?.fonte]).toEqual([25, 'transcript'])
+  const s = ultimoStdin(m)
+  expect(s.sessao.percent).toBeNull()
+  expect(s.contexto).toEqual({ percent: 25, fonte: 'transcript', estimado: true })
+})
+test('contexto-sem-fonte-nada-gravado: percent nulo e sem transcript ⇒ nenhuma gravação e contexto nulo no stdin', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: null })
+  await arrancar(m)
+  expect(m.est.contextos).toHaveLength(0)
+  expect(ultimoStdin(m).contexto).toBeNull()
+})
+
+// ---- desatualizado (FIEL-13 b) ----
+test('desatualizado-no-stdin: segundos desde a última leitura boa no stdin; leitura falhando além do limite ⇒ linha de ATENÇÃO na Pane', async ($, on) => {
+  expect(LIMITE_DESATUALIZADO_S).toBe(120)
+  const m = comPainel($, on, { estado: estadoNovo() })
+  await arrancar(m)
+  expect(m.est.painelStdins[0].desatualizadoS).toBeNull()
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(ultimoStdin(m).desatualizadoS).toBe(60)
+  m.est.painel.modo = 'erro'
+  for (let i = 0; i < 2; i++) { await m.clock.advance(PERIODO); await drena(m) }
+  expect(ultimoStdin(m).desatualizadoS).toBe(120)
+  let ui = await montarPane($, 80)
+  expect((await todosTextos(ui)).join('|')).not.toContain('sem ler o diário')
+  await ui.unmount()
+  await m.clock.advance(PERIODO); await drena(m)
+  ui = await montarPane($, 80)
+  expect((await todosTextos(ui)).join('|')).toContain('painel sem ler o diário há 3 min')
+  await ui.unmount()
+})
+
+// ---- nomes (FIEL-3 d): store, estáveis, únicos entre ativos ----
+test('nomes-unicos-entre-ativos: dois ativos com o mesmo nome no store ⇒ o 1º visto fica, o outro pega o 1º livre; encerrado não ocupa nome', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, {
+    agentesPainel: [{ id: 'a2', type: 'revisor', description: 'T2 revisor', status: 'running' }, { id: 'a1', type: 'implementador', description: 'T1 impl', status: 'waiting' }, { id: 'a3', type: 'implementador', description: 'T3', status: 'completed' }],
+    storeInicial: { [NOMES_STORE]: { a1: { nome: 'LEGOLAS', vistoEm: 1 }, a2: { nome: 'LEGOLAS', vistoEm: 2 }, a3: { nome: 'GIMLI', vistoEm: 0 } } },
+  })
+  await arrancar(m)
+  const n = ultimoStdin(m).nomes
+  expect(n.a1).toBe('LEGOLAS')
+  expect(n.a2).toBe('GIMLI')
+  expect((m.store.get(NOMES_STORE) as any).a2.nome).toBe('GIMLI')
+})
+test('nome-estavel-apos-reload: o nome guardado vale depois do reload, mesmo não sendo o 1º livre; agente novo pega o 1º livre (M-F3f)', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, {
+    agentesPainel: [{ id: 'novo', type: 'revisor', description: 'T2', status: 'running' }, { id: 'a1', type: 'implementador', description: 'T1', status: 'running' }],
+    storeInicial: { [NOMES_STORE]: { a1: { nome: 'ARAGORN', vistoEm: 5 } } },
+  })
+  await arrancar(m)
+  const n = ultimoStdin(m).nomes
+  expect(n.a1).toBe('ARAGORN')
+  expect(n.novo).toBe('GIMLI')
+})
+test('nomes-esgotados-sufixo: pacote sem nome livre ⇒ sufixo 2 a 9, depois "agente"', async ($, on) => {
+  const vivos = Array.from({ length: 4 }, (_, i) => ({ id: `v${i}`, type: 'implementador', description: 'x', status: 'running' }))
+  const m = comPainel($, on, { estado: estadoNovo() }, { agentesPainel: vivos, pacoteNomes: { lider: 'GANDALF', sabio: 'ELROND', nomes: ['GIMLI'] } })
+  await arrancar(m)
+  const n = ultimoStdin(m).nomes
+  expect(vivos.map((v) => n[v.id])).toEqual(['GIMLI', 'GIMLI2', 'GIMLI3', 'GIMLI4'])
+})
+test('store-nomes-ausente-x-corrompido: ausente ⇒ nomes do zero, sem aviso; corrompido ⇒ do zero e 1 aviso', async ($, on) => {
+  const vivo = [{ id: 'a1', type: 'implementador', description: 'T1', status: 'running' }]
+  const m = comPainel($, on, { estado: estadoNovo() }, { agentesPainel: vivo, storeInicial: { [NOMES_STORE]: 7 } })
+  await arrancar(m)
+  expect(ultimoStdin(m).nomes.a1).toBe('GIMLI')
+  expect(m.est.logs.filter((l) => l.includes('nomes da equipe'))).toEqual(['gabarito: os nomes da equipe do painel estavam corrompidos; recomecei.'])
+})
+test('store-nomes-ausente: sem store ⇒ nomes do zero e nenhum aviso', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { agentesPainel: [{ id: 'a1', type: 'implementador', description: 'T1', status: 'running' }] })
+  await arrancar(m)
+  expect(ultimoStdin(m).nomes.a1).toBe('GIMLI')
+  expect(m.est.logs.filter((l) => l.includes('nomes da equipe'))).toEqual([])
+})
+
+// ---- push do pouso (FIEL-14 d) ----
+test('push-no-pouso: pouso pendente ⇒ toast e notify "hora de limpar a conversa", chave `<ID>|pouso|<seq>` no store', async ($, on) => {
+  const m = comPainel($, on, { estado: comPouso(4) })
+  await arrancar(m)
+  expect(m.toasts.filter((t) => t === TOAST_POUSO)).toHaveLength(1)
+  expect(m.est.notifies).toEqual([TOAST_POUSO])
+  expect((m.store.get(POUSO_STORE) as any).chave).toBe('GM-14|pouso|4')
+})
+test('push-mesma-chave-nao-repete: o mesmo pouso em 3 refresh ⇒ 1 push; chave já no store (outra janela) ⇒ 0', async ($, on) => {
+  const m = comPainel($, on, { estado: comPouso(4) })
+  await arrancar(m)
+  for (let i = 0; i < 3; i++) { await m.clock.advance(PERIODO); await drena(m) }
+  expect(m.est.notifies).toHaveLength(1)
+})
+test('push-mesma-chave-no-store: a chave do pouso já gravada ⇒ nenhum push', async ($, on) => {
+  const m = comPainel($, on, { estado: comPouso(4) }, { storeInicial: { [POUSO_STORE]: { chave: 'GM-14|pouso|4', resultado: null } } })
+  await arrancar(m)
+  expect(m.est.notifies).toHaveLength(0)
+  expect(m.toasts.filter((t) => t === TOAST_POUSO)).toHaveLength(0)
+})
+test('push-repetido-com-novo-pouso: novo `sessao.pouso` (seq nova) ⇒ novo push', async ($, on) => {
+  const m = comPainel($, on, { estado: comPouso(4) })
+  await arrancar(m)
+  m.est.painel.estado = comPouso(9)
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(m.est.notifies).toEqual([TOAST_POUSO, TOAST_POUSO])
+  expect((m.store.get(POUSO_STORE) as any).chave).toBe('GM-14|pouso|9')
+})
+test('notify-falha-mantem-toast-e-depende: notify que lança ⇒ o toast saiu, a linha "limpar a conversa" segue na Pane e o push não repete', async ($, on) => {
+  const m = comPainel($, on, { estado: comPouso(4) }, { notify: 'rejeita' })
+  await arrancar(m)
+  for (let i = 0; i < 2; i++) { await m.clock.advance(PERIODO); await drena(m) }
+  expect(m.toasts.filter((t) => t === TOAST_POUSO)).toHaveLength(1)
+  expect(m.est.notifies).toHaveLength(1)
+  const ui = await montarPane($, 80)
+  expect((await todosTextos(ui)).join('|')).toContain('limpar a conversa')
+  await ui.unmount()
+})
+test('sem-pouso-sem-push: sem o item de limpar ⇒ nenhum push do pouso, e o PAROU segue com a sua chave', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() })
+  await arrancar(m)
+  expect(m.est.notifies).toHaveLength(0)
+  expect(m.store.has(POUSO_STORE)).toBe(false)
+})
+
+// ---- pendências herdadas: "depende de você" sem duplicar; medição não é progresso ----
+test('faixa-sem-depende-duplicado: o item "depende de você: nada" do estado novo nunca vira "depende de você: depende de você: nada"', () => {
+  const e = estadoNovo()
+  expect(faixaDe(e, true, null, {})).toBeNull()
+  const f = faixaDe(e, false, null, {})
+  expect(f === null || !f.texto.includes('depende de você: depende de você')).toBe(true)
+  const q = faixaDe(estadoNovo({ depende: [{ nivel: 'dono', motivo: 'depende de você: ? (não consegui ler as specs)', acoes: [] }] }), true, null, {})
+  expect(q === null || !q.texto.includes('depende de você: depende de você')).toBe(true)
+})
+test('parar-nao-repete-apos-fato-medido (pouso.ts SEM_PROGRESSO): fato.medido, nota e dono.resposta depois do loop.parar não fazem o mod regravá-lo', async ($, on) => {
+  const m = mundo($, on, { eventos: EM_TETO_A_E_B_ORFA, plano_json: PLANO_AB })
+  fecharEm(m, PLANO_AB)
+  await m.inicio()
+  await recuperar(m)
+  expect(parou(m)).toHaveLength(1)
+  fecharEm(m, PLANO_AB)
+  m.add('painel', 'fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'feat/PBI-7-x' } }, 'sess-1')
+  m.add('orquestrador', 'nota', { tipo: 'ideia', texto: 'uma ideia' }, 'sess-1')
+  m.add('dono', 'dono.resposta', { pergunta: 'sess-1:9', opcao: 1, rotulo: 'sim' }, 'dono')
+  await recuperar(m)
   await recuperar(m)
   expect(parou(m)).toHaveLength(1)
 })

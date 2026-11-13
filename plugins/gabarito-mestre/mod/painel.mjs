@@ -15,16 +15,38 @@
  * `$.ui.panes()` quando o reload não a fechou, e então nada se abre). (2) O `store` é compartilhado entre janelas do mesmo repositório e a escrita
  * simultânea não é atômica: duas janelas no mesmo instante podem avisar o mesmo PAROU duas vezes (a chave `<id>|<chave>` cala a segunda quando a
  * primeira já gravou).
+ *
+ * GM-14 T20 (REQ-GLB-1, PRG-1, FIEL-10..14): UM painel, no local de `harness.config.json` `painel.local` (lido e gravado por
+ * `onboarding.mjs painel`, T21): `lateral` (padrão) = a Pane da E4, com orçamento `scroll.bodyRows` (ausente ⇒ 7), e a faixa devolve `next(e)`
+ * salvo com a Pane invisível (aí só PAROU ou pergunta aberta, 1 linha); `acima` = nenhuma Pane, a faixa desenha o painel inteiro com
+ * `orcamentoDe(viewport.rows, maxRows)`. Nunca os dois. Botões só na linha do topo. A resposta "sem loop" deixou de esconder o painel: é
+ * falha de leitura (FIEL-10 e). A cada ciclo (início, turno, relógio de 60 s): `painel.mjs medir`, o estado, o contexto da sessão em
+ * `.harness/contexto/<sessao>.json` e o push do pouso. LIMITES (relatório da T20): a Pane é registrada por `registrarPainel` no load do mod
+ * (o hook não some em `acima`; nada a abre); `nomes`, `contexto` e `desatualizadoS` vão no stdin, mas o CLI só os desenha depois da T29/T35.
  */
 import { renderPainel } from '../gates/dist/painel.js';
 import { colunas, cortar, limpar } from '../gates/dist/painel-largura.js';
 import { sortearPacote } from '../gates/dist/painel-equipe.js';
 import { lerX } from '../gates/dist/pouso.js';
+import { orcamentoDe } from '../gates/dist/orcamento.js';
 
 export const ID_PANE = 'gabarito-painel';
-/** Medido pela T9 (task-9-relatorio.md): p95 de `painel.mjs estado` 109 ms ⇒ 30 s; ≥ 1 s pediria 60 s. */
-export const INTERVALO_MS = 30000;
+/** GM-14 T20: relógio de 60 s (FIEL-13 b, S15: p95 60,009 s entre leituras com `clock.every` 60 s + `turn.complete`). */
+export const INTERVALO_MS = 60000;
 export const TIMEOUT_MS = 5000;
+/** `painel.mjs medir` chama `gh` com timeout próprio de 5 s, depois do `git`: a ponte espera mais que a do estado. */
+export const TIMEOUT_MEDIR_MS = 12000;
+/** FIEL-13 b: sem leitura boa do diário além disto ⇒ ATENÇÃO "painel sem ler o diário há N min" (2 × p95 do S15, no lugar dos 180 s provisórios). */
+export const LIMITE_DESATUALIZADO_S = 120;
+export const LOCAIS = Object.freeze(['lateral', 'acima']);
+export const LOCAL_PADRAO = 'lateral';
+/** `lateral` sem `scroll.bodyRows` válido: o mesmo piso da fórmula de H desconhecido (REQ-GLB-1), para nunca rolar. */
+export const ORCAMENTO_LATERAL = 7;
+export const CHAVE_NOMES = 'painel:nomes';
+export const TETO_NOMES = 64;
+/** Dedupe do push do pouso (FIEL-14 d): a mesma forma do `painel:notificado` do PAROU, numa chave própria para os dois não se apagarem. */
+export const CHAVE_NOTIFICADO_POUSO = 'painel:notificado:pouso';
+const ATIVOS = new Set(['pending', 'running', 'waiting']);
 export const CHAVE_NOTIFICADO = 'painel:notificado';
 export const CHAVE_PREFS = 'painel:prefs';
 export const CHAVE_PACOTE = 'painel:pacote';
@@ -55,7 +77,10 @@ const AGENTE_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const SESSAO_RE = /^[A-Za-z0-9-]{1,128}$/;
 export const PREFS_PADRAO = Object.freeze({ preset: 'esquadrao', tema: 'color', narracao: true, ligado: true, pacote: null });
 
+/** Só classifica (a costura de `gates/test/painel-costura.test.mjs` ainda a exige); desde a T20 a classe `sem_loop` não esconde nada: é falha de leitura. */
 const SEM_LOOP = new Set(['plano_ausente', 'entrega_nao_inferida', 'fora_de_repo']);
+const SITUACAO_RE = /^depende de você:/;
+const ID_PERGUNTA_RE = /^[A-Za-z0-9._-]{1,128}:[0-9]{1,9}$/;
 const PRESETS = ['esquadrao', 'executivo'];
 const TEMAS = ['color', 'mono'];
 const ehObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -185,7 +210,8 @@ export function faixaDe(estado, paneVisivel, falha, opc = {}) {
     return { texto: limpar(`■ PAROU ${estado.parar.hora} ${estado.parar.texto}`), cor: 'error', ...botaoDe(estado.parar.acoes, root) };
   }
   if (!ligado) return null;
-  const donos = (Array.isArray(estado.depende) ? estado.depende : []).filter((d) => ehObj(d) && d.nivel === 'dono');
+  // GM-14 T20: "depende de você: nada" e "depende de você: ? (...)" do estado novo são a linha de situação do bloco, não pendência (sem prefixar 2×)
+  const donos = (Array.isArray(estado.depende) ? estado.depende : []).filter((d) => ehObj(d) && d.nivel === 'dono' && !SITUACAO_RE.test(String(d.motivo ?? '')));
   if (donos.length > 0) {
     const mais = donos.length > 1 ? ` (+${donos.length - 1})` : '';
     return { texto: limpar(`depende de você: ${donos[0].motivo}${mais}`), cor: 'warning', ...botaoDe(donos[0].acoes, root) };
@@ -219,6 +245,11 @@ export function linhasDaPane(estado, prefs, largura, extra = {}) {
   const avisos = Array.isArray(extra.avisos) ? extra.avisos.filter((a) => typeof a === 'string') : [];
   const linhas = [];
   if (falha !== null) linhas.push([seg(cortar(textoDaFalha(falha), larg), 'warning', tema)]);
+  // GM-14 T20 (FIEL-13 b): leitura falhando além do limite ⇒ ATENÇÃO com os minutos sem ler
+  const semLerS = numero(extra.semLerS);
+  if (falha !== null && semLerS !== null && semLerS > LIMITE_DESATUALIZADO_S) {
+    linhas.push([seg(cortar(`ATENÇÃO · painel sem ler o diário há ${Math.ceil(semLerS / 60)} min`, larg), 'warning', tema)]);
+  }
   if (avisos.length > 0) linhas.push([seg(comSufixo(`painel: aviso: ${avisos[0]}`, avisos.length > 1 ? ` (+${avisos.length - 1})` : '', larg), 'warning', tema)]);
   if (!ehObj(estado)) {
     if (extra.semLoop === true) linhas.push([seg('sem loop nesta branch', 'inactive', tema)]);
@@ -228,9 +259,15 @@ export function linhasDaPane(estado, prefs, largura, extra = {}) {
   let corpo;
   try {
     // T14b: `altura` = linhas da superfície menos as que `falha`/`avisos` já ocuparam; inteiro ≥ 1, senão ausente (o núcleo não corta nada)
-    const bruta = extra.altura;
-    const altura = Number.isInteger(bruta) && bruta >= 1 ? Math.max(1, bruta - linhas.length) : undefined;
-    corpo = renderPainel(estado, { preset, tema, narracao: p.narracao !== false, largura: larg, ...(altura === undefined ? {} : { altura }) });
+    const desconto = (bruta) => (Number.isInteger(bruta) && bruta >= 1 ? Math.max(1, bruta - linhas.length) : undefined);
+    const altura = desconto(extra.altura);
+    // GM-14 T20: `orcamento` (REQ-GLB-1) e `local` vão ao render novo; o da E4 os ignora
+    const orcamento = desconto(extra.orcamento);
+    const local = LOCAIS.includes(extra.local) ? extra.local : undefined;
+    corpo = renderPainel(estado, {
+      preset, tema, narracao: p.narracao !== false, largura: larg,
+      ...(altura === undefined ? {} : { altura }), ...(orcamento === undefined ? {} : { orcamento }), ...(local === undefined ? {} : { local }),
+    });
     if (!Array.isArray(corpo)) throw new Error('render sem linhas');
   } catch {
     return [...linhas, [seg('painel: não consegui desenhar', 'warning', tema)]];
@@ -243,6 +280,232 @@ export function linhasDaPane(estado, prefs, largura, extra = {}) {
     }).filter((s) => s.texto !== ''));
   }
   return linhas;
+}
+
+// ─────────────────────────────────────────────────────────────── puras (GM-14 T20): local, orçamento, topo e botões
+
+/** Saída de `onboarding.mjs painel` ⇒ `{local, estado}`: `atual` válido ⇒ ele; `oferecer` (ainda não gravado) ⇒ padrão, `ausente`; resto ⇒ padrão, `corrompido` | `ilegivel`. */
+export function localDaSaida(r) {
+  if (!ehObj(r) || typeof r.stdout !== 'string' || r.exitCode !== 0) return { local: LOCAL_PADRAO, estado: 'ilegivel' };
+  let o;
+  try { o = JSON.parse(r.stdout); } catch { return { local: LOCAL_PADRAO, estado: 'ilegivel' }; }
+  if (!ehObj(o) || o.ok !== true) return { local: LOCAL_PADRAO, estado: 'ilegivel' };
+  if (LOCAIS.includes(o.atual)) return { local: o.atual, estado: 'ok' };
+  if (o.oferecer === true) return { local: LOCAL_PADRAO, estado: 'ausente' };
+  return { local: LOCAL_PADRAO, estado: o.motivo === 'config_corrompido' ? 'corrompido' : 'ilegivel' };
+}
+
+/** H do terminal = `e.viewport.rows` (S1b(i), 12/12). Ausente, não finito ou ≤ 0 ⇒ `undefined` (a fórmula de H desconhecido). */
+export function hDoViewport(e) {
+  const h = e?.viewport?.rows;
+  return typeof h === 'number' && Number.isFinite(h) && h > 0 ? h : undefined;
+}
+
+/** Orçamento da Pane: `scroll.bodyRows` inteiro ≥ 1, senão 7. */
+export function orcamentoLateral(bodyRows) {
+  return Number.isInteger(bodyRows) && bodyRows >= 1 ? bodyRows : ORCAMENTO_LATERAL;
+}
+
+const estadoNovo = (estado) => ehObj(estado) && typeof estado.modo === 'string';
+const perguntaDe = (estado) => {
+  const q = ehObj(estado) ? estado.pergunta : null;
+  return ehObj(q) && typeof q.texto === 'string' && Array.isArray(q.opcoes) ? q : null;
+};
+/** O 1º item do topo que é pendência (o PAROU e a pergunta vêm antes; a linha de situação "depende de você: …" não conta). */
+const primeiroItem = (estado) => (Array.isArray(estado?.depende) ? estado.depende : [])
+  .find((d) => ehObj(d) && d.nivel === 'dono' && !SITUACAO_RE.test(String(d.motivo ?? ''))) ?? null;
+
+/**
+ * Botões da linha do topo (REQ-PRG-1, F7): PAROU ⇒ as ações com comando; senão pergunta aberta ⇒ uma por opção, `<n> <rótulo>` com
+ * `/gabarito-mestre:responder <id> <n>`; senão o 1º item do "depende de você" com as suas ações. Comando que `comandoParaPrompt` recusa ou
+ * id de pergunta fora da forma ⇒ sem botão. `[{rotulo, comando}]`.
+ */
+export function botoesDoTopo(estado, root) {
+  if (!ehObj(estado)) return [];
+  const dasAcoes = (acoes) => (Array.isArray(acoes) ? acoes : []).map((a) => ({ rotulo: limpar(String(a?.rotulo ?? '')), comando: comandoParaPrompt(a?.comando, root) }))
+    .filter((b) => b.comando !== null && b.rotulo !== '');
+  if (ehObj(estado.parar)) return dasAcoes(estado.parar.acoes);
+  const q = perguntaDe(estado);
+  if (q !== null) {
+    if (typeof q.id !== 'string' || !ID_PERGUNTA_RE.test(q.id)) return [];
+    return q.opcoes.slice(0, 9).map((op, i) => ({ rotulo: `${i + 1} ${cortar(limpar(String(op)), 60)}`, comando: `/gabarito-mestre:responder ${q.id} ${i + 1}` }));
+  }
+  const item = primeiroItem(estado);
+  return item === null ? [] : dasAcoes(item.acoes);
+}
+
+/** O estado que vai ao render quando o topo ganha botões: tira do texto o que virou botão (as opções da pergunta, as ações com comando do topo). */
+export function estadoParaDesenho(estado) {
+  if (!estadoNovo(estado)) return estado;
+  const semComando = (acoes) => (Array.isArray(acoes) ? acoes : []).filter((a) => !(typeof a?.comando === 'string' && a.comando !== ''));
+  if (ehObj(estado.parar)) return { ...estado, parar: { ...estado.parar, acoes: semComando(estado.parar.acoes) } };
+  const q = perguntaDe(estado);
+  if (q !== null) return { ...estado, pergunta: { ...q, opcoes: [] } };
+  const item = primeiroItem(estado);
+  if (item === null) return estado;
+  return { ...estado, depende: estado.depende.map((d) => (d === item ? { ...d, acoes: semComando(d.acoes) } : d)) };
+}
+
+const textoDaLinha = (l) => (Array.isArray(l) ? l.map((s) => String(s?.texto ?? '')).join('') : '');
+const TOPO_RE = /^(■ )?PAROU |^depende de você: /;
+/** Índice da linha do topo (PAROU ou 1ª do "depende de você") nas linhas desenhadas; nenhuma ⇒ -1. */
+export function indiceDoTopo(linhas) {
+  return (Array.isArray(linhas) ? linhas : []).findIndex((l) => TOPO_RE.test(textoDaLinha(l)));
+}
+
+/**
+ * Painel inteiro acima do input (local `acima`): `linhasDaPane` com `orcamento: orcamentoDe(h, maxRows)` e `local: 'acima'` (RECENTE até 2).
+ * `opc`: `largura`, `h` (de `hDoViewport`), `maxRows` e o resto do `extra` de `linhasDaPane` (`falha`, `avisos`, `semLerS`). Nunca passa do orçamento.
+ */
+export function linhasDaFaixa(estado, prefs, opc = {}) {
+  const orcamento = orcamentoDe(opc.h, Number.isInteger(opc.maxRows) ? opc.maxRows : 1);
+  const linhas = linhasDaPane(estadoParaDesenho(estado), prefs, opc.largura, { falha: opc.falha ?? null, avisos: opc.avisos, semLerS: opc.semLerS, orcamento, altura: orcamento, local: 'acima' });
+  return linhas.slice(0, orcamento);
+}
+
+/**
+ * Uma linha só (lateral com a Pane invisível, ou painel oculto): o PAROU, senão a pergunta aberta; nada mais (REQ-GLB-1). `{texto, cor, botoes}` | `null`.
+ */
+export function faixaUmaLinha(estado, opc = {}) {
+  if (!ehObj(estado)) return null;
+  const botoes = botoesDoTopo(estado, opc.root ?? null);
+  if (ehObj(estado.parar)) return { texto: limpar(`■ PAROU ${estado.parar.hora} ${estado.parar.texto}`), cor: 'error', botoes };
+  const q = perguntaDe(estado);
+  if (q !== null) return { texto: limpar(q.texto), cor: 'warning', botoes };
+  return null;
+}
+
+/** Corta uma linha de segmentos a `max` colunas (o último segmento que passa é cortado; os seguintes saem). */
+function cortarLinha(l, max) {
+  const fora = [];
+  let resto = Math.max(1, max);
+  for (const s of l) {
+    if (resto <= 0) break;
+    const c = colunas(s.texto);
+    if (c <= resto) { fora.push(s); resto -= c; } else { fora.push({ ...s, texto: cortar(s.texto, resto) }); resto = 0; }
+  }
+  return fora;
+}
+
+/** Colunas que os botões ocupam: `' '` + cada `[rótulo]` com a moldura de 2 e o espaço entre eles. */
+export function colunasDosBotoes(botoes) {
+  return (Array.isArray(botoes) ? botoes : []).reduce((n, b) => n + 1 + colunas(b.rotulo ?? '') + 2, 0);
+}
+
+// ─────────────────────────────────────────────────────────────── puras (GM-14 T20): contexto, plano B, pouso e nomes
+
+const SCRIPT_CONTEXTO = `/*gabarito:contexto*/
+const fs = require('node:fs'), path = require('node:path'), cp = require('node:child_process');
+const d = JSON.parse(fs.readFileSync(0, 'utf8'));
+if (!/^[A-Za-z0-9-]{1,128}$/.test(String(d.sessao))) process.exit(2);
+const comum = cp.execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' }).trim();
+const dir = path.join(path.dirname(comum), '.harness', 'contexto');
+fs.mkdirSync(dir, { recursive: true });
+const fim = path.join(dir, d.sessao + '.json'), tmp = fim + '.' + process.pid + '.tmp';
+try { fs.writeFileSync(tmp, JSON.stringify({ percent: d.percent, fonte: d.fonte, em: d.em }) + '\\n'); fs.renameSync(tmp, fim); }
+catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }`;
+
+/**
+ * Gravação do contexto da sessão (FIEL-14 b): `{argv, stdin}` para `$.process.run` com `cwd` = a raiz da sessão. O script acha a worktree
+ * PRINCIPAL (`--git-common-dir`, a mesma raiz de `loop.mjs`) e grava `.harness/contexto/<sessao>.json` `{percent, fonte, em}` por tmp + rename.
+ * Pura (a T34 a usa no P9 com `spawnSync`). Sessão fora da forma, percent não número ou fonte fora de `mod|transcript` ⇒ `null`.
+ */
+export function gravarContexto({ sessao, percent, fonte, emMs } = {}) {
+  if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) return null;
+  if (numero(percent) === null || (fonte !== 'mod' && fonte !== 'transcript') || numero(emMs) === null) return null;
+  return { argv: ['node', '-e', SCRIPT_CONTEXTO], stdin: JSON.stringify({ sessao, percent, fonte, em: new Date(emMs).toISOString() }) };
+}
+
+const SCRIPT_PLANO_B = `/*gabarito:planob*/
+const fs = require('node:fs');
+const { caminho } = JSON.parse(fs.readFileSync(0, 'utf8'));
+const fd = fs.openSync(caminho, 'r'); const tam = fs.fstatSync(fd).size; const n = Math.min(tam, 512 * 1024);
+const buf = Buffer.alloc(n); fs.readSync(fd, buf, 0, n, tam - n); fs.closeSync(fd);
+const linhas = buf.toString('utf8').split('\\n');
+for (let i = linhas.length - 1; i >= 0; i--) {
+  let o; try { o = JSON.parse(linhas[i]); } catch { continue; }
+  const u = o && o.message && o.message.usage;
+  if (!u || typeof u !== 'object') continue;
+  const t = ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'].reduce((s, k) => s + (Number.isFinite(u[k]) ? u[k] : 0), 0);
+  process.stdout.write(JSON.stringify({ ok: true, tokens: t }) + '\\n'); process.exit(0);
+}
+process.stdout.write(JSON.stringify({ ok: false }) + '\\n'); process.exit(1);`;
+
+/** Plano B do contexto (FIEL-11 a): `{argv, stdin}` que lê o último `message.usage` do transcript da sessão. Caminho não absoluto ⇒ `null`. */
+export function pedidoPlanoB(caminho) {
+  if (typeof caminho !== 'string' || !caminho.startsWith('/') || /[\p{Cc}]/u.test(caminho)) return null;
+  return { argv: ['node', '-e', SCRIPT_PLANO_B], stdin: JSON.stringify({ caminho }) };
+}
+
+/** Saída do plano B ⇒ percent inteiro sobre a janela do modelo; sem tokens ou sem janela (`window` do `usage`) ⇒ `null` ("contexto ?"). */
+export function percentDoPlanoB(r, janela) {
+  const w = numero(janela);
+  if (w === null || w <= 0 || !ehObj(r) || r.exitCode !== 0 || typeof r.stdout !== 'string') return null;
+  let o;
+  try { o = JSON.parse(r.stdout); } catch { return null; }
+  const t = ehObj(o) && o.ok === true ? numero(o.tokens) : null;
+  return t === null || t < 0 ? null : Math.round((t / w) * 100);
+}
+
+/**
+ * Chave do push do pouso (FIEL-14 d): com o item "limpar" (`/clear`) no "depende de você" ⇒ `<ID>|pouso|<seq do último sessao.pouso>`; sem
+ * `pousoPendente.seq` no estado (a T34 o projeta) ⇒ `<ID>|pouso|?` (1 push até o item sumir). Sem o item ⇒ `null`.
+ */
+export function chavePouso(estado) {
+  if (!ehObj(estado)) return null;
+  const limpar = (Array.isArray(estado.depende) ? estado.depende : [])
+    .some((d) => ehObj(d) && Array.isArray(d.acoes) && d.acoes.some((a) => a?.comando === '/clear'));
+  if (!limpar) return null;
+  const seq = estado.pousoPendente?.seq;
+  return `${typeof estado.id === 'string' ? estado.id : ''}|pouso|${Number.isInteger(seq) && seq >= 0 ? seq : '?'}`;
+}
+
+/** Texto do push do pouso. */
+export function textoDoPouso(estado) {
+  const id = limpar(String(estado?.id ?? ''));
+  return id === '' ? 'gabarito: hora de limpar a conversa' : `gabarito: hora de limpar a conversa da ${id}`;
+}
+
+/** `painel:nomes` do store ⇒ `{mapa, estado}`: ausente ⇒ vazio, `ausente`; não objeto ⇒ vazio, `corrompido`; entrada fora da forma sai sozinha. */
+export function nomesValidos(v) {
+  const mapa = new Map();
+  if (v === undefined) return { mapa, estado: 'ausente' };
+  if (!ehObj(v)) return { mapa, estado: 'corrompido' };
+  const itens = Object.entries(v).filter(([k, x]) => AGENTE_RE.test(k) && ehObj(x) && numero(x.vistoEm) !== null && (x.nome === null || typeof x.nome === 'string'));
+  itens.sort((a, b) => a[1].vistoEm - b[1].vistoEm);
+  for (const [k, x] of itens.slice(-TETO_NOMES)) mapa.set(k, { nome: x.nome, vistoEm: x.vistoEm });
+  return { mapa, estado: 'ok' };
+}
+
+/**
+ * Nomes dos agentes ATIVOS (FIEL-3 d), estáveis e únicos entre ativos. `registro` (Map id → `{nome, vistoEm}`, na ordem em que o mod viu) ganha os
+ * ativos novos com `vistoEm = agoraMs`; teto 64 (sai o 1º visto). Na ordem de `vistoEm`: o nome guardado fica se nenhum ativo anterior o tem;
+ * os demais pegam o 1º do pacote fora do líder, do sábio, dos `ocupados` (pares) e dos outros ativos; esgotado ⇒ sufixo 2 a 9, depois "agente".
+ * Sem pacote ⇒ o ativo sem nome fica `null`. Devolve `{mapa, mudou}` (mapa novo; a entrada não muda).
+ */
+export function atribuirNomes(registro, ativos, pacote, ocupados = [], agoraMs = 0) {
+  const mapa = new Map(registro instanceof Map ? registro : []);
+  let mudou = false;
+  for (const id of ativos) if (!mapa.has(id)) { mapa.set(id, { nome: null, vistoEm: agoraMs }); mudou = true; }
+  while (mapa.size > TETO_NOMES) { mapa.delete(mapa.keys().next().value); mudou = true; }
+  const vivos = [...mapa.entries()].filter(([id]) => ativos.includes(id)).sort((a, b) => a[1].vistoEm - b[1].vistoEm);
+  const pac = ehObj(pacote) && Array.isArray(pacote.nomes) ? pacote : null;
+  const usados = new Set([...(Array.isArray(ocupados) ? ocupados : []), ...(pac === null ? [] : [pac.lider, pac.sabio])].filter((x) => typeof x === 'string'));
+  const semNome = [];
+  for (const [id, v] of vivos) {
+    if (typeof v.nome === 'string' && v.nome !== 'agente' && !usados.has(v.nome)) usados.add(v.nome);
+    else semNome.push(id);
+  }
+  for (const id of semNome) {
+    if (pac === null) continue;
+    const base = pac.nomes.filter((n) => typeof n === 'string');
+    let nome = base.find((n) => !usados.has(n));
+    for (let k = 2; nome === undefined && k <= 9; k++) nome = base.map((n) => `${n}${k}`).find((n) => !usados.has(n));
+    nome ??= 'agente';
+    if (nome !== 'agente') usados.add(nome);
+    if (mapa.get(id).nome !== nome) { mapa.set(id, { ...mapa.get(id), nome }); mudou = true; }
+  }
+  return { mapa, mudou };
 }
 
 // ─────────────────────────────────────────────────────────────── estado do módulo e ciclo de vida
@@ -268,6 +531,19 @@ const S = {
   transcripts: new Map(), // agent_id → caminho, em ordem de inserção (espelho do store, com teto)
   transcriptsLido: false,
   logados: new Set(), // avisos de `ui.log` já dados neste processo (1× por tipo)
+  // GM-14 T20
+  local: LOCAL_PADRAO, // lido de `harness.config.json` por `onboarding.mjs painel` (1× por `session.start`); o comando troca sem reiniciar
+  sessaoId: null,
+  ultimaOkMs: null, // hora da última leitura boa do estado (FIEL-13 b)
+  semLerS: null, // segundos sem leitura boa, só enquanto a leitura falha
+  transcriptSessao: null, // transcript da sessão (plano B do contexto), do `SubagentStart` ou do `session.start`
+  contexto: null, // {percent, fonte, estimado} da última leitura
+  nomes: new Map(), // agent_id → {nome, vistoEm} (espelho do store, teto 64)
+  nomesLido: false,
+  pacoteNomes: null, // {lider, sabio, nomes} do pacote em uso, lido 1× por pacote
+  pacoteNomesDe: null,
+  notificadoPouso: null, // {chave, resultado} do push do pouso
+  notificadoPousoLido: false,
 };
 
 /** Uma linha só: sem controle nem quebra, no máximo 200 colunas (REQ-PNL-13: a resposta do comando nunca vira bloco). */
@@ -346,9 +622,9 @@ function cancelarRelogio() {
   try { r?.cancel(); } catch { /* já cancelado */ }
 }
 
-/** Abre a Pane sem `focus`. Fechada pelo dono nunca reabre por refresh. Devolve o `UiOpenResult` ou `null`. */
+/** Abre a Pane sem `focus`. Fechada pelo dono nunca reabre por refresh; local `acima` nunca abre (nunca os dois). Devolve o `UiOpenResult` ou `null`. */
 export async function abrirPainel($) {
-  if (S.fechadaPeloDono || S.prefs.ligado === false) return null;
+  if (S.fechadaPeloDono || S.prefs.ligado === false || S.local !== 'lateral') return null;
   S.aberta = true;
   try { return await $.ui.open({ id: ID_PANE, title: 'gabarito' }); } catch { return null; }
 }
@@ -362,7 +638,12 @@ async function carregarNotificado($) {
   } catch { /* store fora do ar: a memória faz o papel */ }
 }
 
-async function pedidoDoMod($) {
+/**
+ * stdin do `estado --agentes` e do `medir --agentes`: `montarPedido` (forma da E4) mais, no topo (GM-14 T20), `session_id` (FIEL-14 a, âncora da
+ * pergunta (b)), `desatualizadoS` (FIEL-13 b), `nomes` (FIEL-3 d) e `contexto` (FIEL-11 a: `{percent, fonte, estimado}` | `null`). O plano B do
+ * contexto NÃO entra em `sessao.percent`: o CLI ainda o desenharia como medido.
+ */
+async function pedidoDoMod($, cwd, agoraMs) {
   let usage = null;
   try { usage = await $.session.usage(); } catch { usage = null; }
   let agentes = null;
@@ -370,10 +651,94 @@ async function pedidoDoMod($) {
   let bruto;
   try { bruto = await $.env.get('GABARITO_POUSO_X'); } catch { bruto = undefined; }
   await carregarNotificado($);
-  return montarPedido({
+  const pedido = montarPedido({
     usage, agentes, x: lerX(bruto).x, notificacao: S.notificado?.resultado ?? null, pacote: S.prefs.pacote ?? S.pacoteSorteado ?? null,
     transcripts: Object.fromEntries(await mapaTranscripts($)),
   });
+  const contexto = await lerContexto($, cwd, pedido, agoraMs);
+  const nomes = await nomesDosAtivos($, cwd, pedido.agentes, agoraMs);
+  return {
+    ...pedido,
+    session_id: S.sessaoId,
+    desatualizadoS: S.ultimaOkMs === null ? null : Math.max(0, Math.round((agoraMs - S.ultimaOkMs) / 1000)),
+    nomes,
+    contexto,
+  };
+}
+
+/** Contexto do orquestrador: `usage.context.percent` (fonte `mod`); nulo ⇒ plano B pelo transcript da sessão (`transcript`, estimado); grava `.harness/contexto/<sessao>.json`. */
+async function lerContexto($, cwd, pedido, agoraMs) {
+  let contexto = null;
+  if (pedido.sessao.percent !== null) contexto = { percent: pedido.sessao.percent, fonte: 'mod', estimado: false };
+  else {
+    const q = pedidoPlanoB(S.transcriptSessao);
+    if (q !== null) {
+      let r = null;
+      try { r = await $.process.run(q.argv, { cwd, stdin: q.stdin, timeoutMs: TIMEOUT_MS }); } catch { r = null; }
+      const p = percentDoPlanoB(r, pedido.sessao.window);
+      if (p !== null) contexto = { percent: p, fonte: 'transcript', estimado: true };
+    }
+  }
+  S.contexto = contexto;
+  const g = contexto === null ? null : gravarContexto({ sessao: S.sessaoId, percent: contexto.percent, fonte: contexto.fonte, emMs: agoraMs });
+  if (g !== null) {
+    try { await $.process.run(g.argv, { cwd, stdin: g.stdin, timeoutMs: TIMEOUT_MS }); } catch { /* o arquivo fica velho e `proxima` o descarta após 120 s */ }
+  }
+  return contexto;
+}
+
+/** `painel:nomes` do store, 1× por processo. Corrompido ⇒ recomeça e avisa 1×. */
+async function carregarNomes($) {
+  if (S.nomesLido) return;
+  S.nomesLido = true;
+  let v;
+  try { v = await $.store.get(CHAVE_NOMES); } catch { return; }
+  const r = nomesValidos(v);
+  for (const [k, x] of r.mapa) if (!S.nomes.has(k)) S.nomes.set(k, x);
+  if (r.estado === 'corrompido') logUma($, 'nomes-corrompidos', 'gabarito: os nomes da equipe do painel estavam corrompidos; recomecei.');
+}
+
+const SCRIPT_PACOTE = `/*gabarito:pacote*/
+const fs = require('node:fs'), path = require('node:path');
+const { nome, fabrica, raiz } = JSON.parse(fs.readFileSync(0, 'utf8'));
+for (const arq of [path.join(fabrica, nome + '.json'), ...(raiz ? [path.join(raiz, '.harness', 'temas', 'nomes', nome + '.json')] : [])]) {
+  let o; try { o = JSON.parse(fs.readFileSync(arq, 'utf8')); } catch { continue; }
+  process.stdout.write(JSON.stringify({ ok: true, pacote: { lider: o.lider, sabio: o.sabio, nomes: o.nomes } }) + '\\n'); process.exit(0);
+}
+process.stdout.write(JSON.stringify({ ok: false }) + '\\n'); process.exit(1);`;
+
+/** Pacote em uso (`lider`, `sabio`, `nomes`), lido 1× por nome de pacote pela ponte. Falha ⇒ `null` (o ativo sem nome fica sem nome). */
+async function pacoteDosNomes($, cwd) {
+  const nome = S.prefs.pacote ?? S.pacoteSorteado ?? 'terra-media';
+  if (S.pacoteNomesDe === nome) return S.pacoteNomes;
+  S.pacoteNomesDe = nome;
+  S.pacoteNomes = null;
+  let raiz = null;
+  try { raiz = (await $.session.repo())?.root ?? null; } catch { raiz = null; }
+  try {
+    const r = await $.process.run(['node', '-e', SCRIPT_PACOTE], { cwd, stdin: JSON.stringify({ nome, fabrica: `${$.plugin.root}/mod/temas/nomes`, raiz: typeof raiz === 'string' ? raiz : null }), timeoutMs: TIMEOUT_MS });
+    const o = r?.exitCode === 0 && typeof r.stdout === 'string' ? JSON.parse(r.stdout) : null;
+    const p = ehObj(o) && o.ok === true && ehObj(o.pacote) ? o.pacote : null;
+    if (p !== null && Array.isArray(p.nomes) && p.nomes.every((n) => typeof n === 'string') && typeof p.lider === 'string' && typeof p.sabio === 'string') S.pacoteNomes = p;
+  } catch { S.pacoteNomes = null; }
+  return S.pacoteNomes;
+}
+
+/** Nomes dos ativos (FIEL-3 d): `{agent_id: nome}` dos ativos com nome; grava `painel:nomes` quando muda. Nunca lança. */
+async function nomesDosAtivos($, cwd, agentes, agoraMs) {
+  try {
+    await carregarNomes($);
+    const ativos = (Array.isArray(agentes) ? agentes : []).filter((a) => ATIVOS.has(a.status) && AGENTE_RE.test(a.id)).map((a) => a.id);
+    if (ativos.length === 0) return {};
+    const pacote = await pacoteDosNomes($, cwd); // 1 leitura por pacote: um nome guardado pode precisar mudar (repetido entre ativos)
+    const pares = (Array.isArray(S.estado?.plano?.tasks) ? S.estado.plano.tasks : []).map((t) => t?.nome).filter((n) => typeof n === 'string');
+    const { mapa, mudou } = atribuirNomes(S.nomes, ativos, pacote, pares, agoraMs);
+    S.nomes = mapa;
+    if (mudou) { try { await $.store.set(CHAVE_NOMES, Object.fromEntries(mapa)); } catch { /* vale nesta sessão */ } }
+    return Object.fromEntries(ativos.map((id) => [id, mapa.get(id)?.nome]).filter(([, n]) => typeof n === 'string'));
+  } catch {
+    return {};
+  }
 }
 
 /**
@@ -408,6 +773,44 @@ export async function avisarParar($, estado) {
   void atualizar($, 'notificacao');
 }
 
+/**
+ * Pouso pendente ⇒ push 1× por chave `<ID>|pouso|<seq>` (FIEL-14 d), como o PAROU: `store.set` antes do `notify`, a memória segura a repetição,
+ * `notify` que falha não apaga o toast nem a linha do "depende de você" e não se repete na mesma chave. Sem o item ⇒ nada (a marca fica: o
+ * próximo pouso tem seq nova).
+ */
+export async function avisarPouso($, estado) {
+  const chave = chavePouso(estado);
+  if (chave === null) return;
+  if (!S.notificadoPousoLido) {
+    S.notificadoPousoLido = true;
+    try {
+      const v = await $.store.get(CHAVE_NOTIFICADO_POUSO);
+      if (ehObj(v) && typeof v.chave === 'string') S.notificadoPouso = { chave: v.chave, resultado: ehObj(v.resultado) ? v.resultado : null };
+    } catch { /* a memória faz o papel */ }
+  }
+  if (S.notificadoPouso?.chave === chave) return;
+  S.notificadoPouso = { chave, resultado: null };
+  try { await $.store.set(CHAVE_NOTIFICADO_POUSO, { chave, resultado: null }); } catch { /* a memória segura */ }
+  const texto = textoDoPouso(estado);
+  try { await $.ui.toast(texto, { timeoutMs: 20000 }); } catch { /* sem tela */ }
+  let resultado;
+  try {
+    const r = await $.ui.notify(texto);
+    resultado = r?.isSent === true ? { ts: new Date(await agora($)).toISOString() } : { motivo: typeof r?.reason === 'string' && r.reason !== '' ? r.reason : 'falhou' };
+  } catch {
+    resultado = { motivo: 'falhou' };
+  }
+  S.notificadoPouso = { chave, resultado };
+  try { await $.store.set(CHAVE_NOTIFICADO_POUSO, { chave, resultado }); } catch { /* a memória segura */ }
+}
+
+/** `painel.mjs medir --agentes` (REQ-DIA-1): grava `fato.medido` quando o valor muda. Falha não vira aviso: a próxima medição tenta de novo. */
+async function medirAgora($, cwd, pedido) {
+  try {
+    await $.process.run(['node', `${$.plugin.root}/gates/scripts/painel.mjs`, 'medir', '--agentes'], { cwd, stdin: JSON.stringify(pedido), timeoutMs: TIMEOUT_MEDIR_MS });
+  } catch { /* medir é melhor esforço */ }
+}
+
 async function uma($, motivo) {
   await preparar($);
   let cwd;
@@ -416,7 +819,8 @@ async function uma($, motivo) {
   if (cwd === null || typeof cwd !== 'string') {
     s = { classe: 'erro', erro: 'sessao_sem_raiz', mensagem: 'a sessão não tem raiz' };
   } else {
-    const pedido = await pedidoDoMod($);
+    const pedido = await pedidoDoMod($, cwd, await agora($));
+    await medirAgora($, cwd, pedido); // antes do estado: o estado já lê o fato que acabou de mudar
     const t0 = await agora($);
     try {
       const r = await $.process.run(['node', `${$.plugin.root}/gates/scripts/painel.mjs`, 'estado', '--agentes'], { cwd, stdin: JSON.stringify(pedido), timeoutMs: TIMEOUT_MS });
@@ -425,26 +829,22 @@ async function uma($, motivo) {
       s = { classe: classeDaFalha((await agora($)) - t0) };
     }
   }
-  if (s.classe === 'sem_loop') {
-    S.semLoop = true; S.estado = null; S.falha = null; S.avisos = [];
-    cancelarRelogio();
-    await lerPanes($);
-    redesenhar($);
-    return;
-  }
   garantirRelogio($);
-  if (s.classe !== 'ok') {
+  const t1 = await agora($);
+  if (s.classe !== 'ok') { // GM-14 T20 (FIEL-10 e): "sem loop" também é falha de leitura; nada se esconde nem o relógio para
     S.falha = s; S.semLoop = false;
+    S.semLerS = S.ultimaOkMs === null ? null : Math.max(0, Math.round((t1 - S.ultimaOkMs) / 1000));
     await lerPanes($);
     redesenhar($);
     return;
   }
-  S.estado = s.estado; S.avisos = s.avisos; S.falha = null; S.semLoop = false;
+  S.estado = s.estado; S.avisos = s.avisos; S.falha = null; S.semLoop = false; S.ultimaOkMs = t1; S.semLerS = null;
   const lista = await lerPanes($);
   const jaListada = Array.isArray(lista) && lista.some((x) => x?.id === ID_PANE);
-  if (!S.aberta && !S.fechadaPeloDono && !jaListada) { await abrirPainel($); await lerPanes($); } else if (jaListada) S.aberta = true;
+  if (S.local === 'lateral' && !S.aberta && !S.fechadaPeloDono && !jaListada) { await abrirPainel($); await lerPanes($); } else if (jaListada) S.aberta = true;
   redesenhar($);
   await avisarParar($, s.estado);
+  await avisarPouso($, s.estado);
 }
 
 /** Uma ponte por vez, com coalescência: o que chega com a ponte em voo vira 1 pendente (no máximo), rodado quando ela termina. Nunca lança. */
@@ -500,12 +900,28 @@ async function escolherPacote($) {
   try { await $.store.set(CHAVE_PACOTE, { nome, sessao: id }); } catch { /* vale nesta sessão */ }
 }
 
-/** Prefs e sorteio, 1× por `session.start`. Nunca lança. */
+/** `painel.local` por `onboarding.mjs painel` (T21): ausente ⇒ lateral calado; corrompido ou ponte que falha ⇒ lateral e 1 aviso (distintos). */
+async function carregarLocal($) {
+  let cwd;
+  try { cwd = await $.session.root(); } catch { cwd = null; }
+  let r = null;
+  if (typeof cwd === 'string') {
+    try { r = await $.process.run(['node', `${$.plugin.root}/gates/scripts/onboarding.mjs`, 'painel'], { cwd, timeoutMs: TIMEOUT_MS }); } catch { r = null; }
+  }
+  const l = localDaSaida(r);
+  S.local = l.local;
+  if (l.estado === 'corrompido') logUma($, 'local-corrompido', 'gabarito: a configuração do local do painel está corrompida; uso ao lado da conversa.');
+  else if (l.estado === 'ilegivel') logUma($, 'local-ilegivel', 'gabarito: não consegui ler o local do painel; uso ao lado da conversa.');
+}
+
+/** Prefs, sorteio, local do painel e id da sessão, 1× por `session.start`. Nunca lança. */
 export function preparar($) {
   if (S.preparando === null) {
     S.preparando = (async () => {
       try { await carregarPrefs($); } catch { /* padrão */ }
       try { await escolherPacote($); } catch { /* sem pacote sorteado: o CLI usa a fábrica */ }
+      try { await carregarLocal($); } catch { S.local = LOCAL_PADRAO; }
+      try { const id = await $.session.id(); S.sessaoId = typeof id === 'string' && SESSAO_RE.test(id) ? id : null; } catch { S.sessaoId = null; }
     })();
   }
   return S.preparando;
@@ -526,6 +942,8 @@ async function mapaTranscripts($) {
 
 /** `classic.SubagentStart`: guarda o caminho do transcript do agente (teto de 64). Dado fora da forma ⇒ nada. Nunca lança. */
 export async function registrarSubagente($, e) {
+  // GM-14 T20: o `transcript_path` do evento é o da SESSÃO (o pai): fonte do plano B do contexto do orquestrador
+  if (typeof e?.transcript_path === 'string' && e.transcript_path.startsWith('/')) S.transcriptSessao = e.transcript_path;
   const caminho = caminhoDoTranscript(e);
   if (caminho === null) return;
   try {
@@ -542,9 +960,16 @@ async function gravarPrefs($, mudanca) {
 
 const SO_NA_SESSAO = ' (só nesta sessão: não gravei a preferência)';
 
+const NOME_LOCAL = { lateral: 'ao lado da conversa', acima: 'acima da linha de digitar' };
+
 async function abrirPeloDono($, rotulo = 'painel aberto') {
   S.fechadaPeloDono = false;
   const gravou = S.prefs.ligado === true ? true : await gravarPrefs($, { ligado: true });
+  if (S.local === 'acima') { // nunca os dois: o painel já é a faixa
+    redesenhar($);
+    void atualizar($, 'painel');
+    return `painel ${NOME_LOCAL.acima}` + (gravou ? '' : SO_NA_SESSAO);
+  }
   let r;
   try { r = await $.ui.open({ id: ID_PANE, title: 'gabarito', focus: true }); } catch { r = { isPlaced: false, reason: 'falhou' }; }
   S.aberta = true;
@@ -566,13 +991,18 @@ async function comandoPainelBruto($, partes) {
     if (PRESETS.includes(a)) return troca({ preset: a }, `painel: ${a}`);
     if (TEMAS.includes(a)) return troca({ tema: a }, `painel: ${a}`);
     if (a === 'ligar') return abrirPeloDono($, 'painel ligado');
-    if (a === 'desligar') {
+    if (a === 'mostrar') {
+      const r = await abrirPeloDono($, 'painel visível');
+      return S.local === 'acima' ? r.replace(`painel ${NOME_LOCAL.acima}`, 'painel visível') : r;
+    }
+    if (a === 'desligar' || a === 'ocultar') {
       const gravou = await gravarPrefs($, { ligado: false });
       S.aberta = false;
       try { await $.ui.close({ id: ID_PANE }); } catch { /* já fechada */ }
       redesenhar($);
-      return 'painel desligado (PAROU ainda avisa)' + (gravou ? '' : SO_NA_SESSAO);
+      return (a === 'ocultar' ? 'painel oculto (PAROU e perguntas continuam)' : 'painel desligado (PAROU ainda avisa)') + (gravou ? '' : SO_NA_SESSAO);
     }
+    if (LOCAIS.includes(a)) return trocarLocal($, a);
     return USO_GABARITO;
   }
   if (partes.length === 2) {
@@ -580,6 +1010,35 @@ async function comandoPainelBruto($, partes) {
     if (a === 'nomes') return nomesDoPainel($, b);
   }
   return USO_GABARITO;
+}
+
+/**
+ * `/gabarito painel lateral|acima` (REQ-GLB-1, D-P2): grava `painel.local` por `onboarding.mjs painel --local <x>` (merge de chave, T21) e troca
+ * sem reiniciar: `acima` fecha a Pane; `lateral` a abre (se o painel não está oculto). Gravação recusada ⇒ vale só nesta sessão, e a resposta diz.
+ */
+async function trocarLocal($, local) {
+  let cwd;
+  try { cwd = await $.session.root(); } catch { cwd = null; }
+  let gravou = false;
+  if (typeof cwd === 'string') {
+    try {
+      const r = await $.process.run(['node', `${$.plugin.root}/gates/scripts/onboarding.mjs`, 'painel', '--local', local], { cwd, timeoutMs: TIMEOUT_MS });
+      const o = r?.exitCode === 0 && typeof r.stdout === 'string' ? JSON.parse(r.stdout) : null;
+      gravou = ehObj(o) && o.ok === true && o.local === local;
+    } catch { gravou = false; }
+  }
+  S.local = local;
+  if (local === 'acima') {
+    S.aberta = false;
+    try { await $.ui.close({ id: ID_PANE }); } catch { /* já fechada */ }
+  } else {
+    S.fechadaPeloDono = false;
+    S.aberta = false;
+    await abrirPainel($);
+    S.aberta = S.prefs.ligado !== false;
+  }
+  redesenhar($);
+  return `painel ${NOME_LOCAL[local]}` + (gravou ? '' : SO_NA_SESSAO);
 }
 
 async function nomesDoPainel($, p) {
@@ -612,11 +1071,31 @@ export async function comandoPainel($, partes) {
 
 const colunasDe = (props) => larguraDe(props?.bodyColumns);
 
-function arvoreDeLinhas($, e, linhas) {
-  const { Box, Text } = $.ui.resolve(e);
-  return h(Box, { flexDirection: 'column' }, ...linhas.map((l) => {
+/** Um `Button` por ação: `onPress` põe o comando no input (`replace`), NUNCA envia. Chaves `painel-acao`, `painel-acao-2`, … */
+function botoesDe($, Button, Text, botoes) {
+  return botoes.flatMap((b, i) => [h(Text, { key: `painel-esp-${i + 1}` }, ' '), h(Button, {
+    key: i === 0 ? 'painel-acao' : `painel-acao-${i + 1}`,
+    label: b.rotulo,
+    onPress: async () => {
+      try {
+        const r = await $.prompt.fill({ text: b.comando, mode: 'replace' });
+        if (r?.isFilled !== true) $.ui.status('gabarito: não consegui pôr o comando no prompt');
+      } catch {
+        try { $.ui.status('gabarito: não consegui pôr o comando no prompt'); } catch { /* sem tela */ }
+      }
+    },
+  })]);
+}
+
+/** Linhas ⇒ árvore; `botoes` vão SÓ na linha do topo (`indiceDoTopo`), que é cortada para eles caberem em `largura`. */
+function arvoreDeLinhas($, e, linhas, botoes = [], largura = 0) {
+  const { Box, Button, Text } = $.ui.resolve(e);
+  const topo = botoes.length > 0 ? indiceDoTopo(linhas) : -1;
+  return h(Box, { flexDirection: 'column' }, ...linhas.map((l0, i) => {
+    const l = i === topo && largura > 0 ? cortarLinha(l0, largura - colunasDosBotoes(botoes)) : l0;
     const filhos = l.filter((s) => s.texto !== '').map((s) => h(Text, s.cor === undefined ? null : { color: s.cor }, s.texto));
-    return h(Text, null, ...(filhos.length === 0 ? [' '] : filhos));
+    const texto = h(Text, null, ...(filhos.length === 0 ? [' '] : filhos));
+    return i === topo ? h(Box, { flexDirection: 'row' }, texto, ...botoesDe($, Button, Text, botoes)) : texto;
   }));
 }
 
@@ -627,6 +1106,7 @@ function arvoreDeLinhas($, e, linhas) {
 export function iniciarPainel($, e) {
   S.interativo = e?.isInteractive === true && e?.surface !== null && e?.surface !== undefined;
   if (!S.interativo) return;
+  if (typeof e?.transcript_path === 'string' && e.transcript_path.startsWith('/')) S.transcriptSessao = e.transcript_path;
   S.preparando = null; // cada `session.start` relê as prefs e confere o sorteio (mesma sessão ⇒ mantém)
   try { $.clock.after(0, () => { void atualizar($, 'inicio'); }); } catch { /* sem relógio */ }
 }
@@ -654,40 +1134,55 @@ export function registrarPainel(on) {
       try { $.clock.after(0, () => { void atualizar($, 'render'); }); } catch { /* sem relógio */ }
     }
     let linhas;
+    let botoes = [];
+    const larg = colunasDe(e.props);
     try {
-      linhas = linhasDaPane(S.estado, S.prefs, colunasDe(e.props), { falha: S.falha, avisos: S.avisos, semLoop: S.semLoop, altura: e.props?.scroll?.bodyRows });
+      // GM-14 T20: orçamento = `scroll.bodyRows` (ausente ⇒ 7, nunca rola); o estado novo ganha os botões do topo
+      const bodyRows = e.props?.scroll?.bodyRows;
+      const novo = estadoNovo(S.estado);
+      botoes = novo ? botoesDoTopo(S.estado, $.plugin.root) : [];
+      linhas = linhasDaPane(novo ? estadoParaDesenho(S.estado) : S.estado, S.prefs, larg, {
+        falha: S.falha, avisos: S.avisos, semLoop: S.semLoop, semLerS: S.semLerS, altura: bodyRows, orcamento: orcamentoLateral(bodyRows), local: 'lateral',
+      });
+      if (novo) linhas = linhas.slice(0, orcamentoLateral(bodyRows));
     } catch {
       linhas = [[{ texto: 'painel: não consegui desenhar', cor: 'warning' }]];
+      botoes = [];
     }
-    return arvoreDeLinhas($, e, linhas);
+    return arvoreDeLinhas($, e, linhas, botoes, larg);
   });
 
+  /**
+   * Faixa acima do input (GM-14 T20, REQ-GLB-1): survey ⇒ `next(e)`. `acima` e visível ⇒ o painel inteiro no orçamento de H/`maxRows`.
+   * `lateral` com a Pane visível ⇒ `next(e)` (nunca os dois). Pane invisível ou painel oculto ⇒ 1 linha só com PAROU ou pergunta; sem eles, `next(e)`.
+   */
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (!S.interativo || e.props?.hasSurvey === true) return next(e);
-    await lerPanes($);
-    let f;
-    try {
-      f = faixaDe(S.estado, S.paneVisivel, S.falha, { root: $.plugin.root, ligado: S.prefs.ligado !== false });
-    } catch {
-      f = null;
-    }
-    if (f === null) return next(e);
-    f = faixaCortada(f, colunasDe(e.props));
+    const oculto = S.prefs.ligado === false;
+    const larg = colunasDe(e.props);
     const { Box, Button, Text } = $.ui.resolve(e);
+    if (S.local === 'acima' && !oculto) {
+      if (S.estado === null && S.falha === null) return next(e);
+      let linhas;
+      let botoes;
+      try {
+        botoes = botoesDoTopo(S.estado, $.plugin.root);
+        linhas = linhasDaFaixa(S.estado, S.prefs, { largura: larg, h: hDoViewport(e), maxRows: e.props?.maxRows, falha: S.falha, avisos: S.avisos, semLerS: S.semLerS });
+      } catch {
+        linhas = [[{ texto: 'painel: não consegui desenhar', cor: 'warning' }]];
+        botoes = [];
+      }
+      return arvoreDeLinhas($, e, linhas, botoes, larg);
+    }
+    if (S.local === 'lateral' && !oculto) {
+      await lerPanes($);
+      if (S.paneVisivel) return next(e);
+    }
+    let f;
+    try { f = faixaUmaLinha(S.estado, { root: $.plugin.root }); } catch { f = null; }
+    if (f === null) return next(e);
+    const cabe = Math.max(1, larg - colunasDosBotoes(f.botoes));
     const cor = S.prefs.tema === 'mono' ? null : { color: f.cor };
-    const comando = f.comando;
-    const botao = comando === null ? [] : [h(Text, null, ' '), h(Button, {
-      key: 'painel-acao',
-      label: f.rotulo,
-      onPress: async () => {
-        try {
-          const r = await $.prompt.fill({ text: comando, mode: 'replace' });
-          if (r?.isFilled !== true) $.ui.status('gabarito: não consegui pôr o comando no prompt');
-        } catch {
-          try { $.ui.status('gabarito: não consegui pôr o comando no prompt'); } catch { /* sem tela */ }
-        }
-      },
-    })];
-    return h(Box, null, h(Text, cor, f.texto), ...botao);
+    return h(Box, null, h(Text, cor, cortar(f.texto, cabe)), ...botoesDe($, Button, Text, f.botoes));
   });
 }
