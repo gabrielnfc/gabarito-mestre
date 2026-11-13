@@ -6,11 +6,12 @@
  * Qualquer outro nome, qualquer chamada com erro ou entrada fora da forma derruba o grupo inteiro para `null`: a linha nunca diz menos que o fato.
  * Limite declarado (S2b, t0a.md): chamada solo chega como grupo de 1 e só `Read` solo foi medido; Bash, Edit e Agent solo são presumidos.
  */
-export type Chamada = { nome: string; erro: boolean; papel?: string };
+export type Chamada = { nome: string; erro: boolean; papel?: string; /** só o `Bash` a usa (`acaoDe`): a `description` que o modelo deu ao comando */ descricao?: string };
 
 const LEITURA = new Set(['Read', 'Grep', 'Glob']);
 const EDICAO = new Set(['Edit', 'Write', 'NotebookEdit']);
 const MAX_PAPEL = 60;
+const MAX_DESCRICAO = 120;
 
 const plural = (n: number, um: string, varios: string): string => `${n} ${n === 1 ? um : varios}`;
 
@@ -43,6 +44,32 @@ export function linhaDoGrupo(cs: Chamada[]): string | null {
     if (shell > 0) partes.push(`executou ${plural(shell, 'comando', 'comandos')}`);
     partes.push(...agentes);
     return partes.join(', ');
+  } catch {
+    return null;
+  }
+}
+
+/** `description` do Bash para o painel: sem caractere de controle ou formato, aparada, até 120 caracteres. Não texto ou vazio ⇒ `null`. */
+export function descricaoLimpa(d: unknown): string | null {
+  if (typeof d !== 'string') return null;
+  const t = [...d.replace(/[\p{Cc}\p{Cf}]/gu, '').trim()].slice(0, MAX_DESCRICAO).join('').trim();
+  return t === '' ? null : t;
+}
+
+/**
+ * Frase NO PRESENTE do que um agente faz agora (FIEL-11 b, GM-14 T35), para 1 chamada de ferramenta (`n` = quantas seguidas do mesmo tipo; inválido ⇒ 1).
+ * `Bash` com `description` ⇒ a própria descrição; senão "rodando N comando(s)". Leitura ⇒ "lendo N arquivo(s)", edição ⇒ "editando N arquivo(s)",
+ * `Agent` ⇒ "chamando <papel>". Fora da tabela ⇒ `null` (o painel não inventa). Nunca lança.
+ */
+export function acaoDe(c: Chamada, n = 1): string | null {
+  try {
+    if (c === null || typeof c !== 'object' || typeof c.nome !== 'string') return null;
+    const k = Number.isSafeInteger(n) && n >= 1 ? n : 1;
+    if (LEITURA.has(c.nome)) return `lendo ${plural(k, 'arquivo', 'arquivos')}`;
+    if (EDICAO.has(c.nome)) return `editando ${plural(k, 'arquivo', 'arquivos')}`;
+    if (c.nome === 'Bash') return descricaoLimpa(c.descricao) ?? `rodando ${plural(k, 'comando', 'comandos')}`;
+    if (c.nome === 'Agent') return `chamando ${papelLimpo(c.papel) ?? 'um agente'}`;
+    return null;
   } catch {
     return null;
   }

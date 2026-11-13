@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { linhaDoGrupo, type Chamada } from '../src/ferramentas.ts';
+import { acaoDe, descricaoLimpa, linhaDoGrupo, type Chamada } from '../src/ferramentas.ts';
 
 const c = (nome: string, extra: Partial<Chamada> = {}): Chamada => ({ nome, erro: false, ...extra });
 
@@ -71,4 +71,44 @@ test('sem-tipo-nem-caminho-na-linha', () => {
     const l = linhaDoGrupo(cs) ?? '';
     assert.doesNotMatch(l, /Read|Bash|Edit|Grep|Glob|Write|Agent|[/\\`]/);
   }
+});
+
+// ---- acaoDe (GM-14 T35, FIEL-11 b): o que o agente faz AGORA, no presente ----
+test('acao-de-outra-ferramenta-no-presente', () => {
+  assert.equal(acaoDe(c('Read')), 'lendo 1 arquivo');
+  assert.equal(acaoDe(c('Grep'), 3), 'lendo 3 arquivos');
+  assert.equal(acaoDe(c('Glob'), 2), 'lendo 2 arquivos');
+  assert.equal(acaoDe(c('Edit')), 'editando 1 arquivo');
+  assert.equal(acaoDe(c('Write'), 2), 'editando 2 arquivos');
+  assert.equal(acaoDe(c('NotebookEdit')), 'editando 1 arquivo');
+  assert.equal(acaoDe(c('Bash')), 'rodando 1 comando');
+  assert.equal(acaoDe(c('Bash'), 4), 'rodando 4 comandos');
+  assert.equal(acaoDe(c('Agent', { papel: 'revisor' })), 'chamando revisor');
+  assert.equal(acaoDe(c('Agent')), 'chamando um agente');
+});
+test('acao-bash-com-descricao-usa-a-descricao', () => {
+  assert.equal(acaoDe({ nome: 'Bash', erro: false, descricao: '  listar arquivos  ' }), 'listar arquivos');
+  assert.equal(acaoDe({ nome: 'Bash', erro: false, descricao: '   ' }), 'rodando 1 comando');
+  assert.equal(acaoDe({ nome: 'Bash', erro: false, descricao: 42 as unknown as string }), 'rodando 1 comando');
+  // descrição só vale no Bash
+  assert.equal(acaoDe({ nome: 'Read', erro: false, descricao: 'x' }), 'lendo 1 arquivo');
+});
+test('acao-higieniza-e-corta-a-descricao', () => {
+  assert.equal(descricaoLimpa('a\u0000b\u202Ec\nd'), 'abcd');
+  assert.equal([...(descricaoLimpa('x'.repeat(500)) ?? '')].length, 120);
+  assert.equal(descricaoLimpa(''), null);
+  assert.equal(descricaoLimpa(undefined), null);
+});
+test('acao-fora-da-tabela-ou-n-invalido', () => {
+  assert.equal(acaoDe(c('Monitor')), null);
+  assert.equal(acaoDe(c('SubagentHandback')), null);
+  assert.equal(acaoDe(c('read')), null); // nome exato, sem caixa
+  assert.equal(acaoDe(null as unknown as Chamada), null);
+  assert.equal(acaoDe(c('Read'), 0), 'lendo 1 arquivo');
+  assert.equal(acaoDe(c('Read'), 1.5), 'lendo 1 arquivo');
+  assert.equal(acaoDe(c('Read'), -2), 'lendo 1 arquivo');
+});
+test('acao-papel-do-agente-limpo', () => {
+  assert.equal(acaoDe(c('Agent', { papel: ' revi\u0000sor ' })), 'chamando revisor');
+  assert.equal(acaoDe(c('Agent', { papel: '   ' })), 'chamando um agente');
 });
