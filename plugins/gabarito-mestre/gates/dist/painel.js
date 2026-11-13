@@ -19,9 +19,10 @@ import { formaInvalida } from './formas.js';
 import { renderBlocos, renderEsquadrao } from './painel-esquadrao.js';
 import { historicoDe } from './painel-texto.js';
 import { renderExecutivo } from './painel-executivo.js';
-import { casarAgente, chaveDoPar, nomesPorPapel, projetarEquipe } from './painel-equipe.js';
+import { chaveDoPar, higienizarDescricao, nomesPorPapel, projetarEquipe, resolverAtivos } from './painel-equipe.js';
+                                                         
 import { dataCivil, fusoValido, horaLocal } from './painel-hora.js';
-                                                                                                                                                                                                                                       
+                                                                                                                                                                                                                           
 
 /** Despacha para o render do preset. Preset desconhecido não vira sucesso: lança (quem chama é o CLI, que já validou a flag). */
 export function renderPainel(e              , o              )          {
@@ -86,7 +87,6 @@ const tipoDe = (ev         )                => (ehObj(ev) && typeof ev.tipo === 
 const msDe = (ev         )         => (ehObj(ev) && typeof ev.ts === 'string' ? Date.parse(ev.ts) : Number.NaN);
 const HEX64 = /^[0-9a-f]{64}$/;
 const DIAS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
-const ENCERRADO                       = new Set(['idle', 'completed', 'failed', 'killed']);
 const EM_VOO                        = ['implementando', 'em_revisao', 'corrigindo'];
 const PAPEL_DO_ESTADO                                     = { implementando: 'implementador', corrigindo: 'correcao', em_revisao: 'revisor' };
 const SEGUNDA_RODADA                        = ['reprovada', 'corrigindo', 'concluida', 'em_revisao'];
@@ -297,21 +297,20 @@ function ciVermelhos(ord          )         {
   return n;
 }
 
-const vivoDe = (a         )                  => ehObj(a) && !ENCERRADO.has(a.status);
-
-function glifoDe(t                                    , plano       , agentes                     )            {
+/**
+ * Glifo da task. O "vivo" e o casamento são os de `painel-equipe` (`resolverAtivos`), os mesmos do AGORA e do ATENÇÃO (FIEL-3 a): `●` só com ativo
+ * casado no papel do estado; task `pendente` com ativo casado (qualquer papel) aparece em curso (`●`), nunca fila.
+ */
+function glifoDe(t                                    , quem                       )            {
   switch (t.estado) {
     case 'integrada': return '✓';
-    case 'pendente': return '○';
+    case 'pendente': return quem?.ativos?.some((x) => x.casamento.task === t.id) === true ? '●' : '○';
     case 'no_teto': return '✗';
     case 'concluida': case 'reprovada': case 'aprovada': return '◐'; // esperam outro papel por definição
     default: {
-      if (agentes === null) return '●'; // sem mod não há como saber: nunca finge ausência
+      if (quem === null || quem.ativos === null) return '●'; // sem mod não há como saber: nunca finge ausência
       const papel = PAPEL_DO_ESTADO[t.estado];
-      return agentes.some((a) => {
-        const c = casarAgente(a.description, plano);
-        return c !== null && c.task === t.id && c.papel === papel;
-      }) ? '●' : '◐';
+      return papel !== undefined && quem.cobertos.has(`${t.id}:${papel}`) ? '●' : '◐';
     }
   }
 }
@@ -458,7 +457,7 @@ export function projetarPainel(planoOuNulo              , eventos               
 function projetarLegado(plano       , eventos                 , entrada               )               {
   const c = calcular(plano, eventos, entrada);
   const { fuso, estados, ord, lista, valido } = c;
-  const agentes = Array.isArray(entrada.agentes) ? entrada.agentes.filter(vivoDe) : null;
+  const quem = resolverAtivos(plano, lista, entrada);
   const agora = entrada.agoraMs;
   const nomes = nomesPorPapel(lista, entrada.pacote);
 
@@ -474,7 +473,7 @@ function projetarLegado(plano       , eventos                 , entrada         
       id: t.id,
       ...(typeof t.titulo === 'string' ? { titulo: t.titulo } : {}),
       estado: r.estado,
-      glifo: glifoDe({ id: t.id, estado: r.estado }, plano, agentes),
+      glifo: glifoDe({ id: t.id, estado: r.estado }, quem),
       ...(papel !== undefined ? { papel } : {}),
       ...(nome !== undefined ? { nome } : {}),
       ...(r.modelo !== undefined ? { modelo: r.modelo } : {}),
@@ -509,11 +508,7 @@ function projetarLegado(plano       , eventos                 , entrada         
   const titulo = typeof entrada.titulo === 'string' && entrada.titulo.trim() !== '' ? entrada.titulo : null;
   // histórico: agente vivo casado ⇒ nome do par (`subagent:<id>` é o `agente` que a guarda grava); o texto do PAROU é o da TABELA_PARAR, com a task só se for do plano
   const porAgente = new Map                ();
-  for (const a of agentes ?? []) {
-    const casado = ehObj(a) && typeof a.id === 'string' ? casarAgente(a.description, plano) : null;
-    const nome = casado === null ? undefined : nomes.get(chaveDoPar(casado.task, casado.papel));
-    if (nome !== undefined) porAgente.set(`subagent:${a.id}`, nome);
-  }
+  for (const x of quem.ativos ?? []) if (x.id !== '') porAgente.set(`subagent:${x.id}`, x.nome); // o mesmo nome que a equipe mostra (FIEL-3 d)
   const textoParar = (motivo        , task               )                =>
     ehMotivo(motivo) ? linhaDaTabela(motivo, task !== null && plano.tasks.some((t) => t.id === task) ? task : null).texto : null;
   const hist = ord === null
@@ -562,17 +557,8 @@ function projetarLegado(plano       , eventos                 , entrada         
 export const LIMITE_DESATUALIZADO_S = 180;
 const NADA = 'depende de você: nada';
 const DESATUALIZADO = 'depende de você: ? (o painel está sem ler o diário)';
-const ATIVO_FIM                       = ENCERRADO;
-const PAPEL_DO_TIPO                          = [[/revisor/i, 'revisor'], [/sombra/i, 'sombra'], [/spike/i, 'spike']];
 const ACAO_DO_PAPEL                        = { implementador: 'implementando', revisor: 'revisando', correcao: 'corrigindo' };
 const finitoNaoNeg = (v         )                => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
-
-/** Papel de um vivo sem task casada: pelo `type` do despacho; sem pista, implementador (FIEL-3 a fica com a T29). */
-function papelDoTipo(tipo         )              {
-  const t = typeof tipo === 'string' ? tipo : '';
-  for (const [re, p] of PAPEL_DO_TIPO) if (re.test(t)) return p;
-  return 'implementador';
-}
 
 /** RECENTE (FIEL-10 d, D-P9): só resultados. `quem` antes do texto (o executivo troca por papel); origem da tabela de `origemDe`. */
 function recenteDe(ord                 , plano       , entrada               , nomes                     , comNomes         , fuso        ,
@@ -648,42 +634,51 @@ function projetarNovo(plano              , eventos                 , entrada    
   if (pergunta !== null) depende = depende.filter((i) => i.motivo !== NADA);
   if (velho) depende = depende.map((i) => (i.motivo === NADA ? { ...i, motivo: DESATUALIZADO } : i));
 
-  // AGORA: só ativos; casados ao plano pelo `casarAgente` da E4 (o casamento novo é da T29)
-  const ativos = entrada.agentes === null ? null : (Array.isArray(entrada.agentes) ? entrada.agentes : []).filter((a)                  => ehObj(a) && !ATIVO_FIM.has(a.status));
+  // AGORA: só ativos, pelo casamento e pelo "ativo" de `painel-equipe` (FIEL-3 a, FIEL-6): as mesmas linhas da equipe, do glifo e do ATENÇÃO
+  const equipeAtiva = resolverAtivos(p, lista, entrada);
+  const ativos = equipeAtiva.ativos;
   const desdeIni = (task        , papel       )                => {
     let ms = Number.NaN;
     for (const ev of ord ?? []) if (ev.tipo === 'task.iniciada' && taskDe(ev) === task && chaveDoPar(task, String(dadosDe(ev).papel)) === chaveDoPar(task, papel)) ms = msDe(ev);
     return Number.isFinite(ms) ? Math.max(0, Math.floor((entrada.agoraMs - ms) / 1000)) : null;
   };
-  const cobertos = new Set        ();
-  const agentes                       = ativos === null ? null : ativos.map((a) => {
-    const casado = casarAgente(a.description, p);
-    const descricao = typeof a.description === 'string' && a.description.trim() !== '' ? a.description : null;
-    if (casado === null) {
+  const agentes                       = ativos === null ? null : ativos.map((x) => {
+    const a = x.agente;
+    const c = x.casamento;
+    const nome = comNomes ? x.nome : null;
+    const util = higienizarDescricao(a.description);
+    // FIEL-11 b: 1) o que o mod viu agora (`acoes`); 2) plano B, o que está registrado, marcado "(registrado)"; sem fonte ⇒ `null` ("?")
+    const aoVivo = ehObj(entrada.acoes) && ehObj(entrada.acoes[x.id]) && typeof entrada.acoes[x.id].texto === 'string' ? higienizarDescricao(entrada.acoes[x.id].texto) : null;
+    if (c.task === null || c.papel === null) {
       const visto = finitoNaoNeg(a.vistoEm);
-      return { quem: { nome: comNomes && typeof a.nome === 'string' && a.nome !== '' ? a.nome : null, papel: papelDoTipo(a.type) }, task: null, acao: descricao,
+      return { quem: { nome, papel: c.papelExibido ?? 'implementador' }, task: null, acao: aoVivo ?? util,
         desdeS: visto === null ? null : Math.max(0, Math.floor((entrada.agoraMs - visto) / 1000)) };
     }
-    cobertos.add(`${casado.task}:${casado.papel}`);
-    // a `description` casada é só "<task> <papel>": o que está fazendo vem do último fato registrado, o papel em palavras (FIEL-11 b, plano B)
-    return { quem: { nome: nomes.get(chaveDoPar(casado.task, casado.papel)) ?? null, papel: casado.papel }, task: casado.task,
-      acao: `${ACAO_DO_PAPEL[casado.papel]} (registrado)`, desdeS: desdeIni(casado.task, casado.papel) };
+    // a `description` casada que é só "<task> <papel>" não diz o que faz: o papel em palavras (último fato registrado)
+    const soPapel = util !== null && /^\S+ (implementador|revisor|correcao)$/.test(util);
+    const registrado = util === null || soPapel ? `${ACAO_DO_PAPEL[c.papel]} (registrado)` : `${util} (registrado)`;
+    return { quem: { nome, papel: c.papelExibido ?? c.papel }, task: c.task, acao: aoVivo ?? registrado, desdeS: desdeIni(c.task, c.papel) };
   });
+  // segundo plano (FIEL-11 c): "Teste · <task ou orquestrador> · <description> · <tempo>"
+  const taskDoDono = new Map((ativos ?? []).map((x) => [x.id, x.casamento.task]));
+  const segundoPlano                = ativos === null || !Array.isArray(entrada.segundoPlano) ? [] : entrada.segundoPlano.filter((b) => ehObj(b) && typeof b.id === 'string').map((b) => ({
+    quem: { nome: null, papel: 'teste'          }, task: b.dono === 'orquestrador' ? null : taskDoDono.get(b.dono) ?? null, acao: higienizarDescricao(b.texto),
+    desdeS: Number.isFinite(b.desde) ? Math.max(0, Math.floor((entrada.agoraMs - b.desde) / 1000)) : null,
+  }));
 
   // ATENÇÃO (FIEL-10 c): só travado ou com problema
   const atencao           = [];
   if (ativos !== null) {
-    for (const t of p.tasks) {
-      const estado = estados.get(t.id)?.estado;
-      const papel = estado === undefined ? undefined : PAPEL_DO_ESTADO[estado];
-      if (papel !== undefined && !cobertos.has(`${t.id}:${papel}`)) atencao.push(`${t.id} sem agente trabalhando`);
-    }
+    for (const t of equipeAtiva.esperando) atencao.push(`${t} sem agente trabalhando`);
+    const d = equipeAtiva.desconhecidos;
+    if (d > 0) atencao.push(`${d} ${d === 1 ? 'agente' : 'agentes'} com estado desconhecido`);
   }
   if (legado.rodape.ci.verde === false) atencao.push('CI vermelho na última execução');
   const alt = c.prod.alteracoes;
   if (alt > 0) atencao.push(`produção alterada ${alt} ${alt === 1 ? 'vez' : 'vezes'} nesta entrega`);
   const semRegistro = contarConsultas(lista) - projetarDecisoes(lista).size;
-  if (semRegistro > 0) atencao.push(`${semRegistro} ${semRegistro === 1 ? 'consulta' : 'consultas'} à Sombra sem decisão registrada`);
+  const sombraAtiva = (ativos ?? []).some((x) => x.casamento.papelExibido === 'sombra');
+  if (semRegistro > 0 && !sombraAtiva) atencao.push(`${semRegistro} ${semRegistro === 1 ? 'consulta' : 'consultas'} à Sombra sem decisão registrada`);
   if (velho) atencao.push(`painel sem ler o diário há ${Math.floor((desat          ) / 60)} min`);
 
   // PRONTO (com plano) ou FASE (sem plano)
@@ -721,7 +716,7 @@ function projetarNovo(plano              , eventos                 , entrada    
     depende, atencao,
     agora: {
       orquestrador: { nome: comNomes ? entrada.pacote?.lider ?? null : null, contexto: pct, estimado: false, pousar: pct !== null && pct >= entrada.x },
-      agentes, segundoPlano: [],
+      agentes, segundoPlano,
     },
     recente: recenteDe(ord, p, entrada, nomes, comNomes, fuso, textoParar),
     desatualizadoS: desat,

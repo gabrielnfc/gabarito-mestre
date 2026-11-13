@@ -185,6 +185,10 @@ export type UsoAgente = { contexto: number; tok: number; modelo: string | null }
 export type AgenteVivo = { id: string; type: string; description: string; status: string; uso: UsoAgente | null; nome?: string; vistoEm?: number };
 /** stdin de `painel.mjs estado|texto --agentes`, campo `nomes` (GM-14 FIEL-3 d): `agent_id` ⇒ nome estável e 1ª vez que o mod o viu (ms). Teto 64. */
 export type NomesAgentes = { [agentId: string]: { nome: string; vistoEm: number } };
+/** stdin de `--agentes`, `acoes` (FIEL-11 b, T35): a última ação ao vivo de cada agente; `fonte` diz de onde veio (`tool.call` ou `Bash`). */
+export type AcoesAgentes = { [agentId: string]: { texto: string; fonte: 'tool' | 'bash'; em: number } };
+/** stdin de `--agentes`, `segundoPlano` (FIEL-11 c): `dono` = `orquestrador` ou o `agent_id`; `desde` em ms. */
+export type SegundoPlanoItem = { id: string; dono: string; texto: string; desde: number };
 /** `fuso`, `entregaId`, `modeloSessao`, `specSha` e `tetoSombra` só o CLI preenche (Sombra 5); o mod nunca. */
 export type EntradaPainel = {
   /** Só preenchida pelo CLI com o loop em `concluir` (toda task integrada e sem proposta aberta). */
@@ -195,6 +199,12 @@ export type EntradaPainel = {
   x: number;
   /** `null` = sem mod (CLI sem `--agentes`): sem linha `◌ sem agente` e `agentes —`. `[]` = mod presente e nenhum vivo. */
   agentes: AgenteVivo[] | null;
+  /** GM-14 FIEL-6 a (stdin do mod): ids com `SubagentStop`; saem do AGORA na hora, antes do `status`. Ausente = nenhum. */
+  encerrados?: string[];
+  /** GM-14 FIEL-11 b: ação ao vivo por `agent_id`; ausente = só o que está registrado. */
+  acoes?: AcoesAgentes;
+  /** GM-14 FIEL-11 c: trabalhos em segundo plano; ausente = nenhum. */
+  segundoPlano?: SegundoPlanoItem[];
   pacote: PacoteNomes;
   notificacao: { ts: string } | { motivo: string } | null;
   agoraMs: number;

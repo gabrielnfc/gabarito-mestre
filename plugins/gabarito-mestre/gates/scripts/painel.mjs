@@ -35,7 +35,7 @@ import { dirEntrega, lerEstrito } from '../dist/diario.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { estadoDe, ordenar, proximaAcao, TIPOS_DE_TASK } from '../dist/loop.js';
 import { projetarPainel, renderPainel } from '../dist/painel.js';
-import { validarPacote, usoDoTranscript } from '../dist/painel-equipe.js';
+import { validarPacote, validarStdinAgentes, usoDoTranscript } from '../dist/painel-equipe.js';
 import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
 import { lerX } from '../dist/pouso.js';
@@ -273,8 +273,11 @@ const tituloDe = (bytes) => {
   return null;
 };
 
-/** Agentes do stdin ⇒ `AgenteVivo[]`. Item que não é objeto ou sem `id` string é descartado; `id` repetido fica o 1º. Não array ⇒ `null`. */
-function agentesDe(bruto) {
+/**
+ * Agentes do stdin ⇒ `AgenteVivo[]`. Item que não é objeto ou sem `id` string é descartado; `id` repetido fica o 1º. Não array ⇒ `null`.
+ * `nomes` (já validado por `validarStdinAgentes`, FIEL-3 d): `{agent_id: {nome, vistoEm}}` do `$.store` do mod; o agente com entrada leva `nome` e `vistoEm`.
+ */
+function agentesDe(bruto, nomes = {}) {
   if (!Array.isArray(bruto)) return null;
   const vistos = new Set();
   const saida = [];
@@ -287,6 +290,7 @@ function agentesDe(bruto) {
       description: typeof it.description === 'string' ? it.description : '',
       status: typeof it.status === 'string' ? it.status : 'desconhecido', // status desconhecido conta como vivo
       uso: usoDoItem(it),
+      ...(Object.hasOwn(nomes, it.id) ? { nome: nomes[it.id].nome, vistoEm: nomes[it.id].vistoEm } : {}),
     });
   }
   return saida;
@@ -506,7 +510,10 @@ export function estadoDoPainel(cwd, opts = {}) {
     // stdin (só quando o chamador passou --agentes)
     const comAgentes = opts.agentes !== undefined && opts.agentes !== null;
     const sessao = comAgentes && ehObj(opts.agentes.sessao) ? opts.agentes.sessao : {};
-    const agentes = comAgentes ? agentesDe(opts.agentes.agentes) : null;
+    // FIEL-3 d, FIEL-6 a, FIEL-11: `nomes`, `encerrados`, `acoes`, `segundoPlano`; ausente = vazio, fora do contrato = falha (nunca vazio calado)
+    const extras = comAgentes ? validarStdinAgentes(opts.agentes) : null;
+    if (extras !== null && !extras.ok) throw new Falha('stdin_invalido', extras.erro);
+    const agentes = comAgentes ? agentesDe(opts.agentes.agentes, extras.valor.nomes) : null;
 
     // x: o do stdin vence o do env (o mod conhece o X que ele passa)
     const xBruto = sessao.x === undefined || sessao.x === null ? env.GABARITO_POUSO_X : typeof sessao.x === 'number' ? String(sessao.x) : typeof sessao.x === 'string' ? sessao.x : '?';
@@ -540,6 +547,7 @@ export function estadoDoPainel(cwd, opts = {}) {
       limites: { h5: numero(sessao.h5), d7: numero(sessao.d7) },
       x: x.x,
       agentes,
+      ...(extras !== null ? { encerrados: extras.valor.encerrados, acoes: extras.valor.acoes, segundoPlano: extras.valor.segundoPlano } : {}),
       pacote,
       notificacao: notificacaoDe(sessao.notificacao),
       agoraMs,

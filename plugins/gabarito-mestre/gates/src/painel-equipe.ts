@@ -5,7 +5,7 @@
  * `diario-puro.ts` (a mesma de `sombra.ts`), e `tokensDe` vem de `pouso.ts` (puro, o mod já o carrega).
  */
 
-import { projetarDecisoes } from './diario-puro.ts';
+import { contarConsultas, projetarDecisoes } from './diario-puro.ts';
 import type { DecisaoSombra } from './diario-puro.ts';
 import { formaInvalida } from './formas.ts';
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.ts';
@@ -13,7 +13,7 @@ import type { EstadoTask } from './loop.ts';
 import { dataCivil } from './painel-hora.ts';
 import { colunas, limpar } from './painel-largura.ts';
 import { tokensDe } from './pouso.ts';
-import type { AgentePainel, AgenteVivo, CorTema, EntradaPainel, EstadoPainel, Evento, NomesAgentes, PacoteNomes, Papel, Plano, UsoAgente } from './tipos.ts';
+import type { AcoesAgentes, AgentePainel, AgenteVivo, CorTema, EntradaPainel, EstadoPainel, Evento, NomesAgentes, PacoteNomes, Papel, Plano, SegundoPlanoItem, UsoAgente } from './tipos.ts';
 
 const DESCRICAO_RE = /^(\S+) (implementador|revisor|correcao)$/;
 
@@ -29,6 +29,64 @@ export function casarAgente(description: string, plano: Plano): { task: string; 
   const tasks = plano !== null && typeof plano === 'object' && Array.isArray(plano.tasks) ? plano.tasks : [];
   if (!tasks.some((t) => t.id === m[1])) return null;
   return { task: m[1], papel: m[2] as Papel };
+}
+
+// ---------- casamento do vivo (GM-14 FIEL-3 a) ----------
+
+export type PapelExibido = NonNullable<AgentePainel['papelExibido']>;
+
+/** Papel que o `type` do despacho diz (`subagent_type`, ex. `gabarito-mestre:gabarito-implementador`); sem pista ⇒ `null`. */
+export function papelDoAgente(tipo: unknown): 'implementador' | 'revisor' | 'spike' | 'sombra' | null {
+  if (typeof tipo !== 'string') return null;
+  if (/revisor/i.test(tipo)) return 'revisor';
+  if (/implementador/i.test(tipo)) return 'implementador';
+  if (/sombra/i.test(tipo)) return 'sombra';
+  if (/spike/i.test(tipo)) return 'spike';
+  return null;
+}
+
+/** `task` e `papel` `null` = sem task do plano (o papel do tipo só serve para exibição). `papel` é o do par (nome, cobertura); `papelExibido` é o mostrado. */
+export type Casamento = { task: string | null; papel: Papel | null; papelExibido: PapelExibido | null };
+
+/**
+ * Liga o vivo à task (FIEL-3 a). Task: o 1º token da `description` é um id do plano, ou esse id mais 1 letra minúscula (`T0a` ⇒ `T0`); vale o id
+ * mais longo; `T10` nunca casa `T1`. Papel, nesta ordem: 1. o do padrão antigo `<task> <papel>`; 2. o do tipo (`papelDoAgente`); 3. tipo
+ * `implementador` numa task em `corrigindo` vira `correcao`; 4. tipo sem papel do gabarito ⇒ o papel do estado da task; 5. sem task, ou sem papel
+ * nenhum, o do tipo só para exibição (`spike`, `sombra`). Nunca lança; `description`/`type` que não são texto ⇒ sem task.
+ */
+export function casarVivo(agente: unknown, plano: Plano, estados: ReadonlyMap<string, EstadoTask>): Casamento {
+  const a = ehObjeto(agente) ? agente : {};
+  const desc = typeof a.description === 'string' ? a.description.trim() : '';
+  const tipo = papelDoAgente(a.type);
+  const token = desc.split(/\s+/)[0] ?? '';
+  const tasks = plano !== null && typeof plano === 'object' && Array.isArray(plano.tasks) ? plano.tasks : [];
+  let task: string | null = null;
+  for (const t of tasks) {
+    const id = t?.id;
+    if (typeof id !== 'string' || id === '') continue;
+    const casa = token === id || (token.length === id.length + 1 && token.startsWith(id) && /^[a-z]$/.test(token.slice(id.length)));
+    if (casa && (task === null || id.length > task.length)) task = id;
+  }
+  if (task === null) return { task: null, papel: null, papelExibido: tipo };
+  const antigo = DESCRICAO_RE.exec(desc);
+  const estado = estados.get(task);
+  const doEstado = estado === undefined ? undefined : PAPEL_DO_ESTADO[estado];
+  let papel: Papel | undefined;
+  if (antigo !== null) papel = antigo[2] as Papel;
+  else if (tipo === 'implementador') papel = estado === 'corrigindo' ? 'correcao' : 'implementador';
+  else if (tipo === 'revisor') papel = 'revisor';
+  else papel = doEstado;
+  return { task, papel: papel ?? 'implementador', papelExibido: papel ?? tipo ?? 'implementador' };
+}
+
+/** Token técnico (a regra de REQ-LNG-1) vira "…" na `description` mostrada (FIEL-3 b). */
+const TECNICO_RE = /[`]|--|\/[a-z]|\bnode\b|\.(json|mjs|md)\b|[a-z]+_[a-z_]+|[a-z]+\.[a-z]+\b/;
+
+/** `description` do despacho para o render: controle vira espaço, token técnico vira "…". Vazio ou não texto ⇒ `null`. */
+export function higienizarDescricao(texto: unknown): string | null {
+  if (typeof texto !== 'string') return null;
+  const tokens = texto.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').split(/\s+/).filter((t) => t !== '');
+  return tokens.length === 0 ? null : tokens.map((t) => (TECNICO_RE.test(t) ? '…' : t)).join(' ');
 }
 
 // ---------- pacote de nomes ----------
@@ -104,6 +162,74 @@ export function validarNomesAgentes(bruto: unknown): { ok: true; nomes: NomesAge
     return { ok: true, nomes };
   } catch {
     return erro('leitura falhou');
+  }
+}
+
+// ---------- stdin de `--agentes` além de `nomes` (GM-14 Emenda 2: `encerrados`, `acoes`, `segundoPlano`) ----------
+
+const TETO_ENCERRADOS = 256;
+const TETO_ACOES = 64;
+const TETO_SEGUNDO_PLANO = 64;
+const TEXTO_MAX = 400;
+
+export type StdinAgentes = { nomes: NomesAgentes; encerrados: string[]; acoes: AcoesAgentes; segundoPlano: SegundoPlanoItem[] };
+
+/**
+ * Valida o que o mod manda no stdin de `--agentes` além da lista: `nomes` (`validarNomesAgentes`), `encerrados` (ids com `SubagentStop`),
+ * `acoes` (`{agent_id: {texto, fonte: 'tool'|'bash', em}}`) e `segundoPlano` (`[{id, dono, texto, desde}]`). Campo ausente (`undefined`, mod da
+ * 2.0.0 ou CLI) ⇒ vazio; campo presente fora do contrato ⇒ `ok: false` ("`<campo>` corrompido: …"), nunca vazio calado. Devolve cópia. Nunca lança.
+ */
+export function validarStdinAgentes(bruto: unknown): { ok: true; valor: StdinAgentes } | { ok: false; erro: string } {
+  const falha = (campo: string, e: string): { ok: false; erro: string } => ({ ok: false, erro: `\`${campo}\` corrompido: ${e}` });
+  try {
+    if (!ehObjeto(bruto)) return { ok: true, valor: { nomes: {}, encerrados: [], acoes: {}, segundoPlano: [] } };
+    const n = validarNomesAgentes(bruto.nomes);
+    if (!n.ok) return n;
+    let encerrados: string[] = [];
+    if (bruto.encerrados !== undefined) {
+      const e = bruto.encerrados;
+      if (!Array.isArray(e)) return falha('encerrados', 'não é lista');
+      if (e.length > TETO_ENCERRADOS) return falha('encerrados', `${e.length} entradas, teto ${TETO_ENCERRADOS}`);
+      for (const id of e) if (typeof id !== 'string' || !AGENT_ID_RE.test(id)) return falha('encerrados', 'id fora do padrão');
+      encerrados = [...(e as string[])];
+    }
+    const acoes: AcoesAgentes = {};
+    if (bruto.acoes !== undefined) {
+      const a = bruto.acoes;
+      if (!ehObjeto(a)) return falha('acoes', 'não é objeto');
+      const ids = Object.keys(a);
+      if (ids.length > TETO_ACOES) return falha('acoes', `${ids.length} entradas, teto ${TETO_ACOES}`);
+      for (const id of ids) {
+        const v: unknown = a[id];
+        if (!AGENT_ID_RE.test(id)) return falha('acoes', 'agent_id fora do padrão');
+        if (!ehObjeto(v)) return falha('acoes', `${id} não é objeto`);
+        const extra = Object.keys(v).find((k) => k !== 'texto' && k !== 'fonte' && k !== 'em');
+        if (extra !== undefined) return falha('acoes', `${id} com campo a mais: ${extra}`);
+        const { texto, fonte, em } = v;
+        if (typeof texto !== 'string' || texto.length > TEXTO_MAX) return falha('acoes', `${id}.texto não é texto curto`);
+        if (fonte !== 'tool' && fonte !== 'bash') return falha('acoes', `${id}.fonte fora de tool|bash`);
+        if (typeof em !== 'number' || !Number.isSafeInteger(em) || em < 0) return falha('acoes', `${id}.em não é inteiro ≥ 0`);
+        acoes[id] = { texto, fonte, em };
+      }
+    }
+    const segundoPlano: SegundoPlanoItem[] = [];
+    if (bruto.segundoPlano !== undefined) {
+      const l = bruto.segundoPlano;
+      if (!Array.isArray(l)) return falha('segundoPlano', 'não é lista');
+      if (l.length > TETO_SEGUNDO_PLANO) return falha('segundoPlano', `${l.length} entradas, teto ${TETO_SEGUNDO_PLANO}`);
+      for (const [i, v] of (l as unknown[]).entries()) {
+        if (!ehObjeto(v)) return falha('segundoPlano', `[${i}] não é objeto`);
+        const { id, dono, texto, desde } = v;
+        if (typeof id !== 'string' || id === '' || id.length > 128) return falha('segundoPlano', `[${i}].id`);
+        if (typeof dono !== 'string' || (dono !== 'orquestrador' && !AGENT_ID_RE.test(dono))) return falha('segundoPlano', `[${i}].dono`);
+        if (typeof texto !== 'string' || texto.length > TEXTO_MAX) return falha('segundoPlano', `[${i}].texto`);
+        if (typeof desde !== 'number' || !Number.isSafeInteger(desde) || desde < 0) return falha('segundoPlano', `[${i}].desde`);
+        segundoPlano.push({ id, dono, texto, desde });
+      }
+    }
+    return { ok: true, valor: { nomes: n.nomes, encerrados, acoes, segundoPlano } };
+  } catch {
+    return falha('stdin', 'leitura falhou');
   }
 }
 
@@ -251,11 +377,110 @@ const familia = (modelo: unknown): string | null => {
   return m === null ? null : m[0];
 };
 
-/** Vivo = `status` fora de `{idle, completed, failed, killed}`; dado desconhecido (inclusive não texto) conta como vivo (`vivosDe`). */
-const vivoDe = (a: unknown): boolean => {
-  const s = ehObjeto(a) ? a.status : undefined;
-  return !(typeof s === 'string' && ENCERRADO.has(s));
+/** Status que contam como trabalhando (FIEL-6 a). */
+const STATUS_ATIVO: ReadonlySet<string> = new Set(['pending', 'running', 'waiting']);
+export type EstadoVivo = 'ativo' | 'encerrado' | 'desconhecido';
+
+/**
+ * Ids que já pararam: `encerrados` do mod (`SubagentStop`) e `custo.medicao` de `subagent:<id>` no diário (plano B). Qualquer dos dois vence o `status`.
+ */
+export function idsEncerrados(eventos: Evento[], encerrados?: unknown): Set<string> {
+  const ids = new Set<string>();
+  for (const e of Array.isArray(eventos) ? eventos : []) {
+    if (ehObjeto(e) && e.tipo === 'custo.medicao' && typeof e.agente === 'string' && e.agente.startsWith('subagent:') && e.agente.length > 9) ids.add(e.agente.slice(9));
+  }
+  if (Array.isArray(encerrados)) for (const id of encerrados) if (typeof id === 'string' && id !== '') ids.add(id);
+  return ids;
+}
+
+/**
+ * Ativo (FIEL-6 a): `status` em `{pending, running, waiting}` e id fora de `fim`. `idle/completed/failed/killed` ou id em `fim` ⇒ `encerrado`;
+ * qualquer outro status (ausente, não texto, desconhecido) ⇒ `desconhecido`: não é ativo (D-P13 1) e o ATENÇÃO o conta.
+ */
+export function estadoDoVivo(a: unknown, fim: ReadonlySet<string>): EstadoVivo {
+  if (!ehObjeto(a)) return 'desconhecido';
+  if (typeof a.id === 'string' && fim.has(a.id)) return 'encerrado';
+  const s = a.status;
+  if (typeof s !== 'string') return 'desconhecido';
+  if (STATUS_ATIVO.has(s)) return 'ativo';
+  return ENCERRADO.has(s) ? 'encerrado' : 'desconhecido';
+}
+
+const NOME_RECEBIDO_RE = /^(?:[A-Z0-9ÀÁÂÃÄÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜ'-]{1,10}[2-9]?|agente)$/u;
+
+/** 1º nome do pacote fora de `usados`; esgotado ⇒ nome + sufixo 2..9 (1º nome, 2º nome… com o sufixo 2; depois o 3); depois do 9 ⇒ "agente" (FIEL-3 d). */
+function proximoNome(pacote: PacoteNomes, usados: ReadonlySet<string>): string {
+  const base = Array.isArray(pacote?.nomes) ? pacote.nomes : [];
+  for (const n of base) if (!usados.has(n)) return n;
+  for (let suf = 2; suf <= 9; suf++) for (const n of base) if (!usados.has(`${n}${suf}`)) return `${n}${suf}`;
+  return 'agente';
+}
+
+export type Ativo = { agente: AgenteVivo; id: string; casamento: Casamento; nome: string };
+export type AtivosDaEquipe = {
+  /** `null` = sem mod (`entrada.agentes === null`). */
+  ativos: Ativo[] | null;
+  /** Agentes com status fora da lista conhecida (nem ativos nem encerrados). */
+  desconhecidos: number;
+  /** Tasks em `implementando`, `corrigindo` ou `em_revisao` sem ativo casado no papel do estado (FIEL-6 b); `[]` sem mod. */
+  esperando: string[];
+  /** `${task}:${papel}` com ativo casado. */
+  cobertos: Set<string>;
+  estados: Map<string, EstadoTask>;
 };
+
+/**
+ * A fonte única de quem está ativo, ligado a qual task e com que nome (FIEL-3 a, d; FIEL-6): o AGORA, o ATENÇÃO, o glifo do PLANO e o histórico
+ * leem esta função, nunca cada um a sua. Nome: casado ⇒ o do par, se nenhum outro ativo o usa; senão (e para o sem task) o recebido do mod
+ * (`nome`, estável) quando livre, senão o 1º livre do pacote, na ordem em que o mod viu o agente (`vistoEm`); o líder e o sábio nunca entram.
+ */
+export function resolverAtivos(plano: Plano, eventos: Evento[] | null, entrada: EntradaPainel): AtivosDaEquipe {
+  const lista: Evento[] = Array.isArray(eventos) ? eventos : [];
+  const ord = ordemSegura(lista);
+  const estados = estadosDasTasks(plano, ord);
+  const vazio: AtivosDaEquipe = { ativos: null, desconhecidos: 0, esperando: [], cobertos: new Set(), estados };
+  if (entrada.agentes === null || entrada.agentes === undefined) return vazio;
+  const fim = idsEncerrados(lista, entrada.encerrados);
+  const pares = nomesPorPapel(lista, entrada.pacote);
+  const brutos = Array.isArray(entrada.agentes) ? (entrada.agentes as unknown[]) : [];
+  let desconhecidos = 0;
+  const ativos: { agente: AgenteVivo; id: string; casamento: Casamento; nome: string | null; i: number }[] = [];
+  brutos.forEach((a, i) => {
+    const e = estadoDoVivo(a, fim);
+    if (e === 'desconhecido') { desconhecidos++; return; }
+    if (e === 'encerrado') return;
+    const agente = a as AgenteVivo;
+    ativos.push({ agente, id: typeof agente.id === 'string' ? agente.id : '', casamento: casarVivo(agente, plano, estados), nome: null, i });
+  });
+  const usados = new Set<string>([entrada.pacote?.lider, entrada.pacote?.sabio].filter((n): n is string => typeof n === 'string'));
+  // 1º, os casados com o nome do par, se livre
+  for (const x of ativos) {
+    const c = x.casamento;
+    const par = c.task === null || c.papel === null ? undefined : pares.get(chaveDoPar(c.task, c.papel));
+    if (par !== undefined && !usados.has(par)) { x.nome = par; usados.add(par); }
+  }
+  // 2º, o resto na ordem em que o mod os viu: o nome recebido, se livre; senão o 1º livre do pacote
+  const resto = ativos.filter((x) => x.nome === null).sort((x, y) => {
+    const vx = Number.isFinite(x.agente.vistoEm) ? (x.agente.vistoEm as number) : Infinity;
+    const vy = Number.isFinite(y.agente.vistoEm) ? (y.agente.vistoEm as number) : Infinity;
+    return vx === vy ? x.i - y.i : vx < vy ? -1 : 1;
+  });
+  for (const x of resto) {
+    const rec = x.agente.nome;
+    const nome = typeof rec === 'string' && NOME_RECEBIDO_RE.test(rec) && !usados.has(rec) ? rec : proximoNome(entrada.pacote, usados);
+    x.nome = nome;
+    if (nome !== 'agente') usados.add(nome);
+  }
+  const cobertos = new Set<string>();
+  for (const x of ativos) if (x.casamento.task !== null && x.casamento.papel !== null) cobertos.add(`${x.casamento.task}:${x.casamento.papel}`);
+  const esperando: string[] = [];
+  for (const t of plano.tasks) {
+    const estado = estados.get(t.id);
+    const papel = estado === undefined ? undefined : PAPEL_DO_ESTADO[estado];
+    if (papel !== undefined && !cobertos.has(`${t.id}:${papel}`)) esperando.push(t.id);
+  }
+  return { ativos: ativos.map((x) => ({ agente: x.agente, id: x.id, casamento: x.casamento, nome: x.nome as string })), desconhecidos, esperando, cobertos, estados };
+}
 
 /** `tok` ausente ou corrompido é `null` (nunca 0: zero é medida, e ausente não é medida); o `contexto` válido segue valendo. */
 type UsoLido = { contexto: number; tok: number | null; modelo: string | null };
@@ -331,41 +556,27 @@ export function projetarEquipe(plano: Plano, eventos: Evento[] | null, entrada: 
     tok: doOrquestrador.ok ? doOrquestrador.tokens : null, h5: entrada.limites.h5, d7: entrada.limites.d7, narrativa: '',
   };
 
-  // agentes
+  // agentes: só ativos (FIEL-6); task em voo sem ativo vai a `esperando` (o ATENÇÃO), nunca a uma linha `◌`
   const agentes: AgentePainel[] = [];
-  const cobertos = new Set<string>(); // `${task}:${papel}` com agente vivo casado
-  if (entrada.agentes !== null) {
-    for (const a of Array.isArray(entrada.agentes) ? (entrada.agentes as AgenteVivo[]) : []) {
-      if (!vivoDe(a)) continue;
-      const uso = ehObjeto(a) ? usoValido(a.uso) : null;
-      const casado = ehObjeto(a) ? casarAgente(a.description, plano) : null;
-      if (casado === null) {
-        agentes.push({
-          nome: null, papel: null, task: undefined, estadoTask: null, modelo: familia(uso?.modelo), ctxPct: pctDe(uso), ctxTok: uso?.contexto ?? null,
-          tok: uso?.tok ?? null, desdeS: null, cor: 'inactive', vivo: true,
-        });
-        continue;
-      }
-      cobertos.add(`${casado.task}:${casado.papel}`);
-      const ini = iniciada(casado.task, casado.papel);
-      const nome = nomes.get(chaveDoPar(casado.task, casado.papel)) ?? null;
+  const res = resolverAtivos(plano, eventos, entrada);
+  for (const x of res.ativos ?? []) {
+    const a = x.agente;
+    const uso = usoValido(a.uso);
+    const c = x.casamento;
+    const descricao = higienizarDescricao(a.description);
+    if (c.task === null || c.papel === null) {
       agentes.push({
-        nome, papel: casado.papel, task: casado.task, estadoTask: estados.get(casado.task) ?? null,
-        modelo: familia(uso?.modelo) ?? familia(ini !== null && ehObjeto(ini.dados) ? ini.dados.modelo : null),
-        ctxPct: pctDe(uso), ctxTok: uso?.contexto ?? null, tok: uso?.tok ?? null, desdeS: desdeS(ini), cor: corDe(nome), vivo: true,
+        nome: x.nome, papel: null, task: undefined, estadoTask: null, modelo: familia(uso?.modelo), ctxPct: pctDe(uso), ctxTok: uso?.contexto ?? null,
+        tok: uso?.tok ?? null, desdeS: null, cor: corDe(x.nome), vivo: true, descricao, papelExibido: c.papelExibido,
       });
+      continue;
     }
-    for (const t of plano.tasks) {
-      const estado = estados.get(t.id);
-      const papel = estado === undefined ? undefined : PAPEL_DO_ESTADO[estado];
-      if (papel === undefined || cobertos.has(`${t.id}:${papel}`)) continue;
-      const ini = iniciada(t.id, papel);
-      const nome = nomes.get(chaveDoPar(t.id, papel)) ?? null;
-      agentes.push({
-        nome, papel, task: t.id, estadoTask: estado as EstadoTask, modelo: familia(ini !== null && ehObjeto(ini.dados) ? ini.dados.modelo : null),
-        ctxPct: null, ctxTok: null, tok: null, desdeS: desdeS(ini), cor: corDe(nome), vivo: false,
-      });
-    }
+    const ini = iniciada(c.task, c.papel);
+    agentes.push({
+      nome: x.nome, papel: c.papel, task: c.task, estadoTask: res.estados.get(c.task) ?? null,
+      modelo: familia(uso?.modelo) ?? familia(ini !== null && ehObjeto(ini.dados) ? ini.dados.modelo : null),
+      ctxPct: pctDe(uso), ctxTok: uso?.contexto ?? null, tok: uso?.tok ?? null, desdeS: desdeS(ini), cor: corDe(x.nome), vivo: true, descricao, papelExibido: c.papelExibido,
+    });
   }
 
   // D-R2: ordem estável, independente da ordem em que o mod lista os agentes: (índice da task no plano, papel, vivo antes de ◌); `sem task` no fim, na ordem de entrada
@@ -376,7 +587,7 @@ export function projetarEquipe(plano: Plano, eventos: Evento[] | null, entrada: 
     .map((a, i) => ({ a, i, k: chaveDeOrdem(a) }))
     .sort((x, y) => (x.k[0] === y.k[0] ? 0 : x.k[0] < y.k[0] ? -1 : 1) || x.k[1] - y.k[1] || x.k[2] - y.k[2] || x.i - y.i)
     .map((x) => x.a);
-  const vivos = entrada.agentes === null ? null : ordenados.filter((a) => a.vivo).length;
+  const vivos = res.ativos === null ? null : ordenados.length;
 
   // revisores aguardando (task em `concluida`); mutações de hoje somam a entrega, não a task
   const hoje = mutacoesDeHoje(ord, entrada);
@@ -397,7 +608,8 @@ export function projetarEquipe(plano: Plano, eventos: Evento[] | null, entrada: 
   const sombra = {
     nome: entrada.pacote.sabio, modelo: familia(ultimaSombra !== null && ehObjeto(ultimaSombra.dados) ? ultimaSombra.dados.modelo : null),
     decisoes: vigentes.length, ultima,
+    consultasAbertas: Math.max(0, contarConsultas(todos) - vigentes.length),
   };
 
-  return { lider, agentes: ordenados, vivos, revisoresAguardando, sombra };
+  return { lider, agentes: ordenados, vivos, revisoresAguardando, esperando: res.esperando, sombra };
 }
