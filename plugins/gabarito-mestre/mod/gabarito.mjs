@@ -284,7 +284,18 @@ async function avaliar($, c) {
     return r;
   }
   if (!(r.acao.tipo === 'parar' && r.acao.motivo === 'diario_invalido')) diarioAvisado = null;
-  // FIEL-2 b: `aprender` só com pendência `dono` (a do `pousar` e do `concluir`) não nega `Agent`; as demais seguem negando
+  // FIEL-2 b: a pendência `dono` sai do cálculo; o resto (pouso, review, parar, fechamento) segue valendo. O núcleo devolve `aprender` no lugar
+  // de `pousar`/`concluir` quando só a `dono` está aberta: refaz-se a pergunta sem as `dono.mensagem`; se a resposta é `pousar`, o pouso vale
+  // (contexto acima de X nega e faz o /clear como sem a mensagem). `concluir` segue esperando a conversa.
+  if (r.acao.tipo === 'aprender' && pendenciasQueBarram(r.acao.pendencias).length === 0) {
+    try {
+      const sem = proximaAcao(m.plano, m.eventos.filter((e) => e?.tipo !== 'dono.mensagem'), {
+        slots: m.slots, percent: m.consumida ? null : percent, x, pausado: m.pausado, vivos: m.vivos,
+        tokens: m.tokens, tetoTokens: m.tetoTokens, podePousar: true,
+      });
+      if (sem.tipo === 'pousar') r.acao = sem;
+    } catch { /* fica `aprender` */ }
+  }
   r.negar = negaDespacho(r.acao, m.consumida) && !(r.acao.tipo === 'aprender' && pendenciasQueBarram(r.acao.pendencias).length === 0);
   return r;
 }
@@ -528,15 +539,22 @@ function abrirTurno($, texto = PROMPT_RETOMADA) {
   }
 }
 
-// FIEL-2 a: no máximo 1 `dono.mensagem` por texto idêntico até o próximo `turn.complete` do orquestrador. Só em memória; o texto nunca é gravado.
-const mensagensDoTurno = new Set();
-const MAX_MENSAGENS_DO_TURNO = 64;
-/** `true` na 1ª vez que o texto aparece neste turno; as seguintes são a mesma mensagem (a fila do motor dispara `prompt.submit` mais de uma vez). */
-function primeiraDoTurno(texto) {
-  if (mensagensDoTurno.has(texto)) return false;
-  if (mensagensDoTurno.size >= MAX_MENSAGENS_DO_TURNO) mensagensDoTurno.clear();
-  mensagensDoTurno.add(texto);
-  return true;
+// FIEL-2 a, plano B do S8 (não medido): o mesmo texto dentro de 120 s é a mesma mensagem, haja ou não `turn.complete` no meio (a fila do
+// motor pode disparar `prompt.submit` de novo depois dele). Só em memória; o texto nunca é gravado. Passou de 120 s ⇒ grava de novo.
+const JANELA_MENSAGEM_MS = 120_000;
+const mensagensVistas = new Map(); // texto -> instante do último registro
+const MAX_MENSAGENS_VISTAS = 64;
+/** `true` quando o texto não foi visto nos últimos 120 s (não marca: quem grava confirma com `marcarMensagem`). */
+function primeiraDaJanela(texto, agora) {
+  const t = mensagensVistas.get(texto);
+  return t === undefined || !(agora - t < JANELA_MENSAGEM_MS);
+}
+function marcarMensagem(texto, agora) {
+  if (mensagensVistas.size >= MAX_MENSAGENS_VISTAS && !mensagensVistas.has(texto)) {
+    for (const [k, t] of mensagensVistas) if (!(agora - t < JANELA_MENSAGEM_MS)) mensagensVistas.delete(k);
+    if (mensagensVistas.size >= MAX_MENSAGENS_VISTAS) mensagensVistas.clear();
+  }
+  mensagensVistas.set(texto, agora);
 }
 
 let mensagemAvisada = null; // causa do último aviso de mensagem do dono não registrada (não repete)
@@ -549,15 +567,18 @@ async function avisarMensagem($, causa) {
 /** REQ-APR-2: grava `dono.mensagem` (só hash e tamanho; a ponte calcula). Nunca bloqueia nem altera o prompt; falha avisa. */
 async function registrarMensagemDoDono($, texto) {
   let causa = null;
+  let gravou = false;
   try {
     const { c, falha } = await loopAtivo($);
     await avisarLeitura($, falha);
-    if (c === null) return;
+    if (c === null) { mensagensVistas.delete(texto); return; }
     const r = await ponte($, { op: 'mensagem', dir: c.dir, cwd: c.cwd, texto });
     if (r.ok !== true) causa = typeof r.erro === 'string' ? r.erro : 'ponte falhou';
+    else gravou = true;
   } catch {
     causa = 'erro inesperado';
   }
+  if (!gravou) mensagensVistas.delete(texto); // a reserva só vale com a gravação feita: o mesmo texto digitado de novo é tentado de novo
   if (causa !== null) await avisarMensagem($, causa);
 }
 
@@ -609,14 +630,16 @@ export const register = (on) => {
     if (ehMensagemDoDono(e)) {
       // a ponte custa 2 `node` (até 5 s cada): o prompt do dono nunca espera por ela
       const texto = e.text;
-      if (!primeiraDoTurno(texto)) return next(e);
+      let agora = 0;
+      try { agora = Number(await $.clock.now()); } catch { agora = Date.now(); }
+      if (!primeiraDaJanela(texto, agora)) return next(e);
+      marcarMensagem(texto, agora); // reserva já: a fila do motor pode repetir antes de a ponte (2 `node`) terminar
       try { $.clock.after(0, () => { registrarMensagemDoDono($, texto).catch(() => {}); }); } catch { avisarMensagem($, 'clock').catch(() => {}); }
     }
     return next(e);
   });
 
   on('turn.complete', async ($, e, next) => {
-    if (e.agentId === undefined) mensagensDoTurno.clear(); // o turno do orquestrador acabou: o mesmo texto de novo é outra mensagem
     await turnoDoPainel($); // agenda e volta: o turno nunca espera a ponte do painel
     const r = await next(e);
     try {

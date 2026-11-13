@@ -3348,8 +3348,8 @@ test('agent-passa-apos-nada-fechar: a pendência fechada por aprendizado.nada li
   fecharEm(m)
   expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
 })
-for (const percent of [60, null, 49]) {
-  test(`pendencia-dono-nao-nega-agent-${percent}: dono.mensagem aberta não nega o despacho, com percent ${percent} (60 = núcleo; null e 49 = negaPorPendencia) (FIEL-2 b)`, async ($, on) => {
+for (const percent of [null, 49]) {
+  test(`pendencia-dono-nao-nega-agent-${percent}: dono.mensagem aberta não nega o despacho abaixo de X (null e 49 = negaPorPendencia) (FIEL-2 b)`, async ($, on) => {
     const m = mundo($, on, { percent, eventos: B_FEITA })
     await m.inicio()
     await m.dono(); await m.clock.settle()
@@ -3357,6 +3357,34 @@ for (const percent of [60, null, 49]) {
     expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
   })
 }
+test('pendencia-dono-nao-tira-o-pouso-60: dono aberta + contexto 60 % (X=50) ⇒ Agent negado por POUSO, nunca por aprendizado; o /clear acontece como sem a mensagem (FIEL-2 b, guardas combinadas)', async ($, on) => {
+  const m = mundo($, on, { percent: 60, eventos: B_FEITA })
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  expect(pendenciasAprendizado(PLANO, m.evs).map((x: any) => x.tipo)).toEqual(['dono'])
+  const r = await m.agent('gabarito-implementador')
+  expect(r.deny).toMatch(/pouso: contexto em 60% \(X=50%\)/)
+  expect(r.deny).not.toMatch(TEXTO_PENDENCIA)
+  expect((await m.agent('gabarito-revisor')).deny).toBeUndefined()
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(1)
+})
+test('pendencia-dono-sem-mensagem-pousa-igual: a mesma entrega sem a mensagem pousa do mesmo jeito (controle)', async ($, on) => {
+  const m = mundo($, on, { percent: 60, eventos: B_FEITA })
+  await m.inicio()
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso: contexto em 60%/)
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(1)
+})
+test('pendencia-dono-sem-resto-nao-nega-agent-60: tudo integrado e fechado + dono aberta, contexto 60 %: o Agent não é negado por aprendizado (o `concluir` espera a conversa, o despacho não) (FIEL-2 b)', async ($, on) => {
+  const todas = aposB(A_INI, A_CON, ['review.veredito', { task: 'a', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }], ['task.integrada', { task: 'a', sha: 'd' }])
+  const m = mundo($, on, { percent: 60, eventos: todas })
+  await m.inicio()
+  fecharEm(m)
+  await m.dono(); await m.clock.settle()
+  expect(pendenciasAprendizado(PLANO, m.evs).map((x: any) => x.tipo)).toEqual(['dono'])
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+})
 const REVIEW_7 = [...aposB(A_INI, A_CON), EV(7, 'review.veredito', { task: 'a', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 })]
 for (const percent of [60, null, 49]) {
   test(`pendencia-review-ainda-nega-${percent}: review aberta nega com percent ${percent}; a lista não traz a pendência dono`, async ($, on) => {
@@ -3455,13 +3483,31 @@ test('mensagem-repetida-no-mesmo-turno-um-evento: o mesmo texto 2× antes do tur
   await m.dono({ text: 'outra mensagem' }); await m.clock.settle()
   expect(msgsDo(m)).toHaveLength(2)
 })
-test('mensagem-repetida-apos-turno-dois-eventos: depois do turn.complete do orquestrador o mesmo texto é outra mensagem (condicionado ao S8, [M])', async ($, on) => {
+test('mensagem-repetida-com-turno-no-meio-dentro-de-120s-um-evento: prompt.submit, turn.complete, prompt.submit do mesmo texto em < 120 s grava 1 (plano B do S8)', async ($, on) => {
   const m = mundo($, on)
   await m.inicio()
   await m.dono(); await m.clock.settle()
   await m.turno(); await m.clock.settle()
+  await m.clock.advance(60_000)
+  await m.dono(); await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(1)
+  expect(PEDIDOS_DE(m, 'mensagem')).toHaveLength(1)
+})
+test('mensagem-repetida-apos-120s-dois-eventos: o mesmo texto depois de 120 s é outra mensagem', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  await m.turno(); await m.clock.settle()
+  await m.clock.advance(121_000)
   await m.dono(); await m.clock.settle()
   expect(msgsDo(m)).toHaveLength(2)
+})
+test('mensagem-falha-nao-marca-o-texto: se a gravação falhou, o mesmo texto digitado de novo é tentado de novo', async ($, on) => {
+  const m = mundo($, on, { mensagemFalha: true })
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  await m.dono(); await m.clock.settle()
+  expect(PEDIDOS_DE(m, 'mensagem')).toHaveLength(2)
 })
 test('mensagem-do-subagent-nao-zera-a-janela: o turn.complete de subagent não reabre o mesmo texto', async ($, on) => {
   const m = mundo($, on)

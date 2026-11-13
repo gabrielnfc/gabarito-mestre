@@ -447,6 +447,39 @@ test('ponte-branch-publicada-sem-loop-ativo: PR mergeado e nenhum aberto + branc
   assert.equal(f.ok, false);
   assert.match(f.erro, /diário ilegível/);
 });
+test('ponte-dir-ledger-e-2o-fato: branch com ID + ledger da entrega (sem spec nem plano) identifica; sem o ledger não (FIEL-1 c)', () => {
+  const d = repoTemp();
+  assert.equal(ponte({ op: 'dir', cwd: d, sessao: 's1' }, d).identificada, false, 'controle: só a branch');
+  mkdirSync(join(d, 'docs', 'ledgers'), { recursive: true });
+  writeFileSync(join(d, 'docs', 'ledgers', 'PBI-7.md'), '# ledger\n');
+  const r = ponte({ op: 'dir', cwd: d, sessao: 's1' }, d);
+  assert.equal(r.identificada, true);
+  assert.equal(r.entrega, 'PBI-7');
+});
+test('ponte-dir-idpadrao-da-config-de-origin: o idPadrao de harness.config.json em origin/HEAD vale na identificação; com ele mais estreito, a branch deixa de identificar (FIEL-1 a)', () => {
+  const d = repoTemp('feat/DOC-5-x');
+  comSpec(d, '# Spec\nPBI: DOC-5\n\n## Seção\n');
+  const antes = ponte({ op: 'dir', cwd: d, sessao: 's1' }, d);
+  assert.equal(antes.identificada, true, 'controle: o padrão geral conhece DOC-5');
+  assert.equal(antes.entrega, 'DOC-5');
+  writeFileSync(join(d, 'harness.config.json'), JSON.stringify({ fluxo: { idPadrao: '^PBI-[0-9]+' } }));
+  gitT(d, 'add', 'harness.config.json'); gitT(d, 'commit', '-qm', 'cfg');
+  gitT(d, 'update-ref', 'refs/remotes/origin/HEAD', 'HEAD');
+  assert.deepEqual(ponte({ op: 'dir', cwd: d, sessao: 's1' }, d), { ok: true, raiz: d, identificada: false, entrega: null });
+});
+test('ponte-dir-dono-resposta-da-sessao-identifica: branch sem ID + dono.resposta (b) da MESMA sessão identifica a entrega; a de outra sessão não (FIEL-1 c, T3)', () => {
+  const d = repoTemp('main');
+  const sem = join(d, '.harness', 'entregas', '_sem-id');
+  const grava = (sessao: string, ev: Record<string, unknown>) => { const q = ponte({ op: 'append', dir: sem, cwd: d, sessao, ev }, d); assert.equal(q.ok, true, JSON.stringify(q)); };
+  grava('s1', { agente: 'orquestrador', tipo: 'fato.medido', dados: { chave: 'plano', valor: { tasks: 3 }, fonte: 'mod' } });
+  assert.equal(ponte({ op: 'dir', cwd: d, sessao: 's1' }, d).identificada, false, 'controle: sem resposta');
+  grava('s1', { agente: 'dono', tipo: 'dono.resposta', dados: { pergunta: 's1:1', opcao: 1, rotulo: 'PBI-7' } });
+  const r = ponte({ op: 'dir', cwd: d, sessao: 's1' }, d);
+  assert.equal(r.identificada, true, JSON.stringify(r));
+  assert.equal(r.entrega, 'PBI-7');
+  assert.equal(r.dir, join(d, '.harness', 'entregas', 'PBI-7'));
+  assert.equal(ponte({ op: 'dir', cwd: d, sessao: 's2' }, d).identificada, false, 'a resposta é da sessão s1');
+});
 test('ponte-append-ler-instantaneo: grava com cadeia, relê e projeta o instantâneo', () => {
   const d = repoTemp();
   const dir = join(d, '.harness', 'entregas', 'PBI-7');
