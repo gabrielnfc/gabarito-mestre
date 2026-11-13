@@ -278,6 +278,15 @@ export function textoPendencia(pendencias                                       
   return `gabarito: aprendizado pendente: feche antes de despachar (${itens.join(', ')}). Feche com \`loop.mjs aprendizado <E|A> D --regra <t> --entra-em <a> --gatilho <sessao:seq> --eventos <sessao:seq>\`, \`loop.mjs aprendizado <E|A> M --regra <t> --entra-em <a> --gatilho <sessao:seq>\` ou \`loop.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>\`. Só o revisor passa.`;
 }
 
+/**
+ * GM-14 T30 (FIEL-2 b): as pendências que barram o `Agent`. A de tipo `dono` (conversa) não barra despacho nem integração; review, parar e
+ * fechamento seguem barrando. Uma função só, usada pelo caminho do núcleo e por `negaPorPendencia` do mod. O filtro mora aqui e em `proximaAcao`,
+ * nunca em `pendenciasAprendizado` (Stop, painel e doctor leem a mesma projeção).
+ */
+export function pendenciasQueBarram                            (pendencias              )      {
+  return Array.isArray(pendencias) ? pendencias.filter((p) => p?.tipo !== 'dono') : [];
+}
+
 /** Negação quando não deu para saber se há pendência (leitura, plano, diário ou núcleo de pendências falhou). */
 export const textoPendenciaNaoVerificada = (motivo        )         =>
   `gabarito: não consegui verificar pendência de aprendizado (${motivo}). Sem despacho novo; só o revisor passa.`;
@@ -298,7 +307,9 @@ const IMPORT_DINAMICO = 'import';
 /**
  * Programa que o mod passa a `node --input-type=module -e` (o ambiente do mod não tem `node:`). Lê UM objeto JSON no stdin
  * (`{op, …}`), escreve UM JSON no stdout e sempre sai 0. Dados nunca entram no programa: só o caminho do `diario.js`. Stdin que não é JSON ⇒ `{ ok: false, erro: 'pedido inválido' }` (nunca um trecho do stdin).
- * Ops: `dir` (raiz, pasta da entrega, `plano.json`), `ler` (estrita: `lerEstrito`), `plano` (`plano.json` validado pela T1 e
+ * Ops: `dir` (GM-14 T30, FIEL-1 a, c: raiz PRINCIPAL por `--git-common-dir`; entrega por `trilhaDe` sobre os fatos já gravados (`idDaBranch` mais
+ * 2º fato, ou `dono.resposta` da sessão; fase de PR pelo último `fato.medido pr` do diário, sem `gh`); `{ok, raiz, identificada, entrega, dir, plano}`,
+ * `identificada: false` quando a entrega não se identifica (sem `dir`: nem `_sem-id`), `ok: false` quando não deu para ler), `ler` (estrita: `lerEstrito`), `plano` (`plano.json` validado pela T1 e
  * `loop.slots`/`loop.tetoTokens` de `harness.config.json`; ilegível ou inválido ⇒ `ok: false`), `instantaneo`,
  * `append` (`unicoPorAgente` não repete o par tipo+agente), `mensagem` (`dono.mensagem {sha256, chars}` na sessão `dono`; o texto
  * nunca é gravado nem ecoado no erro).
@@ -307,13 +318,18 @@ export function codigoPonte(
   diarioUrl        ,
   planoUrl         = diarioUrl.replace(/diario\.js$/, 'plano.js'),
   aprendizadoUrl         = diarioUrl.replace(/diario\.js$/, 'aprendizado.js'),
+  trilhaUrl         = diarioUrl.replace(/diario\.js$/, 'trilha.js'),
+  loopUrl         = diarioUrl.replace(/dist\/diario\.js$/, 'scripts/loop.mjs'),
+  configUrl         = diarioUrl.replace(/dist\/diario\.js$/, 'lib/config.mjs'),
+  libGitUrl         = diarioUrl.replace(/dist\/diario\.js$/, 'lib/git.mjs'),
 )         {
   return [
     `import * as d from ${JSON.stringify(diarioUrl)};`,
     `import * as pl from ${JSON.stringify(planoUrl)};`,
-    `import { readFileSync, existsSync } from 'node:fs';`,
+    `import * as tr from ${JSON.stringify(trilhaUrl)};`,
+    `import { readFileSync, existsSync, realpathSync } from 'node:fs';`,
     `import { execFileSync } from 'node:child_process';`,
-    `import { join } from 'node:path';`,
+    `import { join, basename, dirname } from 'node:path';`,
     `import { createHash } from 'node:crypto';`,
     `const out = (o) => process.stdout.write(JSON.stringify(o));`,
     `const git = (a, cwd) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();`,
@@ -321,11 +337,40 @@ export function codigoPonte(
     `  let e;`,
     `  try { e = JSON.parse(readFileSync(0, 'utf8')); } catch { throw new Error('pedido inválido'); }`,
     `  if (e.op === 'dir') {`,
-    `    const raiz = git(['rev-parse', '--show-toplevel'], e.cwd);`,
-    `    let pbi = null;`,
-    `    try { pbi = /[A-Z]+-\\d+/.exec(git(['symbolic-ref', '--short', 'HEAD'], raiz))?.[0] ?? null; } catch {}`,
-    `    const dir = d.dirEntrega(raiz, pbi);`,
-    `    out({ ok: true, raiz, dir, plano: existsSync(join(dir, 'plano.json')) });`,
+    `    const comum = realpathSync(git(['rev-parse', '--path-format=absolute', '--git-common-dir'], e.cwd));`,
+    `    if (basename(comum) !== '.git') throw new Error('repositório não suportado');`,
+    `    const raiz = dirname(comum);`,
+    `    let branch = null;`,
+    `    try { branch = git(['symbolic-ref', '--short', '-q', 'HEAD'], e.cwd) || null; } catch {}`,
+    `    const cfgm = await ${IMPORT_DINAMICO}(${JSON.stringify(configUrl)});`,
+    `    const gitm = await ${IMPORT_DINAMICO}(${JSON.stringify(libGitUrl)});`,
+    `    const lm = await ${IMPORT_DINAMICO}(${JSON.stringify(loopUrl)});`,
+    `    const cfg = cfgm.lerConfigOrigin(raiz).cfg;`,
+    `    const v = cfg?.fluxo?.idPadrao;`,
+    `    let idPadrao = gitm.PADROES.idPadrao;`,
+    `    if (typeof v === 'string' && v.length > 0 && v.length <= 200) { try { new RegExp(v); idPadrao = v; } catch {} }`,
+    `    const daBranch = tr.idDaBranch(branch, idPadrao);`,
+    `    const dirDiario = d.dirEntrega(raiz, daBranch);`,
+    `    let eventos = [];`,
+    `    if (existsSync(dirDiario)) { const l = d.lerEstrito(dirDiario); if (!l.ok) throw new Error('diário ilegível: ' + l.motivo); eventos = l.eventos; }`,
+    `    let plano = null;`,
+    `    if (daBranch !== null && existsSync(join(dirDiario, 'plano.json'))) {`,
+    `      const vp = pl.validarPlano(JSON.parse(readFileSync(join(dirDiario, 'plano.json'), 'utf8')));`,
+    `      if (!vp.ok) throw new Error('plano.json inválido: ' + vp.erro);`,
+    `      plano = { tasks: vp.plano.tasks.map((t) => t.id) };`,
+    `    }`,
+    `    const ld = cfg?.fluxo?.ledgerDir;`,
+    `    const ledgerDir = typeof ld === 'string' && ld !== '' && !ld.startsWith('/') && !ld.split('/').includes('..') ? ld : 'docs/ledgers';`,
+    `    const ledger = daBranch !== null && existsSync(join(raiz, ledgerDir, daBranch + '.md'));`,
+    `    const specs = lm.lerSpecs(lm.checkoutDaSessao(e.cwd), idPadrao);`,
+    `    const t = tr.trilhaDe({ branch, idPadrao, specs, plano, ledger, gh: 'ok', ultimas: [], sessao: typeof e.sessao === 'string' ? e.sessao : null }, eventos);`,
+    `    if (t.identificada !== true || typeof t.entrega !== 'string') {`,
+    `      out({ ok: true, raiz, identificada: false, entrega: null });`,
+    `    } else {`,
+    `      const dir = d.dirEntrega(raiz, t.entrega);`,
+    `      if (basename(dir) !== t.entrega) throw new Error('entrega fora da forma de pasta');`,
+    `      out({ ok: true, raiz, identificada: true, entrega: t.entrega, dir, plano: existsSync(join(dir, 'plano.json')) });`,
+    `    }`,
     `  } else if (e.op === 'ler') {`,
     `    const l = d.lerEstrito(e.dir);`,
     `    out(l.ok ? { ok: true, eventos: l.eventos } : { ok: false, erro: l.motivo });`,

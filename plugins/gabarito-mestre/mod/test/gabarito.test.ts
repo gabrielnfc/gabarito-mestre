@@ -1,7 +1,7 @@
 /** Testes do mod de pouso (GM-10 T9, REQ-POU-1/2, REQ-OBS-1) por `claude plugin test`. Mutações: task-9-mut.json. */
 import { expect, mock, test } from 'claude-code/testing'
 import { pendenciasAprendizado } from '../../gates/dist/pendencias.js'
-import { CABECALHO, PROMPT_RECUPERACAO, PROMPT_RETOMADA } from '../../gates/dist/pouso.js'
+import { CABECALHO, codigoPonte, PROMPT_RECUPERACAO, PROMPT_RETOMADA } from '../../gates/dist/pouso.js'
 import { faixaDe, gravarContexto, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
 
 const RAIZ = '/repo'
@@ -52,6 +52,12 @@ type Opc = {
   sessaoId?: string
   sessaoIdFalha?: boolean
   existsPacoteFalha?: boolean
+  /** GM-14 T30: ponte `dir` sem entrega identificada (branch sem 2º fato ou com PR aceito), lida sem falha */
+  identificada?: boolean
+  /** GM-14 T30: ponte `dir` responde `ok:false` (não deu para ler) */
+  dirFalha?: boolean
+  /** GM-14 T30: ponte `dir` de antes da T30 (responde `ok` sem o flag `identificada`) */
+  dirSemFlag?: boolean
   /** ponte `mensagem` (T10): resposta `ok:false` */
   mensagemFalha?: boolean
   /** ponte `mensagem` (T10): fica presa até `est.mensagemLibera` */
@@ -256,7 +262,13 @@ function mundo($: any, on: any, o: Opc = {}) {
       const q = JSON.parse(e.init?.stdin ?? '{}')
       pedidos.push(q)
       if (o.ponteSai1) return { value: { exitCode: 1, stdout: JSON.stringify({ ok: true, raiz: RAIZ, dir: DIR, plano: true, eventos: FRONT, texto: 'x' }), stderr: 'boom', isStdoutTruncated: false, isStderrTruncated: false } }
-      if (q.op === 'dir') return ok(JSON.stringify({ ok: true, raiz: RAIZ, dir: est.dir, plano: est.plano }))
+      if (q.op === 'dir') {
+        if (o.dirFalha) return ok(JSON.stringify({ ok: false, erro: 'git falhou' }))
+        if (o.dirSemFlag) return ok(JSON.stringify({ ok: true, raiz: RAIZ, dir: est.dir, plano: est.plano }))
+        // a ponte real não devolve `dir` sem entrega; se devolvesse, o mod não o usa (a identificação é do flag)
+        if (o.identificada === false) return ok(JSON.stringify({ ok: true, raiz: RAIZ, identificada: false, entrega: null, dir: est.dir, plano: true }))
+        return ok(JSON.stringify({ ok: true, raiz: RAIZ, identificada: true, entrega: 'PBI-7', dir: est.dir, plano: est.plano }))
+      }
       if (q.op === 'plano') {
         if (o.plano_json === 'falha') return ok(JSON.stringify({ ok: false, erro: 'plano.json inválido: x' }))
         const cfg = o.config ?? {}
@@ -3336,13 +3348,128 @@ test('agent-passa-apos-nada-fechar: a pendência fechada por aprendizado.nada li
   fecharEm(m)
   expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
 })
-test('agent-negado-com-mensagem-do-dono-aberta: dono.mensagem sem aprendizado nega; a lista traz tipo, sessão e seq', async ($, on) => {
-  const m = mundo($, on, { percent: 49 })
+for (const percent of [60, null, 49]) {
+  test(`pendencia-dono-nao-nega-agent-${percent}: dono.mensagem aberta não nega o despacho, com percent ${percent} (60 = núcleo; null e 49 = negaPorPendencia) (FIEL-2 b)`, async ($, on) => {
+    const m = mundo($, on, { percent, eventos: B_FEITA })
+    await m.inicio()
+    await m.dono(); await m.clock.settle()
+    expect(pendenciasAprendizado(PLANO, m.evs).map((x: any) => x.tipo)).toEqual(['dono'])
+    expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  })
+}
+const REVIEW_7 = [...aposB(A_INI, A_CON), EV(7, 'review.veredito', { task: 'a', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 })]
+for (const percent of [60, null, 49]) {
+  test(`pendencia-review-ainda-nega-${percent}: review aberta nega com percent ${percent}; a lista não traz a pendência dono`, async ($, on) => {
+    const m = mundo($, on, { percent, eventos: REVIEW_7 })
+    await m.inicio()
+    await m.dono(); await m.clock.settle()
+    const r = await m.agent('gabarito-implementador')
+    expect(r.deny).toMatch(TEXTO_PENDENCIA)
+    expect(r.deny).toContain('review s0:7')
+    expect(r.deny).not.toContain('dono dono')
+    expect((await m.agent('gabarito-revisor')).deny).toBeUndefined()
+  })
+}
+test('pendencia-parar-ainda-nega-com-dono: parar aberta + dono aberta nega pela parar', async ($, on) => {
+  const m = mundo($, on, { percent: 49, eventos: PARAR_ABERTO })
   await m.inicio()
   await m.dono(); await m.clock.settle()
   const r = await m.agent('gabarito-implementador')
-  expect(r.deny).toMatch(TEXTO_PENDENCIA)
-  expect(r.deny).toMatch(/\(dono dono:1\)/)
+  expect(r.deny).toContain('(parar s0:5)')
+  expect(r.deny).not.toContain('dono dono')
+})
+
+// ---- T30 (GM-14, FIEL-1 a, c; FIEL-2 a): a entrega certa vem da ponte; sem entrega identificada o mod não age; uma mensagem, um evento ----
+const PEDIDO_DIR = (m: ReturnType<typeof mundo>) => m.pedidos.filter((q) => q.op === 'dir')
+const OPS_QUE_AGEM = ['ler', 'plano', 'append', 'mensagem', 'instantaneo']
+const REVIEW_ABERTA = [...aposB(A_INI, A_CON), EV(7, 'review.veredito', { task: 'a', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 })]
+
+test('ponte-dir-texto-raiz-principal: o programa da ponte usa --git-common-dir, não --show-toplevel, e aplica a trilha sem rodar o gh (FIEL-1 a, c)', () => {
+  const t = codigoPonte('file:///x/gates/dist/diario.js')
+  expect(t).toContain("'--git-common-dir'")
+  expect(t).not.toContain('--show-toplevel')
+  expect(t).toContain('trilhaDe')
+  expect(t).toContain('idDaBranch')
+  expect(t).not.toMatch(/'gh'/)
+})
+test('ponte-dir-pede-com-sessao-e-cwd-da-sessao: o pedido leva o cwd da sessão e o session_id (a trilha lê a resposta da sessão, T3)', async ($, on) => {
+  const m = mundo($, on, { percent: 49 })
+  await m.inicio()
+  await m.agent('gabarito-implementador')
+  const q = PEDIDO_DIR(m)
+  expect(q.length).toBeGreaterThan(0)
+  for (const x of q) expect(x).toMatchObject({ op: 'dir', cwd: RAIZ, sessao: 'sess-1' })
+})
+test('ponte-branch-publicada-sem-loop-ativo: entrega não identificada ⇒ 0 negação, 0 pouso, 0 gravação, nenhum pedido de leitura', async ($, on) => {
+  const m = mundo($, on, { identificada: false, percent: 60, eventos: REVIEW_ABERTA })
+  await m.inicio()
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  await m.turno(); await m.clock.settle()
+  await m.dono(); await m.clock.settle()
+  expect(m.est.clears).toBe(0)
+  expect(m.tipos()).toEqual([])
+  expect(m.toasts).toEqual([])
+  expect(m.pedidos.filter((q) => OPS_QUE_AGEM.includes(q.op))).toEqual([])
+  expect([...m.store.keys()].filter((k) => k.startsWith('pouso:'))).toEqual([])
+})
+test('mod-nao-grava-mensagem-sem-identificacao: sem entrega identificada o dono.mensagem não vai a lugar nenhum (nem _sem-id)', async ($, on) => {
+  const m = mundo($, on, { identificada: false })
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  expect(PEDIDOS_DE(m, 'mensagem')).toHaveLength(0)
+  expect(msgsDo(m)).toHaveLength(0)
+  expect(m.toasts).toEqual([])
+})
+for (const modo of ['sem_loop', 'erro', 'torto'] as const) {
+  test(`sem-estado-do-painel-pendencia-review-nega-${modo}: o painel ${modo} não muda a identificação; a pendência de review segue negando`, async ($, on) => {
+    const m = mundo($, on, { percent: 49, eventos: REVIEW_ABERTA, painel: { modo } })
+    await m.inicio()
+    expect((await m.agent('gabarito-implementador')).deny).toMatch(TEXTO_PENDENCIA)
+    expect(PEDIDO_DIR(m).length).toBeGreaterThan(0)
+  })
+}
+test('ponte-falha-com-pendencia-review-avisa-e-nao-pousa: a ponte que não lê é falha (nunca "sem entrega"): avisa, não pousa, não grava', async ($, on) => {
+  const m = mundo($, on, { dirFalha: true, percent: 60, eventos: REVIEW_ABERTA })
+  await m.inicio()
+  await m.agent('gabarito-implementador')
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(0)
+  expect(m.tipos()).toEqual([])
+  expect(m.toasts.join(' ')).toMatch(/não consegui ler se há loop nesta entrega \(git falhou\)/)
+  expect(m.pedidos.filter((q) => OPS_QUE_AGEM.includes(q.op))).toEqual([])
+})
+test('ponte-dir-sem-flag-de-identificacao-e-falha: resposta ok sem `identificada` não vira entrega nem "sem entrega": avisa e não pousa', async ($, on) => {
+  const m = mundo($, on, { dirSemFlag: true, percent: 60 })
+  await m.inicio()
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(0)
+  expect(m.tipos()).toEqual([])
+  expect(m.toasts.join(' ')).toMatch(/não consegui ler se há loop/)
+})
+test('mensagem-repetida-no-mesmo-turno-um-evento: o mesmo texto 2× antes do turn.complete grava 1 dono.mensagem; texto diferente grava (FIEL-2 a)', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await m.dono(); await m.dono(); await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(1)
+  expect(PEDIDOS_DE(m, 'mensagem')).toHaveLength(1)
+  await m.dono({ text: 'outra mensagem' }); await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(2)
+})
+test('mensagem-repetida-apos-turno-dois-eventos: depois do turn.complete do orquestrador o mesmo texto é outra mensagem (condicionado ao S8, [M])', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  await m.turno(); await m.clock.settle()
+  await m.dono(); await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(2)
+})
+test('mensagem-do-subagent-nao-zera-a-janela: o turn.complete de subagent não reabre o mesmo texto', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  await m.turno({ agentId: 'ag1' }); await m.clock.settle()
+  await m.dono(); await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(1)
 })
 test('agent-negado-diario-corrompido-abaixo-de-x: leitura que falha nega, com o motivo', async ($, on) => {
   const a = mundo($, on, { percent: 49, lerFalha: true, lerErro: 'cadeia quebrada na linha 3' })

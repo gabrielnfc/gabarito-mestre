@@ -17,7 +17,7 @@ import { proximaAcao } from '../gates/dist/loop.js';
 import { pendenciasAprendizado } from '../gates/dist/pendencias.js';
 import * as nucleo from '../gates/dist/loop.js'; // `nucleo.TIPOS_DE_PROGRESSO`: fonte única da lista (lida só em marcarPousoPendente)
 import {
-  analisarFronteira, codigoPonte, dadosMedicao, ehMensagemDoDono, ehRevisor, jaParou, lerX, marcaDeProgresso, negaDespacho, portaDoPouso, PROMPT_RECUPERACAO, PROMPT_RETOMADA,
+  analisarFronteira, codigoPonte, dadosMedicao, ehMensagemDoDono, ehRevisor, jaParou, lerX, marcaDeProgresso, negaDespacho, pendenciasQueBarram, portaDoPouso, PROMPT_RECUPERACAO, PROMPT_RETOMADA,
   tasksDoNegado, tasksEmVoo, textoPendencia, textoPendenciaNaoVerificada, textoRetomada, tokensDe, vivosDe,
 } from '../gates/dist/pouso.js';
 import { comandoPainel, iniciarPainel, registrarPainel, turnoDoPainel, USO_GABARITO } from './painel.mjs'; // E4 T10: Pane, faixa, atualização e aviso do PAROU (nada do pouso depende dele)
@@ -63,14 +63,19 @@ async function ponte($, pedido) {
 }
 
 /**
- * Raiz do checkout e pasta da entrega, resolvidas a CADA disparo (a ponte lê a branch, como `uso-subagent.mjs`).
- * `{ c, falha }`: `c` com a entrega; `c: null, falha: null` só quando não há repositório (nada a ler); `falha` com a causa quando não deu para ler.
+ * Raiz PRINCIPAL e pasta da entrega, resolvidas a CADA disparo pela ponte (GM-14 T30, FIEL-1: `--git-common-dir`, `idDaBranch` com 2º fato ou
+ * `dono.resposta` da sessão; nunca o estado do painel). `{ c, falha }`: `c` com a entrega; `c: null, falha: null` quando não há repositório ou a
+ * entrega não se identifica (lida sem falha: sem loop, sem negação, sem pouso, sem `dono.mensagem`); `falha` com a causa quando não deu para ler.
+ * Resposta `ok` sem o flag `identificada` é falha: nunca vira entrega nem "sem entrega".
  */
 async function lerContexto($) {
   let cwd;
   try { cwd = await $.session.root(); } catch { return { c: null, falha: 'sessão sem raiz' }; }
-  const r = await ponte($, { op: 'dir', cwd });
-  if (r.ok === true && typeof r.dir === 'string' && typeof r.raiz === 'string') return { c: { cwd, raiz: r.raiz, dir: r.dir }, falha: null };
+  let sessao;
+  try { sessao = await $.session.id(); } catch { sessao = undefined; }
+  const r = await ponte($, { op: 'dir', cwd, ...(typeof sessao === 'string' ? { sessao } : {}) });
+  if (r.ok === true && r.identificada === false && typeof r.raiz === 'string') return { c: null, falha: null };
+  if (r.ok === true && r.identificada === true && typeof r.dir === 'string' && typeof r.raiz === 'string') return { c: { cwd, raiz: r.raiz, dir: r.dir }, falha: null };
   let repo;
   try { repo = await $.session.repo(); } catch { return { c: null, falha: 'ponte do diário falhou' }; }
   return repo === null || repo === undefined ? { c: null, falha: null } : { c: null, falha: typeof r.erro === 'string' ? r.erro : 'ponte do diário falhou' };
@@ -279,7 +284,8 @@ async function avaliar($, c) {
     return r;
   }
   if (!(r.acao.tipo === 'parar' && r.acao.motivo === 'diario_invalido')) diarioAvisado = null;
-  r.negar = negaDespacho(r.acao, m.consumida);
+  // FIEL-2 b: `aprender` só com pendência `dono` (a do `pousar` e do `concluir`) não nega `Agent`; as demais seguem negando
+  r.negar = negaDespacho(r.acao, m.consumida) && !(r.acao.tipo === 'aprender' && pendenciasQueBarram(r.acao.pendencias).length === 0);
   return r;
 }
 
@@ -522,6 +528,17 @@ function abrirTurno($, texto = PROMPT_RETOMADA) {
   }
 }
 
+// FIEL-2 a: no máximo 1 `dono.mensagem` por texto idêntico até o próximo `turn.complete` do orquestrador. Só em memória; o texto nunca é gravado.
+const mensagensDoTurno = new Set();
+const MAX_MENSAGENS_DO_TURNO = 64;
+/** `true` na 1ª vez que o texto aparece neste turno; as seguintes são a mesma mensagem (a fila do motor dispara `prompt.submit` mais de uma vez). */
+function primeiraDoTurno(texto) {
+  if (mensagensDoTurno.has(texto)) return false;
+  if (mensagensDoTurno.size >= MAX_MENSAGENS_DO_TURNO) mensagensDoTurno.clear();
+  mensagensDoTurno.add(texto);
+  return true;
+}
+
 let mensagemAvisada = null; // causa do último aviso de mensagem do dono não registrada (não repete)
 async function avisarMensagem($, causa) {
   if (mensagemAvisada === causa) return;
@@ -557,7 +574,8 @@ async function negaPorPendencia($, c) {
   if (!voo.ok) return textoPendenciaNaoVerificada(voo.motivo);
   let pendencias;
   try { pendencias = pendenciasAprendizado(p.plano, l.eventos); } catch { return textoPendenciaNaoVerificada('núcleo de pendências falhou'); }
-  return pendencias.length > 0 ? textoPendencia(pendencias) : null;
+  const barram = pendenciasQueBarram(pendencias); // FIEL-2 b: a conversa (`dono`) não barra o despacho
+  return barram.length > 0 ? textoPendencia(barram) : null;
 }
 
 export const register = (on) => {
@@ -591,12 +609,14 @@ export const register = (on) => {
     if (ehMensagemDoDono(e)) {
       // a ponte custa 2 `node` (até 5 s cada): o prompt do dono nunca espera por ela
       const texto = e.text;
+      if (!primeiraDoTurno(texto)) return next(e);
       try { $.clock.after(0, () => { registrarMensagemDoDono($, texto).catch(() => {}); }); } catch { avisarMensagem($, 'clock').catch(() => {}); }
     }
     return next(e);
   });
 
   on('turn.complete', async ($, e, next) => {
+    if (e.agentId === undefined) mensagensDoTurno.clear(); // o turno do orquestrador acabou: o mesmo texto de novo é outra mensagem
     await turnoDoPainel($); // agenda e volta: o turno nunca espera a ponte do painel
     const r = await next(e);
     try {
@@ -635,7 +655,7 @@ export const register = (on) => {
         if (r.negar) {
           negou();
           if (r.acao?.tipo === 'pousar' && r.mundo !== null) await marcarPousoPendente($, c, r.mundo.eventos);
-          if (r.acao?.tipo === 'aprender') return { deny: textoPendencia(r.acao.pendencias) }; // texto único: nunca `aprender` cru nem "encerre o turno"
+          if (r.acao?.tipo === 'aprender') return { deny: textoPendencia(pendenciasQueBarram(r.acao.pendencias)) }; // texto único: nunca `aprender` cru nem "encerre o turno"
           return { deny: `pouso: contexto em ${r.percent}% (X=${r.x}%), ${descrever(r)}. Sem despacho novo; só o revisor passa. Não tente de novo: encerre o turno.` };
         }
         if (r.porta.despacho === 'permitir') {
