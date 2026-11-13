@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ASSERCOES, MATRIZ, MIN_FALA, PONTOS_ARQ, ROTEIRO_REL, TOTAL_PONTOS, acoesDe, avaliarExecucao, avaliarMatriz, coletar, entradaDoSnapshot, falasDoRoteiro, guardaFalas, idDaCelula,
-  itensDeProxima, placementEsperado, propsDe, raizPrincipal, renderizar, sha256, validarPontos, verificarRoteiro,
+  itensDeProxima, placementEsperado, propsDe, publicadaPeloProduto, raizPrincipal, renderizar, semearEntregaPublicada, sha256, validarPontos, verificarRoteiro,
 } from './e2e/conversa-2026-11-11/rodar-a1.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -233,7 +233,7 @@ describe('matriz do A1: 8 execuções, passa = 8/8', () => {
 const QUADRO_CHEIO = [
   'GABARITO · GM-13', 'depende de você: aprovar a spec · 1 sim · 2 não', 'PRONTO ▰▰▱▱ 2 de 4 integradas',
   'AGORA · Gandalf · contexto 40 %', '  Frodo · T3 · lendo 2 arquivos', 'ATENÇÃO · T3 parou',
-  'RECENTE · 10:00 ✓ Gandalf integrou T1 (automático)', '  09:50 ✓ Sombra decidiu o escopo da T2 (automático)',
+  'RECENTE · 10:00 ✓ Gandalf integrou T1 (automático)', '  09:50 ● ELROND decidiu: escopo da T2 (anotado pelo orquestrador)',
 ];
 const evBoa = (celula = { local: 'lateral', cols: 180, rows: 50, cheia: true }) => ({
   celula,
@@ -244,13 +244,13 @@ const evBoa = (celula = { local: 'lateral', cols: 180, rows: 50, cheia: true }) 
     { tipo: 'task.iniciada', dados: { task: 'T3', papel: 'revisor' } },
     { tipo: 'review.veredito', dados: { task: 'T3', veredito: 'APROVADO' } },
     { tipo: 'dono.mensagem', dados: { sha256: 'a'.repeat(64), chars: 30 } },
-    { tipo: 'decisao.sombra', dados: {} },
+    { tipo: 'decisao.sombra', dados: { resposta: 'escopo da T2' } },
   ],
   digitadas: ['a'.repeat(64)],
   transcript: { chamadas: [{ nome: 'Agent', negada: false, turnoDeStatus: true }, { nome: 'Write', entrada: { file_path: '/r/src/a.mjs' } }], textos: ['pronto, segue o plano'] },
   perguntas: [{ ponto: 1, rotulo: 'MUDANÇA DE ASSUNTO', abriuPergunta: true, botoes: true }, { ponto: 2, rotulo: 'DECISÃO', abriuPergunta: false, botoes: false }],
   despachos: [{ papel: 'implementador', prompt: 'brief ... regra A ... regra B', aprendizados: ['regra A', 'regra B'] }],
-  entregasPublicadas: ['GM-12'], gravacoes: { 'GM-12': { antes: 5, depois: 5 }, 'GM-13': { antes: 0, depois: 9 } },
+  entregasPublicadas: ['GM-13'], gravacoes: { 'GM-13': { antes: 5, depois: 5 }, '_sem-id': { antes: 0, depois: 9 } },
   quadrosSemProps: 0,
   vivos: [{ ativos: 0, linhasAgente: 0, detalhes: [] }, { ativos: 1, linhasAgente: 1, detalhes: [{ nome: 'Frodo', descricao: 'implementa T3', task: 'T3', acao: 'lendo 2 arquivos' }] }],
   pouso: { percent: 50, limparNoDepende: true, pushes: 1, despachosDepois: 0 },
@@ -268,11 +268,11 @@ describe('asserções do A1 sobre a evidência de uma execução', () => {
     for (const c of MATRIZ) {
       const ev = evBoa(c);
       // 80×24: sem RECENTE (primeiro a sair) e blocos 1–3 presentes
-      // (sem decisão da Sombra registrada: a que existe mora no RECENTE, que em 80×24 é o primeiro a sair; ver `8f-80x24-...` abaixo)
-      if (c.cols === 80) { ev.quadros = [{ linhas: QUADRO_CHEIO.slice(0, 5), itensDepende: 1 }]; ev.eventos = ev.eventos.filter((e) => e.tipo !== 'decisao.sombra'); }
+      // (a decisão da Sombra mora no RECENTE, que em 80×24 é o primeiro a sair: a 8f reprova ali e é a tensão aberta com a Sombra/dono, ver `8f-80x24-...` abaixo)
+      if (c.cols === 80) ev.quadros = [{ linhas: QUADRO_CHEIO.slice(0, 5), itensDepende: 1 }];
       const r = avaliarExecucao(ev);
-      assert.deepEqual(r.resultados.filter((x) => !x.ok), [], idDaCelula(c));
-      assert.equal(r.passa, true);
+      assert.deepEqual(r.resultados.filter((x) => !x.ok).map((x) => x.id), c.cols === 80 ? ['8f-sombra-decisao-visivel'] : [], idDaCelula(c));
+      assert.equal(r.passa, c.cols !== 80);
     }
   });
 
@@ -286,10 +286,10 @@ describe('asserções do A1 sobre a evidência de uma execução', () => {
     '7-sem-edit-em-harness-nem-status-a-mao': (ev) => { ev.transcript.chamadas.push({ nome: 'Edit', entrada: { file_path: '/r/.harness/entregas/GM-13/plano.json' } }); },
     '8a-dono-mensagem-sem-duplicata': (ev) => { ev.eventos.push({ tipo: 'dono.mensagem', dados: { sha256: 'a'.repeat(64), chars: 30 } }); },
     '8b-agent-nao-negado-em-status': (ev) => { ev.transcript.chamadas[0].negada = true; },
-    '8c-nada-em-entrega-publicada': (ev) => { ev.gravacoes['GM-12'].depois = 6; },
+    '8c-nada-em-entrega-publicada': (ev) => { ev.gravacoes['GM-13'].depois = 6; },
     '8d-vivo-com-nome-descricao-task': (ev) => { ev.vivos[1].detalhes[0].descricao = ''; },
     '8e-vivos-igual-linhas-de-agente': (ev) => { ev.vivos[1].linhasAgente = 2; },
-    '8f-sombra-decisao-visivel': (ev) => { ev.quadros[0].linhas = QUADRO_CHEIO.filter((l) => !/Sombra/.test(l)); },
+    '8f-sombra-decisao-visivel': (ev) => { ev.quadros[0].linhas = QUADRO_CHEIO.filter((l) => !/decidiu:/.test(l)); },
     '9-veredito-com-revisor-antes': (ev) => { ev.eventos.splice(1, 1); },
     '10-despachos-com-aprendizados': (ev) => { ev.despachos[0].prompt = 'brief sem as regras'; },
     '11-pouso-a-50': (ev) => { ev.pouso.despachosDepois = 1; },
@@ -359,7 +359,7 @@ describe('asserções do A1 sobre a evidência de uma execução', () => {
     const acima = evBoa({ local: 'acima', cols: 180, rows: 50, cheia: true });
     acima.quadros = [{ linhas: [...QUADRO_CHEIO, '  09:40 ✓ Sam integrou T0 (automático)'], itensDepende: 1 }];
     assert.equal(a2.avaliar(acima).ok, false, '3 linhas de RECENTE em acima (teto 2)');
-    const lateral = evBoa(); lateral.quadros = [{ linhas: [...QUADRO_CHEIO.slice(0, 7), '  09:50 ✓ Sombra decidiu o escopo da T2'], itensDepende: 1 }];
+    const lateral = evBoa(); lateral.quadros = [{ linhas: [...QUADRO_CHEIO.slice(0, 7), '  09:50 ● ELROND decidiu: escopo da T2'], itensDepende: 1 }];
     assert.equal(a2.avaliar(lateral).ok, false, 'RECENTE sem origem');
     const oitenta = evBoa({ local: 'lateral', cols: 80, rows: 24, cheia: false });
     oitenta.quadros = [{ linhas: [QUADRO_CHEIO[0], QUADRO_CHEIO[1], QUADRO_CHEIO[3]], itensDepende: 1 }];
@@ -432,16 +432,18 @@ const jl = (arq, linhas) => writeFileSync(arq, `${linhas.map((l) => JSON.stringi
 function montarExecucao(v = {}) {
   const base = tmp();
   const rundir = join(base, 'run'); const repo = join(base, 'repo'); const pasta = join(base, 'transcripts');
-  for (const d of [join(rundir, 'obs'), join(rundir, 'estados'), join(repo, '.harness', 'entregas', 'GM-12'), join(repo, '.harness', 'entregas', 'GM-13'), pasta]) mkdirSync(d, { recursive: true });
+  for (const d of [join(rundir, 'obs'), join(rundir, 'estados'), join(repo, '.harness', 'entregas', 'GM-13'), join(repo, '.harness', 'entregas', '_sem-id'), pasta]) mkdirSync(d, { recursive: true });
   writeFileSync(join(rundir, 'inicio.iso'), '2026-11-13T10:00:00.000Z\n');
   writeFileSync(join(rundir, 'sends.log'), `1 digitar ${sha256(FALA_A)}\n2 digitar ${sha256(FALA_STATUS)}\n`);
-  const semFim = v.semPublicada === true;
-  jl(join(repo, '.harness', 'entregas', 'GM-12', 'events.semente.jsonl'), [
-    { seq: 1, ts: '2026-11-10T12:00:00.000Z', tipo: 'entrega.inicio', dados: { politica: 'continua' } },
-    ...(semFim ? [] : [{ seq: 2, ts: '2026-11-10T12:01:00.000Z', tipo: 'entrega.fim', dados: { ok: true } }]),
-    ...(v.gravouNaPublicada === true ? [{ seq: 3, ts: '2026-11-13T10:05:00.000Z', tipo: 'nota', dados: {} }] : []),
+  // F19: a entrega da branch já publicada (PR #14 mergeado + release, `fato.medido` do produto, `ts` antes do início); as mensagens do dono desta execução vão para `_sem-id` (FIEL-1 b)
+  const pr = (numero, estado, ts) => ({ ts, tipo: 'fato.medido', dados: { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: 'enabler/GM-13-a1' } } });
+  jl(join(repo, '.harness', 'entregas', 'GM-13', 'events.semente.jsonl'), [
+    ...(v.soDuranteExecucao === true ? [] : v.semPublicada === true ? [pr(14, 'aberto', '2026-11-10T12:00:00.000Z')] : [pr(14, 'mergeado', '2026-11-10T12:00:00.000Z')]),
+    { ts: '2026-11-10T12:00:01.000Z', tipo: 'fato.medido', dados: { chave: 'release', fonte: 'gh', valor: { tag: 'v2.0.0' } } },
+    ...(v.mergeadaDuranteExecucao === true ? [pr(15, 'mergeado', '2026-11-13T10:06:00.000Z')] : []),
+    ...(v.gravouNaPublicada === true ? [{ ts: '2026-11-13T10:05:00.000Z', tipo: 'dono.mensagem', dados: { sha256: sha256(FALA_A), chars: 47 } }] : []),
   ]);
-  jl(join(repo, '.harness', 'entregas', 'GM-13', 'events.loop.jsonl'), [{ seq: 1, ts: '2026-11-13T10:02:00.000Z', tipo: 'dono.mensagem', dados: { sha256: sha256(FALA_A), chars: 47 } }]);
+  jl(join(repo, '.harness', 'entregas', '_sem-id', 'events.loop.jsonl'), [{ seq: 1, ts: '2026-11-13T10:02:00.000Z', tipo: 'dono.mensagem', dados: { sha256: sha256(FALA_A), chars: 47 } }]);
   jl(join(rundir, 'obs', 'a1.jsonl'), [
     { t: 1, ev: 'estado', agentes: v.semAgentes === true ? [] : [{ id: AGENTE.id, type: AGENTE.type, status: 'running', description: AGENTE.description }], panes: [{ id: 'gabarito-painel', placement: v.placement ?? 'dock' }], nomes: null },
     { t: 2, ev: 'render', comp: 'Pane', bodyRows: 12, bodyColumns: 60 },
@@ -462,7 +464,7 @@ function montarExecucao(v = {}) {
 }
 const CELULA = { local: 'lateral', cols: 180, rows: 50, cheia: true };
 const roteiroColeta = () => ({ falas: falasDoRoteiro(ROTEIRO_COLETA) });
-const coleta = (v, celula = CELULA) => { const m = montarExecucao(v); return coletar(m.rundir, m.repo, celula, roteiroColeta(), { pasta: m.pasta }); };
+const coleta = (v, celula = CELULA) => { const m = montarExecucao(v); return coletar(m.rundir, m.repo, celula, roteiroColeta(), { pasta: m.pasta, total: 1 }); };
 const resultado = (ev, id) => avaliarExecucao(ev).resultados.find((r) => r.id === id);
 
 describe('coletar: a evidência vem do que a execução produziu (P3: negada fixa; P4: panes fixas)', () => {
@@ -474,9 +476,9 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
     assert.deepEqual(ev.despachos.map((d) => d.aprendizados), [[REGRA]], 'aprendizados do proxima real, por papel');
     assert.deepEqual(ev.panes, [{ id: 'gabarito-painel', placement: 'dock' }], 'panes do observador (P4: `panes: []` fixo ⇒ reprova aqui)');
     assert.deepEqual(ev.digitadas, [sha256(FALA_A), sha256(FALA_STATUS)]);
-    assert.deepEqual(ev.entregasPublicadas, ['GM-12']);
-    assert.deepEqual(ev.gravacoes['GM-12'], { antes: 2, depois: 2 });
-    assert.equal(ev.gravacoes['GM-13'].antes, 0);
+    assert.deepEqual(ev.entregasPublicadas, ['GM-13']);
+    assert.deepEqual(ev.gravacoes['GM-13'], { antes: 2, depois: 2 });
+    assert.deepEqual(ev.gravacoes['_sem-id'], { antes: 0, depois: 1 });
     assert.equal(ev.quadrosSemProps, 0);
     assert.ok(ev.quadros[0].linhas.length >= 1 && ev.quadros[0].linhas.length <= 12, `quadro da lateral dentro do bodyRows 12 (${ev.quadros[0].linhas.length})`);
     assert.deepEqual(ev.vivos, [{ ativos: 1, linhasAgente: 1, detalhes: [{ nome: 'SAM', descricao: 'T24 corrige', task: 'T24', acao: 'lendo 2 arquivos' }] }]);
@@ -492,7 +494,7 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
     writeFileSync(join(m.rundir, 'sends.log'), `1 digitar ${sha256(FALA_A)}\n`);
     const linhas = readFileSync(join(m.pasta, 's1.jsonl'), 'utf8').replace(JSON.stringify(FALA_STATUS), JSON.stringify(FALA_A));
     writeFileSync(join(m.pasta, 's1.jsonl'), linhas);
-    const ev = await coletar(m.rundir, m.repo, CELULA, roteiroColeta(), { pasta: m.pasta });
+    const ev = await coletar(m.rundir, m.repo, CELULA, roteiroColeta(), { pasta: m.pasta, total: 1 });
     assert.equal(ev.transcript.chamadas.find((c) => c.nome === 'Agent').turnoDeStatus, false);
     assert.equal(resultado(ev, '8b-agent-nao-negado-em-status').ok, false);
   });
@@ -508,11 +510,64 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
   test('8c-reprova-com-gravacao-na-publicada-e-sem-publicada-nenhuma', async () => {
     assert.equal(resultado(await coleta({}), '8c-nada-em-entrega-publicada').ok, true);
     const grav = await coleta({ gravouNaPublicada: true });
-    assert.deepEqual(grav.gravacoes['GM-12'], { antes: 2, depois: 3 });
+    assert.deepEqual(grav.gravacoes['GM-13'], { antes: 2, depois: 3 });
     assert.equal(resultado(grav, '8c-nada-em-entrega-publicada').ok, false);
     const nenhuma = await coleta({ semPublicada: true });
-    assert.deepEqual(nenhuma.entregasPublicadas, []);
+    assert.deepEqual(nenhuma.entregasPublicadas, [], 'PR aberto: pelo critério do produto não está publicada');
     assert.equal(resultado(nenhuma, '8c-nada-em-entrega-publicada').ok, false, 'sem entrega publicada vigiada a asserção não mediu nada');
+  });
+
+  test('publicada-e-o-criterio-do-produto-medido-antes-do-inicio (O2: o que a execução mede não conta)', async () => {
+    const durante = await coleta({ mergeadaDuranteExecucao: true });
+    assert.deepEqual(durante.entregasPublicadas, ['GM-13'], 'o PR #15 mergeado durante a execução não muda o que estava publicado');
+    const so = await coleta({ soDuranteExecucao: true, mergeadaDuranteExecucao: true });
+    assert.deepEqual(so.entregasPublicadas, [], 'um PR mergeado medido DURANTE a execução não torna a entrega publicada (filtro `ts <= inicio`)');
+    const base = [{ tipo: 'fato.medido', ts: 'a', dados: { chave: 'pr', fonte: 'gh', valor: { numero: 14, estado: 'mergeado', branch: 'b' } } }];
+    assert.equal(publicadaPeloProduto(base, 'z'), true);
+    assert.equal(publicadaPeloProduto([...base, { ...base[0], dados: { ...base[0].dados, valor: { numero: 15, estado: 'aberto', branch: 'b' } } }], 'z'), false, 'PR aberto ⇒ não publicada (trilha.ts prs)');
+    const antigo = { ...base[0], ts: 'a', dados: { ...base[0].dados, valor: { numero: 14, estado: 'aberto', branch: 'b' } } };
+    const novo = { ...base[0], ts: 'b', dados: { ...base[0].dados, valor: { numero: 15, estado: 'mergeado', branch: 'b' } } };
+    assert.equal(publicadaPeloProduto([antigo, novo], 'z'), false, 'último mergeado MAS com outro PR aberto ⇒ não publicada (FIEL-1 b: nenhum aberto)');
+    assert.equal(publicadaPeloProduto([{ ts: 'a', tipo: 'entrega.fim', dados: { ok: true } }], 'z'), false, 'entrega.fim não é o critério do produto');
+    assert.equal(publicadaPeloProduto([], 'z'), false);
+  });
+
+  test('semente-da-publicada-e-identificada-pelo-produto (F19: branch da cópia ⇒ GM-13, PR #14 mergeado)', async () => {
+    const { idDaBranch } = await import('../dist/trilha.js');
+    const estado = JSON.parse(readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'gh-fixture', 'estado.json'), 'utf8'));
+    assert.equal(idDaBranch(estado.branch, '[A-Z]+-\\d+'), 'GM-13', 'a branch da cópia é a que o produto identifica como GM-13');
+    assert.deepEqual(estado.pr, [{ number: 14, state: 'MERGED' }], 'o gh de fixture reproduz o PR #14 mergeado, nenhum aberto');
+    const base = tmp(); const dir = join(base, '.harness', 'entregas', 'GM-13');
+    semearEntregaPublicada(base);
+    const { lerEstrito } = await import('../dist/diario.js');
+    const lido = lerEstrito(dir);
+    const eventos = lido.eventos ?? lido;
+    assert.equal(publicadaPeloProduto(eventos, '2026-11-13T00:00:00.000Z'), true, 'a semente que o runner grava é publicada pelo critério do produto');
+    assert.equal(existsSync(join(base, '.harness', 'entregas', 'GM-12-semente')), false);
+  });
+
+  test('snapshot-que-falhou-ou-contagem-diferente-do-censo-reprova-a-execucao (M3)', async () => {
+    const m = montarExecucao({});
+    await assert.rejects(coletar(m.rundir, m.repo, CELULA, roteiroColeta(), { pasta: m.pasta }), /1 snapshots \(esperado 26\)/, 'o padrão é o censo do roteiro');
+    await assert.rejects(coletar(m.rundir, m.repo, CELULA, roteiroColeta(), { pasta: m.pasta, total: 2 }), /1 snapshots \(esperado 2\)/);
+    writeFileSync(join(m.rundir, 'snapshot-falhou.log'), 'snapshot 7: erro\n');
+    await assert.rejects(coletar(m.rundir, m.repo, CELULA, roteiroColeta(), { pasta: m.pasta, total: 1 }), /snapshot falhou: snapshot 7/);
+    assert.match(readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), 'utf8'), /snapshot-falhou\.log/, 'o a1.exp grava a falha do snapshot');
+  });
+
+  test('8f-mede-a-decisao-que-o-produto-desenha-e-nao-a-palavra-Sombra (render real)', async () => {
+    const real = await renderizar(ESTADO_REAL, { Pane: { bodyRows: 50, bodyColumns: 180 } }, { local: 'lateral' });
+    assert.ok(real.some((l) => /^RECENTE · \d\d:\d\d ● \S+ decidiu: /.test(l)), 'o produto desenha "<sabio> decidiu: …" no RECENTE');
+    assert.ok(real.some((l) => /^ATENÇÃO · \d+ consultas? à Sombra sem decisão registrada/.test(l)), 'e a ATENÇÃO com a palavra Sombra, que não é decisão');
+    const decisao = { tipo: 'decisao.sombra', dados: { resposta: 'escopo da T2' } };
+    const avalia = (linhas, eventos) => ASSERCOES.find((a) => a.id === '8f-sombra-decisao-visivel').avaliar({ eventos, quadros: [{ linhas, itensDepende: 0 }] });
+    assert.equal(avalia(real, [decisao]).ok, true, 'decisão visível no render real');
+    const soAtencao = real.filter((l) => !/ decidiu: /.test(l));
+    assert.ok(soAtencao.some((l) => /Sombra/.test(l)));
+    assert.equal(avalia(soAtencao, [decisao]).ok, false, 'só a ATENÇÃO com a palavra Sombra NÃO conta (decisão ausente)');
+    const avaliaSem = avalia(real, []);
+    assert.equal(avaliaSem.ok, false, 'decisoes === 0 ⇒ não medida ⇒ falha');
+    assert.match(avaliaSem.detalhe, /não medida/);
   });
 
   test('1-e-2-sem-props-da-superficie-reprovam-como-nao-medidas', async () => {

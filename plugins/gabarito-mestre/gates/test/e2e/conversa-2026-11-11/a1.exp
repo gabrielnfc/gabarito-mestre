@@ -48,7 +48,7 @@ proc ocioso {} {
   return 1
 }
 proc digitar {sha txt} { sends "digitar $sha"; send -- $txt; after 1200; send "\r" }
-proc snapshot {n} { global node runner repo rundir; catch {exec $node $runner snapshot $repo $rundir $n} err; if {$err ne ""} { nota "snapshot $n: $err" } }
+proc snapshot {n} { global node runner repo rundir; catch {exec $node $runner snapshot $repo $rundir $n} err; if {$err ne ""} { nota "snapshot $n: $err"; set f [open $rundir/snapshot-falhou.log a]; puts $f "snapshot $n: $err"; close $f } }
 proc sair {status} {
   global rundir
   nota "fim status=$status"

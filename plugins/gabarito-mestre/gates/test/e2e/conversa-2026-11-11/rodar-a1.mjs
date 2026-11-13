@@ -43,6 +43,8 @@ export function raizPrincipal(cwd = process.cwd()) {
 export const CHAVES_PONTOS = Object.freeze(['roteiroSha256', 'pontos']);
 export const CHAVES_PONTO = Object.freeze(['msg', 'sha256', 'chars', 'esperado']);
 export const CHAVES_ESPERADO = Object.freeze(['fase', 'progresso', 'depende', 'origens']);
+/** A linha de decisão da Sombra no RECENTE do produto: `[RECENTE · ]HH:MM ● <sabio> decidiu: …`. */
+export const LINHA_DECISAO = /^(?:RECENTE · |\s+)\d{2}:\d{2} ● .+ decidiu: /;
 export const TOTAL_PONTOS = 26; // roteiro-s4.md "Total de pontos (exceto —): 26"
 const HEX64 = /^[0-9a-f]{64}$/;
 const mesmas = (o, chaves) => Object.keys(o).length === chaves.length && chaves.every((c) => Object.hasOwn(o, c));
@@ -222,7 +224,7 @@ export const ASSERCOES = Object.freeze([
     return res(emStatus.length >= 1 && ruins.length === 0, `${emStatus.length} Agent em turno de pergunta de status, ${ruins.length} negados`);
   } },
   { id: '8c-nada-em-entrega-publicada', ref: 'A1 (8) Emenda 1', avaliar: (ev) => {
-    // a entrega publicada é a semeada na cópia (`entrega.fim` antes do início); sem nenhuma, a asserção não mediu nada
+    // publicada = o critério do PRODUTO (FIEL-1 b: último `fato.medido pr` mergeado e nenhum aberto, medido antes do início; `publicadaPeloProduto`); sem nenhuma, a asserção não mediu nada
     const ruins = ev.entregasPublicadas.filter((id) => (ev.gravacoes[id]?.depois ?? 0) !== (ev.gravacoes[id]?.antes ?? 0));
     return res(ev.entregasPublicadas.length >= 1 && ruins.length === 0, `${ev.entregasPublicadas.length} entregas publicadas vigiadas, ${ruins.length} com gravação nova`);
   } },
@@ -237,9 +239,11 @@ export const ASSERCOES = Object.freeze([
     return res(ruins.length === 0, `${ruins.length} de ${ev.vivos.length} pontos com ativos ≠ linhas de agente (${ruins.map((p) => `${p.ativos}/${p.linhasAgente}`).join(' ')})`);
   } },
   { id: '8f-sombra-decisao-visivel', ref: 'A1 (8) Emenda 1', avaliar: (ev) => {
-    const decisoes = ev.eventos.filter((e) => e.tipo === 'decisao.sombra').length;
-    const visiveis = ev.quadros.flatMap((q) => q.linhas).filter((l) => /Sombra/.test(l)).length;
-    return res(decisoes === 0 || visiveis >= 1, `${decisoes} decisões da Sombra registradas, ${visiveis} linhas que a mostram`);
+    // a decisão que o PRODUTO desenha no RECENTE é `<sabio> decidiu: …` (painel.ts:592); a ATENÇÃO "N consultas à Sombra sem decisão registrada" (painel.ts:683) NÃO é decisão
+    const decisoes = ev.eventos.filter((e) => e.tipo === 'decisao.sombra' && typeof e.dados?.resposta === 'string' && e.dados.resposta.trim() !== '').length;
+    if (decisoes === 0) return res(false, 'nenhuma decisão da Sombra registrada no diário: não medida');
+    const visiveis = ev.quadros.flatMap((q) => q.linhas).filter((l) => LINHA_DECISAO.test(l)).length;
+    return res(visiveis >= 1, `${decisoes} decisões da Sombra registradas, ${visiveis} linhas de decisão no RECENTE`);
   } },
   { id: '9-veredito-com-revisor-antes', ref: 'A1 (9)', avaliar: (ev) => {
     const armado = new Set();
@@ -331,18 +335,39 @@ export function prepararCopia(raiz, destino, celula) {
 export const REGRA_SEMENTE = 'Regra de semente do A1: confirme o escopo de arquivos antes de escrever.';
 
 /**
- * Semeia a cópia com o que as asserções 8c e 10 precisam para medir algo: (a) uma entrega JÁ PUBLICADA (`entrega.inicio` + `entrega.fim {ok:true}`, `ts` antigo, gravados pelo
- * `append` do próprio produto) para vigiar "nada gravado em entrega publicada"; (b) um aprendizado D no brief do implementador, gravado pelo CLI do produto.
+ * Entrega JÁ PUBLICADA como na conversa real (F19): a da branch da cópia (`idDaBranch('enabler/GM-13-a1')` = GM-13, com o `plano.json` da `ba3986f` como 2º fato) com o PR #14
+ * mergeado e a release 2.0.0, gravados como `fato.medido` (`gh`) pelo `append` do próprio produto, `ts` antigo. É o que faz o produto reconhecer a entrega como publicada (FIEL-1 b).
  */
-export function semear(destino, bin, ghEstado) {
+export function semearEntregaPublicada(destino) {
   const script = `import { append } from ${JSON.stringify(pathToFileURL(join(GATES, 'dist', 'diario.js')).href)};
 const dir = process.argv[1];
-for (const [tipo, dados] of [['entrega.inicio', { politica: 'continua' }], ['entrega.fim', { ok: true }]]) {
-  const r = append(dir, 'semente', { ts: '2026-11-10T12:00:00.000Z', autor: 'a1@example.invalid', sessao: 'semente', agente: 'orquestrador', tipo, dados });
+for (const [chave, valor] of [['pr', { numero: 14, estado: 'mergeado', branch: 'enabler/GM-13-a1' }], ['release', { tag: 'v2.0.0' }]]) {
+  const r = append(dir, 'semente', { ts: '2026-11-10T12:00:00.000Z', autor: 'a1@example.invalid', sessao: 'semente', agente: 'painel', tipo: 'fato.medido', dados: { chave, fonte: 'gh', valor } });
   if (!r.ok) { process.stderr.write(r.erro); process.exit(1); }
 }`;
-  const a = spawnSync(process.execPath, ['--input-type=module', '-e', script, join(destino, '.harness', 'entregas', 'GM-12-semente')], { cwd: destino, encoding: 'utf8' });
+  const a = spawnSync(process.execPath, ['--input-type=module', '-e', script, join(destino, '.harness', 'entregas', 'GM-13')], { cwd: destino, encoding: 'utf8' });
   if (a.status !== 0) throw new Error(`semente da entrega publicada: ${a.stderr}${a.stdout}`);
+}
+
+/** Publicada pelo critério do produto (trilha.ts `prs`): o último PR medido (maior número) está mergeado e nenhum está aberto. Só vale o medido até `inicio` (o que a execução gravar não conta). */
+export function publicadaPeloProduto(eventos, inicio) {
+  const por = new Map();
+  for (const e of eventos) {
+    if (e.tipo !== 'fato.medido' || e.dados?.chave !== 'pr' || !(e.ts <= inicio)) continue;
+    const v = e.dados.valor;
+    if (v && Number.isInteger(v.numero) && typeof v.estado === 'string') por.set(v.numero, v.estado);
+  }
+  if (por.size === 0) return false;
+  const ultimo = Math.max(...por.keys());
+  return por.get(ultimo) === 'mergeado' && ![...por.values()].includes('aberto');
+}
+
+/**
+ * Semeia a cópia com o que as asserções 8c e 10 precisam para medir algo: (a) uma entrega JÁ PUBLICADA (`semearEntregaPublicada`) para vigiar "nada gravado em entrega publicada";
+ * (b) um aprendizado D no brief do implementador, gravado pelo CLI do produto.
+ */
+export function semear(destino, bin, ghEstado) {
+  semearEntregaPublicada(destino);
   const b = spawnSync(process.execPath, [join(GATES, 'scripts', 'loop.mjs'), 'aprendizado', 'E', 'D', '--regra', REGRA_SEMENTE, '--entra-em', 'brief:implementador', '--fonte', 'README.md', '--numero', '1', '--sessao', 'S-semente'], { cwd: destino, encoding: 'utf8', env: ambienteDe({ PATH: `${bin}:${process.env.PATH}`, GH_FIXTURE: ghEstado }) });
   if (b.status !== 0) throw new Error(`semente do aprendizado: ${b.stdout}${b.stderr}`);
 }
@@ -575,7 +600,7 @@ export function lerTranscripts(pasta, falas) {
 export const pastaDeTranscripts = (repo) => join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'projects', realpathSync(repo).replace(/[^A-Za-z0-9-]/g, '-'));
 
 /** Junta a evidência de uma execução (diário, observador, snapshots, transcripts) no formato que `avaliarExecucao` espera. `pasta`: transcripts (padrão: a do Claude Code para o repo). */
-export async function coletar(rundir, repo, celula, roteiro, { pasta = null } = {}) {
+export async function coletar(rundir, repo, celula, roteiro, { pasta = null, total = TOTAL_PONTOS } = {}) {
   const dirs = join(repo, '.harness', 'entregas');
   const eventos = [];
   const gravacoes = {};
@@ -590,8 +615,8 @@ export async function coletar(rundir, repo, celula, roteiro, { pasta = null } = 
       }
       const dele = eventos.filter((e) => e._entrega === d);
       gravacoes[d] = { antes: dele.filter((e) => e.ts <= inicio).length, depois: dele.length };
-      // publicada = `entrega.fim` gravado ANTES do início da execução (a semente da cópia); o que a execução publicar não vale
-      if (dele.some((e) => e.tipo === 'entrega.fim' && e.ts <= inicio)) publicadas.add(d);
+      // publicada = o critério do produto sobre o que foi medido ANTES do início (a semente da cópia); o que a execução medir não vale
+      if (publicadaPeloProduto(dele, inicio)) publicadas.add(d);
     }
   }
   const sends = existsSync(join(rundir, 'sends.log')) ? readFileSync(join(rundir, 'sends.log'), 'utf8').split('\n').filter(Boolean) : [];
@@ -608,6 +633,9 @@ export async function coletar(rundir, repo, celula, roteiro, { pasta = null } = 
       snaps.push(s);
     }
   }
+  // snapshot que falhou (a.exp) ou contagem diferente do censo reprova a execução: as asserções por ponto não avaliam o subconjunto que sobrou como se fosse o todo (I1)
+  if (existsSync(join(rundir, 'snapshot-falhou.log'))) throw new Error(`snapshot falhou: ${readFileSync(join(rundir, 'snapshot-falhou.log'), 'utf8').trim().split('\n')[0]}`);
+  if (snaps.length !== total) throw new Error(`${snaps.length} snapshots (esperado ${total})`);
   const quadros = []; let quadrosSemProps = 0;
   for (const s of snaps) {
     const linhas = await renderizar(s.estado, s.props, celula);
@@ -651,8 +679,9 @@ async function matriz(fonte, tmpRaiz, roteiro, so) {
     writeFileSync(join(rundir, 'falas.tsv'), roteiro.falas.map((f) => `${f.n}\t${f.rotulo}\t${sha256(f.texto)}\t${f.texto}`).join('\n'));
     const r = spawnSync('expect', ['-f', join(AQUI, 'a1.exp'), rundir, repo, PLUGIN, join(rundir, 'observador'), String(celula.cols), String(celula.rows), bin, process.execPath, fileURLToPath(import.meta.url)], { encoding: 'utf8', timeout: 4 * 60 * 60 * 1000 });
     let ev = null;
-    try { ev = await coletar(rundir, repo, celula, roteiro); } catch (e) { process.stderr.write(`${idDaCelula(celula)}: coleta falhou: ${e.message}\n`); }
-    const exec = ev === null || r.status !== 0 ? { celula: idDaCelula(celula), passa: false, resultados: [{ id: 'execucao', ok: false, detalhe: `expect rc ${r.status}; evidência ${ev === null ? 'ausente' : 'coletada'}` }] } : avaliarExecucao(ev);
+    let erroColeta = '';
+    try { ev = await coletar(rundir, repo, celula, roteiro); } catch (e) { erroColeta = e.message; process.stderr.write(`${idDaCelula(celula)}: coleta falhou: ${e.message}\n`); }
+    const exec = ev === null || r.status !== 0 ? { celula: idDaCelula(celula), passa: false, resultados: [{ id: 'execucao', ok: false, detalhe: `expect rc ${r.status}; evidência ${ev === null ? `ausente (${erroColeta})` : 'coletada'}` }] } : avaliarExecucao(ev);
     writeFileSync(join(rundir, 'resultado.json'), `${JSON.stringify(exec, null, 2)}\n`);
     execucoes.push(exec);
   }
