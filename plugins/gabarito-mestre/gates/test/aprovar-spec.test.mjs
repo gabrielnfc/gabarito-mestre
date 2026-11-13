@@ -516,3 +516,78 @@ test('ler-specs-ausente-x-ilegivel: diretório ausente ⇒ []; ilegível ⇒ lan
     }
   }
 });
+
+// ─────────────────────────────────────────────────────────────── T15 r1: PBI só do cabeçalho (DP-3 aj. 1) e garantias sem plano (aj. 2)
+
+/** As specs reais do repo, versionadas: as 6 com `PBI:` no meio da linha 3, entre `·`, e 3 sem PBI no cabeçalho; a da GM-14 cita `PBI: <ID>` também no corpo, que não conta. */
+const SPECS_REAIS = join(PLUGIN, '..', '..', DIR_SPECS);
+const REAIS = {
+  '2026-10-31-e1-fundacao-design.md': 'GM-9',
+  '2026-10-31-visao-2.0-design.md': null,
+  '2026-11-03-e2-loop-pouso-design.md': 'GM-10',
+  '2026-11-09-e3-sombra-emendas-entrega-design.md': 'GM-11',
+  '2026-11-09-e4-painel-design.md': 'GM-12',
+  '2026-11-10-e5-fluxo-gabarito-design.md': 'GM-13',
+  '2026-11-11-gm14-clareza-anexos.md': null,
+  '2026-11-11-gm14-clareza-design.md': 'GM-14',
+  '2026-11-11-gm14-decisoes-dono.md': null,
+};
+
+test('ler-specs-pbi-so-do-cabecalho: as 6 specs reais dão o PBI do meio da linha 3; o corpo nunca conta; ID fora do idPadrao ancorado não conta', () => {
+  const amb = repo({ plano: null, spec: null });
+  mkdirSync(join(amb.dir, DIR_SPECS), { recursive: true });
+  for (const nome of Object.keys(REAIS)) cpSync(join(SPECS_REAIS, nome), join(amb.dir, DIR_SPECS, nome));
+  const porNome = (lista) => Object.fromEntries(lista.map((s) => [s.caminho.slice(DIR_SPECS.length + 1), s.pbi]));
+  assert.deepEqual(porNome(lerSpecs(amb.dir)), REAIS);
+  assert.equal(Object.values(REAIS).filter((p) => p !== null).length, 6);
+  // casos sintéticos: cada um com o valor esperado
+  const casos = {
+    'corpo.md': ['# C\n\n## Notas\nVer PBI: GM-10\n', null], // depois do 1º `## ` nunca conta
+    'meio.md': ['# M\n\nIniciativa: x · PBI: GM-10 · Data: hoje\n\n## A\n', 'GM-10'],
+    'minusc.md': ['# m\nPBI: gm-10\n', null], // não casa o idPadrao padrão
+    'cauda.md': ['# c\nPBI: GM-10x\n', null], // `GM-10x` não é `GM-10`
+    'colado.md': ['# c\nXPBI: GM-10\n', null], // token precisa de início, espaço ou `·` antes
+    'primeiro.md': ['# p\nPBI: GM-11 · PBI: GM-10\n', 'GM-11'], // o 1º token decide
+    'ruim-primeiro.md': ['# r\nPBI: nada\nPBI: GM-10\n', null], // o 1º `PBI:` do cabeçalho decide, mesmo fora do padrão
+  };
+  for (const [nome, [texto]] of Object.entries(casos)) writeFileSync(join(amb.dir, DIR_SPECS, nome), texto);
+  const lidos = porNome(lerSpecs(amb.dir));
+  for (const [nome, [, esperado]] of Object.entries(casos)) assert.equal(lidos[nome], esperado, nome);
+  // idPadrao explícito: `GM-10` não casa `PROJ-\d+`; `PROJ-3` casa
+  writeFileSync(join(amb.dir, DIR_SPECS, 'proj.md'), '# P\nPBI: PROJ-3\n');
+  const outro = porNome(lerSpecs(amb.dir, 'PROJ-\\d+'));
+  assert.equal(outro['meio.md'], null);
+  assert.equal(outro['proj.md'], 'PROJ-3');
+  assert.equal(outro['2026-11-11-gm14-clareza-design.md'], null);
+});
+
+test('aprovar-sem-plano-corpo-nao-ambigua: cabeçalho de a.md + "## Notas / Ver PBI: GM-10" em c.md ⇒ a.md aprovada, nunca spec_ambigua', () => {
+  const amb = repo({ plano: null, spec: null });
+  const alvo = specPbi(amb, 'a.md', 'GM-10');
+  specPbi(amb, 'c.md', null, '## Notas\nVer PBI: GM-10\n');
+  assert.deepEqual(aprovarSpec(amb.dir, 'S-dono'), { ok: true, spec: alvo.caminho, sha256: sha(alvo.bytes), entrega: 'GM-10' });
+  assert.equal(aprovadas(amb).length, 1);
+});
+
+test('aprovar-sem-plano-spec-mudou: sem plano.json, a spec mudou entre o hash e o append ⇒ spec_mudou, 0 bytes novos', () => {
+  const amb = repo({ plano: null, spec: null });
+  const alvo = specPbi(amb, 'a.md', 'GM-10');
+  const antes = amb.bytes();
+  const r = aprovarSpec(amb.dir, 'S-dono', { antes: () => writeFileSync(join(amb.dir, alvo.caminho), 'outra\nPBI: GM-10\n') });
+  assert.equal(r.ok, false);
+  assert.equal(r.erro, 'spec_mudou');
+  assert.deepEqual(amb.bytes(), antes);
+  assert.equal(existsSync(join(amb.entregas, 'plano.json')), false);
+  // sem a troca, a mesma spec aprova
+  assert.equal(aprovarSpec(amb.dir, 'S-dono').ok, true);
+});
+
+test('aprovar-sem-plano-sem-efeito: sem plano.json, evento gravado que o diário relido não mostra ⇒ aprovacao_sem_efeito', () => {
+  const amb = repo({ plano: null, spec: null });
+  specPbi(amb, 'a.md', 'GM-10');
+  const r = aprovarSpec(amb.dir, 'S-dono', {
+    depois: () => { for (const n of readdirSync(amb.entregas)) if (n.startsWith('events.')) writeFileSync(join(amb.entregas, n), ''); },
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.erro, 'aprovacao_sem_efeito');
+});

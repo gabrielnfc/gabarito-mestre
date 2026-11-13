@@ -4581,6 +4581,27 @@ test('id-da-branch-igual-nos-dois-usos: contexto do loop e trilhaDe dão o mesmo
   assert.equal(contexto(amb.dir, { entrega: 'GM-77' }).entrega, 'GM-77');
 });
 
+test('id-padrao-de-origin-invalido-ou-longo: regex inválida e > 200 caracteres caem no padrão, sem lançar; 200 exatos valem', () => {
+  const amb = ambiente({ plano: null });
+  const doLoop = () => {
+    try { return contexto(amb.dir, {}).entrega; } catch (e) { assert.equal(e.erro, 'entrega_nao_inferida', e.message); return null; }
+  };
+  const em = (branch) => { assert.equal(gOk(amb.dir, 'checkout', '-q', '-B', branch).status, 0, branch); return doLoop(); };
+  // regex inválida ⇒ padrão: GM-10 é inferido e nada lança
+  comOrigin(amb, { fluxo: { idPadrao: 'ABC-(\\d+' } });
+  assert.equal(em('enabler/GM-10-loop'), 'GM-10');
+  assert.equal(em('enabler/ABC-7-loop'), 'ABC-7');
+  // 201 caracteres (válida, mas longa) ⇒ padrão: GM-10 vale (a longa não o casaria)
+  const longa = `ABC-\\d+|${'Z'.repeat(201 - 'ABC-\\d+|'.length)}`;
+  assert.equal(longa.length, 201);
+  comOrigin(amb, { fluxo: { idPadrao: longa } });
+  assert.equal(em('enabler/GM-10-loop'), 'GM-10');
+  // 200 exatos valem: a mesma regex encurtada em 1 é a de origin (GM-10 não casa mais)
+  comOrigin(amb, { fluxo: { idPadrao: longa.slice(0, 200) } });
+  assert.equal(em('enabler/GM-10-loop'), null);
+  assert.equal(em('enabler/ABC-7-loop'), 'ABC-7');
+});
+
 test('aprovar-sem-plano-pelo-cli-real (P9): o comando do dono, sem plano.json, grava pelo hook real e o loop segue sem plano', () => {
   const amb = ambiente({ plano: null });
   mkdirSync(join(amb.dir, 'docs', 'superpowers', 'specs'), { recursive: true });

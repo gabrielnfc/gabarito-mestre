@@ -499,6 +499,8 @@ function dicaDaTabela(tipo, dados, invalido) {
 function gravar(c, plano, tipo, dados, antes = () => {}) {
   const eventos = lerDiarioEstrito(c.dirEntrega);
   // `plano === null` só da aprovação antes do plano (T15): sem plano não há tabela; vale a leitura estrita, a forma e o canário.
+  // Desvio da letra da DP-3 aj. 2 ("não passa por gravar"), não do fim: `gravarSemPlano` não tem leitura estrita nem o `antes` onde vivem
+  // `ja_aprovada` e `spec_mudou`; passar por aqui com `null` pula só `diarioInvalido`, que pressupõe plano. Nenhum tipo de task chega com `null`.
   if (plano !== null && diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega já não passa na tabela de transições; nada foi gravado');
   const ts = new Date().toISOString();
   const minhas = eventos.filter((e) => e.sessao === c.sessao).map((e) => e.seq);
@@ -1448,11 +1450,15 @@ const ausenteFs = (e) => e?.code === 'ENOENT' || e?.code === 'ENOTDIR';
 
 /**
  * GM-14 T15 (REQ-TRI-1): as specs de `docs/superpowers/specs/*.md` da raiz dada, em ordem de nome, como `SpecFato` de `trilha.ts`:
- * `{caminho, pbi, sha256, secoes, titulo}`. `pbi` = `PBI: <ID>` nas 15 primeiras linhas (senão `null`); `sha256` dos bytes; `secoes` = linhas
- * `## `; `titulo` = o 1º `# `. Não arquivo regular ou maior que 4 MiB fica de fora. Diretório ausente ⇒ `[]`; ilegível ⇒ lança
- * `Falha('specs_ilegiveis')`: falha de leitura nunca vira "sem spec".
+ * `{caminho, pbi, sha256, secoes, titulo}`. `pbi` = o 1º token `PBI: <ID>` do CABEÇALHO (DP-3 aj. 1, a regra de `painel-medir.mjs`
+ * `pbiDoCabecalho`): só linhas antes do 1º `## ` e entre as 15 primeiras; token precedido de início, espaço ou `·` e o ID inteiro (sem
+ * `[A-Za-z0-9-]` depois) casando `idPadrao` ancorado; senão `null`. O corpo nunca conta. `sha256` dos bytes; `secoes` = linhas `## `;
+ * `titulo` = o 1º `# `. Não arquivo regular ou maior que 4 MiB fica de fora. Diretório ausente ⇒ `[]`; ilegível ⇒ lança
+ * `Falha('specs_ilegiveis')`: falha de leitura nunca vira "sem spec". `idPadrao` ausente ⇒ `fluxo.idPadrao` de origin (`idPadraoDe`).
  */
-export function lerSpecs(raiz) {
+export function lerSpecs(raiz, idPadrao = idPadraoDe(raiz)) {
+  let reId;
+  try { reId = new RegExp(`^(?:${idPadrao})$`); } catch { reId = new RegExp(`^(?:${PADROES.idPadrao})$`); }
   const dir = join(raiz, 'docs', 'superpowers', 'specs');
   let nomes;
   try {
@@ -1472,8 +1478,9 @@ export function lerSpecs(raiz) {
     const linhas = bytes.toString('utf8').split('\n');
     let pbi = null;
     for (const l of linhas.slice(0, 15)) {
-      const m = /(?:^|[\s·|])PBI:\s*([A-Za-z0-9-]+)/.exec(l.slice(0, 400));
-      if (m) { pbi = m[1]; break; }
+      if (/^##\s/.test(l)) break;
+      const m = /(?:^|[\s·])PBI:\s*([A-Za-z0-9-]+)(?![A-Za-z0-9-])/.exec(l.slice(0, 400));
+      if (m !== null) { pbi = reId.test(m[1]) ? m[1] : null; break; }
     }
     const t = linhas.find((l) => l.startsWith('# '));
     specs.push({
