@@ -890,7 +890,8 @@
         "T2",
         "T34",
         "T36",
-        "T37"
+        "T37",
+        "T24"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
@@ -900,7 +901,9 @@
         "plugins/gabarito-mestre/gates/dist/orcamento.js",
         "plugins/gabarito-mestre/gates/dist/painel.js",
         "plugins/gabarito-mestre/gates/test/painel-altura.test.ts",
-        "plugins/gabarito-mestre/gates/test/painel-blocos.test.ts"
+        "plugins/gabarito-mestre/gates/test/painel-blocos.test.ts",
+        "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/rodar-a1.mjs",
+        "plugins/gabarito-mestre/gates/test/conversa-pontos.test.mjs"
       ],
       "reqs": [
         "REQ-GLB-1"
