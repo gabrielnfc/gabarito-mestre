@@ -146,7 +146,7 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.equal(pm.estado.pergunta.texto, 'Esta conversa é da entrega GM-50?');
   assert.equal(f.idPerguntaB, pm.estado.pergunta.id, 'o botão responde a pergunta que o painel mostrou');
   assert.deepEqual([pm.estado.trilha.fase, pm.estado.trilha.marcas], [1, ['●', '○', '○', '○', '○', '○', '○']], 'REQ-TRI-1: sem entrega identificada a trilha volta à fase 1');
-  assert.match(topo(pm)[1], /^depende de você: Esta conversa é da entrega GM-50\? · 1 GM-50 · 2 uma nova/, 'a pergunta (b) no topo, no render também');
+  assert.match(pm.texto, /Esta conversa é da entrega GM-50\? · 1 GM-50 · 2 uma nova/, 'a pergunta (b) aparece no render');
 
   // (10) o dono responde pelo botão: a entrega volta, PR ✓, fase 7 (uso ●) com "aceito"
   assert.match(f.responderB.j.systemMessage, /^Resposta registrada: GM-50\.$/);
@@ -170,6 +170,7 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.equal(topo(pu)[1], 'depende de você: nada');
   assert.match(pu.texto, /^PRONTO ▰{10} 2 de 2 integradas$/m);
   assert.equal(pu.estado.recente[0].origem, '(você respondeu: GM-50)');
+  assert.match(pu.texto, /^RECENTE · \d\d:\d\d .+\(você respondeu: GM-50\)$/m);
 
   // (12) o GitHub falha: nada novo gravado; o painel não diz "nada" nem "aceito" sem conferir (REQ-DIA-1, REQ-DEP-1, REQ-TRI-1, D-P13)
   assert.equal(f.medirComGhFalho.j.ok, false);
@@ -191,6 +192,14 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
 // DEFEITO DE PRODUTO (dono: T37, spec:53): o painel escreve "sem entrega identificada" (painel-esquadrao.js:452); a spec manda "entrega não identificada". Texto exato, um só.
 test('fumaca-marca-sem-entrega: a branch sozinha escreve exatamente "GABARITO · entrega não identificada" (spec:53)', { todo: 'defeito de produto, painel-esquadrao.js:452, dono T37 (spec:53)' }, () => {
   assert.match(topo(P.soBranch)[0], /^GABARITO · entrega não identificada$/);
+});
+
+// DEFEITO DE PRODUTO (dono: T18): com o PR mergeado e a branch sozinha, o diário tem T1 e T2 mas o painel não carrega o plano ⇒ lê o diário como inválido e põe um PAROU
+// ("diário fora da tabela de transições") antes da pergunta (b); a spec (REQ-DEP-1) manda a pergunta (b) na linha 2 do topo, sem PAROU.
+test('fumaca-pr-mergeado-pergunta-no-topo: PR mergeado e a branch sozinha ⇒ a pergunta (b) é a linha 2, sem PAROU de diário inválido (REQ-DEP-1, REQ-TRI-1)', { todo: 'defeito de produto, T18 (REQ-DEP-1)' }, () => {
+  const pm = P.prMergeado;
+  assert.ok(!/^PAROU/m.test(pm.texto), 'diário válido: nenhum PAROU');
+  assert.match(topo(pm)[1], /^depende de você: Esta conversa é da entrega GM-50\? · 1 GM-50 · 2 uma nova/);
 });
 
 // DEFEITO DE PRODUTO (dono: T18, já avisada): com o PR mergeado e a branch sozinha, o painel liga a entrega ("GM-50 … PRONTO 2 de 2") em vez do que a spec manda.
