@@ -65,7 +65,7 @@ export function montarRepo(dest, planoArquivo, { suiteSemGit = false } = {}) {
   mkdirSync(join(dest, 'docs'), { recursive: true });
   writeFileSync(join(dest, '.gitignore'), '.harness/\nnode_modules/\n.tmp-gabarito/\n');
   writeFileSync(join(dest, 'package.json'), JSON.stringify({ name: 'gm99-fumaca', version: '0.0.0', private: true, type: 'module', scripts: { test: 'node --test test/*.test.mjs' } }) + '\n');
-  writeFileSync(join(dest, 'harness.config.json'), JSON.stringify({ gates: { suites: ['npm test'] }, loop: { slots: 2, tetoTokens: 1500000 } }) + '\n');
+  writeFileSync(join(dest, 'harness.config.json'), JSON.stringify({ fluxo: { resolvidoEm: '2026-11-01T00:00:00Z' }, gates: { suites: ['npm test'] }, loop: { slots: 2, tetoTokens: 1500000 } }) + '\n');
   writeFileSync(join(dest, 'test/base.test.mjs'), "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('base', () => assert.ok(true));\n");
   // D2: suíte sensível ao repositório pai. O temporário tem de nascer sem `.git` acima dele (CI roda com TMPDIR comum; uma worktree não).
   if (suiteSemGit) {
@@ -134,7 +134,7 @@ export async function caminhar(opcoes) {
   // ── guarda real (stdin) ────────────────────────────────────────
   function guarda(tool_name, tool_input, agente) {
     contagem.guarda++;
-    const entrada = { hook_event_name: 'PreToolUse', session_id: 'S1', cwd: REAL, tool_name, tool_input, ...(agente ? { agent_id: agente.id, agent_type: agente.tipo } : {}) };
+    const entrada = { hook_event_name: 'PreToolUse', session_id: mundo.sessao, cwd: REAL, tool_name, tool_input, ...(agente ? { agent_id: agente.id, agent_type: agente.tipo } : {}) };
     const r = spawnSync(NODE, [join(PLUGIN, 'gates/dist/guarda.js')], { cwd: REAL, input: JSON.stringify(entrada), encoding: 'utf8', env: ambiente({ ...envBase, CLAUDE_PROJECT_DIR: REAL }) });
     if (r.status !== 0) def(`guarda rc ${r.status}`);
     let d = null;
@@ -167,14 +167,14 @@ export async function caminhar(opcoes) {
   }
 
   // ── host do mod ($ mínimo) ─────────────────────────────────────
-  const mundo = { percent: null, agentes: [], store: new Map(), clears: 0, submits: [], avisos: [], agendado: null, clearAgora: false, denies: [] };
+  const mundo = { sessao: 'S1', clears0: 0, percent: null, agentes: [], store: new Map(), clears: 0, submits: [], avisos: [], agendado: null, clearAgora: false, denies: [] };
   const modArquivo = o.semReabrir ? modSemReabrir(join(o.tmp, 'mod-sem-reabrir')) : (o.mod ?? join(PLUGIN, 'mod/gabarito.mjs')); // `mod`: outro gabarito.mjs (validar a regra da T19 r2 antes de ela chegar)
   const { register } = await import(pathToFileURL(modArquivo).href);
   const H = {};
   register((ev, a, b) => { H[ev] = b ?? a; });
   const $ = {
     plugin: { root: PLUGIN },
-    session: { root: async () => REAL, repo: async () => ({ root: REAL }), id: async () => 'S1', usage: async () => ({ context: mundo.percent === null ? {} : { percent: mundo.percent } }) },
+    session: { root: async () => REAL, repo: async () => ({ root: REAL }), id: async () => mundo.sessao, usage: async () => ({ context: mundo.percent === null ? {} : { percent: mundo.percent } }) },
     env: { get: async (k) => (k === 'GABARITO_POUSO_X' ? o.x : undefined) },
     store: { get: async (k) => mundo.store.get(k), set: async (k, v) => { mundo.store.set(k, v); }, delete: async (k) => { mundo.store.delete(k); } },
     ui: { toast: async (t) => { mundo.avisos.push(t); trilha.push(`  mod aviso: ${t.slice(0, 150)}`); }, log: () => {} },
@@ -196,7 +196,7 @@ export async function caminhar(opcoes) {
   /** Stop real (`stop-loop.mjs`). */
   function stop() {
     const vivos = mundo.agentes.filter((a) => a.status === 'running');
-    const entrada = { session_id: 'S1', cwd: REAL, hook_event_name: 'Stop', background_tasks: vivos.map((a) => ({ type: 'subagent', id: a.id })) };
+    const entrada = { session_id: mundo.sessao, cwd: REAL, hook_event_name: 'Stop', background_tasks: vivos.map((a) => ({ type: 'subagent', id: a.id })) };
     const r = spawnSync(NODE, [join(PLUGIN, 'gates/scripts/stop-loop.mjs')], { cwd: REAL, input: JSON.stringify(entrada), encoding: 'utf8', env: ambiente({ CLAUDE_PROJECT_DIR: REAL }) });
     if (r.status !== 0) def(`stop-loop rc ${r.status}: ${String(r.stderr).slice(0, 120)}`);
     let j = null;
@@ -256,7 +256,7 @@ export async function caminhar(opcoes) {
     for (const l of LEITURAS_REVISOR) {
       const r = spawnSync(NODE, [join(PLUGIN, 'gates/dist/guarda.js')], {
         cwd: REAL,
-        input: JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 'S1', cwd: REAL, tool_name: 'Bash', tool_input: { command: `cd "${wt}" && ${l}` }, agent_id: ag.id, agent_type: ag.tipo }),
+        input: JSON.stringify({ hook_event_name: 'PreToolUse', session_id: mundo.sessao, cwd: REAL, tool_name: 'Bash', tool_input: { command: `cd "${wt}" && ${l}` }, agent_id: ag.id, agent_type: ag.tipo }),
         encoding: 'utf8', env: ambiente({ ...envBase, CLAUDE_PROJECT_DIR: REAL }),
       });
       leituras[l] = r.stdout.includes('"deny"') ? 'deny' : r.stdout.includes('"ask"') ? 'ask' : 'passa';
@@ -423,7 +423,8 @@ export async function caminhar(opcoes) {
   /** Depois do /clear: a memória do modelo vai embora e o cartão de sessão é o que resta. */
   function aposClear(percent) {
     memoria.rodada = {};
-    const c = spawnSync('bash', [join(PLUGIN, 'hooks/session-card.sh')], { cwd: REAL, input: JSON.stringify({ source: 'clear', session_id: 'S1', cwd: REAL }), encoding: 'utf8', env: ambiente({ CLAUDE_PROJECT_DIR: REAL, CLAUDE_PLUGIN_ROOT: PLUGIN }) });
+    mundo.sessao = `S${++mundo.clears0 + 1}`; // o Claude Code real dá session_id novo a cada /clear (anexo D, P9): S2, S3…
+    const c = spawnSync('bash', [join(PLUGIN, 'hooks/session-card.sh')], { cwd: REAL, input: JSON.stringify({ source: 'clear', session_id: mundo.sessao, cwd: REAL }), encoding: 'utf8', env: ambiente({ CLAUDE_PROJECT_DIR: REAL, CLAUDE_PLUGIN_ROOT: PLUGIN }) });
     if (c.status !== 0) def(`cartão de sessão rc ${c.status}`);
     trilha.push(`  /clear, cartão ${(c.stdout ?? '').length} chars`);
     mundo.percent = percent; // depois do /clear o contexto é pequeno

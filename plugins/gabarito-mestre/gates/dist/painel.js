@@ -630,7 +630,8 @@ function projetarNovo(plano              , eventos                 , entrada    
   const abertas = perguntasAbertas(lista, trilha, { sessao: typeof fatos.sessao === 'string' ? fatos.sessao : null, ...(Array.isArray(fatos.ultimas) ? { ultimas: fatos.ultimas } : {}) })
     .filter((q) => q.gatilho !== 'pendencia' && q.gatilho !== 'ideia'); // pendência (3) e ideia (4) são itens de `dependeDe`, com o botão "feito"/"visto"
   const pergunta = abertas[0] ?? null;
-  let depende = dependeDe(trilha, lista, legado.depende, { falhou: fontes }, entrada.pousoPendente === true || pousoPendente(eventos).pendente,
+  const pousoDe = pousoPendente(eventos);
+  let depende = dependeDe(trilha, lista, legado.depende, { falhou: fontes }, entrada.pousoPendente === true || pousoDe.pendente,
     { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao });
   if (pergunta !== null) depende = depende.filter((i) => i.motivo !== NADA);
   if (velho) depende = depende.map((i) => (i.motivo === NADA ? { ...i, motivo: DESATUALIZADO } : i));
@@ -710,8 +711,10 @@ function projetarNovo(plano              , eventos                 , entrada    
   const textoParar = (motivo        , task               )                =>
     ehMotivo(motivo) ? linhaDaTabela(motivo, task !== null && p.tasks.some((t) => t.id === task) ? task : null).texto : null;
 
-  return {
+  // `pousoPendente {pendente, sessao, seq}` no estado (FIEL-14 d): a `chavePouso` do mod lê o `seq` do último `sessao.pouso` (pouso novo ⇒ chave nova ⇒ push novo).
+  const estado                                                                     = {
     ...legado,
+    pousoPendente: pousoDe,
     id: plano !== null ? p.entrega : (trilha.entrega ?? ''),
     modo, trilha, pergunta, perguntasMais: Math.max(0, abertas.length - 1), umaLinha, pronto, fase,
     depende, atencao,
@@ -723,4 +726,5 @@ function projetarNovo(plano              , eventos                 , entrada    
     desatualizadoS: desat,
     fontesFalhas: fontes,
   };
+  return estado;
 }

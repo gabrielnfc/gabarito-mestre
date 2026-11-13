@@ -1598,14 +1598,41 @@ test('pouso-pendente-tabela: clear de outra sessão tira; startup, resume e clea
   assert.deepEqual(pousoPendente([pouso(1, 5), inicio(1, 9, 'S2', 'clear'), pouso(2, 12, 'S2')]), { pendente: true, sessao: 'S2', seq: 2 });
   // a ordem do array não manda: vale o ts
   assert.deepEqual(pousoPendente([inicio(1, 9, 'S2', 'clear'), pouso(1, 5)]), nada);
-  // retomada do mod (pouso automático, FIEL-14 g) atende o pouso; retomada de outra via, anterior ao pouso ou sem `via` não
+  // `sessao.retomada` (de qualquer via) sozinha NÃO tira o pendente (FIEL-14 e: só `sessao.inicio {origem:'clear'}` de outra sessão)
   const ret = (seq: number, seg: number, dados: Record<string, unknown>) => ev(seq, new Date(Date.UTC(2026, 10, 3, 1, 0, seg)).toISOString(), 'S1', 'sessao.retomada', dados);
-  assert.deepEqual(pousoPendente([pouso(1, 5), ret(2, 9, { via: 'mod', chars: 5 })]), nada);
+  assert.equal(pousoPendente([pouso(1, 5), ret(2, 9, { via: 'mod', chars: 5 })]).pendente, true);
   assert.equal(pousoPendente([pouso(1, 5), ret(2, 9, { via: 'dono' })]).pendente, true);
   assert.equal(pousoPendente([pouso(1, 5), ret(2, 9, {})]).pendente, true);
-  assert.equal(pousoPendente([ret(1, 1, { via: 'mod' }), pouso(2, 5)]).pendente, true);
   // origem fora da forma não limpa
   assert.equal(pousoPendente([pouso(1, 5), ev(1, new Date(Date.UTC(2026, 10, 3, 1, 0, 9)).toISOString(), 'S2', 'sessao.inicio', {})]).pendente, true);
+});
+
+test('sessao.retomada sozinha não tira o pendente (via mod, via dono, sem via); com o clear de outra sessão, tira', () => {
+  const ret = (seq: number, seg: number, dados: Record<string, unknown>) => ev(seq, new Date(Date.UTC(2026, 10, 3, 1, 0, seg)).toISOString(), 'S1', 'sessao.retomada', dados);
+  for (const dados of [{ via: 'mod', chars: 5 }, { via: 'dono' }, {}]) {
+    assert.deepEqual(pousoPendente([pouso(1, 5), ret(2, 9, dados)]), { pendente: true, sessao: 'S1', seq: 1 }, JSON.stringify(dados));
+  }
+  assert.equal(pousoPendente([pouso(1, 5), inicio(1, 8, 'S2', 'clear'), ret(2, 9, { via: 'mod' })]).pendente, false);
+});
+
+test('pouso-pendente-chave-por-pouso: o estado do painel carrega pousoPendente.seq e a chavePouso do mod dá chave nova a cada pouso (FIEL-14 d)', async () => {
+  const { projetarPainel } = await import('../src/painel.ts');
+  const { chavePouso } = await import('../../mod/painel.mjs' as string);
+  const p: Plano = { entrega: 'GM-14', tasks: [{ id: 'a', deps: [], arquivos: [] }] };
+  const entrada = {
+    decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+    pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T03:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
+    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26,
+    fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['a'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 'S1' },
+  };
+  const base = diario(ini('a'), con('a'));
+  const e1 = projetarPainel(p, [...base, pouso(10, 30)], entrada as never) as unknown as Record<string, unknown>;
+  const e2 = projetarPainel(p, [...base, pouso(10, 30), inicio(1, 40, 'S2', 'clear'), pouso(2, 50, 'S2')], entrada as never) as unknown as Record<string, unknown>;
+  assert.equal((e1.pousoPendente as { pendente: boolean }).pendente, true);
+  const k1 = chavePouso(e1), k2 = chavePouso(e2);
+  assert.match(k1, /^GM-14\|pouso\|\d+$/);
+  assert.match(k2, /^GM-14\|pouso\|\d+$/);
+  assert.notEqual(k1, k2);
 });
 
 test('pouso-pendente-nao-despacha-nem-revisor: concluida com pouso pendente ⇒ pousar; sem pouso, revisor (controle)', () => {
@@ -1674,5 +1701,6 @@ test('pouso-pendente-regra-unica: o painel e o núcleo dão a mesma resposta par
     const fonte = readFileSync(fileURLToPath(new URL(f, import.meta.url)), 'utf8');
     assert.match(fonte, /from '\.{1,2}\/(dist\/)?pouso-pendente\.(ts|js)'/, f);
     assert.doesNotMatch(fonte, /origem\s*===?\s*'clear'/, `${f} não pode ter regra própria`);
+    assert.doesNotMatch(fonte, /\[[^\]]*'clear'[^\]]*\]\s*\.includes\(|'sessao\.inicio'/, `${f} não pode ter regra própria (includes / tipo sessao.inicio)`);
   }
 });
