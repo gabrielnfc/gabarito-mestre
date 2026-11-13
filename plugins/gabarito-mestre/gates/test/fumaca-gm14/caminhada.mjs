@@ -38,14 +38,20 @@ const RELOGIO = `data:text/javascript,${encodeURIComponent(
   'const B=Number(process.env.FUMACA_AGORA);if(Number.isFinite(B)){const R=Date;globalThis.Date=class extends R{constructor(...a){if(a.length===0)super(B);else super(...a)}static now(){return B}}}',
 )}`;
 
-/** `gh` de fixture: lê o estado de `GH_FIXTURE` (`{pr:[{number,state}], release:[{tagName}]}`); `GH_FIXTURE_FALHA=1` ⇒ rc 1. Só `pr list` e `release list`. */
+/**
+ * `gh` de fixture: lê o estado de `GH_FIXTURE` (`{branch, pr:[{number,state}], release:[{tagName}]}`); `GH_FIXTURE_FALHA=1` ⇒ rc 1. Só `pr list` e `release list`.
+ * Recusa argumento inesperado (REQ-DIA-1: `gh pr list --head <branch>`): com `branch` no estado, `pr list` sem `--head=<branch>` ⇒ rc 2, e o PR de outra branch nunca entra.
+ */
 const GH_FALSO = `#!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 const a = process.argv.slice(2);
 if (process.env.GH_FIXTURE_FALHA === '1') { process.stderr.write('gh de fixture: falha pedida\\n'); process.exit(1); }
 let est;
 try { est = JSON.parse(readFileSync(process.env.GH_FIXTURE, 'utf8')); } catch { process.stderr.write('gh de fixture sem estado\\n'); process.exit(1); }
-if (a[0] === 'pr' && a[1] === 'list') { process.stdout.write(JSON.stringify(est.pr ?? [])); process.exit(0); }
+if (a[0] === 'pr' && a[1] === 'list') {
+  if (est.branch !== undefined && !a.includes('--head=' + est.branch)) { process.stderr.write('gh de fixture: pr list sem --head=' + est.branch + ': ' + a.join(' ') + '\\n'); process.exit(2); }
+  process.stdout.write(JSON.stringify(est.pr ?? [])); process.exit(0);
+}
 if (a[0] === 'release' && a[1] === 'list') { process.stdout.write(JSON.stringify(est.release ?? [])); process.exit(0); }
 process.stderr.write('gh de fixture: comando não previsto: ' + a.join(' ') + '\\n');
 process.exit(2);
@@ -156,8 +162,11 @@ function setefases(base) {
 
   // 1. ideia: a nota entra sem plano; a entrega só existe com branch com ID e um 2º fato (REQ-TRI-1)
   ok(loop('anotar', '--tipo', 'ideia', '--texto', 'mostrar o progresso ao dono'), 'anotar ideia');
+  ok(loop('anotar', '--tipo', 'ideia', '--texto', 'avisar quando a versão sair'), 'anotar 2ª ideia');
   o.passos.ideiaAnotada = passo(a, 'ideia anotada');
   git(a.dir, 'checkout', '-q', '-b', 'feat/GM-50-fumaca');
+  const BRANCH = 'feat/GM-50-fumaca';
+  a.gh({ branch: BRANCH, pr: [], release: [] });
   medir();
   o.passos.soBranch = passo(a, 'só a branch');
   mkdirSync(join(a.dir, 'docs', 'superpowers', 'specs'), { recursive: true });
@@ -197,10 +206,10 @@ function setefases(base) {
   o.passos.todasIntegradas = passo(a, 'T1 e T2 integradas');
 
   // 5. pedido de revisão aberto, depois mergeado (o `gh` de fixture troca de estado)
-  a.gh({ pr: [{ number: 7, state: 'OPEN' }], release: [] });
+  a.gh({ branch: BRANCH, pr: [{ number: 7, state: 'OPEN' }], release: [] });
   medir();
   o.passos.prAberto = passo(a, 'PR aberto');
-  a.gh({ pr: [{ number: 7, state: 'MERGED' }], release: [] });
+  a.gh({ branch: BRANCH, pr: [{ number: 7, state: 'MERGED' }], release: [] });
   medir();
   o.passos.prMergeado = passo(a, 'PR mergeado');
 
@@ -210,7 +219,7 @@ function setefases(base) {
   o.passos.aceito = passo(a, 'aceito');
 
   // a versão sai: o `gh` de fixture lista a release (a tag chega crua)
-  a.gh({ pr: [{ number: 7, state: 'MERGED' }], release: [{ tagName: 'gabarito-mestre--v2.1.0' }] });
+  a.gh({ branch: BRANCH, pr: [{ number: 7, state: 'MERGED' }], release: [{ tagName: 'gabarito-mestre--v2.1.0' }] });
   medir();
   o.passos.publicada = passo(a, 'publicada');
 
@@ -282,6 +291,19 @@ function sentinela(base) {
 
 const REGRA = 'rode o build antes de rodar o teste';
 
+/** O instalador REAL num repositório vazio: o `.gitignore` que ele deixa não esconde o extrato (REQ-APR-5 (a)). Sem `add -f`: é o que um `git add` comum faria. */
+function instaladoNaoEscondeOExtrato(base) {
+  const dir = join(base, 'repo instalado');
+  mkdirSync(dir);
+  git(dir, 'init', '-q', '-b', 'main');
+  const inst = spawnSync('bash', [join(GATES, '..', 'scripts', 'instalar.sh'), dir], { encoding: 'utf8', env: ambiente(T0), timeout: 120_000 });
+  mkdirSync(join(dir, '.harness'), { recursive: true });
+  writeFileSync(join(dir, '.harness', 'aprendizados.jsonl'), '{}\n');
+  const ign = spawnSync('git', ['check-ignore', '-q', '.harness/aprendizados.jsonl'], { cwd: dir, env: ambiente(T0) });
+  git(dir, 'add', '.harness/aprendizados.jsonl');
+  return { instaladorRc: inst.status, gitignore: readFileSync(join(dir, '.gitignore'), 'utf8'), checkIgnoreRc: ign.status, versionados: git(dir, 'ls-files', '-z').split('\0').filter(Boolean) };
+}
+
 function aprendizado(base) {
   const a = montar(base, 'aprendizado');
   const loop = (...args) => a.rodar('loop.mjs', args);
@@ -294,8 +316,11 @@ function aprendizado(base) {
   const apr = ok(loop('aprendizado', 'E', 'D', '--regra', REGRA, '--entra-em', 'brief:implementador', '--eventos', 'loop:1'), 'aprendizado');
   o.aprendizado = apr.j;
   o.extratoBruto = readFileSync(join(a.dir, '.harness', 'aprendizados.jsonl'), 'utf8');
-  git(a.dir, 'add', '-f', '.harness/aprendizados.jsonl', '.harness/entregas/GM-60/plano.json');
+  // o extrato entra por `git add` comum (a regra da fumaça o libera); só o plano da entrega, ignorado pelo padrão `entregas/*/*`, precisa de `-f`
+  git(a.dir, 'add', '.harness/aprendizados.jsonl');
+  git(a.dir, 'add', '-f', '.harness/entregas/GM-60/plano.json');
   git(a.dir, 'commit', '-q', '-m', 'docs: extrato e plano');
+  o.instalador = instaladoNaoEscondeOExtrato(base);
   o.versionados = git(a.dir, 'ls-files', '-z').split('\0').filter(Boolean);
   // clone: só o que o git versiona (nenhum diário), na mesma branch
   const clone = join(base, 'clone por ls-files');
