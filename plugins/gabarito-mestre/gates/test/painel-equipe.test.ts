@@ -898,13 +898,21 @@ test('todo-ativo-tem-nome e nomes-unicos-entre-ativos: casado, sem task e spike 
   assert.equal(eq.agentes.find((a) => a.task === 'T07')?.nome, TM.nomes[0], 'o 1º casado fica com o nome do par');
 });
 
-test('nome-do-par-so-se-livre: o nome do par ocupado por outro ativo vai ao não casado', () => {
+test('nome-do-par-so-se-livre: o nome do par é de quem já o tem; o recebido de um ativo não é trocado (FIEL-3 d)', () => {
   const eventos = diario(ini('T07', 'implementador'));
+  // o sem task já exibe ARAGORN (o nome do par de T07): o casado não o toma; usa o seu recebido
   const agentes = [vivoT('x', 'rascunho', 'general-purpose', { nome: TM.nomes[0], vistoEm: 1 }), vivoT('a', 'T07 x', IMPL, { nome: TM.nomes[3], vistoEm: 2 })];
   const eq = projetarEquipe(PLANO, eventos, entrada({ agentes }));
-  assert.equal(eq.agentes.find((a) => a.task === 'T07')?.nome, TM.nomes[0], 'o casado tem o par e vence o recebido');
-  const semTask = eq.agentes.find((a) => a.task === undefined);
-  assert.equal(semTask?.nome, TM.nomes[1], 'o recebido estava ocupado: o 1º livre do pacote');
+  assert.equal(eq.agentes.find((a) => a.task === undefined)?.nome, TM.nomes[0], 'o nome já exibido não troca quando entra o casado');
+  assert.equal(eq.agentes.find((a) => a.task === 'T07')?.nome, TM.nomes[3], 'o casado, sem o par livre, fica com o seu recebido');
+  // sem ninguém usando o par, o casado o recebe
+  const livre = projetarEquipe(PLANO, eventos, entrada({ agentes: [vivoT('a', 'T07 x', IMPL, { nome: TM.nomes[3], vistoEm: 2 })] }));
+  assert.equal(livre.agentes[0].nome, TM.nomes[0], 'par livre ⇒ o casado o tem');
+  // par ocupado por outro e sem recebido: o 1º livre do pacote, nunca o duplicado
+  const sem = projetarEquipe(PLANO, eventos, entrada({ agentes: [vivoT('x', 'rascunho', 'general-purpose', { nome: TM.nomes[0], vistoEm: 1 }), vivoT('a', 'T07 x', IMPL, { vistoEm: 2 })] }));
+  const nomes = sem.agentes.map((a) => a.nome);
+  assert.equal(new Set(nomes).size, 2, 'únicos');
+  assert.equal(sem.agentes.find((a) => a.task === undefined)?.nome, TM.nomes[0]);
 });
 
 test('nome-estavel-com-novo-agente: nome recebido não muda quando entra outro agente', () => {
@@ -995,6 +1003,10 @@ test('descricao-higienizada: token que casa a regra de REQ-LNG-1 vira "…"; con
 
 test('consultas-abertas: contarConsultas além das decisões registradas; 0 quando não passa', () => {
   assert.equal(projetarEquipe(PLANO, [], entrada()).sombra.consultasAbertas, 0);
+  const consulta = (h: string): [TipoEvento, Record<string, unknown>] => ['sombra.consulta', { pergunta_hash: h.repeat(64), task: 'T07' }];
+  assert.equal(projetarEquipe(PLANO, diario(consulta('a'), consulta('b')), entrada()).sombra.consultasAbertas, 2, 'duas consultas sem decisão');
+  const dec: [TipoEvento, Record<string, unknown>] = ['decisao.sombra', { pergunta_hash: 'a'.repeat(64), task: 'T07', resposta: 'sim', arquivo: 's.md', pergunta_enviesada: false, fontes: ['spec:1'] }];
+  assert.equal(projetarEquipe(PLANO, diario(consulta('a'), consulta('b'), dec), entrada()).sombra.consultasAbertas, 1, 'uma decisão fecha uma');
 });
 
 test('nomes-stdin-ausente-x-corrompido: ausente ⇒ vazio e vale; presente fora do contrato ⇒ recusa com o campo', () => {
@@ -1010,4 +1022,86 @@ test('nomes-stdin-ausente-x-corrompido: ausente ⇒ vazio e vale; presente fora 
     assert.equal(r.ok, false, JSON.stringify(ruim));
     if (!r.ok) assert.match(r.erro, new RegExp(`\`${campo}\` corrompido`), JSON.stringify(ruim));
   }
+});
+
+// ---------- GM-14 T29 r2: sombra com id de task, ação ao vivo, plano B, segundo plano, Sombra ativa ----------
+
+const SOMBRA = 'gabarito-mestre:gabarito-sombra';
+const tarefa = (id: string): Plano => ({ entrega: 'GM-14', tasks: [{ id, deps: [], arquivos: [] }] });
+
+test('sombra-com-id-de-task-nao-cobre-o-implementador: o tipo vem antes do estado (FIEL-3 a, regra 2); o ATENÇÃO segue', () => {
+  const eventos = diario(ini('T07', 'implementador'));
+  const sombra = vivoT('s1', 'T07 dúvida sobre o nome', SOMBRA);
+  const c = casarVivo(sombra, PLANO, new Map([['T07', 'implementando' as const]]));
+  assert.deepEqual(c, { task: null, papel: null, papelExibido: 'sombra' });
+  const r = resolverAtivos(PLANO, eventos, entrada({ agentes: [sombra] }));
+  assert.deepEqual(r.esperando, ['T07'], 'ninguém implementa a T07');
+  assert.equal(r.cobertos.size, 0);
+  const s = novo(PLANO, eventos, { agentes: [sombra] });
+  assert.ok(s.atencao.includes('T07 sem agente trabalhando'), s.atencao.join('|'));
+  assert.equal(s.agora?.agentes?.length, 1);
+  assert.equal(s.agora?.agentes?.[0].quem.papel, 'sombra');
+  assert.equal(s.agora?.agentes?.[0].task, null);
+  // o padrão antigo `<task> <papel>` ainda vence o tipo
+  assert.equal(casarVivo(vivoT('s2', 'T07 revisor', SOMBRA), PLANO, semEstado).papel, 'revisor');
+});
+
+test('acao-ao-vivo-vence-o-registrado: `acoes` do mod é a ação do agente; só a do próprio id (FIEL-11 b)', () => {
+  const eventos = diario(ini('T07', 'implementador'));
+  const agentes = [vivoT('a1', 'T07 implementador', IMPL), vivoT('a2', 'rascunho do plano', 'general-purpose')];
+  const acoes = { a1: { texto: 'lendo 3 arquivos', fonte: 'tool' as const, em: AGORA - 5000 }, a2: { texto: 'rodando 1 comando', fonte: 'tool' as const, em: AGORA - 1000 } };
+  const s = novo(PLANO, eventos, { agentes, acoes });
+  const por = (id: string) => s.agora?.agentes?.find((x) => (id === 'a1' ? x.task === 'T07' : x.task === null));
+  assert.equal(por('a1')?.acao, 'lendo 3 arquivos', 'casado: ao vivo, sem a marca de registrado');
+  assert.equal(por('a2')?.acao, 'rodando 1 comando', 'sem task: ao vivo, sem a marca de registrado');
+  const so = novo(PLANO, eventos, { agentes, acoes: { a1: acoes.a1 } });
+  assert.equal(so.agora?.agentes?.find((x) => x.task === null)?.acao, 'rascunho do plano (registrado)', 'a ação de outro id não vaza');
+  // o texto ao vivo é higienizado como a descrição (token técnico vira "…")
+  const tec = novo(PLANO, eventos, { agentes, acoes: { a1: { texto: 'editando spec-brief.md', fonte: 'tool', em: 1 } } });
+  assert.equal(tec.agora?.agentes?.find((x) => x.task === 'T07')?.acao, 'editando …');
+});
+
+test('acao-plano-b-registrado: sem `acoes`, a description do despacho vai marcada "(registrado)", casada ou não (FIEL-11 b)', () => {
+  const eventos = diario(ini('T07', 'implementador'));
+  const s = novo(PLANO, eventos, { agentes: [vivoT('a1', 'T07 implementador', IMPL), vivoT('a2', 'Explorar o repositório', 'general-purpose')] });
+  assert.equal(s.agora?.agentes?.find((x) => x.task === 'T07')?.acao, 'implementando (registrado)', 'só "<task> <papel>": o papel em palavras');
+  assert.equal(s.agora?.agentes?.find((x) => x.task === null)?.acao, 'Explorar o repositório (registrado)', 'o vivo sem task também marca');
+  const cas = novo(PLANO, eventos, { agentes: [vivoT('a1', 'T07 Contratos do painel', IMPL)] });
+  assert.equal(cas.agora?.agentes?.[0].acao, 'T07 Contratos do painel (registrado)');
+});
+
+test('acao-sem-fonte-interrogacao: sem acoes e sem description, a ação é null (o render escreve "?"), nunca inventada', () => {
+  const s = novo(PLANO, [], { agentes: [vivoT('a1', '   ', 'general-purpose')] });
+  assert.equal(s.agora?.agentes?.[0].acao, null);
+  assert.equal(s.agora?.agentes?.[0].task, null);
+});
+
+test('segundo-plano-no-agora: "Teste" com o dono, a description e o tempo; só com o mod (FIEL-11 c)', () => {
+  const agentes = [vivoT('a1', 'T07 implementador', IMPL)];
+  const eventos = diario(ini('T07', 'implementador'));
+  const segundoPlano = [
+    { id: 'b1', dono: 'a1', texto: 'npm test', desde: AGORA - 90_000 },
+    { id: 'b2', dono: 'orquestrador', texto: 'build do plugin', desde: AGORA - 30_000 },
+    { id: 'b3', dono: 'a1', texto: 'rodar x', desde: Number.NaN },
+  ];
+  const s = novo(PLANO, eventos, { agentes, segundoPlano });
+  const sp = s.agora?.segundoPlano ?? [];
+  assert.equal(sp.length, 3);
+  assert.deepEqual(sp.map((x) => x.quem.papel), ['teste', 'teste', 'teste']);
+  assert.deepEqual(sp.map((x) => x.task), ['T07', null, 'T07'], 'dono agente ⇒ a task dele; orquestrador ⇒ sem task');
+  assert.deepEqual(sp.map((x) => x.desdeS), [90, 30, null]);
+  assert.equal(sp[1].acao, 'build do plugin');
+  assert.deepEqual(novo(PLANO, eventos, { agentes }).agora?.segundoPlano, [], 'sem lista ⇒ vazio');
+  assert.deepEqual(novo(PLANO, eventos, { agentes: null, segundoPlano }).agora?.segundoPlano, [], 'sem mod ⇒ vazio');
+});
+
+test('sombra-ativa-no-agora: Sombra viva é linha do AGORA e cala a consulta sem registro no ATENÇÃO (FIEL-7)', () => {
+  const consulta: [TipoEvento, Record<string, unknown>] = ['sombra.consulta', { pergunta_hash: 'a'.repeat(64), task: 'T07' }];
+  const eventos = diario(consulta);
+  const com = novo(PLANO, eventos, { agentes: [vivoT('s1', 'dúvida do nome', SOMBRA)] });
+  assert.equal(com.agora?.agentes?.length, 1);
+  assert.equal(com.agora?.agentes?.[0].quem.papel, 'sombra');
+  assert.ok(!com.atencao.some((x) => /Sombra/.test(x)), `Sombra ativa: ${com.atencao.join('|')}`);
+  const sem = novo(PLANO, eventos, { agentes: [] });
+  assert.ok(sem.atencao.some((x) => /^1 consulta à Sombra sem /.test(x)), `sem Sombra ativa: ${sem.atencao.join('|')}`);
 });

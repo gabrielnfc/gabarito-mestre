@@ -651,7 +651,7 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
     const aoVivo = ehObj(entrada.acoes) && ehObj(entrada.acoes[x.id]) && typeof entrada.acoes[x.id].texto === 'string' ? higienizarDescricao(entrada.acoes[x.id].texto) : null;
     if (c.task === null || c.papel === null) {
       const visto = finitoNaoNeg(a.vistoEm);
-      return { quem: { nome, papel: c.papelExibido ?? 'implementador' }, task: null, acao: aoVivo ?? util,
+      return { quem: { nome, papel: c.papelExibido ?? 'implementador' }, task: null, acao: aoVivo ?? (util === null ? null : `${util} (registrado)`),
         desdeS: visto === null ? null : Math.max(0, Math.floor((entrada.agoraMs - visto) / 1000)) };
     }
     // a `description` casada que é só "<task> <papel>" não diz o que faz: o papel em palavras (último fato registrado)
@@ -690,7 +690,7 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
   const nAtivos = agentes?.length ?? 0;
   const sufixo: string[] = [];
   if (trilha.fase !== 5) {
-    if (nAtivos > 0) sufixo.push(`${nAtivos} ${nAtivos === 1 ? 'agente trabalhando' : 'agentes trabalhando'}: ${agentes?.[0]?.acao ?? '?'}`);
+    if (nAtivos > 0) sufixo.push(`${nAtivos} ${nAtivos === 1 ? 'agente trabalhando' : 'agentes trabalhando'}: ${(agentes?.[0]?.acao ?? '?').replace(/ \(registrado\)$/, '')}`);
     if (projetarEmendas(lista).abertas.length > 0) sufixo.push('emenda aguardando você');
   }
   const fase = pronto !== null ? null : {

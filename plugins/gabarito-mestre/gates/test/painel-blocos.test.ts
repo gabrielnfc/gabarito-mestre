@@ -425,8 +425,8 @@ test('cli-sem-agentes-sem-nomes-nem-traco: sem --agentes, 1 linha no AGORA e nen
 test('descricao-tecnica-higienizada e vivo-sem-task-mostra-descricao', () => {
   const s = proj(P(...IDS), [ini(0, 'T1')], { agentes: [vivo('Rascunho spec-brief.md com node'), vivo('Explorar o repositório'), vivo('T1 implementador')] });
   const l = linhas(s);
-  assert.ok(l.includes('  LEGOLAS · sem task · Rascunho … com …'), l.join('\n')); // todo vivo tem nome (FIEL-3 d): o par da T1 fica com o 1º, os sem task com os livres
-  assert.ok(l.includes('  GIMLI · sem task · Explorar o repositório'), l.join('\n'));
+  assert.ok(l.includes('  LEGOLAS · sem task · Rascunho … com … (registrado)'), l.join('\n')); // todo vivo tem nome (FIEL-3 d): o par da T1 fica com o 1º, os sem task com os livres
+  assert.ok(l.includes('  GIMLI · sem task · Explorar o repositório (registrado)'), l.join('\n'));
   assert.ok(l.some((x) => /^  ARAGORN · T1 · implementando \(registrado\) · \d+(m|h\d\d)$/.test(x)), l.join('\n'));
   assert.equal(s.agora?.agentes?.length, 3, 'vivos-igual-linhas-de-agente');
   assert.equal(l.filter((x) => / · (sem task|T\d) · /.test(x)).length, 3);

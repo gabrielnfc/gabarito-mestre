@@ -73,6 +73,7 @@ export function casarVivo(agente: unknown, plano: Plano, estados: ReadonlyMap<st
   const doEstado = estado === undefined ? undefined : PAPEL_DO_ESTADO[estado];
   let papel: Papel | undefined;
   if (antigo !== null) papel = antigo[2] as Papel;
+  else if (tipo === 'sombra') return { task: null, papel: null, papelExibido: 'sombra' }; // regra 2: o papel do tipo vem antes do estado; a Sombra nunca cobre a task
   else if (tipo === 'implementador') papel = estado === 'corrigindo' ? 'correcao' : 'implementador';
   else if (tipo === 'revisor') papel = 'revisor';
   else papel = doEstado;
@@ -453,11 +454,14 @@ export function resolverAtivos(plano: Plano, eventos: Evento[] | null, entrada: 
     ativos.push({ agente, id: typeof agente.id === 'string' ? agente.id : '', casamento: casarVivo(agente, plano, estados), nome: null, i });
   });
   const usados = new Set<string>([entrada.pacote?.lider, entrada.pacote?.sabio].filter((n): n is string => typeof n === 'string'));
-  // 1º, os casados com o nome do par, se livre
+  // 1º, os casados com o nome do par, se nenhum outro ativo o usa: nem já escolhido, nem recebido do mod por um não casado (FIEL-3 d: o nome recebido não muda)
+  const recebidoDe = (x: { agente: AgenteVivo }): string | null => (typeof x.agente.nome === 'string' && NOME_RECEBIDO_RE.test(x.agente.nome) ? x.agente.nome : null);
   for (const x of ativos) {
     const c = x.casamento;
     const par = c.task === null || c.papel === null ? undefined : pares.get(chaveDoPar(c.task, c.papel));
-    if (par !== undefined && !usados.has(par)) { x.nome = par; usados.add(par); }
+    if (par === undefined || usados.has(par)) continue;
+    if (ativos.some((y) => y !== x && (y.casamento.task === null || y.casamento.papel === null) && recebidoDe(y) === par)) continue;
+    x.nome = par; usados.add(par);
   }
   // 2º, o resto na ordem em que o mod os viu: o nome recebido, se livre; senão o 1º livre do pacote
   const resto = ativos.filter((x) => x.nome === null).sort((x, y) => {

@@ -567,6 +567,39 @@ describe('stdin (--agentes)', { timeout: 60_000 }, () => {
     assert.equal(r.json.estado.equipe.vivos, 1);
   });
 
+  test('stdin-agentes-ausente-x-corrompido: pelo CLI real, `nomes` chega ao nome do vivo; fora do contrato ⇒ stdin_invalido, nunca vazio calado (FIEL-3 d)', () => {
+    const m = montar({ ...comEventos([['task.iniciada', { task: 'T1', papel: 'implementador' }]]) });
+    const agentes = [{ id: 'a1', type: 'general-purpose', description: 'rascunho do plano', status: 'running' }];
+    const nomeDe = (r) => r.json.estado.equipe.agentes.find((a) => a.vivo && a.task === undefined)?.nome;
+    const sem = cli(m, ['estado', '--agentes'], { input: JSON.stringify({ sessao: {}, agentes }) });
+    assert.equal(sem.rc, 0, sem.stdout + sem.stderr);
+    const padrao = nomeDe(sem);
+    assert.equal(typeof padrao, 'string');
+    assert.notEqual(padrao, 'MERRY', 'sem `nomes` o nome vem do pacote, na ordem');
+    const com = cli(m, ['estado', '--agentes'], { input: JSON.stringify({ sessao: {}, agentes, nomes: { a1: { nome: 'MERRY', vistoEm: 1 } } }) });
+    assert.equal(com.rc, 0, com.stdout + com.stderr);
+    assert.equal(nomeDe(com), 'MERRY', 'o nome recebido do mod é repassado ao núcleo');
+    for (const ruim of [[], { a1: { nome: 'x minúsculo', vistoEm: 1 } }, { a1: 'MERRY' }]) {
+      const r = cli(m, ['estado', '--agentes'], { input: JSON.stringify({ sessao: {}, agentes, nomes: ruim }) });
+      assert.deepEqual([r.rc, r.json?.erro], [1, 'stdin_invalido'], JSON.stringify(ruim));
+      assert.match(r.json.mensagem, /`nomes` corrompido/);
+    }
+  });
+
+  test('acoes-e-segundo-plano-pelo-cli-real: a ação ao vivo e o segundo plano do stdin chegam ao AGORA (FIEL-11 b, c)', () => {
+    const m = montar({ ...comEventos([['task.iniciada', { task: 'T1', papel: 'implementador' }]]) });
+    const entrada = { sessao: {}, agentes: [{ id: 'a1', type: 'implementador', description: 'T1 implementador', status: 'running' }],
+      acoes: { a1: { texto: 'lendo 3 arquivos', fonte: 'tool', em: 1 } }, segundoPlano: [{ id: 'b1', dono: 'orquestrador', texto: 'build do plugin', desde: 1 }] };
+    const r = cli(m, ['estado', '--agentes'], { input: JSON.stringify(entrada) });
+    assert.equal(r.rc, 0, r.stdout + r.stderr);
+    const agora = r.json.estado.agora;
+    assert.equal(agora.agentes.find((a) => a.task === 'T1')?.acao, 'lendo 3 arquivos');
+    assert.deepEqual(agora.segundoPlano.map((x) => [x.quem.papel, x.acao]), [['teste', 'build do plugin']]);
+    const sem = cli(m, ['estado', '--agentes'], { input: JSON.stringify({ ...entrada, acoes: undefined, segundoPlano: undefined }) });
+    assert.equal(sem.json.estado.agora.agentes.find((a) => a.task === 'T1')?.acao, 'implementando (registrado)');
+    assert.deepEqual(sem.json.estado.agora.segundoPlano, []);
+  });
+
   test('x-do-stdin-vence-env e x-env-sem-agentes; inválido ⇒ 50 + aviso', () => {
     const m = montar();
     const env = { GABARITO_POUSO_X: '80' };
