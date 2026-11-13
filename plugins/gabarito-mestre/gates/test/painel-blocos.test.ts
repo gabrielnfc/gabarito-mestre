@@ -535,3 +535,13 @@ test('corte-nunca-cria-palavra-tecnica: cortar "notariado" em "nota…" casaria 
   }
   assert.equal(linhas(s, { largura: 22 })[0], 'GABARITO · GM-14 not…');
 });
+
+test('marca-sem-entrega: sem entrega identificada o cabeçalho diz exatamente "GABARITO · entrega não identificada" (spec:53), nos dois presets e sem título', () => {
+  const base = proj(P(...IDS), [], { titulo: 'GM-14 — Clareza' });
+  const sem = { ...base, id: '' } as EstadoPainel;
+  for (const preset of ['executivo', 'esquadrao'] as const) {
+    const l = renderPainel(sem, { largura: 80, preset } as OpcoesRender).map((x) => x.map((s) => s.texto).join(''));
+    assert.equal(l[0], 'GABARITO · entrega não identificada', preset);
+    assert.ok(!l.join('\n').includes('sem entrega identificada'));
+  }
+});

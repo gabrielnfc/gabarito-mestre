@@ -449,7 +449,7 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
 
   // cabeçalho (FIEL-10 f)
   const titulo = id === '' ? '' : tituloLimpo(e.titulo, e.id); // sem entrega identificada, o título (da entrega) não se aplica
-  por(2, [seg(`GABARITO · ${id !== '' ? id : 'sem entrega identificada'}${titulo !== '' ? ` ${titulo}` : ''}`)]);
+  por(2, [seg(`GABARITO · ${id !== '' ? id : 'entrega não identificada'}${titulo !== '' ? ` ${titulo}` : ''}`)]);
 
   // 1 DEPENDE DE VOCÊ: PAROU, pergunta, demais itens
   const itensTopo: { texto: string; cor: CorTema; rotulo: boolean }[] = [];
