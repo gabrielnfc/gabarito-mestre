@@ -100,18 +100,22 @@ test('fumaca-painel-e4: painel.mjs texto, nos dois presets, é byte a byte o tex
     const l = t.split('\n');
     assert.equal(l[0], 'GABARITO · GM-99 Spec de fumaça da E4', 'FIEL-10 (f): cabeçalho uma vez, igual nos presets');
     // REQ-GLB-1 / FIEL-10 (a): DEPENDE no topo; o PAROU é item dele e vem primeiro, depois a emenda (REQ-DEP-1 (7)); o teto da T2 não repete
-    assert.match(l[1], /^PAROU 12:25 · teto de rodadas de review em T2 \[aprovar\]/);
-    assert.equal(l[2], 'depende de você: decidir a emenda 1 [aprovar] [rejeitar]');
+    // REQ-GLB-1: o motivo do PAROU inteiro, quebrado em 2 linhas (recuo de 4), nenhuma cortada com "…"
+    assert.equal(l[1], 'PAROU 12:25 · teto de rodadas de review em T2 [aprovar] · recusar: deixe a task');
+    assert.equal(l[2], '    parada e emende a spec');
+    assert.equal(l[3], 'depende de você: decidir a emenda 1 [aprovar] [rejeitar]');
+    const iPronto = l.findIndex((x) => x.startsWith('PRONTO'));
+    assert.ok(l.slice(0, iPronto).every((x) => [...x].length <= 80 && !x.endsWith('…')), 'REQ-GLB-1: nenhuma linha do topo passa de 80 colunas nem termina em "…"');
     assert.ok(!/limite de revisões|depende de você: nada/.test(t), 'com PAROU e emenda o topo não diz "nada" nem repete o teto');
     // FIEL-10 (b): PRONTO pinta só integradas (1 de 3 ⇒ 3 de 10 marcas)
-    assert.equal(l[3], 'PRONTO ▰▰▰▱▱▱▱▱▱▱ 1 de 3 integradas');
+    assert.equal(l[4], 'PRONTO ▰▰▰▱▱▱▱▱▱▱ 1 de 3 integradas');
     // FIEL-11 (a)(b): 1ª linha o orquestrador com o contexto; o agente vivo da T3 pelo último fato registrado
-    assert.match(l[4], /^AGORA · \S+ · contexto 46 %$/);
-    assert.match(l[5], /^ {2}\S+ · T3 · implementando \(registrado\) · \dm$/);
+    assert.match(l[5], /^AGORA · \S+ · contexto 46 %$/);
+    assert.match(l[6], /^ {2}\S+ · T3 · implementando \(registrado\) · \dm$/);
     // FIEL-10 (c): o teto da T2 já está no topo e a T3 tem agente ⇒ sem ATENÇÃO
     assert.ok(!/ATENÇÃO/.test(t));
     // FIEL-10 (d): só resultados, mais novo no topo, com origem; "despachou" e "emenda proposta" não entram
-    assert.equal(l[6], 'RECENTE · 12:25 ✗ travou: teto de rodadas de review (automático)');
+    assert.equal(l[7], 'RECENTE · 12:25 ✗ travou: teto de rodadas de review (automático)');
     assert.equal(l.filter((x) => /^(RECENTE · | {2})\d\d:\d\d /.test(x)).length, 5, 'até 5 linhas de RECENTE');
     assert.ok(!/despachou|proposta/.test(t));
     assert.ok(!/NaN|undefined|null|\[object/.test(t), 'valor interno vazou para a tela');
@@ -148,12 +152,15 @@ test('fumaca-devolver-sem-rodar-comando: hooks do dono + conclusão ⇒ decisão
   assert.equal(e.rodape.ci.verde, true);
   assert.equal(o.textoDevolvido.rc, 0, o.textoDevolvido.err);
   // REQ-GLB-1: o item do dono no topo, com o botão; o comando inteiro está no estado (acima) e é o que o botão leva.
-  // A 80 colunas o rótulo do botão sai cortado ("[execut…"): achado do render da T17, relatado, não afirmado aqui.
+  // A 80 colunas o item quebra em linhas (REQ-GLB-1: topo nunca cortado): o botão inteiro aparece, nenhuma linha termina em "…".
   const ld = o.textoDevolvido.out.split('\n');
   assert.equal(ld[0], 'GABARITO · GM-99 Spec de fumaça da E4');
-  assert.match(ld[1], /^depende de você: deploy devolvido ao dono: quero revisar antes de subir \[exec/);
+  const iP = ld.findIndex((x) => x.startsWith('PRONTO'));
+  const topoD = ld.slice(1, iP);
+  assert.ok(topoD.every((x) => [...x].length <= 80 && !x.endsWith('…')), `topo sem corte: ${JSON.stringify(topoD)}`);
+  assert.match(topoD.join(' ').replace(/ +/g, ' '), /^depende de você: deploy devolvido ao dono: quero revisar antes de subir \[executar\]$/);
   assert.equal(ld.filter((x) => x.startsWith('depende de você')).length, 1, '1 item');
-  assert.equal(ld[2], 'PRONTO ▰▰▰▰▰▰▰▰▰▰ 3 de 3 integradas');
+  assert.equal(ld[iP], 'PRONTO ▰▰▰▰▰▰▰▰▰▰ 3 de 3 integradas');
   assert.ok(!/PAROU|depende de você: nada/.test(o.textoDevolvido.out));
 });
 

@@ -1,5 +1,6 @@
 GABARITO · GM-99 Spec de fumaça da E4
-PAROU 12:25 · teto de rodadas de review em T2 [aprovar] · recusar: deixe a task…
+PAROU 12:25 · teto de rodadas de review em T2 [aprovar] · recusar: deixe a task
+    parada e emende a spec
 depende de você: decidir a emenda 1 [aprovar] [rejeitar]
 PRONTO ▰▰▰▱▱▱▱▱▱▱ 1 de 3 integradas
 AGORA · Orquestrador · contexto 46 %

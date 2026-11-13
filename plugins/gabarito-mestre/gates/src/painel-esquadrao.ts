@@ -368,6 +368,31 @@ function natural(v: unknown, modo: 'nome' | 'reticencia' = 'nome'): string {
 
 /** ID de entrega (DP-4): cru só no formato `GM-14` (`^[A-Z]+-\d+$`); qualquer outro (`true_force`) vai por `nomeNatural`. */
 const ID_ENTREGA = /^[A-Z]+-\d+$/;
+/** Quebra `texto` em linhas de até `w` colunas nos espaços; continuações com recuo de 4; palavra maior que a linha é partida (nunca reticência). */
+function quebrarTopo(texto: string, w: number): string[] {
+  const RECUO = Math.min(4, Math.max(0, w - 1));
+  const saida: string[] = [];
+  let atual = '';
+  const limite = (): number => (saida.length === 0 ? w : w - RECUO);
+  const fecha = (): void => { saida.push(saida.length === 0 ? atual : ' '.repeat(RECUO) + atual); atual = ''; };
+  const lead = /^ */.exec(texto)?.[0] ?? '';
+  for (const palavra of texto.slice(lead.length).split(' ')) {
+    if (palavra === '') continue;
+    let pal = palavra;
+    let cand = atual === '' ? (saida.length === 0 ? lead : '') + pal : `${atual} ${pal}`;
+    if (colunas(cand) <= limite()) { atual = cand; continue; }
+    if (atual !== '') { fecha(); cand = pal; }
+    while (colunas(cand) > limite()) {
+      let n = cand.length;
+      while (n > 1 && colunas(cand.slice(0, n)) > limite()) n--;
+      atual = cand.slice(0, n); cand = cand.slice(n); fecha();
+    }
+    atual = cand;
+  }
+  if (atual !== '' || saida.length === 0) fecha();
+  return saida;
+}
+
 const idNatural = (v: unknown): string => { const c = limpar(typeof v === 'string' ? v : ''); return ID_ENTREGA.test(c) ? c : natural(c); };
 
 /**
@@ -474,8 +499,13 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   for (const it of itensTopo) {
     const prefixo = it.rotulo ? (rotulado ? '  ' : 'depende de você: ') : '';
     if (it.rotulo || /^depende de você:/.test(it.texto)) rotulado = true;
-    topo.add(por(1, [seg(`${prefixo}${it.texto}`, it.cor)]));
+    // REQ-GLB-1: o topo nunca sai cortado; o que não cabe em `w` quebra em linhas de continuação (recuo de 4), sem perder palavra
+    for (const t of quebrarTopo(`${prefixo}${it.texto}`, w)) topo.add(por(1, [seg(t, it.cor)]));
   }
+
+  // sem entrega: a última conhecida logo depois do topo (a pergunta (b) segue sendo a linha 2; fumaca-gm14)
+  const ultima = id === '' && typeof e.trilha?.ultimaConhecida === 'string' ? idNatural(e.trilha.ultimaConhecida) : ''; // spec:53
+  if (ultima !== '') por(2, [seg(`última entrega conhecida: ${ultima}`, 'inactive')]);
 
   // 2 PRONTO ou FASE
   const pr = e.pronto;

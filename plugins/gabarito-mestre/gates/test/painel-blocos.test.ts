@@ -545,3 +545,32 @@ test('marca-sem-entrega: sem entrega identificada o cabeçalho diz exatamente "G
     assert.ok(!l.join('\n').includes('sem entrega identificada'));
   }
 });
+
+test('ultima-entrega-conhecida: sem entrega, a 2ª linha é exatamente "última entrega conhecida: <ID>" (spec:53), nos dois presets; com entrega ou sem ultimaConhecida não aparece', () => {
+  const base = proj(P(...IDS), [], { titulo: 'GM-14 — Clareza' });
+  const trilha = { ...(base.trilha as object), ultimaConhecida: 'GM-12' } as EstadoPainel['trilha'];
+  const sem = { ...base, id: '', trilha } as EstadoPainel;
+  for (const preset of ['executivo', 'esquadrao'] as const) {
+    const l = renderPainel(sem, { largura: 80, preset } as OpcoesRender).map((x) => x.map((s) => s.texto).join(''));
+    assert.equal(l[0], 'GABARITO · entrega não identificada', preset);
+    assert.ok(l.includes('última entrega conhecida: GM-12'), `${preset}: ${JSON.stringify(l)}`);
+    assert.equal(l.indexOf('última entrega conhecida: GM-12'), l.findIndex((x) => !/^(depende de você|  |PAROU)/.test(x) && x !== l[0]), preset);
+    const nula = renderPainel({ ...sem, trilha: { ...(trilha as object), ultimaConhecida: null } } as EstadoPainel, { largura: 80, preset } as OpcoesRender).map((x) => x.map((s) => s.texto).join(''));
+    assert.ok(!nula.join('\n').includes('última entrega conhecida'), `${preset}: sem dado, sem linha`);
+    const com = renderPainel({ ...base, trilha } as EstadoPainel, { largura: 80, preset } as OpcoesRender).map((x) => x.map((s) => s.texto).join(''));
+    assert.ok(!com.join('\n').includes('última entrega conhecida'), `${preset}: com entrega identificada, sem a linha`);
+  }
+});
+
+test('topo-nunca-cortado: o PAROU longo a 80 colunas quebra em linhas, com o motivo inteiro, nenhuma passa de 80 nem termina em "…" (REQ-GLB-1)', () => {
+  const motivo = 'deixe a task parada e emende a spec antes de qualquer nova rodada de review, para não repetir o mesmo achado';
+  const base = proj(P(...IDS), [], {});
+  const s = { ...base, parar: { hora: '2026-11-12T12:25:00.000Z', texto: `teto de rodadas de review em T2 · recusar: ${motivo}`, acoes: [{ rotulo: 'aprovar', comando: 'x' }] } } as unknown as EstadoPainel;
+  for (const preset of ['executivo', 'esquadrao'] as const) {
+    const l = renderPainel(s, { largura: 80, preset } as OpcoesRender).map((x) => x.map((t) => t.texto).join(''));
+    const topo = l.filter((x, i) => i >= 1 && i < l.findIndex((y) => y.startsWith('PRONTO')));
+    assert.ok(topo.length >= 2, preset);
+    assert.ok(topo.every((x) => colunas(x) <= 80 && !x.endsWith('…')), `${preset}: ${JSON.stringify(topo)}`);
+    assert.ok(topo.join(' ').replace(/ +/g, ' ').includes(`recusar: ${motivo} [aprovar]`), preset);
+  }
+});
