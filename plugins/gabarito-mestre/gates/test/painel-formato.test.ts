@@ -244,15 +244,16 @@ test('vivos-null-sem-mod: agentes null ⇒ vivos null (não 0), com task em voo 
   assert.notEqual(zero.vivos, eq.vivos);
 });
 
-test('vivos-conta-sem-task-nao-conta-sem-agente: vivo casado e vivo sem task contam; ◌ não', () => {
+test('vivos-conta-sem-task-nao-conta-sem-agente: vivo casado e vivo sem task contam; task sem agente vai a esperando, sem linha', () => {
   const eventos = diario(ini('T07', 'implementador'), ini('T08', 'implementador'), ini('T09', 'implementador'), concl('T09'), ini('T09', 'revisor'));
-  // T07: vivo; T08: ◌ (sem agente); T09 em revisão: ◌; um vivo que não casa com task nenhuma
+  // T07: vivo; T08 e T09 (em revisão): sem agente, vão a `esperando`; um vivo que não casa com task nenhuma
   const eq = projetarEquipe(PLANO, eventos, entrada({ agentes: [ag('T07 implementador'), ag('faz uma coisa qualquer')] }));
   assert.equal(eq.agentes.filter((a) => a.vivo).length, 2);
-  assert.equal(eq.agentes.filter((a) => !a.vivo).length, 2, 'T08 e T09 sem agente');
-  assert.equal(eq.agentes.some((a) => a.nome === null && a.papel === null && a.vivo), true, 'o sem task existe');
+  assert.equal(eq.agentes.filter((a) => !a.vivo).length, 0, 'nenhuma linha ◌ (FIEL-6 b)');
+  assert.deepEqual(eq.esperando, ['T08', 'T09']);
+  assert.equal(eq.agentes.some((a) => a.papel === null && a.vivo && typeof a.nome === 'string'), true, 'o sem task existe, com nome (FIEL-3 d)');
   assert.equal(eq.vivos, 2);
-  // 1 vivo só: o ◌ não entra
+  // 1 vivo só
   const um = projetarEquipe(PLANO, eventos, entrada({ agentes: [ag('T07 implementador')] }));
   assert.equal(um.vivos, 1);
   // agente que terminou (status ≠ running) não é vivo
@@ -260,8 +261,8 @@ test('vivos-conta-sem-task-nao-conta-sem-agente: vivo casado e vivo sem task con
   assert.equal(fim.vivos, 0);
 });
 
-test('equipe-ordem-nao-depende-da-lista-do-mod: a mesma lista permutada dá deepEqual; ordem = task, papel, vivo antes de ◌, sem task no fim', () => {
-  // T07 em correção (reprovada→corrigindo), T08 implementando, T09 em revisão, T10 implementando sem agente (◌)
+test('equipe-ordem-nao-depende-da-lista-do-mod: a mesma lista permutada dá deepEqual; ordem = task, papel, sem task no fim, e task sem agente só em `esperando`', () => {
+  // T07 em correção (reprovada→corrigindo), T08 implementando, T09 em revisão, T10 implementando sem agente (esperando)
   const eventos = diario(
     ini('T07', 'implementador'), concl('T07'), ini('T07', 'revisor'), ['review.veredito', { task: 'T07', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 }], ini('T07', 'correcao'),
     ini('T08', 'implementador'),
@@ -271,8 +272,9 @@ test('equipe-ordem-nao-depende-da-lista-do-mod: a mesma lista permutada dá deep
   const lista = [ag('T09 revisor'), ag('T08 implementador'), ag('T07 correcao'), ag('coisa solta A'), ag('coisa solta B')];
   const base = projetarEquipe(PLANO, eventos, entrada({ agentes: lista }));
   assert.deepEqual(base.agentes.map((a) => `${a.task ?? '-'}:${a.papel ?? '-'}:${a.vivo ? 'v' : 'o'}`), [
-    'T07:correcao:v', 'T08:implementador:v', 'T09:revisor:v', 'T10:implementador:o', '-:-:v', '-:-:v',
+    'T07:correcao:v', 'T08:implementador:v', 'T09:revisor:v', '-:-:v', '-:-:v',
   ]);
+  assert.deepEqual(base.esperando, ['T10']);
   // permutações das 3 casadas (os sem task ficam na ordem de entrada: a regra é "na ordem de entrada", e é estável)
   const [a, b, c, d, f] = lista;
   for (const p of [[c, b, a, d, f], [b, a, c, d, f], [a, c, b, d, f], [c, a, b, d, f], [b, c, a, d, f]]) {
@@ -281,18 +283,18 @@ test('equipe-ordem-nao-depende-da-lista-do-mod: a mesma lista permutada dá deep
   // os sem task mantêm a ordem de entrada
   const inv = projetarEquipe(PLANO, eventos, entrada({ agentes: [f, d, a, b, c] }));
   assert.equal(inv.agentes.length, base.agentes.length);
-  assert.deepEqual(inv.agentes.slice(0, 4), base.agentes.slice(0, 4));
+  assert.deepEqual(inv.agentes.slice(0, 3), base.agentes.slice(0, 3));
 });
 
-test('equipe-ordem-papel-e-vivo: na mesma task, implementador < correcao < revisor e vivo antes de ◌', () => {
+test('equipe-ordem-papel-e-vivo: na mesma task, implementador < correcao < revisor; task sem agente não gera linha', () => {
   // T07 tem dois vivos de papéis diferentes (o 2º casado pela description); listados ao contrário
   const eventos = diario(ini('T07', 'implementador'), ini('T08', 'implementador'));
   const eq = projetarEquipe(PLANO, eventos, entrada({ agentes: [ag('T07 revisor'), ag('T07 correcao'), ag('T07 implementador')] }));
   assert.deepEqual(eq.agentes.filter((a) => a.task === 'T07').map((a) => a.papel), ['implementador', 'correcao', 'revisor']);
-  // T08 implementando sem agente (◌) vem depois de todos da T07 (índice da task) e, entre dois de T07, o vivo antes
-  assert.equal(eq.agentes[eq.agentes.length - 1].task, 'T08');
-  assert.equal(eq.agentes[eq.agentes.length - 1].vivo, false);
-  // por que `vivo antes de ◌` nunca desempata (E28): o ◌ só existe para o par (task, papel) SEM vivo casado, então um par nunca tem os dois
+  // T08 implementando sem agente: sem linha, só em `esperando` (FIEL-6 b)
+  assert.equal(eq.agentes.length, 3);
+  assert.ok(eq.agentes.every((a) => a.vivo));
+  assert.deepEqual(eq.esperando, ['T08']);
   const pares = eq.agentes.filter((a) => a.task !== undefined).map((a) => `${a.task}:${a.papel}`);
   assert.equal(new Set(pares).size, pares.length, 'nenhum par (task, papel) aparece duas vezes');
 });
@@ -304,7 +306,8 @@ test('costura-P9: o estado real de projetarPainel (src) alimenta as funções do
   const eventos = diario(ini('T07', 'implementador'), ini('T08', 'implementador'));
   const real = projetarPainel(PLANO, eventos, entrada({ agentes: [ag('T08 implementador'), ag('lixo')] }));
   assert.equal(real.equipe.vivos, 2);
-  assert.deepEqual(real.equipe.agentes.map((a) => [a.task, a.vivo]), [['T07', false], ['T08', true], [undefined, true]]);
+  assert.deepEqual(real.equipe.agentes.map((a) => [a.task, a.vivo]), [['T08', true], [undefined, true]]);
+  assert.deepEqual(real.equipe.esperando, ['T07']);
   assert.deepEqual(dist.previsao(real), previsao(real));
   assert.equal(dist.fmtTok(412_600), fmtTok(412_600));
   assert.equal(dist.faixaIds(['T07', 'T08'], PLANO.tasks.map((t) => t.id)), 'T07–T08');

@@ -83,7 +83,7 @@ const PAPEL_VIVO: Record<string, string> = { implementando: 'implementador', em_
 
 test('glifo-por-estado: 9 estados × agente vivo do papel certo / ninguém (B3)', () => {
   const esperado: Record<string, [string, string]> = {
-    pendente: ['○', '○'], implementando: ['●', '◐'], concluida: ['◐', '◐'], em_revisao: ['●', '◐'], reprovada: ['◐', '◐'],
+    pendente: ['●', '○'], implementando: ['●', '◐'], concluida: ['◐', '◐'], em_revisao: ['●', '◐'], reprovada: ['◐', '◐'],
     corrigindo: ['●', '◐'], aprovada: ['◐', '◐'], no_teto: ['✗', '✗'], integrada: ['✓', '✓'],
   };
   for (const [estado, itens] of Object.entries(ATE)) {
@@ -95,7 +95,7 @@ test('glifo-por-estado: 9 estados × agente vivo do papel certo / ninguém (B3)'
   }
 });
 
-test('glifo-papel-incompativel-meia-lua: agente vivo de outro papel, de outra task, encerrado ou sem casar não dá ●; status desconhecido é vivo', () => {
+test('glifo-papel-incompativel-meia-lua: agente vivo de outro papel, de outra task ou encerrado não dá ●; status desconhecido não é ativo (FIEL-6 a); o 1º token casa a task (FIEL-3 a)', () => {
   const g = (agentes: AgenteVivo[]) => proj(P('T1', 'T2'), D(ATE.implementando), { agentes }).plano.tasks[0].glifo;
   assert.equal(g([vivo('T1 revisor')]), '◐');
   assert.equal(g([vivo('T1 correcao')]), '◐');
@@ -104,8 +104,8 @@ test('glifo-papel-incompativel-meia-lua: agente vivo de outro papel, de outra ta
   assert.equal(g([vivo('T1 implementador', 'idle')]), '◐');
   assert.equal(g([vivo('T1 implementador', 'failed')]), '◐');
   assert.equal(g([vivo('T1 implementador', 'killed')]), '◐');
-  assert.equal(g([vivo('T1  implementador')]), '◐'); // espaço interno nunca casa
-  assert.equal(g([vivo('T1 implementador', 42 as unknown as string)]), '●'); // dado desconhecido não vira "encerrado"
+  assert.equal(g([vivo('T1  implementador')]), '●'); // FIEL-3 a: vale o 1º token; o papel vem do estado
+  assert.equal(g([vivo('T1 implementador', 42 as unknown as string)]), '◐'); // status desconhecido não é ativo
   assert.equal(g([vivo('T1 implementador')]), '●');
   assert.equal(g([null as unknown as AgenteVivo, vivo('T1 implementador')]), '●'); // lixo na lista não derruba
 });
@@ -895,7 +895,7 @@ test('historico-parar-usa-TABELA_PARAR: texto da tabela, com a task só se for i
   }
 });
 
-test('historico-quem: orquestrador ⇒ líder; agente vivo casado ⇒ nome do par; encerrado, sem task ou desconhecido ⇒ agente; sábio vem do pacote', () => {
+test('historico-quem: orquestrador ⇒ líder; agente vivo casado ⇒ nome do par; encerrado ou outro id ⇒ agente; vivo sem task também tem nome; sábio vem do pacote', () => {
   const evs = (agente: string) => D([ini(0, 'T1'), { ...e(1, 'producao.acesso', { ambiente: 'prod', acao: 'leitura', alvo: 'users' }), agente }]);
   const quem = (agente: string, agentes: AgenteVivo[]) => proj(P('T1'), evs(agente), { agentes }).historico[0].texto;
   const id = (d: string) => `subagent:a-${d}`;
@@ -904,7 +904,7 @@ test('historico-quem: orquestrador ⇒ líder; agente vivo casado ⇒ nome do pa
   assert.equal(quem(id('T1 implementador'), [vivo('T1 implementador', 'completed')]), 'agente leu PRODUÇÃO · users · permitido', 'encerrado não nomeia');
   assert.equal(quem(id('T1 implementador'), []), 'agente leu PRODUÇÃO · users · permitido');
   assert.equal(quem(id('T1 implementador'), null as unknown as AgenteVivo[]), 'agente leu PRODUÇÃO · users · permitido', 'sem mod');
-  assert.equal(quem(id('sombra x'), [vivo('sombra x')]), 'agente leu PRODUÇÃO · users · permitido', 'vivo sem task: sem nome');
+  assert.equal(quem(id('sombra x'), [vivo('sombra x')]), 'A leu PRODUÇÃO · users · permitido', 'todo vivo tem nome (FIEL-3 d), inclusive sem task');
   assert.equal(quem('subagent:outro', [vivo('T1 implementador')]), 'agente leu PRODUÇÃO · users · permitido');
   const dec = proj(P('T1'), D([e(0, 'decisao.sombra', { pergunta_hash: SHA_A, req: 'REQ-PNL-5', resposta: 'seguir', arquivo: 'sombra.md', pergunta_enviesada: false, fontes: ['spec:1'] })]), { pacote: { ...entrada().pacote, sabio: 'YODA' } });
   assert.equal(dec.historico[0].texto, 'YODA decidiu #1 · seguir');
