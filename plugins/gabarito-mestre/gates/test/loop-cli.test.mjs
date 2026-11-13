@@ -5065,8 +5065,8 @@ describe('GM-14 T38: a spec se lê do checkout da sessão; o diário fica na pri
   const sha = (t) => createHash('sha256').update(Buffer.from(t)).digest('hex');
   const AGUARDANDO = 'spec aguardando aprovação';
   /** Worktree REAL (`git worktree add`) na branch da entrega; a principal fica em `main`, sem ID. */
-  function comWorktree(plano) {
-    const amb = ambiente({ branch: 'main', plano });
+  function comWorktree(plano, extra = {}) {
+    const amb = ambiente({ branch: 'main', plano, ...extra });
     const wt = join(amb.dir, '.harness', 'worktrees', 'S1');
     g(amb.dir, 'worktree', 'add', '-q', '-b', 'wt/GM-10-S1', wt);
     const escrever = (raiz, caminho, texto) => { mkdirSync(dirname(join(raiz, caminho)), { recursive: true }); writeFileSync(join(raiz, caminho), texto); };
@@ -5118,6 +5118,32 @@ describe('GM-14 T38: a spec se lê do checkout da sessão; o diário fica na pri
     assert.equal(aprovarSpec(wt, 'S-dono').ok, true);
     const depois = painelEstado(amb, wt);
     assert.equal(JSON.stringify(depois.estado).includes(AGUARDANDO), false, JSON.stringify(depois.estado));
+  });
+
+  test('req-na-spec-le-do-checkout-da-sessao: REQ só na spec da worktree ⇒ proposta aceita; REQ só na da principal ⇒ req_desconhecido (T38, DP-3 aj. 4)', () => {
+    const { amb, wt, escrever } = comWorktree({ ...PLANO_PADRAO, spec: SPEC_A });
+    escrever(wt, SPEC_A, `${TEXTO_WT}\n**REQ-ZZ-1** só na worktree.\n`);
+    escrever(amb.dir, SPEC_A, `${TEXTO_PRINCIPAL}\n**REQ-YY-1** só na principal.\n`);
+    const doWt = amb.cli(proporArgs(amb, { req: 'REQ-ZZ-1' }), { cwd: wt });
+    assert.equal(doWt.rc, 0, doWt.out + doWt.err);
+    assert.equal(emendasDoDiario(amb).filter((e) => e.tipo === 'emenda.proposta').length, 1, 'gravou na principal');
+    const daPrincipal = amb.cli(proporArgs(amb, { req: 'REQ-YY-1' }), { cwd: wt });
+    assert.notEqual(daPrincipal.rc, 0, daPrincipal.out);
+    assert.equal(daPrincipal.j?.erro, 'req_desconhecido', daPrincipal.out + daPrincipal.err);
+    assert.equal(emendasDoDiario(amb).filter((e) => e.tipo === 'emenda.proposta').length, 1, 'nada gravado na recusa');
+  });
+
+  test('registro-sha-do-checkout-da-sessao: `registro` rodado de dentro da worktree grava o sha da spec da WORKTREE, não o da principal (T38, DP-3 aj. 4)', async () => {
+    const { aprovarSpec } = await import('../scripts/loop.mjs');
+    const { amb, wt, escrever } = comWorktree({ ...PLANO_PADRAO, spec: SPEC_A }, { gitignore: false }); // o registro se commita: o diário não pode estar ignorado
+    escrever(wt, SPEC_A, TEXTO_WT);
+    escrever(amb.dir, SPEC_A, TEXTO_PRINCIPAL);
+    assert.equal(aprovarSpec(wt, 'S-dono').ok, true); // aprova o sha da worktree: o registro tem de CONFERIR com ele
+    const r = amb.cli(['registro'], { cwd: wt });
+    assert.equal(r.rc, 0, r.out + r.err);
+    const t = readFileSync(join(amb.entregas, 'registro.md'), 'utf8');
+    assert.ok(t.includes(`sha256 atual da spec: ${sha(TEXTO_WT)} (confere com a última aprovação)`), t);
+    assert.equal(t.includes(sha(TEXTO_PRINCIPAL)), false, 'o sha da principal não entra');
   });
 
   test('plano-spec-diferente-da-aprovada: aprovada sem plano (a.md) e o plano nasce com b.md ⇒ b.md falta aprovar (aprovarSpec grava, nunca ja_aprovada); com a.md ⇒ ja_aprovada', async () => {
