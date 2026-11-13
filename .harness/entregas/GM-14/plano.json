@@ -911,14 +911,18 @@
     },
     {
       "id": "T43",
-      "titulo": "medir não grava em entrega publicada",
+      "titulo": "Regressão: âncora da pergunta (b) em entrega publicada e 8c",
       "deps": [
         "T1",
-        "T11"
+        "T11",
+        "T42",
+        "T24"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
-        "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs"
+        "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs",
+        "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/rodar-a1.mjs",
+        "plugins/gabarito-mestre/gates/test/conversa-pontos.test.mjs"
       ],
       "reqs": [
         "REQ-DIA-1",
