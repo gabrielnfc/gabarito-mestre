@@ -5160,7 +5160,6 @@ describe('GM-14 T38: a spec se lê do checkout da sessão; o diário fica na pri
     return amb.eventos().filter((e) => e.tipo === 'fato.medido' && e.dados.chave === 'spec').map((e) => [e.dados.valor.caminho, e.dados.valor.sha256]);
   };
 
-  const TODO_PAINEL = 'painel.mjs:328 lê da raiz principal, correção na T18 (depende da T38)';
 
   test('spec-na-worktree-da-sessao-com-plano: aprovarSpec, lerSpecs e medir dão o MESMO sha da spec da worktree; diário só na principal', async () => {
     const { aprovarSpec, lerSpecs } = await import('../scripts/loop.mjs');
@@ -5184,7 +5183,7 @@ describe('GM-14 T38: a spec se lê do checkout da sessão; o diário fica na pri
     assert.equal(amb.eventos().filter((e) => e.tipo === 'spec.aprovada').length, 1);
   });
 
-  test('spec-na-worktree-da-sessao-com-plano-painel: o painel estado da sessão vê a aprovação do sha da worktree', { todo: TODO_PAINEL }, async () => {
+  test('spec-na-worktree-da-sessao-com-plano-painel: o painel estado da sessão vê a aprovação do sha da worktree', async () => {
     const { aprovarSpec } = await import('../scripts/loop.mjs');
     const { amb, wt, escrever } = comWorktree({ ...PLANO_PADRAO, spec: SPEC_A });
     escrever(wt, SPEC_A, TEXTO_WT);
@@ -5238,7 +5237,7 @@ describe('GM-14 T38: a spec se lê do checkout da sessão; o diário fica na pri
     ]);
   });
 
-  test('plano-spec-diferente-da-aprovada-painel: o painel mostra b.md aguardando aprovação; com a.md não', { todo: TODO_PAINEL }, async () => {
+  test('plano-spec-diferente-da-aprovada-painel: o painel mostra b.md aguardando aprovação; com a.md não', async () => {
     const { aprovarSpec } = await import('../scripts/loop.mjs');
     const { amb, wt, escrever } = comWorktree(null);
     escrever(wt, SPEC_A, TEXTO_WT);

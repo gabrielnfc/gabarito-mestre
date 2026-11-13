@@ -612,7 +612,7 @@ describe('costura T18: CLI real em toda fase', { timeout: 180_000 }, () => {
   });
 
   test('anotar-real-aparece-com-origem (P9, REQ-LNG-1): a pendência anotada pelo orquestrador aparece no render com "(anotado pelo orquestrador)"',
-    { todo: 'render da T17 sem origem — task de ajuste pendente (Sombra)' }, () => {
+    { todo: 'render da T17 sem origem — T37 (ajuste do render: origem)' }, () => {
       const repo = anotarReal('assinar o contrato do fornecedor');
       assert.match(rodar(repo, 'texto'), /^.*assinar o contrato do fornecedor.*\(anotado pelo orquestrador\).*$/m);
     });

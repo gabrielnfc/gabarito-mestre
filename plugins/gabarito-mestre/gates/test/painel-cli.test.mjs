@@ -20,7 +20,7 @@ import * as diario from '../dist/diario.js';
 import { renderPainel } from '../dist/painel.js';
 import { paraTexto } from '../dist/painel-texto.js';
 import { estadoDoPainel, lerArgs, lerCauda, lerDiarioEstavel, lerEntradaAgentes, main } from '../scripts/painel.mjs';
-import { tetoDaSombra } from '../scripts/loop.mjs';
+import { aprovarSpec, tetoDaSombra } from '../scripts/loop.mjs';
 import { medir } from '../scripts/painel-medir.mjs';
 import { prepararLeitura as prepararLeituraReal } from '../scripts/entrega.mjs';
 import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
@@ -1274,5 +1274,42 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     integrarEm(a, 'GM-12', 'T1'); integrarEm(a, 'GM-12', 'T2');
     evEm(a, 'GM-12', 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 'aberto', branch: 'feat/GM-12-painel' } });
     assert.match(cli(a, ['texto']).stdout, /^PRONTO ▰{10} 2 de 2 integradas$/m);
+  });
+
+  const prMergeado = () => {
+    const m = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
+    integrarEm(m, 'GM-12', 'T1'); integrarEm(m, 'GM-12', 'T2');
+    evEm(m, 'GM-12', 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 'mergeado', branch: 'feat/GM-12-painel' } });
+    return cli(m, ['texto']).stdout;
+  };
+  test('pr-mergeado-texto-nao-identificada (spec:53): o render diz "entrega não identificada"', { todo: 'texto da spec:53 ausente do render da T17 — T37' }, () => {
+    assert.match(prMergeado(), /entrega não identificada/);
+  });
+  test('pr-mergeado-texto-ultima-conhecida (spec:53): o render diz "última entrega conhecida: GM-12"', { todo: 'texto da spec:53 ausente do render da T17 — T37' }, () => {
+    assert.match(prMergeado(), /última entrega conhecida: GM-12/);
+  });
+
+  test('spec-na-worktree-com-plano-painel-pede-botao-aprova (DP-3 aj. 4 com plano; P9): principal v1, worktree v2 e plano ⇒ painel pede aprovar, aprovarSpec do checkout da sessão aprova v2 e o painel não diz "mudou depois" nem "versão nova"', () => {
+    const m = repoT18({ branch: 'main', specs: [SPEC12] });
+    const rel = `docs/superpowers/specs/${SPEC12.nome}`;
+    const wt = join(m.base, 'wt com plano');
+    g(m.repo, 'worktree', 'add', '-q', '-b', 'feat/GM-12-painel', wt);
+    const arq = join(wt, rel);
+    writeFileSync(arq, `${readFileSync(arq, 'utf8')}\n## seção v2\n\nsó na worktree\n`);
+    g(wt, 'add', '-A'); g(wt, 'commit', '-q', '-m', 'spec v2');
+    const shaWt = sha256(readFileSync(arq));
+    assert.notEqual(shaWt, sha256(readFileSync(join(m.repo, rel))), 'preparo: v1 na principal ≠ v2 na worktree');
+    mkdirSync(dirDe(m, 'GM-12'), { recursive: true });
+    writeFileSync(join(dirDe(m, 'GM-12'), 'plano.json'), JSON.stringify({ entrega: 'GM-12', spec: rel, tasks: [{ id: 'T1', deps: [], arquivos: ['src/T1.txt'] }] }));
+    const antes = estadoDoPainel(wt, { agoraMs: AGORA });
+    assert.equal(antes.ok, true, JSON.stringify(antes));
+    const pede = antes.estado.depende.filter((i) => i.acoes?.some((a) => a.comando === '/gabarito-mestre:aprovar'));
+    assert.equal(pede.length, 1, JSON.stringify(antes.estado.depende));
+    // o botão: aprovarSpec do MESMO checkout aprova os bytes da worktree
+    assert.deepEqual(aprovarSpec(wt, 'S-dono'), { ok: true, spec: rel, sha256: shaWt, entrega: 'GM-12' });
+    const depois = estadoDoPainel(wt, { agoraMs: AGORA }).estado;
+    assert.equal(depois.trilha.mudouDepois, false, JSON.stringify(depois.trilha));
+    assert.equal(JSON.stringify(depois.depende).includes('versão nova'), false, JSON.stringify(depois.depende));
+    assert.equal(depois.depende.some((i) => i.acoes?.some((a) => a.comando === '/gabarito-mestre:aprovar')), false, JSON.stringify(depois.depende));
   });
 });

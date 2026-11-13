@@ -40,7 +40,7 @@ import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
 import { lerX } from '../dist/pouso.js';
 import { idDaBranch, trilhaDe } from '../dist/trilha.js';
-import { carregarPlano, contexto, lerDiarioEstrito, lerSpec, lerSpecs, tetoDaSombra } from './loop.mjs';
+import { carregarPlano, checkoutDaSessao, contexto, lerDiarioEstrito, lerSpec, lerSpecs, tetoDaSombra } from './loop.mjs';
 import { decisaoDe, pausado, prepararLeitura } from './entrega.mjs';
 import { medir } from './painel-medir.mjs';
 
@@ -325,18 +325,6 @@ function branchDe(cwd) {
   }
 }
 
-/**
- * Topo do checkout da sessão (`git rev-parse --show-toplevel` do `cwd`): de onde as specs são lidas (DP-3 aj. 4: o `medir` lê as specs do
- * checkout da sessão; numa worktree a spec pode existir só nela). Erro ⇒ `null` (o chamador cai na raiz principal).
- */
-function topoDaSessao(cwd) {
-  try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
-  } catch {
-    return null;
-  }
-}
-
 /** `fluxo.idPadrao` de origin/HEAD, a mesma regra de `loop.mjs` (`idPadraoDe`, não exportada): ausente, longa ou inválida ⇒ o padrão. */
 function idPadraoDe(cfg) {
   const v = cfg?.fluxo?.idPadrao;
@@ -469,9 +457,11 @@ export function estadoDoPainel(cwd, opts = {}) {
     const lido = c === null ? { eventos: [] } : lerDiarioEstavel(c.dirEntrega, opts.diario);
     const eventos = lido.eventos;
 
+    // DP-3 aj. 4: specs (com e sem plano) do checkout da sessão, o mesmo de `aprovarSpec`/`lerSpecs` do loop; diário na raiz principal
+    const sessaoRaiz = raiz === null ? null : checkoutDaSessao(cwd);
     let specs = [];
     if (raiz !== null) {
-      try { specs = lerSpecs(topoDaSessao(cwd) ?? raiz, idPadrao); } catch (e) { if (typeof e?.erro !== 'string') throw e; fontes.push(FONTE.specs); }
+      try { specs = lerSpecs(sessaoRaiz, idPadrao); } catch (e) { if (typeof e?.erro !== 'string') throw e; fontes.push(FONTE.specs); }
     }
     const ativ = raiz === null ? { ultimas: [], ultima: null } : atividades(raiz, fontes);
     const gh = raiz === null ? 'nunca' : ghDe(raiz, id !== null && c.dirEntrega.endsWith(id) ? id : '_sem-id', fontes);
@@ -489,7 +479,7 @@ export function estadoDoPainel(cwd, opts = {}) {
     let specSha = null;
     let titulo = null;
     if (plano !== null && typeof plano.spec === 'string' && plano.spec !== '') {
-      const s = lerSpec(c.raiz, plano);
+      const s = lerSpec(sessaoRaiz, plano);
       if (s.ok) { specSha = s.sha256; titulo = tituloDe(s.bytes); } else avisos.push(`spec: ${s.erro} (${s.mensagem})`);
     } else if (id !== null) {
       const daEntrega = specs.filter((s) => s.pbi === id);
