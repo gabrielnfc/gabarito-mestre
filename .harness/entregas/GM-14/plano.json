@@ -881,6 +881,27 @@
       ]
     },
     {
+      "id": "T42",
+      "titulo": "Decisão da Sombra reservada em 80x24",
+      "deps": [
+        "T17",
+        "T29"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
+        "plugins/gabarito-mestre/gates/src/orcamento.ts",
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
+        "plugins/gabarito-mestre/gates/dist/orcamento.js",
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/test/painel-altura.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-blocos.test.ts"
+      ],
+      "reqs": [
+        "REQ-GLB-1"
+      ]
+    },
+    {
       "id": "T25",
       "titulo": "Aceites A1 e A3, alpha e PR",
       "deps": [
@@ -921,7 +942,8 @@
         "T36",
         "T37",
         "T38",
-        "T39"
+        "T39",
+        "T42"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/.claude-plugin/plugin.json",
