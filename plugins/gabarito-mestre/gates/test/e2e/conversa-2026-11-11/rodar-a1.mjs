@@ -78,12 +78,12 @@ export function validarPontos(p) {
 
 // ─── roteiro e guarda das falas ───
 
-/** Linhas da tabela do roteiro (`| # | hora | mensagem | ponto? | por quê |`): `{n, texto, rotulo}`. */
+/** Linhas da tabela do roteiro (`| # | hora | mensagem | ponto? | por quê |`): `{n, hora, texto, rotulo, porque}`. */
 export function falasDoRoteiro(conteudo) {
   const falas = [];
   for (const linha of conteudo.split('\n')) {
     const m = /^\| (\d+) \| (\d\d:\d\d:\d\d) \| (.*) \| (—|[A-ZÇÃÕ ]+) \| (.*) \|$/u.exec(linha);
-    if (m !== null) falas.push({ n: Number(m[1]), hora: m[2], texto: m[3], rotulo: m[4] });
+    if (m !== null) falas.push({ n: Number(m[1]), hora: m[2], texto: m[3], rotulo: m[4], porque: m[5] });
   }
   return falas;
 }
@@ -147,6 +147,8 @@ export function blocosDe(linhas) {
 }
 const ORDEM_CORTE = ['depende', 'fase', 'agora', 'atencao', 'recente'];
 const res = (ok, detalhe) => ({ ok, detalhe });
+/** Pelo menos um ponto da execução com agente vivo observado; sem isso as asserções de vivo não têm o que medir (nunca passam em vácuo). */
+const vivoObservado = (ev) => Array.isArray(ev.vivos) && ev.vivos.some((p) => p.ativos > 0);
 
 export const ASSERCOES = Object.freeze([
   { id: '1-depende-no-topo', ref: 'A1 (1)', avaliar: (ev) => {
@@ -157,10 +159,12 @@ export const ASSERCOES = Object.freeze([
       if (q.itensDepende > 0 && i !== 0) return true;
       return i > 0;
     });
+    if (ev.quadrosSemProps !== 0) return res(false, `${ev.quadrosSemProps} pontos sem as props da superfície observadas (bodyRows/maxRows): não medida`);
     return res(ev.quadros.length > 0 && ruins.length === 0, `${ev.quadros.length} quadros, ${ruins.length} com o DEPENDE fora do topo ou cortado`);
   } },
   { id: '2-blocos-e-corte', ref: 'A1 (2)', avaliar: (ev) => {
     const { cols, rows } = ev.celula;
+    if (ev.quadrosSemProps !== 0) return res(false, `${ev.quadrosSemProps} pontos sem as props da superfície observadas (bodyRows/maxRows): não medida`);
     const cheio = ev.quadros.reduce((m, q) => (blocosDe(q.linhas).length > blocosDe(m?.linhas ?? []).length ? q : m), null);
     if (cheio === null) return res(false, 'sem quadro');
     const presentes = blocosDe(cheio.linhas);
@@ -181,10 +185,12 @@ export const ASSERCOES = Object.freeze([
     return res(ruins.length === 0, `${ruins.length} linhas citam task integrada fora do RECENTE e do PRONTO`);
   } },
   { id: '4-agora-ativos', ref: 'A1 (4)', avaliar: (ev) => {
-    const d = ev.vivos.detalhes;
-    const nomes = d.map((v) => v.nome);
-    const ok = d.every((v) => v.nome && v.task && v.acao) && new Set(nomes).size === nomes.length;
-    return res(ok, `${d.length} vivos; nomes únicos ${new Set(nomes).size === nomes.length}`);
+    if (!vivoObservado(ev)) return res(false, 'nenhum agente vivo observado em nenhum ponto: não medida');
+    const ruins = ev.vivos.filter((p) => {
+      const nomes = p.detalhes.map((v) => v.nome);
+      return !(p.detalhes.every((v) => v.nome && v.task && v.acao) && new Set(nomes).size === nomes.length);
+    });
+    return res(ruins.length === 0, `${ev.vivos.length} pontos, ${ruins.length} com vivo sem nome/task/ação ou nome repetido`);
   } },
   { id: '5-sem-emoji', ref: 'A1 (5)', avaliar: (ev) => {
     const textos = [...ev.quadros.flatMap((q) => q.linhas), ...ev.transcript.textos];
@@ -210,18 +216,26 @@ export const ASSERCOES = Object.freeze([
     return res(ruins.length === 0, `${ruins.length} textos gravados mais vezes do que digitados`);
   } },
   { id: '8b-agent-nao-negado-em-status', ref: 'A1 (8) Emenda 1', avaliar: (ev) => {
-    const ruins = ev.transcript.chamadas.filter((c) => c.nome === 'Agent' && c.negada === true && c.turnoDeStatus === true);
-    return res(ruins.length === 0, `${ruins.length} Agent negados em turno de pergunta de status`);
+    // o turno de status vem do transcript (a última fala digitada antes da chamada ↔ o roteiro); sem nenhuma chamada em turno de status a asserção não mediu nada
+    const emStatus = ev.transcript.chamadas.filter((c) => c.nome === 'Agent' && c.turnoDeStatus === true);
+    const ruins = emStatus.filter((c) => c.negada === true);
+    return res(emStatus.length >= 1 && ruins.length === 0, `${emStatus.length} Agent em turno de pergunta de status, ${ruins.length} negados`);
   } },
   { id: '8c-nada-em-entrega-publicada', ref: 'A1 (8) Emenda 1', avaliar: (ev) => {
+    // a entrega publicada é a semeada na cópia (`entrega.fim` antes do início); sem nenhuma, a asserção não mediu nada
     const ruins = ev.entregasPublicadas.filter((id) => (ev.gravacoes[id]?.depois ?? 0) !== (ev.gravacoes[id]?.antes ?? 0));
-    return res(ruins.length === 0, `${ruins.length} entregas publicadas com gravação nova`);
+    return res(ev.entregasPublicadas.length >= 1 && ruins.length === 0, `${ev.entregasPublicadas.length} entregas publicadas vigiadas, ${ruins.length} com gravação nova`);
   } },
   { id: '8d-vivo-com-nome-descricao-task', ref: 'A1 (8) Emenda 1', avaliar: (ev) => {
-    const ruins = ev.vivos.detalhes.filter((v) => !(v.nome && v.descricao && v.task));
-    return res(ruins.length === 0, `${ruins.length} vivos sem nome, descrição ou task`);
+    if (!vivoObservado(ev)) return res(false, 'nenhum agente vivo observado em nenhum ponto: não medida');
+    const ruins = ev.vivos.flatMap((p) => p.detalhes).filter((v) => !(v.nome && v.descricao && v.task));
+    return res(ruins.length === 0, `${ruins.length} vivos sem nome, descrição ou task em ${ev.vivos.length} pontos`);
   } },
-  { id: '8e-vivos-igual-linhas-de-agente', ref: 'A1 (8) Emenda 1', avaliar: (ev) => res(ev.vivos.ativos === ev.vivos.linhasAgente, `${ev.vivos.ativos} ativos, ${ev.vivos.linhasAgente} linhas de agente`) },
+  { id: '8e-vivos-igual-linhas-de-agente', ref: 'A1 (8) Emenda 1', avaliar: (ev) => {
+    if (!vivoObservado(ev)) return res(false, 'nenhum agente vivo observado em nenhum ponto: não medida');
+    const ruins = ev.vivos.filter((p) => p.ativos !== p.linhasAgente);
+    return res(ruins.length === 0, `${ruins.length} de ${ev.vivos.length} pontos com ativos ≠ linhas de agente (${ruins.map((p) => `${p.ativos}/${p.linhasAgente}`).join(' ')})`);
+  } },
   { id: '8f-sombra-decisao-visivel', ref: 'A1 (8) Emenda 1', avaliar: (ev) => {
     const decisoes = ev.eventos.filter((e) => e.tipo === 'decisao.sombra').length;
     const visiveis = ev.quadros.flatMap((q) => q.linhas).filter((l) => /Sombra/.test(l)).length;
@@ -238,8 +252,10 @@ export const ASSERCOES = Object.freeze([
     return res(ruins === 0, `${ruins} vereditos sem revisor iniciado antes no ciclo`);
   } },
   { id: '10-despachos-com-aprendizados', ref: 'A1 (10)', avaliar: (ev) => {
+    // `aprendizados` de cada despacho vêm do `proxima` que o orquestrador leu antes (tool_result no transcript); sem nenhum item com aprendizado observado, não mediu nada
+    const comRegra = ev.despachos.filter((d) => d.aprendizados.length > 0);
     const ruins = ev.despachos.filter((d) => d.aprendizados.some((r) => !d.prompt.includes(r)));
-    return res(ev.despachos.length >= 1 && ruins.length === 0, `${ev.despachos.length} despachos, ${ruins.length} sem os aprendizados do item de proxima`);
+    return res(comRegra.length >= 1 && ruins.length === 0, `${ev.despachos.length} despachos, ${comRegra.length} com aprendizados observados no proxima, ${ruins.length} sem eles no prompt`);
   } },
   { id: '11-pouso-a-50', ref: 'A1 (11)', avaliar: (ev) => {
     const p = ev.pouso;
@@ -307,29 +323,65 @@ export function prepararCopia(raiz, destino, celula) {
   writeFileSync(join(destino, 'harness.config.json'), `${JSON.stringify(cfg, null, 2)}\n`);
   mkdirSync(join(destino, '.claude'), { recursive: true });
   writeFileSync(join(destino, '.claude', 'settings.local.json'), `${JSON.stringify({ tui: celula.cheia ? 'fullscreen' : 'default' })}\n`);
+  semear(destino, bin, join(destino, '..', 'gh.json'));
   return { bin, gh: join(destino, '..', 'gh.json') };
 }
 
-/** Mod só de teste: registra a cada 3 s a lista de agentes (com `description`) e as Panes (`placement`) em `$OBS_DIR/a1.jsonl`. Sem texto de prompt. */
+/** Regra sintética (D, entra no brief do implementador) semeada na cópia: sem ela o `proxima` não traz aprendizado e a asserção 10 nada mediria. */
+export const REGRA_SEMENTE = 'Regra de semente do A1: confirme o escopo de arquivos antes de escrever.';
+
+/**
+ * Semeia a cópia com o que as asserções 8c e 10 precisam para medir algo: (a) uma entrega JÁ PUBLICADA (`entrega.inicio` + `entrega.fim {ok:true}`, `ts` antigo, gravados pelo
+ * `append` do próprio produto) para vigiar "nada gravado em entrega publicada"; (b) um aprendizado D no brief do implementador, gravado pelo CLI do produto.
+ */
+export function semear(destino, bin, ghEstado) {
+  const script = `import { append } from ${JSON.stringify(pathToFileURL(join(GATES, 'dist', 'diario.js')).href)};
+const dir = process.argv[1];
+for (const [tipo, dados] of [['entrega.inicio', { politica: 'continua' }], ['entrega.fim', { ok: true }]]) {
+  const r = append(dir, 'semente', { ts: '2026-11-10T12:00:00.000Z', autor: 'a1@example.invalid', sessao: 'semente', agente: 'orquestrador', tipo, dados });
+  if (!r.ok) { process.stderr.write(r.erro); process.exit(1); }
+}`;
+  const a = spawnSync(process.execPath, ['--input-type=module', '-e', script, join(destino, '.harness', 'entregas', 'GM-12-semente')], { cwd: destino, encoding: 'utf8' });
+  if (a.status !== 0) throw new Error(`semente da entrega publicada: ${a.stderr}${a.stdout}`);
+  const b = spawnSync(process.execPath, [join(GATES, 'scripts', 'loop.mjs'), 'aprendizado', 'E', 'D', '--regra', REGRA_SEMENTE, '--entra-em', 'brief:implementador', '--fonte', 'README.md', '--numero', '1', '--sessao', 'S-semente'], { cwd: destino, encoding: 'utf8', env: ambienteDe({ PATH: `${bin}:${process.env.PATH}`, GH_FIXTURE: ghEstado }) });
+  if (b.status !== 0) throw new Error(`semente do aprendizado: ${b.stdout}${b.stderr}`);
+}
+
+/** Mod só de teste: registra em `$OBS_DIR/a1.jsonl` o que a plataforma entrega ao mod do painel, sem texto de prompt: a lista de agentes e as Panes (`placement`), os nomes que o mod guardou (`painel:nomes`), cada `tool.call` de subagente e as props de cada superfície (`Pane`: `scroll.bodyRows`/`bodyColumns`; `AbovePrompt`: `maxRows`/`viewport.rows`/`bodyColumns`). Este plugin entra ANTES do mod na linha de comando para ver o render antes de o mod o consumir. */
 export function escreverObservador(destino) {
   mkdirSync(join(destino, '.claude-plugin'), { recursive: true });
   mkdirSync(join(destino, 'hooks'), { recursive: true });
-  writeFileSync(join(destino, '.claude-plugin', 'plugin.json'), `${JSON.stringify({ name: 'observador-a1', version: '0.0.1', description: 'Observador do A1 (GM-14 T24): agentes e placement das Panes.' })}\n`);
+  writeFileSync(join(destino, '.claude-plugin', 'plugin.json'), `${JSON.stringify({ name: 'observador-a1', version: '0.0.1', description: 'Observador do A1 (GM-14 T24): agentes, placement das Panes, props das superfícies e ações dos subagentes.' })}\n`);
   writeFileSync(join(destino, 'hooks', 'hooks.json'), `${JSON.stringify({ modules: ['../register.mjs'] })}\n`);
-  writeFileSync(join(destino, 'register.mjs'), `let dir = null; const buf = []; let cadeia = Promise.resolve(); let ultimo = '';
+  writeFileSync(join(destino, 'register.mjs'), `let dir = null; const buf = []; let cadeia = Promise.resolve(); let ultimo = ''; const ultimoRender = {};
 const log = ($, o) => { cadeia = cadeia.then(async () => { if (dir === null) return; buf.push(JSON.stringify({ t: await $.clock.now(), ...o })); await $.fs.write(dir + '/a1.jsonl', buf.join('\\n') + '\\n'); }).catch(() => {}); return cadeia; };
+const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+const render = ($, comp, o) => { const chave = JSON.stringify(o); if (ultimoRender[comp] === chave) return; ultimoRender[comp] = chave; void log($, { ev: 'render', comp, ...o }); };
 export const register = (on) => {
   on('session.start', async ($, e, next) => {
     try { dir = (await $.env.get('OBS_DIR')) ?? null; } catch { dir = null; }
     try {
       $.clock.every(3000, async () => {
-        let agentes = []; let panes = [];
+        let agentes = []; let panes = []; let nomes = null;
         try { agentes = (await $.agent.list()).map((a) => ({ id: String(a.id), type: a.type ?? null, status: a.status ?? null, description: a.description ?? null })); } catch { agentes = null; }
         try { panes = (await $.ui.panes()).map((p) => ({ id: String(p.id ?? ''), placement: p.placement ?? null })); } catch { panes = null; }
-        const chave = JSON.stringify([agentes, panes]);
-        if (chave !== ultimo) { ultimo = chave; await log($, { ev: 'estado', agentes, panes }); }
+        try { nomes = (await $.store.get('painel:nomes')) ?? null; } catch { nomes = null; }
+        const chave = JSON.stringify([agentes, panes, nomes]);
+        if (chave !== ultimo) { ultimo = chave; await log($, { ev: 'estado', agentes, panes, nomes }); }
       });
     } catch { /* sem relógio */ }
+    return next(e);
+  });
+  on('tool.call', async ($, e, next) => {
+    try { if (typeof e?.agentId === 'string') await log($, { ev: 'tool', agentId: e.agentId, tool: e.tool ?? null, subagent_type: e.subagent_type ?? null, description: e.tool === 'Bash' && typeof e.description === 'string' ? e.description : null }); } catch { /* observador nunca derruba a chamada */ }
+    return next(e);
+  });
+  on('ui.render', { component: 'Pane', requestId: 'gabarito-painel' }, async ($, e, next) => {
+    try { render($, 'Pane', { bodyRows: num(e.props?.scroll?.bodyRows), bodyColumns: num(e.props?.bodyColumns) }); } catch { /* idem */ }
+    return next(e);
+  });
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    try { render($, 'AbovePrompt', { maxRows: num(e.props?.maxRows), rows: num(e.viewport?.rows), bodyColumns: num(e.props?.bodyColumns), hasSurvey: e.props?.hasSurvey === true }); } catch { /* idem */ }
     return next(e);
   });
 };
@@ -384,32 +436,150 @@ function jsonl(arq) {
   return existsSync(arq) ? readFileSync(arq, 'utf8').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean) : [];
 }
 
-/** Subcomando `snapshot` (chamado pelo `a1.exp` depois de cada ponto): guarda o `estado` do produto com os agentes que o observador viu. */
-function snapshot(repo, rundir, n) {
-  const obs = jsonl(join(rundir, 'obs', 'a1.jsonl')).filter((e) => e.ev === 'estado').at(-1);
-  const agentes = (obs?.agentes ?? []).map((a) => ({ id: a.id, type: a.type, description: a.description, status: a.status, transcript: null }));
-  const entrada = JSON.stringify({ session_id: 'S-a1', sessao: { percent: null }, agentes });
-  const estado = estadoDoProduto(repo, { entrada, bin: join(repo, '..', 'bin'), ghEstado: join(repo, '..', 'gh.json') });
+const TERMINAIS = new Set(['completed', 'failed', 'killed']);
+const ATIVOS = new Set(['pending', 'running', 'waiting']);
+
+/**
+ * `acoes` do stdin como o mod as guarda (mod/painel.mjs `anotarAcao`): a última ferramenta de cada subagente (`tool.call` com `agentId`), pela `acaoDe` do núcleo,
+ * com a contagem de chamadas seguidas do mesmo tipo; `Bash` com descrição ⇒ a descrição (fonte `bash`); agente terminal perde a ação. `ferr` = `dist/ferramentas.js`.
+ */
+export function acoesDe(tools, agentes, ferr) {
+  const acoes = {}; const base = new Map();
+  for (const t of tools) {
+    if (typeof t.agentId !== 'string' || t.agentId === '') continue;
+    const chamada = { nome: t.tool, erro: false, papel: t.subagent_type ?? undefined, descricao: t.tool === 'Bash' ? t.description ?? undefined : undefined };
+    const b = ferr.acaoDe(chamada, 1);
+    if (b === null) continue;
+    const bash = t.tool === 'Bash' && ferr.descricaoLimpa(t.description) !== null;
+    const ant = base.get(t.agentId);
+    const n = bash ? 1 : ant !== undefined && ant.base === b ? ant.n + 1 : 1;
+    base.set(t.agentId, { base: bash ? null : b, n });
+    const texto = ferr.acaoDe(chamada, n);
+    if (texto !== null) acoes[t.agentId] = { texto, fonte: bash ? 'bash' : 'tool', em: Math.max(0, Math.round(Number(t.t) || 0)) };
+  }
+  for (const a of Array.isArray(agentes) ? agentes : []) if (TERMINAIS.has(a.status)) delete acoes[a.id];
+  return acoes;
+}
+
+/** stdin do `estado --agentes` no mesmo contrato que o mod envia (`pedidoDoMod`): agentes, `nomes` (o `painel:nomes` do mod), `acoes`, `encerrados`, `segundoPlano`. */
+export function entradaDoSnapshot(obs, ferr) {
+  const ultimo = obs.filter((e) => e.ev === 'estado').at(-1);
+  const agentes = (ultimo?.agentes ?? []).map((a) => ({ id: a.id, type: a.type ?? '', description: a.description ?? '', status: a.status ?? '', transcript: null }));
+  const ids = new Set(agentes.map((a) => a.id));
+  const nomes = {};
+  for (const [id, v] of Object.entries(ultimo?.nomes ?? {})) if (ids.has(id) && v !== null && typeof v === 'object') nomes[id] = v;
+  const acoes = acoesDe(obs.filter((e) => e.ev === 'tool'), agentes, ferr);
+  const encerrados = agentes.filter((a) => TERMINAIS.has(a.status)).map((a) => a.id);
+  return { agentes, panes: ultimo?.panes ?? [], entrada: { session_id: 'S-a1', sessao: { percent: null }, agentes, nomes, acoes, encerrados, segundoPlano: [] } };
+}
+
+/** Props da última renderização de cada superfície (`Pane`, `AbovePrompt`) vista até aqui; superfície nunca vista ⇒ ausente. */
+export function propsDe(obs) {
+  const props = {};
+  for (const e of obs) if (e.ev === 'render' && typeof e.comp === 'string') { const { ev: _ev, comp, t: _t, ...resto } = e; props[comp] = resto; }
+  return props;
+}
+
+/** Subcomando `snapshot` (chamado pelo `a1.exp` depois de cada ponto): guarda o `estado` do produto, os agentes vistos e as props das superfícies naquele instante. */
+async function snapshot(repo, rundir, n) {
+  const obs = jsonl(join(rundir, 'obs', 'a1.jsonl'));
+  const ferr = await import(pathToFileURL(join(GATES, 'dist', 'ferramentas.js')).href);
+  const { agentes, entrada } = entradaDoSnapshot(obs, ferr);
+  const estado = estadoDoProduto(repo, { entrada: JSON.stringify(entrada), bin: join(repo, '..', 'bin'), ghEstado: join(repo, '..', 'gh.json') });
   mkdirSync(join(rundir, 'estados'), { recursive: true });
-  writeFileSync(join(rundir, 'estados', `${String(n).padStart(2, '0')}.json`), `${JSON.stringify(estado)}\n`);
+  writeFileSync(join(rundir, 'estados', `${String(n).padStart(2, '0')}.json`), `${JSON.stringify({ n, props: propsDe(obs), agentes, estado })}\n`);
 }
 
-async function renderizar(estado, celula) {
-  const { renderPainel } = await import(pathToFileURL(join(GATES, 'dist', 'painel.js')).href);
-  const { paraTexto } = await import(pathToFileURL(join(GATES, 'dist', 'painel-texto.js')).href);
-  const { orcamentoDe } = await import(pathToFileURL(join(GATES, 'dist', 'orcamento.js')).href);
-  const larg = Math.max(1, celula.cols - 5); // `bodyColumns` = colunas − 5 (spikes-tui S1)
-  const maxRows = celula.cheia ? Math.floor(celula.rows / 2) - 5 : celula.rows;
-  const orcamento = celula.local === 'acima' ? orcamentoDe(celula.rows, maxRows) : 7;
-  const linhas = renderPainel(estado, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: larg, orcamento, altura: orcamento, local: celula.local });
-  return paraTexto(linhas, 'mono').split('\n').filter((l) => l !== '');
+let modCache = null;
+const carregarMod = async () => (modCache ??= await import(pathToFileURL(join(PLUGIN, 'mod', 'painel.mjs')).href));
+const larguraDe = (n) => (typeof n === 'number' && Number.isFinite(n) ? Math.max(1, Math.floor(n)) : 1); // a mesma do mod (`larguraDe`)
+
+/**
+ * O quadro como o MOD o desenha: as funções do próprio `mod/painel.mjs` (`linhasDaPane` + `orcamentoLateral` na lateral; `linhasDaFaixa` em `acima`) com as props que o
+ * observador leu da plataforma. Superfície sem render observado ⇒ `null` (a asserção reprova como "não medida"; nada é inventado).
+ */
+export async function renderizar(estado, props, celula) {
+  const mod = await carregarMod();
+  const prefs = { ...mod.PREFS_PADRAO, tema: 'mono' };
+  const texto = (linhas) => linhas.map((l) => l.map((s) => s.texto).join('')).filter((l) => l !== '');
+  if (celula.local === 'acima') {
+    const p = props?.AbovePrompt;
+    if (p === undefined || p === null) return null;
+    return texto(mod.linhasDaFaixa(estado, prefs, { largura: larguraDe(p.bodyColumns), h: p.rows ?? undefined, maxRows: p.maxRows ?? undefined }));
+  }
+  const p = props?.Pane;
+  if (p === undefined || p === null) return null;
+  const bodyRows = p.bodyRows ?? undefined;
+  const novo = estado !== null && typeof estado === 'object' && typeof estado.modo === 'string';
+  let linhas = mod.linhasDaPane(novo ? mod.estadoParaDesenho(estado) : estado, prefs, larguraDe(p.bodyColumns), { altura: bodyRows, orcamento: mod.orcamentoLateral(bodyRows), local: 'lateral' });
+  if (novo) linhas = linhas.slice(0, mod.orcamentoLateral(bodyRows));
+  return texto(linhas);
 }
 
-/** Junta a evidência de uma execução (diário, observador, estados, transcripts) no formato que `avaliarExecucao` espera. */
-export async function coletar(rundir, repo, celula, roteiro) {
+const textoDe = (c) => (typeof c === 'string' ? c : Array.isArray(c) ? c.filter((b) => b?.type === 'text').map((b) => b.text).join('') : '');
+
+/** Itens `{papel, aprendizados:[…]}` de uma saída de `loop.mjs proxima` (qualquer profundidade). Saída que não é JSON ⇒ []. */
+export function itensDeProxima(saida) {
+  let o;
+  try { o = JSON.parse(saida); } catch { return []; }
+  const itens = [];
+  const anda = (v) => {
+    if (Array.isArray(v)) { v.forEach(anda); return; }
+    if (v === null || typeof v !== 'object') return;
+    if (Array.isArray(v.aprendizados)) itens.push({ papel: typeof v.papel === 'string' ? v.papel : null, aprendizados: v.aprendizados.filter((r) => typeof r === 'string') });
+    Object.values(v).forEach(anda);
+  };
+  anda(o);
+  return itens;
+}
+
+/**
+ * Transcripts de uma execução ⇒ `{chamadas, textos, despachos}`. `turnoDeStatus`: a última fala digitada antes da chamada (sha256 ↔ roteiro) é pergunta de status
+ * (`porque` do roteiro). `negada`: o `tool_result` da chamada veio com `is_error`. `despachos[].aprendizados`: as regras dos itens do último `loop.mjs proxima`
+ * cujo papel está no `subagent_type` (sem papel que case, todos os itens).
+ */
+export function lerTranscripts(pasta, falas) {
+  const porSha = new Map(falas.map((f) => [sha256(f.texto), f]));
+  const chamadas = []; const textos = []; const despachos = [];
+  if (!existsSync(pasta)) return { chamadas, textos, despachos };
+  for (const f of readdirSync(pasta).filter((x) => x.endsWith('.jsonl'))) {
+    const linhas = jsonl(join(pasta, f));
+    const negadas = new Set();
+    for (const l of linhas) for (const b of Array.isArray(l.message?.content) ? l.message.content : []) if (b.type === 'tool_result' && b.is_error === true) negadas.add(b.tool_use_id);
+    let fala = null; let itens = []; const bashProxima = new Set();
+    for (const l of linhas) {
+      const c = l.message?.content;
+      if (l.type === 'user') {
+        const t = textoDe(c);
+        if (typeof c === 'string' || (Array.isArray(c) && c.some((b) => b?.type === 'text'))) fala = porSha.get(sha256(t)) ?? porSha.get(sha256(t.trim())) ?? null;
+        for (const b of Array.isArray(c) ? c : []) if (b.type === 'tool_result' && bashProxima.has(b.tool_use_id)) itens = itensDeProxima(textoDe(b.content));
+      }
+      for (const b of Array.isArray(c) ? c : []) {
+        if (l.type === 'assistant' && b.type === 'text') textos.push(b.text);
+        if (l.type === 'assistant' && b.type === 'tool_use') {
+          chamadas.push({ nome: b.name, entrada: b.input, negada: negadas.has(b.id), turnoDeStatus: fala !== null && /pergunta de status/i.test(fala.porque ?? ''), ts: l.timestamp ?? null });
+          if (b.name === 'Bash' && /loop\.mjs['"]?\s+proxima\b/.test(String(b.input?.command ?? ''))) bashProxima.add(b.id);
+          if (b.name === 'Agent') {
+            const tipo = String(b.input?.subagent_type ?? '');
+            const casam = itens.filter((i) => i.papel !== null && tipo.includes(i.papel));
+            despachos.push({ papel: tipo || null, prompt: String(b.input?.prompt ?? ''), aprendizados: (casam.length > 0 ? casam : itens).flatMap((i) => i.aprendizados) });
+          }
+        }
+      }
+    }
+  }
+  return { chamadas, textos, despachos };
+}
+
+/** Pasta dos transcripts do Claude Code para o repo (`<config>/projects/<caminho com tudo que não é [A-Za-z0-9-] trocado por ->`). */
+export const pastaDeTranscripts = (repo) => join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'projects', realpathSync(repo).replace(/[^A-Za-z0-9-]/g, '-'));
+
+/** Junta a evidência de uma execução (diário, observador, snapshots, transcripts) no formato que `avaliarExecucao` espera. `pasta`: transcripts (padrão: a do Claude Code para o repo). */
+export async function coletar(rundir, repo, celula, roteiro, { pasta = null } = {}) {
   const dirs = join(repo, '.harness', 'entregas');
   const eventos = [];
   const gravacoes = {};
+  const publicadas = new Set();
   const inicio = existsSync(join(rundir, 'inicio.iso')) ? readFileSync(join(rundir, 'inicio.iso'), 'utf8').trim() : '';
   if (existsSync(dirs)) {
     for (const d of readdirSync(dirs)) {
@@ -420,51 +590,48 @@ export async function coletar(rundir, repo, celula, roteiro) {
       }
       const dele = eventos.filter((e) => e._entrega === d);
       gravacoes[d] = { antes: dele.filter((e) => e.ts <= inicio).length, depois: dele.length };
+      // publicada = `entrega.fim` gravado ANTES do início da execução (a semente da cópia); o que a execução publicar não vale
+      if (dele.some((e) => e.tipo === 'entrega.fim' && e.ts <= inicio)) publicadas.add(d);
     }
   }
   const sends = existsSync(join(rundir, 'sends.log')) ? readFileSync(join(rundir, 'sends.log'), 'utf8').split('\n').filter(Boolean) : [];
   const digitadas = sends.map((l) => /^\d+ digitar ([0-9a-f]{64})$/.exec(l)?.[1]).filter(Boolean);
-  const obs = jsonl(join(rundir, 'obs', 'a1.jsonl')).filter((e) => e.ev === 'estado');
-  const ultimo = obs.at(-1);
+  const obs = jsonl(join(rundir, 'obs', 'a1.jsonl'));
+  const ultimo = obs.filter((e) => e.ev === 'estado').at(-1);
   const estadosDir = join(rundir, 'estados');
-  const estados = existsSync(estadosDir) ? readdirSync(estadosDir).sort().map((f) => ({ n: Number(f.slice(0, 2)), estado: JSON.parse(readFileSync(join(estadosDir, f), 'utf8')) })) : [];
-  const quadros = [];
-  for (const { estado } of estados) quadros.push({ linhas: await renderizar(estado, celula), itensDepende: (estado.depende ?? []).length + (estado.pergunta ? 1 : 0) + (estado.parar ? 1 : 0) });
-  const pasta = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'projects', realpathSync(repo).replace(/[^A-Za-z0-9-]/g, '-'));
-  const chamadas = []; const textos = []; const despachos = [];
-  if (existsSync(pasta)) {
-    for (const f of readdirSync(pasta).filter((x) => x.endsWith('.jsonl'))) {
-      const negadas = new Set();
-      const linhas = jsonl(join(pasta, f));
-      for (const l of linhas) for (const b of Array.isArray(l.message?.content) ? l.message.content : []) if (b.type === 'tool_result' && b.is_error === true) negadas.add(b.tool_use_id);
-      for (const l of linhas) {
-        for (const b of Array.isArray(l.message?.content) ? l.message.content : []) {
-          if (l.type === 'assistant' && b.type === 'text') textos.push(b.text);
-          if (l.type === 'assistant' && b.type === 'tool_use') {
-            chamadas.push({ nome: b.name, entrada: b.input, negada: negadas.has(b.id), turnoDeStatus: false, ts: l.timestamp ?? null });
-            if (b.name === 'Agent') despachos.push({ papel: null, prompt: String(b.input?.prompt ?? ''), aprendizados: [] });
-          }
-        }
-      }
+  const snaps = [];
+  if (existsSync(estadosDir)) {
+    for (const f of readdirSync(estadosDir).sort()) {
+      let s;
+      try { s = JSON.parse(readFileSync(join(estadosDir, f), 'utf8')); } catch { throw new Error(`snapshot ilegível: ${f}`); }
+      if (s === null || typeof s !== 'object' || s.estado === undefined || !Array.isArray(s.agentes)) throw new Error(`snapshot fora da forma: ${f}`);
+      snaps.push(s);
     }
   }
-  // LIMITE: `turnoDeStatus` fica falso (o `.exp` não anota qual envio é pergunta de status): 8b só vê Agent negado, sem separar o turno
-  const perguntas = estados.map(({ n, estado }) => ({ ponto: n, rotulo: roteiro.falas.find((f) => f.n === n)?.rotulo ?? '—', abriuPergunta: estado.pergunta != null, botoes: Array.isArray(estado.pergunta?.opcoes) && estado.pergunta.opcoes.length >= 2 }));
+  const quadros = []; let quadrosSemProps = 0;
+  for (const s of snaps) {
+    const linhas = await renderizar(s.estado, s.props, celula);
+    if (linhas === null) { quadrosSemProps += 1; continue; }
+    quadros.push({ linhas, itensDepende: (s.estado.depende ?? []).length + (s.estado.pergunta ? 1 : 0) + (s.estado.parar ? 1 : 0) });
+  }
+  const { chamadas, textos, despachos } = lerTranscripts(pasta ?? pastaDeTranscripts(repo), roteiro.falas);
+  const perguntas = snaps.map((s) => ({ ponto: s.n, rotulo: roteiro.falas.find((f) => f.n === s.n)?.rotulo ?? '—', abriuPergunta: s.estado.pergunta != null, botoes: Array.isArray(s.estado.pergunta?.opcoes) && s.estado.pergunta.opcoes.length >= 2 }));
   const integradas = eventos.filter((e) => e.tipo === 'task.integrada').map((e) => e.dados?.task).filter(Boolean);
-  const ult = estados.at(-1)?.estado;
-  const agoraAgentes = Array.isArray(ult?.agora?.agentes) ? ult.agora.agentes : [];
-  const equipe = (Array.isArray(ult?.equipe?.agentes) ? ult.equipe.agentes : []).filter((a) => a.vivo === true);
-  const detalhes = equipe.map((a) => ({ nome: a.nome, descricao: a.descricao, task: a.task, acao: agoraAgentes.find((x) => x.quem?.nome === a.nome)?.acao ?? null }));
-  const ativos = (ultimo?.agentes ?? []).filter((a) => ['pending', 'running', 'waiting'].includes(a.status));
+  // vivos em CADA ponto: os agentes ativos que o observador viu naquele instante × as linhas de agente do AGORA do produto
+  const vivos = snaps.map((s) => {
+    const agora = Array.isArray(s.estado?.agora?.agentes) ? s.estado.agora.agentes : [];
+    const equipe = Array.isArray(s.estado?.equipe?.agentes) ? s.estado.equipe.agentes : [];
+    const detalhes = agora.map((l) => { const e = equipe.find((x) => x.nome === l.quem?.nome); return { nome: l.quem?.nome, descricao: e?.descricao, task: l.task ?? e?.task, acao: l.acao ?? null }; });
+    return { ativos: s.agentes.filter((a) => ATIVOS.has(a.status)).length, linhasAgente: agora.length, detalhes };
+  });
   // pouso (asserção 11): o `sessao.pouso` do diário, o "limpar a conversa" em algum quadro depois dele, os pushes do bare e os `Agent` entre o pouso e o próximo `sessao.inicio {origem: clear}`
   const pouso = eventos.find((e) => e.tipo === 'sessao.pouso');
   const clear = pouso === undefined ? undefined : eventos.find((e) => e.tipo === 'sessao.inicio' && e.dados?.origem === 'clear' && e.ts > pouso.ts);
   const pushes = existsSync(join(rundir, 'pushes.log')) ? readFileSync(join(rundir, 'pushes.log'), 'utf8').split('\n').filter(Boolean).length : 0;
   const depoisDoPouso = pouso === undefined ? [] : chamadas.filter((c) => c.nome === 'Agent' && c.ts > pouso.ts && (clear === undefined || c.ts < clear.ts));
   return {
-    celula, quadros, integradas, eventos, digitadas, transcript: { chamadas, textos }, perguntas, despachos,
-    entregasPublicadas: [...new Set(eventos.filter((e) => e.tipo === 'entrega.fim').map((e) => e._entrega))], gravacoes,
-    vivos: { ativos: ativos.length, linhasAgente: detalhes.length, detalhes },
+    celula, quadros, quadrosSemProps, integradas, eventos, digitadas, transcript: { chamadas, textos }, perguntas, despachos,
+    entregasPublicadas: [...publicadas], gravacoes, vivos,
     pouso: { percent: Number.isFinite(pouso?.dados?.percent) ? pouso.dados.percent : 0, limparNoDepende: pouso !== undefined && quadros.some((q) => q.linhas.some((l) => /limpar a conversa/i.test(l))), pushes, despachosDepois: depoisDoPouso.length },
     panes: (ultimo?.panes ?? []).filter((p) => p.placement !== null),
   };
@@ -497,7 +664,7 @@ async function matriz(fonte, tmpRaiz, roteiro, so) {
 function flag(argv, nome) { const i = argv.indexOf(nome); return i >= 0 ? argv[i + 1] : undefined; }
 
 export async function main(argv) {
-  if (argv[0] === 'snapshot') { snapshot(argv[1], argv[2], Number(argv[3])); return 0; }
+  if (argv[0] === 'snapshot') { await snapshot(argv[1], argv[2], Number(argv[3])); return 0; }
   // `topo` = a árvore que será commitada (a guarda lê o `git ls-files` dela e a cópia do A1 sai dela); `principal` = onde vivem o roteiro e o `.claude-tmp/`
   const topo = flag(argv, '--raiz') ?? git(AQUI, 'rev-parse', '--show-toplevel').trim();
   const principal = flag(argv, '--raiz') ?? raizPrincipal(AQUI);
@@ -516,7 +683,7 @@ export async function main(argv) {
   // a guarda vem ANTES de qualquer execução (e do --gerar): nenhuma fala do roteiro em arquivo versionado
   const g = guardaFalas(topo, roteiro.falas);
   if (!g.ok) { process.stderr.write(`A1 não roda: ${g.achados.length} falas do roteiro em arquivos versionados: ${g.achados.slice(0, 5).map((a) => `${a.arquivo}#${a.n}`).join(', ')}\n`); return 1; }
-  process.stdout.write(`guarda das falas: 0 achados (${g.conferidas} falas ≥ ${MIN_FALA} caracteres em ${g.arquivos} arquivos versionados)\n`);
+  process.stdout.write(`guarda das falas: 0 achados (${g.conferidas} falas ≥ ${MIN_FALA} caracteres em ${g.arquivos} arquivos versionados; ${g.ignorados} ignorados por binário ou > 4 MB, não conferidos)\n`);
   if (modo === '--guarda') return 0;
   if (modo === '--gerar') { const r = gerar(topo, principal, roteiro); process.stdout.write(`pontos.json: ${r.pontos} pontos gerados pelo produto\n`); return 0; }
   const m = await matriz(topo, principal, roteiro, flag(argv, '--so') ?? null);

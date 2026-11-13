@@ -10,13 +10,13 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  ASSERCOES, MATRIZ, MIN_FALA, PONTOS_ARQ, ROTEIRO_REL, TOTAL_PONTOS, avaliarExecucao, avaliarMatriz, falasDoRoteiro, guardaFalas, idDaCelula,
-  placementEsperado, raizPrincipal, sha256, validarPontos, verificarRoteiro,
+  ASSERCOES, MATRIZ, MIN_FALA, PONTOS_ARQ, ROTEIRO_REL, TOTAL_PONTOS, acoesDe, avaliarExecucao, avaliarMatriz, coletar, entradaDoSnapshot, falasDoRoteiro, guardaFalas, idDaCelula,
+  itensDeProxima, placementEsperado, propsDe, raizPrincipal, renderizar, sha256, validarPontos, verificarRoteiro,
 } from './e2e/conversa-2026-11-11/rodar-a1.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -251,7 +251,8 @@ const evBoa = (celula = { local: 'lateral', cols: 180, rows: 50, cheia: true }) 
   perguntas: [{ ponto: 1, rotulo: 'MUDANÇA DE ASSUNTO', abriuPergunta: true, botoes: true }, { ponto: 2, rotulo: 'DECISÃO', abriuPergunta: false, botoes: false }],
   despachos: [{ papel: 'implementador', prompt: 'brief ... regra A ... regra B', aprendizados: ['regra A', 'regra B'] }],
   entregasPublicadas: ['GM-12'], gravacoes: { 'GM-12': { antes: 5, depois: 5 }, 'GM-13': { antes: 0, depois: 9 } },
-  vivos: { ativos: 1, linhasAgente: 1, detalhes: [{ nome: 'Frodo', descricao: 'implementa T3', task: 'T3', acao: 'lendo 2 arquivos' }] },
+  quadrosSemProps: 0,
+  vivos: [{ ativos: 0, linhasAgente: 0, detalhes: [] }, { ativos: 1, linhasAgente: 1, detalhes: [{ nome: 'Frodo', descricao: 'implementa T3', task: 'T3', acao: 'lendo 2 arquivos' }] }],
   pouso: { percent: 50, limparNoDepende: true, pushes: 1, despachosDepois: 0 },
   panes: [{ placement: placementEsperado(celula) ?? 'x' }].filter(() => placementEsperado(celula) !== null),
 });
@@ -279,15 +280,15 @@ describe('asserções do A1 sobre a evidência de uma execução', () => {
     '1-depende-no-topo': (ev) => { ev.quadros[0].linhas = [QUADRO_CHEIO[0], QUADRO_CHEIO[2], QUADRO_CHEIO[1], ...QUADRO_CHEIO.slice(3)]; },
     '2-blocos-e-corte': (ev) => { ev.quadros[0].linhas = QUADRO_CHEIO.filter((l) => !/^PRONTO/.test(l)); },
     '3-sem-task-integrada': (ev) => { ev.quadros[0].linhas = [...QUADRO_CHEIO.slice(0, 5), 'ATENÇÃO · T1 parou', ...QUADRO_CHEIO.slice(6)]; },
-    '4-agora-ativos': (ev) => { ev.vivos.detalhes.push({ nome: 'Frodo', descricao: 'd', task: 'T4', acao: '(registrado)' }); },
+    '4-agora-ativos': (ev) => { ev.vivos[1].detalhes.push({ nome: 'Frodo', descricao: 'd', task: 'T4', acao: '(registrado)' }); },
     '5-sem-emoji': (ev) => { ev.transcript.textos.push('feito ✅'); },
     '6-assunto-vira-pergunta': (ev) => { ev.perguntas[0].botoes = false; },
     '7-sem-edit-em-harness-nem-status-a-mao': (ev) => { ev.transcript.chamadas.push({ nome: 'Edit', entrada: { file_path: '/r/.harness/entregas/GM-13/plano.json' } }); },
     '8a-dono-mensagem-sem-duplicata': (ev) => { ev.eventos.push({ tipo: 'dono.mensagem', dados: { sha256: 'a'.repeat(64), chars: 30 } }); },
     '8b-agent-nao-negado-em-status': (ev) => { ev.transcript.chamadas[0].negada = true; },
     '8c-nada-em-entrega-publicada': (ev) => { ev.gravacoes['GM-12'].depois = 6; },
-    '8d-vivo-com-nome-descricao-task': (ev) => { ev.vivos.detalhes[0].descricao = ''; },
-    '8e-vivos-igual-linhas-de-agente': (ev) => { ev.vivos.linhasAgente = 2; },
+    '8d-vivo-com-nome-descricao-task': (ev) => { ev.vivos[1].detalhes[0].descricao = ''; },
+    '8e-vivos-igual-linhas-de-agente': (ev) => { ev.vivos[1].linhasAgente = 2; },
     '8f-sombra-decisao-visivel': (ev) => { ev.quadros[0].linhas = QUADRO_CHEIO.filter((l) => !/Sombra/.test(l)); },
     '9-veredito-com-revisor-antes': (ev) => { ev.eventos.splice(1, 1); },
     '10-despachos-com-aprendizados': (ev) => { ev.despachos[0].prompt = 'brief sem as regras'; },
@@ -368,5 +369,242 @@ describe('asserções do A1 sobre a evidência de uma execução', () => {
   test('10-sem-despacho-nenhum-reprova (não é vácuo)', () => {
     const ev = evBoa(); ev.despachos = [];
     assert.equal(ASSERCOES.find((a) => a.id === '10-despachos-com-aprendizados').avaliar(ev).ok, false);
+  });
+});
+
+// ─── a guarda: fronteira dos 20 caracteres e arquivos que ela não lê ───
+
+describe('guarda das falas: fronteira e ignorados', () => {
+  const comTamanho = (n) => 'x'.repeat(n);
+  const roteiroCom = (txt) => falasDoRoteiro(`| # | h | m | p | q |\n| 1 | 07:38:21 | ${txt} | DECISÃO | t |\n`);
+
+  test('fronteira-de-20-caracteres (P1: >= virar > ⇒ este teste reprova)', () => {
+    const repo = tmp();
+    git(repo, 'init', '-q', '-b', 'main');
+    const f19 = comTamanho(19); const f20 = comTamanho(20);
+    writeFileSync(join(repo, 'a.md'), `${f19}\n`); git(repo, 'add', '-A'); git(repo, 'commit', '-q', '-m', 'a');
+    assert.equal(guardaFalas(repo, roteiroCom(f19)).conferidas, 0, '19 caracteres: não entra na guarda');
+    assert.equal(guardaFalas(repo, roteiroCom(f19)).ok, true);
+    writeFileSync(join(repo, 'b.md'), `${f20}\n`); git(repo, 'add', '-A'); git(repo, 'commit', '-q', '-m', 'b');
+    const g = guardaFalas(repo, roteiroCom(f20));
+    assert.equal(g.conferidas, 1, '20 caracteres: entra');
+    assert.equal(g.ok, false, '20 caracteres versionados são achado');
+    assert.equal(guardaFalas(repo, roteiroCom('é'.repeat(20))).conferidas, 1, 'conta caracteres, não bytes');
+  });
+
+  test('arquivo-binario-ou-grande-conta-em-ignorados-e-o-cli-diz', () => {
+    const pasta = tmp();
+    const repo = join(pasta, 'repo'); mkdirSync(repo);
+    git(repo, 'init', '-q', '-b', 'main');
+    writeFileSync(join(repo, 'bin.dat'), Buffer.concat([Buffer.from([0]), Buffer.from(FALA_A)]));
+    writeFileSync(join(repo, 'grande.txt'), Buffer.alloc(4 * 1024 * 1024 + 1, 97));
+    writeFileSync(join(repo, 'ok.md'), 'limpo\n');
+    git(repo, 'add', '-A'); git(repo, 'commit', '-q', '-m', 'x');
+    const g = guardaFalas(repo, falasDoRoteiro(ROTEIRO));
+    assert.equal(g.ignorados, 2);
+    assert.equal(g.ok, true, 'o binário não é lido: a guarda segue ok, mas o número de ignorados aparece');
+    const roteiro = join(pasta, 'r.md'); writeFileSync(roteiro, ROTEIRO);
+    const pontos = pontosValidos(); pontos.roteiroSha256 = sha256(ROTEIRO);
+    const arqPontos = join(pasta, 'p.json'); writeFileSync(arqPontos, JSON.stringify(pontos));
+    const r = spawnSync(process.execPath, [RUNNER, '--guarda', '--roteiro', roteiro, '--pontos', arqPontos, '--raiz', repo], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /2 ignorados por binário ou > 4 MB, não conferidos/);
+  });
+});
+
+// ─── a coleta: formato real (estado do produto, `proxima` do produto, transcript, diário, observador) ───
+
+const FERR = await import(new URL('../dist/ferramentas.js', import.meta.url));
+const ESTADO_REAL = JSON.parse(readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'gh-fixture', 'estado-real.json'), 'utf8'));
+const REGRA = 'Regra de semente do A1: confirme o escopo de arquivos antes de escrever.';
+/** Saída REAL de `loop.mjs proxima` numa cópia semeada do A1 (medida na T24 r2): item `{task, papel, ..., aprendizados}`. */
+const PROXIMA_REAL = '{"ok":true,"acao":{"tipo":"despachar","itens":[{"task":"T1","papel":"implementador","spec":"docs/superpowers/specs/x.md","descricao":"T1 implementador","modelo":{"modelo":"sonnet","esforco":"high"},"decisoes":[],"emendas":[],"aprendizados":["' + REGRA + '"]}]},"sinais":{"slots":1,"percent":null,"x":50,"pausado":false,"vivos":0,"tokens":null,"tetoTokens":null,"podePousar":true},"aviso":[]}';
+const FALA_STATUS = 'como estamos agora com tudo isso por aqui, ja terminou?';
+const ROTEIRO_COLETA = [
+  '| # | hora | mensagem | ponto? | por quê |', '|---|---|---|---|---|',
+  `| 1 | 07:38:21 | ${FALA_A} | MUDANÇA DE ASSUNTO | teste |`,
+  `| 4 | 09:00:00 | ${FALA_STATUS} | — | pergunta de status |`, '',
+].join('\n');
+const AGENTE = { id: 'a1b2c3d4e5f60718', type: 'gabarito-mestre:gabarito-implementador', description: 'T24 corrige', status: 'running', transcript: null };
+const jl = (arq, linhas) => writeFileSync(arq, `${linhas.map((l) => JSON.stringify(l)).join('\n')}\n`);
+
+/** Monta rundir + repo + transcripts no formato que o `a1.exp`, o observador e o Claude Code produzem; `v` estraga um campo por vez. */
+function montarExecucao(v = {}) {
+  const base = tmp();
+  const rundir = join(base, 'run'); const repo = join(base, 'repo'); const pasta = join(base, 'transcripts');
+  for (const d of [join(rundir, 'obs'), join(rundir, 'estados'), join(repo, '.harness', 'entregas', 'GM-12'), join(repo, '.harness', 'entregas', 'GM-13'), pasta]) mkdirSync(d, { recursive: true });
+  writeFileSync(join(rundir, 'inicio.iso'), '2026-11-13T10:00:00.000Z\n');
+  writeFileSync(join(rundir, 'sends.log'), `1 digitar ${sha256(FALA_A)}\n2 digitar ${sha256(FALA_STATUS)}\n`);
+  const semFim = v.semPublicada === true;
+  jl(join(repo, '.harness', 'entregas', 'GM-12', 'events.semente.jsonl'), [
+    { seq: 1, ts: '2026-11-10T12:00:00.000Z', tipo: 'entrega.inicio', dados: { politica: 'continua' } },
+    ...(semFim ? [] : [{ seq: 2, ts: '2026-11-10T12:01:00.000Z', tipo: 'entrega.fim', dados: { ok: true } }]),
+    ...(v.gravouNaPublicada === true ? [{ seq: 3, ts: '2026-11-13T10:05:00.000Z', tipo: 'nota', dados: {} }] : []),
+  ]);
+  jl(join(repo, '.harness', 'entregas', 'GM-13', 'events.loop.jsonl'), [{ seq: 1, ts: '2026-11-13T10:02:00.000Z', tipo: 'dono.mensagem', dados: { sha256: sha256(FALA_A), chars: 47 } }]);
+  jl(join(rundir, 'obs', 'a1.jsonl'), [
+    { t: 1, ev: 'estado', agentes: v.semAgentes === true ? [] : [{ id: AGENTE.id, type: AGENTE.type, status: 'running', description: AGENTE.description }], panes: [{ id: 'gabarito-painel', placement: v.placement ?? 'dock' }], nomes: null },
+    { t: 2, ev: 'render', comp: 'Pane', bodyRows: 12, bodyColumns: 60 },
+  ]);
+  const props = v.semProps === true ? {} : { Pane: { bodyRows: 12, bodyColumns: 60 } };
+  writeFileSync(join(rundir, 'estados', '01.json'), `${JSON.stringify({ n: 1, props, agentes: v.semAgentes === true ? [] : [AGENTE], estado: ESTADO_REAL })}\n`);
+  const prompt = v.promptSemRegra === true ? 'brief sem regra nenhuma' : `brief do implementador. ${REGRA}`;
+  jl(join(pasta, 's1.jsonl'), [
+    { type: 'user', timestamp: '2026-11-13T10:03:00.000Z', message: { role: 'user', content: FALA_STATUS } },
+    ...(v.semProxima === true ? [] : [
+      { type: 'assistant', timestamp: '2026-11-13T10:03:01.000Z', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'b1', name: 'Bash', input: { command: 'node /x/gates/scripts/loop.mjs proxima' } }] } },
+      { type: 'user', timestamp: '2026-11-13T10:03:02.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'b1', content: [{ type: 'text', text: PROXIMA_REAL }] }] } },
+    ]),
+    { type: 'assistant', timestamp: '2026-11-13T10:03:03.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'despachando' }, { type: 'tool_use', id: 'g1', name: 'Agent', input: { subagent_type: 'gabarito-mestre:gabarito-implementador', prompt } }] } },
+    { type: 'user', timestamp: '2026-11-13T10:03:04.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'g1', is_error: v.negada !== false, content: 'resultado' }] } },
+  ]);
+  return { rundir, repo, pasta };
+}
+const CELULA = { local: 'lateral', cols: 180, rows: 50, cheia: true };
+const roteiroColeta = () => ({ falas: falasDoRoteiro(ROTEIRO_COLETA) });
+const coleta = (v, celula = CELULA) => { const m = montarExecucao(v); return coletar(m.rundir, m.repo, celula, roteiroColeta(), { pasta: m.pasta }); };
+const resultado = (ev, id) => avaliarExecucao(ev).resultados.find((r) => r.id === id);
+
+describe('coletar: a evidência vem do que a execução produziu (P3: negada fixa; P4: panes fixas)', () => {
+  test('coleta-le-negada-turno-de-status-despachos-panes-e-vivos', async () => {
+    const ev = await coleta({});
+    const agent = ev.transcript.chamadas.find((c) => c.nome === 'Agent');
+    assert.equal(agent.negada, true, 'o tool_result com is_error vira negada (P3: `negada: false` fixo ⇒ reprova aqui)');
+    assert.equal(agent.turnoDeStatus, true, 'a fala digitada antes é a pergunta de status do roteiro');
+    assert.deepEqual(ev.despachos.map((d) => d.aprendizados), [[REGRA]], 'aprendizados do proxima real, por papel');
+    assert.deepEqual(ev.panes, [{ id: 'gabarito-painel', placement: 'dock' }], 'panes do observador (P4: `panes: []` fixo ⇒ reprova aqui)');
+    assert.deepEqual(ev.digitadas, [sha256(FALA_A), sha256(FALA_STATUS)]);
+    assert.deepEqual(ev.entregasPublicadas, ['GM-12']);
+    assert.deepEqual(ev.gravacoes['GM-12'], { antes: 2, depois: 2 });
+    assert.equal(ev.gravacoes['GM-13'].antes, 0);
+    assert.equal(ev.quadrosSemProps, 0);
+    assert.ok(ev.quadros[0].linhas.length >= 1 && ev.quadros[0].linhas.length <= 12, `quadro da lateral dentro do bodyRows 12 (${ev.quadros[0].linhas.length})`);
+    assert.deepEqual(ev.vivos, [{ ativos: 1, linhasAgente: 1, detalhes: [{ nome: 'SAM', descricao: 'T24 corrige', task: 'T24', acao: 'lendo 2 arquivos' }] }]);
+  });
+
+  test('8b-reprova-com-Agent-negado-em-turno-de-status-vindo-da-coleta', async () => {
+    assert.equal(resultado(await coleta({ negada: true }), '8b-agent-nao-negado-em-status').ok, false);
+    assert.equal(resultado(await coleta({ negada: false }), '8b-agent-nao-negado-em-status').ok, true);
+  });
+
+  test('8b-sem-Agent-em-turno-de-status-nao-mediu-nada-e-reprova', async () => {
+    const m = montarExecucao({ negada: false });
+    writeFileSync(join(m.rundir, 'sends.log'), `1 digitar ${sha256(FALA_A)}\n`);
+    const linhas = readFileSync(join(m.pasta, 's1.jsonl'), 'utf8').replace(JSON.stringify(FALA_STATUS), JSON.stringify(FALA_A));
+    writeFileSync(join(m.pasta, 's1.jsonl'), linhas);
+    const ev = await coletar(m.rundir, m.repo, CELULA, roteiroColeta(), { pasta: m.pasta });
+    assert.equal(ev.transcript.chamadas.find((c) => c.nome === 'Agent').turnoDeStatus, false);
+    assert.equal(resultado(ev, '8b-agent-nao-negado-em-status').ok, false);
+  });
+
+  test('10-reprova-com-prompt-sem-a-regra-e-sem-proxima-observado', async () => {
+    assert.equal(resultado(await coleta({}), '10-despachos-com-aprendizados').ok, true);
+    assert.equal(resultado(await coleta({ promptSemRegra: true }), '10-despachos-com-aprendizados').ok, false, 'a regra do proxima falta no prompt');
+    const sem = await coleta({ semProxima: true });
+    assert.deepEqual(sem.despachos[0].aprendizados, []);
+    assert.equal(resultado(sem, '10-despachos-com-aprendizados').ok, false, 'sem aprendizado observado a asserção não mediu nada');
+  });
+
+  test('8c-reprova-com-gravacao-na-publicada-e-sem-publicada-nenhuma', async () => {
+    assert.equal(resultado(await coleta({}), '8c-nada-em-entrega-publicada').ok, true);
+    const grav = await coleta({ gravouNaPublicada: true });
+    assert.deepEqual(grav.gravacoes['GM-12'], { antes: 2, depois: 3 });
+    assert.equal(resultado(grav, '8c-nada-em-entrega-publicada').ok, false);
+    const nenhuma = await coleta({ semPublicada: true });
+    assert.deepEqual(nenhuma.entregasPublicadas, []);
+    assert.equal(resultado(nenhuma, '8c-nada-em-entrega-publicada').ok, false, 'sem entrega publicada vigiada a asserção não mediu nada');
+  });
+
+  test('1-e-2-sem-props-da-superficie-reprovam-como-nao-medidas', async () => {
+    const ev = await coleta({ semProps: true });
+    assert.equal(ev.quadrosSemProps, 1);
+    assert.deepEqual(ev.quadros, []);
+    for (const id of ['1-depende-no-topo', '2-blocos-e-corte']) assert.match(resultado(ev, id).detalhe, /não medida/);
+  });
+
+  test('4-8d-8e-sem-vivo-observado-reprovam-em-vez-de-passar-no-vacuo', async () => {
+    const ev = await coleta({ semAgentes: true });
+    assert.deepEqual(ev.vivos.map((p) => p.ativos), [0]);
+    for (const id of ['4-agora-ativos', '8d-vivo-com-nome-descricao-task', '8e-vivos-igual-linhas-de-agente']) {
+      const r = resultado(ev, id);
+      assert.equal(r.ok, false, id);
+      assert.match(r.detalhe, /nenhum agente vivo observado/);
+    }
+  });
+
+  test('4-8d-8e-avaliam-todos-os-pontos-e-nao-so-o-ultimo', () => {
+    const ev = evBoa();
+    ev.vivos = [{ ativos: 2, linhasAgente: 1, detalhes: [{ nome: 'A', descricao: 'd', task: 'T1', acao: 'x' }] }, { ativos: 0, linhasAgente: 0, detalhes: [] }];
+    assert.equal(resultado(ev, '8e-vivos-igual-linhas-de-agente').ok, false, 'o ponto 1 diverge mesmo com o último vazio');
+    ev.vivos = [{ ativos: 1, linhasAgente: 1, detalhes: [{ nome: 'A', descricao: '', task: 'T1', acao: 'x' }] }, { ativos: 0, linhasAgente: 0, detalhes: [] }];
+    assert.equal(resultado(ev, '8d-vivo-com-nome-descricao-task').ok, false);
+    ev.vivos = [{ ativos: 1, linhasAgente: 1, detalhes: [{ nome: 'A', descricao: 'd', task: 'T1', acao: null }] }, { ativos: 0, linhasAgente: 0, detalhes: [] }];
+    assert.equal(resultado(ev, '4-agora-ativos').ok, false);
+  });
+
+  test('placement-lido-do-observador-reprova-quando-incoerente-com-a-celula', async () => {
+    assert.equal(resultado(await coleta({ placement: 'dock' }), '12-placement-da-pane').ok, true);
+    assert.equal(resultado(await coleta({ placement: 'inline' }), '12-placement-da-pane').ok, false);
+  });
+
+  test('diario-ilegivel-e-snapshot-fora-da-forma-lancam', async () => {
+    const m = montarExecucao({});
+    writeFileSync(join(m.repo, '.harness', 'entregas', 'GM-13', 'events.x.jsonl'), 'não é json\n');
+    await assert.rejects(coletar(m.rundir, m.repo, CELULA, roteiroColeta(), { pasta: m.pasta }), /diário ilegível/);
+    const n = montarExecucao({});
+    writeFileSync(join(n.rundir, 'estados', '02.json'), '{"n":2}\n');
+    await assert.rejects(coletar(n.rundir, n.repo, CELULA, roteiroColeta(), { pasta: n.pasta }), /snapshot fora da forma/);
+  });
+});
+
+describe('renderizar: o quadro vem das funções do mod com as props observadas', () => {
+  test('lateral-usa-bodyRows-e-acima-usa-maxRows-e-viewport', async () => {
+    const curto = await renderizar(ESTADO_REAL, { Pane: { bodyRows: 3, bodyColumns: 60 } }, { local: 'lateral' });
+    const longo = await renderizar(ESTADO_REAL, { Pane: { bodyRows: 40, bodyColumns: 60 } }, { local: 'lateral' });
+    assert.ok(curto.length <= 3, `bodyRows 3 ⇒ ${curto.length} linhas`);
+    assert.ok(longo.length > curto.length, 'a altura da lateral VARIA com bodyRows (o orçamento 7 fixo do runner antigo não variava)');
+    const acimaPouco = await renderizar(ESTADO_REAL, { AbovePrompt: { maxRows: 3, rows: 50, bodyColumns: 100 } }, { local: 'acima' });
+    const acimaMuito = await renderizar(ESTADO_REAL, { AbovePrompt: { maxRows: 30, rows: 50, bodyColumns: 100 } }, { local: 'acima' });
+    assert.ok(acimaPouco.length <= 3);
+    assert.ok(acimaMuito.length > acimaPouco.length, 'maxRows muda a altura em acima');
+    assert.equal(await renderizar(ESTADO_REAL, {}, { local: 'lateral' }), null, 'sem render observado: null, nunca inventado');
+    assert.equal(await renderizar(ESTADO_REAL, { Pane: { bodyRows: 3, bodyColumns: 60 } }, { local: 'acima' }), null, 'a superfície errada não conta');
+  });
+});
+
+describe('stdin do snapshot no contrato do mod (nomes, acoes, encerrados)', () => {
+  const obs = [
+    { t: 1, ev: 'estado', agentes: [{ id: AGENTE.id, type: AGENTE.type, status: 'running', description: 'd' }, { id: 'b1b2c3d4e5f60718', type: 'x', status: 'completed', description: 'd2' }], panes: [{ id: 'p', placement: 'dock' }], nomes: { [AGENTE.id]: { nome: 'SAM', vistoEm: 5 }, ffffffffffffffff: { nome: 'FORA', vistoEm: 1 } } },
+    { t: 10, ev: 'tool', agentId: AGENTE.id, tool: 'Read', subagent_type: 'implementador', description: null },
+    { t: 11, ev: 'tool', agentId: AGENTE.id, tool: 'Read', subagent_type: 'implementador', description: null },
+    { t: 12, ev: 'tool', agentId: 'b1b2c3d4e5f60718', tool: 'Read', subagent_type: 'x', description: null },
+    { t: 13, ev: 'render', comp: 'AbovePrompt', maxRows: 9, rows: 50, bodyColumns: 100, hasSurvey: false },
+    { t: 14, ev: 'render', comp: 'AbovePrompt', maxRows: 11, rows: 50, bodyColumns: 100, hasSurvey: false },
+  ];
+  test('nomes-acoes-encerrados-como-o-mod-envia', () => {
+    const { entrada } = entradaDoSnapshot(obs, FERR);
+    assert.deepEqual(Object.keys(entrada.nomes), [AGENTE.id], 'só nomes de agentes da lista');
+    assert.equal(entrada.nomes[AGENTE.id].nome, 'SAM');
+    assert.deepEqual(entrada.encerrados, ['b1b2c3d4e5f60718']);
+    assert.deepEqual(Object.keys(entrada.acoes), [AGENTE.id], 'agente terminal perde a ação');
+    assert.equal(entrada.acoes[AGENTE.id].fonte, 'tool');
+    assert.match(entrada.acoes[AGENTE.id].texto, /2/, 'duas leituras seguidas contam 2 (como o `anotarAcao` do mod)');
+    assert.deepEqual(entrada.segundoPlano, []);
+    assert.equal(acoesDe([], [], FERR) !== null, true);
+  });
+  test('o-validador-do-produto-aceita-o-stdin-do-snapshot', async () => {
+    const { validarStdinAgentes } = await import('../dist/painel-equipe.js');
+    const { entrada } = entradaDoSnapshot(obs, FERR);
+    const v = validarStdinAgentes(entrada);
+    assert.equal(v.ok, true, v.erro);
+    assert.equal(v.valor.nomes[AGENTE.id].nome, 'SAM');
+    assert.deepEqual(v.valor.encerrados, ['b1b2c3d4e5f60718']);
+  });
+  test('props-da-ultima-renderizacao-por-superficie', () => {
+    assert.deepEqual(propsDe(obs), { AbovePrompt: { maxRows: 11, rows: 50, bodyColumns: 100, hasSurvey: false } });
+  });
+  test('itens-do-proxima-real-e-saida-que-nao-e-json', () => {
+    assert.deepEqual(itensDeProxima(PROXIMA_REAL), [{ papel: 'implementador', aprendizados: [REGRA] }]);
+    assert.deepEqual(itensDeProxima('Error: x'), []);
   });
 });

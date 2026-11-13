@@ -66,7 +66,7 @@ cd $repo
 log_user 0
 log_file -a $rundir/tty.raw
 set stty_init "rows $rows cols $cols"
-spawn claude --plugin-dir $plugin --plugin-dir $obs --setting-sources project,local --strict-mcp-config \
+spawn claude --plugin-dir $obs --plugin-dir $plugin --setting-sources project,local --strict-mcp-config \
   --model claude-haiku-5-5 --permission-mode auto --allowedTools "Bash(node *)" Read ScheduleWakeup --debug-file $rundir/debug.log
 nota "inicio cols=$cols rows=$rows"
 
