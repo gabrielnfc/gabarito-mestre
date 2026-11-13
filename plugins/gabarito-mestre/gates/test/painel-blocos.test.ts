@@ -10,6 +10,7 @@ import { projetarPainel, renderPainel, TABELA_PARAR } from '../src/painel.ts';
 import { fraseHistorico, historicoDe, paraTexto } from '../src/painel-texto.ts';
 import { PAPEL_EXECUTIVO } from '../src/painel-executivo.ts';
 import { orcamentoDe } from '../src/orcamento.ts';
+import { renderBlocos } from '../src/painel-esquadrao.ts';
 import { linhaTecnica } from '../src/origem.ts';
 import { colunas } from '../src/painel-largura.ts';
 import type { FatosTrilha } from '../src/trilha.ts';
@@ -546,7 +547,7 @@ test('marca-sem-entrega: sem entrega identificada o cabeçalho diz exatamente "G
   }
 });
 
-test('ultima-entrega-conhecida: sem entrega, a 2ª linha é exatamente "última entrega conhecida: <ID>" (spec:53), nos dois presets; com entrega ou sem ultimaConhecida não aparece', () => {
+test('ultima-entrega-conhecida: sem entrega, a 1ª linha fora do topo é exatamente "última entrega conhecida: <ID>" (spec:53), nos dois presets; com entrega ou sem ultimaConhecida não aparece', () => {
   const base = proj(P(...IDS), [], { titulo: 'GM-14 — Clareza' });
   const trilha = { ...(base.trilha as object), ultimaConhecida: 'GM-12' } as EstadoPainel['trilha'];
   const sem = { ...base, id: '', trilha } as EstadoPainel;
@@ -573,4 +574,56 @@ test('topo-nunca-cortado: o PAROU longo a 80 colunas quebra em linhas, com o mot
     assert.ok(topo.every((x) => colunas(x) <= 80 && !x.endsWith('…')), `${preset}: ${JSON.stringify(topo)}`);
     assert.ok(topo.join(' ').replace(/ +/g, ' ').includes(`recusar: ${motivo} [aprovar]`), preset);
   }
+});
+
+// T37 r3: (+N) do topo conta ITENS escondidos, nunca linhas quebradas; a continuação fica com o item (REQ-GLB-1, spec:47; D15)
+const topoMedido = (parar: unknown, depende: { motivo: string }[], o: Record<string, unknown>): string[] => {
+  const est: any = { modo: 'loop', id: 'GM-14', titulo: 'x', parar, pergunta: null, depende: depende.map((d) => ({ ...d, acoes: [{ rotulo: 'aprovar', comando: 'y' }], nivel: 'x' })), pronto: { integradas: 1, total: 3, previsao: null }, agora: null, atencao: [], recente: [], trilha: {} };
+  return renderBlocos(est, { largura: 80, preset: 'executivo', ...o } as any).map((x: any) => x.map((t: any) => t.texto).join(''));
+};
+const PAROU_LONGO = { hora: '12:25', texto: 'teto de rodadas de review em T2', acoes: [{ rotulo: 'aprovar', comando: 'x' }, { rotulo: 'recusar: deixe a task parada e emende a spec', comando: null }] };
+const MOTIVO_LONGO = `decidir a emenda ${'muito '.repeat(14)}longa`;
+
+test('topo-mais-por-item: (+N) conta itens escondidos, não linhas quebradas', () => {
+  const sem = topoMedido(PAROU_LONGO, [{ motivo: 'decidir a emenda 1' }, { motivo: 'decidir a emenda 2' }], {});
+  assert.ok(sem.length >= 4 && !sem.join('\n').includes('(+'), JSON.stringify(sem)); // PAROU em 2 linhas, nada escondido
+  const o3 = topoMedido(PAROU_LONGO, [{ motivo: 'decidir a emenda 1' }, { motivo: 'decidir a emenda 2' }, { motivo: 'decidir a emenda 3' }], { orcamento: 3 });
+  assert.equal(o3.length, 3, JSON.stringify(o3));
+  assert.ok(o3[2].startsWith('depende de você: decidir a emenda 1'), o3[2]);
+  assert.ok(o3[2].endsWith(' (+2)'), `2 itens escondidos, não ${o3[2]}`);
+  assert.ok(o3.every((x) => colunas(x) <= 80));
+  const o2 = topoMedido(PAROU_LONGO, [{ motivo: 'decidir a emenda 1' }], { orcamento: 2 });
+  assert.equal(o2.length, 2, JSON.stringify(o2));
+  assert.ok(o2[1].endsWith(' (+1)') && o2.join(' ').replace(/ +/g, ' ').includes('recusar: deixe a task parada e emende a spec'), JSON.stringify(o2)); // PAROU inteiro; 1 item escondido (por linha daria +2)
+  assert.ok(o2[0].startsWith('PAROU 12:25'));
+});
+
+test('topo-item-inteiro: um item que não cabe inteiro sai inteiro, sem sobrar meia continuação', () => {
+  const o = topoMedido(PAROU_LONGO, [{ motivo: MOTIVO_LONGO }, { motivo: 'decidir a emenda 2' }], { orcamento: 3 });
+  assert.equal(o.length, 2, JSON.stringify(o));
+  assert.ok(!o.join('\n').includes('depende de você'), 'o item 2 quebrado não entra pela metade');
+  assert.ok(o[1].endsWith(' (+2)') && colunas(o[1]) <= 80, o[1]);
+  const tres = topoMedido(PAROU_LONGO, [{ motivo: `decidir a emenda ${'muito '.repeat(35)}longa` }], { orcamento: 4 });
+  assert.equal(tres.length, 2, `item de 3 linhas com 2 vagas sai inteiro: ${JSON.stringify(tres)}`);
+  assert.ok(tres[1].endsWith(' (+1)'), tres[1]);
+  const cabe = topoMedido({ ...PAROU_LONGO, acoes: [] }, [{ motivo: 'decidir a emenda 1' }, { motivo: 'decidir a emenda 2' }], { orcamento: 1 });
+  assert.equal(cabe.length, 1, JSON.stringify(cabe));
+  assert.ok(cabe[0].startsWith('PAROU 12:25') && cabe[0].endsWith(' (+2)'), cabe[0]);
+});
+
+test('topo-1o-item-maior-que-o-orcamento (LIMITE, aguarda decisão): D15 vence; mostra só as linhas do orçamento, a última termina em "…" e não inventa (+N)', () => {
+  const o = topoMedido(PAROU_LONGO, [], { orcamento: 1 });
+  assert.equal(o.length, 1, JSON.stringify(o));
+  assert.ok(o[0].startsWith('PAROU 12:25') && o[0].endsWith('…') && colunas(o[0]) <= 80 && !o[0].includes('(+'), o[0]);
+  const c = topoMedido(PAROU_LONGO, [{ motivo: 'decidir a emenda 1' }], { orcamento: 1 });
+  assert.equal(c.length, 1, JSON.stringify(c));
+  assert.ok(c[0].endsWith('… (+1)') && colunas(c[0]) <= 80, c[0]);
+});
+
+test('topo-palavra-maior-que-a-largura: é partida em linhas, sem "…" e sem perder caractere (REQ-GLB-1)', () => {
+  const palavra = 'x'.repeat(107);
+  const o = topoMedido({ ...PAROU_LONGO, texto: `p${palavra}`, acoes: [] }, [], {});
+  const topo = o.slice(1, o.findIndex((x) => x.startsWith('PRONTO')));
+  assert.ok(topo.length >= 2 && topo.every((x) => colunas(x) <= 80 && !x.includes('…')), JSON.stringify(topo));
+  assert.equal(topo.join('').replace(/[^x]/g, '').length, 107, JSON.stringify(topo));
 });

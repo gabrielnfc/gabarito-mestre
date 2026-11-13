@@ -469,6 +469,7 @@ export function renderBlocos(e              , o              )          {
 
   const ls                    = [];
   const topo = new Set       ();
+  const itensLinhas            = []; // as linhas de cada item do topo: um item entra inteiro ou não entra
   let ordem = 0;
   const por = (prioridade        , l       )        => { ls.push({ prioridade, ordem: ordem++, l }); return l; };
 
@@ -500,7 +501,7 @@ export function renderBlocos(e              , o              )          {
     const prefixo = it.rotulo ? (rotulado ? '  ' : 'depende de você: ') : '';
     if (it.rotulo || /^depende de você:/.test(it.texto)) rotulado = true;
     // REQ-GLB-1: o topo nunca sai cortado; o que não cabe em `w` quebra em linhas de continuação (recuo de 4), sem perder palavra
-    for (const t of quebrarTopo(`${prefixo}${it.texto}`, w)) topo.add(por(1, [seg(t, it.cor)]));
+    itensLinhas.push(quebrarTopo(`${prefixo}${it.texto}`, w).map((t) => { const l = por(1, [seg(t, it.cor)]); topo.add(l); return l; }));
   }
 
   // sem entrega: a última conhecida logo depois do topo (a pergunta (b) segue sendo a linha 2; fumaca-gm14)
@@ -558,12 +559,28 @@ export function renderBlocos(e              , o              )          {
 
   // corte por orçamento (REQ-GLB-1): `orcamento`, senão `altura`; sem os dois, sem corte
   const orc = alturaValida(o.orcamento) ?? alturaValida(o.altura);
-  const { linhas, cortadasTopo } = orc === undefined ? { linhas: ls.map((x) => x.l), cortadasTopo: 0 } : cortarPorPrioridade(ls, orc);
-  const ultTopo = cortadasTopo > 0 ? linhas.reduce((k, l, i) => (topo.has(l) ? i : k), -1) : -1;
+  const cortado = orc === undefined ? { linhas: ls.map((x) => x.l), cortadasTopo: 0 } : cortarPorPrioridade(ls, orc);
+  const ficou = new Set(cortado.linhas);
+  // (+N) conta ITENS escondidos (spec:47), nunca linhas quebradas; o item que não coube inteiro sai inteiro.
+  // LIMITE (spec não diz quem cede): o 1º item sozinho maior que o orçamento — D15 vence; fica o que cabe, a última linha termina em "…".
+  const sai = new Set       ();
+  let escondidos = 0;
+  let truncada               = null;
+  itensLinhas.forEach((item, k) => {
+    const dentro = item.filter((l) => ficou.has(l)).length;
+    if (dentro === item.length) return;
+    if (k === 0 && dentro > 0) { truncada = item[dentro - 1]; return; }
+    escondidos++;
+    for (const l of item) sai.add(l);
+  });
+  const linhas = cortado.linhas.filter((l) => !sai.has(l));
+  const ultTopo = escondidos > 0 || truncada !== null ? linhas.reduce((k, l, i) => (topo.has(l) && !sai.has(l) ? i : k), -1) : -1;
   return linhas.map((l, i) => {
-    if (i !== ultTopo) return fim(l);
-    const mais2 = ` (+${cortadasTopo})`;
-    const cabe = Math.max(1, w - colunas(mais2));
-    return [...cortarNatural(l, cabe), seg(mais2, 'warning')];
+    const reticencia = l === truncada;
+    if (i !== ultTopo && !reticencia) return fim(l);
+    const mais2 = escondidos > 0 ? ` (+${escondidos})` : '';
+    const cabe = Math.max(1, w - colunas(mais2) - (reticencia ? 1 : 0));
+    const base = cortarNatural(l, cabe);
+    return [...base, ...(reticencia ? [seg('…', 'warning')] : []), ...(mais2 !== '' ? [seg(mais2, 'warning')] : [])];
   });
 }
