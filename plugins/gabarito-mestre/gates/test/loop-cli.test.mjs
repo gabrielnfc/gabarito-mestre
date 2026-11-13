@@ -4758,7 +4758,8 @@ describe('T36: a Sombra libera o teto', () => {
     writeFileSync(join(amb.entregas, 'sombra', nome), texto);
     return `.harness/entregas/GM-10/sombra/${nome}`;
   };
-  const hashT = (amb, t = 'T1') => hashDaLiberacao(JSON.parse(readFileSync(join(amb.entregas, 'plano.json'), 'utf8')), amb.eventos(), t);
+  /** O hash de liberação que `liberar` recalcula HOJE: emendas, rodadas do ciclo e sha de cada achado (T39 r1). Não depende do caminho da raiz. */
+  const hashT = (amb, t = 'T1') => hashDaLiberacao(JSON.parse(readFileSync(join(amb.entregas, 'plano.json'), 'utf8')), amb.eventos(), t, amb.dir);
 
   test('t36-p9-cli-real: no_teto ⇒ registrar libera:true ⇒ liberar --origem sombra ⇒ pendente r0 ⇒ registro e painel listam ⇒ 2ª recusa teto_sombra_esgotado', async () => {
     const amb = ambReq();
@@ -4834,7 +4835,12 @@ describe('T36: a Sombra libera o teto', () => {
     recusa(amb, 'T1', h0, 'fora_do_teto');
     ok(amb, ['abrir', 'T1']);
     ok(amb, ['iniciar', 'T1', 'implementador']);
-    const h = sombraDecide(amb);
+    // T39 r1: fora do teto `perguntar --libera-teto` já recusa; a decisão só chega aqui forjada
+    const p = sombra(amb, ['perguntar', '--task', 'T1', '--libera-teto']);
+    assert.equal(p.j?.erro, 'fora_do_teto', p.out);
+    const h = hashT(amb);
+    forja(amb, 'forja', 'sombra.consulta', { pergunta_hash: h, task: 'T1' });
+    forja(amb, 'forja', 'decisao.sombra', { pergunta_hash: h, task: 'T1', resposta: 'r', arquivo: arquivosDaDecisao(amb, h), pergunta_enviesada: false, fontes: ['s:1'], libera: true });
     recusa(amb, 'T1', h, 'fora_do_teto');
     const antes = bytesDoDiario(amb);
     assert.equal(liberar(amb, 'T9', h).j.erro, 'task_fora_do_plano');
@@ -4866,8 +4872,11 @@ describe('T36: a Sombra libera o teto', () => {
     const p = sombra(amb, ['perguntar', '--task', 'T1', '--pergunta', 'o teste cobre?']);
     assert.equal(sombra(amb, ['registrar', p.j.hash, respostaJson(amb, BOA)]).rc, 0);
     assert.match(recusa(amb, 'T1', p.j.hash, 'hash_invalido').j.mensagem, /pergunta de liberação/);
-    // pergunta de liberação de OUTRA task, com libera true
-    const h2 = sombraDecide(amb, 'T2');
+    // pergunta de liberação de OUTRA task, com libera true (forjada: a T2 não está no teto, e `perguntar --libera-teto` recusa fora dele, T39 r1)
+    assert.equal(sombra(amb, ['perguntar', '--task', 'T2', '--libera-teto']).j?.erro, 'fora_do_teto');
+    const h2 = hashT(amb, 'T2');
+    forja(amb, 'forja', 'sombra.consulta', { pergunta_hash: h2, task: 'T2' });
+    forja(amb, 'forja', 'decisao.sombra', { pergunta_hash: h2, task: 'T2', resposta: 'r', arquivo: arquivosDaDecisao(amb, h2), pergunta_enviesada: false, fontes: ['s:1'], libera: true });
     recusa(amb, 'T1', h2, 'hash_invalido');
     // a pergunta certa sem decisão ainda
     const aberta = sombra(amb, ['perguntar', '--task', 'T1', '--libera-teto']);
@@ -4913,6 +4922,36 @@ describe('T36: a Sombra libera o teto', () => {
     escreve(amb2, 'emendas', 'emenda.proposta', PROPOSTA({ req: 'REQ-Z-9' }), new Date().toISOString());
     escreve(amb2, 'dono', 'spec.emendada', { proposta_seq: amb2.eventos().filter((e) => e.tipo === 'emenda.proposta').at(-1).seq, origem: 'dono' }, new Date().toISOString());
     assert.equal(hashT(amb2), h2);
+  });
+
+  // T39 r1 (MAJOR 1): a decisão vale para o insumo que a Sombra leu; achado reescrito ou veredito novo depois dela ⇒ `liberar` recusa
+  test('liberar-recusa-decisao-sobre-insumo-velho', () => {
+    for (const mudar of [
+      (amb) => writeFileSync(join(amb.wt('T1'), '.tmp-gabarito', 'review-r2.md'), 'achado r2 REESCRITO\n'),
+      (amb) => {
+        forja(amb, 'loop', 'review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 3, blocker: 1, major: 0 });
+        achado(amb, 'T1', 3);
+      },
+    ]) {
+      const amb = ambReq();
+      comLibera(amb);
+      aoTeto(amb);
+      const velho = sombraDecide(amb);
+      mudar(amb);
+      assert.notEqual(hashT(amb), velho, 'insumo novo, hash novo');
+      assert.match(recusa(amb, 'T1', velho, 'hash_invalido').j.mensagem, /achados de hoje/);
+      assert.deepEqual(estadoT(amb), { estado: 'no_teto', rodada: 2 });
+      // perguntar de novo dá o hash de hoje, brief novo com o insumo novo, e a decisão dele libera
+      const p = sombra(amb, ['perguntar', '--task', 'T1', '--libera-teto']);
+      assert.equal(p.j.hash, hashT(amb));
+      assert.notEqual(p.j.hash, velho);
+      const brief = readFileSync(join(amb.dir, p.j.brief), 'utf8');
+      assert.ok(/REESCRITO/.test(brief) || /### Rodada 3 [^\n]*ÚLTIMA RODADA/.test(brief), brief.slice(-600));
+      const novo = sombraDecide(amb);
+      assert.equal(novo, p.j.hash);
+      const r = liberar(amb, 'T1', novo);
+      assert.equal(r.rc, 0, r.out);
+    }
   });
 
   test('t36-furo-1: fora_da_regra true não libera', () => {
@@ -4964,16 +5003,18 @@ describe('T36: a Sombra libera o teto', () => {
   });
 
   test('t36-furo-4: decisão anterior ao teto pela ORDEM do diário (não pelo ts cru) não vale', () => {
-    // (a) decisão real antes do 2º REPROVADO
+    // (a) antes do 2º REPROVADO a pergunta real nem existe (T39 r1: `perguntar --libera-teto` exige no_teto)
     const amb = ambReq();
     comLibera(amb);
-    let h;
-    aoTeto(amb, 'T1', () => { h = sombraDecide(amb); });
-    assert.match(recusa(amb, 'T1', h, 'hash_invalido').j.mensagem, /antes do teto/);
-    // (b) mesma sessão do veredito, seq menor e ts 1 h À FRENTE: pelo ts cru seria "depois"; pela ordem do diário é antes
+    let p;
+    aoTeto(amb, 'T1', () => { p = sombra(amb, ['perguntar', '--task', 'T1', '--libera-teto']); });
+    assert.equal(p.j?.erro, 'fora_do_teto', p.out);
+    assert.equal(amb.eventos().filter((e) => e.tipo === 'sombra.consulta').length, 0);
+    // (b) mesma sessão do veredito, seq menor e ts 1 h À FRENTE: pelo ts cru seria "depois"; pela ordem do diário é antes.
+    // O hash é o que a task terá no teto (o de `amb`, mesmo ciclo e mesmos achados: o hash não depende do caminho da raiz)
     const amb2 = ambReq();
     comLibera(amb2);
-    const h2 = hashT(amb2);
+    const h2 = hashT(amb);
     aoTeto(amb2, 'T1', () => {
       forja(amb2, 'loop', 'sombra.consulta', { pergunta_hash: h2, task: 'T1' }, 3_600_000);
       forja(amb2, 'loop', 'decisao.sombra', { pergunta_hash: h2, task: 'T1', resposta: 'r', arquivo: arquivosDaDecisao(amb2, h2), pergunta_enviesada: false, fontes: ['s:1'], libera: true }, 3_600_000);
@@ -4989,17 +5030,18 @@ describe('T36: a Sombra libera o teto', () => {
   test('t36-furo-4-relogio: liberação que cairia antes do teto na ordem real ⇒ relogio_do_diario, nada gravado', () => {
     const amb = ambReq();
     comLibera(amb);
-    const h = hashT(amb);
     // o teto inteiro numa sessão com relógio 1 h à frente: a liberação de agora cairia antes dele
     ok(amb, ['abrir', 'T1']);
     const fut = (tipo, dados, n) => forja(amb, 'futuro', tipo, dados, 3_600_000 + n * 1000);
     [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: 'a'.repeat(40) }],
       ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, blocker: 0, major: 1 }], ['task.iniciada', { task: 'T1', papel: 'correcao' }],
       ['task.concluida', { task: 'T1', sha: 'b'.repeat(40) }], ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 2, blocker: 0, major: 1 }],
-      ['sombra.consulta', { pergunta_hash: h, task: 'T1' }],
-      ['decisao.sombra', { pergunta_hash: h, task: 'T1', resposta: 'r', arquivo: arquivosDaDecisao(amb, h), pergunta_enviesada: false, fontes: ['s:1'], libera: true }],
     ].forEach(([tipo, dados], i) => fut(tipo, dados, i));
     achado(amb, 'T1', 2);
+    const h = hashT(amb); // T39 r1: o hash leva o insumo do teto (rodadas e achados), então vem depois deles
+    [['sombra.consulta', { pergunta_hash: h, task: 'T1' }],
+      ['decisao.sombra', { pergunta_hash: h, task: 'T1', resposta: 'r', arquivo: arquivosDaDecisao(amb, h), pergunta_enviesada: false, fontes: ['s:1'], libera: true }],
+    ].forEach(([tipo, dados], i) => fut(tipo, dados, 6 + i));
     amb.fechar();
     assert.deepEqual(estadoT(amb), { estado: 'no_teto', rodada: 2 });
     recusa(amb, 'T1', h, 'relogio_do_diario');

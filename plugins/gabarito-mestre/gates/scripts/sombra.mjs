@@ -9,6 +9,8 @@
  *       GM-14 T39 (emenda 16, FIEL-15 e): o texto traz o critério; o brief traz SEMPRE as emendas aprovadas de REQ-DIA-2 (onde a FIEL-15 mora)
  *       além das dos REQ da task (e elas versionam o hash), e os achados do ciclo corrente (`achadosDoCiclo` de `loop.mjs`): cada
  *       `review-r<n>.md` até 40 KB com corte marcado e o sha256 do arquivo inteiro; ausente, ilegível ou cortado aparece marcado.
+ *       T39 r1: só com a task em `no_teto` (`fora_do_teto`, nada gravado); o hash leva a identidade do insumo (rodadas do ciclo + sha256 de
+ *       cada achado): veredito novo ou achado reescrito ⇒ hash novo, consulta nova e brief novo; a decisão do hash velho não libera.
  *   sombra.mjs registrar <hash> <resposta.json> [--entrega <GM-10>] [--sessao <id>]  → {ok, evento}
  *       resposta.json: { resposta, texto, pergunta_enviesada, fontes?, medicao?, fora_da_regra?, emenda_seq?, substitui?: {sessao, seq}, libera? }
  *       `libera` (booleano, GM-14 T36): só na pergunta de liberação da task (`libera_fora_da_liberacao`); ausente, a decisão grava os campos de antes.
@@ -38,7 +40,7 @@ import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFil
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import { lerConfigOrigin } from '../lib/config.mjs';
-import { ACHADO_MAX_BYTES, achadosDoCiclo, hashDaLiberacao, perguntaDaLiberacao, reqsDaLiberacao, tetoDaSombra } from './loop.mjs';
+import { ACHADO_MAX_BYTES, achadosDoCiclo, estadoNoDiario, hashDaLiberacao, perguntaDaLiberacao, reqsDaLiberacao, tetoDaSombra } from './loop.mjs';
 import * as diario from '../dist/diario.js';
 import { projetarEmendas } from '../dist/emenda.js';
 import { formaInvalida, REQ_RE } from '../dist/formas.js';
@@ -332,21 +334,30 @@ function perguntar(cwd, flags) {
   const { eventos, est } = diarioConferido(c);
   const ancora = req !== undefined ? { req } : { task };
   const liberacao = flags['libera-teto'] === true;
+  // T39 r1 (MAJOR 1): só há liberação a perguntar com a task no teto; fora dele, recusa antes de gravar
+  if (liberacao) {
+    const r = estadoNoDiario(eventos, task);
+    if ('invalido' in r) throw new Falha('diario_invalido', `diário da task ${task} fora da tabela de transições: ${r.invalido}; nada foi gravado`);
+    if (r.estado !== 'no_teto') throw new Falha('fora_do_teto', `a task ${task} está em ${r.estado}: a pergunta de liberação só vale com a task no teto de rodadas (no_teto); nada foi gravado`);
+  }
   // T39: na liberação, as emendas de REQ-DIA-2 entram na versão e no brief (a mesma regra de `hashDaLiberacao`)
   const reqsDasEmendas = liberacao ? reqsDaLiberacao(tarefa) : reqs;
+  // T39 r1 (MAJOR 1): os achados lidos UMA vez alimentam o brief e o hash (`hashDaLiberacao`, a régua de `liberar`): insumo novo, hash novo
+  const achados = liberacao ? achadosDoCiclo(c.raiz, eventos, task) : undefined;
   let hash;
   try {
-    hash = hashPergunta(textoAncora(ancora), versaoDe(est, reqsDasEmendas), pergunta);
+    hash = liberacao ? hashDaLiberacao(plano, eventos, task, c.raiz, achados) : hashPergunta(textoAncora(ancora), versaoDe(est, reqsDasEmendas), pergunta);
   } catch (e) {
     throw new Falha('argumento_invalido', `não deu para calcular o hash da pergunta (${e.message})`, {}, 2);
   }
+  if (hash === null) throw new Falha('diario_invalido', `não deu para calcular o hash da pergunta de liberação de ${task} (emendas do diário não projetam); nada foi gravado`);
 
   const decisao = projetarDecisoes(eventos).get(hash);
   if (decisao !== undefined) return { hash, cache: true, decisao };
 
   const emendas = est.aprovadas.filter((p) => reqsDasEmendas.includes(p.req)).map((p) => ({ proposta_seq: p.seq, req: p.req, diff: p.diff }));
   const base = montarBrief({ pergunta, ancora: textoAncora(ancora), spec: plano.spec, trechos, emendas, ...(tarefa !== undefined ? { task: tarefa } : {}) });
-  const conteudo = liberacao ? comAchados(base, task, achadosDoCiclo(c.raiz, eventos, task)) : base;
+  const conteudo = liberacao ? comAchados(base, task, achados) : base;
   const { teto, aviso: avisoTeto } = tetoDe(c.raiz);
 
   if (consultasAbertas(eventos).includes(hash)) {
@@ -407,7 +418,7 @@ function registrar(cwd, pos, flags) {
   if (consulta === undefined) throw new Falha('sem_consulta', `nenhuma sombra.consulta do hash ${hash}: \`perguntar\` primeiro`);
   const ancora = consulta.dados.req !== undefined ? { req: consulta.dados.req } : { task: consulta.dados.task };
   // GM-14 T36 (furo 3): `libera` só na pergunta de liberação da task (o mesmo hash que `loop.mjs liberar` recalcula); em outra, recusa antes de gravar.
-  if (r.libera !== undefined && (ancora.task === undefined || hashDaLiberacao(carregarPlano(c), eventos, ancora.task) !== hash)) {
+  if (r.libera !== undefined && (ancora.task === undefined || hashDaLiberacao(carregarPlano(c), eventos, ancora.task, c.raiz) !== hash)) {
     throw new Falha('libera_fora_da_liberacao', '`libera` só vale na decisão da pergunta de liberação do teto (`perguntar --task <t> --libera-teto`); nenhum arquivo e nenhum evento foram gravados');
   }
 

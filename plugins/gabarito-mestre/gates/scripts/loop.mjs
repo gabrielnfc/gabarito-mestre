@@ -1956,11 +1956,22 @@ export function achadosDoCiclo(raiz, eventos, task) {
 }
 
 /**
- * Hash da pergunta de liberação da task com a versão da âncora de hoje (a mesma regra de `sombra.mjs perguntar`: `proposta_seq` da ÚLTIMA emenda
- * aprovada dentre os REQs da task e `REQ-DIA-2`, T39). Emenda aprovada depois da pergunta muda o hash: a decisão velha não libera. `null` = task fora do plano ou diário
- * que não projeta. Exportada para `sombra.mjs` (registrar confere `libera`) e para o teste.
+ * Identidade do insumo da liberação (T39 r1, MAJOR 1): rodada, veredito e contagens de cada rodada do ciclo corrente, na ordem, com o estado e o
+ * sha256 do `review-r<n>.md`. Veredito novo ou achado reescrito ⇒ outra identidade ⇒ outro hash ⇒ outro brief: a Sombra nunca decide sobre insumo velho.
  */
-export function hashDaLiberacao(plano, eventos, task) {
+export function insumoDaLiberacao(achados) {
+  const linhas = achados.map((a) => [a.rodada, a.veredito, a.blocker, a.major, a.estado, a.sha256 ?? null]);
+  return createHash('sha256').update(JSON.stringify(linhas)).digest('hex');
+}
+
+/**
+ * Hash da pergunta de liberação da task com a versão da âncora de hoje (a mesma regra de `sombra.mjs perguntar`: `proposta_seq` da ÚLTIMA emenda
+ * aprovada dentre os REQs da task e `REQ-DIA-2`, T39) e a identidade do insumo de hoje (`insumoDaLiberacao` dos achados do ciclo corrente,
+ * lidos de `raiz`, T39 r1). Emenda aprovada, veredito novo ou achado reescrito depois da pergunta muda o hash: a decisão velha não libera.
+ * `achados` já lidos (o brief de `perguntar`) evitam reler. `null` = task fora do plano ou diário que não projeta. Exportada para `sombra.mjs`
+ * (perguntar e registrar) e para o teste.
+ */
+export function hashDaLiberacao(plano, eventos, task, raiz, achados) {
   const t = plano?.tasks?.find((x) => x.id === task);
   if (t === undefined) return null;
   const est = projetarEmendas(eventos);
@@ -1968,7 +1979,17 @@ export function hashDaLiberacao(plano, eventos, task) {
   const reqs = reqsDaLiberacao(t); // T39 (MINOR 665842d7): emenda aprovada de REQ-DIA-2 também versiona a pergunta
   const aprovadas = est.aprovadas.filter((p) => reqs.includes(p.req));
   const versao = aprovadas.length === 0 ? 0 : aprovadas[aprovadas.length - 1].seq;
-  try { return hashPergunta(textoAncora({ task }), versao, perguntaDaLiberacao(task)); } catch { return null; }
+  try {
+    const insumo = insumoDaLiberacao(achados ?? achadosDoCiclo(raiz, eventos, task));
+    return hashPergunta(`${textoAncora({ task })} insumo:${insumo}`, versao, perguntaDaLiberacao(task));
+  } catch { return null; }
+}
+
+/** Estado da task pelo diário inteiro, na ordem de `ordenar` (a régua de `conferirLiberacao`); `{invalido}` se a ordem ou a tabela quebram. */
+export function estadoNoDiario(eventos, task) {
+  const ord = ordenar(eventos);
+  if (!ord.ok) return { invalido: 'diário fora de ordem' };
+  return estadoDe(ord.eventos.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === task));
 }
 
 const ehArquivoRegular = (p) => { try { return lstatSync(p).isFile(); } catch { return false; } };
@@ -1993,7 +2014,7 @@ function conferirLiberacao(c, plano, task, hash, eventos) {
   const invalido = (porque) => new Falha('hash_invalido', `o hash ${String(hash).slice(0, 12)}… não autoriza a liberação de ${task}: ${porque}; nada foi gravado`);
   if (typeof hash !== 'string' || !HASH_RE.test(hash)) throw invalido('fora da forma sha256 em hex minúsculo (64)');
   // furo 1 e 3: só a pergunta fechada de liberação desta task, na versão de hoje da âncora
-  if (hash !== hashDaLiberacao(plano, eventos, task)) throw invalido(`não é o hash da pergunta de liberação da task (sombra.mjs perguntar --task ${task} --libera-teto)`);
+  if (hash !== hashDaLiberacao(plano, eventos, task, c.raiz)) throw invalido(`não é o hash da pergunta de liberação da task com os achados de hoje (sombra.mjs perguntar --task ${task} --libera-teto de novo)`);
   const consulta = ord.eventos.some((e) => e.tipo === 'sombra.consulta' && formaInvalida(e.tipo, e.dados) === null && e.dados.pergunta_hash === hash && e.dados.task === task);
   if (!consulta) throw invalido('sem a sombra.consulta da pergunta de liberação no diário');
   // furo 5: vale a decisão VIGENTE (a substituída não conta), na posição da ordem do diário
