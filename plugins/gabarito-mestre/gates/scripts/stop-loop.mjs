@@ -30,6 +30,7 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import { raizPorFs, inferirPbi } from '../lib/git.mjs';
+import { temOnboarding } from './cartao-sessao.mjs';
 
 export const LIMITE_SEM_PROGRESSO = 3;
 const X_PADRAO = 50;
@@ -358,11 +359,19 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   const { eventos } = lido;
 
   const ord = dl.mod.ordenar(eventos);
+  // GM-14 FIEL-14 (f), emenda 29: a MESMA `pousoPendente` do `loop.mjs proxima` (dist/pouso-pendente.js, sem 2ª definição) e o MESMO fato de
+  // onboarding (`temOnboarding`, config local). Sem onboarding nunca é pendente: o Stop segue como na 2.0.
+  const dpp = await carregar('pouso-pendente');
+  if (!dpp.ok) return dpp.aviso;
+  let pendente = false;
+  try {
+    pendente = dpp.mod.pousoPendente(eventos, temOnboarding(raiz)).pendente === true;
+  } catch { pendente = false; }
   let acao;
   let falhaAcao = null;
   try {
     acao = dl.mod.proximaAcao(plano, eventos, {
-      slots: 1, percent: null, x: X_PADRAO, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false,
+      slots: 1, percent: null, x: X_PADRAO, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false, pousoPendente: pendente,
     });
   } catch (e) {
     falhaAcao = aviso(`Loop: proximaAcao falhou (${curto(e?.name ?? 'erro', 60)}); nada decidido`);
@@ -386,6 +395,10 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   }
   if (falhaAcao !== null) return falhaAcao;
   if (acao.tipo === 'concluir') return avisoLiberacoes(eventos, entrega);
+  // Pouso pendente: nada novo começa e o Stop não conta "sem progresso" (a conversa precisa de /clear, não de despacho).
+  if (pendente && (acao.tipo === 'despachar' || acao.tipo === 'integrar' || acao.tipo === 'pousar' || (acao.tipo === 'parar' && acao.motivo === 'sem_pouso'))) {
+    return aviso(`Loop da entrega ${limpo(entrega)}: pouso pendente; digite /clear para retomar em conversa limpa (nada novo é despachado antes)`);
+  }
   if (acao.tipo !== 'despachar' && acao.tipo !== 'integrar') return saidaParaAcao(acao, entrega);
 
   const saida = saidaParaAcao(acao, entrega);

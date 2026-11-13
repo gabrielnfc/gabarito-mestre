@@ -630,6 +630,8 @@ function copiaSemDist(removerTudo = true, manter = []) {
   mkdirSync(join(dest, 'scripts'), { recursive: true });
   cpSync(SCRIPT, join(dest, 'scripts', 'stop-loop.mjs'));
   cpSync(join(GATES, 'lib'), join(dest, 'lib'), { recursive: true });
+  // o Stop importa `temOnboarding` de cartao-sessao.mjs (fonte única do onboarding; emenda 29), que importa capacidade.mjs
+  for (const n of ['cartao-sessao.mjs', 'capacidade.mjs']) cpSync(join(GATES, 'scripts', n), join(dest, 'scripts', n));
   if (!removerTudo || manter.length) {
     mkdirSync(join(dest, 'dist'), { recursive: true });
     for (const n of manter) cpSync(join(GATES, 'dist', n), join(dest, 'dist', n));
@@ -1402,4 +1404,39 @@ test('stop-comando-aprendizado-roda-de-verdade: cada comando citado pelo Stop gr
   fecha(nada[0], 'nada');
   // O Stop 2 só avisa, com o mesmo texto: o aviso também chega ao agente
   avisa(stop(dir), COMANDO);
+});
+
+// ------------------------------------------------------------------------------------- GM-14 T34 (FIEL-14 f, emenda 29): pouso pendente no Stop
+
+const comOnboarding = (raiz) =>
+  writeFileSync(join(raiz, 'harness.config.json'), JSON.stringify({ fluxo: { ferramenta: 'arquivos', resolvidoEm: '2026-11-01' } }));
+const pousoDe = (raiz, sessao = 'S0') => diario(raiz, sessao, [ev(sessao, 1, 'sessao.pouso', { percent: null, x: 50, via: 'dono' })]);
+
+test('stop-pouso-pendente-com-onboarding-nao-despacha-nem-para: vários Stops, nenhum block e nenhum loop.parar sem_progresso', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  pousoDe(raiz);
+  for (let i = 0; i < 6; i += 1) {
+    const r = stop(raiz); // session_id S1 vem do stdin
+    avisa(r, /\/clear/);
+  }
+  assert.equal(linhasDoDiario(raiz).some((e) => e.tipo === 'loop.parar'), false);
+  assert.equal(existsSync(contadorDe(raiz)), false, 'o Stop não conta sem progresso sob pouso pendente');
+});
+
+test('stop-pouso-sem-onboarding-segue-a-2-0: o mesmo diário sem fluxo.resolvidoEm ainda despacha', () => {
+  const raiz = repo();
+  plano(raiz);
+  pousoDe(raiz);
+  bloqueia(stop(raiz), /T1/);
+});
+
+test('stop-pouso-limpo-volta-a-despachar: sessao.inicio clear de outra sessão depois do pouso tira o pendente', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  pousoDe(raiz);
+  diario(raiz, 'S9', [ev('S9', 1, 'sessao.inicio', { origem: 'clear' })]);
+  bloqueia(stop(raiz), /T1/);
 });
