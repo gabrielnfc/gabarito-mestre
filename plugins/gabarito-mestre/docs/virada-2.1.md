@@ -32,4 +32,4 @@ Reinstale a 2.0.0 do plugin pelos passos de "Como voltar" em `docs/virada-2.0.md
 
 - A herança das regras de repositórios da 1.x (`onboarding.mjs herdar`) chega na 2.2; não existe na 2.1.0.
 - Sem o mod, não há painel, push de aviso nem `/clear` automático: o loop pede a você, em uma linha, que digite `/clear`.
-- Limites medidos do painel e do chat estão em `commands/gabarito.md`, seção "O que só o mod entende".
+- Os limites declarados do painel e do chat (o que foi medido e o que não foi) estão em `commands/gabarito.md`, seção "O que só o mod entende".

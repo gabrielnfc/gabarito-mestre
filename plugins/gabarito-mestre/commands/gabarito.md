@@ -53,9 +53,10 @@ Com o mod, o mesmo `/gabarito` aceita mais: `painel ocultar|mostrar` (menos o PA
 
 Local do painel, com o limite da plataforma: Pane (lateral): ao lado só em tela cheia com ≥ 110 colunas; fora disso a própria plataforma a põe acima da linha de digitar — sempre um só local. O mod nunca troca de local sozinho pela largura; o padrão é `lateral`.
 
-Limites declarados, sem medição que os feche:
+Limites declarados (cada item diz o que foi medido e o que não foi):
 - S1c NÃO MEDIDO: `hasSurvey` não teve teste real (0 renders de pesquisa em 19,5 min); a faixa devolve o render padrão quando há pesquisa.
 - S2b: o `ToolUse` solo chegou como grupo de 1 em 6/6 medições, mas só a leitura (`Read`) foi medida; outra ferramenta solo pode aparecer crua.
 - N11: o contexto do orquestrador no mod depende de `usage.context.percent` (spike S10 a medir); se vier nulo, o painel diz "estimado" ou "?", nunca um número inventado.
-- S12 a S14 (agente ao vivo, fim de subagente, segundo plano): sem a confirmação, o AGORA mostra o último fato registrado, marcado "(registrado)", e o segundo plano não aparece.
+- S13 (fim de subagente), medido em 6/6: o `SubagentStop` chega com o agente ainda `running` (a lista diz `completed` ~210 ms depois) e há stops intermediários (agente que só espera trabalho em segundo plano; `SendMessage` retoma um `completed`). O AGORA só encerra um agente pela lista, nunca pelo `SubagentStop` sozinho.
+- S14 (segundo plano), fim de tarefa de subagente: a notificação do fim não chegou ao mod em 0/3; o fim só se vê pelo sumiço em `background_tasks` (no orquestrador a notificação chegou em 3/3). Fonte de S12 a S14 (S12 9/9 e S14 no orquestrador confirmadas; o segundo plano já aparece no painel): `.superpowers/sdd/2026-11-11-proxima/t0b-relatorio.md`.
 - `onboarding.mjs herdar` (regras herdadas da 1.x) chega na 2.2; não existe na 2.1.0.

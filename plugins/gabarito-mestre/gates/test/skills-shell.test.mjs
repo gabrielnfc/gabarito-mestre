@@ -288,10 +288,13 @@ const lerSkill = () => readFileSync(SKILL_LOOP, 'utf8');
 /** Todo exemplo de `proxima`/`pousar` num texto: código inline `loop.mjs proxima|pousar …` ou `proxima|pousar --…`; devolve os que NÃO têm `--sessao`. */
 export function exemplosSemSessao(texto) {
   const ruins = [];
-  for (const m of texto.matchAll(/`([^`\n]+)`/g)) {
-    const c = m[1];
-    const exemplo = /\bloop\.mjs"?\s+(proxima|pousar)(\s|$)/.test(c) || /^(proxima|pousar)\s+--/.test(c);
-    if (exemplo && !/--sessao\s/.test(c)) ruins.push(c);
+  const eExemplo = (c) => /\bloop\.mjs"?\s+(proxima|pousar)(\s|$)/.test(c) || /^(proxima|pousar)\s+--/.test(c);
+  let cerca = false;
+  for (const linha of texto.split('\n')) {
+    if (/^\s*```/.test(linha)) { cerca = !cerca; continue; }
+    // linha de bloco cercado: a linha inteira é o exemplo; fora dele, só o código inline entre crases
+    const trechos = cerca ? [linha] : [...linha.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]);
+    for (const c of trechos) if (eExemplo(c) && !/--sessao\s/.test(c)) ruins.push(c);
   }
   return ruins;
 }
@@ -307,6 +310,11 @@ test('skill-loop-proxima-e-pousar-com-sessao: todo exemplo de proxima e pousar (
   assert.deepEqual(exemplosSemSessao('`node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" pousar`'), ['node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" pousar']);
   assert.deepEqual(exemplosSemSessao('só então `proxima --vivos <n>`.'), ['proxima --vivos <n>']);
   assert.deepEqual(exemplosSemSessao('`node "x/loop.mjs" proxima --vivos <n> --sessao <id>` e `pousar` nunca vem sozinho'), []);
+  // bloco cercado (o exemplo canônico que o orquestrador copia): sem a flag falha, com ela passa
+  const sem = 'node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" proxima --vivos <n>   # n = vivos';
+  assert.deepEqual(exemplosSemSessao('```bash\n' + sem + '\n```\n'), [sem]);
+  assert.deepEqual(exemplosSemSessao('```bash\n' + sem.replace('<n> ', '<n> --sessao <id> ') + '\n```\n'), []);
+  assert.equal(exemplosSemSessao(lerSkill().replace(' --sessao <id>   # n =', '   # n =')).length, 1);
   // a flag existe de verdade no CLI (nome conferido contra o cabeçalho de loop.mjs)
   const cli = readFileSync(join(PLUGIN, 'gates/scripts/loop.mjs'), 'utf8');
   assert.match(cli, /proxima: \{ pos: 0, flags: \['entrega', 'vivos', 'sessao'\] \}/);
@@ -362,8 +370,10 @@ test('skill-loop-description-com-task-e-modelo: despacho com a descricao do item
 test('skill-loop-pouso-wakeup-autossuficiente: pousar, wakeup com prompt autossuficiente, pedir limpar e push, pendente não despacha', () => {
   const t = lerSkill();
   assert.match(t, /- `pousar` \(com `--sessao`, a partir de `x`, 50 %\): nesta ordem, `node "\$\{CLAUDE_PLUGIN_ROOT\}\/gates\/scripts\/loop\.mjs" pousar --sessao <id>`;/);
-  assert.match(t, /arme o wakeup do `\/loop` com prompt autossuficiente, 1ª linha "retome a entrega <ID>: leia <arquivo de retomada>" e o `instantaneo` do JSON;/);
-  assert.match(t, /peça ao dono, em 1 linha, que limpe a conversa e dê o push\./);
+  assert.match(t, /arme o wakeup do `\/loop` com prompt autossuficiente, 1ª linha "retome a entrega <ID>" e o `instantaneo` do JSON \(é o prompt de retomada; não existe arquivo de retomada\)\./);
+  assert.match(t, /Com o mod, ele limpa a conversa e avisa o dono por push \(o push é o aviso do mod, nunca `git push`\); sem mod, peça ao dono, em 1 linha, que digite `\/clear`\./);
+  // o push não é ação do dono nem do orquestrador (FIEL-14 d); nenhum arquivo de retomada sem produtor
+  assert.doesNotMatch(t, /dê o push|dar o push|arquivo de retomada>/);
   assert.match(t, /Pouso pendente \(`\/clear` ainda não dado\): \*\*não despache nada novo\*\*; `esperar` espera, `pousar` de novo repete o pedido\./);
   assert.match(t, /Sem onboarding nunca há pouso pendente\./);
   assert.match(t, /O `\/clear` do pouso é feito pelo mod; sem mod é do dono/);
@@ -414,7 +424,10 @@ test('commands-cita-ocultar-e-chat: o comando declara painel ocultar|mostrar, ch
   assert.match(t, /S1c NÃO MEDIDO: `hasSurvey` não teve teste real/);
   assert.match(t, /S2b: o `ToolUse` solo chegou como grupo de 1 em 6\/6 medições, mas só a leitura \(`Read`\) foi medida/);
   assert.match(t, /N11: o contexto do orquestrador no mod depende de `usage\.context\.percent` \(spike S10 a medir\)/);
-  assert.match(t, /S12 a S14 .*sem a confirmação, o AGORA mostra o último fato registrado/);
+  assert.match(t, /S13 \(fim de subagente\), medido em 6\/6: .*O AGORA só encerra um agente pela lista, nunca pelo `SubagentStop` sozinho\./);
+  assert.match(t, /S14 \(segundo plano\), fim de tarefa de subagente: a notificação do fim não chegou ao mod em 0\/3; o fim só se vê pelo sumiço em `background_tasks`/);
+  assert.match(t, /o segundo plano já aparece no painel\): `\.superpowers\/sdd\/2026-11-11-proxima\/t0b-relatorio\.md`/);
+  assert.doesNotMatch(t, /sem a confirmação|e o segundo plano não aparece|sem medição que os feche/);
   assert.match(t, /`onboarding\.mjs herdar` .* chega na 2\.2; não existe na 2\.1\.0/);
   // o que o comando cita do mod existe no mod
   const mod = readFileSync(join(PLUGIN, 'mod/chat.mjs'), 'utf8');
