@@ -911,7 +911,7 @@
     },
     {
       "id": "T43",
-      "titulo": "Regressão: âncora da pergunta (b) em entrega publicada e 8c",
+      "titulo": "Regressão da âncora (b) e da 8c",
       "deps": [
         "T1",
         "T11",
