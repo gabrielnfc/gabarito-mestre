@@ -705,7 +705,8 @@
         "T27",
         "T28",
         "T36",
-        "T39"
+        "T39",
+        "T5"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/pouso-pendente.ts",
