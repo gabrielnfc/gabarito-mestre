@@ -588,7 +588,8 @@ describe('costura T18: CLI real em toda fase', { timeout: 180_000 }, () => {
     assert.match(t, /2 ideias/, t);
   });
 
-  test('anotar-real-aparece-com-origem (P9): `loop.mjs anotar --tipo pendencia` real ⇒ `estado` ⇒ o DEPENDE do render mostra a pendência com o botão "feito"', () => {
+  /** Repo novo + `loop.mjs anotar --tipo pendencia` REAL; devolve o repo. */
+  const anotarReal = (texto) => {
     const base = novoTmp('painel anotar ');
     const repo = join(base, 'repo');
     mkdirSync(repo);
@@ -596,14 +597,25 @@ describe('costura T18: CLI real em toda fase', { timeout: 180_000 }, () => {
     g(repo, 'config', 'user.email', 't@t'); g(repo, 'config', 'user.name', 't'); g(repo, 'config', 'commit.gpgsign', 'false');
     writeFileSync(join(repo, 'README.md'), 'x\n'); g(repo, 'add', '-A'); g(repo, 'commit', '-q', '-m', 'inicio');
     assert.equal(rodar(repo, 'texto'), 'GABARITO · sem entrega em curso\n');
-    const a = spawnSync(process.execPath, [LOOP, 'anotar', '--tipo', 'pendencia', '--texto', 'assinar o contrato do fornecedor'], { cwd: repo, encoding: 'utf8' });
+    const a = spawnSync(process.execPath, [LOOP, 'anotar', '--tipo', 'pendencia', '--texto', texto], { cwd: repo, encoding: 'utf8' });
     assert.equal(a.status, 0, a.stdout + a.stderr);
+    return repo;
+  };
+
+  test('anotar-real-aparece-no-depende (P9): `loop.mjs anotar --tipo pendencia` real ⇒ `estado` ⇒ o DEPENDE do render mostra a pendência com o botão "feito"', () => {
+    const repo = anotarReal('assinar o contrato do fornecedor');
     const e = JSON.parse(rodar(repo, 'estado')).estado;
     const item = e.depende.find((i) => i.motivo === 'assinar o contrato do fornecedor');
     assert.ok(item, JSON.stringify(e.depende));
     assert.equal(item.acoes[0].rotulo, 'feito');
     assert.match(rodar(repo, 'texto'), /^depende de você: assinar o contrato do fornecedor \[feito\]$/m);
   });
+
+  test('anotar-real-aparece-com-origem (P9, REQ-LNG-1): a pendência anotada pelo orquestrador aparece no render com "(anotado pelo orquestrador)"',
+    { todo: 'render da T17 sem origem — task de ajuste pendente (Sombra)' }, () => {
+      const repo = anotarReal('assinar o contrato do fornecedor');
+      assert.match(rodar(repo, 'texto'), /^.*assinar o contrato do fornecedor.*\(anotado pelo orquestrador\).*$/m);
+    });
 
   test('medir-real-avanca-fase (P9): `painel.mjs medir` real com `gh` de fixture ⇒ PR `?` com gh falho, depois `●` e "#7 aberto" com gh ok', () => {
     const base = novoTmp('painel medir ');

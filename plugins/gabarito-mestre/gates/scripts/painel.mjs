@@ -39,7 +39,7 @@ import { validarPacote, usoDoTranscript } from '../dist/painel-equipe.js';
 import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
 import { lerX } from '../dist/pouso.js';
-import { idDaBranch } from '../dist/trilha.js';
+import { idDaBranch, trilhaDe } from '../dist/trilha.js';
 import { carregarPlano, contexto, lerDiarioEstrito, lerSpec, lerSpecs, tetoDaSombra } from './loop.mjs';
 import { decisaoDe, pausado, prepararLeitura } from './entrega.mjs';
 import { medir } from './painel-medir.mjs';
@@ -325,6 +325,18 @@ function branchDe(cwd) {
   }
 }
 
+/**
+ * Topo do checkout da sessão (`git rev-parse --show-toplevel` do `cwd`): de onde as specs são lidas (DP-3 aj. 4: o `medir` lê as specs do
+ * checkout da sessão; numa worktree a spec pode existir só nela). Erro ⇒ `null` (o chamador cai na raiz principal).
+ */
+function topoDaSessao(cwd) {
+  try {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 /** `fluxo.idPadrao` de origin/HEAD, a mesma regra de `loop.mjs` (`idPadraoDe`, não exportada): ausente, longa ou inválida ⇒ o padrão. */
 function idPadraoDe(cfg) {
   const v = cfg?.fluxo?.idPadrao;
@@ -418,7 +430,7 @@ function sessaoDoMod(agentes) {
 
 /**
  * Monta o estado do painel. `opts`: `agentes` (objeto do stdin; ausente = sem `--agentes`, equipe só do diário), `pacote`, `entrega`, `agoraMs`
- * (um só `Date.now()` por execução), `env` (padrão `process.env`), `fuso`, `diario` (deps de `lerDiarioEstavel`) e `preparar` (troca `prepararLeitura`, para contar chamadas). Nunca lança: `{ok:true, estado, avisos}`
+ * (um só `Date.now()` por execução), `env` (padrão `process.env`), `fuso`, `diario` (deps de `lerDiarioEstavel`), `preparar` (troca `prepararLeitura`, para contar chamadas) e `projetar` (troca `projetarPainel`, para ler a entrada). Nunca lança: `{ok:true, estado, avisos}`
  * ou `{ok:false, erro, mensagem}`.
  *
  * GM-14 T18 (REQ-GLB-1, FIEL-10 b/e): num repo git NUNCA devolve `sem_loop`/`plano_ausente`/`entrega_nao_inferida`. Sem plano ⇒ FASE pela trilha;
@@ -459,7 +471,7 @@ export function estadoDoPainel(cwd, opts = {}) {
 
     let specs = [];
     if (raiz !== null) {
-      try { specs = lerSpecs(raiz); } catch (e) { if (typeof e?.erro !== 'string') throw e; fontes.push(FONTE.specs); }
+      try { specs = lerSpecs(topoDaSessao(cwd) ?? raiz, idPadrao); } catch (e) { if (typeof e?.erro !== 'string') throw e; fontes.push(FONTE.specs); }
     }
     const ativ = raiz === null ? { ultimas: [], ultima: null } : atividades(raiz, fontes);
     const gh = raiz === null ? 'nunca' : ghDe(raiz, id !== null && c.dirEntrega.endsWith(id) ? id : '_sem-id', fontes);
@@ -468,6 +480,10 @@ export function estadoDoPainel(cwd, opts = {}) {
       branch, idPadrao, specs, plano: plano === null ? null : { tasks: plano.tasks.map((t) => t.id) },
       ledger: raiz !== null && id !== null && temLedger(raiz, id, origin.cfg?.fluxo?.ledgerDir), gh, ultimas: ativ.ultimas, sessao: sessaoMod,
     };
+
+    // FIEL-1 b / spec:53: sem `--entrega`, o plano só entra na projeção quando a trilha liga a entrega (PR mergeado com a branch sozinha não liga:
+    // nada de PRONTO "N de N integradas" de uma entrega não identificada; a trilha segue vendo o plano em `fatos`)
+    if (plano !== null && opts.entrega === undefined && eventos !== null && trilhaDe(fatos, eventos).identificada !== true) plano = null;
 
     // spec: sha e título dos MESMOS bytes (com plano: `plano.spec`; sem plano: a única de `lerSpecs` com o PBI da entrega)
     let specSha = null;
@@ -549,7 +565,7 @@ export function estadoDoPainel(cwd, opts = {}) {
       fora: raiz === null,
       ultima: ativ.ultima,
     };
-    return { ok: true, estado: projetarPainel(plano, eventos, entrada), avisos };
+    return { ok: true, estado: (opts.projetar ?? projetarPainel)(plano, eventos, entrada), avisos };
   } catch (e) {
     if (e instanceof Falha || typeof e?.erro === 'string') return { ok: false, erro: e.erro, mensagem: e.message };
     return { ok: false, erro: 'erro_interno', mensagem: String(e instanceof Error ? e.message : e).slice(0, 200) };
