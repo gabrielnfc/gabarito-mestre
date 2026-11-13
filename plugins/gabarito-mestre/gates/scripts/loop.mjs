@@ -19,8 +19,8 @@
  *   loop.mjs liberar <task> --origem sombra --hash <h>   (GM-14 T36, FIEL-15) a Sombra tira a task do teto, 1 vez por task e só a 1ª liberação; exige
  *       `sombra.libera_teto: true` em `origin/HEAD` (mesma leitura de `julga_emendas`), task `no_teto`, `<h>` = hash da PERGUNTA DE LIBERAÇÃO da task
  *       (`sombra.mjs perguntar --task <t> --libera-teto`) com `decisao.sombra` vigente `libera: true`, sem `fora_da_regra`, depois do veredito do teto na
- *       ordem do diário, com brief e resposta no disco. Recusa: `libera_teto_desligado`, `teto_sombra_esgotado`, `fora_do_teto`, `hash_invalido`
- *       (e `relogio_do_diario`); nada gravado. `--origem` só aceita `sombra` (uso, rc 2): `dono` sai só de `liberarTeto`.
+ *       ordem do diário, com brief e resposta no disco. Recusa: `libera_teto_desligado`, `teto_sombra_esgotado`, `fora_do_teto`, `hash_invalido`,
+ *       `sombra_nao_liberou` (decisão íntegra com `libera` ausente ou false; GM-14 T39) (e `relogio_do_diario`); nada gravado. `--origem` só aceita `sombra` (uso, rc 2): `dono` sai só de `liberarTeto`.
  *   loop.mjs aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>]
  *       (GM-13 T8; contrato e ordem de recusa em `loop-aprendizado.mjs`; `aprendizados` não exige entrega na branch).
  *   loop.mjs anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--entrega <ID>] [--sessao <id>] [--opcao <r>]…   (GM-14 REQ-DIA-2; sem plano)
@@ -1884,14 +1884,80 @@ export function liberarTeto(cwd, task, sessao) {
 const HASH_RE = /^[0-9a-f]{64}$/;
 const RESPOSTA_RE = (entrega, h) => new RegExp(`^\\.harness/entregas/${entrega}/sombra/${h}\\.([0-9a-f]{12})\\.resposta\\.md$`);
 
-/** A PERGUNTA FECHADA de liberação (furo 3): texto fixo por task; `sombra.mjs perguntar --task <t> --libera-teto` a usa, e só ela vale para `liberar`. */
+/**
+ * A PERGUNTA FECHADA de liberação (furo 3): texto fixo por task; `sombra.mjs perguntar --task <t> --libera-teto` a usa, e só ela vale para `liberar`.
+ * GM-14 T39 (emenda 16, FIEL-15 e): o CRITÉRIO está no texto fixo, então mudá-lo muda o hash (FIEL-15 a) e decisão velha não libera.
+ */
 export function perguntaDaLiberacao(task) {
-  return `A task ${task} chegou ao teto de rodadas de review. A spec e os achados sustentam liberar mais um ciclo de implementação e review (a Sombra libera 1 vez por task)?`;
+  return `A task ${task} chegou ao teto de rodadas de review. A spec e os achados sustentam liberar mais um ciclo de implementação e review (a Sombra libera 1 vez por task)? `
+    + 'Critério: libera: true quando cada BLOCKER/MAJOR em aberto na última rodada tem correção dentro da spec vigente (com emendas) e dos arquivos da task, '
+    + 'ou por desvio/task de ajuste já registrados; libera: false quando algum pede mudança de spec ou de desenho (aí emenda ou dono), quando a abordagem da task '
+    + 'está errada (diga qual), quando o arquivo da última rodada falta, está ilegível ou foi cortado, ou quando a última rodada não traz nenhum BLOCKER/MAJOR '
+    + 'legível (contradiz o REPROVADO que levou ao teto).';
+}
+
+/** REQ onde a FIEL-15 mora: as emendas aprovadas dele entram SEMPRE no brief e na versão da pergunta de liberação (T39, emenda 16 e MINOR 665842d7). */
+export const REQ_DA_LIBERACAO = 'REQ-DIA-2';
+
+/** REQs que versionam e alimentam a pergunta de liberação da task: os da task mais `REQ_DA_LIBERACAO`, sem repetir. */
+export const reqsDaLiberacao = (t) => [...new Set([...(t?.reqs ?? []), REQ_DA_LIBERACAO])];
+
+/** Teto de leitura por arquivo de achados no brief da liberação (emenda 16 e.2); o resto é cortado e marcado. */
+export const ACHADO_MAX_BYTES = 40 * 1024;
+
+/**
+ * Achados do CICLO CORRENTE da task (emenda 16 e.2): as rodadas com `review.veredito` da task depois da última `task.reaberta` dela (qualquer
+ * origem), ou desde o começo se não houve, na ordem do diário; uma entrada por rodada (a última vence). Cada arquivo
+ * `<raiz>/.harness/worktrees/<task>/.tmp-gabarito/review-r<n>.md` vem com estado `integro | cortado | ausente | ilegivel`, sha256 do arquivo
+ * inteiro e no máximo `ACHADO_MAX_BYTES` de conteúdo (corte em fronteira de UTF-8). Só lê; symlink (do arquivo ou de `.tmp-gabarito`) é ilegível.
+ */
+export function achadosDoCiclo(raiz, eventos, task) {
+  const ord = ordenar(eventos);
+  const daTask = (ord.ok ? ord.eventos : eventos).filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === task);
+  let ini = 0;
+  daTask.forEach((e, i) => { if (e.tipo === 'task.reaberta') ini = i + 1; });
+  const porRodada = new Map();
+  for (const e of daTask.slice(ini)) {
+    if (e.tipo !== 'review.veredito' || !Number.isInteger(e.dados?.rodada)) continue;
+    porRodada.delete(e.dados.rodada);
+    porRodada.set(e.dados.rodada, e.dados);
+  }
+  const relTmp = `.harness/worktrees/${task}/${TMP}`;
+  const tmp = join(raiz, '.harness', 'worktrees', task, TMP);
+  let tmpRuim = null;
+  try {
+    const st = lstatSync(tmp);
+    if (st.isSymbolicLink() || !st.isDirectory()) tmpRuim = `${TMP} não é um diretório comum (symlink ou arquivo)`;
+  } catch (e) {
+    if (e.code !== 'ENOENT') tmpRuim = `${TMP} ilegível (${e.code ?? e.message})`;
+  }
+  return [...porRodada.values()].map((d) => {
+    const base = { rodada: d.rodada, veredito: d.veredito, blocker: d.blocker, major: d.major, arquivo: `${relTmp}/review-r${d.rodada}.md` };
+    if (tmpRuim !== null) return { ...base, estado: 'ilegivel', motivo: tmpRuim };
+    const arq = join(tmp, `review-r${d.rodada}.md`);
+    let buf;
+    try {
+      if (!lstatSync(arq).isFile()) return { ...base, estado: 'ilegivel', motivo: 'não é arquivo regular (symlink ou diretório)' };
+      buf = readFileSync(arq);
+    } catch (e) {
+      if (e.code === 'ENOENT') return { ...base, estado: 'ausente' };
+      return { ...base, estado: 'ilegivel', motivo: e.code ?? e.message };
+    }
+    const sha256 = createHash('sha256').update(buf).digest('hex');
+    if (buf.length <= ACHADO_MAX_BYTES) {
+      const conteudo = buf.toString('utf8');
+      if (conteudo.trim() === '') return { ...base, estado: 'ilegivel', motivo: 'arquivo vazio', sha256, bytes: buf.length };
+      return { ...base, estado: 'integro', sha256, bytes: buf.length, conteudo };
+    }
+    let fim = ACHADO_MAX_BYTES;
+    while (fim > 0 && (buf[fim] & 0xc0) === 0x80) fim--; // não parte um caractere UTF-8 ao meio
+    return { ...base, estado: 'cortado', sha256, bytes: buf.length, conteudo: buf.subarray(0, fim).toString('utf8'), lidos: fim };
+  });
 }
 
 /**
  * Hash da pergunta de liberação da task com a versão da âncora de hoje (a mesma regra de `sombra.mjs perguntar`: `proposta_seq` da ÚLTIMA emenda
- * aprovada dentre os REQs da task). Emenda aprovada depois da pergunta muda o hash: a decisão velha não libera. `null` = task fora do plano ou diário
+ * aprovada dentre os REQs da task e `REQ-DIA-2`, T39). Emenda aprovada depois da pergunta muda o hash: a decisão velha não libera. `null` = task fora do plano ou diário
  * que não projeta. Exportada para `sombra.mjs` (registrar confere `libera`) e para o teste.
  */
 export function hashDaLiberacao(plano, eventos, task) {
@@ -1899,7 +1965,7 @@ export function hashDaLiberacao(plano, eventos, task) {
   if (t === undefined) return null;
   const est = projetarEmendas(eventos);
   if (est.invalido !== undefined) return null;
-  const reqs = t.reqs ?? [];
+  const reqs = reqsDaLiberacao(t); // T39 (MINOR 665842d7): emenda aprovada de REQ-DIA-2 também versiona a pergunta
   const aprovadas = est.aprovadas.filter((p) => reqs.includes(p.req));
   const versao = aprovadas.length === 0 ? 0 : aprovadas[aprovadas.length - 1].seq;
   try { return hashPergunta(textoAncora({ task }), versao, perguntaDaLiberacao(task)); } catch { return null; }
@@ -1936,7 +2002,6 @@ function conferirLiberacao(c, plano, task, hash, eventos) {
   const d = ord.eventos[v.pos]?.dados ?? {};
   if (d.task !== task) throw invalido('a decisão não é desta task');
   if (d.fora_da_regra === true) throw invalido('a decisão está fora da regra (fora_da_regra)');
-  if (d.libera !== true) throw invalido('a decisão vigente não traz libera: true explícito');
   // furo 4: "depois do veredito que levou ao teto" pela ORDEM do diário (`ordenar`), nunca pelo ts cru
   let posTeto = -1;
   for (let i = 0; i < daTask.length && posTeto < 0; i++) {
@@ -1951,6 +2016,10 @@ function conferirLiberacao(c, plano, task, hash, eventos) {
   let texto = null;
   if (arq !== null && ehArquivoRegular(arq)) { try { texto = readFileSync(arq, 'utf8'); } catch { texto = null; } }
   if (texto === null || sha(texto).slice(0, 12) !== m[1]) throw invalido('o arquivo de resposta da decisão está ausente, fora do lugar ou adulterado');
+  // T39 (emenda 16): decisão íntegra que não traz `libera: true` é a Sombra dizendo não, motivo próprio (por último: só a decisão válida chega aqui)
+  if (d.libera !== true) {
+    throw new Falha('sombra_nao_liberou', `a decisão vigente da Sombra para ${task} não libera (libera ${d.libera === false ? 'false' : 'ausente'}): mais um ciclo é decisão do dono (/gabarito-mestre:liberar ${task}) ou de uma emenda; nada foi gravado`);
+  }
   return { ord };
 }
 

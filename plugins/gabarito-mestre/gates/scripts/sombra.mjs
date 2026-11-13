@@ -6,6 +6,9 @@
  *       → {ok, hash, cache:true, decisao} | {ok, hash, pendente:true, brief, prompt} | {ok, hash, brief, prompt, consultas, teto}
  *   sombra.mjs perguntar --task <id> --libera-teto [--entrega <GM-10>] [--sessao <id>]   (GM-14 T36, FIEL-15) a PERGUNTA FECHADA de liberação do
  *       teto (texto fixo, `perguntaDaLiberacao` de `loop.mjs`); só o hash dela serve a `loop.mjs liberar --origem sombra`. Sem `--pergunta`.
+ *       GM-14 T39 (emenda 16, FIEL-15 e): o texto traz o critério; o brief traz SEMPRE as emendas aprovadas de REQ-DIA-2 (onde a FIEL-15 mora)
+ *       além das dos REQ da task (e elas versionam o hash), e os achados do ciclo corrente (`achadosDoCiclo` de `loop.mjs`): cada
+ *       `review-r<n>.md` até 40 KB com corte marcado e o sha256 do arquivo inteiro; ausente, ilegível ou cortado aparece marcado.
  *   sombra.mjs registrar <hash> <resposta.json> [--entrega <GM-10>] [--sessao <id>]  → {ok, evento}
  *       resposta.json: { resposta, texto, pergunta_enviesada, fontes?, medicao?, fora_da_regra?, emenda_seq?, substitui?: {sessao, seq}, libera? }
  *       `libera` (booleano, GM-14 T36): só na pergunta de liberação da task (`libera_fora_da_liberacao`); ausente, a decisão grava os campos de antes.
@@ -24,6 +27,8 @@
  * orquestrador, e a hipótese dele não passa pela guarda nesse passo (mitigação fora do escopo: capturar a resposta no `SubagentStop`).
  * (2) Sem lock em volta do par ler+gravar, duas chamadas simultâneas do mesmo hash podem gravar duas consultas e dois briefs: conta a mais no
  * teto, nenhuma decisão se perde (mesmo limite de `loop.mjs`). (3) `perguntar` de uma worktree de task grava no diário da raiz PRINCIPAL.
+ * (4) GM-14 T39 (emenda 16): os `review-r<n>.md` que o brief da liberação transcreve ficam na worktree, que o implementador edita; o sha256 no
+ * brief prova o que a Sombra leu, não que é o que o revisor escreveu.
  *
  * Tudo que toca git vai por `execFileSync` com argv, sem shell. Nada é apagado.
  */
@@ -33,7 +38,7 @@ import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFil
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import { lerConfigOrigin } from '../lib/config.mjs';
-import { hashDaLiberacao, perguntaDaLiberacao, tetoDaSombra } from './loop.mjs';
+import { ACHADO_MAX_BYTES, achadosDoCiclo, hashDaLiberacao, perguntaDaLiberacao, reqsDaLiberacao, tetoDaSombra } from './loop.mjs';
 import * as diario from '../dist/diario.js';
 import { projetarEmendas } from '../dist/emenda.js';
 import { formaInvalida, REQ_RE } from '../dist/formas.js';
@@ -258,6 +263,37 @@ function escreverBrief(c, hash, conteudo, { sobrescrever }) {
   }
 }
 
+/** Cerca de código mais longa que qualquer sequência de crases do conteúdo: o achado nunca fecha o bloco. */
+const cerca = (texto) => '`'.repeat(Math.max(3, ...[...texto.matchAll(/`+/gu)].map((m) => m[0].length + 1)));
+
+const ESTADO_DO_ACHADO = {
+  integro: (a) => `íntegro (${a.bytes} bytes)`,
+  cortado: (a) => `CORTADO: só os primeiros ${a.lidos} de ${a.bytes} bytes (limite ${ACHADO_MAX_BYTES}); o sha256 é do arquivo inteiro`,
+  ausente: () => 'AUSENTE: o arquivo não existe',
+  ilegivel: (a) => `ILEGÍVEL: ${a.motivo}`,
+};
+
+/** T39 (emenda 16 e.2): a seção dos achados do ciclo corrente, antes da `## Instrução` (que segue no fim do brief). */
+function comAchados(brief, task, achados) {
+  const partes = ['## Achados do ciclo corrente', '',
+    `Rodadas com review.veredito da task ${task} depois da última task.reaberta dela (ou desde o começo, se não houve), na ordem do diário. `
+    + `Cada arquivo até ${ACHADO_MAX_BYTES} bytes; o sha256 é do arquivo inteiro. Os arquivos ficam na worktree, que o implementador edita: o sha prova o que você leu, não quem escreveu.`];
+  if (achados.length === 0) partes.push('', '(nenhuma rodada no ciclo corrente)');
+  achados.forEach((a, i) => {
+    const ultima = i === achados.length - 1 ? ' · ÚLTIMA RODADA' : '';
+    partes.push('', `### Rodada ${a.rodada} (${a.veredito}, blocker ${a.blocker}, major ${a.major})${ultima}`, '',
+      `- arquivo: ${a.arquivo}`, `- estado: ${ESTADO_DO_ACHADO[a.estado](a)}`, ...(a.sha256 !== undefined ? [`- sha256: ${a.sha256}`] : []));
+    if (a.conteudo !== undefined) {
+      const f = cerca(a.conteudo);
+      partes.push('', `${f}markdown`, a.conteudo.replace(/\n$/u, ''), f);
+      if (a.estado === 'cortado') partes.push('', `[CORTADO em ${a.lidos} de ${a.bytes} bytes]`);
+    }
+  });
+  const i = brief.lastIndexOf('\n## Instrução\n');
+  const secao = `${partes.join('\n')}\n`;
+  return i < 0 ? `${brief}\n${secao}` : `${brief.slice(0, i + 1)}${secao}${brief.slice(i)}`;
+}
+
 function perguntar(cwd, flags) {
   const { req, task } = flags;
   // GM-14 T36: `--libera-teto` é a pergunta fechada de liberação, ancorada na task; o texto é o de `loop.mjs`, nunca digitado.
@@ -295,9 +331,12 @@ function perguntar(cwd, flags) {
 
   const { eventos, est } = diarioConferido(c);
   const ancora = req !== undefined ? { req } : { task };
+  const liberacao = flags['libera-teto'] === true;
+  // T39: na liberação, as emendas de REQ-DIA-2 entram na versão e no brief (a mesma regra de `hashDaLiberacao`)
+  const reqsDasEmendas = liberacao ? reqsDaLiberacao(tarefa) : reqs;
   let hash;
   try {
-    hash = hashPergunta(textoAncora(ancora), versaoDe(est, reqs), pergunta);
+    hash = hashPergunta(textoAncora(ancora), versaoDe(est, reqsDasEmendas), pergunta);
   } catch (e) {
     throw new Falha('argumento_invalido', `não deu para calcular o hash da pergunta (${e.message})`, {}, 2);
   }
@@ -305,8 +344,9 @@ function perguntar(cwd, flags) {
   const decisao = projetarDecisoes(eventos).get(hash);
   if (decisao !== undefined) return { hash, cache: true, decisao };
 
-  const emendas = est.aprovadas.filter((p) => reqs.includes(p.req)).map((p) => ({ proposta_seq: p.seq, req: p.req, diff: p.diff }));
-  const conteudo = montarBrief({ pergunta, ancora: textoAncora(ancora), spec: plano.spec, trechos, emendas, ...(tarefa !== undefined ? { task: tarefa } : {}) });
+  const emendas = est.aprovadas.filter((p) => reqsDasEmendas.includes(p.req)).map((p) => ({ proposta_seq: p.seq, req: p.req, diff: p.diff }));
+  const base = montarBrief({ pergunta, ancora: textoAncora(ancora), spec: plano.spec, trechos, emendas, ...(tarefa !== undefined ? { task: tarefa } : {}) });
+  const conteudo = liberacao ? comAchados(base, task, achadosDoCiclo(c.raiz, eventos, task)) : base;
   const { teto, aviso: avisoTeto } = tetoDe(c.raiz);
 
   if (consultasAbertas(eventos).includes(hash)) {

@@ -819,6 +819,135 @@ describe('registrar', () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────── GM-14 T39 (emenda 16, FIEL-15 e): brief e critério da liberação do teto
+
+describe('T39: brief da liberação', () => {
+  const liberacao = (r, task = 'T1') => rodar(r.raiz, ['perguntar', '--task', task, '--libera-teto', '--entrega', 'GM-10']);
+  const veredito = (r, rodada, veredito = 'REPROVADO', task = 'T1') => evento(r, 'loop', 'review.veredito', { task, veredito, rodada, blocker: 1, major: 0 });
+  const tmpDe = (r, task = 'T1') => join(r.raiz, '.harness', 'worktrees', task, '.tmp-gabarito');
+  const achado = (r, rodada, texto, task = 'T1') => {
+    mkdirSync(tmpDe(r, task), { recursive: true });
+    writeFileSync(join(tmpDe(r, task), `review-r${rodada}.md`), texto);
+  };
+  const briefDe = (r, out) => readFileSync(join(r.raiz, out.brief), 'utf8');
+  /** O trecho do brief de uma rodada: do cabeçalho dela até o próximo cabeçalho de rodada ou de seção. */
+  const secaoDa = (brief, rodada) => {
+    const i = brief.indexOf(`### Rodada ${rodada} `);
+    assert.ok(i >= 0, `rodada ${rodada} no brief`);
+    const resto = brief.slice(i + 1);
+    const fim = resto.search(/\n(### Rodada |## )/u);
+    return fim < 0 ? resto : resto.slice(0, fim);
+  };
+
+  test('brief-liberacao-traz-fiel15-sem-req-dia2-na-task', () => {
+    const r = novoRepo();
+    // a FIEL-15 mora em REQ-DIA-2, que a T1 não lista: a emenda aprovada vai ao brief mesmo assim, ao lado das dos REQ da task
+    evento(r, 'emendas', 'emenda.proposta', { req: 'REQ-DIA-2', diff: '+ FIEL-15 (e) critério da liberação', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'regra_negocio' });
+    julgar(r, 1);
+    evento(r, 'emendas', 'emenda.proposta', { req: 'REQ-A-1', diff: '+ emenda do A1', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'regra_negocio' });
+    julgar(r, 2);
+    evento(r, 'emendas', 'emenda.proposta', { req: 'REQ-Z-9', diff: '+ emenda de outro REQ', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'regra_negocio' });
+    julgar(r, 3);
+    veredito(r, 1);
+    achado(r, 1, 'BLOCKER: x\n');
+    const { rc, out } = liberacao(r);
+    assert.equal(rc, 0, JSON.stringify(out));
+    const brief = briefDe(r, out);
+    assert.ok(brief.includes('+ FIEL-15 (e) critério da liberação'), 'emenda aprovada de REQ-DIA-2 no brief');
+    assert.ok(brief.includes('Emenda aprovada #1 (REQ-DIA-2)'));
+    assert.ok(brief.includes('+ emenda do A1'), 'e as dos REQ da task');
+    assert.ok(!brief.includes('emenda de outro REQ'), 'emenda de REQ fora da task e fora de REQ-DIA-2 não entra');
+    // o critério está no texto fixo da pergunta, com cada caso de libera:false
+    const pergunta = brief.slice(brief.indexOf('## Pergunta'), brief.indexOf('## Âncora'));
+    for (const caso of ['libera: true quando', 'correção dentro da spec vigente', 'desvio/task de ajuste já registrados', 'libera: false quando',
+      'mudança de spec ou de desenho', 'abordagem da task está errada', 'falta, está ilegível ou foi cortado', 'nenhum BLOCKER/MAJOR legível']) {
+      assert.ok(pergunta.includes(caso), `critério na pergunta: ${caso}`);
+    }
+  });
+
+  test('brief-liberacao-traz-achados-com-sha', () => {
+    const r = novoRepo();
+    // ciclo anterior: r1 antes da última task.reaberta; o arquivo ficou no lugar e NÃO é do ciclo corrente
+    veredito(r, 1);
+    achado(r, 1, 'ACHADO VELHO do ciclo anterior\n');
+    evento(r, 'loop', 'task.reaberta', { task: 'T1', origem: 'retomada' });
+    veredito(r, 2);
+    veredito(r, 3);
+    veredito(r, 2, 'REPROVADO', 'T2'); // outra task não conta
+    const r2 = 'MAJOR: falta o caso vazio\n';
+    const r3 = 'BLOCKER: ```bloco``` com crase\n';
+    achado(r, 2, r2);
+    achado(r, 3, r3);
+    const { rc, out } = liberacao(r);
+    assert.equal(rc, 0, JSON.stringify(out));
+    const brief = briefDe(r, out);
+    assert.ok(brief.includes('## Achados do ciclo corrente'));
+    assert.ok(!brief.includes('ACHADO VELHO'), 'rodada antes da última task.reaberta fica fora');
+    assert.ok(!brief.includes('### Rodada 1 '), 'r1 não é do ciclo corrente');
+    const s2 = secaoDa(brief, 2);
+    const s3 = secaoDa(brief, 3);
+    assert.ok(s2.includes(r2.trim()) && s2.includes(`sha256: ${sha256(r2)}`), s2);
+    assert.ok(s3.includes(r3.trim()) && s3.includes(`sha256: ${sha256(r3)}`), s3);
+    assert.ok(s2.includes('.harness/worktrees/T1/.tmp-gabarito/review-r2.md'));
+    assert.ok(s2.startsWith('## Rodada 2 (REPROVADO, blocker 1, major 0)'), s2.slice(0, 80));
+    assert.match(s2, /estado: íntegro \(\d+ bytes\)/);
+    assert.match(s3, /última rodada/i);
+    assert.doesNotMatch(s2, /última rodada/i);
+    assert.ok(brief.indexOf('### Rodada 2 ') < brief.indexOf('### Rodada 3 '), 'na ordem do diário');
+    assert.ok(brief.indexOf('## Achados do ciclo corrente') < brief.indexOf('## Instrução'), 'a instrução segue no fim');
+    // sem task.reaberta: desde o começo da task
+    const s = novoRepo();
+    veredito(s, 1);
+    achado(s, 1, 'achado r1\n');
+    const b = briefDe(s, liberacao(s).out);
+    assert.ok(secaoDa(b, 1).includes('achado r1'));
+  });
+
+  test('achado-cortado-marcado', () => {
+    const r = novoRepo();
+    veredito(r, 1);
+    const grande = `${'A'.repeat(40 * 1024)}FIM-QUE-NAO-ENTRA${'B'.repeat(10 * 1024)}`;
+    achado(r, 1, grande);
+    const brief = briefDe(r, liberacao(r).out);
+    const s = secaoDa(brief, 1);
+    assert.match(s, /CORTADO/);
+    assert.ok(s.includes(`sha256: ${sha256(grande)}`), 'sha do arquivo inteiro');
+    assert.ok(s.includes('A'.repeat(40 * 1024)), 'os primeiros 40 KB entram');
+    assert.ok(!s.includes('FIM-QUE-NAO-ENTRA'), 'o que passa de 40 KB não entra');
+    // exatamente 40 KB não é cortado
+    const r2 = novoRepo();
+    veredito(r2, 1);
+    achado(r2, 1, 'C'.repeat(40 * 1024));
+    assert.doesNotMatch(secaoDa(briefDe(r2, liberacao(r2).out), 1), /CORTADO/);
+  });
+
+  test('ultima-rodada-ausente-marcada', () => {
+    const r = novoRepo();
+    veredito(r, 1);
+    veredito(r, 2);
+    achado(r, 1, 'achado r1\n');
+    const brief = briefDe(r, liberacao(r).out);
+    const s2 = secaoDa(brief, 2);
+    assert.match(s2, /AUSENTE/);
+    assert.match(s2, /última rodada/i);
+    assert.doesNotMatch(secaoDa(brief, 1), /AUSENTE/);
+    // ilegível: diretório no lugar do arquivo e `.tmp-gabarito` symlink
+    const q = novoRepo();
+    veredito(q, 1);
+    mkdirSync(join(tmpDe(q), 'review-r1.md'), { recursive: true });
+    assert.match(secaoDa(briefDe(q, liberacao(q).out), 1), /ILEGÍVEL/);
+    const l = novoRepo();
+    veredito(l, 1);
+    const fora = novoTmp('sombra-fora-');
+    writeFileSync(join(fora, 'review-r1.md'), 'achado de fora\n');
+    mkdirSync(join(l.raiz, '.harness', 'worktrees', 'T1'), { recursive: true });
+    symlinkSync(fora, tmpDe(l));
+    const bl = briefDe(l, liberacao(l).out);
+    assert.match(secaoDa(bl, 1), /ILEGÍVEL/);
+    assert.ok(!bl.includes('achado de fora'), 'symlink não é seguido');
+  });
+});
+
 describe('agente', () => {
   test('agente-sombra-frontmatter', () => {
     const texto = readFileSync(AGENTE, 'utf8');

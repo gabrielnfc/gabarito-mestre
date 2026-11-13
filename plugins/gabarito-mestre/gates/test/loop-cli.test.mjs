@@ -4858,7 +4858,7 @@ describe('T36: a Sombra libera o teto', () => {
     assert.equal(amb.eventos().filter((e) => e.tipo === 'task.reaberta').length, 0);
   });
 
-  test('t36-furo-1-3: só `decisao.sombra` vigente da PERGUNTA de liberação da task, com libera true explícito; outra pergunta, sem libera, libera false, de outra task ⇒ hash_invalido', () => {
+  test('t36-furo-1-3: só `decisao.sombra` vigente da PERGUNTA de liberação da task; outra pergunta ou de outra task ⇒ hash_invalido', () => {
     const amb = ambReq();
     comLibera(amb);
     aoTeto(amb);
@@ -4873,14 +4873,46 @@ describe('T36: a Sombra libera o teto', () => {
     const aberta = sombra(amb, ['perguntar', '--task', 'T1', '--libera-teto']);
     assert.equal(aberta.j.hash, hashT(amb));
     assert.match(recusa(amb, 'T1', aberta.j.hash, 'hash_invalido').j.mensagem, /decisão/);
-    // sem libera e com libera false
-    for (const extra of [{}, { libera: false }]) {
-      const amb2 = ambReq();
-      comLibera(amb2);
-      aoTeto(amb2);
-      const h = sombraDecide(amb2, 'T1', extra);
-      assert.match(recusa(amb2, 'T1', h, 'hash_invalido').j.mensagem, /libera/);
-    }
+    // sem libera e com libera false: motivo próprio (T39, emenda 16), testes liberar-libera-*-sombra-nao-liberou
+  });
+
+  // GM-14 T39 (emenda 16): `libera` ausente ou falso na decisão vigente é a Sombra dizendo não, com motivo próprio (rc 1, nada gravado)
+  for (const [nome, extra] of [['liberar-libera-false-sombra-nao-liberou', { libera: false }], ['liberar-libera-ausente-sombra-nao-liberou', {}]]) {
+    test(nome, () => {
+      const amb = ambReq();
+      comLibera(amb);
+      aoTeto(amb);
+      const h = sombraDecide(amb, 'T1', extra);
+      const r = recusa(amb, 'T1', h, 'sombra_nao_liberou');
+      assert.match(r.j.mensagem, extra.libera === false ? /libera false/ : /libera ausente/);
+      assert.ok(achadosNoLugar(amb), 'achados no lugar');
+      assert.deepEqual(estadoT(amb), { estado: 'no_teto', rodada: 2 });
+    });
+  }
+
+  test('emenda-dia2-nova-muda-hash', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    aoTeto(amb);
+    const h = sombraDecide(amb);
+    assert.equal(h, hashT(amb));
+    // emenda aprovada de REQ-DIA-2 (onde a FIEL-15 mora; a T1 não lista o REQ) depois da decisão: muda o hash, a decisão velha não libera
+    escreve(amb, 'emendas', 'emenda.proposta', PROPOSTA({ req: 'REQ-DIA-2', diff: '+ FIEL-15 nova' }), new Date().toISOString());
+    const seq = amb.eventos().filter((e) => e.tipo === 'emenda.proposta').at(-1).seq;
+    escreve(amb, 'dono', 'spec.emendada', { proposta_seq: seq, origem: 'dono' }, new Date().toISOString());
+    const novo = hashT(amb);
+    assert.notEqual(novo, h, 'emenda de REQ-DIA-2 versiona o hash da liberação');
+    assert.match(recusa(amb, 'T1', h, 'hash_invalido').j.mensagem, /pergunta de liberação/);
+    // a pergunta de hoje (sombra.mjs) tem o hash novo que o loop recalcula, e libera
+    assert.equal(sombraDecide(amb), novo);
+    assert.equal(liberar(amb, 'T1', novo).rc, 0);
+    // controle: emenda de REQ fora da task e fora de REQ-DIA-2 não muda o hash
+    const amb2 = ambReq();
+    aoTeto(amb2);
+    const h2 = hashT(amb2);
+    escreve(amb2, 'emendas', 'emenda.proposta', PROPOSTA({ req: 'REQ-Z-9' }), new Date().toISOString());
+    escreve(amb2, 'dono', 'spec.emendada', { proposta_seq: amb2.eventos().filter((e) => e.tipo === 'emenda.proposta').at(-1).seq, origem: 'dono' }, new Date().toISOString());
+    assert.equal(hashT(amb2), h2);
   });
 
   test('t36-furo-1: fora_da_regra true não libera', () => {
@@ -4983,7 +5015,7 @@ describe('T36: a Sombra libera o teto', () => {
     const a = amb.eventos().filter((e) => e.tipo === 'decisao.sombra').at(-1);
     const sub = sombra(amb, ['registrar', h, respostaJson(amb, { ...BOA, texto: 'mudei de ideia', libera: false, substitui: { sessao: a.sessao, seq: a.seq } })]);
     assert.equal(sub.rc, 0, sub.out);
-    assert.match(recusa(amb, 'T1', h, 'hash_invalido').j.mensagem, /libera/);
+    assert.match(recusa(amb, 'T1', h, 'sombra_nao_liberou').j.mensagem, /libera/);
     // libera false substituída por libera true ⇒ libera
     const amb2 = ambReq();
     comLibera(amb2);
