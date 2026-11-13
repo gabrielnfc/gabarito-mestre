@@ -704,7 +704,8 @@
         "T10",
         "T27",
         "T28",
-        "T36"
+        "T36",
+        "T39"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/pouso-pendente.ts",
@@ -850,6 +851,33 @@
       ]
     },
     {
+      "id": "T39",
+      "titulo": "Brief e critério da liberação",
+      "deps": [
+        "T1",
+        "T6",
+        "T9",
+        "T11",
+        "T15",
+        "T27",
+        "T28",
+        "T31",
+        "T32",
+        "T33",
+        "T36",
+        "T38"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/sombra.mjs",
+        "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+        "plugins/gabarito-mestre/gates/test/sombra-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs"
+      ],
+      "reqs": [
+        "REQ-DIA-2"
+      ]
+    },
+    {
       "id": "T25",
       "titulo": "Aceites A1 e A3, alpha e PR",
       "deps": [
@@ -889,7 +917,8 @@
         "T35",
         "T36",
         "T37",
-        "T38"
+        "T38",
+        "T39"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/.claude-plugin/plugin.json",
