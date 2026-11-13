@@ -891,3 +891,50 @@ test('linha-resumo-executivo-igual-esquadrao-menos-nomes: o executivo usa o pape
   assert.notEqual(esq, exe);
   assert.match(exe, /^  3 agentes: Implementador T4 · Revisor T5 · Implementador T6$/);
 });
+
+// ───────────────────────────── T42 (r4, MAJOR da r1): a decisão da Sombra fica em toda célula, também com o RECENTE cortado em parte
+
+test('reserva-varredura-decisao-visivel-em-toda-celula: decisão + 0/1/2 eventos × 1–3 vivos × orçamento 7–12 × lateral/acima × com/sem ATENÇÃO, largura 80', () => {
+  const seguintes: [string, Item[]][] = [
+    ['0 eventos', []],
+    ['pausa', [e(55, 'loop.pausa', { estado: 'pausado' })]],
+    ['pausa+retoma', [e(55, 'loop.pausa', { estado: 'pausado' }), e(56, 'loop.pausa', { estado: 'retomado' })]],
+  ];
+  let casos = 0;
+  let comPiso = 0;
+  for (const [nome, depois] of seguintes) for (const n of [1, 2, 3]) for (const local of ['lateral', 'acima'] as const) for (const atencao of [false, true]) {
+    const base = roteiro(n, [DEC(50, 'seguir com a T3'), ...depois]);
+    const s = atencao ? ({ ...base, atencao: ['task em voo sem agente'] } as EstadoPainel) : base;
+    const cheio = cabe(s, { local, orcamento: 200 });
+    const b12 = cheio.findIndex((x) => /^AGORA/.test(x));
+    assert.ok(b12 > 0, `premissa: AGORA no render cheio (${nome}/${n}/${local})`);
+    for (let orc = 7; orc <= 12; orc++) {
+      casos++;
+      const l = cabe(s, { local, orcamento: orc });
+      const rotulo = `${nome} n=${n} ${local} atencao=${atencao} orc=${orc}`;
+      assert.ok(l.length <= orc, `${rotulo}: passou do orçamento: ${l.join('|')}`);
+      assert.ok(l.filter(ehDecidiu).length <= 1, `${rotulo}: decisão duplicada: ${l.join('|')}`);
+      assert.deepEqual(l.slice(0, b12), cheio.slice(0, b12), `${rotulo}: blocos 1–2 intactos`);
+      if (orc >= b12 + 2 + 1) {
+        comPiso++;
+        assert.equal(l.filter(ehDecidiu).length, 1, `${rotulo}: a decisão da Sombra some: ${l.join('|')}`);
+        assert.ok(l.some((x) => /^AGORA/.test(x)), `${rotulo}: sem AGORA (bloco 3): ${l.join('|')}`);
+        // a linha que cede à reserva é a ÚLTIMA do RECENTE: sobrando alguma pausa, é a mais nova (12:56 em pausa+retoma)
+        const pausas = l.filter((x) => /\d\d:\d\d ○ pausa/.test(x));
+        if (nome === 'pausa+retoma' && pausas.length > 0) assert.match(pausas[0], /12:56/, `${rotulo}: a pausa que sobra é a mais nova: ${l.join('|')}`);
+      }
+    }
+  }
+  assert.ok(casos >= 3 * 3 * 2 * 2 * 6 && comPiso > 100, `a varredura viu ${casos} casos (${comPiso} acima do piso)`);
+});
+
+test('reserva-parcial-toma-a-ultima-linha-do-recente: decisão + pausa, lateral, 2 vivos, orçamento 8 — 1 linha de RECENTE sobra e é a decisão, sem aumentar o total', () => {
+  const s = roteiro(2, [DEC(50, 'seguir com a T3'), e(55, 'loop.pausa', { estado: 'pausado' })]);
+  const l7 = cabe(s, { local: 'lateral', orcamento: 7 });
+  for (const orc of [8, 9]) {
+    const l = cabe(s, { local: 'lateral', orcamento: orc });
+    assert.equal(l.filter(ehDecidiu).length, 1, l.join('|'));
+    assert.ok(l.length <= orc);
+  }
+  assert.equal(l7.filter(ehDecidiu).length, 1, l7.join('|'));
+});

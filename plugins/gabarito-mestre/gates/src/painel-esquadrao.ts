@@ -594,18 +594,20 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   // 5 RECENTE (até 5 na lateral, 2 acima do input; mais novo no topo)
   const cap = o.local === 'acima' ? 2 : 5;
   const rec = (Array.isArray(e.recente) ? e.recente : []).slice(0, cap);
+  const dec = (e as EstadoPainel & { decisaoSombra?: ItemRecente | null }).decisaoSombra;
+  const daDecisao: Linha[] = [];
   rec.forEach((r, i) => {
     const quem = quemTexto(r.quem);
-    por(5, [seg(i === 0 ? 'RECENTE · ' : '  ', 'inactive'), seg(`${horaDe(r.hora)} `, 'inactive'), seg(r.glifo, r.cor), seg(` ${quem !== '' ? `${quem} ` : ''}${natural(r.texto)} `), seg(limpar(r.origem), 'inactive')]);
+    const lr = por(5, [seg(i === 0 ? 'RECENTE · ' : '  ', 'inactive'), seg(`${horaDe(r.hora)} `, 'inactive'), seg(r.glifo, r.cor), seg(` ${quem !== '' ? `${quem} ` : ''}${natural(r.texto)} `), seg(limpar(r.origem), 'inactive')]);
+    if (dec !== null && dec !== undefined && typeof dec === 'object' && (r === dec || (r.hora === dec.hora && r.texto === dec.texto && r.glifo === dec.glifo && r.origem === dec.origem))) daDecisao.push(lr);
   });
 
-  // Reserva (T42, emenda 32): a decisão da Sombra mais recente, na mesma linha do RECENTE; só entra se o corte tirar o RECENTE inteiro.
-  const dec = (e as EstadoPainel & { decisaoSombra?: ItemRecente | null }).decisaoSombra;
+  // Reserva (T42, emenda 32): a decisão da Sombra mais recente, na mesma linha do RECENTE; entra quando o corte tira o RECENTE (inteiro ou em parte) e a decisão não sobra.
   const reserva: Linha | null = dec === null || dec === undefined || typeof dec !== 'object' ? null : linhaReserva(dec, quemTexto, w);
 
   // corte por orçamento (REQ-GLB-1): `orcamento`, senão `altura`; sem os dois, sem corte
   const orc = alturaValida(o.orcamento) ?? alturaValida(o.altura);
-  let cortado: { linhas: Linha[]; cortadasTopo: number } = orc === undefined ? { linhas: ls.map((x) => x.l), cortadasTopo: 0 } : cortarComReserva(ls, orc, reserva);
+  let cortado: { linhas: Linha[]; cortadasTopo: number } = orc === undefined ? { linhas: ls.map((x) => x.l), cortadasTopo: 0 } : cortarComReserva(ls, orc, reserva, daDecisao);
   // Linha-resumo (T42, emenda 37): só quando há reserva da Sombra, ela NÃO coube e compactar o AGORA (agentes + segundo plano) em 1 linha a faz caber.
   // Se mesmo compactado não couber, o AGORA fica como hoje e a reserva cede.
   if (orc !== undefined && reserva !== null && !cortado.linhas.includes(reserva) && nVivos >= 1 && agoraAgentes.length >= 2) {
