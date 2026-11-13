@@ -907,6 +907,22 @@
       ]
     },
     {
+      "id": "T43",
+      "titulo": "medir não grava em entrega publicada",
+      "deps": [
+        "T1",
+        "T11"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs"
+      ],
+      "reqs": [
+        "REQ-DIA-1",
+        "REQ-TRI-1"
+      ]
+    },
+    {
       "id": "T25",
       "titulo": "Aceites A1 e A3, alpha e PR",
       "deps": [
@@ -948,7 +964,8 @@
         "T37",
         "T38",
         "T39",
-        "T42"
+        "T42",
+        "T43"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/.claude-plugin/plugin.json",
