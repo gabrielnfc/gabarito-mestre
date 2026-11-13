@@ -413,7 +413,9 @@
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/painel.mjs",
         "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
-        "plugins/gabarito-mestre/gates/test/painel-costura.test.mjs"
+        "plugins/gabarito-mestre/gates/test/painel-costura.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-e4.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-e4/"
       ],
       "reqs": [
         "REQ-GLB-1"
