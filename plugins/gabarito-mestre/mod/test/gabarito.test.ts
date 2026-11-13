@@ -2,6 +2,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import { pendenciasAprendizado } from '../../gates/dist/pendencias.js'
 import { CABECALHO, codigoPonte, PROMPT_RECUPERACAO, PROMPT_RETOMADA } from '../../gates/dist/pouso.js'
+import { validarStdinAgentes } from '../../gates/dist/painel-equipe.js'
 import { faixaDe, gravarContexto, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
 
 const RAIZ = '/repo'
@@ -10,6 +11,8 @@ const PRINCIPAL = '/main'
 
 type Ev = { agente: string; tipo: string; dados: Record<string, unknown> }
 type Opc = {
+  /** GM-14 T35: o que o motor devolve ao `tool.call` (objeto ou função do evento); padrão `{}` */
+  resultadoTool?: Record<string, unknown> | ((e: any) => Record<string, unknown>)
   percent?: number | null
   x?: string
   interativo?: boolean
@@ -185,6 +188,8 @@ function mundo($: any, on: any, o: Opc = {}) {
   on('ui.log', (_: any, e: any) => { est.logs.push(e.text); return { value: undefined } })
   on('ui.close', (_: any, e: any) => { est.closes.push(e.id); return { value: undefined } })
   on('classic.SubagentStart', (_: any, e: any) => { est.subStarts.push(e); return {} })
+  on('classic.SubagentStop', () => ({}))
+  on('classic.Stop', () => ({}))
   on('command.register', (_: any, e: any) => { log.push(`register:${e.name}`); est.registros.push(e); return { value: { command: e.name } } })
   on('store.get', (_: any, e: any) => ({ value: store.get(e.key) }))
   on('store.set', (_: any, e: any) => {
@@ -323,7 +328,7 @@ function mundo($: any, on: any, o: Opc = {}) {
     return { text: e.text }
   })
   on('turn.complete', (_: any, e: any) => ({ text: e.answer }))
-  on('tool.call', () => ({ result: {} }))
+  on('tool.call', (_: any, e: any) => ({ result: typeof o.resultadoTool === 'function' ? o.resultadoTool(e) : (o.resultadoTool ?? {}) }))
 
   const clock = mock.clock(on)
   const peer = () => $.prompt.submit({ text: '<agent-message>[Subagent hand-back]', origin: { kind: 'peer' } })
@@ -3983,9 +3988,17 @@ test('nomes-unicos-entre-ativos: dois ativos com o mesmo nome no store ⇒ o 1º
   })
   await arrancar(m)
   const n = ultimoStdin(m).nomes
-  expect(n.a1).toBe('LEGOLAS')
-  expect(n.a2).toBe('GIMLI')
+  expect(n.a1.nome).toBe('LEGOLAS')
+  expect(n.a2.nome).toBe('GIMLI')
   expect((m.store.get(NOMES_STORE) as any).a2.nome).toBe('GIMLI')
+})
+test('nomes-forma-do-contrato: cada ativo vai como {nome, vistoEm} (o validarNomesAgentes real do CLI aceita)', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { agentesPainel: [{ id: 'a1', type: 'implementador', description: 'T1', status: 'running' }] })
+  await arrancar(m)
+  const n = ultimoStdin(m).nomes
+  expect(Object.keys(n.a1).sort()).toEqual(['nome', 'vistoEm'])
+  expect(Number.isSafeInteger(n.a1.vistoEm)).toBe(true)
+  expect((validarStdinAgentes(ultimoStdin(m)) as any).ok).toBe(true)
 })
 test('nome-estavel-apos-reload: o nome guardado vale depois do reload, mesmo não sendo o 1º livre; agente novo pega o 1º livre (M-F3f)', async ($, on) => {
   const m = comPainel($, on, { estado: estadoNovo() }, {
@@ -3994,27 +4007,27 @@ test('nome-estavel-apos-reload: o nome guardado vale depois do reload, mesmo nã
   })
   await arrancar(m)
   const n = ultimoStdin(m).nomes
-  expect(n.a1).toBe('ARAGORN')
-  expect(n.novo).toBe('GIMLI')
+  expect(n.a1.nome).toBe('ARAGORN')
+  expect(n.novo.nome).toBe('GIMLI')
 })
 test('nomes-esgotados-sufixo: pacote sem nome livre ⇒ sufixo 2 a 9, depois "agente"', async ($, on) => {
   const vivos = Array.from({ length: 4 }, (_, i) => ({ id: `v${i}`, type: 'implementador', description: 'x', status: 'running' }))
   const m = comPainel($, on, { estado: estadoNovo() }, { agentesPainel: vivos, pacoteNomes: { lider: 'GANDALF', sabio: 'ELROND', nomes: ['GIMLI'] } })
   await arrancar(m)
   const n = ultimoStdin(m).nomes
-  expect(vivos.map((v) => n[v.id])).toEqual(['GIMLI', 'GIMLI2', 'GIMLI3', 'GIMLI4'])
+  expect(vivos.map((v) => n[v.id].nome)).toEqual(['GIMLI', 'GIMLI2', 'GIMLI3', 'GIMLI4'])
 })
 test('store-nomes-ausente-x-corrompido: ausente ⇒ nomes do zero, sem aviso; corrompido ⇒ do zero e 1 aviso', async ($, on) => {
   const vivo = [{ id: 'a1', type: 'implementador', description: 'T1', status: 'running' }]
   const m = comPainel($, on, { estado: estadoNovo() }, { agentesPainel: vivo, storeInicial: { [NOMES_STORE]: 7 } })
   await arrancar(m)
-  expect(ultimoStdin(m).nomes.a1).toBe('GIMLI')
+  expect(ultimoStdin(m).nomes.a1.nome).toBe('GIMLI')
   expect(m.est.logs.filter((l) => l.includes('nomes da equipe'))).toEqual(['gabarito: os nomes da equipe do painel estavam corrompidos; recomecei.'])
 })
 test('store-nomes-ausente: sem store ⇒ nomes do zero e nenhum aviso', async ($, on) => {
   const m = comPainel($, on, { estado: estadoNovo() }, { agentesPainel: [{ id: 'a1', type: 'implementador', description: 'T1', status: 'running' }] })
   await arrancar(m)
-  expect(ultimoStdin(m).nomes.a1).toBe('GIMLI')
+  expect(ultimoStdin(m).nomes.a1.nome).toBe('GIMLI')
   expect(m.est.logs.filter((l) => l.includes('nomes da equipe'))).toEqual([])
 })
 
@@ -4085,4 +4098,221 @@ test('parar-nao-repete-apos-fato-medido (pouso.ts SEM_PROGRESSO): fato.medido, n
   await recuperar(m)
   await recuperar(m)
   expect(parou(m)).toHaveLength(1)
+})
+
+// ======================================================================================================================================
+// ---- GM-14 T35: AGORA ao vivo (FIEL-11 b/c, FIEL-6 a). Fonte: S12 (`tool.call` com agentId), S13 (SubagentStop não é fim), S14 (backgroundTaskId). ----
+// Mutações: M-P10 (frase fixa), M-T35a (SubagentStop ignorado), M-T35b (segundo plano nunca sai). ----
+// ======================================================================================================================================
+const AG = (id: string, status = 'running') => ({ id, type: 'implementador', description: 'T2 implementador', status })
+const bash = ($: any, extra: Record<string, unknown> = {}) => $.tool.call({ tool: 'Bash', command: 'ls', description: 'listar arquivos', ...extra })
+const ferr = ($: any, tool: string, extra: Record<string, unknown> = {}) => $.tool.call({ tool, ...extra })
+
+test('acao-ao-vivo-bash-description: Bash de subagente ⇒ acoes[agentId] = a description, fonte bash', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await bash($, { agentId: 'a1' }); await drena(m)
+  const a = ultimoStdin(m).acoes.a1
+  expect(a.texto).toBe('listar arquivos')
+  expect(a.fonte).toBe('bash')
+  expect(Number.isSafeInteger(a.em) && a.em >= 0).toBe(true)
+})
+test('acao-de-outra-ferramenta-no-presente: Read×3 ⇒ "lendo 3 arquivos"; outra ferramenta zera a contagem; Bash sem description ⇒ "rodando 1 comando"', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await ferr($, 'Read', { agentId: 'a1', file_path: '/x' }); await ferr($, 'Grep', { agentId: 'a1' }); await ferr($, 'Read', { agentId: 'a1' }); await drena(m)
+  expect(ultimoStdin(m).acoes.a1).toMatchObject({ texto: 'lendo 3 arquivos', fonte: 'tool' })
+  await ferr($, 'Edit', { agentId: 'a1' }); await m.clock.advance(2000); await drena(m)
+  expect(ultimoStdin(m).acoes.a1.texto).toBe('editando 1 arquivo')
+  await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' }); await m.clock.advance(2000); await drena(m)
+  expect(ultimoStdin(m).acoes.a1).toMatchObject({ texto: 'rodando 1 comando', fonte: 'tool' })
+  await ferr($, 'Agent', { agentId: 'a1', subagent_type: 'revisor', description: 'd', prompt: 'p' }); await m.clock.advance(2000); await drena(m)
+  expect(ultimoStdin(m).acoes.a1.texto).toBe('chamando revisor')
+})
+test('acao-sem-fonte-fica-de-fora: ferramenta fora da tabela não inventa ação (nunca frase fixa)', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await ferr($, 'Monitor', { agentId: 'a1' }); await ferr($, 'SubagentHandback', { agentId: 'a1' }); await drena(m)
+  expect(ultimoStdin(m).acoes).toEqual({})
+  await bash($, { agentId: 'a1', description: 'compilar' }); await drena(m)
+  await ferr($, 'Monitor', { agentId: 'a1' }); await drena(m)
+  expect(ultimoStdin(m).acoes.a1.texto).toBe('compilar') // a última ação conhecida fica; a que não se sabe dizer não a apaga
+})
+test('acao-higieniza-a-description: controles saem e passa de 120 caracteres corta', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await bash($, { agentId: 'a1', description: `ver\u0000 tudo\u202E ${'x'.repeat(300)}` }); await drena(m)
+  const t = ultimoStdin(m).acoes.a1.texto as string
+  expect(t.startsWith('ver tudo xxx')).toBe(true)
+  expect([...t].length).toBeLessThanOrEqual(120)
+  expect(/[\u0000-\u001f\u202e]/.test(t)).toBe(false)
+})
+test('tool-call-sem-agentid-e-do-orquestrador: nada em acoes; o resultado do motor passa intacto', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')], resultadoTool: { stdout: 'ok', marca: 7 } })
+  await arrancar(m)
+  const r = await bash($); await drena(m)
+  expect(r).toEqual({ result: { stdout: 'ok', marca: 7 } })
+  expect(ultimoStdin(m).acoes).toEqual({})
+})
+test('tool-call-agentid-fora-do-padrao: id com barra não entra', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await bash($, { agentId: '../x' }); await bash($, { agentId: 42 }); await drena(m)
+  expect(ultimoStdin(m).acoes).toEqual({})
+})
+test('acoes-teto-64: o 65º agente tira o mais antigo', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  for (let i = 0; i < 66; i++) await bash($, { agentId: `ag-${i}` })
+  await drena(m)
+  const k = Object.keys(ultimoStdin(m).acoes)
+  expect(k).toHaveLength(64)
+  expect(k).not.toContain('ag-0'); expect(k).not.toContain('ag-1'); expect(k).toContain('ag-65')
+})
+test('acao-nao-interativo: -p não guarda nada nem chama a ponte', async ($, on) => {
+  const m = comPainel($, on, {}, { interativo: false, agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await bash($, { agentId: 'a1' }); await drena(m)
+  expect(stdinsPainel(m)).toHaveLength(0)
+})
+test('acao-no-fim-da-rajada-chega: 2 ações em menos de 2 s ⇒ a última aparece 2 s depois, sem esperar os 60 s', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await bash($, { agentId: 'a1', description: 'primeira' }); await drena(m)
+  await bash($, { agentId: 'a1', description: 'segunda' })
+  await m.clock.advance(1000); await drena(m)
+  expect(ultimoStdin(m).acoes.a1.texto).toBe('primeira')
+  await m.clock.advance(1000); await drena(m)
+  expect(ultimoStdin(m).acoes.a1.texto).toBe('segunda')
+})
+test('acao-redesenha-sem-esperar-o-relogio: a ação nova chega ao stdin antes do 60 s', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  const antes = stdinsPainel(m).length
+  await bash($, { agentId: 'a1' }); await drena(m)
+  expect(stdinsPainel(m).length).toBeGreaterThan(antes)
+})
+test('subagentstop-sai-na-hora: a lista já diz completed ⇒ o stop reconsulta e o id entra em encerrados, sem esperar o relógio', async ($, on) => {
+  const lista = [AG('a1')]
+  const m = comPainel($, on, {}, { agentesPainel: lista })
+  await arrancar(m)
+  expect(ultimoStdin(m).encerrados).toEqual([])
+  lista[0].status = 'completed'
+  const antes = stdinsPainel(m).length
+  await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [] }); await m.clock.advance(400); await drena(m) // 400 ms: ESPERA_STOP_MS, nunca o relógio de 60 s
+  expect(stdinsPainel(m).length).toBeGreaterThan(antes)
+  expect(ultimoStdin(m).encerrados).toEqual(['a1'])
+})
+test('subagentstop-sozinho-nao-encerra: a lista ainda diz running (S13: o stop chega antes) ⇒ não vai a encerrados', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [] }); await drena(m)
+  expect(ultimoStdin(m).encerrados).toEqual([])
+})
+test('encerrado-que-volta-a-running-sai-de-encerrados: SendMessage retoma o agente (S13, 1/6)', async ($, on) => {
+  const lista = [AG('a1', 'completed')]
+  const m = comPainel($, on, {}, { agentesPainel: lista })
+  await arrancar(m)
+  expect(ultimoStdin(m).encerrados).toEqual(['a1'])
+  lista[0].status = 'running'
+  await turnoVia(m, $)
+  expect(ultimoStdin(m).encerrados).toEqual([])
+})
+test('subagentstart-tira-de-encerrados: o agente que recomeça não fica escondido', async ($, on) => {
+  const lista = [AG('a1', 'completed')]
+  const m = comPainel($, on, {}, { agentesPainel: lista })
+  await arrancar(m)
+  expect(ultimoStdin(m).encerrados).toEqual(['a1'])
+  await subStart($, { agent_id: 'a1' })
+  lista[0].status = 'completed' // a lista ainda não mudou, mas o start vale até a próxima leitura dela dizer o contrário
+  await $.classic.SubagentStop({ agent_id: 'zz', agent_type: '', background_tasks: [] }); await drena(m)
+  expect(ultimoStdin(m).encerrados).toEqual(['a1']) // a lista manda: completed de novo
+})
+test('encerrado-perde-a-acao: a ação de quem terminou sai do stdin', async ($, on) => {
+  const lista = [AG('a1')]
+  const m = comPainel($, on, {}, { agentesPainel: lista })
+  await arrancar(m)
+  await bash($, { agentId: 'a1' }); await drena(m)
+  expect(Object.keys(ultimoStdin(m).acoes)).toEqual(['a1'])
+  lista[0].status = 'completed'
+  await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [] }); await m.clock.advance(400); await drena(m)
+  expect(ultimoStdin(m).acoes).toEqual({})
+})
+const turnoVia = async (m: ReturnType<typeof mundo>, $: any) => { await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't9', reason: 'answer' }); await drena(m) }
+
+test('segundo-plano-aparece-e-sai: Bash em segundo plano do orquestrador entra com o id do resultado e sai quando o Stop não o lista mais', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')], resultadoTool: (e: any) => (e.run_in_background === true ? { backgroundTaskId: 'bg1' } : {}) })
+  await arrancar(m)
+  await bash($, { run_in_background: true, description: 'esperar s14' }); await drena(m)
+  const sp = ultimoStdin(m).segundoPlano
+  expect(sp).toHaveLength(1)
+  expect(sp[0]).toMatchObject({ id: 'bg1', dono: 'orquestrador', texto: 'esperar s14' })
+  expect(Number.isSafeInteger(sp[0].desde)).toBe(true)
+  await $.classic.Stop({ background_tasks: [{ id: 'bg1', type: 'shell', status: 'running', description: 'esperar s14' }] }); await drena(m)
+  expect(ultimoStdin(m).segundoPlano).toHaveLength(1) // ainda lá: o item segue no Stop
+  await $.classic.Stop({ background_tasks: [] }); await drena(m)
+  expect(ultimoStdin(m).segundoPlano).toEqual([])
+})
+test('segundo-plano-de-subagente: dono = o agentId; sai pelo background_tasks do SubagentStop', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')], resultadoTool: (e: any) => (e.run_in_background === true ? { backgroundTaskId: 'bg2' } : {}) })
+  await arrancar(m)
+  await bash($, { agentId: 'a1', run_in_background: true, description: 'esperar sub' }); await drena(m)
+  expect(ultimoStdin(m).segundoPlano).toEqual([expect.objectContaining({ id: 'bg2', dono: 'a1', texto: 'esperar sub' })])
+  await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [{ id: 'a1', type: 'subagent', status: 'running' }] }); await m.clock.advance(400); await drena(m)
+  expect(ultimoStdin(m).segundoPlano).toEqual([])
+})
+test('segundo-plano-sem-description-usa-o-comando: texto = o comando cortado, nunca inventado', async ($, on) => {
+  const m = comPainel($, on, {}, { resultadoTool: { backgroundTaskId: 'bg3' } })
+  await arrancar(m)
+  await $.tool.call({ tool: 'Bash', command: `sleep 25; ${'y'.repeat(300)}`, run_in_background: true }); await drena(m)
+  const t = ultimoStdin(m).segundoPlano[0].texto as string
+  expect(t.startsWith('sleep 25; yyy')).toBe(true)
+  expect([...t].length).toBeLessThanOrEqual(120)
+})
+test('segundo-plano-so-com-backgroundTaskId: Bash em primeiro plano, id fora do padrão e outra ferramenta não entram', async ($, on) => {
+  const m = comPainel($, on, {}, { resultadoTool: (e: any) => (e.tool === 'Bash' && e.command === 'ruim' ? { backgroundTaskId: '../x' } : e.tool === 'Monitor' ? { backgroundTaskId: 'm1' } : {}) })
+  await arrancar(m)
+  await bash($); await $.tool.call({ tool: 'Bash', command: 'ruim' }); await ferr($, 'Monitor'); await drena(m)
+  expect(ultimoStdin(m).segundoPlano).toEqual([])
+})
+test('segundo-plano-teto-64: o 65º tira o mais antigo', async ($, on) => {
+  let n = 0
+  const m = comPainel($, on, {}, { resultadoTool: () => ({ backgroundTaskId: `bg-${n++}` }) })
+  await arrancar(m)
+  for (let i = 0; i < 66; i++) await bash($, { run_in_background: true })
+  await drena(m)
+  const ids = ultimoStdin(m).segundoPlano.map((x: any) => x.id)
+  expect(ids).toHaveLength(64)
+  expect(ids).not.toContain('bg-0'); expect(ids).toContain('bg-65')
+})
+test('stop-sem-lista-nao-apaga: Stop sem background_tasks (ou não lista) não tira o segundo plano', async ($, on) => {
+  const m = comPainel($, on, {}, { resultadoTool: { backgroundTaskId: 'bg1' } })
+  await arrancar(m)
+  await bash($, { run_in_background: true }); await drena(m)
+  await $.classic.Stop({}); await $.classic.Stop({ background_tasks: 'x' }); await drena(m)
+  expect(ultimoStdin(m).segundoPlano).toHaveLength(1)
+})
+test('stdin-com-acoes-encerrados-segundo-plano: a forma que o CLI de T29 aceita (validarStdinAgentes real)', async ($, on) => {
+  const lista = [AG('a1'), AG('a2', 'completed')]
+  const m = comPainel($, on, {}, { agentesPainel: lista, resultadoTool: (e: any) => (e.run_in_background === true ? { backgroundTaskId: 'bg1' } : {}) })
+  await arrancar(m)
+  await bash($, { agentId: 'a1' }); await bash($, { run_in_background: true }); await ferr($, 'Read', { agentId: 'a2' }); await drena(m)
+  const s = ultimoStdin(m)
+  expect(Object.keys(s)).toEqual(expect.arrayContaining(['acoes', 'encerrados', 'segundoPlano', 'nomes']))
+  const v = validarStdinAgentes(s) as any
+  expect(v.erro).toBeUndefined()
+  expect(v.ok).toBe(true)
+  expect(v.valor.acoes.a1.texto).toBe('listar arquivos')
+  expect(v.valor.encerrados).toEqual(['a2'])
+  expect(v.valor.segundoPlano).toHaveLength(1)
+  expect(v.valor.acoes.a2).toBeUndefined() // a2 terminou: sua ação não entra
+})
+test('medir-recebe-o-mesmo-stdin: `medir --agentes` leva acoes, encerrados e segundoPlano (um pedido só)', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await bash($, { agentId: 'a1' }); await drena(m)
+  const med = m.est.medirStdins[m.est.medirStdins.length - 1].stdin
+  expect(med.acoes.a1.texto).toBe('listar arquivos')
+  expect(med.encerrados).toEqual([])
+  expect(med.segundoPlano).toEqual([])
 })

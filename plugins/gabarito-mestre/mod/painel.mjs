@@ -28,6 +28,7 @@ import { renderPainel } from '../gates/dist/painel.js';
 import { colunas, cortar, limpar } from '../gates/dist/painel-largura.js';
 import { sortearPacote } from '../gates/dist/painel-equipe.js';
 import { lerX } from '../gates/dist/pouso.js';
+import { acaoDe, descricaoLimpa } from '../gates/dist/ferramentas.js';
 import { orcamentoDe } from '../gates/dist/orcamento.js';
 
 export const ID_PANE = 'gabarito-painel';
@@ -47,6 +48,8 @@ export const TETO_NOMES = 64;
 /** Dedupe do push do pouso (FIEL-14 d): a mesma forma do `painel:notificado` do PAROU, numa chave própria para os dois não se apagarem. */
 export const CHAVE_NOTIFICADO_POUSO = 'painel:notificado:pouso';
 const ATIVOS = new Set(['pending', 'running', 'waiting']);
+/** O mesmo `NOME_VIVO_RE` de `gates/src/painel-equipe.ts` (o CLI recusa o stdin inteiro com 1 nome fora dele). */
+const NOME_VIVO_RE = /^(?:[A-Z0-9ÀÁÂÃÄÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜ'-]{1,10}[2-9]?|agente)$/u;
 export const CHAVE_NOTIFICADO = 'painel:notificado';
 export const CHAVE_PREFS = 'painel:prefs';
 export const CHAVE_PACOTE = 'painel:pacote';
@@ -545,7 +548,24 @@ const S = {
   pacoteNomesDe: null,
   notificadoPouso: null, // {chave, resultado} do push do pouso
   notificadoPousoLido: false,
+  // GM-14 T35 (AGORA ao vivo): tudo em memória, recomeça num reload (o diário e a lista de agentes refazem o que importa)
+  acoes: new Map(), // agent_id → {texto, fonte, em}: a última ação ao vivo (`tool.call` com `agentId`, S12), teto 64, o mais antigo sai
+  acoesBase: new Map(), // agent_id → {base, n}: contagem de chamadas seguidas do mesmo tipo ("lendo 3 arquivos")
+  encerrados: new Set(), // ids que a lista de agentes mostrou `completed`/`failed`/`killed`; sai se o id volta a ativo (S13: `completed` não é terminal)
+  segundoPlano: new Map(), // backgroundTaskId → {id, dono, texto, desde}: entra pelo resultado do Bash, sai quando o Stop não o lista (S14)
+  acaoAgendada: false, // há uma releitura marcada para o fim da janela
+  ultimaAcaoMs: null, // última vez que uma ação pediu releitura (o `tool.call` não dispara uma ponte por chamada)
 };
+
+export const TETO_ACOES = 64;
+export const TETO_ENCERRADOS = 256;
+export const TETO_SEGUNDO_PLANO = 64;
+/** Releitura pedida por ação ao vivo: no máximo 1 a cada 2 s (a ponte do estado leva até 5 s; ela coalesce o resto). */
+export const JANELA_ACAO_MS = 2000;
+/** O `SubagentStop` chega ~210 ms antes de a lista dizer `completed` (S13: 204–218 ms): a releitura espera um pouco mais que isso. */
+export const ESPERA_STOP_MS = 400;
+const TERMINAIS = new Set(['completed', 'failed', 'killed']);
+const MAX_TEXTO_SEGUNDO_PLANO = 120;
 
 /** Uma linha só: sem controle nem quebra, no máximo 200 colunas (REQ-PNL-13: a resposta do comando nunca vira bloco). */
 export function umaLinha(texto) {
@@ -658,13 +678,34 @@ async function pedidoDoMod($, cwd, agoraMs) {
   });
   const contexto = await lerContexto($, cwd, pedido, agoraMs);
   const nomes = await nomesDosAtivos($, cwd, pedido.agentes, agoraMs);
+  atualizarEncerrados(pedido.agentes);
   return {
     ...pedido,
+    encerrados: [...S.encerrados],
+    acoes: Object.fromEntries(S.acoes),
+    segundoPlano: [...S.segundoPlano.values()],
     session_id: S.sessaoId,
     desatualizadoS: S.ultimaOkMs === null ? null : Math.max(0, Math.round((agoraMs - S.ultimaOkMs) / 1000)),
     nomes,
     contexto,
   };
+}
+
+/**
+ * Encerrados (FIEL-6 a, T35): a lista de agentes é a fonte. `completed`/`failed`/`killed` ⇒ entra (e a ação dele sai); de volta a `pending`/`running`/`waiting`
+ * ⇒ sai (S13: `SendMessage` retoma um agente `completed`). Lista inválida (`null`) ⇒ nada muda. Teto 256: o mais antigo sai. O `SubagentStop` sozinho NÃO
+ * encerra (S13: chega com o agente ainda `running`, e há stops intermediários de agente que só espera trabalho em segundo plano).
+ */
+export function atualizarEncerrados(agentes) {
+  if (!Array.isArray(agentes)) return;
+  for (const a of agentes) {
+    if (!ehObj(a) || typeof a.id !== 'string' || !AGENTE_RE.test(a.id)) continue;
+    if (TERMINAIS.has(a.status)) {
+      S.encerrados.delete(a.id); S.encerrados.add(a.id);
+      S.acoes.delete(a.id); S.acoesBase.delete(a.id);
+    } else if (ATIVOS.has(a.status)) S.encerrados.delete(a.id);
+  }
+  while (S.encerrados.size > TETO_ENCERRADOS) S.encerrados.delete(S.encerrados.values().next().value);
 }
 
 /** Contexto do orquestrador: `usage.context.percent` (fonte `mod`); nulo ⇒ plano B pelo transcript da sessão (`transcript`, estimado); grava `.harness/contexto/<sessao>.json`. */
@@ -736,7 +777,8 @@ async function nomesDosAtivos($, cwd, agentes, agoraMs) {
     const { mapa, mudou } = atribuirNomes(S.nomes, ativos, pacote, pares, agoraMs);
     S.nomes = mapa;
     if (mudou) { try { await $.store.set(CHAVE_NOMES, Object.fromEntries(mapa)); } catch { /* vale nesta sessão */ } }
-    return Object.fromEntries(ativos.map((id) => [id, mapa.get(id)?.nome]).filter(([, n]) => typeof n === 'string'));
+    // a forma do CLI (`validarNomesAgentes`): `{agent_id: {nome, vistoEm}}`; nome fora do padrão do CLI não vai (um só derrubaria o stdin inteiro)
+    return Object.fromEntries(ativos.map((id) => [id, mapa.get(id)]).filter(([, v]) => typeof v?.nome === 'string' && NOME_VIVO_RE.test(v.nome)).map(([id, v]) => [id, { nome: v.nome, vistoEm: v.vistoEm }]));
   } catch {
     return {};
   }
@@ -959,6 +1001,7 @@ async function mapaTranscripts($) {
 export async function registrarSubagente($, e) {
   // GM-14 T20: o `transcript_path` do evento é o da SESSÃO (o pai): fonte do plano B do contexto do orquestrador
   if (typeof e?.transcript_path === 'string' && e.transcript_path.startsWith('/')) S.transcriptSessao = e.transcript_path;
+  if (typeof e?.agent_id === 'string') S.encerrados.delete(e.agent_id); // GM-14 T35: o agente que recomeça não fica escondido
   const caminho = caminhoDoTranscript(e);
   if (caminho === null) return;
   try {
@@ -966,6 +1009,84 @@ export async function registrarSubagente($, e) {
     inserirComTeto(mapa, e.agent_id, caminho);
     await $.store.set(CHAVE_TRANSCRIPTS, Object.fromEntries(mapa));
   } catch { /* a memória do módulo basta nesta sessão */ }
+}
+
+// ─────────────────────────────────────────────────────────────── AGORA ao vivo (GM-14 T35): ações, encerrados e segundo plano
+
+/** Insere no fim com teto: reinserir o mesmo id o move para o fim; passou do teto, sai o mais antigo. */
+function inserirNoFim(mapa, id, valor, teto) {
+  mapa.delete(id);
+  mapa.set(id, valor);
+  while (mapa.size > teto) mapa.delete(mapa.keys().next().value);
+}
+
+/** Pede uma releitura do estado agora, sem esperar o relógio. `limitar` ⇒ no máximo 1 a cada `JANELA_ACAO_MS`; `espera` adia (o `SubagentStop`). */
+async function pedirReleitura($, { limitar = false, espera = 0 } = {}) {
+  if (!S.interativo) return;
+  if (limitar) {
+    const t = await agora($);
+    if (S.ultimaAcaoMs !== null && t - S.ultimaAcaoMs < JANELA_ACAO_MS) { // dentro da janela: 1 leitura no FIM dela, para a última ação da rajada não ficar 60 s sem aparecer
+      if (!S.acaoAgendada) {
+        S.acaoAgendada = true;
+        try {
+          $.clock.after(JANELA_ACAO_MS - (t - S.ultimaAcaoMs), async () => { S.acaoAgendada = false; S.ultimaAcaoMs = await agora($); void atualizar($, 'ao-vivo'); });
+        } catch { S.acaoAgendada = false; }
+      }
+      return;
+    }
+    S.ultimaAcaoMs = t;
+  }
+  try { $.clock.after(espera, () => { void atualizar($, 'ao-vivo'); }); } catch { /* sem relógio */ }
+}
+
+/**
+ * `tool.call` com `agentId` (S12: 9/9 chamadas de subagente): guarda a última ação do agente. `Bash` com `description` ⇒ a descrição (fonte `bash`);
+ * outra ferramenta da tabela ⇒ a frase da T5 no presente, com a contagem de chamadas seguidas do mesmo tipo (fonte `tool`). Sem `agentId` válido
+ * (orquestrador) ou fora da tabela ⇒ nada. Devolve se houve ação nova.
+ */
+async function anotarAcao($, e) {
+  const id = e?.agentId;
+  if (typeof id !== 'string' || !AGENTE_RE.test(id)) return false;
+  const chamada = { nome: e.tool, erro: false, papel: e.subagent_type, descricao: e.tool === 'Bash' ? e.description : undefined };
+  const base = acaoDe(chamada, 1);
+  if (base === null) return false;
+  const bash = e.tool === 'Bash' && descricaoLimpa(e.description) !== null;
+  let n = 1;
+  if (!bash) {
+    const ant = S.acoesBase.get(id);
+    n = ant !== undefined && ant.base === base ? ant.n + 1 : 1;
+  }
+  S.acoesBase.set(id, { base: bash ? null : base, n });
+  const texto = acaoDe({ ...chamada }, n);
+  if (texto === null) return false;
+  inserirNoFim(S.acoes, id, { texto, fonte: bash ? 'bash' : 'tool', em: Math.max(0, Math.round(await agora($))) }, TETO_ACOES);
+  while (S.acoesBase.size > TETO_ACOES * 2) S.acoesBase.delete(S.acoesBase.keys().next().value);
+  return true;
+}
+
+/** Resultado do `Bash` com `backgroundTaskId` (S14: 3/3 no orquestrador, 3/3 no subagente) ⇒ entra no segundo plano. Devolve se entrou. */
+async function anotarSegundoPlano($, e, r) {
+  if (e?.tool !== 'Bash') return false;
+  const id = r?.result?.backgroundTaskId;
+  if (typeof id !== 'string' || !AGENTE_RE.test(id)) return false;
+  const texto = descricaoLimpa(e.description)
+    ?? ([...String(typeof e.command === 'string' ? e.command : '').replace(/[\p{Cc}\p{Cf}]/gu, ' ').trim()].slice(0, MAX_TEXTO_SEGUNDO_PLANO).join('').trim() || 'comando em segundo plano');
+  const dono = typeof e.agentId === 'string' && AGENTE_RE.test(e.agentId) ? e.agentId : 'orquestrador';
+  inserirNoFim(S.segundoPlano, id, { id, dono, texto, desde: Math.max(0, Math.round(await agora($))) }, TETO_SEGUNDO_PLANO);
+  return true;
+}
+
+/**
+ * `Stop`/`SubagentStop` com `background_tasks` (S14): o que o segundo plano guardava e a lista não traz mais terminou. Sem lista (ausente ou não lista)
+ * ⇒ nada sai (ausente ≠ vazio). Devolve se algo saiu.
+ */
+export function podarSegundoPlano(e) {
+  const l = e?.background_tasks;
+  if (!Array.isArray(l)) return false;
+  const vivos = new Set(l.filter(ehObj).map((t) => t.id).filter((id) => typeof id === 'string'));
+  let saiu = false;
+  for (const id of [...S.segundoPlano.keys()]) if (!vivos.has(id)) { S.segundoPlano.delete(id); saiu = true; }
+  return saiu;
 }
 
 async function gravarPrefs($, mudanca) {
@@ -1138,6 +1259,25 @@ export async function turnoDoPainel($) {
 export function registrarPainel(on) {
   on('classic.SubagentStart', async ($, e, next) => {
     try { await registrarSubagente($, e); } catch { /* o painel não derruba o hook */ }
+    return next(e);
+  });
+
+  // GM-14 T35: a ação ao vivo (S12) e o segundo plano (S14). O resultado do motor passa intacto; o painel só observa.
+  on('tool.call', async ($, e, next) => {
+    if (!S.interativo) return next(e);
+    try { if (await anotarAcao($, e)) await pedirReleitura($, { limitar: true }); } catch { /* o painel não derruba a chamada */ }
+    const r = await next(e);
+    try { if (await anotarSegundoPlano($, e, r)) await pedirReleitura($); } catch { /* idem */ }
+    return r;
+  });
+
+  on('classic.SubagentStop', async ($, e, next) => {
+    try { podarSegundoPlano(e); await pedirReleitura($, { espera: ESPERA_STOP_MS }); } catch { /* o painel não derruba o hook */ }
+    return next(e);
+  });
+
+  on('classic.Stop', async ($, e, next) => {
+    try { if (podarSegundoPlano(e)) await pedirReleitura($); } catch { /* idem */ }
     return next(e);
   });
 
