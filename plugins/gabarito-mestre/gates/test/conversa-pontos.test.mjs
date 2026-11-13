@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  ASSERCOES, MATRIZ, MIN_FALA, PONTOS_ARQ, ROTEIRO_REL, TOTAL_PONTOS, acoesDe, avaliarExecucao, avaliarMatriz, coletar, entradaDoSnapshot, falasDoRoteiro, guardaFalas, idDaCelula,
+  ASSERCOES, LINHA_DECISAO, MATRIZ, MIN_FALA, PONTOS_ARQ, ROTEIRO_REL, TOTAL_PONTOS, acoesDe, avaliarExecucao, avaliarMatriz, coletar, entradaDoSnapshot, falasDoRoteiro, guardaFalas, idDaCelula,
   itensDeProxima, placementEsperado, propsDe, publicadaPeloProduto, raizPrincipal, renderizar, semearEntregaPublicada, sha256, validarPontos, verificarRoteiro,
 } from './e2e/conversa-2026-11-11/rodar-a1.mjs';
 
@@ -436,13 +436,18 @@ function montarExecucao(v = {}) {
   writeFileSync(join(rundir, 'inicio.iso'), '2026-11-13T10:00:00.000Z\n');
   writeFileSync(join(rundir, 'sends.log'), `1 digitar ${sha256(FALA_A)}\n2 digitar ${sha256(FALA_STATUS)}\n`);
   // F19: a entrega da branch já publicada (PR #14 mergeado + release, `fato.medido` do produto, `ts` antes do início); as mensagens do dono desta execução vão para `_sem-id` (FIEL-1 b)
-  const pr = (numero, estado, ts) => ({ ts, tipo: 'fato.medido', dados: { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: 'enabler/GM-13-a1' } } });
+  let seq = 0;
+  const pr = (numero, estado, ts) => ({ sessao: 'semente', seq: ++seq, ts, tipo: 'fato.medido', dados: { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: 'enabler/GM-13-a1' } } });
   jl(join(repo, '.harness', 'entregas', 'GM-13', 'events.semente.jsonl'), [
     ...(v.soDuranteExecucao === true ? [] : v.semPublicada === true ? [pr(14, 'aberto', '2026-11-10T12:00:00.000Z')] : [pr(14, 'mergeado', '2026-11-10T12:00:00.000Z')]),
-    { ts: '2026-11-10T12:00:01.000Z', tipo: 'fato.medido', dados: { chave: 'release', fonte: 'gh', valor: { tag: 'v2.0.0' } } },
+    { sessao: 'semente', seq: ++seq, ts: '2026-11-10T12:00:01.000Z', tipo: 'fato.medido', dados: { chave: 'release', fonte: 'gh', valor: { tag: 'v2.0.0' } } },
     ...(v.mergeadaDuranteExecucao === true ? [pr(15, 'mergeado', '2026-11-13T10:06:00.000Z')] : []),
-    ...(v.gravouNaPublicada === true ? [{ ts: '2026-11-13T10:05:00.000Z', tipo: 'dono.mensagem', dados: { sha256: sha256(FALA_A), chars: 47 } }] : []),
+    ...(v.gravouNaPublicada === true ? [{ sessao: 'semente', seq: ++seq, ts: '2026-11-13T10:05:00.000Z', tipo: 'dono.mensagem', dados: { sha256: sha256(FALA_A), chars: 47 } }] : []),
   ]);
+  // o que o painel grava na 1ª medição de cada sessão (painel-medir.mjs): `fato.medido` de branch, spec, plano, pr e release, depois do início
+  const medidos = ['branch', 'spec', 'plano', 'pr', 'release'].map((chave, i) => ({ sessao: 'painel-s1', seq: i + 1, ts: `2026-11-13T10:04:0${i}.000Z`, agente: 'painel', tipo: 'fato.medido', dados: { chave, fonte: 'gh', valor: chave === 'pr' ? { numero: 14, estado: 'mergeado', branch: 'enabler/GM-13-a1' } : { medido: true } } }));
+  if (v.painelMediuNaPublicada === true) jl(join(repo, '.harness', 'entregas', 'GM-13', 'events.painel-s1.jsonl'), medidos);
+  if (v.painelMediuEmSemId === true) jl(join(repo, '.harness', 'entregas', '_sem-id', 'events.painel-s1.jsonl'), medidos);
   jl(join(repo, '.harness', 'entregas', '_sem-id', 'events.loop.jsonl'), [{ seq: 1, ts: '2026-11-13T10:02:00.000Z', tipo: 'dono.mensagem', dados: { sha256: sha256(FALA_A), chars: 47 } }]);
   jl(join(rundir, 'obs', 'a1.jsonl'), [
     { t: 1, ev: 'estado', agentes: v.semAgentes === true ? [] : [{ id: AGENTE.id, type: AGENTE.type, status: 'running', description: AGENTE.description }], panes: [{ id: 'gabarito-painel', placement: v.placement ?? 'dock' }], nomes: null },
@@ -507,6 +512,17 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
     assert.equal(resultado(sem, '10-despachos-com-aprendizados').ok, false, 'sem aprendizado observado a asserção não mediu nada');
   });
 
+  test('8c-conta-o-fato-medido-do-painel-na-publicada-e-passa-quando-vai-a-_sem-id (REQ-DIA-1, FIEL-1 b; Sombra f97c7624)', async () => {
+    const id = '8c-nada-em-entrega-publicada';
+    const painel = await coleta({ painelMediuNaPublicada: true });
+    assert.deepEqual(painel.entregasPublicadas, ['GM-13'], 'a publicada continua publicada: o que o painel mede depois do início não a muda');
+    assert.deepEqual(painel.gravacoes['GM-13'], { antes: 2, depois: 7 }, '5 fato.medido do painel depois do início, no diário real da GM-13');
+    assert.equal(resultado(painel, id).ok, false, 'a 8c conta QUALQUER evento novo: o painel gravar fato.medido na entrega publicada reprova (defeito do produto, corrigido pela T43; até integrar, reprovar é o correto)');
+    const semId = await coleta({ painelMediuEmSemId: true });
+    assert.deepEqual(semId.gravacoes['GM-13'], { antes: 2, depois: 2 });
+    assert.equal(resultado(semId, id).ok, true, 'o mesmo fato.medido em _sem-id (sem entrega identificada) passa');
+  });
+
   test('8c-reprova-com-gravacao-na-publicada-e-sem-publicada-nenhuma', async () => {
     assert.equal(resultado(await coleta({}), '8c-nada-em-entrega-publicada').ok, true);
     const grav = await coleta({ gravouNaPublicada: true });
@@ -522,14 +538,16 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
     assert.deepEqual(durante.entregasPublicadas, ['GM-13'], 'o PR #15 mergeado durante a execução não muda o que estava publicado');
     const so = await coleta({ soDuranteExecucao: true, mergeadaDuranteExecucao: true });
     assert.deepEqual(so.entregasPublicadas, [], 'um PR mergeado medido DURANTE a execução não torna a entrega publicada (filtro `ts <= inicio`)');
-    const base = [{ tipo: 'fato.medido', ts: 'a', dados: { chave: 'pr', fonte: 'gh', valor: { numero: 14, estado: 'mergeado', branch: 'b' } } }];
-    assert.equal(publicadaPeloProduto(base, 'z'), true);
-    assert.equal(publicadaPeloProduto([...base, { ...base[0], dados: { ...base[0].dados, valor: { numero: 15, estado: 'aberto', branch: 'b' } } }], 'z'), false, 'PR aberto ⇒ não publicada (trilha.ts prs)');
-    const antigo = { ...base[0], ts: 'a', dados: { ...base[0].dados, valor: { numero: 14, estado: 'aberto', branch: 'b' } } };
-    const novo = { ...base[0], ts: 'b', dados: { ...base[0].dados, valor: { numero: 15, estado: 'mergeado', branch: 'b' } } };
-    assert.equal(publicadaPeloProduto([antigo, novo], 'z'), false, 'último mergeado MAS com outro PR aberto ⇒ não publicada (FIEL-1 b: nenhum aberto)');
-    assert.equal(publicadaPeloProduto([{ ts: 'a', tipo: 'entrega.fim', dados: { ok: true } }], 'z'), false, 'entrega.fim não é o critério do produto');
-    assert.equal(publicadaPeloProduto([], 'z'), false);
+    let n = 0;
+    const ev = (numero, estado, ts) => ({ sessao: 's', seq: ++n, ts, tipo: 'fato.medido', dados: { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: 'b' } } });
+    const Z = '2026-11-13T00:00:00.000Z';
+    const T = (h) => `2026-11-12T0${h}:00:00.000Z`;
+    assert.equal(await publicadaPeloProduto([ev(14, 'mergeado', T(1))], Z), true);
+    assert.equal(await publicadaPeloProduto([ev(14, 'mergeado', T(1)), ev(15, 'aberto', T(2))], Z), false, 'PR aberto ⇒ não publicada (critério do produto)');
+    assert.equal(await publicadaPeloProduto([ev(14, 'aberto', T(1)), ev(15, 'mergeado', T(2))], Z), false, 'último mergeado MAS com outro PR aberto ⇒ não publicada (FIEL-1 b: nenhum aberto)');
+    assert.equal(await publicadaPeloProduto([{ sessao: 's', seq: 1, ts: T(1), tipo: 'entrega.fim', dados: { ok: true } }], Z), false, 'entrega.fim não é o critério do produto');
+    assert.equal(await publicadaPeloProduto([ev(14, 'mergeado', T(1))], T(0)), false, 'medido depois do início não conta');
+    assert.equal(await publicadaPeloProduto([], Z), false);
   });
 
   test('semente-da-publicada-e-identificada-pelo-produto (F19: branch da cópia ⇒ GM-13, PR #14 mergeado)', async () => {
@@ -542,7 +560,7 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
     const { lerEstrito } = await import('../dist/diario.js');
     const lido = lerEstrito(dir);
     const eventos = lido.eventos ?? lido;
-    assert.equal(publicadaPeloProduto(eventos, '2026-11-13T00:00:00.000Z'), true, 'a semente que o runner grava é publicada pelo critério do produto');
+    assert.equal(await publicadaPeloProduto(eventos, '2026-11-13T00:00:00.000Z'), true, 'a semente que o runner grava é publicada pelo critério do produto');
     assert.equal(existsSync(join(base, '.harness', 'entregas', 'GM-12-semente')), false);
   });
 
@@ -553,6 +571,13 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
     writeFileSync(join(m.rundir, 'snapshot-falhou.log'), 'snapshot 7: erro\n');
     await assert.rejects(coletar(m.rundir, m.repo, CELULA, roteiroColeta(), { pasta: m.pasta, total: 1 }), /snapshot falhou: snapshot 7/);
     assert.match(readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), 'utf8'), /snapshot-falhou\.log/, 'o a1.exp grava a falha do snapshot');
+  });
+
+  test('LINHA_DECISAO-ancorada: so a linha que o produto desenha, nao "decidiu" solto', () => {
+    assert.equal(LINHA_DECISAO.test('RECENTE · 10:00 ● ELROND decidiu: escopo da T2'), true);
+    assert.equal(LINHA_DECISAO.test('  09:50 ● ELROND decidiu: escopo da T2'), true);
+    for (const l of ['ATENÇÃO · 2 consultas à Sombra sem decisão registrada, ninguém decidiu: ainda', 'o dono decidiu: seguir', 'RECENTE · 10:00 ✓ ELROND decidiu: x', 'RECENTE · 10:00 ● decidiu: x', 'texto 10:00 ● ELROND decidiu: x', 'RECENTE · 10:00 ● ELROND decidiu x'])
+      assert.equal(LINHA_DECISAO.test(l), false, l);
   });
 
   test('8f-mede-a-decisao-que-o-produto-desenha-e-nao-a-palavra-Sombra (render real)', async () => {

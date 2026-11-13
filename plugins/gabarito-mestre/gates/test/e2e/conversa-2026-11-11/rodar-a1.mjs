@@ -349,17 +349,15 @@ for (const [chave, valor] of [['pr', { numero: 14, estado: 'mergeado', branch: '
   if (a.status !== 0) throw new Error(`semente da entrega publicada: ${a.stderr}${a.stdout}`);
 }
 
-/** Publicada pelo critério do produto (trilha.ts `prs`): o último PR medido (maior número) está mergeado e nenhum está aberto. Só vale o medido até `inicio` (o que a execução gravar não conta). */
-export function publicadaPeloProduto(eventos, inicio) {
-  const por = new Map();
-  for (const e of eventos) {
-    if (e.tipo !== 'fato.medido' || e.dados?.chave !== 'pr' || !(e.ts <= inicio)) continue;
-    const v = e.dados.valor;
-    if (v && Number.isInteger(v.numero) && typeof v.estado === 'string') por.set(v.numero, v.estado);
-  }
-  if (por.size === 0) return false;
-  const ultimo = Math.max(...por.keys());
-  return por.get(ultimo) === 'mergeado' && ![...por.values()].includes('aberto');
+/**
+ * Publicada pelo critério do PRODUTO: pergunta a `trilhaDe` (dist/trilha.js) com a branch `enabler/<id>-a1`, o plano da `ba3986f` como 2º fato e `gh: ok`; com o 2º fato presente, a branch sozinha NÃO identifica a entrega só quando o último PR está mergeado e nenhum aberto (FIEL-1 b): `identificada === false` com `candidato === id` ⇒ publicada.
+ * Não reimplementa `prs` (privada em trilha.ts). Só vale o diário até `inicio` (o que a execução gravar não conta); diário que o produto não ordena ⇒ fase PR `?` ⇒ identificada ⇒ não publicada.
+ */
+export async function publicadaPeloProduto(eventos, inicio, id = 'GM-13') {
+  const { trilhaDe } = await import(pathToFileURL(join(GATES, 'dist', 'trilha.js')).href);
+  const ate = eventos.filter((e) => e.ts <= inicio);
+  const t = trilhaDe({ branch: `enabler/${id}-a1`, idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: [] }, ledger: false, gh: 'ok', ultimas: [] }, ate);
+  return t.identificada === false && t.candidato === id;
 }
 
 /**
@@ -616,7 +614,7 @@ export async function coletar(rundir, repo, celula, roteiro, { pasta = null, tot
       const dele = eventos.filter((e) => e._entrega === d);
       gravacoes[d] = { antes: dele.filter((e) => e.ts <= inicio).length, depois: dele.length };
       // publicada = o critério do produto sobre o que foi medido ANTES do início (a semente da cópia); o que a execução medir não vale
-      if (publicadaPeloProduto(dele, inicio)) publicadas.add(d);
+      if (await publicadaPeloProduto(dele, inicio, d)) publicadas.add(d);
     }
   }
   const sends = existsSync(join(rundir, 'sends.log')) ? readFileSync(join(rundir, 'sends.log'), 'utf8').split('\n').filter(Boolean) : [];
