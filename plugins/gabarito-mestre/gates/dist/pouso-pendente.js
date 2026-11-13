@@ -4,6 +4,7 @@
  * Pouso pendente (GM-14 FIEL-14 e): a ÚNICA definição. `loop.mjs proxima` (via `proximaAcao`) e o painel (via `dependeDe`) a importam; nenhuma
  * outra regra decide se a conversa ainda precisa ser limpa. Pura e sem `node:` (o mod a importa).
  *
+ * Só vale com onboarding (FIEL-14 h): 2º argumento `onboarding === true`, senão `{pendente:false}`.
  * Pendente = existe `sessao.pouso` e nenhum `sessao.inicio {origem: 'clear'}` posterior (por `ts`, estrito) de OUTRA sessão que a do pouso
  * (nenhuma outra definição). `sessao.retomada` não tira o pendente; `startup` e `resume` (sessão paralela, retomada) também não. `ts` ilegível no início ⇒ ele não conta (falha para o lado de manter o pedido).
  */
@@ -11,8 +12,11 @@
 
 const msDe = (e        )         => (typeof e?.ts === 'string' ? Date.parse(e.ts) : Number.NaN);
 
-export function pousoPendente(eventos                             )                {
+export function pousoPendente(eventos                             , onboarding          )                {
   const nenhum                = { pendente: false, sessao: null, seq: null };
+  // FIEL-14 h: sem onboarding o diário não registra `sessao.inicio` (Q20), então um pendente nunca teria saída. O fato vem de quem chama
+  // (`temOnboarding` de `cartao-sessao.mjs`, a mesma leitura do cartão); ausente ou não verdadeiro ⇒ nunca pendente.
+  if (onboarding !== true) return nenhum;
   if (!Array.isArray(eventos)) return nenhum;
   let ultimo                = null;
   let ms = Number.NEGATIVE_INFINITY;

@@ -176,13 +176,22 @@ function doctorEmCache(root, pluginRoot, agora) {
   return { nivel: c.nivel ?? null, declarado: c.declarado ?? null, em: c.em, fonte: 'recalculado agora' };
 }
 
+/**
+ * O ÚNICO critério de onboarding (GM-14 FIEL-14 h): `fluxo.resolvidoEm` não vazio no harness.config.json LOCAL. O cartão (`coletar`), o `loop.mjs` e o
+ * `painel.mjs` o usam; nenhuma outra definição nem outra leitura (nunca o config de origin/HEAD).
+ */
+export const onboardingDe = (raw) => Boolean(raw && typeof raw === 'object' && raw.fluxo && typeof raw.fluxo === 'object' && typeof raw.fluxo.resolvidoEm === 'string' && raw.fluxo.resolvidoEm);
+/** `raiz` já resolvida (como no cartão: `resolverRaiz(cwd)`). Nunca lança. */
+export function temOnboarding(raiz) {
+  try { return onboardingDe(lerJson(join(raiz, 'harness.config.json'))); } catch { return false; }
+}
+
 export function coletar(cwd, pluginRoot, opts = {}) {
   const agora = opts.agora ? Date.parse(opts.agora) : Date.now();
   const root = resolverRaiz(cwd);
   const raw = lerJson(join(root, 'harness.config.json'));
   const base = { agora, root, semOnboarding: false, configInvalido: raw === undefined };
-  const fluxoOk = raw && typeof raw === 'object' && raw.fluxo && typeof raw.fluxo === 'object' && typeof raw.fluxo.resolvidoEm === 'string' && raw.fluxo.resolvidoEm;
-  if (!fluxoOk) return { ...base, semOnboarding: true };
+  if (!onboardingDe(raw)) return { ...base, semOnboarding: true };
 
   const config = {
     fluxo: { ...DEFAULTS.fluxo, ...raw.fluxo },
@@ -508,7 +517,8 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
   const raiz = ctx.root;
   // GM-14 T34 (FIEL-14 a): a sessão corrente do Claude Code, para a skill passar `--sessao <id>` ao `loop.mjs`. 1 linha, logo após o cabeçalho;
   // id fora da forma do diário (`[A-Za-z0-9._-]{1,128}`) não entra (nada do stdin vira linha de instrução sem filtro).
-  if (entrada.sessionId !== null && /^[A-Za-z0-9._-]{1,128}$/.test(entrada.sessionId)) linhas = [linhas[0], `sessão ${entrada.sessionId}`, ...linhas.slice(1)];
+  // Sem onboarding o cartão é 1 linha (G9, hooks/test/sessao.test.mjs): a linha de sessão não entra, e sem onboarding a regra de pouso não usa a sessão.
+  if (ctx.semOnboarding !== true && entrada.sessionId !== null && /^[A-Za-z0-9._-]{1,128}$/.test(entrada.sessionId)) linhas = [linhas[0], `sessão ${entrada.sessionId}`, ...linhas.slice(1)];
 
   let diario = null;
   try {

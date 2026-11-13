@@ -1573,46 +1573,48 @@ test('t36-historico-e-recente-dizem-a-sombra-liberou', async () => {
 });
 
 // ───────────────────────── GM-14 T34 (FIEL-14 e, f): pouso pendente é regra do produto
+/** `pousoPendente` COM onboarding (a regra da FIEL-14 e); o fato de onboarding vem de quem chama (FIEL-14 h). */
+const pp = (evs: Evento[] | null) => pousoPendente(evs, true);
 /** Como `loop.mjs proxima`: o sinal vem da regra única `pousoPendente` (o núcleo só o consome). */
-const viaCli = (p: Plano, evs: Evento[], s: Sinais) => proximaAcaoNucleo(p, evs, { ...s, pousoPendente: pousoPendente(evs).pendente } as Sinais);
+const viaCli = (p: Plano, evs: Evento[], s: Sinais) => proximaAcaoNucleo(p, evs, { ...s, pousoPendente: pp(evs).pendente } as Sinais);
 const pouso = (seq: number, seg: number, sessao = 'S1'): Evento => ev(seq, new Date(Date.UTC(2026, 10, 3, 1, 0, seg)).toISOString(), sessao, 'sessao.pouso', { percent: 55, x: 50, via: 'dono' });
 const inicio = (seq: number, seg: number, sessao: string, origem: string): Evento => ev(seq, new Date(Date.UTC(2026, 10, 3, 1, 0, seg)).toISOString(), sessao, 'sessao.inicio', { origem });
 
 test('pouso-pendente-tabela: clear de outra sessão tira; startup, resume e clear da mesma sessão não; clear anterior ao pouso não', async () => {
   const nada = { pendente: false, sessao: null, seq: null };
-  assert.deepEqual(pousoPendente([]), nada);
-  assert.deepEqual(pousoPendente(null), nada);
-  assert.deepEqual(pousoPendente([inicio(1, 1, 'S2', 'clear')]), nada);
-  assert.deepEqual(pousoPendente([pouso(1, 5)]), { pendente: true, sessao: 'S1', seq: 1 });
+  assert.deepEqual(pp([]), nada);
+  assert.deepEqual(pp(null), nada);
+  assert.deepEqual(pp([inicio(1, 1, 'S2', 'clear')]), nada);
+  assert.deepEqual(pp([pouso(1, 5)]), { pendente: true, sessao: 'S1', seq: 1 });
   // clear-de-outra-sessao-tira-pendente
-  assert.deepEqual(pousoPendente([pouso(1, 5), inicio(1, 9, 'S2', 'clear')]), nada);
+  assert.deepEqual(pp([pouso(1, 5), inicio(1, 9, 'S2', 'clear')]), nada);
   // sessao-paralela-startup-nao-tira-pendente / resume-nao-tira-pendente
-  assert.equal(pousoPendente([pouso(1, 5), inicio(1, 9, 'S2', 'startup')]).pendente, true);
-  assert.equal(pousoPendente([pouso(1, 5), inicio(1, 9, 'S2', 'resume')]).pendente, true);
-  assert.equal(pousoPendente([pouso(1, 5), inicio(1, 9, 'S2', 'compact')]).pendente, true);
+  assert.equal(pp([pouso(1, 5), inicio(1, 9, 'S2', 'startup')]).pendente, true);
+  assert.equal(pp([pouso(1, 5), inicio(1, 9, 'S2', 'resume')]).pendente, true);
+  assert.equal(pp([pouso(1, 5), inicio(1, 9, 'S2', 'compact')]).pendente, true);
   // a mesma sessão não se limpa a si mesma; clear anterior ao pouso não vale; ts igual não é posterior
-  assert.equal(pousoPendente([pouso(1, 5), inicio(2, 9, 'S1', 'clear')]).pendente, true);
-  assert.equal(pousoPendente([inicio(1, 1, 'S2', 'clear'), pouso(2, 5)]).pendente, true);
-  assert.equal(pousoPendente([pouso(1, 5), inicio(1, 5, 'S2', 'clear')]).pendente, true);
+  assert.equal(pp([pouso(1, 5), inicio(2, 9, 'S1', 'clear')]).pendente, true);
+  assert.equal(pp([inicio(1, 1, 'S2', 'clear'), pouso(2, 5)]).pendente, true);
+  assert.equal(pp([pouso(1, 5), inicio(1, 5, 'S2', 'clear')]).pendente, true);
   // novo pouso depois do clear volta a pedir (D-W3); o seq devolvido é o do último
-  assert.deepEqual(pousoPendente([pouso(1, 5), inicio(1, 9, 'S2', 'clear'), pouso(2, 12, 'S2')]), { pendente: true, sessao: 'S2', seq: 2 });
+  assert.deepEqual(pp([pouso(1, 5), inicio(1, 9, 'S2', 'clear'), pouso(2, 12, 'S2')]), { pendente: true, sessao: 'S2', seq: 2 });
   // a ordem do array não manda: vale o ts
-  assert.deepEqual(pousoPendente([inicio(1, 9, 'S2', 'clear'), pouso(1, 5)]), nada);
+  assert.deepEqual(pp([inicio(1, 9, 'S2', 'clear'), pouso(1, 5)]), nada);
   // `sessao.retomada` (de qualquer via) sozinha NÃO tira o pendente (FIEL-14 e: só `sessao.inicio {origem:'clear'}` de outra sessão)
   const ret = (seq: number, seg: number, dados: Record<string, unknown>) => ev(seq, new Date(Date.UTC(2026, 10, 3, 1, 0, seg)).toISOString(), 'S1', 'sessao.retomada', dados);
-  assert.equal(pousoPendente([pouso(1, 5), ret(2, 9, { via: 'mod', chars: 5 })]).pendente, true);
-  assert.equal(pousoPendente([pouso(1, 5), ret(2, 9, { via: 'dono' })]).pendente, true);
-  assert.equal(pousoPendente([pouso(1, 5), ret(2, 9, {})]).pendente, true);
+  assert.equal(pp([pouso(1, 5), ret(2, 9, { via: 'mod', chars: 5 })]).pendente, true);
+  assert.equal(pp([pouso(1, 5), ret(2, 9, { via: 'dono' })]).pendente, true);
+  assert.equal(pp([pouso(1, 5), ret(2, 9, {})]).pendente, true);
   // origem fora da forma não limpa
-  assert.equal(pousoPendente([pouso(1, 5), ev(1, new Date(Date.UTC(2026, 10, 3, 1, 0, 9)).toISOString(), 'S2', 'sessao.inicio', {})]).pendente, true);
+  assert.equal(pp([pouso(1, 5), ev(1, new Date(Date.UTC(2026, 10, 3, 1, 0, 9)).toISOString(), 'S2', 'sessao.inicio', {})]).pendente, true);
 });
 
 test('sessao.retomada sozinha não tira o pendente (via mod, via dono, sem via); com o clear de outra sessão, tira', () => {
   const ret = (seq: number, seg: number, dados: Record<string, unknown>) => ev(seq, new Date(Date.UTC(2026, 10, 3, 1, 0, seg)).toISOString(), 'S1', 'sessao.retomada', dados);
   for (const dados of [{ via: 'mod', chars: 5 }, { via: 'dono' }, {}]) {
-    assert.deepEqual(pousoPendente([pouso(1, 5), ret(2, 9, dados)]), { pendente: true, sessao: 'S1', seq: 1 }, JSON.stringify(dados));
+    assert.deepEqual(pp([pouso(1, 5), ret(2, 9, dados)]), { pendente: true, sessao: 'S1', seq: 1 }, JSON.stringify(dados));
   }
-  assert.equal(pousoPendente([pouso(1, 5), inicio(1, 8, 'S2', 'clear'), ret(2, 9, { via: 'mod' })]).pendente, false);
+  assert.equal(pp([pouso(1, 5), inicio(1, 8, 'S2', 'clear'), ret(2, 9, { via: 'mod' })]).pendente, false);
 });
 
 test('pouso-pendente-chave-por-pouso: o estado do painel carrega pousoPendente.seq e a chavePouso do mod dá chave nova a cada pouso (FIEL-14 d)', async () => {
@@ -1622,7 +1624,7 @@ test('pouso-pendente-chave-por-pouso: o estado do painel carrega pousoPendente.s
   const entrada = {
     decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
     pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T03:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
-    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26,
+    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26, onboarding: true,
     fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['a'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 'S1' },
   };
   const base = diario(ini('a'), con('a'));
@@ -1679,7 +1681,7 @@ test('pouso-pendente-regra-unica: o painel e o núcleo dão a mesma resposta par
   const entrada = {
     decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
     pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T03:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
-    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26,
+    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26, onboarding: true,
     fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['a'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 'S1' },
   };
   const casos: [string, Evento[]][] = [
@@ -1694,8 +1696,8 @@ test('pouso-pendente-regra-unica: o painel e o núcleo dão a mesma resposta par
     const evs = [...diario(ini('a'), con('a')), ...extra];
     const noPainel = JSON.stringify(projetarPainel(p, evs, entrada as never).depende ?? []).includes('limpar a conversa');
     const noNucleo = viaCli(plano(['a']), evs, sinais()).tipo === 'pousar';
-    assert.equal(noPainel, pousoPendente(evs).pendente, `painel: ${nome}`);
-    assert.equal(noNucleo, pousoPendente(evs).pendente, `núcleo: ${nome}`);
+    assert.equal(noPainel, pp(evs).pendente, `painel: ${nome}`);
+    assert.equal(noNucleo, pp(evs).pendente, `núcleo: ${nome}`);
   }
   for (const f of ['../src/painel.ts', '../scripts/loop.mjs']) {
     const fonte = readFileSync(fileURLToPath(new URL(f, import.meta.url)), 'utf8');
@@ -1703,4 +1705,36 @@ test('pouso-pendente-regra-unica: o painel e o núcleo dão a mesma resposta par
     assert.doesNotMatch(fonte, /origem\s*===?\s*'clear'/, `${f} não pode ter regra própria`);
     assert.doesNotMatch(fonte, /\[[^\]]*'clear'[^\]]*\]\s*\.includes\(|'sessao\.inicio'/, `${f} não pode ter regra própria (includes / tipo sessao.inicio)`);
   }
+});
+
+test('pouso-pendente-sem-onboarding-nunca-pendente (FIEL-14 h): sem o fato de onboarding a regra devolve não pendente, com ou sem sessao.inicio; com onboarding, pendente', () => {
+  const nada = { pendente: false, sessao: null, seq: null };
+  const evs = [pouso(1, 5)];
+  assert.deepEqual(pousoPendente(evs, false), nada);
+  assert.deepEqual(pousoPendente(evs, undefined as never), nada);
+  assert.deepEqual(pousoPendente(evs), nada, 'sem o 2º argumento: fail-closed para "não pendente"');
+  assert.deepEqual(pousoPendente([pouso(1, 5), inicio(1, 9, 'S2', 'startup')], false), nada);
+  assert.deepEqual(pousoPendente(evs, true), { pendente: true, sessao: 'S1', seq: 1 });
+  // o núcleo, ligado como o CLI liga: sem onboarding o pouso não trava `proxima` (comportamento da 2.0)
+  const base = diario(ini('a'), con('a'));
+  const semOnb = proximaAcaoNucleo(plano(['a']), [...base, pouso(10, 30)], { ...sinais(), pousoPendente: pousoPendente([...base, pouso(10, 30)], false).pendente } as Sinais);
+  assert.equal(semOnb.tipo, 'despachar');
+});
+
+test('pouso-pendente-painel-sem-onboarding: o painel só mostra "limpar a conversa" com o fato onboarding verdadeiro na entrada', async () => {
+  const { projetarPainel } = await import('../src/painel.ts');
+  const p: Plano = { entrega: 'GM-14', tasks: [{ id: 'a', deps: [], arquivos: [] }] };
+  const entrada = {
+    decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+    pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T03:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
+    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26,
+    fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['a'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 'S1' },
+  };
+  const evs = [...diario(ini('a'), con('a')), pouso(10, 30)];
+  const txt = (o: Record<string, unknown>) => JSON.stringify(projetarPainel(p, evs, { ...entrada, ...o } as never).depende ?? []);
+  assert.equal(txt({ onboarding: true }).includes('limpar a conversa'), true);
+  assert.equal(txt({ onboarding: false }).includes('limpar a conversa'), false);
+  assert.equal(txt({}).includes('limpar a conversa'), false);
+  const e = projetarPainel(p, evs, { ...entrada, onboarding: false } as never) as unknown as { pousoPendente: { pendente: boolean } };
+  assert.equal(e.pousoPendente.pendente, false);
 });

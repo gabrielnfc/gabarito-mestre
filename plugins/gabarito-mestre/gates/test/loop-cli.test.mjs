@@ -5272,7 +5272,8 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
     assert.equal(j.ok, true, r.stdout + r.stderr);
     return JSON.stringify(j.estado.depende ?? []);
   };
-  const plano1 = () => ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }]) });
+  const ONBOARDING = { ...CONFIG_PADRAO, fluxo: { resolvidoEm: '2026-11-01T00:00:00Z' } }; // repo com onboarding: a FIEL-14 (e) vale inteira
+  const plano1 = (config = ONBOARDING) => ambiente({ config, plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }]) });
 
   test('pousar-a-partir-de-x-com-contexto-da-sessao: 55 % da sessão S1 ⇒ proxima --sessao S1 devolve pousar e mostra o percent', () => {
     const amb = plano1();
@@ -5376,6 +5377,40 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
     inicioDe(amb, 'S2', 'clear');
     assert.equal(amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao.tipo, 'despachar');
     assert.doesNotMatch(painel(amb), /limpar a conversa/);
+  });
+
+  test('proxima-sem-onboarding-nao-trava-pelo-pouso (FIEL-14 h): sem fluxo.resolvidoEm o pouso gravado não trava proxima nem o painel; com onboarding trava (controle)', () => {
+    const amb = plano1(CONFIG_PADRAO);
+    assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    const r = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.acao.tipo, 'despachar', JSON.stringify(r.j.acao));
+    assert.doesNotMatch(painel(amb), /limpar a conversa/);
+    const com = plano1();
+    assert.equal(com.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    assert.deepEqual(com.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    assert.match(painel(com), /limpar a conversa/);
+  });
+
+  test('pouso-onboarding-le-config-local (FIEL-14 h): origin/HEAD com fluxo.resolvidoEm e config local sem ⇒ não pendente; o inverso ⇒ pendente', () => {
+    const amb = plano1(CONFIG_PADRAO);
+    comOrigin(amb, ONBOARDING);
+    assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    assert.equal(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao.tipo, 'despachar');
+    assert.doesNotMatch(painel(amb), /limpar a conversa/);
+    const inv = plano1();
+    comOrigin(inv, CONFIG_PADRAO);
+    assert.equal(inv.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    assert.deepEqual(inv.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    assert.match(painel(inv), /limpar a conversa/);
+  });
+
+  test('pouso-onboarding-criterio-unico: loop.mjs e painel.mjs importam temOnboarding de cartao-sessao.mjs e não têm critério próprio', () => {
+    for (const f of ['loop.mjs', 'painel.mjs']) {
+      const fonte = readFileSync(join(AQUI, '..', 'scripts', f), 'utf8');
+      assert.match(fonte, /import \{[^}]*\btemOnboarding\b[^}]*\} from '\.\/cartao-sessao\.mjs'/, f);
+      assert.doesNotMatch(fonte, /resolvidoEm/, `${f} não pode ler o critério de onboarding por conta própria`);
+    }
   });
 
   test('instalar-ignora-contexto: o .gitignore da raiz ignora .harness/contexto/', () => {

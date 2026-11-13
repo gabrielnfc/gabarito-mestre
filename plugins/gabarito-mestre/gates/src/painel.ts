@@ -550,7 +550,7 @@ function projetarLegado(plano: Plano, eventos: Evento[] | null, entrada: Entrada
  * `ultima`: a última entrega e o estado em palavras (o núcleo não lê pastas); `fora`: fora de um repositório git.
  */
 export type EntradaNova = EntradaPainel & {
-  fatos?: FatosTrilha; fontesFalhas?: string[]; pousoPendente?: boolean; desatualizadoS?: number | null; fora?: boolean;
+  fatos?: FatosTrilha; fontesFalhas?: string[]; pousoPendente?: boolean; onboarding?: boolean; desatualizadoS?: number | null; fora?: boolean;
   ultima?: { id: string; estado: string | null } | null;
 };
 
@@ -630,7 +630,7 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
   const abertas = perguntasAbertas(lista, trilha, { sessao: typeof fatos.sessao === 'string' ? fatos.sessao : null, ...(Array.isArray(fatos.ultimas) ? { ultimas: fatos.ultimas } : {}) })
     .filter((q) => q.gatilho !== 'pendencia' && q.gatilho !== 'ideia'); // pendência (3) e ideia (4) são itens de `dependeDe`, com o botão "feito"/"visto"
   const pergunta = abertas[0] ?? null;
-  const pousoDe = pousoPendente(eventos);
+  const pousoDe = pousoPendente(eventos, entrada.onboarding === true);
   let depende = dependeDe(trilha, lista, legado.depende, { falhou: fontes }, entrada.pousoPendente === true || pousoDe.pendente,
     { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao });
   if (pergunta !== null) depende = depende.filter((i) => i.motivo !== NADA);

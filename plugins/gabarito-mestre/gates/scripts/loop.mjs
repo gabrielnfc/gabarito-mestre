@@ -72,6 +72,7 @@ import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { formaInvalida, formaNaGravacao, MOTIVOS_REENTREGA, REQ_RE } from '../dist/formas.js';
 import { estadoDe, ordenar, podeIntegrar, proximaAcao, tasksCongeladas } from '../dist/loop.js';
 import { pousoPendente } from '../dist/pouso-pendente.js';
+import { temOnboarding } from './cartao-sessao.mjs';
 import { normalizarCaminho, validarPlano } from '../dist/plano.js';
 import { contarConsultas, hashPergunta, projetarDecisoes, textoAncora, trechoDoReq } from '../dist/sombra.js';
 import { vigentes } from '../dist/diario-puro.js';
@@ -1356,7 +1357,7 @@ function proxima(c, plano, flags) {
   aviso.push(...avisoOrigin);
   if (cfg === null) aviso.push('harness.config.json ausente');
   // FIEL-14 e: a regra única (`pouso-pendente.ts`), a mesma que o painel passa a `dependeDe`.
-  const acao = proximaAcao(plano, eventos, { ...sinais, politica: pol.politica, pousoPendente: pousoPendente(eventos).pendente });
+  const acao = proximaAcao(plano, eventos, { ...sinais, politica: pol.politica, pousoPendente: pousoPendente(eventos, temOnboarding(c.raiz)).pendente });
   if (acao.tipo === 'parar' && acao.motivo === 'diario_invalido') {
     throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições (evento fora de ordem ou de task desconhecida)', { acao, sinais });
   }

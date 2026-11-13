@@ -40,6 +40,7 @@ import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
 import { lerX } from '../dist/pouso.js';
 import { idDaBranch, trilhaDe } from '../dist/trilha.js';
+import { temOnboarding } from './cartao-sessao.mjs';
 import { carregarPlano, checkoutDaSessao, contexto, lerDiarioEstrito, lerSpec, lerSpecs, tetoDaSombra } from './loop.mjs';
 import { decisaoDe, pausado, prepararLeitura } from './entrega.mjs';
 import { medir } from './painel-medir.mjs';
@@ -561,6 +562,7 @@ export function estadoDoPainel(cwd, opts = {}) {
       fatos,
       fontesFalhas: fontes,
       fora: raiz === null,
+      onboarding: raiz !== null && temOnboarding(raiz), // FIEL-14 h: o mesmo critério e a mesma leitura do cartão (config LOCAL)
       ultima: ativ.ultima,
     };
     return { ok: true, estado: (opts.projetar ?? projetarPainel)(plano, eventos, entrada), avisos };
