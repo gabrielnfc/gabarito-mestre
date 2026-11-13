@@ -449,7 +449,11 @@
       "arquivos": [
         "plugins/gabarito-mestre/skills/gabarito-instalar/SKILL.md",
         "plugins/gabarito-mestre/skills/gabarito-instalar/trocar.md",
-        "plugins/gabarito-mestre/gates/test/onboarding-skill.test.mjs"
+        "plugins/gabarito-mestre/gates/test/onboarding-skill.test.mjs",
+        "plugins/gabarito-mestre/gates/scripts/onboarding-painel.mjs",
+        "plugins/gabarito-mestre/gates/scripts/onboarding.mjs",
+        "plugins/gabarito-mestre/gates/test/onboarding-painel.test.mjs",
+        "plugins/gabarito-mestre/scripts/test/texto.test.sh"
       ],
       "reqs": [
         "REQ-ONB-2",
