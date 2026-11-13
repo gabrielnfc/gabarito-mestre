@@ -73,3 +73,10 @@ Rode cada item como sonda sua e relate o resultado:
 - P16 (GM-14 23:13, M 1×): revisor sob P16 roda também testes que leem o arquivo tocado (git grep do nome em test/). T14 aprovada r2 quebrou hooks-json.test.mjs só no integrar. Métrica: integrar vermelho por teste de outro arquivo que lê arquivo da task.
 - P18 (GM-14 08:32, M 1×): antes de `concluir` correção/reentrega, orquestrador roda 1× os testes dos arquivos tocados. T21 correção relatou verde com 4 vermelhos. Métrica: review reprovado por teste vermelho no HEAD.
 - **Não commitar na base durante `integrar`** (GM-14 2026-11-12 22:45, M 1×): commit de plano.json em enabler com integrar T21 em curso ⇒ merge --ff-only falhou, integrar perdido (~15 min). Commits de plano só com `pgrep -f 'loop.mjs integrar'` vazio.
+
+## Nunca travar a noite (dono, 2026-11-13, após 6 h parados)
+
+- Integrou task que toca `gates/`, `hooks/`, `mod/` ou o diário ⇒ `bash .claude-tmp/atualizar-plugin-local.sh` na hora (autorizado, D-V2) e pedir `/reload-plugins` ao dono enquanto ele está presente.
+- Nunca gravar no diário evento de tipo ou origem nova com o CLI da branch antes de o plugin instalado conhecê-lo.
+- Antes de o dono sair: simular os próximos despachos e listar em 1 lote tudo que só ele destrava nas próximas horas.
+- Despacho barrado ⇒ seguir com o permitido (review, Sombra, emenda, plano); bloqueio > 30 min ⇒ 1 aviso com o comando pronto.
