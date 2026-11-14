@@ -282,7 +282,7 @@ test('skill-loop-release_pr-empurra-e-abre-o-pr', () => {
 const COMANDO = join(PLUGIN, 'commands/gabarito.md');
 const VIRADA = join(PLUGIN, 'docs/virada-2.1.md');
 const AGENTS = join(PLUGIN, 'reference/AGENTS.md');
-const LIMITE_LOCAL = 'Pane (lateral): ao lado só em tela cheia com ≥ 110 colunas; fora disso a própria plataforma a põe acima da linha de digitar — sempre um só local';
+const LIMITE_LOCAL = 'Pane (lateral): a plataforma só a põe sozinha com ≥ 144 colunas (ao lado em tela cheia, acima da linha de digitar nas outras); abaixo disso o painel avisa e a Pane abre quando você pede /gabarito painel, em qualquer largura — sempre um só local';
 const lerSkill = () => readFileSync(SKILL_LOOP, 'utf8');
 
 /** Todo exemplo de `proxima`/`pousar` num texto: código inline `loop.mjs proxima|pousar …` ou `proxima|pousar --…`; devolve os que NÃO têm `--sessao`. */

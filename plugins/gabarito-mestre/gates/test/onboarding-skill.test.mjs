@@ -98,7 +98,7 @@ function violacoesComuns(texto) {
 }
 
 /** O limite do painel em palavras de spec:70 (decisão Sombra 91a18fea): é a única frase em que "ao lado" e "acima" ficam soltos. */
-const LIMITE = 'fica ao lado em tela cheia com 110 colunas ou mais, senão o Claude Code o põe acima da linha de digitar';
+const LIMITE = 'a plataforma só o põe sozinho com 144 colunas ou mais (ao lado da conversa em tela cheia); abaixo disso ele espera e abre quando você pede /gabarito painel';
 /** REQ-ONB-2: nenhum "ao lado" sem "da conversa" e nenhum "acima" sem "da linha de digitar" fora da frase do limite. */
 function violacoesLocal(texto, nome) {
   const v = [];
@@ -644,7 +644,7 @@ test('skill-local-nos-dois-textos', () => {
   }
   // a frase do limite é a única exceção, e só inteira
   assert.deepEqual(violacoesLocal(`x ${LIMITE} y`, 'T'), []);
-  assert.ok(violacoesLocal('x fica ao lado em tela cheia com 110 colunas ou mais y', 'T').length > 0);
+  assert.ok(violacoesLocal('x a plataforma só o põe sozinho com 144 colunas ou mais (ao lado em tela cheia) y', 'T').length > 0);
 });
 
 test('skill-sem-r19', () => {

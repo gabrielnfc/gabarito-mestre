@@ -26,7 +26,7 @@ const novoDir = () => { const d = realpathSync(mkdtempSync(join(tmpdir(), 'gm-pa
 const CFG = 'harness.config.json';
 const gravarCfg = (raiz, texto) => writeFileSync(join(raiz, CFG), texto);
 const lerCfg = (raiz) => JSON.parse(readFileSync(join(raiz, CFG), 'utf8'));
-const FRASE_LIMITE = 'fica ao lado em tela cheia com 110 colunas ou mais, senão o Claude Code o põe acima da linha de digitar';
+const FRASE_LIMITE = 'a plataforma só o põe sozinho com 144 colunas ou mais (ao lado da conversa em tela cheia); abaixo disso ele espera e abre quando você pede /gabarito painel';
 const cli = (args) => {
   const r = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
   return { rc: r.status, saida: JSON.parse(r.stdout) };

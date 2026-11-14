@@ -4,7 +4,7 @@ Para quem usa o Gabarito Mestre. O que mudou em detalhe está no `CHANGELOG.md`,
 
 ## O que muda da 2.0
 
-- **Um painel só, em um local só.** Você escolhe onde ele fica: ao lado da conversa (padrão; só em tela cheia com 110 colunas ou mais, senão a plataforma o põe acima da linha de digitar) ou acima da linha de digitar. Nunca os dois ao mesmo tempo.
+- **Um painel só, em um local só.** Você escolhe onde ele fica: ao lado da conversa (padrão; a plataforma só o põe sozinho com 144 colunas ou mais (ao lado da conversa em tela cheia); abaixo disso ele espera e abre quando você pede /gabarito painel) ou acima da linha de digitar. Nunca os dois ao mesmo tempo.
 - **O painel diz o que depende de você**, mesmo antes de existir uma entrega em curso, e só mostra o que tem registro: sem fonte, aparece "?" em vez de um número inventado.
 - **O orquestrador anota na hora.** Ideia nova, desvio, mudança de assunto, dúvida que só você resolve e tarefa sua fora da entrega viram uma anotação de uma linha, nas palavras dele, sem plano e sem interromper o trabalho.
 - **O chat fica mais limpo.** As linhas de ferramenta aparecem em linguagem natural ("consultou 3 arquivos"). Quem prefere o texto cru escolhe `/gabarito chat cru`.
@@ -14,7 +14,7 @@ Para quem usa o Gabarito Mestre. O que mudou em detalhe está no `CHANGELOG.md`,
 
 ## Onde fica o painel
 
-Pane (lateral): ao lado só em tela cheia com ≥ 110 colunas; fora disso a própria plataforma a põe acima da linha de digitar — sempre um só local. O gabarito nunca troca de local sozinho pela largura da janela.
+Pane (lateral): a plataforma só a põe sozinha com ≥ 144 colunas (ao lado em tela cheia, acima da linha de digitar nas outras); abaixo disso o painel avisa e a Pane abre quando você pede /gabarito painel, em qualquer largura — sempre um só local. O gabarito nunca troca de local sozinho pela largura da janela.
 
 Para trocar, digite `/gabarito painel lateral` ou `/gabarito painel acima`; para esconder, `/gabarito painel ocultar` (o aviso de PAROU e a pergunta aberta continuam aparecendo) e `/gabarito painel mostrar` para voltar. O painel precisa do mod do Claude Code.
 

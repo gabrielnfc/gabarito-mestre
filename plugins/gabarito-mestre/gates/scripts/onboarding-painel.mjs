@@ -16,7 +16,7 @@ const CONFIG = 'harness.config.json';
 const LOCAIS = ['lateral', 'acima'];
 const PADRAO = 'lateral';
 const ROTULO = { lateral: 'ao lado da conversa (padrão)', acima: 'acima da linha de digitar' };
-const TEXTO = 'Onde quer o painel? Pode ser ao lado da conversa (padrão; fica ao lado em tela cheia com 110 colunas ou mais, senão o Claude Code o põe acima da linha de digitar) ou acima da linha de digitar.';
+const TEXTO = 'Onde quer o painel? Pode ser ao lado da conversa (padrão; a plataforma só o põe sozinho com 144 colunas ou mais (ao lado da conversa em tela cheia); abaixo disso ele espera e abre quando você pede /gabarito painel) ou acima da linha de digitar.';
 const NOME_FRASE = { lateral: 'ao lado da conversa', acima: 'acima da linha de digitar' };
 
 const ehObjeto = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);

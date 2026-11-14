@@ -51,7 +51,7 @@ ou "continua pausado". Reconsulta que falha: "não sei".
 
 Com o mod, o mesmo `/gabarito` aceita mais: `painel ocultar|mostrar` (menos o PAROU e a pergunta aberta, que ficam), `painel lateral|acima` (onde o painel fica) e `chat cru|natural` (as linhas de ferramenta do chat em linguagem natural, ou cruas). Sem o mod, nada disto existe.
 
-Local do painel, com o limite da plataforma: Pane (lateral): ao lado só em tela cheia com ≥ 110 colunas; fora disso a própria plataforma a põe acima da linha de digitar — sempre um só local. O mod nunca troca de local sozinho pela largura; o padrão é `lateral`.
+Local do painel, com o limite da plataforma: Pane (lateral): a plataforma só a põe sozinha com ≥ 144 colunas (ao lado em tela cheia, acima da linha de digitar nas outras); abaixo disso o painel avisa e a Pane abre quando você pede /gabarito painel, em qualquer largura — sempre um só local. O mod nunca troca de local sozinho pela largura; o padrão é `lateral`.
 
 Limites declarados (cada item diz o que foi medido e o que não foi):
 - S1c NÃO MEDIDO: `hasSurvey` não teve teste real (0 renders de pesquisa em 19,5 min); a faixa devolve o render padrão quando há pesquisa.
