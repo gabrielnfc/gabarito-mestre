@@ -390,7 +390,8 @@ export function faixaUmaLinha(estado, opc = {}) {
   if (ehObj(estado.parar)) return { texto: com(limpar(`■ PAROU ${estado.parar.hora} ${estado.parar.texto}`)), cor: 'error', botoes };
   const q = perguntaDe(estado);
   if (q !== null) return { texto: com(limpar(q.texto)), cor: 'warning', botoes };
-  return aviso === null ? null : { texto: aviso, cor: 'warning', botoes };
+  // GM-14 T56 (emenda 62, spec:47): só o aviso ⇒ sem botão do topo; o botão é de PAROU ou da pergunta, e o aviso sai inteiro
+  return aviso === null ? null : { texto: aviso, cor: 'warning', botoes: [] };
 }
 
 /** Corta uma linha de segmentos a `max` colunas (o último segmento que passa é cortado; os seguintes saem). */

@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { pendenciasAprendizado } from '../../gates/dist/pendencias.js'
 import { CABECALHO, codigoPonte, PROMPT_RECUPERACAO, PROMPT_RETOMADA } from '../../gates/dist/pouso.js'
 import { validarStdinAgentes } from '../../gates/dist/painel-equipe.js'
-import { chavePouso, colunasDosBotoes, faixaDe, gravarContexto, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
+import { chavePouso, colunasDosBotoes, faixaDe, faixaUmaLinha, avisoPaneEspera, botoesDoTopo, gravarContexto, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
 import { lerLeitura, pousoPendente, tentativasDoPouso } from '../../gates/dist/pouso-pendente.js'
 import { proximaAcao } from '../../gates/dist/loop.js'
 import { pousoDaFronteira } from '../../gates/dist/pouso.js'
@@ -3862,6 +3862,32 @@ test('linha-unica-cabe-com-a-moldura-real: texto longo + botões (rótulo+4) + "
     expect(total).toBeLessThanOrEqual(larg)
     expect(total).toBeGreaterThan(larg - 12) // o corte não encolhe à toa: usa a linha
   }
+})
+// GM-14 T56 (emenda 62, spec:47 e :154): na linha única o botão é só do topo (PAROU ou pergunta); com só o aviso a linha não leva botão e o aviso cabe inteiro
+const RAZAO_110 = 'unasked below 110 columns (80 now): sem espaço'
+const dependeSpec = () => estadoNovo({ depende: [{ nivel: 'dono', motivo: 'aprovar a spec', acoes: [acaoP('aprovar a spec', '/gabarito-mestre:emenda aprovar 7')] }] })
+test('aviso-inteiro-com-depende-sem-pergunta-80x24: só o aviso na linha única ⇒ sem botão do topo e o aviso cabe inteiro em 80 colunas', () => {
+  const est = dependeSpec()
+  expect(botoesDoTopo(est, '/repo').length).toBe(1) // o item existe: sem a regra o botão entraria
+  const aviso = avisoPaneEspera(RAZAO_110)
+  const f = faixaUmaLinha(est, { root: '/repo', aviso }) as any
+  expect(f.texto).toBe(aviso)
+  expect(f.botoes).toEqual([])
+  const cabe = 80 - colunasDosBotoes(f.botoes) - RESERVA_BORDA
+  expect([...f.texto].length).toBeLessThanOrEqual(cabe)
+  expect(f.texto).toContain('110 colunas')
+})
+test('aviso-nao-regride-botoes: PAROU + aviso e pergunta aberta + aviso mantêm os botões do topo', () => {
+  const aviso = avisoPaneEspera(RAZAO_110)
+  const parar = estadoNovo({ parou: true, parar: { hora: '10:00', texto: 'falhou', acoes: [acaoP('retomar', '/gabarito-mestre:retomar')] } })
+  const fp = faixaUmaLinha(parar, { root: '/repo', aviso }) as any
+  expect(fp.botoes.length).toBe(1)
+  expect(fp.botoes).toEqual(botoesDoTopo(parar, '/repo'))
+  const perg = estadoNovo({ pergunta: PERGUNTA })
+  const fq = faixaUmaLinha(perg, { root: '/repo', aviso }) as any
+  expect(fq.botoes.length).toBe(2)
+  expect(fq.botoes).toEqual(botoesDoTopo(perg, '/repo'))
+  expect(fq.texto).toContain(aviso)
 })
 test('colunas-dos-botoes: cada botão é espaço + "[ " + rótulo + " ]"', () => {
   expect(colunasDosBotoes([{ rotulo: '1 uma nova' }])).toBe(15)
