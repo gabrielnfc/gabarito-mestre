@@ -963,8 +963,12 @@
     },
     {
       "id": "T47",
-      "titulo": "Painel em entrega publicada sem PAROU nem task nula",
-      "deps": [],
+      "titulo": "Painel em entrega publicada",
+      "deps": [
+        "T1",
+        "T18",
+        "T29"
+      ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/painel.mjs",
         "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs"
@@ -975,8 +979,23 @@
     },
     {
       "id": "T48",
-      "titulo": "Entrega publicada não recebe gravações",
-      "deps": [],
+      "titulo": "Publicada não recebe gravações",
+      "deps": [
+        "T1",
+        "T6",
+        "T9",
+        "T11",
+        "T15",
+        "T27",
+        "T28",
+        "T31",
+        "T32",
+        "T33",
+        "T34",
+        "T36",
+        "T38",
+        "T39"
+      ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/stop-loop.mjs",
         "plugins/gabarito-mestre/gates/scripts/loop.mjs",
@@ -994,9 +1013,13 @@
     },
     {
       "id": "T49",
-      "titulo": "Runner do A1 isolado e confiável",
+      "titulo": "Runner do A1 isolado",
       "deps": [
-        "T46"
+        "T46",
+        "T24",
+        "T42",
+        "T43",
+        "T44"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/rodar-a1.mjs",
@@ -1009,8 +1032,12 @@
     },
     {
       "id": "T50",
-      "titulo": "Pane colocada abaixo de 110 colunas",
-      "deps": [],
+      "titulo": "Pane abaixo de 110 colunas",
+      "deps": [
+        "T20",
+        "T30",
+        "T35"
+      ],
       "arquivos": [
         "plugins/gabarito-mestre/mod/painel.mjs",
         "plugins/gabarito-mestre/mod/test/gabarito.test.ts"
