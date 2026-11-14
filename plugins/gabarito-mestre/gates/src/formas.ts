@@ -14,7 +14,7 @@ import type { MotivoParar, Papel, TipoEvento } from './tipos.ts';
 export const TIPOS_EVENTO: readonly TipoEvento[] = Object.freeze([
   'producao.acesso', 'operacao.destrutiva', 'guarda.deny', 'guarda.ask', 'sessao.inicio', 'guarda.heartbeat', 'diario.recusa',
   'task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'ci.resultado', 'loop.parar', 'loop.pausa',
-  'custo.medicao', 'sessao.pouso', 'sessao.retomada',
+  'custo.medicao', 'sessao.pouso', 'sessao.pouso.tentativa', 'sessao.retomada',
   'sombra.consulta', 'decisao.sombra', 'desvio', 'descoberta', 'emenda.proposta', 'spec.emendada', 'emenda.rejeitada',
   'entrega.inicio', 'entrega.smoke', 'entrega.rollback', 'entrega.fim', 'entrega.agendada',
   'spec.aprovada', 'spec.aplicada', 'entrega.devolvida',
@@ -448,6 +448,8 @@ const REGRAS: ReadonlyMap<string, Regra> = new Map<string, Regra>([
   ['fato.medido', fatoMedido],
   ['nota', nota],
   ['dono.resposta', donoResposta],
+  // T53 (emenda 53): repetição do pouso pelo mod; `n` é a tentativa (2 ou 3; a 1ª é o próprio `sessao.pouso`), forma exata.
+  ['sessao.pouso.tentativa', (o) => primeiro(chaveExtra(o, ['n'], '`sessao.pouso.tentativa` carrega só {n}'), campo(o, 'n') === undefined ? obrigatorio('n') : (typeof campo(o, 'n') === 'number' && [2, 3].includes(campo(o, 'n') as number) ? null : 'campo `n` inválido: esperado 2 ou 3'))],
 ]);
 
 const SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

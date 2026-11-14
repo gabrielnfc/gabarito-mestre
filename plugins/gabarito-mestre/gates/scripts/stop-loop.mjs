@@ -368,10 +368,28 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   // onboarding (`temOnboarding`, config local). Sem onboarding nunca é pendente: o Stop segue como na 2.0.
   const dpp = await carregar('pouso-pendente');
   if (!dpp.ok) return dpp.aviso;
+  // GM-14 T53 (emendas 52 e 53): com o mod ativo o pouso se confirma por MEDIÇÃO. As leituras são os `.harness/contexto/<sessao>.json` (fonte `mod`, `em` <= 120 s)
+  // da sessão do hook, da que pousou e da do /clear; a regra é a mesma `pousoPendente` (nenhuma 2ª definição). Arquivo ausente/ilegível ⇒ sem leitura.
+  const sessaoAtual = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;
+  const xEnv = process.env.GABARITO_POUSO_X;
+  const xTeto = xEnv !== undefined && /^\d{1,3}$/.test(xEnv) && Number(xEnv) >= 1 && Number(xEnv) <= 100 ? Number(xEnv) : X_PADRAO;
+  let medicao;
   let pendente = false;
+  let noTeto = false;
   try {
-    pendente = dpp.mod.pousoPendente(eventos, temOnboarding(raiz)).pendente === true;
-  } catch { pendente = false; }
+    const leituras = [];
+    for (const id of dpp.mod.sessoesParaMedir(eventos, sessaoAtual)) {
+      if (!SESSAO_RE.test(id)) continue;
+      try {
+        const l = dpp.mod.lerLeitura(id, readFileSync(join(raiz, '.harness', 'contexto', `${id}.json`), 'utf8'));
+        if (l !== null) leituras.push(l);
+      } catch { /* sem arquivo: sem leitura */ }
+    }
+    medicao = { x: xTeto, agoraMs: Date.now(), sessaoAtual, leituras };
+    pendente = dpp.mod.pousoPendente(eventos, temOnboarding(raiz), medicao).pendente === true;
+    noTeto = dpp.mod.noTeto(medicao) === true;
+  } catch { pendente = false; noTeto = false; }
+  const modAtivo = medicao !== undefined && medicao.leituras.some((l) => l.fonte === 'mod' && Date.now() - l.emMs <= 600_000);
   let acao;
   let falhaAcao = null;
   try {
@@ -402,7 +420,14 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   if (acao.tipo === 'concluir') return avisoLiberacoes(eventos, entrega);
   // Pouso pendente: nada novo começa e o Stop não conta "sem progresso" (a conversa precisa de /clear, não de despacho).
   if (pendente && (acao.tipo === 'despachar' || acao.tipo === 'integrar' || acao.tipo === 'pousar' || (acao.tipo === 'parar' && acao.motivo === 'sem_pouso'))) {
-    return aviso(`Loop da entrega ${limpo(entrega)}: pouso pendente; digite /clear para retomar em conversa limpa (nada novo é despachado antes)`);
+    // com o mod ativo quem limpa é ele (T53): o Stop nunca pede despacho e não manda o dono digitar /clear
+    return aviso(modAtivo
+      ? `Loop da entrega ${limpo(entrega)}: aguardando o pouso do mod (a conversa precisa ser limpa e medida; nada novo é despachado antes)`
+      : `Loop da entrega ${limpo(entrega)}: pouso pendente; digite /clear para retomar em conversa limpa (nada novo é despachado antes)`);
+  }
+  // T53 (52 b): no teto de contexto o Stop também não pede despacho novo (revisor segue valendo: ele fecha a fronteira que o pouso espera)
+  if (noTeto && acao.tipo === 'despachar' && !acao.itens.some((i) => i?.papel === 'revisor')) {
+    return aviso(`Loop da entrega ${limpo(entrega)}: contexto no teto, aguardando o pouso do mod (nada novo é despachado antes)`);
   }
   if (acao.tipo !== 'despachar' && acao.tipo !== 'integrar') return saidaParaAcao(acao, entrega);
 

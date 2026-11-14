@@ -1441,6 +1441,58 @@ test('stop-pouso-limpo-volta-a-despachar: sessao.inicio clear de outra sessão d
   bloqueia(stop(raiz), /T1/);
 });
 
+// ------------------------------------------------------------------------------------- GM-14 T53 (emendas 52 e 53): o Stop no teto, com o mod medindo
+
+/** `.harness/contexto/<sessao>.json` como o mod grava: `{percent, fonte, em}` */
+const contextoDe = (raiz, sessao, percent, { fonte = 'mod', idadeMs = 0 } = {}) => {
+  mkdirSync(join(raiz, '.harness', 'contexto'), { recursive: true });
+  writeFileSync(join(raiz, '.harness', 'contexto', `${sessao}.json`), JSON.stringify({ percent, fonte, em: new Date(Date.now() - idadeMs).toISOString() }));
+};
+
+test('stop-no-teto-nao-pede-despacho: o incidente (pousar manual do dono, sem /clear, contexto 61 %, repo sem onboarding) ⇒ aguardando o pouso do mod; nunca block', () => {
+  const raiz = repo();
+  plano(raiz);
+  pousoDe(raiz); // `loop.mjs pousar` via dono; sem sessao.inicio de /clear
+  contextoDe(raiz, 'S1', 61);
+  for (let i = 0; i < 5; i += 1) avisa(stop(raiz), /aguardando o pouso do mod/);
+  assert.equal(linhasDoDiario(raiz).some((e) => e.tipo === 'loop.parar'), false);
+  assert.equal(existsSync(contadorDe(raiz)), false);
+});
+
+test('stop-teto-sem-pouso-ainda: contexto >= X (fronteira ainda sem pouso) e a ação é despachar implementador ⇒ não pede despacho', () => {
+  const raiz = repo();
+  plano(raiz);
+  contextoDe(raiz, 'S1', 61);
+  avisa(stop(raiz), /contexto no teto, aguardando o pouso do mod/);
+});
+
+test('stop-teto-revisor-segue: o revisor que fecha a fronteira continua sendo pedido no teto', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 's', TASK_APROVADA('s').slice(0, 2)); // concluída sem veredito: ação = despachar revisor
+  contextoDe(raiz, 'S1', 61);
+  bloqueia(stop(raiz), /T1/);
+});
+
+test('stop-pouso-confirmado-por-medicao-libera: a sessão nova (S1) medindo < X confirma, e o despacho volta', () => {
+  const raiz = repo();
+  plano(raiz);
+  pousoDe(raiz);
+  contextoDe(raiz, 'S1', 20);
+  bloqueia(stop(raiz), /T1/);
+});
+
+test('stop-leitura-que-nao-vale-nao-confirma: velha (> 120 s), da sessão que pousou ou de fonte transcript ⇒ continua aguardando o mod', () => {
+  for (const [sessao, opcoes] of [['S1', { idadeMs: 300_000 }], ['S0', {}], ['S1', { fonte: 'transcript' }]]) {
+    const raiz = repo();
+    plano(raiz);
+    pousoDe(raiz);
+    contextoDe(raiz, 'S0', 90); // o mod estava ativo na sessão que pousou
+    contextoDe(raiz, sessao, 20, opcoes);
+    avisa(stop(raiz), /aguardando o pouso do mod/);
+  }
+});
+
 // ------------------------------------------------------------------------------------- T48 (emenda 43, FIEL-1 b/c, asserção 8): entrega publicada
 
 const PR_MERGEADO = (sessao = 'pub') => ev(sessao, 1, 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 'mergeado', branch: 'wt/GM-10-8' } });

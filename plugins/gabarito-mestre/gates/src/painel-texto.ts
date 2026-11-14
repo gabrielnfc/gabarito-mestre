@@ -375,6 +375,11 @@ export function fraseHistorico(ev: Evento, ctx: CtxHistorico): FraseHistorico | 
       const pct = d('percent');
       return typeof pct === 'number' && Number.isFinite(pct) ? frase('▼', 'inactive', `pouso da sessão em ${Math.round(pct)}%`) : null;
     }
+    case 'sessao.pouso.tentativa': {
+      // T53: o tipo cru nunca aparece; só a frase com o número da tentativa
+      const n = d('n');
+      return n === 2 || n === 3 ? frase('▼', 'warning', `pouso repetido, tentativa ${n} de 3`) : null;
+    }
     case 'sessao.retomada':
       return frase('▶', 'inactive', 'sessão retomada');
     case 'entrega.inicio': {

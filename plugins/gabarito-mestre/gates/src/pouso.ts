@@ -119,6 +119,23 @@ export function analisarFronteira(eventos: unknown): AnaliseFronteira {
   return { consumida: ultimoDe('sessao.pouso') > veredito, motivo: null };
 }
 
+/**
+ * GM-14 T53 (emendas 52 e 53): com o mod, `sessao.pouso` posterior ao veredito NÃO consome a fronteira sozinho (o `loop.mjs pousar` do dono também o
+ * grava, sem /clear). Consumida só com a confirmação por medição (`situacaoDoPouso`, pouso-pendente.ts, a única definição). Sem veredito no diário
+ * não há fronteira (como em `analisarFronteira`, que segue intacto). `sessao.pouso.tentativa` não é `sessao.pouso`: nunca consome.
+ */
+export function fronteiraConfirmada(eventos: unknown, confirmado: boolean): AnaliseFronteira {
+  const a = analisarFronteira(eventos);
+  if (a.motivo !== null || !a.consumida) return a;
+  const temVeredito = Array.isArray(eventos) && eventos.some((e) => (e as Evento | null)?.tipo === 'review.veredito');
+  return temVeredito ? { consumida: confirmado === true, motivo: null } : a;
+}
+
+/** Há `review.veredito` e um `sessao.pouso` depois dele: o pouso desta fronteira existe e ainda precisa da confirmação (`situacaoDoPouso`). */
+export function pousoDaFronteira(eventos: unknown): boolean {
+  return fronteiraConfirmada(eventos, true).consumida && !fronteiraConfirmada(eventos, false).consumida;
+}
+
 const EM_VOO: readonly EstadoTask[] = ['implementando', 'corrigindo', 'em_revisao'];
 
 /**

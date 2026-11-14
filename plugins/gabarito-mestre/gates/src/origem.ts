@@ -21,7 +21,7 @@ const AUTOMATICOS: ReadonlySet<string> = new Set([
   'fato.medido', 'review.veredito', 'ci.resultado',
   'task.iniciada', 'task.concluida', 'task.integrada', 'task.reaberta',
   'entrega.inicio', 'entrega.smoke', 'entrega.rollback', 'entrega.fim', 'entrega.agendada', 'entrega.devolvida',
-  'sessao.inicio', 'sessao.pouso', 'sessao.retomada',
+  'sessao.inicio', 'sessao.pouso', 'sessao.pouso.tentativa', 'sessao.retomada',
 ]);
 
 /** Tabela fechada de origem; `dono.mensagem` e tipo fora dela ⇒ `null` (não aparecem). */

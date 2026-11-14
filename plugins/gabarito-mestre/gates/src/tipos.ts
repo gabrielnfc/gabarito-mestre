@@ -12,6 +12,7 @@ export type Ambiente = 'teste' | 'homolog' | 'prod' | 'desconhecido';
 /** Ação da ferramenta sobre o alvo (guarda). `Acao` é o botão do painel (E4); este era `Acao` até GM-12 T1. */
 export type AcaoFerramenta = 'leitura' | 'escrita' | 'execucao';
 export type Faixa = 'silencio' | 'log' | 'mostrar' | 'ask' | 'deny';
+/** `sessao.pouso.tentativa` (GM-14 T53, emenda 53): o mod repete o pouso; NÃO é `sessao.pouso` (nem consome fronteira, nem muda a chave do push). */
 export type TipoEvento =
   | 'producao.acesso'
   | 'operacao.destrutiva'
@@ -30,6 +31,7 @@ export type TipoEvento =
   | 'loop.pausa'
   | 'custo.medicao'
   | 'sessao.pouso'
+  | 'sessao.pouso.tentativa'
   | 'sessao.retomada'
   // E3 (GM-11): Sombra, emendas e entrega
   | 'sombra.consulta'

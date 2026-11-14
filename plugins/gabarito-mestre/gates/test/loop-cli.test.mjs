@@ -5413,6 +5413,27 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
     }
   });
 
+  test('pousar-manual-nao-consome-com-mod (T53, emenda 52 a): com o mod medindo, o pousar do dono grava o evento mas o /clear sozinho não tira o pendente; só a medição da sessão nova < X', () => {
+    const amb = plano1();
+    gravarCtx(amb, 'S1', { percent: 61, fonte: 'mod', em: agora() });
+    assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0); // grava, não recusa (a skill sem mod o usa)
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    assert.match(painel(amb), /limpar a conversa/);
+    // /clear aconteceu (sessao.inicio de S2) mas a leitura da S2 ainda está alta ⇒ o /clear não limpou: segue pendente
+    const ultimo = Math.max(...amb.eventos().map((e) => Date.parse(e.ts)));
+    const r = diario.append(amb.entregas, 'S2', { ts: new Date(ultimo + 1).toISOString(), autor: 't@t', sessao: 'S2', agente: 'orquestrador', tipo: 'sessao.inicio', dados: { origem: 'clear' } });
+    assert.ok(r.ok, JSON.stringify(r));
+    gravarCtx(amb, 'S2', { percent: 61, fonte: 'mod', em: agora() });
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    // leitura que não vale (fonte transcript) não confirma
+    gravarCtx(amb, 'S2', { percent: 20, fonte: 'transcript', em: agora() });
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    // medida pelo mod, < X, depois do /clear ⇒ confirmado: despacha
+    gravarCtx(amb, 'S2', { percent: 20, fonte: 'mod', em: agora() });
+    assert.equal(amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao.tipo, 'despachar');
+    assert.doesNotMatch(painel(amb), /limpar a conversa/);
+  });
+
   test('instalar-ignora-contexto: o .gitignore da raiz ignora .harness/contexto/', () => {
     const linhas = readFileSync(GITIGNORE_RAIZ, 'utf8').split('\n').map((l) => l.trim());
     assert.ok(linhas.includes('.harness/contexto/'));

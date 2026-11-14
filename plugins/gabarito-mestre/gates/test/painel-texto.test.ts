@@ -455,6 +455,7 @@ const TABELA: Caso[] = [
   ['dono liberou', 'task.reaberta', { task: 'T9', origem: 'dono' }, { glifo: '▶', cor: 'success', texto: 'dono liberou T9' }],
   ['pouso', 'sessao.pouso', { percent: 49.6 }, { glifo: '▼', cor: 'inactive', texto: 'pouso da sessão em 50%' }],
   ['retomada', 'sessao.retomada', {}, { glifo: '▶', cor: 'inactive', texto: 'sessão retomada' }],
+  ['pouso repetido (T53)', 'sessao.pouso.tentativa', { n: 2 }, { glifo: '▼', cor: 'warning', texto: 'pouso repetido, tentativa 2 de 3' }],
   ['entrega inicio', 'entrega.inicio', { politica: 'janela' }, { glifo: '▲', cor: 'warning', texto: 'entrega iniciada · janela' }],
   ['smoke ok', 'entrega.smoke', { ok: true }, { glifo: '✓', cor: 'success', texto: 'smoke ok' }],
   ['smoke falhou', 'entrega.smoke', { ok: false }, { glifo: '✗', cor: 'warning', texto: 'smoke falhou' }],
@@ -491,7 +492,7 @@ test('historico-formas-erradas-null', () => {
     ['decisao.sombra', { resposta: '' }], ['decisao.sombra', { resposta: 5 }],
     ['producao.acesso', { ambiente: 'prod', acao: 'leitura' }], ['producao.acesso', { ambiente: 'prod', acao: 'apagar', alvo: 'x' }],
     ['emenda.proposta', {}], ['spec.emendada', { proposta_seq: 0, origem: 'dono' }], ['spec.emendada', { proposta_seq: 2, origem: 'x' }], ['emenda.rejeitada', { origem: 'dono' }],
-    ['loop.pausa', { estado: 'outro' }], ['task.reaberta', { origem: 'dono' }], ['sessao.pouso', { percent: '49' }], ['sessao.pouso', {}],
+    ['loop.pausa', { estado: 'outro' }], ['task.reaberta', { origem: 'dono' }], ['sessao.pouso', { percent: '49' }], ['sessao.pouso', {}], ['sessao.pouso.tentativa', { n: 1 }], ['sessao.pouso.tentativa', {}],
     ['entrega.inicio', { politica: 'nunca' }], ['entrega.smoke', { ok: 'sim' }], ['entrega.rollback', {}], ['entrega.fim', { ok: 1 }],
     ['entrega.agendada', { quando: 'amanhã' }], ['entrega.agendada', { quando: 7 }], ['entrega.devolvida', { motivo: '  ' }], ['entrega.devolvida', {}],
   ];

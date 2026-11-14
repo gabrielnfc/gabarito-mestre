@@ -31,7 +31,7 @@ test('origem-tabela-cada-tipo', () => {
     'sessao.inicio': AUTO, 'guarda.heartbeat': null, 'diario.recusa': null,
     'task.iniciada': AUTO, 'task.concluida': AUTO, 'review.veredito': AUTO, 'task.integrada': AUTO, 'task.reaberta': AUTO,
     'ci.resultado': AUTO, 'loop.parar': null, 'loop.pausa': null, 'custo.medicao': null,
-    'sessao.pouso': AUTO, 'sessao.retomada': AUTO,
+    'sessao.pouso': AUTO, 'sessao.pouso.tentativa': AUTO, 'sessao.retomada': AUTO,
     'sombra.consulta': null, 'decisao.sombra': ORQ, 'desvio': null, 'descoberta': null,
     'emenda.proposta': null, 'spec.emendada': null, 'emenda.rejeitada': null,
     'entrega.inicio': AUTO, 'entrega.smoke': AUTO, 'entrega.rollback': AUTO, 'entrega.fim': AUTO, 'entrega.agendada': AUTO,

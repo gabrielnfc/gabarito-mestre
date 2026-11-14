@@ -701,6 +701,16 @@ function uniaoDoFonte(nome: string): string[] {
   return [...m[1].replace(/\/\/[^\n]*/g, '').matchAll(/'([^']+)'/g)].map((x) => x[1]);
 }
 
+// GM-14 T53 (emenda 53): `sessao.pouso.tentativa` é tipo próprio, forma exata {n: 2|3}.
+test('t53-pouso-tentativa-forma-fechada', () => {
+  ok('sessao.pouso.tentativa', { n: 2 });
+  ok('sessao.pouso.tentativa', { n: 3 });
+  for (const n of [1, 4, 0, 2.5, '2', null]) ruim('sessao.pouso.tentativa', { n }, /n/);
+  ruim('sessao.pouso.tentativa', {}, /n/);
+  ruim('sessao.pouso.tentativa', { n: 2, extra: 1 }, /extra/);
+  assert.ok(TIPOS_EVENTO.includes('sessao.pouso.tentativa' as never));
+});
+
 test('tipos-evento-cobre-a-uniao: TIPOS_EVENTO e MOTIVOS_PARAR são exatamente as uniões de tipos.ts, sem repetição', () => {
   const tipos = uniaoDoFonte('TipoEvento');
   assert.equal(new Set(TIPOS_EVENTO).size, TIPOS_EVENTO.length);
