@@ -201,7 +201,7 @@ for sec in '## Fluxo' '## Trocar um item' '## Modo --vincular' '## Proibido'; do
 done
 N5=$(grep -ci '^## Fase ' "$SI")
 check "SKILL.md instalar sem seção '## Fase ' (sem caixa)" '[ "'"$N5"'" -eq 0 ]' "achei $N5 seção(ões) de fase"
-check "SKILL.md instalar diz o local do painel e o limite ao fim do onboarding (GM-14 T21)" "grep -qF 'fica ao lado em tela cheia com 110 colunas ou mais, senão o Claude Code o põe acima da linha de digitar' '$SI'" "linha do painel ausente"
+check "SKILL.md instalar diz o local do painel e o limite ao fim do onboarding (GM-14 T21)" "grep -qF 'a plataforma só o põe sozinho com 144 colunas ou mais (ao lado da conversa em tela cheia, acima da linha de digitar nas outras); abaixo disso o painel avisa e ele abre quando você pede /gabarito painel, em qualquer largura' '$SI'" "linha do painel ausente"
 CG="$P/commands/gabarito.md"
 check "commands/gabarito.md (sem mod) explica pausar, retomar e que o painel precisa do mod" "grep -qF '/gabarito pausar   para o trabalho automático da entrega' '$CG' && grep -qF '/gabarito retomar  continua de onde parou' '$CG' && grep -qxF 'O painel precisa do mod; sem ele não há o painel.' '$CG'" "ajuda sem mod ausente"
 
@@ -385,7 +385,7 @@ echo "── GM-14 T22: nota da 2.1.0, limite do local do painel"
 V21="$P/docs/virada-2.1.md"
 CMDG="$P/commands/gabarito.md"
 SKL="$P/skills/gabarito-loop/SKILL.md"
-LIMITE_LOCAL='Pane (lateral): ao lado só em tela cheia com ≥ 110 colunas; fora disso a própria plataforma a põe acima da linha de digitar — sempre um só local'
+LIMITE_LOCAL='Pane (lateral): a plataforma só a põe sozinha com ≥ 144 colunas (ao lado em tela cheia, acima da linha de digitar nas outras); abaixo disso o painel avisa e a Pane abre quando você pede /gabarito painel, em qualquer largura — sempre um só local'
 check "texto-limite-do-local: a nota da 2.1.0 e o comando trazem a frase do limite, literal" '[ -f "$V21" ] && grep -qF "$LIMITE_LOCAL" "$V21" && grep -qF "$LIMITE_LOCAL" "$CMDG"' "frase do limite ausente da nota da virada ou do comando"
 # texto-local-nos-dois: linha com "ao lado" diz também "acima da linha de digitar" e vice-versa (nunca um local sozinho); skill, comando e nota
 local_sozinho() {
