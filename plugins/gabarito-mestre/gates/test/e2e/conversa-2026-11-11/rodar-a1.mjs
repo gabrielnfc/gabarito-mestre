@@ -5,7 +5,7 @@
  *
  *   rodar-a1.mjs --guarda  [--roteiro <arq>]         confere o roteiro (ausente ou sha diferente ⇒ não roda e diz por quê) e que nenhuma fala (≥ 20 caracteres) está em `git ls-files`
  *   rodar-a1.mjs --gerar   [--roteiro <arq>]         regrava `pontos.json`: {msg, sha256, chars} por ponto e o `esperado` GERADO PELO PRODUTO (nunca copiado do roteiro)
- *   rodar-a1.mjs --matriz  [--so <local-tamanho-cheia>] [--paralelo <n>] [--ignorar-ref <regex>]... [--roteiro <arq>]   as 8 execuções (local × tamanho × tela cheia) com `a1.exp`; passa = 8/8; células sob TMPDIR (fora do checkout real); `--paralelo` padrão 1
+ *   rodar-a1.mjs --matriz  [--so <local-tamanho-cheia>] [--paralelo <n>] [--roteiro <arq>]   as 8 execuções (local × tamanho × tela cheia) com `a1.exp`; passa = 8/8; células sob TMPDIR (fora do checkout real); `--paralelo` padrão 1
  *   rodar-a1.mjs avaliar <rundir> [--roteiro <arq>]   a avaliação da matriz sobre uma execução já gravada (offline, não abre claude)
  *   rodar-a1.mjs snapshot <repo> <rundir> <n>        (chamado pelo `a1.exp`) grava o `estado` do produto no ponto n
  *
@@ -16,7 +16,7 @@
  * escreveu o código não as abriu: o que nele toca o TUI (`a1.exp`, o observador de Pane, a leitura do transcript) é presumido até a 1ª execução real (T25).
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -303,6 +303,8 @@ export const ASSERCOES = Object.freeze([
     const dbg = Array.isArray(ev.placementsDebug) ? ev.placementsDebug : [];
     // as duas fontes da plataforma: `$.ui.panes()` (observador) e o `ui.open … placed|waits unplaced` do debug.log; sem leitura da plataforma nada foi medido
     if (ev.panesObservadas !== true) return res(false, 'a plataforma nunca devolveu a lista de panes ao observador: não medida');
+    // ausência de `ui.open` só é prova se o debug.log da plataforma existe e o nosso plugin aparece carregado nele (senão "nenhuma linha" é silêncio, não medida)
+    if (ev.debugLogAtivo !== true) return res(false, 'sem debug.log da plataforma com o gabarito-mestre carregado: não medida');
     if (esperado === null) return res(vistos.length === 0 && dbg.length === 0, `placement esperado null (acima); lido ${JSON.stringify(vistos)}; ui.open no debug.log ${dbg.length}`);
     if (dbg.length === 0) return res(false, 'sem "ui.open … placed" no debug.log: não medida');
     const unplaced = dbg.filter((d) => d.estado === 'unplaced');
@@ -715,6 +717,7 @@ export async function coletar(rundir, repo, celula, roteiro, { pasta = null, tot
     panes: (ultimo?.panes ?? []).filter((p) => p.placement !== null),
     // as fontes da plataforma para a asserção 12: o observador chegou a ler a lista de panes? e o que o debug.log diz do `ui.open` do painel
     panesObservadas: obs.some((e) => e.ev === 'estado' && Array.isArray(e.panes)),
+    debugLogAtivo: existsSync(join(rundir, 'debug.log')) && pluginCarregou(readFileSync(join(rundir, 'debug.log'), 'utf8')).ok,
     placementsDebug: placementsDoDebugLog(existsSync(join(rundir, 'debug.log')) ? readFileSync(join(rundir, 'debug.log'), 'utf8') : ''),
   };
 }
@@ -731,25 +734,68 @@ export const vazamentos = (textos, raizes) => textos.filter((t) => typeof t === 
 export const raizDoRepoReal = () => realpathSync(raizPrincipal(AQUI));
 const realDe = (raizes) => [...new Set(raizes.map((r) => { try { return realpathSync(r); } catch { return resolve(r); } }))];
 
-/** Refs que OUTROS implementadores movem (worktrees `wt/<PBI>-<n>` do próprio loop): não são sinal de a célula ter tocado o repo real. */
-export const IGNORAR_REFS_PADRAO = Object.freeze([/^refs\/heads\/wt\//]);
-/** Linhas de `git status` que o ORQUESTRADOR vivo move (estado do harness e temporários do projeto): o diário, as consultas da Sombra e `.claude-tmp/` não são arquivo de código tocado pela célula. */
-export const IGNORAR_STATUS_PADRAO = Object.freeze([/^.. "?\.harness\//, /^.. "?\.claude-tmp\//]);
+/** Refs que OUTROS implementadores movem (worktrees `wt/<PBI>-<n>` do próprio loop): o ref cru não diz quem o moveu; quem moveu é lido da identidade (`marcas`). */
+const IGNORAR_REFS = Object.freeze([/^refs\/heads\/wt\//]);
 /**
- * A foto de um repo: `git status --porcelain`, `for-each-ref` (sem as refs de `ignorarRefs`) e `worktree list` (só os caminhos: o HEAD de uma worktree de outro implementador se move sem a célula).
+ * Linhas de `git status` que o ORQUESTRADOR vivo grava (e só elas): eventos do diário, consultas da Sombra, o plano, aprendizados, ledgers, temporários e as worktrees do loop. NÃO é "o diretório inteiro":
+ * qualquer outro arquivo de `.harness/` invalida; e o conteúdo destes é varrido pela identidade da célula (`marcas`), porque a célula que roda o loop grava nos mesmos lugares.
+ */
+const IGNORAR_STATUS = Object.freeze([
+  /^.. "?\.claude-tmp\//,
+  /^.. "?\.harness\/entregas\/[^/]+\/(events\.[^/]+\.jsonl|plano\.json|sombra\/.*)"?$/,
+  /^.. "?\.harness\/aprendizados\.jsonl"?$/,
+  /^.. "?\.harness\/worktrees\//,
+  /^.. "?docs\/(aprendizados|ledgers)\//,
+]);
+const TETO_VARREDURA = 16 * 1024 * 1024;
+
+/** Identidade que só a célula tem: e-mail dela. O git da célula a herda do ambiente, então commits, reflogs e eventos do diário (`autor` = `user.email`) a carregam, não importa o texto do comando. */
+export const emailDaCelula = (marca) => `${marca}@a1.invalid`;
+export const novaMarca = () => `a1-${randomBytes(5).toString('hex')}`;
+/** Variáveis de ambiente que dão ao git da célula (inclusive `git config user.email`) a identidade dela: valem para `node -e`, `sh -c` e qualquer subprocesso. */
+export const ambienteGitDaCelula = (marca) => ({
+  GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'user.email', GIT_CONFIG_VALUE_0: emailDaCelula(marca), GIT_CONFIG_KEY_1: 'user.name', GIT_CONFIG_VALUE_1: marca,
+  GIT_AUTHOR_NAME: marca, GIT_AUTHOR_EMAIL: emailDaCelula(marca), GIT_COMMITTER_NAME: marca, GIT_COMMITTER_EMAIL: emailDaCelula(marca),
+});
+
+/**
+ * A foto de um repo: `git status --porcelain`, `for-each-ref` (sem os refs de worktrees do loop), `worktree list` (só os caminhos, fora das do loop) e `marcas`: tudo que carrega a identidade da célula
+ * (`marca`): reflogs (branch criado, commit, `worktree add`), commits de qualquer ref, e o CONTEÚDO dos arquivos que o orquestrador também grava (diário, plano, ledgers).
  * Quem não é repo ⇒ lança (a prova nunca passa no escuro).
  */
-export function fotoDoRepo(raiz, { ignorarRefs = IGNORAR_REFS_PADRAO, ignorarStatus = IGNORAR_STATUS_PADRAO } = {}) {
+export function fotoDoRepo(raiz, { marca = null } = {}) {
   const g = (...a) => execFileSync('git', ['-C', raiz, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
-  const refs = g('for-each-ref', '--format=%(refname) %(objectname)').split('\n').filter((l) => l !== '' && !ignorarRefs.some((re) => re.test(l.split(' ')[0]))).join('\n');
-  const worktrees = g('worktree', 'list', '--porcelain').split('\n').filter((l) => l.startsWith('worktree ') && !/\/\.harness\/worktrees\//.test(l)).join('\n');
-  const status = g('status', '--porcelain', '--untracked-files=all').split('\n').filter((l) => l !== '' && !ignorarStatus.some((re) => re.test(l))).join('\n');
-  return { status, refs, worktrees };
+  const refs = g('for-each-ref', '--format=%(refname) %(objectname)').split('\n').filter((l) => l !== '' && !IGNORAR_REFS.some((re) => re.test(l.split(' ')[0]))).join('\n');
+  const todas = g('worktree', 'list', '--porcelain').split('\n').filter((l) => l.startsWith('worktree ')).map((l) => l.slice('worktree '.length));
+  const worktrees = todas.filter((w) => !/\/\.harness\/worktrees\//.test(`${w}/`)).map((w) => `worktree ${w}`).join('\n');
+  const linhas = g('status', '--porcelain', '--untracked-files=all').split('\n').filter((l) => l !== '');
+  const status = linhas.filter((l) => !IGNORAR_STATUS.some((re) => re.test(l))).join('\n');
+  const marcas = [];
+  if (marca !== null) {
+    for (const l of linhas.filter((x) => IGNORAR_STATUS.some((re) => re.test(x)))) {
+      const caminho = l.slice(3).replace(/^"|"$/g, '');
+      if (/\/$/.test(caminho) || /\.harness\/worktrees\//.test(caminho)) continue;
+      try {
+        const st = statSync(join(raiz, caminho));
+        if (!st.isFile()) continue;
+        if (st.size > TETO_VARREDURA) { marcas.push(`arquivo grande demais para varrer: ${caminho}`); continue; }
+        if (readFileSync(join(raiz, caminho), 'utf8').includes(marca)) marcas.push(`arquivo: ${caminho}`);
+      } catch { /* sumiu entre o status e a leitura */ }
+    }
+    for (const l of g('reflog', 'show', '--all', '--format=%gd|%ge|%gn').split('\n')) if (l.includes(marca)) marcas.push(`reflog: ${l.split('|')[0]}`);
+    for (const w of todas) {
+      try { if (execFileSync('git', ['-C', w, 'reflog', 'show', 'HEAD', '--format=%ge|%gn'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).includes(marca)) marcas.push(`reflog do HEAD: ${w}`); } catch { /* worktree sem reflog */ }
+    }
+    for (const campo of ['--author', '--committer']) {
+      for (const sha of g('log', '--all', '-n', '5', '--format=%H', `${campo}=${marca}`).split('\n').filter(Boolean)) marcas.push(`commit ${campo.slice(2)}: ${sha.slice(0, 10)}`);
+    }
+  }
+  return { status, refs, worktrees, marcas: [...new Set(marcas)].sort().join('\n') };
 }
-/** Diferenças entre duas fotos (lista vazia = intocado), uma por parte que mudou, com o que mudou. */
+/** Diferenças entre duas fotos (lista vazia = intocado), uma por parte que mudou, com o que mudou (`marcas` = rastro da identidade da célula no repo real). */
 export function diferencasDeFotos(antes, depois) {
   const linhas = (t) => new Set(String(t).split('\n').filter(Boolean));
-  return ['status', 'refs', 'worktrees'].flatMap((k) => {
+  return ['status', 'refs', 'worktrees', 'marcas'].flatMap((k) => {
     if (antes[k] === depois[k]) return [];
     const a = linhas(antes[k]); const d = linhas(depois[k]);
     const novas = [...d].filter((l) => !a.has(l)); const sumiram = [...a].filter((l) => !d.has(l));
@@ -766,9 +812,10 @@ export function copiarPlugin(destino) {
  * Regras `permissions.deny` que fecham o repo real ao condutor (medido: a célula, sem caminho nenhum no prompt, explorou o disco do usuário, achou `~/projetos_pessoais/<repo>` e criou
  * uma worktree NELE). Caminho absoluto e a forma relativa ao HOME (`~/…`). Spike: `claude -p` com a regra responde DENIED; sem ela executa.
  */
-export function regrasDeNegacao(raizes, home = homedir()) {
+export function regrasDeNegacao(raizes, home = homedir(), protegidos = []) {
   const alvos = raizes.flatMap((r) => (dentroDe(home, r) && r !== resolve(home) ? [r, r.slice(resolve(home).length + 1)] : [r]));
-  return [...new Set([...alvos.map((a) => `Bash(*${a}*)`), ...raizes.flatMap((r) => ['Read', 'Edit', 'Write', 'Glob', 'Grep'].map((f) => `${f}(/${r}/**)`))])];
+  // só as famílias que a plataforma casa por caminho: `Read` (leitura) e `Edit` (qualquer escrita); `Write(`/`Glob(`/`Grep(` não são casadas ("only Edit/Read rules are", medido). `protegidos` só perdem a escrita (ex.: o cache do superpowers).
+  return [...new Set([...alvos.map((a) => `Bash(*${a}*)`), ...raizes.flatMap((r) => ['Read', 'Edit'].map((f) => `${f}(/${r}/**)`)), ...protegidos.map((r) => `Edit(/${r}/**)`)])];
 }
 
 /** Argumentos do `claude` da célula (o `a1.exp` os lê de `<rundir>/claude.args`, um por linha): só caminhos da cópia, modelo Sonnet. */
@@ -814,10 +861,10 @@ export function celulaDoRundir(rundir) {
  * Roda o `a1.exp` (`expect`) de UMA célula, de forma assíncrona, vigiando as invariantes enquanto roda: o repo real mudou (foto ≠ a de antes) ou apareceu `abortar.txt`
  * (escrito pelo `a1.exp` ou pelo `snapshot`) ⇒ mata o expect na hora e devolve `{status, abortada}`. cwd e PWD = `rundir` (nunca o checkout real).
  */
-export function executarExpect({ rundir, args, reais, expect = 'expect', intervalo = 10_000, timeoutMs = 4 * 60 * 60 * 1000, fotoOpc = {} }) {
+export function executarExpect({ rundir, args, reais, expect = 'expect', intervalo = 10_000, timeoutMs = 4 * 60 * 60 * 1000, fotoOpc = {}, marca = null }) {
   return new Promise((ok) => {
     const antes = reais.map((r) => fotoDoRepo(r, fotoOpc));
-    const filho = spawn(expect, args, { cwd: rundir, env: ambienteDe({ PWD: rundir }), stdio: 'ignore' });
+    const filho = spawn(expect, args, { cwd: rundir, env: ambienteDe({ PWD: rundir, ...(marca === null ? {} : ambienteGitDaCelula(marca)) }), stdio: 'ignore' });
     let abortada = null; let fim = false;
     const parar = (causa) => {
       if (abortada !== null) return;
@@ -857,8 +904,7 @@ const DEPS = { preparar: (...a) => prepararCopia(...a), copiarPlugin, executar: 
  * A matriz. `base` fica SOB `TMPDIR` (nunca no checkout real); `opc.paralelo` (padrão 1) limita as células simultâneas; cada célula grava o `resultado.json` ao terminar;
  * invariante violada (repo real alterado, plugin não ativo, 0 render no 1º snapshot, célula fora de `TMPDIR`) reprova a célula e PARA a matriz: as demais não rodam e contam como falha.
  */
-export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps = {}, ignorarRefs = IGNORAR_REFS_PADRAO, ignorarStatus = IGNORAR_STATUS_PADRAO } = {}) {
-  const fotoOpc = { ignorarRefs, ignorarStatus };
+export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps = {} } = {}) {
   const d = { ...DEPS, ...deps };
   const celulas = MATRIZ.filter((c) => so === null || so.split(',').includes(idDaCelula(c)));
   const reais = realDe([fonte, tmpRaiz]);
@@ -880,6 +926,7 @@ export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps =
       gravar(id, rundir, exec, ambienteDaExecucao('', sp));
       return exec;
     }
+    const marca = novaMarca(); const fotoOpc = { marca };
     const antes = reais.map((x) => fotoDoRepo(x, fotoOpc));
     const plugin = join(rundir, 'plugin');
     const { bin } = d.preparar(fonte, repo, celula);
@@ -889,13 +936,13 @@ export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps =
     writeFileSync(join(rundir, 'inicio.iso'), `${new Date().toISOString()}\n`);
     writeFileSync(join(rundir, 'falas.tsv'), roteiro.falas.map((f) => `${f.n}\t${f.rotulo}\t${sha256(f.texto)}\t${f.texto}`).join('\n'));
     const settings = join(rundir, 'settings.json');
-    writeFileSync(settings, `${JSON.stringify({ permissions: { deny: regrasDeNegacao(reais) } }, null, 2)}\n`);
+    writeFileSync(settings, `${JSON.stringify({ permissions: { deny: regrasDeNegacao(reais, homedir(), sp.caminho === undefined ? [] : [sp.caminho]) } }, null, 2)}\n`);
     const argv = argvDoClaude({ observador: join(rundir, 'observador'), plugin, superpowers: sp.caminho, debugLog: join(rundir, 'debug.log'), settings });
     writeFileSync(join(rundir, 'claude.args'), `${argv.join('\n')}\n`);
     const vaza = vazamentos([rundir, repo, ...argv], reais);
     if (vaza.length > 0) throw new Error(`argumento da célula com caminho do repo real: ${vaza[0]}`);
     const args = ['-f', join(AQUI, 'a1.exp'), rundir, repo, bin, process.execPath, fileURLToPath(import.meta.url)];
-    const r = await d.executar({ rundir, repo, plugin, argv, celula: id, args, reais, fotoOpc });
+    const r = await d.executar({ rundir, repo, plugin, argv, celula: id, args, reais, fotoOpc, marca });
     let dif = [];
     try { dif = reais.flatMap((x, i) => diferencasDeFotos(antes[i], fotoDoRepo(x, fotoOpc))); } catch (e) { dif = [`foto final ilegível: ${e.message}`]; }
     const ambiente = { ...dialogosDoExpLog(existsSync(join(rundir, 'exp.log')) ? readFileSync(join(rundir, 'exp.log'), 'utf8') : ''), superpowers: superpowersNoAmbiente(sp) };
@@ -1028,7 +1075,7 @@ export async function main(argv) {
   process.stdout.write(`guarda das falas: 0 achados (${g.conferidas} falas ≥ ${MIN_FALA} caracteres em ${g.arquivos} arquivos versionados; ${g.ignorados} ignorados por binário ou > 4 MB, não conferidos)\n`);
   if (modo === '--guarda') return 0;
   if (modo === '--gerar') { const r = gerar(topo, principal, roteiro); process.stdout.write(`pontos.json: ${r.pontos} pontos gerados pelo produto\n`); return 0; }
-  const m = await matriz(topo, principal, roteiro, flag(argv, '--so') ?? null, { paralelo: Number(flag(argv, '--paralelo') ?? 1), ignorarRefs: [...IGNORAR_REFS_PADRAO, ...argv.flatMap((a, i) => (argv[i - 1] === '--ignorar-ref' ? [new RegExp(a)] : []))] });
+  const m = await matriz(topo, principal, roteiro, flag(argv, '--so') ?? null, { paralelo: Number(flag(argv, '--paralelo') ?? 1) });
   for (const l of m.rel.linhas) process.stdout.write(`${l.passa ? 'PASSA' : 'FALHA'} ${l.celula} ${l.motivo}\n`);
   if (m.abortada !== null) process.stdout.write(`MATRIZ PARADA: ${m.abortada}\n`);
   process.stdout.write(`A1: ${m.rel.passou}/${m.rel.total} (passa = 8/8)\nevidência em ${m.base}\n`);

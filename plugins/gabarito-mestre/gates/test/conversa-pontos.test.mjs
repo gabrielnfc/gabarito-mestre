@@ -256,6 +256,7 @@ const evBoa = (celula = { local: 'lateral', cols: 180, rows: 50, cheia: true }) 
   pouso: { percent: 50, limparNoDepende: true, pushes: 1, despachosDepois: 0 },
   panes: [{ placement: placementEsperado(celula) ?? 'x' }].filter(() => placementEsperado(celula) !== null),
   panesObservadas: true,
+  debugLogAtivo: true,
   placementsDebug: celula.local === 'acima' ? [] : [{ colunas: celula.cols, estado: 'placed' }],
 });
 
@@ -512,7 +513,7 @@ function montarExecucao(v = {}) {
     { t: 1, ev: 'estado', agentes: v.semAgentes === true ? [] : [{ id: AGENTE.id, type: AGENTE.type, status: 'running', description: AGENTE.description }], panes: [{ id: 'gabarito-painel', placement: v.placement ?? 'dock' }], nomes: null },
     { t: 2, ev: 'render', comp: 'Pane', bodyRows: 12, bodyColumns: 60 },
   ]);
-  if (v.semDebug !== true) writeFileSync(join(rundir, 'debug.log'), '2026-11-14T04:43:26.718Z [DEBUG] ui.open gabarito-mestre gabarito-painel (unasked, 180 columns): placed\n');
+  if (v.semDebug !== true) writeFileSync(join(rundir, 'debug.log'), '2026-11-14T04:40:00.000Z [DEBUG] Checking plugin gabarito-mestre: enabled\n2026-11-14T04:43:26.718Z [DEBUG] ui.open gabarito-mestre gabarito-painel (unasked, 180 columns): placed\n');
   const props = v.semProps === true ? {} : { Pane: { bodyRows: 12, bodyColumns: 60 } };
   writeFileSync(join(rundir, 'estados', '01.json'), `${JSON.stringify({ n: 1, props, agentes: v.semAgentes === true ? [] : [AGENTE], estado: ESTADO_REAL })}\n`);
   const prompt = v.promptSemRegra === true ? 'brief sem regra nenhuma' : `brief do implementador. ${REGRA}`;
@@ -1076,20 +1077,65 @@ describe('T49 (a) isolamento: célula e plugin fora do repo real; o repo real fi
     git(r, 'worktree', 'add', '-q', '-b', 'wt/T1', join(r, '.harness', 'worktrees', 'T1'));
     assert.deepEqual(R.diferencasDeFotos(antes2, R.fotoDoRepo(r)), []);
   });
-  test('estado-vivo-do-orquestrador-em-.harness-e-.claude-tmp-nao-invalida; arquivo de código novo no repo real sim', () => {
-    const r = tmpGit(); const a = R.fotoDoRepo(r);
+  test('estado-vivo-do-orquestrador-nao-invalida (eventos com a identidade dele, sombra, .claude-tmp); arquivo de código novo e outro arquivo do .harness invalidam', () => {
+    const r = tmpGit(); const a = R.fotoDoRepo(r, { marca: 'a1-zzz' });
     mkdirSync(join(r, '.harness', 'entregas', 'GM-14', 'sombra'), { recursive: true }); mkdirSync(join(r, '.claude-tmp'), { recursive: true });
     writeFileSync(join(r, '.harness', 'entregas', 'GM-14', 'sombra', 'h.md'), 'x'); writeFileSync(join(r, '.claude-tmp', 'y'), 'y');
-    assert.deepEqual(R.diferencasDeFotos(a, R.fotoDoRepo(r)), []);
+    writeFileSync(join(r, '.harness', 'entregas', 'GM-14', 'events.orq.jsonl'), '{"autor":"dono@x","sessao":"s"}\n');
+    assert.deepEqual(R.diferencasDeFotos(a, R.fotoDoRepo(r, { marca: 'a1-zzz' })), []);
     writeFileSync(join(r, 'src.js'), 'z');
-    assert.match(R.diferencasDeFotos(a, R.fotoDoRepo(r)).join(';'), /status.*src\.js/);
-    const b = R.fotoDoRepo(r, { ignorarStatus: [] }); writeFileSync(join(r, '.harness', 'novo'), 'n');
-    assert.match(R.diferencasDeFotos(b, R.fotoDoRepo(r, { ignorarStatus: [] })).join(';'), /status/, 'sem ignorados, .harness conta');
+    assert.match(R.diferencasDeFotos(a, R.fotoDoRepo(r, { marca: 'a1-zzz' })).join(';'), /status.*src\.js/);
+    rmSync(join(r, 'src.js'));
+    writeFileSync(join(r, '.harness', 'novo'), 'n');
+    assert.match(R.diferencasDeFotos(a, R.fotoDoRepo(r, { marca: 'a1-zzz' })).join(';'), /status.*\.harness\/novo/, '.harness fora da lista do orquestrador conta');
   });
-  test('ignorarRefs-e-configuravel-e-a-celula-fica-invalida-so-pelo-que-nao-e-ignorado', () => {
-    const r = tmpGit(); const a = R.fotoDoRepo(r, { ignorarRefs: [] });
-    git(r, 'branch', 'wt/z');
-    assert.match(R.diferencasDeFotos(a, R.fotoDoRepo(r, { ignorarRefs: [] })).join(';'), /refs/, 'sem ignorados, wt/* conta');
+  test('BLOCKER r1: o rastro do loop da CÉLULA no repo real invalida (identidade da célula em eventos, commits, branch e worktree); o do orquestrador não', () => {
+    const marca = 'a1-abc123'; const envCelula = R.ambienteGitDaCelula(marca);
+    const gitC = (cwd, ...a) => execFileSync('git', ['-C', cwd, '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...envCelula } });
+    const foto = (r) => R.fotoDoRepo(r, { marca });
+    // (1) evento da célula (identidade no conteúdo), em arquivo novo no diretório que o orquestrador também usa
+    let r = tmpGit(); let a = foto(r);
+    mkdirSync(join(r, '.harness', 'entregas', 'GM-14'), { recursive: true });
+    writeFileSync(join(r, '.harness', 'entregas', 'GM-14', 'events.sessao-nova.jsonl'), `{"autor":"${R.emailDaCelula(marca)}","sessao":"nova"}\n`);
+    assert.match(R.diferencasDeFotos(a, foto(r)).join(';'), /marcas/, 'evento da célula');
+    // (2) a célula acrescenta a um arquivo de eventos que JÁ existia (mesma linha de status): a varredura vê o conteúdo
+    r = tmpGit(); mkdirSync(join(r, '.harness', 'entregas', 'GM-14'), { recursive: true });
+    const ev = join(r, '.harness', 'entregas', 'GM-14', 'events.dono.jsonl'); writeFileSync(ev, '{"autor":"dono@x"}\n'); a = foto(r);
+    writeFileSync(ev, `{"autor":"dono@x"}\n{"autor":"${R.emailDaCelula(marca)}"}\n`);
+    assert.match(R.diferencasDeFotos(a, foto(r)).join(';'), /marcas/, 'append em arquivo existente');
+    // (3) worktree em .harness/worktrees + branch wt/* criados pela célula, só `worktree add` (sem commit)
+    r = tmpGit(); a = foto(r);
+    gitC(r, 'worktree', 'add', '-q', '-b', 'wt/GM-14-T1', join(r, '.harness', 'worktrees', 'T1'));
+    assert.match(R.diferencasDeFotos(a, foto(r)).join(';'), /marcas/, 'worktree add da célula');
+    // (4) commit da célula num wt/* que já existia (o ref wt/* é ignorado cru; o autor não)
+    r = tmpGit(); git(r, 'branch', 'wt/x'); const wt = join(r, '.harness', 'worktrees', 'T2'); git(r, 'worktree', 'add', '-q', wt, 'wt/x'); a = foto(r);
+    writeFileSync(join(wt, 'f.txt'), 'f'); gitC(wt, 'add', '-A'); gitC(wt, 'commit', '-q', '-m', 'da celula');
+    assert.match(R.diferencasDeFotos(a, foto(r)).join(';'), /marcas/, 'commit da célula em wt/*');
+    // (5) o MESMO rastro com a identidade do orquestrador (sem a da célula) é ignorado
+    r = tmpGit(); a = foto(r);
+    git(r, 'worktree', 'add', '-q', '-b', 'wt/GM-14-T3', join(r, '.harness', 'worktrees', 'T3'));
+    git(join(r, '.harness', 'worktrees', 'T3'), 'commit', '-q', '--allow-empty', '-m', 'implementador do loop');
+    mkdirSync(join(r, '.harness', 'entregas', 'GM-14'), { recursive: true });
+    writeFileSync(join(r, '.harness', 'entregas', 'GM-14', 'events.outro.jsonl'), '{"autor":"dono@x"}\n');
+    assert.deepEqual(R.diferencasDeFotos(a, foto(r)), []);
+  });
+  test('ambienteGitDaCelula: o user.email visto pelo git da célula é a identidade dela (commits e eventos `autor` a herdam) mesmo num repo com outra', () => {
+    const r = tmpGit(); git(r, 'config', 'user.email', 'dono@real');
+    const out = execFileSync('git', ['-C', r, 'config', 'user.email'], { encoding: 'utf8', env: { ...process.env, ...R.ambienteGitDaCelula('a1-k') } }).trim();
+    assert.equal(out, R.emailDaCelula('a1-k'));
+    assert.notEqual(R.emailDaCelula('a1-k'), R.emailDaCelula('a1-j'));
+  });
+  test('executarExpect-com-marca: a célula que mexe no repo real com o git herdado do ambiente aborta pela marca (o texto do comando não importa)', async () => {
+    const fonte = tmpGit(); const rundir = tmp();
+    const f = join(tmp(), 'expect'); writeFileSync(f, `#!/bin/sh\ngit -C ${fonte} worktree add -q -b wt/GM-14-T9 ${fonte}/.harness/worktrees/T9\nsleep 5\n`); execFileSync('chmod', ['+x', f]);
+    const r = await R.executarExpect({ rundir, args: [], reais: [fonte], expect: f, intervalo: 200, fotoOpc: { marca: 'a1-e2e' }, marca: 'a1-e2e' });
+    assert.match(r.abortada, /repo real alterado.*marcas/);
+  });
+  test('a lista de ignorados do orquestrador NAO e configuravel (r1 MINOR 4): ignorarRefs/ignorarStatus passados são ignorados e a flag --ignorar-ref não existe', () => {
+    const r = tmpGit(); const a = R.fotoDoRepo(r, { ignorarRefs: [/./], ignorarStatus: [/./] });
+    git(r, 'branch', 'enabler/z'); writeFileSync(join(r, 'src.js'), 'z');
+    assert.match(R.diferencasDeFotos(a, R.fotoDoRepo(r, { ignorarRefs: [/./], ignorarStatus: [/./] })).join(';'), /refs.*status|status.*refs/);
+    assert.doesNotMatch(readFileSync(RUNNER, 'utf8'), /--ignorar-ref|ignorarRefs/);
   });
   test('foto-de-quem-nao-e-repo-lanca (a prova nunca passa no escuro)', () => {
     assert.throws(() => R.fotoDoRepo(tmp()));
@@ -1117,14 +1163,25 @@ describe('T49 (a) isolamento: célula e plugin fora do repo real; o repo real fi
     assert.ok(argv.includes('--strict-mcp-config') && argv.includes('--debug-file'));
     assert.deepEqual(R.vazamentos(argv, [R.raizDoRepoReal()]), []);
   });
-  test('negacao-do-repo-real (a célula explora o disco e achou o repo real na 1ª tentativa): regras de Bash/Read/Edit/Write para o caminho absoluto e para o relativo ao HOME', () => {
+  test('negacao-do-repo-real (a célula explora o disco e achou o repo real na 1ª tentativa): regras de Bash/Read/Edit para o caminho absoluto e para o relativo ao HOME; só famílias que a plataforma casa (r1 MINOR 3)', () => {
     const regras = R.regrasDeNegacao(['/home/u/projetos/real'], '/home/u');
-    for (const ferr of ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep']) assert.ok(regras.some((r) => r.startsWith(`${ferr}(`)), ferr);
+    for (const ferr of ['Bash', 'Read', 'Edit']) assert.ok(regras.some((r) => r.startsWith(`${ferr}(`)), ferr);
+    for (const morta of ['Write', 'Glob', 'Grep']) assert.ok(!regras.some((r) => r.startsWith(`${morta}(`)), `${morta}(...) nunca é casada pela plataforma`);
     assert.ok(regras.includes('Bash(*/home/u/projetos/real*)'));
     assert.ok(regras.includes('Bash(*projetos/real*)'), 'a forma ~/… também');
     assert.ok(regras.includes('Read(//home/u/projetos/real/**)'));
     assert.ok(!regras.some((r) => r.includes('*home/u/projetos/outro')));
     assert.deepEqual(R.regrasDeNegacao(['/fora/do/home'], '/home/u').filter((r) => r.startsWith('Bash(')), ['Bash(*/fora/do/home*)']);
+  });
+  test('cache-do-superpowers-protegido-contra-escrita (r1 MINOR 5): Edit negado no caminho dele, sem negar a leitura', () => {
+    const regras = R.regrasDeNegacao(['/home/u/real'], '/home/u', ['/cache/sp/7.0.2']);
+    assert.ok(regras.includes('Edit(//cache/sp/7.0.2/**)'));
+    assert.ok(!regras.some((r) => r.startsWith('Read(') && r.includes('/cache/sp')));
+  });
+  test('settings-da-celula-nega-escrita-no-superpowers', async () => {
+    const e = ambienteMatriz(); await rodarMatriz(e, { so: idDaCelula(MATRIZ[0]) });
+    const c = e.chamadas[0]; const regras = JSON.parse(readFileSync(c.argv[c.argv.indexOf('--settings') + 1], 'utf8')).permissions.deny;
+    assert.ok(regras.includes('Edit(//t/sp/**)'));
   });
   test('argv-leva-o-settings-com-as-regras-e-o-argv-nao-tem-caminho-real (as regras ficam no arquivo, não na linha de comando)', async () => {
     const e = ambienteMatriz();
@@ -1162,12 +1219,22 @@ describe('T49 (a) isolamento: célula e plugin fora do repo real; o repo real fi
     assert.equal(m.rel.ok, false); assert.equal(m.rel.passou, 0);
     assert.match(m.abortada, /isolamento|repo real/);
   });
-  test('ref-que-o-orquestrador-move-pode-ser-ignorada-por-opção (--ignorar-ref); sem a opção a mesma mexida invalida', async () => {
+  test('ref-nao-wt-movida-invalida-sem-opcao-de-ignorar; commit do orquestrador em wt/* não; worktree com a identidade da CÉLULA sim (BLOCKER r1)', async () => {
     const mexe = async (a, fonte) => { git(fonte, 'commit', '-q', '--allow-empty', '-m', 'integração do orquestrador'); return { status: 0, abortada: null }; };
-    const com = ambienteMatriz(mexe); const m1 = await rodarMatriz(com, { so: idDaCelula(MATRIZ[0]), ignorarRefs: [/^refs\/heads\/main$/] });
-    assert.equal(m1.rel.passou, 1, 'ref ignorada não invalida'); assert.equal(m1.abortada, null);
-    const sem = ambienteMatriz(mexe); const m2 = await rodarMatriz(sem, { so: idDaCelula(MATRIZ[0]) });
+    const sem = ambienteMatriz(mexe); const m2 = await rodarMatriz(sem, { so: idDaCelula(MATRIZ[0]), ignorarRefs: [/./] });
     assert.equal(m2.rel.passou, 0); assert.match(m2.abortada, /isolamento/);
+    const orq = ambienteMatriz(async (a, fonte) => { git(fonte, 'branch', 'wt/outro'); return { status: 0, abortada: null }; });
+    const m3 = await rodarMatriz(orq, { so: idDaCelula(MATRIZ[0]) });
+    assert.equal(m3.rel.passou, 1); assert.equal(m3.abortada, null);
+    const cel = ambienteMatriz(async (a, fonte) => {
+      assert.match(a.marca, /^a1-/);
+      execFileSync('git', ['-C', fonte, '-c', 'commit.gpgsign=false', 'worktree', 'add', '-q', '-b', 'wt/GM-14-T1', join(fonte, '.harness', 'worktrees', 'T1')], { env: { ...process.env, ...R.ambienteGitDaCelula(a.marca) }, stdio: 'ignore' });
+      return { status: 0, abortada: null };
+    });
+    const m4 = await rodarMatriz(cel, { so: idDaCelula(MATRIZ[0]) });
+    assert.equal(m4.rel.passou, 0); assert.match(m4.abortada, /isolamento/);
+    const r = JSON.parse(readFileSync(join(m4.base, idDaCelula(MATRIZ[0]), 'resultado.json'), 'utf8'));
+    assert.match(r.resultados[0].detalhe, /marcas/);
   });
   test('--so aceita lista separada por vírgula (duas células para medir o paralelo)', async () => {
     const e = ambienteMatriz(); const ids = [idDaCelula(MATRIZ[4]), idDaCelula(MATRIZ[5])];
@@ -1296,6 +1363,19 @@ describe('T49 (c) evidência vazia é "não medida" e REPROVA (nunca passa em v�
     const ev = evBoa(); ev.placementsDebug = [{ colunas: 80, estado: 'unplaced' }];
     const r = a('12-placement-da-pane').avaliar(ev); assert.equal(r.ok, false); assert.match(r.detalhe, /unplaced/);
   });
+  test('12 (MAJOR r1): acima sem debug.log da plataforma (ausência não é prova) é não medida; com o log ativo e sem ui.open passa', () => {
+    const base = { local: 'acima', cols: 180, rows: 50, cheia: true };
+    naoMedida('12-placement-da-pane', (ev) => { ev.celula = base; ev.panes = []; ev.placementsDebug = []; ev.debugLogAtivo = false; });
+    const ok = evBoa(base); ok.panes = []; ok.placementsDebug = []; ok.debugLogAtivo = true;
+    assert.equal(a('12-placement-da-pane').avaliar(ok).ok, true);
+    naoMedida('12-placement-da-pane', (ev) => { ev.debugLogAtivo = false; });
+  });
+  test('12 (MAJOR r1): debugLogAtivo na coleta = debug.log existe E o nosso plugin aparece carregado nele', async () => {
+    const sem = montarExecucao({ semDebug: true }); assert.equal((await coleta0(sem)).debugLogAtivo, false);
+    const vazio = montarExecucao({ semDebug: true }); writeFileSync(join(vazio.rundir, 'debug.log'), '2026-11-14T04:43:26.718Z [DEBUG] outra coisa\n');
+    assert.equal((await coleta0(vazio)).debugLogAtivo, false);
+    const ok = montarExecucao({}); assert.equal((await coleta0(ok)).debugLogAtivo, true);
+  });
   test('12: acima com ui.open no debug.log reprova (nunca os dois)', () => {
     const ev = evBoa({ local: 'acima', cols: 180, rows: 50, cheia: true }); ev.placementsDebug = [{ colunas: 180, estado: 'placed' }];
     assert.equal(a('12-placement-da-pane').avaliar(ev).ok, false);
@@ -1312,7 +1392,7 @@ describe('T49 (c) evidência vazia é "não medida" e REPROVA (nunca passa em v�
   test('7: sem nenhuma chamada no transcript é não medida', () => { naoMedida('7-sem-edit-em-harness-nem-status-a-mao', (ev) => { ev.transcript.chamadas = []; ev.transcript.textos = []; }); });
   test('as-demais-sem-evidência-reprovam-e-a-execução-reprova (nenhuma isenção, nenhuma contagem à parte)', () => {
     const vazio = evBoa();
-    Object.assign(vazio, { quadros: [], integradas: [], eventos: [], digitadas: [], transcript: { chamadas: [], textos: [] }, perguntas: [], despachos: [], entregasPublicadas: [], vivos: [], panes: [], panesObservadas: false, placementsDebug: [], pouso: { percent: 0, limparNoDepende: false, pushes: 0, despachosDepois: 0 } });
+    Object.assign(vazio, { quadros: [], integradas: [], eventos: [], digitadas: [], transcript: { chamadas: [], textos: [] }, perguntas: [], despachos: [], entregasPublicadas: [], vivos: [], panes: [], panesObservadas: false, debugLogAtivo: false, placementsDebug: [], pouso: { percent: 0, limparNoDepende: false, pushes: 0, despachosDepois: 0 } });
     const r = avaliarExecucao(vazio);
     assert.equal(r.passa, false);
     assert.deepEqual(r.resultados.filter((x) => x.ok).map((x) => x.id), [], 'nenhuma asserção passa sobre evidência vazia');
