@@ -1125,7 +1125,17 @@
         "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
         "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs",
         "plugins/gabarito-mestre/gates/src/pouso-pendente.ts",
-        "plugins/gabarito-mestre/gates/dist/pouso-pendente.js"
+        "plugins/gabarito-mestre/gates/dist/pouso-pendente.js",
+        "plugins/gabarito-mestre/gates/src/tipos.ts",
+        "plugins/gabarito-mestre/gates/src/formas.ts",
+        "plugins/gabarito-mestre/gates/src/origem.ts",
+        "plugins/gabarito-mestre/gates/dist/formas.js",
+        "plugins/gabarito-mestre/gates/dist/origem.js",
+        "plugins/gabarito-mestre/gates/src/painel-texto.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-texto.js",
+        "plugins/gabarito-mestre/gates/test/formas.test.ts",
+        "plugins/gabarito-mestre/gates/test/origem.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-texto.test.ts"
       ],
       "reqs": [
         "REQ-POU-1"
