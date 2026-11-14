@@ -177,7 +177,12 @@ function mundo($: any, on: any, o: Opc = {}) {
   on('agent.list', () => (o.agentesPainel !== undefined ? { value: o.agentesPainel } : o.agentes === 'falha' ? { deny: 'sem sessão' } : o.agentes === 'lixo' ? { value: 'não é lista' } : { value: o.agentes ?? [] }))
   on('ui.toast', (_: any, e: any) => { toasts.push(e.text); log.push('toast'); est.ordem.push('toast'); return { value: undefined } })
   on('ui.status', (_: any, e: any) => { est.statuses.push(e.text); return { value: undefined } })
-  on('ui.open', (_: any, e: any) => { est.opens.push(e); est.ordem.push('open'); return { value: est.openResult } })
+  on('ui.open', (_: any, e: any) => {
+    est.opens.push(e); est.ordem.push('open')
+    // GM-14 T50 (spike): a plataforma lista a Pane que não colocou (`isPlaced:false`) até o dono pedir ou alargar o terminal
+    if (est.openResult?.isPlaced === false && Array.isArray(est.panes) && !est.panes.some((x: any) => x.id === e.id)) est.panes = [...est.panes, { id: e.id, isPlaced: false, isShown: false }]
+    return { value: est.openResult }
+  })
   on('ui.panes', () => (est.panes === 'falha' ? { deny: 'sem panes' } : { value: est.panes }))
   on('ui.notify', (_: any, e: any) => {
     est.ordem.push('notify'); est.notifies.push(e.text)
@@ -3729,6 +3734,126 @@ test('lateral-pane-fechada-so-parou-e-pergunta: Pane fechada ⇒ 1 linha só com
   ui = await montarFaixaH($, 50, 19)
   expect(await todosTextos(ui)).toEqual(['motor'])
   await ui.unmount()
+})
+// ---- T50 (emenda 44, REQ-GLB-1): Pane lateral que a plataforma não colocou ⇒ aviso na linha única; o dono abre com /gabarito painel ----
+const RAZAO_144 = 'unasked below 144 columns (80 now): placed when the person opens it, or when the terminal is widened to 144 columns'
+const semColocar = (reason: string) => ({ openResult: { isPlaced: false, reason } })
+const aviso = async ($: any, largura = 100) => {
+  const ui = await montarFaixaH($, 50, 19, { bodyColumns: largura })
+  const t = (await todosTextos(ui)).join('|')
+  await ui.unmount()
+  return t
+}
+test('aviso-com-limiar-da-plataforma: lateral, Pane não colocada ⇒ 1 linha "precisa de <N> colunas: /gabarito painel para abrir", N tirado do reason (nunca fixo)', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  const t = await aviso($)
+  expect(t).toContain('painel lateral precisa de 144 colunas: /gabarito painel para abrir')
+  m.est.openResult = { isPlaced: false, reason: 'unasked below 170 columns (90 now): placed when the person opens it' }
+  await m.cmd('painel'); await drena(m)
+  expect(await aviso($)).toContain('painel lateral precisa de 170 colunas: /gabarito painel para abrir')
+})
+test('aviso-sem-numero-quando-reason-sem-numero: reason sem limiar ⇒ "mais colunas", sem número nenhum', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar('estreito') })
+  await arrancar(m)
+  for (const reason of ['estreito', '', 'unasked (80 now)']) {
+    m.est.openResult = { isPlaced: false, reason }
+    await m.cmd('painel'); await drena(m)
+    const t = await aviso($)
+    expect(t).toContain('painel lateral precisa de mais colunas: /gabarito painel para abrir')
+    expect(t).not.toMatch(/\d/)
+  }
+})
+test('aviso-sem-pane-colocada-nao-aparece: Pane colocada ⇒ o motor desenha, sem aviso', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', openResult: { isPlaced: false, reason: RAZAO_144 }, panes: PANE_VISIVEL })
+  await arrancar(m)
+  expect(await aviso($)).toBe('motor')
+})
+test('aviso-local-acima-nao-aparece: local acima ⇒ o painel é a faixa, sem aviso de Pane', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'acima', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  expect(await aviso($)).not.toContain('precisa de')
+  expect(m.est.opens).toHaveLength(0)
+})
+test('aviso-painel-oculto-nao-aparece: painel desligado pelo dono ⇒ sem aviso', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  expect(await aviso($)).toContain('precisa de 144 colunas')
+  await m.cmd('painel ocultar'); await drena(m)
+  expect(await aviso($)).not.toContain('precisa de')
+})
+test('parou-e-pergunta-antes-do-aviso: PAROU vem primeiro na linha única; o corte de largura tira o aviso antes', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: pararP() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  const tp = await aviso($, 200)
+  expect(tp).toContain('PAROU')
+  expect(tp).toContain('precisa de 144 colunas')
+  expect(tp.indexOf('PAROU')).toBeLessThan(tp.indexOf('precisa de'))
+  const estreita = await aviso($, 48) // o corte come o fim: o PAROU fica, o aviso sai
+  expect(estreita).toContain('PAROU')
+  expect(estreita).not.toContain('precisa de')
+})
+test('pergunta-antes-do-aviso: a pergunta aberta vem primeiro na linha única', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo({ pergunta: PERGUNTA }) }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  const tq = await aviso($, 200)
+  expect(tq.indexOf('Qual caminho seguir agora')).toBeGreaterThanOrEqual(0)
+  expect(tq.indexOf('precisa de')).toBeGreaterThan(tq.indexOf('Qual caminho seguir agora'))
+})
+test('pedido-do-dono-abre: /gabarito painel abre com focus, a Pane passa a existir e o aviso some; o local segue lateral', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  expect(m.est.opens.length).toBe(1)
+  expect(m.est.opens[0].focus).toBeUndefined() // a abertura do mod não pede o teclado
+  expect(await aviso($)).toContain('precisa de 144 colunas')
+  m.est.openResult = { isPlaced: true } // pedido do dono: a plataforma coloca em qualquer largura
+  m.est.panes = PANE_VISIVEL
+  const r = await m.cmd('painel'); await drena(m)
+  expect(r.text).toBe('painel aberto')
+  expect(m.est.opens.length).toBe(2)
+  expect(m.est.opens[1].focus).toBe(true)
+  expect(m.est.opens[1].id).toBe(ID_PAINEL)
+  expect(await aviso($)).toBe('motor')
+  expect(m.est.locaisGravados).toEqual([])
+})
+test('pedido-do-dono-nao-coube: o pedido que a plataforma ainda não colocou responde com o motivo e o aviso continua', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  expect((await m.cmd('painel')).text).toBe(`painel não coube: ${RAZAO_144}`)
+  expect(await aviso($)).toContain('precisa de 144 colunas')
+})
+test('sem-troca-de-local: Pane sem colocar, em qualquer largura ⇒ o local segue lateral: nada gravado, nada fechado, a faixa nunca vira o painel inteiro', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  for (const larg of [40, 80, 120, 143, 200]) {
+    const t = await aviso($, larg)
+    expect(t).not.toContain('GABARITO')
+    expect(t).not.toContain('PRONTO')
+  }
+  await m.turno(); await m.clock.advance(PERIODO * 2); await drena(m)
+  expect(m.est.locaisGravados).toEqual([])
+  expect(m.est.closes).toHaveLength(0)
+  expect(m.est.opens).toHaveLength(1) // nem reabre sozinho
+})
+test('fechada-nao-reabre-com-aviso: a Pane que o dono fechou (sumiu de `$.ui.panes()`) não reabre e o aviso some', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  expect(await aviso($)).toContain('precisa de 144 colunas')
+  m.est.panes = []
+  await m.turno(); await m.clock.advance(PERIODO * 2); await drena(m)
+  expect(m.est.opens).toHaveLength(1)
+  expect(await aviso($)).not.toContain('precisa de')
 })
 test('comando-painel-troca-local-sem-reiniciar: `painel acima` grava pelo onboarding, fecha a Pane e a faixa vira o painel; `painel lateral` reabre a Pane', async ($, on) => {
   sobreOMotor(on)

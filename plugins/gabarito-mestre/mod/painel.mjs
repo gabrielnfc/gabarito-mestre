@@ -366,16 +366,31 @@ export function linhasDaFaixa(estado, prefs, opc = {}) {
   return linhas.slice(0, orcamento);
 }
 
+/** Limiar de colunas que a plataforma informa no `reason` de uma Pane não colocada ("unasked below 144 columns (80 now): ..."); sem número ⇒ `null` (nunca fixo no código). */
+export function limiarDaRazao(reason) {
+  const m = typeof reason === 'string' ? /\bbelow\s+(\d{1,4})\s+columns\b/.exec(reason) : null;
+  return m === null ? null : Number(m[1]);
+}
+
+/** Aviso da Pane lateral que a plataforma não colocou (GM-14 T50, emenda 44): o número é o do `reason`; sem ele, "mais colunas". */
+export function avisoPaneEspera(reason) {
+  const n = limiarDaRazao(reason);
+  return `painel lateral precisa de ${n === null ? 'mais' : n} colunas: /gabarito painel para abrir`;
+}
+
 /**
- * Uma linha só (lateral com a Pane invisível, ou painel oculto): o PAROU, senão a pergunta aberta; nada mais (REQ-GLB-1). `{texto, cor, botoes}` | `null`.
+ * Uma linha só (lateral com a Pane invisível, ou painel oculto): o PAROU, senão a pergunta aberta, e por último, só na lateral com a Pane que a
+ * plataforma não colocou, o aviso `opc.aviso` (REQ-GLB-1, emenda 44); o aviso vai no fim para o corte de largura tirá-lo primeiro. `{texto, cor, botoes}` | `null`.
  */
 export function faixaUmaLinha(estado, opc = {}) {
-  if (!ehObj(estado)) return null;
+  const aviso = typeof opc.aviso === 'string' && opc.aviso !== '' ? limpar(opc.aviso) : null;
+  if (!ehObj(estado)) return aviso === null ? null : { texto: aviso, cor: 'warning', botoes: [] };
   const botoes = botoesDoTopo(estado, opc.root ?? null);
-  if (ehObj(estado.parar)) return { texto: limpar(`■ PAROU ${estado.parar.hora} ${estado.parar.texto}`), cor: 'error', botoes };
+  const com = (texto) => (aviso === null ? texto : `${texto} · ${aviso}`);
+  if (ehObj(estado.parar)) return { texto: com(limpar(`■ PAROU ${estado.parar.hora} ${estado.parar.texto}`)), cor: 'error', botoes };
   const q = perguntaDe(estado);
-  if (q !== null) return { texto: limpar(q.texto), cor: 'warning', botoes };
-  return null;
+  if (q !== null) return { texto: com(limpar(q.texto)), cor: 'warning', botoes };
+  return aviso === null ? null : { texto: aviso, cor: 'warning', botoes };
 }
 
 /** Corta uma linha de segmentos a `max` colunas (o último segmento que passa é cortado; os seguintes saem). */
@@ -523,6 +538,8 @@ const S = {
   falha: null,
   semLoop: false,
   paneVisivel: false,
+  paneEspera: false, // a plataforma lista a Pane sem colocá-la (T50): espera o pedido do dono ou um terminal mais largo
+  razaoPane: null, // `reason` do último `ui.open` que não colocou (string; '' sem texto) | null
   aberta: false,
   fechadaPeloDono: false,
   notificado: null, // {chave, resultado}: o que se sabe do aviso, lido do store uma vez e mantido em memória (segura a repetição com o store falhando)
@@ -626,6 +643,7 @@ async function lerPanes($) {
     const lista = await $.ui.panes();
     if (!Array.isArray(lista)) return null;
     S.paneVisivel = lista.some((x) => x?.id === ID_PANE && x.isPlaced === true && x.isShown === true);
+    S.paneEspera = !S.paneVisivel && lista.some((x) => x?.id === ID_PANE);
     return lista;
   } catch {
     return null; // não consegui ler: a leitura anterior fica
@@ -648,7 +666,16 @@ function cancelarRelogio() {
 export async function abrirPainel($) {
   if (S.fechadaPeloDono || S.prefs.ligado === false || S.local !== 'lateral') return null;
   S.aberta = true;
-  try { return await $.ui.open({ id: ID_PANE, title: 'gabarito' }); } catch { return null; }
+  let r = null;
+  try { r = await $.ui.open({ id: ID_PANE, title: 'gabarito' }); } catch { return null; }
+  guardarRazao(r);
+  return r;
+}
+
+/** Guarda o motivo de uma abertura que a plataforma não colocou (alimenta o aviso); abertura colocada limpa. */
+function guardarRazao(r) {
+  if (!ehObj(r)) return;
+  S.razaoPane = r.isPlaced === true ? null : (typeof r.reason === 'string' ? r.reason : '');
 }
 
 async function carregarNotificado($) {
@@ -1111,6 +1138,8 @@ async function abrirPeloDono($, rotulo = 'painel aberto') {
   let r;
   try { r = await $.ui.open({ id: ID_PANE, title: 'gabarito', focus: true }); } catch { r = { isPlaced: false, reason: 'falhou' }; }
   S.aberta = true;
+  guardarRazao(r);
+  await lerPanes($);
   void atualizar($, 'painel');
   const base = r?.isPlaced === true ? rotulo : `painel não coube: ${typeof r?.reason === 'string' && r.reason !== '' ? r.reason : 'sem motivo'}`;
   return base + (gravou ? '' : SO_NA_SESSAO);
@@ -1318,6 +1347,8 @@ export function registrarPainel(on) {
   /**
    * Faixa acima do input (GM-14 T20, REQ-GLB-1): survey ⇒ `next(e)`. `acima` e visível ⇒ o painel inteiro no orçamento de H/`maxRows`.
    * `lateral` com a Pane visível ⇒ `next(e)` (nunca os dois). Pane invisível ou painel oculto ⇒ 1 linha só com PAROU ou pergunta; sem eles, `next(e)`.
+   * EXCEÇÃO DECLARADA (T50, emenda 44) a "em lateral o AbovePrompt devolve next(e)": `lateral` com a Pane que a plataforma lista sem colocar ⇒ a mesma
+   * linha única leva o aviso "painel lateral precisa de <N> colunas: /gabarito painel para abrir" depois do PAROU/pergunta; não é 2º local.
    */
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (!S.interativo || e.props?.hasSurvey === true) return next(e);
@@ -1337,12 +1368,15 @@ export function registrarPainel(on) {
       }
       return arvoreDeLinhas($, e, linhas, botoes, larg);
     }
+    let aviso = null;
     if (S.local === 'lateral' && !oculto) {
       await lerPanes($);
       if (S.paneVisivel) return next(e);
+      // GM-14 T50 (emenda 44): a plataforma não colocou a Pane (abaixo do limiar, sem o dono pedir) ⇒ o aviso entra na linha única; o dono abre com /gabarito painel
+      if (S.paneEspera && !S.fechadaPeloDono) aviso = avisoPaneEspera(S.razaoPane);
     }
     let f;
-    try { f = faixaUmaLinha(S.estado, { root: $.plugin.root }); } catch { f = null; }
+    try { f = faixaUmaLinha(S.estado, { root: $.plugin.root, aviso }); } catch { f = null; }
     if (f === null) return next(e);
     const cabe = Math.max(1, larg - colunasDosBotoes(f.botoes));
     const cor = S.prefs.tema === 'mono' ? null : { color: f.cor };
