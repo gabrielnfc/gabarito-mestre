@@ -742,7 +742,7 @@ export const IGNORAR_STATUS_PADRAO = Object.freeze([/^.. "?\.harness\//, /^.. "?
 export function fotoDoRepo(raiz, { ignorarRefs = IGNORAR_REFS_PADRAO, ignorarStatus = IGNORAR_STATUS_PADRAO } = {}) {
   const g = (...a) => execFileSync('git', ['-C', raiz, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
   const refs = g('for-each-ref', '--format=%(refname) %(objectname)').split('\n').filter((l) => l !== '' && !ignorarRefs.some((re) => re.test(l.split(' ')[0]))).join('\n');
-  const worktrees = g('worktree', 'list', '--porcelain').split('\n').filter((l) => l.startsWith('worktree ')).join('\n');
+  const worktrees = g('worktree', 'list', '--porcelain').split('\n').filter((l) => l.startsWith('worktree ') && !/\/\.harness\/worktrees\//.test(l)).join('\n');
   const status = g('status', '--porcelain', '--untracked-files=all').split('\n').filter((l) => l !== '' && !ignorarStatus.some((re) => re.test(l))).join('\n');
   return { status, refs, worktrees };
 }
@@ -975,6 +975,15 @@ export async function main(argv) {
   }
   // `superpowers` (diagnóstico): rc 0 = versão fixa presente (imprime nome/versão/caminho); rc 1 = ausente (imprime a causa)
   if (argv[0] === 'superpowers') { const r = resolverSuperpowers(); process.stdout.write(`${JSON.stringify(r)}\n`); return r.ok ? 0 : 1; }
+  // `superficie <rundir>` (chamado pelo `a1.exp` antes da 1ª fala): a superfície da célula já foi observada? senão grava abortar.txt e rc 1
+  if (argv[0] === 'superficie') {
+    const rundir = resolve(argv[1] ?? ''); const celula = celulaDoRundir(rundir);
+    const causa = celula === null ? 'célula desconhecida' : invariantePrimeiroSnapshot(jsonl(join(rundir, 'obs', 'a1.jsonl')), celula);
+    if (causa === null) return 0;
+    writeFileSync(join(rundir, 'abortar.txt'), `${causa}\n`, { flag: 'a' });
+    process.stdout.write(`${causa}\n`);
+    return 1;
+  }
   if (argv[0] === 'snapshot') { await snapshot(argv[1], argv[2], Number(argv[3])); return 0; }
   // `avaliar <rundir> [--roteiro <arq>]`: a avaliação da matriz sobre uma execução JÁ GRAVADA (offline; não abre claude)
   if (argv[0] === 'avaliar') {

@@ -1070,7 +1070,11 @@ describe('T49 (a) isolamento: célula e plugin fora do repo real; o repo real fi
     assert.match(R.diferencasDeFotos(a, R.fotoDoRepo(r)).join(';'), /refs/, 'ref fora de wt/* continua vigiada');
     git(r, 'branch', '-q', '-D', 'enabler/x');
     git(r, 'worktree', 'add', '-q', '-b', 'wt/outra', join(tmp(), 'wt2'));
-    assert.match(R.diferencasDeFotos(a, R.fotoDoRepo(r)).join(';'), /worktrees/, 'worktree novo continua vigiado');
+    assert.match(R.diferencasDeFotos(a, R.fotoDoRepo(r)).join(';'), /worktrees/, 'worktree novo fora de .harness/worktrees continua vigiado');
+    // worktrees do loop (`.harness/worktrees/<id>`) nascem e morrem com o orquestrador: não são a célula
+    const antes2 = R.fotoDoRepo(r);
+    git(r, 'worktree', 'add', '-q', '-b', 'wt/T1', join(r, '.harness', 'worktrees', 'T1'));
+    assert.deepEqual(R.diferencasDeFotos(antes2, R.fotoDoRepo(r)), []);
   });
   test('estado-vivo-do-orquestrador-em-.harness-e-.claude-tmp-nao-invalida; arquivo de código novo no repo real sim', () => {
     const r = tmpGit(); const a = R.fotoDoRepo(r);
@@ -1225,6 +1229,19 @@ describe('T49 execução do expect: vigia o repo real e para na hora', () => {
     assert.equal(R.invariantePrimeiroSnapshot([pane], { local: 'lateral' }), null);
     assert.equal(R.invariantePrimeiroSnapshot([acima], { local: 'acima' }), null);
     assert.match(R.invariantePrimeiroSnapshot([pane], { local: 'acima' }), /AbovePrompt/);
+  });
+  test('cli-superficie-roda-ANTES-da-1ª-fala: sem render da superfície da célula rc 1 e abortar.txt; com render rc 0', () => {
+    const mk = (linhas) => { const d = tmp(); mkdirSync(join(d, 'obs'), { recursive: true }); writeFileSync(join(d, 'celula.json'), JSON.stringify({ local: 'lateral', cols: 180, rows: 50, cheia: true })); writeFileSync(join(d, 'obs', 'a1.jsonl'), linhas.map((l) => JSON.stringify(l)).join('\n')); return d; };
+    const ruim = mk([{ ev: 'render', comp: 'AbovePrompt', maxRows: 3 }]);
+    assert.equal(spawnSync(process.execPath, [RUNNER, 'superficie', ruim], { encoding: 'utf8' }).status, 1);
+    assert.match(readFileSync(join(ruim, 'abortar.txt'), 'utf8'), /Pane/);
+    const boa = mk([{ ev: 'render', comp: 'Pane', bodyRows: 3 }]);
+    assert.equal(spawnSync(process.execPath, [RUNNER, 'superficie', boa], { encoding: 'utf8' }).status, 0);
+    assert.equal(existsSync(join(boa, 'abortar.txt')), false);
+  });
+  test('a1.exp-chama-superficie-antes-de-digitar', () => {
+    const exp = readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), 'utf8');
+    assert.ok(exp.indexOf('$runner superficie') > 0 && exp.indexOf('$runner superficie') < exp.indexOf('digitar $sha $texto'));
   });
   test('cli-snapshot-sem-render-no-1º-ponto-escreve-abortar.txt-e-nao-calcula-o-estado', () => {
     const rundir = tmp(); mkdirSync(join(rundir, 'obs'), { recursive: true });

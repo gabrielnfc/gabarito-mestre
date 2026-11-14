@@ -113,6 +113,13 @@ if {[catch {exec $node $runner plugin $rundir/debug.log}]} {
   send "\003"; after 500; send "\003"; catch {close}; catch {wait}; exit 3
 }
 
+# invariante da superfície (T49): o observador já viu render da superfície da célula (lateral ⇒ Pane, acima ⇒ AbovePrompt)? Senão a célula nada mediria: para ANTES da 1ª fala
+drenar 5
+if {[catch {exec $node $runner superficie $rundir}]} {
+  nota "SUPERFICIE NAO OBSERVADA: [string trim [exec cat $rundir/abortar.txt]]"
+  sair ABORTADO
+}
+
 set arq [open $rundir/falas.tsv r]
 set linhas [split [read $arq] "\n"]
 close $arq
