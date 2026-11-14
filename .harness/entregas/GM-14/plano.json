@@ -1067,8 +1067,8 @@
       ]
     },
     {
-      "id": "T51",
-      "titulo": "A1 simula o dono abrindo o painel",
+      "id": "T52",
+      "titulo": "A1 por conversa, replay e sessão curta",
       "deps": [
         "T49",
         "T50",
@@ -1089,24 +1089,42 @@
       ]
     },
     {
-      "id": "T52",
-      "titulo": "A1 por conversa, replay e sessão curta",
+      "id": "T53",
+      "titulo": "Mod pousa no teto sem depender do dono",
       "deps": [
-        "T51",
-        "T24",
-        "T42",
-        "T43",
-        "T44",
-        "T46",
-        "T49"
+        "T1",
+        "T5",
+        "T6",
+        "T9",
+        "T11",
+        "T15",
+        "T20",
+        "T27",
+        "T28",
+        "T30",
+        "T31",
+        "T32",
+        "T33",
+        "T34",
+        "T35",
+        "T36",
+        "T38",
+        "T39",
+        "T48",
+        "T50"
       ],
       "arquivos": [
-        "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/rodar-a1.mjs",
-        "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/a1.exp",
-        "plugins/gabarito-mestre/gates/test/conversa-pontos.test.mjs"
+        "plugins/gabarito-mestre/mod/gabarito.mjs",
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
+        "plugins/gabarito-mestre/gates/src/pouso.ts",
+        "plugins/gabarito-mestre/gates/dist/pouso.js",
+        "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+        "plugins/gabarito-mestre/gates/scripts/stop-loop.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs"
       ],
       "reqs": [
-        "REQ-GLB-1"
+        "REQ-POU-1"
       ]
     },
     {
@@ -1159,8 +1177,8 @@
         "T48",
         "T49",
         "T50",
-        "T51",
-        "T52"
+        "T52",
+        "T53"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/.claude-plugin/plugin.json",
