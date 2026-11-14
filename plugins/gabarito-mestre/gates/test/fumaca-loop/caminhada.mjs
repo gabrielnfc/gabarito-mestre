@@ -385,7 +385,7 @@ export async function caminhar(opcoes) {
     }
     ag.status = 'completed';
     await H['turn.complete']($, { agentId: ag.id, reason: 'answer', isAborted: false, usage: uso }, async (e) => e);
-    mundo.percent = o.percent;
+    if (ag.papel === 'revisor') mundo.percent = o.percent; // o contexto só sobe com o veredito (T53, I1)
     trilha.push(`  agente ${ag.id} ${ag.task} ${ag.papel} terminou`);
   }
   async function peer() { if (H['prompt.submit']) await H['prompt.submit']($, { origin: { kind: 'peer' }, text: 'hand-back' }, async (e) => e); }
