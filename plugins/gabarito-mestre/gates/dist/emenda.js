@@ -157,3 +157,81 @@ export function validarJulgamento(est               , proposta_seq        , orig
   if (!est.abertas.some((p) => p.seq === proposta_seq)) return 'proposta inexistente';
   return null;
 }
+
+// ───────────────────────────────────────────────────────────── T54 (emenda 54): sha aceito da spec e a cadeia de emendas aplicadas
+
+const HEX64 = /^[0-9a-f]{64}$/;
+
+                                                                                           
+                                                                                                  
+
+/**
+ * A REGRA ÚNICA do sha aceito da spec (REQ-TRI-1, REQ-DEP-1 (1), REQ-DIA-1, emenda 54). A cadeia, na ordem do diário (`ordenar`):
+ * `spec.aprovada` válida REINICIA a cadeia (a ponta é o sha aprovado); `spec.aplicada` válida AVANÇA a ponta só se (a) o `spec` é o da
+ * aprovação de origem, (b) `sha256_antes` é a ponta, (c) `seq` tem `spec.emendada` na mesma entrega (1º julgamento válido, aprovando) e
+ * (d) a `seq` ainda não foi aplicada. Qualquer outra aplicada é ignorada (cadeia quebrada nunca vira aceito). Diário fora de ordem ⇒ `null`.
+ * `filtro` restringe as aprovações a um caminho (a trilha da spec candidata); sem ele, toda aprovação vale.
+ * Quem decide "o sha atual da spec está aceito?" é só `shaAceito`; painel, trilha e registro não comparam sha por conta própria.
+ */
+export function pontaDaSpec(eventos          , filtro                            )                                                         {
+  const vazio = { ponta: null, aplicacoes: [] };
+  if (!Array.isArray(eventos)) return vazio;
+  let ordem                            ;
+  try {
+    ordem = ordenar(eventos);
+  } catch {
+    return vazio;
+  }
+  if (!ordem.ok) return vazio;
+  const julgadas = new Set(projetarEmendas(eventos).aprovadas.map((p) => p.seq));
+  const aplicadas = new Set        ();
+  const aplicacoes              = [];
+  let ponta                     = null;
+  for (const e of ordem.eventos) {
+    if (!ehObjeto(e) || !ehObjeto(e.dados)) continue;
+    const ref = `${e.sessao}:${e.seq}`;
+    if (e.tipo === 'spec.aprovada') {
+      if (formaInvalida('spec.aprovada', e.dados) !== null) continue;
+      const spec = campo(e.dados, 'spec')          ;
+      if (filtro !== undefined && !filtro(spec)) continue;
+      ponta = { spec, sha256: campo(e.dados, 'sha256')          , aplicadas: 0, ref };
+    } else if (e.tipo === 'spec.aplicada') {
+      if (ponta === null || formaInvalida('spec.aplicada', e.dados) !== null) continue;
+      const seq = campo(e.dados, 'seq')          ;
+      const spec = campo(e.dados, 'spec')          ;
+      const antes = campo(e.dados, 'sha256_antes')          ;
+      const depois = campo(e.dados, 'sha256_depois')          ;
+      if (spec !== ponta.spec || antes !== ponta.sha256 || !julgadas.has(seq) || aplicadas.has(seq)) continue;
+      aplicadas.add(seq);
+      aplicacoes.push({ seq, spec, antes, depois, ref });
+      ponta = { spec, sha256: depois, aplicadas: ponta.aplicadas + 1, ref };
+    }
+  }
+  return { ponta, aplicacoes };
+}
+
+/** `true` só se `sha` (64 hex minúsculos) é o último sha aceito da spec: o da última aprovação, ou o fim da cadeia de aplicadas que parte dela. */
+export function shaAceito(eventos          , sha         , filtro                            )          {
+  if (typeof sha !== 'string' || !HEX64.test(sha)) return false;
+  const { ponta } = pontaDaSpec(eventos, filtro);
+  return ponta !== null && ponta.sha256 === sha;
+}
+
+                                                                                                                              
+
+/**
+ * Pode gravar `spec.aplicada` da `seq`? Só `seq` com `spec.emendada` (aprovada) nesta entrega, uma vez por seq, e só com spec aprovada (ponta
+ * da cadeia) para partir dela. Emenda rejeitada, aberta ou inexistente ⇒ `emenda_nao_aprovada`. Devolve o motivo fechado ou a ponta (`sha256_antes`).
+ */
+export function validarAplicacao(eventos          , seq         )                                                                          {
+  const est = projetarEmendas(eventos);
+  if (est.invalido !== undefined) return { ok: false, motivo: 'diario_invalido' };
+  if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 1) return { ok: false, motivo: 'seq_invalido' };
+  if (!est.aprovadas.some((p) => p.seq === seq)) return { ok: false, motivo: 'emenda_nao_aprovada' };
+  const { ponta, aplicacoes } = pontaDaSpec(eventos);
+  // Já gravada na cadeia ou em qualquer `spec.aplicada` válido da mesma seq (mesmo de cadeia que a aprovação nova reiniciou).
+  const jaGravada = eventos.some((e) => ehObjeto(e) && e.tipo === 'spec.aplicada' && ehObjeto(e.dados) && formaInvalida('spec.aplicada', e.dados) === null && campo(e.dados, 'seq') === seq);
+  if (aplicacoes.some((a) => a.seq === seq) || jaGravada) return { ok: false, motivo: 'ja_aplicada' };
+  if (ponta === null) return { ok: false, motivo: 'spec_sem_aprovacao' };
+  return { ok: true, ponta };
+}

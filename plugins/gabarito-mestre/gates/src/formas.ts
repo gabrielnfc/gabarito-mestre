@@ -17,7 +17,7 @@ export const TIPOS_EVENTO: readonly TipoEvento[] = Object.freeze([
   'custo.medicao', 'sessao.pouso', 'sessao.retomada',
   'sombra.consulta', 'decisao.sombra', 'desvio', 'descoberta', 'emenda.proposta', 'spec.emendada', 'emenda.rejeitada',
   'entrega.inicio', 'entrega.smoke', 'entrega.rollback', 'entrega.fim', 'entrega.agendada',
-  'spec.aprovada', 'entrega.devolvida',
+  'spec.aprovada', 'spec.aplicada', 'entrega.devolvida',
   'aprendizado', 'aprendizado.nada', 'dono.mensagem',
   'fato.medido', 'nota', 'dono.resposta',
 ] as const satisfies readonly TipoEvento[]);
@@ -139,6 +139,18 @@ function exigirSha256(o: Obj): string | null {
   if (v === undefined) return obrigatorio('sha256');
   return typeof v === 'string' && HASH_RE.test(v) ? null : 'campo `sha256` inválido: esperado sha256 em hex minúsculo (64)';
 }
+
+/** `spec.aplicada` (T54, emenda 54): forma fechada `{seq, spec, sha256_antes, sha256_depois}`; os dois sha são 64 hex minúsculos. */
+function exigirSha64(o: Obj, nome: string): string | null {
+  const v = campo(o, nome);
+  if (v === undefined) return obrigatorio(nome);
+  return typeof v === 'string' && HASH_RE.test(v) ? null : `campo \`${nome}\` inválido: esperado sha256 em hex minúsculo (64)`;
+}
+
+const specAplicada: Regra = (o) => primeiro(
+  chaveExtra(o, ['seq', 'spec', 'sha256_antes', 'sha256_depois'], '`spec.aplicada` carrega só {seq, spec, sha256_antes, sha256_depois}'),
+  inteiroPos(o, 'seq'), exigirTexto(o, 'spec'), exigirSha64(o, 'sha256_antes'), exigirSha64(o, 'sha256_depois'),
+);
 
 function motivoDevolvida(o: Obj): string | null {
   const v = campo(o, 'motivo');
@@ -425,6 +437,8 @@ const REGRAS: ReadonlyMap<string, Regra> = new Map<string, Regra>([
   ['entrega.agendada', quando],
   // E4 (GM-12): `spec.aprovada` grava o caminho de `plano.spec` e o sha256 aprovado; `entrega.devolvida` guarda só o motivo (o comando nunca vai ao diário).
   ['spec.aprovada', (o) => primeiro(exigirTexto(o, 'spec'), exigirSha256(o))],
+  // T54 (emenda 54): o texto aprovado de uma emenda foi aplicado na spec; a cadeia de sha aceitos vive em `emenda.ts` (`shaAceito`).
+  ['spec.aplicada', specAplicada],
   ['entrega.devolvida', motivoDevolvida],
   // E5a (GM-13): aprendizado do diário, fechamento sem regra e mensagem do dono (hash e tamanho, nunca o texto).
   ['aprendizado', aprendizado],

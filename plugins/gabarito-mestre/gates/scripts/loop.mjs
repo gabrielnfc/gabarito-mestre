@@ -17,6 +17,8 @@
  *       grava SEMPRE em `events.emendas.jsonl` (`--sessao` é ignorada: o seq da proposta é o dela) e devolve `{proposta_seq, req, task?, congeladas}`;
  *       `proposta_seq` vem da RELEITURA estrita do arquivo (a única `emenda.proposta` com o `ts` e os `dados` gravados), nunca do candidato de `gravar`.
  *   loop.mjs emenda julgar <seq> <aprovar|rejeitar>   origem `sombra`: recusa sem `sombra.julga_emendas: true` em `origin/HEAD` (o config local não conta)
+ *   loop.mjs emenda aplicar <seq>   (GM-14 T54, emenda 54) grava `spec.aplicada {seq, spec, sha256_antes, sha256_depois}` depois que o texto aprovado da emenda foi aplicado na spec:
+ *       só seq com `spec.emendada`, 1 vez por seq; nenhum sha por argumento (antes = ponta da cadeia do diário, depois = sha do arquivo em disco); arquivo igual à ponta ⇒ `nada_a_aplicar`
  *   loop.mjs liberar <task> --origem sombra --hash <h>   (GM-14 T36, FIEL-15) a Sombra tira a task do teto, 1 vez por task e só a 1ª liberação; exige
  *       `sombra.libera_teto: true` em `origin/HEAD` (mesma leitura de `julga_emendas`), task `no_teto`, `<h>` = hash da PERGUNTA DE LIBERAÇÃO da task
  *       (`sombra.mjs perguntar --task <t> --libera-teto`) com `decisao.sombra` vigente `libera: true`, sem `fora_da_regra`, depois do veredito do teto na
@@ -32,7 +34,7 @@
  * Dado ausente, corrompido ou ferramenta falhando nunca vira sucesso; rc 0 só com o efeito feito. Uso errado sai 2.
  *
  * QUEM GRAVA NO DIÁRIO. Só `iniciar` (task.iniciada), `concluir` (task.concluida), `veredito` (review.veredito),
- * `desvio`, `descoberta`, `emenda propor` (emenda.proposta) e `emenda julgar` (spec.emendada ou emenda.rejeitada, origem `sombra`; a origem `dono` sai só de
+ * `desvio`, `descoberta`, `emenda propor` (emenda.proposta), `emenda aplicar` (spec.aplicada, T54) e `emenda julgar` (spec.emendada ou emenda.rejeitada, origem `sombra`; a origem `dono` sai só de
  * `julgarEmendaDono`, que o hook `emenda-dono.mjs` chama), `reabrir` (task.reaberta, SÓ origem `retomada`: nenhum argumento produz `dono`; `dono` sai só de `liberarTeto`, que o hook do comando humano `/gabarito-mestre:liberar` chama),
  * `liberar` (task.reaberta, SÓ origem `sombra` com o `hash` da decisão; GM-14 T36), `integrar` (task.integrada),
  * `ci` (ci.resultado), `parar` (loop.parar) e `anotar` (nota, GM-14: sem plano, sem tabela de transições; confere só a forma, o canário e a legibilidade do diário). `concluir` e `integrar` gravam o `sha`. `abrir` não grava no diário (grava o nome da base em `branch.<branch>.gabaritoBase` e o sha dela em `branch.<branch>.gabaritoBaseSha`)
@@ -67,7 +69,7 @@ import { lerConfigOrigin, resolverModelo } from '../lib/config.mjs';
 import { PADROES } from '../lib/git.mjs';
 import { aprendizadosVigentes, paraDestino } from '../dist/aprendizado.js';
 import * as diario from '../dist/diario.js';
-import { escopoDaTask, projetarEmendas, SESSAO_EMENDAS, validarJulgamento, validarProposta } from '../dist/emenda.js';
+import { escopoDaTask, pontaDaSpec, projetarEmendas, SESSAO_EMENDAS, validarAplicacao, validarJulgamento, validarProposta } from '../dist/emenda.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { formaInvalida, formaNaGravacao, MOTIVOS_REENTREGA, REQ_RE } from '../dist/formas.js';
 import { estadoDe, ordenar, podeIntegrar, proximaAcao, tasksCongeladas } from '../dist/loop.js';
@@ -207,7 +209,7 @@ function lerArgs(argv) {
     registro: { pos: null, flags: ['entrega', 'sessao'] },
     emenda: { pos: null, flags: ['entrega', 'sessao', 'req', 'task', 'diff', 'fato', 'alternativa', 'evidencia', 'causa', 'arquivos'] },
   };
-  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | liberar <task> --origem sombra --hash <h> | concluir <task> --motivo <gate|sombra|dono> | iniciar <task> <papel> [--modelo <haiku|sonnet|opus|fable>] | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | aprendizados --exportar | pousar | registro | anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--opcao <r>]…  [--entrega GM-10]';
+  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | liberar <task> --origem sombra --hash <h> | concluir <task> --motivo <gate|sombra|dono> | iniciar <task> <papel> [--modelo <haiku|sonnet|opus|fable>] | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | emenda aplicar <seq> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | aprendizados --exportar | pousar | registro | anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--opcao <r>]…  [--entrega GM-10]';
   if (typeof cmd !== 'string' || !Object.hasOwn(ESPEC, cmd)) throw new Falha('uso', `comando desconhecido ou ausente. ${uso}`, {}, 2);
   const esp = ESPEC[cmd];
   const pos = [];
@@ -231,7 +233,9 @@ function lerArgs(argv) {
     const sub = pos[0];
     const propor = sub === 'propor' && pos.length === 1;
     const julgar = sub === 'julgar' && pos.length === 3;
-    if (!propor && !julgar) throw new Falha('uso', `emenda espera \`propor\` ou \`julgar <seq> <aprovar|rejeitar>\`. ${uso}`, {}, 2);
+    // T54: `aplicar <seq>` não aceita sha por argumento: o `sha256_depois` é o do arquivo em disco e o `sha256_antes` é a ponta da cadeia do diário.
+    const aplicar = sub === 'aplicar' && pos.length === 2;
+    if (!propor && !julgar && !aplicar) throw new Falha('uso', `emenda espera \`propor\`, \`julgar <seq> <aprovar|rejeitar>\` ou \`aplicar <seq>\`. ${uso}`, {}, 2);
     const obrig = propor ? ['req', 'diff', 'fato', 'alternativa', 'evidencia', 'causa'] : [];
     const permitidas = propor ? esp.flags : ['entrega', 'sessao'];
     const fora = Object.keys(flags).find((n) => !permitidas.includes(n));
@@ -291,6 +295,10 @@ function limitarDados(dados) {
 function formaEmenda(pos, flags) {
   if (flags.entrega !== undefined && !ENTREGA_RE.test(flags.entrega)) throw new Falha('entrega_invalida', `--entrega "${flags.entrega}" fora da forma ${ENTREGA_RE}`);
   if (flags.sessao !== undefined && !SESSAO_RE.test(flags.sessao)) throw new Falha('argumento_invalido', `--sessao fora da forma ${SESSAO_RE}`);
+  if (pos[0] === 'aplicar') {
+    if (!SEQ_RE.test(pos[1])) throw new Falha('argumento_invalido', `seq ${JSON.stringify(pos[1])}: esperado inteiro >= 1 sem zeros à esquerda (até 9 dígitos)`);
+    return { sub: 'aplicar', seq: Number(pos[1]) };
+  }
   if (pos[0] === 'julgar') {
     const [, seq, decisao] = pos;
     if (!SEQ_RE.test(seq)) throw new Falha('argumento_invalido', `seq ${JSON.stringify(seq)}: esperado inteiro >= 1 sem zeros à esquerda (até 9 dígitos)`);
@@ -1640,6 +1648,62 @@ function julgar(c, plano, seq, decisao, origem, antes) {
   return { seq, req: proposta.req, tipo, entrega: c.entrega };
 }
 
+const CODIGO_APLICAR = {
+  diario_invalido: ['diario_invalido', 'o diário da entrega não passa na leitura de emendas; nada foi gravado'],
+  seq_invalido: ['argumento_invalido', 'seq inválido: esperado inteiro >= 1'],
+  emenda_nao_aprovada: ['emenda_nao_aprovada', 'só aplica emenda com `spec.emendada` (aprovada) nesta entrega; aberta, rejeitada ou inexistente não'],
+  ja_aplicada: ['ja_aplicada', 'esta emenda já foi aplicada no texto; cada seq se aplica uma vez'],
+  spec_sem_aprovacao: ['spec_sem_aprovacao', 'não há `spec.aprovada` nesta entrega: a cadeia parte de uma aprovação do dono'],
+};
+
+/**
+ * T54 (emenda 54): `emenda aplicar <seq>` grava `spec.aplicada {seq, spec, sha256_antes, sha256_depois}` depois que o orquestrador editou o texto da spec.
+ * Nenhum sha vem por argumento: `sha256_antes` é a ponta da cadeia lida do diário (`validarAplicacao`, a regra única de `emenda.ts`) e `sha256_depois` é o
+ * sha do arquivo em disco (`shaDaSpec`, bytes do checkout da sessão). Arquivo igual à ponta ⇒ `nada_a_aplicar`. Uma edição que cobre duas emendas
+ * aplica UMA seq por vez (1 aplicar por seq; a 2ª fica `nada_a_aplicar` até outra edição). A conferência final relê o diário depois do gancho `antes`:
+ * ponta que mudou ⇒ `cadeia_quebrada`; spec que mudou ⇒ `spec_mudou`. Limite declarado: o orquestrador redige o texto aplicado; conferi-lo contra o diff
+ * aprovado é do revisor da entrega (o registro lista cada aplicada).
+ */
+function aplicar(c, plano, seq, antesDaGravacao) {
+  const eventos = lerDiarioEstrito(c.dirEntrega);
+  if (diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições; nada foi gravado');
+  const v = validarAplicacao(eventos, seq);
+  if (!v.ok) throw new Falha(CODIGO_APLICAR[v.motivo][0], `${CODIGO_APLICAR[v.motivo][1]}; nada foi gravado`);
+  const checkout = checkoutDaSessao(c.cwd);
+  const alvo = { spec: v.ponta.spec };
+  const depois = shaDaSpec(checkout, alvo);
+  if (!depois.ok) throw new Falha(depois.erro, `${depois.mensagem}; nada foi gravado`);
+  if (depois.sha256 === v.ponta.sha256) throw new Falha('nada_a_aplicar', `a spec ${v.ponta.spec} está igual ao último sha aceito (${v.ponta.sha256.slice(0, 12)}…): edite o texto da emenda antes de aplicar; nada foi gravado`);
+  const dados = { seq, spec: v.ponta.spec, sha256_antes: v.ponta.sha256, sha256_depois: depois.sha256 };
+  const conferir = () => {
+    antesDaGravacao?.();
+    const de_novo = validarAplicacao(lerDiarioEstrito(c.dirEntrega), seq);
+    if (!de_novo.ok || de_novo.ponta.sha256 !== v.ponta.sha256 || de_novo.ponta.spec !== v.ponta.spec) {
+      throw new Falha('cadeia_quebrada', 'a cadeia de specs aceitas mudou entre a leitura e a gravação (outra aprovação ou aplicação); leia o diário e aplique de novo. Nada foi gravado');
+    }
+    const rel = shaDaSpec(checkout, alvo);
+    if (!rel.ok || rel.sha256 !== depois.sha256) throw new Falha('spec_mudou', 'a spec mudou entre o cálculo do sha256 e a gravação; aplique de novo. Nada foi gravado');
+  };
+  gravar(c, plano, 'spec.aplicada', dados, conferir);
+  const ponta = pontaDaSpec(lerDiarioEstrito(c.dirEntrega)).ponta;
+  if (ponta === null || ponta.sha256 !== depois.sha256) {
+    throw new Falha('aplicacao_sem_efeito', `o evento spec.aplicada foi gravado mas o diário relido não leva a cadeia ao sha256 ${depois.sha256.slice(0, 12)}…; confira o diário`);
+  }
+  return { ...dados, entrega: c.entrega, aplicadas: ponta.aplicadas };
+}
+
+/** `emenda aplicar` em processo, com o gancho `antes` (entre as conferências e o append) para o teste simular a corrida. Nunca lança. */
+export function aplicarEmenda(cwd, seq, { antes, sessao, entrega } = {}) {
+  try {
+    if (!Number.isInteger(seq) || seq < 1) throw new Falha('argumento_invalido', `seq ${JSON.stringify(seq)}: esperado inteiro >= 1`);
+    const c = contexto(cwd, { sessao, entrega });
+    return { ok: true, ...aplicar(c, carregarPlano(c), seq, antes) };
+  } catch (e) {
+    if (e instanceof Falha) return { ok: false, erro: e.erro, mensagem: e.message };
+    return { ok: false, erro: 'excecao', mensagem: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 function julgarComoSombra(c, plano, seq, decisao) {
   const o = lerConfigOrigin(c.raiz);
   const liga = o.fonte === 'origin' && o.cfg.sombra !== null && typeof o.cfg.sombra === 'object' && o.cfg.sombra.julga_emendas === true;
@@ -1772,6 +1836,7 @@ async function executar(argv, cwd) {
     case 'descoberta': return { evento: gravar(c, plano, 'descoberta', forma.dados) };
     case 'emenda':
       if (forma.sub === 'propor') return propor(c, plano, propostaPronta);
+      if (forma.sub === 'aplicar') return aplicar(c, plano, forma.seq);
       return julgarComoSombra(c, plano, forma.seq, forma.decisao);
     case 'proxima': return proxima(c, plano, flags);
     case 'aprendizado': case 'pousar': case 'registro':

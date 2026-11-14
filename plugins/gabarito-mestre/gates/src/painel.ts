@@ -6,7 +6,7 @@
  * Decisões: `.superpowers/sdd/2026-11-09-e4-painel/sombra-p1a.md` §0 (D-A a D-C) e "Task 2".
  */
 
-import { projetarEmendas } from './emenda.ts';
+import { projetarEmendas, shaAceito } from './emenda.ts';
 import { cmp, contarConsultas, duracoes, EM_TRABALHO, mediana, projetarDecisoes } from './diario-puro.ts';
 import { dependeDe } from './depende.ts';
 import { origemDe } from './origem.ts';
@@ -86,7 +86,6 @@ const ehObj = (x: unknown): x is Record<string, unknown> => x !== null && typeof
 const dadosDe = (ev: unknown): Record<string, unknown> => (ehObj(ev) && ehObj(ev.dados) ? ev.dados : {});
 const tipoDe = (ev: unknown): string | null => (ehObj(ev) && typeof ev.tipo === 'string' ? ev.tipo : null);
 const msDe = (ev: unknown): number => (ehObj(ev) && typeof ev.ts === 'string' ? Date.parse(ev.ts) : Number.NaN);
-const HEX64 = /^[0-9a-f]{64}$/;
 const DIAS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
 const EM_VOO: readonly EstadoTask[] = ['implementando', 'em_revisao', 'corrigindo'];
 const PAPEL_DO_ESTADO: Partial<Record<EstadoTask, Papel>> = { implementando: 'implementador', corrigindo: 'correcao', em_revisao: 'revisor' };
@@ -345,9 +344,9 @@ function montarDepende(c: Calculo): ItemDepende[] {
   const { entrada, lista, ord, parar } = c;
   const itens: ItemDepende[] = [];
   if (parar !== null) itens.push({ nivel: 'parar', motivo: parar.texto, acoes: parar.acoes });
-  // spec aguardando: nenhum `spec.aprovada` com o sha atual (só sha de 64 hex minúsculos; varredura sem ordem)
+  // spec aguardando: o sha atual não é o último aceito (regra única `shaAceito`: última aprovação ou fim da cadeia de emendas aplicadas)
   if (entrada.specSha !== null && entrada.specSha !== undefined) {
-    const aprovada = lista.some((ev) => tipoDe(ev) === 'spec.aprovada' && typeof dadosDe(ev).sha256 === 'string' && HEX64.test(dadosDe(ev).sha256 as string) && dadosDe(ev).sha256 === entrada.specSha);
+    const aprovada = shaAceito(lista, entrada.specSha);
     if (!aprovada) itens.push({ nivel: 'dono', motivo: 'spec aguardando aprovação', acoes: [{ rotulo: 'aprovar a spec', comando: '/gabarito-mestre:aprovar' }] });
   }
   // `projetarEmendas` ordena por conta própria e, com o diário fora de ordem, não devolve nenhuma aberta (falha fechada: o PAROU cobre).

@@ -46,6 +46,7 @@ export type TipoEvento =
   | 'entrega.agendada'
   // E4 (GM-12): painel
   | 'spec.aprovada'
+  | 'spec.aplicada'
   | 'entrega.devolvida'
   // E5a (GM-13): aprendizado, fechamento sem regra e mensagem do dono
   | 'aprendizado'

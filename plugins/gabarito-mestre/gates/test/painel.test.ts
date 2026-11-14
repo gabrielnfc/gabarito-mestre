@@ -570,7 +570,8 @@ test('spec-aguardando-sha-antigo: specSha sem spec.aprovada com esse sha ⇒ agu
   assert.deepEqual(proj(P('T1'), antigo, { specSha: SHA_A }).depende, [item]);
   assert.deepEqual(proj(P('T1'), D([e(0, 'spec.aprovada', { spec: 'x', sha256: SHA_A })]), { specSha: SHA_A }).depende, []);
   assert.deepEqual(proj(P('T1'), D([e(0, 'spec.aprovada', { spec: 'x', sha256: SHA_B }), e(1, 'spec.aprovada', { spec: 'x', sha256: SHA_A })]), { specSha: SHA_A }).depende, []);
-  assert.deepEqual(proj(P('T1'), D([e(0, 'spec.aprovada', { spec: 'x', sha256: SHA_A }), e(1, 'spec.aprovada', { spec: 'x', sha256: SHA_B })]), { specSha: SHA_A }).depende, []); // a aprovada não precisa ser a última
+  // T54 (emenda 54): o aceito é o ÚLTIMO (a aprovação nova reinicia a cadeia); voltar ao conteúdo antigo é spec nova para o dono
+  assert.deepEqual(proj(P('T1'), D([e(0, 'spec.aprovada', { spec: 'x', sha256: SHA_A }), e(1, 'spec.aprovada', { spec: 'x', sha256: SHA_B })]), { specSha: SHA_A }).depende, [item]);
   assert.deepEqual(proj(P('T1'), [], { specSha: null }).depende, []);
   // maiúsculas ou 63 caracteres: aguardando
   for (const torto of [SHA_A.toUpperCase(), 'a'.repeat(63)]) {
@@ -1258,4 +1259,85 @@ test('uma-linha-regra-unica: umaLinhaDe sobre o estado projetado == umaLinha da 
   assert.equal(umaLinhaDe({ ...livre, pergunta: { id: 'x' } } as unknown as EstadoPainel, null), null, 'pergunta');
   assert.equal(umaLinhaDe({ ...livre, depende: [{ nivel: 'dono', motivo: 'a', acoes: [] }] } as unknown as EstadoPainel, null), null, 'depende');
   assert.equal(umaLinhaDe({ ...livre, agora: { agentes: [{}] } } as unknown as EstadoPainel, null), null, 'agente trabalhando');
+});
+
+// ---------------------------------------------------------------- T54: spec aceita emenda aplicada no texto (emenda 54)
+
+const SHA_C = 'c'.repeat(64);
+const SHA_D = 'd'.repeat(64);
+const aprovadaSpec = (t: number, sha: string, spec = 'docs/x.md'): Item => e(t, 'spec.aprovada', { spec, sha256: sha });
+const propostaDia = (t: number): Item => e(t, 'emenda.proposta', { req: 'REQ-DIA-1', diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'regra_negocio' }, 'emendas');
+const julgada = (t: number, seq: number): Item => e(t, 'spec.emendada', { proposta_seq: seq, origem: 'dono' }, 'dono');
+const aplicada = (t: number, seq: number, antes: string, depois: string, spec = 'docs/x.md'): Item => e(t, 'spec.aplicada', { seq, spec, sha256_antes: antes, sha256_depois: depois }, 'loop');
+const AGUARDA = { nivel: 'dono', motivo: 'spec aguardando aprovação', acoes: [{ rotulo: 'aprovar a spec', comando: '/gabarito-mestre:aprovar' }] };
+const aguardando = (evs: Evento[], specSha: string): boolean => proj(P('T1'), evs, { specSha }).depende.some((d) => d.motivo === AGUARDA.motivo);
+
+test('aplicada-limpa-depende: aprovada A + emenda aprovada + aplicada A⇒B: o sha B não pede aprovação; A (antes da aplicação) também deixa de ser o aceito', () => {
+  const evs = D([aprovadaSpec(0, SHA_A), propostaDia(1), julgada(2, 1), aplicada(3, 1, SHA_A, SHA_B)]);
+  assert.equal(aguardando(evs, SHA_B), false);
+  assert.equal(aguardando(evs, SHA_A), true, 'o aceito é a ponta da cadeia');
+  // duas emendas encadeadas
+  const dois = D([aprovadaSpec(0, SHA_A), propostaDia(1), propostaDia(2), julgada(3, 1), julgada(4, 2), aplicada(5, 1, SHA_A, SHA_B), aplicada(6, 2, SHA_B, SHA_C)]);
+  assert.equal(aguardando(dois, SHA_C), false);
+  assert.equal(aguardando(dois, SHA_B), true);
+});
+
+test('edicao-sem-emenda-segue-pedindo: sha que ninguém aprovou nem aplicou pede a aprovação do dono', () => {
+  const evs = D([aprovadaSpec(0, SHA_A), propostaDia(1), julgada(2, 1), aplicada(3, 1, SHA_A, SHA_B)]);
+  assert.equal(aguardando(evs, SHA_D), true);
+  assert.equal(aguardando(D([aprovadaSpec(0, SHA_A)]), SHA_B), true, 'sem emenda aplicada');
+});
+
+test('aplicar-sem-aprovada-ignorada-na-leitura: aplicada de seq sem spec.emendada, rejeitada ou repetida não move a ponta', () => {
+  const semJulgamento = D([aprovadaSpec(0, SHA_A), propostaDia(1), aplicada(2, 1, SHA_A, SHA_B)]);
+  assert.equal(aguardando(semJulgamento, SHA_B), true, 'proposta aberta');
+  const rejeitada = D([aprovadaSpec(0, SHA_A), propostaDia(1), e(2, 'emenda.rejeitada', { proposta_seq: 1, origem: 'dono' }, 'dono'), aplicada(3, 1, SHA_A, SHA_B)]);
+  assert.equal(aguardando(rejeitada, SHA_B), true, 'rejeitada');
+  const inexistente = D([aprovadaSpec(0, SHA_A), aplicada(1, 7, SHA_A, SHA_B)]);
+  assert.equal(aguardando(inexistente, SHA_B), true, 'seq que não existe');
+  const repetida = D([aprovadaSpec(0, SHA_A), propostaDia(1), julgada(2, 1), aplicada(3, 1, SHA_A, SHA_B), aplicada(4, 1, SHA_B, SHA_C)]);
+  assert.equal(aguardando(repetida, SHA_C), true, 'a mesma seq só aplica uma vez');
+  assert.equal(aguardando(repetida, SHA_B), false);
+});
+
+test('cadeia-quebrada-nao-conta: sha_antes que não é a ponta, ou spec de outro caminho, não move a ponta', () => {
+  const quebrada = D([aprovadaSpec(0, SHA_A), propostaDia(1), julgada(2, 1), aplicada(3, 1, SHA_D, SHA_B)]);
+  assert.equal(aguardando(quebrada, SHA_B), true);
+  const outraSpec = D([aprovadaSpec(0, SHA_A), propostaDia(1), julgada(2, 1), aplicada(3, 1, SHA_A, SHA_B, 'docs/outra.md')]);
+  assert.equal(aguardando(outraSpec, SHA_B), true);
+  const tortaForma = D([aprovadaSpec(0, SHA_A), propostaDia(1), julgada(2, 1), e(3, 'spec.aplicada', { seq: 1, spec: 'docs/x.md', sha256_antes: SHA_A, sha256_depois: SHA_B, extra: 1 }, 'loop')]);
+  assert.equal(aguardando(tortaForma, SHA_B), true, 'campo fora da forma');
+});
+
+test('aprovada-nova-reinicia-cadeia: spec.aprovada depois da aplicada vira a ponta; o fim da cadeia antiga deixa de valer', () => {
+  const evs = D([aprovadaSpec(0, SHA_A), propostaDia(1), julgada(2, 1), aplicada(3, 1, SHA_A, SHA_B), aprovadaSpec(4, SHA_C)]);
+  assert.equal(aguardando(evs, SHA_C), false);
+  assert.equal(aguardando(evs, SHA_B), true);
+  // a cadeia nova parte da nova aprovação: aplicada com antes = aprovação antiga não vale
+  const antiga = D([aprovadaSpec(0, SHA_A), propostaDia(1), julgada(2, 1), aprovadaSpec(3, SHA_C), aplicada(4, 1, SHA_A, SHA_B)]);
+  assert.equal(aguardando(antiga, SHA_B), true);
+});
+
+test('forma-spec-aplicada: forma fechada; sha só 64 hex minúsculos; campo fora ⇒ recusa; faz parte da lista de tipos', async () => {
+  const { formaInvalida, TIPOS_EVENTO } = await import('../src/formas.ts');
+  const ok = { seq: 1, spec: 'docs/x.md', sha256_antes: SHA_A, sha256_depois: SHA_B };
+  assert.equal(formaInvalida('spec.aplicada', ok), null);
+  assert.ok(TIPOS_EVENTO.includes('spec.aplicada' as never));
+  for (const ruim of [{ ...ok, extra: 1 }, { ...ok, seq: 0 }, { ...ok, seq: '1' }, { ...ok, spec: '' }, { ...ok, sha256_antes: SHA_A.toUpperCase() }, { ...ok, sha256_depois: 'a'.repeat(63) }, { ...ok, sha256: SHA_A }, { spec: 'x', seq: 1, sha256_depois: SHA_B }, { seq: 1, spec: 'x', sha256_antes: SHA_A }, null, 'x']) {
+    assert.notEqual(formaInvalida('spec.aplicada', ruim), null, JSON.stringify(ruim));
+  }
+});
+
+test('regra-unica-estatica: shaAceito é a única decisão; painel, trilha e registro a importam e nenhum compara sha da spec por conta própria', () => {
+  const fonte = (n: string): string => readFileSync(join(AQUI, '..', 'src', n), 'utf8');
+  for (const n of ['painel.ts', 'trilha.ts', 'registro.ts']) {
+    const t = fonte(n);
+    assert.match(t, /import \{[^}]*\bshaAceito\b[^}]*\} from '\.\/emenda\.ts'/, `${n} importa shaAceito de emenda.ts`);
+    assert.match(t, /\bshaAceito\(/, `${n} chama shaAceito`);
+  }
+  assert.match(fonte('emenda.ts'), /export function shaAceito\(/);
+  // nenhum consumidor tem critério próprio: a varredura por spec.aprovada com o sha atual saiu do painel; a comparação com a última aprovação saiu da trilha e do registro
+  assert.doesNotMatch(fonte('painel.ts'), /tipoDe\(ev\) === 'spec\.aprovada' && typeof/);
+  assert.doesNotMatch(fonte('trilha.ts'), /ultimaAprovacao\.sha256 !==/);
+  assert.doesNotMatch(fonte('registro.ts'), /specSha === ultima\b/);
 });

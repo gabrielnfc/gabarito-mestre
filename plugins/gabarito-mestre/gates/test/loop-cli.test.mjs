@@ -5669,3 +5669,172 @@ describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (
     assert.match(readFileSync(join(AQUI, '..', 'src', 'guarda.ts'), 'utf8'), /export function entregaPublicada/);
   });
 });
+
+// ─────────────────────────────────────────────────────────────── GM-14 T54: emenda aplicada no texto da spec (emenda 54)
+
+describe('GM-14 T54: `emenda aplicar <seq>` grava spec.aplicada com os sha do diário e do disco', () => {
+  const sha = (t) => createHash('sha256').update(Buffer.from(t)).digest('hex');
+  const SPEC = 'docs/spec.md';
+  /** Entrega com spec aprovada (A), duas emendas propostas e aprovadas pelo dono (#1 e #2). */
+  async function pronto({ aprovadas = [1, 2] } = {}) {
+    const { aprovarSpec, julgarEmendaDono } = await import('../scripts/loop.mjs');
+    const amb = ambReq();
+    const texto0 = readFileSync(join(amb.dir, SPEC), 'utf8');
+    assert.equal(aprovarSpec(amb.dir, 'S-dono').ok, true);
+    for (let i = 0; i < 2; i++) assert.equal(amb.cli(proporArgs(amb)).rc, 0);
+    for (const n of aprovadas) assert.equal(julgarEmendaDono(amb.dir, n, 'aprovar', 'S-dono').ok, true);
+    const editar = (texto) => writeFileSync(join(amb.dir, SPEC), texto);
+    return { amb, texto0, editar, aplicadas: () => amb.eventos().filter((e) => e.tipo === 'spec.aplicada') };
+  }
+  const painelAguarda = async (amb) => {
+    const { projetarPainel } = await import('../dist/painel.js');
+    const plano = JSON.parse(readFileSync(join(amb.entregas, 'plano.json'), 'utf8'));
+    const entrada = {
+      decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+      pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.now(), fuso: 'UTC', titulo: null,
+      politica: { politica: 'continua', dias: null }, base: 'main', entregaId: 'GM-10', modeloSessao: null, specSha: sha(readFileSync(join(amb.dir, SPEC), 'utf8')), tetoSombra: 26,
+    };
+    return projetarPainel(plano, amb.eventos(), entrada).depende.some((d) => d.motivo === 'spec aguardando aprovação');
+  };
+
+  test('aplicada-limpa-depende: aplicar grava {seq, spec, antes, depois}; o painel deixa de pedir aprovação; edição sem emenda segue pedindo', async () => {
+    const { amb, texto0, editar, aplicadas } = await pronto();
+    editar(`${texto0}\nlinha da emenda 1\n`);
+    assert.equal(await painelAguarda(amb), true, 'antes de aplicar a edição pede aprovação');
+    const r = amb.cli(['emenda', 'aplicar', '1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(aplicadas().map((e) => e.dados), [{ seq: 1, spec: SPEC, sha256_antes: sha(texto0), sha256_depois: sha(`${texto0}\nlinha da emenda 1\n`) }]);
+    assert.equal(r.j.sha256_antes, sha(texto0));
+    assert.equal(await painelAguarda(amb), false, 'a cadeia aceita o sha novo');
+    // edição fora de emenda aplicada continua pedindo a aprovação do dono
+    editar(`${texto0}\nlinha da emenda 1\nedição solta\n`);
+    assert.equal(await painelAguarda(amb), true);
+  });
+
+  test('aplicar-nenhum-sha-por-argumento: flags de sha são uso (rc 2) e nada é gravado; o sha_depois é o do disco', async () => {
+    const { amb, texto0, editar, aplicadas } = await pronto();
+    editar(`${texto0}\nx\n`);
+    const antes = bytesDoDiario(amb);
+    for (const flag of ['--sha256', '--sha256-depois', '--sha256_depois', '--sha256_antes', '--sha']) {
+      const r = amb.cli(['emenda', 'aplicar', '1', flag, 'f'.repeat(64)]);
+      assert.equal(r.rc, 2, `${flag}: ${r.out}`);
+      assert.equal(r.j.erro, 'uso');
+    }
+    assert.deepEqual(bytesDoDiario(amb), antes, 'nada gravado');
+    assert.equal(amb.cli(['emenda', 'aplicar', '1']).rc, 0);
+    assert.equal(aplicadas()[0].dados.sha256_depois, sha(`${texto0}\nx\n`));
+  });
+
+  test('aplicar-sem-aprovada-recusa: sem spec.aprovada, emenda aberta, rejeitada, inexistente ou seq torta recusam sem gravar', async () => {
+    const { aprovarSpec, julgarEmendaDono } = await import('../scripts/loop.mjs');
+    // sem spec aprovada (emenda aprovada, spec nunca aprovada)
+    const sem = ambReq();
+    assert.equal(sem.cli(proporArgs(sem)).rc, 0);
+    assert.equal(julgarEmendaDono(sem.dir, 1, 'aprovar', 'S-dono').ok, true);
+    writeFileSync(join(sem.dir, SPEC), 'outro\n');
+    const antesSem = bytesDoDiario(sem);
+    const rSem = sem.cli(['emenda', 'aplicar', '1']);
+    assert.equal(rSem.rc, 1, rSem.out);
+    assert.equal(rSem.j.erro, 'spec_sem_aprovacao');
+    assert.deepEqual(bytesDoDiario(sem), antesSem);
+    // emenda aberta, rejeitada, inexistente
+    const amb = ambReq();
+    assert.equal(aprovarSpec(amb.dir, 'S-dono').ok, true);
+    assert.equal(amb.cli(proporArgs(amb)).rc, 0); // #1 aberta
+    assert.equal(amb.cli(proporArgs(amb)).rc, 0); // #2 rejeitada
+    assert.equal(julgarEmendaDono(amb.dir, 2, 'rejeitar', 'S-dono').ok, true);
+    writeFileSync(join(amb.dir, SPEC), 'editada\n');
+    const antes = bytesDoDiario(amb);
+    for (const seq of ['1', '2', '9']) {
+      const r = amb.cli(['emenda', 'aplicar', seq]);
+      assert.equal(r.rc, 1, `seq ${seq}: ${r.out}`);
+      assert.equal(r.j.erro, 'emenda_nao_aprovada', `seq ${seq}`);
+    }
+    for (const torta of ['0', '-1', 'x', '01', '1.5']) assert.equal(amb.cli(['emenda', 'aplicar', torta]).rc, 1, torta);
+    assert.deepEqual(bytesDoDiario(amb), antes, 'nada gravado');
+  });
+
+  test('aplicar-duas-vezes-recusa: a mesma seq só aplica uma vez, mesmo com a spec editada de novo', async () => {
+    const { amb, texto0, editar, aplicadas } = await pronto();
+    editar(`${texto0}\numa\n`);
+    assert.equal(amb.cli(['emenda', 'aplicar', '1']).rc, 0);
+    editar(`${texto0}\numa\nduas\n`);
+    const antes = bytesDoDiario(amb);
+    const r = amb.cli(['emenda', 'aplicar', '1']);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'ja_aplicada');
+    assert.deepEqual(bytesDoDiario(amb), antes);
+    assert.equal(aplicadas().length, 1);
+  });
+
+  test('aplicar-arquivo-igual-a-ponta-recusa: spec igual ao último sha aceito não tem o que aplicar; uma edição que cobre duas seqs aplica uma só (a outra recusa)', async () => {
+    const { amb, texto0, editar, aplicadas } = await pronto();
+    const antes0 = bytesDoDiario(amb);
+    const r0 = amb.cli(['emenda', 'aplicar', '1']);
+    assert.equal(r0.j.erro, 'nada_a_aplicar', r0.out);
+    assert.deepEqual(bytesDoDiario(amb), antes0);
+    // forma declarada: 1 aplicar por seq, cadeia sem ambiguidade; a edição das duas emendas se aplica na 1ª seq, a 2ª fica "nada a aplicar" até outra edição
+    editar(`${texto0}\nemenda 1 e emenda 2\n`);
+    assert.equal(amb.cli(['emenda', 'aplicar', '1']).rc, 0);
+    const r2 = amb.cli(['emenda', 'aplicar', '2']);
+    assert.equal(r2.j.erro, 'nada_a_aplicar', r2.out);
+    assert.equal(aplicadas().length, 1);
+  });
+
+  test('aplicar-encadeia-e-aprovada-nova-reinicia: a #2 parte do sha da #1; uma aprovação nova do dono reinicia a cadeia', async () => {
+    const { aprovarSpec } = await import('../scripts/loop.mjs');
+    const { amb, texto0, editar, aplicadas } = await pronto();
+    const t1 = `${texto0}\num\n`;
+    const t2 = `${t1}\ndois\n`;
+    editar(t1);
+    assert.equal(amb.cli(['emenda', 'aplicar', '1']).rc, 0);
+    editar(t2);
+    assert.equal(amb.cli(['emenda', 'aplicar', '2']).rc, 0);
+    assert.deepEqual(aplicadas().map((e) => [e.dados.seq, e.dados.sha256_antes, e.dados.sha256_depois]), [[1, sha(texto0), sha(t1)], [2, sha(t1), sha(t2)]]);
+    // aprovação nova com edição solta: reinicia a cadeia (a ponta é a nova aprovação)
+    const t3 = `${t2}\nsolta\n`;
+    editar(t3);
+    assert.equal(await painelAguarda(amb), true);
+    assert.equal(aprovarSpec(amb.dir, 'S-dono').ok, true);
+    assert.equal(await painelAguarda(amb), false);
+  });
+
+  test('cadeia-quebrada-recusa: aprovação nova entre a leitura e a gravação (ponta mudou) ⇒ cadeia_quebrada, nada gravado; spec editada no meio ⇒ spec_mudou', async () => {
+    const { aplicarEmenda } = await import('../scripts/loop.mjs');
+    const { amb, texto0, editar, aplicadas } = await pronto();
+    editar(`${texto0}\num\n`);
+    const antes = bytesDoDiario(amb);
+    const injeta = () => escreve(amb, 'S-dono', 'spec.aprovada', { spec: SPEC, sha256: 'e'.repeat(64) }, new Date(Date.now() + 5000).toISOString());
+    const r = aplicarEmenda(amb.dir, 1, { antes: injeta });
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.equal(r.erro, 'cadeia_quebrada');
+    assert.equal(aplicadas().length, 0);
+    assert.notDeepEqual(bytesDoDiario(amb), antes, 'só a aprovação injetada entrou');
+    // spec editada entre o cálculo do sha e a gravação
+    const r2 = aplicarEmenda(amb.dir, 1, { antes: () => editar(`${texto0}\noutra coisa\n`) });
+    assert.equal(r2.ok, false);
+    assert.ok(['spec_mudou', 'cadeia_quebrada'].includes(r2.erro), r2.erro);
+    assert.equal(aplicadas().length, 0);
+  });
+
+  test('aplicar-grava-a-spec-aprovada-de-origem: o caminho vem da aprovação, não do plano; spec ilegível/ausente recusa', async () => {
+    const { amb, texto0, editar, aplicadas } = await pronto();
+    // o plano passa a apontar para outra spec: o `spec` da aplicada segue o da aprovação de origem
+    mkdirSync(join(amb.dir, 'docs'), { recursive: true });
+    writeFileSync(join(amb.dir, 'docs', 'outra.md'), 'outra\n');
+    writeFileSync(join(amb.entregas, 'plano.json'), JSON.stringify({ ...PLANO_REQ, spec: 'docs/outra.md' }));
+    editar(`${texto0}\num\n`);
+    assert.equal(amb.cli(['emenda', 'aplicar', '1']).rc, 0);
+    assert.equal(aplicadas()[0].dados.spec, SPEC);
+    rmSync(join(amb.dir, SPEC));
+    const r = amb.cli(['emenda', 'aplicar', '2']);
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'spec_ausente');
+  });
+
+  test('regra-unica-estatica-cli: o loop.mjs importa a regra de emenda.js e não compara sha de spec por conta própria', () => {
+    const t = readFileSync(join(AQUI, '..', 'scripts', 'loop.mjs'), 'utf8');
+    assert.match(t, /import \{[^}]*\bvalidarAplicacao\b[^}]*\} from '\.\.\/dist\/emenda\.js'/);
+    assert.match(t, /validarAplicacao\(/);
+  });
+});
