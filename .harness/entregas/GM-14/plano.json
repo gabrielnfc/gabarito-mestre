@@ -1171,7 +1171,13 @@
         "plugins/gabarito-mestre/gates/scripts/loop.mjs",
         "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
         "plugins/gabarito-mestre/gates/test/painel.test.ts",
-        "plugins/gabarito-mestre/gates/test/registro.test.ts"
+        "plugins/gabarito-mestre/gates/test/registro.test.ts",
+        "plugins/gabarito-mestre/gates/src/trilha.ts",
+        "plugins/gabarito-mestre/gates/dist/trilha.js",
+        "plugins/gabarito-mestre/gates/test/trilha.test.ts",
+        "plugins/gabarito-mestre/gates/src/origem.ts",
+        "plugins/gabarito-mestre/gates/dist/origem.js",
+        "plugins/gabarito-mestre/gates/test/origem.test.ts"
       ],
       "reqs": [
         "REQ-DIA-1"
