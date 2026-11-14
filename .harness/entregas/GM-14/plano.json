@@ -1059,7 +1059,8 @@
         "plugins/gabarito-mestre/gates/test/onboarding-painel.test.mjs",
         "plugins/gabarito-mestre/gates/test/onboarding-skill.test.mjs",
         "plugins/gabarito-mestre/gates/test/skills-shell.test.mjs",
-        "plugins/gabarito-mestre/skills/gabarito-instalar/SKILL.md"
+        "plugins/gabarito-mestre/skills/gabarito-instalar/SKILL.md",
+        "plugins/gabarito-mestre/skills/gabarito-instalar/trocar.md"
       ],
       "reqs": [
         "REQ-GLB-1"
