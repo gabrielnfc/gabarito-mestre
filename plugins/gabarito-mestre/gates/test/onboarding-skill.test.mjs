@@ -32,7 +32,7 @@ const PLUGIN = join(AQUI, '..', '..');
 const SKILL = readFileSync(join(PLUGIN, 'skills', 'gabarito-instalar', 'SKILL.md'), 'utf8');
 const TROCAR = readFileSync(join(PLUGIN, 'skills', 'gabarito-instalar', 'trocar.md'), 'utf8');
 const MARCADOR_TIM1 = '(gabarito-instalar). Uma linha por área:'; // byte a byte: o que `instalar.sh --codeowners` escreve; sem texto de fase
-const EXTRAS = ['settings', 'codeowners', 'apendice', 'iniciativa', 'contenda'];
+const EXTRAS = ['settings', 'codeowners', 'apendice', 'iniciativa', 'contenda', 'guarda']; // 'guarda': emenda da spec pelo dono (r4), fora de `perguntas`
 
 // ────────────────────────────────────────────────────────────── funções puras
 
@@ -501,7 +501,9 @@ test('skill-exemplo-respostas-aceito-pelo-gravar', () => {
   assert.equal(r.dryRun, true, 'dry-run: nada gravado');
   // no repo do exemplo, as chaves do exemplo são exatamente as perguntas (sem chave a mais nem a menos)
   const ps = perguntas(detectar(coletarFatos(raiz, { rodar: rodarCom(CLICKUP), hoje: HOJE })), null);
-  assert.deepEqual(Object.keys(ex).filter((k) => k !== '_previa').sort(), ps.map((p) => p.id).sort());
+  // `guarda` é chave extra declarada (emenda da spec pelo dono, r4): fora de `perguntas`, dentro do exemplo.
+  assert.deepEqual(Object.keys(ex).filter((k) => k !== '_previa' && k !== 'guarda').sort(), ps.map((p) => p.id).sort());
+  assert.ok(['nenhuma', 'orquestrador'].includes(ex.guarda), 'o exemplo traz `guarda`');
   // (2) fixture de 5 perguntas (monorepo sem MCP): as 3 fixas do exemplo + defaults das 2 condicionais
   const mono = novoDir();
   cpSync(join(AQUI, 'fixtures', 'onboarding', 'monorepo'), mono, { recursive: true });
@@ -524,4 +526,12 @@ test('skill-exemplo-recusado-quando-quebrado', () => {
   const { _previa, ...semPrevia } = ex;
   const sem = gravarExemplo(raiz, semPrevia, CLICKUP);
   assert.deepEqual([sem.ok, sem.erro], [false, 'previa_ausente']);
+});
+
+test('trocar-guarda-tem-secao-no-trocar-md', () => {
+  const s = secao(TROCAR, 'guarda');
+  assert.match(s, /perguntaGuarda/);
+  assert.match(s, /"guarda"/);
+  assert.match(s, /origin\/HEAD/);
+  assert.match(s, /sem default `orquestrador`/);
 });

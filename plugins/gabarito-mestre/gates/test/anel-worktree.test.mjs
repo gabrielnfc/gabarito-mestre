@@ -254,7 +254,7 @@ function repoRaiz() {
 }
 function hookRaiz(cwd, file_path, { projeto, sub = true } = {}) {
   const e = { tool_name: 'Write', tool_input: { file_path, content: 'x' }, session_id: 's', cwd, hook_event_name: 'PreToolUse', ...(sub ? { agent_id: 'a', agent_type: 'x' } : {}) };
-  const env = { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN }; delete env.CLAUDE_PROJECT_DIR; if (projeto) env.CLAUDE_PROJECT_DIR = projeto;
+  const env = { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN, HOME: mkdtempSync(join(tmpdir(), 'gm-home-')) }; delete env.CLAUDE_PROJECT_DIR; if (projeto) env.CLAUDE_PROJECT_DIR = projeto;
   const r = spawnSync(process.execPath, [GUARDA], { input: JSON.stringify(e), encoding: 'utf8', env, cwd });
   try { return JSON.parse(r.stdout.trim().split('\n').pop()).hookSpecificOutput?.permissionDecision; } catch { return undefined; }
 }

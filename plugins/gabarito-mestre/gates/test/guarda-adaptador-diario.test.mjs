@@ -75,7 +75,7 @@ describe('diário', () => {
     const entrada = { tool_name: 'Bash', tool_input: { command: "psql -h db.prod.exemplo.com -c 'DROP TABLE t'" }, session_id: sessao, cwd: repo };
     const t0 = performance.now();
     const { primeiroStdout, fim, status, stdout } = await new Promise((ok) => {
-      const p = spawn(process.execPath, [GUARDA], { cwd: repo, env: { ...process.env, CLAUDE_PROJECT_DIR: repo, TMPDIR: mkdtempSync(join(tmpdir(), 'gm-adapt-tmp-')) } });
+      const p = spawn(process.execPath, [GUARDA], { cwd: repo, env: { ...process.env, CLAUDE_PROJECT_DIR: repo, HOME: mkdtempSync(join(tmpdir(), 'gm-home-')), TMPDIR: mkdtempSync(join(tmpdir(), 'gm-adapt-tmp-')) } });
       let primeiro = null;
       let out = '';
       p.stdout.on('data', (d) => { primeiro ??= performance.now() - t0; out += d; });

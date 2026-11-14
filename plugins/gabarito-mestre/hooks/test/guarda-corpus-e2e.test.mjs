@@ -96,7 +96,7 @@ describe('corpus ponta a ponta (dist/guarda.js real)', () => {
         cwd: repo,
         input: JSON.stringify(payload),
         encoding: 'utf8',
-        env: { ...process.env, CLAUDE_PROJECT_DIR: repo, CLAUDE_PLUGIN_ROOT: PLUGIN, TMPDIR: tmp },
+        env: { ...process.env, CLAUDE_PROJECT_DIR: repo, CLAUDE_PLUGIN_ROOT: PLUGIN, TMPDIR: tmp, HOME: mkdtempSync(join(tmp, 'home-')) },
       });
       assert.equal(r.status, 0, r.stderr);
       const saida = r.stdout.trim() === '' ? {} : JSON.parse(r.stdout);

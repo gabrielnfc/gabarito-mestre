@@ -78,7 +78,7 @@ function decidirConteudo(entrada: EntradaHook, config: ConfigGuarda | null, cont
  * Q17: comando Bash acima do teto não foi lido inteiro (`segmentar` só vê o início). Sem poder inspecionar, pede:
  * orquestrador ⇒ `ask`, subagent ⇒ `deny`. `ask`/`deny` do prefixo prevalece. O evento leva `motivo` e `chars`, nunca o comando.
  */
-export function decidir(entrada: EntradaHook, config: ConfigGuarda | null, contexto: Contexto): Decisao {
+function decidirComTeto(entrada: EntradaHook, config: ConfigGuarda | null, contexto: Contexto): Decisao {
   const d = decidirConteudo(entrada, config, contexto);
   if (d.faixa === 'ask' || d.faixa === 'deny') return d;
   const comando = entrada?.tool_name === 'Bash' && typeof entrada?.tool_input === 'object' && entrada.tool_input !== null ? entrada.tool_input.command : undefined;
@@ -93,4 +93,21 @@ export function decidir(entrada: EntradaHook, config: ConfigGuarda | null, conte
   return subagent
     ? { classificacao: d.classificacao, faixa: 'deny', permissionDecision: 'deny', evento: { tipo: 'guarda.deny', dados }, systemMessage: null, motivo }
     : { classificacao: d.classificacao, faixa: 'ask', permissionDecision: 'ask', evento: { tipo: 'guarda.ask', dados }, systemMessage: null, motivo };
+}
+
+/**
+ * Autonomia do orquestrador (dono, 2026-11-12): com o interruptor ligado, o `ask` de integridade ou produção do orquestrador vira
+ * passagem silenciosa e grava `guarda.autonomia` com os mesmos `dados` (nunca o comando). Continuam `ask`: o anel `segredo`; o
+ * comando acima do teto (Q17) ou com `cd` perdido, onde a guarda não leu tudo e não vê se há segredo; e a exceção da guarda (Q21). Ligada, o
+ * orquestrador passa também na escrita no interruptor e na marca do nome dele: ele já tem esse poder, e mexer no interruptor não o aumenta
+ * (decisão do dono, 2026-11-12). Desligada, essa escrita segue `ask`: é o que impede o agente de ligar a autonomia sozinho. O subagent
+ * não muda (`deny`).
+ */
+export function decidir(entrada: EntradaHook, config: ConfigGuarda | null, contexto: Contexto, autonomia = false): Decisao {
+  const d = decidirComTeto(entrada, config, contexto);
+  if (!autonomia || d.faixa !== 'ask' || d.classificacao.anel === 'segredo') return d;
+  const comando = entrada?.tool_name === 'Bash' && typeof entrada?.tool_input === 'object' && entrada.tool_input !== null ? entrada.tool_input.command : undefined;
+  if (typeof comando === 'string' && (comando.length > TETO_COMANDO || d.classificacao.cdPerdido === true)) return d;
+  const dados = d.evento?.dados ?? dadosDe(d.classificacao);
+  return { classificacao: d.classificacao, faixa: 'silencio', evento: { tipo: 'guarda.autonomia', dados }, systemMessage: null, motivo: null };
 }

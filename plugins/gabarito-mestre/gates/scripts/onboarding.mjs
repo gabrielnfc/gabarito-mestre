@@ -33,7 +33,7 @@ import { hojeISO, diasEntre } from '../lib/datas.mjs';
 import * as capacidade from './capacidade.mjs';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { PERFIS_MODELO, resolverModelo } from '../lib/config.mjs';
-import { aplicarConfig, ArquivoInvalido } from './onboarding-config.mjs';
+import { aplicarConfig, ArquivoInvalido, AUTONOMIAS_GUARDA } from './onboarding-config.mjs';
 
 export const ORDEM_ITENS = ['tipo_repo', 'ambientes', 'planejamento', 'versionamento', 'orquestracao'];
 export const JANELA_DIAS = 60;
@@ -626,6 +626,25 @@ function perguntasFixas(existente) {
 }
 
 /**
+ * Guarda do orquestrador (`guarda.autonomia`): "nenhuma" = completa, "orquestrador" = autônoma. Fica FORA de `perguntas` (que segue com
+ * as 3 fixas + condicionais, teto `MAX_PERGUNTAS`): a skill a faz junto das decisões de autonomia e a grava em `respostas.guarda`.
+ * Default = o valor já gravado; ausente ou inválido ⇒ "nenhuma".
+ */
+export function perguntaGuarda(existente) {
+  const cfg = configLegivel(existente);
+  const atual = ehObjeto(cfg.guarda) ? cfg.guarda.autonomia : undefined;
+  return {
+    id: 'guarda',
+    texto: 'Guarda do orquestrador: completa (pede confirmação em integridade e produção) ou autônoma (o orquestrador não é interrompido, tudo vai para o diário; leitura de segredo continua pedindo e subagent continua barrado)?',
+    opcoes: [
+      { valor: 'nenhuma', rotulo: 'completa: pede confirmação em integridade e produção' },
+      { valor: 'orquestrador', rotulo: 'autônoma: o orquestrador não é interrompido; tudo vai para o diário; segredo continua pedindo e subagent continua barrado (vale após o merge na branch padrão)' },
+    ],
+    default: AUTONOMIAS_GUARDA.includes(atual) ? atual : 'nenhuma',
+  };
+}
+
+/**
  * Valor já gravado numa resposta anterior (D-T14-2): "trocar" não desfaz a resposta condicional. `undefined` = nada gravado.
  * `tipo_repo` não precisa de ramo: o `app` gravado já é `candidatos[0]` (e `repo-sem-app` volta como fato detectado, sem pergunta).
  */
@@ -833,7 +852,7 @@ export function gravar(raiz, caminhoRespostas, { rodar = rodarReal, hoje = hojeI
   if (cfg.erro) return falha('config_invalida', `harness.config.json ilegível (${cfg.erro})`);
   const lidas = lerRespostas(caminhoRespostas);
   if (lidas.ok === false) return lidas;
-  const { _previa: previaVista, _recalibrar: recalibrarPedido, ...respostas } = lidas.respostas;
+  const { _previa: previaVista, _recalibrar: recalibrarPedido, guarda: respostaGuarda, ...respostas } = lidas.respostas;
   if (recalibrarPedido !== undefined && recalibrarPedido !== true) return falha('respostas_invalidas', '`_recalibrar` só vale `true` (o item `trocar orquestracao` depois do ok do dono)');
   if (!Array.isArray(previaVista)) return falha('previa_ausente', 'respostas sem `_previa` (copie `itens` da saída de `detectar`); sem a prévia não há como saber se a detecção mudou');
   if (!previaVista.every((i) => ehObjeto(i) && typeof i.item === 'string' && typeof i.estado === 'string')) return falha('respostas_invalidas', '`_previa` precisa ser a lista `itens` de `detectar` ({ item, estado, valor })');
@@ -866,17 +885,23 @@ export function gravar(raiz, caminhoRespostas, { rodar = rodarReal, hoje = hojeI
       return falha('resposta_fora_das_opcoes', `${p.id}: ${JSON.stringify(respostas[p.id])} fora das opções (${p.opcoes.map((o) => JSON.stringify(o.valor)).join(', ')})`);
     }
   }
+  if (respostaGuarda !== undefined && !AUTONOMIAS_GUARDA.includes(respostaGuarda)) {
+    return falha('resposta_fora_das_opcoes', `guarda: ${JSON.stringify(respostaGuarda)} fora das opções (${AUTONOMIAS_GUARDA.map((v) => JSON.stringify(v)).join(', ')})`);
+  }
   const { patches, perfil, naoDetectado } = configDasRespostas(itens, respostas, fatos.configExistente, hoje, { fuso, recalibrar: recalibrarPedido === true });
   let r;
   try {
-    r = aplicarConfig(raiz, { secoes: patches, perfil }, { dryRun });
+    r = aplicarConfig(raiz, { secoes: patches, perfil, guardaAutonomia: respostaGuarda }, { dryRun });
   } catch (e) {
     if (e instanceof ArquivoInvalido) return falha('config_invalida', e.message);
     return falha('falha', String(e.message ?? e).split('\n')[0]);
   }
   const ef = politicaEfetiva(lerConfigEntrega(r.depois));
   const efetiva = ef.ok && ef.politica !== respostas.politica ? ef.politica : undefined;
-  return { ok: true, diff: r.diff, naoDetectado, removidas: r.removidas, ...(efetiva !== undefined ? { efetiva } : {}), ...(dryRun ? { dryRun: true } : {}) };
+  // Lembrete não bloqueante: nem a resposta nem a config têm `guarda.autonomia`; a guarda segue completa (default).
+  const semAutonomia = respostaGuarda === undefined && !AUTONOMIAS_GUARDA.includes(r.depois?.guarda?.autonomia);
+  const lembrete = semAutonomia ? 'guarda do orquestrador não perguntada: segue completa (default). Para escolher entre completa e autônoma, peça "trocar guarda".' : undefined;
+  return { ok: true, diff: r.diff, naoDetectado, removidas: r.removidas, ...(efetiva !== undefined ? { efetiva } : {}), ...(lembrete !== undefined ? { lembrete } : {}), ...(dryRun ? { dryRun: true } : {}) };
 }
 
 // ────────────────────────────────────────────────────────────── CLI
@@ -909,7 +934,7 @@ function main(argv) {
     const recal = argv.includes('--recalibrar') ? previaRecalibracao(par, hoje) : null;
     const nova = recal === null && semCalibracao(par) ? calibracaoDaMaquina(hoje) : null;
     const calibracao = recal !== null ? [recal.texto] : nova !== null ? [`o paralelismo será calibrado para esta máquina (${nova.cores} núcleos): ${textoParalelismo(nova.paralelismo)}`] : [];
-    saida({ ok: true, itens, perguntas: ps, previa: previa(itens, ps, { fuso, calibracao, existente: fatos.configExistente }), ...(recal !== null ? { recalibrar: { antes: recal.antes, depois: recal.depois, cores: recal.cores } } : {}) });
+    saida({ ok: true, itens, perguntas: ps, perguntaGuarda: perguntaGuarda(fatos.configExistente), previa: previa(itens, ps, { fuso, calibracao, existente: fatos.configExistente }), ...(recal !== null ? { recalibrar: { antes: recal.antes, depois: recal.depois, cores: recal.cores } } : {}) });
     return 0;
   } catch (e) {
     saida({ ok: false, erro: 'falha', motivo: String(e.message).split('\n')[0] });

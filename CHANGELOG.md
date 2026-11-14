@@ -5,6 +5,24 @@ Usuários do plugin só recebem atualização quando `version` muda.
 
 ## [Unreleased]
 
+### Adicionado
+- **Autonomia do orquestrador na guarda.** Uma nova pergunta no onboarding (`gabarito-instalar`): "Guarda do orquestrador: completa ou autônoma?". Ela grava `guarda.autonomia` (`"nenhuma"` | `"orquestrador"`) no `harness.config.json`, e a guarda só lê esse valor de `origin/HEAD`, o que exige merge.
+  - Também há o interruptor por máquina `~/.claude/gabarito-autonomia.json` (`{"orquestrador": true}`), protegido pelo anel integridade.
+  - Com a autonomia ligada, todo `ask` do orquestrador passa em silêncio e grava o evento `guarda.autonomia` no diário.
+  - Continuam pedindo, mesmo com a autonomia ligada: anel `segredo`, exceção de classificação, comando acima do teto (65.536) e `cd` perdido.
+  - Subagente continua `deny`.
+
+### Mudado
+- `git fetch` comum do orquestrador (remoto de nome simples, sem refspec com `:`/`+`/`refs/`, flags de uma allowlist) não pede mais confirmação.
+
+### Segurança
+- Viram anel integridade (`deny` para subagente):
+  - escrita no interruptor por qualquer caminho (Write, Edit, redirecionamento, `tee`, `cp`, `mv`, interpretadores, glob);
+  - escrita em `refs/remotes`/`packed-refs` por interpretador;
+  - `git branch -d/-D -r` e `-m` sobre ref remota;
+  - `git rebase -x` e `-c alias.*=!` que citam essas áreas.
+- Os testes que sobem `dist/guarda.js` usam `HOME` próprio em tmp e não dependem mais do `$HOME` real.
+
 ## [2.0.0] — 2026-11-11
 
 Versão estável da 2.0. Quem está na 1.1.x: leia `docs/virada-2.0.md` (como atualizar, o que rodar de novo e como voltar). Resumo do que muda para quem usa:

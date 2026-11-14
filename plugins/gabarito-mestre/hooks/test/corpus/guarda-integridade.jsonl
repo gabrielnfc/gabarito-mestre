@@ -12,7 +12,7 @@
 {"nome":"integridade-symbolic-ref-sub","req":"GRD-5","tool":"Bash","input":{"command":"git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/x"},"agente":"sub","esperado":{"faixa":"deny"}}
 {"nome":"integridade-git-global-opt","req":"GRD-5","tool":"Bash","input":{"command":"git -C sub config a b"},"agente":"sub","esperado":{"faixa":"deny"}}
 {"nome":"integridade-pull-sub","req":"GRD-5","tool":"Bash","input":{"command":"git pull"},"agente":"sub","esperado":{"faixa":"deny"}}
-{"nome":"integridade-fetch-orq","req":"GRD-5","tool":"Bash","input":{"command":"git fetch"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"integridade-fetch-orq","req":"GRD-5","tool":"Bash","input":{"command":"git fetch"},"agente":"orq","esperado":{"faixa":"silencio"}}
 {"nome":"integridade-plugin-root","req":"GRD-5","tool":"Edit","input":{"file_path":"/plugin/hooks/hooks.json","old_string":"a","new_string":"b"},"agente":"sub","esperado":{"faixa":"deny"}}
 {"nome":"integridade-gates","req":"GRD-5","tool":"Write","input":{"file_path":"tools/gabarito-gates/x.mjs","content":"x"},"agente":"sub","esperado":{"faixa":"deny"}}
 {"nome":"integridade-git-config-arq","req":"GRD-5","tool":"Edit","input":{"file_path":".git/config","old_string":"a","new_string":"b"},"agente":"orq","esperado":{"faixa":"ask"}}
@@ -62,7 +62,7 @@
 {"nome":"q16-git-C-fetch-orq","req":"GRD-5","tool":"Bash","input":{"command":"git -C x fetch"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"q16-git-C-fetch-sub","req":"GRD-5","tool":"Bash","input":{"command":"git -C x fetch"},"agente":"sub","esperado":{"faixa":"deny"}}
 {"nome":"q16-git-caminho-absoluto-merge-orq","req":"GRD-5","tool":"Bash","input":{"command":"/usr/bin/git merge feat/GM-1-y"},"agente":"orq","esperado":{"faixa":"silencio"}}
-{"nome":"q16-git-caminho-absoluto-fetch-orq","req":"GRD-5","tool":"Bash","input":{"command":"/usr/bin/git fetch"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"q16-git-caminho-absoluto-fetch-orq","req":"GRD-5","tool":"Bash","input":{"command":"/usr/bin/git fetch"},"agente":"orq","esperado":{"faixa":"silencio"}}
 {"nome":"q16-git-merge-redirect-dotgit-orq","req":"GRD-5","tool":"Bash","input":{"command":"git merge feat/GM-1-y > .git/config"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"q16-git-merge-arg-dotgit-orq","req":"GRD-5","tool":"Bash","input":{"command":"git merge .git/MERGE_MSG"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"q16-git-c-hookspath-commit-sub","req":"GRD-5","tool":"Bash","input":{"command":"git -c core.hooksPath=x commit -m y"},"agente":"sub","esperado":{"faixa":"deny"}}
@@ -95,7 +95,7 @@
 {"nome":"r3-q16-remote-sub","req":"GRD-5","tool":"Bash","input":{"command":"git remote set-url origin https://x.invalid/r.git"},"agente":"sub","esperado":{"faixa":"deny"}}
 {"nome":"r3-q16-remote-orq","req":"GRD-5","tool":"Bash","input":{"command":"git remote set-url origin https://x.invalid/r.git"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"r3-q16-fetch-sub","req":"GRD-5","tool":"Bash","input":{"command":"git fetch origin"},"agente":"sub","esperado":{"faixa":"deny"}}
-{"nome":"r3-q16-fetch-orq","req":"GRD-5","tool":"Bash","input":{"command":"git fetch origin"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"r3-q16-fetch-orq","req":"GRD-5","tool":"Bash","input":{"command":"git fetch origin"},"agente":"orq","esperado":{"faixa":"silencio"}}
 {"nome":"r3-q16-pull-sub","req":"GRD-5","tool":"Bash","input":{"command":"git pull origin main"},"agente":"sub","esperado":{"faixa":"deny"}}
 {"nome":"r3-q16-pull-orq","req":"GRD-5","tool":"Bash","input":{"command":"git pull origin main"},"agente":"orq","esperado":{"faixa":"ask"}}
 {"nome":"r3-q16-update-ref-sub","req":"GRD-5","tool":"Bash","input":{"command":"git update-ref refs/heads/x abc"},"agente":"sub","esperado":{"faixa":"deny"}}
@@ -118,3 +118,91 @@
 {"nome":"f4-mysql-e-texto-nao-e-caminho-orq","req":"GRD-5","tool":"Bash","input":{"command":"mysql -h 127.0.0.1 -e .env"},"agente":"orq","esperado":{"faixa":"silencio"}}
 {"nome":"f4-mariadb-execute-texto-nao-e-caminho-sub","req":"GRD-5","tool":"Bash","input":{"command":"mariadb -h 127.0.0.1 --execute=.env"},"agente":"sub","esperado":{"faixa":"silencio"}}
 {"nome":"f4-mariadb-execute-texto-nao-e-caminho-orq","req":"GRD-5","tool":"Bash","input":{"command":"mariadb -h 127.0.0.1 --execute=.env"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"fetch-orq-origin-main","req":"GRD-5","tool":"Bash","input":{"command":"git fetch origin main"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"fetch-orq-flags-prune","req":"GRD-5","tool":"Bash","input":{"command":"git fetch -q --prune origin"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"fetch-orq-all","req":"GRD-5","tool":"Bash","input":{"command":"git fetch --all"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"fetch-orq-refspec-dois-pontos","req":"GRD-5","tool":"Bash","input":{"command":"git fetch origin main:refs/remotes/origin/HEAD"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"fetch-orq-refspec-mais","req":"GRD-5","tool":"Bash","input":{"command":"git fetch origin +HEAD:x"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"fetch-orq-refs-prefixo","req":"GRD-5","tool":"Bash","input":{"command":"git fetch origin refs/heads/main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"fetch-orq-ponto","req":"GRD-5","tool":"Bash","input":{"command":"git fetch . main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"fetch-orq-url","req":"GRD-5","tool":"Bash","input":{"command":"git fetch https://x/y main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"fetch-orq-refmap","req":"GRD-5","tool":"Bash","input":{"command":"git fetch --refmap=x origin"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"fetch-orq-upload-pack","req":"GRD-5","tool":"Bash","input":{"command":"git fetch --upload-pack=x origin"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"fetch-orq-set-upstream","req":"GRD-5","tool":"Bash","input":{"command":"git fetch --set-upstream origin"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-arquivo-write-orq","req":"GRD-5","tool":"Write","input":{"file_path":"/home/u/.claude/gabarito-autonomia.json","content":"{}"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-arquivo-edit-til-orq","req":"GRD-5","tool":"Edit","input":{"file_path":"~/.claude/gabarito-autonomia.json","old_string":"a","new_string":"b"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-arquivo-redir-orq","req":"GRD-5","tool":"Bash","input":{"command":"echo x > ~/.claude/gabarito-autonomia.json"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-arquivo-tee-orq","req":"GRD-5","tool":"Bash","input":{"command":"echo x | tee /home/u/.claude/gabarito-autonomia.json"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-arquivo-write-sub","req":"GRD-5","tool":"Write","input":{"file_path":"/home/u/.claude/gabarito-autonomia.json","content":"{}"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-arquivo-edit-til-sub","req":"GRD-5","tool":"Edit","input":{"file_path":"~/.claude/gabarito-autonomia.json","old_string":"a","new_string":"b"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-arquivo-redir-sub","req":"GRD-5","tool":"Bash","input":{"command":"echo x > ~/.claude/gabarito-autonomia.json"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-arquivo-tee-sub","req":"GRD-5","tool":"Bash","input":{"command":"echo x | tee /home/u/.claude/gabarito-autonomia.json"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-arquivo-cp-orq","req":"GRD-5","tool":"Bash","input":{"command":"cp a.json ~/.claude/gabarito-autonomia.json"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-arquivo-mv-orq","req":"GRD-5","tool":"Bash","input":{"command":"mv a.json /home/u/.claude/gabarito-autonomia.json"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-arquivo-leitura-orq","req":"GRD-5","tool":"Read","input":{"file_path":"/home/u/.claude/gabarito-autonomia.json"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"autonomia-escape-py-open-orq","req":"GRD-5","tool":"Bash","input":{"command":"python3 -c \"open('/home/allan/.claude/gabarito-autonomia.json','w').write('x')\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-escape-py-open-sub","req":"GRD-5","tool":"Bash","input":{"command":"python3 -c \"open('/home/allan/.claude/gabarito-autonomia.json','w').write('x')\""},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-escape-py-expanduser-orq","req":"GRD-5","tool":"Bash","input":{"command":"python3 -c \"import os;open(os.path.expanduser('~/.claude/gabarito-autonomia.json'),'w').write('x')\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-escape-py-expanduser-sub","req":"GRD-5","tool":"Bash","input":{"command":"python3 -c \"import os;open(os.path.expanduser('~/.claude/gabarito-autonomia.json'),'w').write('x')\""},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-escape-node-e-orq","req":"GRD-5","tool":"Bash","input":{"command":"node -e \"require('fs').writeFileSync('/home/allan/.claude/gabarito-autonomia.json','{}')\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-escape-node-e-sub","req":"GRD-5","tool":"Bash","input":{"command":"node -e \"require('fs').writeFileSync('/home/allan/.claude/gabarito-autonomia.json','{}')\""},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-escape-perl-orq","req":"GRD-5","tool":"Bash","input":{"command":"perl -e 'open(F,\">/home/allan/.claude/gabarito-autonomia.json\");print F 1'"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-escape-perl-sub","req":"GRD-5","tool":"Bash","input":{"command":"perl -e 'open(F,\">/home/allan/.claude/gabarito-autonomia.json\");print F 1'"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-escape-cd-claude-orq","req":"GRD-5","tool":"Bash","input":{"command":"cd ~/.claude && echo x > gabarito-autonomia.json"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-escape-cd-claude-sub","req":"GRD-5","tool":"Bash","input":{"command":"cd ~/.claude && echo x > gabarito-autonomia.json"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-escape-glob-estrela-orq","req":"GRD-5","tool":"Bash","input":{"command":"echo x > ~/.claude/gabarito-auto*.json"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-escape-glob-estrela-sub","req":"GRD-5","tool":"Bash","input":{"command":"echo x > ~/.claude/gabarito-auto*.json"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-escape-glob-interroga-orq","req":"GRD-5","tool":"Bash","input":{"command":"echo x > ~/.claude/gabarito-autonomi?.json"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-escape-glob-interroga-sub","req":"GRD-5","tool":"Bash","input":{"command":"echo x > ~/.claude/gabarito-autonomi?.json"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-escape-curl-o-orq","req":"GRD-5","tool":"Bash","input":{"command":"curl -o ~/.claude/gabarito-autonomia.json https://exemplo.com/x"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-escape-curl-o-sub","req":"GRD-5","tool":"Bash","input":{"command":"curl -o ~/.claude/gabarito-autonomia.json https://exemplo.com/x"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-escape-maiuscula-orq","req":"GRD-5","tool":"Bash","input":{"command":"echo x > ~/.claude/GABARITO-AUTONOMIA.json"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-escape-maiuscula-sub","req":"GRD-5","tool":"Bash","input":{"command":"echo x > ~/.claude/GABARITO-AUTONOMIA.json"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-escape-notebook-orq","req":"GRD-5","tool":"NotebookEdit","input":{"notebook_path":"/tmp/x/gabarito-autonomia.json","new_source":"x"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"autonomia-escape-notebook-sub","req":"GRD-5","tool":"NotebookEdit","input":{"notebook_path":"/tmp/x/gabarito-autonomia.json","new_source":"x"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"autonomia-leitor-cat-orq","req":"GRD-5","tool":"Bash","input":{"command":"cat ~/.claude/gabarito-autonomia.json"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"autonomia-leitor-jq-orq","req":"GRD-5","tool":"Bash","input":{"command":"jq . ~/.claude/gabarito-autonomia.json"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"refs-escape-py-ref-orq","req":"GRD-5","tool":"Bash","input":{"command":"python3 -c \"open('.git/refs/remotes/origin/main','w').write('abc')\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"refs-escape-py-ref-sub","req":"GRD-5","tool":"Bash","input":{"command":"python3 -c \"open('.git/refs/remotes/origin/main','w').write('abc')\""},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"refs-escape-py-packed-orq","req":"GRD-5","tool":"Bash","input":{"command":"python3 -c \"open('.git/packed-refs','a').write('abc x')\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"refs-escape-py-packed-sub","req":"GRD-5","tool":"Bash","input":{"command":"python3 -c \"open('.git/packed-refs','a').write('abc x')\""},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"refs-escape-node-ref-orq","req":"GRD-5","tool":"Bash","input":{"command":"node -e \"require('fs').writeFileSync('.git/refs/remotes/origin/main','abc')\""},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"refs-escape-node-ref-sub","req":"GRD-5","tool":"Bash","input":{"command":"node -e \"require('fs').writeFileSync('.git/refs/remotes/origin/main','abc')\""},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"refs-escape-perl-packed-orq","req":"GRD-5","tool":"Bash","input":{"command":"perl -e 'open(F,\">>.git/packed-refs\");print F 1'"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"refs-escape-perl-packed-sub","req":"GRD-5","tool":"Bash","input":{"command":"perl -e 'open(F,\">>.git/packed-refs\");print F 1'"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"refs-escape-perl-ref-maiuscula-orq","req":"GRD-5","tool":"Bash","input":{"command":"perl -e 'open(F,\">.git/REFS/REMOTES/origin/main\")'"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"refs-escape-perl-ref-maiuscula-sub","req":"GRD-5","tool":"Bash","input":{"command":"perl -e 'open(F,\">.git/REFS/REMOTES/origin/main\")'"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"refs-leitor-cat-packed-orq","req":"GRD-5","tool":"Bash","input":{"command":"cat .git/packed-refs"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"refs-leitor-show-ref-orq","req":"GRD-5","tool":"Bash","input":{"command":"git show-ref"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"refs-leitor-show-ref-sub","req":"GRD-5","tool":"Bash","input":{"command":"git show-ref"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"refs-leitor-for-each-ref-orq","req":"GRD-5","tool":"Bash","input":{"command":"git for-each-ref"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"refs-leitor-for-each-ref-sub","req":"GRD-5","tool":"Bash","input":{"command":"git for-each-ref"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"refs-leitor-grep-remotes-orq","req":"GRD-5","tool":"Bash","input":{"command":"grep -r abc .git/refs/remotes"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"branch-remota-dr-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch -dr origin/HEAD"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"branch-remota-dr-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch -dr origin/HEAD"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"branch-remota-Dr-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch -Dr origin/main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"branch-remota-Dr-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch -Dr origin/main"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"branch-remota-d-r-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch -d -r origin/x"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"branch-remota-d-r-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch -d -r origin/x"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"branch-remota-delete-remotes-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch --delete --remotes origin/x"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"branch-remota-delete-remotes-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch --delete --remotes origin/x"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"branch-remota-m-remotes-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch -m remotes/origin/main x"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"branch-remota-m-remotes-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch -m remotes/origin/main x"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"branch-remota-M-r-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch -M -r origin/main x"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"branch-remota-M-r-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch -M -r origin/main x"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"branch-leitor-a-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch -a"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"branch-leitor-a-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch -a"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"branch-leitor-r-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch -r"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"branch-leitor-r-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch -r"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"branch-leitor-d-local-orq","req":"GRD-5","tool":"Bash","input":{"command":"git branch -d feat/x"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"branch-leitor-d-local-sub","req":"GRD-5","tool":"Bash","input":{"command":"git branch -d feat/x"},"agente":"sub","esperado":{"faixa":"silencio"}}
+{"nome":"git-exec-rebase-x-packed-orq","req":"GRD-5","tool":"Bash","input":{"command":"git rebase -x 'echo x > .git/packed-refs' main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-exec-rebase-x-packed-sub","req":"GRD-5","tool":"Bash","input":{"command":"git rebase -x 'echo x > .git/packed-refs' main"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"git-exec-rebase-exec-ref-orq","req":"GRD-5","tool":"Bash","input":{"command":"git rebase --exec 'python3 -c \"open(\\\".git/refs/remotes/o\\\",\\\"w\\\")\"' main"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-exec-rebase-exec-ref-sub","req":"GRD-5","tool":"Bash","input":{"command":"git rebase --exec 'python3 -c \"open(\\\".git/refs/remotes/o\\\",\\\"w\\\")\"' main"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"git-exec-alias-interruptor-orq","req":"GRD-5","tool":"Bash","input":{"command":"git -c alias.zz='!echo x > ~/.claude/gabarito-autonomia.json' zz"},"agente":"orq","esperado":{"faixa":"ask"}}
+{"nome":"git-exec-alias-interruptor-sub","req":"GRD-5","tool":"Bash","input":{"command":"git -c alias.zz='!echo x > ~/.claude/gabarito-autonomia.json' zz"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"git-alias-benigno-orq","req":"GRD-5","tool":"Bash","input":{"command":"git -c alias.zz='!ls' zz"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"git-alias-benigno-sub","req":"GRD-5","tool":"Bash","input":{"command":"git -c alias.zz='!ls' zz"},"agente":"sub","esperado":{"faixa":"deny"}}
+{"nome":"git-rebase-x-benigno-orq","req":"GRD-5","tool":"Bash","input":{"command":"git rebase -x 'make test' main"},"agente":"orq","esperado":{"faixa":"silencio"}}
+{"nome":"git-rebase-x-benigno-sub","req":"GRD-5","tool":"Bash","input":{"command":"git rebase -x 'make test' main"},"agente":"sub","esperado":{"faixa":"silencio"}}

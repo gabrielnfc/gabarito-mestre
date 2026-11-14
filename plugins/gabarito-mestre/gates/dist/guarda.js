@@ -13,7 +13,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { accessSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, statSync, writeSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { precisaContexto } from './classificar-alvo.js';
@@ -29,7 +29,7 @@ const ID_PADRAO = '[A-Z]+-\\d+';
 const CHAVES_AMBIENTE                            = ['hosts', 'projetos', 'bancos', 'mcps', 'variaveis', 'branches'];
 
                                             
-                                                                                                                                                
+                                                                                                                                                                    
 
 // ---------------------------------------------------------------------------------------------------------------
 // fs e git
@@ -115,13 +115,15 @@ function lerGuarda(raiz        )         {
     const divergente = l !== null && l.assinatura !== o.assinatura;
     // D2: origin sem seção `guarda` vence mesmo que a árvore local a tenha; a árvore local é ignorada, e isso se avisa.
     const localIgnorada = o.config === null && l !== null && l.config !== null;
-    return { config: o.config, fonte: 'origin', divergente, localIgnorada, onboarding: true, idPadrao: o.idPadrao };
+    // Autonomia por projeto: só a config de origin/HEAD (mudada por merge) vale; a árvore local nunca liga. Só o valor exato liga.
+    const autonomia = objeto(origem.guarda)?.autonomia === 'orquestrador';
+    return { config: o.config, fonte: 'origin', divergente, localIgnorada, onboarding: true, idPadrao: o.idPadrao, autonomia };
   }
   if (local !== null) {
     const l = normalizar(local, 'local');
-    return { config: l.config, fonte: 'local', divergente: false, localIgnorada: false, onboarding: true, idPadrao: l.idPadrao };
+    return { config: l.config, fonte: 'local', divergente: false, localIgnorada: false, onboarding: true, idPadrao: l.idPadrao, autonomia: false };
   }
-  return { config: null, fonte: 'nenhuma', divergente: false, localIgnorada: false, onboarding: false, idPadrao: ID_PADRAO };
+  return { config: null, fonte: 'nenhuma', divergente: false, localIgnorada: false, onboarding: false, idPadrao: ID_PADRAO, autonomia: false };
 }
 
 function linhaDe(texto               )                {
@@ -180,6 +182,16 @@ function diarioGravavel(dir        )          {
     mkdirSync(dir, { recursive: true });
     accessSync(dir, constants.W_OK);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Autonomia do orquestrador: só `{"orquestrador": true}` (booleano) liga. Ausente, ilegível, JSON inválido ou outro valor ⇒ `false` (fail-closed). */
+export function lerAutonomia(caminho         = join(homedir(), '.claude', 'gabarito-autonomia.json'))          {
+  try {
+    const j          = JSON.parse(readFileSync(caminho, 'utf8'));
+    return typeof j === 'object' && j !== null && !Array.isArray(j) && (j                           ).orquestrador === true;
   } catch {
     return false;
   }
@@ -525,7 +537,7 @@ function principal()       {
   const guarda = raizSessao === null ? null : lerGuarda(raizSessao);
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..', '..');
   const contexto = montarContexto(entrada, raizCwd ?? raizSessao, cwd, pluginRoot, pausa.raizes, ancoraDaSessao(process.env.CLAUDE_PROJECT_DIR));
-  const r = decidir(entrada, guarda?.config ?? null, contexto);
+  const r = decidir(entrada, guarda?.config ?? null, contexto, lerAutonomia() || guarda?.autonomia === true);
 
   const sessao = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;
   const mensagens           = [];

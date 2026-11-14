@@ -7,7 +7,7 @@
  * declaração: leitura de segredo por interpretador (`python -c`, `node -e`, heredoc de interpretador); caminho montado por
  * variável, substituição ou glob (`F=.env; cat $F`, `cat "$(echo .env)"`, `cat .en*`); `find … | xargs` e `$(find …)`;
  * `env`/`printenv`; `base64 | sh`; indireção que escreve em `.git/**` (`X=git; $X update-ref …`, interpretador).
- * Cobertos, não limite: `git push|fetch|update-ref|symbolic-ref|remote set-head` para `refs/remotes/*`;
+ * Cobertos, não limite: `git push|fetch|update-ref|symbolic-ref|remote set-head` para `refs/remotes/*` (exceção do orquestrador: `git fetch [remoto] [branch…]` simples, sem `-C`);
  * redirecionamento, `cp` e `sed -i` em `.git/**`; `find` com `-exec|-execdir|-ok|-okdir|-delete` sobre padrão de segredo.
  * Produção (Q26): qualquer ação em `prod` (leitura, execução, escrita) pede ao orquestrador e nega ao subagent;
  * `segmentosProd` lista todo segmento `prod` para `permitidos` casar um a um.
@@ -16,15 +16,15 @@
  * `curl -o` (escrita por flag de saída), expansão de chaves (`{.env,x}`), heredoc (o corpo vira segmentos),
  * indireção (`X=rm; $X`, `base64 | sh`, `eval`), caminho com espaço em argumento de Bash, substituição fora de
  * aspas duplas além de um nível, `cd` dentro de subshell (vale para o resto do comando), `$(pwd)` fora de aspas.
- * `git`: duas listas por papel (Q16). Subagent: fora da lista permitida de Q14 ⇒ `deny`. Orquestrador: só `remote`, `fetch`,
- * `pull`, `update-ref`, `symbolic-ref`, `config`, `-c remote.*|url.*|core.hooksPath`, `push` a `refs/remotes/*` e alvo em `.git/**`.
+ * `git`: duas listas por papel (Q16). Subagent: fora da lista permitida de Q14 ⇒ `deny`. Orquestrador: só `remote`, `fetch` (salvo o
+ * fetch simples acima), `pull`, `update-ref`, `symbolic-ref`, `config`, `-c remote.*|url.*|core.hooksPath`, `push` a `refs/remotes/*` e alvo em `.git/**`.
  *
  * Convenção de `ambiente`: `desconhecido` com `alvo` vazio = nada a declarar; `desconhecido` com `alvo`
  * preenchido = referência de produção que não dá para verificar (D3, push/merge sem base conhecida) ⇒ `mostrar`.
  */
 
 import type { Ambiente, Classificacao, ConfigGuarda, Contexto, EntradaHook } from './tipos.ts';
-import { anelDeBash, anelDeCaminho, destinoDeRefspec, lerGit, posicionaisDePush, segmentar } from './aneis.ts';
+import { anelDeBash, anelDeCaminho, MARCA_INTERRUPTOR, destinoDeRefspec, lerGit, posicionaisDePush, segmentar } from './aneis.ts';
 import type { Segmento } from './aneis.ts';
 
 type Declarado = 'prod' | 'homolog' | 'teste';
@@ -465,7 +465,7 @@ function classificarCaminho(entrada: EntradaHook, ctx: Contexto): Classificacao 
   // `Grep` filtra por `glob`; `Glob` busca por `pattern`: ambos apontam para arquivos.
   const candidatos = [i.file_path, i.path, i.notebook_path, i.glob, nome === 'Glob' ? i.pattern : undefined].filter((v): v is string => typeof v === 'string' && v !== '');
   for (const alvo of candidatos) {
-    const anel = anelDeCaminho(alvo, ctx, cwd);
+    const anel = anelDeCaminho(alvo, ctx, cwd) ?? (escreve && MARCA_INTERRUPTOR.test(alvo) ? 'integridade' : null);
     if (anel === 'segredo' || (anel === 'integridade' && escreve)) return { ...NEUTRO, acao: escreve ? 'escrita' : 'leitura', alvo, anel };
   }
   return { ...NEUTRO, acao: escreve ? 'escrita' : 'leitura' };

@@ -138,7 +138,9 @@ export function aplicarPerfil(root, valor, opts = {}) {
  * Várias seções (e `perfil`) numa ÚNICA escrita de `harness.config.json`: `secoes` = `{ [secao]: patch }`, cada uma validada e
  * sem chave morta (`removerMortas`); `perfil` validado como em `aplicarPerfil`. Validação falha ⇒ lança antes de escrever.
  */
-export function aplicarConfig(root, { secoes = {}, perfil } = {}, opts = {}) {
+export const AUTONOMIAS_GUARDA = ['nenhuma', 'orquestrador'];
+
+export function aplicarConfig(root, { secoes = {}, perfil, guardaAutonomia } = {}, opts = {}) {
   const patch = {};
   const removidas = [];
   for (const [secao, p] of Object.entries(secoes)) {
@@ -148,6 +150,10 @@ export function aplicarConfig(root, { secoes = {}, perfil } = {}, opts = {}) {
     removidas.push(...limpo.removidas);
   }
   if (perfil !== undefined) patch.perfil = perfilValido(perfil);
+  if (guardaAutonomia !== undefined) {
+    if (!AUTONOMIAS_GUARDA.includes(guardaAutonomia)) throw new RangeError(`guarda.autonomia inválida: ${JSON.stringify(guardaAutonomia)} (use ${AUTONOMIAS_GUARDA.join('|')})`);
+    patch.guarda = { autonomia: guardaAutonomia }; // merge profundo: ambientes e producao da seção ficam como estavam
+  }
   return { ...aplicarEm(join(root, CONFIG_FILE), patch, opts), removidas };
 }
 

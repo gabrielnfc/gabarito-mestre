@@ -84,7 +84,7 @@ function rodarGuarda(repo, command) {
     cwd: repo,
     input: JSON.stringify(entrada),
     encoding: 'utf8',
-    env: { ...process.env, CLAUDE_PROJECT_DIR: repo, CLAUDE_PLUGIN_ROOT: join(GATES, '..') },
+    env: { ...process.env, CLAUDE_PROJECT_DIR: repo, CLAUDE_PLUGIN_ROOT: join(GATES, '..'), HOME: mkdtempSync(join(tmpdir(), 'gm-home-')) },
   });
   assert.equal(r.status, 0, `guarda saiu ${r.status}: ${r.stderr}`);
   const saida = r.stdout.trim() === '' ? {} : JSON.parse(r.stdout);

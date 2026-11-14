@@ -18,7 +18,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { ORDEM_ITENS, coletarFatos, detectar, rodarReal, lerWorkflow, TIMEOUT_MCP_MS, perguntas, previa, configDasRespostas, gravar, MOTIVO_BRANCHPADRAO, MAX_PERGUNTAS } from '../scripts/onboarding.mjs';
+import { ORDEM_ITENS, coletarFatos, detectar, rodarReal, lerWorkflow, TIMEOUT_MCP_MS, perguntas, previa, configDasRespostas, gravar, MOTIVO_BRANCHPADRAO, MAX_PERGUNTAS, perguntaGuarda } from '../scripts/onboarding.mjs';
 import { coletar as coletarCartao } from '../scripts/cartao-sessao.mjs';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { PERFIS_MODELO } from '../lib/config.mjs';
@@ -1750,4 +1750,78 @@ describe('s6', () => {
       }
     });
   }
+});
+
+// ────────────────────────────────────────────────────────────── guarda do orquestrador: completa ou autônoma (`guarda.autonomia`)
+
+describe('guarda-autonomia (pergunta fora de `perguntas`, que segue com as 3 fixas + condicionais)', () => {
+  test('pergunta-guarda-opcoes-e-default', () => {
+    const p = perguntaGuarda(undefined);
+    assert.equal(p.id, 'guarda');
+    assert.deepEqual(p.opcoes.map((o) => o.valor), ['nenhuma', 'orquestrador']);
+    assert.match(p.texto, /completa/);
+    assert.match(p.texto, /autônoma/);
+    assert.equal(p.default, 'nenhuma');
+    assert.equal(perguntaGuarda({ guarda: { autonomia: 'orquestrador' } }).default, 'orquestrador');
+    for (const ruim of ['sim', true, 1, null, {}]) assert.equal(perguntaGuarda({ guarda: { autonomia: ruim } }).default, 'nenhuma', JSON.stringify(ruim));
+    assert.equal(perguntaGuarda({ erro: 'x' }).default, 'nenhuma');
+  });
+
+  test('perguntas-nao-inclui-guarda', () => {
+    const raiz = repoVazio();
+    assert.equal(idsDe(perguntas(itensLista(raiz), existenteDe(raiz))).includes('guarda'), false);
+  });
+
+  test('gravar-guarda-orquestrador-grava-e-preserva-a-secao', () => {
+    const raiz = comConfig(repoVazio(), { guarda: { ambientes: { prod: { hosts: ['api.exemplo.com'] } }, producao: { permitidos: ['x'] } } });
+    const r = gravarCom(raiz, { ...FIXAS, guarda: 'orquestrador' });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const g = cfgDe(raiz).guarda;
+    assert.equal(g.autonomia, 'orquestrador');
+    assert.deepEqual(g.ambientes, { prod: { hosts: ['api.exemplo.com'] } });
+    assert.deepEqual(g.producao, { permitidos: ['x'] });
+  });
+
+  test('gravar-guarda-nenhuma-grava-nenhuma', () => {
+    const raiz = repoVazio();
+    assert.equal(gravarCom(raiz, { ...FIXAS, guarda: 'nenhuma' }).ok, true);
+    assert.equal(cfgDe(raiz).guarda.autonomia, 'nenhuma');
+  });
+
+  test('gravar-sem-guarda-nao-escreve-autonomia', () => {
+    const raiz = repoVazio();
+    assert.equal(gravarCom(raiz, FIXAS).ok, true);
+    assert.equal(cfgDe(raiz).guarda?.autonomia, undefined);
+  });
+
+  test('gravar-guarda-fora-das-opcoes-falha-sem-escrever', () => {
+    const raiz = repoVazio();
+    const r = gravarCom(raiz, { ...FIXAS, guarda: 'sim' });
+    assert.equal(r.ok, false);
+    assert.equal(r.erro, 'resposta_fora_das_opcoes');
+    assert.equal(temCfg(raiz), false);
+  });
+});
+
+describe('guarda-autonomia: lembrete não bloqueante', () => {
+  test('lembrete-quando-falta-guarda-e-a-config-nao-tem', () => {
+    const raiz = repoVazio();
+    const r = gravarCom(raiz, FIXAS);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.match(r.lembrete, /guarda/);
+    assert.match(r.lembrete, /trocar guarda/);
+  });
+
+  test('sem-lembrete-quando-responde-guarda', () => {
+    const r = gravarCom(repoVazio(), { ...FIXAS, guarda: 'nenhuma' });
+    assert.equal(r.ok, true);
+    assert.equal(r.lembrete, undefined);
+  });
+
+  test('sem-lembrete-quando-a-config-ja-tem-autonomia', () => {
+    const raiz = comConfig(repoVazio(), { guarda: { autonomia: 'orquestrador' } });
+    const r = gravarCom(raiz, FIXAS);
+    assert.equal(r.ok, true);
+    assert.equal(r.lembrete, undefined);
+  });
 });

@@ -507,6 +507,9 @@ export function anelDeCaminho(caminho        , contexto          , cwd          
   // Kill switch: qualquer caminho terminado em `.harness/PAUSAR`, de qualquer raiz (o do checkout principal visto da worktree).
   // Sem distinção de caixa (APFS), como o resto dos anéis.
   if (segs.length >= 2 && segs[segs.length - 2].toLowerCase() === '.harness' && minusculo === 'pausar') return 'integridade';
+  // Interruptor de autonomia do orquestrador (`~/.claude/gabarito-autonomia.json`): o agente nunca o liga. Casa pelo fim do caminho
+  // (`~`, absoluto, qualquer home): na dúvida, pede. Leitura segue livre (quem chama só olha este anel em escrita).
+  if (segs.length >= 2 && segs[segs.length - 2].toLowerCase() === '.claude' && minusculo === 'gabarito-autonomia.json') return 'integridade';
   // O diretório `.harness` de cada raiz em que a pausa é lida (a lista de `guarda.ts`), não só o da raiz do cwd.
   const baixo = norm.toLowerCase();
   for (const r of raizesDePausa(contexto)) if (baixo === `${r}/.harness`) return 'integridade';
@@ -576,6 +579,20 @@ const GIT_PERMITIDOS = new Set([
 const GIT_OUTPUT = /^--output(?:=|$)/;
 // Q16: o orquestrador só é interrompido por estes; todo outro `git` segue o prompt nativo.
 const GIT_PEDE_ORQUESTRADOR = new Set(['remote', 'fetch', 'pull', 'update-ref', 'symbolic-ref', 'config']);
+// Fetch comum do orquestrador (decisão do dono, 2026-11-12): no máximo um remoto por nome simples (nada de URL, caminho ou ponto)
+// seguido de nomes de branch; sem refspec (dois-pontos, mais, prefixo refs); só flags de uma allowlist. Qualquer outra forma cai no anel (fail-closed).
+const FETCH_FLAGS = /^(?:-q|--quiet|-v|--verbose|-p|--prune|--all|--tags|--no-tags|--dry-run|--depth=\d+)$/;
+const FETCH_REMOTO = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
+const FETCH_BRANCH = /^[A-Za-z0-9_@][A-Za-z0-9_@./-]*$/;
+function fetchSeguro(resto          )          {
+  const pos           = [];
+  for (const a of resto) {
+    if (a.startsWith('-')) {
+      if (!FETCH_FLAGS.test(a)) return false;
+    } else pos.push(a);
+  }
+  return pos.every((p, i) => (i === 0 ? FETCH_REMOTO.test(p) : FETCH_BRANCH.test(p) && !p.startsWith('refs/')));
+}
 // Leitura por forma (T24): `worktree` só com `list` em 1º; `hash-object` sem `-…w` e sem `--stdin-*` (o git abrevia, `--stdin-p` vale).
 function gitLeituraPorForma(sub        , resto          )          {
   if (sub === 'worktree') return resto[0] === 'list';
@@ -726,6 +743,26 @@ function empilhar(dest          , origem          )       {
   for (let i = 0; i < origem.length; i++) dest.push(origem[i]);
 }
 
+export const MARCA_INTERRUPTOR = /gabarito-auto/i;
+// Escrita em `refs/remotes` ou `packed-refs` por interpretador (python3, node, perl): fora de `git`, cuja classificação é própria.
+const MARCA_REFS = /refs\/remotes|packed-refs/i;
+const LEITORES_SIMPLES = new Set(['cat', 'head', 'tail', 'less', 'more', 'grep', 'ls', 'stat', 'jq']);
+/** `git branch` que apaga (`-d`, `-D`, `--delete`) ou renomeia (`-m`, `-M`, `--move`) ref remota (`-r`, `--remotes`, `remotes/…`, `origin/…`). */
+function branchMexeEmRemota(resto          )          {
+  const curtas = resto.filter((a) => /^-[^-]/.test(a)).join('');
+  const longas = resto.filter((a) => a.startsWith('--'));
+  const apaga = /[dD]/.test(curtas) || longas.some((a) => a === '--delete');
+  const move = /[mM]/.test(curtas) || longas.some((a) => a === '--move');
+  const remota = /r/.test(curtas) || longas.some((a) => a === '--remotes');
+  const nomeRemoto = resto.some((a) => !a.startsWith('-') && /^(refs\/)?remotes\/|^origin\//.test(a));
+  return (apaga && remota) || (move && (remota || nomeRemoto));
+}
+
+/** Leitor sem redirecionamento de saída (e `jq` sem `-i…`): a única forma de citar o interruptor sem pedir. */
+function leitorSimples(s          )          {
+  return LEITORES_SIMPLES.has(s.cmd) && s.saidas.length === 0 && !(s.cmd === 'jq' && s.args.some((a) => /^-[^-]*i/.test(a)));
+}
+
 /**
  * Procura o anel em todos os segmentos. Segredo vence integridade; dentro do mesmo anel vale o primeiro achado.
  * Retorna `null` se nenhum segmento toca um caminho de anel. `cwd` é o diretório da chamada; `cd` muda o corrente.
@@ -737,6 +774,11 @@ export function anelDeBash(segmentos            , contexto          , cwd       
   let cdPerdido = false;
 
   for (const s of segmentos) {
+    // Interruptor de autonomia: citar `gabarito-auto…` (qualquer caixa) num segmento que não seja leitor simples é escrita no
+    // interruptor, por qualquer meio (interpretador, glob, `cd` + nome relativo, `curl -o`). Falso positivo custa um prompt (I9).
+    // Limite G9: nome montado por variável ou concatenação não é visto.
+    if (MARCA_INTERRUPTOR.test(s.cru) && !leitorSimples(s)) integridade ??= { anel: 'integridade', alvo: '.claude/gabarito-autonomia.json', escrita: true };
+    if (s.cmd !== 'git' && MARCA_REFS.test(s.cru) && !leitorSimples(s)) integridade ??= { anel: 'integridade', alvo: 'refs/remotes', escrita: true };
     const escritas           = [...s.saidas];
     const leituras           = [...s.entradas];
     const remocoes           = [];
@@ -763,11 +805,18 @@ export function anelDeBash(segmentos            , contexto          , cwd       
       const gitResto = candidatos(semTextoLivre('git', g.resto)).filter(ehCaminhoPlausivel);
       if (g.configs.some((c) => /^(remote\.|url\.|core\.hookspath)/i.test(c))) integridade ??= { anel: 'integridade', alvo: '.git/config', escrita: true };
       if (!subagent && gitResto.some((p) => dentroDeDotGit(p, contexto, atual))) integridade ??= { anel: 'integridade', alvo: '.git', escrita: true };
+      // `git branch -d|-D -r` e `-m|-M` sobre ref remota apagam ou movem `refs/remotes`: sem `origin/HEAD`, a guarda cai nos ambientes da árvore local.
+      if (g.sub === 'branch' && branchMexeEmRemota(g.resto)) integridade ??= { anel: 'integridade', alvo: 'refs/remotes', escrita: true };
+      // Execução escondida em `git`: `rebase -x|--exec` e `-c alias.*=!…` rodam comando arbitrário. Cita ref, `packed-refs` ou o interruptor ⇒ integridade;
+      // alias de shell, para o subagent, é sempre integridade.
+      const aliasShell = g.configs.some((c) => /^alias\.[^=]*=\s*!/i.test(c));
+      const rebaseExec = g.sub === 'rebase' && g.resto.some((a) => /^--exec(=|$)|^-[a-zA-Z]*x/.test(a));
+      if ((aliasShell || rebaseExec) && (MARCA_REFS.test(s.cru) || MARCA_INTERRUPTOR.test(s.cru) || (subagent && aliasShell))) integridade ??= { anel: 'integridade', alvo: 'refs/remotes', escrita: true };
       if (g.sub === 'push') {
         if (!(subagent ? pushPermitido(g.resto) : pushSemRefsRemotes(g.resto))) integridade ??= { anel: 'integridade', alvo: 'refs/remotes', escrita: true };
       } else if (g.resto.some((a) => GIT_OUTPUT.test(a))) {
         integridade ??= { anel: 'integridade', alvo: '.git', escrita: true };
-      } else if (subagent ? !GIT_PERMITIDOS.has(g.sub) && !gitLeituraPorForma(g.sub, g.resto) : GIT_PEDE_ORQUESTRADOR.has(g.sub)) {
+      } else if (subagent ? !GIT_PERMITIDOS.has(g.sub) && !gitLeituraPorForma(g.sub, g.resto) : GIT_PEDE_ORQUESTRADOR.has(g.sub) && !(g.sub === 'fetch' && g.dirs.length === 0 && fetchSeguro(g.resto))) {
         const alvo = g.sub === 'remote' || g.sub === 'config' ? '.git/config' : g.sub === 'fetch' || g.sub === 'pull' || g.sub === 'update-ref' || g.sub === 'symbolic-ref' ? 'refs/remotes' : '.git';
         integridade ??= { anel: 'integridade', alvo, escrita: true };
       }

@@ -1,6 +1,6 @@
 # gabarito-instalar: trocar um item que não é pergunta do onboarding
 
-Carregado só quando o usuário pede `trocar orquestracao`, `trocar settings`, `trocar codeowners`, `trocar apendice`, `trocar iniciativa` ou `trocar contenda`. Siga só a seção do item pedido. `<raiz>` é a raiz do git (passo 1 do Fluxo em `SKILL.md`). Antes de qualquer gravação, mostre o bloco e peça ok.
+Carregado só quando o usuário pede `trocar orquestracao`, `trocar settings`, `trocar codeowners`, `trocar apendice`, `trocar iniciativa`, `trocar contenda` ou `trocar guarda`. Siga só a seção do item pedido. `<raiz>` é a raiz do git (passo 1 do Fluxo em `SKILL.md`). Antes de qualquer gravação, mostre o bloco e peça ok.
 
 Os dois scripts de config (`onboarding-config.mjs`) fazem merge chave a chave, nunca removem e imprimem o diff. Decida pelo **stdout** (a primeira linha diz o que aconteceu); o stderr só explica:
 
@@ -145,3 +145,12 @@ node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding-config.mjs" --root "<raiz>"
 ```
 
 Depois, no Apêndice (`trocar apendice`), a linha `Arquivos de contenda (serial, sem override)` recebe a lista, na segunda célula.
+
+## guarda
+
+Troca a guarda do orquestrador entre **completa** (`"nenhuma"`: pede confirmação em integridade e produção) e **autônoma** (`"orquestrador"`: o orquestrador não é interrompido, tudo vai para o diário; leitura de segredo continua pedindo e subagent continua barrado). Grava `guarda.autonomia` em `harness.config.json`.
+
+1. Rode o `detectar` (passo 2 do Fluxo) e leia `perguntaGuarda` da saída: o `default` é o valor já gravado.
+2. Pergunte por `AskUserQuestion`, sem default `orquestrador`: use o `texto` e as `opcoes` de `perguntaGuarda`, na ordem dela, com o `rotulo` literal e ` (default)` na primeira.
+3. Passos 5 a 7 do Fluxo, com as respostas das `perguntas` no `default` de cada uma e a chave `"guarda"` com o `valor` escolhido.
+4. Diga em uma linha: a guarda lê `refs/remotes/origin/HEAD`, então o valor só vale depois do merge na branch padrão; a árvore local nunca liga a autonomia.

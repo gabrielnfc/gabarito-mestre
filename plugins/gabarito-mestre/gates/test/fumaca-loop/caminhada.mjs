@@ -13,7 +13,7 @@
  */
 import { spawnSync, execFileSync } from 'node:child_process';
 import {
-  existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, copyFileSync, symlinkSync, realpathSync,
+  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, copyFileSync, symlinkSync, realpathSync,
 } from 'node:fs';
 import { hostname } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -134,7 +134,7 @@ export async function caminhar(opcoes) {
   function guarda(tool_name, tool_input, agente) {
     contagem.guarda++;
     const entrada = { hook_event_name: 'PreToolUse', session_id: 'S1', cwd: REAL, tool_name, tool_input, ...(agente ? { agent_id: agente.id, agent_type: agente.tipo } : {}) };
-    const r = spawnSync(NODE, [join(PLUGIN, 'gates/dist/guarda.js')], { cwd: REAL, input: JSON.stringify(entrada), encoding: 'utf8', env: ambiente({ ...envBase, CLAUDE_PROJECT_DIR: REAL }) });
+    const r = spawnSync(NODE, [join(PLUGIN, 'gates/dist/guarda.js')], { cwd: REAL, input: JSON.stringify(entrada), encoding: 'utf8', env: ambiente({ ...envBase, CLAUDE_PROJECT_DIR: REAL, HOME: mkdtempSync(join(TMPDIR_CENARIO, 'home-')) }) });
     if (r.status !== 0) def(`guarda rc ${r.status}`);
     let d = null;
     try { d = r.stdout.trim() === '' ? null : JSON.parse(r.stdout).hookSpecificOutput?.permissionDecision ?? null; } catch { def('guarda saída não JSON'); }
