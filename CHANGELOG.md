@@ -5,6 +5,29 @@ Usuários do plugin só recebem atualização quando `version` muda.
 
 ## [Unreleased]
 
+## [2.1.0-alpha.1] — 2026-11-14
+
+Pré-versão da 2.1.0 (clareza para quem usa). Não é a versão estável: a 2.1.0 só sai depois do aceite de quem nunca programou (A2) e da publicação pelo dono (`next` para `main`).
+
+### Adicionado
+
+- **Onboarding em linguagem simples**: as perguntas da instalação usam palavras do dia a dia e explicam cada opção. Inclui a oferta do **modo foco**, que deixa o chat mais limpo e pode ser recusada (o foco só liga com sua resposta, em `.claude/settings.local.json`, e se desfaz).
+- **Um painel só, acima do input ou ao lado**, em toda fase (spec, plano, execução, revisão) e fora de entrega. Mostra a trilha da fase e o progresso, o que depende de você (com botão que põe o comando no input sem enviar), os agentes vivos com nome, descrição e task, e a decisão da Sombra registrada. Em janela estreita (abaixo de 144 colunas, ao lado) o painel avisa de quantas colunas precisa e `/gabarito painel` o abre dentro do chat.
+- **Linguagem natural no chat e no painel**: as linhas de ferramenta viram frases ("lendo o arquivo X") e todo evento do diário mostra a origem (você, agente, medição).
+- **Perguntas com botões**: mudança de assunto e ideia nova do dono viram pergunta com botões; a resposta chega ao diário (`dono.resposta`). `loop.mjs anotar` registra ideias sem despachar.
+- **Pouso de contexto no teto, sem depender do dono**: o mod limpa a conversa sozinho quando o contexto passa do limite e só dá o pouso por bom quando a sessão nova mede abaixo do limite; se o `/clear` não aconteceu, repete (até 3 tentativas por fronteira, registradas no diário).
+- **Loop mais fluido**: `iniciar --modelo`, recusa clara do papel de spike, reentrega com motivo, `integrar` com sha já na base, aprendizado que sobrevive a update, entrega publicada não recebe gravações, Sombra pode liberar o teto de rodadas uma vez por task, spec lida do checkout da sessão.
+- **Aceite A1 automático** (`gates/test/e2e/conversa-2026-11-11/rodar-a1.mjs`): refaz a conversa de 11/11 numa cópia isolada, em 8 combinações (local do painel × 80x24 ou 180x50 × tela cheia ou não), lendo a TELA da sessão real, mais 2 conversas completas e replay offline. O agente da célula nunca vê o repositório real; o runner prova antes e depois que ele ficou intocado.
+
+### Limites declarados
+
+- **Herança da 1.x** (leitura das regras antigas, A3) e a coleta correspondente (T8): adiadas para a 2.2.
+- T41 (fluidez adicional do loop): vai para a 2.1.1.
+- A1 isolado (T49): o plugin observador não enxerga a Pane de outro plugin, então o local lateral é medido pela tela, não por propriedade do mod; o resultado vale para o commit em que rodou e para a versão do Claude Code medida.
+- A1 em 80 colunas (T52): com PAROU ou pergunta aberta, o aviso do painel lateral não aparece inteiro; ele só aparece depois que a pergunta é respondida (decisão do dono).
+- Pouso automático (T53): a confirmação depende de a sessão nova medir o contexto em até 120 s; sem leitura, o mod mede de novo e não confirma.
+- Push e PR no modo `auto` e o redesenho do painel após 30 s sem byte novo continuam sem medição própria.
+
 ## [2.0.0] — 2026-11-11
 
 Versão estável da 2.0. Quem está na 1.1.x: leia `docs/virada-2.0.md` (como atualizar, o que rodar de novo e como voltar). Resumo do que muda para quem usa:
