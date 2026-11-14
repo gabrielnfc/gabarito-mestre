@@ -1111,7 +1111,8 @@
         "T38",
         "T39",
         "T48",
-        "T50"
+        "T50",
+        "T54"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/mod/gabarito.mjs",
@@ -1127,6 +1128,52 @@
       ],
       "reqs": [
         "REQ-POU-1"
+      ]
+    },
+    {
+      "id": "T54",
+      "titulo": "Spec aceita emenda aplicada no texto",
+      "deps": [
+        "T1",
+        "T1b",
+        "T6",
+        "T9",
+        "T11",
+        "T15",
+        "T17",
+        "T27",
+        "T28",
+        "T29",
+        "T31",
+        "T32",
+        "T33",
+        "T34",
+        "T36",
+        "T38",
+        "T39",
+        "T42",
+        "T47",
+        "T48"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/emenda.ts",
+        "plugins/gabarito-mestre/gates/src/loop.ts",
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/src/registro.ts",
+        "plugins/gabarito-mestre/gates/src/formas.ts",
+        "plugins/gabarito-mestre/gates/src/tipos.ts",
+        "plugins/gabarito-mestre/gates/dist/emenda.js",
+        "plugins/gabarito-mestre/gates/dist/loop.js",
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/dist/registro.js",
+        "plugins/gabarito-mestre/gates/dist/formas.js",
+        "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel.test.ts",
+        "plugins/gabarito-mestre/gates/test/registro.test.ts"
+      ],
+      "reqs": [
+        "REQ-DIA-1"
       ]
     },
     {
@@ -1180,7 +1227,8 @@
         "T49",
         "T50",
         "T52",
-        "T53"
+        "T53",
+        "T54"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/.claude-plugin/plugin.json",
