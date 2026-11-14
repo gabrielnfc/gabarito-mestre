@@ -76,6 +76,7 @@ import { temOnboarding } from './cartao-sessao.mjs';
 import { normalizarCaminho, validarPlano } from '../dist/plano.js';
 import { contarConsultas, hashPergunta, projetarDecisoes, textoAncora, trechoDoReq } from '../dist/sombra.js';
 import { vigentes } from '../dist/diario-puro.js';
+import { entregaPublicada } from '../dist/guarda.js';
 import { idDaBranch } from '../dist/trilha.js';
 import { avaliar } from './gate-task.mjs';
 import * as loopAprendizado from './loop-aprendizado.mjs';
@@ -113,6 +114,18 @@ class Falha extends Error {
     this.rc = rc;
   }
 }
+
+/**
+ * GM-14 T48 (emenda 43, FIEL-1 b/c, REQ-DIA-1): entrega PUBLICADA (a regra única `entregaPublicada` de `dist/guarda.js`, a mesma do painel, da guarda,
+ * do cartão e do Stop) não recebe `task.*`, `sessao.*` nem `loop.parar`: o comando recusa ANTES de qualquer efeito (merge, achados movidos, evento).
+ * `_sem-id` nunca é publicada. Os tipos vedados valem também dentro de `gravar` (os módulos que o recebem por injeção, como o `pousar`).
+ */
+function recusarSePublicada(c) {
+  if (c.entrega === '_sem-id' || !entregaPublicada(c.raiz, c.entrega, c.sessao)) return;
+  throw new Falha('entrega_publicada', `a entrega ${c.entrega} já está publicada (PR mergeado, sem outro aberto): task, sessão e parar não gravam nela; nada foi feito`);
+}
+const TIPO_VEDADO_EM_PUBLICADA = (tipo) => TIPOS_DE_TASK.includes(tipo) || tipo.startsWith('sessao.') || tipo.startsWith('guarda.') || tipo === 'operacao.destrutiva' || tipo === 'loop.parar';
+const COMANDOS_VEDADOS_EM_PUBLICADA = new Set(['parar', 'iniciar', 'concluir', 'veredito', 'integrar', 'reabrir', 'liberar', 'pousar']);
 
 // ─────────────────────────────────────────────────────────────── git
 
@@ -542,6 +555,7 @@ function dicaDaTabela(tipo, dados, invalido) {
  * CLIs simultâneos sobre a mesma task podem passar juntos pela conferência.
  */
 function gravar(c, plano, tipo, dados, antes = () => {}) {
+  if (TIPO_VEDADO_EM_PUBLICADA(tipo)) recusarSePublicada(c);
   const eventos = lerDiarioEstrito(c.dirEntrega);
   // `plano === null` só da aprovação antes do plano (T15): sem plano não há tabela; vale a leitura estrita, a forma e o canário.
   // Desvio da letra da DP-3 aj. 2 ("não passa por gravar"), não do fim: `gravarSemPlano` não tem leitura estrita nem o `antes` onde vivem
@@ -940,6 +954,7 @@ function devolver(c, wt, branch, revisado, alvo, e) {
 }
 
 async function integrar(c, plano, task, opcoes = {}) {
+  recusarSePublicada(c);
   const t = tarefa(plano, task);
   const eventos = lerDiarioEstrito(c.dirEntrega);
   if (diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições; integrar recusado');
@@ -1733,6 +1748,7 @@ async function executar(argv, cwd) {
   // Uso, conversão e canário do `aprendizado` só dependem dos argumentos: conferidos antes de abrir entrega, plano e diário.
   const aprendizadoPronto = cmd === 'aprendizado' ? loopAprendizado.preparar(Falha, pos, flags) : undefined;
   const c = contexto(cwd, cmd === 'emenda' && forma.sub === 'propor' ? { ...flags, sessao: SESSAO_EMENDAS } : flags);
+  if (COMANDOS_VEDADOS_EM_PUBLICADA.has(cmd)) recusarSePublicada(c);
   if (cmd === 'parar') return { ...gravarSemPlano(c, 'loop.parar', { motivo: forma.motivo }) };
   // Tudo que só depende dos argumentos (diff, tamanho, canário, caminhos) é conferido antes de abrir o plano e o diário.
   let propostaPronta;
@@ -1877,6 +1893,7 @@ export function liberarTeto(cwd, task, sessao) {
     if (typeof task !== 'string' || !ID_RE.test(task)) throw new Falha('id_invalido', `task ${JSON.stringify(task)} fora da forma ${ID_RE}`);
     if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) throw new Falha('argumento_invalido', `sessão fora da forma ${SESSAO_RE}`);
     const c = contexto(cwd, { sessao });
+    recusarSePublicada(c);
     const plano = carregarPlano(c);
     tarefa(plano, task);
     const antes = estadoDaTask(c, task);
@@ -2074,6 +2091,7 @@ function conferirLiberacao(c, plano, task, hash, eventos) {
  * `liberarTeto` (furo 10): `no_teto`, projeção na ordem real (`relogio_do_diario`), achados arquivados por último e releitura. O caminho do dono não muda.
  */
 function liberarComoSombra(c, plano, task, hash) {
+  recusarSePublicada(c);
   tarefa(plano, task);
   const o = lerConfigOrigin(c.raiz);
   const liga = o.fonte === 'origin' && o.cfg.sombra !== null && typeof o.cfg.sombra === 'object' && o.cfg.sombra.libera_teto === true;
@@ -2167,6 +2185,7 @@ export function aprovarSpec(cwd, sessao, opcoes = {}) {
 
 /** `parar` é o registro de que o loop parou, inclusive por diário inválido: não confere o diário nem o plano, só grava. */
 function gravarSemPlano(c, tipo, dados) {
+  if (TIPO_VEDADO_EM_PUBLICADA(tipo)) recusarSePublicada(c);
   let autor = 'desconhecido';
   try { autor = git(c.raiz, 'config', 'user.email') || autor; } catch { /* nada */ }
   const r = diario.append(c.dirEntrega, c.sessao, { ts: new Date().toISOString(), autor, sessao: c.sessao, agente: 'orquestrador', tipo, dados });

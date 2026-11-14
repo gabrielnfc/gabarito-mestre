@@ -5418,3 +5418,157 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
     assert.ok(linhas.includes('.harness/contexto/'));
   });
 });
+
+// ─────────────────────────────────────────────────────────────── T48 (emenda 43, FIEL-1 b/c, asserção 8): entrega publicada não recebe sessao.*, task.*, loop.parar
+
+describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (T48)', () => {
+  const PR = (numero, estado) => ['fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: 'enabler/GM-10-loop' } }];
+  const publicar = (amb) => amb.semear([PR(7, 'mergeado')]);
+  const PLUGIN_RAIZ = join(AQUI, '..', '..');
+  const configOnboarding = { ...CONFIG_PADRAO, fluxo: { resolvidoEm: '2026-11-13T00:00:00Z' } };
+  const semId = (amb) => join(amb.dir, '.harness', 'entregas', '_sem-id');
+  const tiposDe = (dir) => (existsSync(dir) ? diario.ler(dir).map((e) => e.tipo) : []);
+
+  test('publicada-nao-recebe-loop.parar: parar recusa com entrega_publicada e nada é gravado', () => {
+    const amb = ambiente();
+    publicar(amb);
+    const antes = amb.eventos().length;
+    const r = amb.cli(['parar', 'nao_conseguiu']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'entrega_publicada');
+    assert.equal(amb.eventos().length, antes);
+    assert.deepEqual(tiposDe(semId(amb)), []);
+  });
+
+  test('publicada-nao-recebe-task.iniciada: iniciar recusa com entrega_publicada', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    publicar(amb);
+    const antes = amb.eventos().length;
+    const r = amb.cli(['iniciar', 'T1', 'implementador']);
+    assert.equal(r.j?.erro, 'entrega_publicada', r.out + r.err);
+    assert.equal(amb.eventos().length, antes);
+  });
+
+  test('publicada-nao-recebe-task.concluida: concluir recusa com entrega_publicada', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'implementador']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    publicar(amb);
+    const antes = amb.eventos().length;
+    const r = amb.cli(['concluir', 'T1']);
+    assert.equal(r.j?.erro, 'entrega_publicada', r.out + r.err);
+    assert.equal(amb.eventos().length, antes);
+  });
+
+  test('publicada-nao-recebe-review.veredito e task.integrada: veredito e integrar recusam com entrega_publicada', async () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'implementador']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'revisor']).rc, 0);
+    publicar(amb);
+    const antes = amb.eventos().length;
+    assert.equal(amb.cli(['veredito', 'T1', 'APROVADO', '1', '0', '0']).j?.erro, 'entrega_publicada');
+    assert.equal(amb.eventos().length, antes);
+    const integ = amb.cli(['integrar', 'T1']);
+    assert.equal(integ.j?.erro, 'entrega_publicada', integ.out + integ.err);
+    assert.equal(amb.eventos().length, antes);
+  });
+
+  test('publicada-nao-recebe-sessao.pouso: pousar recusa com entrega_publicada', () => {
+    const amb = ambiente();
+    publicar(amb);
+    const antes = amb.eventos().length;
+    const r = amb.cli(['pousar', '--sessao', 'S1']);
+    assert.equal(r.j?.erro, 'entrega_publicada', r.out + r.err);
+    assert.equal(amb.eventos().length, antes);
+  });
+
+  test('identificada-continua-gravando (vizinho): sem PR medido, ou com PR aberto depois do mergeado, parar, iniciar e pousar gravam', () => {
+    for (const prs of [[], [PR(7, 'mergeado'), PR(8, 'aberto')]]) {
+      const amb = ambiente();
+      if (prs.length > 0) amb.semear(prs);
+      const pouso = amb.cli(['pousar']); // só na fronteira: antes de qualquer task em voo
+      assert.equal(pouso.rc, 0, pouso.out + pouso.err);
+      assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+      assert.equal(amb.cli(['iniciar', 'T1', 'implementador']).rc, 0, JSON.stringify(prs));
+      assert.equal(amb.cli(['parar', 'nao_conseguiu']).rc, 0);
+      assert.deepEqual(amb.tipos().filter((t) => t === 'task.iniciada' || t === 'sessao.pouso' || t === 'loop.parar'), ['sessao.pouso', 'task.iniciada', 'loop.parar']);
+    }
+  });
+
+  test('identificada-continua-gravando (vizinho): PR mergeado sem 2º fato (sem plano.json) não é publicada; parar grava', () => {
+    const amb = ambiente({ plano: null });
+    amb.semear([PR(7, 'mergeado')]);
+    assert.equal(amb.cli(['parar', 'nao_conseguiu']).rc, 0);
+    assert.ok(amb.tipos().includes('loop.parar'));
+  });
+
+  test('publicada-nao-recebe-sessao.inicio: o SessionStart grava sessao.inicio e guarda.heartbeat em _sem-id; a entrega fica intacta', async () => {
+    const { montarSaidaHook } = await import('../scripts/cartao-sessao.mjs');
+    const amb = ambiente({ config: configOnboarding });
+    publicar(amb);
+    const antes = amb.eventos().length;
+    const r = await montarSaidaHook({ cwd: amb.dir, pluginRoot: PLUGIN_RAIZ, agora: '2026-11-13T12:00:00Z', entradaTexto: JSON.stringify({ session_id: 'SPUB', source: 'startup' }) });
+    assert.deepEqual(r.falhas, []);
+    assert.equal(amb.eventos().length, antes);
+    assert.deepEqual(tiposDe(semId(amb)), ['sessao.inicio', 'guarda.heartbeat']);
+  });
+
+  test('identificada-continua-gravando (vizinho): o SessionStart de entrega em curso grava sessao.inicio e guarda.heartbeat na entrega', async () => {
+    const { montarSaidaHook } = await import('../scripts/cartao-sessao.mjs');
+    const amb = ambiente({ config: configOnboarding });
+    const antes = amb.eventos().length;
+    const r = await montarSaidaHook({ cwd: amb.dir, pluginRoot: PLUGIN_RAIZ, agora: '2026-11-13T12:00:00Z', entradaTexto: JSON.stringify({ session_id: 'SCUR', source: 'startup' }) });
+    assert.deepEqual(r.falhas, []);
+    assert.deepEqual(amb.tipos().slice(antes), ['sessao.inicio', 'guarda.heartbeat']);
+    assert.deepEqual(tiposDe(semId(amb)), []);
+  });
+
+  test('publicada-nao-abre-fifo-nem-symlink: events.*.jsonl que não é arquivo regular ⇒ false, sem travar a leitura', () => {
+    const amb = ambiente();
+    publicar(amb);
+    const fifo = join(amb.entregas, 'events.fifo.jsonl');
+    assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `import { entregaPublicada } from ${JSON.stringify(join(AQUI, '..', 'dist', 'guarda.js'))}; process.stdout.write(String(entregaPublicada(${JSON.stringify(amb.dir)}, 'GM-10', null)));`], { encoding: 'utf8', timeout: 5000 });
+    assert.equal(r.status, 0, `travou ou falhou: ${r.signal ?? ''} ${r.stderr}`);
+    assert.equal(r.stdout, 'false');
+    rmSync(fifo);
+    symlinkSync('/etc/hosts', join(amb.entregas, 'events.link.jsonl'));
+    assert.equal(spawnSync(process.execPath, ['--input-type=module', '-e', `import { entregaPublicada } from ${JSON.stringify(join(AQUI, '..', 'dist', 'guarda.js'))}; process.stdout.write(String(entregaPublicada(${JSON.stringify(amb.dir)}, 'GM-10', null)));`], { encoding: 'utf8', timeout: 5000 }).stdout, 'false');
+  });
+
+  test('regra-unica: entregaPublicada é a trilha (os 7 casos da trilha; os gravadores não têm critério próprio', async () => {
+    const { entregaPublicada } = await import('../dist/guarda.js');
+    const casos = [
+      ['mergeado+plano', [PR(7, 'mergeado')], true, true],
+      ['sem PR+plano', [], true, false],
+      ['mergeado e aberto', [PR(7, 'mergeado'), PR(8, 'aberto')], true, false],
+      ['aberto e depois mergeado 8, 7 aberto', [PR(7, 'aberto'), PR(8, 'mergeado')], true, false],
+      ['dois mergeados', [PR(7, 'mergeado'), PR(8, 'mergeado')], true, true],
+      ['mergeado sem 2º fato', [PR(7, 'mergeado')], false, false],
+      ['fechado', [PR(7, 'fechado')], true, false],
+    ];
+    for (const [nome, prs, plano, esperado] of casos) {
+      const amb = ambiente({ plano: plano ? PLANO_PADRAO : null });
+      if (prs.length > 0) amb.semear(prs);
+      assert.equal(entregaPublicada(amb.dir, 'GM-10', null), esperado, nome);
+    }
+    // o diário que liga a sessão por `dono.resposta` tira a entrega de "publicada" (REQ-TRI-1), como na trilha
+    const amb = ambiente();
+    amb.semear([PR(7, 'mergeado')]);
+    assert.equal(entregaPublicada(amb.dir, 'GM-10', 'S1'), true);
+    assert.equal(entregaPublicada(amb.dir, 'GM-99', 'S1'), false, 'entrega sem diário não é publicada');
+    assert.equal(entregaPublicada(amb.dir, '../x', 'S1'), false, 'id fora da forma não é publicada');
+    // nenhum gravador carrega critério próprio: a consulta é a função única de dist/guarda.js
+    for (const arq of ['loop.mjs', 'stop-loop.mjs', 'cartao-sessao.mjs']) {
+      const fonte = readFileSync(join(AQUI, '..', 'scripts', arq), 'utf8');
+      assert.match(fonte, /entregaPublicada\(/, arq);
+      assert.doesNotMatch(fonte, /trilhaDe\(|estado === 'mergeado'|estado: 'mergeado'/, `${arq} tem critério próprio de publicada`);
+    }
+    assert.match(readFileSync(join(AQUI, '..', 'src', 'guarda.ts'), 'utf8'), /export function entregaPublicada/);
+  });
+});

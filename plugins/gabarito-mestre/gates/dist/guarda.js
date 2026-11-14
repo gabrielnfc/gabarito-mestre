@@ -194,6 +194,10 @@ export function entregaPublicada(raiz        , entrega               , sessao   
   try {
     const dir = dirEntrega(raiz, entrega);
     if (!existsSync(dir)) return false;
+    // Antes de ler: `events.*.jsonl` que não é arquivo regular (FIFO trava a leitura, symlink traz texto de fora) ⇒ não afirma, sem abrir.
+    for (const nome of readdirSync(dir)) {
+      if (/^events\..+\.jsonl$/.test(nome) && !lstatSync(join(dir, nome)).isFile()) return false;
+    }
     const lido = lerEstrito(dir);
     if (!lido.ok) return false;
     const eventos = lido.eventos;
