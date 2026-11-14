@@ -1036,11 +1036,42 @@
       "deps": [
         "T20",
         "T30",
-        "T35"
+        "T35",
+        "T21",
+        "T22"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/mod/painel.mjs",
-        "plugins/gabarito-mestre/mod/test/gabarito.test.ts"
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
+        "plugins/gabarito-mestre/commands/gabarito.md",
+        "plugins/gabarito-mestre/docs/virada-2.1.md",
+        "plugins/gabarito-mestre/gates/scripts/onboarding-painel.mjs",
+        "plugins/gabarito-mestre/gates/test/onboarding-painel.test.mjs",
+        "plugins/gabarito-mestre/gates/test/onboarding-skill.test.mjs",
+        "plugins/gabarito-mestre/gates/test/skills-shell.test.mjs",
+        "plugins/gabarito-mestre/skills/gabarito-instalar/SKILL.md"
+      ],
+      "reqs": [
+        "REQ-GLB-1"
+      ]
+    },
+    {
+      "id": "T51",
+      "titulo": "A1 simula o dono abrindo o painel",
+      "deps": [
+        "T49",
+        "T50",
+        "T24",
+        "T42",
+        "T43",
+        "T44",
+        "T46"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/rodar-a1.mjs",
+        "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/a1.exp",
+        "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/pontos.json",
+        "plugins/gabarito-mestre/gates/test/conversa-pontos.test.mjs"
       ],
       "reqs": [
         "REQ-GLB-1"
@@ -1095,7 +1126,8 @@
         "T47",
         "T48",
         "T49",
-        "T50"
+        "T50",
+        "T51"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/.claude-plugin/plugin.json",
