@@ -148,7 +148,7 @@ Depois, no Apêndice (`trocar apendice`), a linha `Arquivos de contenda (serial,
 
 ## painel
 
-Troca o local do painel: ao lado da conversa (padrão) ou acima da linha de digitar. Grava só `painel.local` em `harness.config.json`, sem tocar nas outras chaves. O painel fica ao lado da conversa só se vale o limite: fica ao lado em tela cheia com 110 colunas ou mais, senão o Claude Code o põe acima da linha de digitar.
+Troca o local do painel: ao lado da conversa (padrão) ou acima da linha de digitar. Grava só `painel.local` em `harness.config.json`, sem tocar nas outras chaves. O painel fica ao lado da conversa só se vale o limite: a plataforma só o põe sozinho com 144 colunas ou mais (ao lado da conversa em tela cheia); abaixo disso ele espera e abre quando você pede /gabarito painel.
 
 1. Veja o que está gravado:
    ```bash
