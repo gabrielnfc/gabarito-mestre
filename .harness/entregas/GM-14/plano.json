@@ -1214,6 +1214,24 @@
       ]
     },
     {
+      "id": "T56",
+      "titulo": "Linha única só aviso sem botão",
+      "deps": [
+        "T20",
+        "T30",
+        "T35",
+        "T50",
+        "T53"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/mod/painel.mjs",
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts"
+      ],
+      "reqs": [
+        "REQ-GLB-1"
+      ]
+    },
+    {
       "id": "T25",
       "titulo": "Aceites A1 e A3, alpha e PR",
       "deps": [
@@ -1266,7 +1284,8 @@
         "T52",
         "T53",
         "T54",
-        "T55"
+        "T55",
+        "T56"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/.claude-plugin/plugin.json",
