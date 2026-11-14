@@ -1475,31 +1475,43 @@ test('stop-teto-revisor-segue: o revisor que fecha a fronteira continua sendo pe
   bloqueia(stop(raiz), /T1/);
 });
 
-test('stop-pouso-confirmado-por-medicao-libera: a SUCESSORA (S1, com sessao.inicio de /clear) medindo < X confirma, e o despacho volta', () => {
+test('stop-pouso-abaixo-de-x-libera (I1): a PRÓPRIA leitura da sessão (S1) abaixo de X libera o despacho, sem depender de sucessora nem de /clear no diário', () => {
   const raiz = repo();
   plano(raiz);
   pousoDe(raiz);
-  diario(raiz, 'S1', [ev('S1', 1, 'sessao.inicio', { origem: 'clear' })]);
   contextoDe(raiz, 'S1', 20);
   bloqueia(stop(raiz), /T1/);
 });
 
-test('stop-paralela-nao-confirma (r1 MAJOR-2): a sessão paralela (S1) medindo 20 %, sem /clear dela, não tira o aguardando; /clear alheio com a que pousou ainda medindo também não', () => {
+test('stop-por-sessao (I1, ciclo 3): a leitura de OUTRA sessão nunca libera nem prende; só a da que pergunta', () => {
   const raiz = repo();
   plano(raiz);
   diario(raiz, 's', TASK_APROVADA('s'));
   pousoDe(raiz); // pouso da S0
-  contextoDe(raiz, 'S1', 20); // paralela: nenhum sessao.inicio dela
+  contextoDe(raiz, 'S1', 61); // a que pergunta (hook S1) segue em X
+  contextoDe(raiz, 'S0', 5);
+  contextoDe(raiz, 'S9', 5);
+  diario(raiz, 'S9', [ev('S9', 1, 'sessao.inicio', { origem: 'clear' })]); // /clear alheio
   avisa(stop(raiz), /aguardando o pouso do mod/);
-  // a S9 deu /clear por conta própria e a S0 (a que pousou) segue medindo DEPOIS dele: a S0 não foi limpa
-  const raiz2 = repo();
-  plano(raiz2);
-  diario(raiz2, 's', TASK_APROVADA('s'));
-  pousoDe(raiz2);
-  diario(raiz2, 'S9', [ev('S9', 1, 'sessao.inicio', { origem: 'clear' })]);
-  contextoDe(raiz2, 'S0', 61);
-  contextoDe(raiz2, 'S1', 61);
-  avisa(stop(raiz2), /aguardando o pouso do mod/);
+  // a outra sessão (S2), baixa, não é presa à S1 alta nem ao pouso
+  contextoDe(raiz, 'S2', 4);
+  const r = stop(raiz, { session_id: 'S2' });
+  assert.doesNotMatch(r.json?.systemMessage ?? '', /aguardando o pouso do mod/);
+});
+
+test('R3-STOP stop-sessao-nova-depois-de-sucessora-fechada (MAJOR-5): a sucessora (A2) calou, o dia seguinte abre S1 por startup medindo 4 %; o Stop libera (block), não fica aguardando', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  diario(raiz, 's', TASK_APROVADA('s'));
+  pousoDe(raiz); // pouso da S0
+  diario(raiz, 'A2', [ev('A2', 1, 'sessao.retomada', { via: 'mod', chars: 10 })]);
+  diario(raiz, 'S1', [ev('S1', 1, 'sessao.inicio', { origem: 'startup' })]);
+  contextoDe(raiz, 'A2', 30, { idadeMs: 20 * 3_600_000 }); // a sucessora fechou há 20 h
+  contextoDe(raiz, 'S1', 4);
+  bloqueia(stop(raiz), /T1/); // controle: a leitura própria baixa libera
+  contextoDe(raiz, 'S1', 61);
+  avisa(stop(raiz), /aguardando o pouso do mod/); // e a própria alta prende
 });
 
 test('stop-mod-desligado-o-clear-do-dono-libera (r1 MAJOR-3): leitura do mod velha (10 min) = sem mod; o /clear do dono (sessao.inicio) tira o pendente e a instrução do Stop é verdadeira', () => {
@@ -1532,16 +1544,15 @@ test('stop-nao-diz-aguardando-depois-de-sem_pouso (r1 MINOR-5): o mod desistiu (
   assert.doesNotMatch(r.json?.systemMessage ?? '', /aguardando o pouso do mod/);
 });
 
-test('stop-leitura-que-nao-vale-nao-confirma: velha (> 120 s), da sessão que pousou ou de fonte transcript ⇒ continua aguardando o mod', () => {
+test('stop-leitura-que-nao-vale-e-sem-mod: velha (> 120 s), de fonte transcript ou só de outra sessão ⇒ sem leitura própria fresca ⇒ a regra sem mod (sem onboarding o Stop despacha como na 2.0)', () => {
   for (const [sessao, opcoes] of [['S1', { idadeMs: 300_000 }], ['S0', {}], ['S1', { fonte: 'transcript' }]]) {
     const raiz = repo();
     plano(raiz);
     diario(raiz, 's', TASK_APROVADA('s'));
     pousoDe(raiz);
-    diario(raiz, 'S1', [ev('S1', 1, 'sessao.inicio', { origem: 'clear' })]); // a S1 é a sucessora: só falta a leitura valer
-    contextoDe(raiz, 'S0', 90); // o mod estava ativo na sessão que pousou
-    contextoDe(raiz, sessao, 20, opcoes);
-    avisa(stop(raiz), /aguardando o pouso do mod/);
+    contextoDe(raiz, sessao, 90, opcoes);
+    const r = stop(raiz);
+    assert.doesNotMatch(r.json?.systemMessage ?? '', /aguardando o pouso do mod/);
   }
 });
 

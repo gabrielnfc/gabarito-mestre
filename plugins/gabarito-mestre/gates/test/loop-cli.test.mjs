@@ -5413,25 +5413,38 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
     }
   });
 
-  test('pousar-manual-nao-consome-com-mod (T53, emenda 52 a): com o mod medindo, o pousar do dono grava o evento mas o /clear sozinho não tira o pendente; só a medição da sessão nova < X', () => {
+  test('pousar-manual-nao-consome-com-mod (T53, emenda 52 a; I1 por sessão): o pousar do dono grava o evento mas só a PRÓPRIA leitura da sessão decide; nenhuma outra a libera ou prende', () => {
     const amb = plano1();
     gravarCtx(amb, 'S1', { percent: 61, fonte: 'mod', em: agora() });
     assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0); // grava, não recusa (a skill sem mod o usa)
     assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
     assert.match(painel(amb), /limpar a conversa/);
-    // /clear aconteceu (sessao.inicio de S2) mas a leitura da S2 ainda está alta ⇒ o /clear não limpou: segue pendente
-    const ultimo = Math.max(...amb.eventos().map((e) => Date.parse(e.ts)));
-    const r = diario.append(amb.entregas, 'S2', { ts: new Date(ultimo + 1).toISOString(), autor: 't@t', sessao: 'S2', agente: 'orquestrador', tipo: 'sessao.inicio', dados: { origem: 'clear' } });
-    assert.ok(r.ok, JSON.stringify(r));
-    gravarCtx(amb, 'S2', { percent: 61, fonte: 'mod', em: agora() });
-    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao, { tipo: 'pousar' });
-    // leitura que não vale (fonte transcript) não confirma
-    gravarCtx(amb, 'S2', { percent: 20, fonte: 'transcript', em: agora() });
-    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao, { tipo: 'pousar' });
-    // medida pelo mod, < X, depois do /clear ⇒ confirmado: despacha
+    // a S2 (sessão paralela ou nova), baixa, decide pela PRÓPRIA leitura: despacha; a S1 segue pendente
     gravarCtx(amb, 'S2', { percent: 20, fonte: 'mod', em: agora() });
     assert.equal(amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao.tipo, 'despachar');
-    assert.doesNotMatch(painel(amb), /limpar a conversa/);
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    // leitura que não vale (fonte transcript) não é leitura própria: percent nulo, a regra sem mod (com onboarding, sem /clear no diário: pendente)
+    gravarCtx(amb, 'S3', { percent: 20, fonte: 'transcript', em: agora() });
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S3', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    // o /clear do dono (sessao.inicio) com a leitura da S2 alta: só a S2 decide por si, e alta ela pousa
+    inicioDe(amb, 'S2', 'clear');
+    gravarCtx(amb, 'S2', { percent: 61, fonte: 'mod', em: agora() });
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+  });
+
+  test('ponte-real-ler-devolve-agora (T53): a ponte que o mod executa devolve `agora` (a hora do node que escreve o ts do diário); a ponte `contexto` não existe mais', async () => {
+    const { codigoPonte } = await import('../dist/pouso.js');
+    const { pathToFileURL } = await import('node:url');
+    const amb = plano1();
+    const url = pathToFileURL(join(AQUI, '..', 'dist', 'diario.js')).href;
+    const rodar = (pedido) => spawnSync(process.execPath, ['--input-type=module', '-e', codigoPonte(url)], { cwd: amb.dir, input: JSON.stringify(pedido), encoding: 'utf8' });
+    const antes = Date.now();
+    const j = JSON.parse(rodar({ op: 'ler', dir: amb.entregas, cwd: amb.dir }).stdout);
+    assert.equal(j.ok, true);
+    assert.ok(Array.isArray(j.eventos));
+    assert.ok(j.agora >= antes && j.agora <= Date.now(), `agora fora da hora de parede: ${j.agora}`);
+    const k = JSON.parse(rodar({ op: 'contexto', cwd: amb.dir, raiz: amb.dir, sessoes: ['S1'] }).stdout);
+    assert.equal(k.ok, false); // nenhuma sessão lê o contexto de outra pela ponte
   });
 
   test('instalar-ignora-contexto: o .gitignore da raiz ignora .harness/contexto/', () => {

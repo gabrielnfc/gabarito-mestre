@@ -73,7 +73,7 @@ import { escopoDaTask, pontaDaSpec, projetarEmendas, SESSAO_EMENDAS, shaAceito, 
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { formaInvalida, formaNaGravacao, MOTIVOS_REENTREGA, REQ_RE } from '../dist/formas.js';
 import { estadoDe, ordenar, podeIntegrar, proximaAcao, tasksCongeladas } from '../dist/loop.js';
-import { lerLeitura, pousoPendente, sessoesParaMedir } from '../dist/pouso-pendente.js';
+import { lerLeitura, pousoPendente } from '../dist/pouso-pendente.js';
 import { temOnboarding } from './cartao-sessao.mjs';
 import { normalizarCaminho, validarPlano } from '../dist/plano.js';
 import { contarConsultas, hashPergunta, projetarDecisoes, textoAncora, trechoDoReq } from '../dist/sombra.js';
@@ -1257,19 +1257,16 @@ function sinaisDe(c, cfg, eventos, flags) {
 }
 
 const CONTEXTO_VALIDADE_MS = 120_000;
-/** `Medicao` de `situacaoDoPouso` (pouso-pendente.ts, a única regra): as leituras fonte `mod` que existem no disco. Nunca lança; sem `--sessao` ainda mede a do pouso e a do /clear. */
-export function medicaoDoPouso(raiz, sessao, eventos, x, agoraMs = Date.now()) {
+/** `Medicao` de `pousoPendente` (pouso-pendente.ts, a única regra): SÓ a leitura da sessão que pergunta (I1, T53); nenhuma sessão decide por outra. Nunca lança. */
+export function medicaoDoPouso(raiz, sessao, x, agoraMs = Date.now()) {
   const atual = typeof sessao === 'string' && SESSAO_RE.test(sessao) ? sessao : null;
   const leituras = [];
-  try {
-    for (const id of sessoesParaMedir(eventos, atual)) {
-      if (!SESSAO_RE.test(id)) continue;
-      try {
-        const l = lerLeitura(id, readFileSync(join(raiz, '.harness', 'contexto', `${id}.json`), 'utf8'));
-        if (l !== null) leituras.push(l);
-      } catch { /* sem arquivo: sem leitura */ }
-    }
-  } catch { /* diário fora da forma: sem leituras */ }
+  if (atual !== null) {
+    try {
+      const l = lerLeitura(atual, readFileSync(join(raiz, '.harness', 'contexto', `${atual}.json`), 'utf8'));
+      if (l !== null) leituras.push(l);
+    } catch { /* sem arquivo: sem leitura */ }
+  }
   return { x, agoraMs, sessaoAtual: atual, leituras };
 }
 /**
@@ -1397,8 +1394,8 @@ function proxima(c, plano, flags) {
   aviso.push(...avisoOrigin);
   if (cfg === null) aviso.push('harness.config.json ausente');
   // FIEL-14 e: a regra única (`pouso-pendente.ts`), a mesma que o painel passa a `dependeDe`.
-  // GM-14 T53: com o mod ativo o pouso se confirma por medição (leituras `.harness/contexto/<sessao>.json` da sessão, da que pousou e da do /clear)
-  const acao = proximaAcao(plano, eventos, { ...sinais, politica: pol.politica, pousoPendente: pousoPendente(eventos, temOnboarding(c.raiz), medicaoDoPouso(c.raiz, flags.sessao, eventos, sinais.x)).pendente });
+  // GM-14 T53: com o mod medindo ESTA sessão, só a leitura dela decide (I1); sem mod fresco, o /clear do dono
+  const acao = proximaAcao(plano, eventos, { ...sinais, politica: pol.politica, pousoPendente: pousoPendente(eventos, temOnboarding(c.raiz), medicaoDoPouso(c.raiz, flags.sessao, sinais.x)).pendente });
   if (acao.tipo === 'parar' && acao.motivo === 'diario_invalido') {
     throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições (evento fora de ordem ou de task desconhecida)', { acao, sinais });
   }

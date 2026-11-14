@@ -120,20 +120,12 @@ export function analisarFronteira(eventos: unknown): AnaliseFronteira {
 }
 
 /**
- * GM-14 T53 (emendas 52 e 53): com o mod, `sessao.pouso` posterior ao veredito NÃO consome a fronteira sozinho (o `loop.mjs pousar` do dono também o
- * grava, sem /clear). Consumida só com a confirmação por medição (`situacaoDoPouso`, pouso-pendente.ts, a única definição). Sem veredito no diário
- * não há fronteira (como em `analisarFronteira`, que segue intacto). `sessao.pouso.tentativa` não é `sessao.pouso`: nunca consome.
+ * GM-14 T53: há `review.veredito` e um `sessao.pouso` depois dele (o pouso desta fronteira já foi feito). Com o mod, ele NÃO libera nada: quem pode despachar é só a sessão
+ * cuja PRÓPRIA leitura está abaixo de X (pouso-pendente.ts). `analisarFronteira` segue intacto (usada por quem conta o pouso como consumo).
  */
-export function fronteiraConfirmada(eventos: unknown, confirmado: boolean): AnaliseFronteira {
-  const a = analisarFronteira(eventos);
-  if (a.motivo !== null || !a.consumida) return a;
-  const temVeredito = Array.isArray(eventos) && eventos.some((e) => (e as Evento | null)?.tipo === 'review.veredito');
-  return temVeredito ? { consumida: confirmado === true, motivo: null } : a;
-}
-
-/** Há `review.veredito` e um `sessao.pouso` depois dele: o pouso desta fronteira existe e ainda precisa da confirmação (`situacaoDoPouso`). */
 export function pousoDaFronteira(eventos: unknown): boolean {
-  return fronteiraConfirmada(eventos, true).consumida && !fronteiraConfirmada(eventos, false).consumida;
+  const a = analisarFronteira(eventos);
+  return a.motivo === null && a.consumida && Array.isArray(eventos) && eventos.some((e) => (e as Evento | null)?.tipo === 'review.veredito');
 }
 
 const EM_VOO: readonly EstadoTask[] = ['implementando', 'corrigindo', 'em_revisao'];
@@ -391,11 +383,6 @@ export function codigoPonte(
     `  } else if (e.op === 'ler') {`,
     `    const l = d.lerEstrito(e.dir);`,
     `    out(l.ok ? { ok: true, eventos: l.eventos, agora: Date.now() } : { ok: false, erro: l.motivo });`,
-    `  } else if (e.op === 'contexto') {`,
-    `    const ids = Array.isArray(e.sessoes) ? e.sessoes.filter((i) => typeof i === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(i)).slice(0, 32) : [];`,
-    `    const leituras = [];`,
-    `    for (const id of ids) { try { leituras.push({ sessao: id, texto: readFileSync(join(e.raiz, '.harness', 'contexto', id + '.json'), 'utf8').slice(0, 4096) }); } catch {} }`,
-    `    out({ ok: true, leituras });`,
     `  } else if (e.op === 'plano') {`,
     `    const v = pl.validarPlano(JSON.parse(readFileSync(join(e.dir, 'plano.json'), 'utf8')));`,
     `    if (!v.ok) throw new Error('plano.json inválido: ' + v.erro);`,

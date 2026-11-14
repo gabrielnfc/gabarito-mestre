@@ -4,7 +4,7 @@ import { pendenciasAprendizado } from '../../gates/dist/pendencias.js'
 import { CABECALHO, codigoPonte, PROMPT_RECUPERACAO, PROMPT_RETOMADA } from '../../gates/dist/pouso.js'
 import { validarStdinAgentes } from '../../gates/dist/painel-equipe.js'
 import { chavePouso, colunasDosBotoes, faixaDe, gravarContexto, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
-import { pousoPendente, situacaoDoPouso } from '../../gates/dist/pouso-pendente.js'
+import { pousoPendente, tentativasDoPouso } from '../../gates/dist/pouso-pendente.js'
 import { pousoDaFronteira } from '../../gates/dist/pouso.js'
 
 const RAIZ = '/repo'
@@ -83,8 +83,6 @@ type Opc = {
   pacoteNomes?: { lider: string; sabio: string; nomes: string[] } | 'falha'
   /** GM-14 T53: o /clear roda mas não limpa nada (o incidente de 2026-11-14): mesma sessão, mesmo percent */
   clearNaoLimpa?: boolean
-  /** GM-14 T53 (ciclo 2): `.harness/contexto/<sessao>.json` das OUTRAS sessões (a ponte `contexto`); `emMs: 'agora'` = a hora do mock na leitura */
-  contextos?: Record<string, { percent: number; fonte?: string; emMs: number | 'agora' }>
   /** GM-14 T53 (r1): instante inicial do relógio do mock (ms). O mod mede com `$.clock.now()`; o relógio avança 1 s por evento gravado e por leitura de uso. Painel: relógio intocado (0) salvo se dado. */
   agora?: number
   /** GM-14 T53: percent da sessão nova depois do /clear (padrão 5) */
@@ -302,13 +300,6 @@ function mundo($: any, on: any, o: Opc = {}) {
         return ok(JSON.stringify({ ok: true, plano: o.plano_json ?? PLANO, slots: cfg.slots ?? 3, tetoTokens: cfg.tetoTokens ?? null }))
       }
       if (q.op === 'ler') return ok(JSON.stringify(o.lerFalha ? { ok: false, erro: o.lerErro ?? 'x' } : { ok: true, eventos: evs, ...(est.agoraMs !== null ? { agora: est.agoraMs } : {}) }))
-      if (q.op === 'contexto') {
-        const lista = (q.sessoes ?? []).filter((id: string) => o.contextos?.[id] !== undefined).map((id: string) => {
-          const c = (o.contextos as any)[id]
-          return { sessao: id, texto: JSON.stringify({ percent: c.percent, fonte: c.fonte ?? 'mod', em: new Date(c.emMs === 'agora' ? (est.agoraMs ?? Date.now()) : c.emMs).toISOString() }) }
-        })
-        return ok(JSON.stringify({ ok: true, leituras: lista }))
-      }
       if (q.op === 'instantaneo') {
         log.push('instantaneo')
         const t = o.instantaneo ?? 'Diário: 3 evento(s)\nETA: sem dados'
@@ -387,7 +378,7 @@ function mundo($: any, on: any, o: Opc = {}) {
 
 const pousar = async (m: ReturnType<typeof mundo>) => { await m.inicio(); await m.turno(); await m.clock.settle() }
 /** GM-14 T53: um turno na sessão nova (o /clear do mock deixa o percent em 5): a medição confirma o pouso e o despacho se libera */
-const confirmar = async (m: ReturnType<typeof mundo>) => { await m.turno(); await m.clock.settle(); await m.avancar(200_000) } // 200 s depois: passou a janela em que ≥ X seria "o /clear não limpou"
+const confirmar = async (m: ReturnType<typeof mundo>) => { await m.turno(); await m.clock.settle() }
 
 // ---- pouso: ordem dos passos (E23) ----
 test('pousa-na-ordem: store antes do clear, evento e instantâneo antes, retomada por último', async ($, on) => {
@@ -581,26 +572,23 @@ test('sem-veredito-novo-nao-pousa: task nova em curso ou concluída depois do po
   m.est.percent = 60; await m.turno(); await m.clock.settle()
   expect(m.est.clears).toBe(1)
 })
-test('despacho-liberado-apos-pouso: com a fronteira consumida o Agent passa mesmo com percent ≥ X (E1)', async ($, on) => {
+test('despacho-so-abaixo-de-x-apos-pouso: depois do pouso a sessão despacha com a PRÓPRIA leitura abaixo de X e nega em X ou acima (I1, ciclo 3: nada de consumir a fronteira)', async ($, on) => {
   const m = mundo($, on)
   expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/) // antes: fronteira nova, POUSAVEL
   await pousar(m)
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined() // a sessão nova mede 5 %
   m.est.percent = 60
-  expect((await m.agent('gabarito-implementador')).deny).toMatch(/aguardando/) // T53: o sessao.pouso sozinho não libera; a sessão nova mede 60 ≥ X
-  m.est.percent = 5
-  await confirmar(m) // a medição da sessão nova (< X) confirma
-  m.est.percent = 60
-  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
-  expect((await m.agent(undefined)).deny).toBeUndefined()
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/)
+  expect((await m.agent(undefined)).deny).toMatch(/pouso/)
   m.add('o', 'task.iniciada', { task: 'b', papel: 'implementador' })
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/)
+  m.est.percent = 5
   expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
 })
-test('veredito-novo-volta-a-travar: depois de gasto o pouso, outro veredito com percent ≥ X nega o despacho de novo', async ($, on) => {
+test('veredito-novo-volta-a-travar: com agente vivo, em X ou acima e fronteira nova (outro veredito) a negação é a do núcleo (esperar)', async ($, on) => {
   const m = mundo($, on, { agentes: [{ id: 'a1', status: 'running' }] })
   m.add('o', 'sessao.pouso', { percent: 60, x: 50 })
-  m.add('o', 'sessao.retomada', { via: 'mod', chars: 5 }, 'sess-1') // a sucessora (a sessão do mock)...
-  await m.avancar(200_000) // ...medindo 60 % só depois da janela: a conversa cresceu, o pouso foi confirmado (T53)
-  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/) // o pouso desta fronteira já foi feito e a sessão segue em 60 %
   m.add('o', 'task.iniciada', { task: 'b', papel: 'implementador' })
   m.add('o', 'task.concluida', { task: 'b', sha: 'y' })
   m.add('o', 'review.veredito', { task: 'b', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 })
@@ -736,24 +724,22 @@ test('revisor-despachavel-nao-para (MAJOR 2): task concluída, percent alto, tr�
   await m.turno(); await m.clock.settle()
   expect(m.est.clears).toBe(1)
 })
-test('consumida-nao-repousa: depois do pouso, com percent de novo ≥ X, nenhum turno limpa de novo e o Agent passa (E1)', async ($, on) => {
+test('em-x-nao-repousa-dentro-de-60s: depois do pouso, com a sessão de novo em X, nenhum turno repete antes dos 60 s e o Agent segue negado (I1, I3)', async ($, on) => {
   const m = mundo($, on)
   await pousar(m)
-  await confirmar(m)
   expect(m.est.clears).toBe(1)
   for (let i = 0; i < 4; i++) { m.est.percent = 70; await m.turno(); await m.clock.settle() }
   expect(m.est.clears).toBe(1)
   expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(1)
   expect(parou(m)).toHaveLength(0)
   m.est.percent = 70
-  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/)
 })
 const UM = { entrega: 'PBI-7', tasks: [PLANO.tasks[0]] }
 const CASOS_AGENT: [string, Opc, 'nega' | 'passa'][] = [
   ['X cruzado com trabalho a fazer (K)', {}, 'nega'],
   ['abaixo de X', { percent: 49 }, 'passa'],
   ['tudo integrado (L: concluir, a (5) não dispara)', { plano_json: UM, eventos: [...FRONT, INT_A] }, 'passa'],
-  ['fronteira consumida (F): pouso confirmado por medição', { eventos: [...FRONT, EV(4, 'sessao.pouso', { percent: 60, x: 50 }), { ...EV(5, 'sessao.retomada', { via: 'mod', chars: 5 }), sessao: 'sess-1' }] }, 'passa'],
   ['pouso sem confirmação (T53): sessao.pouso sozinho não consome', { eventos: [...FRONT, { ...EV(4, 'sessao.pouso', { percent: 60, x: 50 }), sessao: 'sess-1' }] }, 'nega'],
   ['só resta o teto (M: parar)', { plano_json: UM, eventos: NO_TETO }, 'nega'],
   ['task concluída à espera do revisor (H)', { eventos: A_REVISAR }, 'nega'],
@@ -3357,14 +3343,18 @@ test('falha-antes-do-clear-sem-pouso-diario: sessao.pouso que não grava continu
   expect(m.est.clears).toBe(0)
   expect(parou(m)[0].dados).toEqual({ motivo: 'sem_pouso', causa: 'diario' })
 })
-test('submit-falho-sem-retomada: submit que falhou depois do /clear não deixa sessao.retomada, então a sucessora não se identifica; a sessão nova no teto pousa como qualquer uma (T53, emenda 53 substitui "nunca 2º /clear")', async ($, on) => {
+test('submit-falho-repete-pela-contagem: submit que falhou depois do /clear não deixa sessao.retomada; a sessão nova no teto repete pela contagem da fronteira, 60 s depois (T53, emenda 53 substitui "nunca 2º /clear")', async ($, on) => {
   const m = mundo($, on, { submitFalha: true })
   await pousar(m)
   expect(m.est.clears).toBe(1)
   m.est.percent = 70
   await m.turno(); await m.clock.settle()
   await m.turno(); await m.clock.settle()
-  expect(m.est.clears).toBe(2) // sem sucessora identificável a sessão nova, a 70 %, é uma sessão no teto com a fronteira aberta: pousa como qualquer uma
+  expect(m.est.clears).toBe(1) // dentro dos 60 s da tentativa 1: espera
+  await m.avancar(61_000)
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(2) // a sessão nova, a 70 %, pousa a si mesma: tentativa 2 da contagem da fronteira
+  expect(tentativas(m)).toEqual([2])
   expect(parou(m)).toHaveLength(0)
 })
 test('aprendizados-indisponiveis-avisa-e-pousa: a ponte devolve avisos, o pouso segue e o aviso vem uma vez', async ($, on) => {
@@ -4591,26 +4581,43 @@ test('medir-recebe-o-mesmo-stdin: `medir --agentes` leva acoes, encerrados e seg
 
 
 // ======================================================================================================================================
-// GM-14 T53 (emendas 52 e 53, REQ-POU-1, FIEL-14): o mod pousa no teto sem depender do dono; o pouso só vale com a medição da sessão sucessora.
+// GM-14 T53 (emendas 52 e 53, REQ-POU-1, FIEL-14): o mod pousa no teto sem depender do dono. Invariante POR SESSÃO (ciclo 3):
+//   I1 uma sessão só despacha com a PRÓPRIA leitura abaixo de X (depois do pouso, em X ou acima nega tudo, revisor incluído); nada de outra sessão a libera;
+//   I2 cada sessão em X ou acima com 0 vivos pousa A SI MESMA; I3 até 3 tentativas por fronteira, no diário, de qualquer sessão, depois `sem_pouso` uma vez;
+//   I4 sem janela de tempo: ≥ X é sempre "não despacha".
 // Tempo: o mod mede com a hora que a ponte devolve (`agora`); o mock a dá (`est.agoraMs`), que anda com `avancar`/`clock.advance` e 1 s a cada gravação.
 // Nenhum teste de espera depende do dia em que roda: os eventos nascem RELATIVOS à base do mock.
 // ======================================================================================================================================
 const BASE = Date.UTC(2026, 10, 14, 12, 0, 0)
 const EVT = (seq: number, tipo: string, dados: Record<string, unknown>, atrasoMs: number, sessao = 's0') =>
   ({ seq, ts: new Date(BASE - atrasoMs).toISOString(), autor: 'a', sessao, agente: 'o', tipo, dados, hash_anterior: null })
-/** a sequência real do incidente de 2026-11-14 ~10:05: veredito, `loop.mjs pousar` (via dono) SEM /clear, contexto ainda acima de X (o pouso `atrasoMs` antes de BASE) */
+/** a sequência real do incidente de 2026-11-14 ~10:05: veredito, `loop.mjs pousar` (via dono, sem --sessao) SEM /clear, contexto ainda acima de X */
 const INCIDENTE = (atrasoMs = 600_000) => [
   EVT(1, 'task.iniciada', { task: 'a', papel: 'implementador' }, atrasoMs + 3000), EVT(2, 'task.concluida', { task: 'a', sha: 'x' }, atrasoMs + 2000),
   EVT(3, 'review.veredito', { task: 'a', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, atrasoMs + 1000),
-  EVT(4, 'sessao.pouso', { percent: null, x: 50, via: 'dono' }, atrasoMs, 'loop'), // `pousar` sem --sessao
+  EVT(4, 'sessao.pouso', { percent: null, x: 50, via: 'dono' }, atrasoMs, 'loop'),
+]
+/** o pouso foi da sessão real `sess-A` (10 min atrás) e o /clear dela não limpou */
+const POUSOU_A = (...mais: any[]) => [
+  EVT(1, 'task.iniciada', { task: 'a', papel: 'implementador' }, 603_000), EVT(2, 'task.concluida', { task: 'a', sha: 'x' }, 602_000),
+  EVT(3, 'review.veredito', { task: 'a', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, 601_000),
+  EVT(4, 'sessao.pouso', { percent: 61, x: 50 }, 600_000, 'sess-A'), ...mais,
 ]
 const tentativas = (m: ReturnType<typeof mundo>) => m.grav.filter((g) => g.tipo === 'sessao.pouso.tentativa').map((g) => (g.dados as any).n)
+const nega = async (m: ReturnType<typeof mundo>) => {
+  for (const tipo of ['gabarito-implementador', 'gabarito-mestre:gabarito-implementador', 'gabarito-revisor', 'gabarito-mestre:gabarito-revisor', undefined]) {
+    expect((await m.agent(tipo)).deny).toMatch(/pouso/)
+  }
+}
+const libera = async (m: ReturnType<typeof mundo>) => {
+  for (const tipo of ['gabarito-implementador', 'gabarito-revisor']) expect((await m.agent(tipo)).deny).toBeUndefined()
+}
+/** a vigia de 30 s e a espera de 60 s correm pelo relógio do mock: `n` passos de `ms` sem nenhum turno */
+const passos = async (m: ReturnType<typeof mundo>, n: number, ms = 61_000) => { for (let i = 0; i < n; i++) await m.avancar(ms) }
 
-test('pousar-manual-nao-consome-com-mod: sessao.pouso do dono sem /clear não consome a fronteira: todo Agent negado, revisor incluído', async ($, on) => {
+test('pousar-manual-nao-consome-com-mod: sessao.pouso do dono sem /clear não libera a sessão que segue em X ou acima: todo Agent negado, revisor incluído', async ($, on) => {
   const m = mundo($, on, { eventos: INCIDENTE(), percent: 61, agora: BASE })
-  expect((await m.agent('gabarito-implementador')).deny).toMatch(/aguardando a confirmação do pouso/)
-  expect((await m.agent('gabarito-revisor')).deny).toMatch(/aguardando a confirmação do pouso/)
-  expect((await m.agent('gabarito-mestre:gabarito-revisor')).deny).toMatch(/aguardando/)
+  await nega(m)
   expect(m.est.clears).toBe(0) // o Agent não roda /clear
 })
 
@@ -4624,132 +4631,209 @@ test('teto-com-vivos-nega-agent: contexto ≥ X, fronteira aberta, 2 vivos ⇒ A
   expect((await dois.agent('gabarito-implementador')).deny).toMatch(/pouso/)
 })
 
-test('reproduz-incidente: pousar manual, sem /clear, contexto 61 % ⇒ nada despacha; o mod pousa sozinho e depois da medição < X libera', async ($, on) => {
+test('reproduz-incidente: pousar manual, sem /clear, contexto 61 % ⇒ nada despacha; o mod pousa sozinho (tentativa 2) e a sessão nova, abaixo de X, despacha', async ($, on) => {
   const m = mundo($, on, { eventos: INCIDENTE(), percent: 61, agora: BASE })
   await m.inicio()
-  expect((await m.agent('gabarito-implementador')).deny).toMatch(/aguardando/) // antes da T53 o Agent passava aqui: 8 agentes acima do teto
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/) // antes da T53 o Agent passava aqui: 8 agentes acima do teto
   await m.turno(); await m.clock.settle() // 0 vivos, o pouso manual é de 10 min atrás: o mod não espera o dono
   expect(m.est.clears).toBe(1)
   expect(tentativas(m)).toEqual([2])
   expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(0) // a repetição não é um pouso novo
   expect(m.est.submits).toHaveLength(1)
-  await confirmar(m) // a sessão sucessora mede 5 < X
-  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  await libera(m) // a sessão nova mede 5 < X
 })
 
-test('confirmado-libera: a leitura da sessão sucessora < X confirma, o despacho se libera e a confirmação não se desfaz quando a conversa volta a crescer', async ($, on) => {
+test('abaixo-de-x-libera-e-em-x-nunca: a sessão nova abaixo de X despacha; voltando a X ou acima, nega de novo, sem janela de tempo (I1, I4)', async ($, on) => {
   const m = mundo($, on)
   await pousar(m) // pouso do mod (percent 60) + /clear: sessão nova a 5 %
-  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
-  expect(m.store.get(`confirmado:${DIR}:sess-1:1`)).toEqual({ por: 'sess-1-n' }) // cache da sucessora, por pouso
-  m.est.percent = 80 // dentro da janela de 180 s 80 % seria "o /clear não limpou"; a confirmação guardada pela sucessora vale (E1)
-  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
-  expect((await m.agent('gabarito-revisor')).deny).toBeUndefined()
-  await m.turno(); await m.clock.settle()
-  expect(m.est.clears).toBe(1) // confirmado: sem repetir
+  await libera(m)
+  for (const depois of [0, 10_000, 200_000, 3_600_000]) {
+    await m.avancar(depois)
+    m.est.percent = 80
+    await nega(m)
+  }
+  m.est.percent = 5
+  await libera(m)
 })
 
-test('clear-falho-repete: leitura ≥ X na sucessora = o /clear não limpou; só depois de 60 s o mod repete (n=2), SEM turno nenhum', async ($, on) => {
+test('clear-falho-repete: /clear que deixa 60 % = a sessão nova pousa a si mesma; só depois de 60 s, SEM turno nenhum (n=2)', async ($, on) => {
   const m = mundo($, on, { percentPosClear: 60, agora: BASE })
   await pousar(m)
   expect(m.est.clears).toBe(1)
-  expect((await m.agent('gabarito-implementador')).deny).toMatch(/aguardando/) // 60 % na sessão nova: não confirma, não libera
+  await nega(m)
   await m.turno(); await m.clock.settle() // espera ainda não vencida (poucos segundos do pouso): nada de repetir
   expect(m.est.clears).toBe(1)
   expect(tentativas(m)).toEqual([])
   await m.avancar(30_000) // vigia: ainda < 60 s do pouso
   expect(m.est.clears).toBe(1)
-  await m.avancar(31_000) // vencida: a vigia repete sozinha, sem nenhum turno.complete
+  await m.avancar(31_000) // vencida: a vigia repete sozinha, sem nenhum turn.complete
   expect(m.est.clears).toBe(2)
   expect(tentativas(m)).toEqual([2])
   expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(1)
   expect(parou(m)).toHaveLength(0)
 })
 
-test('sem-turno-a-vigia-repete: o pouso manual é recente, nenhum turno vem; passados 120 s sem medição a vigia conta a tentativa como falha e repete', async ($, on) => {
+test('sem-turno-a-vigia-repete: o pouso manual é recente, nenhum turno vem; a vigia espera os 60 s e repete', async ($, on) => {
   const m = mundo($, on, { eventos: INCIDENTE(20_000), percent: 61, agora: BASE })
   await m.inicio()
   await m.turno(); await m.clock.settle() // pouso de 20 s atrás: espera
   expect(m.est.clears).toBe(0)
-  await m.avancar(60_000) // 80 s do pouso: desconhecida, ainda dentro do limite
+  await m.avancar(30_000) // 50 s do pouso
   expect(m.est.clears).toBe(0)
   expect(tentativas(m)).toEqual([])
-  expect((await m.agent('gabarito-implementador')).deny).toMatch(/aguardando/) // nenhum despacho entre as tentativas
-  expect((await m.agent('gabarito-revisor')).deny).toMatch(/aguardando/)
-  await m.avancar(50_000) // 130 s: vencido, sem nenhum turno
+  await nega(m) // nenhum despacho entre as tentativas
+  await m.avancar(35_000) // 85 s, sem nenhum turno
   expect(m.est.clears).toBe(1)
   expect(tentativas(m)).toEqual([2])
 })
 
-test('leitura-da-sessao-antiga-nao-libera: /clear que não troca a sessão, mesmo medindo < X, não confirma', async ($, on) => {
-  const m = mundo($, on, { clearNaoLimpa: true })
-  await pousar(m) // pouso, /clear sem efeito: mesma sessão, percent 60
-  m.est.percent = 10 // leitura baixa, mas da sessão ANTIGA (a que pousou)
-  expect((await m.agent('gabarito-implementador')).deny).toMatch(/aguardando/)
-  expect((await m.agent('gabarito-revisor')).deny).toMatch(/aguardando/)
-  expect(m.store.get(`confirmado:${DIR}`)).toBeUndefined()
+test('teto-3-tentativas-para-sem-pouso: 3 tentativas e a conversa segue em X ⇒ loop.parar sem_pouso UMA vez, aviso, nenhuma 4ª (tudo pela vigia, sem turno)', async ($, on) => {
+  const m = mundo($, on, { percentPosClear: 60, agora: BASE })
+  await pousar(m)
+  await passos(m, 3) // 1ª repetição, 2ª, e a decisão que desiste
+  expect(m.est.clears).toBe(3) // pouso + 2 repetições = 3 tentativas
+  expect(tentativas(m)).toEqual([2, 3])
+  expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(1)
+  expect(parou(m)).toHaveLength(1)
+  expect(parou(m)[0].dados).toEqual({ motivo: 'sem_pouso', causa: 'sem_confirmacao' })
+  expect(m.toasts.some((t) => /depois de 3 tentativas/.test(t))).toBe(true)
+  for (let i = 0; i < 4; i++) { await m.avancar(61_000); await m.turno(); await m.clock.settle() }
+  expect(m.est.clears).toBe(3) // nenhuma 4ª
+  expect(parou(m)).toHaveLength(1) // o push do PAROU é um só
+  // a conversa cai abaixo de X e volta: a mesma fronteira, a mesma contagem; o loop já parou e `sem_pouso` não se grava de novo
+  m.est.percent = 10; await m.turno(); await m.clock.settle()
+  m.est.percent = 60; await m.turno(); await m.clock.settle()
+  expect(parou(m)).toHaveLength(1)
+  expect(m.est.clears).toBe(3)
 })
 
-/** o pouso foi da sessão real `sess-A` (10 min atrás) e o /clear dela não limpou; sem `sessao.retomada` do mod */
-const POUSOU_A = (...mais: any[]) => [
-  EVT(1, 'task.iniciada', { task: 'a', papel: 'implementador' }, 603_000), EVT(2, 'task.concluida', { task: 'a', sha: 'x' }, 602_000),
-  EVT(3, 'review.veredito', { task: 'a', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, 601_000),
-  EVT(4, 'sessao.pouso', { percent: 61, x: 50 }, 600_000, 'sess-A'), ...mais,
-]
-/** o `$.store` é um arquivo por plugin, não por sessão: nenhuma chave de confirmação do pouso pode existir */
-const semConfirmacaoNoStore = (m: ReturnType<typeof mundo>) => [...m.store.keys()].every((k) => !k.startsWith('confirmado'))
-const CLEAR_DE_C = EVT(5, 'sessao.inicio', { origem: 'clear' }, 597_000, 'sess-C') // C, alheia, deu /clear na própria conversa 3 s depois
-
-test('alheia-com-clear-nao-libera-a-que-pousou (ciclo 2, MAJOR-1): C alheia dá /clear; A (que pousou, o /clear dela não limpou, 61 %) segue negada, implementador e revisor', async ($, on) => {
-  const m = mundo($, on, { eventos: POUSOU_A(CLEAR_DE_C), percent: 61, agora: BASE, sessaoId: 'sess-A', contextos: { 'sess-C': { percent: 5, emMs: 'agora' } } })
-  expect((await m.agent('gabarito-implementador')).deny).toMatch(/aguardando/)
-  expect((await m.agent('gabarito-revisor')).deny).toMatch(/aguardando/)
-  expect(semConfirmacaoNoStore(m)).toBe(true) // nada que decida o pouso mora no store (um arquivo por plugin, não por sessão)
+test('R3-D laço-com-submit-falho (I3, MAJOR-4): o submit da retomada falha e o /clear deixa 70 % ⇒ no máximo 3 /clears, 1 sessao.pouso, sem_pouso uma vez', async ($, on) => {
+  const m = mundo($, on, { submitFalha: true, percentPosClear: 70, agora: BASE })
+  await pousar(m)
+  for (let i = 0; i < 12; i++) { await m.turno(); await m.clock.settle(); await m.avancar(61_000) }
+  expect(m.est.clears).toBe(3)
+  expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(1)
+  expect(tentativas(m)).toEqual([2, 3])
+  expect(parou(m)).toHaveLength(1)
 })
-test('alheia-nao-confirma-por-A (ciclo 2, MAJOR-1): na sessão C o mod lê a leitura fresca de A em 61 %, não grava confirmação nenhuma e não repete o pouso de A', async ($, on) => {
-  const m = mundo($, on, { eventos: POUSOU_A(CLEAR_DE_C), percent: 5, agora: BASE, sessaoId: 'sess-C', contextos: { 'sess-A': { percent: 61, emMs: 'agora' } } })
+test('R3-D2 laço-com-sessao.inicio-clear: com o evento de /clear do onboarding o limite é o mesmo', async ($, on) => {
+  let mm: any
+  const m = mundo($, on, { submitFalha: true, percentPosClear: 70, agora: BASE, aoClear: () => { mm.add('sistema', 'sessao.inicio', { origem: 'clear' }, `${mm.est.sessaoId}-n`) } })
+  mm = m
+  await pousar(m)
+  for (let i = 0; i < 12; i++) { await m.turno(); await m.clock.settle(); await m.avancar(61_000) }
+  expect(m.est.clears).toBe(3)
+  expect(tentativas(m)).toEqual([2, 3])
+  expect(parou(m)).toHaveLength(1)
+})
+test('R3-D3 laço-submit-ok: /clear que não baixa (70 %), submit ok, com e sem turnos ⇒ 3 /clears e sem_pouso', async ($, on) => {
+  const m = mundo($, on, { percentPosClear: 70, agora: BASE })
+  await pousar(m)
+  await passos(m, 12)
+  for (let i = 0; i < 6; i++) { await m.turno(); await m.clock.settle(); await m.avancar(61_000) }
+  expect(m.est.clears).toBe(3)
+  expect(tentativas(m)).toEqual([2, 3])
+  expect(parou(m)).toHaveLength(1)
+})
+test('R3-D4 misto: o 1º /clear troca a sessão e deixa 70 %, os seguintes não trocam ⇒ ainda no máximo 3 /clears', async ($, on) => {
+  const m = mundo($, on, { agora: BASE, percentPosClear: 70 })
+  await pousar(m)
+  let n = 0
+  for (let i = 0; i < 14; i++) {
+    await m.avancar(61_000)
+    if (m.est.clears > 1 && n === 0) n = 1
+    if (n) { m.est.sessaoId = 'sess-1-n'; m.est.percent = 70 }
+    await m.turno(); await m.clock.settle()
+  }
+  expect(m.est.clears).toBeLessThanOrEqual(3)
+  expect(parou(m)).toHaveLength(1)
+})
+
+test('R3-A pouso-de-B-nao-libera-A: A (que pousou, o /clear dela não limpou, 61 %) segue negada mesmo com o pouso de B e B-n a 5 %', async ($, on) => {
+  const evs = POUSOU_A(EVT(5, 'sessao.pouso', { percent: 61, x: 50 }, 30_000, 'sess-B'), EVT(6, 'sessao.retomada', { via: 'mod', chars: 5 }, 25_000, 'sess-B-n'))
+  const m = mundo($, on, { eventos: evs, percent: 61, agora: BASE, sessaoId: 'sess-A' })
+  await nega(m)
+})
+test('R3-A0 controle: A a 61 % sem o pouso de B também é negada', async ($, on) => {
+  const m = mundo($, on, { eventos: POUSOU_A(), percent: 61, agora: BASE, sessaoId: 'sess-A' })
+  await nega(m)
+})
+test('R3-B pouso-sem-sessao-nao-prende-ninguem: pouso `loop` e a paralela B a 10 % não é negada, não se limpa e não repete', async ($, on) => {
+  const m = mundo($, on, { eventos: INCIDENTE(), percent: 10, agora: BASE, sessaoId: 'sess-B' })
   await m.inicio()
-  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined() // C está baixa e a conversa é dela
+  await libera(m)
+  await m.turno(); await m.clock.settle(); await m.avancar(30_000); await m.avancar(61_000)
+  expect(m.est.clears).toBe(0)
+  expect(tentativas(m)).toEqual([])
+})
+test('R3-B2 B se limpou e B-n mede 5 %: A (61 %, onde o dono rodou pousar) continua negada', async ($, on) => {
+  const evs = [...INCIDENTE(), { ...EVT(5, 'sessao.pouso.tentativa', { n: 2 }, 20_000), sessao: 'sess-B' }, { ...EVT(6, 'sessao.retomada', { via: 'mod', chars: 5 }, 15_000), sessao: 'sess-B-n' }]
+  const m = mundo($, on, { eventos: evs, percent: 61, agora: BASE, sessaoId: 'sess-A' })
+  await nega(m)
+})
+test('R3-C sucessora-em-X-com-vivo: sessão nova a 61 % com agente vivo é negada em +0, +100 s e +200 s (sem janela, I4), sem tentativa', async ($, on) => {
+  const vivos: any[] = []
+  const m = mundo($, on, { percentPosClear: 61, agora: BASE, agentes: vivos })
+  await pousar(m)
+  vivos.push({ id: 'v1', status: 'running' })
+  await nega(m)
+  await m.avancar(100_000); await nega(m)
+  await m.avancar(100_000); await nega(m)
+  expect(tentativas(m)).toEqual([])
+  expect(m.est.clears).toBe(1)
+})
+test('R3-C2 sucessora-em-X-com-pausa: o arquivo de pausa por 200 s não a libera; depois da pausa ela pousa de novo e nunca despacha em X', async ($, on) => {
+  const PAUSA = `${PRINCIPAL}/.harness/PAU` + 'SAR'
+  const m = mundo($, on, { percentPosClear: 61, agora: BASE })
+  await pousar(m)
+  m.arquivos.add(PAUSA)
+  await m.avancar(200_000)
+  m.arquivos.delete(PAUSA)
+  await nega(m)
+  await m.turno(); await m.clock.settle(); await m.avancar(61_000)
+  expect(tentativas(m)).toEqual([2, 3])
+})
+test('alheia-com-clear-nao-libera-a-que-pousou: C alheia dá /clear; A (61 %) segue negada; C baixa segue livre', async ($, on) => {
+  const clearC = EVT(5, 'sessao.inicio', { origem: 'clear' }, 597_000, 'sess-C')
+  await nega(mundo($, on, { eventos: POUSOU_A(clearC), percent: 61, agora: BASE, sessaoId: 'sess-A' }))
+})
+test('alheia-baixa-livre: a sessão C alheia, abaixo de X, despacha e não repete o pouso de A', async ($, on) => {
+  const clearC = EVT(5, 'sessao.inicio', { origem: 'clear' }, 597_000, 'sess-C')
+  const m = mundo($, on, { eventos: POUSOU_A(clearC), percent: 5, agora: BASE, sessaoId: 'sess-C' })
+  await m.inicio()
+  await libera(m)
   await m.turno(); await m.clock.settle()
   expect(tentativas(m)).toEqual([])
   expect(m.est.clears).toBe(0)
-  expect(semConfirmacaoNoStore(m)).toBe(true)
 })
-test('cache-de-outra-sessao-nao-vale (ciclo 2, MAJOR-1): o store é compartilhado; a confirmação guardada por OUTRA sessão não libera a sucessora que ainda mede ≥ X', async ($, on) => {
-  const retomada = { ...EVT(5, 'sessao.retomada', { via: 'mod', chars: 5 }, 10_000), sessao: 'sess-X' }
-  const m = mundo($, on, { eventos: POUSOU_A(retomada), percent: 61, agora: BASE, sessaoId: 'sess-X', storeInicial: { [`confirmado:${DIR}:sess-A:4`]: { por: 'sess-Y' } } })
-  expect((await m.agent('gabarito-implementador')).deny).toMatch(/aguardando/) // sess-X é a sucessora e mede 61 %: só a confirmação DELA valeria
-  expect((await m.agent('gabarito-revisor')).deny).toMatch(/aguardando/)
-})
-test('paralela-no-teto-nao-faz-a-tentativa-da-outra (ciclo 2, MAJOR-1): B paralela em 61 % não repete o pouso de A; nega o despacho e pousa a própria conversa', async ($, on) => {
+test('paralela-no-teto-pousa-a-si-mesma (I2): B paralela em 61 % nega o despacho e pousa a PRÓPRIA conversa (tentativa 2 da contagem da fronteira); nunca por A', async ($, on) => {
   const m = mundo($, on, { eventos: POUSOU_A(), percent: 61, agora: BASE, sessaoId: 'sess-B' })
   await m.inicio()
   expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/)
   await m.turno(); await m.clock.settle()
-  expect(tentativas(m)).toEqual([]) // a tentativa é de quem pousou, não de B
-  expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(1) // o de B, pela regra de sempre
+  expect(m.est.clears).toBe(1)
+  expect(tentativas(m)).toEqual([2])
 })
-test('paralela-baixa-livre: B baixa e sem relação com o pouso não é presa a ele nem o confirma', async ($, on) => {
+test('paralela-baixa-livre: B abaixo de X sem relação com o pouso despacha', async ($, on) => {
   const m = mundo($, on, { eventos: POUSOU_A(), percent: 10, agora: BASE, sessaoId: 'sess-B' })
-  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
-  expect(semConfirmacaoNoStore(m)).toBe(true)
+  await libera(m)
 })
 
-test('vivo-por-mais-de-1h-depois-confirma-ou-desiste (ciclo 2, MAJOR-3): agente vivo por 70 min não derruba a vigia; ao terminar o mod repete e chega a sem_pouso, sem turno', async ($, on) => {
+test('vivo-por-mais-de-1h: agente vivo por 70 min não derruba a vigia; ao terminar o mod repete e chega a sem_pouso, sem turno', async ($, on) => {
   const vivos: any[] = []
   const m = mundo($, on, { clearNaoLimpa: true, agora: BASE, agentes: vivos })
-  await pousar(m) // pouso (tentativa 1) e o /clear não faz nada (o incidente): mesma sessão, sem medição que confirme
+  await pousar(m) // pouso (tentativa 1) e o /clear não faz nada (o incidente): mesma sessão, ainda em 60 %
   expect(m.est.clears).toBe(1)
-  vivos.push({ id: 'a2', status: 'running' }) // um agente vivo por mais de 1 h
+  vivos.push({ id: 'a2', status: 'running' })
   await m.avancar(4_200_000)
   expect(m.est.clears).toBe(1)
   expect(tentativas(m)).toEqual([])
   vivos.length = 0
-  for (let i = 0; i < 4; i++) await m.avancar(130_000)
+  await passos(m, 4)
   expect(tentativas(m)).toEqual([2, 3])
-  expect(parou(m).map((g) => g.dados.motivo)).toEqual(['sem_pouso']) // chega ao fim: nunca fica preso
+  expect(parou(m).map((g) => g.dados.motivo)).toEqual(['sem_pouso'])
 })
-test('pausa-por-mais-de-1h-depois-desiste (ciclo 2, MAJOR-3): o arquivo de pausa por 70 min também não derruba a vigia', async ($, on) => {
+test('pausa-por-mais-de-1h: o arquivo de pausa por 70 min também não derruba a vigia', async ($, on) => {
   const PAUSA = `${PRINCIPAL}/.harness/PAU` + 'SAR'
   const m = mundo($, on, { clearNaoLimpa: true, agora: BASE })
   await pousar(m)
@@ -4757,48 +4841,16 @@ test('pausa-por-mais-de-1h-depois-desiste (ciclo 2, MAJOR-3): o arquivo de pausa
   await m.avancar(4_200_000)
   expect(m.est.clears).toBe(1)
   m.arquivos.delete(PAUSA)
-  for (let i = 0; i < 4; i++) await m.avancar(130_000)
+  await passos(m, 4)
   expect(tentativas(m)).toEqual([2, 3])
   expect(parou(m).map((g) => g.dados.motivo)).toEqual(['sem_pouso'])
 })
-
-test('entre-tentativas-tudo-negado (ciclo 2, MAJOR-4): depois da tentativa 2 e antes da 3, implementador, correção e revisor são negados (com e sem namespace)', async ($, on) => {
+test('entre-tentativas-tudo-negado: depois da tentativa 2 e antes da 3, implementador, correção e revisor são negados (com e sem namespace)', async ($, on) => {
   const m = mundo($, on, { percentPosClear: 60, agora: BASE })
   await pousar(m)
   await m.avancar(61_000) // tentativa 2
   expect(tentativas(m)).toEqual([2])
-  for (const tipo of ['gabarito-implementador', 'gabarito-mestre:gabarito-implementador', 'gabarito-revisor', 'gabarito-mestre:gabarito-revisor', undefined]) {
-    expect((await m.agent(tipo)).deny).toMatch(/aguardando/)
-  }
-})
-
-test('leitura-desconhecida-nao-trava: sem medição o pouso nem confirma nem libera, mas passado o limite conta como tentativa falha, e acaba em sem_pouso sem nenhum turno', async ($, on) => {
-  const m = mundo($, on, { eventos: INCIDENTE(), usageFalha: true, agora: BASE })
-  await m.inicio()
-  expect((await m.agent('gabarito-implementador')).deny).toMatch(/aguardando/)
-  await m.turno(); await m.clock.settle() // desconhecida há 10 min > limite: a tentativa 1 falhou, repete
-  expect(tentativas(m)).toEqual([2])
-  expect(m.est.clears).toBe(1)
-  await m.avancar(130_000) // a 2ª também fica sem medição: a vigia conta a falha e faz a 3ª
-  expect(tentativas(m)).toEqual([2, 3])
-  await m.avancar(130_000) // e a 3ª: acabou
-  expect(parou(m).map((g) => g.dados.motivo)).toEqual(['sem_pouso'])
-  expect(m.est.clears).toBe(2)
-})
-
-test('teto-3-tentativas-para-sem-pouso: 3 tentativas sem confirmação ⇒ loop.parar sem_pouso uma vez, aviso, nenhuma 4ª (tudo pela vigia, sem turno)', async ($, on) => {
-  const m = mundo($, on, { percentPosClear: 60, agora: BASE })
-  await pousar(m)
-  for (let i = 0; i < 3; i++) await m.avancar(61_000) // 1ª repetição, 2ª, e a medição da 3ª (≥ X ⇒ esgotada)
-  expect(m.est.clears).toBe(3) // pouso + 2 repetições = 3 tentativas
-  expect(tentativas(m)).toEqual([2, 3])
-  expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(1)
-  expect(parou(m)).toHaveLength(1)
-  expect(parou(m)[0].dados).toEqual({ motivo: 'sem_pouso', causa: 'sem_confirmacao' })
-  expect(m.toasts.some((t) => /não foi confirmado depois de 3 tentativas/.test(t))).toBe(true)
-  for (let i = 0; i < 4; i++) { await m.avancar(61_000); await m.turno(); await m.clock.settle() }
-  expect(m.est.clears).toBe(3) // nenhuma 4ª
-  expect(parou(m)).toHaveLength(1)
+  await nega(m)
 })
 
 test('tentativa-nao-e-pouso: tentativa não muda seq, fronteira nem a chave do push', async ($, on) => {
@@ -4813,82 +4865,70 @@ test('tentativa-nao-e-pouso: tentativa não muda seq, fronteira nem a chave do p
   expect(pousoPendente(soTentativa, true).pendente).toBe(false)
 })
 
-// ---- a definição única (pouso-pendente.ts): o que confirma e o que não confirma ----
+// ---- a definição única (pouso-pendente.ts): por sessão ----
 const PEV = (seq: number, tipo: string, dados: Record<string, unknown>, tsMs: number, sessao: string) =>
   ({ seq, ts: new Date(tsMs).toISOString(), autor: 'a', sessao, agente: 'o', tipo, dados, hash_anterior: null })
 const T0 = Date.UTC(2026, 10, 14, 10, 0, 0)
-const POUSO = PEV(1, 'sessao.pouso', { percent: 60, x: 50 }, T0, 'velha')
-const CLEAR = PEV(1, 'sessao.inicio', { origem: 'clear' }, T0 + 5_000, 'nova')
+const VER = PEV(3, 'review.veredito', { task: 'a', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, T0 - 1000, 's0')
+const POUSO = PEV(4, 'sessao.pouso', { percent: 61, x: 50 }, T0, 'A')
 const L = (sessao: string, percent: number, emMs: number, fonte = 'mod') => ({ sessao, percent, fonte, emMs })
-const med = (leituras: any[], agoraMs: number, extra: any = {}) => ({ x: 50, agoraMs, sessaoAtual: 'nova', leituras, modAtivo: true, ...extra })
+const med = (sessaoAtual: string, leituras: any[], agoraMs: number) => ({ x: 50, agoraMs, sessaoAtual, leituras })
+const pend = (evs: any[], sessao: string, leituras: any[], agoraMs: number) => pousoPendente(evs, true, med(sessao, leituras, agoraMs)).pendente
 
-test('leitura-velha-nao-libera: leitura da sucessora com mais de 120 s não confirma', async ($, on) => {
-  const agora = T0 + 200_000
-  expect(situacaoDoPouso([POUSO, CLEAR], med([L('nova', 10, agora - 10_000)], agora)).confirmado).toBe(true) // controle: fresca confirma
-  const s = situacaoDoPouso([POUSO, CLEAR], med([L('nova', 10, agora - 130_000)], agora))
-  expect(s.confirmado).toBe(false)
-  expect(s.leitura).toBe('desconhecida')
-})
-test('leitura-da-sessao-antiga-nao-libera (pura): leitura da sessão que pousou, de outra, anterior ao /clear, do futuro ou de fonte transcript não confirmam', async ($, on) => {
-  const agora = T0 + 30_000
-  expect(situacaoDoPouso([POUSO, CLEAR], med([L('velha', 10, agora - 1000)], agora)).confirmado).toBe(false) // a sessão antiga
-  expect(situacaoDoPouso([POUSO, CLEAR], med([L('outra', 10, agora - 1000)], agora)).confirmado).toBe(false) // uma terceira
-  expect(situacaoDoPouso([POUSO, CLEAR], med([L('nova', 10, T0 + 1_000)], agora)).confirmado).toBe(false) // anterior ao /clear
-  expect(situacaoDoPouso([POUSO, CLEAR], med([L('nova', 10, agora - 1000, 'transcript')], agora)).confirmado).toBe(false) // estimada
-  expect(situacaoDoPouso([POUSO, CLEAR], med([L('nova', 10, agora + 60_000)], agora)).confirmado).toBe(false) // `em` no futuro (> 5 s)
-  expect(situacaoDoPouso([POUSO, CLEAR], med([L('nova', 50, agora - 1000)], agora)).confirmado).toBe(false) // X exato: não é < X
-  expect(situacaoDoPouso([POUSO, CLEAR], med([L('nova', 49, agora - 1000)], agora)).confirmado).toBe(true)
-})
-test('sucessora (pura, r1 MAJOR-2): sessão paralela sem /clear não confirma; /clear alheio com a que pousou ainda medindo depois dele não confirma; a sucessora de verdade confirma', async ($, on) => {
+test('pura-por-sessao (I1): só a leitura PRÓPRIA decide; a de outra sessão nunca libera nem prende', async ($, on) => {
   const agora = T0 + 60_000
-  // paralela B: mede 10 %, nenhum sessao.inicio {clear} dela
-  expect(situacaoDoPouso([POUSO], med([L('B', 10, agora - 1000)], agora, { sessaoAtual: 'B' })).confirmado).toBe(false)
-  expect(situacaoDoPouso([POUSO, PEV(2, 'sessao.inicio', { origem: 'startup' }, T0 + 5_000, 'B')], med([L('B', 10, agora - 1000)], agora, { sessaoAtual: 'B' })).confirmado).toBe(false)
-  // C deu /clear por conta própria; a que pousou (velha) ainda mede 61 % DEPOIS dele: não foi ela que foi limpa
-  const clearC = PEV(2, 'sessao.inicio', { origem: 'clear' }, T0 + 5_000, 'C')
-  const viva = situacaoDoPouso([POUSO, clearC], med([L('velha', 61, agora - 2000), L('C', 10, agora - 1000)], agora, { sessaoAtual: 'velha' }))
-  expect([viva.confirmado, viva.nova]).toEqual([false, null])
-  // a velha calou depois do /clear (leitura anterior a ele): C é a sucessora e confirma
-  const ok = situacaoDoPouso([POUSO, clearC], med([L('velha', 61, T0 + 1_000), L('C', 10, agora - 1000)], agora, { sessaoAtual: 'C' }))
-  expect([ok.confirmado, ok.nova]).toEqual([true, 'C'])
-  // o /clear do mod: a sucessora aparece na `sessao.retomada {via: mod}` (sem onboarding não há sessao.inicio)
-  const retomada = PEV(2, 'sessao.retomada', { via: 'mod', chars: 10 }, T0 + 5_000, 'S2')
-  expect(situacaoDoPouso([POUSO, retomada], med([L('S2', 10, agora - 1000)], agora, { sessaoAtual: 'S2' })).confirmado).toBe(true)
-  expect(situacaoDoPouso([POUSO, retomada], med([L('velha', 10, agora - 1000)], agora, { sessaoAtual: 'velha' })).confirmado).toBe(false)
-})
-test('sucessora-e-a-ultima (pura, ciclo 2, MAJOR-2): depois de um 2º /clear a sucessora é a nova sessão; o pendente sai com a leitura fresca dela, em +180 s e +600 s', async ($, on) => {
-  const retomada = PEV(2, 'sessao.retomada', { via: 'mod', chars: 10 }, T0 + 5_000, 'A2') // sucessora do mod, confirmada
-  const clearS3 = PEV(2, 'sessao.inicio', { origem: 'clear' }, T0 + 400_000, 'S3') // o dono deu /clear depois (o push "hora de limpar")
-  for (const depois of [180_000, 600_000]) {
-    const agora = T0 + 400_000 + depois
-    const p = pousoPendente([POUSO, retomada, clearS3], true, med([L('S3', 3, agora - 2000), L('A2', 40, T0 + 100_000)], agora, { sessaoAtual: 'S3', modAtivo: undefined }))
-    expect(p.pendente).toBe(false)
+  expect(pend([VER, POUSO], 'A', [L('A', 61, agora - 1000)], agora)).toBe(true) // ainda em X depois do pouso
+  expect(pend([VER, POUSO], 'A', [L('A', 20, agora - 1000)], agora)).toBe(false)
+  expect(pend([VER, POUSO], 'A', [L('A', 50, agora - 1000)], agora)).toBe(true) // X exato: não é < X
+  expect(pend([VER, POUSO], 'A', [L('A', 61, agora - 1000), L('B', 5, agora - 1000)], agora)).toBe(true) // B baixa não libera A
+  expect(pend([VER, POUSO], 'B', [L('A', 61, agora - 1000), L('B', 5, agora - 1000)], agora)).toBe(false) // A alta não prende B
+  // leitura própria que não vale: velha (> 120 s), do futuro (> 5 s), de fonte transcript, de outra sessão ⇒ sem leitura própria: a regra sem mod (/clear do dono)
+  for (const l of [L('A', 20, agora - 130_000), L('A', 20, agora + 60_000), L('A', 20, agora - 1000, 'transcript')]) {
+    expect(pend([VER, POUSO], 'A', [l], agora)).toBe(true) // sem /clear de outra sessão no diário: pendente por evento
+    expect(pend([VER, POUSO, PEV(5, 'sessao.inicio', { origem: 'clear' }, T0 + 5_000, 'S9')], 'A', [l], agora)).toBe(false) // o /clear do dono libera
   }
-  // a sessão que cresce depois da janela é conversa que cresceu, não /clear que falhou (E1): continua confirmada, mod, Stop e proxima iguais
-  const agora = T0 + 5_000 + 300_000
-  expect(situacaoDoPouso([POUSO, retomada], med([L('A2', 55, agora - 1000)], agora, { sessaoAtual: 'A2' })).confirmado).toBe(true)
-  expect(situacaoDoPouso([POUSO, retomada], med([L('A2', 55, T0 + 5_000 + 60_000)], T0 + 5_000 + 61_000, { sessaoAtual: 'A2' })).leitura).toBe('falhou') // mas dentro da janela é o /clear que não limpou
 })
-test('desconhecida-limite (pura): desconhecida só conta como falha depois de 120 s; repetir só depois de 60 s; no máximo 3', async ($, on) => {
-  const cedo = situacaoDoPouso([POUSO], med([], T0 + 50_000, { sessaoAtual: 'velha' }))
-  expect([cedo.falhou, cedo.podeRepetir]).toEqual([false, false])
-  const tarde = situacaoDoPouso([POUSO], med([], T0 + 130_000, { sessaoAtual: 'velha' }))
-  expect([tarde.falhou, tarde.podeRepetir, tarde.esgotada, tarde.tentativas]).toEqual([true, true, false, 1])
-  const t3 = [POUSO, PEV(2, 'sessao.pouso.tentativa', { n: 2 }, T0 + 70_000, 'velha'), PEV(3, 'sessao.pouso.tentativa', { n: 3 }, T0 + 140_000, 'velha')]
-  const fim = situacaoDoPouso(t3, med([], T0 + 300_000, { sessaoAtual: 'velha' }))
-  expect([fim.tentativas, fim.falhou, fim.podeRepetir, fim.esgotada]).toEqual([3, true, false, true])
-  const alta = situacaoDoPouso([POUSO, CLEAR], med([L('nova', 70, T0 + 30_000)], T0 + 40_000))
-  expect([alta.leitura, alta.falhou, alta.podeRepetir]).toEqual(['falhou', true, false]) // falhou, mas só 40 s desde o pouso: espera
-})
-test('sem-mod-o-evento-vale (pura, r1 MAJOR-3): "mod ativo" é leitura FRESCA; mod que some depois do pouso volta à regra do /clear do dono', async ($, on) => {
-  expect(pousoPendente([POUSO], true).pendente).toBe(true)
-  expect(pousoPendente([POUSO, CLEAR], true).pendente).toBe(false)
-  const semMod = (leituras: any[], agoraMs: number) => med(leituras, agoraMs, { modAtivo: undefined })
-  expect(pousoPendente([POUSO, CLEAR], true, semMod([], T0 + 60_000)).pendente).toBe(false) // sem leitura mod: modo evento
-  // mod fresco: o /clear sozinho não basta (a sucessora ainda não mediu)
-  expect(pousoPendente([POUSO, CLEAR], true, semMod([L('velha', 5, T0 + 50_000)], T0 + 60_000)).pendente).toBe(true)
-  // o mod calou: a última leitura tem 10 min, 1 h, 24 h; o dono deu /clear ⇒ o pendente sai (e a instrução "digite /clear" do Stop é verdadeira)
-  for (const depois of [600_000, 3_600_000, 86_400_000]) {
-    expect(pousoPendente([POUSO, CLEAR], true, semMod([L('velha', 5, T0 + 50_000)], T0 + 50_000 + depois)).pendente).toBe(false)
+test('pura-sonda-r2 (P-a, P-a2, P-b, P-c, Q1, Q2, Q3, Q4): as sondas do revisor das rodadas anteriores, com a resposta por sessão', async ($, on) => {
+  const retomada = PEV(5, 'sessao.retomada', { via: 'mod', chars: 10 }, T0 + 5_000, 'A2')
+  const H = 3_600_000
+  // P-a: depois de um 2º /clear (S3), a leitura fresca de S3 baixa libera em +180 s e +600 s
+  for (const d of [180_000, 600_000]) {
+    const evs = [VER, POUSO, retomada, PEV(6, 'sessao.inicio', { origem: 'clear' }, T0 + d - 30_000, 'S3')]
+    expect(pend(evs, 'S3', [L('A2', 4, T0 + 20_000), L('S3', 3, T0 + d - 1000)], T0 + d)).toBe(false)
   }
+  // P-a2: A2 viva a 30 % libera; a 55 % (≥ X) não despacha: o Stop diz aguardando e o mod pousa a conversa
+  expect(pend([VER, POUSO, retomada], 'A2', [L('A2', 30, T0 + 599_000)], T0 + 600_000)).toBe(false)
+  expect(pend([VER, POUSO, retomada], 'A2', [L('A2', 55, T0 + 599_000)], T0 + 600_000)).toBe(true)
+  // P-b: A viva a 61 % depois da tentativa de B, B2 a 5 %: A segue pendente
+  const evsB = [VER, POUSO, PEV(5, 'sessao.pouso.tentativa', { n: 2 }, T0 + 130_000, 'B'), PEV(6, 'sessao.retomada', { via: 'mod', chars: 10 }, T0 + 135_000, 'B2')]
+  expect(pend(evsB, 'A', [L('A', 61, T0 + 139_000), L('B2', 5, T0 + 138_000)], T0 + 140_000)).toBe(true)
+  // P-c: C alheia deu /clear, A viva a 61 %: C (5 %) livre, A pendente
+  const evsC = [VER, POUSO, PEV(5, 'sessao.inicio', { origem: 'clear' }, T0 + 3_000, 'C')]
+  expect(pend(evsC, 'C', [L('A', 61, T0 + 59_000), L('C', 5, T0 + 58_000)], T0 + 60_000)).toBe(false)
+  expect(pend(evsC, 'A', [L('A', 61, T0 + 59_000), L('C', 5, T0 + 58_000)], T0 + 60_000)).toBe(true)
+  // Q1 (MAJOR-5): a sucessora fechou, o dia seguinte abre S4 por startup; S4 mede 4 %: livre
+  const evsQ1 = [VER, POUSO, PEV(5, 'sessao.retomada', { via: 'mod', chars: 10 }, T0 + 5_000, 'A2'), PEV(6, 'sessao.inicio', { origem: 'startup' }, T0 + 20 * H, 'S4')]
+  expect(pend(evsQ1, 'S4', [L('A2', 30, T0 + 2 * H), L('S4', 4, T0 + 20 * H + 59_000)], T0 + 20 * H + 60_000)).toBe(false)
+  // Q2: A2 a 61 % em +100 s e em +190 s: nos dois casos pendente (sem janela, I4)
+  for (const d of [100_000, 190_000]) expect(pend([VER, POUSO, retomada], 'A2', [L('A2', 61, T0 + d - 1000)], T0 + d)).toBe(true)
+  // Q3 e Q4: o pouso de B (ou o `loop`) confirmado por B-n não libera A a 61 %
+  const evsQ3 = [VER, POUSO, PEV(5, 'sessao.pouso', { percent: 61, x: 50 }, T0 + 30_000, 'B'), PEV(6, 'sessao.retomada', { via: 'mod', chars: 10 }, T0 + 35_000, 'B-n')]
+  expect(pend(evsQ3, 'A', [L('A', 61, T0 + 59_000), L('B-n', 5, T0 + 58_000)], T0 + 60_000)).toBe(true)
+  const evsQ4 = [VER, PEV(4, 'sessao.pouso', { percent: null, x: 50, via: 'dono' }, T0, 'loop'), PEV(5, 'sessao.pouso.tentativa', { n: 2 }, T0 + 180_000, 'B'), PEV(6, 'sessao.retomada', { via: 'mod', chars: 10 }, T0 + 185_000, 'B-n')]
+  expect(pend(evsQ4, 'A', [L('A', 61, T0 + 199_000), L('B-n', 5, T0 + 198_000)], T0 + 200_000)).toBe(true)
+})
+test('pura-tentativas (I3): conta por fronteira, de qualquer sessão; veredito novo zera; tentativa não é pouso', async ($, on) => {
+  const t = (evs: any[]) => tentativasDoPouso(evs)
+  expect(t([VER])).toEqual({ n: 0, ultimoMs: null })
+  expect(t([VER, POUSO]).n).toBe(1)
+  expect(t([VER, POUSO, PEV(5, 'sessao.pouso.tentativa', { n: 2 }, T0 + 70_000, 'B'), PEV(6, 'sessao.pouso', { percent: 61, x: 50 }, T0 + 140_000, 'C')])).toEqual({ n: 3, ultimoMs: T0 + 140_000 }) // seq novo e sessão nova NÃO zeram
+  expect(t([VER, POUSO, PEV(7, 'review.veredito', { task: 'b', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, T0 + 500_000, 's0')]).n).toBe(0) // fronteira nova
+  expect(t(null)).toEqual({ n: 0, ultimoMs: null })
+})
+test('pura-sem-mod-o-evento-vale (FIEL-14 e, h): sem leitura própria o /clear do dono libera, mas só com onboarding; startup/resume e sessão paralela não tiram', async ($, on) => {
+  expect(pousoPendente([VER, POUSO], false).pendente).toBe(false) // FIEL-14 h
+  expect(pousoPendente([VER, POUSO], true).pendente).toBe(true)
+  expect(pousoPendente([VER, POUSO, PEV(5, 'sessao.inicio', { origem: 'startup' }, T0 + 5_000, 'S9')], true).pendente).toBe(true)
+  expect(pousoPendente([VER, POUSO, PEV(5, 'sessao.inicio', { origem: 'clear' }, T0 + 5_000, 'S9')], true).pendente).toBe(false)
+  expect(pousoPendente([VER, POUSO, PEV(5, 'sessao.inicio', { origem: 'clear' }, T0 + 5_000, 'A')], true).pendente).toBe(true) // o clear da própria sessão que pousou não conta
 })

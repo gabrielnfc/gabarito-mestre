@@ -7,11 +7,11 @@
  * `Agent` nega para quem não é revisor ⇔ a cláusula (5) de `proximaAcao` dispararia (`negaDespacho`).
  * Passos do pouso, em `$.store['pouso:<pasta da entrega>']` (`$.state` zera no /clear, o store não: M2):
  *   ocioso (sem chave) -> pousando (gravado ANTES do /clear) -> retomando -> ocioso.
- * GM-14 T53 (emendas 52 e 53): `sessao.pouso` sozinho NÃO consome a fronteira (o `loop.mjs pousar` do dono também o grava, sem /clear). Consumida só
- * com a confirmação por MEDIÇÃO (`situacaoDoPouso`, pouso-pendente.ts): a sessão nova, com o mod, mede < X. Medição desconhecida não libera nem trava
- * (passado `LIMITE_DESCONHECIDA_MS` conta como tentativa falha). Leitura >= X depois do /clear = o /clear não aconteceu: o mod repete o pouso, até 3
- * tentativas por fronteira (`sessao.pouso.tentativa {n}`, nunca um push) e então `loop.parar {sem_pouso}`. Até a confirmação TODO Agent é negado, revisor
- * incluído. Com `dono.mensagem` aberta e 0 vivos o mod pousa mesmo assim; a pendência é herdada pela sessão nova (o diário a guarda), nunca fechada.
+ * GM-14 T53 (emendas 52 e 53), invariantes POR SESSÃO. (I1) Uma sessão só despacha Agent com a PRÓPRIA leitura (`usage.context.percent`) abaixo de X; depois de um
+ * pouso desta fronteira e ainda em X ou acima, TODO Agent é negado, revisor incluído. Nenhuma outra sessão, pouso, cache ou janela libera ou prende esta. (I2) Cada sessão
+ * em X ou acima com 0 vivos pousa A SI MESMA. (I3) As tentativas se contam no diário por fronteira (`sessao.pouso` mais `sessao.pouso.tentativa {n}`, de qualquer
+ * sessão, ~60 s entre elas, nunca um push): a 4ª não existe, `loop.parar {sem_pouso}` uma vez. Uma vigia (timer) repete dentro do limite sem depender de turno.
+ * Com `dono.mensagem` aberta e 0 vivos o mod pousa mesmo assim; a pendência é herdada pela sessão nova (o diário a guarda), nunca fechada.
  * Diário lido sem tolerância (`lerEstrito`); dado ausente, corrompido ou API lançando nunca vira pouso.
  * Falha em passo do pouso (diário, instantâneo, store, o /clear que lança): `loop.parar {sem_pouso}` + aviso visível + ocioso, sem repetir o /clear.
  * Entrega, trava e medição são resolvidas a cada disparo: nada de pasta guardada entre turnos.
@@ -22,9 +22,9 @@ import { pendenciasAprendizado } from '../gates/dist/pendencias.js';
 import * as nucleo from '../gates/dist/loop.js'; // `nucleo.TIPOS_DE_PROGRESSO`: fonte única da lista (lida só em marcarPousoPendente)
 import {
   analisarFronteira, codigoPonte, dadosMedicao, ehMensagemDoDono, ehRevisor, jaParou, lerX, marcaDeProgresso, negaDespacho, pendenciasQueBarram, portaDoPouso, PROMPT_RECUPERACAO, PROMPT_RETOMADA,
-  fronteiraConfirmada, pousoDaFronteira, tasksDoNegado, tasksEmVoo, textoPendencia, textoPendenciaNaoVerificada, textoRetomada, tokensDe, vivosDe,
+  pousoDaFronteira, tasksDoNegado, tasksEmVoo, textoPendencia, textoPendenciaNaoVerificada, textoRetomada, tokensDe, vivosDe,
 } from '../gates/dist/pouso.js';
-import { lerLeitura, sessoesParaMedir, situacaoDoPouso } from '../gates/dist/pouso-pendente.js'; // GM-14 T53: a ÚNICA definição da confirmação do pouso (nenhuma 2ª regra aqui)
+import { ESPERA_ENTRE_TENTATIVAS_MS, MAX_TENTATIVAS, tentativasDoPouso } from '../gates/dist/pouso-pendente.js'; // GM-14 T53: a ÚNICA definição da contagem de tentativas
 import { comandoPainel, iniciarPainel, registrarPainel, turnoDoPainel, USO_GABARITO } from './painel.mjs'; // E4 T10: Pane, faixa, atualização e aviso do PAROU (nada do pouso depende dele)
 import { comandoChat, registrarChat } from './chat.mjs'; // GM-14 T5: linha de ferramenta em linguagem natural (`ToolGroup`) e `/gabarito chat cru|natural`
 
@@ -45,8 +45,6 @@ const recuperadas = new Map(); // `${dir}|${task}` → vezes que o mod reabriu a
 const MAX_RECUPERACOES = 2; // REQ-LOOP-5: até 2 por task; na seguinte `loop.parar {nao_conseguiu}`
 const TURNOS_ESPERA = 3; // alinhado a REQ-LOOP-5: o hand-back pode ainda não ter chegado
 
-/** `loop.mjs pousar` sem `--sessao` grava a sessão `loop`: de quem pousou não se sabe, então toda sessão do mod fica presa a esse pouso. */
-const SESSAO_SEM_ID = 'loop';
 const chaveDe = (dir) => `pouso:${dir}`;
 
 async function avisar($, texto) {
@@ -154,13 +152,14 @@ async function falharPouso($, c, causa) {
 }
 
 /**
- * T53 (emenda 53 e): as 3 tentativas do pouso acabaram sem confirmação por medição. `loop.parar {sem_pouso}` e o aviso visível; o PAROU do painel
- * (mod/painel.mjs, `$.ui.notify`) é o push ao dono, pelo caminho que já existe. Nenhuma 4ª tentativa: `desistiu` segura o mod até o percent cair.
+ * T53 (emenda 53 e, I3): as tentativas do pouso desta fronteira acabaram (3, contadas no diário por QUALQUER sessão) e a conversa segue em X ou acima.
+ * `loop.parar {sem_pouso}` UMA vez (`jaParou`) e o aviso visível; o PAROU do painel (mod/painel.mjs, `$.ui.notify`) é o push ao dono, pelo caminho que
+ * já existe. Nenhuma 4ª tentativa: `desistiu` segura o mod até o percent cair.
  */
 async function pousoSemConfirmacao($, c, tentativas) {
   desistiu = true;
   await gravar($, c, { agente: 'orquestrador', tipo: 'loop.parar', dados: { motivo: 'sem_pouso', causa: 'sem_confirmacao' } });
-  await avisar($, `gabarito: o pouso não foi confirmado depois de ${tentativas} tentativas — loop parado, motivo sem_pouso. Limpe a conversa com /clear e retome pelo diário.`);
+  await avisar($, `gabarito: o pouso não limpou a conversa depois de ${tentativas} tentativas — loop parado, motivo sem_pouso. Limpe a conversa com /clear e retome pelo diário.`);
 }
 
 /**
@@ -199,7 +198,7 @@ async function executarPouso($, c, percent, x, tentativa) {
     if (!gravou) await avisar($, 'gabarito: retomada aconteceu mas sessao.retomada não gravou; o próximo cartão pode repetir a linha de pouso.');
   } finally {
     ocupado = false;
-    armarVigia($); // confirmado ou não, a vigia olha: confirmado ⇒ ela mesma para
+    armarVigia($); // a vigia olha de novo; abaixo de X ela mesma para
   }
 }
 
@@ -287,36 +286,6 @@ function descrever(r) {
 const agoraDe = (l) => (typeof l?.agora === 'number' && Number.isFinite(l.agora) ? l.agora : Date.now());
 
 /**
- * T53: a situação do pouso agora (única definição em pouso-pendente.ts). O diário e as leituras decidem; as leituras são os `.harness/contexto/<sessao>.json`
- * das sessões da linha do pouso (a ponte `contexto`) e, por cima, a medição do próprio mod (`usage.context.percent`, fonte `mod`, em = agora).
- * O `$.store` é um arquivo por plugin, NÃO por sessão: nada que decida o pouso mora nele. Só um CACHE, chave `confirmado:<dir>:<sessão que pousou>:<seq>`,
- * valor `{por: <sucessora>}`, gravado só pela própria sucessora (`nova === sessaoAtual`) e honrado só quando `por` é a sucessora que a regra única acha
- * agora: uma sessão alheia nunca o grava nem o aproveita; a conversa que cresce depois de confirmada segue confirmada (E1). `null` ⇒ diário ilegível.
- */
-async function lerSituacao($, eventos, c, percent, x, agora) {
-  if (!Array.isArray(eventos)) return null;
-  let sessaoAtual = null;
-  try { const id = await $.session.id(); if (typeof id === 'string') sessaoAtual = id; } catch { /* sem id: a leitura fica desconhecida */ }
-  let leituras = [];
-  const q = await ponte($, { op: 'contexto', cwd: c.cwd, raiz: c.raiz, sessoes: sessoesParaMedir(eventos, sessaoAtual) });
-  if (q.ok === true && Array.isArray(q.leituras)) {
-    leituras = q.leituras.map((l) => (l !== null && typeof l === 'object' && typeof l.sessao === 'string' && typeof l.texto === 'string' ? lerLeitura(l.sessao, l.texto) : null)).filter((l) => l !== null);
-  }
-  if (percent !== null && sessaoAtual !== null) leituras = [...leituras.filter((l) => l.sessao !== sessaoAtual), { sessao: sessaoAtual, percent, fonte: 'mod', emMs: agora }];
-  let sit = situacaoDoPouso(eventos, { x, agoraMs: agora, sessaoAtual, leituras, modAtivo: true });
-  if (sit.pouso === null || sit.nova === null) return { ...sit, sessaoAtual };
-  const chave = `confirmado:${c.dir}:${sit.pouso.sessao}:${sit.pouso.seq}`;
-  if (!sit.confirmado) {
-    let por = null;
-    try { const v = await $.store.get(chave); por = v !== null && typeof v === 'object' && typeof v.por === 'string' ? v.por : null; } catch { por = null; }
-    if (por === sit.nova) sit = { ...sit, confirmado: true, pendente: false, leitura: 'confirma', falhou: false, podeRepetir: false, esgotada: false };
-  } else if (sit.nova === sessaoAtual) {
-    try { await $.store.set(chave, { por: sit.nova }); } catch { /* a leitura seguinte confirma de novo */ }
-  }
-  return { ...sit, sessaoAtual };
-}
-
-/**
  * A decisão de um disparo: pré-condições do mod, depois o núcleo. Fora de `NUCLEO` a ação é `null`.
  * `negar` = `Agent` não revisor negado. Consumida ⇒ `percent: null` ao núcleo (E1); `proximaAcao` lançando ⇒ sem ação e nega.
  */
@@ -327,38 +296,32 @@ async function avaliar($, c) {
   let pousando = false;
   try { pousando = (await $.store.get(chaveDe(c.dir))) !== undefined; } catch { pousando = true; }
   const porta = portaDoPouso({ orquestrador: true, percent, x, pousando, desistiu, interativo });
-  // `aguardando`: há pouso desta fronteira sem confirmação por medição (T53). `sit` e `eventos` vêm da mesma leitura do diário.
-  const r = { porta, percent, x, mundo: null, acao: null, negar: porta.despacho === 'negar', sit: null, eventos: null, aguardando: false, pousarComDono: false };
+  // `pousoPendente` (I1): esta sessão, pela PRÓPRIA leitura (`usage.context.percent`), segue em X ou acima depois de um pouso desta fronteira: o /clear não a
+  // limpou. Todo Agent é negado, o revisor também. Nenhuma outra sessão, pouso, cache ou janela libera ou prende esta (nem o contrário).
+  const r = { porta, percent, x, mundo: null, acao: null, negar: porta.despacho === 'negar', eventos: null, agora: Date.now(), pousoPendente: false, pousarComDono: false };
   if (porta.estado === 'POUSANDO') return r; // um pouso em andamento (store): o /clear dele ainda não terminou
   let eventos = null;
-  let agora = Date.now();
   if (porta.estado !== 'NUCLEO') {
     const l = await ponte($, { op: 'ler', dir: c.dir, cwd: c.cwd });
-    if (l.ok === true && Array.isArray(l.eventos)) { eventos = l.eventos; agora = agoraDe(l); }
+    if (l.ok === true && Array.isArray(l.eventos)) { eventos = l.eventos; r.agora = agoraDe(l); }
   } else {
     r.negar = true;
     r.mundo = await lerMundo($, c);
     if (r.mundo === null) return r;
     eventos = r.mundo.eventos;
-    agora = r.mundo.agora;
+    r.agora = r.mundo.agora;
   }
   if (eventos !== null) {
     r.eventos = eventos;
-    // só o diário íntegro e com pouso nesta fronteira decide (a leitura ruim cai nas regras de antes)
-    if (pousoDaFronteira(eventos)) {
-      r.sit = await lerSituacao($, eventos, c, percent, x, agora);
-      // `jaParou` (`sem_pouso`): não há o que aguardar, o SEM_POUSO e o `parar` falam.
-      // Só a sessão que pousou (ou o pouso sem sessão, `loop`) ou a sucessora dela (que o /clear não limpou) fica presa ao pouso e pode repeti-lo. Qualquer outra (paralela, alheia) o ignora:
-      // segue as regras de sempre (no teto nega e pousa a própria conversa), nunca faz a tentativa de outra nem a confirma.
-      r.sessaoAtual = r.sit?.sessaoAtual ?? null;
-      r.aguardando = r.sit !== null && !r.sit.confirmado && !jaParou(eventos) && r.sit.pouso !== null && (r.sit.pouso.sessao === r.sessaoAtual || r.sit.nova === r.sessaoAtual || r.sit.pouso.sessao === SESSAO_SEM_ID);
-      if (r.aguardando) { r.negar = true; armarVigia($); }
-    }
+    // `jaParou` (`sem_pouso`): não há o que aguardar, o SEM_POUSO e o `parar` falam
+    r.pousoPendente = percent !== null && percent >= x && pousoDaFronteira(eventos) && !jaParou(eventos);
+    if (r.pousoPendente) { r.negar = true; armarVigia($); }
   }
   if (porta.estado !== 'NUCLEO') return r;
   const m = r.mundo;
-  // GM-14 T53: consumida = pouso depois do veredito E confirmado por medição (`sessao.pouso` sozinho não consome)
-  if (m.consumida) m.consumida = fronteiraConfirmada(m.eventos, r.sit !== null && r.sit.confirmado).consumida;
+  // GM-14 T53: o pouso NÃO consome a fronteira (o `loop.mjs pousar` do dono também o grava, sem /clear). Só não há fronteira sem `review.veredito` (aceite 1);
+  // com veredito, acima de X a sessão não despacha e, com 0 vivos, pousa a si mesma (I2), até 3 tentativas por fronteira (I3).
+  m.consumida = !m.eventos.some((e) => e?.tipo === 'review.veredito');
   try {
     r.acao = proximaAcao(m.plano, m.eventos, {
       slots: m.slots, percent: m.consumida ? null : percent, x, pausado: m.pausado, vivos: m.vivos,
@@ -381,8 +344,8 @@ async function avaliar($, c) {
       }).tipo === 'pousar';
     } catch { /* sem resposta: não nega por isto */ }
   }
-  r.pousarComDono = pousariaSemDono && !r.aguardando; // T53 (52 c): 0 vivos e >= X pousa mesmo com a conversa do dono aberta (herdada pela sessão nova)
-  r.negar = r.aguardando || (soDono ? pousariaSemDono : negaDespacho(r.acao, m.consumida));
+  r.pousarComDono = pousariaSemDono; // T53 (52 c): 0 vivos e >= X pousa mesmo com a conversa do dono aberta (herdada pela sessão nova)
+  r.negar = r.pousoPendente || (soDono ? pousariaSemDono : negaDespacho(r.acao, m.consumida));
   return r;
 }
 
@@ -402,11 +365,10 @@ async function pararDoNucleo($, c, acao, m) {
 }
 
 /**
- * T53, vigia (r1 MAJOR-1): a repetição e o `sem_pouso` não podem depender de um `turn.complete` que talvez nunca venha (o turno acaba, a retomada termina
- * antes dos 60/120 s e ninguém mais fala). O runtime do mod TEM timer (`$.clock.after`/`every`, o mesmo do painel): enquanto houver pouso sem confirmação
- * a vigia reavalia a cada 30 s com a MESMA decisão do fim de turno (`avaliar` + `repetirPouso`). Termina sozinha: confirmado, parado (`sem_pouso`) ou
- * sem entrega, ou quando a sessão não é a que pousou nem a sucessora. Sem teto de contagem: o que a mantém viva é o estado (um agente vivo ou a pausa por horas
- * apenas adiam a decisão; quando cessam, a próxima volta repete ou desiste). Só leitura/decisão que FALHA 20 vezes seguidas a derruba.
+ * T53, vigia: o pouso não pode depender de um `turn.complete` que talvez nunca venha (o turno acaba, a retomada termina antes dos 60 s e ninguém mais fala). O
+ * runtime do mod TEM timer (`$.clock.after`/`every`, o mesmo do painel): enquanto ESTA sessão estiver em X ou acima com fronteira (veredito), a vigia reavalia a cada
+ * 30 s com a MESMA decisão do fim de turno (`avaliar` + `decidir`): repete o pouso dentro do limite (I3) ou desiste. Para sozinha quando a sessão cai abaixo de X, ao
+ * parar (`sem_pouso`) ou sem entrega. Só leitura/decisão que FALHA 20 vezes seguidas a derruba.
  */
 const VIGIA_MS = 30_000;
 let vigia = false;
@@ -428,36 +390,26 @@ async function vigiar($) {
   ocupado = true;
   let agendado = false;
   try {
-    const r = await avaliar($, c); // arma a próxima vigia enquanto houver pouso aguardando
-    if (r.aguardando) agendado = await repetirPouso($, c, r);
+    agendado = await decidir($, c, await avaliar($, c)); // o `avaliar` arma a próxima vigia enquanto houver pouso pendente
   } finally {
     if (!agendado) ocupado = false;
   }
 }
 
 /**
- * T53 (emenda 53 c, e): pouso desta fronteira sem confirmação. Esgotadas as 3 tentativas ⇒ `loop.parar {sem_pouso}` (uma vez) e nenhuma 4ª.
- * Tentativa falha (leitura >= X na sessão nova, ou desconhecida por mais de `LIMITE_DESCONHECIDA_MS`), 60 s depois da anterior, 0 vivos, sem pausa
- * ⇒ repete o pouso (`sessao.pouso.tentativa`). Em qualquer outro caso espera: nenhum despacho entre as tentativas (o Agent segue negado).
- * `true` = um pouso foi agendado.
+ * I2 e I3: esta sessão, em X ou acima com 0 vivos, pousa A SI MESMA. As tentativas se contam no diário por fronteira, de qualquer sessão: a 4ª não existe
+ * (`loop.parar {sem_pouso}` uma vez); a repetição espera 60 s da anterior (a vigia volta). `true` = um pouso foi agendado.
  */
-async function repetirPouso($, c, r) {
-  const sit = r.sit;
-  if (sit === null || r.eventos === null || jaParou(r.eventos)) return false;
-  if (sit.esgotada) { await pousoSemConfirmacao($, c, sit.tentativas); return false; }
-  if (!sit.podeRepetir || !interativo) return false;
-  let lista = null;
-  try { lista = await $.agent.list(); } catch { return false; }
-  if (!Array.isArray(lista) || vivosDe(lista) > 0 || (await pausadoAgora($))) return false;
-  return await iniciarPouso($, c, r.percent, r.x, sit.tentativas + 1);
+async function pousarSeguro($, c, r) {
+  if (r.eventos === null) return false;
+  const t = tentativasDoPouso(r.eventos);
+  if (t.n >= MAX_TENTATIVAS) { await pousoSemConfirmacao($, c, t.n); return false; } // depois do `loop.parar` o núcleo devolve `aprender` (pendência `parar`): não chega aqui de novo
+  if (t.n >= 1 && t.ultimoMs !== null && r.agora - t.ultimoMs < ESPERA_ENTRE_TENTATIVAS_MS) return false;
+  return await iniciarPouso($, c, r.percent, r.x, t.n === 0 ? undefined : t.n + 1);
 }
 
-/** `true` quando um pouso foi agendado (o `ocupado` fica preso até ele terminar). */
-async function aoCompletarTurno($) {
-  const { c, falha } = await loopAtivo($);
-  await avisarLeitura($, falha);
-  if (c === null) { espera = null; return false; }
-  const r = await avaliar($, c);
+/** A decisão do fim de turno e da vigia, a mesma. `true` quando um pouso foi agendado (o `ocupado` fica preso até ele terminar). */
+async function decidir($, c, r) {
   if (r.porta.acao === 'parar_nao_interativo') {
     // F1: `-p` não tem sessão onde rodar /clear nem `$.agent.list`; sem_pouso, nunca pousa.
     espera = null;
@@ -465,13 +417,20 @@ async function aoCompletarTurno($) {
     return false;
   }
   const acao = r.acao;
-  if (r.aguardando && !(acao !== null && acao.tipo === 'parar')) { espera = null; return await repetirPouso($, c, r); }
   if (acao === null || acao.tipo !== 'parar' || acao.motivo !== 'nao_conseguiu') espera = null;
   if (acao === null) return false;
-  if (acao.tipo === 'pousar') return await iniciarPouso($, c, r.percent, r.x);
-  if (acao.tipo === 'aprender' && r.pousarComDono) return await iniciarPouso($, c, r.percent, r.x); // T53 (52 c): a conversa do dono não segura o /clear
+  if (acao.tipo === 'pousar') return await pousarSeguro($, c, r);
+  if (acao.tipo === 'aprender' && r.pousarComDono) return await pousarSeguro($, c, r); // T53 (52 c): a conversa do dono não segura o /clear
   if (acao.tipo === 'parar') await pararDoNucleo($, c, acao, r.mundo);
   return false;
+}
+
+/** `true` quando um pouso foi agendado (o `ocupado` fica preso até ele terminar). */
+async function aoCompletarTurno($) {
+  const { c, falha } = await loopAtivo($);
+  await avisarLeitura($, falha);
+  if (c === null) { espera = null; return false; }
+  return await decidir($, c, await avaliar($, c));
 }
 
 /**
@@ -815,12 +774,12 @@ export const register = (on) => {
           negados += 1;
           try { negadoAte = new Date().toISOString(); } catch { negadoAte = null; } // parede: o diário grava `new Date()`, o `$.clock` dos testes não
         };
-        // T53 (52 b, 53 d): com o pouso desta fronteira sem confirmação todo Agent é negado, o revisor também, com 0 ou mais vivos
-        if (r.aguardando) {
+        // T53 (52 b, 53 d, I1): depois do pouso desta fronteira, esta sessão ainda em X ou acima (a PRÓPRIA leitura) nega todo Agent, o revisor também, com 0 ou mais vivos
+        if (r.pousoPendente) {
           negou();
-          return { deny: `pouso: aguardando a confirmação do pouso pelo mod (contexto em ${r.percent}%, X=${r.x}%). Nenhum despacho novo, nem revisor. Não tente de novo: encerre o turno.` };
+          return { deny: `pouso: contexto em ${r.percent}% (X=${r.x}%), aguardando o /clear do pouso. Nenhum despacho novo, nem revisor. Não tente de novo: encerre o turno.` };
         }
-        if (revisor) return next(e); // fora da confirmação o revisor passa como sempre
+        if (revisor) return next(e); // fora do pouso pendente o revisor passa como sempre
         if (r.negar) {
           negou();
           if (r.acao?.tipo === 'pousar' && r.mundo !== null) await marcarPousoPendente($, c, r.mundo.eventos);

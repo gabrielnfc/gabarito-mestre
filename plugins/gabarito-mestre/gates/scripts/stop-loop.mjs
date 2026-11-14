@@ -368,8 +368,8 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   // onboarding (`temOnboarding`, config local). Sem onboarding nunca é pendente: o Stop segue como na 2.0.
   const dpp = await carregar('pouso-pendente');
   if (!dpp.ok) return dpp.aviso;
-  // GM-14 T53 (emendas 52 e 53): com o mod ativo o pouso se confirma por MEDIÇÃO. As leituras são os `.harness/contexto/<sessao>.json` (fonte `mod`, `em` <= 120 s)
-  // da sessão do hook, da que pousou e da do /clear; a regra é a mesma `pousoPendente` (nenhuma 2ª definição). Arquivo ausente/ilegível ⇒ sem leitura.
+  // GM-14 T53 (emendas 52 e 53, I1): com o mod medindo ESTA sessão só a leitura dela (`.harness/contexto/<sessao>.json`, fonte `mod`, `em` <= 120 s) decide; nenhuma outra
+  // sessão libera ou prende esta. A regra é a mesma `pousoPendente` (nenhuma 2ª definição). Arquivo ausente/ilegível ⇒ sem leitura ⇒ a regra sem mod.
   const sessaoAtual = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;
   const xEnv = process.env.GABARITO_POUSO_X;
   const xTeto = xEnv !== undefined && /^\d{1,3}$/.test(xEnv) && Number(xEnv) >= 1 && Number(xEnv) <= 100 ? Number(xEnv) : X_PADRAO;
@@ -378,10 +378,9 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   let noTeto = false;
   try {
     const leituras = [];
-    for (const id of dpp.mod.sessoesParaMedir(eventos, sessaoAtual)) {
-      if (!SESSAO_RE.test(id)) continue;
+    if (sessaoAtual !== null) {
       try {
-        const l = dpp.mod.lerLeitura(id, readFileSync(join(raiz, '.harness', 'contexto', `${id}.json`), 'utf8'));
+        const l = dpp.mod.lerLeitura(sessaoAtual, readFileSync(join(raiz, '.harness', 'contexto', `${sessaoAtual}.json`), 'utf8'));
         if (l !== null) leituras.push(l);
       } catch { /* sem arquivo: sem leitura */ }
     }
@@ -394,7 +393,7 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   let modAtivo = false;
   try {
     const dpo = await carregar('pouso');
-    modAtivo = medicao !== undefined && dpo.ok && dpp.mod.situacaoDoPouso(eventos, medicao).modo === 'medicao'
+    modAtivo = medicao !== undefined && dpo.ok && dpp.mod.leituraPropria(medicao) !== null
       && dpo.mod.pousoDaFronteira(eventos) === true && dpo.mod.jaParou(eventos) !== true;
   } catch { modAtivo = false; }
   let acao;
