@@ -930,6 +930,23 @@
       ]
     },
     {
+      "id": "T44",
+      "titulo": "Runner do A1 roda numa sessão real",
+      "deps": [
+        "T24",
+        "T42",
+        "T43"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/a1.exp",
+        "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/rodar-a1.mjs",
+        "plugins/gabarito-mestre/gates/test/conversa-pontos.test.mjs"
+      ],
+      "reqs": [
+        "REQ-GLB-1"
+      ]
+    },
+    {
       "id": "T25",
       "titulo": "Aceites A1 e A3, alpha e PR",
       "deps": [
@@ -972,7 +989,8 @@
         "T38",
         "T39",
         "T42",
-        "T43"
+        "T43",
+        "T44"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/.claude-plugin/plugin.json",
