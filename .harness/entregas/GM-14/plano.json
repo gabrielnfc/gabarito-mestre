@@ -1121,7 +1121,9 @@
         "plugins/gabarito-mestre/gates/scripts/loop.mjs",
         "plugins/gabarito-mestre/gates/scripts/stop-loop.mjs",
         "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
-        "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs"
+        "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs",
+        "plugins/gabarito-mestre/gates/src/pouso-pendente.ts",
+        "plugins/gabarito-mestre/gates/dist/pouso-pendente.js"
       ],
       "reqs": [
         "REQ-POU-1"
