@@ -2,7 +2,11 @@
 # Aceite A1 da GM-14 (T24): UMA célula da matriz (local × tamanho × tela cheia). FORA de `npm test`: abre uma TUI real do Claude Code numa cópia do repo
 # em `ba3986f` sob TMPDIR (FORA do checkout real); gasta tokens. Chamado pelo `rodar-a1.mjs --matriz`; não o rode à mão.
 #
-#   a1.exp <rundir> <repo> <bin> <node> <rodar-a1.mjs>
+#   a1.exp <rundir> <repo> <bin> <node> <rodar-a1.mjs> [curta]
+#
+# Dois modos (T52, emenda 45): a CONVERSA (padrão: as falas de falas.tsv, um snapshot por ponto) e a sessão `curta` (sem falas: abre, responde a pergunta (b) como o dono faria, e, abaixo do
+# limiar de colunas da plataforma, digita `/gabarito painel`). Nos dois o `tty.raw` leva marcos (`OSC 1337;gabarito-marco=<nome>`, gravados por `send_log` só no log): `snap-<n>` antes de cada
+# snapshot; `inicio`, `b-respondida`, `pedido` e `depois-do-pedido` na sessão curta. O emulador VT do runner ancora a TELA (placement, aviso, caixa) nesses marcos (emenda 49).
 #
 # Os argumentos do `claude` (cópia do plugin, observador, superpowers de versão FIXA por --plugin-dir, modelo do condutor, debug) vêm de <rundir>/claude.args, um por linha, montados por `argvDoClaude` no `rodar-a1.mjs`:
 # só caminhos da cópia sob TMPDIR; nenhum caminho do repositório real chega ao `claude`. Este arquivo não fixa modelo nem caminho de plugin.
@@ -12,7 +16,8 @@
 # depois de cada ponto de controle. O texto das falas fica SÓ em <rundir>/falas.tsv (ignorado pelo git); sends.log guarda o sha256, nunca o texto.
 # A evidência vem do diário, do observador (obs/a1.jsonl: agentes e `placement` das Panes), dos transcripts e dos snapshots, lidos DEPOIS pelo `rodar-a1.mjs`;
 # a tela nunca é evidência. Pergunta de permissão é registrada e nunca respondida; o diálogo de ambiente "Allow external CLAUDE.md file imports?" é RECUSADO e registrado (exp.log).
-lassign $argv rundir repo bin node runner
+lassign $argv rundir repo bin node runner modo
+if {$modo eq ""} { set modo conversa }
 set cel [open $rundir/celula.json r]; set celjson [read $cel]; close $cel
 regexp {"cols":(\d+)} $celjson -> cols
 regexp {"rows":(\d+)} $celjson -> rows
@@ -31,6 +36,11 @@ set env(CLAUDE_CODE_DISABLE_AUTO_MEMORY) 1
 set env(CLAUDE_CODE_FORCE_SESSION_PERSISTENCE) 1
 file mkdir $rundir/obs
 
+# escala dos tempos de espera (só os testes offline do runner, com um `claude` de mentira, a baixam; numa célula real é sempre 1)
+set esc 1
+if {[info exists env(A1_ESCALA_TEMPO)]} { set esc $env(A1_ESCALA_TEMPO) }
+proc t {s} { global esc; set v [expr {int($s * $esc)}]; if {$v < 1} { return 1 }; return $v }
+proc marco {nome} { send_log "\033\]1337;gabarito-marco=$nome\007" }
 proc sends {tag} { global rundir; set f [open $rundir/sends.log a]; puts $f "[clock seconds] $tag"; close $f }
 proc nota {txt} { global rundir; set f [open $rundir/exp.log a]; puts $f "[clock seconds] $txt"; close $f }
 # diálogo de ambiente (T44, emenda 39): o CLAUDE.md de um diretório ancestral da cópia importa arquivo externo; a cópia NÃO herda instruções do ambiente do dono, então a resposta é SEMPRE "No, disable external imports". MEDIDO na tty.raw da T44: o foco (❯) já nasce em "No", então só Enter recusa (seta para baixo ACEITARIA). O texto sai com cursor-positioning (ESC[nG entre as palavras), por isso o padrão tolera lixo entre elas
@@ -44,6 +54,7 @@ proc recusarImports {} {
   after 800; send "\r"; after 2000
 }
 proc drenar {s} {
+  set s [t $s]
   set fim [expr {[clock seconds] + $s}]
   set timeout 1
   while {[clock seconds] < $fim} {
@@ -60,8 +71,8 @@ proc drenar {s} {
 # turno acabou = 8 s seguidos sem saída na tela (teto de 240 s por ponto)
 proc ocioso {} {
   set t0 [clock seconds]
-  set timeout 8
-  while {[clock seconds] - $t0 < 240} {
+  set timeout [t 8]
+  while {[clock seconds] - $t0 < [t 240]} {
     expect {
       -re {.+} { exp_continue }
       timeout { return 1 }
@@ -71,7 +82,7 @@ proc ocioso {} {
   return 1
 }
 proc digitar {sha txt} { sends "digitar $sha"; send -- $txt; after 1200; send "\r" }
-proc snapshot {n} { global node runner repo rundir; catch {exec $node $runner snapshot $repo $rundir $n} err; if {$err ne ""} { nota "snapshot $n: $err"; set f [open $rundir/snapshot-falhou.log a]; puts $f "snapshot $n: $err"; close $f } }
+proc snapshot {n} { global node runner repo rundir; marco snap-$n; catch {exec $node $runner snapshot $repo $rundir $n} err; if {$err ne ""} { nota "snapshot $n: $err"; set f [open $rundir/snapshot-falhou.log a]; puts $f "snapshot $n: $err"; close $f } }
 proc sair {status} {
   global rundir
   nota "fim status=$status"
@@ -92,7 +103,7 @@ set stty_init "rows $rows cols $cols"
 spawn claude {*}$claude_args
 nota "inicio cols=$cols rows=$rows"
 
-set timeout 15
+set timeout [t 15]
 expect {
   -re {Enter.*confirm|trust this folder|Quick.{0,20}safety} { after 500; sends trust; send "\033\[B"; after 400; send "\r"; after 4000 }
   -re {login|Log in|API key} { nota "LOGIN: nao respondo"; set f [open $rundir/exp.status w]; puts $f NAO_PROVADO_LOGIN; close $f; catch {close}; catch {wait}; exit 3 }
@@ -101,7 +112,7 @@ expect {
 }
 # o TUI só aceita digitação depois de carregar os mods: espera o 1º registro do observador (até 90 s) e mais 6 s
 set t0 [clock seconds]
-while {[clock seconds] - $t0 < 90} {
+while {[clock seconds] - $t0 < [t 90]} {
   if {[file exists $rundir/obs/a1.jsonl]} { break }
   if {![drenar 2]} { exit 1 }
 }
@@ -118,6 +129,29 @@ drenar 5
 if {[catch {exec $node $runner superficie $rundir}]} {
   nota "SUPERFICIE NAO OBSERVADA: [string trim [exec cat $rundir/abortar.txt]]"
   sair ABORTADO
+}
+
+# sessão curta (T52): sem falas do roteiro. Estágios marcados no tty.raw; o que vale (aviso inteiro, Pane colocada) é lido DEPOIS, da tela, pelo `rodar-a1.mjs`
+if {$modo eq "curta"} {
+  set cu [open $rundir/curta.json r]; set cujson [read $cu]; close $cu
+  set pedido [regexp {"pedido":true} $cujson]
+  marco inicio
+  drenar 10
+  # pergunta (b): o runner responde como o dono (resposta fixa, gravada em resposta-b.json); não abriu ⇒ nada a responder (também fica gravado)
+  set cmd ""
+  catch { set cmd [string trim [exec $node $runner resposta-b $repo $rundir]] }
+  if {$cmd ne ""} { digitar resposta-b $cmd; if {![ocioso]} { sair NAO_PROVADO_EOF } }
+  marco b-respondida
+  drenar 10
+  if {$pedido} {
+    marco pedido
+    digitar pedido-do-dono "/gabarito painel"
+    after 1500; send "\r"
+    if {![ocioso]} { sair NAO_PROVADO_EOF }
+    marco depois-do-pedido
+    drenar 8
+  }
+  sair CONCLUIDO
 }
 
 set arq [open $rundir/falas.tsv r]

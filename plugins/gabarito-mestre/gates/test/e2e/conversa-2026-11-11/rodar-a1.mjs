@@ -5,7 +5,8 @@
  *
  *   rodar-a1.mjs --guarda  [--roteiro <arq>]         confere o roteiro (ausente ou sha diferente ⇒ não roda e diz por quê) e que nenhuma fala (≥ 20 caracteres) está em `git ls-files`
  *   rodar-a1.mjs --gerar   [--roteiro <arq>]         regrava `pontos.json`: {msg, sha256, chars} por ponto e o `esperado` GERADO PELO PRODUTO (nunca copiado do roteiro)
- *   rodar-a1.mjs --matriz  [--so <local-tamanho-cheia>] [--paralelo <n>] [--roteiro <arq>]   as 8 execuções (local × tamanho × tela cheia) com `a1.exp`; passa = 8/8; células sob TMPDIR (fora do checkout real); `--paralelo` padrão 1
+ *   rodar-a1.mjs --matriz  [--so <combinações>] [--sem-conversas] [--paralelo <n>] [--roteiro <arq>]   T52 (emenda 45): 8 sessões curtas (placement, lido da TELA) + 2 conversas reais (uma por local, 180×50 cheia, em paralelo) + replay offline das 8 combinações; passa = 8/8; sessão curta reprovada ⇒ as conversas não rodam; células sob TMPDIR (fora do checkout real); `--paralelo` padrão 2
+ *   rodar-a1.mjs avaliar-matriz <base> [--roteiro <arq>]   a matriz GRAVADA em <base> (conversas + curta-<id>) avaliada offline, com replay
  *   rodar-a1.mjs avaliar <rundir> [--roteiro <arq>]   a avaliação da matriz sobre uma execução já gravada (offline, não abre claude)
  *   rodar-a1.mjs snapshot <repo> <rundir> <n>        (chamado pelo `a1.exp`) grava o `estado` do produto no ponto n
  *
@@ -17,7 +18,7 @@
  */
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -298,25 +299,54 @@ export const ASSERCOES = Object.freeze([
     return res(p.percent >= 50 && p.limparNoDepende === true && p.pushes === 1 && p.despachosDepois === 0, `pouso a ${p.percent} %; "limpar a conversa" no DEPENDE ${p.limparNoDepende}; ${p.pushes} push; ${p.despachosDepois} despachos antes do /clear`);
   } },
   { id: '12-placement-da-pane', ref: 'A1 (12)', avaliar: (ev) => {
-    const esperado = placementEsperado(ev.celula);
-    const vistos = ev.panes.map((p) => p.placement);
-    const dbg = Array.isArray(ev.placementsDebug) ? ev.placementsDebug : [];
-    // as duas fontes da plataforma: `$.ui.panes()` (observador) e o `ui.open … placed|waits unplaced` do debug.log; sem leitura da plataforma nada foi medido
-    if (ev.panesObservadas !== true) return res(false, 'a plataforma nunca devolveu a lista de panes ao observador: não medida');
-    // ausência de `ui.open` só é prova se o debug.log da plataforma existe e o nosso plugin aparece carregado nele (senão "nenhuma linha" é silêncio, não medida)
+    // T52 (emendas 49 e 50): o placement é lido da TELA da sessão real (tty.raw por emulador VT); o debug.log só confirma placed/unplaced (nunca dock/inline).
+    const sc = ev.sessaoCurta;
+    if (sc === null || sc === undefined) return res(false, 'sem sessão curta de placement (evidência vazia): não medida');
+    if (sc.fonte !== 'tela') return res(false, `placement lido de "${sc.fonte}" e não da tela: recusado (replay e debug.log não medem dock/inline)`);
+    if (!(sc.quadros > 0)) return res(false, 'sem quadro legível da tela (evidência vazia): não medida');
+    if (placementEsperado(ev.celula) !== null && precisaPedido(ev.celula) && sc.pedidoFeito !== true) return res(false, 'o pedido do dono (/gabarito painel) não consta na sessão curta');
+    if (sc.antes == null || sc.depois == null) return res(false, 'sem quadro legível da tela nos estágios da sessão curta (evidência vazia): não medida');
     if (ev.debugLogAtivo !== true) return res(false, 'sem debug.log da plataforma com o gabarito-mestre carregado: não medida');
-    if (esperado === null) return res(vistos.length === 0 && dbg.length === 0, `placement esperado null (acima); lido ${JSON.stringify(vistos)}; ui.open no debug.log ${dbg.length}`);
-    if (dbg.length === 0) return res(false, 'sem "ui.open … placed" no debug.log: não medida');
-    const unplaced = dbg.filter((d) => d.estado === 'unplaced');
-    if (unplaced.length > 0) return res(false, `a plataforma registrou unplaced em ${unplaced.map((d) => `${d.colunas} colunas`).join(', ')} (placement esperado ${esperado})`);
-    if (vistos.length === 0) return res(false, `a plataforma disse placed, mas $.ui.panes() não devolveu placement (esperado ${esperado}): placement não lido`);
-    return res(vistos.length === 1 && vistos[0] === esperado, `placement esperado ${esperado}; lido ${JSON.stringify(vistos)}; debug.log placed`);
+    const esperado = placementEsperado(ev.celula);
+    const dbg = Array.isArray(sc.debug) ? sc.debug : [];
+    const placed = dbg.some((d) => d.estado === 'placed'); const unplaced = dbg.filter((d) => d.estado === 'unplaced');
+    if (esperado === null) return res(sc.antes.placement === null && sc.depois.placement === null && dbg.length === 0, `acima: Pane na tela antes ${sc.antes.placement} / depois ${sc.depois.placement}; ui.open no debug.log ${dbg.length} (esperado: nenhum)`);
+    if (!precisaPedido(ev.celula)) {
+      if (sc.depois.placement !== esperado) return res(false, `placement esperado ${esperado}; lido na tela ${sc.depois.placement}`);
+      return res(placed && unplaced.length === 0, `placement ${esperado} lido na tela sem pedido; debug.log placed ${placed}, unplaced ${unplaced.length}`);
+    }
+    // abaixo do limiar: (b) respondida pelo runner, aviso INTEIRO na linha única antes do pedido, pedido do dono, Pane colocada na posição da tabela
+    const rb = sc.respostaB;
+    if (rb == null || !['respondida', 'nao-abriu'].includes(rb.estado)) return res(false, 'a resposta do runner à pergunta (b) não está gravada na evidência (evidência vazia): não medida');
+    if (sc.antes.parou === true) return res(false, 'PAROU aberto que não saiu antes do aviso (evidência vazia): não medida');
+    if (sc.antes.perguntaAberta === true) return res(false, 'a pergunta (b) continua aberta na linha única depois da resposta do runner (evidência vazia): não medida');
+    if (sc.antes.placement !== null) return res(false, `Pane já colocada antes do pedido (${sc.antes.placement}): a tabela medida diz não colocada abaixo do limiar`);
+    if (sc.antes.aviso?.estado === 'cortado') return res(false, 'aviso cortado na linha única depois da (b) respondida: o dono não o lê inteiro');
+    if (sc.antes.aviso?.estado !== 'inteiro') return res(false, 'aviso ausente na linha única antes do pedido');
+    const un = unplaced.find((d) => d.unasked === true);
+    if (un === undefined) return res(false, 'sem "unasked … waits unplaced" no debug.log antes do pedido: não medida');
+    if (un.limiar != null && sc.antes.aviso.n !== un.limiar) return res(false, `aviso diz ${sc.antes.aviso.n} colunas mas o reason da plataforma diz ${un.limiar}`);
+    if (sc.depois.placement !== esperado) return res(false, `depois do pedido, placement esperado ${esperado}; lido na tela ${sc.depois.placement}`);
+    return res(placed, `aviso inteiro antes do pedido (N ${sc.antes.aviso.n}); depois do pedido ${esperado} lido na tela; debug.log placed ${placed}`);
   } },
 ]);
 
-/** Uma execução passa só com TODAS as asserções. Asserção que lança reprova (nunca vira "não se aplica"). */
-export function avaliarExecucao(ev) {
-  const resultados = ASSERCOES.map((a) => {
+/**
+ * Quais asserções cada fonte mede (emenda 45): `desenho` (1, 2) por replay de cada combinação; `placement` (12) pela sessão curta; `comportamento` (as demais) pela conversa real do local.
+ * `todas` = as 17 (o que `avaliar <rundir>` e as execuções antigas fazem).
+ */
+export const GRUPOS = Object.freeze({
+  desenho: ['1-depende-no-topo', '2-blocos-e-corte'],
+  placement: ['12-placement-da-pane'],
+  comportamento: ASSERCOES.map((a) => a.id).filter((id) => !['1-depende-no-topo', '2-blocos-e-corte', '12-placement-da-pane'].includes(id)),
+  todas: ASSERCOES.map((a) => a.id),
+});
+
+/** Uma execução passa só com TODAS as asserções do `grupo` (padrão `todas`). Asserção que lança reprova (nunca vira "não se aplica"). */
+export function avaliarExecucao(ev, grupo = 'todas') {
+  const ids = GRUPOS[grupo];
+  if (ids === undefined) throw new Error(`grupo de asserções desconhecido: ${grupo}`);
+  const resultados = ASSERCOES.filter((a) => ids.includes(a.id)).map((a) => {
     let r;
     try { r = a.avaliar(ev); } catch (e) { r = res(false, `evidência malformada: ${String(e.message ?? e).slice(0, 80)}`); }
     return { id: a.id, ref: a.ref, ok: r.ok === true, detalhe: r.detalhe };
@@ -529,7 +559,7 @@ export function acoesDe(tools, agentes, ferr) {
 }
 
 /** stdin do `estado --agentes` no mesmo contrato que o mod envia (`pedidoDoMod`): agentes, `nomes` (o `painel:nomes` do mod), `acoes`, `encerrados`, `segundoPlano`. */
-export function entradaDoSnapshot(obs, ferr) {
+export function entradaDoSnapshot(obs, ferr, { sessao = 'S-a1', percent = null } = {}) {
   const ultimo = obs.filter((e) => e.ev === 'estado').at(-1);
   const agentes = (ultimo?.agentes ?? []).map((a) => ({ id: a.id, type: a.type ?? '', description: a.description ?? '', status: a.status ?? '', transcript: null }));
   const ids = new Set(agentes.map((a) => a.id));
@@ -537,7 +567,7 @@ export function entradaDoSnapshot(obs, ferr) {
   for (const [id, v] of Object.entries(ultimo?.nomes ?? {})) if (ids.has(id) && v !== null && typeof v === 'object') nomes[id] = v;
   const acoes = acoesDe(obs.filter((e) => e.ev === 'tool'), agentes, ferr);
   const encerrados = agentes.filter((a) => TERMINAIS.has(a.status)).map((a) => a.id);
-  return { agentes, panes: ultimo?.panes ?? [], entrada: { session_id: 'S-a1', sessao: { percent: null }, agentes, nomes, acoes, encerrados, segundoPlano: [] } };
+  return { agentes, panes: ultimo?.panes ?? [], entrada: { session_id: sessao, sessao: { percent }, agentes, nomes, acoes, encerrados, segundoPlano: [] } };
 }
 
 /** Props da última renderização de cada superfície (`Pane`, `AbovePrompt`) vista até aqui; superfície nunca vista ⇒ ausente. */
@@ -557,10 +587,12 @@ export async function snapshot(repo, rundir, n) {
     if (causa !== null) { writeFileSync(join(rundir, 'abortar.txt'), `${causa}\n`, { flag: 'a' }); return; }
   }
   const ferr = await import(pathToFileURL(join(GATES, 'dist', 'ferramentas.js')).href);
-  const { agentes, entrada } = entradaDoSnapshot(obs, ferr);
+  const t = Date.now();
+  const sessao = sessaoRealDe(repo);
+  const { agentes, entrada } = entradaDoSnapshot(obs, ferr, { sessao: sessao ?? 'S-a1' });
   const estado = estadoDoProduto(repo, { entrada: JSON.stringify(entrada), bin: join(repo, '..', 'bin'), ghEstado: join(repo, '..', 'gh.json') });
   mkdirSync(join(rundir, 'estados'), { recursive: true });
-  writeFileSync(join(rundir, 'estados', `${String(n).padStart(2, '0')}.json`), `${JSON.stringify({ n, props: propsDe(obs), agentes, estado })}\n`);
+  writeFileSync(join(rundir, 'estados', `${String(n).padStart(2, '0')}.json`), `${JSON.stringify({ n, t, sessao, props: propsDe(obs), agentes, estado })}\n`);
 }
 
 let modCache = null;
@@ -672,7 +704,6 @@ export async function coletar(rundir, repo, celula, roteiro, { pasta = null, tot
   const sends = existsSync(join(rundir, 'sends.log')) ? readFileSync(join(rundir, 'sends.log'), 'utf8').split('\n').filter(Boolean) : [];
   const digitadas = sends.map((l) => /^\d+ digitar ([0-9a-f]{64})$/.exec(l)?.[1]).filter(Boolean);
   const obs = jsonl(join(rundir, 'obs', 'a1.jsonl'));
-  const ultimo = obs.filter((e) => e.ev === 'estado').at(-1);
   const estadosDir = join(rundir, 'estados');
   const snaps = [];
   if (existsSync(estadosDir)) {
@@ -688,8 +719,18 @@ export async function coletar(rundir, repo, celula, roteiro, { pasta = null, tot
   if (snaps.length !== total) throw new Error(`${snaps.length} snapshots (esperado ${total})`);
   const quadros = []; let quadrosSemProps = 0;
   const resumos = new Map(); // ponto → linha-resumo do AGORA que o produto desenhou (emenda 37), ou null
+  // lateral: o observador não vê a Pane de outro plugin; bodyRows/bodyColumns saem da TELA no marco `snap-<n>` que o a1.exp grava (emenda 49 a); sem tela ⇒ sem props ⇒ "não medida"
+  const ttyArq = join(rundir, 'tty.raw');
+  const tela = celula.local === 'lateral' && snaps.some((x) => x.props?.Pane == null) && existsSync(ttyArq) ? emularTela(readFileSync(ttyArq, 'utf8'), celula.rows, celula.cols) : [];
+  const paneDaTela = (n) => {
+    const q = tela.filter((x) => x.marco === `snap-${n}`).at(-1);
+    if (q === undefined) return undefined;
+    const cx = caixaDoPainel(q.linhas, celula.cols);
+    return cx.placement === null || cx.bodyRows === null || cx.bodyColumns === null ? undefined : { bodyRows: cx.bodyRows, bodyColumns: cx.bodyColumns };
+  };
   for (const s of snaps) {
-    const linhas = await renderizar(s.estado, s.props, celula);
+    const props = s.props?.Pane == null && celula.local === 'lateral' ? { ...s.props, Pane: paneDaTela(s.n) } : s.props;
+    const linhas = await renderizar(s.estado, props, celula);
     resumos.set(s.n, linhas === null ? null : resumoDoAgora(linhas));
     if (linhas === null) { quadrosSemProps += 1; continue; }
     quadros.push({ linhas, itensDepende: (s.estado.depende ?? []).length + (s.estado.pergunta ? 1 : 0) + (s.estado.parar ? 1 : 0) });
@@ -714,9 +755,8 @@ export async function coletar(rundir, repo, celula, roteiro, { pasta = null, tot
     celula, quadros, quadrosSemProps, integradas, eventos, digitadas, transcript: { chamadas, textos }, perguntas, despachos,
     entregasPublicadas: [...publicadas], gravacoes, vivos,
     pouso: { percent: Number.isFinite(pouso?.dados?.percent) ? pouso.dados.percent : 0, limparNoDepende: pouso !== undefined && quadros.some((q) => q.linhas.some((l) => /limpar a conversa/i.test(l))), pushes, despachosDepois: depoisDoPouso.length },
-    panes: (ultimo?.panes ?? []).filter((p) => p.placement !== null),
-    // as fontes da plataforma para a asserção 12: o observador chegou a ler a lista de panes? e o que o debug.log diz do `ui.open` do painel
-    panesObservadas: obs.some((e) => e.ev === 'estado' && Array.isArray(e.panes)),
+    // asserção 12 (T52): a sessão curta (tela + debug.log), `null` numa conversa; o debug.log da execução só confirma
+    sessaoCurta: lerSessaoCurta(rundir, celula),
     debugLogAtivo: existsSync(join(rundir, 'debug.log')) && pluginCarregou(readFileSync(join(rundir, 'debug.log'), 'utf8')).ok,
     placementsDebug: placementsDoDebugLog(existsSync(join(rundir, 'debug.log')) ? readFileSync(join(rundir, 'debug.log'), 'utf8') : ''),
   };
@@ -825,22 +865,34 @@ export function argvDoClaude({ observador, plugin, superpowers, debugLog, settin
     '--model', MODELO_CONDUTOR, '--permission-mode', 'auto', '--allowedTools', 'Bash(node *)', 'Read', 'ScheduleWakeup', '--debug-file', debugLog];
 }
 
-/** O que a plataforma diz do `ui.open` do painel no debug.log: `{colunas, estado: 'placed'|'unplaced'}` por abertura (única fonte de "placed" que ela expõe). */
+/**
+ * O que a plataforma diz do `ui.open` do painel no debug.log: `{colunas, estado: 'placed'|'unplaced'}` por abertura; `unasked: true` quando foi a abertura do mod (sem pedido do dono) e
+ * `limiar` (N) quando o `reason` informa "below <N> columns". Confirma a tela, nunca a substitui (o debug.log só diz placed/unplaced, não dock/inline).
+ */
 export function placementsDoDebugLog(log) {
   const achados = [];
   for (const l of String(log).split('\n')) {
-    const m = /ui\.open \S+ gabarito-painel \([^,)]*, (\d+) columns\): (placed|waits unplaced)/.exec(l);
-    if (m !== null) achados.push({ colunas: Number(m[1]), estado: m[2] === 'placed' ? 'placed' : 'unplaced' });
+    const m = /ui\.open \S+ gabarito-painel \(([^,)]*), (\d+) columns\): (placed|waits unplaced)(.*)$/.exec(l);
+    if (m === null) continue;
+    const a = { colunas: Number(m[2]), estado: m[3] === 'placed' ? 'placed' : 'unplaced' };
+    if (/^unasked/.test(m[1])) a.unasked = true;
+    const n = /below (\d+) columns/.exec(m[4]);
+    if (n !== null) a.limiar = Number(n[1]);
+    achados.push(a);
   }
   return achados;
 }
 
-/** Invariante do 1º snapshot: a superfície da célula (`lateral` ⇒ Pane, `acima` ⇒ AbovePrompt) já tem render observado; senão a célula nada mede. Devolve a causa ou `null`. */
+/**
+ * Invariante do 1º snapshot: a superfície da célula já tem render observado; senão a célula nada mede. Devolve a causa ou `null`.
+ * `acima` ⇒ o `AbovePrompt` do produto. `lateral` ⇒ qualquer render (o `AbovePrompt` da plataforma): o observador NÃO vê render nem props da Pane de OUTRO plugin
+ * (`$.ui.panes` só lista as próprias, emenda 49 fato 1); a Pane lateral é lida da TELA (`lerTela`), não do observador.
+ */
 export function invariantePrimeiroSnapshot(obs, celula) {
   const rs = obs.filter((e) => e.ev === 'render');
   if (rs.length === 0) return '0 render observado no 1º snapshot (observador sem nenhum render)';
-  const esperada = celula.local === 'acima' ? 'AbovePrompt' : 'Pane';
-  return rs.some((e) => e.comp === esperada) ? null : `0 render de ${esperada} no 1º snapshot (a superfície da célula ${celula.local} não foi observada)`;
+  if (celula.local !== 'acima') return null;
+  return rs.some((e) => e.comp === 'AbovePrompt') ? null : '0 render de AbovePrompt no 1º snapshot (a superfície da célula acima não foi observada)';
 }
 
 /** `exp.status` do a1.exp que invalida a célula na hora (plugin não ativo, login pedido). */
@@ -894,22 +946,32 @@ export function executarExpect({ rundir, args, reais, expect = 'expect', interva
 }
 
 /** A avaliação de uma execução GRAVADA: a mesma da matriz (coletar + avaliarExecucao). `opc.repo`/`celula`/`roteiro`/`pasta`/`total` têm padrão pela pasta (`<rundir>/repo`, nome/`celula.json`). */
-export async function avaliarRundir(rundir, { repo = join(rundir, 'repo'), celula = celulaDoRundir(rundir), roteiro, pasta = null, total = TOTAL_PONTOS } = {}) {
+export async function avaliarRundir(rundir, { repo = join(rundir, 'repo'), celula = celulaDoRundir(rundir), roteiro, pasta = null, total = TOTAL_PONTOS, grupo = 'todas' } = {}) {
   if (celula === null) throw new Error(`célula desconhecida para ${rundir} (sem celula.json nem nome <local>-<cols>x<rows>-<cheia|normal>)`);
-  return avaliarExecucao(await coletar(rundir, repo, celula, roteiro, { pasta, total }));
+  return avaliarExecucao(await coletar(rundir, repo, celula, roteiro, { pasta, total }), grupo);
 }
 
-const DEPS = { preparar: (...a) => prepararCopia(...a), copiarPlugin, executar: executarExpect, avaliar: (rundir, repo, celula, roteiro) => avaliarRundir(rundir, { repo, celula, roteiro }), superpowers: () => resolverSuperpowers() };
+/** A sessão curta de UMA combinação (emenda 45 item 3): só a asserção 12, lida da tela; devolve também a geometria que o replay da combinação usa. */
+export function avaliarCurta(rundir, celula = celulaDoRundir(rundir)) {
+  if (celula === null) throw new Error(`célula desconhecida para ${rundir}`);
+  const dbg = join(rundir, 'debug.log');
+  const sessaoCurta = lerSessaoCurta(rundir, celula);
+  const ev = { celula, sessaoCurta, debugLogAtivo: existsSync(dbg) && pluginCarregou(readFileSync(dbg, 'utf8')).ok };
+  return { ...avaliarExecucao(ev, 'placement'), geometria: geometriaDaCurta(sessaoCurta, celula) };
+}
+
+const DEPS = { preparar: (...a) => prepararCopia(...a), copiarPlugin, executar: executarExpect, avaliar: (rundir, repo, celula, roteiro, grupo = 'todas') => avaliarRundir(rundir, { repo, celula, roteiro, grupo }), avaliarCurta: (rundir, celula) => avaliarCurta(rundir, celula), superpowers: () => resolverSuperpowers() };
 
 /**
  * A matriz. `base` fica SOB `TMPDIR` (nunca no checkout real); `opc.paralelo` (padrão 1) limita as células simultâneas; cada célula grava o `resultado.json` ao terminar;
  * invariante violada (repo real alterado, plugin não ativo, 0 render no 1º snapshot, célula fora de `TMPDIR`) reprova a célula e PARA a matriz: as demais não rodam e contam como falha.
  */
-export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps = {} } = {}) {
+export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps = {}, modo = 'conversa', grupo = 'todas', base: baseDada = null } = {}) {
   const d = { ...DEPS, ...deps };
   const celulas = MATRIZ.filter((c) => so === null || so.split(',').includes(idDaCelula(c)));
   const reais = realDe([fonte, tmpRaiz]);
-  const base = join(realpathSync(tmpdir()), 'gabarito-a1', String(Date.now()));
+  const curta = modo === 'curta';
+  const base = baseDada ?? join(realpathSync(tmpdir()), 'gabarito-a1', String(Date.now()));
   if (reais.some((r) => dentroDe(r, base))) throw new Error(`a célula ficaria dentro do checkout real (${base}): defina TMPDIR fora dele`);
   const ruins = vazamentos(roteiro.falas.map((f) => f.texto), reais);
   if (ruins.length > 0) throw new Error(`${ruins.length} fala(s) do roteiro com caminho do repo real: a célula não pode vê-lo`);
@@ -918,7 +980,7 @@ export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps =
   const gravar = (id, rundir, exec, ambiente) => writeFileSync(join(rundir, 'resultado.json'), `${JSON.stringify({ ...exec, ambiente }, null, 2)}\n`);
   const executar = async (celula) => {
     const id = idDaCelula(celula);
-    const rundir = join(base, id); const repo = join(rundir, 'repo');
+    const rundir = join(base, `${curta ? 'curta-' : ''}${id}`); const repo = join(rundir, 'repo');
     mkdirSync(join(rundir, 'obs'), { recursive: true });
     const sp = d.superpowers();
     if (!sp.ok) {
@@ -934,6 +996,7 @@ export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps =
     d.copiarPlugin(plugin);
     escreverObservador(join(rundir, 'observador'));
     writeFileSync(join(rundir, 'celula.json'), `${JSON.stringify(celula)}\n`);
+    if (curta) writeFileSync(join(rundir, 'curta.json'), `${JSON.stringify({ pedido: precisaPedido(celula), respostaB: RESPOSTA_B })}\n`);
     writeFileSync(join(rundir, 'inicio.iso'), `${new Date().toISOString()}\n`);
     writeFileSync(join(rundir, 'falas.tsv'), roteiro.falas.map((f) => `${f.n}\t${f.rotulo}\t${sha256(f.texto)}\t${f.texto}`).join('\n'));
     const settings = join(rundir, 'settings.json');
@@ -942,7 +1005,7 @@ export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps =
     writeFileSync(join(rundir, 'claude.args'), `${argv.join('\n')}\n`);
     const vaza = vazamentos([rundir, repo, ...argv], reais);
     if (vaza.length > 0) throw new Error(`argumento da célula com caminho do repo real: ${vaza[0]}`);
-    const args = ['-f', join(AQUI, 'a1.exp'), rundir, repo, bin, process.execPath, fileURLToPath(import.meta.url)];
+    const args = ['-f', join(AQUI, 'a1.exp'), rundir, repo, bin, process.execPath, fileURLToPath(import.meta.url), ...(curta ? ['curta'] : [])];
     const r = await d.executar({ rundir, repo, plugin, argv, celula: id, args, reais, fotoOpc, marca });
     let dif = [];
     try { dif = reais.flatMap((x, i) => diferencasDeFotos(antes[i], fotoDoRepo(x, fotoOpc))); } catch (e) { dif = [`foto final ilegível: ${e.message}`]; }
@@ -957,7 +1020,7 @@ export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps =
     } else {
       let nota = '';
       let exec0 = null;
-      try { exec0 = r.status === 0 ? await d.avaliar(rundir, repo, celula, roteiro) : null; if (r.status !== 0) nota = `expect rc ${r.status}`; } catch (e) { nota = `coleta falhou: ${e.message}`; process.stderr.write(`${id}: ${nota}\n`); }
+      try { exec0 = r.status === 0 ? (curta ? await d.avaliarCurta(rundir, celula) : await d.avaliar(rundir, repo, celula, roteiro, grupo)) : null; if (r.status !== 0) nota = `expect rc ${r.status}`; } catch (e) { nota = `coleta falhou: ${e.message}`; process.stderr.write(`${id}: ${nota}\n`); }
       exec = exec0 ?? { celula: id, passa: false, resultados: [{ id: 'execucao', ok: false, detalhe: `${nota}; evidência ausente` }] };
     }
     gravar(id, rundir, exec, ambiente);
@@ -974,6 +1037,443 @@ export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps =
   };
   await Promise.all(Array.from({ length: Math.max(1, Math.min(paralelo, celulas.length || 1)) }, trabalhador));
   return { rel: avaliarMatriz(execucoes), execucoes, base, abortada };
+}
+
+// ─── a TELA (T52, emendas 49 e 50): emulador VT sobre o tty.raw; placement e aviso lidos do que o dono VÊ ───
+
+/** O observador não vê a Pane de outro plugin (`$.ui.panes` só lista as próprias): render, corte e placement da lateral vêm do `tty.raw` renderizado por um emulador VT. */
+const OSC_MARCO = /^1337;gabarito-marco=(.*)$/;
+
+/**
+ * Emulador VT mínimo (porte do `emu.mjs` do spike de replay, só node): cursor, apagar, rolagem e a janela síncrona `CSI ?2026 l` (fim de quadro). Devolve `[{linhas, marco}]`: um quadro por
+ * fim de janela síncrona, mais um em cada marco e um no fim. O marco é o `OSC 1337;gabarito-marco=<nome> BEL` que o `a1.exp` grava no próprio tty.raw (`send_log`): ancora a tela no estágio da sessão.
+ * LIMITE: caractere largo (emoji, CJK) ocupa 1 célula aqui; o mod não desenha emoji (A1 5), então a coluna do separador da dock não se desloca.
+ */
+export function emularTela(raw, rows, cols) {
+  const s = String(raw);
+  const nova = () => Array.from({ length: rows }, () => Array(cols).fill(' '));
+  let scr = nova(); let r = 0; let c = 0; let top = 0; let bot = rows - 1; let marco = null; let ultima = '';
+  const quadros = [];
+  const foto = () => {
+    const linhas = scr.map((l) => l.join('').replace(/\s+$/, ''));
+    const chave = `${marco}\n${linhas.join('\n')}`;
+    if (chave === ultima) return;
+    ultima = chave;
+    quadros.push({ linhas, marco });
+  };
+  const cl = (v, a, b) => Math.max(a, Math.min(b, v));
+  const rola = (n) => { for (let k = 0; k < Math.abs(n); k++) { if (n > 0) { scr.splice(top, 1); scr.splice(bot, 0, Array(cols).fill(' ')); } else { scr.splice(bot, 1); scr.splice(top, 0, Array(cols).fill(' ')); } } };
+  let i = 0;
+  while (i < s.length) {
+    const ch = s[i];
+    if (ch === '\x1b') {
+      const n = s[i + 1];
+      if (n === '[') {
+        let j = i + 2;
+        while (j < s.length && !/[@-~]/.test(s[j])) j++;
+        const f = s[j]; const par = s.slice(i + 2, j);
+        const p = par.replace('?', '').split(';').map((x) => (x === '' ? NaN : Number(x)));
+        const a = Number.isNaN(p[0]) ? undefined : p[0];
+        if (par.startsWith('?')) { if (f === 'l' && par === '?2026') foto(); }
+        else {
+          switch (f) {
+            case 'H': case 'f': r = cl((p[0] || 1) - 1, 0, rows - 1); c = cl((p[1] || 1) - 1, 0, cols - 1); break;
+            case 'G': c = cl((a || 1) - 1, 0, cols - 1); break;
+            case 'B': r = cl(r + (a || 1), 0, rows - 1); break;
+            case 'A': r = cl(r - (a || 1), 0, rows - 1); break;
+            case 'C': c = cl(c + (a || 1), 0, cols - 1); break;
+            case 'D': c = cl(c - (a || 1), 0, cols - 1); break;
+            case 'K': { const m = a || 0; if (m === 0) for (let x = c; x < cols; x++) scr[r][x] = ' '; else if (m === 1) for (let x = 0; x <= c; x++) scr[r][x] = ' '; else scr[r] = Array(cols).fill(' '); break; }
+            case 'J': { const m = a || 0; if (m === 2 || m === 3) scr = nova(); else if (m === 0) { for (let x = c; x < cols; x++) scr[r][x] = ' '; for (let y = r + 1; y < rows; y++) scr[y] = Array(cols).fill(' '); } break; }
+            case 'r': if (par === '') { top = 0; bot = rows - 1; } else { top = (p[0] || 1) - 1; bot = (p[1] || rows) - 1; } r = 0; c = 0; break;
+            case 'S': rola(a || 1); break;
+            case 'T': rola(-(a || 1)); break;
+            default: break;
+          }
+        }
+        i = j + 1; continue;
+      }
+      if (n === ']') {
+        let j = i + 2;
+        while (j < s.length && s[j] !== '\x07' && !(s[j] === '\x1b' && s[j + 1] === '\\')) j++;
+        const m = OSC_MARCO.exec(s.slice(i + 2, j));
+        if (m !== null) { foto(); marco = m[1]; foto(); }
+        i = j + (s[j] === '\x07' ? 1 : 2); continue;
+      }
+      i += 2; continue;
+    }
+    if (ch === '\r') { c = 0; i++; continue; }
+    if (ch === '\n') { r = cl(r + 1, 0, rows - 1); i++; continue; }
+    const cp = s.codePointAt(i); const w = cp > 0xffff ? 2 : 1;
+    if (cp >= 32) { if (c >= cols) { c = 0; r = cl(r + 1, 0, rows - 1); } scr[r][c] = String.fromCodePoint(cp); c++; }
+    i += w;
+  }
+  foto();
+  return quadros;
+}
+
+const celulasDe = (l) => Array.from(l);
+const ehBorda = (l, col) => celulasDe(l)[col] === '│';
+
+/**
+ * A caixa da Pane do painel numa tela (emenda 49 a): `inline` = caixa de cantos `╭╮╰╯` com o "GABARITO ·" dentro (acima da linha de digitar); `dock` = a Pane ao lado da conversa:
+ * uma coluna de `│` contínua com o "GABARITO ·" colado nela. Sem caixa ⇒ `placement: null`. `bodyRows` = linhas internas lidas na tela; `bodyColumns` = largura interna (inline: a caixa
+ * menos a borda e 1 de respiro de cada lado; dock: do separador ao fim, precisa de `colunas`). `interior` = o texto das linhas internas.
+ */
+export function caixaDoPainel(linhas, colunas = null) {
+  for (let i = 0; i < linhas.length; i++) {
+    const t = linhas[i].trim();
+    if (!(t.startsWith('╭') && t.endsWith('╮'))) continue;
+    let f = -1;
+    for (let k = i + 1; k < linhas.length; k++) {
+      const u = linhas[k].trim();
+      if (u.startsWith('╰') && u.endsWith('╯')) { f = k; break; }
+      if (!(u.startsWith('│') && u.endsWith('│'))) break;
+    }
+    if (f < 0) continue;
+    const interior = linhas.slice(i + 1, f).map((l) => l.trim().replace(/^│ ?/, '').replace(/ ?│$/, '').replace(/\s+$/, ''));
+    if (!interior.some((l) => /^GABARITO ·/.test(l))) continue;
+    return { placement: 'inline', interior, bodyRows: interior.length, bodyColumns: Math.max(0, celulasDe(t).length - 4) };
+  }
+  for (let i = 0; i < linhas.length; i++) {
+    const at = linhas[i].indexOf('│GABARITO ·');
+    if (at < 0) continue;
+    const col = celulasDe(linhas[i].slice(0, at)).length;
+    let a = i; let b = i;
+    while (a > 0 && ehBorda(linhas[a - 1], col)) a--;
+    while (b + 1 < linhas.length && ehBorda(linhas[b + 1], col)) b++;
+    if (b - a + 1 < 3) continue;
+    const interior = linhas.slice(i, b + 1).map((l) => celulasDe(l).slice(col + 1).join('').replace(/\s+$/, ''));
+    return { placement: 'dock', interior, bodyRows: b - i + 1, bodyColumns: colunas === null ? null : Math.max(0, colunas - col - 1) };
+  }
+  return { placement: null, interior: [], bodyRows: null, bodyColumns: null };
+}
+
+/** O aviso da Pane não colocada (REQ-GLB-1, emenda 44) INTEIRO numa linha da tela; `cortado` = o prefixo aparece mas a frase não fecha (ex.: "painel …"). */
+export const AVISO_RE = /painel lateral precisa de (\d+|mais) colunas: \/gabarito painel para abrir/;
+export function avisoNaTela(linhas) {
+  for (const l of linhas) {
+    const m = AVISO_RE.exec(l);
+    if (m !== null) return { estado: 'inteiro', n: m[1] === 'mais' ? null : Number(m[1]) };
+  }
+  if (linhas.some((l) => /painel( lateral precisa[^…]*)? …/.test(l) || /painel lateral precisa/.test(l))) return { estado: 'cortado', n: null };
+  return { estado: null, n: null };
+}
+
+/** Tabela da plataforma (T50, spec:47): a partir daqui a Pane lateral nasce sozinha; abaixo, só depois de `/gabarito painel`. O número do AVISO nunca vem daqui: vem do `reason` do debug.log. */
+export const LIMIAR_SEM_PEDIDO = 144;
+export const precisaPedido = (c) => c.local === 'lateral' && c.cols < LIMIAR_SEM_PEDIDO;
+/** Resposta fixa do runner à pergunta (b) (opção 3 da lista, "conversa avulsa"); fica gravada em `resposta-b.json`. */
+export const RESPOSTA_B = 3;
+
+/** O comando que o dono digitaria para responder a pergunta aberta (`/gabarito-mestre:responder <id> <n>`), ou `null` se não há pergunta (a (b) não abriu). */
+export function comandoDeResposta(pergunta, n = RESPOSTA_B) {
+  if (pergunta === null || typeof pergunta !== 'object' || typeof pergunta.id !== 'string' || pergunta.id === '') return null;
+  if (!Array.isArray(pergunta.opcoes) || n < 1 || n > pergunta.opcoes.length) return null;
+  return `/gabarito-mestre:responder ${pergunta.id} ${n}`;
+}
+
+const resumoDoQuadro = (q, cols) => {
+  const cx = caixaDoPainel(q.linhas, cols);
+  const fora = q.linhas; // PAROU, pergunta e aviso são lidos por início de linha: as linhas da caixa começam em `│` e não casam
+  return {
+    placement: cx.placement, bodyRows: cx.bodyRows, bodyColumns: cx.bodyColumns, interior: cx.interior,
+    aviso: avisoNaTela(fora), parou: fora.some((l) => /^\s*PAROU /.test(l)), perguntaAberta: fora.some((l) => /^\s*depende de você:/.test(l)),
+  };
+};
+
+/** Props do `AbovePrompt` que o observador leu por último (acima: a geometria vem daqui). */
+const abovePromptDe = (obs) => { const e = obs.filter((x) => x.ev === 'render' && x.comp === 'AbovePrompt').at(-1); return e === undefined ? null : { maxRows: e.maxRows ?? null, rows: e.rows ?? null, bodyColumns: e.bodyColumns ?? null }; };
+
+/**
+ * A evidência de UMA sessão curta de placement (emenda 45 item 3): a tela do `tty.raw` nos estágios que o `a1.exp` marca (`b-respondida` = pergunta (b) respondida e antes do pedido;
+ * `pedido`; `depois-do-pedido`), o `debug.log` (confirma placed/unplaced) e a geometria lida (lateral: caixa na tela; acima: props do AbovePrompt). Sem `curta.json` ⇒ `null`.
+ */
+export function lerSessaoCurta(rundir, celula) {
+  const arq = join(rundir, 'curta.json');
+  if (!existsSync(arq)) return null;
+  const meta = JSON.parse(readFileSync(arq, 'utf8'));
+  const rb = existsSync(join(rundir, 'resposta-b.json')) ? JSON.parse(readFileSync(join(rundir, 'resposta-b.json'), 'utf8')) : null;
+  const tty = join(rundir, 'tty.raw');
+  const quadros = existsSync(tty) ? emularTela(readFileSync(tty, 'utf8'), celula.rows, celula.cols) : [];
+  const marcos = [...new Set(quadros.map((q) => q.marco).filter((m) => m !== null))];
+  const ultimoDe = (m) => quadros.filter((q) => q.marco === m).at(-1);
+  const a = ultimoDe('b-respondida');
+  const antes = a === undefined ? null : resumoDoQuadro(a, celula.cols);
+  const d = meta.pedido === true ? ultimoDe('depois-do-pedido') : a;
+  const depois = d === undefined ? null : resumoDoQuadro(d, celula.cols);
+  const dbgArq = join(rundir, 'debug.log');
+  return {
+    fonte: 'tela', quadros: quadros.length, marcos, respostaB: rb, pedido: meta.pedido === true, pedidoFeito: marcos.includes('pedido'),
+    antes, depois, debug: placementsDoDebugLog(existsSync(dbgArq) ? readFileSync(dbgArq, 'utf8') : ''), abovePrompt: abovePromptDe(jsonl(join(rundir, 'obs', 'a1.jsonl'))),
+  };
+}
+
+/** A geometria que o replay usa para a combinação: lateral ⇒ a caixa lida na tela depois do pedido; acima ⇒ as props do AbovePrompt. `null` se a sessão curta não a mediu. */
+export function geometriaDaCurta(sc, celula) {
+  if (sc === null || sc === undefined) return null;
+  if (celula.local === 'acima') return sc.abovePrompt != null && sc.abovePrompt.bodyColumns != null ? { AbovePrompt: sc.abovePrompt } : null;
+  const d = sc.depois;
+  return d != null && d.placement !== null && d.bodyRows !== null && d.bodyColumns !== null ? { Pane: { bodyRows: d.bodyRows, bodyColumns: d.bodyColumns } } : null;
+}
+
+// ─── replay offline (T52, emenda 45): o painel redesenhado fora da sessão, a partir do estado gravado, com os 4 controles medidos ───
+
+/** O que só existe ao vivo e o replay NÃO mede (declarado, emenda 45): contexto %, durações e segundo plano. Máscara aplicada a replay e a tela real antes de comparar. */
+export const mascararAoVivo = (l) => String(l).replace(/\s+\[[-+]\]$/, '').replace(/contexto (\d+ %|\?)/g, 'contexto N %').replace(/ · \d+[smh]( \d+[smh])?$/, ' · D').replace(/ · hora de pousar/, '').replace(/\s+$/, '');
+/** Campo ao vivo AINDA com valor num quadro de replay (a máscara não foi aplicada ou o replay mediu o que não pode): `contexto 12 %`. */
+export const camposAoVivoNoQuadro = (linhas) => linhas.filter((l) => /contexto \d+ %/.test(l));
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/**
+ * O pacote de nomes FIXO da conversa (emenda 45, controle 2): o mod o sorteia da sessão (`sortearPacote(session_id, PACOTES_FABRICA, anterior)`, determinístico) e o guarda; numa conversa com
+ * `/clear` o `anterior` é o pacote da sessão que acabou. Sem sessão real não há pacote (`null`: o replay recusa; nunca "terra-media" por omissão).
+ */
+export async function pacoteDaConversa(repo, sessionId) {
+  const sessoes = sessoesDoRepo(repo).map((x) => x.id);
+  const i = sessoes.indexOf(sessionId);
+  if (i < 0) return null;
+  const { sortearPacote } = await import(pathToFileURL(join(GATES, 'dist', 'painel-equipe.js')).href);
+  const { PACOTES_FABRICA } = await carregarMod();
+  let pacote = null;
+  for (const id of sessoes.slice(0, i + 1)) pacote = sortearPacote(id, [...PACOTES_FABRICA], pacote);
+  return pacote;
+}
+
+/** Sessões reais do repo da conversa: `events.<uuid>.jsonl` de qualquer entrega, com o instante do 1º evento. */
+export function sessoesDoRepo(repo) {
+  const dirs = join(repo, '.harness', 'entregas');
+  const achadas = new Map();
+  if (!existsSync(dirs)) return [];
+  for (const d of readdirSync(dirs)) {
+    for (const a of readdirSync(join(dirs, d))) {
+      const m = /^events\.([0-9a-f-]{36})\.jsonl$/.exec(a);
+      if (m === null || !UUID.test(m[1])) continue;
+      const primeira = readFileSync(join(dirs, d, a), 'utf8').split('\n').find(Boolean);
+      let ts = Number.POSITIVE_INFINITY;
+      try { ts = Date.parse(JSON.parse(primeira).ts); } catch { /* arquivo sem 1ª linha legível: nunca é "a sessão" de ninguém */ }
+      achadas.set(m[1], Math.min(achadas.get(m[1]) ?? Number.POSITIVE_INFINITY, ts));
+    }
+  }
+  return [...achadas].map(([id, inicio]) => ({ id, inicio })).filter((x) => Number.isFinite(x.inicio)).sort((x, y) => x.inicio - y.inicio);
+}
+/** O `session_id` real da conversa no instante `ate` (ms): a última sessão que já tinha começado. Nenhuma ⇒ `null` (nunca inventa "S-a1"). */
+export const sessaoRealDe = (repo, ate = Number.POSITIVE_INFINITY) => sessoesDoRepo(repo).filter((s) => s.inicio <= ate).at(-1)?.id ?? null;
+
+/**
+ * A entrada do replay só vale com os controles medidos (emenda 45): `session_id` REAL (uuid de sessão do diário, nunca o "S-a1" do replay ingênuo, que dá 0/52) e `pacote` fixo.
+ * Devolve a lista de erros (vazia = válida).
+ */
+export function validarEntradaDoReplay(entrada, { sessoes = null, pacote = null } = {}) {
+  const erros = [];
+  if (entrada === null || typeof entrada !== 'object') return ['entrada do replay não é objeto'];
+  if (typeof entrada.session_id !== 'string' || !UUID.test(entrada.session_id)) erros.push(`session_id ${JSON.stringify(entrada.session_id)} não é de sessão real (replay ingênuo)`);
+  else if (sessoes !== null && !sessoes.includes(entrada.session_id)) erros.push(`session_id ${entrada.session_id} sem diário no repo da conversa`);
+  if (typeof pacote !== 'string' || !/^[a-z0-9-]{1,32}$/.test(pacote)) erros.push(`pacote ${JSON.stringify(pacote)} fora do slug (o replay usa o pacote fixo da conversa)`);
+  return erros;
+}
+
+/** Esqueleto do repo no instante `t` (ms): tudo é symlink para o repo da conversa, menos os diários `.jsonl` de cada entrega, cortados nos eventos com `ts` ≤ `t` (o diário "no instante"). */
+export function reconstruirRepo(repo, destino, t) {
+  const h = join(destino, '.harness');
+  mkdirSync(join(h, 'entregas'), { recursive: true });
+  const liga = (de, para) => { try { symlinkSync(de, para); } catch (e) { if (e.code !== 'EEXIST') throw e; } };
+  for (const x of readdirSync(repo)) if (x !== '.harness') liga(join(repo, x), join(destino, x));
+  for (const x of readdirSync(join(repo, '.harness'))) if (x !== 'entregas') liga(join(repo, '.harness', x), join(h, x));
+  for (const e of readdirSync(join(repo, '.harness', 'entregas'))) {
+    const dst = join(h, 'entregas', e);
+    mkdirSync(dst, { recursive: true });
+    for (const a of readdirSync(join(repo, '.harness', 'entregas', e))) {
+      const src = join(repo, '.harness', 'entregas', e, a);
+      if (!a.endsWith('.jsonl')) { liga(src, join(dst, a)); continue; }
+      const linhas = readFileSync(src, 'utf8').split('\n').filter(Boolean).filter((l) => { try { return Date.parse(JSON.parse(l).ts) <= t; } catch { return true; } });
+      writeFileSync(join(dst, a), linhas.length > 0 ? `${linhas.join('\n')}\n` : '');
+    }
+  }
+  return destino;
+}
+
+let paineisCache = null;
+/**
+ * `painel.mjs estado --agentes --pacote <slug>` EM PROCESSO, com o relógio injetável (`agoraMs`: o instante do snapshot, nunca o de agora: durações e "há N min" saem do que foi gravado).
+ * O ambiente (PATH com o `gh` de fixture, GH_FIXTURE, HOME vazio) é trocado só durante a chamada síncrona e restaurado.
+ */
+export async function estadoEmProcesso({ repo, entrada, pacote, agoraMs, bin, gh, home }) {
+  paineisCache ??= await import(pathToFileURL(join(GATES, 'scripts', 'painel.mjs')).href);
+  const antes = { PATH: process.env.PATH, GH_FIXTURE: process.env.GH_FIXTURE, HOME: process.env.HOME, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR };
+  process.env.PATH = `${bin}:${antes.PATH}`; process.env.GH_FIXTURE = gh; process.env.HOME = home; process.env.CLAUDE_CONFIG_DIR = home;
+  let saida = '';
+  try {
+    const rc = paineisCache.main(['estado', '--agentes', '--pacote', pacote], repo, { saida: (t) => { saida += t; }, aviso: () => {}, stdin: () => JSON.stringify(entrada), agoraMs });
+    if (rc !== 0) throw new Error(`painel estado (replay) rc ${rc}: ${saida.slice(0, 160)}`);
+    return JSON.parse(saida).estado;
+  } finally {
+    for (const [k, v] of Object.entries(antes)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+}
+
+/**
+ * O replay de UM ponto: monta o repo no instante do snapshot, a entrada com `session_id` real, pacote fixo da conversa e ações do observador até aquele instante, pede o estado ao produto
+ * (relógio = instante gravado) e desenha pelas funções do mod com a geometria da combinação (`geometria`: `{Pane}` ou `{AbovePrompt}`). Devolve `{linhas (já sem o ao vivo), estado, entrada}`.
+ * `deps.estado` troca o produto (testes). Entrada inválida (ingênua) ⇒ lança: o replay nunca corre sem os controles.
+ */
+export async function replayDoPonto({ conversa, snap, geometria, celula, destino, deps = {} }) {
+  const estadoDe = deps.estado ?? estadoEmProcesso;
+  const t = Number.isFinite(snap.t) ? snap.t : conversa.t0 ?? Date.now();
+  const ferr = await import(pathToFileURL(join(GATES, 'dist', 'ferramentas.js')).href);
+  const sessao = sessaoRealDe(conversa.repo, t);
+  const pacote = sessao === null ? null : await pacoteDaConversa(conversa.repo, sessao);
+  const base = entradaDoSnapshot(jsonlAte(conversa.obs, t), ferr, { sessao, percent: conversa.percent ?? null });
+  const erros = validarEntradaDoReplay(base.entrada, { sessoes: sessoesDoRepo(conversa.repo).map((x) => x.id), pacote });
+  if (erros.length > 0) throw new Error(`replay recusado: ${erros.join('; ')}`);
+  const W = reconstruirRepo(conversa.repo, destino, t);
+  const estado = await estadoDe({ repo: W, entrada: base.entrada, pacote, agoraMs: t, bin: join(conversa.rundir, 'bin'), gh: join(conversa.rundir, 'gh.json'), home: conversa.home });
+  const props = geometria;
+  const bruto = await renderizar(estado, props, celula);
+  return { linhas: bruto === null ? null : bruto.map(mascararAoVivo).filter((l) => l !== ''), estado, entrada: base.entrada };
+}
+const jsonlAte = (obs, t) => obs.filter((e) => !(Number.isFinite(e.t) && e.t > t));
+
+/** `{rundir, repo, obs, ...}` de uma conversa gravada. */
+export function lerConversa(rundir, { home }) {
+  const repo = join(rundir, 'repo');
+  const sid = sessaoRealDe(repo);
+  let percent = null;
+  try { percent = JSON.parse(readFileSync(join(repo, '.harness', 'contexto', `${sid}.json`), 'utf8')).percent ?? null; } catch { percent = null; }
+  return { rundir, repo, obs: jsonl(join(rundir, 'obs', 'a1.jsonl')), percent, home };
+}
+
+const snapsDe = (rundir) => {
+  const d = join(rundir, 'estados');
+  if (!existsSync(d)) return [];
+  return readdirSync(d).sort().map((f) => { const s = JSON.parse(readFileSync(join(d, f), 'utf8')); return { ...s, t: Number.isFinite(s.t) ? s.t : statSync(join(d, f)).mtimeMs, _arq: f }; });
+};
+
+/**
+ * O replay da conversa inteira para UMA combinação: cada snapshot redesenhado com a geometria da combinação. Devolve a evidência de DESENHO que as asserções 1 e 2 leem
+ * (`quadros`, `quadrosSemProps`, `celula`). Geometria ausente (a sessão curta não a mediu) ⇒ `quadrosSemProps = n`: "não medida", nunca vazio-passa.
+ */
+export async function replayDaConversa({ conversa, celula, geometria, destino, deps = {} }) {
+  const snaps = snapsDe(conversa.rundir);
+  const quadros = []; let quadrosSemProps = 0;
+  for (const s of snaps) {
+    if (geometria === null || geometria === undefined) { quadrosSemProps += 1; continue; }
+    const r = await replayDoPonto({ conversa, snap: s, geometria, celula, destino: join(destino, s._arq.replace(/\.json$/, '')), deps });
+    if (r.linhas === null) { quadrosSemProps += 1; continue; }
+    if (camposAoVivoNoQuadro(r.linhas).length > 0) throw new Error('replay com campo ao vivo (contexto %) no quadro: a máscara não foi aplicada');
+    quadros.push({ linhas: r.linhas, itensDepende: (r.estado.depende ?? []).length + (r.estado.pergunta ? 1 : 0) + (r.estado.parar ? 1 : 0) });
+  }
+  return { celula, quadros, quadrosSemProps, n: snaps.length };
+}
+
+/** Só as asserções de DESENHO (1 e 2) são medidas por replay: o placement (12) e as de comportamento só existem em sessão real. Pedir outra ⇒ lança (recusado). */
+export const ASSERCOES_DE_DESENHO = Object.freeze(['1-depende-no-topo', '2-blocos-e-corte']);
+export const ASSERCOES_DE_PLACEMENT = Object.freeze(['12-placement-da-pane']);
+export function avaliarPorReplay(ev, ids = ASSERCOES_DE_DESENHO) {
+  const fora = ids.filter((id) => !ASSERCOES_DE_DESENHO.includes(id));
+  if (fora.length > 0) throw new Error(`replay recusado para ${fora.join(', ')}: só o desenho (1, 2) se mede por replay; placement e comportamento são de sessão real (emenda 45)`);
+  if (!(ev.n > 0)) return ids.map((id) => ({ id, ref: ASSERCOES.find((a) => a.id === id).ref, ok: false, detalhe: 'replay sem nenhum ponto (evidência vazia): não medida' }));
+  return avaliarExecucao(ev, 'desenho').resultados.filter((r) => ids.includes(r.id));
+}
+
+/** Os blocos de um quadro da faixa (`acima`) na tela real: do "GABARITO ·" até a 1ª linha vazia/régua. Distintos, na ordem em que apareceram. */
+export function blocosDaFaixaNaTela(quadros, rows) {
+  const norm = mascararAoVivo;
+  const vistos = new Set(); const blocos = [];
+  for (const q of quadros) {
+    const h = q.linhas.findIndex((l) => l.startsWith('GABARITO ·'));
+    if (h < 0) continue;
+    const b = [];
+    for (let k = h; k < rows && k < h + 16; k++) { const l = q.linhas[k]; if (k > h && (l === '' || l.startsWith('─') || /\/effort/.test(l))) break; b.push(norm(l)); }
+    const chave = b.join('\n');
+    if (!vistos.has(chave)) { vistos.add(chave); blocos.push(b); }
+  }
+  return blocos;
+}
+/**
+ * A estrutura de um quadro: a sequência dos blocos (ordem e quais cortes), independente do texto. O ATENÇÃO fica FORA (declarado): na tela real os botões da pergunta, desenhados pela
+ * plataforma, quebram a linha e empurram o ATENÇÃO para fora da altura; o replay não desenha botão. Medido no spike de replay (cmp5): 26/26 sem o ATENÇÃO.
+ */
+export const estruturaDe = (linhas) => linhas.map((l) => /^(GABARITO|PAROU|depende de você|última entrega|FASE|PRONTO|AGORA|RECENTE)/.exec(l)?.[1]).filter(Boolean).join(',');
+
+// ─── a matriz por conversa (T52, emenda 45): 2 conversas reais + 8 sessões curtas + replay offline; passa = 8/8 ───
+
+/** A conversa real de cada local (180×50 tela cheia): dela saem as asserções de comportamento (3–11, 8a–8f) e os snapshots que o replay redesenha. */
+export const conversaDoLocal = (local) => idDaCelula({ local, cols: 180, rows: 50, cheia: true });
+export const CONVERSAS = Object.freeze(['lateral', 'acima'].map(conversaDoLocal));
+
+const semEvidencia = (id, detalhe) => ({ id, ref: ASSERCOES.find((a) => a.id === id)?.ref ?? id, ok: false, detalhe });
+
+/**
+ * A matriz GRAVADA em `base`: `<id>` das 2 conversas e `curta-<id>` das 8 combinações. Cada combinação junta as 3 fontes (emenda 45 item 4): comportamento da conversa do seu local,
+ * desenho (1, 2) por replay dos snapshots dessa conversa com a geometria da sua sessão curta, placement (12) pela sessão curta. Fonte que falta ou que lança reprova a combinação
+ * (nunca "não se aplica"); combinação não desenhada continua falha. Offline: não abre claude.
+ */
+export async function avaliarGravada(base, roteiro, { deps = {} } = {}) {
+  const d = {
+    conversa: (rundir) => avaliarRundir(rundir, { roteiro, grupo: 'comportamento' }),
+    curta: (rundir, celula) => avaliarCurta(rundir, celula),
+    replay: replayDaConversa,
+    ...deps,
+  };
+  const home = join(base, 'replay-home');
+  mkdirSync(home, { recursive: true });
+  const comportamento = new Map();
+  for (const local of ['lateral', 'acima']) {
+    const rundir = join(base, conversaDoLocal(local));
+    try {
+      if (!existsSync(rundir)) throw new Error('conversa não executada');
+      comportamento.set(local, { rundir, resultados: (await d.conversa(rundir)).resultados });
+    } catch (e) { comportamento.set(local, { rundir, erro: String(e.message ?? e).slice(0, 160) }); }
+  }
+  const execucoes = [];
+  for (const c of MATRIZ) {
+    const id = idDaCelula(c);
+    const resultados = [];
+    let geometria = null;
+    const curtaDir = join(base, `curta-${id}`);
+    try {
+      if (!existsSync(curtaDir)) throw new Error('sessão curta não executada');
+      const cr = await d.curta(curtaDir, c);
+      geometria = cr.geometria ?? null;
+      resultados.push(...cr.resultados);
+    } catch (e) { resultados.push(semEvidencia('12-placement-da-pane', `sessão curta: ${String(e.message ?? e).slice(0, 160)}`)); }
+    const conv = comportamento.get(c.local);
+    if (conv.erro !== undefined) {
+      resultados.push(...GRUPOS.comportamento.map((i) => semEvidencia(i, `conversa ${conversaDoLocal(c.local)}: ${conv.erro}`)));
+      resultados.push(...GRUPOS.desenho.map((i) => semEvidencia(i, `sem conversa para o replay: ${conv.erro}`)));
+    } else {
+      resultados.push(...conv.resultados);
+      try {
+        const ev = await d.replay({ conversa: lerConversa(conv.rundir, { home }), celula: c, geometria, destino: join(base, 'replay', id) });
+        resultados.push(...avaliarPorReplay(ev));
+      } catch (e) { resultados.push(...GRUPOS.desenho.map((i) => semEvidencia(i, `replay: ${String(e.message ?? e).slice(0, 160)}`))); }
+    }
+    execucoes.push({ celula: id, passa: resultados.length === GRUPOS.todas.length && resultados.every((r) => r.ok), resultados });
+  }
+  return { rel: avaliarMatriz(execucoes), execucoes };
+}
+
+/**
+ * A matriz inteira, na ordem do mais barato ao mais caro: (1) as 8 sessões curtas (placement e geometria); (2) se TODAS passaram e nenhuma invariante caiu, as 2 conversas reais em paralelo;
+ * (3) avaliação offline. Sessão curta reprovada ou invariante violada PARA antes das conversas (parada cedo): quem reprova 1 combinação já reprova o 8/8.
+ * `opc.so` restringe as curtas; `opc.semConversas` pula (2) (as combinações ficam "conversa não executada" ⇒ falham: só para iterar o placement barato).
+ */
+export async function matrizA1(fonte, tmpRaiz, roteiro, { so = null, semConversas = false, paralelo = 2, deps = {} } = {}) {
+  const base = join(realpathSync(tmpdir()), 'gabarito-a1', String(Date.now()));
+  const mat = deps.matriz ?? matriz;
+  const avalia = deps.avaliarGravada ?? avaliarGravada;
+  const curtas = await mat(fonte, tmpRaiz, roteiro, so, { paralelo, deps: deps.celula ?? {}, modo: 'curta', base });
+  let parouCedo = null;
+  if (curtas.abortada !== null) parouCedo = `sessão curta: ${curtas.abortada}`;
+  else if (curtas.execucoes.some((x) => x.passa !== true)) parouCedo = `sessão curta reprovada em ${curtas.execucoes.filter((x) => x.passa !== true).map((x) => x.celula).join(', ')}: as conversas não rodam`;
+  let conversas = null;
+  if (parouCedo === null && !semConversas) {
+    conversas = await mat(fonte, tmpRaiz, roteiro, CONVERSAS.join(','), { paralelo, deps: deps.celula ?? {}, grupo: 'comportamento', base });
+    if (conversas.abortada !== null) parouCedo = `conversa: ${conversas.abortada}`;
+  }
+  const { rel } = await avalia(base, roteiro, { deps: deps.gravada ?? {} });
+  return { rel, base, abortada: parouCedo, curtas, conversas };
 }
 
 // ─── ambiente da execução (T44, emenda 39) ───
@@ -1044,6 +1544,30 @@ export async function main(argv) {
     return 1;
   }
   if (argv[0] === 'snapshot') { await snapshot(argv[1], argv[2], Number(argv[3])); return 0; }
+  // `resposta-b <repo> <rundir>` (chamado pelo `a1.exp` da sessão curta): imprime o comando com que o dono responderia a pergunta (b) (vazio se ela não abriu) e grava `resposta-b.json` na evidência
+  if (argv[0] === 'resposta-b') {
+    const repo = resolve(argv[1] ?? ''); const rundir = resolve(argv[2] ?? '');
+    const obs = jsonl(join(rundir, 'obs', 'a1.jsonl'));
+    const ferr = await import(pathToFileURL(join(GATES, 'dist', 'ferramentas.js')).href);
+    const { entrada } = entradaDoSnapshot(obs, ferr, { sessao: sessaoRealDe(repo) ?? 'S-a1' });
+    const estado = estadoDoProduto(repo, { entrada: JSON.stringify(entrada), bin: join(rundir, 'bin'), ghEstado: join(rundir, 'gh.json') });
+    const cmd = comandoDeResposta(estado.pergunta);
+    writeFileSync(join(rundir, 'resposta-b.json'), `${JSON.stringify({ estado: cmd === null ? 'nao-abriu' : 'respondida', pergunta: estado.pergunta?.id ?? null, resposta: cmd === null ? null : RESPOSTA_B })}\n`);
+    process.stdout.write(cmd === null ? '' : `${cmd}\n`);
+    return 0;
+  }
+  // `avaliar-matriz <base>`: a matriz GRAVADA (2 conversas + 8 sessões curtas) avaliada offline, com replay
+  if (argv[0] === 'avaliar-matriz') {
+    const base = resolve(argv[1] ?? '');
+    const arqRot = flag(argv, '--roteiro') ?? join(raizPrincipal(AQUI), ROTEIRO_REL);
+    let pts; try { pts = JSON.parse(readFileSync(flag(argv, '--pontos') ?? PONTOS_ARQ, 'utf8')); } catch (e) { process.stderr.write(`pontos.json ilegível: ${e.message}\n`); return 1; }
+    const rot = verificarRoteiro(arqRot, pts.roteiroSha256);
+    if (!rot.ok) { process.stderr.write(`A1 não avalia: ${rot.motivo}\n`); return 1; }
+    const g = await avaliarGravada(base, rot);
+    for (const l of g.rel.linhas) process.stdout.write(`${l.passa ? 'PASSA' : 'FALHA'} ${l.celula} ${l.motivo}\n`);
+    process.stdout.write(`A1: ${g.rel.passou}/${g.rel.total} (passa = 8/8)\n`);
+    return g.rel.ok ? 0 : 1;
+  }
   // `avaliar <rundir> [--roteiro <arq>]`: a avaliação da matriz sobre uma execução JÁ GRAVADA (offline; não abre claude)
   if (argv[0] === 'avaliar') {
     const rundir = resolve(argv[1] ?? '');
@@ -1076,7 +1600,7 @@ export async function main(argv) {
   process.stdout.write(`guarda das falas: 0 achados (${g.conferidas} falas ≥ ${MIN_FALA} caracteres em ${g.arquivos} arquivos versionados; ${g.ignorados} ignorados por binário ou > 4 MB, não conferidos)\n`);
   if (modo === '--guarda') return 0;
   if (modo === '--gerar') { const r = gerar(topo, principal, roteiro); process.stdout.write(`pontos.json: ${r.pontos} pontos gerados pelo produto\n`); return 0; }
-  const m = await matriz(topo, principal, roteiro, flag(argv, '--so') ?? null, { paralelo: Number(flag(argv, '--paralelo') ?? 1) });
+  const m = await matrizA1(topo, principal, roteiro, { so: flag(argv, '--so') ?? null, semConversas: argv.includes('--sem-conversas'), paralelo: Number(flag(argv, '--paralelo') ?? 2) });
   for (const l of m.rel.linhas) process.stdout.write(`${l.passa ? 'PASSA' : 'FALHA'} ${l.celula} ${l.motivo}\n`);
   if (m.abortada !== null) process.stdout.write(`MATRIZ PARADA: ${m.abortada}\n`);
   process.stdout.write(`A1: ${m.rel.passou}/${m.rel.total} (passa = 8/8)\nevidência em ${m.base}\n`);

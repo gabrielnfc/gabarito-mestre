@@ -10,7 +10,7 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -235,6 +235,19 @@ const QUADRO_CHEIO = [
   'AGORA · Gandalf · contexto 40 %', '  Frodo · T3 · lendo 2 arquivos', 'ATENÇÃO · T3 parou',
   'RECENTE · 10:00 ✓ Gandalf integrou T1 (automático)', '  09:50 ● ELROND decidiu: escopo da T2 (anotado pelo orquestrador)',
 ];
+/** A sessão curta boa (T52): o que `lerSessaoCurta` devolve quando a tela, a resposta (b), o pedido do dono e o debug.log estão como a spec manda para a combinação. */
+const curtaBoa = (celula) => {
+  const esperado = placementEsperado(celula); const pedido = R.precisaPedido(celula);
+  const quadro = (placement, aviso) => ({ placement, bodyRows: placement === null ? null : 12, bodyColumns: placement === null ? null : 60, interior: [], aviso, parou: false, perguntaAberta: false });
+  const sem = { estado: null, n: null };
+  return {
+    fonte: 'tela', quadros: 40, marcos: ['inicio', 'b-respondida', ...(pedido ? ['pedido', 'depois-do-pedido'] : [])],
+    respostaB: { estado: 'respondida', pergunta: 'sess:3', resposta: 3 }, pedido, pedidoFeito: pedido,
+    antes: quadro(pedido ? null : esperado, pedido ? { estado: 'inteiro', n: 144 } : sem), depois: quadro(esperado, sem),
+    debug: esperado === null ? [] : [...(pedido ? [{ colunas: celula.cols, estado: 'unplaced', unasked: true, limiar: 144 }] : []), { colunas: celula.cols, estado: 'placed' }],
+    abovePrompt: celula.local === 'acima' ? { maxRows: 7, rows: celula.rows, bodyColumns: celula.cols - 5 } : null,
+  };
+};
 const evBoa = (celula = { local: 'lateral', cols: 180, rows: 50, cheia: true }) => ({
   celula,
   quadros: [{ linhas: QUADRO_CHEIO, itensDepende: 1 }],
@@ -254,8 +267,7 @@ const evBoa = (celula = { local: 'lateral', cols: 180, rows: 50, cheia: true }) 
   quadrosSemProps: 0,
   vivos: [{ ativos: 0, linhasAgente: 0, detalhes: [] }, { ativos: 1, linhasAgente: 1, detalhes: [{ nome: 'Frodo', descricao: 'implementa T3', task: 'T3', acao: 'lendo 2 arquivos' }] }],
   pouso: { percent: 50, limparNoDepende: true, pushes: 1, despachosDepois: 0 },
-  panes: [{ placement: placementEsperado(celula) ?? 'x' }].filter(() => placementEsperado(celula) !== null),
-  panesObservadas: true,
+  sessaoCurta: curtaBoa(celula),
   debugLogAtivo: true,
   placementsDebug: celula.local === 'acima' ? [] : [{ colunas: celula.cols, estado: 'placed' }],
 });
@@ -295,7 +307,7 @@ describe('asserções do A1 sobre a evidência de uma execução', () => {
     '9-veredito-com-revisor-antes': (ev) => { ev.eventos.splice(1, 1); },
     '10-despachos-com-aprendizados': (ev) => { ev.despachos[0].prompt = 'brief sem as regras'; },
     '11-pouso-a-50': (ev) => { ev.pouso.despachosDepois = 1; },
-    '12-placement-da-pane': (ev) => { ev.panes = [{ placement: 'inline' }]; },
+    '12-placement-da-pane': (ev) => { ev.sessaoCurta.depois.placement = 'inline'; },
   };
 
   for (const a of ASSERCOES) {
@@ -320,21 +332,20 @@ describe('asserções do A1 sobre a evidência de uma execução', () => {
     }
   });
 
-  test('placement-incoerente-reprova-nas-quatro-lateral-e-pane-em-acima', () => {
+  test('placement-incoerente-reprova-nas-quatro-lateral-e-pane-em-acima (lido da TELA da sessão curta)', () => {
     const casos = [
-      [{ local: 'lateral', cols: 180, rows: 50, cheia: true }, [{ placement: 'inline' }], false],
-      [{ local: 'lateral', cols: 180, rows: 50, cheia: false }, [{ placement: 'dock' }], false],
-      [{ local: 'lateral', cols: 80, rows: 24, cheia: true }, [{ placement: 'dock' }], false],
-      [{ local: 'lateral', cols: 80, rows: 24, cheia: false }, [{ placement: 'inline' }], true],
-      [{ local: 'lateral', cols: 80, rows: 24, cheia: false }, [], false],
-      [{ local: 'lateral', cols: 180, rows: 50, cheia: true }, [{ placement: 'dock' }, { placement: 'dock' }], false],
-      [{ local: 'acima', cols: 180, rows: 50, cheia: true }, [{ placement: 'dock' }], false],
-      [{ local: 'acima', cols: 180, rows: 50, cheia: true }, [], true],
+      [{ local: 'lateral', cols: 180, rows: 50, cheia: true }, (sc) => { sc.depois.placement = 'inline'; }, false],
+      [{ local: 'lateral', cols: 180, rows: 50, cheia: false }, (sc) => { sc.depois.placement = 'dock'; }, false],
+      [{ local: 'lateral', cols: 80, rows: 24, cheia: true }, (sc) => { sc.depois.placement = 'dock'; }, false],
+      [{ local: 'lateral', cols: 80, rows: 24, cheia: false }, () => {}, true],
+      [{ local: 'lateral', cols: 80, rows: 24, cheia: false }, (sc) => { sc.depois.placement = null; }, false],
+      [{ local: 'acima', cols: 180, rows: 50, cheia: true }, (sc) => { sc.depois.placement = 'dock'; }, false],
+      [{ local: 'acima', cols: 180, rows: 50, cheia: true }, () => {}, true],
     ];
     const a12 = ASSERCOES.find((a) => a.id === '12-placement-da-pane');
-    for (const [c, panes, esperado] of casos) {
-      const ev = evBoa(c); ev.panes = panes;
-      assert.equal(a12.avaliar(ev).ok, esperado, `${idDaCelula(c)} ${JSON.stringify(panes)}`);
+    for (const [c, mexe, esperado] of casos) {
+      const ev = evBoa(c); mexe(ev.sessaoCurta);
+      assert.equal(a12.avaliar(ev).ok, esperado, `${idDaCelula(c)} ${a12.avaliar(ev).detalhe}`);
     }
   });
 
@@ -540,7 +551,7 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
     assert.equal(agent.negada, true, 'o tool_result com is_error vira negada (P3: `negada: false` fixo ⇒ reprova aqui)');
     assert.equal(agent.turnoDeStatus, true, 'a fala digitada antes é a pergunta de status do roteiro');
     assert.deepEqual(ev.despachos.map((d) => d.aprendizados), [[REGRA]], 'aprendizados do proxima real, por papel');
-    assert.deepEqual(ev.panes, [{ id: 'gabarito-painel', placement: 'dock' }], 'panes do observador (P4: `panes: []` fixo ⇒ reprova aqui)');
+    assert.equal(ev.sessaoCurta, null, 'a conversa não é sessão curta: a asserção 12 vem da tela da curta (T52), nunca do observador');
     assert.deepEqual(ev.digitadas, [sha256(FALA_A), sha256(FALA_STATUS)]);
     assert.deepEqual(ev.entregasPublicadas, ['GM-13']);
     assert.deepEqual(ev.gravacoes['GM-13'], { antes: 2, depois: 2 });
@@ -686,9 +697,9 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
     assert.equal(resultado(ev, '4-agora-ativos').ok, false);
   });
 
-  test('placement-lido-do-observador-reprova-quando-incoerente-com-a-celula', async () => {
-    assert.equal(resultado(await coleta({ placement: 'dock' }), '12-placement-da-pane').ok, true);
-    assert.equal(resultado(await coleta({ placement: 'inline' }), '12-placement-da-pane').ok, false);
+  test('conversa-sem-sessao-curta-nao-mede-o-placement (o observador não vê a Pane de outro plugin)', async () => {
+    const r = resultado(await coleta({ placement: 'dock' }), '12-placement-da-pane');
+    assert.equal(r.ok, false); assert.match(r.detalhe, /sem sessão curta.*não medida/);
   });
 
   test('diario-ilegivel-e-snapshot-fora-da-forma-lancam', async () => {
@@ -817,6 +828,7 @@ describe('ambiente da execução real (T44, emenda 39): plugin carregado e diál
     if (spawnSync('expect', ['-v'], { encoding: 'utf8' }).error) { t.skip('expect ausente'); return; }
     const exp = readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), 'utf8');
     const procs = exp.slice(exp.indexOf('proc sends'), exp.indexOf('proc nota') + exp.slice(exp.indexOf('proc nota')).indexOf('\n') + 1)
+      + exp.slice(exp.indexOf('set esc 1'), exp.indexOf('proc marco')) + exp.slice(exp.indexOf('proc marco'), exp.indexOf('proc sends'))
       + exp.slice(exp.indexOf('set imports_tratado'), exp.indexOf('# turno acabou'));
     const simular = (saida) => {
       const d = mkdtempSync(join(tmpdir(), 'a1-dlg-')); TMPS.push(d);
@@ -1026,7 +1038,8 @@ describe('T49 (b) observador: grava o 1º render depois do session.start e não 
       '2026-11-14T03:00:22.683Z [DEBUG] ui.open gabarito-mestre gabarito-painel (unasked, 80 columns): waits unplaced (unasked below 110 columns (80 now): placed when ...)',
       '2026-11-14T03:00:23.683Z [DEBUG] ui.open outro-plugin outra-pane (unasked, 180 columns): placed',
     ].join('\n');
-    assert.deepEqual(R.placementsDoDebugLog(log), [{ colunas: 180, estado: 'placed' }, { colunas: 80, estado: 'unplaced' }]);
+    assert.deepEqual(R.placementsDoDebugLog(log), [{ colunas: 180, estado: 'placed', unasked: true }, { colunas: 80, estado: 'unplaced', unasked: true, limiar: 110 }]);
+    assert.deepEqual(R.placementsDoDebugLog('2026-11-14T05:00:00.000Z [DEBUG] ui.open gabarito-mestre gabarito-painel (asked, 80 columns): placed'), [{ colunas: 80, estado: 'placed' }], 'abertura a pedido do dono não é "unasked"');
     assert.deepEqual(R.placementsDoDebugLog('nada aqui'), []);
   });
 });
@@ -1335,21 +1348,21 @@ describe('T49 execução do expect: vigia o repo real e para na hora', () => {
     assert.equal(R.causaDoStatus('CONCLUIDO'), null);
     assert.equal(R.causaDoStatus(''), null);
   });
-  test('1º-snapshot-sem-render-da-superficie-esperada-aborta (lateral exige Pane; acima exige AbovePrompt)', () => {
+  test('1º-snapshot-sem-render-da-superficie-esperada-aborta (acima exige AbovePrompt; lateral exige algum render: a Pane de outro plugin o observador não vê)', () => {
     const pane = { ev: 'render', comp: 'Pane', bodyRows: 3 }; const acima = { ev: 'render', comp: 'AbovePrompt', maxRows: 3 };
     assert.match(R.invariantePrimeiroSnapshot([], { local: 'lateral' }), /0 render/);
-    assert.match(R.invariantePrimeiroSnapshot([acima], { local: 'lateral' }), /Pane/, 'AbovePrompt não vale para lateral');
-    assert.equal(R.invariantePrimeiroSnapshot([pane], { local: 'lateral' }), null);
+    assert.match(R.invariantePrimeiroSnapshot([], { local: 'acima' }), /0 render/);
+    assert.equal(R.invariantePrimeiroSnapshot([acima], { local: 'lateral' }), null, 'lateral: o AbovePrompt da plataforma basta (a Pane vem da tela)');
     assert.equal(R.invariantePrimeiroSnapshot([acima], { local: 'acima' }), null);
     assert.match(R.invariantePrimeiroSnapshot([pane], { local: 'acima' }), /AbovePrompt/);
   });
-  test('cli-superficie-roda-ANTES-da-1ª-fala: sem render da superfície da célula rc 1 e abortar.txt; com render rc 0', () => {
+  test('cli-superficie-roda-ANTES-da-1ª-fala: sem render rc 1 e abortar.txt; com render rc 0', () => {
     const mk = (linhas) => { const d = tmp(); mkdirSync(join(d, 'obs'), { recursive: true }); writeFileSync(join(d, 'celula.json'), JSON.stringify({ local: 'lateral', cols: 180, rows: 50, cheia: true })); writeFileSync(join(d, 'obs', 'a1.jsonl'), linhas.map((l) => JSON.stringify(l)).join('\n')); return d; };
-    const ruim = mk([{ ev: 'render', comp: 'AbovePrompt', maxRows: 3 }]);
-    assert.equal(spawnSync(process.execPath, [RUNNER, 'superficie', ruim], { encoding: 'utf8' }).status, 1);
-    assert.match(readFileSync(join(ruim, 'abortar.txt'), 'utf8'), /Pane/);
-    const boa = mk([{ ev: 'render', comp: 'Pane', bodyRows: 3 }]);
-    assert.equal(spawnSync(process.execPath, [RUNNER, 'superficie', boa], { encoding: 'utf8' }).status, 0);
+    const ruim = mk([]);
+    assert.equal(spawnSync(process.execPath, [RUNNER, 'superficie', ruim], { encoding: 'utf8', timeout: 20_000 }).status, 1);
+    assert.match(readFileSync(join(ruim, 'abortar.txt'), 'utf8'), /0 render/);
+    const boa = mk([{ ev: 'render', comp: 'AbovePrompt', maxRows: 3 }]);
+    assert.equal(spawnSync(process.execPath, [RUNNER, 'superficie', boa], { encoding: 'utf8', timeout: 20_000 }).status, 0);
     assert.equal(existsSync(join(boa, 'abortar.txt')), false);
   });
   test('a1.exp-chama-superficie-antes-de-digitar', () => {
@@ -1371,34 +1384,27 @@ describe('T49 (c) evidência vazia é "não medida" e REPROVA (nunca passa em v�
   const a = (id) => ASSERCOES.find((x) => x.id === id);
   const naoMedida = (id, mexe) => { const ev = evBoa(); mexe(ev); const r = a(id).avaliar(ev); assert.equal(r.ok, false, `${id}: ${r.detalhe}`); assert.match(r.detalhe, /não medida/, id); };
   test('boa-evidencia-segue-passando-com-o-novo-formato', () => { assert.equal(avaliarExecucao(evBoa()).passa, true); });
-  test('12: sem leitura de panes pela plataforma (acima e lateral) é não medida', () => {
-    naoMedida('12-placement-da-pane', (ev) => { ev.panesObservadas = false; });
-    naoMedida('12-placement-da-pane', (ev) => { ev.celula = { local: 'acima', cols: 180, rows: 50, cheia: true }; ev.panes = []; ev.panesObservadas = false; });
-  });
-  test('12: lateral sem "placed" no debug.log é não medida; placed sem placement lido reprova dizendo qual fonte faltou', () => {
-    naoMedida('12-placement-da-pane', (ev) => { ev.placementsDebug = []; });
-    const ev = evBoa(); ev.panes = [];
-    const r = a('12-placement-da-pane').avaliar(ev); assert.equal(r.ok, false); assert.match(r.detalhe, /placed/);
-  });
-  test('12: lateral onde a plataforma disse "unplaced" reprova (é o defeito que a T50 trata, não vácuo)', () => {
-    const ev = evBoa(); ev.placementsDebug = [{ colunas: 80, estado: 'unplaced' }];
-    const r = a('12-placement-da-pane').avaliar(ev); assert.equal(r.ok, false); assert.match(r.detalhe, /unplaced/);
-  });
-  test('12 (MAJOR r1): acima sem debug.log da plataforma (ausência não é prova) é não medida; com o log ativo e sem ui.open passa', () => {
-    const base = { local: 'acima', cols: 180, rows: 50, cheia: true };
-    naoMedida('12-placement-da-pane', (ev) => { ev.celula = base; ev.panes = []; ev.placementsDebug = []; ev.debugLogAtivo = false; });
-    const ok = evBoa(base); ok.panes = []; ok.placementsDebug = []; ok.debugLogAtivo = true;
-    assert.equal(a('12-placement-da-pane').avaliar(ok).ok, true);
+  test('12: sem sessão curta, sem quadro legível na tela ou sem debug.log é não medida (evidência vazia reprova)', () => {
+    naoMedida('12-placement-da-pane', (ev) => { ev.sessaoCurta = null; });
+    naoMedida('12-placement-da-pane', (ev) => { ev.sessaoCurta.quadros = 0; });
+    naoMedida('12-placement-da-pane', (ev) => { ev.sessaoCurta.antes = null; });
+    naoMedida('12-placement-da-pane', (ev) => { ev.sessaoCurta.depois = null; });
     naoMedida('12-placement-da-pane', (ev) => { ev.debugLogAtivo = false; });
+    naoMedida('12-placement-da-pane', (ev) => { ev.celula = { local: 'acima', cols: 180, rows: 50, cheia: true }; ev.sessaoCurta = curtaBoa(ev.celula); ev.debugLogAtivo = false; });
   });
-  test('12 (MAJOR r1): debugLogAtivo na coleta = debug.log existe E o nosso plugin aparece carregado nele', async () => {
-    const sem = montarExecucao({ semDebug: true }); assert.equal((await coleta0(sem)).debugLogAtivo, false);
-    const vazio = montarExecucao({ semDebug: true }); writeFileSync(join(vazio.rundir, 'debug.log'), '2026-11-14T04:43:26.718Z [DEBUG] outra coisa\n');
-    assert.equal((await coleta0(vazio)).debugLogAtivo, false);
-    const ok = montarExecucao({}); assert.equal((await coleta0(ok)).debugLogAtivo, true);
+  test('12: debug.log que diz "placed" sem a tela ter caixa reprova (o debug.log só confirma; nunca é a fonte de dock/inline)', () => {
+    const ev = evBoa(); ev.sessaoCurta.depois = { ...ev.sessaoCurta.depois, placement: null };
+    const r = a('12-placement-da-pane').avaliar(ev); assert.equal(r.ok, false); assert.match(r.detalhe, /tela/);
+  });
+  test('12: lateral abaixo do limiar sem "placed" no debug.log depois do pedido reprova; com "unplaced" sem pedido também', () => {
+    const base = { local: 'lateral', cols: 80, rows: 24, cheia: false };
+    const ev = evBoa(base); ev.sessaoCurta.debug = ev.sessaoCurta.debug.filter((d) => d.estado !== 'placed');
+    assert.equal(a('12-placement-da-pane').avaliar(ev).ok, false);
+    const ev2 = evBoa(); ev2.sessaoCurta.debug = [{ colunas: 180, estado: 'unplaced', unasked: true }, { colunas: 180, estado: 'placed' }];
+    assert.equal(a('12-placement-da-pane').avaliar(ev2).ok, false, '≥ limiar: a plataforma disse unplaced, não é o desenhado');
   });
   test('12: acima com ui.open no debug.log reprova (nunca os dois)', () => {
-    const ev = evBoa({ local: 'acima', cols: 180, rows: 50, cheia: true }); ev.placementsDebug = [{ colunas: 180, estado: 'placed' }];
+    const ev = evBoa({ local: 'acima', cols: 180, rows: 50, cheia: true }); ev.sessaoCurta.debug = [{ colunas: 180, estado: 'placed' }];
     assert.equal(a('12-placement-da-pane').avaliar(ev).ok, false);
   });
   test('9: sem nenhum veredito é não medida', () => { naoMedida('9-veredito-com-revisor-antes', (ev) => { ev.eventos = ev.eventos.filter((e) => e.tipo !== 'review.veredito'); }); });
@@ -1413,7 +1419,7 @@ describe('T49 (c) evidência vazia é "não medida" e REPROVA (nunca passa em v�
   test('7: sem nenhuma chamada no transcript é não medida', () => { naoMedida('7-sem-edit-em-harness-nem-status-a-mao', (ev) => { ev.transcript.chamadas = []; ev.transcript.textos = []; }); });
   test('as-demais-sem-evidência-reprovam-e-a-execução-reprova (nenhuma isenção, nenhuma contagem à parte)', () => {
     const vazio = evBoa();
-    Object.assign(vazio, { quadros: [], integradas: [], eventos: [], digitadas: [], transcript: { chamadas: [], textos: [] }, perguntas: [], despachos: [], entregasPublicadas: [], vivos: [], panes: [], panesObservadas: false, debugLogAtivo: false, placementsDebug: [], pouso: { percent: 0, limparNoDepende: false, pushes: 0, despachosDepois: 0 } });
+    Object.assign(vazio, { quadros: [], integradas: [], eventos: [], digitadas: [], transcript: { chamadas: [], textos: [] }, perguntas: [], despachos: [], entregasPublicadas: [], vivos: [], sessaoCurta: null, debugLogAtivo: false, placementsDebug: [], pouso: { percent: 0, limparNoDepende: false, pushes: 0, despachosDepois: 0 } });
     const r = avaliarExecucao(vazio);
     assert.equal(r.passa, false);
     assert.deepEqual(r.resultados.filter((x) => x.ok).map((x) => x.id), [], 'nenhuma asserção passa sobre evidência vazia');
@@ -1448,8 +1454,7 @@ describe('T49 avaliar offline: a mesma avaliação da execução, sobre uma exec
     const m = montarExecucao({});
     writeFileSync(join(m.rundir, 'debug.log'), '2026-11-14T04:43:26.718Z [DEBUG] ui.open gabarito-mestre gabarito-painel (unasked, 180 columns): placed\n');
     const ev = await coleta0(m);
-    assert.deepEqual(ev.placementsDebug, [{ colunas: 180, estado: 'placed' }]);
-    assert.equal(ev.panesObservadas, true);
+    assert.deepEqual(ev.placementsDebug, [{ colunas: 180, estado: 'placed', unasked: true }]);
     const sem = montarExecucao({ semDebug: true }); const ev2 = await coleta0(sem);
     assert.deepEqual(ev2.placementsDebug, []);
   });
@@ -1471,3 +1476,430 @@ describe('T49 avaliar offline: a mesma avaliação da execução, sobre uma exec
   });
 });
 async function coleta0(m) { return coletar(m.rundir, m.repo, { local: 'lateral', cols: 180, rows: 50, cheia: true }, roteiroColeta(), { pasta: m.pasta, total: 1 }); }
+
+// ─── T52: A1 por conversa, replay e sessão curta (emendas 44, 45, 49, 50) ───
+
+const ESC = '\x1b';
+const marcoOsc = (n) => `${ESC}]1337;gabarito-marco=${n}\x07`;
+/** Um quadro de tela: limpa, posiciona cada linha e fecha a janela síncrona (o que o TUI real faz a cada atualização). */
+const quadroRaw = (linhas) => `${ESC}[2J${linhas.map((l, i) => `${ESC}[${i + 1};1H${l}`).join('')}${ESC}[?2026l`;
+const bordaDireita = (l, cols) => `${l}${' '.repeat(Math.max(0, cols - [...l].length))}`;
+const AVISO_80 = 'painel lateral precisa de 144 colunas: /gabarito painel para abrir';
+const PERGUNTA_B = 'depende de você: Esta conversa é da entrega GM-13?  [ 1 GM-13 ] [ 2 uma nova ] [ 3 conversa avulsa ]';
+
+/** Tela 80×24 sem Pane (abaixo do limiar): conversa em cima, a linha única do AbovePrompt, a régua e o prompt embaixo. */
+const telaSemPane = (linhaUnica, rows = 24, cols = 80) => {
+  const L = Array.from({ length: rows }, () => '');
+  L[2] = '❯ pedido sintético do teste'; L[4] = '⏺ resposta sintética do teste';
+  if (linhaUnica !== null) L[rows - 4] = linhaUnica;
+  L[rows - 3] = '─'.repeat(cols); L[rows - 2] = '❯'; L[rows - 1] = '─'.repeat(cols);
+  return L;
+};
+/** Tela com a Pane `inline`: caixa de cantos arredondados acima da régua. */
+const telaInline = (interior, rows = 24, cols = 80) => {
+  const L = telaSemPane(null, rows, cols);
+  const topo = rows - 4 - interior.length - 1;
+  L[topo] = `╭${'─'.repeat(cols - 4)}✕─╮`;
+  interior.forEach((t, i) => { L[topo + 1 + i] = `│ ${t.padEnd(cols - 4)} │`; });
+  L[topo + 1 + interior.length] = `╰${'─'.repeat(cols - 2)}╯`;
+  return L;
+};
+/** Tela com a Pane `dock`: coluna de `│` contínua ao lado da conversa, "GABARITO ·" colado nela e o ✕ no alto. */
+const telaDock = (rows = 50, cols = 180, sep = 99) => {
+  const lado = ['', 'GABARITO · entrega não identificada', 'PAROU 01:44 · 3 paradas sem progresso', 'FASE 1 de 7', 'AGORA · LEIA · contexto 12 %'];
+  const L = Array.from({ length: rows }, (_, r) => `${bordaDireita(r === 3 ? '⏺ conversa' : '', sep)}│${r === 0 ? `${' '.repeat(cols - sep - 3)}✕` : (lado[r] ?? '')}`);
+  L[rows - 4] = '─'.repeat(cols); L[rows - 3] = '❯'; L[rows - 2] = '─'.repeat(cols); L[rows - 1] = '  ⏵⏵ auto mode on';
+  return L.slice(0, rows);
+};
+
+describe('T52 (emenda 49 a) a TELA: emulador VT sobre o tty.raw', () => {
+  test('quadro-por-janela-sincrona e marco-OSC-ancora-o-estagio', () => {
+    const raw = quadroRaw(['primeiro']) + marcoOsc('b-respondida') + quadroRaw(['segundo']) + marcoOsc('pedido');
+    const q = R.emularTela(raw, 4, 20);
+    assert.deepEqual(q.map((x) => x.marco), [null, 'b-respondida', 'b-respondida', 'pedido']);
+    assert.equal(q.find((x) => x.linhas[0] === 'primeiro').marco, null);
+    assert.equal(q.filter((x) => x.marco === 'b-respondida').at(-1).linhas[0], 'segundo', 'o último quadro do estágio é o que o dono via ao fim dele');
+    assert.equal(q.at(-1).linhas[0], 'segundo');
+  });
+  test('cursor-apagar-e-rolagem: o que o emulador desenha é o que a tela mostra', () => {
+    const q = R.emularTela(`${ESC}[2J${ESC}[2;5Hola${ESC}[1;1Hx${ESC}[2;5H${ESC}[K${ESC}[3;1Hfim${ESC}[?2026l`, 4, 20).at(-1);
+    assert.deepEqual(q.linhas, ['x', '', 'fim', '']);
+    const rolou = R.emularTela(`${ESC}[1;1Ha${ESC}[2;1Hb${ESC}[3;1Hc${ESC}[1S${ESC}[?2026l`, 3, 5).at(-1);
+    assert.deepEqual(rolou.linhas, ['b', 'c', '']);
+  });
+  test('caixa-do-painel: inline, dock e sem caixa (acima: a faixa começa na coluna 0) — placement e bodyRows lidos da tela', () => {
+    const inline = R.caixaDoPainel(telaInline(['GABARITO · entrega', 'AGORA · LEIA'], 24, 80), 80);
+    assert.deepEqual([inline.placement, inline.bodyRows, inline.bodyColumns, inline.interior], ['inline', 2, 76, ['GABARITO · entrega', 'AGORA · LEIA']]);
+    const dock = R.caixaDoPainel(telaDock(50, 180, 99), 180);
+    assert.deepEqual([dock.placement, dock.bodyColumns], ['dock', 80]);
+    assert.ok(dock.bodyRows >= 40, `a dock mede a altura da coluna de │ (${dock.bodyRows})`);
+    const faixa = R.caixaDoPainel(['GABARITO · entrega', 'FASE 1 de 7', ...telaSemPane(null).slice(2)], 80);
+    assert.equal(faixa.placement, null, 'a faixa do AbovePrompt (acima) não é Pane');
+    assert.equal(R.caixaDoPainel(telaSemPane(AVISO_80), 80).placement, null);
+    const outraCaixa = telaInline(['qualquer outra caixa'], 24, 80);
+    assert.equal(R.caixaDoPainel(outraCaixa, 80).placement, null, 'caixa sem o "GABARITO ·" não é a Pane do painel');
+  });
+  test('placement-lido-de-tela-gravada-real (a matriz 1794625214308): dock, inline e sem caixa', (t) => {
+    const dir = join(R.raizDoRepoReal(), '.claude-tmp', 'a1', '1794625214308');
+    if (!existsSync(dir)) { t.skip('execuções gravadas ausentes'); return; }
+    const ultimo = (id, rows, cols) => R.emularTela(readFileSync(join(dir, id, 'tty.raw'), 'utf8'), rows, cols).at(-1);
+    assert.equal(R.caixaDoPainel(ultimo('lateral-180x50-cheia', 50, 180).linhas, 180).placement, 'dock');
+    assert.equal(R.caixaDoPainel(ultimo('lateral-180x50-normal', 50, 180).linhas, 180).placement, 'inline');
+    assert.equal(R.caixaDoPainel(ultimo('lateral-80x24-normal', 24, 80).linhas, 80).placement, null, '80 colunas: a plataforma não colocou a Pane');
+    assert.equal(R.caixaDoPainel(ultimo('acima-80x24-cheia', 24, 80).linhas, 80).placement, null, 'acima: 0 Pane');
+  });
+  test('aviso-na-tela: inteiro com o N do reason, cortado ("painel …") e ausente', () => {
+    assert.deepEqual(R.avisoNaTela(['x', `${AVISO_80} [-]`]), { estado: 'inteiro', n: 144 });
+    assert.deepEqual(R.avisoNaTela(['painel lateral precisa de mais colunas: /gabarito painel para abrir']), { estado: 'inteiro', n: null });
+    assert.equal(R.avisoNaTela(['painel …']).estado, 'cortado');
+    assert.equal(R.avisoNaTela(['painel lateral precisa de 144 colunas: /gabarito …']).estado, 'cortado', 'a frase que não fecha é cortada');
+    assert.equal(R.avisoNaTela(['nada disso']).estado, null);
+  });
+  test('comando-de-resposta-da-pergunta-b (o runner responde como o dono): id e opção da própria pergunta, nunca inventados', () => {
+    assert.equal(R.comandoDeResposta({ id: 'sess:3', opcoes: ['GM-13', 'uma nova', 'conversa avulsa'] }), '/gabarito-mestre:responder sess:3 3');
+    assert.equal(R.comandoDeResposta(null), null);
+    assert.equal(R.comandoDeResposta({ id: 'sess:3', opcoes: ['a', 'b'] }), null, 'resposta fixa fora das opções não é digitada');
+    assert.equal(R.comandoDeResposta({ id: '', opcoes: ['a', 'b', 'c'] }), null);
+  });
+});
+
+/** Uma sessão curta GRAVADA: tty.raw com marcos, debug.log, curta.json e resposta-b.json. `v` estraga um campo. */
+function montarCurta(v = {}) {
+  const celula = v.celula ?? { local: 'lateral', cols: 80, rows: 24, cheia: false };
+  const rundir = tmp(); mkdirSync(join(rundir, 'obs'), { recursive: true });
+  const pedido = v.pedido ?? R.precisaPedido(celula);
+  writeFileSync(join(rundir, 'celula.json'), JSON.stringify(celula));
+  writeFileSync(join(rundir, 'curta.json'), JSON.stringify({ pedido, respostaB: 3 }));
+  if (v.semRespostaB !== true) writeFileSync(join(rundir, 'resposta-b.json'), JSON.stringify(v.respostaB ?? { estado: 'respondida', pergunta: 'sess:3', resposta: 3 }));
+  const { rows, cols } = celula;
+  // estágio 1: pergunta (b) aberta; a linha única mostra a pergunta e o aviso SAI CORTADO (emenda 50)
+  let raw = marcoOsc('inicio') + quadroRaw(telaSemPane(v.antesDaB ?? `${PERGUNTA_B} painel …`, rows, cols));
+  // estágio 2: (b) respondida; o aviso tem de estar INTEIRO na linha única, antes do pedido
+  raw += marcoOsc('b-respondida');
+  raw += quadroRaw(v.telaDepoisDaB ?? telaSemPane(v.depoisDaB === undefined ? `${AVISO_80} [-]` : v.depoisDaB, rows, cols));
+  if (pedido && v.semPedido !== true) {
+    raw += marcoOsc('pedido') + quadroRaw(telaSemPane(null, rows, cols));
+    raw += marcoOsc('depois-do-pedido') + quadroRaw(v.telaDepoisDoPedido ?? telaInline(['GABARITO · entrega', 'AGORA · LEIA'], rows, cols));
+  }
+  writeFileSync(join(rundir, 'tty.raw'), raw);
+  const debug = ['2026-11-14T04:40:00.000Z [DEBUG] Checking plugin gabarito-mestre: enabled'];
+  if (v.semUnasked !== true && pedido) debug.push(`2026-11-14T04:40:10.000Z [DEBUG] ui.open gabarito-mestre gabarito-painel (unasked, ${cols} columns): waits unplaced (unasked below ${v.limiar ?? 144} columns (${cols} now): placed when the person opens it, or when the terminal is widened to ${v.limiar ?? 144} columns)`);
+  if (v.semPlaced !== true && celula.local === 'lateral') debug.push(`2026-11-14T04:41:00.000Z [DEBUG] ui.open gabarito-mestre gabarito-painel (${pedido ? 'asked' : 'unasked'}, ${cols} columns): placed`);
+  writeFileSync(join(rundir, 'debug.log'), `${debug.join('\n')}\n`);
+  writeFileSync(join(rundir, 'obs', 'a1.jsonl'), `${JSON.stringify({ t: 1, ev: 'render', comp: 'AbovePrompt', maxRows: 7, rows, bodyColumns: cols - 5, hasSurvey: false })}\n`);
+  return { rundir, celula };
+}
+const r12 = (m) => R.avaliarCurta(m.rundir, m.celula).resultados.find((x) => x.id === '12-placement-da-pane');
+
+describe('T52 (emendas 49 b e 50) asserção 12 lida da TELA da sessão curta: aviso inteiro DEPOIS da (b) respondida, pedido do dono, Pane colocada', () => {
+  test('sessao-boa-80x24: (b) respondida, aviso inteiro antes do pedido, pedido, Pane inline na tela', () => {
+    const m = montarCurta();
+    const r = r12(m);
+    assert.equal(r.ok, true, r.detalhe);
+    const sc = R.lerSessaoCurta(m.rundir, m.celula);
+    assert.deepEqual([sc.fonte, sc.antes.aviso, sc.antes.placement, sc.depois.placement, sc.pedidoFeito], ['tela', { estado: 'inteiro', n: 144 }, null, 'inline', true]);
+    assert.deepEqual(sc.marcos, ['inicio', 'b-respondida', 'pedido', 'depois-do-pedido']);
+    assert.equal(sc.respostaB.estado, 'respondida', 'a resposta do runner fica gravada na evidência');
+  });
+  test('aviso-CORTADO-depois-da-(b)-reprova (mutação: aceita aviso cortado)', () => {
+    const r = r12(montarCurta({ depoisDaB: 'painel … [-]' }));
+    assert.equal(r.ok, false); assert.match(r.detalhe, /cortado/);
+  });
+  test('aviso-inteiro-so-ANTES-da-(b)-respondida-nao-vale (a medida é depois da resposta)', () => {
+    const r = r12(montarCurta({ antesDaB: `${AVISO_80}`, depoisDaB: 'painel … [-]' }));
+    assert.equal(r.ok, false); assert.match(r.detalhe, /cortado/);
+  });
+  test('aviso-AUSENTE-antes-do-pedido-reprova (mutação: aviso não exigido)', () => {
+    const r = r12(montarCurta({ depoisDaB: '' }));
+    assert.equal(r.ok, false); assert.match(r.detalhe, /aviso ausente/);
+  });
+  test('pergunta-(b)-ainda-aberta-ou-PAROU-que-nao-sai-e-evidencia-vazia-e-reprova', () => {
+    const aberta = r12(montarCurta({ depoisDaB: `${PERGUNTA_B} ${AVISO_80}` }));
+    assert.equal(aberta.ok, false); assert.match(aberta.detalhe, /pergunta \(b\) continua aberta.*evidência vazia/);
+    const parou = r12(montarCurta({ depoisDaB: `PAROU 01:44 · 3 paradas sem progresso ${AVISO_80}` }));
+    assert.equal(parou.ok, false); assert.match(parou.detalhe, /PAROU aberto que não saiu.*evidência vazia/);
+  });
+  test('pedido-do-dono-ausente-reprova (mutação: pedido do dono ausente); sem a Pane na tela depois do pedido também', () => {
+    const sem = r12(montarCurta({ semPedido: true }));
+    assert.equal(sem.ok, false); assert.match(sem.detalhe, /pedido do dono/);
+    const vazia = r12(montarCurta({ telaDepoisDoPedido: telaSemPane(null) }));
+    assert.equal(vazia.ok, false); assert.match(vazia.detalhe, /depois do pedido.*lido na tela null/);
+  });
+  test('Pane-ja-colocada-antes-do-pedido-reprova (a tabela medida diz não colocada abaixo do limiar)', () => {
+    const r = r12(montarCurta({ telaDepoisDaB: telaInline([`GABARITO · entrega`, AVISO_80]) }));
+    assert.equal(r.ok, false); assert.match(r.detalhe, /já colocada antes do pedido/);
+  });
+  test('N-do-aviso-vem-do-reason-da-plataforma: aviso com número diferente do limiar do debug.log reprova (nunca número fixo)', () => {
+    const r = r12(montarCurta({ limiar: 150 }));
+    assert.equal(r.ok, false); assert.match(r.detalhe, /144 colunas mas o reason da plataforma diz 150/);
+    assert.equal(r12(montarCurta({ limiar: 144 })).ok, true);
+  });
+  test('resposta-da-(b)-ausente-da-evidencia-ou-debug.log-sem-unasked-reprova', () => {
+    const sem = r12(montarCurta({ semRespostaB: true }));
+    assert.equal(sem.ok, false); assert.match(sem.detalhe, /resposta do runner à pergunta \(b\) não está gravada/);
+    const naoAbriu = r12(montarCurta({ respostaB: { estado: 'nao-abriu', pergunta: null, resposta: null } }));
+    assert.equal(naoAbriu.ok, true, 'a (b) que não abriu fica registrada e não bloqueia');
+    const semUn = r12(montarCurta({ semUnasked: true }));
+    assert.equal(semUn.ok, false); assert.match(semUn.detalhe, /unasked/);
+  });
+  test('180x50-sem-pedido: dock (cheia) e inline (normal) lidos da tela; sem Pane na tela reprova mesmo com "placed" no debug.log', () => {
+    const cheia = { local: 'lateral', cols: 180, rows: 50, cheia: true };
+    assert.equal(r12(montarCurta({ celula: cheia, telaDepoisDaB: telaDock(), pedido: false })).ok, true);
+    assert.equal(r12(montarCurta({ celula: cheia, telaDepoisDaB: telaInline(['GABARITO · e'], 50, 180), pedido: false })).ok, false, 'inline onde a tabela manda dock');
+    const semCaixa = r12(montarCurta({ celula: cheia, telaDepoisDaB: telaSemPane(null, 50, 180), pedido: false }));
+    assert.equal(semCaixa.ok, false, 'placement lido só do debug.log (sem dock/inline na tela) reprova (mutação: debug.log como fonte)');
+    const normal = { local: 'lateral', cols: 180, rows: 50, cheia: false };
+    assert.equal(r12(montarCurta({ celula: normal, telaDepoisDaB: telaInline(['GABARITO · e'], 50, 180), pedido: false })).ok, true);
+  });
+  test('acima: 0 Pane na tela e nenhum ui.open; a geometria da curta vem do AbovePrompt', () => {
+    const acima = { local: 'acima', cols: 80, rows: 24, cheia: false };
+    const m = montarCurta({ celula: acima, pedido: false, depoisDaB: '' });
+    assert.equal(r12(m).ok, true);
+    assert.deepEqual(R.avaliarCurta(m.rundir, acima).geometria, { AbovePrompt: { maxRows: 7, rows: 24, bodyColumns: 75 } });
+    assert.equal(r12(montarCurta({ celula: acima, pedido: false, depoisDaB: '', telaDepoisDaB: telaInline(['GABARITO · e']) })).ok, false, 'Pane na tela em acima (nunca os dois)');
+  });
+  test('geometria-da-curta-lateral: bodyRows e bodyColumns lidos da caixa na tela depois do pedido', () => {
+    const m = montarCurta();
+    assert.deepEqual(R.avaliarCurta(m.rundir, m.celula).geometria, { Pane: { bodyRows: 2, bodyColumns: 76 } });
+    assert.equal(R.geometriaDaCurta(null, m.celula), null);
+    const sem = montarCurta({ telaDepoisDoPedido: telaSemPane(null) });
+    assert.equal(R.avaliarCurta(sem.rundir, sem.celula).geometria, null, 'sem caixa na tela, sem geometria (o replay não inventa)');
+  });
+});
+
+describe('T52 (emenda 49 b) o a1.exp da sessão curta: marcos no tty.raw, (b) respondida, pedido só abaixo do limiar', () => {
+  /** Roda o a1.exp REAL em modo curta com um `claude` e um `node` de mentira (fora do repo; tempos escalados por A1_ESCALA_TEMPO). */
+  function rodarCurta({ pedido, comando }) {
+    const rundir = tmp(); const repo = join(rundir, 'repo'); const bin = join(rundir, 'bin'); mkdirSync(repo, { recursive: true }); mkdirSync(bin, { recursive: true });
+    writeFileSync(join(rundir, 'celula.json'), JSON.stringify({ local: 'lateral', cols: 80, rows: 24, cheia: false }));
+    writeFileSync(join(rundir, 'curta.json'), JSON.stringify({ pedido, respostaB: 3 }));
+    writeFileSync(join(rundir, 'claude.args'), '--model\nx\n');
+    writeFileSync(join(rundir, 'debug.log'), 'Checking plugin gabarito-mestre: enabled\n');
+    writeFileSync(join(bin, 'claude'), '#!/bin/sh\nmkdir -p "$OBS_DIR"\necho \'{"t":1,"ev":"render","comp":"AbovePrompt","maxRows":3,"rows":24,"bodyColumns":75}\' > "$OBS_DIR/a1.jsonl"\nwhile IFS= read -r l; do printf "%s\\n" "$l" >> "$RUNDIR_FAKE/recebido.txt"; case "$l" in /exit*) exit 0;; esac; done\n');
+    const node = join(rundir, 'node-falso'); writeFileSync(node, '#!/bin/sh\ncase "$2" in resposta-b) [ -n "$FAKE_CMD" ] && echo "$FAKE_CMD"; exit 0;; *) exit 0;; esac\n');
+    for (const f of [join(bin, 'claude'), node]) chmodSync(f, 0o755);
+    const r = spawnSync('expect', ['-f', join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), rundir, repo, bin, node, 'runner', 'curta'], { encoding: 'utf8', timeout: 90_000, env: { ...process.env, A1_ESCALA_TEMPO: '0.1', RUNDIR_FAKE: rundir, FAKE_CMD: comando } });
+    const recebido = existsSync(join(rundir, 'recebido.txt')) ? readFileSync(join(rundir, 'recebido.txt'), 'utf8').split('\n').filter(Boolean) : [];
+    return { r, rundir, recebido, marcos: R.emularTela(readFileSync(join(rundir, 'tty.raw'), 'utf8'), 24, 80).map((q) => q.marco).filter((m, i, a) => m !== null && m !== a[i - 1]) };
+  }
+  test('abaixo-do-limiar: responde a (b) com o comando do runner, marca os estágios em ordem e digita /gabarito painel', { timeout: 100_000 }, () => {
+    const c = rodarCurta({ pedido: true, comando: '/gabarito-mestre:responder sess:3 3' });
+    assert.equal(c.r.status, 0, `${c.r.stdout}${c.r.stderr}`);
+    assert.deepEqual(c.marcos, ['inicio', 'b-respondida', 'pedido', 'depois-do-pedido']);
+    const iResp = c.recebido.findIndex((l) => l.includes('/gabarito-mestre:responder sess:3 3'));
+    const iPed = c.recebido.findIndex((l) => l.trim() === '/gabarito painel');
+    assert.ok(iResp >= 0, `a resposta da (b) foi digitada: ${JSON.stringify(c.recebido)}`);
+    assert.ok(iPed > iResp, 'o pedido do dono vem DEPOIS de a (b) ser respondida');
+  });
+  test('sem-pedido-e-sem-pergunta: nada é digitado além do /exit; os marcos de pedido não existem', { timeout: 100_000 }, () => {
+    const c = rodarCurta({ pedido: false, comando: '' });
+    assert.equal(c.r.status, 0, `${c.r.stdout}${c.r.stderr}`);
+    assert.deepEqual(c.marcos, ['inicio', 'b-respondida']);
+    assert.deepEqual(c.recebido.filter((l) => !l.startsWith('/exit')), [], 'nem resposta nem /gabarito painel');
+  });
+});
+
+describe('T52 (emenda 45) replay: os 4 controles medidos, relógio injetável, só o desenho', () => {
+  const UUID1 = '3ae9ccd6-f878-4f59-ac78-6406f260d71f'; const UUID2 = 'a8ce0882-155a-491c-8676-a96438f52d1d';
+  /** Repo de conversa mínimo: diário de 2 sessões (uuid) e um diário de loop; eventos em instantes conhecidos. */
+  function repoDeConversa({ sessoes = [[UUID1, '2026-11-14T05:00:00.000Z']] } = {}) {
+    const rundir = tmp(); const repo = join(rundir, 'repo');
+    const dir = join(repo, '.harness', 'entregas', 'GM-13'); mkdirSync(dir, { recursive: true }); mkdirSync(join(rundir, 'obs'), { recursive: true }); mkdirSync(join(rundir, 'bin'), { recursive: true });
+    for (const [id, ts] of sessoes) writeFileSync(join(dir, `events.${id}.jsonl`), `${JSON.stringify({ seq: 1, ts, tipo: 'sessao.inicio', dados: {} })}\n${JSON.stringify({ seq: 2, ts: new Date(Date.parse(ts) + 60_000).toISOString(), tipo: 'dono.mensagem', dados: { sha256: 'a'.repeat(64) } })}\n`);
+    writeFileSync(join(repo, 'README.md'), 'x'); writeFileSync(join(rundir, 'gh.json'), '{}');
+    return { rundir, repo };
+  }
+  const geometria = { AbovePrompt: { maxRows: 7, rows: 24, bodyColumns: 75 } };
+  const celulaAcima = { local: 'acima', cols: 80, rows: 24, cheia: true };
+  const conversaDe = (m) => R.lerConversa(m.rundir, { home: tmp() });
+  const comContexto = () => { const e = clone(ESTADO_REAL); e.agora.orquestrador.contexto = 19; return e; };
+
+  test('sessao-real-e-pacote-fixo: a sessão vem do diário (uuid), o pacote é o sorteado dela e encadeia com o /clear', async () => {
+    const m = repoDeConversa({ sessoes: [[UUID1, '2026-11-14T05:00:00.000Z'], [UUID2, '2026-11-14T06:00:00.000Z']] });
+    assert.equal(R.sessaoRealDe(m.repo, Date.parse('2026-11-14T05:30:00.000Z')), UUID1);
+    assert.equal(R.sessaoRealDe(m.repo, Date.parse('2026-11-14T06:30:00.000Z')), UUID2, 'depois do /clear vale a sessão nova');
+    assert.equal(R.sessaoRealDe(m.repo, Date.parse('2026-11-14T04:00:00.000Z')), null, 'antes da 1ª sessão não há sessão real (nunca "S-a1")');
+    const p1 = await R.pacoteDaConversa(m.repo, UUID1); const p2 = await R.pacoteDaConversa(m.repo, UUID2);
+    assert.match(p1, /^[a-z0-9-]{1,32}$/);
+    assert.notEqual(p2, p1, 'o sorteio da 2ª sessão exclui o pacote da anterior (anterior)');
+    assert.equal(await R.pacoteDaConversa(m.repo, UUID1), p1, 'determinístico');
+    assert.equal(await R.pacoteDaConversa(m.repo, 'S-a1'), null);
+  });
+  test('replay-ingenuo-reprova: entrada com session_id "S-a1" (ou fora do diário) e pacote ausente são recusados', () => {
+    assert.deepEqual(R.validarEntradaDoReplay({ session_id: UUID1 }, { sessoes: [UUID1], pacote: 'herois' }), []);
+    assert.match(R.validarEntradaDoReplay({ session_id: 'S-a1' }, { pacote: 'herois' }).join(';'), /replay ingênuo/);
+    assert.match(R.validarEntradaDoReplay({ session_id: UUID2 }, { sessoes: [UUID1], pacote: 'herois' }).join(';'), /sem diário/);
+    assert.match(R.validarEntradaDoReplay({ session_id: UUID1 }, { sessoes: [UUID1], pacote: null }).join(';'), /pacote/);
+    assert.match(R.validarEntradaDoReplay(null).join(';'), /não é objeto/);
+  });
+  test('replayDoPonto-recusa-conversa-sem-sessao-real (replay ingênuo reprova) e usa session_id real, pacote fixo e o relógio injetado', async () => {
+    const m = repoDeConversa();
+    const t = Date.parse('2026-11-14T05:10:00.000Z'); const visto = [];
+    const deps = { estado: async (a) => { visto.push(a); return comContexto(); } };
+    const r = await R.replayDoPonto({ conversa: conversaDe(m), snap: { t, n: 1, estado: {} }, geometria, celula: celulaAcima, destino: join(tmp(), 'w'), deps });
+    assert.equal(visto[0].entrada.session_id, UUID1, 'session_id REAL da conversa');
+    assert.equal(visto[0].agoraMs, t, 'relógio injetado: o instante gravado do snapshot, nunca o de agora');
+    assert.equal(visto[0].pacote, await R.pacoteDaConversa(m.repo, UUID1));
+    assert.ok(r.linhas.length > 0);
+    // o mesmo estado com 2 relógios: o relógio chega ao produto e a saída mascarada não depende dele
+    const dois = await R.replayDoPonto({ conversa: conversaDe(m), snap: { t: t + 3_600_000, n: 1, estado: {} }, geometria, celula: celulaAcima, destino: join(tmp(), 'w2'), deps });
+    assert.equal(visto[1].agoraMs, t + 3_600_000);
+    assert.deepEqual(dois.linhas, r.linhas);
+    // antes de qualquer sessão: replay ingênuo recusado
+    await assert.rejects(() => R.replayDoPonto({ conversa: conversaDe(m), snap: { t: Date.parse('2026-11-14T04:00:00.000Z'), n: 1, estado: {} }, geometria, celula: celulaAcima, destino: join(tmp(), 'w3'), deps }), /replay recusado.*session_id/);
+  });
+  test('contexto-%-fora-do-replay: o quadro nunca leva "contexto <n> %" (só existe ao vivo; mutação: contexto incluído)', async () => {
+    const m = repoDeConversa();
+    const r = await R.replayDoPonto({ conversa: conversaDe(m), snap: { t: Date.parse('2026-11-14T05:10:00.000Z'), n: 1, estado: {} }, geometria, celula: celulaAcima, destino: join(tmp(), 'w'), deps: { estado: async () => comContexto() } });
+    assert.ok(r.linhas.some((l) => /contexto N %/.test(l)), 'a linha do AGORA segue lá, com o valor mascarado');
+    assert.deepEqual(R.camposAoVivoNoQuadro(r.linhas), []);
+    assert.deepEqual(R.camposAoVivoNoQuadro(['AGORA · GANDALF · contexto 19 %']), ['AGORA · GANDALF · contexto 19 %'], 'o detector acha o contexto que escapou');
+    assert.equal(R.mascararAoVivo('AGORA · GANDALF · contexto 19 %'), 'AGORA · GANDALF · contexto N %');
+    assert.equal(R.mascararAoVivo('AGORA · GANDALF · contexto ?'), 'AGORA · GANDALF · contexto N %');
+    assert.equal(R.mascararAoVivo('  SAM · T24 · lendo 2 arquivos · 3m 20s'), '  SAM · T24 · lendo 2 arquivos · D');
+    assert.equal(R.mascararAoVivo('AGORA · GANDALF · contexto 70 % · hora de pousar'), 'AGORA · GANDALF · contexto N %');
+  });
+  test('diario-no-instante: o esqueleto do repo corta os eventos com ts depois do snapshot e liga o resto', () => {
+    const m = repoDeConversa();
+    const w = R.reconstruirRepo(m.repo, join(tmp(), 'esqueleto'), Date.parse('2026-11-14T05:00:30.000Z'));
+    const eventos = readFileSync(join(w, '.harness', 'entregas', 'GM-13', `events.${UUID1}.jsonl`), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    assert.deepEqual(eventos.map((e) => e.tipo), ['sessao.inicio'], 'o dono.mensagem de 05:01 ainda não existia às 05:00:30');
+    assert.equal(readFileSync(join(w, 'README.md'), 'utf8'), 'x', 'o resto do repo é o mesmo (symlink)');
+    const tudo = R.reconstruirRepo(m.repo, join(tmp(), 'esqueleto2'), Date.parse('2026-11-14T07:00:00.000Z'));
+    assert.equal(readFileSync(join(tudo, '.harness', 'entregas', 'GM-13', `events.${UUID1}.jsonl`), 'utf8').split('\n').filter(Boolean).length, 2);
+  });
+  test('placement-por-replay-recusado e comportamento-por-replay-recusado: só o desenho (1, 2) se mede por replay', () => {
+    assert.throws(() => R.avaliarPorReplay({ n: 3, quadros: [], quadrosSemProps: 0, celula: celulaAcima }, ['12-placement-da-pane']), /replay recusado para 12-placement-da-pane/);
+    assert.throws(() => R.avaliarPorReplay({ n: 3, quadros: [], quadrosSemProps: 0, celula: celulaAcima }, ['3-sem-task-integrada']), /só o desenho/);
+    const ev = { n: 1, celula: { local: 'acima', cols: 180, rows: 50, cheia: true }, quadros: [{ linhas: QUADRO_CHEIO, itensDepende: 1 }], quadrosSemProps: 0 };
+    assert.deepEqual(R.avaliarPorReplay(ev).map((x) => [x.id, x.ok]), [['1-depende-no-topo', true], ['2-blocos-e-corte', true]]);
+    assert.equal(R.avaliarPorReplay({ ...ev, n: 0 }).every((x) => x.ok === false), true, 'replay sem nenhum ponto é evidência vazia e reprova');
+    assert.equal(R.avaliarPorReplay({ ...ev, quadrosSemProps: 1 }).some((x) => x.ok === false), true, 'geometria que a curta não mediu é "não medida"');
+  });
+  test('replayDaConversa-sem-geometria-da-curta-nao-mede (não inventa props) e lança com campo ao vivo no quadro', async () => {
+    const m = repoDeConversa(); mkdirSync(join(m.rundir, 'estados'), { recursive: true });
+    writeFileSync(join(m.rundir, 'estados', '01.json'), JSON.stringify({ n: 1, t: Date.parse('2026-11-14T05:10:00.000Z'), props: {}, agentes: [], estado: {} }));
+    const deps = { estado: async () => comContexto() };
+    const sem = await R.replayDaConversa({ conversa: conversaDe(m), celula: celulaAcima, geometria: null, destino: join(tmp(), 'r'), deps });
+    assert.deepEqual([sem.n, sem.quadros.length, sem.quadrosSemProps], [1, 0, 1]);
+    const com = await R.replayDaConversa({ conversa: conversaDe(m), celula: celulaAcima, geometria, destino: join(tmp(), 'r2'), deps });
+    assert.deepEqual([com.n, com.quadros.length, com.quadrosSemProps], [1, 1, 0]);
+    assert.ok(com.quadros[0].itensDepende >= 0);
+  });
+  test('replay-reconstruido-bate-na-estrutura-com-a-tela-real: 26/26 em 80x24 (matriz gravada 1794625214308; pula se ausente)', { timeout: 120_000 }, async (t) => {
+    const dir = join(R.raizDoRepoReal(), '.claude-tmp', 'a1', '1794625214308', 'acima-80x24-cheia');
+    if (!existsSync(dir)) { t.skip('matriz gravada ausente'); return; }
+    const conversa = R.lerConversa(dir, { home: tmp() });
+    const reais = R.blocosDaFaixaNaTela(R.emularTela(readFileSync(join(dir, 'tty.raw'), 'utf8'), 24, 80), 24);
+    const snaps = readdirSync(join(dir, 'estados')).sort().map((f) => ({ ...JSON.parse(readFileSync(join(dir, 'estados', f), 'utf8')), t: statSync(join(dir, 'estados', f)).mtimeMs, f }));
+    let bate = 0;
+    const destino = tmp();
+    for (const s of snaps) {
+      const r = await R.replayDoPonto({ conversa, snap: s, geometria: { AbovePrompt: s.props.AbovePrompt }, celula: { local: 'acima', cols: 80, rows: 24, cheia: true }, destino: join(destino, s.f) });
+      if (reais.some((b) => R.estruturaDe(b) === R.estruturaDe(r.linhas) && b.length === r.linhas.length)) bate += 1;
+    }
+    assert.equal(snaps.length, 26);
+    assert.equal(bate, 26, `estrutura igual a algum quadro real em ${bate}/26`);
+    // replay ingênuo (session_id "S-a1" do runner antigo) NÃO bate: o controle 1 é o que faz o replay valer
+    const ingenuo = await R.replayDoPonto({ conversa, snap: snaps[0], geometria: { AbovePrompt: snaps[0].props.AbovePrompt }, celula: { local: 'acima', cols: 80, rows: 24, cheia: true }, destino: join(destino, 'ing'), deps: { estado: (a) => R.estadoEmProcesso({ ...a, entrada: { ...a.entrada, session_id: 'S-a1' } }) } });
+    assert.notEqual(R.estruturaDe(ingenuo.linhas), R.estruturaDe((await R.replayDoPonto({ conversa, snap: snaps[0], geometria: { AbovePrompt: snaps[0].props.AbovePrompt }, celula: { local: 'acima', cols: 80, rows: 24, cheia: true }, destino: join(destino, 'bom') })).linhas));
+  });
+});
+
+describe('T52 (emenda 45) a matriz por conversa: 8 curtas + 2 conversas + replay; passa = 8/8; parada cedo', () => {
+  const resultadosOk = (ids) => ids.map((id) => ({ id, ref: id, ok: true, detalhe: 'ok' }));
+  const idsDe = (g) => R.GRUPOS[g];
+  /** Base gravada de mentira: as 2 conversas e as 8 curtas existem como pastas; as fontes de avaliação são injetadas. */
+  function baseGravada({ semCurta = null, semConversa = null } = {}) {
+    const base = tmp();
+    for (const c of MATRIZ) if (idDaCelula(c) !== semCurta) mkdirSync(join(base, `curta-${idDaCelula(c)}`), { recursive: true });
+    for (const id of R.CONVERSAS) if (id !== semConversa) mkdirSync(join(base, id), { recursive: true });
+    return base;
+  }
+  const depsBoas = (extra = {}) => ({
+    conversa: async () => ({ resultados: resultadosOk(idsDe('comportamento')) }),
+    curta: async () => ({ resultados: resultadosOk(idsDe('placement')), geometria: { AbovePrompt: { maxRows: 7, rows: 24, bodyColumns: 75 } } }),
+    replay: async ({ celula }) => ({ celula, n: 26, quadros: [], quadrosSemProps: 0 }),
+    ...extra,
+  });
+  const avaliarDesenhoOk = (orig) => orig;
+  test('as-conversas-sao-uma-por-local-em-180x50-cheia', () => {
+    assert.deepEqual(R.CONVERSAS, ['lateral-180x50-cheia', 'acima-180x50-cheia']);
+    assert.equal(R.conversaDoLocal('acima'), 'acima-180x50-cheia');
+  });
+  test('grupos: desenho = 1 e 2; placement = 12; comportamento = o resto; juntos são as 17 e não se repetem', () => {
+    assert.deepEqual(R.GRUPOS.desenho, ['1-depende-no-topo', '2-blocos-e-corte']);
+    assert.deepEqual(R.GRUPOS.placement, ['12-placement-da-pane']);
+    const juntos = [...R.GRUPOS.desenho, ...R.GRUPOS.placement, ...R.GRUPOS.comportamento];
+    assert.equal(new Set(juntos).size, 17); assert.deepEqual([...juntos].sort(), [...R.GRUPOS.todas].sort());
+    assert.throws(() => avaliarExecucao(evBoa(), 'nenhum'), /grupo de asserções desconhecido/);
+    const so = avaliarExecucao(evBoa(), 'comportamento');
+    assert.deepEqual(so.resultados.map((x) => x.id), R.GRUPOS.comportamento);
+  });
+  test('8/8: as 3 fontes por combinação (comportamento da conversa do local, desenho por replay, placement pela curta)', async () => {
+    const base = baseGravada();
+    const g = await R.avaliarGravada(base, { falas: [] }, { deps: { ...depsBoas(), replay: async ({ celula }) => ({ celula, n: 1, quadros: [{ linhas: QUADRO_CHEIO, itensDepende: 1 }], quadrosSemProps: 0 }) } });
+    assert.equal(g.rel.total, 8);
+    assert.deepEqual(g.rel.linhas.filter((l) => !l.passa).map((l) => `${l.celula}:${l.motivo}`), [], 'nenhuma combinação reprova');
+    assert.equal(g.rel.ok, true);
+    assert.equal(g.execucoes[0].resultados.length, 17, 'cada combinação junta as 17 asserções (12 + 1/2 + comportamento)');
+  });
+  test('curta-ausente-ou-conversa-ausente-reprova-a-combinação (evidência vazia = reprova; nunca 8/8 por omissão)', async () => {
+    const semCurta = await R.avaliarGravada(baseGravada({ semCurta: 'lateral-80x24-normal' }), { falas: [] }, { deps: depsBoas() });
+    assert.equal(semCurta.rel.ok, false);
+    assert.match(semCurta.rel.linhas.find((l) => l.celula === 'lateral-80x24-normal').motivo, /12-placement/);
+    const semConv = await R.avaliarGravada(baseGravada({ semConversa: 'acima-180x50-cheia' }), { falas: [] }, { deps: depsBoas() });
+    assert.equal(semConv.rel.passou <= 4, true, 'as 4 combinações de acima não têm a conversa do local');
+    assert.match(semConv.execucoes.find((x) => x.celula.startsWith('acima')).resultados.find((r) => !r.ok).detalhe, /não executada|conversa/);
+  });
+  test('replay-que-lanca-ou-asserção-de-comportamento-que-falha-reprova-só-a-combinação-dela', async () => {
+    const g = await R.avaliarGravada(baseGravada(), { falas: [] }, { deps: depsBoas({ replay: async ({ celula }) => { if (celula.local === 'acima' && celula.cols === 80) throw new Error('replay recusado: session_id'); return { celula, n: 1, quadros: [{ linhas: QUADRO_CHEIO, itensDepende: 1 }], quadrosSemProps: 0 }; } }) });
+    assert.deepEqual(g.rel.linhas.filter((l) => !l.passa).map((l) => l.celula).sort(), ['acima-80x24-cheia', 'acima-80x24-normal']);
+    assert.match(g.execucoes.find((x) => x.celula === 'acima-80x24-cheia').resultados.find((r) => r.id === '2-blocos-e-corte').detalhe, /replay: replay recusado/);
+    const g2 = await R.avaliarGravada(baseGravada(), { falas: [] }, { deps: depsBoas({ replay: async ({ celula }) => ({ celula, n: 1, quadros: [{ linhas: QUADRO_CHEIO, itensDepende: 1 }], quadrosSemProps: 0 }), conversa: async (rundir) => ({ resultados: resultadosOk(idsDe('comportamento')).map((r) => (rundir.endsWith('lateral-180x50-cheia') && r.id === '9-veredito-com-revisor-antes' ? { ...r, ok: false } : r)) }) }) });
+    assert.equal(g2.rel.linhas.filter((l) => l.celula.startsWith('lateral') && !l.passa).length, 4, 'a falha da conversa lateral reprova as 4 combinações lateral');
+    assert.equal(g2.rel.linhas.filter((l) => l.celula.startsWith('acima') && !l.passa).length, 0);
+    void avaliarDesenhoOk;
+  });
+  test('matrizA1-parada-cedo: sessão curta reprovada ou invariante violada NÃO abre as conversas; tudo passa ⇒ as 2 conversas em paralelo', async () => {
+    const chamadas = [];
+    const mat = (res) => async (fonte, raiz, roteiro, so, opc) => { chamadas.push({ so, modo: opc.modo ?? 'conversa', grupo: opc.grupo ?? null, paralelo: opc.paralelo }); return res(opc); };
+    const base = { rel: { passou: 8, total: 8, ok: true, linhas: [] } };
+    const avalia = async () => base;
+    const bad = await R.matrizA1('f', 'r', { falas: [] }, { deps: { matriz: mat((o) => ({ execucoes: [{ celula: 'lateral-80x24-normal', passa: false }], abortada: null })), avaliarGravada: avalia } });
+    assert.deepEqual(chamadas.map((c) => c.modo), ['curta'], 'curta reprovada: 1 chamada só');
+    assert.match(bad.abortada, /sessão curta reprovada em lateral-80x24-normal/);
+    chamadas.length = 0;
+    const inv = await R.matrizA1('f', 'r', { falas: [] }, { deps: { matriz: mat(() => ({ execucoes: [], abortada: 'invariante violada na célula x' })), avaliarGravada: avalia } });
+    assert.deepEqual(chamadas.map((c) => c.modo), ['curta']); assert.match(inv.abortada, /invariante violada/);
+    chamadas.length = 0;
+    const ok = await R.matrizA1('f', 'r', { falas: [] }, { deps: { matriz: mat(() => ({ execucoes: [{ celula: 'a', passa: true }], abortada: null })), avaliarGravada: avalia } });
+    assert.deepEqual(chamadas.map((c) => [c.modo, c.so, c.grupo]), [['curta', null, null], ['conversa', R.CONVERSAS.join(','), 'comportamento']]);
+    assert.equal(ok.abortada, null); assert.equal(ok.rel.ok, true);
+    chamadas.length = 0;
+    await R.matrizA1('f', 'r', { falas: [] }, { semConversas: true, deps: { matriz: mat(() => ({ execucoes: [{ celula: 'a', passa: true }], abortada: null })), avaliarGravada: avalia } });
+    assert.deepEqual(chamadas.map((c) => c.modo), ['curta'], '--sem-conversas: só o placement barato');
+    chamadas.length = 0;
+    const conv = await R.matrizA1('f', 'r', { falas: [] }, { deps: { matriz: mat((o) => ({ execucoes: [{ celula: 'a', passa: true }], abortada: o.modo === 'curta' ? null : 'repo real alterado' })), avaliarGravada: avalia } });
+    assert.match(conv.abortada, /^conversa: repo real alterado/);
+  });
+  test('matriz-modo-curta: a pasta é curta-<id>, o curta.json diz se há pedido e o a1.exp recebe "curta"', async () => {
+    const e = ambienteMatriz(); e.deps.avaliarCurta = async (rundir, celula) => ({ celula: idDaCelula(celula), passa: true, resultados: [] });
+    const m = await rodarMatriz(e, { modo: 'curta', paralelo: 2 });
+    assert.equal(e.chamadas.length, 8);
+    for (const a of e.chamadas) {
+      assert.ok(a.rundir.includes('/curta-'), a.rundir);
+      assert.equal(a.args.at(-1), 'curta');
+      const c = JSON.parse(readFileSync(join(a.rundir, 'curta.json'), 'utf8'));
+      const celula = JSON.parse(readFileSync(join(a.rundir, 'celula.json'), 'utf8'));
+      assert.equal(c.pedido, celula.local === 'lateral' && celula.cols === 80, `${a.rundir}: pedido só abaixo do limiar na lateral`);
+    }
+    assert.equal(m.execucoes.length, 8);
+    const conv = ambienteMatriz();
+    await rodarMatriz(conv, { so: 'lateral-180x50-cheia' });
+    assert.equal(conv.chamadas[0].args.includes('curta'), false, 'a conversa não é curta');
+  });
+  test('lerSessaoCurta-sem-curta.json (uma conversa) é null', () => {
+    const d = tmp(); assert.equal(R.lerSessaoCurta(d, { local: 'lateral', cols: 80, rows: 24, cheia: false }), null);
+  });
+});
