@@ -434,6 +434,13 @@ const pendenteDe = (e) => e.parar !== null || e.pergunta !== null || (e.agora?.a
 function semPlanoNaApresentacao(comPlano, semPlano, entrada) {
   if (!ehObj(comPlano) || !ehObj(semPlano)) return comPlano;
   const saida = { ...comPlano, modo: semPlano.modo, id: semPlano.id, pronto: semPlano.pronto, fase: semPlano.fase, plano: semPlano.plano, umaLinha: semPlano.umaLinha };
+  // o sufixo da FASE diz o que o AGORA diz: a ação do vivo casado (do cálculo com o plano), não a descrição crua do vivo sem task
+  const crua = semPlano.agora?.agentes?.[0]?.acao;
+  const casada = comPlano.agora?.agentes?.[0]?.acao;
+  if (ehObj(saida.fase) && Array.isArray(saida.fase.sufixo) && typeof crua === 'string' && typeof casada === 'string') {
+    const tira = (a) => a.replace(/ \(registrado\)$/, '');
+    saida.fase = { ...saida.fase, sufixo: saida.fase.sufixo.map((x) => (typeof x === 'string' && x.endsWith(`: ${tira(crua)}`) ? `${x.slice(0, x.length - tira(crua).length)}${tira(casada)}` : x)) };
+  }
   if (saida.modo === 'projeto' && saida.umaLinha === null && !pendenteDe(comPlano)) {
     const u = entrada?.ultima;
     const ultima = ehObj(u) && typeof u.id === 'string' ? { id: u.id, estado: typeof u.estado === 'string' ? u.estado : null }

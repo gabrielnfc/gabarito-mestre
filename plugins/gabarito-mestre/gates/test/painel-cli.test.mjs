@@ -1311,11 +1311,11 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
 
   // T47 (emenda 43; ledger T25 item 2): a entrega publicada (PR mergeado, branch sozinha) descarta o plano da PROJEÇÃO (spec:53), mas o diário dela
   // tem eventos de task: o descarte não pode produzir PAROU `diario_invalido` nem zerar o casamento FIEL-3 a do vivo "T1 implementador"
-  const publicada = (extra = []) => {
+  const publicada = (extra = [], prEstado = 'mergeado') => {
     const m = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
     evEm(m, 'GM-12', 'task.iniciada', { task: 'T1', papel: 'implementador' });
     for (const [tipo, dados] of extra) evEm(m, 'GM-12', tipo, dados);
-    evEm(m, 'GM-12', 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 'mergeado', branch: 'feat/GM-12-painel' } });
+    evEm(m, 'GM-12', 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: prEstado, branch: 'feat/GM-12-painel' } });
     return m;
   };
   const VIVO = { sessao: {}, agentes: [{ id: 'a1', type: 'implementador', description: 'T1 implementador', status: 'running' }] };
@@ -1341,6 +1341,56 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.equal(e.umaLinha, null, 'com vivo trabalhando há o que mostrar: sem a uma linha de projeto');
     assert.equal(e.parar, null);
     assert.doesNotMatch(cli(m, ['texto', '--agentes'], { input: JSON.stringify(VIVO) }).stdout, /PRONTO/);
+    // o defeito por outro canal: o "depende de você" também vem do cálculo com o plano (sem a "diário fora da tabela" do plano ausente)
+    assert.deepEqual(e.depende, [{ nivel: 'dono', motivo: 'depende de você: nada', acoes: [] }]);
+    assert.doesNotMatch(cli(m, ['texto', '--agentes'], { input: JSON.stringify(VIVO) }).stdout, /diário fora da tabela/);
+  });
+  test('publicada-campos-do-plano (T47): atenção, recente e AGORA da publicada são os da MESMA entrega com o PR aberto (identificada); PRONTO e plano saem', () => {
+    const ate = [...INTEGRAR('T1').slice(1), ['task.iniciada', { task: 'T2', papel: 'implementador' }]];
+    for (const [nome, extra] of [['T1 iniciada', []], ['T1 integrada e T2 iniciada', ate]]) {
+      const p = estado(publicada(extra), { agentes: VIVO }).estado;
+      const i = estado(publicada(extra, 'aberto'), { agentes: VIVO }).estado;
+      assert.deepEqual([p.trilha.identificada, i.trilha.identificada], [false, true], `${nome}: preparo`);
+      for (const campo of ['atencao', 'recente', 'parar']) assert.deepEqual(p[campo], i[campo], `${nome}: ${campo}`);
+      assert.deepEqual(p.agora.agentes, i.agora.agentes, `${nome}: AGORA`);
+      assert.doesNotMatch(JSON.stringify(p.depende), /diário fora da tabela/, nome);
+      // o plano some da apresentação: a identificada o mostra, a publicada não (T47: o plano descartado só sai de PRONTO/modo/id/fase/plano)
+      assert.equal(i.plano.total, 2, `${nome}: a identificada tem o plano`);
+      assert.deepEqual([p.plano.total, p.plano.feitas, p.plano.tasks], [0, 0, []], `${nome}: plano vazio na publicada`);
+    }
+    const r = estado(publicada([...INTEGRAR('T1').slice(1), ['task.iniciada', { task: 'T2', papel: 'implementador' }]]), { agentes: VIVO }).estado;
+    assert.ok(r.recente.some((x) => /integrou T1/.test(x.texto)), JSON.stringify(r.recente));
+    assert.deepEqual(r.atencao, ['T2 sem agente trabalhando'], 'o ATENÇÃO do cálculo com o plano (comportamento a decidir pela spec: vivo não casado)');
+    // a task citada no RECENTE só se nomeia quando está no plano: o plano descartado segue sendo o que a casa
+    const teto = estado(publicada([['loop.parar', { motivo: 'teto_rodadas', task: 'T1' }]])).estado;
+    assert.match(teto.recente[0].texto, /teto de rodadas de review em T1/, JSON.stringify(teto.recente));
+    assert.equal(teto.parar?.motivo, 'teto_rodadas');
+  });
+  test('publicada-fase-coerente-com-agora (T47): o sufixo da FASE diz o mesmo que a linha do AGORA (a ação casada, não a descrição crua do vivo)', () => {
+    const e = estado(publicada(), { agentes: VIVO }).estado;
+    const acao = e.agora.agentes[0].acao.replace(/ \(registrado\)$/, '');
+    assert.equal(e.fase.sufixo[0], `1 agente trabalhando: ${acao}`);
+    assert.doesNotMatch(e.fase.sufixo.join('|'), /T1 implementador/);
+  });
+  test('publicada-uma-linha (T47): só sem nada pedindo o dono ou trabalhando a uma linha traz a última entrega conhecida, com o estado dela; cada pendência a apaga', () => {
+    const sem = estado(publicada()).estado;
+    assert.deepEqual(sem.umaLinha, { ultima: { id: 'GM-12', estado: '0 de 2 tasks integradas' } });
+    assert.equal(sem.modo, 'projeto');
+    const comPergunta = publicada();
+    evEm(comPergunta, 'GM-12', 'fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'feat/GM-12-painel' } }, { sessao: 's1' });
+    const casos = {
+      parar: [estado(publicada([['loop.parar', { motivo: 'sem_progresso' }]])).estado, (e) => e.parar !== null],
+      pergunta: [estado(comPergunta, { agentes: { session_id: 's1', sessao: {}, agentes: [] } }).estado, (e) => e.pergunta !== null],
+      depende: [estado(publicada([['nota', { tipo: 'pendencia', texto: 'a' }]])).estado, (e) => e.depende.some((d) => d.motivo !== 'depende de você: nada')],
+      vivo: [estado(publicada(), { agentes: VIVO }).estado, (e) => e.agora.agentes.length > 0],
+    };
+    for (const [nome, [e, pede]] of Object.entries(casos)) {
+      assert.ok(pede(e), `${nome}: preparo (a projeção tem o que pede o dono)`);
+      assert.equal(e.modo, 'projeto', nome);
+      assert.equal(e.umaLinha, null, nome);
+    }
+    const todas = publicada([...INTEGRAR('T1').slice(1), ...INTEGRAR('T2')]);
+    assert.deepEqual(estado(todas).estado.umaLinha, { ultima: { id: 'GM-12', estado: 'tasks todas integradas' } });
   });
   test('publicada-vizinhos (T47): a mesma entrega com o PR aberto (identificada) segue igual; publicada com plano todo integrado segue sem PRONTO e sem PAROU', () => {
     const a = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
