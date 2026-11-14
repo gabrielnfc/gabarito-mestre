@@ -6,6 +6,9 @@
  * O ESPERADO VEM DA SPEC (Aceite A1, matriz r4): 12 asserções por execução (a 8 tem 6), `placement` `dock` só em 180×50 tela cheia, `inline` nas outras 3 `lateral`,
  * 0 Pane em `acima`; passa = 8/8. As falas do roteiro (`.superpowers/`, fora do git) NUNCA são copiadas para cá: os casos de guarda usam roteiro sintético.
  * MUTAÇÃO PRESCRITA: M21 (apagar a guarda das falas) ⇒ `guarda-falas-em-ls-files` e `runner-guarda-barra-fala-versionada` reprovam.
+
+ * LIMITE DECLARADO (T52 r1, MINOR-2): os testes sobre tela real (`placement-lido-de-tela-gravada-real`, `replay-reconstruido-…26/26`, `lateral-80x24-normal sem lixo`) leem `.claude-tmp/a1/1794625214308`
+ * (não versionável: o tty.raw leva as falas) e PULAM no CI; lá só roda a cobertura sintética.
  */
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
