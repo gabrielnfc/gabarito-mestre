@@ -967,11 +967,18 @@
       "deps": [
         "T1",
         "T18",
-        "T29"
+        "T29",
+        "T17",
+        "T34",
+        "T36",
+        "T42"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/painel.mjs",
-        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs"
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/test/painel.test.ts"
       ],
       "reqs": [
         "REQ-TRI-1"
@@ -994,7 +1001,8 @@
         "T34",
         "T36",
         "T38",
-        "T39"
+        "T39",
+        "T43"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/stop-loop.mjs",
