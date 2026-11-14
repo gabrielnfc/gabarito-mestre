@@ -901,10 +901,11 @@ describe('superpowers fixo (T46, emenda 41): dependência declarada carregada po
     const raiz = mkdtempSync(join(tmpdir(), 'a1-mz-')); TMPS.push(raiz);
     const antes = process.env.CLAUDE_CONFIG_DIR;
     process.env.CLAUDE_CONFIG_DIR = vazia;
+    const tmpAntes = process.env.TMPDIR; process.env.TMPDIR = tmp();
     let m;
     const errOrig = process.stderr.write.bind(process.stderr);
     process.stderr.write = () => true;
-    try { m = await matriz('/inexistente-nao-copiar', raiz, { falas: [] }, idDaCelula(MATRIZ[0])); } finally { process.stderr.write = errOrig; if (antes === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = antes; }
+    try { m = await matriz('/inexistente-nao-copiar', raiz, { falas: [] }, idDaCelula(MATRIZ[0])); } finally { process.stderr.write = errOrig; process.env.TMPDIR = tmpAntes; if (antes === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = antes; }
     const r = JSON.parse(readFileSync(join(m.base, idDaCelula(MATRIZ[0]), 'resultado.json'), 'utf8'));
     assert.equal(r.passa, false);
     assert.equal(r.resultados[0].id, 'dependencia');
@@ -1059,6 +1060,22 @@ describe('T49 (a) isolamento: célula e plugin fora do repo real; o repo real fi
     const wt = join(tmp(), 'wt'); git(r, 'worktree', 'add', '-q', '-b', 'w', wt);
     const d = R.diferencasDeFotos(a, R.fotoDoRepo(r));
     assert.match(d.join(';'), /worktrees/);
+  });
+  test('worktrees-de-outros-implementadores-nao-invalidam: refs wt/* e o HEAD de worktree mudando são ignorados; ref de outro nome e worktree novo/removido não', () => {
+    const r = tmpGit(); const wt = join(tmp(), 'wt'); git(r, 'worktree', 'add', '-q', '-b', 'wt/GM-14-T99', wt);
+    const a = R.fotoDoRepo(r);
+    writeFileSync(join(wt, 'x.txt'), 'x'); git(wt, 'add', '-A'); git(wt, 'commit', '-q', '-m', 'outro implementador');
+    assert.deepEqual(R.diferencasDeFotos(a, R.fotoDoRepo(r)), [], 'commit em wt/* de outro implementador não é do conductor');
+    git(r, 'branch', 'enabler/x');
+    assert.match(R.diferencasDeFotos(a, R.fotoDoRepo(r)).join(';'), /refs/, 'ref fora de wt/* continua vigiada');
+    git(r, 'branch', '-q', '-D', 'enabler/x');
+    git(r, 'worktree', 'add', '-q', '-b', 'wt/outra', join(tmp(), 'wt2'));
+    assert.match(R.diferencasDeFotos(a, R.fotoDoRepo(r)).join(';'), /worktrees/, 'worktree novo continua vigiado');
+  });
+  test('ignorarRefs-e-configuravel-e-a-celula-fica-invalida-so-pelo-que-nao-e-ignorado', () => {
+    const r = tmpGit(); const a = R.fotoDoRepo(r, { ignorarRefs: [] });
+    git(r, 'branch', 'wt/z');
+    assert.match(R.diferencasDeFotos(a, R.fotoDoRepo(r, { ignorarRefs: [] })).join(';'), /refs/, 'sem ignorados, wt/* conta');
   });
   test('foto-de-quem-nao-e-repo-lanca (a prova nunca passa no escuro)', () => {
     assert.throws(() => R.fotoDoRepo(tmp()));

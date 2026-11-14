@@ -731,10 +731,17 @@ export const vazamentos = (textos, raizes) => textos.filter((t) => typeof t === 
 export const raizDoRepoReal = () => realpathSync(raizPrincipal(AQUI));
 const realDe = (raizes) => [...new Set(raizes.map((r) => { try { return realpathSync(r); } catch { return resolve(r); } }))];
 
-/** A foto de um repo: `git status --porcelain`, `for-each-ref` e `worktree list`. Quem não é repo ⇒ lança (a prova nunca passa no escuro). */
-export function fotoDoRepo(raiz) {
+/** Refs que OUTROS implementadores movem (worktrees `wt/<PBI>-<n>` do próprio loop): não são sinal de a célula ter tocado o repo real. */
+export const IGNORAR_REFS_PADRAO = Object.freeze([/^refs\/heads\/wt\//]);
+/**
+ * A foto de um repo: `git status --porcelain`, `for-each-ref` (sem as refs de `ignorarRefs`) e `worktree list` (só os caminhos: o HEAD de uma worktree de outro implementador se move sem a célula).
+ * Quem não é repo ⇒ lança (a prova nunca passa no escuro).
+ */
+export function fotoDoRepo(raiz, { ignorarRefs = IGNORAR_REFS_PADRAO } = {}) {
   const g = (...a) => execFileSync('git', ['-C', raiz, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
-  return { status: g('status', '--porcelain', '--untracked-files=all'), refs: g('for-each-ref', '--format=%(refname) %(objectname)'), worktrees: g('worktree', 'list', '--porcelain') };
+  const refs = g('for-each-ref', '--format=%(refname) %(objectname)').split('\n').filter((l) => l !== '' && !ignorarRefs.some((re) => re.test(l))).join('\n');
+  const worktrees = g('worktree', 'list', '--porcelain').split('\n').filter((l) => l.startsWith('worktree ')).join('\n');
+  return { status: g('status', '--porcelain', '--untracked-files=all'), refs, worktrees };
 }
 /** Diferenças entre duas fotos (lista vazia = intocado), uma por parte que mudou, com o que mudou. */
 export function diferencasDeFotos(antes, depois) {
