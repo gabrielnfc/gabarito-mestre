@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { pendenciasAprendizado } from '../../gates/dist/pendencias.js'
 import { CABECALHO, codigoPonte, PROMPT_RECUPERACAO, PROMPT_RETOMADA } from '../../gates/dist/pouso.js'
 import { validarStdinAgentes } from '../../gates/dist/painel-equipe.js'
-import { faixaDe, gravarContexto, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
+import { colunasDosBotoes, faixaDe, gravarContexto, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
 
 const RAIZ = '/repo'
 const DIR = '/repo/.harness/entregas/PBI-7'
@@ -3798,6 +3798,31 @@ test('parou-e-pergunta-antes-do-aviso: PAROU vem primeiro na linha única; o cor
   const estreita = await aviso($, 48) // o corte come o fim: o PAROU fica, o aviso sai
   expect(estreita).toContain('PAROU')
   expect(estreita).not.toContain('precisa de')
+})
+// Larguras reais medidas em sessão real (T50 r2): o Button da plataforma é "[ " + rótulo + " ]" (rótulo+4), o espaço entre eles é 1, e a plataforma põe "[-]" (3) na borda direita.
+const MOLDURA_BOTAO = 4
+const RESERVA_BORDA = 3
+test('linha-unica-cabe-com-a-moldura-real: texto longo + botões (rótulo+4) + "[-]" da borda nunca passam da largura, em 80 e 120', async ($, on) => {
+  sobreOMotor(on)
+  const longa = { ...PERGUNTA, texto: 'De que entrega é esta conversa? '.repeat(8), opcoes: ['uma nova', 'conversa avulsa'] }
+  const m = comPainel($, on, { estado: estadoNovo({ pergunta: longa }) }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  for (const larg of [80, 120]) {
+    const ui = await montarFaixaH($, 50, 19, { bodyColumns: larg })
+    const textos = await todosTextos(ui)
+    const rotulos = (await ui.findAll({ type: 'Button' })).map((b: any) => (b.props?.label ?? b.label) as string)
+    await ui.unmount()
+    expect(rotulos).toEqual(['1 uma nova', '2 conversa avulsa'])
+    const principal = textos.find((t) => t.trim() !== '') as string
+    const total = [...principal].length + rotulos.reduce((n, r) => n + 1 + [...r].length + MOLDURA_BOTAO, 0) + RESERVA_BORDA
+    expect(total).toBeLessThanOrEqual(larg)
+    expect(total).toBeGreaterThan(larg - 12) // o corte não encolhe à toa: usa a linha
+  }
+})
+test('colunas-dos-botoes: cada botão é espaço + "[ " + rótulo + " ]"', () => {
+  expect(colunasDosBotoes([{ rotulo: '1 uma nova' }])).toBe(15)
+  expect(colunasDosBotoes([{ rotulo: '1 uma nova' }, { rotulo: '2 conversa avulsa' }])).toBe(15 + 22)
+  expect(colunasDosBotoes([])).toBe(0)
 })
 test('pergunta-antes-do-aviso: a pergunta aberta vem primeiro na linha única', async ($, on) => {
   sobreOMotor(on)

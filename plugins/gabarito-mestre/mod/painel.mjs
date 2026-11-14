@@ -405,10 +405,13 @@ function cortarLinha(l, max) {
   return fora;
 }
 
-/** Colunas que os botões ocupam: `' '` + cada `[rótulo]` com a moldura de 2 e o espaço entre eles. */
+/** Colunas que os botões ocupam: o espaço entre eles + `[ rótulo ]` (a moldura do Button da plataforma é de 4, medida em sessão real). */
 export function colunasDosBotoes(botoes) {
-  return (Array.isArray(botoes) ? botoes : []).reduce((n, b) => n + 1 + colunas(b.rotulo ?? '') + 2, 0);
+  return (Array.isArray(botoes) ? botoes : []).reduce((n, b) => n + 1 + colunas(b.rotulo ?? '') + 4, 0);
 }
+
+/** A plataforma põe `[-]` na borda direita da linha do AbovePrompt (3 colunas, medido em sessão real): a linha única as reserva. */
+const RESERVA_BORDA_DIREITA = 3;
 
 // ─────────────────────────────────────────────────────────────── puras (GM-14 T20): contexto, plano B, pouso e nomes
 
@@ -1378,7 +1381,7 @@ export function registrarPainel(on) {
     let f;
     try { f = faixaUmaLinha(S.estado, { root: $.plugin.root, aviso }); } catch { f = null; }
     if (f === null) return next(e);
-    const cabe = Math.max(1, larg - colunasDosBotoes(f.botoes));
+    const cabe = Math.max(1, larg - colunasDosBotoes(f.botoes) - RESERVA_BORDA_DIREITA);
     const cor = S.prefs.tema === 'mono' ? null : { color: f.cor };
     return h(Box, null, h(Text, cor, cortar(f.texto, cabe)), ...botoesDe($, Button, Text, f.botoes));
   });
