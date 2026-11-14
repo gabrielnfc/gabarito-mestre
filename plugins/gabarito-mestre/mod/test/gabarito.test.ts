@@ -83,6 +83,8 @@ type Opc = {
   pacoteNomes?: { lider: string; sabio: string; nomes: string[] } | 'falha'
   /** GM-14 T53: o /clear roda mas não limpa nada (o incidente de 2026-11-14): mesma sessão, mesmo percent */
   clearNaoLimpa?: boolean
+  /** GM-14 T53 (ciclo 2): `.harness/contexto/<sessao>.json` das OUTRAS sessões (a ponte `contexto`); `emMs: 'agora'` = a hora do mock na leitura */
+  contextos?: Record<string, { percent: number; fonte?: string; emMs: number | 'agora' }>
   /** GM-14 T53 (r1): instante inicial do relógio do mock (ms). O mod mede com `$.clock.now()`; o relógio avança 1 s por evento gravado e por leitura de uso. Painel: relógio intocado (0) salvo se dado. */
   agora?: number
   /** GM-14 T53: percent da sessão nova depois do /clear (padrão 5) */
@@ -300,6 +302,13 @@ function mundo($: any, on: any, o: Opc = {}) {
         return ok(JSON.stringify({ ok: true, plano: o.plano_json ?? PLANO, slots: cfg.slots ?? 3, tetoTokens: cfg.tetoTokens ?? null }))
       }
       if (q.op === 'ler') return ok(JSON.stringify(o.lerFalha ? { ok: false, erro: o.lerErro ?? 'x' } : { ok: true, eventos: evs, ...(est.agoraMs !== null ? { agora: est.agoraMs } : {}) }))
+      if (q.op === 'contexto') {
+        const lista = (q.sessoes ?? []).filter((id: string) => o.contextos?.[id] !== undefined).map((id: string) => {
+          const c = (o.contextos as any)[id]
+          return { sessao: id, texto: JSON.stringify({ percent: c.percent, fonte: c.fonte ?? 'mod', em: new Date(c.emMs === 'agora' ? (est.agoraMs ?? Date.now()) : c.emMs).toISOString() }) }
+        })
+        return ok(JSON.stringify({ ok: true, leituras: lista }))
+      }
       if (q.op === 'instantaneo') {
         log.push('instantaneo')
         const t = o.instantaneo ?? 'Diário: 3 evento(s)\nETA: sem dados'
@@ -378,7 +387,7 @@ function mundo($: any, on: any, o: Opc = {}) {
 
 const pousar = async (m: ReturnType<typeof mundo>) => { await m.inicio(); await m.turno(); await m.clock.settle() }
 /** GM-14 T53: um turno na sessão nova (o /clear do mock deixa o percent em 5): a medição confirma o pouso e o despacho se libera */
-const confirmar = async (m: ReturnType<typeof mundo>) => { await m.turno(); await m.clock.settle() }
+const confirmar = async (m: ReturnType<typeof mundo>) => { await m.turno(); await m.clock.settle(); await m.avancar(200_000) } // 200 s depois: passou a janela em que ≥ X seria "o /clear não limpou"
 
 // ---- pouso: ordem dos passos (E23) ----
 test('pousa-na-ordem: store antes do clear, evento e instantâneo antes, retomada por último', async ($, on) => {
@@ -589,7 +598,8 @@ test('despacho-liberado-apos-pouso: com a fronteira consumida o Agent passa mesm
 test('veredito-novo-volta-a-travar: depois de gasto o pouso, outro veredito com percent ≥ X nega o despacho de novo', async ($, on) => {
   const m = mundo($, on, { agentes: [{ id: 'a1', status: 'running' }] })
   m.add('o', 'sessao.pouso', { percent: 60, x: 50 })
-  m.store.set(`confirmado:${DIR}`, { pouso: 's0:4' }) // T53: o pouso já foi confirmado por medição
+  m.add('o', 'sessao.retomada', { via: 'mod', chars: 5 }, 'sess-1') // a sucessora (a sessão do mock)...
+  await m.avancar(200_000) // ...medindo 60 % só depois da janela: a conversa cresceu, o pouso foi confirmado (T53)
   expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
   m.add('o', 'task.iniciada', { task: 'b', papel: 'implementador' })
   m.add('o', 'task.concluida', { task: 'b', sha: 'y' })
@@ -743,8 +753,8 @@ const CASOS_AGENT: [string, Opc, 'nega' | 'passa'][] = [
   ['X cruzado com trabalho a fazer (K)', {}, 'nega'],
   ['abaixo de X', { percent: 49 }, 'passa'],
   ['tudo integrado (L: concluir, a (5) não dispara)', { plano_json: UM, eventos: [...FRONT, INT_A] }, 'passa'],
-  ['fronteira consumida (F): pouso confirmado por medição', { eventos: [...FRONT, EV(4, 'sessao.pouso', { percent: 60, x: 50 })], storeInicial: { [`confirmado:${DIR}`]: { pouso: 's0:4' } } }, 'passa'],
-  ['pouso sem confirmação (T53): sessao.pouso sozinho não consome', { eventos: [...FRONT, EV(4, 'sessao.pouso', { percent: 60, x: 50 })] }, 'nega'],
+  ['fronteira consumida (F): pouso confirmado por medição', { eventos: [...FRONT, EV(4, 'sessao.pouso', { percent: 60, x: 50 }), { ...EV(5, 'sessao.retomada', { via: 'mod', chars: 5 }), sessao: 'sess-1' }] }, 'passa'],
+  ['pouso sem confirmação (T53): sessao.pouso sozinho não consome', { eventos: [...FRONT, { ...EV(4, 'sessao.pouso', { percent: 60, x: 50 }), sessao: 'sess-1' }] }, 'nega'],
   ['só resta o teto (M: parar)', { plano_json: UM, eventos: NO_TETO }, 'nega'],
   ['task concluída à espera do revisor (H)', { eventos: A_REVISAR }, 'nega'],
   ['agente vivo (I)', { agentes: [{ id: 'a1', status: 'running' }] }, 'nega'],
@@ -3347,15 +3357,14 @@ test('falha-antes-do-clear-sem-pouso-diario: sessao.pouso que não grava continu
   expect(m.est.clears).toBe(0)
   expect(parou(m)[0].dados).toEqual({ motivo: 'sem_pouso', causa: 'diario' })
 })
-test('um-so-clear: submit que falhou depois do /clear não repete o /clear em turno seguinte com percent alto', async ($, on) => {
+test('submit-falho-sem-retomada: submit que falhou depois do /clear não deixa sessao.retomada, então a sucessora não se identifica; a sessão nova no teto pousa como qualquer uma (T53, emenda 53 substitui "nunca 2º /clear")', async ($, on) => {
   const m = mundo($, on, { submitFalha: true })
   await pousar(m)
-  await confirmar(m)
   expect(m.est.clears).toBe(1)
   m.est.percent = 70
   await m.turno(); await m.clock.settle()
   await m.turno(); await m.clock.settle()
-  expect(m.est.clears).toBe(1)
+  expect(m.est.clears).toBe(2) // sem sucessora identificável a sessão nova, a 70 %, é uma sessão no teto com a fronteira aberta: pousa como qualquer uma
   expect(parou(m)).toHaveLength(0)
 })
 test('aprendizados-indisponiveis-avisa-e-pousa: a ponte devolve avisos, o pouso segue e o aviso vem uma vez', async ($, on) => {
@@ -4593,7 +4602,7 @@ const EVT = (seq: number, tipo: string, dados: Record<string, unknown>, atrasoMs
 const INCIDENTE = (atrasoMs = 600_000) => [
   EVT(1, 'task.iniciada', { task: 'a', papel: 'implementador' }, atrasoMs + 3000), EVT(2, 'task.concluida', { task: 'a', sha: 'x' }, atrasoMs + 2000),
   EVT(3, 'review.veredito', { task: 'a', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, atrasoMs + 1000),
-  EVT(4, 'sessao.pouso', { percent: null, x: 50, via: 'dono' }, atrasoMs, 'dono-1'),
+  EVT(4, 'sessao.pouso', { percent: null, x: 50, via: 'dono' }, atrasoMs, 'loop'), // `pousar` sem --sessao
 ]
 const tentativas = (m: ReturnType<typeof mundo>) => m.grav.filter((g) => g.tipo === 'sessao.pouso.tentativa').map((g) => (g.dados as any).n)
 
@@ -4632,8 +4641,8 @@ test('confirmado-libera: a leitura da sessão sucessora < X confirma, o despacho
   const m = mundo($, on)
   await pousar(m) // pouso do mod (percent 60) + /clear: sessão nova a 5 %
   expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
-  expect(m.store.get(`confirmado:${DIR}`)).toBeDefined()
-  m.est.percent = 80
+  expect(m.store.get(`confirmado:${DIR}:sess-1:1`)).toEqual({ por: 'sess-1-n' }) // cache da sucessora, por pouso
+  m.est.percent = 80 // dentro da janela de 180 s 80 % seria "o /clear não limpou"; a confirmação guardada pela sucessora vale (E1)
   expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
   expect((await m.agent('gabarito-revisor')).deny).toBeUndefined()
   await m.turno(); await m.clock.settle()
@@ -4681,14 +4690,86 @@ test('leitura-da-sessao-antiga-nao-libera: /clear que não troca a sessão, mesm
   expect(m.store.get(`confirmado:${DIR}`)).toBeUndefined()
 })
 
-test('paralela-nao-confirma: uma sessão paralela baixa, sem relação com o pouso, não o confirma nem fica presa a ele; no teto fica negada e nunca grava a confirmação', async ($, on) => {
-  const base = INCIDENTE()
-  const m = mundo($, on, { eventos: base, percent: 10, agora: BASE, sessaoId: 'sess-B' })
-  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined() // baixa e alheia: livre
-  expect(m.store.get(`confirmado:${DIR}`)).toBeUndefined() // e a leitura baixa DELA não confirma o pouso da outra
-  m.est.percent = 61
+/** o pouso foi da sessão real `sess-A` (10 min atrás) e o /clear dela não limpou; sem `sessao.retomada` do mod */
+const POUSOU_A = (...mais: any[]) => [
+  EVT(1, 'task.iniciada', { task: 'a', papel: 'implementador' }, 603_000), EVT(2, 'task.concluida', { task: 'a', sha: 'x' }, 602_000),
+  EVT(3, 'review.veredito', { task: 'a', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, 601_000),
+  EVT(4, 'sessao.pouso', { percent: 61, x: 50 }, 600_000, 'sess-A'), ...mais,
+]
+/** o `$.store` é um arquivo por plugin, não por sessão: nenhuma chave de confirmação do pouso pode existir */
+const semConfirmacaoNoStore = (m: ReturnType<typeof mundo>) => [...m.store.keys()].every((k) => !k.startsWith('confirmado'))
+const CLEAR_DE_C = EVT(5, 'sessao.inicio', { origem: 'clear' }, 597_000, 'sess-C') // C, alheia, deu /clear na própria conversa 3 s depois
+
+test('alheia-com-clear-nao-libera-a-que-pousou (ciclo 2, MAJOR-1): C alheia dá /clear; A (que pousou, o /clear dela não limpou, 61 %) segue negada, implementador e revisor', async ($, on) => {
+  const m = mundo($, on, { eventos: POUSOU_A(CLEAR_DE_C), percent: 61, agora: BASE, sessaoId: 'sess-A', contextos: { 'sess-C': { percent: 5, emMs: 'agora' } } })
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/aguardando/)
+  expect((await m.agent('gabarito-revisor')).deny).toMatch(/aguardando/)
+  expect(semConfirmacaoNoStore(m)).toBe(true) // nada que decida o pouso mora no store (um arquivo por plugin, não por sessão)
+})
+test('alheia-nao-confirma-por-A (ciclo 2, MAJOR-1): na sessão C o mod lê a leitura fresca de A em 61 %, não grava confirmação nenhuma e não repete o pouso de A', async ($, on) => {
+  const m = mundo($, on, { eventos: POUSOU_A(CLEAR_DE_C), percent: 5, agora: BASE, sessaoId: 'sess-C', contextos: { 'sess-A': { percent: 61, emMs: 'agora' } } })
+  await m.inicio()
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined() // C está baixa e a conversa é dela
+  await m.turno(); await m.clock.settle()
+  expect(tentativas(m)).toEqual([])
+  expect(m.est.clears).toBe(0)
+  expect(semConfirmacaoNoStore(m)).toBe(true)
+})
+test('cache-de-outra-sessao-nao-vale (ciclo 2, MAJOR-1): o store é compartilhado; a confirmação guardada por OUTRA sessão não libera a sucessora que ainda mede ≥ X', async ($, on) => {
+  const retomada = { ...EVT(5, 'sessao.retomada', { via: 'mod', chars: 5 }, 10_000), sessao: 'sess-X' }
+  const m = mundo($, on, { eventos: POUSOU_A(retomada), percent: 61, agora: BASE, sessaoId: 'sess-X', storeInicial: { [`confirmado:${DIR}:sess-A:4`]: { por: 'sess-Y' } } })
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/aguardando/) // sess-X é a sucessora e mede 61 %: só a confirmação DELA valeria
+  expect((await m.agent('gabarito-revisor')).deny).toMatch(/aguardando/)
+})
+test('paralela-no-teto-nao-faz-a-tentativa-da-outra (ciclo 2, MAJOR-1): B paralela em 61 % não repete o pouso de A; nega o despacho e pousa a própria conversa', async ($, on) => {
+  const m = mundo($, on, { eventos: POUSOU_A(), percent: 61, agora: BASE, sessaoId: 'sess-B' })
+  await m.inicio()
   expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/)
-  expect(m.store.get(`confirmado:${DIR}`)).toBeUndefined()
+  await m.turno(); await m.clock.settle()
+  expect(tentativas(m)).toEqual([]) // a tentativa é de quem pousou, não de B
+  expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(1) // o de B, pela regra de sempre
+})
+test('paralela-baixa-livre: B baixa e sem relação com o pouso não é presa a ele nem o confirma', async ($, on) => {
+  const m = mundo($, on, { eventos: POUSOU_A(), percent: 10, agora: BASE, sessaoId: 'sess-B' })
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  expect(semConfirmacaoNoStore(m)).toBe(true)
+})
+
+test('vivo-por-mais-de-1h-depois-confirma-ou-desiste (ciclo 2, MAJOR-3): agente vivo por 70 min não derruba a vigia; ao terminar o mod repete e chega a sem_pouso, sem turno', async ($, on) => {
+  const vivos: any[] = []
+  const m = mundo($, on, { clearNaoLimpa: true, agora: BASE, agentes: vivos })
+  await pousar(m) // pouso (tentativa 1) e o /clear não faz nada (o incidente): mesma sessão, sem medição que confirme
+  expect(m.est.clears).toBe(1)
+  vivos.push({ id: 'a2', status: 'running' }) // um agente vivo por mais de 1 h
+  await m.avancar(4_200_000)
+  expect(m.est.clears).toBe(1)
+  expect(tentativas(m)).toEqual([])
+  vivos.length = 0
+  for (let i = 0; i < 4; i++) await m.avancar(130_000)
+  expect(tentativas(m)).toEqual([2, 3])
+  expect(parou(m).map((g) => g.dados.motivo)).toEqual(['sem_pouso']) // chega ao fim: nunca fica preso
+})
+test('pausa-por-mais-de-1h-depois-desiste (ciclo 2, MAJOR-3): o arquivo de pausa por 70 min também não derruba a vigia', async ($, on) => {
+  const PAUSA = `${PRINCIPAL}/.harness/PAU` + 'SAR'
+  const m = mundo($, on, { clearNaoLimpa: true, agora: BASE })
+  await pousar(m)
+  m.arquivos.add(PAUSA)
+  await m.avancar(4_200_000)
+  expect(m.est.clears).toBe(1)
+  m.arquivos.delete(PAUSA)
+  for (let i = 0; i < 4; i++) await m.avancar(130_000)
+  expect(tentativas(m)).toEqual([2, 3])
+  expect(parou(m).map((g) => g.dados.motivo)).toEqual(['sem_pouso'])
+})
+
+test('entre-tentativas-tudo-negado (ciclo 2, MAJOR-4): depois da tentativa 2 e antes da 3, implementador, correção e revisor são negados (com e sem namespace)', async ($, on) => {
+  const m = mundo($, on, { percentPosClear: 60, agora: BASE })
+  await pousar(m)
+  await m.avancar(61_000) // tentativa 2
+  expect(tentativas(m)).toEqual([2])
+  for (const tipo of ['gabarito-implementador', 'gabarito-mestre:gabarito-implementador', 'gabarito-revisor', 'gabarito-mestre:gabarito-revisor', undefined]) {
+    expect((await m.agent(tipo)).deny).toMatch(/aguardando/)
+  }
 })
 
 test('leitura-desconhecida-nao-trava: sem medição o pouso nem confirma nem libera, mas passado o limite conta como tentativa falha, e acaba em sem_pouso sem nenhum turno', async ($, on) => {
@@ -4774,6 +4855,19 @@ test('sucessora (pura, r1 MAJOR-2): sessão paralela sem /clear não confirma; /
   const retomada = PEV(2, 'sessao.retomada', { via: 'mod', chars: 10 }, T0 + 5_000, 'S2')
   expect(situacaoDoPouso([POUSO, retomada], med([L('S2', 10, agora - 1000)], agora, { sessaoAtual: 'S2' })).confirmado).toBe(true)
   expect(situacaoDoPouso([POUSO, retomada], med([L('velha', 10, agora - 1000)], agora, { sessaoAtual: 'velha' })).confirmado).toBe(false)
+})
+test('sucessora-e-a-ultima (pura, ciclo 2, MAJOR-2): depois de um 2º /clear a sucessora é a nova sessão; o pendente sai com a leitura fresca dela, em +180 s e +600 s', async ($, on) => {
+  const retomada = PEV(2, 'sessao.retomada', { via: 'mod', chars: 10 }, T0 + 5_000, 'A2') // sucessora do mod, confirmada
+  const clearS3 = PEV(2, 'sessao.inicio', { origem: 'clear' }, T0 + 400_000, 'S3') // o dono deu /clear depois (o push "hora de limpar")
+  for (const depois of [180_000, 600_000]) {
+    const agora = T0 + 400_000 + depois
+    const p = pousoPendente([POUSO, retomada, clearS3], true, med([L('S3', 3, agora - 2000), L('A2', 40, T0 + 100_000)], agora, { sessaoAtual: 'S3', modAtivo: undefined }))
+    expect(p.pendente).toBe(false)
+  }
+  // a sessão que cresce depois da janela é conversa que cresceu, não /clear que falhou (E1): continua confirmada, mod, Stop e proxima iguais
+  const agora = T0 + 5_000 + 300_000
+  expect(situacaoDoPouso([POUSO, retomada], med([L('A2', 55, agora - 1000)], agora, { sessaoAtual: 'A2' })).confirmado).toBe(true)
+  expect(situacaoDoPouso([POUSO, retomada], med([L('A2', 55, T0 + 5_000 + 60_000)], T0 + 5_000 + 61_000, { sessaoAtual: 'A2' })).leitura).toBe('falhou') // mas dentro da janela é o /clear que não limpou
 })
 test('desconhecida-limite (pura): desconhecida só conta como falha depois de 120 s; repetir só depois de 60 s; no máximo 3', async ($, on) => {
   const cedo = situacaoDoPouso([POUSO], med([], T0 + 50_000, { sessaoAtual: 'velha' }))

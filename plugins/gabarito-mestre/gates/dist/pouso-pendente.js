@@ -23,6 +23,11 @@ export const ESPERA_ENTRE_TENTATIVAS_MS = 60_000;
 /** Leitura desconhecida por mais que isto, desde a última tentativa, conta como tentativa falha (sem trava eterna). */
 export const LIMITE_DESCONHECIDA_MS = 120_000;
 export const MAX_TENTATIVAS = 3;
+/**
+ * Só nos primeiros 180 s da sucessora uma leitura >= X é "o /clear não limpou". Depois disso é a conversa que CRESCEU (E1: o pouso dura até o próximo veredito):
+ * confirmada. Sem estado guardado: o mod, o Stop e `proxima` chegam à mesma resposta só pelo diário e pelas leituras.
+ */
+export const JANELA_FALHA_MS = 180_000;
 
 /** `.harness/contexto/<sessao>.json` `{percent, fonte, em}`; `emMs` já em número. */
                                                                                        
@@ -32,10 +37,8 @@ export const MAX_TENTATIVAS = 3;
                                                                                                             
                              
                       
-                                                                                                         
+                                                                                      
                      
-                                                                                   
-                           
   
 
                              
@@ -139,14 +142,15 @@ export function situacaoDoPouso(eventos                             , med       
     const pendente = limpou(false) === null;
     return { ...SEM_POUSO, modo: 'evento', pouso, pendente, confirmado: !pendente, leitura: 'sem_medicao', tentativas };
   }
-  // A confirmação só vem da sessão SUCESSORA (emenda 53 a): a do primeiro `sessao.inicio {clear}` ou `sessao.retomada {via: mod}` de OUTRA sessão que a da tentativa,
-  // depois dela. Sessão paralela sem /clear não é sucessora; um /clear alheio com a sessão que pousou ainda medindo depois dele também não (ela não foi limpa).
+  // A confirmação só vem da sessão SUCESSORA (emenda 53 a): a ÚLTIMA sessão da linha do /clear, isto é, a do último `sessao.inicio {clear}` ou
+  // `sessao.retomada {via: mod}` de OUTRA sessão que a da tentativa, depois dela (um 2º /clear move a sucessora para a nova). Sessão paralela sem /clear não é
+  // sucessora; um /clear alheio com a sessão que pousou ainda medindo depois dele também não (ela não foi limpa).
   let suc                = null;
-  let sucMs = Number.POSITIVE_INFINITY;
+  let sucMs = Number.NEGATIVE_INFINITY;
   for (const e of eventos) {
     const t = msDe(e);
     if (!(ehClear(e) || ehRetomadaDoMod(e)) || !Number.isFinite(t) || !Number.isFinite(ref.ms) || t <= ref.ms || e.sessao === ref.sessao) continue;
-    if (t < sucMs) { suc = e; sucMs = t; }
+    if (t >= sucMs) { suc = e; sucMs = t; }
   }
   const refViva = suc !== null && med.leituras.some((l) => l.sessao === ref.sessao && l.fonte === 'mod' && Number.isFinite(l.emMs) && l.emMs > sucMs && fresca(l));
   const nova = suc !== null && !refViva ? suc.sessao : null;
@@ -155,13 +159,13 @@ export function situacaoDoPouso(eventos                             , med       
   const valida = l !== undefined && l.fonte === 'mod' && Number.isFinite(l.emMs) && Number.isFinite(l.percent) && l.percent >= 0 && l.percent <= 100
     && l.emMs > tClear && med.agoraMs - l.emMs <= VALIDADE_LEITURA_MS && l.emMs - med.agoraMs <= 5_000;
   let leitura                           = 'desconhecida';
-  if (valida && l !== undefined) leitura = l.percent < med.x ? 'confirma' : 'falhou';
-  const confirmado = med.confirmouAntes === true || leitura === 'confirma';
+  if (valida && l !== undefined) leitura = l.percent < med.x || l.emMs - sucMs > JANELA_FALHA_MS ? 'confirma' : 'falhou';
+  const confirmado = leitura === 'confirma';
   const desconhecidaLonga = leitura === 'desconhecida' && med.agoraMs - ref.ms >= LIMITE_DESCONHECIDA_MS;
   const falhou = !confirmado && (leitura === 'falhou' || desconhecidaLonga);
   const podeRepetir = falhou && tentativas < MAX_TENTATIVAS && med.agoraMs - ref.ms >= ESPERA_ENTRE_TENTATIVAS_MS;
   return {
-    modo: 'medicao', pouso, pendente: !confirmado, confirmado, leitura: confirmado && leitura !== 'confirma' ? 'confirma' : leitura,
+    modo: 'medicao', pouso, pendente: !confirmado, confirmado, leitura,
     tentativas, falhou, podeRepetir, esgotada: falhou && tentativas >= MAX_TENTATIVAS, nova,
   };
 }
