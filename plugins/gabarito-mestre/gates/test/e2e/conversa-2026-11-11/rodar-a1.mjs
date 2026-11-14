@@ -717,16 +717,16 @@ async function matriz(fonte, tmpRaiz, roteiro, so) {
 
 // ─── ambiente da execução (T44, emenda 39) ───
 
-/** Carga do plugin gabarito-mestre pelo debug.log do Claude Code. Só o NOSSO plugin conta: erro de dependência de OUTRO plugin (superpowers, por `--setting-sources project,local`) não reprova.
- * Sinal positivo obrigatório: o observador gravou (`obsGravou`) OU o log diz que o plugin foi carregado. Sem sinal positivo ⇒ não carregou (nunca "sem erro = carregou"). */
-// MEDIDO na T44: com `--setting-sources project,local` o Claude Code loga "Plugin not available for MCP: gabarito-mestre@inline - error type: dependency-unsatisfied" (a dependência superpowers não está instalada) — é só
-// sobre servidores MCP, e o gabarito-mestre não tem `.mcp.json`; o plugin carregou (hooks.json lido, "Loaded inline plugin", observador gravou). Não é falha de carga do plugin.
-const MCP_SO = /Plugin not available for MCP/;
-export function pluginCarregou(debugLog, obsGravou = false) {
+/** Carga do plugin gabarito-mestre pelo debug.log do Claude Code. Só o NOSSO plugin conta: dependência de OUTRO plugin ausente (superpowers) não reprova SE o nosso estiver ativo.
+ * Sinal positivo obrigatório: o gabarito-mestre aparece entre os plugins HABILITADOS ("Checking plugin gabarito-mestre:" do getPluginSkills). "Loaded inline plugin from path" é só descoberta e o
+ * observador-a1 é outro plugin: nenhum dos dois prova a carga. Qualquer "Plugin not available ... gabarito-mestre" / "dependency-unsatisfied" / "is not installed" sobre o nosso plugin REPROVA
+ * (medido na T44: com `--setting-sources project,local` a dependência superpowers ausente DESABILITA o gabarito-mestre — "7 enabled, 2 disabled", sem ele na lista; a célula rodava com o produto ausente). */
+export function pluginCarregou(debugLog) {
   const linhas = String(debugLog).split('\n');
-  const erroNosso = linhas.some((l) => /gabarito-mestre/.test(l) && /dependency-unsatisfied|is not installed/.test(l) && !/Loaded inline plugin/.test(l) && !MCP_SO.test(l));
-  const carregado = linhas.some((l) => /Loaded inline plugin from path: gabarito-mestre\s*$/.test(l));
-  return { ok: !erroNosso && (obsGravou || carregado), erroNosso, carregado, obsGravou };
+  const nosso = /gabarito-mestre(?![\w-])/;
+  const indisponivel = linhas.some((l) => nosso.test(l) && /Plugin not available|dependency-unsatisfied|is not installed/.test(l));
+  const carregado = linhas.some((l) => /Checking plugin gabarito-mestre:/.test(l));
+  return { ok: !indisponivel && carregado, indisponivel, carregado };
 }
 
 /** O que o `a1.exp` registrou em exp.log sobre o diálogo de ambiente "Allow external CLAUDE.md file imports?": apareceu e foi recusado (ou não apareceu). */
@@ -739,9 +739,9 @@ export function dialogosDoExpLog(expLog) {
 function flag(argv, nome) { const i = argv.indexOf(nome); return i >= 0 ? argv[i + 1] : undefined; }
 
 export async function main(argv) {
-  // `plugin <debug.log> <obs/a1.jsonl>` (chamado pelo `a1.exp`): rc 0 = gabarito-mestre carregou; rc 1 = não carregou
+  // `plugin <debug.log>` (chamado pelo `a1.exp`): rc 0 = gabarito-mestre ativo; rc 1 = não carregou
   if (argv[0] === 'plugin') {
-    const r = pluginCarregou(existsSync(argv[1]) ? readFileSync(argv[1], 'utf8') : '', existsSync(argv[2]) && statSync(argv[2]).size > 0);
+    const r = pluginCarregou(existsSync(argv[1]) ? readFileSync(argv[1], 'utf8') : '');
     process.stdout.write(`${JSON.stringify(r)}\n`);
     return r.ok ? 0 : 1;
   }

@@ -36,7 +36,7 @@ proc drenar {s} {
   set timeout 1
   while {[clock seconds] < $fim} {
     expect {
-      -re {external.{1,40}imports} { recusarImports }
+      -re {external.{1,60}imports\?} { recusarImports }
       -re {Do you want to|Allow this|Esc to cancel} { nota "PERGUNTA-DE-PERMISSAO na tela" }
       -re {.+} {}
       timeout {}
@@ -95,8 +95,8 @@ while {[clock seconds] - $t0 < 90} {
   if {![drenar 2]} { exit 1 }
 }
 drenar 6
-# carga do plugin gabarito-mestre (T44, emenda 39): só o NOSSO plugin conta (dependência de OUTRO plugin, p.ex. superpowers, não reprova) e exige sinal positivo; a regra mora em `rodar-a1.mjs plugin`
-if {[catch {exec $node $runner plugin $rundir/debug.log $rundir/obs/a1.jsonl}]} {
+# carga do plugin gabarito-mestre (T44, emenda 39): só o NOSSO plugin conta e ele precisa estar ATIVO (dependência ausente que o desabilita reprova; dependência de OUTRO plugin com o nosso ativo não); a regra mora em `rodar-a1.mjs plugin`
+if {[catch {exec $node $runner plugin $rundir/debug.log}]} {
   nota "PLUGIN NAO CARREGOU"
   set f [open $rundir/exp.status w]; puts $f NAO_PROVADO_PLUGIN; close $f
   send "\003"; after 500; send "\003"; catch {close}; catch {wait}; exit 3
