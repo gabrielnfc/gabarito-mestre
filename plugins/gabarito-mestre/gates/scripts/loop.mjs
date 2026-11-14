@@ -76,7 +76,7 @@ import { temOnboarding } from './cartao-sessao.mjs';
 import { normalizarCaminho, validarPlano } from '../dist/plano.js';
 import { contarConsultas, hashPergunta, projetarDecisoes, textoAncora, trechoDoReq } from '../dist/sombra.js';
 import { vigentes } from '../dist/diario-puro.js';
-import { entregaPublicada } from '../dist/guarda.js';
+import { entregaPublicada, SESSAO_QUALQUER } from '../dist/guarda.js';
 import { idDaBranch } from '../dist/trilha.js';
 import { avaliar } from './gate-task.mjs';
 import * as loopAprendizado from './loop-aprendizado.mjs';
@@ -121,7 +121,9 @@ class Falha extends Error {
  * `_sem-id` nunca é publicada. Os tipos vedados valem também dentro de `gravar` (os módulos que o recebem por injeção, como o `pousar`).
  */
 function recusarSePublicada(c) {
-  if (c.entrega === '_sem-id' || !entregaPublicada(c.raiz, c.entrega, c.sessao)) return;
+  // Sem `--sessao` o loop grava como `loop` (iniciar, concluir, veredito, integrar, parar, reabrir, liberar: a skill só passa `--sessao` em proxima/pousar/anotar)
+  // e não sabe qual conversa o dono ligou à entrega: depois da resposta do dono (FIEL-1 b, spec:90) o loop NÃO trava. `--sessao` explícito vale como veio.
+  if (c.entrega === '_sem-id' || !entregaPublicada(c.raiz, c.entrega, c.sessao === 'loop' ? SESSAO_QUALQUER : c.sessao)) return;
   throw new Falha('entrega_publicada', `a entrega ${c.entrega} já está publicada (PR mergeado, sem outro aberto): task, sessão e parar não gravam nela; nada foi feito`);
 }
 const TIPO_VEDADO_EM_PUBLICADA = (tipo) => TIPOS_DE_TASK.includes(tipo) || tipo.startsWith('sessao.') || tipo.startsWith('guarda.') || tipo === 'operacao.destrutiva' || tipo === 'loop.parar';
@@ -2091,7 +2093,7 @@ function conferirLiberacao(c, plano, task, hash, eventos) {
  * `liberarTeto` (furo 10): `no_teto`, projeção na ordem real (`relogio_do_diario`), achados arquivados por último e releitura. O caminho do dono não muda.
  */
 function liberarComoSombra(c, plano, task, hash) {
-  recusarSePublicada(c);
+  // a recusa em publicada já vale em `executar` (`liberar` ∈ COMANDOS_VEDADOS_EM_PUBLICADA), antes de chegar aqui
   tarefa(plano, task);
   const o = lerConfigOrigin(c.raiz);
   const liga = o.fonte === 'origin' && o.cfg.sombra !== null && typeof o.cfg.sombra === 'object' && o.cfg.sombra.libera_teto === true;

@@ -188,7 +188,12 @@ function ledgerDirDe(raiz: string): string {
  * mesma trilha a identificaria por 2º fato. Só então ela está publicada. Branch sozinha (sem 2º fato: `plano.json`, spec do ID, `ledger`) nunca
  * é publicada. Diário ilegível ou ausente ⇒ `false` (não afirma). Quem grava evento de sessão, guarda ou loop consulta ISTO; nenhum gravador
  * tem critério próprio. Os fatos vêm do próprio diário (`fato.medido spec|plano|pr`), de `plano.json` e do ledger; nunca roda `gh`.
+ * Consumidores: o medir (`painel-medir.mjs`), `loop.mjs`, o cartão de sessão, o Stop e esta guarda; o teste de equivalência passa por todos no mesmo diário.
+ * `sessao` = a conversa que consulta (só a resposta do dono à pergunta (b) DELA a liga à entrega). `SESSAO_QUALQUER` (o `loop.mjs` sem `--sessao`, que
+ * grava como `loop` e não sabe qual conversa o dono ligou): a entrega deixa de ser publicada se QUALQUER sessão com `dono.resposta` no diário a liga.
  */
+export const SESSAO_QUALQUER = '*';
+const SESSOES_LIGADAS_MAX = 64;
 export function entregaPublicada(raiz: string, entrega: string | null, sessao: string | null = null): boolean {
   if (entrega === null || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(entrega)) return false;
   try {
@@ -214,9 +219,12 @@ export function entregaPublicada(raiz: string, entrega: string | null, sessao: s
     try { ledger = lstatSync(join(raiz, ledgerDirDe(raiz), `${entrega}.md`)).isFile(); } catch { /* sem ledger */ }
     const temPlano = existsSync(join(dir, 'plano.json')) || medido('plano').length > 0;
     // O ID entra como a própria branch e como o padrão (escapado): a identificação não depende da branch atual nem da config.
-    const base = { branch: entrega, idPadrao: entrega.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&'), specs, plano: temPlano ? { tasks: [] as string[] } : null, ledger, ultimas: [], sessao };
-    if (trilhaDe({ ...base, gh: 'ok' }, eventos).identificada === true) return false;
-    return trilhaDe({ ...base, gh: 'falhou' }, eventos).entrega === entrega;
+    const base = { branch: entrega, idPadrao: entrega.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&'), specs, plano: temPlano ? { tasks: [] as string[] } : null, ledger, ultimas: [] };
+    const qualquer = sessao === SESSAO_QUALQUER;
+    const donas = qualquer ? [...new Set(eventos.filter((e) => e.tipo === 'dono.resposta' && typeof e.sessao === 'string').map((e) => e.sessao as string))].slice(0, SESSOES_LIGADAS_MAX) : [];
+    const sessoes: Array<string | null> = qualquer ? [null, ...donas] : [sessao];
+    for (const s of sessoes) if (trilhaDe({ ...base, sessao: s, gh: 'ok' }, eventos).identificada === true) return false;
+    return trilhaDe({ ...base, sessao: qualquer ? null : sessao, gh: 'falhou' }, eventos).entrega === entrega;
   } catch {
     return false;
   }

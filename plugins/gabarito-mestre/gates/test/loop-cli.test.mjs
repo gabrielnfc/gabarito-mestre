@@ -5541,6 +5541,60 @@ describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (
     assert.equal(spawnSync(process.execPath, ['--input-type=module', '-e', `import { entregaPublicada } from ${JSON.stringify(join(AQUI, '..', 'dist', 'guarda.js'))}; process.stdout.write(String(entregaPublicada(${JSON.stringify(amb.dir)}, 'GM-10', null)));`], { encoding: 'utf8', timeout: 5000 }).stdout, 'false');
   });
 
+  /** O dono respondeu à pergunta (b) da conversa `sessao`: o 1º `fato.medido` dela é a âncora; `dono.resposta` liga a entrega (FIEL-1 b, REQ-TRI-1). */
+  const ligarPeloDono = (amb, sessao, rotulo = 'GM-10') => {
+    const w = (tipo, dados, ts) => assert.equal(diario.append(amb.entregas, sessao, { ts, autor: 't@t', sessao, agente: 'orquestrador', tipo, dados }).ok, true);
+    w('fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'enabler/GM-10-loop' } }, '2026-11-13T10:00:00.000Z');
+    const ancora = `${sessao}:${diario.ler(amb.entregas).find((e) => e.sessao === sessao).seq}`;
+    w('dono.resposta', { pergunta: ancora, opcao: 1, rotulo }, '2026-11-13T10:00:01.000Z');
+  };
+
+  test('ligada-pelo-dono-loop-nao-trava (MAJOR-1, spec:90): depois de dono.resposta, parar/iniciar/concluir/veredito/integrar gravam sem --sessao; sessão não ligada segue recusada', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'implementador']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    publicar(amb);
+    assert.equal(amb.cli(['concluir', 'T1']).j?.erro, 'entrega_publicada', 'controle: sem ligação, publicada');
+    ligarPeloDono(amb, 'SDONO');
+    const r1 = amb.cli(['concluir', 'T1']);
+    assert.equal(r1.rc, 0, r1.out + r1.err);
+    assert.equal(amb.cli(['iniciar', 'T1', 'revisor']).rc, 0);
+    assert.equal(amb.cli(['veredito', 'T1', 'APROVADO', '1', '0', '0']).rc, 0);
+    const integ = amb.cli(['integrar', 'T1']);
+    assert.equal(integ.rc, 0, integ.out + integ.err);
+    assert.equal(amb.cli(['parar', 'nao_conseguiu']).rc, 0);
+    assert.equal(amb.cli(['parar', 'nao_conseguiu', '--sessao', 'SDONO']).rc, 0);
+    assert.ok(amb.tipos().includes('task.integrada'));
+    // vizinho perigoso: sessão EXPLÍCITA que o dono não ligou continua recusada (o filtro que libera não fura a guarda)
+    assert.equal(amb.cli(['parar', 'nao_conseguiu', '--sessao', 'OUTRA']).j?.erro, 'entrega_publicada');
+    // vizinho perigoso: a resposta do dono liga OUTRA entrega ⇒ esta segue publicada
+    const amb2 = ambiente();
+    publicar(amb2);
+    ligarPeloDono(amb2, 'SDONO', 'GM-77');
+    assert.equal(amb2.cli(['parar', 'nao_conseguiu']).j?.erro, 'entrega_publicada');
+  });
+
+  test('liberarTeto-recusa-em-publicada (MINOR-1): a liberação do dono não grava em entrega publicada', () => {
+    const amb = ambiente();
+    publicar(amb);
+    const antes = amb.eventos().length;
+    const r = liberarTeto(amb.dir, 'T1', 'S-dono');
+    assert.equal(r.ok, false);
+    assert.equal(r.erro, 'entrega_publicada', JSON.stringify(r));
+    assert.equal(amb.eventos().length, antes);
+    assert.deepEqual(tiposDe(semId(amb)), []);
+  });
+
+  test('liberar-sombra-recusa-em-publicada (MINOR-1): liberar --origem sombra recusa antes de qualquer leitura da decisão e nada é gravado', () => {
+    const amb = ambiente();
+    publicar(amb);
+    const antes = amb.eventos().length;
+    const r = amb.cli(['liberar', 'T1', '--origem', 'sombra', '--hash', 'abcdef123456']);
+    assert.equal(r.j?.erro, 'entrega_publicada', r.out + r.err);
+    assert.equal(amb.eventos().length, antes);
+  });
+
   test('regra-unica: entregaPublicada é a trilha (os 7 casos da trilha; os gravadores não têm critério próprio', async () => {
     const { entregaPublicada } = await import('../dist/guarda.js');
     const casos = [
