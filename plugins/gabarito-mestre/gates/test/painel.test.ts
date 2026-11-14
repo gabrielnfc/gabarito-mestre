@@ -10,7 +10,7 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { dependeDeVoce, etaDe, projetarPainel, TABELA_PARAR } from '../src/painel.ts';
+import { dependeDeVoce, etaDe, projetarPainel, TABELA_PARAR, umaLinhaDe } from '../src/painel.ts';
 import { renderPainel } from '../src/painel.ts';
 import { append, duracoes, lerEstrito, mediana } from '../src/diario.ts';
 import { contarConsultas } from '../src/sombra.ts';
@@ -1221,4 +1221,41 @@ test('mortas-total-zero-igual-nos-presets: task integrada com mutacoes {total: 0
   assert.match(medido.esquadrao, /4 mutações do gate hoje, 0 mortas/, 'esquadrão: 0 medido continua 0');
   assert.match(medido.esquadrao, /T1 integrada · 0 mutações mortas/);
   assert.match(medido.executivo, /0 mutações mortas/, 'executivo: 0 medido continua 0');
+});
+
+// GM-14 T47 (emenda 46): a regra de "uma linha" (FIEL-10 e) vive em `umaLinhaDe`, que `projetarNovo` e `painel.mjs` (entrega publicada) importam.
+// Este teste passa pelas duas camadas: a projeção real (`projetarPainel`, que a chama) e a função sobre o estado já projetado (o que o CLI faz).
+test('uma-linha-regra-unica: umaLinhaDe sobre o estado projetado == umaLinha da projeção real, e cada pendência a apaga', () => {
+  const trilhaFatos = { branch: 'main', idPadrao: '[A-Z]+-\\d+', specs: [], plano: null, ledger: false, gh: 'ok', ultimas: [{ id: 'GM-13', data: '2026-11-10T00:00:00.000Z' }], sessao: 's1' };
+  const base = (extra: Record<string, unknown> = {}) => ({
+    decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+    pacote: { nome: 'Terra Média', lider: 'GANDALF', sabio: 'ELROND', nomes: ['ARAGORN', 'LEGOLAS'] }, notificacao: null, agoraMs: AGORA, fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
+    entregaId: null, modeloSessao: null, specSha: null, tetoSombra: 26, fatos: trilhaFatos, ultima: { id: 'GM-13', estado: 'publicada' }, ...extra,
+  }) as unknown as Parameters<typeof projetarPainel>[2];
+  const ev = (tipo: string, dados: unknown, sessao = 's1', seq = 1): Evento => ({ seq, ts: iso(seq), autor: 't', sessao, agente: 'orquestrador', tipo, dados, hash_anterior: null } as unknown as Evento);
+  const casos: Array<[string, Evento[], Record<string, unknown>, boolean]> = [
+    ['nada', [], {}, false],
+    ['parar', [ev('loop.parar', { motivo: 'sem_progresso' }, 's1', 1), ev('loop.parar', { motivo: 'sem_progresso' }, 's1', 2), ev('loop.parar', { motivo: 'sem_progresso' }, 's1', 3)], {}, true],
+    ['pergunta', [ev('fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'main' } }, 's1', 1)], { fatos: { ...trilhaFatos, branch: 'feat/GM-12-x', idPadrao: '[A-Z]+-\\d+' } }, true],
+    ['depende', [ev('nota', { tipo: 'pendencia', texto: 'a' }, 's1', 1)], {}, true],
+    ['vivo', [], { agentes: [{ id: 'a1', type: 'implementador', description: 'faz coisa', status: 'running', uso: null }] }, true],
+  ];
+  for (const [nome, eventos, extra, pede] of casos) {
+    const entrada = base(extra);
+    const r = projetarPainel(null, eventos, entrada);
+    assert.equal(r.modo, 'projeto', nome);
+    assert.deepEqual(umaLinhaDe(r, (entrada as { ultima?: unknown }).ultima), r.umaLinha, `${nome}: a função sobre o estado == a projeção`);
+    assert.equal(r.umaLinha === null, pede, nome);
+    if (!pede) assert.deepEqual(r.umaLinha, { ultima: { id: 'GM-13', estado: 'publicada' } }, `${nome}: ultima da entrada`);
+  }
+  // a regra isolada, campo a campo (o CLI passa o estado com o plano e o modo da apresentação)
+  const livre = { modo: 'projeto', parar: null, pergunta: null, depende: [{ nivel: 'dono', motivo: 'depende de você: nada', acoes: [] }], agora: { agentes: [] }, trilha: { ultimaConhecida: 'GM-9' } } as unknown as EstadoPainel;
+  assert.deepEqual(umaLinhaDe(livre, { id: 'GM-3', estado: 'x' }), { ultima: { id: 'GM-3', estado: 'x' } }, 'a da entrada vence');
+  assert.deepEqual(umaLinhaDe(livre, undefined), { ultima: { id: 'GM-9', estado: null } }, 'cai na conhecida da trilha');
+  assert.deepEqual(umaLinhaDe({ ...livre, trilha: { ultimaConhecida: null } } as unknown as EstadoPainel, null), { ultima: null });
+  assert.equal(umaLinhaDe({ ...livre, modo: 'entrega' } as EstadoPainel, null), null, 'só no modo projeto');
+  assert.equal(umaLinhaDe({ ...livre, parar: { motivo: 'sem_progresso' } } as unknown as EstadoPainel, null), null, 'parar');
+  assert.equal(umaLinhaDe({ ...livre, pergunta: { id: 'x' } } as unknown as EstadoPainel, null), null, 'pergunta');
+  assert.equal(umaLinhaDe({ ...livre, depende: [{ nivel: 'dono', motivo: 'a', acoes: [] }] } as unknown as EstadoPainel, null), null, 'depende');
+  assert.equal(umaLinhaDe({ ...livre, agora: { agentes: [{}] } } as unknown as EstadoPainel, null), null, 'agente trabalhando');
 });

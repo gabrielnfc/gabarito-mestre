@@ -34,7 +34,7 @@ import { PADROES } from '../lib/git.mjs';
 import { dirEntrega, lerEstrito } from '../dist/diario.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { estadoDe, ordenar, proximaAcao, TIPOS_DE_TASK } from '../dist/loop.js';
-import { projetarPainel, renderPainel } from '../dist/painel.js';
+import { projetarPainel, renderPainel, umaLinhaDe } from '../dist/painel.js';
 import { validarPacote, validarStdinAgentes, usoDoTranscript } from '../dist/painel-equipe.js';
 import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
@@ -421,11 +421,6 @@ function sessaoDoMod(agentes) {
   return typeof s === 'string' && s !== '' ? s : null;
 }
 
-/** Há algo pedindo o dono ou trabalhando (a mesma conta de `projetarNovo`, painel.ts: `pendente`, que decide `umaLinha`). */
-const SEM_PENDENCIA = 'depende de você: nada';
-const pendenteDe = (e) => e.parar !== null || e.pergunta !== null || (e.agora?.agentes?.length ?? 0) > 0
-  || (Array.isArray(e.depende) && e.depende.some((i) => i.motivo !== SEM_PENDENCIA));
-
 /**
  * T47: a projeção de uma entrega NÃO identificada (publicada) mostra o que o plano ausente mostraria (sem PRONTO, `modo`/`id`/`fase` da trilha,
  * `plano` vazio) e mantém do cálculo com o plano o que depende de casar eventos e vivos com as tasks (parar, AGORA, depende, atenção, recente).
@@ -433,7 +428,7 @@ const pendenteDe = (e) => e.parar !== null || e.pergunta !== null || (e.agora?.a
  */
 function semPlanoNaApresentacao(comPlano, semPlano, entrada) {
   if (!ehObj(comPlano) || !ehObj(semPlano)) return comPlano;
-  const saida = { ...comPlano, modo: semPlano.modo, id: semPlano.id, pronto: semPlano.pronto, fase: semPlano.fase, plano: semPlano.plano, umaLinha: semPlano.umaLinha };
+  const saida = { ...comPlano, modo: semPlano.modo, id: semPlano.id, pronto: semPlano.pronto, fase: semPlano.fase, plano: semPlano.plano };
   // o sufixo da FASE diz o que o AGORA diz: a ação do vivo casado (do cálculo com o plano), não a descrição crua do vivo sem task
   const crua = semPlano.agora?.agentes?.[0]?.acao;
   const casada = comPlano.agora?.agentes?.[0]?.acao;
@@ -441,12 +436,8 @@ function semPlanoNaApresentacao(comPlano, semPlano, entrada) {
     const tira = (a) => a.replace(/ \(registrado\)$/, '');
     saida.fase = { ...saida.fase, sufixo: saida.fase.sufixo.map((x) => (typeof x === 'string' && x.endsWith(`: ${tira(crua)}`) ? `${x.slice(0, x.length - tira(crua).length)}${tira(casada)}` : x)) };
   }
-  if (saida.modo === 'projeto' && saida.umaLinha === null && !pendenteDe(comPlano)) {
-    const u = entrada?.ultima;
-    const ultima = ehObj(u) && typeof u.id === 'string' ? { id: u.id, estado: typeof u.estado === 'string' ? u.estado : null }
-      : typeof comPlano.trilha?.ultimaConhecida === 'string' ? { id: comPlano.trilha.ultimaConhecida, estado: null } : null;
-    saida.umaLinha = { ultima };
-  }
+  // a MESMA regra de `projetarNovo` (painel.ts), sobre o estado do cálculo com o plano e o `modo` da apresentação
+  saida.umaLinha = umaLinhaDe(saida, entrada?.ultima);
   return saida;
 }
 

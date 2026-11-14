@@ -614,6 +614,24 @@ function recenteDe(ord: Evento[] | null, plano: Plano, entrada: EntradaPainel, n
   return { itens: itens.reverse().slice(0, 5), decisao: ultimaDecisao };
 }
 
+/**
+ * "Uma linha" do modo projeto (FIEL-10 e): a ÚNICA regra. Só no modo `projeto` e sem nada pedindo o dono (PAROU, pergunta, "depende de você" que não
+ * seja "nada") nem trabalhando (agente vivo); `ultima` = a da entrada (id e estado) ou, sem ela, a conhecida da trilha (estado `null`).
+ * `projetarNovo` a chama com os campos que acabou de calcular; `painel.mjs` (entrega publicada, plano só fora da apresentação) a chama com o estado projetado
+ * do cálculo com o plano e o `modo` da apresentação: os campos são os mesmos (`estado.parar` é `c.parar`; `agora.agentes` é `agentes`).
+ */
+export function umaLinhaDe(
+  e: { modo: EstadoPainel['modo']; parar: unknown; pergunta: unknown; depende: Array<{ motivo: string }>; agora: { agentes: unknown[] | null }; trilha: { ultimaConhecida: string | null } },
+  ultimaDaEntrada: unknown,
+): { ultima: { id: string; estado: string | null } | null } | null {
+  const pendente = e.parar !== null || e.pergunta !== null || (e.agora.agentes?.length ?? 0) > 0 || e.depende.some((i) => i.motivo !== NADA);
+  if (e.modo !== 'projeto' || pendente) return null;
+  const u = ehObj(ultimaDaEntrada) ? ultimaDaEntrada : null;
+  const ultima = u !== null && typeof u.id === 'string' ? { id: u.id, estado: typeof u.estado === 'string' ? u.estado : null }
+    : typeof e.trilha.ultimaConhecida === 'string' ? { id: e.trilha.ultimaConhecida, estado: null } : null;
+  return { ultima };
+}
+
 function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: EntradaNova & { fatos: FatosTrilha }, legado: EstadoPainel): EstadoPainel {
   const p: Plano = plano ?? { entrega: '', tasks: [] };
   const c = calcular(p, eventos, entrada);
@@ -704,11 +722,7 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
 
   // modo e "uma linha" (FIEL-10 e)
   const modo: EstadoPainel['modo'] = entrada.fora === true ? 'fora' : plano !== null || trilha.identificada ? 'entrega' : 'projeto';
-  const pendente = c.parar !== null || pergunta !== null || nAtivos > 0 || depende.some((i) => i.motivo !== NADA);
-  const ultima = ehObj(entrada.ultima) && typeof entrada.ultima.id === 'string'
-    ? { id: entrada.ultima.id, estado: typeof entrada.ultima.estado === 'string' ? entrada.ultima.estado : null }
-    : typeof trilha.ultimaConhecida === 'string' ? { id: trilha.ultimaConhecida, estado: null } : null;
-  const umaLinha = modo === 'projeto' && !pendente ? { ultima } : null;
+  const umaLinha = umaLinhaDe({ modo, parar: c.parar, pergunta, depende, agora: { agentes }, trilha }, entrada.ultima);
 
   const pct = finitoNaoNeg(entrada.contexto?.percent);
   const textoParar = (motivo: string, task: string | null): string | null =>
