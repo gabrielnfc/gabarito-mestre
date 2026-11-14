@@ -942,7 +942,7 @@ describe('superpowers fixo (T46, emenda 41): dependência declarada carregada po
     assert.equal((readFileSync(RUNNER, 'utf8').match(/CLAUDE_CONFIG_DIR \?\?/g) ?? []).length, 1, 'a regra aparece uma vez no runner');
   });
   test('o-claude-carrega-o-superpowers-como-plugin-explicito-e-nunca-liga-setting-sources-user (argv montado pelo runner)', () => {
-    const argv = R.argvDoClaude({ observador: '/t/o', plugin: '/t/p', superpowers: '/t/sp', debugLog: '/t/d' });
+    const argv = R.argvDoClaude({ observador: '/t/o', plugin: '/t/p', superpowers: '/t/sp', debugLog: '/t/d', settings: '/t/s.json' });
     assert.ok(argv.some((a, i) => argv[i - 1] === '--plugin-dir' && a === '/t/sp'));
     assert.equal(argv[argv.indexOf('--setting-sources') + 1], 'project,local', 'sem ligar o setting-sources user (D1)');
   });
@@ -1109,13 +1109,32 @@ describe('T49 (a) isolamento: célula e plugin fora do repo real; o repo real fi
     assert.ok(!R.dentroDe(R.PLUGIN, d));
   });
   test('argvDoClaude: plugins vêm da cópia, modelo é Sonnet, nenhum caminho do repo real (M: condutor haiku)', () => {
-    const argv = R.argvDoClaude({ observador: '/t/obs', plugin: '/t/plugin', superpowers: '/t/sp', debugLog: '/t/debug.log' });
+    const argv = R.argvDoClaude({ observador: '/t/obs', plugin: '/t/plugin', superpowers: '/t/sp', debugLog: '/t/debug.log', settings: '/t/settings.json' });
     assert.equal(R.MODELO_CONDUTOR, 'claude-sonnet-5-5');
     assert.equal(argv[argv.indexOf('--model') + 1], 'claude-sonnet-5-5');
     assert.doesNotMatch(argv.join(' '), /haiku/);
     assert.deepEqual(argv.filter((_, i) => argv[i - 1] === '--plugin-dir'), ['/t/obs', '/t/plugin', '/t/sp']);
     assert.ok(argv.includes('--strict-mcp-config') && argv.includes('--debug-file'));
     assert.deepEqual(R.vazamentos(argv, [R.raizDoRepoReal()]), []);
+  });
+  test('negacao-do-repo-real (a célula explora o disco e achou o repo real na 1ª tentativa): regras de Bash/Read/Edit/Write para o caminho absoluto e para o relativo ao HOME', () => {
+    const regras = R.regrasDeNegacao(['/home/u/projetos/real'], '/home/u');
+    for (const ferr of ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep']) assert.ok(regras.some((r) => r.startsWith(`${ferr}(`)), ferr);
+    assert.ok(regras.includes('Bash(*/home/u/projetos/real*)'));
+    assert.ok(regras.includes('Bash(*projetos/real*)'), 'a forma ~/… também');
+    assert.ok(regras.includes('Read(//home/u/projetos/real/**)'));
+    assert.ok(!regras.some((r) => r.includes('*home/u/projetos/outro')));
+    assert.deepEqual(R.regrasDeNegacao(['/fora/do/home'], '/home/u').filter((r) => r.startsWith('Bash(')), ['Bash(*/fora/do/home*)']);
+  });
+  test('argv-leva-o-settings-com-as-regras-e-o-argv-nao-tem-caminho-real (as regras ficam no arquivo, não na linha de comando)', async () => {
+    const e = ambienteMatriz();
+    await rodarMatriz(e, { so: idDaCelula(MATRIZ[0]) });
+    const c = e.chamadas[0];
+    const sj = c.argv[c.argv.indexOf('--settings') + 1];
+    assert.ok(R.dentroDe(c.rundir, sj));
+    const regras = JSON.parse(readFileSync(sj, 'utf8')).permissions.deny;
+    assert.ok(regras.some((r) => r.includes(e.fonte)) || regras.some((r) => r.includes(e.raiz)), 'o caminho real está nas regras');
+    assert.deepEqual(R.vazamentos(c.argv, [e.fonte, e.raiz]), []);
   });
   test('a1.exp-nao-fixa-modelo-e-le-os-argumentos-do-runner', () => {
     const exp = readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), 'utf8');

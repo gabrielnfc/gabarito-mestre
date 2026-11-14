@@ -762,9 +762,18 @@ export function copiarPlugin(destino) {
   cpSync(PLUGIN, destino, { recursive: true, filter: (o) => !/(^|\/)(node_modules|\.git)(\/|$)/.test(o.slice(PLUGIN.length)) });
 }
 
+/**
+ * Regras `permissions.deny` que fecham o repo real ao condutor (medido: a célula, sem caminho nenhum no prompt, explorou o disco do usuário, achou `~/projetos_pessoais/<repo>` e criou
+ * uma worktree NELE). Caminho absoluto e a forma relativa ao HOME (`~/…`). Spike: `claude -p` com a regra responde DENIED; sem ela executa.
+ */
+export function regrasDeNegacao(raizes, home = homedir()) {
+  const alvos = raizes.flatMap((r) => (dentroDe(home, r) && r !== resolve(home) ? [r, r.slice(resolve(home).length + 1)] : [r]));
+  return [...new Set([...alvos.map((a) => `Bash(*${a}*)`), ...raizes.flatMap((r) => ['Read', 'Edit', 'Write', 'Glob', 'Grep'].map((f) => `${f}(/${r}/**)`))])];
+}
+
 /** Argumentos do `claude` da célula (o `a1.exp` os lê de `<rundir>/claude.args`, um por linha): só caminhos da cópia, modelo Sonnet. */
-export function argvDoClaude({ observador, plugin, superpowers, debugLog }) {
-  return ['--plugin-dir', observador, '--plugin-dir', plugin, '--plugin-dir', superpowers, '--setting-sources', 'project,local', '--strict-mcp-config',
+export function argvDoClaude({ observador, plugin, superpowers, debugLog, settings }) {
+  return ['--plugin-dir', observador, '--plugin-dir', plugin, '--plugin-dir', superpowers, '--settings', settings, '--setting-sources', 'project,local', '--strict-mcp-config',
     '--model', MODELO_CONDUTOR, '--permission-mode', 'auto', '--allowedTools', 'Bash(node *)', 'Read', 'ScheduleWakeup', '--debug-file', debugLog];
 }
 
@@ -879,7 +888,9 @@ export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps =
     writeFileSync(join(rundir, 'celula.json'), `${JSON.stringify(celula)}\n`);
     writeFileSync(join(rundir, 'inicio.iso'), `${new Date().toISOString()}\n`);
     writeFileSync(join(rundir, 'falas.tsv'), roteiro.falas.map((f) => `${f.n}\t${f.rotulo}\t${sha256(f.texto)}\t${f.texto}`).join('\n'));
-    const argv = argvDoClaude({ observador: join(rundir, 'observador'), plugin, superpowers: sp.caminho, debugLog: join(rundir, 'debug.log') });
+    const settings = join(rundir, 'settings.json');
+    writeFileSync(settings, `${JSON.stringify({ permissions: { deny: regrasDeNegacao(reais) } }, null, 2)}\n`);
+    const argv = argvDoClaude({ observador: join(rundir, 'observador'), plugin, superpowers: sp.caminho, debugLog: join(rundir, 'debug.log'), settings });
     writeFileSync(join(rundir, 'claude.args'), `${argv.join('\n')}\n`);
     const vaza = vazamentos([rundir, repo, ...argv], reais);
     if (vaza.length > 0) throw new Error(`argumento da célula com caminho do repo real: ${vaza[0]}`);
