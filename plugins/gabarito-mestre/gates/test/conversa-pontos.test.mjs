@@ -1169,6 +1169,12 @@ describe('T49 (a) isolamento: célula e plugin fora do repo real; o repo real fi
     const sem = ambienteMatriz(mexe); const m2 = await rodarMatriz(sem, { so: idDaCelula(MATRIZ[0]) });
     assert.equal(m2.rel.passou, 0); assert.match(m2.abortada, /isolamento/);
   });
+  test('--so aceita lista separada por vírgula (duas células para medir o paralelo)', async () => {
+    const e = ambienteMatriz(); const ids = [idDaCelula(MATRIZ[4]), idDaCelula(MATRIZ[5])];
+    const m = await rodarMatriz(e, { so: ids.join(','), paralelo: 2 });
+    assert.deepEqual(e.chamadas.map((c) => c.celula).sort(), ids.sort());
+    assert.equal(m.rel.passou, 2);
+  });
   test('repo-real-intocado-nao-invalida', async () => {
     const e = ambienteMatriz();
     const m = await rodarMatriz(e, { so: idDaCelula(MATRIZ[0]) });

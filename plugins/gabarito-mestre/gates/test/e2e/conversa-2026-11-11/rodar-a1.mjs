@@ -860,7 +860,7 @@ const DEPS = { preparar: (...a) => prepararCopia(...a), copiarPlugin, executar: 
 export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps = {}, ignorarRefs = IGNORAR_REFS_PADRAO, ignorarStatus = IGNORAR_STATUS_PADRAO } = {}) {
   const fotoOpc = { ignorarRefs, ignorarStatus };
   const d = { ...DEPS, ...deps };
-  const celulas = MATRIZ.filter((c) => so === null || idDaCelula(c) === so);
+  const celulas = MATRIZ.filter((c) => so === null || so.split(',').includes(idDaCelula(c)));
   const reais = realDe([fonte, tmpRaiz]);
   const base = join(realpathSync(tmpdir()), 'gabarito-a1', String(Date.now()));
   if (reais.some((r) => dentroDe(r, base))) throw new Error(`a célula ficaria dentro do checkout real (${base}): defina TMPDIR fora dele`);
