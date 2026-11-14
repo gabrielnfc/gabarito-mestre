@@ -515,7 +515,7 @@ export async function caminhar(opcoes) {
       submitsVistos = mundo.submits.length;
       vistos.retomadas.push(mundo.submits.at(-1) ?? '');
       trilha.push(`T${turno} /clear + retomada (${mundo.submits.at(-1)?.length} chars)`);
-      aposClear(3);
+      aposClear(0.5);
       r = await ciclo();
       continue;
     }
