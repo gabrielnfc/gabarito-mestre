@@ -15,8 +15,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  ASSERCOES, LINHA_DECISAO, MATRIZ, resumoDoAgora, MIN_FALA, PONTOS_ARQ, ROTEIRO_REL, TOTAL_PONTOS, acoesDe, avaliarExecucao, avaliarMatriz, coletar, entradaDoSnapshot, falasDoRoteiro, guardaFalas, idDaCelula,
-  itensDeProxima, placementEsperado, propsDe, publicadaPeloProduto, raizPrincipal, renderizar, semearEntregaPublicada, sha256, validarPontos, verificarRoteiro,
+  ASSERCOES, LINHA_DECISAO, MATRIZ, resumoDoAgora, MIN_FALA, PONTOS_ARQ, ROTEIRO_REL, TOTAL_PONTOS, acoesDe, avaliarExecucao, avaliarMatriz, coletar, dialogosDoExpLog, entradaDoSnapshot, falasDoRoteiro, guardaFalas, idDaCelula,
+  itensDeProxima, placementEsperado, pluginCarregou, propsDe, publicadaPeloProduto, raizPrincipal, renderizar, semearEntregaPublicada, sha256, validarPontos, verificarRoteiro,
 } from './e2e/conversa-2026-11-11/rodar-a1.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -746,5 +746,52 @@ describe('stdin do snapshot no contrato do mod (nomes, acoes, encerrados)', () =
   test('itens-do-proxima-real-e-saida-que-nao-e-json', () => {
     assert.deepEqual(itensDeProxima(PROXIMA_REAL), [{ papel: 'implementador', aprendizados: [REGRA] }]);
     assert.deepEqual(itensDeProxima('Error: x'), []);
+  });
+});
+
+describe('ambiente da execução real (T44, emenda 39): plugin carregado e diálogo de imports recusado', () => {
+  const OUTRO = 'Plugin loading errors: Dependency "superpowers@claude-plugins-official" is not installed — run `claude plugin install superpowers@claude-plugins-official`';
+  const CARGA = '[DEBUG] Loaded inline plugin from path: gabarito-mestre';
+  test('dependencia-de-OUTRO-plugin-nao-reprova-a-carga (falso positivo da T25; P15: o grep antigo reprovava)', () => {
+    const log = `${CARGA}\n${OUTRO}\n${OUTRO}\n`;
+    assert.equal(pluginCarregou(log).ok, true);
+    assert.equal(/dependency-unsatisfied|is not installed/.test(log), true, 'o grep antigo casaria este log (é o defeito D2)');
+  });
+  test('erro-do-gabarito-mestre-reprova-e-sem-sinal-positivo-tambem', () => {
+    const ruim = `${CARGA}\nPlugin loading errors: Dependency "x@y" of gabarito-mestre is not installed\n`;
+    assert.equal(pluginCarregou(ruim, true).ok, false, 'erro do nosso plugin reprova mesmo com observador gravado');
+    assert.equal(pluginCarregou(`${OUTRO}\n`).ok, false, 'sem carga nem observador: não carregou (não vale "sem erro")');
+    assert.equal(pluginCarregou('').ok, false);
+  });
+  test('aviso-de-MCP-do-proprio-plugin-por-dependencia-do-superpowers-nao-reprova (medido na T44)', () => {
+    const log = `${CARGA}\n[DEBUG] Plugin not available for MCP: gabarito-mestre@inline - error type: dependency-unsatisfied\n`;
+    assert.equal(pluginCarregou(log).ok, true);
+    assert.equal(pluginCarregou(log.replace(CARGA, '')).ok, false, 'mas continua exigindo o sinal positivo de carga');
+  });
+  test('observador-gravou-vale-como-sinal-positivo', () => {
+    assert.equal(pluginCarregou(`${OUTRO}\n`, true).ok, true);
+  });
+  test('cli-plugin-devolve-rc-0-ou-1 (o a1.exp decide por ele)', () => {
+    const d = mkdtempSync(join(tmpdir(), 'a1-plugin-')); TMPS.push(d);
+    writeFileSync(join(d, 'debug.log'), `${CARGA}\n${OUTRO}\n`);
+    writeFileSync(join(d, 'ruim.log'), `${OUTRO}\n`);
+    const rodar = (log) => spawnSync(process.execPath, [RUNNER, 'plugin', join(d, log), join(d, 'nao-existe.jsonl')], { encoding: 'utf8' }).status;
+    assert.equal(rodar('debug.log'), 0);
+    assert.equal(rodar('ruim.log'), 1);
+    assert.equal(rodar('inexistente.log'), 1);
+  });
+  test('dialogo-de-imports-registrado-na-evidencia', () => {
+    assert.deepEqual(dialogosDoExpLog('1 inicio cols=180 rows=50\n2 DIALOGO-IMPORTS-EXTERNOS recusado\n'), { importsExternos: 'apareceu-e-foi-recusado' });
+    assert.deepEqual(dialogosDoExpLog('1 inicio\n'), { importsExternos: 'nao-apareceu' });
+  });
+  test('a1.exp-responde-o-dialogo-recusando-e-usa-o-sinal-do-runner (P14: sem a resposta a TUI para; P15: grep antigo)', () => {
+    const exp = readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), 'utf8');
+    assert.match(exp, /-re \{external\.\{1,40\}imports\} \{ recusarImports \}/, 'o drenar trata o diálogo (texto vem com ESC[nG entre as palavras)');
+    const proc = exp.slice(exp.indexOf('proc recusarImports'), exp.indexOf('proc drenar'));
+    assert.match(proc, /send "\\r"/, 'recusa = Enter no foco que nasce em "No, disable external imports"');
+    assert.doesNotMatch(proc, /\\033\\\[B/, 'seta para baixo ACEITARIA os imports (o foco já nasce em No)');
+    assert.match(exp, /DIALOGO-IMPORTS-EXTERNOS recusado/);
+    assert.doesNotMatch(exp, /grep -c -E "dependency-unsatisfied/, 'checagem antiga de plugin removida');
+    assert.match(exp, /exec \$node \$runner plugin /);
   });
 });

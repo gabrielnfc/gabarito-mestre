@@ -684,6 +684,7 @@ export async function coletar(rundir, repo, celula, roteiro, { pasta = null, tot
   const pushes = existsSync(join(rundir, 'pushes.log')) ? readFileSync(join(rundir, 'pushes.log'), 'utf8').split('\n').filter(Boolean).length : 0;
   const depoisDoPouso = pouso === undefined ? [] : chamadas.filter((c) => c.nome === 'Agent' && c.ts > pouso.ts && (clear === undefined || c.ts < clear.ts));
   return {
+    ambiente: dialogosDoExpLog(existsSync(join(rundir, 'exp.log')) ? readFileSync(join(rundir, 'exp.log'), 'utf8') : ''),
     celula, quadros, quadrosSemProps, integradas, eventos, digitadas, transcript: { chamadas, textos }, perguntas, despachos,
     entregasPublicadas: [...publicadas], gravacoes, vivos,
     pouso: { percent: Number.isFinite(pouso?.dados?.percent) ? pouso.dados.percent : 0, limparNoDepende: pouso !== undefined && quadros.some((q) => q.linhas.some((l) => /limpar a conversa/i.test(l))), pushes, despachosDepois: depoisDoPouso.length },
@@ -708,10 +709,29 @@ async function matriz(fonte, tmpRaiz, roteiro, so) {
     let erroColeta = '';
     try { ev = await coletar(rundir, repo, celula, roteiro); } catch (e) { erroColeta = e.message; process.stderr.write(`${idDaCelula(celula)}: coleta falhou: ${e.message}\n`); }
     const exec = ev === null || r.status !== 0 ? { celula: idDaCelula(celula), passa: false, resultados: [{ id: 'execucao', ok: false, detalhe: `expect rc ${r.status}; evidência ${ev === null ? `ausente (${erroColeta})` : 'coletada'}` }] } : avaliarExecucao(ev);
-    writeFileSync(join(rundir, 'resultado.json'), `${JSON.stringify(exec, null, 2)}\n`);
+    writeFileSync(join(rundir, 'resultado.json'), `${JSON.stringify({ ...exec, ambiente: ev?.ambiente ?? dialogosDoExpLog(existsSync(join(rundir, 'exp.log')) ? readFileSync(join(rundir, 'exp.log'), 'utf8') : '') }, null, 2)}\n`);
     execucoes.push(exec);
   }
   return { rel: avaliarMatriz(execucoes), execucoes, base };
+}
+
+// ─── ambiente da execução (T44, emenda 39) ───
+
+/** Carga do plugin gabarito-mestre pelo debug.log do Claude Code. Só o NOSSO plugin conta: erro de dependência de OUTRO plugin (superpowers, por `--setting-sources project,local`) não reprova.
+ * Sinal positivo obrigatório: o observador gravou (`obsGravou`) OU o log diz que o plugin foi carregado. Sem sinal positivo ⇒ não carregou (nunca "sem erro = carregou"). */
+// MEDIDO na T44: com `--setting-sources project,local` o Claude Code loga "Plugin not available for MCP: gabarito-mestre@inline - error type: dependency-unsatisfied" (a dependência superpowers não está instalada) — é só
+// sobre servidores MCP, e o gabarito-mestre não tem `.mcp.json`; o plugin carregou (hooks.json lido, "Loaded inline plugin", observador gravou). Não é falha de carga do plugin.
+const MCP_SO = /Plugin not available for MCP/;
+export function pluginCarregou(debugLog, obsGravou = false) {
+  const linhas = String(debugLog).split('\n');
+  const erroNosso = linhas.some((l) => /gabarito-mestre/.test(l) && /dependency-unsatisfied|is not installed/.test(l) && !/Loaded inline plugin/.test(l) && !MCP_SO.test(l));
+  const carregado = linhas.some((l) => /Loaded inline plugin from path: gabarito-mestre\s*$/.test(l));
+  return { ok: !erroNosso && (obsGravou || carregado), erroNosso, carregado, obsGravou };
+}
+
+/** O que o `a1.exp` registrou em exp.log sobre o diálogo de ambiente "Allow external CLAUDE.md file imports?": apareceu e foi recusado (ou não apareceu). */
+export function dialogosDoExpLog(expLog) {
+  return { importsExternos: /DIALOGO-IMPORTS-EXTERNOS recusado/.test(String(expLog)) ? 'apareceu-e-foi-recusado' : 'nao-apareceu' };
 }
 
 // ─── CLI ───
@@ -719,6 +739,12 @@ async function matriz(fonte, tmpRaiz, roteiro, so) {
 function flag(argv, nome) { const i = argv.indexOf(nome); return i >= 0 ? argv[i + 1] : undefined; }
 
 export async function main(argv) {
+  // `plugin <debug.log> <obs/a1.jsonl>` (chamado pelo `a1.exp`): rc 0 = gabarito-mestre carregou; rc 1 = não carregou
+  if (argv[0] === 'plugin') {
+    const r = pluginCarregou(existsSync(argv[1]) ? readFileSync(argv[1], 'utf8') : '', existsSync(argv[2]) && statSync(argv[2]).size > 0);
+    process.stdout.write(`${JSON.stringify(r)}\n`);
+    return r.ok ? 0 : 1;
+  }
   if (argv[0] === 'snapshot') { await snapshot(argv[1], argv[2], Number(argv[3])); return 0; }
   // `topo` = a árvore que será commitada (a guarda lê o `git ls-files` dela e a cópia do A1 sai dela); `principal` = onde vivem o roteiro e o `.claude-tmp/`
   const topo = flag(argv, '--raiz') ?? git(AQUI, 'rev-parse', '--show-toplevel').trim();

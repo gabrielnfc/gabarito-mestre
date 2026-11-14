@@ -7,7 +7,7 @@
 # Digita as falas de <rundir>/falas.tsv (colunas: n, rótulo, sha256, texto), uma por vez, esperando o turno acabar e tirando um `snapshot` do estado do produto
 # depois de cada ponto de controle. O texto das falas fica SÓ em <rundir>/falas.tsv (ignorado pelo git); sends.log guarda o sha256, nunca o texto.
 # A evidência vem do diário, do observador (obs/a1.jsonl: agentes e `placement` das Panes), dos transcripts e dos snapshots, lidos DEPOIS pelo `rodar-a1.mjs`;
-# a tela nunca é evidência. Pergunta de permissão é registrada e nunca respondida. LIMITE: nunca rodado de ponta a ponta no ambiente que o escreveu.
+# a tela nunca é evidência. Pergunta de permissão é registrada e nunca respondida; o diálogo de ambiente "Allow external CLAUDE.md file imports?" é RECUSADO e registrado (exp.log).
 lassign $argv rundir repo plugin obs cols rows bin node runner
 set env(TERM) xterm-256color
 set env(OBS_DIR) $rundir/obs
@@ -21,11 +21,22 @@ file mkdir $rundir/obs
 
 proc sends {tag} { global rundir; set f [open $rundir/sends.log a]; puts $f "[clock seconds] $tag"; close $f }
 proc nota {txt} { global rundir; set f [open $rundir/exp.log a]; puts $f "[clock seconds] $txt"; close $f }
+# diálogo de ambiente (T44, emenda 39): o CLAUDE.md de um diretório ancestral da cópia importa arquivo externo; a cópia NÃO herda instruções do ambiente do dono, então a resposta é SEMPRE "No, disable external imports". MEDIDO na tty.raw da T44: o foco (❯) já nasce em "No", então só Enter recusa (seta para baixo ACEITARIA). O texto sai com cursor-positioning (ESC[nG entre as palavras), por isso o padrão tolera lixo entre elas
+set imports_tratado 0
+proc recusarImports {} {
+  global imports_tratado
+  if {$imports_tratado} { return }
+  set imports_tratado 1
+  nota "DIALOGO-IMPORTS-EXTERNOS recusado"
+  sends recusar-imports
+  after 800; send "\r"; after 2000
+}
 proc drenar {s} {
   set fim [expr {[clock seconds] + $s}]
   set timeout 1
   while {[clock seconds] < $fim} {
     expect {
+      -re {external.{1,40}imports} { recusarImports }
       -re {Do you want to|Allow this|Esc to cancel} { nota "PERGUNTA-DE-PERMISSAO na tela" }
       -re {.+} {}
       timeout {}
@@ -84,7 +95,8 @@ while {[clock seconds] - $t0 < 90} {
   if {![drenar 2]} { exit 1 }
 }
 drenar 6
-if {![catch {exec grep -c -E "dependency-unsatisfied|is not installed" $rundir/debug.log}]} {
+# carga do plugin gabarito-mestre (T44, emenda 39): só o NOSSO plugin conta (dependência de OUTRO plugin, p.ex. superpowers, não reprova) e exige sinal positivo; a regra mora em `rodar-a1.mjs plugin`
+if {[catch {exec $node $runner plugin $rundir/debug.log $rundir/obs/a1.jsonl}]} {
   nota "PLUGIN NAO CARREGOU"
   set f [open $rundir/exp.status w]; puts $f NAO_PROVADO_PLUGIN; close $f
   send "\003"; after 500; send "\003"; catch {close}; catch {wait}; exit 3
