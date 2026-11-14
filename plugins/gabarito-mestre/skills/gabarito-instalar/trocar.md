@@ -148,7 +148,7 @@ Depois, no Apêndice (`trocar apendice`), a linha `Arquivos de contenda (serial,
 
 ## painel
 
-Troca o local do painel: ao lado da conversa (padrão) ou acima da linha de digitar. Grava só `painel.local` em `harness.config.json`, sem tocar nas outras chaves. O painel fica ao lado da conversa só se vale o limite: a plataforma só o põe sozinho com 144 colunas ou mais (ao lado da conversa em tela cheia); abaixo disso ele espera e abre quando você pede /gabarito painel.
+Troca o local do painel: ao lado da conversa (padrão) ou acima da linha de digitar. Grava só `painel.local` em `harness.config.json`, sem tocar nas outras chaves. O painel fica ao lado da conversa só se vale o limite: a plataforma só o põe sozinho com 144 colunas ou mais (ao lado da conversa em tela cheia, acima da linha de digitar nas outras); abaixo disso o painel avisa e ele abre quando você pede /gabarito painel, em qualquer largura.
 
 1. Veja o que está gravado:
    ```bash

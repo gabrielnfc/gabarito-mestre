@@ -26,7 +26,7 @@ const novoDir = () => { const d = realpathSync(mkdtempSync(join(tmpdir(), 'gm-pa
 const CFG = 'harness.config.json';
 const gravarCfg = (raiz, texto) => writeFileSync(join(raiz, CFG), texto);
 const lerCfg = (raiz) => JSON.parse(readFileSync(join(raiz, CFG), 'utf8'));
-const FRASE_LIMITE = 'a plataforma só o põe sozinho com 144 colunas ou mais (ao lado da conversa em tela cheia); abaixo disso ele espera e abre quando você pede /gabarito painel';
+const FRASE_LIMITE = 'a plataforma só o põe sozinho com 144 colunas ou mais (ao lado da conversa em tela cheia, acima da linha de digitar nas outras); abaixo disso o painel avisa e ele abre quando você pede /gabarito painel, em qualquer largura';
 const cli = (args) => {
   const r = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
   return { rc: r.status, saida: JSON.parse(r.stdout) };
@@ -50,7 +50,7 @@ describe('oferta (só lê)', () => {
     assert.match(o.texto, /^Onde quer o painel\?/);
     assert.ok(o.texto.includes('ao lado da conversa') && o.texto.includes('acima da linha de digitar'), o.texto);
     assert.match(o.texto, /padrão/);
-    assert.ok(o.texto.length <= 300, `${o.texto.length}`);
+    assert.ok(o.texto.length <= 320, `${o.texto.length}`);
   });
 
   test('oferta-sem-termo-tecnico: nenhum texto oferecido tem palavra proibida, nem a frase técnica da T21', () => {

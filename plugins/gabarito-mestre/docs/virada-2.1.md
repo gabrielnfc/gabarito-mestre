@@ -4,7 +4,7 @@ Para quem usa o Gabarito Mestre. O que mudou em detalhe está no `CHANGELOG.md`,
 
 ## O que muda da 2.0
 
-- **Um painel só, em um local só.** Você escolhe onde ele fica: ao lado da conversa (padrão; a plataforma só o põe sozinho com 144 colunas ou mais (ao lado da conversa em tela cheia); abaixo disso ele espera e abre quando você pede /gabarito painel) ou acima da linha de digitar. Nunca os dois ao mesmo tempo.
+- **Um painel só, em um local só.** Você escolhe onde ele fica: ao lado da conversa (padrão; a plataforma só o põe sozinho com 144 colunas ou mais (ao lado da conversa em tela cheia, acima da linha de digitar nas outras); abaixo disso o painel avisa e ele abre quando você pede /gabarito painel, em qualquer largura) ou acima da linha de digitar. Nunca os dois ao mesmo tempo.
 - **O painel diz o que depende de você**, mesmo antes de existir uma entrega em curso, e só mostra o que tem registro: sem fonte, aparece "?" em vez de um número inventado.
 - **O orquestrador anota na hora.** Ideia nova, desvio, mudança de assunto, dúvida que só você resolve e tarefa sua fora da entrega viram uma anotação de uma linha, nas palavras dele, sem plano e sem interromper o trabalho.
 - **O chat fica mais limpo.** As linhas de ferramenta aparecem em linguagem natural ("consultou 3 arquivos"). Quem prefere o texto cru escolhe `/gabarito chat cru`.

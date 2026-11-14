@@ -283,6 +283,7 @@ const COMANDO = join(PLUGIN, 'commands/gabarito.md');
 const VIRADA = join(PLUGIN, 'docs/virada-2.1.md');
 const AGENTS = join(PLUGIN, 'reference/AGENTS.md');
 const LIMITE_LOCAL = 'Pane (lateral): a plataforma só a põe sozinha com ≥ 144 colunas (ao lado em tela cheia, acima da linha de digitar nas outras); abaixo disso o painel avisa e a Pane abre quando você pede /gabarito painel, em qualquer largura — sempre um só local';
+const LIMITE_ONB = 'a plataforma só o põe sozinho com 144 colunas ou mais (ao lado da conversa em tela cheia, acima da linha de digitar nas outras); abaixo disso o painel avisa e ele abre quando você pede /gabarito painel, em qualquer largura';
 const lerSkill = () => readFileSync(SKILL_LOOP, 'utf8');
 
 /** Todo exemplo de `proxima`/`pousar` num texto: código inline `loop.mjs proxima|pousar …` ou `proxima|pousar --…`; devolve os que NÃO têm `--sessao`. */
@@ -439,6 +440,12 @@ test('commands-cita-painel-local: /gabarito painel lateral|acima com o limite da
   assert.match(t, /`painel lateral\|acima` \(onde o painel fica\)/);
   assert.ok(t.includes(LIMITE_LOCAL), 'limite literal ausente do comando');
   assert.match(t, /O mod nunca troca de local sozinho pela largura; o padrão é `lateral`\./);
+});
+
+test('virada-diz-o-limite-do-local: a nota da 2.1.0 traz a frase da escolha e a do limite, as duas completas (144 colunas, acima da linha de digitar, qualquer largura a pedido)', () => {
+  const t = readFileSync(VIRADA, 'utf8');
+  assert.ok(t.includes(LIMITE_ONB), 'frase da escolha do local incompleta na nota da virada');
+  assert.ok(t.includes(LIMITE_LOCAL), 'frase do limite incompleta na nota da virada');
 });
 
 test('texto-nao-promete-o-que-saiu: FIEL-16 e FIEL-17 (T40/T41, fora da 2.1.0) não aparecem como entregues; sem emoji', () => {

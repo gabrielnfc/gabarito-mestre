@@ -98,7 +98,7 @@ function violacoesComuns(texto) {
 }
 
 /** O limite do painel em palavras de spec:70 (decisão Sombra 91a18fea): é a única frase em que "ao lado" e "acima" ficam soltos. */
-const LIMITE = 'a plataforma só o põe sozinho com 144 colunas ou mais (ao lado da conversa em tela cheia); abaixo disso ele espera e abre quando você pede /gabarito painel';
+const LIMITE = 'a plataforma só o põe sozinho com 144 colunas ou mais (ao lado da conversa em tela cheia, acima da linha de digitar nas outras); abaixo disso o painel avisa e ele abre quando você pede /gabarito painel, em qualquer largura';
 /** REQ-ONB-2: nenhum "ao lado" sem "da conversa" e nenhum "acima" sem "da linha de digitar" fora da frase do limite. */
 function violacoesLocal(texto, nome) {
   const v = [];
@@ -645,6 +645,7 @@ test('skill-local-nos-dois-textos', () => {
   // a frase do limite é a única exceção, e só inteira
   assert.deepEqual(violacoesLocal(`x ${LIMITE} y`, 'T'), []);
   assert.ok(violacoesLocal('x a plataforma só o põe sozinho com 144 colunas ou mais (ao lado em tela cheia) y', 'T').length > 0);
+  assert.ok(violacoesLocal(`x ${LIMITE.replace('ao lado da conversa em tela cheia', 'ao lado em tela cheia')} y`, 'T').length > 0, 'frase alterada não é a exceção');
 });
 
 test('skill-sem-r19', () => {
@@ -663,6 +664,7 @@ test('trocar-painel-no-trocar-md', () => {
   const s = secao(TROCAR, 'painel');
   assert.match(s, /onboarding\.mjs" painel --root "<raiz>"/);
   assert.match(s, /--local <valor>/);
+  assert.ok(s.includes(LIMITE), 'trocar.md painel diz o limite medido (144 colunas, acima da linha de digitar, qualquer largura a pedido)');
   assert.ok(violacoesTrocar(TROCAR.replace(/^## painel\b/m, '## xpainel')).includes('sem-secao: painel'));
   assert.ok(SKILL.includes('`painel`: leia'), 'a skill manda ler a seção painel do trocar.md');
 });
