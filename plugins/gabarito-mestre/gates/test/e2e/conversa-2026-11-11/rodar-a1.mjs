@@ -737,11 +737,11 @@ const realDe = (raizes) => [...new Set(raizes.map((r) => { try { return realpath
 /** Refs que OUTROS implementadores movem (worktrees `wt/<PBI>-<n>` do próprio loop): o ref cru não diz quem o moveu; quem moveu é lido da identidade (`marcas`). */
 const IGNORAR_REFS = Object.freeze([/^refs\/heads\/wt\//]);
 /**
- * Linhas de `git status` que o ORQUESTRADOR vivo grava (e só elas): eventos do diário, consultas da Sombra, o plano, aprendizados, ledgers, temporários e as worktrees do loop. NÃO é "o diretório inteiro":
- * qualquer outro arquivo de `.harness/` invalida; e o conteúdo destes é varrido pela identidade da célula (`marcas`), porque a célula que roda o loop grava nos mesmos lugares.
+ * Linhas de `git status` que o ORQUESTRADOR vivo grava (e só elas): eventos do diário, consultas da Sombra, o plano, aprendizados, ledgers e as worktrees do loop. NÃO é "o diretório inteiro":
+ * qualquer outro arquivo de `.harness/` invalida. LIMITE declarado: o conteúdo destes é varrido pela marca da célula só onde a identidade dela é gravada (eventos `autor`); `plano.json`, `sombra/` e ledgers
+ * não carregam marca, então o que a célula escrever neles NÃO é visto. Arquivos ignorados pelo git (`.claude-tmp/`, `.harness/PAUSAR`, `pouso-pendente.json`, `contexto/`) nem aparecem no status: não são vistos.
  */
 const IGNORAR_STATUS = Object.freeze([
-  /^.. "?\.claude-tmp\//,
   /^.. "?\.harness\/entregas\/[^/]+\/(events\.[^/]+\.jsonl|plano\.json|sombra\/.*)"?$/,
   /^.. "?\.harness\/aprendizados\.jsonl"?$/,
   /^.. "?\.harness\/worktrees\//,
@@ -759,8 +759,9 @@ export const ambienteGitDaCelula = (marca) => ({
 });
 
 /**
- * A foto de um repo: `git status --porcelain`, `for-each-ref` (sem os refs de worktrees do loop), `worktree list` (só os caminhos, fora das do loop) e `marcas`: tudo que carrega a identidade da célula
- * (`marca`): reflogs (branch criado, commit, `worktree add`), commits de qualquer ref, e o CONTEÚDO dos arquivos que o orquestrador também grava (diário, plano, ledgers).
+ * A foto de um repo: `git status --porcelain`, `for-each-ref` (sem os refs de worktrees do loop), `worktree list` (só os caminhos, fora das do loop) e `marcas`: o rastro da identidade da célula (`marca`)
+ * em reflogs (`reflog show --all`: branch criado, commit, `worktree add`, mesmo com a worktree removida), commits de qualquer ref e no CONTEÚDO dos arquivos de status que o orquestrador também grava.
+ * LIMITES (não é cobertura total): a identidade só vale se o git da célula a herda; quem a sobrescreve de propósito (`-c user.email=`, `GIT_*` próprios) apaga o rastro; e vale o que está declarado em `IGNORAR_STATUS`.
  * Quem não é repo ⇒ lança (a prova nunca passa no escuro).
  */
 export function fotoDoRepo(raiz, { marca = null } = {}) {

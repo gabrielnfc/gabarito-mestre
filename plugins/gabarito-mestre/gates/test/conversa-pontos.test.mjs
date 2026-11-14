@@ -1077,10 +1077,10 @@ describe('T49 (a) isolamento: célula e plugin fora do repo real; o repo real fi
     git(r, 'worktree', 'add', '-q', '-b', 'wt/T1', join(r, '.harness', 'worktrees', 'T1'));
     assert.deepEqual(R.diferencasDeFotos(antes2, R.fotoDoRepo(r)), []);
   });
-  test('estado-vivo-do-orquestrador-nao-invalida (eventos com a identidade dele, sombra, .claude-tmp); arquivo de código novo e outro arquivo do .harness invalidam', () => {
+  test('estado-vivo-do-orquestrador-nao-invalida (eventos com a identidade dele, sombra); arquivo de código novo e outro arquivo do .harness invalidam', () => {
     const r = tmpGit(); const a = R.fotoDoRepo(r, { marca: 'a1-zzz' });
-    mkdirSync(join(r, '.harness', 'entregas', 'GM-14', 'sombra'), { recursive: true }); mkdirSync(join(r, '.claude-tmp'), { recursive: true });
-    writeFileSync(join(r, '.harness', 'entregas', 'GM-14', 'sombra', 'h.md'), 'x'); writeFileSync(join(r, '.claude-tmp', 'y'), 'y');
+    mkdirSync(join(r, '.harness', 'entregas', 'GM-14', 'sombra'), { recursive: true });
+    writeFileSync(join(r, '.harness', 'entregas', 'GM-14', 'sombra', 'h.md'), 'x');
     writeFileSync(join(r, '.harness', 'entregas', 'GM-14', 'events.orq.jsonl'), '{"autor":"dono@x","sessao":"s"}\n');
     assert.deepEqual(R.diferencasDeFotos(a, R.fotoDoRepo(r, { marca: 'a1-zzz' })), []);
     writeFileSync(join(r, 'src.js'), 'z');
@@ -1119,13 +1119,34 @@ describe('T49 (a) isolamento: célula e plugin fora do repo real; o repo real fi
     writeFileSync(join(r, '.harness', 'entregas', 'GM-14', 'events.outro.jsonl'), '{"autor":"dono@x"}\n');
     assert.deepEqual(R.diferencasDeFotos(a, foto(r)), []);
   });
+  test('r2 MAJOR: branch wt/* criado pela célula sem commit e sem worktree: só o reflog --all o vê', () => {
+    const marca = 'a1-r2reflog'; const envCelula = R.ambienteGitDaCelula(marca);
+    const gitC = (cwd, ...a) => execFileSync('git', ['-C', cwd, '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...envCelula } });
+    const foto = (r) => R.fotoDoRepo(r, { marca });
+    // (1) branch wt/* criado pela célula, sem commit e sem worktree
+    const r = tmpGit(); const a = foto(r);
+    gitC(r, 'branch', 'wt/GM-14-T77');
+    const d = R.diferencasDeFotos(a, foto(r)).join(';');
+    assert.match(d, /marcas.*reflog: wt\/GM-14-T77/, 'branch sem commit nem worktree');
+  });
+  test('r2 MAJOR: worktree add + worktree remove mantendo o branch deixa só o reflog do branch, e a varredura o vê', () => {
+    const marca = 'a1-r2reflog'; const envCelula = R.ambienteGitDaCelula(marca);
+    const gitC = (cwd, ...a) => execFileSync('git', ['-C', cwd, '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...envCelula } });
+    const foto = (r) => R.fotoDoRepo(r, { marca });
+    let d;
+    const r = tmpGit(); const a = foto(r);
+    const wt = join(r, '.harness', 'worktrees', 'T78');
+    gitC(r, 'worktree', 'add', '-q', '-b', 'wt/GM-14-T78', wt); gitC(r, 'worktree', 'remove', '--force', wt);
+    d = R.diferencasDeFotos(a, foto(r)).join(';');
+    assert.match(d, /marcas.*reflog: wt\/GM-14-T78/, 'worktree removido, branch mantido');
+  });
   test('ambienteGitDaCelula: o user.email visto pelo git da célula é a identidade dela (commits e eventos `autor` a herdam) mesmo num repo com outra', () => {
     const r = tmpGit(); git(r, 'config', 'user.email', 'dono@real');
     const out = execFileSync('git', ['-C', r, 'config', 'user.email'], { encoding: 'utf8', env: { ...process.env, ...R.ambienteGitDaCelula('a1-k') } }).trim();
     assert.equal(out, R.emailDaCelula('a1-k'));
     assert.notEqual(R.emailDaCelula('a1-k'), R.emailDaCelula('a1-j'));
   });
-  test('executarExpect-com-marca: a célula que mexe no repo real com o git herdado do ambiente aborta pela marca (o texto do comando não importa)', async () => {
+  test('executarExpect-com-marca: a célula que mexe no repo real com o git herdado do ambiente aborta pela marca (o texto do comando não importa)', { timeout: 20000 }, async () => {
     const fonte = tmpGit(); const rundir = tmp();
     const f = join(tmp(), 'expect'); writeFileSync(f, `#!/bin/sh\ngit -C ${fonte} worktree add -q -b wt/GM-14-T9 ${fonte}/.harness/worktrees/T9\nsleep 5\n`); execFileSync('chmod', ['+x', f]);
     const r = await R.executarExpect({ rundir, args: [], reais: [fonte], expect: f, intervalo: 200, fotoOpc: { marca: 'a1-e2e' }, marca: 'a1-e2e' });
@@ -1287,7 +1308,7 @@ describe('T49 (a) isolamento: célula e plugin fora do repo real; o repo real fi
 
 describe('T49 execução do expect: vigia o repo real e para na hora', () => {
   const fakeExpect = (segundos) => { const d = tmp(); const f = join(d, 'expect'); writeFileSync(f, `#!/bin/sh\nexec sleep ${segundos}\n`); execFileSync('chmod', ['+x', f]); return f; };
-  test('repo-real-mexido-no-meio-mata-o-expect-e-devolve-a-causa (M: aborto removido ⇒ espera os 30 s)', async () => {
+  test('repo-real-mexido-no-meio-mata-o-expect-e-devolve-a-causa (M: aborto removido ⇒ espera os 30 s)', { timeout: 20000 }, async () => {
     const fonte = tmpGit(); const rundir = tmp();
     const t0 = Date.now();
     setTimeout(() => writeFileSync(join(fonte, 'vazou.txt'), 'x'), 300);
@@ -1296,12 +1317,12 @@ describe('T49 execução do expect: vigia o repo real e para na hora', () => {
     assert.match(r.abortada, /repo real/);
     assert.match(readFileSync(join(rundir, 'abortar.txt'), 'utf8'), /repo real/);
   });
-  test('sem-mexida-espera-o-expect-acabar-sem-abortar', async () => {
+  test('sem-mexida-espera-o-expect-acabar-sem-abortar', { timeout: 20000 }, async () => {
     const fonte = tmpGit(); const rundir = tmp();
     const r = await R.executarExpect({ rundir, args: [], reais: [fonte], expect: fakeExpect(1), intervalo: 100 });
     assert.equal(r.abortada, null); assert.equal(r.status, 0);
   });
-  test('abortar.txt-escrito-pelo-a1.exp-ou-pelo-snapshot-mata-o-expect-na-hora', async () => {
+  test('abortar.txt-escrito-pelo-a1.exp-ou-pelo-snapshot-mata-o-expect-na-hora', { timeout: 20000 }, async () => {
     const fonte = tmpGit(); const rundir = tmp(); const t0 = Date.now();
     setTimeout(() => writeFileSync(join(rundir, 'abortar.txt'), '0 render observado no 1º snapshot\n'), 300);
     const r = await R.executarExpect({ rundir, args: [], reais: [fonte], expect: fakeExpect(30), intervalo: 100 });
@@ -1412,7 +1433,7 @@ describe('T49 avaliar offline: a mesma avaliação da execução, sobre uma exec
     assert.deepEqual(off2, avaliarExecucao(await coletar(m2.rundir, m2.repo, celula, roteiroColeta(), { pasta: m2.pasta, total: 1 })));
     assert.match(off2.resultados.find((x) => x.id === '12-placement-da-pane').detalhe, /não medida/);
   });
-  test('abortar.txt-escrito-e-expect-que-ja-saiu-tambem-aborta', async () => {
+  test('abortar.txt-escrito-e-expect-que-ja-saiu-tambem-aborta', { timeout: 20000 }, async () => {
     const fonte = tmpGit(); const rundir = tmp();
     const f = join(tmp(), 'expect'); writeFileSync(f, `#!/bin/sh\necho "0 render observado" > ${rundir}/abortar.txt\nexit 0\n`); execFileSync('chmod', ['+x', f]);
     const r = await R.executarExpect({ rundir, args: [], reais: [fonte], expect: f, intervalo: 5000 });
