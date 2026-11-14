@@ -1177,7 +1177,8 @@
         "plugins/gabarito-mestre/gates/test/trilha.test.ts",
         "plugins/gabarito-mestre/gates/src/origem.ts",
         "plugins/gabarito-mestre/gates/dist/origem.js",
-        "plugins/gabarito-mestre/gates/test/origem.test.ts"
+        "plugins/gabarito-mestre/gates/test/origem.test.ts",
+        "plugins/gabarito-mestre/gates/test/aprovar-spec.test.mjs"
       ],
       "reqs": [
         "REQ-DIA-1"
