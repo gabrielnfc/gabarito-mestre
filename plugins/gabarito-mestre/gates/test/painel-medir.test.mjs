@@ -651,4 +651,41 @@ describe('regra única de publicada: a função e o loop.mjs concordam no mesmo 
     assert.equal(entregaPublicada(d, 'GM-14', 'S1'), false);
     assert.equal(entregaPublicada(d, 'GM-14', 'S2'), true);
   });
+
+  // MAJOR-1 r2 (decisão da Sombra, 3ª rodada): o "qualquer sessão" só vale com a ligação POSTERIOR ao último PR mergeado da entrega.
+  const PRn = (d, numero, ts) => w(d, SEMENTE, 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero, estado: 'mergeado', branch: 'enabler/GM-14-clareza' } }, ts);
+  const LIGARem = (d, sessao, t0) => {
+    w(d, sessao, 'fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'enabler/GM-14-clareza' } }, t0);
+    const ancora = `${sessao}:${ler(dirDe(d)).find((e) => e.sessao === sessao).seq}`;
+    w(d, sessao, 'dono.resposta', { pergunta: ancora, opcao: 1, rotulo: 'GM-14' }, new Date(Date.parse(t0) + 1000).toISOString());
+  };
+  const parar = (d) => JSON.parse(spawnSync(process.execPath, [LOOP, 'parar', 'nao_conseguiu'], { cwd: d, encoding: 'utf8', env: GIT_ENV }).stdout.trim());
+
+  test('E (MAJOR-1 r2): ligação ANTERIOR ao PR mergeado não destrava o curinga; loop.mjs sem --sessao recusa e não grava', () => {
+    const d = repo();
+    LIGARem(d, 'S1', '2026-11-11T10:00:00.000Z'); // ligada antes da publicação
+    PRn(d, 7, '2026-11-12T10:00:00.000Z'); PLANO(d);
+    assert.equal(entregaPublicada(d, 'GM-14', SESSAO_QUALQUER), true);
+    const antes = ler(dirDe(d)).length;
+    assert.equal(parar(d).erro, 'entrega_publicada');
+    assert.equal(ler(dirDe(d)).length, antes, 'nada gravado na entrega publicada');
+    // vizinho: a mesma ligação, agora posterior ao merge, destrava (o caso que já passava)
+    LIGARem(d, 'S2', '2026-11-13T10:00:00.000Z');
+    assert.equal(entregaPublicada(d, 'GM-14', SESSAO_QUALQUER), false);
+    assert.equal(parar(d).ok, true);
+  });
+
+  test('F (MAJOR-1 r2): republicação (PR novo mergeado depois de S1 ligada) recusa até nova resposta; sessão explícita e outra entrega seguem como antes', () => {
+    const d = repo();
+    PRn(d, 7, '2026-11-12T10:00:00.000Z'); PLANO(d);
+    LIGARem(d, 'S1', '2026-11-13T10:00:00.000Z');
+    assert.equal(entregaPublicada(d, 'GM-14', SESSAO_QUALQUER), false, 'controle: ligação posterior destrava');
+    PRn(d, 8, '2026-11-14T09:00:00.000Z'); // republicação
+    assert.equal(entregaPublicada(d, 'GM-14', SESSAO_QUALQUER), true);
+    assert.equal(parar(d).erro, 'entrega_publicada');
+    assert.equal(entregaPublicada(d, 'GM-14', 'S1'), false, '--sessao explícita de quem o dono ligou segue valendo');
+    LIGARem(d, 'S3', '2026-11-14T10:00:00.000Z'); // nova resposta depois do novo merge
+    assert.equal(entregaPublicada(d, 'GM-14', SESSAO_QUALQUER), false);
+    assert.equal(entregaPublicada(d, 'GM-77', SESSAO_QUALQUER), false, 'outra entrega sem diário não é publicada');
+  });
 });

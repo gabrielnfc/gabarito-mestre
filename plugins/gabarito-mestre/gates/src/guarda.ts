@@ -221,7 +221,11 @@ export function entregaPublicada(raiz: string, entrega: string | null, sessao: s
     // O ID entra como a própria branch e como o padrão (escapado): a identificação não depende da branch atual nem da config.
     const base = { branch: entrega, idPadrao: entrega.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&'), specs, plano: temPlano ? { tasks: [] as string[] } : null, ledger, ultimas: [] };
     const qualquer = sessao === SESSAO_QUALQUER;
-    const donas = qualquer ? [...new Set(eventos.filter((e) => e.tipo === 'dono.resposta' && typeof e.sessao === 'string').map((e) => e.sessao as string))].slice(0, SESSOES_LIGADAS_MAX) : [];
+    // "Qualquer sessão" vale só para a ligação POSTERIOR ao último PR mergeado da entrega: resposta anterior à publicação atual não destrava,
+    // e uma republicação (PR novo mergeado) exige nova resposta do dono. ts ilegível não é "posterior" (recusa).
+    const tsMs = (ts: unknown): number => (typeof ts === 'string' ? Date.parse(ts) : NaN);
+    const mergeadoEm = Math.max(-Infinity, ...eventos.filter((e) => e.tipo === 'fato.medido' && objeto(e.dados)?.chave === 'pr' && objeto(objeto(e.dados)?.valor)?.estado === 'mergeado').map((e) => tsMs(e.ts)).filter((n) => !Number.isNaN(n)));
+    const donas = qualquer ? [...new Set(eventos.filter((e) => e.tipo === 'dono.resposta' && typeof e.sessao === 'string' && tsMs(e.ts) > mergeadoEm).map((e) => e.sessao as string))].slice(0, SESSOES_LIGADAS_MAX) : [];
     const sessoes: Array<string | null> = qualquer ? [null, ...donas] : [sessao];
     for (const s of sessoes) if (trilhaDe({ ...base, sessao: s, gh: 'ok' }, eventos).identificada === true) return false;
     return trilhaDe({ ...base, sessao: qualquer ? null : sessao, gh: 'falhou' }, eventos).entrega === entrega;
