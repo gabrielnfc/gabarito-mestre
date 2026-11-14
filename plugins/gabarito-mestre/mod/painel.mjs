@@ -643,7 +643,7 @@ async function lerPanes($) {
     const lista = await $.ui.panes();
     if (!Array.isArray(lista)) return null;
     S.paneVisivel = lista.some((x) => x?.id === ID_PANE && x.isPlaced === true && x.isShown === true);
-    S.paneEspera = !S.paneVisivel && lista.some((x) => x?.id === ID_PANE);
+    S.paneEspera = lista.some((x) => x?.id === ID_PANE && x.isPlaced === false); // só a que a plataforma NÃO colocou espera; colocada atrás de outra aba não promete colunas
     return lista;
   } catch {
     return null; // não consegui ler: a leitura anterior fica

@@ -183,7 +183,7 @@ function mundo($: any, on: any, o: Opc = {}) {
     if (est.openResult?.isPlaced === false && Array.isArray(est.panes) && !est.panes.some((x: any) => x.id === e.id)) est.panes = [...est.panes, { id: e.id, isPlaced: false, isShown: false }]
     return { value: est.openResult }
   })
-  on('ui.panes', () => (est.panes === 'falha' ? { deny: 'sem panes' } : { value: est.panes }))
+  on('ui.panes', () => (est.panesLidas = (est.panesLidas ?? 0) + 1, est.panes === 'falha' ? { deny: 'sem panes' } : { value: est.panes }))
   on('ui.notify', (_: any, e: any) => {
     est.ordem.push('notify'); est.notifies.push(e.text)
     if (est.notifyModo === 'rejeita') return { deny: 'canal fora do ar' }
@@ -3844,6 +3844,39 @@ test('sem-troca-de-local: Pane sem colocar, em qualquer largura ⇒ o local segu
   expect(m.est.locaisGravados).toEqual([])
   expect(m.est.closes).toHaveLength(0)
   expect(m.est.opens).toHaveLength(1) // nem reabre sozinho
+})
+test('aba-atras-sem-aviso: Pane colocada mas não mostrada (aba atrás de outra) ⇒ sem aviso, antes e depois do pedido do dono (a promessa "mais colunas" seria falsa)', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', openResult: { isPlaced: true }, panes: [{ id: ID_PAINEL, isPlaced: true, isShown: false }] })
+  await arrancar(m)
+  expect(await aviso($, 200)).not.toContain('precisa de')
+  m.est.openResult = { isPlaced: true }
+  await m.cmd('painel'); await drena(m) // depois do pedido: a plataforma colocou, a aba segue atrás
+  expect(await aviso($, 200)).not.toContain('precisa de')
+  await m.turno(); await m.clock.advance(PERIODO * 2); await drena(m)
+  expect(await aviso($, 200)).not.toContain('precisa de')
+})
+test('pedido-do-dono-le-panes-na-hora: o comando relê `$.ui.panes()` ao abrir, sem esperar o render', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  const antes = m.est.panesLidas
+  m.est.openResult = { isPlaced: true }
+  await m.cmd('painel')
+  expect(m.est.panesLidas).toBeGreaterThan(antes)
+})
+test('abertura-colocada-limpa-a-razao: depois de colocada, o motivo antigo não volta ao aviso (Pane listada como não colocada ⇒ "mais colunas")', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  expect(await aviso($)).toContain('precisa de 144 colunas')
+  m.est.openResult = { isPlaced: true }
+  m.est.panes = PANE_VISIVEL
+  await m.cmd('painel'); await drena(m)
+  m.est.panes = [{ id: ID_PAINEL, isPlaced: false, isShown: false }] // o terminal encolheu: a plataforma tirou a Pane
+  const t = await aviso($)
+  expect(t).toContain('painel lateral precisa de mais colunas: /gabarito painel para abrir')
+  expect(t).not.toContain('144')
 })
 test('fechada-nao-reabre-com-aviso: a Pane que o dono fechou (sumiu de `$.ui.panes()`) não reabre e o aviso some', async ($, on) => {
   sobreOMotor(on)
