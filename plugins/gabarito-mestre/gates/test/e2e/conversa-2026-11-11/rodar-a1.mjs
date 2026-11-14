@@ -405,18 +405,26 @@ export function prepararCopia(raiz, destino, celula) {
 /** Regra sintética (D, entra no brief do implementador) semeada na cópia: sem ela o `proxima` não traz aprendizado e a asserção 10 nada mediria. */
 export const REGRA_SEMENTE = 'Regra de semente do A1: confirme o escopo de arquivos antes de escrever.';
 
+/** T55 (emenda 61): a entrega da conversa fica ATIVA (a da branch da cópia; `pontos.json:9-12` pressupõe a GM-13 em fase 5, spec aguardando aprovação) e a publicada vigiada pela 8c é OUTRA. */
+export const ENTREGA_ATIVA = 'GM-13';
+export const ENTREGA_PUBLICADA = 'GM-12';
+
 /**
- * Entrega JÁ PUBLICADA como na conversa real (F19): a da branch da cópia (`idDaBranch('enabler/GM-13-a1')` = GM-13, com o `plano.json` da `ba3986f` como 2º fato) com o PR #14
- * mergeado e a release 2.0.0, gravados como `fato.medido` (`gh`) pelo `append` do próprio produto, `ts` antigo. É o que faz o produto reconhecer a entrega como publicada (FIEL-1 b).
+ * Entrega JÁ PUBLICADA, OUTRA que a da conversa (T55, emenda 61): id e branch próprios (`enabler/<id>-a1`), PR mergeado e release gravados como `fato.medido` (`gh`) pelo `append` do próprio produto,
+ * `ts` antigo. É o que faz o produto reconhecer ESTA entrega como publicada (FIEL-1 b) sem tirar a da conversa do ar: a entrega da branch da cópia (GM-13) nada recebe aqui e o `gh` de fixture
+ * não devolve PR para a branch dela. O caso "publicada na branch da conversa" (F19) sai da A1 e fica nos testes de comportamento da T48/T30 (citados na T55).
  */
-export function semearEntregaPublicada(destino) {
+export function semearEntregaPublicada(destino, id = ENTREGA_PUBLICADA) {
+  if (!/^[A-Z]+-\d+$/.test(id) || id === ENTREGA_ATIVA) throw new Error(`a entrega publicada vigiada tem id próprio e não é a da conversa: ${id}`);
+  const dir = join(destino, '.harness', 'entregas', id);
+  mkdirSync(dir, { recursive: true });
   const script = `import { append } from ${JSON.stringify(pathToFileURL(join(GATES, 'dist', 'diario.js')).href)};
-const dir = process.argv[1];
-for (const [chave, valor] of [['pr', { numero: 14, estado: 'mergeado', branch: 'enabler/GM-13-a1' }], ['release', { tag: 'v2.0.0' }]]) {
+const [dir, branch, numero] = process.argv.slice(1);
+for (const [chave, valor] of [['pr', { numero: Number(numero), estado: 'mergeado', branch }], ['release', { tag: 'v2.0.0' }]]) {
   const r = append(dir, 'semente', { ts: '2026-11-10T12:00:00.000Z', autor: 'a1@example.invalid', sessao: 'semente', agente: 'painel', tipo: 'fato.medido', dados: { chave, fonte: 'gh', valor } });
   if (!r.ok) { process.stderr.write(r.erro); process.exit(1); }
 }`;
-  const a = spawnSync(process.execPath, ['--input-type=module', '-e', script, join(destino, '.harness', 'entregas', 'GM-13')], { cwd: destino, encoding: 'utf8' });
+  const a = spawnSync(process.execPath, ['--input-type=module', '-e', script, dir, `enabler/${id}-a1`, String(Number(id.split('-')[1]) + 100)], { cwd: destino, encoding: 'utf8' });
   if (a.status !== 0) throw new Error(`semente da entrega publicada: ${a.stderr}${a.stdout}`);
 }
 
@@ -424,7 +432,7 @@ for (const [chave, valor] of [['pr', { numero: 14, estado: 'mergeado', branch: '
  * Publicada pelo critério do PRODUTO: pergunta a `trilhaDe` (dist/trilha.js) com a branch `enabler/<id>-a1`, o plano da `ba3986f` como 2º fato e `gh: ok`; com o 2º fato presente, a branch sozinha NÃO identifica a entrega só quando o último PR está mergeado e nenhum aberto (FIEL-1 b): `identificada === false` com `candidato === id` ⇒ publicada.
  * Não reimplementa `prs` (privada em trilha.ts). Só vale o diário até `inicio` (o que a execução gravar não conta); diário que o produto não ordena ⇒ fase PR `?` ⇒ identificada ⇒ não publicada.
  */
-export async function publicadaPeloProduto(eventos, inicio, id = 'GM-13') {
+export async function publicadaPeloProduto(eventos, inicio, id = ENTREGA_PUBLICADA) {
   const { trilhaDe } = await import(pathToFileURL(join(GATES, 'dist', 'trilha.js')).href);
   const ate = eventos.filter((e) => e.ts <= inicio);
   const t = trilhaDe({ branch: `enabler/${id}-a1`, idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: [] }, ledger: false, gh: 'ok', ultimas: [] }, ate);
@@ -432,7 +440,7 @@ export async function publicadaPeloProduto(eventos, inicio, id = 'GM-13') {
 }
 
 /**
- * Semeia a cópia com o que as asserções 8c e 10 precisam para medir algo: (a) uma entrega JÁ PUBLICADA (`semearEntregaPublicada`) para vigiar "nada gravado em entrega publicada";
+ * Semeia a cópia com o que as asserções 8c e 10 precisam para medir algo: (a) OUTRA entrega JÁ PUBLICADA (`semearEntregaPublicada`; a da conversa fica ativa) para vigiar "nada gravado em entrega publicada";
  * (b) um aprendizado D no brief do implementador, gravado pelo CLI do produto.
  */
 export function semear(destino, bin, ghEstado) {

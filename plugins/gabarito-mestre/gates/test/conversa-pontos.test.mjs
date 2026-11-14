@@ -16,10 +16,10 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   ASSERCOES, LINHA_DECISAO, MATRIZ, resumoDoAgora, MIN_FALA, PONTOS_ARQ, ROTEIRO_REL, TOTAL_PONTOS, acoesDe, avaliarExecucao, avaliarMatriz, coletar, dialogosDoExpLog, entradaDoSnapshot, falasDoRoteiro, guardaFalas, idDaCelula,
-  itensDeProxima, placementEsperado, pluginCarregou, resolverSuperpowers, ambienteDaExecucao, SUPERPOWERS_VERSAO, matriz, configDaConta, pastaDeTranscripts, propsDe, publicadaPeloProduto, raizPrincipal, renderizar, semearEntregaPublicada, sha256, validarPontos, verificarRoteiro,
+  itensDeProxima, placementEsperado, pluginCarregou, resolverSuperpowers, ambienteDaExecucao, SUPERPOWERS_VERSAO, matriz, configDaConta, pastaDeTranscripts, propsDe, publicadaPeloProduto, raizPrincipal, renderizar, semearEntregaPublicada, ENTREGA_ATIVA, ENTREGA_PUBLICADA, prepararCopia, BASE_SHA, sha256, validarPontos, verificarRoteiro,
 } from './e2e/conversa-2026-11-11/rodar-a1.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -266,7 +266,7 @@ const evBoa = (celula = { local: 'lateral', cols: 180, rows: 50, cheia: true }) 
   transcript: { chamadas: [{ nome: 'Agent', negada: false, turnoDeStatus: true }, { nome: 'Write', entrada: { file_path: '/r/src/a.mjs' } }], textos: ['pronto, segue o plano'] },
   perguntas: [{ ponto: 1, rotulo: 'MUDANÇA DE ASSUNTO', abriuPergunta: true, botoes: true }, { ponto: 2, rotulo: 'DECISÃO', abriuPergunta: false, botoes: false }],
   despachos: [{ papel: 'implementador', prompt: 'brief ... regra A ... regra B', aprendizados: ['regra A', 'regra B'] }],
-  entregasPublicadas: ['GM-13'], gravacoes: { 'GM-13': { antes: 5, depois: 5 }, '_sem-id': { antes: 0, depois: 9 } },
+  entregasPublicadas: ['GM-12'], gravacoes: { 'GM-12': { antes: 5, depois: 5 }, 'GM-13': { antes: 0, depois: 9 } },
   quadrosSemProps: 0,
   vivos: [{ ativos: 0, linhasAgente: 0, detalhes: [] }, { ativos: 1, linhasAgente: 1, detalhes: [{ nome: 'Frodo', descricao: 'implementa T3', task: 'T3', acao: 'lendo 2 arquivos' }] }],
   pouso: { percent: 50, limparNoDepende: true, pushes: 1, despachosDepois: 0 },
@@ -303,7 +303,7 @@ describe('asserções do A1 sobre a evidência de uma execução', () => {
     '7-sem-edit-em-harness-nem-status-a-mao': (ev) => { ev.transcript.chamadas.push({ nome: 'Edit', entrada: { file_path: '/r/.harness/entregas/GM-13/plano.json' } }); },
     '8a-dono-mensagem-sem-duplicata': (ev) => { ev.eventos.push({ tipo: 'dono.mensagem', dados: { sha256: 'a'.repeat(64), chars: 30 } }); },
     '8b-agent-nao-negado-em-status': (ev) => { ev.transcript.chamadas[0].negada = true; },
-    '8c-nada-em-entrega-publicada': (ev) => { ev.gravacoes['GM-13'].depois = 6; },
+    '8c-nada-em-entrega-publicada': (ev) => { ev.gravacoes['GM-12'].depois = 6; },
     '8d-vivo-com-nome-descricao-task': (ev) => { ev.vivos[1].detalhes[0].descricao = ''; },
     '8e-vivos-igual-linhas-de-agente': (ev) => { ev.vivos[1].linhasAgente = 2; },
     '8f-sombra-decisao-visivel': (ev) => { ev.quadros[0].linhas = QUADRO_CHEIO.filter((l) => !/decidiu:/.test(l)); },
@@ -506,23 +506,23 @@ const jl = (arq, linhas) => writeFileSync(arq, `${linhas.map((l) => JSON.stringi
 function montarExecucao(v = {}) {
   const base = tmp();
   const rundir = join(base, 'run'); const repo = join(base, 'repo'); const pasta = join(base, 'transcripts');
-  for (const d of [join(rundir, 'obs'), join(rundir, 'estados'), join(repo, '.harness', 'entregas', 'GM-13'), join(repo, '.harness', 'entregas', '_sem-id'), pasta]) mkdirSync(d, { recursive: true });
+  for (const d of [join(rundir, 'obs'), join(rundir, 'estados'), join(repo, '.harness', 'entregas', 'GM-12'), join(repo, '.harness', 'entregas', 'GM-13'), pasta]) mkdirSync(d, { recursive: true });
   writeFileSync(join(rundir, 'inicio.iso'), '2026-11-13T10:00:00.000Z\n');
   writeFileSync(join(rundir, 'sends.log'), `1 digitar ${sha256(FALA_A)}\n2 digitar ${sha256(FALA_STATUS)}\n`);
-  // F19: a entrega da branch já publicada (PR #14 mergeado + release, `fato.medido` do produto, `ts` antes do início); as mensagens do dono desta execução vão para `_sem-id` (FIEL-1 b)
+  // T55 (emenda 61): a conversa roda na GM-13 ATIVA (as mensagens do dono vão para ela); a publicada vigiada é OUTRA (GM-12: PR mergeado + release, `fato.medido` do produto, `ts` antes do início)
   let seq = 0;
-  const pr = (numero, estado, ts) => ({ sessao: 'semente', seq: ++seq, ts, tipo: 'fato.medido', dados: { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: 'enabler/GM-13-a1' } } });
-  jl(join(repo, '.harness', 'entregas', 'GM-13', 'events.semente.jsonl'), [
+  const pr = (numero, estado, ts) => ({ sessao: 'semente', seq: ++seq, ts, tipo: 'fato.medido', dados: { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: 'enabler/GM-12-a1' } } });
+  jl(join(repo, '.harness', 'entregas', 'GM-12', 'events.semente.jsonl'), [
     ...(v.soDuranteExecucao === true ? [] : v.semPublicada === true ? [pr(14, 'aberto', '2026-11-10T12:00:00.000Z')] : [pr(14, 'mergeado', '2026-11-10T12:00:00.000Z')]),
     { sessao: 'semente', seq: ++seq, ts: '2026-11-10T12:00:01.000Z', tipo: 'fato.medido', dados: { chave: 'release', fonte: 'gh', valor: { tag: 'v2.0.0' } } },
     ...(v.mergeadaDuranteExecucao === true ? [pr(15, 'mergeado', '2026-11-13T10:06:00.000Z')] : []),
     ...(v.gravouNaPublicada === true ? [{ sessao: 'semente', seq: ++seq, ts: '2026-11-13T10:05:00.000Z', tipo: 'dono.mensagem', dados: { sha256: sha256(FALA_A), chars: 47 } }] : []),
   ]);
   // o que o painel grava na 1ª medição de cada sessão (painel-medir.mjs): `fato.medido` de branch, spec, plano, pr e release, depois do início
-  const medidos = ['branch', 'spec', 'plano', 'pr', 'release'].map((chave, i) => ({ sessao: 'painel-s1', seq: i + 1, ts: `2026-11-13T10:04:0${i}.000Z`, autor: 'painel', agente: 'painel', tipo: 'fato.medido', dados: { chave, fonte: 'gh', valor: chave === 'pr' ? { numero: 14, estado: 'mergeado', branch: 'enabler/GM-13-a1' } : { medido: true } } }));
-  if (v.painelMediuNaPublicada === true) jl(join(repo, '.harness', 'entregas', 'GM-13', 'events.painel-s1.jsonl'), medidos);
-  if (v.painelMediuEmSemId === true) jl(join(repo, '.harness', 'entregas', '_sem-id', 'events.painel-s1.jsonl'), medidos);
-  jl(join(repo, '.harness', 'entregas', '_sem-id', 'events.loop.jsonl'), [{ seq: 1, ts: '2026-11-13T10:02:00.000Z', tipo: 'dono.mensagem', dados: { sha256: sha256(FALA_A), chars: 47 } }]);
+  const medidos = ['branch', 'spec', 'plano', 'pr', 'release'].map((chave, i) => ({ sessao: 'painel-s1', seq: i + 1, ts: `2026-11-13T10:04:0${i}.000Z`, autor: 'painel', agente: 'painel', tipo: 'fato.medido', dados: { chave, fonte: 'gh', valor: chave === 'pr' ? { numero: 14, estado: 'mergeado', branch: 'enabler/GM-12-a1' } : { medido: true } } }));
+  if (v.painelMediuNaPublicada === true) jl(join(repo, '.harness', 'entregas', 'GM-12', 'events.painel-s1.jsonl'), medidos);
+  if (v.painelMediuNaAtiva === true) jl(join(repo, '.harness', 'entregas', 'GM-13', 'events.painel-s1.jsonl'), medidos);
+  jl(join(repo, '.harness', 'entregas', 'GM-13', 'events.loop.jsonl'), [{ seq: 1, ts: '2026-11-13T10:02:00.000Z', tipo: 'dono.mensagem', dados: { sha256: sha256(FALA_A), chars: 47 } }]);
   jl(join(rundir, 'obs', 'a1.jsonl'), [
     { t: 1, ev: 'estado', agentes: v.semAgentes === true ? [] : [{ id: AGENTE.id, type: AGENTE.type, status: 'running', description: AGENTE.description }], panes: [{ id: 'gabarito-painel', placement: v.placement ?? 'dock' }], nomes: null },
     { t: 2, ev: 'render', comp: 'Pane', bodyRows: 12, bodyColumns: 60 },
@@ -556,9 +556,9 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
     assert.deepEqual(ev.despachos.map((d) => d.aprendizados), [[REGRA]], 'aprendizados do proxima real, por papel');
     assert.equal(ev.sessaoCurta, null, 'a conversa não é sessão curta: a asserção 12 vem da tela da curta (T52), nunca do observador');
     assert.deepEqual(ev.digitadas, [sha256(FALA_A), sha256(FALA_STATUS)]);
-    assert.deepEqual(ev.entregasPublicadas, ['GM-13']);
-    assert.deepEqual(ev.gravacoes['GM-13'], { antes: 2, depois: 2 });
-    assert.deepEqual(ev.gravacoes['_sem-id'], { antes: 0, depois: 1 });
+    assert.deepEqual(ev.entregasPublicadas, ['GM-12'], 'só a OUTRA entrega é publicada; a da conversa (GM-13) fica ativa e nunca é vigiada');
+    assert.deepEqual(ev.gravacoes['GM-12'], { antes: 2, depois: 2 });
+    assert.deepEqual(ev.gravacoes['GM-13'], { antes: 0, depois: 1 }, 'a fala do dono grava na ativa');
     assert.equal(ev.quadrosSemProps, 0);
     assert.ok(ev.quadros[0].linhas.length >= 1 && ev.quadros[0].linhas.length <= 12, `quadro da lateral dentro do bodyRows 12 (${ev.quadros[0].linhas.length})`);
     assert.deepEqual(ev.vivos, [{ ativos: 1, linhasAgente: 1, detalhes: [{ nome: 'SAM', descricao: 'T24 corrige', task: 'T24', acao: 'lendo 2 arquivos' }], resumo: null }]);
@@ -590,30 +590,42 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
   test('8c-ignora-o-fato-medido-do-painel-na-publicada-e-reprova-o-resto (REQ-DIA-1, emenda 38)', async () => {
     const id = '8c-nada-em-entrega-publicada';
     const painel = await coleta({ painelMediuNaPublicada: true });
-    assert.deepEqual(painel.entregasPublicadas, ['GM-13'], 'a publicada continua publicada: o que o painel mede depois do início não a muda');
-    assert.deepEqual(painel.gravacoes['GM-13'], { antes: 2, depois: 2 }, 'fato.medido autor painel não conta');
-    assert.equal(resultado(painel, id).ok, true, 'o painel gravar fato.medido no diário da branch publicada passa');
-    const semId = await coleta({ painelMediuEmSemId: true });
-    assert.deepEqual(semId.gravacoes['GM-13'], { antes: 2, depois: 2 });
-    assert.equal(resultado(semId, id).ok, true);
+    assert.deepEqual(painel.entregasPublicadas, ['GM-12'], 'a publicada continua publicada: o que o painel mede depois do início não a muda');
+    assert.deepEqual(painel.gravacoes['GM-12'], { antes: 2, depois: 2 }, 'fato.medido autor painel não conta');
+    assert.equal(resultado(painel, id).ok, true, 'o painel gravar fato.medido no diário da publicada passa');
+    const naAtiva = await coleta({ painelMediuNaAtiva: true });
+    assert.deepEqual(naAtiva.gravacoes['GM-12'], { antes: 2, depois: 2 });
+    assert.equal(resultado(naAtiva, id).ok, true);
     const msg = await coleta({ gravouNaPublicada: true, painelMediuNaPublicada: true });
-    assert.deepEqual(msg.gravacoes['GM-13'], { antes: 2, depois: 3 }, 'dono.mensagem conta mesmo com o fato.medido do painel junto');
+    assert.deepEqual(msg.gravacoes['GM-12'], { antes: 2, depois: 3 }, 'dono.mensagem conta mesmo com o fato.medido do painel junto');
     assert.equal(resultado(msg, id).ok, false, 'dono.mensagem na publicada reprova');
+  });
+
+  test('8c-vigia-OUTRA-entrega-publicada-e-a-ativa-gravada-nao-reprova (T55, emenda 61)', async () => {
+    const id = '8c-nada-em-entrega-publicada';
+    const ev = await coleta({});
+    assert.deepEqual(ev.entregasPublicadas, [ENTREGA_PUBLICADA]);
+    assert.ok(!ev.entregasPublicadas.includes(ENTREGA_ATIVA), 'a entrega da conversa não é a vigiada');
+    assert.notEqual(ENTREGA_PUBLICADA, ENTREGA_ATIVA);
+    assert.ok(ev.gravacoes[ENTREGA_ATIVA].depois > ev.gravacoes[ENTREGA_ATIVA].antes, 'a ativa foi gravada (dono.mensagem) e isso é o esperado');
+    assert.equal(resultado(ev, id).ok, true, 'gravar na ativa não reprova a 8c');
+    const g = await coleta({ gravouNaPublicada: true });
+    assert.equal(resultado(g, id).ok, false, 'gravar na publicada vigiada reprova');
   });
 
   test('8c-reprova-com-gravacao-na-publicada-e-sem-publicada-nenhuma', async () => {
     assert.equal(resultado(await coleta({}), '8c-nada-em-entrega-publicada').ok, true);
     const grav = await coleta({ gravouNaPublicada: true });
-    assert.deepEqual(grav.gravacoes['GM-13'], { antes: 2, depois: 3 });
+    assert.deepEqual(grav.gravacoes['GM-12'], { antes: 2, depois: 3 });
     assert.equal(resultado(grav, '8c-nada-em-entrega-publicada').ok, false);
     const nenhuma = await coleta({ semPublicada: true });
     assert.deepEqual(nenhuma.entregasPublicadas, [], 'PR aberto: pelo critério do produto não está publicada');
-    assert.equal(resultado(nenhuma, '8c-nada-em-entrega-publicada').ok, false, 'sem entrega publicada vigiada a asserção não mediu nada');
+    assert.equal(resultado(nenhuma, '8c-nada-em-entrega-publicada').ok, false, '0 publicada vigiada: a asserção não mediu nada e reprova');
   });
 
   test('publicada-e-o-criterio-do-produto-medido-antes-do-inicio (O2: o que a execução mede não conta)', async () => {
     const durante = await coleta({ mergeadaDuranteExecucao: true });
-    assert.deepEqual(durante.entregasPublicadas, ['GM-13'], 'o PR #15 mergeado durante a execução não muda o que estava publicado');
+    assert.deepEqual(durante.entregasPublicadas, ['GM-12'], 'o PR #15 mergeado durante a execução não muda o que estava publicado');
     const so = await coleta({ soDuranteExecucao: true, mergeadaDuranteExecucao: true });
     assert.deepEqual(so.entregasPublicadas, [], 'um PR mergeado medido DURANTE a execução não torna a entrega publicada (filtro `ts <= inicio`)');
     let n = 0;
@@ -628,18 +640,66 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
     assert.equal(await publicadaPeloProduto([], Z), false);
   });
 
-  test('semente-da-publicada-e-identificada-pelo-produto (F19: branch da cópia ⇒ GM-13, PR #14 mergeado)', async () => {
-    const { idDaBranch } = await import('../dist/trilha.js');
+  test('semente-publica-OUTRA-entrega-e-deixa-a-da-conversa-ativa (T55, emenda 61: id e branch próprios, gh sem PR na branch da conversa)', async () => {
+    const { idDaBranch, trilhaDe } = await import('../dist/trilha.js');
     const estado = JSON.parse(readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'gh-fixture', 'estado.json'), 'utf8'));
-    assert.equal(idDaBranch(estado.branch, '[A-Z]+-\\d+'), 'GM-13', 'a branch da cópia é a que o produto identifica como GM-13');
-    assert.deepEqual(estado.pr, [{ number: 14, state: 'MERGED' }], 'o gh de fixture reproduz o PR #14 mergeado, nenhum aberto');
-    const base = tmp(); const dir = join(base, '.harness', 'entregas', 'GM-13');
+    assert.equal(idDaBranch(estado.branch, '[A-Z]+-\\d+'), ENTREGA_ATIVA, 'a branch da cópia é a que o produto identifica como a da conversa (pontos.json:9-12 pressupõe a GM-13 ativa)');
+    assert.deepEqual(estado.pr, [], 'o gh de fixture não devolve PR (nem mergeado) para a branch da conversa');
+    assert.deepEqual(estado.release, []);
+    const base = tmp();
     semearEntregaPublicada(base);
     const { lerEstrito } = await import('../dist/diario.js');
-    const lido = lerEstrito(dir);
-    const eventos = lido.eventos ?? lido;
-    assert.equal(await publicadaPeloProduto(eventos, '2026-11-13T00:00:00.000Z'), true, 'a semente que o runner grava é publicada pelo critério do produto');
-    assert.equal(existsSync(join(base, '.harness', 'entregas', 'GM-12-semente')), false);
+    const lido = (id) => { const dir = join(base, '.harness', 'entregas', id); if (!existsSync(dir)) return []; const l = lerEstrito(dir); return l.eventos ?? l; };
+    const FUT = '2099-01-01T00:00:00.000Z';
+    assert.equal(await publicadaPeloProduto(lido(ENTREGA_PUBLICADA), FUT, ENTREGA_PUBLICADA), true, 'a semente é publicada pelo critério do produto, com id e branch próprios');
+    assert.equal(lido(ENTREGA_ATIVA).length, 0, 'a entrega da conversa não recebe NENHUM evento da semente');
+    assert.equal(await publicadaPeloProduto(lido(ENTREGA_ATIVA), FUT, ENTREGA_ATIVA), false, 'a da conversa não é publicada');
+    assert.ok(lido(ENTREGA_PUBLICADA).every((e) => e.dados?.chave !== 'pr' || e.dados.valor.branch === `enabler/${ENTREGA_PUBLICADA}-a1`), 'o PR semeado é da branch da publicada vigiada, nunca da conversa');
+    const t = trilhaDe({ branch: estado.branch, idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['T1'] }, ledger: false, gh: 'ok', ultimas: [] }, lido(ENTREGA_ATIVA));
+    assert.equal(t.identificada, true, 'sessão da conversa identificada: fala do dono grava, loop e despacho valem');
+    assert.equal(t.entrega, ENTREGA_ATIVA);
+    assert.throws(() => semearEntregaPublicada(tmp(), ENTREGA_ATIVA), /id próprio/, 'a semente nunca publica a entrega da conversa');
+    assert.throws(() => semearEntregaPublicada(tmp(), 'invalido'), /id próprio/);
+  });
+
+  // T55 (emenda 61), provas (i)(ii) com o produto de verdade: cópia real da A1 (clone na base), ponte do mod (`codigoPonte`), `painel.mjs`, `loop.mjs`; sem sessão do Claude. Sem a base no clone, pula (não passa em vazio).
+  const baseDisponivel = (() => { try { execFileSync('git', ['cat-file', '-e', `${BASE_SHA}^{commit}`], { cwd: raizPrincipal(), stdio: 'ignore' }); return true; } catch { return false; } })();
+  test('copia-real-da-A1: a conversa roda na ativa (fala grava, painel = pontos.json msg 1) e a publicada vigiada nada recebe; a semente antiga reproduz a causa', { skip: baseDisponivel ? false : `base ${BASE_SHA} ausente no clone` }, async () => {
+    const { codigoPonte } = await import('../dist/pouso.js');
+    const { lerEstrito, append } = await import('../dist/diario.js');
+    const PL = join(AQUI, '..');
+    const raiz = tmp(); const destino = join(raiz, 'repo');
+    const { bin, gh } = prepararCopia(raizPrincipal(), destino, { local: 'lateral', cols: 180, rows: 50, cheia: true });
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, GH_FIXTURE: gh };
+    const url = pathToFileURL(join(PL, 'dist', 'diario.js')).href;
+    const ponte = (p) => JSON.parse(spawnSync(process.execPath, ['--input-type=module', '-e', codigoPonte(url)], { cwd: destino, input: JSON.stringify(p), encoding: 'utf8', env }).stdout);
+    const lerTudo = (id) => { const l = lerEstrito(join(destino, '.harness', 'entregas', id)); return l.eventos ?? l; };
+    const n = (id, tipo) => lerTudo(id).filter((e) => e.tipo === tipo).length;
+    const sh = (script, args, input) => spawnSync(process.execPath, [join(PL, 'scripts', script), ...args], { cwd: destino, input, encoding: 'utf8', env });
+    const FUT = '2099-01-01T00:00:00.000Z';
+    const antesPub = lerTudo(ENTREGA_PUBLICADA).length;
+    // (ii) fixture nova
+    const dir = ponte({ op: 'dir', cwd: destino });
+    assert.deepEqual([dir.identificada, dir.entrega], [true, ENTREGA_ATIVA], 'a conversa é identificada na GM-13');
+    assert.equal(ponte({ op: 'mensagem', dir: dir.dir, cwd: destino, texto: 'fala do dono' }).ok, true);
+    assert.equal(n(ENTREGA_ATIVA, 'dono.mensagem'), 1, 'a fala grava dono.mensagem na ativa');
+    assert.equal(n(ENTREGA_PUBLICADA, 'dono.mensagem'), 0);
+    const med = JSON.parse(sh('painel.mjs', ['medir', '--agentes'], JSON.stringify({ session_id: 'painel-s1', sessao: { session_id: 'painel-s1', percent: null }, agentes: [] })).stdout);
+    assert.equal(med.ok, true);
+    const est = JSON.parse(sh('painel.mjs', ['estado']).stdout).estado;
+    const pt = JSON.parse(readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'pontos.json'), 'utf8')).pontos[0].esperado;
+    assert.equal(est.id, ENTREGA_ATIVA);
+    assert.equal(est.trilha.fase, pt.fase);
+    assert.equal(est.trilha.progresso, pt.progresso);
+    assert.deepEqual(est.depende.map((d) => d.motivo.replace(/^depende de você: /, '')), pt.depende, 'o painel bate com pontos.json msg 1');
+    assert.equal(JSON.parse(sh('loop.mjs', ['proxima', '--sessao', 'S-t55']).stdout).acao.tipo, 'despachar', 'o loop devolve trabalho na ativa');
+    assert.equal(lerTudo(ENTREGA_PUBLICADA).length, antesPub, 'a publicada vigiada fica com 0 eventos novos (nem o fato.medido do painel vai para ela)');
+    assert.equal(await publicadaPeloProduto(lerTudo(ENTREGA_PUBLICADA), FUT, ENTREGA_PUBLICADA), true);
+    assert.equal(await publicadaPeloProduto(lerTudo(ENTREGA_ATIVA), FUT, ENTREGA_ATIVA), false);
+    // (i) a causa: a ativa com PR mergeado no diário (a semente antiga) ⇒ sessão sem entrega
+    const r = append(join(destino, '.harness', 'entregas', ENTREGA_ATIVA), 'semente-antiga', { ts: '2026-11-10T12:00:00.000Z', autor: 'a1@example.invalid', sessao: 'semente-antiga', agente: 'painel', tipo: 'fato.medido', dados: { chave: 'pr', fonte: 'gh', valor: { numero: 14, estado: 'mergeado', branch: 'enabler/GM-13-a1' } } });
+    assert.equal(r.ok, true);
+    assert.equal(ponte({ op: 'dir', cwd: destino }).identificada, false, 'semente antiga: GM-13 publicada ⇒ conversa sem entrega (FIEL-1 b), a fala não grava');
   });
 
   test('snapshot-que-falhou-ou-contagem-diferente-do-censo-reprova-a-execucao (M3)', async () => {
