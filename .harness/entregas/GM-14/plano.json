@@ -1012,7 +1012,9 @@
         "plugins/gabarito-mestre/gates/dist/guarda.js",
         "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs",
         "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
-        "plugins/gabarito-mestre/gates/test/guarda-fonte.test.mjs"
+        "plugins/gabarito-mestre/gates/test/guarda-fonte.test.mjs",
+        "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs"
       ],
       "reqs": [
         "REQ-TRI-1",
