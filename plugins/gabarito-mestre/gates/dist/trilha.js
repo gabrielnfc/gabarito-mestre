@@ -14,6 +14,7 @@
  *   entrada da última spec do conjunto (DP-2 ajuste 2); a escolhida passa a ser "a spec".
  */
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.js';
+import { shaAceito } from './emenda.js';
                                          
 
 export const FASES = Object.freeze(['ideia', 'spec', 'aprovacao', 'plano', 'execucao', 'pr', 'uso']         );
@@ -232,7 +233,9 @@ export function trilhaDe(fatos             , eventos          )         {
   const aprovacoes = evs.filter((e) => e.tipo === 'spec.aprovada' && (alvos.length === 0 || alvos.some((s) => semPonto(s.caminho) === semPonto(obj(e.dados).spec))));
   const aprovado = aprovacoes.length > 0;
   const ultimaAprovacao = aprovado ? obj(aprovacoes[aprovacoes.length - 1].dados) : null;
-  const mudouDepois = spec !== null && ultimaAprovacao !== null && ultimaAprovacao.sha256 !== spec.sha256;
+  // T54 (emenda 54): "mudou depois" = o sha atual não é o último aceito (regra única `shaAceito`: aprovação ou cadeia de emendas aplicadas).
+  const dosAlvos = (caminho        )          => alvos.length === 0 || alvos.some((s) => semPonto(s.caminho) === semPonto(caminho));
+  const mudouDepois = spec !== null && ultimaAprovacao !== null && !shaAceito(evs, spec.sha256, dosAlvos);
 
   const nInteg = plano !== null && !corrompido ? integradas(plano.tasks, evs) : 0;
   const planoMedido = evs.some((e) => fatoMedido(e, 'plano') !== null);

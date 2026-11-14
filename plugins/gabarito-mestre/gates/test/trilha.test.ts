@@ -225,6 +225,17 @@ test('spec-editada-apos-aprovar-check-e-mudou-depois', () => {
   assert.equal(trilhaDe(fatos(), expandir([aprovada(A), aprovada(B)])).mudouDepois, true, 'voltou ao conteúdo antigo depois da 2ª aprovação');
 });
 
+test('mudou-depois-segue-a-cadeia: aprovada A + emenda aplicada A⇒B: o sha B não mudou depois; o sha fora da cadeia mudou (T54, emenda 54)', () => {
+  const prop: Compacto = { t: 'emenda.proposta', s: 'emendas', d: { req: 'REQ-DIA-1', diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'regra_negocio' } } as never;
+  const julg: Compacto = { t: 'spec.emendada', s: 'dono', d: { proposta_seq: 1, origem: 'dono' } } as never;
+  const aplic: Compacto = { t: 'spec.aplicada', d: { seq: 1, spec: SPEC, sha256_antes: A, sha256_depois: B } } as never;
+  const evs = expandir([aprovada(A), prop, julg, aplic]);
+  assert.equal(trilhaDe(fatos({ specs: [specFato({ sha256: B })] }), evs).mudouDepois, false);
+  assert.equal(trilhaDe(fatos({ specs: [specFato({ sha256: 'c'.repeat(64) })] }), evs).mudouDepois, true, 'edição fora da emenda aplicada');
+  assert.equal(trilhaDe(fatos(), evs).mudouDepois, true, 'o sha A deixou de ser o aceito');
+  assert.equal(trilhaDe(fatos({ specs: [specFato({ sha256: B })] }), expandir([aprovada(A), prop, aplic])).mudouDepois, true, 'aplicada sem julgamento não vale');
+});
+
 test('pr-14-mergeado-15-aberto-bolinha', () => {
   const f = ler('fase-6.json');
   const ate = f.eventos.slice(0, 2);
