@@ -5575,6 +5575,46 @@ describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (
     assert.equal(amb2.cli(['parar', 'nao_conseguiu']).j?.erro, 'entrega_publicada');
   });
 
+  /** Grava um `fato.medido pr` com `ts` explícito, na sessão `sessao` (a medição por outra conversa). */
+  const medirPR = (amb, sessao, numero, estado, ts) => assert.equal(diario.append(amb.entregas, sessao, { ts, autor: 't@t', sessao, agente: 'orquestrador', tipo: 'fato.medido', dados: { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: 'enabler/GM-10-loop' } } }).ok, true);
+
+  test('ligada-sobrevive-a-remedicao (MAJOR-1 r1, caso J): outra sessão medindo de novo o MESMO PR mergeado não derruba a ligação; PR NOVO mergeado sim', () => {
+    const amb = ambiente();
+    publicar(amb);
+    ligarPeloDono(amb, 'S1');
+    assert.equal(amb.cli(['parar', 'nao_conseguiu']).rc, 0, 'controle: ligada');
+    medirPR(amb, 'S2', 7, 'mergeado', '2026-11-13T11:00:00.000Z');
+    const r = amb.cli(['parar', 'nao_conseguiu']);
+    assert.equal(r.rc, 0, `re-medição do mesmo PR derrubou a ligação: ${r.out}${r.err}`);
+    medirPR(amb, 'S3', 7, 'mergeado', '2026-11-13T11:30:00.000Z');
+    assert.equal(amb.cli(['parar', 'nao_conseguiu']).rc, 0);
+    // PR NOVO mergeado depois da ligação ⇒ republicação: exige nova resposta do dono
+    medirPR(amb, 'S2', 8, 'mergeado', '2026-11-13T12:00:00.000Z');
+    assert.equal(amb.cli(['parar', 'nao_conseguiu']).j?.erro, 'entrega_publicada');
+    // e a re-medição do #8 por outra sessão não o "renova"
+    medirPR(amb, 'S3', 8, 'mergeado', '2026-11-13T13:00:00.000Z');
+    assert.equal(amb.cli(['parar', 'nao_conseguiu']).j?.erro, 'entrega_publicada');
+  });
+
+  test('ligada-pr-nao-mergeado-nao-move-o-corte (MINOR-1 r1): fato.medido pr NÃO mergeado (fechado sem merge) posterior à ligação não derruba a ligação', () => {
+    const amb = ambiente();
+    publicar(amb);
+    ligarPeloDono(amb, 'S1');
+    // 'fechado' de número menor: a trilha segue "publicada" (último = #7 mergeado, nenhum aberto), então só o corte distingue
+    medirPR(amb, 'S2', 6, 'fechado', '2026-11-13T11:00:00.000Z');
+    const r = amb.cli(['parar', 'nao_conseguiu']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(amb.cli(['parar', 'nao_conseguiu', '--sessao', 'OUTRA']).j?.erro, 'entrega_publicada', 'controle: publicada de fato');
+  });
+
+  test('ligada-ts-empatado (MINOR-2 r1): resposta do dono com o MESMO ts do merge não é posterior ⇒ recusa', () => {
+    const amb = ambiente();
+    ligarPeloDono(amb, 'S1');
+    medirPR(amb, 'S2', 7, 'mergeado', '2026-11-13T10:00:01.000Z');
+    amb.fechar();
+    assert.equal(amb.cli(['parar', 'nao_conseguiu']).j?.erro, 'entrega_publicada');
+  });
+
   test('liberarTeto-recusa-em-publicada (MINOR-1): a liberação do dono não grava em entrega publicada', () => {
     const amb = ambiente();
     publicar(amb);

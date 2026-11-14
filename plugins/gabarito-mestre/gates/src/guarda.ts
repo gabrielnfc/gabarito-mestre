@@ -224,7 +224,18 @@ export function entregaPublicada(raiz: string, entrega: string | null, sessao: s
     // "Qualquer sessão" vale só para a ligação POSTERIOR ao último PR mergeado da entrega: resposta anterior à publicação atual não destrava,
     // e uma republicação (PR novo mergeado) exige nova resposta do dono. ts ilegível não é "posterior" (recusa).
     const tsMs = (ts: unknown): number => (typeof ts === 'string' ? Date.parse(ts) : NaN);
-    const mergeadoEm = Math.max(-Infinity, ...eventos.filter((e) => e.tipo === 'fato.medido' && objeto(e.dados)?.chave === 'pr' && objeto(objeto(e.dados)?.valor)?.estado === 'mergeado').map((e) => tsMs(e.ts)).filter((n) => !Number.isNaN(n)));
+    // Corte = o instante em que a PUBLICAÇÃO atual apareceu: por número de PR, o 1º ts em que ele consta mergeado (re-medir o mesmo PR, em outra sessão, não o move);
+    // entre os PRs, o mais tardio (PR novo mergeado = republicação). PR não mergeado não conta.
+    const primeiroMerge = new Map<unknown, number>();
+    for (const e of eventos) {
+      const d = objeto(e.dados);
+      const v = e.tipo === 'fato.medido' && d?.chave === 'pr' ? objeto(d.valor) : null;
+      const t = tsMs(e.ts);
+      if (v === null || v.estado !== 'mergeado' || Number.isNaN(t)) continue;
+      const antes = primeiroMerge.get(v.numero);
+      if (antes === undefined || t < antes) primeiroMerge.set(v.numero, t);
+    }
+    const mergeadoEm = Math.max(-Infinity, ...primeiroMerge.values());
     const donas = qualquer ? [...new Set(eventos.filter((e) => e.tipo === 'dono.resposta' && typeof e.sessao === 'string' && tsMs(e.ts) > mergeadoEm).map((e) => e.sessao as string))].slice(0, SESSOES_LIGADAS_MAX) : [];
     const sessoes: Array<string | null> = qualquer ? [null, ...donas] : [sessao];
     for (const s of sessoes) if (trilhaDe({ ...base, sessao: s, gh: 'ok' }, eventos).identificada === true) return false;
