@@ -421,6 +421,28 @@ function sessaoDoMod(agentes) {
   return typeof s === 'string' && s !== '' ? s : null;
 }
 
+/** Há algo pedindo o dono ou trabalhando (a mesma conta de `projetarNovo`, painel.ts: `pendente`, que decide `umaLinha`). */
+const SEM_PENDENCIA = 'depende de você: nada';
+const pendenteDe = (e) => e.parar !== null || e.pergunta !== null || (e.agora?.agentes?.length ?? 0) > 0
+  || (Array.isArray(e.depende) && e.depende.some((i) => i.motivo !== SEM_PENDENCIA));
+
+/**
+ * T47: a projeção de uma entrega NÃO identificada (publicada) mostra o que o plano ausente mostraria (sem PRONTO, `modo`/`id`/`fase` da trilha,
+ * `plano` vazio) e mantém do cálculo com o plano o que depende de casar eventos e vivos com as tasks (parar, AGORA, depende, atenção, recente).
+ * `comPlano` e `semPlano` vêm do mesmo `projetar`, com as mesmas entradas.
+ */
+function semPlanoNaApresentacao(comPlano, semPlano, entrada) {
+  if (!ehObj(comPlano) || !ehObj(semPlano)) return comPlano;
+  const saida = { ...comPlano, modo: semPlano.modo, id: semPlano.id, pronto: semPlano.pronto, fase: semPlano.fase, plano: semPlano.plano, umaLinha: semPlano.umaLinha };
+  if (saida.modo === 'projeto' && saida.umaLinha === null && !pendenteDe(comPlano)) {
+    const u = entrada?.ultima;
+    const ultima = ehObj(u) && typeof u.id === 'string' ? { id: u.id, estado: typeof u.estado === 'string' ? u.estado : null }
+      : typeof comPlano.trilha?.ultimaConhecida === 'string' ? { id: comPlano.trilha.ultimaConhecida, estado: null } : null;
+    saida.umaLinha = { ultima };
+  }
+  return saida;
+}
+
 /**
  * Monta o estado do painel. `opts`: `agentes` (objeto do stdin; ausente = sem `--agentes`, equipe só do diário), `pacote`, `entrega`, `agoraMs`
  * (um só `Date.now()` por execução), `env` (padrão `process.env`), `fuso`, `diario` (deps de `lerDiarioEstavel`), `preparar` (troca `prepararLeitura`, para contar chamadas) e `projetar` (troca `projetarPainel`, para ler a entrada). Nunca lança: `{ok:true, estado, avisos}`
@@ -478,7 +500,11 @@ export function estadoDoPainel(cwd, opts = {}) {
 
     // FIEL-1 b / spec:53: sem `--entrega`, o plano só entra na projeção quando a trilha liga a entrega (PR mergeado com a branch sozinha não liga:
     // nada de PRONTO "N de N integradas" de uma entrega não identificada; a trilha segue vendo o plano em `fatos`)
-    if (plano !== null && opts.entrega === undefined && eventos !== null && trilhaDe(fatos, eventos).identificada !== true) plano = null;
+    // T47: o plano descartado segue sendo o que casa os eventos de task do diário e os vivos (FIEL-3 a): sem ele, T1 não está no plano e o diário vira
+    // `diario_invalido`. Ele só não aparece em PRONTO/modo/id/fase (a regra de "publicada" é a de `trilhaDe`, a única).
+    const planoDoDiario = plano;
+    const descartado = plano !== null && opts.entrega === undefined && eventos !== null && trilhaDe(fatos, eventos).identificada !== true;
+    if (descartado) plano = null;
 
     // spec: sha e título dos MESMOS bytes (com plano: `plano.spec`; sem plano: a única de `lerSpecs` com o PBI da entrega)
     let specSha = null;
@@ -565,7 +591,9 @@ export function estadoDoPainel(cwd, opts = {}) {
       onboarding: raiz !== null && temOnboarding(raiz), // FIEL-14 h: o mesmo critério e a mesma leitura do cartão (config LOCAL)
       ultima: ativ.ultima,
     };
-    return { ok: true, estado: (opts.projetar ?? projetarPainel)(plano, eventos, entrada), avisos };
+    const projetar = opts.projetar ?? projetarPainel;
+    const estado = projetar(descartado ? planoDoDiario : plano, eventos, entrada);
+    return { ok: true, estado: descartado ? semPlanoNaApresentacao(estado, projetar(null, eventos, entrada), entrada) : estado, avisos };
   } catch (e) {
     if (e instanceof Falha || typeof e?.erro === 'string') return { ok: false, erro: e.erro, mensagem: e.message };
     return { ok: false, erro: 'erro_interno', mensagem: String(e instanceof Error ? e.message : e).slice(0, 200) };

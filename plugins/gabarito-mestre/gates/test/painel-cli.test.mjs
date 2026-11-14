@@ -1309,6 +1309,52 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.match(cli(a, ['texto']).stdout, /^PRONTO ▰{10} 2 de 2 integradas$/m);
   });
 
+  // T47 (emenda 43; ledger T25 item 2): a entrega publicada (PR mergeado, branch sozinha) descarta o plano da PROJEÇÃO (spec:53), mas o diário dela
+  // tem eventos de task: o descarte não pode produzir PAROU `diario_invalido` nem zerar o casamento FIEL-3 a do vivo "T1 implementador"
+  const publicada = (extra = []) => {
+    const m = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
+    evEm(m, 'GM-12', 'task.iniciada', { task: 'T1', papel: 'implementador' });
+    for (const [tipo, dados] of extra) evEm(m, 'GM-12', tipo, dados);
+    evEm(m, 'GM-12', 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 'mergeado', branch: 'feat/GM-12-painel' } });
+    return m;
+  };
+  const VIVO = { sessao: {}, agentes: [{ id: 'a1', type: 'implementador', description: 'T1 implementador', status: 'running' }] };
+  test('publicada-sem-diario-invalido (T47): diário com task.iniciada de T1 + plano real, entrega publicada ⇒ sem PAROU diario_invalido, sem a entrega ligada e sem PRONTO', () => {
+    const m = publicada();
+    const e = estado(m).estado;
+    assert.equal(e.trilha.identificada, false, 'preparo: publicada não identificada');
+    assert.equal(e.parar, null, JSON.stringify(e.parar));
+    assert.equal(e.parado, false);
+    assert.equal(e.pronto, null);
+    assert.notEqual(e.modo, 'entrega');
+    assert.notEqual(e.id, 'GM-12');
+    assert.doesNotMatch(cli(m, ['texto']).stdout, /diário fora da tabela|PRONTO/);
+  });
+  test('publicada-vivo-com-task (T47): vivo "T1 implementador" na publicada casa T1 (task e papel), e o texto não vira PRONTO', () => {
+    const m = publicada();
+    const e = estado(m, { agentes: VIVO }).estado;
+    assert.equal(e.trilha.identificada, false);
+    const a = e.agora.agentes;
+    assert.equal(a.length, 1, JSON.stringify(a));
+    assert.deepEqual([a[0].task, a[0].quem.papel], ['T1', 'implementador']);
+    assert.equal(e.pronto, null);
+    assert.equal(e.umaLinha, null, 'com vivo trabalhando há o que mostrar: sem a uma linha de projeto');
+    assert.equal(e.parar, null);
+    assert.doesNotMatch(cli(m, ['texto', '--agentes'], { input: JSON.stringify(VIVO) }).stdout, /PRONTO/);
+  });
+  test('publicada-vizinhos (T47): a mesma entrega com o PR aberto (identificada) segue igual; publicada com plano todo integrado segue sem PRONTO e sem PAROU', () => {
+    const a = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
+    evEm(a, 'GM-12', 'task.iniciada', { task: 'T1', papel: 'implementador' });
+    evEm(a, 'GM-12', 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 'aberto', branch: 'feat/GM-12-painel' } });
+    const ea = estado(a, { agentes: VIVO }).estado;
+    assert.deepEqual([ea.trilha.identificada, ea.modo, ea.id, ea.parar, ea.agora.agentes[0].task], [true, 'entrega', 'GM-12', null, 'T1']);
+    assert.deepEqual([ea.pronto.integradas, ea.pronto.total], [0, 2]);
+    const t = publicada([...INTEGRAR('T1').slice(1), ...INTEGRAR('T2')]);
+    const et = estado(t).estado;
+    assert.deepEqual([et.trilha.identificada, et.pronto, et.parar, et.modo === 'entrega'], [false, null, null, false]);
+    assert.deepEqual([et.modo, et.umaLinha?.ultima?.id, et.fase?.numero], ['projeto', 'GM-12', 1], 'sem pendência: a última entrega conhecida segue na uma linha');
+  });
+
   const prMergeado = () => {
     const m = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
     integrarEm(m, 'GM-12', 'T1'); integrarEm(m, 'GM-12', 'T2');
