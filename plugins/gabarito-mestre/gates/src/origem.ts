@@ -35,7 +35,7 @@ export function origemDe(ev: Evento): string | null {
     return origem === 'dono' ? VOCE : origem === 'sombra' ? SOMBRA : AUTOMATICO;
   }
   if (AUTOMATICOS.has(tipo)) return AUTOMATICO;
-  if (tipo === 'nota' || tipo === 'decisao.sombra') return ORQUESTRADOR;
+  if (tipo === 'nota' || tipo === 'decisao.sombra' || tipo === 'spec.aplicada') return ORQUESTRADOR;
   if (tipo === 'spec.aprovada') return VOCE;
   if (tipo === 'dono.resposta') {
     // Só a forma por opção tem rótulo; digitada (`{sha256, chars}`) e qualquer forma inválida não têm origem exibível (falha fechada).

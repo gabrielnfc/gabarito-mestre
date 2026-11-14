@@ -35,7 +35,7 @@ test('origem-tabela-cada-tipo', () => {
     'sombra.consulta': null, 'decisao.sombra': ORQ, 'desvio': null, 'descoberta': null,
     'emenda.proposta': null, 'spec.emendada': null, 'emenda.rejeitada': null,
     'entrega.inicio': AUTO, 'entrega.smoke': AUTO, 'entrega.rollback': AUTO, 'entrega.fim': AUTO, 'entrega.agendada': AUTO,
-    'spec.aprovada': VOCE, 'entrega.devolvida': AUTO,
+    'spec.aprovada': VOCE, 'spec.aplicada': ORQ, 'entrega.devolvida': AUTO,
     'aprendizado': null, 'aprendizado.nada': null, 'dono.mensagem': null,
     'fato.medido': AUTO, 'nota': ORQ, 'dono.resposta': '(você respondeu: Sim)',
   };
