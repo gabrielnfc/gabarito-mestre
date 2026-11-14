@@ -1485,7 +1485,9 @@ const marcoOsc = (n) => `${ESC}]1337;gabarito-marco=${n}\x07`;
 const quadroRaw = (linhas) => `${ESC}[2J${linhas.map((l, i) => `${ESC}[${i + 1};1H${l}`).join('')}${ESC}[?2026l`;
 const bordaDireita = (l, cols) => `${l}${' '.repeat(Math.max(0, cols - [...l].length))}`;
 const AVISO_80 = 'painel lateral precisa de 144 colunas: /gabarito painel para abrir';
-const PERGUNTA_B = 'depende de você: Esta conversa é da entrega GM-13?  [ 1 GM-13 ] [ 2 uma nova ] [ 3 conversa avulsa ]';
+// o que o produto desenha (faixaUmaLinha: pergunta sem prefixo) com os botões da plataforma ao lado (tty real)
+const PERGUNTA_B = 'Esta conversa é da entrega  [ 1 GM-13 ] [ 2 uma nova ] [ 3 conversa avulsa ]';
+const PAROU_REAL = '■ PAROU 01:44 3 paradas sem progresso';
 
 /** Tela 80×24 sem Pane (abaixo do limiar): conversa em cima, a linha única do AbovePrompt, a régua e o prompt embaixo. */
 const telaSemPane = (linhaUnica, rows = 24, cols = 80) => {
@@ -1616,7 +1618,7 @@ describe('T52 (emendas 49 b e 50) asserção 12 lida da TELA da sessão curta: a
   test('pergunta-(b)-ainda-aberta-ou-PAROU-que-nao-sai-e-evidencia-vazia-e-reprova', () => {
     const aberta = r12(montarCurta({ depoisDaB: `${PERGUNTA_B} ${AVISO_80}` }));
     assert.equal(aberta.ok, false); assert.match(aberta.detalhe, /pergunta \(b\) continua aberta.*evidência vazia/);
-    const parou = r12(montarCurta({ depoisDaB: `PAROU 01:44 · 3 paradas sem progresso ${AVISO_80}` }));
+    const parou = r12(montarCurta({ depoisDaB: `${PAROU_REAL} · ${AVISO_80}` }));
     assert.equal(parou.ok, false); assert.match(parou.detalhe, /PAROU aberto que não saiu.*evidência vazia/);
   });
   test('pedido-do-dono-ausente-reprova (mutação: pedido do dono ausente); sem a Pane na tela depois do pedido também', () => {
@@ -1669,18 +1671,18 @@ describe('T52 (emendas 49 b e 50) asserção 12 lida da TELA da sessão curta: a
 
 describe('T52 (emenda 49 b) o a1.exp da sessão curta: marcos no tty.raw, (b) respondida, pedido só abaixo do limiar', () => {
   /** Roda o a1.exp REAL em modo curta com um `claude` e um `node` de mentira (fora do repo; tempos escalados por A1_ESCALA_TEMPO). */
-  function rodarCurta({ pedido, comando }) {
+  function rodarCurta({ pedido, comando, parou = '' }) {
     const rundir = tmp(); const repo = join(rundir, 'repo'); const bin = join(rundir, 'bin'); mkdirSync(repo, { recursive: true }); mkdirSync(bin, { recursive: true });
     writeFileSync(join(rundir, 'celula.json'), JSON.stringify({ local: 'lateral', cols: 80, rows: 24, cheia: false }));
     writeFileSync(join(rundir, 'curta.json'), JSON.stringify({ pedido, respostaB: 3 }));
     writeFileSync(join(rundir, 'claude.args'), '--model\nx\n');
     writeFileSync(join(rundir, 'debug.log'), 'Checking plugin gabarito-mestre: enabled\n');
     writeFileSync(join(bin, 'claude'), '#!/bin/sh\nmkdir -p "$OBS_DIR"\necho \'{"t":1,"ev":"render","comp":"AbovePrompt","maxRows":3,"rows":24,"bodyColumns":75}\' > "$OBS_DIR/a1.jsonl"\nwhile IFS= read -r l; do printf "%s\\n" "$l" >> "$RUNDIR_FAKE/recebido.txt"; case "$l" in /exit*) exit 0;; esac; done\n');
-    const node = join(rundir, 'node-falso'); writeFileSync(node, '#!/bin/sh\ncase "$2" in resposta-b) [ -n "$FAKE_CMD" ] && echo "$FAKE_CMD"; exit 0;; *) exit 0;; esac\n');
+    const node = join(rundir, 'node-falso'); writeFileSync(node, '#!/bin/sh\ncase "$2" in resposta-b) [ -n "$FAKE_CMD" ] && echo "$FAKE_CMD"; exit 0;; parou) [ -n "$FAKE_PAROU" ] && exit 1; exit 0;; *) exit 0;; esac\n');
     for (const f of [join(bin, 'claude'), node]) chmodSync(f, 0o755);
-    const r = spawnSync('expect', ['-f', join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), rundir, repo, bin, node, 'runner', 'curta'], { encoding: 'utf8', timeout: 90_000, env: { ...process.env, A1_ESCALA_TEMPO: '0.1', RUNDIR_FAKE: rundir, FAKE_CMD: comando } });
+    const r = spawnSync('expect', ['-f', join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), rundir, repo, bin, node, 'runner', 'curta'], { encoding: 'utf8', timeout: 90_000, env: { ...process.env, A1_ESCALA_TEMPO: '0.1', RUNDIR_FAKE: rundir, FAKE_CMD: comando, FAKE_PAROU: parou } });
     const recebido = existsSync(join(rundir, 'recebido.txt')) ? readFileSync(join(rundir, 'recebido.txt'), 'utf8').split('\n').filter(Boolean) : [];
-    return { r, rundir, recebido, marcos: R.emularTela(readFileSync(join(rundir, 'tty.raw'), 'utf8'), 24, 80).map((q) => q.marco).filter((m, i, a) => m !== null && m !== a[i - 1]) };
+    return { r, rundir, recebido, expLog: existsSync(join(rundir, 'exp.log')) ? readFileSync(join(rundir, 'exp.log'), 'utf8') : '', marcos: R.emularTela(readFileSync(join(rundir, 'tty.raw'), 'utf8'), 24, 80).map((q) => q.marco).filter((m, i, a) => m !== null && m !== a[i - 1]) };
   }
   test('abaixo-do-limiar: responde a (b) com o comando do runner, marca os estágios em ordem e digita /gabarito painel', { timeout: 100_000 }, () => {
     const c = rodarCurta({ pedido: true, comando: '/gabarito-mestre:responder sess:3 3' });
@@ -1690,6 +1692,14 @@ describe('T52 (emenda 49 b) o a1.exp da sessão curta: marcos no tty.raw, (b) re
     const iPed = c.recebido.findIndex((l) => l.trim() === '/gabarito painel');
     assert.ok(iResp >= 0, `a resposta da (b) foi digitada: ${JSON.stringify(c.recebido)}`);
     assert.ok(iPed > iResp, 'o pedido do dono vem DEPOIS de a (b) ser respondida');
+  });
+  test('MAJOR-3 a1.exp espera o PAROU sair: PAROU que não sai para a célula ANTES do pedido (evidência vazia)', { timeout: 150_000 }, () => {
+    const c = (() => { try { return rodarCurta({ pedido: true, comando: '', parou: '1' }); } catch (e) { return { erro: e }; } })();
+    assert.equal(c.erro, undefined, String(c.erro));
+    assert.match(c.expLog, /PAROU-NAO-SAIU/);
+    assert.equal(c.marcos.includes('pedido'), false);
+    assert.equal(c.marcos.includes('b-respondida'), false);
+    assert.equal(R.causaDoStatus('PAROU_NAO_SAIU').includes('evidência vazia'), true);
   });
   test('sem-pedido-e-sem-pergunta: nada é digitado além do /exit; os marcos de pedido não existem', { timeout: 100_000 }, () => {
     const c = rodarCurta({ pedido: false, comando: '' });
@@ -1901,5 +1911,73 @@ describe('T52 (emenda 45) a matriz por conversa: 8 curtas + 2 conversas + replay
   });
   test('lerSessaoCurta-sem-curta.json (uma conversa) é null', () => {
     const d = tmp(); assert.equal(R.lerSessaoCurta(d, { local: 'lateral', cols: 80, rows: 24, cheia: false }), null);
+  });
+});
+
+describe('T52 r1: correções da revisão (rolagem do VT, Pane da conversa lateral, detectores reais, ações no instante)', () => {
+  test('MAJOR-2 emulador rola a tela com LF e quebra automática na última linha', () => {
+    assert.deepEqual(R.emularTela('a\r\nb\r\nc\r\nd', 3, 5).at(-1).linhas, ['b', 'c', 'd']);
+    assert.deepEqual(R.emularTela('abcdefgh', 2, 3).at(-1).linhas, ['def', 'gh'], 'a quebra automática na última linha também rola');
+  });
+  test('MAJOR-2 tela real lateral-80x24-normal: nenhum quadro com lixo colado na linha do PAROU (pula sem a gravação)', (t) => {
+    const dir = join(R.raizDoRepoReal(), '.claude-tmp', 'a1', '1794625214308', 'lateral-80x24-normal');
+    if (!existsSync(dir)) { t.skip('gravação ausente: no CI só a cobertura sintética (limite declarado)'); return; }
+    const q = R.emularTela(readFileSync(join(dir, 'tty.raw'), 'utf8'), 24, 80);
+    const sujos = q.filter((f) => f.linhas.some((l) => /■ PAROU \d\d:\d\d.*\S{3,}■ PAROU/.test(l) || /■ PAROU.*\n/.test(l)));
+    assert.equal(sujos.length, 0);
+  });
+  test('MAJOR-3 detectores casam com o texto real do produto: "■ PAROU hh:mm" e a pergunta com botões [ 1 … ]', () => {
+    assert.match(`${PAROU_REAL} · ${AVISO_80}`, R.PAROU_NA_LINHA);
+    assert.doesNotMatch('PAROU 01:44 · 3 paradas', R.PAROU_NA_LINHA, 'forma inventada não vale');
+    assert.match(PERGUNTA_B, R.PERGUNTA_NA_LINHA);
+    assert.doesNotMatch('depende de você: Esta conversa', R.PERGUNTA_NA_LINHA);
+  });
+  test('MINOR-1 reason sem número exige "mais colunas" (n null); qualquer N fixo reprova', () => {
+    const m = montarCurta({ semUnasked: true }); // monta o debug.log à mão
+    writeFileSync(join(m.rundir, 'debug.log'), 'Checking plugin gabarito-mestre: enabled\n2026-11-14T04:40:10.000Z [DEBUG] ui.open gabarito-mestre gabarito-painel (unasked, 80 columns): waits unplaced (unasked: placed when the person opens it)\n2026-11-14T04:41:00.000Z [DEBUG] ui.open gabarito-mestre gabarito-painel (asked, 80 columns): placed\n');
+    assert.equal(r12(m).ok, false); assert.match(r12(m).detalhe, /mais colunas/);
+    const ok = montarCurta({ semUnasked: true, depoisDaB: 'painel lateral precisa de mais colunas: /gabarito painel para abrir' });
+    writeFileSync(join(ok.rundir, 'debug.log'), readFileSync(join(m.rundir, 'debug.log')));
+    assert.equal(r12(ok).ok, true, r12(ok).detalhe);
+  });
+  test('MAJOR-1 a conversa lateral lê a Pane da TELA no marco snap-<n>: marco errado, sem marco ou Pane undefined deixam o ponto "sem props"', async () => {
+    const mk = (marco) => { const m = montarExecucao({ semProps: true }); writeFileSync(join(m.rundir, 'tty.raw'), marcoOsc(marco) + quadroRaw(telaDock(50, 180))); return m; };
+    const ev = await coleta0(mk('snap-1'));
+    assert.equal(ev.quadrosSemProps, 0, 'Pane lida da tela');
+    assert.equal(ev.quadros.length, 1);
+    assert.ok(ev.quadros[0].linhas.length > 0);
+    assert.equal((await coleta0(mk('snapX-1'))).quadrosSemProps, 1, 'marco errado: não mede');
+    const sem = montarExecucao({ semProps: true }); writeFileSync(join(sem.rundir, 'tty.raw'), quadroRaw(telaDock(50, 180)));
+    assert.equal((await coleta0(sem)).quadrosSemProps, 1, 'snapshot sem marco: não mede');
+    const semTela = montarExecucao({ semProps: true });
+    assert.equal((await coleta0(semTela)).quadrosSemProps, 1, 'sem tty.raw: não mede');
+  });
+  test('MAJOR-1 a1.exp (conversa) grava o marco snap-<n> no tty.raw antes do snapshot', { timeout: 100_000 }, (t) => {
+    if (spawnSync('expect', ['-v'], { encoding: 'utf8' }).error) { t.skip('expect ausente'); return; }
+    const rundir = tmp(); const repo = join(rundir, 'repo'); const bin = join(rundir, 'bin'); mkdirSync(repo, { recursive: true }); mkdirSync(bin, { recursive: true });
+    writeFileSync(join(rundir, 'celula.json'), JSON.stringify({ local: 'lateral', cols: 80, rows: 24, cheia: false }));
+    writeFileSync(join(rundir, 'claude.args'), '--model\nx\n'); writeFileSync(join(rundir, 'debug.log'), 'Checking plugin gabarito-mestre: enabled\n');
+    writeFileSync(join(rundir, 'falas.tsv'), `7\tMUDANÇA DE ASSUNTO\t${'a'.repeat(64)}\tfala sintética\n`);
+    writeFileSync(join(bin, 'claude'), '#!/bin/sh\nmkdir -p "$OBS_DIR"\necho \'{"t":1,"ev":"render","comp":"AbovePrompt","maxRows":3,"rows":24,"bodyColumns":75}\' > "$OBS_DIR/a1.jsonl"\nwhile IFS= read -r l; do case "$l" in /exit*) exit 0;; esac; done\n');
+    const node = join(rundir, 'node-falso'); writeFileSync(node, '#!/bin/sh\nexit 0\n'); for (const f of [join(bin, 'claude'), node]) chmodSync(f, 0o755);
+    const r = spawnSync('expect', ['-f', join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), rundir, repo, bin, node, 'runner'], { encoding: 'utf8', timeout: 90_000, env: { ...process.env, A1_ESCALA_TEMPO: '0.1' } });
+    assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+    assert.ok(R.emularTela(readFileSync(join(rundir, 'tty.raw'), 'utf8'), 24, 80).some((q) => q.marco === 'snap-7'), 'marco snap-7 no tty.raw');
+  });
+  test('MAJOR-4 controle 4 do replay: as ações do observador são cortadas no instante do snapshot', async () => {
+    const UUID = '3ae9ccd6-f878-4f59-ac78-6406f260d71f'; const T0 = Date.parse('2026-11-14T05:10:00.000Z');
+    const rundir = tmp(); const repo = join(rundir, 'repo'); const dir = join(repo, '.harness', 'entregas', 'GM-13'); mkdirSync(dir, { recursive: true }); mkdirSync(join(rundir, 'bin'), { recursive: true }); mkdirSync(join(rundir, 'obs'), { recursive: true });
+    writeFileSync(join(dir, `events.${UUID}.jsonl`), `${JSON.stringify({ seq: 1, ts: '2026-11-14T05:00:00.000Z', tipo: 'sessao.inicio', dados: {} })}\n`);
+    writeFileSync(join(rundir, 'gh.json'), '{}');
+    const obs = [
+      { t: T0 - 5000, ev: 'estado', agentes: [{ id: 'ag1', type: 'gabarito-mestre:gabarito-implementador', status: 'running', description: 'T1 implementador' }], nomes: null },
+      { t: T0 - 1000, ev: 'tool', agentId: 'ag1', tool: 'Read' },
+      { t: T0 + 4000, ev: 'tool', agentId: 'ag1', tool: 'Edit' },
+    ];
+    jl(join(rundir, 'obs', 'a1.jsonl'), obs);
+    let visto = null;
+    await R.replayDoPonto({ conversa: R.lerConversa(rundir, { home: tmp() }), snap: { t: T0, n: 1, estado: {} }, geometria: { AbovePrompt: { maxRows: 7, rows: 24, bodyColumns: 75 } }, celula: { local: 'acima', cols: 80, rows: 24, cheia: true }, destino: join(tmp(), 'w'), deps: { estado: async (a) => { visto = a.entrada; return clone(ESTADO_REAL); } } });
+    assert.equal(visto.acoes.ag1.em, T0 - 1000, 'a última ação até o instante é a do Read; o Edit (T0+4s) ainda não aconteceu');
+    assert.notEqual(visto.acoes.ag1.em, T0 + 4000);
   });
 });

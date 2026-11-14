@@ -141,6 +141,14 @@ if {$modo eq "curta"} {
   set cmd ""
   catch { set cmd [string trim [exec $node $runner resposta-b $repo $rundir]] }
   if {$cmd ne ""} { digitar resposta-b $cmd; if {![ocioso]} { sair NAO_PROVADO_EOF } }
+  # emenda 50: com PAROU aberto a medida espera ele sair; se não sair, evidência vazia (a célula para, sem pedido)
+  set parou 1
+  set t0 [clock seconds]
+  while {[clock seconds] - $t0 < [t 90]} {
+    if {![catch {exec $node $runner parou $repo $rundir}]} { set parou 0; break }
+    drenar 5
+  }
+  if {$parou} { nota "PAROU-NAO-SAIU"; sair PAROU_NAO_SAIU }
   marco b-respondida
   drenar 10
   if {$pedido} {

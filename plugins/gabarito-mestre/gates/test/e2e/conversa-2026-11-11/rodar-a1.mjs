@@ -325,7 +325,7 @@ export const ASSERCOES = Object.freeze([
     if (sc.antes.aviso?.estado !== 'inteiro') return res(false, 'aviso ausente na linha única antes do pedido');
     const un = unplaced.find((d) => d.unasked === true);
     if (un === undefined) return res(false, 'sem "unasked … waits unplaced" no debug.log antes do pedido: não medida');
-    if (un.limiar != null && sc.antes.aviso.n !== un.limiar) return res(false, `aviso diz ${sc.antes.aviso.n} colunas mas o reason da plataforma diz ${un.limiar}`);
+    if (sc.antes.aviso.n !== (un.limiar ?? null)) return res(false, `aviso diz ${sc.antes.aviso.n ?? 'mais'} colunas mas o reason da plataforma diz ${un.limiar ?? 'nenhum número (esperado "mais colunas")'}`);
     if (sc.depois.placement !== esperado) return res(false, `depois do pedido, placement esperado ${esperado}; lido na tela ${sc.depois.placement}`);
     return res(placed, `aviso inteiro antes do pedido (N ${sc.antes.aviso.n}); depois do pedido ${esperado} lido na tela; debug.log placed ${placed}`);
   } },
@@ -899,6 +899,7 @@ export function invariantePrimeiroSnapshot(obs, celula) {
 export function causaDoStatus(texto) {
   const t = String(texto).trim();
   if (t === 'NAO_PROVADO_PLUGIN') return 'plugin gabarito-mestre não ativo na célula (dependência ausente ou não carregou)';
+  if (t === 'PAROU_NAO_SAIU') return 'PAROU aberto que não saiu antes do aviso (evidência vazia)';
   if (t === 'NAO_PROVADO_LOGIN') return 'login pedido na célula: a conta não está autenticada';
   return null;
 }
@@ -1103,9 +1104,9 @@ export function emularTela(raw, rows, cols) {
       i += 2; continue;
     }
     if (ch === '\r') { c = 0; i++; continue; }
-    if (ch === '\n') { r = cl(r + 1, 0, rows - 1); i++; continue; }
+    if (ch === '\n') { if (r === bot) rola(1); else r = cl(r + 1, 0, rows - 1); i++; continue; }
     const cp = s.codePointAt(i); const w = cp > 0xffff ? 2 : 1;
-    if (cp >= 32) { if (c >= cols) { c = 0; r = cl(r + 1, 0, rows - 1); } scr[r][c] = String.fromCodePoint(cp); c++; }
+    if (cp >= 32) { if (c >= cols) { c = 0; if (r === bot) rola(1); else r = cl(r + 1, 0, rows - 1); } scr[r][c] = String.fromCodePoint(cp); c++; }
     i += w;
   }
   foto();
@@ -1173,12 +1174,15 @@ export function comandoDeResposta(pergunta, n = RESPOSTA_B) {
   return `/gabarito-mestre:responder ${pergunta.id} ${n}`;
 }
 
+/** O que o PRODUTO desenha na linha única (`faixaUmaLinha`, mod/painel.mjs): `■ PAROU hh:mm <texto>`; a pergunta sai SEM prefixo e a plataforma põe os botões `[ 1 GM-13 ]` ao lado (no tty real: "Esta conversa é da entrega [ 1 GM-13 ] …"). */
+export const PAROU_NA_LINHA = /(^|\s)■ PAROU \d\d:\d\d/;
+export const PERGUNTA_NA_LINHA = /\[ 1 [^\]]+ \]/;
 const resumoDoQuadro = (q, cols) => {
   const cx = caixaDoPainel(q.linhas, cols);
   const fora = q.linhas; // PAROU, pergunta e aviso são lidos por início de linha: as linhas da caixa começam em `│` e não casam
   return {
     placement: cx.placement, bodyRows: cx.bodyRows, bodyColumns: cx.bodyColumns, interior: cx.interior,
-    aviso: avisoNaTela(fora), parou: fora.some((l) => /^\s*PAROU /.test(l)), perguntaAberta: fora.some((l) => /^\s*depende de você:/.test(l)),
+    aviso: avisoNaTela(fora), parou: fora.some((l) => PAROU_NA_LINHA.test(l)), perguntaAberta: fora.some((l) => PERGUNTA_NA_LINHA.test(l)),
   };
 };
 
@@ -1555,6 +1559,14 @@ export async function main(argv) {
     writeFileSync(join(rundir, 'resposta-b.json'), `${JSON.stringify({ estado: cmd === null ? 'nao-abriu' : 'respondida', pergunta: estado.pergunta?.id ?? null, resposta: cmd === null ? null : RESPOSTA_B })}\n`);
     process.stdout.write(cmd === null ? '' : `${cmd}\n`);
     return 0;
+  }
+  // `parou <repo> <rundir>` (chamado pelo `a1.exp` depois da (b)): rc 0 = nenhum PAROU aberto; rc 1 = PAROU aberto (a medida do aviso espera ele sair, emenda 50)
+  if (argv[0] === 'parou') {
+    const repo = resolve(argv[1] ?? ''); const rundir = resolve(argv[2] ?? '');
+    const ferr = await import(pathToFileURL(join(GATES, 'dist', 'ferramentas.js')).href);
+    const { entrada } = entradaDoSnapshot(jsonl(join(rundir, 'obs', 'a1.jsonl')), ferr, { sessao: sessaoRealDe(repo) ?? 'S-a1' });
+    const estado = estadoDoProduto(repo, { entrada: JSON.stringify(entrada), bin: join(rundir, 'bin'), ghEstado: join(rundir, 'gh.json') });
+    return estado.parar != null ? 1 : 0;
   }
   // `avaliar-matriz <base>`: a matriz GRAVADA (2 conversas + 8 sessões curtas) avaliada offline, com replay
   if (argv[0] === 'avaliar-matriz') {
