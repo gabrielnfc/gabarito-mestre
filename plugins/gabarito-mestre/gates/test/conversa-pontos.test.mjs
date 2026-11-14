@@ -255,6 +255,8 @@ const evBoa = (celula = { local: 'lateral', cols: 180, rows: 50, cheia: true }) 
   vivos: [{ ativos: 0, linhasAgente: 0, detalhes: [] }, { ativos: 1, linhasAgente: 1, detalhes: [{ nome: 'Frodo', descricao: 'implementa T3', task: 'T3', acao: 'lendo 2 arquivos' }] }],
   pouso: { percent: 50, limparNoDepende: true, pushes: 1, despachosDepois: 0 },
   panes: [{ placement: placementEsperado(celula) ?? 'x' }].filter(() => placementEsperado(celula) !== null),
+  panesObservadas: true,
+  placementsDebug: celula.local === 'acima' ? [] : [{ colunas: celula.cols, estado: 'placed' }],
 });
 
 describe('asserções do A1 sobre a evidência de uma execução', () => {
@@ -510,6 +512,7 @@ function montarExecucao(v = {}) {
     { t: 1, ev: 'estado', agentes: v.semAgentes === true ? [] : [{ id: AGENTE.id, type: AGENTE.type, status: 'running', description: AGENTE.description }], panes: [{ id: 'gabarito-painel', placement: v.placement ?? 'dock' }], nomes: null },
     { t: 2, ev: 'render', comp: 'Pane', bodyRows: 12, bodyColumns: 60 },
   ]);
+  if (v.semDebug !== true) writeFileSync(join(rundir, 'debug.log'), '2026-11-14T04:43:26.718Z [DEBUG] ui.open gabarito-mestre gabarito-painel (unasked, 180 columns): placed\n');
   const props = v.semProps === true ? {} : { Pane: { bodyRows: 12, bodyColumns: 60 } };
   writeFileSync(join(rundir, 'estados', '01.json'), `${JSON.stringify({ n: 1, props, agentes: v.semAgentes === true ? [] : [AGENTE], estado: ESTADO_REAL })}\n`);
   const prompt = v.promptSemRegra === true ? 'brief sem regra nenhuma' : `brief do implementador. ${REGRA}`;
@@ -803,13 +806,11 @@ describe('ambiente da execução real (T44, emenda 39): plugin carregado e diál
     assert.deepEqual(dialogosDoExpLog('1 inicio cols=180 rows=50\n2 DIALOGO-IMPORTS-EXTERNOS recusado\n'), { importsExternos: 'apareceu-e-foi-recusado' });
     assert.deepEqual(dialogosDoExpLog('1 inicio\n'), { importsExternos: 'nao-apareceu' });
   });
-  test('ambiente-vai-no-resultado-json-e-no-coletar (M6/M7: lê o campo, troca o valor e falha)', () => {
-    const src = readFileSync(RUNNER, 'utf8');
-    // coletar devolve `ambiente` lido do exp.log; matriz grava o do coletar no resultado.json
-    const coletar = src.slice(src.indexOf('async function coletar'), src.indexOf('async function matriz'));
-    assert.match(coletar, /ambiente: dialogosDoExpLog\(/, 'coletar produz o campo ambiente');
-    const mat = src.slice(src.indexOf('async function matriz'), src.indexOf('// ─── ambiente da execução'));
-    assert.match(mat, /ambiente: \{ \.\.\.\(ev\?\.ambiente \?\?/, 'resultado.json recebe o ambiente do coletar');
+  test('ambiente-do-coletar-vem-do-exp.log (M6/M7: lê o campo, troca o valor e falha)', async () => {
+    const m = montarExecucao({});
+    writeFileSync(join(m.rundir, 'exp.log'), '1 DIALOGO-IMPORTS-EXTERNOS recusado\n');
+    assert.deepEqual((await coleta0(m)).ambiente, { importsExternos: 'apareceu-e-foi-recusado' });
+    assert.deepEqual((await coleta0(montarExecucao({}))).ambiente, { importsExternos: 'nao-apareceu' });
   });
   test('a1.exp-na-simulacao-do-dialogo: recusa com Enter UMA vez, e texto de conversa parecido NÃO dispara (D1; P14)', (t) => {
     if (spawnSync('expect', ['-v'], { encoding: 'utf8' }).error) { t.skip('expect ausente'); return; }
@@ -895,14 +896,6 @@ describe('superpowers fixo (T46, emenda 41): dependência declarada carregada po
     writeFileSync(join(torto, 'plugins', 'cache', 'claude-plugins-official', 'superpowers', '7.0.2', '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'superpowers', version: '9.9.9' }));
     assert.equal(resolverSuperpowers({ config: torto }).ok, false, 'manifesto de outra versão não vale');
   });
-  test('matriz-para-a-celula-sem-rodar-quando-ausente (nunca roda desabilitada)', () => {
-    const m = MATRIZ_SRC();
-    const iResolve = m.indexOf('resolverSuperpowers('); const iExpect = m.indexOf("spawnSync('expect'");
-    assert.ok(iResolve > 0 && iExpect > iResolve, 'resolve ANTES de abrir o expect');
-    assert.match(m, /if \(!sp\.ok\)[\s\S]{0,400}?continue;/, 'ausente: registra e pula a célula');
-    assert.match(m, /dependencia_ausente|sp\.causa/, 'a causa vai ao resultado');
-    assert.doesNotMatch(m, /readdirSync/, 'sem varrer o cache por "última versão"');
-  });
   test('matriz-com-superpowers-ausente-para-a-celula-e-NAO-conta-passa (comportamento, sem abrir o expect)', async () => {
     const vazia = fabricar([]);
     const raiz = mkdtempSync(join(tmpdir(), 'a1-mz-')); TMPS.push(raiz);
@@ -947,23 +940,357 @@ describe('superpowers fixo (T46, emenda 41): dependência declarada carregada po
     } finally { if (antes === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = antes; }
     assert.equal((readFileSync(RUNNER, 'utf8').match(/CLAUDE_CONFIG_DIR \?\?/g) ?? []).length, 1, 'a regra aparece uma vez no runner');
   });
-  test('a1.exp-e-o-spawn-passam-o-superpowers-como-plugin-explicito (superpowers-fixo-no-spawn)', () => {
-    const exp = readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), 'utf8');
-    const spawn = exp.slice(exp.indexOf('spawn claude'), exp.indexOf('nota "inicio'));
-    assert.match(spawn, /--plugin-dir \$superpowers/, 'spawn do claude carrega o superpowers');
-    assert.doesNotMatch(spawn, /--setting-sources[^\n]*user/, 'sem ligar o setting-sources user (D1)');
-    assert.match(exp, /lassign \$argv [^\n]*\brunner superpowers\n/, 'argumento novo declarado');
-    const m = MATRIZ_SRC();
-    assert.match(m, /fileURLToPath\(import\.meta\.url\), sp\.caminho\]/, 'matriz passa o caminho resolvido ao a1.exp');
+  test('o-claude-carrega-o-superpowers-como-plugin-explicito-e-nunca-liga-setting-sources-user (argv montado pelo runner)', () => {
+    const argv = R.argvDoClaude({ observador: '/t/o', plugin: '/t/p', superpowers: '/t/sp', debugLog: '/t/d' });
+    assert.ok(argv.some((a, i) => argv[i - 1] === '--plugin-dir' && a === '/t/sp'));
+    assert.equal(argv[argv.indexOf('--setting-sources') + 1], 'project,local', 'sem ligar o setting-sources user (D1)');
   });
-  test('ambiente-registra-superpowers (nome, versão e caminho no resultado.json; troca o valor e falha)', () => {
+  test('matriz-passa-o-superpowers-resolvido-ao-claude (argv da célula)', async () => {
+    const e = ambienteMatriz();
+    await rodarMatriz(e, { so: idDaCelula(MATRIZ[0]) });
+    assert.ok(e.chamadas[0].argv.some((a, i) => e.chamadas[0].argv[i - 1] === '--plugin-dir' && a === '/t/sp'));
+  });
+  test('ambiente-registra-superpowers (nome, versão e caminho no resultado.json; troca o valor e falha)', async () => {
     const sp = { ok: true, nome: 'superpowers', versao: '7.0.2', caminho: '/x/y' };
     assert.deepEqual(ambienteDaExecucao('1 inicio\n2 DIALOGO-IMPORTS-EXTERNOS recusado\n', sp), { importsExternos: 'apareceu-e-foi-recusado', superpowers: { nome: 'superpowers', versao: '7.0.2', caminho: '/x/y' } });
     assert.deepEqual(ambienteDaExecucao('', { ...sp, versao: '7.0.0', caminho: '/z' }).superpowers, { nome: 'superpowers', versao: '7.0.0', caminho: '/z' });
     assert.deepEqual(ambienteDaExecucao('', { ok: false, causa: 'dependencia_ausente: superpowers@7.0.2' }).superpowers, { dependencia_ausente: 'superpowers@7.0.2' });
     assert.deepEqual(ambienteDaExecucao('', { ok: false, causa: 'dependencia_nao_declarada: superpowers no plugin.json do produto' }).superpowers, { dependencia_nao_declarada: 'superpowers no plugin.json do produto' });
-    const m = MATRIZ_SRC();
-    assert.match(m, /ambienteDaExecucao\('', sp\)/, 'célula parada por ausência registra a causa no ambiente');
-    assert.match(m, /superpowers: superpowersNoAmbiente\(sp\) \} \}/, 'célula executada registra nome/versão/caminho no ambiente');
+    const e = ambienteMatriz({ expLog: '1 DIALOGO-IMPORTS-EXTERNOS recusado\n' });
+    const m = await rodarMatriz(e, { so: idDaCelula(MATRIZ[0]) });
+    const r = JSON.parse(readFileSync(join(m.base, idDaCelula(MATRIZ[0]), 'resultado.json'), 'utf8'));
+    assert.deepEqual(r.ambiente, { importsExternos: 'apareceu-e-foi-recusado', superpowers: { nome: 'superpowers', versao: '7.0.2', caminho: '/t/sp' } });
   });
 });
+
+// ─── T49 (emenda 43): runner do A1 isolado e confiável. Testes de COMPORTAMENTO (nada de regex sobre o fonte do runner) ───
+
+const R = await import(new URL('./e2e/conversa-2026-11-11/rodar-a1.mjs', import.meta.url));
+const tmpGit = () => { const d = tmp(); git(d, 'init', '-q', '-b', 'main'); writeFileSync(join(d, 'a.txt'), 'a'); git(d, 'add', '-A'); git(d, 'commit', '-q', '-m', 'i'); return d; };
+const calar = async (fn) => { const orig = process.stderr.write.bind(process.stderr); process.stderr.write = () => true; try { return await fn(); } finally { process.stderr.write = orig; } };
+
+describe('T49 (b) observador: grava o 1º render depois do session.start e não deduplica contra render descartado', () => {
+  /** Carrega o `register.mjs` REAL escrito por `escreverObservador` com uma plataforma de mentira: `on` guarda handlers, `$` registra o que seria escrito. */
+  async function plataforma() {
+    const d = tmp(); R.escreverObservador(join(d, 'obs'));
+    const mod = await import(`${join(d, 'obs', 'register.mjs')}?${Math.random()}`);
+    const h = {}; mod.register((ev, a, b) => { const [filtro, fn] = typeof a === 'function' ? [null, a] : [a, b]; (h[ev + (filtro?.component ? `:${filtro.component}` : '')] ??= []).push(fn); });
+    const arquivos = {}; let relogio = null; let panes = []; let t = 0;
+    const $ = { env: { get: async () => '/obs' }, clock: { now: async () => ++t, every: (_ms, f) => { relogio = f; } }, fs: { write: async (p, c) => { arquivos[p] = c; } }, agent: { list: async () => [] }, ui: { panes: async () => panes }, store: { get: async () => null } };
+    const next = async () => {};
+    const dispara = async (ev, e = {}) => { for (const f of h[ev] ?? []) await f($, e, next); await new Promise((r) => setTimeout(r, 5)); };
+    const linhas = () => (arquivos['/obs/a1.jsonl'] ?? '').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    return { dispara, linhas, tick: async () => { await relogio(); await new Promise((r) => setTimeout(r, 5)); }, setPanes: (p) => { panes = p; } };
+  }
+  const PROPS = { props: { scroll: { bodyRows: 40 }, bodyColumns: 60 } };
+
+  test('render-antes-do-session.start-nao-trava-o-seguinte: o 1º render depois do start é gravado mesmo igual ao descartado', async () => {
+    const p = await plataforma();
+    await p.dispara('ui.render:Pane', PROPS); // chega antes de o observador saber onde gravar
+    await p.dispara('session.start', {});
+    await p.dispara('ui.render:Pane', PROPS);
+    const panes = p.linhas().filter((l) => l.ev === 'render' && l.comp === 'Pane');
+    assert.ok(panes.length >= 1, 'o render depois do session.start foi gravado');
+    assert.deepEqual(panes[0], { t: panes[0].t, ev: 'render', comp: 'Pane', bodyRows: 40, bodyColumns: 60 });
+  });
+  test('render-so-depois-do-start-tambem-e-gravado', async () => {
+    const p = await plataforma();
+    await p.dispara('session.start', {});
+    await p.dispara('ui.render:Pane', PROPS);
+    assert.equal(p.linhas().filter((l) => l.comp === 'Pane').length, 1);
+  });
+  test('render-igual-ao-ULTIMO-GRAVADO-nao-repete (a deduplicação legítima segue); props diferentes gravam', async () => {
+    const p = await plataforma();
+    await p.dispara('session.start', {});
+    await p.dispara('ui.render:Pane', PROPS); await p.dispara('ui.render:Pane', PROPS);
+    assert.equal(p.linhas().filter((l) => l.comp === 'Pane').length, 1);
+    await p.dispara('ui.render:Pane', { props: { scroll: { bodyRows: 39 }, bodyColumns: 60 } });
+    assert.equal(p.linhas().filter((l) => l.comp === 'Pane').length, 2);
+  });
+  test('panes-lidas-pela-plataforma-vao-ao-registro-com-o-que-ela-expõe', async () => {
+    const p = await plataforma();
+    await p.dispara('session.start', {});
+    p.setPanes([{ id: 'gabarito-painel', placement: 'dock', outro: 3, aninhado: { x: 1 } }]);
+    await p.tick();
+    const e = p.linhas().filter((l) => l.ev === 'estado').at(-1);
+    assert.equal(e.panes[0].placement, 'dock');
+    assert.equal(e.panes[0].id, 'gabarito-painel');
+    assert.equal(e.panes[0].raw.outro, 3, 'campos escalares da Pane ficam registrados para diagnóstico');
+    assert.equal(e.panes[0].raw.aninhado, undefined);
+  });
+  test('placement-do-debug.log (fonte que a plataforma expõe): "ui.open … placed" e "waits unplaced"', () => {
+    const log = [
+      '2026-11-14T04:43:26.718Z [DEBUG] ui.open gabarito-mestre gabarito-painel (unasked, 180 columns): placed',
+      '2026-11-14T03:00:22.683Z [DEBUG] ui.open gabarito-mestre gabarito-painel (unasked, 80 columns): waits unplaced (unasked below 110 columns (80 now): placed when ...)',
+      '2026-11-14T03:00:23.683Z [DEBUG] ui.open outro-plugin outra-pane (unasked, 180 columns): placed',
+    ].join('\n');
+    assert.deepEqual(R.placementsDoDebugLog(log), [{ colunas: 180, estado: 'placed' }, { colunas: 80, estado: 'unplaced' }]);
+    assert.deepEqual(R.placementsDoDebugLog('nada aqui'), []);
+  });
+});
+
+/** Executor de mentira: grava o que recebeu e devolve o que o teste manda. */
+function ambienteMatriz(fn0 = async () => ({ status: 0, abortada: null }), { expLog = null } = {}) {
+  const fn = typeof fn0 === 'function' ? fn0 : async () => ({ status: 0, abortada: null }); if (typeof fn0 === 'object') expLog = fn0.expLog ?? null;
+  const fonte = tmpGit(); const raiz = tmpGit(); const base = tmp();
+  const chamadas = []; const ativos = { n: 0, max: 0 };
+  const deps = {
+    preparar: (f, destino) => { mkdirSync(destino, { recursive: true }); return { bin: join(destino, '..', 'bin') }; },
+    copiarPlugin: (destino) => { mkdirSync(destino, { recursive: true }); },
+    executar: async (a) => { if (expLog !== null) writeFileSync(join(a.rundir, 'exp.log'), expLog); chamadas.push(a); ativos.n += 1; ativos.max = Math.max(ativos.max, ativos.n); try { return await fn(a, fonte); } finally { ativos.n -= 1; } },
+    avaliar: async (rundir, repo, celula) => ({ celula: idDaCelula(celula), passa: true, resultados: [] }),
+    superpowers: () => ({ ok: true, nome: 'superpowers', versao: '7.0.2', caminho: '/t/sp' }),
+  };
+  return { fonte, raiz, base, chamadas, ativos, deps };
+}
+const rodarMatriz = (e, opcoes = {}) => { const antes = process.env.TMPDIR; process.env.TMPDIR = e.base; return calar(() => R.matriz(e.fonte, e.raiz, { falas: [] }, opcoes.so ?? null, { deps: e.deps, ...opcoes })).finally(() => { process.env.TMPDIR = antes; }); };
+
+
+describe('T49 (a) isolamento: célula e plugin fora do repo real; o repo real fica intocado ou a célula é inválida', () => {
+  test('foto-do-repo-pega-status-refs-e-worktrees; diferenças dizem qual', () => {
+    const r = tmpGit(); const a = R.fotoDoRepo(r);
+    assert.deepEqual(R.diferencasDeFotos(a, R.fotoDoRepo(r)), []);
+    writeFileSync(join(r, 'novo.txt'), 'x');
+    assert.match(R.diferencasDeFotos(a, R.fotoDoRepo(r)).join(';'), /status/);
+    rmSync(join(r, 'novo.txt'));
+    git(r, 'branch', 'outra');
+    assert.match(R.diferencasDeFotos(a, R.fotoDoRepo(r)).join(';'), /refs/);
+    git(r, 'branch', '-q', '-D', 'outra');
+    const wt = join(tmp(), 'wt'); git(r, 'worktree', 'add', '-q', '-b', 'w', wt);
+    const d = R.diferencasDeFotos(a, R.fotoDoRepo(r));
+    assert.match(d.join(';'), /worktrees/);
+  });
+  test('foto-de-quem-nao-e-repo-lanca (a prova nunca passa no escuro)', () => {
+    assert.throws(() => R.fotoDoRepo(tmp()));
+  });
+  test('dentroDe-e-vazamentos', () => {
+    assert.equal(R.dentroDe('/a/b', '/a/b/c'), true);
+    assert.equal(R.dentroDe('/a/b', '/a/b'), true);
+    assert.equal(R.dentroDe('/a/b', '/a/bc'), false);
+    assert.deepEqual(R.vazamentos(['--plugin-dir', '/real/x/plugin', '/tmp/ok'], ['/real/x']), ['/real/x/plugin']);
+    assert.deepEqual(R.vazamentos(['/tmp/ok'], ['/real/x']), []);
+  });
+  test('copiarPlugin-copia-o-plugin-para-fora-sem-node_modules', () => {
+    const d = join(tmp(), 'plugin'); R.copiarPlugin(d);
+    assert.ok(existsSync(join(d, '.claude-plugin', 'plugin.json')));
+    assert.ok(existsSync(join(d, 'gates', 'dist')));
+    assert.equal(existsSync(join(d, 'gates', 'node_modules')), false);
+    assert.ok(!R.dentroDe(R.PLUGIN, d));
+  });
+  test('argvDoClaude: plugins vêm da cópia, modelo é Sonnet, nenhum caminho do repo real (M: condutor haiku)', () => {
+    const argv = R.argvDoClaude({ observador: '/t/obs', plugin: '/t/plugin', superpowers: '/t/sp', debugLog: '/t/debug.log' });
+    assert.equal(R.MODELO_CONDUTOR, 'claude-sonnet-5-5');
+    assert.equal(argv[argv.indexOf('--model') + 1], 'claude-sonnet-5-5');
+    assert.doesNotMatch(argv.join(' '), /haiku/);
+    assert.deepEqual(argv.filter((_, i) => argv[i - 1] === '--plugin-dir'), ['/t/obs', '/t/plugin', '/t/sp']);
+    assert.ok(argv.includes('--strict-mcp-config') && argv.includes('--debug-file'));
+    assert.deepEqual(R.vazamentos(argv, [R.raizDoRepoReal()]), []);
+  });
+  test('a1.exp-nao-fixa-modelo-e-le-os-argumentos-do-runner', () => {
+    const exp = readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), 'utf8');
+    assert.doesNotMatch(exp, /haiku/);
+    assert.match(exp, /claude\.args/);
+  });
+
+  test('celula-e-plugin-ficam-FORA-do-checkout-real (sob TMPDIR) e o argv do claude não tem caminho real (M: célula no checkout real)', async () => {
+    const e = ambienteMatriz();
+    await rodarMatriz(e, { so: idDaCelula(MATRIZ[0]) });
+    assert.equal(e.chamadas.length, 1);
+    const c = e.chamadas[0];
+    for (const p of [c.rundir, c.repo, c.plugin]) { assert.ok(!R.dentroDe(e.fonte, p) && !R.dentroDe(e.raiz, p), `${p} fora do repo real`); assert.ok(R.dentroDe(e.base, p), `${p} sob o TMPDIR`); }
+    assert.deepEqual(R.vazamentos([c.rundir, c.repo, ...c.argv], [e.fonte, e.raiz]), []);
+    assert.ok(c.argv.includes(c.plugin), 'o --plugin-dir do produto é a cópia');
+  });
+  test('repo-real-alterado-durante-a-celula-INVALIDA-a-celula-com-causa-e-a-matriz-para (M: sem a prova)', async () => {
+    const e = ambienteMatriz(async (a, fonte) => { writeFileSync(join(fonte, 'vazou.txt'), 'x'); return { status: 0, abortada: null }; });
+    const m = await rodarMatriz(e);
+    assert.equal(e.chamadas.length, 1, 'a matriz para: as outras 7 não rodam');
+    const r = JSON.parse(readFileSync(join(m.base, idDaCelula(MATRIZ[0]), 'resultado.json'), 'utf8'));
+    assert.equal(r.passa, false);
+    assert.equal(r.resultados[0].id, 'isolamento');
+    assert.match(r.resultados[0].detalhe, /status/);
+    assert.equal(m.rel.ok, false); assert.equal(m.rel.passou, 0);
+    assert.match(m.abortada, /isolamento|repo real/);
+  });
+  test('repo-real-intocado-nao-invalida', async () => {
+    const e = ambienteMatriz();
+    const m = await rodarMatriz(e, { so: idDaCelula(MATRIZ[0]) });
+    assert.equal(m.rel.passou, 1);
+    assert.equal(m.abortada, null);
+  });
+  test('invariante-violada-aborta-na-hora-e-a-matriz-nao-roda-as-demais (plugin não ativo, 0 render)', async () => {
+    const e = ambienteMatriz(async () => ({ status: 3, abortada: 'plugin gabarito-mestre não ativo' }));
+    const m = await rodarMatriz(e);
+    assert.equal(e.chamadas.length, 1);
+    assert.equal(m.rel.passou, 0);
+    assert.equal(m.rel.linhas.filter((l) => l.motivo === 'não executada').length, 7);
+    assert.match(m.abortada, /plugin/);
+    const r = JSON.parse(readFileSync(join(m.base, idDaCelula(MATRIZ[0]), 'resultado.json'), 'utf8'));
+    assert.equal(r.passa, false); assert.equal(r.resultados[0].id, 'invariante');
+  });
+  test('falas-com-caminho-do-repo-real-recusam-a-matriz', async () => {
+    const e = ambienteMatriz();
+    await assert.rejects(() => calar(() => { const a = process.env.TMPDIR; process.env.TMPDIR = e.base; return R.matriz(e.fonte, e.raiz, { falas: [{ n: 1, texto: `abra ${e.fonte}/x`, rotulo: '—' }] }, null, { deps: e.deps }).finally(() => { process.env.TMPDIR = a; }); }), /caminho do repo real/);
+    assert.equal(e.chamadas.length, 0);
+  });
+  test('paralelo-ignorado-reprova: --paralelo 2 roda 2 ao mesmo tempo e o padrão roda 1 (M: paralelo ignorado)', async () => {
+    const lento = async () => { await new Promise((r) => setTimeout(r, 40)); return { status: 0, abortada: null }; };
+    const um = ambienteMatriz(lento); await rodarMatriz(um);
+    assert.equal(um.ativos.max, 1, 'padrão: 1'); assert.equal(um.chamadas.length, 8);
+    const dois = ambienteMatriz(lento); const m = await rodarMatriz(dois, { paralelo: 2 });
+    assert.equal(dois.ativos.max, 2); assert.equal(dois.chamadas.length, 8);
+    assert.equal(m.rel.passou, 8);
+  });
+  test('ordem-de-gravacao: com paralelo, a célula rápida grava o resultado antes de a lenta terminar', async () => {
+    const quando = {};
+    const e = ambienteMatriz(async (a) => {
+      if (a.celula === idDaCelula(MATRIZ[0])) { await new Promise((r) => setTimeout(r, 300)); return { status: 0, abortada: null }; }
+      if (a.celula === idDaCelula(MATRIZ[1])) return { status: 0, abortada: null };
+      for (let i = 0; i < 50 && !existsSync(join(a.rundir, '..', idDaCelula(MATRIZ[1]), 'resultado.json')); i += 1) await new Promise((r) => setTimeout(r, 20));
+      quando[a.celula] = existsSync(join(a.rundir, '..', idDaCelula(MATRIZ[1]), 'resultado.json')) && !existsSync(join(a.rundir, '..', idDaCelula(MATRIZ[0]), 'resultado.json'));
+      return { status: 0, abortada: null };
+    });
+    await rodarMatriz(e, { paralelo: 2 });
+    assert.ok(Object.values(quando).some(Boolean), 'o resultado da 2ª existia no disco com a 1ª ainda rodando');
+  });
+});
+
+describe('T49 execução do expect: vigia o repo real e para na hora', () => {
+  const fakeExpect = (segundos) => { const d = tmp(); const f = join(d, 'expect'); writeFileSync(f, `#!/bin/sh\nexec sleep ${segundos}\n`); execFileSync('chmod', ['+x', f]); return f; };
+  test('repo-real-mexido-no-meio-mata-o-expect-e-devolve-a-causa (M: aborto removido ⇒ espera os 30 s)', async () => {
+    const fonte = tmpGit(); const rundir = tmp();
+    const t0 = Date.now();
+    setTimeout(() => writeFileSync(join(fonte, 'vazou.txt'), 'x'), 300);
+    const r = await R.executarExpect({ rundir, args: [], reais: [fonte], expect: fakeExpect(30), intervalo: 100 });
+    assert.ok(Date.now() - t0 < 10000, `parou em ${Date.now() - t0} ms`);
+    assert.match(r.abortada, /repo real/);
+    assert.match(readFileSync(join(rundir, 'abortar.txt'), 'utf8'), /repo real/);
+  });
+  test('sem-mexida-espera-o-expect-acabar-sem-abortar', async () => {
+    const fonte = tmpGit(); const rundir = tmp();
+    const r = await R.executarExpect({ rundir, args: [], reais: [fonte], expect: fakeExpect(1), intervalo: 100 });
+    assert.equal(r.abortada, null); assert.equal(r.status, 0);
+  });
+  test('abortar.txt-escrito-pelo-a1.exp-ou-pelo-snapshot-mata-o-expect-na-hora', async () => {
+    const fonte = tmpGit(); const rundir = tmp(); const t0 = Date.now();
+    setTimeout(() => writeFileSync(join(rundir, 'abortar.txt'), '0 render observado no 1º snapshot\n'), 300);
+    const r = await R.executarExpect({ rundir, args: [], reais: [fonte], expect: fakeExpect(30), intervalo: 100 });
+    assert.ok(Date.now() - t0 < 10000);
+    assert.match(r.abortada, /0 render/);
+  });
+  test('status-do-a1.exp: NAO_PROVADO_PLUGIN e LOGIN abortam; CONCLUIDO não', () => {
+    assert.match(R.causaDoStatus('NAO_PROVADO_PLUGIN'), /plugin/i);
+    assert.match(R.causaDoStatus('NAO_PROVADO_LOGIN\n'), /login/i);
+    assert.equal(R.causaDoStatus('CONCLUIDO'), null);
+    assert.equal(R.causaDoStatus(''), null);
+  });
+  test('1º-snapshot-sem-render-da-superficie-esperada-aborta (lateral exige Pane; acima exige AbovePrompt)', () => {
+    const pane = { ev: 'render', comp: 'Pane', bodyRows: 3 }; const acima = { ev: 'render', comp: 'AbovePrompt', maxRows: 3 };
+    assert.match(R.invariantePrimeiroSnapshot([], { local: 'lateral' }), /0 render/);
+    assert.match(R.invariantePrimeiroSnapshot([acima], { local: 'lateral' }), /Pane/, 'AbovePrompt não vale para lateral');
+    assert.equal(R.invariantePrimeiroSnapshot([pane], { local: 'lateral' }), null);
+    assert.equal(R.invariantePrimeiroSnapshot([acima], { local: 'acima' }), null);
+    assert.match(R.invariantePrimeiroSnapshot([pane], { local: 'acima' }), /AbovePrompt/);
+  });
+  test('cli-snapshot-sem-render-no-1º-ponto-escreve-abortar.txt-e-nao-calcula-o-estado', () => {
+    const rundir = tmp(); mkdirSync(join(rundir, 'obs'), { recursive: true });
+    writeFileSync(join(rundir, 'celula.json'), JSON.stringify({ local: 'lateral', cols: 180, rows: 50, cheia: true }));
+    writeFileSync(join(rundir, 'obs', 'a1.jsonl'), '');
+    const r = spawnSync(process.execPath, [RUNNER, 'snapshot', tmp(), rundir, '1'], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(readFileSync(join(rundir, 'abortar.txt'), 'utf8'), /0 render/);
+    assert.equal(existsSync(join(rundir, 'estados', '01.json')), false);
+  });
+});
+
+describe('T49 (c) evidência vazia é "não medida" e REPROVA (nunca passa em vácuo)', () => {
+  const a = (id) => ASSERCOES.find((x) => x.id === id);
+  const naoMedida = (id, mexe) => { const ev = evBoa(); mexe(ev); const r = a(id).avaliar(ev); assert.equal(r.ok, false, `${id}: ${r.detalhe}`); assert.match(r.detalhe, /não medida/, id); };
+  test('boa-evidencia-segue-passando-com-o-novo-formato', () => { assert.equal(avaliarExecucao(evBoa()).passa, true); });
+  test('12: sem leitura de panes pela plataforma (acima e lateral) é não medida', () => {
+    naoMedida('12-placement-da-pane', (ev) => { ev.panesObservadas = false; });
+    naoMedida('12-placement-da-pane', (ev) => { ev.celula = { local: 'acima', cols: 180, rows: 50, cheia: true }; ev.panes = []; ev.panesObservadas = false; });
+  });
+  test('12: lateral sem "placed" no debug.log é não medida; placed sem placement lido reprova dizendo qual fonte faltou', () => {
+    naoMedida('12-placement-da-pane', (ev) => { ev.placementsDebug = []; });
+    const ev = evBoa(); ev.panes = [];
+    const r = a('12-placement-da-pane').avaliar(ev); assert.equal(r.ok, false); assert.match(r.detalhe, /placed/);
+  });
+  test('12: lateral onde a plataforma disse "unplaced" reprova (é o defeito que a T50 trata, não vácuo)', () => {
+    const ev = evBoa(); ev.placementsDebug = [{ colunas: 80, estado: 'unplaced' }];
+    const r = a('12-placement-da-pane').avaliar(ev); assert.equal(r.ok, false); assert.match(r.detalhe, /unplaced/);
+  });
+  test('12: acima com ui.open no debug.log reprova (nunca os dois)', () => {
+    const ev = evBoa({ local: 'acima', cols: 180, rows: 50, cheia: true }); ev.placementsDebug = [{ colunas: 180, estado: 'placed' }];
+    assert.equal(a('12-placement-da-pane').avaliar(ev).ok, false);
+  });
+  test('9: sem nenhum veredito é não medida', () => { naoMedida('9-veredito-com-revisor-antes', (ev) => { ev.eventos = ev.eventos.filter((e) => e.tipo !== 'review.veredito'); }); });
+  test('3: sem task integrada nem quadro é não medida', () => {
+    naoMedida('3-sem-task-integrada', (ev) => { ev.integradas = []; });
+    naoMedida('3-sem-task-integrada', (ev) => { ev.quadros = []; });
+  });
+  test('8a: sem dono.mensagem gravada nem digitada é não medida', () => {
+    naoMedida('8a-dono-mensagem-sem-duplicata', (ev) => { ev.eventos = ev.eventos.filter((e) => e.tipo !== 'dono.mensagem'); });
+    naoMedida('8a-dono-mensagem-sem-duplicata', (ev) => { ev.digitadas = []; });
+  });
+  test('7: sem nenhuma chamada no transcript é não medida', () => { naoMedida('7-sem-edit-em-harness-nem-status-a-mao', (ev) => { ev.transcript.chamadas = []; ev.transcript.textos = []; }); });
+  test('as-demais-sem-evidência-reprovam-e-a-execução-reprova (nenhuma isenção, nenhuma contagem à parte)', () => {
+    const vazio = evBoa();
+    Object.assign(vazio, { quadros: [], integradas: [], eventos: [], digitadas: [], transcript: { chamadas: [], textos: [] }, perguntas: [], despachos: [], entregasPublicadas: [], vivos: [], panes: [], panesObservadas: false, placementsDebug: [], pouso: { percent: 0, limparNoDepende: false, pushes: 0, despachosDepois: 0 } });
+    const r = avaliarExecucao(vazio);
+    assert.equal(r.passa, false);
+    assert.deepEqual(r.resultados.filter((x) => x.ok).map((x) => x.id), [], 'nenhuma asserção passa sobre evidência vazia');
+  });
+});
+
+describe('T49 avaliar offline: a mesma avaliação da execução, sobre uma execução já gravada', () => {
+  test('avaliarRundir-iguala-coletar+avaliarExecucao (online e offline não divergem)', async () => {
+    const m = montarExecucao({});
+    const celula = { local: 'lateral', cols: 180, rows: 50, cheia: true };
+    const off = await R.avaliarRundir(m.rundir, { repo: m.repo, celula, roteiro: roteiroColeta(), pasta: m.pasta, total: 1 });
+    const on = avaliarExecucao(await coletar(m.rundir, m.repo, celula, roteiroColeta(), { pasta: m.pasta, total: 1 }));
+    assert.deepEqual(off, on);
+    // sem nenhum `estado` do observador (panes nunca lidas) a asserção 12 é "não medida" nos dois caminhos
+    const m2 = montarExecucao({}); writeFileSync(join(m2.rundir, 'obs', 'a1.jsonl'), `${JSON.stringify({ t: 2, ev: 'render', comp: 'Pane', bodyRows: 12, bodyColumns: 60 })}\n`);
+    const off2 = await R.avaliarRundir(m2.rundir, { repo: m2.repo, celula, roteiro: roteiroColeta(), pasta: m2.pasta, total: 1 });
+    assert.deepEqual(off2, avaliarExecucao(await coletar(m2.rundir, m2.repo, celula, roteiroColeta(), { pasta: m2.pasta, total: 1 })));
+    assert.match(off2.resultados.find((x) => x.id === '12-placement-da-pane').detalhe, /não medida/);
+  });
+  test('abortar.txt-escrito-e-expect-que-ja-saiu-tambem-aborta', async () => {
+    const fonte = tmpGit(); const rundir = tmp();
+    const f = join(tmp(), 'expect'); writeFileSync(f, `#!/bin/sh\necho "0 render observado" > ${rundir}/abortar.txt\nexit 0\n`); execFileSync('chmod', ['+x', f]);
+    const r = await R.executarExpect({ rundir, args: [], reais: [fonte], expect: f, intervalo: 5000 });
+    assert.match(r.abortada, /0 render/);
+  });
+  test('celula-vem-do-nome-da-pasta-ou-do-celula.json', () => {
+    assert.deepEqual(R.celulaDoRundir('/x/lateral-180x50-cheia'), { local: 'lateral', cols: 180, rows: 50, cheia: true });
+    assert.deepEqual(R.celulaDoRundir('/x/acima-80x24-normal'), { local: 'acima', cols: 80, rows: 24, cheia: false });
+    assert.equal(R.celulaDoRundir('/x/qualquer'), null);
+  });
+  test('o-debug.log-da-execução-entra-na-evidência-de-placement', async () => {
+    const m = montarExecucao({});
+    writeFileSync(join(m.rundir, 'debug.log'), '2026-11-14T04:43:26.718Z [DEBUG] ui.open gabarito-mestre gabarito-painel (unasked, 180 columns): placed\n');
+    const ev = await coleta0(m);
+    assert.deepEqual(ev.placementsDebug, [{ colunas: 180, estado: 'placed' }]);
+    assert.equal(ev.panesObservadas, true);
+    const sem = montarExecucao({ semDebug: true }); const ev2 = await coleta0(sem);
+    assert.deepEqual(ev2.placementsDebug, []);
+  });
+  test('regressão-offline-nas-8-execuções-gravadas-da-T25 (a correção (c) derruba o vácuo e nada passa a aprovar; pula se o artefato local não existe)', async (t) => {
+    const dir = join(R.raizDoRepoReal(), '.claude-tmp', 'a1', '1794625214308');
+    const roteiroArq = join(R.raizDoRepoReal(), ROTEIRO_REL);
+    if (!existsSync(dir) || !existsSync(roteiroArq)) { t.skip('execuções gravadas ou roteiro ausentes'); return; }
+    const roteiro = R.verificarRoteiro(roteiroArq, JSON.parse(readFileSync(PONTOS_ARQ, 'utf8')).roteiroSha256);
+    if (!roteiro.ok) { t.skip(roteiro.motivo); return; }
+    for (const c of MATRIZ) {
+      const id = idDaCelula(c);
+      const antigo = JSON.parse(readFileSync(join(dir, id, 'resultado.json'), 'utf8'));
+      const novo = await R.avaliarRundir(join(dir, id), { roteiro });
+      const ok = (r) => new Set(r.resultados.filter((x) => x.ok).map((x) => x.id));
+      assert.deepEqual([...ok(novo)].filter((x) => !ok(antigo).has(x)), [], `${id}: nada passa a aprovar`);
+      for (const vacuo of ['3-sem-task-integrada', '8a-dono-mensagem-sem-duplicata']) assert.equal(novo.resultados.find((x) => x.id === vacuo).ok, false, `${id}: ${vacuo} era vácuo`);
+      assert.equal(novo.passa, false);
+    }
+  });
+});
+async function coleta0(m) { return coletar(m.rundir, m.repo, { local: 'lateral', cols: 180, rows: 50, cheia: true }, roteiroColeta(), { pasta: m.pasta, total: 1 }); }

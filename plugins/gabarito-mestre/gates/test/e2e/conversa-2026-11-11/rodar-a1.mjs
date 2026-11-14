@@ -5,7 +5,8 @@
  *
  *   rodar-a1.mjs --guarda  [--roteiro <arq>]         confere o roteiro (ausente ou sha diferente ⇒ não roda e diz por quê) e que nenhuma fala (≥ 20 caracteres) está em `git ls-files`
  *   rodar-a1.mjs --gerar   [--roteiro <arq>]         regrava `pontos.json`: {msg, sha256, chars} por ponto e o `esperado` GERADO PELO PRODUTO (nunca copiado do roteiro)
- *   rodar-a1.mjs --matriz  [--so <local-tamanho-cheia>] [--roteiro <arq>]   as 8 execuções (local × tamanho × tela cheia) com `a1.exp`; passa = 8/8
+ *   rodar-a1.mjs --matriz  [--so <local-tamanho-cheia>] [--paralelo <n>] [--roteiro <arq>]   as 8 execuções (local × tamanho × tela cheia) com `a1.exp`; passa = 8/8; células sob TMPDIR (fora do checkout real); `--paralelo` padrão 1
+ *   rodar-a1.mjs avaliar <rundir> [--roteiro <arq>]   a avaliação da matriz sobre uma execução já gravada (offline, não abre claude)
  *   rodar-a1.mjs snapshot <repo> <rundir> <n>        (chamado pelo `a1.exp`) grava o `estado` do produto no ponto n
  *
  * As falas NUNCA vão ao repositório: `pontos.json` guarda só o número da mensagem no roteiro, o sha256 e o tamanho. As falas do roteiro só existem em
@@ -14,10 +15,10 @@
  * LIMITE DECLARADO: o A1 completo exige sessões interativas reais do Claude Code (8 × ~62 mensagens). Este runner as dirige por `a1.exp`, mas o ambiente que
  * escreveu o código não as abriu: o que nele toca o TUI (`a1.exp`, o observador de Pane, a leitura do transcript) é presumido até a 1ª execução real (T25).
  */
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -201,6 +202,8 @@ export const ASSERCOES = Object.freeze([
     return res(ORDEM_CORTE.every((b) => presentes.includes(b)) && rec.length >= 1 && rec.length <= cap && comOrigem, `blocos ${presentes.join(',')}; RECENTE ${rec.length} (teto ${cap}); com origem ${comOrigem}`);
   } },
   { id: '3-sem-task-integrada', ref: 'A1 (3)', avaliar: (ev) => {
+    if (ev.quadros.length === 0) return res(false, 'sem quadro observado: não medida');
+    if (ev.integradas.length === 0) return res(false, 'nenhuma task integrada no diário: não medida');
     const linhas = ev.quadros.flatMap((q) => q.linhas).filter((l) => !/^(RECENTE ·|PRONTO |FASE |GABARITO ·)/.test(l) && !/^  \d\d:\d\d /.test(l));
     const ruins = linhas.filter((l) => ev.integradas.some((id) => new RegExp(`(?<![A-Za-z0-9])${id}(?![A-Za-z0-9])`).test(l)));
     return res(ruins.length === 0, `${ruins.length} linhas citam task integrada fora do RECENTE e do PRONTO`);
@@ -227,6 +230,7 @@ export const ASSERCOES = Object.freeze([
     return res(assuntos.length > 0 && ruins.length === 0, `${assuntos.length} mudanças de assunto, ${ruins.length} sem pergunta com botões`);
   } },
   { id: '7-sem-edit-em-harness-nem-status-a-mao', ref: 'A1 (7)', avaliar: (ev) => {
+    if (ev.transcript.chamadas.length === 0) return res(false, 'nenhuma chamada de ferramenta no transcript: não medida');
     const edits = ev.transcript.chamadas.filter((c) => (c.nome === 'Edit' || c.nome === 'Write') && String(c.entrada?.file_path ?? '').includes('/.harness/'));
     const aMao = ev.transcript.textos.filter((t) => /^(GABARITO ·|FASE \d de 7|PRONTO [▰▱])/m.test(t));
     return res(edits.length === 0 && aMao.length === 0, `${edits.length} Edit/Write em .harness/; ${aMao.length} blocos de status à mão`);
@@ -234,6 +238,8 @@ export const ASSERCOES = Object.freeze([
   { id: '8a-dono-mensagem-sem-duplicata', ref: 'A1 (8) Emenda 1', avaliar: (ev) => {
     const por = new Map();
     for (const e of ev.eventos) if (e.tipo === 'dono.mensagem') por.set(e.dados.sha256, (por.get(e.dados.sha256) ?? 0) + 1);
+    if (por.size === 0) return res(false, 'nenhum dono.mensagem gravado no diário: não medida');
+    if (ev.digitadas.length === 0) return res(false, 'nenhuma fala digitada registrada: não medida');
     const digitadas = new Map();
     for (const s of ev.digitadas) digitadas.set(s, (digitadas.get(s) ?? 0) + 1);
     const ruins = [...por].filter(([sha, n]) => n > (digitadas.get(sha) ?? 0));
@@ -277,7 +283,9 @@ export const ASSERCOES = Object.freeze([
       if (e.tipo === 'task.iniciada' && e.dados?.papel === 'revisor') armado.add(task);
       if (e.tipo === 'review.veredito') { if (!armado.has(task)) ruins += 1; armado.delete(task); }
     }
-    return res(ruins === 0, `${ruins} vereditos sem revisor iniciado antes no ciclo`);
+    const vereditos = ev.eventos.filter((e) => e.tipo === 'review.veredito').length;
+    if (vereditos === 0) return res(false, 'nenhum review.veredito no diário: não medida');
+    return res(ruins === 0, `${ruins} de ${vereditos} vereditos sem revisor iniciado antes no ciclo`);
   } },
   { id: '10-despachos-com-aprendizados', ref: 'A1 (10)', avaliar: (ev) => {
     // `aprendizados` de cada despacho vêm do `proxima` que o orquestrador leu antes (tool_result no transcript); sem nenhum item com aprendizado observado, não mediu nada
@@ -292,8 +300,15 @@ export const ASSERCOES = Object.freeze([
   { id: '12-placement-da-pane', ref: 'A1 (12)', avaliar: (ev) => {
     const esperado = placementEsperado(ev.celula);
     const vistos = ev.panes.map((p) => p.placement);
-    const ok = esperado === null ? vistos.length === 0 : vistos.length === 1 && vistos[0] === esperado;
-    return res(ok, `placement esperado ${esperado}; lido ${JSON.stringify(vistos)}`);
+    const dbg = Array.isArray(ev.placementsDebug) ? ev.placementsDebug : [];
+    // as duas fontes da plataforma: `$.ui.panes()` (observador) e o `ui.open … placed|waits unplaced` do debug.log; sem leitura da plataforma nada foi medido
+    if (ev.panesObservadas !== true) return res(false, 'a plataforma nunca devolveu a lista de panes ao observador: não medida');
+    if (esperado === null) return res(vistos.length === 0 && dbg.length === 0, `placement esperado null (acima); lido ${JSON.stringify(vistos)}; ui.open no debug.log ${dbg.length}`);
+    if (dbg.length === 0) return res(false, 'sem "ui.open … placed" no debug.log: não medida');
+    const unplaced = dbg.filter((d) => d.estado === 'unplaced');
+    if (unplaced.length > 0) return res(false, `a plataforma registrou unplaced em ${unplaced.map((d) => `${d.colunas} colunas`).join(', ')} (placement esperado ${esperado})`);
+    if (vistos.length === 0) return res(false, `a plataforma disse placed, mas $.ui.panes() não devolveu placement (esperado ${esperado}): placement não lido`);
+    return res(vistos.length === 1 && vistos[0] === esperado, `placement esperado ${esperado}; lido ${JSON.stringify(vistos)}; debug.log placed`);
   } },
 ]);
 
@@ -400,18 +415,21 @@ export function escreverObservador(destino) {
   mkdirSync(join(destino, 'hooks'), { recursive: true });
   writeFileSync(join(destino, '.claude-plugin', 'plugin.json'), `${JSON.stringify({ name: 'observador-a1', version: '0.0.1', description: 'Observador do A1 (GM-14 T24): agentes, placement das Panes, props das superfícies e ações dos subagentes.' })}\n`);
   writeFileSync(join(destino, 'hooks', 'hooks.json'), `${JSON.stringify({ modules: ['../register.mjs'] })}\n`);
-  writeFileSync(join(destino, 'register.mjs'), `let dir = null; const buf = []; let cadeia = Promise.resolve(); let ultimo = ''; const ultimoRender = {};
+  writeFileSync(join(destino, 'register.mjs'), `let dir = null; const buf = []; let cadeia = Promise.resolve(); let ultimo = ''; const gravado = {}; const pendente = {};
 const log = ($, o) => { cadeia = cadeia.then(async () => { if (dir === null) return; buf.push(JSON.stringify({ t: await $.clock.now(), ...o })); await $.fs.write(dir + '/a1.jsonl', buf.join('\\n') + '\\n'); }).catch(() => {}); return cadeia; };
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-const render = ($, comp, o) => { const chave = JSON.stringify(o); if (ultimoRender[comp] === chave) return; ultimoRender[comp] = chave; void log($, { ev: 'render', comp, ...o }); };
+const escalares = (p) => Object.fromEntries(Object.entries(p ?? {}).filter(([, v]) => ['string', 'number', 'boolean'].includes(typeof v) || v === null));
+// T49 (b): render que chega ANTES de o session.start saber onde gravar fica pendente (nunca vira "último render"); só o último GRAVADO deduplica
+const render = ($, comp, o) => { if (dir === null) { pendente[comp] = o; return; } const chave = JSON.stringify(o); if (gravado[comp] === chave) return; gravado[comp] = chave; void log($, { ev: 'render', comp, ...o }); };
 export const register = (on) => {
   on('session.start', async ($, e, next) => {
     try { dir = (await $.env.get('OBS_DIR')) ?? null; } catch { dir = null; }
+    for (const [comp, o] of Object.entries(pendente)) { delete pendente[comp]; render($, comp, o); }
     try {
       $.clock.every(3000, async () => {
         let agentes = []; let panes = []; let nomes = null;
         try { agentes = (await $.agent.list()).map((a) => ({ id: String(a.id), type: a.type ?? null, status: a.status ?? null, description: a.description ?? null })); } catch { agentes = null; }
-        try { panes = (await $.ui.panes()).map((p) => ({ id: String(p.id ?? ''), placement: p.placement ?? null })); } catch { panes = null; }
+        try { panes = (await $.ui.panes()).map((p) => ({ id: String(p.id ?? ''), placement: p.placement ?? null, raw: escalares(p) })); } catch { panes = null; }
         try { nomes = (await $.store.get('painel:nomes')) ?? null; } catch { nomes = null; }
         const chave = JSON.stringify([agentes, panes, nomes]);
         if (chave !== ultimo) { ultimo = chave; await log($, { ev: 'estado', agentes, panes, nomes }); }
@@ -528,8 +546,14 @@ export function propsDe(obs) {
 }
 
 /** Subcomando `snapshot` (chamado pelo `a1.exp` depois de cada ponto): guarda o `estado` do produto, os agentes vistos e as props das superfícies naquele instante. */
-async function snapshot(repo, rundir, n) {
+export async function snapshot(repo, rundir, n) {
   const obs = jsonl(join(rundir, 'obs', 'a1.jsonl'));
+  // invariante do 1º snapshot (T49): sem render da superfície da célula observado, nada será medido: para a célula aqui e agora
+  const celula = celulaDoRundir(rundir);
+  if (celula !== null && !(existsSync(join(rundir, 'estados')) && readdirSync(join(rundir, 'estados')).length > 0)) {
+    const causa = invariantePrimeiroSnapshot(obs, celula);
+    if (causa !== null) { writeFileSync(join(rundir, 'abortar.txt'), `${causa}\n`, { flag: 'a' }); return; }
+  }
   const ferr = await import(pathToFileURL(join(GATES, 'dist', 'ferramentas.js')).href);
   const { agentes, entrada } = entradaDoSnapshot(obs, ferr);
   const estado = estadoDoProduto(repo, { entrada: JSON.stringify(entrada), bin: join(repo, '..', 'bin'), ghEstado: join(repo, '..', 'gh.json') });
@@ -689,39 +713,197 @@ export async function coletar(rundir, repo, celula, roteiro, { pasta = null, tot
     entregasPublicadas: [...publicadas], gravacoes, vivos,
     pouso: { percent: Number.isFinite(pouso?.dados?.percent) ? pouso.dados.percent : 0, limparNoDepende: pouso !== undefined && quadros.some((q) => q.linhas.some((l) => /limpar a conversa/i.test(l))), pushes, despachosDepois: depoisDoPouso.length },
     panes: (ultimo?.panes ?? []).filter((p) => p.placement !== null),
+    // as fontes da plataforma para a asserção 12: o observador chegou a ler a lista de panes? e o que o debug.log diz do `ui.open` do painel
+    panesObservadas: obs.some((e) => e.ev === 'estado' && Array.isArray(e.panes)),
+    placementsDebug: placementsDoDebugLog(existsSync(join(rundir, 'debug.log')) ? readFileSync(join(rundir, 'debug.log'), 'utf8') : ''),
   };
 }
 
-export async function matriz(fonte, tmpRaiz, roteiro, so) {
+// ─── isolamento (T49, emenda 43): a célula e a cópia do plugin vivem FORA do checkout real; o repo real é provado intocado antes e depois ───
+
+/** Condutor do A1 (emenda 43 d): Sonnet; haiku fazia 0–2 `Agent` por célula e não conduzia a conversa. */
+export const MODELO_CONDUTOR = 'claude-sonnet-5-5';
+
+export const dentroDe = (pai, filho) => { const p = resolve(pai); const f = resolve(filho); return f === p || f.startsWith(p.endsWith('/') ? p : `${p}/`); };
+/** Os textos que citam algum dos caminhos reais (a célula nunca os vê: cwd, `--plugin-dir`, argumentos, falas). */
+export const vazamentos = (textos, raizes) => textos.filter((t) => typeof t === 'string' && raizes.some((r) => t.includes(r)));
+/** Raiz do checkout real que hospeda este runner (o principal: a worktree vive dentro dele). */
+export const raizDoRepoReal = () => realpathSync(raizPrincipal(AQUI));
+const realDe = (raizes) => [...new Set(raizes.map((r) => { try { return realpathSync(r); } catch { return resolve(r); } }))];
+
+/** A foto de um repo: `git status --porcelain`, `for-each-ref` e `worktree list`. Quem não é repo ⇒ lança (a prova nunca passa no escuro). */
+export function fotoDoRepo(raiz) {
+  const g = (...a) => execFileSync('git', ['-C', raiz, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+  return { status: g('status', '--porcelain', '--untracked-files=all'), refs: g('for-each-ref', '--format=%(refname) %(objectname)'), worktrees: g('worktree', 'list', '--porcelain') };
+}
+/** Diferenças entre duas fotos (lista vazia = intocado), uma por parte que mudou, com o que mudou. */
+export function diferencasDeFotos(antes, depois) {
+  const linhas = (t) => new Set(String(t).split('\n').filter(Boolean));
+  return ['status', 'refs', 'worktrees'].flatMap((k) => {
+    if (antes[k] === depois[k]) return [];
+    const a = linhas(antes[k]); const d = linhas(depois[k]);
+    const novas = [...d].filter((l) => !a.has(l)); const sumiram = [...a].filter((l) => !d.has(l));
+    return [`${k}: +${JSON.stringify(novas.slice(0, 5))} -${JSON.stringify(sumiram.slice(0, 5))}`];
+  });
+}
+
+/** Cópia do plugin para fora do checkout real (sem `node_modules` nem `.git`): é o `--plugin-dir` do produto na célula. */
+export function copiarPlugin(destino) {
+  cpSync(PLUGIN, destino, { recursive: true, filter: (o) => !/(^|\/)(node_modules|\.git)(\/|$)/.test(o.slice(PLUGIN.length)) });
+}
+
+/** Argumentos do `claude` da célula (o `a1.exp` os lê de `<rundir>/claude.args`, um por linha): só caminhos da cópia, modelo Sonnet. */
+export function argvDoClaude({ observador, plugin, superpowers, debugLog }) {
+  return ['--plugin-dir', observador, '--plugin-dir', plugin, '--plugin-dir', superpowers, '--setting-sources', 'project,local', '--strict-mcp-config',
+    '--model', MODELO_CONDUTOR, '--permission-mode', 'auto', '--allowedTools', 'Bash(node *)', 'Read', 'ScheduleWakeup', '--debug-file', debugLog];
+}
+
+/** O que a plataforma diz do `ui.open` do painel no debug.log: `{colunas, estado: 'placed'|'unplaced'}` por abertura (única fonte de "placed" que ela expõe). */
+export function placementsDoDebugLog(log) {
+  const achados = [];
+  for (const l of String(log).split('\n')) {
+    const m = /ui\.open \S+ gabarito-painel \([^,)]*, (\d+) columns\): (placed|waits unplaced)/.exec(l);
+    if (m !== null) achados.push({ colunas: Number(m[1]), estado: m[2] === 'placed' ? 'placed' : 'unplaced' });
+  }
+  return achados;
+}
+
+/** Invariante do 1º snapshot: a superfície da célula (`lateral` ⇒ Pane, `acima` ⇒ AbovePrompt) já tem render observado; senão a célula nada mede. Devolve a causa ou `null`. */
+export function invariantePrimeiroSnapshot(obs, celula) {
+  const rs = obs.filter((e) => e.ev === 'render');
+  if (rs.length === 0) return '0 render observado no 1º snapshot (observador sem nenhum render)';
+  const esperada = celula.local === 'acima' ? 'AbovePrompt' : 'Pane';
+  return rs.some((e) => e.comp === esperada) ? null : `0 render de ${esperada} no 1º snapshot (a superfície da célula ${celula.local} não foi observada)`;
+}
+
+/** `exp.status` do a1.exp que invalida a célula na hora (plugin não ativo, login pedido). */
+export function causaDoStatus(texto) {
+  const t = String(texto).trim();
+  if (t === 'NAO_PROVADO_PLUGIN') return 'plugin gabarito-mestre não ativo na célula (dependência ausente ou não carregou)';
+  if (t === 'NAO_PROVADO_LOGIN') return 'login pedido na célula: a conta não está autenticada';
+  return null;
+}
+
+/** `celula.json` (ou o nome `<local>-<cols>x<rows>-<cheia|normal>` da pasta, como nas execuções antigas) ⇒ célula; senão `null`. */
+export function celulaDoRundir(rundir) {
+  try { return JSON.parse(readFileSync(join(rundir, 'celula.json'), 'utf8')); } catch { /* cai para o nome */ }
+  const m = /(lateral|acima)-(\d+)x(\d+)-(cheia|normal)$/.exec(String(rundir).replace(/\/$/, ''));
+  return m === null ? null : { local: m[1], cols: Number(m[2]), rows: Number(m[3]), cheia: m[4] === 'cheia' };
+}
+
+/**
+ * Roda o `a1.exp` (`expect`) de UMA célula, de forma assíncrona, vigiando as invariantes enquanto roda: o repo real mudou (foto ≠ a de antes) ou apareceu `abortar.txt`
+ * (escrito pelo `a1.exp` ou pelo `snapshot`) ⇒ mata o expect na hora e devolve `{status, abortada}`. cwd e PWD = `rundir` (nunca o checkout real).
+ */
+export function executarExpect({ rundir, args, reais, expect = 'expect', intervalo = 10_000, timeoutMs = 4 * 60 * 60 * 1000 }) {
+  return new Promise((ok) => {
+    const antes = reais.map(fotoDoRepo);
+    const filho = spawn(expect, args, { cwd: rundir, env: ambienteDe({ PWD: rundir }), stdio: 'ignore' });
+    let abortada = null; let fim = false;
+    const parar = (causa) => {
+      if (abortada !== null) return;
+      abortada = causa;
+      try { writeFileSync(join(rundir, 'abortar.txt'), `${causa}\n`, { flag: 'a' }); } catch { /* rundir some */ }
+      try { filho.kill('SIGTERM'); } catch { /* já saiu */ }
+      setTimeout(() => { try { filho.kill('SIGKILL'); } catch { /* já saiu */ } }, 3000).unref();
+    };
+    const vigia = setInterval(() => {
+      if (fim || abortada !== null) return;
+      if (existsSync(join(rundir, 'abortar.txt'))) { parar(readFileSync(join(rundir, 'abortar.txt'), 'utf8').trim().split('\n')[0] || 'abortar.txt'); return; }
+      try {
+        const dif = reais.flatMap((r, i) => diferencasDeFotos(antes[i], fotoDoRepo(r)));
+        if (dif.length > 0) parar(`repo real alterado durante a célula: ${dif.join('; ')}`);
+      } catch (e) { parar(`repo real ilegível durante a célula: ${String(e.message).slice(0, 120)}`); }
+    }, intervalo);
+    const teto = setTimeout(() => parar(`teto de ${Math.round(timeoutMs / 60000)} min da célula`), timeoutMs);
+    filho.on('close', (status) => {
+      fim = true; clearInterval(vigia); clearTimeout(teto);
+      const st = existsSync(join(rundir, 'exp.status')) ? causaDoStatus(readFileSync(join(rundir, 'exp.status'), 'utf8')) : null;
+      const arq = existsSync(join(rundir, 'abortar.txt')) ? readFileSync(join(rundir, 'abortar.txt'), 'utf8').trim().split('\n')[0] : null;
+      ok({ status, abortada: abortada ?? (arq === '' ? null : arq) ?? st });
+    });
+    filho.on('error', (e) => { fim = true; clearInterval(vigia); clearTimeout(teto); ok({ status: -1, abortada: `expect não abriu: ${e.code ?? e.message}` }); });
+  });
+}
+
+/** A avaliação de uma execução GRAVADA: a mesma da matriz (coletar + avaliarExecucao). `opc.repo`/`celula`/`roteiro`/`pasta`/`total` têm padrão pela pasta (`<rundir>/repo`, nome/`celula.json`). */
+export async function avaliarRundir(rundir, { repo = join(rundir, 'repo'), celula = celulaDoRundir(rundir), roteiro, pasta = null, total = TOTAL_PONTOS } = {}) {
+  if (celula === null) throw new Error(`célula desconhecida para ${rundir} (sem celula.json nem nome <local>-<cols>x<rows>-<cheia|normal>)`);
+  return avaliarExecucao(await coletar(rundir, repo, celula, roteiro, { pasta, total }));
+}
+
+const DEPS = { preparar: (...a) => prepararCopia(...a), copiarPlugin, executar: executarExpect, avaliar: (rundir, repo, celula, roteiro) => avaliarRundir(rundir, { repo, celula, roteiro }), superpowers: () => resolverSuperpowers() };
+
+/**
+ * A matriz. `base` fica SOB `TMPDIR` (nunca no checkout real); `opc.paralelo` (padrão 1) limita as células simultâneas; cada célula grava o `resultado.json` ao terminar;
+ * invariante violada (repo real alterado, plugin não ativo, 0 render no 1º snapshot, célula fora de `TMPDIR`) reprova a célula e PARA a matriz: as demais não rodam e contam como falha.
+ */
+export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps = {} } = {}) {
+  const d = { ...DEPS, ...deps };
   const celulas = MATRIZ.filter((c) => so === null || idDaCelula(c) === so);
-  const base = join(tmpRaiz, '.claude-tmp', 'a1', String(Date.now()));
+  const reais = realDe([fonte, tmpRaiz]);
+  const base = join(realpathSync(tmpdir()), 'gabarito-a1', String(Date.now()));
+  if (reais.some((r) => dentroDe(r, base))) throw new Error(`a célula ficaria dentro do checkout real (${base}): defina TMPDIR fora dele`);
+  const ruins = vazamentos(roteiro.falas.map((f) => f.texto), reais);
+  if (ruins.length > 0) throw new Error(`${ruins.length} fala(s) do roteiro com caminho do repo real: a célula não pode vê-lo`);
   const execucoes = [];
-  for (const celula of celulas) {
-    const rundir = join(base, idDaCelula(celula));
-    const repo = join(rundir, 'repo');
+  let abortada = null;
+  const gravar = (id, rundir, exec, ambiente) => writeFileSync(join(rundir, 'resultado.json'), `${JSON.stringify({ ...exec, ambiente }, null, 2)}\n`);
+  const executar = async (celula) => {
+    const id = idDaCelula(celula);
+    const rundir = join(base, id); const repo = join(rundir, 'repo');
     mkdirSync(join(rundir, 'obs'), { recursive: true });
-    // superpowers (T46, emenda 41): dependência declarada do produto, carregada como plugin explícito de versão FIXA; ausente ⇒ a célula para com causa própria, sem rodar desabilitada
-    const sp = resolverSuperpowers();
+    const sp = d.superpowers();
     if (!sp.ok) {
-      process.stderr.write(`${idDaCelula(celula)}: ${sp.causa}\n`);
-      const exec = { celula: idDaCelula(celula), passa: false, resultados: [{ id: 'dependencia', ok: false, detalhe: sp.causa }] };
-      writeFileSync(join(rundir, 'resultado.json'), `${JSON.stringify({ ...exec, ambiente: ambienteDaExecucao('', sp) }, null, 2)}\n`);
-      execucoes.push(exec);
-      continue;
+      process.stderr.write(`${id}: ${sp.causa}\n`);
+      const exec = { celula: id, passa: false, resultados: [{ id: 'dependencia', ok: false, detalhe: sp.causa }] };
+      gravar(id, rundir, exec, ambienteDaExecucao('', sp));
+      return exec;
     }
-    const { bin } = prepararCopia(fonte, repo, celula);
+    const antes = reais.map(fotoDoRepo);
+    const plugin = join(rundir, 'plugin');
+    const { bin } = d.preparar(fonte, repo, celula);
+    d.copiarPlugin(plugin);
     escreverObservador(join(rundir, 'observador'));
+    writeFileSync(join(rundir, 'celula.json'), `${JSON.stringify(celula)}\n`);
     writeFileSync(join(rundir, 'inicio.iso'), `${new Date().toISOString()}\n`);
     writeFileSync(join(rundir, 'falas.tsv'), roteiro.falas.map((f) => `${f.n}\t${f.rotulo}\t${sha256(f.texto)}\t${f.texto}`).join('\n'));
-    const r = spawnSync('expect', ['-f', join(AQUI, 'a1.exp'), rundir, repo, PLUGIN, join(rundir, 'observador'), String(celula.cols), String(celula.rows), bin, process.execPath, fileURLToPath(import.meta.url), sp.caminho], { encoding: 'utf8', timeout: 4 * 60 * 60 * 1000 });
-    let ev = null;
-    let erroColeta = '';
-    try { ev = await coletar(rundir, repo, celula, roteiro); } catch (e) { erroColeta = e.message; process.stderr.write(`${idDaCelula(celula)}: coleta falhou: ${e.message}\n`); }
-    const exec = ev === null || r.status !== 0 ? { celula: idDaCelula(celula), passa: false, resultados: [{ id: 'execucao', ok: false, detalhe: `expect rc ${r.status}; evidência ${ev === null ? `ausente (${erroColeta})` : 'coletada'}` }] } : avaliarExecucao(ev);
-    writeFileSync(join(rundir, 'resultado.json'), `${JSON.stringify({ ...exec, ambiente: { ...(ev?.ambiente ?? dialogosDoExpLog(existsSync(join(rundir, 'exp.log')) ? readFileSync(join(rundir, 'exp.log'), 'utf8') : '')), superpowers: superpowersNoAmbiente(sp) } }, null, 2)}\n`);
-    execucoes.push(exec);
-  }
-  return { rel: avaliarMatriz(execucoes), execucoes, base };
+    const argv = argvDoClaude({ observador: join(rundir, 'observador'), plugin, superpowers: sp.caminho, debugLog: join(rundir, 'debug.log') });
+    writeFileSync(join(rundir, 'claude.args'), `${argv.join('\n')}\n`);
+    const vaza = vazamentos([rundir, repo, ...argv], reais);
+    if (vaza.length > 0) throw new Error(`argumento da célula com caminho do repo real: ${vaza[0]}`);
+    const args = ['-f', join(AQUI, 'a1.exp'), rundir, repo, bin, process.execPath, fileURLToPath(import.meta.url)];
+    const r = await d.executar({ rundir, repo, plugin, argv, celula: id, args, reais });
+    let dif = [];
+    try { dif = reais.flatMap((x, i) => diferencasDeFotos(antes[i], fotoDoRepo(x))); } catch (e) { dif = [`foto final ilegível: ${e.message}`]; }
+    const ambiente = { ...dialogosDoExpLog(existsSync(join(rundir, 'exp.log')) ? readFileSync(join(rundir, 'exp.log'), 'utf8') : ''), superpowers: superpowersNoAmbiente(sp) };
+    let exec;
+    if (dif.length > 0) {
+      exec = { celula: id, passa: false, resultados: [{ id: 'isolamento', ok: false, detalhe: `repo real alterado (célula inválida): ${dif.join('; ')}` }] };
+      abortada ??= `isolamento: repo real alterado na célula ${id}`;
+    } else if (r.abortada !== null && r.abortada !== undefined) {
+      exec = { celula: id, passa: false, resultados: [{ id: 'invariante', ok: false, detalhe: r.abortada }] };
+      abortada ??= `invariante violada na célula ${id}: ${r.abortada}`;
+    } else {
+      let nota = '';
+      let exec0 = null;
+      try { exec0 = r.status === 0 ? await d.avaliar(rundir, repo, celula, roteiro) : null; if (r.status !== 0) nota = `expect rc ${r.status}`; } catch (e) { nota = `coleta falhou: ${e.message}`; process.stderr.write(`${id}: ${nota}\n`); }
+      exec = exec0 ?? { celula: id, passa: false, resultados: [{ id: 'execucao', ok: false, detalhe: `${nota}; evidência ausente` }] };
+    }
+    gravar(id, rundir, exec, ambiente);
+    return exec;
+  };
+  const fila = [...celulas];
+  const trabalhador = async () => {
+    for (;;) {
+      if (abortada !== null) return;
+      const c = fila.shift();
+      if (c === undefined) return;
+      execucoes.push(await executar(c));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(paralelo, celulas.length || 1)) }, trabalhador));
+  return { rel: avaliarMatriz(execucoes), execucoes, base, abortada };
 }
 
 // ─── ambiente da execução (T44, emenda 39) ───
@@ -783,13 +965,24 @@ export async function main(argv) {
   // `superpowers` (diagnóstico): rc 0 = versão fixa presente (imprime nome/versão/caminho); rc 1 = ausente (imprime a causa)
   if (argv[0] === 'superpowers') { const r = resolverSuperpowers(); process.stdout.write(`${JSON.stringify(r)}\n`); return r.ok ? 0 : 1; }
   if (argv[0] === 'snapshot') { await snapshot(argv[1], argv[2], Number(argv[3])); return 0; }
+  // `avaliar <rundir> [--roteiro <arq>]`: a avaliação da matriz sobre uma execução JÁ GRAVADA (offline; não abre claude)
+  if (argv[0] === 'avaliar') {
+    const rundir = resolve(argv[1] ?? '');
+    const arqRot = flag(argv, '--roteiro') ?? join(raizPrincipal(AQUI), ROTEIRO_REL);
+    let ptsA; try { ptsA = JSON.parse(readFileSync(flag(argv, '--pontos') ?? PONTOS_ARQ, 'utf8')); } catch (e) { process.stderr.write(`pontos.json ilegível: ${e.message}\n`); return 1; }
+    const rot = verificarRoteiro(arqRot, ptsA.roteiroSha256);
+    if (!rot.ok) { process.stderr.write(`A1 não avalia: ${rot.motivo}\n`); return 1; }
+    const exec = await avaliarRundir(rundir, { roteiro: rot, pasta: flag(argv, '--transcripts') ?? null });
+    process.stdout.write(`${JSON.stringify(exec, null, 2)}\n`);
+    return exec.passa ? 0 : 1;
+  }
   // `topo` = a árvore que será commitada (a guarda lê o `git ls-files` dela e a cópia do A1 sai dela); `principal` = onde vivem o roteiro e o `.claude-tmp/`
   const topo = flag(argv, '--raiz') ?? git(AQUI, 'rev-parse', '--show-toplevel').trim();
   const principal = flag(argv, '--raiz') ?? raizPrincipal(AQUI);
   const arqPontos = flag(argv, '--pontos') ?? PONTOS_ARQ;
   const arqRoteiro = flag(argv, '--roteiro') ?? join(principal, ROTEIRO_REL);
   const modo = argv.find((a) => ['--guarda', '--gerar', '--matriz'].includes(a));
-  if (modo === undefined) { process.stderr.write('uso: rodar-a1.mjs --guarda | --gerar | --matriz [--so <celula>] [--roteiro <arq>]\n'); return 2; }
+  if (modo === undefined) { process.stderr.write('uso: rodar-a1.mjs --guarda | --gerar | --matriz [--so <celula>] [--paralelo <n>] [--roteiro <arq>] | avaliar <rundir>\n'); return 2; }
   let pontos = null;
   if (modo !== '--gerar') {
     try { pontos = JSON.parse(readFileSync(arqPontos, 'utf8')); } catch (e) { process.stderr.write(`pontos.json ilegível: ${e.message}\n`); return 1; }
@@ -804,8 +997,9 @@ export async function main(argv) {
   process.stdout.write(`guarda das falas: 0 achados (${g.conferidas} falas ≥ ${MIN_FALA} caracteres em ${g.arquivos} arquivos versionados; ${g.ignorados} ignorados por binário ou > 4 MB, não conferidos)\n`);
   if (modo === '--guarda') return 0;
   if (modo === '--gerar') { const r = gerar(topo, principal, roteiro); process.stdout.write(`pontos.json: ${r.pontos} pontos gerados pelo produto\n`); return 0; }
-  const m = await matriz(topo, principal, roteiro, flag(argv, '--so') ?? null);
+  const m = await matriz(topo, principal, roteiro, flag(argv, '--so') ?? null, { paralelo: Number(flag(argv, '--paralelo') ?? 1) });
   for (const l of m.rel.linhas) process.stdout.write(`${l.passa ? 'PASSA' : 'FALHA'} ${l.celula} ${l.motivo}\n`);
+  if (m.abortada !== null) process.stdout.write(`MATRIZ PARADA: ${m.abortada}\n`);
   process.stdout.write(`A1: ${m.rel.passou}/${m.rel.total} (passa = 8/8)\nevidência em ${m.base}\n`);
   return m.rel.ok ? 0 : 1;
 }

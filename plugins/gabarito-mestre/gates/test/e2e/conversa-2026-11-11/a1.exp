@@ -1,16 +1,26 @@
 #!/usr/bin/expect -f
-# Aceite A1 da GM-14 (T24): UMA célula da matriz (local × tamanho × tela cheia). FORA de `npm test`: abre uma TUI real do Claude Code (haiku) numa cópia do repo
-# em `ba3986f` sob .claude-tmp/a1/; gasta tokens. Chamado pelo `rodar-a1.mjs --matriz`; não o rode à mão.
+# Aceite A1 da GM-14 (T24): UMA célula da matriz (local × tamanho × tela cheia). FORA de `npm test`: abre uma TUI real do Claude Code numa cópia do repo
+# em `ba3986f` sob TMPDIR (FORA do checkout real); gasta tokens. Chamado pelo `rodar-a1.mjs --matriz`; não o rode à mão.
 #
-#   a1.exp <rundir> <repo> <plugin-root> <observador> <cols> <rows> <bin> <node> <rodar-a1.mjs> <superpowers>
+#   a1.exp <rundir> <repo> <bin> <node> <rodar-a1.mjs>
 #
-# <superpowers>: raiz do superpowers de versão FIXA (T46, emenda 41), resolvida pelo `rodar-a1.mjs` no cache da conta que roda; carregado como plugin explícito (`--plugin-dir`), nunca por --setting-sources user
+# Os argumentos do `claude` (cópia do plugin, observador, superpowers de versão FIXA por --plugin-dir, modelo do condutor, debug) vêm de <rundir>/claude.args, um por linha, montados por `argvDoClaude` no `rodar-a1.mjs`:
+# só caminhos da cópia sob TMPDIR; nenhum caminho do repositório real chega ao `claude`. Este arquivo não fixa modelo nem caminho de plugin.
+# cols/rows vêm de <rundir>/celula.json.
 #
 # Digita as falas de <rundir>/falas.tsv (colunas: n, rótulo, sha256, texto), uma por vez, esperando o turno acabar e tirando um `snapshot` do estado do produto
 # depois de cada ponto de controle. O texto das falas fica SÓ em <rundir>/falas.tsv (ignorado pelo git); sends.log guarda o sha256, nunca o texto.
 # A evidência vem do diário, do observador (obs/a1.jsonl: agentes e `placement` das Panes), dos transcripts e dos snapshots, lidos DEPOIS pelo `rodar-a1.mjs`;
 # a tela nunca é evidência. Pergunta de permissão é registrada e nunca respondida; o diálogo de ambiente "Allow external CLAUDE.md file imports?" é RECUSADO e registrado (exp.log).
-lassign $argv rundir repo plugin obs cols rows bin node runner superpowers
+lassign $argv rundir repo bin node runner
+set cel [open $rundir/celula.json r]; set celjson [read $cel]; close $cel
+regexp {"cols":(\d+)} $celjson -> cols
+regexp {"rows":(\d+)} $celjson -> rows
+set af [open $rundir/claude.args r]; set claude_args [split [string trimright [read $af] "\n"] "\n"]; close $af
+set obs $rundir/obs
+# cwd e PWD da célula são a cópia: nenhum caminho do checkout real herdado
+set env(PWD) $repo
+catch {unset env(OLDPWD)}
 set env(TERM) xterm-256color
 set env(OBS_DIR) $rundir/obs
 set env(PATH) "$bin:$env(PATH)"
@@ -79,8 +89,7 @@ cd $repo
 log_user 0
 log_file -a $rundir/tty.raw
 set stty_init "rows $rows cols $cols"
-spawn claude --plugin-dir $obs --plugin-dir $plugin --plugin-dir $superpowers --setting-sources project,local --strict-mcp-config \
-  --model claude-haiku-5-5 --permission-mode auto --allowedTools "Bash(node *)" Read ScheduleWakeup --debug-file $rundir/debug.log
+spawn claude {*}$claude_args
 nota "inicio cols=$cols rows=$rows"
 
 set timeout 15
@@ -118,6 +127,8 @@ foreach linha $linhas {
   if {![ocioso]} { sair NAO_PROVADO_EOF }
   # ponto de controle = tudo que não é "—": o estado do produto depois do turno
   if {$rotulo ne "—"} { snapshot $n }
+  # invariante violada (snapshot ou runner escreveu abortar.txt): a célula para na hora, sem digitar o resto
+  if {[file exists $rundir/abortar.txt]} { nota "ABORTAR: [string trim [exec cat $rundir/abortar.txt]]"; sair ABORTADO }
 }
 drenar 20
 sair CONCLUIDO
