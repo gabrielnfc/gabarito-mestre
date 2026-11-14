@@ -19,6 +19,7 @@
  * Pouso pendente (T18): `.harness/pouso-pendente.json {entrega, linhas}`, gravado pelo mod ao negar `Agent` porque a ação é `pousar`.
  * Marcador válido (mesma entrega e mesma contagem de progresso) ⇒ apaga marcador e contador, avisa e NÃO bloqueia, para o turno
  * terminar e o `turn.complete` pousar. Ausente, de outra contagem, ilegível ou que não apaga: regra normal, nunca silencia duas vezes.
+ * Entrega publicada (T48: `entregaPublicada` de dist/guarda.js, a regra única) ⇒ silêncio: o Stop não conta nem grava nela.
  * O terceiro Stop sem evento de progresso (tipos que `proximaAcao` consome) no diário da entrega grava `loop.parar {sem_progresso}` e deixa parar com aviso.
  * Falha de dado ou de ferramenta dentro de loop vira systemMessage com a causa, nunca block que prenda a sessão.
  * Sai sempre 0. Núcleo em dist/ (loop.js, plano.js, diario.js): ausente ⇒ aviso, nunca exceção.
@@ -315,6 +316,10 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   if (branch === null) return null;
   const entrega = entregaDaBranch(raiz, branch);
   if (entrega === null) return null;
+
+  // GM-14 T48 (emenda 43): entrega publicada (a regra única de `dist/guarda.js`, a mesma do painel e dos gravadores) não é loop: nem contador nem `loop.parar`.
+  const dg = await carregar('guarda');
+  if (dg.ok && dg.mod.entregaPublicada(raiz, entrega, typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null)) return null;
 
   const dir = join(raiz, '.harness', 'entregas', entrega);
   const arquivoPlano = join(dir, 'plano.json');

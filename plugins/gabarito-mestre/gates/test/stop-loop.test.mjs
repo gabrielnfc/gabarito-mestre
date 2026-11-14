@@ -1440,3 +1440,38 @@ test('stop-pouso-limpo-volta-a-despachar: sessao.inicio clear de outra sessão d
   diario(raiz, 'S9', [ev('S9', 1, 'sessao.inicio', { origem: 'clear' })]);
   bloqueia(stop(raiz), /T1/);
 });
+
+// ------------------------------------------------------------------------------------- T48 (emenda 43, FIEL-1 b/c, asserção 8): entrega publicada
+
+const PR_MERGEADO = (sessao = 'pub') => ev(sessao, 1, 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 'mergeado', branch: 'wt/GM-10-8' } });
+const PR_ABERTO = (sessao = 'pub') => ev(sessao, 2, 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 8, estado: 'aberto', branch: 'wt/GM-10-8' } });
+
+test('publicada-nao-recebe-loop.parar: entrega com PR mergeado e plano.json fica em silêncio nos Stops e nada é gravado nela', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'pub', [PR_MERGEADO()]);
+  const antes = linhasDoDiario(raiz).length;
+  for (let i = 0; i < 6; i++) mudo(stop(raiz));
+  assert.equal(linhasDoDiario(raiz).length, antes);
+  assert.equal(linhasDoDiario(raiz).filter((e) => e.tipo === 'loop.parar').length, 0);
+  assert.equal(existsSync(contadorDe(raiz)), false, 'o Stop não conta sem_progresso em publicada');
+});
+
+test('publicada-vizinho-pr-aberto-continua-gravando: PR mergeado e outro aberto não é publicada; o 3º Stop grava loop.parar', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'pub', [PR_MERGEADO(), PR_ABERTO()]);
+  bloqueia(stop(raiz));
+  bloqueia(stop(raiz));
+  bloqueia(stop(raiz));
+  avisa(stop(raiz), /Gravei loop\.parar/);
+  assert.equal(linhasDoDiario(raiz).filter((e) => e.tipo === 'loop.parar').length, 1);
+});
+
+test('publicada-vizinho-sem-2o-fato: PR mergeado sem plano.json, spec nem ledger não identifica a entrega (a regra da trilha); sem plano o Stop segue em silêncio sem gravar', () => {
+  const raiz = repo();
+  diario(raiz, 'pub', [PR_MERGEADO()]);
+  const antes = linhasDoDiario(raiz).length;
+  mudo(stop(raiz));
+  assert.equal(linhasDoDiario(raiz).length, antes);
+});
