@@ -4,7 +4,8 @@ import { pendenciasAprendizado } from '../../gates/dist/pendencias.js'
 import { CABECALHO, codigoPonte, PROMPT_RECUPERACAO, PROMPT_RETOMADA } from '../../gates/dist/pouso.js'
 import { validarStdinAgentes } from '../../gates/dist/painel-equipe.js'
 import { chavePouso, colunasDosBotoes, faixaDe, gravarContexto, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
-import { pousoPendente, tentativasDoPouso } from '../../gates/dist/pouso-pendente.js'
+import { lerLeitura, pousoPendente, tentativasDoPouso } from '../../gates/dist/pouso-pendente.js'
+import { proximaAcao } from '../../gates/dist/loop.js'
 import { pousoDaFronteira } from '../../gates/dist/pouso.js'
 
 const RAIZ = '/repo'
@@ -4931,4 +4932,42 @@ test('pura-sem-mod-o-evento-vale (FIEL-14 e, h): sem leitura própria o /clear d
   expect(pousoPendente([VER, POUSO, PEV(5, 'sessao.inicio', { origem: 'startup' }, T0 + 5_000, 'S9')], true).pendente).toBe(true)
   expect(pousoPendente([VER, POUSO, PEV(5, 'sessao.inicio', { origem: 'clear' }, T0 + 5_000, 'S9')], true).pendente).toBe(false)
   expect(pousoPendente([VER, POUSO, PEV(5, 'sessao.inicio', { origem: 'clear' }, T0 + 5_000, 'A')], true).pendente).toBe(true) // o clear da própria sessão que pousou não conta
+})
+
+test('pura-fronteira-atual (c3, MAJOR-1): o pouso de uma fronteira ANTERIOR não é pendente; a regra é a mesma `pousoDaFronteira` do mod; o `proxima` (proximaAcao com o mesmo flag) despacha o revisor em vez de pousar', async ($, on) => {
+  const iniT = (seq: number, t: string, ms: number) => PEV(seq, 'task.iniciada', { task: t, papel: 'implementador' }, ms, 's0')
+  const conT = (seq: number, t: string, ms: number) => PEV(seq, 'task.concluida', { task: t, sha: 'x' }, ms, 's0')
+  const verT = (seq: number, t: string, ms: number) => PEV(seq, 'review.veredito', { task: t, veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, ms, 's0')
+  const intT = (seq: number, t: string, ms: number) => PEV(seq, 'task.integrada', { task: t, sha: 'd' }, ms, 's0')
+  const antes = [iniT(1, 'a', T0 - 9000), conT(2, 'a', T0 - 8000), verT(3, 'a', T0 - 7000), intT(4, 'a', T0 - 6000)]
+  const velho = PEV(5, 'sessao.pouso', { percent: 61, x: 50 }, T0 - 5000, 'S0')
+  const nova = [iniT(6, 'b', T0 - 4000), conT(7, 'b', T0 - 3000), verT(8, 'b', T0 - 2000), intT(9, 'b', T0 - 1000)]
+  const agora = T0 + 60_000
+  const m = med('S1', [L('S1', 61, agora - 1000)], agora)
+  // pouso da fronteira atual (depois do último veredito): pendente; fronteira nova (veredito depois do pouso): não
+  expect(pousoPendente([...antes, velho], true, m).pendente).toBe(true)
+  expect(pousoPendente([...antes, velho, ...nova], true, m).pendente).toBe(false)
+  expect(pousoPendente([...antes, velho, ...nova], false, m).pendente).toBe(false)
+  // `proxima`: com o flag da regra única, T c concluída a revisar em 61 % ⇒ despachar o revisor, nunca pousar
+  const plano = { entrega: 'PBI-7', tasks: [{ id: 'a', deps: [], arquivos: ['a.ts'] }, { id: 'b', deps: [], arquivos: ['b.ts'] }, { id: 'c', deps: [], arquivos: ['c.ts'] }] } as any
+  const evs = [...antes, velho, ...nova, iniT(10, 'c', T0 - 500), conT(11, 'c', T0 - 400)]
+  const flag = pousoPendente(evs, true, m).pendente
+  const acao: any = proximaAcao(plano, evs, { slots: 3, percent: 61, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: true, pousoPendente: flag })
+  expect(flag).toBe(false)
+  expect(acao.tipo).toBe('despachar')
+  expect(acao.itens.map((i: any) => i.papel)).toEqual(['revisor'])
+})
+test('pura-x-exato-e-faixa (c3, MINOR-3): percent == X depois do pouso é pendente (>=); percent fora de [0,100] não é leitura', async ($, on) => {
+  const agora = T0 + 60_000
+  expect(pend([VER, POUSO], 'A', [L('A', 50, agora - 1000)], agora)).toBe(true)
+  expect(pend([VER, POUSO], 'A', [L('A', 49.99, agora - 1000)], agora)).toBe(false)
+  const j = (percent: number) => JSON.stringify({ percent, fonte: 'mod', em: new Date(agora - 1000).toISOString() })
+  expect(lerLeitura('A', j(-5))).toBeNull()
+  expect(lerLeitura('A', j(101))).toBeNull()
+  expect(lerLeitura('A', j(0))).not.toBeNull()
+  expect(lerLeitura('A', j(100))).not.toBeNull()
+})
+test('em-x-exato-nega (c3, MINOR-3): o mod nega com a leitura exatamente em X depois do pouso', async ($, on) => {
+  const m = mundo($, on, { eventos: INCIDENTE(), percent: 50, agora: BASE })
+  await nega(m)
 })

@@ -1499,6 +1499,46 @@ test('stop-por-sessao (I1, ciclo 3): a leitura de OUTRA sessão nunca libera nem
   assert.doesNotMatch(r.json?.systemMessage ?? '', /aguardando o pouso do mod/);
 });
 
+/** pouso VELHO (fronteira anterior) e fronteira nova: a=T1 integrada, pouso S0, T2 com veredito e integrada, e T3 concluída (revisor) ou aprovada (integrar) */
+const TRES = { entrega: 'GM-10', tasks: ['T1', 'T2', 'T3'].map((id) => ({ id, deps: [], arquivos: [`${id}.ts`] })) };
+function pousoVelhoFronteiraNova(raiz, t3) {
+  plano(raiz, TRES);
+  const t = (sessao, seq, task, ...resto) => [
+    ev(sessao, seq, 'task.iniciada', { task, papel: 'implementador' }), ev(sessao, seq + 1, 'task.concluida', { task, sha: 'x' }), ...resto,
+  ];
+  const ver = (sessao, seq, task) => ev(sessao, seq, 'review.veredito', { task, veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 });
+  const integ = (sessao, seq, task) => ev(sessao, seq, 'task.integrada', { task, sha: 'd' });
+  diario(raiz, 's1', [...t('s1', 1, 'T1', ver('s1', 3, 'T1'), integ('s1', 4, 'T1'))]);
+  diario(raiz, 'S0', [ev('S0', 1, 'sessao.pouso', { percent: 61, x: 50 })]);
+  diario(raiz, 's2', [...t('s2', 1, 'T2', ver('s2', 3, 'T2'), integ('s2', 4, 'T2'))]);
+  diario(raiz, 's3', t3 === 'revisor' ? t('s3', 1, 'T3') : t('s3', 1, 'T3', ver('s3', 3, 'T3')));
+}
+test('R4-STOP-C pouso-velho-fronteira-nova-despacha-o-revisor (c3, MAJOR-1): com o mod medindo a sessão em 61 %, o Stop real dá block do revisor, não "digite /clear" (com e sem onboarding)', () => {
+  for (const onb of [false, true]) {
+    const raiz = repo();
+    pousoVelhoFronteiraNova(raiz, 'revisor');
+    if (onb) comOnboarding(raiz);
+    contextoDe(raiz, 'S1', 61);
+    const r = stop(raiz);
+    bloqueia(r, /T3/);
+    assert.doesNotMatch(r.json?.reason ?? '', /\/clear/);
+  }
+});
+test('R4-STOP-B pouso-velho-fronteira-nova-integra (c3, MAJOR-1): com T3 aprovada o Stop real manda integrar, não limpar', () => {
+  const raiz = repo();
+  pousoVelhoFronteiraNova(raiz, 'integrar');
+  contextoDe(raiz, 'S1', 61);
+  const r = stop(raiz);
+  bloqueia(r, /integr/i);
+});
+test('R4-STOP-A controle: o pouso da fronteira ATUAL (sem veredito depois dele) segue aguardando o mod', () => {
+  const raiz = repo();
+  plano(raiz, TRES);
+  diario(raiz, 's1', TASK_APROVADA('s1'));
+  pousoDe(raiz);
+  contextoDe(raiz, 'S1', 61);
+  avisa(stop(raiz), /aguardando o pouso do mod/);
+});
 test('R3-STOP stop-sessao-nova-depois-de-sucessora-fechada (MAJOR-5): a sucessora (A2) calou, o dia seguinte abre S1 por startup medindo 4 %; o Stop libera (block), não fica aguardando', () => {
   const raiz = repo();
   plano(raiz);
@@ -1525,13 +1565,14 @@ test('stop-mod-desligado-o-clear-do-dono-libera (r1 MAJOR-3): leitura do mod vel
   bloqueia(stop(raiz, { session_id: 'S9' }), /T1/); // o /clear do dono libera
 });
 
-test('stop-nao-diz-aguardando-sem-fronteira (r1 MINOR-5): pouso sem review.veredito não é do mod (ele nunca age); o Stop manda o dono limpar, não aguardar', () => {
+test('stop-nao-diz-pouso-pendente-sem-fronteira (r1 MINOR-5, c3): pouso sem review.veredito não é pouso de fronteira nenhuma; o Stop não manda limpar, só diz que o contexto está no teto', () => {
   const raiz = repo();
   plano(raiz);
   pousoDe(raiz); // sem veredito no diário
   contextoDe(raiz, 'S1', 61);
   const r = stop(raiz);
-  assert.doesNotMatch(r.json?.systemMessage ?? '', /aguardando o pouso do mod/);
+  assert.doesNotMatch(r.json?.systemMessage ?? '', /digite \/clear|pouso pendente/);
+  avisa(r, /contexto no teto/);
 });
 
 test('stop-nao-diz-aguardando-depois-de-sem_pouso (r1 MINOR-5): o mod desistiu (loop.parar sem_pouso); o Stop não promete o pouso do mod', () => {

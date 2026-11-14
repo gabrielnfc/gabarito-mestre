@@ -1,8 +1,9 @@
                                          
+import { pousoDaFronteira } from './pouso.js';
 
 /**
  * Pouso pendente (GM-14 FIEL-14 e): a ÚNICA definição. `loop.mjs proxima` (via `proximaAcao`), o hook Stop, o mod (a contagem de tentativas) e o painel
- * (via `dependeDe`) a importam; nenhuma outra regra decide se a conversa ainda precisa ser limpa. Pura e sem `node:` (o mod a importa).
+ * (via `dependeDe`) a importam; nenhuma outra regra decide se a conversa ainda precisa ser limpa. Pura e sem `node:` (o mod a importa). A fronteira é a de `pousoDaFronteira` (pouso.ts), a única.
  *
  * Só vale com onboarding (FIEL-14 h) no modo por evento: 2º argumento `onboarding === true`, senão `{pendente:false}`.
  *
@@ -103,8 +104,9 @@ export function pousoPendente(eventos                             , onboarding  
   if (p === null) return nenhum;
   const propria = leituraPropria(medicao);
   if (propria !== null && medicao !== undefined) {
-    // com o mod: a própria leitura decide, sem onboarding (não depende do diário de sessão)
-    return propria.percent >= medicao.x ? { pendente: true, sessao: p.e.sessao, seq: p.e.seq } : nenhum;
+    // com o mod: a própria leitura decide, sem onboarding (não depende do diário de sessão). O pouso conta só se for o da fronteira ATUAL
+    // (`pousoDaFronteira`, pouso.ts: a MESMA definição do mod): um pouso de fronteira anterior não manda o dono limpar nada.
+    return propria.percent >= medicao.x && pousoDaFronteira(eventos) ? { pendente: true, sessao: p.e.sessao, seq: p.e.seq } : nenhum;
   }
   // sem leitura própria fresca: a regra sem mod. FIEL-14 h: sem onboarding o diário não registra `sessao.inicio` (Q20), então o pendente POR EVENTO nunca teria
   // saída; o fato vem de quem chama (`temOnboarding` de `cartao-sessao.mjs`).
