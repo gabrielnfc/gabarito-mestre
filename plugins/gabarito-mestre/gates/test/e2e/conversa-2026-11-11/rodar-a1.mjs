@@ -5,7 +5,7 @@
  *
  *   rodar-a1.mjs --guarda  [--roteiro <arq>]         confere o roteiro (ausente ou sha diferente ⇒ não roda e diz por quê) e que nenhuma fala (≥ 20 caracteres) está em `git ls-files`
  *   rodar-a1.mjs --gerar   [--roteiro <arq>]         regrava `pontos.json`: {msg, sha256, chars} por ponto e o `esperado` GERADO PELO PRODUTO (nunca copiado do roteiro)
- *   rodar-a1.mjs --matriz  [--so <local-tamanho-cheia>] [--paralelo <n>] [--roteiro <arq>]   as 8 execuções (local × tamanho × tela cheia) com `a1.exp`; passa = 8/8; células sob TMPDIR (fora do checkout real); `--paralelo` padrão 1
+ *   rodar-a1.mjs --matriz  [--so <local-tamanho-cheia>] [--paralelo <n>] [--ignorar-ref <regex>]... [--roteiro <arq>]   as 8 execuções (local × tamanho × tela cheia) com `a1.exp`; passa = 8/8; células sob TMPDIR (fora do checkout real); `--paralelo` padrão 1
  *   rodar-a1.mjs avaliar <rundir> [--roteiro <arq>]   a avaliação da matriz sobre uma execução já gravada (offline, não abre claude)
  *   rodar-a1.mjs snapshot <repo> <rundir> <n>        (chamado pelo `a1.exp`) grava o `estado` do produto no ponto n
  *
@@ -741,7 +741,7 @@ export const IGNORAR_STATUS_PADRAO = Object.freeze([/^.. "?\.harness\//, /^.. "?
  */
 export function fotoDoRepo(raiz, { ignorarRefs = IGNORAR_REFS_PADRAO, ignorarStatus = IGNORAR_STATUS_PADRAO } = {}) {
   const g = (...a) => execFileSync('git', ['-C', raiz, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
-  const refs = g('for-each-ref', '--format=%(refname) %(objectname)').split('\n').filter((l) => l !== '' && !ignorarRefs.some((re) => re.test(l))).join('\n');
+  const refs = g('for-each-ref', '--format=%(refname) %(objectname)').split('\n').filter((l) => l !== '' && !ignorarRefs.some((re) => re.test(l.split(' ')[0]))).join('\n');
   const worktrees = g('worktree', 'list', '--porcelain').split('\n').filter((l) => l.startsWith('worktree ')).join('\n');
   const status = g('status', '--porcelain', '--untracked-files=all').split('\n').filter((l) => l !== '' && !ignorarStatus.some((re) => re.test(l))).join('\n');
   return { status, refs, worktrees };
@@ -805,9 +805,9 @@ export function celulaDoRundir(rundir) {
  * Roda o `a1.exp` (`expect`) de UMA célula, de forma assíncrona, vigiando as invariantes enquanto roda: o repo real mudou (foto ≠ a de antes) ou apareceu `abortar.txt`
  * (escrito pelo `a1.exp` ou pelo `snapshot`) ⇒ mata o expect na hora e devolve `{status, abortada}`. cwd e PWD = `rundir` (nunca o checkout real).
  */
-export function executarExpect({ rundir, args, reais, expect = 'expect', intervalo = 10_000, timeoutMs = 4 * 60 * 60 * 1000 }) {
+export function executarExpect({ rundir, args, reais, expect = 'expect', intervalo = 10_000, timeoutMs = 4 * 60 * 60 * 1000, fotoOpc = {} }) {
   return new Promise((ok) => {
-    const antes = reais.map(fotoDoRepo);
+    const antes = reais.map((r) => fotoDoRepo(r, fotoOpc));
     const filho = spawn(expect, args, { cwd: rundir, env: ambienteDe({ PWD: rundir }), stdio: 'ignore' });
     let abortada = null; let fim = false;
     const parar = (causa) => {
@@ -821,7 +821,7 @@ export function executarExpect({ rundir, args, reais, expect = 'expect', interva
       if (fim || abortada !== null) return;
       if (existsSync(join(rundir, 'abortar.txt'))) { parar(readFileSync(join(rundir, 'abortar.txt'), 'utf8').trim().split('\n')[0] || 'abortar.txt'); return; }
       try {
-        const dif = reais.flatMap((r, i) => diferencasDeFotos(antes[i], fotoDoRepo(r)));
+        const dif = reais.flatMap((r, i) => diferencasDeFotos(antes[i], fotoDoRepo(r, fotoOpc)));
         if (dif.length > 0) parar(`repo real alterado durante a célula: ${dif.join('; ')}`);
       } catch (e) { parar(`repo real ilegível durante a célula: ${String(e.message).slice(0, 120)}`); }
     }, intervalo);
@@ -848,7 +848,8 @@ const DEPS = { preparar: (...a) => prepararCopia(...a), copiarPlugin, executar: 
  * A matriz. `base` fica SOB `TMPDIR` (nunca no checkout real); `opc.paralelo` (padrão 1) limita as células simultâneas; cada célula grava o `resultado.json` ao terminar;
  * invariante violada (repo real alterado, plugin não ativo, 0 render no 1º snapshot, célula fora de `TMPDIR`) reprova a célula e PARA a matriz: as demais não rodam e contam como falha.
  */
-export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps = {} } = {}) {
+export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps = {}, ignorarRefs = IGNORAR_REFS_PADRAO, ignorarStatus = IGNORAR_STATUS_PADRAO } = {}) {
+  const fotoOpc = { ignorarRefs, ignorarStatus };
   const d = { ...DEPS, ...deps };
   const celulas = MATRIZ.filter((c) => so === null || idDaCelula(c) === so);
   const reais = realDe([fonte, tmpRaiz]);
@@ -870,7 +871,7 @@ export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps =
       gravar(id, rundir, exec, ambienteDaExecucao('', sp));
       return exec;
     }
-    const antes = reais.map(fotoDoRepo);
+    const antes = reais.map((x) => fotoDoRepo(x, fotoOpc));
     const plugin = join(rundir, 'plugin');
     const { bin } = d.preparar(fonte, repo, celula);
     d.copiarPlugin(plugin);
@@ -883,9 +884,9 @@ export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps =
     const vaza = vazamentos([rundir, repo, ...argv], reais);
     if (vaza.length > 0) throw new Error(`argumento da célula com caminho do repo real: ${vaza[0]}`);
     const args = ['-f', join(AQUI, 'a1.exp'), rundir, repo, bin, process.execPath, fileURLToPath(import.meta.url)];
-    const r = await d.executar({ rundir, repo, plugin, argv, celula: id, args, reais });
+    const r = await d.executar({ rundir, repo, plugin, argv, celula: id, args, reais, fotoOpc });
     let dif = [];
-    try { dif = reais.flatMap((x, i) => diferencasDeFotos(antes[i], fotoDoRepo(x))); } catch (e) { dif = [`foto final ilegível: ${e.message}`]; }
+    try { dif = reais.flatMap((x, i) => diferencasDeFotos(antes[i], fotoDoRepo(x, fotoOpc))); } catch (e) { dif = [`foto final ilegível: ${e.message}`]; }
     const ambiente = { ...dialogosDoExpLog(existsSync(join(rundir, 'exp.log')) ? readFileSync(join(rundir, 'exp.log'), 'utf8') : ''), superpowers: superpowersNoAmbiente(sp) };
     let exec;
     if (dif.length > 0) {
@@ -1007,7 +1008,7 @@ export async function main(argv) {
   process.stdout.write(`guarda das falas: 0 achados (${g.conferidas} falas ≥ ${MIN_FALA} caracteres em ${g.arquivos} arquivos versionados; ${g.ignorados} ignorados por binário ou > 4 MB, não conferidos)\n`);
   if (modo === '--guarda') return 0;
   if (modo === '--gerar') { const r = gerar(topo, principal, roteiro); process.stdout.write(`pontos.json: ${r.pontos} pontos gerados pelo produto\n`); return 0; }
-  const m = await matriz(topo, principal, roteiro, flag(argv, '--so') ?? null, { paralelo: Number(flag(argv, '--paralelo') ?? 1) });
+  const m = await matriz(topo, principal, roteiro, flag(argv, '--so') ?? null, { paralelo: Number(flag(argv, '--paralelo') ?? 1), ignorarRefs: [...IGNORAR_REFS_PADRAO, ...argv.flatMap((a, i) => (argv[i - 1] === '--ignorar-ref' ? [new RegExp(a)] : []))] });
   for (const l of m.rel.linhas) process.stdout.write(`${l.passa ? 'PASSA' : 'FALHA'} ${l.celula} ${l.motivo}\n`);
   if (m.abortada !== null) process.stdout.write(`MATRIZ PARADA: ${m.abortada}\n`);
   process.stdout.write(`A1: ${m.rel.passou}/${m.rel.total} (passa = 8/8)\nevidência em ${m.base}\n`);

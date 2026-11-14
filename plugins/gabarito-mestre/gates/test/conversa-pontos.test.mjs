@@ -1139,6 +1139,13 @@ describe('T49 (a) isolamento: célula e plugin fora do repo real; o repo real fi
     assert.equal(m.rel.ok, false); assert.equal(m.rel.passou, 0);
     assert.match(m.abortada, /isolamento|repo real/);
   });
+  test('ref-que-o-orquestrador-move-pode-ser-ignorada-por-opção (--ignorar-ref); sem a opção a mesma mexida invalida', async () => {
+    const mexe = async (a, fonte) => { git(fonte, 'commit', '-q', '--allow-empty', '-m', 'integração do orquestrador'); return { status: 0, abortada: null }; };
+    const com = ambienteMatriz(mexe); const m1 = await rodarMatriz(com, { so: idDaCelula(MATRIZ[0]), ignorarRefs: [/^refs\/heads\/main$/] });
+    assert.equal(m1.rel.passou, 1, 'ref ignorada não invalida'); assert.equal(m1.abortada, null);
+    const sem = ambienteMatriz(mexe); const m2 = await rodarMatriz(sem, { so: idDaCelula(MATRIZ[0]) });
+    assert.equal(m2.rel.passou, 0); assert.match(m2.abortada, /isolamento/);
+  });
   test('repo-real-intocado-nao-invalida', async () => {
     const e = ambienteMatriz();
     const m = await rodarMatriz(e, { so: idDaCelula(MATRIZ[0]) });
