@@ -390,7 +390,7 @@ export function codigoPonte(
     `    }`,
     `  } else if (e.op === 'ler') {`,
     `    const l = d.lerEstrito(e.dir);`,
-    `    out(l.ok ? { ok: true, eventos: l.eventos } : { ok: false, erro: l.motivo });`,
+    `    out(l.ok ? { ok: true, eventos: l.eventos, agora: Date.now() } : { ok: false, erro: l.motivo });`,
     `  } else if (e.op === 'plano') {`,
     `    const v = pl.validarPlano(JSON.parse(readFileSync(join(e.dir, 'plano.json'), 'utf8')));`,
     `    if (!v.ok) throw new Error('plano.json inválido: ' + v.erro);`,

@@ -197,6 +197,7 @@ async function executarPouso($, c, percent, x, tentativa) {
     if (!gravou) await avisar($, 'gabarito: retomada aconteceu mas sessao.retomada não gravou; o próximo cartão pode repetir a linha de pouso.');
   } finally {
     ocupado = false;
+    armarVigia($); // confirmado ou não, a vigia olha: confirmado ⇒ ela mesma para
   }
 }
 
@@ -259,7 +260,7 @@ async function lerMundo($, c) {
   let lista = null;
   try { lista = await $.agent.list(); } catch { lista = null; }
   return {
-    eventos: l.eventos, plano: p.plano, slots: p.slots, tetoTokens: p.tetoTokens, tokens: t.tokens,
+    eventos: l.eventos, agora: agoraDe(l), plano: p.plano, slots: p.slots, tetoTokens: p.tetoTokens, tokens: t.tokens,
     vivos: vivosDe(lista), pausado: await pausadoAgora($), consumida: a.consumida, marca: marcaDeProgresso(l.eventos),
   };
 }
@@ -279,19 +280,21 @@ function descrever(r) {
 
 const chaveConfirmado = (dir) => `confirmado:${dir}`;
 
-/** Relógio de parede, o mesmo do `ts` do diário (`new Date()` da ponte); o `$.clock` do motor é outro e os testes o controlam à parte. */
-const agoraMs = () => Date.now();
+/**
+ * Hora da confirmação: a que a PONTE devolve em `ler` (`Date.now()` do node que escreve o `ts` do diário: a mesma base, sem depender do relógio do motor,
+ * que conta desde 0). Sem ela (ponte antiga), a de parede. Os testes dão à ponte o relógio deles (T53): a espera nunca depende do dia em que rodam.
+ */
+const agoraDe = (l) => (typeof l?.agora === 'number' && Number.isFinite(l.agora) ? l.agora : Date.now());
 
 /**
  * T53: a situação do pouso agora (única definição em pouso-pendente.ts). A leitura da sessão atual é a medição do próprio mod (`usage.context.percent`,
  * fonte `mod`, em = agora); o arquivo `.harness/contexto/<sessao>.json` é a cópia dela para o Stop. A confirmação fica no store (leitura alta depois
  * dela, numa conversa que voltou a crescer, não a desfaz). `null` ⇒ diário ilegível: quem chama não presume nada.
  */
-async function lerSituacao($, eventos, c, percent, x) {
+async function lerSituacao($, eventos, c, percent, x, agora) {
   if (!Array.isArray(eventos)) return null;
   let sessaoAtual = null;
   try { const id = await $.session.id(); if (typeof id === 'string') sessaoAtual = id; } catch { /* sem id: a leitura fica desconhecida */ }
-  const agora = agoraMs();
   const leituras = percent !== null && sessaoAtual !== null ? [{ sessao: sessaoAtual, percent, fonte: 'mod', emMs: agora }] : [];
   const base = situacaoDoPouso(eventos);
   let confirmouAntes = false;
@@ -305,7 +308,7 @@ async function lerSituacao($, eventos, c, percent, x) {
   if (sit.pouso !== null && sit.confirmado && !confirmouAntes) {
     try { await $.store.set(chaveConfirmado(c.dir), { pouso: `${sit.pouso.sessao}:${sit.pouso.seq}` }); } catch { /* a leitura seguinte confirma de novo */ }
   }
-  return sit;
+  return { ...sit, sessaoAtual };
 }
 
 /**
@@ -323,22 +326,29 @@ async function avaliar($, c) {
   const r = { porta, percent, x, mundo: null, acao: null, negar: porta.despacho === 'negar', sit: null, eventos: null, aguardando: false, pousarComDono: false };
   if (porta.estado === 'POUSANDO') return r; // um pouso em andamento (store): o /clear dele ainda não terminou
   let eventos = null;
+  let agora = Date.now();
   if (porta.estado !== 'NUCLEO') {
     const l = await ponte($, { op: 'ler', dir: c.dir, cwd: c.cwd });
-    if (l.ok === true && Array.isArray(l.eventos)) eventos = l.eventos;
+    if (l.ok === true && Array.isArray(l.eventos)) { eventos = l.eventos; agora = agoraDe(l); }
   } else {
     r.negar = true;
     r.mundo = await lerMundo($, c);
     if (r.mundo === null) return r;
     eventos = r.mundo.eventos;
+    agora = r.mundo.agora;
   }
   if (eventos !== null) {
     r.eventos = eventos;
     // só o diário íntegro e com pouso nesta fronteira decide (a leitura ruim cai nas regras de antes)
     if (pousoDaFronteira(eventos)) {
-      r.sit = await lerSituacao($, eventos, c, percent, x);
+      r.sit = await lerSituacao($, eventos, c, percent, x, agora);
+      r.sessaoAtual = r.sit?.sessaoAtual ?? null;
       r.aguardando = r.sit !== null && !r.sit.confirmado && !jaParou(eventos); // parado (`sem_pouso`): não há o que aguardar, o SEM_POUSO e o `parar` falam
-      if (r.aguardando) r.negar = true;
+      // Uma sessão PARALELA, baixa e sem relação com o pouso (nem a que pousou nem a sucessora) não fica presa a ele; a que pousou, e qualquer uma no
+      // teto ou sem medição, fica. O mod age (repete, desiste) só por quem pode ser limpo: ver `repetirPouso`.
+      if (r.aguardando) r.envolvida = r.sit.pouso !== null && (r.sit.pouso.sessao === r.sessaoAtual || r.sit.nova === r.sessaoAtual || percent === null || percent >= x);
+      if (r.aguardando && !r.envolvida) r.aguardando = false;
+      if (r.aguardando) { r.negar = true; armarVigia($); } else vigiaVezes = 0;
     }
   }
   if (porta.estado !== 'NUCLEO') return r;
@@ -385,6 +395,36 @@ async function pararDoNucleo($, c, acao, m) {
   const dados = acao.task === undefined ? { motivo: acao.motivo } : { motivo: acao.motivo, task: acao.task };
   await gravar($, c, { agente: 'orquestrador', tipo: 'loop.parar', dados });
   await avisar($, `gabarito: loop parado (${acao.motivo}${acao.task === undefined ? '' : `, task ${acao.task}`}). Nenhum pouso automático; veja o diário da entrega.`);
+}
+
+/**
+ * T53, vigia (r1 MAJOR-1): a repetição e o `sem_pouso` não podem depender de um `turn.complete` que talvez nunca venha (o turno acaba, a retomada termina
+ * antes dos 60/120 s e ninguém mais fala). O runtime do mod TEM timer (`$.clock.after`/`every`, o mesmo do painel): enquanto houver pouso sem confirmação
+ * a vigia reavalia a cada 30 s com a MESMA decisão do fim de turno (`avaliar` + `repetirPouso`). Termina sozinha: confirmado, parado (`sem_pouso`) ou
+ * sem entrega. Teto de 120 reavaliações seguidas (1 h) sem fato novo, para nunca virar laço eterno; um turno ou um pouso novo recomeça a conta.
+ */
+const VIGIA_MS = 30_000;
+const VIGIA_MAX = 120;
+let vigia = false;
+let vigiaVezes = 0;
+function armarVigia($) {
+  if (vigia || vigiaVezes >= VIGIA_MAX) return;
+  vigia = true;
+  vigiaVezes += 1;
+  try { $.clock.after(VIGIA_MS, () => { vigia = false; vigiar($).catch(() => { ocupado = false; }); }); } catch { vigia = false; }
+}
+async function vigiar($) {
+  if (ocupado) { armarVigia($); return; } // um pouso ou uma decisão em curso: olha de novo depois
+  const { c } = await loopAtivo($);
+  if (c === null) return;
+  ocupado = true;
+  let agendado = false;
+  try {
+    const r = await avaliar($, c); // arma a próxima vigia enquanto houver pouso aguardando
+    if (r.aguardando) agendado = await repetirPouso($, c, r);
+  } finally {
+    if (!agendado) ocupado = false;
+  }
 }
 
 /**

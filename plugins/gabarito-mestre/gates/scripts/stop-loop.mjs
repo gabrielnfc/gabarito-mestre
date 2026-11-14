@@ -389,7 +389,14 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
     pendente = dpp.mod.pousoPendente(eventos, temOnboarding(raiz), medicao).pendente === true;
     noTeto = dpp.mod.noTeto(medicao) === true;
   } catch { pendente = false; noTeto = false; }
-  const modAtivo = medicao !== undefined && medicao.leituras.some((l) => l.fonte === 'mod' && Date.now() - l.emMs <= 600_000);
+  // "Aguardando o pouso do mod" só é verdade com o mod medindo AGORA (leitura fresca: a mesma situação da regra única), com veredito (há fronteira) e sem o mod já
+  // ter desistido (`sem_pouso`): fora disso o dono é quem limpa, e a instrução "digite /clear" é a certa.
+  let modAtivo = false;
+  try {
+    const dpo = await carregar('pouso');
+    modAtivo = medicao !== undefined && dpo.ok && dpp.mod.situacaoDoPouso(eventos, medicao).modo === 'medicao'
+      && dpo.mod.pousoDaFronteira(eventos) === true && dpo.mod.jaParou(eventos) !== true;
+  } catch { modAtivo = false; }
   let acao;
   let falhaAcao = null;
   try {

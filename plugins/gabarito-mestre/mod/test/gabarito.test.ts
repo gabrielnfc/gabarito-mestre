@@ -83,6 +83,8 @@ type Opc = {
   pacoteNomes?: { lider: string; sabio: string; nomes: string[] } | 'falha'
   /** GM-14 T53: o /clear roda mas não limpa nada (o incidente de 2026-11-14): mesma sessão, mesmo percent */
   clearNaoLimpa?: boolean
+  /** GM-14 T53 (r1): instante inicial do relógio do mock (ms). O mod mede com `$.clock.now()`; o relógio avança 1 s por evento gravado e por leitura de uso. Painel: relógio intocado (0) salvo se dado. */
+  agora?: number
   /** GM-14 T53: percent da sessão nova depois do /clear (padrão 5) */
   percentPosClear?: number | null
 }
@@ -155,12 +157,15 @@ function mundo($: any, on: any, o: Opc = {}) {
     painel: { ...(o.painel ?? {}) } as PainelOpc, painelStdins: [] as any[], painelArgv: [] as string[][], painelInit: [] as any[], painelFlight: 0, painelLibera: [] as (() => void)[],
     opens: [] as any[], panes: (o.panes ?? []) as any, openResult: (o.openResult ?? { isPlaced: true }) as any, notifies: [] as string[], fills: [] as any[], statuses: [] as (string | undefined)[],
     subStarts: [] as any[], logs: [] as string[], closes: [] as any[], registros: [] as any[], sessaoId: o.sessaoId ?? 'sess-1', ordem: [] as string[], notifyModo: (o.notify ?? 'ok') as string, rateLimits: (o.rateLimits === undefined ? [] : o.rateLimits) as any, fillIsFilled: o.fillIsFilled !== false,
+    agoraMs: null as number | null,
     msgs: [] as { sha256: string; chars: number }[], mensagemLibera: [] as (() => void)[],
     // GM-14 T20: local, medir, contexto, plano B e pacote (cada ponte guarda o que recebeu)
     local: (o.local ?? 'lateral') as string, locaisGravados: [] as string[], medirStdins: [] as any[], contextos: [] as any[], contextoInit: [] as any[], planosB: [] as any[], pacotesLidos: [] as any[],
   }
 
   // o diário em memória: tudo que o mod grava volta na próxima leitura, com seq e ts válidos para a T2
+  /** anda o relógio do mock (e o conta em `est.agoraMs`); só com relógio controlado */
+  const bump = (ms: number) => { est.agoraMs = (est.agoraMs ?? 0) + ms }
   const seqs = new Map<string, number>()
   for (const e of evs) seqs.set(e.sessao, Math.max(seqs.get(e.sessao) ?? 0, e.seq))
   const add = (agente: string, tipo: string, dados: Record<string, unknown>, sessao = 's0') => {
@@ -168,7 +173,10 @@ function mundo($: any, on: any, o: Opc = {}) {
     seqs.set(sessao, seq)
     relogio += 1
     const ultimoTs = evs.reduce((m, e) => Math.max(m, Date.parse(e.ts)), 0) // monotônico: depois de um evento com ts adiantado, o seguinte não volta no tempo
-    evs.push({ seq, ts: new Date(Math.max(Date.UTC(2026, 10, 3, 1, 0, relogio), ultimoTs + 1000)).toISOString(), autor: 'a', sessao, agente, tipo, dados, hash_anterior: null })
+    // com relógio controlado (T53) o evento nasce na hora do mock, 1 s depois da anterior: o tempo anda sozinho a cada gravação
+    let ts = Math.max(Date.UTC(2026, 10, 3, 1, 0, relogio), ultimoTs + 1000)
+    if (est.agoraMs !== null) { bump(Math.max(est.agoraMs + 1000, ultimoTs + 1000) - est.agoraMs); ts = est.agoraMs }
+    evs.push({ seq, ts: new Date(ts).toISOString(), autor: 'a', sessao, agente, tipo, dados, hash_anterior: null })
   }
 
   on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
@@ -178,6 +186,7 @@ function mundo($: any, on: any, o: Opc = {}) {
   on('env.get', (_: any, e: any) => ({ value: e.name === 'GABARITO_POUSO_X' ? o.x : undefined }))
   on('session.usage', () => {
     if (o.usageFalha) return { deny: 'usage fora do ar' }
+    if (est.agoraMs !== null) bump(1000) // uma leitura de uso é um instante depois do anterior
     return { value: { startedAt: 0, context: { window: o.janela === undefined ? 1_000_000 : o.janela, percent: est.percent ?? undefined, tokens: 1 }, rateLimits: est.rateLimits } }
   })
   on('agent.list', () => (o.agentesPainel !== undefined ? { value: o.agentesPainel } : o.agentes === 'falha' ? { deny: 'sem sessão' } : o.agentes === 'lixo' ? { value: 'não é lista' } : { value: o.agentes ?? [] }))
@@ -290,7 +299,7 @@ function mundo($: any, on: any, o: Opc = {}) {
         const cfg = o.config ?? {}
         return ok(JSON.stringify({ ok: true, plano: o.plano_json ?? PLANO, slots: cfg.slots ?? 3, tetoTokens: cfg.tetoTokens ?? null }))
       }
-      if (q.op === 'ler') return ok(JSON.stringify(o.lerFalha ? { ok: false, erro: o.lerErro ?? 'x' } : { ok: true, eventos: evs }))
+      if (q.op === 'ler') return ok(JSON.stringify(o.lerFalha ? { ok: false, erro: o.lerErro ?? 'x' } : { ok: true, eventos: evs, ...(est.agoraMs !== null ? { agora: est.agoraMs } : {}) }))
       if (q.op === 'instantaneo') {
         log.push('instantaneo')
         const t = o.instantaneo ?? 'Diário: 3 evento(s)\nETA: sem dados'
@@ -343,7 +352,15 @@ function mundo($: any, on: any, o: Opc = {}) {
   on('turn.complete', (_: any, e: any) => ({ text: e.answer }))
   on('tool.call', (_: any, e: any) => ({ result: typeof o.resultadoTool === 'function' ? o.resultadoTool(e) : (o.resultadoTool ?? {}) }))
 
-  const clock = mock.clock(on)
+  const clockReal = mock.clock(on)
+  // o relógio exposto aos testes conta o que avança (o `ts` dos eventos gravados segue o mesmo relógio)
+  const clock = {
+    advance: async (ms: number) => { if (est.agoraMs !== null) est.agoraMs += ms; return clockReal.advance(ms) },
+    set: (ms: number) => { if (est.agoraMs !== null) est.agoraMs = ms; else return clockReal.set(ms) },
+    settle: () => clockReal.settle(), sleep: (ms: number) => clockReal.sleep(ms), now: () => clockReal.now(),
+  } as typeof clockReal
+  est.agoraMs = o.painel !== undefined && o.agora === undefined ? null : (o.agora ?? Date.UTC(2026, 10, 3, 2, 0, 0))
+  // a ponte `ler` devolve `agora: est.agoraMs` (que anda com `advance`/`set` e a cada gravação); os timers seguem o relógio do mock
   const peer = () => $.prompt.submit({ text: '<agent-message>[Subagent hand-back]', origin: { kind: 'peer' } })
   const turno = (extra: Record<string, unknown> = {}) =>
     $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', ...extra })
@@ -353,7 +370,10 @@ function mundo($: any, on: any, o: Opc = {}) {
   const tipos = () => grav.map((g) => g.tipo)
   /** mensagem digitada pelo dono: o composer real manda `command: null` (S1) */
   const dono = (extra: Record<string, unknown> = {}) => $.prompt.submit({ text: 'mensagem do dono', origin: { kind: 'composer' }, command: null, isMeta: false, ...extra })
-  return { log, grav, toasts, escritas, pedidos, store, arquivos, est, clock, turno, peer, agent, inicio, cmd, tipos, evs, add, dono }
+  /** relógio do mock em ms absolutos / avança e dispara os timers (vigia de 30 s) */
+  const relogio_ = (ms: number) => { clock.set(ms) }
+  const avancar = async (ms: number) => { await clock.advance(ms); await clock.settle() }
+  return { relogio: relogio_, avancar, log, grav, toasts, escritas, pedidos, store, arquivos, est, clock, turno, peer, agent, inicio, cmd, tipos, evs, add, dono }
 }
 
 const pousar = async (m: ReturnType<typeof mundo>) => { await m.inicio(); await m.turno(); await m.clock.settle() }
@@ -4562,13 +4582,14 @@ test('medir-recebe-o-mesmo-stdin: `medir --agentes` leva acoes, encerrados e seg
 
 
 // ======================================================================================================================================
-// GM-14 T53 (emendas 52 e 53, REQ-POU-1, FIEL-14): o mod pousa no teto sem depender do dono; o pouso só vale com a medição da sessão nova.
+// GM-14 T53 (emendas 52 e 53, REQ-POU-1, FIEL-14): o mod pousa no teto sem depender do dono; o pouso só vale com a medição da sessão sucessora.
+// Tempo: o mod mede com a hora que a ponte devolve (`agora`); o mock a dá (`est.agoraMs`), que anda com `avancar`/`clock.advance` e 1 s a cada gravação.
+// Nenhum teste de espera depende do dia em que roda: os eventos nascem RELATIVOS à base do mock.
 // ======================================================================================================================================
-const AGORA = () => Date.now()
-/** evento com ts relativo ao relógio de parede (o mod mede com `Date.now()`, como o diário grava `new Date()`) */
+const BASE = Date.UTC(2026, 10, 14, 12, 0, 0)
 const EVT = (seq: number, tipo: string, dados: Record<string, unknown>, atrasoMs: number, sessao = 's0') =>
-  ({ seq, ts: new Date(AGORA() - atrasoMs).toISOString(), autor: 'a', sessao, agente: 'o', tipo, dados, hash_anterior: null })
-/** a sequência real do incidente de 2026-11-14 ~10:05: veredito, `loop.mjs pousar` (via dono) SEM /clear, contexto ainda acima de X */
+  ({ seq, ts: new Date(BASE - atrasoMs).toISOString(), autor: 'a', sessao, agente: 'o', tipo, dados, hash_anterior: null })
+/** a sequência real do incidente de 2026-11-14 ~10:05: veredito, `loop.mjs pousar` (via dono) SEM /clear, contexto ainda acima de X (o pouso `atrasoMs` antes de BASE) */
 const INCIDENTE = (atrasoMs = 600_000) => [
   EVT(1, 'task.iniciada', { task: 'a', papel: 'implementador' }, atrasoMs + 3000), EVT(2, 'task.concluida', { task: 'a', sha: 'x' }, atrasoMs + 2000),
   EVT(3, 'review.veredito', { task: 'a', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, atrasoMs + 1000),
@@ -4577,9 +4598,8 @@ const INCIDENTE = (atrasoMs = 600_000) => [
 const tentativas = (m: ReturnType<typeof mundo>) => m.grav.filter((g) => g.tipo === 'sessao.pouso.tentativa').map((g) => (g.dados as any).n)
 
 test('pousar-manual-nao-consome-com-mod: sessao.pouso do dono sem /clear não consome a fronteira: todo Agent negado, revisor incluído', async ($, on) => {
-  const m = mundo($, on, { eventos: INCIDENTE(), percent: 61 })
-  const r = await m.agent('gabarito-implementador')
-  expect(r.deny).toMatch(/aguardando a confirmação do pouso/)
+  const m = mundo($, on, { eventos: INCIDENTE(), percent: 61, agora: BASE })
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/aguardando a confirmação do pouso/)
   expect((await m.agent('gabarito-revisor')).deny).toMatch(/aguardando a confirmação do pouso/)
   expect((await m.agent('gabarito-mestre:gabarito-revisor')).deny).toMatch(/aguardando/)
   expect(m.est.clears).toBe(0) // o Agent não roda /clear
@@ -4596,19 +4616,19 @@ test('teto-com-vivos-nega-agent: contexto ≥ X, fronteira aberta, 2 vivos ⇒ A
 })
 
 test('reproduz-incidente: pousar manual, sem /clear, contexto 61 % ⇒ nada despacha; o mod pousa sozinho e depois da medição < X libera', async ($, on) => {
-  const m = mundo($, on, { eventos: INCIDENTE(), percent: 61 })
+  const m = mundo($, on, { eventos: INCIDENTE(), percent: 61, agora: BASE })
   await m.inicio()
   expect((await m.agent('gabarito-implementador')).deny).toMatch(/aguardando/) // antes da T53 o Agent passava aqui: 8 agentes acima do teto
-  await m.turno(); await m.clock.settle() // 0 vivos: o mod não espera o dono
+  await m.turno(); await m.clock.settle() // 0 vivos, o pouso manual é de 10 min atrás: o mod não espera o dono
   expect(m.est.clears).toBe(1)
   expect(tentativas(m)).toEqual([2])
   expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(0) // a repetição não é um pouso novo
   expect(m.est.submits).toHaveLength(1)
-  await confirmar(m) // sessão nova mede 5 < X
+  await confirmar(m) // a sessão sucessora mede 5 < X
   expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
 })
 
-test('confirmado-libera: a leitura da sessão nova < X confirma, o despacho se libera e a confirmação não se desfaz quando a conversa volta a crescer', async ($, on) => {
+test('confirmado-libera: a leitura da sessão sucessora < X confirma, o despacho se libera e a confirmação não se desfaz quando a conversa volta a crescer', async ($, on) => {
   const m = mundo($, on)
   await pousar(m) // pouso do mod (percent 60) + /clear: sessão nova a 5 %
   expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
@@ -4620,26 +4640,36 @@ test('confirmado-libera: a leitura da sessão nova < X confirma, o despacho se l
   expect(m.est.clears).toBe(1) // confirmado: sem repetir
 })
 
-test('clear-falho-repete: leitura ≥ X na sessão nova = o /clear não limpou; o mod repete (sessao.pouso.tentativa n=2) e valida de novo', async ($, on) => {
-  const m = mundo($, on, { percentPosClear: 60 })
+test('clear-falho-repete: leitura ≥ X na sucessora = o /clear não limpou; só depois de 60 s o mod repete (n=2), SEM turno nenhum', async ($, on) => {
+  const m = mundo($, on, { percentPosClear: 60, agora: BASE })
   await pousar(m)
   expect(m.est.clears).toBe(1)
   expect((await m.agent('gabarito-implementador')).deny).toMatch(/aguardando/) // 60 % na sessão nova: não confirma, não libera
-  await m.turno(); await m.clock.settle()
+  await m.turno(); await m.clock.settle() // espera ainda não vencida (poucos segundos do pouso): nada de repetir
+  expect(m.est.clears).toBe(1)
+  expect(tentativas(m)).toEqual([])
+  await m.avancar(30_000) // vigia: ainda < 60 s do pouso
+  expect(m.est.clears).toBe(1)
+  await m.avancar(31_000) // vencida: a vigia repete sozinha, sem nenhum turno.complete
   expect(m.est.clears).toBe(2)
   expect(tentativas(m)).toEqual([2])
   expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(1)
   expect(parou(m)).toHaveLength(0)
 })
 
-test('tentativa-espera-60s: tentativa fresca (< 60 s) não repete ainda e o Agent segue negado entre as tentativas', async ($, on) => {
-  const m = mundo($, on, { eventos: INCIDENTE(20_000), percent: 61 })
+test('sem-turno-a-vigia-repete: o pouso manual é recente, nenhum turno vem; passados 120 s sem medição a vigia conta a tentativa como falha e repete', async ($, on) => {
+  const m = mundo($, on, { eventos: INCIDENTE(20_000), percent: 61, agora: BASE })
   await m.inicio()
-  await m.turno(); await m.clock.settle()
+  await m.turno(); await m.clock.settle() // pouso de 20 s atrás: espera
+  expect(m.est.clears).toBe(0)
+  await m.avancar(60_000) // 80 s do pouso: desconhecida, ainda dentro do limite
   expect(m.est.clears).toBe(0)
   expect(tentativas(m)).toEqual([])
   expect((await m.agent('gabarito-implementador')).deny).toMatch(/aguardando/) // nenhum despacho entre as tentativas
   expect((await m.agent('gabarito-revisor')).deny).toMatch(/aguardando/)
+  await m.avancar(50_000) // 130 s: vencido, sem nenhum turno
+  expect(m.est.clears).toBe(1)
+  expect(tentativas(m)).toEqual([2])
 })
 
 test('leitura-da-sessao-antiga-nao-libera: /clear que não troca a sessão, mesmo medindo < X, não confirma', async ($, on) => {
@@ -4651,41 +4681,52 @@ test('leitura-da-sessao-antiga-nao-libera: /clear que não troca a sessão, mesm
   expect(m.store.get(`confirmado:${DIR}`)).toBeUndefined()
 })
 
-test('leitura-desconhecida-nao-trava: sem medição o pouso nem confirma nem libera, mas passado o limite conta como tentativa falha (não é trava eterna)', async ($, on) => {
-  const m = mundo($, on, { eventos: INCIDENTE(), usageFalha: true })
+test('paralela-nao-confirma: uma sessão paralela baixa, sem relação com o pouso, não o confirma nem fica presa a ele; no teto fica negada e nunca grava a confirmação', async ($, on) => {
+  const base = INCIDENTE()
+  const m = mundo($, on, { eventos: base, percent: 10, agora: BASE, sessaoId: 'sess-B' })
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined() // baixa e alheia: livre
+  expect(m.store.get(`confirmado:${DIR}`)).toBeUndefined() // e a leitura baixa DELA não confirma o pouso da outra
+  m.est.percent = 61
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/)
+  expect(m.store.get(`confirmado:${DIR}`)).toBeUndefined()
+})
+
+test('leitura-desconhecida-nao-trava: sem medição o pouso nem confirma nem libera, mas passado o limite conta como tentativa falha, e acaba em sem_pouso sem nenhum turno', async ($, on) => {
+  const m = mundo($, on, { eventos: INCIDENTE(), usageFalha: true, agora: BASE })
   await m.inicio()
   expect((await m.agent('gabarito-implementador')).deny).toMatch(/aguardando/)
   await m.turno(); await m.clock.settle() // desconhecida há 10 min > limite: a tentativa 1 falhou, repete
   expect(tentativas(m)).toEqual([2])
   expect(m.est.clears).toBe(1)
-  for (let i = 0; i < 4; i++) { await m.turno(); await m.clock.settle() }
-  expect(tentativas(m)).toEqual([2, 3]) // chega ao fim: não fica esperando para sempre
+  await m.avancar(130_000) // a 2ª também fica sem medição: a vigia conta a falha e faz a 3ª
+  expect(tentativas(m)).toEqual([2, 3])
+  await m.avancar(130_000) // e a 3ª: acabou
   expect(parou(m).map((g) => g.dados.motivo)).toEqual(['sem_pouso'])
+  expect(m.est.clears).toBe(2)
 })
 
-test('teto-3-tentativas-para-sem-pouso: 3 tentativas sem confirmação ⇒ loop.parar sem_pouso uma vez, aviso, nenhuma 4ª', async ($, on) => {
-  const m = mundo($, on, { percentPosClear: 60 })
+test('teto-3-tentativas-para-sem-pouso: 3 tentativas sem confirmação ⇒ loop.parar sem_pouso uma vez, aviso, nenhuma 4ª (tudo pela vigia, sem turno)', async ($, on) => {
+  const m = mundo($, on, { percentPosClear: 60, agora: BASE })
   await pousar(m)
-  for (let i = 0; i < 8; i++) { await m.turno(); await m.clock.settle() }
+  for (let i = 0; i < 3; i++) await m.avancar(61_000) // 1ª repetição, 2ª, e a medição da 3ª (≥ X ⇒ esgotada)
   expect(m.est.clears).toBe(3) // pouso + 2 repetições = 3 tentativas
   expect(tentativas(m)).toEqual([2, 3])
   expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(1)
   expect(parou(m)).toHaveLength(1)
   expect(parou(m)[0].dados).toEqual({ motivo: 'sem_pouso', causa: 'sem_confirmacao' })
   expect(m.toasts.some((t) => /não foi confirmado depois de 3 tentativas/.test(t))).toBe(true)
-  for (let i = 0; i < 3; i++) { await m.turno(); await m.clock.settle() }
+  for (let i = 0; i < 4; i++) { await m.avancar(61_000); await m.turno(); await m.clock.settle() }
   expect(m.est.clears).toBe(3) // nenhuma 4ª
   expect(parou(m)).toHaveLength(1)
 })
 
-test('stop-do-mod-nao-conta: tentativa não é pouso (seq, fronteira e push inalterados)', async ($, on) => {
+test('tentativa-nao-e-pouso: tentativa não muda seq, fronteira nem a chave do push', async ($, on) => {
   const base = INCIDENTE()
   const com = [...base, EVT(5, 'sessao.pouso.tentativa', { n: 2 }, 300_000, 'sess-1'), EVT(6, 'sessao.pouso.tentativa', { n: 3 }, 100_000, 'sess-1')]
   expect(pousoPendente(com, true)).toEqual(pousoPendente(base, true)) // mesmo seq ⇒ mesma chave do push
   expect(pousoPendente(com, true).seq).toBe(4)
   const estado = (pp: any) => ({ id: 'PBI-7', depende: [{ acoes: [{ comando: '/clear' }] }], pousoPendente: pp })
   expect(chavePouso(estado(pousoPendente(com, true)))).toBe(chavePouso(estado(pousoPendente(base, true))))
-  // só tentativas, sem `sessao.pouso`: nada a confirmar e a fronteira segue aberta
   const soTentativa = [...base.slice(0, 3), EVT(5, 'sessao.pouso.tentativa', { n: 2 }, 100_000, 'sess-1')]
   expect(pousoDaFronteira(soTentativa)).toBe(false)
   expect(pousoPendente(soTentativa, true).pendente).toBe(false)
@@ -4700,21 +4741,39 @@ const CLEAR = PEV(1, 'sessao.inicio', { origem: 'clear' }, T0 + 5_000, 'nova')
 const L = (sessao: string, percent: number, emMs: number, fonte = 'mod') => ({ sessao, percent, fonte, emMs })
 const med = (leituras: any[], agoraMs: number, extra: any = {}) => ({ x: 50, agoraMs, sessaoAtual: 'nova', leituras, modAtivo: true, ...extra })
 
-test('leitura-velha-nao-libera: leitura da sessão nova com mais de 120 s não confirma', async ($, on) => {
+test('leitura-velha-nao-libera: leitura da sucessora com mais de 120 s não confirma', async ($, on) => {
   const agora = T0 + 200_000
   expect(situacaoDoPouso([POUSO, CLEAR], med([L('nova', 10, agora - 10_000)], agora)).confirmado).toBe(true) // controle: fresca confirma
   const s = situacaoDoPouso([POUSO, CLEAR], med([L('nova', 10, agora - 130_000)], agora))
   expect(s.confirmado).toBe(false)
   expect(s.leitura).toBe('desconhecida')
 })
-test('leitura-da-sessao-antiga-nao-libera (pura): leitura da sessão que pousou, de outra sessão, anterior ao /clear ou de fonte transcript não confirmam', async ($, on) => {
+test('leitura-da-sessao-antiga-nao-libera (pura): leitura da sessão que pousou, de outra, anterior ao /clear, do futuro ou de fonte transcript não confirmam', async ($, on) => {
   const agora = T0 + 30_000
   expect(situacaoDoPouso([POUSO, CLEAR], med([L('velha', 10, agora - 1000)], agora)).confirmado).toBe(false) // a sessão antiga
   expect(situacaoDoPouso([POUSO, CLEAR], med([L('outra', 10, agora - 1000)], agora)).confirmado).toBe(false) // uma terceira
   expect(situacaoDoPouso([POUSO, CLEAR], med([L('nova', 10, T0 + 1_000)], agora)).confirmado).toBe(false) // anterior ao /clear
   expect(situacaoDoPouso([POUSO, CLEAR], med([L('nova', 10, agora - 1000, 'transcript')], agora)).confirmado).toBe(false) // estimada
+  expect(situacaoDoPouso([POUSO, CLEAR], med([L('nova', 10, agora + 60_000)], agora)).confirmado).toBe(false) // `em` no futuro (> 5 s)
   expect(situacaoDoPouso([POUSO, CLEAR], med([L('nova', 50, agora - 1000)], agora)).confirmado).toBe(false) // X exato: não é < X
   expect(situacaoDoPouso([POUSO, CLEAR], med([L('nova', 49, agora - 1000)], agora)).confirmado).toBe(true)
+})
+test('sucessora (pura, r1 MAJOR-2): sessão paralela sem /clear não confirma; /clear alheio com a que pousou ainda medindo depois dele não confirma; a sucessora de verdade confirma', async ($, on) => {
+  const agora = T0 + 60_000
+  // paralela B: mede 10 %, nenhum sessao.inicio {clear} dela
+  expect(situacaoDoPouso([POUSO], med([L('B', 10, agora - 1000)], agora, { sessaoAtual: 'B' })).confirmado).toBe(false)
+  expect(situacaoDoPouso([POUSO, PEV(2, 'sessao.inicio', { origem: 'startup' }, T0 + 5_000, 'B')], med([L('B', 10, agora - 1000)], agora, { sessaoAtual: 'B' })).confirmado).toBe(false)
+  // C deu /clear por conta própria; a que pousou (velha) ainda mede 61 % DEPOIS dele: não foi ela que foi limpa
+  const clearC = PEV(2, 'sessao.inicio', { origem: 'clear' }, T0 + 5_000, 'C')
+  const viva = situacaoDoPouso([POUSO, clearC], med([L('velha', 61, agora - 2000), L('C', 10, agora - 1000)], agora, { sessaoAtual: 'velha' }))
+  expect([viva.confirmado, viva.nova]).toEqual([false, null])
+  // a velha calou depois do /clear (leitura anterior a ele): C é a sucessora e confirma
+  const ok = situacaoDoPouso([POUSO, clearC], med([L('velha', 61, T0 + 1_000), L('C', 10, agora - 1000)], agora, { sessaoAtual: 'C' }))
+  expect([ok.confirmado, ok.nova]).toEqual([true, 'C'])
+  // o /clear do mod: a sucessora aparece na `sessao.retomada {via: mod}` (sem onboarding não há sessao.inicio)
+  const retomada = PEV(2, 'sessao.retomada', { via: 'mod', chars: 10 }, T0 + 5_000, 'S2')
+  expect(situacaoDoPouso([POUSO, retomada], med([L('S2', 10, agora - 1000)], agora, { sessaoAtual: 'S2' })).confirmado).toBe(true)
+  expect(situacaoDoPouso([POUSO, retomada], med([L('velha', 10, agora - 1000)], agora, { sessaoAtual: 'velha' })).confirmado).toBe(false)
 })
 test('desconhecida-limite (pura): desconhecida só conta como falha depois de 120 s; repetir só depois de 60 s; no máximo 3', async ($, on) => {
   const cedo = situacaoDoPouso([POUSO], med([], T0 + 50_000, { sessaoAtual: 'velha' }))
@@ -4727,9 +4786,15 @@ test('desconhecida-limite (pura): desconhecida só conta como falha depois de 12
   const alta = situacaoDoPouso([POUSO, CLEAR], med([L('nova', 70, T0 + 30_000)], T0 + 40_000))
   expect([alta.leitura, alta.falhou, alta.podeRepetir]).toEqual(['falhou', true, false]) // falhou, mas só 40 s desde o pouso: espera
 })
-test('sem-mod-o-evento-vale (pura): sem leitura do mod o /clear do dono (sessao.inicio) segue sendo a saída (FIEL-14 e)', async ($, on) => {
+test('sem-mod-o-evento-vale (pura, r1 MAJOR-3): "mod ativo" é leitura FRESCA; mod que some depois do pouso volta à regra do /clear do dono', async ($, on) => {
   expect(pousoPendente([POUSO], true).pendente).toBe(true)
   expect(pousoPendente([POUSO, CLEAR], true).pendente).toBe(false)
-  expect(pousoPendente([POUSO, CLEAR], true, med([], T0 + 60_000, { modAtivo: undefined })).pendente).toBe(false) // sem leitura mod: modo evento
-  expect(pousoPendente([POUSO, CLEAR], true, med([L('velha', 5, T0 - 1000)], T0 + 60_000, { modAtivo: undefined })).pendente).toBe(true) // mod ativo: o /clear sozinho não basta
+  const semMod = (leituras: any[], agoraMs: number) => med(leituras, agoraMs, { modAtivo: undefined })
+  expect(pousoPendente([POUSO, CLEAR], true, semMod([], T0 + 60_000)).pendente).toBe(false) // sem leitura mod: modo evento
+  // mod fresco: o /clear sozinho não basta (a sucessora ainda não mediu)
+  expect(pousoPendente([POUSO, CLEAR], true, semMod([L('velha', 5, T0 + 50_000)], T0 + 60_000)).pendente).toBe(true)
+  // o mod calou: a última leitura tem 10 min, 1 h, 24 h; o dono deu /clear ⇒ o pendente sai (e a instrução "digite /clear" do Stop é verdadeira)
+  for (const depois of [600_000, 3_600_000, 86_400_000]) {
+    expect(pousoPendente([POUSO, CLEAR], true, semMod([L('velha', 5, T0 + 50_000)], T0 + 50_000 + depois)).pendente).toBe(false)
+  }
 })

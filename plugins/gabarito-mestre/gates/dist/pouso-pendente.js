@@ -87,13 +87,19 @@ const ehClear = (e        )          => {
   return e?.tipo === 'sessao.inicio' && d !== null && typeof d === 'object' && d.origem === 'clear';
 };
 
+/** `sessao.retomada {via: 'mod'}`: o mod a grava na sessão NOVA, logo depois do /clear dele (`$.session.id()` já é o da sucessora). */
+const ehRetomadaDoMod = (e        )          => {
+  const d = e?.dados                                              ;
+  return e?.tipo === 'sessao.retomada' && d !== null && typeof d === 'object' && d.via === 'mod';
+};
+
 /** Quais sessões o chamador deve medir para `situacaoDoPouso` (a atual, a do último pouso/tentativa e a do `/clear` posterior). */
 export function sessoesParaMedir(eventos                             , sessaoAtual               )           {
   const lista = new Set        ();
   if (sessaoAtual !== null) lista.add(sessaoAtual);
   if (Array.isArray(eventos)) {
     for (const e of eventos) {
-      if ((e?.tipo === 'sessao.pouso' || e?.tipo === 'sessao.pouso.tentativa' || ehClear(e)) && typeof e.sessao === 'string') lista.add(e.sessao);
+      if ((e?.tipo === 'sessao.pouso' || e?.tipo === 'sessao.pouso.tentativa' || ehClear(e) || ehRetomadaDoMod(e)) && typeof e.sessao === 'string') lista.add(e.sessao);
     }
   }
   return [...lista];
@@ -125,15 +131,26 @@ export function situacaoDoPouso(eventos                             , med       
     }
     return c;
   };
-  const modAtivo = med === undefined ? false : (med.modAtivo ?? med.leituras.some((l) => l.fonte === 'mod' && Number.isFinite(l.emMs) && l.emMs >= ref.ms - VALIDADE_LEITURA_MS));
+  // "Mod ativo" é sinal FRESCO: alguma leitura `mod` de até 120 s. O mod desligado depois do pouso volta à regra sem mod (o /clear do dono libera).
+  const fresca = (l         )          => l.fonte === 'mod' && Number.isFinite(l.emMs) && med !== undefined && med.agoraMs - l.emMs <= VALIDADE_LEITURA_MS && l.emMs - med.agoraMs <= 5_000;
+  const modAtivo = med === undefined ? false : (med.modAtivo ?? med.leituras.some(fresca));
   if (med === undefined || !modAtivo) {
     // sem mod: o fato é o `/clear` do dono (FIEL-14 e), como antes
     const pendente = limpou(false) === null;
     return { ...SEM_POUSO, modo: 'evento', pouso, pendente, confirmado: !pendente, leitura: 'sem_medicao', tentativas };
   }
-  const c = limpou(true);
-  const nova = c !== null ? c.sessao : med.sessaoAtual !== null && med.sessaoAtual !== ref.sessao ? med.sessaoAtual : null;
-  const tClear = c !== null ? msDe(c) : ref.ms;
+  // A confirmação só vem da sessão SUCESSORA (emenda 53 a): a do primeiro `sessao.inicio {clear}` ou `sessao.retomada {via: mod}` de OUTRA sessão que a da tentativa,
+  // depois dela. Sessão paralela sem /clear não é sucessora; um /clear alheio com a sessão que pousou ainda medindo depois dele também não (ela não foi limpa).
+  let suc                = null;
+  let sucMs = Number.POSITIVE_INFINITY;
+  for (const e of eventos) {
+    const t = msDe(e);
+    if (!(ehClear(e) || ehRetomadaDoMod(e)) || !Number.isFinite(t) || !Number.isFinite(ref.ms) || t <= ref.ms || e.sessao === ref.sessao) continue;
+    if (t < sucMs) { suc = e; sucMs = t; }
+  }
+  const refViva = suc !== null && med.leituras.some((l) => l.sessao === ref.sessao && l.fonte === 'mod' && Number.isFinite(l.emMs) && l.emMs > sucMs && fresca(l));
+  const nova = suc !== null && !refViva ? suc.sessao : null;
+  const tClear = suc !== null ? sucMs : ref.ms;
   const l = nova === null ? undefined : med.leituras.find((x) => x.sessao === nova);
   const valida = l !== undefined && l.fonte === 'mod' && Number.isFinite(l.emMs) && Number.isFinite(l.percent) && l.percent >= 0 && l.percent <= 100
     && l.emMs > tClear && med.agoraMs - l.emMs <= VALIDADE_LEITURA_MS && l.emMs - med.agoraMs <= 5_000;

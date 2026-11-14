@@ -1452,6 +1452,7 @@ const contextoDe = (raiz, sessao, percent, { fonte = 'mod', idadeMs = 0 } = {}) 
 test('stop-no-teto-nao-pede-despacho: o incidente (pousar manual do dono, sem /clear, contexto 61 %, repo sem onboarding) ⇒ aguardando o pouso do mod; nunca block', () => {
   const raiz = repo();
   plano(raiz);
+  diario(raiz, 's', TASK_APROVADA('s')); // há fronteira: o veredito que o pouso espera
   pousoDe(raiz); // `loop.mjs pousar` via dono; sem sessao.inicio de /clear
   contextoDe(raiz, 'S1', 61);
   for (let i = 0; i < 5; i += 1) avisa(stop(raiz), /aguardando o pouso do mod/);
@@ -1474,19 +1475,70 @@ test('stop-teto-revisor-segue: o revisor que fecha a fronteira continua sendo pe
   bloqueia(stop(raiz), /T1/);
 });
 
-test('stop-pouso-confirmado-por-medicao-libera: a sessão nova (S1) medindo < X confirma, e o despacho volta', () => {
+test('stop-pouso-confirmado-por-medicao-libera: a SUCESSORA (S1, com sessao.inicio de /clear) medindo < X confirma, e o despacho volta', () => {
   const raiz = repo();
   plano(raiz);
   pousoDe(raiz);
+  diario(raiz, 'S1', [ev('S1', 1, 'sessao.inicio', { origem: 'clear' })]);
   contextoDe(raiz, 'S1', 20);
   bloqueia(stop(raiz), /T1/);
+});
+
+test('stop-paralela-nao-confirma (r1 MAJOR-2): a sessão paralela (S1) medindo 20 %, sem /clear dela, não tira o aguardando; /clear alheio com a que pousou ainda medindo também não', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 's', TASK_APROVADA('s'));
+  pousoDe(raiz); // pouso da S0
+  contextoDe(raiz, 'S1', 20); // paralela: nenhum sessao.inicio dela
+  avisa(stop(raiz), /aguardando o pouso do mod/);
+  // a S9 deu /clear por conta própria e a S0 (a que pousou) segue medindo DEPOIS dele: a S0 não foi limpa
+  const raiz2 = repo();
+  plano(raiz2);
+  diario(raiz2, 's', TASK_APROVADA('s'));
+  pousoDe(raiz2);
+  diario(raiz2, 'S9', [ev('S9', 1, 'sessao.inicio', { origem: 'clear' })]);
+  contextoDe(raiz2, 'S0', 61);
+  contextoDe(raiz2, 'S1', 61);
+  avisa(stop(raiz2), /aguardando o pouso do mod/);
+});
+
+test('stop-mod-desligado-o-clear-do-dono-libera (r1 MAJOR-3): leitura do mod velha (10 min) = sem mod; o /clear do dono (sessao.inicio) tira o pendente e a instrução do Stop é verdadeira', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  pousoDe(raiz);
+  contextoDe(raiz, 'S0', 61, { idadeMs: 600_000 }); // o mod calou depois do pouso
+  avisa(stop(raiz), /digite \/clear/); // sem mod fresco: a regra por evento, e o texto manda o dono limpar
+  diario(raiz, 'S9', [ev('S9', 1, 'sessao.inicio', { origem: 'clear' })]);
+  bloqueia(stop(raiz, { session_id: 'S9' }), /T1/); // o /clear do dono libera
+});
+
+test('stop-nao-diz-aguardando-sem-fronteira (r1 MINOR-5): pouso sem review.veredito não é do mod (ele nunca age); o Stop manda o dono limpar, não aguardar', () => {
+  const raiz = repo();
+  plano(raiz);
+  pousoDe(raiz); // sem veredito no diário
+  contextoDe(raiz, 'S1', 61);
+  const r = stop(raiz);
+  assert.doesNotMatch(r.json?.systemMessage ?? '', /aguardando o pouso do mod/);
+});
+
+test('stop-nao-diz-aguardando-depois-de-sem_pouso (r1 MINOR-5): o mod desistiu (loop.parar sem_pouso); o Stop não promete o pouso do mod', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 's', TASK_APROVADA('s'));
+  diario(raiz, 'S0', [ev('S0', 1, 'sessao.pouso', { percent: 61, x: 50 }), ev('S0', 2, 'loop.parar', { motivo: 'sem_pouso', causa: 'sem_confirmacao' })]);
+  contextoDe(raiz, 'S1', 61);
+  const r = stop(raiz);
+  assert.doesNotMatch(r.json?.systemMessage ?? '', /aguardando o pouso do mod/);
 });
 
 test('stop-leitura-que-nao-vale-nao-confirma: velha (> 120 s), da sessão que pousou ou de fonte transcript ⇒ continua aguardando o mod', () => {
   for (const [sessao, opcoes] of [['S1', { idadeMs: 300_000 }], ['S0', {}], ['S1', { fonte: 'transcript' }]]) {
     const raiz = repo();
     plano(raiz);
+    diario(raiz, 's', TASK_APROVADA('s'));
     pousoDe(raiz);
+    diario(raiz, 'S1', [ev('S1', 1, 'sessao.inicio', { origem: 'clear' })]); // a S1 é a sucessora: só falta a leitura valer
     contextoDe(raiz, 'S0', 90); // o mod estava ativo na sessão que pousou
     contextoDe(raiz, sessao, 20, opcoes);
     avisa(stop(raiz), /aguardando o pouso do mod/);
