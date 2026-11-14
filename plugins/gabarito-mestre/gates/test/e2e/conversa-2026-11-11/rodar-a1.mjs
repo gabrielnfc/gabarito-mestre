@@ -700,16 +700,25 @@ async function matriz(fonte, tmpRaiz, roteiro, so) {
     const rundir = join(base, idDaCelula(celula));
     const repo = join(rundir, 'repo');
     mkdirSync(join(rundir, 'obs'), { recursive: true });
+    // superpowers (T46, emenda 41): dependência declarada do produto, carregada como plugin explícito de versão FIXA; ausente ⇒ a célula para com causa própria, sem rodar desabilitada
+    const sp = resolverSuperpowers();
+    if (!sp.ok) {
+      process.stderr.write(`${idDaCelula(celula)}: ${sp.causa}\n`);
+      const exec = { celula: idDaCelula(celula), passa: false, resultados: [{ id: 'dependencia', ok: false, detalhe: sp.causa }] };
+      writeFileSync(join(rundir, 'resultado.json'), `${JSON.stringify({ ...exec, ambiente: ambienteDaExecucao('', sp) }, null, 2)}\n`);
+      execucoes.push(exec);
+      continue;
+    }
     const { bin } = prepararCopia(fonte, repo, celula);
     escreverObservador(join(rundir, 'observador'));
     writeFileSync(join(rundir, 'inicio.iso'), `${new Date().toISOString()}\n`);
     writeFileSync(join(rundir, 'falas.tsv'), roteiro.falas.map((f) => `${f.n}\t${f.rotulo}\t${sha256(f.texto)}\t${f.texto}`).join('\n'));
-    const r = spawnSync('expect', ['-f', join(AQUI, 'a1.exp'), rundir, repo, PLUGIN, join(rundir, 'observador'), String(celula.cols), String(celula.rows), bin, process.execPath, fileURLToPath(import.meta.url)], { encoding: 'utf8', timeout: 4 * 60 * 60 * 1000 });
+    const r = spawnSync('expect', ['-f', join(AQUI, 'a1.exp'), rundir, repo, PLUGIN, join(rundir, 'observador'), String(celula.cols), String(celula.rows), bin, process.execPath, fileURLToPath(import.meta.url), sp.caminho], { encoding: 'utf8', timeout: 4 * 60 * 60 * 1000 });
     let ev = null;
     let erroColeta = '';
     try { ev = await coletar(rundir, repo, celula, roteiro); } catch (e) { erroColeta = e.message; process.stderr.write(`${idDaCelula(celula)}: coleta falhou: ${e.message}\n`); }
     const exec = ev === null || r.status !== 0 ? { celula: idDaCelula(celula), passa: false, resultados: [{ id: 'execucao', ok: false, detalhe: `expect rc ${r.status}; evidência ${ev === null ? `ausente (${erroColeta})` : 'coletada'}` }] } : avaliarExecucao(ev);
-    writeFileSync(join(rundir, 'resultado.json'), `${JSON.stringify({ ...exec, ambiente: ev?.ambiente ?? dialogosDoExpLog(existsSync(join(rundir, 'exp.log')) ? readFileSync(join(rundir, 'exp.log'), 'utf8') : '') }, null, 2)}\n`);
+    writeFileSync(join(rundir, 'resultado.json'), `${JSON.stringify({ ...exec, ambiente: { ...(ev?.ambiente ?? dialogosDoExpLog(existsSync(join(rundir, 'exp.log')) ? readFileSync(join(rundir, 'exp.log'), 'utf8') : '')), superpowers: superpowersNoAmbiente(sp) } }, null, 2)}\n`);
     execucoes.push(exec);
   }
   return { rel: avaliarMatriz(execucoes), execucoes, base };
@@ -734,6 +743,27 @@ export function dialogosDoExpLog(expLog) {
   return { importsExternos: /DIALOGO-IMPORTS-EXTERNOS recusado/.test(String(expLog)) ? 'apareceu-e-foi-recusado' : 'nao-apareceu' };
 }
 
+/** Versão FIXA do superpowers que a cópia do A1 carrega (T46, emenda 41): a instalada quando a emenda foi aprovada. Nunca "a última do cache". */
+export const SUPERPOWERS_VERSAO = '7.0.2';
+
+/** Diretório de configuração da conta que roda (padrão do Claude Code: CLAUDE_CONFIG_DIR, senão ~/.claude). */
+export const configDaConta = () => process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude');
+
+/** Resolve o superpowers fixo: nome e marketplace vêm da dependência declarada no plugin.json do produto; o caminho, do cache de plugins da conta que roda; a versão é a FIXA.
+ * Versão fixa ausente (sem diretório, sem manifesto ou manifesto de outra versão) ⇒ `{ ok: false, causa: 'dependencia_ausente: <nome>@<versão>' }`: nunca cai para outra versão. */
+export function resolverSuperpowers({ config = configDaConta(), pluginJson = join(PLUGIN, '.claude-plugin', 'plugin.json'), versao = SUPERPOWERS_VERSAO } = {}) {
+  const dep = (JSON.parse(readFileSync(pluginJson, 'utf8')).dependencies ?? []).find((d) => d?.name === 'superpowers') ?? { name: 'superpowers', marketplace: 'claude-plugins-official' };
+  const caminho = join(config, 'plugins', 'cache', dep.marketplace, dep.name, versao);
+  let manifesto = null;
+  try { manifesto = JSON.parse(readFileSync(join(caminho, '.claude-plugin', 'plugin.json'), 'utf8')); } catch { manifesto = null; }
+  if (manifesto?.name !== dep.name || manifesto?.version !== versao) return { ok: false, causa: `dependencia_ausente: ${dep.name}@${versao}` };
+  return { ok: true, nome: manifesto.name, versao: manifesto.version, caminho };
+}
+
+/** `ambiente` do resultado.json: o diálogo de imports (exp.log) mais o superpowers carregado (nome, versão, caminho) ou a causa da ausência. */
+export const superpowersNoAmbiente = (sp) => (sp.ok ? { nome: sp.nome, versao: sp.versao, caminho: sp.caminho } : { dependencia_ausente: sp.causa.replace(/^dependencia_ausente: /, '') });
+export const ambienteDaExecucao = (expLog, sp) => ({ ...dialogosDoExpLog(expLog), superpowers: superpowersNoAmbiente(sp) });
+
 // ─── CLI ───
 
 function flag(argv, nome) { const i = argv.indexOf(nome); return i >= 0 ? argv[i + 1] : undefined; }
@@ -745,6 +775,8 @@ export async function main(argv) {
     process.stdout.write(`${JSON.stringify(r)}\n`);
     return r.ok ? 0 : 1;
   }
+  // `superpowers` (diagnóstico): rc 0 = versão fixa presente (imprime nome/versão/caminho); rc 1 = ausente (imprime a causa)
+  if (argv[0] === 'superpowers') { const r = resolverSuperpowers(); process.stdout.write(`${JSON.stringify(r)}\n`); return r.ok ? 0 : 1; }
   if (argv[0] === 'snapshot') { await snapshot(argv[1], argv[2], Number(argv[3])); return 0; }
   // `topo` = a árvore que será commitada (a guarda lê o `git ls-files` dela e a cópia do A1 sai dela); `principal` = onde vivem o roteiro e o `.claude-tmp/`
   const topo = flag(argv, '--raiz') ?? git(AQUI, 'rev-parse', '--show-toplevel').trim();

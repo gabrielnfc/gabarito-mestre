@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ASSERCOES, LINHA_DECISAO, MATRIZ, resumoDoAgora, MIN_FALA, PONTOS_ARQ, ROTEIRO_REL, TOTAL_PONTOS, acoesDe, avaliarExecucao, avaliarMatriz, coletar, dialogosDoExpLog, entradaDoSnapshot, falasDoRoteiro, guardaFalas, idDaCelula,
-  itensDeProxima, placementEsperado, pluginCarregou, propsDe, publicadaPeloProduto, raizPrincipal, renderizar, semearEntregaPublicada, sha256, validarPontos, verificarRoteiro,
+  itensDeProxima, placementEsperado, pluginCarregou, resolverSuperpowers, ambienteDaExecucao, SUPERPOWERS_VERSAO, propsDe, publicadaPeloProduto, raizPrincipal, renderizar, semearEntregaPublicada, sha256, validarPontos, verificarRoteiro,
 } from './e2e/conversa-2026-11-11/rodar-a1.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -809,7 +809,7 @@ describe('ambiente da execução real (T44, emenda 39): plugin carregado e diál
     const coletar = src.slice(src.indexOf('async function coletar'), src.indexOf('async function matriz'));
     assert.match(coletar, /ambiente: dialogosDoExpLog\(/, 'coletar produz o campo ambiente');
     const mat = src.slice(src.indexOf('async function matriz'), src.indexOf('// ─── ambiente da execução'));
-    assert.match(mat, /ambiente: ev\?\.ambiente \?\?/, 'resultado.json recebe o ambiente do coletar');
+    assert.match(mat, /ambiente: \{ \.\.\.\(ev\?\.ambiente \?\?/, 'resultado.json recebe o ambiente do coletar');
   });
   test('a1.exp-na-simulacao-do-dialogo: recusa com Enter UMA vez, e texto de conversa parecido NÃO dispara (D1; P14)', (t) => {
     if (spawnSync('expect', ['-v'], { encoding: 'utf8' }).error) { t.skip('expect ausente'); return; }
@@ -840,5 +840,85 @@ describe('ambiente da execução real (T44, emenda 39): plugin carregado e diál
     assert.doesNotMatch(proc, /\\033\\\[B/, 'seta para baixo ACEITARIA os imports (o foco já nasce em No)');
     assert.doesNotMatch(exp, /grep -c -E "dependency-unsatisfied/, 'checagem antiga de plugin removida');
     assert.match(exp, /exec \$node \$runner plugin /);
+  });
+});
+
+describe('superpowers fixo (T46, emenda 41): dependência declarada carregada por --plugin-dir de versão FIXA', () => {
+  const MATRIZ_SRC = () => { const src = readFileSync(RUNNER, 'utf8'); return src.slice(src.indexOf('async function matriz'), src.indexOf('// ─── ambiente da execução')); };
+  const fabricar = (versoes, { nome = 'superpowers', marketplace = 'claude-plugins-official' } = {}) => {
+    const d = mkdtempSync(join(tmpdir(), 'a1-sp-')); TMPS.push(d);
+    for (const v of versoes) {
+      mkdirSync(join(d, 'plugins', 'cache', marketplace, nome, v, '.claude-plugin'), { recursive: true });
+      writeFileSync(join(d, 'plugins', 'cache', marketplace, nome, v, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: nome, version: v }));
+    }
+    return d;
+  };
+  test('versao-fixa-declarada-no-runner (7.0.2) e sem caminho de usuário fixo no runner nem no a1.exp (condição 2 da Sombra)', () => {
+    assert.equal(SUPERPOWERS_VERSAO, '7.0.2');
+    for (const f of [RUNNER, join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp')]) assert.doesNotMatch(readFileSync(f, 'utf8'), /\/Users\/|\/home\/[a-z]/, `${f}: caminho absoluto de usuário`);
+  });
+  test('resolve-pelo-diretorio-de-configuracao-da-conta-e-pela-dependencia-do-plugin.json (condição 1 e 2)', () => {
+    const conta = fabricar(['7.0.0', '7.0.2']);
+    const r = resolverSuperpowers({ config: conta });
+    assert.equal(r.ok, true);
+    assert.deepEqual({ nome: r.nome, versao: r.versao }, { nome: 'superpowers', versao: '7.0.2' });
+    assert.equal(r.caminho, join(conta, 'plugins', 'cache', 'claude-plugins-official', 'superpowers', '7.0.2'));
+    // a fonte do nome e do marketplace é a dependência do plugin.json, não uma constante do runner
+    const pj = join(conta, 'plugin.json');
+    writeFileSync(pj, JSON.stringify({ dependencies: [{ name: 'superpowers', marketplace: 'mkt-x' }] }));
+    const o = resolverSuperpowers({ config: fabricar(['7.0.2'], { marketplace: 'mkt-x' }), pluginJson: pj });
+    assert.equal(o.ok, true); assert.match(o.caminho, /cache\/mkt-x\/superpowers\/7\.0\.2$/, 'marketplace vem do plugin.json');
+    assert.equal(resolverSuperpowers({ config: fabricar(['7.0.2']), pluginJson: pj }).ok, false, 'marketplace do plugin.json diferente do cache: ausente');
+    // o plugin.json real do produto declara o superpowers
+    assert.equal(resolverSuperpowers({ config: fabricar([]) }).causa, 'dependencia_ausente: superpowers@7.0.2');
+  });
+  test('config-vem-de-CLAUDE_CONFIG_DIR-com-o-padrao-do-claude-code', () => {
+    const conta = fabricar(['7.0.2']);
+    const sub = (env) => spawnSync(process.execPath, [RUNNER, 'superpowers'], { encoding: 'utf8', env: { PATH: process.env.PATH, ...env } });
+    const a = sub({ CLAUDE_CONFIG_DIR: conta });
+    assert.equal(a.status, 0, a.stderr); assert.equal(JSON.parse(a.stdout).caminho, join(conta, 'plugins', 'cache', 'claude-plugins-official', 'superpowers', '7.0.2'));
+    const b = sub({ CLAUDE_CONFIG_DIR: fabricar([]) });
+    assert.equal(b.status, 1, 'conta sem a versão fixa: rc 1');
+  });
+  test('dependencia-ausente-para-com-causa: versão fixa ausente NÃO cai para outra versão do cache', () => {
+    const conta = fabricar(['7.0.0', '7.1.0']); // há outras versões, não a fixa
+    const r = resolverSuperpowers({ config: conta });
+    assert.equal(r.ok, false);
+    assert.equal(r.causa, 'dependencia_ausente: superpowers@7.0.2');
+    assert.equal(r.caminho, undefined, 'sem caminho: nada a carregar');
+    // diretório da versão existe mas vazio (sem plugin.json): também ausente
+    const vazio = mkdtempSync(join(tmpdir(), 'a1-sp-')); TMPS.push(vazio);
+    mkdirSync(join(vazio, 'plugins', 'cache', 'claude-plugins-official', 'superpowers', '7.0.2'), { recursive: true });
+    assert.equal(resolverSuperpowers({ config: vazio }).ok, false);
+    // a versão registrada no manifesto precisa ser a fixa
+    const torto = fabricar([]); mkdirSync(join(torto, 'plugins', 'cache', 'claude-plugins-official', 'superpowers', '7.0.2', '.claude-plugin'), { recursive: true });
+    writeFileSync(join(torto, 'plugins', 'cache', 'claude-plugins-official', 'superpowers', '7.0.2', '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'superpowers', version: '9.9.9' }));
+    assert.equal(resolverSuperpowers({ config: torto }).ok, false, 'manifesto de outra versão não vale');
+  });
+  test('matriz-para-a-celula-sem-rodar-quando-ausente (nunca roda desabilitada)', () => {
+    const m = MATRIZ_SRC();
+    const iResolve = m.indexOf('resolverSuperpowers('); const iExpect = m.indexOf("spawnSync('expect'");
+    assert.ok(iResolve > 0 && iExpect > iResolve, 'resolve ANTES de abrir o expect');
+    assert.match(m, /if \(!sp\.ok\)[\s\S]{0,400}?continue;/, 'ausente: registra e pula a célula');
+    assert.match(m, /dependencia_ausente|sp\.causa/, 'a causa vai ao resultado');
+    assert.doesNotMatch(m, /readdirSync/, 'sem varrer o cache por "última versão"');
+  });
+  test('a1.exp-e-o-spawn-passam-o-superpowers-como-plugin-explicito (superpowers-fixo-no-spawn)', () => {
+    const exp = readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), 'utf8');
+    const spawn = exp.slice(exp.indexOf('spawn claude'), exp.indexOf('nota "inicio'));
+    assert.match(spawn, /--plugin-dir \$superpowers/, 'spawn do claude carrega o superpowers');
+    assert.doesNotMatch(spawn, /--setting-sources[^\n]*user/, 'sem ligar o setting-sources user (D1)');
+    assert.match(exp, /lassign \$argv [^\n]*\brunner superpowers\n/, 'argumento novo declarado');
+    const m = MATRIZ_SRC();
+    assert.match(m, /fileURLToPath\(import\.meta\.url\), sp\.caminho\]/, 'matriz passa o caminho resolvido ao a1.exp');
+  });
+  test('ambiente-registra-superpowers (nome, versão e caminho no resultado.json; troca o valor e falha)', () => {
+    const sp = { ok: true, nome: 'superpowers', versao: '7.0.2', caminho: '/x/y' };
+    assert.deepEqual(ambienteDaExecucao('1 inicio\n2 DIALOGO-IMPORTS-EXTERNOS recusado\n', sp), { importsExternos: 'apareceu-e-foi-recusado', superpowers: { nome: 'superpowers', versao: '7.0.2', caminho: '/x/y' } });
+    assert.deepEqual(ambienteDaExecucao('', { ...sp, versao: '7.0.0', caminho: '/z' }).superpowers, { nome: 'superpowers', versao: '7.0.0', caminho: '/z' });
+    assert.deepEqual(ambienteDaExecucao('', { ok: false, causa: 'dependencia_ausente: superpowers@7.0.2' }).superpowers, { dependencia_ausente: 'superpowers@7.0.2' });
+    const m = MATRIZ_SRC();
+    assert.match(m, /ambienteDaExecucao\('', sp\)/, 'célula parada por ausência registra a causa no ambiente');
+    assert.match(m, /superpowers: superpowersNoAmbiente\(sp\) \} \}/, 'célula executada registra nome/versão/caminho no ambiente');
   });
 });
