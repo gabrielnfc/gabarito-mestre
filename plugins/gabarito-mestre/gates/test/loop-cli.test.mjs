@@ -5832,9 +5832,34 @@ describe('GM-14 T54: `emenda aplicar <seq>` grava spec.aplicada com os sha do di
     assert.equal(r.j.erro, 'spec_ausente');
   });
 
+  test('aprovarSpec-segue-shaAceito: (1) A, aplicada A⇒B, spec volta a A; (2) A, depois B, spec volta a A: aprovar grava e o painel limpa', async () => {
+    const { aprovarSpec } = await import('../scripts/loop.mjs');
+    // (1)
+    const um = await pronto();
+    um.editar(`${um.texto0}\nB\n`);
+    assert.equal(um.amb.cli(['emenda', 'aplicar', '1']).rc, 0);
+    um.editar(um.texto0);
+    assert.equal(await painelAguarda(um.amb), true);
+    assert.equal(aprovarSpec(um.amb.dir, 'S-dono').ok, true);
+    assert.equal(await painelAguarda(um.amb), false);
+    // (2)
+    const dois = await pronto();
+    dois.editar(`${dois.texto0}\nB\n`);
+    assert.equal(aprovarSpec(dois.amb.dir, 'S-dono').ok, true);
+    dois.editar(dois.texto0);
+    assert.equal(await painelAguarda(dois.amb), true);
+    assert.equal(aprovarSpec(dois.amb.dir, 'S-dono').ok, true);
+    assert.equal(await painelAguarda(dois.amb), false);
+    assert.equal(aprovarSpec(dois.amb.dir, 'S-dono').erro, 'ja_aprovada', 'o aceito agora é A: aprovar de novo recusa');
+  });
+
   test('regra-unica-estatica-cli: o loop.mjs importa a regra de emenda.js e não compara sha de spec por conta própria', () => {
     const t = readFileSync(join(AQUI, '..', 'scripts', 'loop.mjs'), 'utf8');
     assert.match(t, /import \{[^}]*\bvalidarAplicacao\b[^}]*\} from '\.\.\/dist\/emenda\.js'/);
     assert.match(t, /validarAplicacao\(/);
+    // aprovarSpec: o `ja_aprovada` vem de shaAceito, não de varredura própria por spec.aprovada com o sha atual
+    const apr = t.slice(t.indexOf('export function aprovarSpec'), t.indexOf('/** `parar` é o registro'));
+    assert.match(apr, /shaAceito\(eventos, atual\.sha256\)/);
+    assert.doesNotMatch(apr, /if \(antesN > 0\)/);
   });
 });

@@ -69,7 +69,7 @@ import { lerConfigOrigin, resolverModelo } from '../lib/config.mjs';
 import { PADROES } from '../lib/git.mjs';
 import { aprendizadosVigentes, paraDestino } from '../dist/aprendizado.js';
 import * as diario from '../dist/diario.js';
-import { escopoDaTask, pontaDaSpec, projetarEmendas, SESSAO_EMENDAS, validarAplicacao, validarJulgamento, validarProposta } from '../dist/emenda.js';
+import { escopoDaTask, pontaDaSpec, projetarEmendas, SESSAO_EMENDAS, shaAceito, validarAplicacao, validarJulgamento, validarProposta } from '../dist/emenda.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { formaInvalida, formaNaGravacao, MOTIVOS_REENTREGA, REQ_RE } from '../dist/formas.js';
 import { estadoDe, ordenar, podeIntegrar, proximaAcao, tasksCongeladas } from '../dist/loop.js';
@@ -2203,7 +2203,8 @@ function liberarComoSombra(c, plano, task, hash) {
  * o diário segue na raiz principal).
  * A spec é `plano.spec`; sem `plano.json` (GM-14 T15, a aprovação vem antes do plano) é a ÚNICA de `lerSpecs` com `PBI` da entrega: 0 ⇒
  * `spec_ausente`, 2+ ⇒ `spec_ambigua`, specs ilegíveis ⇒ `specs_ilegiveis`; nada gravado em nenhum. Plano presente e inválido segue `plano_invalido`.
- * "Já aprovada" = existe `spec.aprovada` de forma válida com o sha atual, sem ordem e sem olhar `spec` (a régua do painel): não entra em
+ * "Já aprovada" = o sha atual é o último aceito (`shaAceito`, a regra única de `emenda.ts`, T54: última aprovação ou fim da cadeia de emendas aplicadas;
+ * voltar a um sha antigo NÃO é aceito e se aprova de novo, o que reinicia a cadeia; a contagem de `spec.aprovada` com o sha só confere a releitura): não entra em
  * transição nem depende de relógio. Nunca lança: `{ok:true, spec, sha256, entrega}` só com o evento gravado E relido (a contagem com esse sha
  * subiu, não "+1 exato": sem lock, duas sessões juntas gravam dois eventos iguais, limite do `gravar`); senão `{ok:false, erro, mensagem}`.
  * `opcoes.antes` e `opcoes.depois` são injeção de teste: `antes` roda logo antes de reler o sha e gravar, `depois` entre o append e a releitura.
@@ -2232,7 +2233,7 @@ export function aprovarSpec(cwd, sessao, opcoes = {}) {
     let antesN = 0;
     const conferir = (_candidato, eventos) => {
       antesN = contar(eventos);
-      if (antesN > 0) throw new Falha('ja_aprovada', `a spec com o sha256 ${atual.sha256.slice(0, 12)}… já foi aprovada; só uma spec que mudou se aprova de novo. Nada foi gravado`);
+      if (shaAceito(eventos, atual.sha256)) throw new Falha('ja_aprovada', `a spec com o sha256 ${atual.sha256.slice(0, 12)}… já foi aprovada; só uma spec que mudou se aprova de novo. Nada foi gravado`);
       opcoes.antes?.();
       const de_novo = shaDaSpec(checkout, alvo);
       if (!de_novo.ok || de_novo.sha256 !== atual.sha256) throw new Falha('spec_mudou', 'a spec mudou entre o cálculo do sha256 e a gravação; aprove de novo. Nada foi gravado');

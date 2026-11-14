@@ -130,14 +130,17 @@ test('aprovar-apos-mudanca-grava-de-novo: aprovar A, editar para B, aprovar B gr
   assert.deepEqual(aprovadas(amb).map((e) => e.dados.sha256), [sha(Buffer.from('A\n')), sha(Buffer.from('B\n'))]);
 });
 
-test('aprovar-reverter-para-sha-antigo-ja-aprovado: A, B, voltar a A ⇒ ja_aprovada (a régua é só o sha, em qualquer posição do diário)', () => {
+test('aprovar-reverter-para-sha-antigo: A, B, voltar a A ⇒ aprova de novo (o aceito é o ÚLTIMO, T54 emenda 54); A de novo em seguida ⇒ ja_aprovada', () => {
   const amb = repo({ spec: 'A\n' });
   hook(stdinTui(amb.dir));
   amb.spec('B\n');
   hook(stdinTui(amb.dir));
   amb.spec('A\n');
+  const r = hook(stdinTui(amb.dir));
+  assert.notEqual(r.j?.decision, 'block', r.out);
+  assert.equal(aprovadas(amb).length, 3);
   recusa(amb, stdinTui(amb.dir), /ja_aprovada/);
-  assert.equal(aprovadas(amb).length, 2);
+  assert.equal(aprovadas(amb).length, 3);
 });
 
 test('aprovar-outro-caminho-mesmo-conteudo-ja-aprovado: trocar plano.spec para outro arquivo com os mesmos bytes ⇒ ja_aprovada (não olha `spec`)', () => {
