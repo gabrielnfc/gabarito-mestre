@@ -17,6 +17,7 @@ import { trilhaDe, ancoraDaPerguntaB } from '../dist/trilha.js';
 import { marcaDeProgresso, jaParou } from '../dist/pouso.js';
 import { medir } from '../scripts/painel-medir.mjs';
 import { estadoDoPainel } from '../scripts/painel.mjs';
+import { entregaPublicada, SESSAO_QUALQUER } from '../dist/guarda.js';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const FAKE_GH = join(AQUI, 'fixtures', 'gh');
@@ -589,5 +590,65 @@ describe('medir: entrega publicada segue gravando fato.medido na branch (T43, em
     const r = estadoDoPainel(d, { agentes: entrada([], 'sessao-2'), fuso: 'UTC' });
     assert.equal(r.ok, true);
     assert.match(JSON.stringify(r), /Esta conversa é da entrega|De que entrega é esta conversa/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────── T48 emenda 47: UMA regra de "publicada", medir e gravadores no mesmo diário
+
+describe('regra única de publicada: a função e o loop.mjs concordam no mesmo diário; o medir segue na entrega (T48, emenda 47 × decisão do dono, emenda 38)', () => {
+  const LOOP = join(AQUI, '..', 'scripts', 'loop.mjs');
+  const SEMENTE = 'semente';
+  const w = (d, sessao, tipo, dados, ts) => assert.equal(append(dirDe(d), sessao, { ts, autor: 't@t', sessao, agente: 'orquestrador', tipo, dados }).ok, true);
+  const PR = (d, estado = 'mergeado') => w(d, SEMENTE, 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado, branch: 'enabler/GM-14-clareza' } }, '2026-11-12T10:00:00.000Z');
+  const SPEC = (d) => w(d, SEMENTE, 'fato.medido', { chave: 'spec', fonte: 'arquivo', valor: { caminho: 'docs/superpowers/specs/a.md', sha256: 'a'.repeat(64), secoes: 2 } }, '2026-11-12T10:00:01.000Z');
+  const PLANO = (d) => { mkdirSync(dirDe(d), { recursive: true }); writeFileSync(join(dirDe(d), 'plano.json'), JSON.stringify({ tasks: [{ id: 'T1' }] })); };
+  const LEDGER = (d) => { mkdirSync(join(d, 'docs', 'ledgers'), { recursive: true }); writeFileSync(join(d, 'docs', 'ledgers', 'GM-14.md'), '# ledger\n'); };
+  const LIGAR = (d, sessao) => {
+    w(d, sessao, 'fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'enabler/GM-14-clareza' } }, '2026-11-13T10:00:00.000Z');
+    const ancora = `${sessao}:${ler(dirDe(d)).find((e) => e.sessao === sessao).seq}`;
+    w(d, sessao, 'dono.resposta', { pergunta: ancora, opcao: 1, rotulo: 'GM-14' }, '2026-11-13T10:00:01.000Z');
+  };
+
+  const casos = [
+    ['2º fato por spec (fato.medido spec no diário)', (d) => { PR(d); SPEC(d); }, 'S9', true],
+    ['2º fato por ledger', (d) => { PR(d); LEDGER(d); }, 'S9', true],
+    ['2º fato por plano.json', (d) => { PR(d); PLANO(d); }, 'S9', true],
+    ['branch sozinha, sem 2º fato', (d) => { PR(d); }, 'S9', false],
+    ['PR aberto depois do mergeado', (d) => { PR(d); w(d, SEMENTE, 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 8, estado: 'aberto', branch: 'enabler/GM-14-clareza' } }, '2026-11-12T10:00:02.000Z'); PLANO(d); }, 'S9', false],
+    ['dono ligou ESTA conversa por dono.resposta', (d) => { PR(d); PLANO(d); LIGAR(d, 'S9'); }, 'S9', false],
+    ['dono ligou OUTRA conversa', (d) => { PR(d); PLANO(d); LIGAR(d, 'S1'); }, 'S9', true],
+  ];
+  const _semId = (d) => join(d, '.harness', 'entregas', '_sem-id');
+  const doSessao = (dir, sessao) => (existsSync(dir) ? ler(dir).filter((e) => e.sessao === sessao) : []);
+
+  for (const [nome, montar, sessao, publicada] of casos) {
+    for (const gh of ['rc1', 'pr-vazio']) { // gh falhando agora (FIEL-1 c: vale o último pr do diário) e gh que não traz PR novo
+      test(`${nome} [gh ${gh}] ⇒ publicada=${publicada}: entregaPublicada e loop.mjs concordam; medir fica na entrega`, () => {
+        const d = repo();
+        montar(d);
+        const antes = ler(dirDe(d)).length;
+        assert.equal(entregaPublicada(d, 'GM-14', sessao), publicada, 'a função única');
+        const m = medir(d, { rodar: rodarCom(gh), agentes: entrada([], sessao), timeoutMs: 5000, agora: () => Date.parse('2026-11-14T10:00:00Z') });
+        assert.ok(m.gravados.length > 0, JSON.stringify(m)); // algo novo a gravar (a falha do gh em rc1 é esperada)
+        // o medir NÃO consulta a regra de publicada: por decisão do dono (emenda 38) o fato.medido do painel fica no diário da entrega, é dele a âncora da pergunta (b)
+        assert.equal(doSessao(dirDe(d), sessao).filter((e) => e.tipo === 'fato.medido' && e.autor === 'painel').length > 0, true, 'o medir grava na entrega, publicada ou não');
+        assert.equal(existsSync(_semId(d)), false, 'o medir nunca manda a _sem-id');
+        // o loop.mjs (parar, sessão explícita) consulta a MESMA função
+        const p = spawnSync(process.execPath, [LOOP, 'parar', 'nao_conseguiu', '--sessao', sessao], { cwd: d, encoding: 'utf8', env: GIT_ENV });
+        const j = JSON.parse(p.stdout.trim());
+        assert.equal(j.erro === 'entrega_publicada', publicada, p.stdout + p.stderr);
+        if (!publicada) assert.equal(j.ok, true, p.stdout);
+      });
+    }
+  }
+
+  test('loop.mjs sem --sessao: o dono ligou uma conversa ⇒ o loop não trava (SESSAO_QUALQUER); sem ligação ⇒ publicada', () => {
+    const d = repo();
+    PR(d); PLANO(d);
+    assert.equal(entregaPublicada(d, 'GM-14', SESSAO_QUALQUER), true);
+    LIGAR(d, 'S1');
+    assert.equal(entregaPublicada(d, 'GM-14', SESSAO_QUALQUER), false);
+    assert.equal(entregaPublicada(d, 'GM-14', 'S1'), false);
+    assert.equal(entregaPublicada(d, 'GM-14', 'S2'), true);
   });
 });

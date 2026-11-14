@@ -5623,6 +5623,9 @@ describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (
       assert.match(fonte, /entregaPublicada\(/, arq);
       assert.doesNotMatch(fonte, /trilhaDe\(|estado === 'mergeado'|estado: 'mergeado'/, `${arq} tem critério próprio de publicada`);
     }
+    // o medir não decide "publicada" (decisão do dono, emenda 38: o fato.medido fica na entrega); também não carrega critério próprio
+    assert.doesNotMatch(readFileSync(join(AQUI, '..', 'scripts', 'painel-medir.mjs'), 'utf8'), /trilhaDe\(|estado === 'mergeado'|estado: 'mergeado'/, 'painel-medir.mjs tem critério próprio de publicada');
+    // o comportamento (não só a fonte) está em painel-medir.test.mjs: a função e o loop.mjs no mesmo diário (spec, ledger, plano, ligação por dono.resposta)
     assert.match(readFileSync(join(AQUI, '..', 'src', 'guarda.ts'), 'utf8'), /export function entregaPublicada/);
   });
 });
