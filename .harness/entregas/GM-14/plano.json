@@ -1135,7 +1135,8 @@
         "plugins/gabarito-mestre/gates/dist/painel-texto.js",
         "plugins/gabarito-mestre/gates/test/formas.test.ts",
         "plugins/gabarito-mestre/gates/test/origem.test.ts",
-        "plugins/gabarito-mestre/gates/test/painel-texto.test.ts"
+        "plugins/gabarito-mestre/gates/test/painel-texto.test.ts",
+        "plugins/gabarito-mestre/gates/test/fumaca-loop/caminhada.mjs"
       ],
       "reqs": [
         "REQ-POU-1"
