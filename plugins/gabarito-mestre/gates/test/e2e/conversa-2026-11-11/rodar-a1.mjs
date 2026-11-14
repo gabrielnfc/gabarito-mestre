@@ -619,7 +619,7 @@ export function lerTranscripts(pasta, falas) {
 }
 
 /** Pasta dos transcripts do Claude Code para o repo (`<config>/projects/<caminho com tudo que não é [A-Za-z0-9-] trocado por ->`). */
-export const pastaDeTranscripts = (repo) => join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'projects', realpathSync(repo).replace(/[^A-Za-z0-9-]/g, '-'));
+export const pastaDeTranscripts = (repo) => join(configDaConta(), 'projects', realpathSync(repo).replace(/[^A-Za-z0-9-]/g, '-'));
 
 /** Junta a evidência de uma execução (diário, observador, snapshots, transcripts) no formato que `avaliarExecucao` espera. `pasta`: transcripts (padrão: a do Claude Code para o repo). */
 export async function coletar(rundir, repo, celula, roteiro, { pasta = null, total = TOTAL_PONTOS } = {}) {
@@ -692,7 +692,7 @@ export async function coletar(rundir, repo, celula, roteiro, { pasta = null, tot
   };
 }
 
-async function matriz(fonte, tmpRaiz, roteiro, so) {
+export async function matriz(fonte, tmpRaiz, roteiro, so) {
   const celulas = MATRIZ.filter((c) => so === null || idDaCelula(c) === so);
   const base = join(tmpRaiz, '.claude-tmp', 'a1', String(Date.now()));
   const execucoes = [];
@@ -750,9 +750,10 @@ export const SUPERPOWERS_VERSAO = '7.0.2';
 export const configDaConta = () => process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude');
 
 /** Resolve o superpowers fixo: nome e marketplace vêm da dependência declarada no plugin.json do produto; o caminho, do cache de plugins da conta que roda; a versão é a FIXA.
- * Versão fixa ausente (sem diretório, sem manifesto ou manifesto de outra versão) ⇒ `{ ok: false, causa: 'dependencia_ausente: <nome>@<versão>' }`: nunca cai para outra versão. */
+ * Sem a dependência no plugin.json ⇒ `dependencia_nao_declarada` (nunca um valor fixo no lugar). Versão fixa ausente (sem diretório, sem manifesto ou manifesto de outra versão) ⇒ `{ ok: false, causa: 'dependencia_ausente: <nome>@<versão>' }`: nunca cai para outra versão. */
 export function resolverSuperpowers({ config = configDaConta(), pluginJson = join(PLUGIN, '.claude-plugin', 'plugin.json'), versao = SUPERPOWERS_VERSAO } = {}) {
-  const dep = (JSON.parse(readFileSync(pluginJson, 'utf8')).dependencies ?? []).find((d) => d?.name === 'superpowers') ?? { name: 'superpowers', marketplace: 'claude-plugins-official' };
+  const dep = (JSON.parse(readFileSync(pluginJson, 'utf8')).dependencies ?? []).find((d) => d?.name === 'superpowers');
+  if (dep === undefined) return { ok: false, causa: 'dependencia_nao_declarada: superpowers no plugin.json do produto' };
   const caminho = join(config, 'plugins', 'cache', dep.marketplace, dep.name, versao);
   let manifesto = null;
   try { manifesto = JSON.parse(readFileSync(join(caminho, '.claude-plugin', 'plugin.json'), 'utf8')); } catch { manifesto = null; }
@@ -761,7 +762,11 @@ export function resolverSuperpowers({ config = configDaConta(), pluginJson = joi
 }
 
 /** `ambiente` do resultado.json: o diálogo de imports (exp.log) mais o superpowers carregado (nome, versão, caminho) ou a causa da ausência. */
-export const superpowersNoAmbiente = (sp) => (sp.ok ? { nome: sp.nome, versao: sp.versao, caminho: sp.caminho } : { dependencia_ausente: sp.causa.replace(/^dependencia_ausente: /, '') });
+export const superpowersNoAmbiente = (sp) => {
+  if (sp.ok) return { nome: sp.nome, versao: sp.versao, caminho: sp.caminho };
+  const [chave, ...resto] = sp.causa.split(': ');
+  return { [chave]: resto.join(': ') };
+};
 export const ambienteDaExecucao = (expLog, sp) => ({ ...dialogosDoExpLog(expLog), superpowers: superpowersNoAmbiente(sp) });
 
 // ─── CLI ───

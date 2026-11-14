@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ASSERCOES, LINHA_DECISAO, MATRIZ, resumoDoAgora, MIN_FALA, PONTOS_ARQ, ROTEIRO_REL, TOTAL_PONTOS, acoesDe, avaliarExecucao, avaliarMatriz, coletar, dialogosDoExpLog, entradaDoSnapshot, falasDoRoteiro, guardaFalas, idDaCelula,
-  itensDeProxima, placementEsperado, pluginCarregou, resolverSuperpowers, ambienteDaExecucao, SUPERPOWERS_VERSAO, propsDe, publicadaPeloProduto, raizPrincipal, renderizar, semearEntregaPublicada, sha256, validarPontos, verificarRoteiro,
+  itensDeProxima, placementEsperado, pluginCarregou, resolverSuperpowers, ambienteDaExecucao, SUPERPOWERS_VERSAO, matriz, configDaConta, pastaDeTranscripts, propsDe, publicadaPeloProduto, raizPrincipal, renderizar, semearEntregaPublicada, sha256, validarPontos, verificarRoteiro,
 } from './e2e/conversa-2026-11-11/rodar-a1.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -903,6 +903,50 @@ describe('superpowers fixo (T46, emenda 41): dependência declarada carregada po
     assert.match(m, /dependencia_ausente|sp\.causa/, 'a causa vai ao resultado');
     assert.doesNotMatch(m, /readdirSync/, 'sem varrer o cache por "última versão"');
   });
+  test('matriz-com-superpowers-ausente-para-a-celula-e-NAO-conta-passa (comportamento, sem abrir o expect)', async () => {
+    const vazia = fabricar([]);
+    const raiz = mkdtempSync(join(tmpdir(), 'a1-mz-')); TMPS.push(raiz);
+    const antes = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = vazia;
+    let m;
+    const errOrig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = () => true;
+    try { m = await matriz('/inexistente-nao-copiar', raiz, { falas: [] }, idDaCelula(MATRIZ[0])); } finally { process.stderr.write = errOrig; if (antes === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = antes; }
+    const r = JSON.parse(readFileSync(join(m.base, idDaCelula(MATRIZ[0]), 'resultado.json'), 'utf8'));
+    assert.equal(r.passa, false);
+    assert.equal(r.resultados[0].id, 'dependencia');
+    assert.equal(r.resultados[0].ok, false);
+    assert.equal(r.ambiente.superpowers.dependencia_ausente, 'superpowers@7.0.2');
+    assert.equal(existsSync(join(m.base, idDaCelula(MATRIZ[0]), 'repo', 'plugins')), false, 'a cópia do produto nem foi preparada');
+    assert.equal(m.rel.passou, 0, 'a célula parada não entra no 8/8');
+    assert.equal(m.rel.ok, false);
+  });
+  test('manifesto-de-outro-nome-no-diretorio-da-versao-fixa-nao-vale', () => {
+    const c = fabricar([]);
+    const dir = join(c, 'plugins', 'cache', 'claude-plugins-official', 'superpowers', '7.0.2', '.claude-plugin');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'plugin.json'), JSON.stringify({ name: 'outro-plugin', version: '7.0.2' }));
+    assert.equal(resolverSuperpowers({ config: c }).ok, false, 'nome diferente da dependência declarada: ausente');
+  });
+  test('plugin.json-sem-a-dependencia-declarada-falha-com-causa-propria (sem valor fixo silencioso, condição 1)', () => {
+    const conta = fabricar(['7.0.2']); // o cache TEM a versão fixa: só a declaração falta
+    for (const conteudo of [{ name: 'x' }, { dependencies: [] }, { dependencies: [{ name: 'outro', marketplace: 'm' }] }]) {
+      const pj = join(conta, 'sem-dep.json'); writeFileSync(pj, JSON.stringify(conteudo));
+      const r = resolverSuperpowers({ config: conta, pluginJson: pj });
+      assert.equal(r.ok, false, JSON.stringify(conteudo));
+      assert.match(r.causa, /^dependencia_nao_declarada: superpowers/);
+      assert.equal(r.caminho, undefined);
+    }
+  });
+  test('a-regra-CLAUDE_CONFIG_DIR-vive-numa-funcao-so (configDaConta usada por pastaDeTranscripts)', () => {
+    const conta = fabricar([]); const antes = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = conta;
+    try {
+      assert.equal(configDaConta(), conta);
+      assert.ok(pastaDeTranscripts(AQUI).startsWith(join(conta, 'projects') + '/'), 'transcripts sob a conta');
+    } finally { if (antes === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = antes; }
+    assert.equal((readFileSync(RUNNER, 'utf8').match(/CLAUDE_CONFIG_DIR \?\?/g) ?? []).length, 1, 'a regra aparece uma vez no runner');
+  });
   test('a1.exp-e-o-spawn-passam-o-superpowers-como-plugin-explicito (superpowers-fixo-no-spawn)', () => {
     const exp = readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), 'utf8');
     const spawn = exp.slice(exp.indexOf('spawn claude'), exp.indexOf('nota "inicio'));
@@ -917,6 +961,7 @@ describe('superpowers fixo (T46, emenda 41): dependência declarada carregada po
     assert.deepEqual(ambienteDaExecucao('1 inicio\n2 DIALOGO-IMPORTS-EXTERNOS recusado\n', sp), { importsExternos: 'apareceu-e-foi-recusado', superpowers: { nome: 'superpowers', versao: '7.0.2', caminho: '/x/y' } });
     assert.deepEqual(ambienteDaExecucao('', { ...sp, versao: '7.0.0', caminho: '/z' }).superpowers, { nome: 'superpowers', versao: '7.0.0', caminho: '/z' });
     assert.deepEqual(ambienteDaExecucao('', { ok: false, causa: 'dependencia_ausente: superpowers@7.0.2' }).superpowers, { dependencia_ausente: 'superpowers@7.0.2' });
+    assert.deepEqual(ambienteDaExecucao('', { ok: false, causa: 'dependencia_nao_declarada: superpowers no plugin.json do produto' }).superpowers, { dependencia_nao_declarada: 'superpowers no plugin.json do produto' });
     const m = MATRIZ_SRC();
     assert.match(m, /ambienteDaExecucao\('', sp\)/, 'célula parada por ausência registra a causa no ambiente');
     assert.match(m, /superpowers: superpowersNoAmbiente\(sp\) \} \}/, 'célula executada registra nome/versão/caminho no ambiente');
