@@ -1072,6 +1072,16 @@ describe('T49 (a) isolamento: célula e plugin fora do repo real; o repo real fi
     git(r, 'worktree', 'add', '-q', '-b', 'wt/outra', join(tmp(), 'wt2'));
     assert.match(R.diferencasDeFotos(a, R.fotoDoRepo(r)).join(';'), /worktrees/, 'worktree novo continua vigiado');
   });
+  test('estado-vivo-do-orquestrador-em-.harness-e-.claude-tmp-nao-invalida; arquivo de código novo no repo real sim', () => {
+    const r = tmpGit(); const a = R.fotoDoRepo(r);
+    mkdirSync(join(r, '.harness', 'entregas', 'GM-14', 'sombra'), { recursive: true }); mkdirSync(join(r, '.claude-tmp'), { recursive: true });
+    writeFileSync(join(r, '.harness', 'entregas', 'GM-14', 'sombra', 'h.md'), 'x'); writeFileSync(join(r, '.claude-tmp', 'y'), 'y');
+    assert.deepEqual(R.diferencasDeFotos(a, R.fotoDoRepo(r)), []);
+    writeFileSync(join(r, 'src.js'), 'z');
+    assert.match(R.diferencasDeFotos(a, R.fotoDoRepo(r)).join(';'), /status.*src\.js/);
+    const b = R.fotoDoRepo(r, { ignorarStatus: [] }); writeFileSync(join(r, '.harness', 'novo'), 'n');
+    assert.match(R.diferencasDeFotos(b, R.fotoDoRepo(r, { ignorarStatus: [] })).join(';'), /status/, 'sem ignorados, .harness conta');
+  });
   test('ignorarRefs-e-configuravel-e-a-celula-fica-invalida-so-pelo-que-nao-e-ignorado', () => {
     const r = tmpGit(); const a = R.fotoDoRepo(r, { ignorarRefs: [] });
     git(r, 'branch', 'wt/z');

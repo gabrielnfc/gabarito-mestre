@@ -733,15 +733,18 @@ const realDe = (raizes) => [...new Set(raizes.map((r) => { try { return realpath
 
 /** Refs que OUTROS implementadores movem (worktrees `wt/<PBI>-<n>` do próprio loop): não são sinal de a célula ter tocado o repo real. */
 export const IGNORAR_REFS_PADRAO = Object.freeze([/^refs\/heads\/wt\//]);
+/** Linhas de `git status` que o ORQUESTRADOR vivo move (estado do harness e temporários do projeto): o diário, as consultas da Sombra e `.claude-tmp/` não são arquivo de código tocado pela célula. */
+export const IGNORAR_STATUS_PADRAO = Object.freeze([/^.. "?\.harness\//, /^.. "?\.claude-tmp\//]);
 /**
  * A foto de um repo: `git status --porcelain`, `for-each-ref` (sem as refs de `ignorarRefs`) e `worktree list` (só os caminhos: o HEAD de uma worktree de outro implementador se move sem a célula).
  * Quem não é repo ⇒ lança (a prova nunca passa no escuro).
  */
-export function fotoDoRepo(raiz, { ignorarRefs = IGNORAR_REFS_PADRAO } = {}) {
+export function fotoDoRepo(raiz, { ignorarRefs = IGNORAR_REFS_PADRAO, ignorarStatus = IGNORAR_STATUS_PADRAO } = {}) {
   const g = (...a) => execFileSync('git', ['-C', raiz, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
   const refs = g('for-each-ref', '--format=%(refname) %(objectname)').split('\n').filter((l) => l !== '' && !ignorarRefs.some((re) => re.test(l))).join('\n');
   const worktrees = g('worktree', 'list', '--porcelain').split('\n').filter((l) => l.startsWith('worktree ')).join('\n');
-  return { status: g('status', '--porcelain', '--untracked-files=all'), refs, worktrees };
+  const status = g('status', '--porcelain', '--untracked-files=all').split('\n').filter((l) => l !== '' && !ignorarStatus.some((re) => re.test(l))).join('\n');
+  return { status, refs, worktrees };
 }
 /** Diferenças entre duas fotos (lista vazia = intocado), uma por parte que mudou, com o que mudou. */
 export function diferencasDeFotos(antes, depois) {
