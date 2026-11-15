@@ -57,7 +57,12 @@ export type TipoEvento =
   // GM-14: fato medido, anotação do orquestrador e resposta do dono por botão
   | 'fato.medido'
   | 'nota'
-  | 'dono.resposta';
+  | 'dono.resposta'
+  // GM-15 (T1): adiada/cortada, encerramento e reabertura da entrega, uso da autonomia da guarda
+  | 'task.fora'
+  | 'entrega.encerrada'
+  | 'entrega.reaberta'
+  | 'guarda.autonomia_usada';
 export type Fonte = 'origin' | 'local';
 export type AmbienteDecl = {
   hosts?: string[];
@@ -67,9 +72,12 @@ export type AmbienteDecl = {
   variaveis?: string[];
   branches?: string[];
 };
+/** GM-15 (REQ-AUT-2): `guarda.autonomia` do config; lida só de `origin/HEAD`, ausente = `nenhuma`. */
+export type AutonomiaGuarda = 'nenhuma' | 'orquestrador';
 export type ConfigGuarda = {
   ambientes: Partial<Record<'teste' | 'homolog' | 'prod', AmbienteDecl>>;
   permitidos: string[];
+  autonomia?: AutonomiaGuarda;
 };
 export type Contexto = {
   branchAtual: string | null;

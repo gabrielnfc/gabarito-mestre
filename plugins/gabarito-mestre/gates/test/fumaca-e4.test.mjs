@@ -98,36 +98,41 @@ test('fumaca-painel-e4: painel.mjs texto, nos dois presets, é byte a byte o tex
   const exe = o.textoExecutivo.out;
   for (const t of [esq, exe]) {
     const l = t.split('\n');
-    assert.equal(l[0], 'GABARITO · GM-99 Spec de fumaça da E4', 'FIEL-10 (f): cabeçalho uma vez, igual nos presets');
+    // GM-15 T29 (D-G1c): o desenho é o do E4 — o rótulo do preset à direita do cabeçalho, ◆ DEPENDE DE VOCÊ, PLANO, EQUIPE, histórico hh:mm
+    assert.equal(l[0].replace(/ {2,}(esquadrão( · .*)?|executivo)$/, ''), 'GABARITO · GM-99 Spec de fumaça da E4', 'FIEL-10 (f): cabeçalho uma vez, igual nos presets');
     // REQ-GLB-1 / FIEL-10 (a): DEPENDE no topo; o PAROU é item dele e vem primeiro, depois a emenda (REQ-DEP-1 (7)); o teto da T2 não repete
     // REQ-GLB-1: o motivo do PAROU inteiro, quebrado em 2 linhas (recuo de 4), nenhuma cortada com "…"
-    assert.equal(l[1], 'PAROU 12:25 · teto de rodadas de review em T2 [aprovar] · recusar: deixe a task');
-    assert.equal(l[2], '    parada e emende a spec');
-    assert.equal(l[3], 'depende de você: decidir a emenda 1 [aprovar] [rejeitar]');
-    const iPronto = l.findIndex((x) => x.startsWith('PRONTO'));
-    assert.ok(l.slice(0, iPronto).every((x) => [...x].length <= 80 && !x.endsWith('…')), 'REQ-GLB-1: nenhuma linha do topo passa de 80 colunas nem termina em "…"');
+    assert.equal(l[1], '■ PAROU 12:25 · teto de rodadas de review em T2 [aprovar] · recusar: deixe a');
+    assert.equal(l[2], '    task parada e emende a spec');
+    assert.equal(l[3], '◆ DEPENDE DE VOCÊ  1 item');
+    assert.equal(l[4], '  decidir a emenda 1 [aprovar] [rejeitar]');
+    const iSep = l.findIndex((x) => /^─+$/.test(x));
+    assert.equal(iSep, 5, 'o topo acaba no 1º separador do E4');
+    assert.ok(l.slice(0, iSep).every((x) => [...x].length <= 80 && !x.endsWith('…')), 'REQ-GLB-1: nenhuma linha do topo passa de 80 colunas nem termina em "…"');
     assert.ok(!/limite de revisões|depende de você: nada/.test(t), 'com PAROU e emenda o topo não diz "nada" nem repete o teto');
-    // FIEL-10 (b): PRONTO pinta só integradas (1 de 3 ⇒ 3 de 10 marcas)
-    assert.equal(l[4], 'PRONTO ▰▰▰▱▱▱▱▱▱▱ 1 de 3 integradas');
-    // FIEL-11 (a)(b): 1ª linha o orquestrador com o contexto; o agente vivo da T3 pelo último fato registrado
-    assert.match(l[5], /^AGORA · \S+ · contexto 46 %$/);
-    assert.match(l[6], /^ {2}\S+ · T3 · implementando \(registrado\) · \dm$/);
+    // FIEL-10 (b): PLANO pinta só integradas (1 de 3 ⇒ 7 de 21 marcas), status do loop à direita
+    assert.match(l[6], /^PLANO {3}▰{7}▱{14} {2}33% {2}1\/3 tasks +loop parado$/);
+    // FIEL-11 (a)(b): o orquestrador com o contexto; o agente vivo da T3 pelo último fato registrado, com a medição do uso (93k)
+    assert.match(t, /^│ {2}ctx █+░+ 46% · pouso em 50% {3}tok \?$/m);
+    assert.match(t, /^│ {2}5h █░{9} 12% {3}7d █░{9} 5%$/m);
+    assert.match(t, /^└─ ● \S+ · haiku {2}T3 {2}ctx 93k {2}\dm {2}implementando \(registrado\)$/m);
     // FIEL-10 (c): o teto da T2 já está no topo e a T3 tem agente ⇒ sem ATENÇÃO
     assert.ok(!/ATENÇÃO/.test(t));
     // FIEL-10 (d): só resultados, mais novo no topo, com origem; "despachou" e "emenda proposta" não entram
-    assert.equal(l[7], 'RECENTE · 12:25 ✗ travou: teto de rodadas de review (automático)');
-    assert.equal(l.filter((x) => /^(RECENTE · | {2})\d\d:\d\d /.test(x)).length, 5, 'até 5 linhas de RECENTE');
+    const rec = l.filter((x) => /^\d\d:\d\d /.test(x));
+    assert.equal(rec[0], '12:25 ✗ travou: teto de rodadas de review (automático)');
+    assert.equal(rec.length, 5, 'até 5 linhas de RECENTE');
     assert.ok(!/despachou|proposta/.test(t));
     assert.ok(!/NaN|undefined|null|\[object/.test(t), 'valor interno vazou para a tela');
     assert.ok(l.every((x) => [...x].length <= 80), 'nada passa de 80 colunas');
   }
-  assert.match(esq, /^AGORA · [A-Z]{2,10} · contexto 46 %$/m, 'o esquadrão leva o nome do pacote');
-  assert.match(esq, /^ {2}[A-Z]{2,10} · T3 · /m);
-  assert.match(exe, /^AGORA · Orquestrador · contexto 46 %$/m);
-  assert.match(exe, /^ {2}Implementador · T3 · /m);
-  assert.ok(!/ARAGORN|SAM|FRODO|GANDALF|ELROND|LEGOLAS/.test(exe), 'o Executivo não tem nome de pacote (D-P10)');
-  // o topo (cabeçalho, PAROU, DEPENDE, PRONTO) tem as MESMAS linhas nos dois presets
-  assert.deepEqual(exe.split('\n').slice(0, 4), esq.split('\n').slice(0, 4));
+  assert.match(esq, /^[A-Z]{2,10} {2}orquestra$/m, 'o esquadrão leva o nome do pacote');
+  assert.match(esq, /^└─ ● [A-Z]{2,10} · haiku {2}T3 /m);
+  assert.match(exe, /^Orquestrador {2}orquestra$/m);
+  assert.match(exe, /^└─ ● Implementador · haiku {2}T3 /m);
+  assert.ok(!/ARAGORN|SAM|FRODO|GANDALF|ELROND|LEGOLAS|terra média/.test(exe), 'o Executivo não tem nome de pacote (D-P10)');
+  // o topo (PAROU, DEPENDE) e o PLANO têm as MESMAS linhas nos dois presets; o cabeçalho só difere no rótulo do preset
+  assert.deepEqual(exe.split('\n').slice(1, 7), esq.split('\n').slice(1, 7));
 });
 
 test('fumaca-devolver-sem-rodar-comando: hooks do dono + conclusão ⇒ decisão subir ⇒ devolver grava o pedido, nenhum deploy/smoke/rollback roda, o painel mostra o comando', () => {
@@ -154,13 +159,13 @@ test('fumaca-devolver-sem-rodar-comando: hooks do dono + conclusão ⇒ decisão
   // REQ-GLB-1: o item do dono no topo, com o botão; o comando inteiro está no estado (acima) e é o que o botão leva.
   // A 80 colunas o item quebra em linhas (REQ-GLB-1: topo nunca cortado): o botão inteiro aparece, nenhuma linha termina em "…".
   const ld = o.textoDevolvido.out.split('\n');
-  assert.equal(ld[0], 'GABARITO · GM-99 Spec de fumaça da E4');
-  const iP = ld.findIndex((x) => x.startsWith('PRONTO'));
-  const topoD = ld.slice(1, iP);
+  assert.equal(ld[0].replace(/ {2,}(esquadrão( · .*)?|executivo)$/, ''), 'GABARITO · GM-99 Spec de fumaça da E4');
+  const iP = ld.findIndex((x) => x.startsWith('PLANO'));
+  const topoD = ld.slice(1, ld.findIndex((x) => /^─+$/.test(x)));
   assert.ok(topoD.every((x) => [...x].length <= 80 && !x.endsWith('…')), `topo sem corte: ${JSON.stringify(topoD)}`);
-  assert.match(topoD.join(' ').replace(/ +/g, ' '), /^depende de você: deploy devolvido ao dono: quero revisar antes de subir \[executar\]$/);
-  assert.equal(ld.filter((x) => x.startsWith('depende de você')).length, 1, '1 item');
-  assert.equal(ld[iP], 'PRONTO ▰▰▰▰▰▰▰▰▰▰ 3 de 3 integradas');
+  assert.match(topoD.join(' ').replace(/ +/g, ' '), /^◆ DEPENDE DE VOCÊ 1 item deploy devolvido ao dono: quero revisar antes de subir \[executar\]$/);
+  assert.equal(ld.filter((x) => x.startsWith('  deploy devolvido')).length, 1, '1 item');
+  assert.match(ld[iP], /^PLANO {3}▰{21} {2}100% {2}3\/3 tasks +todas integradas$/);
   assert.ok(!/PAROU|depende de você: nada/.test(o.textoDevolvido.out));
 });
 

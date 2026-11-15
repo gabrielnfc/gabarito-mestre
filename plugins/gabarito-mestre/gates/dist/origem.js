@@ -22,6 +22,8 @@ const AUTOMATICOS                      = new Set([
   'task.iniciada', 'task.concluida', 'task.integrada', 'task.reaberta',
   'entrega.inicio', 'entrega.smoke', 'entrega.rollback', 'entrega.fim', 'entrega.agendada', 'entrega.devolvida',
   'sessao.inicio', 'sessao.pouso', 'sessao.pouso.tentativa', 'sessao.retomada',
+  // GM-15 (T1): o encerramento é medido pelo `medir` e o uso da autonomia é gravado pela guarda; ninguém os escreve à mão.
+  'entrega.encerrada', 'guarda.autonomia_usada',
 ]);
 
 /** Tabela fechada de origem; `dono.mensagem` e tipo fora dela ⇒ `null` (não aparecem). */
@@ -33,6 +35,12 @@ export function origemDe(ev        )                {
   if (tipo === 'task.reaberta') {
     const origem = dados !== null && typeof dados === 'object' ? (dados                           ).origem : undefined;
     return origem === 'dono' ? VOCE : origem === 'sombra' ? SOMBRA : AUTOMATICO;
+  }
+  // GM-15 (T1): só o comando humano grava `entrega.reaberta`; `task.fora` é do dono ou da Sombra, e outra origem (ou dados ilegíveis) não aparece.
+  if (tipo === 'entrega.reaberta') return VOCE;
+  if (tipo === 'task.fora') {
+    const origem = dados !== null && typeof dados === 'object' ? (dados                           ).origem : undefined;
+    return origem === 'dono' ? VOCE : origem === 'sombra' ? SOMBRA : null;
   }
   if (AUTOMATICOS.has(tipo)) return AUTOMATICO;
   if (tipo === 'nota' || tipo === 'decisao.sombra' || tipo === 'spec.aplicada') return ORQUESTRADOR;

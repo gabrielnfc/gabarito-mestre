@@ -38,11 +38,13 @@ test('origem-tabela-cada-tipo', () => {
     'spec.aprovada': VOCE, 'spec.aplicada': ORQ, 'entrega.devolvida': AUTO,
     'aprendizado': null, 'aprendizado.nada': null, 'dono.mensagem': null,
     'fato.medido': AUTO, 'nota': ORQ, 'dono.resposta': '(você respondeu: Sim)',
+    'task.fora': VOCE, 'entrega.encerrada': AUTO, 'entrega.reaberta': VOCE, 'guarda.autonomia_usada': AUTO,
   };
   assert.deepEqual(Object.keys(esperado).sort(), [...TIPOS_EVENTO].sort(), 'cada TipoEvento tem expectativa explícita');
   const dados: Record<string, Record<string, unknown>> = {
     'task.reaberta': { task: 'T1', origem: 'retomada' },
     'dono.resposta': { pergunta: 's1:3', opcao: 1, rotulo: 'Sim' },
+    'task.fora': { task: 'T5', como: 'adiada', motivo: 'm', origem: 'dono' },
   };
   for (const tipo of TIPOS_EVENTO) {
     assert.equal(origemDe(ev(tipo, dados[tipo] ?? {})), esperado[tipo], tipo);
@@ -241,4 +243,17 @@ test('dist-origem-mesmo-contrato', async () => {
   assert.equal(dist.linhaTecnica('smoke'), true);
   assert.equal(dist.linhaTecnica('fase 3 de 7'), false);
   assert.equal(dist.REGEX_TECNICA.source, REGEX_TECNICA.source);
+});
+
+test('origem-dos-eventos-novos: tabela fechada, (você)/(automático)/(Sombra); origem ilegível ou fora da lista não aparece', () => {
+  const SOMBRA = '(Sombra)';
+  assert.equal(origemDe(ev('entrega.encerrada', { entrega: 'GM-14', pr: 22, via: 'head', mergeado_em: '2026-11-15T10:00:00.000Z' })), AUTO);
+  assert.equal(origemDe(ev('entrega.reaberta', { entrega: 'GM-14', em: '2026-11-15T10:00:00.000Z' })), VOCE);
+  assert.equal(origemDe(ev('guarda.autonomia_usada', { anel: 'a', alvo: 'b', acao: 'c', ambiente: 'd' })), AUTO);
+  assert.equal(origemDe(ev('task.fora', { task: 'T5', como: 'adiada', motivo: 'm', origem: 'dono' })), VOCE);
+  assert.equal(origemDe(ev('task.fora', { task: 'T5', como: 'cortada', motivo: 'm', origem: 'sombra', fonte: 'f' })), SOMBRA);
+  for (const o of ['retomada', 'xyz', '', null, undefined, 7]) assert.equal(origemDe(ev('task.fora', { task: 'T5', origem: o as never })), null, JSON.stringify(o));
+  assert.equal(origemDe(ev('task.fora', null as never)), null);
+  // tipo vizinho inventado continua fora da tabela
+  for (const t of ['entrega.encerrada2', 'entrega.reabrir', 'task.fora.x', 'guarda.autonomia']) assert.equal(origemDe(ev(t)), null, t);
 });

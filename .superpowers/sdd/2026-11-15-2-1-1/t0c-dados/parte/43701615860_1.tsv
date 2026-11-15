@@ -1,0 +1,6 @@
+43701615860	1	hooks — corpora (bash ubuntu-latest)	piso (node -e "")   p50   18.8 ms · p95   21.2 ms · máx   21.7 ms
+43701615860	1	hooks — corpora (bash ubuntu-latest)	guarda (guarda.js)  p50   40.5 ms · p95   43.8 ms · máx   44.3 ms
+43701615860	1	hooks — corpora (bash ubuntu-latest)	limite p95 150 ms: ok
+43701615860	1	hooks — corpora (bash macos-latest)	piso (node -e "")   p50   48.0 ms · p95   64.3 ms · máx   73.7 ms
+43701615860	1	hooks — corpora (bash macos-latest)	guarda (guarda.js)  p50   81.8 ms · p95   99.3 ms · máx  101.9 ms
+43701615860	1	hooks — corpora (bash macos-latest)	limite p95 150 ms: ok

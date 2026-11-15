@@ -300,8 +300,10 @@ describe('coletar — repo git real', () => {
     assert.equal(ctx.worktrees, null);
     assert.equal(linha(montarCartao(ctx), 'PBI:'), 'PBI: (b) não inferido — branch fora de branchPadrao/branchWorktree');
   });
-  test('branches sem PBI: main, chore/GM-3-x, feat/pbi-12-x → "(b) não inferido"; wt/PBI-7-2 → PBI-7 (worktree 2)', () => {
-    for (const b of ['main', 'chore/GM-3-x', 'feat/pbi-12-x']) {
+  test('branches sem PBI: main, feat/pbi-12-x → "(b) não inferido"; chore/GM-3-x e hotfix/GM-15-x → a mesma entrega do loop.mjs; wt/PBI-7-2 → PBI-7 (worktree 2)', () => {
+    assert.equal(coletar(repoGit({}, 'chore/GM-3-x'), pluginFalso(), opts()).pbi, 'GM-3');
+    assert.equal(coletar(repoGit({}, 'hotfix/GM-15-alpha2'), pluginFalso(), opts()).pbi, 'GM-15');
+    for (const b of ['main', 'feat/pbi-12-x']) {
       const ctx = coletar(repoGit({}, b), pluginFalso(), opts());
       assert.equal(ctx.pbi, null, b);
       assert.match(linha(montarCartao(ctx), 'PBI:'), /^PBI: \(b\) não inferido/, b);

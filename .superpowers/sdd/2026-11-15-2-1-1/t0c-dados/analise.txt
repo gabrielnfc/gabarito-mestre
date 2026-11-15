@@ -1,0 +1,14 @@
+
+== mac: N=111 tentativas (109 runs); retries (att>1): 2
+piso p95: min 23.4 med 49.3 p95 74.2 max 99.8
+excesso: min 15.9 med 51.0 p90 72.8 p95 82.4 p99 113.6 max 158.7; p99/med 2.23
+estouros do limite bruto 150: 6 -> 42652055728/a1(ex 50.9) 42663757299/a1(ex 98.5) 42705486672/a1(ex 78.3) 42892996899/a1(ex 158.7) 43213939506/a1(ex 113.6) 43721146846/a1(ex 106.2)
+limite (sobre excesso) | % de execuções que pegariam regressão +50/+100/+150 ms | falso positivo no histórico
+p99x1,5 = 170.4 ms | 1/111 (0.9%) | 16/111 (14.4%) | 107/111 (96.4%) | FP 0
+maxx1,5 (plano) = 238.1 ms | 0/111 (0.0%) | 1/111 (0.9%) | 4/111 (3.6%) | FP 0
+p95x2 = 164.8 ms | 1/111 (0.9%) | 27/111 (24.3%) | 111/111 (100.0%) | FP 0
+
+== ubu: N=109 tentativas (109 runs); retries (att>1): 0
+piso p95: min 16.3 med 24.0 p95 28.9 max 36.3
+excesso: min 15.2 med 23.6 p90 30.0 p95 31.3 p99 32.6 max 35.8; p99/med 1.38
+estouros do limite bruto 150: 0 -> 

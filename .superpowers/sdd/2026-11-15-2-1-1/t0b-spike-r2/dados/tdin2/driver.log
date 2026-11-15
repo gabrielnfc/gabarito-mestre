@@ -1,0 +1,9 @@
+cmd: claude --model claude-haiku-5-5 --setting-sources project --strict-mcp-config --plugin-dir /Users/gabs-dev/projetos_pessoais/gabarito-mestre/.harness/worktrees/T0b/.claude-tmp/gm15-t0b/r2/tdin2/plug
+1794759059 ['wait', 8]
+1794759067 ['key', 'enter']
+1794759067 ['wait', 4]
+1794759071 ['send', '/loop responda apenas: ok']
+1794759072 ['wait', 40]
+1794759112 ['send', '/exit']
+1794759113 ['wait', 3]
+fim

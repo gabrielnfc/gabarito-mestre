@@ -141,10 +141,16 @@ test('stop-sem-card-sai', () => {
   assert.equal(existsSync(contadorDe(raiz)), false);
 });
 
-test('stop-branch-wt-sem-numero-sai: wt/GM-10-x não tem card', () => {
+test('stop-branch-hotfix-acha-a-entrega (GM-15 hotfix): mesma regra do loop.mjs (idDaBranch), tipo hotfix incluso', () => {
+  const raiz = repo('hotfix/GM-10-alpha2');
+  plano(raiz);
+  bloqueia(stop(raiz), /T1/);
+});
+
+test('stop-branch-wt-sem-numero: wt/GM-10-x acha a entrega GM-10 (a regra do loop.mjs não exige o índice)', () => {
   const raiz = repo('wt/GM-10-x');
   plano(raiz);
-  mudo(stop(raiz));
+  bloqueia(stop(raiz), /T1/);
 });
 
 test('stop-head-destacado-sai', () => {

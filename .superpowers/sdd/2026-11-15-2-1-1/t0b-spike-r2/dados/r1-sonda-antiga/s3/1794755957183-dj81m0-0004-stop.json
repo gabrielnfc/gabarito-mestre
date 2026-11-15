@@ -1,0 +1,1 @@
+{"t":1794755957183,"carga":"dj81m0","dado":{"background_tasks":[{"id":"bkw992t78","type":"shell","status":"running","description":"integrar T3 em fundo","command":"sleep 30; echo integrar-3"}],"session_crons":[],"memv":"0.1.0","disco":"0.1.0"}}

@@ -80,9 +80,12 @@ describe('costura mod → CLI real → mod', () => {
     const prefs = { preset: 'esquadrao', tema: 'mono', narracao: true, ligado: true };
     const txt = texto(linhasDaPane(a.estado, prefs, 80));
     // GM-14 T18: o CLI passa `fatos` ⇒ render dos 5 blocos (T17, FIEL-11 a): o orquestrador mostra o contexto da sessão; o uso do transcript segue no estado
-    assert.match(txt, /^AGORA · GANDALF · contexto 46 %$/m, txt);
+    // GM-15 T29 (desenho do E4): a linha do contexto do líder com a barra
+    assert.match(txt, /^│ {2}ctx █+░+ 46% · pouso em 50% {3}tok \S+$/m, txt);
     assert.equal(a.estado.equipe.agentes.find((x) => x.task === 'T2' && x.vivo)?.ctxTok, 92762, 'o ctx da fixture (92.762) chega ao estado pelo CLI real');
-    assert.doesNotMatch(txt, /\b5h\b/, 'rateLimits sem five_hour ⇒ nenhuma linha 5h');
+    // GM-15 T29 (D-G1, emenda 2: sem medição ⇒ "?", nunca some nem vira 0): rateLimits sem five_hour ⇒ `5h ?`, nunca barra nem 0%
+    assert.match(txt, /^│ {2}5h \? {3}7d █░{9} 9%$/m, txt);
+    assert.doesNotMatch(txt, /5h [█░]|5h 0%/, 'rateLimits sem five_hour ⇒ nenhuma barra de 5h');
     assert.equal(a.estado.equipe.lider.d7, 9, 'seven_day (9) chega ao líder no estado');
     // GM-14 T18: o estado novo traz o item "depende de você: nada" (T13/T17, D-P13). `faixaDe` do mod (mod/painel.mjs, T20) ainda o lê como
     // pendência ("depende de você: depende de você: nada"): defeito de costura relatado à T20, fora dos arquivos da T18. Aqui só o que o CLI entrega.
@@ -573,7 +576,7 @@ describe('costura T18: CLI real em toda fase', { timeout: 180_000 }, () => {
       } else {
         assert.equal(e.fase, null);
         const n = fx.eventos.flatMap((c) => c.integradas ?? []).length;
-        assert.match(t, new RegExp(`^PRONTO [▰▱]+ ${n} de ${fx.fatos.plano.tasks.length} integradas`, 'm'), t);
+        assert.match(t, new RegExp(`^PLANO {1,3}[▰▱]+ {1,2}\\d+% {1,2}${n}/${fx.fatos.plano.tasks.length} tasks`, 'm'), t); // GM-15 T29: PRONTO ⇒ PLANO do E4
       }
     });
   }
@@ -608,7 +611,7 @@ describe('costura T18: CLI real em toda fase', { timeout: 180_000 }, () => {
     const item = e.depende.find((i) => i.motivo === 'assinar o contrato do fornecedor');
     assert.ok(item, JSON.stringify(e.depende));
     assert.equal(item.acoes[0].rotulo, 'feito');
-    assert.match(rodar(repo, 'texto'), /^depende de você: assinar o contrato do fornecedor \[feito\]$/m);
+    assert.match(rodar(repo, 'texto'), /^◆ DEPENDE DE VOCÊ {2}1 item\n {2}assinar o contrato do fornecedor \[feito\]$/m); // GM-15 T29: topo do E4
   });
 
   test('anotar-real-aparece-com-origem (P9, REQ-LNG-1): a pendência anotada pelo orquestrador aparece no render com "(anotado pelo orquestrador)"',

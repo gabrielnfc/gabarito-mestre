@@ -333,7 +333,7 @@ function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw
   ]);
 }
 
-// ───────────────────────────── GM-14 T17: os 5 blocos (REQ-GLB-1, REQ-LNG-1, FIEL-10..13) ─────────────────────────────
+// ───────────────────────────── GM-14 T17 (regra dos 5 blocos) + GM-15 T29 (desenho do E4): `renderBlocos` (REQ-GLB-1, REQ-LNG-1, FIEL-10..13) ─────────────────────────────
 //
 // Um renderizador só para os dois presets (FIEL-12): `ludico` (esquadrão) mostra o nome temático; o executivo, o papel de `PAPEL_EXECUTIVO`.
 // Blocos e prioridade de corte (D-P8): 1 DEPENDE DE VOCÊ (topo; PAROU, pergunta, itens) · 2 cabeçalho e PRONTO/FASE · 3 AGORA · 4 ATENÇÃO
@@ -426,21 +426,27 @@ function cortarNatural(l: Linha, w: number): Linha {
   return [];
 }
 
+/** Glifo de resultado do RECENTE: só os da forma (`✓ ✗ ● ○`); outro texto (corrompido) vira "?" — nunca símbolo que vire emoji (FIEL-13 c). */
+const glifoRecente = (g: unknown): string => (typeof g === 'string' && ['✓', '✗', '●', '○'].includes(g) ? g : '?');
+
+/** Linha do RECENTE no desenho do histórico do E4 (GM-15 T29): `hh:mm <glifo> <quem> <texto> <origem>`; o texto já natural. */
+function linhaRecente(r: ItemRecente, quemTexto: (q: QuemPainel | null | undefined) => string, texto: string): Linha {
+  const quem = quemTexto(r.quem);
+  const origem = limpar(typeof r.origem === 'string' ? r.origem : '');
+  return aparar([seg(`${horaDe(r.hora)} `, 'inactive'), seg(glifoRecente(r.glifo), r.cor), seg(` ${quem !== '' ? `${quem} ` : ''}${texto} `), seg(origem, 'inactive')]);
+}
+
 /**
  * Linha reservada da decisão da Sombra (T42, emenda 32): a mesma linha do RECENTE, truncada em `w` pelo TEXTO da decisão, para a origem
  * (`(anotado pelo orquestrador)`, REQ-LNG-1) ficar à vista. Sem folga para o texto (< 16 colunas, o suficiente para dizer algo), o texto vence a origem: cai no corte comum da linha inteira.
  */
 function linhaReserva(r: ItemRecente, quemTexto: (q: QuemPainel | null | undefined) => string, w: number): Linha {
-  const quem = quemTexto(r.quem);
-  const antes = `RECENTE · ${horaDe(r.hora)} `;
-  const origem = limpar(r.origem);
-  const montar = (t: string): Linha => [seg(antes.slice(0, 'RECENTE · '.length), 'inactive'), seg(antes.slice('RECENTE · '.length), 'inactive'), seg(r.glifo, r.cor), seg(` ${quem !== '' ? `${quem} ` : ''}${t} `), seg(origem, 'inactive')];
   const t = natural(r.texto);
-  const inteira = montar(t);
+  const inteira = linhaRecente(r, quemTexto, t);
   if (colunas(textoDe(inteira)) <= w) return inteira;
-  const fixo = colunas(textoDe(montar('')));
+  const fixo = colunas(textoDe(linhaRecente(r, quemTexto, '')));
   const folga = w - fixo;
-  return folga >= 16 ? montar(cortar(t, folga)) : cortarNatural(inteira, w);
+  return folga >= 16 ? linhaRecente(r, quemTexto, cortar(t, folga)) : cortarNatural(inteira, w);
 }
 
 /**
@@ -480,11 +486,31 @@ const horaDe = (h: unknown): string => {
 const FASES_NOME = ['ideia', 'spec', 'aprovação', 'plano', 'execução', 'PR', 'uso'];
 const inteiroNaoNeg = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null);
 
+
+/** Glifo de task da forma (`TaskPainel.glifo`); outro texto (corrompido) vira "?". */
+const glifoTask = (g: unknown): string => (typeof g === 'string' && ['✓', '●', '◐', '○', '✗'].includes(g) ? g : '?');
+/** Número do painel (contagem, %): só finito ≥ 0, senão "?" (D-P13: ausente e corrompido nunca viram 0 nem texto técnico). */
+const ouInterroga = (v: unknown): string => { const n = nn(v); return n === null ? '?' : String(Math.round(n)); };
+
+/**
+ * Painel do estado novo (GM-15 T29, D-G1b/D-G1c): a CARA do painel E4 (`renderEsquadrao`, v2.0.0 — cabeçalho com o preset à direita, topo
+ * `◆ DEPENDE DE VOCÊ`, PLANO com barra ▰▱ e a fila de tasks, EQUIPE com orquestrador, barras █░ de contexto e de 5h/7d, árvore ├─/└─ dos agentes,
+ * `◆ ATENÇÃO`, histórico `hh:mm` e rodapé CI/PROD/política, separadores `─`, faixas por largura ≥ 60 / 44–59 / < 44) com TODA a regra do
+ * painel de 5 blocos da GM-14: o que entra no topo (REQ-DEP-1), PRONTO/FASE (FIEL-10 b), AGORA ao vivo (FIEL-11), ATENÇÃO (FIEL-10 c), RECENTE
+ * só resultados e com origem (FIEL-10 d), natural (REQ-LNG-1), D-P13 ("?" sem fonte, nunca 0), corte por orçamento (D-P8, emendas 32 e 37).
+ *
+ * Prioridade de corte (D-P8): 1 topo · 2 cabeçalho e PLANO/FASE · 3 orquestrador e agentes · 4 ATENÇÃO · 5 RECENTE; as linhas que só o E4 tinha
+ * saem antes de todas (6 tasks em voo · 6.1 limites · 6.3 fila · 6.4 faixa de integradas · 6.5 rótulo EQUIPE · 6.6 nome do orquestrador · 6.7
+ * narração · 6.8 rodapé), e os separadores só entram nas linhas que sobram (como no E4, cortados primeiro). Com pouca altura, como no E4: o
+ * nome do orquestrador sai e a linha do contexto passa a levá-lo; as 2 linhas da fila viram 1.
+ */
 export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   const w0 = o?.largura;
   if (typeof w0 !== 'number' || !Number.isFinite(w0) || Math.floor(w0) < 1) throw new RangeError(`largura inválida: ${String(w0)} (número finito ≥ 1)`);
   const w = Math.floor(w0);
   const ludico = o.preset === 'esquadrao';
+  const larga = w >= 60;
+  const minima = w < 44;
   const id = idNatural(e.id);
   const fim = (l: Linha): Linha => cortarNatural(l, w);
 
@@ -503,54 +529,163 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   };
 
   const ls: LinhaPrioridade[] = [];
+  const secao = new Map<Linha, number>(); // 0 cabeçalho e topo · 1 PLANO · 2 EQUIPE · 3 ATENÇÃO · 4 histórico e rodapé: o separador vai entre seções
   const topo = new Set<Linha>();
   const itensLinhas: Linha[][] = []; // as linhas de cada item do topo: um item entra inteiro ou não entra
   let ordem = 0;
-  const por = (prioridade: number, l: Linha): Linha => { ls.push({ prioridade, ordem: ordem++, l }); return l; };
+  const por = (prioridade: number, l: Linha, sec: number): Linha => { ls.push({ prioridade, ordem: ordem++, l }); secao.set(l, sec); return l; };
 
-  // cabeçalho (FIEL-10 f)
+  // ───────── cabeçalho (FIEL-10 f): o título uma vez; o preset à direita, como no E4 ─────────
   const titulo = id === '' ? '' : tituloLimpo(e.titulo, e.id); // sem entrega identificada, o título (da entrega) não se aplica
-  por(2, [seg(`GABARITO · ${id !== '' ? id : 'entrega não identificada'}${titulo !== '' ? ` ${titulo}` : ''}`)]);
+  const cab = `GABARITO · ${id !== '' ? id : 'entrega não identificada'}${titulo !== '' ? ` ${titulo}` : ''}`;
+  const pacote = natural(e.pacote).toLowerCase();
+  const rotuloPreset = ludico ? `esquadrão${pacote !== '' ? ` · ${pacote}` : ''}` : 'executivo';
+  por(2, larga && colunas(cab) + 1 + colunas(rotuloPreset) <= w ? alinhar([seg(cab)], [seg(rotuloPreset, 'inactive')], w) : [seg(cab)], 0);
 
-  // 1 DEPENDE DE VOCÊ: PAROU, pergunta, demais itens
-  const itensTopo: { texto: string; cor: CorTema; rotulo: boolean }[] = [];
+  // ───────── topo: PAROU, depois `◆ DEPENDE DE VOCÊ  N itens` com os itens recuados (REQ-DEP-1) ─────────
+  type ItemTopo = { texto: string; cor?: CorTema; tipo: 'parou' | 'item' | 'proprio'; peso: number };
+  const itensTopo: ItemTopo[] = [];
   const p = e.parar;
-  if (p !== null && typeof p === 'object') {
-    itensTopo.push({ texto: `PAROU ${horaDe(p.hora)} · ${natural(p.texto)}${botoes(p.acoes)}`, cor: 'error', rotulo: false });
-  }
+  if (p !== null && typeof p === 'object') itensTopo.push({ texto: `■ PAROU ${horaDe(p.hora)} · ${natural(p.texto)}${botoes(p.acoes)}`, cor: 'error', tipo: 'parou', peso: 0 });
   const q = e.pergunta;
   if (q !== null && q !== undefined && typeof q.texto === 'string') {
     const ops = (Array.isArray(q.opcoes) ? q.opcoes : []).map((x, i) => ` · ${i + 1} ${natural(x)}`).join('');
-    itensTopo.push({ texto: `${natural(q.texto)}${ops}`, cor: 'warning', rotulo: true });
+    itensTopo.push({ texto: `${natural(q.texto)}${ops}`, tipo: 'item', peso: 1 });
   }
   const mais = inteiroNaoNeg(e.perguntasMais) ?? 0;
-  if (mais > 0) itensTopo.push({ texto: `mais ${mais} ${mais === 1 ? 'pergunta aberta' : 'perguntas abertas'}`, cor: 'warning', rotulo: true });
+  if (mais > 0) itensTopo.push({ texto: `mais ${mais} ${mais === 1 ? 'pergunta aberta' : 'perguntas abertas'}`, tipo: 'item', peso: mais });
   for (const i of Array.isArray(e.depende) ? e.depende : []) {
     if (i === null || typeof i !== 'object' || (p !== null && i.nivel === 'parar')) continue;
     const m = typeof i.motivo === 'string' ? i.motivo : '';
-    const proprio = /^depende de você:/.test(m);
-    itensTopo.push({ texto: proprio ? `depende de você:${natural(m.slice('depende de você:'.length)) === '' ? '' : ` ${natural(m.slice('depende de você:'.length))}`}` : `${natural(m)}${botoes(i.acoes)}`, cor: proprio && /nada$/.test(m) ? 'inactive' : 'warning', rotulo: !proprio });
+    if (/^depende de você:/.test(m)) {
+      const resto = natural(m.slice('depende de você:'.length));
+      itensTopo.push({ texto: `depende de você:${resto === '' ? '' : ` ${resto}`}`, cor: /nada$/.test(m) ? 'inactive' : 'warning', tipo: 'proprio', peso: 0 });
+    } else itensTopo.push({ texto: `${natural(m)}${botoes(i.acoes)}`, tipo: 'item', peso: 1 });
   }
-  let rotulado = false;
+  const nItens = itensTopo.reduce((n, x) => n + (x.tipo === 'item' ? x.peso : 0), 0);
+  // O rótulo `◆ DEPENDE DE VOCÊ  N itens` do E4 é desenho, não item: com pouca altura é o 1º a sair e o 1º item passa a começar por `◆`
+  // (troca no fim, mesma largura) — o (+N) conta só itens e a altura vai para o que é regra.
+  let rotuloDepende: Linha | null = null;
+  let primeiraDoItem: Linha | null = null;
+  let semRotulo: Linha | null = null;
   for (const it of itensTopo) {
-    const prefixo = it.rotulo ? (rotulado ? '  ' : 'depende de você: ') : '';
-    if (it.rotulo || /^depende de você:/.test(it.texto)) rotulado = true;
+    if (it.tipo === 'item' && rotuloDepende === null) {
+      rotuloDepende = por(6.9, [seg('◆ DEPENDE DE VOCÊ', 'warning'), seg(`  ${nItens} ${nItens === 1 ? 'item' : 'itens'}`, 'warning')], 0);
+    }
     // REQ-GLB-1: o topo nunca sai cortado; o que não cabe em `w` quebra em linhas de continuação (recuo de 4), sem perder palavra
-    itensLinhas.push(quebrarTopo(`${prefixo}${it.texto}`, w).map((t) => { const l = por(1, [seg(t, it.cor)]); topo.add(l); return l; }));
+    const doItem = quebrarTopo(it.tipo === 'item' ? `  ${it.texto}` : it.texto, w).map((t): Linha => (it.cor === undefined ? [seg(t)] : [seg(t, it.cor)]));
+    if (it.tipo === 'item' && primeiraDoItem === null && doItem.length > 0) {
+      primeiraDoItem = doItem[0];
+      semRotulo = [seg('◆', 'warning'), seg(textoDe(doItem[0]).slice(1))];
+    }
+    itensLinhas.push(doItem.map((l) => { por(1, l, 0); topo.add(l); return l; }));
   }
 
-  // sem entrega: a última conhecida logo depois do topo (a pergunta (b) segue sendo a linha 2; fumaca-gm14)
-  const ultima = id === '' && typeof e.trilha?.ultimaConhecida === 'string' ? idNatural(e.trilha.ultimaConhecida) : ''; // spec:53
-  if (ultima !== '') por(2, [seg(`última entrega conhecida: ${ultima}`, 'inactive')]);
+  // sem entrega: a última conhecida logo depois do topo (spec:53)
+  const ultima = id === '' && typeof e.trilha?.ultimaConhecida === 'string' ? idNatural(e.trilha.ultimaConhecida) : '';
+  if (ultima !== '') por(2, [seg(`última entrega conhecida: ${ultima}`, 'inactive')], 0);
 
-  // 2 PRONTO ou FASE
+  // nomes e cores dos agentes do AGORA (FIEL-3 d): o nome é único entre os ativos; a medição (ctx, tokens, modelo, cor) é a da equipe
+  const ag = e.agora;
+  const agentesAg: AgenteAgora[] | null = ag !== undefined && ag !== null && Array.isArray(ag.agentes) ? ag.agentes.filter((a) => a !== null && typeof a === 'object') : null;
+  const eqAg: AgentePainel[] = Array.isArray(e.equipe?.agentes) ? e.equipe.agentes.filter((a) => a !== null && typeof a === 'object' && a.vivo === true) : [];
+  const daEquipe = (a: AgenteAgora): AgentePainel | undefined => {
+    const nome = a.quem?.nome;
+    const porNome = typeof nome === 'string' && nome !== '' ? eqAg.filter((x) => x.nome === nome) : [];
+    if (porNome.length === 1) return porNome[0];
+    const porTask = eqAg.filter((x) => (x.task ?? null) === (a.task ?? null));
+    return porNome.length === 0 && porTask.length === 1 ? porTask[0] : undefined;
+  };
+
+  // ───────── PLANO: PRONTO com a fila de tasks do E4 (FIEL-10 b), ou FASE sem plano ─────────
   const pr = e.pronto;
+  let fila1: Linha | null = null;
+  let fila2: Linha | null = null;
+  let filaJunta: Linha | null = null;
   if (pr !== null && pr !== undefined) {
-    const integradas = inteiroNaoNeg(pr.integradas) ?? 0;
-    const total = inteiroNaoNeg(pr.total) ?? 0;
-    const prev = pr.previsao !== null && typeof pr.previsao?.hora === 'string'
-      ? ` · previsão ${limpar(pr.previsao.hora)} (base: ${inteiroNaoNeg(pr.previsao.base) ?? '?'} tasks desta entrega)` : '';
-    por(2, [seg('PRONTO '), ...barraSegs(total === 0 ? 0 : (integradas / total) * 100, 10, '▰', '▱', 'success'), seg(` ${integradas} de ${total} integradas${prev}`)]);
+    const integ = inteiroNaoNeg(pr.integradas);
+    const total = inteiroNaoNeg(pr.total);
+    const pct = integ !== null && total !== null && total > 0 ? Math.round((Math.min(integ, total) / total) * 100) : null;
+    const pctTxt = pct === null ? '?' : `${pct}%`;
+    const tasksTxt = `${integ ?? '?'}/${total ?? '?'} tasks`;
+    const prevV = pr.previsao !== null && typeof pr.previsao?.hora === 'string' && limpar(pr.previsao.hora) !== '' ? pr.previsao : null;
+    const status = prevV !== null ? `previsão ${limpar(prevV.hora)} (base: ${inteiroNaoNeg(prevV.base) ?? '?'} tasks desta entrega)`
+      : p !== null && typeof p === 'object' ? 'loop parado' : e.parado === true ? 'loop pausado' : integ !== null && total !== null && total > 0 && integ >= total ? 'todas integradas' : '';
+    // a barra pinta só integradas (D-P6); sem número, "?" no lugar da barra (nunca barra vazia que pareça 0 %)
+    const barraPlano = (bw: number): Linha => (pct === null ? [seg('?')] : barraSegs(pct, bw, '▰', '▱', 'success'));
+    if (larga) {
+      const resto = 8 + 2 + colunas(pctTxt) + 2 + colunas(tasksTxt) + 3 + colunas(status);
+      const bw = Math.min(21, Math.max(5, w - resto));
+      const esq: Linha = [seg('PLANO   '), ...barraPlano(bw), ...(pct === null ? [seg(`  ${tasksTxt}`)] : [seg(`  ${pctTxt}  ${tasksTxt}`)])];
+      // status à direita como no E4; se não cabe, vai no fim da linha (cortado com "…"), nunca corta número
+      por(2, status === '' ? esq : larg(esq) + 1 + colunas(status) <= w ? alinhar(esq, [seg(status, 'inactive')], w) : [...esq, seg(` · ${status}`, 'inactive')], 1);
+    } else {
+      por(2, [seg('PLANO '), ...barraPlano(minima ? 5 : 10), ...(pct === null ? [seg(` ${tasksTxt}`)] : [seg(` ${pctTxt} ${tasksTxt}`)]), ...(status !== '' ? [seg(` · ${status}`, 'inactive')] : [])], 1);
+    }
+
+    // faixa das integradas (E4): a contagem, nunca a lista (FIEL-10 b: task integrada não é listada)
+    if (larga && integ !== null && integ > 0) {
+      const partes = [`${integ} ${integ === 1 ? 'integrada' : 'integradas'}`];
+      const r = nn(e.plano?.rodadaMedia);
+      const m = nn(e.plano?.medianaS);
+      const extra = [...(r !== null ? [`${r.toFixed(1)} rodada média`] : []), ...(m !== null ? [`mediana ${Math.round(m / 60)} min`] : [])];
+      por(6.4, [seg('  '), seg('✓', 'success'), seg(` ${partes[0]}`), ...(extra.length > 0 ? [seg(` · ${extra.join(' · ')}`, 'inactive')] : [])], 1);
+    }
+
+    // tasks em voo e fila (E4); `pendente` com vivo casado está em curso, nunca na fila (FIEL-3 a)
+    const tasks: TaskPainel[] = Array.isArray(e.plano?.tasks) ? e.plano.tasks.filter((x) => x !== null && typeof x === 'object' && typeof x.id === 'string') : [];
+    const ordemIds = tasks.map((x) => x.id);
+    const emCurso = (x: TaskPainel): boolean => x.estado === 'pendente' && x.glifo === '●';
+    const emVoo = tasks.filter((x) => x.estado !== 'integrada' && (x.estado !== 'pendente' || emCurso(x)));
+    const fila = tasks.filter((x) => x.estado === 'pendente' && !emCurso(x));
+    const aberta = (tid: unknown): boolean => tasks.find((x) => x.id === tid)?.estado !== 'integrada';
+    // FIEL-8: `concluida` se diz "entregue"; `pendente` em curso, "em curso"
+    const estadoTxt = (x: TaskPainel): string => (emCurso(x) ? 'em curso' : x.estado === 'concluida' ? 'entregue' : textoEstadoTask(x.estado));
+    const estadoCor = (x: TaskPainel): CorTema => (emCurso(x) ? 'success' : corEstadoTask(x.estado));
+    // o nome na fila é o do agente vivo da task (o mesmo do AGORA); sem dados da sessão (FIEL-4), nenhum nome
+    const agenteDaTask = (x: TaskPainel): AgenteAgora | undefined => agentesAg?.find((a) => a.task === x.id);
+    const nomeDe = (x: TaskPainel): string => { const a = agenteDaTask(x); return a === undefined ? '' : quemTexto(a.quem); };
+    const corNome = (x: TaskPainel): CorTema | undefined => { const a = agenteDaTask(x); return a === undefined ? undefined : daEquipe(a)?.cor; };
+    const nomeW = maxCol(emVoo.map(nomeDe));
+    const estW = maxCol(emVoo.map(estadoTxt));
+    const primeira: TaskPainel | undefined = fila[0];
+    const id2 = (x: TaskPainel): string => t(x.id);
+    const idW = maxCol([...emVoo.map(id2), ...(larga && primeira ? [id2(primeira)] : [])]);
+    const tempoTask = (x: TaskPainel): string => tempoDe(x.desdeS);
+    if (larga) {
+      const tcol = w >= 80 ? Math.min(40, w - 48) : w >= 72 ? 24 : 0;
+      const tituloT = (x: TaskPainel): string => (tcol > 0 ? cortar(natural(x.titulo), tcol) : '');
+      const tw = maxCol([...emVoo.map(tituloT), ...(primeira ? [tituloT(primeira)] : [])]);
+      const colTitulo = (x: TaskPainel, cor?: CorTema): Linha => (tw > 0 ? [seg(pad(tituloT(x), tw), cor), seg('  ')] : []);
+      for (const x of emVoo) {
+        const c = estadoCor(x);
+        por(6, aparar([
+          seg('  '), seg(glifoTask(x.glifo), c), seg(` ${pad(id2(x), idW)}  `), ...colTitulo(x),
+          seg(pad(estadoTxt(x), estW), c), seg('  '), ...(nomeW > 0 ? [seg(pad(nomeDe(x), nomeW), corNome(x)), seg('  ')] : []), seg(tempoTask(x), 'inactive'),
+        ]), 1);
+      }
+      if (primeira) {
+        const deps = (Array.isArray(primeira.deps) ? primeira.deps : []).filter(aberta).map(t).filter((x) => x !== '');
+        fila1 = por(6.3, aparar([
+          seg('  '), seg('○', 'inactive'), seg(` ${pad(id2(primeira), idW)}  `, 'inactive'), ...colTitulo(primeira, 'inactive'),
+          seg(deps.length > 0 ? `fila · depende de ${deps.join(' ')}` : 'fila', 'inactive'),
+        ]), 1);
+        if (fila.length > 1) {
+          filaJunta = [seg('  '), seg(`○ ${t(faixaIds(fila.map((x) => x.id), ordemIds))}  fila`, 'inactive')];
+          fila2 = por(6.3, [seg('  '), seg(`○ ${t(faixaIds(fila.slice(1).map((x) => x.id), ordemIds))}  fila`, 'inactive')], 1);
+        }
+      }
+    } else {
+      for (const x of emVoo) {
+        const c = estadoCor(x);
+        const nome = nomeDe(x);
+        por(6, aparar([
+          seg(glifoTask(x.glifo), c), seg(` ${id2(x)} `), ...(nome !== '' ? [seg(pad(nome, nomeW), corNome(x)), seg('  ')] : []),
+          seg(pad(estadoTxt(x), estW), c), seg('  '), seg(tempoTask(x), 'inactive'),
+        ]), 1);
+      }
+      if (fila.length > 0) fila1 = por(6.3, [seg(`○ ${t(faixaIds(fila.map((x) => x.id), ordemIds))} fila`, 'inactive')], 1);
+    }
   } else if (e.fase !== null && e.fase !== undefined) {
     const f = e.fase;
     const marcas = Array.isArray(f.marcas) ? f.marcas : [];
@@ -558,76 +693,209 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
     const barra7 = FASES_NOME.map((_, i) => (marcas[i] === '✓' ? '▰' : '▱')).join('');
     const trilha = FASES_NOME.map((nome, i) => `${['✓', '●', '○', '?'].includes(marcas[i]) ? marcas[i] : '?'} ${nome}`).join(' › ');
     const partes = [natural(f.progresso), ...(Array.isArray(f.sufixo) ? f.sufixo.map((x) => natural(x)) : []), ...(typeof f.motivo === 'string' ? [`? ${natural(f.motivo)}`] : [])].filter((x) => x !== '');
-    por(2, [seg(`FASE ${n === null ? '?' : n} de 7 `), seg(barra7, 'success'), seg(`${partes.map((x) => ` · ${x}`).join('')} · `), seg(trilha, 'inactive')]);
+    por(2, [seg(`FASE ${n === null ? '?' : n} de 7 `), seg(barra7, 'success'), seg(`${partes.map((x) => ` · ${x}`).join('')} · `), seg(trilha, 'inactive')], 1);
   }
 
-  // 3 AGORA (FIEL-4, FIEL-11)
-  const agoraAgentes: LinhaPrioridade[] = []; // as linhas de agente e de segundo plano do AGORA (candidatas à linha-resumo, T42 emenda 37)
+  // ───────── EQUIPE: o AGORA (FIEL-4, FIEL-11) no desenho do E4 ─────────
+  const agoraAgentes: LinhaPrioridade[] = []; // as linhas de agente e de segundo plano (candidatas à linha-resumo, T42 emenda 37)
   const resumo: { r: string; t: string }[] = [];
   let nVivos = 0;
-  const ag = e.agora;
+  let linhaNomeOrq: Linha | null = null;
+  let linhaCtx: Linha | null = null;
+  let ctxComNome: Linha | null = null;
   if (ag !== undefined && ag !== null) {
-    if (ag.agentes === null) por(3, [seg('AGORA · agentes e contexto: medidos só no painel da sessão', 'inactive')]);
-    else {
+    if (agentesAg === null) {
+      // FIEL-4: sem dados da sessão, 1 linha só; nada de contexto, tokens, 5h/7d nem nomes sorteados
+      por(3, [seg('EQUIPE · '), seg('agentes e contexto: medidos só no painel da sessão', 'inactive')], 2);
+    } else {
+      nVivos = agentesAg.length; // "N agentes" = número de linhas de agente (FIEL-6 b)
+      if (larga) por(6.5, alinhar([seg('EQUIPE')], [seg(`agentes ${nVivos} ${nVivos === 1 ? 'vivo' : 'vivos'}`, 'inactive')], w), 2);
       const or = ag.orquestrador;
-      const pct = inteiroNaoNeg(or?.contexto === null ? null : Math.round(Number(or?.contexto)));
-      const ctx = pct === null ? 'contexto ?' : or.estimado === true ? `contexto ~${pct} % (estimado)` : `contexto ${pct} %`;
-      por(3, [seg('AGORA · '), seg(`${quemTexto({ nome: or?.nome ?? null, papel: 'orquestrador' })} · ${ctx}${pct !== null && or.pousar === true ? ' · hora de pousar' : ''}`)]);
-      const linhaAgente = (a: AgenteAgora, tarefaPadrao: string): Linha => {
-        const tempo = inteiroNaoNeg(a.desdeS);
-        const acao = a.acao === null || a.acao === undefined ? '?' : natural(a.acao, 'reticencia') || '?';
-        return [seg(`  ${quemTexto(a.quem)} · ${a.task === null || a.task === undefined ? tarefaPadrao : limpar(a.task)} · ${acao}${tempo === null ? '' : ` · ${fmtTempo(tempo)}`}`)];
+      const nomeOrq = quemTexto({ nome: typeof or?.nome === 'string' ? or.nome : null, papel: 'orquestrador' });
+      const lider = e.equipe?.lider;
+      const c0 = or?.contexto;
+      const pct = typeof c0 === 'number' && Number.isFinite(c0) && c0 >= 0 ? Math.round(c0) : null;
+      const estim = or?.estimado === true && pct !== null;
+      const xp = nn(lider?.x);
+      const hora = pct !== null && or?.pousar === true ? ' · hora de pousar' : '';
+      const tokV = nn(lider?.tok);
+      const tokTxt = `   tok ${tokV === null ? '?' : fmtTok(tokV)}`;
+      /** Linha do contexto do orquestrador: barra █░ (sem medição, "?" no lugar dela); "hora de pousar" nunca é cortada: a barra cede, depois o "pouso em". */
+      const ctxOrq = (comNome: boolean, comTok: boolean): Linha => {
+        let pre: Linha = comNome ? [seg(nomeOrq), seg(' ctx ')] : [seg('│', 'inactive'), seg('  ctx ')];
+        let tk = comTok ? tokTxt : '';
+        const teto = comNome ? 19 : w >= 72 ? 29 : 19;
+        let pz = xp === null ? '' : ` · pouso em ${fmtPct(xp)}`;
+        let est = estim ? ' (estimado)' : '';
+        const txtPct = (): string => (pct === null ? '?' : `${estim ? '~' : ''}${pct}%${est}`);
+        const fixo = (): number => larg(pre) + (pct === null ? 0 : 1) + colunas(txtPct()) + colunas(pz) + colunas(hora) + colunas(tk);
+        let bw = Math.min(teto, w - fixo());
+        // "hora de pousar" nunca é cortada: cede a barra, depois o "pouso em", depois o "(estimado)" (o "~" segue dizendo que é estimado),
+        // depois os tokens, depois o nome (encurtado com "…", depois fora) e por fim o "ctx " (review T29 r1: < 44 e nome longo)
+        if (bw < 5 && pz !== '') { pz = ''; bw = Math.min(teto, w - fixo()); }
+        if (bw < 1 && est !== '') { est = ''; bw = Math.min(teto, w - fixo()); }
+        if (hora !== '' && bw < 1 && tk !== '') { tk = ''; bw = Math.min(teto, w - fixo()); }
+        if (hora !== '' && bw < -1 && comNome) {
+          const nomeCabe = colunas(nomeOrq) + bw + 1; // sem barra, o espaço antes do número também sai
+          pre = nomeCabe >= 2 ? [seg(cortar(nomeOrq, nomeCabe)), seg(' ctx ')] : [seg('ctx ')];
+          bw = Math.min(teto, w - fixo());
+        }
+        if (hora !== '' && bw < -1) { pre = []; bw = Math.min(teto, w - fixo()); }
+        // nem o número cabe ao lado: fica só o aviso, inteiro
+        if (hora !== '' && bw < -1) return [seg(hora.replace(/^ · /, ''), 'warning')];
+        bw = Math.max(0, bw);
+        return [
+          ...pre, ...(pct === null ? [seg(txtPct())] : [...barraSegs(pct, bw, '█', '░', 'success'), seg(`${bw > 0 ? ' ' : ''}${txtPct()}`)]),
+          ...(pz !== '' ? [seg(pz, 'inactive')] : []), ...(hora !== '' ? [seg(hora, 'warning')] : []), ...(tk !== '' ? [seg(tk)] : []),
+        ];
       };
-      for (const a of ag.agentes) { por(3, linhaAgente(a, 'sem task')); agoraAgentes.push(ls[ls.length - 1]); resumo.push({ r: quemTexto(a.quem), t: a.task === null || a.task === undefined ? 'sem task' : limpar(a.task) }); }
-      for (const a of Array.isArray(ag.segundoPlano) ? ag.segundoPlano : []) {
-        por(3, linhaAgente({ ...a, quem: { nome: null, papel: 'teste' } }, 'orquestrador')); agoraAgentes.push(ls[ls.length - 1]);
-        resumo.push({ r: quemTexto({ nome: null, papel: 'teste' }), t: a.task === null || a.task === undefined ? 'orquestrador' : limpar(a.task) });
+      const h5 = nn(lider?.h5);
+      const d7 = nn(lider?.d7);
+      if (larga) {
+        const modelo = t(lider?.modelo);
+        linhaNomeOrq = por(6.6, aparar([seg(nomeOrq), seg('  orquestra'), ...(modelo !== '' ? [seg(` · ${modelo}`, 'inactive')] : [])]), 2);
+        linhaCtx = por(3, ctxOrq(false, true), 2);
+        ctxComNome = ctxOrq(true, true);
+        // limites 5h e 7d com a barra de 10 do E4; sem medição, "?" no lugar da barra (D-P13)
+        const lim = (rot: string, v: number | null): Linha => (v === null ? [seg(`${rot} ?`)] : [seg(`${rot} `), ...barraSegs(v, 10, '█', '░', 'success'), seg(` ${fmtPct(v)}`)]);
+        por(6.1, [seg('│', 'inactive'), seg('  '), ...lim('5h', h5), seg('   '), ...lim('7d', d7)], 2);
+        const narr = natural(lider?.narrativa);
+        // `▶` do E4 é pictográfico (vira emoji em terminal, FIEL-13 c): `▸`
+        if (o.narracao === true && w >= 72 && narr !== '') por(6.7, [seg('│', 'inactive'), seg('  '), seg('▸', 'success'), seg(` ${narr}`)], 2);
+      } else {
+        linhaCtx = por(3, ctxOrq(true, false), 2);
+        por(6.1, [seg('│ ', 'inactive'), seg(`5h ${h5 === null ? '?' : fmtPct(h5)} 7d ${d7 === null ? '?' : fmtPct(d7)}${tokTxt.replace(/^ +/, ' ')}`)], 2);
       }
-      nVivos = ag.agentes.length;
+
+      // árvore dos agentes (├─ … └─): só ativos (FIEL-6); o que faz (FIEL-11 b) no fim da linha, onde o corte não alcança número
+      const segundo = Array.isArray(ag.segundoPlano) ? ag.segundoPlano.filter((a) => a !== null && typeof a === 'object') : [];
+      const itens = [...agentesAg.map((a) => ({ a, bg: false })), ...segundo.map((a) => ({ a: { ...a, quem: { nome: null, papel: 'teste' as const } }, bg: true }))];
+      const dados = itens.map(({ a, bg }) => {
+        const eq = bg ? undefined : daEquipe(a);
+        const tempo = inteiroNaoNeg(a.desdeS);
+        return {
+          nome: quemTexto(a.quem), cor: eq?.cor, gc: (bg || eq?.estadoTask == null ? 'inactive' : corEstadoTask(eq.estadoTask)) as CorTema, modelo: t(eq?.modelo),
+          task: typeof a.task === 'string' && t(a.task) !== '' ? t(a.task) : bg ? 'orquestrador' : 'sem task',
+          pct: bg ? null : nn(eq?.ctxPct), tok: bg ? null : nn(eq?.ctxTok), bg, tempo: tempo === null ? '' : fmtTempo(tempo),
+          acao: a.acao === null || a.acao === undefined ? '?' : natural(a.acao, 'reticencia') || '?',
+        };
+      });
+      type Dado = (typeof dados)[number];
+      const ctxSegs = (d: Dado): Linha => (d.bg ? [] : d.pct !== null
+        ? [seg('ctx '), ...barraSegs(d.pct, 10, '█', '░', 'success'), seg(` ${fmtPct(d.pct)}`)]
+        : [seg(d.tok !== null ? `ctx ${fmtTok(d.tok)}` : 'ctx ?')]);
+      const linhas: Linha[] = [];
+      if (larga) {
+        const nw = maxCol(dados.map((d) => d.nome));
+        const tw = maxCol(dados.map((d) => d.task));
+        const cw = maxCol(dados.map((d) => textoDe(ctxSegs(d))));
+        const acaoMin = Math.min(12, maxCol(dados.map((d) => d.acao)));
+        // níveis (o número nunca é cortado, P1c D-R6): 0 tudo · 1 sem modelo · 2 sem tempo · 3 nome encurtado com "…"
+        const bases = (nivel: number, nwU: number): Linha[] => {
+          const nomeDe = (d: Dado): string => (nivel >= 3 ? cortar(d.nome, nwU) : d.nome);
+          const modeloDe = (d: Dado): string => (nivel === 0 && d.modelo !== '' ? ` · ${d.modelo}` : '');
+          const nmw = maxCol(dados.map((d) => `${nomeDe(d)}${modeloDe(d)}`));
+          const caudas = dados.map((d) => [...(d.pct !== null && d.tok !== null ? [fmtTok(d.tok)] : []), ...(nivel < 2 && d.tempo !== '' ? [d.tempo] : [])].join(' · '));
+          const caw = maxCol(caudas);
+          return dados.map((d, i) => [
+            seg(PREFIXO(i === dados.length - 1, true), 'inactive'), seg('●', d.gc), seg(' '), seg(nomeDe(d), d.cor),
+            ...(modeloDe(d) !== '' ? [seg(modeloDe(d), 'inactive')] : []), seg(' '.repeat(nmw - colunas(`${nomeDe(d)}${modeloDe(d)}`))), seg('  '), seg(pad(d.task, tw)), seg('  '),
+            ...ctxSegs(d), seg(' '.repeat(cw - colunas(textoDe(ctxSegs(d))))), ...(caw > 0 ? [seg(`  ${pad(caudas[i], caw)}`, 'inactive')] : []),
+          ]);
+        };
+        let nivel = 0;
+        let nwU = nw;
+        const largura = (n: number): number => Math.max(0, ...bases(n, nwU).map(larg)) + 2 + acaoMin;
+        while (nivel < 3 && largura(nivel) > w) {
+          nivel++;
+          if (nivel === 3) nwU = Math.max(1, nw - (largura(3) - w));
+        }
+        bases(nivel, nwU).forEach((b, i) => linhas.push([...b, seg(`  ${dados[i].acao}`)]));
+      } else {
+        const nw = maxCol(dados.map((d) => d.nome));
+        dados.forEach((d, i) => {
+          const nums = d.bg ? '' : [d.pct !== null ? fmtPct(d.pct) : '', d.tok !== null ? fmtTok(d.tok) : ''].filter((x) => x !== '').join(' ') || '?';
+          linhas.push(aparar([
+            seg(PREFIXO(i === dados.length - 1, false), 'inactive'), seg('●', d.gc), seg(' '), seg(pad(d.nome, nw), d.cor), seg(` ${d.task}`),
+            seg(`${nums !== '' ? ` ${nums}` : ''}${d.tempo !== '' ? ` ${d.tempo}` : ''}`, 'inactive'), seg(` ${d.acao}`),
+          ]));
+        });
+      }
+      linhas.forEach((l, i) => {
+        por(3, l, 2); agoraAgentes.push(ls[ls.length - 1]);
+        resumo.push({ r: dados[i].nome, t: dados[i].task });
+      });
     }
   }
 
-  // 4 ATENÇÃO
+  // ───────── ATENÇÃO (FIEL-10 c): `◆ ATENÇÃO  a · b` do E4; o que não cabe vai à linha seguinte, alinhado ─────────
   const atencao = (Array.isArray(e.atencao) ? e.atencao : []).map((x) => natural(x)).filter((x) => x !== '');
-  atencao.forEach((x, i) => por(4, [seg(i === 0 ? 'ATENÇÃO · ' : '  ', 'warning'), seg(x)]));
+  const rotAt = larga ? '◆ ATENÇÃO  ' : '◆ ';
+  const grupos: string[][] = [];
+  for (const x of atencao) {
+    const g = grupos[grupos.length - 1];
+    if (g !== undefined && colunas(rotAt) + colunas([...g, x].join(' · ')) <= w) g.push(x);
+    else grupos.push([x]);
+  }
+  grupos.forEach((g, i) => por(4, i === 0 ? [seg(rotAt.trimEnd(), 'warning'), seg(`${larga ? '  ' : ' '}${g.join(' · ')}`)] : [seg(`${' '.repeat(colunas(rotAt))}${g.join(' · ')}`)], 3));
 
-  // 5 RECENTE (até 5 na lateral, 2 acima do input; mais novo no topo)
+  // ───────── histórico do E4 = RECENTE (FIEL-10 d): só resultados, mais novo no topo, com origem; até 5 na lateral e 2 acima do input ─────────
   const cap = o.local === 'acima' ? 2 : 5;
-  const rec = (Array.isArray(e.recente) ? e.recente : []).slice(0, cap);
+  const todosRec = Array.isArray(e.recente) ? e.recente.filter((r) => r !== null && typeof r === 'object') : [];
+  const rec = todosRec.slice(0, cap);
   const dec = (e as EstadoPainel & { decisaoSombra?: ItemRecente | null }).decisaoSombra;
   const daDecisao: Linha[] = [];
-  rec.forEach((r, i) => {
-    const quem = quemTexto(r.quem);
-    const lr = por(5, [seg(i === 0 ? 'RECENTE · ' : '  ', 'inactive'), seg(`${horaDe(r.hora)} `, 'inactive'), seg(r.glifo, r.cor), seg(` ${quem !== '' ? `${quem} ` : ''}${natural(r.texto)} `), seg(limpar(r.origem), 'inactive')]);
+  for (const r of rec) {
+    const lr = por(5, linhaRecente(r, quemTexto, natural(r.texto)), 4);
     if (dec !== null && dec !== undefined && typeof dec === 'object' && (r === dec || (r.hora === dec.hora && r.texto === dec.texto && r.glifo === dec.glifo && r.origem === dec.origem))) daDecisao.push(lr);
-  });
+  }
+
+  // rodapé do E4: CI, produção e política; sem medição, "?" (D-P13); `▼ N` = resultados que o teto do local escondeu
+  if (e.rodape !== null && typeof e.rodape === 'object') {
+    const ci = e.rodape.ci?.verde;
+    const ciTxt = ci === true ? 'verde' : ci === false ? 'vermelho' : '?';
+    const ciCor: CorTema = ci === true ? 'success' : ci === false ? 'warning' : 'inactive';
+    const leu = ouInterroga(e.rodape.prod?.leituras);
+    const alt = ouInterroga(e.rodape.prod?.alteracoes);
+    const pol0 = natural(e.rodape.politica);
+    const pol = pol0 === '' || pol0 === 'undefined' || pol0 === 'null' ? '?' : pol0;
+    const k = Math.max(0, todosRec.length - rec.length);
+    por(6.8, larga
+      ? alinhar([seg('CI '), seg('●', ciCor), seg(` ${ciTxt}   PROD leu ${leu} · alterou ${alt}   política ${pol}`)], k > 0 ? [seg(`▼ ${k} ${k === 1 ? 'evento' : 'eventos'}`, 'inactive')] : [], w)
+      : [seg('CI '), seg('●', ciCor), seg(` ${ciTxt}  PROD ${leu}/${alt}`), ...(k > 0 ? [seg(`  ▼ ${k}`, 'inactive')] : [])], 4);
+  }
 
   // Reserva (T42, emenda 32): a decisão da Sombra mais recente, na mesma linha do RECENTE; entra quando o corte tira o RECENTE (inteiro ou em parte) e a decisão não sobra.
   const reserva: Linha | null = dec === null || dec === undefined || typeof dec !== 'object' ? null : linhaReserva(dec, quemTexto, w);
+  if (reserva !== null) secao.set(reserva, 4);
 
   // corte por orçamento (REQ-GLB-1): `orcamento`, senão `altura`; sem os dois, sem corte
   const orc = alturaValida(o.orcamento) ?? alturaValida(o.altura);
   let cortado: { linhas: Linha[]; cortadasTopo: number } = orc === undefined ? { linhas: ls.map((x) => x.l), cortadasTopo: 0 } : cortarComReserva(ls, orc, reserva, daDecisao);
   // Linha-resumo (T42, emenda 37): só quando há reserva da Sombra, ela NÃO coube e compactar o AGORA (agentes + segundo plano) em 1 linha a faz caber.
-  // Se mesmo compactado não couber, o AGORA fica como hoje e a reserva cede.
   if (orc !== undefined && reserva !== null && !cortado.linhas.includes(reserva) && nVivos >= 1 && agoraAgentes.length >= 2) {
     const recente = ls.filter((x) => x.prioridade === 5).map((x) => x.l);
     if (recente.length > 0 && !recente.some((l) => cortado.linhas.includes(l))) {
       const compacta = linhaResumo(nVivos, resumo, w);
+      secao.set(compacta, 2);
       const fora = new Set(agoraAgentes);
       const ls2: LinhaPrioridade[] = [];
       ls.forEach((x) => { if (x === agoraAgentes[0]) ls2.push({ ...x, l: compacta }); else if (!fora.has(x)) ls2.push(x); });
-      // a linha livre que a compactação abre é da DECISÃO da Sombra mais recente (emenda 32), não do item mais recente do RECENTE: o RECENTE segue fora e a reserva entra
       const semRecente = ls2.filter((x) => x.prioridade !== 5);
-      const fim = ls2.reduce((m, x) => Math.max(m, x.ordem), 0) + 1;
-      const c2 = cortarPorPrioridade([...semRecente, { prioridade: PRIORIDADE_RESERVA, ordem: fim, l: reserva }], orc);
-      // a compactação só vale com a decisão à vista (emenda 37): se a reserva ainda não coube, o AGORA fica como hoje
+      const ultimo = ls2.reduce((m, x) => Math.max(m, x.ordem), 0) + 1;
+      const c2 = cortarPorPrioridade([...semRecente, { prioridade: PRIORIDADE_RESERVA, ordem: ultimo, l: reserva }], orc);
       if (c2.linhas.includes(reserva)) cortado = { linhas: c2.linhas, cortadasTopo: c2.cortadasTopo };
     }
   }
   const ficou = new Set(cortado.linhas);
+  // trocas do E4 com pouca altura: sem a linha do nome, o contexto do orquestrador leva o nome; sem a 2ª linha da fila, a 1ª vira a faixa inteira
+  const troca = new Map<Linha, Linha>();
+  if (rotuloDepende !== null && primeiraDoItem !== null && semRotulo !== null && !ficou.has(rotuloDepende) && ficou.has(primeiraDoItem)) troca.set(primeiraDoItem, semRotulo);
+  if (linhaNomeOrq !== null && linhaCtx !== null && ctxComNome !== null && !ficou.has(linhaNomeOrq) && ficou.has(linhaCtx)) troca.set(linhaCtx, ctxComNome);
+  if (fila1 !== null && fila2 !== null && filaJunta !== null && ficou.has(fila1) && !ficou.has(fila2)) troca.set(fila1, filaJunta);
+
   // (+N) conta ITENS escondidos (spec:47), nunca linhas quebradas; o item que não coube inteiro sai inteiro.
-  // LIMITE (spec não diz quem cede): o 1º item sozinho maior que o orçamento — D15 vence; fica o que cabe, a última linha termina em "…" (uma só). Mesma colisão: item que coube inteiro e é o último do topo perde o fim para o " (+N)" (D15 vence).
+  // LIMITE (spec não diz quem cede): o 1º item sozinho maior que o orçamento — D15 vence; fica o que cabe, a última linha termina em "…" (uma só).
   const sai = new Set<Linha>();
   let escondidos = 0;
   let truncada: Linha | null = null;
@@ -640,14 +908,26 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   });
   const linhas = cortado.linhas.filter((l) => !sai.has(l));
   const ultTopo = escondidos > 0 || truncada !== null ? linhas.reduce((k, l, i) => (topo.has(l) && !sai.has(l) ? i : k), -1) : -1;
-  return linhas.map((l, i) => {
+  const desenhadas = linhas.map((l, i): { orig: Linha; l: Linha } => {
     const reticencia = l === truncada;
-    if (i !== ultTopo && !reticencia) return fim(l);
+    if (i !== ultTopo && !reticencia) return { orig: l, l: fim(troca.get(l) ?? l) };
     const mais2 = escondidos > 0 ? ` (+${escondidos})` : '';
     const cabe = Math.max(1, w - colunas(mais2));
-    // reticência única: cortarLinha já termina em "…" ao cortar; só acrescenta quando a linha cabe inteira com folga
     const folga = reticencia && colunas(textoDe(l)) < cabe;
-    const base = cortarNatural(l, reticencia && !folga ? (colunas(textoDe(l)) === cabe ? Math.max(1, cabe - 1) : cabe) : cabe);
-    return [...base, ...(folga ? [seg('…', 'warning')] : []), ...(mais2 !== '' ? [seg(mais2, 'warning')] : [])];
+    const lt = troca.get(l) ?? l;
+    const base = cortarNatural(lt, reticencia && !folga ? (colunas(textoDe(l)) === cabe ? Math.max(1, cabe - 1) : cabe) : cabe);
+    return { orig: l, l: [...base, ...(folga ? [seg('…', 'warning')] : []), ...(mais2 !== '' ? [seg(mais2, 'warning')] : [])] };
   });
+
+  // separadores do E4 entre seções, só nas linhas que sobram do orçamento (cortados primeiro, como no E4); < 44 colunas não tem
+  let livres = orc === undefined ? Number.POSITIVE_INFINITY : orc - desenhadas.length;
+  const saida: Linha[] = [];
+  let anterior = -1;
+  for (const d of desenhadas) {
+    const s = secao.get(d.orig) ?? anterior;
+    if (!minima && saida.length > 0 && s !== anterior && livres > 0) { saida.push(separador(w)); livres--; }
+    saida.push(d.l);
+    anterior = s;
+  }
+  return saida;
 }
