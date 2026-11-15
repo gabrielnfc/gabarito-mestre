@@ -387,7 +387,8 @@
       "titulo": "Stop: trava, pouso e loop avisam",
       "deps": [
         "T16",
-        "T17"
+        "T17",
+        "T5"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/stop-loop.mjs",
