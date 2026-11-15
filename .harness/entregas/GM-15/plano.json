@@ -306,7 +306,9 @@
         "plugins/gabarito-mestre/skills/gabarito-instalar/trocar.md",
         "plugins/gabarito-mestre/gates/test/onboarding.test.mjs",
         "plugins/gabarito-mestre/gates/test/onboarding-skill.test.mjs",
-        "plugins/gabarito-mestre/gates/test/onboarding-config.test.mjs"
+        "plugins/gabarito-mestre/gates/test/onboarding-config.test.mjs",
+        "plugins/gabarito-mestre/gates/test/onboarding-texto.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fixtures/onboarding/golden-perguntas-2.0.0.json"
       ],
       "reqs": [
         "REQ-AUT-2"
