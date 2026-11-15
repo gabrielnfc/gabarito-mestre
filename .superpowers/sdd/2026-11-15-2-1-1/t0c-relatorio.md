@@ -1,28 +1,39 @@
-# T0c — Spike S6: excesso do bench da guarda no macOS do CI
+# T0c — Spike S6: excesso do bench da guarda no macOS do CI (rodada 2, corrigida)
 
 Pergunta fechada: distribuição de `p95(guarda) − p95(node -e "")` no runner macOS (passo `bench-guarda`), N ≥ 10, pelos logs de execuções existentes.
 
 ## Método
-- `gh run list --workflow ci.yml --limit 300 --json ...`: 130 execuções (menos que o teto 300 ⇒ lista completa, mais antiga 2026-09-05).
-- `gh run view <id> --log` (só leitura) para as 130; filtro das linhas `piso (node -e "")`, `guarda (guarda.js)` e `limite p95` do job macOS. Nenhum workflow disparado, nenhum push.
-- Excesso por execução = p95 da guarda − p95 do piso (ambos impressos pelo próprio bench, n=20 cada).
+- Driver `t0c-dados/coleta.sh` (só leitura): `gh run list --workflow ci.yml --limit 300` = 130 runs (lista completa); para CADA run e CADA tentativa (`run_attempt` 1..n; 3 runs têm 2: 43721146846, 42705486672, 41765663328) `gh run view <id> --attempt <n> --log`, filtro das linhas `piso`, `guarda`, `limite p95`. 133 tentativas lidas. Nenhum workflow disparado, nenhum push.
+- Dado bruto: `t0c-dados/bruto.tsv` (672 linhas), `t0c-dados/parte/` (uma por run/tentativa), `runs.json`. Análise: `node t0c-dados/analisa.mjs` → `analise.txt`.
+- Detalhe: numa nova tentativa só roda o job que falhou; o outro job reaparece com o MESMO log (mesmo texto). Dedupe por run + texto da linha do piso ⇒ cada medição conta uma vez.
+- Excesso = p95 guarda − p95 piso (ambos impressos pelo bench, n=20 cada).
 
-## Dado bruto
-- 130 execuções; 109 têm a linha do bench macOS com piso; 0 linhas sem piso (21 execuções sem bench macOS: anteriores ao passo ou jobs que não o rodam).
-- Excesso (ms), N = 109: mínimo 15,9 · mediana 50,9 · p90 71,1 · p95 74,1 · p99 98,5 · máximo 158,7.
-- Estouros do limite bruto 150 ms (4 em 109): 42652055728 (piso 99,8; guarda 150,7; excesso 50,9), 42663757299 (excesso 98,5), 42892996899 (excesso 158,7, é o máximo), 43213939506 (piso 82,2; guarda 195,8; excesso 113,6).
-- Piso do runner varia 23,4 a 99,8 ms (p95); é isso que o limite bruto confunde com custo da guarda: 1 dos 4 estouros tem excesso na mediana (50,9).
-- Correção ao brief: `43721146846` NÃO é falha. Run de push em main, conclusão success, guarda p95 119,6, piso 57,0, excesso 62,6. As falhas do macOS são as 4 acima (`43213939506` está entre elas).
+## Dado bruto (macOS, todas as tentativas)
+- 111 medições distintas em 109 runs (112 linhas de log; 1 duplicada por job não reexecutado). Antes: 109 só com a última tentativa (viés de sobrevivência).
+- Excesso (ms): mín 15,9 · mediana 51,0 · p90 72,8 · p95 82,4 · p99 113,6 · máx 158,7. Critério de "estabilidade": p99/mediana = 2,23 (cauda de ~2× a mediana; não é estável, o excesso mistura ruído do runner).
+- Piso do runner (p95): 23,4 a 99,8 ms, mediana 49,3.
+- Estouros do limite bruto 150 ms: **6 em 111** (antes: 4 em 109): 42652055728 (ex 50,9), 42663757299 (98,5), 42705486672 tentativa 1 (piso 75,6; guarda 153,9; ex 78,3), 42892996899 (158,7, o máximo), 43213939506 (113,6), 43721146846 tentativa 1 (piso 66,3; guarda 172,5; ex 106,2).
+- Correção da rodada 1: `43721146846` FALHOU na tentativa 1 (ESTOUROU) e passou na tentativa 2 (guarda 119,6; piso 57,0; ex 62,6) sem mudança de código. 42705486672 também: tentativa 1 falhou, 2 passou. O relatório anterior leu só a última tentativa.
+- Ubuntu (medido agora, 109 medições): piso p95 mediana 24,0 (16,3 a 36,3); excesso mediana 23,6, máx 35,8; 0 estouros. "Piso ~25 ms" confirmado.
 
 ## Veredito: CONFIRMADA
-Há log com piso em todas as execuções medidas, N = 109 ≥ 10. O excesso é estável o bastante para um limite sobre ele (mediana 50,9; 1 outlier em 158,7).
+Há log com piso em todas as medições, N = 111 ≥ 10. Excesso: mediana 51,0, p99 113,6, máx 158,7.
 
-Limite proposto (regra do plano): maior excesso × 1,5 = 238,05 ⇒ arredondado a 10 ms: **240 ms**. Decisão do planejador, reversível.
-Observação para a T21: 240 sobre o excesso é muito folgado frente ao p99 (98,5); o máximo é um único outlier. Alternativa a escolher (não decidida aqui): p99 × 1,5 ≈ 150 ms de excesso. A regra do plano fixa 240.
+## Sensibilidade do limite (sobre o excesso) — para a Sombra decidir; NÃO escolhi
+Simulação: soma-se uma regressão d ao excesso de cada uma das 111 medições; coluna = quantas passam do limite (o gate falharia). FP = quantas das 111 medições reais já estourariam sem regressão.
+
+| limite | valor (ms) | +50 ms | +100 ms | +150 ms | FP histórico |
+|---|---|---|---|---|---|
+| p99 × 1,5 | 170,4 | 1/111 (0,9%) | 16/111 (14,4%) | 107/111 (96,4%) | 0 |
+| máx × 1,5 (regra do plano) | 238,1 → 240 | 0/111 (0%) | 1/111 (0,9%) | 4/111 (3,6%) | 0 |
+| p95 × 2 (proposto aqui) | 164,8 | 1/111 (0,9%) | 27/111 (24,3%) | 111/111 (100%) | 0 |
+
+Justificativa do terceiro: p95 (82,4) é a cauda normal observada; ×2 dá folga de 2× sobre ela e tem 0 FP no histórico. Ainda assim só pega +100 ms em 24%.
+Leitura: com o limite do plano (240) uma guarda 150 ms mais lenta (≈3× o excesso mediano) passa em 96% das execuções; nenhum candidato pega +50 ms de forma útil. O "repete 1x" da T21 reduz ainda mais a detecção (não simulado). Esse ruído do runner (cauda 2× a mediana, n=20) limita qualquer limite absoluto; alternativa a avaliar pela Sombra: comparar com mediana de várias rodadas ou medir em ordem de grandeza (razão guarda/piso), não medido aqui.
 
 ## O que a medição NÃO responde
-- Não mede o runner atual: só histórico até 2026-11-15; variação do runner futuro não é coberta.
-- n=20 por execução dá p95 ruidoso (o 19º valor); o excesso mistura ruído dos dois p95.
-- Não prova que um excesso de 240 ms ainda detecta regressão real da guarda (sensibilidade do limite); só que o histórico passaria.
-- Não cobre ubuntu (piso ~25 ms, limite folgado lá).
-- Execuções de PR e de push entram juntas; não separei por evento.
+- Runner futuro: só histórico até 2026-11-15.
+- n=20 por execução: p95 ruidoso; o excesso mistura o ruído de dois p95.
+- A regressão somada é sintética (aditiva); regressão real pode ter outra forma (ex. escala com o piso).
+- Não separei PR de push; a sensibilidade com "repete 1x" não foi simulada.
+- Não escolhe o limite.

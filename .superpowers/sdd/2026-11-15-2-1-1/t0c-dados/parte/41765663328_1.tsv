@@ -1,0 +1,6 @@
+41765663328	1	hooks — corpora (bash ubuntu-latest)	latência da guarda (p95 wall ≤ 150 ms no runner; local ≤ 60 ms)	2026-11-04T03:12:42.8431752Z piso (node -e "")   p50   23.5 ms · p95   28.6 ms · máx   34.1 ms
+41765663328	1	hooks — corpora (bash ubuntu-latest)	latência da guarda (p95 wall ≤ 150 ms no runner; local ≤ 60 ms)	2026-11-04T03:12:42.8432700Z guarda (guarda.js)  p50   45.5 ms · p95   47.8 ms · máx   49.9 ms
+41765663328	1	hooks — corpora (bash ubuntu-latest)	latência da guarda (p95 wall ≤ 150 ms no runner; local ≤ 60 ms)	2026-11-04T03:12:42.8433376Z limite p95 150 ms: ok
+41765663328	1	hooks — corpora (bash macos-latest)	latência da guarda (p95 wall ≤ 150 ms no runner; local ≤ 60 ms)	2026-11-04T03:12:46.0093290Z piso (node -e "")   p50   26.4 ms · p95   28.3 ms · máx   28.4 ms
+41765663328	1	hooks — corpora (bash macos-latest)	latência da guarda (p95 wall ≤ 150 ms no runner; local ≤ 60 ms)	2026-11-04T03:12:46.0093870Z guarda (guarda.js)  p50   45.7 ms · p95   47.9 ms · máx   50.1 ms
+41765663328	1	hooks — corpora (bash macos-latest)	latência da guarda (p95 wall ≤ 150 ms no runner; local ≤ 60 ms)	2026-11-04T03:12:46.0094170Z limite p95 150 ms: ok
