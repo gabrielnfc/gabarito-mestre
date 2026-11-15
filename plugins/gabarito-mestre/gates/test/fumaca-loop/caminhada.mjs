@@ -501,7 +501,7 @@ export async function caminhar(opcoes) {
     await fimTurnoMod();
     if (o.passaTempoMs !== undefined && !tempoFeito && mundo.clears > 0 && r.negou && !mundo.clearAgora) {
       // T59: a repetição do pouso espera 60 s do pouso anterior (I3) e a fumaça não espera relógio: o `Date.now()` dos processos que o MOD chama (a ponte `ler`, que devolve o `agora`)
-      // anda `passaTempoMs`; o diário (cadeia de hash) fica intacto. Depois a vigia (o timer de 30 s do mod) roda.
+      // anda `passaTempoMs`; o diário (cadeia de hash) fica intacto. LIMITE (MINOR-3 do review r1): `relogioMs` só cresce e não volta, então toda comparação de 60 s entre tentativas passa de imediato depois deste avanço; esta fumaça prova no máximo 2 /clear e NÃO prova o espaçamento de uma 3ª tentativa (isso é do mod-test, com relógio próprio). Depois a vigia (o timer de 30 s do mod) roda.
       tempoFeito = true;
       mundo.relogioMs += o.passaTempoMs;
       trilha.push(`  o tempo passa: ${o.passaTempoMs} ms; a vigia do mod roda`);

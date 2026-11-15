@@ -41,6 +41,7 @@ Rode cada item como sonda sua e relate o resultado:
 3. **Quem chama isto?** Mudou nome, flag, campo ou texto: `git grep` em skills, reference, README, doctor, CI. T11 quebrou o instalador em silêncio.
 4. **Vizinhos do caso.** Corrigiu um caso, teste os adjacentes: caixa, espaço no caminho, aspas, relativo e absoluto, worktree e principal (T7, E12).
 5. **O teste distingue?** Troque a regra por outra plausível: o teste precisa falhar. Ele não pode depender de carga ou relógio da máquina.
+6. **Um teste por chamada.** Sinal passado a N chamadas do mesmo núcleo (ex.: `pousoPendente` nas duas `proximaAcao` do mod): um teste por chamada, e a mutação de cada uma morre. T59 r1: a 2ª chamada (conversa do dono aberta) não tinha teste e a mutação vivia.
 
 ## Descartado
 

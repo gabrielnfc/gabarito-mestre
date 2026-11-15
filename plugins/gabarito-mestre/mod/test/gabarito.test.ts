@@ -4872,6 +4872,15 @@ test('T59-impasse-0-vivos-pousa: POUSOU_A + a integrada + b concluída, 61 %, 0 
   expect(m.est.submits).toHaveLength(1)
   await libera(m) // a sessão nova mede 5 < X
 })
+test('T59-impasse-com-dono-aberto-pousa: o mesmo impasse com a conversa do dono aberta (dono.mensagem), 61 %, 0 vivos ⇒ 1 /clear (emenda 52 c); o revisor segue negado (pousoPendente na 2ª chamada do núcleo, pousariaSemDono)', async ($, on) => {
+  const m = mundo($, on, { eventos: IMPASSE(), percent: 61, agora: BASE, sessaoId: 'sess-A', agentes: [] })
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  await nega(m) // revisor incluído
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(1)
+  expect(tentativas(m)).toEqual([2])
+})
 test('T59-impasse-pela-vigia-sem-turno: o mesmo impasse sai pela vigia de 30 s, sem nenhum fim de turno depois', async ($, on) => {
   const m = mundo($, on, { eventos: IMPASSE(), percent: 61, agora: BASE, sessaoId: 'sess-A', agentes: [] })
   await m.inicio()
