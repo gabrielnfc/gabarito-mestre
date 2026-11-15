@@ -11,10 +11,11 @@
     },
     {
       "id": "autonomia",
-      "default": false,
+      "default": "espera",
       "valores": [
-        false,
-        true
+        "espera",
+        "trabalha",
+        "publica"
       ]
     },
     {
@@ -39,10 +40,11 @@
     },
     {
       "id": "autonomia",
-      "default": false,
+      "default": "espera",
       "valores": [
-        false,
-        true
+        "espera",
+        "trabalha",
+        "publica"
       ]
     },
     {
@@ -83,10 +85,11 @@
     },
     {
       "id": "autonomia",
-      "default": false,
+      "default": "espera",
       "valores": [
-        false,
-        true
+        "espera",
+        "trabalha",
+        "publica"
       ]
     },
     {
@@ -119,10 +122,11 @@
     },
     {
       "id": "autonomia",
-      "default": false,
+      "default": "espera",
       "valores": [
-        false,
-        true
+        "espera",
+        "trabalha",
+        "publica"
       ]
     },
     {
