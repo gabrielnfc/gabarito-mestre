@@ -28,12 +28,13 @@ after(() => { /* temporários ficam em TMPDIR (gitignored); nada é apagado (R2)
 const GIT_ENV = { ...process.env, HOME: tmpdir(), GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
 const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'user.useConfigOnly=true', ...args], { cwd, encoding: 'utf8', env: GIT_ENV }).trim();
 
-/** Repo descartável na `branch` (`null` ⇒ HEAD solto). */
-function repo(branch = 'enabler/GM-14-clareza') {
+/** Repo descartável na `branch` (`null` ⇒ HEAD solto). `onboarding: false` ⇒ sem `harness.config.json` (T60: o painel só lê). */
+function repo(branch = 'enabler/GM-14-clareza', { onboarding = true } = {}) {
   const d = join(realpathSync(mkdtempSync(join(tmpdir(), 'medir teste '))), 'r');
   mkdirSync(d, { recursive: true });
   git(d, 'init', '-q', '-b', 'main');
   git(d, 'commit', '-q', '--allow-empty', '-m', 'ini');
+  if (onboarding) { writeFileSync(join(d, 'harness.config.json'), '{}\n'); git(d, 'add', 'harness.config.json'); git(d, 'commit', '-q', '-m', 'onboarding'); }
   if (branch === null) git(d, 'checkout', '-q', '--detach');
   else if (branch !== 'main') git(d, 'checkout', '-q', '-b', branch);
   raizes.push(d);
@@ -65,6 +66,52 @@ function spec(d, nome, cabecalho, corpo = '## Seção\n') {
   mkdirSync(join(d, 'docs', 'superpowers', 'specs'), { recursive: true });
   writeFileSync(join(d, 'docs', 'superpowers', 'specs', nome), `# Título da ${nome}\n\n${cabecalho}\n\n${corpo}`);
 }
+
+describe('medir: só com onboarding (T60, REQ-DIA-1, emenda 68)', () => {
+  const arvore = (d) => (existsSync(join(d, '.harness')) ? readdirSync(join(d, '.harness'), { recursive: true }) : []);
+
+  test('sem-onboarding-zero-escrita-e-zero-gh: turnos e 60 s depois, nada em .harness/ e gh nunca chamado', () => {
+    const d = repo('enabler/GM-14-clareza', { onboarding: false });
+    spec(d, 'a.md', 'PBI: GM-14', '## S1\n');
+    const log = join(mkdtempSync(join(tmpdir(), 'gh log ')), 'gh.log');
+    let agora = Date.parse('2026-11-11T20:00:00Z');
+    for (let i = 0; i < 3; i++) {
+      const r = rodarMedir(d, 'ok', { log, agentes: [{ id: 'a1', type: 'implementador', status: 'running' }], agora: () => agora });
+      assert.deepEqual(r, { ok: true, gravados: [], falhas: [] });
+      agora += 30000; // 3 medições em 60 s simulados
+    }
+    assert.deepEqual(arvore(d), []);
+    assert.equal(existsSync(log), false);
+  });
+
+  test('sem-onboarding-id-nulo (_sem-id): branch sem ID também não grava nem chama gh', () => {
+    const d = repo('feature/sem-id', { onboarding: false });
+    const log = join(mkdtempSync(join(tmpdir(), 'gh log ')), 'gh.log');
+    assert.deepEqual(rodarMedir(d, 'ok', { log }), { ok: true, gravados: [], falhas: [] });
+    assert.deepEqual(arvore(d), []);
+    assert.equal(existsSync(log), false);
+  });
+
+  test('com-onboarding: o comportamento atual (grava e chama gh)', () => {
+    const d = repo();
+    const log = join(mkdtempSync(join(tmpdir(), 'gh log ')), 'gh.log');
+    const r = rodarMedir(d, 'ok', { log });
+    assert.equal(r.ok, true);
+    assert.ok(r.gravados.includes('branch') && r.gravados.includes('pr'));
+    assert.equal(readFileSync(log, 'utf8').trim().split('\n').length, 2);
+    assert.ok(existsSync(join(d, '.harness', 'painel-medir.json')));
+  });
+
+  test('onboarding-so-em-origin-HEAD (config no remoto, nenhuma local): mesmo critério da guarda ⇒ grava', () => {
+    const d = repo('enabler/GM-14-clareza', { onboarding: false });
+    const o = mkdtempSync(join(tmpdir(), 'origem '));
+    git(o, 'init', '-q', '-b', 'main');
+    writeFileSync(join(o, 'harness.config.json'), '{}\n');
+    git(o, 'add', '.'); git(o, 'commit', '-q', '-m', 'cfg');
+    git(d, 'remote', 'add', 'origin', o); git(d, 'fetch', '-q', 'origin'); git(d, 'remote', 'set-head', 'origin', 'main');
+    assert.ok(rodarMedir(d, 'ok').gravados.includes('branch'));
+  });
+});
 
 describe('medir: fatos e dedupe', () => {
   test('tres-medicoes-iguais-um-evento', () => {

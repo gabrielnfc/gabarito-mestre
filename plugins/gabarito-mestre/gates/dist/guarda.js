@@ -125,6 +125,14 @@ function lerGuarda(raiz        )         {
   return { config: null, fonte: 'nenhuma', divergente: false, localIgnorada: false, onboarding: false, idPadrao: ID_PADRAO };
 }
 
+/**
+ * Predicado ÚNICO de onboarding (Q20; GM-14 T60, emenda 68): `harness.config.json` em `refs/remotes/origin/HEAD` ou na árvore local de `raiz`.
+ * A guarda (diário), o mod do painel e `painel-medir.mjs` perguntam aqui: sem onboarding nada grava em `.harness/` e nada chama `gh`.
+ */
+export function temOnboarding(raiz        )          {
+  return lerGuarda(raiz).onboarding;
+}
+
 function linhaDe(texto               )                {
   const t = texto?.trim() ?? '';
   return t === '' ? null : t.split('\n')[0];

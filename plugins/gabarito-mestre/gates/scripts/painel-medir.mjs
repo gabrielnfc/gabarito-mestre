@@ -21,6 +21,7 @@ import { isatty } from 'node:tty';
 import { join } from 'node:path';
 import { append, dirEntrega, lerEstrito, padraoDeRecusa } from '../dist/diario.js';
 import { idDaBranch } from '../dist/trilha.js';
+import { temOnboarding } from '../dist/guarda.js';
 import { lerConfigOrigin } from '../lib/config.mjs';
 import { contexto } from './loop.mjs';
 
@@ -228,6 +229,8 @@ export function medir(cwd, opcoes = {}) {
 
     let raiz;
     try { raiz = contexto(cwd, { entrega: '_sem-id' }).raiz; } catch (e) { falhas.push(e?.erro ?? 'fora_de_repo'); return fim(); }
+    // T60 (emenda 68): sem onboarding o painel só lê; nenhuma escrita em `.harness/` e nenhuma chamada a `gh`. Não é falha.
+    if (!temOnboarding(raiz)) return fim();
 
     // branch (git). HEAD solto não é falha: não há branch a registrar.
     const rb = rodar('git', ['symbolic-ref', '--short', '-q', 'HEAD'], { cwd, timeoutMs });
