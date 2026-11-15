@@ -592,6 +592,46 @@
       ]
     },
     {
+      "id": "T31",
+      "titulo": "Núcleo da visão de projeto (D-G3)",
+      "deps": [
+        "T29",
+        "T30"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/projeto.ts",
+        "plugins/gabarito-mestre/gates/dist/projeto.js",
+        "plugins/gabarito-mestre/gates/test/projeto.test.ts",
+        "plugins/gabarito-mestre/gates/test/fixtures/projeto/"
+      ],
+      "reqs": [
+        "REQ-ENT-2"
+      ]
+    },
+    {
+      "id": "T32",
+      "titulo": "Render e CLI da visão de projeto",
+      "deps": [
+        "T31",
+        "T4",
+        "T8",
+        "T9",
+        "T19",
+        "T25"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-projeto.test.ts"
+      ],
+      "reqs": [
+        "REQ-ENT-2"
+      ]
+    },
+    {
       "id": "T27",
       "titulo": "Aceite final: replay da GM-14",
       "deps": [
@@ -604,7 +644,9 @@
         "T18",
         "T19",
         "T29",
-        "T30"
+        "T30",
+        "T31",
+        "T32"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/test/aceite-gm15.test.mjs",
