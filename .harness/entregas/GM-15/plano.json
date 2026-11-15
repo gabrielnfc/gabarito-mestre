@@ -550,6 +550,20 @@
       ]
     },
     {
+      "id": "T29",
+      "titulo": "Painel com paridade do E4 (D-G1)",
+      "deps": [],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
+        "plugins/gabarito-mestre/gates/test/painel-blocos.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-esquadrao.test.ts"
+      ],
+      "reqs": [
+        "REQ-HIG-1"
+      ]
+    },
+    {
       "id": "T27",
       "titulo": "Aceite final: replay da GM-14",
       "deps": [
@@ -560,7 +574,8 @@
         "T12",
         "T13",
         "T18",
-        "T19"
+        "T19",
+        "T29"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/test/aceite-gm15.test.mjs",
