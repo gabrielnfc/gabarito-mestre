@@ -1528,15 +1528,17 @@ export function permissaoDoExpLog(expLog) {
   return { apareceu: /PERGUNTA-DE-PERMISSAO|PERMISSAO-RECUSADA/.test(t), recusadas, naoFechou: /PERMISSAO-NAO-FECHOU/.test(t) };
 }
 
+const JANELA_DEDUP_MS = 120_000;
 /**
- * Validade da célula (T57, emenda 63, condição 2 da Sombra): cada fala do ROTEIRO digitada pelo runner (sends.log `digitar <sha256>`) tem EXATAMENTE 1 `dono.mensagem` por digitação, com
+ * Validade da célula (T57, emenda 63, condição 2 da Sombra): cada fala do ROTEIRO digitada pelo runner (sends.log `digitar <sha256>`) tem EXATAMENTE 1 `dono.mensagem` por digitação (o mesmo texto digitado de novo em menos de 120 s é a mesma mensagem para o produto: 1 registro por janela, medido na sessão real da T57 com as falas 4 e 7 iguais), com
  * {sha256, chars} iguais aos de `pontos.json` (msg do ponto) ou, nas falas sem ponto, aos do próprio roteiro (mesma conta: sha256 do texto, caracteres). Perdida ou dupla ⇒ inválida, com causa
  * própria; nenhuma fala digitada ⇒ inválida (nunca aprovação em vácuo). Ações do runner fora do roteiro (`digitar resposta-b`, `digitar pedido-do-dono`, recusas, trust, exit) não entram
  * na contagem e voltam à parte em `acoesDoRunner`. Só conta `dono.mensagem` com `ts` >= início da execução (o que a semente trouxe não é da conversa).
  */
 export function validarFalas1a1({ eventos, sends, falas, pontos, inicio = '' }) {
   const linhas = String(sends).split('\n').filter(Boolean);
-  const digitadas = linhas.map((l) => /^\d+ digitar ([0-9a-f]{64})$/.exec(l)?.[1]).filter(Boolean);
+  const digitacoes = linhas.map((l) => /^(\d+) digitar ([0-9a-f]{64})$/.exec(l)).filter(Boolean).map((m) => ({ t: Number(m[1]) * 1000, sha: m[2] }));
+  const digitadas = digitacoes.map((d) => d.sha);
   const acoesDoRunner = linhas.map((l) => /^\d+ (.+)$/.exec(l)?.[1]).filter((x) => x !== undefined && !/^digitar [0-9a-f]{64}$/.test(x));
   const porSha = new Map();
   for (const f of falas) porSha.set(sha256(f.texto), f);
@@ -1548,17 +1550,25 @@ export function validarFalas1a1({ eventos, sends, falas, pontos, inicio = '' }) 
     if (!gravadas.has(k)) gravadas.set(k, []);
     gravadas.get(k).push(e.dados?.chars);
   }
-  const enviadas = new Map();
-  for (const sha of digitadas) if (porSha.has(sha)) enviadas.set(sha, (enviadas.get(sha) ?? 0) + 1);
+  // o PRODUTO grava o mesmo texto UMA vez por janela de 120 s (FIEL-2 a, `primeiraDaJanela` do mod: a janela conta do último registro, não da última digitação): o esperado é o que o produto deve gravar
+  const enviadas = new Map(); // sha ⇒ digitações
+  const esperadas = new Map(); // sha ⇒ registros esperados
+  const ultimo = new Map();
+  for (const { t, sha } of digitacoes) {
+    if (!porSha.has(sha)) continue;
+    enviadas.set(sha, (enviadas.get(sha) ?? 0) + 1);
+    if (!ultimo.has(sha) || !(t - ultimo.get(sha) < JANELA_DEDUP_MS)) { esperadas.set(sha, (esperadas.get(sha) ?? 0) + 1); ultimo.set(sha, t); }
+  }
   const falhas = [];
   if (enviadas.size === 0) falhas.push('nenhuma fala do roteiro digitada: não medida');
-  for (const [sha, n] of enviadas) {
+  for (const [sha, nDig] of enviadas) {
+    const n = esperadas.get(sha);
     const f = porSha.get(sha);
     const ponto = dePonto.get(f.n);
     const esperado = ponto !== undefined ? { sha256: ponto.sha256, chars: ponto.chars } : { sha256: sha, chars: [...f.texto].length };
     const g = gravadas.get(esperado.sha256) ?? [];
-    if (g.length < n) falhas.push(`fala ${f.n} perdida: digitada ${n}x, ${g.length} dono.mensagem`);
-    else if (g.length > n) falhas.push(`fala ${f.n} dupla: digitada ${n}x, ${g.length} dono.mensagem`);
+    if (g.length < n) falhas.push(`fala ${f.n} perdida: digitada ${nDig}x (esperado ${n} registro(s)), ${g.length} dono.mensagem`);
+    else if (g.length > n) falhas.push(`fala ${f.n} dupla: digitada ${nDig}x (esperado ${n} registro(s)), ${g.length} dono.mensagem`);
     else if (g.some((c) => c !== esperado.chars)) falhas.push(`fala ${f.n}: dono.mensagem com chars ${g.find((c) => c !== esperado.chars)} diferente do esperado ${esperado.chars}`);
   }
   return { ok: falhas.length === 0, causa: falhas.length === 0 ? null : falhas.join('; '), digitadas: [...enviadas.values()].reduce((a, b) => a + b, 0), acoesDoRunner };

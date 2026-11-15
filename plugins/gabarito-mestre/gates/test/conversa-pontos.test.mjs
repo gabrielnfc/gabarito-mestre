@@ -2057,7 +2057,7 @@ describe('T57 (emenda 63): o runner não digita fala sobre diálogo de permissã
   test('sessao-gravada-6-de-8: 8 falas digitadas e 6 dono.mensagem (a 6 e a 7 viraram resposta do diálogo) ⇒ célula INVÁLIDA com a causa de cada fala perdida', () => {
     const r = validar({ sends: SENDS([1, 2, 3, 4, 5, 6, 7, 8]), eventos: [1, 2, 3, 4, 5, 8].map((n) => ev(FALAS[n - 1])) });
     assert.equal(r.ok, false);
-    assert.match(r.causa, /fala 6 perdida: digitada 1x, 0 dono\.mensagem/);
+    assert.match(r.causa, /fala 6 perdida: digitada 1x \(esperado 1 registro\(s\)\), 0 dono\.mensagem/);
     assert.match(r.causa, /fala 7 perdida/);
     assert.doesNotMatch(r.causa, /fala [12345]|fala 8/, 'só as perdidas entram na causa');
     assert.equal(r.digitadas, 8);
@@ -2068,7 +2068,7 @@ describe('T57 (emenda 63): o runner não digita fala sobre diálogo de permissã
   });
   test('fala-dupla-chars-trocado-e-vacuo-reprovam-com-causa-propria (nunca aprovação em vácuo)', () => {
     const dupla = validar({ sends: SENDS([1, 2]), eventos: [ev(FALAS[0]), ev(FALAS[0]), ev(FALAS[1])] });
-    assert.match(dupla.causa, /fala 1 dupla: digitada 1x, 2 dono\.mensagem/);
+    assert.match(dupla.causa, /fala 1 dupla: digitada 1x \(esperado 1 registro\(s\)\), 2 dono\.mensagem/);
     const chars = validar({ sends: SENDS([1]), eventos: [{ ...ev(FALAS[0]), dados: { sha256: sha256(FALAS[0].texto), chars: 999 } }] });
     assert.match(chars.causa, /fala 1: dono\.mensagem com chars 999 diferente do esperado/);
     const trocado = validarFalas1a1({ eventos: [ev(FALAS[0])], sends: SENDS([1]), falas: FALAS, pontos: { pontos: [{ msg: 1, sha256: sha256(FALAS[0].texto), chars: 7 }] }, inicio: '' });
@@ -2084,6 +2084,15 @@ describe('T57 (emenda 63): o runner não digita fala sobre diálogo de permissã
     assert.equal(r.ok, true, r.causa);
     assert.equal(r.digitadas, 2, 'só as falas do roteiro');
     assert.deepEqual(r.acoesDoRunner, ['digitar resposta-b', 'recusar-permissao', 'digitar pedido-do-dono', 'exit']);
+  });
+  test('mesmo-texto-em-menos-de-120s-e-UMA-mensagem-para-o-produto (medido na sessão real: falas 4 e 7 iguais, 90 s entre elas, 1 dono.mensagem)', () => {
+    const igual = { n: 9, rotulo: '—', texto: TEXTOS[0] };
+    const sha = sha256(TEXTOS[0]);
+    const com = (t2, qtos) => validarFalas1a1({ eventos: Array.from({ length: qtos }, () => ev(FALAS[0])), sends: `1000 digitar ${sha}\n${t2} digitar ${sha}\n`, falas: [FALAS[0], igual], pontos: { pontos: [] }, inicio: '' });
+    assert.equal(com(1090, 1).ok, true, '90 s depois: o produto grava 1 vez e o validador espera 1');
+    assert.match(com(1090, 2).causa, /dupla: digitada 2x \(esperado 1 registro/, '90 s depois e 2 registros: dupla');
+    assert.match(com(1130, 1).causa, /perdida: digitada 2x \(esperado 2 registro/, '130 s depois: a janela passou, o produto grava de novo; 1 registro é perda');
+    assert.equal(com(1130, 2).ok, true);
   });
   test('dono.mensagem-anterior-ao-inicio-nao-e-da-conversa (a semente da cópia)', () => {
     const r = validar({ sends: SENDS([1]), eventos: [ev(FALAS[0], { ts: '2026-11-14T09:00:00.000Z' })] });
