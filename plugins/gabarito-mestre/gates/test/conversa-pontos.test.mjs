@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  ASSERCOES, LINHA_DECISAO, MATRIZ, resumoDoAgora, MIN_FALA, PONTOS_ARQ, ROTEIRO_REL, TOTAL_PONTOS, acoesDe, avaliarExecucao, avaliarMatriz, coletar, dialogosDoExpLog, entradaDoSnapshot, falasDoRoteiro, guardaFalas, idDaCelula,
+  ASSERCOES, LINHA_DECISAO, MATRIZ, resumoDoAgora, MIN_FALA, PONTOS_ARQ, ROTEIRO_REL, TOTAL_PONTOS, acoesDe, avaliarExecucao, avaliarMatriz, coletar, dialogosDoExpLog, permissaoDoExpLog, validarFalas1a1, entradaDoSnapshot, falasDoRoteiro, guardaFalas, idDaCelula,
   itensDeProxima, placementEsperado, pluginCarregou, resolverSuperpowers, ambienteDaExecucao, SUPERPOWERS_VERSAO, matriz, configDaConta, pastaDeTranscripts, propsDe, publicadaPeloProduto, raizPrincipal, renderizar, semearEntregaPublicada, ENTREGA_ATIVA, ENTREGA_PUBLICADA, prepararCopia, BASE_SHA, sha256, validarPontos, verificarRoteiro,
 } from './e2e/conversa-2026-11-11/rodar-a1.mjs';
 
@@ -1036,7 +1036,7 @@ describe('superpowers fixo (T46, emenda 41): dependência declarada carregada po
     const e = ambienteMatriz({ expLog: '1 DIALOGO-IMPORTS-EXTERNOS recusado\n' });
     const m = await rodarMatriz(e, { so: idDaCelula(MATRIZ[0]) });
     const r = JSON.parse(readFileSync(join(m.base, idDaCelula(MATRIZ[0]), 'resultado.json'), 'utf8'));
-    assert.deepEqual(r.ambiente, { importsExternos: 'apareceu-e-foi-recusado', superpowers: { nome: 'superpowers', versao: '7.0.2', caminho: '/t/sp' } });
+    assert.deepEqual(r.ambiente, { importsExternos: 'apareceu-e-foi-recusado', permissao: { apareceu: false, recusadas: 0, naoFechou: false }, superpowers: { nome: 'superpowers', versao: '7.0.2', caminho: '/t/sp' } });
   });
 });
 
@@ -2042,5 +2042,165 @@ describe('T52 r1: correções da revisão (rolagem do VT, Pane da conversa later
     await R.replayDoPonto({ conversa: R.lerConversa(rundir, { home: tmp() }), snap: { t: T0, n: 1, estado: {} }, geometria: { AbovePrompt: { maxRows: 7, rows: 24, bodyColumns: 75 } }, celula: { local: 'acima', cols: 80, rows: 24, cheia: true }, destino: join(tmp(), 'w'), deps: { estado: async (a) => { visto = a.entrada; return clone(ESTADO_REAL); } } });
     assert.equal(visto.acoes.ag1.em, T0 - 1000, 'a última ação até o instante é a do Read; o Edit (T0+4s) ainda não aconteceu');
     assert.notEqual(visto.acoes.ag1.em, T0 + 4000);
+  });
+});
+
+describe('T57 (emenda 63): o runner não digita fala sobre diálogo de permissão e a célula só vale com fala ↔ dono.mensagem 1:1', () => {
+  // roteiro sintético de 8 falas; pontos.json sintético só para as de ponto (1, 2, 3, 5, 8: como o real), as outras (4, 6, 7) valem pelo roteiro
+  const TEXTOS = Array.from({ length: 8 }, (_, i) => `fala sintética número ${i + 1} do roteiro de teste, com acento: ação`);
+  const FALAS = TEXTOS.map((texto, i) => ({ n: i + 1, rotulo: [1, 2, 3, 5, 8].includes(i + 1) ? 'DECISÃO' : '—', texto }));
+  const PONTOS = { pontos: FALAS.filter((f) => f.rotulo !== '—').map((f) => ({ msg: f.n, sha256: sha256(f.texto), chars: [...f.texto].length })) };
+  const ev = (f, extra = {}) => ({ tipo: 'dono.mensagem', ts: '2026-11-14T10:00:05.000Z', dados: { sha256: sha256(f.texto), chars: [...f.texto].length }, ...extra });
+  const SENDS = (ns) => `${ns.map((n, i) => `${1000 + i} digitar ${sha256(TEXTOS[n - 1])}`).join('\n')}\n`;
+  const validar = (v) => validarFalas1a1({ eventos: [], sends: '', falas: FALAS, pontos: PONTOS, inicio: '2026-11-14T10:00:00.000Z', ...v });
+
+  test('sessao-gravada-6-de-8: 8 falas digitadas e 6 dono.mensagem (a 6 e a 7 viraram resposta do diálogo) ⇒ célula INVÁLIDA com a causa de cada fala perdida', () => {
+    const r = validar({ sends: SENDS([1, 2, 3, 4, 5, 6, 7, 8]), eventos: [1, 2, 3, 4, 5, 8].map((n) => ev(FALAS[n - 1])) });
+    assert.equal(r.ok, false);
+    assert.match(r.causa, /fala 6 perdida: digitada 1x, 0 dono\.mensagem/);
+    assert.match(r.causa, /fala 7 perdida/);
+    assert.doesNotMatch(r.causa, /fala [12345]|fala 8/, 'só as perdidas entram na causa');
+    assert.equal(r.digitadas, 8);
+  });
+  test('fixture-8-de-8: cada fala digitada tem 1 dono.mensagem com sha256 e chars de pontos.json (ou do roteiro, nas sem ponto) ⇒ válida', () => {
+    const r = validar({ sends: SENDS([1, 2, 3, 4, 5, 6, 7, 8]), eventos: FALAS.map((f) => ev(f)) });
+    assert.deepEqual({ ok: r.ok, causa: r.causa, digitadas: r.digitadas }, { ok: true, causa: null, digitadas: 8 });
+  });
+  test('fala-dupla-chars-trocado-e-vacuo-reprovam-com-causa-propria (nunca aprovação em vácuo)', () => {
+    const dupla = validar({ sends: SENDS([1, 2]), eventos: [ev(FALAS[0]), ev(FALAS[0]), ev(FALAS[1])] });
+    assert.match(dupla.causa, /fala 1 dupla: digitada 1x, 2 dono\.mensagem/);
+    const chars = validar({ sends: SENDS([1]), eventos: [{ ...ev(FALAS[0]), dados: { sha256: sha256(FALAS[0].texto), chars: 999 } }] });
+    assert.match(chars.causa, /fala 1: dono\.mensagem com chars 999 diferente do esperado/);
+    const trocado = validarFalas1a1({ eventos: [ev(FALAS[0])], sends: SENDS([1]), falas: FALAS, pontos: { pontos: [{ msg: 1, sha256: sha256(FALAS[0].texto), chars: 7 }] }, inicio: '' });
+    assert.match(trocado.causa, /chars .* diferente do esperado 7/, 'o esperado do ponto vem de pontos.json, não do texto');
+    assert.match(validar({ sends: '', eventos: [ev(FALAS[0])] }).causa, /nenhuma fala do roteiro digitada: não medida/);
+    assert.match(validar({ sends: '1 trust\n2 exit\n' }).causa, /nenhuma fala do roteiro digitada/);
+  });
+  test('acao-do-runner-fora-do-roteiro-nao-conta-como-fala: resposta-b e /gabarito painel têm dono.mensagem e ficam à parte', () => {
+    const resposta = { tipo: 'dono.mensagem', ts: '2026-11-14T10:00:07.000Z', dados: { sha256: sha256('/gabarito retomar'), chars: 17 } };
+    const painel = { tipo: 'dono.mensagem', ts: '2026-11-14T10:00:08.000Z', dados: { sha256: sha256('/gabarito painel'), chars: 16 } };
+    const sends = `${SENDS([1, 2])}2000 digitar resposta-b\n2001 recusar-permissao\n2002 digitar pedido-do-dono\n2003 exit\n`;
+    const r = validar({ sends, eventos: [ev(FALAS[0]), resposta, ev(FALAS[1]), painel] });
+    assert.equal(r.ok, true, r.causa);
+    assert.equal(r.digitadas, 2, 'só as falas do roteiro');
+    assert.deepEqual(r.acoesDoRunner, ['digitar resposta-b', 'recusar-permissao', 'digitar pedido-do-dono', 'exit']);
+  });
+  test('dono.mensagem-anterior-ao-inicio-nao-e-da-conversa (a semente da cópia)', () => {
+    const r = validar({ sends: SENDS([1]), eventos: [ev(FALAS[0], { ts: '2026-11-14T09:00:00.000Z' })] });
+    assert.match(r.causa, /fala 1 perdida/);
+  });
+  test('sha256-e-chars-do-dono.mensagem-que-o-PRODUTO-grava-igualam-os-de-pontos.json (a ponte real, não a conta do teste)', async () => {
+    const { codigoPonte } = await import(pathToFileURL(join(AQUI, '..', 'dist', 'pouso.js')).href);
+    const url = pathToFileURL(join(AQUI, '..', 'dist', 'diario.js')).href;
+    const gravar = (dir, texto) => {
+      const r = spawnSync(process.execPath, ['--input-type=module', '-e', codigoPonte(url)], { input: JSON.stringify({ op: 'mensagem', dir, cwd: dir, texto }), encoding: 'utf8' });
+      assert.equal(JSON.parse(r.stdout).ok, true, r.stderr);
+    };
+    const dir = join(tmp(), 'ent'); mkdirSync(dir, { recursive: true });
+    for (const f of FALAS) gravar(dir, f.texto);
+    const gravados = readdirSync(dir).filter((x) => x.endsWith('.jsonl')).flatMap((x) => readFileSync(join(dir, x), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+    assert.equal(gravados.length, 8);
+    for (const p of PONTOS.pontos) {
+      const g = gravados.find((e) => e.dados.sha256 === p.sha256);
+      assert.ok(g, `msg ${p.msg}: o produto gravou o sha256 de pontos.json`);
+      assert.equal(g.dados.chars, p.chars, `msg ${p.msg}: chars do produto = chars de pontos.json`);
+    }
+    // e o validador aceita exatamente o que o produto gravou (diário real do produto como evidência)
+    const r = validar({ sends: SENDS([1, 2, 3, 4, 5, 6, 7, 8]), eventos: gravados.map((e) => ({ ...e, ts: '2026-11-14T10:00:05.000Z' })) });
+    assert.equal(r.ok, true, r.causa);
+  });
+  test('roteiro-real-vs-pontos.json: o produto grava os MESMOS sha256 e chars de cada ponto (pula sem o roteiro local)', async (t) => {
+    const raiz = raizPrincipal(AQUI);
+    const pts = JSON.parse(readFileSync(PONTOS_ARQ, 'utf8'));
+    const rot = verificarRoteiro(join(raiz, ROTEIRO_REL), pts.roteiroSha256);
+    if (!rot.ok) { t.skip('roteiro local ausente'); return; }
+    const { codigoPonte } = await import(pathToFileURL(join(AQUI, '..', 'dist', 'pouso.js')).href);
+    const url = pathToFileURL(join(AQUI, '..', 'dist', 'diario.js')).href;
+    const dir = join(tmp(), 'ent'); mkdirSync(dir, { recursive: true });
+    for (const f of rot.falas) {
+      const r = spawnSync(process.execPath, ['--input-type=module', '-e', codigoPonte(url)], { input: JSON.stringify({ op: 'mensagem', dir, cwd: dir, texto: f.texto }), encoding: 'utf8' });
+      assert.equal(JSON.parse(r.stdout).ok, true);
+    }
+    const gravados = readdirSync(dir).filter((x) => x.endsWith('.jsonl')).flatMap((x) => readFileSync(join(dir, x), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+    for (const p of pts.pontos) {
+      const g = gravados.find((e) => e.dados.sha256 === p.sha256);
+      assert.ok(g, `msg ${p.msg}: sha256 do produto = pontos.json`);
+      assert.equal(g.dados.chars, p.chars, `msg ${p.msg}: chars do produto = pontos.json`);
+    }
+  });
+  test('avaliarRundir-com-pontos: célula inválida com id próprio quando falta dono.mensagem; válida (e com as ações do runner à parte) quando há 1:1', async () => {
+    const m = montarExecucao({});
+    const celula = { local: 'lateral', cols: 180, rows: 50, cheia: true };
+    const roteiro = roteiroColeta();
+    const textoA = roteiro.falas.find((f) => sha256(f.texto) === sha256(FALA_A)).texto;
+    const dono = (texto, ts) => ({ seq: 1, ts, tipo: 'dono.mensagem', dados: { sha256: sha256(texto), chars: [...texto].length } });
+    writeFileSync(join(m.rundir, 'sends.log'), `1 digitar ${sha256(FALA_A)}\n2 digitar ${sha256(FALA_STATUS)}\n3 digitar resposta-b\n`);
+    const gravar = (linhas) => jl(join(m.repo, '.harness', 'entregas', 'GM-13', 'events.loop.jsonl'), linhas);
+    gravar([dono(textoA, '2026-11-13T10:02:00.000Z')]);
+    const ruim = await R.avaliarRundir(m.rundir, { repo: m.repo, celula, roteiro, pasta: m.pasta, total: 1, pontos: { pontos: [] } });
+    assert.equal(ruim.passa, false);
+    assert.deepEqual(ruim.resultados.map((x) => x.id), ['falas-1a1']);
+    assert.match(ruim.resultados[0].detalhe, /célula inválida: fala \d+ perdida/);
+    gravar([dono(textoA, '2026-11-13T10:02:00.000Z'), dono(FALA_STATUS, '2026-11-13T10:03:00.000Z'), dono('resposta do runner', '2026-11-13T10:03:30.000Z')]);
+    const boa = await R.avaliarRundir(m.rundir, { repo: m.repo, celula, roteiro, pasta: m.pasta, total: 1, pontos: { pontos: [] } });
+    assert.ok(boa.resultados.length > 1 && boa.resultados.every((x) => x.id !== 'falas-1a1'), 'as asserções normais seguem');
+    assert.deepEqual(boa.falas, { digitadas: 2, acoesDoRunner: ['digitar resposta-b'] });
+  });
+  test('causa-do-status-e-permissao-no-exp.log', () => {
+    assert.match(R.causaDoStatus('DIALOGO_NAO_FECHOU\n'), /diálogo de permissão que não fechou/);
+    assert.deepEqual(permissaoDoExpLog('1 inicio\n'), { apareceu: false, recusadas: 0, naoFechou: false });
+    assert.deepEqual(permissaoDoExpLog('1 PERGUNTA-DE-PERMISSAO na tela\n2 PERMISSAO-RECUSADA 1\n'), { apareceu: true, recusadas: 1, naoFechou: false });
+    assert.equal(permissaoDoExpLog('PERMISSAO-NAO-FECHOU').naoFechou, true);
+  });
+
+  describe('a1.exp com um "claude" de mentira que abre o diálogo de permissão (comportamento: o que o terminal recebe)', () => {
+    const DIALOGO = "Hook PreToolUse:Bash requires confirmation for this command:\\n  integridade em .git/config exige confirmacao humana\\nDo you want to proceed?\\n> 1. Yes\\n  2. No\\nEsc\\033[1Cto\\033[1Ccancel\\n\\033]9;Claude needs your permission\\007\\n";
+    // o "claude": mostra o diálogo; o 1º byte decide: ESC fecha; qualquer outro é RESPOSTA ao diálogo (o defeito). `fecha=0`: ESC ignorado e o diálogo reaparece a cada tecla
+    const rodar = (t, { dialogo = true, fecha = true, fala = 'FALA DO ROTEIRO UMA VEZ SO' } = {}) => {
+      if (spawnSync('expect', ['-v'], { encoding: 'utf8' }).error) { t.skip('expect ausente'); return null; }
+      const exp = readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), 'utf8');
+      const procs = exp.slice(exp.indexOf('# escala dos tempos'), exp.indexOf('proc snapshot'));
+      const d = mkdtempSync(join(tmpdir(), 'a1-perm-')); TMPS.push(d);
+      const mostra = dialogo ? `printf '${DIALOGO}'` : "printf 'Do you want to proceed with the refactor?\\n'";
+      const filho = [
+        mostra,
+        'IFS= read -rsn1 k',
+        `if [ "$k" = "$(printf '\\033')" ]; then echo esc >> ${d}/teclas; k=''; ${fecha ? "printf 'tela limpa\\n'" : mostra}; else echo "$k" >> ${d}/teclas; fi`,
+        ...(fecha ? [] : ['IFS= read -rsn1 k; echo "$k" >> ' + d + '/teclas; ' + mostra, 'IFS= read -rsn1 k; echo "$k" >> ' + d + '/teclas; ' + mostra, 'IFS= read -rsn1 k; echo "$k" >> ' + d + '/teclas; ' + mostra]),
+        `IFS= read -r l; echo "$k$l" >> ${d}/fala`,
+        'sleep 1',
+      ].join('; ');
+      writeFileSync(join(d, 'sim.sh'), `#!/bin/bash\n${filho}\n`); chmodSync(join(d, 'sim.sh'), 0o755);
+      writeFileSync(join(d, 'sim.exp'), `set rundir ${d}\nset env(A1_ESCALA_TEMPO) 0.25\nset env(A1_ESCALA_TEMPO) 0.25\n${procs}\nproc sair {status} { global rundir; set f [open $rundir/exp.status w]; puts $f $status; close $f; exit 0 }\nspawn ${d}/sim.sh\nlog_user 0\ndrenar 6\ndigitar ${sha256(fala)} {${fala}}\nocioso\nexit 0\n`);
+      const r = spawnSync('expect', ['-f', join(d, 'sim.exp')], { encoding: 'utf8', timeout: 90000 });
+      assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+      const ler = (n) => (existsSync(join(d, n)) ? readFileSync(join(d, n), 'utf8') : '');
+      return { teclas: ler('teclas'), fala: ler('fala').trim(), exp: ler('exp.log'), sends: ler('sends.log'), status: ler('exp.status').trim() };
+    };
+    test('dialogo-aberto: Esc primeiro (recusa), registro na evidência, e a MESMA fala digitada depois, uma vez só', (t) => {
+      const r = rodar(t); if (r === null) return;
+      assert.match(r.teclas, /^esc\n/, 'o primeiro byte que o diálogo recebe é a recusa (Esc), nunca a fala');
+      assert.equal(r.fala, 'FALA DO ROTEIRO UMA VEZ SO', 'a fala chegou ao prompt inteira, depois do diálogo fechar');
+      assert.equal((r.exp.match(/PERMISSAO-RECUSADA/g) ?? []).length, 1);
+      assert.match(r.exp, /PERGUNTA-DE-PERMISSAO na tela/);
+      assert.equal(r.sends.split('\n').filter((l) => /recusar-permissao/.test(l)).length, 1);
+      assert.equal(r.sends.split('\n').filter((l) => new RegExp(`digitar ${sha256('FALA DO ROTEIRO UMA VEZ SO')}$`).test(l)).length, 1, 'digitada uma vez só');
+      assert.ok(r.sends.indexOf('recusar-permissao') < r.sends.indexOf('digitar '), 'recusa antes da fala');
+      assert.deepEqual(permissaoDoExpLog(r.exp), { apareceu: true, recusadas: 1, naoFechou: false });
+    });
+    test('dialogo-que-nao-fecha: a célula para com causa própria e a fala NÃO é digitada', (t) => {
+      const r = rodar(t, { fecha: false }); if (r === null) return;
+      assert.equal(r.status, 'DIALOGO_NAO_FECHOU');
+      assert.match(r.exp, /PERMISSAO-NAO-FECHOU/);
+      assert.equal(r.fala, '', 'nenhuma fala chegou ao claude');
+      assert.doesNotMatch(r.teclas, /FALA/, 'nem uma tecla da fala');
+      assert.doesNotMatch(r.sends, new RegExp(`digitar ${sha256('FALA DO ROTEIRO UMA VEZ SO')}`));
+    });
+    test('sem-dialogo (texto de conversa parecido, sem Esc to cancel nem aviso): nenhum Esc e a fala é digitada', (t) => {
+      const r = rodar(t, { dialogo: false }); if (r === null) return;
+      assert.doesNotMatch(r.teclas, /esc/, 'nenhum Esc avulso');
+      assert.equal(r.fala, 'FALA DO ROTEIRO UMA VEZ SO');
+      assert.doesNotMatch(r.exp, /PERMISSAO-RECUSADA/);
+    });
   });
 });

@@ -15,7 +15,7 @@
 # Digita as falas de <rundir>/falas.tsv (colunas: n, rótulo, sha256, texto), uma por vez, esperando o turno acabar e tirando um `snapshot` do estado do produto
 # depois de cada ponto de controle. O texto das falas fica SÓ em <rundir>/falas.tsv (ignorado pelo git); sends.log guarda o sha256, nunca o texto.
 # A evidência vem do diário, do observador (obs/a1.jsonl: agentes e `placement` das Panes), dos transcripts e dos snapshots, lidos DEPOIS pelo `rodar-a1.mjs`;
-# a tela nunca é evidência. Pergunta de permissão é registrada e nunca respondida; o diálogo de ambiente "Allow external CLAUDE.md file imports?" é RECUSADO e registrado (exp.log).
+# a tela nunca é evidência. Diálogo de PERMISSÃO (T57, emenda 63; o ask de um hook, `Do you want to proceed?`) nunca recebe a fala: o runner o RECUSA (Esc), registra no exp.log e só então digita a fala, uma vez; o que não fecha ⇒ DIALOGO_NAO_FECHOU. O diálogo de ambiente "Allow external CLAUDE.md file imports?" é RECUSADO e registrado (exp.log).
 lassign $argv rundir repo bin node runner modo
 if {$modo eq ""} { set modo conversa }
 set cel [open $rundir/celula.json r]; set celjson [read $cel]; close $cel
@@ -53,15 +53,28 @@ proc recusarImports {} {
   sends recusar-imports
   after 800; send "\r"; after 2000
 }
+# diálogo de PERMISSÃO (T57, emenda 63): MEDIDO no tty.raw da A1 (1794625214308): `Hook PreToolUse:Bash requires confirmation ... Do you want to proceed? ❯ 1. Yes 2. No  Esc to cancel · Tab to amend`, com o aviso OSC `Claude needs your permission`. O foco nasce em "Yes": recusar é Esc (nunca Enter). Digitar a fala sobre ele a transforma em resposta do diálogo (sem UserPromptSubmit): foi o defeito da sessão de 8 falas (6 de 8 dono.mensagem)
+set dialogo_aberto 0
+set cauda ""
+set npermissao 0
+# o texto de uma leitura da tela; a decisão é em Tcl (o `.+` do expect casa do início do buffer e esconderia o padrão que vem depois), com a cauda da leitura anterior (o texto pode vir partido)
+proc ler {txt} {
+  global dialogo_aberto cauda
+  set j "$cauda$txt"
+  set cauda [string range $j end-120 end]
+  if {[regexp {external.{1,60}imports\?} $j]} { recusarImports; set cauda "" }
+  if {[regexp {needs your permission} $j] || ([regexp {Do you want to (proceed|make)} $j] && [regexp {Esc.{1,6}to.{1,6}cancel} $j])} {
+    if {!$dialogo_aberto} { nota "PERGUNTA-DE-PERMISSAO na tela" }
+    set dialogo_aberto 1; set cauda ""
+  } elseif {[regexp {Allow this|Esc to cancel} $j]} { nota "PERGUNTA-DE-PERMISSAO na tela" ; set cauda "" }
+}
 proc drenar {s} {
   set s [t $s]
   set fim [expr {[clock seconds] + $s}]
   set timeout 1
   while {[clock seconds] < $fim} {
     expect {
-      -re {external.{1,60}imports\?} { recusarImports }
-      -re {Do you want to|Allow this|Esc to cancel} { nota "PERGUNTA-DE-PERMISSAO na tela" }
-      -re {.+} {}
+      -re {.+} { ler $expect_out(0,string) }
       timeout {}
       eof { nota "EOF"; return 0 }
     }
@@ -74,14 +87,39 @@ proc ocioso {} {
   set timeout [t 8]
   while {[clock seconds] - $t0 < [t 240]} {
     expect {
-      -re {.+} { exp_continue }
+      -re {.+} { ler $expect_out(0,string); exp_continue }
       timeout { return 1 }
       eof { return 0 }
     }
   }
   return 1
 }
-proc digitar {sha txt} { sends "digitar $sha"; send -- $txt; after 1200; send "\r" }
+# recusa o diálogo de permissão (Esc), registra, e confere que fechou: depois do Esc a tela precisa ficar sem o diálogo; reaparecer (ou Esc sem efeito) por 3 vezes = não fechou
+proc recusarPermissao {} {
+  global dialogo_aberto npermissao
+  for {set i 0} {$i < 3} {incr i} {
+    incr npermissao
+    nota "PERMISSAO-RECUSADA $npermissao"
+    sends recusar-permissao
+    set dialogo_aberto 0
+    send "\033"
+    drenar 4
+    if {!$dialogo_aberto} { return 1 }
+  }
+  nota "PERMISSAO-NAO-FECHOU"
+  return 0
+}
+# tudo o que a fala do roteiro exige antes de ser digitada: nenhum diálogo de permissão aberto. 0 = não fechou (a célula para sem digitar)
+proc livreDeDialogo {} {
+  global dialogo_aberto
+  for {set k 0} {$k < 6} {incr k} {
+    if {!$dialogo_aberto} { return 1 }
+    if {![recusarPermissao]} { return 0 }
+    if {![ocioso]} { return 0 }
+  }
+  return [expr {!$dialogo_aberto}]
+}
+proc digitar {sha txt} { if {![livreDeDialogo]} { sair DIALOGO_NAO_FECHOU }; sends "digitar $sha"; send -- $txt; after 1200; send "\r" }
 proc snapshot {n} { global node runner repo rundir; marco snap-$n; catch {exec $node $runner snapshot $repo $rundir $n} err; if {$err ne ""} { nota "snapshot $n: $err"; set f [open $rundir/snapshot-falhou.log a]; puts $f "snapshot $n: $err"; close $f } }
 proc sair {status} {
   global rundir
@@ -174,6 +212,8 @@ foreach linha $linhas {
   set texto [join [lrange $campos 3 end] "\t"]
   digitar $sha $texto
   if {![ocioso]} { sair NAO_PROVADO_EOF }
+  # diálogo de permissão aberto durante o turno: recusa e espera o turno acabar antes do snapshot (e da próxima fala)
+  if {![livreDeDialogo]} { sair DIALOGO_NAO_FECHOU }
   # ponto de controle = tudo que não é "—": o estado do produto depois do turno
   if {$rotulo ne "—"} { snapshot $n }
   # invariante violada (snapshot ou runner escreveu abortar.txt): a célula para na hora, sem digitar o resto

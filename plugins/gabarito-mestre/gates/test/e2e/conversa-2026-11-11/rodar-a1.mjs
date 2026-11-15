@@ -908,6 +908,7 @@ export function causaDoStatus(texto) {
   const t = String(texto).trim();
   if (t === 'NAO_PROVADO_PLUGIN') return 'plugin gabarito-mestre não ativo na célula (dependência ausente ou não carregou)';
   if (t === 'PAROU_NAO_SAIU') return 'PAROU aberto que não saiu antes do aviso (evidência vazia)';
+  if (t === 'DIALOGO_NAO_FECHOU') return 'diálogo de permissão que não fechou no tempo do runner depois de recusado: a fala do roteiro não foi digitada';
   if (t === 'NAO_PROVADO_LOGIN') return 'login pedido na célula: a conta não está autenticada';
   return null;
 }
@@ -955,10 +956,22 @@ export function executarExpect({ rundir, args, reais, expect = 'expect', interva
 }
 
 /** A avaliação de uma execução GRAVADA: a mesma da matriz (coletar + avaliarExecucao). `opc.repo`/`celula`/`roteiro`/`pasta`/`total` têm padrão pela pasta (`<rundir>/repo`, nome/`celula.json`). */
-export async function avaliarRundir(rundir, { repo = join(rundir, 'repo'), celula = celulaDoRundir(rundir), roteiro, pasta = null, total = TOTAL_PONTOS, grupo = 'todas' } = {}) {
+export async function avaliarRundir(rundir, { repo = join(rundir, 'repo'), celula = celulaDoRundir(rundir), roteiro, pasta = null, total = TOTAL_PONTOS, grupo = 'todas', pontos = null } = {}) {
   if (celula === null) throw new Error(`célula desconhecida para ${rundir} (sem celula.json nem nome <local>-<cols>x<rows>-<cheia|normal>)`);
-  return avaliarExecucao(await coletar(rundir, repo, celula, roteiro, { pasta, total }), grupo);
+  const ev = await coletar(rundir, repo, celula, roteiro, { pasta, total });
+  const exec = avaliarExecucao(ev, grupo);
+  if (pontos === null) return exec;
+  // T57 (emenda 63): a célula só vale se cada fala digitada virou exatamente 1 dono.mensagem; senão é INVÁLIDA com causa própria, nunca aprovação em vácuo
+  const sendsArq = join(rundir, 'sends.log');
+  const inicioArq = join(rundir, 'inicio.iso');
+  const v = validarFalas1a1({ eventos: ev.eventos, sends: existsSync(sendsArq) ? readFileSync(sendsArq, 'utf8') : '', falas: roteiro.falas, pontos, inicio: existsSync(inicioArq) ? readFileSync(inicioArq, 'utf8').trim() : '' });
+  const falas = { digitadas: v.digitadas, acoesDoRunner: v.acoesDoRunner };
+  if (!v.ok) return { celula: exec.celula ?? idDaCelula(celula), passa: false, resultados: [{ id: 'falas-1a1', ok: false, detalhe: `célula inválida: ${v.causa}` }], falas };
+  return { ...exec, falas };
 }
+
+/** `pontos.json` do produto, para a validade 1:1 das falas (as chamadas de produção o passam; os testes de coleta não). */
+export const lerPontos = () => JSON.parse(readFileSync(PONTOS_ARQ, 'utf8'));
 
 /** A sessão curta de UMA combinação (emenda 45 item 3): só a asserção 12, lida da tela; devolve também a geometria que o replay da combinação usa. */
 export function avaliarCurta(rundir, celula = celulaDoRundir(rundir)) {
@@ -969,7 +982,7 @@ export function avaliarCurta(rundir, celula = celulaDoRundir(rundir)) {
   return { ...avaliarExecucao(ev, 'placement'), geometria: geometriaDaCurta(sessaoCurta, celula) };
 }
 
-const DEPS = { preparar: (...a) => prepararCopia(...a), copiarPlugin, executar: executarExpect, avaliar: (rundir, repo, celula, roteiro, grupo = 'todas') => avaliarRundir(rundir, { repo, celula, roteiro, grupo }), avaliarCurta: (rundir, celula) => avaliarCurta(rundir, celula), superpowers: () => resolverSuperpowers() };
+const DEPS = { preparar: (...a) => prepararCopia(...a), copiarPlugin, executar: executarExpect, avaliar: (rundir, repo, celula, roteiro, grupo = 'todas') => avaliarRundir(rundir, { repo, celula, roteiro, grupo, pontos: lerPontos() }), avaliarCurta: (rundir, celula) => avaliarCurta(rundir, celula), superpowers: () => resolverSuperpowers() };
 
 /**
  * A matriz. `base` fica SOB `TMPDIR` (nunca no checkout real); `opc.paralelo` (padrão 1) limita as células simultâneas; cada célula grava o `resultado.json` ao terminar;
@@ -1018,7 +1031,8 @@ export async function matriz(fonte, tmpRaiz, roteiro, so, { paralelo = 1, deps =
     const r = await d.executar({ rundir, repo, plugin, argv, celula: id, args, reais, fotoOpc, marca });
     let dif = [];
     try { dif = reais.flatMap((x, i) => diferencasDeFotos(antes[i], fotoDoRepo(x, fotoOpc))); } catch (e) { dif = [`foto final ilegível: ${e.message}`]; }
-    const ambiente = { ...dialogosDoExpLog(existsSync(join(rundir, 'exp.log')) ? readFileSync(join(rundir, 'exp.log'), 'utf8') : ''), superpowers: superpowersNoAmbiente(sp) };
+    const expLog = existsSync(join(rundir, 'exp.log')) ? readFileSync(join(rundir, 'exp.log'), 'utf8') : '';
+    const ambiente = { ...dialogosDoExpLog(expLog), permissao: permissaoDoExpLog(expLog), superpowers: superpowersNoAmbiente(sp) };
     let exec;
     if (dif.length > 0) {
       exec = { celula: id, passa: false, resultados: [{ id: 'isolamento', ok: false, detalhe: `repo real alterado (célula inválida): ${dif.join('; ')}` }] };
@@ -1423,7 +1437,7 @@ const semEvidencia = (id, detalhe) => ({ id, ref: ASSERCOES.find((a) => a.id ===
  */
 export async function avaliarGravada(base, roteiro, { deps = {} } = {}) {
   const d = {
-    conversa: (rundir) => avaliarRundir(rundir, { roteiro, grupo: 'comportamento' }),
+    conversa: (rundir) => avaliarRundir(rundir, { roteiro, grupo: 'comportamento', pontos: lerPontos() }),
     curta: (rundir, celula) => avaliarCurta(rundir, celula),
     replay: replayDaConversa,
     ...deps,
@@ -1505,6 +1519,49 @@ export function pluginCarregou(debugLog) {
 /** O que o `a1.exp` registrou em exp.log sobre o diálogo de ambiente "Allow external CLAUDE.md file imports?": apareceu e foi recusado (ou não apareceu). */
 export function dialogosDoExpLog(expLog) {
   return { importsExternos: /DIALOGO-IMPORTS-EXTERNOS recusado/.test(String(expLog)) ? 'apareceu-e-foi-recusado' : 'nao-apareceu' };
+}
+
+/** Diálogo de PERMISSÃO (T57, emenda 63): o a1.exp o RECUSA (Esc) em vez de digitar a fala sobre ele e registra no exp.log cada aparição e cada recusa. Devolve o que a evidência diz. */
+export function permissaoDoExpLog(expLog) {
+  const t = String(expLog);
+  const recusadas = (t.match(/PERMISSAO-RECUSADA/g) ?? []).length;
+  return { apareceu: /PERGUNTA-DE-PERMISSAO|PERMISSAO-RECUSADA/.test(t), recusadas, naoFechou: /PERMISSAO-NAO-FECHOU/.test(t) };
+}
+
+/**
+ * Validade da célula (T57, emenda 63, condição 2 da Sombra): cada fala do ROTEIRO digitada pelo runner (sends.log `digitar <sha256>`) tem EXATAMENTE 1 `dono.mensagem` por digitação, com
+ * {sha256, chars} iguais aos de `pontos.json` (msg do ponto) ou, nas falas sem ponto, aos do próprio roteiro (mesma conta: sha256 do texto, caracteres). Perdida ou dupla ⇒ inválida, com causa
+ * própria; nenhuma fala digitada ⇒ inválida (nunca aprovação em vácuo). Ações do runner fora do roteiro (`digitar resposta-b`, `digitar pedido-do-dono`, recusas, trust, exit) não entram
+ * na contagem e voltam à parte em `acoesDoRunner`. Só conta `dono.mensagem` com `ts` >= início da execução (o que a semente trouxe não é da conversa).
+ */
+export function validarFalas1a1({ eventos, sends, falas, pontos, inicio = '' }) {
+  const linhas = String(sends).split('\n').filter(Boolean);
+  const digitadas = linhas.map((l) => /^\d+ digitar ([0-9a-f]{64})$/.exec(l)?.[1]).filter(Boolean);
+  const acoesDoRunner = linhas.map((l) => /^\d+ (.+)$/.exec(l)?.[1]).filter((x) => x !== undefined && !/^digitar [0-9a-f]{64}$/.test(x));
+  const porSha = new Map();
+  for (const f of falas) porSha.set(sha256(f.texto), f);
+  const dePonto = new Map((pontos?.pontos ?? []).map((p) => [p.msg, p]));
+  const gravadas = new Map();
+  for (const e of eventos) {
+    if (e?.tipo !== 'dono.mensagem' || (inicio !== '' && String(e.ts) < inicio)) continue;
+    const k = e.dados?.sha256;
+    if (!gravadas.has(k)) gravadas.set(k, []);
+    gravadas.get(k).push(e.dados?.chars);
+  }
+  const enviadas = new Map();
+  for (const sha of digitadas) if (porSha.has(sha)) enviadas.set(sha, (enviadas.get(sha) ?? 0) + 1);
+  const falhas = [];
+  if (enviadas.size === 0) falhas.push('nenhuma fala do roteiro digitada: não medida');
+  for (const [sha, n] of enviadas) {
+    const f = porSha.get(sha);
+    const ponto = dePonto.get(f.n);
+    const esperado = ponto !== undefined ? { sha256: ponto.sha256, chars: ponto.chars } : { sha256: sha, chars: [...f.texto].length };
+    const g = gravadas.get(esperado.sha256) ?? [];
+    if (g.length < n) falhas.push(`fala ${f.n} perdida: digitada ${n}x, ${g.length} dono.mensagem`);
+    else if (g.length > n) falhas.push(`fala ${f.n} dupla: digitada ${n}x, ${g.length} dono.mensagem`);
+    else if (g.some((c) => c !== esperado.chars)) falhas.push(`fala ${f.n}: dono.mensagem com chars ${g.find((c) => c !== esperado.chars)} diferente do esperado ${esperado.chars}`);
+  }
+  return { ok: falhas.length === 0, causa: falhas.length === 0 ? null : falhas.join('; '), digitadas: [...enviadas.values()].reduce((a, b) => a + b, 0), acoesDoRunner };
 }
 
 /** Versão FIXA do superpowers que a cópia do A1 carrega (T46, emenda 41): a instalada quando a emenda foi aprovada. Nunca "a última do cache". */
@@ -1595,7 +1652,7 @@ export async function main(argv) {
     let ptsA; try { ptsA = JSON.parse(readFileSync(flag(argv, '--pontos') ?? PONTOS_ARQ, 'utf8')); } catch (e) { process.stderr.write(`pontos.json ilegível: ${e.message}\n`); return 1; }
     const rot = verificarRoteiro(arqRot, ptsA.roteiroSha256);
     if (!rot.ok) { process.stderr.write(`A1 não avalia: ${rot.motivo}\n`); return 1; }
-    const exec = await avaliarRundir(rundir, { roteiro: rot, pasta: flag(argv, '--transcripts') ?? null });
+    const exec = await avaliarRundir(rundir, { roteiro: rot, pasta: flag(argv, '--transcripts') ?? null, pontos: ptsA });
     process.stdout.write(`${JSON.stringify(exec, null, 2)}\n`);
     return exec.passa ? 0 : 1;
   }
