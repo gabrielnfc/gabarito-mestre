@@ -47,6 +47,55 @@ const TURNOS_ESPERA = 3; // alinhado a REQ-LOOP-5: o hand-back pode ainda não t
 
 const chaveDe = (dir) => `pouso:${dir}`;
 
+// ─────────────────────────────────────────────────────────────── GM-15 T17 (REQ-POU-4): o sinal do loop automático
+// Medido na T0b (S4 ii, `.superpowers/sdd/2026-11-15-2-1-1/t0b-relatorio.md`): o `/loop` real arma um item em `Stop.session_crons`
+// (`recurring:true` = intervalo, `recurring:false` = wakeup dinâmico). Nada armado ⇒ lista vazia. A sentinela `<<autonomous-loop-dynamic>>`
+// NUNCA aparece ali: não se casa o prompt. Campo ausente ou fora da forma ⇒ "não conferível", nunca "ausente" nem "armado".
+// Forma publicada (a T18 e a T19 leem): `.harness/loop-dinamico.json` = `{estado: 'armado'|'ausente'|'nao_conferivel', intervalo, dinamico, sessao, em}`
+// (um arquivo só por repo, não por sessão: o id da sessão do mod e o do hook divergem depois do /clear; `sessao` e `em` dizem quem e quando).
+export const ARQUIVO_SINAL_LOOP = 'loop-dinamico.json';
+
+/** `session_crons` do Stop ⇒ `{estado, intervalo, dinamico}`. Pura. */
+export function sinalDoLoop(e) {
+  const l = e?.session_crons;
+  if (!Array.isArray(l)) return { estado: 'nao_conferivel', intervalo: 0, dinamico: 0 };
+  if (l.length === 0) return { estado: 'ausente', intervalo: 0, dinamico: 0 };
+  if (!l.every((c) => c !== null && typeof c === 'object' && !Array.isArray(c) && typeof c.recurring === 'boolean')) return { estado: 'nao_conferivel', intervalo: 0, dinamico: 0 };
+  const intervalo = l.filter((c) => c.recurring === true).length;
+  return { estado: 'armado', intervalo, dinamico: l.length - intervalo };
+}
+
+const SCRIPT_SINAL_LOOP = `/*gabarito:loop*/
+const fs = require('node:fs'), path = require('node:path'), cp = require('node:child_process');
+const { url, sinal } = JSON.parse(fs.readFileSync(0, 'utf8'));
+const comum = cp.execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' }).trim();
+const raiz = path.dirname(comum);
+import(url).then((m) => {
+  if (m.temOnboarding(raiz) !== true) return;
+  const dir = path.join(raiz, '.harness'); fs.mkdirSync(dir, { recursive: true });
+  const fim = path.join(dir, '${ARQUIVO_SINAL_LOOP}'), tmp = fim + '.' + process.pid + '.tmp';
+  try { fs.writeFileSync(tmp, JSON.stringify(sinal) + '\\n'); fs.renameSync(tmp, fim); } catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }
+}).catch(() => process.exit(1));`;
+
+/** `{argv, stdin}` para `$.process.run` (cwd = a raiz da sessão): grava o sinal na raiz PRINCIPAL, só em repo com onboarding. Dado fora da forma ⇒ `null`. */
+export function gravarSinalLoop({ pluginRoot, estado, intervalo, dinamico, sessao, emMs } = {}) {
+  if (typeof pluginRoot !== 'string' || pluginRoot === '' || !['armado', 'ausente', 'nao_conferivel'].includes(estado)) return null;
+  if (!Number.isSafeInteger(intervalo) || !Number.isSafeInteger(dinamico) || !Number.isFinite(emMs)) return null;
+  const url = ('file://' + encodeURI(`${pluginRoot}/gates/dist/guarda.js`)).replace(/#/g, '%23').replace(/\?/g, '%3F');
+  const id = typeof sessao === 'string' && /^[A-Za-z0-9-]{1,128}$/.test(sessao) ? sessao : null;
+  return { argv: ['node', '-e', SCRIPT_SINAL_LOOP], stdin: JSON.stringify({ url, sinal: { estado, intervalo, dinamico, sessao: id, em: new Date(emMs).toISOString() } }) };
+}
+
+async function publicarSinalLoop($, e) {
+  let cwd;
+  try { cwd = await $.session.root(); } catch { return; }
+  let emMs;
+  try { emMs = Number(await $.clock.now()); } catch { emMs = Date.now(); }
+  const q = gravarSinalLoop({ pluginRoot: $.plugin.root, ...sinalDoLoop(e), sessao: e?.session_id, emMs });
+  if (q === null) return;
+  try { await $.process.run(q.argv, { cwd, stdin: q.stdin, timeoutMs: 5000 }); } catch { /* sem ponte: o sinal fica velho, o leitor trata como não conferível */ }
+}
+
 async function avisar($, texto) {
   try { await $.ui.toast(texto, { timeoutMs: 20000 }); } catch { /* sem tela */ }
   try { $.ui.log(texto, { to: 'transcript' }); } catch { /* sem transcript */ }
@@ -703,6 +752,11 @@ async function negaPorPendencia($, c) {
 export const register = (on) => {
   registrarPainel(on);
   registrarChat(on);
+  // REQ-POU-4: a cada Stop o mod publica se o loop automático está armado; agenda e volta (o Stop nunca espera o node).
+  on('classic.Stop', { hook_event_name: 'Stop' }, async ($, e, next) => {
+    if (interativo) { try { $.clock.after(0, () => { publicarSinalLoop($, e).catch(() => {}); }); } catch { /* sem relógio */ } }
+    return next(e);
+  });
   on('session.start', async ($, e, next) => {
     interativo = e.isInteractive === true;
     await iniciarPainel($, e);

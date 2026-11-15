@@ -3,6 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { pendenciasAprendizado } from '../../gates/dist/pendencias.js'
 import { CABECALHO, codigoPonte, PROMPT_RECUPERACAO, PROMPT_RETOMADA } from '../../gates/dist/pouso.js'
 import { validarStdinAgentes } from '../../gates/dist/painel-equipe.js'
+import { gravarSinalLoop, sinalDoLoop } from '../gabarito.mjs'
 import { chavePouso, colunasDosBotoes, faixaDe, faixaUmaLinha, avisoPaneEspera, botoesDoTopo, gravarContexto, indiceDoTopo, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
 import { lerLeitura, pousoPendente, tentativasDoPouso } from '../../gates/dist/pouso-pendente.js'
 import { proximaAcao } from '../../gates/dist/loop.js'
@@ -166,7 +167,7 @@ function mundo($: any, on: any, o: Opc = {}) {
     agoraMs: null as number | null,
     msgs: [] as { sha256: string; chars: number }[], mensagemLibera: [] as (() => void)[],
     // GM-14 T20: local, medir, contexto, plano B e pacote (cada ponte guarda o que recebeu)
-    local: (o.local ?? 'lateral') as string, locaisGravados: [] as string[], medirStdins: [] as any[], contextos: [] as any[], contextoInit: [] as any[], planosB: [] as any[], pacotesLidos: [] as any[], onboardings: [] as any[],
+    local: (o.local ?? 'lateral') as string, locaisGravados: [] as string[], medirStdins: [] as any[], contextos: [] as any[], contextoInit: [] as any[], planosB: [] as any[], pacotesLidos: [] as any[], onboardings: [] as any[], sinaisLoop: [] as any[],
   }
 
   // o diário em memória: tudo que o mod grava volta na próxima leitura, com seq e ts válidos para a T2
@@ -268,6 +269,7 @@ function mundo($: any, on: any, o: Opc = {}) {
         if (o.onboardingFalha) return { deny: 'node não iniciou' }
         return cru0(`${JSON.stringify({ ok: true, onboarding: o.semOnboarding !== true })}\n`)
       }
+      if (String(argv[2]).startsWith('/*gabarito:loop*/')) { est.sinaisLoop.push({ q, init: e.init }); return cru0('') }
       if (String(argv[2]).startsWith('/*gabarito:contexto*/')) { est.contextos.push(q); est.contextoInit.push(e.init); return cru0('') }
       if (String(argv[2]).startsWith('/*gabarito:planob*/')) {
         est.planosB.push(q)
@@ -5217,4 +5219,56 @@ test('t60-com-onboarding-comportamento-atual: grava o contexto e mede, e a ponte
   expect(m.est.medirStdins.length).toBeGreaterThanOrEqual(1)
   expect(m.est.onboardings[0].q.raiz).toBe(RAIZ)
   expect(m.est.onboardings[0].q.url).toMatch(/^file:\/\/.*\/gates\/dist\/guarda\.js$/)
+})
+
+// ---- GM-15 T17 (REQ-POU-4): o sinal do loop automático, lido de `Stop.session_crons` (medido na T0b, S4 ii) ----
+const SINAL_ARMADO_INTERVALO = { id: 'c1', schedule: '*/5 * * * *', recurring: true, prompt: '/loop 5m x' }
+const SINAL_ARMADO_WAKEUP = { id: 'c2', schedule: '2026-11-15T12:00:00', recurring: false, prompt: '/loop verifique pronto.txt' }
+const ultimoSinal = (m: ReturnType<typeof mundo>) => JSON.parse(m.est.sinaisLoop.at(-1).q.sinal ? JSON.stringify(m.est.sinaisLoop.at(-1).q.sinal) : 'null')
+
+test('mod-sinal-wakeup-armado: Stop com item de wakeup (recurring:false) e de intervalo ⇒ sinal armado com as contagens, gravado na raiz da sessão com a sessão do hook', async ($, on) => {
+  const m = mundo($, on, {})
+  await arrancar(m)
+  await $.classic.Stop({ session_id: 'hook-novo-1', session_crons: [SINAL_ARMADO_WAKEUP] }); await drena(m)
+  expect(m.est.sinaisLoop).toHaveLength(1)
+  expect(ultimoSinal(m)).toMatchObject({ estado: 'armado', dinamico: 1, intervalo: 0, sessao: 'hook-novo-1' })
+  expect(m.est.sinaisLoop[0].init.cwd).toBe(RAIZ)
+  await $.classic.Stop({ session_id: 'hook-novo-1', session_crons: [SINAL_ARMADO_INTERVALO, SINAL_ARMADO_WAKEUP] }); await drena(m)
+  expect(ultimoSinal(m)).toMatchObject({ estado: 'armado', dinamico: 1, intervalo: 1 })
+  expect(new Date(ultimoSinal(m).em).toISOString()).toBe(ultimoSinal(m).em)
+})
+test('mod-sinal-wakeup-ausente: Stop com session_crons vazio ⇒ sinal ausente (gravado: o leitor distingue de "nunca medido")', async ($, on) => {
+  const m = mundo($, on, {})
+  await arrancar(m)
+  await $.classic.Stop({ session_id: 's-1', session_crons: [] }); await drena(m)
+  expect(ultimoSinal(m)).toMatchObject({ estado: 'ausente', dinamico: 0, intervalo: 0 })
+})
+test('mod-sinal-nao-conferivel: campo ausente, não array ou item fora da forma ⇒ nao_conferivel, nunca ausente nem armado', async ($, on) => {
+  const m = mundo($, on, {})
+  await arrancar(m)
+  for (const e of [{}, { session_crons: 'x' }, { session_crons: null }, { session_crons: [{ id: 'c', schedule: 'x' }] }, { session_crons: [SINAL_ARMADO_WAKEUP, 7] }]) {
+    await $.classic.Stop({ session_id: 's-1', ...e }); await drena(m)
+    expect(ultimoSinal(m).estado).toBe('nao_conferivel')
+  }
+  expect(m.est.sinaisLoop).toHaveLength(5)
+})
+test('mod-sinal-sentinela-nao-conta: o prompt da sentinela sozinho não arma nem desarma; só o item conta (S4: a sentinela nunca aparece em 23 sessões)', () => {
+  expect(sinalDoLoop({ session_crons: [] }).estado).toBe('ausente')
+  expect(sinalDoLoop({ session_crons: [{ recurring: false, prompt: 'qualquer coisa' }] }).estado).toBe('armado')
+  expect(sinalDoLoop({ session_crons: [{ recurring: false, prompt: '<<autonomous-loop-dynamic>>' }] }).estado).toBe('armado')
+  expect(sinalDoLoop(undefined).estado).toBe('nao_conferivel')
+})
+test('mod-sinal-sessao-nao-interativa-nao-grava: sem sessão interativa o Stop não escreve o sinal', async ($, on) => {
+  const m = mundo($, on, { interativo: false })
+  await arrancar(m)
+  await $.classic.Stop({ session_id: 's-1', session_crons: [SINAL_ARMADO_WAKEUP] }); await drena(m)
+  expect(m.est.sinaisLoop).toHaveLength(0)
+})
+test('mod-sinal-gravar-pura: gravarSinalLoop fora da forma ⇒ null; sessão fora do padrão vira null no arquivo', () => {
+  const ok = { pluginRoot: '/p', estado: 'armado', intervalo: 0, dinamico: 1, sessao: 's-1', emMs: 0 }
+  expect(gravarSinalLoop(ok)?.argv.slice(0, 2)).toEqual(['node', '-e'])
+  expect(JSON.parse(gravarSinalLoop({ ...ok, sessao: '../x' })!.stdin).sinal.sessao).toBeNull()
+  expect(gravarSinalLoop({ ...ok, estado: 'talvez' })).toBeNull()
+  expect(gravarSinalLoop({ ...ok, pluginRoot: '' })).toBeNull()
+  expect(gravarSinalLoop({ ...ok, intervalo: 1.5 })).toBeNull()
 })
