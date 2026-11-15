@@ -1,0 +1,622 @@
+{
+  "entrega": "GM-15",
+  "spec": "docs/superpowers/specs/2026-11-15-gm15-fluidez-design.md",
+  "tasks": [
+    {
+      "id": "T0",
+      "titulo": "Spikes S1 S2 S3 S7 e locais",
+      "deps": [],
+      "arquivos": [
+        ".superpowers/sdd/2026-11-15-2-1-1/t0-relatorio.md"
+      ],
+      "reqs": [
+        "REQ-ENT-1",
+        "REQ-EME-3",
+        "REQ-HIG-1"
+      ]
+    },
+    {
+      "id": "T0b",
+      "titulo": "Spikes S4 S5 S8 (runtime)",
+      "deps": [],
+      "arquivos": [
+        ".superpowers/sdd/2026-11-15-2-1-1/t0b-relatorio.md"
+      ],
+      "reqs": [
+        "REQ-POU-3",
+        "REQ-POU-4",
+        "REQ-STP-1"
+      ]
+    },
+    {
+      "id": "T0c",
+      "titulo": "Spike S6 (bench no CI)",
+      "deps": [],
+      "arquivos": [
+        ".superpowers/sdd/2026-11-15-2-1-1/t0c-relatorio.md"
+      ],
+      "reqs": [
+        "REQ-CI-1"
+      ]
+    },
+    {
+      "id": "T1",
+      "titulo": "Contratos dos 4 eventos novos",
+      "deps": [],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/tipos.ts",
+        "plugins/gabarito-mestre/gates/src/formas.ts",
+        "plugins/gabarito-mestre/gates/src/origem.ts",
+        "plugins/gabarito-mestre/gates/dist/formas.js",
+        "plugins/gabarito-mestre/gates/dist/origem.js",
+        "plugins/gabarito-mestre/gates/test/formas.test.ts",
+        "plugins/gabarito-mestre/gates/test/origem.test.ts"
+      ],
+      "reqs": [
+        "REQ-ENT-1",
+        "REQ-ENT-2",
+        "REQ-AUT-2",
+        "REQ-HIG-1"
+      ]
+    },
+    {
+      "id": "T2",
+      "titulo": "PR #20: painel no app desktop",
+      "deps": [],
+      "arquivos": [
+        "plugins/gabarito-mestre/mod/painel.mjs",
+        "plugins/gabarito-mestre/mod/gabarito.mjs",
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
+        "CHANGELOG.md"
+      ],
+      "reqs": [
+        "REQ-HIG-1"
+      ]
+    },
+    {
+      "id": "T3",
+      "titulo": "Núcleo do encerramento",
+      "deps": [
+        "T1"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/trilha.ts",
+        "plugins/gabarito-mestre/gates/src/guarda.ts",
+        "plugins/gabarito-mestre/gates/dist/trilha.js",
+        "plugins/gabarito-mestre/gates/dist/guarda.js",
+        "plugins/gabarito-mestre/gates/test/trilha.test.ts",
+        "plugins/gabarito-mestre/gates/test/encerramento.test.ts"
+      ],
+      "reqs": [
+        "REQ-ENT-1"
+      ]
+    },
+    {
+      "id": "T4",
+      "titulo": "medir grava o encerramento",
+      "deps": [
+        "T0",
+        "T3"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fixtures/gh-encerramento"
+      ],
+      "reqs": [
+        "REQ-ENT-1"
+      ]
+    },
+    {
+      "id": "T5",
+      "titulo": "Núcleo de adiada e cortada",
+      "deps": [
+        "T1"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/loop.ts",
+        "plugins/gabarito-mestre/gates/dist/loop.js",
+        "plugins/gabarito-mestre/gates/test/loop.test.ts"
+      ],
+      "reqs": [
+        "REQ-ENT-2"
+      ]
+    },
+    {
+      "id": "T6",
+      "titulo": "CLI adiar, cortar, reabrir (Sombra)",
+      "deps": [
+        "T5"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs"
+      ],
+      "reqs": [
+        "REQ-ENT-2"
+      ]
+    },
+    {
+      "id": "T7",
+      "titulo": "Comandos humanos do dono",
+      "deps": [
+        "T3",
+        "T6"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/comando-dono.mjs",
+        "plugins/gabarito-mestre/skills/reabrir-entrega/SKILL.md",
+        "plugins/gabarito-mestre/skills/adiar/SKILL.md",
+        "plugins/gabarito-mestre/skills/cortar/SKILL.md",
+        "plugins/gabarito-mestre/skills/reabrir/SKILL.md",
+        "plugins/gabarito-mestre/hooks/hooks.json",
+        "plugins/gabarito-mestre/hooks/test/hooks-json.test.mjs",
+        "plugins/gabarito-mestre/gates/test/comando-dono.test.mjs"
+      ],
+      "reqs": [
+        "REQ-ENT-1",
+        "REQ-ENT-2"
+      ]
+    },
+    {
+      "id": "T8",
+      "titulo": "Painel com a entrega encerrada",
+      "deps": [
+        "T0",
+        "T4"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/src/depende.ts",
+        "plugins/gabarito-mestre/gates/src/tipos.ts",
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/scripts/responder.mjs",
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/dist/depende.js",
+        "plugins/gabarito-mestre/gates/test/painel.test.ts",
+        "plugins/gabarito-mestre/gates/test/depende.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/responder.test.mjs",
+        "plugins/gabarito-mestre/gates/test/entrega-encerrada-cli.test.mjs"
+      ],
+      "reqs": [
+        "REQ-ENT-1"
+      ]
+    },
+    {
+      "id": "T9",
+      "titulo": "Painel: alvo sem fora, plano relido",
+      "deps": [
+        "T5",
+        "T8"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/src/depende.ts",
+        "plugins/gabarito-mestre/gates/src/tipos.ts",
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/dist/depende.js",
+        "plugins/gabarito-mestre/gates/test/painel.test.ts",
+        "plugins/gabarito-mestre/gates/test/depende.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs"
+      ],
+      "reqs": [
+        "REQ-ENT-2"
+      ]
+    },
+    {
+      "id": "T10",
+      "titulo": "Congelamento mínimo da emenda",
+      "deps": [
+        "T0",
+        "T5"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/loop.ts",
+        "plugins/gabarito-mestre/gates/src/emenda.ts",
+        "plugins/gabarito-mestre/gates/dist/loop.js",
+        "plugins/gabarito-mestre/gates/dist/emenda.js",
+        "plugins/gabarito-mestre/gates/test/loop.test.ts",
+        "plugins/gabarito-mestre/gates/test/emenda.test.ts"
+      ],
+      "reqs": [
+        "REQ-EME-3"
+      ]
+    },
+    {
+      "id": "T11",
+      "titulo": "Brief da Sombra com o diff",
+      "deps": [
+        "T1",
+        "T6",
+        "T10"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/sombra.mjs",
+        "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+        "plugins/gabarito-mestre/gates/src/emenda.ts",
+        "plugins/gabarito-mestre/gates/src/formas.ts",
+        "plugins/gabarito-mestre/gates/dist/emenda.js",
+        "plugins/gabarito-mestre/gates/dist/formas.js",
+        "plugins/gabarito-mestre/gates/test/sombra-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/emenda.test.ts",
+        "plugins/gabarito-mestre/gates/test/formas.test.ts"
+      ],
+      "reqs": [
+        "REQ-EME-3"
+      ]
+    },
+    {
+      "id": "T12",
+      "titulo": "Trava parcial não para o loop",
+      "deps": [
+        "T10"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/loop.ts",
+        "plugins/gabarito-mestre/gates/dist/loop.js",
+        "plugins/gabarito-mestre/gates/test/loop.test.ts"
+      ],
+      "reqs": [
+        "REQ-AUT-1"
+      ]
+    },
+    {
+      "id": "T13",
+      "titulo": "Lote do dono no proxima e DEPENDE",
+      "deps": [
+        "T9",
+        "T11",
+        "T12"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+        "plugins/gabarito-mestre/gates/src/depende.ts",
+        "plugins/gabarito-mestre/gates/src/tipos.ts",
+        "plugins/gabarito-mestre/gates/dist/depende.js",
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/depende.test.ts"
+      ],
+      "reqs": [
+        "REQ-AUT-1"
+      ]
+    },
+    {
+      "id": "T14",
+      "titulo": "Onboarding: 1 pergunta de autonomia",
+      "deps": [],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/onboarding.mjs",
+        "plugins/gabarito-mestre/gates/scripts/onboarding-config.mjs",
+        "plugins/gabarito-mestre/skills/gabarito-instalar/SKILL.md",
+        "plugins/gabarito-mestre/skills/gabarito-instalar/trocar.md",
+        "plugins/gabarito-mestre/gates/test/onboarding.test.mjs",
+        "plugins/gabarito-mestre/gates/test/onboarding-skill.test.mjs",
+        "plugins/gabarito-mestre/gates/test/onboarding-config.test.mjs"
+      ],
+      "reqs": [
+        "REQ-AUT-2"
+      ]
+    },
+    {
+      "id": "T15",
+      "titulo": "PR #19: guarda config E interruptor",
+      "deps": [
+        "T1",
+        "T2",
+        "T3",
+        "T14"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/aneis.ts",
+        "plugins/gabarito-mestre/gates/src/classificar-alvo.ts",
+        "plugins/gabarito-mestre/gates/src/decidir.ts",
+        "plugins/gabarito-mestre/gates/src/guarda.ts",
+        "plugins/gabarito-mestre/gates/dist/aneis.js",
+        "plugins/gabarito-mestre/gates/dist/classificar-alvo.js",
+        "plugins/gabarito-mestre/gates/dist/decidir.js",
+        "plugins/gabarito-mestre/gates/dist/guarda.js",
+        "plugins/gabarito-mestre/gates/scripts/harness-doctor.mjs",
+        "plugins/gabarito-mestre/gates/test/autonomia-config.test.mjs",
+        "plugins/gabarito-mestre/gates/test/autonomia-guarda.test.ts",
+        "plugins/gabarito-mestre/gates/test/autonomia-processo.test.mjs",
+        "plugins/gabarito-mestre/gates/test/autonomia-refs.test.ts",
+        "plugins/gabarito-mestre/gates/test/harness-doctor-autonomia.test.mjs",
+        "plugins/gabarito-mestre/gates/test/_adaptador-helpers.mjs",
+        "plugins/gabarito-mestre/gates/test/anel-worktree.test.mjs",
+        "plugins/gabarito-mestre/gates/test/corpus-guarda.test.ts",
+        "plugins/gabarito-mestre/gates/test/guarda-adaptador-diario.test.mjs",
+        "plugins/gabarito-mestre/gates/test/guarda-fonte.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-loop/caminhada.mjs",
+        "plugins/gabarito-mestre/hooks/test/corpus/guarda-integridade.jsonl",
+        "plugins/gabarito-mestre/hooks/test/guarda-corpus-e2e.test.mjs",
+        "CHANGELOG.md",
+        "README.md"
+      ],
+      "reqs": [
+        "REQ-AUT-2"
+      ]
+    },
+    {
+      "id": "T16",
+      "titulo": "Stop: integrar em fundo e X decimal",
+      "deps": [
+        "T0b"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/stop-loop.mjs",
+        "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs"
+      ],
+      "reqs": [
+        "REQ-STP-1",
+        "REQ-HIG-1"
+      ]
+    },
+    {
+      "id": "T17",
+      "titulo": "Mod: sinal do loop dinâmico",
+      "deps": [
+        "T0b",
+        "T2"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/mod/gabarito.mjs",
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts"
+      ],
+      "reqs": [
+        "REQ-POU-4"
+      ]
+    },
+    {
+      "id": "T18",
+      "titulo": "Stop: trava, pouso e loop avisam",
+      "deps": [
+        "T16",
+        "T17"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/stop-loop.mjs",
+        "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs"
+      ],
+      "reqs": [
+        "REQ-AUT-2",
+        "REQ-POU-3",
+        "REQ-POU-4"
+      ]
+    },
+    {
+      "id": "T19",
+      "titulo": "Painel: trava, pouso e loop avisam",
+      "deps": [
+        "T13",
+        "T17",
+        "T18"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/src/depende.ts",
+        "plugins/gabarito-mestre/gates/src/tipos.ts",
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/dist/depende.js",
+        "plugins/gabarito-mestre/gates/test/painel.test.ts",
+        "plugins/gabarito-mestre/gates/test/depende.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/avisos-cli.test.mjs"
+      ],
+      "reqs": [
+        "REQ-AUT-2",
+        "REQ-POU-3",
+        "REQ-POU-4"
+      ]
+    },
+    {
+      "id": "T20",
+      "titulo": "Doctor: mod e versão; fumaça pouso",
+      "deps": [
+        "T0b",
+        "T15",
+        "T21"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/harness-doctor.mjs",
+        "plugins/gabarito-mestre/gates/test/harness-doctor-mod-versao.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-pouso.test.mjs",
+        ".github/workflows/ci.yml"
+      ],
+      "reqs": [
+        "REQ-POU-3"
+      ]
+    },
+    {
+      "id": "T21",
+      "titulo": "Bench da CI desconta o piso",
+      "deps": [
+        "T0c"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/bench-guarda.mjs",
+        "plugins/gabarito-mestre/gates/test/bench-guarda.test.mjs",
+        ".github/workflows/ci.yml"
+      ],
+      "reqs": [
+        "REQ-CI-1"
+      ]
+    },
+    {
+      "id": "T22",
+      "titulo": "Comando nomes, ajuda e sortear",
+      "deps": [
+        "T17"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/mod/painel.mjs",
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-costura.test.mjs",
+        "plugins/gabarito-mestre/commands/gabarito.md"
+      ],
+      "reqs": [
+        "REQ-HIG-1"
+      ]
+    },
+    {
+      "id": "T23",
+      "titulo": "Onboarding: critério único e cache",
+      "deps": [
+        "T15",
+        "T22"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/cartao-sessao.mjs",
+        "plugins/gabarito-mestre/gates/src/guarda.ts",
+        "plugins/gabarito-mestre/gates/dist/guarda.js",
+        "plugins/gabarito-mestre/mod/painel.mjs",
+        "plugins/gabarito-mestre/gates/test/cartao-sessao.test.mjs",
+        "plugins/gabarito-mestre/gates/test/onboarding-criterio.test.mjs",
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts"
+      ],
+      "reqs": [
+        "REQ-HIG-1"
+      ]
+    },
+    {
+      "id": "T24",
+      "titulo": "Teste fora do .harness; alerta",
+      "deps": [
+        "T0"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/gate-task.mjs",
+        "plugins/gabarito-mestre/gates/test/gate-task.test.mjs",
+        "plugins/gabarito-mestre/gates/test/_raiz-segura.mjs",
+        "plugins/gabarito-mestre/gates/test/raiz-segura.test.mjs"
+      ],
+      "reqs": [
+        "REQ-HIG-1"
+      ]
+    },
+    {
+      "id": "T25",
+      "titulo": "Higiene: reaberta, FIEL-14, MINORs",
+      "deps": [
+        "T0",
+        "T12",
+        "T17",
+        "T19",
+        "T23"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/loop.ts",
+        "plugins/gabarito-mestre/gates/dist/loop.js",
+        "plugins/gabarito-mestre/gates/test/loop.test.ts",
+        "plugins/gabarito-mestre/gates/src/guarda.ts",
+        "plugins/gabarito-mestre/gates/dist/guarda.js",
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
+        "plugins/gabarito-mestre/mod/gabarito.mjs",
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
+        "docs/virada-2.1.md"
+      ],
+      "reqs": [
+        "REQ-HIG-1"
+      ]
+    },
+    {
+      "id": "T26",
+      "titulo": "Skill do loop: CI, loop, fora",
+      "deps": [
+        "T6",
+        "T7",
+        "T11",
+        "T12",
+        "T13",
+        "T17",
+        "T21"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/skills/gabarito-loop/SKILL.md",
+        "plugins/gabarito-mestre/gates/test/skill-loop-gm15.test.mjs"
+      ],
+      "reqs": [
+        "REQ-CI-1",
+        "REQ-POU-3",
+        "REQ-POU-4",
+        "REQ-ENT-2",
+        "REQ-EME-3",
+        "REQ-AUT-1"
+      ]
+    },
+    {
+      "id": "T27",
+      "titulo": "Aceite final: replay da GM-14",
+      "deps": [
+        "T4",
+        "T7",
+        "T8",
+        "T9",
+        "T12",
+        "T13",
+        "T18",
+        "T19"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/test/aceite-gm15.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fixtures/gm15-aceite"
+      ],
+      "reqs": [
+        "REQ-ENT-1",
+        "REQ-ENT-2",
+        "REQ-AUT-1"
+      ]
+    },
+    {
+      "id": "T28",
+      "titulo": "Virada 2.1.0 final",
+      "deps": [
+        "T0",
+        "T0b",
+        "T0c",
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "T6",
+        "T7",
+        "T8",
+        "T9",
+        "T10",
+        "T11",
+        "T12",
+        "T13",
+        "T14",
+        "T15",
+        "T16",
+        "T17",
+        "T18",
+        "T19",
+        "T20",
+        "T21",
+        "T22",
+        "T23",
+        "T24",
+        "T25",
+        "T26",
+        "T27"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/.claude-plugin/plugin.json",
+        "plugins/gabarito-mestre/gates/package.json",
+        "plugins/gabarito-mestre/gates/test/package.test.mjs",
+        "plugins/gabarito-mestre/scripts/test/texto.test.sh",
+        "CHANGELOG.md"
+      ],
+      "reqs": [
+        "REQ-CI-1"
+      ]
+    }
+  ]
+}
