@@ -562,7 +562,11 @@
         "plugins/gabarito-mestre/gates/test/painel-blocos.test.ts",
         "plugins/gabarito-mestre/gates/test/painel-esquadrao.test.ts",
         "plugins/gabarito-mestre/gates/src/painel.ts",
-        "plugins/gabarito-mestre/gates/dist/painel.js"
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/src/painel-executivo.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-executivo.js",
+        "plugins/gabarito-mestre/gates/test/painel-executivo.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel.test.ts"
       ],
       "reqs": [
         "REQ-HIG-1"
