@@ -62,7 +62,9 @@
     {
       "id": "T2",
       "titulo": "PR #20: painel no app desktop",
-      "deps": [],
+      "deps": [
+        "T29"
+      ],
       "arquivos": [
         "plugins/gabarito-mestre/mod/painel.mjs",
         "plugins/gabarito-mestre/mod/gabarito.mjs",
@@ -364,7 +366,8 @@
       "titulo": "Mod: sinal do loop dinâmico",
       "deps": [
         "T0b",
-        "T2"
+        "T2",
+        "T29"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/mod/gabarito.mjs",
@@ -456,7 +459,8 @@
       "id": "T22",
       "titulo": "Comando nomes, ajuda e sortear",
       "deps": [
-        "T17"
+        "T17",
+        "T29"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/mod/painel.mjs",
@@ -473,7 +477,8 @@
       "titulo": "Onboarding: critério único e cache",
       "deps": [
         "T15",
-        "T22"
+        "T22",
+        "T29"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/cartao-sessao.mjs",
@@ -512,7 +517,8 @@
         "T12",
         "T17",
         "T19",
-        "T23"
+        "T23",
+        "T29"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/loop.ts",
@@ -569,7 +575,15 @@
         "plugins/gabarito-mestre/gates/src/painel-executivo.ts",
         "plugins/gabarito-mestre/gates/dist/painel-executivo.js",
         "plugins/gabarito-mestre/gates/test/painel-executivo.test.ts",
-        "plugins/gabarito-mestre/gates/test/painel.test.ts"
+        "plugins/gabarito-mestre/gates/test/painel.test.ts",
+        "plugins/gabarito-mestre/mod/painel.mjs",
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
+        "plugins/gabarito-mestre/gates/test/fumaca-e4.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-gm14.test.mjs",
+        "plugins/gabarito-mestre/gates/test/conversa-pontos.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-costura.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-lng.test.ts"
       ],
       "reqs": [
         "REQ-HIG-1"
