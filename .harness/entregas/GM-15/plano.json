@@ -98,7 +98,8 @@
       "titulo": "medir grava o encerramento",
       "deps": [
         "T0",
-        "T3"
+        "T3",
+        "T33"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
@@ -168,7 +169,8 @@
         "T0",
         "T4",
         "T29",
-        "T30"
+        "T30",
+        "T33"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel.ts",
@@ -195,7 +197,8 @@
         "T5",
         "T8",
         "T29",
-        "T30"
+        "T30",
+        "T33"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel.ts",
@@ -402,7 +405,8 @@
         "T17",
         "T18",
         "T29",
-        "T30"
+        "T30",
+        "T33"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel.ts",
@@ -460,7 +464,8 @@
       "titulo": "Comando nomes, ajuda e sortear",
       "deps": [
         "T17",
-        "T29"
+        "T29",
+        "T33"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/mod/painel.mjs",
@@ -478,7 +483,8 @@
       "deps": [
         "T15",
         "T22",
-        "T29"
+        "T29",
+        "T33"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/cartao-sessao.mjs",
@@ -518,7 +524,8 @@
         "T17",
         "T19",
         "T23",
-        "T29"
+        "T29",
+        "T33"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/loop.ts",
@@ -598,7 +605,8 @@
       "id": "T30",
       "titulo": "Previsão exata (D-G2)",
       "deps": [
-        "T29"
+        "T29",
+        "T33"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel.ts",
@@ -636,7 +644,8 @@
         "T8",
         "T9",
         "T19",
-        "T25"
+        "T25",
+        "T33"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
@@ -721,6 +730,28 @@
       ],
       "reqs": [
         "REQ-CI-1"
+      ]
+    },
+    {
+      "id": "T33",
+      "titulo": "Painel: pouso pela medição do proxima",
+      "deps": [
+        "T29",
+        "T17"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
+        "plugins/gabarito-mestre/mod/painel.mjs",
+        "plugins/gabarito-mestre/gates/test/painel.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-pouso.test.mjs",
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts"
+      ],
+      "reqs": [
+        "REQ-POU-3"
       ]
     }
   ]
