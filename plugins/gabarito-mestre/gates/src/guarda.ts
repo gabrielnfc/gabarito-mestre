@@ -20,7 +20,7 @@ import { precisaContexto } from './classificar-alvo.ts';
 import { decidir } from './decidir.ts';
 import { append, dirEntrega, lerEstrito } from './diario.ts';
 import { consultasAbertas, diarioEmOrdem, promptSombra } from './sombra.ts';
-import { trilhaDe } from './trilha.ts';
+import { encerramentoDe, trilhaDe } from './trilha.ts';
 import type { AmbienteDecl, ConfigGuarda, Contexto, Decisao, EntradaHook, TipoEvento } from './tipos.ts';
 
 const GIT_TIMEOUT_MS = 2000;
@@ -214,6 +214,9 @@ export function entregaPublicada(raiz: string, entrega: string | null, sessao: s
     const lido = lerEstrito(dir);
     if (!lido.ok) return false;
     const eventos = lido.eventos;
+    // GM-15 T3 (REQ-ENT-1 c): com `entrega.encerrada` no diário o estado é só ele (sem `entrega.reaberta` posterior); a ligação por sessão (`dono.resposta`,
+    // inclusive o "feito" de pendência) não vence o encerramento nem o reabre. A regra antiga (abaixo) vale só para entrega sem `entrega.encerrada`.
+    if (eventos.some((e) => e.tipo === 'entrega.encerrada' && objeto(e.dados)?.entrega === entrega)) return encerramentoDe(eventos, entrega).encerrada;
     const medido = (chave: string): Array<Record<string, unknown>> =>
       eventos.flatMap((e) => {
         const d = objeto(e.dados);
