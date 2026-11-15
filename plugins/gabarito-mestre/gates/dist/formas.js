@@ -5,7 +5,7 @@
  * Contrato de falha: `dados` ausente (`undefined`) e `dados` corrompido (qualquer valor que não seja objeto simples) têm motivos distintos;
  * campo obrigatório ausente e campo inválido também. Só vale propriedade própria: o que vem do prototype não conta (D1).
  * `null` = forma ok ou tipo sem regra. Tipos da E1/E2 não ganham regra nova, salvo os campos opcionais de `ci.resultado`,
- * `custo.medicao` e (E4) `task.iniciada.modelo` e `task.integrada.mutacoes`; para eles, `dados` que não é objeto segue aceito (é o que o diário aceita hoje: nenhum evento existente passa a ser recusado).
+ * `custo.medicao` e (E4) `task.iniciada.modelo` e `task.integrada.mutacoes`; para eles, `dados` que não é objeto segue aceito (é o que o diário aceita hoje: nenhum evento existente passa a ser recusado). Exceção deliberada (GM-15 T1, F7 a): `task.reaberta` passou a regra estrita.
  */
 
                                                                  
@@ -20,6 +20,7 @@ export const TIPOS_EVENTO                        = Object.freeze([
   'spec.aprovada', 'spec.aplicada', 'entrega.devolvida',
   'aprendizado', 'aprendizado.nada', 'dono.mensagem',
   'fato.medido', 'nota', 'dono.resposta',
+  'task.fora', 'entrega.encerrada', 'entrega.reaberta', 'guarda.autonomia_usada',
 ]                                         );
 
 /** Lista runtime da união `MotivoParar` (GM-14), conferida do mesmo jeito. */
@@ -40,6 +41,7 @@ const HASH_RE = /^[0-9a-f]{64}$/;
 const TS_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 const CAUSAS                    = ['regra_negocio', 'tecnica'];
 const ORIGENS                    = ['dono', 'sombra'];
+const ORIGENS_REABERTA                    = ['dono', 'retomada', 'sombra'];
 const POLITICAS                    = ['continua', 'janela', 'sob_demanda'];
 const MOTIVOS_FIM                    = ['deploy', 'smoke', 'rollback'];
 const RESPOSTA_MAX = 1000;
@@ -60,6 +62,10 @@ const OPCAO_MAX = 60;
 const TIPOS_NOTA                    = ['ideia', 'desvio', 'assunto', 'duvida', 'pendencia'];
 const FONTES_FATO                    = ['git', 'gh', 'arquivo', 'mod'];
 const ESTADOS_PR                    = ['aberto', 'mergeado', 'fechado'];
+/** GM-15: como o PR foi ligado à entrega (head da branch ou título do PR). */
+const VIAS_ENCERRAMENTO                    = ['head', 'titulo'];
+const SEMVER_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+const MOTIVO_FORA_MAX = 160;
 const CONFIRMACAO_FONTE_RE = /^(.+):([1-9]\d{0,8})$/;
 
                                    
@@ -199,11 +205,11 @@ const decisaoSombra        = (o) => {
   return fontes === undefined && medicao === undefined ? 'campo `fontes` ou `medicao` ausente: decisão sem fonte nem medição' : null;
 };
 
-function quando(o     )                {
-  const v = campo(o, 'quando');
-  if (v === undefined) return obrigatorio('quando');
+function quando(o     , nome = 'quando')                {
+  const v = campo(o, nome);
+  if (v === undefined) return obrigatorio(nome);
   const m = typeof v === 'string' ? TS_RE.exec(v) : null;
-  const invalido = 'campo `quando` inválido: esperado instante ISO 8601 com fuso';
+  const invalido = `campo \`${nome}\` inválido: esperado instante ISO 8601 com fuso`;
   if (m === null) return invalido;
   const [ano, mes, dia, h, mi, s] = [1, 2, 3, 4, 5, 6].map((i) => Number(m[i]));
   const diasNoMes = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
@@ -357,7 +363,12 @@ const FORMAS_FATO                                                               
   ['branch', { nome: (o, n) => textoLinha(o, n) }],
   ['spec', { caminho: exigirCaminho, sha256: (o) => exigirSha256(o), secoes: inteiroNaoNegativo }],
   ['plano', { tasks: inteiroNaoNegativo }],
-  ['pr', { numero: inteiroPos, estado: (o, n) => exigirEnum(o, n, ESTADOS_PR), branch: (o, n) => textoLinha(o, n) }],
+  // GM-15 (T1): `base` (branch de destino) e `via` (como o PR foi achado) são opcionais: o fato legado, sem eles, segue válido (e nunca encerra, T3).
+  ['pr', {
+    numero: inteiroPos, estado: (o, n) => exigirEnum(o, n, ESTADOS_PR), branch: (o, n) => textoLinha(o, n),
+    base: (o, n) => (campo(o, n) === undefined ? null : textoLinha(o, n)),
+    via: (o, n) => (campo(o, n) === undefined ? null : exigirEnum(o, n, VIAS_ENCERRAMENTO)),
+  }],
   ['release', { tag: (o, n) => textoLinha(o, n) }],
   ['agente', { id: (o, n) => textoLinha(o, n), papel: (o, n) => textoLinha(o, n), estado: (o, n) => textoLinha(o, n) }],
 ]);
@@ -410,6 +421,60 @@ const donoResposta        = (o) => {
   return primeiro(chaveExtra(o, ['pergunta', 'opcao', 'rotulo'], '`dono.resposta` carrega só {pergunta, opcao, rotulo}'), perguntaErro, opcaoErro, textoLinha(o, 'rotulo', OPCAO_MAX));
 };
 
+// ── GM-15 T1: task.fora, entrega.encerrada, entrega.reaberta, guarda.autonomia_usada ──────────────────────────────────────────
+
+/** `task.fora {task, como, motivo, origem, fonte?}`: `origem: sombra` ⇒ `fonte` obrigatória (a decisão que a autorizou). O canário do `motivo` é o do `append`. */
+const taskFora        = (o) => primeiro(
+  chaveExtra(o, ['task', 'como', 'motivo', 'origem', 'fonte'], '`task.fora` carrega só {task, como, motivo, origem, fonte?}'),
+  textoLinha(o, 'task'), exigirEnum(o, 'como', ['adiada', 'cortada']), textoLinha(o, 'motivo', MOTIVO_FORA_MAX), exigirEnum(o, 'origem', ORIGENS),
+  campo(o, 'fonte') === undefined ? (campo(o, 'origem') === 'sombra' ? obrigatorio('fonte') + ': a origem `sombra` cita a decisão que a autorizou' : null) : textoLinha(o, 'fonte'),
+);
+
+function idEntrega(o     )                {
+  const v = campo(o, 'entrega');
+  return v === undefined ? obrigatorio('entrega') : typeof v === 'string' && ENTREGA_RE.test(v) ? null : 'campo `entrega` inválido: esperado ID de entrega (ex. GM-14)';
+}
+
+const entregaEncerrada        = (o) => {
+  const ver = campo(o, 'versao');
+  return primeiro(
+    chaveExtra(o, ['entrega', 'pr', 'via', 'mergeado_em', 'versao'], '`entrega.encerrada` carrega só {entrega, pr, via, mergeado_em, versao?}'),
+    idEntrega(o), campo(o, 'pr') === undefined ? obrigatorio('pr') : inteiroPositivo(campo(o, 'pr')) ? null : 'campo `pr` inválido: esperado inteiro ≥ 1',
+    exigirEnum(o, 'via', VIAS_ENCERRAMENTO), quando(o, 'mergeado_em'),
+    ver === undefined || (typeof ver === 'string' && SEMVER_RE.test(ver)) ? null : 'campo `versao` inválido: esperado X.Y.Z (semver)',
+  );
+};
+
+const entregaReaberta        = (o) => primeiro(chaveExtra(o, ['entrega', 'em'], '`entrega.reaberta` carrega só {entrega, em}'), idEntrega(o), quando(o, 'em'));
+
+/** Nunca o comando cru: `comando` (ou qualquer chave fora da lista) é recusada. */
+const guardaAutonomiaUsada        = (o) => primeiro(
+  chaveExtra(o, ['anel', 'alvo', 'acao', 'ambiente'], '`guarda.autonomia_usada` carrega só {anel, alvo, acao, ambiente}: nunca o comando'),
+  textoLinha(o, 'anel', 60), textoLinha(o, 'alvo', 200), textoLinha(o, 'acao', 60), textoLinha(o, 'ambiente', 60),
+);
+
+/** `task.reaberta`: `origem` ∈ dono|retomada|sombra (F7 a); `hash` só na liberação da Sombra; a volta de `fora` ({de: 'fora'}) leva `fonte` e nunca `hash`. */
+const taskReaberta        = (o) => {
+  const origem = campo(o, 'origem');
+  if (origem === undefined) return obrigatorio('origem');
+  if (typeof origem !== 'string' || !ORIGENS_REABERTA.includes(origem)) return `campo \`origem\` inválido: esperado um de ${ORIGENS_REABERTA.join(' | ')}`;
+  const de = campo(o, 'de');
+  if (de !== undefined) {
+    if (de !== 'fora') return 'campo `de` inválido: só o literal `fora` ou ausente';
+    return primeiro(
+      chaveExtra(o, ['task', 'origem', 'fonte', 'de'], '`task.reaberta` de `fora` carrega só {task, origem, fonte, de}'),
+      origem === 'retomada' ? 'campo `origem` inválido: a volta de `fora` é do dono ou da Sombra, nunca `retomada`' : null,
+      textoLinha(o, 'task'), textoLinha(o, 'fonte'),
+    );
+  }
+  const hash = campo(o, 'hash');
+  if (origem === 'sombra') {
+    if (hash === undefined) return 'campo `hash` ausente: a liberação da Sombra cita a decisão (sha256 em hex minúsculo)';
+    return typeof hash === 'string' && HASH_RE.test(hash) ? null : 'campo `hash` inválido: esperado sha256 em hex minúsculo (64)';
+  }
+  return hash === undefined ? null : 'campo `hash` só na liberação da Sombra (`origem: sombra`)';
+};
+
 const REGRAS                             = new Map               ([
   ['sombra.consulta', (o) => primeiro(exigirHash(o), exigirReqOuTask(o))],
   ['decisao.sombra', decisaoSombra],
@@ -448,6 +513,12 @@ const REGRAS                             = new Map               ([
   ['fato.medido', fatoMedido],
   ['nota', nota],
   ['dono.resposta', donoResposta],
+  // GM-14 T36 (FIEL-15) + GM-15 T1 (F7 a): `task.reaberta` saiu das regras opcionais: origem fechada, `dados` ausente/corrompido recusado.
+  ['task.reaberta', taskReaberta],
+  ['task.fora', taskFora],
+  ['entrega.encerrada', entregaEncerrada],
+  ['entrega.reaberta', entregaReaberta],
+  ['guarda.autonomia_usada', guardaAutonomiaUsada],
   // T53 (emenda 53): repetição do pouso pelo mod; `n` é a tentativa (2 ou 3; a 1ª é o próprio `sessao.pouso`), forma exata.
   ['sessao.pouso.tentativa', (o) => primeiro(chaveExtra(o, ['n'], '`sessao.pouso.tentativa` carrega só {n}'), campo(o, 'n') === undefined ? obrigatorio('n') : (typeof campo(o, 'n') === 'number' && [2, 3].includes(campo(o, 'n')          ) ? null : 'campo `n` inválido: esperado 2 ou 3'))],
 ]);
@@ -484,18 +555,6 @@ const REGRAS_OPCIONAIS                             = new Map               ([
   ],
   // GM-14 T31 Emenda 12 (anexos C a5): o APROVADO carrega o `sha` que o revisor viu; na leitura, ausente = diário 2.0.0.
   ['review.veredito', (o) => opcionalSha(o)],
-  [
-    // GM-14 T36 (FIEL-15): a liberação da Sombra carrega o `hash` da decisão que a autorizou; só ela o tem (`dono`/`retomada` com `hash` recusa).
-    'task.reaberta',
-    (o) => {
-      const hash = campo(o, 'hash');
-      if (campo(o, 'origem') === 'sombra') {
-        if (hash === undefined) return 'campo `hash` ausente: a liberação da Sombra cita a decisão (sha256 em hex minúsculo)';
-        return typeof hash === 'string' && HASH_RE.test(hash) ? null : 'campo `hash` inválido: esperado sha256 em hex minúsculo (64)';
-      }
-      return hash === undefined ? null : 'campo `hash` só na liberação da Sombra (`origem: sombra`)';
-    },
-  ],
   [
     // E4: `mutacoes {total, mortas}` opcional (contagem do gate de mutação desta task); `mortas ≤ total`.
     'task.integrada',
