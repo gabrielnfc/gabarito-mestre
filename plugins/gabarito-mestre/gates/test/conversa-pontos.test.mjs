@@ -2049,8 +2049,8 @@ describe('T57 (emenda 63): o runner não digita fala sobre diálogo de permissã
   // roteiro sintético de 8 falas; pontos.json sintético só para as de ponto (1, 2, 3, 5, 8: como o real), as outras (4, 6, 7) valem pelo roteiro
   const TEXTOS = Array.from({ length: 8 }, (_, i) => `fala sintética número ${i + 1} do roteiro de teste, com acento: ação`);
   const FALAS = TEXTOS.map((texto, i) => ({ n: i + 1, rotulo: [1, 2, 3, 5, 8].includes(i + 1) ? 'DECISÃO' : '—', texto }));
-  const PONTOS = { pontos: FALAS.filter((f) => f.rotulo !== '—').map((f) => ({ msg: f.n, sha256: sha256(f.texto), chars: [...f.texto].length })) };
-  const ev = (f, extra = {}) => ({ tipo: 'dono.mensagem', ts: '2026-11-14T10:00:05.000Z', dados: { sha256: sha256(f.texto), chars: [...f.texto].length }, ...extra });
+  const PONTOS = { pontos: FALAS.filter((f) => f.rotulo !== '—').map((f) => ({ msg: f.n, sha256: sha256(f.texto), chars: f.texto.length })) };
+  const ev = (f, extra = {}) => ({ tipo: 'dono.mensagem', ts: '2026-11-14T10:00:05.000Z', dados: { sha256: sha256(f.texto), chars: f.texto.length }, ...extra });
   const SENDS = (ns) => `${ns.map((n, i) => `${1000 + i} digitar ${sha256(TEXTOS[n - 1])}`).join('\n')}\n`;
   const validar = (v) => validarFalas1a1({ eventos: [], sends: '', falas: FALAS, pontos: PONTOS, inicio: '2026-11-14T10:00:00.000Z', ...v });
 
@@ -2093,6 +2093,32 @@ describe('T57 (emenda 63): o runner não digita fala sobre diálogo de permissã
     assert.match(com(1090, 2).causa, /dupla: digitada 2x \(esperado 1 registro/, '90 s depois e 2 registros: dupla');
     assert.match(com(1130, 1).causa, /perdida: digitada 2x \(esperado 2 registro/, '130 s depois: a janela passou, o produto grava de novo; 1 registro é perda');
     assert.equal(com(1130, 2).ok, true);
+  });
+  test('tres-digitacoes-do-mesmo-texto: a janela de 120 s conta do ÚLTIMO REGISTRO, não da última digitação (como o produto, mod/gabarito.mjs:646-655)', () => {
+    const sha = sha256(TEXTOS[0]);
+    const tres = (gravadas) => validarFalas1a1({ eventos: Array.from({ length: gravadas }, () => ev(FALAS[0])), sends: `1000 digitar ${sha}\n1100 digitar ${sha}\n1200 digitar ${sha}\n`, falas: [FALAS[0], { n: 9, rotulo: '—', texto: TEXTOS[0] }, { n: 10, rotulo: '—', texto: TEXTOS[0] }], pontos: { pontos: [] }, inicio: '' });
+    // t=1000 registra; t=1100 (100 s depois do registro) é a mesma mensagem; t=1200 (200 s depois do registro, 100 s depois da digitação anterior) registra de novo ⇒ 2 registros
+    assert.equal(tres(2).ok, true, tres(2).causa);
+    assert.match(tres(1).causa, /fala 10 perdida: digitada 3x \(esperado 2 registro\(s\)\), 1 dono\.mensagem/);
+    assert.match(tres(3).causa, /dupla: digitada 3x \(esperado 2 registro/);
+  });
+  test('falas-de-texto-igual: a perda é atribuída à fala certa (a 4ª ou a 7ª), não a "a última com o mesmo sha"', () => {
+    const t4 = TEXTOS[3];
+    const falas = FALAS.map((f) => (f.n === 7 ? { ...f, texto: t4 } : f));
+    const sha = sha256(t4);
+    const r = (t2, qtos) => validarFalas1a1({ eventos: Array.from({ length: qtos }, () => ev({ texto: t4 })), sends: `1000 digitar ${sha}\n${t2} digitar ${sha}\n`, falas, pontos: PONTOS, inicio: '' });
+    assert.match(r(1130, 1).causa, /fala 7 perdida/, '2 registros esperados, o 1º (fala 4) existe: falta a 7');
+    assert.doesNotMatch(r(1130, 1).causa, /fala 4/);
+    assert.match(r(1130, 0).causa, /fala 4 perdida/, 'nenhum registro: falta já a 4');
+    assert.match(r(1090, 0).causa, /fala 4 perdida/);
+  });
+  test('chars-sem-ponto-como-o-PRODUTO-grava: texto.length (UTF-16), não pontos de código', () => {
+    const texto = 'fala com emoji \u{1F600} e ação';
+    assert.notEqual(texto.length, [...texto].length);
+    const f = { n: 4, rotulo: '—', texto };
+    const com = (chars) => validarFalas1a1({ eventos: [{ tipo: 'dono.mensagem', ts: '2026-11-14T10:00:05.000Z', dados: { sha256: sha256(texto), chars } }], sends: `1000 digitar ${sha256(texto)}\n`, falas: [f], pontos: { pontos: [] }, inicio: '' });
+    assert.equal(com(texto.length).ok, true);
+    assert.match(com([...texto].length).causa, /chars .* diferente do esperado/);
   });
   test('dono.mensagem-anterior-ao-inicio-nao-e-da-conversa (a semente da cópia)', () => {
     const r = validar({ sends: SENDS([1]), eventos: [ev(FALAS[0], { ts: '2026-11-14T09:00:00.000Z' })] });
@@ -2142,7 +2168,7 @@ describe('T57 (emenda 63): o runner não digita fala sobre diálogo de permissã
     const celula = { local: 'lateral', cols: 180, rows: 50, cheia: true };
     const roteiro = roteiroColeta();
     const textoA = roteiro.falas.find((f) => sha256(f.texto) === sha256(FALA_A)).texto;
-    const dono = (texto, ts) => ({ seq: 1, ts, tipo: 'dono.mensagem', dados: { sha256: sha256(texto), chars: [...texto].length } });
+    const dono = (texto, ts) => ({ seq: 1, ts, tipo: 'dono.mensagem', dados: { sha256: sha256(texto), chars: texto.length } });
     writeFileSync(join(m.rundir, 'sends.log'), `1 digitar ${sha256(FALA_A)}\n2 digitar ${sha256(FALA_STATUS)}\n3 digitar resposta-b\n`);
     const gravar = (linhas) => jl(join(m.repo, '.harness', 'entregas', 'GM-13', 'events.loop.jsonl'), linhas);
     gravar([dono(textoA, '2026-11-13T10:02:00.000Z')]);
@@ -2162,17 +2188,68 @@ describe('T57 (emenda 63): o runner não digita fala sobre diálogo de permissã
     assert.equal(permissaoDoExpLog('PERMISSAO-NAO-FECHOU').naoFechou, true);
   });
 
+  test('avaliarRundir: diálogo de permissão que apareceu e o runner NÃO recusou (0 recusas) ou que não fechou ⇒ célula inválida com id próprio, mesmo com fala 1:1 aparente', async () => {
+    const m = montarExecucao({});
+    const celula = { local: 'lateral', cols: 180, rows: 50, cheia: true };
+    const roteiro = roteiroColeta();
+    const textoA = roteiro.falas.find((f) => sha256(f.texto) === sha256(FALA_A)).texto;
+    writeFileSync(join(m.rundir, 'sends.log'), `1 digitar ${sha256(FALA_A)}\n`);
+    jl(join(m.repo, '.harness', 'entregas', 'GM-13', 'events.loop.jsonl'), [{ seq: 1, ts: '2026-11-13T10:02:00.000Z', tipo: 'dono.mensagem', dados: { sha256: sha256(textoA), chars: textoA.length } }]);
+    const av = (expLog) => { writeFileSync(join(m.rundir, 'exp.log'), expLog); return R.avaliarRundir(m.rundir, { repo: m.repo, celula, roteiro, pasta: m.pasta, total: 1, pontos: { pontos: [] } }); };
+    const semRecusa = await av('1 PERGUNTA-DE-PERMISSAO na tela\n');
+    assert.equal(semRecusa.passa, false);
+    assert.deepEqual(semRecusa.resultados.map((x) => x.id), ['permissao-1a1']);
+    assert.match(semRecusa.resultados[0].detalhe, /apareceu e o runner não o recusou/);
+    const naoFechou = await av('1 PERGUNTA-DE-PERMISSAO na tela\n2 PERMISSAO-RECUSADA 1\n3 PERMISSAO-NAO-FECHOU\n');
+    assert.match(naoFechou.resultados[0].detalhe, /não fechou/);
+    const ok = await av('1 PERGUNTA-DE-PERMISSAO na tela\n2 PERMISSAO-RECUSADA 1\n');
+    assert.ok(ok.resultados.every((x) => x.id !== 'permissao-1a1'), 'recusado e fechado: a célula segue para as asserções normais');
+    assert.ok((await av('1 inicio\n')).resultados.every((x) => x.id !== 'permissao-1a1'), 'sem diálogo: nada a invalidar');
+  });
+
   describe('a1.exp com um "claude" de mentira que abre o diálogo de permissão (comportamento: o que o terminal recebe)', () => {
+    // o diálogo SIMULADO (espaços literais e os dois sinais). O diálogo REAL vem de fixtures/permissao-tty-real.json: o tty.raw gravado da A1 1794703098821, com movimentos de cursor entre as palavras
     const DIALOGO = "Hook PreToolUse:Bash requires confirmation for this command:\\n  integridade em .git/config exige confirmacao humana\\nDo you want to proceed?\\n> 1. Yes\\n  2. No\\nEsc\\033[1Cto\\033[1Ccancel\\n\\033]9;Claude needs your permission\\007\\n";
-    // o "claude": mostra o diálogo; o 1º byte decide: ESC fecha; qualquer outro é RESPOSTA ao diálogo (o defeito). `fecha=0`: ESC ignorado e o diálogo reaparece a cada tecla
-    const rodar = (t, { dialogo = true, fecha = true, fala = 'FALA DO ROTEIRO UMA VEZ SO' } = {}) => {
-      if (spawnSync('expect', ['-v'], { encoding: 'utf8' }).error) { t.skip('expect ausente'); return null; }
+    const REAL = JSON.parse(readFileSync(join(AQUI, 'fixtures', 'permissao-tty-real.json'), 'utf8'));
+    const procsDoExp = () => {
       const exp = readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), 'utf8');
-      const procs = exp.slice(exp.indexOf('# escala dos tempos'), exp.indexOf('proc snapshot'));
-      const d = mkdtempSync(join(tmpdir(), 'a1-perm-')); TMPS.push(d);
-      const mostra = dialogo ? `printf '${DIALOGO}'` : "printf 'Do you want to proceed with the refactor?\\n'";
+      return exp.slice(exp.indexOf('# escala dos tempos'), exp.indexOf('\ncd $repo'));
+    };
+    const falasDoExp = () => {
+      const exp = readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), 'utf8');
+      return exp.slice(exp.indexOf('set arq [open $rundir/falas.tsv r]'));
+    };
+    const temExpect = (t) => { if (spawnSync('expect', ['-v'], { encoding: 'utf8' }).error) { t.skip('expect ausente'); return false; } return true; };
+    // o comando de shell que desenha o diálogo `qual`: texto simulado, o diálogo real (em 3 pedaços, partindo as sequências no meio), o real sem o `Esc to cancel`, só o aviso OSC, ou só o `Esc to cancel`
+    const mostrar = (d, qual, pedacos = 3) => {
+      const wr = (n, txt) => { writeFileSync(join(d, n), txt); return join(d, n); };
+      if (qual === 'simulado') return `printf '${DIALOGO}'`;
+      if (qual === 'osc') return `printf '\\033]9;Claude needs your permission\\007'`;
+      if (qual === 'esc-solto') return "printf 'Esc to cancel\\n'";
+      if (qual === 'parecido') return "printf 'Do you want to proceed with the refactor?\\n'";
+      const txt = qual === 'real' ? REAL.comEscToCancel : REAL.semEscToCancel;
+      const a = Math.floor(txt.length / 3);
+      const partes = pedacos === 1 ? [txt] : [txt.slice(0, a + 1), txt.slice(a + 1, 2 * a + 7), txt.slice(2 * a + 7)];
+      return partes.map((x, i) => `cat ${wr(`pedaco${qual}${i}`, x)}`).join('; sleep 0.2; ');
+    };
+    const ler = (d, n) => (existsSync(join(d, n)) ? readFileSync(join(d, n), 'utf8') : '');
+    const saida = (d) => ({ teclas: ler(d, 'teclas'), fala: ler(d, 'fala').trim(), exp: ler(d, 'exp.log'), sends: ler(d, 'sends.log'), status: ler(d, 'exp.status').trim(), snap: ler(d, 'snap.log') });
+    const novo = () => { const d = mkdtempSync(join(tmpdir(), 'a1-perm-')); TMPS.push(d); return d; };
+    // espera (até 30 s, sem depender da carga da máquina) a marca que o "claude" de mentira imprime DEPOIS de desenhar o diálogo; tudo que chega passa pela `ler` real
+    const ATE = ['proc ate {marca} {', '  set timeout 30; set acc ""', '  while {1} {', '    expect {', '      -re {.+} { ler $expect_out(0,string); append acc $expect_out(0,string); if {[string first $marca $acc] >= 0} { return 1 } }', '      timeout { return 0 }', '      eof { return 0 }', '    }', '  }', '}'].join('\n');
+    const rodarExp = (d, corpo) => {
+      writeFileSync(join(d, 'sim.exp'), `set rundir ${d}\nset env(A1_ESCALA_TEMPO) 0.25\n${procsDoExp()}\n${ATE}\n${corpo}\n`);
+      const r = spawnSync('expect', ['-f', join(d, 'sim.exp')], { encoding: 'utf8', timeout: 90000 });
+      assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+    };
+    // o "claude" do 1º teste: mostra o diálogo; o 1º byte decide: ESC fecha; qualquer outro é RESPOSTA ao diálogo (o defeito). `fecha=false`: ESC ignorado e o diálogo reaparece a cada tecla
+    const rodar = (t, { dialogo = 'simulado', fecha = true, fala = 'FALA DO ROTEIRO UMA VEZ SO' } = {}) => {
+      if (!temExpect(t)) return null;
+      const d = novo();
+      const mostra = dialogo === 'nenhum' ? "printf 'Do you want to proceed with the refactor?\\n'" : mostrar(d, dialogo);
       const filho = [
         mostra,
+        'echo MARCAPRONTO',
         'IFS= read -rsn1 k',
         `if [ "$k" = "$(printf '\\033')" ]; then echo esc >> ${d}/teclas; k=''; ${fecha ? "printf 'tela limpa\\n'" : mostra}; else echo "$k" >> ${d}/teclas; fi`,
         ...(fecha ? [] : ['IFS= read -rsn1 k; echo "$k" >> ' + d + '/teclas; ' + mostra, 'IFS= read -rsn1 k; echo "$k" >> ' + d + '/teclas; ' + mostra, 'IFS= read -rsn1 k; echo "$k" >> ' + d + '/teclas; ' + mostra]),
@@ -2180,11 +2257,9 @@ describe('T57 (emenda 63): o runner não digita fala sobre diálogo de permissã
         'sleep 1',
       ].join('; ');
       writeFileSync(join(d, 'sim.sh'), `#!/bin/bash\n${filho}\n`); chmodSync(join(d, 'sim.sh'), 0o755);
-      writeFileSync(join(d, 'sim.exp'), `set rundir ${d}\nset env(A1_ESCALA_TEMPO) 0.25\nset env(A1_ESCALA_TEMPO) 0.25\n${procs}\nproc sair {status} { global rundir; set f [open $rundir/exp.status w]; puts $f $status; close $f; exit 0 }\nspawn ${d}/sim.sh\nlog_user 0\ndrenar 6\ndigitar ${sha256(fala)} {${fala}}\nocioso\nexit 0\n`);
-      const r = spawnSync('expect', ['-f', join(d, 'sim.exp')], { encoding: 'utf8', timeout: 90000 });
-      assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
-      const ler = (n) => (existsSync(join(d, n)) ? readFileSync(join(d, n), 'utf8') : '');
-      return { teclas: ler('teclas'), fala: ler('fala').trim(), exp: ler('exp.log'), sends: ler('sends.log'), status: ler('exp.status').trim() };
+      // a `sair` é a REAL do a1.exp (não há override): o que o runner faz ao terminar é parte do que se mede
+      rodarExp(d, `spawn ${d}/sim.sh\nlog_user 0\nate MARCAPRONTO\ndigitar ${sha256(fala)} {${fala}}\nocioso\nif {$dialogo_aberto} { sair CONCLUIDO }\nexit 0`);
+      return saida(d);
     };
     test('dialogo-aberto: Esc primeiro (recusa), registro na evidência, e a MESMA fala digitada depois, uma vez só', (t) => {
       const r = rodar(t); if (r === null) return;
@@ -2197,19 +2272,91 @@ describe('T57 (emenda 63): o runner não digita fala sobre diálogo de permissã
       assert.ok(r.sends.indexOf('recusar-permissao') < r.sends.indexOf('digitar '), 'recusa antes da fala');
       assert.deepEqual(permissaoDoExpLog(r.exp), { apareceu: true, recusadas: 1, naoFechou: false });
     });
-    test('dialogo-que-nao-fecha: a célula para com causa própria e a fala NÃO é digitada', (t) => {
+    // MAJOR 1 (r1): no terminal REAL o texto vem com cursor (`Do\\e[5Gyou\\e[9Gwant...`). Cada um destes diálogos tem de abrir e ser recusado ANTES da fala, com UM sinal só
+    for (const [qual, quem] of [
+      ['real', 'o diálogo REAL gravado (tty.raw), sem o aviso OSC, em 3 pedaços partidos no meio de sequências: só o texto normalizado o detecta'],
+      ['real-sem-esc', 'o diálogo REAL sem a linha "Esc to cancel": só `Do you want to proceed` + opções (1. Yes) o detecta, depois de normalizar o cursor'],
+      ['osc', 'só o aviso OSC "Claude needs your permission" (sem texto de diálogo)'],
+      ['esc-solto', '"Esc to cancel" sozinho: antes só anotava e digitava por cima; agora abre o diálogo'],
+    ]) {
+      test(`dialogo-detectado-por-UM-sinal [${qual}]: ${quem}`, (t) => {
+        const r = rodar(t, { dialogo: qual });
+        if (r === null) return;
+        assert.match(r.teclas, /^esc\n/, 'o primeiro byte é Esc: a fala não foi digitada sobre o diálogo');
+        assert.equal(r.fala, 'FALA DO ROTEIRO UMA VEZ SO');
+        assert.equal((r.exp.match(/PERMISSAO-RECUSADA/g) ?? []).length, 1);
+        assert.ok(r.sends.indexOf('recusar-permissao') < r.sends.indexOf('digitar '), 'recusa antes da fala');
+      });
+    }
+    test('dialogo-que-nao-fecha: a célula para com causa própria, a fala NÃO é digitada e a saída NÃO manda /exit nem Enter (usa a `sair` real)', (t) => {
       const r = rodar(t, { fecha: false }); if (r === null) return;
       assert.equal(r.status, 'DIALOGO_NAO_FECHOU');
       assert.match(r.exp, /PERMISSAO-NAO-FECHOU/);
+      assert.match(r.exp, /SAIDA-SEM-TECLA/);
       assert.equal(r.fala, '', 'nenhuma fala chegou ao claude');
       assert.doesNotMatch(r.teclas, /FALA/, 'nem uma tecla da fala');
       assert.doesNotMatch(r.sends, new RegExp(`digitar ${sha256('FALA DO ROTEIRO UMA VEZ SO')}`));
+      // MAJOR 2 (r1): com o foco em "Yes", `/exit` + Enter aprovaria o ask. Só Esc chegou ao diálogo
+      const linhas = r.teclas.split('\n').slice(0, -1);
+      assert.ok(linhas.length > 0 && linhas.every((l) => l === 'esc' || l === '\x1b'), `só Esc: ${JSON.stringify(linhas)}`);
+      assert.doesNotMatch(r.sends, / exit$/m, 'não registra o envio de /exit');
+      assert.match(r.sends, / kill$/m);
     });
     test('sem-dialogo (texto de conversa parecido, sem Esc to cancel nem aviso): nenhum Esc e a fala é digitada', (t) => {
-      const r = rodar(t, { dialogo: false }); if (r === null) return;
+      const r = rodar(t, { dialogo: 'nenhum' }); if (r === null) return;
       assert.doesNotMatch(r.teclas, /esc/, 'nenhum Esc avulso');
       assert.equal(r.fala, 'FALA DO ROTEIRO UMA VEZ SO');
       assert.doesNotMatch(r.exp, /PERMISSAO-RECUSADA/);
+    });
+    // o "claude" da saída: recebe a ÚLTIMA fala e DEPOIS abre o diálogo; tudo que chega é registrado (ESC ⇒ "esc", Enter ⇒ "ENTER"); com `fecha=false` o Esc reabre o diálogo
+    const rodarSair = (t, { fecha }) => {
+      if (!temExpect(t)) return null;
+      const d = novo();
+      const mostra = mostrar(d, 'real', 1);
+      const filho = [
+        `IFS= read -r l; echo "$l" >> ${d}/fala`,
+        mostra,
+        'echo MARCAPRONTO',
+        `while IFS= read -rsn1 -t 40 k; do if [ -z "$k" ]; then echo ENTER >> ${d}/teclas; break; elif [ "$k" = "$(printf '\\033')" ]; then echo esc >> ${d}/teclas; ${fecha ? "printf 'tela limpa\\n'" : mostra}; else echo "$k" >> ${d}/teclas; fi; done`,
+      ].join('\n');
+      writeFileSync(join(d, 'sim.sh'), `#!/bin/bash\n${filho}\n`); chmodSync(join(d, 'sim.sh'), 0o755);
+      rodarExp(d, `spawn ${d}/sim.sh\nlog_user 0\ndrenar 2\ndigitar ${sha256('ULTIMA FALA')} {ULTIMA FALA}\nate MARCAPRONTO\nocioso\ndrenar 20\nsair CONCLUIDO`);
+      return saida(d);
+    };
+    test('saida-com-dialogo-aberto-depois-da-ultima-fala-que-NAO-fecha: nunca /exit nem Enter; kill; célula DIALOGO_NAO_FECHOU', (t) => {
+      const r = rodarSair(t, { fecha: false }); if (r === null) return;
+      assert.equal(r.fala, 'ULTIMA FALA');
+      assert.equal(r.status, 'DIALOGO_NAO_FECHOU');
+      const linhas = r.teclas.split('\n').slice(0, -1);
+      assert.ok(linhas.length > 0 && linhas.every((l) => l === 'esc'), `só Esc, sem /exit nem Enter: ${JSON.stringify(linhas)}`);
+      assert.match(r.exp, /SAIDA-SEM-TECLA/);
+      assert.deepEqual(permissaoDoExpLog(r.exp).naoFechou, true);
+    });
+    test('saida-com-dialogo-aberto-depois-da-ultima-fala-que-FECHA: Esc primeiro, e só então /exit + Enter; status CONCLUIDO', (t) => {
+      const r = rodarSair(t, { fecha: true }); if (r === null) return;
+      assert.equal(r.status, 'CONCLUIDO');
+      assert.deepEqual(r.teclas.split('\n').slice(0, -1), ['esc', '/', 'e', 'x', 'i', 't', 'ENTER'], 'a recusa (Esc) vem ANTES do /exit');
+      assert.equal(permissaoDoExpLog(r.exp).recusadas, 1);
+    });
+    test('livre-de-dialogo-pos-turno: o diálogo aberto DURANTE o turno é recusado ANTES do snapshot (o snapshot não é tirado com o diálogo aberto)', (t) => {
+      if (!temExpect(t)) return;
+      const d = novo();
+      const mostra = mostrar(d, 'real', 1);
+      writeFileSync(join(d, 'falas.tsv'), `1\tDECISÃO\t${sha256('PRIMEIRA')}\tPRIMEIRA\n2\tDECISÃO\t${sha256('SEGUNDA')}\tSEGUNDA\n`);
+      const filho = [
+        `IFS= read -r l; echo "$l" >> ${d}/fala`,
+        mostra,
+        `IFS= read -rsn1 k; echo esc >> ${d}/teclas; printf 'tela limpa\\n'`,
+        `IFS= read -r l; echo "$l" >> ${d}/fala`,
+        `while IFS= read -rsn1 -t 40 k; do if [ -z "$k" ]; then break; fi; done`,
+      ].join('\n');
+      writeFileSync(join(d, 'sim.sh'), `#!/bin/bash\n${filho}\n`); chmodSync(join(d, 'sim.sh'), 0o755);
+      // o snapshot de mentira registra se o diálogo estava aberto no instante dele (a global do a1.exp)
+      rodarExp(d, `proc snapshot {n} { global dialogo_aberto rundir; set f [open $rundir/snap.log a]; puts $f "snap $n aberto=$dialogo_aberto"; close $f }\nset node x; set runner x; set repo $rundir\nspawn ${d}/sim.sh\nlog_user 0\ndrenar 2\n${falasDoExp()}`);
+      const r = saida(d);
+      assert.match(r.snap, /^snap 1 aberto=0\nsnap 2 aberto=0\n$/, `snapshots com o diálogo fechado: ${JSON.stringify(r.snap)}`);
+      assert.equal(r.fala.split('\n').join('|'), 'PRIMEIRA|SEGUNDA');
+      assert.equal(r.status, 'CONCLUIDO');
     });
   });
 });

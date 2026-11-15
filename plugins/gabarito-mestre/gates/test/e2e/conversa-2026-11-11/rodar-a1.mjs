@@ -967,6 +967,10 @@ export async function avaliarRundir(rundir, { repo = join(rundir, 'repo'), celul
   const v = validarFalas1a1({ eventos: ev.eventos, sends: existsSync(sendsArq) ? readFileSync(sendsArq, 'utf8') : '', falas: roteiro.falas, pontos, inicio: existsSync(inicioArq) ? readFileSync(inicioArq, 'utf8').trim() : '' });
   const falas = { digitadas: v.digitadas, acoesDoRunner: v.acoesDoRunner };
   if (!v.ok) return { celula: exec.celula ?? idDaCelula(celula), passa: false, resultados: [{ id: 'falas-1a1', ok: false, detalhe: `célula inválida: ${v.causa}` }], falas };
+  // T57 r1: diálogo de permissão que apareceu e o runner NÃO recusou (nenhuma recusa registrada), ou que não fechou ⇒ a fala pode ter sido digitada sobre ele: inválida, mesmo com 1:1 aparente
+  const expLogArq = join(rundir, 'exp.log');
+  const perm = permissaoDoExpLog(existsSync(expLogArq) ? readFileSync(expLogArq, 'utf8') : '');
+  if (perm.naoFechou || (perm.apareceu && perm.recusadas === 0)) return { celula: exec.celula ?? idDaCelula(celula), passa: false, resultados: [{ id: 'permissao-1a1', ok: false, detalhe: `célula inválida: ${perm.naoFechou ? 'diálogo de permissão que não fechou' : 'diálogo de permissão apareceu e o runner não o recusou (0 recusas)'}` }], falas };
   return { ...exec, falas };
 }
 
@@ -1538,10 +1542,10 @@ const JANELA_DEDUP_MS = 120_000;
 export function validarFalas1a1({ eventos, sends, falas, pontos, inicio = '' }) {
   const linhas = String(sends).split('\n').filter(Boolean);
   const digitacoes = linhas.map((l) => /^(\d+) digitar ([0-9a-f]{64})$/.exec(l)).filter(Boolean).map((m) => ({ t: Number(m[1]) * 1000, sha: m[2] }));
-  const digitadas = digitacoes.map((d) => d.sha);
   const acoesDoRunner = linhas.map((l) => /^\d+ (.+)$/.exec(l)?.[1]).filter((x) => x !== undefined && !/^digitar [0-9a-f]{64}$/.test(x));
+  // falas de texto igual (4 e 7 do roteiro real) dividem o sha: a k-ésima digitação desse sha é a k-ésima fala dele, na ordem do roteiro
   const porSha = new Map();
-  for (const f of falas) porSha.set(sha256(f.texto), f);
+  for (const f of falas) { const k = sha256(f.texto); if (!porSha.has(k)) porSha.set(k, []); porSha.get(k).push(f); }
   const dePonto = new Map((pontos?.pontos ?? []).map((p) => [p.msg, p]));
   const gravadas = new Map();
   for (const e of eventos) {
@@ -1552,24 +1556,32 @@ export function validarFalas1a1({ eventos, sends, falas, pontos, inicio = '' }) 
   }
   // o PRODUTO grava o mesmo texto UMA vez por janela de 120 s (FIEL-2 a, `primeiraDaJanela` do mod: a janela conta do último registro, não da última digitação): o esperado é o que o produto deve gravar
   const enviadas = new Map(); // sha ⇒ digitações
-  const esperadas = new Map(); // sha ⇒ registros esperados
+  const esperadas = new Map(); // sha ⇒ falas (do roteiro) que abrem uma janela, ou seja, os registros esperados, na ordem
   const ultimo = new Map();
   for (const { t, sha } of digitacoes) {
     if (!porSha.has(sha)) continue;
-    enviadas.set(sha, (enviadas.get(sha) ?? 0) + 1);
-    if (!ultimo.has(sha) || !(t - ultimo.get(sha) < JANELA_DEDUP_MS)) { esperadas.set(sha, (esperadas.get(sha) ?? 0) + 1); ultimo.set(sha, t); }
+    const k = enviadas.get(sha) ?? 0;
+    enviadas.set(sha, k + 1);
+    if (!ultimo.has(sha) || !(t - ultimo.get(sha) < JANELA_DEDUP_MS)) {
+      const doSha = porSha.get(sha);
+      if (!esperadas.has(sha)) esperadas.set(sha, []);
+      esperadas.get(sha).push(doSha[Math.min(k, doSha.length - 1)]);
+      ultimo.set(sha, t);
+    }
   }
   const falhas = [];
   if (enviadas.size === 0) falhas.push('nenhuma fala do roteiro digitada: não medida');
   for (const [sha, nDig] of enviadas) {
-    const n = esperadas.get(sha);
-    const f = porSha.get(sha);
-    const ponto = dePonto.get(f.n);
-    const esperado = ponto !== undefined ? { sha256: ponto.sha256, chars: ponto.chars } : { sha256: sha, chars: [...f.texto].length };
+    const quem = esperadas.get(sha);
+    const n = quem.length;
+    const f0 = quem[0];
+    const ponto = dePonto.get(f0.n);
+    // chars como o PRODUTO grava (`texto.length`, gates/src/pouso.ts:408), não por pontos de código
+    const esperado = ponto !== undefined ? { sha256: ponto.sha256, chars: ponto.chars } : { sha256: sha, chars: f0.texto.length };
     const g = gravadas.get(esperado.sha256) ?? [];
-    if (g.length < n) falhas.push(`fala ${f.n} perdida: digitada ${nDig}x (esperado ${n} registro(s)), ${g.length} dono.mensagem`);
-    else if (g.length > n) falhas.push(`fala ${f.n} dupla: digitada ${nDig}x (esperado ${n} registro(s)), ${g.length} dono.mensagem`);
-    else if (g.some((c) => c !== esperado.chars)) falhas.push(`fala ${f.n}: dono.mensagem com chars ${g.find((c) => c !== esperado.chars)} diferente do esperado ${esperado.chars}`);
+    if (g.length < n) falhas.push(`fala ${quem[g.length].n} perdida: digitada ${nDig}x (esperado ${n} registro(s)), ${g.length} dono.mensagem`);
+    else if (g.length > n) falhas.push(`fala ${quem[n - 1].n} dupla: digitada ${nDig}x (esperado ${n} registro(s)), ${g.length} dono.mensagem`);
+    else if (g.some((c) => c !== esperado.chars)) falhas.push(`fala ${f0.n}: dono.mensagem com chars ${g.find((c) => c !== esperado.chars)} diferente do esperado ${esperado.chars}`);
   }
   return { ok: falhas.length === 0, causa: falhas.length === 0 ? null : falhas.join('; '), digitadas: [...enviadas.values()].reduce((a, b) => a + b, 0), acoesDoRunner };
 }

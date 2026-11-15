@@ -57,16 +57,25 @@ proc recusarImports {} {
 set dialogo_aberto 0
 set cauda ""
 set npermissao 0
-# o texto de uma leitura da tela; a decisão é em Tcl (o `.+` do expect casa do início do buffer e esconderia o padrão que vem depois), com a cauda da leitura anterior (o texto pode vir partido)
+# o texto de uma leitura da tela, NORMALIZADO: o terminal real desenha cada palavra com movimento de cursor (`Do\e[5Gyou\e[9Gwant\e[14Gto`; MEDIDO no tty.raw da A1 1794703098821), então o texto cru nunca traz "Do you want to". Cada CSI de cursor vira um espaço, os demais CSI e OSC saem, o branco colapsa. A decisão é em Tcl (o `.+` do expect casa do início do buffer e esconderia o padrão que vem depois), com a cauda da leitura anterior (o texto pode vir partido)
+proc normalizar {txt} {
+  regsub -all {\x1b\[[0-9;?]*[GCDABEFHfd]} $txt " " t
+  regsub -all {\x1b\[[0-9;?<>=]*[ -/]*[@-~]} $t "" t
+  regsub -all {\x1b\][^\x07]*\x07} $t "" t
+  regsub -all {[ \t\r\n]+} $t " " t
+  return $t
+}
+# QUALQUER sinal de diálogo de permissão abre o diálogo (dialogo_aberto=1): o aviso OSC `needs your permission` (cru), ou o texto normalizado `Do you want to proceed|make` com as opções (`1. Yes`) ou `Esc to cancel`, ou `Allow this`/`Esc to cancel` soltos. Nunca só anotar e digitar por cima
 proc ler {txt} {
   global dialogo_aberto cauda
   set j "$cauda$txt"
-  set cauda [string range $j end-120 end]
-  if {[regexp {external.{1,60}imports\?} $j]} { recusarImports; set cauda "" }
-  if {[regexp {needs your permission} $j] || ([regexp {Do you want to (proceed|make)} $j] && [regexp {Esc.{1,6}to.{1,6}cancel} $j])} {
+  set cauda [string range $j end-1500 end]
+  set n [normalizar $j]
+  if {[regexp {external.{1,60}imports\?} $n]} { recusarImports; set cauda ""; return }
+  if {[regexp {needs your permission} $j] || [regexp {Do you want to (proceed|make).{0,250}(1\. ?Yes|Esc to cancel)} $n] || [regexp {Allow this|Esc to cancel} $n]} {
     if {!$dialogo_aberto} { nota "PERGUNTA-DE-PERMISSAO na tela" }
     set dialogo_aberto 1; set cauda ""
-  } elseif {[regexp {Allow this|Esc to cancel} $j]} { nota "PERGUNTA-DE-PERMISSAO na tela" ; set cauda "" }
+  }
 }
 proc drenar {s} {
   set s [t $s]
@@ -121,14 +130,32 @@ proc livreDeDialogo {} {
 }
 proc digitar {sha txt} { if {![livreDeDialogo]} { sair DIALOGO_NAO_FECHOU }; sends "digitar $sha"; send -- $txt; after 1200; send "\r" }
 proc snapshot {n} { global node runner repo rundir; marco snap-$n; catch {exec $node $runner snapshot $repo $rundir $n} err; if {$err ne ""} { nota "snapshot $n: $err"; set f [open $rundir/snapshot-falhou.log a]; puts $f "snapshot $n: $err"; close $f } }
+# saída: NUNCA com diálogo de permissão aberto (T57 r1): `/exit` + Enter com o foco em "Yes" APROVARIA o ask que o runner não conseguiu recusar. Com diálogo aberto: recusa (Esc) antes; se não fechar, encerra o processo SEM tecla que aprove (kill), registra e a célula fica INVÁLIDA (DIALOGO_NAO_FECHOU)
 proc sair {status} {
-  global rundir
+  global rundir dialogo_aberto
+  catch { drenar 1 }
+  if {$dialogo_aberto} {
+    set fechou 0
+    if {$status ne "DIALOGO_NAO_FECHOU"} { catch { set fechou [recusarPermissao] } }
+    if {!$fechou} {
+      nota "SAIDA-SEM-TECLA diálogo de permissão aberto: processo encerrado sem /exit nem Enter"
+      nota "fim status=DIALOGO_NAO_FECHOU"
+      set f [open $rundir/exp.status w]; puts $f DIALOGO_NAO_FECHOU; close $f
+      sends kill
+      catch { exec kill [exp_pid] }
+      after 500
+      catch {close}; catch {wait}
+      puts "exp done DIALOGO_NAO_FECHOU"
+      exit 0
+    }
+  }
   nota "fim status=$status"
   set f [open $rundir/exp.status w]; puts $f $status; close $f
   sends exit
-  send "/exit\r"; after 2500; send "\r"
+  # o processo pode já ter saído (EOF na última espera): enviar a um spawn fechado seria erro do Tcl, não da célula
+  catch { send "/exit\r"; after 2500; send "\r" }
   set timeout 15
-  expect { eof {} timeout { nota "nao saiu; Ctrl-C"; send "\003"; after 500; send "\003" } }
+  catch { expect { eof {} timeout { nota "nao saiu; Ctrl-C"; send "\003"; after 500; send "\003" } } }
   catch {close}; catch {wait}
   puts "exp done $status"
   exit 0
