@@ -1232,6 +1232,28 @@
       ]
     },
     {
+      "id": "T57",
+      "titulo": "Runner A1 sem fala sobre diálogo",
+      "deps": [
+        "T24",
+        "T42",
+        "T43",
+        "T44",
+        "T46",
+        "T49",
+        "T52",
+        "T55"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/a1.exp",
+        "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/rodar-a1.mjs",
+        "plugins/gabarito-mestre/gates/test/conversa-pontos.test.mjs"
+      ],
+      "reqs": [
+        "REQ-GLB-1"
+      ]
+    },
+    {
       "id": "T25",
       "titulo": "Aceites A1 e A3, alpha e PR",
       "deps": [
@@ -1285,7 +1307,8 @@
         "T53",
         "T54",
         "T55",
-        "T56"
+        "T56",
+        "T57"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/.claude-plugin/plugin.json",
