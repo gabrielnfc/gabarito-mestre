@@ -178,7 +178,10 @@ describe('forma do estado e do texto', { timeout: 60_000 }, () => {
     assert.notEqual(cor, roda(['--preset', 'executivo', '--largura', '60', '--tema', 'mono']));
     assert.notEqual(roda(['--preset', 'executivo', '--largura', '30']), roda(['--preset', 'executivo', '--largura', '90']));
     // GM-14 T18 (FIEL-4/FIEL-12): sem --agentes os dois presets coincidem (nenhum nome sorteado); com a sessão, o esquadrão tem nomes
-    assert.equal(roda(['--preset', 'executivo']), roda(['--preset', 'esquadrao']));
+    // GM-15 T29 (D-G1c): o rótulo do preset à direita do cabeçalho do E4 é a única diferença sem a sessão
+    const semRotulo = (t) => t.replace(/ {2,}(esquadrão( · [^\n]*)?|executivo)\n/, '\n');
+    assert.equal(semRotulo(roda(['--preset', 'executivo'])), semRotulo(roda(['--preset', 'esquadrao'])));
+    assert.notEqual(roda(['--preset', 'executivo']), roda(['--preset', 'esquadrao']), 'premissa: o rótulo do preset difere');
     const comSessao = (preset) => { const s = []; assert.equal(main(['texto', '--agentes', '--preset', preset], m.repo, IO({ saida: (t) => s.push(t), stdin: () => JSON.stringify({ sessao: {}, agentes: [] }) })), 0); return s.join(''); };
     assert.notEqual(comSessao('executivo'), comSessao('esquadrao'));
   });
@@ -1219,9 +1222,10 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     evEm(m, 'GM-12', 'task.iniciada', { task: 'T2', papel: 'implementador' });
     const t = cli(m, ['texto']);
     assert.equal(t.rc, 0, t.stdout);
-    assert.match(t.stdout, /^AGORA · agentes e contexto: medidos só no painel da sessão$/m);
-    assert.doesNotMatch(t.stdout, /GANDALF|ELROND|ARAGORN|LEGOLAS|agentes —|ctx —/);
-    assert.match(t.stdout, /^PRONTO ▰+▱+ 1 de 2 integradas/m);
+    // GM-15 T29 (desenho do E4): a seção EQUIPE é 1 linha só
+    assert.match(t.stdout, /^EQUIPE · agentes e contexto: medidos só no painel da sessão$/m);
+    assert.doesNotMatch(t.stdout, /GANDALF|ELROND|ARAGORN|LEGOLAS|agentes —|ctx|tok |5h|7d/);
+    assert.match(t.stdout, /^PLANO {3}▰+▱+ {2}50% {2}1\/2 tasks/m);
   });
 
   test('spec-na-worktree-da-sessao (DP-3 aj. 4; sombra-dp.md:95 ataque 2): principal em outra branch sem a spec, spec só na worktree ⇒ a FASE do painel vê a spec do checkout da sessão, com o mesmo sha que o `medir` grava', () => {
@@ -1301,12 +1305,12 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.notEqual(e.id, 'GM-12');
     assert.equal(e.trilha.ultimaConhecida, 'GM-12');
     const t = cli(m, ['texto']).stdout;
-    assert.doesNotMatch(t, /PRONTO|2 de 2 integradas/, t);
+    assert.doesNotMatch(t, /^PLANO|2\/2 tasks/m, t); // GM-15 T29: PRONTO ⇒ PLANO do E4
     // a mesma branch com o PR ainda aberto segue ligada: o PRONTO volta (o corte é o fato, não a branch)
     const a = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
     integrarEm(a, 'GM-12', 'T1'); integrarEm(a, 'GM-12', 'T2');
     evEm(a, 'GM-12', 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 'aberto', branch: 'feat/GM-12-painel' } });
-    assert.match(cli(a, ['texto']).stdout, /^PRONTO ▰{10} 2 de 2 integradas$/m);
+    assert.match(cli(a, ['texto']).stdout, /^PLANO {3}▰{21} {2}100% {2}2\/2 tasks +todas integradas$/m);
   });
 
   // T47 (emenda 43; ledger T25 item 2): a entrega publicada (PR mergeado, branch sozinha) descarta o plano da PROJEÇÃO (spec:53), mas o diário dela
@@ -1328,7 +1332,7 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.equal(e.pronto, null);
     assert.notEqual(e.modo, 'entrega');
     assert.notEqual(e.id, 'GM-12');
-    assert.doesNotMatch(cli(m, ['texto']).stdout, /diário fora da tabela|PRONTO/);
+    assert.doesNotMatch(cli(m, ['texto']).stdout, /diário fora da tabela|^PLANO/m);
   });
   test('publicada-vivo-com-task (T47): vivo "T1 implementador" na publicada casa T1 (task e papel), e o texto não vira PRONTO', () => {
     const m = publicada();
@@ -1340,7 +1344,7 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.equal(e.pronto, null);
     assert.equal(e.umaLinha, null, 'com vivo trabalhando há o que mostrar: sem a uma linha de projeto');
     assert.equal(e.parar, null);
-    assert.doesNotMatch(cli(m, ['texto', '--agentes'], { input: JSON.stringify(VIVO) }).stdout, /PRONTO/);
+    assert.doesNotMatch(cli(m, ['texto', '--agentes'], { input: JSON.stringify(VIVO) }).stdout, /^PLANO/m);
     // o defeito por outro canal: o "depende de você" também vem do cálculo com o plano (sem a "diário fora da tabela" do plano ausente)
     assert.deepEqual(e.depende, [{ nivel: 'dono', motivo: 'depende de você: nada', acoes: [] }]);
     assert.doesNotMatch(cli(m, ['texto', '--agentes'], { input: JSON.stringify(VIVO) }).stdout, /diário fora da tabela/);

@@ -83,8 +83,9 @@ const ESTADOS: [string, () => EstadoPainel][] = [
     e(4, 'loop.parar', { motivo: 'rollback' })]), entrada({ agentes: [], pausado: true }))],
 ];
 
-const GLIFOS = new Set(['✓', '●', '○', '◐', '✗', '▰', '▱', '·', '›', '─', '?', '…']);
-/** Fora de letra, número, espaço, pontuação e símbolo ASCII ou Latin-1, só a lista fechada de glifos (REQ-LNG-1, Emenda 2): `⚠`, `■`, `◆`, `▶` não passam. */
+/** GM-15 T29 (D-G1c): os glifos do desenho do E4 (`█ ░ │ ├ └ ◆ ■ ▸ ▼`) entram; nenhum é `Extended_Pictographic` (medido). `▶` e `⚠` seguem fora. */
+const GLIFOS = new Set(['✓', '●', '○', '◐', '✗', '▰', '▱', '·', '›', '─', '?', '…', '█', '░', '│', '├', '└', '◆', '■', '▸', '▼']);
+/** Fora de letra, número, espaço, pontuação e símbolo ASCII ou Latin-1, só a lista fechada de glifos (REQ-LNG-1, Emenda 2): `⚠` e `▶` não passam. */
 const foraDaLista = (l: string): string[] => [...l].filter((c) => !/[\p{L}\p{N}\p{P}\s]/u.test(c) && !(c.codePointAt(0) as number <= 0xff) && !GLIFOS.has(c));
 const SGR = /\x1b\[[0-9;]*m/g;
 
@@ -103,8 +104,10 @@ test('lng-propriedade: 12 estados × larguras 20..200 × 2 presets × 2 temas �
             assert.ok(!linhaTecnica(l), `técnica: ${onde}`);
             assert.doesNotMatch(l, /\p{Extended_Pictographic}|️/u, `emoji: ${onde}`);
             assert.deepEqual(foraDaLista(l), [], `glifo fora da lista: ${onde}`);
-            assert.doesNotMatch(l, /\d…/, `número cortado: ${onde}`);
-            assert.doesNotMatch(l, /\b0 %|contexto 0\b/, `ausente virou zero: ${onde}`);
+            // número solto cortado; id de task (`T3`) não é número (a mesma definição de `NUMERO_NO_FIM`, painel-texto.ts) — no histórico do E4 o id cai no fim da linha
+            assert.doesNotMatch(l, /(?<![A-Za-z0-9_-])\d[0-9/:.,]*…/, `número cortado: ${onde}`);
+            assert.doesNotMatch(l, /\b0 %|contexto 0\b|ctx ░* ?0%|tok 0\b|[57][hd] ░+ 0%/, `ausente virou zero: ${onde}`);
+            assert.doesNotMatch(l, /—/, `"—" no lugar de "?": ${onde}`);
             assert.doesNotMatch(l, /GM 1[34]\b/, `ID naturalizado: ${onde}`);
             assert.doesNotMatch(l, /\b(true force|minha entrega) \1\b/i, `ID repetido (título sem o prefixo, FIEL-5 a): ${onde}`);
             assert.ok(colunas(l) <= largura, `passou da largura: ${onde}`);
@@ -119,7 +122,7 @@ test('lng-propriedade: 12 estados × larguras 20..200 × 2 presets × 2 temas �
 test('rotulo-com-ponto-e-sublinhado-normalizado: nome e título que a regex pega viram palavras; tag vira X.Y.Z (Review Focus 5)', () => {
   const s = ESTADOS.find(([n]) => n === 'execucao-agentes')![1]();
   const l = paraTexto(renderPainel(s, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 200 }), 'mono').split('\n');
-  assert.equal(l[0], 'GABARITO · GM-14 true force em 2.0.0 com meu app config e notas md');
+  assert.equal(l[0].replace(/ {2,}(esquadrão( · .*)?|executivo)$/, ''), 'GABARITO · GM-14 true force em 2.0.0 com meu app config e notas md'); // GM-15 T29: o rótulo do preset à direita é desenho do E4
   const u = paraTexto(renderPainel(ESTADOS.find(([n]) => n === 'uma-linha')![1](), { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 200 }), 'mono');
   assert.equal(u, 'GABARITO · sem entrega em curso · última: GM-13 (publicada em 2.0.0)');
 });
@@ -127,14 +130,24 @@ test('rotulo-com-ponto-e-sublinhado-normalizado: nome e título que a regex pega
 test('ausente-nao-e-zero: contexto não medido é "?"; 0 medido é 0', () => {
   const r = (pct: number | null) => paraTexto(renderPainel(projetarPainel(P, D([]), entrada({ contexto: { percent: pct, tokens: null, window: null } })),
     { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 120 }), 'mono');
-  assert.match(r(null), /AGORA · GANDALF · contexto \?$/m);
-  assert.match(r(0), /AGORA · GANDALF · contexto 0 %$/m);
-  assert.match(r(Number.NaN as unknown as number), /contexto \?$/m);
+  // GM-15 T29 (desenho do E4): sem medição, "?" no lugar da barra; 0 medido é barra vazia com 0%
+  assert.match(r(null), /^│ {2}ctx \? · pouso em 50% {3}tok \?$/m);
+  assert.match(r(0), /^│ {2}ctx ░+ 0% · pouso em 50% {3}tok \?$/m);
+  assert.match(r(Number.NaN as unknown as number), /^│ {2}ctx \? · /m);
+  assert.doesNotMatch(r(null), /ctx [█░]|ctx 0%/);
 });
 
 test('palavra-tipo-em-qualquer-caixa: "Nota", "SMOKE", "Rollback" e "node-api" no título viram "…"; o resto fica (decisão a confirmar com a Sombra)', () => {
   const s = projetarPainel(P, D([]), entrada({ titulo: 'Nota fiscal com SMOKE, Rollback e node-api' }));
-  const l = paraTexto(renderPainel(s, { preset: 'executivo', tema: 'mono', narracao: true, largura: 200 }), 'mono').split('\n')[0];
+  const l = paraTexto(renderPainel(s, { preset: 'executivo', tema: 'mono', narracao: true, largura: 200 }), 'mono').split('\n')[0].replace(/ {2,}executivo$/, '');
   assert.equal(l, 'GABARITO · GM-14 … fiscal com … e … api'); // reticências seguidas viram uma
   assert.ok(!linhaTecnica(l));
+});
+
+test('glifos-que-viram-emoji-seguem-barrados (GM-15 T29): a lista aceita os do E4, mas `▶` e `⚠` (pictográficos) continuam fora', () => {
+  assert.deepEqual(foraDaLista('│  ▸ narração ├─ └─ █░ ◆ ■ ▼ 3'), []);
+  assert.deepEqual(foraDaLista('│  ▶ narração'), ['▶']);
+  assert.deepEqual(foraDaLista('⚠ cuidado'), ['⚠']);
+  for (const c of ['█', '░', '│', '├', '└', '◆', '■', '▸', '▼']) assert.doesNotMatch(c, /\p{Extended_Pictographic}/u, c);
+  assert.match('▶', /\p{Extended_Pictographic}/u);
 });

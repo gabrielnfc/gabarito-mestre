@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { pendenciasAprendizado } from '../../gates/dist/pendencias.js'
 import { CABECALHO, codigoPonte, PROMPT_RECUPERACAO, PROMPT_RETOMADA } from '../../gates/dist/pouso.js'
 import { validarStdinAgentes } from '../../gates/dist/painel-equipe.js'
-import { chavePouso, colunasDosBotoes, faixaDe, faixaUmaLinha, avisoPaneEspera, botoesDoTopo, gravarContexto, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
+import { chavePouso, colunasDosBotoes, faixaDe, faixaUmaLinha, avisoPaneEspera, botoesDoTopo, gravarContexto, indiceDoTopo, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
 import { lerLeitura, pousoPendente, tentativasDoPouso } from '../../gates/dist/pouso-pendente.js'
 import { proximaAcao } from '../../gates/dist/loop.js'
 import { pousoDaFronteira } from '../../gates/dist/pouso.js'
@@ -2709,7 +2709,10 @@ test('faixa-depende-acima: no local acima o "depende de você" sai no topo, em w
   const m = comPainel($, on, { estado: dep }, { local: 'acima' })
   await arrancar(m)
   const ui = await montarFaixaH($, 50, 19)
-  expect((await todosTextos(ui)).join('|')).toContain('depende de você: emenda 7 aguardando')
+  // GM-15 T29 (D-G1c): o topo tem a cara do E4: `◆ DEPENDE DE VOCÊ  N itens` (warning) e o item recuado, com o botão
+  const tx = (await todosTextos(ui)).join('|')
+  expect(tx).toContain('◆ DEPENDE DE VOCÊ  2 itens')
+  expect(tx).toContain('  emenda 7 aguardando')
   expect(JSON.stringify(await ui.drawn())).toContain('"color":"warning"')
   await ui.press({ key: 'painel-acao' })
   expect(m.est.fills.map((f) => f.text)).toEqual(['/gabarito-mestre:emenda aprovar 7'])
@@ -3770,7 +3773,7 @@ test('nunca-os-dois: acima ⇒ 0 ui.open e a faixa desenha o painel inteiro; lat
   const ui = await montarFaixaH($, 50, 19)
   const t = (await todosTextos(ui)).join('|')
   expect(t).toContain('GABARITO')
-  expect(t).toContain('PRONTO')
+  expect(t).toContain('PLANO')
   await ui.unmount()
 })
 test('nunca-os-dois-pane-aberta-de-antes: acima com a Pane listada de antes ⇒ o reload a fecha 1×, a Pane não desenha o painel e a faixa desenha', async ($, on) => {
@@ -3783,12 +3786,12 @@ test('nunca-os-dois-pane-aberta-de-antes: acima com a Pane listada de antes ⇒ 
   const pane = await montarPane($)
   const tp = (await todosTextos(pane)).join('|')
   expect(tp).not.toContain('GABARITO')
-  expect(tp).not.toContain('PRONTO')
+  expect(tp).not.toContain('PLANO')
   await pane.unmount()
   const ui = await montarFaixaH($, 50, 19)
   const t = (await todosTextos(ui)).join('|')
   expect(t).toContain('GABARITO')
-  expect(t).toContain('PRONTO')
+  expect(t).toContain('PLANO')
   await ui.unmount()
 })
 test('nunca-os-dois-pane-aberta-de-antes-com-falha: acima com a Pane listada e a leitura do estado falhando ⇒ a Pane fecha mesmo assim', async ($, on) => {
@@ -3817,7 +3820,7 @@ test('nunca-os-dois-faixa-de-antes: lateral sem Pane (a faixa era o painel antes
   let ui = await montarFaixaH($, 50, 19)
   const t = (await todosTextos(ui)).join('|')
   expect(t).not.toContain('GABARITO')
-  expect(t).not.toContain('PRONTO')
+  expect(t).not.toContain('PLANO')
   await ui.unmount()
   m.est.panes = PANE_VISIVEL
   ui = await montarFaixaH($, 50, 19)
@@ -3852,7 +3855,7 @@ test('lateral-pane-fechada-so-parou-e-pergunta: Pane fechada ⇒ 1 linha só com
   let t = (await todosTextos(ui)).join('|')
   expect(t).not.toContain('GABARITO')
   expect(t).toContain('Qual caminho seguir agora')
-  expect(t).not.toContain('PRONTO')
+  expect(t).not.toContain('PLANO')
   expect(t).not.toContain('aprovar a spec')
   expect((await ui.findAll({ type: 'Button' })).length).toBe(2)
   await ui.unmount()
@@ -4025,7 +4028,7 @@ test('sem-troca-de-local: Pane sem colocar, em qualquer largura ⇒ o local segu
   for (const larg of [40, 80, 120, 143, 200]) {
     const t = await aviso($, larg)
     expect(t).not.toContain('GABARITO')
-    expect(t).not.toContain('PRONTO')
+    expect(t).not.toContain('PLANO')
   }
   await m.turno(); await m.clock.advance(PERIODO * 2); await drena(m)
   expect(m.est.locaisGravados).toEqual([])
@@ -4186,6 +4189,34 @@ test('botao-so-no-topo: com pergunta no topo, o item seguinte do "depende de voc
   expect(comBotao).toEqual([iTopo])
   expect(linhas.some((l: string) => l.includes('aprovar a spec'))).toBe(true)
   await ui.unmount()
+})
+test('botao-no-item-do-depende-e4 (GM-15 T29, D-G1c): o botão vai no 1º item depois de `◆ DEPENDE DE VOCÊ`, nunca no rótulo nem no `◆ ATENÇÃO`', async ($, on) => {
+  const dep = { nivel: 'dono', motivo: 'aprovar a spec da GM-14', acoes: [acaoP('aprovar', '/gabarito-mestre:aprovar')] }
+  const m = comPainel($, on, { estado: estadoNovo({ depende: [dep], atencao: ['CI vermelho na última execução'] }) }, { local: 'acima' })
+  await arrancar(m)
+  const ui = await montarFaixaH($, 50, 19)
+  const linhas = ((await ui.drawn()).children ?? []).map((l: any) => JSON.stringify(l))
+  const iRotulo = linhas.findIndex((l: string) => l.includes('◆ DEPENDE DE VOCÊ'))
+  const iItem = linhas.findIndex((l: string) => l.includes('aprovar a spec da GM-14'))
+  const iAtencao = linhas.findIndex((l: string) => l.includes('ATENÇÃO'))
+  expect(iRotulo).toBeGreaterThanOrEqual(0)
+  expect(iItem).toBe(iRotulo + 1)
+  expect(iAtencao).toBeGreaterThan(iItem)
+  const comBotao = linhas.map((l: string, i: number) => [i, l.includes('"Button"') || l.includes('painel-acao')] as const).filter(([, b]) => b).map(([i]) => i)
+  expect(comBotao).toEqual([iItem])
+  await ui.press({ key: 'painel-acao' })
+  expect(m.est.fills.map((f: any) => f.text)).toEqual(['/gabarito-mestre:aprovar'])
+  await ui.unmount()
+})
+test('indice-do-topo-e4 (GM-15 T29): PAROU; item depois do rótulo; `◆ item` sem o rótulo; nunca rótulo nem ATENÇÃO', () => {
+  const L = (...xs: string[]) => xs.map((t) => [{ texto: t }])
+  expect(indiceDoTopo(L('GABARITO · GM-14', '■ PAROU 12:00 · x', '◆ DEPENDE DE VOCÊ  1 item', '  y'))).toBe(1)
+  expect(indiceDoTopo(L('GABARITO · GM-14', '◆ DEPENDE DE VOCÊ  2 itens', '  y [ok]', '  z'))).toBe(2)
+  expect(indiceDoTopo(L('GABARITO · GM-14', '◆ y [ok] (+1)', '────'))).toBe(1)
+  expect(indiceDoTopo(L('GABARITO · GM-14', 'depende de você: nada', '◆ ATENÇÃO  CI vermelho'))).toBe(1)
+  expect(indiceDoTopo(L('GABARITO · GM-14', 'PLANO   ▰▱  50%', '◆ ATENÇÃO  CI vermelho'))).toBe(-1)
+  expect(indiceDoTopo(L('GABARITO · GM-14', '◆ DEPENDE DE VOCÊ  1 item'))).toBe(-1)
+  expect(indiceDoTopo(L('GABARITO · GM-14', '◆ DEPENDE DE VOCÊ  1 item', 'PLANO'))).toBe(-1)
 })
 test('has-survey-next: acima, com survey a faixa devolve next(e), mesmo com PAROU', async ($, on) => {
   sobreOMotor(on)

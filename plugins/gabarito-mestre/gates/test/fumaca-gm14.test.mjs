@@ -34,7 +34,8 @@ const f = o.setefases;
 const P = f.passos;
 const ev = (lista, tipo) => lista.filter((e) => e.tipo === tipo);
 const fatos = (chave, sessao) => f.eventos.filter((e) => e.tipo === 'fato.medido' && e.dados.chave === chave && (sessao === undefined || e.sessao === sessao)).map((e) => e.dados);
-const topo = (p) => p.texto.split('\n');
+/** GM-15 T29 (D-G1c): linhas do desenho do E4, sem o rótulo do preset à direita do cabeçalho. */
+const topo = (p) => p.texto.split('\n').map((l) => l.replace(/ {2,}(esquadrão( · .*)?|executivo)$/, ''));
 const ORIGENS = new Set(['(automático)', '(anotado pelo orquestrador)', '(você)']);
 const origemValida = (x) => ORIGENS.has(x) || /^\(você respondeu: .+\)$/.test(x);
 
@@ -53,11 +54,11 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.equal(i.estado.trilha.identificada, false);
   assert.deepEqual([i.estado.trilha.fase, i.estado.trilha.marcas], [1, ['●', '○', '○', '○', '○', '○', '○']]);
   assert.equal(i.estado.trilha.progresso, '2 ideias anotadas');
-  assert.match(topo(i)[1], /^depende de você: decidir se as 2 ideias viram a próxima entrega \[visto\]/);
+  assert.equal(topo(i)[1], '◆ DEPENDE DE VOCÊ  1 item'); assert.match(topo(i)[2], /^  decidir se as 2 ideias viram a próxima entrega \[visto\]/);
   assert.match(i.texto, /^FASE 1 de 7 ▱{7} · 2 ideias anotadas/m);
   assert.deepEqual(i.estado.depende.map((d) => d.motivo), ['decidir se as 2 ideias viram a próxima entrega']);
   assert.deepEqual(i.estado.recente, [], 'sem origem a mostrar: nenhum fato aconteceu ainda');
-  assert.ok(!/^RECENTE/m.test(i.texto));
+  assert.ok(!/^\d\d:\d\d /m.test(i.texto)); // GM-15 T29: o RECENTE é o histórico hh:mm do E4
 
   // (3) branch com ID sem 2º fato: a conversa pergunta de qual entrega é (REQ-PRG-1 (b)), no topo; a branch sozinha não liga (REQ-TRI-1)
   const b = P.soBranch;
@@ -65,7 +66,7 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.equal(b.estado.pergunta.gatilho, 'b');
   assert.equal(b.estado.pergunta.texto, 'Esta conversa é da entrega GM-50?');
   assert.deepEqual(b.estado.pergunta.opcoes, ['GM-50', 'uma nova', 'conversa avulsa']);
-  assert.match(topo(b)[1], /^depende de você: Esta conversa é da entrega GM-50\? · 1 GM-50 · 2 uma nova/);
+  assert.equal(topo(b)[1], '◆ DEPENDE DE VOCÊ  1 item'); assert.match(topo(b)[2], /^  Esta conversa é da entrega GM-50\? · 1 GM-50 · 2 uma nova/);
   assert.deepEqual([b.estado.trilha.fase, b.estado.trilha.marcas], [1, ['●', '○', '○', '○', '○', '○', '○']], 'a branch sozinha não adianta fase (REQ-TRI-1)');
   assert.match(b.texto, /^FASE 1 de 7 ▱{7} · /m);
   assert.ok(!/GM-50/.test(topo(b)[0]), 'a branch sozinha não liga a entrega: o cabeçalho não traz o ID nem o título (REQ-TRI-1)');
@@ -78,7 +79,7 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.deepEqual([s.estado.trilha.fase, s.estado.trilha.marcas], [3, ['✓', '✓', '●', '○', '○', '○', '○']]);
   assert.equal(s.estado.trilha.progresso, 'spec com 3 seções · falta aprovar', 'as 3 linhas `## ` da spec');
   assert.equal(topo(s)[0], 'GABARITO · GM-50 Spec de fumaça da clareza', 'FIEL-10 (f): ID e título uma vez, sem o ID repetido');
-  assert.match(topo(s)[1], /^depende de você: aprovar a spec da GM-50 \[aprovar a spec\]/);
+  assert.equal(topo(s)[1], '◆ DEPENDE DE VOCÊ  1 item'); assert.match(topo(s)[2], /^  aprovar a spec da GM-50 \[aprovar a spec\]/);
   assert.deepEqual(s.estado.depende.map((d) => [d.motivo, d.acoes.map((a) => a.rotulo)]), [['aprovar a spec da GM-50', ['aprovar a spec']]]);
   assert.equal(s.estado.depende[0].acoes[0].comando, '/gabarito-mestre:aprovar', 'o comando só existe na ação do botão');
   assert.match(s.texto, /^FASE 3 de 7 ▰{2}▱{5} · spec com 3 seções · falta aprovar/m, '`?` não pinta; só as 2 marcas ✓');
@@ -95,50 +96,50 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.match(a.texto, /^FASE 4 de 7 ▰{3}▱{4} · spec com 3 seções/m);
   assert.equal(a.estado.recente[0].texto, 'spec aprovada');
   assert.equal(a.estado.recente[0].origem, '(você)', 'REQ-LNG-1: spec.aprovada é do dono');
-  assert.match(a.texto, /^RECENTE · \d\d:\d\d ✓ spec aprovada \(você\)$/m);
+  assert.match(a.texto, /^\d\d:\d\d ✓ spec aprovada \(você\)$/m);
 
   // (6) plano: PRONTO com 0 de 2 e a barra vazia (FIEL-10 b); fase 5 "N tasks" (REQ-TRI-1)
   const pl = P.plano;
   assert.deepEqual([pl.estado.trilha.fase, pl.estado.trilha.marcas], [5, ['✓', '✓', '✓', '✓', '●', '○', '○']]);
   assert.equal(pl.estado.trilha.progresso, '2 tasks');
   assert.deepEqual(pl.estado.pronto, { integradas: 0, total: 2, previsao: null });
-  assert.match(pl.texto, /^PRONTO ▱{10} 0 de 2 integradas$/m);
+  assert.match(pl.texto, /^PLANO {3}▱{21} {2}0% {2}0\/2 tasks$/m);
   assert.equal(pl.estado.fase, null, 'FIEL-10 (b): com plano o PRONTO ocupa o lugar da FASE');
   assert.ok(!/^FASE/m.test(pl.texto), 'e o texto não mostra a FASE junto');
   assert.deepEqual(pl.estado.depende.map((d) => d.motivo), ['depende de você: nada'], 'REQ-DEP-1: com a spec aprovada, nada espera o dono');
   assert.equal(topo(pl)[1], 'depende de você: nada');
   assert.deepEqual(pl.estado.recente.map((r) => [r.texto, r.origem]), [['spec aprovada', '(você)']], 'REQ-LNG-1: a origem da aprovação');
-  assert.match(pl.texto, /^RECENTE · \d\d:\d\d ✓ spec aprovada \(você\)$/m);
+  assert.match(pl.texto, /^\d\d:\d\d ✓ spec aprovada \(você\)$/m);
 
   // (7) execução: a barra pinta só integradas (1 de 2 ⇒ 5 de 10) e sem previsão antes de 3 integradas (FIEL-10 b)
   const u = P.umaIntegrada;
   assert.equal(u.estado.trilha.progresso, '1 de 2 tasks integradas');
   assert.deepEqual(u.estado.pronto, { integradas: 1, total: 2, previsao: null });
-  assert.match(u.texto, /^PRONTO ▰{5}▱{5} 1 de 2 integradas$/m);
+  assert.match(u.texto, /^PLANO {3}▰{11}▱{10} {2}50% {2}1\/2 tasks$/m);
   assert.deepEqual([u.estado.trilha.fase, u.estado.trilha.marcas], [5, ['✓', '✓', '✓', '✓', '●', '○', '○']], 'ainda na execução (REQ-TRI-1)');
   assert.ok(!/^FASE/m.test(u.texto));
   assert.deepEqual(u.estado.depende.map((d) => d.motivo), ['depende de você: nada']);
   assert.equal(topo(u)[1], 'depende de você: nada');
-  assert.match(u.texto, /^RECENTE · \d\d:\d\d ✓ integrou T1 \(automático\)$/m);
+  assert.match(u.texto, /^\d\d:\d\d ✓ integrou T1 \(automático\)$/m);
   assert.ok(!/previsão/.test(u.texto));
   assert.deepEqual(u.estado.recente.map((r) => [r.texto, r.origem]).slice(0, 2), [['integrou T1', '(automático)'], ['aprovou T1', '(automático)']]);
   assert.ok(!/despachou|iniciou|entregou/.test(u.estado.recente.map((r) => r.texto).join(' ')), 'FIEL-10 (d): só resultados');
   const t = P.todasIntegradas;
   assert.deepEqual([t.estado.trilha.fase, t.estado.trilha.marcas], [6, ['✓', '✓', '✓', '✓', '✓', '●', '○']]);
   assert.equal(t.estado.trilha.progresso, '2 de 2 tasks integradas');
-  assert.match(t.texto, /^PRONTO ▰{10} 2 de 2 integradas$/m);
+  assert.match(t.texto, /^PLANO {3}▰{21} {2}100% {2}2\/2 tasks +todas integradas$/m);
   assert.equal(topo(t)[1], 'depende de você: nada');
-  assert.match(t.texto, /^RECENTE · \d\d:\d\d ✓ integrou T2 \(automático\)$/m);
+  assert.match(t.texto, /^\d\d:\d\d ✓ integrou T2 \(automático\)$/m);
   assert.deepEqual(t.estado.depende.map((d) => d.motivo), ['depende de você: nada']);
 
   // (8) pedido de revisão aberto: item (2) do REQ-DEP-1, sem botão; o progresso diz o número
   const pa = P.prAberto;
   assert.equal(pa.estado.trilha.progresso, 'pedido de revisão #7 aberto');
   assert.deepEqual(pa.estado.depende.map((d) => [d.motivo, d.acoes]), [['revisar e aceitar o pedido de revisão #7', []]]);
-  assert.match(topo(pa)[1], /^depende de você: revisar e aceitar o pedido de revisão #7$/);
+  assert.equal(topo(pa)[1], '◆ DEPENDE DE VOCÊ  1 item'); assert.match(topo(pa)[2], /^  revisar e aceitar o pedido de revisão #7$/);
   assert.deepEqual([pa.estado.trilha.fase, pa.estado.trilha.marcas], [6, ['✓', '✓', '✓', '✓', '✓', '●', '○']], 'REQ-TRI-1: o pedido aberto é a fase atual (●), ainda não ✓');
-  assert.match(pa.texto, /^PRONTO ▰{10} 2 de 2 integradas$/m);
-  assert.match(pa.texto, /^RECENTE · \d\d:\d\d ✓ integrou T2 \(automático\)$/m);
+  assert.match(pa.texto, /^PLANO {3}▰{21} {2}100% {2}2\/2 tasks +todas integradas$/m);
+  assert.match(pa.texto, /^\d\d:\d\d ✓ integrou T2 \(automático\)$/m);
 
   // (9) PR mergeado e a branch sozinha: não liga a entrega (FIEL-1 b), pergunta (b) de novo
   const pm = P.prMergeado;
@@ -158,8 +159,8 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.deepEqual(ac.estado.depende.map((d) => d.motivo), ['depende de você: nada']);
   assert.equal(topo(ac)[0], 'GABARITO · GM-50 Spec de fumaça da clareza', 'a entrega voltou: ID e título (REQ-TRI-1)');
   assert.equal(topo(ac)[1], 'depende de você: nada');
-  assert.match(ac.texto, /^PRONTO ▰{10} 2 de 2 integradas$/m);
-  assert.match(ac.texto, /^RECENTE · \d\d:\d\d ● pergunta respondida \(você respondeu: GM-50\)$/m);
+  assert.match(ac.texto, /^PLANO {3}▰{21} {2}100% {2}2\/2 tasks +todas integradas$/m);
+  assert.match(ac.texto, /^\d\d:\d\d ● pergunta respondida \(você respondeu: GM-50\)$/m);
 
   // (11) release no GitHub: "versão X.Y.Z publicada", tag normalizada (REQ-TRI-1, REQ-LNG-1)
   assert.match(P.publicada.estado.trilha.progresso, /· versão 2\.1\.0 publicada$/);
@@ -168,9 +169,9 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.deepEqual([pu.estado.trilha.fase, pu.estado.trilha.marcas], [7, ['✓', '✓', '✓', '✓', '✓', '✓', '●']]);
   assert.deepEqual(pu.estado.depende.map((d) => d.motivo), ['depende de você: nada']);
   assert.equal(topo(pu)[1], 'depende de você: nada');
-  assert.match(pu.texto, /^PRONTO ▰{10} 2 de 2 integradas$/m);
+  assert.match(pu.texto, /^PLANO {3}▰{21} {2}100% {2}2\/2 tasks +todas integradas$/m);
   assert.equal(pu.estado.recente[0].origem, '(você respondeu: GM-50)');
-  assert.match(pu.texto, /^RECENTE · \d\d:\d\d .+\(você respondeu: GM-50\)$/m);
+  assert.match(pu.texto, /^\d\d:\d\d .+\(você respondeu: GM-50\)$/m);
 
   // (12) o GitHub falha: nada novo gravado; o painel não diz "nada" nem "aceito" sem conferir (REQ-DIA-1, REQ-DEP-1, REQ-TRI-1, D-P13)
   assert.equal(f.medirComGhFalho.j.ok, false);
@@ -182,7 +183,7 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.equal(g.estado.trilha.motivos[5], 'não consegui conferir o pedido de revisão');
   assert.deepEqual(g.estado.depende.map((d) => d.motivo), ['depende de você: ? (não consegui ler o GitHub)']);
   assert.equal(topo(g)[1], 'depende de você: ? (não consegui ler o GitHub)', 'no render também: nunca "nada" sem conferir');
-  assert.match(g.texto, /^PRONTO ▰{10} 2 de 2 integradas$/m);
+  assert.match(g.texto, /^PLANO {3}▰{21} {2}100% {2}2\/2 tasks +todas integradas$/m);
   assert.equal(g.estado.recente[0].origem, '(você respondeu: GM-50)');
 
   // (13) fora de um repositório git (FIEL-10 e)
@@ -198,8 +199,8 @@ test('fumaca-marca-sem-entrega: a branch sozinha escreve exatamente "GABARITO ·
 // ("diário fora da tabela de transições") antes da pergunta (b); a spec (REQ-DEP-1) manda a pergunta (b) na linha 2 do topo, sem PAROU.
 test('fumaca-pr-mergeado-pergunta-no-topo: PR mergeado e a branch sozinha ⇒ a pergunta (b) é a linha 2, sem PAROU de diário inválido (REQ-DEP-1, REQ-TRI-1)', { todo: 'defeito de produto, T18 (REQ-DEP-1)' }, () => {
   const pm = P.prMergeado;
-  assert.ok(!/^PAROU/m.test(pm.texto), 'diário válido: nenhum PAROU');
-  assert.match(topo(pm)[1], /^depende de você: Esta conversa é da entrega GM-50\? · 1 GM-50 · 2 uma nova/);
+  assert.ok(!/^(■ )?PAROU/m.test(pm.texto), 'diário válido: nenhum PAROU');
+  assert.equal(topo(pm)[1], '◆ DEPENDE DE VOCÊ  1 item'); assert.match(topo(pm)[2], /^  Esta conversa é da entrega GM-50\? · 1 GM-50 · 2 uma nova/);
 });
 
 // DEFEITO DE PRODUTO (dono: T18, já avisada): com o PR mergeado e a branch sozinha, o painel liga a entrega ("GM-50 … PRONTO 2 de 2") em vez do que a spec manda.
@@ -208,11 +209,12 @@ test('fumaca-pr-mergeado-sem-resposta: PR mergeado e a branch sozinha ⇒ "entre
   const pm = P.prMergeado;
   assert.match(topo(pm)[0], /^GABARITO · entrega não identificada$/);
   assert.match(pm.texto, /última entrega conhecida: GM-50/);
-  assert.ok(!/^PRONTO/m.test(pm.texto), 'não liga a entrega: o PRONTO dela não aparece');
+  assert.ok(!/^PLANO/m.test(pm.texto), 'não liga a entrega: o PLANO dela não aparece');
 });
 
 test('fumaca-sete-fases-linguagem: em todo passo, 0 linha técnica, até 80 colunas, nenhum emoji, só glifos da lista e origem da tabela fechada (REQ-LNG-1, FIEL-10)', () => {
-  const GLIFOS = /^[\p{L}\p{N}\p{P}\p{Zs}✓●○◐✗▰▱·›─?#%]*$/u;
+  // GM-15 T29 (D-G1c): os glifos do desenho do E4 (█ ░ │ ├ └ ◆ ■ ▸ ▼) entram; nenhum vira emoji (o teste de emoji abaixo segue)
+  const GLIFOS = /^[\p{L}\p{N}\p{P}\p{Zs}✓●○◐✗▰▱·›─?#%█░│├└◆■▸▼]*$/u;
   assert.equal(Object.keys(P).length, 13, 'os 13 passos da caminhada');
   for (const [nome, p] of Object.entries(P)) {
     for (const l of p.texto.split('\n')) {
@@ -226,8 +228,8 @@ test('fumaca-sete-fases-linguagem: em todo passo, 0 linha técnica, até 80 colu
     for (const h of p.estado.historico ?? []) assert.ok(h.origem === null || origemValida(h.origem), `${nome}: origem do histórico fora da tabela: ${h.origem}`);
     assert.equal(p.texto.endsWith('\n'), true, nome);
   }
-  // "AGORA" só diz o que mediu: com a sessão do mod, o orquestrador e o contexto (FIEL-11 a)
-  assert.match(P.spec.texto, /^AGORA · \S+ · contexto 30 %$/m);
+  // "AGORA" (EQUIPE do E4) só diz o que mediu: com a sessão do mod, o orquestrador e o contexto (FIEL-11 a)
+  assert.match(P.spec.texto, /^│ {2}ctx █+░+ 30% · pouso em 50% {3}tok \S+$/m);
 });
 
 test('fumaca-fatos-medidos: o diário da entrega leva só as formas fechadas, cada uma 1× por mudança, e o PR muda de aberto para mergeado (REQ-DIA-1)', () => {
@@ -258,7 +260,7 @@ test('fumaca-pergunta-e-resposta: assunto novo sem entrega ⇒ pergunta (a) no t
   assert.match(c.estado.pergunta.texto, /^A conversa mudou de assunto\. Isto é .*ideia para a próxima ou conversa avulsa\?$/);
   assert.deepEqual(c.estado.pergunta.opcoes, ['ideia para a próxima', 'conversa avulsa']);
   assert.equal(q.id, 'S-pergunta:1', '<sessão>:<seq> da nota');
-  assert.match(topo(c)[1], /^depende de você: A conversa mudou de assunto\./, 'a pergunta é o item do topo (REQ-PRG-1)');
+  assert.equal(topo(c)[1], '◆ DEPENDE DE VOCÊ  1 item'); assert.match(topo(c)[2], /^  A conversa mudou de assunto\./, 'a pergunta é o item do topo (REQ-PRG-1)');
   // o hook grava a resposta com o rótulo da opção (nunca do argumento)
   assert.equal(q.hook.rc, 0, q.hook.err);
   assert.deepEqual(q.hook.j, { systemMessage: 'Resposta registrada: ideia para a próxima.' });
