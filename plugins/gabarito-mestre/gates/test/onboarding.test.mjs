@@ -1107,7 +1107,14 @@ describe('previa', () => {
     assert.ok(!nada.includes('política efetiva'));
     // as 3 decisões com default, e a janela padrão com o fuso recebido
     assert.match(nada, /política de entrega: sob_demanda/);
-    assert.match(nada, /autonomia em produção: espera o seu ok para tudo/);
+    assert.match(nada, /autonomia em produção: não\n/, 'a resposta 1 mantém o texto da prévia da 2.0.0');
+    const cfgA = (a, g, j, l) => ({ entrega: { politica: 'sob_demanda', autonomia: a }, guarda: { autonomia: g }, sombra: { julga_emendas: j, libera_teto: l } });
+    const pub = previa(it, perguntas(it, cfgA(true, 'orquestrador', true, true)), { fuso: FUSO });
+    assert.match(pub, /autonomia em produção: sim\n/);
+    const trab = previa(it, perguntas(it, cfgA(false, 'orquestrador', true, true)), { fuso: FUSO });
+    assert.match(trab, /autonomia em produção: trabalha sozinha, espera o seu ok para publicar\n/);
+    const mista = previa(it, perguntas(it, cfgA(false, 'nenhuma', true, false)), { fuso: FUSO });
+    assert.match(mista, /autonomia em produção: autonomia mista: preciso da sua escolha\n/);
     assert.match(nada, /perfil de modelos: padrao/);
     assert.ok(nada.includes(FUSO) && nada.includes('09:00') && nada.includes('17:00'));
   });

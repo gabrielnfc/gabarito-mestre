@@ -580,10 +580,11 @@ export const CHAVES_AUTONOMIA = {
   trabalha: { entrega: false, guarda: 'orquestrador', julga_emendas: true, libera_teto: true },
   publica: { entrega: true, guarda: 'orquestrador', julga_emendas: true, libera_teto: true },
 };
+// A prévia técnica segue byte a byte a da 2.0.0 nos dois extremos ("não"/"sim"); só a resposta nova ganha texto próprio.
 const TEXTO_AUTONOMIA = {
-  espera: 'espera o seu ok para tudo',
+  espera: 'não',
   trabalha: 'trabalha sozinha, espera o seu ok para publicar',
-  publica: 'trabalha e publica sozinha',
+  publica: 'sim',
 };
 const ROTULO_AUTONOMIA_TRABALHA = 'Trabalhe sozinha, mas espere o meu "pode" para publicar';
 const ROTULO_AUTONOMIA_PUBLICA = 'Pode publicar sozinha, dentro da regra escolhida';
