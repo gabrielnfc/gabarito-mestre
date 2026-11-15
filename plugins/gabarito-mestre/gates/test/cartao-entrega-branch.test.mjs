@@ -22,9 +22,9 @@ const CONFIG = JSON.stringify({
   versionamento: { resolvidoEm: '2026-09-20' },
   orquestracao: { modelo: { politica: 'mais-potente', alias: 'fable', resolvidoEm: '2026-09-01', validadeDias: 90 }, paralelismo: { simultaneos: 2, teto: 4 } },
 });
-const repoNaBranch = (branch) => {
+const repoNaBranch = (branch, config = CONFIG) => {
   const dir = mkdtempSync(join(tmpdir(), 'cartao-ent-'));
-  writeFileSync(join(dir, 'harness.config.json'), CONFIG);
+  writeFileSync(join(dir, 'harness.config.json'), config);
   git(dir, 'init', '-q');
   git(dir, 'symbolic-ref', 'HEAD', 'refs/heads/main');
   git(dir, 'commit', '-q', '--allow-empty', '-m', 'chore: init');
@@ -43,7 +43,7 @@ const hook = (dir, entrada) => {
   const r = spawnSync(process.execPath, [SCRIPT, '--hook', '--root', dir, '--plugin-root', plugin(), '--agora', '2026-11-15T20:00:00Z'], { cwd: dir, input: JSON.stringify(entrada), encoding: 'utf8', env, timeout: 8000 });
   let j = null;
   try { j = JSON.parse(r.stdout); } catch { /* o teste assere */ }
-  return { code: r.status, stderr: r.stderr, ctx: j?.hookSpecificOutput?.additionalContext ?? '' };
+  return { code: r.status, stderr: r.stderr, ctx: j?.hookSpecificOutput?.additionalContext ?? '', msg: j?.systemMessage ?? '' };
 };
 const ev = (sessao, tipo, dados, ts) => ({ ts, autor: 'a@b.dev', sessao, agente: 'orquestrador', tipo, dados });
 
@@ -71,8 +71,28 @@ describe('cartão infere a entrega pela regra do loop.mjs (GM-15 hotfix)', () =>
     assert.equal(pousoPendente(ler(d), true).pendente, false);
   });
 
-  test('fonte única: idPadraoDe é o mesmo que o loop usa (padrão sem origin)', () => {
-    const dir = repoNaBranch('hotfix/GM-15-alpha2');
-    assert.equal(idPadraoDe(dir), '^[A-Z]+-\\d+$');
+  test('fonte única: origin/HEAD com fluxo.idPadrao próprio (só PBI-n) decide: GM-15 deixa de ser entrega e vai a _sem-id, como no loop', () => {
+    const custom = JSON.stringify({ ...JSON.parse(CONFIG), fluxo: { ...JSON.parse(CONFIG).fluxo, idPadrao: '^PBI-\\d+$' } });
+    const dir = repoNaBranch('hotfix/GM-15-alpha2', custom);
+    git(dir, 'add', 'harness.config.json');
+    git(dir, 'commit', '-q', '-m', 'chore: config');
+    git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+    assert.equal(idPadraoDe(dir), '^PBI-\\d+$');
+    const r = hook(dir, { session_id: 'sess-b', source: 'clear' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(existsSync(dirEntrega(dir, 'GM-15')), false, 'o padrão do padrão (GM-15) não vale com idPadrao próprio');
+    assert.deepEqual(ler(dirEntrega(dir, null)).map((e) => e.tipo), ['sessao.inicio', 'guarda.heartbeat']);
+    assert.match(r.ctx, /não inferido/);
+  });
+
+  test('fallback do SessionStart (coletar lança): a entrega ainda vem da regra do loop, não de inferirPbi', () => {
+    // ledgerDir não texto ⇒ `join` lança dentro de coletar ⇒ ctx.erro ⇒ o caminho de contingência (a entrega só aparece no cabeçalho; nada é gravado).
+    const quebrada = JSON.stringify({ ...JSON.parse(CONFIG), fluxo: { ...JSON.parse(CONFIG).fluxo, ledgerDir: 123 } });
+    const dir = repoNaBranch('hotfix/GM-15-alpha2', quebrada);
+    const r = hook(dir, { session_id: 'sess-b', source: 'clear' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stderr, /cartão indisponível/);
+    assert.match(r.msg, /^GABARITO · hotfix\/GM-15-alpha2 · GM-15/);
   });
 });
