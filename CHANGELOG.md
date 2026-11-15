@@ -5,9 +5,19 @@ Usuários do plugin só recebem atualização quando `version` muda.
 
 ## [Unreleased]
 
+## [2.1.0-alpha.2] — 2026-11-15
+
+Hotfix do painel (GM-15, decisões do dono D-G1, D-G1a, D-G1b, D-G1c e D-G4).
+
 ### Corrigido
 
-- **Painel no app desktop**: ficava em "painel: lendo…" para sempre, porque o app hospeda o Claude Code via SDK (`session.start` com `isInteractive: false` e sem superfície). O painel agora passa a ler quando uma superfície se anexa (`session.attach`), quando a Pane é desenhada ou o `session.start` já enxerga uma superfície (`$.session.surfaces()`), ou quando a pessoa digita `/gabarito painel`. Em `-p` sem superfície nada muda: não lê.
+- **Painel volta à cara da 2.0.0 com a regra da 2.1**: o desenho de 5 blocos da 2.1.0-alpha.1 deixou de mostrar dados que o painel da 2.0.0 mostrava, sem decisão do dono. Voltam o PLANO com a fila de tasks e a faixa de progresso, a EQUIPE em árvore com a barra de contexto da sessão, as barras dos limites de 5 h e de 7 dias, contexto e tokens de cada agente, a narração e as cores (por agente, por estado da task, do CI e das barras). Continuam valendo as regras da 2.1: só agentes vivos de verdade, "?" quando não há medição (nunca número inventado), "depende de você" e atenção verdadeiros, histórico com a origem e o mais novo no topo, "hora de pousar" nunca cortada. Os itens de ATENÇÃO que não cabem numa linha passam para a seguinte sem sumir. Botões só nos itens de "depende de você". Teste de paridade com a 2.0.0, validação em 120/100/80/60/44 colunas e 33 mutações.
+- **Painel no app desktop**: ficava em "painel: lendo…" para sempre, porque o app hospeda o Claude Code via SDK (`session.start` com `isInteractive: false` e sem superfície). O painel agora passa a ler quando uma superfície se anexa (`session.attach`), quando a Pane é desenhada ou o `session.start` já enxerga uma superfície (`$.session.surfaces()`), ou quando a pessoa digita `/gabarito painel`. Em `-p` sem superfície nada muda: não lê. Contribuição de Allan Rolli (PR #20).
+
+### Limites
+
+- A comparação do aceite A1 com a gravação da sessão real feita no desenho de 5 blocos fica pendente: regravar no aceite da 2.1.0 final.
+- A 2.1.0 final segue em construção (GM-15): fechamento da entrega pelo merge na main, tasks adiadas, previsão exata, visão de projeto e chat em linguagem natural.
 
 ## [2.1.0-alpha.1] — 2026-11-14
 
