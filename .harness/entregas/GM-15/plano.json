@@ -20,7 +20,8 @@
       "titulo": "Spikes S4 S5 S8 (runtime)",
       "deps": [],
       "arquivos": [
-        ".superpowers/sdd/2026-11-15-2-1-1/t0b-relatorio.md"
+        ".superpowers/sdd/2026-11-15-2-1-1/t0b-relatorio.md",
+        ".superpowers/sdd/2026-11-15-2-1-1/t0b-spike-r2/"
       ],
       "reqs": [
         "REQ-POU-3",
@@ -33,7 +34,8 @@
       "titulo": "Spike S6 (bench no CI)",
       "deps": [],
       "arquivos": [
-        ".superpowers/sdd/2026-11-15-2-1-1/t0c-relatorio.md"
+        ".superpowers/sdd/2026-11-15-2-1-1/t0c-relatorio.md",
+        ".superpowers/sdd/2026-11-15-2-1-1/t0c-dados/"
       ],
       "reqs": [
         "REQ-CI-1"
