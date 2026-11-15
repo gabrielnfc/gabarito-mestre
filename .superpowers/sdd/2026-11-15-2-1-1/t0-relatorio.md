@@ -15,10 +15,28 @@ Critério testado: `gh pr list --base main --state merged --search "<ID> in:titl
 - PRs de entrega achados pelo critério (a): **1 de 2** (só o #22, porque o título leva "GM-14"). O #16 se chama "release: gabarito-mestre 2.0.0", head `next`, sem o ID no título. `--head` com o ID: 0 de 2 (as duas entregas subiram por `next` ou por `chore/GM-14-virada-2-1`, nunca por branch com o ID puro).
 - Sem `in:title` o #16 aparece (o corpo cita `GM-13`), mas junto com ruído: GM-13 devolve 3 PR (1 certo), GM-14 devolve 2 (1 certo). Precisão 2 de 5.
 - Tempo do `gh`: 564 ms (GM-13) e 634 ms (GM-14) com `in:title`; 688 ms e 630 ms sem.
-- Todos os PRs mergeados na `main` (limite 100): 11 (#1-#7, #16, #18, #21, #22); só #22 leva ID da entrega no título.
+- Amostra: 22 PRs no repositório (`gh pr list --state all`), 11 mergeados na `main` (#1-#7, #16, #18, #21, #22). **8 de 11 levam ID de entrega no título** (#1-#7 = GM-1..GM-7, #22 = GM-14); #16, #18 e #21 não levam.
 
-**VEREDITO S1: REFUTADA.** O critério acha 1/2 (50 %).
-Consequência no plano: o PR da virada passa a levar o ID da entrega no título (como o #22) e o limite fica declarado: PR de virada sem ID no título (caso #16) não é achado pelo critério (a); só o ID no título conta. A T3/T4 não podem depender de `--head` com o ID.
+### S1b: precisão (review r1, MAJOR-1)
+
+A busca do GitHub é por token, não por cadeia exata. Medi, para cada ID GM-1..GM-15, `gh pr list --base main --state merged --search "<ID> in:title"` e, sobre o resultado, 3 filtros de cliente. Verdade: o PR que entregou o ID na `main` (GM-1..7 = #1..#7, GM-13 = #16, GM-14 = #22; GM-8..12 e GM-15 não têm PR na `main`: 0 esperado). Script `.claude-tmp/gm15-t0/s1.mjs`.
+
+| Critério | Acertos | Falsos positivos | Perdidos |
+|---|---|---|---|
+| só a busca `<ID> in:title` | 8 | **7** | 1 (#16) |
+| + regex com fronteira `(^\|[^A-Za-z0-9-])<ID>([^0-9A-Za-z-]\|$)` | 8 | **0** | 1 (#16) |
+| + `\b<ID>\b` | 8 | 0 | 1 (#16) |
+| + prefixo `tipo(<ID>)` ou `<ID>:` | 8 | 0 | 1 (#16) |
+
+- A busca sozinha erra: `GM-1` devolve 7 PRs (#1, #2, #4, #5, #6, #7, #22) com 1 certo (6 falsos); `GM-2` devolve #2 e #22 (1 falso). Sem o filtro de cliente a entrega GM-1 seria dada como encerrada pelo #22.
+- Casos sintéticos do regex de fronteira para `GM-1`: `feat(GM-1): x`, `(GM-1)` e `GM-1` casam; `GM-15: x`, `enabler(GM-14): y`, `XGM-1 z` e `GM-1-x` **não** casam (`\b` casa `GM-1-x`; a fronteira com `-` não).
+- Os 7 falsos da busca no escopo medido (GM-1..GM-15) saem todos no filtro; o limite do #16 (sem ID no título) segue.
+
+**Critério proposto (medido: 8 acertos, 0 falsos, 1 perdido):** o PR conta como entrega do ID só se o título casa o ID com fronteira exata, `(^|[^A-Za-z0-9-])<ID>([^0-9A-Za-z-]|$)`, aplicado no cliente sobre o que a busca devolve.
+**Conclusão para T3/T4:** casar ID exato com fronteira, nunca confiar na busca por token; testes `titulo-com-id-prefixo-nao-casa` (`GM-15:` não conta para `GM-1`), `titulo-sem-id-nao-conta` (caso #16, limite declarado) e `titulo-com-id-exato-conta`.
+
+**VEREDITO S1: REFUTADA** para a busca sozinha (recall 1/2 em GM-13/GM-14, precisão 8/15 = 53 %); o critério com fronteira exata tem precisão 8/8 no escopo medido.
+Consequência no plano: o PR da virada leva o ID da entrega no título (como o #22) e o limite fica declarado: PR de virada sem ID no título (caso #16) não é achado pelo critério (a). T3/T4 não dependem de `--head` com o ID.
 
 ## S2: de onde veio o `events.sessao-1.jsonl`?
 
@@ -39,7 +57,7 @@ Reprodução em `mkdtemp`, com a cópia do diário real da GM-14 (20 arquivos `e
 - Mesma resposta por sessão `zzzz-sessao`: abertas **12 → 11** (fechou).
 - Ideia `loop:1209`, resposta `visto`: sessão `01db6bdc-aaaa` ⇒ `{id:'loop:1209', n:1}` antes e depois; sessão `zzzz-sessao` ⇒ `null` depois.
 
-**Causa:** `diario.ts:233` (`ler`) concatena os arquivos por `nomes.sort()` (nome do arquivo), não por ordem causal. `depende.ts:85` (`pendenciaAberta`: `j > i`) e `depende.ts` `ideiasAbertas` (`p < j`) comparam o **índice** no array. Uma resposta gravada em `events.<sessao>.jsonl` cujo nome ordena antes de `events.loop.jsonl` vem antes da nota no array e nunca é "posterior". Toda sessão de conversa tem id UUID hexadecimal (`0-9a-f` < `l`), então a resposta do dono pelo botão, que grava na sessão dele, não fecha nota alguma do `loop` (que são as 12 pendências). Só sessão com nome depois de `loop` (`m`-`z`) fecha.
+**Causa:** `diario.ts:233` (`ler`) concatena os arquivos por `nomes.sort()` (nome do arquivo), não por ordem causal. `depende.ts:85` (`pendenciaAberta`: `j > i`) e `depende.ts` `ideiasAbertas` (`p < j`) comparam o **índice** no array. Uma resposta gravada em `events.<sessao>.jsonl` cujo nome ordena antes de `events.loop.jsonl` vem antes da nota no array e nunca é "posterior". Toda sessão de conversa tem id UUID hexadecimal (`0-9a-f` < `l`), então a resposta do dono pelo botão, que grava na sessão dele, não fecha nota alguma do `loop` (que são as 12 pendências). Só sessão com nome igual a `loop` (ou `loop*`) ou depois dele (`m`-`z`) fecha.
 
 **Número:** pendências listadas antes/depois da resposta: 12/12 (sessão UUID) e 12/11 (nome > `loop`). Ideia: 1/1 e 1/0.
 Consequência (T8): "posterior" passa a ser por `ts` (com desempate por ordem do arquivo, para `ts` iguais), não por índice; teste com sessão antes e depois de `loop` na ordem de nome. A mesma regra vale em `perguntas.ts` (`pendenciaAberta` é importada) e no `responder.mjs` (`avaliar` usa `perguntasAbertas` sobre `lerEstrito`, que também ordena por nome).
@@ -48,7 +66,7 @@ Consequência (T8): "posterior" passa a ser por `ts` (com desempate por ordem do
 
 ## S7: congelamento atual (`loop.ts:218-227`) × regra EME-3 (A) no plano e nas emendas da GM-14
 
-Método: 71 `emenda.proposta` do diário real (sessão `emendas`), plano final `plano.json` (58 tasks). Para cada proposta, no `ts` dela: tasks integradas = `task.integrada` menos `task.reaberta` até aquele instante. Regra atual: tasks com o `req` exato + dependentes transitivas de qualquer estado. Regra EME-3 (A): tasks **não integradas** com o `req` ou com `arquivos` em comum com a proposta (`arquivos` do `--arquivos`), mais dependentes não integradas delas. Saída completa por proposta em `.claude-tmp/gm15-t0/s7.out`.
+Método: 71 `emenda.proposta` do diário real (sessão `emendas`), plano final `plano.json` (58 tasks). Para cada proposta, no `ts` dela: tasks integradas = `task.integrada` menos `task.reaberta` até aquele instante. Regra atual: tasks com o `req` exato + dependentes transitivas de qualquer estado. Regra EME-3 (A): tasks **não integradas** com o `req` ou com `arquivos` em comum com a proposta (`arquivos` do `--arquivos`), mais dependentes não integradas delas. Script `.claude-tmp/gm15-t0/s7.mjs` (reescrito e rodado de novo: saída idêntica linha a linha a `s7.out`, 71 linhas); saída completa por proposta em `.claude-tmp/gm15-t0/s7.out`.
 
 | Regra | Soma de tasks congeladas (71 propostas) | Média | Mediana | Máximo |
 |---|---|---|---|---|
