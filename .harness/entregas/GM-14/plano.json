@@ -1247,7 +1247,8 @@
       "arquivos": [
         "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/a1.exp",
         "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/rodar-a1.mjs",
-        "plugins/gabarito-mestre/gates/test/conversa-pontos.test.mjs"
+        "plugins/gabarito-mestre/gates/test/conversa-pontos.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fixtures/permissao-tty-real.json"
       ],
       "reqs": [
         "REQ-GLB-1"
