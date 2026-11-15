@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { formaInvalida } from './formas.js';
 import { cmp, diarioEmOrdem, duracoes, ehObjeto, mediana, projetarDecisoes } from './diario-puro.js';
@@ -55,6 +55,12 @@ const SESSAO_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const PBI_RE = /^[A-Z]+-\d+$/;
 const FIM_LEITURA = 65536;
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
+const NONBLOCK = constants.O_NONBLOCK ?? 0;
+// Extrato versionado (GM-14 T33, REQ-APR-5): arquivo inteiro e linha têm teto ANTES de qualquer regex; acima ⇒ corrompido (nunca regravado).
+const EXTRATO_MAX = 8 * 1024 * 1024;
+const EXTRATO_LINHA_MAX = LINHA_MAX + 512;
+/** Prefixo dos avisos do extrato: não são "entrega ilegível" (o instantâneo conta os dois à parte). */
+export const AVISO_EXTRATO = 'aprendizados: extrato ';
 
 /** Nome do padrão que casa com o texto, ou `null` se está limpo. */
 export function recusaCanario(linha        )                {
@@ -81,6 +87,11 @@ function varrer(valor         )                {
     }
   }
   return null;
+}
+
+/** Padrão que o `append` recusa para este evento: 'tamanho' (linha acima de LINHA_MAX), senão o da varredura, senão `null`. Fonte única da regra (a medição do painel importa esta). */
+export function padraoDeRecusa(ev         )                {
+  return JSON.stringify(ev).length > LINHA_MAX ? 'tamanho' : varrer(ev);
 }
 
 const sha = (s        )         => createHash('sha256').update(s).digest('hex');
@@ -171,7 +182,7 @@ export function append(
     }
 
     // canário ANTES do lock; linha grande é recusada sem rodar regex.
-    const padrao = JSON.stringify(ev).length > LINHA_MAX ? 'tamanho' : varrer(ev);
+    const padrao = padraoDeRecusa(ev);
 
     mkdirSync(dir, { recursive: true });
     const arquivo = join(dir, `events.${sessao}.jsonl`);
@@ -278,13 +289,8 @@ export function lerEstrito(dir        )                 {
   return { ok: true, eventos: out };
 }
 
-/**
- * Árvore de aprendizados (GM-13 T2): `<dirEntregas>/<entrega>/events.*.jsonl` por `lerEstrito`. Entrega ilegível fica fora e
- * gera o aviso `aprendizados: <entrega> ilegível (<motivo>)`; pasta ausente ⇒ mapa vazio sem aviso (ausente ≠ corrompido);
- * pasta que existe mas não lista ⇒ aviso. Só lê arquivo REGULAR (lstat): FIFO ou symlink no lugar de um `events.*.jsonl` vira
- * aviso e a entrega fica fora, nunca trava o leitor nem segue link (fonte única: doctor, loop e cartão chamam esta). Nunca lança.
- */
-export function lerAprendizados(dirEntregas        )                                                          {
+/** Árvore `<dirEntregas>/<entrega>/events.*.jsonl` (GM-13 T2), sem o extrato: o corpo do leitor da 2.0.0, intacto. */
+function lerArvore(dirEntregas        )                                                          {
   const porEntrega = new Map                  ();
   const avisos           = [];
   let nomes          ;
@@ -309,6 +315,181 @@ export function lerAprendizados(dirEntregas        )                            
     }
   }
   return { porEntrega, avisos };
+}
+
+                                                                       
+              
+                         
+                                            
+                                                                                      
+
+const chaveDe = (entrega        , sessao        , seq        )         => JSON.stringify([entrega, sessao, seq]);
+const avisoLinha = (i        , motivo        )         => `${AVISO_EXTRATO}linha ${i} fora (${motivo})`;
+
+/**
+ * Motivo de recusa de uma linha JSON já lida, ou `null`. Só a forma do EVENTO (chave, tipo, ts, `dados` objeto): a forma de `dados` é julgada
+ * por quem lê, como a do diário (`aprendizadosVigentes` com a forma vigente; o doctor tolera papel removido) — uma regra só, em `aprendizado.ts`.
+ * Assim o evento de versão anterior entra igual e o D de papel removido chega ao aviso do doctor também no clone.
+ */
+function recusaDaLinha(o         )                {
+  if (!ehObjeto(o) || Object.keys(o).length !== 2 || !Object.hasOwn(o, 'entrega') || !Object.hasOwn(o, 'evento')) return 'esperado {entrega, evento}';
+  if (typeof o.entrega !== 'string' || !PBI_RE.test(o.entrega)) return 'entrega fora da forma';
+  const e = o.evento;
+  if (!ehObjeto(e)) return 'evento não é objeto';
+  if (e.tipo !== 'aprendizado') return 'tipo não é aprendizado';
+  if (typeof e.sessao !== 'string' || !SESSAO_RE.test(e.sessao) || !Number.isSafeInteger(e.seq) || (e.seq          ) < 1 || typeof e.ts !== 'string') return 'sessao, seq ou ts fora da forma';
+  return ehObjeto(e.dados) ? null : 'dados não é objeto';
+}
+
+/**
+ * Extrato `.harness/aprendizados.jsonl`. Ausente (ENOENT) ≠ corrompido. Corrompido: não é arquivo regular (symlink, FIFO, pasta: não segue link,
+ * nunca trava), maior que o teto, linha que não é JSON, linha acima do teto ou fim sem `\n`. Linha JSON recusada (forma do evento, tipo, entrega, chave
+ * repetida) fica fora com aviso e é PRESERVADA byte a byte na regravação (provisório ii); linha que o canário acusa fica fora e NÃO é preservada.
+ */
+function lerExtrato(arquivo        )          {
+  const corrompido = (motivo        )          => ({ estado: 'corrompido', motivo });
+  try {
+    if (!lstatSync(arquivo).isFile()) return corrompido('não é arquivo regular');
+  } catch (e) {
+    const code = (e                                )?.code;
+    return code === 'ENOENT' || code === 'ENOTDIR' ? { estado: 'ausente' } : corrompido(`não lê: ${code ?? 'erro'}`);
+  }
+  let bruto        ;
+  let fd = -1;
+  try {
+    fd = openSync(arquivo, constants.O_RDONLY | NOFOLLOW | NONBLOCK);
+    const st = fstatSync(fd);
+    if (!st.isFile()) return corrompido('não é arquivo regular');
+    if (st.size > EXTRATO_MAX) return corrompido(`maior que ${EXTRATO_MAX} bytes`);
+    bruto = readFileSync(fd, 'utf8');
+  } catch (e) {
+    const code = (e                                )?.code;
+    return corrompido(code === 'ELOOP' ? 'não é arquivo regular' : `não lê: ${code ?? 'erro'}`);
+  } finally {
+    if (fd >= 0) { try { closeSync(fd); } catch { /* nada */ } }
+  }
+  if (bruto === '') return { estado: 'ok', linhas: [], avisos: [], preservadas: [] };
+  if (!bruto.endsWith('\n')) return corrompido('última linha sem quebra (gravação interrompida)');
+  const linhas                 = [];
+  const avisos           = [];
+  const preservadas           = [];
+  const vistas = new Set        ();
+  const crus = bruto.slice(0, -1).split('\n');
+  for (let i = 0; i < crus.length; i++) {
+    const l = crus[i];
+    if (l.length > EXTRATO_LINHA_MAX) return corrompido(`linha ${i + 1} acima de ${EXTRATO_LINHA_MAX} caracteres`);
+    let o         ;
+    try { o = JSON.parse(l); } catch { return corrompido(`linha ${i + 1} não é JSON`); }
+    const padrao = recusaCanario(l);
+    if (padrao !== null) { avisos.push(avisoLinha(i + 1, `canário ${padrao}`)); continue; }
+    const motivo = recusaDaLinha(o);
+    if (motivo !== null) { avisos.push(avisoLinha(i + 1, motivo)); preservadas.push(l); continue; }
+    const { entrega, evento } = o                                       ;
+    const chave = chaveDe(entrega, evento.sessao, evento.seq);
+    if (vistas.has(chave)) { avisos.push(avisoLinha(i + 1, 'chave repetida')); preservadas.push(l); continue; }
+    vistas.add(chave);
+    linhas.push({ entrega, evento, chave });
+  }
+  return { estado: 'ok', linhas, avisos, preservadas };
+}
+
+const porSessaoSeq = (a        , b        )         => cmp(String(a.sessao), String(b.sessao)) || Number(a.seq) - Number(b.seq);
+
+/**
+ * Junção árvore + extrato pela chave `(entrega, sessao, seq)` — nunca por entrega. Mesma chave nos dois: vale o diário; conteúdo diferente ⇒
+ * aviso "extrato diverge". Só no extrato ⇒ entra (clone novo; inclusive em entrega ilegível na árvore, cujo aviso continua: provisório iii).
+ * Entrega que ganhou evento do extrato volta a `(sessao, seq)`. `arquivo` nulo ⇒ só a árvore.
+ */
+function juntar(dirEntregas        , arquivo               )                                                                            {
+  const { porEntrega, avisos } = lerArvore(dirEntregas);
+  const extrato          = arquivo === null ? { estado: 'ausente' } : lerExtrato(arquivo);
+  if (extrato.estado === 'corrompido') avisos.push(`${AVISO_EXTRATO}corrompido (${extrato.motivo}); lido só o diário`);
+  if (extrato.estado !== 'ok') return { porEntrega, avisos, extrato };
+  const indice = new Map                ();
+  for (const [entrega, eventos] of porEntrega) for (const e of eventos) if (ehObjeto(e)) indice.set(chaveDe(entrega, String(e.sessao), Number(e.seq)), e);
+  const tocadas = new Set        ();
+  for (const { entrega, evento, chave } of extrato.linhas) {
+    const doDiario = indice.get(chave);
+    if (doDiario !== undefined) {
+      if (JSON.stringify(doDiario) !== JSON.stringify(evento)) avisos.push(`${AVISO_EXTRATO}diverge do diário em ${entrega}/${evento.sessao}:${evento.seq}; vale o diário`);
+      continue;
+    }
+    const lista = porEntrega.get(entrega);
+    if (lista === undefined) porEntrega.set(entrega, [evento]);
+    else lista.push(evento);
+    tocadas.add(entrega);
+  }
+  for (const entrega of tocadas) (porEntrega.get(entrega)            ).sort(porSessaoSeq);
+  avisos.push(...extrato.avisos);
+  const ordenado = new Map([...porEntrega.entries()].sort(([a], [b]) => cmp(a, b)));
+  return { porEntrega: ordenado, avisos, extrato };
+}
+
+/**
+ * Leitor único dos aprendizados (GM-13 T2; GM-14 T33, REQ-APR-5 b): a árvore `<dirEntregas>/<entrega>/events.*.jsonl` por `lerEstrito` JUNTA
+ * o extrato versionado (`opcoes.extrato`, padrão `<dirEntregas>/../aprendizados.jsonl`). Árvore: entrega ilegível fica fora com o aviso
+ * `aprendizados: <entrega> ilegível (<motivo>)`; pasta ausente ⇒ mapa vazio sem aviso (ausente ≠ corrompido); pasta que existe mas não lista ⇒
+ * aviso; só lê arquivo REGULAR (lstat). Extrato ausente ⇒ igual à 2.0.0; corrompido ⇒ aviso e só a árvore; avisos do extrato começam com
+ * `AVISO_EXTRATO`. Fonte única: doctor, loop e cartão chamam esta. Nunca lança.
+ */
+export function lerAprendizados(dirEntregas        , opcoes                       )                                                          {
+  try {
+    const arquivo = typeof opcoes?.extrato === 'string' ? opcoes.extrato : join(dirEntregas, '..', 'aprendizados.jsonl');
+    const { porEntrega, avisos } = juntar(dirEntregas, arquivo);
+    return { porEntrega, avisos };
+  } catch (e) {
+    return { porEntrega: new Map(), avisos: [`aprendizados: leitura falhou (${e instanceof Error ? e.message : 'erro desconhecido'})`] };
+  }
+}
+
+                                                                                                                                        
+
+/**
+ * Regrava `<raiz>/.harness/aprendizados.jsonl` (REQ-APR-5 a) a partir da JUNÇÃO árvore + extrato — nunca só da árvore: clone novo + aprendizado
+ * novo não apaga o que só existia no extrato. Uma linha `{entrega, evento}` por evento `aprendizado` bem formado (a forma de `dados` é julgada
+ * na leitura, pela versão que lê: o extrato não filtra pela forma de quem grava), evento byte a byte igual ao lido,
+ * ordenada por `(entrega, sessao, seq)`; as linhas recusadas na leitura (exceto canário) vêm depois, byte a byte, na ordem em que estavam.
+ * Canário de novo em cada linha antes de escrever: acusa ⇒ fora com aviso (o evento segue no diário). Extrato corrompido ⇒ NÃO regrava
+ * (provisório i). Escrita por tmp no mesmo diretório + rename; falha ⇒ extrato antigo intacto. Não grava evento. Nunca lança.
+ * `avisos` leva TODO aviso da leitura (entrega ilegível na árvore inclusive) e todo evento que ficou fora (`fora`): nada sai calado.
+ */
+export function exportarAprendizados(raiz        )             {
+  const dirHarness = join(raiz, '.harness');
+  const arquivo = join(dirHarness, 'aprendizados.jsonl');
+  let tmp                = null;
+  try {
+    const { porEntrega, avisos: lidos, extrato } = juntar(join(dirHarness, 'entregas'), arquivo);
+    const avisos = [...lidos]; // todo aviso da leitura (entrega ilegível inclusive): exportar o que leu nunca vira "ok, avisos: []" calado
+    if (extrato.estado === 'corrompido') return { ok: false, motivo: 'extrato corrompido, não regravado', avisos };
+    const saida                                                  = [];
+    let fora = 0;
+    for (const [entrega, eventos] of porEntrega) {
+      for (const e of eventos) {
+        if (!ehObjeto(e) || e.tipo !== 'aprendizado') continue;
+        const ref = `${entrega}/${String(e.sessao)}:${String(e.seq)}`;
+        const recusa = recusaDaLinha({ entrega, evento: e });
+        if (recusa !== null) { fora += 1; avisos.push(`${AVISO_EXTRATO}sem ${ref} (${recusa}: não versionada)`); continue; }
+        const linha = JSON.stringify({ entrega, evento: e });
+        const padrao = linha.length > EXTRATO_LINHA_MAX ? 'tamanho' : recusaCanario(linha);
+        if (padrao !== null) { fora += 1; avisos.push(`${AVISO_EXTRATO}sem ${ref} (canário ${padrao}); o evento segue no diário`); continue; }
+        saida.push({ entrega, e, linha });
+      }
+    }
+    saida.sort((a, b) => cmp(a.entrega, b.entrega) || porSessaoSeq(a.e, b.e));
+    const preservadas = extrato.estado === 'ok' ? extrato.preservadas : [];
+    const todas = [...saida.map((s) => s.linha), ...preservadas];
+    if (todas.length === 0 && extrato.estado === 'ausente') return { ok: true, linhas: 0, fora, avisos };
+    const texto = todas.map((l) => `${l}\n`).join('');
+    tmp = join(dirHarness, `.aprendizados.jsonl.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
+    const fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NOFOLLOW, 0o644);
+    try { writeSync(fd, texto); } finally { closeSync(fd); }
+    renameSync(tmp, arquivo);
+    tmp = null;
+    return { ok: true, linhas: saida.length, fora, avisos };
+  } catch (e) {
+    if (tmp !== null) { try { unlinkSync(tmp); } catch { /* nunca chegou a existir */ } }
+    return { ok: false, motivo: `extrato não regravado (${(e                                )?.code ?? (e instanceof Error ? e.message : 'erro')})`, avisos: [] };
+  }
 }
 
 /** Corta em `n` unidades e não deixa meio par substituto no fim. */
@@ -351,8 +532,9 @@ function blocoDecisoes(entrada          )                                       
 }
 
 const CONTROLE_APR = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
-const rodapeAprendizados = (fora        )         => `... ${fora} aprendizado(s) fora`;
+const rodapeAprendizados = (fora        )         => `... ${fora} aprendizado(s) fora (os mais antigos; lista inteira em loop.mjs aprendizados)`;
 const avisoArvore = (k        )         => `Aprendizados: ${k} entrega(s) ilegível(is); veja loop.mjs aprendizados`;
+const avisoExtrato = (k        )         => `Aprendizados: extrato com ${k} aviso(s); veja loop.mjs aprendizados`;
 
 /** D com `instantaneo`, de forma própria: `projetar` não confia no chamador (M nunca entra, item torto não lança). */
 function aprendizadosDoInstantaneo(lista         )                       {
@@ -368,7 +550,10 @@ function aprendizadosDoInstantaneo(lista         )                       {
 function blocoAprendizados(lista                      , avisos          )           {
   if (lista.length === 0 && avisos.length === 0) return [];
   const cabecalho = `Aprendizados (${lista.length}):`;
-  const aviso = avisos.length > 0 ? [avisoArvore(avisos.length)] : [];
+  // aviso do extrato (diverge, corrompido, linha fora) não é entrega ilegível: cada um tem a sua linha e a sua conta
+  const doExtrato = avisos.filter((a) => typeof a === 'string' && a.startsWith(AVISO_EXTRATO)).length;
+  const ilegiveis = avisos.length - doExtrato;
+  const aviso = [...(ilegiveis > 0 ? [avisoArvore(ilegiveis)] : []), ...(doExtrato > 0 ? [avisoExtrato(doExtrato)] : [])];
   let usado = cabecalho.length + 1 + aviso.reduce((n, l) => n + l.length + 1, 0) + rodapeAprendizados(lista.length).length + 1;
   const linhas           = [];
   for (const a of lista) {
@@ -379,6 +564,14 @@ function blocoAprendizados(lista                      , avisos          )       
   }
   const fora = lista.length - linhas.length;
   return [cabecalho, ...aviso, ...linhas, ...(fora > 0 ? [rodapeAprendizados(fora)] : [])];
+}
+
+/** Quantos D de `instantaneo` cabem no bloco (N) de quantos há (M): a linha "aprendizados: N no instantâneo de M" do doctor (REQ-APR-5 c). */
+export function aprendizadosNoInstantaneo(lista         , avisos           = [])                           {
+  const doInstantaneo = aprendizadosDoInstantaneo(lista);
+  const bloco = blocoAprendizados(doInstantaneo, Array.isArray(avisos) ? avisos : []);
+  const n = bloco.filter((l) => /^[EA] /.test(l)).length;
+  return { n, m: doInstantaneo.length };
 }
 
 export function projetar(eventos          , opcoes                                                                         )                                                                                                                                               {

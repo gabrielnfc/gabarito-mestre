@@ -225,17 +225,30 @@ test('stdin-ruim: ausente, não JSON ou não objeto ⇒ block (fail-closed), nad
   assert.deepEqual(amb.bytes(), antes);
 });
 
-test('CLI: liberar e liberarTeto não são comandos do loop.mjs (uso, rc 2) e nada é gravado', () => {
+test('CLI: nenhum argumento do loop.mjs produz a liberação do dono (uso, rc 2) e nada é gravado', () => {
+  // GM-14 T36 (FIEL-15): `liberar` existe, mas só `--origem sombra --hash <h>`; sem elas ou com `--origem dono` é uso, recusado pela tabela de argumentos.
   const amb = repo({ semear: ATE_O_TETO('T1') });
   const antes = amb.bytes();
-  for (const args of [['liberar', 'T1'], ['liberarTeto', 'T1'], ['liberar', 'T1', '--sessao', 'dono'], ['reabrir', 'T1', '--origem', 'dono']]) {
+  const h = 'e'.repeat(64);
+  const casos = [
+    [['liberar', 'T1'], /liberar exige --origem/],
+    [['liberar', 'T1', '--sessao', 'dono'], /liberar exige --origem/],
+    [['liberar', 'T1', '--hash', h], /liberar exige --origem/],
+    [['liberar', 'T1', '--origem', 'dono', '--hash', h], /só aceita --origem sombra/],
+    [['liberar', 'T1', '--origem', 'dono', '--hash', h, '--sessao', 'dono'], /só aceita --origem sombra/],
+    [['liberar', 'T1', '--dono'], /argumento desconhecido para liberar: --dono/],
+    [['liberarTeto', 'T1'], /desconhecido ou ausente/],
+    [['reabrir', 'T1', '--origem', 'dono'], /argumento desconhecido para reabrir: --origem/],
+  ];
+  for (const [args, re] of casos) {
     const r = loop(amb.dir, ...args);
     assert.equal(r.rc, 2, args.join(' '));
-    assert.equal(r.j?.erro, 'uso');
-    assert.match(r.j.mensagem, /desconhecido/);
+    assert.equal(r.j?.ok, false, args.join(' '));
+    assert.equal(r.j?.erro, 'uso', args.join(' '));
+    assert.match(r.j.mensagem, re, args.join(' '));
   }
-  assert.match(loop(amb.dir, 'liberar', 'T1').j.mensagem, /desconhecido ou ausente/, 'recusado pela tabela de argumentos, não por um default alcançável');
-  assert.deepEqual(amb.bytes(), antes);
+  assert.deepEqual(amb.bytes(), antes, 'diário relido byte a byte: nada gravado');
+  assert.equal(amb.eventos().filter((e) => e.tipo === 'task.reaberta').length, 0, 'nenhuma task.reaberta');
 });
 
 test('reabrir-no-teto-continua-no-teto: o modelo não sai do teto pelo CLI', () => {
@@ -555,7 +568,12 @@ const casa = (matcher, nome) => {
 test('hooks.json: UserPromptExpansion roda liberar-teto.mjs com onFailure block, e só para o próprio comando (matcher real)', () => {
   // GM-11 T1: o evento ganhou o grupo da emenda (matcher próprio); GM-12 T1: e o do aprovar. O do liberar continua sozinho no seu matcher.
   const todos = JSON.parse(lerPlugin('hooks', 'hooks.json')).hooks.UserPromptExpansion;
-  assert.ok(Array.isArray(todos) && todos.length === 3);
+  assert.ok(Array.isArray(todos));
+  // conjunto nominal (sem fixar o total do produto): os 4 comandos do dono têm o seu grupo, cada um com o seu matcher
+  const matchers = todos.map((g) => g.matcher);
+  for (const nome of ['liberar', 'emenda', 'aprovar', 'responder']) {
+    assert.ok(matchers.includes(`^gabarito-mestre:${nome}$`), `falta o grupo de ${nome}`);
+  }
   const h = todos.filter((g) => /liberar-teto\.mjs/.test(JSON.stringify(g)));
   assert.equal(h.length, 1);
   assert.equal(todos.filter((g) => casa(g.matcher, COMANDO)).length, 1, 'só um grupo casa o liberar');

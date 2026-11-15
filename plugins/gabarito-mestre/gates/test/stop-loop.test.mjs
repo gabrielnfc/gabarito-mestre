@@ -630,6 +630,8 @@ function copiaSemDist(removerTudo = true, manter = []) {
   mkdirSync(join(dest, 'scripts'), { recursive: true });
   cpSync(SCRIPT, join(dest, 'scripts', 'stop-loop.mjs'));
   cpSync(join(GATES, 'lib'), join(dest, 'lib'), { recursive: true });
+  // o Stop importa `temOnboarding` de cartao-sessao.mjs (fonte única do onboarding; emenda 29), que importa capacidade.mjs
+  for (const n of ['cartao-sessao.mjs', 'capacidade.mjs']) cpSync(join(GATES, 'scripts', n), join(dest, 'scripts', n));
   if (!removerTudo || manter.length) {
     mkdirSync(join(dest, 'dist'), { recursive: true });
     for (const n of manter) cpSync(join(GATES, 'dist', n), join(dest, 'dist', n));
@@ -1088,6 +1090,53 @@ test('aprender-apos-loop-parar-ainda-block: loop.parar do mod abre pendência e 
   avisa(stop(raiz), /parar mod:1/);
 });
 
+// GM-14 T27 (FIEL-2 b): `proximaAcao` já não trava despacho por `dono`; o Stop segue cobrando (1 block por gatilho). Mutação M-F2c.
+const HASH_DONO = 'b'.repeat(64);
+const MENSAGEM = (sessao, seq) => ev(sessao, seq, 'dono.mensagem', { sha256: HASH_DONO, chars: 9 });
+const NADA = (sessao, seq, g) => ev(sessao, seq, 'aprendizado.nada', { gatilho: g, motivo: 'só conversa' });
+
+test('pendencia-dono-bloqueia-stop-uma-vez: com a ação sendo despachar, a `dono` aberta bloqueia o 1º Stop, avisa o 2º e o 3º', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'dono', [MENSAGEM('dono', 1)]);
+  const r1 = stop(raiz);
+  bloqueia(r1, /^Loop da entrega GM-10 tem aprendizado pendente: dono dono:1\. Feche com /);
+  assert.match(r1.json.reason, COMANDO);
+  assert.deepEqual(estadoAprender(raiz), { entrega: 'GM-10', avisados: ['dono:1'] });
+  avisa(stop(raiz), /aprendizado pendente: dono dono:1/);
+  avisa(stop(raiz), /aprendizado pendente: dono dono:1/);
+  assert.deepEqual(estadoAprender(raiz), { entrega: 'GM-10', avisados: ['dono:1'] });
+});
+
+test('segunda-mensagem-novo-block: fechada a 1ª, a 2ª mensagem do dono é gatilho novo e bloqueia de novo; sem fechar, também', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'dono', [MENSAGEM('dono', 1)]);
+  bloqueia(stop(raiz), /dono dono:1/);
+  avisa(stop(raiz), /dono dono:1/);
+  // a 1ª fecha; sem pendência o Stop volta ao fluxo de sempre (despachar), sem falar de aprendizado
+  diario(raiz, 'loop', [NADA('loop', 1, { sessao: 'dono', seq: 1 })]);
+  const livre = stop(raiz);
+  assert.ok(!/aprendizado pendente/.test(`${livre.json?.reason ?? ''}${livre.json?.systemMessage ?? ''}`), 'fechada, o Stop não cobra aprendizado');
+  // a 2ª mensagem: novo gatilho, novo block
+  diario(raiz, 'dono', [MENSAGEM('dono', 2)]);
+  bloqueia(stop(raiz), /dono dono:2/);
+  assert.deepEqual(estadoAprender(raiz), { entrega: 'GM-10', avisados: ['dono:2'] });
+  avisa(stop(raiz), /dono dono:2/);
+  // sem fechar a 2ª, uma 3ª ancora na mais recente: outro gatilho, outro block
+  diario(raiz, 'dono', [MENSAGEM('dono', 3)]);
+  bloqueia(stop(raiz), /dono dono:3/);
+});
+
+test('pendencia-dono-nao-esconde-review: `dono` e review abertas, o Stop cita as duas numa só mensagem', () => {
+  const raiz = repo();
+  comPendenciaReview(raiz);
+  diario(raiz, 'dono', [MENSAGEM('dono', 1)]);
+  const r = stop(raiz);
+  bloqueia(r, /review s:3, dono dono:1/);
+  assert.deepEqual(estadoAprender(raiz), { entrega: 'GM-10', avisados: ['s:3', 'dono:1'] });
+});
+
 test('ci-vermelho-com-parar-ainda-block: acao=parar(ci_vermelho) não esconde a pendência (cálculo à parte)', () => {
   const raiz = repo();
   plano(raiz);
@@ -1248,6 +1297,31 @@ test('fechada-a-pendencia-o-stop-volta-ao-normal: sem pendência concluir lista 
   avisa(stop(raiz), /Liberações do teto: T1 /);
 });
 
+test('t36-concluir-lista-a-sombra-e-o-dono (FIEL-15 c): cada liberação com quem liberou, task, hora e sessão; retomada não entra', () => {
+  const P2 = { entrega: 'GM-10', tasks: [{ id: 'T1', deps: [], arquivos: ['a.ts'] }, { id: 'T2', deps: [], arquivos: ['b.ts'] }] };
+  const raiz = repo();
+  plano(raiz, P2);
+  const teto = (s, n, t) => [
+    ev(s, n, 'task.iniciada', { task: t, papel: 'implementador' }), ev(s, n + 1, 'task.concluida', { task: t }),
+    ev(s, n + 2, 'review.veredito', { task: t, veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 }), ev(s, n + 3, 'task.iniciada', { task: t, papel: 'correcao' }),
+    ev(s, n + 4, 'task.concluida', { task: t }), ev(s, n + 5, 'review.veredito', { task: t, veredito: 'REPROVADO', rodada: 2, major: 1, blocker: 0 }),
+  ];
+  const fim = (s, n, t) => [
+    ev(s, n, 'task.iniciada', { task: t, papel: 'implementador' }), ev(s, n + 1, 'task.concluida', { task: t }),
+    ev(s, n + 2, 'review.veredito', { task: t, veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }), ev(s, n + 3, 'task.integrada', { task: t }),
+  ];
+  const lib = (s, n, t, origem) => ev(s, n, 'task.reaberta', { task: t, origem, ...(origem === 'sombra' ? { hash: 'e'.repeat(64) } : {}) });
+  const evs = [...teto('s', 1, 'T1'), lib('s', 7, 'T1', 'sombra'), ...fim('s', 8, 'T1'), ...teto('s', 12, 'T2'), lib('s', 18, 'T2', 'dono'), ...fim('s', 19, 'T2'), lib('s', 23, 'T2', 'retomada')];
+  diario(raiz, 's', evs);
+  fecharPendenciasNoDiario(entregaDir(raiz), P2);
+  const r = stop(raiz);
+  avisa(r, /concluído/);
+  const ts = (seq) => evs.find((e) => e.seq === seq).ts;
+  assert.match(r.json.systemMessage, new RegExp(`Liberações do teto: a Sombra liberou a T1 \\(${ts(7).replace(/\./g, '\\.')}, s\\), T2 \\(${ts(18).replace(/\./g, '\\.')}, s\\)\\. Se não foi você`));
+  assert.equal((r.json.systemMessage.match(/T2/g) ?? []).length, 1, 'a retomada não é liberação');
+  assert.doesNotMatch(r.json.systemMessage, /a Sombra liberou a T2/, 'a do dono não vira da Sombra');
+});
+
 // ------------------------------------------------------------------------------------- FX2: o comando do Stop roda de verdade (P9)
 
 const LOOP_CLI = join(GATES, 'scripts', 'loop.mjs');
@@ -1330,4 +1404,249 @@ test('stop-comando-aprendizado-roda-de-verdade: cada comando citado pelo Stop gr
   fecha(nada[0], 'nada');
   // O Stop 2 só avisa, com o mesmo texto: o aviso também chega ao agente
   avisa(stop(dir), COMANDO);
+});
+
+// ------------------------------------------------------------------------------------- GM-14 T34 (FIEL-14 f, emenda 29): pouso pendente no Stop
+
+const comOnboarding = (raiz) =>
+  writeFileSync(join(raiz, 'harness.config.json'), JSON.stringify({ fluxo: { ferramenta: 'arquivos', resolvidoEm: '2026-11-01' } }));
+const pousoDe = (raiz, sessao = 'S0') => diario(raiz, sessao, [ev(sessao, 1, 'sessao.pouso', { percent: null, x: 50, via: 'dono' })]);
+
+test('stop-pouso-pendente-com-onboarding-nao-despacha-nem-para: vários Stops, nenhum block e nenhum loop.parar sem_progresso', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  pousoDe(raiz);
+  for (let i = 0; i < 6; i += 1) {
+    const r = stop(raiz); // session_id S1 vem do stdin
+    avisa(r, /\/clear/);
+  }
+  assert.equal(linhasDoDiario(raiz).some((e) => e.tipo === 'loop.parar'), false);
+  assert.equal(existsSync(contadorDe(raiz)), false, 'o Stop não conta sem progresso sob pouso pendente');
+});
+
+test('stop-pouso-sem-onboarding-segue-a-2-0: o mesmo diário sem fluxo.resolvidoEm ainda despacha', () => {
+  const raiz = repo();
+  plano(raiz);
+  pousoDe(raiz);
+  bloqueia(stop(raiz), /T1/);
+});
+
+test('stop-pouso-limpo-volta-a-despachar: sessao.inicio clear de outra sessão depois do pouso tira o pendente', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  pousoDe(raiz);
+  diario(raiz, 'S9', [ev('S9', 1, 'sessao.inicio', { origem: 'clear' })]);
+  bloqueia(stop(raiz), /T1/);
+});
+
+// ------------------------------------------------------------------------------------- GM-14 T53 (emendas 52 e 53): o Stop no teto, com o mod medindo
+
+/** `.harness/contexto/<sessao>.json` como o mod grava: `{percent, fonte, em}` */
+const contextoDe = (raiz, sessao, percent, { fonte = 'mod', idadeMs = 0 } = {}) => {
+  mkdirSync(join(raiz, '.harness', 'contexto'), { recursive: true });
+  writeFileSync(join(raiz, '.harness', 'contexto', `${sessao}.json`), JSON.stringify({ percent, fonte, em: new Date(Date.now() - idadeMs).toISOString() }));
+};
+
+test('stop-no-teto-nao-pede-despacho: o incidente (pousar manual do dono, sem /clear, contexto 61 %, repo sem onboarding) ⇒ aguardando o pouso do mod; nunca block', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 's', TASK_APROVADA('s')); // há fronteira: o veredito que o pouso espera
+  pousoDe(raiz); // `loop.mjs pousar` via dono; sem sessao.inicio de /clear
+  contextoDe(raiz, 'S1', 61);
+  for (let i = 0; i < 5; i += 1) avisa(stop(raiz), /aguardando o pouso do mod/);
+  assert.equal(linhasDoDiario(raiz).some((e) => e.tipo === 'loop.parar'), false);
+  assert.equal(existsSync(contadorDe(raiz)), false);
+});
+
+test('stop-teto-sem-pouso-ainda: contexto >= X (fronteira ainda sem pouso) e a ação é despachar implementador ⇒ não pede despacho', () => {
+  const raiz = repo();
+  plano(raiz);
+  contextoDe(raiz, 'S1', 61);
+  avisa(stop(raiz), /contexto no teto, aguardando o pouso do mod/);
+});
+
+test('stop-teto-revisor-segue: o revisor que fecha a fronteira continua sendo pedido no teto', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 's', TASK_APROVADA('s').slice(0, 2)); // concluída sem veredito: ação = despachar revisor
+  contextoDe(raiz, 'S1', 61);
+  bloqueia(stop(raiz), /T1/);
+});
+
+test('stop-pouso-abaixo-de-x-libera (I1): a PRÓPRIA leitura da sessão (S1) abaixo de X libera o despacho, sem depender de sucessora nem de /clear no diário', () => {
+  const raiz = repo();
+  plano(raiz);
+  pousoDe(raiz);
+  contextoDe(raiz, 'S1', 20);
+  bloqueia(stop(raiz), /T1/);
+});
+
+test('stop-por-sessao (I1, ciclo 3): a leitura de OUTRA sessão nunca libera nem prende; só a da que pergunta', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 's', TASK_APROVADA('s'));
+  pousoDe(raiz); // pouso da S0
+  contextoDe(raiz, 'S1', 61); // a que pergunta (hook S1) segue em X
+  contextoDe(raiz, 'S0', 5);
+  contextoDe(raiz, 'S9', 5);
+  diario(raiz, 'S9', [ev('S9', 1, 'sessao.inicio', { origem: 'clear' })]); // /clear alheio
+  avisa(stop(raiz), /aguardando o pouso do mod/);
+  // a outra sessão (S2), baixa, não é presa à S1 alta nem ao pouso
+  contextoDe(raiz, 'S2', 4);
+  const r = stop(raiz, { session_id: 'S2' });
+  assert.doesNotMatch(r.json?.systemMessage ?? '', /aguardando o pouso do mod/);
+});
+
+/** pouso VELHO (fronteira anterior) e fronteira nova: a=T1 integrada, pouso S0, T2 com veredito e integrada, e T3 concluída (revisor) ou aprovada (integrar) */
+const TRES = { entrega: 'GM-10', tasks: ['T1', 'T2', 'T3'].map((id) => ({ id, deps: [], arquivos: [`${id}.ts`] })) };
+function pousoVelhoFronteiraNova(raiz, t3) {
+  plano(raiz, TRES);
+  const t = (sessao, seq, task, ...resto) => [
+    ev(sessao, seq, 'task.iniciada', { task, papel: 'implementador' }), ev(sessao, seq + 1, 'task.concluida', { task, sha: 'x' }), ...resto,
+  ];
+  const ver = (sessao, seq, task) => ev(sessao, seq, 'review.veredito', { task, veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 });
+  const integ = (sessao, seq, task) => ev(sessao, seq, 'task.integrada', { task, sha: 'd' });
+  diario(raiz, 's1', [...t('s1', 1, 'T1', ver('s1', 3, 'T1'), integ('s1', 4, 'T1'))]);
+  diario(raiz, 'S0', [ev('S0', 1, 'sessao.pouso', { percent: 61, x: 50 })]);
+  diario(raiz, 's2', [...t('s2', 1, 'T2', ver('s2', 3, 'T2'), integ('s2', 4, 'T2'))]);
+  diario(raiz, 's3', t3 === 'revisor' ? t('s3', 1, 'T3') : t('s3', 1, 'T3', ver('s3', 3, 'T3')));
+}
+test('R4-STOP-C pouso-velho-fronteira-nova-despacha-o-revisor (c3, MAJOR-1): com o mod medindo a sessão em 61 %, o Stop real dá block do revisor, não "digite /clear" (com e sem onboarding)', () => {
+  for (const onb of [false, true]) {
+    const raiz = repo();
+    pousoVelhoFronteiraNova(raiz, 'revisor');
+    if (onb) comOnboarding(raiz);
+    contextoDe(raiz, 'S1', 61);
+    const r = stop(raiz);
+    bloqueia(r, /T3/);
+    assert.doesNotMatch(r.json?.reason ?? '', /\/clear/);
+  }
+});
+test('R4-STOP-B pouso-velho-fronteira-nova-integra (c3, MAJOR-1): com T3 aprovada o Stop real manda integrar, não limpar', () => {
+  const raiz = repo();
+  pousoVelhoFronteiraNova(raiz, 'integrar');
+  contextoDe(raiz, 'S1', 61);
+  const r = stop(raiz);
+  bloqueia(r, /integr/i);
+});
+test('R4-STOP-A controle: o pouso da fronteira ATUAL (sem veredito depois dele) segue aguardando o mod', () => {
+  const raiz = repo();
+  plano(raiz, TRES);
+  diario(raiz, 's1', TASK_APROVADA('s1'));
+  pousoDe(raiz);
+  contextoDe(raiz, 'S1', 61);
+  avisa(stop(raiz), /aguardando o pouso do mod/);
+});
+test('T59-STOP-impasse-revisor-pendente (emenda 67): pouso da fronteira feito, T1 integrada, T2 concluída à espera do revisor, o mod medindo 61 % ⇒ o Stop avisa que o mod pousa e NUNCA pede despacho (nem do revisor), com e sem onboarding, em vários Stops', () => {
+  for (const onb of [false, true]) {
+    const raiz = repo();
+    plano(raiz, TRES);
+    if (onb) comOnboarding(raiz);
+    diario(raiz, 's1', [...TASK_APROVADA('s1'), ev('s1', 4, 'task.integrada', { task: 'T1', sha: 'd' })]);
+    pousoDe(raiz);
+    diario(raiz, 's2', [ev('s2', 1, 'task.iniciada', { task: 'T2', papel: 'implementador' }), ev('s2', 2, 'task.concluida', { task: 'T2', sha: 'y' })]);
+    contextoDe(raiz, 'S1', 61);
+    for (let i = 0; i < 4; i += 1) {
+      const r = stop(raiz);
+      avisa(r, /aguardando o pouso do mod/);
+      assert.doesNotMatch(r.json.systemMessage, /\bT2\b|revisor/i);
+    }
+    // controle: com a leitura própria baixa (o /clear já limpou), o revisor é pedido
+    contextoDe(raiz, 'S1', 4);
+    bloqueia(stop(raiz), /T2/);
+  }
+});
+test('R3-STOP stop-sessao-nova-depois-de-sucessora-fechada (MAJOR-5): a sucessora (A2) calou, o dia seguinte abre S1 por startup medindo 4 %; o Stop libera (block), não fica aguardando', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  diario(raiz, 's', TASK_APROVADA('s'));
+  pousoDe(raiz); // pouso da S0
+  diario(raiz, 'A2', [ev('A2', 1, 'sessao.retomada', { via: 'mod', chars: 10 })]);
+  diario(raiz, 'S1', [ev('S1', 1, 'sessao.inicio', { origem: 'startup' })]);
+  contextoDe(raiz, 'A2', 30, { idadeMs: 20 * 3_600_000 }); // a sucessora fechou há 20 h
+  contextoDe(raiz, 'S1', 4);
+  bloqueia(stop(raiz), /T1/); // controle: a leitura própria baixa libera
+  contextoDe(raiz, 'S1', 61);
+  avisa(stop(raiz), /aguardando o pouso do mod/); // e a própria alta prende
+});
+
+test('stop-mod-desligado-o-clear-do-dono-libera (r1 MAJOR-3): leitura do mod velha (10 min) = sem mod; o /clear do dono (sessao.inicio) tira o pendente e a instrução do Stop é verdadeira', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  pousoDe(raiz);
+  contextoDe(raiz, 'S0', 61, { idadeMs: 600_000 }); // o mod calou depois do pouso
+  avisa(stop(raiz), /digite \/clear/); // sem mod fresco: a regra por evento, e o texto manda o dono limpar
+  diario(raiz, 'S9', [ev('S9', 1, 'sessao.inicio', { origem: 'clear' })]);
+  bloqueia(stop(raiz, { session_id: 'S9' }), /T1/); // o /clear do dono libera
+});
+
+test('stop-nao-diz-pouso-pendente-sem-fronteira (r1 MINOR-5, c3): pouso sem review.veredito não é pouso de fronteira nenhuma; o Stop não manda limpar, só diz que o contexto está no teto', () => {
+  const raiz = repo();
+  plano(raiz);
+  pousoDe(raiz); // sem veredito no diário
+  contextoDe(raiz, 'S1', 61);
+  const r = stop(raiz);
+  assert.doesNotMatch(r.json?.systemMessage ?? '', /digite \/clear|pouso pendente/);
+  avisa(r, /contexto no teto/);
+});
+
+test('stop-nao-diz-aguardando-depois-de-sem_pouso (r1 MINOR-5): o mod desistiu (loop.parar sem_pouso); o Stop não promete o pouso do mod', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 's', TASK_APROVADA('s'));
+  diario(raiz, 'S0', [ev('S0', 1, 'sessao.pouso', { percent: 61, x: 50 }), ev('S0', 2, 'loop.parar', { motivo: 'sem_pouso', causa: 'sem_confirmacao' })]);
+  contextoDe(raiz, 'S1', 61);
+  const r = stop(raiz);
+  assert.doesNotMatch(r.json?.systemMessage ?? '', /aguardando o pouso do mod/);
+});
+
+test('stop-leitura-que-nao-vale-e-sem-mod: velha (> 120 s), de fonte transcript ou só de outra sessão ⇒ sem leitura própria fresca ⇒ a regra sem mod (sem onboarding o Stop despacha como na 2.0)', () => {
+  for (const [sessao, opcoes] of [['S1', { idadeMs: 300_000 }], ['S0', {}], ['S1', { fonte: 'transcript' }]]) {
+    const raiz = repo();
+    plano(raiz);
+    diario(raiz, 's', TASK_APROVADA('s'));
+    pousoDe(raiz);
+    contextoDe(raiz, sessao, 90, opcoes);
+    const r = stop(raiz);
+    assert.doesNotMatch(r.json?.systemMessage ?? '', /aguardando o pouso do mod/);
+  }
+});
+
+// ------------------------------------------------------------------------------------- T48 (emenda 43, FIEL-1 b/c, asserção 8): entrega publicada
+
+const PR_MERGEADO = (sessao = 'pub') => ev(sessao, 1, 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 'mergeado', branch: 'wt/GM-10-8' } });
+const PR_ABERTO = (sessao = 'pub') => ev(sessao, 2, 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 8, estado: 'aberto', branch: 'wt/GM-10-8' } });
+
+test('publicada-nao-recebe-loop.parar: entrega com PR mergeado e plano.json fica em silêncio nos Stops e nada é gravado nela', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'pub', [PR_MERGEADO()]);
+  const antes = linhasDoDiario(raiz).length;
+  for (let i = 0; i < 6; i++) mudo(stop(raiz));
+  assert.equal(linhasDoDiario(raiz).length, antes);
+  assert.equal(linhasDoDiario(raiz).filter((e) => e.tipo === 'loop.parar').length, 0);
+  assert.equal(existsSync(contadorDe(raiz)), false, 'o Stop não conta sem_progresso em publicada');
+});
+
+test('publicada-vizinho-pr-aberto-continua-gravando: PR mergeado e outro aberto não é publicada; o 3º Stop grava loop.parar', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'pub', [PR_MERGEADO(), PR_ABERTO()]);
+  bloqueia(stop(raiz));
+  bloqueia(stop(raiz));
+  bloqueia(stop(raiz));
+  avisa(stop(raiz), /Gravei loop\.parar/);
+  assert.equal(linhasDoDiario(raiz).filter((e) => e.tipo === 'loop.parar').length, 1);
+});
+
+test('publicada-vizinho-sem-2o-fato: PR mergeado sem plano.json, spec nem ledger não identifica a entrega (a regra da trilha); sem plano o Stop segue em silêncio sem gravar', () => {
+  const raiz = repo();
+  diario(raiz, 'pub', [PR_MERGEADO()]);
+  const antes = linhasDoDiario(raiz).length;
+  mudo(stop(raiz));
+  assert.equal(linhasDoDiario(raiz).length, antes);
 });

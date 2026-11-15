@@ -7,6 +7,7 @@
  * CONTRATO DE FALHA. Diário `[]` (ausente) é registro com todas as seções em `- nenhum`. Diário que não ordena, ou evento que o registro
  * lê e que não tem a forma do contrato, LANÇA `Error` (o CLI diz `diario_ilegivel`): nunca vira registro "sem aquela decisão".
  */
+import { pontaDaSpec, shaAceito } from './emenda.js';
 import { formaInvalida } from './formas.js';
 import { ordenar } from './loop.js';
                                          
@@ -54,11 +55,15 @@ export function montarRegistro(entrega        , eventos          , specSha      
   const aprovacoes = lista.filter((e) => e.tipo === 'spec.aprovada');
   aprovacoes.forEach(exigirValido);
   const linhasSpec = aprovacoes.map((e) => `- ${ref(e)} · spec ${limpa(campo(e.dados, 'spec'), 200)} · sha256 ${limpa(campo(e.dados, 'sha256'), 64)}`);
+  // T54 (emenda 54): cada emenda aplicada no texto aparece (para o revisor da entrega conferir o diff contra a emenda) e o sha atual confere com a CADEIA.
+  const aplicadas = lista.filter((e) => e.tipo === 'spec.aplicada');
+  aplicadas.forEach(exigirValido);
+  linhasSpec.push(...aplicadas.map((e) => `- ${ref(e)} · emenda #${limpa(campo(e.dados, 'seq'), 16)} aplicada · spec ${limpa(campo(e.dados, 'spec'), 200)} · sha256 ${limpa(campo(e.dados, 'sha256_antes'), 64)} ⇒ ${limpa(campo(e.dados, 'sha256_depois'), 64)}`));
   if (aprovacoes.length > 0) {
-    const ultima = campo(aprovacoes[aprovacoes.length - 1].dados, 'sha256');
-    linhasSpec.push(specSha === null
-      ? '- sha256 atual da spec: indisponível'
-      : `- sha256 atual da spec: ${limpa(specSha, 64)} (${specSha === ultima ? 'confere com a última aprovação' : 'difere da última aprovação'})`);
+    const { ponta } = pontaDaSpec(lista);
+    const n = ponta === null ? 0 : ponta.aplicadas;
+    const confere = shaAceito(lista, specSha) ? (n === 0 ? 'confere com a última aprovação' : `confere com a aprovação + ${n} ${n === 1 ? 'emenda aplicada' : 'emendas aplicadas'}`) : 'difere da última aprovação';
+    linhasSpec.push(specSha === null ? '- sha256 atual da spec: indisponível' : `- sha256 atual da spec: ${limpa(specSha, 64)} (${confere})`);
   }
 
   // 2. Decisões da Sombra
@@ -98,12 +103,14 @@ export function montarRegistro(entrega        , eventos          , specSha      
     if (!propostas.some((p) => p.seq === seq)) linhasEmendas.push(`- #${limpa(seq, 16)} · julgamento sem proposta no diário · ${j.tipo === 'spec.emendada' ? 'aprovada' : 'rejeitada'} por ${limpa(campo(j.dados, 'origem'), 16)}`);
   }
 
-  // 4. Liberações de teto: só `task.reaberta` com origem `dono` (a retomada não libera teto)
-  const reabertas = lista.filter((e) => e.tipo === 'task.reaberta' && campo(e.dados, 'origem') === 'dono');
+  // 4. Liberações de teto: `task.reaberta` com origem `dono` ou `sombra` (GM-14 T36, FIEL-15 c); a retomada não libera teto
+  const reabertas = lista.filter((e) => e.tipo === 'task.reaberta' && (campo(e.dados, 'origem') === 'dono' || campo(e.dados, 'origem') === 'sombra'));
   const linhasTeto = reabertas.map((e) => {
     const task = campo(e.dados, 'task');
     if (typeof task !== 'string' || task === '') throw new Error(`evento ${ref(e)} (task.reaberta) sem \`task\`; o registro não omite liberação calado`);
-    return `- ${ref(e)} · task ${limpa(task, 64)} · liberada pelo dono`;
+    if (campo(e.dados, 'origem') === 'dono') return `- ${ref(e)} · task ${limpa(task, 64)} · liberada pelo dono`;
+    exigirValido(e); // a da Sombra cita a decisão: sem `hash` válido não vira linha "liberada" calada
+    return `- ${ref(e)} · task ${limpa(task, 64)} · a Sombra liberou a ${limpa(task, 64)} · decisão ${limpa(campo(e.dados, 'hash'), 64).slice(0, 12)}`;
   });
 
   // 5. Desvios e 6. Descobertas

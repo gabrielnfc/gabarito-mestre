@@ -2,9 +2,10 @@
 /**
  * REQ-LOOP-3 e REQ-LOOP-2 pela borda — `loop.mjs`: worktree por task, integração com gate e próxima ação.
  *
- *   loop.mjs proxima [--vivos <n>]    slots = `capacidade.mjs --medido`; `loop.slots` do config só reduz (sem calibração: 1 slot e aviso)
+ *   loop.mjs proxima [--vivos <n>] [--sessao <id>]    slots = `capacidade.mjs --medido`; `loop.slots` do config só reduz (sem calibração: 1 slot e aviso)
+ *       `--sessao` (GM-14 FIEL-14): `percent` vem de `.harness/contexto/<sessao>.json` (mod; `em` <= 120 s), senão nulo; pouso pendente ⇒ nada novo despacha.
  *   loop.mjs abrir <task> | fechar <task> | integrar <task>
- *   loop.mjs iniciar <task> <implementador|revisor|correcao> | concluir <task> | reabrir <task>
+ *   loop.mjs iniciar <task> <implementador|revisor|correcao> [--modelo <haiku|sonnet|opus|fable>] | concluir <task> | reabrir <task>
  *   loop.mjs veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major>
  *       REPROVADO exige achados não vazios em `<worktree>/.tmp-gabarito/review-r<rodada>.md` (senão `achados_ausentes`, nada gravado);
  *       `proxima` os aponta (`achados`) no item `correcao`: depois do /clear o arquivo é a única memória deles.
@@ -16,17 +17,27 @@
  *       grava SEMPRE em `events.emendas.jsonl` (`--sessao` é ignorada: o seq da proposta é o dela) e devolve `{proposta_seq, req, task?, congeladas}`;
  *       `proposta_seq` vem da RELEITURA estrita do arquivo (a única `emenda.proposta` com o `ts` e os `dados` gravados), nunca do candidato de `gravar`.
  *   loop.mjs emenda julgar <seq> <aprovar|rejeitar>   origem `sombra`: recusa sem `sombra.julga_emendas: true` em `origin/HEAD` (o config local não conta)
+ *   loop.mjs emenda aplicar <seq>   (GM-14 T54, emenda 54) grava `spec.aplicada {seq, spec, sha256_antes, sha256_depois}` depois que o texto aprovado da emenda foi aplicado na spec:
+ *       só seq com `spec.emendada`, 1 vez por seq; nenhum sha por argumento (antes = ponta da cadeia do diário, depois = sha do arquivo em disco); arquivo igual à ponta ⇒ `nada_a_aplicar`
+ *   loop.mjs liberar <task> --origem sombra --hash <h>   (GM-14 T36, FIEL-15) a Sombra tira a task do teto, 1 vez por task e só a 1ª liberação; exige
+ *       `sombra.libera_teto: true` em `origin/HEAD` (mesma leitura de `julga_emendas`), task `no_teto`, `<h>` = hash da PERGUNTA DE LIBERAÇÃO da task
+ *       (`sombra.mjs perguntar --task <t> --libera-teto`) com `decisao.sombra` vigente `libera: true`, sem `fora_da_regra`, depois do veredito do teto na
+ *       ordem do diário, com brief e resposta no disco. Recusa: `libera_teto_desligado`, `teto_sombra_esgotado`, `fora_do_teto`, `hash_invalido`,
+ *       `sombra_nao_liberou` (decisão íntegra com `libera` ausente ou false; GM-14 T39) (e `relogio_do_diario`); nada gravado. `--origem` só aceita `sombra` (uso, rc 2): `dono` sai só de `liberarTeto`.
  *   loop.mjs aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>]
  *       (GM-13 T8; contrato e ordem de recusa em `loop-aprendizado.mjs`; `aprendizados` não exige entrega na branch).
+ *   loop.mjs anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--entrega <ID>] [--sessao <id>] [--opcao <r>]…   (GM-14 REQ-DIA-2; sem plano)
+ *       grava `nota` (forma da T1) e devolve `{ok, evento:{tipo:'nota', dados}, entrega, sessao}`; entrega = `--entrega`, senão a da branch, senão `_sem-id`.
  *   todos aceitam --entrega <GM-10> (senão vem da branch); os que gravam aceitam --sessao <id> (padrão `loop`).
  *
  * CONTRATO DE FALHA. Saída é UMA linha de JSON em stdout, sempre com `ok`; falha traz `erro` (código) e `mensagem`.
  * Dado ausente, corrompido ou ferramenta falhando nunca vira sucesso; rc 0 só com o efeito feito. Uso errado sai 2.
  *
  * QUEM GRAVA NO DIÁRIO. Só `iniciar` (task.iniciada), `concluir` (task.concluida), `veredito` (review.veredito),
- * `desvio`, `descoberta`, `emenda propor` (emenda.proposta) e `emenda julgar` (spec.emendada ou emenda.rejeitada, origem `sombra`; a origem `dono` sai só de
- * `julgarEmendaDono`, que o hook `emenda-dono.mjs` chama), `reabrir` (task.reaberta, SÓ origem `retomada`: nenhum argumento produz `dono`; `dono` sai só de `liberarTeto`, que o hook do comando humano `/gabarito-mestre:liberar` chama), `integrar` (task.integrada),
- * `ci` (ci.resultado) e `parar` (loop.parar). `concluir` e `integrar` gravam o `sha`. `abrir` não grava no diário (grava a base em `branch.<branch>.gabaritoBase`)
+ * `desvio`, `descoberta`, `emenda propor` (emenda.proposta), `emenda aplicar` (spec.aplicada, T54) e `emenda julgar` (spec.emendada ou emenda.rejeitada, origem `sombra`; a origem `dono` sai só de
+ * `julgarEmendaDono`, que o hook `emenda-dono.mjs` chama), `reabrir` (task.reaberta, SÓ origem `retomada`: nenhum argumento produz `dono`; `dono` sai só de `liberarTeto`, que o hook do comando humano `/gabarito-mestre:liberar` chama),
+ * `liberar` (task.reaberta, SÓ origem `sombra` com o `hash` da decisão; GM-14 T36), `integrar` (task.integrada),
+ * `ci` (ci.resultado), `parar` (loop.parar) e `anotar` (nota, GM-14: sem plano, sem tabela de transições; confere só a forma, o canário e a legibilidade do diário). `concluir` e `integrar` gravam o `sha`. `abrir` não grava no diário (grava o nome da base em `branch.<branch>.gabaritoBase` e o sha dela em `branch.<branch>.gabaritoBaseSha`)
  * e é idempotente: worktree registrada com HEAD na branch da task devolve o mesmo resultado com `ja_aberta: true`; qualquer outro estado recusa. Todo evento de task é conferido contra `TRANSICOES` ANTES de gravar:
  * o CLI nunca produz um diário que o núcleo recuse.
  *
@@ -34,6 +45,12 @@
  * Sombra: nada liga o julgamento a uma `decisao.sombra`; a opção é do dono, em origin. (2) A regra (4) de `proximaAcao` conta todo `ci.resultado`
  * (homolog e PR juntos): o lado é o seguro, para mais cedo. (3) Dois `emenda propor` simultâneos validam fora do lock; o `proposta_seq` devolvido é
  * sempre o da própria linha. (4) O aviso de emenda depende de "posterior" entre sessões: relógio atrasado no julgamento cala o aviso (falso negativo).
+ * (5) GM-14 T36 (furo 2): com `sombra.libera_teto: true` quem grava a prova é o orquestrador (`sombra.mjs registrar` transcreve a resposta da Sombra,
+ * limite (1) de `sombra.mjs`): `liberar` exige a pergunta de liberação da task (hash recalculado aqui), a `sombra.consulta` dela, o brief e a resposta no
+ * disco com o sha do texto e `libera: true` vigente; o que NÃO fecha é o orquestrador escrever ele mesmo a resposta "libera" sem ter despachado a Sombra.
+ * A opção é do dono, em origin; o registro e o painel mostram cada liberação como "a Sombra liberou a <task>". (6) GM-14 T36 (furo 7): nada
+ * distingue, no CLI, o orquestrador de um subagent que rode `loop.mjs liberar` (sem `agent_id` na borda, mesmo nível do Q14 de `liberar-teto.mjs`);
+ * o teto de 1 liberação por task e a ordem (só a 1ª) limitam o dano a um ciclo a mais, visível.
  *
  * Tudo que toca git vai por `execFileSync` com argv, sem shell. Nada é apagado por outro meio que `git worktree remove`
  * sem `--force`, `git branch -d` do que `abrir` acabou de criar e o `.tmp-gabarito` da própria worktree.
@@ -49,14 +66,20 @@ import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import { lerConfigOrigin, resolverModelo } from '../lib/config.mjs';
+import { PADROES } from '../lib/git.mjs';
 import { aprendizadosVigentes, paraDestino } from '../dist/aprendizado.js';
 import * as diario from '../dist/diario.js';
-import { escopoDaTask, projetarEmendas, SESSAO_EMENDAS, validarJulgamento, validarProposta } from '../dist/emenda.js';
+import { escopoDaTask, pontaDaSpec, projetarEmendas, SESSAO_EMENDAS, shaAceito, validarAplicacao, validarJulgamento, validarProposta } from '../dist/emenda.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
-import { formaInvalida, REQ_RE } from '../dist/formas.js';
+import { formaInvalida, formaNaGravacao, MOTIVOS_REENTREGA, REQ_RE } from '../dist/formas.js';
 import { estadoDe, ordenar, podeIntegrar, proximaAcao, tasksCongeladas } from '../dist/loop.js';
+import { lerLeitura, pousoPendente } from '../dist/pouso-pendente.js';
+import { temOnboarding } from './cartao-sessao.mjs';
 import { normalizarCaminho, validarPlano } from '../dist/plano.js';
-import { contarConsultas, projetarDecisoes, trechoDoReq } from '../dist/sombra.js';
+import { contarConsultas, hashPergunta, projetarDecisoes, textoAncora, trechoDoReq } from '../dist/sombra.js';
+import { vigentes } from '../dist/diario-puro.js';
+import { entregaPublicada, SESSAO_QUALQUER } from '../dist/guarda.js';
+import { idDaBranch } from '../dist/trilha.js';
 import { avaliar } from './gate-task.mjs';
 import * as loopAprendizado from './loop-aprendizado.mjs';
 import { clonar, nomeBanco, soltar, validarDb } from './db-template.mjs';
@@ -68,6 +91,7 @@ const ENTREGA_RE = /^[A-Z]+-\d+$/;
 const SESSAO_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const NUM_RE = /^(0|[1-9]\d{0,14})$/;
 const PAPEIS = ['implementador', 'revisor', 'correcao'];
+const MODELOS_INICIAR = ['haiku', 'sonnet', 'opus', 'fable'];
 const MOTIVOS = ['teto_rodadas', 'ci_vermelho', 'teto_tokens', 'sem_pouso', 'sem_progresso', 'diario_invalido', 'nao_conseguiu', 'smoke', 'rollback', 'janela_ausente'];
 const TIPOS_DE_TASK = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
 const GLOB = /[*?[\]{}]/;
@@ -92,6 +116,20 @@ class Falha extends Error {
     this.rc = rc;
   }
 }
+
+/**
+ * GM-14 T48 (emenda 43, FIEL-1 b/c, REQ-DIA-1): entrega PUBLICADA (a regra única `entregaPublicada` de `dist/guarda.js`, a mesma do painel, da guarda,
+ * do cartão e do Stop) não recebe `task.*`, `sessao.*` nem `loop.parar`: o comando recusa ANTES de qualquer efeito (merge, achados movidos, evento).
+ * `_sem-id` nunca é publicada. Os tipos vedados valem também dentro de `gravar` (os módulos que o recebem por injeção, como o `pousar`).
+ */
+function recusarSePublicada(c) {
+  // Sem `--sessao` o loop grava como `loop` (iniciar, concluir, veredito, integrar, parar, reabrir, liberar: a skill só passa `--sessao` em proxima/pousar/anotar)
+  // e não sabe qual conversa o dono ligou à entrega: depois da resposta do dono (FIEL-1 b, spec:90) o loop NÃO trava. `--sessao` explícito vale como veio.
+  if (c.entrega === '_sem-id' || !entregaPublicada(c.raiz, c.entrega, c.sessao === 'loop' ? SESSAO_QUALQUER : c.sessao)) return;
+  throw new Falha('entrega_publicada', `a entrega ${c.entrega} já está publicada (PR mergeado, sem outro aberto): task, sessão e parar não gravam nela; nada foi feito`);
+}
+const TIPO_VEDADO_EM_PUBLICADA = (tipo) => TIPOS_DE_TASK.includes(tipo) || tipo.startsWith('sessao.') || tipo.startsWith('guarda.') || tipo === 'operacao.destrutiva' || tipo === 'loop.parar';
+const COMANDOS_VEDADOS_EM_PUBLICADA = new Set(['parar', 'iniciar', 'concluir', 'veredito', 'integrar', 'reabrir', 'liberar', 'pousar']);
 
 // ─────────────────────────────────────────────────────────────── git
 
@@ -132,19 +170,33 @@ function raizPrincipal(cwd) {
   return dirname(real);
 }
 
+/**
+ * GM-14 T38 (DP-3 aj. 4): raiz do checkout DA SESSÃO (`git rev-parse --show-toplevel` do `cwd`, por `realpath`). A spec se lê daqui
+ * (`lerSpecs`, `shaDaSpec`/`lerSpec`, `aprovarSpec`, REQ na spec), como `painel.mjs medir`; o diário segue na raiz principal (`raizPrincipal`).
+ * Um leitor numa raiz e outro noutra daria "mudou depois" falso. Fora de repositório ⇒ `Falha('fora_de_repo')`.
+ */
+export function checkoutDaSessao(cwd) {
+  try {
+    return realpathSync(git(cwd, 'rev-parse', '--show-toplevel'));
+  } catch (e) {
+    throw new Falha('fora_de_repo', `não é um checkout git (${e.message})`);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────── entrada
 
 /** Argumentos estritos. Flag desconhecida, sem valor ou repetida e posicional a mais ou a menos é uso (rc 2). */
 function lerArgs(argv) {
   const [cmd, ...resto] = argv;
   const ESPEC = {
-    proxima: { pos: 0, flags: ['entrega', 'vivos'] },
+    proxima: { pos: 0, flags: ['entrega', 'vivos', 'sessao'] },
     abrir: { pos: 1, flags: ['entrega'] },
     fechar: { pos: 1, flags: ['entrega'] },
     integrar: { pos: 1, flags: ['entrega', 'sessao'] },
-    iniciar: { pos: 2, flags: ['entrega', 'sessao'] },
-    concluir: { pos: 1, flags: ['entrega', 'sessao'] },
+    iniciar: { pos: 2, flags: ['entrega', 'sessao', 'modelo'] },
+    concluir: { pos: 1, flags: ['entrega', 'sessao', 'motivo'] },
     reabrir: { pos: 1, flags: ['entrega', 'sessao'] },
+    liberar: { pos: 1, flags: ['entrega', 'sessao', 'origem', 'hash'], obrig: ['origem', 'hash'] },
     veredito: { pos: 5, flags: ['entrega', 'sessao'] },
     parar: { pos: 1, flags: ['entrega', 'sessao'] },
     ci: { pos: 1, flags: ['entrega', 'sessao', 'alvo'] },
@@ -152,12 +204,12 @@ function lerArgs(argv) {
     descoberta: { pos: 0, flags: ['entrega', 'sessao', 'evidencia', 'causa'], obrig: ['evidencia', 'causa'] },
     // E5a (GM-13): `aprendizado` confere os posicionais e as flags por tipo em `loop-aprendizado.mjs` (uso, rc 2); `aprendizados` lê a árvore, sem entrega (T8).
     aprendizado: { pos: null, flags: ['entrega', 'sessao', 'regra', 'entra-em', 'gatilho', 'eventos', 'fonte', 'numero', 'substitui', 'motivo'] },
-    aprendizados: { pos: 0, flags: ['para'] },
+    aprendizados: { pos: 0, flags: ['para', 'exportar'], semValor: ['exportar'] },
     pousar: { pos: null, flags: ['entrega', 'sessao'] },
     registro: { pos: null, flags: ['entrega', 'sessao'] },
     emenda: { pos: null, flags: ['entrega', 'sessao', 'req', 'task', 'diff', 'fato', 'alternativa', 'evidencia', 'causa', 'arquivos'] },
   };
-  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | iniciar <task> <papel> | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | pousar | registro  [--entrega GM-10]';
+  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | liberar <task> --origem sombra --hash <h> | concluir <task> --motivo <gate|sombra|dono> | iniciar <task> <papel> [--modelo <haiku|sonnet|opus|fable>] | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | emenda aplicar <seq> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | aprendizados --exportar | pousar | registro | anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--opcao <r>]…  [--entrega GM-10]';
   if (typeof cmd !== 'string' || !Object.hasOwn(ESPEC, cmd)) throw new Falha('uso', `comando desconhecido ou ausente. ${uso}`, {}, 2);
   const esp = ESPEC[cmd];
   const pos = [];
@@ -167,6 +219,7 @@ function lerArgs(argv) {
     if (a.startsWith('--')) {
       const nome = a.slice(2);
       if (!esp.flags.includes(nome)) throw new Falha('uso', `argumento desconhecido para ${cmd}: ${a}. ${uso}`, {}, 2);
+      if (esp.semValor?.includes(nome)) { if (Object.hasOwn(flags, nome)) throw new Falha('uso', `${a} repetido. ${uso}`, {}, 2); flags[nome] = true; continue; }
       const v = resto[i + 1];
       if (v === undefined || v.startsWith('--')) throw new Falha('uso', `${a} sem valor. ${uso}`, {}, 2);
       if (Object.hasOwn(flags, nome)) throw new Falha('uso', `${a} repetido. ${uso}`, {}, 2);
@@ -180,7 +233,9 @@ function lerArgs(argv) {
     const sub = pos[0];
     const propor = sub === 'propor' && pos.length === 1;
     const julgar = sub === 'julgar' && pos.length === 3;
-    if (!propor && !julgar) throw new Falha('uso', `emenda espera \`propor\` ou \`julgar <seq> <aprovar|rejeitar>\`. ${uso}`, {}, 2);
+    // T54: `aplicar <seq>` não aceita sha por argumento: o `sha256_depois` é o do arquivo em disco e o `sha256_antes` é a ponta da cadeia do diário.
+    const aplicar = sub === 'aplicar' && pos.length === 2;
+    if (!propor && !julgar && !aplicar) throw new Falha('uso', `emenda espera \`propor\`, \`julgar <seq> <aprovar|rejeitar>\` ou \`aplicar <seq>\`. ${uso}`, {}, 2);
     const obrig = propor ? ['req', 'diff', 'fato', 'alternativa', 'evidencia', 'causa'] : [];
     const permitidas = propor ? esp.flags : ['entrega', 'sessao'];
     const fora = Object.keys(flags).find((n) => !permitidas.includes(n));
@@ -240,6 +295,10 @@ function limitarDados(dados) {
 function formaEmenda(pos, flags) {
   if (flags.entrega !== undefined && !ENTREGA_RE.test(flags.entrega)) throw new Falha('entrega_invalida', `--entrega "${flags.entrega}" fora da forma ${ENTREGA_RE}`);
   if (flags.sessao !== undefined && !SESSAO_RE.test(flags.sessao)) throw new Falha('argumento_invalido', `--sessao fora da forma ${SESSAO_RE}`);
+  if (pos[0] === 'aplicar') {
+    if (!SEQ_RE.test(pos[1])) throw new Falha('argumento_invalido', `seq ${JSON.stringify(pos[1])}: esperado inteiro >= 1 sem zeros à esquerda (até 9 dígitos)`);
+    return { sub: 'aplicar', seq: Number(pos[1]) };
+  }
   if (pos[0] === 'julgar') {
     const [, seq, decisao] = pos;
     if (!SEQ_RE.test(seq)) throw new Falha('argumento_invalido', `seq ${JSON.stringify(seq)}: esperado inteiro >= 1 sem zeros à esquerda (até 9 dígitos)`);
@@ -316,7 +375,28 @@ function validarForma(cmd, pos, flags) {
     const arquivos = listaDeCaminhos(flags.arquivos);
     return { task, req: flags.req, dados: { task, req: flags.req, ...evid, arquivos, causa }, textos: { evidencia: flags.evidencia, arquivos: arquivos.join(',') } };
   }
-  if (cmd === 'iniciar' && !PAPEIS.includes(pos[1])) throw new Falha('papel_invalido', `papel "${pos[1]}" fora da lista: ${PAPEIS.join(', ')}`);
+  if (cmd === 'liberar') {
+    // GM-14 T36: a origem é só `sombra` (uso, rc 2): nenhum argumento produz `dono`. O hash fora da forma é motivo, não uso (FIEL-15 b).
+    if (flags.origem !== 'sombra') throw new Falha('uso', `liberar só aceita --origem sombra (a liberação do dono é o comando /gabarito-mestre:liberar); veio ${JSON.stringify(flags.origem)}`, {}, 2);
+    return { task, hash: flags.hash };
+  }
+  if (cmd === 'concluir') {
+    // FIEL-8 b6: o motivo da reentrega é forma; fora dos 3 literais recusa antes de abrir plano ou diário.
+    if (flags.motivo !== undefined && !MOTIVOS_REENTREGA.includes(flags.motivo)) {
+      throw new Falha('argumento_invalido', `--motivo ${JSON.stringify(flags.motivo)}: esperado um de ${MOTIVOS_REENTREGA.join(' | ')}; nada foi gravado`);
+    }
+    return { task, motivo: flags.motivo };
+  }
+  if (cmd === 'iniciar') {
+    // FIEL-3 (a): `spike` não é papel do diário; o spike entra como `implementador` (o papel visível vem do tipo da task).
+    if (pos[1] === 'spike') throw new Falha('papel_invalido', 'o papel "spike" não existe no diário: inicie o spike como `implementador`; nada foi gravado');
+    if (!PAPEIS.includes(pos[1])) throw new Falha('papel_invalido', `papel "${pos[1]}" fora da lista: ${PAPEIS.join(', ')}`);
+    // FIEL-3 (c): o modelo real do despacho; a lista é a da forma `task.iniciada.modelo` (MODELOS_TASK em formas.ts).
+    if (flags.modelo !== undefined && !MODELOS_INICIAR.includes(flags.modelo)) {
+      throw new Falha('argumento_invalido', `--modelo ${JSON.stringify(flags.modelo)}: esperado um de ${MODELOS_INICIAR.join(' | ')}; nada foi gravado`);
+    }
+    return { task, papel: pos[1], modelo: flags.modelo };
+  }
   if (cmd === 'veredito') {
     const [, v, rodada, blocker, major] = pos;
     if (v !== 'APROVADO' && v !== 'REPROVADO') throw new Falha('argumento_invalido', `veredito "${v}": esperado APROVADO ou REPROVADO`);
@@ -331,14 +411,28 @@ function validarForma(cmd, pos, flags) {
 
 // ─────────────────────────────────────────────────────────────── contexto, plano, config, diário
 
-/** Exportada para o painel (E4, T9): a MESMA regra de raiz principal, entrega por branch ou `--entrega`. */
+/**
+ * `fluxo.idPadrao` de `origin/HEAD`, a chave que a guarda e o painel leem (GM-14 T15, REQ-TRI-1): ausente, não texto, longo ou regex
+ * inválida ⇒ o padrão de `lib/git.mjs`. Nunca lança.
+ */
+function idPadraoDe(raiz) {
+  const v = lerConfigOrigin(raiz)?.cfg?.fluxo?.idPadrao;
+  if (typeof v !== 'string' || v.length === 0 || v.length > 200) return PADROES.idPadrao;
+  try { new RegExp(v); } catch { return PADROES.idPadrao; }
+  return v;
+}
+
+/**
+ * Exportada para o painel (E4, T9): a MESMA regra de raiz principal, entrega por branch ou `--entrega`.
+ * Da branch, a entrega é `idDaBranch` (T3, a mesma de `trilhaDe`); `ENTREGA_RE` segue valendo porque o ID vira diretório.
+ */
 export function contexto(cwd, flags) {
   const raiz = raizPrincipal(cwd);
   let entrega = flags.entrega;
   if (entrega === undefined) {
     let branch = '';
     try { branch = git(cwd, 'rev-parse', '--abbrev-ref', 'HEAD'); } catch { /* sem branch */ }
-    entrega = /[A-Z]+-\d+/.exec(branch)?.[0];
+    entrega = idDaBranch(branch, idPadraoDe(raiz)) ?? undefined;
     if (entrega === undefined || !ENTREGA_RE.test(entrega)) {
       throw new Falha('entrega_nao_inferida', `não achei a entrega na branch "${branch}"; passe --entrega <ID>`);
     }
@@ -449,14 +543,34 @@ const diarioInvalido = (plano, eventos) => {
   return a.tipo === 'parar' && a.motivo === 'diario_invalido';
 };
 
+/** FIEL-8 b3/b4: o que a recusa da tabela diz ao orquestrador sobre `concluir` (entrega e reentrega). */
+const DICA_REENTREGA = {
+  em_revisao: 'revisor em voo: espere o veredito',
+  reprovada: 'o caminho é a correção',
+  no_teto: 'só o dono tira do teto',
+};
+function dicaDaTabela(tipo, dados, invalido) {
+  if (tipo !== 'task.concluida') return '';
+  const m = /^(task\.concluida|concluida\.reentrega) em (\w+)$/.exec(invalido);
+  if (m === null) return '';
+  if (m[1] === 'task.concluida' && (m[2] === 'concluida' || m[2] === 'aprovada')) {
+    return ` (commit novo depois do concluir: \`concluir ${dados.task} --motivo <gate|sombra|dono>\`)`;
+  }
+  return m[1] === 'concluida.reentrega' && Object.hasOwn(DICA_REENTREGA, m[2]) ? ` (${DICA_REENTREGA[m[2]]})` : '';
+}
+
 /**
  * Confere o evento contra a tabela e SÓ ENTÃO grava. O diário atual já inválido recusa (nada piora um diário quebrado);
  * a transição que a tabela não aceita recusa com a causa. Limite declarado: sem lock em volta do par ler+gravar, dois
  * CLIs simultâneos sobre a mesma task podem passar juntos pela conferência.
  */
 function gravar(c, plano, tipo, dados, antes = () => {}) {
+  if (TIPO_VEDADO_EM_PUBLICADA(tipo)) recusarSePublicada(c);
   const eventos = lerDiarioEstrito(c.dirEntrega);
-  if (diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega já não passa na tabela de transições; nada foi gravado');
+  // `plano === null` só da aprovação antes do plano (T15): sem plano não há tabela; vale a leitura estrita, a forma e o canário.
+  // Desvio da letra da DP-3 aj. 2 ("não passa por gravar"), não do fim: `gravarSemPlano` não tem leitura estrita nem o `antes` onde vivem
+  // `ja_aprovada` e `spec_mudou`; passar por aqui com `null` pula só `diarioInvalido`, que pressupõe plano. Nenhum tipo de task chega com `null`.
+  if (plano !== null && diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega já não passa na tabela de transições; nada foi gravado');
   const ts = new Date().toISOString();
   const minhas = eventos.filter((e) => e.sessao === c.sessao).map((e) => e.seq);
   const candidato = {
@@ -469,11 +583,14 @@ function gravar(c, plano, tipo, dados, antes = () => {}) {
     if ('invalido' in r) {
       // Depois do /clear a rodada não está em lugar nenhum além do diário: a mensagem diz qual o diário espera.
       const esperada = r.invalido === 'rodada fora de sequência' ? estadoDe(fila) : null;
-      const dica = esperada !== null && !('invalido' in esperada) ? ` (rodada esperada: ${esperada.rodada + 1})` : '';
+      const dica = esperada !== null && !('invalido' in esperada) ? ` (rodada esperada: ${esperada.rodada + 1})` : dicaDaTabela(tipo, dados, r.invalido);
       throw new Falha('transicao_invalida', `${tipo} não cabe na tabela para a task ${dados.task}: ${r.invalido}${dica}; nada foi gravado`);
     }
     if (diarioInvalido(plano, [...eventos, candidato])) throw new Falha('transicao_invalida', `${tipo} tornaria o diário inválido; nada foi gravado`);
   }
+  // Emenda 12: a borda nova sempre grava `sha` no `iniciar revisor` e no APROVADO (a leitura da 2.0.0 aceita a ausência; a gravação, não).
+  const naGravacao = formaNaGravacao(tipo, dados);
+  if (naGravacao !== null) throw new Falha('forma_invalida', `${naGravacao}; nada foi gravado`);
   antes(candidato, eventos); // última conferência antes de gravar (depois da tabela: a causa mais fundamental vem primeiro)
   let autor = 'desconhecido';
   try { autor = git(c.raiz, 'config', 'user.email') || autor; } catch { /* sem user.email: o diário aceita "desconhecido" */ }
@@ -607,8 +724,10 @@ function abrir(c, plano, task) {
     throw new Falha('worktree_existe', `já existe ${relative(c.raiz, join(pasta, task))} (ou colide por caixa); abrir não toca no que existe`);
   }
   mkdirSync(pasta, { recursive: true });
+  let baseSha;
   try {
-    git(c.raiz, 'worktree', 'add', '-b', branch, caminho, git(c.raiz, 'rev-parse', 'HEAD'));
+    baseSha = git(c.raiz, 'rev-parse', 'HEAD');
+    git(c.raiz, 'worktree', 'add', '-b', branch, caminho, baseSha);
   } catch (e) {
     throw new Falha('worktree_falhou', `git worktree add falhou: ${e.message}`);
   }
@@ -624,6 +743,8 @@ function abrir(c, plano, task) {
     garantirTmp(caminho);
     ({ dir: tmp, criado: tmpCriado } = garantirTmpExterno(caminho));
     git(c.raiz, 'config', `branch.${branch}.gabaritoBase`, base);
+    // FIEL-9 (a6, Emenda 2): `gabaritoBase` guarda o NOME da base; o sha dela no abrir é o que separa "commit próprio" de "nada entregue".
+    git(c.raiz, 'config', `branch.${branch}.gabaritoBaseSha`, baseSha);
   } catch (e) {
     const restos = [];
     if (tmpCriado) {
@@ -843,6 +964,7 @@ function devolver(c, wt, branch, revisado, alvo, e) {
 }
 
 async function integrar(c, plano, task, opcoes = {}) {
+  recusarSePublicada(c);
   const t = tarefa(plano, task);
   const eventos = lerDiarioEstrito(c.dirEntrega);
   if (diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições; integrar recusado');
@@ -870,6 +992,31 @@ async function integrar(c, plano, task, opcoes = {}) {
   const atual = git(wt, 'rev-parse', `refs/heads/${branch}`);
   if (typeof revisado !== 'string' || revisado !== atual) {
     throw new Falha('commit_nao_revisado', `o HEAD de ${branch} (${atual.slice(0, 12)}) não é o commit de task.concluida (${typeof revisado === 'string' ? revisado.slice(0, 12) : 'sem sha'}): há commit que ninguém revisou; nada foi feito`, nada);
+  }
+  // Emenda 12 (FIEL-8 c): o último APROVADO na ordem precisa ser do `revisado`; ordem torta (relógio entre sessões) recusa, nunca integra.
+  // APROVADO sem `sha` (diário 2.0.0) segue só a guarda por ordem acima.
+  const aprovado = (ord.ok ? ord.eventos : []).filter((e) => e.tipo === 'review.veredito' && e.dados?.task === task && e.dados?.veredito === 'APROVADO').at(-1);
+  if (aprovado !== undefined && Object.hasOwn(aprovado.dados, 'sha') && aprovado.dados.sha !== revisado) {
+    throw new Falha('commit_nao_revisado', `o último APROVADO de ${task} é do commit ${String(aprovado.dados.sha).slice(0, 12)}, não do ${revisado.slice(0, 12)} que entraria: há commit que ninguém revisou; nada foi feito`, nada);
+  }
+  // (a6) FIEL-9: o sha aprovado (`revisado`, lido 1 vez do último task.concluida e já comparado com o HEAD em (a5)) já está na base?
+  // 0 ⇒ caminho "já na base"; 1 ⇒ caminho normal; qualquer outro código ⇒ não sei, nada é feito.
+  let naBase = (opcoes.ancestral ?? ehAncestral)(c.raiz, revisado, `refs/heads/${base}`);
+  // Emenda 2: o caminho (b) só vale com ao menos 1 commit próprio desde a base do `abrir` (o aprovado nem igual nem ancestral dela).
+  // Sem commit próprio, ou sem o sha da base gravado para provar, segue o caminho normal, que recusa como antes no gate (A3: 0 commits contra a base).
+  if (naBase === 0) {
+    let baseAbrir = '';
+    try { baseAbrir = git(c.raiz, 'config', '--get', `branch.${branch}.gabaritoBaseSha`); } catch { /* ausente: sem prova */ }
+    const proprio = baseAbrir === '' ? 0 : (opcoes.ancestral ?? ehAncestral)(c.raiz, revisado, baseAbrir);
+    if (proprio !== 0 && proprio !== 1) {
+      throw new Falha('ancestral_indeterminado', `git merge-base --is-ancestor ${revisado.slice(0, 12)} ${baseAbrir.slice(0, 12)} saiu com ${proprio === null ? 'sinal ou erro' : `código ${proprio}`}: não sei se ${task} tem commit próprio desde a base do abrir; nada foi feito`, nada);
+    }
+    // Emenda 3: exceção DECLARADA, nunca implícita — um `desvio` da mesma task citando o sha aprovado (T0 commitada na base antes do `abrir`).
+    if (proprio === 0 && !desvioCitaSha(c, ord.ok ? ord.eventos : [], task, revisado)) naBase = 1;
+  }
+  if (naBase === 0) return integrarJaNaBase(c, plano, ord.ok ? ord.eventos : [], task, branch, base, revisado);
+  if (naBase !== 1) {
+    throw new Falha('ancestral_indeterminado', `git merge-base --is-ancestor ${revisado.slice(0, 12)} ${base} saiu com ${naBase === null ? 'sinal ou erro' : `código ${naBase}`}: não sei se o commit aprovado já está na base; nada foi feito`, nada);
   }
   const mutacoes = carregarMutacoes(c, t);
   let alvo;
@@ -952,6 +1099,69 @@ async function integrar(c, plano, task, opcoes = {}) {
     throw new Falha('fechar_falhou', `o merge entrou e o evento task.integrada foi gravado, mas fechar falhou (${causa})`, { merge: true, evento: true, causa: e.erro });
   }
   return { task, branch, base, merge: true, evento: true, fechada: true, banco: fechada.banco, ignorados_removidos: fechada.ignorados_removidos, mutacoes: mutacoesMedidas, relato: relatoVerde };
+}
+
+/**
+ * Emenda 3 (FIEL-9 a6): algum `desvio` da MESMA task cita o sha aprovado em `evidencia` ou num item de `arquivos`? Cita = um token hexadecimal
+ * minúsculo isolado (fronteira de palavra, 7 a 40 caracteres) que é o sha completo, ou prefixo dele com >= 7 que o git resolve SÓ para ele
+ * (`rev-parse --verify` recusa prefixo ambíguo). Menos de 7, maiúsculas, colado a outra letra ou com caractere a mais: não cita.
+ */
+function desvioCitaSha(c, eventos, task, sha) {
+  const cita = (tok) => {
+    if (tok === sha) return true;
+    if (tok.length >= 40 || !sha.startsWith(tok)) return false;
+    try { return git(c.raiz, 'rev-parse', '--verify', '--quiet', '--end-of-options', tok) === sha; } catch { return false; }
+  };
+  return eventos.some((e) => {
+    if (e.tipo !== 'desvio' || e.dados?.task !== task) return false;
+    const textos = [e.dados.evidencia, ...(Array.isArray(e.dados.arquivos) ? e.dados.arquivos : [])].filter((t) => typeof t === 'string');
+    return textos.some((t) => (t.match(/(?<![0-9A-Za-z])[0-9a-f]{7,40}(?![0-9A-Za-z])/g) ?? []).some(cita));
+  });
+}
+
+/** `git merge-base --is-ancestor`: o código de saída (0 é ancestral, 1 não é), `null` se o git nem rodou ou morreu por sinal. */
+function ehAncestral(cwd, ancestral, descendente) {
+  const r = spawnSync('git', ['-C', cwd, 'merge-base', '--is-ancestor', ancestral, descendente], { stdio: 'ignore', env: ambienteGit() });
+  return r.error ? null : r.status;
+}
+
+/**
+ * FIEL-9 (b4): o que já verificou o commit que entrou direto na base. (i) a 1ª integração com gate (sem `ja_na_base`) cujo sha descende dele;
+ * senão (ii) o próximo integrar, só se resta task do plano fora de `integrada`; senão (iii) a CI do pedido de revisão. Nunca promete integração que não virá.
+ */
+function coberturaJaNaBase(c, plano, ord, task, alvo) {
+  const cobriu = ord.find((e) => e.tipo === 'task.integrada' && e.dados?.ja_na_base !== true && typeof e.dados?.sha === 'string' && ehAncestral(c.raiz, alvo, e.dados.sha) === 0);
+  if (cobriu !== undefined) return `o gate da integração de ${cobriu.dados.task} já rodou sobre ele`;
+  const integrada = (id) => {
+    const r = estadoDe(ord.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === id));
+    return !('invalido' in r) && r.estado === 'integrada';
+  };
+  const resta = plano.tasks.some((t) => t.id !== task && !integrada(t.id));
+  return resta
+    ? 'nenhum gate rodou sobre ele ainda; o próximo integrar roda sobre ele'
+    : 'nenhum gate rodou sobre ele e não há outro integrar: a CI do pedido de revisão é a 1ª verificação, e o merge espera ela verde';
+}
+
+/**
+ * FIEL-9 (b): o commit aprovado já é ancestral da base. Sem rebase, sem gate, sem merge: a branch e a base não se movem. Grava `task.integrada`
+ * com o MESMO `alvo` que (a5) comparou e (a6) testou (nada é relido) e fecha a worktree como o caminho normal.
+ */
+function integrarJaNaBase(c, plano, ord, task, branch, base, alvo) {
+  const aviso = `aviso: ${task} já estava na base (${alvo.slice(0, 12)} é ancestral de ${base}): integrada sem merge, sem rebase e sem gate; ${coberturaJaNaBase(c, plano, ord, task, alvo)}`;
+  try {
+    gravar(c, plano, 'task.integrada', { task, sha: alvo, ja_na_base: true });
+  } catch (e) {
+    const causa = e instanceof Falha ? `${e.erro}: ${e.message}` : String(e.message ?? e);
+    throw new Falha('evento_nao_gravado', `${task} já estava na base, mas o evento task.integrada NÃO foi gravado (${causa}); nada foi movido e fechar não foi chamado`, { merge: false, evento: false });
+  }
+  let fechada;
+  try {
+    fechada = fechar(c, task);
+  } catch (e) {
+    const causa = e instanceof Falha ? `${e.erro}: ${e.message}` : String(e.message ?? e);
+    throw new Falha('fechar_falhou', `${task} já estava na base e o evento task.integrada foi gravado, mas fechar falhou (${causa})`, { merge: false, evento: true, causa: e.erro });
+  }
+  return { task, branch, base, merge: false, ja_na_base: true, evento: true, fechada: true, banco: fechada.banco, ignorados_removidos: fechada.ignorados_removidos, relato: [aviso] };
 }
 
 // ─────────────────────────────────────────────────────────────── proxima
@@ -1041,7 +1251,40 @@ function sinaisDe(c, cfg, eventos, flags) {
     if (existsSync(join(topo, '.harness', 'PAUSAR'))) pausado = true;
   } catch { /* o principal já foi conferido */ }
 
-  return { sinais: { slots, percent: null, x, pausado, vivos, tokens, tetoTokens, podePousar: false }, aviso };
+  const percent = percentDaSessao(c.raiz, flags.sessao);
+  // `podePousar`: o pouso sem mod é `loop.mjs pousar` (REQ-POU-3); a skill o executa quando `proxima` devolve `pousar` (GM-14 FIEL-14 c).
+  return { sinais: { slots, percent, x, pausado, vivos, tokens, tetoTokens, podePousar: true }, aviso };
+}
+
+const CONTEXTO_VALIDADE_MS = 120_000;
+/** `Medicao` de `pousoPendente` (pouso-pendente.ts, a única regra): SÓ a leitura da sessão que pergunta (I1, T53); nenhuma sessão decide por outra. Nunca lança. */
+export function medicaoDoPouso(raiz, sessao, x, agoraMs = Date.now()) {
+  const atual = typeof sessao === 'string' && SESSAO_RE.test(sessao) ? sessao : null;
+  const leituras = [];
+  if (atual !== null) {
+    try {
+      const l = lerLeitura(atual, readFileSync(join(raiz, '.harness', 'contexto', `${atual}.json`), 'utf8'));
+      if (l !== null) leituras.push(l);
+    } catch { /* sem arquivo: sem leitura */ }
+  }
+  return { x, agoraMs, sessaoAtual: atual, leituras };
+}
+/**
+ * GM-14 T34 (FIEL-14 b): `percent` da sessão do Claude, lido de `<raiz>/.harness/contexto/<sessao>.json` (`{percent, fonte, em}`, gravado pelo mod).
+ * Só o arquivo DESSA sessão conta; sem `--sessao`, arquivo ausente, ilegível, fora da forma, `em` velho (> 120 s) ou do futuro (> 5 s) ⇒ `null`
+ * (como na 2.0: `percent` nulo não pousa). Nunca lança.
+ */
+export function percentDaSessao(raiz, sessao, agoraMs = Date.now()) {
+  if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) return null;
+  let j;
+  try { j = JSON.parse(readFileSync(join(raiz, '.harness', 'contexto', `${sessao}.json`), 'utf8')); } catch { return null; }
+  if (j === null || typeof j !== 'object' || Array.isArray(j)) return null;
+  if (typeof j.percent !== 'number' || !Number.isFinite(j.percent) || j.percent < 0 || j.percent > 100) return null;
+  if (typeof j.em !== 'string') return null;
+  const em = Date.parse(j.em);
+  if (!Number.isFinite(em)) return null;
+  const idade = agoraMs - em;
+  return idade >= -5_000 && idade <= CONTEXTO_VALIDADE_MS ? j.percent : null;
 }
 
 /** `sombra.teto` de `origin/HEAD`: ausente ⇒ 26; inteiro >= 1 vale; qualquer outra coisa ⇒ 26 e aviso (a origem corrompida já foi avisada à parte). */
@@ -1150,7 +1393,9 @@ function proxima(c, plano, flags) {
   const { sinais, aviso } = sinaisDe(c, cfg, eventos, flags);
   aviso.push(...avisoOrigin);
   if (cfg === null) aviso.push('harness.config.json ausente');
-  const acao = proximaAcao(plano, eventos, { ...sinais, politica: pol.politica });
+  // FIEL-14 e: a regra única (`pouso-pendente.ts`), a mesma que o painel passa a `dependeDe`.
+  // GM-14 T53: com o mod medindo ESTA sessão, só a leitura dela decide (I1); sem mod fresco, o /clear do dono
+  const acao = proximaAcao(plano, eventos, { ...sinais, politica: pol.politica, pousoPendente: pousoPendente(eventos, temOnboarding(c.raiz), medicaoDoPouso(c.raiz, flags.sessao, sinais.x)).pendente });
   if (acao.tipo === 'parar' && acao.motivo === 'diario_invalido') {
     throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições (evento fora de ordem ou de task desconhecida)', { acao, sinais });
   }
@@ -1203,6 +1448,25 @@ function decisoesDoItem(c, plano, item, reqs, extra) {
 }
 
 /**
+ * FIEL-8 b8: o revisor revê o diff INTEIRO, `<gabaritoBase>...<sha do último task.concluida>`, nunca `<sha anterior>..<sha novo>`;
+ * se esse último foi reentrega, `reentrega: <motivo>`. Sem base gravada ou sem sha: `diff: null` e aviso (nunca inventa base nem diff parcial).
+ */
+function diffDoRevisor(c, eventos, task, aviso) {
+  const ord = ordenar(eventos);
+  const ultimo = (ord.ok ? ord.eventos : []).filter((e) => e.tipo === 'task.concluida' && e.dados?.task === task).at(-1);
+  const branch = ramo(c, task);
+  let base = '';
+  try { base = git(c.raiz, 'config', '--get', `branch.${branch}.gabaritoBase`); } catch { /* ausente */ }
+  const sha = ultimo?.dados?.sha;
+  const reentrega = typeof ultimo?.dados?.motivo === 'string' ? { reentrega: ultimo.dados.motivo } : {};
+  if (base === '' || typeof sha !== 'string' || sha === '') {
+    aviso.push(`diff da task ${task} indeterminado (${base === '' ? `sem branch.${branch}.gabaritoBase` : 'último task.concluida sem sha'}): o revisor lê o diff inteiro desde a base da worktree`);
+    return { diff: null, ...reentrega };
+  }
+  return { diff: `${base}...${sha}`, ...reentrega };
+}
+
+/**
  * O item de despacho carrega o que o /clear apaga: `spec` (ponteiro do topo do plano), `modelo`, `decisoes`, `aprendizados` (regras D do brief deste papel) e `emendas` (as aprovadas dos REQs da task: o
  * arquivo da spec nunca é editado pela emenda, então o implementador, a correção e o revisor leem o diff aqui) e, na `correcao`, `achados` (caminho do
  * arquivo da rodada reprovada). Arquivo de achados ausente ou vazio não vira caminho: `achados: null` e aviso (o orquestrador não manda corrigir às cegas).
@@ -1221,6 +1485,7 @@ function enriquecer(c, plano, eventos, item, aviso, extra) {
     // E5a (GM-13): as regras D vigentes que entram no brief DESTE papel (`brief:<papel>` exato; M nunca entra).
     aprendizados: paraDestino(extra.vigentes, `brief:${item.papel}`).map((a) => a.regra),
   };
+  if (item.papel === 'revisor') return { ...saida, ...diffDoRevisor(c, eventos, item.task, aviso) };
   if (item.papel !== 'correcao') return saida;
   const ord = ordenar(eventos);
   const reprovado = (ord.ok ? ord.eventos : []).filter((e) => e.tipo === 'review.veredito' && e.dados?.task === item.task && e.dados?.veredito === 'REPROVADO').at(-1);
@@ -1236,7 +1501,8 @@ const CODIGO_JULGAMENTO = { 'diário fora de ordem': 'diario_invalido', 'propost
 
 /**
  * Caminho real da spec do plano, com contenção léxica E por `realpath` na raiz (symlink dentro da raiz que aponta para fora é recusado).
- * Base única de `reqNaSpec` e `shaDaSpec`: a spec que prova um REQ é a mesma que o dono aprova. Nunca lança.
+ * Base única de `reqNaSpec` e `shaDaSpec`: a spec que prova um REQ é a mesma que o dono aprova. `raiz` = checkout da sessão
+ * (`checkoutDaSessao`, T38), nunca a principal. Nunca lança.
  * `erro` ∈ `sem_spec`, `spec_fora_da_raiz`, `spec_ausente` (ENOENT), `spec_ilegivel` (outro erro, diretório, não regular).
  */
 function caminhoDaSpec(raiz, plano) {
@@ -1260,7 +1526,7 @@ function caminhoDaSpec(raiz, plano) {
 
 /**
  * O sha256 único da spec (D-P2): "aguardando" no painel (T9) e "já aprovada" no hook (T8) comparam este número.
- * São os BYTES do arquivo na raiz PRINCIPAL (`raizPrincipal`), sem decodificar. Nunca lança.
+ * São os BYTES do arquivo no CHECKOUT DA SESSÃO (`checkoutDaSessao`, T38: DP-3 aj. 4), sem decodificar. Nunca lança.
  * `{ok:true, spec, sha256}` ou `{ok:false, erro, mensagem}`, `erro` ∈ `sem_spec`, `spec_fora_da_raiz`, `spec_ausente`, `spec_ilegivel`, `spec_vazia`.
  */
 export function shaDaSpec(raiz, plano) {
@@ -1285,9 +1551,55 @@ export function lerSpec(raiz, plano) {
   }
 }
 
+const SPEC_MAX = 4 * 1024 * 1024;
+const ausenteFs = (e) => e?.code === 'ENOENT' || e?.code === 'ENOTDIR';
+
+/**
+ * GM-14 T15 (REQ-TRI-1): as specs de `docs/superpowers/specs/*.md` da raiz dada, em ordem de nome, como `SpecFato` de `trilha.ts`:
+ * `{caminho, pbi, sha256, secoes, titulo}`. `pbi` = o 1º token `PBI: <ID>` do CABEÇALHO (DP-3 aj. 1, a regra de `painel-medir.mjs`
+ * `pbiDoCabecalho`): só linhas antes do 1º `## ` e entre as 15 primeiras; token precedido de início, espaço ou `·` e o ID inteiro (sem
+ * `[A-Za-z0-9-]` depois) casando `idPadrao` ancorado; senão `null`. O corpo nunca conta. `sha256` dos bytes; `secoes` = linhas `## `;
+ * `titulo` = o 1º `# `. Não arquivo regular ou maior que 4 MiB fica de fora. Diretório ausente ⇒ `[]`; ilegível ⇒ lança
+ * `Falha('specs_ilegiveis')`: falha de leitura nunca vira "sem spec". `idPadrao` ausente ⇒ `fluxo.idPadrao` de origin (`idPadraoDe`).
+ */
+export function lerSpecs(raiz, idPadrao = idPadraoDe(raiz)) {
+  let reId;
+  try { reId = new RegExp(`^(?:${idPadrao})$`); } catch { reId = new RegExp(`^(?:${PADROES.idPadrao})$`); }
+  const dir = join(raiz, 'docs', 'superpowers', 'specs');
+  let nomes;
+  try {
+    nomes = readdirSync(dir).filter((n) => n.endsWith('.md')).sort();
+  } catch (e) {
+    if (ausenteFs(e)) return [];
+    throw new Falha('specs_ilegiveis', `não consegui listar as specs (${e.code ?? 'erro'})`);
+  }
+  const specs = [];
+  for (const nome of nomes) {
+    const arq = join(dir, nome);
+    let st;
+    try { st = lstatSync(arq); } catch (e) { throw new Falha('specs_ilegiveis', `não consegui ler ${nome} (${e.code ?? 'erro'})`); }
+    if (!st.isFile() || st.size > SPEC_MAX) continue;
+    let bytes;
+    try { bytes = readFileSync(arq); } catch (e) { throw new Falha('specs_ilegiveis', `não consegui ler ${nome} (${e.code ?? 'erro'})`); }
+    const linhas = bytes.toString('utf8').split('\n');
+    let pbi = null;
+    for (const l of linhas.slice(0, 15)) {
+      if (/^##\s/.test(l)) break;
+      const m = /(?:^|[\s·])PBI:\s*([A-Za-z0-9-]+)(?![A-Za-z0-9-])/.exec(l.slice(0, 400));
+      if (m !== null) { pbi = reId.test(m[1]) ? m[1] : null; break; }
+    }
+    const t = linhas.find((l) => l.startsWith('# '));
+    specs.push({
+      caminho: `docs/superpowers/specs/${nome}`, pbi, sha256: createHash('sha256').update(bytes).digest('hex'),
+      secoes: linhas.filter((l) => l.startsWith('## ')).length, titulo: t === undefined ? '' : t.slice(2).trim(),
+    });
+  }
+  return specs;
+}
+
 /** REQ com trecho na spec do plano. Spec ausente, ilegível ou fora da raiz ⇒ `false` (sem a spec não há como provar o REQ). */
 function reqNaSpec(c, plano, req) {
-  const r = caminhoDaSpec(c.raiz, plano);
+  const r = caminhoDaSpec(checkoutDaSessao(c.cwd), plano);
   if (!r.ok) return false;
   try {
     return trechoDoReq(readFileSync(r.real, 'utf8'), req) !== null;
@@ -1349,6 +1661,62 @@ function julgar(c, plano, seq, decisao, origem, antes) {
   return { seq, req: proposta.req, tipo, entrega: c.entrega };
 }
 
+const CODIGO_APLICAR = {
+  diario_invalido: ['diario_invalido', 'o diário da entrega não passa na leitura de emendas; nada foi gravado'],
+  seq_invalido: ['argumento_invalido', 'seq inválido: esperado inteiro >= 1'],
+  emenda_nao_aprovada: ['emenda_nao_aprovada', 'só aplica emenda com `spec.emendada` (aprovada) nesta entrega; aberta, rejeitada ou inexistente não'],
+  ja_aplicada: ['ja_aplicada', 'esta emenda já foi aplicada no texto; cada seq se aplica uma vez'],
+  spec_sem_aprovacao: ['spec_sem_aprovacao', 'não há `spec.aprovada` nesta entrega: a cadeia parte de uma aprovação do dono'],
+};
+
+/**
+ * T54 (emenda 54): `emenda aplicar <seq>` grava `spec.aplicada {seq, spec, sha256_antes, sha256_depois}` depois que o orquestrador editou o texto da spec.
+ * Nenhum sha vem por argumento: `sha256_antes` é a ponta da cadeia lida do diário (`validarAplicacao`, a regra única de `emenda.ts`) e `sha256_depois` é o
+ * sha do arquivo em disco (`shaDaSpec`, bytes do checkout da sessão). Arquivo igual à ponta ⇒ `nada_a_aplicar`. Uma edição que cobre duas emendas
+ * aplica UMA seq por vez (1 aplicar por seq; a 2ª fica `nada_a_aplicar` até outra edição). A conferência final relê o diário depois do gancho `antes`:
+ * ponta que mudou ⇒ `cadeia_quebrada`; spec que mudou ⇒ `spec_mudou`. Limite declarado: o orquestrador redige o texto aplicado; conferi-lo contra o diff
+ * aprovado é do revisor da entrega (o registro lista cada aplicada).
+ */
+function aplicar(c, plano, seq, antesDaGravacao) {
+  const eventos = lerDiarioEstrito(c.dirEntrega);
+  if (diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições; nada foi gravado');
+  const v = validarAplicacao(eventos, seq);
+  if (!v.ok) throw new Falha(CODIGO_APLICAR[v.motivo][0], `${CODIGO_APLICAR[v.motivo][1]}; nada foi gravado`);
+  const checkout = checkoutDaSessao(c.cwd);
+  const alvo = { spec: v.ponta.spec };
+  const depois = shaDaSpec(checkout, alvo);
+  if (!depois.ok) throw new Falha(depois.erro, `${depois.mensagem}; nada foi gravado`);
+  if (depois.sha256 === v.ponta.sha256) throw new Falha('nada_a_aplicar', `a spec ${v.ponta.spec} está igual ao último sha aceito (${v.ponta.sha256.slice(0, 12)}…): edite o texto da emenda antes de aplicar; nada foi gravado`);
+  const dados = { seq, spec: v.ponta.spec, sha256_antes: v.ponta.sha256, sha256_depois: depois.sha256 };
+  const conferir = () => {
+    antesDaGravacao?.();
+    const de_novo = validarAplicacao(lerDiarioEstrito(c.dirEntrega), seq);
+    if (!de_novo.ok || de_novo.ponta.sha256 !== v.ponta.sha256 || de_novo.ponta.spec !== v.ponta.spec) {
+      throw new Falha('cadeia_quebrada', 'a cadeia de specs aceitas mudou entre a leitura e a gravação (outra aprovação ou aplicação); leia o diário e aplique de novo. Nada foi gravado');
+    }
+    const rel = shaDaSpec(checkout, alvo);
+    if (!rel.ok || rel.sha256 !== depois.sha256) throw new Falha('spec_mudou', 'a spec mudou entre o cálculo do sha256 e a gravação; aplique de novo. Nada foi gravado');
+  };
+  gravar(c, plano, 'spec.aplicada', dados, conferir);
+  const ponta = pontaDaSpec(lerDiarioEstrito(c.dirEntrega)).ponta;
+  if (ponta === null || ponta.sha256 !== depois.sha256) {
+    throw new Falha('aplicacao_sem_efeito', `o evento spec.aplicada foi gravado mas o diário relido não leva a cadeia ao sha256 ${depois.sha256.slice(0, 12)}…; confira o diário`);
+  }
+  return { ...dados, entrega: c.entrega, aplicadas: ponta.aplicadas };
+}
+
+/** `emenda aplicar` em processo, com o gancho `antes` (entre as conferências e o append) para o teste simular a corrida. Nunca lança. */
+export function aplicarEmenda(cwd, seq, { antes, sessao, entrega } = {}) {
+  try {
+    if (!Number.isInteger(seq) || seq < 1) throw new Falha('argumento_invalido', `seq ${JSON.stringify(seq)}: esperado inteiro >= 1`);
+    const c = contexto(cwd, { sessao, entrega });
+    return { ok: true, ...aplicar(c, carregarPlano(c), seq, antes) };
+  } catch (e) {
+    if (e instanceof Falha) return { ok: false, erro: e.erro, mensagem: e.message };
+    return { ok: false, erro: 'excecao', mensagem: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 function julgarComoSombra(c, plano, seq, decisao) {
   const o = lerConfigOrigin(c.raiz);
   const liga = o.fonte === 'origin' && o.cfg.sombra !== null && typeof o.cfg.sombra === 'object' && o.cfg.sombra.julga_emendas === true;
@@ -1380,7 +1748,78 @@ export function julgarEmendaDono(cwd, seq, decisao, sessao, opcoes = {}) {
 
 // ─────────────────────────────────────────────────────────────── despacho
 
+/**
+ * `sessao` de `anotar`: a mesma forma do `<sessao>` de `IdPergunta` (`[A-Za-z0-9-]{1,128}`, sem `.` nem `_`, que o `SESSAO_RE` do diário aceita) e
+ * diferente de `herdar` (`herdar:<n>` é a forma do id herdado). Uma `duvida` gravada numa sessão fora disso viraria pergunta que ninguém responde.
+ */
+const SESSAO_PERGUNTA_RE = /^[A-Za-z0-9-]{1,128}$/;
+
+/** Leitor de `anotar`: `--opcao` se repete (2–4 na `duvida`), as demais flags não; sem posicional. Uso errado sai 2. */
+function lerArgsAnotar(argv) {
+  const uso = 'uso: loop.mjs anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--entrega <ID>] [--sessao <id>] [--opcao <r>]…';
+  const flags = {};
+  const opcoes = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a.startsWith('--')) throw new Falha('uso', `anotar não tem argumento posicional (${JSON.stringify(a)}). ${uso}`, {}, 2);
+    const nome = a.slice(2);
+    if (!['tipo', 'texto', 'entrega', 'sessao', 'opcao'].includes(nome)) throw new Falha('uso', `argumento desconhecido para anotar: ${a}. ${uso}`, {}, 2);
+    const v = argv[i + 1];
+    if (v === undefined || v.startsWith('--')) throw new Falha('uso', `${a} sem valor. ${uso}`, {}, 2);
+    if (nome === 'opcao') opcoes.push(v);
+    else if (Object.hasOwn(flags, nome)) throw new Falha('uso', `${a} repetido. ${uso}`, {}, 2);
+    else flags[nome] = v;
+    i++;
+  }
+  for (const nome of ['tipo', 'texto']) if (!Object.hasOwn(flags, nome)) throw new Falha('uso', `anotar exige --${nome}. ${uso}`, {}, 2);
+  return { flags, opcoes };
+}
+
+/**
+ * Destino: `--entrega`; senão a entrega da branch (a regra de `contexto`); senão `_sem-id`. `--entrega` diferente da branch grava nela e só nela:
+ * a nota não identifica entrega (quem identifica é o painel, por um 2º fato). Fora de repositório falha: sem raiz não há diário.
+ */
+function destinoDeAnotar(cwd, flags) {
+  try {
+    return contexto(cwd, flags);
+  } catch (e) {
+    if (!(e instanceof Falha) || e.erro !== 'entrega_nao_inferida') throw e;
+    const raiz = raizPrincipal(cwd);
+    return { cwd, raiz, entrega: '_sem-id', dirEntrega: diario.dirEntrega(raiz, null), sessao: flags.sessao ?? 'loop' };
+  }
+}
+
+/**
+ * `anotar` (GM-14, REQ-DIA-2): grava `nota` sem plano. Ordem: uso (2) ⇒ forma da T1 (tipo, 1 linha, até 160 CARACTERES, opções 2–4 só na `duvida`)
+ * ⇒ canário no texto e em cada opção ⇒ entrega e raiz ⇒ diário legível ⇒ `diario.append`. Recusa em qualquer passo: rc 1, `erro` com o motivo
+ * (nunca o valor), nada gravado. Diário ausente cria a pasta; diário com linha ilegível ou cadeia quebrada recusa (`diario_ilegivel`): anotar não piora o que já quebrou.
+ */
+function anotar(argv, cwd) {
+  const { flags, opcoes } = lerArgsAnotar(argv);
+  if (flags.entrega !== undefined && !ENTREGA_RE.test(flags.entrega)) throw new Falha('entrega_invalida', `--entrega "${flags.entrega}" fora da forma ${ENTREGA_RE}`);
+  if (flags.sessao !== undefined && (!SESSAO_PERGUNTA_RE.test(flags.sessao) || flags.sessao === 'herdar')) {
+    throw new Falha('argumento_invalido', `--sessao fora da forma ${SESSAO_PERGUNTA_RE} (ou "herdar"): a pergunta da nota se chamaria <sessao>:<n> e ninguém a responderia`);
+  }
+  const dados = { tipo: flags.tipo, texto: flags.texto, ...(opcoes.length > 0 ? { opcoes } : {}) };
+  const invalida = formaInvalida('nota', dados);
+  if (invalida !== null) throw new Falha('forma_invalida', `${invalida}; nada foi gravado`);
+  for (const [nome, v] of [['texto', flags.texto], ...opcoes.map((o, i) => [`opcao ${i + 1}`, o])]) {
+    const padrao = diario.recusaCanario(v);
+    if (padrao !== null) throw new Falha('segredo_na_nota', `${nome} casa o canário de segredo (${padrao}); nada foi gravado`);
+  }
+  const c = destinoDeAnotar(cwd, flags);
+  lerDiarioEstrito(c.dirEntrega);
+  let autor = 'desconhecido';
+  try { autor = git(c.raiz, 'config', 'user.email') || autor; } catch { /* sem user.email: o diário aceita "desconhecido" */ }
+  const r = diario.append(c.dirEntrega, c.sessao, { ts: new Date().toISOString(), autor, sessao: c.sessao, agente: 'orquestrador', tipo: 'nota', dados });
+  if (!r.ok) throw new Falha(/^forma_invalida: /.test(r.erro) ? 'forma_invalida' : 'evento_nao_gravado', `nota não gravada: ${r.erro}`);
+  if (r.gravado !== 'evento') throw new Falha('evento_nao_gravado', 'nota recusada pelo diário (canário ou tamanho)');
+  return { evento: { tipo: 'nota', dados }, entrega: c.entrega, sessao: c.sessao };
+}
+
 async function executar(argv, cwd) {
+  // Desvia antes de `lerArgs`: `--opcao` se repete (2–4), o que o leitor comum recusa como flag repetida.
+  if (argv[0] === 'anotar') return anotar(argv.slice(1), cwd);
   const { cmd, pos, flags } = lerArgs(argv);
   const forma = validarForma(cmd, pos, flags);
   // `aprendizados` lê a árvore da raiz principal: não depende da entrega da branch nem de plano (D-P1c-5), então desvia ANTES de `contexto` e `carregarPlano`.
@@ -1388,6 +1827,7 @@ async function executar(argv, cwd) {
   // Uso, conversão e canário do `aprendizado` só dependem dos argumentos: conferidos antes de abrir entrega, plano e diário.
   const aprendizadoPronto = cmd === 'aprendizado' ? loopAprendizado.preparar(Falha, pos, flags) : undefined;
   const c = contexto(cwd, cmd === 'emenda' && forma.sub === 'propor' ? { ...flags, sessao: SESSAO_EMENDAS } : flags);
+  if (COMANDOS_VEDADOS_EM_PUBLICADA.has(cmd)) recusarSePublicada(c);
   if (cmd === 'parar') return { ...gravarSemPlano(c, 'loop.parar', { motivo: forma.motivo }) };
   // Tudo que só depende dos argumentos (diff, tamanho, canário, caminhos) é conferido antes de abrir o plano e o diário.
   let propostaPronta;
@@ -1409,24 +1849,38 @@ async function executar(argv, cwd) {
     case 'descoberta': return { evento: gravar(c, plano, 'descoberta', forma.dados) };
     case 'emenda':
       if (forma.sub === 'propor') return propor(c, plano, propostaPronta);
+      if (forma.sub === 'aplicar') return aplicar(c, plano, forma.seq);
       return julgarComoSombra(c, plano, forma.seq, forma.decisao);
     case 'proxima': return proxima(c, plano, flags);
     case 'aprendizado': case 'pousar': case 'registro':
-      return loopAprendizado[cmd]({ c, plano, gravar, lerDiarioEstrito, Falha, git, shaDaSpec, pronto: aprendizadoPronto }, pos, flags);
+      // T38: a spec do registro é a do checkout da sessão, a mesma que `aprovarSpec` grava (o `raiz` que o módulo passa é ignorado).
+      const shaDoCheckout = (_raiz, p) => shaDaSpec(checkoutDaSessao(c.cwd), p);
+      return loopAprendizado[cmd]({ c, plano, gravar, lerDiarioEstrito, Falha, git, shaDaSpec: shaDoCheckout, pronto: aprendizadoPronto }, pos, flags);
     case 'abrir': return abrir(c, plano, task);
     case 'fechar': tarefa(plano, task); return fechar(c, task);
     case 'integrar': return integrar(c, plano, task);
     case 'iniciar': {
       tarefa(plano, task);
       worktreeViva(c, task);
-      const { modelo, aviso } = modeloDaInicio(c, forma.papel);
-      return { evento: gravar(c, plano, 'task.iniciada', { task, papel: forma.papel, ...(modelo !== undefined ? { modelo } : {}) }), ...(aviso.length > 0 ? { aviso } : {}) };
+      // `--modelo` (o do despacho) vence o config; sem o flag, o da 2.0.0 (família do config para o papel).
+      const { modelo: doConfig, aviso } = modeloDaInicio(c, forma.papel);
+      const modelo = forma.modelo ?? doConfig;
+      // Emenda 12: o revisor revê o sha do último task.concluida (o `<sha>` do diff do item, b8); o APROVADO copia este valor.
+      const sha = forma.papel === 'revisor' ? ultimoDaTask(c, task, (e) => e.tipo === 'task.concluida')?.dados?.sha : undefined;
+      const dados = { task, papel: forma.papel, ...(modelo !== undefined ? { modelo } : {}), ...(sha !== undefined ? { sha } : {}) };
+      return { evento: gravar(c, plano, 'task.iniciada', dados), ...(aviso.length > 0 ? { aviso } : {}) };
     }
     case 'concluir': {
       tarefa(plano, task);
       const wt = worktreeViva(c, task);
       const sha = git(wt, 'rev-parse', `refs/heads/${ramo(c, task)}`);
-      return { evento: gravar(c, plano, 'task.concluida', { task, sha }) };
+      // FIEL-8 b5 (e 4.i do P1, PROVISÓRIO): o sha do último task.concluida da task já foi entregue; sem commit novo não há o que revisar.
+      const shaIgual = (_candidato, eventos) => {
+        const ord = ordenar(eventos);
+        const ultimo = (ord.ok ? ord.eventos : []).filter((e) => e.tipo === 'task.concluida' && e.dados?.task === task).at(-1);
+        if (ultimo?.dados?.sha === sha) throw new Falha('sha_igual', `o sha ${sha.slice(0, 12)} é o do último task.concluida de ${task}: faça o commit novo antes de concluir; nada foi gravado`);
+      };
+      return { evento: gravar(c, plano, 'task.concluida', { task, sha, ...(forma.motivo !== undefined ? { motivo: forma.motivo } : {}) }, shaIgual) };
     }
     case 'ci': return { evento: gravar(c, plano, 'ci.resultado', { verde: forma.verde, ...(forma.alvo !== undefined ? { alvo: forma.alvo } : {}) }) };
     case 'veredito': {
@@ -1440,11 +1894,31 @@ async function executar(argv, cwd) {
           throw new Falha('achados_ausentes', `REPROVADO exige os achados em ${relative(c.raiz, arq)} (arquivo não vazio); grave-os e repita o veredito; nada foi gravado`, { achados: arq });
         }
       };
-      return { evento: gravar(c, plano, 'review.veredito', { task, veredito: forma.veredito, rodada: forma.rodada, blocker: forma.blocker, major: forma.major }, exigirAchados) };
+      // Emenda 12: o APROVADO COPIA o sha do último `iniciar revisor` (nunca recalcula do diário) e o HEAD da branch tem de ser ele.
+      const aprovado = forma.veredito === 'APROVADO';
+      const sha = aprovado ? ultimoDaTask(c, task, (e) => e.tipo === 'task.iniciada' && e.dados?.papel === 'revisor')?.dados?.sha : undefined;
+      const conferir = () => {
+        exigirAchados();
+        if (!aprovado || typeof sha !== 'string') return;
+        let head = '';
+        try { head = git(c.raiz, 'rev-parse', `refs/heads/${ramo(c, task)}`); } catch { /* sem branch */ }
+        if (head !== sha) {
+          throw new Falha('sha_diferente', `o HEAD de ${ramo(c, task)} (${head === '' ? 'ausente' : head.slice(0, 12)}) não é o sha ${sha.slice(0, 12)} que o revisor recebeu no iniciar: o APROVADO não vale para commit que ele não viu; nada foi gravado`);
+        }
+      };
+      const dados = { task, veredito: forma.veredito, rodada: forma.rodada, blocker: forma.blocker, major: forma.major, ...(sha !== undefined ? { sha } : {}) };
+      return { evento: gravar(c, plano, 'review.veredito', dados, conferir) };
     }
     case 'reabrir': tarefa(plano, task); return { evento: gravar(c, plano, 'task.reaberta', { task, origem: 'retomada' }) };
+    case 'liberar': return liberarComoSombra(c, plano, task, forma.hash);
     default: throw new Falha('uso', `comando desconhecido: ${cmd}`, {}, 2);
   }
+}
+
+/** Último evento da task (na ordem do diário) que casa `filtro`; diário fora de ordem ⇒ nenhum (a tabela do `gravar` recusa depois). */
+function ultimoDaTask(c, task, filtro) {
+  const ord = ordenar(lerDiarioEstrito(c.dirEntrega));
+  return (ord.ok ? ord.eventos : []).filter((e) => e.dados?.task === task && filtro(e)).at(-1);
 }
 
 /** Estado da task segundo o núcleo, lendo o diário de forma estrita; diário que a tabela recusa ⇒ falha, nunca um estado inventado. */
@@ -1454,7 +1928,9 @@ function estadoDaTask(c, task) {
   if (!ord.ok) throw new Falha('diario_invalido', 'o diário da entrega não está em ordem');
   const r = estadoDe(ord.eventos.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === task));
   if ('invalido' in r) throw new Falha('diario_invalido', `diário da task ${task} fora da tabela de transições: ${r.invalido}`);
-  return { estado: r.estado, donos: eventos.filter((e) => e.tipo === 'task.reaberta' && e.dados?.task === task && e.dados?.origem === 'dono').length };
+  const liberacoes = (origem) => eventos.filter((e) => e.tipo === 'task.reaberta' && e.dados?.task === task && e.dados?.origem === origem).length;
+  // GM-14 T36 (furo 10): as liberações da Sombra contam à parte; `donos` segue sendo só a do dono (a releitura do `liberarTeto` não muda).
+  return { estado: r.estado, donos: liberacoes('dono'), sombras: liberacoes('sombra') };
 }
 
 /**
@@ -1497,6 +1973,7 @@ export function liberarTeto(cwd, task, sessao) {
     if (typeof task !== 'string' || !ID_RE.test(task)) throw new Falha('id_invalido', `task ${JSON.stringify(task)} fora da forma ${ID_RE}`);
     if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) throw new Falha('argumento_invalido', `sessão fora da forma ${SESSAO_RE}`);
     const c = contexto(cwd, { sessao });
+    recusarSePublicada(c);
     const plano = carregarPlano(c);
     tarefa(plano, task);
     const antes = estadoDaTask(c, task);
@@ -1524,10 +2001,223 @@ export function liberarTeto(cwd, task, sessao) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────── a Sombra libera o teto (GM-14 T36, FIEL-15)
+
+const HASH_RE = /^[0-9a-f]{64}$/;
+const RESPOSTA_RE = (entrega, h) => new RegExp(`^\\.harness/entregas/${entrega}/sombra/${h}\\.([0-9a-f]{12})\\.resposta\\.md$`);
+
+/**
+ * A PERGUNTA FECHADA de liberação (furo 3): texto fixo por task; `sombra.mjs perguntar --task <t> --libera-teto` a usa, e só ela vale para `liberar`.
+ * GM-14 T39 (emenda 16, FIEL-15 e): o CRITÉRIO está no texto fixo, então mudá-lo muda o hash (FIEL-15 a) e decisão velha não libera.
+ */
+export function perguntaDaLiberacao(task) {
+  return `A task ${task} chegou ao teto de rodadas de review. A spec e os achados sustentam liberar mais um ciclo de implementação e review (a Sombra libera 1 vez por task)? `
+    + 'Critério: libera: true quando cada BLOCKER/MAJOR em aberto na última rodada tem correção dentro da spec vigente (com emendas) e dos arquivos da task, '
+    + 'ou por desvio/task de ajuste já registrados; libera: false quando algum pede mudança de spec ou de desenho (aí emenda ou dono), quando a abordagem da task '
+    + 'está errada (diga qual), quando o arquivo da última rodada falta, está ilegível ou foi cortado, ou quando a última rodada não traz nenhum BLOCKER/MAJOR '
+    + 'legível (contradiz o REPROVADO que levou ao teto).';
+}
+
+/** REQ onde a FIEL-15 mora: as emendas aprovadas dele entram SEMPRE no brief e na versão da pergunta de liberação (T39, emenda 16 e MINOR 665842d7). */
+export const REQ_DA_LIBERACAO = 'REQ-DIA-2';
+
+/** REQs que versionam e alimentam a pergunta de liberação da task: os da task mais `REQ_DA_LIBERACAO`, sem repetir. */
+export const reqsDaLiberacao = (t) => [...new Set([...(t?.reqs ?? []), REQ_DA_LIBERACAO])];
+
+/** Teto de leitura por arquivo de achados no brief da liberação (emenda 16 e.2); o resto é cortado e marcado. */
+export const ACHADO_MAX_BYTES = 40 * 1024;
+
+/**
+ * Achados do CICLO CORRENTE da task (emenda 16 e.2): as rodadas com `review.veredito` da task depois da última `task.reaberta` dela (qualquer
+ * origem), ou desde o começo se não houve, na ordem do diário; uma entrada por rodada (a última vence). Cada arquivo
+ * `<raiz>/.harness/worktrees/<task>/.tmp-gabarito/review-r<n>.md` vem com estado `integro | cortado | ausente | ilegivel`, sha256 do arquivo
+ * inteiro e no máximo `ACHADO_MAX_BYTES` de conteúdo (corte em fronteira de UTF-8). Só lê; symlink (do arquivo ou de `.tmp-gabarito`) é ilegível.
+ */
+export function achadosDoCiclo(raiz, eventos, task) {
+  const ord = ordenar(eventos);
+  const daTask = (ord.ok ? ord.eventos : eventos).filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === task);
+  let ini = 0;
+  daTask.forEach((e, i) => { if (e.tipo === 'task.reaberta') ini = i + 1; });
+  const porRodada = new Map();
+  for (const e of daTask.slice(ini)) {
+    if (e.tipo !== 'review.veredito' || !Number.isInteger(e.dados?.rodada)) continue;
+    porRodada.delete(e.dados.rodada);
+    porRodada.set(e.dados.rodada, e.dados);
+  }
+  const relTmp = `.harness/worktrees/${task}/${TMP}`;
+  const tmp = join(raiz, '.harness', 'worktrees', task, TMP);
+  let tmpRuim = null;
+  try {
+    const st = lstatSync(tmp);
+    if (st.isSymbolicLink() || !st.isDirectory()) tmpRuim = `${TMP} não é um diretório comum (symlink ou arquivo)`;
+  } catch (e) {
+    if (e.code !== 'ENOENT') tmpRuim = `${TMP} ilegível (${e.code ?? e.message})`;
+  }
+  return [...porRodada.values()].map((d) => {
+    const base = { rodada: d.rodada, veredito: d.veredito, blocker: d.blocker, major: d.major, arquivo: `${relTmp}/review-r${d.rodada}.md` };
+    if (tmpRuim !== null) return { ...base, estado: 'ilegivel', motivo: tmpRuim };
+    const arq = join(tmp, `review-r${d.rodada}.md`);
+    let buf;
+    try {
+      if (!lstatSync(arq).isFile()) return { ...base, estado: 'ilegivel', motivo: 'não é arquivo regular (symlink ou diretório)' };
+      buf = readFileSync(arq);
+    } catch (e) {
+      if (e.code === 'ENOENT') return { ...base, estado: 'ausente' };
+      return { ...base, estado: 'ilegivel', motivo: e.code ?? e.message };
+    }
+    const sha256 = createHash('sha256').update(buf).digest('hex');
+    if (buf.length <= ACHADO_MAX_BYTES) {
+      const conteudo = buf.toString('utf8');
+      if (conteudo.trim() === '') return { ...base, estado: 'ilegivel', motivo: 'arquivo vazio', sha256, bytes: buf.length };
+      return { ...base, estado: 'integro', sha256, bytes: buf.length, conteudo };
+    }
+    let fim = ACHADO_MAX_BYTES;
+    while (fim > 0 && (buf[fim] & 0xc0) === 0x80) fim--; // não parte um caractere UTF-8 ao meio
+    return { ...base, estado: 'cortado', sha256, bytes: buf.length, conteudo: buf.subarray(0, fim).toString('utf8'), lidos: fim };
+  });
+}
+
+/**
+ * Identidade do insumo da liberação (T39 r1, MAJOR 1): rodada, veredito e contagens de cada rodada do ciclo corrente, na ordem, com o estado e o
+ * sha256 do `review-r<n>.md`. Veredito novo ou achado reescrito ⇒ outra identidade ⇒ outro hash ⇒ outro brief: a Sombra nunca decide sobre insumo velho.
+ */
+export function insumoDaLiberacao(achados) {
+  const linhas = achados.map((a) => [a.rodada, a.veredito, a.blocker, a.major, a.estado, a.sha256 ?? null]);
+  return createHash('sha256').update(JSON.stringify(linhas)).digest('hex');
+}
+
+/**
+ * Hash da pergunta de liberação da task com a versão da âncora de hoje (a mesma regra de `sombra.mjs perguntar`: `proposta_seq` da ÚLTIMA emenda
+ * aprovada dentre os REQs da task e `REQ-DIA-2`, T39) e a identidade do insumo de hoje (`insumoDaLiberacao` dos achados do ciclo corrente,
+ * lidos de `raiz`, T39 r1). Emenda aprovada, veredito novo ou achado reescrito depois da pergunta muda o hash: a decisão velha não libera.
+ * `achados` já lidos (o brief de `perguntar`) evitam reler. `null` = task fora do plano ou diário que não projeta. Exportada para `sombra.mjs`
+ * (perguntar e registrar) e para o teste.
+ */
+export function hashDaLiberacao(plano, eventos, task, raiz, achados) {
+  const t = plano?.tasks?.find((x) => x.id === task);
+  if (t === undefined) return null;
+  const est = projetarEmendas(eventos);
+  if (est.invalido !== undefined) return null;
+  const reqs = reqsDaLiberacao(t); // T39 (MINOR 665842d7): emenda aprovada de REQ-DIA-2 também versiona a pergunta
+  const aprovadas = est.aprovadas.filter((p) => reqs.includes(p.req));
+  const versao = aprovadas.length === 0 ? 0 : aprovadas[aprovadas.length - 1].seq;
+  try {
+    const insumo = insumoDaLiberacao(achados ?? achadosDoCiclo(raiz, eventos, task));
+    return hashPergunta(`${textoAncora({ task })} insumo:${insumo}`, versao, perguntaDaLiberacao(task));
+  } catch { return null; }
+}
+
+/** Estado da task pelo diário inteiro, na ordem de `ordenar` (a régua de `conferirLiberacao`); `{invalido}` se a ordem ou a tabela quebram. */
+export function estadoNoDiario(eventos, task) {
+  const ord = ordenar(eventos);
+  if (!ord.ok) return { invalido: 'diário fora de ordem' };
+  return estadoDe(ord.eventos.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === task));
+}
+
+const ehArquivoRegular = (p) => { try { return lstatSync(p).isFile(); } catch { return false; } };
+
+/**
+ * Tudo que o diário decide sobre a liberação da Sombra, na ordem dos motivos de FIEL-15 (b). Puro sobre `eventos` (mais a leitura do brief e da
+ * resposta no disco): roda antes de `gravar` e de novo DENTRO dele, sobre o diário que ele leu. Lança `Falha`; nada grava.
+ */
+function conferirLiberacao(c, plano, task, hash, eventos) {
+  const ord = ordenar(eventos);
+  if (!ord.ok) throw new Falha('diario_invalido', 'o diário da entrega não está em ordem; nada foi gravado');
+  const daTask = ord.eventos.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === task);
+  // furo 6: a Sombra só dá a 1ª liberação; qualquer liberação anterior (do dono ou dela) faz da próxima uma decisão do dono.
+  const anteriores = daTask.filter((e) => e.tipo === 'task.reaberta' && (e.dados?.origem === 'dono' || e.dados?.origem === 'sombra'));
+  if (anteriores.length > 0) {
+    const quem = anteriores.map((e) => (e.dados.origem === 'dono' ? 'o dono' : 'a Sombra')).join(' e ');
+    throw new Falha('teto_sombra_esgotado', `a task ${task} já foi liberada (${quem}): a Sombra só dá a 1ª liberação, a próxima é sempre do dono (/gabarito-mestre:liberar ${task}); nada foi gravado`);
+  }
+  const r = estadoDe(daTask);
+  if ('invalido' in r) throw new Falha('diario_invalido', `diário da task ${task} fora da tabela de transições: ${r.invalido}; nada foi gravado`);
+  if (r.estado !== 'no_teto') throw new Falha('fora_do_teto', `a task ${task} está em ${r.estado}: a Sombra só libera task no teto de rodadas; nada foi gravado`);
+  const invalido = (porque) => new Falha('hash_invalido', `o hash ${String(hash).slice(0, 12)}… não autoriza a liberação de ${task}: ${porque}; nada foi gravado`);
+  if (typeof hash !== 'string' || !HASH_RE.test(hash)) throw invalido('fora da forma sha256 em hex minúsculo (64)');
+  // furo 1 e 3: só a pergunta fechada de liberação desta task, na versão de hoje da âncora
+  if (hash !== hashDaLiberacao(plano, eventos, task, c.raiz)) throw invalido(`não é o hash da pergunta de liberação da task com os achados de hoje (sombra.mjs perguntar --task ${task} --libera-teto de novo)`);
+  const consulta = ord.eventos.some((e) => e.tipo === 'sombra.consulta' && formaInvalida(e.tipo, e.dados) === null && e.dados.pergunta_hash === hash && e.dados.task === task);
+  if (!consulta) throw invalido('sem a sombra.consulta da pergunta de liberação no diário');
+  // furo 5: vale a decisão VIGENTE (a substituída não conta), na posição da ordem do diário
+  const v = vigentes(eventos).get(hash);
+  if (v === undefined) throw invalido('sem decisão da Sombra para a pergunta de liberação');
+  const d = ord.eventos[v.pos]?.dados ?? {};
+  if (d.task !== task) throw invalido('a decisão não é desta task');
+  if (d.fora_da_regra === true) throw invalido('a decisão está fora da regra (fora_da_regra)');
+  // furo 4: "depois do veredito que levou ao teto" pela ORDEM do diário (`ordenar`), nunca pelo ts cru
+  let posTeto = -1;
+  for (let i = 0; i < daTask.length && posTeto < 0; i++) {
+    const p = estadoDe(daTask.slice(0, i + 1));
+    if (!('invalido' in p) && p.estado === 'no_teto') posTeto = ord.eventos.indexOf(daTask[i]);
+  }
+  if (v.pos <= posTeto) throw invalido('a decisão vem antes do teto na ordem do diário (só vale a dada depois do veredito que levou ao teto)');
+  // furo 2 (o que dá para fechar): o brief que `perguntar` gerou e a resposta que `registrar` gravou estão no disco, com o sha do texto
+  if (!ehArquivoRegular(join(c.dirEntrega, 'sombra', `${hash}.md`))) throw invalido('o brief da pergunta não está no disco');
+  const m = typeof d.arquivo === 'string' ? RESPOSTA_RE(c.entrega, hash).exec(d.arquivo) : null;
+  const arq = m === null ? null : join(c.dirEntrega, 'sombra', basename(d.arquivo));
+  let texto = null;
+  if (arq !== null && ehArquivoRegular(arq)) { try { texto = readFileSync(arq, 'utf8'); } catch { texto = null; } }
+  if (texto === null || sha(texto).slice(0, 12) !== m[1]) throw invalido('o arquivo de resposta da decisão está ausente, fora do lugar ou adulterado');
+  // T39 (emenda 16): decisão íntegra que não traz `libera: true` é a Sombra dizendo não, motivo próprio (por último: só a decisão válida chega aqui)
+  if (d.libera !== true) {
+    throw new Falha('sombra_nao_liberou', `a decisão vigente da Sombra para ${task} não libera (libera ${d.libera === false ? 'false' : 'ausente'}): mais um ciclo é decisão do dono (/gabarito-mestre:liberar ${task}) ou de uma emenda; nada foi gravado`);
+  }
+  return { ord };
+}
+
+/**
+ * `loop.mjs liberar <task> --origem sombra --hash <h>`: a ÚNICA gravação de `task.reaberta {origem:"sombra", hash}` (FIEL-15). Repete o caminho de
+ * `liberarTeto` (furo 10): `no_teto`, projeção na ordem real (`relogio_do_diario`), achados arquivados por último e releitura. O caminho do dono não muda.
+ */
+function liberarComoSombra(c, plano, task, hash) {
+  // a recusa em publicada já vale em `executar` (`liberar` ∈ COMANDOS_VEDADOS_EM_PUBLICADA), antes de chegar aqui
+  tarefa(plano, task);
+  const o = lerConfigOrigin(c.raiz);
+  const liga = o.fonte === 'origin' && o.cfg.sombra !== null && typeof o.cfg.sombra === 'object' && o.cfg.sombra.libera_teto === true;
+  if (!liga) {
+    throw new Falha('libera_teto_desligado', o.invalida
+      ? `config de origin/HEAD inválida (${o.motivo}): sem sombra.libera_teto verdadeiro lá, a Sombra não libera o teto; nada foi gravado`
+      : 'sombra.libera_teto não é true em origin/HEAD (o config local não conta): a Sombra não libera o teto; nada foi gravado');
+  }
+  const eventos = lerDiarioEstrito(c.dirEntrega);
+  if (diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições; nada foi gravado');
+  conferirLiberacao(c, plano, task, hash, eventos);
+  // Projeta o candidato NA ORDEM REAL (relógio de outra sessão pode pô-lo antes do teto). Fora do teto `reaberta.sombra` é par ausente, então a tabela
+  // de `gravar` recusaria antes do gancho: a projeção roda aqui primeiro (com o candidato que `gravar` montaria) e de novo dentro dele.
+  const projetarNaOrdem = (candidato, lidos) => {
+    const ord = ordenar([...lidos, candidato]);
+    if (!ord.ok) throw new Falha('diario_invalido', `a liberação de ${task} deixaria o diário fora de ordem; nada foi gravado`);
+    const r = estadoDe(ord.eventos.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === task));
+    if ('invalido' in r || r.estado !== 'pendente') {
+      throw new Falha('relogio_do_diario', `a liberação de ${task} não tiraria a task do teto: na ordem do diário o evento cairia antes do teto (um evento do diário tem relógio à frente do agora; estado projetado ${'invalido' in r ? r.invalido : r.estado}). Nada foi gravado`);
+    }
+  };
+  const minhas = eventos.filter((e) => e.sessao === c.sessao).map((e) => e.seq);
+  const dados = { task, origem: 'sombra', hash };
+  projetarNaOrdem({ seq: (minhas.length ? Math.max(...minhas) : 0) + 1, ts: new Date().toISOString(), sessao: c.sessao, tipo: 'task.reaberta', dados }, eventos);
+  const antes = estadoDaTask(c, task);
+  const projetar = (candidato, lidos) => {
+    conferirLiberacao(c, plano, task, hash, lidos); // o diário que `gravar` leu (outra sessão pode ter gravado no meio)
+    projetarNaOrdem(candidato, lidos);
+    arquivarAchados(c, task); // última coisa antes do append: toda recusa acima deixa os achados onde estão
+  };
+  gravar(c, plano, 'task.reaberta', dados, projetar);
+  const depois = estadoDaTask(c, task);
+  if (depois.sombras !== antes.sombras + 1 || depois.estado !== 'pendente') {
+    throw new Falha('liberacao_sem_efeito', `o evento de ${task} foi gravado mas o diário relido não mostra a task fora do teto (estado ${depois.estado}, liberações da Sombra ${antes.sombras} → ${depois.sombras}); confira o diário`);
+  }
+  return { task, entrega: c.entrega, estado: depois.estado, origem: 'sombra', hash };
+}
+
 /**
  * REQ-PNL-8: a ÚNICA gravação de `spec.aprovada {spec, sha256}`. Fora de `ESPEC` de propósito: nenhum argumento do CLI chega aqui, só o
- * hook `UserPromptExpansion` (`aprovar-spec.mjs`), disparado pelo comando que o dono digita. O sha é o de `shaDaSpec` (bytes, raiz principal).
- * "Já aprovada" = existe `spec.aprovada` de forma válida com o sha atual, sem ordem e sem olhar `spec` (a régua do painel): não entra em
+ * hook `UserPromptExpansion` (`aprovar-spec.mjs`), disparado pelo comando que o dono digita. O sha é o de `shaDaSpec` (bytes, checkout da sessão: T38;
+ * o diário segue na raiz principal).
+ * A spec é `plano.spec`; sem `plano.json` (GM-14 T15, a aprovação vem antes do plano) é a ÚNICA de `lerSpecs` com `PBI` da entrega: 0 ⇒
+ * `spec_ausente`, 2+ ⇒ `spec_ambigua`, specs ilegíveis ⇒ `specs_ilegiveis`; nada gravado em nenhum. Plano presente e inválido segue `plano_invalido`.
+ * "Já aprovada" = o sha atual é o último aceito (`shaAceito`, a regra única de `emenda.ts`, T54: última aprovação ou fim da cadeia de emendas aplicadas;
+ * voltar a um sha antigo NÃO é aceito e se aprova de novo, o que reinicia a cadeia; a contagem de `spec.aprovada` com o sha só confere a releitura): não entra em
  * transição nem depende de relógio. Nunca lança: `{ok:true, spec, sha256, entrega}` só com o evento gravado E relido (a contagem com esse sha
  * subiu, não "+1 exato": sem lock, duas sessões juntas gravam dois eventos iguais, limite do `gravar`); senão `{ok:false, erro, mensagem}`.
  * `opcoes.antes` e `opcoes.depois` são injeção de teste: `antes` roda logo antes de reler o sha e gravar, `depois` entre o append e a releitura.
@@ -1536,16 +2226,29 @@ export function aprovarSpec(cwd, sessao, opcoes = {}) {
   try {
     if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) throw new Falha('argumento_invalido', `sessão fora da forma ${SESSAO_RE}`);
     const c = contexto(cwd, { sessao });
-    const plano = carregarPlano(c);
-    const atual = shaDaSpec(c.raiz, plano);
+    const checkout = checkoutDaSessao(cwd);
+    // T15 (REQ-TRI-1): sem plano.json a aprovação vem antes do plano; a spec é a ÚNICA da entrega em lerSpecs.
+    let plano = null;
+    let alvo;
+    try {
+      plano = carregarPlano(c);
+      alvo = plano;
+    } catch (e) {
+      if (!(e instanceof Falha) || e.erro !== 'plano_ausente') throw e;
+      const daEntrega = lerSpecs(checkout, idPadraoDe(c.raiz)).filter((s) => s.pbi === c.entrega);
+      if (daEntrega.length === 0) throw new Falha('spec_ausente', `sem plano.json e sem spec com \`PBI: ${c.entrega}\` em docs/superpowers/specs; nada foi gravado`);
+      if (daEntrega.length > 1) throw new Falha('spec_ambigua', `sem plano.json e com ${daEntrega.length} specs com \`PBI: ${c.entrega}\` (${daEntrega.map((s) => s.caminho).join(', ')}); deixe uma só. Nada foi gravado`);
+      alvo = { spec: daEntrega[0].caminho };
+    }
+    const atual = shaDaSpec(checkout, alvo);
     if (!atual.ok) throw new Falha(atual.erro, `${atual.mensagem}; nada foi gravado`);
     const contar = (eventos) => eventos.filter((e) => e.tipo === 'spec.aprovada' && formaInvalida('spec.aprovada', e.dados) === null && e.dados.sha256 === atual.sha256).length;
     let antesN = 0;
     const conferir = (_candidato, eventos) => {
       antesN = contar(eventos);
-      if (antesN > 0) throw new Falha('ja_aprovada', `a spec com o sha256 ${atual.sha256.slice(0, 12)}… já foi aprovada; só uma spec que mudou se aprova de novo. Nada foi gravado`);
+      if (shaAceito(eventos, atual.sha256)) throw new Falha('ja_aprovada', `a spec com o sha256 ${atual.sha256.slice(0, 12)}… já foi aprovada; só uma spec que mudou se aprova de novo. Nada foi gravado`);
       opcoes.antes?.();
-      const de_novo = shaDaSpec(c.raiz, plano);
+      const de_novo = shaDaSpec(checkout, alvo);
       if (!de_novo.ok || de_novo.sha256 !== atual.sha256) throw new Falha('spec_mudou', 'a spec mudou entre o cálculo do sha256 e a gravação; aprove de novo. Nada foi gravado');
     };
     gravar(c, plano, 'spec.aprovada', { spec: atual.spec, sha256: atual.sha256 }, conferir);
@@ -1563,6 +2266,7 @@ export function aprovarSpec(cwd, sessao, opcoes = {}) {
 
 /** `parar` é o registro de que o loop parou, inclusive por diário inválido: não confere o diário nem o plano, só grava. */
 function gravarSemPlano(c, tipo, dados) {
+  if (TIPO_VEDADO_EM_PUBLICADA(tipo)) recusarSePublicada(c);
   let autor = 'desconhecido';
   try { autor = git(c.raiz, 'config', 'user.email') || autor; } catch { /* nada */ }
   const r = diario.append(c.dirEntrega, c.sessao, { ts: new Date().toISOString(), autor, sessao: c.sessao, agente: 'orquestrador', tipo, dados });

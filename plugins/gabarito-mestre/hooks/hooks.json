@@ -82,6 +82,17 @@
             "onFailure": "block"
           }
         ]
+      },
+      {
+        "matcher": "^gabarito-mestre:responder$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/gates/scripts/responder.mjs\"",
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
       }
     ],
     "Stop": [

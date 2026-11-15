@@ -1,0 +1,15 @@
+#!/usr/bin/env node
+// `gh` de fixture do A1 (GM-14 T24): lê o estado de GH_FIXTURE (`{branch, pr:[{number,state}], release:[{tagName}]}`); só `pr list` e `release list`.
+// Recusa argumento inesperado: com `branch` no estado, `pr list` exige `--head=<branch>` (REQ-DIA-1). GH_FIXTURE_FALHA=1 ⇒ rc 1.
+const { readFileSync } = require('node:fs');
+const a = process.argv.slice(2);
+if (process.env.GH_FIXTURE_FALHA === '1') { process.stderr.write('gh de fixture: falha pedida\n'); process.exit(1); }
+let est;
+try { est = JSON.parse(readFileSync(process.env.GH_FIXTURE, 'utf8')); } catch { process.stderr.write('gh de fixture sem estado\n'); process.exit(1); }
+if (a[0] === 'pr' && a[1] === 'list') {
+  if (est.branch !== undefined && !a.includes(`--head=${est.branch}`)) { process.stderr.write(`gh de fixture: pr list sem --head=${est.branch}: ${a.join(' ')}\n`); process.exit(2); }
+  process.stdout.write(JSON.stringify(est.pr ?? [])); process.exit(0);
+}
+if (a[0] === 'release' && a[1] === 'list') { process.stdout.write(JSON.stringify(est.release ?? [])); process.exit(0); }
+process.stderr.write(`gh de fixture: comando não previsto: ${a.join(' ')}\n`);
+process.exit(2);

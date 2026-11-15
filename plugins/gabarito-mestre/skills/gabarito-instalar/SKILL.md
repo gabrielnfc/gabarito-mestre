@@ -8,7 +8,7 @@ allowed-tools: Bash(bash:*), Bash(node:*), Bash(ls:*), Bash(cat:*), Bash(cp:*), 
 
 Instala o harness e configura o fluxo numa passada só. **Instalar não é adotar**: o nível de adoção fica `____` e quem mede é o doctor. Para subir de nível, o planejamento é feito com `superpowers:brainstorming` e depois `superpowers:writing-plans`; esta skill não planeja. Sem superpowers a instalação segue: avise em uma linha.
 
-Estas instruções são para você. Ao falar com o usuário, use frases curtas, sem siglas internas (R20, D-3, nomes de regra) e sem pedir que ele rode comandos.
+Estas instruções são para você. Ao falar com o usuário, use frases curtas, sem siglas internas (D-3, nomes de regra) e sem pedir que ele rode comandos.
 
 **Um comando por chamada.** Cada bloco `bash` é um comando simples. Não encadeie com `;`, `&&`, `||`, `if` nem `[ … ]`: composto não casa com as permissões. Decida em prosa, pelo exit e pelo stdout.
 
@@ -23,7 +23,7 @@ Estas instruções são para você. Ao falar com o usuário, use frases curtas, 
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/instalar.sh" "<raiz>"
    ```
    O instalador nunca sobrescreve nem apaga: o que difere vira `<arquivo>.novo`. Mostre a linha `── N criado(s)…`, a lista de `.novo` e cada linha que começa com `AVISO:`, uma frase simples por aviso, sem o comando que ela sugere. Não repasse as outras linhas: algumas mandam o usuário executar comando.
-   Aviso de que os hooks do git de versionamento não foram instalados: diga que a trava de versionamento ainda não está ligada no git e que, depois de aplicar o `versionamento-check.mjs.novo`, a instalação precisa ser pedida de novo. Com `--atualizar`, diga também que as regras R19 a R21 do `AGENTS.md` antigo agora são do harness e que as regras do projeto passam a R30 em diante (renumere ao aplicar o `AGENTS.md.novo`).
+   Aviso de que os hooks do git de versionamento não foram instalados: diga que a trava de versionamento ainda não está ligada no git e que, depois de aplicar o `versionamento-check.mjs.novo`, a instalação precisa ser pedida de novo.
    Sem perguntar, para cada arquivo abaixo rode `test -e "<raiz>/<destino>"` e, só com exit 1, o `cp -n` para `"<raiz>/<destino>"` (nunca sobrescreve):
 
    | Destino (dentro da raiz) | Origem em `${CLAUDE_PLUGIN_ROOT}/templates/` |
@@ -37,8 +37,8 @@ Estas instruções são para você. Ao falar com o usuário, use frases curtas, 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding.mjs" detectar --root "<raiz>"
    ```
-   Sempre o script do plugin, nunca o de `tools/`. A saída é JSON: `{ok, itens, perguntas, previa}`. `ok:false` com `config_invalida`: pare, mostre o `motivo`, diga "conserte o JSON de harness.config.json e peça o onboarding de novo" e vá ao passo 7. `ok:false` com `falha`, ou saída que não é JSON: pare com o motivo em uma linha e vá ao passo 7. Nunca detecte à mão nem improvise outro caminho.
-3. **Prévia.** Mostre o campo `previa` como veio, numa tela. Não reescreva nem resuma.
+   Sempre o script do plugin, nunca o de `tools/`. A saída é JSON: `{ok, itens, perguntas, previaSimples, previa}`. `ok:false` com `config_invalida`: pare, mostre o `motivo`, diga "conserte o JSON de harness.config.json e peça o onboarding de novo" e vá ao passo 7. `ok:false` com `falha`, ou saída que não é JSON: pare com o motivo em uma linha e vá ao passo 7. Nunca detecte à mão nem improvise outro caminho.
+3. **Prévia.** Mostre o campo `previaSimples`, numa tela, sem reescrever nem resumir: é a prévia padrão, em linguagem de quem nunca programou. Só se o usuário pedir "mostrar detalhes", mostre o campo `previa`.
 4. **Perguntas.** Pergunte só as `perguntas` que o `detectar` devolveu, na ordem dele: primeiro `politica`, `autonomia` e `perfil`, depois as condicionais. Fato detectado nunca é perguntado e nenhuma pergunta é inventada. Item com uma opção só nunca chega em `perguntas` (o script já o trata como fato, na prévia, sem gravar nada): não o pergunte, não o reformule e não o conte. Toda pergunta do script tem 2 ou mais opções; se alguma vier com menos, pare e diga "detecção inválida". Use `AskUserQuestion` em até 2 chamadas (1ª: as 3 fixas; 2ª: as condicionais), com no máximo 4 perguntas por chamada. Mostre as opções na ordem do script, sem reordenar (o default vem primeiro, então Enter o confirma), com o `rotulo` literal; ao default acrescente ` (default)`. Resposta que é o rótulo de uma opção vale o `valor` dela, com o tipo JSON (`true`, `false`, `null`; nunca "sim", "não" nem "null" em texto). "Other" ou texto livre vale se for igual a um `valor`; senão, repergunte 1 vez e, na 2ª falha, pare sem gravar. Pergunta com mais de 4 opções: as 4 primeiras viram opção; as demais ficam no texto da pergunta e valem como "Other" exato.
    Sessão sem `AskUserQuestion` (headless): use o default de cada pergunta, rode o passo 6 com `--dry-run`, mostre o diff e não grave. No fechamento, diga "rode numa sessão com perguntas": consentimento não tem default.
 5. **Respostas.** Escreva `<raiz>/.claude-tmp/onboarding-respostas.json`. Se o arquivo já existe, `Read` antes do `Write` (o `Write` falha sem `Read`); se o `Write` falhar, pare: nunca rode o passo 6 com o arquivo antigo. Só estas chaves, exatamente (`_recalibrar` só entra no `trocar orquestracao`, conforme `trocar.md`): `_previa` (o array `itens` do `detectar`, copiado sem mudar nada, na mesma ordem de chaves) e uma chave por `id` de pergunta (as 3 fixas e o nome do item de cada condicional). Chave a mais ou a menos faz o `gravar` recusar.
@@ -60,12 +60,23 @@ Estas instruções são para você. Ao falar com o usuário, use frases curtas, 
    - `deteccao_mudou` (algo mudou entre a prévia e a gravação, como um servidor MCP que oscilou): volte ao passo 2 e pergunte só o que mudou ou é novo. No máximo 2 voltas; na 3ª, pare com "detecção instável: <itens>".
    - `resposta_fora_das_opcoes`: repergunte só aquele id, 1 vez.
    - `config_invalida`, `falha`: pare com o motivo. Nunca edite o `harness.config.json` à mão.
+   Gravou? Faça agora duas ofertas, fora do teto de perguntas e uma de cada vez; sem `AskUserQuestion` (headless), nenhuma: consentimento não tem default. Cada uma devolve `{ok, oferecer, texto, opcoes, default}`; `oferecer:false` ou `ok:false`: pule, sem dizer nada.
+   1. **Foco** (chat mais limpo):
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding.mjs" foco --root "<raiz>"
+   ```
+   Pergunte o `texto`, com `não, obrigado` (o `default`) em 1º e `sim` em 2º, para o Enter confirmar o padrão: sem escolha deliberada nada é gravado. "sim": rode o mesmo comando com `--sim` no fim, mostre `frase` e `comoVoltar`. Não: nada.
+   2. **Local do painel**, só depois do foco:
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/onboarding.mjs" painel --root "<raiz>"
+   ```
+   Pergunte o `texto`, com os `rotulo` das `opcoes` (o padrão, ao lado da conversa, primeiro). Rode o mesmo comando com `--local lateral` ou `--local acima` no fim, conforme o `valor` escolhido, e mostre `frase`.
 7. **Doctor** (sempre, também depois de erro). Ele acha a raiz do git a partir do diretório atual, então não precisa de `cd`:
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/harness-doctor.mjs" --explain
    ```
    É o doctor do plugin, da mesma versão do `onboarding.mjs`. Mostre `Nível alcançado` e as linhas `FALTA` do nível seguinte: é o que falta para subir um nível. Com `.novo` pendente, diga em uma linha que o doctor mediu antes de aplicá-los.
-8. **Fechamento.** Diga o que ficou instalado, o nível que o doctor mediu e que falta preencher o Apêndice do `AGENTS.md` (stack, fronteiras e comandos do projeto). Diga também, em uma linha, que para mudar algo depois basta pedir "trocar" e o assunto (por exemplo, trocar perfil). Só se o usuário pedir a lista: `trocar <item>` serve para os 5 fatos (`tipo_repo`, `ambientes`, `planejamento`, `versionamento`, `orquestracao`), as 3 decisões (`politica`, `autonomia`, `perfil`) e o que fica fora das perguntas (`settings`, `codeowners`, `apendice`, `iniciativa`, `contenda`). Diga ao usuário, em uma linha: "Quando uma entrega começar, o painel abre sozinho ao lado (em terminal largo); `/gabarito` mostra as opções." Mostre `git status` e pare, sem commit.
+8. **Fechamento.** Diga o que ficou instalado, o nível que o doctor mediu e que falta preencher o Apêndice do `AGENTS.md` (stack, fronteiras e comandos do projeto). Diga também, em uma linha, que para mudar algo depois basta pedir "trocar" e o assunto (por exemplo, trocar perfil). Só se o usuário pedir a lista: `trocar <item>` serve para os 5 fatos (`tipo_repo`, `ambientes`, `planejamento`, `versionamento`, `orquestracao`), as 3 decisões (`politica`, `autonomia`, `perfil`) e o que fica fora das perguntas (`settings`, `codeowners`, `apendice`, `iniciativa`, `contenda`, `painel`). Diga o local do painel, em uma linha: "O painel fica ao lado da conversa ou acima da linha de digitar, um só por vez: a plataforma só o põe sozinho com 144 colunas ou mais (ao lado da conversa em tela cheia, acima da linha de digitar nas outras); abaixo disso o painel avisa e ele abre quando você pede /gabarito painel, em qualquer largura. Para trocar, peça /gabarito painel." Mostre `git status` e pare, sem commit.
    Base diferente de `main` e `gabarito.yml` criado agora: troque com `Edit` `--base origin/main` por `--base origin/<base>` sem perguntar (o arquivo é nosso) e diga em uma linha. Se ele já existia (`mantido`), só diga a linha a trocar.
 
 ## Trocar um item
@@ -74,7 +85,7 @@ Pedido "trocar `<item>`": rode os passos 1 (só a raiz) e 2 (`detectar`). Item f
 - `<item>` está nas `perguntas`: pergunte só ele; as outras respostas são o `default` de cada pergunta (o script garante que o default é o valor já gravado); siga os passos 5 a 7.
 - `<item>` não está nas `perguntas` (fato detectado): não há o que perguntar. Diga a fonte (`itens[].fonte`) e que o valor muda quando o repo mudar. Não grave.
 - `orquestracao`: recalibra o paralelismo desta máquina (quantos implementadores trabalham ao mesmo tempo). Mostra antes e depois e só grava com o ok do usuário; leia `${CLAUDE_PLUGIN_ROOT}/skills/gabarito-instalar/trocar.md` e siga só a seção `orquestracao`. Para mudar só o modelo, é `trocar perfil`.
-- `settings`, `codeowners`, `apendice`, `iniciativa`, `contenda`: leia `${CLAUDE_PLUGIN_ROOT}/skills/gabarito-instalar/trocar.md` e siga só a seção daquele item.
+- `settings`, `codeowners`, `apendice`, `iniciativa`, `contenda`, `painel`: leia `${CLAUDE_PLUGIN_ROOT}/skills/gabarito-instalar/trocar.md` e siga só a seção daquele item.
 
 ## Modo --vincular <PBI>
 

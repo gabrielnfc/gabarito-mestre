@@ -1,0 +1,1049 @@
+{
+ "fonte": "t0b.md S3b (8 células dia × entrega, cenário B + plano B) e a medição intradia de 11/11 13:00; datas e PRs do oráculo de t0b. Tasks reduzidas a 2; caminho e título da spec do Sherlock e o rótulo SH-2 são sintéticos.",
+ "celulas": [
+  {
+   "celula": "GM-11 09/11",
+   "real": 6,
+   "variante": "branch",
+   "fatos": {
+    "branch": "enabler/GM-11-sombra-emendas",
+    "idPadrao": "[A-Z]+-\\d+",
+    "specs": [
+     {
+      "caminho": "docs/superpowers/specs/2026-11-09-e3-sombra-emendas-entrega-design.md",
+      "pbi": "GM-11",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "secoes": 9,
+      "titulo": "E3 Sombra, emendas e entrega"
+     }
+    ],
+    "plano": {
+     "tasks": [
+      "T1",
+      "T2"
+     ]
+    },
+    "ledger": false,
+    "gh": "ok",
+    "ultimas": []
+   },
+   "eventos": [
+    {
+     "t": "spec.aprovada",
+     "d": {
+      "spec": "docs/superpowers/specs/2026-11-09-e3-sombra-emendas-entrega-design.md",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+     }
+    },
+    {
+     "integradas": [
+      "T1",
+      "T2"
+     ]
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 11,
+       "estado": "aberto",
+       "branch": "enabler/GM-11-sombra-emendas"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 11,
+       "estado": "mergeado",
+       "branch": "enabler/GM-11-sombra-emendas"
+      }
+     }
+    }
+   ],
+   "esperado": null
+  },
+  {
+   "celula": "GM-11 09/11",
+   "real": 6,
+   "variante": "dono",
+   "fatos": {
+    "branch": "enabler/GM-11-sombra-emendas",
+    "idPadrao": "[A-Z]+-\\d+",
+    "specs": [
+     {
+      "caminho": "docs/superpowers/specs/2026-11-09-e3-sombra-emendas-entrega-design.md",
+      "pbi": "GM-11",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "secoes": 9,
+      "titulo": "E3 Sombra, emendas e entrega"
+     }
+    ],
+    "plano": {
+     "tasks": [
+      "T1",
+      "T2"
+     ]
+    },
+    "ledger": false,
+    "gh": "ok",
+    "ultimas": [],
+    "sessao": "sessao-dono"
+   },
+   "eventos": [
+    {
+     "t": "spec.aprovada",
+     "d": {
+      "spec": "docs/superpowers/specs/2026-11-09-e3-sombra-emendas-entrega-design.md",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+     }
+    },
+    {
+     "integradas": [
+      "T1",
+      "T2"
+     ]
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 11,
+       "estado": "aberto",
+       "branch": "enabler/GM-11-sombra-emendas"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 11,
+       "estado": "mergeado",
+       "branch": "enabler/GM-11-sombra-emendas"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "s": "sessao-dono",
+     "d": {
+      "chave": "branch",
+      "fonte": "git",
+      "valor": {
+       "nome": "enabler/GM-11-sombra-emendas"
+      }
+     }
+    },
+    {
+     "t": "dono.resposta",
+     "s": "sessao-dono",
+     "d": {
+      "pergunta": "sessao-dono:1",
+      "opcao": 1,
+      "rotulo": "GM-11"
+     }
+    }
+   ],
+   "esperado": "✓✓✓✓✓✓●"
+  },
+  {
+   "celula": "GM-12 09/11",
+   "real": 4,
+   "variante": "branch",
+   "fatos": {
+    "branch": "enabler/GM-12-painel",
+    "idPadrao": "[A-Z]+-\\d+",
+    "specs": [
+     {
+      "caminho": "docs/superpowers/specs/2026-11-09-e4-painel-design.md",
+      "pbi": "GM-12",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "secoes": 10,
+      "titulo": "E4 Painel"
+     }
+    ],
+    "plano": {
+     "tasks": [
+      "T1",
+      "T2"
+     ]
+    },
+    "ledger": false,
+    "gh": "ok",
+    "ultimas": []
+   },
+   "eventos": [
+    {
+     "t": "spec.aprovada",
+     "d": {
+      "spec": "docs/superpowers/specs/2026-11-09-e4-painel-design.md",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+     }
+    },
+    {
+     "integradas": [
+      "T1"
+     ]
+    }
+   ],
+   "esperado": "✓✓✓✓●○○"
+  },
+  {
+   "celula": "GM-12 10/11",
+   "real": 6,
+   "variante": "branch",
+   "fatos": {
+    "branch": "enabler/GM-12-painel",
+    "idPadrao": "[A-Z]+-\\d+",
+    "specs": [
+     {
+      "caminho": "docs/superpowers/specs/2026-11-09-e4-painel-design.md",
+      "pbi": "GM-12",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "secoes": 10,
+      "titulo": "E4 Painel"
+     }
+    ],
+    "plano": {
+     "tasks": [
+      "T1",
+      "T2"
+     ]
+    },
+    "ledger": false,
+    "gh": "ok",
+    "ultimas": []
+   },
+   "eventos": [
+    {
+     "t": "spec.aprovada",
+     "d": {
+      "spec": "docs/superpowers/specs/2026-11-09-e4-painel-design.md",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+     }
+    },
+    {
+     "integradas": [
+      "T1",
+      "T2"
+     ]
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 13,
+       "estado": "aberto",
+       "branch": "enabler/GM-12-painel"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 13,
+       "estado": "mergeado",
+       "branch": "enabler/GM-12-painel"
+      }
+     }
+    }
+   ],
+   "esperado": null
+  },
+  {
+   "celula": "GM-12 10/11",
+   "real": 6,
+   "variante": "dono",
+   "fatos": {
+    "branch": "enabler/GM-12-painel",
+    "idPadrao": "[A-Z]+-\\d+",
+    "specs": [
+     {
+      "caminho": "docs/superpowers/specs/2026-11-09-e4-painel-design.md",
+      "pbi": "GM-12",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "secoes": 10,
+      "titulo": "E4 Painel"
+     }
+    ],
+    "plano": {
+     "tasks": [
+      "T1",
+      "T2"
+     ]
+    },
+    "ledger": false,
+    "gh": "ok",
+    "ultimas": [],
+    "sessao": "sessao-dono"
+   },
+   "eventos": [
+    {
+     "t": "spec.aprovada",
+     "d": {
+      "spec": "docs/superpowers/specs/2026-11-09-e4-painel-design.md",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+     }
+    },
+    {
+     "integradas": [
+      "T1",
+      "T2"
+     ]
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 13,
+       "estado": "aberto",
+       "branch": "enabler/GM-12-painel"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 13,
+       "estado": "mergeado",
+       "branch": "enabler/GM-12-painel"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "s": "sessao-dono",
+     "d": {
+      "chave": "branch",
+      "fonte": "git",
+      "valor": {
+       "nome": "enabler/GM-12-painel"
+      }
+     }
+    },
+    {
+     "t": "dono.resposta",
+     "s": "sessao-dono",
+     "d": {
+      "pergunta": "sessao-dono:1",
+      "opcao": 1,
+      "rotulo": "GM-12"
+     }
+    }
+   ],
+   "esperado": "✓✓✓✓✓✓●"
+  },
+  {
+   "celula": "GM-13 10/11",
+   "real": 6,
+   "variante": "branch",
+   "fatos": {
+    "branch": "enabler/GM-13-fluxo",
+    "idPadrao": "[A-Z]+-\\d+",
+    "specs": [
+     {
+      "caminho": "docs/superpowers/specs/2026-11-10-e5-fluxo-gabarito-design.md",
+      "pbi": "GM-13",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "secoes": 11,
+      "titulo": "E5 Fluxo Gabarito"
+     }
+    ],
+    "plano": {
+     "tasks": [
+      "T1",
+      "T2"
+     ]
+    },
+    "ledger": false,
+    "gh": "ok",
+    "ultimas": []
+   },
+   "eventos": [
+    {
+     "t": "spec.aprovada",
+     "d": {
+      "spec": "docs/superpowers/specs/2026-11-10-e5-fluxo-gabarito-design.md",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+     }
+    },
+    {
+     "integradas": [
+      "T1",
+      "T2"
+     ]
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 14,
+       "estado": "aberto",
+       "branch": "enabler/GM-13-fluxo"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 14,
+       "estado": "mergeado",
+       "branch": "enabler/GM-13-fluxo"
+      }
+     }
+    }
+   ],
+   "esperado": null
+  },
+  {
+   "celula": "GM-13 10/11",
+   "real": 6,
+   "variante": "dono",
+   "fatos": {
+    "branch": "enabler/GM-13-fluxo",
+    "idPadrao": "[A-Z]+-\\d+",
+    "specs": [
+     {
+      "caminho": "docs/superpowers/specs/2026-11-10-e5-fluxo-gabarito-design.md",
+      "pbi": "GM-13",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "secoes": 11,
+      "titulo": "E5 Fluxo Gabarito"
+     }
+    ],
+    "plano": {
+     "tasks": [
+      "T1",
+      "T2"
+     ]
+    },
+    "ledger": false,
+    "gh": "ok",
+    "ultimas": [],
+    "sessao": "sessao-dono"
+   },
+   "eventos": [
+    {
+     "t": "spec.aprovada",
+     "d": {
+      "spec": "docs/superpowers/specs/2026-11-10-e5-fluxo-gabarito-design.md",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+     }
+    },
+    {
+     "integradas": [
+      "T1",
+      "T2"
+     ]
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 14,
+       "estado": "aberto",
+       "branch": "enabler/GM-13-fluxo"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 14,
+       "estado": "mergeado",
+       "branch": "enabler/GM-13-fluxo"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "s": "sessao-dono",
+     "d": {
+      "chave": "branch",
+      "fonte": "git",
+      "valor": {
+       "nome": "enabler/GM-13-fluxo"
+      }
+     }
+    },
+    {
+     "t": "dono.resposta",
+     "s": "sessao-dono",
+     "d": {
+      "pergunta": "sessao-dono:1",
+      "opcao": 1,
+      "rotulo": "GM-13"
+     }
+    }
+   ],
+   "esperado": "✓✓✓✓✓✓●"
+  },
+  {
+   "celula": "GM-13 11/11 13:00",
+   "real": 5,
+   "variante": "branch",
+   "fatos": {
+    "branch": "enabler/GM-13-virada",
+    "idPadrao": "[A-Z]+-\\d+",
+    "specs": [
+     {
+      "caminho": "docs/superpowers/specs/2026-11-10-e5-fluxo-gabarito-design.md",
+      "pbi": "GM-13",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "secoes": 11,
+      "titulo": "E5 Fluxo Gabarito"
+     }
+    ],
+    "plano": {
+     "tasks": [
+      "T1",
+      "T2"
+     ]
+    },
+    "ledger": false,
+    "gh": "ok",
+    "ultimas": []
+   },
+   "eventos": [
+    {
+     "t": "spec.aprovada",
+     "d": {
+      "spec": "docs/superpowers/specs/2026-11-10-e5-fluxo-gabarito-design.md",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+     }
+    },
+    {
+     "integradas": [
+      "T1",
+      "T2"
+     ]
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 14,
+       "estado": "aberto",
+       "branch": "enabler/GM-13-fluxo"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 14,
+       "estado": "mergeado",
+       "branch": "enabler/GM-13-fluxo"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 15,
+       "estado": "aberto",
+       "branch": "enabler/GM-13-virada"
+      }
+     }
+    }
+   ],
+   "esperado": "✓✓✓✓✓●○"
+  },
+  {
+   "celula": "GM-13 11/11",
+   "real": 6,
+   "variante": "branch",
+   "fatos": {
+    "branch": "enabler/GM-13-virada",
+    "idPadrao": "[A-Z]+-\\d+",
+    "specs": [
+     {
+      "caminho": "docs/superpowers/specs/2026-11-10-e5-fluxo-gabarito-design.md",
+      "pbi": "GM-13",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "secoes": 11,
+      "titulo": "E5 Fluxo Gabarito"
+     }
+    ],
+    "plano": {
+     "tasks": [
+      "T1",
+      "T2"
+     ]
+    },
+    "ledger": false,
+    "gh": "ok",
+    "ultimas": []
+   },
+   "eventos": [
+    {
+     "t": "spec.aprovada",
+     "d": {
+      "spec": "docs/superpowers/specs/2026-11-10-e5-fluxo-gabarito-design.md",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+     }
+    },
+    {
+     "integradas": [
+      "T1",
+      "T2"
+     ]
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 14,
+       "estado": "aberto",
+       "branch": "enabler/GM-13-fluxo"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 14,
+       "estado": "mergeado",
+       "branch": "enabler/GM-13-fluxo"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 15,
+       "estado": "aberto",
+       "branch": "enabler/GM-13-virada"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 15,
+       "estado": "mergeado",
+       "branch": "enabler/GM-13-virada"
+      }
+     }
+    }
+   ],
+   "esperado": null
+  },
+  {
+   "celula": "GM-13 11/11",
+   "real": 6,
+   "variante": "dono",
+   "fatos": {
+    "branch": "enabler/GM-13-virada",
+    "idPadrao": "[A-Z]+-\\d+",
+    "specs": [
+     {
+      "caminho": "docs/superpowers/specs/2026-11-10-e5-fluxo-gabarito-design.md",
+      "pbi": "GM-13",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "secoes": 11,
+      "titulo": "E5 Fluxo Gabarito"
+     }
+    ],
+    "plano": {
+     "tasks": [
+      "T1",
+      "T2"
+     ]
+    },
+    "ledger": false,
+    "gh": "ok",
+    "ultimas": [],
+    "sessao": "sessao-dono"
+   },
+   "eventos": [
+    {
+     "t": "spec.aprovada",
+     "d": {
+      "spec": "docs/superpowers/specs/2026-11-10-e5-fluxo-gabarito-design.md",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+     }
+    },
+    {
+     "integradas": [
+      "T1",
+      "T2"
+     ]
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 14,
+       "estado": "aberto",
+       "branch": "enabler/GM-13-fluxo"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 14,
+       "estado": "mergeado",
+       "branch": "enabler/GM-13-fluxo"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 15,
+       "estado": "aberto",
+       "branch": "enabler/GM-13-virada"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "d": {
+      "chave": "pr",
+      "fonte": "gh",
+      "valor": {
+       "numero": 15,
+       "estado": "mergeado",
+       "branch": "enabler/GM-13-virada"
+      }
+     }
+    },
+    {
+     "t": "fato.medido",
+     "s": "sessao-dono",
+     "d": {
+      "chave": "branch",
+      "fonte": "git",
+      "valor": {
+       "nome": "enabler/GM-13-virada"
+      }
+     }
+    },
+    {
+     "t": "dono.resposta",
+     "s": "sessao-dono",
+     "d": {
+      "pergunta": "sessao-dono:1",
+      "opcao": 1,
+      "rotulo": "GM-13"
+     }
+    }
+   ],
+   "esperado": "✓✓✓✓✓✓●"
+  },
+  {
+   "celula": "SH-2a 30/09",
+   "real": 3,
+   "variante": "branch",
+   "fatos": {
+    "branch": "Developer",
+    "idPadrao": "[A-Z]+-\\d+",
+    "specs": [
+     {
+      "caminho": "docs/superpowers/specs/2026-09-30-sherlock-2a-design.md",
+      "pbi": null,
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "secoes": 7,
+      "titulo": "Sherlock 2a"
+     }
+    ],
+    "plano": null,
+    "ledger": false,
+    "gh": "nunca",
+    "ultimas": []
+   },
+   "eventos": [
+    {
+     "t": "spec.aprovada",
+     "d": {
+      "spec": "docs/superpowers/specs/2026-09-30-sherlock-2a-design.md",
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+     }
+    }
+   ],
+   "esperado": null
+  },
+  {
+   "celula": "SH-2a 30/09",
+   "real": 3,
+   "variante": "dono",
+   "fatos": {
+    "branch": "Developer",
+    "idPadrao": "[A-Z]+-\\d+",
+    "specs": [
+     {
+      "caminho": "docs/superpowers/specs/2026-09-30-sherlock-2a-design.md",
+      "pbi": null,
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "secoes": 7,
+      "titulo": "Sherlock 2a"
+     }
+    ],
+    "plano": null,
+    "ledger": false,
+    "gh": "nunca",
+    "ultimas": [],
+    "sessao": "sessao-dono"
+   },
+   "eventos": [
+    {
+     "t": "spec.aprovada",
+     "d": {
+      "spec": "docs/superpowers/specs/2026-09-30-sherlock-2a-design.md",
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+     }
+    },
+    {
+     "t": "fato.medido",
+     "s": "sessao-dono",
+     "d": {
+      "chave": "branch",
+      "fonte": "git",
+      "valor": {
+       "nome": "Developer"
+      }
+     }
+    },
+    {
+     "t": "dono.resposta",
+     "s": "sessao-dono",
+     "d": {
+      "pergunta": "sessao-dono:1",
+      "opcao": 1,
+      "rotulo": "SH-2"
+     }
+    }
+   ],
+   "esperado": "✓✓✓????"
+  },
+  {
+   "celula": "SH-2a 13/10",
+   "real": 3,
+   "variante": "branch",
+   "fatos": {
+    "branch": "Developer",
+    "idPadrao": "[A-Z]+-\\d+",
+    "specs": [
+     {
+      "caminho": "docs/superpowers/specs/2026-09-30-sherlock-2a-design.md",
+      "pbi": null,
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "secoes": 7,
+      "titulo": "Sherlock 2a"
+     }
+    ],
+    "plano": null,
+    "ledger": false,
+    "gh": "nunca",
+    "ultimas": []
+   },
+   "eventos": [
+    {
+     "t": "spec.aprovada",
+     "d": {
+      "spec": "docs/superpowers/specs/2026-09-30-sherlock-2a-design.md",
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+     }
+    }
+   ],
+   "esperado": null
+  },
+  {
+   "celula": "SH-2a 13/10",
+   "real": 3,
+   "variante": "dono",
+   "fatos": {
+    "branch": "Developer",
+    "idPadrao": "[A-Z]+-\\d+",
+    "specs": [
+     {
+      "caminho": "docs/superpowers/specs/2026-09-30-sherlock-2a-design.md",
+      "pbi": null,
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "secoes": 7,
+      "titulo": "Sherlock 2a"
+     }
+    ],
+    "plano": null,
+    "ledger": false,
+    "gh": "nunca",
+    "ultimas": [],
+    "sessao": "sessao-dono"
+   },
+   "eventos": [
+    {
+     "t": "spec.aprovada",
+     "d": {
+      "spec": "docs/superpowers/specs/2026-09-30-sherlock-2a-design.md",
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+     }
+    },
+    {
+     "t": "fato.medido",
+     "s": "sessao-dono",
+     "d": {
+      "chave": "branch",
+      "fonte": "git",
+      "valor": {
+       "nome": "Developer"
+      }
+     }
+    },
+    {
+     "t": "dono.resposta",
+     "s": "sessao-dono",
+     "d": {
+      "pergunta": "sessao-dono:1",
+      "opcao": 1,
+      "rotulo": "SH-2"
+     }
+    }
+   ],
+   "esperado": "✓✓✓????"
+  },
+  {
+   "celula": "SH-2a 14/10",
+   "real": 6,
+   "variante": "branch",
+   "fatos": {
+    "branch": "Developer",
+    "idPadrao": "[A-Z]+-\\d+",
+    "specs": [
+     {
+      "caminho": "docs/superpowers/specs/2026-09-30-sherlock-2a-design.md",
+      "pbi": null,
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "secoes": 7,
+      "titulo": "Sherlock 2a"
+     }
+    ],
+    "plano": null,
+    "ledger": false,
+    "gh": "nunca",
+    "ultimas": []
+   },
+   "eventos": [
+    {
+     "t": "spec.aprovada",
+     "d": {
+      "spec": "docs/superpowers/specs/2026-09-30-sherlock-2a-design.md",
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+     }
+    }
+   ],
+   "esperado": null
+  },
+  {
+   "celula": "SH-2a 14/10",
+   "real": 6,
+   "variante": "dono",
+   "fatos": {
+    "branch": "Developer",
+    "idPadrao": "[A-Z]+-\\d+",
+    "specs": [
+     {
+      "caminho": "docs/superpowers/specs/2026-09-30-sherlock-2a-design.md",
+      "pbi": null,
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "secoes": 7,
+      "titulo": "Sherlock 2a"
+     }
+    ],
+    "plano": null,
+    "ledger": false,
+    "gh": "nunca",
+    "ultimas": [],
+    "sessao": "sessao-dono"
+   },
+   "eventos": [
+    {
+     "t": "spec.aprovada",
+     "d": {
+      "spec": "docs/superpowers/specs/2026-09-30-sherlock-2a-design.md",
+      "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+     }
+    },
+    {
+     "t": "fato.medido",
+     "s": "sessao-dono",
+     "d": {
+      "chave": "branch",
+      "fonte": "git",
+      "valor": {
+       "nome": "Developer"
+      }
+     }
+    },
+    {
+     "t": "dono.resposta",
+     "s": "sessao-dono",
+     "d": {
+      "pergunta": "sessao-dono:1",
+      "opcao": 1,
+      "rotulo": "SH-2"
+     }
+    }
+   ],
+   "esperado": "✓✓✓????"
+  }
+ ]
+}

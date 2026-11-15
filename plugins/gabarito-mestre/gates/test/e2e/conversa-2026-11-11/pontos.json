@@ -1,0 +1,367 @@
+{
+  "roteiroSha256": "ed78e2a804d85256ae74ae912e28bddfa97485e08a96a370d36715321dffaf42",
+  "pontos": [
+    {
+      "msg": 1,
+      "sha256": "c330fbc87b3b04f119e00299c46b6da1c96e71cf56893e65c70b1bf38846ad7d",
+      "chars": 85,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 2,
+      "sha256": "c6b675b2e3b0891f7e53b33583db6afa344405f51cb24375c40bc8054a7a4097",
+      "chars": 105,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 3,
+      "sha256": "ed79c06cdd4b64891ed9c4a8d3ea38363b938300d6a314ab99594871a87fc3c8",
+      "chars": 142,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 5,
+      "sha256": "507a9a8be3d145a86daa9644b28bf42a8dc0720d8baeabdf0406c393692bf082",
+      "chars": 3,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 8,
+      "sha256": "507a9a8be3d145a86daa9644b28bf42a8dc0720d8baeabdf0406c393692bf082",
+      "chars": 3,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 9,
+      "sha256": "6d8fd5e7c5471b68cc774c45af75506d6d7cea0b0476333ee7dca73e79683d03",
+      "chars": 206,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 11,
+      "sha256": "beb580fc59c83d23943d7bffff5d7802d77f33421c24c469ebc852c21718f482",
+      "chars": 146,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 13,
+      "sha256": "09b1ec7db84ede31d46f1b1b593507a25c803cfdea128e1ba20f8384e5f9296f",
+      "chars": 48,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 15,
+      "sha256": "a2fff082b530acfeeb82065547e0e6864cecce288d045edbc42f3dd08f4943e6",
+      "chars": 142,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 19,
+      "sha256": "a303714d721e7fe25d4dde26274d088d6a6003d1d6fc107a58e6895d86cf11af",
+      "chars": 60,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 21,
+      "sha256": "1becd913ebddc57ec3591e1e3bddcf8f939b6d995cd0cf423565b6c2e380e2f8",
+      "chars": 136,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 23,
+      "sha256": "478310e5e371018d497bf010e9bca0900fc6cca80daac67e49000104aec6011f",
+      "chars": 150,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 24,
+      "sha256": "f54d0bf3c6c609d5e7f93d348d4332364fdee0edc1592ea2a30137ba31ead0e1",
+      "chars": 8,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 32,
+      "sha256": "507a9a8be3d145a86daa9644b28bf42a8dc0720d8baeabdf0406c393692bf082",
+      "chars": 3,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 38,
+      "sha256": "507a9a8be3d145a86daa9644b28bf42a8dc0720d8baeabdf0406c393692bf082",
+      "chars": 3,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 40,
+      "sha256": "7b46fca0b3cb308986fde84ff18351255017b89ca0ae0e44352f89494c79e0ba",
+      "chars": 133,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 41,
+      "sha256": "a166e0d86894f3a46f2c0980245b7f192239c524ef4650f4e608bd32727d01ae",
+      "chars": 107,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 42,
+      "sha256": "b19b3f55b207b09f68a7e2a81714505c1ceaafa7741fa95c4fb98f06ffed6e51",
+      "chars": 160,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 43,
+      "sha256": "6283b15dc5ff886058ce2c3db6d3b90b188252c76c693e7011a1ae03a23c338b",
+      "chars": 261,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 44,
+      "sha256": "95f8d9866596dba4f8ab36712da51c7bbeda88340897a2dc436b4fd6e0b2e7a2",
+      "chars": 142,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 45,
+      "sha256": "1cecc4817991115ff061014ad9f2fdbce5e7ea28af5ac7779b18c6b30045f2dd",
+      "chars": 175,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se a ideia vira a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 46,
+      "sha256": "5f24ee1f5ff9f97f93c014cb844a0fe04bdc9c28a9cd4f34cd2b98b99e54fcbb",
+      "chars": 301,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se as 2 ideias viram a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 47,
+      "sha256": "3c69ed51d0afcc9e7247c835915a767f5950e5e5c4a221fe54a8412963df45e9",
+      "chars": 212,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se as 3 ideias viram a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 50,
+      "sha256": "507a9a8be3d145a86daa9644b28bf42a8dc0720d8baeabdf0406c393692bf082",
+      "chars": 3,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se as 3 ideias viram a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 51,
+      "sha256": "3e578bf9a3779089f5cc47cd31a56e93cc3b7606d1dcfeb0e9e64ced96fcc64a",
+      "chars": 229,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se as 4 ideias viram a próxima entrega"
+        ],
+        "origens": []
+      }
+    },
+    {
+      "msg": 52,
+      "sha256": "507a9a8be3d145a86daa9644b28bf42a8dc0720d8baeabdf0406c393692bf082",
+      "chars": 3,
+      "esperado": {
+        "fase": 5,
+        "progresso": "20 tasks",
+        "depende": [
+          "spec aguardando aprovação",
+          "decidir se as 4 ideias viram a próxima entrega"
+        ],
+        "origens": []
+      }
+    }
+  ]
+}

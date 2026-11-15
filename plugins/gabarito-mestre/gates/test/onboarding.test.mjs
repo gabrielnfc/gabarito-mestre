@@ -799,14 +799,15 @@ describe('perguntas', () => {
       assert.ok(p.opcoes.some((o) => o.valor === p.default), `${p.id}: o default é uma das opções`);
       assert.equal('aviso' in p, false, `${p.id}: config ausente não gera aviso`);
     }
-    assert.match(ps[0].texto, /Política de entrega/);
-    assert.match(ps[1].texto, /Autonomia em produção/);
-    assert.match(ps[2].texto, /Perfil de modelos/);
-    assert.match(ps[0].opcoes.find((o) => o.valor === 'sob_demanda').rotulo, /PR de release/);
-    assert.match(ps[0].opcoes.find((o) => o.valor === 'janela').rotulo, /janela de horário/);
-    assert.match(ps[1].opcoes.find((o) => o.valor === true).rotulo, /^sim/);
-    // o rótulo de cada perfil vem de PERFIS_MODELO, não de outra tabela
-    for (const o of ps[2].opcoes) assert.ok(o.rotulo.includes(PERFIS_MODELO[o.valor].revisor_final.modelo), o.rotulo);
+    // GM-14 T7: o texto é pela consequência (detalhe em onboarding-texto.test.mjs); aqui só o que ancora a pergunta ao valor
+    assert.match(ps[0].texto, /entrega pronta/);
+    assert.match(ps[1].texto, /publicar/);
+    assert.match(ps[2].texto, /gastar menos/);
+    assert.match(ps[0].opcoes.find((o) => o.valor === 'sob_demanda').rotulo, /pedido de revisão/);
+    assert.match(ps[0].opcoes.find((o) => o.valor === 'janela').rotulo, /horário/);
+    assert.match(ps[1].opcoes.find((o) => o.valor === true).rotulo, /^Pode publicar sozinha/);
+    // os valores de cada perfil vêm de PERFIS_MODELO, não de outra tabela
+    assert.deepEqual(ps[2].opcoes.map((o) => o.valor).sort(), Object.keys(PERFIS_MODELO).sort());
   });
 
   test('perguntas-default-primeiro', () => {
@@ -915,7 +916,7 @@ describe('perguntas', () => {
   test('rotulo-nao-com-continua', () => {
     const it = itensLista(repoVazio());
     const nao = (entrega) => perguntas(it, { entrega })[1].opcoes.find((o) => o.valor === false).rotulo;
-    const FRASE = 'a entrega vira sob demanda: PR de release, você faz merge e deploy';
+    const FRASE = 'Espere o meu "pode": só abra o pedido de revisão';
     assert.equal(nao({ politica: 'continua' }), FRASE);
     assert.equal(nao({ politica: 'janela' }), FRASE);
     assert.notEqual(nao({ politica: 'sob_demanda' }), FRASE);
@@ -998,9 +999,10 @@ describe('perguntas', () => {
     const tipo = ps[3];
     assert.deepEqual(tipo.opcoes.map((o) => o.valor), ['app', 'repo-sem-app']);
     assert.equal(tipo.default, 'app');
+    // GM-14 T7: a pergunta fala do projeto, sem a fonte (que fica na prévia técnica)
     const fonteTipo = it.find((i) => i.item === 'tipo_repo').fonte;
-    assert.ok(tipo.texto.startsWith('tipo_repo:') && tipo.texto.includes(fonteTipo), tipo.texto);
-    assert.deepEqual(tipo.opcoes.map((o) => o.rotulo), ['app', 'repo-sem-app']);
+    assert.ok(/aplicativo ou site/.test(tipo.texto) && !tipo.texto.includes(fonteTipo), tipo.texto);
+    assert.deepEqual(tipo.opcoes.map((o) => o.rotulo), ['Tem um aplicativo ou site', 'Não, só código de apoio e documentos']);
     const r = gravarCom(raiz, { ...FIXAS, tipo_repo: 'app', planejamento: null }, { claude: SEM_MCP });
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.deepEqual(r.naoDetectado, ['ambientes', 'planejamento'], 'ambientes (sem opção) e planejamento (respondido null) ficam não detectados');
@@ -1021,7 +1023,7 @@ describe('perguntas', () => {
     for (const p of ps) assert.ok(p.opcoes.length >= 2, `${p.id} com ${p.opcoes.length} opção`);
     const pla = ps[3];
     assert.deepEqual(pla.opcoes.map((o) => o.valor), ['arquivos', null], 'planejamento sem candidato ⇒ arquivos (regra da 1.1)');
-    assert.equal(pla.opcoes[1].rotulo, 'deixar não detectado (trocar planejamento depois)');
+    assert.equal(pla.opcoes[1].rotulo, 'Deixar em aberto por enquanto');
     assert.equal(pla.default, 'arquivos');
     // resposta `null` ⇒ naoDetectado e nada gravado; 'arquivos' ⇒ fluxo.ferramenta
     const a = gravarCom(raiz, { ...FIXAS, planejamento: null }, { claude: SEM_MCP });

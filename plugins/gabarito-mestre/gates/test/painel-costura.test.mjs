@@ -7,7 +7,8 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, copyFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, copyFileSync, readdirSync, readFileSync, chmodSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
@@ -78,10 +79,14 @@ describe('costura mod → CLI real → mod', () => {
     assert.equal(a.classe, 'ok', JSON.stringify(a));
     const prefs = { preset: 'esquadrao', tema: 'mono', narracao: true, ligado: true };
     const txt = texto(linhasDaPane(a.estado, prefs, 80));
-    assert.match(txt, /ctx 93k/, `o ctx da fixture (ctxTok 92.762) aparece como \`fmtTok\` o escreve, 93k (arredonda; o plano diz 92k):\n${txt}`);
+    // GM-14 T18: o CLI passa `fatos` ⇒ render dos 5 blocos (T17, FIEL-11 a): o orquestrador mostra o contexto da sessão; o uso do transcript segue no estado
+    assert.match(txt, /^AGORA · GANDALF · contexto 46 %$/m, txt);
+    assert.equal(a.estado.equipe.agentes.find((x) => x.task === 'T2' && x.vivo)?.ctxTok, 92762, 'o ctx da fixture (92.762) chega ao estado pelo CLI real');
     assert.doesNotMatch(txt, /\b5h\b/, 'rateLimits sem five_hour ⇒ nenhuma linha 5h');
-    assert.match(txt, /7d/, 'seven_day (9) chega ao líder');
-    assert.equal(faixaDe(a.estado, true, null), null, 'nada pendente e Pane visível: sem faixa');
+    assert.equal(a.estado.equipe.lider.d7, 9, 'seven_day (9) chega ao líder no estado');
+    // GM-14 T18: o estado novo traz o item "depende de você: nada" (T13/T17, D-P13). `faixaDe` do mod (mod/painel.mjs, T20) ainda o lê como
+    // pendência ("depende de você: depende de você: nada"): defeito de costura relatado à T20, fora dos arquivos da T18. Aqui só o que o CLI entrega.
+    assert.deepEqual(a.estado.depende.map((i) => i.motivo), ['depende de você: nada']);
 
     // (B) o loop PARA pelo CLI real do loop, com T2 no teto
     for (const [tipo, dados] of [['task.concluida', { task: 'T2', sha: 'c'.repeat(40) }],
@@ -100,14 +105,15 @@ describe('costura mod → CLI real → mod', () => {
     assert.match(texto(linhasDaPane(b.estado, prefs, 80)), /PAROU/);
   });
 
-  test('CLI sem loop: erro `plano_ausente` do CLI real vira classe `sem_loop`', () => {
+  test('sem-plano-fase-zero-sem-loop (GM-14 T18): branch com ID e sem plano.json ⇒ o CLI real devolve ok e o mod lê classe `ok`, nunca `sem_loop`', () => {
     const base = novoTmp('painel mod sem loop ');
     const repo = join(base, 'repo');
     mkdirSync(repo);
     g(repo, 'init', '-q', '-b', 'feat/GM-12-x');
     g(repo, 'config', 'user.email', 't@t'); g(repo, 'config', 'user.name', 't');
     const r = interpretarSaida(cli(repo, JSON.stringify(montarPedido({ usage: null, agentes: [], x: 50, notificacao: null, pacote: null, transcripts: {} }))));
-    assert.equal(r.classe, 'sem_loop', JSON.stringify(r));
+    assert.equal(r.classe, 'ok', JSON.stringify(r));
+    assert.equal(r.estado.modo, 'projeto', 'branch com ID mas sem 2º fato: entrega não identificada');
   });
 });
 
@@ -494,5 +500,156 @@ describe('T11: pacotes de fábrica e funções puras do comando', () => {
     assert.match(achar(/\/gabarito pausar/), /para o trabalho automático da entrega/);
     assert.match(achar(/\/gabarito retomar/), /continua de onde parou/);
     assert.doesNotMatch(USO_GABARITO, new RegExp(['Pane', '\\bmod\\b', 'preset', 'Sombra', 'Workflow' + ' TRUE', 'loop'].join('|'), 'i'));
+  });
+});
+
+// ─── GM-14 T18 (P1/P9): `painel.mjs estado|texto` pelo CLI REAL em cada fase da trilha (fixtures de `fixtures/trilha/`) ───
+describe('costura T18: CLI real em toda fase', { timeout: 180_000 }, () => {
+  const TRILHA = join(AQUI, 'fixtures', 'trilha');
+  const sha = (b) => createHash('sha256').update(b).digest('hex');
+  const INTEGRAR = (task) => [
+    ['task.iniciada', { task, papel: 'implementador' }], ['task.concluida', { task, sha: 'a'.repeat(40) }],
+    ['review.veredito', { task, veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }], ['task.integrada', { task, sha: 'b'.repeat(40) }],
+  ];
+  /** Materializa a fixture em repo git real: branch, specs (sha REAL dos bytes no lugar do da fixture), plano.json, ledger, painel-medir.json, entregas de `ultimas`. */
+  function materializar(fx, { semEventos = false } = {}) {
+    const f = fx.fatos;
+    const base = novoTmp('painel trilha ');
+    const repo = join(base, 'repo');
+    mkdirSync(repo);
+    g(repo, 'init', '-q', '-b', f.branch);
+    g(repo, 'config', 'user.email', 't@t'); g(repo, 'config', 'user.name', 't'); g(repo, 'config', 'commit.gpgsign', 'false');
+    writeFileSync(join(repo, 'README.md'), 'x\n');
+    const id = /([A-Z]+-\d+)/.exec(f.branch.split('/').pop())?.[1] ?? null;
+    const troca = new Map();
+    for (const s of f.specs) {
+      mkdirSync(join(repo, dirname(s.caminho)), { recursive: true });
+      const corpo = `# ${s.titulo}\n\nPBI: ${s.pbi}\n\n${'## seção\n\ntexto\n\n'.repeat(s.secoes)}`;
+      writeFileSync(join(repo, s.caminho), corpo);
+      troca.set(s.sha256, sha(Buffer.from(corpo)));
+    }
+    if (f.ledger) { mkdirSync(join(repo, 'docs', 'ledgers'), { recursive: true }); writeFileSync(join(repo, 'docs', 'ledgers', `${id}.md`), `# ${id}\n`); }
+    g(repo, 'add', '-A'); g(repo, 'commit', '-q', '-m', 'inicio');
+    const dir = join(repo, '.harness', 'entregas', id ?? '_sem-id');
+    mkdirSync(dir, { recursive: true });
+    if (f.plano !== null) writeFileSync(join(dir, 'plano.json'), JSON.stringify({ entrega: id, tasks: f.plano.tasks.map((t) => ({ id: t, deps: [], arquivos: [`src/${t}.txt`] })) }));
+    if (f.gh !== 'nunca' && id !== null) writeFileSync(join(repo, '.harness', 'painel-medir.json'), JSON.stringify({ [id]: { gh: f.gh, em: '2026-11-01T00:00:00.000Z' } }));
+    for (const u of f.ultimas) {
+      const r = diario.append(join(repo, '.harness', 'entregas', u.id), 'loop', { ts: u.data, autor: 't@t', sessao: 'loop', agente: 'orquestrador', tipo: 'fato.medido', dados: { chave: 'branch', fonte: 'git', valor: { nome: 'main' } } });
+      assert.ok(r.ok, JSON.stringify(r));
+    }
+    let min = 0;
+    const push = (tipo, dados, sessao = 'sessao-a') => {
+      const d = JSON.parse(JSON.stringify(dados));
+      if (typeof d.sha256 === 'string' && troca.has(d.sha256)) d.sha256 = troca.get(d.sha256);
+      const r = diario.append(dir, sessao, { ts: new Date(Date.UTC(2026, 10, 1, 0, min++)).toISOString(), autor: 't@t', sessao, agente: 'orquestrador', tipo, dados: d });
+      assert.ok(r.ok && r.gravado === 'evento', `${tipo}: ${JSON.stringify(r)}`);
+    };
+    if (!semEventos) for (const c of fx.eventos) { if (c.integradas) for (const t of c.integradas) for (const [tp, d] of INTEGRAR(t)) push(tp, d); else push(c.t, c.d, c.s); }
+    return { repo, id };
+  }
+  const rodar = (repo, sub, sessao) => {
+    const args = sessao ? [CLI, sub, '--agentes'] : [CLI, sub];
+    const r = spawnSync(process.execPath, args, { cwd: repo, encoding: 'utf8', timeout: 60_000, input: sessao ? JSON.stringify({ session_id: sessao, sessao: {}, agentes: [] }) : undefined });
+    assert.equal(r.status, 0, `${sub}: ${r.stdout}${r.stderr}`);
+    return r.stdout;
+  };
+
+  for (const nome of readdirSync(TRILHA).filter((n) => /^fase-\d\.json$/.test(n)).sort()) {
+    test(`costura-trilha-${nome}: o CLI real lê os mesmos fatos da fixture (marcas, fase, progresso) e o texto traz a linha FASE/PRONTO`, () => {
+      const fx = JSON.parse(readFileSync(join(TRILHA, nome), 'utf8'));
+      const { repo } = materializar(fx);
+      const sessao = fx.fatos.sessao;
+      const out = JSON.parse(rodar(repo, 'estado', sessao));
+      const e = out.estado;
+      const esp = fx.esperado;
+      assert.deepEqual([e.trilha.marcas.join(''), e.trilha.identificada, e.trilha.entrega, e.trilha.fase, e.trilha.progresso, e.trilha.mudouDepois, e.trilha.ultimaConhecida],
+        [esp.marcas, esp.identificada, esp.entrega, esp.fase, esp.progresso, esp.mudouDepois, esp.ultimaConhecida], `${fx.nome}\n${JSON.stringify(e.trilha)}`);
+      assert.doesNotMatch(JSON.stringify(out), /sem_loop|plano_ausente/);
+      const t = rodar(repo, 'texto', sessao);
+      if (fx.fatos.plano === null) {
+        assert.equal(e.pronto, null);
+        assert.match(t, new RegExp(`^FASE ${esp.fase} de 7 `, 'm'), t);
+      } else {
+        assert.equal(e.fase, null);
+        const n = fx.eventos.flatMap((c) => c.integradas ?? []).length;
+        assert.match(t, new RegExp(`^PRONTO [▰▱]+ ${n} de ${fx.fatos.plano.tasks.length} integradas`, 'm'), t);
+      }
+    });
+  }
+
+  test('costura-fora-de-entrega: fase 1 sem eventos ⇒ 1 linha com a última conhecida; com as ideias ⇒ FASE 1 de 7 e o item das ideias', () => {
+    const fx = JSON.parse(readFileSync(join(TRILHA, 'fase-1.json'), 'utf8'));
+    const vazio = materializar(fx, { semEventos: true });
+    assert.equal(rodar(vazio.repo, 'texto'), 'GABARITO · sem entrega em curso · última: GM-19\n');
+    const cheio = materializar(fx);
+    const t = rodar(cheio.repo, 'texto');
+    assert.match(t, /^FASE 1 de 7 /m, t);
+    assert.match(t, /2 ideias/, t);
+  });
+
+  /** Repo novo + `loop.mjs anotar --tipo pendencia` REAL; devolve o repo. */
+  const anotarReal = (texto) => {
+    const base = novoTmp('painel anotar ');
+    const repo = join(base, 'repo');
+    mkdirSync(repo);
+    g(repo, 'init', '-q', '-b', 'main');
+    g(repo, 'config', 'user.email', 't@t'); g(repo, 'config', 'user.name', 't'); g(repo, 'config', 'commit.gpgsign', 'false');
+    writeFileSync(join(repo, 'README.md'), 'x\n'); g(repo, 'add', '-A'); g(repo, 'commit', '-q', '-m', 'inicio');
+    assert.equal(rodar(repo, 'texto'), 'GABARITO · sem entrega em curso\n');
+    const a = spawnSync(process.execPath, [LOOP, 'anotar', '--tipo', 'pendencia', '--texto', texto], { cwd: repo, encoding: 'utf8' });
+    assert.equal(a.status, 0, a.stdout + a.stderr);
+    return repo;
+  };
+
+  test('anotar-real-aparece-no-depende (P9): `loop.mjs anotar --tipo pendencia` real ⇒ `estado` ⇒ o DEPENDE do render mostra a pendência com o botão "feito"', () => {
+    const repo = anotarReal('assinar o contrato do fornecedor');
+    const e = JSON.parse(rodar(repo, 'estado')).estado;
+    const item = e.depende.find((i) => i.motivo === 'assinar o contrato do fornecedor');
+    assert.ok(item, JSON.stringify(e.depende));
+    assert.equal(item.acoes[0].rotulo, 'feito');
+    assert.match(rodar(repo, 'texto'), /^depende de você: assinar o contrato do fornecedor \[feito\]$/m);
+  });
+
+  test('anotar-real-aparece-com-origem (P9, REQ-LNG-1): a pendência anotada pelo orquestrador aparece no render com "(anotado pelo orquestrador)"',
+    { todo: 'render da T17 sem origem — T37 (ajuste do render: origem)' }, () => {
+      const repo = anotarReal('assinar o contrato do fornecedor');
+      assert.match(rodar(repo, 'texto'), /^.*assinar o contrato do fornecedor.*\(anotado pelo orquestrador\).*$/m);
+    });
+
+  test('medir-real-avanca-fase (P9): `painel.mjs medir` real com `gh` de fixture ⇒ PR `?` com gh falho, depois `●` e "#7 aberto" com gh ok', () => {
+    const base = novoTmp('painel medir ');
+    const repo = join(base, 'repo');
+    mkdirSync(repo);
+    g(repo, 'init', '-q', '-b', 'feat/GM-12-medir');
+    g(repo, 'config', 'user.email', 't@t'); g(repo, 'config', 'user.name', 't'); g(repo, 'config', 'commit.gpgsign', 'false');
+    writeFileSync(join(repo, 'README.md'), 'x\n'); writeFileSync(join(repo, 'harness.config.json'), '{}\n'); /* T60 (emenda 71): o medir só grava com onboarding */ g(repo, 'add', '-A'); g(repo, 'commit', '-q', '-m', 'inicio');
+    const dir = join(repo, '.harness', 'entregas', 'GM-12');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'plano.json'), JSON.stringify({ entrega: 'GM-12', tasks: [{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }] }));
+    let min = 0;
+    for (const [tipo, dados] of INTEGRAR('T1')) {
+      const r = diario.append(dir, 'loop', { ts: new Date(Date.UTC(2026, 10, 1, 0, min++)).toISOString(), autor: 't@t', sessao: 'loop', agente: 'orquestrador', tipo, dados });
+      assert.ok(r.ok);
+    }
+    const bin = join(base, 'bin');
+    mkdirSync(bin);
+    const gh = join(bin, 'gh');
+    const fakeGh = (falha) => { writeFileSync(gh, falha ? '#!/bin/sh\nexit 1\n' : '#!/bin/sh\ncase "$2" in list) ;; esac\nif [ "$1" = pr ]; then echo \'[{"number":7,"state":"OPEN"}]\'; else echo \'[]\'; fi\n'); chmodSync(gh, 0o755); };
+    const medir = () => {
+      const r = spawnSync(process.execPath, [CLI, 'medir', '--agentes'], { cwd: repo, encoding: 'utf8', input: JSON.stringify({ session_id: 's1', sessao: {}, agentes: [] }), env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+      return JSON.parse(r.stdout.trim());
+    };
+    fakeGh(true);
+    assert.equal(medir().ok, false);
+    const antes = JSON.parse(rodar(repo, 'estado')).estado;
+    assert.deepEqual([antes.trilha.marcas[5], antes.fontesFalhas], ['?', ['o GitHub']]);
+    fakeGh(false);
+    const m = medir();
+    assert.equal(m.ok, true, JSON.stringify(m));
+    assert.ok(m.gravados.includes('pr'), JSON.stringify(m));
+    const depois = JSON.parse(rodar(repo, 'estado')).estado;
+    assert.deepEqual([depois.trilha.marcas[5], depois.trilha.progresso, depois.fontesFalhas], ['●', 'pedido de revisão #7 aberto', []]);
+    assert.match(rodar(repo, 'texto'), /revisar e aceitar o pedido de revisão #7/);
   });
 });

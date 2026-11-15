@@ -20,7 +20,8 @@ import * as diario from '../dist/diario.js';
 import { renderPainel } from '../dist/painel.js';
 import { paraTexto } from '../dist/painel-texto.js';
 import { estadoDoPainel, lerArgs, lerCauda, lerDiarioEstavel, lerEntradaAgentes, main } from '../scripts/painel.mjs';
-import { tetoDaSombra } from '../scripts/loop.mjs';
+import { aprovarSpec, tetoDaSombra } from '../scripts/loop.mjs';
+import { medir } from '../scripts/painel-medir.mjs';
 import { prepararLeitura as prepararLeituraReal } from '../scripts/entrega.mjs';
 import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
 
@@ -175,16 +176,20 @@ describe('forma do estado e do texto', { timeout: 60_000 }, () => {
     assert.equal(cor, `${paraTexto(renderPainel(e, { preset: 'executivo', tema: 'color', narracao: true, largura: 60 }), 'color')}\n`);
     assert.ok(cor.includes('\x1b['), 'color: com SGR');
     assert.notEqual(cor, roda(['--preset', 'executivo', '--largura', '60', '--tema', 'mono']));
-    assert.notEqual(roda(['--preset', 'executivo', '--largura', '60']), roda(['--preset', 'executivo', '--largura', '90']));
-    assert.notEqual(roda(['--preset', 'executivo']), roda(['--preset', 'esquadrao']));
+    assert.notEqual(roda(['--preset', 'executivo', '--largura', '30']), roda(['--preset', 'executivo', '--largura', '90']));
+    // GM-14 T18 (FIEL-4/FIEL-12): sem --agentes os dois presets coincidem (nenhum nome sorteado); com a sessão, o esquadrão tem nomes
+    assert.equal(roda(['--preset', 'executivo']), roda(['--preset', 'esquadrao']));
+    const comSessao = (preset) => { const s = []; assert.equal(main(['texto', '--agentes', '--preset', preset], m.repo, IO({ saida: (t) => s.push(t), stdin: () => JSON.stringify({ sessao: {}, agentes: [] }) })), 0); return s.join(''); };
+    assert.notEqual(comSessao('executivo'), comSessao('esquadrao'));
   });
 
   test('texto-falha-e-json: em falha o texto imprime a mesma linha JSON, rc 1', () => {
-    const m = montar({ branch: 'main' });
+    const m = montar();
+    writeFileSync(join(m.dir, 'plano.json'), '{ não é json');
     const r = cli(m, ['texto']);
     assert.equal(r.rc, 1);
     assert.equal(r.json.ok, false);
-    assert.equal(r.json.erro, 'entrega_nao_inferida');
+    assert.equal(r.json.erro, 'plano_invalido');
   });
 });
 
@@ -227,28 +232,24 @@ describe('uso errado (rc 2) e falhas de contexto (rc 1)', { timeout: 60_000 }, (
       { largura: '44', preset: 'executivo', tema: 'color', pacote: 'galaxia', agentes: true, entrega: 'GM-9' });
   });
 
-  test('fora-de-repo', () => {
-    const d = novoTmp('painel fora ');
-    const r = cli({ repo: d }, ['estado']);
-    assert.equal(r.rc, 1);
-    assert.equal(r.json.erro, 'fora_de_repo');
-  });
-
-  test('entrega-nao-inferida e --entrega', () => {
+  test('branch sem ID (T18: modo projeto, não erro) e --entrega', () => {
     const m = montar({ branch: 'main' });
-    assert.equal(cli(m, ['estado']).json.erro, 'entrega_nao_inferida');
+    const sem = cli(m, ['estado']);
+    assert.equal(sem.rc, 0, sem.stdout);
+    assert.deepEqual([sem.json.estado.modo, sem.json.estado.id], ['projeto', '']);
     const r = cli(m, ['estado', '--entrega', 'GM-12']);
     assert.equal(r.rc, 0);
-    assert.equal(r.json.estado.id, 'GM-12');
+    assert.deepEqual([r.json.estado.id, r.json.estado.modo, r.json.estado.plano.total], ['GM-12', 'entrega', 2]);
   });
 
-  test('plano-ausente-ok-false: rc 1, `plano_ausente`, nada criado', () => {
+  test('plano-ausente (T18): rc 0, estado pela trilha, sem `plano_ausente`, nada criado', () => {
     const m = montar();
     renameSync(join(m.dir, 'plano.json'), join(m.base, 'plano.fora'));
     const antes = hashArvore(join(m.repo, '.harness'));
     const r = cli(m, ['estado']);
-    assert.equal(r.rc, 1);
-    assert.deepEqual([r.json.ok, r.json.erro], [false, 'plano_ausente']);
+    assert.equal(r.rc, 0, r.stdout);
+    assert.deepEqual([r.json.ok, r.json.estado.pronto, r.json.estado.plano.total], [true, null, 0]);
+    assert.doesNotMatch(r.stdout, /plano_ausente|sem_loop/);
     assert.equal(hashArvore(join(m.repo, '.harness')), antes);
   });
 
@@ -566,6 +567,39 @@ describe('stdin (--agentes)', { timeout: 60_000 }, () => {
     assert.equal(r.json.estado.equipe.vivos, 1);
   });
 
+  test('stdin-agentes-ausente-x-corrompido: pelo CLI real, `nomes` chega ao nome do vivo; fora do contrato ⇒ stdin_invalido, nunca vazio calado (FIEL-3 d)', () => {
+    const m = montar({ ...comEventos([['task.iniciada', { task: 'T1', papel: 'implementador' }]]) });
+    const agentes = [{ id: 'a1', type: 'general-purpose', description: 'rascunho do plano', status: 'running' }];
+    const nomeDe = (r) => r.json.estado.equipe.agentes.find((a) => a.vivo && a.task === undefined)?.nome;
+    const sem = cli(m, ['estado', '--agentes'], { input: JSON.stringify({ sessao: {}, agentes }) });
+    assert.equal(sem.rc, 0, sem.stdout + sem.stderr);
+    const padrao = nomeDe(sem);
+    assert.equal(typeof padrao, 'string');
+    assert.notEqual(padrao, 'MERRY', 'sem `nomes` o nome vem do pacote, na ordem');
+    const com = cli(m, ['estado', '--agentes'], { input: JSON.stringify({ sessao: {}, agentes, nomes: { a1: { nome: 'MERRY', vistoEm: 1 } } }) });
+    assert.equal(com.rc, 0, com.stdout + com.stderr);
+    assert.equal(nomeDe(com), 'MERRY', 'o nome recebido do mod é repassado ao núcleo');
+    for (const ruim of [[], { a1: { nome: 'x minúsculo', vistoEm: 1 } }, { a1: 'MERRY' }]) {
+      const r = cli(m, ['estado', '--agentes'], { input: JSON.stringify({ sessao: {}, agentes, nomes: ruim }) });
+      assert.deepEqual([r.rc, r.json?.erro], [1, 'stdin_invalido'], JSON.stringify(ruim));
+      assert.match(r.json.mensagem, /`nomes` corrompido/);
+    }
+  });
+
+  test('acoes-e-segundo-plano-pelo-cli-real: a ação ao vivo e o segundo plano do stdin chegam ao AGORA (FIEL-11 b, c)', () => {
+    const m = montar({ ...comEventos([['task.iniciada', { task: 'T1', papel: 'implementador' }]]) });
+    const entrada = { sessao: {}, agentes: [{ id: 'a1', type: 'implementador', description: 'T1 implementador', status: 'running' }],
+      acoes: { a1: { texto: 'lendo 3 arquivos', fonte: 'tool', em: 1 } }, segundoPlano: [{ id: 'b1', dono: 'orquestrador', texto: 'build do plugin', desde: 1 }] };
+    const r = cli(m, ['estado', '--agentes'], { input: JSON.stringify(entrada) });
+    assert.equal(r.rc, 0, r.stdout + r.stderr);
+    const agora = r.json.estado.agora;
+    assert.equal(agora.agentes.find((a) => a.task === 'T1')?.acao, 'lendo 3 arquivos');
+    assert.deepEqual(agora.segundoPlano.map((x) => [x.quem.papel, x.acao]), [['teste', 'build do plugin']]);
+    const sem = cli(m, ['estado', '--agentes'], { input: JSON.stringify({ ...entrada, acoes: undefined, segundoPlano: undefined }) });
+    assert.equal(sem.json.estado.agora.agentes.find((a) => a.task === 'T1')?.acao, 'implementando (registrado)');
+    assert.deepEqual(sem.json.estado.agora.segundoPlano, []);
+  });
+
   test('x-do-stdin-vence-env e x-env-sem-agentes; inválido ⇒ 50 + aviso', () => {
     const m = montar();
     const env = { GABARITO_POUSO_X: '80' };
@@ -734,14 +768,15 @@ describe('spec, título, pausa, teto e política', { timeout: 60_000 }, () => {
     assert.ok(!estado(n).estado.depende.some((d) => d.motivo === 'loop pausado'), 'o principal não tem PAUSAR');
   });
 
-  test('tetoSombra: sombra.teto de origin vence; ausente ⇒ 26; inválido ⇒ 26 + aviso (a Sombra usa a mesma tetoDaSombra do loop)', () => {
+  test('atencao-sombra-sem-registro: com `fatos` a ATENÇÃO conta consultas sem decisão (FIEL-10 c), com ou sem teto em origin; teto inválido ⇒ aviso; tetoDaSombra do loop lê origin (o valor na projeção: teto-da-sombra-de-origin-chega-a-projecao)', () => {
     const m = montar({ origem: { sombra: { teto: 3 } } });
     for (let i = 0; i < 4; i++) ev(m, 'sombra.consulta', { pergunta_hash: `${i}`.repeat(64).slice(0, 64), task: 'T1' });
+    // GM-14 T18: o CLI passa `fatos` ⇒ ATENÇÃO é a da T17 (FIEL-10 c): consultas sem decisão registrada, não o teto (que a FIEL-10 c não lista)
     const r = estado(m).estado;
-    assert.ok(r.atencao.some((a) => /Sombra: 4 consultas, acima do teto de 3/.test(a)), JSON.stringify(r.atencao));
+    assert.deepEqual(r.atencao, ['4 consultas à Sombra sem decisão registrada'], JSON.stringify(r.atencao));
     const sem = montar({ origem: {} });
     for (let i = 0; i < 4; i++) ev(sem, 'sombra.consulta', { pergunta_hash: `${i}`.repeat(64).slice(0, 64), task: 'T1' });
-    assert.ok(!estado(sem).estado.atencao.some((a) => /Sombra/.test(a)));
+    assert.deepEqual(estado(sem).estado.atencao, ['4 consultas à Sombra sem decisão registrada']);
     const ruim = montar({ origem: { sombra: { teto: 0 } } });
     const rr = estado(ruim);
     assert.ok(rr.avisos.some((a) => /sombra\.teto inválido/.test(a)));
@@ -959,5 +994,451 @@ describe('costura: os CLIs reais do loop alimentam o painel', { timeout: 60_000 
     assert.equal(r.json.estado.plano.tasks[0].estado, 'integrada');
     assert.equal(r.json.estado.qualidade.mortas, 1, '`integrar` grava mutacoes {total:1, mortas:1}');
     assert.equal(r.json.estado.plano.feitas, 1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────── GM-14 T18 (REQ-GLB-1, FIEL-10 b/e, D-P13)
+
+/**
+ * Repositório SEM plano por padrão: specs em `docs/superpowers/specs/<nome>` com `PBI:` no cabeçalho e `secoes` linhas `## `. `planos`: `{ID: [tasks]}`.
+ * Eventos por `evEm(m, id|null, tipo, dados, extras)` (`null` = `_sem-id`).
+ */
+function repoT18({ branch = 'feat/GM-12-painel', specs = [], planos = {}, ledger = [], origem } = {}) {
+  const base = novoTmp('painel t18 ');
+  const repo = join(base, 'repo com espaço');
+  mkdirSync(repo);
+  g(repo, 'init', '-q', '-b', branch);
+  g(repo, 'config', 'user.email', 't@t.test'); g(repo, 'config', 'user.name', 't'); g(repo, 'config', 'commit.gpgsign', 'false');
+  writeFileSync(join(repo, 'README.md'), 'x\n');
+  if (specs.length > 0) mkdirSync(join(repo, 'docs', 'superpowers', 'specs'), { recursive: true });
+  for (const s of specs) {
+    writeFileSync(join(repo, 'docs', 'superpowers', 'specs', s.nome), `# ${s.titulo}\n\n${s.pbi === null ? '' : `PBI: ${s.pbi}\n`}\n${'## seção\n\ntexto\n\n'.repeat(s.secoes)}`);
+  }
+  for (const id of ledger) { mkdirSync(join(repo, 'docs', 'ledgers'), { recursive: true }); writeFileSync(join(repo, 'docs', 'ledgers', `${id}.md`), `# ${id}\n`); }
+  if (origem !== undefined) writeFileSync(join(repo, 'harness.config.json'), JSON.stringify(origem));
+  g(repo, 'add', '-A'); g(repo, 'commit', '-q', '-m', 'inicio');
+  if (origem !== undefined) {
+    const bare = join(base, 'origin.git');
+    mkdirSync(bare);
+    g(bare, 'init', '-q', '--bare', '-b', branch);
+    g(repo, 'remote', 'add', 'origin', bare);
+    g(repo, 'push', '-q', 'origin', branch);
+    g(repo, 'remote', 'set-head', 'origin', branch);
+  }
+  for (const [id, tasks] of Object.entries(planos)) {
+    mkdirSync(join(repo, '.harness', 'entregas', id), { recursive: true });
+    writeFileSync(join(repo, '.harness', 'entregas', id, 'plano.json'), JSON.stringify({ entrega: id, tasks: tasks.map((t) => ({ id: t, deps: [], arquivos: [`src/${t}.txt`] })) }));
+  }
+  return { base, repo, seq: 0 };
+}
+const dirDe = (m, id) => join(m.repo, '.harness', 'entregas', id ?? '_sem-id');
+function evEm(m, id, tipo, dados, { sessao = 'loop', ts } = {}) {
+  m.seq += 1;
+  const r = diario.append(dirDe(m, id), sessao, { ts: ts ?? new Date(Date.UTC(2026, 10, 9, 12, 0, m.seq)).toISOString(), autor: 't@t.test', sessao, agente: 'orquestrador', tipo, dados });
+  assert.ok(r.ok && r.gravado === 'evento', `preparo: ${tipo} não gravado: ${JSON.stringify(r)}`);
+}
+const integrarEm = (m, id, t, extras) => { for (const [tipo, dados] of INTEGRAR(t)) evEm(m, id, tipo, dados, extras); };
+const SPEC12 = { nome: '2026-11-12-gm12.md', pbi: 'GM-12', titulo: 'Painel da GM-12', secoes: 2 };
+const medirJson = (m, corpo) => writeFileSync(join(m.repo, '.harness', 'painel-medir.json'), typeof corpo === 'string' ? corpo : JSON.stringify(corpo));
+const textoDe = (m, args = []) => { const s = []; assert.equal(main(['texto', ...args], m.repo, IO({ saida: (t) => s.push(t) })), 0); return s.join(''); };
+/** Caminhos e bytes de `.harness/` (o `find .harness` do plano): o painel nunca cria, apaga nem muda nada. */
+function findHarness(m) {
+  const out = [];
+  const anda = (d) => { if (!existsSync(d)) return; for (const n of readdirSync(d).sort()) { const p = join(d, n); const st = statSync(p); out.push(`${p.slice(m.repo.length)}:${st.isDirectory() ? 'd' : sha256(readFileSync(p))}`); if (st.isDirectory()) anda(p); } };
+  anda(join(m.repo, '.harness'));
+  return out;
+}
+
+describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000 }, () => {
+  test('sem-plano-fase-zero-sem-loop: spec com PBI e sem plano.json ⇒ rc 0, FASE 3 de 7 pela trilha; nunca `sem_loop` nem `plano_ausente` (M-T18a)', () => {
+    const m = repoT18({ specs: [SPEC12] });
+    const r = cli(m, ['estado']);
+    assert.equal(r.rc, 0, r.stdout + r.stderr);
+    assert.doesNotMatch(r.stdout, /sem_loop|plano_ausente|entrega_nao_inferida/);
+    const e = r.json.estado;
+    assert.deepEqual([e.modo, e.id, e.pronto, e.umaLinha, e.titulo], ['entrega', 'GM-12', null, null, 'Painel da GM-12']);
+    assert.deepEqual([e.fase.numero, e.fase.marcas.join(''), e.fase.progresso], [3, '✓✓●○○○○', 'spec com 2 seções · falta aprovar']);
+    assert.deepEqual(e.fontesFalhas, []);
+    assert.ok(e.depende.some((i) => i.motivo === 'aprovar a spec da GM-12'), JSON.stringify(e.depende));
+    const t = cli(m, ['texto']);
+    assert.equal(t.rc, 0, t.stdout);
+    assert.match(t.stdout, /^FASE 3 de 7 ▰▰▱▱▱▱▱ · spec com 2 seções · falta aprovar · ✓ ideia › ✓ spec › ● /m);
+    assert.match(textoDe(m, ['--largura', '200']), /^FASE 3 de 7 ▰▰▱▱▱▱▱ · spec com 2 seções · falta aprovar · ✓ ideia › ✓ spec › ● aprovação › ○ plano › ○ execução › ○ PR › ○ uso$/m);
+    assert.doesNotMatch(t.stdout, /sem loop|sem_loop/);
+    // spec aprovada pelo sha REAL dos bytes ⇒ fase 4 (o sha vem de lerSpecs, não inventado)
+    const bytes = readFileSync(join(m.repo, 'docs', 'superpowers', 'specs', SPEC12.nome));
+    evEm(m, 'GM-12', 'spec.aprovada', { spec: `docs/superpowers/specs/${SPEC12.nome}`, sha256: sha256(bytes) });
+    const e4 = cli(m, ['estado']).json.estado;
+    assert.deepEqual([e4.fase.numero, e4.trilha.mudouDepois], [4, false]);
+  });
+
+  test('sem entrega e sem nada no diário: branch main ⇒ modo projeto e 1 linha `GABARITO · sem entrega em curso`', () => {
+    const v = repoT18({ branch: 'main' });
+    const r = cli(v, ['estado']);
+    assert.equal(r.rc, 0, r.stdout);
+    assert.deepEqual([r.json.estado.modo, r.json.estado.umaLinha], ['projeto', { ultima: null }]);
+    assert.equal(cli(v, ['texto']).stdout, 'GABARITO · sem entrega em curso\n');
+    assert.deepEqual(findHarness(v), [], 'nada criado em .harness/');
+  });
+
+  test('fora-de-repo: rc 0, modo fora, texto `GABARITO · fora de um projeto` em 1 linha; nada criado', () => {
+    const d = novoTmp('painel fora ');
+    const r = cli({ repo: d }, ['estado']);
+    assert.equal(r.rc, 0, r.stdout + r.stderr);
+    assert.equal(r.json.ok, true);
+    assert.equal(r.json.estado.modo, 'fora');
+    const t = cli({ repo: d }, ['texto']);
+    assert.equal(t.rc, 0);
+    assert.equal(t.stdout, 'GABARITO · fora de um projeto\n');
+    assert.deepEqual(readdirSync(d), []);
+  });
+
+  test('head-destacado-uma-linha: HEAD solto, sem entrega ⇒ 1 linha com a última entrega (ts mais recente fora de `_*`) e o estado em palavras', () => {
+    const m = repoT18({ branch: 'feat/GM-7-x', planos: { 'GM-7': ['T1', 'T2'], 'GM-5': ['T1'] } });
+    evEm(m, 'GM-5', 'nota', { tipo: 'ideia', texto: 'antiga' }, { ts: '2026-11-01T10:00:00.000Z' });
+    integrarEm(m, 'GM-7', 'T1');
+    evEm(m, null, 'fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'main' } }, { ts: '2026-11-30T10:00:00.000Z' }); // mais novo, mas em _sem-id
+    g(m.repo, 'checkout', '-q', '--detach');
+    const r = cli(m, ['estado']);
+    assert.equal(r.rc, 0, r.stdout);
+    const e = r.json.estado;
+    assert.equal(e.modo, 'projeto');
+    assert.deepEqual(e.umaLinha, { ultima: { id: 'GM-7', estado: '1 de 2 tasks integradas' } });
+    assert.equal(e.trilha.ultimaConhecida, 'GM-7');
+    assert.equal(cli(m, ['texto']).stdout, 'GABARITO · sem entrega em curso · última: GM-7 (1 de 2 tasks integradas)\n');
+    // GM-5 passa a ser a mais recente ⇒ a linha muda (a regra é o ts, não a ordem das pastas)
+    evEm(m, 'GM-5', 'nota', { tipo: 'ideia', texto: 'nova' }, { ts: '2026-11-20T10:00:00.000Z' });
+    assert.deepEqual(cli(m, ['estado']).json.estado.umaLinha, { ultima: { id: 'GM-5', estado: '0 de 1 tasks integradas' } });
+    integrarEm(m, 'GM-5', 'T1', { ts: '2026-11-21T10:00:00.000Z' });
+    assert.deepEqual(cli(m, ['estado']).json.estado.umaLinha, { ultima: { id: 'GM-5', estado: 'tasks todas integradas' } });
+  });
+
+  test('estado-byte-a-byte-igual: 3 chamadas de estado e de texto dão os mesmos bytes; `.harness/` igual antes e depois (nem painel-medir.json)', () => {
+    const m = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
+    integrarEm(m, 'GM-12', 'T1');
+    evEm(m, null, 'nota', { tipo: 'ideia', texto: 'fora da entrega' });
+    const antes = findHarness(m);
+    const status = g(m.repo, 'status', '--porcelain');
+    const estados = [1, 2, 3].map(() => { const s = []; assert.equal(main(['estado'], m.repo, IO({ saida: (t) => s.push(t) })), 0); return s.join(''); });
+    const textos = [1, 2, 3].map(() => textoDe(m));
+    assert.equal(new Set(estados).size, 1);
+    assert.equal(new Set(textos).size, 1);
+    for (let i = 0; i < 3; i++) assert.equal(cli(m, ['estado']).rc, 0);
+    assert.deepEqual(findHarness(m), antes);
+    assert.equal(existsSync(join(m.repo, '.harness', 'painel-medir.json')), false);
+    assert.equal(g(m.repo, 'status', '--porcelain'), status);
+    // DP-1 (sombra-dp.md:95 ataque 1): com um painel-medir.json VELHO presente, o estado o lê e não o reescreve (bytes e mtime iguais)
+    const velho = '{"GM-12":{"gh":"ok","em":"2026-01-01T00:00:00.000Z"},"_sem-id":{"gh":"falhou","em":"2026-01-01T00:00:00.000Z"}}';
+    medirJson(m, velho);
+    const arq = join(m.repo, '.harness', 'painel-medir.json');
+    const mtime = statSync(arq).mtimeMs;
+    const antesV = findHarness(m);
+    const statusV = g(m.repo, 'status', '--porcelain');
+    const estadosV = [1, 2, 3].map(() => { const s = []; assert.equal(main(['estado'], m.repo, IO({ saida: (t) => s.push(t) })), 0); return s.join(''); });
+    assert.equal(new Set(estadosV).size, 1);
+    assert.equal(new Set([1, 2, 3].map(() => textoDe(m))).size, 1);
+    for (let i = 0; i < 3; i++) assert.equal(cli(m, ['estado']).rc, 0);
+    assert.deepEqual(findHarness(m), antesV);
+    assert.equal(readFileSync(arq, 'utf8'), velho);
+    assert.equal(statSync(arq).mtimeMs, mtime);
+    assert.equal(g(m.repo, 'status', '--porcelain'), statusV);
+  });
+
+  test('medir-json-ausente-x-corrompido: ausente ⇒ gh nunca, sem falha; corrompido ⇒ fonte que falhou; `falhou` da entrega ⇒ PR `?` e "o GitHub"', () => {
+    const m = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1'] } });
+    integrarEm(m, 'GM-12', 'T1');
+    const ler = () => cli(m, ['estado']).json.estado;
+    const nada = ler();
+    assert.deepEqual([nada.trilha.marcas[5], nada.fontesFalhas], ['●', []]);
+    assert.ok(!nada.depende.some((i) => /não consegui ler/.test(i.motivo)), JSON.stringify(nada.depende));
+    medirJson(m, '{ corrompido');
+    const c = ler();
+    assert.deepEqual([c.trilha.marcas[5], c.fontesFalhas], ['●', ['o registro de medição do painel']]);
+    assert.ok(c.depende.some((i) => i.motivo === 'depende de você: ? (não consegui ler o registro de medição do painel)'), JSON.stringify(c.depende));
+    assert.ok(!c.depende.some((i) => i.motivo === 'depende de você: nada'));
+    medirJson(m, '[1,2]');
+    assert.deepEqual(ler().fontesFalhas, ['o registro de medição do painel'], 'JSON que não é objeto também é corrompido');
+    medirJson(m, { 'GM-12': { gh: 'falhou', em: '2026-11-09T12:00:00.000Z' } });
+    const f = ler();
+    assert.deepEqual([f.trilha.marcas[5], f.trilha.motivos[5], f.fontesFalhas], ['?', 'não consegui conferir o pedido de revisão', ['o GitHub']]);
+    assert.match(textoDe(m), /não consegui ler o GitHub/);
+    medirJson(m, { 'GM-12': { gh: 'ok', em: '2026-11-09T12:00:00.000Z' }, '_sem-id': { gh: 'falhou', em: '2026-11-09T12:00:00.000Z' } });
+    const ok = ler();
+    assert.deepEqual([ok.trilha.marcas[5], ok.fontesFalhas], ['●', []], 'a chave é a da entrega: `_sem-id` falho não contamina a GM-12');
+    medirJson(m, { 'GM-12': { gh: 'talvez' } });
+    assert.deepEqual(ler().fontesFalhas, ['o registro de medição do painel'], 'gh fora de ok|falhou é registro corrompido');
+  });
+
+  test('fontes-falhas-no-estado: specs ilegíveis e diário de outra entrega ilegível ⇒ nomes naturais em fontesFalhas, o DEPENDE nunca diz "nada"', () => {
+    const m = repoT18({ branch: 'main', specs: [SPEC12], planos: { 'GM-5': ['T1'] } });
+    evEm(m, 'GM-5', 'nota', { tipo: 'ideia', texto: 'x' });
+    const dirSpecs = join(m.repo, 'docs', 'superpowers', 'specs');
+    const base0 = cli(m, ['estado']).json.estado;
+    assert.deepEqual(base0.fontesFalhas, []);
+    execFileSync('chmod', ['000', dirSpecs]);
+    try {
+      const e = cli(m, ['estado']).json.estado;
+      assert.deepEqual(e.fontesFalhas, ['as specs']);
+      assert.ok(e.depende.some((i) => i.motivo === 'depende de você: ? (não consegui ler as specs)'), JSON.stringify(e.depende));
+      assert.equal(e.umaLinha, null, 'com fonte que falhou não é "sem entrega em curso" em 1 linha: o DEPENDE mostra o ?');
+      assert.match(textoDe(m), /não consegui ler as specs/);
+      assert.doesNotMatch(textoDe(m), /specs ilegiveis|specs_ilegiveis|painel medir/);
+    } finally { execFileSync('chmod', ['755', dirSpecs]); }
+    // diário de outra entrega corrompido (ultimas): falha nomeada, nunca lista vazia
+    appendFileSync(join(dirDe(m, 'GM-5'), 'events.loop.jsonl'), '{ linha quebrada\n');
+    const d = cli(m, ['estado']).json.estado;
+    assert.deepEqual(d.fontesFalhas, ['o diário da GM-5']);
+    assert.ok(d.depende.some((i) => i.motivo === 'depende de você: ? (não consegui ler o diário da GM-5)'), JSON.stringify(d.depende));
+  });
+
+  test('ultimas-1-ponto-por-evento: `ultimas` dá a última conhecida pelo ts (fora de `_*`), igual ao `responder.mjs`', () => {
+    const m = repoT18({ branch: 'main', planos: { 'GM-9': ['T1'] } });
+    evEm(m, 'GM-9', 'nota', { tipo: 'ideia', texto: 'a' }, { ts: '2026-11-02T00:00:00.000Z' });
+    evEm(m, 'GM-8', 'nota', { tipo: 'ideia', texto: 'b' }, { ts: '2026-11-05T00:00:00.000Z' });
+    evEm(m, '_x', 'nota', { tipo: 'ideia', texto: 'c' }, { ts: '2026-11-09T00:00:00.000Z' });
+    const e = cli(m, ['estado']).json.estado;
+    assert.equal(e.trilha.ultimaConhecida, 'GM-8');
+    assert.deepEqual(e.umaLinha, { ultima: { id: 'GM-8', estado: null } }, 'sem plano.json ⇒ estado null (não inventado)');
+  });
+
+  test('sessao-do-stdin-chega-a-trilha: a pergunta (b) só abre com o `session_id` do mod no stdin', () => {
+    const m = repoT18({ branch: 'feat/GM-12-painel' });
+    evEm(m, 'GM-12', 'fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'feat/GM-12-painel' } }, { sessao: 's1' });
+    const sem = cli(m, ['estado', '--agentes'], { input: JSON.stringify({ sessao: {}, agentes: [] }) }).json.estado;
+    const com = cli(m, ['estado', '--agentes'], { input: JSON.stringify({ session_id: 's1', sessao: {}, agentes: [] }) }).json.estado;
+    assert.equal(sem.pergunta, null);
+    assert.equal(com.pergunta?.gatilho, 'b', JSON.stringify(com.pergunta));
+    assert.match(com.pergunta.id, /^s1:/);
+    const aninhado = cli(m, ['estado', '--agentes'], { input: JSON.stringify({ sessao: { session_id: 's1' }, agentes: [] }) }).json.estado;
+    assert.equal(aninhado.pergunta?.id, com.pergunta.id, '`sessao.session_id` vale como no `medir`');
+  });
+
+  test('cli-sem-agentes-sem-nomes-nem-traco: `painel.mjs texto` real sem --agentes ⇒ AGORA em 1 linha e nenhum nome sorteado', () => {
+    const m = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
+    integrarEm(m, 'GM-12', 'T1');
+    evEm(m, 'GM-12', 'task.iniciada', { task: 'T2', papel: 'implementador' });
+    const t = cli(m, ['texto']);
+    assert.equal(t.rc, 0, t.stdout);
+    assert.match(t.stdout, /^AGORA · agentes e contexto: medidos só no painel da sessão$/m);
+    assert.doesNotMatch(t.stdout, /GANDALF|ELROND|ARAGORN|LEGOLAS|agentes —|ctx —/);
+    assert.match(t.stdout, /^PRONTO ▰+▱+ 1 de 2 integradas/m);
+  });
+
+  test('spec-na-worktree-da-sessao (DP-3 aj. 4; sombra-dp.md:95 ataque 2): principal em outra branch sem a spec, spec só na worktree ⇒ a FASE do painel vê a spec do checkout da sessão, com o mesmo sha que o `medir` grava', () => {
+    const m = repoT18({ branch: 'main', origem: {} }); // T60 (emenda 71): o medir só grava com onboarding
+    const wt = join(m.base, 'wt da sessão');
+    g(m.repo, 'worktree', 'add', '-q', '-b', 'feat/GM-12-painel', wt);
+    mkdirSync(join(wt, 'docs', 'superpowers', 'specs'), { recursive: true });
+    const arq = join(wt, 'docs', 'superpowers', 'specs', SPEC12.nome);
+    writeFileSync(arq, `# ${SPEC12.titulo}\n\nPBI: GM-12\n\n${'## seção\n\ntexto\n\n'.repeat(2)}`);
+    g(wt, 'add', '-A'); g(wt, 'commit', '-q', '-m', 'spec');
+    assert.equal(existsSync(join(m.repo, 'docs', 'superpowers', 'specs', SPEC12.nome)), false, 'preparo: a principal não tem a spec');
+    const r = estadoDoPainel(wt, { agoraMs: AGORA });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const e = r.estado;
+    assert.deepEqual([e.modo, e.id, e.titulo, e.fase?.numero, e.fase?.progresso], ['entrega', 'GM-12', SPEC12.titulo, 3, 'spec com 2 seções · falta aprovar']);
+    // o `medir` no mesmo checkout grava a spec com o sha dos MESMOS bytes; aprovado por esse sha ⇒ fase 4 sem "mudou depois"
+    const rodar = (cmd, args, o) => (cmd === 'gh' ? { status: 4, stdout: '', stderr: '' } : spawnSync(cmd, args, { cwd: o?.cwd, encoding: 'utf8' }));
+    const md = medir(wt, { rodar, agentes: { session_id: 'sess-wt', agentes: [] }, agora: () => AGORA });
+    assert.ok(md.gravados?.includes('spec'), JSON.stringify(md)); // gh de fixture sem login: só os fatos de gh faltam
+    const lidos = diario.lerEstrito(dirDe(m, 'GM-12'));
+    assert.ok(lidos.ok, JSON.stringify(lidos));
+    const fatoSpec = lidos.eventos.filter((x) => x.tipo === 'fato.medido' && x.dados.chave === 'spec').map((x) => x.dados.valor.sha256);
+    assert.deepEqual(fatoSpec, [sha256(readFileSync(arq))], 'o medir leu a spec da worktree');
+    evEm(m, 'GM-12', 'spec.aprovada', { spec: `docs/superpowers/specs/${SPEC12.nome}`, sha256: fatoSpec[0] });
+    const e4 = estadoDoPainel(wt, { agoraMs: AGORA }).estado;
+    assert.deepEqual([e4.fase?.numero, e4.trilha.mudouDepois], [4, false]);
+    // e a principal (outra branch, sem a spec) não herda nada da worktree
+    assert.equal(estado(m).estado.modo, 'projeto');
+  });
+
+  test('idpadrao-custom-de-origin (R3): `fluxo.idPadrao` de origin/HEAD vale no painel; o padrão não liga uma branch que o custom recusa', () => {
+    const so = repoT18({ specs: [SPEC12], origem: { fluxo: { idPadrao: 'XY-\\d+' } } });
+    const e = estado(so).estado;
+    assert.equal(e.modo, 'projeto', JSON.stringify([e.modo, e.id]));
+    assert.notEqual(e.id, 'GM-12');
+    const xy = repoT18({ branch: 'feat/XY-3-painel', specs: [{ ...SPEC12, nome: 'xy.md', pbi: 'XY-3', titulo: 'Painel XY' }], origem: { fluxo: { idPadrao: 'XY-\\d+' } } });
+    const ex = estado(xy).estado;
+    assert.deepEqual([ex.modo, ex.id, ex.titulo, ex.fase?.numero], ['entrega', 'XY-3', 'Painel XY', 3]);
+  });
+
+  test('entregas-ilegivel-vira-interrogacao (R6): `.harness/entregas` ilegível ≠ ausente ⇒ "a lista de entregas" em fontesFalhas e o DEPENDE com "?"', () => {
+    const m = repoT18({ branch: 'main' });
+    assert.deepEqual(estado(m).estado.fontesFalhas, [], 'ausente não é falha');
+    const base = join(m.repo, '.harness', 'entregas');
+    mkdirSync(join(base, 'GM-5'), { recursive: true });
+    execFileSync('chmod', ['000', base]);
+    try {
+      const e = estado(m).estado;
+      assert.ok(e.fontesFalhas.includes('a lista de entregas'), JSON.stringify(e.fontesFalhas));
+      assert.ok(e.depende.some((i) => /^depende de você: \? \(não consegui ler (.+ e )?a lista de entregas( e .+)?\)$/.test(i.motivo)), JSON.stringify(e.depende));
+      assert.ok(!e.depende.some((i) => i.motivo === 'depende de você: nada'));
+    } finally { execFileSync('chmod', ['755', base]); }
+  });
+
+  test('teto-da-sombra-de-origin-chega-a-projecao (R7): `sombra.teto` de origin vira `tetoSombra` da projeção; ausente ou inválido ⇒ 26', () => {
+    const teto = (origem) => {
+      const m = repoT18({ specs: [SPEC12], origem });
+      let visto;
+      const r = estadoDoPainel(m.repo, { agoraMs: AGORA, projetar: (p, ev, entrada) => { visto = entrada.tetoSombra; return {}; } });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      return visto;
+    };
+    assert.equal(teto({ sombra: { teto: 3 } }), 3);
+    assert.equal(teto({ sombra: { teto: 41 } }), 41);
+    assert.equal(teto({}), 26);
+    assert.equal(teto({ sombra: { teto: 0 } }), 26);
+  });
+
+  test('pr-mergeado-sem-resposta-nao-liga (spec:53, FIEL-1 b): plano todo integrado + PR mergeado como fato ⇒ sem PRONTO e sem a entrega ligada; última conhecida é a GM-12', () => {
+    const m = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
+    integrarEm(m, 'GM-12', 'T1'); integrarEm(m, 'GM-12', 'T2');
+    evEm(m, 'GM-12', 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 'mergeado', branch: 'feat/GM-12-painel' } });
+    const e = cli(m, ['estado']).json.estado;
+    assert.equal(e.trilha.identificada, false);
+    assert.equal(e.pronto, null, JSON.stringify(e.pronto));
+    assert.notEqual(e.modo, 'entrega');
+    assert.notEqual(e.id, 'GM-12');
+    assert.equal(e.trilha.ultimaConhecida, 'GM-12');
+    const t = cli(m, ['texto']).stdout;
+    assert.doesNotMatch(t, /PRONTO|2 de 2 integradas/, t);
+    // a mesma branch com o PR ainda aberto segue ligada: o PRONTO volta (o corte é o fato, não a branch)
+    const a = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
+    integrarEm(a, 'GM-12', 'T1'); integrarEm(a, 'GM-12', 'T2');
+    evEm(a, 'GM-12', 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 'aberto', branch: 'feat/GM-12-painel' } });
+    assert.match(cli(a, ['texto']).stdout, /^PRONTO ▰{10} 2 de 2 integradas$/m);
+  });
+
+  // T47 (emenda 43; ledger T25 item 2): a entrega publicada (PR mergeado, branch sozinha) descarta o plano da PROJEÇÃO (spec:53), mas o diário dela
+  // tem eventos de task: o descarte não pode produzir PAROU `diario_invalido` nem zerar o casamento FIEL-3 a do vivo "T1 implementador"
+  const publicada = (extra = [], prEstado = 'mergeado') => {
+    const m = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
+    evEm(m, 'GM-12', 'task.iniciada', { task: 'T1', papel: 'implementador' });
+    for (const [tipo, dados] of extra) evEm(m, 'GM-12', tipo, dados);
+    evEm(m, 'GM-12', 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: prEstado, branch: 'feat/GM-12-painel' } });
+    return m;
+  };
+  const VIVO = { sessao: {}, agentes: [{ id: 'a1', type: 'implementador', description: 'T1 implementador', status: 'running' }] };
+  test('publicada-sem-diario-invalido (T47): diário com task.iniciada de T1 + plano real, entrega publicada ⇒ sem PAROU diario_invalido, sem a entrega ligada e sem PRONTO', () => {
+    const m = publicada();
+    const e = estado(m).estado;
+    assert.equal(e.trilha.identificada, false, 'preparo: publicada não identificada');
+    assert.equal(e.parar, null, JSON.stringify(e.parar));
+    assert.equal(e.parado, false);
+    assert.equal(e.pronto, null);
+    assert.notEqual(e.modo, 'entrega');
+    assert.notEqual(e.id, 'GM-12');
+    assert.doesNotMatch(cli(m, ['texto']).stdout, /diário fora da tabela|PRONTO/);
+  });
+  test('publicada-vivo-com-task (T47): vivo "T1 implementador" na publicada casa T1 (task e papel), e o texto não vira PRONTO', () => {
+    const m = publicada();
+    const e = estado(m, { agentes: VIVO }).estado;
+    assert.equal(e.trilha.identificada, false);
+    const a = e.agora.agentes;
+    assert.equal(a.length, 1, JSON.stringify(a));
+    assert.deepEqual([a[0].task, a[0].quem.papel], ['T1', 'implementador']);
+    assert.equal(e.pronto, null);
+    assert.equal(e.umaLinha, null, 'com vivo trabalhando há o que mostrar: sem a uma linha de projeto');
+    assert.equal(e.parar, null);
+    assert.doesNotMatch(cli(m, ['texto', '--agentes'], { input: JSON.stringify(VIVO) }).stdout, /PRONTO/);
+    // o defeito por outro canal: o "depende de você" também vem do cálculo com o plano (sem a "diário fora da tabela" do plano ausente)
+    assert.deepEqual(e.depende, [{ nivel: 'dono', motivo: 'depende de você: nada', acoes: [] }]);
+    assert.doesNotMatch(cli(m, ['texto', '--agentes'], { input: JSON.stringify(VIVO) }).stdout, /diário fora da tabela/);
+  });
+  test('publicada-campos-do-plano (T47): atenção, recente e AGORA da publicada são os da MESMA entrega com o PR aberto (identificada); PRONTO e plano saem', () => {
+    const ate = [...INTEGRAR('T1').slice(1), ['task.iniciada', { task: 'T2', papel: 'implementador' }]];
+    for (const [nome, extra] of [['T1 iniciada', []], ['T1 integrada e T2 iniciada', ate]]) {
+      const p = estado(publicada(extra), { agentes: VIVO }).estado;
+      const i = estado(publicada(extra, 'aberto'), { agentes: VIVO }).estado;
+      assert.deepEqual([p.trilha.identificada, i.trilha.identificada], [false, true], `${nome}: preparo`);
+      for (const campo of ['atencao', 'recente', 'parar']) assert.deepEqual(p[campo], i[campo], `${nome}: ${campo}`);
+      assert.deepEqual(p.agora.agentes, i.agora.agentes, `${nome}: AGORA`);
+      assert.doesNotMatch(JSON.stringify(p.depende), /diário fora da tabela/, nome);
+      // o plano some da apresentação: a identificada o mostra, a publicada não (T47: o plano descartado só sai de PRONTO/modo/id/fase/plano)
+      assert.equal(i.plano.total, 2, `${nome}: a identificada tem o plano`);
+      assert.deepEqual([p.plano.total, p.plano.feitas, p.plano.tasks], [0, 0, []], `${nome}: plano vazio na publicada`);
+    }
+    const r = estado(publicada([...INTEGRAR('T1').slice(1), ['task.iniciada', { task: 'T2', papel: 'implementador' }]]), { agentes: VIVO }).estado;
+    assert.ok(r.recente.some((x) => /integrou T1/.test(x.texto)), JSON.stringify(r.recente));
+    assert.deepEqual(r.atencao, ['T2 sem agente trabalhando'], 'o ATENÇÃO do cálculo com o plano (comportamento a decidir pela spec: vivo não casado)');
+    // a task citada no RECENTE só se nomeia quando está no plano: o plano descartado segue sendo o que a casa
+    const teto = estado(publicada([['loop.parar', { motivo: 'teto_rodadas', task: 'T1' }]])).estado;
+    assert.match(teto.recente[0].texto, /teto de rodadas de review em T1/, JSON.stringify(teto.recente));
+    assert.equal(teto.parar?.motivo, 'teto_rodadas');
+  });
+  test('publicada-fase-coerente-com-agora (T47): o sufixo da FASE diz o mesmo que a linha do AGORA (a ação casada, não a descrição crua do vivo)', () => {
+    const e = estado(publicada(), { agentes: VIVO }).estado;
+    const acao = e.agora.agentes[0].acao.replace(/ \(registrado\)$/, '');
+    assert.equal(e.fase.sufixo[0], `1 agente trabalhando: ${acao}`);
+    assert.doesNotMatch(e.fase.sufixo.join('|'), /T1 implementador/);
+  });
+  test('publicada-uma-linha (T47): só sem nada pedindo o dono ou trabalhando a uma linha traz a última entrega conhecida, com o estado dela; cada pendência a apaga', () => {
+    const sem = estado(publicada()).estado;
+    assert.deepEqual(sem.umaLinha, { ultima: { id: 'GM-12', estado: '0 de 2 tasks integradas' } });
+    assert.equal(sem.modo, 'projeto');
+    const comPergunta = publicada();
+    evEm(comPergunta, 'GM-12', 'fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'feat/GM-12-painel' } }, { sessao: 's1' });
+    const casos = {
+      parar: [estado(publicada([['loop.parar', { motivo: 'sem_progresso' }]])).estado, (e) => e.parar !== null],
+      pergunta: [estado(comPergunta, { agentes: { session_id: 's1', sessao: {}, agentes: [] } }).estado, (e) => e.pergunta !== null],
+      depende: [estado(publicada([['nota', { tipo: 'pendencia', texto: 'a' }]])).estado, (e) => e.depende.some((d) => d.motivo !== 'depende de você: nada')],
+      vivo: [estado(publicada(), { agentes: VIVO }).estado, (e) => e.agora.agentes.length > 0],
+    };
+    for (const [nome, [e, pede]] of Object.entries(casos)) {
+      assert.ok(pede(e), `${nome}: preparo (a projeção tem o que pede o dono)`);
+      assert.equal(e.modo, 'projeto', nome);
+      assert.equal(e.umaLinha, null, nome);
+    }
+    const todas = publicada([...INTEGRAR('T1').slice(1), ...INTEGRAR('T2')]);
+    assert.deepEqual(estado(todas).estado.umaLinha, { ultima: { id: 'GM-12', estado: 'tasks todas integradas' } });
+  });
+  test('publicada-vizinhos (T47): a mesma entrega com o PR aberto (identificada) segue igual; publicada com plano todo integrado segue sem PRONTO e sem PAROU', () => {
+    const a = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
+    evEm(a, 'GM-12', 'task.iniciada', { task: 'T1', papel: 'implementador' });
+    evEm(a, 'GM-12', 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 'aberto', branch: 'feat/GM-12-painel' } });
+    const ea = estado(a, { agentes: VIVO }).estado;
+    assert.deepEqual([ea.trilha.identificada, ea.modo, ea.id, ea.parar, ea.agora.agentes[0].task], [true, 'entrega', 'GM-12', null, 'T1']);
+    assert.deepEqual([ea.pronto.integradas, ea.pronto.total], [0, 2]);
+    const t = publicada([...INTEGRAR('T1').slice(1), ...INTEGRAR('T2')]);
+    const et = estado(t).estado;
+    assert.deepEqual([et.trilha.identificada, et.pronto, et.parar, et.modo === 'entrega'], [false, null, null, false]);
+    assert.deepEqual([et.modo, et.umaLinha?.ultima?.id, et.fase?.numero], ['projeto', 'GM-12', 1], 'sem pendência: a última entrega conhecida segue na uma linha');
+  });
+
+  const prMergeado = () => {
+    const m = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
+    integrarEm(m, 'GM-12', 'T1'); integrarEm(m, 'GM-12', 'T2');
+    evEm(m, 'GM-12', 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 'mergeado', branch: 'feat/GM-12-painel' } });
+    return cli(m, ['texto']).stdout;
+  };
+  test('pr-mergeado-texto-nao-identificada (spec:53): o render diz "entrega não identificada"', { todo: 'texto da spec:53 ausente do render da T17 — T37' }, () => {
+    assert.match(prMergeado(), /entrega não identificada/);
+  });
+  test('pr-mergeado-texto-ultima-conhecida (spec:53): o render diz "última entrega conhecida: GM-12"', { todo: 'texto da spec:53 ausente do render da T17 — T37' }, () => {
+    assert.match(prMergeado(), /última entrega conhecida: GM-12/);
+  });
+
+  test('spec-na-worktree-com-plano-painel-pede-botao-aprova (DP-3 aj. 4 com plano; P9): principal v1, worktree v2 e plano ⇒ painel pede aprovar, aprovarSpec do checkout da sessão aprova v2 e o painel não diz "mudou depois" nem "versão nova"', () => {
+    const m = repoT18({ branch: 'main', specs: [SPEC12] });
+    const rel = `docs/superpowers/specs/${SPEC12.nome}`;
+    const wt = join(m.base, 'wt com plano');
+    g(m.repo, 'worktree', 'add', '-q', '-b', 'feat/GM-12-painel', wt);
+    const arq = join(wt, rel);
+    writeFileSync(arq, `${readFileSync(arq, 'utf8')}\n## seção v2\n\nsó na worktree\n`);
+    g(wt, 'add', '-A'); g(wt, 'commit', '-q', '-m', 'spec v2');
+    const shaWt = sha256(readFileSync(arq));
+    assert.notEqual(shaWt, sha256(readFileSync(join(m.repo, rel))), 'preparo: v1 na principal ≠ v2 na worktree');
+    mkdirSync(dirDe(m, 'GM-12'), { recursive: true });
+    writeFileSync(join(dirDe(m, 'GM-12'), 'plano.json'), JSON.stringify({ entrega: 'GM-12', spec: rel, tasks: [{ id: 'T1', deps: [], arquivos: ['src/T1.txt'] }] }));
+    const antes = estadoDoPainel(wt, { agoraMs: AGORA });
+    assert.equal(antes.ok, true, JSON.stringify(antes));
+    const pede = antes.estado.depende.filter((i) => i.acoes?.some((a) => a.comando === '/gabarito-mestre:aprovar'));
+    assert.equal(pede.length, 1, JSON.stringify(antes.estado.depende));
+    // o botão: aprovarSpec do MESMO checkout aprova os bytes da worktree
+    assert.deepEqual(aprovarSpec(wt, 'S-dono'), { ok: true, spec: rel, sha256: shaWt, entrega: 'GM-12' });
+    const depois = estadoDoPainel(wt, { agoraMs: AGORA }).estado;
+    assert.equal(depois.trilha.mudouDepois, false, JSON.stringify(depois.trilha));
+    assert.equal(JSON.stringify(depois.depende).includes('versão nova'), false, JSON.stringify(depois.depende));
+    assert.equal(depois.depende.some((i) => i.acoes?.some((a) => a.comando === '/gabarito-mestre:aprovar')), false, JSON.stringify(depois.depende));
   });
 });

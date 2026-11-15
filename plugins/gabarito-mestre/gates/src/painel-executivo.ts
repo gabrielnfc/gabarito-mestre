@@ -11,7 +11,17 @@ import { colunas, cortar, limpar } from './painel-largura.ts';
 import { barra, blocoTopo, cortarLinha, cortarPorAltura } from './painel-texto.ts';
 import type { LinhaMarcada } from './painel-texto.ts';
 import { alinhar, corEstadoTask, fmtPct, fmtTempo, fmtTok, num, previsao, separador } from './painel-formato.ts';
-import type { AgentePainel, CorTema, EstadoPainel, Linha, OpcoesRender, Segmento } from './tipos.ts';
+import type { AgentePainel, CorTema, EstadoPainel, Linha, OpcoesRender, PapelPainel, Segmento } from './tipos.ts';
+
+/**
+ * GM-14 T17 (FIEL-12, D-P10, D-P11): no estado novo o executivo é o MESMO render dos 5 blocos (`renderBlocos`, `painel-esquadrao.ts`), sem lúdico:
+ * no lugar do nome temático vai o papel desta tabela; o nº da task diferencia dois do mesmo papel. Este arquivo não desenha o estado novo.
+ * `renderExecutivo` abaixo segue só para o estado da E4 (sem `fatos`), até o CLI (T18) e o mod (T20) passarem ao estado novo.
+ */
+export const PAPEL_EXECUTIVO: Readonly<Record<PapelPainel, string>> = Object.freeze({
+  orquestrador: 'Orquestrador', implementador: 'Implementador', correcao: 'Implementador', spike: 'Implementador',
+  revisor: 'Revisor', sombra: 'Conselheiro', teste: 'Teste',
+});
 
 const MDASH = '—';
 const ROTULO_LONGO = 13;

@@ -155,6 +155,8 @@ Uma linha por guarda, mecanismo e parâmetros em `referencia.md §5`; instalaç�
 **Orquestrador decide sozinho:** dispatch e sequência · integração de commits · rounds de correção · triagem de falha · abrir PR de escopo já autorizado · trocar fixture ou abordagem de teste quando a medição refuta o plano.
 **Exige o usuário:** tudo do §1.
 
+**Anota na hora (REQ-DIA-2).** O orquestrador grava `loop.mjs anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t>` em 1 linha, com palavras próprias (nunca a fala do dono copiada), ao acontecer: ideia nova, desvio, mudança de assunto, dúvida que só o dono resolve (2 a 4 `--opcao`), tarefa do dono fora daqui (`pendencia`).
+
 **R21 — Orquestrador despacha, não implementa.** Implementação, spike, review e exploração pesada rodam em subagente com contexto próprio; exceção única: mudança de uma linha. O modelo do orquestrador é o resolvido em `orquestracao.modelo` (Apêndice); subagentes herdam (`inherit`). **Velocidade nunca compra concorrência:** arquivo disjunto, contenda e recurso compartilhado serial não têm override. Gate: cartão de sessão e `remind-orchestrator.sh` lembram; `gabarito-conformidade` reprova plano que paraleliza contenda.
 
 **Paralelismo:** duas tasks rodam juntas quando **o grafo do plano as declara independentes E os arquivos são disjuntos E nenhuma toca arquivo de contenda** (Apêndice). O corte nasce no plano; o orquestrador mede a máquina antes de cada dispatch (`capacidade.mjs`, slots no ledger) e pode **serializar o que o plano paralelizou — nunca o inverso**. **Recurso compartilhado é sempre serial** (banco, filas, sandbox, namespace). Mecânica em `referencia.md §3.1`; antes de despachar, `prompts.md`.

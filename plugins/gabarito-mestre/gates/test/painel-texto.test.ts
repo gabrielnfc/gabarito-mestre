@@ -455,6 +455,7 @@ const TABELA: Caso[] = [
   ['dono liberou', 'task.reaberta', { task: 'T9', origem: 'dono' }, { glifo: '▶', cor: 'success', texto: 'dono liberou T9' }],
   ['pouso', 'sessao.pouso', { percent: 49.6 }, { glifo: '▼', cor: 'inactive', texto: 'pouso da sessão em 50%' }],
   ['retomada', 'sessao.retomada', {}, { glifo: '▶', cor: 'inactive', texto: 'sessão retomada' }],
+  ['pouso repetido (T53)', 'sessao.pouso.tentativa', { n: 2 }, { glifo: '▼', cor: 'warning', texto: 'pouso repetido, tentativa 2 de 3' }],
   ['entrega inicio', 'entrega.inicio', { politica: 'janela' }, { glifo: '▲', cor: 'warning', texto: 'entrega iniciada · janela' }],
   ['smoke ok', 'entrega.smoke', { ok: true }, { glifo: '✓', cor: 'success', texto: 'smoke ok' }],
   ['smoke falhou', 'entrega.smoke', { ok: false }, { glifo: '✗', cor: 'warning', texto: 'smoke falhou' }],
@@ -491,7 +492,7 @@ test('historico-formas-erradas-null', () => {
     ['decisao.sombra', { resposta: '' }], ['decisao.sombra', { resposta: 5 }],
     ['producao.acesso', { ambiente: 'prod', acao: 'leitura' }], ['producao.acesso', { ambiente: 'prod', acao: 'apagar', alvo: 'x' }],
     ['emenda.proposta', {}], ['spec.emendada', { proposta_seq: 0, origem: 'dono' }], ['spec.emendada', { proposta_seq: 2, origem: 'x' }], ['emenda.rejeitada', { origem: 'dono' }],
-    ['loop.pausa', { estado: 'outro' }], ['task.reaberta', { origem: 'dono' }], ['sessao.pouso', { percent: '49' }], ['sessao.pouso', {}],
+    ['loop.pausa', { estado: 'outro' }], ['task.reaberta', { origem: 'dono' }], ['sessao.pouso', { percent: '49' }], ['sessao.pouso', {}], ['sessao.pouso.tentativa', { n: 1 }], ['sessao.pouso.tentativa', {}],
     ['entrega.inicio', { politica: 'nunca' }], ['entrega.smoke', { ok: 'sim' }], ['entrega.rollback', {}], ['entrega.fim', { ok: 1 }],
     ['entrega.agendada', { quando: 'amanhã' }], ['entrega.agendada', { quando: 7 }], ['entrega.devolvida', { motivo: '  ' }], ['entrega.devolvida', {}],
   ];
@@ -522,8 +523,9 @@ test('historico-prod-homolog', () => {
   const t = (ambiente: unknown, tipo = 'producao.acesso') => (fraseHistorico(ev(tipo, { ambiente, acao: 'leitura', alvo: 'a' }), CTX) as { texto: string }).texto;
   assert.equal(t('prod'), 'GANDALF leu PRODUÇÃO · a · permitido');
   assert.equal(t('homolog'), 'GANDALF leu HOMOLOG · a · permitido');
-  assert.equal(t('desconhecido'), 'GANDALF leu ambiente desconhecido · a · permitido');
-  assert.equal(t(undefined), 'GANDALF leu ambiente desconhecido · a · permitido');
+  // GM-14 T17 (FIEL-5 b): ambiente não conferido não diz "permitido"
+  assert.equal(t('desconhecido'), 'GANDALF leu a (não consegui conferir se é produção)');
+  assert.equal(t(undefined), 'GANDALF leu a (não consegui conferir se é produção)');
   assert.equal(t('teste'), 'GANDALF leu TESTE · a · permitido', 'ambiente `teste` existe (decidir.ts:68-73, faixa log): não é "desconhecido" (T4 MINOR 4)');
   assert.equal(t('teste', 'operacao.destrutiva'), 'GANDALF leu TESTE · a · destrutiva');
   assert.equal(t('prod', 'operacao.destrutiva'), 'GANDALF leu PRODUÇÃO · a · destrutiva');
@@ -608,7 +610,7 @@ test('historicoDe-ordem-e-hist-max', () => {
   assert.equal(r.ocultos, 5, 'só frases não nulas contam; custo.medicao fica fora');
   assert.equal(r.itens[0].hora, '10:24', 'mais recente primeiro');
   assert.equal(r.itens[19].hora, '10:05');
-  assert.deepEqual(r.itens[0], { glifo: '▶', texto: 'sessão retomada', hora: '10:24', cor: 'inactive' });
+  assert.deepEqual(r.itens[0], { glifo: '▶', texto: 'sessão retomada', hora: '10:24', cor: 'inactive', origem: '(automático)' });
   const desc = r.itens.map((i) => i.hora);
   assert.deepEqual(desc, [...desc].sort().reverse());
 });

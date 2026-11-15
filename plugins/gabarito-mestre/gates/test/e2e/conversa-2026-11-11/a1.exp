@@ -1,0 +1,251 @@
+#!/usr/bin/expect -f
+# Aceite A1 da GM-14 (T24): UMA célula da matriz (local × tamanho × tela cheia). FORA de `npm test`: abre uma TUI real do Claude Code numa cópia do repo
+# em `ba3986f` sob TMPDIR (FORA do checkout real); gasta tokens. Chamado pelo `rodar-a1.mjs --matriz`; não o rode à mão.
+#
+#   a1.exp <rundir> <repo> <bin> <node> <rodar-a1.mjs> [curta]
+#
+# Dois modos (T52, emenda 45): a CONVERSA (padrão: as falas de falas.tsv, um snapshot por ponto) e a sessão `curta` (sem falas: abre, responde a pergunta (b) como o dono faria, e, abaixo do
+# limiar de colunas da plataforma, digita `/gabarito painel`). Nos dois o `tty.raw` leva marcos (`OSC 1337;gabarito-marco=<nome>`, gravados por `send_log` só no log): `snap-<n>` antes de cada
+# snapshot; `inicio`, `b-respondida`, `pedido` e `depois-do-pedido` na sessão curta. O emulador VT do runner ancora a TELA (placement, aviso, caixa) nesses marcos (emenda 49).
+#
+# Os argumentos do `claude` (cópia do plugin, observador, superpowers de versão FIXA por --plugin-dir, modelo do condutor, debug) vêm de <rundir>/claude.args, um por linha, montados por `argvDoClaude` no `rodar-a1.mjs`:
+# só caminhos da cópia sob TMPDIR; nenhum caminho do repositório real chega ao `claude`. Este arquivo não fixa modelo nem caminho de plugin.
+# cols/rows vêm de <rundir>/celula.json.
+#
+# Digita as falas de <rundir>/falas.tsv (colunas: n, rótulo, sha256, texto), uma por vez, esperando o turno acabar e tirando um `snapshot` do estado do produto
+# depois de cada ponto de controle. O texto das falas fica SÓ em <rundir>/falas.tsv (ignorado pelo git); sends.log guarda o sha256, nunca o texto.
+# A evidência vem do diário, do observador (obs/a1.jsonl: agentes e `placement` das Panes), dos transcripts e dos snapshots, lidos DEPOIS pelo `rodar-a1.mjs`;
+# a tela nunca é evidência. Diálogo de PERMISSÃO (T57, emenda 63; o ask de um hook, `Do you want to proceed?`) nunca recebe a fala: o runner o RECUSA (Esc), registra no exp.log e só então digita a fala, uma vez; o que não fecha ⇒ DIALOGO_NAO_FECHOU. O diálogo de ambiente "Allow external CLAUDE.md file imports?" é RECUSADO e registrado (exp.log).
+lassign $argv rundir repo bin node runner modo
+if {$modo eq ""} { set modo conversa }
+set cel [open $rundir/celula.json r]; set celjson [read $cel]; close $cel
+regexp {"cols":(\d+)} $celjson -> cols
+regexp {"rows":(\d+)} $celjson -> rows
+set af [open $rundir/claude.args r]; set claude_args [split [string trimright [read $af] "\n"] "\n"]; close $af
+set obs $rundir/obs
+# cwd e PWD da célula são a cópia: nenhum caminho do checkout real herdado
+set env(PWD) $repo
+catch {unset env(OLDPWD)}
+set env(TERM) xterm-256color
+set env(OBS_DIR) $rundir/obs
+set env(PATH) "$bin:$env(PATH)"
+set env(GH_FIXTURE) $rundir/gh.json
+set env(GABARITO_POUSO_X) 1
+set env(CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION) false
+set env(CLAUDE_CODE_DISABLE_AUTO_MEMORY) 1
+set env(CLAUDE_CODE_FORCE_SESSION_PERSISTENCE) 1
+file mkdir $rundir/obs
+
+# escala dos tempos de espera (só os testes offline do runner, com um `claude` de mentira, a baixam; numa célula real é sempre 1)
+set esc 1
+if {[info exists env(A1_ESCALA_TEMPO)]} { set esc $env(A1_ESCALA_TEMPO) }
+proc t {s} { global esc; set v [expr {int($s * $esc)}]; if {$v < 1} { return 1 }; return $v }
+proc marco {nome} { send_log "\033\]1337;gabarito-marco=$nome\007" }
+proc sends {tag} { global rundir; set f [open $rundir/sends.log a]; puts $f "[clock seconds] $tag"; close $f }
+proc nota {txt} { global rundir; set f [open $rundir/exp.log a]; puts $f "[clock seconds] $txt"; close $f }
+# diálogo de ambiente (T44, emenda 39): o CLAUDE.md de um diretório ancestral da cópia importa arquivo externo; a cópia NÃO herda instruções do ambiente do dono, então a resposta é SEMPRE "No, disable external imports". MEDIDO na tty.raw da T44: o foco (❯) já nasce em "No", então só Enter recusa (seta para baixo ACEITARIA). O texto sai com cursor-positioning (ESC[nG entre as palavras), por isso o padrão tolera lixo entre elas
+set imports_tratado 0
+proc recusarImports {} {
+  global imports_tratado
+  if {$imports_tratado} { return }
+  set imports_tratado 1
+  nota "DIALOGO-IMPORTS-EXTERNOS recusado"
+  sends recusar-imports
+  after 800; send "\r"; after 2000
+}
+# diálogo de PERMISSÃO (T57, emenda 63): MEDIDO no tty.raw da A1 (1794625214308): `Hook PreToolUse:Bash requires confirmation ... Do you want to proceed? ❯ 1. Yes 2. No  Esc to cancel · Tab to amend`, com o aviso OSC `Claude needs your permission`. O foco nasce em "Yes": recusar é Esc (nunca Enter). Digitar a fala sobre ele a transforma em resposta do diálogo (sem UserPromptSubmit): foi o defeito da sessão de 8 falas (6 de 8 dono.mensagem)
+set dialogo_aberto 0
+set cauda ""
+set npermissao 0
+# o texto de uma leitura da tela, NORMALIZADO: o terminal real desenha cada palavra com movimento de cursor (`Do\e[5Gyou\e[9Gwant\e[14Gto`; MEDIDO no tty.raw da A1 1794703098821), então o texto cru nunca traz "Do you want to". Cada CSI de cursor vira um espaço, os demais CSI e OSC saem, o branco colapsa. A decisão é em Tcl (o `.+` do expect casa do início do buffer e esconderia o padrão que vem depois), com a cauda da leitura anterior (o texto pode vir partido)
+proc normalizar {txt} {
+  regsub -all {\x1b\[[0-9;?]*[GCDABEFHfd]} $txt " " t
+  regsub -all {\x1b\[[0-9;?<>=]*[ -/]*[@-~]} $t "" t
+  regsub -all {\x1b\][^\x07]*\x07} $t "" t
+  regsub -all {[ \t\r\n]+} $t " " t
+  return $t
+}
+# o diálogo de PERMISSÃO abre (dialogo_aberto=1) SÓ pelo sinal próprio do ask: o aviso OSC `needs your permission` (cru) ou o texto normalizado `Do you want to proceed|make` seguido da opção `1. Yes`. NUNCA por `Esc to cancel` ou `Allow this` soltos (T57 r2, MAJOR 1): o rodapé "Enter to confirm · Esc to cancel" é do diálogo de TRUST (tty.raw 1794703689498 offset 2139) e do diálogo de saída com tarefas em background, e os confundia com permissão. Nunca só anotar e digitar por cima
+proc ler {txt} {
+  global dialogo_aberto cauda
+  set j "$cauda$txt"
+  set cauda [string range $j end-1500 end]
+  set n [normalizar $j]
+  # sem `return`: o ask de permissão no mesmo pedaço de um "external imports?" não pode se perder (T57 r2, MINOR 2)
+  if {[regexp {external.{1,60}imports\?} $n]} { recusarImports; set cauda "" }
+  if {[regexp {needs your permission} $j] || [regexp {Do you want to (proceed|make).{0,250}1\. ?Yes} $n]} {
+    if {!$dialogo_aberto} { nota "PERGUNTA-DE-PERMISSAO na tela" }
+    set dialogo_aberto 1; set cauda ""
+  }
+}
+proc drenar {s} {
+  set s [t $s]
+  set fim [expr {[clock seconds] + $s}]
+  set timeout 1
+  while {[clock seconds] < $fim} {
+    expect {
+      -re {.+} { ler $expect_out(0,string) }
+      timeout {}
+      eof { nota "EOF"; return 0 }
+    }
+  }
+  return 1
+}
+# turno acabou = 8 s seguidos sem saída na tela (teto de 240 s por ponto)
+proc ocioso {} {
+  set t0 [clock seconds]
+  set timeout [t 8]
+  while {[clock seconds] - $t0 < [t 240]} {
+    expect {
+      -re {.+} { ler $expect_out(0,string); exp_continue }
+      timeout { return 1 }
+      eof { return 0 }
+    }
+  }
+  return 1
+}
+# recusa o diálogo de permissão (Esc), registra, e confere que fechou: depois do Esc a tela precisa ficar sem o diálogo; reaparecer (ou Esc sem efeito) por 3 vezes = não fechou
+proc recusarPermissao {} {
+  global dialogo_aberto npermissao
+  for {set i 0} {$i < 3} {incr i} {
+    incr npermissao
+    nota "PERMISSAO-RECUSADA $npermissao"
+    sends recusar-permissao
+    set dialogo_aberto 0
+    send "\033"
+    drenar 4
+    if {!$dialogo_aberto} { return 1 }
+  }
+  nota "PERMISSAO-NAO-FECHOU"
+  return 0
+}
+# tudo o que a fala do roteiro exige antes de ser digitada: nenhum diálogo de permissão aberto. 0 = não fechou (a célula para sem digitar)
+proc livreDeDialogo {} {
+  global dialogo_aberto
+  for {set k 0} {$k < 6} {incr k} {
+    if {!$dialogo_aberto} { return 1 }
+    if {![recusarPermissao]} { return 0 }
+    if {![ocioso]} { return 0 }
+  }
+  return [expr {!$dialogo_aberto}]
+}
+proc digitar {sha txt} { if {![livreDeDialogo]} { sair DIALOGO_NAO_FECHOU }; sends "digitar $sha"; send -- $txt; after 1200; send "\r" }
+proc snapshot {n} { global node runner repo rundir; marco snap-$n; catch {exec $node $runner snapshot $repo $rundir $n} err; if {$err ne ""} { nota "snapshot $n: $err"; set f [open $rundir/snapshot-falhou.log a]; puts $f "snapshot $n: $err"; close $f } }
+# saída: NUNCA com diálogo de permissão aberto (T57 r1): `/exit` + Enter com o foco em "Yes" APROVARIA o ask que o runner não conseguiu recusar. Com diálogo aberto: recusa (Esc) antes; se não fechar, encerra o processo SEM tecla que aprove (kill), registra e a célula fica INVÁLIDA (DIALOGO_NAO_FECHOU)
+proc sair {status} {
+  global rundir dialogo_aberto
+  catch { drenar 1 }
+  if {$dialogo_aberto} {
+    set fechou 0
+    if {$status ne "DIALOGO_NAO_FECHOU"} { catch { set fechou [recusarPermissao] } }
+    if {!$fechou} {
+      nota "SAIDA-SEM-TECLA diálogo de permissão aberto: processo encerrado sem /exit nem Enter"
+      nota "fim status=DIALOGO_NAO_FECHOU"
+      set f [open $rundir/exp.status w]; puts $f DIALOGO_NAO_FECHOU; close $f
+      sends kill
+      catch { exec kill [exp_pid] }
+      after 500
+      catch {close}; catch {wait}
+      puts "exp done DIALOGO_NAO_FECHOU"
+      exit 0
+    }
+  }
+  nota "fim status=$status"
+  set f [open $rundir/exp.status w]; puts $f $status; close $f
+  sends exit
+  # o processo pode já ter saído (EOF na última espera): enviar a um spawn fechado seria erro do Tcl, não da célula
+  catch { send "/exit\r"; after 2500; send "\r" }
+  set timeout 15
+  catch { expect { eof {} timeout { nota "nao saiu; Ctrl-C"; send "\003"; after 500; send "\003" } } }
+  catch {close}; catch {wait}
+  puts "exp done $status"
+  exit 0
+}
+
+cd $repo
+log_user 0
+log_file -a $rundir/tty.raw
+set stty_init "rows $rows cols $cols"
+spawn claude {*}$claude_args
+nota "inicio cols=$cols rows=$rows"
+
+set timeout [t 15]
+expect {
+  -re {Enter.*confirm|trust this folder|Quick.{0,20}safety} { after 500; sends trust; send "\033\[B"; after 400; send "\r"; after 4000 }
+  -re {login|Log in|API key} { nota "LOGIN: nao respondo"; set f [open $rundir/exp.status w]; puts $f NAO_PROVADO_LOGIN; close $f; catch {close}; catch {wait}; exit 3 }
+  timeout {}
+  eof { nota "EOF cedo"; exit 1 }
+}
+# o TUI só aceita digitação depois de carregar os mods: espera o 1º registro do observador (até 90 s) e mais 6 s
+set t0 [clock seconds]
+while {[clock seconds] - $t0 < [t 90]} {
+  if {[file exists $rundir/obs/a1.jsonl]} { break }
+  if {![drenar 2]} { exit 1 }
+}
+drenar 6
+# carga do plugin gabarito-mestre (T44, emenda 39): só o NOSSO plugin conta e ele precisa estar ATIVO (dependência ausente que o desabilita reprova; dependência de OUTRO plugin com o nosso ativo não); a regra mora em `rodar-a1.mjs plugin`
+if {[catch {exec $node $runner plugin $rundir/debug.log}]} {
+  nota "PLUGIN NAO CARREGOU"
+  set f [open $rundir/exp.status w]; puts $f NAO_PROVADO_PLUGIN; close $f
+  send "\003"; after 500; send "\003"; catch {close}; catch {wait}; exit 3
+}
+
+# invariante da superfície (T49): o observador já viu render da superfície da célula (lateral ⇒ Pane, acima ⇒ AbovePrompt)? Senão a célula nada mediria: para ANTES da 1ª fala
+drenar 5
+if {[catch {exec $node $runner superficie $rundir}]} {
+  nota "SUPERFICIE NAO OBSERVADA: [string trim [exec cat $rundir/abortar.txt]]"
+  sair ABORTADO
+}
+
+# sessão curta (T52): sem falas do roteiro. Estágios marcados no tty.raw; o que vale (aviso inteiro, Pane colocada) é lido DEPOIS, da tela, pelo `rodar-a1.mjs`
+if {$modo eq "curta"} {
+  set cu [open $rundir/curta.json r]; set cujson [read $cu]; close $cu
+  set pedido [regexp {"pedido":true} $cujson]
+  marco inicio
+  drenar 10
+  # pergunta (b): o runner responde como o dono (resposta fixa, gravada em resposta-b.json); não abriu ⇒ nada a responder (também fica gravado)
+  set cmd ""
+  catch { set cmd [string trim [exec $node $runner resposta-b $repo $rundir]] }
+  if {$cmd ne ""} { digitar resposta-b $cmd; if {![ocioso]} { sair NAO_PROVADO_EOF } }
+  # emenda 50: com PAROU aberto a medida espera ele sair; se não sair, evidência vazia (a célula para, sem pedido)
+  set parou 1
+  set t0 [clock seconds]
+  while {[clock seconds] - $t0 < [t 90]} {
+    if {![catch {exec $node $runner parou $repo $rundir}]} { set parou 0; break }
+    drenar 5
+  }
+  if {$parou} { nota "PAROU-NAO-SAIU"; sair PAROU_NAO_SAIU }
+  marco b-respondida
+  drenar 10
+  if {$pedido} {
+    marco pedido
+    digitar pedido-do-dono "/gabarito painel"
+    after 1500; send "\r"
+    if {![ocioso]} { sair NAO_PROVADO_EOF }
+    marco depois-do-pedido
+    drenar 8
+  }
+  sair CONCLUIDO
+}
+
+set arq [open $rundir/falas.tsv r]
+set linhas [split [read $arq] "\n"]
+close $arq
+foreach linha $linhas {
+  if {$linha eq ""} { continue }
+  set campos [split $linha "\t"]
+  set n [lindex $campos 0]
+  set rotulo [lindex $campos 1]
+  set sha [lindex $campos 2]
+  set texto [join [lrange $campos 3 end] "\t"]
+  digitar $sha $texto
+  if {![ocioso]} { sair NAO_PROVADO_EOF }
+  # diálogo de permissão aberto durante o turno: recusa e espera o turno acabar antes do snapshot (e da próxima fala)
+  if {![livreDeDialogo]} { sair DIALOGO_NAO_FECHOU }
+  # ponto de controle = tudo que não é "—": o estado do produto depois do turno
+  if {$rotulo ne "—"} { snapshot $n }
+  # invariante violada (snapshot ou runner escreveu abortar.txt): a célula para na hora, sem digitar o resto
+  if {[file exists $rundir/abortar.txt]} { nota "ABORTAR: [string trim [exec cat $rundir/abortar.txt]]"; sair ABORTADO }
+}
+drenar 20
+sair CONCLUIDO

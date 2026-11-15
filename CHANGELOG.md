@@ -5,6 +5,48 @@ Usuários do plugin só recebem atualização quando `version` muda.
 
 ## [Unreleased]
 
+## [2.1.0-alpha.1] — 2026-11-14
+
+Pré-versão da 2.1.0 (clareza para quem usa). Não é a versão estável: a 2.1.0 só sai depois do aceite de quem nunca programou (A2) e da publicação pelo dono (`next` para `main`).
+
+### Adicionado
+
+- **Onboarding em linguagem simples**: as perguntas da instalação usam palavras do dia a dia e explicam cada opção. Inclui a oferta do **modo foco**, que deixa o chat mais limpo e pode ser recusada (o foco só liga com sua resposta, em `.claude/settings.local.json`, e se desfaz).
+- **Um painel só, acima do input ou ao lado**, em toda fase (spec, plano, execução, revisão) e fora de entrega. Mostra a trilha da fase e o progresso, o que depende de você (com botão que põe o comando no input sem enviar), os agentes vivos com nome, descrição e task, e a decisão da Sombra registrada. Em janela estreita (abaixo de 144 colunas, ao lado) o painel avisa de quantas colunas precisa e `/gabarito painel` o abre dentro do chat.
+- **Linguagem natural no chat e no painel**: as linhas de ferramenta viram frases ("lendo o arquivo X") e todo evento do diário mostra a origem (você, agente, medição).
+- **Perguntas com botões**: mudança de assunto e ideia nova do dono viram pergunta com botões; a resposta chega ao diário (`dono.resposta`). `loop.mjs anotar` registra ideias sem despachar.
+- **Pouso de contexto no teto, sem depender do dono**: o mod limpa a conversa sozinho quando o contexto passa do limite e só dá o pouso por bom quando a sessão nova mede abaixo do limite; se o `/clear` não aconteceu, repete (até 3 tentativas por fronteira, registradas no diário).
+- **Loop mais fluido**: `iniciar --modelo`, recusa clara do papel de spike, reentrega com motivo, `integrar` com sha já na base, aprendizado que sobrevive a update, entrega publicada não recebe gravações, Sombra pode liberar o teto de rodadas uma vez por task, spec lida do checkout da sessão.
+- **Aceite A1 automático** (`gates/test/e2e/conversa-2026-11-11/rodar-a1.mjs`): refaz a conversa de 11/11 numa cópia isolada, em 8 combinações (local do painel × 80x24 ou 180x50 × tela cheia ou não), lendo a TELA da sessão real, mais 2 conversas completas e replay offline. O agente da célula nunca vê o repositório real; o runner prova antes e depois que ele ficou intocado.
+- **Fixture do A1 em entrega ativa (T55)**: a conversa roda numa entrega GM-13 ativa; a publicada fica vigiada pela asserção 8c, em outra entrega, e o `gh` da célula não vê PR na branch da conversa.
+- **Aviso sozinho na linha única do painel (T56)**: sem botão do topo, e o aviso sai inteiro em 80 colunas.
+- **Runner do A1 recusa diálogo de permissão (T57)**: detecta o diálogo no tty real, nunca sai com ele aberto, e valida cada fala 1:1 com o `dono.mensagem` gravado (uma por janela de 120 s do mesmo texto).
+
+- **Medição e escrita só com onboarding (T60, REQ-DIA-1)**: o mod e o painel só gravam em `.harness/` (`contexto/<sessao>.json`, `painel-medir.json`, `fato.medido` no diário, inclusive `_sem-id`) e só chamam `gh` (`pr list`, `release list`) em repositório com onboarding, o mesmo critério da guarda (`harness.config.json` em `origin/HEAD` ou na árvore local; uma função só, `temOnboarding`). Sem onboarding o painel só lê, como na 2.0.0: nenhuma escrita em `.harness/`, nenhuma chamada a `gh`, e o resto do painel segue visível. Sem onboarding não há `.harness/contexto`, então o loop não recebe percent de contexto, como na 2.0. Corrige o MAJOR-2 do review final.
+
+### Aceite A1 (spec:154): REPROVADA
+
+A 2.1.0-alpha.1 **foi reprovada no aceite A1 completo** e sai como **A1 parcial declarado**, por decisão do dono em 2026-11-15 (anotado pelo orquestrador; emenda 65 aprovada pela Sombra com condições). Ela **não** é declarada aceita pelo A1; o A1 8/8 continua sendo o aceite da 2.1.0 final. Resultado da 3ª matriz, por grupo:
+
+- **Sessões curtas (asserção 12, placement da Pane): 8/8.**
+- **Conversa lateral 180x50 cheia: falha 3, 4, 5, 6, 8b, 8d, 8e, 8f, 9 e 11.**
+- **Conversa acima 180x50 cheia: falha as mesmas e também a 10; a célula morreu no teto de tempo.**
+- **Replay: sem medida válida.**
+- **Asserção 2: "RECENTE 0" na avaliação offline.**
+
+Classe de cada falha, caminho da evidência, tabela e veredito do diagnóstico: `docs/ledgers/GM-14.md`, seção "T25: aceite A1, 3ª matriz". O que fica para a 2.1.1 (redesenho do A1, asserções 6 e 11) está lá também. As condições da spec:155 seguem valendo para a alpha.1: CI 100 % verde, review final (Fable) e PR da alpha.1 para `next`; a 2.1.0 em `main` só o dono publica.
+
+### Limites declarados
+
+- **Herança da 1.x** (leitura das regras antigas, A3) e a coleta correspondente (T8): adiadas para a 2.2.
+- T41 (fluidez adicional do loop): vai para a 2.1.1.
+- **Pedido de confirmação falso da guarda em git só de leitura**: consultar o e-mail configurado no git (`config --get`, `--get-all`, `--show-origin`) e listar remotos (`remote`, `remote -v`) pedem confirmação como se fossem escrita no `.git/config` (`gates/src/aneis.ts:578,771-773`). Cortou 4 turnos na conversa lateral do A1. Correção na 2.1.1.
+- **Pergunta com botões do condutor** (`AskUserQuestion`) é registrada como pedido de permissão (achado MINOR da T57). Correção na 2.1.1.
+- A1 isolado (T49): o plugin observador não enxerga a Pane de outro plugin, então o local lateral é medido pela tela, não por propriedade do mod; o resultado vale para o commit em que rodou e para a versão do Claude Code medida.
+- A1 em 80 colunas (T52): com PAROU ou pergunta aberta, o aviso do painel lateral não aparece inteiro; ele só aparece depois que a pergunta é respondida (decisão do dono).
+- Pouso automático (T53): a confirmação depende de a sessão nova medir o contexto em até 120 s; sem leitura, o mod mede de novo e não confirma.
+- Push e PR no modo `auto` e o redesenho do painel após 30 s sem byte novo continuam sem medição própria.
+
 ## [2.0.0] — 2026-11-11
 
 Versão estável da 2.0. Quem está na 1.1.x: leia `docs/virada-2.0.md` (como atualizar, o que rodar de novo e como voltar). Resumo do que muda para quem usa:

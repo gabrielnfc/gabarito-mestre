@@ -12,6 +12,8 @@ import * as diarioFs from '../src/diario.ts';
 import { projetarEmendas, reqsCongelados, SESSAO_EMENDAS } from '../src/emenda.ts';
 import type { ChaveEvento, EstadoTask } from '../src/loop.ts';
 import { analisarFronteira, negaDespacho } from '../src/pouso.ts';
+import { pousoPendente } from '../src/pouso-pendente.ts';
+import { pendenciasAprendizado } from '../src/pendencias.ts';
 import type { Evento, Plano, Sinais, TipoEvento } from '../src/tipos.ts';
 
 /**
@@ -297,6 +299,29 @@ test('podeIntegrar-exige-dep-integrada', () => {
   assert.deepEqual(proximaAcao(p, evs, sinais()), { tipo: 'integrar', tasks: ['a'] });
   assert.equal(podeIntegrar(p, diario(...pronta('a'), ...aprovada('b')), 'b'), true);
 });
+// GM-14 T32 (Emenda 3, FIEL-9 e): `task.integrada {ja_na_base: true}` é integração para o núcleo, sem código novo (C7, C8). Regressão.
+const intNaBase = (task: string): [TipoEvento, Record<string, unknown>] => ['task.integrada', { task, sha: 'abc', ja_na_base: true }];
+test('integrada-ja-na-base-libera-concluir: T0 aprovada e o resto integrado ⇒ integrar; com o evento ja_na_base ⇒ concluir', () => {
+  const p = plano(['T0'], ['T1'], ['T2', ['T1']]);
+  const antes = [...aprovada('T0'), ...pronta('T1'), ...pronta('T2')];
+  assert.deepEqual(proximaAcao(p, diario(...antes), sinais()), { tipo: 'integrar', tasks: ['T0'] });
+  assert.deepEqual(proximaAcao(p, diario(...antes, intNaBase('T0')), sinais()), { tipo: 'concluir' });
+  assert.equal(podeIntegrar(p, diario(...antes, intNaBase('T0')), 'T0'), false, 'integrada não é integrável de novo');
+  // a forma é guardada na escrita do diário (o núcleo não muda, FIEL-9 e): `ja_na_base` fora do literal true nunca vira linha
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'loop-ja-na-base-')));
+  const grava = (dados: Record<string, unknown>) =>
+    diarioFs.append(dir, 's1', { ts: '2026-11-11T00:00:00.000Z', autor: 't@t', sessao: 's1', agente: 'orquestrador', tipo: 'task.integrada', dados } as never);
+  const r = grava({ task: 'T0', sha: 'abc', ja_na_base: 'sim' });
+  assert.equal(r.ok, false);
+  assert.match((r as { erro: string }).erro, /ja_na_base/);
+  assert.deepEqual(diarioFs.ler(dir), []);
+  assert.deepEqual(grava({ task: 'T0', sha: 'abc', ja_na_base: true }), { ok: true, gravado: 'evento' });
+});
+test('integrada-ja-na-base-libera-despacho: T0 aprovada e T2 pendente sem dependência ⇒ integrar; com o evento ⇒ despachar T2', () => {
+  const p = plano(['T0'], ['T2']);
+  assert.deepEqual(proximaAcao(p, diario(...aprovada('T0')), sinais()), { tipo: 'integrar', tasks: ['T0'] });
+  assert.deepEqual(proximaAcao(p, diario(...aprovada('T0'), intNaBase('T0')), sinais()), { tipo: 'despachar', itens: [{ task: 'T2', papel: 'implementador' }] });
+});
 test('podeIntegrar-casos-falsos', () => {
   const p = plano(['a']);
   assert.equal(podeIntegrar(p, [], 'a'), false, 'sem veredito');
@@ -391,6 +416,10 @@ test('dependente-de-bloqueada-nao-aprovada-espera', () => {
 const tetoDe = (t: string) => ({ tipo: 'parar', motivo: 'teto_rodadas', task: t });
 const dono = (task: string): [TipoEvento, Record<string, unknown>] => ['task.reaberta', { task, origem: 'dono' }];
 const retomada = (task: string): [TipoEvento, Record<string, unknown>] => ['task.reaberta', { task, origem: 'retomada' }];
+/** GM-14 T36 (FIEL-15): liberação pela Sombra, com o hash da decisão. */
+const sombraLib = (task: string): [TipoEvento, Record<string, unknown>] => ['task.reaberta', { task, origem: 'sombra', hash: 'e'.repeat(64) }];
+/** GM-14 T31 (FIEL-8 b): reentrega = `task.concluida` com `motivo`, sha novo. */
+const ree = (task: string, motivo: unknown = 'gate', sha = 'abc2'): [TipoEvento, Record<string, unknown>] => ['task.concluida', { task, sha, motivo }];
 const EVENTOS_AVULSOS: [string, [TipoEvento, Record<string, unknown>]][] = [
   ['iniciada.implementador', ini('a')], ['iniciada.revisor', ini('a', 'revisor')], ['iniciada.correcao', ini('a', 'correcao')],
   ['concluida', con('a')], ['aprovado r3', ver('a', 'APROVADO', 3)], ['aprovado r2 com achado', ver('a', 'APROVADO', 2, 1)],
@@ -606,6 +635,8 @@ function eventoDaChave(chave: ChaveEvento, rodadaAtual: number): Par {
     case 'veredito.reprovado.sem_achado': return ver('a', 'REPROVADO', proxima);
     case 'reaberta.retomada': return retomada('a');
     case 'reaberta.dono': return dono('a');
+    case 'reaberta.sombra': return sombraLib('a');
+    case 'concluida.reentrega': return ree('a');
   }
 }
 /** Oráculo independente: a tabela escrita por extenso, uma aresta por linha. Alterar `TRANSICOES` exige alterar isto. */
@@ -623,6 +654,7 @@ concluida veredito.reprovado.teto no_teto
 concluida veredito.reprovado.sem_achado reprovada
 concluida reaberta.retomada concluida
 concluida reaberta.dono concluida
+concluida concluida.reentrega concluida
 em_revisao veredito.aprovado aprovada
 em_revisao veredito.reprovado.r1 reprovada
 em_revisao veredito.reprovado.teto no_teto
@@ -638,6 +670,7 @@ corrigindo reaberta.dono corrigindo
 aprovada task.integrada integrada
 aprovada reaberta.retomada aprovada
 aprovada reaberta.dono aprovada
+aprovada concluida.reentrega concluida
 no_teto iniciada.implementador no_teto
 no_teto iniciada.revisor no_teto
 no_teto iniciada.correcao no_teto
@@ -649,6 +682,7 @@ no_teto veredito.reprovado.teto no_teto
 no_teto veredito.reprovado.sem_achado no_teto
 no_teto reaberta.retomada no_teto
 no_teto reaberta.dono pendente
+no_teto reaberta.sombra pendente
 integrada reaberta.retomada integrada
 integrada reaberta.dono integrada
 `.trim().split('\n').map((l) => l.split(' ') as [EstadoTask, ChaveEvento, EstadoTask]);
@@ -677,7 +711,11 @@ for (const estado of Object.keys(TRANSICOES) as EstadoTask[]) {
       assert.equal('invalido' in chegou ? chegou.invalido : chegou.estado, estado, 'o prefixo leva ao estado');
       const r = estadoDe(diario(...evs, eventoDaChave(chave, rodada)));
       if (esperado === undefined) assert.ok('invalido' in r, JSON.stringify(r));
-      else assert.deepEqual(r, { estado: esperado, rodada: esperado === 'pendente' ? 0 : chave.startsWith('veredito.') && estado !== 'no_teto' ? rodada + 1 : rodada });
+      else {
+        // FIEL-8 b2: a reentrega sobre `aprovada` anula o APROVADO (rodada − 1); em `concluida` (b1) a rodada fica.
+        const anulada = chave === 'concluida.reentrega' && estado === 'aprovada';
+        assert.deepEqual(r, { estado: esperado, rodada: esperado === 'pendente' ? 0 : chave.startsWith('veredito.') && estado !== 'no_teto' ? rodada + 1 : anulada ? rodada - 1 : rodada });
+      }
     });
   }
 }
@@ -1257,6 +1295,93 @@ test('proxima-pendencias-ausente-x-corrompido: sem pendência o fluxo é o de ho
   assert.deepEqual(proximaAcaoNucleo(p, diario(ini('a'), con('a'), ver('a', 'APROVADO', 1)), sinais({ percent: 10 })), { tipo: 'integrar', tasks: ['a'] });
   assert.deepEqual(proximaAcaoNucleo(p, [{ ...ev(1, 'ontem', 's1', ...reprovaMajor('a')) }], sinais()), invalido);
 });
+// ===================================================================================================================
+// GM-14 T27 (FIEL-2 b; Sombra `sombra-fiel2.md`): a pendência `dono` só barra `pousar` e `concluir`. Despacho e integração seguem.
+// Pendência de review, de parar e de fechamento continuam barrando tudo. O filtro é de `proximaAcao`, nunca de `pendenciasAprendizado`.
+// Mutações (task-27-mut.json): M-F2b `dono` volta a barrar despacho · M-F2e `dono` deixa de barrar `concluir` · M-F2f `dono` deixa de barrar
+// `pousar` · M-F2g o filtro vai para dentro de `pendenciasAprendizado` · M-F2h `dono` solta a pendência de review junto.
+// ===================================================================================================================
+const HASH_DONO = 'a'.repeat(64);
+const mensagemDono = (): [TipoEvento, Record<string, unknown>] => ['dono.mensagem', { sha256: HASH_DONO, chars: 12 }];
+const PEND_DONO = (seq: number) => [{ sessao: 's1', seq, tipo: 'dono' }];
+
+test('pendencia-dono-nao-nega-agent: com `dono` aberta o núcleo despacha, com `percent` presente e ausente; negaDespacho não nega', () => {
+  const p = plano(['a']);
+  const evs = diario(mensagemDono());
+  for (const percent of [10, null]) {
+    const acao = proximaAcaoNucleo(p, evs, sinais({ percent }));
+    assert.deepEqual(acao, { tipo: 'despachar', itens: [{ task: 'a', papel: 'implementador' }] }, `percent=${percent}`);
+    assert.equal(negaDespacho(acao, true), false, 'fronteira consumida (o mod passa `percent: null`): o `Agent` não é negado');
+  }
+  // a pendência segue existindo na projeção (Stop, painel e doctor leem a mesma): o filtro não está em `pendenciasAprendizado`
+  assert.deepEqual(pendenciasAprendizado(p, evs), PEND_DONO(1));
+});
+test('pendencia-dono-nao-nega-correcao-e-revisor: correção e revisor também despacham com `dono` aberta', () => {
+  const p = plano(['a'], ['b']);
+  const corr = diario(ini('a'), con('a'), ver('a', 'REPROVADO', 1), mensagemDono());
+  assert.deepEqual(pendenciasAprendizado(p, corr).map((x) => x.tipo), ['dono'], 'MINOR sem MAJOR: só a `dono` abre');
+  assert.deepEqual(proximaAcaoNucleo(p, corr, sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'correcao' }, { task: 'b', papel: 'implementador' }] });
+  const rev = diario(ini('a'), con('a'), mensagemDono());
+  assert.deepEqual(proximaAcaoNucleo(p, rev, sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'revisor' }, { task: 'b', papel: 'implementador' }] });
+});
+test('pendencia-dono-nao-barra-integrar: task aprovada com `dono` aberta integra; fechada a mensagem, integra igual', () => {
+  const p = plano(['a']);
+  const base = [...aprovada('a'), mensagemDono()];
+  assert.deepEqual(proximaAcaoNucleo(p, diario(...base), sinais()), { tipo: 'integrar', tasks: ['a'] });
+  assert.deepEqual(proximaAcaoNucleo(p, diario(...base, nada('s1', 4)), sinais()), { tipo: 'integrar', tasks: ['a'] });
+  assert.equal(negaDespacho({ tipo: 'integrar', tasks: ['a'] }, false), false);
+});
+test('pendencia-dono-barra-pousar: percent ≥ X com trabalho restante e `dono` aberta ⇒ aprender, nunca pousar; fechada, pousa', () => {
+  const p = plano(['a']);
+  const evs = diario(mensagemDono());
+  assert.deepEqual(proximaAcaoNucleo(p, evs, NX()), { tipo: 'aprender', pendencias: PEND_DONO(1) });
+  assert.deepEqual(proximaAcaoNucleo(p, diario(mensagemDono(), nada('s1', 1)), NX()), { tipo: 'pousar' });
+  // abaixo de X não há pouso a barrar: despacha
+  assert.equal(proximaAcaoNucleo(p, evs, sinais({ percent: 10 })).tipo, 'despachar');
+  // sem pouso possível a ação é `parar sem_pouso`, e o `dono` não a esconde (parar não é pousar)
+  assert.deepEqual(proximaAcaoNucleo(p, evs, NX({ podePousar: false })), { tipo: 'parar', motivo: 'sem_pouso' });
+});
+test('pendencia-dono-nao-barra-revisor-antes-do-pouso: o revisor da fronteira despacha com `dono` aberta (só o pouso espera)', () => {
+  const p = plano(['a']);
+  assert.deepEqual(proximaAcaoNucleo(p, diario(ini('a'), con('a'), mensagemDono()), NX()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'revisor' }] });
+});
+test('pendencia-dono-x-concluir: tudo integrado, fechamento já fechado, `dono` aberta ⇒ aprender; fechada ⇒ concluir', () => {
+  const p = plano(['a']);
+  const base = [...pronta('a'), nada('s1', 4)];
+  assert.deepEqual(proximaAcaoNucleo(p, diario(...base), sinais()), { tipo: 'concluir' }, 'sem `dono`, concluir');
+  assert.deepEqual(proximaAcaoNucleo(p, diario(...base, mensagemDono()), sinais()), { tipo: 'aprender', pendencias: PEND_DONO(6) });
+  assert.deepEqual(proximaAcaoNucleo(p, diario(...base, mensagemDono(), nada('s1', 6)), sinais()), { tipo: 'concluir' });
+  assert.equal(negaDespacho({ tipo: 'aprender', pendencias: PEND_DONO(6) }, false), true, 'a ação aprender segue nada despachável');
+});
+test('pendencia-dono-x-concluir-com-emenda: com proposta aberta a `dono` não muda `esperar emenda` (só vale onde concluiria)', () => {
+  const p = plano(['a']);
+  const evs = [...diario(...pronta('a'), nada('s1', 4), mensagemDono()), prop(1, 'REQ-A-1', {}, 100)];
+  assert.deepEqual(proximaAcaoNucleo(p, evs, sinais()), { tipo: 'esperar', motivo: 'emenda', propostas: [{ seq: 1, req: 'REQ-A-1' }] });
+});
+test('pendencia-review-ainda-nega: review, parar e fechamento barram tudo, com ou sem `dono` junto; a lista leva as duas', () => {
+  const p = plano(['a'], ['b']);
+  // review (MAJOR) + dono: aprender com as 2, nunca despachar
+  const rv = diario(ini('a'), con('a'), reprovaMajor('a'), mensagemDono());
+  assert.deepEqual(proximaAcaoNucleo(p, rv, sinais()), { tipo: 'aprender', pendencias: [{ sessao: 's1', seq: 3, tipo: 'review' }, { sessao: 's1', seq: 4, tipo: 'dono' }] });
+  // fechada a `dono`, a review ainda barra
+  assert.deepEqual(proximaAcaoNucleo(p, diario(ini('a'), con('a'), reprovaMajor('a'), mensagemDono(), nada('s1', 4)), sinais()), { tipo: 'aprender', pendencias: PEND_REVIEW_3 });
+  // integrar e pousar também seguem barrados pela review
+  assert.equal(proximaAcaoNucleo(p, diario(ini('a'), con('a'), reprovaMajor('a'), ...aprovada('b'), mensagemDono()), sinais()).tipo, 'aprender');
+  assert.equal(proximaAcaoNucleo(plano(['a']), diario(ini('a'), con('a'), reprovaMajor('a'), mensagemDono()), NX()).tipo, 'aprender');
+  // parar manual + dono
+  assert.deepEqual(proximaAcaoNucleo(p, diario(pararEv('nao_conseguiu'), mensagemDono()), sinais()), { tipo: 'aprender', pendencias: [{ sessao: 's1', seq: 1, tipo: 'parar' }, { sessao: 's1', seq: 2, tipo: 'dono' }] });
+  // fechamento (tudo integrado, ainda aberto) + dono
+  const t = plano(['a']);
+  assert.deepEqual(proximaAcaoNucleo(t, diario(...pronta('a'), mensagemDono()), sinais()), { tipo: 'aprender', pendencias: [{ sessao: 's1', seq: 4, tipo: 'fechamento' }, { sessao: 's1', seq: 5, tipo: 'dono' }] });
+});
+test('pendencia-dono-nao-esconde-parar-nem-espera: pausa, teto de tokens e CI vermelho seguem acima; plano vazio com `dono` é nao_conseguiu', () => {
+  const p = plano(['a']);
+  const evs = diario(mensagemDono());
+  assert.deepEqual(proximaAcaoNucleo(p, evs, sinais({ pausado: true })), { tipo: 'esperar', motivo: 'pausado' });
+  assert.deepEqual(proximaAcaoNucleo(plano(), evs, sinais()), { tipo: 'parar', motivo: 'nao_conseguiu' });
+  assert.deepEqual(proximaAcaoNucleo(p, diario(ci(false), ci(false), mensagemDono()), sinais()), { tipo: 'parar', motivo: 'ci_vermelho' });
+});
+
 test('negaDespacho-aprender-sempre: com ou sem fronteira consumida; concluir e integrar continuam livres', () => {
   const aprender = { tipo: 'aprender', pendencias: [{ sessao: 's1', seq: 3, tipo: 'review' }] } as const;
   assert.equal(negaDespacho(aprender, true), true);
@@ -1287,4 +1412,340 @@ test('dist-loop-nao-importa-node-nem-modulo-que-importe', () => {
   assert.ok(visto.has('emenda.js') && visto.has('plano.js'), 'loop.js deve importar emenda.js (sem cópia da projeção)');
   // REQ-APR-2: a cláusula `aprender` usa a projeção de `pendencias.js` (sem cópia), que entra no fecho e também não importa `node:*`
   assert.ok(visto.has('pendencias.js'), 'loop.js deve importar pendencias.js (sem cópia da projeção)');
+});
+
+// ---- GM-14 T31 (Emenda 2, FIEL-8 b): reentrega com motivo. P1 da Sombra (t31-sombra-p1.md), ataques 1–15 no núcleo. Mutações M-F8a..g.
+const MOTIVOS_R = ['gate', 'sombra', 'dono'] as const;
+test('reentrega-concluida-mantem-rodada (b1): concluida + R => concluida, rodada igual, nos 3 motivos', () => {
+  for (const m of MOTIVOS_R) {
+    assert.deepEqual(estadoDe(diario(ini('a'), con('a'), ree('a', m))), { estado: 'concluida', rodada: 0 }, m);
+    const r1 = [ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), ini('a', 'correcao'), con('a')] as Par[];
+    assert.deepEqual(estadoDe(diario(...r1, ree('a', m))), { estado: 'concluida', rodada: 1 }, `${m} após r1`);
+  }
+});
+test('reentrega-aprovada-anula-o-aprovado (b2): aprovada + R => concluida, rodada − 1; o próximo veredito declara a rodada anulada', () => {
+  for (const m of MOTIVOS_R) {
+    assert.deepEqual(estadoDe(diario(...aprovada('a'), ree('a', m))), { estado: 'concluida', rodada: 0 }, m);
+    assert.deepEqual(estadoDe(diario(...aprovada('a'), ree('a', m), ver('a', 'APROVADO', 1))), { estado: 'aprovada', rodada: 1 }, `${m}: veredito 1 passa`);
+    assert.deepEqual(estadoDe(diario(...aprovada('a'), ree('a', m), ver('a', 'APROVADO', 2))), { invalido: 'rodada fora de sequência' }, `${m}: veredito 2 mente`);
+  }
+});
+test('reentrega-motivo-invalido (b6): motivo fora de gate|sombra|dono, null, vazio ou número => "motivo inválido"', () => {
+  for (const m of ['x', null, '', 3, 'GATE', true, ['gate']]) {
+    assert.deepEqual(estadoDe(diario(ini('a'), con('a'), ree('a', m))), { invalido: 'motivo inválido' }, JSON.stringify(m));
+    assert.deepEqual(estadoDe(diario(...aprovada('a'), ree('a', m))), { invalido: 'motivo inválido' }, JSON.stringify(m));
+    assert.deepEqual(proximaAcao(plano(['a']), diario(...aprovada('a'), ree('a', m)), sinais()), invalido, JSON.stringify(m));
+  }
+});
+test('reentrega-sem-motivo-e-a-chave-de-2-0-0: motivo ausente (ou undefined) = task.concluida, nunca reentrega', () => {
+  assert.deepEqual(estadoDe(diario(ini('a'), ['task.concluida', { task: 'a', sha: 'x', motivo: undefined }])), { estado: 'concluida', rodada: 0 });
+  assert.deepEqual(estadoDe(diario(...aprovada('a'), con('a'))), { invalido: 'task.concluida em aprovada' }, 'b4: P em aprovada segue inválido');
+  assert.deepEqual(estadoDe(diario(ini('a'), con('a'), con('a'))), { invalido: 'task.concluida em concluida' }, 'b4: P em concluida segue inválido');
+});
+test('reentrega-no-teto-invalida (ataque 1): R em no_teto é diário inválido e a proxima para, nos 3 motivos', () => {
+  for (const m of MOTIVOS_R) {
+    assert.deepEqual(estadoDe(diario(...noTeto('a'), ree('a', m))), { invalido: 'concluida.reentrega em no_teto' }, m);
+    assert.deepEqual(proximaAcao(plano(['a']), diario(...noTeto('a'), ree('a', m)), sinais()), invalido, m);
+  }
+  assert.deepEqual(estadoDe(diario(...noTeto('a'), con('a'))), { estado: 'no_teto', rodada: 2 }, 'P em no_teto segue autotransição');
+});
+test('reentrega-integrada-invalida (ataque 2): R depois de integrada nunca reabre', () => {
+  for (const m of MOTIVOS_R) assert.deepEqual(estadoDe(diario(...pronta('a'), ree('a', m))), { invalido: 'concluida.reentrega em integrada' }, m);
+});
+for (const [estado, evs] of [
+  ['pendente', []], ['implementando', [ini('a')]], ['em_revisao', [ini('a'), con('a'), ini('a', 'revisor')]],
+  ['reprovada', [ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1)]], ['corrigindo', [ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), ini('a', 'correcao')]],
+] as [EstadoTask, Par[]][]) {
+  test(`reentrega-em-${estado}-invalida (b3, ataque 12): par ausente nos 3 motivos`, () => {
+    for (const m of MOTIVOS_R) assert.deepEqual(estadoDe(diario(...evs, ree('a', m))), { invalido: `concluida.reentrega em ${estado}` }, m);
+  });
+}
+test('reentrega-duas-seguidas-rodada-nunca-negativa (ataque 6): − 1 só sai de aprovada', () => {
+  assert.deepEqual(estadoDe(diario(...aprovada('a'), ree('a', 'gate', 's1'), ree('a', 'sombra', 's2'))), { estado: 'concluida', rodada: 0 });
+  assert.deepEqual(estadoDe(diario(...aprovada('a'), ree('a', 'gate', 's1'), ree('a', 'dono', 's2'), ree('a', 'gate', 's3'))), { estado: 'concluida', rodada: 0 });
+});
+test('reentrega-r2-nao-foge-do-teto (ataque 7): aprovada em 2 => R => espera 2; REPROVADO 2 com achado => no_teto', () => {
+  const r2 = [ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), ini('a', 'correcao'), con('a'), ver('a', 'APROVADO', 2)] as Par[];
+  assert.deepEqual(estadoDe(diario(...r2)), { estado: 'aprovada', rodada: 2 });
+  assert.deepEqual(estadoDe(diario(...r2, ree('a'))), { estado: 'concluida', rodada: 1 });
+  assert.deepEqual(estadoDe(diario(...r2, ree('a'), ver('a', 'REPROVADO', 2, 1))), { estado: 'no_teto', rodada: 2 });
+  assert.deepEqual(estadoDe(diario(...r2, ree('a'), ver('a', 'REPROVADO', 3, 1))), { invalido: 'rodada fora de sequência' }, 'a R não abre rodada extra');
+});
+test('reentrega-determinismo (ataque 8a): reler o mesmo diário dá o mesmo estado e rodada', () => {
+  const evs = diario(...aprovada('a'), ree('a'));
+  const a = estadoDe(evs);
+  const b = estadoDe(structuredClone(evs));
+  assert.deepEqual(a, b);
+  assert.deepEqual(a, { estado: 'concluida', rodada: 0 }, 'r − 1 = 0 é valor, não ausência');
+});
+test('reentrega-diario-2-0-0-sem-motivo-projeta-igual (ataque 9): ciclo completo e r1 reprovada => correção => concluida', () => {
+  assert.deepEqual(estadoDe(diario(...pronta('a'))), { estado: 'integrada', rodada: 1 });
+  assert.deepEqual(estadoDe(diario(ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), ini('a', 'correcao'), con('a'))), { estado: 'concluida', rodada: 1 });
+  assert.deepEqual(estadoDe(diario(...aprovada('a'))), { estado: 'aprovada', rodada: 1 });
+});
+test('reentrega-nao-pula-review (ataque 11): depois da R a proxima despacha revisor, nunca integrar; podeIntegrar falso', () => {
+  const p = plano(['a']);
+  assert.deepEqual(proximaAcao(p, diario(...aprovada('a')), sinais()), { tipo: 'integrar', tasks: ['a'] });
+  for (const m of MOTIVOS_R) {
+    assert.deepEqual(proximaAcao(p, diario(...aprovada('a'), ree('a', m)), sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'revisor' }] }, m);
+    assert.equal(podeIntegrar(p, diario(...aprovada('a'), ree('a', m)), 'a'), false, m);
+    assert.equal(podeIntegrar(p, diario(...aprovada('a'), ree('a', m), ini('a', 'revisor'), ver('a', 'APROVADO', 1)), 'a'), true, `${m}: APROVADO novo libera`);
+  }
+});
+test('reentrega-relogio-voltando-o-nucleo-aceita (ataque 8b): a defesa mora na borda; o núcleo projeta pela ordem', () => {
+  const i = ev(1, '2026-11-03T00:00:01.000Z', 'A', ...ini('a'));
+  const c = ev(2, '2026-11-03T00:00:02.000Z', 'A', ...con('a'));
+  const rv = ev(3, '2026-11-03T00:00:05.000Z', 'A', ...ini('a', 'revisor'));
+  const v = ev(4, '2026-11-03T00:00:06.000Z', 'A', ...ver('a', 'APROVADO', 1));
+  const r = ev(1, '2026-11-03T00:00:03.000Z', 'B', ...ree('a'));
+  const ord = ordenar([i, c, rv, v, r]);
+  assert.ok(ord.ok);
+  assert.deepEqual(ord.eventos.map((e) => e.seq + e.sessao), ['1A', '2A', '1B', '3A', '4A'], 'R intercala antes do APROVADO');
+});
+
+// ═══════════════════════════════════════ GM-14 T36 (FIEL-15, emenda 13): a Sombra libera o teto 1 vez por task
+// Núcleo: `reaberta.sombra` só tira do teto (no_teto ⇒ pendente, rodada 0); em qualquer outro estado é par ausente (diário inválido).
+// Vista: origem `(Sombra)` (REQ-LNG-1), RECENTE do painel, histórico e registro dizem "a Sombra liberou a <task>".
+test('t36-sombra-tira-do-teto-e-zera-a-rodada', () => {
+  assert.deepEqual(estadoDe(diario(...noTeto('a'), sombraLib('a'))), { estado: 'pendente', rodada: 0 });
+  // fora do teto é par ausente: a Sombra nunca grava evento sem efeito que parece liberação
+  for (const pre of [[], [ini('a')], [ini('a'), con('a')], [ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1)], aprovada('a'), pronta('a')]) {
+    assert.ok('invalido' in estadoDe(diario(...pre, sombraLib('a'))), JSON.stringify(pre));
+  }
+  // origem fora da lista segue inválida (a `sombra` não abre a porta para outra)
+  assert.ok('invalido' in estadoDe(diario(...noTeto('a'), ['task.reaberta', { task: 'a', origem: 'Sombra' }])));
+  // o loop segue: depois da Sombra, a task volta ao despacho
+  assert.deepEqual(proximaAcao(plano(['a']), diario(...noTeto('a'), sombraLib('a')), sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'implementador' }] });
+  // a 2ª é do dono: depois de novo teto, o dono tira do teto como sempre
+  assert.deepEqual(estadoDe(diario(...noTeto('a'), sombraLib('a'), ...noTeto('a'), dono('a'))), { estado: 'pendente', rodada: 0 });
+});
+
+test('t36-origem-da-sombra-e-sombra-nunca-automatico-nem-voce', async () => {
+  const { origemDe } = await import('../src/origem.ts');
+  const r = (dados: Record<string, unknown>) => origemDe(ev(1, '2026-11-03T00:00:00.000Z', 's1', 'task.reaberta', dados));
+  assert.equal(r({ task: 'T1', origem: 'sombra', hash: 'e'.repeat(64) }), '(Sombra)');
+  assert.equal(r({ task: 'T1', origem: 'dono' }), '(você)');
+  assert.equal(r({ task: 'T1', origem: 'retomada' }), '(automático)');
+  assert.equal(r({ task: 'T1', origem: 'Sombra' }), '(automático)');
+});
+
+test('t36-registro-lista-a-sombra-e-o-dono', async () => {
+  const { montarRegistro } = await import('../src/registro.ts');
+  const evs = diario(...noTeto('a'), sombraLib('a'), ...noTeto('a'), dono('a'));
+  const texto = montarRegistro('GM-10', evs, null);
+  const secao = texto.split('## Liberações de teto')[1].split('\n## ')[0];
+  const linhas = secao.split('\n').filter((l) => l.startsWith('- '));
+  assert.deepEqual(linhas, [
+    `- s1:7 · task a · a Sombra liberou a a · decisão ${'e'.repeat(12)}`,
+    '- s1:14 · task a · liberada pelo dono',
+  ]);
+  // retomada não é liberação
+  assert.doesNotMatch(montarRegistro('GM-10', diario(...noTeto('a'), retomada('a')), null), /Sombra liberou|liberada pelo dono/);
+});
+
+test('t36-historico-e-recente-dizem-a-sombra-liberou', async () => {
+  const { fraseHistorico } = await import('../src/painel-texto.ts');
+  const { linhaTecnica } = await import('../src/origem.ts');
+  const ctx = { nomes: new Map(), lider: 'L', sabio: 'S', porAgente: new Map(), fuso: 'UTC', agoraMs: Date.parse('2026-11-03T01:00:00Z'), textoParar: () => null };
+  const f = fraseHistorico(ev(1, '2026-11-03T00:00:00.000Z', 's1', ...sombraLib('T9')), ctx);
+  assert.deepEqual(f, { glifo: '▶', cor: 'success', texto: 'a Sombra liberou a T9' });
+  assert.equal(linhaTecnica(f!.texto), false);
+  assert.deepEqual(fraseHistorico(ev(1, '2026-11-03T00:00:00.000Z', 's1', ...dono('T9')), ctx), { glifo: '▶', cor: 'success', texto: 'dono liberou T9' });
+
+  const { projetarPainel } = await import('../src/painel.ts');
+  const p: Plano = { entrega: 'GM-14', tasks: [{ id: 'T1', deps: [], arquivos: [] }] };
+  const evs = diario(...noTeto('T1'), sombraLib('T1'));
+  const entrada = {
+    decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+    pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T01:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
+    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26,
+    fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['T1'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' },
+  };
+  const s = projetarPainel(p, evs, entrada as never);
+  const item = (s.recente ?? []).find((i) => /Sombra/.test(i.texto));
+  assert.ok(item, JSON.stringify(s.recente));
+  assert.equal(item.texto, 'a Sombra liberou a T1');
+  assert.equal(item.origem, '(Sombra)');
+  // DEPENDE (5): com a task fora do teto, o item do teto sai, como na liberação do dono
+  assert.equal(JSON.stringify(s.depende ?? []).includes('limite de revis'), false, JSON.stringify(s.depende));
+  const preso = projetarPainel(p, diario(...noTeto('T1')), entrada as never);
+  assert.equal(JSON.stringify(preso.depende ?? []).includes('T1'), true, 'controle: no teto, o item existe');
+});
+
+// ───────────────────────── GM-14 T34 (FIEL-14 e, f): pouso pendente é regra do produto
+/** `pousoPendente` COM onboarding (a regra da FIEL-14 e); o fato de onboarding vem de quem chama (FIEL-14 h). */
+const pp = (evs: Evento[] | null) => pousoPendente(evs, true);
+/** Como `loop.mjs proxima`: o sinal vem da regra única `pousoPendente` (o núcleo só o consome). */
+const viaCli = (p: Plano, evs: Evento[], s: Sinais) => proximaAcaoNucleo(p, evs, { ...s, pousoPendente: pp(evs).pendente } as Sinais);
+const pouso = (seq: number, seg: number, sessao = 'S1'): Evento => ev(seq, new Date(Date.UTC(2026, 10, 3, 1, 0, seg)).toISOString(), sessao, 'sessao.pouso', { percent: 55, x: 50, via: 'dono' });
+const inicio = (seq: number, seg: number, sessao: string, origem: string): Evento => ev(seq, new Date(Date.UTC(2026, 10, 3, 1, 0, seg)).toISOString(), sessao, 'sessao.inicio', { origem });
+
+test('pouso-pendente-tabela: clear de outra sessão tira; startup, resume e clear da mesma sessão não; clear anterior ao pouso não', async () => {
+  const nada = { pendente: false, sessao: null, seq: null };
+  assert.deepEqual(pp([]), nada);
+  assert.deepEqual(pp(null), nada);
+  assert.deepEqual(pp([inicio(1, 1, 'S2', 'clear')]), nada);
+  assert.deepEqual(pp([pouso(1, 5)]), { pendente: true, sessao: 'S1', seq: 1 });
+  // clear-de-outra-sessao-tira-pendente
+  assert.deepEqual(pp([pouso(1, 5), inicio(1, 9, 'S2', 'clear')]), nada);
+  // sessao-paralela-startup-nao-tira-pendente / resume-nao-tira-pendente
+  assert.equal(pp([pouso(1, 5), inicio(1, 9, 'S2', 'startup')]).pendente, true);
+  assert.equal(pp([pouso(1, 5), inicio(1, 9, 'S2', 'resume')]).pendente, true);
+  assert.equal(pp([pouso(1, 5), inicio(1, 9, 'S2', 'compact')]).pendente, true);
+  // a mesma sessão não se limpa a si mesma; clear anterior ao pouso não vale; ts igual não é posterior
+  assert.equal(pp([pouso(1, 5), inicio(2, 9, 'S1', 'clear')]).pendente, true);
+  assert.equal(pp([inicio(1, 1, 'S2', 'clear'), pouso(2, 5)]).pendente, true);
+  assert.equal(pp([pouso(1, 5), inicio(1, 5, 'S2', 'clear')]).pendente, true);
+  // novo pouso depois do clear volta a pedir (D-W3); o seq devolvido é o do último
+  assert.deepEqual(pp([pouso(1, 5), inicio(1, 9, 'S2', 'clear'), pouso(2, 12, 'S2')]), { pendente: true, sessao: 'S2', seq: 2 });
+  // a ordem do array não manda: vale o ts
+  assert.deepEqual(pp([inicio(1, 9, 'S2', 'clear'), pouso(1, 5)]), nada);
+  // `sessao.retomada` (de qualquer via) sozinha NÃO tira o pendente (FIEL-14 e: só `sessao.inicio {origem:'clear'}` de outra sessão)
+  const ret = (seq: number, seg: number, dados: Record<string, unknown>) => ev(seq, new Date(Date.UTC(2026, 10, 3, 1, 0, seg)).toISOString(), 'S1', 'sessao.retomada', dados);
+  assert.equal(pp([pouso(1, 5), ret(2, 9, { via: 'mod', chars: 5 })]).pendente, true);
+  assert.equal(pp([pouso(1, 5), ret(2, 9, { via: 'dono' })]).pendente, true);
+  assert.equal(pp([pouso(1, 5), ret(2, 9, {})]).pendente, true);
+  // origem fora da forma não limpa
+  assert.equal(pp([pouso(1, 5), ev(1, new Date(Date.UTC(2026, 10, 3, 1, 0, 9)).toISOString(), 'S2', 'sessao.inicio', {})]).pendente, true);
+});
+
+test('sessao.retomada sozinha não tira o pendente (via mod, via dono, sem via); com o clear de outra sessão, tira', () => {
+  const ret = (seq: number, seg: number, dados: Record<string, unknown>) => ev(seq, new Date(Date.UTC(2026, 10, 3, 1, 0, seg)).toISOString(), 'S1', 'sessao.retomada', dados);
+  for (const dados of [{ via: 'mod', chars: 5 }, { via: 'dono' }, {}]) {
+    assert.deepEqual(pp([pouso(1, 5), ret(2, 9, dados)]), { pendente: true, sessao: 'S1', seq: 1 }, JSON.stringify(dados));
+  }
+  assert.equal(pp([pouso(1, 5), inicio(1, 8, 'S2', 'clear'), ret(2, 9, { via: 'mod' })]).pendente, false);
+});
+
+test('pouso-pendente-chave-por-pouso: o estado do painel carrega pousoPendente.seq e a chavePouso do mod dá chave nova a cada pouso (FIEL-14 d)', async () => {
+  const { projetarPainel } = await import('../src/painel.ts');
+  const { chavePouso } = await import('../../mod/painel.mjs' as string);
+  const p: Plano = { entrega: 'GM-14', tasks: [{ id: 'a', deps: [], arquivos: [] }] };
+  const entrada = {
+    decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+    pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T03:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
+    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26, onboarding: true,
+    fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['a'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 'S1' },
+  };
+  const base = diario(ini('a'), con('a'));
+  const e1 = projetarPainel(p, [...base, pouso(10, 30)], entrada as never) as unknown as Record<string, unknown>;
+  const e2 = projetarPainel(p, [...base, pouso(10, 30), inicio(1, 40, 'S2', 'clear'), pouso(2, 50, 'S2')], entrada as never) as unknown as Record<string, unknown>;
+  assert.equal((e1.pousoPendente as { pendente: boolean }).pendente, true);
+  const k1 = chavePouso(e1), k2 = chavePouso(e2);
+  assert.match(k1, /^GM-14\|pouso\|\d+$/);
+  assert.match(k2, /^GM-14\|pouso\|\d+$/);
+  assert.notEqual(k1, k2);
+});
+
+test('pouso-pendente-nao-despacha-nem-revisor: concluida com pouso pendente ⇒ pousar; sem pouso, revisor (controle)', () => {
+  const p = plano(['a']);
+  const base = diario(ini('a'), con('a'));
+  assert.equal(viaCli(p, base, sinais()).tipo, 'despachar');
+  assert.deepEqual(viaCli(p, [...base, pouso(10, 30)], sinais()), { tipo: 'pousar' });
+  // abaixo OU acima de x: o contexto não decide quando o pouso está pendente (M-W1: revisor despachado)
+  assert.deepEqual(viaCli(p, [...base, pouso(10, 30)], sinais({ percent: 80 })), { tipo: 'pousar' });
+  assert.deepEqual(viaCli(p, [...base, pouso(10, 30)], sinais({ percent: null })), { tipo: 'pousar' });
+});
+
+test('pouso-pendente-nao-despacha-task-nem-integra: pendente sem vivos ⇒ pousar, nunca integrar nem implementador', () => {
+  assert.deepEqual(viaCli(plano(['a'], ['b']), [...diario(...aprovada('a')), pouso(10, 30)], sinais()), { tipo: 'pousar' });
+  assert.deepEqual(viaCli(plano(['a']), [pouso(10, 30)], sinais()), { tipo: 'pousar' });
+});
+
+test('pouso-pendente-com-vivos-espera: agente ativo ⇒ esperar pouso_pendente, nada novo', () => {
+  const p = plano(['a']);
+  const evs = [...diario(ini('a'), con('a')), pouso(10, 30)];
+  assert.deepEqual(viaCli(p, evs, sinais({ vivos: 1 })), { tipo: 'esperar', motivo: 'pouso_pendente' });
+  assert.deepEqual(viaCli(plano(['a'], ['b']), [...diario(...aprovada('a')), pouso(10, 30)], sinais({ vivos: 1 })), { tipo: 'esperar', motivo: 'pouso_pendente' });
+});
+
+test('T59-impasse-revisor-pendente: pouso da fronteira feito, `a` integrada, `b` concluída (revisor pendente), contexto >= X ⇒ 0 vivos pousar; com vivos esperar; nunca despachar o revisor (emenda 67)', () => {
+  const p = plano(['a'], ['b']);
+  const evs = [...diario(...pronta('a')), pouso(10, 30), ...diario(ini('b'), con('b')).map((e, i) => ({ ...e, seq: 20 + i, ts: new Date(Date.UTC(2026, 10, 3, 1, 5, i)).toISOString() }))];
+  // o sinal real: o núcleo recebe o pendente de quem lê o diário e o percent da própria sessão
+  assert.deepEqual(viaCli(p, evs, sinais({ percent: 61 })), { tipo: 'pousar' });
+  assert.deepEqual(viaCli(p, evs, sinais({ percent: 61, vivos: 2 })), { tipo: 'esperar', motivo: 'pouso_pendente' });
+  assert.deepEqual(viaCli(p, evs, sinais({ percent: null })), { tipo: 'pousar' });
+  // controle: sem o pouso, o revisor segue despachado (a 2.0 acima de X)
+  assert.equal(viaCli(p, [...diario(...pronta('a'), ini('b'), con('b'))], sinais({ percent: 61 })).tipo, 'despachar');
+});
+
+test('pouso-pendente-sem-vivos-repete-pousar: a cada chamada, e clear de outra sessão volta a despachar', () => {
+  const p = plano(['a']);
+  const evs = [...diario(ini('a'), con('a')), pouso(10, 30)];
+  assert.deepEqual(viaCli(p, evs, sinais()), { tipo: 'pousar' });
+  assert.deepEqual(viaCli(p, [...evs, pouso(11, 40)], sinais()), { tipo: 'pousar' });
+  assert.equal(viaCli(p, [...evs, inicio(1, 45, 'S2', 'clear')], sinais()).tipo, 'despachar');
+  assert.deepEqual(viaCli(p, [...evs, inicio(1, 45, 'S2', 'startup')], sinais()), { tipo: 'pousar' });
+});
+
+test('pouso-pendente-nao-vence-o-que-vem-antes: pausa, teto de tokens e podePousar falso mantêm as respostas deles', () => {
+  const p = plano(['a']);
+  const evs = [...diario(ini('a'), con('a')), pouso(10, 30)];
+  assert.deepEqual(viaCli(p, evs, sinais({ pausado: true })), { tipo: 'esperar', motivo: 'pausado' });
+  assert.deepEqual(viaCli(p, evs, sinais({ podePousar: false })), { tipo: 'parar', motivo: 'sem_pouso' });
+});
+
+test('pouso-pendente-regra-unica: o painel e o núcleo dão a mesma resposta para a mesma tabela, e as duas camadas importam a mesma função', async () => {
+  const { projetarPainel } = await import('../src/painel.ts');
+  const p: Plano = { entrega: 'GM-14', tasks: [{ id: 'a', deps: [], arquivos: [] }] };
+  const entrada = {
+    decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+    pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T03:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
+    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26, onboarding: true,
+    fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['a'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 'S1' },
+  };
+  const casos: [string, Evento[]][] = [
+    ['sem pouso', []],
+    ['pouso', [pouso(10, 30)]],
+    ['clear de outra', [pouso(10, 30), inicio(1, 40, 'S2', 'clear')]],
+    ['startup', [pouso(10, 30), inicio(1, 40, 'S2', 'startup')]],
+    ['resume', [pouso(10, 30), inicio(1, 40, 'S2', 'resume')]],
+    ['clear e novo pouso', [pouso(10, 30), inicio(1, 40, 'S2', 'clear'), pouso(2, 50, 'S2')]],
+  ];
+  for (const [nome, extra] of casos) {
+    const evs = [...diario(ini('a'), con('a')), ...extra];
+    const noPainel = JSON.stringify(projetarPainel(p, evs, entrada as never).depende ?? []).includes('limpar a conversa');
+    const noNucleo = viaCli(plano(['a']), evs, sinais()).tipo === 'pousar';
+    assert.equal(noPainel, pp(evs).pendente, `painel: ${nome}`);
+    assert.equal(noNucleo, pp(evs).pendente, `núcleo: ${nome}`);
+  }
+  for (const f of ['../src/painel.ts', '../scripts/loop.mjs']) {
+    const fonte = readFileSync(fileURLToPath(new URL(f, import.meta.url)), 'utf8');
+    assert.match(fonte, /from '\.{1,2}\/(dist\/)?pouso-pendente\.(ts|js)'/, f);
+    assert.doesNotMatch(fonte, /origem\s*===?\s*'clear'/, `${f} não pode ter regra própria`);
+    assert.doesNotMatch(fonte, /\[[^\]]*'clear'[^\]]*\]\s*\.includes\(|'sessao\.inicio'/, `${f} não pode ter regra própria (includes / tipo sessao.inicio)`);
+  }
+});
+
+test('pouso-pendente-sem-onboarding-nunca-pendente (FIEL-14 h): sem o fato de onboarding a regra devolve não pendente, com ou sem sessao.inicio; com onboarding, pendente', () => {
+  const nada = { pendente: false, sessao: null, seq: null };
+  const evs = [pouso(1, 5)];
+  assert.deepEqual(pousoPendente(evs, false), nada);
+  assert.deepEqual(pousoPendente(evs, undefined as never), nada);
+  assert.deepEqual(pousoPendente(evs), nada, 'sem o 2º argumento: fail-closed para "não pendente"');
+  assert.deepEqual(pousoPendente([pouso(1, 5), inicio(1, 9, 'S2', 'startup')], false), nada);
+  assert.deepEqual(pousoPendente(evs, true), { pendente: true, sessao: 'S1', seq: 1 });
+  // o núcleo, ligado como o CLI liga: sem onboarding o pouso não trava `proxima` (comportamento da 2.0)
+  const base = diario(ini('a'), con('a'));
+  const semOnb = proximaAcaoNucleo(plano(['a']), [...base, pouso(10, 30)], { ...sinais(), pousoPendente: pousoPendente([...base, pouso(10, 30)], false).pendente } as Sinais);
+  assert.equal(semOnb.tipo, 'despachar');
+});
+
+test('pouso-pendente-painel-sem-onboarding: o painel só mostra "limpar a conversa" com o fato onboarding verdadeiro na entrada', async () => {
+  const { projetarPainel } = await import('../src/painel.ts');
+  const p: Plano = { entrega: 'GM-14', tasks: [{ id: 'a', deps: [], arquivos: [] }] };
+  const entrada = {
+    decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+    pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T03:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
+    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26,
+    fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['a'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 'S1' },
+  };
+  const evs = [...diario(ini('a'), con('a')), pouso(10, 30)];
+  const txt = (o: Record<string, unknown>) => JSON.stringify(projetarPainel(p, evs, { ...entrada, ...o } as never).depende ?? []);
+  assert.equal(txt({ onboarding: true }).includes('limpar a conversa'), true);
+  assert.equal(txt({ onboarding: false }).includes('limpar a conversa'), false);
+  assert.equal(txt({}).includes('limpar a conversa'), false);
+  const e = projetarPainel(p, evs, { ...entrada, onboarding: false } as never) as unknown as { pousoPendente: { pendente: boolean } };
+  assert.equal(e.pousoPendente.pendente, false);
 });

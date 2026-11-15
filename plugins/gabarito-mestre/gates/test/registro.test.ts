@@ -241,3 +241,36 @@ describe('montarRegistro: corte por ponto de código', () => {
     assert.equal(corpo(montarRegistro('GM-13', [curto], null), 'Descobertas')[0], `- loop:1 · tecnica · ${'x'.repeat(238)}😀`, 'no limite exato não corta');
   });
 });
+
+describe('T54 (emenda 54): o registro confere o sha atual com a cadeia de emendas aplicadas', () => {
+  const SHA3 = 'd'.repeat(64);
+  const aplic = (seq: number, antes: string, depois: string, n: number, ts: number, spec = 'docs/spec.md'): Evento =>
+    ev('loop', 20 + n, 'spec.aplicada', { seq, spec, sha256_antes: antes, sha256_depois: depois }, t(ts));
+  // a proposta #1 e o julgamento que a aprova vêm de PROP/APROV_DONO; a #2 é aprovada aqui
+  const APROV2 = ev('dono', 2, 'spec.emendada', { proposta_seq: 2, origem: 'dono' }, t(15));
+  const COM1 = [APROVA, PROP, APROV_DONO, aplic(1, SHA, SHA2, 1, 20)];
+
+  test('registro-confere-com-cadeia: sha no fim da cadeia ⇒ "confere com a aprovação + N emendas aplicadas"; cada aplicada listada com antes ⇒ depois', () => {
+    const um = corpo(montarRegistro('GM-14', COM1, SHA2), 'Aprovação da spec');
+    assert.equal(um[1], `- loop:21 · emenda #1 aplicada · spec docs/spec.md · sha256 ${SHA} ⇒ ${SHA2}`);
+    assert.equal(um[2], `- sha256 atual da spec: ${SHA2} (confere com a aprovação + 1 emenda aplicada)`);
+    const dois = [...COM1, PROP2, APROV2, aplic(2, SHA2, SHA3, 2, 30)];
+    const r = corpo(montarRegistro('GM-14', dois, SHA3), 'Aprovação da spec');
+    assert.equal(r[r.length - 1], `- sha256 atual da spec: ${SHA3} (confere com a aprovação + 2 emendas aplicadas)`);
+    assert.ok(r.includes(`- loop:22 · emenda #2 aplicada · spec docs/spec.md · sha256 ${SHA2} ⇒ ${SHA3}`));
+  });
+
+  test('registro-sha-fora-da-cadeia-difere: o sha aprovado antes da aplicação, um sha solto e a cadeia sem julgamento seguem "difere"', () => {
+    assert.match(corpo(montarRegistro('GM-14', COM1, SHA), 'Aprovação da spec').pop() as string, /\(difere da última aprovação\)$/);
+    assert.match(corpo(montarRegistro('GM-14', COM1, 'e'.repeat(64)), 'Aprovação da spec').pop() as string, /\(difere da última aprovação\)$/);
+    const semJulgar = [APROVA, PROP, aplic(1, SHA, SHA2, 1, 20)];
+    assert.match(corpo(montarRegistro('GM-14', semJulgar, SHA2), 'Aprovação da spec').pop() as string, /\(difere da última aprovação\)$/);
+    // sem aplicada, o texto de antes segue igual
+    assert.match(corpo(montarRegistro('GM-14', [APROVA], SHA), 'Aprovação da spec').pop() as string, /\(confere com a última aprovação\)$/);
+  });
+
+  test('registro-aplicada-fora-da-forma-lanca: o registro não omite aplicada inválida calado', () => {
+    const torta = ev('loop', 21, 'spec.aplicada', { seq: 1, spec: 'docs/spec.md', sha256_antes: SHA, sha256_depois: 'xyz' }, t(20));
+    assert.throws(() => montarRegistro('GM-14', [APROVA, PROP, APROV_DONO, torta], SHA), /spec\.aplicada/);
+  });
+});

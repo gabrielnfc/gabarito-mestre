@@ -6,6 +6,11 @@
  *   loop.mjs aprendizado <E|A> <D|M> --regra <t> --entra-em <a,b> [--gatilho <sessao:seq>] [--eventos <s:q,…>] [--fonte <f> --numero <n>] [--substitui [<entrega>/]<sessao:seq>]
  *   loop.mjs aprendizado nada --gatilho <sessao:seq> --motivo <t>
  *   loop.mjs aprendizados [--para <instantaneo|spec|brief:<papel>>]      (não exige entrega na branch nem plano: lê a árvore da raiz principal)
+ *   loop.mjs aprendizados --exportar      (GM-14 T33: regrava `.harness/aprendizados.jsonl` da junção árvore + extrato, sem gravar evento)
+ *
+ * EXTRATO (GM-14 T33, REQ-APR-5 a). Depois do `append` de um `aprendizado`, `exportarAprendizados` regrava o extrato versionado (tmp + rename).
+ * O evento já está no diário: falha na regravação (ou extrato corrompido, que nunca é sobrescrito) vira `aviso` com rc 0 e `extrato.ok: false`;
+ * nunca some calada e nunca desfaz o evento.
  *
  * ORDEM DO `aprendizado` (cada passo recusa sem gravar; só o 1º é rc 2):
  *   1 uso → 2 conversão (`argumento_invalido`) → 3 canário em todo texto digitado (`segredo_no_aprendizado`: `append` com canário GRAVA `diario.recusa`,
@@ -18,13 +23,13 @@ import { createHash, randomBytes } from 'node:crypto';
 import { closeSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { aprendizadosVigentes, paraDestino, validarAprendizado } from '../dist/aprendizado.js';
-import { lerAprendizados, projetar, recusaCanario } from '../dist/diario.js';
+import { exportarAprendizados, lerAprendizados, projetar, recusaCanario } from '../dist/diario.js';
 import { formaInvalida, PAPEIS } from '../dist/formas.js';
 import { pendenciasAprendizado } from '../dist/pendencias.js';
 import { montarRegistro } from '../dist/registro.js';
 import { lerX, tasksEmVoo } from '../dist/pouso.js';
 
-const USO = 'uso: loop.mjs aprendizado <E|A> <D|M> --regra <t> --entra-em <a,b> [--gatilho <sessao:seq>] [--eventos <s:q,…>] [--fonte <f> --numero <n>] [--substitui [<entrega>/]<sessao:seq>] [--entrega GM-10] [--sessao <id>] | aprendizado nada --gatilho <sessao:seq> --motivo <t> | aprendizados [--para <instantaneo|spec|brief:<papel>>]';
+const USO = 'uso: loop.mjs aprendizado <E|A> <D|M> --regra <t> --entra-em <a,b> [--gatilho <sessao:seq>] [--eventos <s:q,…>] [--fonte <f> --numero <n>] [--substitui [<entrega>/]<sessao:seq>] [--entrega GM-10] [--sessao <id>] | aprendizado nada --gatilho <sessao:seq> --motivo <t> | aprendizados [--para <instantaneo|spec|brief:<papel>>] | aprendizados --exportar';
 const SESSAO_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const SEQ_RE = /^[1-9]\d{0,8}$/;
 const ENTREGA_RE = /^[A-Z]+-\d+$/;
@@ -120,6 +125,9 @@ const codigoDe = (motivo) => {
   return CODIGOS_DE_REFERENCIA.includes(prefixo) ? prefixo : 'forma_invalida';
 };
 
+/** Regravação ok com aviso da leitura (entrega ilegível, linha fora, canário): o aviso sobe ao topo da saída; nunca sucesso calado. */
+const comAviso = (extrato) => (extrato.avisos.length > 0 ? { aviso: extrato.avisos } : {});
+
 export function aprendizado(deps, pos, flags) {
   const { c, plano, gravar, Falha } = deps;
   const { tipo, dados } = deps.pronto ?? preparar(Falha, pos, flags);
@@ -148,7 +156,15 @@ export function aprendizado(deps, pos, flags) {
     if (motivo !== null) throw new Falha(codigoDe(motivo), `${motivo}; nada foi gravado`);
   };
   // `gravar` devolve `{tipo, ...dados}` e o `tipo` E|A do aprendizado cobre o tipo do evento: `tipo_evento` diz qual evento foi gravado.
-  return { evento: { ...gravar(c, plano, tipo, dados, antes), tipo_evento: tipo } };
+  const evento = { ...gravar(c, plano, tipo, dados, antes), tipo_evento: tipo };
+  if (tipo !== 'aprendizado') return { evento };
+  const extrato = exportarAprendizados(c.raiz);
+  if (extrato.ok) return { evento, extrato, ...comAviso(extrato) };
+  // o que fazer depende da falha: extrato corrompido nunca é sobrescrito (exportar também recusa); falha de escrita passa com o exportar
+  const passo = extrato.motivo.startsWith('extrato corrompido')
+    ? 'confira .harness/aprendizados.jsonl (loop.mjs aprendizados diz o motivo) e, corrigido, rode loop.mjs aprendizados --exportar'
+    : 'rode loop.mjs aprendizados --exportar';
+  return { evento, extrato, aviso: [`${extrato.motivo}; o evento está no diário: ${passo}`] };
 }
 
 /** Não abre entrega nem plano: só `raizPrincipal(cwd)` (injetada). Árvore ilegível vira aviso; nunca "0" calado. */
@@ -156,7 +172,16 @@ export function aprendizados(deps, pos, flags) {
   const { Falha } = deps;
   if (pos.length !== 0) throw uso(Falha, 'aprendizados não tem posicionais');
   if (flags.para !== undefined && !DESTINOS.includes(flags.para)) throw invalido(Falha, `--para: esperado ${DESTINOS.join(' | ')}`);
+  if (flags.exportar !== undefined && flags.para !== undefined) throw uso(Falha, '--exportar não lista: não vale com --para');
   const raiz = deps.raizPrincipal(deps.cwd);
+  if (flags.exportar !== undefined) {
+    const extrato = exportarAprendizados(raiz);
+    if (!extrato.ok) {
+      const codigo = extrato.motivo.startsWith('extrato corrompido') ? 'extrato_corrompido' : 'extrato_nao_gravado';
+      throw new Falha(codigo, `${extrato.motivo}; nenhum evento gravado${extrato.avisos.length > 0 ? ` (${extrato.avisos.join('; ')})` : ''}`);
+    }
+    return { extrato, ...comAviso(extrato) };
+  }
   const { porEntrega, avisos } = lerAprendizados(join(raiz, '.harness', 'entregas'));
   const vigentes = aprendizadosVigentes(porEntrega);
   const lista = flags.para === undefined ? vigentes.filter((a) => a.status === 'D') : paraDestino(vigentes, flags.para);

@@ -10,11 +10,15 @@
  */
 
 import { alinhar, corEstadoTask, faixaIds, fmtPct, fmtTempo, fmtTok, num, previsao, separador, textoDoPapel, textoEstadoTask } from './painel-formato.js';
+import { PAPEL_EXECUTIVO } from './painel-executivo.js';
+import { PRIORIDADE_RESERVA, cortarComReserva, cortarPorPrioridade } from './orcamento.js';
+                                                      
+import { linhaTecnica, nomeNatural, tagNatural } from './origem.js';
                                                     
 import { colunas, cortar, limpar } from './painel-largura.js';
-import { barra, blocoTopo, cortarLinha, cortarPorAltura } from './painel-texto.js';
+import { alturaValida, barra, blocoTopo, cortarLinha, cortarPorAltura } from './painel-texto.js';
                                                       
-                                                                                                                 
+                                                                                                                                                             
 
 const seg = (texto        , cor          )           => (cor === undefined ? { texto } : { texto, cor });
 const t = (v         )         => (typeof v === 'string' ? limpar(v) : '');
@@ -327,4 +331,323 @@ function linhaAgente(a              , larga         , nw        , vw        , mw
     pre, seg('●', gc), seg(' '), seg(pad(nivel >= 4 ? cortar(nome, nw) : nome, nw), a.cor), seg('  '), ...(vw > 0 ? [seg(pad(textoDoPapel(a.papel), vw))] : []), seg(pad(modelo, mw), 'inactive'),
     seg('  '), seg(pad(t(a.task), tw)), seg('  '), ...ctx, ...fim,
   ]);
+}
+
+// ───────────────────────────── GM-14 T17: os 5 blocos (REQ-GLB-1, REQ-LNG-1, FIEL-10..13) ─────────────────────────────
+//
+// Um renderizador só para os dois presets (FIEL-12): `ludico` (esquadrão) mostra o nome temático; o executivo, o papel de `PAPEL_EXECUTIVO`.
+// Blocos e prioridade de corte (D-P8): 1 DEPENDE DE VOCÊ (topo; PAROU, pergunta, itens) · 2 cabeçalho e PRONTO/FASE · 3 AGORA · 4 ATENÇÃO
+// · 5 RECENTE. Bloco vazio não ocupa linha; topo nunca cortado: o que dele não couber vira `(+N)` na última linha do topo que ficou.
+// REQ-LNG-1: todo texto que vem de dado passa por `natural` (marcação fora, sem emoji, token técnico normalizado ou "…"); o comando nunca
+// aparece (só o rótulo do botão, entre colchetes). Número nunca cortado (`cortarLinha`); a linha cortada nunca vira técnica (`cortarNatural`).
+
+/** Símbolo que vira emoji no terminal (FIEL-13 c): sai antes do render. */
+const EMOJI = /[\p{Extended_Pictographic}\uFE0F]/gu;
+
+/** Marcação de texto (D-P14): crase, `**`, `__` e `_ênfase_` saem; o texto fica. */
+const semMarcacao = (s        )         => s.replace(/`+|\*\*|__/g, '').replace(/(^|[\s(])_([^_\s][^_]*?)_(?=$|[\s).,:;!?])/g, '$1$2');
+
+/**
+ * Texto de dado em linguagem natural. `nome`: token técnico ⇒ tag `X.Y.Z` ou `nomeNatural` (`true_force` ⇒ `true force`), e o que ainda for técnico
+ * (`node`, palavra que é tipo de evento) ⇒ "…". `reticencia` (descrição de despacho, FIEL-3 b): token técnico ⇒ "…". ID de entrega (`GM-14`)
+ * não é técnico e nunca passa por `nomeNatural` (DP-4).
+ */
+function natural(v         , modo                        = 'nome')         {
+  const base = semMarcacao(limpar(typeof v === 'string' ? v : '')).replace(EMOJI, '');
+  const saida           = [];
+  for (const tok of base.split(/\s+/)) {
+    if (tok === '') continue;
+    if (!linhaTecnica(tok)) { saida.push(tok); continue; }
+    if (modo === 'reticencia') { saida.push('…'); continue; }
+    const tag = /\d+\.\d+\.\d+/.test(tok) ? tagNatural(tok) : null;
+    if (tag !== null) { saida.push(tag); continue; }
+    for (const w of nomeNatural(tok).split(' ')) if (w !== '') saida.push(linhaTecnica(w) ? '…' : w);
+  }
+  return saida.join(' ').replace(/…(\s+…)+/g, '…');
+}
+
+/** ID de entrega (DP-4): cru só no formato `GM-14` (`^[A-Z]+-\d+$`); qualquer outro (`true_force`) vai por `nomeNatural`. */
+const ID_ENTREGA = /^[A-Z]+-\d+$/;
+/** Quebra `texto` em linhas de até `w` colunas nos espaços; continuações com recuo de 4; palavra maior que a linha é partida (nunca reticência). */
+function quebrarTopo(texto        , w        )           {
+  const RECUO = Math.min(4, Math.max(0, w - 1));
+  const saida           = [];
+  let atual = '';
+  const limite = ()         => (saida.length === 0 ? w : w - RECUO);
+  const fecha = ()       => { saida.push(saida.length === 0 ? atual : ' '.repeat(RECUO) + atual); atual = ''; };
+  const lead = /^ */.exec(texto)?.[0] ?? '';
+  for (const palavra of texto.slice(lead.length).split(' ')) {
+    if (palavra === '') continue;
+    let pal = palavra;
+    let cand = atual === '' ? (saida.length === 0 ? lead : '') + pal : `${atual} ${pal}`;
+    if (colunas(cand) <= limite()) { atual = cand; continue; }
+    if (atual !== '') { fecha(); cand = pal; }
+    while (colunas(cand) > limite()) {
+      let n = cand.length;
+      while (n > 1 && colunas(cand.slice(0, n)) > limite()) n--;
+      atual = cand.slice(0, n); cand = cand.slice(n); fecha();
+    }
+    atual = cand;
+  }
+  if (atual !== '' || saida.length === 0) fecha();
+  return saida;
+}
+
+const idNatural = (v         )         => { const c = limpar(typeof v === 'string' ? v : ''); return ID_ENTREGA.test(c) ? c : natural(c); };
+
+/**
+ * Título (FIEL-5 a, D-P14): sem o prefixo `<ID> —|–|-|:`, sem marcação, uma vez. O prefixo sai comparando o título CRU (sem marcação) com o ID CRU
+ * (`true_force`, não `true force`); só depois o resto vira natural.
+ */
+function tituloLimpo(titulo         , idCru         )         {
+  let t = semMarcacao(limpar(typeof titulo === 'string' ? titulo : '')).trim();
+  const id = limpar(typeof idCru === 'string' ? idCru : '').trim();
+  if (id !== '') {
+    if (t.toLowerCase() === id.toLowerCase()) return '';
+    if (t.toLowerCase().startsWith(id.toLowerCase())) {
+      const resto = t.slice(id.length);
+      const m = /^\s*[—–:-]\s*/.exec(resto);
+      if (m) t = resto.slice(m[0].length);
+    }
+  }
+  return natural(t);
+}
+
+const textoDe = (l       )         => l.map((x) => x.texto).join('');
+
+/** `cortarLinha` que nunca deixa técnica uma linha que não era (corte no meio de palavra: `notaria` ⇒ `nota…`): recua até não casar. */
+function cortarNatural(l       , w        )        {
+  const r = cortarLinha(l, w);
+  if (!linhaTecnica(textoDe(r)) || linhaTecnica(textoDe(l))) return r;
+  for (let k = w - 1; k >= 1; k--) {
+    const x = cortarLinha(l, k);
+    if (!linhaTecnica(textoDe(x))) return x;
+  }
+  return [];
+}
+
+/**
+ * Linha reservada da decisão da Sombra (T42, emenda 32): a mesma linha do RECENTE, truncada em `w` pelo TEXTO da decisão, para a origem
+ * (`(anotado pelo orquestrador)`, REQ-LNG-1) ficar à vista. Sem folga para o texto (< 16 colunas, o suficiente para dizer algo), o texto vence a origem: cai no corte comum da linha inteira.
+ */
+function linhaReserva(r             , quemTexto                                              , w        )        {
+  const quem = quemTexto(r.quem);
+  const antes = `RECENTE · ${horaDe(r.hora)} `;
+  const origem = limpar(r.origem);
+  const montar = (t        )        => [seg(antes.slice(0, 'RECENTE · '.length), 'inactive'), seg(antes.slice('RECENTE · '.length), 'inactive'), seg(r.glifo, r.cor), seg(` ${quem !== '' ? `${quem} ` : ''}${t} `), seg(origem, 'inactive')];
+  const t = natural(r.texto);
+  const inteira = montar(t);
+  if (colunas(textoDe(inteira)) <= w) return inteira;
+  const fixo = colunas(textoDe(montar('')));
+  const folga = w - fixo;
+  return folga >= 16 ? montar(cortar(t, folga)) : cortarNatural(inteira, w);
+}
+
+/**
+ * Linha-resumo do AGORA (T42, emenda 37): `  <N> agentes: <rótulo> <task> · <rótulo> <task> …`. N = TODOS os vivos (mesmo os que o "…" esconde);
+ * itens = agentes e linhas de segundo plano; ação e tempo saem. Corta em fronteira de item e termina em "…" quando algum não coube.
+ */
+function linhaResumo(n        , itens                            , w        )        {
+  const pre = `  ${n} agentes:`;
+  let txt = pre;
+  let todos = true;
+  for (let i = 0; i < itens.length; i++) {
+    const cand = `${txt}${i === 0 ? ' ' : ' · '}${itens[i].r} ${itens[i].t}`;
+    const cabeIt = colunas(cand) <= w && (i === itens.length - 1 || colunas(`${cand} …`) <= w);
+    if (!cabeIt) { todos = false; break; }
+    txt = cand;
+  }
+  if (txt === pre) return cortarNatural([seg(`${pre} ${itens.map((x) => `${x.r} ${x.t}`).join(' · ')}`)], w);
+  return [seg(todos ? txt : `${txt} …`)];
+}
+
+/** Botões no texto: só o rótulo (`[aprovar a spec]`); ação sem comando é instrução (` · rótulo`). O comando fica em `Acao.comando`. */
+function botoes(acoes         )         {
+  if (!Array.isArray(acoes)) return '';
+  return (acoes          ).map((a) => {
+    if (a === null || typeof a !== 'object' || typeof a.rotulo !== 'string' || a.rotulo.trim() === '') return '';
+    const r = natural(a.rotulo);
+    return typeof a.comando === 'string' && a.comando !== '' ? ` [${r}]` : ` · ${r}`;
+  }).join('');
+}
+
+/** Hora sem leitura (`--:--` da E4) vira "?": `--` é marca técnica (REQ-LNG-1). */
+const horaDe = (h         )         => {
+  const t = limpar(typeof h === 'string' ? h : '');
+  return t === '' || t.includes('--') ? '?' : t;
+};
+
+const FASES_NOME = ['ideia', 'spec', 'aprovação', 'plano', 'execução', 'PR', 'uso'];
+const inteiroNaoNeg = (v         )                => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null);
+
+export function renderBlocos(e              , o              )          {
+  const w0 = o?.largura;
+  if (typeof w0 !== 'number' || !Number.isFinite(w0) || Math.floor(w0) < 1) throw new RangeError(`largura inválida: ${String(w0)} (número finito ≥ 1)`);
+  const w = Math.floor(w0);
+  const ludico = o.preset === 'esquadrao';
+  const id = idNatural(e.id);
+  const fim = (l       )        => cortarNatural(l, w);
+
+  if (e.modo === 'fora') return [fim([seg('GABARITO · fora de um projeto', 'inactive')])];
+  if (e.umaLinha !== null && e.umaLinha !== undefined) {
+    const u = e.umaLinha.ultima;
+    const ult = u === null || typeof u?.id !== 'string' ? '' : ` · última: ${idNatural(u.id)}${typeof u.estado === 'string' && u.estado !== '' ? ` (${natural(u.estado)})` : ''}`;
+    return [fim([seg(`GABARITO · sem entrega em curso${ult}`, 'inactive')])];
+  }
+
+  const quemTexto = (q                               )         => {
+    if (q === null || q === undefined) return '';
+    if (ludico && typeof q.nome === 'string' && q.nome !== '') return natural(q.nome);
+    if (!ludico) return PAPEL_EXECUTIVO[q.papel] ?? 'Implementador';
+    return q.papel === 'orquestrador' ? 'orquestrador' : q.papel === 'sombra' ? 'Sombra' : (PAPEL_EXECUTIVO[q.papel] ?? 'Implementador');
+  };
+
+  const ls                    = [];
+  const topo = new Set       ();
+  const itensLinhas            = []; // as linhas de cada item do topo: um item entra inteiro ou não entra
+  let ordem = 0;
+  const por = (prioridade        , l       )        => { ls.push({ prioridade, ordem: ordem++, l }); return l; };
+
+  // cabeçalho (FIEL-10 f)
+  const titulo = id === '' ? '' : tituloLimpo(e.titulo, e.id); // sem entrega identificada, o título (da entrega) não se aplica
+  por(2, [seg(`GABARITO · ${id !== '' ? id : 'entrega não identificada'}${titulo !== '' ? ` ${titulo}` : ''}`)]);
+
+  // 1 DEPENDE DE VOCÊ: PAROU, pergunta, demais itens
+  const itensTopo                                                     = [];
+  const p = e.parar;
+  if (p !== null && typeof p === 'object') {
+    itensTopo.push({ texto: `PAROU ${horaDe(p.hora)} · ${natural(p.texto)}${botoes(p.acoes)}`, cor: 'error', rotulo: false });
+  }
+  const q = e.pergunta;
+  if (q !== null && q !== undefined && typeof q.texto === 'string') {
+    const ops = (Array.isArray(q.opcoes) ? q.opcoes : []).map((x, i) => ` · ${i + 1} ${natural(x)}`).join('');
+    itensTopo.push({ texto: `${natural(q.texto)}${ops}`, cor: 'warning', rotulo: true });
+  }
+  const mais = inteiroNaoNeg(e.perguntasMais) ?? 0;
+  if (mais > 0) itensTopo.push({ texto: `mais ${mais} ${mais === 1 ? 'pergunta aberta' : 'perguntas abertas'}`, cor: 'warning', rotulo: true });
+  for (const i of Array.isArray(e.depende) ? e.depende : []) {
+    if (i === null || typeof i !== 'object' || (p !== null && i.nivel === 'parar')) continue;
+    const m = typeof i.motivo === 'string' ? i.motivo : '';
+    const proprio = /^depende de você:/.test(m);
+    itensTopo.push({ texto: proprio ? `depende de você:${natural(m.slice('depende de você:'.length)) === '' ? '' : ` ${natural(m.slice('depende de você:'.length))}`}` : `${natural(m)}${botoes(i.acoes)}`, cor: proprio && /nada$/.test(m) ? 'inactive' : 'warning', rotulo: !proprio });
+  }
+  let rotulado = false;
+  for (const it of itensTopo) {
+    const prefixo = it.rotulo ? (rotulado ? '  ' : 'depende de você: ') : '';
+    if (it.rotulo || /^depende de você:/.test(it.texto)) rotulado = true;
+    // REQ-GLB-1: o topo nunca sai cortado; o que não cabe em `w` quebra em linhas de continuação (recuo de 4), sem perder palavra
+    itensLinhas.push(quebrarTopo(`${prefixo}${it.texto}`, w).map((t) => { const l = por(1, [seg(t, it.cor)]); topo.add(l); return l; }));
+  }
+
+  // sem entrega: a última conhecida logo depois do topo (a pergunta (b) segue sendo a linha 2; fumaca-gm14)
+  const ultima = id === '' && typeof e.trilha?.ultimaConhecida === 'string' ? idNatural(e.trilha.ultimaConhecida) : ''; // spec:53
+  if (ultima !== '') por(2, [seg(`última entrega conhecida: ${ultima}`, 'inactive')]);
+
+  // 2 PRONTO ou FASE
+  const pr = e.pronto;
+  if (pr !== null && pr !== undefined) {
+    const integradas = inteiroNaoNeg(pr.integradas) ?? 0;
+    const total = inteiroNaoNeg(pr.total) ?? 0;
+    const prev = pr.previsao !== null && typeof pr.previsao?.hora === 'string'
+      ? ` · previsão ${limpar(pr.previsao.hora)} (base: ${inteiroNaoNeg(pr.previsao.base) ?? '?'} tasks desta entrega)` : '';
+    por(2, [seg('PRONTO '), ...barraSegs(total === 0 ? 0 : (integradas / total) * 100, 10, '▰', '▱', 'success'), seg(` ${integradas} de ${total} integradas${prev}`)]);
+  } else if (e.fase !== null && e.fase !== undefined) {
+    const f = e.fase;
+    const marcas = Array.isArray(f.marcas) ? f.marcas : [];
+    const n = inteiroNaoNeg(f.numero);
+    const barra7 = FASES_NOME.map((_, i) => (marcas[i] === '✓' ? '▰' : '▱')).join('');
+    const trilha = FASES_NOME.map((nome, i) => `${['✓', '●', '○', '?'].includes(marcas[i]) ? marcas[i] : '?'} ${nome}`).join(' › ');
+    const partes = [natural(f.progresso), ...(Array.isArray(f.sufixo) ? f.sufixo.map((x) => natural(x)) : []), ...(typeof f.motivo === 'string' ? [`? ${natural(f.motivo)}`] : [])].filter((x) => x !== '');
+    por(2, [seg(`FASE ${n === null ? '?' : n} de 7 `), seg(barra7, 'success'), seg(`${partes.map((x) => ` · ${x}`).join('')} · `), seg(trilha, 'inactive')]);
+  }
+
+  // 3 AGORA (FIEL-4, FIEL-11)
+  const agoraAgentes                    = []; // as linhas de agente e de segundo plano do AGORA (candidatas à linha-resumo, T42 emenda 37)
+  const resumo                             = [];
+  let nVivos = 0;
+  const ag = e.agora;
+  if (ag !== undefined && ag !== null) {
+    if (ag.agentes === null) por(3, [seg('AGORA · agentes e contexto: medidos só no painel da sessão', 'inactive')]);
+    else {
+      const or = ag.orquestrador;
+      const pct = inteiroNaoNeg(or?.contexto === null ? null : Math.round(Number(or?.contexto)));
+      const ctx = pct === null ? 'contexto ?' : or.estimado === true ? `contexto ~${pct} % (estimado)` : `contexto ${pct} %`;
+      por(3, [seg('AGORA · '), seg(`${quemTexto({ nome: or?.nome ?? null, papel: 'orquestrador' })} · ${ctx}${pct !== null && or.pousar === true ? ' · hora de pousar' : ''}`)]);
+      const linhaAgente = (a             , tarefaPadrao        )        => {
+        const tempo = inteiroNaoNeg(a.desdeS);
+        const acao = a.acao === null || a.acao === undefined ? '?' : natural(a.acao, 'reticencia') || '?';
+        return [seg(`  ${quemTexto(a.quem)} · ${a.task === null || a.task === undefined ? tarefaPadrao : limpar(a.task)} · ${acao}${tempo === null ? '' : ` · ${fmtTempo(tempo)}`}`)];
+      };
+      for (const a of ag.agentes) { por(3, linhaAgente(a, 'sem task')); agoraAgentes.push(ls[ls.length - 1]); resumo.push({ r: quemTexto(a.quem), t: a.task === null || a.task === undefined ? 'sem task' : limpar(a.task) }); }
+      for (const a of Array.isArray(ag.segundoPlano) ? ag.segundoPlano : []) {
+        por(3, linhaAgente({ ...a, quem: { nome: null, papel: 'teste' } }, 'orquestrador')); agoraAgentes.push(ls[ls.length - 1]);
+        resumo.push({ r: quemTexto({ nome: null, papel: 'teste' }), t: a.task === null || a.task === undefined ? 'orquestrador' : limpar(a.task) });
+      }
+      nVivos = ag.agentes.length;
+    }
+  }
+
+  // 4 ATENÇÃO
+  const atencao = (Array.isArray(e.atencao) ? e.atencao : []).map((x) => natural(x)).filter((x) => x !== '');
+  atencao.forEach((x, i) => por(4, [seg(i === 0 ? 'ATENÇÃO · ' : '  ', 'warning'), seg(x)]));
+
+  // 5 RECENTE (até 5 na lateral, 2 acima do input; mais novo no topo)
+  const cap = o.local === 'acima' ? 2 : 5;
+  const rec = (Array.isArray(e.recente) ? e.recente : []).slice(0, cap);
+  const dec = (e                                                         ).decisaoSombra;
+  const daDecisao          = [];
+  rec.forEach((r, i) => {
+    const quem = quemTexto(r.quem);
+    const lr = por(5, [seg(i === 0 ? 'RECENTE · ' : '  ', 'inactive'), seg(`${horaDe(r.hora)} `, 'inactive'), seg(r.glifo, r.cor), seg(` ${quem !== '' ? `${quem} ` : ''}${natural(r.texto)} `), seg(limpar(r.origem), 'inactive')]);
+    if (dec !== null && dec !== undefined && typeof dec === 'object' && (r === dec || (r.hora === dec.hora && r.texto === dec.texto && r.glifo === dec.glifo && r.origem === dec.origem))) daDecisao.push(lr);
+  });
+
+  // Reserva (T42, emenda 32): a decisão da Sombra mais recente, na mesma linha do RECENTE; entra quando o corte tira o RECENTE (inteiro ou em parte) e a decisão não sobra.
+  const reserva               = dec === null || dec === undefined || typeof dec !== 'object' ? null : linhaReserva(dec, quemTexto, w);
+
+  // corte por orçamento (REQ-GLB-1): `orcamento`, senão `altura`; sem os dois, sem corte
+  const orc = alturaValida(o.orcamento) ?? alturaValida(o.altura);
+  let cortado                                            = orc === undefined ? { linhas: ls.map((x) => x.l), cortadasTopo: 0 } : cortarComReserva(ls, orc, reserva, daDecisao);
+  // Linha-resumo (T42, emenda 37): só quando há reserva da Sombra, ela NÃO coube e compactar o AGORA (agentes + segundo plano) em 1 linha a faz caber.
+  // Se mesmo compactado não couber, o AGORA fica como hoje e a reserva cede.
+  if (orc !== undefined && reserva !== null && !cortado.linhas.includes(reserva) && nVivos >= 1 && agoraAgentes.length >= 2) {
+    const recente = ls.filter((x) => x.prioridade === 5).map((x) => x.l);
+    if (recente.length > 0 && !recente.some((l) => cortado.linhas.includes(l))) {
+      const compacta = linhaResumo(nVivos, resumo, w);
+      const fora = new Set(agoraAgentes);
+      const ls2                    = [];
+      ls.forEach((x) => { if (x === agoraAgentes[0]) ls2.push({ ...x, l: compacta }); else if (!fora.has(x)) ls2.push(x); });
+      // a linha livre que a compactação abre é da DECISÃO da Sombra mais recente (emenda 32), não do item mais recente do RECENTE: o RECENTE segue fora e a reserva entra
+      const semRecente = ls2.filter((x) => x.prioridade !== 5);
+      const fim = ls2.reduce((m, x) => Math.max(m, x.ordem), 0) + 1;
+      const c2 = cortarPorPrioridade([...semRecente, { prioridade: PRIORIDADE_RESERVA, ordem: fim, l: reserva }], orc);
+      // a compactação só vale com a decisão à vista (emenda 37): se a reserva ainda não coube, o AGORA fica como hoje
+      if (c2.linhas.includes(reserva)) cortado = { linhas: c2.linhas, cortadasTopo: c2.cortadasTopo };
+    }
+  }
+  const ficou = new Set(cortado.linhas);
+  // (+N) conta ITENS escondidos (spec:47), nunca linhas quebradas; o item que não coube inteiro sai inteiro.
+  // LIMITE (spec não diz quem cede): o 1º item sozinho maior que o orçamento — D15 vence; fica o que cabe, a última linha termina em "…" (uma só). Mesma colisão: item que coube inteiro e é o último do topo perde o fim para o " (+N)" (D15 vence).
+  const sai = new Set       ();
+  let escondidos = 0;
+  let truncada               = null;
+  itensLinhas.forEach((item, k) => {
+    const dentro = item.filter((l) => ficou.has(l)).length;
+    if (dentro === item.length) return;
+    if (k === 0 && dentro > 0) { truncada = item[dentro - 1]; return; }
+    escondidos++;
+    for (const l of item) sai.add(l);
+  });
+  const linhas = cortado.linhas.filter((l) => !sai.has(l));
+  const ultTopo = escondidos > 0 || truncada !== null ? linhas.reduce((k, l, i) => (topo.has(l) && !sai.has(l) ? i : k), -1) : -1;
+  return linhas.map((l, i) => {
+    const reticencia = l === truncada;
+    if (i !== ultTopo && !reticencia) return fim(l);
+    const mais2 = escondidos > 0 ? ` (+${escondidos})` : '';
+    const cabe = Math.max(1, w - colunas(mais2));
+    // reticência única: cortarLinha já termina em "…" ao cortar; só acrescenta quando a linha cabe inteira com folga
+    const folga = reticencia && colunas(textoDe(l)) < cabe;
+    const base = cortarNatural(l, reticencia && !folga ? (colunas(textoDe(l)) === cabe ? Math.max(1, cabe - 1) : cabe) : cabe);
+    return [...base, ...(folga ? [seg('…', 'warning')] : []), ...(mais2 !== '' ? [seg(mais2, 'warning')] : [])];
+  });
 }

@@ -20,6 +20,7 @@ import { precisaContexto } from './classificar-alvo.js';
 import { decidir } from './decidir.js';
 import { append, dirEntrega, lerEstrito } from './diario.js';
 import { consultasAbertas, diarioEmOrdem, promptSombra } from './sombra.js';
+import { trilhaDe } from './trilha.js';
                                                                                                          
 
 const GIT_TIMEOUT_MS = 2000;
@@ -124,6 +125,14 @@ function lerGuarda(raiz        )         {
   return { config: null, fonte: 'nenhuma', divergente: false, localIgnorada: false, onboarding: false, idPadrao: ID_PADRAO };
 }
 
+/**
+ * Predicado ÚNICO de onboarding (Q20; GM-14 T60, emenda 68): `harness.config.json` em `refs/remotes/origin/HEAD` ou na árvore local de `raiz`.
+ * A guarda (diário), o mod do painel e `painel-medir.mjs` perguntam aqui: sem onboarding nada grava em `.harness/` e nada chama `gh`.
+ */
+export function temOnboarding(raiz        )          {
+  return lerGuarda(raiz).onboarding;
+}
+
 function linhaDe(texto               )                {
   const t = texto?.trim() ?? '';
   return t === '' ? null : t.split('\n')[0];
@@ -172,6 +181,81 @@ function idDaEntrega(branch               , idPadrao        )                {
   } catch {
     return /[A-Z]+-\d+/.exec(branch)?.[0] ?? null;
   }
+}
+
+/** `fluxo.ledgerDir` da config (origin/HEAD, senão a árvore local): relativo e sem `..`; senão `docs/ledgers`. */
+function ledgerDirDe(raiz        )         {
+  const cfg = parseJson(git(raiz, ['show', 'refs/remotes/origin/HEAD:harness.config.json'])) ?? parseJson(lerLocal(raiz));
+  const v = objeto(cfg?.fluxo)?.ledgerDir;
+  return typeof v === 'string' && v !== '' && !v.startsWith('/') && !v.split('/').includes('..') ? v : 'docs/ledgers';
+}
+
+/**
+ * Regra ÚNICA de "entrega publicada" (GM-14 T48, emenda 43; FIEL-1 b/c, REQ-DIA-1; a mesma de `painel-medir.mjs`, T43): a trilha (`trilhaDe`) lê o diário
+ * da entrega e, com o PR mergeado, nenhum aberto e sem `dono.resposta` que ligue a sessão, DEIXA de identificá-la; com o PR como `?` (gh falhou) a
+ * mesma trilha a identificaria por 2º fato. Só então ela está publicada. Branch sozinha (sem 2º fato: `plano.json`, spec do ID, `ledger`) nunca
+ * é publicada. Diário ilegível ou ausente ⇒ `false` (não afirma). Quem grava evento de sessão, guarda ou loop consulta ISTO; nenhum gravador
+ * tem critério próprio. Os fatos vêm do próprio diário (`fato.medido spec|plano|pr`), de `plano.json` e do ledger; nunca roda `gh`.
+ * Consumidores: o medir (`painel-medir.mjs`), `loop.mjs`, o cartão de sessão, o Stop e esta guarda; o teste de equivalência passa por todos no mesmo diário.
+ * `sessao` = a conversa que consulta (só a resposta do dono à pergunta (b) DELA a liga à entrega). `SESSAO_QUALQUER` (o `loop.mjs` sem `--sessao`, que
+ * grava como `loop` e não sabe qual conversa o dono ligou): a entrega deixa de ser publicada se QUALQUER sessão com `dono.resposta` no diário a liga.
+ */
+export const SESSAO_QUALQUER = '*';
+const SESSOES_LIGADAS_MAX = 64;
+export function entregaPublicada(raiz        , entrega               , sessao                = null)          {
+  if (entrega === null || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(entrega)) return false;
+  try {
+    const dir = dirEntrega(raiz, entrega);
+    if (!existsSync(dir)) return false;
+    // Antes de ler: `events.*.jsonl` que não é arquivo regular (FIFO trava a leitura, symlink traz texto de fora) ⇒ não afirma, sem abrir.
+    for (const nome of readdirSync(dir)) {
+      if (/^events\..+\.jsonl$/.test(nome) && !lstatSync(join(dir, nome)).isFile()) return false;
+    }
+    const lido = lerEstrito(dir);
+    if (!lido.ok) return false;
+    const eventos = lido.eventos;
+    const medido = (chave        )                                 =>
+      eventos.flatMap((e) => {
+        const d = objeto(e.dados);
+        const v = d !== null && e.tipo === 'fato.medido' && d.chave === chave ? objeto(d.valor) : null;
+        return v === null ? [] : [v];
+      });
+    const porCaminho = new Map                                 ();
+    for (const v of medido('spec')) if (typeof v.caminho === 'string') porCaminho.set(v.caminho, v);
+    const specs = [...porCaminho.values()].map((v) => ({ caminho: v.caminho          , pbi: entrega, sha256: typeof v.sha256 === 'string' ? v.sha256 : '', secoes: typeof v.secoes === 'number' ? v.secoes : 0, titulo: '' }));
+    let ledger = false;
+    try { ledger = lstatSync(join(raiz, ledgerDirDe(raiz), `${entrega}.md`)).isFile(); } catch { /* sem ledger */ }
+    const temPlano = existsSync(join(dir, 'plano.json')) || medido('plano').length > 0;
+    // O ID entra como a própria branch e como o padrão (escapado): a identificação não depende da branch atual nem da config.
+    const base = { branch: entrega, idPadrao: entrega.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&'), specs, plano: temPlano ? { tasks: []             } : null, ledger, ultimas: [] };
+    const qualquer = sessao === SESSAO_QUALQUER;
+    // "Qualquer sessão" vale só para a ligação POSTERIOR ao último PR mergeado da entrega: resposta anterior à publicação atual não destrava,
+    // e uma republicação (PR novo mergeado) exige nova resposta do dono. ts ilegível não é "posterior" (recusa).
+    const tsMs = (ts         )         => (typeof ts === 'string' ? Date.parse(ts) : NaN);
+    // Corte = o instante em que a PUBLICAÇÃO atual apareceu: por número de PR, o 1º ts em que ele consta mergeado (re-medir o mesmo PR, em outra sessão, não o move);
+    // entre os PRs, o mais tardio (PR novo mergeado = republicação). PR não mergeado não conta.
+    const primeiroMerge = new Map                 ();
+    for (const e of eventos) {
+      const d = objeto(e.dados);
+      const v = e.tipo === 'fato.medido' && d?.chave === 'pr' ? objeto(d.valor) : null;
+      const t = tsMs(e.ts);
+      if (v === null || v.estado !== 'mergeado' || Number.isNaN(t)) continue;
+      const antes = primeiroMerge.get(v.numero);
+      if (antes === undefined || t < antes) primeiroMerge.set(v.numero, t);
+    }
+    const mergeadoEm = Math.max(-Infinity, ...primeiroMerge.values());
+    const donas = qualquer ? [...new Set(eventos.filter((e) => e.tipo === 'dono.resposta' && typeof e.sessao === 'string' && tsMs(e.ts) > mergeadoEm).map((e) => e.sessao          ))].slice(0, SESSOES_LIGADAS_MAX) : [];
+    const sessoes                       = qualquer ? [null, ...donas] : [sessao];
+    for (const s of sessoes) if (trilhaDe({ ...base, sessao: s, gh: 'ok' }, eventos).identificada === true) return false;
+    return trilhaDe({ ...base, sessao: qualquer ? null : sessao, gh: 'falhou' }, eventos).entrega === entrega;
+  } catch {
+    return false;
+  }
+}
+
+/** Diretório que recebe o evento de sessão, guarda ou loop: o da entrega, ou `_sem-id` quando ela já está publicada (REQ-DIA-1). */
+function dirDeEvento(raiz        , id               , sessao               )         {
+  return dirEntrega(raiz, id !== null && entregaPublicada(raiz, id, sessao) ? null : id);
 }
 
 /** Diretório do diário gravável? Checado ANTES de escrever a decisão, para o aviso entrar na mesma saída. */
@@ -254,7 +338,7 @@ function registrarExcecao(entrada             , erro        )       {
     if (raiz === null || sessao === null) return;
     const guarda = lerGuarda(raiz);
     if (!guarda.onboarding) return;
-    const dir = dirEntrega(raiz, idDaEntrega(linhaDe(git(raiz, ['symbolic-ref', '--short', 'HEAD'])), guarda.idPadrao));
+    const dir = dirDeEvento(raiz, idDaEntrega(linhaDe(git(raiz, ['symbolic-ref', '--short', 'HEAD'])), guarda.idPadrao), sessao);
     if (!diarioGravavel(dir)) return;
     const sub = ehSubagent(entrada);
     const autor = linhaDe(git(raiz, ['config', 'user.email'])) ?? 'desconhecido';
@@ -464,7 +548,7 @@ function registrarPausa(entrada             , raiz               )       {
     if (raiz === null || sessao === null) return;
     const guarda = lerGuarda(raiz);
     if (!guarda.onboarding) return;
-    const dir = dirEntrega(raiz, idDaEntrega(linhaDe(git(raiz, ['symbolic-ref', '--short', 'HEAD'])), guarda.idPadrao));
+    const dir = dirDeEvento(raiz, idDaEntrega(linhaDe(git(raiz, ['symbolic-ref', '--short', 'HEAD'])), guarda.idPadrao), sessao);
     if (!diarioGravavel(dir)) return;
     const autor = linhaDe(git(raiz, ['config', 'user.email'])) ?? 'desconhecido';
     append(dir, sessao, {
@@ -549,7 +633,7 @@ function principal()       {
       mensagens.push('GABARITO: session_id ausente ou fora do padrão; a guarda segue sem registrar no diário');
     } else {
       const branch = contexto.branchAtual ?? linhaDe(git(raizSessao, ['symbolic-ref', '--short', 'HEAD']));
-      const dir = dirEntrega(raizSessao, idDaEntrega(branch, guarda.idPadrao));
+      const dir = dirDeEvento(raizSessao, idDaEntrega(branch, guarda.idPadrao), sessao);
       if (!diarioGravavel(dir)) {
         mensagens.push('GABARITO: diário indisponível; a guarda segue sem registrar este evento');
       } else {

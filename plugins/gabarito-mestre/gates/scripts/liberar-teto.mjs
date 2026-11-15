@@ -2,7 +2,9 @@
 /**
  * Hook `UserPromptExpansion` do comando humano `/gabarito-mestre:liberar <task>` (REQ-LOOP-2, spec r12; spike A1, 2.1.318).
  *
- * É o único caminho que grava `task.reaberta {origem:"dono"}` e tira uma task do teto de rodadas. O modelo não chega aqui: a skill tem
+ * É o único caminho do DONO: o único que grava `task.reaberta {origem:"dono"}` e tira uma task do teto de rodadas por decisão humana. O outro
+ * caminho para fora do teto é o da Sombra (GM-14 T36, FIEL-15): `loop.mjs liberar <task> --origem sombra --hash <h>`, 1 vez por task, só a 1ª
+ * liberação e só com `sombra.libera_teto: true` em origin; grava `origem:"sombra"`, nunca `dono`. O modelo não chega aqui: a skill tem
  * `disable-model-invocation: true` (a chamada via `Skill` é recusada e não dispara este hook). Adaptador fino: a regra e a gravação
  * são de `liberarTeto` em `loop.mjs`.
  *

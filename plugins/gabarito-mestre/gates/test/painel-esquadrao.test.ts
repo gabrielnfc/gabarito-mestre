@@ -644,7 +644,7 @@ test('costura-P9: diário e projetarPainel reais (src) ⇒ renderPainel do dist 
     const ls = render(st, 100);
     assert.ok(ls.some((l) => /T08 .*implementando/.test(l)), ls.join('\n'));
     if (agentes === null) assert.ok(ls.some((l) => /agentes —$/.test(l)), 'sem mod: traço');
-    else assert.ok(ls.some((l) => /agentes 1 vivo$/.test(l)) && ls.some((l) => /^├─ ◌ .*sem agente · T07/.test(l)), ls.join('\n'));
+    else assert.ok(ls.some((l) => /agentes 1 vivo$/.test(l)) && !ls.some((l) => l.includes('◌')), ls.join('\n')); // FIEL-6 b: T07 sem agente não vira linha ◌
   }
 });
 

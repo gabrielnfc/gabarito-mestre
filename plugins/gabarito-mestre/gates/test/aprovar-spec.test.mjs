@@ -20,7 +20,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import * as diario from '../dist/diario.js';
-import { aprovarSpec, shaDaSpec } from '../scripts/loop.mjs';
+import { aprovarSpec, lerSpecs, shaDaSpec } from '../scripts/loop.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const GATES = join(AQUI, '..');
@@ -130,14 +130,17 @@ test('aprovar-apos-mudanca-grava-de-novo: aprovar A, editar para B, aprovar B gr
   assert.deepEqual(aprovadas(amb).map((e) => e.dados.sha256), [sha(Buffer.from('A\n')), sha(Buffer.from('B\n'))]);
 });
 
-test('aprovar-reverter-para-sha-antigo-ja-aprovado: A, B, voltar a A ⇒ ja_aprovada (a régua é só o sha, em qualquer posição do diário)', () => {
+test('aprovar-reverter-para-sha-antigo: A, B, voltar a A ⇒ aprova de novo (o aceito é o ÚLTIMO, T54 emenda 54); A de novo em seguida ⇒ ja_aprovada', () => {
   const amb = repo({ spec: 'A\n' });
   hook(stdinTui(amb.dir));
   amb.spec('B\n');
   hook(stdinTui(amb.dir));
   amb.spec('A\n');
+  const r = hook(stdinTui(amb.dir));
+  assert.notEqual(r.j?.decision, 'block', r.out);
+  assert.equal(aprovadas(amb).length, 3);
   recusa(amb, stdinTui(amb.dir), /ja_aprovada/);
-  assert.equal(aprovadas(amb).length, 2);
+  assert.equal(aprovadas(amb).length, 3);
 });
 
 test('aprovar-outro-caminho-mesmo-conteudo-ja-aprovado: trocar plano.spec para outro arquivo com os mesmos bytes ⇒ ja_aprovada (não olha `spec`)', () => {
@@ -285,13 +288,14 @@ test('aprovar-sessao: session_id fora da forma grava como `dono`; cwd ausente us
 test('aprovar-fora-de-repo-plano-ausente-plano-invalido: cada um bloqueia com a causa própria', () => {
   const fora = realpathSync(mkdtempSync(join(tmpdir(), 'aprovar-nrepo-')));
   bloqueou(hook(stdinTui(fora)), /fora_de_repo/);
+  // T15 (REQ-TRI-1): sem plano.json a spec vem de docs/superpowers/specs; sem nenhuma da entrega ⇒ spec_ausente, nada gravado
   const sem = repo({ plano: null });
-  recusa(sem, stdinTui(sem.dir), /plano_ausente/);
+  recusa(sem, stdinTui(sem.dir), /spec_ausente/);
   const ruim = repo({ plano: '{' });
   recusa(ruim, stdinTui(ruim.dir), /plano_invalido/);
 });
 
-test('aprovar-de-dentro-da-worktree-usa-principal: grava no diário da raiz principal, com o sha da spec da principal', () => {
+test('aprovar-de-dentro-da-worktree-spec-da-worktree: grava no diário da raiz principal, com o sha da spec da WORKTREE (T38, DP-3 aj. 4)', () => {
   const amb = repo({ spec: 'principal\n', branch: 'main' });
   const wt = join(amb.dir, '.harness', 'worktrees', 'T1');
   const r0 = git(amb.dir, 'worktree', 'add', '-q', '-b', 'wt/GM-10-T1', wt);
@@ -301,8 +305,8 @@ test('aprovar-de-dentro-da-worktree-usa-principal: grava no diário da raiz prin
   assert.notEqual(r.j?.decision, 'block', r.out);
   const a = aprovadas(amb);
   assert.equal(a.length, 1, 'no diário da principal');
-  assert.equal(a[0].dados.sha256, sha(Buffer.from('principal\n')));
-  assert.notEqual(a[0].dados.sha256, sha(Buffer.from('da worktree\n')));
+  assert.equal(a[0].dados.sha256, sha(Buffer.from('da worktree\n')));
+  assert.notEqual(a[0].dados.sha256, sha(Buffer.from('principal\n')));
   assert.equal(existsSync(join(wt, '.harness', 'entregas')), false, 'a worktree não ganhou diário');
 });
 
@@ -421,4 +425,215 @@ test('skill-aprovar-frontmatter: só do dono, sem argumento, sem citar painel.mj
   assert.match(t, /gabarito-loop/);
   assert.match(t, /Não grave nem edite o diário/);
   assert.doesNotMatch(t, /painel\.mjs/);
+});
+
+// ─────────────────────────────────────────────────────────────── T15 (REQ-TRI-1): aprovar antes do plano
+
+const DIR_SPECS = 'docs/superpowers/specs';
+/** Spec em `docs/superpowers/specs/<nome>` com cabeçalho `PBI: <pbi>` (null = sem cabeçalho). */
+function specPbi(amb, nome, pbi, corpo = '## Uma\n\n## Duas\n') {
+  mkdirSync(join(amb.dir, DIR_SPECS), { recursive: true });
+  const texto = `# Título ${nome}\n\n${pbi === null ? '' : `PBI: ${pbi}\n`}\n${corpo}`;
+  writeFileSync(join(amb.dir, DIR_SPECS, nome), texto);
+  return { caminho: `${DIR_SPECS}/${nome}`, bytes: Buffer.from(texto) };
+}
+
+test('aprovar-sem-plano-spec-unica-grava: sem plano.json, a única spec com PBI da entrega é aprovada (hook real → loop → diário)', () => {
+  const amb = repo({ plano: null, spec: null });
+  const alvo = specPbi(amb, 'a.md', 'GM-10');
+  specPbi(amb, 'b.md', 'GM-11'); // outra entrega não conta
+  specPbi(amb, 'c.md', null); // sem cabeçalho não conta
+  const r = hook(stdinTui(amb.dir));
+  assert.equal(r.rc, 0, r.err);
+  assert.notEqual(r.j?.decision, 'block', r.out);
+  const a = aprovadas(amb);
+  assert.equal(a.length, 1);
+  assert.deepEqual(a[0].dados, { spec: alvo.caminho, sha256: sha(alvo.bytes) });
+  assert.equal(a[0].sessao, 'S-dono');
+  assert.equal(r.j.systemMessage, `Spec ${alvo.caminho} aprovada pelo dono (sha256 ${sha(alvo.bytes).slice(0, 12)}…, entrega GM-10).`);
+  assert.equal(existsSync(join(amb.entregas, 'plano.json')), false, 'aprovar não cria plano');
+  // 2ª vez com o mesmo sha: ja_aprovada, nada gravado (a régua de sempre vale sem plano)
+  recusa(amb, stdinTui(amb.dir), /ja_aprovada/);
+  // a costura pela função: o mesmo resultado sem o hook, depois de editar a spec
+  writeFileSync(join(amb.dir, alvo.caminho), 'mudou\nPBI: GM-10\n');
+  assert.deepEqual(aprovarSpec(amb.dir, 'S-dono'), { ok: true, spec: alvo.caminho, sha256: sha(Buffer.from('mudou\nPBI: GM-10\n')), entrega: 'GM-10' });
+});
+
+test('aprovar-sem-plano-duas-specs-recusa: 2 specs da entrega ⇒ spec_ambigua; 0 ⇒ spec_ausente; nada gravado em nenhum dos dois', () => {
+  const duas = repo({ plano: null, spec: null });
+  specPbi(duas, 'a.md', 'GM-10');
+  specPbi(duas, 'b.md', 'GM-10');
+  recusa(duas, stdinTui(duas.dir), /spec_ambigua/);
+  assert.equal(aprovarSpec(duas.dir, 'S-dono').erro, 'spec_ambigua');
+  assert.equal(aprovadas(duas).length, 0);
+  assert.equal(existsSync(join(duas.entregas, 'plano.json')), false);
+  const nenhuma = repo({ plano: null, spec: null });
+  specPbi(nenhuma, 'b.md', 'GM-11');
+  recusa(nenhuma, stdinTui(nenhuma.dir), /spec_ausente/);
+  assert.equal(aprovarSpec(nenhuma.dir, 'S-dono').erro, 'spec_ausente');
+  assert.equal(aprovadas(nenhuma).length, 0);
+  // diretório de specs ausente também é 0 specs (não falha de leitura)
+  const semDir = repo({ plano: null, spec: null });
+  assert.equal(aprovarSpec(semDir.dir, 'S-dono').erro, 'spec_ausente');
+});
+
+test('aprovar-com-plano-inalterado: com plano.json vale plano.spec, mesmo com 2 specs da entrega em docs/superpowers/specs; plano.json intocado', () => {
+  const amb = repo({ spec: 'do plano\n' });
+  specPbi(amb, 'a.md', 'GM-10');
+  specPbi(amb, 'b.md', 'GM-10');
+  const planoAntes = readFileSync(join(amb.entregas, 'plano.json'), 'utf8');
+  const r = hook(stdinTui(amb.dir));
+  assert.notEqual(r.j?.decision, 'block', r.out);
+  assert.deepEqual(aprovadas(amb).map((e) => e.dados), [{ spec: SPEC, sha256: sha(Buffer.from('do plano\n')) }]);
+  assert.equal(readFileSync(join(amb.entregas, 'plano.json'), 'utf8'), planoAntes);
+  // plano presente e inválido não cai no caminho sem plano: segue plano_invalido
+  const ruim = repo({ plano: '{' });
+  specPbi(ruim, 'a.md', 'GM-10');
+  recusa(ruim, stdinTui(ruim.dir), /plano_invalido/);
+});
+
+test('ler-specs-ausente-x-ilegivel: diretório ausente ⇒ []; ilegível ⇒ lança specs_ilegiveis; cada campo vem do arquivo', () => {
+  const amb = repo({ plano: null, spec: null });
+  assert.deepEqual(lerSpecs(amb.dir), []);
+  const a = specPbi(amb, 'a.md', 'GM-10', '## Uma\n\n## Duas\n\n## Três\n');
+  specPbi(amb, 'z.md', null, '');
+  writeFileSync(join(amb.dir, DIR_SPECS, 'nao-md.txt'), 'PBI: GM-10\n');
+  mkdirSync(join(amb.dir, DIR_SPECS, 'pasta.md'));
+  // PBI só nas 15 primeiras linhas
+  writeFileSync(join(amb.dir, DIR_SPECS, 'tarde.md'), `# Tarde\n${'x\n'.repeat(15)}PBI: GM-10\n`);
+  assert.deepEqual(lerSpecs(amb.dir), [
+    { caminho: a.caminho, pbi: 'GM-10', sha256: sha(a.bytes), secoes: 3, titulo: 'Título a.md' },
+    { caminho: `${DIR_SPECS}/tarde.md`, pbi: null, sha256: sha(Buffer.from(`# Tarde\n${'x\n'.repeat(15)}PBI: GM-10\n`)), secoes: 0, titulo: 'Tarde' },
+    { caminho: `${DIR_SPECS}/z.md`, pbi: null, sha256: sha(Buffer.from('# Título z.md\n\n\n')), secoes: 0, titulo: 'Título z.md' },
+  ]);
+  if (!SEM_ROOT) {
+    chmodSync(join(amb.dir, DIR_SPECS), 0o000);
+    try {
+      assert.throws(() => lerSpecs(amb.dir), (e) => e.erro === 'specs_ilegiveis');
+      // e pela borda: ilegível não vira "sem spec" (spec_ausente), nada gravado
+      const r = aprovarSpec(amb.dir, 'S-dono');
+      assert.equal(r.erro, 'specs_ilegiveis');
+      assert.equal(aprovadas(amb).length, 0);
+    } finally {
+      chmodSync(join(amb.dir, DIR_SPECS), 0o755);
+    }
+  }
+});
+
+// ─────────────────────────────────────────────────────────────── T15 r1: PBI só do cabeçalho (DP-3 aj. 1) e garantias sem plano (aj. 2)
+
+/** As specs reais do repo, versionadas: as 6 com `PBI:` no meio da linha 3, entre `·`, e 3 sem PBI no cabeçalho; a da GM-14 cita `PBI: <ID>` também no corpo, que não conta. */
+const SPECS_REAIS = join(PLUGIN, '..', '..', DIR_SPECS);
+const REAIS = {
+  '2026-10-31-e1-fundacao-design.md': 'GM-9',
+  '2026-10-31-visao-2.0-design.md': null,
+  '2026-11-03-e2-loop-pouso-design.md': 'GM-10',
+  '2026-11-09-e3-sombra-emendas-entrega-design.md': 'GM-11',
+  '2026-11-09-e4-painel-design.md': 'GM-12',
+  '2026-11-10-e5-fluxo-gabarito-design.md': 'GM-13',
+  '2026-11-11-gm14-clareza-anexos.md': null,
+  '2026-11-11-gm14-clareza-design.md': 'GM-14',
+  '2026-11-11-gm14-decisoes-dono.md': null,
+};
+
+test('ler-specs-pbi-so-do-cabecalho: as 6 specs reais dão o PBI do meio da linha 3; o corpo nunca conta; ID fora do idPadrao ancorado não conta', () => {
+  const amb = repo({ plano: null, spec: null });
+  mkdirSync(join(amb.dir, DIR_SPECS), { recursive: true });
+  for (const nome of Object.keys(REAIS)) cpSync(join(SPECS_REAIS, nome), join(amb.dir, DIR_SPECS, nome));
+  const porNome = (lista) => Object.fromEntries(lista.map((s) => [s.caminho.slice(DIR_SPECS.length + 1), s.pbi]));
+  assert.deepEqual(porNome(lerSpecs(amb.dir)), REAIS);
+  assert.equal(Object.values(REAIS).filter((p) => p !== null).length, 6);
+  // casos sintéticos: cada um com o valor esperado
+  const casos = {
+    'corpo.md': ['# C\n\n## Notas\nVer PBI: GM-10\n', null], // depois do 1º `## ` nunca conta
+    'meio.md': ['# M\n\nIniciativa: x · PBI: GM-10 · Data: hoje\n\n## A\n', 'GM-10'],
+    'minusc.md': ['# m\nPBI: gm-10\n', null], // não casa o idPadrao padrão
+    'cauda.md': ['# c\nPBI: GM-10x\n', null], // `GM-10x` não é `GM-10`
+    'colado.md': ['# c\nXPBI: GM-10\n', null], // token precisa de início, espaço ou `·` antes
+    'primeiro.md': ['# p\nPBI: GM-11 · PBI: GM-10\n', 'GM-11'], // o 1º token decide
+    'ruim-primeiro.md': ['# r\nPBI: nada\nPBI: GM-10\n', null], // o 1º `PBI:` do cabeçalho decide, mesmo fora do padrão
+  };
+  for (const [nome, [texto]] of Object.entries(casos)) writeFileSync(join(amb.dir, DIR_SPECS, nome), texto);
+  const lidos = porNome(lerSpecs(amb.dir));
+  for (const [nome, [, esperado]] of Object.entries(casos)) assert.equal(lidos[nome], esperado, nome);
+  // idPadrao explícito: `GM-10` não casa `PROJ-\d+`; `PROJ-3` casa
+  writeFileSync(join(amb.dir, DIR_SPECS, 'proj.md'), '# P\nPBI: PROJ-3\n');
+  const outro = porNome(lerSpecs(amb.dir, 'PROJ-\\d+'));
+  assert.equal(outro['meio.md'], null);
+  assert.equal(outro['proj.md'], 'PROJ-3');
+  assert.equal(outro['2026-11-11-gm14-clareza-design.md'], null);
+});
+
+test('aprovar-sem-plano-corpo-nao-ambigua: cabeçalho de a.md + "## Notas / Ver PBI: GM-10" em c.md ⇒ a.md aprovada, nunca spec_ambigua', () => {
+  const amb = repo({ plano: null, spec: null });
+  const alvo = specPbi(amb, 'a.md', 'GM-10');
+  specPbi(amb, 'c.md', null, '## Notas\nVer PBI: GM-10\n');
+  assert.deepEqual(aprovarSpec(amb.dir, 'S-dono'), { ok: true, spec: alvo.caminho, sha256: sha(alvo.bytes), entrega: 'GM-10' });
+  assert.equal(aprovadas(amb).length, 1);
+});
+
+test('aprovar-sem-plano-spec-mudou: sem plano.json, a spec mudou entre o hash e o append ⇒ spec_mudou, 0 bytes novos', () => {
+  const amb = repo({ plano: null, spec: null });
+  const alvo = specPbi(amb, 'a.md', 'GM-10');
+  const antes = amb.bytes();
+  const r = aprovarSpec(amb.dir, 'S-dono', { antes: () => writeFileSync(join(amb.dir, alvo.caminho), 'outra\nPBI: GM-10\n') });
+  assert.equal(r.ok, false);
+  assert.equal(r.erro, 'spec_mudou');
+  assert.deepEqual(amb.bytes(), antes);
+  assert.equal(existsSync(join(amb.entregas, 'plano.json')), false);
+  // sem a troca, a mesma spec aprova
+  assert.equal(aprovarSpec(amb.dir, 'S-dono').ok, true);
+});
+
+test('aprovar-sem-plano-sem-efeito: sem plano.json, evento gravado que o diário relido não mostra ⇒ aprovacao_sem_efeito', () => {
+  const amb = repo({ plano: null, spec: null });
+  specPbi(amb, 'a.md', 'GM-10');
+  const r = aprovarSpec(amb.dir, 'S-dono', {
+    depois: () => { for (const n of readdirSync(amb.entregas)) if (n.startsWith('events.')) writeFileSync(join(amb.entregas, n), ''); },
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.erro, 'aprovacao_sem_efeito');
+});
+
+test('spec-na-worktree-da-sessao-sem-plano: sem plano.json, a spec só na worktree REAL é aprovada; o medir da sessão dá o mesmo sha; garantias intactas', async () => {
+  const { medir } = await import('../scripts/painel-medir.mjs');
+  const amb = repo({ plano: null, spec: null, branch: 'main' });
+  // T60 (emenda 71): o medir só grava com onboarding; a config entra só nesta fixture, commitada para valer também na worktree
+  writeFileSync(join(amb.dir, 'harness.config.json'), '{}\n');
+  git(amb.dir, 'add', 'harness.config.json'); git(amb.dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'chore: onboarding');
+  const wtCru = join(amb.dir, '.harness', 'worktrees', 'S1');
+  const r0 = git(amb.dir, 'worktree', 'add', '-q', '-b', 'wt/GM-10-S1', wtCru);
+  assert.equal(r0.status, 0, r0.stderr);
+  const wt = realpathSync(wtCru);
+  // a spec da entrega SÓ na worktree; a principal tem outra spec da mesma entrega (lê-la daria outro sha ou spec_ambigua)
+  const texto = '# GM-10\n\nIniciativa: X · PBI: GM-10 (Enabler) · Data: hoje\n\n## Uma\n';
+  const caminho = `${DIR_SPECS}/gm10.md`;
+  mkdirSync(join(wt, DIR_SPECS), { recursive: true });
+  writeFileSync(join(wt, caminho), texto);
+  specPbi(amb, 'outra.md', 'GM-10');
+  // hook real de dentro da worktree
+  const r = hook(stdinTui(wt));
+  assert.equal(r.rc, 0, r.err);
+  assert.notEqual(r.j?.decision, 'block', r.out);
+  const a = aprovadas(amb);
+  assert.deepEqual(a.map((e) => e.dados), [{ spec: caminho, sha256: sha(Buffer.from(texto)) }], 'no diário da principal, sha da worktree');
+  assert.equal(existsSync(join(wt, '.harness', 'entregas')), false, 'a worktree não ganhou diário');
+  assert.equal(existsSync(join(amb.entregas, 'plano.json')), false, 'aprovar não cria plano');
+  // lerSpecs do checkout da sessão: o mesmo sha
+  assert.deepEqual(lerSpecs(wt).filter((s) => s.pbi === 'GM-10').map((s) => [s.caminho, s.sha256]), [[caminho, sha(Buffer.from(texto))]]);
+  // medir (painel-medir) da mesma sessão: o mesmo caminho e sha
+  const rodar = (cmd, args, o) => (cmd === 'git' ? spawnSync('git', args, { cwd: o.cwd, encoding: 'utf8' }) : { status: 1, stdout: '', stderr: 'sem gh' });
+  medir(wt, { rodar, agentes: { session_id: 'S-medir', agentes: [] }, agora: () => Date.parse('2026-11-12T20:00:00Z') });
+  const medidos = amb.eventos().filter((e) => e.tipo === 'fato.medido' && e.dados.chave === 'spec').map((e) => [e.dados.valor.caminho, e.dados.valor.sha256]);
+  assert.deepEqual(medidos, [[caminho, sha(Buffer.from(texto))]]);
+  // garantias sem plano (DP-3 aj. 2) seguem do checkout da sessão: ja_aprovada, spec_mudou, aprovacao_sem_efeito
+  const bytesAntes = amb.bytes();
+  assert.equal(aprovarSpec(wt, 'S-dono').erro, 'ja_aprovada');
+  writeFileSync(join(wt, caminho), `${texto}v2\n`);
+  assert.equal(aprovarSpec(wt, 'S-dono', { antes: () => writeFileSync(join(wt, caminho), `${texto}v3\n`) }).erro, 'spec_mudou');
+  assert.deepEqual(amb.bytes(), bytesAntes, 'recusas não gravam');
+  const semEfeito = aprovarSpec(wt, 'S-dono', {
+    depois: () => { for (const n of readdirSync(amb.entregas)) if (n.startsWith('events.')) writeFileSync(join(amb.entregas, n), ''); },
+  });
+  assert.equal(semEfeito.erro, 'aprovacao_sem_efeito');
 });
