@@ -2226,6 +2226,11 @@ describe('T57 (emenda 63): o runner não digita fala sobre diálogo de permissã
       if (qual === 'simulado') return `printf '${DIALOGO}'`;
       if (qual === 'osc') return `printf '\\033]9;Claude needs your permission\\007'`;
       if (qual === 'esc-solto') return "printf 'Esc to cancel\\n'";
+      if (qual === 'trust-real' || qual === 'saida-real') {
+        const txt = qual === 'trust-real' ? REAL.trustReal.bytes : REAL.saidaTarefasReal.bytes;
+        const a = Math.floor(txt.length / 3);
+        return [txt.slice(0, a + 1), txt.slice(a + 1, 2 * a + 7), txt.slice(2 * a + 7)].map((x, i) => `cat ${wr(`pedaco${qual}${i}`, x)}`).join('; sleep 0.2; ');
+      }
       if (qual === 'parecido') return "printf 'Do you want to proceed with the refactor?\\n'";
       const txt = qual === 'real' ? REAL.comEscToCancel : REAL.semEscToCancel;
       const a = Math.floor(txt.length / 3);
@@ -2277,7 +2282,6 @@ describe('T57 (emenda 63): o runner não digita fala sobre diálogo de permissã
       ['real', 'o diálogo REAL gravado (tty.raw), sem o aviso OSC, em 3 pedaços partidos no meio de sequências: só o texto normalizado o detecta'],
       ['real-sem-esc', 'o diálogo REAL sem a linha "Esc to cancel": só `Do you want to proceed` + opções (1. Yes) o detecta, depois de normalizar o cursor'],
       ['osc', 'só o aviso OSC "Claude needs your permission" (sem texto de diálogo)'],
-      ['esc-solto', '"Esc to cancel" sozinho: antes só anotava e digitava por cima; agora abre o diálogo'],
     ]) {
       test(`dialogo-detectado-por-UM-sinal [${qual}]: ${quem}`, (t) => {
         const r = rodar(t, { dialogo: qual });
@@ -2288,6 +2292,58 @@ describe('T57 (emenda 63): o runner não digita fala sobre diálogo de permissã
         assert.ok(r.sends.indexOf('recusar-permissao') < r.sends.indexOf('digitar '), 'recusa antes da fala');
       });
     }
+    // MAJOR 1 (r2): `Esc to cancel` é o rodapé de OUTROS diálogos (trust, saída com tarefas em background). Só o sinal próprio do ask de permissão abre. Mutação: reintroduzir o ramo solto `Esc to cancel` ⇒ estes testes morrem
+    for (const [qual, quem] of [
+      ['trust-real', 'o diálogo de TRUST REAL (bytes do início do tty.raw 1794703689498, rodapé "Enter to confirm · Esc to cancel")'],
+      ['saida-real', 'o diálogo de SAÍDA com tarefas em background REAL (mesmo rodapé)'],
+      ['esc-solto', '"Esc to cancel" sozinho'],
+    ]) {
+      test(`sem-sinal-proprio-nao-abre-dialogo [${qual}]: ${quem}: nenhum Esc, nenhuma recusa, a fala é digitada`, (t) => {
+        const r = rodar(t, { dialogo: qual });
+        if (r === null) return;
+        assert.doesNotMatch(r.teclas, /esc/, 'nenhum Esc antes da fala');
+        assert.equal(r.fala, 'FALA DO ROTEIRO UMA VEZ SO');
+        assert.doesNotMatch(r.exp, /PERMISSAO-RECUSADA|PERGUNTA-DE-PERMISSAO/);
+        assert.deepEqual(permissaoDoExpLog(r.exp), { apareceu: false, recusadas: 0, naoFechou: false });
+      });
+    }
+    // a `ler` REAL do a1.exp, direto (sem processo filho), em pedaços de vários tamanhos; o recusarImports vira contador (o real manda Enter a um spawn)
+    const lerTcl = (d, pedacos) => {
+      const arqs = pedacos.map((x, i) => { writeFileSync(join(d, `p${i}`), x); return join(d, `p${i}`); });
+      const corpo = [`set imp 0`, `proc recusarImports {} { global imp; incr imp }`, `proc nota {s} { puts "NOTA $s" }`,
+        `foreach a {${arqs.join(' ')}} { set f [open $a r]; fconfigure $f -translation binary -encoding utf-8; set txt [read $f]; close $f; ler $txt }`,
+        `puts "ABERTO=$dialogo_aberto IMPORTS=$imp"`].join('\n');
+      writeFileSync(join(d, 'ler.exp'), `set rundir ${d}\n${procsDoExp()}\n${corpo}\n`);
+      const r = spawnSync('expect', ['-f', join(d, 'ler.exp')], { encoding: 'utf8', timeout: 60000 });
+      assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+      return r.stdout;
+    };
+    const fatias = (txt, n) => { const o = []; for (let i = 0; i < txt.length; i += n) o.push(txt.slice(i, i + n)); return o; };
+    for (const tam of [7, 100, 100000]) {
+      test(`ler-direto [pedaços de ${tam}]: trust e saída reais ⇒ 0 detecções; o diálogo real de permissão ⇒ detecta`, (t) => {
+        if (!temExpect(t)) return;
+        const d = novo();
+        assert.match(lerTcl(d, fatias(REAL.trustReal.bytes, tam)), /ABERTO=0/);
+        assert.match(lerTcl(d, fatias(REAL.saidaTarefasReal.bytes, tam)), /ABERTO=0/);
+        assert.match(lerTcl(d, fatias(REAL.trustReal.bytes + REAL.saidaTarefasReal.bytes, tam)), /ABERTO=0/);
+        assert.match(lerTcl(d, fatias(REAL.comEscToCancel, tam)), /ABERTO=1/);
+        // `Do you want to proceed` + rodapé "Esc to cancel", mas SEM as opções 1. Yes: não é o ask de permissão (mutação: aceitar `Esc to cancel` no lugar da opção)
+        assert.match(lerTcl(d, fatias('Do you want to proceed?\n  Enter to confirm \u00b7 Esc to cancel\n', tam)), /ABERTO=0/);
+        // o trust ANTES do ask real não esconde o ask
+        assert.match(lerTcl(d, fatias(REAL.trustReal.bytes + REAL.semEscToCancel, tam)), /ABERTO=1/);
+      });
+    }
+    // MINOR 2 (r2): o ramo de imports fazia `return` antes do teste de permissão
+    test('imports-e-permissao-no-mesmo-pedaco: recusa os imports E abre o diálogo de permissão (nenhum dos dois se perde)', (t) => {
+      if (!temExpect(t)) return;
+      const d = novo();
+      const imports = 'Allow external CLAUDE.md file imports?\n';
+      const so = lerTcl(d, [imports + REAL.osc]);
+      assert.match(so, /ABERTO=1 IMPORTS=1/);
+      assert.match(lerTcl(d, [imports + REAL.semEscToCancel]), /ABERTO=1 IMPORTS=1/);
+      assert.match(lerTcl(d, [imports]), /ABERTO=0 IMPORTS=1/, 'só os imports: não é permissão');
+      assert.match(lerTcl(d, [REAL.osc, imports]), /ABERTO=1 IMPORTS=1/, 'permissão antes, imports depois, em leituras separadas');
+    });
     test('dialogo-que-nao-fecha: a célula para com causa própria, a fala NÃO é digitada e a saída NÃO manda /exit nem Enter (usa a `sair` real)', (t) => {
       const r = rodar(t, { fecha: false }); if (r === null) return;
       assert.equal(r.status, 'DIALOGO_NAO_FECHOU');

@@ -65,14 +65,15 @@ proc normalizar {txt} {
   regsub -all {[ \t\r\n]+} $t " " t
   return $t
 }
-# QUALQUER sinal de diálogo de permissão abre o diálogo (dialogo_aberto=1): o aviso OSC `needs your permission` (cru), ou o texto normalizado `Do you want to proceed|make` com as opções (`1. Yes`) ou `Esc to cancel`, ou `Allow this`/`Esc to cancel` soltos. Nunca só anotar e digitar por cima
+# o diálogo de PERMISSÃO abre (dialogo_aberto=1) SÓ pelo sinal próprio do ask: o aviso OSC `needs your permission` (cru) ou o texto normalizado `Do you want to proceed|make` seguido da opção `1. Yes`. NUNCA por `Esc to cancel` ou `Allow this` soltos (T57 r2, MAJOR 1): o rodapé "Enter to confirm · Esc to cancel" é do diálogo de TRUST (tty.raw 1794703689498 offset 2139) e do diálogo de saída com tarefas em background, e os confundia com permissão. Nunca só anotar e digitar por cima
 proc ler {txt} {
   global dialogo_aberto cauda
   set j "$cauda$txt"
   set cauda [string range $j end-1500 end]
   set n [normalizar $j]
-  if {[regexp {external.{1,60}imports\?} $n]} { recusarImports; set cauda ""; return }
-  if {[regexp {needs your permission} $j] || [regexp {Do you want to (proceed|make).{0,250}(1\. ?Yes|Esc to cancel)} $n] || [regexp {Allow this|Esc to cancel} $n]} {
+  # sem `return`: o ask de permissão no mesmo pedaço de um "external imports?" não pode se perder (T57 r2, MINOR 2)
+  if {[regexp {external.{1,60}imports\?} $n]} { recusarImports; set cauda "" }
+  if {[regexp {needs your permission} $j] || [regexp {Do you want to (proceed|make).{0,250}1\. ?Yes} $n]} {
     if {!$dialogo_aberto} { nota "PERGUNTA-DE-PERMISSAO na tela" }
     set dialogo_aberto 1; set cauda ""
   }
