@@ -15,7 +15,7 @@ import { pendenciasAprendizado } from './pendencias.js';
 const TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 /** Papéis de task do loop; a lista mora em `formas.ts` (a forma do aprendizado a usa e `loop.ts` já depende de `formas.ts` por `emenda.ts`). */
 export { PAPEIS };
-export const TIPOS_DE_TASK                    = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
+export const TIPOS_DE_TASK                    = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'task.fora'];
 /**
  * Progresso (REQ-LOOP-5): os eventos que `proximaAcao` consome, TIPOS_DE_TASK, `ci.resultado` e o julgamento de emenda (descongela).
  * Fonte única: o hook Stop (contador de Stops) e o mod (marcador de pouso pendente) importam esta lista; guarda, sessão, custo,
@@ -62,7 +62,7 @@ export function ordenar(eventos          )                                      
 }
 
                         
-                                                                                                                                  
+                                                                                                                                                         
 
 /** Eventos de task como a tabela os enxerga; o veredito já vem classificado pela rodada e pelos achados. */
 export const CHAVES_DE_EVENTO = [
@@ -70,6 +70,7 @@ export const CHAVES_DE_EVENTO = [
   'veredito.aprovado', 'veredito.aprovado.com_achado',
   'veredito.reprovado.r1', 'veredito.reprovado.teto', 'veredito.reprovado.sem_achado',
   'task.integrada', 'reaberta.retomada', 'reaberta.dono', 'reaberta.sombra', 'concluida.reentrega',
+  'fora.adiada', 'fora.cortada', 'reaberta.fora',
 ]         ;
                                                             
 
@@ -88,23 +89,29 @@ const VEREDITOS = {
  * `aprovada` (b2, rodada − 1: o APROVADO anulado não conta); em qualquer outro estado é par ausente (b3). O motivo não dá poder: não tira do teto, não pula review.
  * `reaberta.sombra` (GM-14 T36, FIEL-15): SÓ em `no_teto` (⇒ `pendente`, rodada 0); em qualquer outro estado é par ausente: a Sombra nunca grava
  * evento sem efeito que pareça liberação. "1 vez por task e só a 1ª liberação" é da borda (`loop.mjs liberar`), que conta no diário.
+ * GM-15 T5 (REQ-ENT-2): `fora.adiada` e `fora.cortada` (`task.fora`) levam a `adiada`/`cortada` SÓ de estado não integrado e sem agente em voo
+ * (`pendente`, `concluida`, `reprovada`, `aprovada`, `no_teto`); de `implementando`, `corrigindo`, `em_revisao`, `integrada` ou de outro fora é par ausente.
+ * `adiada` e `cortada` são terminais: só `reaberta.fora` (`task.reaberta {de:'fora'}`, dono ou Sombra) sai, para `pendente` com rodada 0 (aprendizado 142).
  */
 export const TRANSICOES                                                               = {
-  pendente: { 'iniciada.implementador': 'implementando', 'reaberta.retomada': 'pendente', 'reaberta.dono': 'pendente' },
+  pendente: { 'fora.adiada': 'adiada', 'fora.cortada': 'cortada', 'iniciada.implementador': 'implementando', 'reaberta.retomada': 'pendente', 'reaberta.dono': 'pendente' },
   implementando: { 'task.concluida': 'concluida', 'reaberta.retomada': 'pendente', 'reaberta.dono': 'implementando' },
-  concluida: { 'iniciada.revisor': 'em_revisao', ...VEREDITOS, 'reaberta.retomada': 'concluida', 'reaberta.dono': 'concluida', 'concluida.reentrega': 'concluida' },
+  concluida: { 'fora.adiada': 'adiada', 'fora.cortada': 'cortada', 'iniciada.revisor': 'em_revisao', ...VEREDITOS, 'reaberta.retomada': 'concluida', 'reaberta.dono': 'concluida', 'concluida.reentrega': 'concluida' },
   em_revisao: { ...VEREDITOS, 'reaberta.retomada': 'concluida', 'reaberta.dono': 'em_revisao' },
-  reprovada: { 'iniciada.correcao': 'corrigindo', 'reaberta.retomada': 'reprovada', 'reaberta.dono': 'reprovada' },
+  reprovada: { 'fora.adiada': 'adiada', 'fora.cortada': 'cortada', 'iniciada.correcao': 'corrigindo', 'reaberta.retomada': 'reprovada', 'reaberta.dono': 'reprovada' },
   corrigindo: { 'task.concluida': 'concluida', 'reaberta.retomada': 'reprovada', 'reaberta.dono': 'corrigindo' },
-  aprovada: { 'task.integrada': 'integrada', 'reaberta.retomada': 'aprovada', 'reaberta.dono': 'aprovada', 'concluida.reentrega': 'concluida' },
+  aprovada: { 'fora.adiada': 'adiada', 'fora.cortada': 'cortada', 'task.integrada': 'integrada', 'reaberta.retomada': 'aprovada', 'reaberta.dono': 'aprovada', 'concluida.reentrega': 'concluida' },
   // Autotransição: só o dono (ou a Sombra, 1 vez, com o flag de origin: FIEL-15) tira do teto; evento avulso não tira nem quebra. `task.integrada` fica de fora: integrar sem liberação é fraude.
   no_teto: {
+    'fora.adiada': 'adiada', 'fora.cortada': 'cortada',
     'iniciada.implementador': 'no_teto', 'iniciada.revisor': 'no_teto', 'iniciada.correcao': 'no_teto', 'task.concluida': 'no_teto',
     'veredito.aprovado': 'no_teto', 'veredito.aprovado.com_achado': 'no_teto', 'veredito.reprovado.r1': 'no_teto',
     'veredito.reprovado.teto': 'no_teto', 'veredito.reprovado.sem_achado': 'no_teto',
     'reaberta.retomada': 'no_teto', 'reaberta.dono': 'pendente', 'reaberta.sombra': 'pendente',
   },
   integrada: { 'reaberta.retomada': 'integrada', 'reaberta.dono': 'integrada' },
+  adiada: { 'reaberta.fora': 'pendente' },
+  cortada: { 'reaberta.fora': 'pendente' },
 };
 
 const contagem = (v         )          => Number.isInteger(v) && (v          ) >= 0;
@@ -123,7 +130,16 @@ function chaveDe(e        , rodada        , estado            )                 
       return { chave: 'concluida.reentrega', rodada: estado === 'aprovada' ? rodada - 1 : null };
     case 'task.integrada':
       return { chave: 'task.integrada', rodada: null };
+    case 'task.fora':
+      if (dados.como !== 'adiada' && dados.como !== 'cortada') return 'como inválido';
+      return { chave: `fora.${dados.como}`               , rodada: null };
     case 'task.reaberta':
+      // GM-15 T5: a volta de `fora` ({de:'fora'}) é do dono ou da Sombra, nunca `retomada`; outro valor de `de` não é lido como reabertura comum.
+      if (dados.de !== undefined) {
+        if (dados.de !== 'fora') return 'de inválido';
+        if (dados.origem !== 'dono' && dados.origem !== 'sombra') return 'origem inválida';
+        return { chave: 'reaberta.fora', rodada: null };
+      }
       if (dados.origem !== 'dono' && dados.origem !== 'retomada' && dados.origem !== 'sombra') return 'origem inválida';
       return { chave: `reaberta.${dados.origem}`               , rodada: null };
     case 'review.veredito': {
@@ -246,7 +262,30 @@ function depLiberada(estados                           , dep        )          {
 }
 
 const EM_VOO                        = ['implementando', 'corrigindo', 'em_revisao'];
-const SEM_RESTO                        = ['integrada', 'no_teto'];
+const SEM_RESTO                        = ['integrada', 'no_teto', 'adiada', 'cortada'];
+/** REQ-ENT-2: terminal que sai do alvo, do `parar teto_rodadas`, do `nao_conseguiu` e do `concluir`. */
+const FORA                        = ['adiada', 'cortada'];
+const FORA_PERMITIDO                        = ['pendente', 'concluida', 'reprovada', 'aprovada', 'no_teto'];
+
+                           
+                
+                                                                                                  
+                                                                
+
+/**
+ * REQ-ENT-2: `adiar`/`cortar` `task` é permitido? Só de estado não integrado e sem agente em voo; e só se todo dependente direto já está fora.
+ * Puro: a borda (`loop.mjs`) chama antes de gravar `task.fora` e lista os `dependentes` na recusa.
+ */
+export function foraPermitido(plano       , eventos          , task        )                {
+  const ord = ordenar(eventos);
+  const proj = ord.ok ? projetar(plano, ord.eventos) : null;
+  if (!proj) return { ok: false, motivo: 'diario_invalido' };
+  const e = proj.estados.get(task);
+  if (e === undefined) return { ok: false, motivo: 'task_desconhecida' };
+  if (!FORA_PERMITIDO.includes(e.estado)) return { ok: false, motivo: 'estado', estado: e.estado };
+  const dependentes = plano.tasks.filter((t) => t.deps.includes(task) && !FORA.includes(de(proj.estados, t.id)              )).map((t) => t.id);
+  return dependentes.length > 0 ? { ok: false, motivo: 'dependentes', dependentes } : { ok: true };
+}
 
 export function proximaAcao(plano       , eventos          , sinais                                      )           {
   // (1)
@@ -276,6 +315,8 @@ export function proximaAcao(plano       , eventos          , sinais             
   const donoAberto = pendencias.length > 0;
   // Plano vazio não é sucesso: nada foi entregue.
   if (plano.tasks.length === 0) return { tipo: 'parar', motivo: 'nao_conseguiu' };
+  // REQ-ENT-2: o alvo é só o que não está fora; plano com tudo fora também não entregou nada.
+  if (plano.tasks.every((t) => FORA.includes(de(proj.estados, t.id)              ))) return { tipo: 'parar', motivo: 'nao_conseguiu' };
 
   const { estados } = proj;
   const est = (id        )               => estados.get(id)                ;
@@ -324,7 +365,7 @@ export function proximaAcao(plano       , eventos          , sinais             
 
   // (8) Tudo integrado: com proposta aberta a spec está em disputa, então nem `concluir` nem entrega (REQ-EME-2).
   const esperaEmenda = ()           => ({ tipo: 'esperar', motivo: 'emenda', propostas: abertas });
-  if (ids.every((id) => est(id).estado === 'integrada')) {
+  if (ids.every((id) => est(id).estado === 'integrada' || FORA.includes(est(id).estado))) {
     if (abertas.length > 0) return esperaEmenda();
     return donoAberto ? aprender() : { tipo: 'concluir' };
   }
@@ -337,7 +378,7 @@ export function proximaAcao(plano       , eventos          , sinais             
   const morta = ids.find((id) => EM_VOO.includes(est(id).estado));
   if (morta !== undefined) return { tipo: 'parar', motivo: 'nao_conseguiu', task: morta };
   // Só espera o dono quando TUDO que falta está congelado; uma task fora do congelamento que ninguém despacha está presa.
-  const faltam = ids.filter((id) => est(id).estado !== 'integrada');
+  const faltam = ids.filter((id) => est(id).estado !== 'integrada' && !FORA.includes(est(id).estado));
   if (faltam.every((id) => congeladas.has(id))) return esperaEmenda();
   // Sem agente vivo e sem próxima ação (ex.: task iniciada cujo agente morreu): para, nunca em silêncio.
   return { tipo: 'parar', motivo: 'nao_conseguiu', task: faltam.find(livre)           };
