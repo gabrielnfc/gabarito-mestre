@@ -33,6 +33,7 @@ const comEnv = (k, valor, fn) => {
   let r; try { r = fn(); } catch (e) { restaurarEnv(k, antes); throw e; }
   return r && typeof r.then === 'function' ? r.finally(() => restaurarEnv(k, antes)) : (restaurarEnv(k, antes), r);
 };
+const temExpect = (t) => { if (spawnSync('expect', ['-v'], { encoding: 'utf8' }).error) { t.skip('expect ausente'); return false; } return true; };
 const tmp = () => { const d = realpathSync(mkdtempSync(join(tmpdir(), 'conversa-pontos-'))); // real: sem TMPDIR o macOS cai em /tmp (symlink de /private/tmp)
   TMPS.push(d); return d; };
 test('T58: restaurar variável de ambiente ausente a deixa AUSENTE (nunca a string "undefined"); com valor, devolve o valor', () => {
@@ -1769,7 +1770,8 @@ describe('T52 (emenda 49 b) o a1.exp da sessão curta: marcos no tty.raw, (b) re
     const recebido = existsSync(join(rundir, 'recebido.txt')) ? readFileSync(join(rundir, 'recebido.txt'), 'utf8').split('\n').filter(Boolean) : [];
     return { r, rundir, recebido, expLog: existsSync(join(rundir, 'exp.log')) ? readFileSync(join(rundir, 'exp.log'), 'utf8') : '', marcos: R.emularTela(readFileSync(join(rundir, 'tty.raw'), 'utf8'), 24, 80).map((q) => q.marco).filter((m, i, a) => m !== null && m !== a[i - 1]) };
   }
-  test('abaixo-do-limiar: responde a (b) com o comando do runner, marca os estágios em ordem e digita /gabarito painel', { timeout: 100_000 }, () => {
+  test('abaixo-do-limiar: responde a (b) com o comando do runner, marca os estágios em ordem e digita /gabarito painel', { timeout: 100_000 }, (t) => {
+    if (!temExpect(t)) return;
     const c = rodarCurta({ pedido: true, comando: '/gabarito-mestre:responder sess:3 3' });
     assert.equal(c.r.status, 0, `${c.r.stdout}${c.r.stderr}`);
     assert.deepEqual(c.marcos, ['inicio', 'b-respondida', 'pedido', 'depois-do-pedido']);
@@ -1778,7 +1780,8 @@ describe('T52 (emenda 49 b) o a1.exp da sessão curta: marcos no tty.raw, (b) re
     assert.ok(iResp >= 0, `a resposta da (b) foi digitada: ${JSON.stringify(c.recebido)}`);
     assert.ok(iPed > iResp, 'o pedido do dono vem DEPOIS de a (b) ser respondida');
   });
-  test('MAJOR-3 a1.exp espera o PAROU sair: PAROU que não sai para a célula ANTES do pedido (evidência vazia)', { timeout: 150_000 }, () => {
+  test('MAJOR-3 a1.exp espera o PAROU sair: PAROU que não sai para a célula ANTES do pedido (evidência vazia)', { timeout: 150_000 }, (t) => {
+    if (!temExpect(t)) return;
     const c = (() => { try { return rodarCurta({ pedido: true, comando: '', parou: '1' }); } catch (e) { return { erro: e }; } })();
     assert.equal(c.erro, undefined, String(c.erro));
     assert.match(c.expLog, /PAROU-NAO-SAIU/);
@@ -1786,7 +1789,8 @@ describe('T52 (emenda 49 b) o a1.exp da sessão curta: marcos no tty.raw, (b) re
     assert.equal(c.marcos.includes('b-respondida'), false);
     assert.equal(R.causaDoStatus('PAROU_NAO_SAIU').includes('evidência vazia'), true);
   });
-  test('sem-pedido-e-sem-pergunta: nada é digitado além do /exit; os marcos de pedido não existem', { timeout: 100_000 }, () => {
+  test('sem-pedido-e-sem-pergunta: nada é digitado além do /exit; os marcos de pedido não existem', { timeout: 100_000 }, (t) => {
+    if (!temExpect(t)) return;
     const c = rodarCurta({ pedido: false, comando: '' });
     assert.equal(c.r.status, 0, `${c.r.stdout}${c.r.stderr}`);
     assert.deepEqual(c.marcos, ['inicio', 'b-respondida']);
@@ -2241,7 +2245,6 @@ describe('T57 (emenda 63): o runner não digita fala sobre diálogo de permissã
       const exp = readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'a1.exp'), 'utf8');
       return exp.slice(exp.indexOf('set arq [open $rundir/falas.tsv r]'));
     };
-    const temExpect = (t) => { if (spawnSync('expect', ['-v'], { encoding: 'utf8' }).error) { t.skip('expect ausente'); return false; } return true; };
     // o comando de shell que desenha o diálogo `qual`: texto simulado, o diálogo real (em 3 pedaços, partindo as sequências no meio), o real sem o `Esc to cancel`, só o aviso OSC, ou só o `Esc to cancel`
     const mostrar = (d, qual, pedacos = 3) => {
       const wr = (n, txt) => { writeFileSync(join(d, n), txt); return join(d, n); };
