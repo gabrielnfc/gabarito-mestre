@@ -115,12 +115,14 @@
       "id": "T5",
       "titulo": "Núcleo de adiada e cortada",
       "deps": [
-        "T1"
+        "T1",
+        "T16"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/loop.ts",
         "plugins/gabarito-mestre/gates/dist/loop.js",
-        "plugins/gabarito-mestre/gates/test/loop.test.ts"
+        "plugins/gabarito-mestre/gates/test/loop.test.ts",
+        "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs"
       ],
       "reqs": [
         "REQ-ENT-2"
