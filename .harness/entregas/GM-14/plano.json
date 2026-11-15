@@ -1391,7 +1391,10 @@
         "plugins/gabarito-mestre/gates/src/guarda.ts",
         "plugins/gabarito-mestre/gates/dist/guarda.js",
         "plugins/gabarito-mestre/docs/virada-2.1.md",
-        "CHANGELOG.md"
+        "CHANGELOG.md",
+        "plugins/gabarito-mestre/gates/test/aprovar-spec.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-costura.test.mjs"
       ],
       "reqs": [
         "REQ-DIA-1"
