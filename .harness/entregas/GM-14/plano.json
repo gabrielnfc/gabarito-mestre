@@ -1366,7 +1366,9 @@
         "plugins/gabarito-mestre/gates/scripts/stop-loop.mjs",
         "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs",
         "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
-        "plugins/gabarito-mestre/gates/test/fumaca-loop/caminhada.mjs"
+        "plugins/gabarito-mestre/gates/test/fumaca-loop/caminhada.mjs",
+        "plugins/gabarito-mestre/gates/test/loop.test.ts",
+        "plugins/gabarito-mestre/gates/test/fumaca-loop.test.mjs"
       ],
       "reqs": [
         "REQ-POU-1"
