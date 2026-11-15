@@ -108,8 +108,8 @@ describe('aplicar — harness.config.json', () => {
     assert.throws(() => aplicar(dir, 'fluxo', { ferramenta: 'arquivos' }), ArquivoInvalido);
     assert.equal(readFileSync(join(dir, 'harness.config.json'), 'utf8'), '{"docsDir": ');
   });
-  test('seção desconhecida é RangeError; as seis do contrato existem (E5a T6b: entrega e onboarding entram)', () => {
-    assert.deepEqual(SECOES, ['fluxo', 'versionamento', 'orquestracao', 'contexto', 'entrega', 'onboarding']);
+  test('seção desconhecida é RangeError; as oito do contrato existem (E5a T6b: entrega e onboarding entram)', () => {
+    assert.deepEqual(SECOES, ['fluxo', 'versionamento', 'orquestracao', 'contexto', 'entrega', 'guarda', 'sombra', 'onboarding']);
     assert.throws(() => aplicar(repo(), 'quality', {}), RangeError);
   });
   test('entrega e onboarding são seções graváveis, e o CLI --set as aceita', () => {
