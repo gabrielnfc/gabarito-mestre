@@ -1330,6 +1330,21 @@
         "REQ-PRG-1",
         "REQ-TRI-1"
       ]
+    },
+    {
+      "id": "T58",
+      "titulo": "TMPDIR restaurado sem undefined",
+      "deps": [
+        "T49",
+        "T55",
+        "T57"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/test/conversa-pontos.test.mjs"
+      ],
+      "reqs": [
+        "REQ-GLB-1"
+      ]
     }
   ]
 }
