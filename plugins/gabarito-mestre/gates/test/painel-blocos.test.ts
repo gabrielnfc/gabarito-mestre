@@ -11,7 +11,7 @@ import { projetarPainel, renderPainel, TABELA_PARAR } from '../src/painel.ts';
 import { fraseHistorico, historicoDe, paraTexto } from '../src/painel-texto.ts';
 import { PAPEL_EXECUTIVO } from '../src/painel-executivo.ts';
 import { orcamentoDe } from '../src/orcamento.ts';
-import { renderBlocos } from '../src/painel-esquadrao.ts';
+import { renderBlocos, renderEsquadrao } from '../src/painel-esquadrao.ts';
 import { linhaTecnica } from '../src/origem.ts';
 import { colunas } from '../src/painel-largura.ts';
 import type { FatosTrilha } from '../src/trilha.ts';
@@ -60,9 +60,34 @@ const entrada = (extra: Partial<Entrada> = {}): Entrada => ({
 const proj = (plano: Plano | null, itens: Item[] | null, extra: Partial<Entrada> = {}): EstadoPainel =>
   projetarPainel(plano, itens === null ? null : D(itens), entrada(extra) as EntradaPainel & { fatos: FatosTrilha });
 const vivo = (description: string, status = 'running', type = 'general-purpose'): AgenteVivo => ({ id: `a-${description}`, type, description, status, uso: null });
-const linhas = (s: EstadoPainel, o: Partial<OpcoesRender> = {}): string[] =>
+/** GM-15 T29 (D-G1b): o desenho é o do E4. `cru` = as linhas desenhadas; `linhas` = sem os separadores `─` e sem o rótulo do preset à direita do cabeçalho (layout, não regra). */
+const SEP = /^─+$/;
+const semRotulo = (l: string): string => l.replace(/ {2,}(esquadrão( · .*)?|executivo)$/, '');
+const cru = (s: EstadoPainel, o: Partial<OpcoesRender> = {}): string[] =>
   paraTexto(renderPainel(s, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 200, ...o }), 'mono').split('\n').filter((l) => l !== '');
+const linhas = (s: EstadoPainel, o: Partial<OpcoesRender> = {}): string[] => cru(s, o).filter((l) => !SEP.test(l)).map(semRotulo);
 const texto = (s: EstadoPainel, o: Partial<OpcoesRender> = {}): string => linhas(s, o).join('\n');
+/** Igualdade módulo as trocas do E4 com pouca altura (mesma informação): barra de largura diferente, contexto com o nome do líder, item com o `◆` do rótulo. */
+const norm = (x: string): string => x.replace(/[█░]+/g, '#').replace(/^(│ {2}|\S+ )ctx /, 'ctx ').replace(/^◆ (?!ATENÇÃO|DEPENDE)/, '  ');
+/** Linhas do RECENTE no desenho do E4 (histórico `hh:mm <glifo> …`; hora sem leitura = "?"). */
+const ehRecente = (x: string): boolean => /^(\d\d:\d\d|\?) [✓✗●○?] /.test(x);
+/** Itens do topo (DEPENDE): PAROU, `depende de você: …` e os itens recuados; sem o rótulo `◆ DEPENDE DE VOCÊ` (desenho) e sem continuações. */
+const itensTopo = (xs: string[]): string[] => {
+  const fimTopo = xs.findIndex((x, i) => i > 0 && /^(PLANO|FASE|EQUIPE|última entrega|◆ ATENÇÃO)/.test(x) || ehRecente(x));
+  return xs.slice(1, fimTopo < 0 ? xs.length : fimTopo).filter((x) => !/^◆ DEPENDE DE VOCÊ|^    /.test(x));
+};
+/**
+ * Prioridade de corte (D-P8) de cada linha do desenho, pelo padrão do E4: 1 topo · 2 cabeçalho, PLANO/FASE, última entrega · 3 orquestrador
+ * (ctx), agentes, linha-resumo, FIEL-4 · 4 ATENÇÃO · 5 RECENTE · 6 o que só o E4 tinha (tasks, fila, faixa, limites, rótulos, nome do líder, narração, rodapé).
+ */
+const prioDe = (x: string): number => {
+  if (/^(GABARITO|PLANO|FASE|última entrega)/.test(x)) return 2;
+  if (/^◆ DEPENDE DE VOCÊ|^EQUIPE {2,}|^\S+ {2}orquestra|^│ {1,2}(5h|▸)|^CI ●|^ {2}[●○◐✓✗?] |^[●○◐✓✗?] T|^○ /.test(x)) return 6;
+  if (/^│ {2}ctx |^\S+ ctx |^[├└]─? ●|^ {2}\d+ agentes:|^EQUIPE · /.test(x)) return 3;
+  if (/^◆ ATENÇÃO|^ {11}\S/.test(x)) return 4;
+  if (ehRecente(x)) return 5;
+  return 1;
+};
 
 /** Execução: T1..T3 integradas, T4 implementando, T5 em revisão, T6 pendente. */
 const EXECUCAO: Item[] = [...ciclo('T1', 0), ...ciclo('T2', 10), ...ciclo('T3', 20), ini(40, 'T4'), ini(41, 'T5'), con(42, 'T5'), ini(43, 'T5', 'revisor')];
@@ -81,14 +106,14 @@ test('orcamento-1-parou-vence-pergunta: com PAROU e pergunta aberta e 1 linha, o
   assert.equal(s.pergunta?.texto, 'qual caminho seguir?');
   const l = linhas(s, { orcamento: 1 });
   assert.equal(l.length, 1);
-  assert.match(l[0], /^PAROU \d\d:\d\d · teto de rodadas de review em T1/);
+  assert.match(l[0], /^■ PAROU \d\d:\d\d · teto de rodadas de review em T1/);
   assert.match(l[0], /\(\+\d+\)$/, 'o que não coube vira (+N), nunca some em silêncio');
   const n = Number(/\(\+(\d+)\)$/.exec(l[0])?.[1]);
-  const todas = linhas(s).filter((x) => /^(PAROU|depende de você|  )/.test(x) && !/^  \d\d:/.test(x));
+  const todas = itensTopo(linhas(s));
   assert.ok(n >= 1 && n === todas.length - 1, `(+${n}) = itens do topo que não couberam (${todas.length - 1})`);
-  // com 2 linhas a pergunta entra logo depois do PAROU
+  // com 2 linhas a pergunta entra logo depois do PAROU (o rótulo `◆ DEPENDE DE VOCÊ` sai antes e o item leva o `◆`)
   const l2 = linhas(s, { orcamento: 2 });
-  assert.match(l2[1], /qual caminho seguir\?/);
+  assert.match(l2[1], /^◆ qual caminho seguir\?/);
 });
 
 test('mais-n-so-se-nao-cabe: lista do topo que cabe inteira não ganha (+N); que não cabe, ganha', () => {
@@ -98,52 +123,49 @@ test('mais-n-so-se-nao-cabe: lista do topo que cabe inteira não ganha (+N); que
   for (const orc of [5, 9, 40]) assert.ok(linhas(s, { orcamento: orc }).every((x) => !/\(\+\d+\)/.test(x)), `orçamento ${orc}: cabe, sem (+N)`);
   const curto = linhas(s, { orcamento: 1 });
   assert.equal(curto.length, 1);
-  assert.match(curto[0], /renovar o certificado.*\(\+1\)$/);
+  assert.match(curto[0], /^◆ renovar o certificado.*\(\+1\)$/);
 });
 
 test('prioridades-por-h-e-maxrows: 9 pares de H × maxRows ⇒ ≤ orçamento, topo presente, blocos de cima antes dos de baixo, 0 "N more"', () => {
   const s = proj(P(...IDS), [...EXECUCAO, ...RECENTES.slice(-3), nota(50, 'pendencia', 'renovar o certificado')], {
     agentes: [vivo('T4 implementador'), vivo('T5 revisor')],
   });
-  const ordem = (l: string) => (/^(PAROU|depende de você|  [a-z])/i.test(l) && !/^  (\d|ARAGORN|LEGOLAS|GIMLI|FRODO|SAM|MERRY|PIPPIN|BOROMIR|Teste)/.test(l) ? 1 : 0);
-  void ordem;
   const pares: [number | undefined, number][] = [[50, 20], [40, 15], [24, 7], [20, 5], [50, 50], [24, 24], [20, 20], [24, 6], [50, 19]];
   const cheio = linhas(s);
-  const blocoDe = (l: string, i: number, xs: string[]): string => {
-    for (let k = i; k >= 0; k--) {
-      const m = /^(GABARITO|depende de você|PAROU|PRONTO|FASE|AGORA|ATENÇÃO|RECENTE)/.exec(xs[k]);
-      if (m) return m[1] === 'PAROU' ? 'depende de você' : m[1];
-    }
-    return '?';
-  };
-  const PRIO: Record<string, number> = { 'depende de você': 1, GABARITO: 2, PRONTO: 2, FASE: 2, AGORA: 3, 'ATENÇÃO': 4, RECENTE: 5 };
-  const prioCheio = cheio.map((l, i) => PRIO[blocoDe(l, i, cheio)]);
   for (const [h, maxRows] of pares) {
     const orc = orcamentoDe(h, maxRows);
+    const bruto = cru(s, { orcamento: orc });
     const l = linhas(s, { orcamento: orc });
-    assert.ok(l.length <= orc, `H ${h} maxRows ${maxRows}: ${l.length} > ${orc}`);
-    assert.ok(l.length >= Math.min(orc, cheio.length), `H ${h} maxRows ${maxRows}: sobrou linha vazia`);
-    assert.ok(l.some((x) => /^depende de você/.test(x)), `H ${h}: topo sumiu`);
+    assert.ok(bruto.length <= orc, `H ${h} maxRows ${maxRows}: ${bruto.length} > ${orc}`);
+    assert.ok(bruto.length >= Math.min(orc, cheio.length), `H ${h} maxRows ${maxRows}: sobrou linha vazia`);
+    assert.ok(l.some((x) => /renovar o certificado/.test(x)), `H ${h}: topo sumiu`);
     assert.ok(l.every((x) => !/\bmore\b/.test(x)), 'sem "N more"');
-    const maxPrio = Math.max(...l.map((x) => PRIO[blocoDe(x, l.indexOf(x), l)] ?? 9));
+    const maxPrio = Math.max(...l.map(prioDe));
     const presentes = new Set(l);
+    // trocas do E4 (mesma informação): o item do topo leva o `◆` do rótulo; a linha do contexto leva o nome do líder
+    const normais = new Set(l.map(norm));
+    const presente = (x: string): boolean => presentes.has(x) || normais.has(norm(x));
     // exceção declarada (emenda 37, 2ª ao D-P8): com a decisão da Sombra, o AGORA encolhe para a linha-resumo `N agentes:` antes de o RECENTE sair
     const resumido = l.some((x) => /^  \d+ agentes:/.test(x));
-    cheio.forEach((x, i) => { if (prioCheio[i] < maxPrio && !(resumido && /^  \S+ · .* · /.test(x) && prioCheio[i] === 3)) assert.ok(presentes.has(x) || /\(\+\d+\)/.test(l.join('\n')), `H ${h}: "${x}" (prio ${prioCheio[i]}) saiu antes de prio ${maxPrio}`); });
+    for (const x of cheio) if (prioDe(x) < maxPrio && !(resumido && /^[├└]/.test(x))) assert.ok(presente(x) || /\(\+\d+\)/.test(l.join('\n')), `H ${h}: "${x}" (prio ${prioDe(x)}) saiu antes de prio ${maxPrio}`);
   }
 });
 
-test('blocos-na-ordem-e-vazios-somem: DEPENDE · PRONTO · AGORA · ATENÇÃO · RECENTE; bloco sem conteúdo não ocupa linha', () => {
+test('blocos-na-ordem-e-vazios-somem: cabeçalho · DEPENDE · PLANO · EQUIPE · ATENÇÃO · histórico (desenho do E4); bloco sem conteúdo não ocupa linha', () => {
   const cheio = proj(P(...IDS), [...EXECUCAO, e(60, 'ci.resultado', { verde: false, alvo: 'main' })], { agentes: [vivo('T4 implementador')] });
   const l = linhas(cheio);
-  const rotulos = l.map((x) => /^(GABARITO|depende de você|PRONTO|FASE|AGORA|ATENÇÃO|RECENTE)/.exec(x)?.[1]).filter((x) => x !== undefined);
-  assert.deepEqual(rotulos, ['GABARITO', 'depende de você', 'PRONTO', 'AGORA', 'ATENÇÃO', 'RECENTE']);
+  const rotulos = l.map((x) => (ehRecente(x) ? 'RECENTE' : /^(GABARITO|depende de você|◆ DEPENDE DE VOCÊ|PLANO|FASE|EQUIPE|◆ ATENÇÃO|CI ●)/.exec(x)?.[1])).filter((x) => x !== undefined)
+    .filter((x, i, xs) => i === 0 || xs[i - 1] !== x);
+  assert.deepEqual(rotulos, ['GABARITO', 'depende de você', 'PLANO', 'EQUIPE', '◆ ATENÇÃO', 'RECENTE', 'CI ●']);
+  // separadores do E4 entre as seções, nunca 2 colados
+  const c = cru(cheio);
+  assert.ok(c.some((x) => SEP.test(x)) && c.every((x, i) => !(SEP.test(x) && SEP.test(c[i + 1] ?? ''))), c.join('\n'));
   const semAtencao = linhas(proj(P(...IDS), [...ciclo('T1', 0)], { agentes: [] }));
-  assert.ok(semAtencao.every((x) => !/^ATENÇÃO/.test(x)), 'ATENÇÃO vazio some');
+  assert.ok(semAtencao.every((x) => !/ATENÇÃO/.test(x)), 'ATENÇÃO vazio some');
   const semRecente = linhas(proj(P(...IDS), [ini(0, 'T1')], { agentes: [vivo('T1 implementador')] }));
-  assert.ok(semRecente.every((x) => !/^RECENTE/.test(x)), 'RECENTE vazio some');
-  assert.ok(l.every((x) => !/^(PLANO|EQUIPE)\b/.test(x)), 'não há bloco PLANO nem EQUIPE');
+  assert.ok(semRecente.every((x) => !ehRecente(x)), 'RECENTE vazio some');
   assert.ok(l.every((x) => !/\bT[123] integrada\b|^\s*✓ T[123]\b/.test(x)), 'task integrada não é listada');
+  assert.ok(l.some((x) => /^  ✓ 3 integradas/.test(x)), 'a faixa do E4 diz quantas, sem listar');
 });
 
 // ───────────────────────────── RECENTE (FIEL-10 d, D-P9)
@@ -151,10 +173,7 @@ test('blocos-na-ordem-e-vazios-somem: DEPENDE · PRONTO · AGORA · ATENÇÃO ·
 test('recente-5-lateral-2-acima e recente-so-resultados: só aprovou/reprovou/integrou/travou/decisão/pausa, mais novo no topo, com origem', () => {
   const s = proj(P(...IDS), RECENTES);
   const lat = linhas(s, { local: 'lateral' });
-  const rec = (xs: string[]) => {
-    const i = xs.findIndex((x) => /^RECENTE/.test(x));
-    return i < 0 ? [] : xs.slice(i).filter((x, k) => k === 0 || /^  \d\d:\d\d/.test(x));
-  };
+  const rec = (xs: string[]) => xs.filter(ehRecente);
   const r5 = rec(lat);
   assert.equal(r5.length, 5);
   assert.match(r5[0], /pausa \(você\)$/, 'mais novo no topo; retomar do dono também é "pausa (você)"');
@@ -174,9 +193,11 @@ test('recente-5-lateral-2-acima e recente-so-resultados: só aprovou/reprovou/in
 test('recente-encolhe-primeiro-acima: com pouco orçamento o RECENTE sai antes do AGORA e do ATENÇÃO', () => {
   const s = proj(P(...IDS), [...EXECUCAO, e(60, 'ci.resultado', { verde: false, alvo: 'main' })], { agentes: [vivo('T4 implementador')] });
   const cheio = linhas(s, { local: 'acima' });
-  const semRecente = cheio.filter((x) => !/^RECENTE|^  \d\d:\d\d/.test(x));
+  // no desenho do E4 as linhas que só ele tinha (prio 6: tasks, limites, rodapé…) saem antes; o que sobra = blocos 1–4 sem o RECENTE
+  const semRecente = cheio.filter((x) => !ehRecente(x) && prioDe(x) < 5);
+  assert.ok(cheio.some(ehRecente) && cheio.some((x) => /^◆ ATENÇÃO/.test(x)), 'premissa: há RECENTE e ATENÇÃO');
   const l = linhas(s, { local: 'acima', orcamento: semRecente.length });
-  assert.deepEqual(l, semRecente);
+  assert.deepEqual(l.map(norm), semRecente.map(norm)); // `norm`: o contexto do líder leva o nome quando a linha do nome sai (troca do E4)
 });
 
 // ───────────────────────────── PRONTO / FASE (FIEL-10 b)
@@ -184,8 +205,9 @@ test('recente-encolhe-primeiro-acima: com pouco orçamento o RECENTE sai antes d
 test('pronto-pinta-so-integradas: aprovada esperando não pinta; integrada não é listada', () => {
   const s = proj(P(...IDS), [...ciclo('T1', 0), ini(10, 'T2'), con(11, 'T2'), ini(12, 'T2', 'revisor'), ver(13, 'T2', true)]);
   assert.deepEqual(s.pronto, { integradas: 1, total: 6, previsao: null });
-  const l = linhas(s).find((x) => /^PRONTO/.test(x)) as string;
-  assert.match(l, /^PRONTO ▰{2}▱{8} 1 de 6 integradas$/);
+  const l = linhas(s).find((x) => /^PLANO/.test(x)) as string;
+  assert.match(l, /^PLANO   ▰{4}▱{17}  17%  1\/6 tasks$/, 'barra do E4 (21) pinta só a integrada: 1/6 ≈ 4 de 21');
+  assert.ok(linhas(s).some((x) => /^  ◐ T2 +aprovada/.test(x)), 'a aprovada esperando aparece na fila do E4, sem pintar');
 });
 
 test('previsao-so-com-base: previsão só com ≥ 3 integradas nesta entrega, dita com a base', () => {
@@ -194,7 +216,7 @@ test('previsao-so-com-base: previsão só com ≥ 3 integradas nesta entrega, di
   assert.doesNotMatch(texto(dois), /previsão/);
   const tres = proj(P(...IDS), [...ciclo('T1', 0), ...ciclo('T2', 10), ...ciclo('T3', 20)]);
   assert.equal(tres.pronto?.previsao?.base, 3);
-  assert.match(texto(tres), /PRONTO ▰{5}▱{5} 3 de 6 integradas · previsão \d\d:\d\d \(base: 3 tasks desta entrega\)/);
+  assert.match(texto(tres), /^PLANO   ▰+▱+  50%  3\/6 tasks +previsão \d\d:\d\d \(base: 3 tasks desta entrega\)$/m);
 });
 
 test('fase-fora-de-entrega: sem plano, a linha FASE mostra n de 7, barra só de ✓, progresso e a trilha', () => {
@@ -204,7 +226,7 @@ test('fase-fora-de-entrega: sem plano, a linha FASE mostra n de 7, barra só de 
   assert.equal(s.pronto, null);
   const l = linhas(s).find((x) => /^FASE/.test(x)) as string;
   assert.equal(l, 'FASE 3 de 7 ▰▰▱▱▱▱▱ · spec com 6 seções · falta aprovar · ✓ ideia › ✓ spec › ● aprovação › ○ plano › ○ execução › ○ PR › ○ uso');
-  assert.ok(linhas(s).every((x) => !/^PRONTO/.test(x)), 'em-loop-sem-linha-de-trilha: FASE e PRONTO nunca juntos');
+  assert.ok(linhas(s).every((x) => !/^PLANO/.test(x)), 'em-loop-sem-linha-de-trilha: FASE e PLANO nunca juntos');
   const exec = proj(P(...IDS), EXECUCAO);
   assert.ok(linhas(exec).every((x) => !/^FASE/.test(x)), 'em execução a linha PRONTO, não a FASE');
 });
@@ -219,7 +241,7 @@ test('uma-linha-sem-entrega-em-curso e fora-de-um-projeto', () => {
   assert.deepEqual(linhas(fora), ['GABARITO · fora de um projeto']);
   // sem entrega MAS com pendência: não é uma linha, o topo aparece
   const comPendencia = proj(null, [nota(1, 'pendencia', 'renovar o certificado')], { fatos: fatos({ branch: 'main', plano: null }) });
-  assert.match(texto(comPendencia), /depende de você: renovar o certificado \[feito\]/);
+  assert.match(texto(comPendencia), /^◆ DEPENDE DE VOCÊ {2}1 item\n {2}renovar o certificado \[feito\]$/m);
   assert.equal(comPendencia.modo, 'projeto');
 });
 
@@ -228,7 +250,7 @@ test('uma-linha-sem-entrega-em-curso e fora-de-um-projeto', () => {
 test('nada-so-com-todas-as-fontes: fixture 18:40 com T12 no limite ⇒ item (5), nunca "nada"; fonte que falhou ⇒ "?"', () => {
   const s = proj(P('T11', 'T12', 'T13'), noTeto('T12', 0), { fatos: fatos({ plano: { tasks: ['T11', 'T12', 'T13'] } }) });
   const t = texto(s);
-  assert.match(t, /depende de você: decidir a T12: chegou ao limite de revisões \[liberar mais uma rodada\]/);
+  assert.match(t, /^◆ DEPENDE DE VOCÊ {2}1 item\n {2}decidir a T12: chegou ao limite de revisões \[liberar mais uma rodada\]$/m);
   assert.doesNotMatch(t, /depende de você: nada/);
   const falhou = proj(P(...IDS), [], { fontesFalhas: ['o GitHub'] });
   assert.match(texto(falhou), /depende de você: \? \(não consegui ler o GitHub\)/);
@@ -242,7 +264,7 @@ test('nada-so-com-todas-as-fontes: fixture 18:40 com T12 no limite ⇒ item (5),
 test('limpar-no-depende: pouso pendente ⇒ "limpar a conversa" com o botão, sem o comando no texto', () => {
   const s = proj(P(...IDS), [], { pousoPendente: true });
   const t = texto(s);
-  assert.match(t, /depende de você: limpar a conversa \[limpar\]/);
+  assert.match(t, /^◆ DEPENDE DE VOCÊ {2}1 item\n {2}limpar a conversa \[limpar\]$/m);
   assert.doesNotMatch(t, /\/clear/);
   assert.deepEqual(s.depende.find((i) => i.motivo === 'limpar a conversa')?.acoes, [{ rotulo: 'limpar', comando: '/clear' }]);
 });
@@ -250,7 +272,7 @@ test('limpar-no-depende: pouso pendente ⇒ "limpar a conversa" com o botão, se
 test('desatualizado-atencao-e-nunca-nada: passou de 180 s ⇒ ATENÇÃO e o topo nunca diz "nada"', () => {
   const s = proj(P(...IDS), [], { desatualizadoS: 600 });
   const t = texto(s);
-  assert.match(t, /ATENÇÃO · painel sem ler o diário há 10 min/);
+  assert.match(t, /^◆ ATENÇÃO {2}painel sem ler o diário há 10 min$/m);
   assert.doesNotMatch(t, /depende de você: nada/);
   assert.match(t, /depende de você: \?/);
   const dentro = proj(P(...IDS), [], { desatualizadoS: 180 });
@@ -263,8 +285,7 @@ test('pergunta-real-pelo-projetar (P9): nota de dúvida vira pergunta no topo; r
   const s = proj(P(...IDS), base);
   assert.equal(s.pergunta?.id, 's1:1');
   assert.equal(s.perguntasMais, 1);
-  assert.match(texto(s), /depende de você: qual caminho seguir\? · 1 este · 2 aquele/);
-  assert.match(texto(s), /mais 1 pergunta aberta/);
+  assert.match(texto(s), /^◆ DEPENDE DE VOCÊ {2}2 itens\n {2}qual caminho seguir\? · 1 este · 2 aquele\n {2}mais 1 pergunta aberta$/m);
   assert.doesNotMatch(texto(s), /depende de você: nada/, 'com pergunta aberta o topo não diz "nada"');
   const outra = proj(P(...IDS), [...base, e(3, 'dono.resposta', { pergunta: 's1:2', opcao: 1, rotulo: 'azul' }, 'dono')]);
   assert.equal(outra.pergunta?.id, 's1:1', 'resposta a s1:2 não fecha s1:1');
@@ -275,9 +296,7 @@ test('pergunta-real-pelo-projetar (P9): nota de dúvida vira pergunta no topo; r
 
 const MOTIVOS = Object.keys(TABELA_PARAR) as MotivoParar[];
 const recenteDe = (itens: Item[], extra: Partial<Entrada> = {}): string[] => {
-  const l = linhas(proj(P(...IDS), itens, { agentes: null, ...extra }), { local: 'lateral' });
-  const i = l.findIndex((x) => /^RECENTE/.test(x));
-  return i < 0 ? [] : l.slice(i).filter((x, k) => k === 0 || /^  \d\d:\d\d/.test(x));
+  return linhas(proj(P(...IDS), itens, { agentes: null, ...extra }), { local: 'lateral' }).filter(ehRecente);
 };
 
 test('recente-origem-da-pausa (emenda 4): pausa e retomada do dono são "pausa (você)", nunca "(automático)"', () => {
@@ -333,7 +352,7 @@ test('pergunta-ideia-pelo-perguntasAbertas-real (r3, T13b): opção única "vist
   assert.equal(s.pergunta, null, 'a ideia não é pergunta aberta: é o item (4) do "depende de você"');
   const l = linhas(s);
   const q = l.filter((x) => /ideias? viram? a próxima/.test(x));
-  assert.deepEqual(q, ['depende de você: decidir se as 2 ideias viram a próxima entrega [visto]'], `a ideia sai 1 vez só (item (4)):\n${l.join('\n')}`);
+  assert.deepEqual(q, ['  decidir se as 2 ideias viram a próxima entrega [visto]'], `a ideia sai 1 vez só (item (4)):\n${l.join('\n')}`);
   for (const x of l) assert.ok(!linhaTecnica(x), `técnica: "${x}"`);
   for (const preset of ['esquadrao', 'executivo'] as const) for (const largura of [20, 40, 80, 120]) for (const x of linhas(s, { preset, largura })) {
     assert.ok(!linhaTecnica(x), `técnica ${preset} ${largura}: "${x}"`);
@@ -406,21 +425,25 @@ test('titulo-tira-o-id-cru-antes-de-naturalizar (r3): o prefixo é comparado com
 test('orquestrador-primeira-linha-do-agora: contexto e hora de pousar; contexto ausente é "?", nunca 0', () => {
   const s = proj(P(...IDS), [ini(0, 'T1')], { agentes: [vivo('T1 implementador')], contexto: { percent: 55, tokens: null, window: null } });
   const l = linhas(s);
-  const i = l.findIndex((x) => /^AGORA/.test(x));
-  assert.equal(l[i], 'AGORA · GANDALF · contexto 55 % · hora de pousar');
-  assert.match(l[i + 1], /^  ARAGORN · T1 · implementando \(registrado\) · \d+(m|h\d\d)$/);
+  // desenho do E4: rótulo EQUIPE, o líder e, logo abaixo, a linha do contexto com a barra
+  const i = l.findIndex((x) => /^EQUIPE/.test(x));
+  assert.equal(l[i + 1], 'GANDALF  orquestra');
+  assert.equal(l[i + 2], `│  ctx ${'█'.repeat(16)}${'░'.repeat(13)} 55% · pouso em 50% · hora de pousar   tok ?`);
+  assert.ok(l.some((x) => /^└─ ● ARAGORN  T1  ctx \?  \d+(m|h\d\d)  implementando \(registrado\)$/.test(x)), l.join('\n'));
   const semCtx = linhas(proj(P(...IDS), [], { contexto: { percent: null, tokens: null, window: null } }));
-  assert.ok(semCtx.includes('AGORA · GANDALF · contexto ?'));
+  assert.ok(semCtx.includes('│  ctx ? · pouso em 50%   tok ?'), 'sem medição: "?" no lugar da barra, nunca barra vazia nem 0');
+  assert.ok(semCtx.every((x) => !/ctx [█░]|ctx 0%|hora de pousar/.test(x)));
   const abaixo = linhas(proj(P(...IDS), [], { contexto: { percent: 49, tokens: null, window: null } }));
-  assert.ok(abaixo.includes('AGORA · GANDALF · contexto 49 %'));
+  assert.ok(abaixo.includes(`│  ctx ${'█'.repeat(14)}${'░'.repeat(15)} 49% · pouso em 50%   tok ?`), abaixo.join('\n'));
 });
 
 test('cli-sem-agentes-sem-nomes-nem-traco: sem --agentes, 1 linha no AGORA e nenhum nome sorteado', () => {
   const s = proj(P(...IDS), [...RECENTES, ini(50, 'T4')], { agentes: null });
   const t = texto(s);
-  assert.match(t, /^AGORA · agentes e contexto: medidos só no painel da sessão$/m);
-  assert.equal(t.split('\n').filter((x) => /^AGORA|^  [A-Z][a-z]+ · T\d/.test(x)).length, 1);
-  assert.doesNotMatch(t, /GANDALF|ELROND|ARAGORN|LEGOLAS|agentes —|ctx —|5h|7d/);
+  assert.match(t, /^EQUIPE · agentes e contexto: medidos só no painel da sessão$/m);
+  // a seção da equipe é 1 linha só: nenhum ctx, tok, 5h/7d, narração, árvore nem nome na fila
+  assert.equal(t.split('\n').filter((x) => /^EQUIPE|^\S+ {2}orquestra|^│|^[├└]/.test(x)).length, 1);
+  assert.doesNotMatch(t, /GANDALF|ELROND|ARAGORN|LEGOLAS|agentes —|ctx|tok|5h|7d|vivos?\b/);
   assert.match(t, /Sombra decidiu: seguir com a T3/);
   const comAgentes = texto(proj(P(...IDS), [...RECENTES, ini(50, 'T4')], { agentes: [vivo('T4 implementador')] }));
   assert.match(comAgentes, /ELROND decidiu/, 'cli-com-agentes-igual-ao-mod: com --agentes os nomes voltam');
@@ -429,18 +452,19 @@ test('cli-sem-agentes-sem-nomes-nem-traco: sem --agentes, 1 linha no AGORA e nen
 test('descricao-tecnica-higienizada e vivo-sem-task-mostra-descricao', () => {
   const s = proj(P(...IDS), [ini(0, 'T1')], { agentes: [vivo('Rascunho spec-brief.md com node'), vivo('Explorar o repositório'), vivo('T1 implementador')] });
   const l = linhas(s);
-  assert.ok(l.includes('  LEGOLAS · sem task · Rascunho … com … (registrado)'), l.join('\n')); // todo vivo tem nome (FIEL-3 d): o par da T1 fica com o 1º, os sem task com os livres
-  assert.ok(l.includes('  GIMLI · sem task · Explorar o repositório (registrado)'), l.join('\n'));
-  assert.ok(l.some((x) => /^  ARAGORN · T1 · implementando \(registrado\) · \d+(m|h\d\d)$/.test(x)), l.join('\n'));
+  assert.ok(l.includes('├─ ● LEGOLAS  sem task  ctx ?        Rascunho … com … (registrado)'), l.join('\n')); // todo vivo tem nome (FIEL-3 d): o par da T1 fica com o 1º, os sem task com os livres
+  assert.ok(l.includes('├─ ● GIMLI    sem task  ctx ?        Explorar o repositório (registrado)'), l.join('\n'));
+  assert.ok(l.some((x) => /^└─ ● ARAGORN  T1        ctx \?  \d+(m|h\d\d)  implementando \(registrado\)$/.test(x)), l.join('\n'));
   assert.equal(s.agora?.agentes?.length, 3, 'vivos-igual-linhas-de-agente');
-  assert.equal(l.filter((x) => / · (sem task|T\d) · /.test(x)).length, 3);
+  assert.equal(l.filter((x) => /^[├└]─ ● /.test(x)).length, 3);
+  assert.ok(l.some((x) => /^EQUIPE +agentes 3 vivos$/.test(x)), 'N vivos = linhas de agente');
 });
 
 test('em-voo-sem-agente-vai-a-atencao: task em voo sem agente vivo ⇒ ATENÇÃO, nunca linha no AGORA', () => {
   const s = proj(P(...IDS), [ini(0, 'T1'), ini(1, 'T2'), con(2, 'T2'), ini(3, 'T2', 'revisor')], { agentes: [vivo('T2 revisor')] });
   const t = texto(s);
-  assert.match(t, /ATENÇÃO · T1 sem agente trabalhando/);
-  assert.doesNotMatch(t, /AGORA[^\n]*\n(  [^\n]*\n)*  [^\n]*T1 ·/, 'T1 não vira linha do AGORA');
+  assert.match(t, /^◆ ATENÇÃO {2}T1 sem agente trabalhando$/m);
+  assert.ok(t.split('\n').every((x) => !/^[├└]─? .* T1 /.test(x)), 'T1 não vira linha de agente na árvore');
   assert.doesNotMatch(t, /◌/);
   assert.doesNotMatch(texto(proj(P(...IDS), [ini(0, 'T1')], { agentes: null })), /sem agente trabalhando/, 'sem mod não se sabe: nada no ATENÇÃO');
 });
@@ -451,8 +475,9 @@ test('sombra-decisao-no-recente, sombra-consulta-sem-registro-na-atencao e sem-l
   const consulta = (t: number) => e(t, 'sombra.consulta', { pergunta_hash: 'a'.repeat(64), task: 'T1' });
   const s = proj(P(...IDS), [consulta(1), consulta(2), DEC(3, 'sim', 'T1')]);
   const t = texto(s);
-  assert.match(t, /RECENTE · \d\d:\d\d ● ELROND decidiu: sim \(anotado pelo orquestrador\)/);
-  assert.match(t, /ATENÇÃO · 1 consulta à Sombra sem decisão registrada/);
+  assert.match(t, /^\d\d:\d\d ● ELROND decidiu: sim \(anotado pelo orquestrador\)$/m);
+  assert.match(t, /^◆ ATENÇÃO {2}1 consulta à Sombra sem decisão registrada$/m);
+  assert.ok(t.split('\n').every((x) => !/^[├└]─? [●○] ELROND/.test(x)), 'a Sombra não tem linha fixa na árvore do E4 (FIEL-7, D-P4)');
   assert.doesNotMatch(t, /aconselha|\d+ decis(ão|ões)\b/, 'sem linha fixa da Sombra com contagem');
   const semConsulta = texto(proj(P(...IDS), [consulta(1), DEC(3, 'sim', 'T1')]));
   assert.doesNotMatch(semConsulta, /consulta/);
@@ -483,8 +508,12 @@ test('progresso-spec-com-revisor-vivo, progresso-emenda-aberta e progresso-execu
 test('executivo-igual-esquadrao-menos-nomes e executivo-papeis-da-tabela', () => {
   const s = proj(P(...IDS), [...RECENTES, ini(50, 'T4'), ini(51, 'T5'), con(52, 'T5'), ini(53, 'T5', 'revisor')],
     { agentes: [vivo('T4 implementador'), vivo('T5 revisor')] });
-  const esq = texto(s, { preset: 'esquadrao' });
-  const exe = texto(s, { preset: 'executivo' });
+  // o alinhamento das colunas do E4 acompanha o tamanho do nome: compara-se com os espaços de alinhamento colapsados (layout, não texto)
+  const colapsa = (x: string): string => x.replace(/ {2,}/g, ' ');
+  const esq = colapsa(texto(s, { preset: 'esquadrao' }));
+  const exe = colapsa(texto(s, { preset: 'executivo' }));
+  assert.match(cru(s, { preset: 'esquadrao' })[0], / esquadrão · terra média$/);
+  assert.match(cru(s, { preset: 'executivo' })[0], / executivo$/, 'o rótulo do preset (o pacote é lúdico) é a única outra troca');
   // troca cada nome temático pelo papel do próprio estado (quem do AGORA e do RECENTE, orquestrador e Sombra)
   const pares = new Map<string, string>([['GANDALF', 'Orquestrador'], ['ELROND', 'Conselheiro']]);
   for (const q of [...(s.agora?.agentes ?? []).map((a) => a.quem), ...(s.recente ?? []).map((r) => r.quem)]) if (q?.nome) pares.set(q.nome, PAPEL_EXECUTIVO[q.papel]);
@@ -497,9 +526,10 @@ test('executivo-igual-esquadrao-menos-nomes e executivo-papeis-da-tabela', () =>
     orquestrador: 'Orquestrador', implementador: 'Implementador', correcao: 'Implementador', spike: 'Implementador',
     revisor: 'Revisor', sombra: 'Conselheiro', teste: 'Teste',
   });
-  assert.match(exe, /^AGORA · Orquestrador · contexto 40 %$/m);
-  assert.match(exe, /^  Implementador · T4 · implementando \(registrado\)/m);
-  assert.match(exe, /^  Revisor · T5 · revisando \(registrado\)/m);
+  assert.match(exe, /^Orquestrador orquestra$/m);
+  assert.match(exe, /^├─ ● Implementador T4 ctx \? \d+(m|h\d\d) implementando \(registrado\)$/m);
+  assert.match(exe, /^└─ ● Revisor T5 ctx \? \d+(m|h\d\d) revisando \(registrado\)$/m);
+  assert.match(exe, /^ ● T4 implementando Implementador /m, 'o nome na fila do E4 também vira papel');
 });
 
 // ───────────────────────────── histórico com origem (REQ-LNG-1) e FIEL-5 b
@@ -527,7 +557,7 @@ test('parou-sem-comando-no-texto: TABELA_PARAR sem comando, sem palavra-tipo e s
   }
   const s = proj(P(...IDS), [...noTeto('T1', 0), e(20, 'loop.parar', { motivo: 'teto_rodadas', task: 'T1' })]);
   const l = linhas(s)[1];
-  assert.match(l, /^PAROU \d\d:\d\d · teto de rodadas de review em T1 \[aprovar\] · recusar: deixe a task parada e emende a spec$/);
+  assert.match(l, /^■ PAROU \d\d:\d\d · teto de rodadas de review em T1 \[aprovar\] · recusar: deixe a task parada e emende a spec$/);
   assert.equal(s.parar?.acoes[0].comando, '/gabarito-mestre:liberar T1');
 });
 
@@ -545,7 +575,7 @@ test('marca-sem-entrega: sem entrega identificada o cabeçalho diz exatamente "G
   const sem = { ...base, id: '' } as EstadoPainel;
   for (const preset of ['executivo', 'esquadrao'] as const) {
     const l = renderPainel(sem, { largura: 80, preset } as OpcoesRender).map((x) => x.map((s) => s.texto).join(''));
-    assert.equal(l[0], 'GABARITO · entrega não identificada', preset);
+    assert.equal(semRotulo(l[0]), 'GABARITO · entrega não identificada', preset);
     assert.ok(!l.join('\n').includes('sem entrega identificada'));
   }
 });
@@ -556,9 +586,9 @@ test('ultima-entrega-conhecida: sem entrega, a 1ª linha fora do topo é exatame
   const sem = { ...base, id: '', trilha } as EstadoPainel;
   for (const preset of ['executivo', 'esquadrao'] as const) {
     const l = renderPainel(sem, { largura: 80, preset } as OpcoesRender).map((x) => x.map((s) => s.texto).join(''));
-    assert.equal(l[0], 'GABARITO · entrega não identificada', preset);
+    assert.equal(semRotulo(l[0]), 'GABARITO · entrega não identificada', preset);
     assert.ok(l.includes('última entrega conhecida: GM-12'), `${preset}: ${JSON.stringify(l)}`);
-    assert.equal(l.indexOf('última entrega conhecida: GM-12'), l.findIndex((x) => !/^(depende de você|  |PAROU)/.test(x) && x !== l[0]), preset);
+    assert.equal(l.indexOf('última entrega conhecida: GM-12'), l.findIndex((x) => !/^(depende de você|◆ DEPENDE DE VOCÊ|  |■ PAROU)/.test(x) && x !== l[0]), preset);
     const nula = renderPainel({ ...sem, trilha: { ...(trilha as object), ultimaConhecida: null } } as EstadoPainel, { largura: 80, preset } as OpcoesRender).map((x) => x.map((s) => s.texto).join(''));
     assert.ok(!nula.join('\n').includes('última entrega conhecida'), `${preset}: sem dado, sem linha`);
     const com = renderPainel({ ...base, trilha } as EstadoPainel, { largura: 80, preset } as OpcoesRender).map((x) => x.map((s) => s.texto).join(''));
@@ -572,7 +602,7 @@ test('topo-nunca-cortado: o PAROU longo a 80 colunas quebra em linhas, com o mot
   const s = { ...base, parar: { hora: '2026-11-12T12:25:00.000Z', texto: `teto de rodadas de review em T2 · recusar: ${motivo}`, acoes: [{ rotulo: 'aprovar', comando: 'x' }] } } as unknown as EstadoPainel;
   for (const preset of ['executivo', 'esquadrao'] as const) {
     const l = renderPainel(s, { largura: 80, preset } as OpcoesRender).map((x) => x.map((t) => t.texto).join(''));
-    const topo = l.filter((x, i) => i >= 1 && i < l.findIndex((y) => y.startsWith('PRONTO')));
+    const topo = l.filter((x, i) => i >= 1 && i < l.findIndex((y) => SEP.test(y)));
     assert.ok(topo.length >= 2, preset);
     assert.ok(topo.every((x) => colunas(x) <= 80 && !x.endsWith('…')), `${preset}: ${JSON.stringify(topo)}`);
     assert.ok(topo.join(' ').replace(/ +/g, ' ').includes(`recusar: ${motivo} [aprovar]`), preset);
@@ -592,32 +622,32 @@ test('topo-mais-por-item: (+N) conta itens escondidos, não linhas quebradas', (
   assert.ok(sem.length >= 4 && !sem.join('\n').includes('(+'), JSON.stringify(sem)); // PAROU em 2 linhas, nada escondido
   const o3 = topoMedido(PAROU_LONGO, [{ motivo: 'decidir a emenda 1' }, { motivo: 'decidir a emenda 2' }, { motivo: 'decidir a emenda 3' }], { orcamento: 3 });
   assert.equal(o3.length, 3, JSON.stringify(o3));
-  assert.ok(o3[2].startsWith('depende de você: decidir a emenda 1'), o3[2]);
+  assert.ok(o3[2].startsWith('◆ decidir a emenda 1'), o3[2]);
   assert.ok(o3[2].endsWith(' (+2)'), `2 itens escondidos, não ${o3[2]}`);
   assert.ok(o3.every((x) => colunas(x) <= 80));
   const o2 = topoMedido(PAROU_LONGO, [{ motivo: 'decidir a emenda 1' }], { orcamento: 2 });
   assert.equal(o2.length, 2, JSON.stringify(o2));
   assert.ok(o2[1].endsWith(' (+1)') && o2.join(' ').replace(/ +/g, ' ').includes('recusar: deixe a task parada e emende a spec'), JSON.stringify(o2)); // PAROU inteiro; 1 item escondido (por linha daria +2)
-  assert.ok(o2[0].startsWith('PAROU 12:25'));
+  assert.ok(o2[0].startsWith('■ PAROU 12:25'));
 });
 
 test('topo-item-inteiro: um item que não cabe inteiro sai inteiro, sem sobrar meia continuação', () => {
   const o = topoMedido(PAROU_LONGO, [{ motivo: MOTIVO_LONGO }, { motivo: 'decidir a emenda 2' }], { orcamento: 3 });
   assert.equal(o.length, 2, JSON.stringify(o));
-  assert.ok(!o.join('\n').includes('depende de você'), 'o item 2 quebrado não entra pela metade');
+  assert.ok(!o.join('\n').includes('decidir a emenda'), 'o item 2 quebrado não entra pela metade');
   assert.ok(o[1].endsWith(' (+2)') && colunas(o[1]) <= 80, o[1]);
   const tres = topoMedido(PAROU_LONGO, [{ motivo: `decidir a emenda ${'muito '.repeat(35)}longa` }], { orcamento: 4 });
   assert.equal(tres.length, 2, `item de 3 linhas com 2 vagas sai inteiro: ${JSON.stringify(tres)}`);
   assert.ok(tres[1].endsWith(' (+1)'), tres[1]);
   const cabe = topoMedido({ ...PAROU_LONGO, acoes: [] }, [{ motivo: 'decidir a emenda 1' }, { motivo: 'decidir a emenda 2' }], { orcamento: 1 });
   assert.equal(cabe.length, 1, JSON.stringify(cabe));
-  assert.ok(cabe[0].startsWith('PAROU 12:25') && cabe[0].endsWith(' (+2)'), cabe[0]);
+  assert.ok(cabe[0].startsWith('■ PAROU 12:25') && cabe[0].endsWith(' (+2)'), cabe[0]);
 });
 
 test('topo-1o-item-maior-que-o-orcamento (LIMITE, aguarda decisão): D15 vence; mostra só as linhas do orçamento, a última termina em "…" e não inventa (+N)', () => {
   const o = topoMedido(PAROU_LONGO, [], { orcamento: 1 });
   assert.equal(o.length, 1, JSON.stringify(o));
-  assert.ok(o[0].startsWith('PAROU 12:25') && o[0].endsWith('…') && colunas(o[0]) <= 80 && !o[0].includes('(+'), o[0]);
+  assert.ok(o[0].startsWith('■ PAROU 12:25') && o[0].endsWith('…') && colunas(o[0]) <= 80 && !o[0].includes('(+'), o[0]);
   const c = topoMedido(PAROU_LONGO, [{ motivo: 'decidir a emenda 1' }], { orcamento: 1 });
   assert.equal(c.length, 1, JSON.stringify(c));
   assert.ok(c[0].endsWith('… (+1)') && !c[0].includes('……') && colunas(c[0]) <= 80, c[0]);
@@ -638,7 +668,7 @@ test('topo-ultimo-item-inteiro-perde-o-fim-para-o-(+N) (LIMITE declarado, D15 ve
 test('topo-palavra-maior-que-a-largura: é partida em linhas, sem "…" e sem perder caractere (REQ-GLB-1)', () => {
   const palavra = 'x'.repeat(107);
   const o = topoMedido({ ...PAROU_LONGO, texto: `p${palavra}`, acoes: [] }, [], {});
-  const topo = o.slice(1, o.findIndex((x) => x.startsWith('PRONTO')));
+  const topo = o.slice(1, o.findIndex((x) => SEP.test(x)));
   assert.ok(topo.length >= 2 && topo.every((x) => colunas(x) <= 80 && !x.includes('…')), JSON.stringify(topo));
   assert.equal(topo.join('').replace(/[^x]/g, '').length, 107, JSON.stringify(topo));
 });
@@ -654,26 +684,31 @@ test('T37: linha truncada que ocupa exatamente a largura mantém uma reticência
     renderBlocos(e, { largura: 20, preset: 'executivo', orcamento } as OpcoesRender).map((x) => x.map((s) => s.texto).join(''));
   // sem "(+N)": a linha cortada tinha exatamente 20 colunas (cabe); abre mão de 1 coluna para a "…" caber e ser única
   const sem = rende(est(`a ${'b'.repeat(200)}`, 0), 2);
-  assert.deepEqual(sem, ['PAROU 12:25 · a', `    ${'b'.repeat(14)}…`]);
+  assert.deepEqual(sem, ['■ PAROU 12:25 · a', `    ${'b'.repeat(14)}…`]);
   // com "(+N)": mesma largura exata (cabe = 20 - 5 colunas do " (+1)" incluído); termina em "…" antes do "(+1)", sem "……"
-  const com = rende(est(`a ${'b'.repeat(200)}`, 1), 1);
-  assert.deepEqual(com, ['PAROU 12:25 ·… (+1)']);
+  // (GM-15 T29: o `■ ` do E4 alarga o PAROU em 2; sem o "a " a 1ª linha volta a ter exatamente `cabe` = 15 colunas, "■ PAROU 12:25 ·")
+  const com = rende(est(`${'b'.repeat(200)}`, 1), 1);
+  assert.equal(colunas('■ PAROU 12:25 ·'), 15, 'premissa: a linha truncada tem exatamente cabe colunas');
+  assert.deepEqual(com, ['■ PAROU… (+1)']); // a hora (número) nunca é cortada: recua inteira (cortarLinha)
   for (const ls of [sem, com]) assert.ok(ls.every((l) => colunas(l) <= 20 && !l.includes('……')), JSON.stringify(ls));
   assert.ok(sem[sem.length - 1].endsWith('…') && com[0].replace(/ \(\+\d+\)$/, '').endsWith('…'));
 });
 
 // ───────────────────────────── T42 (emenda 32): a decisão da Sombra fica reservada quando o corte tiraria o RECENTE inteiro
 
-const cabe = (s: EstadoPainel, o: Partial<OpcoesRender>): string[] => linhas(s, { largura: 80, ...o });
-const eRec = (xs: string[]): boolean => xs.some((x) => /^RECENTE|^  \d\d:\d\d/.test(x));
+/** Render a 80 (padrão) sem separadores e sem o rótulo do preset; com orçamento, confere antes que o desenho INTEIRO (com os separadores do E4) não passa dele (D15). */
+const cabe = (s: EstadoPainel, o: Partial<OpcoesRender>): string[] => {
+  const c = cru(s, { largura: 80, ...o });
+  if (o.orcamento !== undefined) assert.ok(c.length <= o.orcamento, `D15: ${c.length} linhas > orçamento ${o.orcamento}: ${c.join('|')}`);
+  return c.filter((l) => !SEP.test(l)).map(semRotulo);
+};
+const eRec = (xs: string[]): boolean => xs.some(ehRecente);
 const ehDecidiu = (x: string): boolean => /ELROND decidiu: seguir com a T3 \(anotado pelo orquestrador\)$/.test(x);
 const noVoo = (itens: Item[]): EstadoPainel => proj(P(...IDS), [...EXECUCAO, ...itens, e(60, 'ci.resultado', { verde: false, alvo: 'main' })], { agentes: [vivo('T4 implementador')] });
-/** Linhas dos blocos 1–3 (tudo menos ATENÇÃO e RECENTE) de um estado: o piso que a reserva nunca fura. */
-const blocos123 = (s: EstadoPainel, local: 'lateral' | 'acima'): string[] => {
-  const l = cabe(s, { local });
-  const i = l.findIndex((x) => /^(ATENÇÃO|RECENTE)/.test(x));
-  return i < 0 ? l : l.slice(0, i);
-};
+/** Linhas dos blocos 1–3 (prioridade ≤ 3: topo, cabeçalho, PLANO/FASE, contexto do líder e agentes) de um estado: o piso que a reserva nunca fura. */
+const blocos123 = (s: EstadoPainel, local: 'lateral' | 'acima'): string[] => cabe(s, { local }).filter((x) => prioDe(x) <= 3);
+/** `xs` contém `x` módulo as trocas do E4 com pouca altura (`norm`). */
+const tem = (xs: string[], x: string): boolean => xs.map(norm).includes(norm(x));
 
 for (const local of ['lateral', 'acima'] as const) {
   test(`decisao-sombra-reservada-80x24-${local}: orçamento que tiraria o RECENTE inteiro mantém 1 linha "decidiu:" e os blocos 1–3`, () => {
@@ -684,7 +719,7 @@ for (const local of ['lateral', 'acima'] as const) {
     const l = cabe(s, { local, orcamento: b123.length + 1 });
     assert.ok(l.length <= b123.length + 1, 'nunca passa do orçamento');
     assert.equal(l.filter(ehDecidiu).length, 1, `1 linha da decisão: ${l.join('|')}`);
-    for (const x of b123) assert.ok(l.includes(x), `bloco 1–3 presente: "${x}"`);
+    for (const x of b123) assert.ok(tem(l, x), `bloco 1–3 presente: "${x}"`);
     assert.ok(l.every((x) => colunas(x) <= 80));
   });
 }
@@ -710,7 +745,7 @@ test('sem-decisao-sem-reserva: sem decisao.sombra o corte é o de hoje (nenhuma 
   const l = cabe(s, { local: 'lateral', orcamento: orc });
   assert.ok(!eRec(l), 'RECENTE inteiro cortado como hoje');
   assert.equal(l.length, orc, 'o orçamento sobra para o ATENÇÃO, não para uma reserva');
-  assert.ok(l.some((x) => /^ATENÇÃO/.test(x)));
+  assert.ok(l.some((x) => /^◆ ATENÇÃO/.test(x)));
   assert.ok(!l.some((x) => /decidiu:/.test(x)));
 });
 
@@ -718,19 +753,19 @@ test('reserva-cede-sem-espaco: orçamento menor que blocos 1–3 + 1 ⇒ blocos 
   const s = noVoo([DEC(50, 'seguir com a T3')]);
   const b123 = blocos123(s, 'lateral');
   const l = cabe(s, { local: 'lateral', orcamento: b123.length });
-  assert.deepEqual(l, b123);
+  assert.deepEqual(l.map(norm), b123.map(norm));
   assert.ok(!l.some((x) => /decidiu:/.test(x)));
 });
 
 test('reserva-vence-atencao: com ATENÇÃO e decisão, no orçamento b123+1 a linha "decidiu:" fica e o ATENÇÃO sai antes dela', () => {
   const s = noVoo([DEC(50, 'seguir com a T3')]);
   const b123 = blocos123(s, 'lateral');
-  assert.ok(cabe(s, { local: 'lateral' }).some((x) => /^ATENÇÃO/.test(x)), 'premissa: há ATENÇÃO');
+  assert.ok(cabe(s, { local: 'lateral' }).some((x) => /^◆ ATENÇÃO/.test(x)), 'premissa: há ATENÇÃO');
   const l = cabe(s, { local: 'lateral', orcamento: b123.length + 1 });
   assert.equal(l.filter(ehDecidiu).length, 1);
-  assert.ok(!l.some((x) => /^ATENÇÃO/.test(x)), 'ATENÇÃO saiu antes da reserva');
+  assert.ok(!l.some((x) => /^◆ ATENÇÃO/.test(x)), 'ATENÇÃO saiu antes da reserva');
   const maior = cabe(s, { local: 'lateral', orcamento: 200 });
-  assert.ok(maior.some((x) => /^ATENÇÃO/.test(x)) && maior.some(ehDecidiu), 'sem aperto, ATENÇÃO e RECENTE aparecem normais');
+  assert.ok(maior.some((x) => /^◆ ATENÇÃO/.test(x)) && maior.some(ehDecidiu), 'sem aperto, ATENÇÃO e RECENTE aparecem normais');
 });
 
 test('reserva-quando-recente-cortado-so-em-parte: se alguma linha do RECENTE sobrevive não há reserva extra (sem duplicar a decisão)', () => {
@@ -749,7 +784,10 @@ const VIVOS = ['T4 implementador', 'T5 revisor', 'T6 implementador'];
 const roteiro = (n: number, itens: Item[] = [DEC(50, 'seguir com a T3')], extra: Partial<Entrada> = {}): EstadoPainel =>
   doRoteiro(proj(P(...IDS), [...EXECUCAO, ...itens], { agentes: VIVOS.slice(0, n).map((d) => vivo(d)), ...extra }));
 const ORC_ACIMA = orcamentoDe(24, 12);
-const linhasAgora = (l: string[]): string[] => l.filter((x) => /^AGORA|^  (\d+ agentes:|\S+ · )/.test(x) && !/decidiu:|^  \d\d:\d\d/.test(x));
+/** Linhas do AGORA no desenho do E4: contexto do líder, árvore dos agentes e linha-resumo (prioridade 3). */
+const linhasAgora = (l: string[]): string[] => l.filter((x) => prioDe(x) === 3);
+/** Linhas dos blocos 1–2 (prioridade ≤ 2): topo, cabeçalho, PLANO/FASE. */
+const blocos12 = (l: string[]): string[] => l.filter((x) => prioDe(x) <= 2);
 const resumoDe = (l: string[]): string[] => l.filter((x) => /^  \d+ agentes:/.test(x));
 
 test('roteiro-premissa: DEPENDE do roteiro tem 2 itens e orcamentoDe(24, 12) = 7', () => {
@@ -767,10 +805,10 @@ for (const n of [2, 3]) {
     assert.equal(l.filter(ehDecidiu).length, 1, `a decisão da Sombra fica: ${l.join('|')}`);
     const agora = linhasAgora(l);
     assert.equal(agora.length, 2, agora.join('|'));
-    assert.match(agora[0], /^AGORA · GANDALF · contexto 40 %/);
+    assert.match(agora[0], /^GANDALF ctx █+░+ 40% · pouso em 50%   tok \?$/, 'sem a linha do nome, o contexto leva o nome (troca do E4)');
     assert.match(agora[1], new RegExp(`^  ${n} agentes: .*T4`));
     for (const x of DEPENDE_ROTEIRO) assert.ok(l.some((y) => y.includes(x)), `DEPENDE presente: ${x}`);
-    assert.ok(l.some((x) => /^PRONTO|^FASE/.test(x)) && l[0].startsWith('GABARITO'));
+    assert.ok(l.some((x) => /^PLANO|^FASE/.test(x)) && l[0].startsWith('GABARITO'));
     assert.ok(l.every((x) => colunas(x) <= 80));
   });
 }
@@ -811,26 +849,26 @@ test('sem-compactar-quando-cabe: com a reserva cabendo (180×50 sem corte, later
   for (const o of [{ local: 'lateral' as const, largura: 180 }, { local: 'lateral' as const, largura: 80, orcamento: 14 }, { local: 'acima' as const, largura: 80, orcamento: 14 }]) {
     const l = cabe(s, o);
     assert.equal(resumoDe(l).length, 0, `${JSON.stringify(o)}: ${l.join('|')}`);
-    assert.equal(l.filter((x) => /^  \S+ · T\d · /.test(x)).length, 3, '1 linha por agente');
+    assert.equal(l.filter((x) => /^[├└]─ ● \S+ +T\d /.test(x)).length, 3, '1 linha por agente');
   }
   // reserva cabendo SEM compactar: RECENTE cortado inteiro, blocos 1–3 completos (orquestrador + 3 agentes) + a reserva
   const pleno = cabe(s, { local: 'acima', orcamento: 200 });
-  const b123 = pleno.findIndex((x) => /^(ATENÇÃO|RECENTE)/.test(x));
+  const b123 = pleno.filter((x) => prioDe(x) <= 3).length;
   const l = cabe(s, { local: 'acima', orcamento: b123 + 1 });
   assert.equal(resumoDe(l).length, 0, l.join('|'));
   assert.equal(l.filter(ehDecidiu).length, 1);
-  assert.equal(l.filter((x) => /^  \S+ · T\d · /.test(x)).length, 3);
+  assert.equal(l.filter((x) => /^[├└]─ ● \S+ +T\d /.test(x)).length, 3);
 });
 
 test('reserva-cabe-sem-compactar-com-atencao: ATENÇÃO ocupa a linha do RECENTE, a reserva a toma e o AGORA fica com 1 linha por agente (D-P8 + emenda 32)', () => {
   const s = roteiro(3, [DEC(50, 'seguir com a T3'), e(60, 'ci.resultado', { verde: false, alvo: 'main' })]);
   const pleno = cabe(s, { local: 'acima', orcamento: 200 });
-  const b123 = pleno.findIndex((x) => /^(ATENÇÃO|RECENTE)/.test(x));
-  assert.match(pleno[b123], /^ATENÇÃO/, 'premissa: o ATENÇÃO vem antes do RECENTE');
+  const b123 = pleno.filter((x) => prioDe(x) <= 3).length;
+  assert.ok(pleno.findIndex((x) => /^◆ ATENÇÃO/.test(x)) >= 0 && pleno.findIndex((x) => /^◆ ATENÇÃO/.test(x)) < pleno.findIndex(ehRecente), 'premissa: o ATENÇÃO vem antes do RECENTE');
   const l = cabe(s, { local: 'acima', orcamento: b123 + 1 });
   assert.equal(l.filter(ehDecidiu).length, 1, l.join('|'));
   assert.equal(resumoDe(l).length, 0, l.join('|'));
-  assert.equal(l.filter((x) => /^  \S+ · T\d · /.test(x)).length, 3, '1 linha por agente');
+  assert.equal(l.filter((x) => /^[├└]─ ● \S+ +T\d /.test(x)).length, 3, '1 linha por agente');
 });
 
 test('decisao-com-folga-nao-duplica: reserva entra uma vez só mesmo com linha sobrando depois de compactar', () => {
@@ -852,8 +890,8 @@ test('sem-decisao-nunca-compacta: sem decisao.sombra o AGORA não vira linha-res
 
 test('reserva-cede-mesmo-compactado: blocos 1–2 + 2 linhas de AGORA + reserva > orçamento ⇒ a reserva cede e o AGORA fica como hoje', () => {
   const s = roteiro(3);
-  const b12 = cabe(s, { local: 'acima', orcamento: 200 }).findIndex((x) => /^AGORA/.test(x));
-  assert.equal(b12, 4, 'blocos 1–2 do roteiro: GABARITO + 2 do DEPENDE + PRONTO');
+  const b12 = blocos12(cabe(s, { local: 'acima', orcamento: 200 })).length;
+  assert.equal(b12, 4, 'blocos 1–2 do roteiro: GABARITO + 2 itens do DEPENDE + PLANO (o rótulo `◆ DEPENDE DE VOCÊ` do E4 é desenho, sai antes)');
   const limiar = b12 + 2 + 1; // = 7: cabe compactado
   const cabeLa = cabe(s, { local: 'acima', orcamento: limiar });
   assert.equal(cabeLa.filter(ehDecidiu).length, 1);
@@ -862,7 +900,7 @@ test('reserva-cede-mesmo-compactado: blocos 1–2 + 2 linhas de AGORA + reserva 
   assert.ok(!cede.some((x) => /decidiu:/.test(x)), cede.join('|'));
   assert.equal(resumoDe(cede).length, 0, 'compactar não ajudou: o AGORA fica com 1 linha por agente');
   assert.equal(cede.length, limiar - 1);
-  assert.ok(cede.some((x) => /^AGORA/.test(x)) && cede.some((x) => /^PRONTO/.test(x)));
+  assert.ok(cede.some((x) => /ctx /.test(x) && prioDe(x) === 3) && cede.some((x) => /^PLANO/.test(x)));
 });
 
 for (const n of [2, 3]) {
@@ -906,7 +944,7 @@ test('reserva-varredura-decisao-visivel-em-toda-celula: decisão + 0/1/2 eventos
     const base = roteiro(n, [DEC(50, 'seguir com a T3'), ...depois]);
     const s = atencao ? ({ ...base, atencao: ['task em voo sem agente'] } as EstadoPainel) : base;
     const cheio = cabe(s, { local, orcamento: 200 });
-    const b12 = cheio.findIndex((x) => /^AGORA/.test(x));
+    const b12 = blocos12(cheio).length;
     assert.ok(b12 > 0, `premissa: AGORA no render cheio (${nome}/${n}/${local})`);
     for (let orc = 7; orc <= 12; orc++) {
       casos++;
@@ -914,13 +952,13 @@ test('reserva-varredura-decisao-visivel-em-toda-celula: decisão + 0/1/2 eventos
       const rotulo = `${nome} n=${n} ${local} atencao=${atencao} orc=${orc}`;
       assert.ok(l.length <= orc, `${rotulo}: passou do orçamento: ${l.join('|')}`);
       assert.ok(l.filter(ehDecidiu).length <= 1, `${rotulo}: decisão duplicada: ${l.join('|')}`);
-      assert.deepEqual(l.slice(0, b12), cheio.slice(0, b12), `${rotulo}: blocos 1–2 intactos`);
+      assert.deepEqual(blocos12(l).map(norm), blocos12(cheio).map(norm), `${rotulo}: blocos 1–2 intactos`);
       // a reserva só existe com corte por ORÇAMENTO no RECENTE (ciclo 3, emenda 32); sem corte, a decisão além do teto do local não aparece
-      const corte = JSON.stringify(l.filter((x) => /^RECENTE|^  \d\d:\d\d/.test(x))) !== JSON.stringify(cheio.filter((x) => /^RECENTE|^  \d\d:\d\d/.test(x)));
+      const corte = JSON.stringify(l.filter(ehRecente)) !== JSON.stringify(cheio.filter(ehRecente));
       if (orc >= b12 + 2 + 1 && corte) {
         comPiso++;
         assert.equal(l.filter(ehDecidiu).length, 1, `${rotulo}: a decisão da Sombra some: ${l.join('|')}`);
-        assert.ok(l.some((x) => /^AGORA/.test(x)), `${rotulo}: sem AGORA (bloco 3): ${l.join('|')}`);
+        assert.ok(l.some((x) => /ctx /.test(x) && prioDe(x) === 3), `${rotulo}: sem AGORA (bloco 3): ${l.join('|')}`);
         // a linha que cede à reserva é a ÚLTIMA do RECENTE: sobrando alguma pausa, é a mais nova (12:56 em pausa+retoma)
         const pausas = l.filter((x) => /\d\d:\d\d ○ pausa/.test(x));
         if (nome === 'pausa+retoma' && pausas.length > 0) assert.match(pausas[0], /12:56/, `${rotulo}: a pausa que sobra é a mais nova: ${l.join('|')}`);
@@ -943,7 +981,7 @@ test('reserva-parcial-toma-a-ultima-linha-do-recente: decisão + pausa, lateral,
 
 // ───────────────────────────── T42 (ciclo 3, emenda 32): a reserva só existe com corte por ORÇAMENTO no RECENTE e toma o lugar da última linha, nunca soma
 
-const ehRec = (x: string): boolean => /^RECENTE|^  \d\d:\d\d/.test(x);
+const ehRec = ehRecente;
 const eventosApos = (k: number): Item[] => Array.from({ length: k }, (_, i) => e(55 + i, 'loop.pausa', { estado: i % 2 === 0 ? 'pausado' : 'retomado' }));
 
 test('reserva-varredura-teto-e-corte: decisão + 0–6 eventos × 1–3 vivos × orçamento 7–40 × lateral/acima × com/sem ATENÇÃO × largura 80/180', () => {
@@ -954,7 +992,7 @@ test('reserva-varredura-teto-e-corte: decisão + 0–6 eventos × 1–3 vivos ×
     const base = roteiro(n, [DEC(50, 'seguir com a T3'), ...eventosApos(k)]);
     const s = atencao ? ({ ...base, atencao: ['task em voo sem agente'] } as EstadoPainel) : base;
     const cheio = cabe(s, { local, orcamento: 200, largura });
-    const b12 = cheio.findIndex((x) => /^AGORA/.test(x));
+    const b12 = blocos12(cheio).length;
     const teto = local === 'acima' ? 2 : 5;
     assert.ok(b12 > 0 && cheio.filter(ehRec).length <= teto, `premissa: render cheio respeita o teto (k=${k} n=${n} ${local} w=${largura})`);
     for (let orc = 7; orc <= 40; orc++) {
@@ -964,7 +1002,7 @@ test('reserva-varredura-teto-e-corte: decisão + 0–6 eventos × 1–3 vivos ×
       assert.ok(l.length <= orc, `${rotulo}: passou do orçamento: ${l.join('|')}`);
       assert.ok(l.filter(ehRec).length <= teto, `${rotulo}: RECENTE acima do teto ${teto}: ${l.join('|')}`);
       assert.ok(l.filter(ehDecidiu).length <= 1, `${rotulo}: decisão duplicada: ${l.join('|')}`);
-      assert.deepEqual(l.slice(0, b12), cheio.slice(0, b12), `${rotulo}: blocos 1–2 intactos`);
+      assert.deepEqual(blocos12(l).map(norm), blocos12(cheio).map(norm), `${rotulo}: blocos 1–2 intactos`);
       const corte = JSON.stringify(l.filter(ehRec)) !== JSON.stringify(cheio.filter(ehRec));
       if (!corte) {
         semCorte++;
@@ -997,4 +1035,259 @@ test('reserva-reconhece-decisao-por-campos: estado serializado (cópia do item) 
     if (l.filter(ehDecidiu).length === 1 && l.filter(ehRec).length >= 2) visto++;
   }
   assert.ok(visto > 0, 'premissa: há orçamento com corte parcial e a decisão entre as sobras');
+});
+
+// ───────────────────────────── GM-15 T29 (D-G1b, D-G1c): a cara do E4 com a regra do painel novo e a validação que o E4 não tinha
+
+/** Estado rico, do projetar real: 3 integradas, T4 implementando (com uso medido), T5 em revisão, T6–T8 na fila, pendência, CI vermelho, decisão da Sombra. */
+const IDS8 = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8'];
+const P8: Plano = { entrega: 'GM-14', tasks: IDS8.map((id, i) => ({ id, titulo: `Tarefa ${id} do painel`, deps: i === 5 ? ['T5'] : [], arquivos: [] })) };
+const rico = (extra: Partial<Entrada> = {}): EstadoPainel => {
+  const s = proj(P8, [...EXECUCAO, nota(45, 'pendencia', 'renovar o certificado'), DEC(50, 'seguir com a T3'), e(60, 'ci.resultado', { verde: false, alvo: 'main' })], {
+    agentes: [{ ...vivo('T4 implementador'), uso: { contexto: 60_000, tok: 90_000, modelo: 'claude-sonnet' } }, vivo('T5 revisor')],
+    contexto: { percent: 55, tokens: 120_000, window: 200_000 }, limites: { h5: 30, d7: 70 }, modeloSessao: 'claude-sonnet', titulo: 'GM-14 — Clareza para quem usa',
+    fatos: fatos({ plano: { tasks: IDS8 } }), ...extra,
+  });
+  return { ...s, equipe: { ...s.equipe, lider: { ...s.equipe.lider, tok: 732_000 } } }; // tok do líder vem de custo.medicao; o estado é dado
+};
+const segs = (l: { texto: string; cor?: string }[]): string => l.map((x) => x.texto).join('');
+const desenho = (s: EstadoPainel, o: Partial<OpcoesRender>, velho = false): { texto: string; cor?: string }[][] =>
+  (velho ? renderEsquadrao(s, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 120, ...o } as OpcoesRender)
+    : renderPainel(s, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 120, ...o } as OpcoesRender)) as { texto: string; cor?: string }[][];
+/** Classe estrutural de cada linha do desenho do E4 (a mesma para o render novo e o `renderEsquadrao` de referência). */
+const classe = (x: string): string => {
+  if (SEP.test(x)) return 'sep';
+  if (/^GABARITO/.test(x)) return 'cabeçalho';
+  if (/^◆ DEPENDE DE VOCÊ/.test(x)) return 'depende';
+  if (/^PLANO/.test(x)) return 'plano';
+  if (/^ {2}✓ /.test(x)) return 'faixa';
+  if (/^ {2}[●◐✗] T/.test(x)) return 'task';
+  if (/^ {2}○ /.test(x)) return 'fila';
+  if (/^EQUIPE/.test(x)) return 'equipe';
+  if (/^\S+ {2}orquestra/.test(x)) return 'líder';
+  if (/^│ {2}ctx /.test(x)) return 'ctx';
+  if (/^│ {2}(5h|7d) /.test(x)) return 'limites';
+  if (/^│ {2}[▶▸] /.test(x)) return 'narração';
+  if (/^[├└]─ ○ \S+ {2}aconselha/.test(x)) return 'sombra-fixa';
+  if (/^[├└]─ ◐ /.test(x)) return 'revisor-aguarda';
+  if (/^[├└]─ [●◌] /.test(x)) return 'agente';
+  if (/^◆ ATENÇÃO/.test(x)) return 'atenção';
+  if (/^(\d\d:\d\d|\?) \S /.test(x)) return 'histórico';
+  if (/^CI ●/.test(x)) return 'rodapé';
+  return 'item';
+};
+const estrutura = (xs: string[]): string[] => xs.map(classe).filter((c, i, cs) => i === 0 || cs[i - 1] !== c);
+
+for (const largura of [120, 80]) {
+  test(`layout-e4-snapshot-${largura}: mesmo estado, render novo × renderEsquadrao (2.0.0): mesmas seções na mesma ordem; diferenças só as da regra nova`, () => {
+    const s = rico();
+    const novo = desenho(s, { largura }).map(segs);
+    const velho = desenho(s, { largura }, true).map(segs);
+    // diferenças que a regra nova manda (cada uma, uma só): FIEL-7/D-P4 a Sombra não tem linha fixa; FIEL-6 c sem "revisor aguarda" falso
+    const esperado = estrutura(velho).filter((c) => c !== 'sombra-fixa' && c !== 'revisor-aguarda');
+    assert.deepEqual(estrutura(novo), esperado, `novo:\n${novo.join('\n')}\n\nE4:\n${velho.join('\n')}`);
+    assert.ok(novo.every((x) => colunas(x) <= largura), 'nenhuma linha passa da largura');
+    // campo a campo: cada dado do E4 está no novo (mutação que tira qualquer um morre)
+    const t = novo.join('\n');
+    assert.match(novo[0], /^GABARITO · GM-14 Clareza para quem usa +esquadrão · terra média$/, 'cabeçalho com o preset à direita; título uma vez (o E4 dizia "GM-14 GM-14")');
+    assert.equal((novo[0].match(/GM-14/g) ?? []).length, 1);
+    assert.match(t, /^◆ DEPENDE DE VOCÊ {2}1 item\n {2}renovar o certificado \[feito\]$/m, 'DEPENDE');
+    assert.match(t, /^PLANO {3}▰+▱+ {2}38% {2}3\/8 tasks +previsão \d\d:\d\d \(base: 3 tasks desta entrega\)$/m, 'PLANO com barra, %, k/N tasks e o status à direita');
+    assert.match(t, /^ {2}✓ 3 integradas · 1\.0 rodada média · mediana \d+ min$/m, 'faixa das integradas');
+    assert.match(t, /^ {2}● T4 {2}(Tarefa T4 do painel {2})?implementando {2}\S+ +\d+(m|h\d\d)$/m, 'task em voo com estado, nome e tempo');
+    assert.match(t, /^ {2}○ T6 {2}(Tarefa T6 do painel {2})?fila · depende de T5$/m, 'fila com a dependência aberta');
+    assert.match(t, /^ {2}○ T7–T8 {2}fila$/m, 'resto da fila');
+    assert.match(t, /^EQUIPE +agentes 2 vivos$/m);
+    assert.match(t, /^GANDALF {2}orquestra · sonnet$/m);
+    assert.match(t, /^│ {2}ctx █+░+ 55% · pouso em 50% · hora de pousar {3}tok 732k$/m, 'barra de contexto, pouso, hora de pousar e tokens do líder');
+    assert.match(t, /^│ {2}5h █{3}░{7} 30% {3}7d █{7}░{3} 70%$/m, 'barras de 10 dos limites 5h e 7d');
+    assert.match(t, /^│ {2}▸ \S/m, 'narração');
+    assert.match(t, /^├─ ● \S+ · sonnet +T4 +ctx █{3}░{7} 30% {2}60k · \d+(m|h\d\d) +implementando( \(registrado\)| \(regis.*…)$/m, 'agente com barra de contexto, tokens, tempo e o que faz (cortado no fim, nunca no número)');
+    assert.match(t, /^└─ ● \S+ +T5 +ctx \? +\d+(m|h\d\d) +revisando \(registrado\)$/m, 'agente sem medição: "?", nunca barra vazia');
+    assert.match(t, /^◆ ATENÇÃO {2}CI vermelho na última execução$/m);
+    assert.match(t, /^\d\d:\d\d ● ELROND decidiu: seguir com a T3 \(anotado pelo orquestrador\)$/m, 'histórico com origem');
+    assert.match(t, /^CI ● vermelho {3}PROD leu 0 · alterou 0 {3}política continua$/m, 'rodapé');
+    if (largura === 120) {
+      // barras idênticas às do E4 (mesma largura, mesmos glifos)
+      const barras = (xs: string[]): string[] => xs.flatMap((x) => x.match(/[▰▱]{5,}|[█░]{10,}/g) ?? []);
+      for (const b of barras(velho.filter((x) => /^(PLANO|│ {2}ctx|│ {2}5h)/.test(x)))) assert.ok(barras(novo).includes(b), `barra do E4 "${b}" no novo`);
+    }
+  });
+}
+
+test('cores-paridade-e4: segmento a segmento (texto → cor) igual ao renderEsquadrao nas linhas equivalentes; mono sem cor', () => {
+  const s = rico();
+  const novo = desenho(s, {});
+  const velho = desenho(s, {}, true);
+  const linha = (xs: { texto: string; cor?: string }[][], re: RegExp) => xs.find((l) => re.test(segs(l))) as { texto: string; cor?: string }[];
+  const cor = (l: { texto: string; cor?: string }[], re: RegExp): string | undefined => l.find((x) => re.test(x.texto))?.cor;
+  // barras: ctx do líder, limites, plano, agente
+  for (const [re, glifos] of [[/^│ {2}ctx/, [/^█+$/, /^░+$/]], [/^│ {2}5h/, [/^█+$/, /^░+$/]], [/^PLANO/, [/^▰+$/, /^▱+$/]]] as [RegExp, RegExp[]][]) {
+    for (const g of glifos) assert.equal(cor(linha(novo, re), g), cor(linha(velho, re), g), `${re} ${g}`);
+  }
+  assert.equal(cor(linha(novo, /^│ {2}ctx/), /^│$/), 'inactive');
+  assert.equal(cor(linha(novo, /^│ {2}ctx/), /pouso em/), cor(linha(velho, /^│ {2}ctx/), /pouso em/));
+  // fila: glifo e estado pela cor do estado; nome pela cor do agente
+  for (const re of [/^ {2}● T4/, /^ {2}● T5/]) {
+    const a = linha(novo, re);
+    const b = linha(velho, re);
+    for (const g of [/^●$/, /implementando|em revisão/]) assert.equal(cor(a, g), cor(b, g), `${re} ${g}`);
+    const nome = b.find((x) => /^[A-Z]{3,} *$/.test(x.texto));
+    assert.ok(nome !== undefined && nome.cor !== undefined, 'premissa: o E4 pinta o nome');
+    assert.equal(cor(a, new RegExp(`^${nome.texto.trim()} *$`)), nome.cor, `${re}: cor do agente na fila`);
+  }
+  // árvore: glifo pela cor do estado da task, nome pela cor do agente, barra
+  const agN = linha(novo, /^├─ ● /);
+  const agV = linha(velho, /^├─ ● /);
+  for (const g of [/^●$/, /^[A-Z]{3,} *$/, /^█+$/, /^├─ $/]) assert.equal(cor(agN, g), cor(agV, g), `agente ${g}`);
+  assert.ok(cor(agN, /^[A-Z]{3,} *$/) !== undefined, 'o agente tem cor própria (corDoNome do E4)');
+  // faixa, CI, histórico
+  assert.equal(cor(linha(novo, /^ {2}✓/), /^✓$/), cor(linha(velho, /^ {2}✓/), /^✓$/));
+  assert.equal(cor(linha(novo, /^CI/), /^●$/), 'warning');
+  assert.equal(cor(linha(novo, /^CI/), /^●$/), cor(linha(velho, /^CI/), /^●$/));
+  assert.equal(cor(linha(novo, /^◆ ATENÇÃO/), /^◆ ATENÇÃO$/), 'warning');
+  assert.equal(cor(linha(novo, /^\d\d:\d\d ● ELROND/), /^\d\d:\d\d $/), 'inactive');
+  // mono: sem SGR; color: com
+  assert.doesNotMatch(paraTexto(renderPainel(s, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 120 }), 'mono'), /\x1b\[/);
+  assert.match(paraTexto(renderPainel(s, { preset: 'esquadrao', tema: 'color', narracao: true, largura: 120 }), 'color'), /\x1b\[/);
+});
+
+/** Painel real da 2.0.0 a 89 colunas, colado pelo dono (D-G1c, .claude-tmp/gm15/painel-referencia-dono.txt): a cara a reproduzir, com os erros que NÃO voltam. */
+const REFERENCIA_DONO = `GABARITO · GM-14 GM-14 — Clareza para quem usa                       esquadrão · hogwarts
+◆ DEPENDE DE VOCÊ  1 item
+  loop pausado  /gabarito retomar
+─────────────────────────────────────────────────────────────────────────────────────────
+PLANO   ▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱  3%  1/31 tasks                                loop pausado
+  ✓ T1   integrada · 1.0 rodada média · mediana 55 min
+  ◐ T0   Spikes pré-construção                 aprovada           1h19
+  ◐ T1b  Contratos do painel fiel              aguarda revisão    36m
+  ◐ T2   Orçamento e prioridade de linhas      aprovada           6m
+  ◐ T3   Trilha, fase e progresso              aguarda revisão    36m
+  ◐ T4   Origem, normalização e regex técnica  aprovada           44m
+  ◐ T5   Linha de ferramenta natural           aguarda revisão    36m
+  ◐ T6   \`loop.mjs anotar\`                     aprovada           16m
+  ◐ T7   Onboarding em linguagem simples       aprovada           35m
+  ◐ T8   Herança da 1.x, coleta                reprovada          5m
+  ◐ T9   Oferta do modo foco                   aprovada           17m
+  ◐ T10  Instalador ignora \`_onboarding/\`      aprovada           11m
+  ◐ T12  Perguntas abertas                     aguarda revisão    5m
+  ◐ T27  Dono só barra pousar e concluir       aprovada           13m
+  ○ T11  \`painel.mjs medir\`                    fila · depende de T3
+  ○ 16 tasks  fila
+─────────────────────────────────────────────────────────────────────────────────────────
+EQUIPE                                                                    agentes 0 vivos
+MINERVA  orquestra · opus
+│  ctx ███████░░░░░░░░░░░░░░░░░░░░░░ 23% · pouso em 50%   tok 732k
+│  7d ███░░░░░░░ 34%
+│  ▶ pausado, nada novo é despachado
+├─ ◐ revisor aguarda T1b
+├─ ◐ revisor aguarda T3
+├─ ◐ revisor aguarda T5
+├─ ◐ HARRY  revisa aguarda T12
+└─ ○ DUMBLEDORE  aconselha  2 decisões · #51 MAJOR-A: entrega identificada pela ponte di…
+─────────────────────────────────────────────────────────────────────────────────────────
+◆ ATENÇÃO  T8 na 2ª rodada de review · T12 na 2ª rodada de review
+─────────────────────────────────────────────────────────────────────────────────────────
+18:03 ▶ despachou DRACO em T12
+18:03 ▶ despachou SNAPE em T2
+18:05 ✓ SNAPE aprovou T2 · 2 min
+18:05 ✗ GINNY reprovou T8 · 1 achado
+CI ● —   PROD leu 0 · alterou 0   política sob_demanda                       ▼ 60 eventos`;
+
+test('referencia-do-dono-2-0-0 (D-G1c): estado equivalente ao painel real de 89 col tem a mesma estrutura, sem os erros que não podem voltar', () => {
+  const ref = REFERENCIA_DONO.split('\n').filter((l) => l !== '');
+  // erros da referência (regra nova): agentes falsos "revisor aguarda" e linha fixa da Sombra saem; o título não repete o ID; nada de "—"
+  const esperado = estrutura(ref).filter((c) => c !== 'sombra-fixa' && c !== 'revisor-aguarda');
+  const IDSR = ['T0', 'T1', 'T1b', 'T2', 'T3', 'T11', 'T13', 'T14'];
+  const s = proj({ entrega: 'GM-14', tasks: IDSR.map((id) => ({ id, titulo: `Tarefa ${id}`, deps: id === 'T11' ? ['T3'] : [], arquivos: [] })) },
+    [...ciclo('T1', 0), ini(10, 'T0'), con(11, 'T0'), ini(12, 'T1b'), con(13, 'T1b'), ini(14, 'T2'), con(15, 'T2'), ini(16, 'T3'), con(17, 'T3'), nota(20, 'pendencia', 'retomar o loop'), e(30, 'ci.resultado', { verde: false, alvo: 'main' })],
+    { agentes: [], limites: { h5: null, d7: 34 }, titulo: 'GM-14 — Clareza para quem usa', politica: { politica: 'sob_demanda', dias: null }, fatos: fatos({ plano: { tasks: IDSR } }) });
+  const l = cru(s, { largura: 89 });
+  assert.deepEqual(estrutura(l), esperado, `novo:\n${l.join('\n')}\n\nreferência:\n${ref.join('\n')}`);
+  const t = l.join('\n');
+  assert.match(l[0], /^GABARITO · GM-14 Clareza para quem usa +esquadrão · terra média$/);
+  assert.doesNotMatch(t, /GM-14 GM-14|aguarda T|revisa aguarda|—|rodada de review/, 'erros da 2.0.0 que não voltam');
+  assert.match(t, /^│ {2}5h \? {3}7d █{3}░{7} 34%$/m, 'limite sem medição é "?", não some nem vira 0');
+  assert.match(t, /^ {2}◐ T0 .* entregue/m, 'concluída se diz "entregue" (FIEL-8)');
+  assert.ok(l.every((x) => colunas(x) <= 89));
+});
+
+const EMOJI_RE = /[\p{Extended_Pictographic}\uFE0F]/u;
+test('largura-glifos-validacao-nova: 120/100/80/60/44 sem linha maior que a largura, sem quebra, sem glifo que vire emoji, nos dois presets e em 5 estados', () => {
+  const estados: [string, EstadoPainel][] = [
+    ['rico', rico()],
+    ['parou', proj(P(...IDS), [...noTeto('T1', 0), e(20, 'loop.parar', { motivo: 'teto_rodadas', task: 'T1' })], { agentes: [vivo('T2 implementador')] })],
+    ['sem-agentes', rico({ agentes: null })],
+    ['vazio', proj(P(...IDS), [])],
+    ['segundo-plano', rico({ segundoPlano: [{ id: 'b', dono: 'orquestrador', texto: 'npm test ⚠️ 🚀 com emoji', desde: AGORA - 60_000 }] })],
+  ];
+  for (const [nome, s] of estados) for (const preset of ['esquadrao', 'executivo'] as const) for (const largura of [120, 100, 80, 60, 44]) {
+    const l = cru(s, { preset, largura });
+    for (const x of l) {
+      assert.ok(colunas(x) <= largura, `${nome} ${preset} ${largura}: passou da largura: "${x}"`);
+      assert.ok(!x.includes('\n') && !EMOJI_RE.test(x), `${nome} ${preset} ${largura}: glifo emoji ou quebra: "${x}"`);
+      assert.ok(!linhaTecnica(x) || /^│/.test(x) === false, `${nome}: técnica "${x}"`);
+    }
+    assert.ok(!l.some((x) => /▶/.test(x)), '▶ do E4 é pictográfico: a narração usa ▸');
+  }
+});
+
+test('hora-de-pousar-nunca-cortada: 80, 60 e 44 colunas, com e sem a linha do nome (orçamento), contexto estimado incluso', () => {
+  for (const largura of [80, 72, 60, 50, 44]) for (const orcamento of [undefined, 9, 7]) {
+    const s = rico();
+    const l = cru(s, { largura, ...(orcamento === undefined ? {} : { orcamento }) });
+    const ctx = l.find((x) => /ctx .*55%/.test(x));
+    assert.ok(ctx !== undefined && / · hora de pousar/.test(ctx), `${largura}/${orcamento}: ${l.join('|')}`);
+    const est = { ...s, agora: { ...s.agora!, orquestrador: { ...s.agora!.orquestrador, estimado: true } } } as EstadoPainel;
+    const le = cru(est, { largura });
+    assert.ok(le.some((x) => /ctx .*~55%( \(estimado\))? .*· hora de pousar/.test(x) && colunas(x) <= largura), `${largura} estimado: ${le.join('|')}`);
+    if (largura >= 60) assert.ok(le.some((x) => /~55% \(estimado\)/.test(x)), `${largura}: o "(estimado)" só cede abaixo de 60`);
+  }
+});
+
+test('ausente-corrompido-zero-distintos: ausente e corrompido viram "?" (nunca 0 nem "—"); 0 medido é 0', () => {
+  const base = rico();
+  const comLider = (v: unknown, campo: 'h5' | 'd7' | 'tok'): string => cru({ ...base, equipe: { ...base.equipe, lider: { ...base.equipe.lider, [campo]: v } } } as EstadoPainel).join('\n');
+  for (const v of [null, undefined, Number.NaN, -1, Number.POSITIVE_INFINITY, '30']) {
+    assert.match(comLider(v, 'h5'), /^│ {2}5h \? {3}7d █/m, `5h ${String(v)}`);
+    assert.match(comLider(v, 'd7'), / {3}7d \?$/m, `7d ${String(v)}`);
+    assert.match(comLider(v, 'tok'), /tok \?$/m, `tok ${String(v)}`);
+  }
+  assert.match(comLider(0, 'h5'), /^│ {2}5h ░{10} 0% /m, '0 medido é barra vazia com 0%');
+  assert.match(comLider(0, 'tok'), /tok 0$/m);
+  const orq = (v: unknown): string => cru({ ...base, agora: { ...base.agora!, orquestrador: { ...base.agora!.orquestrador, contexto: v } } } as EstadoPainel).join('\n');
+  for (const v of [null, Number.NaN, -5, '55']) {
+    assert.match(orq(v), /^│ {2}ctx \? · pouso em 50% {3}tok 732k$/m, `ctx ${String(v)}`);
+    assert.doesNotMatch(orq(v), /hora de pousar/);
+  }
+  assert.match(orq(0), /^│ {2}ctx ░+ 0% · pouso em 50%/m);
+  const agente = (v: unknown): string => cru({ ...base, equipe: { ...base.equipe, agentes: base.equipe.agentes.map((a) => (a.task === 'T4' ? { ...a, ctxPct: v, ctxTok: v } : a)) } } as EstadoPainel).join('\n');
+  for (const v of [null, Number.NaN, -1]) assert.match(agente(v), /^├─ ● \S+ · sonnet +T4 +ctx \? /m, `agente ${String(v)}`);
+  assert.match(agente(0), /^├─ ● \S+ · sonnet +T4 +ctx ░{10} 0% {2}0 · /m);
+  const rod = (v: unknown): string => cru({ ...base, rodape: { ...base.rodape, prod: { leituras: v, alteracoes: v }, ci: { verde: null, execucoesHoje: 0 } } } as EstadoPainel).join('\n');
+  assert.match(rod(Number.NaN), /^CI ● \? {3}PROD leu \? · alterou \?/m);
+  assert.match(rod(0), /^CI ● \? {3}PROD leu 0 · alterou 0/m);
+  const pr = (v: unknown): string => cru({ ...base, pronto: { ...base.pronto!, integradas: v } } as EstadoPainel).join('\n');
+  assert.match(pr(Number.NaN), /^PLANO {3}\? {2}\?\/8 tasks/m, 'sem número, "?" no lugar da barra');
+  assert.match(pr(0), /^PLANO {3}▱+ {2}0% {2}0\/8 tasks/m);
+  for (const x of [rico(), base].flatMap((s) => cru(s))) assert.ok(!x.includes('—') || /^GABARITO/.test(x), `"—" no lugar de "?": ${x}`);
+});
+
+test('fiel4-sem-agentes-em-toda-largura: sem --agentes nenhuma linha de ctx, tok, 5h/7d, árvore ou nome sorteado', () => {
+  const s = rico({ agentes: null });
+  for (const largura of [120, 80, 60, 50, 40]) for (const preset of ['esquadrao', 'executivo'] as const) {
+    const t = cru(s, { largura, preset }).join('\n');
+    assert.match(t, /^EQUIPE · agentes e contexto/m, `${largura} ${preset}`);
+    assert.doesNotMatch(t, /ctx|tok |5h|7d|^[├└]|GANDALF|ARAGORN|LEGOLAS|GIMLI|orquestra\b|▸/m, `${largura} ${preset}:\n${t}`);
+  }
+});
+
+test('arvore-cede-texto-antes-de-numero: a 60 colunas a linha do agente cede o modelo e o tempo para a ação aparecer; ctx e tokens nunca são cortados', () => {
+  const s = rico();
+  const linha = (largura: number): string => cru(s, { largura }).find((x) => /^├─ ● .* T4 /.test(x)) as string;
+  assert.match(linha(120), /· sonnet .* 30% {2}60k · \d+(m|h\d\d) {2}implementando \(registrado\)$/);
+  const l60 = linha(60);
+  assert.ok(colunas(l60) <= 60, l60);
+  assert.match(l60, /ctx █{3}░{7} 30% {2}60k {2}implementa/, `nível do E4: sem modelo e sem tempo, a ação à vista: ${l60}`);
+  assert.doesNotMatch(l60, /sonnet/);
 });
