@@ -1345,6 +1345,54 @@
       "reqs": [
         "REQ-GLB-1"
       ]
+    },
+    {
+      "id": "T59",
+      "titulo": "Pouso com revisor pendente",
+      "deps": [
+        "T53",
+        "T56",
+        "T57",
+        "T58"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/mod/gabarito.mjs",
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
+        "plugins/gabarito-mestre/gates/src/loop.ts",
+        "plugins/gabarito-mestre/gates/dist/loop.js",
+        "plugins/gabarito-mestre/gates/src/pouso.ts",
+        "plugins/gabarito-mestre/gates/dist/pouso.js",
+        "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+        "plugins/gabarito-mestre/gates/scripts/stop-loop.mjs",
+        "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-loop/caminhada.mjs"
+      ],
+      "reqs": [
+        "REQ-POU-1"
+      ]
+    },
+    {
+      "id": "T60",
+      "titulo": "Mod só grava com onboarding",
+      "deps": [
+        "T53",
+        "T56",
+        "T59"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/mod/painel.mjs",
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
+        "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs",
+        "plugins/gabarito-mestre/gates/src/guarda.ts",
+        "plugins/gabarito-mestre/gates/dist/guarda.js",
+        "plugins/gabarito-mestre/docs/virada-2.1.md",
+        "CHANGELOG.md"
+      ],
+      "reqs": [
+        "REQ-DIA-1"
+      ]
     }
   ]
 }
