@@ -1394,6 +1394,21 @@
       "reqs": [
         "REQ-DIA-1"
       ]
+    },
+    {
+      "id": "T61",
+      "titulo": "Sessão curta pula sem expect",
+      "deps": [
+        "T52",
+        "T57",
+        "T58"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/test/conversa-pontos.test.mjs"
+      ],
+      "reqs": [
+        "REQ-GLB-1"
+      ]
     }
   ]
 }
