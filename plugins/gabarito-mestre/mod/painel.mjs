@@ -438,6 +438,20 @@ export function gravarContexto({ sessao, percent, fonte, emMs } = {}) {
   return { argv: ['node', '-e', SCRIPT_CONTEXTO], stdin: JSON.stringify({ sessao, percent, fonte, em: new Date(emMs).toISOString() }) };
 }
 
+const SCRIPT_ONBOARDING = `/*gabarito:onboarding*/
+const { url, raiz } = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+import(url).then((m) => { process.stdout.write(JSON.stringify({ ok: true, onboarding: m.temOnboarding(raiz) === true }) + '\\n'); }).catch(() => process.exit(1));`;
+
+/**
+ * Pergunta ao predicado ÚNICO da guarda (`temOnboarding`, gates/dist/guarda.js) se o repo tem onboarding (GM-14 T60, emenda 68): sem ele o mod
+ * não grava em `.harness/` (contexto, medição) nem chama `gh`. `{argv, stdin}` para `$.process.run`; raiz ou plugin fora da forma ⇒ `null`.
+ */
+export function pedidoOnboarding(raiz, pluginRoot) {
+  if (typeof raiz !== 'string' || raiz === '' || typeof pluginRoot !== 'string' || pluginRoot === '') return null;
+  const url = ('file://' + encodeURI(`${pluginRoot}/gates/dist/guarda.js`)).replace(/#/g, '%23').replace(/\?/g, '%3F');
+  return { argv: ['node', '-e', SCRIPT_ONBOARDING], stdin: JSON.stringify({ url, raiz }) };
+}
+
 const SCRIPT_PLANO_B = `/*gabarito:planob*/
 const fs = require('node:fs');
 const { caminho } = JSON.parse(fs.readFileSync(0, 'utf8'));
@@ -541,6 +555,7 @@ const S = {
   avisos: [],
   falha: null,
   semLoop: false,
+  onboardingDe: null, // raiz em que a ponte já confirmou onboarding (T60); `false` nunca fica: a próxima leitura pergunta de novo
   paneVisivel: false,
   paneEspera: false, // a plataforma lista a Pane sem colocá-la (T50): espera o pedido do dono ou um terminal mais largo
   razaoPane: null, // `reason` do último `ui.open` que não colocou (string; '' sem texto) | null
@@ -740,6 +755,19 @@ export function atualizarEncerrados(agentes) {
   while (S.encerrados.size > TETO_ENCERRADOS) S.encerrados.delete(S.encerrados.values().next().value);
 }
 
+/** Repo com onboarding? Resposta da ponte; qualquer falha ⇒ `false` (falha fechada: sem onboarding confirmado, nada grava). `true` fica na memória por raiz. */
+async function comOnboarding($, cwd) {
+  if (S.onboardingDe === cwd) return true;
+  const q = pedidoOnboarding(cwd, $.plugin.root);
+  if (q === null) return false;
+  try {
+    const r = await $.process.run(q.argv, { cwd, stdin: q.stdin, timeoutMs: TIMEOUT_MS });
+    const o = r?.exitCode === 0 && typeof r.stdout === 'string' ? JSON.parse(r.stdout) : null;
+    if (ehObj(o) && o.ok === true && o.onboarding === true) { S.onboardingDe = cwd; return true; }
+  } catch { /* ponte negada ou resposta torta */ }
+  return false;
+}
+
 /** Contexto do orquestrador: `usage.context.percent` (fonte `mod`); nulo ⇒ plano B pelo transcript da sessão (`transcript`, estimado); grava `.harness/contexto/<sessao>.json`. */
 async function lerContexto($, cwd, pedido, agoraMs) {
   let contexto = null;
@@ -754,7 +782,7 @@ async function lerContexto($, cwd, pedido, agoraMs) {
     }
   }
   S.contexto = contexto;
-  const g = contexto === null ? null : gravarContexto({ sessao: S.sessaoId, percent: contexto.percent, fonte: contexto.fonte, emMs: agoraMs });
+  const g = contexto === null || !(await comOnboarding($, cwd)) ? null : gravarContexto({ sessao: S.sessaoId, percent: contexto.percent, fonte: contexto.fonte, emMs: agoraMs });
   if (g !== null) {
     try { await $.process.run(g.argv, { cwd, stdin: g.stdin, timeoutMs: TIMEOUT_MS }); } catch { /* o arquivo fica velho e `proxima` o descarta após 120 s */ }
   }
@@ -909,7 +937,7 @@ async function uma($, motivo) {
     s = { classe: 'erro', erro: 'sessao_sem_raiz', mensagem: 'a sessão não tem raiz' };
   } else {
     const pedido = await pedidoDoMod($, cwd, await agora($));
-    if (S.medirPedida) { S.medirPedida = false; await medirAgora($, cwd, pedido); } // antes do estado: o estado já lê o fato que acabou de mudar; releitura ao vivo NÃO mede (gh a cada tool.call)
+    if (S.medirPedida) { S.medirPedida = false; if (await comOnboarding($, cwd)) await medirAgora($, cwd, pedido); } // antes do estado: o estado já lê o fato que acabou de mudar; releitura ao vivo NÃO mede (gh a cada tool.call)
     const t0 = await agora($);
     try {
       const r = await $.process.run(['node', `${$.plugin.root}/gates/scripts/painel.mjs`, 'estado', '--agentes'], { cwd, stdin: JSON.stringify(pedido), timeoutMs: TIMEOUT_MS });

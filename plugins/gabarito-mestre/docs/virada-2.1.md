@@ -28,6 +28,16 @@ Para trocar, digite `/gabarito painel lateral` ou `/gabarito painel acima`; para
 
 Reinstale a 2.0.0 do plugin pelos passos de "Como voltar" em `docs/virada-2.0.md`. Para desfazer o foco, apague `viewMode` e `tui` de `.claude/settings.local.json`.
 
+## Medição e escrita só com onboarding
+
+O mod e o painel só **gravam** em `.harness/` (contexto da sessão, registro de medição, fatos medidos no diário) e só **chamam o `gh`** (lista de PRs e de releases) em repositório com onboarding feito, isto é, com `harness.config.json` (o mesmo critério da guarda). Em repositório sem onboarding o painel só lê, como na 2.0.0:
+
+- nenhuma escrita em `.harness/` e nenhuma chamada ao `gh`; o restante do painel segue visível;
+- sem `.harness/contexto` o loop não tem percent de contexto (nulo, como na 2.0);
+- sem o `gh`, a fase do PR e o estado da última entrega vêm do diário ou aparecem como "?", nunca inventados. Uma fonte que o painel não consultou por falta de onboarding **não** conta como "não lida": a linha "depende de você" não acusa falha de leitura por isso (medido).
+
+Rode o onboarding (`gabarito-instalar`) para ligar a medição.
+
 ## Limites desta versão
 
 - A herança das regras de repositórios da 1.x (`onboarding.mjs herdar`) chega na 2.2; não existe na 2.1.0.

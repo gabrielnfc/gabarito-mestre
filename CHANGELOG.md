@@ -22,6 +22,8 @@ Pré-versão da 2.1.0 (clareza para quem usa). Não é a versão estável: a 2.1
 - **Aviso sozinho na linha única do painel (T56)**: sem botão do topo, e o aviso sai inteiro em 80 colunas.
 - **Runner do A1 recusa diálogo de permissão (T57)**: detecta o diálogo no tty real, nunca sai com ele aberto, e valida cada fala 1:1 com o `dono.mensagem` gravado (uma por janela de 120 s do mesmo texto).
 
+- **Medição e escrita só com onboarding (T60, REQ-DIA-1)**: o mod e o painel só gravam em `.harness/` (`contexto/<sessao>.json`, `painel-medir.json`, `fato.medido` no diário, inclusive `_sem-id`) e só chamam `gh` (`pr list`, `release list`) em repositório com onboarding, o mesmo critério da guarda (`harness.config.json` em `origin/HEAD` ou na árvore local; uma função só, `temOnboarding`). Sem onboarding o painel só lê, como na 2.0.0: nenhuma escrita em `.harness/`, nenhuma chamada a `gh`, e o resto do painel segue visível. Sem onboarding não há `.harness/contexto`, então o loop não recebe percent de contexto, como na 2.0. Corrige o MAJOR-2 do review final.
+
 ### Aceite A1 (spec:154): REPROVADA
 
 A 2.1.0-alpha.1 **foi reprovada no aceite A1 completo** e sai como **A1 parcial declarado**, por decisão do dono em 2026-11-15 (anotado pelo orquestrador; emenda 65 aprovada pela Sombra com condições). Ela **não** é declarada aceita pelo A1; o A1 8/8 continua sendo o aceite da 2.1.0 final. Resultado da 3ª matriz, por grupo:

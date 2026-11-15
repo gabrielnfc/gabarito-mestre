@@ -72,6 +72,10 @@ type Opc = {
   instantaneoAvisos?: string[]
   /** gravação de `sessao.retomada` (T10) falha */
   retomadaFalha?: boolean
+  /** GM-14 T60: a ponte de onboarding (predicado único da guarda) responde que o repo NÃO tem onboarding */
+  semOnboarding?: boolean
+  /** GM-14 T60: a ponte de onboarding falha (nega, ou sai ≠ 0) */
+  onboardingFalha?: boolean
   /** GM-14 T20: `painel.local` que `onboarding.mjs painel` devolve; 'falha' ⇒ a ponte nega; 'corrompido' ⇒ `ok:true` sem `atual` */
   local?: 'lateral' | 'acima' | 'falha' | 'corrompido' | 'ausente'
   /** GM-14 T20: `onboarding.mjs painel --local` responde `ok:false` */
@@ -161,7 +165,7 @@ function mundo($: any, on: any, o: Opc = {}) {
     agoraMs: null as number | null,
     msgs: [] as { sha256: string; chars: number }[], mensagemLibera: [] as (() => void)[],
     // GM-14 T20: local, medir, contexto, plano B e pacote (cada ponte guarda o que recebeu)
-    local: (o.local ?? 'lateral') as string, locaisGravados: [] as string[], medirStdins: [] as any[], contextos: [] as any[], contextoInit: [] as any[], planosB: [] as any[], pacotesLidos: [] as any[],
+    local: (o.local ?? 'lateral') as string, locaisGravados: [] as string[], medirStdins: [] as any[], contextos: [] as any[], contextoInit: [] as any[], planosB: [] as any[], pacotesLidos: [] as any[], onboardings: [] as any[],
   }
 
   // o diário em memória: tudo que o mod grava volta na próxima leitura, com seq e ts válidos para a T2
@@ -256,6 +260,11 @@ function mundo($: any, on: any, o: Opc = {}) {
     // GM-14 T20: pontes `node -e` do painel (contexto, plano B e pacote), reconhecidas pela marca no início do script
     if (argv[0] === 'node' && argv[1] === '-e' && String(argv[2]).startsWith('/*gabarito:')) {
       const q = JSON.parse(e.init?.stdin ?? 'null')
+      if (String(argv[2]).startsWith('/*gabarito:onboarding*/')) {
+        est.onboardings.push({ q, init: e.init })
+        if (o.onboardingFalha) return { deny: 'node não iniciou' }
+        return cru0(`${JSON.stringify({ ok: true, onboarding: o.semOnboarding !== true })}\n`)
+      }
       if (String(argv[2]).startsWith('/*gabarito:contexto*/')) { est.contextos.push(q); est.contextoInit.push(e.init); return cru0('') }
       if (String(argv[2]).startsWith('/*gabarito:planob*/')) {
         est.planosB.push(q)
@@ -5061,4 +5070,41 @@ test('pura-x-exato-e-faixa (c3, MINOR-3): percent == X depois do pouso é penden
 test('em-x-exato-nega (c3, MINOR-3): o mod nega com a leitura exatamente em X depois do pouso', async ($, on) => {
   const m = mundo($, on, { eventos: INCIDENTE(), percent: 50, agora: BASE })
   await nega(m)
+})
+
+// ---- GM-14 T60 (REQ-DIA-1, emenda 68, MAJOR-2 do review final): o mod só GRAVA em .harness/ e só CHAMA gh com onboarding ----
+// Mutações: tirar o predicado de `lerContexto` (gravação do contexto) OU de `uma` (medir) derruba o teste do seu caminho.
+test('t60-sem-onboarding-nao-grava-contexto: percent do mod existe, mas a ponte de gravação do contexto nunca roda (turnos e 60 s)', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: 37, semOnboarding: true })
+  await arrancar(m)
+  await m.turno(); await drena(m)
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(m.est.onboardings.length).toBeGreaterThanOrEqual(1)
+  expect(m.est.onboardings[0].init.cwd).toBe(RAIZ)
+  expect(m.est.contextos).toHaveLength(0)
+  expect(m.est.painelStdins.length).toBeGreaterThanOrEqual(2) // o restante do painel segue lendo
+})
+test('t60-sem-onboarding-nao-mede: `painel.mjs medir` (que chama gh) nunca roda no início, no turno nem aos 60 s; o estado segue sendo lido', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { semOnboarding: true })
+  await arrancar(m)
+  await m.turno(); await drena(m)
+  await m.clock.advance(PERIODO); await drena(m)
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(m.est.medirStdins).toHaveLength(0)
+  expect(m.est.painelArgv.filter((a) => a[2] === 'estado').length).toBeGreaterThanOrEqual(3)
+})
+test('t60-onboarding-ponte-falha-nao-grava-nem-mede: sem resposta da ponte o mod não presume onboarding (falha fechada)', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: 37, onboardingFalha: true })
+  await arrancar(m)
+  await m.turno(); await drena(m)
+  expect(m.est.contextos).toHaveLength(0)
+  expect(m.est.medirStdins).toHaveLength(0)
+})
+test('t60-com-onboarding-comportamento-atual: grava o contexto e mede, e a ponte recebe a raiz da sessão e o dist da guarda', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: 37 })
+  await arrancar(m)
+  expect(m.est.contextos.length).toBeGreaterThanOrEqual(1)
+  expect(m.est.medirStdins.length).toBeGreaterThanOrEqual(1)
+  expect(m.est.onboardings[0].q.raiz).toBe(RAIZ)
+  expect(m.est.onboardings[0].q.url).toMatch(/^file:\/\/.*\/gates\/dist\/guarda\.js$/)
 })

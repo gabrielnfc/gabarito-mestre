@@ -17,6 +17,7 @@ import { trilhaDe, ancoraDaPerguntaB } from '../dist/trilha.js';
 import { marcaDeProgresso, jaParou } from '../dist/pouso.js';
 import { medir } from '../scripts/painel-medir.mjs';
 import { estadoDoPainel } from '../scripts/painel.mjs';
+import { pedidoOnboarding } from '../../mod/painel.mjs';
 import { entregaPublicada, SESSAO_QUALQUER } from '../dist/guarda.js';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -90,6 +91,33 @@ describe('medir: só com onboarding (T60, REQ-DIA-1, emenda 68)', () => {
     assert.deepEqual(rodarMedir(d, 'ok', { log }), { ok: true, gravados: [], falhas: [] });
     assert.deepEqual(arvore(d), []);
     assert.equal(existsSync(log), false);
+  });
+
+  test('ponte-real (mod): o argv de pedidoOnboarding roda temOnboarding da guarda; sem config ⇒ false, com ⇒ true; entrada torta ⇒ null', () => {
+    const raizPlugin = join(AQUI, '..', '..');
+    const ler = (dir) => {
+      const p = pedidoOnboarding(dir, raizPlugin);
+      const r = spawnSync(p.argv[0], p.argv.slice(1), { input: p.stdin, encoding: 'utf8', cwd: dir });
+      return r.status === 0 ? JSON.parse(r.stdout) : null;
+    };
+    const d = repo('enabler/GM-14-clareza', { onboarding: false });
+    assert.deepEqual(ler(d), { ok: true, onboarding: false });
+    writeFileSync(join(d, 'harness.config.json'), '{}\n');
+    assert.deepEqual(ler(d), { ok: true, onboarding: true });
+    assert.equal(pedidoOnboarding('', raizPlugin), null);
+    assert.equal(pedidoOnboarding(d, ''), null);
+    const fora = mkdtempSync(join(tmpdir(), 'fora de repo '));
+    assert.deepEqual(ler(fora), { ok: true, onboarding: false });
+  });
+
+  test('estado-sem-onboarding-nunca-sem-loop (cond. 4): repo git sem harness.config.json ⇒ o estado lê, não devolve sem_loop/plano_ausente, e não cria .harness/', () => {
+    const d = repo('enabler/GM-14-clareza', { onboarding: false });
+    const r = estadoDoPainel(d, { agentes: entrada([], 'sessao-9'), fuso: 'UTC' });
+    assert.equal(r.ok, true);
+    assert.doesNotMatch(JSON.stringify(r), /sem_loop|plano_ausente|entrega_nao_inferida/);
+    assert.deepEqual(r.estado.fontesFalhas, []); // fonte não consultada (gh) NÃO conta como "não lida" no DEPENDE (medido, cond. 3)
+    assert.equal(r.estado.pronto, null);
+    assert.deepEqual(arvore(d), []);
   });
 
   test('com-onboarding: o comportamento atual (grava e chama gh)', () => {
