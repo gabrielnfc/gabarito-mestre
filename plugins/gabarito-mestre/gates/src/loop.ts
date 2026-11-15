@@ -289,7 +289,7 @@ export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais & { 
 
   // (5) `percent` nulo não satisfaz a comparação. GM-14 T34 (FIEL-14 e, f): pouso pendente entra aqui como se o contexto estivesse acima de `x`, mas NÃO
   // despacha revisor (revoga, só para o pendente, o despacho da 2.0): o que está em voo termina e nada novo começa. O sinal vem de quem lê o diário com a
-  // regra única de `pouso-pendente.ts`: `loop.mjs proxima` e o hook Stop (`stop-loop.mjs`) o passam; o mod não, e segue como na 2.0 (controle próprio do pouso).
+  // regra única de `pouso-pendente.ts`: `loop.mjs proxima`, o hook Stop (`stop-loop.mjs`) e, desde a T59 (emenda 67), o mod o passam: com contexto >= X e o pouso da fronteira feito, task `concluida` à espera do revisor NÃO vence o pouso (0 vivos ⇒ `pousar`, com vivos ⇒ `esperar`).
   const pendente = sinais.pousoPendente === true;
   if (pendente || (sinais.percent !== null && sinais.percent >= sinais.x)) {
     if (!pendente && revisores.length > 0 && capacidade >= 1) return despachar(revisores);

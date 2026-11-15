@@ -167,7 +167,7 @@ export async function caminhar(opcoes) {
   }
 
   // ── host do mod ($ mínimo) ─────────────────────────────────────
-  const mundo = { sessao: 'S1', clears0: 0, percent: null, agentes: [], store: new Map(), clears: 0, submits: [], avisos: [], agendado: null, clearAgora: false, denies: [] };
+  const mundo = { sessao: 'S1', clears0: 0, percent: null, agentes: [], store: new Map(), clears: 0, submits: [], avisos: [], agendado: null, clearAgora: false, denies: [], relogioMs: 0 };
   const modArquivo = o.semReabrir ? modSemReabrir(join(o.tmp, 'mod-sem-reabrir')) : (o.mod ?? join(PLUGIN, 'mod/gabarito.mjs')); // `mod`: outro gabarito.mjs (validar a regra da T19 r2 antes de ela chegar)
   const { register } = await import(pathToFileURL(modArquivo).href);
   const H = {};
@@ -178,7 +178,10 @@ export async function caminhar(opcoes) {
     env: { get: async (k) => (k === 'GABARITO_POUSO_X' ? o.x : undefined) },
     store: { get: async (k) => mundo.store.get(k), set: async (k, v) => { mundo.store.set(k, v); }, delete: async (k) => { mundo.store.delete(k); } },
     ui: { toast: async (t) => { mundo.avisos.push(t); trilha.push(`  mod aviso: ${t.slice(0, 150)}`); }, log: () => {} },
-    process: { run: async (argv, op = {}) => { const r = spawnSync(argv[0], argv.slice(1), { cwd: op.cwd, input: op.stdin, encoding: 'utf8', env: ambiente() }); return { exitCode: r.status, stdout: r.stdout, stderr: r.stderr }; } },
+    process: { run: async (argv, op = {}) => {
+      let args = argv.slice(1);
+      if (mundo.relogioMs > 0) { writeFileSync(join(o.tmp, 'relogio.cjs'), 'const d = Date.now; Date.now = () => d() + Number(process.env.GAB_RELOGIO_MS);\n'); args = ['--require', join(o.tmp, 'relogio.cjs'), ...args]; }
+      const r = spawnSync(argv[0], args, { cwd: op.cwd, input: op.stdin, encoding: 'utf8', env: ambiente(mundo.relogioMs > 0 ? { GAB_RELOGIO_MS: String(mundo.relogioMs) } : {}) }); return { exitCode: r.status, stdout: r.stdout, stderr: r.stderr }; } },
     fs: { exists: async (p) => existsSync(p), write: async (p, t) => { writeFileSync(p, t); } },
     clock: { now: async () => Date.now(), after: (_ms, fn) => { mundo.agendado = fn; }, every: () => {} },
     command: { register: async () => {}, run: async ({ command }) => { if (command === 'clear') { mundo.clears++; mundo.percent = null; mundo.clearAgora = true; } } },
@@ -386,6 +389,8 @@ export async function caminhar(opcoes) {
     ag.status = 'completed';
     await H['turn.complete']($, { agentId: ag.id, reason: 'answer', isAborted: false, usage: uso }, async (e) => e);
     if (ag.papel === 'revisor') mundo.percent = o.percent; // o contexto só sobe com o veredito (T53, I1)
+    // T59 (emenda 67): o contexto também sobe quando o implementador termina (o impasse: pouso da fronteira feito, task concluída à espera do revisor, contexto >= X)
+    else if (o.sobeNoImplementador === true) mundo.percent = o.percent;
     trilha.push(`  agente ${ag.id} ${ag.task} ${ag.papel} terminou`);
   }
   async function peer() { if (H['prompt.submit']) await H['prompt.submit']($, { origin: { kind: 'peer' }, text: 'hand-back' }, async (e) => e); }
@@ -455,7 +460,7 @@ export async function caminhar(opcoes) {
     if (!(liberacao.reabrirSegueNoTeto && liberacao.subagentBloqueado && liberacao.diarioIgual && liberacao.liberou)) def(`liberação do dono fora do previsto: ${JSON.stringify(liberacao)}`);
   }
 
-  let turno = 0; let fim = null; let blocks = 0; let escFeito = false; let pendenteFeito = false; let liberou = false;
+  let tempoFeito = false; let turno = 0; let fim = null; let blocks = 0; let escFeito = false; let pendenteFeito = false; let liberou = false;
   const pendentes = []; let submitsVistos = 0;
   mundo.percent = o.percent; // 1ª resposta define o percent
   trilha.push(`T${turno} prompt do dono`);
@@ -494,6 +499,15 @@ export async function caminhar(opcoes) {
       for (const ag of mundo.agentes.filter((a) => a.status === 'running')) { await terminar(ag); pendentes.push(ag); }
     }
     await fimTurnoMod();
+    if (o.passaTempoMs !== undefined && !tempoFeito && mundo.clears > 0 && r.negou && !mundo.clearAgora) {
+      // T59: a repetição do pouso espera 60 s do pouso anterior (I3) e a fumaça não espera relógio: o `Date.now()` dos processos que o MOD chama (a ponte `ler`, que devolve o `agora`)
+      // anda `passaTempoMs`; o diário (cadeia de hash) fica intacto. Depois a vigia (o timer de 30 s do mod) roda.
+      tempoFeito = true;
+      mundo.relogioMs += o.passaTempoMs;
+      trilha.push(`  o tempo passa: ${o.passaTempoMs} ms; a vigia do mod roda`);
+      // a vigia decide e agenda o pouso (`$.clock.after(0, ...)`): cada timer que o mod arma roda uma vez, até o /clear
+      for (let i = 0; i < 3 && mundo.agendado && !mundo.clearAgora; i++) { const f = mundo.agendado; mundo.agendado = null; await f(); await new Promise((r2) => setImmediate(r2)); }
+    }
     if (fim && !mundo.clearAgora && o.liberar && !liberou && /^parar teto_rodadas/.test(fim)) {
       // o dono digita o comando; o corpo da skill manda o modelo consultar `proxima`, e o ciclo segue
       liberou = true;

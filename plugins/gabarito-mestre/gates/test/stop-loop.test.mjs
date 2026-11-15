@@ -1539,6 +1539,25 @@ test('R4-STOP-A controle: o pouso da fronteira ATUAL (sem veredito depois dele) 
   contextoDe(raiz, 'S1', 61);
   avisa(stop(raiz), /aguardando o pouso do mod/);
 });
+test('T59-STOP-impasse-revisor-pendente (emenda 67): pouso da fronteira feito, T1 integrada, T2 concluída à espera do revisor, o mod medindo 61 % ⇒ o Stop avisa que o mod pousa e NUNCA pede despacho (nem do revisor), com e sem onboarding, em vários Stops', () => {
+  for (const onb of [false, true]) {
+    const raiz = repo();
+    plano(raiz, TRES);
+    if (onb) comOnboarding(raiz);
+    diario(raiz, 's1', [...TASK_APROVADA('s1'), ev('s1', 4, 'task.integrada', { task: 'T1', sha: 'd' })]);
+    pousoDe(raiz);
+    diario(raiz, 's2', [ev('s2', 1, 'task.iniciada', { task: 'T2', papel: 'implementador' }), ev('s2', 2, 'task.concluida', { task: 'T2', sha: 'y' })]);
+    contextoDe(raiz, 'S1', 61);
+    for (let i = 0; i < 4; i += 1) {
+      const r = stop(raiz);
+      avisa(r, /aguardando o pouso do mod/);
+      assert.doesNotMatch(r.json.systemMessage, /\bT2\b|revisor/i);
+    }
+    // controle: com a leitura própria baixa (o /clear já limpou), o revisor é pedido
+    contextoDe(raiz, 'S1', 4);
+    bloqueia(stop(raiz), /T2/);
+  }
+});
 test('R3-STOP stop-sessao-nova-depois-de-sucessora-fechada (MAJOR-5): a sucessora (A2) calou, o dia seguinte abre S1 por startup medindo 4 %; o Stop libera (block), não fica aguardando', () => {
   const raiz = repo();
   plano(raiz);

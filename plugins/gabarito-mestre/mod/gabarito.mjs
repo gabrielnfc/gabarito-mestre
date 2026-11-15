@@ -326,6 +326,9 @@ async function avaliar($, c) {
     r.acao = proximaAcao(m.plano, m.eventos, {
       slots: m.slots, percent: m.consumida ? null : percent, x, pausado: m.pausado, vivos: m.vivos,
       tokens: m.tokens, tetoTokens: m.tetoTokens, podePousar: true,
+      // T59 (emenda 67, FIEL-14 f): depois do pouso desta fronteira, em X ou acima, o núcleo não prioriza o revisor (impasse com a task `concluida` à espera):
+      // 0 vivos ⇒ `pousar`, com vivos ⇒ `esperar`. O mesmo sinal que o Stop e o `loop.mjs proxima` já passam.
+      pousoPendente: r.pousoPendente,
     });
   } catch {
     await avisarDiario($, 'o núcleo do loop falhou');
@@ -340,7 +343,7 @@ async function avaliar($, c) {
   if (soDono && !m.consumida && percent !== null && percent >= x) {
     try {
       pousariaSemDono = proximaAcao(m.plano, m.eventos.filter((e) => e?.tipo !== 'dono.mensagem'), {
-        slots: m.slots, percent, x, pausado: m.pausado, vivos: m.vivos, tokens: m.tokens, tetoTokens: m.tetoTokens, podePousar: true,
+        slots: m.slots, percent, x, pausado: m.pausado, vivos: m.vivos, tokens: m.tokens, tetoTokens: m.tetoTokens, podePousar: true, pousoPendente: r.pousoPendente,
       }).tipo === 'pousar';
     } catch { /* sem resposta: não nega por isto */ }
   }

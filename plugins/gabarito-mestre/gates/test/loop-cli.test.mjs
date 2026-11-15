@@ -5364,6 +5364,27 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
     assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
   });
 
+  test('T59-impasse-revisor-pendente (emenda 67), pelo CLI real: veredito de T1, pouso, T1 integrada, T2 concluída (revisor pendente) e a sessão em 61 % ⇒ proxima 0 vivos pousar, com vivos esperar; nunca o revisor', () => {
+    const amb = ambiente({ config: ONBOARDING, plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }, { id: 'T2', deps: [], arquivos: ['src/t2.txt'] }]) });
+    amb.aprovar('T1');
+    assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    assert.equal(amb.cli(['integrar', 'T1']).rc, 0);
+    for (const a of [['abrir', 'T2'], ['iniciar', 'T2', 'implementador']]) assert.equal(amb.cli(a).rc, 0, a.join(' '));
+    amb.commitNaWt('T2', 'src/t2.txt');
+    assert.equal(amb.cli(['concluir', 'T2']).rc, 0);
+    gravarCtx(amb, 'S1', { percent: 61, fonte: 'mod', em: agora() });
+    const sem = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
+    assert.equal(sem.rc, 0, sem.out + sem.err);
+    assert.deepEqual(sem.j.acao, { tipo: 'pousar' });
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '1']).j.acao, { tipo: 'esperar', motivo: 'pouso_pendente' });
+    // controle: a sessão nova (abaixo de X) já pode despachar o revisor
+    gravarCtx(amb, 'S1', { percent: 5, fonte: 'mod', em: agora() });
+    inicioDe(amb, 'S2', 'clear');
+    const nova = amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao;
+    assert.equal(nova.tipo, 'despachar');
+    assert.deepEqual(nova.itens.map((i) => `${i.task} ${i.papel}`), ['T2 revisor']);
+  });
+
   test('pouso-atravessa-cli-proxima-depende-painel (P9): pousar S1 ⇒ proxima sem despacho ⇒ painel real com "limpar a conversa" ⇒ clear de S2 tira ⇒ despacha; startup de S2 não tira', () => {
     const amb = plano1();
     assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);

@@ -1659,6 +1659,17 @@ test('pouso-pendente-com-vivos-espera: agente ativo ⇒ esperar pouso_pendente, 
   assert.deepEqual(viaCli(plano(['a'], ['b']), [...diario(...aprovada('a')), pouso(10, 30)], sinais({ vivos: 1 })), { tipo: 'esperar', motivo: 'pouso_pendente' });
 });
 
+test('T59-impasse-revisor-pendente: pouso da fronteira feito, `a` integrada, `b` concluída (revisor pendente), contexto >= X ⇒ 0 vivos pousar; com vivos esperar; nunca despachar o revisor (emenda 67)', () => {
+  const p = plano(['a'], ['b']);
+  const evs = [...diario(...pronta('a')), pouso(10, 30), ...diario(ini('b'), con('b')).map((e, i) => ({ ...e, seq: 20 + i, ts: new Date(Date.UTC(2026, 10, 3, 1, 5, i)).toISOString() }))];
+  // o sinal real: o núcleo recebe o pendente de quem lê o diário e o percent da própria sessão
+  assert.deepEqual(viaCli(p, evs, sinais({ percent: 61 })), { tipo: 'pousar' });
+  assert.deepEqual(viaCli(p, evs, sinais({ percent: 61, vivos: 2 })), { tipo: 'esperar', motivo: 'pouso_pendente' });
+  assert.deepEqual(viaCli(p, evs, sinais({ percent: null })), { tipo: 'pousar' });
+  // controle: sem o pouso, o revisor segue despachado (a 2.0 acima de X)
+  assert.equal(viaCli(p, [...diario(...pronta('a'), ini('b'), con('b'))], sinais({ percent: 61 })).tipo, 'despachar');
+});
+
 test('pouso-pendente-sem-vivos-repete-pousar: a cada chamada, e clear de outra sessão volta a despachar', () => {
   const p = plano(['a']);
   const evs = [...diario(ini('a'), con('a')), pouso(10, 30)];

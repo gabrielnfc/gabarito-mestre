@@ -4855,6 +4855,53 @@ test('paralela-baixa-livre: B abaixo de X sem relação com o pouso despacha', a
   await libera(m)
 })
 
+// GM-14 T59 (emenda 67, MAJOR-1 do review final): pouso da fronteira já feito, contexto de volta a X ou acima e task `concluida` à espera do revisor.
+// Antes da T59 o mod nega todo Agent (revisor incluído) e o núcleo devolvia `despachar revisor`, nunca `pousar`: só o /clear manual saía do impasse.
+/** pouso de A feito, `a` integrada e `b` concluída (revisor pendente): o diário do impasse */
+const IMPASSE = () => POUSOU_A(
+  EVT(5, 'task.integrada', { task: 'a', sha: 'd' }, 500_000),
+  EVT(6, 'task.iniciada', { task: 'b', papel: 'implementador' }, 400_000), EVT(7, 'task.concluida', { task: 'b', sha: 'y' }, 390_000),
+)
+test('T59-impasse-0-vivos-pousa: POUSOU_A + a integrada + b concluída, 61 %, 0 vivos ⇒ o mod pousa (/clear, tentativa 2); nunca despacha o revisor', async ($, on) => {
+  const m = mundo($, on, { eventos: IMPASSE(), percent: 61, agora: BASE, sessaoId: 'sess-A', agentes: [] })
+  await m.inicio()
+  await nega(m) // revisor incluído
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(1)
+  expect(tentativas(m)).toEqual([2])
+  expect(m.est.submits).toHaveLength(1)
+  await libera(m) // a sessão nova mede 5 < X
+})
+test('T59-impasse-pela-vigia-sem-turno: o mesmo impasse sai pela vigia de 30 s, sem nenhum fim de turno depois', async ($, on) => {
+  const m = mundo($, on, { eventos: IMPASSE(), percent: 61, agora: BASE, sessaoId: 'sess-A', agentes: [] })
+  await m.inicio()
+  await nega(m) // o 1º Agent já arma a vigia
+  await passos(m, 2)
+  expect(m.est.clears).toBe(1)
+  expect(tentativas(m)).toEqual([2])
+})
+test('T59-impasse-com-vivos-espera: o mesmo impasse com agente vivo ⇒ espera, sem /clear e sem despachar o revisor; ao terminar o vivo, pousa', async ($, on) => {
+  const vivos: any[] = [{ id: 'v1', status: 'running' }]
+  const m = mundo($, on, { eventos: IMPASSE(), percent: 61, agora: BASE, sessaoId: 'sess-A', agentes: vivos })
+  await m.inicio()
+  await nega(m)
+  await m.turno(); await m.clock.settle(); await m.avancar(61_000)
+  expect(m.est.clears).toBe(0)
+  expect(tentativas(m)).toEqual([])
+  await nega(m) // nunca o revisor
+  vivos.length = 0
+  await passos(m, 2)
+  expect(m.est.clears).toBe(1)
+  expect(tentativas(m)).toEqual([2])
+})
+test('T59-controle-fronteira-aberta-abaixo-de-x: o impasse com a sessão a 10 % não pousa e o revisor passa', async ($, on) => {
+  const m = mundo($, on, { eventos: IMPASSE(), percent: 10, agora: BASE, sessaoId: 'sess-A', agentes: [] })
+  await m.inicio()
+  await libera(m)
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(0)
+})
+
 test('vivo-por-mais-de-1h: agente vivo por 70 min não derruba a vigia; ao terminar o mod repete e chega a sem_pouso, sem turno', async ($, on) => {
   const vivos: any[] = []
   const m = mundo($, on, { clearNaoLimpa: true, agora: BASE, agentes: vivos })
