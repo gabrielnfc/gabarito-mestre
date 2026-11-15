@@ -1225,7 +1225,7 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
   });
 
   test('spec-na-worktree-da-sessao (DP-3 aj. 4; sombra-dp.md:95 ataque 2): principal em outra branch sem a spec, spec só na worktree ⇒ a FASE do painel vê a spec do checkout da sessão, com o mesmo sha que o `medir` grava', () => {
-    const m = repoT18({ branch: 'main' });
+    const m = repoT18({ branch: 'main', origem: {} }); // T60 (emenda 71): o medir só grava com onboarding
     const wt = join(m.base, 'wt da sessão');
     g(m.repo, 'worktree', 'add', '-q', '-b', 'feat/GM-12-painel', wt);
     mkdirSync(join(wt, 'docs', 'superpowers', 'specs'), { recursive: true });

@@ -623,7 +623,7 @@ describe('costura T18: CLI real em toda fase', { timeout: 180_000 }, () => {
     mkdirSync(repo);
     g(repo, 'init', '-q', '-b', 'feat/GM-12-medir');
     g(repo, 'config', 'user.email', 't@t'); g(repo, 'config', 'user.name', 't'); g(repo, 'config', 'commit.gpgsign', 'false');
-    writeFileSync(join(repo, 'README.md'), 'x\n'); g(repo, 'add', '-A'); g(repo, 'commit', '-q', '-m', 'inicio');
+    writeFileSync(join(repo, 'README.md'), 'x\n'); writeFileSync(join(repo, 'harness.config.json'), '{}\n'); /* T60 (emenda 71): o medir só grava com onboarding */ g(repo, 'add', '-A'); g(repo, 'commit', '-q', '-m', 'inicio');
     const dir = join(repo, '.harness', 'entregas', 'GM-12');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'plano.json'), JSON.stringify({ entrega: 'GM-12', tasks: [{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }] }));

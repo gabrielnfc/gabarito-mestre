@@ -598,6 +598,9 @@ test('aprovar-sem-plano-sem-efeito: sem plano.json, evento gravado que o diário
 test('spec-na-worktree-da-sessao-sem-plano: sem plano.json, a spec só na worktree REAL é aprovada; o medir da sessão dá o mesmo sha; garantias intactas', async () => {
   const { medir } = await import('../scripts/painel-medir.mjs');
   const amb = repo({ plano: null, spec: null, branch: 'main' });
+  // T60 (emenda 71): o medir só grava com onboarding; a config entra só nesta fixture, commitada para valer também na worktree
+  writeFileSync(join(amb.dir, 'harness.config.json'), '{}\n');
+  git(amb.dir, 'add', 'harness.config.json'); git(amb.dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'chore: onboarding');
   const wtCru = join(amb.dir, '.harness', 'worktrees', 'S1');
   const r0 = git(amb.dir, 'worktree', 'add', '-q', '-b', 'wt/GM-10-S1', wtCru);
   assert.equal(r0.status, 0, r0.stderr);
