@@ -308,6 +308,24 @@ function avisoLiberacoes(eventos, entrega) {
   return aviso(`Loop da entrega ${limpo(entrega)} concluído. Liberações do teto: ${lista.join(', ')}${resto > 0 ? ` e mais ${resto}` : ''}. Se não foi você, confira o diário.`);
 }
 
+const SHELL_INTEGRANDO = /\b(integrar|gate-task)\b/;
+const SHELL_ENCERRADO = new Set(['idle', 'completed', 'failed', 'killed']);
+
+/**
+ * Trabalho vivo em segundo plano: subagent (qualquer status) ou shell de fundo do orquestrador que integra (GM-15 STP-1, forma medida no S5:
+ * `{type:'shell', status:'running', description, command}`). A `description` vem do modelo, então `command` também vale. Outro shell não conta;
+ * shell já encerrado também não.
+ */
+function temTrabalhoVivo(tarefas) {
+  if (!Array.isArray(tarefas)) return false;
+  return tarefas.some((t) => {
+    if (t === null || typeof t !== 'object') return false;
+    if (t.type === 'subagent') return true;
+    if (t.type !== 'shell' || (typeof t.status === 'string' && SHELL_ENCERRADO.has(t.status))) return false;
+    return [t.description, t.command].some((c) => typeof c === 'string' && c.length <= 2000 && SHELL_INTEGRANDO.test(c));
+  });
+}
+
 /** Núcleo do hook. Devolve o objeto a imprimir, ou `null` para silêncio. */
 export async function executar(texto, ambiente = process.env, cwdProcesso = process.cwd()) {
   const { entrada, aviso: erroEntrada } = lerEntrada(texto);
@@ -349,7 +367,7 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   if (!v.ok) return aviso(`Loop: plano.json da entrega ${limpo(entrega)} inválido: ${curto(v.erro)}; nada decidido`);
   const plano = v.plano;
 
-  if (Array.isArray(entrada.background_tasks) && entrada.background_tasks.some((t) => t !== null && typeof t === 'object' && t.type === 'subagent')) return null;
+  if (temTrabalhoVivo(entrada.background_tasks)) return null;
   if (pausado(raiz)) return null;
 
   const dl = await carregar('loop');
@@ -376,8 +394,9 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   // GM-14 T53 (emendas 52 e 53, I1): com o mod medindo ESTA sessão só a leitura dela (`.harness/contexto/<sessao>.json`, fonte `mod`, `em` <= 120 s) decide; nenhuma outra
   // sessão libera ou prende esta. A regra é a mesma `pousoPendente` (nenhuma 2ª definição). Arquivo ausente/ilegível ⇒ sem leitura ⇒ a regra sem mod.
   const sessaoAtual = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;
-  const xEnv = process.env.GABARITO_POUSO_X;
-  const xTeto = xEnv !== undefined && /^\d{1,3}$/.test(xEnv) && Number(xEnv) >= 1 && Number(xEnv) <= 100 ? Number(xEnv) : X_PADRAO;
+  // GM-15 T16 (HIG-1): o mesmo `lerX` do mod e do `pouso.mjs` (decimal em (0, 100], inválido ⇒ 50); dist/pouso.js ausente ⇒ X padrão, sem lançar.
+  const dpx = await carregar('pouso');
+  const xTeto = dpx.ok && typeof dpx.mod.lerX === 'function' ? dpx.mod.lerX(process.env.GABARITO_POUSO_X).x : X_PADRAO;
   let medicao;
   let pendente = false;
   let noTeto = false;

@@ -246,6 +246,47 @@ test('stop-shell-background-nao-conta', () => {
   bloqueia(stop(raiz, { background_tasks: [{ id: 'sh', type: 'shell', status: 'running' }] }));
 });
 
+/** Forma medida pelo S5 (GM-15 T0b): shell de fundo do orquestrador no stdin do Stop. */
+const shellDe = (description, extra = {}) => ({ id: 'sh1', type: 'shell', status: 'running', description, command: 'node loop.mjs x', ...extra });
+
+test('stop-integrar-em-fundo-silencio (GM-15 STP-1): shell de fundo com "integrar" na description conta como vivo, igual ao subagent', () => {
+  const raiz = repo();
+  plano(raiz);
+  mudo(stop(raiz, { background_tasks: [shellDe('integrar T3 em fundo')] }));
+  assert.equal(existsSync(contadorDe(raiz)), false, 'trabalho vivo não mexe no contador');
+});
+
+test('stop-gate-task-em-fundo-silencio (GM-15 STP-1): shell de fundo com "gate-task" na description conta como vivo', () => {
+  const raiz = repo();
+  plano(raiz);
+  mudo(stop(raiz, { background_tasks: [shellDe('gate-task T3 em fundo')] }));
+});
+
+test('stop-integrar-em-fundo-so-no-command: a description vem do modelo; o command com integrar também conta', () => {
+  const raiz = repo();
+  plano(raiz);
+  mudo(stop(raiz, { background_tasks: [shellDe('rodando', { command: 'node plugins/x/loop.mjs integrar T3' })] }));
+});
+
+test('stop-outro-shell-nao-conta (GM-15 STP-1): shell de fundo sem integrar/gate-task segue sem contar (npm test, servidor, build)', () => {
+  const raiz = repo();
+  plano(raiz);
+  bloqueia(stop(raiz, { background_tasks: [shellDe('rodar a suíte em fundo', { command: 'npm test' })] }), /T1/);
+  bloqueia(stop(raiz, { background_tasks: [shellDe('subir servidor', { command: 'node server.mjs', status: 'running' })] }), /T1/);
+});
+
+test('stop-integrar-em-fundo-encerrado-nao-conta: shell com integrar mas já completed/failed/killed não segura o Stop', () => {
+  const raiz = repo();
+  plano(raiz);
+  for (const status of ['completed', 'failed', 'killed']) bloqueia(stop(raiz, { background_tasks: [shellDe('integrar T3 em fundo', { status })] }), /T1/);
+});
+
+test('stop-integrar-em-fundo-nao-fura-plano-invalido: a linha 3 (plano) vem antes do trabalho vivo', () => {
+  const raiz = repo();
+  plano(raiz, '{ nao e json');
+  avisa(stop(raiz, { background_tasks: [shellDe('integrar T3 em fundo')] }), /plano/i);
+});
+
 test('stop-shell-e-agente-juntos: o agente conta', () => {
   const raiz = repo();
   plano(raiz);
@@ -1655,4 +1696,37 @@ test('publicada-vizinho-sem-2o-fato: PR mergeado sem plano.json, spec nem ledger
   const antes = linhasDoDiario(raiz).length;
   mudo(stop(raiz));
   assert.equal(linhasDoDiario(raiz).length, antes);
+});
+
+// ------------------------------------------------------------------------------------- GM-15 T16: X decimal e ligação com idPadraoDe
+
+test('stop-x-decimal (GM-15 STP-1/HIG-1): GABARITO_POUSO_X=37.5 vale igual ao pouso.ts; 40 % já é teto, e com X inteiro só (50) não seria', () => {
+  const raiz = repo();
+  plano(raiz);
+  contextoDe(raiz, 'S1', 40);
+  avisa(stop(raiz, {}, { env: { GABARITO_POUSO_X: '37.5' } }), /contexto no teto, aguardando o pouso do mod/);
+  bloqueia(stop(raiz, {}, { env: { GABARITO_POUSO_X: '45.5' } }), /T1/); // 40 < 45.5: fora do teto
+  bloqueia(stop(raiz), /T1/); // sem a variável: X = 50, 40 % fora do teto
+});
+
+test('stop-x-invalido-volta-ao-padrao: 0, 100.1, texto e "37,5" caem em 50 (40 % fora do teto), como lerX', () => {
+  for (const x of ['0', '100.1', 'abc', '37,5', '-5', '']) {
+    const raiz = repo(); // repo novo por caso: o contador de "sem progresso" é por repo
+    plano(raiz);
+    contextoDe(raiz, 'S1', 40);
+    bloqueia(stop(raiz, {}, { env: { GABARITO_POUSO_X: x } }), /T1/);
+  }
+});
+
+test('stop-branch-hotfix-respeita-idPadrao-da-origem (GM-15 hotfix, MINOR r1): origin/HEAD com fluxo.idPadrao só PBI-n ⇒ hotfix/GM-10-x não é entrega e o Stop fica mudo', () => {
+  bloqueia(stop((() => { const r = repo('hotfix/GM-10-x'); plano(r); return r; })()), /T1/); // controle: sem config própria o padrão acha GM-10
+  const raiz = repo('hotfix/GM-10-x');
+  plano(raiz);
+  writeFileSync(join(raiz, 'harness.config.json'), JSON.stringify({ fluxo: { idPadrao: '^PBI-\\d+$' } }));
+  git(raiz, 'add', 'harness.config.json');
+  git(raiz, 'commit', '-q', '-m', 'chore: config');
+  git(raiz, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  git(raiz, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  mudo(stop(raiz));
+  assert.equal(existsSync(contadorDe(raiz)), false);
 });
