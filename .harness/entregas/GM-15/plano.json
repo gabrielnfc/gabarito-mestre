@@ -583,7 +583,10 @@
         "plugins/gabarito-mestre/gates/test/conversa-pontos.test.mjs",
         "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
         "plugins/gabarito-mestre/gates/test/painel-costura.test.mjs",
-        "plugins/gabarito-mestre/gates/test/painel-lng.test.ts"
+        "plugins/gabarito-mestre/gates/test/painel-lng.test.ts",
+        "plugins/gabarito-mestre/gates/test/e2e/conversa-2026-11-11/rodar-a1.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-e4/esquadrao.txt",
+        "plugins/gabarito-mestre/gates/test/fumaca-e4/executivo.txt"
       ],
       "reqs": [
         "REQ-HIG-1"
