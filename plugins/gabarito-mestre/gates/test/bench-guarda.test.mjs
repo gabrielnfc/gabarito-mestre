@@ -1,6 +1,11 @@
 // bench-guarda: decisão pura sobre medições injetadas (REQ-CI-1). Nenhum teste lê relógio nem roda a guarda.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { decidir, resumo } from '../scripts/bench-guarda.mjs';
 
 const r = (p95) => ({ n: 20, p50: p95 / 2, p95, max: p95 });
@@ -62,4 +67,30 @@ test('sem limite nenhum só informa', () => {
 test('resumo: p95 de 20 amostras é a 19ª ordenada', () => {
   const a = Array.from({ length: 20 }, (_, i) => i + 1);
   assert.equal(resumo(a).p95, 19);
+});
+
+// CLI real: o script roda com a flag de verdade e o exit code é o contrato da CI (ci.yml).
+const SCRIPT = fileURLToPath(new URL('../scripts/bench-guarda.mjs', import.meta.url));
+const roda = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', timeout: 60000 });
+
+test('cli: --limite-excesso estourado sai 1 e repete (guarda é sempre mais lenta que o piso, limite 0,001 não depende de carga)', () => {
+  const r = roda('--n', '2', '--limite-excesso', '0.001');
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stdout, /limite excesso 0.001 ms: ESTOUROU/);
+  assert.match(r.stdout, /2 medições/);
+});
+
+test('cli: --limite-excesso folgado sai 0', () => {
+  const r = roda('--n', '2', '--limite-excesso', '1000000');
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /limite excesso 1000000 ms: ok/);
+});
+
+test('cli: roda por symlink (entrypoint) — --n 0 sai 2', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gm-bench-link-'));
+  const link = join(dir, 'bench.mjs');
+  symlinkSync(SCRIPT, link);
+  const r = spawnSync(process.execPath, [link, '--n', '0'], { encoding: 'utf8', timeout: 30000 });
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /uso:/);
 });

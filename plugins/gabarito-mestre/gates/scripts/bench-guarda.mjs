@@ -3,7 +3,7 @@
  * bench-guarda.mjs — latência wall-clock do hook da guarda (REQ-GRD-3, E1:60).
  *
  * USO
- *   node scripts/bench-guarda.mjs [--n 20] [--limite <ms>] [--json]
+ *   node scripts/bench-guarda.mjs [--n 20] [--limite <ms> | --limite-excesso <ms>] [--json]
  *
  * Cria um repositório temporário com `origin` e `harness.config.json` em origin/HEAD (o caminho real do hook:
  * `git show` da config), roda `dist/guarda.js` N vezes em processo novo com um comando benigno (`ls`) e imprime
@@ -17,8 +17,8 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { arg } from '../lib/cli.mjs';
+import { fileURLToPath } from 'node:url';
+import { arg, ehEntrypoint } from '../lib/cli.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const GUARDA = join(AQUI, '..', 'dist', 'guarda.js');
@@ -150,4 +150,4 @@ function principal() {
   if (!v.ok) process.exit(1);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) principal();
+if (ehEntrypoint(import.meta.url)) principal();
