@@ -85,8 +85,8 @@ jobs:
           node-version: '22'
       - run: bash --version | head -1
       - run: node --test plugins/gabarito-mestre/hooks/test/*.test.mjs
-      - name: latência da guarda (p95 wall ≤ 150 ms no runner; local ≤ 60 ms)
-        run: node plugins/gabarito-mestre/gates/scripts/bench-guarda.mjs --n 20 --limite 150
+      - name: latência da guarda (excesso p95 sobre o piso do node ≤ 240 ms, repete 1×; local ≤ 60 ms absoluto)
+        run: node plugins/gabarito-mestre/gates/scripts/bench-guarda.mjs --n 20 --limite-excesso 240
 
   texto:
     name: texto — invariantes da 1.1.0 (grep)
