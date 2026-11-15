@@ -164,7 +164,8 @@
       "titulo": "Painel com a entrega encerrada",
       "deps": [
         "T0",
-        "T4"
+        "T4",
+        "T29"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel.ts",
@@ -189,7 +190,8 @@
       "titulo": "Painel: alvo sem fora, plano relido",
       "deps": [
         "T5",
-        "T8"
+        "T8",
+        "T29"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel.ts",
@@ -393,7 +395,8 @@
       "deps": [
         "T13",
         "T17",
-        "T18"
+        "T18",
+        "T29"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel.ts",
@@ -557,7 +560,9 @@
         "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
         "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
         "plugins/gabarito-mestre/gates/test/painel-blocos.test.ts",
-        "plugins/gabarito-mestre/gates/test/painel-esquadrao.test.ts"
+        "plugins/gabarito-mestre/gates/test/painel-esquadrao.test.ts",
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/dist/painel.js"
       ],
       "reqs": [
         "REQ-HIG-1"
