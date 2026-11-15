@@ -3864,18 +3864,27 @@ test('linha-unica-cabe-com-a-moldura-real: texto longo + botões (rótulo+4) + "
   }
 })
 // GM-14 T56 (emenda 62, spec:47 e :154): na linha única o botão é só do topo (PAROU ou pergunta); com só o aviso a linha não leva botão e o aviso cabe inteiro
-const RAZAO_110 = 'unasked below 110 columns (80 now): sem espaço'
+const RAZAO_110 = 'unasked below 110 columns (80 now, an id the person opened before): placed when the person opens it, or when the terminal is widened to 110 columns'
 const dependeSpec = () => estadoNovo({ depende: [{ nivel: 'dono', motivo: 'aprovar a spec', acoes: [acaoP('aprovar a spec', '/gabarito-mestre:emenda aprovar 7')] }] })
-test('aviso-inteiro-com-depende-sem-pergunta-80x24: só o aviso na linha única ⇒ sem botão do topo e o aviso cabe inteiro em 80 colunas', () => {
-  const est = dependeSpec()
-  expect(botoesDoTopo(est, '/repo').length).toBe(1) // o item existe: sem a regra o botão entraria
+test('aviso-inteiro-com-depende-sem-pergunta-80x24: DESENHADO a 80 colunas, só o aviso na linha única ⇒ aviso inteiro e nenhum botão', async ($, on) => {
+  sobreOMotor(on)
+  expect(botoesDoTopo(dependeSpec(), '/repo').length).toBe(1) // o item existe: sem a regra o botão entraria
+  const m = comPainel($, on, { estado: dependeSpec() }, { local: 'lateral', ...semColocar(RAZAO_110) })
+  await arrancar(m)
+  const ui = await montarFaixaH($, 50, 19, { bodyColumns: 80 })
+  const t = (await todosTextos(ui)).join('|')
+  const botoes = await ui.findAll({ type: 'Button' })
+  await ui.unmount()
+  expect(t).toContain(avisoPaneEspera(RAZAO_110)) // inteiro, sem corte
+  expect(t).toContain('painel lateral precisa de 110 colunas: /gabarito painel para abrir')
+  expect(t).not.toContain('aprovar a spec')
+  expect(botoes.length).toBe(0)
+})
+test('aviso-sem-botao-na-conta-pura: faixaUmaLinha só com aviso devolve botoes vazios', () => {
   const aviso = avisoPaneEspera(RAZAO_110)
-  const f = faixaUmaLinha(est, { root: '/repo', aviso }) as any
+  const f = faixaUmaLinha(dependeSpec(), { root: '/repo', aviso }) as any
   expect(f.texto).toBe(aviso)
   expect(f.botoes).toEqual([])
-  const cabe = 80 - colunasDosBotoes(f.botoes) - RESERVA_BORDA
-  expect([...f.texto].length).toBeLessThanOrEqual(cabe)
-  expect(f.texto).toContain('110 colunas')
 })
 test('aviso-nao-regride-botoes: PAROU + aviso e pergunta aberta + aviso mantêm os botões do topo', () => {
   const aviso = avisoPaneEspera(RAZAO_110)
