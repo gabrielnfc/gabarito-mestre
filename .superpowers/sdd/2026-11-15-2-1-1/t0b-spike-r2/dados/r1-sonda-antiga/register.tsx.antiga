@@ -1,0 +1,42 @@
+import type { Register } from 'claude-code'
+// Sonda descartavel GM-15 T0b. So observa.
+const OUT = '/Users/gabs-dev/projetos_pessoais/gabarito-mestre/.harness/worktrees/T0b/.claude-tmp/gm15-t0b/out/mod'
+const CARGA = Math.random().toString(36).slice(2, 8) // muda a cada (re)carga do modulo
+let seq = 0
+let memv: string | null = null
+async function log($: any, nome: string, dado: unknown) {
+  seq += 1
+  try { await $.fs.write(`${OUT}/${Date.now()}-${CARGA}-${String(seq).padStart(4, '0')}-${nome}.json`, JSON.stringify({ t: Date.now(), carga: CARGA, dado })) } catch { /* sonda */ }
+}
+async function disco($: any): Promise<string | null> {
+  try { const t = await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`); return JSON.parse(typeof t === 'string' ? t : t.text ?? t.content ?? String(t)).version ?? null } catch (x) { return 'erro:' + String(x).slice(0, 80) }
+}
+export const register: Register = on => {
+  on('plugin.register' as any, async ($: any, e: any, next: any) => {
+    await log($, 'plugin-register', { name: e.name, version: e.version ?? null, provenance: e.provenance })
+    return next(e)
+  })
+  on('session.start', async ($, e, next) => {
+    memv = await disco($)
+    await log($, 'start', { origem: (e as any).source ?? (e as any).origin ?? null, keys: Object.keys(e as any), memv, interativo: (e as any).isInteractive })
+    return next(e)
+  })
+  on('classic.Stop', async ($, e, next) => {
+    const x: any = e
+    await log($, 'stop', { background_tasks: x.background_tasks ?? null, session_crons: x.session_crons ?? null, memv, disco: await disco($) })
+    return next(e)
+  })
+  on('tool.call', async ($, e, next) => {
+    const x: any = e
+    const r: any = await next(e)
+    let txt = ''; try { txt = JSON.stringify(r) } catch { txt = '?' }
+    await log($, 'tool', { tool: x.tool, bg: x.run_in_background ?? null, desc: x.description ?? null, cmd: typeof x.command === 'string' ? x.command.slice(0, 80) : null, trecho: txt.slice(0, 300) })
+    return r
+  })
+  on('prompt.submit', async ($, e, next) => {
+    const x: any = e
+    await log($, 'prompt', { source: x.source ?? null, origin: x.origin ?? null, text: typeof x.text === 'string' ? x.text.slice(0, 120) : null })
+    return next(e)
+  })
+  on('turn.complete', async ($, e, next) => { await log($, 'turn', { memv, disco: await disco($) }); return next(e) })
+}

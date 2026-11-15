@@ -1,0 +1,1 @@
+[["wait",8],["key","enter"],["wait",4],["send","responda apenas: ok"],["wait",12],["disco","0.2.9"],["wait",1],["send","responda apenas: ok2"],["wait",12],["send","/exit"],["wait",3]]
