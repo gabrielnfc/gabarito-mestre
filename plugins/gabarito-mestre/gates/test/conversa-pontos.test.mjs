@@ -13,7 +13,7 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -26,7 +26,29 @@ const AQUI = dirname(fileURLToPath(import.meta.url));
 const RUNNER = join(AQUI, 'e2e', 'conversa-2026-11-11', 'rodar-a1.mjs');
 const TMPS = [];
 after(() => { for (const d of TMPS) rmSync(d, { recursive: true, force: true }); });
-const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'conversa-pontos-')); TMPS.push(d); return d; };
+// T58 (emenda 66): variável de ambiente ausente se restaura APAGANDO, nunca atribuindo `undefined` (vira a string "undefined").
+const restaurarEnv = (k, v) => { if (v === undefined) delete process.env[k]; else process.env[k] = v; };
+const comEnv = (k, valor, fn) => {
+  const antes = process.env[k]; process.env[k] = valor;
+  let r; try { r = fn(); } catch (e) { restaurarEnv(k, antes); throw e; }
+  return r && typeof r.then === 'function' ? r.finally(() => restaurarEnv(k, antes)) : (restaurarEnv(k, antes), r);
+};
+const tmp = () => { const d = realpathSync(mkdtempSync(join(tmpdir(), 'conversa-pontos-'))); // real: sem TMPDIR o macOS cai em /tmp (symlink de /private/tmp)
+  TMPS.push(d); return d; };
+test('T58: restaurar variável de ambiente ausente a deixa AUSENTE (nunca a string "undefined"); com valor, devolve o valor', () => {
+  const salvo = process.env.TMPDIR;
+  try {
+    delete process.env.TMPDIR;
+    restaurarEnv('TMPDIR', undefined); // não pode gravar 'undefined'
+    assert.equal('TMPDIR' in process.env, false, 'TMPDIR continua ausente');
+    comEnv('TMPDIR', '/x-t58', () => assert.equal(process.env.TMPDIR, '/x-t58'));
+    assert.equal('TMPDIR' in process.env, false, 'comEnv com TMPDIR ausente devolve ausente');
+    process.env.TMPDIR = '/orig-t58';
+    comEnv('TMPDIR', '/x-t58', () => {});
+    assert.equal(process.env.TMPDIR, '/orig-t58', 'comEnv com valor devolve o valor');
+    assert.equal(tmpdir() !== 'undefined', true);
+  } finally { restaurarEnv('TMPDIR', salvo); }
+});
 const git = (cwd, ...a) => execFileSync('git', ['-C', cwd, '-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
@@ -981,7 +1003,7 @@ describe('superpowers fixo (T46, emenda 41): dependência declarada carregada po
     let m;
     const errOrig = process.stderr.write.bind(process.stderr);
     process.stderr.write = () => true;
-    try { m = await matriz('/inexistente-nao-copiar', raiz, { falas: [] }, idDaCelula(MATRIZ[0])); } finally { process.stderr.write = errOrig; process.env.TMPDIR = tmpAntes; if (antes === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = antes; }
+    try { m = await matriz('/inexistente-nao-copiar', raiz, { falas: [] }, idDaCelula(MATRIZ[0])); } finally { process.stderr.write = errOrig; restaurarEnv('TMPDIR', tmpAntes); restaurarEnv('CLAUDE_CONFIG_DIR', antes); }
     const r = JSON.parse(readFileSync(join(m.base, idDaCelula(MATRIZ[0]), 'resultado.json'), 'utf8'));
     assert.equal(r.passa, false);
     assert.equal(r.resultados[0].id, 'dependencia');
@@ -1014,7 +1036,7 @@ describe('superpowers fixo (T46, emenda 41): dependência declarada carregada po
     try {
       assert.equal(configDaConta(), conta);
       assert.ok(pastaDeTranscripts(AQUI).startsWith(join(conta, 'projects') + '/'), 'transcripts sob a conta');
-    } finally { if (antes === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = antes; }
+    } finally { restaurarEnv('CLAUDE_CONFIG_DIR', antes); }
     assert.equal((readFileSync(RUNNER, 'utf8').match(/CLAUDE_CONFIG_DIR \?\?/g) ?? []).length, 1, 'a regra aparece uma vez no runner');
   });
   test('o-claude-carrega-o-superpowers-como-plugin-explicito-e-nunca-liga-setting-sources-user (argv montado pelo runner)', () => {
@@ -1121,7 +1143,7 @@ function ambienteMatriz(fn0 = async () => ({ status: 0, abortada: null }), { exp
   };
   return { fonte, raiz, base, chamadas, ativos, deps };
 }
-const rodarMatriz = (e, opcoes = {}) => { const antes = process.env.TMPDIR; process.env.TMPDIR = e.base; return calar(() => R.matriz(e.fonte, e.raiz, { falas: [] }, opcoes.so ?? null, { deps: e.deps, ...opcoes })).finally(() => { process.env.TMPDIR = antes; }); };
+const rodarMatriz = (e, opcoes = {}) => comEnv('TMPDIR', e.base, () => calar(() => R.matriz(e.fonte, e.raiz, { falas: [] }, opcoes.so ?? null, { deps: e.deps, ...opcoes })));
 
 
 describe('T49 (a) isolamento: célula e plugin fora do repo real; o repo real fica intocado ou a célula é inválida', () => {
@@ -1357,7 +1379,7 @@ describe('T49 (a) isolamento: célula e plugin fora do repo real; o repo real fi
   });
   test('falas-com-caminho-do-repo-real-recusam-a-matriz', async () => {
     const e = ambienteMatriz();
-    await assert.rejects(() => calar(() => { const a = process.env.TMPDIR; process.env.TMPDIR = e.base; return R.matriz(e.fonte, e.raiz, { falas: [{ n: 1, texto: `abra ${e.fonte}/x`, rotulo: '—' }] }, null, { deps: e.deps }).finally(() => { process.env.TMPDIR = a; }); }), /caminho do repo real/);
+    await assert.rejects(() => calar(() => comEnv('TMPDIR', e.base, () => R.matriz(e.fonte, e.raiz, { falas: [{ n: 1, texto: `abra ${e.fonte}/x`, rotulo: '—' }] }, null, { deps: e.deps }))), /caminho do repo real/);
     assert.equal(e.chamadas.length, 0);
   });
   test('paralelo-ignorado-reprova: --paralelo 2 roda 2 ao mesmo tempo e o padrão roda 1 (M: paralelo ignorado)', async () => {
