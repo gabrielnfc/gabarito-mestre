@@ -737,14 +737,16 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
   test('LINHA_DECISAO-ancorada: so a linha que o produto desenha, nao "decidiu" solto', () => {
     assert.equal(LINHA_DECISAO.test('RECENTE · 10:00 ● ELROND decidiu: escopo da T2'), true);
     assert.equal(LINHA_DECISAO.test('  09:50 ● ELROND decidiu: escopo da T2'), true);
+    assert.equal(LINHA_DECISAO.test('09:50 ● ELROND decidiu: escopo da T2 (anotado pelo orquestrador)'), true, 'GM-15 T29: o histórico do E4 começa na coluna 0');
     for (const l of ['ATENÇÃO · 2 consultas à Sombra sem decisão registrada, ninguém decidiu: ainda', 'o dono decidiu: seguir', 'RECENTE · 10:00 ✓ ELROND decidiu: x', 'RECENTE · 10:00 ● decidiu: x', 'texto 10:00 ● ELROND decidiu: x', 'RECENTE · 10:00 ● ELROND decidiu x'])
       assert.equal(LINHA_DECISAO.test(l), false, l);
   });
 
   test('8f-mede-a-decisao-que-o-produto-desenha-e-nao-a-palavra-Sombra (render real)', async () => {
     const real = await renderizar(ESTADO_REAL, { Pane: { bodyRows: 50, bodyColumns: 180 } }, { local: 'lateral' });
-    assert.ok(real.some((l) => /^RECENTE · \d\d:\d\d ● \S+ decidiu: /.test(l)), 'o produto desenha "<sabio> decidiu: …" no RECENTE');
-    assert.ok(real.some((l) => /^ATENÇÃO · \d+ consultas? à Sombra sem decisão registrada/.test(l)), 'e a ATENÇÃO com a palavra Sombra, que não é decisão');
+    // GM-15 T29 (D-G1c): o RECENTE é o histórico `hh:mm` do E4 e a ATENÇÃO é `◆ ATENÇÃO  …`
+    assert.ok(real.some((l) => /^\d\d:\d\d ● \S+ decidiu: /.test(l)), 'o produto desenha "<sabio> decidiu: …" no RECENTE');
+    assert.ok(real.some((l) => /^◆ ATENÇÃO {2}\d+ consultas? à Sombra sem decisão registrada/.test(l)), 'e a ATENÇÃO com a palavra Sombra, que não é decisão');
     const decisao = { tipo: 'decisao.sombra', dados: { resposta: 'escopo da T2' } };
     const avalia = (linhas, eventos) => ASSERCOES.find((a) => a.id === '8f-sombra-decisao-visivel').avaliar({ eventos, quadros: [{ linhas, itensDepende: 0 }] });
     assert.equal(avalia(real, [decisao]).ok, true, 'decisão visível no render real');
@@ -1850,7 +1852,14 @@ describe('T52 (emenda 45) replay: os 4 controles medidos, relógio injetável, s
   test('contexto-%-fora-do-replay: o quadro nunca leva "contexto <n> %" (só existe ao vivo; mutação: contexto incluído)', async () => {
     const m = repoDeConversa();
     const r = await R.replayDoPonto({ conversa: conversaDe(m), snap: { t: Date.parse('2026-11-14T05:10:00.000Z'), n: 1, estado: {} }, geometria, celula: celulaAcima, destino: join(tmp(), 'w'), deps: { estado: async () => comContexto() } });
-    assert.ok(r.linhas.some((l) => /contexto N %/.test(l)), 'a linha do AGORA segue lá, com o valor mascarado');
+    assert.ok(r.linhas.some((l) => /ctx N %/.test(l)), 'a linha do contexto (EQUIPE do E4, GM-15 T29) segue lá, com o valor mascarado');
+    assert.deepEqual(R.camposAoVivoNoQuadro(['│  ctx ███░░ 19% · pouso em 50%   tok ?', '├─ ● SAM  T3  ctx ███░ 30%  60k · 2m  a']).length, 2, 'o detector acha o contexto do E4 que escapou');
+    assert.equal(R.mascararAoVivo('│  ctx █████░░░░ 70% · pouso em 50% · hora de pousar   tok 412k'), '│  ctx N % · pouso em 50%  tok 412k');
+    assert.equal(R.mascararAoVivo('│  ctx ? · pouso em 50%   tok ?'), '│  ctx N % · pouso em 50%  tok ?');
+    assert.equal(R.mascararAoVivo('GANDALF ctx ███░ ~55% (estimado) · hora de pousar   tok ?'), 'GANDALF ctx N %  tok ?');
+    assert.equal(R.mascararAoVivo('├─ ● SAM · haiku  T3  ctx ███░░░░░░░ 30%  60k · 2h20  implementando (registrado)'), '├─ ● SAM · haiku  T3  ctx N %  D  implementando (registrado)');
+    assert.equal(R.mascararAoVivo('└─ ● SAM  T3  ctx 93k  6m  lendo 2 arquivos'), '└─ ● SAM  T3  ctx N %  D  lendo 2 arquivos');
+    assert.equal(R.mascararAoVivo('  ● T4  Tarefa  implementando  GIMLI    2h20'), '  ● T4  Tarefa  implementando  GIMLI  D');
     assert.deepEqual(R.camposAoVivoNoQuadro(r.linhas), []);
     assert.deepEqual(R.camposAoVivoNoQuadro(['AGORA · GANDALF · contexto 19 %']), ['AGORA · GANDALF · contexto 19 %'], 'o detector acha o contexto que escapou');
     assert.equal(R.mascararAoVivo('AGORA · GANDALF · contexto 19 %'), 'AGORA · GANDALF · contexto N %');
@@ -1885,7 +1894,7 @@ describe('T52 (emenda 45) replay: os 4 controles medidos, relógio injetável, s
     assert.deepEqual([com.n, com.quadros.length, com.quadrosSemProps], [1, 1, 0]);
     assert.ok(com.quadros[0].itensDepende >= 0);
   });
-  test('replay-reconstruido-bate-na-estrutura-com-a-tela-real: 26/26 em 80x24 (matriz gravada 1794625214308; pula se ausente)', { timeout: 120_000 }, async (t) => {
+  test('replay-reconstruido-bate-na-estrutura-com-a-tela-real: 26/26 em 80x24 (matriz gravada 1794625214308; pula se ausente)', { timeout: 120_000, todo: 'gravação do desenho de 5 blocos (pré-D-G1b); regravar no aceite final T27' }, async (t) => {
     const dir = join(R.raizDoRepoReal(), '.claude-tmp', 'a1', '1794625214308', 'acima-80x24-cheia');
     if (!existsSync(dir)) { t.skip('matriz gravada ausente'); return; }
     const conversa = R.lerConversa(dir, { home: tmp() });
