@@ -165,7 +165,8 @@
       "deps": [
         "T0",
         "T4",
-        "T29"
+        "T29",
+        "T30"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel.ts",
@@ -191,7 +192,8 @@
       "deps": [
         "T5",
         "T8",
-        "T29"
+        "T29",
+        "T30"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel.ts",
@@ -396,7 +398,8 @@
         "T13",
         "T17",
         "T18",
-        "T29"
+        "T29",
+        "T30"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel.ts",
@@ -573,6 +576,22 @@
       ]
     },
     {
+      "id": "T30",
+      "titulo": "Previsão exata (D-G2)",
+      "deps": [
+        "T29"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/test/painel-eta.test.ts",
+        "plugins/gabarito-mestre/gates/test/fixtures/eta-gm14/"
+      ],
+      "reqs": [
+        "REQ-HIG-1"
+      ]
+    },
+    {
       "id": "T27",
       "titulo": "Aceite final: replay da GM-14",
       "deps": [
@@ -584,7 +603,8 @@
         "T13",
         "T18",
         "T19",
-        "T29"
+        "T29",
+        "T30"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/test/aceite-gm15.test.mjs",
