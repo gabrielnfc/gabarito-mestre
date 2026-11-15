@@ -62,9 +62,7 @@
     {
       "id": "T2",
       "titulo": "PR #20: painel no app desktop",
-      "deps": [
-        "T29"
-      ],
+      "deps": [],
       "arquivos": [
         "plugins/gabarito-mestre/mod/painel.mjs",
         "plugins/gabarito-mestre/mod/gabarito.mjs",
@@ -564,7 +562,9 @@
     {
       "id": "T29",
       "titulo": "Painel com paridade do E4 (D-G1)",
-      "deps": [],
+      "deps": [
+        "T2"
+      ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
         "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
