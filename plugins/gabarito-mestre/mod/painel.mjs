@@ -354,13 +354,18 @@ const textoDaLinha = (l) => (Array.isArray(l) ? l.map((s) => String(s?.texto ?? 
  * GM-15 T29 (D-G1c): o topo tem a cara do E4. Linha dos botões: o PAROU; senão o 1º item depois do rótulo `◆ DEPENDE DE VOCÊ  N itens`
  * (o rótulo nunca leva botão); com pouca altura o rótulo sai e o item começa por `◆ `. `◆ ATENÇÃO` nunca é topo. `depende de você: …` (linha de situação) segue valendo.
  */
-const TOPO_RE = /^(■ )?PAROU |^depende de você: |^◆ (?!ATENÇÃO|DEPENDE DE VOCÊ)/;
+const TOPO_RE = /^(■ )?PAROU |^depende de você: /;
+/** `◆ item` (rótulo fora): só é topo como 1ª ou 2ª linha de conteúdo (logo depois do cabeçalho); a ATENÇÃO estreita (`◆ T2 …`, < 60 col) vem depois. */
+const ITEM_SEM_ROTULO_RE = /^◆ (?!ATENÇÃO|DEPENDE DE VOCÊ)/;
 const ROTULO_DEPENDE_RE = /^◆ DEPENDE DE VOCÊ/;
 /** Índice da linha do topo nas linhas desenhadas; nenhuma ⇒ -1. */
 export function indiceDoTopo(linhas) {
   const ts = (Array.isArray(linhas) ? linhas : []).map(textoDaLinha);
+  let conteudo = 0;
   for (let i = 0; i < ts.length; i++) {
     if (TOPO_RE.test(ts[i])) return i;
+    if (conteudo <= 1 && ITEM_SEM_ROTULO_RE.test(ts[i])) return i;
+    if (!/^─+$/.test(ts[i])) conteudo++;
     if (ROTULO_DEPENDE_RE.test(ts[i])) return i + 1 < ts.length && /^ {2}\S/.test(ts[i + 1]) ? i + 1 : -1;
   }
   return -1;

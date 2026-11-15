@@ -1245,6 +1245,40 @@ test('hora-de-pousar-nunca-cortada: 80, 60 e 44 colunas, com e sem a linha do no
   }
 });
 
+test('hora-de-pousar-nunca-cortada-estreito-e-nome-longo (review T29 r1): abaixo de 44 e com líder de nome longo, o nome e a barra cedem antes', () => {
+  for (const lider of ['GANDALF', 'GANDALFOOOOOOOOOOLONGO']) for (const largura of [80, 60, 44, 43, 36, 30, 24, 20]) for (const orcamento of [undefined, 7]) for (const estimado of [false, true]) {
+    const s0 = rico({ pacote: { ...PACOTE, lider } });
+    const s = estimado ? ({ ...s0, agora: { ...s0.agora!, orquestrador: { ...s0.agora!.orquestrador, estimado: true } } } as EstadoPainel) : s0;
+    const l = cru(s, { largura, ...(orcamento === undefined ? {} : { orcamento }) });
+    const ctx = l.filter((x) => /pous/.test(x));
+    const rot = `${lider} ${largura}/${orcamento}/${estimado}: ${l.join('|')}`;
+    assert.equal(ctx.length, 1, rot);
+    // o número cede só quando nem ele cabe ao lado do aviso (20 colunas com "~55%")
+    assert.match(ctx[0], largura >= 24 ? /~?55%( \(estimado\))?( · pouso em \d+%)? · hora de pousar( {3}tok \S+)?$/ : /(^|~?55% · )hora de pousar$/, rot);
+    assert.ok(colunas(ctx[0]) <= largura, rot);
+    // o nome cede encurtando ("…") antes de sair: a 30 colunas ainda se lê o começo do líder
+    if (largura >= 30 && !ctx[0].startsWith('│')) assert.match(ctx[0], /^GAN/, rot);
+  }
+});
+
+test('atencao-agrupada-nada-some (review T29 r1): N avisos que não cabem numa linha vão às linhas seguintes; todos aparecem, inteiros, a 120, 80 e 44', () => {
+  const avisos = ['primeiro aviso de atenção da fila', 'segundo aviso de atenção da fila', 'terceiro aviso de atenção da fila', 'quarto aviso de atenção da fila',
+    'quinto aviso de atenção da fila', 'sexto aviso de atenção da fila', 'sétimo aviso de atenção da fila'];
+  const s = { ...rico(), atencao: avisos } as EstadoPainel;
+  for (const largura of [120, 80, 44]) {
+    const l = cru(s, { largura });
+    const i0 = l.findIndex((x) => /^◆ (ATENÇÃO {2})?primeiro aviso/.test(x));
+    assert.ok(i0 >= 0, `${largura}: ${l.join('|')}`);
+    const bloco: string[] = [l[i0]];
+    for (let i = i0 + 1; i < l.length && /^ {2,}\S/.test(l[i]); i++) bloco.push(l[i]);
+    assert.ok(bloco.length >= 2, `${largura}: os 7 avisos não cabem numa linha: ${bloco.join('|')}`);
+    const itens = bloco.map((x, k) => (k === 0 ? x.replace(/^◆ (ATENÇÃO {2})?/, '') : x.trim())).flatMap((x) => x.split(' · '));
+    assert.deepEqual(itens, avisos, `${largura}: todos, inteiros e na ordem: ${bloco.join('|')}`);
+    assert.ok(bloco.every((x) => colunas(x) <= largura), `${largura}: ${bloco.join('|')}`);
+    assert.equal(l.filter((x) => /^◆ ATENÇÃO/.test(x)).length, largura >= 60 ? 1 : 0, `${largura}: um rótulo só`);
+  }
+});
+
 test('ausente-corrompido-zero-distintos: ausente e corrompido viram "?" (nunca 0 nem "—"); 0 medido é 0', () => {
   const base = rico();
   const comLider = (v: unknown, campo: 'h5' | 'd7' | 'tok'): string => cru({ ...base, equipe: { ...base.equipe, lider: { ...base.equipe.lider, [campo]: v } } } as EstadoPainel).join('\n');

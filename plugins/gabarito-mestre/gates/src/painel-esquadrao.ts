@@ -722,17 +722,27 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
       const tokTxt = `   tok ${tokV === null ? '?' : fmtTok(tokV)}`;
       /** Linha do contexto do orquestrador: barra █░ (sem medição, "?" no lugar dela); "hora de pousar" nunca é cortada: a barra cede, depois o "pouso em". */
       const ctxOrq = (comNome: boolean, comTok: boolean): Linha => {
-        const pre: Linha = comNome ? [seg(nomeOrq), seg(' ctx ')] : [seg('│', 'inactive'), seg('  ctx ')];
-        const tk = comTok ? tokTxt : '';
+        let pre: Linha = comNome ? [seg(nomeOrq), seg(' ctx ')] : [seg('│', 'inactive'), seg('  ctx ')];
+        let tk = comTok ? tokTxt : '';
         const teto = comNome ? 19 : w >= 72 ? 29 : 19;
         let pz = xp === null ? '' : ` · pouso em ${fmtPct(xp)}`;
         let est = estim ? ' (estimado)' : '';
         const txtPct = (): string => (pct === null ? '?' : `${estim ? '~' : ''}${pct}%${est}`);
         const fixo = (): number => larg(pre) + (pct === null ? 0 : 1) + colunas(txtPct()) + colunas(pz) + colunas(hora) + colunas(tk);
         let bw = Math.min(teto, w - fixo());
-        // "hora de pousar" nunca é cortada: cede a barra, depois o "pouso em", depois o "(estimado)" (o "~" segue dizendo que é estimado)
+        // "hora de pousar" nunca é cortada: cede a barra, depois o "pouso em", depois o "(estimado)" (o "~" segue dizendo que é estimado),
+        // depois os tokens, depois o nome (encurtado com "…", depois fora) e por fim o "ctx " (review T29 r1: < 44 e nome longo)
         if (bw < 5 && pz !== '') { pz = ''; bw = Math.min(teto, w - fixo()); }
         if (bw < 1 && est !== '') { est = ''; bw = Math.min(teto, w - fixo()); }
+        if (hora !== '' && bw < 1 && tk !== '') { tk = ''; bw = Math.min(teto, w - fixo()); }
+        if (hora !== '' && bw < -1 && comNome) {
+          const nomeCabe = colunas(nomeOrq) + bw + 1; // sem barra, o espaço antes do número também sai
+          pre = nomeCabe >= 2 ? [seg(cortar(nomeOrq, nomeCabe)), seg(' ctx ')] : [seg('ctx ')];
+          bw = Math.min(teto, w - fixo());
+        }
+        if (hora !== '' && bw < -1) { pre = []; bw = Math.min(teto, w - fixo()); }
+        // nem o número cabe ao lado: fica só o aviso, inteiro
+        if (hora !== '' && bw < -1) return [seg(hora.replace(/^ · /, ''), 'warning')];
         bw = Math.max(0, bw);
         return [
           ...pre, ...(pct === null ? [seg(txtPct())] : [...barraSegs(pct, bw, '█', '░', 'success'), seg(`${bw > 0 ? ' ' : ''}${txtPct()}`)]),

@@ -4217,6 +4217,11 @@ test('indice-do-topo-e4 (GM-15 T29): PAROU; item depois do rótulo; `◆ item` s
   expect(indiceDoTopo(L('GABARITO · GM-14', 'PLANO   ▰▱  50%', '◆ ATENÇÃO  CI vermelho'))).toBe(-1)
   expect(indiceDoTopo(L('GABARITO · GM-14', '◆ DEPENDE DE VOCÊ  1 item'))).toBe(-1)
   expect(indiceDoTopo(L('GABARITO · GM-14', '◆ DEPENDE DE VOCÊ  1 item', 'PLANO'))).toBe(-1)
+  // review T29 r1: a ATENÇÃO estreita (< 60 col) também começa por `◆ `; o `◆ item` só é topo logo depois do cabeçalho
+  expect(indiceDoTopo(L('GABARITO · GM-14', '────', '◆ y [ok]'))).toBe(2)
+  expect(indiceDoTopo(L('◆ y [ok]', 'PLANO'))).toBe(0)
+  expect(indiceDoTopo(L('GABARITO · GM-14', 'PLANO ▰▱ 50%', '◆ T2 sem agente trabalhando'))).toBe(-1)
+  expect(indiceDoTopo(L('GM-14 ▰▱ 50% ETA 17:42', '● T8 GIMLI    implementando', '────', '◆ T2 sem agente trabalhando'))).toBe(-1)
 })
 test('has-survey-next: acima, com survey a faixa devolve next(e), mesmo com PAROU', async ($, on) => {
   sobreOMotor(on)
