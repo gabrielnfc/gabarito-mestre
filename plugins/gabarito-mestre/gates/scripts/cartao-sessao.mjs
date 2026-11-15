@@ -22,7 +22,7 @@ import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { arg, ehEntrypoint } from '../lib/cli.mjs';
-import { lerJson, lerGuarda } from '../lib/config.mjs';
+import { lerJson, lerGuarda, idPadraoDe } from '../lib/config.mjs';
 import { git, raizDoRepo, inferirPbi, PADROES } from '../lib/git.mjs';
 import { diasEntre } from '../lib/datas.mjs';
 import { medir, calcularSlots } from './capacidade.mjs';
@@ -70,6 +70,22 @@ export const limparLinha = (s) => String(s ?? '').replace(/[\u0000-\u001f\u007f-
 // ────────────────────────────────────────────────────────────── puras
 
 export { inferirPbi }; // movido para lib/git (mesma assinatura)
+
+// `dist/trilha.js` ausente (instalação quebrada) não derruba o hook (F5): cai na regra antiga `inferirPbi`, sem gravar nada de errado.
+let idDaBranch = null;
+try { ({ idDaBranch } = await import('../dist/trilha.js')); } catch { /* fail-open */ }
+
+/**
+ * Entrega da branch, pela MESMA regra do `loop.mjs` (`idDaBranch` com `idPadraoDe`, fonte única; GM-15 hotfix): `hotfix/GM-15-alpha2` ⇒ GM-15.
+ * `n` é o índice do worktree `wt/<PBI>-<n>`. Sem entrega ⇒ `null`. Sem `dist/trilha.js` ⇒ `inferirPbi` (degradado).
+ */
+function entregaDaBranch(branch, raiz) {
+  const b = typeof branch === 'string' ? branch : null;
+  if (idDaBranch === null) return inferirPbi(b, { fluxo: { idPadrao: idPadraoDe(raiz) } });
+  const pbi = idDaBranch(b, idPadraoDe(raiz));
+  const wt = /^wt\/.+-(\d+)$/.exec(b ?? '');
+  return pbi === null ? null : { pbi, n: wt ? Number(wt[1]) : null };
+}
 
 /** Frontmatter YAML de uma chave por linha (`chave: valor`), sem aninhamento — é o que os templates de card usam. */
 export function lerFrontmatter(texto) {
@@ -211,7 +227,7 @@ export function coletar(cwd, pluginRoot, opts = {}) {
     branch = '(sem git)';
     sha = '-------';
   }
-  const inf = inferirPbi(branch, config);
+  const inf = entregaDaBranch(branch, root);
 
   const cacheLido = lerJson(join(root, '.harness', 'fluxo-cache.json'));
   const cache = cacheLido && typeof cacheLido === 'object' ? cacheLido : {};
@@ -536,7 +552,7 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
       branch = '(sem git)';
     }
   }
-  const pbi = ctx.pbi ?? inferirPbi(branch, ctx.config)?.pbi ?? null;
+  const pbi = ctx.pbi ?? entregaDaBranch(branch, raiz)?.pbi ?? null;
 
   let fonte = 'local';
   let divergente = false;
