@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderPainel } from '../src/painel.ts';
+import { cortarComReserva, cortarPorPrioridade } from '../src/orcamento.ts';
 import { blocoTopo, paraTexto } from '../src/painel-texto.ts';
 import { colunas } from '../src/painel-largura.ts';
 import type { EstadoPainel, Linha, OpcoesRender } from '../src/tipos.ts';
@@ -278,4 +279,17 @@ test('alt-classes-nunca-saem-fora-da-vez (propriedade, Executivo): com/sem Limit
     }
   }
   assert.ok(casos > 10_000, `a propriedade viu ${casos} casos`);
+});
+
+// ───────────────────────────── T42 (r1 MINOR): `cortarComReserva` sem RECENTE na entrada não desenha a reserva
+test('cortarComReserva-sem-recente: sem linha de RECENTE (prioridade 5) a reserva não entra, mesmo com folga (guarda !temRecente)', () => {
+  const seg = (texto: string): Linha => [{ texto }];
+  const ls = [{ prioridade: 1, ordem: 0, l: seg('topo') }, { prioridade: 3, ordem: 1, l: seg('agora') }, { prioridade: 4, ordem: 2, l: seg('atencao') }];
+  const reserva = seg('decidiu');
+  const c = cortarComReserva(ls, 10, reserva);
+  assert.deepEqual(c.linhas.map(TEXTO), ['topo', 'agora', 'atencao']);
+  assert.deepEqual(c, cortarPorPrioridade(ls, 10));
+  // com RECENTE na entrada e cortado inteiro, a mesma reserva entra (o teste distingue a guarda)
+  const com = [...ls, { prioridade: 5, ordem: 3, l: seg('recente') }];
+  assert.ok(cortarComReserva(com, 3, reserva).linhas.some((l) => TEXTO(l) === 'decidiu'));
 });

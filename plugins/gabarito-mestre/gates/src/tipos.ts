@@ -5,11 +5,14 @@
 
 import type { DecisaoEntrega } from './entrega.ts';
 import type { EstadoTask } from './loop.ts';
+import type { Pergunta } from './perguntas.ts';
+import type { Trilha } from './trilha.ts';
 
 export type Ambiente = 'teste' | 'homolog' | 'prod' | 'desconhecido';
 /** Ação da ferramenta sobre o alvo (guarda). `Acao` é o botão do painel (E4); este era `Acao` até GM-12 T1. */
 export type AcaoFerramenta = 'leitura' | 'escrita' | 'execucao';
 export type Faixa = 'silencio' | 'log' | 'mostrar' | 'ask' | 'deny';
+/** `sessao.pouso.tentativa` (GM-14 T53, emenda 53): o mod repete o pouso; NÃO é `sessao.pouso` (nem consome fronteira, nem muda a chave do push). */
 export type TipoEvento =
   | 'producao.acesso'
   | 'operacao.destrutiva'
@@ -28,6 +31,7 @@ export type TipoEvento =
   | 'loop.pausa'
   | 'custo.medicao'
   | 'sessao.pouso'
+  | 'sessao.pouso.tentativa'
   | 'sessao.retomada'
   // E3 (GM-11): Sombra, emendas e entrega
   | 'sombra.consulta'
@@ -44,11 +48,16 @@ export type TipoEvento =
   | 'entrega.agendada'
   // E4 (GM-12): painel
   | 'spec.aprovada'
+  | 'spec.aplicada'
   | 'entrega.devolvida'
   // E5a (GM-13): aprendizado, fechamento sem regra e mensagem do dono
   | 'aprendizado'
   | 'aprendizado.nada'
-  | 'dono.mensagem';
+  | 'dono.mensagem'
+  // GM-14: fato medido, anotação do orquestrador e resposta do dono por botão
+  | 'fato.medido'
+  | 'nota'
+  | 'dono.resposta';
 export type Fonte = 'origin' | 'local';
 export type AmbienteDecl = {
   hosts?: string[];
@@ -109,7 +118,8 @@ export type Evento = {
 };
 
 // E2 (GM-10): plano como dado e contratos do loop. `dados` do diário nunca carrega comando cru.
-// `task.reaberta`: `dados = {task, origem: 'dono' | 'retomada'}`; só `dono`, por comando humano, libera o teto.
+// `task.reaberta`: `dados = {task, origem: 'dono' | 'retomada'}` ou `{task, origem: 'sombra', hash}`. `dono`, por comando humano, libera o teto;
+// `sombra` (GM-14 T36, FIEL-15) libera 1 vez por task, só a 1ª liberação, com `sombra.libera_teto: true` em origin e a decisão `hash` com `libera: true`.
 export type Causa = 'regra_negocio' | 'tecnica';
 export type OrigemJulgamento = 'dono' | 'sombra';
 export type PoliticaEntrega = 'continua' | 'janela' | 'sob_demanda';
@@ -149,7 +159,7 @@ export type RefEvento = { sessao: string; seq: number };
 export type RefAprendizado = RefEvento & { entrega?: string };
 export type DadosAprendizado = {
   tipo: 'E' | 'A'; status: 'D' | 'M'; gatilho: RefEvento | null;
-  evidencia: { eventos?: RefEvento[]; medicao?: { fonte: string; numero: number } };
+  evidencia: { eventos?: RefEvento[]; medicao?: { fonte: string; numero: number }; confirmacao?: Confirmacao };
   regra: string; entra_em: string[]; substitui?: RefAprendizado;
 };
 export type TipoGatilho = 'review' | 'parar' | 'fechamento' | 'dono';
@@ -174,7 +184,14 @@ export type Segmento = { texto: string; cor?: CorTema };
 export type Linha = Segmento[];
 export type PacoteNomes = { nome: string; lider: string; sabio: string; nomes: string[] };
 export type UsoAgente = { contexto: number; tok: number; modelo: string | null };
-export type AgenteVivo = { id: string; type: string; description: string; status: string; uso: UsoAgente | null };
+/** `nome`/`vistoEm` (GM-14 FIEL-3 d): vêm de `nomes` do stdin de `--agentes` (o `$.store` do mod); ausentes no CLI e na 2.0.0. */
+export type AgenteVivo = { id: string; type: string; description: string; status: string; uso: UsoAgente | null; nome?: string; vistoEm?: number };
+/** stdin de `painel.mjs estado|texto --agentes`, campo `nomes` (GM-14 FIEL-3 d): `agent_id` ⇒ nome estável e 1ª vez que o mod o viu (ms). Teto 64. */
+export type NomesAgentes = { [agentId: string]: { nome: string; vistoEm: number } };
+/** stdin de `--agentes`, `acoes` (FIEL-11 b, T35): a última ação ao vivo de cada agente; `fonte` diz de onde veio (`tool.call` ou `Bash`). */
+export type AcoesAgentes = { [agentId: string]: { texto: string; fonte: 'tool' | 'bash'; em: number } };
+/** stdin de `--agentes`, `segundoPlano` (FIEL-11 c): `dono` = `orquestrador` ou o `agent_id`; `desde` em ms. */
+export type SegundoPlanoItem = { id: string; dono: string; texto: string; desde: number };
 /** `fuso`, `entregaId`, `modeloSessao`, `specSha` e `tetoSombra` só o CLI preenche (Sombra 5); o mod nunca. */
 export type EntradaPainel = {
   /** Só preenchida pelo CLI com o loop em `concluir` (toda task integrada e sem proposta aberta). */
@@ -185,6 +202,12 @@ export type EntradaPainel = {
   x: number;
   /** `null` = sem mod (CLI sem `--agentes`): sem linha `◌ sem agente` e `agentes —`. `[]` = mod presente e nenhum vivo. */
   agentes: AgenteVivo[] | null;
+  /** GM-14 FIEL-6 a (stdin do mod): ids com `SubagentStop`; saem do AGORA na hora, antes do `status`. Ausente = nenhum. */
+  encerrados?: string[];
+  /** GM-14 FIEL-11 b: ação ao vivo por `agent_id`; ausente = só o que está registrado. */
+  acoes?: AcoesAgentes;
+  /** GM-14 FIEL-11 c: trabalhos em segundo plano; ausente = nenhum. */
+  segundoPlano?: SegundoPlanoItem[];
   pacote: PacoteNomes;
   notificacao: { ts: string } | { motivo: string } | null;
   agoraMs: number;
@@ -208,6 +231,10 @@ export type AgentePainel = {
   ctxPct: number | null; ctxTok: number | null; tok: number | null; desdeS: number | null; cor: CorTema;
   /** `true` = agente vivo (`●`); `false` = task em voo sem agente de papel compatível (`◌ sem agente`). */
   vivo: boolean;
+  /** GM-14 FIEL-3 b: `description` do despacho, já higienizada (token técnico ⇒ "…"); `null` sem vivo. */
+  descricao: string | null;
+  /** GM-14 FIEL-3 a: papel mostrado (antigo > tipo > `correcao` em `corrigindo` > estado > tipo sem task); `null` sem papel. */
+  papelExibido: 'implementador' | 'revisor' | 'correcao' | 'spike' | 'sombra' | null;
 };
 export type EstadoPainel = {
   id: string; titulo: string | null; pacote: string;
@@ -222,17 +249,77 @@ export type EstadoPainel = {
     vivos: number | null;
     /** Sombra 6: `nome` null antes do 1º despacho do par (task, revisor); `mutacoesHoje`/`mortasHoje` null sem integração de hoje com `mutacoes`. */
     revisoresAguardando: { nome: string | null; task: string; mutacoesHoje: number | null; mortasHoje: number | null }[];
-    sombra: { nome: string; modelo: string | null; decisoes: number; ultima: { seq: number; resposta: string; fonte: string | null } | null };
+    /** GM-14 FIEL-6 b: tasks em `implementando`/`corrigindo`/`em_revisao` sem vivo casado ("esperando o orquestrador" no PLANO). */
+    esperando: string[];
+    /** GM-14 FIEL-7: `consultasAbertas` = consultas (`contarConsultas`) além das decisões registradas; 0 quando não passa. */
+    sombra: { nome: string; modelo: string | null; decisoes: number; ultima: { seq: number; resposta: string; fonte: string | null } | null; consultasAbertas: number };
   };
   parado: boolean;
   /** `chave` identifica a ocorrência do Parar (o mod avisa 1× por chave); `hora` é `hh:mm`, `dd/mm hh:mm` ou `--:--` (sem evento com hora legível). */
   parar: { motivo: MotivoParar; texto: string; acoes: Acao[]; hora: string; chave: string; emVoo: string[]; alteracoes: number } | null;
   depende: ItemDepende[]; atencao: string[];
-  historico: { glifo: string; texto: string; hora: string; cor: CorTema }[]; ocultos: number;
+  /** `origem` (GM-14 T17, REQ-LNG-1): a da tabela fechada de `origemDe`; `null` = tipo fora da tabela. */
+  historico: { glifo: string; texto: string; hora: string; cor: CorTema; origem?: string | null }[]; ocultos: number;
   rodape: { ci: { verde: boolean | null; execucoesHoje: number }; prod: { leituras: number; alteracoes: number }; politica: string };
   /** Já convertida por `horaLocal`: o render não conhece o fuso. */
   notificacao: { hora: string } | { motivo: string } | null; qualidade: { rodadaMedia: number | null; mortas: number | null };
+  // GM-14 T17 (REQ-GLB-1, FIEL-10..13): estado dos 5 blocos. Presentes só quando `projetarPainel` recebe `fatos`; sem eles o render é o da E4.
+  /** `entrega`: plano ou entrega identificada; `projeto`: repo sem entrega identificada; `fora`: fora de um repositório git. */
+  modo?: 'entrega' | 'projeto' | 'fora';
+  trilha?: Trilha | null;
+  /** 1ª pergunta aberta (a mais antiga), sem as pendências (que são itens de `depende`); `perguntasMais` = as outras abertas. */
+  pergunta?: Pergunta | null;
+  perguntasMais?: number;
+  /** FIEL-10 e: sem entrega em curso e nada pendente ⇒ o painel é 1 linha. `estado` em palavras, `null` = não conhecido. */
+  umaLinha?: { ultima: { id: string; estado: string | null } | null } | null;
+  /** FIEL-10 b, com plano: só integradas pintam; previsão só com ≥ 3 integradas nesta entrega (`base`). */
+  pronto?: { integradas: number; total: number; previsao: { hora: string; base: number } | null } | null;
+  /** FIEL-10 b, sem plano: a trilha em 1 linha. `motivo` = o do 1º `?`; `sufixo` = N17 b (fora da execução). */
+  fase?: { numero: number | null; marcas: string[]; motivo: string | null; progresso: string; sufixo: string[] } | null;
+  /** FIEL-11: `agentes` `null` = sem dados da sessão (CLI sem `--agentes`, FIEL-4); `contexto` `null` = não medido. */
+  agora?: {
+    orquestrador: { nome: string | null; contexto: number | null; estimado: boolean; pousar: boolean };
+    agentes: AgenteAgora[] | null; segundoPlano: AgenteAgora[];
+  };
+  /** FIEL-10 d: só resultados, mais novo primeiro (até 5; o render corta 2 acima do input). */
+  recente?: ItemRecente[];
+  /** FIEL-13 b: segundos desde a última leitura bem-sucedida do diário pelo mod; `null` = não medido. */
+  desatualizadoS?: number | null;
+  /** Fontes que falharam (nomes naturais), para o DEPENDE nunca dizer "nada" com falha. */
+  fontesFalhas?: string[];
 };
+/** Papel de quem aparece no AGORA e no RECENTE; o executivo troca o nome por `PAPEL_EXECUTIVO[papel]` (FIEL-12). */
+export type PapelPainel = 'orquestrador' | 'implementador' | 'correcao' | 'spike' | 'revisor' | 'sombra' | 'teste';
+/** `nome` = nome temático (só com dados da sessão; FIEL-4); `null` ⇒ o render usa o papel. */
+export type QuemPainel = { nome: string | null; papel: PapelPainel };
+/** Linha do AGORA: `acao` já higienizada (FIEL-3 b); `null` = sem fonte ("?"). */
+export type AgenteAgora = { quem: QuemPainel; task: string | null; acao: string | null; desdeS: number | null };
+/** Resultado do RECENTE: `quem` (se houver) vem antes do `texto`; `origem` da tabela de REQ-LNG-1. */
+export type ItemRecente = { hora: string; glifo: '✓' | '✗' | '●' | '○'; cor: CorTema; quem: QuemPainel | null; texto: string; origem: string };
 export type OpcoesRender = { preset: 'esquadrao' | 'executivo'; tema: 'color' | 'mono'; narracao: boolean; largura: number;
   /** T14b: linhas que a superfície dá ao corpo (`props.scroll.bodyRows` da Pane). Ausente ⇒ saída byte a byte igual à sem altura; presente e menor que o desenho ⇒ densidade por altura (REQ-PNL-9, emenda D-R4). */
-  altura?: number };
+  altura?: number;
+  /** GM-14 T17 (REQ-GLB-1): linhas que cabem (de `orcamentoDe`). Ausente ⇒ `altura`; sem os dois, sem corte (como a E4). Só no estado novo. */
+  orcamento?: number;
+  /** GM-14 T17: local do painel; o RECENTE mostra até 5 em `lateral` (padrão) e 2 em `acima`. */
+  local?: 'lateral' | 'acima' };
+
+// GM-14 (2.1.0): fato medido, nota, resposta do dono e confirmação de regra herdada. Formas fechadas, conferidas por `formaInvalida` no `append`.
+export type ChaveFato = 'branch' | 'spec' | 'plano' | 'pr' | 'release' | 'agente';
+/**
+ * `valor` tem exatamente as chaves da forma de `chave` (campo a mais ⇒ recusa). O `sessao` do evento que carrega um `fato.medido` de sessão
+ * é o `session_id` do mod (DP-2): a pergunta (b) se ancora por sessão.
+ */
+export type DadosFato = { chave: ChaveFato; fonte: 'git' | 'gh' | 'arquivo' | 'mod'; valor:
+  { nome: string } | { caminho: string; sha256: string; secoes: number } | { tasks: number } |
+  { numero: number; estado: 'aberto' | 'mergeado' | 'fechado'; branch: string } | { tag: string } |
+  { id: string; papel: string; estado: string } };
+export type TipoNota = 'ideia' | 'desvio' | 'assunto' | 'duvida' | 'pendencia';
+/** `texto` 1..160 caracteres, 1 linha; `opcoes` só (e sempre) com `duvida`: 2..4 de 1..60, sem repetição (caixa e espaço das pontas não distinguem). */
+export type DadosNota = { tipo: TipoNota; texto: string; opcoes?: string[] };
+/** `<sessao>:<seq>` (`ID_PERGUNTA_RE`) ou `herdar:<id>`, id estável do candidato herdado em hex 8..64 (DP-6: origem + sha256 do trecho, nunca índice). */
+export type IdPergunta = string;
+/** Uma das duas, nunca as duas: rótulo das opções, ou só `{sha256, chars}` do que foi digitado (o texto do dono nunca vai ao diário). */
+export type DadosResposta = { pergunta: IdPergunta; opcao: number; rotulo: string } | { pergunta: IdPergunta; sha256: string; chars: number };
+/** `fonte` = `<arquivo relativo>:<linha ≥ 1>`; `resposta` aponta a `dono.resposta` que confirmou (D11). */
+export type Confirmacao = { fonte: string; resposta: RefEvento };

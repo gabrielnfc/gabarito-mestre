@@ -11,7 +11,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { casarAgente, nomesPorPapel, projetarEquipe, sortearPacote, usoDoTranscript, validarPacote } from '../src/painel-equipe.ts';
+import { casarAgente, casarVivo, estadoDoVivo, higienizarDescricao, idsEncerrados, nomesPorPapel, papelDoAgente, projetarEquipe, resolverAtivos, sortearPacote, usoDoTranscript, validarNomesAgentes, validarPacote, validarStdinAgentes } from '../src/painel-equipe.ts';
+import { projetarPainel } from '../src/painel.ts';
 import { projetarDecisoes } from '../src/sombra.ts';
 import type { AgenteVivo, EntradaPainel, Evento, PacoteNomes, Plano, TipoEvento } from '../src/tipos.ts';
 
@@ -257,8 +258,8 @@ test('nomes-diario-invalido-null', () => {
   // e pela equipe: todo nome null, sem lançar
   const eq = projetarEquipe(PLANO, [a, b], entrada({ agentes: [ag('T07 implementador')] }));
   assert.equal(eq.agentes.length, 1);
-  assert.equal(eq.agentes[0].nome, null);
-  assert.equal(eq.agentes[0].cor, 'inactive');
+  // todo ativo tem nome (FIEL-3 d): sem o do par, o 1º livre do pacote
+  assert.equal(eq.agentes[0].nome, TM.nomes[0]);
 });
 
 test('nomes-papel-invalido-ignorado', () => {
@@ -282,14 +283,19 @@ test('nomes-limite-ordenar-intercala-por-ts', () => {
 // ---------- casarAgente ----------
 
 test('descricao-quase-igual-sem-task', () => {
+  // FIEL-3 a: o 1º token decide a task; o que não casa o id (outro id, caixa, espaço antes) fica sem task, mas continua vivo e com nome
   const eventos = diario(ini('T07', 'implementador'));
-  for (const d of ['T07  implementador', 't07 implementador', 'T07 Implementador', 'T07 implementador extra', 'T99 implementador', 'T07 sombra', 'T07', '', 'implementador T07', 'T07\timplementador']) {
+  for (const d of ['t07 implementador', 'T99 implementador', '', 'implementador T07', 'x T07 implementador', 'T07x1 implementador', 'T077 implementador']) {
     assert.equal(casarAgente(d, PLANO), null, d);
     const eq = projetarEquipe(PLANO, eventos, entrada({ agentes: [ag(d)] }));
     const vivos = eq.agentes.filter((a) => a.vivo);
     assert.equal(vivos.length, 1, d);
-    assert.deepEqual([vivos[0].nome, vivos[0].papel, vivos[0].task, vivos[0].estadoTask, vivos[0].cor], [null, null, undefined, null, 'inactive'], d);
+    assert.deepEqual([vivos[0].papel, vivos[0].task, vivos[0].estadoTask], [null, undefined, null], d);
+    assert.ok(typeof vivos[0].nome === 'string' && vivos[0].nome !== '', d);
   }
+  // o legado `casarAgente` segue estrito; o casamento novo aceita texto depois do id
+  assert.equal(casarAgente('T07 implementador extra', PLANO), null);
+  assert.equal(projetarEquipe(PLANO, eventos, entrada({ agentes: [ag('T07 implementador extra')] })).agentes[0].task, 'T07');
 });
 
 test('casar-agente-trim-e-nao-texto', () => {
@@ -304,26 +310,20 @@ test('casar-agente-trim-e-nao-texto', () => {
 
 // ---------- agentes ----------
 
-test('task-sem-agente-sem-agente', () => {
+test('task-sem-agente-vai-a-esperando-sem-linha', () => {
   const eventos = diario(ini('T07', 'implementador'), ini('T08', 'implementador'));
   const eq = projetarEquipe(PLANO, eventos, entrada({ agentes: [ag('T07 implementador', { uso: uso(50_000) })] }));
-  const sem = eq.agentes.filter((a) => !a.vivo);
-  assert.equal(sem.length, 1);
-  assert.deepEqual(
-    [sem[0].task, sem[0].papel, sem[0].estadoTask, sem[0].nome, sem[0].ctxPct, sem[0].ctxTok, sem[0].tok],
-    ['T08', 'implementador', 'implementando', TM.nomes[1], null, null, null],
-  );
-  const vivo = eq.agentes.find((a) => a.vivo);
-  assert.equal(vivo?.task, 'T07');
-  assert.equal(vivo?.nome, TM.nomes[0]);
+  assert.deepEqual(eq.agentes.map((a) => [a.task, a.vivo, a.nome]), [['T07', true, TM.nomes[0]]], 'nenhuma linha ◌');
+  assert.deepEqual(eq.esperando, ['T08']);
+  assert.equal(eq.vivos, 1);
 });
 
-test('agentes-null-sem-sem-agente', () => {
+test('agentes-null-sem-linhas-nem-esperando', () => {
   const eventos = diario(ini('T07', 'implementador'), ini('T08', 'implementador'));
   const nulo = projetarEquipe(PLANO, eventos, entrada({ agentes: null }));
-  assert.deepEqual(nulo.agentes, []);
+  assert.deepEqual([nulo.agentes, nulo.vivos, nulo.esperando], [[], null, []]);
   const vazio = projetarEquipe(PLANO, eventos, entrada({ agentes: [] }));
-  assert.deepEqual(vazio.agentes.map((a) => [a.task, a.vivo]), [['T07', false], ['T08', false]]);
+  assert.deepEqual([vazio.agentes, vazio.vivos, vazio.esperando], [[], 0, ['T07', 'T08']]);
   // o revisor aguardando não depende de haver mod
   const conc = diario(ini('T07', 'implementador'), concl('T07'));
   assert.deepEqual(projetarEquipe(PLANO, conc, entrada({ agentes: null })).revisoresAguardando.map((r) => r.task), ['T07']);
@@ -333,33 +333,33 @@ test('encerrado-fora', () => {
   const eventos = diario(ini('T07', 'implementador'));
   for (const status of ['idle', 'completed', 'failed', 'killed']) {
     const eq = projetarEquipe(PLANO, eventos, entrada({ agentes: [ag('T07 implementador', { status })] }));
-    assert.equal(eq.agentes.filter((a) => a.vivo).length, 0, status);
-    assert.equal(eq.agentes.filter((a) => !a.vivo).length, 1, `${status}: a task fica sem agente`);
+    assert.equal(eq.agentes.length, 0, status);
+    assert.deepEqual(eq.esperando, ['T07'], `${status}: a task fica sem agente`);
   }
   for (const status of ['running', 'pending', 'waiting']) {
-    assert.equal(projetarEquipe(PLANO, eventos, entrada({ agentes: [ag('T07 implementador', { status })] })).agentes.filter((a) => a.vivo).length, 1, status);
+    assert.equal(projetarEquipe(PLANO, eventos, entrada({ agentes: [ag('T07 implementador', { status })] })).agentes.length, 1, status);
   }
 });
 
-test('status-desconhecido-vivo', () => {
+test('status-desconhecido-nao-e-ativo (FIEL-6 a)', () => {
   const eventos = diario(ini('T07', 'implementador'));
   for (const status of [42, null, undefined, 'esquisito'] as unknown[]) {
     const eq = projetarEquipe(PLANO, eventos, entrada({ agentes: [ag('T07 implementador', { status: status as string })] }));
-    assert.equal(eq.agentes.filter((a) => a.vivo).length, 1, String(status));
+    assert.equal(eq.agentes.length, 0, String(status));
+    assert.deepEqual(eq.esperando, ['T07'], String(status));
   }
 });
 
 test('linha-pelo-papel-nao-pelo-estado', () => {
-  // implementador vivo com a task já em em_revisao: a linha diz implementador; o revisor ausente vira ◌
+  // implementador vivo com a task já em em_revisao: a linha diz implementador; o revisor ausente vai a `esperando`
   const eventos = diario(ini('T07', 'implementador'), concl('T07'), ini('T07', 'revisor'));
   const eq = projetarEquipe(PLANO, eventos, entrada({ agentes: [ag('T07 implementador')] }));
-  const vivo = eq.agentes.find((a) => a.vivo);
-  assert.deepEqual([vivo?.papel, vivo?.estadoTask, vivo?.nome], ['implementador', 'em_revisao', TM.nomes[0]]);
-  const sem = eq.agentes.find((a) => !a.vivo);
-  assert.deepEqual([sem?.papel, sem?.task, sem?.estadoTask, sem?.nome], ['revisor', 'T07', 'em_revisao', TM.nomes[1]]);
-  // com o revisor vivo, o ◌ some
+  assert.deepEqual(eq.agentes.map((a) => [a.papel, a.estadoTask, a.nome]), [['implementador', 'em_revisao', TM.nomes[0]]]);
+  assert.deepEqual(eq.esperando, ['T07']);
+  // com o revisor vivo, esperando some
   const ok = projetarEquipe(PLANO, eventos, entrada({ agentes: [ag('T07 revisor')] }));
-  assert.deepEqual(ok.agentes.map((a) => [a.papel, a.vivo]), [['revisor', true], ]);
+  assert.deepEqual(ok.agentes.map((a) => [a.papel, a.vivo]), [['revisor', true]]);
+  assert.deepEqual(ok.esperando, []);
 });
 
 test('dois-vivos-mesmo-par', () => {
@@ -367,7 +367,7 @@ test('dois-vivos-mesmo-par', () => {
   const eq = projetarEquipe(PLANO, eventos, entrada({ agentes: [ag('T07 implementador'), { ...ag('T07 implementador'), id: 'outro' }] }));
   assert.equal(eq.agentes.length, 2);
   assert.equal(eq.agentes[0].nome, TM.nomes[0]);
-  assert.equal(eq.agentes[1].nome, TM.nomes[0]);
+  assert.notEqual(eq.agentes[1].nome, TM.nomes[0], 'nome único entre ativos (FIEL-3 d)');
 });
 
 test('corrigindo-espera-agente-correcao', () => {
@@ -377,8 +377,7 @@ test('corrigindo-espera-agente-correcao', () => {
   );
   const eq = projetarEquipe(PLANO, eventos, entrada({ agentes: [ag('T07 correcao')] }));
   assert.deepEqual(eq.agentes.map((a) => [a.papel, a.estadoTask, a.vivo, a.nome]), [['correcao', 'corrigindo', true, TM.nomes[0]]]);
-  const sem = projetarEquipe(PLANO, eventos, entrada({ agentes: [] }));
-  assert.deepEqual(sem.agentes.map((a) => [a.papel, a.vivo]), [['correcao', false]]);
+  assert.deepEqual(projetarEquipe(PLANO, eventos, entrada({ agentes: [] })).esperando, ['T07']);
 });
 
 test('cor-ordem-global', () => {
@@ -718,7 +717,7 @@ const dec = (hash: string, resposta: string, extra: Record<string, unknown> = {}
 ];
 
 test('sombra-sempre-presente', () => {
-  assert.deepEqual(projetarEquipe(PLANO, [], entrada()).sombra, { nome: 'ELROND', modelo: null, decisoes: 0, ultima: null });
+  assert.deepEqual(projetarEquipe(PLANO, [], entrada()).sombra, { nome: 'ELROND', modelo: null, decisoes: 0, ultima: null, consultasAbertas: 0 });
   const eventos = diario(dec(hashA, 'primeira'), dec(hashB, 'segunda', { fontes: undefined, medicao: 'medido.json' }), dec(hashA, 'terceira', { fontes: ['plano:1', 'spec:2'] }));
   const s = projetarEquipe(PLANO, eventos, entrada()).sombra;
   assert.equal(s.nome, 'ELROND');
@@ -727,7 +726,7 @@ test('sombra-sempre-presente', () => {
   // a Sombra entra mesmo sem nenhum agente e com diário que não ordena
   const a = ev('task.iniciada', { task: 'T07', papel: 'implementador' });
   const b: Evento = { ...ev('task.iniciada', { task: 'T08', papel: 'implementador' }), seq: a.seq };
-  assert.deepEqual(projetarEquipe(PLANO, [a, b], entrada()).sombra, { nome: 'ELROND', modelo: null, decisoes: 0, ultima: null });
+  assert.deepEqual(projetarEquipe(PLANO, [a, b], entrada()).sombra, { nome: 'ELROND', modelo: null, decisoes: 0, ultima: null, consultasAbertas: 0 });
 });
 
 test('sombra-ultima-desempate-por-sessao (T3 MINOR 2): mesmo ts em sessões diferentes ⇒ a de sessao maior; mesma sessão ⇒ seq maior', () => {
@@ -816,4 +815,293 @@ test('costura-diario-transcript-equipe', () => {
   assert.deepEqual([rev?.nome, rev?.papel, rev?.estadoTask, rev?.ctxPct, rev?.ctxTok, rev?.tok, rev?.cor], [pacoteDe('galaxia').nomes[2], 'revisor', 'em_revisao', 44, 88_000, 15_306, 'autoAccept']);
   assert.equal(eq.lider.nome, 'LEIA');
   assert.equal(eq.sombra.nome, 'YODA');
+});
+
+// ---------- GM-14 T29: casamento, nome e vivos da equipe (FIEL-3 a, b, d; FIEL-6; FIEL-7) ----------
+
+const IMPL = 'gabarito-mestre:gabarito-implementador';
+const REV = 'gabarito-mestre:gabarito-revisor';
+const planoDe = (...ids: string[]): Plano => ({ entrega: 'GM-14', tasks: ids.map((id) => ({ id, deps: [], arquivos: [] })) });
+const vivoT = (id: string, description: string, type = 'general-purpose', extra: Partial<AgenteVivo> = {}): AgenteVivo => ({ id, type, description, status: 'running', uso: null, ...extra });
+const semEstado = new Map<string, never>();
+const FATOS = (...tasks: string[]) => ({ branch: 'x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' });
+const novo = (plano: Plano, eventos: Evento[], extra: Partial<EntradaPainel>) => projetarPainel(plano, eventos, { ...entrada(extra), fatos: FATOS(...plano.tasks.map((t) => t.id)) } as never);
+
+test('casa-t1-contratos-com-tipo-implementador: o 1º token é o id; o tipo dá o papel', () => {
+  const c = casarVivo(vivoT('a1', 'T1 Contratos de painel', IMPL), planoDe('T1', 'T2'), semEstado);
+  assert.deepEqual([c.task, c.papel, c.papelExibido], ['T1', 'implementador', 'implementador']);
+});
+
+test('t0a-casa-t0: id + 1 letra minúscula casa o id; maiúscula, 2 letras e dígito não', () => {
+  const p = planoDe('T0', 'T1');
+  assert.equal(casarVivo(vivoT('a', 'T0a medir', IMPL), p, semEstado).task, 'T0');
+  for (const d of ['T0A medir', 'T0ab medir', 'T00 medir', 'x T0 medir', 't0 medir']) assert.equal(casarVivo(vivoT('a', d, IMPL), p, semEstado).task, null, d);
+});
+
+test('t10-nao-casa-t1: T10 nunca casa T1; com os dois no plano vale o id mais longo', () => {
+  assert.equal(casarVivo(vivoT('a', 'T10 x', IMPL), planoDe('T1'), semEstado).task, null);
+  assert.equal(casarVivo(vivoT('a', 'T10 x', IMPL), planoDe('T1', 'T10'), semEstado).task, 'T10');
+  assert.equal(casarVivo(vivoT('a', 'T1a x', IMPL), planoDe('T1', 'T1a'), semEstado).task, 'T1a', 'o mais longo');
+});
+
+test('papel-antigo-vence-tipo: "<task> revisor" com tipo implementador é revisor', () => {
+  const c = casarVivo(vivoT('a', 'T1 revisor', IMPL), planoDe('T1'), new Map([['T1', 'corrigindo' as const]]));
+  assert.deepEqual([c.papel, c.papelExibido], ['revisor', 'revisor']);
+});
+
+test('papel-pela-ordem: tipo > implementador em corrigindo vira correcao > estado > tipo só para exibição', () => {
+  const p = planoDe('T1');
+  const est = (e: 'implementando' | 'corrigindo' | 'em_revisao' | 'pendente') => new Map([['T1', e]]);
+  assert.equal(casarVivo(vivoT('a', 'T1 x', REV), p, est('implementando')).papel, 'revisor', 'tipo');
+  assert.equal(casarVivo(vivoT('a', 'T1 x', IMPL), p, est('corrigindo')).papel, 'correcao', 'regra 3');
+  assert.equal(casarVivo(vivoT('a', 'T1 x', IMPL), p, est('em_revisao')).papel, 'implementador', 'tipo implementador fora de corrigindo');
+  assert.equal(casarVivo(vivoT('a', 'T1 x', 'general-purpose'), p, est('em_revisao')).papel, 'revisor', 'regra 4: estado');
+  const spike = casarVivo(vivoT('a', 'T1 x', 'gabarito-mestre:gabarito-spike'), p, est('pendente'));
+  assert.deepEqual([spike.task, spike.papelExibido], ['T1', 'spike'], 'regra 5: tipo só para exibição');
+  const sem = casarVivo(vivoT('a', 'rascunho da spec', 'gabarito-mestre:gabarito-sombra'), p, est('implementando'));
+  assert.deepEqual([sem.task, sem.papel, sem.papelExibido], [null, null, 'sombra']);
+  assert.equal(papelDoAgente('general-purpose'), null);
+  assert.equal(papelDoAgente(42), null);
+});
+
+test('correcao-com-tipo-implementador-cobre: task em corrigindo com agente tipo implementador ⇒ linha no AGORA, 0 no ATENÇÃO', () => {
+  const eventos = diario(ini('T07', 'implementador'), concl('T07'), ini('T07', 'revisor'),
+    ['review.veredito', { task: 'T07', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 }], ini('T07', 'correcao'));
+  const agentes = [vivoT('a1', 'T07 corrigir o achado', IMPL)];
+  const eq = projetarEquipe(PLANO, eventos, entrada({ agentes }));
+  assert.deepEqual(eq.agentes.map((a) => [a.papel, a.papelExibido, a.vivo]), [['correcao', 'correcao', true]]);
+  assert.deepEqual(eq.esperando, []);
+  const s = novo(PLANO, eventos, { agentes });
+  assert.equal(s.atencao.filter((x) => /sem agente trabalhando/.test(x)).length, 0);
+  assert.equal(s.agora?.agentes?.length, 1);
+});
+
+test('t0-pendente-com-spike-vivo-em-curso: task pendente com vivo casado aparece em curso (●), nunca fila (○); o diário não muda', () => {
+  const plano = planoDe('T0', 'T07');
+  const agentes = [vivoT('sp', 'T0 medir a paginação', 'gabarito-mestre:gabarito-spike')];
+  const s = projetarPainel(plano, [], entrada({ agentes }));
+  assert.equal(s.plano.tasks.find((t) => t.id === 'T0')?.glifo, '●');
+  assert.equal(s.plano.tasks.find((t) => t.id === 'T0')?.estado, 'pendente');
+  assert.equal(s.equipe.agentes[0].papelExibido, 'spike');
+  const sem = projetarPainel(plano, [], entrada({ agentes: [] }));
+  assert.equal(sem.plano.tasks.find((t) => t.id === 'T0')?.glifo, '○');
+});
+
+test('todo-ativo-tem-nome e nomes-unicos-entre-ativos: casado, sem task e spike recebem nome, e dois ativos nunca dividem o mesmo', () => {
+  const eventos = diario(ini('T07', 'implementador'));
+  const agentes = [vivoT('a', 'T07 x', IMPL), vivoT('b', 'T07 y', IMPL), vivoT('c', 'rascunho', 'general-purpose'), vivoT('d', 'medir', 'gabarito-mestre:gabarito-spike')];
+  const eq = projetarEquipe(PLANO, eventos, entrada({ agentes }));
+  const nomes = eq.agentes.map((a) => a.nome);
+  assert.ok(nomes.every((n) => typeof n === 'string' && n !== ''), JSON.stringify(nomes));
+  assert.equal(new Set(nomes).size, nomes.length, 'únicos');
+  assert.ok(!nomes.includes(TM.lider) && !nomes.includes(TM.sabio));
+  assert.equal(eq.agentes.find((a) => a.task === 'T07')?.nome, TM.nomes[0], 'o 1º casado fica com o nome do par');
+});
+
+test('nome-do-par-so-se-livre: o nome do par é de quem já o tem; o recebido de um ativo não é trocado (FIEL-3 d)', () => {
+  const eventos = diario(ini('T07', 'implementador'));
+  // o sem task já exibe ARAGORN (o nome do par de T07): o casado não o toma; usa o seu recebido
+  const agentes = [vivoT('x', 'rascunho', 'general-purpose', { nome: TM.nomes[0], vistoEm: 1 }), vivoT('a', 'T07 x', IMPL, { nome: TM.nomes[3], vistoEm: 2 })];
+  const eq = projetarEquipe(PLANO, eventos, entrada({ agentes }));
+  assert.equal(eq.agentes.find((a) => a.task === undefined)?.nome, TM.nomes[0], 'o nome já exibido não troca quando entra o casado');
+  assert.equal(eq.agentes.find((a) => a.task === 'T07')?.nome, TM.nomes[3], 'o casado, sem o par livre, fica com o seu recebido');
+  // sem ninguém usando o par, o casado o recebe
+  const livre = projetarEquipe(PLANO, eventos, entrada({ agentes: [vivoT('a', 'T07 x', IMPL, { nome: TM.nomes[3], vistoEm: 2 })] }));
+  assert.equal(livre.agentes[0].nome, TM.nomes[0], 'par livre ⇒ o casado o tem');
+  // par ocupado por outro e sem recebido: o 1º livre do pacote, nunca o duplicado
+  const sem = projetarEquipe(PLANO, eventos, entrada({ agentes: [vivoT('x', 'rascunho', 'general-purpose', { nome: TM.nomes[0], vistoEm: 1 }), vivoT('a', 'T07 x', IMPL, { vistoEm: 2 })] }));
+  const nomes = sem.agentes.map((a) => a.nome);
+  assert.equal(new Set(nomes).size, 2, 'únicos');
+  assert.equal(sem.agentes.find((a) => a.task === undefined)?.nome, TM.nomes[0]);
+});
+
+test('nome-estavel-com-novo-agente: nome recebido não muda quando entra outro agente', () => {
+  const um = [vivoT('x', 'a', 'general-purpose', { nome: TM.nomes[4], vistoEm: 1 })];
+  const dois = [vivoT('y', 'b', 'general-purpose', { vistoEm: 0 }), ...um];
+  const n1 = projetarEquipe(PLANO, [], entrada({ agentes: um })).agentes[0].nome;
+  const n2 = projetarEquipe(PLANO, [], entrada({ agentes: dois })).agentes.find((a) => a.descricao === 'a')?.nome;
+  assert.equal(n1, TM.nomes[4]);
+  assert.equal(n2, TM.nomes[4]);
+});
+
+test('pacote-esgotado-sufixo-e-agente: acabou o pacote ⇒ nome com sufixo 2 a 9; depois do 9 ⇒ "agente"', () => {
+  const quantos = TM.nomes.length * 9 + 1;
+  const agentes = Array.from({ length: quantos }, (_, i) => vivoT(`x${i}`, `trabalho ${i}`, 'general-purpose', { vistoEm: i }));
+  const nomes = projetarEquipe(PLANO, [], entrada({ agentes })).agentes.map((a) => a.nome);
+  assert.deepEqual(nomes.slice(0, TM.nomes.length), TM.nomes);
+  assert.equal(nomes[TM.nomes.length], `${TM.nomes[0]}2`);
+  assert.equal(nomes[nomes.length - 1], 'agente');
+  assert.equal(new Set(nomes.filter((n) => n !== 'agente')).size, nomes.length - 1);
+});
+
+test('subagentstop-sai-do-agora: `encerrados` do mod e `custo.medicao` de subagent:<id> vencem o status', () => {
+  const eventos = diario(ini('T07', 'implementador'), ini('T08', 'implementador'));
+  const agentes = [vivoT('a', 'T07 x', IMPL), vivoT('b', 'T08 y', IMPL)];
+  assert.equal(projetarEquipe(PLANO, eventos, entrada({ agentes })).vivos, 2);
+  const parou = projetarEquipe(PLANO, eventos, entrada({ agentes, encerrados: ['a'] }));
+  assert.deepEqual(parou.agentes.map((a) => a.task), ['T08']);
+  assert.equal(parou.vivos, 1);
+  assert.deepEqual(parou.esperando, ['T07'], 'T07 em voo sem ativo');
+  const medida = [...eventos, ev('custo.medicao', { papel: 'implementador', modelo: 'claude-opus-4-8', input_tokens: 1, output_tokens: 1 }, '2026-11-09T12:30:00.000Z', 's1', 'subagent:b')];
+  assert.deepEqual(projetarEquipe(PLANO, medida, entrada({ agentes })).agentes.map((a) => a.task), ['T07']);
+  assert.deepEqual([...idsEncerrados(medida, ['z'])].sort(), ['b', 'z']);
+});
+
+test('status-fora-da-lista-nao-e-ativo: desconhecido não entra no AGORA e conta "estado desconhecido" no ATENÇÃO', () => {
+  const fim = new Set<string>();
+  for (const [st, esperado] of [['pending', 'ativo'], ['running', 'ativo'], ['waiting', 'ativo'], ['idle', 'encerrado'], ['killed', 'encerrado'], ['esquisito', 'desconhecido'], [42, 'desconhecido'], [undefined, 'desconhecido']] as [unknown, string][]) {
+    assert.equal(estadoDoVivo({ id: 'a', status: st }, fim), esperado, String(st));
+  }
+  const agentes = [vivoT('a', 'T07 x', IMPL), vivoT('b', 'T08 y', IMPL, { status: 'esquisito' })];
+  const eventos = diario(ini('T07', 'implementador'));
+  const r = resolverAtivos(PLANO, eventos, entrada({ agentes }));
+  assert.equal(r.ativos?.length, 1);
+  assert.equal(r.desconhecidos, 1);
+  assert.ok(novo(PLANO, eventos, { agentes }).atencao.includes('1 agente com estado desconhecido'));
+});
+
+test('em-revisao-sem-vivo-na-atencao: T0 e T4 em revisão sem revisor ativo ⇒ 0 "◌" e uma linha por task no ATENÇÃO', () => {
+  const plano = planoDe('T0', 'T4');
+  const eventos = diario(ini('T0', 'implementador'), concl('T0'), ini('T0', 'revisor'), ini('T4', 'implementador'), concl('T4'), ini('T4', 'revisor'));
+  const agentes = [vivoT('a', 'T0 x', IMPL)];
+  const eq = projetarEquipe(plano, eventos, entrada({ agentes }));
+  assert.deepEqual(eq.agentes.map((a) => a.vivo), [true], 'nenhuma linha ◌');
+  assert.deepEqual(eq.esperando, ['T0', 'T4']);
+  assert.deepEqual(novo(plano, eventos, { agentes }).atencao.filter((x) => /sem agente trabalhando/.test(x)), ['T0 sem agente trabalhando', 'T4 sem agente trabalhando']);
+});
+
+test('agora-e-atencao-concordam: o nº de linhas do AGORA é o de ativos e o ATENÇÃO usa o mesmo casamento', () => {
+  const eventos = diario(ini('T07', 'implementador'), ini('T08', 'implementador'));
+  const agentes = [vivoT('a', 'T07 x', IMPL), vivoT('b', 'sem task nenhuma', 'general-purpose')];
+  const eq = projetarEquipe(PLANO, eventos, entrada({ agentes }));
+  const s = novo(PLANO, eventos, { agentes });
+  assert.equal(s.agora?.agentes?.length, eq.vivos);
+  assert.deepEqual(s.atencao.filter((x) => /sem agente trabalhando/.test(x)), eq.esperando.map((t) => `${t} sem agente trabalhando`));
+});
+
+test('glifo-e-equipe-concordam: o ● do PLANO existe se e só se a equipe tem agente casado no papel do estado', () => {
+  const eventos = diario(ini('T07', 'implementador'), ini('T08', 'implementador'), concl('T08'), ini('T08', 'revisor'));
+  for (const agentes of [[vivoT('a', 'T07 x', IMPL)], [vivoT('a', 'T07 x', IMPL), vivoT('b', 'T08 y', IMPL)], [vivoT('a', 'T08 y', REV)], []]) {
+    const s = projetarPainel(PLANO, eventos, entrada({ agentes }));
+    for (const t of ['T07', 'T08']) {
+      const coberto = !s.equipe.esperando.includes(t);
+      assert.equal(s.plano.tasks.find((x) => x.id === t)?.glifo === '●', coberto, `${t} com ${agentes.map((a) => a.description).join(',')}`);
+    }
+  }
+});
+
+test('descricao-higienizada: token que casa a regra de REQ-LNG-1 vira "…"; controle vira espaço; vazio e não texto ⇒ null', () => {
+  assert.equal(higienizarDescricao('Rascunho spec-brief.md'), 'Rascunho …');
+  assert.equal(higienizarDescricao('rodar `npm test` e node x.mjs'), 'rodar … … e … …');
+  assert.equal(higienizarDescricao('ler loop_cli --flag /tmp/x'), 'ler … … …');
+  assert.equal(higienizarDescricao('T07\timplementar\npainel'), 'T07 implementar painel');
+  assert.equal(higienizarDescricao('   '), null);
+  assert.equal(higienizarDescricao(42), null);
+  const eq = projetarEquipe(PLANO, [], entrada({ agentes: [vivoT('a', 'Rascunho spec-brief.md')] }));
+  assert.equal(eq.agentes[0].descricao, 'Rascunho …');
+});
+
+test('consultas-abertas: contarConsultas além das decisões registradas; 0 quando não passa', () => {
+  assert.equal(projetarEquipe(PLANO, [], entrada()).sombra.consultasAbertas, 0);
+  const consulta = (h: string): [TipoEvento, Record<string, unknown>] => ['sombra.consulta', { pergunta_hash: h.repeat(64), task: 'T07' }];
+  assert.equal(projetarEquipe(PLANO, diario(consulta('a'), consulta('b')), entrada()).sombra.consultasAbertas, 2, 'duas consultas sem decisão');
+  const dec: [TipoEvento, Record<string, unknown>] = ['decisao.sombra', { pergunta_hash: 'a'.repeat(64), task: 'T07', resposta: 'sim', arquivo: 's.md', pergunta_enviesada: false, fontes: ['spec:1'] }];
+  assert.equal(projetarEquipe(PLANO, diario(consulta('a'), consulta('b'), dec), entrada()).sombra.consultasAbertas, 1, 'uma decisão fecha uma');
+});
+
+test('nomes-stdin-ausente-x-corrompido: ausente ⇒ vazio e vale; presente fora do contrato ⇒ recusa com o campo', () => {
+  assert.deepEqual(validarStdinAgentes({}), { ok: true, valor: { nomes: {}, encerrados: [], acoes: {}, segundoPlano: [] } });
+  assert.deepEqual(validarNomesAgentes(undefined), { ok: true, nomes: {} });
+  const bom = validarStdinAgentes({ nomes: { a1: { nome: 'FRODO', vistoEm: 5 } }, encerrados: ['a2'], acoes: { a1: { texto: 'lendo 3 arquivos', fonte: 'tool', em: 9 } },
+    segundoPlano: [{ id: 'bg1', dono: 'orquestrador', texto: 'rodando testes', desde: 3 }] });
+  assert.equal(bom.ok, true);
+  for (const [campo, ruim] of [['nomes', { nomes: [] }], ['nomes', { nomes: { a: { nome: 'x', vistoEm: 1 } } }], ['encerrados', { encerrados: 'a' }], ['encerrados', { encerrados: ['../x'] }],
+    ['acoes', { acoes: { a: { texto: 't', fonte: 'outra', em: 1 } } }], ['acoes', { acoes: { a: { texto: 't', fonte: 'tool', em: 1, x: 1 } } }], ['segundoPlano', { segundoPlano: {} }],
+    ['segundoPlano', { segundoPlano: [{ id: 'b', dono: 'x y', texto: 't', desde: 1 }] }]] as [string, unknown][]) {
+    const r = validarStdinAgentes(ruim);
+    assert.equal(r.ok, false, JSON.stringify(ruim));
+    if (!r.ok) assert.match(r.erro, new RegExp(`\`${campo}\` corrompido`), JSON.stringify(ruim));
+  }
+});
+
+// ---------- GM-14 T29 r2: sombra com id de task, ação ao vivo, plano B, segundo plano, Sombra ativa ----------
+
+const SOMBRA = 'gabarito-mestre:gabarito-sombra';
+const tarefa = (id: string): Plano => ({ entrega: 'GM-14', tasks: [{ id, deps: [], arquivos: [] }] });
+
+test('sombra-com-id-de-task-nao-cobre-o-implementador: o tipo vem antes do estado (FIEL-3 a, regra 2); o ATENÇÃO segue', () => {
+  const eventos = diario(ini('T07', 'implementador'));
+  const sombra = vivoT('s1', 'T07 dúvida sobre o nome', SOMBRA);
+  const c = casarVivo(sombra, PLANO, new Map([['T07', 'implementando' as const]]));
+  assert.deepEqual(c, { task: null, papel: null, papelExibido: 'sombra' });
+  const r = resolverAtivos(PLANO, eventos, entrada({ agentes: [sombra] }));
+  assert.deepEqual(r.esperando, ['T07'], 'ninguém implementa a T07');
+  assert.equal(r.cobertos.size, 0);
+  const s = novo(PLANO, eventos, { agentes: [sombra] });
+  assert.ok(s.atencao.includes('T07 sem agente trabalhando'), s.atencao.join('|'));
+  assert.equal(s.agora?.agentes?.length, 1);
+  assert.equal(s.agora?.agentes?.[0].quem.papel, 'sombra');
+  assert.equal(s.agora?.agentes?.[0].task, null);
+  // o padrão antigo `<task> <papel>` ainda vence o tipo
+  assert.equal(casarVivo(vivoT('s2', 'T07 revisor', SOMBRA), PLANO, semEstado).papel, 'revisor');
+});
+
+test('acao-ao-vivo-vence-o-registrado: `acoes` do mod é a ação do agente; só a do próprio id (FIEL-11 b)', () => {
+  const eventos = diario(ini('T07', 'implementador'));
+  const agentes = [vivoT('a1', 'T07 implementador', IMPL), vivoT('a2', 'rascunho do plano', 'general-purpose')];
+  const acoes = { a1: { texto: 'lendo 3 arquivos', fonte: 'tool' as const, em: AGORA - 5000 }, a2: { texto: 'rodando 1 comando', fonte: 'tool' as const, em: AGORA - 1000 } };
+  const s = novo(PLANO, eventos, { agentes, acoes });
+  const por = (id: string) => s.agora?.agentes?.find((x) => (id === 'a1' ? x.task === 'T07' : x.task === null));
+  assert.equal(por('a1')?.acao, 'lendo 3 arquivos', 'casado: ao vivo, sem a marca de registrado');
+  assert.equal(por('a2')?.acao, 'rodando 1 comando', 'sem task: ao vivo, sem a marca de registrado');
+  const so = novo(PLANO, eventos, { agentes, acoes: { a1: acoes.a1 } });
+  assert.equal(so.agora?.agentes?.find((x) => x.task === null)?.acao, 'rascunho do plano (registrado)', 'a ação de outro id não vaza');
+  // o texto ao vivo é higienizado como a descrição (token técnico vira "…")
+  const tec = novo(PLANO, eventos, { agentes, acoes: { a1: { texto: 'editando spec-brief.md', fonte: 'tool', em: 1 } } });
+  assert.equal(tec.agora?.agentes?.find((x) => x.task === 'T07')?.acao, 'editando …');
+});
+
+test('acao-plano-b-registrado: sem `acoes`, a description do despacho vai marcada "(registrado)", casada ou não (FIEL-11 b)', () => {
+  const eventos = diario(ini('T07', 'implementador'));
+  const s = novo(PLANO, eventos, { agentes: [vivoT('a1', 'T07 implementador', IMPL), vivoT('a2', 'Explorar o repositório', 'general-purpose')] });
+  assert.equal(s.agora?.agentes?.find((x) => x.task === 'T07')?.acao, 'implementando (registrado)', 'só "<task> <papel>": o papel em palavras');
+  assert.equal(s.agora?.agentes?.find((x) => x.task === null)?.acao, 'Explorar o repositório (registrado)', 'o vivo sem task também marca');
+  const cas = novo(PLANO, eventos, { agentes: [vivoT('a1', 'T07 Contratos do painel', IMPL)] });
+  assert.equal(cas.agora?.agentes?.[0].acao, 'T07 Contratos do painel (registrado)');
+});
+
+test('acao-sem-fonte-interrogacao: sem acoes e sem description, a ação é null (o render escreve "?"), nunca inventada', () => {
+  const s = novo(PLANO, [], { agentes: [vivoT('a1', '   ', 'general-purpose')] });
+  assert.equal(s.agora?.agentes?.[0].acao, null);
+  assert.equal(s.agora?.agentes?.[0].task, null);
+});
+
+test('segundo-plano-no-agora: "Teste" com o dono, a description e o tempo; só com o mod (FIEL-11 c)', () => {
+  const agentes = [vivoT('a1', 'T07 implementador', IMPL)];
+  const eventos = diario(ini('T07', 'implementador'));
+  const segundoPlano = [
+    { id: 'b1', dono: 'a1', texto: 'npm test', desde: AGORA - 90_000 },
+    { id: 'b2', dono: 'orquestrador', texto: 'build do plugin', desde: AGORA - 30_000 },
+    { id: 'b3', dono: 'a1', texto: 'rodar x', desde: Number.NaN },
+  ];
+  const s = novo(PLANO, eventos, { agentes, segundoPlano });
+  const sp = s.agora?.segundoPlano ?? [];
+  assert.equal(sp.length, 3);
+  assert.deepEqual(sp.map((x) => x.quem.papel), ['teste', 'teste', 'teste']);
+  assert.deepEqual(sp.map((x) => x.task), ['T07', null, 'T07'], 'dono agente ⇒ a task dele; orquestrador ⇒ sem task');
+  assert.deepEqual(sp.map((x) => x.desdeS), [90, 30, null]);
+  assert.equal(sp[1].acao, 'build do plugin');
+  assert.deepEqual(novo(PLANO, eventos, { agentes }).agora?.segundoPlano, [], 'sem lista ⇒ vazio');
+  assert.deepEqual(novo(PLANO, eventos, { agentes: null, segundoPlano }).agora?.segundoPlano, [], 'sem mod ⇒ vazio');
+});
+
+test('sombra-ativa-no-agora: Sombra viva é linha do AGORA e cala a consulta sem registro no ATENÇÃO (FIEL-7)', () => {
+  const consulta: [TipoEvento, Record<string, unknown>] = ['sombra.consulta', { pergunta_hash: 'a'.repeat(64), task: 'T07' }];
+  const eventos = diario(consulta);
+  const com = novo(PLANO, eventos, { agentes: [vivoT('s1', 'dúvida do nome', SOMBRA)] });
+  assert.equal(com.agora?.agentes?.length, 1);
+  assert.equal(com.agora?.agentes?.[0].quem.papel, 'sombra');
+  assert.ok(!com.atencao.some((x) => /Sombra/.test(x)), `Sombra ativa: ${com.atencao.join('|')}`);
+  const sem = novo(PLANO, eventos, { agentes: [] });
+  assert.ok(sem.atencao.some((x) => /^1 consulta à Sombra sem /.test(x)), `sem Sombra ativa: ${sem.atencao.join('|')}`);
 });

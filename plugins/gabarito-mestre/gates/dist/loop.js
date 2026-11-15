@@ -6,7 +6,7 @@
 // O mod carrega `dist/loop.js` como módulo de hook: só import relativo e, no fecho inteiro, nenhum módulo embutido do Node (por isso `plano.ts` normaliza caminho por conta própria).
 // A projeção das propostas abertas é UMA só, a de `emenda.ts`; `emenda.ts` importa `ordenar` daqui (ciclo medido nos runners).
 import { projetarEmendas } from './emenda.js';
-import { PAPEIS } from './formas.js';
+import { MOTIVOS_REENTREGA, PAPEIS } from './formas.js';
 import { pendenciasAprendizado } from './pendencias.js';
                                                                                          
 
@@ -69,7 +69,7 @@ export const CHAVES_DE_EVENTO = [
   'iniciada.implementador', 'iniciada.revisor', 'iniciada.correcao', 'task.concluida',
   'veredito.aprovado', 'veredito.aprovado.com_achado',
   'veredito.reprovado.r1', 'veredito.reprovado.teto', 'veredito.reprovado.sem_achado',
-  'task.integrada', 'reaberta.retomada', 'reaberta.dono',
+  'task.integrada', 'reaberta.retomada', 'reaberta.dono', 'reaberta.sombra', 'concluida.reentrega',
 ]         ;
                                                             
 
@@ -84,21 +84,25 @@ const VEREDITOS = {
  * Única fonte do estado de uma task: estado → evento → próximo estado. Par ausente é diário inválido.
  * `veredito.aprovado.com_achado` não aparece em nenhum estado de propósito (A11).
  * `reaberta.retomada` fora de agente em voo não muda nada: quem decide reabrir é o orquestrador, não esta tabela.
+ * `concluida.reentrega` (FIEL-8 b, `concluir --motivo`): commit novo depois do `concluir` só em `concluida` (b1, rodada igual) e em
+ * `aprovada` (b2, rodada − 1: o APROVADO anulado não conta); em qualquer outro estado é par ausente (b3). O motivo não dá poder: não tira do teto, não pula review.
+ * `reaberta.sombra` (GM-14 T36, FIEL-15): SÓ em `no_teto` (⇒ `pendente`, rodada 0); em qualquer outro estado é par ausente: a Sombra nunca grava
+ * evento sem efeito que pareça liberação. "1 vez por task e só a 1ª liberação" é da borda (`loop.mjs liberar`), que conta no diário.
  */
 export const TRANSICOES                                                               = {
   pendente: { 'iniciada.implementador': 'implementando', 'reaberta.retomada': 'pendente', 'reaberta.dono': 'pendente' },
   implementando: { 'task.concluida': 'concluida', 'reaberta.retomada': 'pendente', 'reaberta.dono': 'implementando' },
-  concluida: { 'iniciada.revisor': 'em_revisao', ...VEREDITOS, 'reaberta.retomada': 'concluida', 'reaberta.dono': 'concluida' },
+  concluida: { 'iniciada.revisor': 'em_revisao', ...VEREDITOS, 'reaberta.retomada': 'concluida', 'reaberta.dono': 'concluida', 'concluida.reentrega': 'concluida' },
   em_revisao: { ...VEREDITOS, 'reaberta.retomada': 'concluida', 'reaberta.dono': 'em_revisao' },
   reprovada: { 'iniciada.correcao': 'corrigindo', 'reaberta.retomada': 'reprovada', 'reaberta.dono': 'reprovada' },
   corrigindo: { 'task.concluida': 'concluida', 'reaberta.retomada': 'reprovada', 'reaberta.dono': 'corrigindo' },
-  aprovada: { 'task.integrada': 'integrada', 'reaberta.retomada': 'aprovada', 'reaberta.dono': 'aprovada' },
-  // Autotransição: só o dono tira do teto; evento avulso não tira nem quebra. `task.integrada` fica de fora: integrar sem liberação é fraude.
+  aprovada: { 'task.integrada': 'integrada', 'reaberta.retomada': 'aprovada', 'reaberta.dono': 'aprovada', 'concluida.reentrega': 'concluida' },
+  // Autotransição: só o dono (ou a Sombra, 1 vez, com o flag de origin: FIEL-15) tira do teto; evento avulso não tira nem quebra. `task.integrada` fica de fora: integrar sem liberação é fraude.
   no_teto: {
     'iniciada.implementador': 'no_teto', 'iniciada.revisor': 'no_teto', 'iniciada.correcao': 'no_teto', 'task.concluida': 'no_teto',
     'veredito.aprovado': 'no_teto', 'veredito.aprovado.com_achado': 'no_teto', 'veredito.reprovado.r1': 'no_teto',
     'veredito.reprovado.teto': 'no_teto', 'veredito.reprovado.sem_achado': 'no_teto',
-    'reaberta.retomada': 'no_teto', 'reaberta.dono': 'pendente',
+    'reaberta.retomada': 'no_teto', 'reaberta.dono': 'pendente', 'reaberta.sombra': 'pendente',
   },
   integrada: { 'reaberta.retomada': 'integrada', 'reaberta.dono': 'integrada' },
 };
@@ -113,11 +117,14 @@ function chaveDe(e        , rodada        , estado            )                 
       if (!(PAPEIS                      ).includes(dados.papel)) return 'papel inválido';
       return { chave: `iniciada.${dados.papel         }`               , rodada: null };
     case 'task.concluida':
-      return { chave: 'task.concluida', rodada: null };
+      // Sem `motivo` é a entrega da 2.0.0 (chave `task.concluida`); com ele, a reentrega (b), e só os 3 literais valem (b6).
+      if (dados.motivo === undefined) return { chave: 'task.concluida', rodada: null };
+      if (!(MOTIVOS_REENTREGA                      ).includes(dados.motivo)) return 'motivo inválido';
+      return { chave: 'concluida.reentrega', rodada: estado === 'aprovada' ? rodada - 1 : null };
     case 'task.integrada':
       return { chave: 'task.integrada', rodada: null };
     case 'task.reaberta':
-      if (dados.origem !== 'dono' && dados.origem !== 'retomada') return 'origem inválida';
+      if (dados.origem !== 'dono' && dados.origem !== 'retomada' && dados.origem !== 'sombra') return 'origem inválida';
       return { chave: `reaberta.${dados.origem}`               , rodada: null };
     case 'review.veredito': {
       const { veredito, rodada: declarada, major, blocker } = dados;
@@ -241,7 +248,7 @@ function depLiberada(estados                           , dep        )          {
 const EM_VOO                        = ['implementando', 'corrigindo', 'em_revisao'];
 const SEM_RESTO                        = ['integrada', 'no_teto'];
 
-export function proximaAcao(plano       , eventos          , sinais        )           {
+export function proximaAcao(plano       , eventos          , sinais                                      )           {
   // (1)
   const ord = ordenar(eventos);
   const proj = ord.ok ? projetar(plano, ord.eventos) : null;
@@ -261,8 +268,12 @@ export function proximaAcao(plano       , eventos          , sinais        )    
   }
   // (4c) REQ-APR-2: pendência de aprendizado aberta vence tudo que vem depois (plano vazio, pouso, integração, despacho, concluir). A (1) já
   // barrou o diário fora da tabela: `pendenciasAprendizado` devolve `[]` nele e nunca é lido como "sem pendência".
+  // GM-14 T27 (FIEL-2 b): a pendência `dono` (conversa) não trava despacho nem integração; só `pousar` e `concluir` a esperam, porque o diário
+  // guarda hash e tamanho, nunca o texto, e depois do `/clear` ela só fecharia às cegas. O filtro mora aqui, nunca em `pendenciasAprendizado`.
   const pendencias = pendenciasAprendizado(plano, ord.eventos);
-  if (pendencias.length > 0) return { tipo: 'aprender', pendencias };
+  const aprender = ()           => ({ tipo: 'aprender', pendencias });
+  if (pendencias.some((p) => p.tipo !== 'dono')) return aprender();
+  const donoAberto = pendencias.length > 0;
   // Plano vazio não é sucesso: nada foi entregue.
   if (plano.tasks.length === 0) return { tipo: 'parar', motivo: 'nao_conseguiu' };
 
@@ -276,9 +287,13 @@ export function proximaAcao(plano       , eventos          , sinais        )    
   // Congelada não ganha revisor, correção, integração nem despacho novo; em voo ela termina (a tabela segue aceitando o evento).
   const revisores = ids.filter((id) => est(id).estado === 'concluida' && livre(id)).map((task) => ({ task, papel: 'revisor'          }));
 
-  // (5) `percent` nulo não satisfaz a comparação.
-  if (sinais.percent !== null && sinais.percent >= sinais.x) {
-    if (revisores.length > 0 && capacidade >= 1) return despachar(revisores);
+  // (5) `percent` nulo não satisfaz a comparação. GM-14 T34 (FIEL-14 e, f): pouso pendente entra aqui como se o contexto estivesse acima de `x`, mas NÃO
+  // despacha revisor (revoga, só para o pendente, o despacho da 2.0): o que está em voo termina e nada novo começa. O sinal vem de quem lê o diário com a
+  // regra única de `pouso-pendente.ts`: `loop.mjs proxima`, o hook Stop (`stop-loop.mjs`) e, desde a T59 (emenda 67), o mod o passam: com contexto >= X e o pouso da fronteira feito, task `concluida` à espera do revisor NÃO vence o pouso (0 vivos ⇒ `pousar`, com vivos ⇒ `esperar`).
+  const pendente = sinais.pousoPendente === true;
+  if (pendente || (sinais.percent !== null && sinais.percent >= sinais.x)) {
+    if (!pendente && revisores.length > 0 && capacidade >= 1) return despachar(revisores);
+    if (pendente && sinais.vivos > 0) return { tipo: 'esperar', motivo: 'pouso_pendente' };
     if (sinais.vivos > 0) return { tipo: 'esperar', motivo: 'agentes vivos antes do pouso' };
     // (5b) Sem agente vivo, task em voo não é fronteira (REQ-POU-1 exige `review.veredito`): o agente morreu. Não pousa.
     const emVoo = ids.find((id) => EM_VOO.includes(est(id).estado));
@@ -286,7 +301,8 @@ export function proximaAcao(plano       , eventos          , sinais        )    
     // (5d) Pousar só se resta trabalho que não espera um teto: task fora de {integrada, no_teto} e sem ancestral em `no_teto`.
     // Sem resto, o loop conclui (8) ou para no teto (9) antes de qualquer pouso.
     if (plano.tasks.some((t) => !SEM_RESTO.includes(est(t.id).estado) && !ancestrais(plano, t.id).some((a) => de(estados, a) === 'no_teto'))) {
-      return sinais.podePousar ? { tipo: 'pousar' } : { tipo: 'parar', motivo: 'sem_pouso' };
+      if (!sinais.podePousar) return { tipo: 'parar', motivo: 'sem_pouso' };
+      return donoAberto ? aprender() : { tipo: 'pousar' };
     }
   }
 
@@ -308,7 +324,10 @@ export function proximaAcao(plano       , eventos          , sinais        )    
 
   // (8) Tudo integrado: com proposta aberta a spec está em disputa, então nem `concluir` nem entrega (REQ-EME-2).
   const esperaEmenda = ()           => ({ tipo: 'esperar', motivo: 'emenda', propostas: abertas });
-  if (ids.every((id) => est(id).estado === 'integrada')) return abertas.length === 0 ? { tipo: 'concluir' } : esperaEmenda();
+  if (ids.every((id) => est(id).estado === 'integrada')) {
+    if (abertas.length > 0) return esperaEmenda();
+    return donoAberto ? aprender() : { tipo: 'concluir' };
+  }
 
   // (9)
   if (sinais.vivos > 0) return { tipo: 'esperar', motivo: 'agentes vivos' };

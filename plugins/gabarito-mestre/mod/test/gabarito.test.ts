@@ -1,7 +1,12 @@
 /** Testes do mod de pouso (GM-10 T9, REQ-POU-1/2, REQ-OBS-1) por `claude plugin test`. Mutações: task-9-mut.json. */
 import { expect, mock, test } from 'claude-code/testing'
 import { pendenciasAprendizado } from '../../gates/dist/pendencias.js'
-import { CABECALHO, PROMPT_RECUPERACAO, PROMPT_RETOMADA } from '../../gates/dist/pouso.js'
+import { CABECALHO, codigoPonte, PROMPT_RECUPERACAO, PROMPT_RETOMADA } from '../../gates/dist/pouso.js'
+import { validarStdinAgentes } from '../../gates/dist/painel-equipe.js'
+import { chavePouso, colunasDosBotoes, faixaDe, faixaUmaLinha, avisoPaneEspera, botoesDoTopo, gravarContexto, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
+import { lerLeitura, pousoPendente, tentativasDoPouso } from '../../gates/dist/pouso-pendente.js'
+import { proximaAcao } from '../../gates/dist/loop.js'
+import { pousoDaFronteira } from '../../gates/dist/pouso.js'
 
 const RAIZ = '/repo'
 const DIR = '/repo/.harness/entregas/PBI-7'
@@ -9,6 +14,8 @@ const PRINCIPAL = '/main'
 
 type Ev = { agente: string; tipo: string; dados: Record<string, unknown> }
 type Opc = {
+  /** GM-14 T35: o que o motor devolve ao `tool.call` (objeto ou função do evento); padrão `{}` */
+  resultadoTool?: Record<string, unknown> | ((e: any) => Record<string, unknown>)
   percent?: number | null
   x?: string
   interativo?: boolean
@@ -51,6 +58,12 @@ type Opc = {
   sessaoId?: string
   sessaoIdFalha?: boolean
   existsPacoteFalha?: boolean
+  /** GM-14 T30: ponte `dir` sem entrega identificada (branch sem 2º fato ou com PR aceito), lida sem falha */
+  identificada?: boolean
+  /** GM-14 T30: ponte `dir` responde `ok:false` (não deu para ler) */
+  dirFalha?: boolean
+  /** GM-14 T30: ponte `dir` de antes da T30 (responde `ok` sem o flag `identificada`) */
+  dirSemFlag?: boolean
   /** ponte `mensagem` (T10): resposta `ok:false` */
   mensagemFalha?: boolean
   /** ponte `mensagem` (T10): fica presa até `est.mensagemLibera` */
@@ -59,6 +72,26 @@ type Opc = {
   instantaneoAvisos?: string[]
   /** gravação de `sessao.retomada` (T10) falha */
   retomadaFalha?: boolean
+  /** GM-14 T60: a ponte de onboarding (predicado único da guarda) responde que o repo NÃO tem onboarding */
+  semOnboarding?: boolean
+  /** GM-14 T60: a ponte de onboarding falha (nega, ou sai ≠ 0) */
+  onboardingFalha?: boolean
+  /** GM-14 T20: `painel.local` que `onboarding.mjs painel` devolve; 'falha' ⇒ a ponte nega; 'corrompido' ⇒ `ok:true` sem `atual` */
+  local?: 'lateral' | 'acima' | 'falha' | 'corrompido' | 'ausente'
+  /** GM-14 T20: `onboarding.mjs painel --local` responde `ok:false` */
+  gravarLocalFalha?: boolean
+  /** GM-14 T20: tokens do último `message.usage` do transcript da sessão (plano B do contexto); 'falha' ⇒ a ponte nega */
+  planoB?: number | 'falha'
+  /** GM-14 T20 (review r1): `usage.context.window`; ausente ⇒ 1.000.000; null ⇒ o motor não deu a janela */
+  janela?: number | null
+  /** GM-14 T20: pacote lido pela ponte de nomes (`lider`, `sabio`, `nomes`); ausente ⇒ terra-media reduzido */
+  pacoteNomes?: { lider: string; sabio: string; nomes: string[] } | 'falha'
+  /** GM-14 T53: o /clear roda mas não limpa nada (o incidente de 2026-11-14): mesma sessão, mesmo percent */
+  clearNaoLimpa?: boolean
+  /** GM-14 T53 (r1): instante inicial do relógio do mock (ms). O mod mede com `$.clock.now()`; o relógio avança 1 s por evento gravado e por leitura de uso. Painel: relógio intocado (0) salvo se dado. */
+  agora?: number
+  /** GM-14 T53: percent da sessão nova depois do /clear (padrão 5) */
+  percentPosClear?: number | null
 }
 type PainelOpc = {
   modo?: 'ok' | 'sem_loop' | 'erro' | 'torto' | 'trunca' | 'rejeita' | 'timeout' | 'pendente'
@@ -129,10 +162,15 @@ function mundo($: any, on: any, o: Opc = {}) {
     painel: { ...(o.painel ?? {}) } as PainelOpc, painelStdins: [] as any[], painelArgv: [] as string[][], painelInit: [] as any[], painelFlight: 0, painelLibera: [] as (() => void)[],
     opens: [] as any[], panes: (o.panes ?? []) as any, openResult: (o.openResult ?? { isPlaced: true }) as any, notifies: [] as string[], fills: [] as any[], statuses: [] as (string | undefined)[],
     subStarts: [] as any[], logs: [] as string[], closes: [] as any[], registros: [] as any[], sessaoId: o.sessaoId ?? 'sess-1', ordem: [] as string[], notifyModo: (o.notify ?? 'ok') as string, rateLimits: (o.rateLimits === undefined ? [] : o.rateLimits) as any, fillIsFilled: o.fillIsFilled !== false,
+    agoraMs: null as number | null,
     msgs: [] as { sha256: string; chars: number }[], mensagemLibera: [] as (() => void)[],
+    // GM-14 T20: local, medir, contexto, plano B e pacote (cada ponte guarda o que recebeu)
+    local: (o.local ?? 'lateral') as string, locaisGravados: [] as string[], medirStdins: [] as any[], contextos: [] as any[], contextoInit: [] as any[], planosB: [] as any[], pacotesLidos: [] as any[], onboardings: [] as any[],
   }
 
   // o diário em memória: tudo que o mod grava volta na próxima leitura, com seq e ts válidos para a T2
+  /** anda o relógio do mock (e o conta em `est.agoraMs`); só com relógio controlado */
+  const bump = (ms: number) => { est.agoraMs = (est.agoraMs ?? 0) + ms }
   const seqs = new Map<string, number>()
   for (const e of evs) seqs.set(e.sessao, Math.max(seqs.get(e.sessao) ?? 0, e.seq))
   const add = (agente: string, tipo: string, dados: Record<string, unknown>, sessao = 's0') => {
@@ -140,7 +178,10 @@ function mundo($: any, on: any, o: Opc = {}) {
     seqs.set(sessao, seq)
     relogio += 1
     const ultimoTs = evs.reduce((m, e) => Math.max(m, Date.parse(e.ts)), 0) // monotônico: depois de um evento com ts adiantado, o seguinte não volta no tempo
-    evs.push({ seq, ts: new Date(Math.max(Date.UTC(2026, 10, 3, 1, 0, relogio), ultimoTs + 1000)).toISOString(), autor: 'a', sessao, agente, tipo, dados, hash_anterior: null })
+    // com relógio controlado (T53) o evento nasce na hora do mock, 1 s depois da anterior: o tempo anda sozinho a cada gravação
+    let ts = Math.max(Date.UTC(2026, 10, 3, 1, 0, relogio), ultimoTs + 1000)
+    if (est.agoraMs !== null) { bump(Math.max(est.agoraMs + 1000, ultimoTs + 1000) - est.agoraMs); ts = est.agoraMs }
+    evs.push({ seq, ts: new Date(ts).toISOString(), autor: 'a', sessao, agente, tipo, dados, hash_anterior: null })
   }
 
   on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
@@ -150,13 +191,19 @@ function mundo($: any, on: any, o: Opc = {}) {
   on('env.get', (_: any, e: any) => ({ value: e.name === 'GABARITO_POUSO_X' ? o.x : undefined }))
   on('session.usage', () => {
     if (o.usageFalha) return { deny: 'usage fora do ar' }
-    return { value: { startedAt: 0, context: { window: 1_000_000, percent: est.percent ?? undefined, tokens: 1 }, rateLimits: est.rateLimits } }
+    if (est.agoraMs !== null) bump(1000) // uma leitura de uso é um instante depois do anterior
+    return { value: { startedAt: 0, context: { window: o.janela === undefined ? 1_000_000 : o.janela, percent: est.percent ?? undefined, tokens: 1 }, rateLimits: est.rateLimits } }
   })
   on('agent.list', () => (o.agentesPainel !== undefined ? { value: o.agentesPainel } : o.agentes === 'falha' ? { deny: 'sem sessão' } : o.agentes === 'lixo' ? { value: 'não é lista' } : { value: o.agentes ?? [] }))
   on('ui.toast', (_: any, e: any) => { toasts.push(e.text); log.push('toast'); est.ordem.push('toast'); return { value: undefined } })
   on('ui.status', (_: any, e: any) => { est.statuses.push(e.text); return { value: undefined } })
-  on('ui.open', (_: any, e: any) => { est.opens.push(e); est.ordem.push('open'); return { value: est.openResult } })
-  on('ui.panes', () => (est.panes === 'falha' ? { deny: 'sem panes' } : { value: est.panes }))
+  on('ui.open', (_: any, e: any) => {
+    est.opens.push(e); est.ordem.push('open')
+    // GM-14 T50 (spike): a plataforma lista a Pane que não colocou (`isPlaced:false`) até o dono pedir ou alargar o terminal
+    if (est.openResult?.isPlaced === false && Array.isArray(est.panes) && !est.panes.some((x: any) => x.id === e.id)) est.panes = [...est.panes, { id: e.id, isPlaced: false, isShown: false }]
+    return { value: est.openResult }
+  })
+  on('ui.panes', () => (est.panesLidas = (est.panesLidas ?? 0) + 1, est.panes === 'falha' ? { deny: 'sem panes' } : { value: est.panes }))
   on('ui.notify', (_: any, e: any) => {
     est.ordem.push('notify'); est.notifies.push(e.text)
     if (est.notifyModo === 'rejeita') return { deny: 'canal fora do ar' }
@@ -166,6 +213,8 @@ function mundo($: any, on: any, o: Opc = {}) {
   on('ui.log', (_: any, e: any) => { est.logs.push(e.text); return { value: undefined } })
   on('ui.close', (_: any, e: any) => { est.closes.push(e.id); return { value: undefined } })
   on('classic.SubagentStart', (_: any, e: any) => { est.subStarts.push(e); return {} })
+  on('classic.SubagentStop', () => ({}))
+  on('classic.Stop', () => ({}))
   on('command.register', (_: any, e: any) => { log.push(`register:${e.name}`); est.registros.push(e); return { value: { command: e.name } } })
   on('store.get', (_: any, e: any) => ({ value: store.get(e.key) }))
   on('store.set', (_: any, e: any) => {
@@ -189,6 +238,45 @@ function mundo($: any, on: any, o: Opc = {}) {
   on('process.run', async (_: any, e: any) => {
     const argv: string[] = e.argv
     const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    const cru0 = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    // GM-14 T20: `onboarding.mjs painel [--local x]` (lê e grava `painel.local`)
+    if (argv[0] === 'node' && String(argv[1]).endsWith('/gates/scripts/onboarding.mjs') && argv[2] === 'painel') {
+      const i = argv.indexOf('--local')
+      if (i >= 0) {
+        if (o.gravarLocalFalha) return cru0(`${JSON.stringify({ ok: false, erro: 'config_corrompido', motivo: 'harness.config.json não é um JSON de objeto válido' })}\n`, 1)
+        est.locaisGravados.push(argv[i + 1]); est.local = argv[i + 1]
+        return cru0(`${JSON.stringify({ ok: true, local: argv[i + 1], mudou: true })}\n`)
+      }
+      if (est.local === 'falha') return { deny: 'node não iniciou' }
+      if (est.local === 'ausente') return cru0(`${JSON.stringify({ ok: true, oferecer: true, default: 'lateral' })}\n`)
+      if (est.local === 'corrompido') return cru0(`${JSON.stringify({ ok: true, oferecer: false, motivo: 'config_corrompido', default: 'lateral' })}\n`)
+      return cru0(`${JSON.stringify({ ok: true, oferecer: false, motivo: 'ja_gravado', atual: est.local, default: 'lateral' })}\n`)
+    }
+    // GM-14 T20: `painel.mjs medir --agentes` (só registra o stdin; o diário não muda aqui)
+    if (o.painel !== undefined && argv[0] === 'node' && String(argv[1]).endsWith('/gates/scripts/painel.mjs') && argv[2] === 'medir') {
+      est.medirStdins.push({ argv, stdin: JSON.parse(e.init?.stdin ?? 'null'), cwd: e.init?.cwd })
+      return cru0(`${JSON.stringify({ ok: true, gravados: [], falhas: [] })}\n`)
+    }
+    // GM-14 T20: pontes `node -e` do painel (contexto, plano B e pacote), reconhecidas pela marca no início do script
+    if (argv[0] === 'node' && argv[1] === '-e' && String(argv[2]).startsWith('/*gabarito:')) {
+      const q = JSON.parse(e.init?.stdin ?? 'null')
+      if (String(argv[2]).startsWith('/*gabarito:onboarding*/')) {
+        est.onboardings.push({ q, init: e.init })
+        if (o.onboardingFalha) return { deny: 'node não iniciou' }
+        return cru0(`${JSON.stringify({ ok: true, onboarding: o.semOnboarding !== true })}\n`)
+      }
+      if (String(argv[2]).startsWith('/*gabarito:contexto*/')) { est.contextos.push(q); est.contextoInit.push(e.init); return cru0('') }
+      if (String(argv[2]).startsWith('/*gabarito:planob*/')) {
+        est.planosB.push(q)
+        if (o.planoB === undefined || o.planoB === 'falha') return { deny: 'sem transcript' }
+        return cru0(`${JSON.stringify({ ok: true, tokens: o.planoB })}\n`)
+      }
+      if (String(argv[2]).startsWith('/*gabarito:pacote*/')) {
+        est.pacotesLidos.push(q)
+        if (o.pacoteNomes === 'falha') return cru0(`${JSON.stringify({ ok: false })}\n`, 1)
+        return cru0(`${JSON.stringify({ ok: true, pacote: o.pacoteNomes ?? { lider: 'GANDALF', sabio: 'ELROND', nomes: ['GIMLI', 'LEGOLAS', 'ARAGORN'] } })}\n`)
+      }
+    }
     if (o.painel !== undefined && argv[0] === 'node' && String(argv[1]).endsWith('/gates/scripts/painel.mjs')) {
       est.painelArgv.push(argv); est.painelInit.push(e.init); est.painelStdins.push(JSON.parse(e.init?.stdin ?? 'null')); est.painelFlight += 1
       try {
@@ -209,13 +297,19 @@ function mundo($: any, on: any, o: Opc = {}) {
       const q = JSON.parse(e.init?.stdin ?? '{}')
       pedidos.push(q)
       if (o.ponteSai1) return { value: { exitCode: 1, stdout: JSON.stringify({ ok: true, raiz: RAIZ, dir: DIR, plano: true, eventos: FRONT, texto: 'x' }), stderr: 'boom', isStdoutTruncated: false, isStderrTruncated: false } }
-      if (q.op === 'dir') return ok(JSON.stringify({ ok: true, raiz: RAIZ, dir: est.dir, plano: est.plano }))
+      if (q.op === 'dir') {
+        if (o.dirFalha) return ok(JSON.stringify({ ok: false, erro: 'git falhou' }))
+        if (o.dirSemFlag) return ok(JSON.stringify({ ok: true, raiz: RAIZ, dir: est.dir, plano: est.plano }))
+        // a ponte real não devolve `dir` sem entrega; se devolvesse, o mod não o usa (a identificação é do flag)
+        if (o.identificada === false) return ok(JSON.stringify({ ok: true, raiz: RAIZ, identificada: false, entrega: null, dir: est.dir, plano: true }))
+        return ok(JSON.stringify({ ok: true, raiz: RAIZ, identificada: true, entrega: 'PBI-7', dir: est.dir, plano: est.plano }))
+      }
       if (q.op === 'plano') {
         if (o.plano_json === 'falha') return ok(JSON.stringify({ ok: false, erro: 'plano.json inválido: x' }))
         const cfg = o.config ?? {}
         return ok(JSON.stringify({ ok: true, plano: o.plano_json ?? PLANO, slots: cfg.slots ?? 3, tetoTokens: cfg.tetoTokens ?? null }))
       }
-      if (q.op === 'ler') return ok(JSON.stringify(o.lerFalha ? { ok: false, erro: o.lerErro ?? 'x' } : { ok: true, eventos: evs }))
+      if (q.op === 'ler') return ok(JSON.stringify(o.lerFalha ? { ok: false, erro: o.lerErro ?? 'x' } : { ok: true, eventos: evs, ...(est.agoraMs !== null ? { agora: est.agoraMs } : {}) }))
       if (q.op === 'instantaneo') {
         log.push('instantaneo')
         const t = o.instantaneo ?? 'Diário: 3 evento(s)\nETA: sem dados'
@@ -235,7 +329,7 @@ function mundo($: any, on: any, o: Opc = {}) {
         log.push(`append:${q.ev.tipo}`)
         if (o.appendFalha?.includes(q.ev.tipo) || (o.retomadaFalha && q.ev.tipo === 'sessao.retomada')) return ok(JSON.stringify({ ok: false, erro: 'x' }))
         grav.push({ agente: q.ev.agente, tipo: q.ev.tipo, dados: q.ev.dados })
-        add(q.ev.agente, q.ev.tipo, q.ev.dados, 'sess-1')
+        add(q.ev.agente, q.ev.tipo, q.ev.dados, typeof q.sessao === 'string' ? q.sessao : 'sess-1')
         return ok(JSON.stringify({ ok: true, gravado: 'evento' }))
       }
     }
@@ -253,7 +347,9 @@ function mundo($: any, on: any, o: Opc = {}) {
     log.push('clear'); est.clears += 1
     o.aoClear?.()
     if (o.clearFalha) throw new Error('is not available in this mode: no session is bound in this process')
-    est.percent = null
+    if (o.clearNaoLimpa) return { text: '' } // T53: o comando volta ok e nada muda
+    est.percent = o.percentPosClear === undefined ? 5 : o.percentPosClear
+    est.sessaoId = `${est.sessaoId}-n` // /clear gera session_id novo (FIEL-14 e)
     return { text: '' }
   })
   on('prompt.submit', async (_: any, e: any) => {
@@ -264,9 +360,17 @@ function mundo($: any, on: any, o: Opc = {}) {
     return { text: e.text }
   })
   on('turn.complete', (_: any, e: any) => ({ text: e.answer }))
-  on('tool.call', () => ({ result: {} }))
+  on('tool.call', (_: any, e: any) => ({ result: typeof o.resultadoTool === 'function' ? o.resultadoTool(e) : (o.resultadoTool ?? {}) }))
 
-  const clock = mock.clock(on)
+  const clockReal = mock.clock(on)
+  // o relógio exposto aos testes conta o que avança (o `ts` dos eventos gravados segue o mesmo relógio)
+  const clock = {
+    advance: async (ms: number) => { if (est.agoraMs !== null) est.agoraMs += ms; return clockReal.advance(ms) },
+    set: (ms: number) => { if (est.agoraMs !== null) est.agoraMs = ms; else return clockReal.set(ms) },
+    settle: () => clockReal.settle(), sleep: (ms: number) => clockReal.sleep(ms), now: () => clockReal.now(),
+  } as typeof clockReal
+  est.agoraMs = o.painel !== undefined && o.agora === undefined ? null : (o.agora ?? Date.UTC(2026, 10, 3, 2, 0, 0))
+  // a ponte `ler` devolve `agora: est.agoraMs` (que anda com `advance`/`set` e a cada gravação); os timers seguem o relógio do mock
   const peer = () => $.prompt.submit({ text: '<agent-message>[Subagent hand-back]', origin: { kind: 'peer' } })
   const turno = (extra: Record<string, unknown> = {}) =>
     $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', ...extra })
@@ -276,10 +380,15 @@ function mundo($: any, on: any, o: Opc = {}) {
   const tipos = () => grav.map((g) => g.tipo)
   /** mensagem digitada pelo dono: o composer real manda `command: null` (S1) */
   const dono = (extra: Record<string, unknown> = {}) => $.prompt.submit({ text: 'mensagem do dono', origin: { kind: 'composer' }, command: null, isMeta: false, ...extra })
-  return { log, grav, toasts, escritas, pedidos, store, arquivos, est, clock, turno, peer, agent, inicio, cmd, tipos, evs, add, dono }
+  /** relógio do mock em ms absolutos / avança e dispara os timers (vigia de 30 s) */
+  const relogio_ = (ms: number) => { clock.set(ms) }
+  const avancar = async (ms: number) => { await clock.advance(ms); await clock.settle() }
+  return { relogio: relogio_, avancar, log, grav, toasts, escritas, pedidos, store, arquivos, est, clock, turno, peer, agent, inicio, cmd, tipos, evs, add, dono }
 }
 
 const pousar = async (m: ReturnType<typeof mundo>) => { await m.inicio(); await m.turno(); await m.clock.settle() }
+/** GM-14 T53: um turno na sessão nova (o /clear do mock deixa o percent em 5): a medição confirma o pouso e o despacho se libera */
+const confirmar = async (m: ReturnType<typeof mundo>) => { await m.turno(); await m.clock.settle() }
 
 // ---- pouso: ordem dos passos (E23) ----
 test('pousa-na-ordem: store antes do clear, evento e instantâneo antes, retomada por último', async ($, on) => {
@@ -436,6 +545,7 @@ test('pouso-nao-repete: hand-back com percent indefinido depois do clear não fa
 test('retomado-volta-a-ocioso: depois do submit o store some, mas a fronteira gasta não pousa de novo', async ($, on) => {
   const m = mundo($, on)
   await pousar(m)
+  await confirmar(m)
   expect(m.store.has(CHAVE)).toBe(false)
   m.est.percent = 55
   await m.turno(); await m.clock.settle()
@@ -444,7 +554,7 @@ test('retomado-volta-a-ocioso: depois do submit o store some, mas a fronteira ga
 test('x-baixo-um-pouso-por-veredito: X=1, percent definido em todo turno, um veredito ⇒ um pouso (S1)', async ($, on) => {
   const m = mundo($, on, { x: '1', percent: 5 })
   await m.inicio()
-  for (let i = 0; i < 5; i++) { m.est.percent = 5; await m.turno(); await m.clock.settle() }
+  for (let i = 0; i < 5; i++) { m.est.percent = i === 0 ? 5 : 0; await m.turno(); await m.clock.settle() } // T53: a sessão nova mede 0 < X e confirma
   expect(m.est.clears).toBe(1)
   expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(1)
   expect(m.tipos().filter((t) => t === 'sessao.retomada')).toHaveLength(1)
@@ -454,36 +564,41 @@ test('x-baixo-um-pouso-por-veredito: veredito novo abre uma segunda fronteira, e
   const m = mundo($, on, { x: '1', percent: 5 })
   await m.inicio()
   await m.turno(); await m.clock.settle()
+  m.est.percent = 0; await confirmar(m) // T53: confirma o 1º pouso (X=1)
   m.add('o', 'task.iniciada', { task: 'b', papel: 'implementador' })
   m.add('o', 'task.concluida', { task: 'b', sha: 'y' })
   m.add('o', 'review.veredito', { task: 'b', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 })
-  for (let i = 0; i < 4; i++) { m.est.percent = 5; await m.turno(); await m.clock.settle() }
+  for (let i = 0; i < 4; i++) { m.est.percent = i === 0 ? 5 : 0; await m.turno(); await m.clock.settle() }
   expect(m.est.clears).toBe(2)
   expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(2)
 })
 test('sem-veredito-novo-nao-pousa: task nova em curso ou concluída depois do pouso não é fronteira', async ($, on) => {
   const m = mundo($, on)
   await pousar(m)
+  await confirmar(m)
   m.add('o', 'task.iniciada', { task: 'b', papel: 'implementador' })
   m.est.percent = 60; await m.turno(); await m.clock.settle()
   m.add('o', 'task.concluida', { task: 'b', sha: 'y' })
   m.est.percent = 60; await m.turno(); await m.clock.settle()
   expect(m.est.clears).toBe(1)
 })
-test('despacho-liberado-apos-pouso: com a fronteira consumida o Agent passa mesmo com percent ≥ X (E1)', async ($, on) => {
+test('despacho-so-abaixo-de-x-apos-pouso: depois do pouso a sessão despacha com a PRÓPRIA leitura abaixo de X e nega em X ou acima (I1, ciclo 3: nada de consumir a fronteira)', async ($, on) => {
   const m = mundo($, on)
   expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/) // antes: fronteira nova, POUSAVEL
   await pousar(m)
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined() // a sessão nova mede 5 %
   m.est.percent = 60
-  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
-  expect((await m.agent(undefined)).deny).toBeUndefined()
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/)
+  expect((await m.agent(undefined)).deny).toMatch(/pouso/)
   m.add('o', 'task.iniciada', { task: 'b', papel: 'implementador' })
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/)
+  m.est.percent = 5
   expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
 })
-test('veredito-novo-volta-a-travar: depois de gasto o pouso, outro veredito com percent ≥ X nega o despacho de novo', async ($, on) => {
+test('veredito-novo-volta-a-travar: com agente vivo, em X ou acima e fronteira nova (outro veredito) a negação é a do núcleo (esperar)', async ($, on) => {
   const m = mundo($, on, { agentes: [{ id: 'a1', status: 'running' }] })
   m.add('o', 'sessao.pouso', { percent: 60, x: 50 })
-  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/) // o pouso desta fronteira já foi feito e a sessão segue em 60 %
   m.add('o', 'task.iniciada', { task: 'b', papel: 'implementador' })
   m.add('o', 'task.concluida', { task: 'b', sha: 'y' })
   m.add('o', 'review.veredito', { task: 'b', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 })
@@ -619,7 +734,7 @@ test('revisor-despachavel-nao-para (MAJOR 2): task concluída, percent alto, tr�
   await m.turno(); await m.clock.settle()
   expect(m.est.clears).toBe(1)
 })
-test('consumida-nao-repousa: depois do pouso, com percent de novo ≥ X, nenhum turno limpa de novo e o Agent passa (E1)', async ($, on) => {
+test('em-x-nao-repousa-dentro-de-60s: depois do pouso, com a sessão de novo em X, nenhum turno repete antes dos 60 s e o Agent segue negado (I1, I3)', async ($, on) => {
   const m = mundo($, on)
   await pousar(m)
   expect(m.est.clears).toBe(1)
@@ -628,14 +743,14 @@ test('consumida-nao-repousa: depois do pouso, com percent de novo ≥ X, nenhum 
   expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(1)
   expect(parou(m)).toHaveLength(0)
   m.est.percent = 70
-  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/)
 })
 const UM = { entrega: 'PBI-7', tasks: [PLANO.tasks[0]] }
 const CASOS_AGENT: [string, Opc, 'nega' | 'passa'][] = [
   ['X cruzado com trabalho a fazer (K)', {}, 'nega'],
   ['abaixo de X', { percent: 49 }, 'passa'],
   ['tudo integrado (L: concluir, a (5) não dispara)', { plano_json: UM, eventos: [...FRONT, INT_A] }, 'passa'],
-  ['fronteira consumida (F)', { eventos: [...FRONT, EV(4, 'sessao.pouso', { percent: 60, x: 50 })] }, 'passa'],
+  ['pouso sem confirmação (T53): sessao.pouso sozinho não consome', { eventos: [...FRONT, { ...EV(4, 'sessao.pouso', { percent: 60, x: 50 }), sessao: 'sess-1' }] }, 'nega'],
   ['só resta o teto (M: parar)', { plano_json: UM, eventos: NO_TETO }, 'nega'],
   ['task concluída à espera do revisor (H)', { eventos: A_REVISAR }, 'nega'],
   ['agente vivo (I)', { agentes: [{ id: 'a1', status: 'running' }] }, 'nega'],
@@ -648,7 +763,9 @@ for (const [nome, opc, esperado] of CASOS_AGENT) {
     const r = await m.agent('gabarito-implementador')
     if (esperado === 'nega') expect(r.deny).toMatch(/pouso/)
     else expect(r.deny).toBeUndefined()
-    expect((await m.agent('gabarito-revisor')).deny).toBeUndefined() // o revisor nunca é negado
+    // o revisor nunca é negado, salvo com o pouso desta fronteira sem confirmação (T53: aí todo Agent é negado)
+    if (nome.includes('T53')) expect((await m.agent('gabarito-revisor')).deny).toMatch(/aguardando/)
+    else expect((await m.agent('gabarito-revisor')).deny).toBeUndefined()
   })
 }
 test('tudo-integrado-conclui-sem-pousar (L, 5d): nenhum pouso e nenhuma parada', async ($, on) => {
@@ -2114,8 +2231,26 @@ const propsPane = (cols = 80) => ({ title: 'gabarito', isFocused: false, bodyCol
 const propsFaixa = (extra: Record<string, unknown> = {}) => ({ hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 100, scroll: { offset: 0, bodyRows: 9 }, view: {}, ...extra }) as any
 const montarPane = ($: any, cols = 80) => $.ui.mount({ plugin: 'gabarito-mestre', surface: 'terminal', component: 'Pane', requestId: ID_PAINEL, props: propsPane(cols) })
 const montarFaixa = ($: any, extra: Record<string, unknown> = {}) => $.ui.mount({ plugin: 'gabarito-mestre', surface: 'terminal', component: 'AbovePrompt', requestId: 'faixa', props: propsFaixa(extra) })
+/** GM-14 T20: AbovePrompt com H (`viewport.rows`, S1b) e `maxRows`; `h` null ⇒ sem viewport (H desconhecido) */
+const montarFaixaH = ($: any, h: number | null, maxRows: number, extra: Record<string, unknown> = {}) =>
+  $.ui.mount({ plugin: 'gabarito-mestre', surface: 'terminal', component: 'AbovePrompt', requestId: 'faixa', props: propsFaixa({ maxRows, ...extra }), ...(h === null ? {} : { viewport: { rows: h, columns: 100 } }) })
+/** GM-14 T20: o estado novo (T17/T18: `modo`, blocos), sobre o da E4 para manter `plano` e `equipe` */
+function estadoNovo(o: Record<string, any> = {}) {
+  return estadoPainel({
+    id: 'GM-14', titulo: 'Clareza', modo: 'entrega', trilha: null, pergunta: null, perguntasMais: 0, umaLinha: null,
+    pronto: { integradas: 2, total: 5, previsao: null }, fase: null,
+    agora: { orquestrador: { nome: 'GANDALF', contexto: 40, estimado: false, pousar: false }, agentes: [], segundoPlano: [] },
+    recente: [], desatualizadoS: null, fontesFalhas: [], atencao: [],
+    depende: [{ nivel: 'dono', motivo: 'depende de você: nada', acoes: [] }],
+    ...o,
+  })
+}
+const PERGUNTA = { id: 'sess-1:7', gatilho: 'd', texto: 'Qual caminho seguir agora', opcoes: ['manter', 'trocar'] }
+/** Muitas linhas de ATENÇÃO: o desenho passa de qualquer orçamento testado */
+const ATENCAO_LONGA = Array.from({ length: 30 }, (_, i) => `aviso numero ${i + 1}`)
+const linhasDesenhadas = async (ui: any) => { const a = await ui.drawn(); return Array.isArray(a?.children) ? a.children.length : 0 }
 const drena = async (m: ReturnType<typeof mundo>) => { for (let i = 0; i < 8; i++) await m.clock.settle() }
-const PERIODO = 30000
+const PERIODO = 60000 // GM-14 T20: relógio de 60 s (S15)
 const comPainel = ($: any, on: any, painel: PainelOpc = {}, o: Opc = {}) => mundo($, on, { painel: { modo: 'ok', ...painel }, ...o })
 const arrancar = async (m: ReturnType<typeof mundo>) => { await m.inicio(); await drena(m) }
 const todosTextos = async (ui: any) => (await ui.findAll({ type: 'Text' })).map((t: any) => t.text as string)
@@ -2140,14 +2275,18 @@ test('pane-argv-cwd-timeout: node <raiz>/gates/scripts/painel.mjs estado --agent
   expect(m.est.painelInit[0].cwd).toBe(RAIZ)
   expect(m.est.painelInit[0].timeoutMs).toBe(5000)
 })
-test('sem-plano-nada-abre: sem loop ⇒ 0 ui.open, e o relógio é cancelado (sem-loop-cancela-relogio)', async ($, on) => {
+test('sem-loop-nao-esconde-nem-cancela-relogio (GM-14 T20, M-T20a): resposta "sem loop" é falha de leitura, não esconde o painel nem para o relógio', async ($, on) => {
   const m = comPainel($, on, { modo: 'sem_loop' })
   await arrancar(m)
-  expect(m.est.opens).toHaveLength(0)
   expect(m.est.painelStdins).toHaveLength(1)
   await m.clock.advance(PERIODO * 3)
   await drena(m)
-  expect(m.est.painelStdins).toHaveLength(1)
+  expect(m.est.painelStdins).toHaveLength(4)
+  const ui = await montarPane($, 80)
+  const t = (await todosTextos(ui)).join('|')
+  expect(t).toContain('painel: leitura falhou')
+  expect(t).not.toContain('sem loop nesta branch')
+  await ui.unmount()
 })
 test('nao-interativo-sem-painel: -p ⇒ 0 ponte do painel, 0 ui.open, 0 faixa', async ($, on) => {
   const m = comPainel($, on, {}, { interativo: false })
@@ -2263,12 +2402,13 @@ test('pane-bodyRows-desconta-as-linhas-de-aviso: o aviso do alto ocupa 1 das bod
   }
   expect(vistos).toBe(12)
 })
-test('pane-sem-loop: `sem loop nesta branch` em inactive', async ($, on) => {
+test('pane-sem-loop-e-falha: sem estado e resposta "sem loop" ⇒ a Pane diz que a leitura falhou, em warning, nunca "sem loop"', async ($, on) => {
   const m = comPainel($, on, { modo: 'sem_loop' })
   await arrancar(m)
   const ui = await montarPane($, 80)
-  expect((await todosTextos(ui)).join('|')).toContain('sem loop nesta branch')
-  expect(JSON.stringify(await ui.drawn())).toContain('"color":"inactive"')
+  expect((await todosTextos(ui)).join('|')).toContain('painel: leitura falhou')
+  expect((await todosTextos(ui)).join('|')).not.toContain('sem loop')
+  expect(JSON.stringify(await ui.drawn())).toContain('"color":"warning"')
   await ui.unmount()
 })
 test('sem-esc-no-text: ESC no título e no motivo nunca chega a um filho de Text, na Pane nem na faixa', async ($, on) => {
@@ -2303,7 +2443,7 @@ test('pane-redesenha-ao-atualizar: o refresh invalida o desenho; a Pane montada 
   expect(depois).not.toContain('VELHO-1')
   await ui.unmount()
 })
-test('loop-some-pane-mostra-sem-loop: depois de um estado, a resposta "sem loop" troca a Pane e tira a faixa', async ($, on) => {
+test('loop-some-pane-mantem-o-ultimo: depois de um estado, a resposta "sem loop" vira falha; o último estado e o PAROU ficam', async ($, on) => {
   sobreOMotor(on)
   const m = comPainel($, on, { estado: pararP() }, { panes: [] })
   await arrancar(m)
@@ -2311,14 +2451,14 @@ test('loop-some-pane-mostra-sem-loop: depois de um estado, a resposta "sem loop"
   await m.turno(); await drena(m)
   const rodadas = m.est.painelStdins.length
   await m.clock.advance(PERIODO * 3); await drena(m)
-  expect(m.est.painelStdins.length, 'o relógio que existia foi cancelado').toBe(rodadas)
+  expect(m.est.painelStdins.length, 'o relógio segue').toBe(rodadas + 3)
   const ui = await montarPane($, 80)
   const t = (await todosTextos(ui)).join('|')
-  expect(t).toContain('sem loop nesta branch')
-  expect(t).not.toContain('GANDALF')
+  expect(t).toContain('painel: leitura falhou')
+  expect(t).toContain('GANDALF')
   await ui.unmount()
   const faixa = await montarFaixa($)
-  expect(await todosTextos(faixa)).toEqual(['motor'])
+  expect((await todosTextos(faixa)).join('|')).toContain('PAROU')
   await faixa.unmount()
 })
 
@@ -2419,37 +2559,37 @@ test('refresh-30s-depois-de-parar: o relógio segue depois do PAROU (B6)', async
 })
 
 // ---- Pane visível × faixa ----
-test('isplaced-false-so-faixa: open ⇒ não posta ⇒ faixa `<id> N/M · ETA` em inactive (sobre o motor)', async ($, on) => {
+test('isplaced-false-so-faixa: open ⇒ não posta ⇒ a faixa mostra só o PAROU (lateral sem Pane visível), sobre o motor', async ($, on) => {
   sobreOMotor(on)
-  const m = comPainel($, on, {}, { openResult: { isPlaced: false, reason: 'estreito' }, panes: [{ id: ID_PAINEL, isPlaced: false, isShown: false }] })
+  const m = comPainel($, on, { estado: pararP() }, { openResult: { isPlaced: false, reason: 'estreito' }, panes: [{ id: ID_PAINEL, isPlaced: false, isShown: false }] })
   await arrancar(m)
   const ui = await montarFaixa($)
-  const t = await todosTextos(ui)
-  expect(t.some((x) => x.includes('GM-12 1/2 · ETA 17:42'))).toBe(true)
-  expect(JSON.stringify(await ui.drawn())).toContain('"color":"inactive"')
+  const t = (await todosTextos(ui)).join('|')
+  expect(t).toContain('PAROU')
+  expect(t).not.toContain('GM-12 1/2')
   await ui.unmount()
 })
 test('pane-visivel-por-panes: a faixa lê `$.ui.panes()`, nunca o retorno de open', async ($, on) => {
   sobreOMotor(on)
-  const m = comPainel($, on, {}, { openResult: { isPlaced: false, reason: 'estreito' }, panes: [{ id: ID_PAINEL, isPlaced: false, isShown: false }] })
+  const m = comPainel($, on, { estado: pararP() }, { openResult: { isPlaced: false, reason: 'estreito' }, panes: [{ id: ID_PAINEL, isPlaced: false, isShown: false }] })
   await arrancar(m)
   let ui = await montarFaixa($)
-  expect((await todosTextos(ui)).join('|')).toContain('GM-12 1/2')
+  expect((await todosTextos(ui)).join('|')).toContain('PAROU')
   await ui.unmount()
   m.est.panes = [{ id: ID_PAINEL, isPlaced: true, isShown: true }] // o dono alargou o terminal; o open (já respondido) continua dizendo false
   await m.turno(); await drena(m)
   ui = await montarFaixa($)
   const t = (await todosTextos(ui)).join('|')
-  expect(t).not.toContain('GM-12 1/2')
+  expect(t).not.toContain('PAROU')
   expect(t).toContain('motor')
   await ui.unmount()
 })
 const paneInvisivel = async ($: any, on: any, par: { isPlaced: boolean; isShown: boolean }) => {
   sobreOMotor(on)
-  const m = comPainel($, on, {}, { panes: [{ id: ID_PAINEL, ...par }] })
+  const m = comPainel($, on, { estado: pararP() }, { panes: [{ id: ID_PAINEL, ...par }] })
   await arrancar(m)
   const ui = await montarFaixa($)
-  expect((await todosTextos(ui)).join('|')).toContain('GM-12 1/2')
+  expect((await todosTextos(ui)).join('|')).toContain('PAROU')
   await ui.unmount()
 }
 test('pane-visivel-exige-posta: isShown sem isPlaced é Pane invisível', async ($, on) => { await paneInvisivel($, on, { isPlaced: false, isShown: true }) })
@@ -2462,14 +2602,12 @@ test('faixa-some-com-pane-e-nada: Pane posta e nada pendente ⇒ a faixa cede ao
   expect(await todosTextos(ui)).toEqual(['motor'])
   await ui.unmount()
 })
-test('faixa-inactive-pane-fechada: Pane fechada ⇒ `<id> N/M · ETA hh:mm`; sem ETA ⇒ `<id> N/M`', async ($, on) => {
+test('faixa-pane-fechada-sem-parou-cede: Pane fechada e nada no topo (sem PAROU nem pergunta) ⇒ a faixa cede ao motor (GM-14: nada de `<id> N/M`)', async ($, on) => {
   sobreOMotor(on)
-  const m = comPainel($, on, { estado: estadoPainel({ plano: { ...estadoPainel().plano, eta: null } }) }, { panes: [] })
+  const m = comPainel($, on, { estado: estadoPainel({ depende: [{ nivel: 'dono', motivo: 'loop pausado', acoes: [] }] }) }, { panes: [] })
   await arrancar(m)
   const ui = await montarFaixa($)
-  const t = (await todosTextos(ui)).join('|')
-  expect(t).toContain('GM-12 1/2')
-  expect(t).not.toContain('ETA')
+  expect(await todosTextos(ui)).toEqual(['motor'])
   await ui.unmount()
 })
 test('has-survey-cede: com survey a faixa passa, mesmo com PAROU', async ($, on) => {
@@ -2491,14 +2629,16 @@ test('faixa-parou: ■ PAROU com hora e motivo, botão com o rótulo da ação',
   expect(JSON.stringify(await ui.drawn())).toContain('aprovar')
   await ui.unmount()
 })
-test('faixa-depende: `depende de você: <motivo> (+N)` em warning', async ($, on) => {
+test('faixa-depende-acima: no local acima o "depende de você" sai no topo, em warning, com o botão do item', async ($, on) => {
   sobreOMotor(on)
-  const dep = estadoPainel({ depende: [{ nivel: 'dono', motivo: 'emenda #7 em REQ-PNL-4', acoes: [acaoP('aprovar', '/gabarito-mestre:emenda aprovar 7')] }, { nivel: 'dono', motivo: 'loop pausado', acoes: [] }] })
-  const m = comPainel($, on, { estado: dep })
+  const dep = estadoNovo({ depende: [{ nivel: 'dono', motivo: 'emenda 7 aguardando', acoes: [acaoP('aprovar', '/gabarito-mestre:emenda aprovar 7')] }, { nivel: 'dono', motivo: 'loop pausado', acoes: [] }] })
+  const m = comPainel($, on, { estado: dep }, { local: 'acima' })
   await arrancar(m)
-  const ui = await montarFaixa($)
-  expect((await todosTextos(ui)).join('|')).toContain('depende de você: emenda #7 em REQ-PNL-4 (+1)')
+  const ui = await montarFaixaH($, 50, 19)
+  expect((await todosTextos(ui)).join('|')).toContain('depende de você: emenda 7 aguardando')
   expect(JSON.stringify(await ui.drawn())).toContain('"color":"warning"')
+  await ui.press({ key: 'painel-acao' })
+  expect(m.est.fills.map((f) => f.text)).toEqual(['/gabarito-mestre:emenda aprovar 7'])
   await ui.unmount()
 })
 
@@ -2518,10 +2658,10 @@ test('botao-fill-nunca-submit: o botão põe o comando no prompt (replace) e nun
 })
 test('botao-comando-node-com-raiz: `node <plugin>/…` vira `! node "<raiz>/…"`', async ($, on) => {
   sobreOMotor(on)
-  const dev = estadoPainel({ depende: [{ nivel: 'dono', motivo: 'deploy devolvido ao dono: x', acoes: [acaoP('executar', 'node <plugin>/gates/scripts/entrega.mjs executar --entrega GM-12')] }] })
-  const m = comPainel($, on, { estado: dev })
+  const dev = estadoNovo({ depende: [{ nivel: 'dono', motivo: 'deploy devolvido ao dono', acoes: [acaoP('executar', 'node <plugin>/gates/scripts/entrega.mjs executar --entrega GM-12')] }] })
+  const m = comPainel($, on, { estado: dev }, { local: 'acima' })
   await arrancar(m)
-  const ui = await montarFaixa($)
+  const ui = await montarFaixaH($, 50, 19)
   await ui.press({ key: 'painel-acao' })
   expect(m.est.fills[0].text.startsWith('! node "')).toBe(true)
   expect(m.est.fills[0].text.endsWith('/gates/scripts/entrega.mjs" executar --entrega GM-12')).toBe(true)
@@ -3213,14 +3353,18 @@ test('falha-antes-do-clear-sem-pouso-diario: sessao.pouso que não grava continu
   expect(m.est.clears).toBe(0)
   expect(parou(m)[0].dados).toEqual({ motivo: 'sem_pouso', causa: 'diario' })
 })
-test('um-so-clear: submit que falhou depois do /clear não repete o /clear em turno seguinte com percent alto', async ($, on) => {
+test('submit-falho-repete-pela-contagem: submit que falhou depois do /clear não deixa sessao.retomada; a sessão nova no teto repete pela contagem da fronteira, 60 s depois (T53, emenda 53 substitui "nunca 2º /clear")', async ($, on) => {
   const m = mundo($, on, { submitFalha: true })
   await pousar(m)
   expect(m.est.clears).toBe(1)
   m.est.percent = 70
   await m.turno(); await m.clock.settle()
   await m.turno(); await m.clock.settle()
-  expect(m.est.clears).toBe(1)
+  expect(m.est.clears).toBe(1) // dentro dos 60 s da tentativa 1: espera
+  await m.avancar(61_000)
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(2) // a sessão nova, a 70 %, pousa a si mesma: tentativa 2 da contagem da fronteira
+  expect(tentativas(m)).toEqual([2])
   expect(parou(m)).toHaveLength(0)
 })
 test('aprendizados-indisponiveis-avisa-e-pousa: a ponte devolve avisos, o pouso segue e o aviso vem uma vez', async ($, on) => {
@@ -3240,11 +3384,11 @@ test('agent-negado-com-pendencia-abaixo-de-x: loop.parar aberto nega o despacho 
   expect(r.deny).not.toMatch(/\baprender\b/)
   expect(r.deny).not.toMatch(/encerre o turno/)
 })
-test('revisor-passa-com-pendencia: o revisor passa sem nenhum pedido de ponte', async ($, on) => {
+test('revisor-passa-com-pendencia: o revisor passa e a ponte não grava nada', async ($, on) => {
   const m = mundo($, on, { percent: 49, eventos: PARAR_ABERTO })
   expect((await m.agent('gabarito-revisor')).deny).toBeUndefined()
   expect((await m.agent('gabarito-mestre:gabarito-revisor')).deny).toBeUndefined()
-  expect(m.pedidos).toHaveLength(0)
+  expect(m.pedidos.filter((p: any) => p.op === 'append')).toHaveLength(0) // T53: lê o diário para o pouso sem confirmação, nunca grava
 })
 test('agent-negado-com-pendencia-percent-null: percent ausente (usage fora do ar) também nega', async ($, on) => {
   const m = mundo($, on, { percent: null, eventos: PARAR_ABERTO })
@@ -3266,13 +3410,190 @@ test('agent-passa-apos-nada-fechar: a pendência fechada por aprendizado.nada li
   fecharEm(m)
   expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
 })
-test('agent-negado-com-mensagem-do-dono-aberta: dono.mensagem sem aprendizado nega; a lista traz tipo, sessão e seq', async ($, on) => {
-  const m = mundo($, on, { percent: 49 })
+for (const percent of [null, 49]) {
+  test(`pendencia-dono-nao-nega-agent-${percent}: dono.mensagem aberta não nega o despacho abaixo de X (null e 49 = negaPorPendencia) (FIEL-2 b)`, async ($, on) => {
+    const m = mundo($, on, { percent, eventos: B_FEITA })
+    await m.inicio()
+    await m.dono(); await m.clock.settle()
+    expect(pendenciasAprendizado(PLANO, m.evs).map((x: any) => x.tipo)).toEqual(['dono'])
+    expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  })
+}
+test('teto-com-dono-aberto-pousa-e-herda: dono aberta + contexto 60 % (X=50), 0 vivos ⇒ Agent negado pela regra de contexto, o mod POUSA mesmo assim e a pendência dono segue aberta para a sessão nova (T53, emenda 52 c)', async ($, on) => {
+  const m = mundo($, on, { percent: 60, eventos: B_FEITA })
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  expect(pendenciasAprendizado(PLANO, m.evs).map((x: any) => x.tipo)).toEqual(['dono'])
+  const r = await m.agent('gabarito-implementador')
+  expect(r.deny).toMatch(/pouso: contexto em 60% \(X=50%\)/)
+  expect(r.deny).not.toMatch(TEXTO_PENDENCIA)
+  expect((await m.agent('gabarito-revisor')).deny).toBeUndefined()
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(1)
+  expect(m.tipos()).toContain('sessao.pouso')
+  // herdada, nunca fechada: nenhum aprendizado.nada gravado pelo mod, a pendência `dono` continua no diário da sessão nova
+  expect(m.tipos()).not.toContain('aprendizado.nada')
+  expect(pendenciasAprendizado(PLANO, m.evs).map((x: any) => x.tipo)).toEqual(['dono'])
+  expect(parou(m)).toHaveLength(0)
+})
+test('pendencia-dono-sem-mensagem-pousa-igual: a mesma entrega sem a mensagem pousa do mesmo jeito (controle)', async ($, on) => {
+  const m = mundo($, on, { percent: 60, eventos: B_FEITA })
+  await m.inicio()
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso: contexto em 60%/)
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(1)
+})
+test('pendencia-dono-sem-resto-nao-nega-agent-60: tudo integrado e fechado + dono aberta, contexto 60 %: o Agent não é negado por aprendizado (o `concluir` espera a conversa, o despacho não) (FIEL-2 b)', async ($, on) => {
+  const todas = aposB(A_INI, A_CON, ['review.veredito', { task: 'a', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }], ['task.integrada', { task: 'a', sha: 'd' }])
+  const m = mundo($, on, { percent: 60, eventos: todas })
+  await m.inicio()
+  fecharEm(m)
+  await m.dono(); await m.clock.settle()
+  expect(pendenciasAprendizado(PLANO, m.evs).map((x: any) => x.tipo)).toEqual(['dono'])
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+})
+const REVIEW_7 = [...aposB(A_INI, A_CON), EV(7, 'review.veredito', { task: 'a', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 })]
+for (const percent of [60, null, 49]) {
+  test(`pendencia-review-ainda-nega-${percent}: review aberta nega com percent ${percent}; a lista não traz a pendência dono`, async ($, on) => {
+    const m = mundo($, on, { percent, eventos: REVIEW_7 })
+    await m.inicio()
+    await m.dono(); await m.clock.settle()
+    const r = await m.agent('gabarito-implementador')
+    expect(r.deny).toMatch(TEXTO_PENDENCIA)
+    expect(r.deny).toContain('review s0:7')
+    expect(r.deny).not.toContain('dono dono')
+    expect((await m.agent('gabarito-revisor')).deny).toBeUndefined()
+  })
+}
+test('pendencia-parar-ainda-nega-com-dono: parar aberta + dono aberta nega pela parar', async ($, on) => {
+  const m = mundo($, on, { percent: 49, eventos: PARAR_ABERTO })
   await m.inicio()
   await m.dono(); await m.clock.settle()
   const r = await m.agent('gabarito-implementador')
-  expect(r.deny).toMatch(TEXTO_PENDENCIA)
-  expect(r.deny).toMatch(/\(dono dono:1\)/)
+  expect(r.deny).toContain('(parar s0:5)')
+  expect(r.deny).not.toContain('dono dono')
+})
+
+// ---- T30 (GM-14, FIEL-1 a, c; FIEL-2 a): a entrega certa vem da ponte; sem entrega identificada o mod não age; uma mensagem, um evento ----
+const PEDIDO_DIR = (m: ReturnType<typeof mundo>) => m.pedidos.filter((q) => q.op === 'dir')
+const OPS_QUE_AGEM = ['ler', 'plano', 'append', 'mensagem', 'instantaneo']
+const REVIEW_ABERTA = [...aposB(A_INI, A_CON), EV(7, 'review.veredito', { task: 'a', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 })]
+
+test('ponte-dir-texto-raiz-principal: o programa da ponte usa --git-common-dir, não --show-toplevel, e aplica a trilha sem rodar o gh (FIEL-1 a, c)', () => {
+  const t = codigoPonte('file:///x/gates/dist/diario.js')
+  expect(t).toContain("'--git-common-dir'")
+  expect(t).not.toContain('--show-toplevel')
+  expect(t).toContain('trilhaDe')
+  expect(t).toContain('idDaBranch')
+  expect(t).not.toMatch(/'gh'/)
+})
+test('ponte-dir-pede-com-sessao-e-cwd-da-sessao: o pedido leva o cwd da sessão e o session_id (a trilha lê a resposta da sessão, T3)', async ($, on) => {
+  const m = mundo($, on, { percent: 49 })
+  await m.inicio()
+  await m.agent('gabarito-implementador')
+  const q = PEDIDO_DIR(m)
+  expect(q.length).toBeGreaterThan(0)
+  for (const x of q) expect(x).toMatchObject({ op: 'dir', cwd: RAIZ, sessao: 'sess-1' })
+})
+test('ponte-branch-publicada-sem-loop-ativo: entrega não identificada ⇒ 0 negação, 0 pouso, 0 gravação, nenhum pedido de leitura', async ($, on) => {
+  const m = mundo($, on, { identificada: false, percent: 60, eventos: REVIEW_ABERTA })
+  await m.inicio()
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+  await m.turno(); await m.clock.settle()
+  await m.dono(); await m.clock.settle()
+  expect(m.est.clears).toBe(0)
+  expect(m.tipos()).toEqual([])
+  expect(m.toasts).toEqual([])
+  expect(m.pedidos.filter((q) => OPS_QUE_AGEM.includes(q.op))).toEqual([])
+  expect([...m.store.keys()].filter((k) => k.startsWith('pouso:'))).toEqual([])
+})
+test('mod-nao-grava-mensagem-sem-identificacao: sem entrega identificada o dono.mensagem não vai a lugar nenhum (nem _sem-id)', async ($, on) => {
+  const m = mundo($, on, { identificada: false })
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  expect(PEDIDOS_DE(m, 'mensagem')).toHaveLength(0)
+  expect(msgsDo(m)).toHaveLength(0)
+  expect(m.toasts).toEqual([])
+})
+test('mensagem-sem-entrega-nao-reserva-o-texto: o texto visto sem entrega identificada não fica reservado; identificada a entrega dentro de 120 s, o mesmo texto grava (N7)', async ($, on) => {
+  const o: any = { identificada: false }
+  const m = mundo($, on, o)
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(0)
+  o.identificada = true
+  await m.clock.advance(30_000)
+  await m.dono(); await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(1)
+})
+for (const modo of ['sem_loop', 'erro', 'torto'] as const) {
+  test(`sem-estado-do-painel-pendencia-review-nega-${modo}: o painel ${modo} não muda a identificação; a pendência de review segue negando`, async ($, on) => {
+    const m = mundo($, on, { percent: 49, eventos: REVIEW_ABERTA, painel: { modo } })
+    await m.inicio()
+    expect((await m.agent('gabarito-implementador')).deny).toMatch(TEXTO_PENDENCIA)
+    expect(PEDIDO_DIR(m).length).toBeGreaterThan(0)
+  })
+}
+test('ponte-falha-com-pendencia-review-avisa-e-nao-pousa: a ponte que não lê é falha (nunca "sem entrega"): avisa, não pousa, não grava', async ($, on) => {
+  const m = mundo($, on, { dirFalha: true, percent: 60, eventos: REVIEW_ABERTA })
+  await m.inicio()
+  await m.agent('gabarito-implementador')
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(0)
+  expect(m.tipos()).toEqual([])
+  expect(m.toasts.join(' ')).toMatch(/não consegui ler se há loop nesta entrega \(git falhou\)/)
+  expect(m.pedidos.filter((q) => OPS_QUE_AGEM.includes(q.op))).toEqual([])
+})
+test('ponte-dir-sem-flag-de-identificacao-e-falha: resposta ok sem `identificada` não vira entrega nem "sem entrega": avisa e não pousa', async ($, on) => {
+  const m = mundo($, on, { dirSemFlag: true, percent: 60 })
+  await m.inicio()
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(0)
+  expect(m.tipos()).toEqual([])
+  expect(m.toasts.join(' ')).toMatch(/não consegui ler se há loop/)
+})
+test('mensagem-repetida-no-mesmo-turno-um-evento: o mesmo texto 2× antes do turn.complete grava 1 dono.mensagem; texto diferente grava (FIEL-2 a)', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await m.dono(); await m.dono(); await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(1)
+  expect(PEDIDOS_DE(m, 'mensagem')).toHaveLength(1)
+  await m.dono({ text: 'outra mensagem' }); await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(2)
+})
+test('mensagem-repetida-com-turno-no-meio-dentro-de-120s-um-evento: prompt.submit, turn.complete, prompt.submit do mesmo texto em < 120 s grava 1 (plano B do S8)', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  await m.turno(); await m.clock.settle()
+  await m.clock.advance(60_000)
+  await m.dono(); await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(1)
+  expect(PEDIDOS_DE(m, 'mensagem')).toHaveLength(1)
+})
+test('mensagem-repetida-apos-120s-dois-eventos: o mesmo texto depois de 120 s é outra mensagem', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  await m.turno(); await m.clock.settle()
+  await m.clock.advance(121_000)
+  await m.dono(); await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(2)
+})
+test('mensagem-falha-nao-marca-o-texto: se a gravação falhou, o mesmo texto digitado de novo é tentado de novo', async ($, on) => {
+  const m = mundo($, on, { mensagemFalha: true })
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  await m.dono(); await m.clock.settle()
+  expect(PEDIDOS_DE(m, 'mensagem')).toHaveLength(2)
+})
+test('mensagem-do-subagent-nao-zera-a-janela: o turn.complete de subagent não reabre o mesmo texto', async ($, on) => {
+  const m = mundo($, on)
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  await m.turno({ agentId: 'ag1' }); await m.clock.settle()
+  await m.dono(); await m.clock.settle()
+  expect(msgsDo(m)).toHaveLength(1)
 })
 test('agent-negado-diario-corrompido-abaixo-de-x: leitura que falha nega, com o motivo', async ($, on) => {
   const a = mundo($, on, { percent: 49, lerFalha: true, lerErro: 'cadeia quebrada na linha 3' })
@@ -3343,4 +3664,1447 @@ test('parar-nao-repete-apos-aprendizado-evento: fechar a pendência `parar` com 
   expect(pendenciasAprendizado(PLANO_AB, m.evs)).toHaveLength(0)
   await recuperar(m)
   expect(parou(m)).toHaveLength(1)
+})
+
+// ======================================================================================================================================
+// ---- painel (GM-14 T20): um painel no local escolhido (REQ-GLB-1, PRG-1, FIEL-10..14). Mutações: t20 (M-T20a/b, M13, M-P1, M-P2, M-P7, M-W4..6, M-F3f) ----
+// ======================================================================================================================================
+const PANE_VISIVEL = [{ id: ID_PAINEL, isPlaced: true, isShown: true }]
+const NOMES_STORE = 'painel:nomes'
+const POUSO_STORE = 'painel:notificado:pouso'
+const LIMPAR = { nivel: 'dono', motivo: 'limpar a conversa', acoes: [acaoP('limpar', '/clear')] }
+const comPouso = (seq: number) => estadoNovo({ depende: [LIMPAR], pousoPendente: { pendente: true, sessao: 's0', seq } })
+const TOAST_POUSO = 'gabarito: hora de limpar a conversa da GM-14'
+
+// ---- local: lateral (padrão) × acima, nunca os dois ----
+test('local-padrao-lateral: sem `painel.local` gravado ⇒ lateral: a Pane abre e a faixa cede ao motor com a Pane visível', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'ausente', panes: PANE_VISIVEL })
+  await arrancar(m)
+  await m.cmd('painel'); await drena(m)
+  expect(m.est.opens.length).toBeGreaterThanOrEqual(1)
+  const ui = await montarFaixaH($, 50, 19)
+  expect(await todosTextos(ui)).toEqual(['motor'])
+  await ui.unmount()
+})
+test('nunca-os-dois: acima ⇒ 0 ui.open e a faixa desenha o painel inteiro; lateral com a Pane visível ⇒ a faixa devolve next(e)', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'acima' })
+  await arrancar(m)
+  await m.turno(); await drena(m)
+  expect(m.est.opens).toHaveLength(0)
+  const ui = await montarFaixaH($, 50, 19)
+  const t = (await todosTextos(ui)).join('|')
+  expect(t).toContain('GABARITO')
+  expect(t).toContain('PRONTO')
+  await ui.unmount()
+})
+test('nunca-os-dois-pane-aberta-de-antes: acima com a Pane listada de antes ⇒ o reload a fecha 1×, a Pane não desenha o painel e a faixa desenha', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'acima', panes: PANE_VISIVEL })
+  await arrancar(m)
+  await m.turno(); await drena(m)
+  expect(m.est.closes.filter((id: any) => id === ID_PAINEL)).toHaveLength(1)
+  expect(m.est.opens).toHaveLength(0)
+  const pane = await montarPane($)
+  const tp = (await todosTextos(pane)).join('|')
+  expect(tp).not.toContain('GABARITO')
+  expect(tp).not.toContain('PRONTO')
+  await pane.unmount()
+  const ui = await montarFaixaH($, 50, 19)
+  const t = (await todosTextos(ui)).join('|')
+  expect(t).toContain('GABARITO')
+  expect(t).toContain('PRONTO')
+  await ui.unmount()
+})
+test('nunca-os-dois-pane-aberta-de-antes-com-falha: acima com a Pane listada e a leitura do estado falhando ⇒ a Pane fecha mesmo assim', async ($, on) => {
+  const m = comPainel($, on, { modo: 'erro' }, { local: 'acima', panes: PANE_VISIVEL })
+  await arrancar(m)
+  expect(m.est.closes.filter((id: any) => id === ID_PAINEL)).toHaveLength(1)
+  expect(m.est.opens).toHaveLength(0)
+})
+test('nunca-os-dois-clear-local-trocado: lateral com a Pane de pé, o config passa a acima (onboarding) e vem o /clear ⇒ a Pane fecha 1× e não desenha', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', panes: PANE_VISIVEL })
+  await arrancar(m)
+  expect(m.est.closes).toHaveLength(0)
+  m.est.local = 'acima' // gravado por fora (onboarding da T21) com a sessão aberta
+  await arrancar(m) // /clear ⇒ novo session.start
+  expect(m.est.closes.filter((id: any) => id === ID_PAINEL)).toHaveLength(1)
+  const pane = await montarPane($)
+  expect((await todosTextos(pane)).join('|')).not.toContain('GABARITO')
+  await pane.unmount()
+})
+test('nunca-os-dois-faixa-de-antes: lateral sem Pane (a faixa era o painel antes) ⇒ o reload abre a Pane e a faixa não desenha o painel multi-linha', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', panes: [] })
+  await arrancar(m)
+  expect(m.est.opens).toHaveLength(1)
+  expect(m.est.closes).toHaveLength(0)
+  let ui = await montarFaixaH($, 50, 19)
+  const t = (await todosTextos(ui)).join('|')
+  expect(t).not.toContain('GABARITO')
+  expect(t).not.toContain('PRONTO')
+  await ui.unmount()
+  m.est.panes = PANE_VISIVEL
+  ui = await montarFaixaH($, 50, 19)
+  expect(await todosTextos(ui)).toEqual(['motor'])
+  await ui.unmount()
+  const pane = await montarPane($)
+  expect((await todosTextos(pane)).join('|')).toContain('GABARITO')
+  await pane.unmount()
+})
+test('nunca-os-dois-lateral: lateral com a Pane posta ⇒ a faixa é a do motor mesmo com pergunta aberta', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo({ pergunta: PERGUNTA }) }, { local: 'lateral', panes: PANE_VISIVEL })
+  await arrancar(m)
+  const ui = await montarFaixaH($, 50, 19)
+  expect(await todosTextos(ui)).toEqual(['motor'])
+  await ui.unmount()
+})
+test('sem-pane-nem-ui-open: com local acima, nem início, nem turno, nem relógio, nem `/gabarito painel`/`mostrar` abrem a Pane', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'acima' })
+  await arrancar(m)
+  await m.turno(); await m.clock.advance(PERIODO * 2); await drena(m)
+  expect((await m.cmd('painel')).text).toBe('painel acima da linha de digitar')
+  await m.cmd('painel mostrar'); await drena(m)
+  expect(m.est.opens).toHaveLength(0)
+})
+test('lateral-pane-fechada-so-parou-e-pergunta: Pane fechada ⇒ 1 linha só com a pergunta (ou o PAROU); o resto do painel não aparece', async ($, on) => {
+  sobreOMotor(on)
+  const dep = { nivel: 'dono', motivo: 'aprovar a spec da GM-14', acoes: [acaoP('aprovar', '/gabarito-mestre:aprovar')] }
+  const m = comPainel($, on, { estado: estadoNovo({ pergunta: PERGUNTA, depende: [dep] }) }, { local: 'lateral', panes: [] })
+  await arrancar(m)
+  let ui = await montarFaixaH($, 50, 19)
+  let t = (await todosTextos(ui)).join('|')
+  expect(t).not.toContain('GABARITO')
+  expect(t).toContain('Qual caminho seguir agora')
+  expect(t).not.toContain('PRONTO')
+  expect(t).not.toContain('aprovar a spec')
+  expect((await ui.findAll({ type: 'Button' })).length).toBe(2)
+  await ui.unmount()
+  m.est.painel.estado = estadoNovo({ depende: [dep] })
+  await m.turno(); await drena(m)
+  ui = await montarFaixaH($, 50, 19)
+  expect(await todosTextos(ui)).toEqual(['motor'])
+  await ui.unmount()
+})
+// ---- T50 (emenda 44, REQ-GLB-1): Pane lateral que a plataforma não colocou ⇒ aviso na linha única; o dono abre com /gabarito painel ----
+const RAZAO_144 = 'unasked below 144 columns (80 now): placed when the person opens it, or when the terminal is widened to 144 columns'
+const semColocar = (reason: string) => ({ openResult: { isPlaced: false, reason } })
+const aviso = async ($: any, largura = 100) => {
+  const ui = await montarFaixaH($, 50, 19, { bodyColumns: largura })
+  const t = (await todosTextos(ui)).join('|')
+  await ui.unmount()
+  return t
+}
+test('aviso-com-limiar-da-plataforma: lateral, Pane não colocada ⇒ 1 linha "precisa de <N> colunas: /gabarito painel para abrir", N tirado do reason (nunca fixo)', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  const t = await aviso($)
+  expect(t).toContain('painel lateral precisa de 144 colunas: /gabarito painel para abrir')
+  m.est.openResult = { isPlaced: false, reason: 'unasked below 170 columns (90 now): placed when the person opens it' }
+  await m.cmd('painel'); await drena(m)
+  expect(await aviso($)).toContain('painel lateral precisa de 170 colunas: /gabarito painel para abrir')
+})
+test('aviso-sem-numero-quando-reason-sem-numero: reason sem limiar ⇒ "mais colunas", sem número nenhum', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar('estreito') })
+  await arrancar(m)
+  for (const reason of ['estreito', '', 'unasked (80 now)']) {
+    m.est.openResult = { isPlaced: false, reason }
+    await m.cmd('painel'); await drena(m)
+    const t = await aviso($)
+    expect(t).toContain('painel lateral precisa de mais colunas: /gabarito painel para abrir')
+    expect(t).not.toMatch(/\d/)
+  }
+})
+test('aviso-sem-pane-colocada-nao-aparece: Pane colocada ⇒ o motor desenha, sem aviso', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', openResult: { isPlaced: false, reason: RAZAO_144 }, panes: PANE_VISIVEL })
+  await arrancar(m)
+  expect(await aviso($)).toBe('motor')
+})
+test('aviso-local-acima-nao-aparece: local acima ⇒ o painel é a faixa, sem aviso de Pane', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'acima', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  expect(await aviso($)).not.toContain('precisa de')
+  expect(m.est.opens).toHaveLength(0)
+})
+test('aviso-painel-oculto-nao-aparece: painel desligado pelo dono ⇒ sem aviso', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  expect(await aviso($)).toContain('precisa de 144 colunas')
+  await m.cmd('painel ocultar'); await drena(m)
+  expect(await aviso($)).not.toContain('precisa de')
+})
+test('parou-e-pergunta-antes-do-aviso: PAROU vem primeiro na linha única; o corte de largura tira o aviso antes', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: pararP() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  const tp = await aviso($, 200)
+  expect(tp).toContain('PAROU')
+  expect(tp).toContain('precisa de 144 colunas')
+  expect(tp.indexOf('PAROU')).toBeLessThan(tp.indexOf('precisa de'))
+  const estreita = await aviso($, 48) // o corte come o fim: o PAROU fica, o aviso sai
+  expect(estreita).toContain('PAROU')
+  expect(estreita).not.toContain('precisa de')
+})
+// Larguras reais medidas em sessão real (T50 r2): o Button da plataforma é "[ " + rótulo + " ]" (rótulo+4), o espaço entre eles é 1, e a plataforma põe "[-]" (3) na borda direita.
+const MOLDURA_BOTAO = 4
+const RESERVA_BORDA = 3
+test('linha-unica-cabe-com-a-moldura-real: texto longo + botões (rótulo+4) + "[-]" da borda nunca passam da largura, em 80 e 120', async ($, on) => {
+  sobreOMotor(on)
+  const longa = { ...PERGUNTA, texto: 'De que entrega é esta conversa? '.repeat(8), opcoes: ['uma nova', 'conversa avulsa'] }
+  const m = comPainel($, on, { estado: estadoNovo({ pergunta: longa }) }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  for (const larg of [80, 120]) {
+    const ui = await montarFaixaH($, 50, 19, { bodyColumns: larg })
+    const textos = await todosTextos(ui)
+    const rotulos = (await ui.findAll({ type: 'Button' })).map((b: any) => (b.props?.label ?? b.label) as string)
+    await ui.unmount()
+    expect(rotulos).toEqual(['1 uma nova', '2 conversa avulsa'])
+    const principal = textos.find((t) => t.trim() !== '') as string
+    const total = [...principal].length + rotulos.reduce((n, r) => n + 1 + [...r].length + MOLDURA_BOTAO, 0) + RESERVA_BORDA
+    expect(total).toBeLessThanOrEqual(larg)
+    expect(total).toBeGreaterThan(larg - 12) // o corte não encolhe à toa: usa a linha
+  }
+})
+// GM-14 T56 (emenda 62, spec:47 e :154): na linha única o botão é só do topo (PAROU ou pergunta); com só o aviso a linha não leva botão e o aviso cabe inteiro
+const RAZAO_110 = 'unasked below 110 columns (80 now, an id the person opened before): placed when the person opens it, or when the terminal is widened to 110 columns'
+const dependeSpec = () => estadoNovo({ depende: [{ nivel: 'dono', motivo: 'aprovar a spec', acoes: [acaoP('aprovar a spec', '/gabarito-mestre:emenda aprovar 7')] }] })
+test('aviso-inteiro-com-depende-sem-pergunta-80x24: DESENHADO a 80 colunas, só o aviso na linha única ⇒ aviso inteiro e nenhum botão', async ($, on) => {
+  sobreOMotor(on)
+  expect(botoesDoTopo(dependeSpec(), '/repo').length).toBe(1) // o item existe: sem a regra o botão entraria
+  const m = comPainel($, on, { estado: dependeSpec() }, { local: 'lateral', ...semColocar(RAZAO_110) })
+  await arrancar(m)
+  const ui = await montarFaixaH($, 50, 19, { bodyColumns: 80 })
+  const t = (await todosTextos(ui)).join('|')
+  const botoes = await ui.findAll({ type: 'Button' })
+  await ui.unmount()
+  expect(t).toContain(avisoPaneEspera(RAZAO_110)) // inteiro, sem corte
+  expect(t).toContain('painel lateral precisa de 110 colunas: /gabarito painel para abrir')
+  expect(t).not.toContain('aprovar a spec')
+  expect(botoes.length).toBe(0)
+})
+test('aviso-sem-botao-na-conta-pura: faixaUmaLinha só com aviso devolve botoes vazios', () => {
+  const aviso = avisoPaneEspera(RAZAO_110)
+  const f = faixaUmaLinha(dependeSpec(), { root: '/repo', aviso }) as any
+  expect(f.texto).toBe(aviso)
+  expect(f.botoes).toEqual([])
+})
+test('aviso-nao-regride-botoes: PAROU + aviso e pergunta aberta + aviso mantêm os botões do topo', () => {
+  const aviso = avisoPaneEspera(RAZAO_110)
+  const parar = estadoNovo({ parou: true, parar: { hora: '10:00', texto: 'falhou', acoes: [acaoP('retomar', '/gabarito-mestre:retomar')] } })
+  const fp = faixaUmaLinha(parar, { root: '/repo', aviso }) as any
+  expect(fp.botoes.length).toBe(1)
+  expect(fp.botoes).toEqual(botoesDoTopo(parar, '/repo'))
+  const perg = estadoNovo({ pergunta: PERGUNTA })
+  const fq = faixaUmaLinha(perg, { root: '/repo', aviso }) as any
+  expect(fq.botoes.length).toBe(2)
+  expect(fq.botoes).toEqual(botoesDoTopo(perg, '/repo'))
+  expect(fq.texto).toContain(aviso)
+})
+test('colunas-dos-botoes: cada botão é espaço + "[ " + rótulo + " ]"', () => {
+  expect(colunasDosBotoes([{ rotulo: '1 uma nova' }])).toBe(15)
+  expect(colunasDosBotoes([{ rotulo: '1 uma nova' }, { rotulo: '2 conversa avulsa' }])).toBe(15 + 22)
+  expect(colunasDosBotoes([])).toBe(0)
+})
+test('pergunta-antes-do-aviso: a pergunta aberta vem primeiro na linha única', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo({ pergunta: PERGUNTA }) }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  const tq = await aviso($, 200)
+  expect(tq.indexOf('Qual caminho seguir agora')).toBeGreaterThanOrEqual(0)
+  expect(tq.indexOf('precisa de')).toBeGreaterThan(tq.indexOf('Qual caminho seguir agora'))
+})
+test('pedido-do-dono-abre: /gabarito painel abre com focus, a Pane passa a existir e o aviso some; o local segue lateral', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  expect(m.est.opens.length).toBe(1)
+  expect(m.est.opens[0].focus).toBeUndefined() // a abertura do mod não pede o teclado
+  expect(await aviso($)).toContain('precisa de 144 colunas')
+  m.est.openResult = { isPlaced: true } // pedido do dono: a plataforma coloca em qualquer largura
+  m.est.panes = PANE_VISIVEL
+  const r = await m.cmd('painel'); await drena(m)
+  expect(r.text).toBe('painel aberto')
+  expect(m.est.opens.length).toBe(2)
+  expect(m.est.opens[1].focus).toBe(true)
+  expect(m.est.opens[1].id).toBe(ID_PAINEL)
+  expect(await aviso($)).toBe('motor')
+  expect(m.est.locaisGravados).toEqual([])
+})
+test('pedido-do-dono-nao-coube: o pedido que a plataforma ainda não colocou responde com o motivo e o aviso continua', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  expect((await m.cmd('painel')).text).toBe(`painel não coube: ${RAZAO_144}`)
+  expect(await aviso($)).toContain('precisa de 144 colunas')
+})
+test('sem-troca-de-local: Pane sem colocar, em qualquer largura ⇒ o local segue lateral: nada gravado, nada fechado, a faixa nunca vira o painel inteiro', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  for (const larg of [40, 80, 120, 143, 200]) {
+    const t = await aviso($, larg)
+    expect(t).not.toContain('GABARITO')
+    expect(t).not.toContain('PRONTO')
+  }
+  await m.turno(); await m.clock.advance(PERIODO * 2); await drena(m)
+  expect(m.est.locaisGravados).toEqual([])
+  expect(m.est.closes).toHaveLength(0)
+  expect(m.est.opens).toHaveLength(1) // nem reabre sozinho
+})
+test('aba-atras-sem-aviso: Pane colocada mas não mostrada (aba atrás de outra) ⇒ sem aviso, antes e depois do pedido do dono (a promessa "mais colunas" seria falsa)', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', openResult: { isPlaced: true }, panes: [{ id: ID_PAINEL, isPlaced: true, isShown: false }] })
+  await arrancar(m)
+  expect(await aviso($, 200)).not.toContain('precisa de')
+  m.est.openResult = { isPlaced: true }
+  await m.cmd('painel'); await drena(m) // depois do pedido: a plataforma colocou, a aba segue atrás
+  expect(await aviso($, 200)).not.toContain('precisa de')
+  await m.turno(); await m.clock.advance(PERIODO * 2); await drena(m)
+  expect(await aviso($, 200)).not.toContain('precisa de')
+})
+test('pedido-do-dono-le-panes-na-hora: o comando relê `$.ui.panes()` ao abrir, sem esperar o render', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  const antes = m.est.panesLidas
+  m.est.openResult = { isPlaced: true }
+  await m.cmd('painel')
+  expect(m.est.panesLidas).toBeGreaterThan(antes)
+})
+test('abertura-colocada-limpa-a-razao: depois de colocada, o motivo antigo não volta ao aviso (Pane listada como não colocada ⇒ "mais colunas")', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  expect(await aviso($)).toContain('precisa de 144 colunas')
+  m.est.openResult = { isPlaced: true }
+  m.est.panes = PANE_VISIVEL
+  await m.cmd('painel'); await drena(m)
+  m.est.panes = [{ id: ID_PAINEL, isPlaced: false, isShown: false }] // o terminal encolheu: a plataforma tirou a Pane
+  const t = await aviso($)
+  expect(t).toContain('painel lateral precisa de mais colunas: /gabarito painel para abrir')
+  expect(t).not.toContain('144')
+})
+test('fechada-nao-reabre-com-aviso: a Pane que o dono fechou (sumiu de `$.ui.panes()`) não reabre e o aviso some', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', ...semColocar(RAZAO_144) })
+  await arrancar(m)
+  expect(await aviso($)).toContain('precisa de 144 colunas')
+  m.est.panes = []
+  await m.turno(); await m.clock.advance(PERIODO * 2); await drena(m)
+  expect(m.est.opens).toHaveLength(1)
+  expect(await aviso($)).not.toContain('precisa de')
+})
+test('comando-painel-troca-local-sem-reiniciar: `painel acima` grava pelo onboarding, fecha a Pane e a faixa vira o painel; `painel lateral` reabre a Pane', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'lateral', panes: PANE_VISIVEL })
+  await arrancar(m)
+  const inicios = m.est.opens.length
+  expect((await m.cmd('painel acima')).text).toBe('painel acima da linha de digitar')
+  expect(m.est.locaisGravados).toEqual(['acima'])
+  expect(m.est.closes).toContain(ID_PAINEL)
+  m.est.panes = []
+  let ui = await montarFaixaH($, 50, 19)
+  expect((await todosTextos(ui)).join('|')).toContain('GABARITO')
+  await ui.unmount()
+  expect(m.est.opens.length).toBe(inicios)
+  expect((await m.cmd('painel lateral')).text).toBe('painel ao lado da conversa')
+  expect(m.est.locaisGravados).toEqual(['acima', 'lateral'])
+  expect(m.est.opens.length).toBe(inicios + 1)
+  m.est.panes = PANE_VISIVEL
+  ui = await montarFaixaH($, 50, 19)
+  expect(await todosTextos(ui)).toEqual(['motor'])
+  await ui.unmount()
+})
+test('comando-painel-local-falha-vale-na-sessao: onboarding recusa ⇒ o local muda só nesta sessão e a resposta diz', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { gravarLocalFalha: true })
+  await arrancar(m)
+  expect((await m.cmd('painel acima')).text).toBe('painel acima da linha de digitar (só nesta sessão: não gravei a preferência)')
+  m.est.opens.length = 0
+  await m.turno(); await drena(m)
+  expect(m.est.opens).toHaveLength(0)
+})
+test('prefs-ausente-x-corrompida: local ausente ⇒ lateral sem aviso; config corrompido ⇒ lateral e 1 aviso; ponte que falha ⇒ lateral e outro aviso', async ($, on) => {
+  const ausente = comPainel($, on, { estado: estadoNovo() }, { local: 'ausente' })
+  await arrancar(ausente)
+  expect(ausente.est.opens.length).toBeGreaterThanOrEqual(1)
+  expect(ausente.est.logs.filter((l) => l.includes('local do painel'))).toEqual([])
+})
+test('prefs-corrompida-local: config corrompido ⇒ lateral e 1 aviso por processo', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'corrompido' })
+  await arrancar(m); await m.inicio(); await drena(m)
+  expect(m.est.opens.length).toBeGreaterThanOrEqual(1)
+  expect(m.est.logs.filter((l) => l.includes('local do painel'))).toEqual(['gabarito: a configuração do local do painel está corrompida; uso ao lado da conversa.'])
+})
+test('prefs-ponte-falha-local: onboarding não roda ⇒ lateral e o aviso de leitura (distinto do corrompido)', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'falha' })
+  await arrancar(m)
+  expect(m.est.opens.length).toBeGreaterThanOrEqual(1)
+  expect(m.est.logs.filter((l) => l.includes('local do painel'))).toEqual(['gabarito: não consegui ler o local do painel; uso ao lado da conversa.'])
+})
+
+// ---- orçamento: acima (H e maxRows) e lateral (bodyRows) ----
+test('faixa-respeita-orcamento: acima, pares do S1b (24/6, 50/19) e vizinhos (24/7, 50/20) ⇒ exatamente o orçamento, nunca mais', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo({ atencao: ATENCAO_LONGA }) }, { local: 'acima' })
+  await arrancar(m)
+  for (const [h, maxRows, esperado] of [[24, 6, 6], [50, 19, 19], [24, 7, 7], [50, 20, 20]]) {
+    const ui = await montarFaixaH($, h, maxRows)
+    expect(await linhasDesenhadas(ui), `H ${h} maxRows ${maxRows}`).toBe(esperado)
+    await ui.unmount()
+  }
+})
+test('viewport-rows-e-h: o H é `viewport.rows` (S1b): maxRows 19 com H 24 ⇒ 7 linhas; com H 50 ⇒ 19', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo({ atencao: ATENCAO_LONGA }) }, { local: 'acima' })
+  await arrancar(m)
+  let ui = await montarFaixaH($, 24, 19)
+  expect(await linhasDesenhadas(ui)).toBe(7)
+  await ui.unmount()
+  ui = await montarFaixaH($, 50, 19)
+  expect(await linhasDesenhadas(ui)).toBe(19)
+  await ui.unmount()
+})
+test('h-ausente-formula: sem viewport ⇒ maxRows ≤ 7 vale inteiro; acima, min(maxRows − 6, 7)', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo({ atencao: ATENCAO_LONGA }) }, { local: 'acima' })
+  await arrancar(m)
+  for (const [maxRows, esperado] of [[5, 5], [7, 7], [10, 4], [19, 7]]) {
+    const ui = await montarFaixaH($, null, maxRows)
+    expect(await linhasDesenhadas(ui), `maxRows ${maxRows}`).toBe(esperado)
+    await ui.unmount()
+  }
+})
+test('pane-respeita-body-rows: lateral, bodyRows 10 ⇒ 10 linhas; sem bodyRows ⇒ 7 (nunca rola)', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo({ atencao: ATENCAO_LONGA }) })
+  await arrancar(m)
+  expect((await linhasDaPane(m, $, { offset: 0, bodyRows: 10 })).length).toBe(10)
+  expect((await linhasDaPane(m, $, { offset: 0 })).length).toBe(7)
+})
+
+// ---- botões: só no topo; opção da pergunta põe o `responder` no input, nunca envia ----
+test('botao-pergunta-fill-responder: acima, cada opção é um botão `<n> <rótulo>` que põe `/gabarito-mestre:responder <id> <n>` (replace), sem enviar', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo({ pergunta: PERGUNTA }) }, { local: 'acima' })
+  await arrancar(m)
+  const ui = await montarFaixaH($, 50, 19)
+  const rotulos = (await ui.findAll({ type: 'Button' })).map((b: any) => b.props?.label ?? b.label)
+  expect(rotulos).toEqual(['1 manter', '2 trocar'])
+  await ui.press({ key: 'painel-acao' })
+  await ui.press({ key: 'painel-acao-2' })
+  expect(m.est.fills.map((f) => [f.text, f.mode])).toEqual([['/gabarito-mestre:responder sess-1:7 1', 'replace'], ['/gabarito-mestre:responder sess-1:7 2', 'replace']])
+  expect(m.est.submits).toEqual([])
+  await ui.unmount()
+})
+test('botao-so-no-topo: com pergunta no topo, o item seguinte do "depende de você" não ganha botão', async ($, on) => {
+  const dep = { nivel: 'dono', motivo: 'aprovar a spec da GM-14', acoes: [acaoP('aprovar', '/gabarito-mestre:aprovar')] }
+  const m = comPainel($, on, { estado: estadoNovo({ pergunta: PERGUNTA, depende: [dep] }) }, { local: 'acima' })
+  await arrancar(m)
+  const ui = await montarFaixaH($, 50, 19)
+  const botoes = await ui.findAll({ type: 'Button' })
+  expect(botoes.length).toBe(2)
+  const linhas = ((await ui.drawn()).children ?? []).map((l: any) => JSON.stringify(l))
+  const iTopo = linhas.findIndex((l: string) => l.includes('Qual caminho seguir agora'))
+  const comBotao = linhas.map((l: string, i: number) => [i, l.includes('"Button"') || l.includes('painel-acao')] as const).filter(([, b]) => b).map(([i]) => i)
+  expect(comBotao).toEqual([iTopo])
+  expect(linhas.some((l: string) => l.includes('aprovar a spec'))).toBe(true)
+  await ui.unmount()
+})
+test('has-survey-next: acima, com survey a faixa devolve next(e), mesmo com PAROU', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo({ parar: pararP().parar, pergunta: PERGUNTA }) }, { local: 'acima' })
+  await arrancar(m)
+  const ui = await montarFaixaH($, 50, 19, { hasSurvey: true })
+  expect(await todosTextos(ui)).toEqual(['motor'])
+  expect(await ui.find({ type: 'Button' })).toBeUndefined()
+  await ui.unmount()
+})
+
+// ---- ocultar | mostrar ----
+test('ocultar-mantem-parou-e-pergunta: oculto ⇒ só PAROU ou pergunta aberta, em 1 linha; sem os dois, a faixa cede; mostrar volta o painel', async ($, on) => {
+  sobreOMotor(on)
+  const m = comPainel($, on, { estado: estadoNovo() }, { local: 'acima' })
+  await arrancar(m)
+  expect((await m.cmd('painel ocultar')).text).toBe('painel oculto (PAROU e perguntas continuam)')
+  let ui = await montarFaixaH($, 50, 19)
+  expect(await todosTextos(ui)).toEqual(['motor'])
+  await ui.unmount()
+  m.est.painel.estado = estadoNovo({ pergunta: PERGUNTA })
+  await m.turno(); await drena(m)
+  ui = await montarFaixaH($, 50, 19)
+  expect((await todosTextos(ui)).join('|')).not.toContain('GABARITO')
+  expect((await todosTextos(ui)).join('|')).toContain('Qual caminho seguir agora')
+  await ui.unmount()
+  m.est.painel.estado = pararP()
+  await m.turno(); await drena(m)
+  ui = await montarFaixaH($, 50, 19)
+  expect((await todosTextos(ui)).join('|')).toContain('PAROU')
+  await ui.unmount()
+  expect((await m.cmd('painel mostrar')).text).toBe('painel visível')
+  m.est.painel.estado = estadoNovo()
+  await m.turno(); await drena(m)
+  ui = await montarFaixaH($, 50, 19)
+  expect((await todosTextos(ui)).join('|')).toContain('GABARITO')
+  await ui.unmount()
+})
+test('ocultar-lateral-fecha-a-pane: lateral oculto fecha a Pane e não reabre no relógio', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() })
+  await arrancar(m)
+  await m.cmd('painel ocultar')
+  expect(m.est.closes).toContain(ID_PAINEL)
+  m.est.opens.length = 0
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(m.est.opens).toHaveLength(0)
+})
+
+// ---- medir: no turno e no relógio de 60 s ----
+test('medir-no-turno-e-relogio: `painel.mjs medir --agentes` com o session_id no início, a cada turno e a cada 60 s (nada aos 30 s)', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() })
+  await arrancar(m)
+  expect(m.est.medirStdins).toHaveLength(1)
+  expect(m.est.medirStdins[0].argv.slice(2)).toEqual(['medir', '--agentes'])
+  expect(m.est.medirStdins[0].stdin.session_id).toBe('sess-1')
+  expect(m.est.medirStdins[0].cwd).toBe(RAIZ)
+  await m.turno(); await drena(m)
+  expect(m.est.medirStdins).toHaveLength(2)
+  await m.clock.advance(PERIODO / 2); await drena(m)
+  expect(m.est.medirStdins).toHaveLength(2)
+  await m.clock.advance(PERIODO / 2); await drena(m)
+  expect(m.est.medirStdins).toHaveLength(3)
+})
+
+// ---- contexto do orquestrador (FIEL-11 a, FIEL-14 b) ----
+test('contexto-json-gravado: a leitura do mod vai a `.harness/contexto/<sessao>.json` pela ponte (tmp + rename), com fonte mod', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: 37 })
+  await arrancar(m)
+  expect(m.est.contextos.length).toBeGreaterThanOrEqual(1)
+  const c = m.est.contextos[0]
+  expect(c.sessao).toBe('sess-1')
+  expect(c.percent).toBe(37)
+  expect(c.fonte).toBe('mod')
+  expect(new Date(c.em).toISOString()).toBe(c.em)
+  expect(m.est.contextoInit[0].cwd).toBe(RAIZ)
+})
+test('contexto-gravar-pura: gravarContexto devolve argv de node -e com o script e o stdin; sessão fora da forma ou percent não número ⇒ null', () => {
+  const g = gravarContexto({ sessao: 'abc-1', percent: 55, fonte: 'mod', emMs: Date.UTC(2026, 10, 12) })
+  expect(g?.argv.slice(0, 2)).toEqual(['node', '-e'])
+  expect(String(g?.argv[2]).startsWith('/*gabarito:contexto*/')).toBe(true)
+  expect(String(g?.argv[2])).toContain('renameSync')
+  expect(JSON.parse(g!.stdin)).toEqual({ sessao: 'abc-1', percent: 55, fonte: 'mod', em: '2026-11-12T00:00:00.000Z' })
+  expect(gravarContexto({ sessao: '../x', percent: 55, fonte: 'mod', emMs: 0 })).toBeNull()
+  expect(gravarContexto({ sessao: 'abc-1', percent: null, fonte: 'mod', emMs: 0 })).toBeNull()
+  expect(gravarContexto({ sessao: 'abc-1', percent: 5, fonte: 'outra', emMs: 0 })).toBeNull()
+})
+test('contexto-plano-b-estimado: percent nulo ⇒ o transcript da sessão dá a estimativa (tokens ÷ janela), gravada com fonte transcript; o stdin não a finge medida', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: null, planoB: 250000 })
+  await m.inicio()
+  await subStart($)
+  await drena(m)
+  await m.turno(); await drena(m)
+  expect(m.est.planosB.at(-1)?.caminho).toBe('/h/proj/abc-123.jsonl')
+  const c = m.est.contextos.at(-1)
+  expect([c?.percent, c?.fonte]).toEqual([25, 'transcript'])
+  const s = ultimoStdin(m)
+  expect(s.sessao.percent).toBeNull()
+  expect(s.contexto).toEqual({ percent: 25, fonte: 'transcript', estimado: true })
+})
+test('contexto-plano-b-sem-janela: percent e window nulos com transcript ⇒ contexto nulo ("?"), nada gravado, nunca NaN', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: null, janela: null, planoB: 250000 })
+  await m.inicio()
+  await subStart($)
+  await drena(m)
+  await m.turno(); await drena(m)
+  expect(m.est.planosB.length).toBeGreaterThan(0) // o plano B rodou: é a janela nula que o barra
+  expect(m.est.contextos).toHaveLength(0)
+  const s = ultimoStdin(m)
+  expect(s.contexto).toBeNull()
+  expect(JSON.stringify(s)).not.toContain('NaN')
+  expect(JSON.stringify(s)).not.toContain('null,"fonte"')
+})
+test('contexto-sem-fonte-nada-gravado: percent nulo e sem transcript ⇒ nenhuma gravação e contexto nulo no stdin', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: null })
+  await arrancar(m)
+  expect(m.est.contextos).toHaveLength(0)
+  expect(ultimoStdin(m).contexto).toBeNull()
+})
+
+// ---- desatualizado (FIEL-13 b) ----
+test('desatualizado-no-stdin: segundos desde a última leitura boa no stdin; leitura falhando além do limite ⇒ linha de ATENÇÃO na Pane', async ($, on) => {
+  expect(LIMITE_DESATUALIZADO_S).toBe(120)
+  const m = comPainel($, on, { estado: estadoNovo() })
+  await arrancar(m)
+  expect(m.est.painelStdins[0].desatualizadoS).toBeNull()
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(ultimoStdin(m).desatualizadoS).toBe(60)
+  m.est.painel.modo = 'erro'
+  for (let i = 0; i < 2; i++) { await m.clock.advance(PERIODO); await drena(m) }
+  expect(ultimoStdin(m).desatualizadoS).toBe(120)
+  let ui = await montarPane($, 80)
+  expect((await todosTextos(ui)).join('|')).not.toContain('sem ler o diário')
+  await ui.unmount()
+  await m.clock.advance(PERIODO); await drena(m)
+  ui = await montarPane($, 80)
+  expect((await todosTextos(ui)).join('|')).toContain('painel sem ler o diário há 3 min')
+  await ui.unmount()
+})
+
+// ---- nomes (FIEL-3 d): store, estáveis, únicos entre ativos ----
+test('nomes-unicos-entre-ativos: dois ativos com o mesmo nome no store ⇒ o 1º visto fica, o outro pega o 1º livre; encerrado não ocupa nome', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, {
+    agentesPainel: [{ id: 'a2', type: 'revisor', description: 'T2 revisor', status: 'running' }, { id: 'a1', type: 'implementador', description: 'T1 impl', status: 'waiting' }, { id: 'a3', type: 'implementador', description: 'T3', status: 'completed' }],
+    storeInicial: { [NOMES_STORE]: { a1: { nome: 'LEGOLAS', vistoEm: 1 }, a2: { nome: 'LEGOLAS', vistoEm: 2 }, a3: { nome: 'GIMLI', vistoEm: 0 } } },
+  })
+  await arrancar(m)
+  const n = ultimoStdin(m).nomes
+  expect(n.a1.nome).toBe('LEGOLAS')
+  expect(n.a2.nome).toBe('GIMLI')
+  expect((m.store.get(NOMES_STORE) as any).a2.nome).toBe('GIMLI')
+})
+test('nomes-forma-do-contrato: cada ativo vai como {nome, vistoEm} (o validarNomesAgentes real do CLI aceita)', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { agentesPainel: [{ id: 'a1', type: 'implementador', description: 'T1', status: 'running' }] })
+  await arrancar(m)
+  const n = ultimoStdin(m).nomes
+  expect(Object.keys(n.a1).sort()).toEqual(['nome', 'vistoEm'])
+  expect(Number.isSafeInteger(n.a1.vistoEm)).toBe(true)
+  expect((validarStdinAgentes(ultimoStdin(m)) as any).ok).toBe(true)
+})
+test('nome-estavel-apos-reload: o nome guardado vale depois do reload, mesmo não sendo o 1º livre; agente novo pega o 1º livre (M-F3f)', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, {
+    agentesPainel: [{ id: 'novo', type: 'revisor', description: 'T2', status: 'running' }, { id: 'a1', type: 'implementador', description: 'T1', status: 'running' }],
+    storeInicial: { [NOMES_STORE]: { a1: { nome: 'ARAGORN', vistoEm: 5 } } },
+  })
+  await arrancar(m)
+  const n = ultimoStdin(m).nomes
+  expect(n.a1.nome).toBe('ARAGORN')
+  expect(n.novo.nome).toBe('GIMLI')
+})
+test('nomes-esgotados-sufixo: pacote sem nome livre ⇒ sufixo 2 a 9, depois "agente"', async ($, on) => {
+  const vivos = Array.from({ length: 4 }, (_, i) => ({ id: `v${i}`, type: 'implementador', description: 'x', status: 'running' }))
+  const m = comPainel($, on, { estado: estadoNovo() }, { agentesPainel: vivos, pacoteNomes: { lider: 'GANDALF', sabio: 'ELROND', nomes: ['GIMLI'] } })
+  await arrancar(m)
+  const n = ultimoStdin(m).nomes
+  expect(vivos.map((v) => n[v.id].nome)).toEqual(['GIMLI', 'GIMLI2', 'GIMLI3', 'GIMLI4'])
+})
+test('store-nomes-ausente-x-corrompido: ausente ⇒ nomes do zero, sem aviso; corrompido ⇒ do zero e 1 aviso', async ($, on) => {
+  const vivo = [{ id: 'a1', type: 'implementador', description: 'T1', status: 'running' }]
+  const m = comPainel($, on, { estado: estadoNovo() }, { agentesPainel: vivo, storeInicial: { [NOMES_STORE]: 7 } })
+  await arrancar(m)
+  expect(ultimoStdin(m).nomes.a1.nome).toBe('GIMLI')
+  expect(m.est.logs.filter((l) => l.includes('nomes da equipe'))).toEqual(['gabarito: os nomes da equipe do painel estavam corrompidos; recomecei.'])
+})
+test('store-nomes-ausente: sem store ⇒ nomes do zero e nenhum aviso', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { agentesPainel: [{ id: 'a1', type: 'implementador', description: 'T1', status: 'running' }] })
+  await arrancar(m)
+  expect(ultimoStdin(m).nomes.a1.nome).toBe('GIMLI')
+  expect(m.est.logs.filter((l) => l.includes('nomes da equipe'))).toEqual([])
+})
+
+// ---- push do pouso (FIEL-14 d) ----
+test('push-no-pouso: pouso pendente ⇒ toast e notify "hora de limpar a conversa", chave `<ID>|pouso|<seq>` no store', async ($, on) => {
+  const m = comPainel($, on, { estado: comPouso(4) })
+  await arrancar(m)
+  expect(m.toasts.filter((t) => t === TOAST_POUSO)).toHaveLength(1)
+  expect(m.est.notifies).toEqual([TOAST_POUSO])
+  expect((m.store.get(POUSO_STORE) as any).chave).toBe('GM-14|pouso|4')
+})
+test('push-mesma-chave-nao-repete: o mesmo pouso em 3 refresh ⇒ 1 push; chave já no store (outra janela) ⇒ 0', async ($, on) => {
+  const m = comPainel($, on, { estado: comPouso(4) })
+  await arrancar(m)
+  for (let i = 0; i < 3; i++) { await m.clock.advance(PERIODO); await drena(m) }
+  expect(m.est.notifies).toHaveLength(1)
+})
+test('push-mesma-chave-no-store: a chave do pouso já gravada ⇒ nenhum push', async ($, on) => {
+  const m = comPainel($, on, { estado: comPouso(4) }, { storeInicial: { [POUSO_STORE]: { chave: 'GM-14|pouso|4', resultado: null } } })
+  await arrancar(m)
+  expect(m.est.notifies).toHaveLength(0)
+  expect(m.toasts.filter((t) => t === TOAST_POUSO)).toHaveLength(0)
+})
+test('push-repetido-com-novo-pouso: novo `sessao.pouso` (seq nova) ⇒ novo push', async ($, on) => {
+  const m = comPainel($, on, { estado: comPouso(4) })
+  await arrancar(m)
+  m.est.painel.estado = comPouso(9)
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(m.est.notifies).toEqual([TOAST_POUSO, TOAST_POUSO])
+  expect((m.store.get(POUSO_STORE) as any).chave).toBe('GM-14|pouso|9')
+})
+test('notify-falha-mantem-toast-e-depende: notify que lança ⇒ o toast saiu, a linha "limpar a conversa" segue na Pane e o push não repete', async ($, on) => {
+  const m = comPainel($, on, { estado: comPouso(4) }, { notify: 'rejeita' })
+  await arrancar(m)
+  for (let i = 0; i < 2; i++) { await m.clock.advance(PERIODO); await drena(m) }
+  expect(m.toasts.filter((t) => t === TOAST_POUSO)).toHaveLength(1)
+  expect(m.est.notifies).toHaveLength(1)
+  const ui = await montarPane($, 80)
+  expect((await todosTextos(ui)).join('|')).toContain('limpar a conversa')
+  await ui.unmount()
+})
+test('sem-pouso-sem-push: sem o item de limpar ⇒ nenhum push do pouso, e o PAROU segue com a sua chave', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() })
+  await arrancar(m)
+  expect(m.est.notifies).toHaveLength(0)
+  expect(m.store.has(POUSO_STORE)).toBe(false)
+})
+
+// ---- pendências herdadas: "depende de você" sem duplicar; medição não é progresso ----
+test('faixa-sem-depende-duplicado: o item "depende de você: nada" do estado novo nunca vira "depende de você: depende de você: nada"', () => {
+  const e = estadoNovo()
+  expect(faixaDe(e, true, null, {})).toBeNull()
+  const f = faixaDe(e, false, null, {})
+  expect(f === null || !f.texto.includes('depende de você: depende de você')).toBe(true)
+  const q = faixaDe(estadoNovo({ depende: [{ nivel: 'dono', motivo: 'depende de você: ? (não consegui ler as specs)', acoes: [] }] }), true, null, {})
+  expect(q === null || !q.texto.includes('depende de você: depende de você')).toBe(true)
+})
+test('parar-nao-repete-apos-fato-medido (pouso.ts SEM_PROGRESSO): fato.medido, nota e dono.resposta depois do loop.parar não fazem o mod regravá-lo', async ($, on) => {
+  const m = mundo($, on, { eventos: EM_TETO_A_E_B_ORFA, plano_json: PLANO_AB })
+  fecharEm(m, PLANO_AB)
+  await m.inicio()
+  await recuperar(m)
+  expect(parou(m)).toHaveLength(1)
+  fecharEm(m, PLANO_AB)
+  m.add('painel', 'fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'feat/PBI-7-x' } }, 'sess-1')
+  m.add('orquestrador', 'nota', { tipo: 'ideia', texto: 'uma ideia' }, 'sess-1')
+  m.add('dono', 'dono.resposta', { pergunta: 'sess-1:9', opcao: 1, rotulo: 'sim' }, 'dono')
+  await recuperar(m)
+  await recuperar(m)
+  expect(parou(m)).toHaveLength(1)
+})
+
+// ======================================================================================================================================
+// ---- GM-14 T35: AGORA ao vivo (FIEL-11 b/c, FIEL-6 a). Fonte: S12 (`tool.call` com agentId), S13 (SubagentStop não é fim), S14 (backgroundTaskId). ----
+// Mutações: M-P10 (frase fixa), M-T35a (SubagentStop ignorado), M-T35b (segundo plano nunca sai). ----
+// ======================================================================================================================================
+const AG = (id: string, status = 'running') => ({ id, type: 'implementador', description: 'T2 implementador', status })
+const bash = ($: any, extra: Record<string, unknown> = {}) => $.tool.call({ tool: 'Bash', command: 'ls', description: 'listar arquivos', ...extra })
+const ferr = ($: any, tool: string, extra: Record<string, unknown> = {}) => $.tool.call({ tool, ...extra })
+
+test('acao-ao-vivo-bash-description: Bash de subagente ⇒ acoes[agentId] = a description, fonte bash', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await bash($, { agentId: 'a1' }); await drena(m)
+  const a = ultimoStdin(m).acoes.a1
+  expect(a.texto).toBe('listar arquivos')
+  expect(a.fonte).toBe('bash')
+  expect(Number.isSafeInteger(a.em) && a.em >= 0).toBe(true)
+})
+test('acao-de-outra-ferramenta-no-presente: Read×3 ⇒ "lendo 3 arquivos"; outra ferramenta zera a contagem; Bash sem description ⇒ "rodando 1 comando"', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await ferr($, 'Read', { agentId: 'a1', file_path: '/x' }); await ferr($, 'Grep', { agentId: 'a1' }); await ferr($, 'Read', { agentId: 'a1' }); await drena(m)
+  expect(ultimoStdin(m).acoes.a1).toMatchObject({ texto: 'lendo 3 arquivos', fonte: 'tool' })
+  await ferr($, 'Edit', { agentId: 'a1' }); await m.clock.advance(2000); await drena(m)
+  expect(ultimoStdin(m).acoes.a1.texto).toBe('editando 1 arquivo')
+  await $.tool.call({ tool: 'Bash', command: 'ls', agentId: 'a1' }); await m.clock.advance(2000); await drena(m)
+  expect(ultimoStdin(m).acoes.a1).toMatchObject({ texto: 'rodando 1 comando', fonte: 'tool' })
+  await ferr($, 'Agent', { agentId: 'a1', subagent_type: 'revisor', description: 'd', prompt: 'p' }); await m.clock.advance(2000); await drena(m)
+  expect(ultimoStdin(m).acoes.a1.texto).toBe('chamando revisor')
+})
+test('acao-sem-fonte-fica-de-fora: ferramenta fora da tabela não inventa ação (nunca frase fixa)', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await ferr($, 'Monitor', { agentId: 'a1' }); await ferr($, 'SubagentHandback', { agentId: 'a1' }); await drena(m)
+  expect(ultimoStdin(m).acoes).toEqual({})
+  await bash($, { agentId: 'a1', description: 'compilar' }); await drena(m)
+  await ferr($, 'Monitor', { agentId: 'a1' }); await drena(m)
+  expect(ultimoStdin(m).acoes.a1.texto).toBe('compilar') // a última ação conhecida fica; a que não se sabe dizer não a apaga
+})
+test('acao-higieniza-a-description: controles saem e passa de 120 caracteres corta', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await bash($, { agentId: 'a1', description: `ver\u0000 tudo\u202E ${'x'.repeat(300)}` }); await drena(m)
+  const t = ultimoStdin(m).acoes.a1.texto as string
+  expect(t.startsWith('ver tudo xxx')).toBe(true)
+  expect([...t].length).toBeLessThanOrEqual(120)
+  expect(/[\u0000-\u001f\u202e]/.test(t)).toBe(false)
+})
+test('tool-call-sem-agentid-e-do-orquestrador: nada em acoes; o resultado do motor passa intacto', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')], resultadoTool: { stdout: 'ok', marca: 7 } })
+  await arrancar(m)
+  const r = await bash($); await drena(m)
+  expect(r).toEqual({ result: { stdout: 'ok', marca: 7 } })
+  expect(ultimoStdin(m).acoes).toEqual({})
+})
+test('tool-call-agentid-fora-do-padrao: id com barra não entra', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await bash($, { agentId: '../x' }); await bash($, { agentId: 42 }); await drena(m)
+  expect(ultimoStdin(m).acoes).toEqual({})
+})
+test('acoes-teto-64: o 65º agente tira o mais antigo', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  for (let i = 0; i < 66; i++) await bash($, { agentId: `ag-${i}` })
+  await drena(m)
+  const k = Object.keys(ultimoStdin(m).acoes)
+  expect(k).toHaveLength(64)
+  expect(k).not.toContain('ag-0'); expect(k).not.toContain('ag-1'); expect(k).toContain('ag-65')
+})
+test('acao-nao-interativo: -p não guarda nada nem chama a ponte', async ($, on) => {
+  const m = comPainel($, on, {}, { interativo: false, agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await bash($, { agentId: 'a1' }); await drena(m)
+  expect(stdinsPainel(m)).toHaveLength(0)
+})
+test('acao-no-fim-da-rajada-chega: 2 ações em menos de 2 s ⇒ a última aparece 2 s depois, sem esperar os 60 s', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await bash($, { agentId: 'a1', description: 'primeira' }); await drena(m)
+  await bash($, { agentId: 'a1', description: 'segunda' })
+  await m.clock.advance(1000); await drena(m)
+  expect(ultimoStdin(m).acoes.a1.texto).toBe('primeira')
+  await m.clock.advance(1000); await drena(m)
+  expect(ultimoStdin(m).acoes.a1.texto).toBe('segunda')
+})
+test('acao-redesenha-sem-esperar-o-relogio: a ação nova chega ao stdin antes do 60 s', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  const antes = stdinsPainel(m).length
+  await bash($, { agentId: 'a1' }); await drena(m)
+  expect(stdinsPainel(m).length).toBeGreaterThan(antes)
+})
+test('subagentstop-sai-na-hora: a lista já diz completed ⇒ o stop reconsulta e o id entra em encerrados, sem esperar o relógio', async ($, on) => {
+  const lista = [AG('a1')]
+  const m = comPainel($, on, {}, { agentesPainel: lista })
+  await arrancar(m)
+  expect(ultimoStdin(m).encerrados).toEqual([])
+  const antes = stdinsPainel(m).length
+  await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [] }) // S13: no instante do stop a lista ainda diz running
+  await drena(m)
+  expect(ultimoStdin(m).encerrados).toEqual([])
+  await m.clock.advance(210); lista[0].status = 'completed'; await drena(m) // S13: completed ~210 ms depois do stop
+  await m.clock.advance(190); await drena(m) // 400 ms no total: ESPERA_STOP_MS, nunca o relógio de 60 s
+  expect(stdinsPainel(m).length).toBeGreaterThan(antes)
+  expect(ultimoStdin(m).encerrados).toEqual(['a1'])
+})
+test('subagentstop-sozinho-nao-encerra: a lista ainda diz running (S13: o stop chega antes) ⇒ não vai a encerrados', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [] }); await drena(m)
+  expect(ultimoStdin(m).encerrados).toEqual([])
+})
+test('encerrado-que-volta-a-running-sai-de-encerrados: SendMessage retoma o agente (S13, 1/6)', async ($, on) => {
+  const lista = [AG('a1', 'completed')]
+  const m = comPainel($, on, {}, { agentesPainel: lista })
+  await arrancar(m)
+  expect(ultimoStdin(m).encerrados).toEqual(['a1'])
+  lista[0].status = 'running'
+  await turnoVia(m, $)
+  expect(ultimoStdin(m).encerrados).toEqual([])
+})
+test('subagentstart-tira-de-encerrados: o agente que recomeça não fica escondido', async ($, on) => {
+  const lista = [AG('a1', 'completed')]
+  const m = comPainel($, on, {}, { agentesPainel: lista })
+  await arrancar(m)
+  expect(ultimoStdin(m).encerrados).toEqual(['a1'])
+  await subStart($, { agent_id: 'a1' })
+  lista[0].status = 'completed' // a lista ainda não mudou, mas o start vale até a próxima leitura dela dizer o contrário
+  await $.classic.SubagentStop({ agent_id: 'zz', agent_type: '', background_tasks: [] }); await drena(m)
+  expect(ultimoStdin(m).encerrados).toEqual(['a1']) // a lista manda: completed de novo
+})
+test('encerrado-perde-a-acao: a ação de quem terminou sai do stdin', async ($, on) => {
+  const lista = [AG('a1')]
+  const m = comPainel($, on, {}, { agentesPainel: lista })
+  await arrancar(m)
+  await bash($, { agentId: 'a1' }); await drena(m)
+  expect(Object.keys(ultimoStdin(m).acoes)).toEqual(['a1'])
+  await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [] }); await drena(m) // S13: ainda running no stop
+  await m.clock.advance(210); lista[0].status = 'completed'; await drena(m)
+  await m.clock.advance(190); await drena(m)
+  expect(ultimoStdin(m).acoes).toEqual({})
+})
+test('releitura-ao-vivo-nao-mede: rajada de tool.call refaz o estado mas não chama `painel.mjs medir` (gh) a cada chamada', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  const medirAntes = m.est.medirStdins.length
+  const estadosAntes = stdinsPainel(m).length
+  for (let i = 0; i < 30; i++) { await bash($, { agentId: 'a1', description: `passo ${i}` }); await m.clock.advance(500); await drena(m) } // 15 s de rajada
+  expect(stdinsPainel(m).length).toBeGreaterThan(estadosAntes + 3) // a releitura ao vivo continua refazendo o estado
+  expect(m.est.medirStdins.length - medirAntes).toBe(0)
+})
+test('medir-segue-no-ritmo-proprio: o relógio de 60 s ainda mede, mesmo com ações ao vivo no meio', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  const medirAntes = m.est.medirStdins.length
+  await bash($, { agentId: 'a1' }); await m.clock.advance(2000); await drena(m)
+  expect(m.est.medirStdins.length - medirAntes).toBe(0)
+  await m.clock.advance(60000); await drena(m)
+  expect(m.est.medirStdins.length - medirAntes).toBeGreaterThanOrEqual(1)
+})
+test('acao-e-segundo-plano-levam-a-hora-de-agora: em/desde = o relógio no momento do evento, não 0', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')], resultadoTool: (e: any) => (e.run_in_background === true ? { backgroundTaskId: 'bg9' } : {}) })
+  await arrancar(m)
+  await m.clock.advance(12345); await drena(m)
+  const t1 = (m.clock as any).now()
+  expect(t1).toBeGreaterThan(10000)
+  await bash($, { agentId: 'a1', description: 'agora' }); await drena(m)
+  expect(ultimoStdin(m).acoes.a1.em).toBe(Math.round(t1))
+  await m.clock.advance(7000)
+  const t2 = (m.clock as any).now()
+  await bash($, { run_in_background: true, description: 'fundo' }); await drena(m)
+  expect(ultimoStdin(m).segundoPlano[0].desde).toBe(Math.round(t2))
+})
+const turnoVia = async (m: ReturnType<typeof mundo>, $: any) => { await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't9', reason: 'answer' }); await drena(m) }
+
+test('segundo-plano-aparece-e-sai: Bash em segundo plano do orquestrador entra com o id do resultado e sai quando o Stop não o lista mais', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')], resultadoTool: (e: any) => (e.run_in_background === true ? { backgroundTaskId: 'bg1' } : {}) })
+  await arrancar(m)
+  await bash($, { run_in_background: true, description: 'esperar s14' }); await drena(m)
+  const sp = ultimoStdin(m).segundoPlano
+  expect(sp).toHaveLength(1)
+  expect(sp[0]).toMatchObject({ id: 'bg1', dono: 'orquestrador', texto: 'esperar s14' })
+  expect(Number.isSafeInteger(sp[0].desde)).toBe(true)
+  await $.classic.Stop({ background_tasks: [{ id: 'bg1', type: 'shell', status: 'running', description: 'esperar s14' }] }); await drena(m)
+  expect(ultimoStdin(m).segundoPlano).toHaveLength(1) // ainda lá: o item segue no Stop
+  await $.classic.Stop({ background_tasks: [] }); await drena(m)
+  expect(ultimoStdin(m).segundoPlano).toEqual([])
+})
+test('segundo-plano-de-subagente: dono = o agentId; sai pelo background_tasks do SubagentStop', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')], resultadoTool: (e: any) => (e.run_in_background === true ? { backgroundTaskId: 'bg2' } : {}) })
+  await arrancar(m)
+  await bash($, { agentId: 'a1', run_in_background: true, description: 'esperar sub' }); await drena(m)
+  expect(ultimoStdin(m).segundoPlano).toEqual([expect.objectContaining({ id: 'bg2', dono: 'a1', texto: 'esperar sub' })])
+  await $.classic.SubagentStop({ agent_id: 'a1', agent_type: 'general-purpose', background_tasks: [{ id: 'a1', type: 'subagent', status: 'running' }] }); await m.clock.advance(400); await drena(m)
+  expect(ultimoStdin(m).segundoPlano).toEqual([])
+})
+test('segundo-plano-sem-description-usa-o-comando: texto = o comando cortado, nunca inventado', async ($, on) => {
+  const m = comPainel($, on, {}, { resultadoTool: { backgroundTaskId: 'bg3' } })
+  await arrancar(m)
+  await $.tool.call({ tool: 'Bash', command: `sleep 25; ${'y'.repeat(300)}`, run_in_background: true }); await drena(m)
+  const t = ultimoStdin(m).segundoPlano[0].texto as string
+  expect(t.startsWith('sleep 25; yyy')).toBe(true)
+  expect([...t].length).toBeLessThanOrEqual(120)
+})
+test('segundo-plano-so-com-backgroundTaskId: Bash em primeiro plano, id fora do padrão e outra ferramenta não entram', async ($, on) => {
+  const m = comPainel($, on, {}, { resultadoTool: (e: any) => (e.tool === 'Bash' && e.command === 'ruim' ? { backgroundTaskId: '../x' } : e.tool === 'Monitor' ? { backgroundTaskId: 'm1' } : {}) })
+  await arrancar(m)
+  await bash($); await $.tool.call({ tool: 'Bash', command: 'ruim' }); await ferr($, 'Monitor'); await drena(m)
+  expect(ultimoStdin(m).segundoPlano).toEqual([])
+})
+test('segundo-plano-teto-64: o 65º tira o mais antigo', async ($, on) => {
+  let n = 0
+  const m = comPainel($, on, {}, { resultadoTool: () => ({ backgroundTaskId: `bg-${n++}` }) })
+  await arrancar(m)
+  for (let i = 0; i < 66; i++) await bash($, { run_in_background: true })
+  await drena(m)
+  const ids = ultimoStdin(m).segundoPlano.map((x: any) => x.id)
+  expect(ids).toHaveLength(64)
+  expect(ids).not.toContain('bg-0'); expect(ids).toContain('bg-65')
+})
+test('stop-sem-lista-nao-apaga: Stop sem background_tasks (ou não lista) não tira o segundo plano', async ($, on) => {
+  const m = comPainel($, on, {}, { resultadoTool: { backgroundTaskId: 'bg1' } })
+  await arrancar(m)
+  await bash($, { run_in_background: true }); await drena(m)
+  await $.classic.Stop({}); await $.classic.Stop({ background_tasks: 'x' }); await drena(m)
+  expect(ultimoStdin(m).segundoPlano).toHaveLength(1)
+})
+test('stdin-com-acoes-encerrados-segundo-plano: a forma que o CLI de T29 aceita (validarStdinAgentes real)', async ($, on) => {
+  const lista = [AG('a1'), AG('a2', 'completed')]
+  const m = comPainel($, on, {}, { agentesPainel: lista, resultadoTool: (e: any) => (e.run_in_background === true ? { backgroundTaskId: 'bg1' } : {}) })
+  await arrancar(m)
+  await bash($, { agentId: 'a1' }); await bash($, { run_in_background: true }); await ferr($, 'Read', { agentId: 'a2' }); await drena(m)
+  const s = ultimoStdin(m)
+  expect(Object.keys(s)).toEqual(expect.arrayContaining(['acoes', 'encerrados', 'segundoPlano', 'nomes']))
+  const v = validarStdinAgentes(s) as any
+  expect(v.erro).toBeUndefined()
+  expect(v.ok).toBe(true)
+  expect(v.valor.acoes.a1.texto).toBe('listar arquivos')
+  expect(v.valor.encerrados).toEqual(['a2'])
+  expect(v.valor.segundoPlano).toHaveLength(1)
+  expect(v.valor.acoes.a2).toBeUndefined() // a2 terminou: sua ação não entra
+})
+test('medir-recebe-o-mesmo-stdin: `medir --agentes` leva acoes, encerrados e segundoPlano (um pedido só)', async ($, on) => {
+  const m = comPainel($, on, {}, { agentesPainel: [AG('a1')] })
+  await arrancar(m)
+  await bash($, { agentId: 'a1' }); await drena(m)
+  await turnoVia(m, $) // a medição segue o ritmo próprio (turno), não a releitura ao vivo
+  const med = m.est.medirStdins[m.est.medirStdins.length - 1].stdin
+  expect(med.acoes.a1.texto).toBe('listar arquivos')
+  expect(med.encerrados).toEqual([])
+  expect(med.segundoPlano).toEqual([])
+})
+
+
+// ======================================================================================================================================
+// GM-14 T53 (emendas 52 e 53, REQ-POU-1, FIEL-14): o mod pousa no teto sem depender do dono. Invariante POR SESSÃO (ciclo 3):
+//   I1 uma sessão só despacha com a PRÓPRIA leitura abaixo de X (depois do pouso, em X ou acima nega tudo, revisor incluído); nada de outra sessão a libera;
+//   I2 cada sessão em X ou acima com 0 vivos pousa A SI MESMA; I3 até 3 tentativas por fronteira, no diário, de qualquer sessão, depois `sem_pouso` uma vez;
+//   I4 sem janela de tempo: ≥ X é sempre "não despacha".
+// Tempo: o mod mede com a hora que a ponte devolve (`agora`); o mock a dá (`est.agoraMs`), que anda com `avancar`/`clock.advance` e 1 s a cada gravação.
+// Nenhum teste de espera depende do dia em que roda: os eventos nascem RELATIVOS à base do mock.
+// ======================================================================================================================================
+const BASE = Date.UTC(2026, 10, 14, 12, 0, 0)
+const EVT = (seq: number, tipo: string, dados: Record<string, unknown>, atrasoMs: number, sessao = 's0') =>
+  ({ seq, ts: new Date(BASE - atrasoMs).toISOString(), autor: 'a', sessao, agente: 'o', tipo, dados, hash_anterior: null })
+/** a sequência real do incidente de 2026-11-14 ~10:05: veredito, `loop.mjs pousar` (via dono, sem --sessao) SEM /clear, contexto ainda acima de X */
+const INCIDENTE = (atrasoMs = 600_000) => [
+  EVT(1, 'task.iniciada', { task: 'a', papel: 'implementador' }, atrasoMs + 3000), EVT(2, 'task.concluida', { task: 'a', sha: 'x' }, atrasoMs + 2000),
+  EVT(3, 'review.veredito', { task: 'a', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, atrasoMs + 1000),
+  EVT(4, 'sessao.pouso', { percent: null, x: 50, via: 'dono' }, atrasoMs, 'loop'),
+]
+/** o pouso foi da sessão real `sess-A` (10 min atrás) e o /clear dela não limpou */
+const POUSOU_A = (...mais: any[]) => [
+  EVT(1, 'task.iniciada', { task: 'a', papel: 'implementador' }, 603_000), EVT(2, 'task.concluida', { task: 'a', sha: 'x' }, 602_000),
+  EVT(3, 'review.veredito', { task: 'a', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, 601_000),
+  EVT(4, 'sessao.pouso', { percent: 61, x: 50 }, 600_000, 'sess-A'), ...mais,
+]
+const tentativas = (m: ReturnType<typeof mundo>) => m.grav.filter((g) => g.tipo === 'sessao.pouso.tentativa').map((g) => (g.dados as any).n)
+const nega = async (m: ReturnType<typeof mundo>) => {
+  for (const tipo of ['gabarito-implementador', 'gabarito-mestre:gabarito-implementador', 'gabarito-revisor', 'gabarito-mestre:gabarito-revisor', undefined]) {
+    expect((await m.agent(tipo)).deny).toMatch(/pouso/)
+  }
+}
+const libera = async (m: ReturnType<typeof mundo>) => {
+  for (const tipo of ['gabarito-implementador', 'gabarito-revisor']) expect((await m.agent(tipo)).deny).toBeUndefined()
+}
+/** a vigia de 30 s e a espera de 60 s correm pelo relógio do mock: `n` passos de `ms` sem nenhum turno */
+const passos = async (m: ReturnType<typeof mundo>, n: number, ms = 61_000) => { for (let i = 0; i < n; i++) await m.avancar(ms) }
+
+test('pousar-manual-nao-consome-com-mod: sessao.pouso do dono sem /clear não libera a sessão que segue em X ou acima: todo Agent negado, revisor incluído', async ($, on) => {
+  const m = mundo($, on, { eventos: INCIDENTE(), percent: 61, agora: BASE })
+  await nega(m)
+  expect(m.est.clears).toBe(0) // o Agent não roda /clear
+})
+
+test('teto-zero-vivos-nega-agent: contexto ≥ X, fronteira aberta, 0 vivos ⇒ Agent negado', async ($, on) => {
+  const zero = mundo($, on, { percent: 60, agentes: [] })
+  expect((await zero.agent('gabarito-implementador')).deny).toMatch(/pouso/)
+  expect((await zero.agent(undefined)).deny).toMatch(/pouso/)
+})
+test('teto-com-vivos-nega-agent: contexto ≥ X, fronteira aberta, 2 vivos ⇒ Agent negado', async ($, on) => {
+  const dois = mundo($, on, { percent: 60, agentes: [{ id: 'a1', status: 'running' }, { id: 'a2', status: 'waiting' }] })
+  expect((await dois.agent('gabarito-implementador')).deny).toMatch(/pouso/)
+})
+
+test('reproduz-incidente: pousar manual, sem /clear, contexto 61 % ⇒ nada despacha; o mod pousa sozinho (tentativa 2) e a sessão nova, abaixo de X, despacha', async ($, on) => {
+  const m = mundo($, on, { eventos: INCIDENTE(), percent: 61, agora: BASE })
+  await m.inicio()
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/) // antes da T53 o Agent passava aqui: 8 agentes acima do teto
+  await m.turno(); await m.clock.settle() // 0 vivos, o pouso manual é de 10 min atrás: o mod não espera o dono
+  expect(m.est.clears).toBe(1)
+  expect(tentativas(m)).toEqual([2])
+  expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(0) // a repetição não é um pouso novo
+  expect(m.est.submits).toHaveLength(1)
+  await libera(m) // a sessão nova mede 5 < X
+})
+
+test('abaixo-de-x-libera-e-em-x-nunca: a sessão nova abaixo de X despacha; voltando a X ou acima, nega de novo, sem janela de tempo (I1, I4)', async ($, on) => {
+  const m = mundo($, on)
+  await pousar(m) // pouso do mod (percent 60) + /clear: sessão nova a 5 %
+  await libera(m)
+  for (const depois of [0, 10_000, 200_000, 3_600_000]) {
+    await m.avancar(depois)
+    m.est.percent = 80
+    await nega(m)
+  }
+  m.est.percent = 5
+  await libera(m)
+})
+
+test('clear-falho-repete: /clear que deixa 60 % = a sessão nova pousa a si mesma; só depois de 60 s, SEM turno nenhum (n=2)', async ($, on) => {
+  const m = mundo($, on, { percentPosClear: 60, agora: BASE })
+  await pousar(m)
+  expect(m.est.clears).toBe(1)
+  await nega(m)
+  await m.turno(); await m.clock.settle() // espera ainda não vencida (poucos segundos do pouso): nada de repetir
+  expect(m.est.clears).toBe(1)
+  expect(tentativas(m)).toEqual([])
+  await m.avancar(30_000) // vigia: ainda < 60 s do pouso
+  expect(m.est.clears).toBe(1)
+  await m.avancar(31_000) // vencida: a vigia repete sozinha, sem nenhum turn.complete
+  expect(m.est.clears).toBe(2)
+  expect(tentativas(m)).toEqual([2])
+  expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(1)
+  expect(parou(m)).toHaveLength(0)
+})
+
+test('sem-turno-a-vigia-repete: o pouso manual é recente, nenhum turno vem; a vigia espera os 60 s e repete', async ($, on) => {
+  const m = mundo($, on, { eventos: INCIDENTE(20_000), percent: 61, agora: BASE })
+  await m.inicio()
+  await m.turno(); await m.clock.settle() // pouso de 20 s atrás: espera
+  expect(m.est.clears).toBe(0)
+  await m.avancar(30_000) // 50 s do pouso
+  expect(m.est.clears).toBe(0)
+  expect(tentativas(m)).toEqual([])
+  await nega(m) // nenhum despacho entre as tentativas
+  await m.avancar(35_000) // 85 s, sem nenhum turno
+  expect(m.est.clears).toBe(1)
+  expect(tentativas(m)).toEqual([2])
+})
+
+test('teto-3-tentativas-para-sem-pouso: 3 tentativas e a conversa segue em X ⇒ loop.parar sem_pouso UMA vez, aviso, nenhuma 4ª (tudo pela vigia, sem turno)', async ($, on) => {
+  const m = mundo($, on, { percentPosClear: 60, agora: BASE })
+  await pousar(m)
+  await passos(m, 3) // 1ª repetição, 2ª, e a decisão que desiste
+  expect(m.est.clears).toBe(3) // pouso + 2 repetições = 3 tentativas
+  expect(tentativas(m)).toEqual([2, 3])
+  expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(1)
+  expect(parou(m)).toHaveLength(1)
+  expect(parou(m)[0].dados).toEqual({ motivo: 'sem_pouso', causa: 'sem_confirmacao' })
+  expect(m.toasts.some((t) => /depois de 3 tentativas/.test(t))).toBe(true)
+  for (let i = 0; i < 4; i++) { await m.avancar(61_000); await m.turno(); await m.clock.settle() }
+  expect(m.est.clears).toBe(3) // nenhuma 4ª
+  expect(parou(m)).toHaveLength(1) // o push do PAROU é um só
+  // a conversa cai abaixo de X e volta: a mesma fronteira, a mesma contagem; o loop já parou e `sem_pouso` não se grava de novo
+  m.est.percent = 10; await m.turno(); await m.clock.settle()
+  m.est.percent = 60; await m.turno(); await m.clock.settle()
+  expect(parou(m)).toHaveLength(1)
+  expect(m.est.clears).toBe(3)
+})
+
+test('R3-D laço-com-submit-falho (I3, MAJOR-4): o submit da retomada falha e o /clear deixa 70 % ⇒ no máximo 3 /clears, 1 sessao.pouso, sem_pouso uma vez', async ($, on) => {
+  const m = mundo($, on, { submitFalha: true, percentPosClear: 70, agora: BASE })
+  await pousar(m)
+  for (let i = 0; i < 12; i++) { await m.turno(); await m.clock.settle(); await m.avancar(61_000) }
+  expect(m.est.clears).toBe(3)
+  expect(m.tipos().filter((t) => t === 'sessao.pouso')).toHaveLength(1)
+  expect(tentativas(m)).toEqual([2, 3])
+  expect(parou(m)).toHaveLength(1)
+})
+test('R3-D2 laço-com-sessao.inicio-clear: com o evento de /clear do onboarding o limite é o mesmo', async ($, on) => {
+  let mm: any
+  const m = mundo($, on, { submitFalha: true, percentPosClear: 70, agora: BASE, aoClear: () => { mm.add('sistema', 'sessao.inicio', { origem: 'clear' }, `${mm.est.sessaoId}-n`) } })
+  mm = m
+  await pousar(m)
+  for (let i = 0; i < 12; i++) { await m.turno(); await m.clock.settle(); await m.avancar(61_000) }
+  expect(m.est.clears).toBe(3)
+  expect(tentativas(m)).toEqual([2, 3])
+  expect(parou(m)).toHaveLength(1)
+})
+test('R3-D3 laço-submit-ok: /clear que não baixa (70 %), submit ok, com e sem turnos ⇒ 3 /clears e sem_pouso', async ($, on) => {
+  const m = mundo($, on, { percentPosClear: 70, agora: BASE })
+  await pousar(m)
+  await passos(m, 12)
+  for (let i = 0; i < 6; i++) { await m.turno(); await m.clock.settle(); await m.avancar(61_000) }
+  expect(m.est.clears).toBe(3)
+  expect(tentativas(m)).toEqual([2, 3])
+  expect(parou(m)).toHaveLength(1)
+})
+test('R3-D4 misto: o 1º /clear troca a sessão e deixa 70 %, os seguintes não trocam ⇒ ainda no máximo 3 /clears', async ($, on) => {
+  const m = mundo($, on, { agora: BASE, percentPosClear: 70 })
+  await pousar(m)
+  let n = 0
+  for (let i = 0; i < 14; i++) {
+    await m.avancar(61_000)
+    if (m.est.clears > 1 && n === 0) n = 1
+    if (n) { m.est.sessaoId = 'sess-1-n'; m.est.percent = 70 }
+    await m.turno(); await m.clock.settle()
+  }
+  expect(m.est.clears).toBeLessThanOrEqual(3)
+  expect(parou(m)).toHaveLength(1)
+})
+
+test('R3-A pouso-de-B-nao-libera-A: A (que pousou, o /clear dela não limpou, 61 %) segue negada mesmo com o pouso de B e B-n a 5 %', async ($, on) => {
+  const evs = POUSOU_A(EVT(5, 'sessao.pouso', { percent: 61, x: 50 }, 30_000, 'sess-B'), EVT(6, 'sessao.retomada', { via: 'mod', chars: 5 }, 25_000, 'sess-B-n'))
+  const m = mundo($, on, { eventos: evs, percent: 61, agora: BASE, sessaoId: 'sess-A' })
+  await nega(m)
+})
+test('R3-A0 controle: A a 61 % sem o pouso de B também é negada', async ($, on) => {
+  const m = mundo($, on, { eventos: POUSOU_A(), percent: 61, agora: BASE, sessaoId: 'sess-A' })
+  await nega(m)
+})
+test('R3-B pouso-sem-sessao-nao-prende-ninguem: pouso `loop` e a paralela B a 10 % não é negada, não se limpa e não repete', async ($, on) => {
+  const m = mundo($, on, { eventos: INCIDENTE(), percent: 10, agora: BASE, sessaoId: 'sess-B' })
+  await m.inicio()
+  await libera(m)
+  await m.turno(); await m.clock.settle(); await m.avancar(30_000); await m.avancar(61_000)
+  expect(m.est.clears).toBe(0)
+  expect(tentativas(m)).toEqual([])
+})
+test('R3-B2 B se limpou e B-n mede 5 %: A (61 %, onde o dono rodou pousar) continua negada', async ($, on) => {
+  const evs = [...INCIDENTE(), { ...EVT(5, 'sessao.pouso.tentativa', { n: 2 }, 20_000), sessao: 'sess-B' }, { ...EVT(6, 'sessao.retomada', { via: 'mod', chars: 5 }, 15_000), sessao: 'sess-B-n' }]
+  const m = mundo($, on, { eventos: evs, percent: 61, agora: BASE, sessaoId: 'sess-A' })
+  await nega(m)
+})
+test('R3-C sucessora-em-X-com-vivo: sessão nova a 61 % com agente vivo é negada em +0, +100 s e +200 s (sem janela, I4), sem tentativa', async ($, on) => {
+  const vivos: any[] = []
+  const m = mundo($, on, { percentPosClear: 61, agora: BASE, agentes: vivos })
+  await pousar(m)
+  vivos.push({ id: 'v1', status: 'running' })
+  await nega(m)
+  await m.avancar(100_000); await nega(m)
+  await m.avancar(100_000); await nega(m)
+  expect(tentativas(m)).toEqual([])
+  expect(m.est.clears).toBe(1)
+})
+test('R3-C2 sucessora-em-X-com-pausa: o arquivo de pausa por 200 s não a libera; depois da pausa ela pousa de novo e nunca despacha em X', async ($, on) => {
+  const PAUSA = `${PRINCIPAL}/.harness/PAU` + 'SAR'
+  const m = mundo($, on, { percentPosClear: 61, agora: BASE })
+  await pousar(m)
+  m.arquivos.add(PAUSA)
+  await m.avancar(200_000)
+  m.arquivos.delete(PAUSA)
+  await nega(m)
+  await m.turno(); await m.clock.settle(); await m.avancar(61_000)
+  expect(tentativas(m)).toEqual([2, 3])
+})
+test('alheia-com-clear-nao-libera-a-que-pousou: C alheia dá /clear; A (61 %) segue negada; C baixa segue livre', async ($, on) => {
+  const clearC = EVT(5, 'sessao.inicio', { origem: 'clear' }, 597_000, 'sess-C')
+  await nega(mundo($, on, { eventos: POUSOU_A(clearC), percent: 61, agora: BASE, sessaoId: 'sess-A' }))
+})
+test('alheia-baixa-livre: a sessão C alheia, abaixo de X, despacha e não repete o pouso de A', async ($, on) => {
+  const clearC = EVT(5, 'sessao.inicio', { origem: 'clear' }, 597_000, 'sess-C')
+  const m = mundo($, on, { eventos: POUSOU_A(clearC), percent: 5, agora: BASE, sessaoId: 'sess-C' })
+  await m.inicio()
+  await libera(m)
+  await m.turno(); await m.clock.settle()
+  expect(tentativas(m)).toEqual([])
+  expect(m.est.clears).toBe(0)
+})
+test('paralela-no-teto-pousa-a-si-mesma (I2): B paralela em 61 % nega o despacho e pousa a PRÓPRIA conversa (tentativa 2 da contagem da fronteira); nunca por A', async ($, on) => {
+  const m = mundo($, on, { eventos: POUSOU_A(), percent: 61, agora: BASE, sessaoId: 'sess-B' })
+  await m.inicio()
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/)
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(1)
+  expect(tentativas(m)).toEqual([2])
+})
+test('paralela-baixa-livre: B abaixo de X sem relação com o pouso despacha', async ($, on) => {
+  const m = mundo($, on, { eventos: POUSOU_A(), percent: 10, agora: BASE, sessaoId: 'sess-B' })
+  await libera(m)
+})
+
+// GM-14 T59 (emenda 67, MAJOR-1 do review final): pouso da fronteira já feito, contexto de volta a X ou acima e task `concluida` à espera do revisor.
+// Antes da T59 o mod nega todo Agent (revisor incluído) e o núcleo devolvia `despachar revisor`, nunca `pousar`: só o /clear manual saía do impasse.
+/** pouso de A feito, `a` integrada e `b` concluída (revisor pendente): o diário do impasse */
+const IMPASSE = () => POUSOU_A(
+  EVT(5, 'task.integrada', { task: 'a', sha: 'd' }, 500_000),
+  EVT(6, 'task.iniciada', { task: 'b', papel: 'implementador' }, 400_000), EVT(7, 'task.concluida', { task: 'b', sha: 'y' }, 390_000),
+)
+test('T59-impasse-0-vivos-pousa: POUSOU_A + a integrada + b concluída, 61 %, 0 vivos ⇒ o mod pousa (/clear, tentativa 2); nunca despacha o revisor', async ($, on) => {
+  const m = mundo($, on, { eventos: IMPASSE(), percent: 61, agora: BASE, sessaoId: 'sess-A', agentes: [] })
+  await m.inicio()
+  await nega(m) // revisor incluído
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(1)
+  expect(tentativas(m)).toEqual([2])
+  expect(m.est.submits).toHaveLength(1)
+  await libera(m) // a sessão nova mede 5 < X
+})
+test('T59-impasse-com-dono-aberto-pousa: o mesmo impasse com a conversa do dono aberta (dono.mensagem), 61 %, 0 vivos ⇒ 1 /clear (emenda 52 c); o revisor segue negado (pousoPendente na 2ª chamada do núcleo, pousariaSemDono)', async ($, on) => {
+  const m = mundo($, on, { eventos: IMPASSE(), percent: 61, agora: BASE, sessaoId: 'sess-A', agentes: [] })
+  await m.inicio()
+  await m.dono(); await m.clock.settle()
+  await nega(m) // revisor incluído
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(1)
+  expect(tentativas(m)).toEqual([2])
+})
+test('T59-impasse-pela-vigia-sem-turno: o mesmo impasse sai pela vigia de 30 s, sem nenhum fim de turno depois', async ($, on) => {
+  const m = mundo($, on, { eventos: IMPASSE(), percent: 61, agora: BASE, sessaoId: 'sess-A', agentes: [] })
+  await m.inicio()
+  await nega(m) // o 1º Agent já arma a vigia
+  await passos(m, 2)
+  expect(m.est.clears).toBe(1)
+  expect(tentativas(m)).toEqual([2])
+})
+test('T59-impasse-com-vivos-espera: o mesmo impasse com agente vivo ⇒ espera, sem /clear e sem despachar o revisor; ao terminar o vivo, pousa', async ($, on) => {
+  const vivos: any[] = [{ id: 'v1', status: 'running' }]
+  const m = mundo($, on, { eventos: IMPASSE(), percent: 61, agora: BASE, sessaoId: 'sess-A', agentes: vivos })
+  await m.inicio()
+  await nega(m)
+  await m.turno(); await m.clock.settle(); await m.avancar(61_000)
+  expect(m.est.clears).toBe(0)
+  expect(tentativas(m)).toEqual([])
+  await nega(m) // nunca o revisor
+  vivos.length = 0
+  await passos(m, 2)
+  expect(m.est.clears).toBe(1)
+  expect(tentativas(m)).toEqual([2])
+})
+test('T59-controle-fronteira-aberta-abaixo-de-x: o impasse com a sessão a 10 % não pousa e o revisor passa', async ($, on) => {
+  const m = mundo($, on, { eventos: IMPASSE(), percent: 10, agora: BASE, sessaoId: 'sess-A', agentes: [] })
+  await m.inicio()
+  await libera(m)
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(0)
+})
+
+test('vivo-por-mais-de-1h: agente vivo por 70 min não derruba a vigia; ao terminar o mod repete e chega a sem_pouso, sem turno', async ($, on) => {
+  const vivos: any[] = []
+  const m = mundo($, on, { clearNaoLimpa: true, agora: BASE, agentes: vivos })
+  await pousar(m) // pouso (tentativa 1) e o /clear não faz nada (o incidente): mesma sessão, ainda em 60 %
+  expect(m.est.clears).toBe(1)
+  vivos.push({ id: 'a2', status: 'running' })
+  await m.avancar(4_200_000)
+  expect(m.est.clears).toBe(1)
+  expect(tentativas(m)).toEqual([])
+  vivos.length = 0
+  await passos(m, 4)
+  expect(tentativas(m)).toEqual([2, 3])
+  expect(parou(m).map((g) => g.dados.motivo)).toEqual(['sem_pouso'])
+})
+test('pausa-por-mais-de-1h: o arquivo de pausa por 70 min também não derruba a vigia', async ($, on) => {
+  const PAUSA = `${PRINCIPAL}/.harness/PAU` + 'SAR'
+  const m = mundo($, on, { clearNaoLimpa: true, agora: BASE })
+  await pousar(m)
+  m.arquivos.add(PAUSA)
+  await m.avancar(4_200_000)
+  expect(m.est.clears).toBe(1)
+  m.arquivos.delete(PAUSA)
+  await passos(m, 4)
+  expect(tentativas(m)).toEqual([2, 3])
+  expect(parou(m).map((g) => g.dados.motivo)).toEqual(['sem_pouso'])
+})
+test('entre-tentativas-tudo-negado: depois da tentativa 2 e antes da 3, implementador, correção e revisor são negados (com e sem namespace)', async ($, on) => {
+  const m = mundo($, on, { percentPosClear: 60, agora: BASE })
+  await pousar(m)
+  await m.avancar(61_000) // tentativa 2
+  expect(tentativas(m)).toEqual([2])
+  await nega(m)
+})
+
+test('tentativa-nao-e-pouso: tentativa não muda seq, fronteira nem a chave do push', async ($, on) => {
+  const base = INCIDENTE()
+  const com = [...base, EVT(5, 'sessao.pouso.tentativa', { n: 2 }, 300_000, 'sess-1'), EVT(6, 'sessao.pouso.tentativa', { n: 3 }, 100_000, 'sess-1')]
+  expect(pousoPendente(com, true)).toEqual(pousoPendente(base, true)) // mesmo seq ⇒ mesma chave do push
+  expect(pousoPendente(com, true).seq).toBe(4)
+  const estado = (pp: any) => ({ id: 'PBI-7', depende: [{ acoes: [{ comando: '/clear' }] }], pousoPendente: pp })
+  expect(chavePouso(estado(pousoPendente(com, true)))).toBe(chavePouso(estado(pousoPendente(base, true))))
+  const soTentativa = [...base.slice(0, 3), EVT(5, 'sessao.pouso.tentativa', { n: 2 }, 100_000, 'sess-1')]
+  expect(pousoDaFronteira(soTentativa)).toBe(false)
+  expect(pousoPendente(soTentativa, true).pendente).toBe(false)
+})
+
+// ---- a definição única (pouso-pendente.ts): por sessão ----
+const PEV = (seq: number, tipo: string, dados: Record<string, unknown>, tsMs: number, sessao: string) =>
+  ({ seq, ts: new Date(tsMs).toISOString(), autor: 'a', sessao, agente: 'o', tipo, dados, hash_anterior: null })
+const T0 = Date.UTC(2026, 10, 14, 10, 0, 0)
+const VER = PEV(3, 'review.veredito', { task: 'a', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, T0 - 1000, 's0')
+const POUSO = PEV(4, 'sessao.pouso', { percent: 61, x: 50 }, T0, 'A')
+const L = (sessao: string, percent: number, emMs: number, fonte = 'mod') => ({ sessao, percent, fonte, emMs })
+const med = (sessaoAtual: string, leituras: any[], agoraMs: number) => ({ x: 50, agoraMs, sessaoAtual, leituras })
+const pend = (evs: any[], sessao: string, leituras: any[], agoraMs: number) => pousoPendente(evs, true, med(sessao, leituras, agoraMs)).pendente
+
+test('pura-por-sessao (I1): só a leitura PRÓPRIA decide; a de outra sessão nunca libera nem prende', async ($, on) => {
+  const agora = T0 + 60_000
+  expect(pend([VER, POUSO], 'A', [L('A', 61, agora - 1000)], agora)).toBe(true) // ainda em X depois do pouso
+  expect(pend([VER, POUSO], 'A', [L('A', 20, agora - 1000)], agora)).toBe(false)
+  expect(pend([VER, POUSO], 'A', [L('A', 50, agora - 1000)], agora)).toBe(true) // X exato: não é < X
+  expect(pend([VER, POUSO], 'A', [L('A', 61, agora - 1000), L('B', 5, agora - 1000)], agora)).toBe(true) // B baixa não libera A
+  expect(pend([VER, POUSO], 'B', [L('A', 61, agora - 1000), L('B', 5, agora - 1000)], agora)).toBe(false) // A alta não prende B
+  // leitura própria que não vale: velha (> 120 s), do futuro (> 5 s), de fonte transcript, de outra sessão ⇒ sem leitura própria: a regra sem mod (/clear do dono)
+  for (const l of [L('A', 20, agora - 130_000), L('A', 20, agora + 60_000), L('A', 20, agora - 1000, 'transcript')]) {
+    expect(pend([VER, POUSO], 'A', [l], agora)).toBe(true) // sem /clear de outra sessão no diário: pendente por evento
+    expect(pend([VER, POUSO, PEV(5, 'sessao.inicio', { origem: 'clear' }, T0 + 5_000, 'S9')], 'A', [l], agora)).toBe(false) // o /clear do dono libera
+  }
+})
+test('pura-sonda-r2 (P-a, P-a2, P-b, P-c, Q1, Q2, Q3, Q4): as sondas do revisor das rodadas anteriores, com a resposta por sessão', async ($, on) => {
+  const retomada = PEV(5, 'sessao.retomada', { via: 'mod', chars: 10 }, T0 + 5_000, 'A2')
+  const H = 3_600_000
+  // P-a: depois de um 2º /clear (S3), a leitura fresca de S3 baixa libera em +180 s e +600 s
+  for (const d of [180_000, 600_000]) {
+    const evs = [VER, POUSO, retomada, PEV(6, 'sessao.inicio', { origem: 'clear' }, T0 + d - 30_000, 'S3')]
+    expect(pend(evs, 'S3', [L('A2', 4, T0 + 20_000), L('S3', 3, T0 + d - 1000)], T0 + d)).toBe(false)
+  }
+  // P-a2: A2 viva a 30 % libera; a 55 % (≥ X) não despacha: o Stop diz aguardando e o mod pousa a conversa
+  expect(pend([VER, POUSO, retomada], 'A2', [L('A2', 30, T0 + 599_000)], T0 + 600_000)).toBe(false)
+  expect(pend([VER, POUSO, retomada], 'A2', [L('A2', 55, T0 + 599_000)], T0 + 600_000)).toBe(true)
+  // P-b: A viva a 61 % depois da tentativa de B, B2 a 5 %: A segue pendente
+  const evsB = [VER, POUSO, PEV(5, 'sessao.pouso.tentativa', { n: 2 }, T0 + 130_000, 'B'), PEV(6, 'sessao.retomada', { via: 'mod', chars: 10 }, T0 + 135_000, 'B2')]
+  expect(pend(evsB, 'A', [L('A', 61, T0 + 139_000), L('B2', 5, T0 + 138_000)], T0 + 140_000)).toBe(true)
+  // P-c: C alheia deu /clear, A viva a 61 %: C (5 %) livre, A pendente
+  const evsC = [VER, POUSO, PEV(5, 'sessao.inicio', { origem: 'clear' }, T0 + 3_000, 'C')]
+  expect(pend(evsC, 'C', [L('A', 61, T0 + 59_000), L('C', 5, T0 + 58_000)], T0 + 60_000)).toBe(false)
+  expect(pend(evsC, 'A', [L('A', 61, T0 + 59_000), L('C', 5, T0 + 58_000)], T0 + 60_000)).toBe(true)
+  // Q1 (MAJOR-5): a sucessora fechou, o dia seguinte abre S4 por startup; S4 mede 4 %: livre
+  const evsQ1 = [VER, POUSO, PEV(5, 'sessao.retomada', { via: 'mod', chars: 10 }, T0 + 5_000, 'A2'), PEV(6, 'sessao.inicio', { origem: 'startup' }, T0 + 20 * H, 'S4')]
+  expect(pend(evsQ1, 'S4', [L('A2', 30, T0 + 2 * H), L('S4', 4, T0 + 20 * H + 59_000)], T0 + 20 * H + 60_000)).toBe(false)
+  // Q2: A2 a 61 % em +100 s e em +190 s: nos dois casos pendente (sem janela, I4)
+  for (const d of [100_000, 190_000]) expect(pend([VER, POUSO, retomada], 'A2', [L('A2', 61, T0 + d - 1000)], T0 + d)).toBe(true)
+  // Q3 e Q4: o pouso de B (ou o `loop`) confirmado por B-n não libera A a 61 %
+  const evsQ3 = [VER, POUSO, PEV(5, 'sessao.pouso', { percent: 61, x: 50 }, T0 + 30_000, 'B'), PEV(6, 'sessao.retomada', { via: 'mod', chars: 10 }, T0 + 35_000, 'B-n')]
+  expect(pend(evsQ3, 'A', [L('A', 61, T0 + 59_000), L('B-n', 5, T0 + 58_000)], T0 + 60_000)).toBe(true)
+  const evsQ4 = [VER, PEV(4, 'sessao.pouso', { percent: null, x: 50, via: 'dono' }, T0, 'loop'), PEV(5, 'sessao.pouso.tentativa', { n: 2 }, T0 + 180_000, 'B'), PEV(6, 'sessao.retomada', { via: 'mod', chars: 10 }, T0 + 185_000, 'B-n')]
+  expect(pend(evsQ4, 'A', [L('A', 61, T0 + 199_000), L('B-n', 5, T0 + 198_000)], T0 + 200_000)).toBe(true)
+})
+test('pura-tentativas (I3): conta por fronteira, de qualquer sessão; veredito novo zera; tentativa não é pouso', async ($, on) => {
+  const t = (evs: any[]) => tentativasDoPouso(evs)
+  expect(t([VER])).toEqual({ n: 0, ultimoMs: null })
+  expect(t([VER, POUSO]).n).toBe(1)
+  expect(t([VER, POUSO, PEV(5, 'sessao.pouso.tentativa', { n: 2 }, T0 + 70_000, 'B'), PEV(6, 'sessao.pouso', { percent: 61, x: 50 }, T0 + 140_000, 'C')])).toEqual({ n: 3, ultimoMs: T0 + 140_000 }) // seq novo e sessão nova NÃO zeram
+  expect(t([VER, POUSO, PEV(7, 'review.veredito', { task: 'b', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, T0 + 500_000, 's0')]).n).toBe(0) // fronteira nova
+  expect(t(null)).toEqual({ n: 0, ultimoMs: null })
+})
+test('pura-sem-mod-o-evento-vale (FIEL-14 e, h): sem leitura própria o /clear do dono libera, mas só com onboarding; startup/resume e sessão paralela não tiram', async ($, on) => {
+  expect(pousoPendente([VER, POUSO], false).pendente).toBe(false) // FIEL-14 h
+  expect(pousoPendente([VER, POUSO], true).pendente).toBe(true)
+  expect(pousoPendente([VER, POUSO, PEV(5, 'sessao.inicio', { origem: 'startup' }, T0 + 5_000, 'S9')], true).pendente).toBe(true)
+  expect(pousoPendente([VER, POUSO, PEV(5, 'sessao.inicio', { origem: 'clear' }, T0 + 5_000, 'S9')], true).pendente).toBe(false)
+  expect(pousoPendente([VER, POUSO, PEV(5, 'sessao.inicio', { origem: 'clear' }, T0 + 5_000, 'A')], true).pendente).toBe(true) // o clear da própria sessão que pousou não conta
+})
+
+test('pura-fronteira-atual (c3, MAJOR-1): o pouso de uma fronteira ANTERIOR não é pendente; a regra é a mesma `pousoDaFronteira` do mod; o `proxima` (proximaAcao com o mesmo flag) despacha o revisor em vez de pousar', async ($, on) => {
+  const iniT = (seq: number, t: string, ms: number) => PEV(seq, 'task.iniciada', { task: t, papel: 'implementador' }, ms, 's0')
+  const conT = (seq: number, t: string, ms: number) => PEV(seq, 'task.concluida', { task: t, sha: 'x' }, ms, 's0')
+  const verT = (seq: number, t: string, ms: number) => PEV(seq, 'review.veredito', { task: t, veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }, ms, 's0')
+  const intT = (seq: number, t: string, ms: number) => PEV(seq, 'task.integrada', { task: t, sha: 'd' }, ms, 's0')
+  const antes = [iniT(1, 'a', T0 - 9000), conT(2, 'a', T0 - 8000), verT(3, 'a', T0 - 7000), intT(4, 'a', T0 - 6000)]
+  const velho = PEV(5, 'sessao.pouso', { percent: 61, x: 50 }, T0 - 5000, 'S0')
+  const nova = [iniT(6, 'b', T0 - 4000), conT(7, 'b', T0 - 3000), verT(8, 'b', T0 - 2000), intT(9, 'b', T0 - 1000)]
+  const agora = T0 + 60_000
+  const m = med('S1', [L('S1', 61, agora - 1000)], agora)
+  // pouso da fronteira atual (depois do último veredito): pendente; fronteira nova (veredito depois do pouso): não
+  expect(pousoPendente([...antes, velho], true, m).pendente).toBe(true)
+  expect(pousoPendente([...antes, velho, ...nova], true, m).pendente).toBe(false)
+  expect(pousoPendente([...antes, velho, ...nova], false, m).pendente).toBe(false)
+  // `proxima`: com o flag da regra única, T c concluída a revisar em 61 % ⇒ despachar o revisor, nunca pousar
+  const plano = { entrega: 'PBI-7', tasks: [{ id: 'a', deps: [], arquivos: ['a.ts'] }, { id: 'b', deps: [], arquivos: ['b.ts'] }, { id: 'c', deps: [], arquivos: ['c.ts'] }] } as any
+  const evs = [...antes, velho, ...nova, iniT(10, 'c', T0 - 500), conT(11, 'c', T0 - 400)]
+  const flag = pousoPendente(evs, true, m).pendente
+  const acao: any = proximaAcao(plano, evs, { slots: 3, percent: 61, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: true, pousoPendente: flag })
+  expect(flag).toBe(false)
+  expect(acao.tipo).toBe('despachar')
+  expect(acao.itens.map((i: any) => i.papel)).toEqual(['revisor'])
+})
+test('pura-x-exato-e-faixa (c3, MINOR-3): percent == X depois do pouso é pendente (>=); percent fora de [0,100] não é leitura', async ($, on) => {
+  const agora = T0 + 60_000
+  expect(pend([VER, POUSO], 'A', [L('A', 50, agora - 1000)], agora)).toBe(true)
+  expect(pend([VER, POUSO], 'A', [L('A', 49.99, agora - 1000)], agora)).toBe(false)
+  const j = (percent: number) => JSON.stringify({ percent, fonte: 'mod', em: new Date(agora - 1000).toISOString() })
+  expect(lerLeitura('A', j(-5))).toBeNull()
+  expect(lerLeitura('A', j(101))).toBeNull()
+  expect(lerLeitura('A', j(0))).not.toBeNull()
+  expect(lerLeitura('A', j(100))).not.toBeNull()
+})
+test('em-x-exato-nega (c3, MINOR-3): o mod nega com a leitura exatamente em X depois do pouso', async ($, on) => {
+  const m = mundo($, on, { eventos: INCIDENTE(), percent: 50, agora: BASE })
+  await nega(m)
+})
+
+// ---- GM-14 T60 (REQ-DIA-1, emenda 68, MAJOR-2 do review final): o mod só GRAVA em .harness/ e só CHAMA gh com onboarding ----
+// Mutações: tirar o predicado de `lerContexto` (gravação do contexto) OU de `uma` (medir) derruba o teste do seu caminho.
+test('t60-sem-onboarding-nao-grava-contexto: percent do mod existe, mas a ponte de gravação do contexto nunca roda (turnos e 60 s)', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: 37, semOnboarding: true })
+  await arrancar(m)
+  await m.turno(); await drena(m)
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(m.est.onboardings.length).toBeGreaterThanOrEqual(1)
+  expect(m.est.onboardings[0].init.cwd).toBe(RAIZ)
+  expect(m.est.contextos).toHaveLength(0)
+  expect(m.est.painelStdins.length).toBeGreaterThanOrEqual(2) // o restante do painel segue lendo
+})
+test('t60-sem-onboarding-nao-mede: `painel.mjs medir` (que chama gh) nunca roda no início, no turno nem aos 60 s; o estado segue sendo lido', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { semOnboarding: true })
+  await arrancar(m)
+  await m.turno(); await drena(m)
+  await m.clock.advance(PERIODO); await drena(m)
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(m.est.medirStdins).toHaveLength(0)
+  expect(m.est.painelArgv.filter((a) => a[2] === 'estado').length).toBeGreaterThanOrEqual(3)
+})
+test('t60-onboarding-ponte-falha-nao-grava-nem-mede: sem resposta da ponte o mod não presume onboarding (falha fechada)', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: 37, onboardingFalha: true })
+  await arrancar(m)
+  await m.turno(); await drena(m)
+  expect(m.est.contextos).toHaveLength(0)
+  expect(m.est.medirStdins).toHaveLength(0)
+})
+test('t60-com-onboarding-comportamento-atual: grava o contexto e mede, e a ponte recebe a raiz da sessão e o dist da guarda', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: 37 })
+  await arrancar(m)
+  expect(m.est.contextos.length).toBeGreaterThanOrEqual(1)
+  expect(m.est.medirStdins.length).toBeGreaterThanOrEqual(1)
+  expect(m.est.onboardings[0].q.raiz).toBe(RAIZ)
+  expect(m.est.onboardings[0].q.url).toMatch(/^file:\/\/.*\/gates\/dist\/guarda\.js$/)
 })

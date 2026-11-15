@@ -4,13 +4,15 @@
  *
  *   painel.mjs estado [--agentes] [--pacote <nome>] [--entrega <ID>]
  *   painel.mjs texto  [--largura N] [--preset esquadrao|executivo] [--tema color|mono] [--pacote <nome>] [--agentes] [--entrega <ID>]
+ *   painel.mjs medir  [--agentes]   (GM-14 REQ-DIA-1: o ÚNICO subcomando que grava, e só `fato.medido`; em `painel-medir.mjs`. A T1 só liga o
+ *                                    despacho: devolve `nao_implementado`, rc 1, nada lido do stdin nem gravado; a T11 implementa)
  *
  * `--agentes`: JSON em stdin `{sessao:{percent,tokens,window,h5,d7,x,notificacao,pacote}, agentes:[{id,type,description,status,transcript}]|null}`
  * (sombra-p1d D-M3). SEM `--agentes` o stdin NUNCA é lido (a skill chama pelo Bash com stdin herdado: o CLI travaria).
  * `estado` imprime `{ok:true, estado, avisos}`; `texto` imprime `paraTexto(renderPainel(...))` (padrão: 80 colunas, esquadrao, mono).
  * Falha: UMA linha JSON `{ok:false, erro, mensagem}`, rc 1; uso errado rc 2. `texto` falha com a mesma linha JSON.
  *
- * SÓ LÊ. Nada de `decidirAgora`, lock, âncora, `append` ou `.harness/` criado: o painel pode rodar a cada 30 s, durante um deploy, com a janela fechada.
+ * `estado` e `texto` SÓ LEEM (D8). Nada de `decidirAgora`, lock, âncora, `append` ou `.harness/` criado: o painel pode rodar a cada 30 s, durante um deploy, com a janela fechada.
  * A decisão de entrega vem de `prepararLeitura` + `decisaoDe` (entrega.mjs), só com o loop em `concluir`.
  *
  * LEITURA ESTÁVEL DO DIÁRIO (D-M2). O diário são vários `events.<sessao>.jsonl` de processos diferentes; lidos em sequência, uma linha em gravação
@@ -21,21 +23,27 @@
  * LIMITES DECLARADOS. (1) `prepararLeitura` relê o diário (2ª fotografia); só alimenta `decisaoEntrega`. (2) `AgentePainel.tok` = soma com dedupe da
  * CAUDA lida (≤ 256 KB), não do transcript inteiro (MINOR, backlog: nenhum render o lê).
  */
+import { execFileSync } from 'node:child_process';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readFileSync, readdirSync } from 'node:fs';
 import { isatty } from 'node:tty';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import { lerConfigOrigin } from '../lib/config.mjs';
+import { PADROES } from '../lib/git.mjs';
+import { dirEntrega, lerEstrito } from '../dist/diario.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
-import { ordenar, proximaAcao } from '../dist/loop.js';
-import { projetarPainel, renderPainel } from '../dist/painel.js';
-import { validarPacote, usoDoTranscript } from '../dist/painel-equipe.js';
+import { estadoDe, ordenar, proximaAcao, TIPOS_DE_TASK } from '../dist/loop.js';
+import { projetarPainel, renderPainel, umaLinhaDe } from '../dist/painel.js';
+import { validarPacote, validarStdinAgentes, usoDoTranscript } from '../dist/painel-equipe.js';
 import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
 import { lerX } from '../dist/pouso.js';
-import { carregarPlano, contexto, lerDiarioEstrito, lerSpec, tetoDaSombra } from './loop.mjs';
+import { idDaBranch, trilhaDe } from '../dist/trilha.js';
+import { temOnboarding } from './cartao-sessao.mjs';
+import { carregarPlano, checkoutDaSessao, contexto, lerDiarioEstrito, lerSpec, lerSpecs, tetoDaSombra } from './loop.mjs';
 import { decisaoDe, pausado, prepararLeitura } from './entrega.mjs';
+import { medir } from './painel-medir.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const MOD_NOMES = join(AQUI, '..', '..', 'mod', 'temas', 'nomes');
@@ -50,7 +58,7 @@ const STDIN_MAX = 4 * 1024 * 1024;
 const TENTATIVAS = 3;
 const INTERVALO_MS = 50;
 const SINAIS_NEUTROS = { slots: 1, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false };
-const USO = 'uso: painel.mjs estado [--agentes] [--pacote <nome>] [--entrega <ID>] | painel.mjs texto [--largura N] [--preset esquadrao|executivo] [--tema color|mono] [--pacote <nome>] [--agentes] [--entrega <ID>]';
+const USO = 'uso: painel.mjs estado [--agentes] [--pacote <nome>] [--entrega <ID>] | painel.mjs texto [--largura N] [--preset esquadrao|executivo] [--tema color|mono] [--pacote <nome>] [--agentes] [--entrega <ID>] | painel.mjs medir [--agentes]';
 
 /** Falha com código: vira `{ok:false, erro, mensagem}` (rc 1; uso é 2). */
 class Falha extends Error {
@@ -69,8 +77,8 @@ const numero = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
 /** Estrito: subcomando, flag desconhecida, repetida, sem valor, valor fora da forma e posicional a mais são uso (rc 2). */
 export function lerArgs(argv) {
   const [cmd, ...resto] = argv;
-  if (cmd !== 'estado' && cmd !== 'texto') throw new Falha('uso', `subcomando ${JSON.stringify(cmd ?? null)}: esperado estado ou texto. ${USO}`, 2);
-  const COM_VALOR = cmd === 'texto' ? ['largura', 'preset', 'tema', 'pacote', 'entrega'] : ['pacote', 'entrega'];
+  if (cmd !== 'estado' && cmd !== 'texto' && cmd !== 'medir') throw new Falha('uso', `subcomando ${JSON.stringify(cmd ?? null)}: esperado estado, texto ou medir. ${USO}`, 2);
+  const COM_VALOR = cmd === 'texto' ? ['largura', 'preset', 'tema', 'pacote', 'entrega'] : cmd === 'medir' ? [] : ['pacote', 'entrega'];
   const flags = {};
   for (let i = 0; i < resto.length; i++) {
     const a = resto[i];
@@ -245,7 +253,7 @@ function lerPacoteDe(arquivo) {
 /** `mod/temas/nomes/<p>.json`, senão `<raiz>/.harness/temas/nomes/<p>.json`; inválido ou inexistente ⇒ `terra-media` e aviso. */
 function carregarPacote(nome, raiz, avisos) {
   const motivos = [];
-  for (const arquivo of [join(MOD_NOMES, `${nome}.json`), join(raiz, '.harness', 'temas', 'nomes', `${nome}.json`)]) {
+  for (const arquivo of [join(MOD_NOMES, `${nome}.json`), ...(raiz === null ? [] : [join(raiz, '.harness', 'temas', 'nomes', `${nome}.json`)])]) {
     const r = lerPacoteDe(arquivo);
     if (r.ok) return r.pacote;
     motivos.push(r.erro);
@@ -266,8 +274,11 @@ const tituloDe = (bytes) => {
   return null;
 };
 
-/** Agentes do stdin ⇒ `AgenteVivo[]`. Item que não é objeto ou sem `id` string é descartado; `id` repetido fica o 1º. Não array ⇒ `null`. */
-function agentesDe(bruto) {
+/**
+ * Agentes do stdin ⇒ `AgenteVivo[]`. Item que não é objeto ou sem `id` string é descartado; `id` repetido fica o 1º. Não array ⇒ `null`.
+ * `nomes` (já validado por `validarStdinAgentes`, FIEL-3 d): `{agent_id: {nome, vistoEm}}` do `$.store` do mod; o agente com entrada leva `nome` e `vistoEm`.
+ */
+function agentesDe(bruto, nomes = {}) {
   if (!Array.isArray(bruto)) return null;
   const vistos = new Set();
   const saida = [];
@@ -280,6 +291,7 @@ function agentesDe(bruto) {
       description: typeof it.description === 'string' ? it.description : '',
       status: typeof it.status === 'string' ? it.status : 'desconhecido', // status desconhecido conta como vivo
       uso: usoDoItem(it),
+      ...(Object.hasOwn(nomes, it.id) ? { nome: nomes[it.id].nome, vistoEm: nomes[it.id].vistoEm } : {}),
     });
   }
   return saida;
@@ -303,37 +315,212 @@ function modeloDoDiario(eventos) {
   return modelo;
 }
 
+// ─────────────────────────────────────────────────────────────── fatos da trilha (GM-14 T18)
+
+/** Nomes naturais das fontes (D-P13): o render os mostra em "não consegui ler <fonte>"; nunca nome de arquivo nem código. */
+const FONTE = Object.freeze({ specs: 'as specs', medir: 'o registro de medição do painel', gh: 'o GitHub', entregas: 'a lista de entregas', diarioDe: (id) => `o diário da ${id}` });
+const ausenteFs = (e) => e?.code === 'ENOENT' || e?.code === 'ENOTDIR';
+
+/** Branch do checkout da sessão; HEAD solto ou erro ⇒ `null` (não há branch a ler). */
+function branchDe(cwd) {
+  try {
+    return execFileSync('git', ['symbolic-ref', '--short', '-q', 'HEAD'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** `fluxo.idPadrao` de origin/HEAD, a mesma regra de `loop.mjs` (`idPadraoDe`, não exportada): ausente, longa ou inválida ⇒ o padrão. */
+function idPadraoDe(cfg) {
+  const v = cfg?.fluxo?.idPadrao;
+  if (typeof v !== 'string' || v.length === 0 || v.length > 200) return PADROES.idPadrao;
+  try { new RegExp(v); } catch { return PADROES.idPadrao; }
+  return v;
+}
+
+/** `<ledgerDir>/<ID>.md` (padrão `docs/ledgers`), a mesma regra do `responder.mjs`. */
+function temLedger(raiz, id, ledgerDir) {
+  const dir = typeof ledgerDir === 'string' && ledgerDir !== '' && !ledgerDir.startsWith('/') && !ledgerDir.split('/').includes('..') ? ledgerDir : 'docs/ledgers';
+  try { return lstatSync(join(raiz, dir, `${id}.md`)).isFile(); } catch { return false; }
+}
+
+/** Estado da entrega em palavras, só com fato: `N de M tasks integradas` | `tasks todas integradas`; sem `plano.json` legível ⇒ `null`. */
+function estadoEmPalavras(dir, eventos) {
+  let tasks;
+  try {
+    const j = JSON.parse(readFileSync(join(dir, 'plano.json'), 'utf8'));
+    if (!ehObj(j) || !Array.isArray(j.tasks)) return null;
+    tasks = j.tasks.map((t) => t?.id).filter((x) => typeof x === 'string');
+  } catch {
+    return null;
+  }
+  if (tasks.length === 0) return null;
+  let n = 0;
+  for (const id of tasks) {
+    const r = estadoDe(eventos.filter((e) => TIPOS_DE_TASK.includes(e?.tipo) && e?.dados?.task === id));
+    if (!('invalido' in r) && r.estado === 'integrada') n++;
+  }
+  return n === tasks.length ? 'tasks todas integradas' : `${n} de ${tasks.length} tasks integradas`;
+}
+
+/**
+ * Pontos de atividade `{id, data}` (pendência T14/T15: a MESMA regra do `responder.mjs`): 1 por `ts` distinto de cada entrega de
+ * `.harness/entregas/` fora das pastas `_*`. Diário ilegível ⇒ a fonte entra em `fontes` (nunca lista vazia calada). `ultima` = a de `ts` mais recente.
+ */
+function atividades(raiz, fontes) {
+  const base = join(raiz, '.harness', 'entregas');
+  let nomes;
+  try {
+    nomes = readdirSync(base).filter((n) => !n.startsWith('_')).sort();
+  } catch (e) {
+    if (!ausenteFs(e)) fontes.push(FONTE.entregas);
+    return { ultimas: [], ultima: null };
+  }
+  const ultimas = [];
+  let ultima = null;
+  for (const id of nomes) {
+    const dir = join(base, id);
+    try { if (!lstatSync(dir).isDirectory()) continue; } catch { continue; }
+    const lido = lerEstrito(dir);
+    if (!lido.ok) { fontes.push(FONTE.diarioDe(id)); continue; }
+    const vistos = new Set();
+    let maior = null;
+    for (const e of lido.eventos) {
+      if (typeof e?.ts !== 'string' || vistos.has(e.ts)) continue;
+      vistos.add(e.ts);
+      ultimas.push({ id, data: e.ts });
+      if (maior === null || e.ts > maior) maior = e.ts;
+    }
+    if (maior !== null && (ultima === null || maior > ultima.data)) ultima = { id, data: maior, dir, eventos: lido.eventos };
+  }
+  return { ultimas, ultima: ultima === null ? null : { id: ultima.id, estado: estadoEmPalavras(ultima.dir, ultima.eventos) } };
+}
+
+/** `gh` da entrega pelo `.harness/painel-medir.json` (T11; `estado` só lê): ausente ⇒ `nunca`; corrompido ⇒ `nunca` + fonte que falhou; `falhou` ⇒ o GitHub. */
+function ghDe(raiz, chave, fontes) {
+  let texto;
+  try {
+    texto = readFileSync(join(raiz, '.harness', 'painel-medir.json'), 'utf8');
+  } catch (e) {
+    if (!ausenteFs(e)) fontes.push(FONTE.medir);
+    return 'nunca';
+  }
+  let j;
+  try { j = JSON.parse(texto); } catch { fontes.push(FONTE.medir); return 'nunca'; }
+  if (!ehObj(j)) { fontes.push(FONTE.medir); return 'nunca'; }
+  const it = j[chave];
+  if (it === undefined) return 'nunca';
+  if (!ehObj(it) || (it.gh !== 'ok' && it.gh !== 'falhou')) { fontes.push(FONTE.medir); return 'nunca'; }
+  if (it.gh === 'falhou') fontes.push(FONTE.gh);
+  return it.gh;
+}
+
+/** `session_id` do mod (stdin de `--agentes`), a mesma leitura do `medir`; sem ele a trilha nunca liga por resposta (falha fechada). */
+function sessaoDoMod(agentes) {
+  const s = agentes?.session_id ?? agentes?.sessao?.session_id;
+  return typeof s === 'string' && s !== '' ? s : null;
+}
+
+/**
+ * T47: a projeção de uma entrega NÃO identificada (publicada) mostra o que o plano ausente mostraria (sem PRONTO, `modo`/`id`/`fase` da trilha,
+ * `plano` vazio) e mantém do cálculo com o plano o que depende de casar eventos e vivos com as tasks (parar, AGORA, depende, atenção, recente).
+ * `comPlano` e `semPlano` vêm do mesmo `projetar`, com as mesmas entradas.
+ */
+function semPlanoNaApresentacao(comPlano, semPlano, entrada) {
+  if (!ehObj(comPlano) || !ehObj(semPlano)) return comPlano;
+  const saida = { ...comPlano, modo: semPlano.modo, id: semPlano.id, pronto: semPlano.pronto, fase: semPlano.fase, plano: semPlano.plano };
+  // o sufixo da FASE diz o que o AGORA diz: a ação do vivo casado (do cálculo com o plano), não a descrição crua do vivo sem task
+  const crua = semPlano.agora?.agentes?.[0]?.acao;
+  const casada = comPlano.agora?.agentes?.[0]?.acao;
+  if (ehObj(saida.fase) && Array.isArray(saida.fase.sufixo) && typeof crua === 'string' && typeof casada === 'string') {
+    const tira = (a) => a.replace(/ \(registrado\)$/, '');
+    saida.fase = { ...saida.fase, sufixo: saida.fase.sufixo.map((x) => (typeof x === 'string' && x.endsWith(`: ${tira(crua)}`) ? `${x.slice(0, x.length - tira(crua).length)}${tira(casada)}` : x)) };
+  }
+  // a MESMA regra de `projetarNovo` (painel.ts), sobre o estado do cálculo com o plano e o `modo` da apresentação
+  saida.umaLinha = umaLinhaDe(saida, entrada?.ultima);
+  return saida;
+}
+
 /**
  * Monta o estado do painel. `opts`: `agentes` (objeto do stdin; ausente = sem `--agentes`, equipe só do diário), `pacote`, `entrega`, `agoraMs`
- * (um só `Date.now()` por execução), `env` (padrão `process.env`), `fuso`, `diario` (deps de `lerDiarioEstavel`) e `preparar` (troca `prepararLeitura`, para contar chamadas). Nunca lança: `{ok:true, estado, avisos}`
+ * (um só `Date.now()` por execução), `env` (padrão `process.env`), `fuso`, `diario` (deps de `lerDiarioEstavel`), `preparar` (troca `prepararLeitura`, para contar chamadas) e `projetar` (troca `projetarPainel`, para ler a entrada). Nunca lança: `{ok:true, estado, avisos}`
  * ou `{ok:false, erro, mensagem}`.
+ *
+ * GM-14 T18 (REQ-GLB-1, FIEL-10 b/e): num repo git NUNCA devolve `sem_loop`/`plano_ausente`/`entrega_nao_inferida`. Sem plano ⇒ FASE pela trilha;
+ * branch sem ID ⇒ diário de `_sem-id`; fora de repo ⇒ `modo: 'fora'`. Sempre passa `fatos` (FatosTrilha: branch, idPadrao, specs de `lerSpecs`,
+ * plano, ledger, gh de `painel-medir.json`, `ultimas`, `sessao` do stdin) a `projetarPainel` e as fontes que falharam em `fontesFalhas`.
  */
 export function estadoDoPainel(cwd, opts = {}) {
   const avisos = [];
   try {
     const agoraMs = opts.agoraMs ?? Date.now();
     const env = opts.env ?? process.env;
-    const c = contexto(cwd, { entrega: opts.entrega });
-    const plano = carregarPlano(c);
-    const lido = lerDiarioEstavel(c.dirEntrega, opts.diario);
+    const fontes = [];
+
+    // raiz e entrega: fora de repo ⇒ `fora`; branch sem ID ⇒ `_sem-id` (a mesma regra de raiz do loop)
+    let raiz = null;
+    try {
+      raiz = contexto(cwd, { entrega: opts.entrega ?? '_sem-id' }).raiz;
+    } catch (e) {
+      if (e?.erro !== 'fora_de_repo') throw e;
+    }
+    const origin = raiz === null ? { cfg: null, fonte: 'nenhuma', invalida: false } : lerConfigOrigin(raiz);
+    if (origin.invalida === true) avisos.push(`config de origin/HEAD inválida (${origin.motivo})`);
+    const idPadrao = idPadraoDe(origin.cfg);
+    const branch = raiz === null ? null : branchDe(cwd);
+    const id = opts.entrega ?? idDaBranch(branch, idPadrao);
+    const c = raiz === null ? null : { cwd, raiz, entrega: id ?? '_sem-id', dirEntrega: dirEntrega(raiz, id ?? null), sessao: 'loop' };
+
+    let plano = null;
+    if (c !== null && id !== null) {
+      try {
+        plano = carregarPlano(c);
+      } catch (e) {
+        if (e?.erro !== 'plano_ausente') throw e;
+      }
+    }
+    const lido = c === null ? { eventos: [] } : lerDiarioEstavel(c.dirEntrega, opts.diario);
     const eventos = lido.eventos;
 
-    // spec: sha e título dos MESMOS bytes
+    // DP-3 aj. 4: specs (com e sem plano) do checkout da sessão, o mesmo de `aprovarSpec`/`lerSpecs` do loop; diário na raiz principal
+    const sessaoRaiz = raiz === null ? null : checkoutDaSessao(cwd);
+    let specs = [];
+    if (raiz !== null) {
+      try { specs = lerSpecs(sessaoRaiz, idPadrao); } catch (e) { if (typeof e?.erro !== 'string') throw e; fontes.push(FONTE.specs); }
+    }
+    const ativ = raiz === null ? { ultimas: [], ultima: null } : atividades(raiz, fontes);
+    const gh = raiz === null ? 'nunca' : ghDe(raiz, id !== null && c.dirEntrega.endsWith(id) ? id : '_sem-id', fontes);
+    const sessaoMod = sessaoDoMod(opts.agentes);
+    const fatos = {
+      branch, idPadrao, specs, plano: plano === null ? null : { tasks: plano.tasks.map((t) => t.id) },
+      ledger: raiz !== null && id !== null && temLedger(raiz, id, origin.cfg?.fluxo?.ledgerDir), gh, ultimas: ativ.ultimas, sessao: sessaoMod,
+    };
+
+    // FIEL-1 b / spec:53: sem `--entrega`, o plano só entra na projeção quando a trilha liga a entrega (PR mergeado com a branch sozinha não liga:
+    // nada de PRONTO "N de N integradas" de uma entrega não identificada; a trilha segue vendo o plano em `fatos`)
+    // T47: o plano descartado segue sendo o que casa os eventos de task do diário e os vivos (FIEL-3 a): sem ele, T1 não está no plano e o diário vira
+    // `diario_invalido`. Ele só não aparece em PRONTO/modo/id/fase (a regra de "publicada" é a de `trilhaDe`, a única).
+    const planoDoDiario = plano;
+    const descartado = plano !== null && opts.entrega === undefined && eventos !== null && trilhaDe(fatos, eventos).identificada !== true;
+    if (descartado) plano = null;
+
+    // spec: sha e título dos MESMOS bytes (com plano: `plano.spec`; sem plano: a única de `lerSpecs` com o PBI da entrega)
     let specSha = null;
     let titulo = null;
-    if (typeof plano.spec === 'string' && plano.spec !== '') {
-      const s = lerSpec(c.raiz, plano);
+    if (plano !== null && typeof plano.spec === 'string' && plano.spec !== '') {
+      const s = lerSpec(sessaoRaiz, plano);
       if (s.ok) { specSha = s.sha256; titulo = tituloDe(s.bytes); } else avisos.push(`spec: ${s.erro} (${s.mensagem})`);
+    } else if (id !== null) {
+      const daEntrega = specs.filter((s) => s.pbi === id);
+      if (daEntrega.length === 1 && daEntrega[0].titulo !== '') titulo = daEntrega[0].titulo;
     }
 
     // origem: teto da Sombra e política
-    const origin = lerConfigOrigin(c.raiz);
-    if (origin.invalida === true) avisos.push(`config de origin/HEAD inválida (${origin.motivo})`);
     const teto = tetoDaSombra(origin);
     if (teto.aviso !== undefined) avisos.push(teto.aviso);
     const config = lerConfigEntrega(origin.cfg);
     avisos.push(...config.erros);
-    const efetiva = politicaEfetiva(config, plano.politica_entrega);
+    const efetiva = politicaEfetiva(config, plano?.politica_entrega);
     if (!efetiva.ok) avisos.push(`política de entrega: ${efetiva.mensagem}`);
     const politica = efetiva.ok
       ? { politica: efetiva.politica, dias: efetiva.janela?.dias ?? null }
@@ -348,7 +535,10 @@ export function estadoDoPainel(cwd, opts = {}) {
     // stdin (só quando o chamador passou --agentes)
     const comAgentes = opts.agentes !== undefined && opts.agentes !== null;
     const sessao = comAgentes && ehObj(opts.agentes.sessao) ? opts.agentes.sessao : {};
-    const agentes = comAgentes ? agentesDe(opts.agentes.agentes) : null;
+    // FIEL-3 d, FIEL-6 a, FIEL-11: `nomes`, `encerrados`, `acoes`, `segundoPlano`; ausente = vazio, fora do contrato = falha (nunca vazio calado)
+    const extras = comAgentes ? validarStdinAgentes(opts.agentes) : null;
+    if (extras !== null && !extras.ok) throw new Falha('stdin_invalido', extras.erro);
+    const agentes = comAgentes ? agentesDe(opts.agentes.agentes, extras.valor.nomes) : null;
 
     // x: o do stdin vence o do env (o mod conhece o X que ele passa)
     const xBruto = sessao.x === undefined || sessao.x === null ? env.GABARITO_POUSO_X : typeof sessao.x === 'number' ? String(sessao.x) : typeof sessao.x === 'string' ? sessao.x : '?';
@@ -362,11 +552,11 @@ export function estadoDoPainel(cwd, opts = {}) {
       if (PACOTE_RE.test(sessao.pacote)) nomePacote = sessao.pacote;
       else avisos.push(`sessao.pacote ${JSON.stringify(sessao.pacote.slice(0, 40))} fora da forma: usando ${PACOTE_PADRAO}`);
     }
-    const pacote = carregarPacote(nomePacote, c.raiz, avisos);
+    const pacote = carregarPacote(nomePacote, raiz, avisos);
 
-    // decisão de entrega: só com o loop em `concluir` (custo); sem efeito
+    // decisão de entrega: só com plano e o loop em `concluir` (custo); sem efeito
     let decisaoEntrega = null;
-    if (eventos !== null && eventos.length > 0) {
+    if (plano !== null && eventos !== null && eventos.length > 0) {
       const ord = ordenar(eventos);
       if (ord.ok && proximaAcao(plano, eventos, SINAIS_NEUTROS).tipo === 'concluir') {
         const r = (opts.preparar ?? prepararLeitura)(cwd, { entrega: c.entrega, agoraMs });
@@ -377,23 +567,31 @@ export function estadoDoPainel(cwd, opts = {}) {
 
     const entrada = {
       decisaoEntrega,
-      pausado: pausado(c),
+      pausado: c === null ? false : pausado(c),
       contexto: { percent: numero(sessao.percent), tokens: numero(sessao.tokens), window: numero(sessao.window) },
       limites: { h5: numero(sessao.h5), d7: numero(sessao.d7) },
       x: x.x,
       agentes,
+      ...(extras !== null ? { encerrados: extras.valor.encerrados, acoes: extras.valor.acoes, segundoPlano: extras.valor.segundoPlano } : {}),
       pacote,
       notificacao: notificacaoDe(sessao.notificacao),
       agoraMs,
       fuso,
       titulo,
       politica,
-      entregaId: c.entrega,
+      entregaId: plano !== null ? c.entrega : id,
       modeloSessao: modeloDoDiario(eventos),
       specSha,
       tetoSombra: teto.teto,
+      fatos,
+      fontesFalhas: fontes,
+      fora: raiz === null,
+      onboarding: raiz !== null && temOnboarding(raiz), // FIEL-14 h: o mesmo critério e a mesma leitura do cartão (config LOCAL)
+      ultima: ativ.ultima,
     };
-    return { ok: true, estado: projetarPainel(plano, eventos, entrada), avisos };
+    const projetar = opts.projetar ?? projetarPainel;
+    const estado = projetar(descartado ? planoDoDiario : plano, eventos, entrada);
+    return { ok: true, estado: descartado ? semPlanoNaApresentacao(estado, projetar(null, eventos, entrada), entrada) : estado, avisos };
   } catch (e) {
     if (e instanceof Falha || typeof e?.erro === 'string') return { ok: false, erro: e.erro, mensagem: e.message };
     return { ok: false, erro: 'erro_interno', mensagem: String(e instanceof Error ? e.message : e).slice(0, 200) };
@@ -413,6 +611,12 @@ export function main(argv, cwd = process.cwd(), io = {}) {
   };
   try {
     const { cmd, flags } = lerArgs(argv);
+    if (cmd === 'medir') {
+      // GM-14 T1: só o despacho. A T11 lê o stdin de `--agentes` e grava; o stub lança antes de qualquer leitura ou escrita.
+      const r = medir(cwd, { agentes: flags.agentes === true });
+      saida(`${JSON.stringify(r)}\n`);
+      return r?.ok === true ? 0 : 1;
+    }
     const agentes = flags.agentes === true ? lerEntradaAgentes((io.stdin ?? lerStdin)()) : undefined;
     const r = estadoDoPainel(cwd, { agentes, pacote: flags.pacote, entrega: flags.entrega, agoraMs: io.agoraMs });
     if (!r.ok) return falha(new Falha(r.erro, r.mensagem));

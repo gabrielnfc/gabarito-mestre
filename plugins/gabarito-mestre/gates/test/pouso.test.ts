@@ -315,6 +315,23 @@ test('marca-de-progresso: custo.medicao e loop.parar não contam; qualquer outro
   assert.equal(marcaDeProgresso('x'), -1);
 });
 
+test('sem-progresso-gm14: fato.medido, nota e dono.resposta depois de loop.parar não desfazem o já-parou nem somam à marca', () => {
+  const parar: [TipoEvento, Record<string, unknown>] = ['loop.parar', { motivo: 'teto_rodadas' }];
+  const fato: [TipoEvento, Record<string, unknown>] = ['fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'x' } }];
+  const nota: [TipoEvento, Record<string, unknown>] = ['nota', { tipo: 'assunto', texto: 'algo' }];
+  const resp: [TipoEvento, Record<string, unknown>] = ['dono.resposta', { pergunta: 's:1', opcao: 1, rotulo: 'sim' }];
+  const recusa: [TipoEvento, Record<string, unknown>] = ['diario.recusa', { tipo: 'fato.medido', padrao: 'AKIA' }];
+  assert.equal(jaParou(diario(ini('a'), parar, recusa)), true);
+  assert.equal(marcaDeProgresso(diario(ini('a'), con('a'), recusa, recusa)), 2);
+  assert.equal(jaParou(diario(ini('a'), parar, fato)), true);
+  assert.equal(jaParou(diario(ini('a'), parar, nota)), true);
+  assert.equal(jaParou(diario(ini('a'), parar, resp)), true);
+  assert.equal(jaParou(diario(ini('a'), parar, fato, nota, resp, con('a'))), false);
+  assert.equal(marcaDeProgresso(diario(ini('a'), con('a'))), 2);
+  assert.equal(marcaDeProgresso(diario(ini('a'), con('a'), fato, nota, resp)), 2);
+  assert.equal(marcaDeProgresso(diario(ini('a'), con('a'), fato, nota, resp, ver('a'))), 3);
+});
+
 // ---- revisor ----
 test('revisor-nome-real: o nome da constante é o do frontmatter em agents/', () => {
   const md = readFileSync(join(PLUGIN, 'agents', 'gabarito-revisor.md'), 'utf8');
@@ -375,16 +392,93 @@ function repoTemp(branch = 'feat/PBI-7-x') {
   spawnSync('git', ['symbolic-ref', 'HEAD', `refs/heads/${branch}`], { cwd: d });
   return d;
 }
-test('ponte-dir: acha a raiz, a pasta da entrega pelo PBI da branch e se há plano.json', () => {
+const gitT = (cwd: string, ...args: string[]) => {
+  const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t.local', ...args], { cwd, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout.trim();
+};
+const SPEC_PBI7 = '# Spec\nPBI: PBI-7\n\n## Seção\n';
+function comSpec(d: string, texto = SPEC_PBI7) {
+  mkdirSync(join(d, 'docs', 'superpowers', 'specs'), { recursive: true });
+  writeFileSync(join(d, 'docs', 'superpowers', 'specs', 'x.md'), texto);
+}
+test('ponte-dir: sem 2º fato a branch sozinha não identifica; com spec do PBI ou plano.json identifica e acha a pasta e o plano (FIEL-1 c)', () => {
   const d = repoTemp();
-  let r = ponte({ op: 'dir', cwd: d }, d);
-  assert.deepEqual(r, { ok: true, raiz: d, dir: join(d, '.harness', 'entregas', 'PBI-7'), plano: false });
-  mkdirSync(r.dir, { recursive: true });
-  writeFileSync(join(r.dir, 'plano.json'), '{}');
-  r = ponte({ op: 'dir', cwd: d }, d);
-  assert.equal(r.plano, true);
+  assert.deepEqual(ponte({ op: 'dir', cwd: d, sessao: 's1' }, d), { ok: true, raiz: d, identificada: false, entrega: null });
+  comSpec(d);
+  const dir = join(d, '.harness', 'entregas', 'PBI-7');
+  let r = ponte({ op: 'dir', cwd: d, sessao: 's1' }, d);
+  assert.deepEqual(r, { ok: true, raiz: d, identificada: true, entrega: 'PBI-7', dir, plano: false });
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'plano.json'), '{}');
+  r = ponte({ op: 'dir', cwd: d, sessao: 's1' }, d);
+  assert.equal(r.ok, false, 'plano.json inválido é falha de leitura, nunca "sem entrega"');
+  assert.match(r.erro, /plano\.json inválido/);
   const sem = repoTemp('main');
-  assert.equal(ponte({ op: 'dir', cwd: sem }, sem).dir, join(sem, '.harness', 'entregas', '_sem-id'));
+  assert.deepEqual(ponte({ op: 'dir', cwd: sem, sessao: 's1' }, sem), { ok: true, raiz: sem, identificada: false, entrega: null }, 'nem _sem-id');
+});
+test('ponte-raiz-principal-da-worktree: de dentro de uma worktree a raiz é a principal e a spec é lida do checkout da sessão (FIEL-1 a)', () => {
+  const d = repoTemp('main');
+  writeFileSync(join(d, 'a'), '1');
+  gitT(d, 'add', '.'); gitT(d, 'commit', '-qm', 'i');
+  const wt = join(d, 'wt');
+  gitT(d, 'worktree', 'add', '-q', '-b', 'feat/PBI-7-x', wt);
+  assert.deepEqual(ponte({ op: 'dir', cwd: wt, sessao: 's1' }, wt), { ok: true, raiz: d, identificada: false, entrega: null });
+  comSpec(wt); // a spec só existe na worktree da sessão
+  const r = ponte({ op: 'dir', cwd: wt, sessao: 's1' }, wt);
+  assert.equal(r.raiz, d, 'raiz principal, não o toplevel da worktree');
+  assert.equal(r.identificada, true);
+  assert.equal(r.dir, join(d, '.harness', 'entregas', 'PBI-7'));
+  assert.notEqual(r.raiz, wt);
+});
+test('ponte-branch-publicada-sem-loop-ativo: PR mergeado e nenhum aberto + branch sozinha não identifica; PR aberto ou a resposta (b) da sessão identifica (FIEL-1 b, c)', () => {
+  const d = repoTemp();
+  comSpec(d);
+  const dir = join(d, '.harness', 'entregas', 'PBI-7');
+  const grava = (sessao: string, ev: Record<string, unknown>) => assert.equal(ponte({ op: 'append', dir, cwd: d, sessao, ev }, d).ok, true);
+  const pr = (numero: number, estado: string) => grava('s9', { agente: 'orquestrador', tipo: 'fato.medido', dados: { chave: 'pr', valor: { numero, estado, branch: 'feat/PBI-7-x' }, fonte: 'gh' } });
+  pr(3, 'mergeado');
+  assert.deepEqual(ponte({ op: 'dir', cwd: d, sessao: 's1' }, d), { ok: true, raiz: d, identificada: false, entrega: null });
+  pr(4, 'aberto');
+  assert.equal(ponte({ op: 'dir', cwd: d, sessao: 's1' }, d).identificada, true, 'PR aberto depois: a entrega volta');
+  // diário ilegível é falha, nunca "sem entrega"
+  writeFileSync(join(dir, 'events.s9.jsonl'), 'lixo\n');
+  const f = ponte({ op: 'dir', cwd: d, sessao: 's1' }, d);
+  assert.equal(f.ok, false);
+  assert.match(f.erro, /diário ilegível/);
+});
+test('ponte-dir-ledger-e-2o-fato: branch com ID + ledger da entrega (sem spec nem plano) identifica; sem o ledger não (FIEL-1 c)', () => {
+  const d = repoTemp();
+  assert.equal(ponte({ op: 'dir', cwd: d, sessao: 's1' }, d).identificada, false, 'controle: só a branch');
+  mkdirSync(join(d, 'docs', 'ledgers'), { recursive: true });
+  writeFileSync(join(d, 'docs', 'ledgers', 'PBI-7.md'), '# ledger\n');
+  const r = ponte({ op: 'dir', cwd: d, sessao: 's1' }, d);
+  assert.equal(r.identificada, true);
+  assert.equal(r.entrega, 'PBI-7');
+});
+test('ponte-dir-idpadrao-da-config-de-origin: o idPadrao de harness.config.json em origin/HEAD vale na identificação; com ele mais estreito, a branch deixa de identificar (FIEL-1 a)', () => {
+  const d = repoTemp('feat/DOC-5-x');
+  comSpec(d, '# Spec\nPBI: DOC-5\n\n## Seção\n');
+  const antes = ponte({ op: 'dir', cwd: d, sessao: 's1' }, d);
+  assert.equal(antes.identificada, true, 'controle: o padrão geral conhece DOC-5');
+  assert.equal(antes.entrega, 'DOC-5');
+  writeFileSync(join(d, 'harness.config.json'), JSON.stringify({ fluxo: { idPadrao: '^PBI-[0-9]+' } }));
+  gitT(d, 'add', 'harness.config.json'); gitT(d, 'commit', '-qm', 'cfg');
+  gitT(d, 'update-ref', 'refs/remotes/origin/HEAD', 'HEAD');
+  assert.deepEqual(ponte({ op: 'dir', cwd: d, sessao: 's1' }, d), { ok: true, raiz: d, identificada: false, entrega: null });
+});
+test('ponte-dir-dono-resposta-da-sessao-identifica: branch sem ID + dono.resposta (b) da MESMA sessão identifica a entrega; a de outra sessão não (FIEL-1 c, T3)', () => {
+  const d = repoTemp('main');
+  const sem = join(d, '.harness', 'entregas', '_sem-id');
+  const grava = (sessao: string, ev: Record<string, unknown>) => { const q = ponte({ op: 'append', dir: sem, cwd: d, sessao, ev }, d); assert.equal(q.ok, true, JSON.stringify(q)); };
+  grava('s1', { agente: 'orquestrador', tipo: 'fato.medido', dados: { chave: 'plano', valor: { tasks: 3 }, fonte: 'mod' } });
+  assert.equal(ponte({ op: 'dir', cwd: d, sessao: 's1' }, d).identificada, false, 'controle: sem resposta');
+  grava('s1', { agente: 'dono', tipo: 'dono.resposta', dados: { pergunta: 's1:1', opcao: 1, rotulo: 'PBI-7' } });
+  const r = ponte({ op: 'dir', cwd: d, sessao: 's1' }, d);
+  assert.equal(r.identificada, true, JSON.stringify(r));
+  assert.equal(r.entrega, 'PBI-7');
+  assert.equal(r.dir, join(d, '.harness', 'entregas', 'PBI-7'));
+  assert.equal(ponte({ op: 'dir', cwd: d, sessao: 's2' }, d).identificada, false, 'a resposta é da sessão s1');
 });
 test('ponte-append-ler-instantaneo: grava com cadeia, relê e projeta o instantâneo', () => {
   const d = repoTemp();
@@ -757,7 +851,7 @@ async function modReal(raiz: string, percent: number | null) {
   const drenar = async () => { while (agendados.length > 0) { await agendados.shift()!(); await new Promise((r) => setTimeout(r, 50)); } await new Promise((r) => setTimeout(r, 300)); };
   return { H, $, drenar, avisos, mundo };
 }
-test('costura-mensagem-do-dono: prompt.submit do composer no mod real grava events.dono.jsonl na pasta da entrega (nunca na raiz) e o Agent seguinte é negado pela pendência dono', async () => {
+test('costura-mensagem-do-dono: prompt.submit do composer no mod real grava events.dono.jsonl na pasta da entrega (nunca na raiz) e o Agent seguinte NÃO é negado pela pendência dono (FIEL-2 b)', async () => {
   const base = mkdtempSync(join(tmpdir(), 'gm-costura-dono-'));
   const repo = join(base, 'repo');
   montarRepo(repo, join(aqui, 'fumaca-loop', 'planos', 'uma.json'));
@@ -786,13 +880,14 @@ test('costura-mensagem-do-dono: prompt.submit do composer no mod real grava even
   const todos = todosOsArquivos(join(raiz, '.harness')).filter((a) => a.endsWith('events.dono.jsonl'));
   assert.deepEqual(todos, [arq]);
   for (const a of todosOsArquivos(join(raiz, '.harness'))) assert.ok(!readFileSync(a, 'utf8').includes(sentinela), a);
-  // com a mensagem aberta, o Agent não revisor é negado pelo texto único da pendência `dono` (também com percent nulo); o revisor passa
+  // com a mensagem `dono` aberta (única pendência) o Agent NÃO é negado, com percent presente ou nulo; a conversa não trava o trabalho
   const ok = async () => ({ ok: true });
   const a = await H['tool.call']($, { tool: 'Agent', subagent_type: 'gabarito-implementador' }, ok);
-  assert.match(a?.deny ?? '', /^gabarito: aprendizado pendente: feche antes de despachar \(dono dono:1\)\. .*Só o revisor passa\.$/);
-  assert.doesNotMatch(a.deny, /encerre o turno/);
+  assert.equal(a?.deny, undefined);
+  assert.equal(a?.ok, true, 'o despacho segue pelo next');
   mundo.percent = null;
   const a2 = await H['tool.call']($, { tool: 'Agent', subagent_type: 'gabarito-implementador' }, ok);
-  assert.match(a2?.deny ?? '', /\(dono dono:1\)/);
+  assert.equal(a2?.deny, undefined);
+  assert.equal(a2?.ok, true);
   assert.equal((await H['tool.call']($, { tool: 'Agent', subagent_type: 'gabarito-revisor' }, ok)).ok, true);
 });

@@ -14,10 +14,12 @@
  *                                  teto_rodadas e nao_conseguiu vencem o `aprender`): não avisada ⇒ block uma vez por gatilho; já avisada ⇒ systemMessage
  *   loop.parar sem task depois .... silêncio
  *   proximaAcao: esperar ......... silêncio (exceto `emenda`: systemMessage com as propostas abertas, sem block e sem contador); parar: systemMessage; despachar/integrar: block
- *   concluir ...................... silêncio, ou systemMessage listando as liberações do dono (`task.reaberta` origem `dono`; REQ-LOOP-2)
+ *   concluir ...................... silêncio, ou systemMessage listando as liberações do teto (`task.reaberta` origem `dono`, REQ-LOOP-2, e
+ *                                   origem `sombra` como "a Sombra liberou a <task>", GM-14 T36 FIEL-15 c)
  * Pouso pendente (T18): `.harness/pouso-pendente.json {entrega, linhas}`, gravado pelo mod ao negar `Agent` porque a ação é `pousar`.
  * Marcador válido (mesma entrega e mesma contagem de progresso) ⇒ apaga marcador e contador, avisa e NÃO bloqueia, para o turno
  * terminar e o `turn.complete` pousar. Ausente, de outra contagem, ilegível ou que não apaga: regra normal, nunca silencia duas vezes.
+ * Entrega publicada (T48: `entregaPublicada` de dist/guarda.js, a regra única) ⇒ silêncio: o Stop não conta nem grava nela.
  * O terceiro Stop sem evento de progresso (tipos que `proximaAcao` consome) no diário da entrega grava `loop.parar {sem_progresso}` e deixa parar com aviso.
  * Falha de dado ou de ferramenta dentro de loop vira systemMessage com a causa, nunca block que prenda a sessão.
  * Sai sempre 0. Núcleo em dist/ (loop.js, plano.js, diario.js): ausente ⇒ aviso, nunca exceção.
@@ -29,6 +31,7 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import { raizPorFs, inferirPbi } from '../lib/git.mjs';
+import { temOnboarding } from './cartao-sessao.mjs';
 
 export const LIMITE_SEM_PROGRESSO = 3;
 const X_PADRAO = 50;
@@ -288,12 +291,15 @@ function entregaDaBranch(raiz, branch) {
   }
 }
 
-/** `concluir` com liberação do dono no diário: lista task, hora e sessão (a forja pelo mesmo usuário de SO não é evitável, só visível). Nunca bloqueia. */
+/**
+ * `concluir` com liberação do teto no diário: lista task, hora e sessão (a forja pelo mesmo usuário de SO não é evitável, só visível). Nunca bloqueia.
+ * GM-14 T36 (FIEL-15 c): a liberação da Sombra entra na mesma lista como "a Sombra liberou a <task>"; a do dono segue como antes (só a task).
+ */
 function avisoLiberacoes(eventos, entrega) {
-  const donos = eventos.filter((e) => e?.tipo === 'task.reaberta' && e.dados?.origem === 'dono');
-  if (donos.length === 0) return null;
-  const lista = donos.slice(0, ITENS_NO_MOTIVO).map((e) => `${limpo(e.dados.task)} (${limpo(e.ts)}, ${limpo(e.sessao)})`);
-  const resto = donos.length - lista.length;
+  const liberacoes = eventos.filter((e) => e?.tipo === 'task.reaberta' && (e.dados?.origem === 'dono' || e.dados?.origem === 'sombra'));
+  if (liberacoes.length === 0) return null;
+  const lista = liberacoes.slice(0, ITENS_NO_MOTIVO).map((e) => `${e.dados.origem === 'sombra' ? 'a Sombra liberou a ' : ''}${limpo(e.dados.task)} (${limpo(e.ts)}, ${limpo(e.sessao)})`);
+  const resto = liberacoes.length - lista.length;
   return aviso(`Loop da entrega ${limpo(entrega)} concluído. Liberações do teto: ${lista.join(', ')}${resto > 0 ? ` e mais ${resto}` : ''}. Se não foi você, confira o diário.`);
 }
 
@@ -310,6 +316,10 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   if (branch === null) return null;
   const entrega = entregaDaBranch(raiz, branch);
   if (entrega === null) return null;
+
+  // GM-14 T48 (emenda 43): entrega publicada (a regra única de `dist/guarda.js`, a mesma do painel e dos gravadores) não é loop: nem contador nem `loop.parar`.
+  const dg = await carregar('guarda');
+  if (dg.ok && dg.mod.entregaPublicada(raiz, entrega, typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null)) return null;
 
   const dir = join(raiz, '.harness', 'entregas', entrega);
   const arquivoPlano = join(dir, 'plano.json');
@@ -354,11 +364,43 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   const { eventos } = lido;
 
   const ord = dl.mod.ordenar(eventos);
+  // GM-14 FIEL-14 (f), emenda 29: a MESMA `pousoPendente` do `loop.mjs proxima` (dist/pouso-pendente.js, sem 2ª definição) e o MESMO fato de
+  // onboarding (`temOnboarding`, config local). Sem onboarding nunca é pendente: o Stop segue como na 2.0.
+  const dpp = await carregar('pouso-pendente');
+  if (!dpp.ok) return dpp.aviso;
+  // GM-14 T53 (emendas 52 e 53, I1): com o mod medindo ESTA sessão só a leitura dela (`.harness/contexto/<sessao>.json`, fonte `mod`, `em` <= 120 s) decide; nenhuma outra
+  // sessão libera ou prende esta. A regra é a mesma `pousoPendente` (nenhuma 2ª definição). Arquivo ausente/ilegível ⇒ sem leitura ⇒ a regra sem mod.
+  const sessaoAtual = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;
+  const xEnv = process.env.GABARITO_POUSO_X;
+  const xTeto = xEnv !== undefined && /^\d{1,3}$/.test(xEnv) && Number(xEnv) >= 1 && Number(xEnv) <= 100 ? Number(xEnv) : X_PADRAO;
+  let medicao;
+  let pendente = false;
+  let noTeto = false;
+  try {
+    const leituras = [];
+    if (sessaoAtual !== null) {
+      try {
+        const l = dpp.mod.lerLeitura(sessaoAtual, readFileSync(join(raiz, '.harness', 'contexto', `${sessaoAtual}.json`), 'utf8'));
+        if (l !== null) leituras.push(l);
+      } catch { /* sem arquivo: sem leitura */ }
+    }
+    medicao = { x: xTeto, agoraMs: Date.now(), sessaoAtual, leituras };
+    pendente = dpp.mod.pousoPendente(eventos, temOnboarding(raiz), medicao).pendente === true;
+    noTeto = dpp.mod.noTeto(medicao) === true;
+  } catch { pendente = false; noTeto = false; }
+  // "Aguardando o pouso do mod" só é verdade com o mod medindo AGORA (leitura fresca: a mesma situação da regra única), com veredito (há fronteira) e sem o mod já
+  // ter desistido (`sem_pouso`): fora disso o dono é quem limpa, e a instrução "digite /clear" é a certa.
+  let modAtivo = false;
+  try {
+    const dpo = await carregar('pouso');
+    modAtivo = medicao !== undefined && dpo.ok && dpp.mod.leituraPropria(medicao) !== null
+      && dpo.mod.pousoDaFronteira(eventos) === true && dpo.mod.jaParou(eventos) !== true;
+  } catch { modAtivo = false; }
   let acao;
   let falhaAcao = null;
   try {
     acao = dl.mod.proximaAcao(plano, eventos, {
-      slots: 1, percent: null, x: X_PADRAO, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false,
+      slots: 1, percent: null, x: X_PADRAO, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false, pousoPendente: pendente,
     });
   } catch (e) {
     falhaAcao = aviso(`Loop: proximaAcao falhou (${curto(e?.name ?? 'erro', 60)}); nada decidido`);
@@ -382,6 +424,17 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   }
   if (falhaAcao !== null) return falhaAcao;
   if (acao.tipo === 'concluir') return avisoLiberacoes(eventos, entrega);
+  // Pouso pendente: nada novo começa e o Stop não conta "sem progresso" (a conversa precisa de /clear, não de despacho).
+  if (pendente && (acao.tipo === 'despachar' || acao.tipo === 'integrar' || acao.tipo === 'pousar' || (acao.tipo === 'parar' && acao.motivo === 'sem_pouso'))) {
+    // com o mod ativo quem limpa é ele (T53): o Stop nunca pede despacho e não manda o dono digitar /clear
+    return aviso(modAtivo
+      ? `Loop da entrega ${limpo(entrega)}: aguardando o pouso do mod (a conversa precisa ser limpa e medida; nada novo é despachado antes)`
+      : `Loop da entrega ${limpo(entrega)}: pouso pendente; digite /clear para retomar em conversa limpa (nada novo é despachado antes)`);
+  }
+  // T53 (52 b): no teto de contexto o Stop também não pede despacho novo (revisor segue valendo: ele fecha a fronteira que o pouso espera)
+  if (noTeto && acao.tipo === 'despachar' && !acao.itens.some((i) => i?.papel === 'revisor')) {
+    return aviso(`Loop da entrega ${limpo(entrega)}: contexto no teto, aguardando o pouso do mod (nada novo é despachado antes)`);
+  }
   if (acao.tipo !== 'despachar' && acao.tipo !== 'integrar') return saidaParaAcao(acao, entrega);
 
   const saida = saidaParaAcao(acao, entrega);

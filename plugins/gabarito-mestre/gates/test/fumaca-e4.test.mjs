@@ -6,6 +6,9 @@
  * Os `.txt` da pasta `fumaca-e4/` são o texto `mono` de 80 colunas do estado PAROU (teto de rodadas em T2, emenda aberta, T3 com o agente vivo): o teste só os
  * LÊ. Com o relógio congelado por processo (ver a caminhada) o texto é o mesmo a cada execução.
  *
+ * GM-14 T18 (desvio registrado, REQ-GLB-1): `painel.mjs` passa `fatos` sempre, então o `depende` é o de `dependeDe` (REQ-DEP-1, itens (5) e (7)) e o texto
+ * é o render de blocos (REQ-GLB-1, FIEL-10, FIEL-11). Goldens regravados a esse contrato; cada linha conferida contra a spec (motivos em t18-relatorio.md).
+ *
  * MUTAÇÕES PRESCRITAS: task-12-mut.json da entrega.
  */
 import { test, after } from 'node:test';
@@ -35,13 +38,18 @@ test('fumaca-spec-aprovada-pelo-hook: aguardando ⇒ aprova (sha256 dos bytes) �
   assert.deepEqual(tipos('spec.aprovada').map((e) => e.dados), [{ spec: 'docs/spec.md', sha256: sha }], 'um único spec.aprovada, com o caminho e o sha256 dos bytes');
   assert.equal(o.aprovarDeNovo.j.decision, 'block');
   assert.match(o.aprovarDeNovo.j.reason, /ja_aprovada/);
-  assert.deepEqual(o.estadoAprovada.j.estado.depende, [], 'aprovada: nada depende do dono');
+  // REQ-DEP-1: todas as fontes leram e a lista é vazia ⇒ o único item é "depende de você: nada", sem botão
+  assert.deepEqual(o.estadoAprovada.j.estado.depende, [{ nivel: 'dono', motivo: 'depende de você: nada', acoes: [] }], 'aprovada: nada depende do dono');
 });
 
 test('fumaca-emenda-aberta-e-agente-vivo: a proposta aparece em depende com os comandos reais; o transcript de fixture chega a ctxTok 92762 e tok 86900 pelo CLI', () => {
   assert.deepEqual(o.proposta.j.congeladas, ['T3']);
   const e = o.estadoEmenda.j.estado;
-  assert.deepEqual(e.depende, [{ nivel: 'dono', motivo: 'emenda #1 em REQ-C-1', acoes: [{ rotulo: 'aprovar', comando: '/gabarito-mestre:emenda aprovar 1' }, { rotulo: 'rejeitar', comando: '/gabarito-mestre:emenda rejeitar 1' }] }]);
+  // REQ-DEP-1, ordem (5) antes de (7): T2 já está no teto (o loop ainda não parou, então nenhum PAROU traz o liberar) e a emenda #1 está aberta
+  assert.deepEqual(e.depende, [
+    { nivel: 'dono', motivo: 'decidir a T2: chegou ao limite de revisões', acoes: [{ rotulo: 'liberar mais uma rodada', comando: '/gabarito-mestre:liberar T2' }] },
+    { nivel: 'dono', motivo: 'decidir a emenda 1', acoes: [{ rotulo: 'aprovar', comando: '/gabarito-mestre:emenda aprovar 1' }, { rotulo: 'rejeitar', comando: '/gabarito-mestre:emenda rejeitar 1' }] },
+  ]);
   assert.equal(e.parar, null, 'ainda não parou');
   // costura (P9): stdin do mod → painel.mjs → lerCauda/usoDoTranscript → projeção → estado
   const vivos = e.equipe.agentes.filter((a) => a.vivo);
@@ -70,9 +78,11 @@ test('fumaca-teto-de-rodadas-e-parou: T2 reprovada 2× ⇒ no_teto ⇒ proxima d
   assert.equal(e.parar.hora, '12:25');
   assert.deepEqual(e.plano.tasks.map((t) => [t.id, t.estado, t.glifo]), [['T1', 'integrada', '✓'], ['T2', 'no_teto', '✗'], ['T3', 'implementando', '●']]);
   assert.deepEqual([e.plano.feitas, e.plano.total, e.plano.pct], [1, 3, 33]);
-  // PAROU primeiro, depois a emenda (nivel dono); o `parar` não se repete
+  // PAROU primeiro, depois a emenda (REQ-DEP-1 (7)); o item (5) da T2 não se repete, o PAROU já traz o liberar (FIEL-10 c)
   assert.deepEqual(e.depende.map((d) => d.nivel), ['parar', 'dono']);
-  assert.equal(e.depende[1].motivo, 'emenda #1 em REQ-C-1');
+  assert.deepEqual(e.depende[0].acoes, e.parar.acoes);
+  assert.deepEqual(e.depende[1], { nivel: 'dono', motivo: 'decidir a emenda 1', acoes: [{ rotulo: 'aprovar', comando: '/gabarito-mestre:emenda aprovar 1' }, { rotulo: 'rejeitar', comando: '/gabarito-mestre:emenda rejeitar 1' }] });
+  assert.ok(!e.depende.some((d) => /limite de revisões/.test(d.motivo)), 'o teto da T2 só aparece no PAROU');
   assert.deepEqual(e.notificacao, { hora: '12:26' }, 'notificação do mod, em UTC, logo depois do PAROU (12:25)');
   assert.equal(o.estadoNotificacaoAntiga.j.estado.notificacao, null, 'ts 12:12 é anterior ao PAROU das 12:25: de um Parar antigo, não aparece sob o atual');
 });
@@ -83,30 +93,41 @@ test('fumaca-painel-e4: painel.mjs texto, nos dois presets, é byte a byte o tex
     assert.equal(r.err, '', `${preset}: aviso inesperado no stderr`);
     assert.equal(r.out, lido(`${preset}.txt`), `${preset}: texto difere do golden da fumaça`);
   }
-  // o que os goldens têm de CONTEÚDO (não só a igualdade): tudo veio dos CLIs reais
+  // o que os goldens têm de CONTEÚDO (não só a igualdade): tudo veio dos CLIs reais, na forma da spec (GM-14 T18)
   const esq = o.textoEsquadrao.out;
   const exe = o.textoExecutivo.out;
-  assert.match(esq, /^GABARITO · GM-99 Spec de fumaça da E4 +esquadrão · terra média$/m);
-  assert.match(exe, /^GABARITO · GM-99 Spec de fumaça da E4 +executivo$/m);
   for (const t of [esq, exe]) {
-    assert.match(t, /^■ PAROU 12:25  teto de rodadas de review em T2$/m);
-    assert.match(t, /^ +aprovar  \/gabarito-mestre:liberar T2$/m);
-    assert.match(t, /^ +T3 continua · produção: 0 alterações nesta entrega · notificação enviada 12:26$/m);
-    assert.match(t, /^◆ DEPENDE DE VOCÊ  1 item$/m);
-    assert.match(t, /emenda #1 em REQ-C-1  \/gabarito-mestre:emenda aprovar 1 · rejeitar 1$/m);
-    assert.match(t, /93k/, 'o ctx do transcript de fixture (92.762 ⇒ 93k) está na tela');
+    const l = t.split('\n');
+    assert.equal(l[0], 'GABARITO · GM-99 Spec de fumaça da E4', 'FIEL-10 (f): cabeçalho uma vez, igual nos presets');
+    // REQ-GLB-1 / FIEL-10 (a): DEPENDE no topo; o PAROU é item dele e vem primeiro, depois a emenda (REQ-DEP-1 (7)); o teto da T2 não repete
+    // REQ-GLB-1: o motivo do PAROU inteiro, quebrado em 2 linhas (recuo de 4), nenhuma cortada com "…"
+    assert.equal(l[1], 'PAROU 12:25 · teto de rodadas de review em T2 [aprovar] · recusar: deixe a task');
+    assert.equal(l[2], '    parada e emende a spec');
+    assert.equal(l[3], 'depende de você: decidir a emenda 1 [aprovar] [rejeitar]');
+    const iPronto = l.findIndex((x) => x.startsWith('PRONTO'));
+    assert.ok(l.slice(0, iPronto).every((x) => [...x].length <= 80 && !x.endsWith('…')), 'REQ-GLB-1: nenhuma linha do topo passa de 80 colunas nem termina em "…"');
+    assert.ok(!/limite de revisões|depende de você: nada/.test(t), 'com PAROU e emenda o topo não diz "nada" nem repete o teto');
+    // FIEL-10 (b): PRONTO pinta só integradas (1 de 3 ⇒ 3 de 10 marcas)
+    assert.equal(l[4], 'PRONTO ▰▰▰▱▱▱▱▱▱▱ 1 de 3 integradas');
+    // FIEL-11 (a)(b): 1ª linha o orquestrador com o contexto; o agente vivo da T3 pelo último fato registrado
+    assert.match(l[5], /^AGORA · \S+ · contexto 46 %$/);
+    assert.match(l[6], /^ {2}\S+ · T3 · implementando \(registrado\) · \dm$/);
+    // FIEL-10 (c): o teto da T2 já está no topo e a T3 tem agente ⇒ sem ATENÇÃO
+    assert.ok(!/ATENÇÃO/.test(t));
+    // FIEL-10 (d): só resultados, mais novo no topo, com origem; "despachou" e "emenda proposta" não entram
+    assert.equal(l[7], 'RECENTE · 12:25 ✗ travou: teto de rodadas de review (automático)');
+    assert.equal(l.filter((x) => /^(RECENTE · | {2})\d\d:\d\d /.test(x)).length, 5, 'até 5 linhas de RECENTE');
+    assert.ok(!/despachou|proposta/.test(t));
     assert.ok(!/NaN|undefined|null|\[object/.test(t), 'valor interno vazou para a tela');
-    assert.ok(t.split('\n').every((l) => [...l].length <= 80), 'nada passa de 80 colunas');
+    assert.ok(l.every((x) => [...x].length <= 80), 'nada passa de 80 colunas');
   }
-  assert.match(esq, /^PLANO +▰+▱+ +33% +1\/3 tasks +loop parado$/m);
-  assert.match(esq, /^ +✗ T2 +Agentes vivos +no teto +8m$/m);
-  assert.match(esq, /^ +● T3 +Depende de você +implementando +[A-Z]+ +6m$/m);
-  assert.match(exe, /^Tasks +1 integrada · 2 em curso · 0 na fila$/m);
-  assert.match(exe, /^Previsão +loop parado$/m);
-  assert.ok(!/ARAGORN|SAM|FRODO|GANDALF|ELROND/.test(exe), 'o Executivo não tem nome de pacote');
-  // o PAROU tem as MESMAS linhas nos dois presets
-  const bloco = (t) => { const l = t.split('\n'); return l.slice(l.findIndex((x) => x.startsWith('■ PAROU ')), l.findIndex((x) => x.startsWith('◆ DEPENDE')) + 2); };
-  assert.deepEqual(bloco(exe), bloco(esq));
+  assert.match(esq, /^AGORA · [A-Z]{2,10} · contexto 46 %$/m, 'o esquadrão leva o nome do pacote');
+  assert.match(esq, /^ {2}[A-Z]{2,10} · T3 · /m);
+  assert.match(exe, /^AGORA · Orquestrador · contexto 46 %$/m);
+  assert.match(exe, /^ {2}Implementador · T3 · /m);
+  assert.ok(!/ARAGORN|SAM|FRODO|GANDALF|ELROND|LEGOLAS/.test(exe), 'o Executivo não tem nome de pacote (D-P10)');
+  // o topo (cabeçalho, PAROU, DEPENDE, PRONTO) tem as MESMAS linhas nos dois presets
+  assert.deepEqual(exe.split('\n').slice(0, 4), esq.split('\n').slice(0, 4));
 });
 
 test('fumaca-devolver-sem-rodar-comando: hooks do dono + conclusão ⇒ decisão subir ⇒ devolver grava o pedido, nenhum deploy/smoke/rollback roda, o painel mostra o comando', () => {
@@ -130,9 +151,17 @@ test('fumaca-devolver-sem-rodar-comando: hooks do dono + conclusão ⇒ decisão
   assert.equal(e.equipe.vivos, 0, 'agentes: [] ⇒ 0 vivos');
   assert.equal(e.rodape.ci.verde, true);
   assert.equal(o.textoDevolvido.rc, 0, o.textoDevolvido.err);
-  assert.match(o.textoDevolvido.out, /^◆ DEPENDE DE VOCÊ  1 item$/m);
-  assert.match(o.textoDevolvido.out, /node <plugin>\/gates\/scripts\/entrega\.mjs executar --entrega GM-99$/m, 'o comando vai inteiro, no fim da linha');
-  assert.ok(!/■ PAROU/.test(o.textoDevolvido.out));
+  // REQ-GLB-1: o item do dono no topo, com o botão; o comando inteiro está no estado (acima) e é o que o botão leva.
+  // A 80 colunas o item quebra em linhas (REQ-GLB-1: topo nunca cortado): o botão inteiro aparece, nenhuma linha termina em "…".
+  const ld = o.textoDevolvido.out.split('\n');
+  assert.equal(ld[0], 'GABARITO · GM-99 Spec de fumaça da E4');
+  const iP = ld.findIndex((x) => x.startsWith('PRONTO'));
+  const topoD = ld.slice(1, iP);
+  assert.ok(topoD.every((x) => [...x].length <= 80 && !x.endsWith('…')), `topo sem corte: ${JSON.stringify(topoD)}`);
+  assert.match(topoD.join(' ').replace(/ +/g, ' '), /^depende de você: deploy devolvido ao dono: quero revisar antes de subir \[executar\]$/);
+  assert.equal(ld.filter((x) => x.startsWith('depende de você')).length, 1, '1 item');
+  assert.equal(ld[iP], 'PRONTO ▰▰▰▰▰▰▰▰▰▰ 3 de 3 integradas');
+  assert.ok(!/PAROU|depende de você: nada/.test(o.textoDevolvido.out));
 });
 
 test('fumaca-limpa-o-temporario: o diretório da caminhada existe durante os testes; limpar() o apaga e recusa qualquer outro caminho', () => {

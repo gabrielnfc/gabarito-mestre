@@ -194,6 +194,28 @@ describe('fumaça do loop sem LLM', { concurrency: 4 }, () => {
     });
   }
 
+  // T59 (emenda 67, MAJOR-1 do review final, P9): o impasse pelos adaptadores reais (mod, Stop, loop.mjs, guarda). T1 integrada depois do veredito e do pouso; o contexto sobe de
+  // novo quando o implementador de T3 termina (T3 concluída, à espera do revisor) e o revisor é negado. O mod pousa sozinho (a vigia, 10 min depois do pouso: a repetição espera
+  // 60 s) e a sessão nova despacha o revisor. Sem a correção o loop para ali: 1 /clear, "Agent negado sem agente vivo".
+  test('impasse-revisor-pendente (T59): pouso feito, contexto volta a X com T3 concluída; o mod pousa de novo (2º /clear, tentativa) e o revisor roda na sessão nova', async () => {
+    const r = await rodar({ plano: planos('cadeia'), sobeNoImplementador: true, passaTempoMs: 600_000, x: '1', percent: 6 });
+    const m = TRILHA(r);
+    assert.equal(r.fim, 'concluir', `fim${m}`);
+    assert.equal(r.clears, 2, `o mod deu 2 /clear (o pouso e a repetição do impasse)${m}`);
+    assert.equal(r.pouso, 1, `1 sessao.pouso: a repetição é tentativa, não pouso novo${m}`);
+    assert.equal(r.retomada, 2, `1 retomada por /clear${m}`);
+    assert.equal(r.integradas, 2, `integradas${m}`);
+    assert.equal(r.vereditos, 2, `vereditos${m}`);
+    assert.ok(r.denies >= 2, `o mod negou o despacho antes dos dois pousos, o revisor incluído${m}`);
+    assert.deepEqual(r.defeitos, [], `defeitos${m}`);
+    assert.deepEqual(r.parar, [], `loop.parar${m}`);
+  });
+  test('impasse-revisor-pendente, controle (T59): sem o contexto subir no implementador não há impasse: 1 só pouso e conclui', async () => {
+    const r = await rodar({ plano: planos('cadeia'), passaTempoMs: 600_000, x: '1', percent: 6 });
+    assert.equal(r.fim, 'concluir', `fim${TRILHA(r)}`);
+    assert.equal(r.clears, 1, `1 /clear${TRILHA(r)}`);
+  });
+
   test('X não atingido: contexto abaixo de X, nenhum Agent negado, nenhum pouso, e o loop conclui', async () => {
     const r = await rodar({ plano: planos('tres'), vereditos: { T1: ['REPROVADO'] }, percent: 10, x: '50' });
     conferir(r, { fim: 'concluir', pouso: 0, integradas: 3, vereditos: 4, correcoes: 1, proxima: 'concluir', denies: 0 });

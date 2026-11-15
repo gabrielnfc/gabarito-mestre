@@ -1,0 +1,11 @@
+{
+ "nome": "fase 4: spec aprovada com o sha atual, sem plano",
+ "fatos": { "branch": "feat/GM-20-trilha", "idPadrao": "[A-Z]+-\\d+",
+  "specs": [ { "caminho": "docs/superpowers/specs/2026-11-20-gm20-design.md", "pbi": "GM-20", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "secoes": 6, "titulo": "Trilha da GM-20" } ],
+  "plano": null, "ledger": false, "gh": "ok", "ultimas": [] },
+ "eventos": [
+  { "t": "spec.aprovada", "d": { "spec": "docs/superpowers/specs/2026-11-20-gm20-design.md", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
+ ],
+ "esperado": { "marcas": "✓✓✓●○○○", "identificada": true, "entrega": "GM-20", "candidato": "GM-20", "fase": 4,
+  "progresso": "spec com 6 seções", "mudouDepois": false, "ultimaConhecida": null }
+}

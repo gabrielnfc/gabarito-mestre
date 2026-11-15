@@ -1232,19 +1232,19 @@ describe('aprendizados no instantâneo e pouso sem retomada (GM-13 T9, REQ-APR-3
     const i = l.findIndex((x) => x.startsWith('Aprendizados ('));
     if (i < 0) return [];
     let f = i + 1;
-    while (f < l.length && !/^20\d\d-/.test(l[f]) && !l[f].startsWith('... ') || (f < l.length && /aprendizado\(s\) fora$/.test(l[f]))) f++;
+    while (f < l.length && !/^20\d\d-/.test(l[f]) && !l[f].startsWith('... ') || (f < l.length && /aprendizado\(s\) fora \(os mais antigos; lista inteira em loop\.mjs aprendizados\)$/.test(l[f]))) f++;
     return l.slice(i, f);
   };
 
-  test('instantaneo-aprendizados-ate-800: 20 D de 300 caracteres ⇒ 4 linhas, 16 fora, bloco de 689 (número do S4)', () => {
+  test('instantaneo-aprendizados-ate-800: 20 D de 300 caracteres ⇒ 4 linhas, 16 fora, bloco de 747 (689 do S4 + rodapé novo da T33 GM-14)', () => {
     const regras = Array.from({ length: 20 }, () => apr('x'.repeat(300)));
     const p = projetar([guarda(1)], { aprendizados: regras });
     const b = blocoApr(p.instantaneo);
     assert.equal(p.aprendizados, 20);
     assert.equal(b[0], 'Aprendizados (20):');
     assert.equal(b.length, 6);
-    assert.equal(b.at(-1), '... 16 aprendizado(s) fora');
-    assert.equal(b.join('\n').length, 689);
+    assert.equal(b.at(-1), '... 16 aprendizado(s) fora (os mais antigos; lista inteira em loop.mjs aprendizados)');
+    assert.equal(b.join('\n').length, 747);
     assert.ok(b.join('\n').length <= 800);
   });
   test('instantaneo-linha-160: a linha inteira tem 160, `<E|A> ` mais 158 da regra', () => {
@@ -1265,7 +1265,7 @@ describe('aprendizados no instantâneo e pouso sem retomada (GM-13 T9, REQ-APR-3
     assert.deepEqual(blocoApr(tres.instantaneo), ['Aprendizados (3):', 'E a', 'E b', 'E c']);
     assert.ok(!tres.instantaneo.includes('aprendizado(s) fora'));
     const seis = projetar([guarda(1)], { aprendizados: Array.from({ length: 6 }, () => apr('z'.repeat(300))) });
-    assert.equal(blocoApr(seis.instantaneo).at(-1), '... 2 aprendizado(s) fora');
+    assert.equal(blocoApr(seis.instantaneo).at(-1), '... 2 aprendizado(s) fora (os mais antigos; lista inteira em loop.mjs aprendizados)');
   });
   test('instantaneo-total-3200-com-decisoes-1600: com 30 decisões, 20 D e 200 eventos, o bloco de decisões não perde linha e o total fica ≤ 3200', () => {
     const es = [...Array.from({ length: 30 }, (_, i) => dec(i + 1, hx(i), 'r'.repeat(200))), ...Array.from({ length: 200 }, (_, i) => guarda(100 + i, `a-${i}`))];
@@ -1329,12 +1329,12 @@ describe('aprendizados no instantâneo e pouso sem retomada (GM-13 T9, REQ-APR-3
     const p = projetar([guarda(1)], { aprendizados: Array.from({ length: 20 }, () => apr('x'.repeat(300))), avisosAprendizados: ['a'] });
     const b = blocoApr(p.instantaneo).join('\n');
     assert.ok(b.length <= 800 && b.length > 600, String(b.length));
-    assert.match(b, /aprendizado\(s\) fora$/);
+    assert.match(b, /aprendizado\(s\) fora \(os mais antigos; lista inteira em loop\.mjs aprendizados\)$/);
   });
   test('instantaneo-orcamento-reserva-rodape: 20 D de 127 caracteres ⇒ o rodapé do pior caso está reservado e o bloco fica ≤ 800', () => {
     const b = blocoApr(projetar([guarda(1)], { aprendizados: Array.from({ length: 20 }, () => apr('x'.repeat(127))) }).instantaneo);
     assert.ok(b.join('\n').length <= 800, String(b.join('\n').length));
-    assert.equal(b.at(-1), '... 15 aprendizado(s) fora');
+    assert.equal(b.at(-1), '... 15 aprendizado(s) fora (os mais antigos; lista inteira em loop.mjs aprendizados)');
     assert.equal(b.length, 1 + 5 + 1);
   });
   test('instantaneo-diario-vazio-com-d: projetar([]) com D mostra o bloco (entrega nova)', () => {

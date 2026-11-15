@@ -1,0 +1,154 @@
+{
+  "completa": [
+    {
+      "id": "politica",
+      "default": "sob_demanda",
+      "valores": [
+        "sob_demanda",
+        "continua",
+        "janela"
+      ]
+    },
+    {
+      "id": "autonomia",
+      "default": false,
+      "valores": [
+        false,
+        true
+      ]
+    },
+    {
+      "id": "perfil",
+      "default": "padrao",
+      "valores": [
+        "padrao",
+        "economia",
+        "qualidade"
+      ]
+    }
+  ],
+  "monorepo": [
+    {
+      "id": "politica",
+      "default": "sob_demanda",
+      "valores": [
+        "sob_demanda",
+        "continua",
+        "janela"
+      ]
+    },
+    {
+      "id": "autonomia",
+      "default": false,
+      "valores": [
+        false,
+        true
+      ]
+    },
+    {
+      "id": "perfil",
+      "default": "padrao",
+      "valores": [
+        "padrao",
+        "economia",
+        "qualidade"
+      ]
+    },
+    {
+      "id": "tipo_repo",
+      "default": "app",
+      "valores": [
+        "app",
+        "repo-sem-app"
+      ]
+    },
+    {
+      "id": "planejamento",
+      "default": "arquivos",
+      "valores": [
+        "arquivos",
+        null
+      ]
+    }
+  ],
+  "1.1.x": [
+    {
+      "id": "politica",
+      "default": "sob_demanda",
+      "valores": [
+        "sob_demanda",
+        "continua",
+        "janela"
+      ]
+    },
+    {
+      "id": "autonomia",
+      "default": false,
+      "valores": [
+        false,
+        true
+      ]
+    },
+    {
+      "id": "perfil",
+      "default": "padrao",
+      "valores": [
+        "padrao",
+        "economia",
+        "qualidade"
+      ]
+    },
+    {
+      "id": "versionamento",
+      "default": "main",
+      "valores": [
+        "main",
+        null
+      ]
+    }
+  ],
+  "todos-abertos-teto": [
+    {
+      "id": "politica",
+      "default": "sob_demanda",
+      "valores": [
+        "sob_demanda",
+        "continua",
+        "janela"
+      ]
+    },
+    {
+      "id": "autonomia",
+      "default": false,
+      "valores": [
+        false,
+        true
+      ]
+    },
+    {
+      "id": "perfil",
+      "default": "padrao",
+      "valores": [
+        "padrao",
+        "economia",
+        "qualidade"
+      ]
+    },
+    {
+      "id": "tipo_repo",
+      "default": "app",
+      "valores": [
+        "app",
+        "repo-sem-app"
+      ]
+    },
+    {
+      "id": "ambientes",
+      "default": "prod",
+      "valores": [
+        "prod",
+        "staging"
+      ]
+    }
+  ]
+}

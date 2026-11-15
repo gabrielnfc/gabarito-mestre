@@ -20,6 +20,7 @@
 #  M-T14  tirar `.claude-tmp/` da lista de emendar_gitignore ⇒ gitignore-claude-tmp
 #  M19 T6 r1: .gitignore sem `.harness/heartbeat.json` ⇒ gitignore-heartbeat-local
 #  M16 T6: --atualizar sobrescreve gate editado     ⇒ atualizar-nao-sobrescreve-gate
+#  M-A19 T33: .gitignore com `.harness/aprendizados.jsonl` (ou `.harness/*.jsonl`) ⇒ instalador-nao-ignora-extrato
 set -eu
 AQUI="$(cd "$(dirname "$0")" && pwd)"
 INSTALAR="$AQUI/../instalar.sh"
@@ -251,6 +252,55 @@ R10C="$(novo_repo)"; env $GITENV git -C "$R10C" init -q
 printf '#!/usr/bin/env python3\nprint(1)\n' > "$R10C/.git/hooks/commit-msg"; chmod +x "$R10C/.git/hooks/commit-msg"; cp "$R10C/.git/hooks/commit-msg" "$R10C.orig"
 if SAIDA10C="$(env $GITENV bash "$INSTALAR" "$R10C" 2>&1)"; then RC10C=0; else RC10C=$?; fi
 check "hook python de terceiro: sai 0, avisa, e o arquivo fica byte a byte igual" '[ "$RC10C" -eq 0 ] && cmp -s "$R10C/.git/hooks/commit-msg" "$R10C.orig" && printf "%s" "$SAIDA10C" | grep -q "NÃO instalados"'
+
+echo "── cenário 12: instalador ignora a herança (_onboarding/) e a medição do painel (painel-medir.json)"
+R12="$(novo_repo)"
+if SAIDA12="$(bash "$INSTALAR" "$R12" 2>&1)"; then RC12=0; else RC12=$?; fi
+check "instalar-ignora-onboarding-e-medir: repo novo sai 0 e ignora as 2 linhas" \
+  '[ "$RC12" -eq 0 ] && grep -qxF ".harness/entregas/_onboarding/" "$R12/.gitignore" && grep -qxF ".harness/painel-medir.json" "$R12/.gitignore"'
+R13="$(novo_repo)"; printf 'node_modules/' > "$R13/.gitignore"
+if SAIDA13="$(bash "$INSTALAR" "$R13" 2>&1)"; then RC13=0; else RC13=$?; fi
+check "instalar-ignora-onboarding-e-medir: .gitignore sem \\n final ganha as 2 linhas em linhas próprias e nada é removido" \
+  '[ "$RC13" -eq 0 ] && [ "$(grep -cxF -e "node_modules/" -e ".harness/entregas/_onboarding/" -e ".harness/painel-medir.json" "$R13/.gitignore")" -eq 3 ] && [ "$(head -n1 "$R13/.gitignore")" = "node_modules/" ]'
+ANTES13="$(cat "$R13/.gitignore")"
+bash "$INSTALAR" "$R13" >/dev/null 2>&1 || true
+check "instalar-ignora-onboarding-e-medir: 2ª execução não duplica nenhuma das 2 linhas" \
+  '[ "$(grep -cxF ".harness/entregas/_onboarding/" "$R13/.gitignore")" -eq 1 ] && [ "$(grep -cxF ".harness/painel-medir.json" "$R13/.gitignore")" -eq 1 ] && [ "$(cat "$R13/.gitignore")" = "$ANTES13" ]'
+R14="$(novo_repo)"; printf '/.harness/painel-medir.json\n' > "$R14/.gitignore"
+if SAIDA14="$(bash "$INSTALAR" "$R14" 2>&1)"; then RC14=0; else RC14=$?; fi
+check "instalar-ignora-onboarding-e-medir: linha já presente com / inicial não quebra a instalação e não é removida" \
+  '[ "$RC14" -eq 0 ] && grep -qxF "/.harness/painel-medir.json" "$R14/.gitignore" && [ -f "$R14/AGENTS.md" ]'
+RAIZ_GI="$REPO_ROOT/.gitignore"
+check "gitignore da raiz deste repo ignora _onboarding/, painel-medir.json e doctor-cache.json (dogfood, DP-1)" \
+  'grep -qxF ".harness/entregas/_onboarding/" "$RAIZ_GI" && grep -qxF ".harness/painel-medir.json" "$RAIZ_GI" && grep -qxF ".harness/doctor-cache.json" "$RAIZ_GI"'
+
+echo "── cenário 13: instalador nunca ignora o extrato de aprendizados (GM-14 T33, REQ-APR-5 a; série T10 → T33)"
+R15="$(novo_repo)"; env $GITENV git -C "$R15" init -q
+if SAIDA15="$(env $GITENV bash "$INSTALAR" "$R15" 2>&1)"; then RC15=0; else RC15=$?; fi
+mkdir -p "$R15/.harness"; printf '{}\n' > "$R15/.harness/aprendizados.jsonl"
+check "instalador-nao-ignora-extrato: depois de instalar (com as linhas da T10), git check-ignore do extrato dá rc 1" \
+  '[ "$RC15" -eq 0 ] && grep -qxF ".harness/entregas/_onboarding/" "$R15/.gitignore" && grep -qxF ".harness/painel-medir.json" "$R15/.gitignore" && { env $GITENV git -C "$R15" check-ignore -q .harness/aprendizados.jsonl; [ $? -eq 1 ]; }'
+bash "$INSTALAR" "$R15" >/dev/null 2>&1 || true
+check "instalador-nao-ignora-extrato: 2ª execução segue sem ignorar o extrato" \
+  '{ env $GITENV git -C "$R15" check-ignore -q .harness/aprendizados.jsonl; [ $? -eq 1 ]; }'
+check "instalador-nao-ignora-extrato: o extrato deste repo também não é ignorado (dogfood)" \
+  '{ git -C "$REPO_ROOT" check-ignore -q .harness/aprendizados.jsonl; [ $? -eq 1 ]; }'
+
+echo "── cenário 14: instalador ignora o contexto por sessão (GM-14 T34, FIEL-14 b; série T10 → T33 → T34)"
+R16="$(novo_repo)"; env $GITENV git -C "$R16" init -q
+if SAIDA16="$(env $GITENV bash "$INSTALAR" "$R16" 2>&1)"; then RC16=0; else RC16=$?; fi
+mkdir -p "$R16/.harness/contexto"; printf '{}\n' > "$R16/.harness/contexto/S1.json"
+check "instalar-ignora-contexto: repo novo sai 0 e git check-ignore do arquivo de contexto dá rc 0" \
+  '[ "$RC16" -eq 0 ] && grep -qxF ".harness/contexto/" "$R16/.gitignore" && env $GITENV git -C "$R16" check-ignore -q .harness/contexto/S1.json'
+bash "$INSTALAR" "$R16" >/dev/null 2>&1 || true
+check "instalar-ignora-contexto: 2ª execução não duplica a linha" \
+  '[ "$(grep -cxF ".harness/contexto/" "$R16/.gitignore")" -eq 1 ]'
+R17="$(novo_repo)"; printf 'node_modules/' > "$R17/.gitignore"
+bash "$INSTALAR" "$R17" >/dev/null 2>&1 || true
+check "instalar-ignora-contexto: .gitignore sem \\n final recebe a linha em linha própria e nada é removido" \
+  'grep -qxF ".harness/contexto/" "$R17/.gitignore" && [ "$(head -n1 "$R17/.gitignore")" = "node_modules/" ]'
+check "gitignore da raiz deste repo ignora .harness/contexto/ (dogfood)" \
+  'grep -qxF ".harness/contexto/" "$RAIZ_GI"'
 
 echo "── $passou ok, $falhou falha(s)"
 [ "$falhou" -eq 0 ]

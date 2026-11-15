@@ -176,13 +176,22 @@ function doctorEmCache(root, pluginRoot, agora) {
   return { nivel: c.nivel ?? null, declarado: c.declarado ?? null, em: c.em, fonte: 'recalculado agora' };
 }
 
+/**
+ * O ÚNICO critério de onboarding (GM-14 FIEL-14 h): `fluxo.resolvidoEm` não vazio no harness.config.json LOCAL. O cartão (`coletar`), o `loop.mjs` e o
+ * `painel.mjs` o usam; nenhuma outra definição nem outra leitura (nunca o config de origin/HEAD).
+ */
+export const onboardingDe = (raw) => Boolean(raw && typeof raw === 'object' && raw.fluxo && typeof raw.fluxo === 'object' && typeof raw.fluxo.resolvidoEm === 'string' && raw.fluxo.resolvidoEm);
+/** `raiz` já resolvida (como no cartão: `resolverRaiz(cwd)`). Nunca lança. */
+export function temOnboarding(raiz) {
+  try { return onboardingDe(lerJson(join(raiz, 'harness.config.json'))); } catch { return false; }
+}
+
 export function coletar(cwd, pluginRoot, opts = {}) {
   const agora = opts.agora ? Date.parse(opts.agora) : Date.now();
   const root = resolverRaiz(cwd);
   const raw = lerJson(join(root, 'harness.config.json'));
   const base = { agora, root, semOnboarding: false, configInvalido: raw === undefined };
-  const fluxoOk = raw && typeof raw === 'object' && raw.fluxo && typeof raw.fluxo === 'object' && typeof raw.fluxo.resolvidoEm === 'string' && raw.fluxo.resolvidoEm;
-  if (!fluxoOk) return { ...base, semOnboarding: true };
+  if (!onboardingDe(raw)) return { ...base, semOnboarding: true };
 
   const config = {
     fluxo: { ...DEFAULTS.fluxo, ...raw.fluxo },
@@ -506,6 +515,10 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
     linhas = [LINHA_INDISPONIVEL];
   }
   const raiz = ctx.root;
+  // GM-14 T34 (FIEL-14 a): a sessão corrente do Claude Code, para a skill passar `--sessao <id>` ao `loop.mjs`. 1 linha, logo após o cabeçalho;
+  // id fora da forma do diário (`[A-Za-z0-9._-]{1,128}`) não entra (nada do stdin vira linha de instrução sem filtro).
+  // Sem onboarding o cartão é 1 linha (G9, hooks/test/sessao.test.mjs): a linha de sessão não entra, e sem onboarding a regra de pouso não usa a sessão.
+  if (ctx.semOnboarding !== true && entrada.sessionId !== null && /^[A-Za-z0-9._-]{1,128}$/.test(entrada.sessionId)) linhas = [linhas[0], `sessão ${entrada.sessionId}`, ...linhas.slice(1)];
 
   let diario = null;
   try {
@@ -540,8 +553,17 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
   let diarioOk = false;
   if (diario && !ctx.semOnboarding && !ctx.erro) {
     // Sem onboarding (ou cartão indisponível) o hook não escreve nada: o instalador ainda não ignorou `.harness/` (F1, Q20).
+    // GM-14 T48 (emenda 43): `sessao.inicio` e `guarda.heartbeat` de entrega PUBLICADA (regra única de `dist/guarda.js`) vão a `_sem-id`; a leitura do
+    // instantâneo e da retomada segue na pasta da entrega. Módulo ausente ⇒ não afirma publicada (o diário da entrega, como antes).
     const dir = diario.dirEntrega(raiz, pbi);
-    if (!caminhosSemSymlink(raiz, dir)) {
+    let dirGravacao = dir;
+    try {
+      const { entregaPublicada } = await import('../dist/guarda.js');
+      if (pbi !== null && entregaPublicada(raiz, pbi, entrada.sessionId)) dirGravacao = diario.dirEntrega(raiz, null);
+    } catch (e) {
+      falhas.push(`publicada não conferida: ${String(e?.message ?? e).split('\n')[0]}`);
+    }
+    if (!caminhosSemSymlink(raiz, dir) || !caminhosSemSymlink(raiz, dirGravacao)) {
       falhas.push('diário em caminho com symlink — nada lido nem gravado');
     } else {
       try {
@@ -588,7 +610,7 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
         ];
         diarioOk = true;
         for (const ev of eventosNovos) {
-          const r = diario.append(dir, entrada.sessionId, ev);
+          const r = diario.append(dirGravacao, entrada.sessionId, ev);
           if (!r.ok || r.gravado === 'recusa') {
             diarioOk = false;
             falhas.push(`diário recusou ${ev.tipo}: ${r.erro ?? 'canário'}`);
@@ -596,7 +618,7 @@ export async function montarSaidaHook({ cwd, pluginRoot, agora, entradaTexto }) 
           }
         }
         if (diarioOk) {
-          const arquivo = relative(raiz, join(dir, `events.${entrada.sessionId}.jsonl`)).split('\\').join('/');
+          const arquivo = relative(raiz, join(dirGravacao, `events.${entrada.sessionId}.jsonl`)).split('\\').join('/');
           const erro = gravarMarcador(raiz, { ts, sessao: entrada.sessionId, arquivo, autor, fonte, divergente });
           if (erro) {
             diarioOk = false;

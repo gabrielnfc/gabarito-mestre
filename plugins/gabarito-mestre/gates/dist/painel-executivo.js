@@ -11,7 +11,17 @@ import { colunas, cortar, limpar } from './painel-largura.js';
 import { barra, blocoTopo, cortarLinha, cortarPorAltura } from './painel-texto.js';
                                                       
 import { alinhar, corEstadoTask, fmtPct, fmtTempo, fmtTok, num, previsao, separador } from './painel-formato.js';
-                                                                                                     
+                                                                                                                  
+
+/**
+ * GM-14 T17 (FIEL-12, D-P10, D-P11): no estado novo o executivo é o MESMO render dos 5 blocos (`renderBlocos`, `painel-esquadrao.ts`), sem lúdico:
+ * no lugar do nome temático vai o papel desta tabela; o nº da task diferencia dois do mesmo papel. Este arquivo não desenha o estado novo.
+ * `renderExecutivo` abaixo segue só para o estado da E4 (sem `fatos`), até o CLI (T18) e o mod (T20) passarem ao estado novo.
+ */
+export const PAPEL_EXECUTIVO                                        = Object.freeze({
+  orquestrador: 'Orquestrador', implementador: 'Implementador', correcao: 'Implementador', spike: 'Implementador',
+  revisor: 'Revisor', sombra: 'Conselheiro', teste: 'Teste',
+});
 
 const MDASH = '—';
 const ROTULO_LONGO = 13;

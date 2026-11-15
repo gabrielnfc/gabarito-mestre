@@ -138,3 +138,69 @@ describe('fonte da config (D2)', () => {
     }
   });
 });
+
+// ------------------------------------------------------------------------------------- T48 (emenda 43, FIEL-1 b/c): entrega publicada não recebe guarda.*
+
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+
+/** Repo com onboarding (config em origin/HEAD), na branch do ID `GM-10`, com `plano.json` e o diário da entrega (2º fato + PRs dados). */
+function entrega({ prs = [], plano = true, branch = 'enabler/GM-10-loop' } = {}) {
+  const repo = montar({ origem: config(), branch });
+  const dir = join(repo, '.harness', 'entregas', 'GM-10');
+  mkdirSync(dir, { recursive: true });
+  if (plano) writeFileSync(join(dir, 'plano.json'), JSON.stringify({ entrega: 'GM-10', tasks: [] }));
+  const linhas = prs.map(([numero, estado], i) => JSON.stringify({
+    seq: i + 1, ts: `2026-11-13T10:00:0${i}.000Z`, autor: 't', sessao: 'semente', agente: 'orquestrador', tipo: 'fato.medido', hash_anterior: null,
+    dados: { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch } },
+  }));
+  if (linhas.length > 0) writeFileSync(join(dir, 'events.semente.jsonl'), `${linhas.join('\n')}\n`);
+  return repo;
+}
+const tiposEm = (repo, id) => {
+  const dir = join(repo, '.harness', 'entregas', id);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((n) => /^events\..+\.jsonl$/.test(n) && !n.includes('semente'))
+    .flatMap((n) => readFileSync(join(dir, n), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).tipo));
+};
+
+describe('entrega publicada não recebe guarda.* (T48)', () => {
+  test('publicada-nao-recebe-guarda.ask: ask em produção grava em _sem-id; a entrega publicada fica intacta', () => {
+    const repo = entrega({ prs: [[7, 'mergeado']] });
+    assert.equal(rodarGuarda(repo, 'vercel --prod').decisao, 'ask');
+    assert.deepEqual(tiposEm(repo, 'GM-10'), []);
+    assert.deepEqual(tiposEm(repo, '_sem-id'), ['guarda.ask']);
+  });
+
+  test('publicada-nao-recebe-operacao.destrutiva: rm -rf grava em _sem-id', () => {
+    const repo = entrega({ prs: [[7, 'mergeado']] });
+    rodarGuarda(repo, 'rm -rf .next dist');
+    assert.deepEqual(tiposEm(repo, 'GM-10'), []);
+    assert.deepEqual(tiposEm(repo, '_sem-id'), ['operacao.destrutiva']);
+  });
+
+  test('identificada-continua-gravando (vizinho): PR mergeado e outro aberto ⇒ o guarda.ask entra na entrega', () => {
+    const repo = entrega({ prs: [[7, 'mergeado'], [8, 'aberto']] });
+    rodarGuarda(repo, 'vercel --prod');
+    assert.deepEqual(tiposEm(repo, 'GM-10'), ['guarda.ask']);
+    assert.deepEqual(tiposEm(repo, '_sem-id'), []);
+  });
+
+  test('identificada-continua-gravando (vizinho): sem nenhum PR medido ⇒ entrega em curso recebe', () => {
+    const repo = entrega({ prs: [] });
+    rodarGuarda(repo, 'vercel --prod');
+    assert.deepEqual(tiposEm(repo, 'GM-10'), ['guarda.ask']);
+  });
+
+  test('vizinho: PR mergeado SEM 2º fato (sem plano.json) não é publicada; o diário da branch segue recebendo (âncora da pergunta b)', () => {
+    const repo = entrega({ prs: [[7, 'mergeado']], plano: false });
+    rodarGuarda(repo, 'vercel --prod');
+    assert.deepEqual(tiposEm(repo, 'GM-10'), ['guarda.ask']);
+  });
+
+  test('combinação das guardas: publicada continua pedindo (ask) em produção; o destino do registro não muda a decisão', () => {
+    const publicada = rodarGuarda(entrega({ prs: [[7, 'mergeado']] }), 'vercel --prod');
+    const curso = rodarGuarda(entrega({ prs: [] }), 'vercel --prod');
+    assert.equal(publicada.decisao, 'ask');
+    assert.deepEqual(publicada.saida, curso.saida);
+  });
+});

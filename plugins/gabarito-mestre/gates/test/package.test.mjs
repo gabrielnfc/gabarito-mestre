@@ -43,12 +43,11 @@ describe('ehRepoDoPlugin — cópia instalada sob um pai com marketplace.json al
 });
 
 describe('gates/package.json 1.1.0', () => {
-  test('version é 2.0.0 (virada: estável, sem sufixo de pré-versão)', () => {
-    assert.equal(pkg.version, '2.0.0');
-    assert.doesNotMatch(pkg.version, /alpha|beta|rc|-/);
+  test('version é 2.1.0-alpha.1 (pré-versão da 2.1.0; a estável 2.1.0 só o dono publica, next ⇒ main)', () => {
+    assert.equal(pkg.version, '2.1.0-alpha.1');
   });
-  test('sem-alpha: plugin.json e gates não carregam sufixo de pré-versão', { skip: noPlugin }, () => {
-    for (const v of [ler(PLUGIN_JSON).version, pkg.version]) assert.match(v, /^\d+\.\d+\.\d+$/, `versão com sufixo: ${v}`);
+  test('versao-formato: plugin.json e gates dizem a mesma versão SemVer, com no máximo o sufixo alpha.N', { skip: noPlugin }, () => {
+    for (const v of [ler(PLUGIN_JSON).version, pkg.version]) assert.match(v, /^\d+\.\d+\.\d+(-alpha\.\d+)?$/, `versão fora do formato: ${v}`);
   });
   test('versao-manifestos: plugin.json, gates, marketplace (se trouxer versão) e CHANGELOG dizem a mesma versão', { skip: fora }, () => {
     const v = ler(PLUGIN_JSON).version;

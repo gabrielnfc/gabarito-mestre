@@ -8,6 +8,7 @@
  */
 
 import { ordenar } from './loop.js';
+import { origemDe } from './origem.js';
 import { horaLocal } from './painel-hora.js';
 import { colunas, cortar, limpar } from './painel-largura.js';
                                                                                  
@@ -327,10 +328,13 @@ export function fraseHistorico(ev        , ctx              )                   
       const verbo = acao === 'leitura' ? 'leu' : acao === 'escrita' ? 'alterou' : acao === 'execucao' ? 'executou em' : null;
       if (verbo === null || typeof alvo !== 'string') return null;
       const amb = d('ambiente');
-      const ambiente = amb === 'prod' ? 'PRODUÇÃO' : amb === 'homolog' ? 'HOMOLOG' : amb === 'teste' ? 'TESTE' : 'ambiente desconhecido';
       const quem = ev.agente === 'orquestrador' ? ctx.lider : typeof ev.agente === 'string' ? (ctx.porAgente?.get(ev.agente) ?? 'agente') : 'agente';
+      const destino = alvo.trim() === '' ? '—' : alvo;
+      // FIEL-5 b (GM-14): ambiente não conferido não vira "permitido" nem "ambiente desconhecido"; a guarda não muda
+      if (amb !== 'prod' && amb !== 'homolog' && amb !== 'teste') return frase('▲', 'warning', `${quem} ${verbo} ${destino} (não consegui conferir se é produção)`);
+      const ambiente = amb === 'prod' ? 'PRODUÇÃO' : amb === 'homolog' ? 'HOMOLOG' : 'TESTE';
       const sufixo = ev.tipo === 'producao.acesso' ? 'permitido' : 'destrutiva';
-      return frase('▲', 'warning', `${quem} ${verbo} ${ambiente} · ${alvo.trim() === '' ? '—' : alvo} · ${sufixo}`);
+      return frase('▲', 'warning', `${quem} ${verbo} ${ambiente} · ${destino} · ${sufixo}`);
     }
     case 'ci.resultado': {
       const verde = d('verde');
@@ -364,10 +368,17 @@ export function fraseHistorico(ev        , ctx              )                   
       return null; // `{negado}` e qualquer outra forma
     }
     case 'task.reaberta':
-      return txt(task) && d('origem') === 'dono' ? frase('▶', 'success', `dono liberou ${task}`) : null;
+      if (!txt(task)) return null;
+      // GM-14 T36 (FIEL-15 c): a liberação da Sombra aparece com o nome dela, nunca como do dono
+      return d('origem') === 'dono' ? frase('▶', 'success', `dono liberou ${task}`) : d('origem') === 'sombra' ? frase('▶', 'success', `a Sombra liberou a ${task}`) : null;
     case 'sessao.pouso': {
       const pct = d('percent');
       return typeof pct === 'number' && Number.isFinite(pct) ? frase('▼', 'inactive', `pouso da sessão em ${Math.round(pct)}%`) : null;
+    }
+    case 'sessao.pouso.tentativa': {
+      // T53: o tipo cru nunca aparece; só a frase com o número da tentativa
+      const n = d('n');
+      return n === 2 || n === 3 ? frase('▼', 'warning', `pouso repetido, tentativa ${n} de 3`) : null;
     }
     case 'sessao.retomada':
       return frase('▶', 'inactive', 'sessão retomada');
@@ -410,6 +421,7 @@ export const HIST_MAX = 20;
 
 /**
  * Histórico do estado: frases não nulas do diário ordenado, mais recente primeiro, até `HIST_MAX`; `ocultos` = as que sobram.
+ * Cada item traz `origem` = `origemDe(ev)` (GM-14 T17, REQ-LNG-1: tabela fechada; `null` = tipo fora dela).
  * Diário que `ordenar` recusa (ou que não é lista) ⇒ vazio: o painel não inventa histórico de diário inválido (o PAROU `diario_invalido` já avisa).
  * `revisaoS` de um veredito = `ts` dele − `ts` do último `task.iniciada {papel:'revisor'}` da mesma task antes dele; ausente ou negativo ⇒ sem duração.
  */
@@ -433,7 +445,7 @@ export function historicoDe(eventos          , ctx                              
       }
     }
     const f = fraseHistorico(ev, { ...ctx, revisaoS });
-    if (f !== null) todos.push({ glifo: f.glifo, texto: f.texto, hora: horaLocal(ms, ctx.agoraMs, ctx.fuso), cor: f.cor });
+    if (f !== null) todos.push({ glifo: f.glifo, texto: f.texto, hora: horaLocal(ms, ctx.agoraMs, ctx.fuso), cor: f.cor, origem: origemDe(ev) });
   }
   todos.reverse();
   return { itens: todos.slice(0, HIST_MAX), ocultos: Math.max(0, todos.length - HIST_MAX) };

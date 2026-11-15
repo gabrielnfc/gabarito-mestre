@@ -65,7 +65,7 @@ export function montarRepo(dest, planoArquivo, { suiteSemGit = false } = {}) {
   mkdirSync(join(dest, 'docs'), { recursive: true });
   writeFileSync(join(dest, '.gitignore'), '.harness/\nnode_modules/\n.tmp-gabarito/\n');
   writeFileSync(join(dest, 'package.json'), JSON.stringify({ name: 'gm99-fumaca', version: '0.0.0', private: true, type: 'module', scripts: { test: 'node --test test/*.test.mjs' } }) + '\n');
-  writeFileSync(join(dest, 'harness.config.json'), JSON.stringify({ gates: { suites: ['npm test'] }, loop: { slots: 2, tetoTokens: 1500000 } }) + '\n');
+  writeFileSync(join(dest, 'harness.config.json'), JSON.stringify({ fluxo: { resolvidoEm: '2026-11-01T00:00:00Z' }, gates: { suites: ['npm test'] }, loop: { slots: 2, tetoTokens: 1500000 } }) + '\n');
   writeFileSync(join(dest, 'test/base.test.mjs'), "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('base', () => assert.ok(true));\n");
   // D2: suíte sensível ao repositório pai. O temporário tem de nascer sem `.git` acima dele (CI roda com TMPDIR comum; uma worktree não).
   if (suiteSemGit) {
@@ -95,7 +95,7 @@ export function montarRepo(dest, planoArquivo, { suiteSemGit = false } = {}) {
 }
 
 /**
- * Cópia do mod em que `tasksDoNegado` devolve lista vazia (controle positivo do item 6): `gabarito.mjs` copiado (o Node segue
+ * Cópia do mod em que `tasksDoNegado` devolve lista vazia (controle positivo do item 6): `gabarito.mjs`, `painel.mjs` e `chat.mjs` copiados (o Node segue
  * symlink, então o mod não pode ser link) e `gates/dist` de links, menos `pouso.js`, copiado e adulterado.
  */
 function modSemReabrir(dir) {
@@ -103,6 +103,7 @@ function modSemReabrir(dir) {
   mkdirSync(join(dir, 'gates/dist'), { recursive: true });
   copyFileSync(join(PLUGIN, 'mod/gabarito.mjs'), join(dir, 'mod/gabarito.mjs'));
   copyFileSync(join(PLUGIN, 'mod/painel.mjs'), join(dir, 'mod/painel.mjs')); // E4 T10: o gabarito.mjs importa o painel por caminho relativo
+  copyFileSync(join(PLUGIN, 'mod/chat.mjs'), join(dir, 'mod/chat.mjs')); // GM-14 T5: o gabarito.mjs importa o chat por caminho relativo
   for (const n of readdirSync(join(PLUGIN, 'gates/dist'))) {
     if (n === 'pouso.js') continue;
     symlinkSync(realpathSync(join(PLUGIN, 'gates/dist', n)), join(dir, 'gates/dist', n));
@@ -133,7 +134,7 @@ export async function caminhar(opcoes) {
   // ── guarda real (stdin) ────────────────────────────────────────
   function guarda(tool_name, tool_input, agente) {
     contagem.guarda++;
-    const entrada = { hook_event_name: 'PreToolUse', session_id: 'S1', cwd: REAL, tool_name, tool_input, ...(agente ? { agent_id: agente.id, agent_type: agente.tipo } : {}) };
+    const entrada = { hook_event_name: 'PreToolUse', session_id: mundo.sessao, cwd: REAL, tool_name, tool_input, ...(agente ? { agent_id: agente.id, agent_type: agente.tipo } : {}) };
     const r = spawnSync(NODE, [join(PLUGIN, 'gates/dist/guarda.js')], { cwd: REAL, input: JSON.stringify(entrada), encoding: 'utf8', env: ambiente({ ...envBase, CLAUDE_PROJECT_DIR: REAL }) });
     if (r.status !== 0) def(`guarda rc ${r.status}`);
     let d = null;
@@ -166,18 +167,21 @@ export async function caminhar(opcoes) {
   }
 
   // ── host do mod ($ mínimo) ─────────────────────────────────────
-  const mundo = { percent: null, agentes: [], store: new Map(), clears: 0, submits: [], avisos: [], agendado: null, clearAgora: false, denies: [] };
+  const mundo = { sessao: 'S1', clears0: 0, percent: null, agentes: [], store: new Map(), clears: 0, submits: [], avisos: [], agendado: null, clearAgora: false, denies: [], relogioMs: 0 };
   const modArquivo = o.semReabrir ? modSemReabrir(join(o.tmp, 'mod-sem-reabrir')) : (o.mod ?? join(PLUGIN, 'mod/gabarito.mjs')); // `mod`: outro gabarito.mjs (validar a regra da T19 r2 antes de ela chegar)
   const { register } = await import(pathToFileURL(modArquivo).href);
   const H = {};
   register((ev, a, b) => { H[ev] = b ?? a; });
   const $ = {
     plugin: { root: PLUGIN },
-    session: { root: async () => REAL, repo: async () => ({ root: REAL }), id: async () => 'S1', usage: async () => ({ context: mundo.percent === null ? {} : { percent: mundo.percent } }) },
+    session: { root: async () => REAL, repo: async () => ({ root: REAL }), id: async () => mundo.sessao, usage: async () => ({ context: mundo.percent === null ? {} : { percent: mundo.percent } }) },
     env: { get: async (k) => (k === 'GABARITO_POUSO_X' ? o.x : undefined) },
     store: { get: async (k) => mundo.store.get(k), set: async (k, v) => { mundo.store.set(k, v); }, delete: async (k) => { mundo.store.delete(k); } },
     ui: { toast: async (t) => { mundo.avisos.push(t); trilha.push(`  mod aviso: ${t.slice(0, 150)}`); }, log: () => {} },
-    process: { run: async (argv, op = {}) => { const r = spawnSync(argv[0], argv.slice(1), { cwd: op.cwd, input: op.stdin, encoding: 'utf8', env: ambiente() }); return { exitCode: r.status, stdout: r.stdout, stderr: r.stderr }; } },
+    process: { run: async (argv, op = {}) => {
+      let args = argv.slice(1);
+      if (mundo.relogioMs > 0) { writeFileSync(join(o.tmp, 'relogio.cjs'), 'const d = Date.now; Date.now = () => d() + Number(process.env.GAB_RELOGIO_MS);\n'); args = ['--require', join(o.tmp, 'relogio.cjs'), ...args]; }
+      const r = spawnSync(argv[0], args, { cwd: op.cwd, input: op.stdin, encoding: 'utf8', env: ambiente(mundo.relogioMs > 0 ? { GAB_RELOGIO_MS: String(mundo.relogioMs) } : {}) }); return { exitCode: r.status, stdout: r.stdout, stderr: r.stderr }; } },
     fs: { exists: async (p) => existsSync(p), write: async (p, t) => { writeFileSync(p, t); } },
     clock: { now: async () => Date.now(), after: (_ms, fn) => { mundo.agendado = fn; }, every: () => {} },
     command: { register: async () => {}, run: async ({ command }) => { if (command === 'clear') { mundo.clears++; mundo.percent = null; mundo.clearAgora = true; } } },
@@ -195,7 +199,7 @@ export async function caminhar(opcoes) {
   /** Stop real (`stop-loop.mjs`). */
   function stop() {
     const vivos = mundo.agentes.filter((a) => a.status === 'running');
-    const entrada = { session_id: 'S1', cwd: REAL, hook_event_name: 'Stop', background_tasks: vivos.map((a) => ({ type: 'subagent', id: a.id })) };
+    const entrada = { session_id: mundo.sessao, cwd: REAL, hook_event_name: 'Stop', background_tasks: vivos.map((a) => ({ type: 'subagent', id: a.id })) };
     const r = spawnSync(NODE, [join(PLUGIN, 'gates/scripts/stop-loop.mjs')], { cwd: REAL, input: JSON.stringify(entrada), encoding: 'utf8', env: ambiente({ CLAUDE_PROJECT_DIR: REAL }) });
     if (r.status !== 0) def(`stop-loop rc ${r.status}: ${String(r.stderr).slice(0, 120)}`);
     let j = null;
@@ -255,7 +259,7 @@ export async function caminhar(opcoes) {
     for (const l of LEITURAS_REVISOR) {
       const r = spawnSync(NODE, [join(PLUGIN, 'gates/dist/guarda.js')], {
         cwd: REAL,
-        input: JSON.stringify({ hook_event_name: 'PreToolUse', session_id: 'S1', cwd: REAL, tool_name: 'Bash', tool_input: { command: `cd "${wt}" && ${l}` }, agent_id: ag.id, agent_type: ag.tipo }),
+        input: JSON.stringify({ hook_event_name: 'PreToolUse', session_id: mundo.sessao, cwd: REAL, tool_name: 'Bash', tool_input: { command: `cd "${wt}" && ${l}` }, agent_id: ag.id, agent_type: ag.tipo }),
         encoding: 'utf8', env: ambiente({ ...envBase, CLAUDE_PROJECT_DIR: REAL }),
       });
       leituras[l] = r.stdout.includes('"deny"') ? 'deny' : r.stdout.includes('"ask"') ? 'ask' : 'passa';
@@ -384,7 +388,9 @@ export async function caminhar(opcoes) {
     }
     ag.status = 'completed';
     await H['turn.complete']($, { agentId: ag.id, reason: 'answer', isAborted: false, usage: uso }, async (e) => e);
-    mundo.percent = o.percent;
+    if (ag.papel === 'revisor') mundo.percent = o.percent; // o contexto só sobe com o veredito (T53, I1)
+    // T59 (emenda 67): o contexto também sobe quando o implementador termina (o impasse: pouso da fronteira feito, task concluída à espera do revisor, contexto >= X)
+    else if (o.sobeNoImplementador === true) mundo.percent = o.percent;
     trilha.push(`  agente ${ag.id} ${ag.task} ${ag.papel} terminou`);
   }
   async function peer() { if (H['prompt.submit']) await H['prompt.submit']($, { origin: { kind: 'peer' }, text: 'hand-back' }, async (e) => e); }
@@ -422,7 +428,8 @@ export async function caminhar(opcoes) {
   /** Depois do /clear: a memória do modelo vai embora e o cartão de sessão é o que resta. */
   function aposClear(percent) {
     memoria.rodada = {};
-    const c = spawnSync('bash', [join(PLUGIN, 'hooks/session-card.sh')], { cwd: REAL, input: JSON.stringify({ source: 'clear', session_id: 'S1', cwd: REAL }), encoding: 'utf8', env: ambiente({ CLAUDE_PROJECT_DIR: REAL, CLAUDE_PLUGIN_ROOT: PLUGIN }) });
+    mundo.sessao = `S${++mundo.clears0 + 1}`; // o Claude Code real dá session_id novo a cada /clear (anexo D, P9): S2, S3…
+    const c = spawnSync('bash', [join(PLUGIN, 'hooks/session-card.sh')], { cwd: REAL, input: JSON.stringify({ source: 'clear', session_id: mundo.sessao, cwd: REAL }), encoding: 'utf8', env: ambiente({ CLAUDE_PROJECT_DIR: REAL, CLAUDE_PLUGIN_ROOT: PLUGIN }) });
     if (c.status !== 0) def(`cartão de sessão rc ${c.status}`);
     trilha.push(`  /clear, cartão ${(c.stdout ?? '').length} chars`);
     mundo.percent = percent; // depois do /clear o contexto é pequeno
@@ -453,7 +460,7 @@ export async function caminhar(opcoes) {
     if (!(liberacao.reabrirSegueNoTeto && liberacao.subagentBloqueado && liberacao.diarioIgual && liberacao.liberou)) def(`liberação do dono fora do previsto: ${JSON.stringify(liberacao)}`);
   }
 
-  let turno = 0; let fim = null; let blocks = 0; let escFeito = false; let pendenteFeito = false; let liberou = false;
+  let tempoFeito = false; let turno = 0; let fim = null; let blocks = 0; let escFeito = false; let pendenteFeito = false; let liberou = false;
   const pendentes = []; let submitsVistos = 0;
   mundo.percent = o.percent; // 1ª resposta define o percent
   trilha.push(`T${turno} prompt do dono`);
@@ -492,6 +499,15 @@ export async function caminhar(opcoes) {
       for (const ag of mundo.agentes.filter((a) => a.status === 'running')) { await terminar(ag); pendentes.push(ag); }
     }
     await fimTurnoMod();
+    if (o.passaTempoMs !== undefined && !tempoFeito && mundo.clears > 0 && r.negou && !mundo.clearAgora) {
+      // T59: a repetição do pouso espera 60 s do pouso anterior (I3) e a fumaça não espera relógio: o `Date.now()` dos processos que o MOD chama (a ponte `ler`, que devolve o `agora`)
+      // anda `passaTempoMs`; o diário (cadeia de hash) fica intacto. LIMITE (MINOR-3 do review r1): `relogioMs` só cresce e não volta, então toda comparação de 60 s entre tentativas passa de imediato depois deste avanço; esta fumaça prova no máximo 2 /clear e NÃO prova o espaçamento de uma 3ª tentativa (isso é do mod-test, com relógio próprio). Depois a vigia (o timer de 30 s do mod) roda.
+      tempoFeito = true;
+      mundo.relogioMs += o.passaTempoMs;
+      trilha.push(`  o tempo passa: ${o.passaTempoMs} ms; a vigia do mod roda`);
+      // a vigia decide e agenda o pouso (`$.clock.after(0, ...)`): cada timer que o mod arma roda uma vez, até o /clear
+      for (let i = 0; i < 3 && mundo.agendado && !mundo.clearAgora; i++) { const f = mundo.agendado; mundo.agendado = null; await f(); await new Promise((r2) => setImmediate(r2)); }
+    }
     if (fim && !mundo.clearAgora && o.liberar && !liberou && /^parar teto_rodadas/.test(fim)) {
       // o dono digita o comando; o corpo da skill manda o modelo consultar `proxima`, e o ciclo segue
       liberou = true;
@@ -513,7 +529,7 @@ export async function caminhar(opcoes) {
       submitsVistos = mundo.submits.length;
       vistos.retomadas.push(mundo.submits.at(-1) ?? '');
       trilha.push(`T${turno} /clear + retomada (${mundo.submits.at(-1)?.length} chars)`);
-      aposClear(3);
+      aposClear(0.5);
       r = await ciclo();
       continue;
     }

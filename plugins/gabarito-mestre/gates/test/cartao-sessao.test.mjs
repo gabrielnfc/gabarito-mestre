@@ -932,6 +932,32 @@ describe('T9 · aprendizados, linha de retomada e ordem de corte (GM-13, REQ-APR
     assert.equal(r.ok, true, r.erro);
   };
 
+  test('cartao-mostra-sessao (GM-14 T34, FIEL-14 a): o session_id do stdin vira 1 linha "sessão <id>" no cartão; id fora da forma ou ausente ⇒ nenhuma', () => {
+    const dir = comPouso();
+    const r = hook(dir, { session_id: 's-abc.1_2', source: 'startup' });
+    assert.equal(r.code, 0, r.stderr);
+    const linhasS = r.ctx.split('\n').filter((l) => /^sessão /.test(l));
+    assert.deepEqual(linhasS, ['sessão s-abc.1_2']);
+    assert.equal(r.ctx.split('\n')[0], RETOMADA, 'a retomada segue em 1º lugar');
+    for (const ruim of ['com espaço', 'x'.repeat(129), 'a\nsessão falsa']) {
+      const o = hook(dir, { session_id: ruim, source: 'startup' });
+      assert.equal(o.code, 0, o.stderr);
+      assert.equal(o.ctx.split('\n').some((l) => /^sessão /.test(l)), false, JSON.stringify(ruim));
+    }
+    const sem = hook(dir, { source: 'startup' });
+    assert.equal(sem.ctx.split('\n').some((l) => /^sessão /.test(l)), false);
+  });
+
+  test('cartao-sem-onboarding-uma-linha (GM-14 T34, FIEL-14 h): sem fluxo.resolvidoEm o session_id do stdin NÃO vira linha "sessão"; o cartão segue com 1 linha', () => {
+    const dir = repoGit({ 'harness.config.json': '{}' });
+    for (const source of ['startup', 'clear']) {
+      const r = hook(dir, { session_id: 's-sem-onb', source });
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(r.ctx.trim().split('\n').length, 1, r.ctx);
+      assert.equal(/^sessão /m.test(r.ctx), false, r.ctx);
+    }
+  });
+
   test('cartao-clear-traz-linha: clear, resume e startup com pouso aberto trazem a linha exata na 1ª posição', () => {
     for (const source of ['clear', 'resume', 'startup']) {
       const r = hook(comPouso(), { session_id: `s-${source}`, source });

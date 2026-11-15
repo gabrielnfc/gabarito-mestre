@@ -7,7 +7,7 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, lstatSync, statSync, symlinkSync, chmodSync, readdirSync, appendFileSync, rmSync,
+  mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, lstatSync, statSync, symlinkSync, chmodSync, readdirSync, appendFileSync, rmSync, renameSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, isAbsolute } from 'node:path';
@@ -15,9 +15,12 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { marcaPronto } from '../scripts/db-template.mjs';
-import { integrarComGate, slotsDaCapacidade } from '../scripts/loop.mjs';
+import { contexto, hashDaLiberacao, integrarComGate, liberarTeto, slotsDaCapacidade } from '../scripts/loop.mjs';
+import { idDaBranch, trilhaDe } from '../dist/trilha.js';
 import { casarAgente } from '../dist/painel-equipe.js';
+import { estadoDe as estadoNucleo, ordenar as ordenarNucleo } from '../dist/loop.js';
 import * as diario from '../dist/diario.js';
+import { pendenciasAprendizado } from '../dist/pendencias.js';
 import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
@@ -508,6 +511,67 @@ describe('comandos que gravam', () => {
     assert.equal(e[0].agente, 'orquestrador');
   });
 
+  test('iniciar-modelo-flag-vence-config', () => {
+    // config manda opus; o flag manda haiku; o diário grava o do flag (e a forma do evento fica a mesma)
+    const amb = ambiente({ config: { ...CONFIG_PADRAO, orquestracao: { modelos: { implementador: 'opus' } } } });
+    amb.cli(['abrir', 'T1']);
+    const r = amb.cli(['iniciar', 'T1', 'implementador', '--modelo', 'haiku']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const e = amb.eventos();
+    assert.equal(e.length, 1);
+    assert.equal(e[0].tipo, 'task.iniciada');
+    assert.deepEqual(e[0].dados, { task: 'T1', papel: 'implementador', modelo: 'haiku' });
+    // todos os valores da lista valem
+    for (const m of ['sonnet', 'opus', 'fable']) {
+      const a = ambiente();
+      a.cli(['abrir', 'T1']);
+      assert.equal(a.cli(['iniciar', 'T1', 'implementador', '--modelo', m]).rc, 0, m);
+      assert.equal(a.eventos()[0].dados.modelo, m);
+    }
+  });
+
+  test('iniciar-sem-flag-igual-2-0-0', () => {
+    // sem --modelo, o modelo é o do config (opus), como a 2.0.0; nenhum campo a mais no evento
+    const amb = ambiente({ config: { ...CONFIG_PADRAO, orquestracao: { modelos: { implementador: 'opus' } } } });
+    amb.cli(['abrir', 'T1']);
+    const r = amb.cli(['iniciar', 'T1', 'implementador']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const e = amb.eventos();
+    assert.equal(e.length, 1);
+    assert.deepEqual(e[0].dados, { task: 'T1', papel: 'implementador', modelo: 'opus' });
+    assert.deepEqual(Object.keys(e[0].dados), ['task', 'papel', 'modelo']);
+  });
+
+  test('iniciar-modelo-fora-da-lista-recusa', () => {
+    const amb = ambiente();
+    amb.cli(['abrir', 'T1']);
+    for (const m of ['gpt', 'Opus', 'claude-opus-5-5', '', 'spike']) {
+      const r = amb.cli(['iniciar', 'T1', 'implementador', '--modelo', m]);
+      assert.equal(r.rc, 1, `"${m}": ${r.out}${r.err}`);
+      assert.equal(r.j.erro, 'argumento_invalido', `${m}: recusa na borda, antes de tocar o diário`);
+      assert.match(r.j.mensagem, /haiku \| sonnet \| opus \| fable/, m);
+      assert.match(r.j.mensagem, /nada foi gravado/, m);
+    }
+    assert.equal(amb.eventos().length, 0, 'nada gravado no diário');
+    // o recusado não deixa estado: o iniciar válido seguinte grava o 1º e único evento
+    assert.equal(amb.cli(['iniciar', 'T1', 'implementador', '--modelo', 'opus']).rc, 0);
+    assert.equal(amb.eventos().length, 1);
+  });
+
+  test('iniciar-spike-recusa-com-frase', () => {
+    const amb = ambiente();
+    amb.cli(['abrir', 'T1']);
+    const r = amb.cli(['iniciar', 'T1', 'spike']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.match(r.j.mensagem, /implementador/);
+    assert.doesNotMatch(r.j.mensagem, /fora da lista/, 'frase própria, não a lista genérica');
+    assert.equal(amb.eventos().length, 0, 'nada gravado no diário');
+    // com --modelo também recusa, e o papel valido ao lado segue aceito
+    assert.equal(amb.cli(['iniciar', 'T1', 'spike', '--modelo', 'opus']).rc, 1);
+    assert.equal(amb.eventos().length, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'implementador']).rc, 0);
+  });
+
   test('iniciar-papel-invalido-recusa', () => {
     const amb = ambiente();
     amb.cli(['abrir', 'T1']);
@@ -552,7 +616,7 @@ describe('comandos que gravam', () => {
     amb.aprovar('T1');
     const v = amb.eventos().at(-1);
     assert.equal(v.tipo, 'review.veredito');
-    assert.deepEqual(v.dados, { task: 'T1', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 });
+    assert.deepEqual(v.dados, { task: 'T1', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0, sha: amb.topo('wt/GM-10-T1') });
   });
 
   test('veredito-argumentos-invalidos-recusa', () => {
@@ -1218,7 +1282,7 @@ describe('proxima', () => {
     // E3 (T10): todo item leva `modelo`, `decisoes` e `emendas` (vazias sem Sombra nem emenda); E5a (T8): e `aprendizados` (vazio sem aprendizado D na árvore)
     const item = (task) => ({ task, papel: 'implementador', descricao: `${task} implementador`, modelo: { modelo: 'sonnet', esforco: 'high' }, decisoes: [], emendas: [], aprendizados: [] });
     assert.deepEqual(r.j.acao, { tipo: 'despachar', itens: [item('T1'), item('T3')] });
-    assert.deepEqual(r.j.sinais, { slots: 2, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false });
+    assert.deepEqual(r.j.sinais, { slots: 2, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: true });
     assert.equal(r.j.aviso, undefined);
     assert.equal(r.out.trim().split('\n').length, 1, 'uma linha de JSON');
   });
@@ -1562,6 +1626,7 @@ describe('integrar entra só o commit aprovado', () => {
     const ev = amb.eventos().at(-1);
     assert.equal(ev.tipo, 'task.integrada');
     assert.equal(ev.dados.sha, amb.topo());
+    assert.ok(!('ja_na_base' in ev.dados), 'caminho normal (FIEL-9 d): sem a chave ja_na_base');
     assert.ok(amb.gitChamadas().some((l) => new RegExp(`merge --ff-only ${ev.dados.sha}$`).test(l)), 'merge por sha, não por nome de ref');
   });
 
@@ -1647,6 +1712,549 @@ exec "${GIT_REAL}" "$@"
 `, { mode: 0o755 });
     const antes = semEfeito(amb);
     nada(amb, antes, amb.cli(['integrar', 'T1']), 'merge_sem_efeito');
+  });
+});
+
+/**
+ * GM-14 T32 (Emenda 3, FIEL-9 a–e): o commit aprovado já está na base (C2). `integrar` grava `task.integrada {ja_na_base: true}` sem rebase, gate nem merge,
+ * fecha a worktree e diz no `aviso:` o que cobriu o sha. Mutações M-F9a..j, l, m: task-32-mut.json da entrega GM-14.
+ */
+describe('integrar com o sha aprovado já na base (FIEL-9)', () => {
+  const BASE = 'enabler/GM-10-loop';
+  const BRANCH = 'wt/GM-10-T1';
+  /** C2: o commit da task entrou direto na base (fast-forward da base até ele). */
+  const baseAte = (amb, ref) => g(amb.dir, 'merge', '-q', '--ff-only', ref);
+  const commitNaBase = (amb, arq = 'src/base.txt') => {
+    writeFileSync(join(amb.dir, arq), 'base\n');
+    g(amb.dir, 'add', arq);
+    g(amb.dir, 'commit', '-q', '-m', 'chore: base anda');
+  };
+  const aviso = (task, sha, cobertura) => `aviso: ${task} já estava na base (${sha.slice(0, 12)} é ancestral de ${BASE}): integrada sem merge, sem rebase e sem gate; ${cobertura}`;
+  const COB_PROXIMO = 'nenhum gate rodou sobre ele ainda; o próximo integrar roda sobre ele';
+  const COB_CI = 'nenhum gate rodou sobre ele e não há outro integrar: a CI do pedido de revisão é a 1ª verificação, e o merge espera ela verde';
+  const COB_GATE = (t) => `o gate da integração de ${t} já rodou sobre ele`;
+  /** Nenhuma chamada de git que move branch ou base (o `merge-base --is-ancestor` não conta). */
+  const semMover = (amb) => {
+    const movem = amb.gitChamadas().filter((l) => /(^|\s)(rebase|merge|reset|update-ref|cherry-pick)(\s|$)/.test(l));
+    assert.deepEqual(movem, [], 'o caminho já na base não faz rebase nem merge');
+  };
+  const nadaCli = (amb, antes, r, erro) => {
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, erro, r.out);
+    assert.equal(r.j.merge, false);
+    assert.equal(r.j.evento, false);
+    assert.deepEqual(semEfeito(amb), antes);
+    assert.ok(!amb.tipos().includes('task.integrada'));
+  };
+
+  test('ja-na-base-integra-sem-merge', async () => {
+    const amb = ambiente();
+    const w = amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    const baseAntes = amb.topo(BASE);
+    let chamado = false;
+    const r = await integrarComGate(amb.dir, 'T1', { avaliar: async () => { chamado = true; throw new Error('o gate não roda no caminho já na base'); } });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(chamado, false, 'o gate não foi chamado');
+    assert.equal(r.task, 'T1');
+    assert.equal(r.branch, BRANCH);
+    assert.equal(r.base, BASE);
+    assert.equal(r.merge, false);
+    assert.equal(r.ja_na_base, true);
+    assert.equal(r.evento, true);
+    assert.equal(r.fechada, true);
+    assert.equal(r.banco, 'n/a');
+    assert.deepEqual(r.ignorados_removidos, []);
+    assert.ok(!('mutacoes' in r), 'sem mutações: o gate não rodou');
+    assert.deepEqual(r.relato, [aviso('T1', aprovado, COB_PROXIMO)]);
+    const ev = amb.eventos().at(-1);
+    assert.equal(ev.tipo, 'task.integrada');
+    assert.deepEqual(ev.dados, { task: 'T1', sha: aprovado, ja_na_base: true });
+    assert.equal(amb.topo(BASE), baseAntes, 'a base não se move');
+    assert.equal(amb.topo(BRANCH), aprovado, 'a branch não se move');
+    assert.ok(!existsSync(w), 'worktree fechada');
+    assert.equal(g(amb.dir, 'status', '--short').trim(), '');
+  });
+
+  test('ja-na-base-com-base-a-frente', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    commitNaBase(amb);
+    const baseAntes = amb.topo(BASE);
+    assert.notEqual(baseAntes, aprovado);
+    writeFileSync(amb.gitLog, '');
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.ok, true);
+    assert.equal(r.j.merge, false);
+    assert.equal(r.j.ja_na_base, true);
+    assert.deepEqual(amb.eventos().at(-1).dados, { task: 'T1', sha: aprovado, ja_na_base: true }, 'grava o sha aprovado, não o HEAD da base');
+    assert.equal(amb.topo(BASE), baseAntes);
+    assert.equal(amb.topo(BRANCH), aprovado);
+    semMover(amb);
+    assert.ok(amb.gitChamadas().some((l) => l.endsWith(`merge-base --is-ancestor ${aprovado} refs/heads/${BASE}`)), 'o aprovado é o ancestral testado, a base o descendente');
+  });
+
+  test('ja-na-base-aviso-sem-gate-ainda', () => {
+    // integração anterior cujo sha NÃO tem o aprovado como ancestral não cobre: cobertura (ii), com T2 ainda por integrar
+    const amb = ambiente();
+    amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    amb.aprovar('T3');
+    assert.equal(amb.cli(['integrar', 'T3']).rc, 0);
+    g(amb.dir, 'merge', '-q', '--no-ff', '-m', 'chore: T1 entra direto na base', aprovado);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.relato, [aviso('T1', aprovado, COB_PROXIMO)]);
+    // integração anterior que só "já estava na base" também não cobre: o gate não rodou nela
+    const b = ambiente();
+    b.aprovar('T1');
+    const aprovadoB = b.topo(BRANCH);
+    baseAte(b, aprovadoB);
+    b.semear([
+      ['task.iniciada', { task: 'T3', papel: 'implementador' }],
+      ['task.concluida', { task: 'T3', sha: aprovadoB }],
+      ['review.veredito', { task: 'T3', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }],
+      ['task.integrada', { task: 'T3', sha: aprovadoB, ja_na_base: true }],
+    ]);
+    const rb = b.cli(['integrar', 'T1']);
+    assert.equal(rb.rc, 0, rb.out + rb.err);
+    assert.deepEqual(rb.j.relato, [aviso('T1', aprovadoB, COB_PROXIMO)]);
+  });
+
+  test('ja-na-base-aviso-cita-integracao-que-cobriu', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    amb.aprovar('T3');
+    const r3 = amb.cli(['integrar', 'T3']);
+    assert.equal(r3.rc, 0, r3.out + r3.err);
+    assert.equal(r3.j.merge, true, 'T3 integrou com gate sobre a base que já tem o aprovado de T1');
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.relato, [aviso('T1', aprovado, COB_GATE('T3'))]);
+  });
+
+  test('ja-na-base-ultima-task-cita-ci', () => {
+    // única task fora de `integrada`: não há próximo integrar; a cobertura (iii) cita a CI do pedido de revisão
+    const amb = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }]) });
+    amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.relato, [aviso('T1', aprovado, COB_CI)]);
+    // com outra task já integrada (com gate, antes do aprovado entrar) e nenhuma restante: ainda (iii)
+    const b = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }, { id: 'T3', deps: [], arquivos: ['src/t3.txt'] }]) });
+    b.aprovar('T1');
+    const aprovadoB = b.topo(BRANCH);
+    b.aprovar('T3');
+    assert.equal(b.cli(['integrar', 'T3']).rc, 0);
+    g(b.dir, 'merge', '-q', '--no-ff', '-m', 'chore: T1 entra direto na base', aprovadoB);
+    const rb = b.cli(['integrar', 'T1']);
+    assert.equal(rb.rc, 0, rb.out + rb.err);
+    assert.deepEqual(rb.j.relato, [aviso('T1', aprovadoB, COB_CI)]);
+  });
+
+  test('ja-na-base-mesmo-alvo-nas-tres-guardas', () => {
+    // Correção 1: `alvo` é lido 1 vez do último task.concluida. Depois da 1ª leitura da branch, todo `rev-parse` da branch, da base ou de HEAD
+    // devolve um sha falso: se o caminho (b) relesse qualquer um, o gravado mudaria.
+    const amb = ambiente();
+    amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    const bin = amb.env.PATH.split(':')[0];
+    writeFileSync(join(bin, 'git'), `#!/bin/bash
+echo "$*" >> "$GIT_LOG"
+case "$*" in
+  *"rev-parse refs/heads/${BRANCH}"|*"rev-parse refs/heads/${BASE}"|*"rev-parse HEAD")
+    if [ -f "$GIT_LOG.marca" ]; then echo ${'f'.repeat(40)}; exit 0; fi
+    if [[ "$*" == *"rev-parse refs/heads/${BRANCH}" ]]; then touch "$GIT_LOG.marca"; fi ;;
+esac
+exec "${GIT_REAL}" "$@"
+`, { mode: 0o755 });
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.ok(existsSync(`${amb.gitLog}.marca`), 'a branch foi lida em (a5)');
+    assert.deepEqual(amb.eventos().at(-1).dados, { task: 'T1', sha: aprovado, ja_na_base: true });
+    assert.ok(r.j.relato[0].includes(`(${aprovado.slice(0, 12)} é ancestral`), r.j.relato[0]);
+    assert.ok(amb.gitChamadas().some((l) => l.endsWith(`merge-base --is-ancestor ${aprovado} refs/heads/${BASE}`)), '(a6) testa o mesmo alvo');
+  });
+
+  test('ja-na-base-head-alem-do-aprovado-recusa', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    amb.commitNaWt('T1', 'src/t1.txt', 'depois\n', 'feat(GM-10): depois do veredito');
+    const topoBranch = amb.topo(BRANCH);
+    const antes = semEfeito(amb);
+    nadaCli(amb, antes, amb.cli(['integrar', 'T1']), 'commit_nao_revisado');
+    assert.equal(amb.topo(BRANCH), topoBranch, 'branch intocada');
+  });
+
+  test('ja-na-base-worktree-suja-recusa', () => {
+    const amb = ambiente();
+    const w = amb.aprovar('T1');
+    baseAte(amb, amb.topo(BRANCH));
+    writeFileSync(join(w, 'novo.txt'), 'x');
+    const antes = semEfeito(amb);
+    nadaCli(amb, antes, amb.cli(['integrar', 'T1']), 'worktree_suja');
+    assert.equal(readFileSync(join(w, 'novo.txt'), 'utf8'), 'x');
+  });
+
+  test('ja-na-base-sem-aprovado-recusa', () => {
+    const amb = ambiente();
+    for (const a of [['abrir', 'T1'], ['iniciar', 'T1', 'implementador']]) assert.equal(amb.cli(a).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+    baseAte(amb, amb.topo(BRANCH));
+    const antes = semEfeito(amb);
+    nadaCli(amb, antes, amb.cli(['integrar', 'T1']), 'nao_integravel');
+  });
+
+  test('ancestral-indeterminado-recusa', async () => {
+    const amb = ambiente();
+    const w = amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    for (const codigo of [128, null, 2, -1]) {
+      const antes = semEfeito(amb);
+      const args = [];
+      let gate = false;
+      const r = await integrarComGate(amb.dir, 'T1', {
+        ancestral: (...a) => { args.push(a); return codigo; },
+        avaliar: async () => { gate = true; return { reprova: 0, alertas: 0, relato: [], suites: 1, testes: 1, mutacoes: 0, semContagem: 0 }; },
+      });
+      assert.equal(r.ok, false, `${codigo} ${JSON.stringify(r)}`);
+      assert.equal(r.erro, 'ancestral_indeterminado', String(codigo));
+      assert.equal(r.merge, false);
+      assert.equal(r.evento, false);
+      assert.equal(gate, false, 'nem o caminho normal');
+      assert.deepEqual(args, [[amb.dir, aprovado, `refs/heads/${BASE}`]]);
+      assert.deepEqual(semEfeito(amb), antes);
+      assert.equal(amb.topo(BRANCH), aprovado, 'branch intocada');
+      assert.ok(existsSync(w));
+      assert.ok(!amb.tipos().includes('task.integrada'));
+    }
+  });
+
+  test('nao-ancestral-segue-caminho-normal', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    commitNaBase(amb);
+    writeFileSync(amb.gitLog, '');
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.merge, true);
+    assert.ok(!('ja_na_base' in r.j));
+    assert.ok(!r.j.relato.some((l) => /já estava na base/.test(l)), JSON.stringify(r.j.relato));
+    const ev = amb.eventos().at(-1);
+    assert.deepEqual(ev.dados, { task: 'T1', sha: amb.topo(BASE), mutacoes: { total: 0, mortas: 0 } });
+    assert.ok(amb.gitChamadas().some((l) => / rebase refs\/heads\//.test(l)), 'rebase do caminho normal');
+    assert.ok(amb.gitChamadas().some((l) => / merge --ff-only /.test(l)), 'merge do caminho normal');
+  });
+
+  /** abrir → iniciar → concluir SEM commit → revisor → APROVADO: o sha aprovado é a própria base do `abrir`. */
+  const aprovarSemCommit = (amb, t) => {
+    for (const a of [['abrir', t], ['iniciar', t, 'implementador'], ['concluir', t], ['iniciar', t, 'revisor'], ['veredito', t, 'APROVADO', '1', '0', '0']]) {
+      const r = amb.cli(a);
+      assert.equal(r.rc, 0, `${a.join(' ')} ${r.out}`);
+    }
+    return amb.wt(t);
+  };
+
+  test('abrir-grava-o-sha-da-base', () => {
+    const amb = ambiente();
+    const topo = amb.topo(BASE);
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    assert.equal(g(amb.dir, 'config', '--get', `branch.${BRANCH}.gabaritoBase`).trim(), BASE, 'gabaritoBase guarda o NOME da base');
+    assert.equal(g(amb.dir, 'config', '--get', `branch.${BRANCH}.gabaritoBaseSha`).trim(), topo, 'gabaritoBaseSha guarda o sha da base no abrir');
+  });
+
+  test('ja-na-base-sem-commit-proprio-recusa', () => {
+    // Emenda 2: sem commit próprio desde a base do `abrir`, o caminho (b) não vale; recusa como antes (A3: 0 commits contra a base)
+    for (const baseAnda of [true, false]) {
+      const amb = ambiente();
+      const w = aprovarSemCommit(amb, 'T1');
+      const aprovado = amb.topo(BRANCH);
+      if (baseAnda) commitNaBase(amb);
+      assert.equal(spawnSync(GIT_REAL, ['-C', amb.dir, 'merge-base', '--is-ancestor', aprovado, BASE]).status, 0, 'o aprovado é ancestral da base');
+      const topoBase = amb.topo(BASE);
+      const r = amb.cli(['integrar', 'T1']);
+      assert.equal(r.rc, 1, `${baseAnda} ${r.out}${r.err}`);
+      assert.equal(r.j.erro, 'gate_reprovado', r.out);
+      assert.ok(r.j.relato.some((l) => /0 commits contra a base/.test(l)), JSON.stringify(r.j.relato));
+      assert.equal(r.j.merge, false);
+      assert.equal(r.j.evento, false);
+      assert.ok(!('ja_na_base' in r.j));
+      assert.ok(!amb.tipos().includes('task.integrada'), 'sem task.integrada gravada');
+      assert.equal(amb.topo(BASE), topoBase, 'base intocada');
+      assert.equal(amb.topo(BRANCH), aprovado, 'a branch voltou ao commit revisado');
+      assert.ok(existsSync(w));
+    }
+  });
+
+  test('ja-na-base-sem-sha-da-base-gravado-segue-caminho-normal', () => {
+    // worktree aberta sem `gabaritoBaseSha` (versão anterior do abrir): não há prova de commit próprio, segue o caminho de antes
+    const amb = ambiente();
+    amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    commitNaBase(amb);
+    g(amb.dir, 'config', '--unset', `branch.${BRANCH}.gabaritoBaseSha`);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'gate_reprovado', r.out);
+    assert.ok(!amb.tipos().includes('task.integrada'));
+  });
+
+  /**
+   * Emenda 3: a TOPOLOGIA EXATA da T0 real. O commit da task entrou na base ANTES do `abrir`: a branch nasce NELE ("Created from <sha>"),
+   * sem commit próprio, e a base anda depois. Só um `desvio` da MESMA task citando o sha aprovado libera o caminho (b); sem ele, recusa (A3).
+   */
+  const PLANO_DESVIO = planoDe([
+    { id: 'T1', deps: [], arquivos: ['src/t1.txt'], reqs: ['REQ-A-1'] },
+    { id: 'T2', deps: [], arquivos: ['src/t2.txt'], reqs: ['REQ-A-2'] },
+  ]);
+  const topologiaT0 = ({ semShaGravado = false } = {}) => {
+    const amb = ambiente({ plano: PLANO_DESVIO });
+    writeFileSync(join(amb.dir, 'src/t1.txt'), 't0 commitada direto na base\n');
+    g(amb.dir, 'add', 'src/t1.txt');
+    g(amb.dir, 'commit', '-q', '-m', 'docs(GM-10): T0 direto na base');
+    const aprovado = amb.topo(BASE);
+    const w = aprovarSemCommit(amb, 'T1');
+    commitNaBase(amb);
+    // fatos do git medidos, não presumidos: a branch nasceu no aprovado, sem commit próprio, e ele é ancestral da base
+    assert.equal(amb.topo(BRANCH), aprovado);
+    assert.match(g(amb.dir, 'reflog', 'show', '--format=%gs', BRANCH).trim().split('\n').at(-1), new RegExp(`^branch: Created from ${aprovado}$`));
+    assert.equal(g(amb.dir, 'merge-base', BRANCH, BASE).trim(), aprovado);
+    assert.equal(g(amb.dir, 'rev-list', '--count', `${aprovado}..${BRANCH}`).trim(), '0');
+    assert.equal(spawnSync(GIT_REAL, ['-C', amb.dir, 'merge-base', '--is-ancestor', aprovado, BASE]).status, 0);
+    if (semShaGravado) g(amb.dir, 'config', '--unset', `branch.${BRANCH}.gabaritoBaseSha`);
+    return { amb, w, aprovado };
+  };
+  const desvio = (amb, task, req, evidencia, arquivos = '') => {
+    const r = amb.cli(['desvio', task, '--req', req, '--evidencia', evidencia, '--arquivos', arquivos, '--causa', 'tecnica']);
+    assert.equal(r.rc, 0, r.out + r.err);
+  };
+  const recusaZeroCommits = (amb, w, aprovado) => {
+    const topoBase = amb.topo(BASE);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'gate_reprovado', r.out);
+    assert.ok(r.j.relato.some((l) => /0 commits contra a base/.test(l)), JSON.stringify(r.j.relato));
+    assert.equal(r.j.evento, false);
+    assert.ok(!('ja_na_base' in r.j));
+    assert.ok(!amb.tipos().includes('task.integrada'), 'nada gravado');
+    assert.equal(amb.topo(BASE), topoBase, 'base intocada');
+    assert.equal(amb.topo(BRANCH), aprovado, 'a branch voltou ao commit revisado');
+    assert.ok(existsSync(w));
+  };
+  const integraPorB = (amb, w, aprovado) => {
+    const topoBase = amb.topo(BASE);
+    writeFileSync(amb.gitLog, '');
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.ok, true);
+    assert.equal(r.j.merge, false);
+    assert.equal(r.j.ja_na_base, true);
+    assert.deepEqual(amb.eventos().at(-1).dados, { task: 'T1', sha: aprovado, ja_na_base: true });
+    assert.equal(amb.topo(BASE), topoBase, 'a base não se move');
+    assert.ok(!existsSync(w), 'worktree fechada');
+    semMover(amb);
+  };
+
+  test('t0-sem-desvio-recusa-zero-commits', () => {
+    for (const semShaGravado of [false, true]) {
+      const { amb, w, aprovado } = topologiaT0({ semShaGravado });
+      recusaZeroCommits(amb, w, aprovado);
+    }
+  });
+
+  test('t0-desvio-da-task-citando-o-sha-integra-por-b', () => {
+    for (const semShaGravado of [false, true]) {
+      // sha completo em `evidencia`; com e sem `gabaritoBaseSha` (abrir antigo)
+      const { amb, w, aprovado } = topologiaT0({ semShaGravado });
+      desvio(amb, 'T1', 'REQ-A-1', `T0 commitada na base antes do abrir: ${aprovado}`);
+      integraPorB(amb, w, aprovado);
+    }
+  });
+
+  test('t0-desvio-cita-sha-curto-inequivoco-integra-por-b', () => {
+    const { amb, w, aprovado } = topologiaT0();
+    desvio(amb, 'T1', 'REQ-A-1', `T0 na base (${aprovado.slice(0, 7)}), reflog Created from`);
+    integraPorB(amb, w, aprovado);
+  });
+
+  test('t0-desvio-cita-sha-em-arquivos-integra-por-b', () => {
+    const { amb, w, aprovado } = topologiaT0();
+    desvio(amb, 'T1', 'REQ-A-1', 'T0 commitada na base antes do abrir', `src/t1.txt,${aprovado.slice(0, 12)}`);
+    integraPorB(amb, w, aprovado);
+  });
+
+  test('t0-desvio-de-outra-task-citando-o-sha-recusa', () => {
+    const { amb, w, aprovado } = topologiaT0();
+    desvio(amb, 'T2', 'REQ-A-2', `T0 commitada na base antes do abrir: ${aprovado}`, aprovado);
+    recusaZeroCommits(amb, w, aprovado);
+  });
+
+  test('t0-evento-de-outro-tipo-da-mesma-task-citando-o-sha-recusa', () => {
+    // a exceção é SÓ do `desvio`: proposta de emenda (a rejeitada; a aceita reabriria a aprovação) da MESMA task, citando o sha em evidencia e em arquivos, não libera (b)
+    const { amb, w, aprovado } = topologiaT0();
+    const dados = PROPOSTA({ task: 'T1', evidencia: `T0 na base: ${aprovado}`, arquivos: [aprovado] });
+    escreve(amb, 'emendas', 'emenda.proposta', dados, '2026-02-01T00:00:01.000Z');
+    escreve(amb, 'dono', 'emenda.rejeitada', { proposta_seq: 1, origem: 'dono' }, '2026-02-01T00:00:02.000Z');
+    recusaZeroCommits(amb, w, aprovado);
+  });
+
+  test('t0-desvio-da-task-citando-outro-sha-recusa', () => {
+    const { amb, w, aprovado } = topologiaT0();
+    const outro = amb.topo(BASE);
+    assert.notEqual(outro, aprovado);
+    desvio(amb, 'T1', 'REQ-A-1', `outro commit: ${outro}`, outro.slice(0, 12));
+    recusaZeroCommits(amb, w, aprovado);
+  });
+
+  test('t0-desvio-cita-sha-curto-demais-ou-ambiguo-recusa', () => {
+    // 6 hex não cita; prefixo que o git não resolve só para o aprovado (ambíguo) não cita; sha com 1 hex a mais (41) não cita; maiúsculas não são o texto exato
+    const { amb, w, aprovado } = topologiaT0();
+    desvio(amb, 'T1', 'REQ-A-1', `curto ${aprovado.slice(0, 6)} longo ${aprovado}0 caixa ${aprovado.toUpperCase()} colado x${aprovado.slice(0, 8)}`);
+    const bin = amb.env.PATH.split(':')[0];
+    writeFileSync(join(bin, 'git'), `#!/bin/bash
+echo "$*" >> "$GIT_LOG"
+if [[ "$*" == *"rev-parse --verify --quiet --end-of-options ${aprovado.slice(0, 7)}" ]]; then exit 128; fi
+exec "${GIT_REAL}" "$@"
+`, { mode: 0o755 });
+    desvio(amb, 'T1', 'REQ-A-1', `ambíguo ${aprovado.slice(0, 7)}`);
+    recusaZeroCommits(amb, w, aprovado);
+  });
+
+  test('ja-na-base-commit-proprio-indeterminado-recusa', async () => {
+    const amb = ambiente();
+    const w = amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    const baseAbrir = g(amb.dir, 'config', '--get', `branch.${BRANCH}.gabaritoBaseSha`).trim();
+    for (const codigo of [128, null]) {
+      const antes = semEfeito(amb);
+      const args = [];
+      let gate = false;
+      const r = await integrarComGate(amb.dir, 'T1', {
+        ancestral: (...a) => { args.push(a); return args.length === 1 ? 0 : codigo; },
+        avaliar: async () => { gate = true; return { reprova: 0, alertas: 0, relato: [], suites: 1, testes: 1, mutacoes: 0, semContagem: 0 }; },
+      });
+      assert.equal(r.ok, false, JSON.stringify(r));
+      assert.equal(r.erro, 'ancestral_indeterminado', String(codigo));
+      assert.equal(r.merge, false);
+      assert.equal(r.evento, false);
+      assert.equal(gate, false);
+      assert.deepEqual(args, [[amb.dir, aprovado, `refs/heads/${BASE}`], [amb.dir, aprovado, baseAbrir]]);
+      assert.deepEqual(semEfeito(amb), antes);
+      assert.ok(existsSync(w));
+    }
+  });
+
+  test('ja-na-base-erro-do-git-na-cobertura-nao-cobriu', () => {
+    // FIEL-9 (b4): `merge-base --is-ancestor` que falha na cobertura conta como "não cobriu", nunca como cobertura
+    const amb = ambiente();
+    amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    amb.aprovar('T3');
+    assert.equal(amb.cli(['integrar', 'T3']).rc, 0);
+    const shaT3 = amb.eventos().at(-1).dados.sha;
+    const bin = amb.env.PATH.split(':')[0];
+    writeFileSync(join(bin, 'git'), `#!/bin/bash
+echo "$*" >> "$GIT_LOG"
+if [[ "$*" == *"merge-base --is-ancestor ${aprovado} ${shaT3}" ]]; then echo "fatal: injetado" >&2; exit 128; fi
+exec "${GIT_REAL}" "$@"
+`, { mode: 0o755 });
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.ok(amb.gitChamadas().some((l) => l.endsWith(`merge-base --is-ancestor ${aprovado} ${shaT3}`)), 'a cobertura testou a integração de T3');
+    assert.deepEqual(r.j.relato, [aviso('T1', aprovado, COB_PROXIMO)]);
+  });
+
+  test('ja-na-base-cobertura-cita-a-primeira-integracao-do-diario', () => {
+    const amb = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }, { id: 'T3', deps: [], arquivos: ['src/t3.txt'] }, { id: 'T4', deps: [], arquivos: ['src/t4.txt'] }]) });
+    amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    for (const t of ['T3', 'T4']) {
+      amb.aprovar(t);
+      const ri = amb.cli(['integrar', t]);
+      assert.equal(ri.rc, 0, ri.out + ri.err);
+      assert.equal(ri.j.merge, true, `${t} integrou com gate`);
+    }
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.relato, [aviso('T1', aprovado, COB_GATE('T3'))]);
+  });
+
+  test('ja-na-base-evento-nao-gravado-nao-fecha', () => {
+    const amb = ambiente();
+    const w = amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    const topoBase = amb.topo(BASE);
+    chmodSync(amb.entregas, 0o555);
+    let r;
+    try { r = amb.cli(['integrar', 'T1']); } finally { chmodSync(amb.entregas, 0o755); }
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'evento_nao_gravado');
+    assert.equal(r.j.merge, false, 'nada foi movido');
+    assert.equal(r.j.evento, false);
+    assert.match(r.j.mensagem, /já estava na base/);
+    assert.ok(!amb.tipos().includes('task.integrada'));
+    assert.ok(existsSync(w), 'fechar não foi chamado');
+    assert.ok(!amb.gitChamadas().some((l) => /worktree remove/.test(l)));
+    assert.equal(amb.topo(BASE), topoBase);
+    assert.equal(amb.topo(BRANCH), aprovado);
+  });
+
+  test('ja-na-base-fechar-falha-relata-evento', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    const aprovado = amb.topo(BRANCH);
+    baseAte(amb, aprovado);
+    const r = amb.cli(['integrar', 'T1'], { extra: { GIT_FALHAR: 'worktree remove' } });
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'fechar_falhou');
+    assert.equal(r.j.merge, false);
+    assert.equal(r.j.evento, true);
+    assert.match(r.j.mensagem, /já estava na base/);
+    assert.deepEqual(amb.eventos().at(-1).dados, { task: 'T1', sha: aprovado, ja_na_base: true });
+  });
+
+  test('proxima-apos-ja-na-base', () => {
+    // com pendente: antes integrar, depois despachar a dependente
+    const amb = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }, { id: 'T2', deps: ['T1'], arquivos: ['src/t2.txt'] }]) });
+    amb.aprovar('T1');
+    baseAte(amb, amb.topo(BRANCH));
+    amb.fechar();
+    const antes = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(antes.rc, 0, antes.out);
+    assert.deepEqual(antes.j.acao, { tipo: 'integrar', tasks: ['T1'] });
+    assert.equal(amb.cli(['integrar', 'T1']).rc, 0);
+    amb.fechar();
+    const depois = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(depois.rc, 0, depois.out);
+    assert.equal(depois.j.acao.tipo, 'despachar', JSON.stringify(depois.j.acao));
+    assert.deepEqual(depois.j.acao.itens.map((i) => i.task), ['T2']);
+    // sem pendente: depois concluir
+    const b = ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }]) });
+    b.aprovar('T1');
+    baseAte(b, b.topo(BRANCH));
+    b.fechar();
+    assert.equal(b.cli(['proxima', '--vivos', '0']).j.acao.tipo, 'integrar');
+    assert.equal(b.cli(['integrar', 'T1']).rc, 0);
+    b.fechar();
+    const fim = b.cli(['proxima', '--vivos', '0']);
+    assert.equal(fim.j.acao.tipo, 'concluir', JSON.stringify(fim.j.acao));
   });
 });
 
@@ -3624,15 +4232,1689 @@ describe('E5a T8: proxima leva os aprendizados D do papel no item despachar', ()
     assert.deepEqual(l.j.aprendizados.map((a) => a.regra), ['rode o gate antes de concluir']);
   });
 
-  test('nada-fecha-e-proxima-segue: com a mensagem do dono a pendência abre (`aprender`); `aprendizado nada` fecha e o `proxima` volta a despachar', () => {
+  test('nada-fecha-e-proxima-segue: com a mensagem do dono a pendência abre na projeção e o `proxima` segue despachando (GM-14 FIEL-2 b); `aprendizado nada` fecha a pendência', () => {
     const amb = ambiente();
     assert.ok(diario.append(amb.entregas, 'dono', { ts: '2026-01-01T00:00:01.000Z', autor: 't@t', sessao: 'dono', agente: 'orquestrador', tipo: 'dono.mensagem', dados: { sha256: 'b'.repeat(64), chars: 4 } }).ok);
     const antes = amb.cli(['proxima', '--vivos', '0']);
-    assert.equal(antes.j.acao.tipo, 'aprender', antes.out);
-    assert.deepEqual(antes.j.acao.pendencias, [{ sessao: 'dono', seq: 1, tipo: 'dono' }]);
+    assert.equal(antes.j.acao.tipo, 'despachar', antes.out);
+    const abertas = () => pendenciasAprendizado(JSON.parse(readFileSync(join(amb.entregas, 'plano.json'), 'utf8')), diario.ler(amb.entregas));
+    assert.deepEqual(abertas(), [{ sessao: 'dono', seq: 1, tipo: 'dono' }]);
     const nada = amb.cli(['aprendizado', 'nada', '--gatilho', 'dono:1', '--motivo', 'mensagem sem regra a tirar']);
     assert.equal(nada.rc, 0, nada.out + nada.err);
     const depois = amb.cli(['proxima', '--vivos', '0']);
     assert.equal(depois.j.acao.tipo, 'despachar', depois.out);
+    assert.deepEqual(abertas(), []);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────── GM-14 T1: fiação dos subcomandos novos (stubs)
+
+describe('GM-14: subcomandos novos ainda sem implementação', () => {
+  const PAINEL = join(AQUI, '..', 'scripts', 'painel.mjs');
+  const ONBOARDING = join(AQUI, '..', 'scripts', 'onboarding.mjs');
+  /** Fotografia do que o subcomando poderia gravar: toda a árvore fora de `.git` (caminho, tamanho e sha256) e o `git status`. */
+  const foto = (dir) => {
+    const lista = [];
+    const andar = (d) => {
+      for (const n of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, n.name);
+        if (n.name === '.git') continue;
+        if (n.isDirectory()) { lista.push(`${p}/`); andar(p); } else lista.push(`${p} ${createHash('sha256').update(readFileSync(p)).digest('hex')}`);
+      }
+    };
+    andar(dir);
+    return { arvore: lista.sort(), status: g(dir, 'status', '--porcelain', '--untracked-files=all') };
+  };
+  const rodarNode = (amb, script, args) => {
+    const r = spawnSync(process.execPath, [script, ...args], { cwd: amb.dir, encoding: 'utf8', env: amb.env, input: '' });
+    let j = null;
+    try { j = JSON.parse(r.stdout.trim()); } catch { /* fica null */ }
+    return { rc: r.status, j, out: r.stdout, err: r.stderr };
+  };
+
+  test('subcomandos-gm14-stub-nao-implementado: onboarding herdar|foco ⇒ rc 1, erro nao_implementado, nada gravado', () => {
+    const amb = ambiente();
+    const casos = [
+      // `painel.mjs medir` saiu daqui na T11: tem teste próprio em painel-medir.test.mjs.
+      ['onboarding.mjs herdar', () => rodarNode(amb, ONBOARDING, ['herdar', '--root', amb.dir])],
+      ['onboarding.mjs herdar --gravar', () => rodarNode(amb, ONBOARDING, ['herdar', '--root', amb.dir, '--gravar'])],
+    ];
+    for (const [nome, rodar] of casos) {
+      const antes = foto(amb.dir);
+      const r = rodar();
+      assert.equal(r.rc, 1, `${nome}: ${r.out}${r.err}`);
+      assert.ok(r.j !== null, `${nome}: saída não é 1 linha JSON: ${r.out}`);
+      assert.equal(r.j.ok, false, nome);
+      assert.equal(r.j.erro, 'nao_implementado', `${nome}: ${r.out}`);
+      assert.deepEqual(foto(amb.dir), antes, `${nome}: gravou algo`);
+    }
+    assert.equal(amb.eventos().length, 0);
+  });
+
+  test('subcomandos-gm14-vizinhos: subcomando desconhecido segue uso (rc 2) nos três CLIs', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['anota']).rc, 2);
+    assert.equal(amb.cli(['anotar']).rc, 2, 'anotar sem --tipo/--texto é uso');
+    assert.equal(rodarNode(amb, PAINEL, ['medi']).rc, 2);
+    assert.equal(rodarNode(amb, ONBOARDING, ['herda']).rc, 2);
+  });
+});
+
+// ─────────────────────────────────────────────── GM-14 T31 (Emenda 2, FIEL-8 b, c): reentrega com motivo pela borda
+// P1 da Sombra (.superpowers/sdd/2026-11-11-proxima/t31-sombra-p1.md): cada transição e cada ataque com teste nomeado. Mutações: task-31-mut.json.
+describe('reentrega (concluir --motivo)', () => {
+  const BASE = 'enabler/GM-10-loop';
+  const MOTIVOS_R = ['gate', 'sombra', 'dono'];
+  /** Bytes de todo o diário da entrega: recusa = nada gravado, byte a byte. */
+  const fotoDiario = (amb) => readdirSync(amb.entregas).filter((f) => f.endsWith('.jsonl')).sort().map((f) => `${f}\n${readFileSync(join(amb.entregas, f), 'utf8')}`).join('\n');
+  const estadoT = (amb, t) => {
+    const ord = ordenarNucleo(amb.eventos());
+    assert.ok(ord.ok);
+    return estadoNucleo(ord.eventos.filter((e) => ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'].includes(e.tipo) && e.dados?.task === t));
+  };
+  const vereditos = (amb) => amb.eventos().filter((e) => e.tipo === 'review.veredito').length;
+  /** Evento de outra sessão com `ts` escolhido: o relógio de outra máquina (ou de antes do /clear) no diário. */
+  const doFuturo = (amb, sessao, lista) => {
+    lista.forEach(([tipo, dados], i) => {
+      const ts = new Date(Date.UTC(2099, 0, 1, 0, 0, i + 1)).toISOString();
+      const r = diario.append(amb.entregas, sessao, { ts, autor: 't@t', sessao, agente: 'orquestrador', tipo, dados });
+      assert.ok(r.ok && r.gravado === 'evento', JSON.stringify(r));
+    });
+  };
+  const recusa = (amb, args, erro, msg) => {
+    const antes = fotoDiario(amb);
+    const r = amb.cli(args);
+    assert.equal(r.rc, 1, `${args.join(' ')} ${r.out}${r.err}`);
+    assert.equal(r.j?.ok, false);
+    assert.equal(r.j.erro, erro, r.out);
+    if (msg) assert.match(r.j.mensagem, msg);
+    assert.equal(fotoDiario(amb), antes, `${args.join(' ')}: nada gravado`);
+    return r;
+  };
+
+  test('reentrega-aprovada-grava-motivo-e-volta-a-concluida (b2, b7, P15): lê tipo, task, sha, motivo e rodada; 0 veredito novo', () => {
+    for (const m of MOTIVOS_R) {
+      const amb = ambiente();
+      amb.aprovar('T1');
+      assert.deepEqual(estadoT(amb, 'T1'), { estado: 'aprovada', rodada: 1 });
+      const nVer = vereditos(amb);
+      amb.commitNaWt('T1', 'src/t1.txt', 'y\n', 'fix(GM-10): depois do gate');
+      const sha = amb.topo('wt/GM-10-T1');
+      const r = amb.cli(['concluir', 'T1', '--motivo', m]);
+      assert.equal(r.rc, 0, r.out + r.err);
+      const e = amb.eventos().at(-1);
+      assert.equal(e.tipo, 'task.concluida');
+      assert.deepEqual(e.dados, { task: 'T1', sha, motivo: m });
+      assert.equal(e.dados.motivo, m);
+      assert.equal(e.dados.sha, sha);
+      assert.equal(e.dados.task, 'T1');
+      assert.deepEqual(r.j.evento, { tipo: 'task.concluida', task: 'T1', sha, motivo: m });
+      assert.equal(vereditos(amb), nVer, 'a reentrega não grava review.veredito');
+      assert.deepEqual(estadoT(amb, 'T1'), { estado: 'concluida', rodada: 0 }, 'rodada − 1: o APROVADO anulado não conta');
+    }
+  });
+
+  test('reentrega-concluida-mantem-rodada (b1, b7): não gasta rodada nem grava veredito; o veredito seguinte é a rodada 1', () => {
+    for (const m of MOTIVOS_R) {
+      const amb = ambiente();
+      for (const a of [['abrir', 'T1'], ['iniciar', 'T1', 'implementador']]) assert.equal(amb.cli(a).rc, 0);
+      amb.commitNaWt('T1', 'src/t1.txt');
+      assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+      amb.commitNaWt('T1', 'src/t1.txt', 'y\n');
+      const r = amb.cli(['concluir', 'T1', '--motivo', m]);
+      assert.equal(r.rc, 0, r.out);
+      assert.equal(vereditos(amb), 0);
+      assert.deepEqual(estadoT(amb, 'T1'), { estado: 'concluida', rodada: 0 });
+      assert.equal(amb.cli(['iniciar', 'T1', 'revisor']).rc, 0);
+      assert.equal(amb.cli(['veredito', 'T1', 'APROVADO', '1', '0', '0']).rc, 0);
+    }
+  });
+
+  test('reentrega-motivo-invalido-recusa-antes-de-ler (b6, ataque 3): rc 1 argumento_invalido, nada lido nem gravado; sem valor é uso', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    amb.commitNaWt('T1', 'src/t1.txt', 'y\n');
+    for (const m of ['x', 'GATE', '', ' gate', 'dono ']) recusa(amb, ['concluir', 'T1', '--motivo', m], 'argumento_invalido', /--motivo/);
+    const semPlano = ambiente({ plano: null });
+    const r = semPlano.cli(['concluir', 'T1', '--motivo', 'x']);
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'argumento_invalido', 'forma antes do plano e do diário');
+    const u = amb.cli(['concluir', 'T1', '--motivo']);
+    assert.equal(u.rc, 2);
+    assert.equal(u.j.erro, 'uso');
+    assert.deepEqual(estadoT(amb, 'T1'), { estado: 'aprovada', rodada: 1 });
+  });
+
+  test('reentrega-mesmo-sha-recusa (b5, ataque 4): aprovada e concluida + R com o sha do último task.concluida => sha_igual', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    for (const m of MOTIVOS_R) recusa(amb, ['concluir', 'T1', '--motivo', m], 'sha_igual', /sha/);
+    assert.deepEqual(estadoT(amb, 'T1'), { estado: 'aprovada', rodada: 1 }, 'segue aprovada, rodada intacta');
+    amb.commitNaWt('T1', 'src/t1.txt', 'y\n');
+    assert.equal(amb.cli(['concluir', 'T1', '--motivo', 'gate']).rc, 0);
+    recusa(amb, ['concluir', 'T1', '--motivo', 'sombra'], 'sha_igual');
+    assert.deepEqual(estadoT(amb, 'T1'), { estado: 'concluida', rodada: 0 });
+  });
+
+  test('concluir-sem-motivo-mesmo-sha-recusa (4.i): correção sem commit novo não tem o que revisar', () => {
+    const amb = ambiente();
+    for (const a of [['abrir', 'T1'], ['iniciar', 'T1', 'implementador']]) assert.equal(amb.cli(a).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'revisor']).rc, 0);
+    writeFileSync(join(amb.wt('T1'), '.tmp-gabarito', 'review-r1.md'), '- MAJOR 1: x\n');
+    assert.equal(amb.cli(['veredito', 'T1', 'REPROVADO', '1', '0', '1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'correcao']).rc, 0);
+    recusa(amb, ['concluir', 'T1'], 'sha_igual');
+    amb.commitNaWt('T1', 'src/t1.txt', 'y\n');
+    assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+  });
+
+  test('concluir-sem-motivo-em-concluida-e-aprovada-cita-motivo (b4, ataque 13)', () => {
+    const amb = ambiente();
+    for (const a of [['abrir', 'T1'], ['iniciar', 'T1', 'implementador']]) assert.equal(amb.cli(a).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt', 'y\n');
+    recusa(amb, ['concluir', 'T1'], 'transicao_invalida', /--motivo <gate\|sombra\|dono>/);
+    const apr = ambiente();
+    apr.aprovar('T1');
+    apr.commitNaWt('T1', 'src/t1.txt', 'y\n');
+    recusa(apr, ['concluir', 'T1'], 'transicao_invalida', /--motivo <gate\|sombra\|dono>/);
+  });
+
+  // b3 (ataque 12): um teste por estado, nos 3 motivos; sha sempre novo, para só a tabela decidir.
+  const VELHO = 'b'.repeat(40);
+  const PREFIXOS = {
+    pendente: [],
+    implementando: [['task.iniciada', { task: 'T1', papel: 'implementador' }]],
+    em_revisao: [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: VELHO }], ['task.iniciada', { task: 'T1', papel: 'revisor' }]],
+    reprovada: [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: VELHO }], ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, blocker: 0, major: 1 }]],
+    corrigindo: [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: VELHO }], ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, blocker: 0, major: 1 }], ['task.iniciada', { task: 'T1', papel: 'correcao' }]],
+    no_teto: [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: VELHO }], ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, blocker: 0, major: 1 }], ['task.iniciada', { task: 'T1', papel: 'correcao' }], ['task.concluida', { task: 'T1', sha: 'c'.repeat(40) }], ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 2, blocker: 0, major: 1 }]],
+  };
+  const DICAS = { em_revisao: /espere o veredito/, reprovada: /caminho é a correção/, no_teto: /só o dono tira/ };
+  for (const [estado, prefixo] of Object.entries(PREFIXOS)) {
+    test(`reentrega-em-${estado}-recusa (b3): transicao_invalida, nada gravado, estado igual`, () => {
+      const amb = ambiente();
+      assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+      if (prefixo.length > 0) amb.semear(prefixo);
+      amb.commitNaWt('T1', 'src/t1.txt', 'novo\n');
+      const antes = estadoT(amb, 'T1');
+      assert.equal(antes.estado, estado);
+      for (const m of MOTIVOS_R) recusa(amb, ['concluir', 'T1', '--motivo', m], 'transicao_invalida', DICAS[estado] ?? /concluida\.reentrega em /);
+      assert.deepEqual(estadoT(amb, 'T1'), antes, estado === 'no_teto' ? 'a reentrega não tira do teto' : 'estado igual');
+    });
+  }
+
+  test('reentrega-em-integrada-recusa (ataque 2): worktree fechada => worktree_ausente, nada gravado, nunca reabre', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    assert.equal(amb.cli(['integrar', 'T1']).rc, 0);
+    for (const m of MOTIVOS_R) recusa(amb, ['concluir', 'T1', '--motivo', m], 'worktree_ausente');
+    assert.equal(estadoT(amb, 'T1').estado, 'integrada');
+  });
+
+  test('reentrega-costura-integrar (c, P9, ataque 5): aprovada => R => integrar recusa sem APROVADO novo; revisor + APROVADO da rodada anulada => integra o sha da R', () => {
+    const amb = ambiente();
+    amb.aprovar('T1');
+    amb.commitNaWt('T1', 'src/t1.txt', 'reentregue\n');
+    const shaR = amb.topo('wt/GM-10-T1');
+    assert.equal(amb.cli(['concluir', 'T1', '--motivo', 'gate']).rc, 0);
+    const antes = semEfeito(amb);
+    const n = amb.cli(['integrar', 'T1']);
+    assert.equal(n.rc, 1, n.out);
+    assert.equal(n.j.erro, 'nao_integravel');
+    assert.deepEqual(semEfeito(amb), antes, 'sem merge nem evento');
+    const p = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(p.j.acao.tipo, 'despachar', p.out);
+    assert.deepEqual(p.j.acao.itens.map((i) => [i.task, i.papel]).filter(([t]) => t === 'T1'), [['T1', 'revisor']], 'a R não pula review');
+    recusa(amb, ['veredito', 'T1', 'APROVADO', '2', '0', '0'], 'transicao_invalida', /rodada esperada: 1/);
+    assert.equal(amb.cli(['iniciar', 'T1', 'revisor']).rc, 0);
+    recusa(amb, ['veredito', 'T1', 'APROVADO', '2', '0', '0'], 'transicao_invalida', /rodada esperada: 1/);
+    assert.equal(amb.cli(['veredito', 'T1', 'APROVADO', '1', '0', '0']).rc, 0);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(amb.eventos().at(-1).tipo, 'task.integrada');
+    assert.equal(amb.eventos().at(-1).dados.sha, shaR);
+    assert.equal(readFileSync(join(amb.dir, 'src/t1.txt'), 'utf8'), 'reentregue\n', 'o commit da reentrega entrou');
+  });
+
+  test('reentrega-revisor-ve-diff-inteiro (b8, ataque 14): diff <base>...<sha da R> e reentrega; sem R, diff sem reentrega; sem base, diff null e aviso', () => {
+    const amb = ambiente();
+    for (const a of [['abrir', 'T1'], ['iniciar', 'T1', 'implementador']]) assert.equal(amb.cli(a).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    const shaP = amb.topo('wt/GM-10-T1');
+    assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+    const semR = amb.cli(['proxima', '--vivos', '0']).j.acao.itens.find((i) => i.task === 'T1' && i.papel === 'revisor');
+    assert.equal(semR.diff, `${BASE}...${shaP}`);
+    assert.ok(!Object.hasOwn(semR, 'reentrega'), JSON.stringify(semR));
+    amb.commitNaWt('T1', 'src/t1.txt', 'y\n');
+    const shaR = amb.topo('wt/GM-10-T1');
+    assert.equal(amb.cli(['concluir', 'T1', '--motivo', 'sombra']).rc, 0);
+    const comR = amb.cli(['proxima', '--vivos', '0']).j.acao.itens.find((i) => i.task === 'T1' && i.papel === 'revisor');
+    assert.equal(comR.diff, `${BASE}...${shaR}`, 'diff inteiro desde a base, nunca <sha anterior>..<sha novo>');
+    assert.ok(!comR.diff.includes(shaP));
+    assert.equal(comR.reentrega, 'sombra');
+    const solto = ambiente();
+    solto.semear([['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: VELHO }]]);
+    const p = solto.cli(['proxima', '--vivos', '0']);
+    const it = p.j.acao.itens.find((i) => i.task === 'T1' && i.papel === 'revisor');
+    assert.equal(it.diff, null, 'sem base gravada não inventa diff');
+    assert.ok((p.j.aviso ?? []).some((a) => /T1/.test(a) && /gabaritoBase/.test(a)), JSON.stringify(p.j.aviso));
+  });
+
+  // ── Emenda 12 (anexos C a5, FIEL-8 c): o sha que o revisor viu vai no `iniciar revisor` e o APROVADO o copia; `integrar` compara.
+  const em = (amb, sessao, ts, tipo, dados) => {
+    const r = diario.append(amb.entregas, sessao, { ts, autor: 't@t', sessao, agente: 'orquestrador', tipo, dados });
+    assert.ok(r.ok && r.gravado === 'evento', JSON.stringify(r));
+  };
+  const T = (s) => new Date(Date.UTC(2026, 0, 1, 0, 0, 0, s)).toISOString();
+
+  test('iniciar-revisor-grava-sha-do-ultimo-concluida: o mesmo do diff despachado; sem sha no concluida (2.0.0), recusa', () => {
+    const amb = ambiente();
+    for (const a of [['abrir', 'T1'], ['iniciar', 'T1', 'implementador']]) assert.equal(amb.cli(a).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    const sha = amb.topo('wt/GM-10-T1');
+    assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+    const item = amb.cli(['proxima', '--vivos', '0']).j.acao.itens.find((i) => i.task === 'T1' && i.papel === 'revisor');
+    assert.equal(amb.cli(['iniciar', 'T1', 'revisor']).rc, 0);
+    const e = amb.eventos().at(-1);
+    assert.equal(e.tipo, 'task.iniciada');
+    assert.equal(e.dados.papel, 'revisor');
+    assert.equal(e.dados.sha, sha);
+    assert.equal(item.diff, `${BASE}...${e.dados.sha}`, 'o sha do iniciar é o <sha> do diff');
+    const velho = ambiente();
+    assert.equal(velho.cli(['abrir', 'T1']).rc, 0);
+    velho.semear([['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1' }]]);
+    recusa(velho, ['iniciar', 'T1', 'revisor'], 'forma_invalida', /sha/);
+  });
+
+  test('veredito-sha-diferente-do-head-recusa: commit depois do iniciar revisor => APROVADO recusado, nada gravado', () => {
+    const amb = ambiente();
+    for (const a of [['abrir', 'T1'], ['iniciar', 'T1', 'implementador']]) assert.equal(amb.cli(a).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    for (const a of [['concluir', 'T1'], ['iniciar', 'T1', 'revisor']]) assert.equal(amb.cli(a).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt', 'sem revisão\n');
+    recusa(amb, ['veredito', 'T1', 'APROVADO', '1', '0', '0'], 'sha_diferente', /HEAD/);
+    assert.equal(estadoT(amb, 'T1').estado, 'em_revisao');
+  });
+
+  test('veredito-aprovado-sem-sha-recusado-na-gravacao: iniciar revisor da 2.0.0 (sem sha) não recebe APROVADO (fail-closed)', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    const sha = amb.topo('wt/GM-10-T1');
+    amb.semear([['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha }], ['task.iniciada', { task: 'T1', papel: 'revisor' }]]);
+    recusa(amb, ['veredito', 'T1', 'APROVADO', '1', '0', '0'], 'forma_invalida', /`sha` ausente/);
+    assert.equal(estadoT(amb, 'T1').estado, 'em_revisao');
+  });
+
+  test('veredito-usa-sha-do-iniciar-com-reentrega-de-relogio-atras: R de outra sessão cai antes do iniciar; o APROVADO copia o sha do iniciar e recusa', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    const sha1 = amb.topo('wt/GM-10-T1');
+    amb.commitNaWt('T1', 'src/t1.txt', 'reentregue\n');
+    const sha2 = amb.topo('wt/GM-10-T1');
+    em(amb, 'A', T(1), 'task.iniciada', { task: 'T1', papel: 'implementador' });
+    em(amb, 'A', T(2), 'task.concluida', { task: 'T1', sha: sha1 });
+    em(amb, 'C', T(4), 'task.iniciada', { task: 'T1', papel: 'revisor', sha: sha1 });
+    em(amb, 'B', T(3), 'task.concluida', { task: 'T1', sha: sha2, motivo: 'gate' }); // relógio atrás: na ordem, antes do iniciar
+    amb.fechar();
+    assert.equal(estadoT(amb, 'T1').estado, 'em_revisao');
+    recusa(amb, ['veredito', 'T1', 'APROVADO', '1', '0', '0'], 'sha_diferente', new RegExp(sha1.slice(0, 12)));
+  });
+
+  test('integrar-recusa-aprovado-de-outro-sha: R com relógio atrás cai antes do APROVADO; o APROVADO é de outro sha => commit_nao_revisado', () => {
+    for (const empate of [false, true]) {
+      const amb = ambiente();
+      assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+      amb.commitNaWt('T1', 'src/t1.txt');
+      const sha1 = amb.topo('wt/GM-10-T1');
+      amb.commitNaWt('T1', 'src/t1.txt', 'reentregue\n');
+      const sha2 = amb.topo('wt/GM-10-T1');
+      em(amb, 'A', T(1), 'task.iniciada', { task: 'T1', papel: 'implementador' });
+      em(amb, 'A', T(2), 'task.concluida', { task: 'T1', sha: sha1 });
+      em(amb, 'A', T(4), 'task.iniciada', { task: 'T1', papel: 'revisor', sha: sha1 });
+      em(amb, 'A', T(5), 'review.veredito', { task: 'T1', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0, sha: sha1 });
+      // ts empatado com o iniciar: `ordenar` desempata pela sessão ('A' < 'B'), e a R ainda cairia depois; por isso o empate é com o concluida.
+      em(amb, 'B', empate ? T(2) : T(3), 'task.concluida', { task: 'T1', sha: sha2, motivo: 'gate' });
+      amb.fechar();
+      assert.deepEqual(estadoT(amb, 'T1'), { estado: 'aprovada', rodada: 1 }, 'a ordem torta projeta aprovada');
+      const antes = semEfeito(amb);
+      const r = amb.cli(['integrar', 'T1']);
+      assert.equal(r.rc, 1, r.out);
+      assert.equal(r.j.erro, 'commit_nao_revisado', r.out);
+      assert.deepEqual(semEfeito(amb), antes, 'nada gravado, nada integrado');
+    }
+  });
+
+  test('veredito-sem-sha-2-0-0-segue-ordem: diário da 2.0.0 (iniciar e APROVADO sem sha) integra pela guarda de ordem', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    const sha = amb.topo('wt/GM-10-T1');
+    amb.semear([
+      ['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha }],
+      ['task.iniciada', { task: 'T1', papel: 'revisor' }], ['review.veredito', { task: 'T1', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }],
+    ]);
+    const r = amb.cli(['integrar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(amb.eventos().at(-1).tipo, 'task.integrada');
+  });
+
+});
+
+// ─────────────────────────────────────────────────────────────── T15 (REQ-TRI-1): uma regra de ID
+
+test('id-da-branch-igual-nos-dois-usos: contexto do loop e trilhaDe dão o mesmo ID nas mesmas 6 branches, com o idPadrao de origin', () => {
+  const amb = ambiente({ plano: null });
+  const doLoop = () => {
+    try { return contexto(amb.dir, {}).entrega; } catch (e) { assert.equal(e.erro, 'entrega_nao_inferida', e.message); return null; }
+  };
+  const daTrilha = (branch, idPadrao) => trilhaDe({ branch, idPadrao, specs: [], plano: null, ledger: false, gh: 'nunca', ultimas: [] }, []).candidato;
+  const casos = (idPadrao, esperado) => {
+    const branches = Object.keys(esperado);
+    assert.equal(branches.length, 6);
+    for (const b of branches) {
+      assert.equal(gOk(amb.dir, 'checkout', '-q', '-B', b).status, 0, b);
+      const loop = doLoop();
+      assert.equal(loop, esperado[b], `loop em ${b}`);
+      assert.equal(daTrilha(b, idPadrao), loop, `trilha em ${b}`);
+      assert.equal(idDaBranch(b, idPadrao), loop, `idDaBranch em ${b}`);
+    }
+  };
+  // sem origin: o padrão; "feat/x-GM-10" e "GM-10x" casam a regex antiga solta e não casam a regra única
+  casos('^[A-Z]+-\\d+$', {
+    'enabler/GM-10-loop': 'GM-10', 'wt/GM-10-T1': 'GM-10', 'GM-10': 'GM-10', 'feat/x-GM-10': null, 'main': null, 'feat/GM-10x-a': null,
+  });
+  // com origin: o idPadrao de fluxo.idPadrao vale no loop também
+  comOrigin(amb, { fluxo: { idPadrao: 'ABC-\\d+' } });
+  casos('ABC-\\d+', {
+    'enabler/ABC-7-loop': 'ABC-7', 'wt/ABC-7-T1': 'ABC-7', 'ABC-7': 'ABC-7', 'enabler/GM-10-loop': null, 'main': null, 'feat/x-ABC-7': null,
+  });
+  // origin corrompida cai no padrão (como a guarda e o painel), sem lançar outra coisa
+  comOrigin(amb, '{');
+  assert.equal(gOk(amb.dir, 'checkout', '-q', '-B', 'enabler/GM-10-loop').status, 0);
+  assert.equal(doLoop(), 'GM-10');
+  // --entrega explícito segue vencendo a branch
+  assert.equal(contexto(amb.dir, { entrega: 'GM-77' }).entrega, 'GM-77');
+});
+
+test('id-padrao-de-origin-invalido-ou-longo: regex inválida e > 200 caracteres caem no padrão, sem lançar; 200 exatos valem', () => {
+  const amb = ambiente({ plano: null });
+  const doLoop = () => {
+    try { return contexto(amb.dir, {}).entrega; } catch (e) { assert.equal(e.erro, 'entrega_nao_inferida', e.message); return null; }
+  };
+  const em = (branch) => { assert.equal(gOk(amb.dir, 'checkout', '-q', '-B', branch).status, 0, branch); return doLoop(); };
+  // regex inválida ⇒ padrão: GM-10 é inferido e nada lança
+  comOrigin(amb, { fluxo: { idPadrao: 'ABC-(\\d+' } });
+  assert.equal(em('enabler/GM-10-loop'), 'GM-10');
+  assert.equal(em('enabler/ABC-7-loop'), 'ABC-7');
+  // 201 caracteres (válida, mas longa) ⇒ padrão: GM-10 vale (a longa não o casaria)
+  const longa = `ABC-\\d+|${'Z'.repeat(201 - 'ABC-\\d+|'.length)}`;
+  assert.equal(longa.length, 201);
+  comOrigin(amb, { fluxo: { idPadrao: longa } });
+  assert.equal(em('enabler/GM-10-loop'), 'GM-10');
+  // 200 exatos valem: a mesma regex encurtada em 1 é a de origin (GM-10 não casa mais)
+  comOrigin(amb, { fluxo: { idPadrao: longa.slice(0, 200) } });
+  assert.equal(em('enabler/GM-10-loop'), null);
+  assert.equal(em('enabler/ABC-7-loop'), 'ABC-7');
+});
+
+test('aprovar-sem-plano-pelo-cli-real (P9): o comando do dono, sem plano.json, grava pelo hook real e o loop segue sem plano', () => {
+  const amb = ambiente({ plano: null });
+  mkdirSync(join(amb.dir, 'docs', 'superpowers', 'specs'), { recursive: true });
+  const texto = '# Spec\n\nPBI: GM-10\n\n## A\n';
+  writeFileSync(join(amb.dir, 'docs', 'superpowers', 'specs', 's.md'), texto);
+  const hook = join(AQUI, '..', 'scripts', 'aprovar-spec.mjs');
+  const entrada = { session_id: 'S-dono', cwd: amb.dir, hook_event_name: 'UserPromptExpansion', command_name: 'gabarito-mestre:aprovar', command_args: '', command_source: 'plugin' };
+  const r = spawnSync(process.execPath, [hook], { input: JSON.stringify(entrada), encoding: 'utf8', cwd: amb.dir, env: amb.env });
+  assert.equal(r.status, 0, r.stderr);
+  const j = JSON.parse(r.stdout.trim());
+  assert.notEqual(j.decision, 'block', r.stdout);
+  const ev = amb.eventos().filter((e) => e.tipo === 'spec.aprovada');
+  assert.deepEqual(ev.map((e) => e.dados), [{ spec: 'docs/superpowers/specs/s.md', sha256: createHash('sha256').update(texto).digest('hex') }]);
+  // o loop sem plano continua dizendo plano_ausente (aprovar não inventa plano)
+  const p = amb.cli(['proxima', '--vivos', '0']);
+  assert.equal(p.j?.erro, 'plano_ausente', p.out);
+});
+
+// ═══════════════════════════════════════════════════════════════ GM-14 T36: a Sombra libera o teto 1 vez por task (FIEL-15, emenda 13)
+// Ataques obrigatórios: furos 1–10 da Sombra e44cd3ef. Cada recusa relê o diário (bytes iguais) e confere que os achados ficaram no lugar.
+
+describe('T36: a Sombra libera o teto', () => {
+  const SOMBRA = join(AQUI, '..', 'scripts', 'sombra.mjs');
+  const sombra = (amb, args) => {
+    const r = spawnSync(process.execPath, [SOMBRA, ...args], { cwd: amb.dir, encoding: 'utf8', env: amb.env });
+    let j = null;
+    try { j = JSON.parse(r.stdout.trim()); } catch { /* fica null */ }
+    return { rc: r.status, j, out: r.stdout + r.stderr };
+  };
+  const comLibera = (amb, sombraCfg = { libera_teto: true }) => comOrigin(amb, { sombra: sombraCfg });
+  const ok = (amb, args) => { const r = amb.cli(args); assert.equal(r.rc, 0, `${args.join(' ')}: ${r.out}${r.err}`); return r; };
+  const achado = (amb, t, n) => { mkdirSync(join(amb.wt(t), '.tmp-gabarito'), { recursive: true }); writeFileSync(join(amb.wt(t), '.tmp-gabarito', `review-r${n}.md`), `achado r${n}\n`); };
+  /** Pelo CLI real: abrir, implementar, REPROVADO r1, corrigir, (antesDoTeto), REPROVADO r2 com achado ⇒ no_teto. */
+  function aoTeto(amb, t = 'T1', antesDoTeto = () => {}) {
+    ok(amb, ['abrir', t]);
+    ok(amb, ['iniciar', t, 'implementador']);
+    amb.commitNaWt(t, `src/${t.toLowerCase()}.txt`, 'a\n');
+    ok(amb, ['concluir', t]);
+    ok(amb, ['iniciar', t, 'revisor']);
+    achado(amb, t, 1);
+    ok(amb, ['veredito', t, 'REPROVADO', '1', '1', '0']);
+    ok(amb, ['iniciar', t, 'correcao']);
+    amb.commitNaWt(t, `src/${t.toLowerCase()}.txt`, 'b\n');
+    ok(amb, ['concluir', t]);
+    ok(amb, ['iniciar', t, 'revisor']);
+    antesDoTeto();
+    achado(amb, t, 2);
+    ok(amb, ['veredito', t, 'REPROVADO', '2', '1', '0']);
+  }
+  const estadoT = (amb, t = 'T1') => {
+    const o = ordenarNucleo(amb.eventos());
+    assert.ok(o.ok);
+    return estadoNucleo(o.eventos.filter((e) => ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'].includes(e.tipo) && e.dados?.task === t));
+  };
+  const respostaJson = (amb, obj, nome = `r-${Math.random().toString(16).slice(2)}.json`) => {
+    const f = join(amb.tmpSistema, nome);
+    writeFileSync(f, JSON.stringify(obj));
+    return f;
+  };
+  const BOA = { resposta: 'libera mais um ciclo', texto: 'a spec sustenta mais uma rodada', pergunta_enviesada: false, fontes: ['docs/spec.md:3'] };
+  /** Pergunta de liberação + decisão pelo CLI real da Sombra. Devolve o hash. */
+  function sombraDecide(amb, t = 'T1', extra = { libera: true }) {
+    const p = sombra(amb, ['perguntar', '--task', t, '--libera-teto']);
+    assert.equal(p.rc, 0, p.out);
+    const r = sombra(amb, ['registrar', p.j.hash, respostaJson(amb, { ...BOA, ...extra })]);
+    assert.equal(r.rc, 0, r.out);
+    return p.j.hash;
+  }
+  const liberar = (amb, t, h, extra = []) => amb.cli(['liberar', t, '--origem', 'sombra', '--hash', h, ...extra]);
+  const achadosNoLugar = (amb, t = 'T1') => existsSync(join(amb.wt(t), '.tmp-gabarito', 'review-r2.md'));
+  /** Recusa com o código, rc 1, 1 frase e NADA gravado (diário relido byte a byte) nem achado movido. */
+  function recusa(amb, t, h, erro, extra = []) {
+    const antes = bytesDoDiario(amb);
+    const r = liberar(amb, t, h, extra);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.ok, false);
+    assert.equal(r.j.erro, erro, r.out);
+    assert.equal(typeof r.j.mensagem, 'string');
+    assert.match(r.j.mensagem, /nada foi gravado/i);
+    assert.deepEqual(bytesDoDiario(amb), antes, 'nada gravado');
+    return r;
+  }
+  /** Evento escrito à mão (forja) com `ts` deslocado do agora; a sessão decide a ordem. */
+  const forja = (amb, sessao, tipo, dados, deslocMs = 0) => {
+    const r = diario.append(amb.entregas, sessao, { ts: new Date(Date.now() + deslocMs).toISOString(), autor: 't@t', sessao, agente: 'orquestrador', tipo, dados });
+    assert.ok(r.ok && r.gravado === 'evento', JSON.stringify(r));
+  };
+  /** Arquivos que `registrar` grava (brief e resposta), sem passar pelo CLI. */
+  const arquivosDaDecisao = (amb, h, texto = 'texto') => {
+    mkdirSync(join(amb.entregas, 'sombra'), { recursive: true });
+    writeFileSync(join(amb.entregas, 'sombra', `${h}.md`), 'brief\n');
+    const nome = `${h}.${createHash('sha256').update(texto).digest('hex').slice(0, 12)}.resposta.md`;
+    writeFileSync(join(amb.entregas, 'sombra', nome), texto);
+    return `.harness/entregas/GM-10/sombra/${nome}`;
+  };
+  /** O hash de liberação que `liberar` recalcula HOJE: emendas, rodadas do ciclo e sha de cada achado (T39 r1). Não depende do caminho da raiz. */
+  const hashT = (amb, t = 'T1') => hashDaLiberacao(JSON.parse(readFileSync(join(amb.entregas, 'plano.json'), 'utf8')), amb.eventos(), t, amb.dir);
+
+  test('t36-p9-cli-real: no_teto ⇒ registrar libera:true ⇒ liberar --origem sombra ⇒ pendente r0 ⇒ registro e painel listam ⇒ 2ª recusa teto_sombra_esgotado', async () => {
+    const amb = ambReq();
+    comLibera(amb);
+    aoTeto(amb);
+    assert.deepEqual(estadoT(amb), { estado: 'no_teto', rodada: 2 });
+    const h = sombraDecide(amb);
+    const dec = amb.eventos().filter((e) => e.tipo === 'decisao.sombra');
+    assert.equal(dec.length, 1);
+    assert.equal(dec[0].dados.libera, true, 'o campo libera chega ao diário');
+    assert.equal(dec[0].dados.task, 'T1');
+    assert.equal(dec[0].dados.pergunta_hash, h);
+    assert.equal(h, hashT(amb), 'a pergunta de liberação tem o hash que o loop recalcula');
+    const antes = amb.eventos().length;
+    const r = liberar(amb, 'T1', h);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual([r.j.ok, r.j.task, r.j.entrega, r.j.estado, r.j.origem, r.j.hash], [true, 'T1', 'GM-10', 'pendente', 'sombra', h]);
+    const novos = amb.eventos().slice(antes);
+    assert.equal(novos.length, 1, 'um evento só');
+    assert.equal(novos[0].tipo, 'task.reaberta');
+    assert.deepEqual(novos[0].dados, { task: 'T1', origem: 'sombra', hash: h });
+    assert.equal(novos[0].sessao, 'loop');
+    assert.deepEqual(estadoT(amb), { estado: 'pendente', rodada: 0 });
+    // os achados do ciclo que terminou no teto saem do caminho (como na liberação do dono)
+    assert.equal(achadosNoLugar(amb), false);
+    assert.ok(existsSync(join(amb.wt('T1'), '.tmp-gabarito', 'ciclo-1', 'review-r2.md')));
+    // registro (o que o Stop de concluir e o registro.md mostram ao dono) e RECENTE do painel
+    const { montarRegistro } = await import('../dist/registro.js');
+    assert.match(montarRegistro('GM-10', amb.eventos(), null), /· task T1 · a Sombra liberou a T1 · decisão [0-9a-f]{12}/);
+    const { fraseHistorico } = await import('../dist/painel-texto.js');
+    const ctx = { nomes: new Map(), lider: 'L', sabio: 'S', porAgente: new Map(), fuso: 'UTC', agoraMs: Date.now(), textoParar: () => null };
+    assert.equal(fraseHistorico(novos[0], ctx)?.texto, 'a Sombra liberou a T1');
+    // 2ª tentativa: sempre do dono
+    const dois = recusa(amb, 'T1', h, 'teto_sombra_esgotado');
+    assert.match(dois.j.mensagem, /dono/);
+    assert.match(dois.j.mensagem, /gabarito-mestre:liberar/);
+  });
+
+  test('t36-sem-flag: sem origin, origin sem a chave, chave que não é true, só no config local e origin ilegível ⇒ libera_teto_desligado', () => {
+    const amb = ambReq({ config: { ...CONFIG_PADRAO, sombra: { libera_teto: true } } });
+    aoTeto(amb);
+    const h = sombraDecide(amb);
+    for (const preparar of [() => {}, () => comOrigin(amb, { sombra: { teto: 9 } }), () => comOrigin(amb, { sombra: { libera_teto: 'true' } }),
+      () => comOrigin(amb, { sombra: { julga_emendas: true } }), () => comOrigin(amb, { sombra: null }), () => comOrigin(amb, '{quebrado')]) {
+      preparar();
+      const r = recusa(amb, 'T1', h, 'libera_teto_desligado');
+      assert.match(r.j.mensagem, /origin\/HEAD/);
+      assert.ok(achadosNoLugar(amb), 'achados no lugar');
+    }
+    assert.deepEqual(estadoT(amb), { estado: 'no_teto', rodada: 2 });
+    // controle: o mesmo diário com o flag em origin libera
+    comLibera(amb);
+    assert.equal(liberar(amb, 'T1', h).rc, 0);
+  });
+
+  test('t36-sem-flag-comportamento-identico (FIEL-15 d): decisão sem `libera` grava os mesmos campos de antes; o dono libera como sempre', () => {
+    const amb = ambReq();
+    aoTeto(amb);
+    const p = sombra(amb, ['perguntar', '--task', 'T1', '--pergunta', 'a forma vale?']);
+    const reg = sombra(amb, ['registrar', p.j.hash, respostaJson(amb, BOA)]);
+    assert.equal(reg.rc, 0, reg.out);
+    const d = amb.eventos().filter((e) => e.tipo === 'decisao.sombra').at(-1).dados;
+    assert.deepEqual(Object.keys(d).sort(), ['arquivo', 'fontes', 'pergunta_enviesada', 'pergunta_hash', 'resposta', 'task']);
+    const r = liberarTeto(amb.dir, 'T1', 'S-dono');
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(amb.eventos().filter((e) => e.tipo === 'task.reaberta').map((e) => e.dados), [{ task: 'T1', origem: 'dono' }]);
+  });
+
+  test('t36-fora-do-teto: pendente, implementando e reprovada ⇒ fora_do_teto', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    const h0 = hashT(amb);
+    recusa(amb, 'T1', h0, 'fora_do_teto');
+    ok(amb, ['abrir', 'T1']);
+    ok(amb, ['iniciar', 'T1', 'implementador']);
+    // T39 r1: fora do teto `perguntar --libera-teto` já recusa; a decisão só chega aqui forjada
+    const p = sombra(amb, ['perguntar', '--task', 'T1', '--libera-teto']);
+    assert.equal(p.j?.erro, 'fora_do_teto', p.out);
+    const h = hashT(amb);
+    forja(amb, 'forja', 'sombra.consulta', { pergunta_hash: h, task: 'T1' });
+    forja(amb, 'forja', 'decisao.sombra', { pergunta_hash: h, task: 'T1', resposta: 'r', arquivo: arquivosDaDecisao(amb, h), pergunta_enviesada: false, fontes: ['s:1'], libera: true });
+    recusa(amb, 'T1', h, 'fora_do_teto');
+    const antes = bytesDoDiario(amb);
+    assert.equal(liberar(amb, 'T9', h).j.erro, 'task_fora_do_plano');
+    assert.deepEqual(bytesDoDiario(amb), antes);
+  });
+
+  test('t36-uso: só --origem sombra; --hash e --origem obrigatórios; nenhum argumento produz dono; hash fora da forma ⇒ hash_invalido', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    aoTeto(amb);
+    const h = sombraDecide(amb);
+    const antes = bytesDoDiario(amb);
+    for (const a of [['liberar', 'T1', '--origem', 'dono', '--hash', h], ['liberar', 'T1', '--origem', 'retomada', '--hash', h], ['liberar', 'T1', '--hash', h],
+      ['liberar', 'T1', '--origem', 'sombra'], ['liberar', '--origem', 'sombra', '--hash', h], ['liberar', 'T1', '--origem', 'sombra', '--hash', h, '--dono', 'x']]) {
+      const r = amb.cli(a);
+      assert.equal(r.rc, 2, `${a.join(' ')}: ${r.out}`);
+      assert.equal(r.j.ok, false);
+    }
+    assert.deepEqual(bytesDoDiario(amb), antes);
+    for (const ruim of ['xyz', h.toUpperCase(), h.slice(1), `${h}0`]) recusa(amb, 'T1', ruim, 'hash_invalido');
+    assert.equal(amb.eventos().filter((e) => e.tipo === 'task.reaberta').length, 0);
+  });
+
+  test('t36-furo-1-3: só `decisao.sombra` vigente da PERGUNTA de liberação da task; outra pergunta ou de outra task ⇒ hash_invalido', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    aoTeto(amb);
+    // outra pergunta da mesma task (sem libera): qualquer decisão da task NÃO serve
+    const p = sombra(amb, ['perguntar', '--task', 'T1', '--pergunta', 'o teste cobre?']);
+    assert.equal(sombra(amb, ['registrar', p.j.hash, respostaJson(amb, BOA)]).rc, 0);
+    assert.match(recusa(amb, 'T1', p.j.hash, 'hash_invalido').j.mensagem, /pergunta de liberação/);
+    // pergunta de liberação de OUTRA task, com libera true (forjada: a T2 não está no teto, e `perguntar --libera-teto` recusa fora dele, T39 r1)
+    assert.equal(sombra(amb, ['perguntar', '--task', 'T2', '--libera-teto']).j?.erro, 'fora_do_teto');
+    const h2 = hashT(amb, 'T2');
+    forja(amb, 'forja', 'sombra.consulta', { pergunta_hash: h2, task: 'T2' });
+    forja(amb, 'forja', 'decisao.sombra', { pergunta_hash: h2, task: 'T2', resposta: 'r', arquivo: arquivosDaDecisao(amb, h2), pergunta_enviesada: false, fontes: ['s:1'], libera: true });
+    recusa(amb, 'T1', h2, 'hash_invalido');
+    // a pergunta certa sem decisão ainda
+    const aberta = sombra(amb, ['perguntar', '--task', 'T1', '--libera-teto']);
+    assert.equal(aberta.j.hash, hashT(amb));
+    assert.match(recusa(amb, 'T1', aberta.j.hash, 'hash_invalido').j.mensagem, /decisão/);
+    // sem libera e com libera false: motivo próprio (T39, emenda 16), testes liberar-libera-*-sombra-nao-liberou
+  });
+
+  // GM-14 T39 (emenda 16): `libera` ausente ou falso na decisão vigente é a Sombra dizendo não, com motivo próprio (rc 1, nada gravado)
+  for (const [nome, extra] of [['liberar-libera-false-sombra-nao-liberou', { libera: false }], ['liberar-libera-ausente-sombra-nao-liberou', {}]]) {
+    test(nome, () => {
+      const amb = ambReq();
+      comLibera(amb);
+      aoTeto(amb);
+      const h = sombraDecide(amb, 'T1', extra);
+      const r = recusa(amb, 'T1', h, 'sombra_nao_liberou');
+      assert.match(r.j.mensagem, extra.libera === false ? /libera false/ : /libera ausente/);
+      assert.ok(achadosNoLugar(amb), 'achados no lugar');
+      assert.deepEqual(estadoT(amb), { estado: 'no_teto', rodada: 2 });
+    });
+  }
+
+  test('emenda-dia2-nova-muda-hash', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    aoTeto(amb);
+    const h = sombraDecide(amb);
+    assert.equal(h, hashT(amb));
+    // emenda aprovada de REQ-DIA-2 (onde a FIEL-15 mora; a T1 não lista o REQ) depois da decisão: muda o hash, a decisão velha não libera
+    escreve(amb, 'emendas', 'emenda.proposta', PROPOSTA({ req: 'REQ-DIA-2', diff: '+ FIEL-15 nova' }), new Date().toISOString());
+    const seq = amb.eventos().filter((e) => e.tipo === 'emenda.proposta').at(-1).seq;
+    escreve(amb, 'dono', 'spec.emendada', { proposta_seq: seq, origem: 'dono' }, new Date().toISOString());
+    const novo = hashT(amb);
+    assert.notEqual(novo, h, 'emenda de REQ-DIA-2 versiona o hash da liberação');
+    assert.match(recusa(amb, 'T1', h, 'hash_invalido').j.mensagem, /pergunta de liberação/);
+    // a pergunta de hoje (sombra.mjs) tem o hash novo que o loop recalcula, e libera
+    assert.equal(sombraDecide(amb), novo);
+    assert.equal(liberar(amb, 'T1', novo).rc, 0);
+    // controle: emenda de REQ fora da task e fora de REQ-DIA-2 não muda o hash
+    const amb2 = ambReq();
+    aoTeto(amb2);
+    const h2 = hashT(amb2);
+    escreve(amb2, 'emendas', 'emenda.proposta', PROPOSTA({ req: 'REQ-Z-9' }), new Date().toISOString());
+    escreve(amb2, 'dono', 'spec.emendada', { proposta_seq: amb2.eventos().filter((e) => e.tipo === 'emenda.proposta').at(-1).seq, origem: 'dono' }, new Date().toISOString());
+    assert.equal(hashT(amb2), h2);
+  });
+
+  // T39 r1 (MAJOR 1): a decisão vale para o insumo que a Sombra leu; achado reescrito ou veredito novo depois dela ⇒ `liberar` recusa
+  test('liberar-recusa-decisao-sobre-insumo-velho', () => {
+    for (const mudar of [
+      (amb) => writeFileSync(join(amb.wt('T1'), '.tmp-gabarito', 'review-r2.md'), 'achado r2 REESCRITO\n'),
+      (amb) => {
+        forja(amb, 'loop', 'review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 3, blocker: 1, major: 0 });
+        achado(amb, 'T1', 3);
+      },
+    ]) {
+      const amb = ambReq();
+      comLibera(amb);
+      aoTeto(amb);
+      const velho = sombraDecide(amb);
+      mudar(amb);
+      assert.notEqual(hashT(amb), velho, 'insumo novo, hash novo');
+      assert.match(recusa(amb, 'T1', velho, 'hash_invalido').j.mensagem, /achados de hoje/);
+      assert.deepEqual(estadoT(amb), { estado: 'no_teto', rodada: 2 });
+      // perguntar de novo dá o hash de hoje, brief novo com o insumo novo, e a decisão dele libera
+      const p = sombra(amb, ['perguntar', '--task', 'T1', '--libera-teto']);
+      assert.equal(p.j.hash, hashT(amb));
+      assert.notEqual(p.j.hash, velho);
+      const brief = readFileSync(join(amb.dir, p.j.brief), 'utf8');
+      assert.ok(/REESCRITO/.test(brief) || /### Rodada 3 [^\n]*ÚLTIMA RODADA/.test(brief), brief.slice(-600));
+      const novo = sombraDecide(amb);
+      assert.equal(novo, p.j.hash);
+      const r = liberar(amb, 'T1', novo);
+      assert.equal(r.rc, 0, r.out);
+    }
+  });
+
+  test('t36-furo-1: fora_da_regra true não libera', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    aoTeto(amb);
+    const h = hashT(amb);
+    forja(amb, 'forja', 'sombra.consulta', { pergunta_hash: h, task: 'T1' });
+    forja(amb, 'forja', 'decisao.sombra', { pergunta_hash: h, task: 'T1', resposta: 'r', arquivo: arquivosDaDecisao(amb, h), pergunta_enviesada: false, fora_da_regra: true, emenda_seq: 1, libera: true });
+    assert.match(recusa(amb, 'T1', h, 'hash_invalido').j.mensagem, /fora da regra/);
+    // controle: a mesma forja sem fora_da_regra libera (o que recusou foi o campo)
+    const amb2 = ambReq();
+    comLibera(amb2);
+    aoTeto(amb2);
+    forja(amb2, 'forja', 'sombra.consulta', { pergunta_hash: h, task: 'T1' });
+    forja(amb2, 'forja', 'decisao.sombra', { pergunta_hash: h, task: 'T1', resposta: 'r', arquivo: arquivosDaDecisao(amb2, h), pergunta_enviesada: false, fontes: ['s:1'], libera: true });
+    assert.equal(liberar(amb2, 'T1', h).rc, 0);
+  });
+
+  test('t36-furo-2: brief ausente, resposta ausente ou adulterada, decisão sem consulta ⇒ hash_invalido', () => {
+    const casos = {
+      brief: (amb, h) => renameSync(join(amb.entregas, 'sombra', `${h}.md`), join(amb.entregas, 'sombra', `${h}.md.fora`)),
+      resposta: (amb, h) => { const n = readdirSync(join(amb.entregas, 'sombra')).find((x) => x.startsWith(`${h}.`) && x.endsWith('.resposta.md')); renameSync(join(amb.entregas, 'sombra', n), join(amb.entregas, 'sombra', `${n}.fora`)); },
+      adulterada: (amb, h) => { const n = readdirSync(join(amb.entregas, 'sombra')).find((x) => x.startsWith(`${h}.`) && x.endsWith('.resposta.md')); writeFileSync(join(amb.entregas, 'sombra', n), 'outro texto'); },
+    };
+    for (const [nome, estragar] of Object.entries(casos)) {
+      const amb = ambReq();
+      comLibera(amb);
+      aoTeto(amb);
+      const h = sombraDecide(amb);
+      estragar(amb, h);
+      assert.match(recusa(amb, 'T1', h, 'hash_invalido').j.mensagem, /arquivo|brief|resposta/, nome);
+    }
+    // decisão forjada sem `sombra.consulta` da pergunta
+    const amb = ambReq();
+    comLibera(amb);
+    aoTeto(amb);
+    const h = hashT(amb);
+    forja(amb, 'forja', 'decisao.sombra', { pergunta_hash: h, task: 'T1', resposta: 'r', arquivo: arquivosDaDecisao(amb, h), pergunta_enviesada: false, fontes: ['s:1'], libera: true });
+    assert.match(recusa(amb, 'T1', h, 'hash_invalido').j.mensagem, /consulta/);
+    // arquivo da decisão que aponta para outro lugar
+    const amb3 = ambReq();
+    comLibera(amb3);
+    aoTeto(amb3);
+    forja(amb3, 'forja', 'sombra.consulta', { pergunta_hash: h, task: 'T1' });
+    arquivosDaDecisao(amb3, h);
+    forja(amb3, 'forja', 'decisao.sombra', { pergunta_hash: h, task: 'T1', resposta: 'r', arquivo: 'docs/spec.md', pergunta_enviesada: false, fontes: ['s:1'], libera: true });
+    recusa(amb3, 'T1', h, 'hash_invalido');
+  });
+
+  test('t36-furo-4: decisão anterior ao teto pela ORDEM do diário (não pelo ts cru) não vale', () => {
+    // (a) antes do 2º REPROVADO a pergunta real nem existe (T39 r1: `perguntar --libera-teto` exige no_teto)
+    const amb = ambReq();
+    comLibera(amb);
+    let p;
+    aoTeto(amb, 'T1', () => { p = sombra(amb, ['perguntar', '--task', 'T1', '--libera-teto']); });
+    assert.equal(p.j?.erro, 'fora_do_teto', p.out);
+    assert.equal(amb.eventos().filter((e) => e.tipo === 'sombra.consulta').length, 0);
+    // (b) mesma sessão do veredito, seq menor e ts 1 h À FRENTE: pelo ts cru seria "depois"; pela ordem do diário é antes.
+    // O hash é o que a task terá no teto (o de `amb`, mesmo ciclo e mesmos achados: o hash não depende do caminho da raiz)
+    const amb2 = ambReq();
+    comLibera(amb2);
+    const h2 = hashT(amb);
+    aoTeto(amb2, 'T1', () => {
+      forja(amb2, 'loop', 'sombra.consulta', { pergunta_hash: h2, task: 'T1' }, 3_600_000);
+      forja(amb2, 'loop', 'decisao.sombra', { pergunta_hash: h2, task: 'T1', resposta: 'r', arquivo: arquivosDaDecisao(amb2, h2), pergunta_enviesada: false, fontes: ['s:1'], libera: true }, 3_600_000);
+    });
+    const o = ordenarNucleo(amb2.eventos());
+    assert.ok(o.ok);
+    const pos = (f) => o.eventos.findIndex(f);
+    assert.ok(pos((e) => e.tipo === 'decisao.sombra') < pos((e) => e.tipo === 'review.veredito' && e.dados.rodada === 2), 'controle: na ordem, a decisão vem antes');
+    assert.ok(Date.parse(o.eventos[pos((e) => e.tipo === 'decisao.sombra')].ts) > Date.parse(o.eventos[pos((e) => e.tipo === 'review.veredito' && e.dados.rodada === 2)].ts), 'controle: pelo ts, depois');
+    assert.match(recusa(amb2, 'T1', h2, 'hash_invalido').j.mensagem, /antes do teto/);
+  });
+
+  test('t36-furo-4-relogio: liberação que cairia antes do teto na ordem real ⇒ relogio_do_diario, nada gravado', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    // o teto inteiro numa sessão com relógio 1 h à frente: a liberação de agora cairia antes dele
+    ok(amb, ['abrir', 'T1']);
+    const fut = (tipo, dados, n) => forja(amb, 'futuro', tipo, dados, 3_600_000 + n * 1000);
+    [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: 'a'.repeat(40) }],
+      ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, blocker: 0, major: 1 }], ['task.iniciada', { task: 'T1', papel: 'correcao' }],
+      ['task.concluida', { task: 'T1', sha: 'b'.repeat(40) }], ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 2, blocker: 0, major: 1 }],
+    ].forEach(([tipo, dados], i) => fut(tipo, dados, i));
+    achado(amb, 'T1', 2);
+    const h = hashT(amb); // T39 r1: o hash leva o insumo do teto (rodadas e achados), então vem depois deles
+    [['sombra.consulta', { pergunta_hash: h, task: 'T1' }],
+      ['decisao.sombra', { pergunta_hash: h, task: 'T1', resposta: 'r', arquivo: arquivosDaDecisao(amb, h), pergunta_enviesada: false, fontes: ['s:1'], libera: true }],
+    ].forEach(([tipo, dados], i) => fut(tipo, dados, 6 + i));
+    amb.fechar();
+    assert.deepEqual(estadoT(amb), { estado: 'no_teto', rodada: 2 });
+    recusa(amb, 'T1', h, 'relogio_do_diario');
+    assert.ok(achadosNoLugar(amb), 'a recusa deixa os achados onde estão');
+  });
+
+  test('t36-furo-5: decisão substituída não vale; vale a vigente', () => {
+    // libera true substituída por libera false ⇒ recusa
+    const amb = ambReq();
+    comLibera(amb);
+    aoTeto(amb);
+    const h = sombraDecide(amb);
+    const a = amb.eventos().filter((e) => e.tipo === 'decisao.sombra').at(-1);
+    const sub = sombra(amb, ['registrar', h, respostaJson(amb, { ...BOA, texto: 'mudei de ideia', libera: false, substitui: { sessao: a.sessao, seq: a.seq } })]);
+    assert.equal(sub.rc, 0, sub.out);
+    assert.match(recusa(amb, 'T1', h, 'sombra_nao_liberou').j.mensagem, /libera/);
+    // libera false substituída por libera true ⇒ libera
+    const amb2 = ambReq();
+    comLibera(amb2);
+    aoTeto(amb2);
+    const h2 = sombraDecide(amb2, 'T1', { libera: false });
+    const b = amb2.eventos().filter((e) => e.tipo === 'decisao.sombra').at(-1);
+    assert.equal(sombra(amb2, ['registrar', h2, respostaJson(amb2, { ...BOA, texto: 'agora sim', libera: true, substitui: { sessao: b.sessao, seq: b.seq } })]).rc, 0);
+    const r = liberar(amb2, 'T1', h2);
+    assert.equal(r.rc, 0, r.out);
+  });
+
+  test('t36-furo-6: a Sombra só dá a 1ª liberação; depois do dono, mesmo no teto de novo, teto_sombra_esgotado; depois da Sombra, o dono libera', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    ok(amb, ['abrir', 'T1']);
+    const ciclo = [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: 'a'.repeat(40) }],
+      ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, blocker: 0, major: 1 }], ['task.iniciada', { task: 'T1', papel: 'correcao' }],
+      ['task.concluida', { task: 'T1', sha: 'b'.repeat(40) }], ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 2, blocker: 0, major: 1 }]];
+    amb.semear([...ciclo, ['task.reaberta', { task: 'T1', origem: 'dono' }], ...ciclo]);
+    assert.deepEqual(estadoT(amb), { estado: 'no_teto', rodada: 2 });
+    const h = sombraDecide(amb);
+    assert.match(recusa(amb, 'T1', h, 'teto_sombra_esgotado').j.mensagem, /dono/);
+    // a liberação da Sombra é aceita pela tabela e o dono tira do teto depois dela
+    const amb2 = ambReq();
+    ok(amb2, ['abrir', 'T1']);
+    amb2.semear([...ciclo, ['task.reaberta', { task: 'T1', origem: 'sombra', hash: 'e'.repeat(64) }], ...ciclo]);
+    assert.deepEqual(estadoT(amb2), { estado: 'no_teto', rodada: 2 });
+    comLibera(amb2);
+    recusa(amb2, 'T1', sombraDecide(amb2), 'teto_sombra_esgotado');
+    const d = liberarTeto(amb2.dir, 'T1', 'S-dono');
+    assert.equal(d.ok, true, JSON.stringify(d));
+    assert.deepEqual(estadoT(amb2), { estado: 'pendente', rodada: 0 });
+  });
+
+  test('t36-registrar-libera: não booleano ⇒ resposta_invalida; libera:true fora da pergunta de liberação ⇒ libera_fora_da_liberacao; nada gravado', () => {
+    const amb = ambReq();
+    aoTeto(amb);
+    const lib = sombra(amb, ['perguntar', '--task', 'T1', '--libera-teto']);
+    const outra = sombra(amb, ['perguntar', '--task', 'T1', '--pergunta', 'outra?']);
+    const doReq = sombra(amb, ['perguntar', '--req', 'REQ-A-1', '--pergunta', 'e o req?']);
+    const arquivos = () => readdirSync(join(amb.entregas, 'sombra')).sort();
+    const antes = [bytesDoDiario(amb), arquivos()];
+    for (const v of ['true', 1, null]) {
+      const r = sombra(amb, ['registrar', lib.j.hash, respostaJson(amb, { ...BOA, libera: v })]);
+      assert.equal(r.j.erro, 'resposta_invalida', r.out);
+      assert.match(r.j.mensagem, /libera/);
+    }
+    for (const hh of [outra.j.hash, doReq.j.hash]) {
+      const r = sombra(amb, ['registrar', hh, respostaJson(amb, { ...BOA, libera: true })]);
+      assert.equal(r.rc, 1, r.out);
+      assert.equal(r.j.erro, 'libera_fora_da_liberacao', r.out);
+    }
+    assert.deepEqual([bytesDoDiario(amb), arquivos()], antes, 'nada gravado: diário e arquivos iguais');
+    // `--libera-teto` exige --task e não aceita --pergunta
+    for (const a of [['perguntar', '--req', 'REQ-A-1', '--libera-teto'], ['perguntar', '--task', 'T1', '--libera-teto', '--pergunta', 'x?'], ['perguntar', '--libera-teto']]) {
+      assert.equal(sombra(amb, a).rc, 2, a.join(' '));
+    }
+  });
+
+  test('t36-dono-inalterado: com o flag ligado e decisão da Sombra presente, o caminho do dono grava origem dono e só ele', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    aoTeto(amb);
+    sombraDecide(amb);
+    const r = liberarTeto(amb.dir, 'T1', 'S-dono');
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(amb.eventos().filter((e) => e.tipo === 'task.reaberta').map((e) => [e.sessao, e.dados]), [['S-dono', { task: 'T1', origem: 'dono' }]]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────── GM-14 T38: spec do checkout da sessão (DP-3 aj. 4 e 5)
+
+describe('GM-14 T38: a spec se lê do checkout da sessão; o diário fica na principal', () => {
+  const PAINEL = join(AQUI, '..', 'scripts', 'painel.mjs');
+  const SPEC_A = 'docs/superpowers/specs/gm10-a.md';
+  const SPEC_B = 'docs/superpowers/specs/gm10-b.md';
+  const TEXTO_WT = '# GM-10 da worktree\n\nPBI: GM-10\n\n## Uma\n';
+  const TEXTO_PRINCIPAL = '# GM-10 da principal\n\nPBI: GM-10\n\n## Outra\n';
+  const sha = (t) => createHash('sha256').update(Buffer.from(t)).digest('hex');
+  const AGUARDANDO = 'spec aguardando aprovação';
+  /** Worktree REAL (`git worktree add`) na branch da entrega; a principal fica em `main`, sem ID. */
+  function comWorktree(plano, extra = {}) {
+    const amb = ambiente({ branch: 'main', plano, ...extra });
+    const wt = join(amb.dir, '.harness', 'worktrees', 'S1');
+    g(amb.dir, 'worktree', 'add', '-q', '-b', 'wt/GM-10-S1', wt);
+    const escrever = (raiz, caminho, texto) => { mkdirSync(dirname(join(raiz, caminho)), { recursive: true }); writeFileSync(join(raiz, caminho), texto); };
+    return { amb, wt: realpathSync(wt), escrever };
+  }
+  const painelEstado = (amb, cwd) => {
+    const r = spawnSync(process.execPath, [PAINEL, 'estado'], { cwd, encoding: 'utf8', env: amb.env, input: '' });
+    let j = null;
+    try { j = JSON.parse(r.stdout.trim()); } catch { /* fica null */ }
+    assert.equal(j?.ok, true, `painel estado: ${r.stdout}${r.stderr}`);
+    return j;
+  };
+  const shaDoMedir = async (amb, cwd) => {
+    const { medir } = await import('../scripts/painel-medir.mjs');
+    const rodar = (cmd, args, o) => (cmd === 'git' ? spawnSync('git', args, { cwd: o.cwd, encoding: 'utf8' }) : { status: 1, stdout: '', stderr: 'sem gh' });
+    medir(cwd, { rodar, agentes: { session_id: 'S-medir', agentes: [] }, agora: () => Date.parse('2026-11-12T20:00:00Z') });
+    return amb.eventos().filter((e) => e.tipo === 'fato.medido' && e.dados.chave === 'spec').map((e) => [e.dados.valor.caminho, e.dados.valor.sha256]);
+  };
+
+  const TODO_PAINEL = 'painel.mjs:328 lê da raiz principal, correção na T18 (depende da T38)';
+
+  test('spec-na-worktree-da-sessao-com-plano: aprovarSpec, lerSpecs e medir dão o MESMO sha da spec da worktree; diário só na principal', async () => {
+    const { aprovarSpec, lerSpecs } = await import('../scripts/loop.mjs');
+    const { amb, wt, escrever } = comWorktree({ ...PLANO_PADRAO, spec: SPEC_A });
+    escrever(wt, SPEC_A, TEXTO_WT);
+    escrever(amb.dir, SPEC_A, TEXTO_PRINCIPAL); // a principal tem OUTRA versão: ler dela daria outro sha
+    const r = aprovarSpec(wt, 'S-dono');
+    assert.deepEqual(r, { ok: true, spec: SPEC_A, sha256: sha(TEXTO_WT), entrega: 'GM-10' });
+    const a = amb.eventos().filter((e) => e.tipo === 'spec.aprovada');
+    assert.deepEqual(a.map((e) => e.dados), [{ spec: SPEC_A, sha256: sha(TEXTO_WT) }], 'no diário da principal');
+    assert.equal(existsSync(join(wt, '.harness', 'entregas')), false, 'a worktree não ganhou diário');
+    // lerSpecs do checkout da sessão: o mesmo sha
+    assert.deepEqual(lerSpecs(wt).map((s) => [s.caminho, s.sha256]), [[SPEC_A, sha(TEXTO_WT)]]);
+    // medir (painel-medir) lê o mesmo arquivo do mesmo checkout: mesmo sha
+    assert.deepEqual(await shaDoMedir(amb, wt), [[SPEC_A, sha(TEXTO_WT)]]);
+    // garantias intactas com plano: 2ª vez ⇒ ja_aprovada; mudança entre o hash e o append ⇒ spec_mudou
+    assert.equal(aprovarSpec(wt, 'S-dono').erro, 'ja_aprovada');
+    escrever(wt, SPEC_A, `${TEXTO_WT}mais\n`);
+    const mudou = aprovarSpec(wt, 'S-dono', { antes: () => escrever(wt, SPEC_A, `${TEXTO_WT}outra\n`) });
+    assert.equal(mudou.erro, 'spec_mudou', JSON.stringify(mudou));
+    assert.equal(amb.eventos().filter((e) => e.tipo === 'spec.aprovada').length, 1);
+  });
+
+  test('spec-na-worktree-da-sessao-com-plano-painel: o painel estado da sessão vê a aprovação do sha da worktree', { todo: TODO_PAINEL }, async () => {
+    const { aprovarSpec } = await import('../scripts/loop.mjs');
+    const { amb, wt, escrever } = comWorktree({ ...PLANO_PADRAO, spec: SPEC_A });
+    escrever(wt, SPEC_A, TEXTO_WT);
+    escrever(amb.dir, SPEC_A, TEXTO_PRINCIPAL);
+    assert.equal(aprovarSpec(wt, 'S-dono').ok, true);
+    const depois = painelEstado(amb, wt);
+    assert.equal(JSON.stringify(depois.estado).includes(AGUARDANDO), false, JSON.stringify(depois.estado));
+  });
+
+  test('req-na-spec-le-do-checkout-da-sessao: REQ só na spec da worktree ⇒ proposta aceita; REQ só na da principal ⇒ req_desconhecido (T38, DP-3 aj. 4)', () => {
+    const { amb, wt, escrever } = comWorktree({ ...PLANO_PADRAO, spec: SPEC_A });
+    escrever(wt, SPEC_A, `${TEXTO_WT}\n**REQ-ZZ-1** só na worktree.\n`);
+    escrever(amb.dir, SPEC_A, `${TEXTO_PRINCIPAL}\n**REQ-YY-1** só na principal.\n`);
+    const doWt = amb.cli(proporArgs(amb, { req: 'REQ-ZZ-1' }), { cwd: wt });
+    assert.equal(doWt.rc, 0, doWt.out + doWt.err);
+    assert.equal(emendasDoDiario(amb).filter((e) => e.tipo === 'emenda.proposta').length, 1, 'gravou na principal');
+    const daPrincipal = amb.cli(proporArgs(amb, { req: 'REQ-YY-1' }), { cwd: wt });
+    assert.notEqual(daPrincipal.rc, 0, daPrincipal.out);
+    assert.equal(daPrincipal.j?.erro, 'req_desconhecido', daPrincipal.out + daPrincipal.err);
+    assert.equal(emendasDoDiario(amb).filter((e) => e.tipo === 'emenda.proposta').length, 1, 'nada gravado na recusa');
+  });
+
+  test('registro-sha-do-checkout-da-sessao: `registro` rodado de dentro da worktree grava o sha da spec da WORKTREE, não o da principal (T38, DP-3 aj. 4)', async () => {
+    const { aprovarSpec } = await import('../scripts/loop.mjs');
+    const { amb, wt, escrever } = comWorktree({ ...PLANO_PADRAO, spec: SPEC_A }, { gitignore: false }); // o registro se commita: o diário não pode estar ignorado
+    escrever(wt, SPEC_A, TEXTO_WT);
+    escrever(amb.dir, SPEC_A, TEXTO_PRINCIPAL);
+    assert.equal(aprovarSpec(wt, 'S-dono').ok, true); // aprova o sha da worktree: o registro tem de CONFERIR com ele
+    const r = amb.cli(['registro'], { cwd: wt });
+    assert.equal(r.rc, 0, r.out + r.err);
+    const t = readFileSync(join(amb.entregas, 'registro.md'), 'utf8');
+    assert.ok(t.includes(`sha256 atual da spec: ${sha(TEXTO_WT)} (confere com a última aprovação)`), t);
+    assert.equal(t.includes(sha(TEXTO_PRINCIPAL)), false, 'o sha da principal não entra');
+  });
+
+  test('plano-spec-diferente-da-aprovada: aprovada sem plano (a.md) e o plano nasce com b.md ⇒ b.md falta aprovar (aprovarSpec grava, nunca ja_aprovada); com a.md ⇒ ja_aprovada', async () => {
+    const { aprovarSpec } = await import('../scripts/loop.mjs');
+    const textoB = '# GM-10 b\n\nsem cabeçalho de PBI, outro texto\n';
+    const { amb, wt, escrever } = comWorktree(null);
+    escrever(wt, SPEC_A, TEXTO_WT);
+    assert.deepEqual(aprovarSpec(wt, 'S-dono'), { ok: true, spec: SPEC_A, sha256: sha(TEXTO_WT), entrega: 'GM-10' });
+    escrever(wt, SPEC_B, textoB);
+    // plano com a.md: o mesmo arquivo aprovado não se aprova de novo
+    writeFileSync(join(amb.entregas, 'plano.json'), JSON.stringify({ ...PLANO_PADRAO, spec: SPEC_A }));
+    assert.equal(aprovarSpec(wt, 'S-dono').erro, 'ja_aprovada');
+    // plano com b.md: não herda o ✓ de a.md; a aprovação grava o sha de b.md
+    writeFileSync(join(amb.entregas, 'plano.json'), JSON.stringify({ ...PLANO_PADRAO, spec: SPEC_B }));
+    assert.deepEqual(aprovarSpec(wt, 'S-dono'), { ok: true, spec: SPEC_B, sha256: sha(textoB), entrega: 'GM-10' });
+    assert.deepEqual(amb.eventos().filter((e) => e.tipo === 'spec.aprovada').map((e) => e.dados), [
+      { spec: SPEC_A, sha256: sha(TEXTO_WT) }, { spec: SPEC_B, sha256: sha(textoB) },
+    ]);
+  });
+
+  test('plano-spec-diferente-da-aprovada-painel: o painel mostra b.md aguardando aprovação; com a.md não', { todo: TODO_PAINEL }, async () => {
+    const { aprovarSpec } = await import('../scripts/loop.mjs');
+    const { amb, wt, escrever } = comWorktree(null);
+    escrever(wt, SPEC_A, TEXTO_WT);
+    assert.equal(aprovarSpec(wt, 'S-dono').ok, true);
+    escrever(wt, SPEC_B, '# GM-10 b\n\noutro texto\n');
+    writeFileSync(join(amb.entregas, 'plano.json'), JSON.stringify({ ...PLANO_PADRAO, spec: SPEC_B }));
+    assert.ok(JSON.stringify(painelEstado(amb, wt).estado).includes(AGUARDANDO));
+    writeFileSync(join(amb.entregas, 'plano.json'), JSON.stringify({ ...PLANO_PADRAO, spec: SPEC_A }));
+    assert.equal(JSON.stringify(painelEstado(amb, wt).estado).includes(AGUARDANDO), false);
+  });
+});
+
+describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
+  const PAINEL_CLI = join(AQUI, '..', 'scripts', 'painel.mjs');
+  const CONTEXTO = (amb, sessao) => join(amb.dir, '.harness', 'contexto', `${sessao}.json`);
+  const gravarCtx = (amb, sessao, obj, texto = null) => {
+    mkdirSync(join(amb.dir, '.harness', 'contexto'), { recursive: true });
+    writeFileSync(CONTEXTO(amb, sessao), texto ?? JSON.stringify(obj));
+  };
+  const agora = (deslocMs = 0) => new Date(Date.now() + deslocMs).toISOString();
+  /** Evento de OUTRA sessão com `ts` posterior ao último do diário (o clear/startup do `SessionStart`). */
+  const inicioDe = (amb, sessao, origem) => {
+    const ultimo = Math.max(...amb.eventos().map((e) => Date.parse(e.ts)));
+    const ts = new Date(ultimo + 5000).toISOString();
+    const r = diario.append(amb.entregas, sessao, { ts, autor: 't@t', sessao, agente: 'orquestrador', tipo: 'sessao.inicio', dados: { origem } });
+    assert.ok(r.ok, JSON.stringify(r));
+  };
+  const painel = (amb) => {
+    const r = spawnSync(process.execPath, [PAINEL_CLI, 'estado'], { cwd: amb.dir, encoding: 'utf8', env: amb.env, input: '' });
+    const j = JSON.parse(r.stdout.trim());
+    assert.equal(j.ok, true, r.stdout + r.stderr);
+    return JSON.stringify(j.estado.depende ?? []);
+  };
+  const ONBOARDING = { ...CONFIG_PADRAO, fluxo: { resolvidoEm: '2026-11-01T00:00:00Z' } }; // repo com onboarding: a FIEL-14 (e) vale inteira
+  const plano1 = (config = ONBOARDING) => ambiente({ config, plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }]) });
+
+  test('pousar-a-partir-de-x-com-contexto-da-sessao: 55 % da sessão S1 ⇒ proxima --sessao S1 devolve pousar e mostra o percent', () => {
+    const amb = plano1();
+    gravarCtx(amb, 'S1', { percent: 55, fonte: 'mod', em: agora() });
+    const r = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.acao.tipo, 'pousar');
+    assert.equal(r.j.sinais.percent, 55);
+    // abaixo de x: despacha
+    gravarCtx(amb, 'S1', { percent: 20, fonte: 'mod', em: agora() });
+    assert.equal(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao.tipo, 'despachar');
+  });
+
+  test('contexto-de-outra-sessao-nao-conta: o arquivo da S2 não pousa a S1; sem --sessao o percent é nulo', () => {
+    const amb = plano1();
+    gravarCtx(amb, 'S2', { percent: 90, fonte: 'mod', em: agora() });
+    const a = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
+    assert.equal(a.j.sinais.percent, null);
+    assert.equal(a.j.acao.tipo, 'despachar');
+    const b = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(b.j.sinais.percent, null);
+    assert.equal(b.j.acao.tipo, 'despachar');
+  });
+
+  test('contexto-velho-ou-corrompido-e-nulo: > 120 s, futuro, JSON torto, percent fora da forma, em ausente ⇒ nulo e despacha', () => {
+    const amb = plano1();
+    const ruins = [
+      [{ percent: 90, fonte: 'mod', em: agora(-121_000) }, null],
+      [{ percent: 90, fonte: 'mod', em: agora(60_000) }, null],
+      [null, '{nao é json'],
+      [{ percent: '90', fonte: 'mod', em: agora() }, null],
+      [{ percent: 150, fonte: 'mod', em: agora() }, null],
+      [{ percent: 90, fonte: 'mod' }, null],
+      [{ percent: 90, fonte: 'mod', em: 'ontem' }, null],
+      [[90], null],
+    ];
+    for (const [obj, texto] of ruins) {
+      gravarCtx(amb, 'S1', obj, texto);
+      const r = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
+      assert.equal(r.rc, 0, r.out + r.err);
+      assert.equal(r.j.sinais.percent, null, JSON.stringify(obj ?? texto));
+      assert.equal(r.j.acao.tipo, 'despachar');
+    }
+    // 120 s exatos ainda vale (controle da fronteira)
+    gravarCtx(amb, 'S1', { percent: 90, fonte: 'mod', em: agora(-100_000) });
+    assert.equal(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao.tipo, 'pousar');
+  });
+
+  test('contexto-do-mod-chega-ao-proxima (P9): gravarContexto real da T20 grava 55 % e o loop.mjs proxima --sessao real devolve pousar', async () => {
+    const { gravarContexto } = await import('../../mod/painel.mjs');
+    const amb = plano1();
+    const g1 = gravarContexto({ sessao: 'S1', percent: 55, fonte: 'mod', emMs: Date.now() });
+    assert.ok(g1);
+    const rodou = spawnSync(g1.argv[0], g1.argv.slice(1), { cwd: amb.dir, input: g1.stdin, encoding: 'utf8', env: amb.env });
+    assert.equal(rodou.status, 0, rodou.stderr);
+    const r = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
+    assert.equal(r.j.acao.tipo, 'pousar', r.out);
+    assert.equal(r.j.sinais.percent, 55);
+  });
+
+  test('pousar-grava-sessao-do-claude: --sessao S1 vira o campo sessao do evento; sem --sessao fica "loop"', () => {
+    const amb = plano1();
+    const r = amb.cli(['pousar', '--sessao', 'S1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    const pousos = amb.eventos().filter((e) => e.tipo === 'sessao.pouso');
+    assert.deepEqual(pousos.map((e) => e.sessao), ['S1']);
+    assert.equal(amb.cli(['pousar']).rc, 0);
+    assert.deepEqual(amb.eventos().filter((e) => e.tipo === 'sessao.pouso').map((e) => e.sessao).sort(), ['S1', 'loop']);
+  });
+
+  test('pouso-pendente-nao-despacha-nem-revisor, com-vivos-espera, sem-vivos-repete-sem-segunda-retomada: pelo CLI real', () => {
+    const amb = plano1();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'implementador']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao.tipo, 'despachar', 'controle: sem pouso, o revisor é despachado');
+    assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    const sem = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
+    assert.deepEqual(sem.j.acao, { tipo: 'pousar' });
+    const com = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '1']);
+    assert.deepEqual(com.j.acao, { tipo: 'esperar', motivo: 'pouso_pendente' });
+    // a skill repete o pousar (D-W3): novo sessao.pouso, nenhuma sessao.retomada gravada pelo CLI
+    assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    const tipos = amb.tipos();
+    assert.equal(tipos.filter((t) => t === 'sessao.pouso').length, 2);
+    assert.equal(tipos.filter((t) => t === 'sessao.retomada').length, 0);
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+  });
+
+  test('T59-impasse-revisor-pendente (emenda 67), pelo CLI real: veredito de T1, pouso, T1 integrada, T2 concluída (revisor pendente) e a sessão em 61 % ⇒ proxima 0 vivos pousar, com vivos esperar; nunca o revisor', () => {
+    const amb = ambiente({ config: ONBOARDING, plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }, { id: 'T2', deps: [], arquivos: ['src/t2.txt'] }]) });
+    amb.aprovar('T1');
+    assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    assert.equal(amb.cli(['integrar', 'T1']).rc, 0);
+    for (const a of [['abrir', 'T2'], ['iniciar', 'T2', 'implementador']]) assert.equal(amb.cli(a).rc, 0, a.join(' '));
+    amb.commitNaWt('T2', 'src/t2.txt');
+    assert.equal(amb.cli(['concluir', 'T2']).rc, 0);
+    gravarCtx(amb, 'S1', { percent: 61, fonte: 'mod', em: agora() });
+    const sem = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
+    assert.equal(sem.rc, 0, sem.out + sem.err);
+    assert.deepEqual(sem.j.acao, { tipo: 'pousar' });
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '1']).j.acao, { tipo: 'esperar', motivo: 'pouso_pendente' });
+    // controle: a sessão nova (abaixo de X) já pode despachar o revisor
+    gravarCtx(amb, 'S1', { percent: 5, fonte: 'mod', em: agora() });
+    inicioDe(amb, 'S2', 'clear');
+    const nova = amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao;
+    assert.equal(nova.tipo, 'despachar');
+    assert.deepEqual(nova.itens.map((i) => `${i.task} ${i.papel}`), ['T2 revisor']);
+  });
+
+  test('pouso-atravessa-cli-proxima-depende-painel (P9): pousar S1 ⇒ proxima sem despacho ⇒ painel real com "limpar a conversa" ⇒ clear de S2 tira ⇒ despacha; startup de S2 não tira', () => {
+    const amb = plano1();
+    assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    assert.match(painel(amb), /limpar a conversa/);
+    inicioDe(amb, 'S2', 'startup');
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    assert.match(painel(amb), /limpar a conversa/);
+    inicioDe(amb, 'S3', 'resume');
+    assert.match(painel(amb), /limpar a conversa/);
+    inicioDe(amb, 'S2', 'clear');
+    assert.equal(amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao.tipo, 'despachar');
+    assert.doesNotMatch(painel(amb), /limpar a conversa/);
+  });
+
+  test('proxima-sem-onboarding-nao-trava-pelo-pouso (FIEL-14 h): sem fluxo.resolvidoEm o pouso gravado não trava proxima nem o painel; com onboarding trava (controle)', () => {
+    const amb = plano1(CONFIG_PADRAO);
+    assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    const r = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.acao.tipo, 'despachar', JSON.stringify(r.j.acao));
+    assert.doesNotMatch(painel(amb), /limpar a conversa/);
+    const com = plano1();
+    assert.equal(com.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    assert.deepEqual(com.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    assert.match(painel(com), /limpar a conversa/);
+  });
+
+  test('pouso-onboarding-le-config-local (FIEL-14 h): origin/HEAD com fluxo.resolvidoEm e config local sem ⇒ não pendente; o inverso ⇒ pendente', () => {
+    const amb = plano1(CONFIG_PADRAO);
+    comOrigin(amb, ONBOARDING);
+    assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    assert.equal(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao.tipo, 'despachar');
+    assert.doesNotMatch(painel(amb), /limpar a conversa/);
+    const inv = plano1();
+    comOrigin(inv, CONFIG_PADRAO);
+    assert.equal(inv.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    assert.deepEqual(inv.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    assert.match(painel(inv), /limpar a conversa/);
+  });
+
+  test('pouso-onboarding-criterio-unico: loop.mjs e painel.mjs importam temOnboarding de cartao-sessao.mjs e não têm critério próprio', () => {
+    for (const f of ['loop.mjs', 'painel.mjs']) {
+      const fonte = readFileSync(join(AQUI, '..', 'scripts', f), 'utf8');
+      assert.match(fonte, /import \{[^}]*\btemOnboarding\b[^}]*\} from '\.\/cartao-sessao\.mjs'/, f);
+      assert.doesNotMatch(fonte, /resolvidoEm/, `${f} não pode ler o critério de onboarding por conta própria`);
+    }
+  });
+
+  test('pousar-manual-nao-consome-com-mod (T53, emenda 52 a; I1 por sessão): o pousar do dono grava o evento mas só a PRÓPRIA leitura da sessão decide; nenhuma outra a libera ou prende', () => {
+    const amb = plano1();
+    gravarCtx(amb, 'S1', { percent: 61, fonte: 'mod', em: agora() });
+    assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0); // grava, não recusa (a skill sem mod o usa)
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    assert.match(painel(amb), /limpar a conversa/);
+    // a S2 (sessão paralela ou nova), baixa, decide pela PRÓPRIA leitura: despacha; a S1 segue pendente
+    gravarCtx(amb, 'S2', { percent: 20, fonte: 'mod', em: agora() });
+    assert.equal(amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao.tipo, 'despachar');
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    // leitura que não vale (fonte transcript) não é leitura própria: percent nulo, a regra sem mod (com onboarding, sem /clear no diário: pendente)
+    gravarCtx(amb, 'S3', { percent: 20, fonte: 'transcript', em: agora() });
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S3', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    // o /clear do dono (sessao.inicio) com a leitura da S2 alta: só a S2 decide por si, e alta ela pousa
+    inicioDe(amb, 'S2', 'clear');
+    gravarCtx(amb, 'S2', { percent: 61, fonte: 'mod', em: agora() });
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+  });
+
+  test('ponte-real-ler-devolve-agora (T53): a ponte que o mod executa devolve `agora` (a hora do node que escreve o ts do diário); a ponte `contexto` não existe mais', async () => {
+    const { codigoPonte } = await import('../dist/pouso.js');
+    const { pathToFileURL } = await import('node:url');
+    const amb = plano1();
+    const url = pathToFileURL(join(AQUI, '..', 'dist', 'diario.js')).href;
+    const rodar = (pedido) => spawnSync(process.execPath, ['--input-type=module', '-e', codigoPonte(url)], { cwd: amb.dir, input: JSON.stringify(pedido), encoding: 'utf8' });
+    const antes = Date.now();
+    const j = JSON.parse(rodar({ op: 'ler', dir: amb.entregas, cwd: amb.dir }).stdout);
+    assert.equal(j.ok, true);
+    assert.ok(Array.isArray(j.eventos));
+    assert.ok(j.agora >= antes && j.agora <= Date.now(), `agora fora da hora de parede: ${j.agora}`);
+    const k = JSON.parse(rodar({ op: 'contexto', cwd: amb.dir, raiz: amb.dir, sessoes: ['S1'] }).stdout);
+    assert.equal(k.ok, false); // nenhuma sessão lê o contexto de outra pela ponte
+  });
+
+  test('instalar-ignora-contexto: o .gitignore da raiz ignora .harness/contexto/', () => {
+    const linhas = readFileSync(GITIGNORE_RAIZ, 'utf8').split('\n').map((l) => l.trim());
+    assert.ok(linhas.includes('.harness/contexto/'));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────── T48 (emenda 43, FIEL-1 b/c, asserção 8): entrega publicada não recebe sessao.*, task.*, loop.parar
+
+describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (T48)', () => {
+  const PR = (numero, estado) => ['fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: 'enabler/GM-10-loop' } }];
+  const publicar = (amb) => amb.semear([PR(7, 'mergeado')]);
+  const PLUGIN_RAIZ = join(AQUI, '..', '..');
+  const configOnboarding = { ...CONFIG_PADRAO, fluxo: { resolvidoEm: '2026-11-13T00:00:00Z' } };
+  const semId = (amb) => join(amb.dir, '.harness', 'entregas', '_sem-id');
+  const tiposDe = (dir) => (existsSync(dir) ? diario.ler(dir).map((e) => e.tipo) : []);
+
+  test('publicada-nao-recebe-loop.parar: parar recusa com entrega_publicada e nada é gravado', () => {
+    const amb = ambiente();
+    publicar(amb);
+    const antes = amb.eventos().length;
+    const r = amb.cli(['parar', 'nao_conseguiu']);
+    assert.equal(r.rc, 1, r.out + r.err);
+    assert.equal(r.j.erro, 'entrega_publicada');
+    assert.equal(amb.eventos().length, antes);
+    assert.deepEqual(tiposDe(semId(amb)), []);
+  });
+
+  test('publicada-nao-recebe-task.iniciada: iniciar recusa com entrega_publicada', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    publicar(amb);
+    const antes = amb.eventos().length;
+    const r = amb.cli(['iniciar', 'T1', 'implementador']);
+    assert.equal(r.j?.erro, 'entrega_publicada', r.out + r.err);
+    assert.equal(amb.eventos().length, antes);
+  });
+
+  test('publicada-nao-recebe-task.concluida: concluir recusa com entrega_publicada', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'implementador']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    publicar(amb);
+    const antes = amb.eventos().length;
+    const r = amb.cli(['concluir', 'T1']);
+    assert.equal(r.j?.erro, 'entrega_publicada', r.out + r.err);
+    assert.equal(amb.eventos().length, antes);
+  });
+
+  test('publicada-nao-recebe-review.veredito e task.integrada: veredito e integrar recusam com entrega_publicada', async () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'implementador']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'revisor']).rc, 0);
+    publicar(amb);
+    const antes = amb.eventos().length;
+    assert.equal(amb.cli(['veredito', 'T1', 'APROVADO', '1', '0', '0']).j?.erro, 'entrega_publicada');
+    assert.equal(amb.eventos().length, antes);
+    const integ = amb.cli(['integrar', 'T1']);
+    assert.equal(integ.j?.erro, 'entrega_publicada', integ.out + integ.err);
+    assert.equal(amb.eventos().length, antes);
+  });
+
+  test('publicada-nao-recebe-sessao.pouso: pousar recusa com entrega_publicada', () => {
+    const amb = ambiente();
+    publicar(amb);
+    const antes = amb.eventos().length;
+    const r = amb.cli(['pousar', '--sessao', 'S1']);
+    assert.equal(r.j?.erro, 'entrega_publicada', r.out + r.err);
+    assert.equal(amb.eventos().length, antes);
+  });
+
+  test('identificada-continua-gravando (vizinho): sem PR medido, ou com PR aberto depois do mergeado, parar, iniciar e pousar gravam', () => {
+    for (const prs of [[], [PR(7, 'mergeado'), PR(8, 'aberto')]]) {
+      const amb = ambiente();
+      if (prs.length > 0) amb.semear(prs);
+      const pouso = amb.cli(['pousar']); // só na fronteira: antes de qualquer task em voo
+      assert.equal(pouso.rc, 0, pouso.out + pouso.err);
+      assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+      assert.equal(amb.cli(['iniciar', 'T1', 'implementador']).rc, 0, JSON.stringify(prs));
+      assert.equal(amb.cli(['parar', 'nao_conseguiu']).rc, 0);
+      assert.deepEqual(amb.tipos().filter((t) => t === 'task.iniciada' || t === 'sessao.pouso' || t === 'loop.parar'), ['sessao.pouso', 'task.iniciada', 'loop.parar']);
+    }
+  });
+
+  test('identificada-continua-gravando (vizinho): PR mergeado sem 2º fato (sem plano.json) não é publicada; parar grava', () => {
+    const amb = ambiente({ plano: null });
+    amb.semear([PR(7, 'mergeado')]);
+    assert.equal(amb.cli(['parar', 'nao_conseguiu']).rc, 0);
+    assert.ok(amb.tipos().includes('loop.parar'));
+  });
+
+  test('publicada-nao-recebe-sessao.inicio: o SessionStart grava sessao.inicio e guarda.heartbeat em _sem-id; a entrega fica intacta', async () => {
+    const { montarSaidaHook } = await import('../scripts/cartao-sessao.mjs');
+    const amb = ambiente({ config: configOnboarding });
+    publicar(amb);
+    const antes = amb.eventos().length;
+    const r = await montarSaidaHook({ cwd: amb.dir, pluginRoot: PLUGIN_RAIZ, agora: '2026-11-13T12:00:00Z', entradaTexto: JSON.stringify({ session_id: 'SPUB', source: 'startup' }) });
+    assert.deepEqual(r.falhas, []);
+    assert.equal(amb.eventos().length, antes);
+    assert.deepEqual(tiposDe(semId(amb)), ['sessao.inicio', 'guarda.heartbeat']);
+  });
+
+  test('identificada-continua-gravando (vizinho): o SessionStart de entrega em curso grava sessao.inicio e guarda.heartbeat na entrega', async () => {
+    const { montarSaidaHook } = await import('../scripts/cartao-sessao.mjs');
+    const amb = ambiente({ config: configOnboarding });
+    const antes = amb.eventos().length;
+    const r = await montarSaidaHook({ cwd: amb.dir, pluginRoot: PLUGIN_RAIZ, agora: '2026-11-13T12:00:00Z', entradaTexto: JSON.stringify({ session_id: 'SCUR', source: 'startup' }) });
+    assert.deepEqual(r.falhas, []);
+    assert.deepEqual(amb.tipos().slice(antes), ['sessao.inicio', 'guarda.heartbeat']);
+    assert.deepEqual(tiposDe(semId(amb)), []);
+  });
+
+  test('publicada-nao-abre-fifo-nem-symlink: events.*.jsonl que não é arquivo regular ⇒ false, sem travar a leitura', () => {
+    const amb = ambiente();
+    publicar(amb);
+    const fifo = join(amb.entregas, 'events.fifo.jsonl');
+    assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `import { entregaPublicada } from ${JSON.stringify(join(AQUI, '..', 'dist', 'guarda.js'))}; process.stdout.write(String(entregaPublicada(${JSON.stringify(amb.dir)}, 'GM-10', null)));`], { encoding: 'utf8', timeout: 5000 });
+    assert.equal(r.status, 0, `travou ou falhou: ${r.signal ?? ''} ${r.stderr}`);
+    assert.equal(r.stdout, 'false');
+    rmSync(fifo);
+    symlinkSync('/etc/hosts', join(amb.entregas, 'events.link.jsonl'));
+    assert.equal(spawnSync(process.execPath, ['--input-type=module', '-e', `import { entregaPublicada } from ${JSON.stringify(join(AQUI, '..', 'dist', 'guarda.js'))}; process.stdout.write(String(entregaPublicada(${JSON.stringify(amb.dir)}, 'GM-10', null)));`], { encoding: 'utf8', timeout: 5000 }).stdout, 'false');
+  });
+
+  /** O dono respondeu à pergunta (b) da conversa `sessao`: o 1º `fato.medido` dela é a âncora; `dono.resposta` liga a entrega (FIEL-1 b, REQ-TRI-1). */
+  const ligarPeloDono = (amb, sessao, rotulo = 'GM-10') => {
+    const w = (tipo, dados, ts) => assert.equal(diario.append(amb.entregas, sessao, { ts, autor: 't@t', sessao, agente: 'orquestrador', tipo, dados }).ok, true);
+    w('fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'enabler/GM-10-loop' } }, '2026-11-13T10:00:00.000Z');
+    const ancora = `${sessao}:${diario.ler(amb.entregas).find((e) => e.sessao === sessao).seq}`;
+    w('dono.resposta', { pergunta: ancora, opcao: 1, rotulo }, '2026-11-13T10:00:01.000Z');
+  };
+
+  test('ligada-pelo-dono-loop-nao-trava (MAJOR-1, spec:90): depois de dono.resposta, parar/iniciar/concluir/veredito/integrar gravam sem --sessao; sessão não ligada segue recusada', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    assert.equal(amb.cli(['iniciar', 'T1', 'implementador']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    publicar(amb);
+    assert.equal(amb.cli(['concluir', 'T1']).j?.erro, 'entrega_publicada', 'controle: sem ligação, publicada');
+    ligarPeloDono(amb, 'SDONO');
+    const r1 = amb.cli(['concluir', 'T1']);
+    assert.equal(r1.rc, 0, r1.out + r1.err);
+    assert.equal(amb.cli(['iniciar', 'T1', 'revisor']).rc, 0);
+    assert.equal(amb.cli(['veredito', 'T1', 'APROVADO', '1', '0', '0']).rc, 0);
+    const integ = amb.cli(['integrar', 'T1']);
+    assert.equal(integ.rc, 0, integ.out + integ.err);
+    assert.equal(amb.cli(['parar', 'nao_conseguiu']).rc, 0);
+    assert.equal(amb.cli(['parar', 'nao_conseguiu', '--sessao', 'SDONO']).rc, 0);
+    assert.ok(amb.tipos().includes('task.integrada'));
+    // vizinho perigoso: sessão EXPLÍCITA que o dono não ligou continua recusada (o filtro que libera não fura a guarda)
+    assert.equal(amb.cli(['parar', 'nao_conseguiu', '--sessao', 'OUTRA']).j?.erro, 'entrega_publicada');
+    // vizinho perigoso: a resposta do dono liga OUTRA entrega ⇒ esta segue publicada
+    const amb2 = ambiente();
+    publicar(amb2);
+    ligarPeloDono(amb2, 'SDONO', 'GM-77');
+    assert.equal(amb2.cli(['parar', 'nao_conseguiu']).j?.erro, 'entrega_publicada');
+  });
+
+  /** Grava um `fato.medido pr` com `ts` explícito, na sessão `sessao` (a medição por outra conversa). */
+  const medirPR = (amb, sessao, numero, estado, ts) => assert.equal(diario.append(amb.entregas, sessao, { ts, autor: 't@t', sessao, agente: 'orquestrador', tipo: 'fato.medido', dados: { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: 'enabler/GM-10-loop' } } }).ok, true);
+
+  test('ligada-sobrevive-a-remedicao (MAJOR-1 r1, caso J): outra sessão medindo de novo o MESMO PR mergeado não derruba a ligação; PR NOVO mergeado sim', () => {
+    const amb = ambiente();
+    publicar(amb);
+    ligarPeloDono(amb, 'S1');
+    assert.equal(amb.cli(['parar', 'nao_conseguiu']).rc, 0, 'controle: ligada');
+    medirPR(amb, 'S2', 7, 'mergeado', '2026-11-13T11:00:00.000Z');
+    const r = amb.cli(['parar', 'nao_conseguiu']);
+    assert.equal(r.rc, 0, `re-medição do mesmo PR derrubou a ligação: ${r.out}${r.err}`);
+    medirPR(amb, 'S3', 7, 'mergeado', '2026-11-13T11:30:00.000Z');
+    assert.equal(amb.cli(['parar', 'nao_conseguiu']).rc, 0);
+    // PR NOVO mergeado depois da ligação ⇒ republicação: exige nova resposta do dono
+    medirPR(amb, 'S2', 8, 'mergeado', '2026-11-13T12:00:00.000Z');
+    assert.equal(amb.cli(['parar', 'nao_conseguiu']).j?.erro, 'entrega_publicada');
+    // e a re-medição do #8 por outra sessão não o "renova"
+    medirPR(amb, 'S3', 8, 'mergeado', '2026-11-13T13:00:00.000Z');
+    assert.equal(amb.cli(['parar', 'nao_conseguiu']).j?.erro, 'entrega_publicada');
+  });
+
+  test('ligada-pr-nao-mergeado-nao-move-o-corte (MINOR-1 r1): fato.medido pr NÃO mergeado (fechado sem merge) posterior à ligação não derruba a ligação', () => {
+    const amb = ambiente();
+    publicar(amb);
+    ligarPeloDono(amb, 'S1');
+    // 'fechado' de número menor: a trilha segue "publicada" (último = #7 mergeado, nenhum aberto), então só o corte distingue
+    medirPR(amb, 'S2', 6, 'fechado', '2026-11-13T11:00:00.000Z');
+    const r = amb.cli(['parar', 'nao_conseguiu']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(amb.cli(['parar', 'nao_conseguiu', '--sessao', 'OUTRA']).j?.erro, 'entrega_publicada', 'controle: publicada de fato');
+  });
+
+  test('ligada-ts-empatado (MINOR-2 r1): resposta do dono com o MESMO ts do merge não é posterior ⇒ recusa', () => {
+    const amb = ambiente();
+    ligarPeloDono(amb, 'S1');
+    medirPR(amb, 'S2', 7, 'mergeado', '2026-11-13T10:00:01.000Z');
+    amb.fechar();
+    assert.equal(amb.cli(['parar', 'nao_conseguiu']).j?.erro, 'entrega_publicada');
+  });
+
+  test('liberarTeto-recusa-em-publicada (MINOR-1): a liberação do dono não grava em entrega publicada', () => {
+    const amb = ambiente();
+    publicar(amb);
+    const antes = amb.eventos().length;
+    const r = liberarTeto(amb.dir, 'T1', 'S-dono');
+    assert.equal(r.ok, false);
+    assert.equal(r.erro, 'entrega_publicada', JSON.stringify(r));
+    assert.equal(amb.eventos().length, antes);
+    assert.deepEqual(tiposDe(semId(amb)), []);
+  });
+
+  test('liberar-sombra-recusa-em-publicada (MINOR-1): liberar --origem sombra recusa antes de qualquer leitura da decisão e nada é gravado', () => {
+    const amb = ambiente();
+    publicar(amb);
+    const antes = amb.eventos().length;
+    const r = amb.cli(['liberar', 'T1', '--origem', 'sombra', '--hash', 'abcdef123456']);
+    assert.equal(r.j?.erro, 'entrega_publicada', r.out + r.err);
+    assert.equal(amb.eventos().length, antes);
+  });
+
+  test('regra-unica: entregaPublicada é a trilha (os 7 casos da trilha; os gravadores não têm critério próprio', async () => {
+    const { entregaPublicada } = await import('../dist/guarda.js');
+    const casos = [
+      ['mergeado+plano', [PR(7, 'mergeado')], true, true],
+      ['sem PR+plano', [], true, false],
+      ['mergeado e aberto', [PR(7, 'mergeado'), PR(8, 'aberto')], true, false],
+      ['aberto e depois mergeado 8, 7 aberto', [PR(7, 'aberto'), PR(8, 'mergeado')], true, false],
+      ['dois mergeados', [PR(7, 'mergeado'), PR(8, 'mergeado')], true, true],
+      ['mergeado sem 2º fato', [PR(7, 'mergeado')], false, false],
+      ['fechado', [PR(7, 'fechado')], true, false],
+    ];
+    for (const [nome, prs, plano, esperado] of casos) {
+      const amb = ambiente({ plano: plano ? PLANO_PADRAO : null });
+      if (prs.length > 0) amb.semear(prs);
+      assert.equal(entregaPublicada(amb.dir, 'GM-10', null), esperado, nome);
+    }
+    // o diário que liga a sessão por `dono.resposta` tira a entrega de "publicada" (REQ-TRI-1), como na trilha
+    const amb = ambiente();
+    amb.semear([PR(7, 'mergeado')]);
+    assert.equal(entregaPublicada(amb.dir, 'GM-10', 'S1'), true);
+    assert.equal(entregaPublicada(amb.dir, 'GM-99', 'S1'), false, 'entrega sem diário não é publicada');
+    assert.equal(entregaPublicada(amb.dir, '../x', 'S1'), false, 'id fora da forma não é publicada');
+    // nenhum gravador carrega critério próprio: a consulta é a função única de dist/guarda.js
+    for (const arq of ['loop.mjs', 'stop-loop.mjs', 'cartao-sessao.mjs']) {
+      const fonte = readFileSync(join(AQUI, '..', 'scripts', arq), 'utf8');
+      assert.match(fonte, /entregaPublicada\(/, arq);
+      assert.doesNotMatch(fonte, /trilhaDe\(|estado === 'mergeado'|estado: 'mergeado'/, `${arq} tem critério próprio de publicada`);
+    }
+    // o medir não decide "publicada" (decisão do dono, emenda 38: o fato.medido fica na entrega); também não carrega critério próprio
+    assert.doesNotMatch(readFileSync(join(AQUI, '..', 'scripts', 'painel-medir.mjs'), 'utf8'), /trilhaDe\(|estado === 'mergeado'|estado: 'mergeado'/, 'painel-medir.mjs tem critério próprio de publicada');
+    // o comportamento (não só a fonte) está em painel-medir.test.mjs: a função e o loop.mjs no mesmo diário (spec, ledger, plano, ligação por dono.resposta)
+    assert.match(readFileSync(join(AQUI, '..', 'src', 'guarda.ts'), 'utf8'), /export function entregaPublicada/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────── GM-14 T54: emenda aplicada no texto da spec (emenda 54)
+
+describe('GM-14 T54: `emenda aplicar <seq>` grava spec.aplicada com os sha do diário e do disco', () => {
+  const sha = (t) => createHash('sha256').update(Buffer.from(t)).digest('hex');
+  const SPEC = 'docs/spec.md';
+  /** Entrega com spec aprovada (A), duas emendas propostas e aprovadas pelo dono (#1 e #2). */
+  async function pronto({ aprovadas = [1, 2] } = {}) {
+    const { aprovarSpec, julgarEmendaDono } = await import('../scripts/loop.mjs');
+    const amb = ambReq();
+    const texto0 = readFileSync(join(amb.dir, SPEC), 'utf8');
+    assert.equal(aprovarSpec(amb.dir, 'S-dono').ok, true);
+    for (let i = 0; i < 2; i++) assert.equal(amb.cli(proporArgs(amb)).rc, 0);
+    for (const n of aprovadas) assert.equal(julgarEmendaDono(amb.dir, n, 'aprovar', 'S-dono').ok, true);
+    const editar = (texto) => writeFileSync(join(amb.dir, SPEC), texto);
+    return { amb, texto0, editar, aplicadas: () => amb.eventos().filter((e) => e.tipo === 'spec.aplicada') };
+  }
+  const painelAguarda = async (amb) => {
+    const { projetarPainel } = await import('../dist/painel.js');
+    const plano = JSON.parse(readFileSync(join(amb.entregas, 'plano.json'), 'utf8'));
+    const entrada = {
+      decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+      pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.now(), fuso: 'UTC', titulo: null,
+      politica: { politica: 'continua', dias: null }, base: 'main', entregaId: 'GM-10', modeloSessao: null, specSha: sha(readFileSync(join(amb.dir, SPEC), 'utf8')), tetoSombra: 26,
+    };
+    return projetarPainel(plano, amb.eventos(), entrada).depende.some((d) => d.motivo === 'spec aguardando aprovação');
+  };
+
+  test('aplicada-limpa-depende: aplicar grava {seq, spec, antes, depois}; o painel deixa de pedir aprovação; edição sem emenda segue pedindo', async () => {
+    const { amb, texto0, editar, aplicadas } = await pronto();
+    editar(`${texto0}\nlinha da emenda 1\n`);
+    assert.equal(await painelAguarda(amb), true, 'antes de aplicar a edição pede aprovação');
+    const r = amb.cli(['emenda', 'aplicar', '1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(aplicadas().map((e) => e.dados), [{ seq: 1, spec: SPEC, sha256_antes: sha(texto0), sha256_depois: sha(`${texto0}\nlinha da emenda 1\n`) }]);
+    assert.equal(r.j.sha256_antes, sha(texto0));
+    assert.equal(await painelAguarda(amb), false, 'a cadeia aceita o sha novo');
+    // edição fora de emenda aplicada continua pedindo a aprovação do dono
+    editar(`${texto0}\nlinha da emenda 1\nedição solta\n`);
+    assert.equal(await painelAguarda(amb), true);
+  });
+
+  test('aplicar-nenhum-sha-por-argumento: flags de sha são uso (rc 2) e nada é gravado; o sha_depois é o do disco', async () => {
+    const { amb, texto0, editar, aplicadas } = await pronto();
+    editar(`${texto0}\nx\n`);
+    const antes = bytesDoDiario(amb);
+    for (const flag of ['--sha256', '--sha256-depois', '--sha256_depois', '--sha256_antes', '--sha']) {
+      const r = amb.cli(['emenda', 'aplicar', '1', flag, 'f'.repeat(64)]);
+      assert.equal(r.rc, 2, `${flag}: ${r.out}`);
+      assert.equal(r.j.erro, 'uso');
+    }
+    assert.deepEqual(bytesDoDiario(amb), antes, 'nada gravado');
+    assert.equal(amb.cli(['emenda', 'aplicar', '1']).rc, 0);
+    assert.equal(aplicadas()[0].dados.sha256_depois, sha(`${texto0}\nx\n`));
+  });
+
+  test('aplicar-sem-aprovada-recusa: sem spec.aprovada, emenda aberta, rejeitada, inexistente ou seq torta recusam sem gravar', async () => {
+    const { aprovarSpec, julgarEmendaDono } = await import('../scripts/loop.mjs');
+    // sem spec aprovada (emenda aprovada, spec nunca aprovada)
+    const sem = ambReq();
+    assert.equal(sem.cli(proporArgs(sem)).rc, 0);
+    assert.equal(julgarEmendaDono(sem.dir, 1, 'aprovar', 'S-dono').ok, true);
+    writeFileSync(join(sem.dir, SPEC), 'outro\n');
+    const antesSem = bytesDoDiario(sem);
+    const rSem = sem.cli(['emenda', 'aplicar', '1']);
+    assert.equal(rSem.rc, 1, rSem.out);
+    assert.equal(rSem.j.erro, 'spec_sem_aprovacao');
+    assert.deepEqual(bytesDoDiario(sem), antesSem);
+    // emenda aberta, rejeitada, inexistente
+    const amb = ambReq();
+    assert.equal(aprovarSpec(amb.dir, 'S-dono').ok, true);
+    assert.equal(amb.cli(proporArgs(amb)).rc, 0); // #1 aberta
+    assert.equal(amb.cli(proporArgs(amb)).rc, 0); // #2 rejeitada
+    assert.equal(julgarEmendaDono(amb.dir, 2, 'rejeitar', 'S-dono').ok, true);
+    writeFileSync(join(amb.dir, SPEC), 'editada\n');
+    const antes = bytesDoDiario(amb);
+    for (const seq of ['1', '2', '9']) {
+      const r = amb.cli(['emenda', 'aplicar', seq]);
+      assert.equal(r.rc, 1, `seq ${seq}: ${r.out}`);
+      assert.equal(r.j.erro, 'emenda_nao_aprovada', `seq ${seq}`);
+    }
+    for (const torta of ['0', '-1', 'x', '01', '1.5']) assert.equal(amb.cli(['emenda', 'aplicar', torta]).rc, 1, torta);
+    assert.deepEqual(bytesDoDiario(amb), antes, 'nada gravado');
+  });
+
+  test('aplicar-duas-vezes-recusa: a mesma seq só aplica uma vez, mesmo com a spec editada de novo', async () => {
+    const { amb, texto0, editar, aplicadas } = await pronto();
+    editar(`${texto0}\numa\n`);
+    assert.equal(amb.cli(['emenda', 'aplicar', '1']).rc, 0);
+    editar(`${texto0}\numa\nduas\n`);
+    const antes = bytesDoDiario(amb);
+    const r = amb.cli(['emenda', 'aplicar', '1']);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'ja_aplicada');
+    assert.deepEqual(bytesDoDiario(amb), antes);
+    assert.equal(aplicadas().length, 1);
+  });
+
+  test('aplicar-arquivo-igual-a-ponta-recusa: spec igual ao último sha aceito não tem o que aplicar; uma edição que cobre duas seqs aplica uma só (a outra recusa)', async () => {
+    const { amb, texto0, editar, aplicadas } = await pronto();
+    const antes0 = bytesDoDiario(amb);
+    const r0 = amb.cli(['emenda', 'aplicar', '1']);
+    assert.equal(r0.j.erro, 'nada_a_aplicar', r0.out);
+    assert.deepEqual(bytesDoDiario(amb), antes0);
+    // forma declarada: 1 aplicar por seq, cadeia sem ambiguidade; a edição das duas emendas se aplica na 1ª seq, a 2ª fica "nada a aplicar" até outra edição
+    editar(`${texto0}\nemenda 1 e emenda 2\n`);
+    assert.equal(amb.cli(['emenda', 'aplicar', '1']).rc, 0);
+    const r2 = amb.cli(['emenda', 'aplicar', '2']);
+    assert.equal(r2.j.erro, 'nada_a_aplicar', r2.out);
+    assert.equal(aplicadas().length, 1);
+  });
+
+  test('aplicar-encadeia-e-aprovada-nova-reinicia: a #2 parte do sha da #1; uma aprovação nova do dono reinicia a cadeia', async () => {
+    const { aprovarSpec } = await import('../scripts/loop.mjs');
+    const { amb, texto0, editar, aplicadas } = await pronto();
+    const t1 = `${texto0}\num\n`;
+    const t2 = `${t1}\ndois\n`;
+    editar(t1);
+    assert.equal(amb.cli(['emenda', 'aplicar', '1']).rc, 0);
+    editar(t2);
+    assert.equal(amb.cli(['emenda', 'aplicar', '2']).rc, 0);
+    assert.deepEqual(aplicadas().map((e) => [e.dados.seq, e.dados.sha256_antes, e.dados.sha256_depois]), [[1, sha(texto0), sha(t1)], [2, sha(t1), sha(t2)]]);
+    // aprovação nova com edição solta: reinicia a cadeia (a ponta é a nova aprovação)
+    const t3 = `${t2}\nsolta\n`;
+    editar(t3);
+    assert.equal(await painelAguarda(amb), true);
+    assert.equal(aprovarSpec(amb.dir, 'S-dono').ok, true);
+    assert.equal(await painelAguarda(amb), false);
+  });
+
+  test('cadeia-quebrada-recusa: aprovação nova entre a leitura e a gravação (ponta mudou) ⇒ cadeia_quebrada, nada gravado; spec editada no meio ⇒ spec_mudou', async () => {
+    const { aplicarEmenda } = await import('../scripts/loop.mjs');
+    const { amb, texto0, editar, aplicadas } = await pronto();
+    editar(`${texto0}\num\n`);
+    const antes = bytesDoDiario(amb);
+    const injeta = () => escreve(amb, 'S-dono', 'spec.aprovada', { spec: SPEC, sha256: 'e'.repeat(64) }, new Date(Date.now() + 5000).toISOString());
+    const r = aplicarEmenda(amb.dir, 1, { antes: injeta });
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.equal(r.erro, 'cadeia_quebrada');
+    assert.equal(aplicadas().length, 0);
+    assert.notDeepEqual(bytesDoDiario(amb), antes, 'só a aprovação injetada entrou');
+    // spec editada entre o cálculo do sha e a gravação
+    const r2 = aplicarEmenda(amb.dir, 1, { antes: () => editar(`${texto0}\noutra coisa\n`) });
+    assert.equal(r2.ok, false);
+    assert.ok(['spec_mudou', 'cadeia_quebrada'].includes(r2.erro), r2.erro);
+    assert.equal(aplicadas().length, 0);
+  });
+
+  test('aplicar-grava-a-spec-aprovada-de-origem: o caminho vem da aprovação, não do plano; spec ilegível/ausente recusa', async () => {
+    const { amb, texto0, editar, aplicadas } = await pronto();
+    // o plano passa a apontar para outra spec: o `spec` da aplicada segue o da aprovação de origem
+    mkdirSync(join(amb.dir, 'docs'), { recursive: true });
+    writeFileSync(join(amb.dir, 'docs', 'outra.md'), 'outra\n');
+    writeFileSync(join(amb.entregas, 'plano.json'), JSON.stringify({ ...PLANO_REQ, spec: 'docs/outra.md' }));
+    editar(`${texto0}\num\n`);
+    assert.equal(amb.cli(['emenda', 'aplicar', '1']).rc, 0);
+    assert.equal(aplicadas()[0].dados.spec, SPEC);
+    rmSync(join(amb.dir, SPEC));
+    const r = amb.cli(['emenda', 'aplicar', '2']);
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'spec_ausente');
+  });
+
+  test('aprovarSpec-segue-shaAceito: (1) A, aplicada A⇒B, spec volta a A; (2) A, depois B, spec volta a A: aprovar grava e o painel limpa', async () => {
+    const { aprovarSpec } = await import('../scripts/loop.mjs');
+    // (1)
+    const um = await pronto();
+    um.editar(`${um.texto0}\nB\n`);
+    assert.equal(um.amb.cli(['emenda', 'aplicar', '1']).rc, 0);
+    um.editar(um.texto0);
+    assert.equal(await painelAguarda(um.amb), true);
+    assert.equal(aprovarSpec(um.amb.dir, 'S-dono').ok, true);
+    assert.equal(await painelAguarda(um.amb), false);
+    // (2)
+    const dois = await pronto();
+    dois.editar(`${dois.texto0}\nB\n`);
+    assert.equal(aprovarSpec(dois.amb.dir, 'S-dono').ok, true);
+    dois.editar(dois.texto0);
+    assert.equal(await painelAguarda(dois.amb), true);
+    assert.equal(aprovarSpec(dois.amb.dir, 'S-dono').ok, true);
+    assert.equal(await painelAguarda(dois.amb), false);
+    assert.equal(aprovarSpec(dois.amb.dir, 'S-dono').erro, 'ja_aprovada', 'o aceito agora é A: aprovar de novo recusa');
+  });
+
+  test('regra-unica-estatica-cli: o loop.mjs importa a regra de emenda.js e não compara sha de spec por conta própria', () => {
+    const t = readFileSync(join(AQUI, '..', 'scripts', 'loop.mjs'), 'utf8');
+    assert.match(t, /import \{[^}]*\bvalidarAplicacao\b[^}]*\} from '\.\.\/dist\/emenda\.js'/);
+    assert.match(t, /validarAplicacao\(/);
+    // aprovarSpec: o `ja_aprovada` vem de shaAceito, não de varredura própria por spec.aprovada com o sha atual
+    const apr = t.slice(t.indexOf('export function aprovarSpec'), t.indexOf('/** `parar` é o registro'));
+    assert.match(apr, /shaAceito\(eventos, atual\.sha256\)/);
+    assert.doesNotMatch(apr, /if \(antesN > 0\)/);
   });
 });
