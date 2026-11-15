@@ -1,0 +1,6 @@
+43721146846	2	hooks — corpora (bash macos-latest)	latência da guarda (p95 wall ≤ 150 ms no runner; local ≤ 60 ms)	2026-11-15T14:31:33.1639370Z piso (node -e "")   p50   48.2 ms · p95   57.0 ms · máx   60.3 ms
+43721146846	2	hooks — corpora (bash macos-latest)	latência da guarda (p95 wall ≤ 150 ms no runner; local ≤ 60 ms)	2026-11-15T14:31:33.1640160Z guarda (guarda.js)  p50   97.5 ms · p95  119.6 ms · máx  124.5 ms
+43721146846	2	hooks — corpora (bash macos-latest)	latência da guarda (p95 wall ≤ 150 ms no runner; local ≤ 60 ms)	2026-11-15T14:31:33.1640630Z limite p95 150 ms: ok
+43721146846	2	hooks — corpora (bash ubuntu-latest)	piso (node -e "")   p50   15.2 ms · p95   17.3 ms · máx   17.9 ms
+43721146846	2	hooks — corpora (bash ubuntu-latest)	guarda (guarda.js)  p50   34.0 ms · p95   34.8 ms · máx   34.8 ms
+43721146846	2	hooks — corpora (bash ubuntu-latest)	limite p95 150 ms: ok

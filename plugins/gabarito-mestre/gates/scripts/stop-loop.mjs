@@ -30,6 +30,7 @@ import { join, dirname, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
+import { idPadraoDe } from '../lib/config.mjs';
 import { raizPorFs, inferirPbi } from '../lib/git.mjs';
 import { temOnboarding } from './cartao-sessao.mjs';
 
@@ -279,12 +280,16 @@ function lerEntrada(texto) {
   return { entrada: o };
 }
 
-function entregaDaBranch(raiz, branch) {
-  let cfg;
+/**
+ * Entrega da branch pela MESMA regra do `loop.mjs` e do cartão (`idDaBranch` com `idPadraoDe`, GM-15 hotfix): `hotfix/GM-15-alpha2` ⇒ GM-15.
+ * `dist/trilha.js` ausente ⇒ cai em `inferirPbi` (o aviso de dist ausente vem dos outros módulos, mais adiante). Nunca lança.
+ */
+async function entregaDaBranch(raiz, branch) {
   try {
-    cfg = JSON.parse(readFileSync(join(raiz, 'harness.config.json'), 'utf8'));
-  } catch { /* sem config: padrões */ }
-  try {
+    const dt = await carregar('trilha');
+    if (dt.ok) return dt.mod.idDaBranch(branch, idPadraoDe(raiz));
+    let cfg;
+    try { cfg = JSON.parse(readFileSync(join(raiz, 'harness.config.json'), 'utf8')); } catch { /* sem config: padrões */ }
     return inferirPbi(branch, cfg)?.pbi ?? null;
   } catch {
     return null;
@@ -314,7 +319,7 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   if (raiz === null) return null;
   const branch = git(raiz, ['symbolic-ref', '--short', 'HEAD']);
   if (branch === null) return null;
-  const entrega = entregaDaBranch(raiz, branch);
+  const entrega = await entregaDaBranch(raiz, branch);
   if (entrega === null) return null;
 
   // GM-14 T48 (emenda 43): entrega publicada (a regra única de `dist/guarda.js`, a mesma do painel e dos gravadores) não é loop: nem contador nem `loop.parar`.

@@ -1,0 +1,1 @@
+[["wait",8],["key","enter"],["wait",4],["send","/loop verifique se existe o arquivo pronto.txt neste diretorio; se nao existir, continue verificando ate existir"],["wait",50],["send","/exit"],["wait",3]]

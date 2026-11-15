@@ -65,7 +65,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { lerConfigOrigin, resolverModelo } from '../lib/config.mjs';
+import { idPadraoDe, lerConfigOrigin, resolverModelo } from '../lib/config.mjs';
 import { PADROES } from '../lib/git.mjs';
 import { aprendizadosVigentes, paraDestino } from '../dist/aprendizado.js';
 import * as diario from '../dist/diario.js';
@@ -410,17 +410,6 @@ function validarForma(cmd, pos, flags) {
 }
 
 // ─────────────────────────────────────────────────────────────── contexto, plano, config, diário
-
-/**
- * `fluxo.idPadrao` de `origin/HEAD`, a chave que a guarda e o painel leem (GM-14 T15, REQ-TRI-1): ausente, não texto, longo ou regex
- * inválida ⇒ o padrão de `lib/git.mjs`. Nunca lança.
- */
-function idPadraoDe(raiz) {
-  const v = lerConfigOrigin(raiz)?.cfg?.fluxo?.idPadrao;
-  if (typeof v !== 'string' || v.length === 0 || v.length > 200) return PADROES.idPadrao;
-  try { new RegExp(v); } catch { return PADROES.idPadrao; }
-  return v;
-}
 
 /**
  * Exportada para o painel (E4, T9): a MESMA regra de raiz principal, entrega por branch ou `--entrega`.

@@ -45,8 +45,8 @@ export function raizPrincipal(cwd = process.cwd()) {
 export const CHAVES_PONTOS = Object.freeze(['roteiroSha256', 'pontos']);
 export const CHAVES_PONTO = Object.freeze(['msg', 'sha256', 'chars', 'esperado']);
 export const CHAVES_ESPERADO = Object.freeze(['fase', 'progresso', 'depende', 'origens']);
-/** A linha de decisão da Sombra no RECENTE do produto: `[RECENTE · ]HH:MM ● <sabio> decidiu: …`. */
-export const LINHA_DECISAO = /^(?:RECENTE · |\s+)\d{2}:\d{2} ● .+ decidiu: /;
+/** A linha de decisão da Sombra no RECENTE do produto: `[RECENTE · ]HH:MM ● <sabio> decidiu: …`; no desenho do E4 (GM-15 T29, D-G1c) o histórico começa na coluna 0. */
+export const LINHA_DECISAO = /^(?:RECENTE · |\s+)?\d{2}:\d{2} ● .+ decidiu: /;
 export const TOTAL_PONTOS = 26; // roteiro-s4.md "Total de pontos (exceto —): 26"
 const HEX64 = /^[0-9a-f]{64}$/;
 const mesmas = (o, chaves) => Object.keys(o).length === chaves.length && chaves.every((c) => Object.hasOwn(o, c));
@@ -1250,9 +1250,20 @@ export function geometriaDaCurta(sc, celula) {
 // ─── replay offline (T52, emenda 45): o painel redesenhado fora da sessão, a partir do estado gravado, com os 4 controles medidos ───
 
 /** O que só existe ao vivo e o replay NÃO mede (declarado, emenda 45): contexto %, durações e segundo plano. Máscara aplicada a replay e a tela real antes de comparar. */
-export const mascararAoVivo = (l) => String(l).replace(/\s+\[[-+]\]$/, '').replace(/contexto (\d+ %|\?)/g, 'contexto N %').replace(/ · \d+[smh]( \d+[smh])?$/, ' · D').replace(/ · hora de pousar/, '').replace(/\s+$/, '');
-/** Campo ao vivo AINDA com valor num quadro de replay (a máscara não foi aplicada ou o replay mediu o que não pode): `contexto 12 %`. */
-export const camposAoVivoNoQuadro = (linhas) => linhas.filter((l) => /contexto \d+ %/.test(l));
+export const mascararAoVivo = (l) => mascararE4(String(l).replace(/\s+\[[-+]\]$/, '').replace(/contexto (\d+ %|\?)/g, 'contexto N %').replace(/ · \d+[smh]( \d+[smh])?$/, ' · D').replace(/ · hora de pousar/, '')).replace(/\s+$/, '');
+/**
+ * GM-15 T29 (D-G1c): as mesmas medidas ao vivo no desenho do E4. Contexto do líder (`│  ctx █…░ 46% · pouso em 50%`, `GANDALF ctx …`) e do agente
+ * (`├─ ● SAM  T3  ctx ███░ 30%  60k · 2m  …`, `ctx 93k`, `ctx ?`) viram `ctx N %`; durações na árvore e na fila do PLANO viram `D`; o alinhamento colapsa.
+ */
+const TEMPO_E4 = /(?<=\s)(\d+h\d\d|\d+m)(?=\s|$)/g;
+function mascararE4(l) {
+  let x = l.replace(/\bctx (?:[█░]+ ?)?(?:~?\d+%(?: \(estimado\))?|\?)/g, 'ctx N %');
+  if (/^[├└]─? ● /.test(x)) x = x.replace(/ctx [\d.]+[kM]?(?=\s|$)/, 'ctx N %').replace(/(ctx N %) +[\d.]+[kM]?(?: · |(?=\s{2}|$))/, '$1  ');
+  if (/^[├└]─? ● |^ {2}[●◐✗] T/.test(x)) x = x.replace(TEMPO_E4, 'D');
+  return /^[├└│]|^ {2}[●◐✗○] |^\S+ ctx N %/.test(x) ? x.replace(/ {2,}/g, '  ') : x;
+}
+/** Campo ao vivo AINDA com valor num quadro de replay (a máscara não foi aplicada ou o replay mediu o que não pode): `contexto 12 %`, `ctx █░ 12%`. */
+export const camposAoVivoNoQuadro = (linhas) => linhas.filter((l) => /contexto \d+ %|\bctx (?:[█░]+ ?)?~?\d+%/.test(l));
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /**

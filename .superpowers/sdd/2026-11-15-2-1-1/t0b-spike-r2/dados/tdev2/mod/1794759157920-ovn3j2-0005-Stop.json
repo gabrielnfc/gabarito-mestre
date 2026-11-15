@@ -1,0 +1,1 @@
+{"t":1794759157920,"carga":"ovn3j2","seq":5,"ev":"Stop","loaded":"0.1.0","disco":"0.1.0","dado":{"background_tasks":[],"session_crons":[{"id":"065e13fc","schedule":"17 13 * * *","recurring":false,"prompt":"/loop verifique se existe o arquivo pronto.txt neste diretorio; se nao existir, continue verificando ate existir"}]}}

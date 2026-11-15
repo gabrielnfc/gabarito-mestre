@@ -3,6 +3,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { execFileSync } from 'node:child_process';
+import { PADROES } from './git.mjs';
 
 /** null = ausente · undefined = JSON inválido/ilegível · {} = arquivo vazio (quem chama decide o que fazer com cada um). */
 export function lerJson(caminho) {
@@ -151,6 +152,17 @@ export function lerConfigOrigin(raiz) {
   } catch (e) {
     return { cfg: null, fonte: 'nenhuma', invalida: true, motivo: `origin/HEAD ilegível (${e instanceof Error ? e.message.split('\n')[0] : 'erro desconhecido'})` };
   }
+}
+
+/**
+ * `fluxo.idPadrao` de `origin/HEAD`, a chave que a guarda, o painel, o loop e o cartão leem (GM-14 T15, REQ-TRI-1; GM-15 hotfix: movida de
+ * `loop.mjs` para ser a fonte única): ausente, não texto, longo ou regex inválida ⇒ o padrão de `lib/git.mjs`. Nunca lança.
+ */
+export function idPadraoDe(raiz) {
+  const v = lerConfigOrigin(raiz)?.cfg?.fluxo?.idPadrao;
+  if (typeof v !== 'string' || v.length === 0 || v.length > 200) return PADROES.idPadrao;
+  try { new RegExp(v); } catch { return PADROES.idPadrao; }
+  return v;
 }
 
 /** Perfil de modelo por papel (REQ-MOD-1). O doctor avisa abaixo do recomendado; nunca bloqueia. */

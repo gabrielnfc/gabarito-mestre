@@ -1,12 +1,24 @@
-GABARITO · GM-99 Spec de fumaça da E4
-PAROU 12:25 · teto de rodadas de review em T2 [aprovar] · recusar: deixe a task
-    parada e emende a spec
-depende de você: decidir a emenda 1 [aprovar] [rejeitar]
-PRONTO ▰▰▰▱▱▱▱▱▱▱ 1 de 3 integradas
-AGORA · GANDALF · contexto 46 %
-  SAM · T3 · implementando (registrado) · 6m
-RECENTE · 12:25 ✗ travou: teto de rodadas de review (automático)
-  12:19 ✗ FRODO reprovou T2 · 1 achado (automático)
-  12:15 ✗ FRODO reprovou T2 · 1 achado (automático)
-  12:10 ✓ integrou T1 (automático)
-  12:09 ✓ LEGOLAS aprovou T1 (automático)
+GABARITO · GM-99 Spec de fumaça da E4                    esquadrão · terra média
+■ PAROU 12:25 · teto de rodadas de review em T2 [aprovar] · recusar: deixe a
+    task parada e emende a spec
+◆ DEPENDE DE VOCÊ  1 item
+  decidir a emenda 1 [aprovar] [rejeitar]
+────────────────────────────────────────────────────────────────────────────────
+PLANO   ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱  33%  1/3 tasks                        loop parado
+  ✓ 1 integrada · 1.0 rodada média
+  ✗ T2  Agentes vivos    no teto             8m
+  ● T3  Depende de você  implementando  SAM  6m
+────────────────────────────────────────────────────────────────────────────────
+EQUIPE                                                            agentes 1 vivo
+GANDALF  orquestra
+│  ctx █████████████░░░░░░░░░░░░░░░░ 46% · pouso em 50%   tok ?
+│  5h █░░░░░░░░░ 12%   7d █░░░░░░░░░ 5%
+│  ▸ parado · T3 continua
+└─ ● SAM · haiku  T3  ctx 93k  6m  implementando (registrado)
+────────────────────────────────────────────────────────────────────────────────
+12:25 ✗ travou: teto de rodadas de review (automático)
+12:19 ✗ FRODO reprovou T2 · 1 achado (automático)
+12:15 ✗ FRODO reprovou T2 · 1 achado (automático)
+12:10 ✓ integrou T1 (automático)
+12:09 ✓ LEGOLAS aprovou T1 (automático)
+CI ● ?   PROD leu 0 · alterou 0   política continua

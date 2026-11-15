@@ -1,0 +1,3 @@
+cmd: claude -p --model claude-haiku-5-5 --setting-sources project --strict-mcp-config --max-turns 6 --plugin-dir /Users/gabs-dev/projetos_pessoais/gabarito-mestre/.harness/worktrees/T0b/.claude-tmp/gm15-t0b/r2/ptroca2/plug <prompt>
+troca-disco 1794759040
+exit=0

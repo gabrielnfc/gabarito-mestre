@@ -184,7 +184,8 @@ test('forma-ci-alvo-invalido: ci.resultado aceita alvo homolog; custo.medicao pa
 
 test('forma-tipo-antigo-sem-regra: tipos da E1/E2 sem regra nova seguem aceitos com quaisquer dados de hoje', () => {
   const antigos = ['guarda.deny', 'guarda.ask', 'producao.acesso', 'operacao.destrutiva', 'sessao.inicio', 'guarda.heartbeat', 'diario.recusa',
-    'task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'loop.parar', 'loop.pausa', 'sessao.pouso', 'sessao.retomada'];
+    'task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'loop.parar', 'loop.pausa', 'sessao.pouso', 'sessao.retomada'];
+  // `task.reaberta` saiu desta lista de propósito (GM-15 T1, F7 a): origem fechada; ver `reaberta-origem-invalida-recusada-no-append`.
   for (const t of antigos) {
     for (const d of [{}, { qualquer: 1 }, { task: 'T1', origem: 'dono' }, null, undefined, 'x', [], 5]) assert.equal(formaInvalida(t, d), null, `${t} ${JSON.stringify(d)}`);
   }
@@ -739,4 +740,106 @@ test('t36-reaberta-da-sombra-exige-hash-e-so-ela-o-tem', () => {
   ruim('task.reaberta', { task: 'T1', origem: 'retomada', hash: H }, /hash/);
   // a gravação recusa igual (o append confere a forma)
   assert.match(String(formaInvalida('task.reaberta', { task: 'T1', origem: 'sombra' })), /hash/);
+});
+
+// ── GM-15 T1: contratos dos 4 eventos novos (R2, condição 6; HIG-1 D) ─────────────────────────────────────────────────────────
+// Mutações prescritas: M1a tirar um dos 4 de TIPOS_EVENTO · M1b task.fora sombra sem `fonte` aceita · M1c task.reaberta origem `xyz` aceita
+// · M1d entrega.reaberta com origem (automático) · M1e guarda.autonomia_usada aceitando `comando`.
+const NOVOS = ['task.fora', 'entrega.encerrada', 'entrega.reaberta', 'guarda.autonomia_usada'];
+const TS = '2026-11-15T10:00:00.000Z';
+const FORA = { task: 'T5', como: 'adiada', motivo: 'depende do dono', origem: 'dono' };
+const ENC = { entrega: 'GM-14', pr: 22, via: 'head', mergeado_em: TS };
+const REAB = { entrega: 'GM-14', em: TS };
+const AUT = { anel: 'integridade', alvo: 'packed-refs', acao: 'escrita', ambiente: 'teste' };
+
+test('formas-quatro-eventos: cada forma válida passa; cada campo lido, trocado, ausente ou extra é recusado', () => {
+  for (const t of NOVOS) assert.ok(TIPOS_EVENTO.includes(t as never), `${t} em TIPOS_EVENTO`);
+  const casos: [string, Record<string, unknown>][] = [['task.fora', FORA], ['entrega.encerrada', ENC], ['entrega.reaberta', REAB], ['guarda.autonomia_usada', AUT]];
+  for (const [tipo, base] of casos) {
+    ok(tipo, base);
+    ruim(tipo, { ...base, extra: 1 }, /`extra`/);
+    for (const k of Object.keys(base)) {
+      const { [k]: _fora, ...sem } = base;
+      ruim(tipo, sem, new RegExp(`\`${k}\``));
+    }
+    ruim(tipo, undefined, /ausente/);
+    ruim(tipo, 'x', /corrompido/);
+    ruim(tipo, null, /corrompido/);
+  }
+  // task.fora: cada campo trocado
+  for (const c of ['feita', '', null, 7]) ruim('task.fora', { ...FORA, como: c }, /`como`/);
+  ok('task.fora', { ...FORA, como: 'cortada' });
+  for (const o of ['retomada', 'xyz', '', null]) ruim('task.fora', { ...FORA, origem: o }, /`origem`/);
+  for (const m of ['', 'a\nb', 'x'.repeat(161), null]) ruim('task.fora', { ...FORA, motivo: m }, /`motivo`/);
+  ok('task.fora', { ...FORA, motivo: 'x'.repeat(160) });
+  ok('task.fora', { ...FORA, fonte: 'decisao:abc' });
+  ruim('task.fora', { ...FORA, fonte: '' }, /`fonte`/);
+  // entrega.encerrada: cada campo trocado
+  for (const e of ['gm-14', 'GM14', '../x', 7]) ruim('entrega.encerrada', { ...ENC, entrega: e }, /`entrega`/);
+  for (const n of [0, -1, 1.5, '22', NaN]) ruim('entrega.encerrada', { ...ENC, pr: n }, /`pr`/);
+  for (const v of ['main', '', null]) ruim('entrega.encerrada', { ...ENC, via: v }, /`via`/);
+  ok('entrega.encerrada', { ...ENC, via: 'titulo' });
+  for (const m of ['ontem', '2026-11-15', '2026-02-30T10:00:00Z', 7]) ruim('entrega.encerrada', { ...ENC, mergeado_em: m }, /`mergeado_em`/);
+  ok('entrega.encerrada', { ...ENC, versao: '2.1.0' });
+  ok('entrega.encerrada', { ...ENC, versao: '2.1.0-alpha.1' });
+  for (const v of ['2.1', 'v2.1.0', '', 7]) ruim('entrega.encerrada', { ...ENC, versao: v }, /`versao`/);
+  // entrega.reaberta: `em` e `entrega` lidos
+  for (const e of ['gm-14', 7]) ruim('entrega.reaberta', { ...REAB, entrega: e }, /`entrega`/);
+  for (const m of ['ontem', 7, '2026-13-01T00:00:00Z']) ruim('entrega.reaberta', { ...REAB, em: m }, /`em`/);
+  // guarda.autonomia_usada: cada campo é texto de 1 linha
+  for (const k of Object.keys(AUT)) for (const v of ['', 'a\nb', 7, null]) ruim('guarda.autonomia_usada', { ...AUT, [k]: v }, new RegExp(`\`${k}\``));
+});
+
+test('task-fora-sombra-sem-fonte-recusa: a origem sombra cita a decisão; a do dono não precisa', () => {
+  ruim('task.fora', { ...FORA, origem: 'sombra' }, /`fonte`/);
+  ok('task.fora', { ...FORA, origem: 'sombra', fonte: 'decisao:abc' });
+  ok('task.fora', FORA);
+  assert.match(String(formaInvalida('task.fora', { ...FORA, origem: 'sombra' })), /sombra/);
+});
+
+test('guarda-autonomia-usada-nunca-o-comando: `comando` (e variações) é recusado, nunca gravado', () => {
+  for (const k of ['comando', 'cmd', 'command', 'linha']) ruim('guarda.autonomia_usada', { ...AUT, [k]: 'git push' }, new RegExp(`\`${k}\``));
+  assert.match(String(formaInvalida('guarda.autonomia_usada', { ...AUT, comando: 'x' })), /nunca o comando/);
+});
+
+test('fato-pr-base-via-opcionais: sem base/via segue válido (legado); com eles, valores lidos', () => {
+  ok('fato.medido', fato('pr'));
+  ok('fato.medido', fato('pr', { base: 'main', via: 'head' }));
+  ok('fato.medido', fato('pr', { base: 'next', via: 'titulo' }));
+  ok('fato.medido', fato('pr', { base: 'main' }));
+  ok('fato.medido', fato('pr', { via: 'head' }));
+  for (const b of ['', 'a\nb', 7, null]) ruim('fato.medido', fato('pr', { base: b }), /`base`/);
+  for (const v of ['main', '', 7, null]) ruim('fato.medido', fato('pr', { via: v }), /`via`/);
+  ruim('fato.medido', fato('pr', { extra: 1 }), /`extra`/);
+  // base/via só valem em `pr`: outra chave com eles continua recusada
+  ruim('fato.medido', fato('branch', { base: 'main' }), /`base`/);
+});
+
+test('reaberta-origem-invalida-recusada-no-append: HIG-1 D, recusa antes de gravar, não só na projeção', async () => {
+  for (const o of ['xyz', '', 'Dono', 'orquestrador', null, 7]) ruim('task.reaberta', { task: 'T1', origem: o }, /`origem`/);
+  ruim('task.reaberta', { task: 'T1' }, /`origem`/);
+  ruim('task.reaberta', undefined, /ausente/);
+  ruim('task.reaberta', 'x', /corrompido/);
+  // pelo `append` real: nada vai para o arquivo
+  const { mkdtempSync, existsSync, readdirSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { append } = await import('../src/diario.ts');
+  const raiz = mkdtempSync(join(tmpdir(), 'gm15-t1-'));
+  const r = append(raiz, 'sessao-t1', { tipo: 'task.reaberta', dados: { task: 'T1', origem: 'xyz' }, autor: 'orquestrador', agente: 'principal' } as never);
+  assert.equal(r.ok, false);
+  assert.match(String((r as { erro: string }).erro), /forma_invalida.*origem/);
+  assert.equal(existsSync(join(raiz, '.harness')) ? readdirSync(join(raiz, '.harness')).length : 0, 0, 'nada gravado');
+});
+
+test('reaberta-volta-de-fora-exige-fonte: {de: fora} leva fonte, origem dono ou sombra, nunca hash', () => {
+  const v = { task: 'T5', origem: 'dono', fonte: 'dono:comando', de: 'fora' };
+  ok('task.reaberta', v);
+  ok('task.reaberta', { ...v, origem: 'sombra' });
+  ruim('task.reaberta', { task: 'T5', origem: 'dono', de: 'fora' }, /`fonte`/);
+  ruim('task.reaberta', { ...v, fonte: '' }, /`fonte`/);
+  ruim('task.reaberta', { ...v, origem: 'retomada' }, /`origem`/);
+  ruim('task.reaberta', { ...v, de: 'teto' }, /`de`/);
+  ruim('task.reaberta', { ...v, hash: H }, /`hash`/);
+  ruim('task.reaberta', { ...v, task: '' }, /`task`/);
 });

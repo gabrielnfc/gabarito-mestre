@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { pendenciasAprendizado } from '../../gates/dist/pendencias.js'
 import { CABECALHO, codigoPonte, PROMPT_RECUPERACAO, PROMPT_RETOMADA } from '../../gates/dist/pouso.js'
 import { validarStdinAgentes } from '../../gates/dist/painel-equipe.js'
-import { chavePouso, colunasDosBotoes, faixaDe, faixaUmaLinha, avisoPaneEspera, botoesDoTopo, gravarContexto, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
+import { chavePouso, colunasDosBotoes, faixaDe, faixaUmaLinha, avisoPaneEspera, botoesDoTopo, gravarContexto, indiceDoTopo, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
 import { lerLeitura, pousoPendente, tentativasDoPouso } from '../../gates/dist/pouso-pendente.js'
 import { proximaAcao } from '../../gates/dist/loop.js'
 import { pousoDaFronteira } from '../../gates/dist/pouso.js'
@@ -19,6 +19,7 @@ type Opc = {
   percent?: number | null
   x?: string
   interativo?: boolean
+  surfaces?: string[]
   plano?: boolean
   agentes?: { id: string; status: string }[] | 'falha' | 'lixo'
   eventos?: any[]
@@ -160,7 +161,7 @@ function mundo($: any, on: any, o: Opc = {}) {
     dir: DIR, plano: o.plano !== false, percent: o.percent === undefined ? 60 : o.percent, clears: 0, submits: [] as string[], liberar: null as null | (() => void),
     // painel (T10)
     painel: { ...(o.painel ?? {}) } as PainelOpc, painelStdins: [] as any[], painelArgv: [] as string[][], painelInit: [] as any[], painelFlight: 0, painelLibera: [] as (() => void)[],
-    opens: [] as any[], panes: (o.panes ?? []) as any, openResult: (o.openResult ?? { isPlaced: true }) as any, notifies: [] as string[], fills: [] as any[], statuses: [] as (string | undefined)[],
+    surfaces: (o.surfaces ?? []) as string[], opens: [] as any[], panes: (o.panes ?? []) as any, openResult: (o.openResult ?? { isPlaced: true }) as any, notifies: [] as string[], fills: [] as any[], statuses: [] as (string | undefined)[],
     subStarts: [] as any[], logs: [] as string[], closes: [] as any[], registros: [] as any[], sessaoId: o.sessaoId ?? 'sess-1', ordem: [] as string[], notifyModo: (o.notify ?? 'ok') as string, rateLimits: (o.rateLimits === undefined ? [] : o.rateLimits) as any, fillIsFilled: o.fillIsFilled !== false,
     agoraMs: null as number | null,
     msgs: [] as { sha256: string; chars: number }[], mensagemLibera: [] as (() => void)[],
@@ -185,6 +186,7 @@ function mundo($: any, on: any, o: Opc = {}) {
   }
 
   on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
+  on('session.attach', (_: any, e: any) => ({ clientId: e.clientId }))
   on('session.id', () => (o.sessaoIdFalha ? { deny: 'sem id' } : { value: est.sessaoId }))
   on('session.root', () => ({ value: RAIZ }))
   on('session.repo', () => ({ value: { root: PRINCIPAL, remote: null, internal: false } }))
@@ -203,6 +205,7 @@ function mundo($: any, on: any, o: Opc = {}) {
     if (est.openResult?.isPlaced === false && Array.isArray(est.panes) && !est.panes.some((x: any) => x.id === e.id)) est.panes = [...est.panes, { id: e.id, isPlaced: false, isShown: false }]
     return { value: est.openResult }
   })
+  on('session.surfaces', () => ({ value: est.surfaces }))
   on('ui.panes', () => (est.panesLidas = (est.panesLidas ?? 0) + 1, est.panes === 'falha' ? { deny: 'sem panes' } : { value: est.panes }))
   on('ui.notify', (_: any, e: any) => {
     est.ordem.push('notify'); est.notifies.push(e.text)
@@ -2309,6 +2312,77 @@ const semTela = async ($: any, on: any, interativo: boolean, surface: string | n
 }
 test('sem-tela-sem-painel: isInteractive true com surface null ⇒ nada do painel', async ($, on) => { await semTela($, on, true, null) })
 test('sem-interativo-sem-painel: isInteractive false com tela ⇒ nada do painel', async ($, on) => { await semTela($, on, false, 'terminal') })
+
+// ---- app desktop (SDK): session.start chega com isInteractive false e surface null; a tela aparece depois, em session.attach ----
+const startSdk = ($: any) => $.session.start({ cwd: RAIZ, surface: null, isInteractive: false })
+test('desktop-attach-le: start SDK sem tela, depois session.attach desktop ⇒ painel.mjs estado roda e abre a Pane', async ($, on) => {
+  const m = comPainel($, on)
+  await startSdk($)
+  await drena(m)
+  expect(m.est.painelStdins).toHaveLength(0)
+  await $.session.attach({ surface: 'desktop', clientId: 'desktop:default' })
+  await drena(m)
+  expect(m.est.painelArgv.length).toBeGreaterThan(0)
+  expect(m.est.painelArgv[0].slice(2)).toEqual(['estado', '--agentes'])
+  expect(m.est.opens).toHaveLength(1)
+  const antes = m.est.painelStdins.length
+  await m.clock.advance(PERIODO)
+  await drena(m)
+  expect(m.est.painelStdins.length).toBeGreaterThan(antes)
+})
+test('desktop-comando-painel-le: /gabarito painel em sessão SDK sem tela ⇒ lê e abre', async ($, on) => {
+  const m = comPainel($, on)
+  await startSdk($)
+  await drena(m)
+  expect(m.est.painelStdins).toHaveLength(0)
+  await m.cmd('painel')
+  await drena(m)
+  expect(m.est.painelStdins.length).toBeGreaterThan(0)
+  expect(m.est.opens).toHaveLength(1)
+})
+test('sdk-sem-tela-sem-attach-nao-le: -p sem superfície e sem attach ⇒ 0 ponte, 0 ui.open', async ($, on) => {
+  const m = comPainel($, on)
+  await startSdk($)
+  await m.turno()
+  await m.clock.advance(PERIODO * 3)
+  await drena(m)
+  expect(m.est.painelStdins).toHaveLength(0)
+  expect(m.est.opens).toHaveLength(0)
+})
+test('desktop-render-com-superficie-le: start SDK sem attach, Pane renderiza com surfaces() [desktop] ⇒ painel.mjs estado roda', async ($, on) => {
+  const m = comPainel($, on)
+  await startSdk($)
+  await drena(m)
+  expect(m.est.painelStdins).toHaveLength(0)
+  m.est.surfaces = ['desktop'] // a tela aparece depois do start, sem attach
+  const ui = await montarPane($, 80)
+  await drena(m)
+  expect(m.est.painelArgv.length).toBeGreaterThan(0)
+  expect(m.est.painelArgv[0].slice(2)).toEqual(['estado', '--agentes'])
+  await ui.unmount()
+})
+test('render-sem-superficie-nao-le: start SDK sem attach, Pane renderiza com surfaces() vazio ⇒ 0 ponte', async ($, on) => {
+  const m = comPainel($, on, {}, { surfaces: [] })
+  await startSdk($)
+  const ui = await montarPane($, 80)
+  await m.clock.advance(PERIODO * 2)
+  await drena(m)
+  expect(m.est.painelStdins).toHaveLength(0)
+  await ui.unmount()
+})
+test('start-depois-de-attach-nao-rebaixa: start SDK, attach, start de novo (reload do módulo) ⇒ continua lendo', async ($, on) => {
+  const m = comPainel($, on, {}, { surfaces: ['desktop'] })
+  await startSdk($)
+  await $.session.attach({ surface: 'desktop', clientId: 'desktop:default' })
+  await drena(m)
+  await startSdk($)
+  await drena(m)
+  const antes = m.est.painelStdins.length
+  expect(antes).toBeGreaterThan(0)
+  await m.clock.advance(PERIODO)
+  await drena(m)
+  expect(m.est.painelStdins.length).toBeGreaterThan(antes)
+})
 test('loop-aparece-no-turno-abre: sem loop no início; o plano aparece e o turno abre a Pane e recria o relógio', async ($, on) => {
   const m = comPainel($, on, { modo: 'sem_loop' })
   await arrancar(m)
@@ -2635,7 +2709,10 @@ test('faixa-depende-acima: no local acima o "depende de você" sai no topo, em w
   const m = comPainel($, on, { estado: dep }, { local: 'acima' })
   await arrancar(m)
   const ui = await montarFaixaH($, 50, 19)
-  expect((await todosTextos(ui)).join('|')).toContain('depende de você: emenda 7 aguardando')
+  // GM-15 T29 (D-G1c): o topo tem a cara do E4: `◆ DEPENDE DE VOCÊ  N itens` (warning) e o item recuado, com o botão
+  const tx = (await todosTextos(ui)).join('|')
+  expect(tx).toContain('◆ DEPENDE DE VOCÊ  2 itens')
+  expect(tx).toContain('  emenda 7 aguardando')
   expect(JSON.stringify(await ui.drawn())).toContain('"color":"warning"')
   await ui.press({ key: 'painel-acao' })
   expect(m.est.fills.map((f) => f.text)).toEqual(['/gabarito-mestre:emenda aprovar 7'])
@@ -3696,7 +3773,7 @@ test('nunca-os-dois: acima ⇒ 0 ui.open e a faixa desenha o painel inteiro; lat
   const ui = await montarFaixaH($, 50, 19)
   const t = (await todosTextos(ui)).join('|')
   expect(t).toContain('GABARITO')
-  expect(t).toContain('PRONTO')
+  expect(t).toContain('PLANO')
   await ui.unmount()
 })
 test('nunca-os-dois-pane-aberta-de-antes: acima com a Pane listada de antes ⇒ o reload a fecha 1×, a Pane não desenha o painel e a faixa desenha', async ($, on) => {
@@ -3709,12 +3786,12 @@ test('nunca-os-dois-pane-aberta-de-antes: acima com a Pane listada de antes ⇒ 
   const pane = await montarPane($)
   const tp = (await todosTextos(pane)).join('|')
   expect(tp).not.toContain('GABARITO')
-  expect(tp).not.toContain('PRONTO')
+  expect(tp).not.toContain('PLANO')
   await pane.unmount()
   const ui = await montarFaixaH($, 50, 19)
   const t = (await todosTextos(ui)).join('|')
   expect(t).toContain('GABARITO')
-  expect(t).toContain('PRONTO')
+  expect(t).toContain('PLANO')
   await ui.unmount()
 })
 test('nunca-os-dois-pane-aberta-de-antes-com-falha: acima com a Pane listada e a leitura do estado falhando ⇒ a Pane fecha mesmo assim', async ($, on) => {
@@ -3743,7 +3820,7 @@ test('nunca-os-dois-faixa-de-antes: lateral sem Pane (a faixa era o painel antes
   let ui = await montarFaixaH($, 50, 19)
   const t = (await todosTextos(ui)).join('|')
   expect(t).not.toContain('GABARITO')
-  expect(t).not.toContain('PRONTO')
+  expect(t).not.toContain('PLANO')
   await ui.unmount()
   m.est.panes = PANE_VISIVEL
   ui = await montarFaixaH($, 50, 19)
@@ -3778,7 +3855,7 @@ test('lateral-pane-fechada-so-parou-e-pergunta: Pane fechada ⇒ 1 linha só com
   let t = (await todosTextos(ui)).join('|')
   expect(t).not.toContain('GABARITO')
   expect(t).toContain('Qual caminho seguir agora')
-  expect(t).not.toContain('PRONTO')
+  expect(t).not.toContain('PLANO')
   expect(t).not.toContain('aprovar a spec')
   expect((await ui.findAll({ type: 'Button' })).length).toBe(2)
   await ui.unmount()
@@ -3951,7 +4028,7 @@ test('sem-troca-de-local: Pane sem colocar, em qualquer largura ⇒ o local segu
   for (const larg of [40, 80, 120, 143, 200]) {
     const t = await aviso($, larg)
     expect(t).not.toContain('GABARITO')
-    expect(t).not.toContain('PRONTO')
+    expect(t).not.toContain('PLANO')
   }
   await m.turno(); await m.clock.advance(PERIODO * 2); await drena(m)
   expect(m.est.locaisGravados).toEqual([])
@@ -4112,6 +4189,39 @@ test('botao-so-no-topo: com pergunta no topo, o item seguinte do "depende de voc
   expect(comBotao).toEqual([iTopo])
   expect(linhas.some((l: string) => l.includes('aprovar a spec'))).toBe(true)
   await ui.unmount()
+})
+test('botao-no-item-do-depende-e4 (GM-15 T29, D-G1c): o botão vai no 1º item depois de `◆ DEPENDE DE VOCÊ`, nunca no rótulo nem no `◆ ATENÇÃO`', async ($, on) => {
+  const dep = { nivel: 'dono', motivo: 'aprovar a spec da GM-14', acoes: [acaoP('aprovar', '/gabarito-mestre:aprovar')] }
+  const m = comPainel($, on, { estado: estadoNovo({ depende: [dep], atencao: ['CI vermelho na última execução'] }) }, { local: 'acima' })
+  await arrancar(m)
+  const ui = await montarFaixaH($, 50, 19)
+  const linhas = ((await ui.drawn()).children ?? []).map((l: any) => JSON.stringify(l))
+  const iRotulo = linhas.findIndex((l: string) => l.includes('◆ DEPENDE DE VOCÊ'))
+  const iItem = linhas.findIndex((l: string) => l.includes('aprovar a spec da GM-14'))
+  const iAtencao = linhas.findIndex((l: string) => l.includes('ATENÇÃO'))
+  expect(iRotulo).toBeGreaterThanOrEqual(0)
+  expect(iItem).toBe(iRotulo + 1)
+  expect(iAtencao).toBeGreaterThan(iItem)
+  const comBotao = linhas.map((l: string, i: number) => [i, l.includes('"Button"') || l.includes('painel-acao')] as const).filter(([, b]) => b).map(([i]) => i)
+  expect(comBotao).toEqual([iItem])
+  await ui.press({ key: 'painel-acao' })
+  expect(m.est.fills.map((f: any) => f.text)).toEqual(['/gabarito-mestre:aprovar'])
+  await ui.unmount()
+})
+test('indice-do-topo-e4 (GM-15 T29): PAROU; item depois do rótulo; `◆ item` sem o rótulo; nunca rótulo nem ATENÇÃO', () => {
+  const L = (...xs: string[]) => xs.map((t) => [{ texto: t }])
+  expect(indiceDoTopo(L('GABARITO · GM-14', '■ PAROU 12:00 · x', '◆ DEPENDE DE VOCÊ  1 item', '  y'))).toBe(1)
+  expect(indiceDoTopo(L('GABARITO · GM-14', '◆ DEPENDE DE VOCÊ  2 itens', '  y [ok]', '  z'))).toBe(2)
+  expect(indiceDoTopo(L('GABARITO · GM-14', '◆ y [ok] (+1)', '────'))).toBe(1)
+  expect(indiceDoTopo(L('GABARITO · GM-14', 'depende de você: nada', '◆ ATENÇÃO  CI vermelho'))).toBe(1)
+  expect(indiceDoTopo(L('GABARITO · GM-14', 'PLANO   ▰▱  50%', '◆ ATENÇÃO  CI vermelho'))).toBe(-1)
+  expect(indiceDoTopo(L('GABARITO · GM-14', '◆ DEPENDE DE VOCÊ  1 item'))).toBe(-1)
+  expect(indiceDoTopo(L('GABARITO · GM-14', '◆ DEPENDE DE VOCÊ  1 item', 'PLANO'))).toBe(-1)
+  // review T29 r1: a ATENÇÃO estreita (< 60 col) também começa por `◆ `; o `◆ item` só é topo logo depois do cabeçalho
+  expect(indiceDoTopo(L('GABARITO · GM-14', '────', '◆ y [ok]'))).toBe(2)
+  expect(indiceDoTopo(L('◆ y [ok]', 'PLANO'))).toBe(0)
+  expect(indiceDoTopo(L('GABARITO · GM-14', 'PLANO ▰▱ 50%', '◆ T2 sem agente trabalhando'))).toBe(-1)
+  expect(indiceDoTopo(L('GM-14 ▰▱ 50% ETA 17:42', '● T8 GIMLI    implementando', '────', '◆ T2 sem agente trabalhando'))).toBe(-1)
 })
 test('has-survey-next: acima, com survey a faixa devolve next(e), mesmo com PAROU', async ($, on) => {
   sobreOMotor(on)

@@ -350,10 +350,25 @@ export function estadoParaDesenho(estado) {
 }
 
 const textoDaLinha = (l) => (Array.isArray(l) ? l.map((s) => String(s?.texto ?? '')).join('') : '');
+/**
+ * GM-15 T29 (D-G1c): o topo tem a cara do E4. Linha dos botões: o PAROU; senão o 1º item depois do rótulo `◆ DEPENDE DE VOCÊ  N itens`
+ * (o rótulo nunca leva botão); com pouca altura o rótulo sai e o item começa por `◆ `. `◆ ATENÇÃO` nunca é topo. `depende de você: …` (linha de situação) segue valendo.
+ */
 const TOPO_RE = /^(■ )?PAROU |^depende de você: /;
-/** Índice da linha do topo (PAROU ou 1ª do "depende de você") nas linhas desenhadas; nenhuma ⇒ -1. */
+/** `◆ item` (rótulo fora): só é topo como 1ª ou 2ª linha de conteúdo (logo depois do cabeçalho); a ATENÇÃO estreita (`◆ T2 …`, < 60 col) vem depois. */
+const ITEM_SEM_ROTULO_RE = /^◆ (?!ATENÇÃO|DEPENDE DE VOCÊ)/;
+const ROTULO_DEPENDE_RE = /^◆ DEPENDE DE VOCÊ/;
+/** Índice da linha do topo nas linhas desenhadas; nenhuma ⇒ -1. */
 export function indiceDoTopo(linhas) {
-  return (Array.isArray(linhas) ? linhas : []).findIndex((l) => TOPO_RE.test(textoDaLinha(l)));
+  const ts = (Array.isArray(linhas) ? linhas : []).map(textoDaLinha);
+  let conteudo = 0;
+  for (let i = 0; i < ts.length; i++) {
+    if (TOPO_RE.test(ts[i])) return i;
+    if (conteudo <= 1 && ITEM_SEM_ROTULO_RE.test(ts[i])) return i;
+    if (!/^─+$/.test(ts[i])) conteudo++;
+    if (ROTULO_DEPENDE_RE.test(ts[i])) return i + 1 < ts.length && /^ {2}\S/.test(ts[i + 1]) ? i + 1 : -1;
+  }
+  return -1;
 }
 
 /**
@@ -1172,6 +1187,7 @@ async function abrirPeloDono($, rotulo = 'painel aberto') {
   S.aberta = true;
   guardarRazao(r);
   await lerPanes($);
+  S.interativo = true; // quem digitou `/gabarito painel` está à frente, inclusive no app desktop (o SDK chega com `isInteractive: false`)
   void atualizar($, 'painel');
   const base = r?.isPlaced === true ? rotulo : `painel não coube: ${typeof r?.reason === 'string' && r.reason !== '' ? r.reason : 'sem motivo'}`;
   return base + (gravou ? '' : SO_NA_SESSAO);
@@ -1301,15 +1317,26 @@ function arvoreDeLinhas($, e, linhas, botoes = [], largura = 0) {
 
 /**
  * `session.start` do painel: chamado de dentro do hook que `gabarito.mjs` já tem (o motor recusa dois `on('session.start')` sem matcher). Não bloqueia:
- * `atualizar('inicio')` roda num timer. `-p` (`isInteractive: false` ou `surface: null`) ⇒ nada do painel.
+ * `atualizar('inicio')` roda num timer. `-p` (`isInteractive: false` ou `surface: null`) sem nenhuma superfície em `$.session.surfaces()` ⇒ nada do painel.
  */
-export function iniciarPainel($, e) {
+export async function iniciarPainel($, e) {
   S.interativo = e?.isInteractive === true && e?.surface !== null && e?.surface !== undefined;
+  if (!S.interativo && await temSuperficie($)) S.interativo = true; // start repetido (reload do módulo) depois de um attach: a tela segue lá, não rebaixa
   if (!S.interativo) return;
   if (typeof e?.transcript_path === 'string' && e.transcript_path.startsWith('/')) S.transcriptSessao = e.transcript_path;
   S.preparando = null; // cada `session.start` relê as prefs e confere o sorteio (mesma sessão ⇒ mantém)
   S.localAplicado = false; // e reaplica o local resolvido à Pane listada
   try { $.clock.after(0, () => { void atualizar($, 'inicio'); }); } catch { /* sem relógio */ }
+}
+
+/** Alguma superfície desenha a sessão? (`$.session.surfaces()`: vazio em `-p`; no app desktop o SDK chega sem tela no `session.start` e ela aparece em `session.attach`.) Nunca lança. */
+async function temSuperficie($) {
+  try {
+    const l = await $.session.surfaces();
+    return Array.isArray(l) && l.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /** `turn.complete` do painel (qualquer `agentId`): o turno não espera a ponte (até 5 s), `atualizar` roda num timer. */
@@ -1344,12 +1371,21 @@ export function registrarPainel(on) {
     return next(e);
   });
 
+  on('session.attach', async ($, e, next) => {
+    try {
+      S.interativo = true; // há uma superfície anexada (app desktop, celular): tem gente olhando
+      $.clock.after(0, () => { void atualizar($, 'attach'); });
+    } catch { /* o painel não derruba o hook */ }
+    return next(e);
+  });
+
   on('ui.close', async ($, e, next) => {
     if (e?.id === ID_PANE && e?.origin?.kind === 'person') S.fechadaPeloDono = true;
     return next(e);
   });
 
   on('ui.render', { component: 'Pane', requestId: ID_PANE }, async ($, e) => {
+    if (!S.interativo && await temSuperficie($)) S.interativo = true; // alguém desenha a Pane: a sessão tem tela
     if (S.interativo && S.relogio === null && !S.semLoop) { // módulo recarregado com a Pane de pé: recomeça o ciclo (uma vez: o relógio passa a existir)
       try { $.clock.after(0, () => { void atualizar($, 'render'); }); } catch { /* sem relógio */ }
     }
