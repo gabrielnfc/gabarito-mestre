@@ -377,7 +377,8 @@ export function previsaoExata(
   // Sem ritmo medido nas anteriores o ponto seria só caminho ÷ ocupação (erro ~79 % no replay, r2 MAJOR 1): nenhuma previsão, o painel mostra "?" (D-P13)
   const rAnt = typeof ritmoAnteriores === 'number' && Number.isFinite(ritmoAnteriores) && ritmoAnteriores > 0 ? ritmoAnteriores : null;
   const fallback = daqui.impl.length < 3 && anteriores !== null && Array.isArray(anteriores.impl) && anteriores.impl.length >= 3 && rAnt !== null;
-  const et = fallback ? (anteriores          ) : daqui;
+  // as 1 ou 2 tasks já medidas aqui somam às anteriores (r2 MINOR 4), não se descartam
+  const et         = fallback ? { impl: [...(anteriores          ).impl, ...daqui.impl], rev: [...(anteriores          ).rev, ...daqui.rev], integ: [...(anteriores          ).integ, ...daqui.integ] } : daqui;
   if (et.impl.length < 3) return null;
   const med = (xs          )         => mediana(xs);
   const q = (xs          , x        )         => quantil([...xs].sort((a, b) => a - b), x);

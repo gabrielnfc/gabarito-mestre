@@ -374,9 +374,11 @@ test('eta-fallback-anteriores: com menos de 3 integradas nesta entrega, as etapa
   const rAnt = ritmoDasAnteriores(diarios, 'GM-15') as number;
   const p = previsaoExata(plano, atual, est as never, feitas(['A']), agora, 'UTC', null, 1, ant, rAnt) as NonNullable<ReturnType<typeof previsaoExata>>;
   assert.ok(p !== null, 'com as anteriores a previsão sai');
-  const porTask = mediana(gm14.impl) + mediana(gm14.rev) + mediana(gm14.integ);
-  assert.equal(p.conta.minPorTask, Math.round(porTask / 60), 'min/task = a mediana das etapas da GM-14');
-  assert.equal(p.n, gm14.impl.length, 'a base diz quantas tasks mediram');
+  // r2 MINOR 4: a task já medida nesta entrega (A: 1 + 4 + 1 min) soma às anteriores em vez de ser descartada
+  const junto = { impl: [...gm14.impl, 60], rev: [...gm14.rev, 240], integ: [...gm14.integ, 60] };
+  const porTask = mediana(junto.impl) + mediana(junto.rev) + mediana(junto.integ);
+  assert.equal(p.conta.minPorTask, Math.round(porTask / 60), 'min/task = a mediana das etapas da GM-14 com a A desta entrega');
+  assert.equal(p.n, gm14.impl.length + 1, 'a base diz quantas tasks mediram: as da GM-14 e a A');
   assert.match(p.motivo as string, /entregas anteriores/, 'o motivo diz de onde vieram as etapas');
   // 3 integradas nesta entrega: as dela mandam, as anteriores não entram
   const tres = prever(P([['A', []], ['B', []], ['C', []], ['X', []]]), pend(['X']));
