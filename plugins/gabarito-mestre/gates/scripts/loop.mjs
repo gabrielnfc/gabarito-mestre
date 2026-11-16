@@ -1450,13 +1450,18 @@ function proxima(c, plano, flags) {
   return { acao: acao.tipo === 'despachar' ? { ...acao, itens: acao.itens.map((i) => enriquecer(c, plano, eventos, i, aviso, extra)) } : acao, lote, sinais, ...(aviso.length ? { aviso } : {}) };
 }
 
+/** A versão do plugin instalado (o `package.json` dos gates, a mesma do plugin.json); ilegível ⇒ undefined (o item sai sem versão). */
+function versaoDoPlugin() {
+  try { const v = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version; return typeof v === 'string' ? v : undefined; } catch { return undefined; }
+}
+
 /**
  * GM-15 T13 (REQ-AUT-1): a config do lote do dono, UMA leitura para `proxima` e o painel (`painel.mjs`): `sombra.libera_teto`/`julga_emendas` só de
  * `origin/HEAD` (o config local não conta, a regra de `exigirJulgaEmendas`/`liberarComoSombra`); `autonomia` e `base` de `lerConfigEntrega(origin.cfg)`.
  */
 export function configDoLote(origin, ce = lerConfigEntrega(origin?.cfg)) {
   const s = origin?.fonte === 'origin' && origin.cfg?.sombra !== null && typeof origin.cfg?.sombra === 'object' ? origin.cfg.sombra : {};
-  return { liberaTeto: s.libera_teto === true, julgaEmendas: s.julga_emendas === true, autonomiaEntrega: ce.autonomia === true, base: ce.base };
+  return { liberaTeto: s.libera_teto === true, julgaEmendas: s.julga_emendas === true, autonomiaEntrega: ce.autonomia === true, base: ce.base, versaoPlugin: versaoDoPlugin() };
 }
 
 /** Aprendizados vigentes da árvore (todas as entregas). Entrega ilegível vira aviso; falha na leitura nunca derruba o despacho (lista vazia e aviso). */

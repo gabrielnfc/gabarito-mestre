@@ -26,6 +26,8 @@ import { medir } from '../scripts/painel-medir.mjs';
 import { prepararLeitura as prepararLeituraReal } from '../scripts/entrega.mjs';
 import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
 import { estadoParaDesenho, linhasDaPane } from '../../mod/painel.mjs';
+import { readFileSync as lerArqVersao } from 'node:fs';
+const VERSAO_PLUGIN = JSON.parse(lerArqVersao(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(AQUI, '..', 'scripts', 'painel.mjs');
@@ -1553,7 +1555,7 @@ describe('GM-15 T13: lote do dono no painel', () => {
     const m = montarLote({ entrega: { base: 'next', autonomia: false }, sombra: { julga_emendas: false, libera_teto: false } });
     const lote = proximaDe(m);
     assert.deepEqual(lote.map((i) => i.motivo), ['decidir a T1: chegou ao limite de revisões', 'decidir a emenda 1',
-      'atualizar o plugin: o diário tem evento de uma versão mais nova', 'no fim da entrega: levar next para main']);
+      `atualizar o plugin (instalado: ${VERSAO_PLUGIN}): o diário tem evento de uma versão mais nova`, 'no fim da entrega: levar next para main']);
     const r = cli(m, ['estado']);
     assert.equal(r.rc, 0, r.stdout + r.stderr);
     const dep = r.json.estado.depende;
@@ -1565,9 +1567,9 @@ describe('GM-15 T13: lote do dono no painel', () => {
 
   test('lote-no-painel-segue-origin: com a Sombra e a autonomia ligadas em origin/HEAD, painel e proxima tiram teto, emenda e next ⇒ main juntos', () => {
     const m = montarLote({ entrega: { base: 'next', autonomia: true }, sombra: { julga_emendas: true, libera_teto: true } });
-    assert.deepEqual(proximaDe(m).map((i) => i.motivo), ['atualizar o plugin: o diário tem evento de uma versão mais nova']);
+    assert.deepEqual(proximaDe(m).map((i) => i.motivo), [`atualizar o plugin (instalado: ${VERSAO_PLUGIN}): o diário tem evento de uma versão mais nova`]);
     const motivos = cli(m, ['estado']).json.estado.depende.map((d) => d.motivo);
-    assert.ok(motivos.includes('atualizar o plugin: o diário tem evento de uma versão mais nova'), JSON.stringify(motivos));
+    assert.ok(motivos.includes(`atualizar o plugin (instalado: ${VERSAO_PLUGIN}): o diário tem evento de uma versão mais nova`), JSON.stringify(motivos));
     assert.ok(!motivos.some((x) => /emenda 1|levar next/.test(x)), JSON.stringify(motivos));
   });
 });

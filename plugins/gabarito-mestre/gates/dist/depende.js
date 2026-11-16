@@ -289,6 +289,9 @@ export function dependeDe(
                            
 
 export const MOTIVO_PLUGIN_ATRAS = 'atualizar o plugin: o diário tem evento de uma versão mais nova';
+/** O motivo com a versão instalada (a medível: o evento desconhecido não traz a que o diário exige); sem versão, o motivo de antes. */
+export const motivoPluginAtras = (versao         )         =>
+  typeof versao === 'string' && /^[0-9A-Za-z.+-]{1,40}$/.test(versao) ? `atualizar o plugin (instalado: ${versao}): o diário tem evento de uma versão mais nova` : MOTIVO_PLUGIN_ATRAS;
 const CONHECIDOS                      = new Set(TIPOS_EVENTO);
 
 /**
@@ -313,7 +316,7 @@ export function loteDoDono(plano              , eventos          , cfg          
   const noTeto = (id        )          => { const r = estadoDe(daTask(id)); return !('invalido' in r) && r.estado === 'no_teto'; };
   const teto = tasks.filter((id) => noTeto(id) && (c.liberaTeto !== true || gasta(id))).map(itemTeto);
   const emendas = c.julgaEmendas === true ? [] : projetarEmendas(evs).abertas.map((p) => itemEmenda(p.seq));
-  const versao = evs.some((e) => !CONHECIDOS.has(e.tipo)) ? [item(MOTIVO_PLUGIN_ATRAS, [{ rotulo: 'atualizar', comando: '/plugin' }])] : [];
+  const versao = evs.some((e) => !CONHECIDOS.has(e.tipo)) ? [item(motivoPluginAtras(typeof c.versaoPlugin === 'string' ? c.versaoPlugin : undefined), [{ rotulo: 'atualizar', comando: '/plugin' }])] : [];
   const base = typeof c.base === 'string' && c.base !== '' ? c.base : 'main';
   const encerrada = evs.some((e) => e.tipo === 'entrega.encerrada');
   const main = tasks.length > 0 && base !== 'main' && c.autonomiaEntrega !== true && !encerrada

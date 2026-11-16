@@ -264,7 +264,7 @@ export type EntradaPainel = {
 /** Botão do painel: `comando` null quando a ação é uma instrução ao dono, sem comando que a execute. (Não confundir com `AcaoFerramenta`.) */
 export type Acao = { rotulo: string; comando: string | null };
 /** GM-15 T13 (REQ-AUT-1): o que o lote do dono lê da config (Sombra de origin/HEAD; entrega de `lerConfigEntrega`). */
-export type ConfigLote = { liberaTeto: boolean; julgaEmendas: boolean; autonomiaEntrega: boolean; base: string };
+export type ConfigLote = { liberaTeto: boolean; julgaEmendas: boolean; autonomiaEntrega: boolean; base: string; versaoPlugin?: string };
 export type ItemDepende = { nivel: 'parar' | 'dono'; motivo: string; acoes: Acao[] };
 export type GlifoTask = '✓' | '●' | '◐' | '○' | '✗';
 export type TaskPainel = { id: string; titulo?: string; estado: EstadoTask; glifo: GlifoTask; nome?: string; papel?: Papel; modelo?: string; desdeS?: number; deps: string[] };

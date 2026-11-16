@@ -620,3 +620,10 @@ test('parou-de-uma-task-nao-esconde-teto-de-outra: base com PAROU de teto da T2 
   const dep = dependeDe(APROVADA, expandir([...noTeto('T2'), ...noTeto('T3')]), [baseT2], OK, false, GIT, lote);
   assert.deepEqual(motivos(dep).filter((m) => /T2|T3/.test(m)), ['teto de rodadas de review em T2', 'decidir a T3: chegou ao limite de revisões']);
 });
+
+test('plugin-atras-nomeia-a-versao: o item do lote traz a versão instalada e o comando /plugin (review r1 MINOR-2)', () => {
+  const evs = expandir([evNovo()]);
+  const [i] = loteDoDono(PLANO_LOTE, evs, { ...CFG_LIGADA, versaoPlugin: '2.1.0-alpha.2' });
+  assert.match(i.motivo, /2\.1\.0-alpha\.2/);
+  assert.deepEqual(i.acoes, [{ rotulo: 'atualizar', comando: '/plugin' }]);
+});

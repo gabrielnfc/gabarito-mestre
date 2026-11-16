@@ -28,6 +28,7 @@ const AQUI = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(AQUI, '..', 'scripts', 'loop.mjs');
 const GITIGNORE_RAIZ = join(AQUI, '..', '..', '..', '..', '.gitignore');
 const GIT_REAL = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+const VERSAO_PLUGIN = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 const FAKE_PSQL = String.raw`
 import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs';
@@ -6337,7 +6338,7 @@ describe('GM-15 T13: lote do dono no proxima', () => {
     ['task.iniciada', { task: t, papel: 'revisor' }], ['review.veredito', { task: t, veredito: 'REPROVADO', rodada: 2, blocker: 0, major: 1 }],
   ];
   const DESLIGADA = { entrega: { base: 'next', autonomia: false }, sombra: { julga_emendas: false, libera_teto: false } };
-  const MOTIVOS_4 = ['decidir a T2: chegou ao limite de revisões', 'decidir a emenda 1', 'atualizar o plugin: o diário tem evento de uma versão mais nova', 'no fim da entrega: levar next para main'];
+  const MOTIVOS_4 = ['decidir a T2: chegou ao limite de revisões', 'decidir a emenda 1', `atualizar o plugin (instalado: ${VERSAO_PLUGIN}): o diário tem evento de uma versão mais nova`, 'no fim da entrega: levar next para main'];
   const montar = (cfgOrigin, { config } = {}) => {
     const amb = ambReq(config ? { config } : {});
     if (cfgOrigin !== null) comOrigin(amb, cfgOrigin);
@@ -6360,9 +6361,9 @@ describe('GM-15 T13: lote do dono no proxima', () => {
   test('lote-le-origin: a Sombra ligada e a autonomia de entrega em origin/HEAD esvaziam o lote (fica só o plugin atrás); o config local não conta', () => {
     const lig = montar({ entrega: { base: 'next', autonomia: true }, sombra: { julga_emendas: true, libera_teto: true } }).cli(['proxima']);
     assert.equal(lig.rc, 0, lig.out);
-    assert.deepEqual(lig.j.lote.map((i) => i.motivo), ['atualizar o plugin: o diário tem evento de uma versão mais nova']);
+    assert.deepEqual(lig.j.lote.map((i) => i.motivo), [`atualizar o plugin (instalado: ${VERSAO_PLUGIN}): o diário tem evento de uma versão mais nova`]);
     const soLocal = montar(null, { config: { ...CONFIG_PADRAO, entrega: { base: 'next', autonomia: true }, sombra: { julga_emendas: true, libera_teto: true } } }).cli(['proxima']);
-    assert.deepEqual(soLocal.j.lote.map((i) => i.motivo), ['decidir a T2: chegou ao limite de revisões', 'decidir a emenda 1', 'atualizar o plugin: o diário tem evento de uma versão mais nova'],
+    assert.deepEqual(soLocal.j.lote.map((i) => i.motivo), ['decidir a T2: chegou ao limite de revisões', 'decidir a emenda 1', `atualizar o plugin (instalado: ${VERSAO_PLUGIN}): o diário tem evento de uma versão mais nova`],
       'sem origin: Sombra desligada e base main (sem next ⇒ main)');
   });
 
