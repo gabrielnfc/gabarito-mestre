@@ -274,11 +274,11 @@ describe('fumaça do loop sem LLM', { concurrency: 4 }, () => {
     });
   }
 
-  test('esquece-sempre: o modelo esquece o Agent de T3 em toda tentativa; depois de 2 recuperações o mod grava loop.parar nao_conseguiu', async () => {
+  test('esquece-sempre: o modelo esquece o Agent de T3 em toda tentativa; depois de 1 recuperação (REQ-AUT-1) o mod grava loop.parar nao_conseguiu', async () => {
     const r = await rodar({ plano: planos('tres'), esquece: 'T3', esqueceSempre: true });
     const m = TRILHA(r);
     assert.deepEqual(r.parar, ['nao_conseguiu'], `loop.parar${m}`);
-    assert.equal(r.reabertas, 2, `2 reaberturas${m}`);
+    assert.equal(r.reabertas, 1, `1 reabertura (GM-15 T12: reabrir 2 vezes morre)${m}`);
     assert.deepEqual(r.defeitos, [], `defeitos${m}`);
     assert.equal(r.integradas, 2, `T3 nunca integra${m}`);
     assert.ok(r.avisos.some((a) => /nao_conseguiu/.test(a)), `aviso visível${m}`);
@@ -327,5 +327,9 @@ describe('fumaça do loop sem LLM', { concurrency: 4 }, () => {
     assert.deepEqual(r.proximaFinal, { tipo: 'retomar', task: 'T1' }, `trava em retomar${m}`);
     assert.notEqual(r.fim, 'concluir', `não chega a concluir${m}`);
     assert.equal(r.reabertas, 0, `nada reaberto${m}`);
+    // a trava não é calada: o Stop (que não bloqueia no `retomar`) avisa a task morta. A espera do mod (N turnos sem evento novo ⇒ `nao_conseguiu`)
+    // não chega a gravar aqui: sem Stop bloqueando, não há turno seguinte (limite declarado da T12).
+    assert.ok(r.trilha.some((l) => /Stop ->.*task T1 morreu/.test(l)), `Stop avisa a task morta${m}`);
+    assert.deepEqual(r.parar, [], `sem turno seguinte, nada gravado${m}`);
   });
 });
