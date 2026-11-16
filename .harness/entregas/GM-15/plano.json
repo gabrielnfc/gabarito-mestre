@@ -79,7 +79,9 @@
       "id": "T3",
       "titulo": "Núcleo do encerramento",
       "deps": [
-        "T1"
+        "T1",
+        "T5",
+        "T29"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/trilha.ts",
@@ -87,7 +89,11 @@
         "plugins/gabarito-mestre/gates/dist/trilha.js",
         "plugins/gabarito-mestre/gates/dist/guarda.js",
         "plugins/gabarito-mestre/gates/test/trilha.test.ts",
-        "plugins/gabarito-mestre/gates/test/encerramento.test.ts"
+        "plugins/gabarito-mestre/gates/test/encerramento.test.ts",
+        "plugins/gabarito-mestre/gates/test/cartao-entrega-branch.test.mjs",
+        "plugins/gabarito-mestre/gates/test/conversa-pontos.test.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs"
       ],
       "reqs": [
         "REQ-ENT-1"
@@ -99,7 +105,8 @@
       "deps": [
         "T0",
         "T3",
-        "T33"
+        "T33",
+        "T24"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
@@ -132,11 +139,13 @@
       "id": "T6",
       "titulo": "CLI adiar, cortar, reabrir (Sombra)",
       "deps": [
-        "T5"
+        "T5",
+        "T3"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/loop.mjs",
-        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs"
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/liberar-teto.test.mjs"
       ],
       "reqs": [
         "REQ-ENT-2"
@@ -242,7 +251,8 @@
       "deps": [
         "T1",
         "T6",
-        "T10"
+        "T10",
+        "T24"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/sombra.mjs",
@@ -391,7 +401,8 @@
       "deps": [
         "T16",
         "T17",
-        "T5"
+        "T5",
+        "T3"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/stop-loop.mjs",
@@ -471,7 +482,8 @@
       "deps": [
         "T17",
         "T29",
-        "T33"
+        "T33",
+        "T24"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/mod/painel.mjs",
@@ -509,13 +521,22 @@
       "id": "T24",
       "titulo": "Teste fora do .harness; alerta",
       "deps": [
-        "T0"
+        "T0",
+        "T3",
+        "T6"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/gate-task.mjs",
         "plugins/gabarito-mestre/gates/test/gate-task.test.mjs",
         "plugins/gabarito-mestre/gates/test/_raiz-segura.mjs",
-        "plugins/gabarito-mestre/gates/test/raiz-segura.test.mjs"
+        "plugins/gabarito-mestre/gates/test/raiz-segura.test.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-costura.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/aprovar-spec.test.mjs",
+        "plugins/gabarito-mestre/gates/test/conversa-pontos.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-gm14.test.mjs"
       ],
       "reqs": [
         "REQ-HIG-1"
@@ -745,7 +766,8 @@
       "titulo": "Painel: pouso pela medição do proxima",
       "deps": [
         "T29",
-        "T17"
+        "T17",
+        "T24"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel.ts",
