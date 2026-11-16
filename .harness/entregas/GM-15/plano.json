@@ -932,7 +932,8 @@
         "plugins/gabarito-mestre/gates/test/painel-esquadrao.test.ts",
         "plugins/gabarito-mestre/gates/test/painel-texto.test.ts",
         "plugins/gabarito-mestre/gates/test/fumaca-e4.test.mjs",
-        "plugins/gabarito-mestre/gates/test/fumaca-e4/"
+        "plugins/gabarito-mestre/gates/test/fumaca-e4/",
+        "plugins/gabarito-mestre/gates/test/painel-altura.test.ts"
       ]
     }
   ]
