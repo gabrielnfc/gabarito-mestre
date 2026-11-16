@@ -5690,6 +5690,19 @@ describe('entrega publicada: nada de sessao.*, guarda.*, task.* nem loop.parar (
     assert.equal(amb.eventos().length, antes);
   });
 
+  test('encerrada-ligada-pelo-dono-loop-recusa (GM-15 T3, REQ-ENT-1 c): entrega.encerrada + dono.resposta ⇒ sem --sessao e com --sessao da ligada, parar recusa e nada é gravado', () => {
+    const amb = ambiente();
+    amb.semear([['entrega.encerrada', { entrega: 'GM-10', pr: 7, via: 'head', mergeado_em: '2026-11-13T09:00:00.000Z' }]]);
+    ligarPeloDono(amb, 'SDONO');
+    const antes = amb.eventos().length;
+    for (const extra of [[], ['--sessao', 'SDONO']]) {
+      const r = amb.cli(['parar', 'nao_conseguiu', ...extra]);
+      assert.equal(r.rc, 1, r.out + r.err);
+      assert.equal(r.j?.erro, 'entrega_publicada', r.out + r.err);
+    }
+    assert.equal(amb.eventos().length, antes);
+  });
+
   test('regra-unica: entregaPublicada é a trilha (os 7 casos da trilha; os gravadores não têm critério próprio', async () => {
     const { entregaPublicada } = await import('../dist/guarda.js');
     const casos = [

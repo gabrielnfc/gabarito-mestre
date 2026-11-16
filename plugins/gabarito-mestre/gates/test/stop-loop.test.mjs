@@ -1679,6 +1679,20 @@ test('publicada-nao-recebe-loop.parar: entrega com PR mergeado e plano.json fica
   assert.equal(existsSync(contadorDe(raiz)), false, 'o Stop não conta sem_progresso em publicada');
 });
 
+test('encerrada-ligada-pelo-dono-segue-publicada (GM-15 T3, REQ-ENT-1 c): entrega.encerrada + dono.resposta ligando a sessão do Stop ⇒ silêncio, nada gravado', () => {
+  const raiz = repo();
+  plano(raiz);
+  const w = (sessao, tipo, dados, ts) => assert.equal(anexar(entregaDir(raiz), sessao, { ts, autor: 'a', sessao, agente: 'orquestrador', tipo, dados }).ok, true);
+  w('SDONO', 'fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'wt/GM-10-8' } }, '2026-11-03T09:00:00.000Z');
+  w('SDONO', 'dono.resposta', { pergunta: 'SDONO:1', opcao: 1, rotulo: 'GM-10' }, '2026-11-03T09:00:01.000Z');
+  w('pub', 'entrega.encerrada', { entrega: 'GM-10', pr: 7, via: 'head', mergeado_em: '2026-11-03T08:00:00.000Z' }, '2026-11-03T08:00:01.000Z');
+  const antes = linhasDoDiario(raiz).length;
+  for (let i = 0; i < 6; i++) mudo(stop(raiz, { session_id: 'SDONO' }));
+  assert.equal(linhasDoDiario(raiz).length, antes);
+  assert.equal(linhasDoDiario(raiz).filter((e) => e.tipo === 'loop.parar').length, 0);
+  assert.equal(existsSync(contadorDe(raiz)), false, 'o Stop não conta sem_progresso em entrega encerrada, ainda que o dono a tenha ligado');
+});
+
 test('publicada-vizinho-pr-aberto-continua-gravando: PR mergeado e outro aberto não é publicada; o 3º Stop grava loop.parar', () => {
   const raiz = repo();
   plano(raiz);

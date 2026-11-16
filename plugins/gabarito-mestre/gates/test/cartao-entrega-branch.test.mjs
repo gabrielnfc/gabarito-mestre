@@ -61,6 +61,19 @@ describe('cartão infere a entrega pela regra do loop.mjs (GM-15 hotfix)', () =>
     assert.doesNotMatch(r.ctx, /não inferido/);
   });
 
+  test('encerrada + dono.resposta ligando a sessão: o sessao.inicio da entrega encerrada vai a _sem-id (GM-15 T3, REQ-ENT-1 c)', () => {
+    const dir = repoNaBranch('hotfix/GM-15-alpha2');
+    const d = dirEntrega(dir, 'GM-15');
+    append(d, 'sess-a', ev('sess-a', 'entrega.encerrada', { entrega: 'GM-15', pr: 9, via: 'head', mergeado_em: '2026-11-15T10:00:00.000Z' }, '2026-11-15T10:00:01.000Z'));
+    append(d, 'sess-b', ev('sess-b', 'fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'hotfix/GM-15-alpha2' } }, '2026-11-15T11:00:00.000Z'));
+    append(d, 'sess-b', ev('sess-b', 'dono.resposta', { pergunta: 'sess-b:1', opcao: 1, rotulo: 'GM-15' }, '2026-11-15T11:00:01.000Z'));
+    const r = hook(dir, { session_id: 'sess-b', source: 'clear' });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!ler(d).some((e) => e.tipo === 'sessao.inicio'), 'nada de sessao.inicio na entrega encerrada');
+    const semId = ler(dirEntrega(dir, null));
+    assert.ok(semId.some((e) => e.tipo === 'sessao.inicio' && e.sessao === 'sess-b'), 'o sessao.inicio foi para _sem-id');
+  });
+
   test('de ponta: pouso da sessão A em GM-15 + SessionStart clear da sessão B na branch hotfix ⇒ pousoPendente false', () => {
     const dir = repoNaBranch('hotfix/GM-15-alpha2');
     const d = dirEntrega(dir, 'GM-15');

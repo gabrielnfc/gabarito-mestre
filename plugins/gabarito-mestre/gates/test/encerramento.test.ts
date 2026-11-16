@@ -170,4 +170,12 @@ test('sem-encerrada-regra-antiga: PR mergeado + plano, sem resposta, segue publi
 test('encerrada-de-outra-entrega-nao-vale: o evento de GM-11 no diário de GM-10 não encerra', () => {
   const outra: Ev = { tipo: 'entrega.encerrada', ts: T(4), dados: { entrega: 'GM-11', pr: 7, via: 'head', mergeado_em: T(3) } };
   assert.equal(entregaPublicada(diario([outra]), ID, null), false);
+  // com PR mergeado + plano a regra antiga dá true; só o filtro de entrega faz a encerrada alheia não valer (a reaberta cobre a ausência de atalho)
+  assert.equal(entregaPublicada(diario([prFato(7, 'mergeado', { base: 'main', via: 'head' }, T(2)), outra, reaberta(T(5))]), ID, null), true, 'a de outra entrega não é atalho de encerrada nem reabre');
+});
+
+test('reaberta-pr-mergeado-antes-nao-reencerra-em-encerramentoDe: encerrada pós-reabertura com mergeado_em anterior a ela não encerra', () => {
+  const es = evs([reaberta(T(20)), encerrada(23, T(15), T(25))]);
+  assert.equal(encerramentoDe(es, ID).encerrada, false);
+  assert.equal(encerramentoDe(evs([reaberta(T(20)), encerrada(23, T(22), T(25))]), ID).encerrada, true, 'controle: mergeado_em posterior encerra');
 });
