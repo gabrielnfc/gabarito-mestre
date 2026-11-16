@@ -19,6 +19,9 @@
  *  N13 falha do git sem aviso                                                     ⇒ git-worktree-falha-avisa
  *  N14 CLI não liga o projeto ao `texto` (só ao `estado`)                         ⇒ cli-script-real-texto-e-estado
  *  N15 projeto com 1 PBI desenhado (sem o mínimo de 2)                            ⇒ projeto-1-pbi-nao-aparece
+ *  N23 renderEsquadrao (legado) escreve "sem task"                              ⇒ agente-fora-do-loop-legado
+ *  N24 renderExecutivo escreve "sem task"                                   ⇒ agente-fora-do-loop-legado
+ *  N25 o legado/executivo ignora o estado da task (pendente mostra o id)      ⇒ agente-fora-do-loop-legado
  *  N16 a CLI usa o plano.json da árvore atual em vez do commit mais recente       ⇒ cli-plano-de-commit-mais-recente
  */
 import { test } from 'node:test';
@@ -30,6 +33,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { projetarPainel, renderPainel } from '../src/painel.ts';
 import { paraTexto } from '../src/painel-texto.ts';
+import { renderEsquadrao } from '../src/painel-esquadrao.ts';
+import { renderExecutivo } from '../src/painel-executivo.ts';
+import { EXTRAS } from './painel-fixtures/estados.ts';
 import { colunas } from '../src/painel-largura.ts';
 import { planoMdDoCard, projetarProjeto, ROTULO_FASE_NAO_MEDIDA, ROTULO_FORA_DO_LOOP, worktreesDe } from '../src/projeto.ts';
 import type { ArvoreLida, EstadoProjeto } from '../src/projeto.ts';
@@ -458,5 +464,30 @@ test('cli-FL1-fora-da-arvore-ignorado: `fluxo.mapeamento.FL1` absoluto ou com ".
     const r = estadoDe(repo);
     assert.equal(r.ok, true, fl1);
     assert.deepEqual((r.estado.projeto as EstadoProjeto).linhas, [], `${fl1}: nenhum card lido`);
+  }
+});
+
+test('agente-fora-do-loop-legado: renderEsquadrao (legado) e renderExecutivo escrevem o MESMO rótulo, sem task ou com task pendente; task iniciada mostra o id', () => {
+  const txt = (ls: { texto: string }[][]): string[] => ls.map((l) => l.map((x) => x.texto).join(''));
+  for (const w of [44, 80, 120]) {
+    const esq = txt(renderEsquadrao(EXTRAS['sem-task'], { preset: 'esquadrao', tema: 'mono', narracao: true, largura: w }));
+    assert.ok(esq.some((l) => l.includes(ROTULO_FORA_DO_LOOP)), `esquadrão ${w}: ${esq.join('\n')}`);
+    assert.ok(esq.every((l) => !/sem task/.test(l) && colunas(l) <= w));
+    const exe = txt(renderExecutivo(EXTRAS['sem-task'], { preset: 'executivo', tema: 'mono', narracao: true, largura: w }));
+    assert.ok(exe.some((l) => l.includes(ROTULO_FORA_DO_LOOP)), `executivo ${w}: ${exe.join('\n')}`);
+    assert.ok(exe.every((l) => !/sem task/.test(l) && colunas(l) <= w));
+  }
+  // task pendente (ninguém rodou `iniciar`) também; iniciada, o id
+  const pend = structuredClone(EXTRAS['sem-task']);
+  const ag = pend.equipe.agentes[pend.equipe.agentes.length - 1]; // o vivo sem task do fixture
+  ag.nome = 'ARAGORN'; ag.papel = 'implementador'; ag.task = 'T9'; ag.estadoTask = 'implementando';
+  pend.plano.tasks = pend.plano.tasks.filter((x) => x.id !== 'T9').concat([{ ...pend.plano.tasks[0], id: 'T9', deps: [] }]);
+  const set = (est: string): void => { pend.plano.tasks = pend.plano.tasks.map((x) => (x.id === 'T9' ? { ...x, estado: est } : x)) as typeof pend.plano.tasks; };
+  for (const [est, fora] of [['pendente', true], ['implementando', false]] as const) {
+    set(est);
+    const e1 = txt(renderEsquadrao(pend, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 120 })).filter((l) => /ARAGORN/.test(l) && /^├─ ● /.test(l));
+    const e2 = txt(renderExecutivo(pend, { preset: 'executivo', tema: 'mono', narracao: true, largura: 120 })).filter((l) => /^● /.test(l) && /implementador 2|T9|agente fora/.test(l) && !/revisor/.test(l));
+    for (const l of [...e1, ...e2]) assert.equal(l.includes(ROTULO_FORA_DO_LOOP), fora, `${est}: ${l}`);
+    assert.ok(e1.length > 0 && e2.length > 0, `${est}: linhas do agente`);
   }
 });

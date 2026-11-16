@@ -15,7 +15,7 @@ import { PRIORIDADE_RESERVA, cortarComReserva, cortarPorPrioridade } from './orc
 import type { LinhaPrioridade } from './orcamento.ts';
 import { linhaTecnica, nomeNatural, tagNatural } from './origem.ts';
 import type { Previsao } from './painel-formato.ts';
-import { rotuloAgente, rotuloFase } from './projeto.ts';
+import { ROTULO_FORA_DO_LOOP, rotuloAgente, rotuloFase } from './projeto.ts';
 import type { EstadoProjeto, LinhaProjeto } from './projeto.ts';
 import type { EstadoTask } from './loop.ts';
 import { colunas, cortar, limpar } from './painel-largura.ts';
@@ -224,13 +224,14 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
     const vw = maxCol(verbos);
     const modelos = eq.agentes.filter((a) => a.vivo).map((a) => (t(a.modelo) !== '' ? ` · ${t(a.modelo)}` : ''));
     const mw = maxCol(modelos);
-    const tw = maxCol(eq.agentes.map((a) => t(a.task)));
+    const estadosLegado = new Map<string, EstadoTask>(e.plano.tasks.map((x) => [x.id, x.estado as EstadoTask]));
+    const tw = maxCol(eq.agentes.map((a) => (a.vivo && rotuloAgente({ task: typeof a.task === 'string' && t(a.task) !== '' ? t(a.task) : null, papelExibido: null }, estadosLegado) === ROTULO_FORA_DO_LOOP ? ROTULO_FORA_DO_LOOP : t(a.task))));
     if (vivos !== null) {
       // número nunca é cortado (P1c D-R6): se a linha mais larga não cabe, TODAS cedem juntas, texto primeiro (nível 1: sem modelo), depois o tempo inteiro (nível 2)
       // níveis: 0 tudo · 1 sem modelo · 2 sem tempo · 3 sem o verbo do papel · 4 nome encurtado com `…` (texto, nunca número)
       let nivel = 0;
       let nwUsado = nw;
-      const montar = (n: number): Linha[] => eq.agentes.map((a) => linhaAgente(a, larga, nwUsado, n >= 3 ? 0 : vw, n === 0 ? mw : 0, tw, n));
+      const montar = (n: number): Linha[] => eq.agentes.map((a) => linhaAgente(a, larga, nwUsado, n >= 3 ? 0 : vw, n === 0 ? mw : 0, tw, n, estadosLegado));
       while (nivel < 4 && larga && montar(nivel).some((l) => larg(l) > w)) {
         nivel++;
         if (nivel === 4) {
@@ -308,9 +309,12 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
   return cortarPorAltura(saida.map((l, i): LinhaMarcada => ({ l, tag: marcas.get(i)?.tag ?? '', ...(marcas.get(i)?.trocar === undefined ? {} : { trocar: marcas.get(i)?.trocar }) })), o.altura, ['sep', 'narr', 'lim', 'fila', 'faixa']);
 }
 
-/** Linha de agente: vivo (`●`), `sem task`, ou `◌ sem agente` (task em voo sem agente de papel compatível). */
-function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw: number, tw: number, nivel = 0): Linha {
+/** Linha de agente: vivo (`●`), `agente fora do loop`, ou `◌ sem agente` (task em voo sem agente de papel compatível). */
+function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw: number, tw: number, nivel = 0, estados: ReadonlyMap<string, EstadoTask> = new Map()): Linha {
   const pre = seg(PREFIXO(false, larga), 'inactive');
+  // GM-15 T32 (item 5): o rótulo único de `projeto.ts` (agente sem task ou com task não iniciada)
+  const tarefa = rotuloAgente({ task: typeof a.task === 'string' && t(a.task) !== '' ? t(a.task) : null, papelExibido: null }, estados);
+  const foraDoLoop = tarefa === ROTULO_FORA_DO_LOOP;
   const nome = t(a.nome ?? a.papel);
   if (!a.vivo) {
     return aparar([pre, seg('◌', 'inactive'), seg(` ${larga ? pad(nome, nw) : nome}`, a.cor), seg(larga ? '  sem agente' : '', 'inactive'), seg(`${larga ? ' · ' : ' '}${t(a.task)}`, 'inactive')]);
@@ -321,7 +325,7 @@ function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw
   const gc: CorTema = semTask || a.estadoTask === null ? 'inactive' : corEstadoTask(a.estadoTask);
   if (!larga) {
     const fim = [pct !== null ? fmtPct(pct) : '', tok !== null ? fmtTok(tok) : ''].filter((x) => x !== '').join(' ');
-    return aparar([pre, seg('●', gc), seg(' '), seg(semTask ? 'sem task' : pad(nome, nw), semTask ? 'inactive' : a.cor), seg(fim !== '' ? ` ${fim}` : '', 'inactive')]);
+    return aparar([pre, seg('●', gc), seg(' '), seg(semTask ? ROTULO_FORA_DO_LOOP : pad(nome, nw), semTask ? 'inactive' : a.cor), seg(fim !== '' ? ` ${fim}` : '', 'inactive')]);
   }
   const ctx: Linha = pct !== null
     ? [seg('ctx '), ...barraSegs(pct, 10, '█', '░', 'success'), seg(` ${fmtPct(pct)}`)]
@@ -329,10 +333,10 @@ function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw
   const cauda = [...(pct !== null && tok !== null ? [fmtTok(tok)] : []), ...(nivel < 2 && tempoDe(a.desdeS) !== '' ? [tempoDe(a.desdeS)] : [])];
   const modelo = nivel === 0 && t(a.modelo) !== '' ? ` · ${t(a.modelo)}` : '';
   const fim = cauda.length > 0 ? [seg(`  ${cauda.join(' · ')}`, 'inactive')] : [];
-  if (semTask) return aparar([pre, seg('●', gc), seg(' '), seg('sem task', 'inactive'), seg(modelo, 'inactive'), seg('  '), ...ctx, ...fim]);
+  if (semTask) return aparar([pre, seg('●', gc), seg(' '), seg(ROTULO_FORA_DO_LOOP, 'inactive'), seg(modelo, 'inactive'), seg('  '), ...ctx, ...fim]);
   return aparar([
     pre, seg('●', gc), seg(' '), seg(pad(nivel >= 4 ? cortar(nome, nw) : nome, nw), a.cor), seg('  '), ...(vw > 0 ? [seg(pad(textoDoPapel(a.papel), vw))] : []), seg(pad(modelo, mw), 'inactive'),
-    seg('  '), seg(pad(t(a.task), tw)), seg('  '), ...ctx, ...fim,
+    seg('  '), seg(pad(foraDoLoop ? ROTULO_FORA_DO_LOOP : t(a.task), tw)), seg('  '), ...ctx, ...fim,
   ]);
 }
 
