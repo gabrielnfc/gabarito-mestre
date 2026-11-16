@@ -276,14 +276,21 @@
       "deps": [
         "T10",
         "T18",
-        "T3"
+        "T3",
+        "T15",
+        "T33"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/loop.ts",
         "plugins/gabarito-mestre/gates/dist/loop.js",
         "plugins/gabarito-mestre/gates/test/loop.test.ts",
         "plugins/gabarito-mestre/gates/scripts/stop-loop.mjs",
-        "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs"
+        "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs",
+        "plugins/gabarito-mestre/mod/gabarito.mjs",
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
+        "plugins/gabarito-mestre/gates/test/fumaca-loop.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-loop/caminhada.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-e4.test.mjs"
       ],
       "reqs": [
         "REQ-AUT-1"
@@ -487,7 +494,8 @@
         "T17",
         "T29",
         "T33",
-        "T24"
+        "T24",
+        "T12"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/mod/painel.mjs",
