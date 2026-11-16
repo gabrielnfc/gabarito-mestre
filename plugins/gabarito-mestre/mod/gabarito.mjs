@@ -342,6 +342,7 @@ function descrever(r) {
   if (a.tipo === 'pousar') return 'pouso pendente';
   if (a.tipo === 'esperar') return `esperar (${a.motivo})`;
   if (a.tipo === 'parar') return `loop parado (${a.motivo})`;
+  if (a.tipo === 'retomar') return `task ${a.task} em voo sem agente: reabra antes de despachar (sem reabrir, nao_conseguiu)`;
   return a.tipo === 'despachar' ? 'revisão pendente' : a.tipo;
 }
 
@@ -485,7 +486,9 @@ async function decidir($, c, r) {
     await falharPouso($, c, 'nao_interativo');
     return false;
   }
-  const acao = r.acao;
+  // GM-15 T12 (REQ-AUT-1): `retomar` é a task em voo sem agente. A reabertura do mod é a de `recuperarOrfas`; se ela não reabriu
+  // (hand-back a caminho, negação pendente, `task.reaberta` que não grava), vale a regra de antes: N turnos sem evento novo ⇒ `nao_conseguiu`.
+  const acao = r.acao?.tipo === 'retomar' ? { tipo: 'parar', motivo: 'nao_conseguiu', task: r.acao.task } : r.acao;
   if (acao === null || acao.tipo !== 'parar' || acao.motivo !== 'nao_conseguiu') espera = null;
   if (acao === null) return false;
   if (acao.tipo === 'pousar') return await pousarSeguro($, c, r);

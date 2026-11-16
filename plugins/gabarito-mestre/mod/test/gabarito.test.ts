@@ -2100,6 +2100,8 @@ test('orfa-sem-task-em-voo-nao-abre-turno: nada em voo ⇒ nada a recuperar', as
 const DONO_A = ['task.reaberta', { task: 'a', origem: 'dono' }] as [string, Record<string, unknown>]
 const PLANO_AB = { entrega: 'PBI-7', tasks: [{ id: 'a', deps: [], arquivos: ['a.ts'] }, { id: 'b', deps: [], arquivos: ['b.ts'] }] }
 const EM_TETO_A_E_B_ORFA = [...NO_TETO, EV(7, 'task.iniciada', { task: 'b', papel: 'implementador' })]
+// GM-15 T12 (REQ-AUT-1): a órfã é reaberta 1 vez antes do `parar` do teto de outra task; com a retomada já gasta, o teto para como antes.
+const EM_TETO_A_E_B_ORFA_RETOMADA = [...EM_TETO_A_E_B_ORFA, EV(8, 'task.reaberta', { task: 'b', origem: 'retomada' }), EV(9, 'task.iniciada', { task: 'b', papel: 'implementador' })]
 const MEDIDO = EV(8, 'custo.medicao', { agente: 'orquestrador', input_tokens: 90, output_tokens: 20, cache_read: 0, cache_creation: 0 })
 const naoReabre = (m: ReturnType<typeof mundo>) => {
   expect(reabertas(m)).toHaveLength(0)
@@ -2108,7 +2110,7 @@ const naoReabre = (m: ReturnType<typeof mundo>) => {
 }
 
 test('orfa-teto-rodadas-nao-reabre: T1 no teto e outra órfã ⇒ grava parar teto_rodadas com aviso, 0 reabertas, 0 turnos', async ($, on) => {
-  const m = mundo($, on, { eventos: EM_TETO_A_E_B_ORFA, plano_json: PLANO_AB })
+  const m = mundo($, on, { eventos: EM_TETO_A_E_B_ORFA_RETOMADA, plano_json: PLANO_AB })
   fecharEm(m, PLANO_AB) // REQ-APR-2 muda a ordem: o MAJOR do teto abre pendência antes do `parar`
   await m.inicio()
   await recuperar(m)
@@ -2118,6 +2120,14 @@ test('orfa-teto-rodadas-nao-reabre: T1 no teto e outra órfã ⇒ grava parar te
   expect(m.toasts.some((t) => t.includes('teto_rodadas'))).toBe(true)
   await recuperar(m)
   expect(parou(m)).toHaveLength(1)
+})
+test('orfa-teto-rodadas-reabre-1x (GM-15 T12, REQ-AUT-1): T1 no teto e outra órfã sem retomada ⇒ a órfã é reaberta (retomada) e abre turno, sem loop.parar', async ($, on) => {
+  const m = mundo($, on, { eventos: EM_TETO_A_E_B_ORFA, plano_json: PLANO_AB })
+  fecharEm(m, PLANO_AB)
+  await m.inicio()
+  await recuperar(m)
+  expect(reabertas(m).map((g) => g.dados)).toEqual([{ task: 'b', origem: 'retomada' }])
+  expect(parou(m)).toHaveLength(0)
 })
 test('orfa-teto-tokens-nao-reabre: tokens no teto ⇒ grava parar teto_tokens, 0 reabertas, 0 turnos', async ($, on) => {
   const m = mundo($, on, { eventos: [...ORFA, MEDIDO], config: { tetoTokens: 100 } })
@@ -3714,7 +3724,7 @@ test('deny-pendencia-lista-ate-6: 8 pendências ⇒ 6 itens e `e mais 2`', async
   expect(r.deny).toContain('(parar s0:5, parar s0:6, parar s0:7, parar s0:8, parar s0:9, parar s0:10, e mais 2)')
 })
 test('parar-nao-repete-apos-aprendizado: loop.parar, aprendizado que o fecha e o turno seguinte NÃO regravam loop.parar', async ($, on) => {
-  const m = mundo($, on, { eventos: EM_TETO_A_E_B_ORFA, plano_json: PLANO_AB })
+  const m = mundo($, on, { eventos: EM_TETO_A_E_B_ORFA_RETOMADA, plano_json: PLANO_AB })
   fecharEm(m, PLANO_AB)
   await m.inicio()
   await recuperar(m)
@@ -3728,7 +3738,7 @@ test('parar-nao-repete-apos-aprendizado: loop.parar, aprendizado que o fecha e o
   expect(parou(m)).toHaveLength(1)
 })
 test('parar-nao-repete-apos-aprendizado-evento: fechar a pendência `parar` com `aprendizado` (não só `aprendizado.nada`) também não regrava loop.parar', async ($, on) => {
-  const m = mundo($, on, { eventos: EM_TETO_A_E_B_ORFA, plano_json: PLANO_AB })
+  const m = mundo($, on, { eventos: EM_TETO_A_E_B_ORFA_RETOMADA, plano_json: PLANO_AB })
   fecharEm(m, PLANO_AB)
   await m.inicio()
   await recuperar(m)
@@ -4479,7 +4489,7 @@ test('faixa-sem-depende-duplicado: o item "depende de você: nada" do estado nov
   expect(q === null || !q.texto.includes('depende de você: depende de você')).toBe(true)
 })
 test('parar-nao-repete-apos-fato-medido (pouso.ts SEM_PROGRESSO): fato.medido, nota e dono.resposta depois do loop.parar não fazem o mod regravá-lo', async ($, on) => {
-  const m = mundo($, on, { eventos: EM_TETO_A_E_B_ORFA, plano_json: PLANO_AB })
+  const m = mundo($, on, { eventos: EM_TETO_A_E_B_ORFA_RETOMADA, plano_json: PLANO_AB })
   fecharEm(m, PLANO_AB)
   await m.inicio()
   await recuperar(m)
