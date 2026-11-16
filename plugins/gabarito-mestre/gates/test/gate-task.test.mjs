@@ -374,10 +374,34 @@ describe('gate-task', () => {
     assert.doesNotMatch(texto(r), /m1 morta/);
   });
 
+  // `rodar` injetado: suíte com `suiteMs` e mutação que morre em `mutMs` (tempos declarados, não medidos).
+  const rodarCom = (suiteMs, mutMs) => async (nome, cmd) => (
+    nome === 'ok' ? { nome, rc: 0, out: 'ℹ tests 1\nℹ pass 1\nℹ fail 0\n', ms: suiteMs }
+      : nome.endsWith('sem mutação') ? { nome, rc: 0, out: '', ms: mutMs }
+        : { nome, rc: 1, out: '', ms: mutMs });
+
+  test('alerta-tempo-relativo-suite-rapida: suíte de 65 ms, morte em 0,09 s ⇒ sem alerta (M24b)', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const r = await avaliar({ wt: dir, base, mutacoes: [mut()], rodar: rodarCom(65, 90), ...verde });
+    assert.equal(r.alertas, 0, texto(r));
+    assert.match(texto(r), /mutação m1 morta/);
+    assert.equal(r.mutacoes, 1);
+  });
+
+  test('alerta-tempo-relativo-suite-lenta: suíte de 4 s, morte em 0,09 s ⇒ alerta', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const r = await avaliar({ wt: dir, base, mutacoes: [mut()], rodar: rodarCom(4000, 90), ...verde });
+    assert.equal(r.alertas, 1, texto(r));
+    assert.match(texto(r), /ALERTA.*m1.*tempo/);
+    assert.equal(r.mutacoes, 0);
+  });
+
   test('gate-tempo-zero-alerta: alerta visível, não veredito', async () => {
     const { dir, base } = repo();
     commit(dir, 'src/b.txt', 'b\n');
-    const r = await avaliar({ wt: dir, base, mutacoes: [mut()], ...verde });
+    const r = await avaliar({ wt: dir, base, mutacoes: [mut()], rodar: rodarCom(4000, 1), ...verde });
     assert.match(texto(r), /ALERTA.*m1.*tempo/);
     assert.doesNotMatch(texto(r), /m1 morta/);
     assert.doesNotMatch(texto(r), /m1 VIVA/);
