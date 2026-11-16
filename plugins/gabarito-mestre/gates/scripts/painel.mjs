@@ -321,7 +321,7 @@ function modeloDoDiario(eventos) {
 // ─────────────────────────────────────────────────────────────── fatos da trilha (GM-14 T18)
 
 /** Nomes naturais das fontes (D-P13): o render os mostra em "não consegui ler <fonte>"; nunca nome de arquivo nem código. */
-const FONTE = Object.freeze({ specs: 'as specs', medir: 'o registro de medição do painel', gh: 'o GitHub', entregas: 'a lista de entregas', diarioDe: (id) => `o diário da ${id}` });
+const FONTE = Object.freeze({ plano: 'o plano', specs: 'as specs', medir: 'o registro de medição do painel', gh: 'o GitHub', entregas: 'a lista de entregas', diarioDe: (id) => `o diário da ${id}` });
 const ausenteFs = (e) => e?.code === 'ENOENT' || e?.code === 'ENOTDIR';
 
 /** Branch do checkout da sessão; HEAD solto ou erro ⇒ `null` (não há branch a ler). */
@@ -350,12 +350,17 @@ function estadoEmPalavras(dir, eventos) {
     return null;
   }
   if (tasks.length === 0) return null;
+  // GM-15 T9 (REQ-ENT-2): adiada e cortada saem do alvo (o mesmo denominador do PRONTO)
   let n = 0;
+  let alvo = 0;
   for (const id of tasks) {
     const r = estadoDe(eventos.filter((e) => TIPOS_DE_TASK.includes(e?.tipo) && e?.dados?.task === id));
-    if (!('invalido' in r) && r.estado === 'integrada') n++;
+    const est = 'invalido' in r ? null : r.estado;
+    if (est === 'adiada' || est === 'cortada') continue;
+    alvo++;
+    if (est === 'integrada') n++;
   }
-  return n === tasks.length ? 'tasks todas integradas' : `${n} de ${tasks.length} tasks integradas`;
+  return n === alvo ? 'tasks todas integradas' : `${n} de ${alvo} tasks integradas`;
 }
 
 /**
@@ -501,12 +506,19 @@ export function estadoDoPainel(cwd, opts = {}) {
     const id = opts.entrega ?? idDaBranch(branch, idPadrao);
     const c = raiz === null ? null : { cwd, raiz, entrega: id ?? '_sem-id', dirEntrega: dirEntrega(raiz, id ?? null), sessao: 'loop' };
 
+    // GM-15 T9 (REQ-ENT-2): o plano é relido a cada leitura; `plano.json` inválido NÃO derruba o estado (o mod guardaria o último, o plano velho): vai sem
+    // plano, com o motivo em `planoInvalido` ("?" na FASE) e "o plano" nas fontes que falharam (o DEPENDE diz "?"); o motivo inteiro vai nos avisos
     let plano = null;
+    let planoInvalido = null;
     if (c !== null && id !== null) {
       try {
         plano = carregarPlano(c);
       } catch (e) {
-        if (e?.erro !== 'plano_ausente') throw e;
+        if (e?.erro === 'plano_invalido') {
+          planoInvalido = String(e.message ?? '').replace(/^\S*plano\.json:? ?/, '') || 'plano.json ilegível';
+          fontes.push(FONTE.plano);
+          avisos.push(`plano: ${e.message}`);
+        } else if (e?.erro !== 'plano_ausente') throw e;
       }
     }
     const lido = c === null ? { eventos: [] } : lerDiarioEstavel(c.dirEntrega, opts.diario);
@@ -642,6 +654,7 @@ export function estadoDoPainel(cwd, opts = {}) {
       proxima,
       // r1 MAJOR-2: a entregue só zera o diário projetado quando é a dele (branch com ID ou `--entrega`); a última conhecida não zera o `_sem-id`
       entregueDoDiario: id !== null,
+      planoInvalido,
     };
     const projetar = opts.projetar ?? projetarPainel;
     const estado = projetar(descartado ? planoDoDiario : plano, eventos, entrada);

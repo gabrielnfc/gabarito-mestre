@@ -188,12 +188,12 @@ describe('forma do estado e do texto', { timeout: 60_000 }, () => {
   });
 
   test('texto-falha-e-json: em falha o texto imprime a mesma linha JSON, rc 1', () => {
+    // GM-15 T9 (REQ-ENT-2): plano.json inválido deixou de ser falha (vira "?" no estado); a falha aqui é o stdin de `--agentes` que não é JSON
     const m = montar();
-    writeFileSync(join(m.dir, 'plano.json'), '{ não é json');
-    const r = cli(m, ['texto']);
+    const r = cli(m, ['texto', '--agentes'], { input: '{ não é json' });
     assert.equal(r.rc, 1);
     assert.equal(r.json.ok, false);
-    assert.equal(r.json.erro, 'plano_invalido');
+    assert.equal(r.json.erro, 'stdin_invalido');
   });
 });
 
@@ -257,13 +257,19 @@ describe('uso errado (rc 2) e falhas de contexto (rc 1)', { timeout: 60_000 }, (
     assert.equal(hashArvore(join(m.repo, '.harness')), antes);
   });
 
-  test('plano-invalido: não JSON, forma errada e outra entrega são `plano_invalido`, distintos de ausente', () => {
+  test('plano-invalido: não JSON, forma errada e outra entrega são "plano inválido" (rc 0, GM-15 T9 REQ-ENT-2), distintos de ausente', () => {
+    const ausente = montar();
+    renameSync(join(ausente.dir, 'plano.json'), join(ausente.base, 'plano.fora'));
+    const a = cli(ausente, ['estado']).json.estado;
+    assert.equal(a.depende.some((d) => /não consegui ler o plano/.test(d.motivo)), false, 'ausente não é falha de leitura');
+    assert.doesNotMatch(String(a.fase?.motivo), /plano inválido/);
     for (const corpo of ['{ não é json', '{"entrega":"GM-12","tasks":"x"}', JSON.stringify({ entrega: 'GM-99', tasks: [{ id: 'T1', deps: [], arquivos: ['a'] }] })]) {
       const m = montar();
       writeFileSync(join(m.dir, 'plano.json'), corpo);
       const r = cli(m, ['estado']);
-      assert.equal(r.rc, 1, corpo);
-      assert.equal(r.json.erro, 'plano_invalido', corpo);
+      assert.equal(r.rc, 0, corpo);
+      assert.match(r.json.estado.fase.motivo, /^plano inválido: /, corpo);
+      assert.ok(r.json.estado.depende.some((d) => d.motivo === 'depende de você: ? (não consegui ler o plano)'), corpo);
     }
   });
 });
@@ -1449,5 +1455,66 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.equal(depois.trilha.mudouDepois, false, JSON.stringify(depois.trilha));
     assert.equal(JSON.stringify(depois.depende).includes('versão nova'), false, JSON.stringify(depois.depende));
     assert.equal(depois.depende.some((i) => i.acoes?.some((a) => a.comando === '/gabarito-mestre:aprovar')), false, JSON.stringify(depois.depende));
+  });
+});
+
+// ─────────────────────────────────────────────── GM-15 T9 (REQ-ENT-2): o alvo é só o que não foi feito; o plano é relido a cada leitura
+describe('GM-15 T9: alvo sem fora, plano relido', { timeout: 60_000 }, () => {
+  const FORA = (task, como = 'adiada') => ['task.fora', { task, como, motivo: 'fora do corte', origem: 'sombra', fonte: 'spec:35' }];
+  const reescrever = (m, tasks, extra = {}) => writeFileSync(join(m.dir, 'plano.json'), JSON.stringify({ entrega: ENTREGA, spec: 'docs/spec.md', tasks, ...extra }));
+  const TASK = (id, deps = []) => ({ id, titulo: `task ${id}`, deps, arquivos: [`src/${id}.txt`] });
+
+  test('plano-mudou-painel-muda: plano, spec e `task.fora` relidos a cada leitura ⇒ PRONTO e DEPENDE mudam sem comando do dono', () => {
+    const spec = '# Titulo\n\nv1\n';
+    const m = montar({ spec, eventos: [...INTEGRAR('T1')] });
+    ev(m, 'spec.aprovada', { spec: 'docs/spec.md', sha256: sha256(Buffer.from(spec)) });
+    const a = estado(m).estado;
+    assert.deepEqual([a.pronto.integradas, a.pronto.total], [1, 2]);
+    assert.equal(a.depende.some((d) => d.motivo === 'spec aguardando aprovação'), false);
+    // o plano ganha a T3 e passa a apontar outra spec (sha novo): a próxima leitura já vê os dois
+    writeFileSync(join(m.repo, 'docs', 'spec2.md'), '# Titulo\n\nv2\n');
+    reescrever(m, [TASK('T1'), TASK('T2', ['T1']), TASK('T3')], { spec: 'docs/spec2.md' });
+    const b = estado(m).estado;
+    assert.deepEqual([b.pronto.integradas, b.pronto.total], [1, 3]);
+    assert.ok(b.depende.some((d) => d.motivo === 'spec aguardando aprovação'), JSON.stringify(b.depende));
+    // a T3 é cortada pela Sombra (evento no diário): a próxima leitura tira a T3 do alvo
+    ev(m, ...FORA('T3', 'cortada'));
+    const c = estado(m).estado;
+    assert.deepEqual([c.pronto.integradas, c.pronto.total, c.plano.total], [1, 2, 2]);
+    assert.equal(c.plano.tasks.some((t) => t.id === 'T3'), false);
+    assert.match(cli(m, ['texto']).stdout, /1\/2 tasks/);
+  });
+
+  test('plano-invalido-mostra-interrogacao: plano.json inválido depois de um válido ⇒ rc 0, "?" com o motivo, nunca o plano velho', () => {
+    for (const corpo of ['{ não é json', '{"entrega":"GM-12","tasks":"x"}', JSON.stringify({ entrega: 'GM-99', tasks: [{ id: 'T1', deps: [], arquivos: ['a'] }] })]) {
+      const m = montar({ eventos: [...INTEGRAR('T1'), ['task.iniciada', { task: 'T2', papel: 'implementador' }]] });
+      assert.deepEqual([estado(m).estado.pronto.integradas, estado(m).estado.pronto.total], [1, 2], corpo);
+      writeFileSync(join(m.dir, 'plano.json'), corpo);
+      const r = cli(m, ['estado']);
+      assert.equal(r.rc, 0, `${corpo}: ${r.stdout}`);
+      const e = r.json.estado;
+      assert.equal(e.pronto, null, `${corpo}: sem PRONTO do plano velho`);
+      assert.deepEqual([e.plano.total, e.plano.tasks], [0, []], corpo);
+      assert.equal(e.parar, null, `${corpo}: plano ilegível não vira PAROU de diário`);
+      assert.equal(e.fase.numero, null, corpo);
+      assert.match(e.fase.motivo, /^plano inválido: /, corpo);
+      assert.ok(e.depende.some((d) => d.motivo === 'depende de você: ? (não consegui ler o plano)'), `${corpo}: ${JSON.stringify(e.depende)}`);
+      assert.ok(r.json.avisos.some((a) => /^plano: /.test(a)), `${corpo}: o motivo inteiro vai nos avisos`);
+      const t = cli(m, ['texto']);
+      assert.equal(t.rc, 0, corpo);
+      assert.match(t.stdout, /FASE \? de 7 .*\? plano inválido: /, corpo);
+      assert.doesNotMatch(t.stdout, /\d+\/2 tasks/, `${corpo}: nada do plano velho`);
+      // corrigido o plano, a leitura seguinte volta ao PRONTO (nada guardado)
+      reescrever(m, [TASK('T1'), TASK('T2', ['T1'])]);
+      assert.deepEqual([estado(m).estado.pronto.integradas, estado(m).estado.pronto.total], [1, 2], corpo);
+    }
+  });
+
+  test('ultima-em-palavras-sem-fora: a última entrega com a T2 cortada e a T1 integrada é "tasks todas integradas"', () => {
+    const m = repoT18({ branch: 'feat/GM-7-x', planos: { 'GM-7': ['T1', 'T2'] } });
+    integrarEm(m, 'GM-7', 'T1');
+    evEm(m, 'GM-7', ...FORA('T2', 'cortada'));
+    g(m.repo, 'checkout', '-q', '--detach');
+    assert.deepEqual(cli(m, ['estado']).json.estado.umaLinha, { ultima: { id: 'GM-7', estado: 'tasks todas integradas' } });
   });
 });
