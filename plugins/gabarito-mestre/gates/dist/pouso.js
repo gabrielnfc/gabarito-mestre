@@ -89,7 +89,7 @@ export function vivosDe(lista         )         {
   return n;
 }
 
-const TIPOS_DE_TASK                    = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'task.fora'];
+const TIPOS_DE_TASK                    = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
 
                                                                              
 

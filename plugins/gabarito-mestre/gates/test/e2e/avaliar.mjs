@@ -55,7 +55,7 @@ export function proxima(repo, plugin, vivos) {
 }
 
 /** `parou` = o último `loop.parar` não tem evento de task depois (r8, sombra-t13g item 4): `liberar` grava `task.reaberta{dono}` e tira a corrida do PAROU. */
-const TIPOS_DE_TASK = new Set(['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'task.fora']); // = diario.ts TIPOS_DE_TASK
+const TIPOS_DE_TASK = new Set(['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta']); // = diario.ts TIPOS_DE_TASK
 export const parouAgora = (ev) => {
   const i = ev.map((e) => e.tipo).lastIndexOf('loop.parar');
   return i >= 0 && !ev.slice(i + 1).some((e) => TIPOS_DE_TASK.has(e.tipo));
