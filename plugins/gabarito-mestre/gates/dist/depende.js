@@ -14,7 +14,7 @@ import { ehRespostaDeAdiamento, formaInvalida, ID_PERGUNTA_RE, TIPOS_EVENTO } fr
 import { AGORA_NAO_TETO } from './pouso.js';
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.js';
 import { cmp } from './diario-puro.js';
-                                                                            
+                                                                                        
 import { idDaBranch } from './trilha.js';
                                           
 
@@ -284,8 +284,7 @@ export function dependeDe(
   return saida;
 }
 
-/** GM-15 T13 (REQ-AUT-1): o que o lote lê da config de `origin/HEAD` (Sombra) e da entrega (`lerConfigEntrega`). */
-                                                                                                                 
+                           
 
 export const MOTIVO_PLUGIN_ATRAS = 'atualizar o plugin: o diário tem evento de uma versão mais nova';
 const CONHECIDOS                      = new Set(TIPOS_EVENTO);

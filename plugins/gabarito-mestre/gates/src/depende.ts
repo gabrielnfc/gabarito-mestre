@@ -14,7 +14,7 @@ import { ehRespostaDeAdiamento, formaInvalida, ID_PERGUNTA_RE, TIPOS_EVENTO } fr
 import { AGORA_NAO_TETO } from './pouso.ts';
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.ts';
 import { cmp } from './diario-puro.ts';
-import type { Acao, Evento, ItemDepende, Plano, Proxima } from './tipos.ts';
+import type { Acao, ConfigLote, Evento, ItemDepende, Plano, Proxima } from './tipos.ts';
 import { idDaBranch } from './trilha.ts';
 import type { Trilha } from './trilha.ts';
 
@@ -284,8 +284,7 @@ export function dependeDe(
   return saida;
 }
 
-/** GM-15 T13 (REQ-AUT-1): o que o lote lê da config de `origin/HEAD` (Sombra) e da entrega (`lerConfigEntrega`). */
-export type ConfigLote = { liberaTeto: boolean; julgaEmendas: boolean; autonomiaEntrega: boolean; base: string };
+export type { ConfigLote };
 
 export const MOTIVO_PLUGIN_ATRAS = 'atualizar o plugin: o diário tem evento de uma versão mais nova';
 const CONHECIDOS: ReadonlySet<string> = new Set(TIPOS_EVENTO);

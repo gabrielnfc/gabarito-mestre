@@ -8,7 +8,7 @@
 
 import { projetarEmendas, shaAceito } from './emenda.js';
 import { cmp, contarConsultas, duracoes, EM_TRABALHO, mediana, projetarDecisoes } from './diario-puro.js';
-import { dependeDe } from './depende.js';
+import { dependeDe, loteDoDono } from './depende.js';
 import { origemDe } from './origem.js';
 import { loteRecomendadas, perguntasAbertas } from './perguntas.js';
 import { pousoPendente,              } from './pouso-pendente.js';
@@ -1041,7 +1041,9 @@ function projetarNovo(plano              , eventos                 , entrada    
   // o pedido de /clear é da sessão, não da entrega: entra nos dois ramos (r1 MAJOR-2)
   const pedidoClear = entrada.pousoPendente === true ? true : { pendente: pousoDe.pendente, id: clear.id };
   let depende = zera ? dependeDe(null                            , [], [], { falhou: fontes }, pedidoClear, { branch: null, idPadrao: fatos.idPadrao }) : dependeDe(trilha, lista, legado.depende, { falhou: fontes }, pedidoClear,
-    { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao });
+    { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao },
+    // GM-15 T13 (REQ-AUT-1): o lote do dono, o mesmo de `proxima` (mesma função e mesma config de origin); sem `configLote` (o mod) fica o DEPENDE de antes
+    entrada.configLote !== undefined ? loteDoDono(plano, lista, entrada.configLote) : undefined);
   // GM-15 T8 (review r1 MAJOR-1): a próxima com botão vira item do DEPENDE (o mod já desenha os botões dos itens); nunca é item da encerrada
   if (entregue !== null && proxima !== null && Array.isArray(proxima.acoes) && proxima.acoes.length > 0) {
     depende = [...depende.filter((i) => i.motivo !== NADA), { nivel: 'dono', motivo: motivoDaProxima(proxima.texto), acoes: proxima.acoes.map((a) => ({ ...a })) }];

@@ -1526,3 +1526,48 @@ describe('GM-15 T9: alvo sem fora, plano relido', { timeout: 60_000 }, () => {
     assert.deepEqual(cli(m, ['estado']).json.estado.umaLinha, { ultima: { id: 'GM-7', estado: 'tasks todas integradas' } });
   });
 });
+
+// GM-15 T13 (REQ-AUT-1): o lote do dono chega ao DEPENDE que o painel desenha, igual ao do `proxima` (mesma config da Sombra de origin/HEAD).
+// Mutação: painel sem lote (não passa `configLote` / `dependeDe` sem o lote) ⇒ lote-igual-no-painel morre.
+describe('GM-15 T13: lote do dono no painel', () => {
+  const NO_TETO = (t) => [
+    ['task.iniciada', { task: t, papel: 'implementador' }], ['task.concluida', { task: t, sha: 'a'.repeat(40) }],
+    ['task.iniciada', { task: t, papel: 'revisor' }], ['review.veredito', { task: t, veredito: 'REPROVADO', rodada: 1, blocker: 0, major: 1 }],
+    ['task.iniciada', { task: t, papel: 'correcao' }], ['task.concluida', { task: t, sha: 'b'.repeat(40) }],
+    ['task.iniciada', { task: t, papel: 'revisor' }], ['review.veredito', { task: t, veredito: 'REPROVADO', rodada: 2, blocker: 0, major: 1 }],
+  ];
+  const PROP = { req: 'REQ-A-1', diff: '+ x', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'regra_negocio' };
+  const montarLote = (origem) => {
+    const m = montar({ origem, eventos: [...NO_TETO('T1'), ['evento.do.futuro', { x: 1 }]] });
+    ev(m, 'emenda.proposta', PROP, { sessao: 'emendas' });
+    return m;
+  };
+  const proximaDe = (m) => {
+    const r = spawnSync(process.execPath, [LOOP, 'proxima'], { cwd: m.repo, encoding: 'utf8', timeout: 60_000 });
+    const j = JSON.parse(r.stdout.trim().split('\n').at(-1));
+    assert.equal(j.ok, true, r.stdout + r.stderr);
+    return j.lote;
+  };
+
+  test('lote-igual-no-painel: o DEPENDE do painel (CLI) traz o lote do proxima inteiro, contíguo e na mesma ordem', () => {
+    const m = montarLote({ entrega: { base: 'next', autonomia: false }, sombra: { julga_emendas: false, libera_teto: false } });
+    const lote = proximaDe(m);
+    assert.deepEqual(lote.map((i) => i.motivo), ['decidir a T1: chegou ao limite de revisões', 'decidir a emenda 1',
+      'atualizar o plugin: o diário tem evento de uma versão mais nova', 'no fim da entrega: levar next para main']);
+    const r = cli(m, ['estado']);
+    assert.equal(r.rc, 0, r.stdout + r.stderr);
+    const dep = r.json.estado.depende;
+    const i = dep.findIndex((d) => d.motivo === lote[0].motivo);
+    assert.ok(i >= 0, JSON.stringify(dep.map((d) => d.motivo)));
+    assert.deepEqual(dep.slice(i, i + lote.length), lote);
+    assert.equal(dep.filter((d) => d.acoes.some((a) => a.comando === '/gabarito-mestre:liberar T1')).length, 1, 'liberar 1 vez');
+  });
+
+  test('lote-no-painel-segue-origin: com a Sombra e a autonomia ligadas em origin/HEAD, painel e proxima tiram teto, emenda e next ⇒ main juntos', () => {
+    const m = montarLote({ entrega: { base: 'next', autonomia: true }, sombra: { julga_emendas: true, libera_teto: true } });
+    assert.deepEqual(proximaDe(m).map((i) => i.motivo), ['atualizar o plugin: o diário tem evento de uma versão mais nova']);
+    const motivos = cli(m, ['estado']).json.estado.depende.map((d) => d.motivo);
+    assert.ok(motivos.includes('atualizar o plugin: o diário tem evento de uma versão mais nova'), JSON.stringify(motivos));
+    assert.ok(!motivos.some((x) => /emenda 1|levar next/.test(x)), JSON.stringify(motivos));
+  });
+});

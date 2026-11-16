@@ -42,7 +42,7 @@ import { sessoesDeRetomada } from '../dist/pouso-pendente.js';
 import { encerramentoDe, idDaBranch, trilhaDe } from '../dist/trilha.js';
 import { proximaEntrega } from '../dist/depende.js';
 import { temOnboarding } from './cartao-sessao.mjs';
-import { carregarPlano, checkoutDaSessao, contexto, lerDiarioEstrito, lerSpec, lerSpecs, medicaoDoPouso, tetoDaSombra } from './loop.mjs';
+import { carregarPlano, checkoutDaSessao, configDoLote, contexto, lerDiarioEstrito, lerSpec, lerSpecs, medicaoDoPouso, tetoDaSombra } from './loop.mjs';
 import { decisaoDe, pausado, prepararLeitura } from './entrega.mjs';
 import { medir } from './painel-medir.mjs';
 
@@ -638,6 +638,7 @@ export function estadoDoPainel(cwd, opts = {}) {
       modeloSessao: modeloDoDiario(eventos),
       specSha,
       tetoSombra: teto.teto,
+      configLote: configDoLote(origin, config), // GM-15 T13: o lote do dono com a mesma leitura de origin que `loop.mjs proxima`
       fatos,
       fontesFalhas: fontes,
       fora: raiz === null,

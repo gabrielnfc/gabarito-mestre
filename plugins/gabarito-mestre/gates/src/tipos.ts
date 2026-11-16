@@ -244,6 +244,11 @@ export type EntradaPainel = {
   specSha: string | null;
   /** `sombra.teto` de origin (26 padrão). */
   tetoSombra: number;
+  /**
+   * GM-15 T13 (REQ-AUT-1): config do lote do dono, a MESMA de `loop.mjs proxima` (`configDoLote`: Sombra só de origin/HEAD, entrega de `lerConfigEntrega`);
+   * só o CLI preenche. Ausente = sem lote (o DEPENDE de antes, com (5) e (7)).
+   */
+  configLote?: ConfigLote;
   /** GM-15 T30 (h.1): fechamento medido (s) nas entregas anteriores do repo (`fechamentoDasAnteriores`); só o CLI preenche. Ausente/`null` = não medido. */
   fechamentoS?: number | null;
   /** GM-15 T30 (Emenda 3, fallback): etapas medidas (s) nas entregas anteriores do repo (`etapasDasAnteriores`); só o CLI preenche. Ausente/`null` = sem fallback. */
@@ -258,6 +263,8 @@ export type EntradaPainel = {
 };
 /** Botão do painel: `comando` null quando a ação é uma instrução ao dono, sem comando que a execute. (Não confundir com `AcaoFerramenta`.) */
 export type Acao = { rotulo: string; comando: string | null };
+/** GM-15 T13 (REQ-AUT-1): o que o lote do dono lê da config (Sombra de origin/HEAD; entrega de `lerConfigEntrega`). */
+export type ConfigLote = { liberaTeto: boolean; julgaEmendas: boolean; autonomiaEntrega: boolean; base: string };
 export type ItemDepende = { nivel: 'parar' | 'dono'; motivo: string; acoes: Acao[] };
 export type GlifoTask = '✓' | '●' | '◐' | '○' | '✗';
 export type TaskPainel = { id: string; titulo?: string; estado: EstadoTask; glifo: GlifoTask; nome?: string; papel?: Papel; modelo?: string; desdeS?: number; deps: string[] };

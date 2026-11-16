@@ -1446,9 +1446,17 @@ function proxima(c, plano, flags) {
   // A árvore de aprendizados é lida UMA vez por chamada (nunca por item); só quando há o que despachar.
   const extra = { cfg, ordenados, est, decisoes: projetarDecisoes(eventos), vigentes: acao.tipo === 'despachar' ? aprendizadosDaArvore(c, aviso) : [] };
   // GM-15 T13 (REQ-AUT-1): o que só o dono destrava sai em 1 lote, ao lado da ação (o loop segue no permitido); a Sombra só de origin, a entrega de `lerConfigEntrega`.
-  const sombraOrigin = origin.fonte === 'origin' && origin.cfg?.sombra !== null && typeof origin.cfg?.sombra === 'object' ? origin.cfg.sombra : {};
-  const lote = loteDoDono(plano, eventos, { liberaTeto: sombraOrigin.libera_teto === true, julgaEmendas: sombraOrigin.julga_emendas === true, autonomiaEntrega: ce.autonomia === true, base: ce.base });
+  const lote = loteDoDono(plano, eventos, configDoLote(origin, ce));
   return { acao: acao.tipo === 'despachar' ? { ...acao, itens: acao.itens.map((i) => enriquecer(c, plano, eventos, i, aviso, extra)) } : acao, lote, sinais, ...(aviso.length ? { aviso } : {}) };
+}
+
+/**
+ * GM-15 T13 (REQ-AUT-1): a config do lote do dono, UMA leitura para `proxima` e o painel (`painel.mjs`): `sombra.libera_teto`/`julga_emendas` só de
+ * `origin/HEAD` (o config local não conta, a regra de `exigirJulgaEmendas`/`liberarComoSombra`); `autonomia` e `base` de `lerConfigEntrega(origin.cfg)`.
+ */
+export function configDoLote(origin, ce = lerConfigEntrega(origin?.cfg)) {
+  const s = origin?.fonte === 'origin' && origin.cfg?.sombra !== null && typeof origin.cfg?.sombra === 'object' ? origin.cfg.sombra : {};
+  return { liberaTeto: s.libera_teto === true, julgaEmendas: s.julga_emendas === true, autonomiaEntrega: ce.autonomia === true, base: ce.base };
 }
 
 /** Aprendizados vigentes da árvore (todas as entregas). Entrega ilegível vira aviso; falha na leitura nunca derruba o despacho (lista vazia e aviso). */
