@@ -462,7 +462,9 @@
         "plugins/gabarito-mestre/gates/test/painel.test.ts",
         "plugins/gabarito-mestre/gates/test/depende.test.ts",
         "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
-        "plugins/gabarito-mestre/gates/test/avisos-cli.test.mjs"
+        "plugins/gabarito-mestre/gates/test/avisos-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-pouso.test.mjs"
       ],
       "reqs": [
         "REQ-AUT-2",
