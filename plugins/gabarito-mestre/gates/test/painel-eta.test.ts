@@ -11,12 +11,13 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } fro
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { etapasDe, fechamentoDasAnteriores, fechamentoDe, ocupacaoDe, previsaoExata, projetarPainel, ritmoDe } from '../src/painel.ts';
+import { etapasDe, fechamentoDasAnteriores, fechamentoDe, ocupacaoDe, previsaoExata, projetarPainel, renderPainel, ritmoDe } from '../src/painel.ts';
+import { colunas } from '../src/painel-largura.ts';
 import * as dist from '../dist/painel.js';
 import * as diario from '../dist/diario.js';
 import { estadoDoPainel } from '../scripts/painel.mjs';
 import { raizSegura } from './_raiz-segura.mjs';
-import type { EntradaPainel, Evento, Plano, TipoEvento } from '../src/tipos.ts';
+import type { EntradaPainel, EstadoPainel, Evento, OpcoesRender, Plano, TipoEvento } from '../src/tipos.ts';
 
 const T0 = Date.parse('2026-11-16T12:00:00Z');
 const MIN = 60_000;
@@ -192,6 +193,56 @@ test('base-igual-ao-vetor: pronto.previsao diz as tasks, o ritmo e o fechamento 
   assert.equal(com.conta.fechamentoS, 3600, 'o fechamento da entrada chega à conta');
   assert.equal(com.restanteS - sem.restanteS, 3600);
   assert.equal(typeof com.hora, 'string');
+});
+
+/** h.2: o estado de 5 tasks (3 integradas) com ou sem fechamento medido, e a linha PLANO do desenho em `w` colunas. */
+const P5 = P([['A', []], ['B', []], ['C', []], ['X', []], ['Y', ['X']]]);
+const E5 = (extra: Record<string, unknown> = {}): EntradaPainel => ({
+  decisaoEntrega: null, pausado: false, contexto: { percent: 10, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+  pacote: { nome: 'p', lider: 'L', sabio: 'S', nomes: ['N'] }, notificacao: null, agoraMs: AGORA_TRES, fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
+  entregaId: 'GM-15', modeloSessao: null, specSha: null, tetoSombra: 26,
+  fatos: { branch: 'b', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['A', 'B', 'C', 'X', 'Y'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' }, ...extra,
+} as unknown as EntradaPainel);
+const linhaPlano = (s: EstadoPainel, w: number): string =>
+  renderPainel(s, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: w } as OpcoesRender).map((l) => l.map((x) => x.texto).join('')).find((l) => /^PLANO/.test(l)) as string;
+
+/** Etapas diferentes nas 3 integradas: a faixa tem largura (de ≠ até). */
+const IRREG = D([...ciclo('A', 0, 1, 4, 1), ...ciclo('B', 0.5, 3, 8, 1), ...ciclo('C', 1, 2, 12, 2)]);
+
+test('eta-base-visivel-100col: em >= 100 colunas a linha da previsão diz a faixa e a base da MESMA conta (caminho, min/task, rodada, fechamento) (h.2)', () => {
+  const s = projetarPainel(P5, IRREG, E5({ fechamentoS: 4800, agoraMs: T0 + 20 * MIN }));
+  const pv = s.pronto?.previsao as Record<string, any>;
+  assert.notEqual(pv.faixa.de, pv.faixa.ate, 'premissa: faixa com largura');
+  const l120 = linhaPlano(s, 120);
+  assert.ok(l120.endsWith(`previsão ${pv.faixa.de}–${pv.faixa.ate} · caminho 2 tasks · ${pv.conta.minPorTask} min/task · 1,0 rodada · fechamento 1h20`), l120);
+  const l100 = linhaPlano(s, 100);
+  assert.ok(colunas(l100) <= 100, l100);
+  assert.match(l100, /previsão \d\d:\d\d–\d\d:\d\d · caminho 2 tasks · .*fechamento 1h20$/, 'em 100 a base sai por campo inteiro, o fechamento fica');
+  // a base é a do estado: outro número na conta muda o texto (nada recalculado no render)
+  const outro = { ...s, pronto: { ...s.pronto, previsao: { ...pv, conta: { ...pv.conta, caminho: 7, minPorTask: 41, rodadas: 1.7, fechamentoS: 1500 } } } } as EstadoPainel;
+  assert.match(linhaPlano(outro, 120), / · caminho 7 tasks · 41 min\/task · 1,7 rodada · fechamento 25 min$/);
+});
+
+test('eta-base-cortada-80col: abaixo de 100 colunas só a faixa, sem a base (h.2, D-P8)', () => {
+  const s = projetarPainel(P5, IRREG, E5({ fechamentoS: 4800, agoraMs: T0 + 20 * MIN }));
+  for (const w of [99, 80]) {
+    const l = linhaPlano(s, w);
+    assert.match(l, /previsão \d\d:\d\d–\d\d:\d\d$/, `${w}: ${l}`);
+    assert.doesNotMatch(l, /caminho|min\/task|rodada|fechamento|base:/);
+    assert.ok(colunas(l) <= w);
+  }
+});
+
+test('eta-fechamento-sem-medicao-interroga: sem fechamento medido a faixa abre em "?" e, em >= 100, a base diz que o fechamento não foi medido (h.1)', () => {
+  const s = projetarPainel(P5, TRES, E5());
+  assert.match(linhaPlano(s, 120), /previsão \d\d:\d\d–\? · caminho 2 tasks · 6 min\/task · 1,0 rodada · fechamento não medido$/);
+  assert.match(linhaPlano(s, 80), /previsão \d\d:\d\d–\?$/);
+});
+
+test('eta-previsao-antiga-intacta: sem a conta exata (estado sem faixa) a linha segue a do E4 com a base em tasks', () => {
+  const s = projetarPainel(P5, TRES, E5());
+  const velho = { ...s, pronto: { ...s.pronto, previsao: { hora: '12:30', base: 3 } } } as EstadoPainel;
+  assert.match(linhaPlano(velho, 120), /previsão 12:30 \(base: 3 tasks desta entrega\)$/);
 });
 
 test('replay-gm14: erro mediano da previsão contra o término real, em cada integração da GM-14, e a conta antiga como régua', () => {

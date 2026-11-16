@@ -486,6 +486,43 @@ const horaDe = (h         )         => {
 const FASES_NOME = ['ideia', 'spec', 'aprovação', 'plano', 'execução', 'PR', 'uso'];
 const inteiroNaoNeg = (v         )                => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null);
 
+/** Duração do fechamento (h.2): `< 1 h` em minutos, senão `1h20`. */
+function fmtFechamento(s        )         {
+  const min = Math.round(s / 60);
+  return min < 60 ? `${min} min` : `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`;
+}
+
+/**
+ * Texto da previsão do PLANO (GM-15 T30, h.1/h.2). Com a conta exata (`faixa`): a faixa `de–ate` (`ate` `?` = fechamento não medido); em `w >= 100`
+ * a base da MESMA conta (`pronto.previsao.conta`, nada recalculado): caminho, min/task, rodada, fechamento, por campo inteiro até caber em `cabe`
+ * colunas (saem rodada, min/task e caminho, nesta ordem; o fechamento fica). Número inválido ⇒ o campo some (D-P13). Sem a conta exata, o texto do E4.
+ */
+function textoPrevisao(pv                                                              , w        , cabe        )         {
+  const fx = pv.faixa;
+  if (fx === null || typeof fx !== 'object' || typeof fx.de !== 'string' || limpar(fx.de) === '') return `previsão ${limpar(pv.hora)} (base: ${inteiroNaoNeg(pv.base) ?? '?'} tasks desta entrega)`;
+  const de = limpar(fx.de);
+  const ate = typeof fx.ate === 'string' && limpar(fx.ate) !== '' ? limpar(fx.ate) : '?';
+  const faixa = `previsão ${de === ate ? de : `${de}–${ate}`}`;
+  if (w < 100) return faixa;
+  const c = pv.conta !== null && typeof pv.conta === 'object' ? pv.conta : null;
+  const caminho = inteiroNaoNeg(c?.caminho);
+  const mpt = inteiroNaoNeg(c?.minPorTask);
+  const rod = nn(c?.rodadas);
+  const fe = c?.fechamentoS === null ? 'fechamento não medido' : nn(c?.fechamentoS) !== null ? `fechamento ${fmtFechamento(nn(c?.fechamentoS)          )}` : null;
+  // [texto, ordem de saída] — sai primeiro o de maior número
+  const campos                            = [
+    [caminho === null ? null : `caminho ${caminho} ${caminho === 1 ? 'task' : 'tasks'}`, 3], [mpt === null ? null : `${mpt} min/task`, 2],
+    [rod === null ? null : `${rod.toFixed(1).replace('.', ',')} rodada`, 1], [fe, 4],
+  ];
+  let vivos = campos.filter((x)                        => x[0] !== null);
+  const montar = ()         => [faixa, ...vivos.map((x) => x[0])].join(' · ');
+  while (vivos.length > 0 && colunas(montar()) > cabe) {
+    const menor = Math.min(...vivos.map((x) => x[1]));
+    vivos = vivos.filter((x) => x[1] !== menor);
+  }
+  return montar();
+}
+
 
 /** Glifo de task da forma (`TaskPainel.glifo`); outro texto (corrompido) vira "?". */
 const glifoTask = (g         )         => (typeof g === 'string' && ['✓', '●', '◐', '○', '✗'].includes(g) ? g : '?');
@@ -611,7 +648,9 @@ export function renderBlocos(e              , o              )          {
     const pctTxt = pct === null ? '?' : `${pct}%`;
     const tasksTxt = `${integ ?? '?'}/${total ?? '?'} tasks`;
     const prevV = pr.previsao !== null && typeof pr.previsao?.hora === 'string' && limpar(pr.previsao.hora) !== '' ? pr.previsao : null;
-    const status = prevV !== null ? `previsão ${limpar(prevV.hora)} (base: ${inteiroNaoNeg(prevV.base) ?? '?'} tasks desta entrega)`
+    // h.2: o que sobra para a previsão ao lado de "PLANO", da barra mínima (5), do % e de k/N
+    const cabePrev = w - (8 + 5 + 2 + colunas(pctTxt) + 2 + colunas(tasksTxt) + 1);
+    const status = prevV !== null ? textoPrevisao(prevV, w, cabePrev)
       : p !== null && typeof p === 'object' ? 'loop parado' : e.parado === true ? 'loop pausado' : integ !== null && total !== null && total > 0 && integ >= total ? 'todas integradas'
         : w >= 100 && integ !== null && integ < 3 ? 'ETA ?: n insuficiente' : '';
     // a barra pinta só integradas (D-P6); sem número, "?" no lugar da barra (nunca barra vazia que pareça 0 %)
