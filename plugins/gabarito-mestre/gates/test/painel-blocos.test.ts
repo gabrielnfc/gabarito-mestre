@@ -1507,3 +1507,37 @@ test('interrogacao-com-motivo (g.9): a partir de 100 colunas todo "?" diz por qu
   const pend = cru({ ...base, rodape: { ...base.rodape, ci: { verde: null, execucoesHoje: 0, pendente: true } } } as EstadoPainel, { largura: 120 }).join('\n');
   assert.match(pend, /^CI ● \? \(CI pendente\)/m);
 });
+
+// ---- GM-15 T35 (D-G11 a, D-G12 5, r.8): botões por item no DEPENDE, até 5 + "mais N"; "agora não" e o lote na pergunta ----
+test('depende-botoes-por-item (r.8): 3 itens ⇒ 3 linhas com os próprios botões; 7 ⇒ 5 + "mais 2" com o botão de ver todos; expandido ⇒ os 7', async () => {
+  const mod = await import('../../mod/painel.mjs' as string);
+  const pend = (n: number): Item[] => Array.from({ length: n }, (_, i) => nota(i + 1, 'pendencia', `tarefa número ${i + 1}`));
+  const desenhar = (s: EstadoPainel) => {
+    const linhasM = mod.linhasDaPane(mod.estadoParaDesenho(s), { preset: 'esquadrao', tema: 'mono' }, 120, {});
+    const mapa: Map<number, { rotulo: string; comando: string }[]> = mod.botoesPorLinha(s, null, linhasM);
+    const textoDe = (i: number) => linhasM[i].map((x: { texto: string }) => x.texto).join('');
+    return [...mapa].map(([i, b]) => `${textoDe(i).trim()} | ${b.map((x) => `${x.rotulo}=${x.comando}`).join(' ')}`);
+  };
+  const tres = proj(P(...IDS), pend(3));
+  assert.deepEqual(desenhar(mod.dependeVisivel(tres, false)), [1, 2, 3].map((n) => `tarefa número ${n} | feito=/gabarito-mestre:responder s1:${n} 1`));
+  const sete = proj(P(...IDS), pend(7));
+  const vis = desenhar(mod.dependeVisivel(sete, false));
+  assert.equal(vis.length, 6);
+  assert.deepEqual(vis.slice(0, 5), [1, 2, 3, 4, 5].map((n) => `tarefa número ${n} | feito=/gabarito-mestre:responder s1:${n} 1`));
+  assert.equal(vis[5], 'mais 2 itens | ver todos=/gabarito painel depende');
+  assert.equal(desenhar(mod.dependeVisivel(sete, true)).length, 7);
+  // o texto do item não repete o botão: "[feito]" sai do desenho de todos os itens com botão
+  const linhasM = mod.linhasDaPane(mod.estadoParaDesenho(mod.dependeVisivel(sete, false)), { preset: 'esquadrao', tema: 'mono' }, 120, {});
+  assert.equal(linhasM.map((l: { texto: string }[]) => l.map((x) => x.texto).join('')).some((t: string) => /\[feito\]/.test(t)), false);
+});
+
+test('agora-nao-e-lote-na-pergunta (r.14, r.16): a pergunta aberta ganha "agora não" e, com recomendada, "aprovar recomendadas (N)"', async () => {
+  const mod = await import('../../mod/painel.mjs' as string);
+  const s = proj(P(...IDS), [nota(1, 'duvida', 'Emenda 13: aprovar?', { opcoes: ['aprovar (recomendado)', 'rejeitar'] }, 's1', 'orquestrador'),
+    nota(2, 'duvida', 'Meta?', { opcoes: ['manter', 'trocar (recomendado)'] }, 's1', 'orquestrador')]);
+  const b = mod.botoesDoTopo(s, null).map((x: { rotulo: string; comando: string }) => `${x.rotulo}=${x.comando}`);
+  assert.deepEqual(b, [
+    '1 aprovar (recomendado)=/gabarito-mestre:responder s1:1 1', '2 rejeitar=/gabarito-mestre:responder s1:1 2',
+    'agora não=/gabarito-mestre:responder s1:1 agora', 'aprovar recomendadas (2)=/gabarito-mestre:responder lote',
+  ]);
+});

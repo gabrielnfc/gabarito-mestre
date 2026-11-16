@@ -340,7 +340,13 @@ export function botoesDoTopo(estado, root) {
   const q = perguntaDe(estado);
   if (q !== null) {
     if (typeof q.id !== 'string' || !ID_PERGUNTA_RE.test(q.id)) return [];
-    return q.opcoes.slice(0, 9).map((op, i) => ({ rotulo: `${i + 1} ${cortar(limpar(String(op)), 60)}`, comando: `/gabarito-mestre:responder ${q.id} ${i + 1}` }));
+    // GM-15 T35 (r.14, r.16): toda pergunta tem "agora não"; com recomendação aberta, o lote "aprovar recomendadas (N)" (o hook pede confirmação)
+    const n = Number.isInteger(estado.recomendadas) && estado.recomendadas > 0 ? estado.recomendadas : 0;
+    return [
+      ...q.opcoes.slice(0, 9).map((op, i) => ({ rotulo: `${i + 1} ${cortar(limpar(String(op)), 60)}`, comando: `/gabarito-mestre:responder ${q.id} ${i + 1}` })),
+      { rotulo: 'agora não', comando: `/gabarito-mestre:responder ${q.id} agora` },
+      ...(n > 0 ? [{ rotulo: `aprovar recomendadas (${n})`, comando: '/gabarito-mestre:responder lote' }] : []),
+    ];
   }
   const item = primeiroItem(estado);
   return item === null ? [] : dasAcoes(item.acoes);
@@ -353,9 +359,62 @@ export function estadoParaDesenho(estado) {
   if (ehObj(estado.parar)) return { ...estado, parar: { ...estado.parar, acoes: semComando(estado.parar.acoes) } };
   const q = perguntaDe(estado);
   if (q !== null) return { ...estado, pergunta: { ...q, opcoes: [] } };
-  const item = primeiroItem(estado);
-  if (item === null) return estado;
-  return { ...estado, depende: estado.depende.map((d) => (d === item ? { ...d, acoes: semComando(d.acoes) } : d)) };
+  // GM-15 T35 (r.8): cada item tem os próprios botões (`botoesPorLinha`), então nenhum item repete no texto a ação que virou botão
+  if (!Array.isArray(estado.depende)) return estado;
+  return { ...estado, depende: estado.depende.map((d) => (ehObj(d) && d.nivel === 'dono' ? { ...d, acoes: semComando(d.acoes) } : d)) };
+}
+
+/** GM-15 T35 (r.8, D-G12 5): itens do DEPENDE visíveis antes do "mais N". */
+export const DEPENDE_VISIVEIS = 5;
+const COMANDO_DEPENDE = '/gabarito painel depende';
+const ehItemDono = (d) => ehObj(d) && d.nivel === 'dono' && !SITUACAO_RE.test(String(d.motivo ?? ''));
+/**
+ * GM-15 T35 (r.8): até 5 itens do DEPENDE (na ordem do estado: a base e os itens mais antigos primeiro) e o resto num item "mais N itens" com o botão
+ * "ver todos" (`/gabarito painel depende`, que alterna `expandido`). Expandido ou com até 5 ⇒ o estado igual. Pura.
+ */
+export function dependeVisivel(estado, expandido = false) {
+  if (!estadoNovo(estado) || !Array.isArray(estado.depende)) return estado;
+  const donos = estado.depende.filter(ehItemDono);
+  if (expandido === true || donos.length <= DEPENDE_VISIVEIS) return estado;
+  const fora = new Set(donos.slice(DEPENDE_VISIVEIS));
+  const n = fora.size;
+  const mais = { nivel: 'dono', motivo: `mais ${n} ${n === 1 ? 'item' : 'itens'}`, acoes: [{ rotulo: 'ver todos', comando: COMANDO_DEPENDE }] };
+  return { ...estado, depende: [...estado.depende.filter((d) => !fora.has(d)), mais] };
+}
+
+/**
+ * GM-15 T35 (r.8, D-G11 a): botões POR ITEM. Mapa `índice da linha desenhada ⇒ botões`: PAROU ⇒ só a linha do topo; senão, depois do rótulo
+ * `◆ DEPENDE DE VOCÊ`, cada linha de item (recuo de 2, a mesma ordem de `painel-esquadrao`: pergunta, "mais N perguntas", itens) leva os botões dela;
+ * a pergunta leva os de `botoesDoTopo`. Sem o rótulo (pouca altura) ⇒ só o topo, como antes. Comando que `comandoParaPrompt` recusa não vira botão. Pura.
+ */
+export function botoesPorLinha(estado, root, linhas) {
+  const mapa = new Map();
+  if (!ehObj(estado)) return mapa;
+  const topo = () => {
+    const i = indiceDoTopo(linhas);
+    const b = botoesDoTopo(estado, root);
+    if (i >= 0 && b.length > 0) mapa.set(i, b);
+    return mapa;
+  };
+  if (ehObj(estado.parar)) return topo();
+  const dasAcoes = (acoes) => (Array.isArray(acoes) ? acoes : []).map((a) => ({ rotulo: limpar(String(a?.rotulo ?? '')), comando: comandoParaPrompt(a?.comando, root) }))
+    .filter((b) => b.comando !== null && b.rotulo !== '');
+  const filas = [];
+  if (perguntaDe(estado) !== null) filas.push(botoesDoTopo(estado, root));
+  if (Number.isInteger(estado.perguntasMais) && estado.perguntasMais > 0) filas.push([]);
+  // sem PAROU, item `parar` solto também é linha de item (painel-esquadrao): toda linha que não é a de situação conta
+  for (const d of Array.isArray(estado.depende) ? estado.depende : []) if (ehObj(d) && !SITUACAO_RE.test(String(d.motivo ?? ''))) filas.push(dasAcoes(d.acoes));
+  const ts = (Array.isArray(linhas) ? linhas : []).map(textoDaLinha);
+  const rotulo = ts.findIndex((t) => ROTULO_DEPENDE_RE.test(t));
+  if (rotulo < 0) return topo();
+  let k = 0;
+  for (let i = rotulo + 1; i < ts.length && k < filas.length; i++) {
+    if (!/^ /.test(ts[i])) break;
+    if (!/^ {2}\S/.test(ts[i])) continue; // continuação (recuo de 4)
+    if (filas[k].length > 0) mapa.set(i, filas[k]);
+    k += 1;
+  }
+  return mapa;
 }
 
 const textoDaLinha = (l) => (Array.isArray(l) ? l.map((s) => String(s?.texto ?? '')).join('') : '');
@@ -609,6 +668,7 @@ const S = {
   prefs: PREFS_PADRAO,
   preparando: null, // promessa de `preparar` (prefs + sorteio): uma por `session.start`
   pacoteSorteado: null,
+  dependeExpandido: false, // GM-15 T35 (r.8): `/gabarito painel depende` mostra todos os itens do DEPENDE
   escolhaNomes: null, // GM-15 T22: botões `[{rotulo, comando}]` de `/gabarito painel nomes` sem pacote; some no próximo comando do painel
   transcripts: new Map(), // agent_id → caminho, em ordem de inserção (espelho do store, com teto)
   transcriptsLido: false,
@@ -1254,6 +1314,11 @@ async function comandoPainelBruto($, partes) {
     }
     if (LOCAIS.includes(a)) return trocarLocal($, a);
     if (a === 'nomes') return listarNomes($);
+    if (a === 'depende') { // GM-15 T35 (r.8): o botão "ver todos" do "mais N" alterna os itens do DEPENDE
+      S.dependeExpandido = !S.dependeExpandido;
+      redesenhar($);
+      return S.dependeExpandido ? 'painel: todos os itens do depende de você' : `painel: até ${DEPENDE_VISIVEIS} itens do depende de você`;
+    }
     return USO_GABARITO;
   }
   if (partes.length === 2) {
@@ -1372,9 +1437,10 @@ export async function comandoPainel($, partes) {
 const colunasDe = (props) => larguraDe(props?.bodyColumns);
 
 /** Um `Button` por ação: `onPress` põe o comando no input (`replace`), NUNCA envia. Chaves `painel-acao`, `painel-acao-2`, … */
-function botoesDe($, Button, Text, botoes) {
-  return botoes.flatMap((b, i) => [h(Text, { key: `painel-esp-${i + 1}` }, ' '), h(Button, {
-    key: i === 0 ? 'painel-acao' : `painel-acao-${i + 1}`,
+function botoesDe($, Button, Text, botoes, linha = null) {
+  const sufixo = linha === null ? '' : `-l${linha}`;
+  return botoes.flatMap((b, i) => [h(Text, { key: `painel-esp-${i + 1}${sufixo}` }, ' '), h(Button, {
+    key: (i === 0 ? 'painel-acao' : `painel-acao-${i + 1}`) + sufixo,
     label: b.rotulo,
     onPress: async () => {
       try {
@@ -1387,16 +1453,32 @@ function botoesDe($, Button, Text, botoes) {
   })]);
 }
 
-/** Linhas ⇒ árvore; `botoes` vão SÓ na linha do topo (`indiceDoTopo`), que é cortada para eles caberem em `largura`. */
+/**
+ * Linhas ⇒ árvore. `botoes`: um `Map` linha ⇒ botões (GM-15 T35 r.8, `botoesPorLinha`) ou, como antes, uma lista que vai SÓ na linha do topo
+ * (`indiceDoTopo`). Cada linha com botões é cortada para eles caberem em `largura`.
+ */
 function arvoreDeLinhas($, e, linhas, botoes = [], largura = 0) {
   const { Box, Button, Text } = $.ui.resolve(e);
-  const topo = botoes.length > 0 ? indiceDoTopo(linhas) : -1;
+  const topo = indiceDoTopo(linhas);
+  const mapa = botoes instanceof Map ? botoes : new Map(botoes.length > 0 && topo >= 0 ? [[topo, botoes]] : []);
   return h(Box, { flexDirection: 'column' }, ...linhas.map((l0, i) => {
-    const l = i === topo && largura > 0 ? cortarLinha(l0, largura - colunasDosBotoes(botoes)) : l0;
+    const bs = mapa.get(i) ?? [];
+    const l = bs.length > 0 && largura > 0 ? cortarLinha(l0, largura - colunasDosBotoes(bs)) : l0;
     const filhos = l.filter((s) => s.texto !== '').map((s) => h(Text, s.cor === undefined ? null : { color: s.cor }, s.texto));
     const texto = h(Text, null, ...(filhos.length === 0 ? [' '] : filhos));
-    return i === topo ? h(Box, { flexDirection: 'row' }, texto, ...botoesDe($, Button, Text, botoes)) : texto;
+    // a linha do topo mantém as chaves `painel-acao`, `painel-acao-2`…; as dos outros itens ganham `-l<linha>` (chave única por árvore)
+    return bs.length > 0 ? h(Box, { flexDirection: 'row' }, texto, ...botoesDe($, Button, Text, bs, i === topo ? null : i)) : texto;
   }));
+}
+
+/** GM-15 T35 (r.8): botões por linha do estado desenhado, com os de `painel nomes` na linha do topo (T22). */
+function mapaDeBotoes(estado, root, linhas, larg) {
+  const mapa = botoesPorLinha(estado, root, linhas);
+  if (Array.isArray(S.escolhaNomes) && S.escolhaNomes.length > 0) {
+    const i = indiceDoTopo(linhas);
+    if (i >= 0) mapa.set(i, botoesComNomes(mapa.get(i) ?? [], S.escolhaNomes, larg));
+  }
+  return mapa;
 }
 
 /**
@@ -1493,11 +1575,12 @@ export function registrarPainel(on) {
       // GM-14 T20: orçamento = `scroll.bodyRows` (ausente ⇒ 7, nunca rola); o estado novo ganha os botões do topo
       const bodyRows = e.props?.scroll?.bodyRows;
       const novo = estadoNovo(S.estado);
-      botoes = botoesComNomes(novo ? botoesDoTopo(S.estado, $.plugin.root) : [], S.escolhaNomes, larg);
-      linhas = linhasDaPane(novo ? estadoParaDesenho(S.estado) : S.estado, S.prefs, larg, {
+      const vis = novo ? dependeVisivel(S.estado, S.dependeExpandido) : S.estado; // GM-15 T35 (r.8): até 5 itens + "mais N"
+      linhas = linhasDaPane(novo ? estadoParaDesenho(vis) : S.estado, S.prefs, larg, {
         falha: S.falha, avisos: S.avisos, semLoop: S.semLoop, semLerS: S.semLerS, altura: bodyRows, orcamento: orcamentoLateral(bodyRows), local: 'lateral',
       });
       if (novo) linhas = linhas.slice(0, orcamentoLateral(bodyRows));
+      botoes = novo ? mapaDeBotoes(vis, $.plugin.root, linhas, larg) : botoesComNomes([], S.escolhaNomes, larg);
     } catch {
       linhas = [[{ texto: 'painel: não consegui desenhar', cor: 'warning' }]];
       botoes = [];
@@ -1521,8 +1604,9 @@ export function registrarPainel(on) {
       let linhas;
       let botoes;
       try {
-        botoes = botoesComNomes(botoesDoTopo(S.estado, $.plugin.root), S.escolhaNomes, larg);
-        linhas = linhasDaFaixa(S.estado, S.prefs, { largura: larg, h: hDoViewport(e), maxRows: e.props?.maxRows, falha: S.falha, avisos: S.avisos, semLerS: S.semLerS });
+        const vis = dependeVisivel(S.estado, S.dependeExpandido); // GM-15 T35 (r.8)
+        linhas = linhasDaFaixa(vis, S.prefs, { largura: larg, h: hDoViewport(e), maxRows: e.props?.maxRows, falha: S.falha, avisos: S.avisos, semLerS: S.semLerS });
+        botoes = mapaDeBotoes(vis, $.plugin.root, linhas, larg);
       } catch {
         linhas = [[{ texto: 'painel: não consegui desenhar', cor: 'warning' }]];
         botoes = [];

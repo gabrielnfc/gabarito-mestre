@@ -10,7 +10,7 @@ import { projetarEmendas, shaAceito } from './emenda.js';
 import { cmp, contarConsultas, duracoes, EM_TRABALHO, mediana, projetarDecisoes } from './diario-puro.js';
 import { dependeDe } from './depende.js';
 import { origemDe } from './origem.js';
-import { perguntasAbertas } from './perguntas.js';
+import { loteRecomendadas, perguntasAbertas } from './perguntas.js';
 import { pousoPendente,              } from './pouso-pendente.js';
 import { pedidoDeClear } from './pouso.js';
 import { trilhaDe } from './trilha.js';
@@ -1047,9 +1047,10 @@ function projetarNovo(plano              , eventos                 , entrada    
 
   // `pousoPendente {pendente, sessao, seq}` no estado (FIEL-14 d): a `chavePouso` do mod lê o `seq` do último `sessao.pouso` (pouso novo ⇒ chave nova ⇒ push novo).
   const rec = recenteDe(ord, p, entrada, nomes, comNomes, fuso, textoParar);
-  const estado                                                                                                        = {
+  const estado                                                                                                                              = {
     ...legado,
     pousoPendente: pousoDe,
+    recomendadas: loteRecomendadas(abertas).length, // GM-15 T35 (r.16): o botão "aprovar recomendadas (N)" do mod
     id: plano !== null ? p.entrega : (trilha.entrega ?? ''),
     modo, trilha, pergunta, perguntasMais: Math.max(0, abertas.length - 1), umaLinha, pronto, fase,
     depende, atencao,

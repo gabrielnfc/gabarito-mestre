@@ -10,7 +10,7 @@ import { projetarEmendas, shaAceito } from './emenda.ts';
 import { cmp, contarConsultas, duracoes, EM_TRABALHO, mediana, projetarDecisoes } from './diario-puro.ts';
 import { dependeDe } from './depende.ts';
 import { origemDe } from './origem.ts';
-import { perguntasAbertas } from './perguntas.ts';
+import { loteRecomendadas, perguntasAbertas } from './perguntas.ts';
 import { pousoPendente, type Medicao } from './pouso-pendente.ts';
 import { pedidoDeClear } from './pouso.ts';
 import { trilhaDe } from './trilha.ts';
@@ -1047,9 +1047,10 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
 
   // `pousoPendente {pendente, sessao, seq}` no estado (FIEL-14 d): a `chavePouso` do mod lê o `seq` do último `sessao.pouso` (pouso novo ⇒ chave nova ⇒ push novo).
   const rec = recenteDe(ord, p, entrada, nomes, comNomes, fuso, textoParar);
-  const estado: EstadoPainel & { pousoPendente: ReturnType<typeof pousoPendente>; decisaoSombra: ItemRecente | null } = {
+  const estado: EstadoPainel & { pousoPendente: ReturnType<typeof pousoPendente>; decisaoSombra: ItemRecente | null; recomendadas: number } = {
     ...legado,
     pousoPendente: pousoDe,
+    recomendadas: loteRecomendadas(abertas).length, // GM-15 T35 (r.16): o botão "aprovar recomendadas (N)" do mod
     id: plano !== null ? p.entrega : (trilha.entrega ?? ''),
     modo, trilha, pergunta, perguntasMais: Math.max(0, abertas.length - 1), umaLinha, pronto, fase,
     depende, atencao,

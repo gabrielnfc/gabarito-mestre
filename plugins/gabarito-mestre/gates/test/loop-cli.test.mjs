@@ -6268,6 +6268,16 @@ describe('GM-15 T35 (r.10, C5): o orquestrador fecha só a própria pendência',
     assert.equal(respostas(amb).length, 1);
   });
 
+  test('proxima-nao-espera-adiada (r.14, C4): dúvida do dono adiada ("agora não") não trava: proxima despacha o que é permitido', () => {
+    const amb = ambT();
+    const id = gravar(amb, 'loop', 'orquestrador', 'nota', { tipo: 'duvida', texto: 'qual caminho?', opcoes: ['a', 'b'] });
+    gravar(amb, 'dono', 'orquestrador', 'dono.resposta', { pergunta: id, opcao: 1, rotulo: 'agora não' });
+    const r = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.acao.tipo, 'despachar', JSON.stringify(r.j.acao));
+    assert.deepEqual(r.j.acao.itens.map((i) => `${i.task} ${i.papel}`), ['T1 implementador']);
+  });
+
   test('orquestrador-nao-fecha-item-do-dono: pendência de outro autor, dúvida, emenda, pouso e id inexistente recusam sem gravar', () => {
     const amb = ambT();
     const ids = [
