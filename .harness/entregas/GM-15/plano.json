@@ -468,7 +468,11 @@
         "plugins/gabarito-mestre/gates/test/conversa-pontos.test.mjs",
         "plugins/gabarito-mestre/gates/test/fumaca-e4.test.mjs",
         "plugins/gabarito-mestre/gates/test/fumaca-gm14.test.mjs",
-        "plugins/gabarito-mestre/gates/test/painel-pouso.test.mjs"
+        "plugins/gabarito-mestre/gates/test/painel-pouso.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-e4/caminhada.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-gm14/caminhada.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-e4/esquadrao.txt",
+        "plugins/gabarito-mestre/gates/test/fumaca-e4/executivo.txt"
       ],
       "reqs": [
         "REQ-AUT-2",
