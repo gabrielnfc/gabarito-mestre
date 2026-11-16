@@ -15,7 +15,7 @@ import { renderPainel } from '../src/painel.ts';
 import { append, duracoes, lerEstrito, mediana } from '../src/diario.ts';
 import { contarConsultas } from '../src/sombra.ts';
 import { tokensDe } from '../src/pouso.ts';
-import { nomesPorPapel, projetarEquipe } from '../src/painel-equipe.ts';
+import { integrandoDe, nomesPorPapel, projetarEquipe, rotuloDoShell, SHELL_INTEGRANDO } from '../src/painel-equipe.ts';
 import { horaLocal } from '../src/painel-hora.ts';
 import type { AgenteVivo, EntradaPainel, EstadoPainel, Evento, MotivoParar, Plano, TipoEvento } from '../src/tipos.ts';
 
@@ -1442,4 +1442,47 @@ test('base-igual-ao-vetor (g.14): integrada sem duração medida (veredito com t
   assert.equal(s.plano.feitas, 4);
   assert.equal(s.plano.eta?.n, 3, 'a conta tem 3 durações');
   assert.equal(s.pronto?.previsao?.base, 3, 'a base mostrada é a da conta');
+});
+
+// ---------------------------------------------------------------- g.11: rótulos do SEGUNDO PLANO (a regra; o desenho da seção depende de painel-blocos.test.ts)
+
+test('rotulo-integrando (g.11): `integrar` e `gate-task` no comando ou na descrição ⇒ Integrando, com a task', () => {
+  assert.deepEqual(rotuloDoShell({ texto: 'integrar T16', comando: 'cd /r && node plugins/gabarito-mestre/gates/scripts/loop.mjs integrar T16 2>&1 | tail' }), { tipo: 'Integrando', task: 'T16' });
+  assert.deepEqual(rotuloDoShell({ texto: 'gate da T14', comando: 'node gate-task.mjs T14' }), { tipo: 'Integrando', task: 'T14' });
+  assert.deepEqual(rotuloDoShell({ texto: 'integrar T3 em fundo' }), { tipo: 'Integrando', task: 'T3' }, 'só a descrição também vale');
+  assert.deepEqual(rotuloDoShell({ texto: 'esperar a integração', comando: 'until grep -q integrar out.txt; do sleep 2; done' }).tipo, 'Aguardando', 'laço que só espera a integração não é integrar');
+});
+
+test('rotulo-teste (g.11): suíte de teste (node --test, npm test, mod-test.sh, claude plugin test, *.test.*) ⇒ Teste', () => {
+  for (const comando of ['node --experimental-strip-types --test test/painel.test.ts', 'npm test', 'npm run test', 'bash scripts/test/mod-test.sh', 'claude plugin test .', 'node x/painel-pouso.test.mjs', 'bash scripts/test/texto.test.sh']) {
+    assert.equal(rotuloDoShell({ texto: 'rodar', comando }).tipo, 'Teste', comando);
+  }
+  assert.equal(rotuloDoShell({ texto: 'Find mod test setup', comando: 'grep -rn setup mod' }).tipo, 'Comando', 'a busca "mod test setup" não é teste');
+});
+
+test('rotulo-aguardando (g.11): laço de espera (until/while … sleep|grep) ⇒ Aguardando', () => {
+  assert.equal(rotuloDoShell({ texto: 'esperar', comando: 'until grep -q pronto out.txt; do sleep 3; done' }).tipo, 'Aguardando');
+  assert.equal(rotuloDoShell({ texto: 'esperar', comando: 'while ! test -f x; do sleep 1; done' }).tipo, 'Aguardando');
+  assert.equal(rotuloDoShell({ texto: 'aguardando', comando: 'while true; do date; done' }).tipo, 'Comando', 'laço sem sleep nem grep não espera nada');
+});
+
+test('rotulo-comando (g.11): o resto ⇒ Comando, sem task inventada; entrada fora da forma não lança', () => {
+  assert.deepEqual(rotuloDoShell({ texto: 'listar arquivos', comando: 'ls -la' }), { tipo: 'Comando', task: null });
+  for (const ruim of [null, undefined, {}, { texto: 7, comando: {} }]) assert.deepEqual(rotuloDoShell(ruim as never), { tipo: 'Comando', task: null });
+  assert.deepEqual(integrandoDe('x'), []);
+});
+
+test('rotulo-task-pelo-cwd (g.11): a task vem do cwd da worktree, depois de `integrar|gate-task <T>`, depois da descrição; sem prova ⇒ null', () => {
+  assert.equal(rotuloDoShell({ texto: 'rodar testes', comando: 'cd /r/.harness/worktrees/T14 && node --test test/a.test.ts' }).task, 'T14');
+  assert.equal(rotuloDoShell({ texto: 'testes da T9', comando: 'node --test x' }).task, 'T9');
+  assert.equal(rotuloDoShell({ texto: 'rodar', comando: 'cd /r/.harness/worktrees/T14b && npm test' }).task, 'T14b');
+  assert.equal(rotuloDoShell({ texto: 'rodar', comando: 'node --test x' }).task, null);
+  assert.equal(rotuloDoShell({ texto: 'rodar', comando: 'cd /r/.harness/worktrees/T14 && node scripts/loop.mjs integrar T16' }).task, 'T14', 'o cwd vence o argumento');
+});
+
+test('fonte-unica-shell-integrando (g.11): o literal do painel é o mesmo do hook Stop (stop-loop.mjs, SHELL_INTEGRANDO)', () => {
+  const stop = readFileSync(join(AQUI, '..', 'scripts', 'stop-loop.mjs'), 'utf8');
+  const m = /const SHELL_INTEGRANDO = (\/.+\/);/.exec(stop);
+  assert.ok(m !== null, 'stop-loop.mjs declara SHELL_INTEGRANDO');
+  assert.equal(String(SHELL_INTEGRANDO), (m as RegExpExecArray)[1]);
 });

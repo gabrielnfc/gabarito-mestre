@@ -284,3 +284,17 @@ test('cli-pacote-da-sessao: leitura sem pacote, pacote fora da forma ou velha de
   assert.equal(estadoDoPainel(r, { agoraMs: Date.now() }).estado.pacote, 'Terra Média', 'sem --sessao a leitura de 1 h atrás não vale');
   assert.equal(estadoDoPainel(r, { agoraMs: Date.now(), sessao: 'sessao-v' }).estado.pacote, 'Hogwarts', 'pedindo a sessão pelo id, o pacote dela vale');
 });
+
+// ───────────────────────────── g.11/g.15 pela borda: o `comando` do shell de fundo chega à narração
+test('narracao-integrando-pela-cli: o `comando` do segundoPlano do mod passa pelo validador do stdin e a narração diz "integrando T1"', () => {
+  const { r } = repo({ origem: origemOnb, eventos: [['task.iniciada', { task: 'T2', papel: 'implementador' }]] });
+  const sp = (extra) => ({ session_id: 'sessao-p', agentes: [], sessao: {}, segundoPlano: [{ id: 'bg1', dono: 'orquestrador', texto: 'rodando', desde: 1, ...extra }] });
+  const ok = estadoDoPainel(r, { agoraMs: Date.now(), agentes: sp({ comando: 'cd /r && node scripts/loop.mjs integrar T1 | tail' }) });
+  assert.equal(ok.ok, true, JSON.stringify(ok));
+  assert.match(ok.estado.equipe.lider.narrativa, /integrando T1\b/);
+  const sem = estadoDoPainel(r, { agoraMs: Date.now(), agentes: sp({ comando: 'ls' }) });
+  assert.doesNotMatch(sem.estado.equipe.lider.narrativa, /integrando/);
+  const ruim = estadoDoPainel(r, { agoraMs: Date.now(), agentes: sp({ comando: 7 }) });
+  assert.equal(ruim.ok, false);
+  assert.equal(ruim.erro, 'stdin_invalido');
+});

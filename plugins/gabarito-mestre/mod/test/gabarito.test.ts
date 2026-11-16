@@ -4697,6 +4697,18 @@ test('segundo-plano-sem-description-usa-o-comando: texto = o comando cortado, nu
   expect(t.startsWith('sleep 25; yyy')).toBe(true)
   expect([...t].length).toBeLessThanOrEqual(120)
 })
+test('segundo-plano-leva-o-comando (g.11): o comando cortado em 400 e sem controle vai no item, para o painel rotular o shell; sem comando o item não leva o campo', async ($, on) => {
+  const m = comPainel($, on, {}, { resultadoTool: (e: any) => ({ backgroundTaskId: e.description === 'sem cmd' ? 'bg8' : 'bg7' }) })
+  await arrancar(m)
+  await $.tool.call({ tool: 'Bash', command: `node loop.mjs integrar T16\u0007 ${'z'.repeat(600)}`, description: 'integrar T16', run_in_background: true }); await drena(m)
+  const it = ultimoStdin(m).segundoPlano[0]
+  expect(it.texto).toBe('integrar T16')
+  expect(it.comando.startsWith('node loop.mjs integrar T16  zzz')).toBe(true)
+  expect([...it.comando].length).toBeLessThanOrEqual(400)
+  expect(it.comando).not.toMatch(/\u0007/)
+  await $.tool.call({ tool: 'Bash', description: 'sem cmd', run_in_background: true }); await drena(m)
+  expect(ultimoStdin(m).segundoPlano.find((x: any) => x.id === 'bg8')).not.toHaveProperty('comando')
+})
 test('segundo-plano-so-com-backgroundTaskId: Bash em primeiro plano, id fora do padrão e outra ferramenta não entram', async ($, on) => {
   const m = comPainel($, on, {}, { resultadoTool: (e: any) => (e.tool === 'Bash' && e.command === 'ruim' ? { backgroundTaskId: '../x' } : e.tool === 'Monitor' ? { backgroundTaskId: 'm1' } : {}) })
   await arrancar(m)

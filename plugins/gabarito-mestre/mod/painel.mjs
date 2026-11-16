@@ -619,6 +619,8 @@ export const JANELA_ACAO_MS = 2000;
 export const ESPERA_STOP_MS = 400;
 const TERMINAIS = new Set(['completed', 'failed', 'killed']);
 const MAX_TEXTO_SEGUNDO_PLANO = 120;
+/** O comando do shell de fundo que segue ao painel (mesmo teto de `TEXTO_MAX` do validador do CLI). */
+const MAX_COMANDO_SEGUNDO_PLANO = 400;
 
 /** Uma linha só: sem controle nem quebra, no máximo 200 colunas (REQ-PNL-13: a resposta do comando nunca vira bloco). */
 export function umaLinha(texto) {
@@ -1149,7 +1151,9 @@ async function anotarSegundoPlano($, e, r) {
   const texto = descricaoLimpa(e.description)
     ?? ([...String(typeof e.command === 'string' ? e.command : '').replace(/[\p{Cc}\p{Cf}]/gu, ' ').trim()].slice(0, MAX_TEXTO_SEGUNDO_PLANO).join('').trim() || 'comando em segundo plano');
   const dono = typeof e.agentId === 'string' && AGENTE_RE.test(e.agentId) ? e.agentId : 'orquestrador';
-  inserirNoFim(S.segundoPlano, id, { id, dono, texto, desde: Math.max(0, Math.round(await agora($))) }, TETO_SEGUNDO_PLANO);
+  // GM-15 T33 (g.11): o comando (cortado, sem controle) segue para o painel rotular o shell (integrando, teste, aguardando, comando) e achar a task; só vai ao CLI local, nunca ao texto
+  const comando = [...String(typeof e.command === 'string' ? e.command : '').replace(/[\p{Cc}\p{Cf}]/gu, ' ').trim()].slice(0, MAX_COMANDO_SEGUNDO_PLANO).join('').trim();
+  inserirNoFim(S.segundoPlano, id, { id, dono, texto, desde: Math.max(0, Math.round(await agora($))), ...(comando !== '' ? { comando } : {}) }, TETO_SEGUNDO_PLANO);
   return true;
 }
 
