@@ -6288,13 +6288,23 @@ describe('GM-15 T35 (r.10, C5): o orquestrador fecha só a própria pendência',
   });
 
   test('proxima-nao-espera-adiada (r.14, C4): dúvida do dono adiada ("agora não") não trava: proxima despacha o que é permitido', () => {
+    // Guarda de REGRESSÃO (review r1 MINOR-1): o núcleo de `proxima` não lê perguntas nem respostas do dono, então não há sítio de mutação "esperar
+    // item adiado" hoje. A prova é estrutural (abaixo) e por controle: com a dúvida ABERTA a ação é a mesma. Se alguém fizer o núcleo ler perguntas,
+    // a asserção estrutural cai e este teste passa a exigir que o adiado não trave.
     const amb = ambT();
     const id = gravar(amb, 'loop', 'orquestrador', 'nota', { tipo: 'duvida', texto: 'qual caminho?', opcoes: ['a', 'b'] });
+    const aberta = amb.cli(['proxima', '--vivos', '0']);
+    assert.equal(aberta.rc, 0, aberta.out + aberta.err);
     gravar(amb, 'dono', 'orquestrador', 'dono.resposta', { pergunta: id, rotulo: 'agora não' });
     const r = amb.cli(['proxima', '--vivos', '0']);
     assert.equal(r.rc, 0, r.out + r.err);
     assert.equal(r.j.acao.tipo, 'despachar', JSON.stringify(r.j.acao));
     assert.deepEqual(r.j.acao.itens.map((i) => `${i.task} ${i.papel}`), ['T1 implementador']);
+    assert.deepEqual(r.j.acao, aberta.j.acao, 'dúvida aberta ou adiada: a mesma ação');
+    for (const f of ['loop.ts', 'pendencias.ts']) {
+      const fonte = readFileSync(join(AQUI, '..', 'src', f), 'utf8');
+      assert.doesNotMatch(fonte, /from '\.\/(perguntas|depende)\.ts'|'dono\.resposta'|tipo === 'nota'/, `${f}: o núcleo de proxima passou a ler perguntas; o adiado não pode travar (r.14)`);
+    }
   });
 
   test('orquestrador-nao-fecha-item-do-dono: pendência de outro autor, dúvida, emenda, pouso e id inexistente recusam sem gravar', () => {
