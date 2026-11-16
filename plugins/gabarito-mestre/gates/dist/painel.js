@@ -225,16 +225,26 @@ export function etapasDe(eventos          , integradas                     )    
   return saida;
 }
 
-/** Relógio por task integrada: da 1ª `task.iniciada` à última `task.integrada`, dividido pelas integradas. `null` sem as duas pontas. */
-export function ritmoDe(eventos          , integradas                     )                {
-  let ini = Number.NaN, fim = Number.NaN;
+/** Um ciclo de relógio com noite dentro: a janela do ritmo. */
+const DIA_MS = 24 * 3_600_000;
+
+/**
+ * Relógio por task integrada no ÚLTIMO CICLO DE 24 h até `agoraMs` (uma noite e as esperas dentro): 24 h ÷ integradas na janela. Com menos de 24 h
+ * de história, a janela começa na 1ª `task.iniciada`. Nenhuma integrada na janela ⇒ da 1ª iniciada até agora ÷ todas. `null` sem integrada.
+ * Replay da GM-14 (2026-11-16): a conta da entrega inteira pesava a rajada do 1º dia e errava 29,1 % contra o término real; a do último dia, 25 %.
+ */
+export function ritmoDe(eventos          , integradas                     , agoraMs        )                {
+  let ini = Number.NaN;
+  for (const ev of eventos) if (tipoDe(ev) === 'task.iniciada' && msDe(ev) <= agoraMs && !(msDe(ev) >= ini)) ini = msDe(ev);
+  if (integradas.size === 0 || !(agoraMs > ini)) return null;
+  const desde = Math.max(ini, agoraMs - DIA_MS);
+  const na = new Set        ();
   for (const ev of eventos) {
     const t = msDe(ev);
-    if (!Number.isFinite(t)) continue;
-    if (tipoDe(ev) === 'task.iniciada' && !(t >= ini)) ini = t;
-    if (tipoDe(ev) === 'task.integrada' && !(t <= fim)) fim = t;
+    const id = taskDe(ev);
+    if (tipoDe(ev) === 'task.integrada' && id !== null && integradas.has(id) && t > desde && t <= agoraMs) na.add(id);
   }
-  return integradas.size === 0 || !(fim > ini) ? null : (fim - ini) / 1000 / integradas.size;
+  return na.size === 0 ? (agoraMs - ini) / 1000 / integradas.size : (agoraMs - desde) / 1000 / na.size;
 }
 
 /** h.1: segundos da última `task.integrada` ao primeiro `entrega.encerrada` depois dela; `null` sem os dois (nunca palpite). */
@@ -324,7 +334,7 @@ export function previsaoExata(
   const soma = f ?? 0;
   // o caminho crítico é o piso; o ritmo medido (relógio por task integrada, com as paradas dentro) é o que ele não vê. O ponto é o maior dos dois.
   const abertas = plano.tasks.filter((t) => faltaDaTask(estados.get(t.id), agoraMs, medidas) > 0).length;
-  const ritmo = ritmoDe(eventos, integradas);
+  const ritmo = ritmoDe(eventos, integradas, agoraMs);
   const piso = meio.fim / oc;
   const pontoS = Math.max(piso, ritmo === null ? 0 : ritmo * abertas);
   const baixo = Math.min(pontoS, fazer(lo).fim / oc) + soma;

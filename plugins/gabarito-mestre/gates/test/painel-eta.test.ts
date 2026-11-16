@@ -113,8 +113,21 @@ test('ocupacao-e-ritmo: o tempo parado alarga a previsão; o ritmo medido vira o
   // 3 integradas em sequência com 2 h de parada entre elas: ritmo ≈ 1 h por task; faltam 2 ⇒ o ponto é o ritmo, não os 12 min do caminho
   const lento = D([...ciclo('A', 0), ...ciclo('B', 120), ...ciclo('C', 240)]);
   const f = previsaoExata(P([['A', []], ['B', []], ['C', []], ['X', []], ['Y', []]]), lento, comIntegradas(pend(['X', 'Y'])) as never, feitas(['A', 'B', 'C']), T0 + 247 * MIN, 'UTC', null, 1) as NonNullable<ReturnType<typeof previsaoExata>>;
-  assert.equal(ritmoDe(lento, feitas(['A', 'B', 'C'])), (246 * 60) / 3);
+  assert.equal(ritmoDe(lento, feitas(['A', 'B', 'C']), T0 + 247 * MIN), (247 * 60) / 3, 'menos de 24 h de história: da 1ª iniciada até agora');
   assert.ok(f.restanteS >= 2 * 82 * 60 - 1, `2 tasks abertas × 82 min de ritmo (veio ${f.restanteS / 60} min)`);
+});
+
+test('ritmo-ultimo-dia: o ritmo é o do último ciclo de 24 h até agora (uma noite dentro), não o da entrega inteira', () => {
+  const H = 60;
+  // 3 integradas na 1ª hora (rajada), depois só 2 em 26-27 h: a rajada fica fora da janela de 24 h
+  const ev = D([...ciclo('A', 0), ...ciclo('B', 10), ...ciclo('C', 20), ...ciclo('D', 26 * H), ...ciclo('E', 27 * H)]);
+  const todas = feitas(['A', 'B', 'C', 'D', 'E']);
+  const agora = T0 + (27 * H + 10) * MIN;
+  assert.equal(ritmoDe(ev, todas, agora), (24 * 3600) / 2, '24 h ÷ 2 integradas na janela');
+  // o relógio corre até agora: 10 h sem integrar alargam o ritmo (a noite entra na conta)
+  assert.equal(ritmoDe(ev, todas, agora + 10 * H * MIN), (24 * 3600) / 2, 'D e E (26-27 h) ainda na janela que acaba 10 h depois');
+  assert.equal(ritmoDe(ev, todas, agora + 30 * H * MIN), (57 * H + 10) * 60 / 5, 'sem integrada nas últimas 24 h: da 1ª iniciada até agora ÷ todas');
+  assert.equal(ritmoDe(ev, feitas([]), agora), null);
 });
 
 test('base-igual-ao-vetor: pronto.previsao diz as tasks, o ritmo e o fechamento da MESMA conta (g.14, h.2)', () => {
@@ -171,9 +184,10 @@ test('replay-gm14: erro mediano da previsão contra o término real, em cada int
   }
   const med = (xs: number[]): number => [...xs].sort((a, b) => a - b)[xs.length >> 1];
   console.log(`replay GM-14 (${novo.length} pontos): erro mediano caminho ${(med(novo) * 100).toFixed(1)}% · com fechamento ${(med(comFecho) * 100).toFixed(1)}% · conta antiga ${(med(antigo) * 100).toFixed(1)}%`);
-  // a meta da D-G2 é ≤ 15 %; a medição de 2026-11-16 deu ~33 % (paradas de noite e espera do dono não se preveem). Este teto TRAVA o que se mediu, não a meta.
-  assert.ok(med(novo) < 0.4, `erro mediano ${med(novo)}`);
-  assert.ok(med(comFecho) < 0.4, `erro mediano com fechamento ${med(comFecho)}`);
+  // a meta da D-G2 é ≤ 15 %. Medido em 2026-11-16: ritmo da entrega inteira 32,9 % / 29,1 % (com fechamento, contra o término real); ritmo do último
+  // dia 26,4 % / 25,4 %. Teto: o ritmo médio FINAL da GM-14 (94 min/task, que nenhum ponto conhece) erra 14,8 %. Este teto TRAVA o que se mediu, não a meta.
+  assert.ok(med(novo) < 0.28, `erro mediano ${med(novo)}`);
+  assert.ok(med(comFecho) < 0.27, `erro mediano com fechamento ${med(comFecho)}`);
   assert.ok(med(novo) < med(antigo) / 2, 'a previsão nova erra menos da metade da antiga');
 });
 
