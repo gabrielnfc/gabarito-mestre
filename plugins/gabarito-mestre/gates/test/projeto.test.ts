@@ -28,6 +28,12 @@
  *  M22 Sombra sem task devolve null (exceção)                                  ⇒ sombra-sem-task-fora-do-loop
  *  M23 empate de atualizadoEm vence a outra árvore, não a atual                ⇒ card-mais-novo-vence
  *  M24 diário só da 1ª árvore (sem união)                                      ⇒ diario-uniao-sem-repetir
+ * Emenda 19 (aprovada, D-G13, .claude-tmp/gm15r/emenda-t31c.md):
+ *  M25 plano.json da 1ª árvore, sem olhar o commit                             ⇒ plano-vigente-e-o-de-commit-mais-recente
+ *  M26 empate de commit vence a outra árvore                                   ⇒ plano-vigente-e-o-de-commit-mais-recente
+ *  M27 árvore sem git perde para a de commit                                   ⇒ plano-vigente-e-o-de-commit-mais-recente
+ *  M28 tasks estimadas dos PBIs sem plano entram no total do %                 ⇒ pbi-sem-plano-fora-do-pct
+ *  M29 número estimado sem "~"                                                 ⇒ previsao-estima-pbi-sem-plano-com-til
  * Variantes a/b/c (M11, M12, M13, M14) e o roteiro: .claude-tmp/t31/mut.mjs (fora do repo).
  */
 import { test } from 'node:test';
@@ -294,4 +300,37 @@ test('feito-sem-plano-e-diario-ilegivel: PBI feito sem plano não entra na estim
   assert.equal(r.totais.foraDaConta, e.totais.foraDaConta + 1);
   assert.equal(r.totais.previsao.estimada?.pbisSemPlano, 3, 'o feito sem plano não é trabalho a estimar');
   assert.deepEqual(r.avisos, ['PBI-3: diário ilegível em /FIX/wt-pbi-2']);
+});
+
+test('plano-vigente-e-o-de-commit-mais-recente: entre worktrees vale o plano.json de commit mais recente; empate ou sem git ⇒ árvore atual', () => {
+  const pl = (ids: string[]): { ok: true; bruto: unknown } => ({ ok: true, bruto: { entrega: 'GM-9', tasks: ids.map((id) => ({ id, titulo: id, deps: [], arquivos: [`${id}.ts`] })) } });
+  const arv = (cAtual: number | null, cOutra: number | null): ArvoreLida[] => [
+    { caminho: '/atual', cards: [], entregas: [{ id: 'GM-9', plano: pl(['T1']), planoCommitMs: cAtual, eventos: [] }] },
+    { caminho: '/outra', cards: [], entregas: [{ id: 'GM-9', plano: pl(['T1', 'T2', 'T3']), planoCommitMs: cOutra, eventos: [] }] }];
+  const total = (a: ArvoreLida[]): number | undefined => linha(projetarProjeto(a, OPC), 'GM-9').tasks?.total;
+  assert.equal(total(arv(1000, 2000)), 3, 'commit mais recente na outra árvore vence');
+  assert.equal(linha(projetarProjeto(arv(1000, 2000), OPC), 'GM-9').origem, '/outra');
+  assert.equal(total(arv(3000, 2000)), 1);
+  assert.equal(total(arv(2000, 2000)), 1, 'empate ⇒ árvore atual');
+  assert.equal(total(arv(null, 2000)), 1, 'sem git ⇒ árvore atual');
+  assert.equal(total(arv(1000, null)), 1, 'sem git ⇒ árvore atual');
+});
+
+test('pbi-sem-plano-fora-do-pct: as tasks estimadas dos PBIs sem plano não entram no % nem no total de tasks', () => {
+  const e = projetoCompleto();
+  assert.ok(e.totais.previsao.estimada !== null); // há estimativa (3 PBIs sem plano)…
+  assert.equal(e.totais.tasks, 9); // …mas o % é só dos PBIs com plano
+  assert.equal(e.totais.restantes, 3);
+  assert.equal(e.totais.pct, 33);
+  assert.equal(e.totais.pctComEstimadas, 67);
+});
+
+test('previsao-estima-pbi-sem-plano-com-til: tasks estimadas = mediana × PBIs sem plano não concluídos; número com "~" e rotulado estimado', () => {
+  const est = projetoCompleto().totais.previsao.estimada;
+  assert.ok(est !== null);
+  assert.equal(est.tasks, 9); // mediana 3 × 3 PBIs sem plano abertos
+  assert.match(est.texto, /^~9 tasks estimadas/);
+  assert.match(est.texto, /estimad/);
+  assert.match(est.texto, new RegExp(`~${est.hora}`));
+  assert.doesNotMatch(est.texto, /[`]|--|\/[a-z]|\bnode\b|\.(json|mjs|md)\b|[a-z]+_[a-z_]+|[a-z]+\.[a-z]+\b/); // REQ-LNG-1
 });

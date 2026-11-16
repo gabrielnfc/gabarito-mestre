@@ -28,8 +28,11 @@ const ID_PADRAO = /^[A-Z]+-\d+$/;
 export type ArvoreLida = {
   caminho: string;
   cards: Array<{ arquivo: string; texto: string; planoMd: string | null }>;
-  /** `plano`: `null` = sem `plano.json`; `ok:false` = arquivo ilegível. `eventos`: `null` = diário ilegível. */
-  entregas: Array<{ id: string; plano: { ok: true; bruto: unknown } | { ok: false; motivo: string } | null; eventos: Evento[] | null }>;
+  /**
+   * `plano`: `null` = sem `plano.json`; `ok:false` = arquivo ilegível. `planoCommitMs`: data (ms) do último commit que tocou o `plano.json` nesta
+   * árvore (`git log -1`, lido por quem chama); `null`/ausente = sem git ou não versionado. `eventos`: `null` = diário ilegível.
+   */
+  entregas: Array<{ id: string; plano: { ok: true; bruto: unknown } | { ok: false; motivo: string } | null; planoCommitMs?: number | null; eventos: Evento[] | null }>;
 };
 
 export type Card = { id: string; status: string | null; titulo: string | null; atualizadoEm: string | null; planoMd: string | null };
@@ -63,8 +66,11 @@ export type PrevisaoProjeto = {
   ritmoS: number | null;
   /** (a) medida: ritmo × restantes dos PBIs com plano. */
   medida: { restanteS: number; hora: string } | null;
-  /** (b) estimada: a medida + os PBIs sem plano (não feitos) × mediana de tasks por PBI com plano. `null` sem PBI sem plano. */
-  estimada: { restanteS: number; hora: string; pbisSemPlano: number; tasksPorPbi: number } | null;
+  /**
+   * (b) estimada (emenda 19 p.5): a medida + `tasks` = mediana de tasks dos PBIs com plano × PBIs sem plano não concluídos, no ritmo medido.
+   * Só na previsão (fora do %). `texto` marca os números com "~" e diz "estimadas". `null` sem PBI sem plano aberto.
+   */
+  estimada: { restanteS: number; hora: string; pbisSemPlano: number; tasksPorPbi: number; tasks: number; texto: string } | null;
   motivo: string | null;
 };
 export type EstadoProjeto = {
@@ -274,13 +280,16 @@ function previsaoDoProjeto(linhas: LinhaProjeto[], diarios: Array<{ id: string; 
   const est = estimativaSemPlano(linhas);
   if (est === null) return { ritmoS: ritmo, medida, estimada: null, motivo: null };
   if ('motivo' in est) return { ritmoS: ritmo, medida, estimada: null, motivo: est.motivo };
-  const estS = medidaS + ritmo * est.tasksPorPbi * est.abertos;
-  return { ritmoS: ritmo, medida, estimada: { restanteS: estS, hora: hora(estS), pbisSemPlano: est.abertos, tasksPorPbi: est.tasksPorPbi }, motivo: null };
+  const tasks = est.tasksPorPbi * est.abertos;
+  const estS = medidaS + ritmo * tasks;
+  const h = hora(estS);
+  const texto = `~${Math.round(tasks)} tasks estimadas em ${est.abertos} PBIs sem plano, até ~${h}`;
+  return { ritmoS: ritmo, medida, estimada: { restanteS: estS, hora: h, pbisSemPlano: est.abertos, tasksPorPbi: est.tasksPorPbi, tasks, texto }, motivo: null };
 }
 
 /**
- * PENDENTE DE DECISÃO DO DONO (emenda 18 deixa fora): fórmula da estimativa dos PBIs sem plano. Hoje: PBIs sem plano e não feitos × mediana de
- * tasks dos PBIs com plano. `null` = nenhum PBI sem plano aberto.
+ * Emenda 19 p.5 (D-G13): PBIs sem plano e não concluídos × mediana de tasks dos PBIs com plano; só para a previsão, nunca no %.
+ * `null` = nenhum PBI sem plano aberto.
  */
 function estimativaSemPlano(linhas: LinhaProjeto[]): { abertos: number; tasksPorPbi: number } | { motivo: string } | null {
   const abertos = linhas.filter((l) => l.semPlano && !l.feito).length;
@@ -291,9 +300,15 @@ function estimativaSemPlano(linhas: LinhaProjeto[]): { abertos: number; tasksPor
 }
 
 /**
- * PENDENTE DE DECISÃO DO DONO (emenda 18 deixa fora): qual plano.json vale entre worktrees. Hoje: o da 1ª árvore que tem um (a atual primeiro,
- * depois a ordem do git); `ents` já vem nessa ordem.
+ * Emenda 19 p.3p (D-G13): entre worktrees vale o `plano.json` cujo último commit é o mais recente. Empate, ou alguma árvore sem data de commit
+ * (sem git, não versionado) ⇒ o da árvore atual (`ents` vem com a atual primeiro, depois a ordem do git).
  */
-function escolherPlanoJson<T extends { plano: unknown }>(ents: T[]): T | undefined {
-  return ents.find((e) => e.plano !== null);
+function escolherPlanoJson<T extends { plano: unknown; planoCommitMs?: number | null }>(ents: T[]): T | undefined {
+  const com = ents.filter((e) => e.plano !== null);
+  if (com.length === 0) return undefined;
+  const data = (e: T): number | null => (typeof e.planoCommitMs === 'number' && Number.isFinite(e.planoCommitMs) ? e.planoCommitMs : null);
+  if (com.some((e) => data(e) === null)) return com[0];
+  let melhor = com[0];
+  for (const e of com.slice(1)) if ((data(e) as number) > (data(melhor) as number)) melhor = e;
+  return melhor;
 }
