@@ -33,6 +33,7 @@
  *   loop.mjs aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>]
  *       (GM-13 T8; contrato e ordem de recusa em `loop-aprendizado.mjs`; `aprendizados` não exige entrega na branch).
  *   loop.mjs anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--entrega <ID>] [--sessao <id>] [--opcao <r>]…   (GM-14 REQ-DIA-2; sem plano)
+ *   loop.mjs anotar --fechar <sessao>:<seq>   (GM-15 T35 r.10: fecha só a pendência aberta escrita pelo orquestrador; item do dono recusa)
  *       grava `nota` (forma da T1) e devolve `{ok, evento:{tipo:'nota', dados}, entrega, sessao}`; entrega = `--entrega`, senão a da branch, senão `_sem-id`.
  *   todos aceitam --entrega <GM-10> (senão vem da branch); os que gravam aceitam --sessao <id> (padrão `loop`).
  *
@@ -77,7 +78,8 @@ import { aprendizadosVigentes, paraDestino } from '../dist/aprendizado.js';
 import * as diario from '../dist/diario.js';
 import { escopoDaTask, pontaDaSpec, projetarEmendas, SESSAO_EMENDAS, shaAceito, validarAplicacao, validarJulgamento, validarProposta } from '../dist/emenda.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
-import { formaInvalida, formaNaGravacao, MOTIVOS_REENTREGA, REQ_RE } from '../dist/formas.js';
+import { formaInvalida, formaNaGravacao, ID_PERGUNTA_RE, MOTIVOS_REENTREGA, REQ_RE } from '../dist/formas.js';
+import { pendenciaAberta } from '../dist/depende.js';
 import { estadoDe, foraPermitido, ordenar, podeIntegrar, proximaAcao, TIPOS_DE_TASK, tasksCongeladas } from '../dist/loop.js';
 import { lerLeitura } from '../dist/pouso-pendente.js';
 import { pedidoDeClear } from '../dist/pouso.js';
@@ -1864,20 +1866,26 @@ const SESSAO_PERGUNTA_RE = /^[A-Za-z0-9-]{1,128}$/;
 
 /** Leitor de `anotar`: `--opcao` se repete (2–4 na `duvida`), as demais flags não; sem posicional. Uso errado sai 2. */
 function lerArgsAnotar(argv) {
-  const uso = 'uso: loop.mjs anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--entrega <ID>] [--sessao <id>] [--opcao <r>]…';
+  const uso = 'uso: loop.mjs anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--entrega <ID>] [--sessao <id>] [--opcao <r>]… | loop.mjs anotar --fechar <sessao>:<seq> [--entrega <ID>] [--sessao <id>]';
   const flags = {};
   const opcoes = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (!a.startsWith('--')) throw new Falha('uso', `anotar não tem argumento posicional (${JSON.stringify(a)}). ${uso}`, {}, 2);
     const nome = a.slice(2);
-    if (!['tipo', 'texto', 'entrega', 'sessao', 'opcao'].includes(nome)) throw new Falha('uso', `argumento desconhecido para anotar: ${a}. ${uso}`, {}, 2);
+    if (!['tipo', 'texto', 'entrega', 'sessao', 'opcao', 'fechar'].includes(nome)) throw new Falha('uso', `argumento desconhecido para anotar: ${a}. ${uso}`, {}, 2);
     const v = argv[i + 1];
     if (v === undefined || v.startsWith('--')) throw new Falha('uso', `${a} sem valor. ${uso}`, {}, 2);
     if (nome === 'opcao') opcoes.push(v);
     else if (Object.hasOwn(flags, nome)) throw new Falha('uso', `${a} repetido. ${uso}`, {}, 2);
     else flags[nome] = v;
     i++;
+  }
+  // GM-15 T35 (r.10): `--fechar <sessao>:<seq>` fecha a própria pendência; não se mistura com o que grava nota
+  if (Object.hasOwn(flags, 'fechar')) {
+    if (['tipo', 'texto'].some((n) => Object.hasOwn(flags, n)) || opcoes.length > 0) throw new Falha('uso', `--fechar não se mistura com --tipo, --texto nem --opcao. ${uso}`, {}, 2);
+    if (!ID_PERGUNTA_RE.test(flags.fechar) || flags.fechar.startsWith('herdar:')) throw new Falha('uso', `--fechar ${JSON.stringify(flags.fechar.slice(0, 60))} fora da forma <sessao>:<seq>. ${uso}`, {}, 2);
+    return { flags, opcoes };
   }
   for (const nome of ['tipo', 'texto']) if (!Object.hasOwn(flags, nome)) throw new Falha('uso', `anotar exige --${nome}. ${uso}`, {}, 2);
   return { flags, opcoes };
@@ -1902,8 +1910,34 @@ function destinoDeAnotar(cwd, flags) {
  * ⇒ canário no texto e em cada opção ⇒ entrega e raiz ⇒ diário legível ⇒ `diario.append`. Recusa em qualquer passo: rc 1, `erro` com o motivo
  * (nunca o valor), nada gravado. Diário ausente cria a pasta; diário com linha ilegível ou cadeia quebrada recusa (`diario_ilegivel`): anotar não piora o que já quebrou.
  */
+/**
+ * GM-15 T35 (r.10, C5): `anotar --fechar <sessao>:<seq>` fecha SÓ nota `pendencia` de autoria do orquestrador (`agente: orquestrador`) ainda aberta
+ * (`pendenciaAberta`, a regra única), gravando `dono.resposta {pergunta, opcao: 1, rotulo: "feito"}` como o botão "feito". Item do dono (pendência de outro
+ * autor, dúvida, emenda, pedido de /clear) ou id que não existe recusa com rc 1 e nada gravado.
+ */
+function fecharPropria(c, id) {
+  const eventos = lerDiarioEstrito(c.dirEntrega);
+  const nota = eventos.find((e) => `${e.sessao}:${e.seq}` === id);
+  const ord = ordenar(eventos);
+  const evs = ord.ok ? ord.eventos : eventos;
+  const aberta = nota !== undefined && nota.agente === 'orquestrador' && pendenciaAberta(evs, nota) !== null;
+  if (!aberta) {
+    throw new Falha('nao_e_pendencia_aberta_do_orquestrador', `${id} não é pendência aberta escrita pelo orquestrador; item do dono (pergunta, dúvida, emenda, pedido de limpar a conversa) só o dono fecha; nada foi gravado`);
+  }
+  let autor = 'desconhecido';
+  try { autor = git(c.raiz, 'config', 'user.email') || autor; } catch { /* sem user.email: o diário aceita "desconhecido" */ }
+  const dados = { pergunta: id, opcao: 1, rotulo: 'feito' };
+  const r = diario.append(c.dirEntrega, c.sessao, { ts: new Date().toISOString(), autor, sessao: c.sessao, agente: 'orquestrador', tipo: 'dono.resposta', dados });
+  if (!r.ok || r.gravado !== 'evento') throw new Falha('evento_nao_gravado', `fechamento não gravado: ${r.ok ? 'recusado pelo diário' : r.erro}`);
+  return { evento: { tipo: 'dono.resposta', dados }, entrega: c.entrega, sessao: c.sessao };
+}
+
 function anotar(argv, cwd) {
   const { flags, opcoes } = lerArgsAnotar(argv);
+  if (Object.hasOwn(flags, 'fechar')) {
+    if (flags.entrega !== undefined && !ENTREGA_RE.test(flags.entrega)) throw new Falha('entrega_invalida', `--entrega "${flags.entrega}" fora da forma ${ENTREGA_RE}`);
+    return fecharPropria(destinoDeAnotar(cwd, flags), flags.fechar);
+  }
   if (flags.entrega !== undefined && !ENTREGA_RE.test(flags.entrega)) throw new Falha('entrega_invalida', `--entrega "${flags.entrega}" fora da forma ${ENTREGA_RE}`);
   if (flags.sessao !== undefined && (!SESSAO_PERGUNTA_RE.test(flags.sessao) || flags.sessao === 'herdar')) {
     throw new Falha('argumento_invalido', `--sessao fora da forma ${SESSAO_PERGUNTA_RE} (ou "herdar"): a pergunta da nota se chamaria <sessao>:<n> e ninguém a responderia`);

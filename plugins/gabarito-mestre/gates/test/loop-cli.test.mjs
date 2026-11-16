@@ -6244,3 +6244,45 @@ describe('GM-15 T6: adiar, cortar e reabrir (a Sombra, com fonte; o dono só pel
     assert.match(JSON.stringify(amb.cli(['proxima']).j), /T2/);
   });
 });
+
+describe('GM-15 T35 (r.10, C5): o orquestrador fecha só a própria pendência', () => {
+  const ambT = () => ambiente({ plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }]) });
+  const gravar = (amb, sessao, agente, tipo, dados) => {
+    const ultimo = Math.max(0, ...amb.eventos().map((e) => Date.parse(e.ts)));
+    const r = diario.append(amb.entregas, sessao, { ts: new Date(Math.max(ultimo + 1000, Date.now())).toISOString(), autor: 't@t', sessao, agente, tipo, dados });
+    assert.ok(r.ok, JSON.stringify(r));
+    const e = amb.eventos().filter((x) => x.sessao === sessao).pop();
+    return `${e.sessao}:${e.seq}`;
+  };
+  const respostas = (amb) => amb.eventos().filter((e) => e.tipo === 'dono.resposta');
+
+  test('orquestrador-fecha-propria-pendencia: nota pendencia do orquestrador (antiga) ⇒ anotar --fechar grava "feito" e ela fecha; 2ª vez recusa', () => {
+    const amb = ambT();
+    const id = gravar(amb, 'loop', 'orquestrador', 'nota', { tipo: 'pendencia', texto: 'lembrar de medir o bench' });
+    const r = amb.cli(['anotar', '--fechar', id]);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(respostas(amb).map((e) => e.dados), [{ pergunta: id, opcao: 1, rotulo: 'feito' }]);
+    const de_novo = amb.cli(['anotar', '--fechar', id]);
+    assert.equal(de_novo.rc, 1);
+    assert.equal(de_novo.j.erro, 'nao_e_pendencia_aberta_do_orquestrador');
+    assert.equal(respostas(amb).length, 1);
+  });
+
+  test('orquestrador-nao-fecha-item-do-dono: pendência de outro autor, dúvida, emenda, pouso e id inexistente recusam sem gravar', () => {
+    const amb = ambT();
+    const ids = [
+      gravar(amb, 'loop', 'dono', 'nota', { tipo: 'pendencia', texto: 'renovar o domínio' }),
+      gravar(amb, 'loop', 'orquestrador', 'nota', { tipo: 'duvida', texto: 'qual?', opcoes: ['a', 'b'] }),
+      gravar(amb, 'S1', 'orquestrador', 'sessao.pouso', { percent: 55, x: 50, via: 'dono' }),
+      'loop:999',
+    ];
+    for (const id of ids) {
+      const r = amb.cli(['anotar', '--fechar', id]);
+      assert.equal(r.rc, 1, `${id}: ${r.out}`);
+      assert.equal(r.j.erro, 'nao_e_pendencia_aberta_do_orquestrador', id);
+    }
+    assert.equal(respostas(amb).length, 0);
+    assert.equal(amb.cli(['anotar', '--fechar', 'nao-e-id']).rc, 2, 'id fora da forma é uso');
+    assert.equal(amb.cli(['anotar', '--fechar', 'loop:1', '--tipo', 'pendencia']).rc, 2, '--fechar não se mistura com --tipo/--texto');
+  });
+});
