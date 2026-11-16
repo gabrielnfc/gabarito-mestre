@@ -1087,10 +1087,11 @@ test('segundo-plano-no-agora: "Teste" com o dono, a description e o tempo; só c
   const s = novo(PLANO, eventos, { agentes, segundoPlano });
   const sp = s.agora?.segundoPlano ?? [];
   assert.equal(sp.length, 3);
-  assert.deepEqual(sp.map((x) => x.quem.papel), ['teste', 'teste', 'teste']);
-  assert.deepEqual(sp.map((x) => x.task), ['T07', null, 'T07'], 'dono agente ⇒ a task dele; orquestrador ⇒ sem task');
+  // GM-15 T33 (g.11, D-G8): `quem` = quem disparou (a sessão principal ou o agente dono), `acao` = o tipo do shell pelo comando/descrição (rotuloDoShell)
+  assert.deepEqual(sp.map((x) => x.quem.papel), ['implementador', 'orquestrador', 'implementador']);
+  assert.deepEqual(sp.map((x) => x.task), ['T07', null, 'T07'], 'dono agente ⇒ a task dele; orquestrador sem prova ⇒ sem task');
   assert.deepEqual(sp.map((x) => x.desdeS), [90, 30, null]);
-  assert.equal(sp[1].acao, 'build do plugin');
+  assert.deepEqual(sp.map((x) => x.acao), ['Teste', 'Comando', 'Comando'], 'npm test ⇒ Teste; o resto ⇒ Comando');
   assert.deepEqual(novo(PLANO, eventos, { agentes }).agora?.segundoPlano, [], 'sem lista ⇒ vazio');
   assert.deepEqual(novo(PLANO, eventos, { agentes: null, segundoPlano }).agora?.segundoPlano, [], 'sem mod ⇒ vazio');
 });

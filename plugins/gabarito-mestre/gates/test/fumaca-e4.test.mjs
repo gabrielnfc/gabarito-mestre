@@ -115,7 +115,9 @@ test('fumaca-painel-e4: painel.mjs texto, nos dois presets, é byte a byte o tex
     // FIEL-11 (a)(b): o orquestrador com o contexto; o agente vivo da T3 pelo último fato registrado, com a medição do uso (93k)
     assert.match(t, /^│ {2}ctx █+░+ 46% · pouso em 50% {3}tok \?$/m);
     assert.match(t, /^│ {2}5h █░{9} 12% {3}7d █░{9} 5%$/m);
-    assert.match(t, /^└─ ● \S+ · haiku {2}T3 {2}ctx 93k {2}\dm {2}implementando \(registrado\)$/m);
+    // GM-15 T33 (g.8): a Sombra é o último └ da EQUIPE; o agente fica com ├─
+    assert.match(t, /^├─ ● \S+ · haiku {2}T3 {2}ctx 93k {2}\dm {2}implementando \(registrado\)$/m);
+    assert.match(t, /^└─ ○ (ELROND|Conselheiro)$/m, 'a Sombra fecha a árvore (sem decisão: só o nome)');
     // FIEL-10 (c): o teto da T2 já está no topo e a T3 tem agente ⇒ sem ATENÇÃO
     assert.ok(!/ATENÇÃO/.test(t));
     // FIEL-10 (d): só resultados, mais novo no topo, com origem; "despachou" e "emenda proposta" não entram
@@ -127,9 +129,9 @@ test('fumaca-painel-e4: painel.mjs texto, nos dois presets, é byte a byte o tex
     assert.ok(l.every((x) => [...x].length <= 80), 'nada passa de 80 colunas');
   }
   assert.match(esq, /^[A-Z]{2,10} {2}orquestra$/m, 'o esquadrão leva o nome do pacote');
-  assert.match(esq, /^└─ ● [A-Z]{2,10} · haiku {2}T3 /m);
+  assert.match(esq, /^├─ ● [A-Z]{2,10} · haiku {2}T3 /m);
   assert.match(exe, /^Orquestrador {2}orquestra$/m);
-  assert.match(exe, /^└─ ● Implementador · haiku {2}T3 /m);
+  assert.match(exe, /^├─ ● Implementador · haiku {2}T3 /m);
   assert.ok(!/ARAGORN|SAM|FRODO|GANDALF|ELROND|LEGOLAS|terra média/.test(exe), 'o Executivo não tem nome de pacote (D-P10)');
   // o topo (PAROU, DEPENDE) e o PLANO têm as MESMAS linhas nos dois presets; o cabeçalho só difere no rótulo do preset
   assert.deepEqual(exe.split('\n').slice(1, 7), esq.split('\n').slice(1, 7));
