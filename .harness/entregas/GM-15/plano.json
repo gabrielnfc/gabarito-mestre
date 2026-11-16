@@ -645,13 +645,19 @@
       "titulo": "Previsão exata (D-G2)",
       "deps": [
         "T29",
-        "T33"
+        "T33",
+        "T4",
+        "T1"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel.ts",
         "plugins/gabarito-mestre/gates/dist/painel.js",
         "plugins/gabarito-mestre/gates/test/painel-eta.test.ts",
-        "plugins/gabarito-mestre/gates/test/fixtures/eta-gm14/"
+        "plugins/gabarito-mestre/gates/test/fixtures/eta-gm14/",
+        "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
+        "plugins/gabarito-mestre/gates/src/tipos.ts",
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs"
       ],
       "reqs": [
         "REQ-HIG-1"
