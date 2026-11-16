@@ -99,9 +99,11 @@ export function saidaParaAcao(acao, entrega) {
     }
     case 'retomar': {
       // GM-15 T12: task em voo cujo agente morreu; 1 reabertura por task (a 2ª morte vira nao_conseguiu no núcleo).
+      // Aviso, nunca block: quem reabre com o mod é ele, no FIM do turno (D1, REQ-LOOP-5); um block prenderia o turno e o mod nunca reabriria
+      // (correção do integrar da T12: a fumaça do loop ficava em `retomar` até o teto de ciclos).
       if (typeof acao.task !== 'string' || acao.task === '') return null;
       const t = limpo(acao.task);
-      return { decision: 'block', reason: `Loop da entrega ${e} segue: o agente da task ${t} morreu; reabra a task ${t} (loop.mjs reabrir ${t}) e despache de novo.` };
+      return aviso(`Loop da entrega ${e}: o agente da task ${t} morreu; reabra a task ${t} (loop.mjs reabrir ${t}) e despache de novo (com o mod, ele reabre no fim do turno).`);
     }
     case 'parar': {
       const id = typeof acao.motivo === 'string' ? limpo(acao.motivo) : '?';

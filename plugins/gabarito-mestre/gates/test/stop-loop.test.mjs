@@ -426,13 +426,23 @@ test('stop-pousar-sai: o hook não pousa (função pura)', () => {
   assert.equal(saidaParaAcao({ tipo: 'pousar' }, 'GM-10'), null);
 });
 
-test('stop-retomar-bloqueia-com-reabra-a-task: a ação retomar manda reabrir a task travada (função pura, T12)', () => {
+test('stop-retomar-avisa-com-reabra-a-task: a ação retomar manda reabrir a task travada, em aviso e nunca block (função pura, T12)', () => {
   const r = saidaParaAcao({ tipo: 'retomar', task: 'T3' }, 'GM-10');
-  assert.equal(r?.decision, 'block');
-  assert.match(r.reason, /reabra a task T3/);
-  assert.match(r.reason, /GM-10/);
+  assert.equal(r?.decision, undefined, 'block prenderia o turno e o mod nunca reabriria no fim dele');
+  assert.match(r.systemMessage, /reabra a task T3/);
+  assert.match(r.systemMessage, /GM-10/);
   const torta = saidaParaAcao({ tipo: 'retomar', task: 'T3\n$(x)' }, 'GM-10');
-  assert.doesNotMatch(torta.reason, /[\n$`]/, 'id da task é sanitizado');
+  assert.doesNotMatch(torta.systemMessage, /[\n$`]/, 'id da task é sanitizado');
+});
+
+test('stop-retomar-deixa-o-turno-acabar: task em voo sem agente (1ª vez) ⇒ aviso em todo Stop, nenhum block, nada gravado, contador intocado', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 's', [ev('s', 1, 'task.iniciada', { task: 'T1', papel: 'implementador' })]);
+  const antes = linhasDoDiario(raiz).length;
+  for (let i = 0; i < 4; i += 1) avisa(stop(raiz), /reabra a task T1/);
+  assert.equal(linhasDoDiario(raiz).length, antes);
+  assert.equal(existsSync(contadorDe(raiz)), false);
 });
 
 test('stop-despachar-vazio-sai: sem itens não há o que mandar', () => {
