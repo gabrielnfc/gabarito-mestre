@@ -372,6 +372,8 @@ export async function caminhar(opcoes) {
       if (a.tipo === 'concluir') return { fim: 'concluir' };
       if (a.tipo === 'parar') return { fim: `parar ${a.motivo}${a.task ? ` ${a.task}` : ''}` };
       if (a.tipo === 'pousar') return { encerra: 'pousar' };
+      // GM-15 T12 (REQ-AUT-1): task em voo sem agente; com o mod, quem reabre é ele no fim do turno (D1, REQ-LOOP-5): o modelo encerra o turno
+      if (a.tipo === 'retomar') return { encerra: `retomar ${a.task}` };
     }
     return { fim: 'ciclo sem fim' };
   }

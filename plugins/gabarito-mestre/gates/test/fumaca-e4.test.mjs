@@ -64,8 +64,10 @@ test('fumaca-emenda-aberta-e-agente-vivo: a proposta aparece em depende com os c
   assert.deepEqual([e.equipe.lider.h5, e.equipe.lider.d7], [12, 5]);
 });
 
-test('fumaca-teto-de-rodadas-e-parou: T2 reprovada 2× ⇒ no_teto ⇒ proxima decide parar ⇒ loop.parar ⇒ o estado diz PAROU com a task e o comando', () => {
-  assert.deepEqual(o.proximaTeto.j.acao, { tipo: 'parar', motivo: 'teto_rodadas', task: 'T2' });
+test('fumaca-teto-de-rodadas-e-parou: T2 reprovada 2× ⇒ no_teto ⇒ proxima pede retomar a órfã T3 antes do teto (T12) ⇒ loop.parar ⇒ o estado diz PAROU com a task e o comando', () => {
+  // GM-15 T12 (REQ-AUT-1): a caminhada chama `proxima --vivos 0` com T3 em voo, então a retomada única de T3 vem antes do teto de T2;
+  // o `parar teto_rodadas` segue gravado pelo `loop.mjs parar` logo abaixo, e o resto da cena não muda
+  assert.deepEqual(o.proximaTeto.j.acao, { tipo: 'retomar', task: 'T3' });
   assert.deepEqual(tipos('loop.parar').map((x) => x.dados), [{ motivo: 'teto_rodadas' }]);
   assert.deepEqual(tipos('review.veredito').filter((x) => x.dados.task === 'T2').map((x) => [x.dados.veredito, x.dados.rodada]), [['REPROVADO', 1], ['REPROVADO', 2], ['APROVADO', 1]], 'reprovada 2× (teto); a APROVADO é de depois da liberação do dono');
   const e = o.estadoParou.j.estado;
