@@ -28,7 +28,7 @@ const BRANCH = 'enabler/GM-14-clareza';
 const OK = { falhou: [] as string[] };
 const GIT = { branch: BRANCH, idPadrao: ID_PADRAO };
 
-type C = { t: TipoEvento; d: Record<string, unknown>; s?: string };
+type C = { t: TipoEvento; d: Record<string, unknown>; s?: string; a?: string };
 
 function expandir(compactos: C[]): Evento[] {
   const seqs = new Map<string, number>();
@@ -38,7 +38,7 @@ function expandir(compactos: C[]): Evento[] {
     const seq = (seqs.get(sessao) ?? 0) + 1;
     seqs.set(sessao, seq);
     const ts = new Date(Date.UTC(2026, 10, 11, 12, min++)).toISOString();
-    return { seq, ts, autor: 'teste', sessao, agente: 'orquestrador', tipo: c.t, dados: c.d, hash_anterior: null } as Evento;
+    return { seq, ts, autor: 'teste', sessao, agente: c.a ?? 'orquestrador', tipo: c.t, dados: c.d, hash_anterior: null } as Evento;
   });
 }
 
@@ -55,7 +55,8 @@ const chamar = (t: Trilha, evs: C[], base: ItemDepende[] = [], opc: { fontes?: {
   dependeDe(t, expandir(evs), base, opc.fontes ?? OK, opc.pouso ?? false, opc.git ?? GIT);
 const motivos = (xs: ItemDepende[]) => xs.map((i) => i.motivo);
 
-const nota = (tipo: string, texto: string, s = 'sessao-a', extra: Record<string, unknown> = {}): C => ({ t: 'nota', s, d: { tipo, texto, ...extra } });
+/** GM-15 T35 (r.13): nota de pendência/ideia de autoria do orquestrador não entra no DEPENDE; os testes antigos usam autoria `dono`. */
+const nota = (tipo: string, texto: string, s = 'sessao-a', extra: Record<string, unknown> = {}, a = 'dono'): C => ({ t: 'nota', s, a, d: { tipo, texto, ...extra } });
 const pr = (numero: number, estado: string): C => ({ t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: BRANCH } } });
 const feito = (pergunta: string): C => ({ t: 'dono.resposta', s: 'sessao-dono', d: { pergunta, opcao: 1, rotulo: 'feito' } });
 const hash = 'c'.repeat(64);
@@ -463,4 +464,37 @@ test('ideia-com-id-irrespondivel-falha-fechada: sessão com ponto ⇒ nada de bo
   // a ideia é a 1ª nota da sessão e ainda assim tem botão (a âncora de (b) a pula; ver trilha.ts)
   assert.deepEqual(ideiasDe(chamar(APROVADA, [nota('ideia', 'a')]))[0].acoes, botao('sessao-a:1'));
   assert.deepEqual(ideiasAbertas(expandir([nota('ideia', 'a')])), { id: 'sessao-a:1', n: 1 });
+});
+
+// ---- GM-15 T35 (D-G11, D-G12) ----
+import { AGORA_NAO_TETO } from '../src/pouso.ts';
+
+test('nota-do-orquestrador-fora-do-depende (r.13): as 17 pendências e as ideias do orquestrador abertas não entram; a do dono entra (controle)', () => {
+  const orq = Array.from({ length: 17 }, (_, i) => nota('pendencia', `lembrete ${i + 1} do orquestrador`, 'loop', {}, 'orquestrador'));
+  const ideiasOrq = [nota('ideia', 'ideia do orquestrador', 'loop', {}, 'orquestrador')];
+  assert.deepEqual(motivos(chamar(APROVADA, [...orq, ...ideiasOrq])), ['depende de você: nada']);
+  const comDono = chamar(APROVADA, [...orq, nota('pendencia', 'renovar o domínio', 'sessao-a')]);
+  assert.deepEqual(motivos(comDono), ['renovar o domínio']);
+});
+
+test('depende-vazio-uma-linha (r.13): sem item que trave, o DEPENDE é 1 item só, a linha de situação', () => {
+  const r = chamar(APROVADA, [nota('pendencia', 'lembrete', 'loop', {}, 'orquestrador'), nota('desvio', 'x')]);
+  assert.equal(r.length, 1);
+  assert.equal(r[0].motivo, 'depende de você: nada');
+  assert.deepEqual(r[0].acoes, []);
+});
+
+test('clear-com-agora-nao-no-teto (r.9): o pedido de /clear traz "limpar" e "agora não (loop parado)" para o id do pouso; pedido adiado some', () => {
+  const r = dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'S1:2' }, GIT);
+  assert.deepEqual(r, [{ nivel: 'dono', motivo: 'limpar a conversa', acoes: [{ rotulo: 'limpar', comando: '/clear' }, { rotulo: AGORA_NAO_TETO, comando: '/gabarito-mestre:responder S1:2 agora' }] }]);
+  assert.deepEqual(motivos(dependeDe(APROVADA, [], [], OK, { pendente: false, id: 'S1:2' }, GIT)), ['depende de você: nada']);
+  // id fora da forma: só o "limpar" (o hook recusaria o botão)
+  assert.deepEqual(dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'a.b:2' }, GIT)[0].acoes, [{ rotulo: 'limpar', comando: '/clear' }]);
+});
+
+test('pendencia-adiada-nao-fecha-e-some (r.14): "agora não" à pendência do dono a tira do DEPENDE sem fechá-la (pendenciaAberta segue aberta)', () => {
+  const evs = [nota('pendencia', 'renovar o domínio'), { t: 'dono.resposta', s: 'sessao-dono', d: { pergunta: 'sessao-a:1', opcao: 1, rotulo: 'agora não' } } as C];
+  assert.deepEqual(motivos(chamar(APROVADA, evs)), ['depende de você: nada']);
+  const lista = expandir(evs);
+  assert.deepEqual(pendenciaAberta(lista, lista[0]), { id: 'sessao-a:1', texto: 'renovar o domínio' });
 });

@@ -42,7 +42,8 @@ const noTeto = (task: string, a: number): Item[] => [
   ini(a + 4, task, 'correcao'), con(a + 5, task), ini(a + 6, task, 'revisor'), ver(a + 7, task, false, 2, 1),
 ];
 const DEC = (t: number, resposta: string, task = 'T3') => e(t, 'decisao.sombra', { pergunta_hash: 'a'.repeat(64), task, resposta, arquivo: 'sombra.md', pergunta_enviesada: false, fontes: ['spec:1'] });
-const nota = (t: number, tipo: string, texto: string, extra: Record<string, unknown> = {}, sessao = 's1') => e(t, 'nota', { tipo, texto, ...extra }, sessao);
+/** GM-15 T35 (r.13): pendência/ideia do orquestrador não entra no DEPENDE; os testes de pendência/ideia usam autoria `dono` (`agente` explícito). */
+const nota = (t: number, tipo: string, texto: string, extra: Record<string, unknown> = {}, sessao = 's1', agente = 'dono') => e(t, 'nota', { tipo, texto, ...extra }, sessao, agente);
 
 const ID_PADRAO = '[A-Z]+-\\d+';
 const IDS = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6'];

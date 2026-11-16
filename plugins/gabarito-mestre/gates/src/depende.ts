@@ -11,6 +11,7 @@
  */
 import { projetarEmendas } from './emenda.ts';
 import { formaInvalida, ID_PERGUNTA_RE } from './formas.ts';
+import { AGORA_NAO_TETO, ehAdiamento } from './pouso.ts';
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.ts';
 import type { Acao, Evento, ItemDepende } from './tipos.ts';
 import { idDaBranch } from './trilha.ts';
@@ -82,9 +83,27 @@ export function pendenciaAberta(evs: Evento[], nota: Evento): { id: string; text
   if (!ID_PERGUNTA_RE.test(id)) return null;
   const i = evs.indexOf(nota);
   if (i < 0) return null;
-  const fechada = evs.some((r, j) => j > i && r.tipo === 'dono.resposta' && formaInvalida('dono.resposta', r.dados) === null && r.dados.pergunta === id && 'rotulo' in r.dados);
+  // GM-15 T35 (r.14): "agora não" adia, nunca fecha
+  const fechada = evs.some((r, j) => j > i && r.tipo === 'dono.resposta' && formaInvalida('dono.resposta', r.dados) === null && r.dados.pergunta === id && 'rotulo' in r.dados && !ehAdiamento(r.dados.rotulo));
   return fechada ? null : { id, texto: nota.dados.texto as string };
 }
+
+/**
+ * GM-15 T35 (r.14, D-G12 2): ids adiados pelo dono = a ÚLTIMA `dono.resposta` por rótulo (forma válida) ao id é "agora não…". Resposta
+ * de verdade depois do adiamento o desfaz (e fecha); o gatilho que muda abre id novo (âncora nova), que não está aqui. Nunca lança.
+ */
+export function adiadas(evs: Evento[]): Set<string> {
+  const ultima = new Map<string, boolean>();
+  for (const r of Array.isArray(evs) ? evs : []) {
+    if (obj(r).tipo !== 'dono.resposta' || formaInvalida('dono.resposta', r.dados) !== null || !('rotulo' in r.dados)) continue;
+    ultima.set(r.dados.pergunta as string, ehAdiamento(r.dados.rotulo));
+  }
+  return new Set([...ultima].filter(([, a]) => a).map(([id]) => id));
+}
+
+/** GM-15 T35 (r.13, D-G12 1): nota de pendência/ideia escrita pelo orquestrador é lembrete dele (vai ao plano/brief), nunca item do dono. */
+export const notaDoOrquestrador = (e: Evento): boolean => obj(e).tipo === 'nota' && obj(e).agente === 'orquestrador'
+  && (obj(obj(e).dados).tipo === 'pendencia' || obj(obj(e).dados).tipo === 'ideia');
 
 const pendenciasAbertas = (evs: Evento[]): { id: string; texto: string }[] =>
   evs.flatMap((e) => { const p = pendenciaAberta(evs, e); return p === null ? [] : [p]; });
@@ -132,7 +151,7 @@ function higienizar(texto: string): string {
 
 export function dependeDe(
   trilha: Trilha, eventos: Evento[], base: ItemDepende[],
-  fontes: { falhou: string[] }, pousoPendente: boolean, git: { branch: string | null; idPadrao: string },
+  fontes: { falhou: string[] }, pousoPendente: boolean | { pendente: boolean; id: string | null }, git: { branch: string | null; idPadrao: string },
 ): ItemDepende[] {
   const falhou: string[] = [];
   for (const f of Array.isArray(fontes?.falhou) ? fontes.falhou : []) {
@@ -153,7 +172,16 @@ export function dependeDe(
   const marcas = Array.isArray(t.marcas) ? t.marcas : [];
 
   // (6) pouso pendente
-  const limpar = pousoPendente === true ? [item('limpar a conversa', [{ rotulo: 'limpar', comando: '/clear' }])] : [];
+  // GM-15 T35 (r.9): com o id do pouso, o pedido traz "agora não (loop parado)" (o hook `responder` grava o adiamento; no teto o loop segue parado)
+  const pouso = obj(pousoPendente);
+  const pedeClear = pousoPendente === true || pouso.pendente === true;
+  const idPouso = typeof pouso.id === 'string' && ID_PERGUNTA_RE.test(pouso.id) && !pouso.id.startsWith('herdar:') ? pouso.id : null;
+  const limpar = pedeClear
+    ? [item('limpar a conversa', [{ rotulo: 'limpar', comando: '/clear' }, ...(idPouso === null ? [] : [{ rotulo: AGORA_NAO_TETO, comando: `/gabarito-mestre:responder ${idPouso} agora` }])])]
+    : [];
+  // GM-15 T35 (r.13, r.14): o DEPENDE não mostra lembrete do orquestrador nem item adiado pelo dono
+  const adiados = adiadas(evs);
+  const doDono = evs.filter((e) => !notaDoOrquestrador(e));
 
   // (5) task no limite de revisões; a base (PAROU de teto, REQ-PNL-3) já traz o mesmo botão `liberar <task>`: não repete.
   const jaNaBase = (id: string): boolean => (Array.isArray(base) ? base : []).some((b) => Array.isArray(b?.acoes) && b.acoes.some((a) => a?.comando === `/gabarito-mestre:liberar ${id}`)
@@ -180,11 +208,11 @@ export function dependeDe(
   const revisar = aberto !== null ? [item(`revisar e aceitar o pedido de revisão #${aberto}`)] : [];
 
   // (3) pendências abertas, com o botão "feito"
-  const pendencias = pendenciasAbertas(evs).map((p) => item(higienizar(p.texto), [{ rotulo: 'feito', comando: `/gabarito-mestre:responder ${p.id} 1` }]));
+  const pendencias = pendenciasAbertas(doDono).filter((p) => !adiados.has(p.id)).map((p) => item(higienizar(p.texto), [{ rotulo: 'feito', comando: `/gabarito-mestre:responder ${p.id} 1` }]));
 
   // (4) ideias para a próxima entrega
-  const ideias = ideiasAbertas(evs);
-  const decidirIdeias = ideias !== null
+  const ideias = ideiasAbertas(doDono);
+  const decidirIdeias = ideias !== null && !adiados.has(ideias.id)
     ? [item(textoIdeias(ideias.n), [{ rotulo: VISTO, comando: `/gabarito-mestre:responder ${ideias.id} 1` }])]
     : [];
 
