@@ -476,10 +476,10 @@ function medicaoDoPainel(raiz, sessao, x, eventos, agoraMs) {
   return m;
 }
 
-/** `session_id` do mod (stdin de `--agentes`), a mesma leitura do `medir`; sem ele a trilha nunca liga por resposta (falha fechada). */
-function sessaoDoMod(agentes) {
+/** `session_id` do mod (stdin de `--agentes`), a mesma leitura e a mesma forma (`SESSAO_RE`) do `medir`; sem ele, ou fora da forma, a trilha nunca liga por resposta (falha fechada). */
+export function sessaoDoMod(agentes) {
   const s = agentes?.session_id ?? agentes?.sessao?.session_id;
-  return typeof s === 'string' && s !== '' ? s : null;
+  return typeof s === 'string' && SESSAO_RE.test(s) ? s : null;
 }
 
 /**

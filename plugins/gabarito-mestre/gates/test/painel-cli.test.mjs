@@ -20,7 +20,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as diario from '../dist/diario.js';
 import { renderPainel } from '../dist/painel.js';
 import { paraTexto } from '../dist/painel-texto.js';
-import { estadoDoPainel, lerArgs, lerCauda, lerDiarioEstavel, lerEntradaAgentes, main } from '../scripts/painel.mjs';
+import { estadoDoPainel, lerArgs, lerCauda, lerDiarioEstavel, lerEntradaAgentes, main, sessaoDoMod } from '../scripts/painel.mjs';
 import { aprovarSpec, tetoDaSombra } from '../scripts/loop.mjs';
 import { medir } from '../scripts/painel-medir.mjs';
 import { prepararLeitura as prepararLeituraReal } from '../scripts/entrega.mjs';
@@ -1225,6 +1225,16 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.match(com.pergunta.id, /^s1:/);
     const aninhado = cli(m, ['estado', '--agentes'], { input: JSON.stringify({ sessao: { session_id: 's1' }, agentes: [] }) }).json.estado;
     assert.equal(aninhado.pergunta?.id, com.pergunta.id, '`sessao.session_id` vale como no `medir`');
+  });
+
+  test('regex-sessao-painel: `sessaoDoMod` aceita a mesma forma do `medir` (SESSAO_RE): das 5 entradas do T0 só `abc-123` vale; `sessao.session_id` aninhado também', () => {
+    const forma = /^[A-Za-z0-9._-]{1,128}$/;
+    const entradas = ['abc-123', 'a b', '../x', 'x'.repeat(200), 'a:b'];
+    assert.deepEqual(entradas.map((s) => sessaoDoMod({ session_id: s })), ['abc-123', null, null, null, null]);
+    for (const s of entradas) assert.equal(sessaoDoMod({ session_id: s }) !== null, forma.test(s), `mesma decisão da forma do medir: ${s.slice(0, 12)}`);
+    assert.equal(sessaoDoMod({ sessao: { session_id: 'abc-123' } }), 'abc-123');
+    assert.equal(sessaoDoMod({ sessao: { session_id: 'a b' } }), null);
+    for (const ruim of [undefined, null, {}, { session_id: 7 }, { session_id: '' }]) assert.equal(sessaoDoMod(ruim), null);
   });
 
   test('cli-sem-agentes-sem-nomes-nem-traco: `painel.mjs texto` real sem --agentes ⇒ AGORA em 1 linha e nenhum nome sorteado', () => {
