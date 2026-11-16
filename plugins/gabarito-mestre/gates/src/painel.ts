@@ -13,7 +13,7 @@ import { origemDe } from './origem.ts';
 import { loteRecomendadas, perguntasAbertas } from './perguntas.ts';
 import { pousoPendente, type Medicao } from './pouso-pendente.ts';
 import { pedidoDeClear } from './pouso.ts';
-import { trilhaDe } from './trilha.ts';
+import { encerramentoDe, trilhaDe } from './trilha.ts';
 import type { FatosTrilha } from './trilha.ts';
 import { estadoDe, ordenar, proximaAcao, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK } from './loop.ts';
 import type { EstadoTask } from './loop.ts';
@@ -21,18 +21,60 @@ import { formaInvalida } from './formas.ts';
 import { renderBlocos, renderEsquadrao } from './painel-esquadrao.ts';
 import { historicoDe } from './painel-texto.ts';
 import { renderExecutivo } from './painel-executivo.ts';
+import { cortar } from './painel-largura.ts';
 import { chaveDoPar, higienizarDescricao, integrandoDe, nomesPorPapel, projetarEquipe, resolverAtivos, rotuloDoShell } from './painel-equipe.ts';
 import type { AtivosDaEquipe } from './painel-equipe.ts';
 import { dataCivil, fusoValido, horaLocal } from './painel-hora.ts';
-import type { Acao, AgenteAgora, EntradaPainel, EstadoPainel, Evento, GlifoTask, ItemDepende, ItemRecente, Linha, MotivoParar, OpcoesRender, Papel, PapelPainel, Plano, QuemPainel, Sinais, TaskPainel } from './tipos.ts';
+import type { Acao, AgenteAgora, EntradaPainel, Entregue, EstadoPainel, Evento, GlifoTask, ItemDepende, ItemRecente, Linha, MotivoParar, OpcoesRender, Papel, PapelPainel, Plano, Proxima, QuemPainel, Sinais, TaskPainel } from './tipos.ts';
 
 /** Despacha para o render do preset. Preset desconhecido não vira sucesso: lança (quem chama é o CLI, que já validou a flag). */
 export function renderPainel(e: EstadoPainel, o: OpcoesRender): Linha[] {
   // GM-14 T17: estado novo (projetado com `fatos`) ⇒ um renderizador só, os 5 blocos; o executivo é o mesmo sem lúdico (FIEL-12)
-  if (e !== null && typeof e === 'object' && e.modo !== undefined && (o?.preset === 'esquadrao' || o?.preset === 'executivo')) return renderBlocos(e, o);
+  if (e !== null && typeof e === 'object' && e.modo !== undefined && (o?.preset === 'esquadrao' || o?.preset === 'executivo')) {
+    const l = linhaEntregue(e, o);
+    return l !== null ? [l] : renderBlocos(e, o);
+  }
   if (o.preset === 'esquadrao') return renderEsquadrao(e, o);
   if (o.preset === 'executivo') return renderExecutivo(e, o);
   throw new RangeError(`preset desconhecido: ${String(o.preset)} (esquadrao | executivo)`);
+}
+
+/**
+ * GM-15 T8 (REQ-ENT-1 d i): com a entrega encerrada e nada vivo nem pendente além dela, o painel é 1 linha: "<ID> entregue (versão X.Y.Z)" e a próxima
+ * (o botão "seguir" vive em `estado.proxima.acoes`). Agente vivo ou item que não é da entrega (fonte que falhou) ⇒ `null` e os blocos de sempre.
+ */
+function linhaEntregue(e: EstadoPainel, o: OpcoesRender): Linha | null {
+  const ent = e.entregue;
+  if (ent === null || ent === undefined || typeof ent.id !== 'string' || !ID_ENTREGUE.test(ent.id)) return null;
+  if ((e.agora?.agentes?.length ?? 0) > 0 || (e.agora?.segundoPlano?.length ?? 0) > 0 || (Array.isArray(e.depende) && e.depende.some((i) => i?.motivo !== NADA))) return null;
+  const w = typeof o?.largura === 'number' && Number.isFinite(o.largura) && o.largura >= 1 ? Math.floor(o.largura) : 80;
+  const versao = typeof ent.versao === 'string' && VERSAO_RE.test(ent.versao) ? ` (versão ${ent.versao})` : '';
+  const p = e.proxima;
+  const prox = p === null || p === undefined || typeof p.texto !== 'string' || p.texto === '' ? ''
+    : p.tipo === 'nenhuma' ? ` · ${p.texto}` : ` · próxima: ${p.texto}`;
+  return [{ texto: cortar(`GABARITO · ${ent.id} entregue${versao}${prox}`, w), cor: 'inactive' }];
+}
+const ID_ENTREGUE = /^[A-Za-z0-9-]{1,40}$/;
+const VERSAO_RE = /^\d+\.\d+\.\d+$/;
+
+/**
+ * GM-15 T8 (REQ-ENT-1 c, d): a entrega `id` com `entrega.encerrada` vigente (regra única `encerramentoDe`) ⇒ `{id, versao}`; senão `null`. `versao` = a do
+ * encerramento ou, sem ela, o X.Y.Z do último `fato.medido release` do diário (a mesma leitura da trilha); sem os dois, `null`. Puro, nunca lança.
+ */
+export function entregueDe(eventos: Evento[] | null, id: string | null): Entregue | null {
+  if (typeof id !== 'string' || !ID_ENTREGUE.test(id) || !Array.isArray(eventos)) return null;
+  const enc = encerramentoDe(eventos, id);
+  if (!enc.encerrada || enc.primeira === null) return null;
+  const x = (v: unknown): string | null => { const m = typeof v === 'string' ? /(\d+\.\d+\.\d+)/.exec(v) : null; return m === null ? null : m[1]; };
+  let versao = x(enc.primeira.versao);
+  if (versao === null) {
+    const ord = ordenar(eventos);
+    for (const ev of ord.ok ? ord.eventos : []) {
+      const d = dadosDe(ev);
+      if (tipoDe(ev) === 'fato.medido' && d.chave === 'release') versao = x(ehObj(d.valor) ? d.valor.tag : null) ?? versao;
+    }
+  }
+  return { id, versao };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -861,6 +903,9 @@ export type EntradaNova = EntradaPainel & {
   ultima?: { id: string; estado: string | null } | null;
   /** GM-15 T33 (emenda 5): a medição do pouso, a MESMA do `loop.mjs proxima` (`medicaoDoPouso`): a leitura própria da sessão que pergunta, fresca até 120 s. Ausente ⇒ regra sem mod. */
   medicaoPouso?: Medicao;
+  /** GM-15 T8 (REQ-ENT-1 d): a entrega encerrada que o painel mostra (de `entregueDe`) e a próxima (de `proximaEntrega`). Ausente ⇒ nenhuma. */
+  entregue?: Entregue | null;
+  proxima?: Proxima | null;
 };
 
 /** FIEL-13 b: limite de "desatualizado" (180 s provisório = 3 × o relógio do mod, até o valor do S15). */
@@ -930,11 +975,11 @@ function recenteDe(ord: Evento[] | null, plano: Plano, entrada: EntradaPainel, n
  * do cálculo com o plano e o `modo` da apresentação: os campos são os mesmos (`estado.parar` é `c.parar`; `agora.agentes` é `agentes`).
  */
 export function umaLinhaDe(
-  e: { modo: EstadoPainel['modo']; parar: unknown; pergunta: unknown; depende: Array<{ motivo: string }>; agora: { agentes: unknown[] | null }; trilha: { ultimaConhecida: string | null } },
+  e: { modo: EstadoPainel['modo']; parar: unknown; pergunta: unknown; depende: Array<{ motivo: string }>; agora: { agentes: unknown[] | null }; trilha: { ultimaConhecida: string | null }; entregue?: unknown },
   ultimaDaEntrada: unknown,
 ): { ultima: { id: string; estado: string | null } | null } | null {
   const pendente = e.parar !== null || e.pergunta !== null || (e.agora.agentes?.length ?? 0) > 0 || e.depende.some((i) => i.motivo !== NADA);
-  if (e.modo !== 'projeto' || pendente) return null;
+  if (e.modo !== 'projeto' || pendente || ehObj(e.entregue)) return null; // GM-15 T8: com a entrega encerrada a linha é a de entregue
   const u = ehObj(ultimaDaEntrada) ? ultimaDaEntrada : null;
   const ultima = u !== null && typeof u.id === 'string' ? { id: u.id, estado: typeof u.estado === 'string' ? u.estado : null }
     : typeof e.trilha.ultimaConhecida === 'string' ? { id: e.trilha.ultimaConhecida, estado: null } : null;
@@ -955,16 +1000,20 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
   const desat = finitoNaoNeg(entrada.desatualizadoS);
   const velho = desat !== null && desat > LIMITE_DESATUALIZADO_S;
 
+  // GM-15 T8 (REQ-ENT-1 d ii): com a entrega encerrada, os itens dela saem do topo (PAROU, pergunta, DEPENDE), do ATENÇÃO e do PRONTO
+  const entregue: Entregue | null = ehObj(entrada.entregue) && typeof entrada.entregue.id === 'string' ? { id: entrada.entregue.id, versao: typeof entrada.entregue.versao === 'string' ? entrada.entregue.versao : null } : null;
+  const proxima: Proxima | null = entregue !== null && ehObj(entrada.proxima) ? entrada.proxima : null;
+
   // trilha, perguntas e "depende de você" pelas funções únicas (T3, T12, T13)
   const trilha = trilhaDe(fatos, lista);
-  const abertas = perguntasAbertas(lista, trilha, { sessao: typeof fatos.sessao === 'string' ? fatos.sessao : null, ...(Array.isArray(fatos.ultimas) ? { ultimas: fatos.ultimas } : {}) })
+  const abertas = entregue !== null ? [] : perguntasAbertas(lista, trilha, { sessao: typeof fatos.sessao === 'string' ? fatos.sessao : null, ...(Array.isArray(fatos.ultimas) ? { ultimas: fatos.ultimas } : {}) })
     .filter((q) => q.gatilho !== 'pendencia' && q.gatilho !== 'ideia'); // pendência (3) e ideia (4) são itens de `dependeDe`, com o botão "feito"/"visto"
   const pergunta = abertas[0] ?? null;
   // GM-15 T35 (r.12, r.9): o pedido de /clear da regra única `pedidoDeClear`: sem medição não há pedido; adiado ("agora não") some do painel até +10 p.p.
   const clear = pedidoDeClear(eventos, entrada.onboarding === true, entrada.medicaoPouso);
   const [sessaoPouso, seqPouso] = clear.id === null ? [null, null] : [clear.id.slice(0, clear.id.lastIndexOf(':')), Number(clear.id.slice(clear.id.lastIndexOf(':') + 1))];
   const pousoDe: ReturnType<typeof pousoPendente> = clear.pendente && !clear.adiado ? { pendente: true, sessao: sessaoPouso, seq: seqPouso } : { pendente: false, sessao: null, seq: null };
-  let depende = dependeDe(trilha, lista, legado.depende, { falhou: fontes }, entrada.pousoPendente === true ? true : { pendente: pousoDe.pendente, id: clear.id },
+  let depende = entregue !== null ? dependeDe(null as unknown as typeof trilha, [], [], { falhou: fontes }, false, { branch: null, idPadrao: fatos.idPadrao }) : dependeDe(trilha, lista, legado.depende, { falhou: fontes }, entrada.pousoPendente === true ? true : { pendente: pousoDe.pendente, id: clear.id },
     { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao });
   if (pergunta !== null) depende = depende.filter((i) => i.motivo !== NADA);
   if (velho) depende = depende.map((i) => (i.motivo === NADA ? { ...i, motivo: DESATUALIZADO } : i));
@@ -1018,12 +1067,13 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
   const semRegistro = contarConsultas(lista) - projetarDecisoes(lista).size;
   const sombraAtiva = (ativos ?? []).some((x) => x.casamento.papelExibido === 'sombra');
   if (semRegistro > 0 && !sombraAtiva) atencao.push(`${semRegistro} ${semRegistro === 1 ? 'consulta' : 'consultas'} à Sombra sem decisão registrada`);
+  if (entregue !== null) atencao.length = 0; // M8a: nada da entrega encerrada (consultas à Sombra, CI, produção, task sem agente) fica no ATENÇÃO
   if (velho) atencao.push(`painel sem ler o diário há ${Math.floor((desat as number) / 60)} min`);
 
   // PRONTO (com plano) ou FASE (sem plano)
   const feitas = legado.plano.feitas;
   const total = p.tasks.length;
-  const pronto = plano !== null && total > 0
+  const pronto = entregue === null && plano !== null && total > 0
     ? { integradas: feitas, total, previsao: feitas < total && (PREVISAO_DO_ESTADO.get(legado) ?? null) !== null ? previsaoDoPronto(legado)
       : feitas >= 3 && feitas < total && legado.plano.eta !== null ? previsaoDoPronto(legado) : null }
     : null;
@@ -1039,7 +1089,7 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
 
   // modo e "uma linha" (FIEL-10 e)
   const modo: EstadoPainel['modo'] = entrada.fora === true ? 'fora' : plano !== null || trilha.identificada ? 'entrega' : 'projeto';
-  const umaLinha = umaLinhaDe({ modo, parar: c.parar, pergunta, depende, agora: { agentes }, trilha }, entrada.ultima);
+  const umaLinha = umaLinhaDe({ modo, parar: c.parar, pergunta, depende, agora: { agentes }, trilha, entregue }, entrada.ultima);
 
   const pct = finitoNaoNeg(entrada.contexto?.percent);
   const textoParar = (motivo: string, task: string | null): string | null =>
@@ -1053,7 +1103,8 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
     recomendadas: loteRecomendadas(abertas).length, // GM-15 T35 (r.16): o botão "aprovar recomendadas (N)" do mod
     id: plano !== null ? p.entrega : (trilha.entrega ?? ''),
     modo, trilha, pergunta, perguntasMais: Math.max(0, abertas.length - 1), umaLinha, pronto, fase,
-    depende, atencao,
+    depende, atencao, entregue, proxima,
+    ...(entregue !== null ? { parar: null, parado: false } : {}),
     agora: {
       orquestrador: { nome: comNomes ? entrada.pacote?.lider ?? null : null, contexto: pct, estimado: false, pousar: pct !== null && pct >= entrada.x },
       agentes, segundoPlano,

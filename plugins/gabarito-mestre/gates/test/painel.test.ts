@@ -10,7 +10,7 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { dependeDeVoce, etaDe, projetarPainel, TABELA_PARAR, umaLinhaDe } from '../src/painel.ts';
+import { dependeDeVoce, entregueDe, etaDe, projetarPainel, TABELA_PARAR, umaLinhaDe } from '../src/painel.ts';
 import { renderPainel } from '../src/painel.ts';
 import { append, duracoes, lerEstrito, mediana } from '../src/diario.ts';
 import { contarConsultas } from '../src/sombra.ts';
@@ -1487,4 +1487,22 @@ test('fonte-unica-shell-integrando (g.11): o literal do painel é o mesmo do hoo
   const m = /const SHELL_INTEGRANDO = (\/.+\/);/.exec(stop);
   assert.ok(m !== null, 'stop-loop.mjs declara SHELL_INTEGRANDO');
   assert.equal(String(SHELL_INTEGRANDO), (m as RegExpExecArray)[1]);
+});
+
+// ── GM-15 T8 (REQ-ENT-1 c, d): `entregueDe`, a mesma regra de encerramento da guarda (`encerramentoDe`) ─────────────────────────────────────
+test('entregue-de: encerrada ⇒ {id, versao}; reaberta depois ⇒ null; versão do encerramento > release medido; id inseguro ou diário torto ⇒ null', () => {
+  let seq = 0;
+  const e = (tipo: string, dados: Record<string, unknown>, ts: string) => ({ seq: ++seq, ts, autor: 'a', sessao: 's', agente: 'painel', tipo, dados, hash_anterior: null }) as unknown as Evento;
+  const rel = e('fato.medido', { chave: 'release', fonte: 'gh', valor: { tag: 'v2.1.0-alpha.1' } }, '2026-11-15T09:00:00.000Z');
+  const enc = e('entrega.encerrada', { entrega: 'GM-9', pr: 3, via: 'head', mergeado_em: '2026-11-15T10:00:00.000Z' }, '2026-11-15T10:00:01.000Z');
+  assert.deepEqual(entregueDe([enc], 'GM-9'), { id: 'GM-9', versao: null });
+  assert.deepEqual(entregueDe([rel, enc], 'GM-9'), { id: 'GM-9', versao: '2.1.0' });
+  assert.equal(entregueDe([rel, enc], 'GM-8'), null, 'o encerramento é da entrega do evento');
+  const reab = e('entrega.reaberta', { entrega: 'GM-9', em: '2026-11-15T11:00:00.000Z' }, '2026-11-15T11:00:01.000Z');
+  assert.equal(entregueDe([rel, enc, reab], 'GM-9'), null, 'reaberta pelo dono deixa de ser entregue');
+  const comVersao = e('entrega.encerrada', { entrega: 'GM-7', pr: 4, via: 'titulo', mergeado_em: '2026-11-15T10:00:00.000Z', versao: '3.0.0' }, '2026-11-15T12:00:01.000Z');
+  assert.deepEqual(entregueDe([rel, comVersao], 'GM-7'), { id: 'GM-7', versao: '3.0.0' });
+  assert.equal(entregueDe(null, 'GM-9'), null);
+  assert.equal(entregueDe([enc], 'GM 9'), null);
+  assert.equal(entregueDe([enc, { ...enc }], 'GM-9'), null, 'diário que não ordena (seq repetido) não afirma');
 });

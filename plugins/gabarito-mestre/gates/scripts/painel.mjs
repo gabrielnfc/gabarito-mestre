@@ -33,13 +33,14 @@ import { idPadraoDe, lerConfigOrigin } from '../lib/config.mjs';
 import { dirEntrega, lerEstrito } from '../dist/diario.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { estadoDe, ordenar, proximaAcao, TIPOS_DE_TASK } from '../dist/loop.js';
-import { etapasDasAnteriores, fechamentoDasAnteriores, projetarPainel, renderPainel, ritmoDasAnteriores, umaLinhaDe } from '../dist/painel.js';
+import { entregueDe, etapasDasAnteriores, fechamentoDasAnteriores, projetarPainel, renderPainel, ritmoDasAnteriores, umaLinhaDe } from '../dist/painel.js';
 import { validarPacote, validarStdinAgentes, usoDoTranscript } from '../dist/painel-equipe.js';
 import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
 import { lerX } from '../dist/pouso.js';
 import { sessoesDeRetomada } from '../dist/pouso-pendente.js';
-import { idDaBranch, trilhaDe } from '../dist/trilha.js';
+import { encerramentoDe, idDaBranch, trilhaDe } from '../dist/trilha.js';
+import { proximaEntrega } from '../dist/depende.js';
 import { temOnboarding } from './cartao-sessao.mjs';
 import { carregarPlano, checkoutDaSessao, contexto, lerDiarioEstrito, lerSpec, lerSpecs, medicaoDoPouso, tetoDaSombra } from './loop.mjs';
 import { decisaoDe, pausado, prepararLeitura } from './entrega.mjs';
@@ -518,6 +519,12 @@ export function estadoDoPainel(cwd, opts = {}) {
       try { specs = lerSpecs(sessaoRaiz, idPadrao); } catch (e) { if (typeof e?.erro !== 'string') throw e; fontes.push(FONTE.specs); }
     }
     const ativ = raiz === null ? { ultimas: [], ultima: null, diarios: [] } : atividades(raiz, fontes);
+    // GM-15 T8 (REQ-ENT-1 d): a entrega encerrada que o painel mostra: a da branch (ou `--entrega`); sem ela, a última conhecida (a do "sem entrega em
+    // curso · última"). A próxima: spec com PBI sem encerramento mais nova ⇒ ideias anotadas na entregue ⇒ nenhuma (regra de `proximaEntrega`).
+    const daEntregue = id !== null ? { id, eventos } : ativ.ultima === null ? null : { id: ativ.ultima.id, eventos: ativ.diarios.find((x) => x.id === ativ.ultima.id)?.eventos ?? null };
+    const entregue = daEntregue === null ? null : entregueDe(daEntregue.eventos, daEntregue.id);
+    const encerradas = new Set(ativ.diarios.filter((x) => encerramentoDe(x.eventos, x.id).encerrada).map((x) => x.id));
+    const proxima = entregue === null ? null : proximaEntrega(specs, encerradas, daEntregue.eventos);
     const gh = raiz === null ? 'nunca' : ghDe(raiz, id !== null && c.dirEntrega.endsWith(id) ? id : '_sem-id', fontes);
     const sessaoMod = sessaoDoMod(opts.agentes);
     const fatos = {
@@ -631,6 +638,8 @@ export function estadoDoPainel(cwd, opts = {}) {
       // ... e o ritmo delas (relógio por task integrada); sem ritmo medido o fallback mostra "?" (r2 MAJOR 1)
       ritmoAnterioresS: ritmoDasAnteriores(ativ.diarios, id),
       ...(medicaoPouso !== undefined ? { medicaoPouso } : {}),
+      entregue,
+      proxima,
     };
     const projetar = opts.projetar ?? projetarPainel;
     const estado = projetar(descartado ? planoDoDiario : plano, eventos, entrada);
