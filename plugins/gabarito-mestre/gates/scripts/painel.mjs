@@ -29,8 +29,7 @@ import { isatty } from 'node:tty';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { lerConfigOrigin } from '../lib/config.mjs';
-import { PADROES } from '../lib/git.mjs';
+import { idPadraoDe, lerConfigOrigin } from '../lib/config.mjs';
 import { dirEntrega, lerEstrito } from '../dist/diario.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { estadoDe, ordenar, proximaAcao, TIPOS_DE_TASK } from '../dist/loop.js';
@@ -39,9 +38,10 @@ import { validarPacote, validarStdinAgentes, usoDoTranscript } from '../dist/pai
 import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
 import { lerX } from '../dist/pouso.js';
+import { sessoesDeRetomada } from '../dist/pouso-pendente.js';
 import { idDaBranch, trilhaDe } from '../dist/trilha.js';
 import { temOnboarding } from './cartao-sessao.mjs';
-import { carregarPlano, checkoutDaSessao, contexto, lerDiarioEstrito, lerSpec, lerSpecs, tetoDaSombra } from './loop.mjs';
+import { carregarPlano, checkoutDaSessao, contexto, lerDiarioEstrito, lerSpec, lerSpecs, medicaoDoPouso, tetoDaSombra } from './loop.mjs';
 import { decisaoDe, pausado, prepararLeitura } from './entrega.mjs';
 import { medir } from './painel-medir.mjs';
 
@@ -50,6 +50,7 @@ const MOD_NOMES = join(AQUI, '..', '..', 'mod', 'temas', 'nomes');
 const PACOTE_PADRAO = 'terra-media';
 const PACOTE_RE = /^[a-z0-9-]{1,32}$/;
 const ENTREGA_RE = /^[A-Z]+-\d+$/;
+const SESSAO_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const LARGURA_RE = /^[1-9]\d{0,5}$/;
 const PRESETS = ['esquadrao', 'executivo'];
 const TEMAS = ['color', 'mono'];
@@ -58,7 +59,7 @@ const STDIN_MAX = 4 * 1024 * 1024;
 const TENTATIVAS = 3;
 const INTERVALO_MS = 50;
 const SINAIS_NEUTROS = { slots: 1, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false };
-const USO = 'uso: painel.mjs estado [--agentes] [--pacote <nome>] [--entrega <ID>] | painel.mjs texto [--largura N] [--preset esquadrao|executivo] [--tema color|mono] [--pacote <nome>] [--agentes] [--entrega <ID>] | painel.mjs medir [--agentes]';
+const USO = 'uso: painel.mjs estado [--agentes] [--pacote <nome>] [--entrega <ID>] [--sessao <id>] | painel.mjs texto [--largura N] [--preset esquadrao|executivo] [--tema color|mono] [--pacote <nome>] [--agentes] [--entrega <ID>] [--sessao <id>] | painel.mjs medir [--agentes]';
 
 /** Falha com código: vira `{ok:false, erro, mensagem}` (rc 1; uso é 2). */
 class Falha extends Error {
@@ -78,7 +79,7 @@ const numero = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
 export function lerArgs(argv) {
   const [cmd, ...resto] = argv;
   if (cmd !== 'estado' && cmd !== 'texto' && cmd !== 'medir') throw new Falha('uso', `subcomando ${JSON.stringify(cmd ?? null)}: esperado estado, texto ou medir. ${USO}`, 2);
-  const COM_VALOR = cmd === 'texto' ? ['largura', 'preset', 'tema', 'pacote', 'entrega'] : cmd === 'medir' ? [] : ['pacote', 'entrega'];
+  const COM_VALOR = cmd === 'texto' ? ['largura', 'preset', 'tema', 'pacote', 'entrega', 'sessao'] : cmd === 'medir' ? [] : ['pacote', 'entrega', 'sessao'];
   const flags = {};
   for (let i = 0; i < resto.length; i++) {
     const a = resto[i];
@@ -100,6 +101,7 @@ export function lerArgs(argv) {
   if (flags.preset !== undefined && !PRESETS.includes(flags.preset)) throw new Falha('uso', `--preset ${JSON.stringify(flags.preset)}: esperado ${PRESETS.join(' | ')}. ${USO}`, 2);
   if (flags.tema !== undefined && !TEMAS.includes(flags.tema)) throw new Falha('uso', `--tema ${JSON.stringify(flags.tema)}: esperado ${TEMAS.join(' | ')}. ${USO}`, 2);
   if (flags.pacote !== undefined && !PACOTE_RE.test(flags.pacote)) throw new Falha('uso', `--pacote ${JSON.stringify(flags.pacote)} fora da forma ${PACOTE_RE}. ${USO}`, 2);
+  if (flags.sessao !== undefined && !SESSAO_RE.test(flags.sessao)) throw new Falha('uso', `--sessao ${JSON.stringify(flags.sessao)} fora da forma ${SESSAO_RE}. ${USO}`, 2);
   if (flags.entrega !== undefined && !ENTREGA_RE.test(flags.entrega)) throw new Falha('uso', `--entrega ${JSON.stringify(flags.entrega)} fora da forma ${ENTREGA_RE}. ${USO}`, 2);
   return { cmd, flags };
 }
@@ -330,14 +332,6 @@ function branchDe(cwd) {
   }
 }
 
-/** `fluxo.idPadrao` de origin/HEAD, a mesma regra de `loop.mjs` (`idPadraoDe`, não exportada): ausente, longa ou inválida ⇒ o padrão. */
-function idPadraoDe(cfg) {
-  const v = cfg?.fluxo?.idPadrao;
-  if (typeof v !== 'string' || v.length === 0 || v.length > 200) return PADROES.idPadrao;
-  try { new RegExp(v); } catch { return PADROES.idPadrao; }
-  return v;
-}
-
 /** `<ledgerDir>/<ID>.md` (padrão `docs/ledgers`), a mesma regra do `responder.mjs`. */
 function temLedger(raiz, id, ledgerDir) {
   const dir = typeof ledgerDir === 'string' && ledgerDir !== '' && !ledgerDir.startsWith('/') && !ledgerDir.split('/').includes('..') ? ledgerDir : 'docs/ledgers';
@@ -415,6 +409,13 @@ function ghDe(raiz, chave, fontes) {
   return it.gh;
 }
 
+/** A medição do pouso de `loop.mjs proxima` (`medicaoDoPouso`) para a sessão do painel, mais a de cada sessão que retomou depois do pouso (`sessoesDeRetomada`). */
+function medicaoDoPainel(raiz, sessao, x, eventos, agoraMs) {
+  const m = medicaoDoPouso(raiz, sessao, x, agoraMs);
+  for (const id of sessoesDeRetomada(eventos)) m.leituras.push(...medicaoDoPouso(raiz, id, x, agoraMs).leituras);
+  return m;
+}
+
 /** `session_id` do mod (stdin de `--agentes`), a mesma leitura do `medir`; sem ele a trilha nunca liga por resposta (falha fechada). */
 function sessaoDoMod(agentes) {
   const s = agentes?.session_id ?? agentes?.sessao?.session_id;
@@ -466,7 +467,7 @@ export function estadoDoPainel(cwd, opts = {}) {
     }
     const origin = raiz === null ? { cfg: null, fonte: 'nenhuma', invalida: false } : lerConfigOrigin(raiz);
     if (origin.invalida === true) avisos.push(`config de origin/HEAD inválida (${origin.motivo})`);
-    const idPadrao = idPadraoDe(origin.cfg);
+    const idPadrao = idPadraoDe(raiz ?? cwd); // a regra do loop (lib/config.mjs), sem cópia
     const branch = raiz === null ? null : branchDe(cwd);
     const id = opts.entrega ?? idDaBranch(branch, idPadrao);
     const c = raiz === null ? null : { cwd, raiz, entrega: id ?? '_sem-id', dirEntrega: dirEntrega(raiz, id ?? null), sessao: 'loop' };
@@ -565,6 +566,10 @@ export function estadoDoPainel(cwd, opts = {}) {
       }
     }
 
+    // GM-15 T33 (emenda 5): a MESMA medição do `loop.mjs proxima` (`medicaoDoPouso`): a leitura própria da sessão que pergunta (`--sessao`, senão o `session_id` do mod),
+    // fresca até 120 s; mais a leitura das sessões que retomaram depois do pouso (g.18). Sem sessão ou fora de repo ⇒ sem medição ⇒ a regra sem mod.
+    const sessaoPouso = opts.sessao ?? sessaoMod;
+    const medicaoPouso = raiz === null || sessaoPouso === null ? undefined : medicaoDoPainel(raiz, sessaoPouso, x.x, eventos, agoraMs);
     const entrada = {
       decisaoEntrega,
       pausado: c === null ? false : pausado(c),
@@ -588,6 +593,7 @@ export function estadoDoPainel(cwd, opts = {}) {
       fora: raiz === null,
       onboarding: raiz !== null && temOnboarding(raiz), // FIEL-14 h: o mesmo critério e a mesma leitura do cartão (config LOCAL)
       ultima: ativ.ultima,
+      ...(medicaoPouso !== undefined ? { medicaoPouso } : {}),
     };
     const projetar = opts.projetar ?? projetarPainel;
     const estado = projetar(descartado ? planoDoDiario : plano, eventos, entrada);
@@ -618,7 +624,7 @@ export function main(argv, cwd = process.cwd(), io = {}) {
       return r?.ok === true ? 0 : 1;
     }
     const agentes = flags.agentes === true ? lerEntradaAgentes((io.stdin ?? lerStdin)()) : undefined;
-    const r = estadoDoPainel(cwd, { agentes, pacote: flags.pacote, entrega: flags.entrega, agoraMs: io.agoraMs });
+    const r = estadoDoPainel(cwd, { agentes, pacote: flags.pacote, entrega: flags.entrega, sessao: flags.sessao, agoraMs: io.agoraMs });
     if (!r.ok) return falha(new Falha(r.erro, r.mensagem));
     if (cmd === 'estado') {
       saida(`${JSON.stringify({ ok: true, estado: r.estado, avisos: r.avisos })}\n`);

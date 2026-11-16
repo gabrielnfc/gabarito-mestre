@@ -11,7 +11,7 @@ import { cmp, contarConsultas, duracoes, EM_TRABALHO, mediana, projetarDecisoes 
 import { dependeDe } from './depende.ts';
 import { origemDe } from './origem.ts';
 import { perguntasAbertas } from './perguntas.ts';
-import { pousoPendente } from './pouso-pendente.ts';
+import { pousoPendente, type Medicao } from './pouso-pendente.ts';
 import { trilhaDe } from './trilha.ts';
 import type { FatosTrilha } from './trilha.ts';
 import { estadoDe, ordenar, proximaAcao, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK } from './loop.ts';
@@ -551,6 +551,8 @@ function projetarLegado(plano: Plano, eventos: Evento[] | null, entrada: Entrada
 export type EntradaNova = EntradaPainel & {
   fatos?: FatosTrilha; fontesFalhas?: string[]; pousoPendente?: boolean; onboarding?: boolean; desatualizadoS?: number | null; fora?: boolean;
   ultima?: { id: string; estado: string | null } | null;
+  /** GM-15 T33 (emenda 5): a medição do pouso, a MESMA do `loop.mjs proxima` (`medicaoDoPouso`): a leitura própria da sessão que pergunta, fresca até 120 s. Ausente ⇒ regra sem mod. */
+  medicaoPouso?: Medicao;
 };
 
 /** FIEL-13 b: limite de "desatualizado" (180 s provisório = 3 × o relógio do mod, até o valor do S15). */
@@ -650,7 +652,7 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
   const abertas = perguntasAbertas(lista, trilha, { sessao: typeof fatos.sessao === 'string' ? fatos.sessao : null, ...(Array.isArray(fatos.ultimas) ? { ultimas: fatos.ultimas } : {}) })
     .filter((q) => q.gatilho !== 'pendencia' && q.gatilho !== 'ideia'); // pendência (3) e ideia (4) são itens de `dependeDe`, com o botão "feito"/"visto"
   const pergunta = abertas[0] ?? null;
-  const pousoDe = pousoPendente(eventos, entrada.onboarding === true);
+  const pousoDe = pousoPendente(eventos, entrada.onboarding === true, entrada.medicaoPouso);
   let depende = dependeDe(trilha, lista, legado.depende, { falhou: fontes }, entrada.pousoPendente === true || pousoDe.pendente,
     { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao });
   if (pergunta !== null) depende = depende.filter((i) => i.motivo !== NADA);

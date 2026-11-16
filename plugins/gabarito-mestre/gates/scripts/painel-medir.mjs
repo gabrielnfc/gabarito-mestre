@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import { append, dirEntrega, lerEstrito, padraoDeRecusa } from '../dist/diario.js';
 import { idDaBranch } from '../dist/trilha.js';
 import { temOnboarding } from '../dist/guarda.js';
-import { lerConfigOrigin } from '../lib/config.mjs';
+import { idPadraoDe } from '../lib/config.mjs';
 import { contexto } from './loop.mjs';
 
 /** Falha com código: o despachante a devolve como `{ok:false, erro, ...}` e rc 1. */
@@ -35,7 +35,6 @@ export class Falha extends Error {
 
 const TIMEOUT_MS = 5000;
 const SESSAO_RE = /^[A-Za-z0-9._-]{1,128}$/;
-const ID_PADRAO = '[A-Z]+-\\d+';
 const DIR_SPECS = join('docs', 'superpowers', 'specs');
 const SPEC_MAX = 1024 * 1024;
 const STDIN_MAX = 4 * 1024 * 1024;
@@ -94,15 +93,6 @@ function ultimoValor(eventos, sessao, chave, valor) {
     achado = v;
   }
   return achado;
-}
-
-/** `idPadrao` da chave que a guarda lê (`fluxo.idPadrao`, origin/HEAD); ausente, não texto ou inválido ⇒ padrão. */
-function idPadraoDe(raiz) {
-  let v;
-  try { v = lerConfigOrigin(raiz)?.cfg?.fluxo?.idPadrao; } catch { v = undefined; }
-  if (typeof v !== 'string' || v.length === 0 || v.length > 200) return ID_PADRAO;
-  try { new RegExp(v); } catch { return ID_PADRAO; }
-  return v;
 }
 
 /** `PBI: <ID>` só das linhas antes do 1º `## `; o corpo nunca conta (DP-3 ajuste 1). */
@@ -255,8 +245,7 @@ export function medir(cwd, opcoes = {}) {
     if (branch !== null) fatos.push({ chave: 'branch', fonte: 'git', valor: { nome: branch } });
 
     if (id !== null) {
-      let reId;
-      try { reId = new RegExp(`^(?:${idPadrao})$`); } catch { reId = new RegExp(`^(?:${ID_PADRAO})$`); }
+      const reId = new RegExp(`^(?:${idPadrao})$`); // `idPadraoDe` (a fonte única) só devolve regex válida
       for (const s of specsDaEntrega(cwd, id, reId, falhas)) fatos.push({ chave: 'spec', fonte: 'arquivo', valor: s });
       const arqPlano = join(dir, 'plano.json');
       if (existsSync(arqPlano)) {
