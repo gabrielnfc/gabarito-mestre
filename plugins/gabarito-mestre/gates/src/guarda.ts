@@ -116,7 +116,8 @@ function lerGuarda(raiz: string): Guarda {
     const divergente = l !== null && l.assinatura !== o.assinatura;
     // D2: origin sem seção `guarda` vence mesmo que a árvore local a tenha; a árvore local é ignorada, e isso se avisa.
     const localIgnorada = o.config === null && l !== null && l.config !== null;
-    // Autonomia por projeto: só a config de origin/HEAD (mudada por merge) vale; a árvore local nunca liga. Só o valor exato liga.
+    // Autonomia por projeto (REQ-AUT-2 b): metade da regra, só a config de origin/HEAD (mudada por merge) vale; a árvore local nunca liga.
+    // Só o valor exato liga, e a passagem ainda exige o interruptor (`principal`: config E interruptor).
     const autonomia = objeto(origem.guarda)?.autonomia === 'orquestrador';
     return { config: o.config, fonte: 'origin', divergente, localIgnorada, onboarding: true, idPadrao: o.idPadrao, autonomia };
   }
@@ -624,7 +625,7 @@ function principal(): void {
   const guarda = raizSessao === null ? null : lerGuarda(raizSessao);
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..', '..');
   const contexto = montarContexto(entrada, raizCwd ?? raizSessao, cwd, pluginRoot, pausa.raizes, ancoraDaSessao(process.env.CLAUDE_PROJECT_DIR));
-  const r = decidir(entrada, guarda?.config ?? null, contexto, lerAutonomia() || guarda?.autonomia === true);
+  const r = decidir(entrada, guarda?.config ?? null, contexto, guarda?.autonomia === true && lerAutonomia());
 
   const sessao = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;
   const mensagens: string[] = [];

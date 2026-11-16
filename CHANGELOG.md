@@ -6,11 +6,12 @@ Usuários do plugin só recebem atualização quando `version` muda.
 ## [Unreleased]
 
 ### Adicionado
-- **Autonomia do orquestrador na guarda.** Uma nova pergunta no onboarding (`gabarito-instalar`): "Guarda do orquestrador: completa ou autônoma?". Ela grava `guarda.autonomia` (`"nenhuma"` | `"orquestrador"`) no `harness.config.json`, e a guarda só lê esse valor de `origin/HEAD`, o que exige merge.
-  - Também há o interruptor por máquina `~/.claude/gabarito-autonomia.json` (`{"orquestrador": true}`), protegido pelo anel integridade.
-  - Com a autonomia ligada, todo `ask` do orquestrador passa em silêncio e grava o evento `guarda.autonomia` no diário.
-  - Continuam pedindo, mesmo com a autonomia ligada: anel `segredo`, exceção de classificação, comando acima do teto (65.536) e `cd` perdido.
+- **Autonomia do orquestrador na guarda: precisa do projeto E da máquina (GM-15 T15, REQ-AUT-2 b).** A guarda só deixa o `ask` do orquestrador passar quando as duas coisas valem: `guarda.autonomia` = `"orquestrador"` no `harness.config.json` lido de `origin/HEAD` (o projeto pede; exige merge) **e** o interruptor por máquina `~/.claude/gabarito-autonomia.json` (`{"orquestrador": true}`, protegido pelo anel integridade). Só um dos dois não basta: continua `ask`. A pergunta que grava `guarda.autonomia` é a única de autonomia do onboarding (3 respostas, 4 chaves; GM-15 T14).
+  - Com os dois ligados, todo `ask` do orquestrador passa em silêncio e grava o evento `guarda.autonomia_usada` no diário (só anel, alvo, ação e ambiente; nunca o comando).
+  - Continuam pedindo, mesmo com os dois ligados: anel `segredo`, exceção de classificação, comando acima do teto (65.536) e `cd` perdido.
   - Subagente continua `deny`.
+  - O `harness-doctor` mostra as 4 chaves de autonomia, a "autonomia mista" e o descompasso nos dois sentidos (o projeto pede e a máquina não liga; a máquina liga e o projeto não pede).
+  - Mudança sobre a PR #19 (Allan): a regra era "um ou outro" (`||`) e passou a "os dois" (`&&`); o evento `guarda.autonomia` virou `guarda.autonomia_usada`.
 
 ### Mudado
 - `git fetch` comum do orquestrador (remoto de nome simples, sem refspec com `:`/`+`/`refs/`, flags de uma allowlist) não pede mais confirmação.

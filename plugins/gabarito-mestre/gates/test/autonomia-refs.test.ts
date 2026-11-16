@@ -41,7 +41,7 @@ describe('escrita em refs por interpretador', () => {
     const c = `python3 -c "open('.git/${REF}/origin/main','w')"`;
     const d = decidir(bash(c), null, CTX, true);
     assert.equal(d.faixa, 'silencio');
-    assert.equal(d.evento?.tipo, 'guarda.autonomia');
+    assert.equal(d.evento?.tipo, 'guarda.autonomia_usada');
     assert.equal(decidir(bash(c, true), null, CTX, true).faixa, 'deny');
   });
 

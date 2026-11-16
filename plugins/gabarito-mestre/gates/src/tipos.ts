@@ -18,7 +18,6 @@ export type TipoEvento =
   | 'operacao.destrutiva'
   | 'guarda.deny'
   | 'guarda.ask'
-  | 'guarda.autonomia'
   | 'sessao.inicio'
   | 'guarda.heartbeat'
   | 'diario.recusa'

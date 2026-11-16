@@ -1,6 +1,6 @@
 /**
  * Interruptor de autonomia do orquestrador (decisão do dono, 2026-11-12): `~/.claude/gabarito-autonomia.json` = `{"orquestrador": true}`
- * troca todo `ask` do orquestrador por passagem silenciosa com evento `guarda.autonomia`. `segredo` e subagent não mudam.
+ * troca todo `ask` do orquestrador por passagem silenciosa com evento `guarda.autonomia_usada`. `segredo` e subagent não mudam.
  *
  * MUTAÇÕES PRESCRITAS:
  *  A1  converter também o anel `segredo` ⇒ `autonomia-segredo-continua-ask` falha
@@ -37,7 +37,7 @@ describe('autonomia do orquestrador', () => {
     const d = decidir(bash('git remote add x y'), null, CTX, true);
     assert.equal(d.faixa, 'silencio');
     assert.equal(d.permissionDecision, undefined);
-    assert.equal(d.evento?.tipo, 'guarda.autonomia');
+    assert.equal(d.evento?.tipo, 'guarda.autonomia_usada');
     assert.equal(d.evento?.dados.anel, 'integridade');
     assert.equal(JSON.stringify(d.evento).includes('remote add'), false, 'nunca o comando');
   });
@@ -72,7 +72,7 @@ describe('autonomia do orquestrador', () => {
       assert.equal(decidir({ ...escrita(p), agent_id: 'a1' }, null, CTX, true).faixa, 'deny', p);
       const d = decidir(escrita(p), null, CTX, true);
       assert.equal(d.faixa, 'silencio', p);
-      assert.equal(d.evento?.tipo, 'guarda.autonomia', p);
+      assert.equal(d.evento?.tipo, 'guarda.autonomia_usada', p);
     }
   });
 
@@ -90,7 +90,7 @@ describe('autonomia do orquestrador', () => {
       assert.equal(decidir(bash(c, true), null, CTX, true).faixa, 'deny', c);
       const on = decidir(bash(c), null, CTX, true);
       assert.equal(on.faixa, 'silencio', c);
-      assert.equal(on.evento?.tipo, 'guarda.autonomia', c);
+      assert.equal(on.evento?.tipo, 'guarda.autonomia_usada', c);
     }
   });
 
@@ -103,7 +103,7 @@ describe('autonomia do orquestrador', () => {
       assert.equal(off.evento?.tipo, 'guarda.ask');
       const on = decidir(e, null, CTX, true);
       assert.equal(on.faixa, 'silencio');
-      assert.equal(on.evento?.tipo, 'guarda.autonomia');
+      assert.equal(on.evento?.tipo, 'guarda.autonomia_usada');
       assert.equal(JSON.stringify(on.evento).includes('echo x'), false, 'nunca o comando');
     }
   });
