@@ -131,9 +131,12 @@ test('ausente-nao-e-zero: contexto não medido é "?"; 0 medido é 0', () => {
   const r = (pct: number | null) => paraTexto(renderPainel(projetarPainel(P, D([]), entrada({ contexto: { percent: pct, tokens: null, window: null } })),
     { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 120 }), 'mono');
   // GM-15 T29 (desenho do E4): sem medição, "?" no lugar da barra; 0 medido é barra vazia com 0%
-  assert.match(r(null), /^│ {2}ctx \? · pouso em 50% {3}tok \?$/m);
-  assert.match(r(0), /^│ {2}ctx ░+ 0% · pouso em 50% {3}tok \?$/m);
-  assert.match(r(Number.NaN as unknown as number), /^│ {2}ctx \? · /m);
+  // GM-15 T33 (g.9): a 120 colunas o "?" diz por que falta o dado; o 5h ausente é omitido (g.10, D-G7), o 7d segue com o motivo
+  assert.match(r(null), /^│ {2}ctx \? \(sem medição\) · pouso em 50% {3}tok \? \(sem medição\)$/m);
+  assert.match(r(0), /^│ {2}ctx ░+ 0% · pouso em 50% {3}tok \? \(sem medição\)$/m);
+  assert.match(r(Number.NaN as unknown as number), /^│ {2}ctx \? \(sem medição\) · /m);
+  assert.match(r(null), /^│ {2}7d \? \(sem medição\)$/m);
+  assert.doesNotMatch(r(null), /5h/);
   assert.doesNotMatch(r(null), /ctx [█░]|ctx 0%/);
 });
 

@@ -451,7 +451,7 @@ function linhaReserva(r: ItemRecente, quemTexto: (q: QuemPainel | null | undefin
 
 /**
  * Linha-resumo do AGORA (T42, emenda 37): `  <N> agentes: <rótulo> <task> · <rótulo> <task> …`. N = TODOS os vivos (mesmo os que o "…" esconde);
- * itens = agentes e linhas de segundo plano; ação e tempo saem. Corta em fronteira de item e termina em "…" quando algum não coube.
+ * itens = só agentes (o segundo plano é seção própria, g.11); ação e tempo saem. Corta em fronteira de item e termina em "…" quando algum não coube.
  */
 function linhaResumo(n: number, itens: { r: string; t: string }[], w: number): Linha {
   const pre = `  ${n} agentes:`;
@@ -513,6 +513,8 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   const minima = w < 44;
   const id = idNatural(e.id);
   const fim = (l: Linha): Linha => cortarNatural(l, w);
+  /** GM-15 T33 (g.9): todo "?" diz por que falta o dado, em 1–3 palavras, a partir de 100 colunas; abaixo disso fica só o "?". */
+  const mot = (m: string): string => (w >= 100 ? ` (${m})` : '');
 
   if (e.modo === 'fora') return [fim([seg('GABARITO · fora de um projeto', 'inactive')])];
   if (e.umaLinha !== null && e.umaLinha !== undefined) {
@@ -610,7 +612,8 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
     const tasksTxt = `${integ ?? '?'}/${total ?? '?'} tasks`;
     const prevV = pr.previsao !== null && typeof pr.previsao?.hora === 'string' && limpar(pr.previsao.hora) !== '' ? pr.previsao : null;
     const status = prevV !== null ? `previsão ${limpar(prevV.hora)} (base: ${inteiroNaoNeg(prevV.base) ?? '?'} tasks desta entrega)`
-      : p !== null && typeof p === 'object' ? 'loop parado' : e.parado === true ? 'loop pausado' : integ !== null && total !== null && total > 0 && integ >= total ? 'todas integradas' : '';
+      : p !== null && typeof p === 'object' ? 'loop parado' : e.parado === true ? 'loop pausado' : integ !== null && total !== null && total > 0 && integ >= total ? 'todas integradas'
+        : w >= 100 && integ !== null && integ < 3 ? 'ETA ?: n insuficiente' : '';
     // a barra pinta só integradas (D-P6); sem número, "?" no lugar da barra (nunca barra vazia que pareça 0 %)
     const barraPlano = (bw: number): Linha => (pct === null ? [seg('?')] : barraSegs(pct, bw, '▰', '▱', 'success'));
     if (larga) {
@@ -697,7 +700,7 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   }
 
   // ───────── EQUIPE: o AGORA (FIEL-4, FIEL-11) no desenho do E4 ─────────
-  const agoraAgentes: LinhaPrioridade[] = []; // as linhas de agente e de segundo plano (candidatas à linha-resumo, T42 emenda 37)
+  const agoraAgentes: LinhaPrioridade[] = []; // as linhas de agente (candidatas à linha-resumo, T42 emenda 37)
   const resumo: { r: string; t: string }[] = [];
   let nVivos = 0;
   let linhaNomeOrq: Linha | null = null;
@@ -719,7 +722,7 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
       const xp = nn(lider?.x);
       const hora = pct !== null && or?.pousar === true ? ' · hora de pousar' : '';
       const tokV = nn(lider?.tok);
-      const tokTxt = `   tok ${tokV === null ? '?' : fmtTok(tokV)}`;
+      const tokTxt = `   tok ${tokV === null ? `?${mot('sem medição')}` : fmtTok(tokV)}`;
       /** Linha do contexto do orquestrador: barra █░ (sem medição, "?" no lugar dela); "hora de pousar" nunca é cortada: a barra cede, depois o "pouso em". */
       const ctxOrq = (comNome: boolean, comTok: boolean): Linha => {
         let pre: Linha = comNome ? [seg(nomeOrq), seg(' ctx ')] : [seg('│', 'inactive'), seg('  ctx ')];
@@ -727,7 +730,7 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
         const teto = comNome ? 19 : w >= 72 ? 29 : 19;
         let pz = xp === null ? '' : ` · pouso em ${fmtPct(xp)}`;
         let est = estim ? ' (estimado)' : '';
-        const txtPct = (): string => (pct === null ? '?' : `${estim ? '~' : ''}${pct}%${est}`);
+        const txtPct = (): string => (pct === null ? `?${mot('sem medição')}` : `${estim ? '~' : ''}${pct}%${est}`);
         const fixo = (): number => larg(pre) + (pct === null ? 0 : 1) + colunas(txtPct()) + colunas(pz) + colunas(hora) + colunas(tk);
         let bw = Math.min(teto, w - fixo());
         // "hora de pousar" nunca é cortada: cede a barra, depois o "pouso em", depois o "(estimado)" (o "~" segue dizendo que é estimado),
@@ -757,34 +760,36 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
         linhaCtx = por(3, ctxOrq(false, true), 2);
         ctxComNome = ctxOrq(true, true);
         // limites 5h e 7d com a barra de 10 do E4; sem medição, "?" no lugar da barra (D-P13)
-        const lim = (rot: string, v: number | null): Linha => (v === null ? [seg(`${rot} ?`)] : [seg(`${rot} `), ...barraSegs(v, 10, '█', '░', 'success'), seg(` ${fmtPct(v)}`)]);
-        por(6.1, [seg('│', 'inactive'), seg('  '), ...lim('5h', h5), seg('   '), ...lim('7d', d7)], 2);
+        // D-G7 (g.10): sem `five_hour` na plataforma o campo 5h não existe (omitido, nunca "5h ?"); o 7d segue, com "?" quando não medido (D-P13)
+        const lim = (rot: string, v: number | null): Linha => (v === null ? [seg(`${rot} ?${mot('sem medição')}`)] : [seg(`${rot} `), ...barraSegs(v, 10, '█', '░', 'success'), seg(` ${fmtPct(v)}`)]);
+        por(6.1, [seg('│', 'inactive'), seg('  '), ...(h5 !== null ? [...lim('5h', h5), seg('   ')] : []), ...lim('7d', d7)], 2);
         const narr = natural(lider?.narrativa);
         // `▶` do E4 é pictográfico (vira emoji em terminal, FIEL-13 c): `▸`
         if (o.narracao === true && w >= 72 && narr !== '') por(6.7, [seg('│', 'inactive'), seg('  '), seg('▸', 'success'), seg(` ${narr}`)], 2);
       } else {
         linhaCtx = por(3, ctxOrq(true, false), 2);
-        por(6.1, [seg('│ ', 'inactive'), seg(`5h ${h5 === null ? '?' : fmtPct(h5)} 7d ${d7 === null ? '?' : fmtPct(d7)}${tokTxt.replace(/^ +/, ' ')}`)], 2);
+        por(6.1, [seg('│ ', 'inactive'), seg(`${h5 === null ? '' : `5h ${fmtPct(h5)} `}7d ${d7 === null ? '?' : fmtPct(d7)}${tokTxt.replace(/^ +/, ' ')}`)], 2);
       }
 
       // árvore dos agentes (├─ … └─): só ativos (FIEL-6); o que faz (FIEL-11 b) no fim da linha, onde o corte não alcança número
-      const segundo = Array.isArray(ag.segundoPlano) ? ag.segundoPlano.filter((a) => a !== null && typeof a === 'object') : [];
-      const itens = [...agentesAg.map((a) => ({ a, bg: false })), ...segundo.map((a) => ({ a: { ...a, quem: { nome: null, papel: 'teste' as const } }, bg: true }))];
-      const dados = itens.map(({ a, bg }) => {
-        const eq = bg ? undefined : daEquipe(a);
+      // GM-15 T33 (g.11, D-G8): a EQUIPE tem só agentes (+ Sombra); o shell de fundo vai para a seção SEGUNDO PLANO, abaixo
+      const dados = agentesAg.map((a) => {
+        const eq = daEquipe(a);
         const tempo = inteiroNaoNeg(a.desdeS);
         return {
-          nome: quemTexto(a.quem), cor: eq?.cor, gc: (bg || eq?.estadoTask == null ? 'inactive' : corEstadoTask(eq.estadoTask)) as CorTema, modelo: t(eq?.modelo),
-          task: typeof a.task === 'string' && t(a.task) !== '' ? t(a.task) : bg ? 'orquestrador' : 'sem task',
-          pct: bg ? null : nn(eq?.ctxPct), tok: bg ? null : nn(eq?.ctxTok), bg, tempo: tempo === null ? '' : fmtTempo(tempo),
-          acao: a.acao === null || a.acao === undefined ? '?' : natural(a.acao, 'reticencia') || '?',
+          nome: quemTexto(a.quem), cor: eq?.cor, gc: (eq?.estadoTask == null ? 'inactive' : corEstadoTask(eq.estadoTask)) as CorTema, modelo: t(eq?.modelo),
+          task: typeof a.task === 'string' && t(a.task) !== '' ? t(a.task) : 'sem task',
+          pct: nn(eq?.ctxPct), tok: nn(eq?.ctxTok), tempo: tempo === null ? '' : fmtTempo(tempo),
+          acao: a.acao === null || a.acao === undefined ? `?${mot('sem fonte')}` : natural(a.acao, 'reticencia') || `?${mot('sem fonte')}`,
         };
       });
       type Dado = (typeof dados)[number];
-      const ctxSegs = (d: Dado): Linha => (d.bg ? [] : d.pct !== null
+      const ctxSegs = (d: Dado): Linha => (d.pct !== null
         ? [seg('ctx '), ...barraSegs(d.pct, 10, '█', '░', 'success'), seg(` ${fmtPct(d.pct)}`)]
-        : [seg(d.tok !== null ? `ctx ${fmtTok(d.tok)}` : 'ctx ?')]);
+        : [seg(d.tok !== null ? `ctx ${fmtTok(d.tok)}` : `ctx ?${mot('sem medição')}`)]);
       const linhas: Linha[] = [];
+      const sb = e.equipe?.sombra;
+      const temSombra = sb !== null && typeof sb === 'object';
       if (larga) {
         const nw = maxCol(dados.map((d) => d.nome));
         const tw = maxCol(dados.map((d) => d.task));
@@ -798,7 +803,7 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
           const caudas = dados.map((d) => [...(d.pct !== null && d.tok !== null ? [fmtTok(d.tok)] : []), ...(nivel < 2 && d.tempo !== '' ? [d.tempo] : [])].join(' · '));
           const caw = maxCol(caudas);
           return dados.map((d, i) => [
-            seg(PREFIXO(i === dados.length - 1, true), 'inactive'), seg('●', d.gc), seg(' '), seg(nomeDe(d), d.cor),
+            seg(PREFIXO(i === dados.length - 1 && !temSombra, true), 'inactive'), seg('●', d.gc), seg(' '), seg(nomeDe(d), d.cor),
             ...(modeloDe(d) !== '' ? [seg(modeloDe(d), 'inactive')] : []), seg(' '.repeat(nmw - colunas(`${nomeDe(d)}${modeloDe(d)}`))), seg('  '), seg(pad(d.task, tw)), seg('  '),
             ...ctxSegs(d), seg(' '.repeat(cw - colunas(textoDe(ctxSegs(d))))), ...(caw > 0 ? [seg(`  ${pad(caudas[i], caw)}`, 'inactive')] : []),
           ]);
@@ -814,9 +819,9 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
       } else {
         const nw = maxCol(dados.map((d) => d.nome));
         dados.forEach((d, i) => {
-          const nums = d.bg ? '' : [d.pct !== null ? fmtPct(d.pct) : '', d.tok !== null ? fmtTok(d.tok) : ''].filter((x) => x !== '').join(' ') || '?';
+          const nums = [d.pct !== null ? fmtPct(d.pct) : '', d.tok !== null ? fmtTok(d.tok) : ''].filter((x) => x !== '').join(' ') || '?';
           linhas.push(aparar([
-            seg(PREFIXO(i === dados.length - 1, false), 'inactive'), seg('●', d.gc), seg(' '), seg(pad(d.nome, nw), d.cor), seg(` ${d.task}`),
+            seg(PREFIXO(i === dados.length - 1 && !temSombra, false), 'inactive'), seg('●', d.gc), seg(' '), seg(pad(d.nome, nw), d.cor), seg(` ${d.task}`),
             seg(`${nums !== '' ? ` ${nums}` : ''}${d.tempo !== '' ? ` ${d.tempo}` : ''}`, 'inactive'), seg(` ${d.acao}`),
           ]));
         });
@@ -825,6 +830,46 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
         por(3, l, 2); agoraAgentes.push(ls[ls.length - 1]);
         resumo.push({ r: dados[i].nome, t: dados[i].task });
       });
+      // GM-15 T33 (g.8, emenda 11): a Sombra é o último `└` da EQUIPE, como no E4 (`renderEsquadrao`): nome, "aconselha", modelo, nº de decisões e a última
+      // `#seq resposta (fonte)`; estreito ⇒ nome + `#seq`; sem decisão ⇒ só o nome. Nos 2 presets (o executivo chama de Conselheiro, `PAPEL_EXECUTIVO`).
+      if (temSombra) {
+        const nomeS = quemTexto({ nome: typeof sb.nome === 'string' ? sb.nome : null, papel: 'sombra' });
+        const decS = nn(sb.decisoes);
+        const ultS = sb.ultima !== null && typeof sb.ultima === 'object' ? sb.ultima : null;
+        const seqS = ultS === null ? null : nn(ultS.seq);
+        const temDecisao = (decS !== null && decS > 0) || seqS !== null;
+        if (larga) {
+          const cont = decS === null || decS === 0 ? '' : `${Math.round(decS)} ${Math.round(decS) === 1 ? 'decisão' : 'decisões'}`;
+          const resp = ultS !== null && seqS !== null ? `#${Math.round(seqS)} ${natural(ultS.resposta)}${t(ultS.fonte) !== '' ? ` (${t(ultS.fonte)})` : ''}` : '';
+          const mod = t(sb.modelo);
+          por(3, aparar(temDecisao
+            ? [seg(PREFIXO(true, true), 'inactive'), seg('○', 'inactive'), seg(' '), seg(nomeS, 'planMode'), seg('  aconselha'), ...(mod !== '' ? [seg(` · ${mod}`, 'inactive')] : []),
+              seg(`  ${[cont, resp].filter((x) => x !== '').join(' · ')}`, 'inactive')]
+            : [seg(PREFIXO(true, true), 'inactive'), seg('○', 'inactive'), seg(' '), seg(nomeS, 'planMode')]), 2);
+        } else {
+          const fim2 = ultS !== null && seqS !== null ? ` #${Math.round(seqS)}` : '';
+          por(3, aparar([seg(PREFIXO(true, false), 'inactive'), seg('○', 'inactive'), seg(' '), seg(nomeS, 'planMode'), ...(fim2 !== '' ? [seg(fim2, 'inactive')] : [])]), 2);
+        }
+      }
+      // GM-15 T33 (g.11, D-G8): SEGUNDO PLANO, seção própria abaixo da EQUIPE, 1 linha por shell de fundo (tipo · task · quem disparou · tempo); `agora.segundoPlano`
+      // já vem rotulado por `painel.ts` (`quem` = quem disparou, `task`, `acao` = tipo). É a 1ª a encolher no corte (prioridade 7; o resumo da seção, 6,9); vazia, some.
+      const shells = Array.isArray(ag.segundoPlano) ? ag.segundoPlano.filter((a) => a !== null && typeof a === 'object') : [];
+      if (shells.length > 0) {
+        const TIPOS: [string, string, string][] = [['Integrando', 'integrando', 'integrando'], ['Teste', 'teste', 'testes'], ['Aguardando', 'aguardando', 'aguardando'], ['Comando', 'comando', 'comandos']];
+        const tipoDe = (a: AgenteAgora): string => (TIPOS.some((x) => x[0] === a.acao) ? (a.acao as string) : 'Comando');
+        const contagem = TIPOS.map(([k, um, varios]) => { const n = shells.filter((a) => tipoDe(a) === k).length; return n === 0 ? '' : k === 'Integrando' || k === 'Aguardando' ? `${n} ${um}` : `${n} ${n === 1 ? um : varios}`; }).filter((x) => x !== '').join(' · ');
+        if (larga) {
+          por(6.9, alinhar([seg('SEGUNDO PLANO')], [seg(contagem, 'inactive')], w), 2.5);
+          for (const a of shells) {
+            const quemS = a.quem !== null && typeof a.quem === 'object' && a.quem.papel === 'orquestrador' ? nomeOrq : quemTexto(a.quem);
+            const taskS = typeof a.task === 'string' && t(a.task) !== '' ? ` ${t(a.task)}` : '';
+            const tempoS = inteiroNaoNeg(a.desdeS);
+            por(7, aparar([seg('  ◦ ', 'inactive'), seg(`${tipoDe(a)}${taskS}`), seg(` · ${quemS}${tempoS !== null ? ` · ${fmtTempo(tempoS)}` : ''}`, 'inactive')]), 2.5);
+          }
+        } else {
+          por(6.9, [seg(`segundo plano: ${contagem}`, 'inactive')], 2.5);
+        }
+      }
     }
   }
 
@@ -853,12 +898,13 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   // rodapé do E4: CI, produção e política; sem medição, "?" (D-P13); `▼ N` = resultados que o teto do local escondeu
   if (e.rodape !== null && typeof e.rodape === 'object') {
     const ci = e.rodape.ci?.verde;
-    const ciTxt = ci === true ? 'verde' : ci === false ? 'vermelho' : '?';
+    // g.9: nenhum `ci.resultado` da entrega ⇒ "CI sem execução"; `rodape.ci.pendente` (execução rodando) ⇒ "CI pendente"
+    const ciTxt = ci === true ? 'verde' : ci === false ? 'vermelho' : `?${mot((e.rodape.ci as { pendente?: boolean } | undefined)?.pendente === true ? 'CI pendente' : 'CI sem execução')}`;
     const ciCor: CorTema = ci === true ? 'success' : ci === false ? 'warning' : 'inactive';
-    const leu = ouInterroga(e.rodape.prod?.leituras);
-    const alt = ouInterroga(e.rodape.prod?.alteracoes);
+    const leu = ouInterroga(e.rodape.prod?.leituras) + (nn(e.rodape.prod?.leituras) === null ? mot('diário sem leitura') : '');
+    const alt = ouInterroga(e.rodape.prod?.alteracoes) + (nn(e.rodape.prod?.alteracoes) === null ? mot('diário sem leitura') : '');
     const pol0 = natural(e.rodape.politica);
-    const pol = pol0 === '' || pol0 === 'undefined' || pol0 === 'null' ? '?' : pol0;
+    const pol = pol0 === '' || pol0 === 'undefined' || pol0 === 'null' ? `?${mot('sem política')}` : pol0;
     const k = Math.max(0, todosRec.length - rec.length);
     por(6.8, larga
       ? alinhar([seg('CI '), seg('●', ciCor), seg(` ${ciTxt}   PROD leu ${leu} · alterou ${alt}   política ${pol}`)], k > 0 ? [seg(`▼ ${k} ${k === 1 ? 'evento' : 'eventos'}`, 'inactive')] : [], w)
@@ -872,7 +918,7 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   // corte por orçamento (REQ-GLB-1): `orcamento`, senão `altura`; sem os dois, sem corte
   const orc = alturaValida(o.orcamento) ?? alturaValida(o.altura);
   let cortado: { linhas: Linha[]; cortadasTopo: number } = orc === undefined ? { linhas: ls.map((x) => x.l), cortadasTopo: 0 } : cortarComReserva(ls, orc, reserva, daDecisao);
-  // Linha-resumo (T42, emenda 37): só quando há reserva da Sombra, ela NÃO coube e compactar o AGORA (agentes + segundo plano) em 1 linha a faz caber.
+  // Linha-resumo (T42, emenda 37): só quando há reserva da Sombra, ela NÃO coube e compactar o AGORA (agentes) em 1 linha a faz caber.
   if (orc !== undefined && reserva !== null && !cortado.linhas.includes(reserva) && nVivos >= 1 && agoraAgentes.length >= 2) {
     const recente = ls.filter((x) => x.prioridade === 5).map((x) => x.l);
     if (recente.length > 0 && !recente.some((l) => cortado.linhas.includes(l))) {

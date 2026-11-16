@@ -593,12 +593,13 @@ describe('stdin (--agentes)', { timeout: 60_000 }, () => {
   test('acoes-e-segundo-plano-pelo-cli-real: a ação ao vivo e o segundo plano do stdin chegam ao AGORA (FIEL-11 b, c)', () => {
     const m = montar({ ...comEventos([['task.iniciada', { task: 'T1', papel: 'implementador' }]]) });
     const entrada = { sessao: {}, agentes: [{ id: 'a1', type: 'implementador', description: 'T1 implementador', status: 'running' }],
-      acoes: { a1: { texto: 'lendo 3 arquivos', fonte: 'tool', em: 1 } }, segundoPlano: [{ id: 'b1', dono: 'orquestrador', texto: 'build do plugin', desde: 1 }] };
+      acoes: { a1: { texto: 'lendo 3 arquivos', fonte: 'tool', em: 1 } }, segundoPlano: [{ id: 'b1', dono: 'orquestrador', texto: 'build do plugin', desde: 1 }, { id: 'b2', dono: 'a1', texto: 'rodar a suíte', desde: 1, comando: 'npm test' }] };
     const r = cli(m, ['estado', '--agentes'], { input: JSON.stringify(entrada) });
     assert.equal(r.rc, 0, r.stdout + r.stderr);
     const agora = r.json.estado.agora;
     assert.equal(agora.agentes.find((a) => a.task === 'T1')?.acao, 'lendo 3 arquivos');
-    assert.deepEqual(agora.segundoPlano.map((x) => [x.quem.papel, x.acao]), [['teste', 'build do plugin']]);
+    // GM-15 T33 (g.11): o painel rotula o shell pelo comando (Teste, Integrando, Aguardando, Comando); `quem` = quem disparou, `task` = a do agente dono
+    assert.deepEqual(agora.segundoPlano.map((x) => [x.quem.papel, x.task, x.acao]), [['orquestrador', null, 'Comando'], ['implementador', 'T1', 'Teste']]);
     const sem = cli(m, ['estado', '--agentes'], { input: JSON.stringify({ ...entrada, acoes: undefined, segundoPlano: undefined }) });
     assert.equal(sem.json.estado.agora.agentes.find((a) => a.task === 'T1')?.acao, 'implementando (registrado)');
     assert.deepEqual(sem.json.estado.agora.segundoPlano, []);

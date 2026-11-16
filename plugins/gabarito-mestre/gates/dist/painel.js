@@ -20,7 +20,7 @@ import { formaInvalida } from './formas.js';
 import { renderBlocos, renderEsquadrao } from './painel-esquadrao.js';
 import { historicoDe } from './painel-texto.js';
 import { renderExecutivo } from './painel-executivo.js';
-import { chaveDoPar, higienizarDescricao, integrandoDe, nomesPorPapel, projetarEquipe, resolverAtivos } from './painel-equipe.js';
+import { chaveDoPar, higienizarDescricao, integrandoDe, nomesPorPapel, projetarEquipe, resolverAtivos, rotuloDoShell } from './painel-equipe.js';
                                                          
 import { dataCivil, fusoValido, horaLocal } from './painel-hora.js';
                                                                                                                                                                                                                            
@@ -696,12 +696,16 @@ function projetarNovo(plano              , eventos                 , entrada    
     const registrado = util === null || soPapel ? `${ACAO_DO_PAPEL[c.papel]} (registrado)` : `${util} (registrado)`;
     return { quem: { nome, papel: c.papelExibido ?? c.papel }, task: c.task, acao: aoVivo ?? registrado, desdeS: desdeIni(c.task, c.papel) };
   });
-  // segundo plano (FIEL-11 c): "Teste · <task ou orquestrador> · <description> · <tempo>"
-  const taskDoDono = new Map((ativos ?? []).map((x) => [x.id, x.casamento.task]));
-  const segundoPlano                = ativos === null || !Array.isArray(entrada.segundoPlano) ? [] : entrada.segundoPlano.filter((b) => ehObj(b) && typeof b.id === 'string').map((b) => ({
-    quem: { nome: null, papel: 'teste'          }, task: b.dono === 'orquestrador' ? null : taskDoDono.get(b.dono) ?? null, acao: higienizarDescricao(b.texto),
-    desdeS: Number.isFinite(b.desde) ? Math.max(0, Math.floor((entrada.agoraMs - b.desde) / 1000)) : null,
-  }));
+  // segundo plano (FIEL-11 c, GM-15 T33 g.11/D-G8): seção própria, 1 linha por shell: `acao` = tipo (rotuloDoShell: Integrando/Teste/Aguardando/Comando), `task` = a que o
+  // comando ou a descrição provam (senão a do agente dono), `quem` = quem disparou (a sessão principal ou o agente); sem prova de task ⇒ `null` (nunca palpite)
+  const donoDe = new Map((ativos ?? []).map((x) => [x.id, x]));
+  const segundoPlano                = ativos === null || !Array.isArray(entrada.segundoPlano) ? [] : entrada.segundoPlano.filter((b) => ehObj(b) && typeof b.id === 'string').map((b) => {
+    const r = rotuloDoShell(b);
+    const d = b.dono === 'orquestrador' ? undefined : donoDe.get(b.dono);
+    const quem             = b.dono === 'orquestrador' ? { nome: null, papel: 'orquestrador' }
+      : d === undefined ? { nome: null, papel: 'implementador' } : { nome: comNomes ? d.nome : null, papel: d.casamento.papelExibido ?? d.casamento.papel ?? 'implementador' };
+    return { quem, task: r.task ?? d?.casamento.task ?? null, acao: r.tipo, desdeS: Number.isFinite(b.desde) ? Math.max(0, Math.floor((entrada.agoraMs - b.desde) / 1000)) : null };
+  });
 
   // ATENÇÃO (FIEL-10 c): só travado ou com problema
   const atencao           = [];
