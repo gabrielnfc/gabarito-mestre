@@ -169,6 +169,11 @@ const gravaContexto = (r, sessao, percent) => {
   mkdirSync(join(r, '.harness', 'contexto'), { recursive: true });
   writeFileSync(join(r, '.harness', 'contexto', `${sessao}.json`), JSON.stringify({ percent, fonte: 'mod', em: new Date().toISOString() }));
 };
+// GM-15 T19: estes testes não são sobre o loop; arma o sinal da sessão (forma do mod: gabarito.mjs `interpretarSinalLoop`), sem o que o painel não oferece o pouso
+const armaLoop = (r, sessao) => {
+  mkdirSync(join(r, '.harness', 'contexto'), { recursive: true });
+  writeFileSync(join(r, '.harness', 'contexto', `loop-dinamico.${sessao}.json`), JSON.stringify({ estado: 'armado', intervalo: 0, dinamico: 1, sessao, em: new Date().toISOString() }) + '\n');
+};
 const proxima = (r, sessao) => {
   const p = spawnSync(process.execPath, [LOOP, 'proxima', '--entrega', 'GM-77', '--sessao', sessao], { cwd: r, encoding: 'utf8', timeout: 60_000, env: { ...process.env, GABARITO_POUSO_X: '50' } });
   return JSON.parse(p.stdout.split('\n').filter(Boolean).pop());
@@ -179,6 +184,7 @@ test('painel-e-proxima-mesma-resposta: o mesmo diário e a mesma leitura dão o 
   for (const [percent, pendente] of [[19, false], [61, true]]) {
     const { r } = repo({ origem, eventos: FRONTEIRA });
     gravaContexto(r, 'sessao-p', percent);
+    armaLoop(r, 'sessao-p');
     const a = proxima(r, 'sessao-p');
     assert.equal(a.acao.tipo === 'pousar', pendente, `proxima com ${percent} %: ${JSON.stringify(a.acao)}`);
     const est = estadoDoPainel(r, { agoraMs: Date.now(), agentes: { session_id: 'sessao-p', agentes: [], sessao: {} } });

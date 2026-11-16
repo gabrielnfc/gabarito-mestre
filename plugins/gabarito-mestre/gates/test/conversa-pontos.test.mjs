@@ -712,7 +712,10 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
     assert.equal(n(ENTREGA_PUBLICADA, 'dono.mensagem'), 0);
     const med = JSON.parse(sh('painel.mjs', ['medir', '--agentes'], JSON.stringify({ session_id: 'painel-s1', sessao: { session_id: 'painel-s1', percent: null }, agentes: [] })).stdout);
     assert.equal(med.ok, true);
-    const est = JSON.parse(sh('painel.mjs', ['estado']).stdout).estado;
+    // GM-15 T19: esta cópia não é sobre o loop; arma o sinal da sessão (forma do mod: gabarito.mjs `interpretarSinalLoop`) para o painel não avisar "ligar o loop"
+    mkdirSync(join(destino, '.harness', 'contexto'), { recursive: true });
+    writeFileSync(join(destino, '.harness', 'contexto', 'loop-dinamico.painel-s1.json'), JSON.stringify({ estado: 'armado', intervalo: 0, dinamico: 1, sessao: 'painel-s1', em: new Date().toISOString() }) + '\n');
+    const est = JSON.parse(sh('painel.mjs', ['estado', '--sessao', 'painel-s1']).stdout).estado;
     const pt = JSON.parse(readFileSync(join(AQUI, 'e2e', 'conversa-2026-11-11', 'pontos.json'), 'utf8')).pontos[0].esperado;
     assert.equal(est.id, ENTREGA_ATIVA);
     assert.equal(est.trilha.fase, pt.fase);
