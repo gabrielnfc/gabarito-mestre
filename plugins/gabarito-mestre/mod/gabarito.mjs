@@ -51,13 +51,14 @@ const chaveDe = (dir) => `pouso:${dir}`;
 // Medido na T0b (S4 ii, `.superpowers/sdd/2026-11-15-2-1-1/t0b-relatorio.md`): o `/loop` real arma um item em `Stop.session_crons`
 // (`recurring:true` = intervalo, `recurring:false` = wakeup dinâmico). Nada armado ⇒ lista vazia. A sentinela `<<autonomous-loop-dynamic>>`
 // NUNCA aparece ali: não se casa o prompt. Campo ausente ou fora da forma ⇒ "não conferível", nunca "ausente" nem "armado".
-// Forma publicada (a T18 e a T19 leem): `.harness/loop-dinamico.<session_id do hook>.json` = `{estado: 'armado'|'ausente'|'nao_conferivel', intervalo, dinamico, sessao, em}`.
+// Forma publicada (a T18 e a T19 leem): `.harness/contexto/loop-dinamico.<session_id do hook>.json` = `{estado: 'armado'|'ausente'|'nao_conferivel', intervalo, dinamico, sessao, em}`.
+// Fica em `.harness/contexto/` (já ignorado em .gitignore e emendado por scripts/instalar.sh): estado de sessão nunca entra em commit. O frescor de `em` é do consumidor (T18/T19): o leitor só confere forma e sessão.
 // Um arquivo POR SESSÃO (aprendizado D: estado de hook do mod é chaveado pelo session_id do hook): sessões no checkout e nas worktrees partilham a raiz
 // principal e não se sobrescrevem. O leitor é `interpretarSinalLoop(texto, sessao)`: só aceita o arquivo da sessão pedida; o resto é `nao_conferivel`.
 // Id fora de `[A-Za-z0-9-]{1,128}` (path traversal) ⇒ não grava e não lê. Arquivos de sessões antigas se acumulam: limpeza fica para quem for dono (não é trivial sem apagar).
 const ID_SESSAO = /^[A-Za-z0-9-]{1,128}$/;
 /** Nome do arquivo do sinal da sessão (relativo a `.harness/`), ou `null` se o id não serve de chave. Pura. */
-export const arquivoSinalLoop = (sessao) => (typeof sessao === 'string' && ID_SESSAO.test(sessao) ? `loop-dinamico.${sessao}.json` : null);
+export const arquivoSinalLoop = (sessao) => (typeof sessao === 'string' && ID_SESSAO.test(sessao) ? `contexto/loop-dinamico.${sessao}.json` : null);
 
 /** Texto do arquivo da sessão `sessao` ⇒ sinal. Ausente (`null`/`undefined`), corrompido, fora da forma ou de OUTRA sessão ⇒ `nao_conferivel`; nunca "armado" por engano. Pura. */
 export function interpretarSinalLoop(texto, sessao) {
@@ -87,8 +88,8 @@ const comum = cp.execFileSync('git', ['rev-parse', '--path-format=absolute', '--
 const raiz = path.dirname(comum);
 import(url).then((m) => {
   if (m.temOnboarding(raiz) !== true) return;
-  const dir = path.join(raiz, '.harness'); fs.mkdirSync(dir, { recursive: true });
-  const fim = path.join(dir, arquivo), tmp = fim + '.' + process.pid + '.tmp';
+  const fim = path.join(raiz, '.harness', arquivo); fs.mkdirSync(path.dirname(fim), { recursive: true });
+  const tmp = fim + '.' + process.pid + '.tmp';
   try { fs.writeFileSync(tmp, JSON.stringify(sinal) + '\\n'); fs.renameSync(tmp, fim); } catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }
 }).catch(() => process.exit(1));`;
 

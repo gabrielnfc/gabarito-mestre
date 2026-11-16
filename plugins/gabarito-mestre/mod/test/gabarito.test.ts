@@ -5268,7 +5268,10 @@ test('mod-sinal-gravar-pura: gravarSinalLoop fora da forma ⇒ null; sessão for
   const ok = { pluginRoot: '/p', estado: 'armado', intervalo: 0, dinamico: 1, sessao: 's-1', emMs: 0 }
   expect(gravarSinalLoop(ok)?.argv.slice(0, 2)).toEqual(['node', '-e'])
   for (const ruim of ['../x', 'a/b', '', undefined, 'x'.repeat(129)]) expect(gravarSinalLoop({ ...ok, sessao: ruim })).toBeNull()
-  expect(JSON.parse(gravarSinalLoop(ok)!.stdin).arquivo).toBe('loop-dinamico.s-1.json')
+  expect(JSON.parse(gravarSinalLoop(ok)!.stdin).arquivo).toBe('contexto/loop-dinamico.s-1.json')
+  // o sinal cai sob .harness/contexto/ (ignorado pelo git), nunca solto em .harness/
+  expect(arquivoSinalLoop('s-1')!.startsWith('contexto/')).toBe(true)
+  expect(arquivoSinalLoop('s-1')!.split('/')).toHaveLength(2)
   expect(gravarSinalLoop({ ...ok, estado: 'talvez' })).toBeNull()
   expect(gravarSinalLoop({ ...ok, pluginRoot: '' })).toBeNull()
   expect(gravarSinalLoop({ ...ok, intervalo: 1.5 })).toBeNull()
@@ -5287,9 +5290,9 @@ test('mod-sinal-2-sessoes: B arma, A continua não vendo armado (um arquivo por 
   expect(le('sessao-B').estado).toBe('armado')
   expect(le('sessao-A').estado).toBe('ausente')
   // A não vê o arquivo de B, nem se o leitor for apontado para ele
-  expect(interpretarSinalLoop(disco.get('loop-dinamico.sessao-B.json'), 'sessao-A').estado).toBe('nao_conferivel')
+  expect(interpretarSinalLoop(disco.get('contexto/loop-dinamico.sessao-B.json'), 'sessao-A').estado).toBe('nao_conferivel')
 })
-test('mod-sinal-leitor: ausente (arquivo não existe) ≠ corrompido ≠ de outra sessão; só o conteúdo da sessão vale', () => {
+test('mod-sinal-leitor: arquivo ausente, corrompido e de outra sessão são todos nao_conferivel; só o conteúdo válido da sessão vale', () => {
   const bom = JSON.stringify({ estado: 'armado', intervalo: 0, dinamico: 1, sessao: 's-1', em: '2026-11-15T12:00:00.000Z' })
   expect(interpretarSinalLoop(bom, 's-1')).toMatchObject({ estado: 'armado', dinamico: 1, sessao: 's-1' })
   expect(interpretarSinalLoop(undefined, 's-1').estado).toBe('nao_conferivel')
