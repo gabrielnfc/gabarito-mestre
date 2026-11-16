@@ -190,22 +190,26 @@ test('tabela-H-concluida-despacha-revisor: com ou sem agente vivo, o revisor vem
 test('tabela-I-vivos-sem-concluida-espera', () => {
   assert.equal(proximaAcao(plano(['a'], ['b']), diario(...aprovada('a')), NX({ vivos: 2 })).tipo, 'esperar');
 });
-test('tabela-J-em-voo-sem-agente-nao-pousa: implementando, corrigindo e em_revisao sem vivo caem em nao_conseguiu (5b)', () => {
+test('tabela-J-em-voo-sem-agente-nao-pousa: implementando, corrigindo e em_revisao sem vivo pedem retomar 1x e, reaberta, nao_conseguiu (5b)', () => {
   const impl = diario(ini('a'));
-  assert.deepEqual(proximaAcao(plano(['a']), impl, NX()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['a']), impl, NX()), { tipo: 'retomar', task: 'a' });
   const corr = diario(ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), ini('a', 'correcao'));
-  assert.deepEqual(proximaAcao(plano(['a']), corr, NX()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['a']), corr, NX()), { tipo: 'retomar', task: 'a' });
   const rev = diario(ini('a'), con('a'), ini('a', 'revisor'));
-  assert.deepEqual(proximaAcao(plano(['a']), rev, NX()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['a']), rev, NX()), { tipo: 'retomar', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a'), retomada('a'), ini('a')), NX()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' }, 'já retomada 1x');
 });
 test('tabela-J-motivo-e-da-task-em-voo: outra task no teto não troca o motivo para teto_rodadas', () => {
   const evs = diario(...noTeto('a'), ini('b'));
-  assert.deepEqual(proximaAcao(plano(['a'], ['b']), evs, NX()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'b' });
+  assert.deepEqual(proximaAcao(plano(['a'], ['b']), evs, NX()), { tipo: 'retomar', task: 'b' });
+  assert.deepEqual(proximaAcao(plano(['a'], ['b']), diario(...noTeto('a'), ini('b'), retomada('b'), ini('b')), NX()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'b' });
 });
-test('tabela-9b-antes-de-9c: no_teto vence task em voo quando o percent não manda pousar (r2 MINOR)', () => {
+test('tabela-9b-antes-de-9c: no_teto vence task em voo já retomada 1x quando o percent não manda pousar (r2 MINOR; a 1ª retomada vem antes, T12)', () => {
   const evs = diario(...noTeto('a'), ini('b'));
-  assert.deepEqual(proximaAcao(plano(['a'], ['b']), evs, sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'a' });
-  assert.deepEqual(proximaAcao(plano(['b'], ['a']), diario(ini('b'), ...noTeto('a')), sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['a'], ['b']), evs, sinais()), { tipo: 'retomar', task: 'b' });
+  const velha = diario(...noTeto('a'), ini('b'), retomada('b'), ini('b'));
+  assert.deepEqual(proximaAcao(plano(['a'], ['b']), velha, sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['b'], ['a']), diario(ini('b'), retomada('b'), ini('b'), ...noTeto('a')), sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'a' });
 });
 test('tabela-K-aprovada-nao-integrada-pousa', () => {
   assert.deepEqual(proximaAcao(plano(['a']), diario(...aprovada('a')), NX()), { tipo: 'pousar' });
@@ -519,7 +523,7 @@ test('teto-em-dep-transitiva-apos-dono-libera', () => {
 });
 test('dono-sem-rodada-anterior-nao-muda-nada', () => {
   assert.deepEqual(proximaAcao(plano(['a']), diario(dono('a')), sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'implementador' }] });
-  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a'), dono('a')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a'), dono('a')), sinais()), { tipo: 'retomar', task: 'a' }, 'dono não conta como retomada');
   assert.deepEqual(proximaAcao(plano(['a']), diario(...aprovada('a'), dono('a')), sinais()), { tipo: 'integrar', tasks: ['a'] });
   assert.deepEqual(proximaAcao(plano(['a']), diario(...pronta('a'), dono('a')), sinais()), { tipo: 'concluir' });
 });
@@ -588,7 +592,7 @@ test('concluir-exige-todas-integradas', () => {
   assert.notEqual(proximaAcao(p, diario(...pronta('a'), ...aprovada('b')), sinais()).tipo, 'concluir');
   assert.notEqual(proximaAcao(p, diario(...pronta('a')), sinais()).tipo, 'concluir');
   assert.deepEqual(proximaAcao(p, diario(...pronta('a'), ...noTeto('b')), sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'b' });
-  assert.deepEqual(proximaAcao(p, diario(...pronta('a'), ini('b')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'b' });
+  assert.deepEqual(proximaAcao(p, diario(...pronta('a'), ini('b')), sinais()), { tipo: 'retomar', task: 'b' });
 });
 // (9)
 test('nada-a-fazer-vivos-espera', () => {
@@ -601,8 +605,9 @@ test('nada-a-fazer-no-teto-para-com-a-task', () => {
 test('rodada-2-reprovada-sem-major-nao-e-teto', () => {
   assert.deepEqual(proximaAcao(plano(['a']), diario(...noTeto('a', 0, 0)), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
 });
-test('orfa-sem-vivos-para-sem-silencio', () => {
-  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+test('orfa-sem-vivos-para-sem-silencio: 1ª vez retomar, 2ª nao_conseguiu', () => {
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a')), sinais()), { tipo: 'retomar', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a'), retomada('a'), ini('a')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
 });
 // tabela de estados e transições (rodada 3)
 type Par = [TipoEvento, Record<string, unknown>];
@@ -753,16 +758,16 @@ test('pausa-revisor-retoma', () => {
   const p = plano(['a']);
   const morto = [ini('a'), con('a'), ini('a', 'revisor')];
   const pausa: Par = ['loop.pausa', {}];
-  assert.deepEqual(proximaAcao(p, diario(...morto, pausa), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' }, 'sem reabertura não adivinha');
+  assert.deepEqual(proximaAcao(p, diario(...morto, pausa), sinais()), { tipo: 'retomar', task: 'a' }, 'sem reabertura pede retomar');
   assert.deepEqual(proximaAcao(p, diario(...morto, pausa, retomada('a')), sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'revisor' }] });
   const r2 = [ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), ...corrigida(2, 0).slice(0, 2), ini('a', 'revisor'), pausa, retomada('a')];
   assert.deepEqual(proximaAcao(p, diario(...r2), sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'revisor' }] }, 'rodada 2');
-  assert.deepEqual(proximaAcao(p, diario(...morto, pausa, dono('a')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' }, 'dono não é retomada');
+  assert.deepEqual(proximaAcao(p, diario(...morto, pausa, dono('a')), sinais()), { tipo: 'retomar', task: 'a' }, 'dono não é retomada');
 });
 test('pausa-correcao-retoma', () => {
   const p = plano(['a']);
   const morta = [ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), ini('a', 'correcao')];
-  assert.deepEqual(proximaAcao(p, diario(...morta), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+  assert.deepEqual(proximaAcao(p, diario(...morta), sinais()), { tipo: 'retomar', task: 'a' });
   assert.deepEqual(proximaAcao(p, diario(...morta, retomada('a')), sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'correcao' }] });
   assert.equal(proximaAcao(p, diario(...morta, retomada('a')), sinais({ vivos: 1 })).tipo, 'despachar', 'a tabela não olha vivos: quem grava a reabertura decide');
 });
@@ -1061,16 +1066,17 @@ test('emenda-nao-mascara-task-presa', () => {
 test('emenda-nao-mascara-agente-morto', () => {
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', []));
   const morto = [...diarioT(ini('T2')), prop(1, 'REQ-A-1')];
-  assert.deepEqual(proximaAcao(p, morto, sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'T2' });
+  assert.deepEqual(proximaAcao(p, morto, sinais()), { tipo: 'retomar', task: 'T2' });
   // a própria task congelada em voo, sem agente vivo: também morreu
   const p1 = planoR(T('T1', [], ['REQ-A-1']));
-  assert.deepEqual(proximaAcao(p1, [...diarioT(ini('T1')), prop(1, 'REQ-A-1')], sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'T1' });
+  assert.deepEqual(proximaAcao(p1, [...diarioT(ini('T1')), prop(1, 'REQ-A-1')], sinais()), { tipo: 'retomar', task: 'T1' });
 });
 test('9c-aponta-a-task-em-voo-nao-a-primeira-nao-integrada', () => {
   // T1 congelada pendente vem antes no plano, mas quem morreu é T2
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', []));
-  const a = proximaAcao(p, [...diarioT(ini('T2')), prop(1, 'REQ-A-1')], sinais());
+  const a = proximaAcao(p, [...diarioT(ini('T2'), ['task.reaberta', { task: 'T2', origem: 'retomada' }], ini('T2')), prop(1, 'REQ-A-1')], sinais());
   assert.equal(a.tipo === 'parar' ? a.task : null, 'T2');
+  assert.deepEqual(proximaAcao(p, [...diarioT(ini('T2')), prop(1, 'REQ-A-1')], sinais()), { tipo: 'retomar', task: 'T2' }, '1ª vez: retomar a que morreu');
 });
 test('sem-slot-livre-segue-na-presenca-de-emenda', () => {
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', []));
@@ -1841,7 +1847,7 @@ test('no-teto-adiada-nao-para: o teto da task fora não gera parar teto_rodadas'
   assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), fora('a', 'adiada'), ...pronta('b')), sinais()), { tipo: 'concluir' });
   const q = plano(['a'], ['c']);
   assert.deepEqual(proximaAcao(q, diario(...noTeto('a'), fora('a', 'adiada')), sinais()), { tipo: 'despachar', itens: [{ task: 'c', papel: 'implementador' }] }, 'o resto segue');
-  assert.deepEqual(proximaAcao(q, diario(...noTeto('a'), fora('a', 'adiada'), ini('c')), sinais({ vivos: 0 })), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'c' }, 'a órfã de verdade ainda para');
+  assert.deepEqual(proximaAcao(q, diario(...noTeto('a'), fora('a', 'adiada'), ini('c'), retomada('c'), ini('c')), sinais({ vivos: 0 })), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'c' }, 'a órfã já retomada ainda para');
 });
 test('fora-no-pouso: so resta task fora => o pouso não é pedido (5d)', () => {
   const evs = diario(...pronta('a'), fora('b', 'adiada'));
@@ -1914,4 +1920,60 @@ test('foraPermitido: livre, dependentes listados, dependente fora libera, diári
 test('task.fora é evento de task e de progresso (o Stop e o painel o enxergam)', () => {
   assert.ok(TIPOS_DE_TASK.includes('task.fora'));
   assert.ok(TIPOS_DE_PROGRESSO.includes('task.fora'));
+});
+
+// GM-15 T12 (REQ-AUT-1 núcleo): trava parcial não para o loop
+const retomarA = (t: string) => ({ tipo: 'retomar', task: t });
+test('teto-numa-task-outra-segue: a no_teto e b independente em curso; o loop despacha, revê e integra b antes de parar no teto de a', () => {
+  const p = plano(['a'], ['b']);
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a')), sinais()), { tipo: 'despachar', itens: [{ task: 'b', papel: 'implementador' }] });
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ini('b'), con('b')), sinais()), { tipo: 'despachar', itens: [{ task: 'b', papel: 'revisor' }] });
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ...aprovada('b')), sinais()), { tipo: 'integrar', tasks: ['b'] });
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ...pronta('b')), sinais()), tetoDe('a'), 'só depois de tudo o que corre para');
+});
+test('em-voo-sem-agente-reabre-1x: sem vivo, a task em voo pede retomar antes de qualquer parar, inclusive do teto de outra', () => {
+  const p = plano(['a'], ['b']);
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a')), sinais()), retomarA('a'));
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('b'), ini('a')), sinais()), retomarA('a'), 'o teto de b não vence a retomada de a');
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('b'), ini('a')), NX()), retomarA('a'), 'também na cláusula do pouso (5b)');
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a'), con('a'), ini('a', 'revisor')), sinais()), retomarA('a'), 'revisor morto');
+  assert.equal(proximaAcao(p, diario(ini('a')), sinais({ vivos: 1 })).tipo, 'despachar', 'com agente vivo nada é retomado: b (livre) segue');
+});
+test('em-voo-segunda-vez-nao-conseguiu: depois de task.reaberta retomada e nova morte, para', () => {
+  const p = plano(['a'], ['b']);
+  const bOk = pronta('b');
+  assert.deepEqual(proximaAcao(p, diario(...bOk, ini('a'), retomada('a'), ini('a')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+  assert.deepEqual(proximaAcao(p, diario(...bOk, ini('a'), retomada('a'), ini('a')), NX()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' }, '5b');
+  assert.deepEqual(proximaAcao(p, diario(...bOk, ini('a'), dono('a')), sinais()), retomarA('a'), 'reabertura do dono não gasta a retomada');
+  assert.deepEqual(proximaAcao(p, diario(...bOk, retomada('b'), ini('a')), sinais()), retomarA('a'), 'a conta é por task: a retomada de b não gasta a de a');
+});
+test('barrado-global-para: diário inválido, pendência de review e fechamento seguem parando tudo mesmo com task em voo sem agente e outra livre', () => {
+  const p = plano(['a'], ['b']);
+  const invalidoEv = [ev(2, '2026-11-03T00:00:01.000Z', 's1', ...ini('a')), ev(1, '2026-11-03T00:00:02.000Z', 's1', ...ini('b'))];
+  assert.deepEqual(proximaAcao(p, invalidoEv, sinais()), { tipo: 'parar', motivo: 'diario_invalido' });
+  assert.equal(proximaAcaoNucleo(p, diario(...noTeto('a'), ini('b'), ['loop.parar', { motivo: 'teto_rodadas', task: 'a' }]), sinais()).tipo, 'aprender', 'pendência de aprendizado do parar vence a retomada');
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ini('b')), sinais({ tokens: 5, tetoTokens: 5 })), { tipo: 'parar', motivo: 'teto_tokens' });
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ini('b'), ci(false), ci(false)), sinais()), { tipo: 'parar', motivo: 'ci_vermelho' });
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ini('b')), sinais({ pausado: true })), { tipo: 'esperar', motivo: 'pausado' });
+  assert.deepEqual(proximaAcao(p, diario(...pronta('a'), ...pronta('b')), sinais()), { tipo: 'concluir' }, 'fechamento: tudo integrado conclui, sem retomar nada');
+});
+test('liberacao-gasta-aguarda-dono-sem-parar: a no_teto com a liberação da Sombra gasta não segura b; só ao fim para, apontando a', () => {
+  const p = plano(['a'], ['b']);
+  const gasta = [...noTeto('a'), sombraLib('a'), ...noTeto('a')];
+  assert.deepEqual(estadoDe(diario(...gasta)).estado, 'no_teto', 'controle: voltou ao teto');
+  assert.deepEqual(proximaAcao(p, diario(...gasta), sinais()), { tipo: 'despachar', itens: [{ task: 'b', papel: 'implementador' }] });
+  assert.deepEqual(proximaAcao(p, diario(...gasta, ...aprovada('b')), sinais()), { tipo: 'integrar', tasks: ['b'] });
+  assert.deepEqual(proximaAcao(p, diario(...gasta, ini('b')), sinais({ vivos: 1 })).tipo, 'esperar');
+  assert.deepEqual(proximaAcao(p, diario(...gasta, ini('b')), sinais()), retomarA('b'));
+  assert.deepEqual(proximaAcao(p, diario(...gasta, ...pronta('b')), sinais()), tetoDe('a'), 'fila do dono: só a a espera');
+});
+test('sintetica-1-teto-3-independentes-concluir: com 1 task no teto, 3 independentes e 1 adiada, as 3 integram e só então o loop para no teto', () => {
+  const p = plano(['t'], ['i1'], ['i2'], ['i3'], ['x']);
+  let evs = diario(...noTeto('t'), fora('x', 'adiada'));
+  assert.deepEqual(proximaAcao(p, evs, sinais({ slots: 3 })), { tipo: 'despachar', itens: [{ task: 'i1', papel: 'implementador' }, { task: 'i2', papel: 'implementador' }, { task: 'i3', papel: 'implementador' }] });
+  evs = diario(...noTeto('t'), fora('x', 'adiada'), ...aprovada('i1'), ...aprovada('i2'), ...aprovada('i3'));
+  assert.deepEqual(proximaAcao(p, evs, sinais()), { tipo: 'integrar', tasks: ['i1', 'i2', 'i3'] });
+  evs = diario(...noTeto('t'), fora('x', 'adiada'), ...pronta('i1'), ...pronta('i2'), ...pronta('i3'));
+  assert.deepEqual(proximaAcao(p, evs, sinais()), tetoDe('t'));
+  assert.notEqual(proximaAcao(p, evs, sinais()).tipo, 'concluir', 'a task no teto ainda é do dono');
 });

@@ -304,6 +304,12 @@ export function foraPermitido(plano: Plano, eventos: Evento[], task: string): Fo
   return dependentes.length > 0 ? { ok: false, motivo: 'dependentes', dependentes } : { ok: true };
 }
 
+/**
+ * GM-15 T12 (REQ-AUT-1): ação `retomar`, a reabertura única de task em voo cujo agente morreu (`task.reaberta {origem: retomada}`, gravada por
+ * `loop.mjs reabrir`). Fica aqui porque `tipos.ts` não é da task: o orquestrador a trata como qualquer outra ação do núcleo.
+ */
+export type AcaoRetomar = { tipo: 'retomar'; task: string };
+
 export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais & { pousoPendente?: boolean }): AcaoLoop {
   // (1)
   const ord = ordenar(eventos);
@@ -339,6 +345,13 @@ export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais & { 
   const est = (id: string): EstadoRodada => estados.get(id) as EstadoRodada;
   const ids = plano.tasks.map((t) => t.id);
   const { congeladas, abertas } = congelamento(plano, ord.eventos);
+  // REQ-AUT-1: a retomada é de 1 vez por task, contada no diário inteiro; só a origem `retomada` gasta (o dono e a Sombra não).
+  const retomadas = (id: string): number => ord.eventos.filter((e) => e.tipo === 'task.reaberta' && e.dados?.task === id && e.dados?.origem === 'retomada').length;
+  const orfa = (): string | undefined => ids.find((id) => EM_VOO.includes(est(id).estado));
+  const retomavel = (): AcaoLoop | undefined => {
+    const id = orfa();
+    return id !== undefined && retomadas(id) === 0 ? ({ tipo: 'retomar', task: id } as AcaoRetomar as unknown as AcaoLoop) : undefined;
+  };
   const livre = (id: string): boolean => !congeladas.has(id);
   const capacidade = Math.max(0, sinais.slots - sinais.vivos);
   const despachar = (itens: { task: string; papel: Papel }[]): AcaoLoop => ({ tipo: 'despachar', itens: itens.slice(0, capacidade) });
@@ -354,8 +367,8 @@ export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais & { 
     if (pendente && sinais.vivos > 0) return { tipo: 'esperar', motivo: 'pouso_pendente' };
     if (sinais.vivos > 0) return { tipo: 'esperar', motivo: 'agentes vivos antes do pouso' };
     // (5b) Sem agente vivo, task em voo não é fronteira (REQ-POU-1 exige `review.veredito`): o agente morreu. Não pousa.
-    const emVoo = ids.find((id) => EM_VOO.includes(est(id).estado));
-    if (emVoo !== undefined) return { tipo: 'parar', motivo: 'nao_conseguiu', task: emVoo };
+    const emVoo = orfa();
+    if (emVoo !== undefined) return retomavel() ?? { tipo: 'parar', motivo: 'nao_conseguiu', task: emVoo };
     // (5d) Pousar só se resta trabalho que não espera um teto: task fora de {integrada, no_teto} e sem ancestral em `no_teto`.
     // Sem resto, o loop conclui (8) ou para no teto (9) antes de qualquer pouso.
     if (plano.tasks.some((t) => !SEM_RESTO.includes(est(t.id).estado) && !ancestrais(plano, t.id).some((a) => de(estados, a) === 'no_teto'))) {
@@ -389,10 +402,13 @@ export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais & { 
 
   // (9)
   if (sinais.vivos > 0) return { tipo: 'esperar', motivo: 'agentes vivos' };
+  // REQ-AUT-1: a task que o agente deixou morta é reaberta (1 vez) antes de qualquer parar, inclusive o do teto de outra.
+  const reabrir = retomavel();
+  if (reabrir !== undefined) return reabrir;
   const noLimite = ids.find((id) => est(id).estado === 'no_teto');
   if (noLimite !== undefined) return { tipo: 'parar', motivo: 'teto_rodadas', task: noLimite };
   // Task em voo sem agente vivo morreu, congelada ou não: a emenda não a explica.
-  const morta = ids.find((id) => EM_VOO.includes(est(id).estado));
+  const morta = orfa();
   if (morta !== undefined) return { tipo: 'parar', motivo: 'nao_conseguiu', task: morta };
   // Só espera o dono quando TUDO que falta está congelado; uma task fora do congelamento que ninguém despacha está presa.
   const faltam = ids.filter((id) => est(id).estado !== 'integrada' && !FORA.includes(est(id).estado));
