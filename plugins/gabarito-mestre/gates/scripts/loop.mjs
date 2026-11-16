@@ -13,9 +13,11 @@
  *   loop.mjs ci <verde|vermelho> [--alvo homolog]
  *   loop.mjs desvio <task> --req <REQ> --evidencia <t> --arquivos <a,b> --causa <regra_negocio|tecnica>      (`--arquivos ''` = lista vazia, explícita)
  *   loop.mjs descoberta --evidencia <t> --causa <regra_negocio|tecnica>
- *   loop.mjs emenda propor --req <REQ> [--task <id>] --diff <arquivo> --fato <t> --alternativa <t> --evidencia <t> --causa <c> [--arquivos <a,b>]
+ *   loop.mjs emenda propor --req <REQ> [--task <id>] --diff <arquivo> --fato <t> --alternativa <t> --evidencia <t> --causa <c> [--arquivos <a,b>] [--origem sombra]
  *       grava SEMPRE em `events.emendas.jsonl` (`--sessao` é ignorada: o seq da proposta é o dela) e devolve `{proposta_seq, req, task?, congeladas}`;
  *       `proposta_seq` vem da RELEITURA estrita do arquivo (a única `emenda.proposta` com o `ts` e os `dados` gravados), nunca do candidato de `gravar`.
+ *       GM-15 T11 (REQ-EME-3 B): na mesma âncora (REQ + task) o orquestrador propõe no máximo 2 vezes que a Sombra rejeita; a 3ª recusa. `--origem sombra`
+ *       grava a proposta que a Sombra redigiu, só depois da 2ª rejeição e com `sombra.julga_emendas` em origin; `--origem dono` é rc 2.
  *   loop.mjs emenda julgar <seq> <aprovar|rejeitar>   origem `sombra`: recusa sem `sombra.julga_emendas: true` em `origin/HEAD` (o config local não conta)
  *   loop.mjs emenda aplicar <seq>   (GM-14 T54, emenda 54) grava `spec.aplicada {seq, spec, sha256_antes, sha256_depois}` depois que o texto aprovado da emenda foi aplicado na spec:
  *       só seq com `spec.emendada`, 1 vez por seq; nenhum sha por argumento (antes = ponta da cadeia do diário, depois = sha do arquivo em disco); arquivo igual à ponta ⇒ `nada_a_aplicar`
@@ -211,14 +213,14 @@ const ESPEC = {
   aprendizados: { pos: 0, flags: ['para', 'exportar'], semValor: ['exportar'] },
   pousar: { pos: null, flags: ['entrega', 'sessao'] },
   registro: { pos: null, flags: ['entrega', 'sessao'] },
-  emenda: { pos: null, flags: ['entrega', 'sessao', 'req', 'task', 'diff', 'fato', 'alternativa', 'evidencia', 'causa', 'arquivos'] },
+  emenda: { pos: null, flags: ['entrega', 'sessao', 'req', 'task', 'diff', 'fato', 'alternativa', 'evidencia', 'causa', 'arquivos', 'origem'] },
 };
 export const ESPEC_DO_CLI = ESPEC;
 
 /** Argumentos estritos. Flag desconhecida, sem valor ou repetida e posicional a mais ou a menos é uso (rc 2). */
 function lerArgs(argv) {
   const [cmd, ...resto] = argv;
-  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | reabrir <task> --origem sombra --fonte <f> | adiar|cortar <task> --motivo <t> --origem sombra --fonte <f> | liberar <task> --origem sombra --hash <h> | concluir <task> --motivo <gate|sombra|dono> | iniciar <task> <papel> [--modelo <haiku|sonnet|opus|fable>] | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | emenda aplicar <seq> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | aprendizados --exportar | pousar | registro | anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--opcao <r>]…  [--entrega GM-10]';
+  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | reabrir <task> --origem sombra --fonte <f> | adiar|cortar <task> --motivo <t> --origem sombra --fonte <f> | liberar <task> --origem sombra --hash <h> | concluir <task> --motivo <gate|sombra|dono> | iniciar <task> <papel> [--modelo <haiku|sonnet|opus|fable>] | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] [--origem sombra] | emenda julgar <seq> <aprovar|rejeitar> | emenda aplicar <seq> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | aprendizados --exportar | pousar | registro | anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--opcao <r>]…  [--entrega GM-10]';
   if (typeof cmd !== 'string' || !Object.hasOwn(ESPEC, cmd)) throw new Falha('uso', `comando desconhecido ou ausente. ${uso}`, {}, 2);
   const esp = ESPEC[cmd];
   const pos = [];
@@ -318,6 +320,8 @@ function formaEmenda(pos, flags) {
   if (flags.task !== undefined && !ID_RE.test(flags.task)) throw new Falha('argumento_invalido', `--task ${JSON.stringify(flags.task)} fora da forma ${ID_RE}`);
   causaDe(flags.causa);
   for (const nome of ['fato', 'alternativa', 'evidencia']) textoDe(nome, flags[nome]);
+  // GM-15 T11: o único valor aceito é `sombra`; nenhum argumento produz `dono` (invariante do CLI)
+  if (flags.origem !== undefined && flags.origem !== 'sombra') throw new Falha('uso', `--origem ${JSON.stringify(flags.origem)}: emenda propor só aceita sombra (ou nada)`, {}, 2);
   return { sub: 'propor' };
 }
 
@@ -348,6 +352,7 @@ function prepararProposta(cwd, flags) {
   const dados = {
     req: flags.req, ...(flags.task !== undefined ? { task: flags.task } : {}), diff, fato: flags.fato, alternativa: flags.alternativa, evidencia: flags.evidencia, causa: flags.causa,
     ...(arquivos !== undefined ? { arquivos } : {}),
+    ...(flags.origem === 'sombra' ? { origem: 'sombra' } : {}),
   };
   limitarDados(dados);
   return dados;
@@ -1621,6 +1626,8 @@ function reqNaSpec(c, plano, req) {
 }
 
 function propor(c, plano, dados, antesDoAppend) {
+  // GM-15 T11: a Sombra só redige a 3ª proposta com `sombra.julga_emendas` em origin (a mesma regra de `emenda julgar`)
+  if (dados.origem === 'sombra') exigirJulgaEmendas(c, 'propõe emenda');
   const eventos = lerDiarioEstrito(c.dirEntrega);
   if (diarioInvalido(plano, eventos)) throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições; nada foi gravado');
   const motivo = validarProposta(plano, projetarEmendas(eventos), dados);

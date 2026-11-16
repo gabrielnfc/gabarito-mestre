@@ -3805,6 +3805,73 @@ describe('E3 T10: emenda propor, emenda julgar, desvio, descoberta e ci', () => 
   });
 });
 
+describe('GM-15 T11: a 3ª proposta é da Sombra (REQ-EME-3 B)', () => {
+  const comJulga = (amb) => comOrigin(amb, { sombra: { julga_emendas: true } });
+  /** 2 propostas do orquestrador na mesma âncora, as duas rejeitadas pela Sombra. */
+  function comDuasRejeitadas(extra = {}) {
+    const amb = ambReq();
+    comJulga(amb);
+    for (const seq of ['1', '2']) {
+      assert.equal(amb.cli(proporArgs(amb, extra)).rc, 0);
+      assert.equal(amb.cli(['emenda', 'julgar', seq, 'rejeitar']).rc, 0);
+    }
+    return amb;
+  }
+
+  test('t11-terceira-proposta-do-orquestrador-recusa: nada gravado; outra âncora segue livre', () => {
+    const amb = comDuasRejeitadas();
+    const antes = bytesDoDiario(amb);
+    const r = amb.cli(proporArgs(amb));
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'proposta_recusada');
+    assert.match(r.j.mensagem, /terceira proposta do orquestrador/);
+    assert.deepEqual(bytesDoDiario(amb), antes);
+    assert.equal(amb.cli(proporArgs(amb, { req: 'REQ-B-1' })).rc, 0, 'outro REQ é outra âncora');
+  });
+
+  test('segunda-rejeicao-sombra-redige: --origem sombra grava a proposta com origem sombra e o texto que a Sombra redigiu', () => {
+    const amb = comDuasRejeitadas();
+    const r = amb.cli([...proporArgs(amb, { fato: 'fato da Sombra', alternativa: 'alt da Sombra' }), '--origem', 'sombra']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.proposta_seq, 3);
+    const e = emendasDoDiario(amb).filter((x) => x.tipo === 'emenda.proposta');
+    assert.equal(e.length, 3);
+    assert.deepEqual([e[2].dados.origem, e[2].dados.fato, e[2].dados.alternativa], ['sombra', 'fato da Sombra', 'alt da Sombra']);
+    assert.equal(e[0].dados.origem, undefined, 'a do orquestrador não leva origem');
+  });
+
+  test('t11-origem-sombra-antes-da-2a-rejeicao-recusa', () => {
+    const amb = ambReq();
+    comJulga(amb);
+    assert.equal(amb.cli(proporArgs(amb)).rc, 0);
+    assert.equal(amb.cli(['emenda', 'julgar', '1', 'rejeitar']).rc, 0);
+    const antes = bytesDoDiario(amb);
+    const r = amb.cli([...proporArgs(amb), '--origem', 'sombra']);
+    assert.equal(r.j.erro, 'proposta_recusada');
+    assert.match(r.j.mensagem, /2ª rejeição/);
+    assert.deepEqual(bytesDoDiario(amb), antes);
+  });
+
+  test('t11-origem-sombra-exige-julga-emendas-em-origin', () => {
+    const amb = comDuasRejeitadas();
+    comOrigin(amb, { sombra: { julga_emendas: false } });
+    const antes = bytesDoDiario(amb);
+    const r = amb.cli([...proporArgs(amb), '--origem', 'sombra']);
+    assert.equal(r.j.erro, 'julga_emendas_desligado');
+    assert.deepEqual(bytesDoDiario(amb), antes);
+  });
+
+  test('t11-origem-dono-ou-outra-recusa-rc2: nenhum argumento produz dono', () => {
+    const amb = comDuasRejeitadas();
+    const antes = bytesDoDiario(amb);
+    for (const v of ['dono', 'retomada', '']) {
+      const r = amb.cli([...proporArgs(amb), '--origem', v]);
+      assert.equal(r.rc, 2, `${v}: ${r.out}`);
+      assert.deepEqual(bytesDoDiario(amb), antes);
+    }
+  });
+});
+
 describe('E3 T10: integrar com o escopo das emendas', () => {
   const PLANO_INT = { entrega: 'GM-10', tasks: [{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], reqs: ['REQ-A-1'] }] };
 
