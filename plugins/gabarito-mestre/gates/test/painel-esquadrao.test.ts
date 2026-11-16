@@ -318,12 +318,12 @@ test('esq-zero-vivos-com-sem-agente: mod presente, 0 vivos e 1 ◌ ⇒ "agentes 
   assert.ok(render(semNome, 80).some((l) => l.includes('◌ implementador  sem agente')), 'sem nome ⇒ o papel literal');
 });
 
-test('esq-sem-task: vivo sem task escreve "sem task" e a cor do glifo é inactive', () => {
+test('esq-sem-task: vivo sem task escreve "agente fora do loop" (GM-15 T32) e a cor do glifo é inactive', () => {
   const ls = renderEsquadrao(EXTRAS['sem-task'], op(80));
-  const l = ls.find((x) => TEXTO(x).startsWith('├─ ● sem task'))!;
-  assert.match(TEXTO(l), /^├─ ● sem task · sonnet {2}ctx █░{9} 12% {2}24k$/);
+  const l = ls.find((x) => TEXTO(x).startsWith('├─ ● agente fora do loop'))!;
+  assert.match(TEXTO(l), /^├─ ● agente fora do loop {2}ctx █░{9} 12% {2}24k$/);
   assert.equal(l.find((s) => s.texto === '●')!.cor, 'inactive');
-  assert.ok(render(EXTRAS['sem-task'], 44).includes('├ ● sem task 12% 24k'));
+  assert.ok(render(EXTRAS['sem-task'], 44).includes('├ ● agente fora do loop 12% 24k'));
 });
 
 test('esq-limite-zero-aparece: tok 0 e h5 0 aparecem (ausente ≠ zero)', () => {

@@ -328,7 +328,7 @@ function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw
     return aparar([pre, seg('●', gc), seg(' '), seg(semTask ? ROTULO_FORA_DO_LOOP : pad(nome, nw), semTask ? 'inactive' : a.cor), seg(fim !== '' ? ` ${fim}` : '', 'inactive')]);
   }
   const ctx: Linha = pct !== null
-    ? [seg('ctx '), ...barraSegs(pct, 10, '█', '░', 'success'), seg(` ${fmtPct(pct)}`)]
+    ? [seg('ctx '), ...barraSegs(pct, nivel >= 3 ? 1 : 10, '█', '░', 'success'), seg(` ${fmtPct(pct)}`)] // nível 3: a barra cede (o rótulo "agente fora do loop" é largo), o nome só depois
     : [seg(tok !== null ? `ctx ${fmtTok(tok)}` : 'ctx —')];
   const cauda = [...(pct !== null && tok !== null ? [fmtTok(tok)] : []), ...(nivel < 2 && tempoDe(a.desdeS) !== '' ? [tempoDe(a.desdeS)] : [])];
   const modelo = nivel === 0 && t(a.modelo) !== '' ? ` · ${t(a.modelo)}` : '';
