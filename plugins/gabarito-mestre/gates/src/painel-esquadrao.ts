@@ -500,9 +500,11 @@ function fmtFechamento(s: number): string {
 function textoPrevisao(pv: NonNullable<NonNullable<EstadoPainel['pronto']>['previsao']>, w: number, cabe: number): string {
   const fx = pv.faixa;
   if (fx === null || typeof fx !== 'object' || typeof fx.de !== 'string' || limpar(fx.de) === '') return `previsão ${limpar(pv.hora)} (base: ${inteiroNaoNeg(pv.base) ?? '?'} tasks desta entrega)`;
+  // o 1º número é sempre o ponto (`hora`), a faixa vem atrás (r1 MAJOR 1: a ponta de baixo sozinha erra o que o ponto não erra)
+  const ponto = horaDe(pv.hora);
   const de = limpar(fx.de);
   const ate = typeof fx.ate === 'string' && limpar(fx.ate) !== '' ? limpar(fx.ate) : '?';
-  const faixa = `previsão ${de === ate ? de : `${de}–${ate}`}`;
+  const faixa = `previsão ${de === ate && de === ponto ? ponto : de === ponto ? `${ponto}–${ate}` : `${ponto} (${de}–${ate})`}`;
   if (w < 100) return faixa;
   const c = pv.conta !== null && typeof pv.conta === 'object' ? pv.conta : null;
   const caminho = inteiroNaoNeg(c?.caminho);

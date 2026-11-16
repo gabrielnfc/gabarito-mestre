@@ -351,8 +351,11 @@ export function previsaoExata(
   const ritmo = ritmoDe(eventos, integradas, agoraMs);
   const piso = meio.fim / oc;
   const pontoS = Math.max(piso, ritmo === null ? 0 : ritmo * abertas);
-  const baixo = Math.min(pontoS, fazer(lo).fim / oc) + soma;
-  const alto = Math.max(pontoS, fazer(hi).fim / oc) + soma;
+  // a faixa é a do ponto: a razão P25 ÷ mediana e P75 ÷ mediana do caminho aplicada a ELE (ritmo ou caminho), então o ponto fica dentro dela
+  // e nunca vira a ponta (r1 MINOR 6). Com o caminho no ponto, dá o mesmo que P25 ÷ ocupação e P75 ÷ ocupação.
+  const razao = (x        )         => (meio.fim > 0 ? x / meio.fim : 1);
+  const baixo = pontoS * Math.min(1, razao(fazer(lo).fim)) + soma;
+  const alto = pontoS * Math.max(1, razao(fazer(hi).fim)) + soma;
   const restanteS = pontoS + soma;
   const hora = (s        )         => horaLocal(agoraMs + s * 1000, agoraMs, fuso);
   const porTaskS = medidas.impl + medidas.rev + medidas.integ;

@@ -214,10 +214,10 @@ test('eta-base-visivel-100col: em >= 100 colunas a linha da previsão diz a faix
   const pv = s.pronto?.previsao as Record<string, any>;
   assert.notEqual(pv.faixa.de, pv.faixa.ate, 'premissa: faixa com largura');
   const l140 = linhaPlano(s, 140); // largura em que a base inteira cabe ao lado da barra cheia
-  assert.ok(l140.endsWith(`previsão ${pv.faixa.de}–${pv.faixa.ate} · caminho 2 tasks · ${pv.conta.minPorTask} min/task · 1,0 rodada · fechamento 1h20`), l140);
+  assert.ok(l140.endsWith(`previsão ${pv.hora} (${pv.faixa.de}–${pv.faixa.ate}) · caminho 2 tasks · ${pv.conta.minPorTask} min/task · 1,0 rodada · fechamento 1h20`), l140);
   const l100 = linhaPlano(s, 100);
   assert.ok(colunas(l100) <= 100, l100);
-  assert.match(l100, /previsão \d\d:\d\d–\d\d:\d\d · fechamento 1h20$/, 'em 100, ao lado da barra cheia, a base sai por campo inteiro (rodada, min/task, caminho) e o fechamento fica');
+  assert.match(l100, /previsão \d\d:\d\d \(\d\d:\d\d–\d\d:\d\d\) · fechamento 1h20$/, 'em 100, ao lado da barra cheia, a base sai por campo inteiro (rodada, min/task, caminho) e o fechamento fica');
   // a base é a do estado: outro número na conta muda o texto (nada recalculado no render)
   const outro = { ...s, pronto: { ...s.pronto, previsao: { ...pv, conta: { ...pv.conta, caminho: 7, minPorTask: 41, rodadas: 1.7, fechamentoS: 1500 } } } } as EstadoPainel;
   assert.match(linhaPlano(outro, 160), / · caminho 7 tasks · 41 min\/task · 1,7 rodada · fechamento 25 min$/);
@@ -227,7 +227,7 @@ test('eta-base-cortada-80col: abaixo de 100 colunas só a faixa, sem a base (h.2
   const s = projetarPainel(P5, IRREG, E5({ fechamentoS: 4800, agoraMs: T0 + 20 * MIN }));
   for (const w of [99, 80]) {
     const l = linhaPlano(s, w);
-    assert.match(l, /previsão \d\d:\d\d–\d\d:\d\d$/, `${w}: ${l}`);
+    assert.match(l, /previsão \d\d:\d\d \(\d\d:\d\d–\d\d:\d\d\)$/, `${w}: ${l}`);
     assert.doesNotMatch(l, /caminho|min\/task|rodada|fechamento|base:/);
     assert.ok(colunas(l) <= w);
   }
@@ -299,6 +299,72 @@ test('replay-gm14: erro mediano da previsão contra o término real, em cada int
   assert.ok(med(novo) < 0.28, `erro mediano ${med(novo)}`);
   assert.ok(med(comFecho) < 0.27, `erro mediano com fechamento ${med(comFecho)}`);
   assert.ok(med(novo) < med(antigo) / 2, 'a previsão nova erra menos da metade da antiga');
+});
+
+/** O replay da GM-14 (fixture eta-gm14, T8 fora): plano, diário, integrações, término real e a entrada do painel em `agoraMs`. */
+function replayGm14() {
+  const F = join(AQUI, 'fixtures', 'eta-gm14');
+  const plano0 = JSON.parse(readFileSync(join(F, 'plano.json'), 'utf8')) as Plano;
+  const meta = JSON.parse(readFileSync(join(F, 'meta.json'), 'utf8')) as { fimRealIso: string };
+  const todos = readFileSync(join(F, 'eventos.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as Evento);
+  const ev = todos.filter((x) => (x.dados as { task?: string }).task !== 'T8');
+  const plano: Plano = { ...plano0, tasks: plano0.tasks.filter((t) => t.id !== 'T8').map((t) => ({ ...t, deps: t.deps.filter((d) => d !== 'T8') })) };
+  const ints = ev.filter((x) => x.tipo === 'task.integrada');
+  const ids = plano.tasks.map((t) => t.id);
+  const ent = (agoraMs: number, extra: Record<string, unknown> = {}): EntradaPainel => ({
+    decisaoEntrega: null, pausado: false, contexto: { percent: 1, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+    pacote: { nome: 'p', lider: 'L', sabio: 'S', nomes: ['N'] }, notificacao: null, agoraMs, fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
+    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26, fechamentoS: null,
+    fatos: { branch: 'b', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ids }, ledger: false, gh: 'ok', ultimas: [], sessao: 'loop' }, ...extra,
+  } as unknown as EntradaPainel);
+  return { plano, ev, ints, fim: Date.parse(meta.fimRealIso), ent };
+}
+/** `HH:MM` (hoje) ou `dd/mm HH:MM` em UTC, de volta a ms. */
+const horaMs = (s: string, agoraMs: number): number => {
+  const d = new Date(agoraMs);
+  let m = s.match(/^(\d\d)\/(\d\d) (\d\d):(\d\d)$/);
+  if (m) return Date.UTC(d.getUTCFullYear(), Number(m[2]) - 1, Number(m[1]), Number(m[3]), Number(m[4]));
+  m = s.match(/^(\d\d):(\d\d)$/) as RegExpMatchArray;
+  assert.ok(m, `hora "${s}"`);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), Number(m[1]), Number(m[2]));
+};
+
+test('eta-numero-exibido-e-o-ponto: no replay da GM-14 o 1º número da linha PLANO é o ponto e erra o mesmo que ele; a faixa o contém (h, MAJOR 1 r1)', () => {
+  const { plano, ev, ints, fim, ent } = replayGm14();
+  const exibido: number[] = [], ponto: number[] = [];
+  let dentro = 0;
+  for (let k = 3; k < ints.length; k++) {
+    const agora = Date.parse(ints[k - 1].ts) + 1000;
+    const s = projetarPainel(plano, ev.filter((x) => Date.parse(x.ts) <= agora), ent(agora));
+    const pv = s.pronto?.previsao as Record<string, any>;
+    const l = linhaPlano(s, 80);
+    const m = l.match(/previsão ((?:\d\d\/\d\d )?\d\d:\d\d)/) as RegExpMatchArray;
+    assert.ok(m, l);
+    assert.equal(m[1], pv.hora, `${k}: o 1º número é o ponto (${l})`);
+    const h = horaMs(pv.hora, agora), de = horaMs(pv.faixa.de, agora);
+    assert.ok(de <= h, `${k}: a ponta de baixo não passa do ponto`);
+    exibido.push(Math.abs(horaMs(m[1], agora) - fim) / (fim - agora));
+    ponto.push(Math.abs(agora + pv.restanteS * 1000 - fim) / (fim - agora));
+    // com o fechamento medido a faixa fecha: o ponto fica dentro dela, nunca vira a ponta de cima por conta do ritmo (MINOR 6 r1)
+    const c = projetarPainel(plano, ev.filter((x) => Date.parse(x.ts) <= agora), ent(agora, { fechamentoS: 3600 })).pronto?.previsao as Record<string, any>;
+    const ch = horaMs(c.hora, agora), cde = horaMs(c.faixa.de, agora), cate = horaMs(c.faixa.ate, agora);
+    assert.ok(cde <= ch && ch <= cate, `${k}: ${c.faixa.de} ≤ ${c.hora} ≤ ${c.faixa.ate}`);
+    if (cde < ch) dentro++;
+  }
+  const med = (xs: number[]): number => [...xs].sort((a, b) => a - b)[xs.length >> 1];
+  console.log(`replay GM-14: erro mediano do número exibido ${(med(exibido) * 100).toFixed(1)}% · do ponto ${(med(ponto) * 100).toFixed(1)}%`);
+  assert.ok(Math.abs(med(exibido) - med(ponto)) < 0.005, `exibido ${med(exibido)} × ponto ${med(ponto)}`);
+  assert.ok(dentro > (ints.length - 3) / 2, `a faixa tem largura abaixo do ponto na maioria dos pontos (${dentro})`);
+});
+
+test('eta-faixa-com-ritmo: quando o ritmo domina, a faixa segue os quartis em volta do ponto e o ponto não é a ponta de cima (MINOR 6 r1)', () => {
+  // etapas irregulares (quartis diferentes) e 5 h de parada entre as integradas: o ritmo (≈ 3,5 h/task) passa o caminho ÷ ocupação
+  const lento = D([...ciclo('A', 0, 1, 4, 1), ...ciclo('B', 300, 3, 8, 1), ...ciclo('C', 600, 2, 12, 2)]);
+  const agora = T0 + 620 * MIN;
+  const f = previsaoExata(P([['A', []], ['B', []], ['C', []], ['X', []], ['Y', []]]), lento, comIntegradas(pend(['X', 'Y'])) as never, feitas(['A', 'B', 'C']), agora, 'UTC', 600, 1) as NonNullable<ReturnType<typeof previsaoExata>>;
+  const h = horaMs(f.hora, agora), de = horaMs(f.faixa.de, agora), ate = horaMs(f.faixa.ate, agora);
+  assert.equal(f.restanteS, 2 * ((620 * 60) / 3) + 600, 'premissa: o ponto é o ritmo × 2 abertas + o fechamento');
+  assert.ok(de < h && h < ate, `${f.faixa.de} < ${f.hora} < ${f.faixa.ate}`);
 });
 
 test('dist-igual-ao-src: o artefato que o CLI e o mod carregam calcula a mesma previsão', () => {
