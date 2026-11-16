@@ -11,7 +11,7 @@ import { cmp, contarConsultas, duracoes, EM_TRABALHO, mediana, projetarDecisoes 
 import { dependeDe, loteDoDono } from './depende.ts';
 import { origemDe } from './origem.ts';
 import { loteRecomendadas, perguntasAbertas } from './perguntas.ts';
-import { pousoPendente, type Medicao } from './pouso-pendente.ts';
+import { leituraPropria, noTeto, pousoPendente, type Medicao } from './pouso-pendente.ts';
 import { pedidoDeClear } from './pouso.ts';
 import { encerramentoDe, trilhaDe } from './trilha.ts';
 import type { FatosTrilha } from './trilha.ts';
@@ -929,7 +929,44 @@ export type EntradaNova = EntradaPainel & {
   proxima?: Proxima | null;
   /** GM-15 T8 (review r1 MAJOR-2): `false` = a entregue é só a "última conhecida" e o diário projetado é outro (`_sem-id`): nada dele some. Ausente ⇒ `true`. */
   entregueDoDiario?: boolean;
+  /**
+   * GM-15 T19 (REQ-POU-4): o sinal do loop automático da sessão do painel (`.harness/contexto/loop-dinamico.<sessao>.json` da T17, lido por `painel.mjs` com o
+   * leitor do mod e o frescor do Stop): `armado` | `ausente`. Ausente ou `null` = não conferível (sem sessão, sem arquivo, velho, de outra sessão): nada muda.
+   */
+  loopDinamico?: 'armado' | 'ausente' | null;
 };
+
+/** GM-15 T19 (REQ-AUT-2 c): `parar` há mais que isto é trava longa (o mesmo limite do hook Stop, `stop-loop.mjs` `TRAVA_LONGA_MS`). */
+export const TRAVA_LONGA_MS = 30 * 60_000;
+
+/**
+ * GM-15 T19 (REQ-AUT-2 c): a trava longa. Trava = o PAROU do diário (`c.parar`) ou, sem ele, `proximaAcao` em `parar` (a mesma régua do Stop: slots 1, sem
+ * agente vivo). Não é trava: diário inválido (o PAROU já diz), pouso pendente (o pedido de /clear diz), agente vivo, integração em segundo plano, pausa.
+ * Início = o último evento de progresso (`TIPOS_DE_PROGRESSO`) ou o 1º `loop.parar` da sequência vigente, o mais novo: o mod regrava o `loop.parar` a cada
+ * evento e o relógio não recomeça por isso. Puro; `null` até `TRAVA_LONGA_MS` inclusive.
+ */
+function travaLonga(plano: Plano, c: Calculo, entrada: EntradaPainel, ocupado: boolean, pousoPedido: boolean): { minutos: number; motivo: MotivoParar; task: string | null } | null {
+  const { ord } = c;
+  if (ocupado || pousoPedido || entrada.pausado === true || ord === null || !c.valido || plano.tasks.length === 0) return null;
+  let motivo: MotivoParar | null = null;
+  let task: string | null = null;
+  if (c.parar !== null) motivo = c.parar.motivo;
+  else {
+    let a: ReturnType<typeof proximaAcao>;
+    try { a = proximaAcao(plano, ord, { ...SINAIS_NEUTROS, slots: 1, podePousar: true }); } catch { return null; }
+    if (a.tipo !== 'parar') return null;
+    motivo = ehMotivo(a.motivo) ? a.motivo : null;
+    task = typeof a.task === 'string' && plano.tasks.some((t) => t.id === a.task) ? a.task : null;
+  }
+  if (motivo === null || motivo === 'diario_invalido') return null;
+  let inicio = Number.NEGATIVE_INFINITY;
+  for (const ev of ord) if (TIPOS_DE_PROGRESSO.includes(ev.tipo) && msDe(ev) > inicio) inicio = msDe(ev);
+  const v = pararVigente(ord);
+  if (v !== null && msDe(v.primeiro) > inicio) inicio = msDe(v.primeiro);
+  const idade = entrada.agoraMs - inicio;
+  if (!Number.isFinite(idade) || idade <= TRAVA_LONGA_MS) return null;
+  return { minutos: Math.floor(idade / 60_000), motivo, task };
+}
 
 /** FIEL-13 b: limite de "desatualizado" (180 s provisório = 3 × o relógio do mod, até o valor do S15). */
 export const LIMITE_DESATUALIZADO_S = 180;
@@ -1038,8 +1075,24 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
   const clear = pedidoDeClear(eventos, entrada.onboarding === true, entrada.medicaoPouso);
   const [sessaoPouso, seqPouso] = clear.id === null ? [null, null] : [clear.id.slice(0, clear.id.lastIndexOf(':')), Number(clear.id.slice(clear.id.lastIndexOf(':') + 1))];
   const pousoDe: ReturnType<typeof pousoPendente> = clear.pendente && !clear.adiado ? { pendente: true, sessao: sessaoPouso, seq: seqPouso } : { pendente: false, sessao: null, seq: null };
+  // GM-15 T19 (REQ-POU-3, REQ-POU-4): o sinal do loop da sessão, o contexto alto sem pouso desta sessão e o "ligar o loop", com a régua do Stop
+  const loopDinamico = entrada.loopDinamico === 'armado' || entrada.loopDinamico === 'ausente' ? entrada.loopDinamico : null;
+  const comLoop = plano !== null && p.tasks.length > 0 && !zera && c.valido && entrada.onboarding === true;
+  let acaoLoop: ReturnType<typeof proximaAcao> | null = null;
+  if (comLoop && ord !== null) {
+    try { acaoLoop = proximaAcao(p, ord, { ...SINAIS_NEUTROS, slots: 1, podePousar: true, pousoPendente: clear.pendente }); } catch { acaoLoop = null; }
+  }
+  const med = entrada.medicaoPouso;
+  const alto = med !== undefined && noTeto(med);
+  const propria = leituraPropria(med);
+  // "sem `sessao.pouso` da sessão": com a leitura própria em X ou acima, o pouso da fronteira atual já é o pedido de /clear (`pedidoDeClear`, regra única):
+  // pedido aberto (adiado ou não) ⇒ o aviso de contexto não sai, o DEPENDE mostra o pedido
+  const contextoAlto = comLoop && loopDinamico === 'armado' && alto && propria !== null && !clear.pendente && acaoLoop !== null && acaoLoop.tipo !== 'concluir'
+    ? { percent: propria.percent, x: (med as Medicao).x } : null;
+  const ligarLoop = comLoop && loopDinamico === 'ausente' && (clear.pendente || alto || (acaoLoop !== null && ['despachar', 'integrar', 'pousar'].includes(acaoLoop.tipo)));
+  const extrasLoop = { loop: loopDinamico, contexto: contextoAlto, ligarLoop };
   // o pedido de /clear é da sessão, não da entrega: entra nos dois ramos (r1 MAJOR-2)
-  const pedidoClear = entrada.pousoPendente === true ? true : { pendente: pousoDe.pendente, id: clear.id };
+  const pedidoClear = entrada.pousoPendente === true ? { pendente: true, id: null, ...extrasLoop } : { pendente: pousoDe.pendente, id: clear.id, ...extrasLoop };
   let depende = zera ? dependeDe(null as unknown as typeof trilha, [], [], { falhou: fontes }, pedidoClear, { branch: null, idPadrao: fatos.idPadrao }) : dependeDe(trilha, lista, legado.depende, { falhou: fontes }, pedidoClear,
     { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao },
     // GM-15 T13 (REQ-AUT-1): o lote do dono, o mesmo de `proxima` (mesma função e mesma config de origin); sem `configLote` (o mod) fica o DEPENDE de antes
@@ -1087,6 +1140,24 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
     return { quem, task: r.task ?? d?.casamento.task ?? null, acao: r.tipo, desdeS: Number.isFinite(b.desde) ? Math.max(0, Math.floor((entrada.agoraMs - b.desde) / 1000)) : null };
   });
 
+  // GM-15 T19 (REQ-AUT-2 c): parado há mais de 30 min ⇒ "parado há N min: <motivo>"; o comando fica só no botão. Com o PAROU (que já traz a hora e os
+  // botões, e cuja linha é fixa: REQ-PNL-3), 1 linha no ATENÇÃO; com o teto (o item que já tem o botão de liberar), o motivo daquele item; senão, item novo
+  // no topo com as ações da tabela do PAROU
+  let travaNoParou: string | null = null;
+  const trava = zera ? null : travaLonga(p, c, entrada, (ativos?.length ?? 0) > 0 || integrandoDe((entrada as EntradaPainel & { segundoPlano?: unknown }).segundoPlano).length > 0, clear.pendente);
+  if (trava !== null) {
+    const prefixo = `parado há ${trava.minutos} min: `;
+    if (c.parar !== null) travaNoParou = `${prefixo}${c.parar.texto}`;
+    else {
+      const linha = linhaDaTabela(trava.motivo, trava.task);
+      const liberar = trava.task === null ? null : `/gabarito-mestre:liberar ${trava.task}`;
+      const k = liberar === null ? -1 : depende.findIndex((i) => i.acoes.some((a) => a.comando === liberar));
+      depende = k >= 0
+        ? depende.map((i, j) => (j === k ? { ...i, motivo: `${prefixo}${linha.texto}` } : i))
+        : [{ nivel: 'dono', motivo: `${prefixo}${linha.texto}`, acoes: linha.acoes }, ...depende.filter((i) => i.motivo !== NADA)];
+    }
+  }
+
   // ATENÇÃO (FIEL-10 c): só travado ou com problema
   const atencao: string[] = [];
   if (ativos !== null) {
@@ -1100,6 +1171,7 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
   const semRegistro = contarConsultas(lista) - projetarDecisoes(lista).size;
   const sombraAtiva = (ativos ?? []).some((x) => x.casamento.papelExibido === 'sombra');
   if (semRegistro > 0 && !sombraAtiva) atencao.push(`${semRegistro} ${semRegistro === 1 ? 'consulta' : 'consultas'} à Sombra sem decisão registrada`);
+  if (travaNoParou !== null) atencao.unshift(travaNoParou);
   if (zera) atencao.length = 0; // M8a: nada da entrega encerrada (consultas à Sombra, CI, produção, task sem agente) fica no ATENÇÃO
   if (velho) atencao.push(`painel sem ler o diário há ${Math.floor((desat as number) / 60)} min`);
 

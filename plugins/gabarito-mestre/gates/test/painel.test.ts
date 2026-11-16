@@ -1631,3 +1631,131 @@ test('plano-invalido-mostra-interrogacao (núcleo): `planoInvalido` ⇒ sem PRON
   assert.match(tela, /FASE \? de 7/);
   assert.match(tela, /\? plano inválido: plano.json não é JSON/, 'o render troca o ponto por espaço (natural), o motivo chega');
 });
+
+// ---------------------------------------------------------------- GM-15 T19 (REQ-AUT-2 c, REQ-POU-3, REQ-POU-4): trava, pouso e loop avisam no painel
+// Mutações: M19-d a trava avisa antes dos 30 min ⇒ trava-30min-avisa-painel · M19-e o relógio da trava pelo último `loop.parar` regravado ⇒
+// parar-regravado-nao-zera-o-relogio · M19-f trava com agente vivo ⇒ trava-com-agente-vivo-nao-avisa · M19-g contexto alto sem conferir o `sessao.pouso` da sessão ⇒
+// contexto-alto-sem-pouso-avisa-painel · M19-h contexto alto sem o loop armado ⇒ contexto-alto-so-com-loop-armado · M19-i "ligar o loop" sem trabalho a seguir ⇒
+// sem-loop-dinamico-avisa-painel · M19-j o pedido de /clear com o loop desligado ⇒ clear-so-com-wakeup-painel
+import { CMD_LIGAR_LOOP, MOTIVO_LIGAR_ANTES_DO_CLEAR, MOTIVO_LIGAR_LOOP, motivoContextoAlto } from '../src/depende.ts';
+import { TRAVA_LONGA_MS } from '../src/painel.ts';
+import { pendenciasAprendizado } from '../src/pendencias.ts';
+
+/** T1 no teto de rodadas: o último evento de progresso (o 2º veredito) cai no minuto 7. */
+/** As pendências de aprendizado das reprovações já fechadas (sem elas `proximaAcao` é `aprender`, não `parar`; o Stop também as trata à parte). */
+const TETO_T1: Item[] = [ini(0, 'T1'), con(1, 'T1'), ini(2, 'T1', 'revisor'), ver(3, 'T1', false, 1, 1), ini(4, 'T1', 'correcao'), con(5, 'T1'), ini(6, 'T1', 'revisor'), ver(7, 'T1', false, 2, 1),
+  e(7, 'aprendizado.nada', { gatilho: { sessao: 's1', seq: 4 }, motivo: 'teste' }, 'ap'), e(7, 'aprendizado.nada', { gatilho: { sessao: 's1', seq: 8 }, motivo: 'teste' }, 'ap')];
+const comandos = (s: EstadoPainel): string[] => s.depende.flatMap((i) => i.acoes.map((a) => a.comando ?? ''));
+
+test('trava-30min-avisa-painel (REQ-AUT-2 c): parar há mais de 30 min ⇒ "parado há N min: <motivo>", o comando só no botão; até 30 min, nada', () => {
+  const s = projNovo(P('T1'), D(TETO_T1));
+  const it = s.depende.find((i) => i.motivo.startsWith('parado há'));
+  assert.ok(it !== undefined, JSON.stringify(motivos(s)));
+  assert.equal(it.motivo, 'parado há 173 min: teto de rodadas de review em T1');
+  assert.ok(it.acoes.some((a) => a.comando === '/gabarito-mestre:liberar T1'), 'o comando está no botão');
+  assert.doesNotMatch(it.motivo, /\/|gabarito/, 'o texto não leva o comando');
+  assert.equal(s.depende.filter((i) => i.acoes.some((a) => a.comando === '/gabarito-mestre:liberar T1')).length, 1, 'o teto não repete: 1 item com o botão');
+  assert.match(desenho(s), /parado há 173 min: teto de rodadas de review em T1/, 'o render desenha o aviso');
+  assert.equal(TRAVA_LONGA_MS, 30 * 60_000);
+  // 30 min exatos ainda não é trava longa; 31 é
+  const ultimo = T0 + 7 * 60_000;
+  assert.ok(!motivos(projNovo(P('T1'), D(TETO_T1), { agoraMs: ultimo + TRAVA_LONGA_MS })).some((m) => m.startsWith('parado há')));
+  assert.ok(motivos(projNovo(P('T1'), D(TETO_T1), { agoraMs: ultimo + TRAVA_LONGA_MS + 60_000 })).includes('parado há 31 min: teto de rodadas de review em T1'));
+});
+
+test('trava-30min-avisa-painel: com o PAROU do diário (linha fixa, com a hora e os botões), o aviso é 1 linha do ATENÇÃO; nenhum item novo', () => {
+  const s = projNovo(P('T1', 'T2'), D([...ciclo('T1', 0, 5), parar(10)]));
+  assert.ok(s.parar !== null);
+  assert.equal(s.parar.texto, '3 paradas sem progresso', 'a linha do PAROU não muda');
+  assert.equal(s.atencao[0], 'parado há 170 min: 3 paradas sem progresso');
+  assert.match(desenho(s), /parado há 170 min: 3 paradas sem progresso/, 'o render desenha o aviso');
+  assert.ok(!motivos(s).some((m) => m.startsWith('parado há')));
+  // controle: 20 min depois do PAROU ainda não é trava longa
+  assert.ok(!projNovo(P('T1', 'T2'), D([...ciclo('T1', 0, 5), parar(10)]), { agoraMs: T0 + 30 * 60_000 }).atencao.some((a) => a.startsWith('parado há')));
+});
+
+test('parar-regravado-nao-zera-o-relogio: o mod regrava o `loop.parar` a cada evento; o relógio da trava conta do 1º da sequência', () => {
+  const s = projNovo(P('T1', 'T2'), D([...ciclo('T1', 0, 5), parar(10), parar(170)]));
+  assert.equal(s.atencao[0], 'parado há 170 min: 3 paradas sem progresso');
+});
+
+test('motivo-novo-aviso-novo (painel): progresso depois da trava recomeça o relógio; a trava nova conta dela', () => {
+  // T1 no teto às 7; um CI verde às 160 (evento de progresso) e nada mais: o relógio recomeça das 160 ⇒ 20 min, sem aviso
+  const evs = D([...TETO_T1, e(160, 'ci.resultado', { verde: true })]);
+  assert.ok(!motivos(projNovo(P('T1'), evs)).some((m) => m.startsWith('parado há')), JSON.stringify(motivos(projNovo(P('T1'), evs))));
+  { const m = motivos(projNovo(P('T1'), evs, { agoraMs: T0 + 200 * 60_000 })); assert.ok(m.some((x) => x.startsWith('parado há 40 min: ')), JSON.stringify(m)); }
+});
+
+test('trava-com-agente-vivo-nao-avisa: agente vivo, integração em segundo plano ou pausa não é trava', () => {
+  const evs = D(TETO_T1);
+  const tem = (s: EstadoPainel) => motivos(s).some((m) => m.startsWith('parado há'));
+  assert.ok(tem(projNovo(P('T1'), evs)), 'controle');
+  assert.ok(!tem(projNovo(P('T1'), evs, { agentes: [vivo('T1 correcao')] })), 'agente vivo');
+  assert.ok(!tem(projNovo(P('T1'), evs, { segundoPlano: [{ id: 'b1', texto: 'integrar T1', comando: 'node loop.mjs integrar T1', dono: 'orquestrador', desde: AGORA - 60_000 }] } as Partial<EntradaPainel>)), 'integrando');
+  assert.ok(!tem(projNovo(P('T1'), evs, { pausado: true })), 'pausado');
+  assert.ok(!tem(projNovo(P('T1'), D(ciclo('T1', 0, 5)))), 'tudo integrado não é trava');
+});
+
+// pouso e loop: a sessão do painel é S1, medida pelo mod 10 s antes de agora
+const med = (percent: number, sessaoAtual: string | null = 'S1') => ({ x: 50, agoraMs: AGORA, sessaoAtual, leituras: [{ sessao: 'S1', percent, fonte: 'mod', emMs: AGORA - 10_000 }] });
+const pouso = (t: number, sessao = 'S1') => e(t, 'sessao.pouso', { percent: 60, x: 50 }, sessao);
+/** T1 aprovada às 3 (fronteira), integrada às 4; T2 pendente (há o que despachar). */
+const FRONTEIRA: Item[] = [ini(0, 'T1'), con(1, 'T1'), ini(2, 'T1', 'revisor'), ver(3, 'T1', true), integ(4, 'T1')];
+const projP = (itens: Item[], extra: Partial<EntradaPainel> & Record<string, unknown>) =>
+  projNovo(P('T1', 'T2'), D(itens), { agoraMs: AGORA, onboarding: true, ...extra } as Partial<EntradaPainel>);
+
+test('contexto-alto-sem-pouso-avisa-painel (REQ-POU-3): contexto >= X, sem `sessao.pouso` desta sessão na fronteira e loop armado ⇒ "limpar a conversa", quem limpa é o mod', () => {
+  const s = projP(FRONTEIRA, { medicaoPouso: med(62), loopDinamico: 'armado' });
+  assert.ok(motivos(s).includes(motivoContextoAlto(62, 50)), JSON.stringify(motivos(s)));
+  assert.match(desenho(s), /limpar a conversa: contexto em 62 % \(teto 50 %\); quem limpa é o mod, não o agente/);
+  assert.ok(!comandos(s).includes('/clear'), 'quem limpa é o mod: sem botão de /clear');
+  // abaixo de X, sem leitura própria (outra sessão) ou leitura velha ⇒ nada
+  assert.ok(!motivos(projP(FRONTEIRA, { medicaoPouso: med(49), loopDinamico: 'armado' })).some((m) => m.startsWith('limpar a conversa')));
+  assert.ok(!motivos(projP(FRONTEIRA, { medicaoPouso: med(62, 'S9'), loopDinamico: 'armado' })).some((m) => m.startsWith('limpar a conversa')));
+  // entrega concluída (tudo integrado, sem pendência de aprendizado): o Stop também não avisa
+  const tudo = D([...FRONTEIRA, ...ciclo('T2', 10, 15)]);
+  const ap = pendenciasAprendizado(P('T1', 'T2'), tudo).map((x) => e(20, 'aprendizado.nada', { gatilho: { sessao: x.sessao, seq: x.seq }, motivo: 'teste' }, 'ap'));
+  assert.ok(ap.length > 0);
+  assert.ok(!motivos(projP([...FRONTEIRA, ...ciclo('T2', 10, 15), ...ap], { medicaoPouso: med(62), loopDinamico: 'armado' })).some((m) => m.startsWith('limpar a conversa')), 'concluir');
+  // pouso desta sessão numa fronteira anterior (antes do último veredito) não conta: avisa
+  assert.ok(motivos(projP([pouso(-1), ...FRONTEIRA], { medicaoPouso: med(62), loopDinamico: 'armado' })).includes(motivoContextoAlto(62, 50)));
+  // esta sessão já pousou nesta fronteira ⇒ o aviso de contexto não sai: o que aparece é o pedido de /clear (a regra única `pedidoDeClear`), adiado ou não
+  const pousou = projP([...FRONTEIRA, pouso(5, 'S1')], { medicaoPouso: med(62), loopDinamico: 'armado' });
+  assert.deepEqual(motivos(pousou).filter((m) => m.startsWith('limpar a conversa')), ['limpar a conversa'], JSON.stringify(motivos(pousou)));
+  const adiado = projP([...FRONTEIRA, pouso(5, 'S1'), e(6, 'dono.resposta', { pergunta: 'S1:1', rotulo: 'agora não (loop parado, contexto em 60 %)' }, 'S1')], { medicaoPouso: med(62), loopDinamico: 'armado' });
+  assert.ok(!motivos(adiado).some((m) => m.startsWith('limpar a conversa')), `adiado: o pedido some e o aviso de contexto não o repete ${JSON.stringify(motivos(adiado))}`);
+});
+
+test('contexto-alto-so-com-loop-armado (REQ-POU-4): sem o loop armado nunca há "limpar a conversa"; desligado ⇒ "ligar o loop automático"', () => {
+  const nc = projP(FRONTEIRA, { medicaoPouso: med(62) });
+  assert.ok(!motivos(nc).some((m) => m.startsWith('limpar a conversa') || m.startsWith('ligar o loop')), 'não conferível: nada');
+  const off = projP(FRONTEIRA, { medicaoPouso: med(62), loopDinamico: 'ausente' });
+  assert.ok(!motivos(off).some((m) => m.startsWith('limpar a conversa')), JSON.stringify(motivos(off)));
+  assert.ok(motivos(off).includes(MOTIVO_LIGAR_LOOP));
+});
+
+test('sem-loop-dinamico-avisa-painel (REQ-POU-4): com onboarding, sinal "ausente" da sessão e trabalho a seguir ⇒ "ligar o loop automático" com o botão; senão nada', () => {
+  const s = projP(FRONTEIRA, { loopDinamico: 'ausente' });
+  const it = s.depende.find((i) => i.motivo === MOTIVO_LIGAR_LOOP);
+  assert.ok(it !== undefined, JSON.stringify(motivos(s)));
+  assert.deepEqual(it.acoes, [{ rotulo: 'ligar o loop', comando: CMD_LIGAR_LOOP }]);
+  assert.match(desenho(s), /ligar o loop automático: sem ele nada retoma o trabalho depois do pouso/);
+  const sem = (extra: Record<string, unknown>, itens: Item[] = FRONTEIRA) => !motivos(projP(itens, extra)).includes(MOTIVO_LIGAR_LOOP);
+  assert.ok(sem({ loopDinamico: 'armado' }), 'armado');
+  assert.ok(sem({ loopDinamico: null }), 'não conferível');
+  assert.ok(sem({}), 'sem o sinal lido');
+  assert.ok(sem({ loopDinamico: 'ausente', onboarding: false }), 'sem onboarding o mod não grava o sinal');
+  assert.ok(sem({ loopDinamico: 'ausente' }, [...FRONTEIRA, ...ciclo('T2', 10, 15)]), 'tudo integrado: nada a seguir');
+});
+
+test('clear-so-com-wakeup-painel (REQ-POU-4, aprendizado 185): pouso pendente com o loop desligado ⇒ nenhum /clear no painel; armado ⇒ o "limpar" de sempre', () => {
+  const itens = [...FRONTEIRA, pouso(5, 'S1')];
+  const off = projP(itens, { medicaoPouso: med(62), loopDinamico: 'ausente' });
+  assert.ok(!comandos(off).includes('/clear'), JSON.stringify(off.depende));
+  assert.ok(!motivos(off).includes('limpar a conversa'));
+  assert.ok(motivos(off).includes(MOTIVO_LIGAR_ANTES_DO_CLEAR));
+  assert.equal(motivos(off).filter((m) => m.startsWith('ligar o loop')).length, 1, 'um item só');
+  const on = projP(itens, { medicaoPouso: med(62), loopDinamico: 'armado' });
+  assert.ok(comandos(on).includes('/clear'));
+  assert.ok(motivos(on).includes('limpar a conversa'));
+});
