@@ -193,8 +193,8 @@ export function respostaValida(p: Pergunta[], id: IdPergunta, opcao: number, eve
 }
 
 /**
- * GM-15 T35 (r.14, D-G12 2): toda pergunta aberta aceita "agora não" (o hook `responder` grava `{pergunta, opcao: 1, rotulo: "agora não"}`: a forma da
- * T1 exige `opcao` de 1 a 4 e quem decide é o rótulo). Só pergunta ABERTA (a adiada já não está em `p`). Nunca lança.
+ * GM-15 T35 (r.14, D-G12 2): toda pergunta aberta aceita "agora não" (o hook `responder` grava `{pergunta, rotulo: "agora não"}`, a forma própria do
+ * adiamento em formas.ts, sem `opcao`). Só pergunta ABERTA (a adiada já não está em `p`). Nunca lança.
  */
 export function adiamentoValido(p: Pergunta[], id: IdPergunta): { ok: true; rotulo: string } | { ok: false; erro: 'inexistente' } {
   return lista<Pergunta>(p).some((q) => q?.id === id) ? { ok: true, rotulo: AGORA_NAO } : { ok: false, erro: 'inexistente' };

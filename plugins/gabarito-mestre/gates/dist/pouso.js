@@ -2,6 +2,7 @@ import { estadoDe, ordenar } from './loop.js';
                                             
                                                           
 import { leituraPropria, pousoPendente,              } from './pouso-pendente.js';
+import { AGORA_NAO, ehRotuloDeAdiamento } from './formas.js';
 
 /**
  * Núcleo do pouso (REQ-POU-1, GM-10 T9). Puro e sem `node:`: o mod o importa dentro do ambiente dele, que não tem Node.
@@ -432,15 +433,15 @@ export function codigoPonte(
 
 // ─────────────────────────────────────────────────────────────── GM-15 T35 (D-G11 b, e; D-G12 2): pedido de /clear medido e "agora não"
 
-/** Rótulo de adiamento de qualquer pergunta do dono (D-G12 2). Resposta cujo rótulo começa por ele adia; nunca fecha. */
-export const AGORA_NAO = 'agora não';
+/** Rótulo de adiamento (D-G12 2): a forma vive em formas.ts (`{pergunta, rotulo}`, sem `opcao`). */
+export { AGORA_NAO };
 /** Botão do pedido de /clear: no teto (pouso obrigatório) o loop segue parado mesmo adiado (REGRA 4). */
 export const AGORA_NAO_TETO = 'agora não (loop parado)';
 /** Quanto o contexto tem de subir, desde o adiamento, para o pedido de /clear voltar (D-G11 b). */
 export const VOLTA_DO_CLEAR_PP = 10;
 
 /** `dono.resposta` por rótulo que adia (`agora não…`, sem caixa, pontas aparadas). */
-export const ehAdiamento = (rotulo         )          => typeof rotulo === 'string' && rotulo.trim().toLowerCase().startsWith(AGORA_NAO);
+export const ehAdiamento = ehRotuloDeAdiamento;
 
 /** Rótulo gravado no adiamento do /clear: leva o contexto medido na hora (a resposta não tem outro campo, formas.ts). ≤ 60 caracteres. */
 export const rotuloAdiamentoClear = (percent        )         => `${AGORA_NAO_TETO.slice(0, -1)}, contexto em ${Math.round(percent)} %)`;

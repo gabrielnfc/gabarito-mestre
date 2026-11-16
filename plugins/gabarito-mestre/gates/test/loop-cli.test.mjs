@@ -5510,7 +5510,7 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
   // GM-15 T35 (D-G11 b, e)
   const respostaDoDono = (amb, pergunta, rotulo) => {
     const ultimo = Math.max(...amb.eventos().map((e) => Date.parse(e.ts)));
-    const r = diario.append(amb.entregas, 'dono', { ts: new Date(ultimo + 1000).toISOString(), autor: 't@t', sessao: 'dono', agente: 'orquestrador', tipo: 'dono.resposta', dados: { pergunta, opcao: 1, rotulo } });
+    const r = diario.append(amb.entregas, 'dono', { ts: new Date(ultimo + 1000).toISOString(), autor: 't@t', sessao: 'dono', agente: 'orquestrador', tipo: 'dono.resposta', dados: { pergunta, rotulo } }); // forma do adiamento (formas.ts)
     assert.ok(r.ok, JSON.stringify(r));
   };
   const painelDa = (amb, sessao) => {
@@ -6271,7 +6271,7 @@ describe('GM-15 T35 (r.10, C5): o orquestrador fecha só a própria pendência',
   test('proxima-nao-espera-adiada (r.14, C4): dúvida do dono adiada ("agora não") não trava: proxima despacha o que é permitido', () => {
     const amb = ambT();
     const id = gravar(amb, 'loop', 'orquestrador', 'nota', { tipo: 'duvida', texto: 'qual caminho?', opcoes: ['a', 'b'] });
-    gravar(amb, 'dono', 'orquestrador', 'dono.resposta', { pergunta: id, opcao: 1, rotulo: 'agora não' });
+    gravar(amb, 'dono', 'orquestrador', 'dono.resposta', { pergunta: id, rotulo: 'agora não' });
     const r = amb.cli(['proxima', '--vivos', '0']);
     assert.equal(r.rc, 0, r.out + r.err);
     assert.equal(r.j.acao.tipo, 'despachar', JSON.stringify(r.j.acao));

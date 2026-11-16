@@ -226,7 +226,7 @@ function gravar(raiz, dir, sessao, tipo, dados) {
 /**
  * GM-15 T35 (r.9, r.14): "agora não" para o id `<sessao>:<seq>`. Vale para pergunta ABERTA (`adiamentoValido`, rótulo "agora não") e para o pedido de
  * /clear em curso desta sessão (`pedidoDeClear` com a leitura própria de `medicaoDoPouso`, a mesma de `loop.mjs proxima`; rótulo com o contexto medido,
- * que a volta em +10 p.p. lê). Grava `{pergunta, opcao: 1, rotulo}` (a forma exige opcao 1..4; o rótulo decide) e relê. `{ok, ...}` ou Falha.
+ * que a volta em +10 p.p. lê). Grava `{pergunta, rotulo}` (a forma própria do adiamento, formas.ts: sem `opcao`) e relê. `{ok, ...}` ou Falha.
  */
 function adiar(raiz, ctxHook, sessao, id) {
   const x = lerX(process.env.GABARITO_POUSO_X).x;
@@ -240,7 +240,7 @@ function adiar(raiz, ctxHook, sessao, id) {
   if (achadas.length === 0) return bloquear(`inexistente: não há pergunta aberta nem pedido de limpar a conversa ${id} para adiar; nada foi gravado`);
   if (achadas.length >= 2) return bloquear(`ambigua: ${id} existe nos diários de ${achadas.map((a) => a.rotulo).join(' e ')}; nada foi gravado`);
   const [a] = achadas;
-  gravar(raiz, a.dir, sessao, 'dono.resposta', { pergunta: id, opcao: 1, rotulo: a.gravar });
+  gravar(raiz, a.dir, sessao, 'dono.resposta', { pergunta: id, rotulo: a.gravar });
   const lido = diario.lerEstrito(a.dir);
   if (!lido.ok) throw new Falha('resposta_sem_efeito', `o adiamento foi gravado mas o diário não relê (${lido.motivo}); confira o diário`);
   const ultima = respostasDe(lido.eventos, id).pop();

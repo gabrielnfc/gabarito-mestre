@@ -404,7 +404,12 @@ const nota: Regra = (o) => primeiro(
   exigirEnum(o, 'tipo', TIPOS_NOTA), textoLinha(o, 'texto', NOTA_MAX), opcoesDaNota(o),
 );
 
-/** `dono.resposta`: `{pergunta, opcao, rotulo}` OU `{pergunta, sha256, chars}`; misturar, ou qualquer outra chave (`texto`), recusa. */
+/** GM-15 T35 (D-G12 2): rótulo de adiamento de pergunta do dono. Resposta cujo rótulo começa por ele adia; nunca fecha. */
+export const AGORA_NAO = 'agora não';
+/** Rótulo que adia: texto que começa por "agora não" (sem caixa, pontas aparadas). */
+export const ehRotuloDeAdiamento = (rotulo: unknown): boolean => typeof rotulo === 'string' && rotulo.trim().toLowerCase().startsWith(AGORA_NAO);
+
+/** `dono.resposta`: `{pergunta, opcao, rotulo}` OU `{pergunta, sha256, chars}` OU, no adiamento, `{pergunta, rotulo: "agora não…"}`; misturar, ou qualquer outra chave (`texto`), recusa. */
 const donoResposta: Regra = (o) => {
   const porOpcao = campo(o, 'opcao') !== undefined || campo(o, 'rotulo') !== undefined;
   const porHash = campo(o, 'sha256') !== undefined || campo(o, 'chars') !== undefined;
@@ -417,6 +422,11 @@ const donoResposta: Regra = (o) => {
     return primeiro(chaveExtra(o, ['pergunta', 'sha256', 'chars'], '`dono.resposta` digitada carrega só {pergunta, sha256, chars}'), perguntaErro, exigirSha256(o), inteiroNaoNegativo(o, 'chars'));
   }
   const opcao = campo(o, 'opcao');
+  // GM-15 T35 (r.9, r.14): o adiamento ("agora não…") não é opção da pergunta: forma própria {pergunta, rotulo}, sem `opcao`
+  const rotulo = campo(o, 'rotulo');
+  if (opcao === undefined && ehRotuloDeAdiamento(rotulo)) {
+    return primeiro(chaveExtra(o, ['pergunta', 'rotulo'], '`dono.resposta` de adiamento carrega só {pergunta, rotulo}'), perguntaErro, textoLinha(o, 'rotulo', OPCAO_MAX));
+  }
   const opcaoErro = opcao === undefined ? obrigatorio('opcao') : typeof opcao === 'number' && Number.isInteger(opcao) && opcao >= 1 && opcao <= 4 ? null : 'campo `opcao` inválido: esperado inteiro de 1 a 4';
   return primeiro(chaveExtra(o, ['pergunta', 'opcao', 'rotulo'], '`dono.resposta` carrega só {pergunta, opcao, rotulo}'), perguntaErro, opcaoErro, textoLinha(o, 'rotulo', OPCAO_MAX));
 };

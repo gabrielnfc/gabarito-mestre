@@ -517,12 +517,12 @@ test('skill-responder-frontmatter: só do dono (disable-model-invocation: true),
 });
 
 // ---- GM-15 T35 (D-G11 b, D-G12 2 e 4): "agora não" e o lote das recomendadas, pelo MESMO hook ----
-test('responder-agora-nao-adia-pergunta (r.14): `<id> agora` grava {pergunta, opcao 1, rotulo "agora não"} e a pergunta sai das abertas sem fechar; 2ª vez recusa', () => {
+test('responder-agora-nao-adia-pergunta (r.14): `<id> agora` grava a forma do adiamento {pergunta, rotulo "agora não"} e a pergunta sai das abertas sem fechar; 2ª vez recusa', () => {
   const amb = comDuvida();
   const r = hook(stdinTui(amb.dir, 'loop:1 agora'));
   assert.equal(r.rc, 0, r.err);
   assert.equal(r.j?.systemMessage, 'Resposta registrada: agora não.', r.out);
-  assert.deepEqual(respostas(amb).map((e) => e.dados), [{ pergunta: 'loop:1', opcao: 1, rotulo: 'agora não' }]);
+  assert.deepEqual(respostas(amb).map((e) => e.dados), [{ pergunta: 'loop:1', rotulo: 'agora não' }]);
   const eventos = diario.ler(amb.pasta('_sem-id'));
   const t = trilhaDe({ branch: 'main', idPadrao: IDPADRAO, specs: [], plano: null, ledger: false, gh: 'nunca', ultimas: [], sessao: 'S-dono' }, eventos);
   assert.deepEqual(perguntasAbertas(eventos, t, { sessao: 'S-dono' }), []);
@@ -541,7 +541,7 @@ test('responder-agora-nao-no-pouso (r.9): o pedido de /clear da sessão (medida 
   writeFileSync(join(amb.dir, '.harness', 'contexto', 'S-dono.json'), JSON.stringify({ percent: 55, fonte: 'mod', em: new Date().toISOString() }));
   const r = hook(stdinTui(amb.dir, `${id} agora`));
   assert.equal(r.j?.systemMessage, 'Resposta registrada: agora não (loop parado, contexto em 55 %).', r.out);
-  assert.deepEqual(respostas(amb).map((e) => e.dados), [{ pergunta: id, opcao: 1, rotulo: 'agora não (loop parado, contexto em 55 %)' }]);
+  assert.deepEqual(respostas(amb).map((e) => e.dados), [{ pergunta: id, rotulo: 'agora não (loop parado, contexto em 55 %)' }]);
   recusa(amb, stdinTui(amb.dir, `${id} agora`), /inexistente/); // já adiado
 });
 

@@ -677,6 +677,16 @@ test('ideia-nao-divide-id-com-a-pergunta-b: sessão cuja 1ª nota é ideia, depo
 
 // ---- GM-15 T35 (D-G12 2, 3, 4): "agora não" em toda pergunta, obsolescência com prova, lote das recomendadas ----
 import { adiamentoValido, impressaoDoLote, loteRecomendadas } from '../src/perguntas.ts';
+const adia = (pergunta: string, s = 'sessao-dono'): Compacto => ({ t: 'dono.resposta', d: { pergunta, rotulo: 'agora não' }, s });
+
+test('agora-nao-forma-propria (r.14, formas.ts): {pergunta, rotulo "agora não…"} sem opcao vale; rótulo comum sem opcao e adiamento com chave a mais recusam; e não fecha', () => {
+  assert.equal(formaInvalida('dono.resposta', { pergunta: 's:1', rotulo: 'agora não' }), null);
+  assert.equal(formaInvalida('dono.resposta', { pergunta: 's:1', rotulo: 'agora não (loop parado, contexto em 55 %)' }), null);
+  assert.match(String(formaInvalida('dono.resposta', { pergunta: 's:1', rotulo: 'feito' })), /`opcao` ausente/);
+  assert.notEqual(formaInvalida('dono.resposta', { pergunta: 's:1', rotulo: 'agora não', texto: 'x' }), null);
+  const evs = expandir([notaDe('duvida', 'qual?', 'sessao-a', ['x', 'y']), adia('sessao-a:1')]);
+  assert.equal(respostaValida([], 'sessao-a:1', 1, evs).erro, 'inexistente', 'adiada não conta como respondida');
+});
 
 test('agora-nao-em-toda-pergunta (r.14): toda pergunta aberta (a, b, d, pendência, ideia) aceita "agora não", que a esconde sem fechar as outras', () => {
   const base: Compacto[] = [inicio('sessao-a'), branch('sessao-a'), notaDe('assunto', 'mudou'), notaDe('duvida', 'qual caminho?', 'sessao-a', ['por A', 'por B']),
@@ -685,7 +695,7 @@ test('agora-nao-em-toda-pergunta (r.14): toda pergunta aberta (a, b, d, pendênc
   assert.deepEqual(abertas.map((p) => p.gatilho).sort(), ['a', 'b', 'd', 'ideia', 'pendencia']);
   for (const p of abertas) {
     assert.deepEqual(adiamentoValido(abertas, p.id), { ok: true, rotulo: 'agora não' }, p.gatilho);
-    const depois = perguntasAbertas(expandir([...base, resp(p.id, 1, 'agora não')]), trilha(), { sessao: 'sessao-a' });
+    const depois = perguntasAbertas(expandir([...base, adia(p.id)]), trilha(), { sessao: 'sessao-a' });
     assert.equal(depois.some((q) => q.id === p.id), false, `${p.gatilho} adiada some`);
     assert.equal(depois.length, abertas.length - 1, `${p.gatilho}: só ela sai`);
   }
@@ -696,14 +706,14 @@ test('adiada-volta-quando-gatilho-muda (r.14): ideia adiada volta com a ideia no
   const ideia1 = [notaDe('ideia', 'cores')];
   const abertas1 = perguntasAbertas(expandir(ideia1), identificada());
   assert.equal(abertas1.length, 1);
-  const adiada = [...ideia1, resp(abertas1[0].id, 1, 'agora não')];
+  const adiada = [...ideia1, adia(abertas1[0].id)];
   assert.deepEqual(perguntasAbertas(expandir(adiada), identificada()), []);
   const volta = perguntasAbertas(expandir([...adiada, notaDe('ideia', 'sons')]), identificada());
   assert.equal(volta.length, 1);
   assert.notEqual(volta[0].id, abertas1[0].id);
   assert.match(volta[0].texto, /as 2 ideias/);
   // dúvida adiada: sem evento novo da âncora, segue escondida; a resposta de verdade depois fecha
-  const duvida = [notaDe('duvida', 'qual?', 'sessao-a', ['x', 'y']), resp('sessao-a:1', 1, 'agora não'), notaDe('desvio', 'outra coisa')];
+  const duvida = [notaDe('duvida', 'qual?', 'sessao-a', ['x', 'y']), adia('sessao-a:1'), notaDe('desvio', 'outra coisa')];
   assert.deepEqual(perguntasAbertas(expandir(duvida), identificada()), []);
 });
 

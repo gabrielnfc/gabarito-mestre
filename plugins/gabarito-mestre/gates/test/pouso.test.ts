@@ -901,7 +901,7 @@ import { AGORA_NAO_TETO, pedidoDeClear, rotuloAdiamentoClear } from '../src/pous
   const veredito = ev(1, 'review.veredito', { task: 'T1', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }, 'loop');
   const pouso = ev(2, 'sessao.pouso', {}, 'S1');
   const med = (percent: number | null) => ({ x: 50, agoraMs: T0 + 60_000, sessaoAtual: 'S1', leituras: percent === null ? [] : [{ sessao: 'S1', percent, fonte: 'mod', emMs: T0 + 59_000 }] });
-  const adiar = (seq: number, percent: number) => ev(seq, 'dono.resposta', { pergunta: 'S1:2', opcao: 1, rotulo: rotuloAdiamentoClear(percent) }, 'dono');
+  const adiar = (seq: number, percent: number) => ev(seq, 'dono.resposta', { pergunta: 'S1:2', rotulo: rotuloAdiamentoClear(percent) }, 'dono');
 
   test('sem-medicao-nao-pede-pouso (r.12, D-P13): sem leitura própria fresca nunca há pedido de /clear, nem com onboarding e o pouso gravado sem /clear', () => {
     assert.deepEqual(pedidoDeClear([veredito, pouso], true, med(null)), { pendente: false, adiado: false, id: null, percent: null });
@@ -919,6 +919,6 @@ import { AGORA_NAO_TETO, pedidoDeClear, rotuloAdiamentoClear } from '../src/pous
     assert.equal(pedidoDeClear(evs, true, med(65)).adiado, false);
     assert.equal(pedidoDeClear(evs, true, med(64)).pendente, true);
     // adiamento a outro pouso (id diferente) não adia este
-    assert.equal(pedidoDeClear([veredito, pouso, ev(3, 'dono.resposta', { pergunta: 'S1:9', opcao: 1, rotulo: rotuloAdiamentoClear(55) }, 'dono')], true, med(55)).adiado, false);
+    assert.equal(pedidoDeClear([veredito, pouso, ev(3, 'dono.resposta', { pergunta: 'S1:9', rotulo: rotuloAdiamentoClear(55) }, 'dono')], true, med(55)).adiado, false);
   });
 }

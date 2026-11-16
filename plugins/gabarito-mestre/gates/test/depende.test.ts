@@ -493,7 +493,7 @@ test('clear-com-agora-nao-no-teto (r.9): o pedido de /clear traz "limpar" e "ago
 });
 
 test('pendencia-adiada-nao-fecha-e-some (r.14): "agora não" à pendência do dono a tira do DEPENDE sem fechá-la (pendenciaAberta segue aberta)', () => {
-  const evs = [nota('pendencia', 'renovar o domínio'), { t: 'dono.resposta', s: 'sessao-dono', d: { pergunta: 'sessao-a:1', opcao: 1, rotulo: 'agora não' } } as C];
+  const evs = [nota('pendencia', 'renovar o domínio'), { t: 'dono.resposta', s: 'sessao-dono', d: { pergunta: 'sessao-a:1', rotulo: 'agora não' } } as C];
   assert.deepEqual(motivos(chamar(APROVADA, evs)), ['depende de você: nada']);
   const lista = expandir(evs);
   assert.deepEqual(pendenciaAberta(lista, lista[0]), { id: 'sessao-a:1', texto: 'renovar o domínio' });
