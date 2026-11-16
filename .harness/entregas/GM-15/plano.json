@@ -611,7 +611,13 @@
         "plugins/gabarito-mestre/docs/virada-2.1.md",
         "plugins/gabarito-mestre/gates/src/painel.ts",
         "plugins/gabarito-mestre/gates/dist/painel.js",
-        "plugins/gabarito-mestre/gates/test/painel.test.ts"
+        "plugins/gabarito-mestre/gates/test/painel.test.ts",
+        "plugins/gabarito-mestre/gates/src/pouso.ts",
+        "plugins/gabarito-mestre/gates/dist/pouso.js",
+        "plugins/gabarito-mestre/gates/test/pouso.test.ts",
+        "plugins/gabarito-mestre/gates/src/trilha.ts",
+        "plugins/gabarito-mestre/gates/dist/trilha.js",
+        "plugins/gabarito-mestre/gates/test/trilha.test.ts"
       ],
       "reqs": [
         "REQ-HIG-1"
