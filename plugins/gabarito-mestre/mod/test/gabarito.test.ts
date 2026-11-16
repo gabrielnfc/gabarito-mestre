@@ -88,6 +88,8 @@ type Opc = {
   janela?: number | null
   /** GM-14 T20: pacote lido pela ponte de nomes (`lider`, `sabio`, `nomes`); ausente ⇒ terra-media reduzido */
   pacoteNomes?: { lider: string; sabio: string; nomes: string[] } | 'falha'
+  /** GM-15 T22: pacotes de `.harness/temas/nomes/*.json` do repo que a ponte de listagem devolve; 'falha' ⇒ a ponte nega */
+  pacotesRepo?: string[] | 'falha'
   /** GM-14 T53: o /clear roda mas não limpa nada (o incidente de 2026-11-14): mesma sessão, mesmo percent */
   clearNaoLimpa?: boolean
   /** GM-14 T53 (r1): instante inicial do relógio do mock (ms). O mod mede com `$.clock.now()`; o relógio avança 1 s por evento gravado e por leitura de uso. Painel: relógio intocado (0) salvo se dado. */
@@ -167,7 +169,7 @@ function mundo($: any, on: any, o: Opc = {}) {
     agoraMs: null as number | null,
     msgs: [] as { sha256: string; chars: number }[], mensagemLibera: [] as (() => void)[],
     // GM-14 T20: local, medir, contexto, plano B e pacote (cada ponte guarda o que recebeu)
-    local: (o.local ?? 'lateral') as string, locaisGravados: [] as string[], medirStdins: [] as any[], contextos: [] as any[], contextoInit: [] as any[], planosB: [] as any[], pacotesLidos: [] as any[], onboardings: [] as any[], sinaisLoop: [] as any[],
+    local: (o.local ?? 'lateral') as string, locaisGravados: [] as string[], medirStdins: [] as any[], contextos: [] as any[], contextoInit: [] as any[], planosB: [] as any[], pacotesLidos: [] as any[], listagens: [] as any[], onboardings: [] as any[], sinaisLoop: [] as any[],
   }
 
   // o diário em memória: tudo que o mod grava volta na próxima leitura, com seq e ts válidos para a T2
@@ -275,6 +277,11 @@ function mundo($: any, on: any, o: Opc = {}) {
         est.planosB.push(q)
         if (o.planoB === undefined || o.planoB === 'falha') return { deny: 'sem transcript' }
         return cru0(`${JSON.stringify({ ok: true, tokens: o.planoB })}\n`)
+      }
+      if (String(argv[2]).startsWith('/*gabarito:listar*/')) {
+        est.listagens.push(q)
+        if (o.pacotesRepo === 'falha') return { deny: 'node não iniciou' }
+        return cru0(`${JSON.stringify({ ok: true, nomes: o.pacotesRepo ?? [] })}\n`)
       }
       if (String(argv[2]).startsWith('/*gabarito:pacote*/')) {
         est.pacotesLidos.push(q)
@@ -1378,7 +1385,7 @@ for (const args of ['', 'foo', 'pausar x', 'PAUSAR', 'retomar tudo', ' ']) {
     const r = await m.cmd(args)
     expect(r.text).toMatch(/^Uso: o painel abre sozinho ao lado, em terminal largo/)
     expect(r.text).toContain('/gabarito painel desligar   fecha e não abre sozinho; só o aviso de PAROU')
-    expect(r.text.split('\n').length).toBeLessThanOrEqual(14)
+    expect(r.text.split('\n').length).toBeLessThanOrEqual(20)
     expect(m.arquivos.size).toBe(0)
     expect(m.tipos()).toEqual([])
   })
@@ -2893,10 +2900,15 @@ const USO_ESPERADO = [
   '/gabarito painel executivo  resumido: só o essencial da entrega',
   '/gabarito painel color      com cores  (ou: mono, sem cores)',
   '/gabarito painel narracao on|off   liga ou desliga a narração',
-  '/gabarito painel nomes <pacote>    troca os nomes da equipe',
+  '/gabarito painel nomes      lista os pacotes de nomes; <pacote> troca',
+  '/gabarito painel nomes sortear     volta a sortear os nomes da equipe',
+  '/gabarito painel lateral    painel ao lado  (ou: acima, acima da conversa)',
+  '/gabarito painel ocultar    esconde o painel; PAROU e perguntas ficam',
+  '/gabarito painel mostrar    traz o painel de volta',
   '/gabarito painel ligar      volta a abrir sozinho',
   '/gabarito painel desligar   fecha e não abre sozinho; só o aviso de PAROU',
   '                            continua',
+  '/gabarito chat cru|natural  linhas de ferramenta cruas ou em linguagem natural',
   '/gabarito pausar            para o trabalho automático da entrega',
   '/gabarito retomar           continua de onde parou',
 ].join('\n')
@@ -2923,7 +2935,7 @@ test('comando-registro: description e argumentHint novos', async ($, on) => {
 test('comando-uso: vazio, desconhecido e painel malformado devolvem a ajuda exata', async ($, on) => {
   const m = comPainel($, on)
   await arrancar(m)
-  for (const a of ['', 'x', 'painel foo', 'painel nomes', 'painel narracao talvez', 'painel esquadrao extra', 'painel narracao on off', '   ']) {
+  for (const a of ['', 'x', 'painel foo', 'painel nomes a b', 'painel narracao talvez', 'painel esquadrao extra', 'painel narracao on off', '   ']) {
     expect((await m.cmd(a)).text).toBe(USO_ESPERADO)
   }
 })
@@ -3019,6 +3031,81 @@ test('comando-nomes-fs-falha-nao-vira-existe: fs.exists falhando ⇒ não conseg
   await arrancar(m)
   expect((await m.cmd('painel nomes meu')).text).toBe('não consegui verificar o pacote: meu')
   expect(m.store.has(PREFS_STORE)).toBe(false)
+})
+// ---- GM-15 T22 (REQ-HIG-1): `nomes` sem pacote lista; `nomes sortear` volta ao sorteio; `sortear` é reservado ----
+const comRepo = ($: any, on: any, pacotesRepo: string[] | 'falha', extra: Opc = {}) => comPainel($, on, {}, { pacotesRepo, arquivos: ['/main/.harness/temas/nomes/meu-time.json'], ...extra })
+test('nomes-sem-pacote-lista: fábrica + 1 do repo numa linha, o atual (fixo) marcado, sem a ajuda e sem gravar nada', async ($, on) => {
+  const m = comRepo($, on, ['meu-time'])
+  await arrancar(m)
+  await m.cmd('painel nomes herois')
+  const gravadas = setsDe(m, PREFS_STORE)
+  const t = (await m.cmd('painel nomes')).text
+  expect(t).not.toBe(USO_ESPERADO)
+  expect(t).toBe('painel nomes: galaxia, herois (atual), hogwarts, terra-media, meu-time · botão ou /gabarito painel nomes <pacote> | sortear')
+  expect(setsDe(m, PREFS_STORE)).toBe(gravadas)
+})
+test('nomes-lista-marca-sorteado: sem pacote escolhido, o da sessão sai como "sorteado nesta sessão"', async ($, on) => {
+  const m = comRepo($, on, [])
+  await arrancar(m)
+  const sorteado = ((await m.store.get(PACOTE_STORE)) as any).nome as string
+  expect(FABRICA).toContain(sorteado)
+  const t = (await m.cmd('painel nomes')).text
+  expect(t.match(/\(atual\)|\(sorteado nesta sessão\)/g)).toEqual(['(sorteado nesta sessão)'])
+  expect(t).toContain(`${sorteado} (sorteado nesta sessão)`)
+})
+test('nomes-lista-repo-ilegivel: a ponte falha ⇒ só os de fábrica, dizendo que não leu os do repo', async ($, on) => {
+  const m = comRepo($, on, 'falha')
+  await arrancar(m)
+  const t = (await m.cmd('painel nomes')).text
+  expect(t).toContain('galaxia')
+  expect(t).not.toContain('meu-time')
+  expect(t).toContain('não li os do repo')
+})
+test('nomes-lista-botoes: 1 botão por pacote põe `/gabarito painel nomes <p>` no input (replace); o botão some depois do comando', async ($, on) => {
+  sobreOMotor(on)
+  const m = comRepo($, on, ['meu-time'], { local: 'acima' })
+  await arrancar(m)
+  await m.cmd('painel nomes')
+  const ui = await montarFaixaH($, 50, 19)
+  for (const k of ['painel-acao', 'painel-acao-2', 'painel-acao-3', 'painel-acao-4', 'painel-acao-5']) await ui.press({ key: k })
+  expect(m.est.fills.map((f) => [f.text, f.mode])).toEqual(['galaxia', 'herois', 'hogwarts', 'terra-media', 'meu-time'].map((p) => [`/gabarito painel nomes ${p}`, 'replace']))
+  await m.cmd('painel nomes herois')
+  await ui.unmount()
+  const ui2 = await montarFaixaH($, 50, 19)
+  expect(await ui2.findAll({ type: 'Button' })).toHaveLength(0)
+  await ui2.unmount()
+})
+test('nomes-sortear-volta-ao-sorteio: grava pacote null, sorteia outro na hora, guarda no store e manda à ponte', async ($, on) => {
+  const m = comRepo($, on, [])
+  await arrancar(m)
+  await m.cmd('painel nomes herois')
+  await drena(m)
+  expect(((await m.store.get(PREFS_STORE)) as any).pacote).toBe('herois')
+  const antes = ((await m.store.get(PACOTE_STORE)) as any).nome as string
+  const t = (await m.cmd('painel nomes sortear')).text
+  await drena(m)
+  expect((await m.store.get(PREFS_STORE) as any).pacote).toBeNull()
+  const depois = ((await m.store.get(PACOTE_STORE)) as any).nome as string
+  expect(FABRICA).toContain(depois)
+  expect(depois).not.toBe(antes)
+  expect(t).toBe(`painel: nomes sorteados: ${depois}`)
+  expect(ultimoStdin(m).sessao.pacote).toBe(depois)
+})
+test('sortear-recusado-como-pacote: `sortear` nunca vira pacote, nem com arquivo no repo, e fica fora da lista', async ($, on) => {
+  const m = comRepo($, on, ['sortear', 'meu-time'], { arquivos: ['/main/.harness/temas/nomes/sortear.json', '/main/.harness/temas/nomes/meu-time.json'] })
+  await arrancar(m)
+  await m.cmd('painel nomes sortear')
+  expect(((await m.store.get(PREFS_STORE)) as any).pacote).toBeNull()
+  const t = (await m.cmd('painel nomes')).text
+  expect(t).toMatch(/terra-media[^,]*, meu-time ·/)
+  expect(t).not.toContain('sortear,')
+})
+test('sortear-nas-prefs-vira-padrao: `pacote: "sortear"` gravado à mão não vale como pacote (o sorteio da sessão manda)', async ($, on) => {
+  const m = comRepo($, on, [])
+  m.store.set(PREFS_STORE, { preset: 'esquadrao', tema: 'color', narracao: true, ligado: true, pacote: 'sortear' })
+  await arrancar(m)
+  expect((await m.cmd('painel nomes')).text).not.toContain('(atual)')
+  expect(m.est.contextos.length === 0 || m.est.contextos.every((c: any) => c.pacote !== 'sortear')).toBe(true)
 })
 test('comando-desligar-ligar: desligar fecha, grava ligado:false e não cancela o relógio; ligar reabre com focus', async ($, on) => {
   const m = comPainel($, on)

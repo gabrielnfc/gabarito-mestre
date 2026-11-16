@@ -58,7 +58,7 @@ export const CHAVE_TRANSCRIPTS = 'painel:transcripts';
 export const TETO_TRANSCRIPTS = 64;
 /** Os pacotes de fábrica (`mod/temas/nomes/`). O mod não lê diretório sem `node:fs`: um teste em `gates/` compara esta lista com o diretório. */
 export const PACOTES_FABRICA = Object.freeze(['galaxia', 'herois', 'hogwarts', 'terra-media']);
-/** Ajuda do `/gabarito` (sem argumento ou desconhecido): linguagem do adotante, ≤ 14 linhas, ≤ 80 colunas. Multilinha de propósito (não passa por `umaLinha`). */
+/** Ajuda do `/gabarito` (sem argumento ou desconhecido): linguagem do adotante, ≤ 20 linhas, ≤ 80 colunas; lista todo ramo aceito (teste varre o código). Multilinha de propósito (não passa por `umaLinha`). */
 export const USO_GABARITO = [
   'Uso: o painel abre sozinho ao lado, em terminal largo, quando uma entrega',
   'começa.',
@@ -68,13 +68,20 @@ export const USO_GABARITO = [
   '/gabarito painel executivo  resumido: só o essencial da entrega',
   '/gabarito painel color      com cores  (ou: mono, sem cores)',
   '/gabarito painel narracao on|off   liga ou desliga a narração',
-  '/gabarito painel nomes <pacote>    troca os nomes da equipe',
+  '/gabarito painel nomes      lista os pacotes de nomes; <pacote> troca',
+  '/gabarito painel nomes sortear     volta a sortear os nomes da equipe',
+  '/gabarito painel lateral    painel ao lado  (ou: acima, acima da conversa)',
+  '/gabarito painel ocultar    esconde o painel; PAROU e perguntas ficam',
+  '/gabarito painel mostrar    traz o painel de volta',
   '/gabarito painel ligar      volta a abrir sozinho',
   '/gabarito painel desligar   fecha e não abre sozinho; só o aviso de PAROU',
   '                            continua',
+  '/gabarito chat cru|natural  linhas de ferramenta cruas ou em linguagem natural',
   '/gabarito pausar            para o trabalho automático da entrega',
   '/gabarito retomar           continua de onde parou',
 ].join('\n');
+/** Palavra reservada de `/gabarito painel nomes sortear` (volta ao sorteio): nunca é pacote, nem do repo nem das preferências. */
+const PACOTE_SORTEAR = 'sortear';
 const PACOTE_RE = /^[a-z0-9-]{1,32}$/;
 const AGENTE_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const SESSAO_RE = /^[A-Za-z0-9-]{1,128}$/;
@@ -583,6 +590,7 @@ const S = {
   prefs: PREFS_PADRAO,
   preparando: null, // promessa de `preparar` (prefs + sorteio): uma por `session.start`
   pacoteSorteado: null,
+  escolhaNomes: null, // GM-15 T22: botões `[{rotulo, comando}]` de `/gabarito painel nomes` sem pacote; some no próximo comando do painel
   transcripts: new Map(), // agent_id → caminho, em ordem de inserção (espelho do store, com teto)
   transcriptsLido: false,
   logados: new Set(), // avisos de `ui.log` já dados neste processo (1× por tipo)
@@ -642,7 +650,7 @@ export function prefsValidas(v) {
       tema: TEMAS.includes(v.tema) ? v.tema : d.tema,
       narracao: typeof v.narracao === 'boolean' ? v.narracao : d.narracao,
       ligado: typeof v.ligado === 'boolean' ? v.ligado : d.ligado,
-      pacote: typeof v.pacote === 'string' && PACOTE_RE.test(v.pacote) ? v.pacote : d.pacote,
+      pacote: typeof v.pacote === 'string' && PACOTE_RE.test(v.pacote) && v.pacote !== PACOTE_SORTEAR ? v.pacote : d.pacote,
     },
   };
 }
@@ -1015,7 +1023,7 @@ async function carregarPrefs($) {
 }
 
 /** Pacote da sessão (sombra-p1d T11): `prefs.pacote` vence; senão `{nome, sessao}` do store; mesma sessão ⇒ mantém; outra ⇒ sorteia sem repetir o anterior. */
-async function escolherPacote($) {
+async function escolherPacote($, forcar = false) {
   if (S.prefs.pacote !== null) return;
   let id;
   try { id = await $.session.id(); } catch { id = null; }
@@ -1024,7 +1032,7 @@ async function escolherPacote($) {
   try { v = await $.store.get(CHAVE_PACOTE); } catch { v = undefined; }
   let anterior = null;
   if (ehObj(v) && typeof v.nome === 'string' && PACOTE_RE.test(v.nome)) {
-    if (v.sessao === id) { S.pacoteSorteado = v.nome; return; }
+    if (v.sessao === id && !forcar) { S.pacoteSorteado = v.nome; return; }
     anterior = v.nome;
   } else if (typeof v === 'string' && PACOTE_RE.test(v)) {
     anterior = v; // formato legado: string
@@ -1201,6 +1209,7 @@ async function abrirPeloDono($, rotulo = 'painel aberto') {
 async function comandoPainelBruto($, partes) {
   await preparar($);
   const [a, b] = partes;
+  S.escolhaNomes = null; // os botões de `nomes` valem até o próximo comando
   if (partes.length === 0) return abrirPeloDono($);
   const troca = async (mudanca, texto) => {
     const gravou = await gravarPrefs($, mudanca);
@@ -1223,6 +1232,7 @@ async function comandoPainelBruto($, partes) {
       return (a === 'ocultar' ? 'painel oculto (PAROU e perguntas continuam)' : 'painel desligado (PAROU ainda avisa)') + (gravou ? '' : SO_NA_SESSAO);
     }
     if (LOCAIS.includes(a)) return trocarLocal($, a);
+    if (a === 'nomes') return listarNomes($);
     return USO_GABARITO;
   }
   if (partes.length === 2) {
@@ -1262,13 +1272,61 @@ async function trocarLocal($, local) {
   return `painel ${NOME_LOCAL[local]}` + (gravou ? '' : SO_NA_SESSAO);
 }
 
+/** Raiz do repo da sessão (`session.repo`, senão `session.root`); `null` se nenhuma responde. */
+async function raizDoRepo($) {
+  let raiz = null;
+  try { raiz = (await $.session.repo())?.root ?? null; } catch { raiz = null; }
+  if (typeof raiz !== 'string') { try { raiz = await $.session.root(); } catch { raiz = null; } }
+  return typeof raiz === 'string' && raiz !== '' ? raiz : null;
+}
+
+const SCRIPT_LISTAR = `/*gabarito:listar*/
+const fs = require('node:fs'), path = require('node:path');
+const { raiz } = JSON.parse(fs.readFileSync(0, 'utf8'));
+let n = [];
+try { n = fs.readdirSync(path.join(raiz, '.harness', 'temas', 'nomes')).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)).sort(); }
+catch (e) { if (!e || e.code !== 'ENOENT') { process.stdout.write(JSON.stringify({ ok: false }) + '\\n'); process.exit(1); } }
+process.stdout.write(JSON.stringify({ ok: true, nomes: n }) + '\\n');`;
+
+/** Teto de pacotes na lista (e de botões): o resto não cabe numa linha. */
+const TETO_LISTA_NOMES = 9;
+
+/** Pacotes do repo (`.harness/temas/nomes/*.json`) com nome válido, fora da fábrica e fora do reservado. `null` ⇒ não consegui ler. */
+async function pacotesDoRepo($) {
+  const raiz = await raizDoRepo($);
+  if (raiz === null) return [];
+  try {
+    const r = await $.process.run(['node', '-e', SCRIPT_LISTAR], { cwd: raiz, stdin: JSON.stringify({ raiz }), timeoutMs: TIMEOUT_MS });
+    const o = r?.exitCode === 0 && typeof r.stdout === 'string' ? JSON.parse(r.stdout) : null;
+    if (!ehObj(o) || o.ok !== true || !Array.isArray(o.nomes)) return null;
+    return o.nomes.filter((n) => typeof n === 'string' && PACOTE_RE.test(n) && n !== PACOTE_SORTEAR && !PACOTES_FABRICA.includes(n));
+  } catch { return null; }
+}
+
+/** `/gabarito painel nomes` sem pacote: lista fábrica + repo numa linha, marca o atual e põe 1 botão por pacote (`S.escolhaNomes`). Não grava nada. */
+async function listarNomes($) {
+  const repo = await pacotesDoRepo($);
+  const todos = [...PACOTES_FABRICA, ...(repo ?? [])].slice(0, TETO_LISTA_NOMES);
+  const marca = (n) => (S.prefs.pacote === n ? ' (atual)' : S.prefs.pacote === null && S.pacoteSorteado === n ? ' (sorteado nesta sessão)' : '');
+  S.escolhaNomes = todos.map((n) => ({ rotulo: n, comando: `/gabarito painel nomes ${n}` }));
+  redesenhar($);
+  return `painel nomes: ${todos.map((n) => n + marca(n)).join(', ')}${repo === null ? ' (não li os do repo)' : ''} · botão ou /gabarito painel nomes <pacote> | ${PACOTE_SORTEAR}`;
+}
+
+/** `/gabarito painel nomes sortear`: grava `pacote: null` (o sorteio volta a valer) e sorteia na hora, sem repetir o da sessão. */
+async function sortearNomes($) {
+  const gravou = await gravarPrefs($, { pacote: null });
+  await escolherPacote($, true);
+  void atualizar($, 'prefs');
+  return `painel: nomes sorteados: ${S.pacoteSorteado ?? 'terra-media'}` + (gravou ? '' : SO_NA_SESSAO);
+}
+
 async function nomesDoPainel($, p) {
+  if (p === PACOTE_SORTEAR) return sortearNomes($);
   if (!PACOTE_RE.test(p)) return `pacote inválido: ${cortar(limpar(p), 40)} (fábrica: ${PACOTES_FABRICA.join(' ')})`;
   if (!PACOTES_FABRICA.includes(p)) {
-    let raiz = null;
-    try { raiz = (await $.session.repo())?.root ?? null; } catch { raiz = null; }
-    if (typeof raiz !== 'string') { try { raiz = await $.session.root(); } catch { raiz = null; } }
-    if (typeof raiz !== 'string' || raiz === '') return `pacote não encontrado: ${p}`;
+    const raiz = await raizDoRepo($);
+    if (raiz === null) return `pacote não encontrado: ${p}`;
     let existe;
     try { existe = await $.fs.exists(`${raiz}/.harness/temas/nomes/${p}.json`); } catch { return `não consegui verificar o pacote: ${p}`; }
     if (existe !== true) return `pacote não encontrado: ${p}`;
@@ -1405,7 +1463,7 @@ export function registrarPainel(on) {
       // GM-14 T20: orçamento = `scroll.bodyRows` (ausente ⇒ 7, nunca rola); o estado novo ganha os botões do topo
       const bodyRows = e.props?.scroll?.bodyRows;
       const novo = estadoNovo(S.estado);
-      botoes = novo ? botoesDoTopo(S.estado, $.plugin.root) : [];
+      botoes = S.escolhaNomes ?? (novo ? botoesDoTopo(S.estado, $.plugin.root) : []);
       linhas = linhasDaPane(novo ? estadoParaDesenho(S.estado) : S.estado, S.prefs, larg, {
         falha: S.falha, avisos: S.avisos, semLoop: S.semLoop, semLerS: S.semLerS, altura: bodyRows, orcamento: orcamentoLateral(bodyRows), local: 'lateral',
       });
@@ -1429,11 +1487,11 @@ export function registrarPainel(on) {
     const larg = colunasDe(e.props);
     const { Box, Button, Text } = $.ui.resolve(e);
     if (S.local === 'acima' && !oculto) {
-      if (S.estado === null && S.falha === null) return next(e);
+      if (S.estado === null && S.falha === null && S.escolhaNomes === null) return next(e);
       let linhas;
       let botoes;
       try {
-        botoes = botoesDoTopo(S.estado, $.plugin.root);
+        botoes = S.escolhaNomes ?? botoesDoTopo(S.estado, $.plugin.root);
         linhas = linhasDaFaixa(S.estado, S.prefs, { largura: larg, h: hDoViewport(e), maxRows: e.props?.maxRows, falha: S.falha, avisos: S.avisos, semLerS: S.semLerS });
       } catch {
         linhas = [[{ texto: 'painel: não consegui desenhar', cor: 'warning' }]];
@@ -1450,6 +1508,7 @@ export function registrarPainel(on) {
     }
     let f;
     try { f = faixaUmaLinha(S.estado, { root: $.plugin.root, aviso }); } catch { f = null; }
+    if (S.escolhaNomes !== null) f = { texto: 'nomes da equipe: escolha um pacote', cor: 'warning', botoes: S.escolhaNomes };
     if (f === null) return next(e);
     const cabe = Math.max(1, larg - colunasDosBotoes(f.botoes) - RESERVA_BORDA_DIREITA);
     const cor = S.prefs.tema === 'mono' ? null : { color: f.cor };

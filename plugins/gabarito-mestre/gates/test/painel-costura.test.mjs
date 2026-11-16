@@ -478,6 +478,7 @@ describe('T11: pacotes de fábrica e funções puras do comando', () => {
     assert.deepEqual(prefsValidas({ ...cheio, ligado: 0 }).prefs, { ...cheio, ligado: true });
     assert.deepEqual(prefsValidas({ ...cheio, pacote: '../x' }).prefs, { ...cheio, pacote: null });
     assert.deepEqual(prefsValidas({ ...cheio, pacote: 9 }).prefs, { ...cheio, pacote: null });
+    assert.deepEqual(prefsValidas({ ...cheio, pacote: 'sortear' }).prefs, { ...cheio, pacote: null }, 'sortear é reservado (T22)');
   });
 
   test('umaLinha: sem controle nem quebra, ≤ 200 colunas', () => {
@@ -487,9 +488,30 @@ describe('T11: pacotes de fábrica e funções puras do comando', () => {
     assert.equal(umaLinha('painel: color'), 'painel: color');
   });
 
-  test('USO_GABARITO: ajuda do adotante, cada opção explicada, ≤ 14 linhas de ≤ 80 colunas, sem jargão interno', () => {
+  test('ajuda-cobre-todos-os-ramos: toda palavra que o comando aceita (varrida do código de painel, chat e gabarito) aparece na USO_GABARITO', () => {
+    const MOD = join(AQUI, '..', '..', 'mod');
+    const lerMod = (n) => readFileSync(join(MOD, n), 'utf8');
+    const corpo = (src, nome) => {
+      const i = src.indexOf(`function ${nome}(`);
+      assert.ok(i >= 0, `sem função ${nome}`);
+      const j = src.indexOf('\n}\n', i);
+      return src.slice(i, j);
+    };
+    const painel = lerMod('painel.mjs'), chat = lerMod('chat.mjs'), gab = lerMod('gabarito.mjs');
+    const achadas = new Set();
+    for (const m of corpo(painel, 'comandoPainelBruto').matchAll(/\b[ab] === '([a-z]+)'/g)) achadas.add(m[1]);
+    for (const m of corpo(painel, 'nomesDoPainel').matchAll(/\bp === (?:'([a-z]+)'|(PACOTE_[A-Z]+))/g)) achadas.add(m[1] ?? painel.match(new RegExp(`const ${m[2]} = '([a-z]+)'`))?.[1]);
+    for (const nome of ['PRESETS', 'TEMAS', 'LOCAIS']) for (const m of painel.match(new RegExp(`const ${nome} = (?:Object\\.freeze\\()?\\[([^\\]]*)\\]`))[1].matchAll(/'([a-z]+)'/g)) achadas.add(m[1]);
+    for (const m of corpo(chat, 'comandoChat').matchAll(/modo [!=]== '([a-z]+)'/g)) achadas.add(m[1]);
+    for (const m of gab.matchAll(/\bacao (?:===|!==) '([a-z]+)'|\bacao\.startsWith\('([a-z]+) '\)/g)) achadas.add(m[1] ?? m[2]);
+    assert.ok(achadas.size >= 16, `a varredura achou pouco (${[...achadas].join(' ')})`);
+    const faltam = [...achadas].filter((w) => !new RegExp(`(^|[^a-z])${w}([^a-z]|$)`).test(USO_GABARITO));
+    assert.deepEqual(faltam, [], `ramos aceitos que a ajuda não cita: ${faltam.join(', ')}`);
+  });
+
+  test('USO_GABARITO: ajuda do adotante, cada opção explicada, ≤ 20 linhas de ≤ 80 colunas, sem jargão interno', () => {
     const linhas = USO_GABARITO.split('\n');
-    assert.ok(linhas.length <= 14, `linhas: ${linhas.length}`);
+    assert.ok(linhas.length <= 20, `linhas: ${linhas.length}`);
     for (const l of linhas) assert.ok([...l].length <= 80, `larga (${[...l].length}): ${l}`);
     const achar = (re) => linhas.find((l) => re.test(l)) ?? assert.fail(`sem linha ${re}`);
     assert.match(`${linhas[0]} ${linhas[1]}`, /^Uso: o painel abre sozinho ao lado, em terminal largo, quando uma entrega começa\.$/);
@@ -498,7 +520,12 @@ describe('T11: pacotes de fábrica e funções puras do comando', () => {
     assert.match(achar(/painel executivo/), /executivo {2}resumido/);
     assert.match(achar(/painel color/), /color {6}com cores {2}\(ou: mono, sem cores\)/);
     assert.match(achar(/narracao/), /narracao on\|off {3}liga ou desliga a narração/);
-    assert.match(achar(/nomes/), /nomes <pacote> {4}troca os nomes da equipe/);
+    assert.match(achar(/painel nomes {6}/), /nomes {6}lista os pacotes de nomes; <pacote> troca/);
+    assert.match(achar(/nomes sortear/), /nomes sortear {5}volta a sortear os nomes da equipe/);
+    assert.match(achar(/painel lateral/), /lateral {4}painel ao lado {2}\(ou: acima, acima da conversa\)/);
+    assert.match(achar(/painel ocultar/), /ocultar {4}esconde o painel; PAROU e perguntas ficam/);
+    assert.match(achar(/painel mostrar/), /mostrar {4}traz o painel de volta/);
+    assert.match(achar(/\/gabarito chat/), /chat cru\|natural {2}linhas de ferramenta cruas ou em linguagem natural/);
     assert.match(achar(/painel ligar/), /volta a abrir sozinho/);
     assert.match(USO_GABARITO, /desligar {3}fecha e não abre sozinho; só o aviso de PAROU\n {28}continua\n/);
     assert.match(achar(/\/gabarito pausar/), /para o trabalho automático da entrega/);
