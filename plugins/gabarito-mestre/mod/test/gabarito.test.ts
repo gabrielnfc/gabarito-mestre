@@ -4,7 +4,7 @@ import { pendenciasAprendizado } from '../../gates/dist/pendencias.js'
 import { CABECALHO, codigoPonte, PROMPT_RECUPERACAO, PROMPT_RETOMADA } from '../../gates/dist/pouso.js'
 import { validarStdinAgentes } from '../../gates/dist/painel-equipe.js'
 import { arquivoSinalLoop, gravarSinalLoop, interpretarSinalLoop, sinalDoLoop } from '../gabarito.mjs'
-import { chavePouso, colunasDosBotoes, faixaDe, faixaUmaLinha, avisoPaneEspera, botoesDoTopo, gravarContexto, indiceDoTopo, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
+import { botoesComNomes, chavePouso, colunasDosBotoes, faixaDe, faixaUmaLinha, avisoPaneEspera, botoesDoTopo, gravarContexto, indiceDoTopo, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
 import { lerLeitura, pousoPendente, tentativasDoPouso } from '../../gates/dist/pouso-pendente.js'
 import { proximaAcao } from '../../gates/dist/loop.js'
 import { pousoDaFronteira } from '../../gates/dist/pouso.js'
@@ -3110,6 +3110,40 @@ test('nomes-some-em-qualquer-comando: `painel nomes` + `pausar` ⇒ sem botão d
   const ui = await montarFaixaH($, 50, 19)
   expect(await rotulosDe(ui)).not.toContain('galaxia')
   await ui.unmount()
+})
+const comNomesNaTela = async ($: any, on: any) => {
+  sobreOMotor(on)
+  const m = comRepoE($, on, pararP(), [], { local: 'acima' })
+  await arrancar(m)
+  await m.cmd('painel nomes')
+  return m
+}
+const aindaTemBotao = async ($: any) => { const ui = await montarFaixaH($, 50, 19); const r = await rotulosDe(ui); await ui.unmount(); return r.includes('galaxia') }
+test('prompt-do-dono-limpa-botoes-de-nomes: mensagem do dono no composer, sem command ⇒ os botões somem', async ($, on) => {
+  await comNomesNaTela($, on)
+  expect(await aindaTemBotao($)).toBe(true)
+  await $.prompt.submit({ text: 'oi', origin: { kind: 'composer' }, command: null, isMeta: false })
+  expect(await aindaTemBotao($)).toBe(false)
+})
+test('prompt-de-peer-ou-bridge-nao-limpa: peer e bridge não apagam os botões', async ($, on) => {
+  await comNomesNaTela($, on)
+  await $.prompt.submit({ text: '<agent-message>x', origin: { kind: 'peer' } })
+  await $.prompt.submit({ text: 'via bridge', origin: { kind: 'bridge' }, command: null })
+  expect(await aindaTemBotao($)).toBe(true)
+})
+test('nomes-digitado-mantem-botoes: command.run de `painel nomes` + prompt.submit do mesmo slash (command preenchido, composer) ⇒ os botões ficam', async ($, on) => {
+  await comNomesNaTela($, on)
+  await $.prompt.submit({ text: '/gabarito painel nomes', origin: { kind: 'composer' }, command: { name: 'gabarito', args: 'painel nomes' } })
+  expect(await aindaTemBotao($)).toBe(true)
+  await $.prompt.submit({ text: 'meta', origin: { kind: 'composer' }, command: null, isMeta: true })
+  expect(await aindaTemBotao($)).toBe(true)
+})
+test('botoes-com-nomes-orcamento-desconta-o-topo: topo + nomes que só cabem se o topo não contasse ⇒ vira +N e a linha respeita o mínimo de texto', () => {
+  const topo = [{ rotulo: 'aprovar', comando: '/x' }]
+  const nomes = ['aaaaaaaaaa', 'bbbbbbbbbb', 'cccccccccc'].map((n) => ({ rotulo: n, comando: n }))
+  const r = botoesComNomes(topo, nomes, 80)
+  expect(r.some((b: any) => /^\+\d/.test(b.rotulo))).toBe(true)
+  expect(colunasDosBotoes(r) + 24 + 3).toBeLessThanOrEqual(80)
 })
 test('nomes-botoes-cabem-na-largura: 4 de fábrica + 5 do repo de 17 col ⇒ a linha única ≤ 80 col, com o resto indicado (MAJOR-3)', async ($, on) => {
   sobreOMotor(on)

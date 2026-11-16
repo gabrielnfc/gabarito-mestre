@@ -1461,7 +1461,9 @@ export function registrarPainel(on) {
   // GM-15 T22 (MAJOR-2): os botões de `painel nomes` valem até o próximo comando do `/gabarito` (qualquer um) ou o próximo prompt do dono
   on('command.run', { command: 'gabarito' }, async ($, e, next) => { S.escolhaNomes = null; return next(e); });
   on('prompt.submit', { origin: { kind: 'composer' } }, async ($, e, next) => {
-    if (S.escolhaNomes !== null && e?.origin?.kind !== 'peer') { S.escolhaNomes = null; redesenhar($); }
+    // só mensagem do dono: o slash command digitado também dispara prompt.submit (com `command`) e não pode apagar os próprios botões; mesmo critério de `ehMensagemDoDono` (gates/src/pouso.ts)
+    const ehComando = (e?.command !== null && e?.command !== undefined) || e?.isMeta === true;
+    if (S.escolhaNomes !== null && e?.origin?.kind === 'composer' && !ehComando) { S.escolhaNomes = null; redesenhar($); }
     return next(e);
   });
 
