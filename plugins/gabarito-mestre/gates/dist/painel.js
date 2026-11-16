@@ -63,26 +63,20 @@ function linhaEntregue(e              , o              )               {
 /** GM-15 T8 (review r1 MAJOR-1): o item do DEPENDE que leva o botão "seguir" da próxima entrega. Não é item da entrega encerrada: é a oferta da próxima. */
 export const motivoDaProxima = (texto        )         => `próxima entrega: ${texto}`;
 const ID_ENTREGUE = /^[A-Za-z0-9-]{1,40}$/;
-const VERSAO_RE = /^\d+\.\d+\.\d+$/;
+/** X.Y.Z com pré-release opcional, a MESMA forma que `formas.ts` (SEMVER_RE) aceita no `entrega.encerrada`: a versão aparece inteira ou não aparece. */
+const VERSAO_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 /**
  * GM-15 T8 (REQ-ENT-1 c, d): a entrega `id` com `entrega.encerrada` vigente (regra única `encerramentoDe`) ⇒ `{id, versao}`; senão `null`. `versao` = a do
- * encerramento ou, sem ela, o X.Y.Z do último `fato.medido release` do diário (a mesma leitura da trilha); sem os dois, `null`. Puro, nunca lança.
+ * encerramento INTEIRA (pré-release incluída, sem o `v`: "v2.1.0-alpha.2" ⇒ "2.1.0-alpha.2", nunca "2.1.0"); sem ela, `null` (r1 MAJOR-3): o `fato.medido
+ * release` é o último release do repo, sem amarra ao PR nem ao `mergeado_em`, então não diz a versão desta entrega. Puro, nunca lança.
  */
 export function entregueDe(eventos                 , id               )                  {
   if (typeof id !== 'string' || !ID_ENTREGUE.test(id) || !Array.isArray(eventos)) return null;
   const enc = encerramentoDe(eventos, id);
   if (!enc.encerrada || enc.primeira === null) return null;
-  const x = (v         )                => { const m = typeof v === 'string' ? /(\d+\.\d+\.\d+)/.exec(v) : null; return m === null ? null : m[1]; };
-  let versao = x(enc.primeira.versao);
-  if (versao === null) {
-    const ord = ordenar(eventos);
-    for (const ev of ord.ok ? ord.eventos : []) {
-      const d = dadosDe(ev);
-      if (tipoDe(ev) === 'fato.medido' && d.chave === 'release') versao = x(ehObj(d.valor) ? d.valor.tag : null) ?? versao;
-    }
-  }
-  return { id, versao };
+  const v = typeof enc.primeira.versao === 'string' ? enc.primeira.versao.trim().replace(/^v/, '') : '';
+  return { id, versao: VERSAO_RE.test(v) ? v : null };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------

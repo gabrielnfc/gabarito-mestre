@@ -1496,12 +1496,18 @@ test('entregue-de: encerrada ⇒ {id, versao}; reaberta depois ⇒ null; versão
   const rel = e('fato.medido', { chave: 'release', fonte: 'gh', valor: { tag: 'v2.1.0-alpha.1' } }, '2026-11-15T09:00:00.000Z');
   const enc = e('entrega.encerrada', { entrega: 'GM-9', pr: 3, via: 'head', mergeado_em: '2026-11-15T10:00:00.000Z' }, '2026-11-15T10:00:01.000Z');
   assert.deepEqual(entregueDe([enc], 'GM-9'), { id: 'GM-9', versao: null });
-  assert.deepEqual(entregueDe([rel, enc], 'GM-9'), { id: 'GM-9', versao: '2.1.0' });
+  // r1 MAJOR-3: o release medido é o último do repo, sem amarra ao PR nem ao mergeado_em ⇒ não dá versão (nunca "2.1.0" de "v2.1.0-alpha.1")
+  assert.deepEqual(entregueDe([rel, enc], 'GM-9'), { id: 'GM-9', versao: null });
   assert.equal(entregueDe([rel, enc], 'GM-8'), null, 'o encerramento é da entrega do evento');
   const reab = e('entrega.reaberta', { entrega: 'GM-9', em: '2026-11-15T11:00:00.000Z' }, '2026-11-15T11:00:01.000Z');
   assert.equal(entregueDe([rel, enc, reab], 'GM-9'), null, 'reaberta pelo dono deixa de ser entregue');
   const comVersao = e('entrega.encerrada', { entrega: 'GM-7', pr: 4, via: 'titulo', mergeado_em: '2026-11-15T10:00:00.000Z', versao: '3.0.0' }, '2026-11-15T12:00:01.000Z');
   assert.deepEqual(entregueDe([rel, comVersao], 'GM-7'), { id: 'GM-7', versao: '3.0.0' });
+  // a versão do encerramento inteira, pré-release incluída (o caso real de hoje: tag v2.1.0-alpha.2)
+  const alpha = e('entrega.encerrada', { entrega: 'GM-15', pr: 23, via: 'titulo', mergeado_em: '2026-11-15T20:00:00.000Z', versao: '2.1.0-alpha.2' }, '2026-11-15T20:00:01.000Z');
+  assert.deepEqual(entregueDe([rel, alpha], 'GM-15'), { id: 'GM-15', versao: '2.1.0-alpha.2' });
+  const torta = e('entrega.encerrada', { entrega: 'GM-16', pr: 24, via: 'titulo', mergeado_em: '2026-11-15T20:00:00.000Z', versao: 'versão 2.1.0 final' }, '2026-11-15T20:00:02.000Z');
+  assert.deepEqual(entregueDe([rel, torta], 'GM-16'), { id: 'GM-16', versao: null }, 'versão fora da forma semver não vira X.Y.Z recortado');
   assert.equal(entregueDe(null, 'GM-9'), null);
   assert.equal(entregueDe([enc], 'GM 9'), null);
   assert.equal(entregueDe([enc, { ...enc }], 'GM-9'), null, 'diário que não ordena (seq repetido) não afirma');

@@ -127,7 +127,8 @@ test('entregue-sai-do-alvo: GM-14 + gh com o #22 ⇒ medir grava entrega.encerra
   assert.deepEqual(enc.map((e) => e.dados), [{ entrega: 'GM-14', pr: 22, via: 'titulo', mergeado_em: '2026-11-15T12:00:00Z' }]);
 
   const e = estado(d);
-  assert.deepEqual(e.entregue, { id: 'GM-14', versao: '2.1.0' }, 'a versão vem do fato release medido (v2.1.0-alpha.1 ⇒ 2.1.0)');
+  // r1 MAJOR-3: o release medido (v2.1.0-alpha.1, o último do repo) não é amarrado ao #22 ⇒ sem versão; nunca "2.1.0" recortado
+  assert.deepEqual(e.entregue, { id: 'GM-14', versao: null }, 'release sem amarra ao PR não dá versão');
   assert.equal(e.pronto, null, 'PRONTO da entrega sai');
   assert.equal(e.parar, null);
   assert.equal(e.pergunta, null);
@@ -139,7 +140,7 @@ test('entregue-sai-do-alvo: GM-14 + gh com o #22 ⇒ medir grava entrega.encerra
 
   const ls = texto(d);
   assert.equal(ls.length, 1, ls.join('\n'));
-  assert.equal(ls[0], '◆ GABARITO · GM-14 entregue (versão 2.1.0) · próxima: decidir se a ideia vira a próxima entrega');
+  assert.equal(ls[0], '◆ GABARITO · GM-14 entregue · próxima: decidir se a ideia vira a próxima entrega');
 
   const s = stop(d);
   assert.equal(s.status, 0, s.stderr);
@@ -326,4 +327,14 @@ test('seguir-chega-ao-mod (nenhuma): sem próxima anotada não há item nem bot�
   const { linhas, mapa } = botoesDoMod(e);
   assert.deepEqual(linhas, ['GABARITO · GM-44 entregue · nenhuma próxima anotada']);
   assert.equal(mapa.size, 0);
+});
+
+test('versao-nunca-truncada (r1 MAJOR-3): o caso real, tag v2.1.0-alpha.2, encerramento com versao 2.1.0-alpha.2 (a forma do evento é sem `v`) ⇒ "(versão 2.1.0-alpha.2)", nunca "2.1.0"', () => {
+  const d = repo('hotfix/GM-15-alpha2');
+  w(d, 'GM-15', 'loop', 'fato.medido', { chave: 'release', fonte: 'gh', valor: { tag: 'v2.1.0-alpha.1' } }, '2026-11-15T19:00:00.000Z');
+  w(d, 'GM-15', 'loop', 'entrega.encerrada', { entrega: 'GM-15', pr: 23, via: 'titulo', mergeado_em: '2026-11-15T20:00:00Z', versao: '2.1.0-alpha.2' }, '2026-11-15T20:00:01.000Z', 'painel');
+  assert.deepEqual(estado(d).entregue, { id: 'GM-15', versao: '2.1.0-alpha.2' });
+  const [l] = texto(d);
+  assert.match(l, /^GABARITO · GM-15 entregue \(versão 2\.1\.0-alpha\.2\) · nenhuma próxima anotada$/);
+  assert.doesNotMatch(l, /versão 2\.1\.0\)/);
 });
