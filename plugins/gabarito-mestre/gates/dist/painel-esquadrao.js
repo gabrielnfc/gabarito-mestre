@@ -15,6 +15,9 @@ import { PRIORIDADE_RESERVA, cortarComReserva, cortarPorPrioridade } from './orc
                                                       
 import { linhaTecnica, nomeNatural, tagNatural } from './origem.js';
                                                     
+import { rotuloAgente, rotuloFase } from './projeto.js';
+                                                                
+                                            
 import { colunas, cortar, limpar } from './painel-largura.js';
 import { alturaValida, barra, blocoTopo, cortarLinha, cortarPorAltura } from './painel-texto.js';
                                                       
@@ -333,6 +336,70 @@ function linhaAgente(a              , larga         , nw        , vw        , mw
   ]);
 }
 
+// ───────────────────────────── GM-15 T32 (REQ-ENT-2 emenda 4, D-G3): visão de PROJETO, acima da visão de entrega ─────────────────────────────
+//
+// O núcleo é `projeto.ts` (T31, puro); a borda (`painel.mjs`) lê todas as worktrees e cola `estado.projeto`. Aqui só se DESENHA. Aparece com 2 ou mais PBIs/entregas
+// (com 1 só, a visão de entrega já é o projeto). ≥ 72 colunas: totais em 2 ou 3 linhas (contagens · previsão medida · previsão estimada) + 1 linha por PBI; abaixo, 1 linha de totais (D-P8: a visão de entrega
+// mantém a prioridade dela, o projeto é o 1º a encolher); < 44, só a contagem. Número nunca cortado: o que cede é o título; a linha cortada termina em "…".
+// PBI sem plano: "sem plano", nunca 0 % (o total diz quantos ficam fora da conta). Previsão: "(medida)" = ritmo medido (T30) só do que tem plano;
+// a parte dos PBIs sem plano vem com "~" e "estimadas" (emenda 19 p.5, D-G13), nunca somada ao %.
+
+/** Largura mínima das linhas por PBI; abaixo, 1 linha de totais. */
+const LARGURA_PROJETO_LINHAS = 72;
+
+/** `estado.projeto` válido e com 2 ou mais linhas; senão `null` (nada desenhado). */
+function projetoDe(e              )                       {
+  const p = (e                                                     ).projeto;
+  if (p === null || p === undefined || typeof p !== 'object' || !Array.isArray(p.linhas) || p.totais === null || typeof p.totais !== 'object') return null;
+  return p.linhas.filter((l) => l !== null && typeof l === 'object' && typeof l.id === 'string').length >= 2 ? p : null;
+}
+
+function linhasDoProjeto(p               , w        , mot                       )                                     {
+  const tt = p.totais;
+  const feitos = ouInterroga(tt.feitos);
+  const total = ouInterroga(tt.pbis);
+  const pctN = nn(tt.pct);
+  const pct = pctN === null ? '?' : `${Math.round(pctN)}%`;
+  const fora = inteiroNaoNeg(tt.foraDaConta) ?? 0;
+  const med = tt.previsao?.medida ?? null;
+  const est = tt.previsao?.estimada ?? null;
+  if (w < 44) return { totais: [[seg(`PBIs ${feitos}/${total} · ${pct}`)]], pbis: [] };
+  if (w < LARGURA_PROJETO_LINHAS) {
+    const prev = est !== null ? `~${t(est.hora)} estimada` : med !== null ? `${t(med.hora)} medida` : '?';
+    return { totais: [[seg(`PROJETO ${feitos}/${total} PBIs · ${pct} · ${prev}${fora > 0 ? ` · ${fora} sem plano` : ''}`)]], pbis: [] };
+  }
+  // linha 1: contagens (o número nunca é cortado: o que não cabe em `w` sai por variantes mais curtas, a mais longa primeiro)
+  const estimadas = inteiroNaoNeg(tt.estimadas) ?? 0;
+  const tasks = `${pct} das tasks (${ouInterroga(tt.integradas)} de ${ouInterroga(tt.tasks)}${estimadas > 0 ? `, +${estimadas} estimadas` : ''})`;
+  const base = `PROJETO  ${feitos} de ${total} PBIs feitos · ${tasks}`;
+  const variantes = [
+    `${base} · ${ouInterroga(tt.restantes)} restantes${fora > 0 ? ` · ${fora} sem plano, fora da conta` : ''}`,
+    `${base} · ${ouInterroga(tt.restantes)} restantes${fora > 0 ? ` · ${fora} sem plano` : ''}`,
+    `${base}${fora > 0 ? ` · ${fora} sem plano` : ''}`,
+    base,
+  ];
+  const l1 = variantes.find((v) => colunas(v) <= w) ?? variantes[variantes.length - 1];
+  // linha 2: a previsão medida (a); linha 3: a parte dos PBIs sem plano, estimada (b), com "~"
+  const totais          = [
+    [seg(l1)],
+    [seg(med !== null ? `  previsão ${t(med.hora)} (medida)` : `  previsão ?${mot(tt.previsao?.ritmoS === null || tt.previsao?.ritmoS === undefined ? 'sem ritmo medido' : 'sem fonte')}`, 'inactive')],
+    ...(est !== null ? [[seg(`  ${t(est.texto)}`, 'inactive')]         ] : []),
+  ];
+  const ls = p.linhas.filter((l)                    => l !== null && typeof l === 'object' && typeof l.id === 'string');
+  const idW = maxCol(ls.map((l) => t(l.id)));
+  const txt = (l              )         => t(l.texto) || '?';
+  const txtW = maxCol(ls.map(txt));
+  const tcol = Math.min(40, w - (8 + idW + txtW));
+  const titulos = ls.map((l) => (tcol >= 4 ? cortar(natural(l.titulo), tcol) : ''));
+  const tw = maxCol(titulos);
+  const pbis = ls.map((l, i)        => {
+    const g = l.motivo !== null && l.motivo !== undefined ? '?' : l.feito === true ? '✓' : l.semPlano === true ? '○' : '●';
+    const cor                      = g === '✓' ? 'success' : g === '○' ? 'inactive' : g === '?' ? 'warning' : undefined;
+    return aparar([seg('  '), seg(g, cor), seg(` ${pad(t(l.id), idW)}  `), ...(tw > 0 ? [seg(`${pad(titulos[i], tw)}  `)] : []), seg(txt(l), l.semPlano === true && g !== '?' ? 'inactive' : undefined)]);
+  });
+  return { totais, pbis };
+}
+
 // ───────────────────────────── GM-14 T17 (regra dos 5 blocos) + GM-15 T29 (desenho do E4): `renderBlocos` (REQ-GLB-1, REQ-LNG-1, FIEL-10..13) ─────────────────────────────
 //
 // Um renderizador só para os dois presets (FIEL-12): `ludico` (esquadrão) mostra o nome temático; o executivo, o papel de `PAPEL_EXECUTIVO`.
@@ -559,7 +626,7 @@ export function renderBlocos(e              , o              )          {
   if (e.umaLinha !== null && e.umaLinha !== undefined) {
     const u = e.umaLinha.ultima;
     const ult = u === null || typeof u?.id !== 'string' ? '' : ` · última: ${idNatural(u.id)}${typeof u.estado === 'string' && u.estado !== '' ? ` (${natural(u.estado)})` : ''}`;
-    return [fim([seg(`GABARITO · sem entrega em curso${ult}`, 'inactive')])];
+    return [fim([seg(`GABARITO · sem entrega em curso${ult}`, 'inactive')])]; // GM-15 T32: continua 1 linha (REQ-ENT-1 d i); o projeto só entra na visão de entrega
   }
 
   const quemTexto = (q                               )         => {
@@ -626,6 +693,14 @@ export function renderBlocos(e              , o              )          {
   // sem entrega: a última conhecida logo depois do topo (spec:53)
   const ultima = id === '' && typeof e.trilha?.ultimaConhecida === 'string' ? idNatural(e.trilha.ultimaConhecida) : '';
   if (ultima !== '') por(2, [seg(`última entrega conhecida: ${ultima}`, 'inactive')], 0);
+
+  // ───────── PROJETO (GM-15 T32, emenda 4): acima da visão de entrega; o 1º a encolher no corte (a entrega mantém a prioridade D-P8) ─────────
+  const projeto = projetoDe(e);
+  if (projeto !== null) {
+    const dp = linhasDoProjeto(projeto, w, mot);
+    for (const l of dp.totais) por(6.94, l, 0.5);
+    for (const l of dp.pbis) por(6.96, l, 0.5);
+  }
 
   // nomes e cores dos agentes do AGORA (FIEL-3 d): o nome é único entre os ativos; a medição (ctx, tokens, modelo, cor) é a da equipe
   const ag = e.agora;
@@ -740,7 +815,12 @@ export function renderBlocos(e              , o              )          {
     const barra7 = FASES_NOME.map((_, i) => (marcas[i] === '✓' ? '▰' : '▱')).join('');
     const trilha = FASES_NOME.map((nome, i) => `${['✓', '●', '○', '?'].includes(marcas[i]) ? marcas[i] : '?'} ${nome}`).join(' › ');
     const partes = [natural(f.progresso), ...(Array.isArray(f.sufixo) ? f.sufixo.map((x) => natural(x)) : []), ...(typeof f.motivo === 'string' ? [`? ${natural(f.motivo)}`] : [])].filter((x) => x !== '');
-    por(2, [seg(`FASE ${n === null ? '?' : n} de 7 `), seg(barra7, 'success'), seg(`${partes.map((x) => ` · ${x}`).join('')} · `), seg(trilha, 'inactive')], 1);
+    // GM-15 T32 (emenda 4 item 4, D-P13): sem `plano.json` a fase não é medida ("fase não medida", sem "n de 7" nem barra); com ele, "FASE n de 7". Sem a marca (estado de fora do CLI), como antes.
+    const semPlanoJson = (e                                             ).temPlanoJson === false;
+    const rotuloF = rotuloFase(!semPlanoJson, n);
+    por(2, semPlanoJson
+      ? [seg(rotuloF), seg(`${partes.map((x) => ` · ${x}`).join('')} · `), seg(trilha, 'inactive')]
+      : [seg(`${rotuloF} `), seg(barra7, 'success'), seg(`${partes.map((x) => ` · ${x}`).join('')} · `), seg(trilha, 'inactive')], 1);
   }
 
   // ───────── EQUIPE: o AGORA (FIEL-4, FIEL-11) no desenho do E4 ─────────
@@ -817,12 +897,14 @@ export function renderBlocos(e              , o              )          {
 
       // árvore dos agentes (├─ … └─): só ativos (FIEL-6); o que faz (FIEL-11 b) no fim da linha, onde o corte não alcança número
       // GM-15 T33 (g.11, D-G8): a EQUIPE tem só agentes (+ Sombra); o shell de fundo vai para a seção SEGUNDO PLANO, abaixo
+      // GM-15 T32 (emenda 4 item 5): o agente só é da task se ela saiu de `pendente` (alguém rodou `loop.mjs iniciar`); senão "agente fora do loop" (a regra única de `projeto.ts`)
+      const estadosDasTasks = new Map                    ((Array.isArray(e.plano?.tasks) ? e.plano.tasks : []).filter((x) => x !== null && typeof x === 'object' && typeof x.id === 'string').map((x) => [x.id, x.estado              ]));
       const dados = agentesAg.map((a) => {
         const eq = daEquipe(a);
         const tempo = inteiroNaoNeg(a.desdeS);
         return {
           nome: quemTexto(a.quem), cor: eq?.cor, gc: (eq?.estadoTask == null ? 'inactive' : corEstadoTask(eq.estadoTask))           , modelo: t(eq?.modelo),
-          task: typeof a.task === 'string' && t(a.task) !== '' ? t(a.task) : 'sem task',
+          task: rotuloAgente({ task: typeof a.task === 'string' && t(a.task) !== '' ? t(a.task) : null, papelExibido: null }, estadosDasTasks),
           pct: nn(eq?.ctxPct), tok: nn(eq?.ctxTok), tempo: tempo === null ? '' : fmtTempo(tempo),
           acao: a.acao === null || a.acao === undefined ? `?${mot('sem fonte')}` : natural(a.acao, 'reticencia') || `?${mot('sem fonte')}`,
         };

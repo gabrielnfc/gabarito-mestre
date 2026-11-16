@@ -12,6 +12,9 @@
  * `estado` imprime `{ok:true, estado, avisos}`; `texto` imprime `paraTexto(renderPainel(...))` (padrão: 80 colunas, esquadrao, mono).
  * Falha: UMA linha JSON `{ok:false, erro, mensagem}`, rc 1; uso errado rc 2. `texto` falha com a mesma linha JSON.
  *
+ * GM-15 T32 (REQ-ENT-2 emenda 4): o estado ganha `projeto` (uma linha por PBI/entrega, lidas em TODAS as worktrees de `git worktree list`; `projeto.ts` é o núcleo
+ * puro) e `temPlanoJson`; o `texto` desenha o projeto acima da entrega. Falha do `git worktree list` ⇒ só a árvore atual + aviso (stderr).
+ *
  * `estado` e `texto` SÓ LEEM (D8). Nada de `decidirAgora`, lock, âncora, `append` ou `.harness/` criado: o painel pode rodar a cada 30 s, durante um deploy, com a janela fechada.
  * A decisão de entrega vem de `prepararLeitura` + `decisaoDe` (entrega.mjs), só com o loop em `concluir`.
  *
@@ -24,7 +27,7 @@
  * CAUDA lida (≤ 256 KB), não do transcript inteiro (MINOR, backlog: nenhum render o lê).
  */
 import { execFileSync } from 'node:child_process';
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readFileSync, readdirSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { isatty } from 'node:tty';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,6 +44,7 @@ import { lerX } from '../dist/pouso.js';
 import { sessoesDeRetomada } from '../dist/pouso-pendente.js';
 import { encerramentoDe, idDaBranch, trilhaDe } from '../dist/trilha.js';
 import { proximaEntrega } from '../dist/depende.js';
+import { planoMdDoCard, projetarProjeto, worktreesDe } from '../dist/projeto.js';
 import { temOnboarding } from './cartao-sessao.mjs';
 import { carregarPlano, checkoutDaSessao, configDoLote, contexto, lerDiarioEstrito, lerSpec, lerSpecs, medicaoDoPouso, tetoDaSombra } from './loop.mjs';
 import { decisaoDe, pausado, prepararLeitura } from './entrega.mjs';
@@ -248,6 +252,98 @@ export function lerDiarioEstavel(dir, deps = {}) {
     if (i < tentativas - 1) dormir(intervaloMs);
   }
   throw new Falha('diario_em_escrita', `o diário mudou durante a leitura ${tentativas} vezes seguidas (escrita em curso): tente de novo`);
+}
+
+// ─────────────────────────────────────────────────────────────── visão de projeto (GM-15 T32, REQ-ENT-2 emenda 4)
+
+const TEXTO_MAX = 1024 * 1024;
+
+/** Texto de arquivo regular (≤ 1 MiB, nunca link); qualquer falha ⇒ `null`. */
+function lerTextoSeguro(caminho) {
+  try {
+    const st = lstatSync(caminho);
+    return st.isFile() && st.size <= TEXTO_MAX ? readFileSync(caminho, 'utf8') : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Caminho relativo de config/card (`docs/fluxo/pbis/`): sem barra inicial, sem `..`, sem vazio; devolve sem barra final, ou `null`. */
+function relativoSeguro(c) {
+  if (typeof c !== 'string' || c === '' || c.length > 300 || isAbsolute(c) || c.includes('\0')) return null;
+  const limpo = c.replace(/\/+$/, '');
+  return limpo === '' || limpo.split('/').includes('..') ? null : limpo;
+}
+
+/** `git worktree list --porcelain` na árvore atual; falha ⇒ `{ok:false, motivo}` (o aviso é de `worktreesDe`). */
+function worktreeListDoGit(atual) {
+  try {
+    return { ok: true, saida: execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: atual, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000 }) };
+  } catch (e) {
+    return { ok: false, motivo: String(e?.stderr || e?.message || 'erro desconhecido').trim().split('\n')[0].slice(0, 120) };
+  }
+}
+
+/** Data (ms) do último commit que tocou `rel` na árvore `caminho`; sem git, não versionado ou saída estranha ⇒ `null` (emenda 19: empate/sem data ⇒ árvore atual). */
+function commitMsDe(caminho, rel) {
+  try {
+    const s = execFileSync('git', ['log', '-1', '--format=%ct', '--', rel], { cwd: caminho, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000 }).trim();
+    return /^\d{1,12}$/.test(s) ? Number(s) * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+/** O que a borda lê de UMA árvore, no formato de `ArvoreLida` (projeto.ts): cards de `fluxo.mapeamento.FL1`, o plano .md do card, `plano.json` e o diário de cada entrega. */
+function lerArvoreDoProjeto(caminho, fl1, idRe) {
+  const cards = [];
+  if (fl1 !== null) {
+    let nomes = [];
+    try { nomes = readdirSync(join(caminho, fl1)).filter((n) => n.endsWith('.md')).sort(); } catch { /* sem a pasta nesta árvore */ }
+    for (const arquivo of nomes) {
+      const texto = lerTextoSeguro(join(caminho, fl1, arquivo));
+      if (texto === null) continue;
+      const md = relativoSeguro(planoMdDoCard(texto));
+      cards.push({ arquivo, texto, planoMd: md === null ? null : lerTextoSeguro(join(caminho, md)) });
+    }
+  }
+  const entregas = [];
+  const base = join(caminho, '.harness', 'entregas');
+  let ids = [];
+  try { ids = readdirSync(base).filter((n) => idRe.test(n)).sort(); } catch { /* árvore sem entregas */ }
+  for (const id of ids) {
+    const dir = join(base, id);
+    try { if (!lstatSync(dir).isDirectory()) continue; } catch { continue; }
+    let plano = null;
+    let planoCommitMs = null;
+    if (existsFile(join(dir, 'plano.json'))) {
+      const texto = lerTextoSeguro(join(dir, 'plano.json'));
+      if (texto === null) plano = { ok: false, motivo: 'plano.json ilegível' };
+      else {
+        try { plano = { ok: true, bruto: JSON.parse(texto) }; } catch (e) { plano = { ok: false, motivo: `plano.json ilegível: ${String(e?.message ?? e).slice(0, 100)}` }; }
+      }
+      planoCommitMs = commitMsDe(caminho, join('.harness', 'entregas', id, 'plano.json'));
+    }
+    const lido = lerEstrito(dir);
+    entregas.push({ id, plano, planoCommitMs, eventos: lido.ok ? lido.eventos : null });
+  }
+  return { caminho, cards, entregas };
+}
+const existsFile = (c) => { try { return lstatSync(c).isFile(); } catch { return false; } };
+
+/**
+ * Visão de projeto (REQ-ENT-2 emenda 4): lê TODAS as worktrees de `git worktree list` (a atual primeiro; falha do git ⇒ só a atual + aviso) e entrega a
+ * `projetarProjeto` (núcleo puro, T31). Só LÊ. `deps.worktreeList(atual)` troca o `git` (testes).
+ */
+export function projetoDoRepo({ atual, cfg, idPadrao, agoraMs, fuso, deps = {} }) {
+  const fl1 = relativoSeguro(cfg?.fluxo?.mapeamento?.FL1);
+  let idRe;
+  try { idRe = new RegExp(idPadrao); } catch { idRe = /^[A-Z]+-\d+$/; }
+  const real = (c) => { try { return realpathSync(c); } catch { return c; } };
+  const wt = worktreesDe((deps.worktreeList ?? worktreeListDoGit)(atual), real(atual));
+  const caminhos = [...new Set(wt.caminhos.map(real))];
+  const arvores = caminhos.map((c) => lerArvoreDoProjeto(c, fl1, idRe));
+  return projetarProjeto(arvores, { agoraMs, fuso, idPadrao: idRe, avisos: wt.aviso === null ? [] : [wt.aviso] });
 }
 
 // ─────────────────────────────────────────────────────────────── pacote de nomes
@@ -504,7 +600,7 @@ function semPlanoNaApresentacao(comPlano, semPlano, entrada) {
 
 /**
  * Monta o estado do painel. `opts`: `agentes` (objeto do stdin; ausente = sem `--agentes`, equipe só do diário), `pacote`, `entrega`, `agoraMs`
- * (um só `Date.now()` por execução), `env` (padrão `process.env`), `fuso`, `diario` (deps de `lerDiarioEstavel`), `preparar` (troca `prepararLeitura`, para contar chamadas) e `projetar` (troca `projetarPainel`, para ler a entrada). Nunca lança: `{ok:true, estado, avisos}`
+ * (um só `Date.now()` por execução), `env` (padrão `process.env`), `fuso`, `diario` (deps de `lerDiarioEstavel`), `preparar` (troca `prepararLeitura`, para contar chamadas) `projetar` (troca `projetarPainel`, para ler a entrada) e `projetoDeps` (troca o `git worktree list` da visão de projeto). Nunca lança: `{ok:true, estado, avisos}`
  * ou `{ok:false, erro, mensagem}`.
  *
  * GM-14 T18 (REQ-GLB-1, FIEL-10 b/e): num repo git NUNCA devolve `sem_loop`/`plano_ausente`/`entrega_nao_inferida`. Sem plano ⇒ FASE pela trilha;
@@ -687,7 +783,18 @@ export function estadoDoPainel(cwd, opts = {}) {
     };
     const projetar = opts.projetar ?? projetarPainel;
     const estado = projetar(descartado ? planoDoDiario : plano, eventos, entrada);
-    return { ok: true, estado: descartado ? semPlanoNaApresentacao(estado, projetar(null, eventos, entrada), entrada) : estado, avisos };
+    const apresentado = descartado ? semPlanoNaApresentacao(estado, projetar(null, eventos, entrada), entrada) : estado;
+    // GM-15 T32 (REQ-ENT-2 emenda 4): a visão de projeto (todas as worktrees) acima da de entrega; `temPlanoJson` = a entrega tem `plano.json` (item 4: sem ele, "fase não medida")
+    let projeto = null;
+    if (raiz !== null) {
+      try {
+        projeto = projetoDoRepo({ atual: sessaoRaiz ?? raiz, cfg: origin.cfg, idPadrao, agoraMs, fuso, deps: opts.projetoDeps });
+        avisos.push(...projeto.avisos);
+      } catch (e) {
+        avisos.push(`visão de projeto não lida: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`);
+      }
+    }
+    return { ok: true, estado: { ...apresentado, projeto, temPlanoJson: planoDoDiario !== null || planoInvalido !== null }, avisos };
   } catch (e) {
     if (e instanceof Falha || typeof e?.erro === 'string') return { ok: false, erro: e.erro, mensagem: e.message };
     return { ok: false, erro: 'erro_interno', mensagem: String(e instanceof Error ? e.message : e).slice(0, 200) };
@@ -714,7 +821,7 @@ export function main(argv, cwd = process.cwd(), io = {}) {
       return r?.ok === true ? 0 : 1;
     }
     const agentes = flags.agentes === true ? lerEntradaAgentes((io.stdin ?? lerStdin)()) : undefined;
-    const r = estadoDoPainel(cwd, { agentes, pacote: flags.pacote, entrega: flags.entrega, sessao: flags.sessao, agoraMs: io.agoraMs });
+    const r = estadoDoPainel(cwd, { agentes, pacote: flags.pacote, entrega: flags.entrega, sessao: flags.sessao, agoraMs: io.agoraMs, projetoDeps: io.projetoDeps });
     if (!r.ok) return falha(new Falha(r.erro, r.mensagem));
     if (cmd === 'estado') {
       saida(`${JSON.stringify({ ok: true, estado: r.estado, avisos: r.avisos })}\n`);
