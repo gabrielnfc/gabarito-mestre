@@ -43,7 +43,7 @@ Status ao dono: comece por `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/painel.mjs
 
 ## Anotar na hora
 
-Sem plano e sem pedir licença, em 1 linha e com as **suas** palavras (nunca a fala do dono copiada): `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" anotar --tipo <tipo> --texto <t> --sessao <id>`. Tipos: `ideia` (ideia nova), `desvio`, `assunto` (mudança de assunto), `duvida` (só o dono resolve: 2 a 4 `--opcao <rótulo>`), `pendencia` (tarefa do dono, fora daqui). Anote ao acontecer, antes de seguir o ciclo.
+Sem plano e sem pedir licença, em 1 linha e com as **suas** palavras (nunca a fala do dono copiada): `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" anotar --tipo <tipo> --texto <t> --sessao <id>`. Tipos: `ideia` (ideia nova), `desvio`, `assunto` (mudança de assunto), `duvida` (só o dono resolve: 2 a 4 `--opcao <rótulo>`; marque a sua recomendação com "(recomendado)" no rótulo). `pendencia` o CLI recusa: o painel do dono só mostra o que trava e só ele decide, então lembrete ou obrigação sua vai ao plano (plano.json, brief da task) ou à retomada; pendência antiga sua você fecha com `node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" anotar --fechar <sessao>:<seq>` (item do dono o CLI recusa). Anote ao acontecer, antes de seguir o ciclo.
 
 ## Entrega
 

@@ -1942,6 +1942,10 @@ function anotar(argv, cwd) {
   if (flags.sessao !== undefined && (!SESSAO_PERGUNTA_RE.test(flags.sessao) || flags.sessao === 'herdar')) {
     throw new Falha('argumento_invalido', `--sessao fora da forma ${SESSAO_PERGUNTA_RE} (ou "herdar"): a pergunta da nota se chamaria <sessao>:<n> e ninguém a responderia`);
   }
+  // GM-15 T35 (r.13, D-G12 1): o painel do dono só mostra o que trava e só ele decide; lembrete/obrigação do orquestrador vai ao plano ou à retomada
+  if (flags.tipo === 'pendencia') {
+    throw new Falha('pendencia_do_orquestrador', 'pendência do orquestrador não vai ao painel do dono: anote no plano (plano.json, brief da task) ou na retomada; o que só o dono decide é --tipo duvida com 2 a 4 --opcao; nada foi gravado');
+  }
   const dados = { tipo: flags.tipo, texto: flags.texto, ...(opcoes.length > 0 ? { opcoes } : {}) };
   const invalida = formaInvalida('nota', dados);
   if (invalida !== null) throw new Falha('forma_invalida', `${invalida}; nada foi gravado`);
