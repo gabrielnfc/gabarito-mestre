@@ -167,6 +167,7 @@ function mundo($: any, on: any, o: Opc = {}) {
     surfaces: (o.surfaces ?? []) as string[], opens: [] as any[], panes: (o.panes ?? []) as any, openResult: (o.openResult ?? { isPlaced: true }) as any, notifies: [] as string[], fills: [] as any[], statuses: [] as (string | undefined)[],
     subStarts: [] as any[], logs: [] as string[], closes: [] as any[], registros: [] as any[], sessaoId: o.sessaoId ?? 'sess-1', ordem: [] as string[], notifyModo: (o.notify ?? 'ok') as string, rateLimits: (o.rateLimits === undefined ? [] : o.rateLimits) as any, fillIsFilled: o.fillIsFilled !== false,
     agoraMs: null as number | null,
+    semOnboarding: o.semOnboarding === true, // GM-15 T23: mutável, o config pode sumir com a sessão aberta
     msgs: [] as { sha256: string; chars: number }[], mensagemLibera: [] as (() => void)[],
     // GM-14 T20: local, medir, contexto, plano B e pacote (cada ponte guarda o que recebeu)
     local: (o.local ?? 'lateral') as string, locaisGravados: [] as string[], medirStdins: [] as any[], contextos: [] as any[], contextoInit: [] as any[], planosB: [] as any[], pacotesLidos: [] as any[], listagens: [] as any[], onboardings: [] as any[], sinaisLoop: [] as any[],
@@ -269,7 +270,7 @@ function mundo($: any, on: any, o: Opc = {}) {
       if (String(argv[2]).startsWith('/*gabarito:onboarding*/')) {
         est.onboardings.push({ q, init: e.init })
         if (o.onboardingFalha) return { deny: 'node não iniciou' }
-        return cru0(`${JSON.stringify({ ok: true, onboarding: o.semOnboarding !== true })}\n`)
+        return cru0(`${JSON.stringify({ ok: true, onboarding: !est.semOnboarding })}\n`)
       }
       if (String(argv[2]).startsWith('/*gabarito:loop*/')) { est.sinaisLoop.push({ q, init: e.init }); return cru0('') }
       if (String(argv[2]).startsWith('/*gabarito:contexto*/')) { est.contextos.push(q); est.contextoInit.push(e.init); return cru0('') }
@@ -5428,6 +5429,29 @@ test('t60-com-onboarding-comportamento-atual: grava o contexto e mede, e a ponte
   expect(m.est.medirStdins.length).toBeGreaterThanOrEqual(1)
   expect(m.est.onboardings[0].q.raiz).toBe(RAIZ)
   expect(m.est.onboardings[0].q.url).toMatch(/^file:\/\/.*\/gates\/dist\/guarda\.js$/)
+})
+
+// GM-15 T23 (REQ-HIG-1, O1): o cache positivo de onboarding vence em 30 s; o config some ⇒ a próxima leitura periódica pergunta de novo e pára de gravar/medir.
+// Mutação M23b: cache que nunca invalida (sem o teste de validade) ⇒ derruba os dois.
+test('cache-onboarding-invalida-sem-config: com onboarding grava; o config some; depois do TTL o mod pergunta de novo e não grava mais', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: 37 })
+  await arrancar(m)
+  expect(m.est.contextos.length).toBeGreaterThanOrEqual(1)
+  m.est.semOnboarding = true // o config sumiu
+  await m.clock.advance(PERIODO); await drena(m)
+  const gravados = m.est.contextos.length
+  const perguntas = m.est.onboardings.length
+  await m.turno(); await drena(m)
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(m.est.onboardings.length).toBeGreaterThan(perguntas)
+  expect(m.est.contextos).toHaveLength(gravados)
+})
+test('cache-onboarding-vale-dentro-do-ttl: com onboarding confirmado, leituras dentro do TTL não repetem a ponte', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: 37 })
+  await arrancar(m)
+  const perguntas = m.est.onboardings.length
+  await m.turno(); await drena(m)
+  expect(m.est.onboardings).toHaveLength(perguntas)
 })
 
 // ---- GM-15 T17 (REQ-POU-4): o sinal do loop automático, lido de `Stop.session_crons` (medido na T0b, S4 ii) ----

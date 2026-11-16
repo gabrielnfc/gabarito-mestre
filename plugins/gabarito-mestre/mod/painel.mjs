@@ -35,6 +35,8 @@ export const ID_PANE = 'gabarito-painel';
 /** GM-14 T20: relógio de 60 s (FIEL-13 b, S15: p95 60,009 s entre leituras com `clock.every` 60 s + `turn.complete`). */
 export const INTERVALO_MS = 60000;
 export const TIMEOUT_MS = 5000;
+/** Quanto o `true` da ponte de onboarding vale sem perguntar de novo; menor que o período do painel (60 s), então toda leitura periódica reconfere (GM-15 T23). */
+export const TTL_ONBOARDING_MS = 30_000;
 /** `painel.mjs medir` chama `gh` com timeout próprio de 5 s, depois do `git`: a ponte espera mais que a do estado. */
 export const TIMEOUT_MEDIR_MS = 12000;
 /** FIEL-13 b: sem leitura boa do diário além disto ⇒ ATENÇÃO "painel sem ler o diário há N min" (2 × p95 do S15, no lugar dos 180 s provisórios). */
@@ -595,6 +597,7 @@ const S = {
   falha: null,
   semLoop: false,
   onboardingDe: null, // raiz em que a ponte já confirmou onboarding (T60); `false` nunca fica: a próxima leitura pergunta de novo
+  onboardingAte: 0, // até quando (ms do relógio do mod) o `true` acima vale sem perguntar de novo (GM-15 T23, O1: o config pode sumir)
   paneVisivel: false,
   paneEspera: false, // a plataforma lista a Pane sem colocá-la (T50): espera o pedido do dono ou um terminal mais largo
   razaoPane: null, // `reason` do último `ui.open` que não colocou (string; '' sem texto) | null
@@ -799,13 +802,15 @@ export function atualizarEncerrados(agentes) {
 
 /** Repo com onboarding? Resposta da ponte; qualquer falha ⇒ `false` (falha fechada: sem onboarding confirmado, nada grava). `true` fica na memória por raiz. */
 async function comOnboarding($, cwd) {
-  if (S.onboardingDe === cwd) return true;
+  const agoraMs = await agora($);
+  if (S.onboardingDe === cwd && agoraMs < S.onboardingAte) return true;
+  S.onboardingDe = null; // GM-15 T23 (O1): o `true` vence em `TTL_ONBOARDING_MS`; o config pode ter sumido (checkout trocado, origin/HEAD removido)
   const q = pedidoOnboarding(cwd, $.plugin.root);
   if (q === null) return false;
   try {
     const r = await $.process.run(q.argv, { cwd, stdin: q.stdin, timeoutMs: TIMEOUT_MS });
     const o = r?.exitCode === 0 && typeof r.stdout === 'string' ? JSON.parse(r.stdout) : null;
-    if (ehObj(o) && o.ok === true && o.onboarding === true) { S.onboardingDe = cwd; return true; }
+    if (ehObj(o) && o.ok === true && o.onboarding === true) { S.onboardingDe = cwd; S.onboardingAte = agoraMs + TTL_ONBOARDING_MS; return true; }
   } catch { /* ponte negada ou resposta torta */ }
   return false;
 }
