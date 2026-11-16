@@ -577,7 +577,8 @@
         "T19",
         "T23",
         "T29",
-        "T33"
+        "T33",
+        "T35"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/loop.ts",
@@ -605,7 +606,8 @@
         "T12",
         "T13",
         "T17",
-        "T21"
+        "T21",
+        "T35"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/skills/gabarito-loop/SKILL.md",
@@ -875,7 +877,8 @@
         "T23",
         "T22",
         "T12",
-        "T4"
+        "T4",
+        "T20"
       ],
       "reqs": [
         "REQ-HIG-1"
@@ -906,7 +909,23 @@
         "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs",
         "plugins/gabarito-mestre/mod/painel.mjs",
         "plugins/gabarito-mestre/gates/scripts/responder.mjs",
-        "plugins/gabarito-mestre/gates/test/responder.test.mjs"
+        "plugins/gabarito-mestre/gates/test/responder.test.mjs",
+        "plugins/gabarito-mestre/gates/test/loop.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-pouso.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-pouso.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-gm14.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-gm14/",
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-costura.test.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-anotar.test.mjs",
+        "plugins/gabarito-mestre/gates/test/skills-shell.test.mjs",
+        "plugins/gabarito-mestre/skills/gabarito-loop/SKILL.md",
+        "plugins/gabarito-mestre/commands/gabarito.md",
+        "plugins/gabarito-mestre/mod/gabarito.mjs",
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
+        "plugins/gabarito-mestre/gates/src/formas.ts",
+        "plugins/gabarito-mestre/gates/dist/formas.js"
       ]
     }
   ]
