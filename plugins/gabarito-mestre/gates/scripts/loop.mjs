@@ -1418,7 +1418,8 @@ function proxima(c, plano, flags) {
   // GM-15 T35 (r.12, r.9): o pedido de /clear da regra única `pedidoDeClear` (pouso.ts): sem medição de contexto não há pedido; adiado pelo dono
   // ("agora não") segue pendente, então nada novo despacha, mas o loop espera em vez de pousar.
   const clear = pedidoDeClear(eventos, temOnboarding(c.raiz), medicaoDoPouso(c.raiz, flags.sessao, sinais.x));
-  const acaoNucleo = proximaAcao(plano, eventos, { ...sinais, politica: pol.politica, pousoPendente: clear.pendente });
+  // Adiamento NUNCA solta o pendente (r.9, C4): `adiado` implica pendente, então no teto nada novo despacha (nem revisor); só o `pousar` vira espera.
+  const acaoNucleo = proximaAcao(plano, eventos, { ...sinais, politica: pol.politica, pousoPendente: clear.pendente || clear.adiado });
   const acao = clear.adiado && acaoNucleo.tipo === 'pousar' ? { tipo: 'esperar', motivo: 'pouso_adiado' } : acaoNucleo;
   if (acao.tipo === 'parar' && acao.motivo === 'diario_invalido') {
     throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições (evento fora de ordem ou de task desconhecida)', { acao, sinais });

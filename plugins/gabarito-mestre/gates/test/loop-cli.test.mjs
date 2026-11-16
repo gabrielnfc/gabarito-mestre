@@ -5551,6 +5551,25 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
     assert.match(painelDa(amb, 'S1'), /limpar a conversa/);
   });
 
+  test('clear-agora-nao-no-teto-nao-despacha-revisor (r.9, C4; review r1 MAJOR-1): adiado no teto com task concluída à espera do revisor ⇒ proxima espera, nunca despacha o revisor', () => {
+    const amb = ambiente({ config: ONBOARDING, plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'] }, { id: 'T2', deps: [], arquivos: ['src/t2.txt'] }]) });
+    amb.aprovar('T1');
+    for (const a of [['abrir', 'T2'], ['iniciar', 'T2', 'implementador']]) assert.equal(amb.cli(a).rc, 0, a.join(' '));
+    amb.commitNaWt('T2', 'src/t2.txt');
+    assert.equal(amb.cli(['concluir', 'T2']).rc, 0);
+    gravarCtx(amb, 'S1', { percent: 55, fonte: 'mod', em: agora() });
+    assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    const pouso = amb.eventos().filter((e) => e.tipo === 'sessao.pouso').pop();
+    respostaDoDono(amb, `${pouso.sessao}:${pouso.seq}`, 'agora não (loop parado, contexto em 55 %)');
+    const r = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.acao, { tipo: 'esperar', motivo: 'pouso_adiado' });
+    // controle: sem o pedido (leitura baixa) o mesmo diário despacha o revisor da T2
+    gravarCtx(amb, 'S1', { percent: 20, fonte: 'mod', em: agora() });
+    const baixa = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao;
+    assert.ok(baixa.tipo === 'integrar' || (baixa.tipo === 'despachar' && baixa.itens.some((i) => i.task === 'T2' && i.papel === 'revisor')), JSON.stringify(baixa));
+  });
+
   test('pousar-manual-nao-consome-com-mod (T53, emenda 52 a; I1 por sessão): o pousar do dono grava o evento mas só a PRÓPRIA leitura da sessão decide; nenhuma outra a libera ou prende', () => {
     const amb = plano1();
     amb.aprovar('T1'); // GM-15 T35 (r.12): o pedido medido exige a fronteira
