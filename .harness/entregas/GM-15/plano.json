@@ -680,7 +680,8 @@
         "T29",
         "T30",
         "T31",
-        "T32"
+        "T32",
+        "T34"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/test/aceite-gm15.test.mjs",
@@ -725,7 +726,8 @@
         "T24",
         "T25",
         "T26",
-        "T27"
+        "T27",
+        "T34"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/.claude-plugin/plugin.json",
@@ -754,10 +756,50 @@
         "plugins/gabarito-mestre/gates/test/painel.test.ts",
         "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
         "plugins/gabarito-mestre/gates/test/painel-pouso.test.mjs",
-        "plugins/gabarito-mestre/mod/test/gabarito.test.ts"
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
+        "plugins/gabarito-mestre/gates/src/pouso-pendente.ts",
+        "plugins/gabarito-mestre/gates/dist/pouso-pendente.js",
+        "plugins/gabarito-mestre/gates/src/painel-equipe.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-equipe.js",
+        "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js"
       ],
       "reqs": [
-        "REQ-POU-3"
+        "REQ-POU-3",
+        "REQ-HIG-1"
+      ]
+    },
+    {
+      "id": "T34",
+      "titulo": "Robustez do loop (emenda 7)",
+      "deps": [
+        "T5",
+        "T6",
+        "T16",
+        "T33",
+        "T11",
+        "T13",
+        "T22",
+        "T23",
+        "T25"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/mod/painel.mjs",
+        "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+        "plugins/gabarito-mestre/gates/src/diario-puro.ts",
+        "plugins/gabarito-mestre/gates/dist/diario-puro.js",
+        "plugins/gabarito-mestre/gates/src/pouso.ts",
+        "plugins/gabarito-mestre/gates/dist/pouso.js",
+        "plugins/gabarito-mestre/gates/test/e2e/avaliar.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/pouso.test.ts",
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
+        "plugins/gabarito-mestre/scripts/test/mod-test.sh"
+      ],
+      "reqs": [
+        "REQ-POU-3",
+        "REQ-HIG-1",
+        "REQ-ENT-2"
       ]
     }
   ]
