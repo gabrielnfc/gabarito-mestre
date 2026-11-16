@@ -14,7 +14,7 @@ import { join, dirname } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { append, ler, lerEstrito, lerAprendizados, exportarAprendizados, padraoDeRecusa } from '../dist/diario.js';
-import { trilhaDe, ancoraDaPerguntaB } from '../dist/trilha.js';
+import { trilhaDe, ancoraDaPerguntaB, encerramentoDe } from '../dist/trilha.js';
 import { marcaDeProgresso, jaParou } from '../dist/pouso.js';
 import { medir } from '../scripts/painel-medir.mjs';
 import { estadoDoPainel } from '../scripts/painel.mjs';
@@ -131,7 +131,7 @@ describe('medir: só com onboarding (T60, REQ-DIA-1, emenda 68)', () => {
     const r = rodarMedir(d, 'ok', { log });
     assert.equal(r.ok, true);
     assert.ok(r.gravados.includes('branch') && r.gravados.includes('pr'));
-    assert.equal(readFileSync(log, 'utf8').trim().split('\n').length, 2);
+    assert.equal(readFileSync(log, 'utf8').trim().split('\n').length, 3); // pr list (head) + pr list (título, T4) + release list
     assert.ok(existsSync(join(d, '.harness', 'painel-medir.json')));
   });
 
@@ -298,7 +298,7 @@ describe('medir: gh falha (nada gravado, motivo distinto, estado em painel-medir
     const rodar = (c, a, o) => { if (c === 'gh') vistos.push(o.timeoutMs); return base(c, a, o); };
     medir(d, { rodar, agentes: entrada() });
     medir(d, { rodar, agentes: entrada(), timeoutMs: 1234 });
-    assert.deepEqual(vistos, [5000, 5000, 1234, 1234]);
+    assert.deepEqual(vistos, [5000, 5000, 5000, 1234, 1234, 1234]); // head, título (T4) e release por medição
   });
 
   test('gh rc 0 com JSON parcial nao vira PR vazio: falha, e o PR gravado antes continua unico', () => {
@@ -779,4 +779,176 @@ test('teste-de-origem-s2-usa-raiz-segura: repo() só cria repositório em base q
     assert.throws(() => repoEm(base), /do checkout/, `repoEm(${base})`);
     assert.equal(existsSync(join(base, 'r')), false, 'recusou antes de escrever');
   }
+});
+
+// ── GM-15 T4 (REQ-ENT-1 a, c; R2-1): o medir grava o encerramento ────────────────────────────────────────────────────────────────────────────
+// `gh` de fixture (fixtures/gh-encerramento/gh) com os PRs #7, #8, #16, #17, #22 e #23 como no GitHub. MUTAÇÕES: M4a não remedir o `aberto` · M4b gravar em
+// `_sem-id` · M4c `mergeado_em` do relógio local · M4d base `next` aceita na busca por título · M4e fato sem `base` encerrando · M4f `via` perdido.
+describe('medir: grava o encerramento da entrega (REQ-ENT-1 a, c)', () => {
+  const GH_ENC = join(AQUI, 'fixtures', 'gh-encerramento');
+  const SID2 = 'sessao-2';
+  /** `gh` da fixture de encerramento; `extra` = PRs a mais (GH_PRS_EXTRA), `modo` = GH_MODO, `log` = GH_LOG. */
+  const rodarEnc = ({ extra, modo, log } = {}) => (cmd, args, { cwd, timeoutMs }) => {
+    const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
+    if (cmd === 'gh') {
+      env.PATH = `${GH_ENC}:${process.env.PATH}`;
+      if (extra) env.GH_PRS_EXTRA = JSON.stringify(extra);
+      if (modo) env.GH_MODO = modo;
+      if (log) env.GH_LOG = log;
+    }
+    return spawnSync(cmd, args, { cwd, encoding: 'utf8', timeout: timeoutMs, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  };
+  const medirEnc = (d, { sessao = SID, agora = '2026-11-16T09:00:00Z', ...gh } = {}) => medir(d, { rodar: rodarEnc(gh), agentes: entrada([], sessao), timeoutMs: 5000, agora: () => Date.parse(agora) });
+  const encerradas = (d, id) => (existsSync(dirDe(d, id)) ? ler(dirDe(d, id)).filter((e) => e.tipo === 'entrega.encerrada') : []);
+  const novoLog = () => join(mkdtempSync(join(tmpdir(), 'gh enc log ')), 'gh.log');
+  /** Planta um `fato.medido` antigo no diário da entrega `id` (sessão `sessao`). */
+  const planta = (d, id, chave, valor, ts, sessao = 'antiga') => {
+    const r = append(dirDe(d, id), sessao, { ts, autor: 'painel', sessao, agente: 'painel', tipo: 'fato.medido', dados: { chave, fonte: chave === 'branch' ? 'git' : 'gh', valor } });
+    assert.equal(r.ok, true);
+  };
+
+  test('medir-encerra-entrega-de-outra-branch: sessão em enabler/GM-15-…, a GM-14 (última conhecida) encerra pelo #22; o #17 (base next) não', () => {
+    const d = repo('enabler/GM-15-fluidez');
+    planta(d, 'GM-14', 'branch', { nome: 'enabler/GM-14-clareza' }, '2026-11-15T10:00:00.000Z');
+    planta(d, 'GM-14', 'pr', { numero: 17, estado: 'aberto', branch: 'enabler/GM-14-clareza' }, '2026-11-15T10:01:00.000Z');
+    const r = medirEnc(d);
+    assert.equal(r.ok, true, JSON.stringify(r.falhas));
+    const enc = encerradas(d, 'GM-14');
+    assert.equal(enc.length, 1);
+    assert.deepEqual(enc[0].dados, { entrega: 'GM-14', pr: 22, via: 'titulo', mergeado_em: '2026-11-15T12:00:00Z' });
+    assert.equal(enc[0].autor, 'painel');
+    // o #17 foi remedido por número: mergeado na next, head da própria entrega, e NÃO encerrou
+    const f17 = fatos(d, 'GM-14', 'pr').filter((e) => e.dados.valor.numero === 17).at(-1).dados.valor;
+    assert.deepEqual(f17, { numero: 17, estado: 'mergeado', branch: 'enabler/GM-14-clareza', base: 'next', via: 'head' });
+    assert.equal(encerradas(d, 'GM-15').length, 0, 'a entrega da branch (GM-15) não encerra: o #23 é da next');
+    // P9 (review T3 r1): o que a leitura entende do diário que o `medir` gravou
+    const lido = lerEstrito(dirDe(d, 'GM-14'));
+    assert.equal(lido.ok, true);
+    const e = encerramentoDe(lido.eventos, 'GM-14');
+    assert.equal(e.encerrada, true);
+    assert.deepEqual(e.primeira, { pr: 22, via: 'titulo', mergeado_em: '2026-11-15T12:00:00Z' });
+    assert.equal(entregaPublicada(d, 'GM-14', SESSAO_QUALQUER), true);
+    assert.equal(entregaPublicada(d, 'GM-15', SESSAO_QUALQUER), false);
+  });
+
+  test('titulo-sem-id-no-head-encerra: PR estilo #16 (ID só no título, head next, base main) encerra pelo adaptador, via titulo, com o fato pr gravado', () => {
+    const d = repo('enabler/GM-13-dois-zero');
+    const r = medirEnc(d);
+    assert.equal(r.ok, true, JSON.stringify(r.falhas));
+    const enc = encerradas(d, 'GM-13');
+    assert.equal(enc.length, 1);
+    assert.deepEqual(enc[0].dados, { entrega: 'GM-13', pr: 16, via: 'titulo', mergeado_em: '2026-11-11T18:00:00Z' });
+    assert.deepEqual(fatos(d, 'GM-13', 'pr').at(-1).dados.valor, { numero: 16, estado: 'mergeado', branch: 'next', base: 'main', via: 'titulo' });
+  });
+
+  test('encerra-por-head: PR mergeado na main com o head da entrega encerra com via head', () => {
+    const d = repo('enabler/GM-20-x');
+    const extra = [{ number: 31, state: 'MERGED', baseRefName: 'main', headRefName: 'enabler/GM-20-x', title: 'sem o id', mergedAt: '2026-11-16T08:00:00Z' }];
+    assert.equal(medirEnc(d, { extra }).ok, true);
+    assert.deepEqual(encerradas(d, 'GM-20').map((e) => e.dados), [{ entrega: 'GM-20', pr: 31, via: 'head', mergeado_em: '2026-11-16T08:00:00Z' }]);
+  });
+
+  test('base-next-nao-encerra: o #23 (head da GM-15, base next) e um PR só com o ID no título e base next nunca encerram', () => {
+    const d = repo('hotfix/GM-15-alpha2');
+    const extra = [{ number: 24, state: 'MERGED', baseRefName: 'next', headRefName: 'outra-coisa', title: 'GM-15 também no título', mergedAt: '2026-11-16T07:00:00Z' }];
+    const r = medirEnc(d, { extra });
+    assert.equal(r.ok, true, JSON.stringify(r.falhas));
+    assert.equal(encerradas(d, 'GM-15').length, 0);
+    const f = fatos(d, 'GM-15', 'pr').map((e) => e.dados.valor);
+    assert.deepEqual(f.map((v) => v.numero), [23], 'o #24 (base next) nem entra pela busca por título');
+    assert.equal(f[0].base, 'next');
+  });
+
+  test('mergeado-legado-sem-base-nao-encerra: gh que não devolve base (o #7 do F3) grava o fato sem base nem via e não encerra', () => {
+    const d = repo();
+    const r = rodarMedir(d, 'ok'); // fixtures/gh: PR #7 MERGED só com number e state
+    assert.equal(r.ok, true);
+    const v = fatos(d, 'GM-14', 'pr').find((e) => e.dados.valor.numero === 7).dados.valor;
+    assert.deepEqual(v, { numero: 7, estado: 'mergeado', branch: 'enabler/GM-14-clareza' });
+    assert.equal(encerradas(d, 'GM-14').length, 0);
+  });
+
+  test('pr-velho-remedido: #8 aberto no diário e fora da lista do head ⇒ gh pr view 8 ⇒ MERGED com head de outra entrega ⇒ sai da entrega (sem via)', () => {
+    const d = repo('enabler/GM-14-clareza');
+    planta(d, 'GM-14', 'pr', { numero: 8, estado: 'aberto', branch: 'enabler/GM-14-clareza' }, '2026-11-14T10:00:00.000Z');
+    const log = novoLog();
+    const r = medirEnc(d, { log });
+    assert.equal(r.ok, true, JSON.stringify(r.falhas));
+    assert.ok(readFileSync(log, 'utf8').split('\n').some((l) => /^pr view 8 /.test(l)), 'remediu o #8 por número');
+    const v = fatos(d, 'GM-14', 'pr').filter((e) => e.dados.valor.numero === 8).at(-1).dados.valor;
+    assert.deepEqual(v, { numero: 8, estado: 'mergeado', branch: 'enabler/GM-9-fundacao', base: 'next' });
+    assert.equal(v.via, undefined, 'head de outra entrega, título sem o ID: sem via, `prs()` o descarta da GM-14');
+  });
+
+  test('encerrada-em-dir-entrega-nunca-sem-id: em main (sem ID) a GM-14 encerra no diário da GM-14; _sem-id nunca recebe entrega.encerrada', () => {
+    const d = repo('main');
+    planta(d, 'GM-14', 'branch', { nome: 'enabler/GM-14-clareza' }, '2026-11-15T10:00:00.000Z');
+    const r = medirEnc(d);
+    assert.equal(r.ok, true, JSON.stringify(r.falhas));
+    assert.equal(encerradas(d, 'GM-14').length, 1);
+    assert.equal(encerradas(d, '_sem-id').length, 0);
+    assert.equal(readdirSync(join(d, '.harness', 'entregas')).filter((n) => !/^GM-/.test(n)).every((n) => encerradas(d, n).length === 0), true);
+  });
+
+  test('mergeado-em-vem-do-gh: o mergeado_em gravado é o mergedAt da fixture, nunca o relógio local', () => {
+    const d = repo('enabler/GM-13-dois-zero');
+    assert.equal(medirEnc(d, { agora: '2031-01-02T03:04:05Z' }).ok, true);
+    assert.equal(encerradas(d, 'GM-13')[0].dados.mergeado_em, '2026-11-11T18:00:00Z');
+    assert.notEqual(encerradas(d, 'GM-13')[0].dados.mergeado_em, '2031-01-02T03:04:05.000Z');
+  });
+
+  test('gh-falha-nada-gravado: rc 1, gh ausente e mergedAt inválido não gravam entrega.encerrada nem fato de gh; ok false e gh falhou', () => {
+    const d = repo('enabler/GM-13-dois-zero');
+    const estadoGh = (dd) => JSON.parse(readFileSync(join(dd, '.harness', 'painel-medir.json'), 'utf8'));
+    const r = medirEnc(d, { modo: 'rc1' });
+    assert.equal(r.ok, false);
+    assert.match(r.falhas[0], /^gh_falhou: pr list rc 1$/);
+    const d2 = repo('enabler/GM-13-dois-zero');
+    const r2 = medir(d2, { rodar: rodarCom('ausente'), agentes: entrada(), timeoutMs: 300 });
+    assert.equal(r2.ok, false);
+    assert.equal(r2.falhas[0], 'gh_ausente');
+    const d3 = repo('enabler/GM-20-x');
+    const extra = [{ number: 33, state: 'MERGED', baseRefName: 'main', headRefName: 'enabler/GM-20-x', title: 'x', mergedAt: 'ontem' }];
+    const r3 = medirEnc(d3, { extra });
+    assert.equal(r3.ok, false);
+    assert.match(r3.falhas[0], /^gh_json_invalido/);
+    for (const [dd, id] of [[d, 'GM-13'], [d2, 'GM-13'], [d3, 'GM-20']]) {
+      assert.equal(encerradas(dd, id).length, 0);
+      assert.equal(fatos(dd, id, 'pr').length + fatos(dd, id, 'release').length, 0);
+      assert.equal(estadoGh(dd)[id].gh, 'falhou');
+    }
+  });
+
+  test('medir-duas-sessoes-duplicata-tolerada: a 2ª sessão não duplica; se duas gravaram, a leitura vale a 1ª e um medir seguinte segue ok sem 3ª', () => {
+    const d = repo('enabler/GM-13-dois-zero');
+    assert.equal(medirEnc(d, { sessao: SID }).ok, true);
+    assert.equal(medirEnc(d, { sessao: SID2 }).ok, true);
+    assert.equal(encerradas(d, 'GM-13').length, 1, 'a 2ª sessão leu o encerramento e não grava outro');
+    // corrida real: a 2ª sessão leu o diário antes da 1ª gravar ⇒ 2 eventos; a projeção usa o 1º
+    const dados = { entrega: 'GM-13', pr: 16, via: 'titulo', mergeado_em: '2026-11-11T18:00:00Z' };
+    assert.equal(append(dirDe(d, 'GM-13'), 'sessao-3', { ts: '2026-11-16T09:00:01.000Z', autor: 'painel', sessao: 'sessao-3', agente: 'painel', tipo: 'entrega.encerrada', dados }).ok, true);
+    assert.equal(encerradas(d, 'GM-13').length, 2);
+    const e = encerramentoDe(lerEstrito(dirDe(d, 'GM-13')).eventos, 'GM-13');
+    assert.equal(e.encerrada, true);
+    assert.equal(e.primeira.pr, 16);
+    assert.equal(medirEnc(d, { sessao: 'sessao-4' }).ok, true);
+    assert.equal(encerradas(d, 'GM-13').length, 2, 'nenhum medir grava a 3ª');
+  });
+
+  test('reaberta-nao-reencerra-pelo-mesmo-pr / reaberta-reencerra-com-pr-novo: depois da reabertura, o #22 remedido não encerra; um PR novo mergeado depois encerra', () => {
+    const d = repo('main');
+    planta(d, 'GM-14', 'branch', { nome: 'enabler/GM-14-clareza' }, '2026-11-15T10:00:00.000Z');
+    assert.equal(medirEnc(d).ok, true);
+    assert.equal(encerradas(d, 'GM-14').length, 1);
+    assert.equal(append(dirDe(d, 'GM-14'), 'dono', { ts: '2026-11-15T13:00:00.000Z', autor: 'dono', sessao: 'dono', agente: 'dono', tipo: 'entrega.reaberta', dados: { entrega: 'GM-14', em: '2026-11-15T13:00:00.000Z' } }).ok, true);
+    assert.equal(encerramentoDe(lerEstrito(dirDe(d, 'GM-14')).eventos, 'GM-14').encerrada, false, 'reaberta');
+    assert.equal(medirEnc(d, { sessao: SID2 }).ok, true);
+    assert.equal(encerradas(d, 'GM-14').length, 1, 'o mesmo #22 não encerra de novo');
+    const extra = [{ number: 30, state: 'MERGED', baseRefName: 'main', headRefName: 'next', title: 'release(GM-14): 2.1.0', mergedAt: '2026-11-16T08:00:00Z' }];
+    assert.equal(medirEnc(d, { sessao: 'sessao-3', extra }).ok, true);
+    assert.equal(encerradas(d, 'GM-14').length, 2);
+    const e = encerramentoDe(lerEstrito(dirDe(d, 'GM-14')).eventos, 'GM-14');
+    assert.equal(e.encerrada, true);
+    assert.equal(e.primeira.pr, 30);
+  });
 });

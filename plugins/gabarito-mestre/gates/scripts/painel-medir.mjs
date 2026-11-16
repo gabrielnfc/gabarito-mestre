@@ -5,6 +5,11 @@
  * Fatos e fontes: branch (git), spec (`docs/superpowers/specs/*.md` do checkout da sessão com `PBI: <ID>` no cabeçalho), plano (`plano.json` da
  * entrega), pr e release (`gh`, timeout de 5 s), agente (stdin do mod). Entrega = `idDaBranch` (a MESMA regra da trilha, T3); sem ela tudo vai a `_sem-id`.
  *
+ * GM-15 T4 (REQ-ENT-1 a, c): o `medir` grava também `entrega.encerrada` (a única coisa além de `fato.medido`; origem automática). O PR da entrega vem por
+ * head (`--head`), por título (`--base main --state merged --search "<ID> in:title"`, `via: 'titulo'`) e por remedição por número (`gh pr view`) de todo PR
+ * que o diário dá como `aberto`; `fato.medido pr` ganha `base` e `via`. Encerra quem `podeEncerrar` (trilha.ts), com `mergeado_em` = `mergedAt` do `gh`
+ * (nunca o relógio local), em `dirEntrega(raiz, id)` (nunca `_sem-id`). Mede também a "última entrega conhecida" sem encerramento (a do painel).
+ *
  * Contratos (DP-1, DP-2, DP-3 da Sombra):
  *  - `sessao` = `session_id` do stdin do mod (arquivo `events.<sessao>.jsonl`); sem ele nada é gravado (a âncora da pergunta (b) é por sessão).
  *  - `gh` ausente (ENOENT), sem login (rc 4), timeout, rc ≠ 0 ou saída que não é a lista esperada ⇒ NENHUM fato de `gh` gravado e
@@ -20,10 +25,64 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, readSync, renameSync,
 import { isatty } from 'node:tty';
 import { join } from 'node:path';
 import { append, dirEntrega, lerEstrito, padraoDeRecusa } from '../dist/diario.js';
-import { idDaBranch } from '../dist/trilha.js';
+import { encerramentoDe, idDaBranch, podeEncerrar } from '../dist/trilha.js';
 import { temOnboarding } from '../dist/guarda.js';
 import { idPadraoDe } from '../lib/config.mjs';
 import { contexto } from './loop.mjs';
+
+const ID_FORA_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const CAMPOS_PR = 'number,state,baseRefName,headRefName,title,mergedAt';
+const escaparRe = (t) => t.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
+
+/** Item da lista do `gh` ⇒ PR normalizado ou `null` (forma inválida). `base`/`mergeado_em` só existem quando o `gh` os devolve. */
+function prDoGh(p) {
+  if (p === null || typeof p !== 'object' || !Number.isInteger(p.number) || p.number <= 0 || typeof p.state !== 'string' || !ESTADOS_GH.has(p.state.toUpperCase())) return null;
+  for (const k of ['baseRefName', 'headRefName', 'title', 'mergedAt']) if (p[k] !== undefined && p[k] !== null && typeof p[k] !== 'string') return null;
+  const estado = ESTADOS_GH.get(p.state.toUpperCase());
+  const mergeadoEm = typeof p.mergedAt === 'string' && !Number.isNaN(Date.parse(p.mergedAt)) ? p.mergedAt : null;
+  if (p.state.toUpperCase() === 'MERGED' && p.baseRefName === 'main' && mergeadoEm === null) return null; // sem `mergedAt` não há `mergeado_em` a gravar
+  return { numero: p.number, estado, base: textoLinha(p.baseRefName) ? p.baseRefName : null, head: textoLinha(p.headRefName) ? p.headRefName : null, titulo: typeof p.title === 'string' ? p.title : '', mergeado_em: mergeadoEm };
+}
+
+/** `gh pr list|view` ⇒ `{falha}` ou `{lista}` (normalizada). */
+function ghPrs(rodar, cwd, timeoutMs, args, nome, unico) {
+  const r = rodar('gh', args, { cwd, timeoutMs });
+  const falha = falhaDoGh(r, nome);
+  if (falha !== null) return { falha };
+  let v;
+  try { v = JSON.parse(r.stdout); } catch { return { falha: `gh_json_invalido: ${nome}` }; }
+  const bruta = unico ? [v] : v;
+  if (!Array.isArray(bruta)) return { falha: `gh_json_invalido: ${nome}` };
+  const lista = bruta.map(prDoGh);
+  return lista.every((x) => x !== null) ? { lista } : { falha: `gh_json_invalido: ${nome}` };
+}
+
+/** Último estado medido por número (qualquer sessão): os que o diário dá como `aberto`. */
+function abertosDoDiario(eventos) {
+  const por = new Map();
+  for (const e of eventos) {
+    const v = e?.tipo === 'fato.medido' && e.dados?.chave === 'pr' ? e.dados.valor : null;
+    if (v !== null && typeof v === 'object' && Number.isInteger(v.numero)) por.set(v.numero, v.estado);
+  }
+  return [...por].filter(([, est]) => est === 'aberto').map(([n]) => n);
+}
+
+/** A "última entrega conhecida" (a do painel: `ts` mais recente) ⇒ `{id, dir, eventos}` se não está encerrada e não é `exceto`; senão `null`. Ilegível ⇒ não conta. */
+function ultimaSemEncerramento(raiz, exceto, reId) {
+  let nomes;
+  try { nomes = readdirSync(join(raiz, '.harness', 'entregas')); } catch { return null; }
+  let melhor = null;
+  for (const id of nomes) {
+    if (id.startsWith('_') || !ID_FORA_RE.test(id) || !reId.test(id)) continue;
+    const dir = dirEntrega(raiz, id);
+    if (!dir.endsWith(id)) continue;
+    const lido = lerEstrito(dir);
+    if (!lido.ok) continue;
+    const maior = lido.eventos.reduce((m, e) => (typeof e?.ts === 'string' && e.ts > m ? e.ts : m), '');
+    if (maior !== '' && (melhor === null || maior > melhor.maior)) melhor = { id, dir, eventos: lido.eventos, maior };
+  }
+  return melhor === null || melhor.id === exceto || encerramentoDe(melhor.eventos, melhor.id).encerrada ? null : melhor;
+}
 
 /** Falha com código: o despachante a devolve como `{ok:false, erro, ...}` e rc 1. */
 export class Falha extends Error {
@@ -259,18 +318,53 @@ export function medir(cwd, opcoes = {}) {
       }
     }
 
-    // gh: tudo ou nada. Qualquer falha ⇒ nenhum fato de gh e `gh: 'falhou'`.
+    // gh: tudo ou nada. Qualquer falha ⇒ nenhum fato de gh (nem encerramento) e `gh: 'falhou'`.
     const deGh = [];
+    const encerrar = []; // PRs candidatos a encerrar a entrega `id` (e a "última conhecida")
     let falhaGh = null;
-    if (id !== null) {
-      const r = rodar('gh', ['pr', 'list', `--head=${branch}`, '--state', 'all', '--limit', '30', '--json', 'number,state'], { cwd, timeoutMs });
-      falhaGh = falhaDoGh(r, 'pr list');
-      if (falhaGh === null) {
-        const lista = listaJson(r.stdout);
-        const ok = lista !== null && lista.every((p) => p !== null && typeof p === 'object' && Number.isInteger(p.number) && p.number > 0
-          && typeof p.state === 'string' && ESTADOS_GH.has(p.state.toUpperCase()));
-        if (!ok) falhaGh = 'gh_json_invalido: pr list';
-        else for (const p of lista) deGh.push({ chave: 'pr', fonte: 'gh', valor: { numero: p.number, estado: ESTADOS_GH.get(p.state.toUpperCase()), branch } });
+    const reIdEntrega = new RegExp(`^(?:${idPadrao})$`);
+    const alvoExtra = ultimaSemEncerramento(raiz, id, reIdEntrega);
+    /** Mede os PRs de uma entrega: head (se há branch), título e remedição por número do que o diário dá como `aberto`. */
+    const medirPrs = (alvo) => {
+      const achados = new Map();
+      const casaTitulo = new RegExp(`(?<![A-Za-z0-9-])${escaparRe(alvo.id)}(?![A-Za-z0-9-])`);
+      const guarda = (p, via) => {
+        if (achados.has(p.numero)) return;
+        const comBase = p.base !== null;
+        achados.set(p.numero, { numero: p.numero, estado: p.estado, branch: p.head ?? alvo.branch ?? 'desconhecida', base: p.base, via: comBase ? via : null, mergeado_em: p.mergeado_em });
+      };
+      if (alvo.branch !== null) {
+        const r = ghPrs(rodar, cwd, timeoutMs, ['pr', 'list', `--head=${alvo.branch}`, '--state', 'all', '--limit', '30', '--json', CAMPOS_PR], 'pr list');
+        if (r.falha) return r;
+        for (const p of r.lista) guarda(p, 'head');
+      }
+      const t = ghPrs(rodar, cwd, timeoutMs, ['pr', 'list', '--base', 'main', '--state', 'merged', '--search', `${alvo.id} in:title`, '--limit', '30', '--json', CAMPOS_PR], 'pr list titulo');
+      if (t.falha) return t;
+      for (const p of t.lista) if (p.base === 'main' && p.head !== null && casaTitulo.test(p.titulo)) guarda(p, 'titulo');
+      for (const n of abertosDoDiario(alvo.eventos)) {
+        if (achados.has(n)) continue;
+        const v = ghPrs(rodar, cwd, timeoutMs, ['pr', 'view', String(n), '--json', CAMPOS_PR], 'pr view', true);
+        if (v.falha) return v;
+        const p = v.lista[0];
+        const porHead = idDaBranch(p.head, idPadrao) === alvo.id;
+        // head de outra entrega e título sem o ID (`via` ausente): o fato sai da entrega na releitura (`prs()`)
+        guarda(p, porHead ? 'head' : p.base === 'main' && p.mergeado_em !== null && casaTitulo.test(p.titulo) ? 'titulo' : null);
+      }
+      return { prs: [...achados.values()] };
+    };
+    const alvos = [];
+    if (id !== null) alvos.push({ id, branch, eventos, dir, sessao: true });
+    if (alvoExtra !== null) alvos.push({ id: alvoExtra.id, branch: null, eventos: alvoExtra.eventos, dir: alvoExtra.dir, sessao: false });
+    for (const alvo of alvos) {
+      if (falhaGh !== null) break; // gh ausente/timeout: a próxima chamada falharia igual, e cada uma custa o timeout
+      const r = medirPrs(alvo);
+      if (r.falha) { falhaGh = r.falha; break; }
+      for (const p of r.prs) {
+        const valor = { numero: p.numero, estado: p.estado, branch: p.branch };
+        if (p.base !== null) valor.base = p.base;
+        if (p.via !== null) valor.via = p.via;
+        deGh.push({ chave: 'pr', fonte: 'gh', valor, alvo });
+        if (p.base === 'main' && p.mergeado_em !== null) encerrar.push({ alvo, pr: p });
       }
     }
     if (falhaGh === null) {
@@ -279,10 +373,10 @@ export function medir(cwd, opcoes = {}) {
       if (falhaGh === null) {
         const lista = listaJson(r.stdout);
         if (lista === null || !lista.every((x) => x !== null && typeof x === 'object' && textoLinha(x.tagName))) falhaGh = 'gh_json_invalido: release list';
-        else if (lista.length > 0) deGh.push({ chave: 'release', fonte: 'gh', valor: { tag: lista[0].tagName } });
+        else if (lista.length > 0) deGh.push({ chave: 'release', fonte: 'gh', valor: { tag: lista[0].tagName }, alvo: null });
       }
     }
-    if (falhaGh === null) fatos.push(...deGh);
+    if (falhaGh === null) fatos.push(...deGh.filter((f) => f.alvo === null || f.alvo.sessao));
     else falhas.push(falhaGh);
     const erroEstado = gravarEstadoGh(raiz, chaveGh, falhaGh === null ? 'ok' : 'falhou', agora());
     if (erroEstado !== null) falhas.push(erroEstado);
@@ -296,22 +390,44 @@ export function medir(cwd, opcoes = {}) {
       }
     }
 
-    for (const f of fatos) {
-      const antes = ultimoValor(eventos, sessao, f.chave, f.valor);
-      if (antes !== undefined && canonico(antes) === canonico(f.valor)) continue;
-      const ev = { ts: new Date(agora()).toISOString(), autor: 'painel', sessao, agente: 'painel', tipo: 'fato.medido', dados: { chave: f.chave, fonte: f.fonte, valor: f.valor } };
-      // recusa (canário/tamanho): `diario.recusa` só quando o motivo muda dentro da sessão (1 por sessão por motivo); não é progresso.
-      const padrao = padraoDeRecusa(ev);
-      if (padrao !== null && eventos.some((e) => e?.tipo === 'diario.recusa' && e.sessao === sessao && e.dados?.padrao === padrao)) { falhas.push(`recusado: ${f.chave}`); continue; }
-      const r = append(dir, sessao, ev);
-      if (!r.ok) { falhas.push(`nao_gravou: ${f.chave}: ${String(r.erro).slice(0, 160)}`); continue; }
-      if (r.gravado !== 'evento') {
-        eventos = [...eventos, { ts: ev.ts, autor: ev.autor, sessao, agente: ev.agente, tipo: 'diario.recusa', dados: { tipo: 'fato.medido', padrao: padrao ?? 'desconhecido' }, seq: 0, hash_anterior: null }];
-        falhas.push(`recusado: ${f.chave}`);
-        continue;
+    /** Grava `lista` no diário `dir` (só o que mudou NESTA sessão); devolve os eventos relidos. */
+    const gravar = (dirAlvo, eventosAlvo, lista) => {
+      let evs = eventosAlvo;
+      for (const f of lista) {
+        const antes = ultimoValor(evs, sessao, f.chave, f.valor);
+        if (antes !== undefined && canonico(antes) === canonico(f.valor)) continue;
+        const ev = { ts: new Date(agora()).toISOString(), autor: 'painel', sessao, agente: 'painel', tipo: f.tipo ?? 'fato.medido', dados: f.dados ?? { chave: f.chave, fonte: f.fonte, valor: f.valor } };
+        // recusa (canário/tamanho): `diario.recusa` só quando o motivo muda dentro da sessão (1 por sessão por motivo); não é progresso.
+        const padrao = padraoDeRecusa(ev);
+        const rotulo = f.chave ?? f.tipo;
+        if (padrao !== null && evs.some((e) => e?.tipo === 'diario.recusa' && e.sessao === sessao && e.dados?.padrao === padrao)) { falhas.push(`recusado: ${rotulo}`); continue; }
+        const r = append(dirAlvo, sessao, ev);
+        if (!r.ok) { falhas.push(`nao_gravou: ${rotulo}: ${String(r.erro).slice(0, 160)}`); continue; }
+        if (r.gravado !== 'evento') {
+          evs = [...evs, { ts: ev.ts, autor: ev.autor, sessao, agente: ev.agente, tipo: 'diario.recusa', dados: { tipo: ev.tipo, padrao: padrao ?? 'desconhecido' }, seq: 0, hash_anterior: null }];
+          falhas.push(`recusado: ${rotulo}`);
+          continue;
+        }
+        evs = [...evs, { ...ev, seq: 0, hash_anterior: null }];
+        gravados.push(rotulo);
       }
-      eventos = [...eventos, { ...ev, seq: 0, hash_anterior: null }];
-      gravados.push(f.chave);
+      return evs;
+    };
+    eventos = gravar(dir, eventos, fatos);
+    if (falhaGh === null) {
+      // a "última conhecida" (outra entrega): só os `pr` dela e o encerramento
+      for (const alvo of alvos.filter((x) => !x.sessao)) alvo.eventos = gravar(alvo.dir, alvo.eventos, deGh.filter((f) => f.alvo === alvo));
+      if (id !== null) alvos[0].eventos = eventos;
+      // encerramento: o 1º PR (por `mergeado_em`) que `podeEncerrar`, sobre o diário RELIDO do disco (os eventos em memória não têm `seq` real, e outra sessão
+      // pode ter gravado agora); depois de gravado, os demais já não encerram.
+      for (const { alvo, pr } of encerrar.sort((x, y) => Date.parse(x.pr.mergeado_em) - Date.parse(y.pr.mergeado_em))) {
+        if (!alvo.dir.endsWith(alvo.id)) continue;
+        const lido = lerEstrito(alvo.dir);
+        if (!lido.ok) { falhas.push(`diario_corrompido: ${lido.motivo}`); break; }
+        if (!podeEncerrar(lido.eventos, alvo.id, pr)) continue;
+        const dados = { entrega: alvo.id, pr: pr.numero, via: pr.via, mergeado_em: pr.mergeado_em };
+        gravar(alvo.dir, lido.eventos, [{ tipo: 'entrega.encerrada', dados, valor: dados }]);
+      }
     }
   } catch (e) {
     falhas.push(`erro_interno: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`);

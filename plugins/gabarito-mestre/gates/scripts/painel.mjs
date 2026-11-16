@@ -4,8 +4,8 @@
  *
  *   painel.mjs estado [--agentes] [--pacote <nome>] [--entrega <ID>]
  *   painel.mjs texto  [--largura N] [--preset esquadrao|executivo] [--tema color|mono] [--pacote <nome>] [--agentes] [--entrega <ID>]
- *   painel.mjs medir  [--agentes]   (GM-14 REQ-DIA-1: o ÚNICO subcomando que grava, e só `fato.medido`; em `painel-medir.mjs`. A T1 só liga o
- *                                    despacho: devolve `nao_implementado`, rc 1, nada lido do stdin nem gravado; a T11 implementa)
+ *   painel.mjs medir  [--agentes]   (GM-14 REQ-DIA-1: o ÚNICO subcomando que grava; em `painel-medir.mjs`. GM-15 T4 (REQ-ENT-1 c), papel novo: além de
+ *                                    `fato.medido` grava `entrega.encerrada` (origem automática) quando um PR com base `main` encerra a entrega)
  *
  * `--agentes`: JSON em stdin `{sessao:{percent,tokens,window,h5,d7,x,notificacao,pacote}, agentes:[{id,type,description,status,transcript}]|null}`
  * (sombra-p1d D-M3). SEM `--agentes` o stdin NUNCA é lido (a skill chama pelo Bash com stdin herdado: o CLI travaria).
