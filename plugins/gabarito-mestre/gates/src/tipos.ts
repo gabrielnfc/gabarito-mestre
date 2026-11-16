@@ -246,6 +246,8 @@ export type EntradaPainel = {
   fechamentoS?: number | null;
   /** GM-15 T30 (Emenda 3, fallback): etapas medidas (s) nas entregas anteriores do repo (`etapasDasAnteriores`); só o CLI preenche. Ausente/`null` = sem fallback. */
   etapasAnteriores?: { impl: number[]; rev: number[]; integ: number[] } | null;
+  /** GM-15 T30 (Emenda 3, fallback, r2 MAJOR 1): ritmo (s por task integrada) das entregas anteriores (`ritmoDasAnteriores`); só o CLI preenche. Ausente/`null` ⇒ fallback em "?". */
+  ritmoAnterioresS?: number | null;
 };
 /** Botão do painel: `comando` null quando a ação é uma instrução ao dono, sem comando que a execute. (Não confundir com `AcaoFerramenta`.) */
 export type Acao = { rotulo: string; comando: string | null };

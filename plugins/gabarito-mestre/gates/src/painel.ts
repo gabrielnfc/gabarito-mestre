@@ -286,6 +286,30 @@ export function etapasDasAnteriores(diarios: ReadonlyArray<{ id: string; eventos
   return saida;
 }
 
+/**
+ * Emenda 3 (fallback, r2 MAJOR 1): o ritmo (s de relógio por task integrada) das OUTRAS entregas do repo, juntas: soma, em cada uma, da 1ª
+ * `task.iniciada` à última `task.integrada`, ÷ o total de tasks integradas. A `atual` fica fora; nenhuma integrada ⇒ `null` (a previsão vira "?").
+ * Replay GM-14 (2026-11-16): sem ele o ponto do fallback (caminho ÷ ocupação) errava 78,5 a 79,8 %; com ele, 2,4 a 2,8 % (anterior = a própria GM-14).
+ */
+export function ritmoDasAnteriores(diarios: ReadonlyArray<{ id: string; eventos: Evento[] }>, atual: string | null): number | null {
+  let relogio = 0, tasks = 0;
+  for (const d of diarios) {
+    if (d.id === atual || !Array.isArray(d.eventos)) continue;
+    let ini = Number.NaN, fim = Number.NaN;
+    const ints = new Set<string>();
+    for (const ev of d.eventos) {
+      const t = msDe(ev), id = taskDe(ev);
+      if (!Number.isFinite(t)) continue;
+      if (tipoDe(ev) === 'task.iniciada' && !(t >= ini)) ini = t;
+      if (tipoDe(ev) === 'task.integrada' && id !== null) { ints.add(id); if (!(t <= fim)) fim = t; }
+    }
+    if (ints.size === 0 || !(fim > ini)) continue;
+    relogio += (fim - ini) / 1000;
+    tasks += ints.size;
+  }
+  return tasks === 0 ? null : relogio / tasks;
+}
+
 /** Tempo que falta para a task, com crédito do que já rodou na etapa atual (piso 0). `q` escolhe a medida da etapa (mediana ou quartil). */
 function faltaDaTask(est: EstadoParaPrever | undefined, agoraMs: number, e: { impl: number; rev: number; integ: number }): number {
   if (est === undefined || est.estado === 'pendente' || est.estado === 'reprovada' || est.estado === 'no_teto') return e.impl + e.rev + e.integ;
@@ -346,11 +370,13 @@ function escalonar(deps: Map<string, string[]>, falta: Map<string, number>, p: n
  */
 export function previsaoExata(
   plano: Plano, eventos: Evento[], estados: ReadonlyMap<string, EstadoParaPrever>, integradas: ReadonlySet<string>,
-  agoraMs: number, fuso: string, fechamentoS: number | null, rodadas: number | null, anteriores: Etapas | null = null,
+  agoraMs: number, fuso: string, fechamentoS: number | null, rodadas: number | null, anteriores: Etapas | null = null, ritmoAnteriores: number | null = null,
 ): PrevisaoExata | null {
   const daqui = etapasDe(eventos, integradas);
-  // Emenda 3: menos de 3 medidas aqui ⇒ as das entregas anteriores do repo; o ritmo desta entrega (de 0 a 2 integradas) não sustenta conta e fica fora
-  const fallback = daqui.impl.length < 3 && anteriores !== null && Array.isArray(anteriores.impl) && anteriores.impl.length >= 3;
+  // Emenda 3: menos de 3 medidas aqui ⇒ as etapas E o ritmo das entregas anteriores do repo (o ritmo desta, de 0 a 2 integradas, não sustenta conta).
+  // Sem ritmo medido nas anteriores o ponto seria só caminho ÷ ocupação (erro ~79 % no replay, r2 MAJOR 1): nenhuma previsão, o painel mostra "?" (D-P13)
+  const rAnt = typeof ritmoAnteriores === 'number' && Number.isFinite(ritmoAnteriores) && ritmoAnteriores > 0 ? ritmoAnteriores : null;
+  const fallback = daqui.impl.length < 3 && anteriores !== null && Array.isArray(anteriores.impl) && anteriores.impl.length >= 3 && rAnt !== null;
   const et = fallback ? (anteriores as Etapas) : daqui;
   if (et.impl.length < 3) return null;
   const med = (xs: number[]): number => mediana(xs);
@@ -367,7 +393,7 @@ export function previsaoExata(
   const soma = f ?? 0;
   // o caminho crítico é o piso; o ritmo medido (relógio por task integrada, com as paradas dentro) é o que ele não vê. O ponto é o maior dos dois.
   const abertas = plano.tasks.filter((t) => faltaDaTask(estados.get(t.id), agoraMs, medidas) > 0).length;
-  const ritmo = fallback ? null : ritmoDe(eventos, integradas, agoraMs);
+  const ritmo = fallback ? rAnt : ritmoDe(eventos, integradas, agoraMs);
   const piso = meio.fim / oc;
   const pontoS = Math.max(piso, ritmo === null ? 0 : ritmo * abertas);
   // a faixa é a do ponto: a razão P25 ÷ mediana e P75 ÷ mediana do caminho aplicada a ELE (ritmo ou caminho), então o ponto fica dentro dela
@@ -409,7 +435,8 @@ function previsaoDo(plano: Plano, ord: Evento[], c: Calculo, integradas: Readonl
   const ok = (xs: unknown): xs is number[] => Array.isArray(xs) && xs.every((x) => typeof x === 'number' && Number.isFinite(x) && x >= 0);
   const anteriores = ant !== null && typeof ant === 'object' && ok((ant as Etapas).impl) && ok((ant as Etapas).rev) && ok((ant as Etapas).integ)
     && (ant as Etapas).impl.length === (ant as Etapas).rev.length && (ant as Etapas).rev.length === (ant as Etapas).integ.length ? (ant as Etapas) : null;
-  return previsaoExata(plano, ord, c.estados, integradas, agora, fuso, fechamento, rodadas, anteriores);
+  const r: unknown = entrada.ritmoAnterioresS;
+  return previsaoExata(plano, ord, c.estados, integradas, agora, fuso, fechamento, rodadas, anteriores, typeof r === 'number' ? r : null);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------

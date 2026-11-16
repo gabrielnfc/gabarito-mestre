@@ -33,7 +33,7 @@ import { idPadraoDe, lerConfigOrigin } from '../lib/config.mjs';
 import { dirEntrega, lerEstrito } from '../dist/diario.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { estadoDe, ordenar, proximaAcao, TIPOS_DE_TASK } from '../dist/loop.js';
-import { etapasDasAnteriores, fechamentoDasAnteriores, projetarPainel, renderPainel, umaLinhaDe } from '../dist/painel.js';
+import { etapasDasAnteriores, fechamentoDasAnteriores, projetarPainel, renderPainel, ritmoDasAnteriores, umaLinhaDe } from '../dist/painel.js';
 import { validarPacote, validarStdinAgentes, usoDoTranscript } from '../dist/painel-equipe.js';
 import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
@@ -628,6 +628,8 @@ export function estadoDoPainel(cwd, opts = {}) {
       fechamentoS: fechamentoDasAnteriores(ativ.diarios, id),
       // Emenda 3: as etapas das entregas anteriores, para a previsão com menos de 3 integradas nesta entrega
       etapasAnteriores: etapasDasAnteriores(ativ.diarios, id),
+      // ... e o ritmo delas (relógio por task integrada); sem ritmo medido o fallback mostra "?" (r2 MAJOR 1)
+      ritmoAnterioresS: ritmoDasAnteriores(ativ.diarios, id),
       ...(medicaoPouso !== undefined ? { medicaoPouso } : {}),
     };
     const projetar = opts.projetar ?? projetarPainel;

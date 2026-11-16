@@ -11,7 +11,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } fro
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { etapasDasAnteriores, etapasDe, fechamentoDasAnteriores, fechamentoDe, ocupacaoDe, previsaoExata, projetarPainel, renderPainel, ritmoDe } from '../src/painel.ts';
+import { etapasDasAnteriores, etapasDe, fechamentoDasAnteriores, fechamentoDe, ocupacaoDe, previsaoExata, projetarPainel, renderPainel, ritmoDasAnteriores, ritmoDe } from '../src/painel.ts';
 import { colunas } from '../src/painel-largura.ts';
 import { mediana } from '../src/diario-puro.ts';
 import * as dist from '../dist/painel.js';
@@ -371,7 +371,8 @@ test('eta-fallback-anteriores: com menos de 3 integradas nesta entrega, as etapa
   const est = new Map<string, Est>([['A', { estado: 'integrada', ultimo: atual[0] }], ...pend(['X', 'Y'])]);
   const agora = T0 + 10 * MIN;
   assert.equal(previsaoExata(plano, atual, est as never, feitas(['A']), agora, 'UTC', null, 1), null, 'sem as anteriores: 1 integrada não mede');
-  const p = previsaoExata(plano, atual, est as never, feitas(['A']), agora, 'UTC', null, 1, ant) as NonNullable<ReturnType<typeof previsaoExata>>;
+  const rAnt = ritmoDasAnteriores(diarios, 'GM-15') as number;
+  const p = previsaoExata(plano, atual, est as never, feitas(['A']), agora, 'UTC', null, 1, ant, rAnt) as NonNullable<ReturnType<typeof previsaoExata>>;
   assert.ok(p !== null, 'com as anteriores a previsão sai');
   const porTask = mediana(gm14.impl) + mediana(gm14.rev) + mediana(gm14.integ);
   assert.equal(p.conta.minPorTask, Math.round(porTask / 60), 'min/task = a mediana das etapas da GM-14');
@@ -379,14 +380,40 @@ test('eta-fallback-anteriores: com menos de 3 integradas nesta entrega, as etapa
   assert.match(p.motivo as string, /entregas anteriores/, 'o motivo diz de onde vieram as etapas');
   // 3 integradas nesta entrega: as dela mandam, as anteriores não entram
   const tres = prever(P([['A', []], ['B', []], ['C', []], ['X', []]]), pend(['X']));
-  const tresAnt = previsaoExata(P([['A', []], ['B', []], ['C', []], ['X', []]]), TRES, comIntegradas(pend(['X'])) as never, feitas(['A', 'B', 'C']), AGORA_TRES, 'UTC', null, 1, ant);
+  const tresAnt = previsaoExata(P([['A', []], ['B', []], ['C', []], ['X', []]]), TRES, comIntegradas(pend(['X'])) as never, feitas(['A', 'B', 'C']), AGORA_TRES, 'UTC', null, 1, ant, rAnt);
   assert.deepEqual(tresAnt, tres);
   // no painel: com 1 integrada e as anteriores na entrada, o PRONTO traz a previsão
-  const s = projetarPainel(plano, atual, E5({ agoraMs: agora, etapasAnteriores: ant, fatos: { branch: 'b', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['A', 'X', 'Y'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' } }));
+  const s = projetarPainel(plano, atual, E5({ agoraMs: agora, etapasAnteriores: ant, ritmoAnterioresS: rAnt, fatos: { branch: 'b', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['A', 'X', 'Y'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' } }));
   const pv = s.pronto?.previsao as Record<string, any>;
   assert.ok(pv && pv.conta, 'pronto.previsao com a conta exata');
   assert.equal(pv.conta.minPorTask, Math.round(porTask / 60));
   assert.equal(projetarPainel(plano, atual, E5({ agoraMs: agora })).pronto?.previsao, null, 'sem as anteriores, nada');
+});
+
+test('eta-fallback-ritmo-anteriores: com menos de 3 integradas o ponto usa o ritmo das anteriores e erra perto da mediana do replay; sem ritmo medido, "?" (Emenda 3, r2 MAJOR 1)', () => {
+  // replay da GM-14 nas 1ª e 2ª integradas, com a própria GM-14 como anterior (o único diário com etapas no repo): o melhor caso, mas o mesmo do r2.
+  // Medido em 2026-11-16 (.claude-tmp/t30r2/fb2.ts): sem o ritmo das anteriores o ponto (caminho ÷ ocupação) errava 78,5 a 79,8 % e saltava 25 h na 3ª.
+  const { plano, ev, ints, fim, ent } = replayGm14();
+  const diarios = [{ id: 'GM-14', eventos: ev }];
+  const etapas = etapasDasAnteriores(diarios, 'GM-15');
+  const ritmo = ritmoDasAnteriores(diarios, 'GM-15') as number;
+  const ini0 = Math.min(...ev.filter((x) => x.tipo === 'task.iniciada').map((x) => Date.parse(x.ts)));
+  assert.equal(ritmo, (Date.parse(ints[ints.length - 1].ts) - ini0) / 1000 / 57, 'ritmo da anterior = da 1ª iniciada à última integrada ÷ integradas');
+  for (const k of [1, 2]) {
+    const agora = Date.parse(ints[k - 1].ts) + 1000;
+    const lista = ev.filter((x) => Date.parse(x.ts) <= agora);
+    const pv = projetarPainel(plano, lista, ent(agora, { etapasAnteriores: etapas, ritmoAnterioresS: ritmo })).pronto?.previsao as Record<string, any>;
+    assert.ok(pv && pv.conta, `${k}: previsão no fallback`);
+    const erro = Math.abs(agora + pv.restanteS * 1000 - fim) / (fim - agora);
+    console.log(`fallback GM-14 com ${k} integrada(s): erro do ponto ${(erro * 100).toFixed(1)}%`);
+    assert.ok(erro < 0.25, `${k}: erro ${erro} (sem o ritmo das anteriores: ~0,79)`);
+    assert.equal(pv.conta.ritmoMin, Math.round(ritmo / 60), 'a base mostra o ritmo usado');
+    // sem ritmo medido nas anteriores a conta não se sustenta: nenhuma previsão, a linha diz "?" com motivo em >= 100 colunas
+    const s = projetarPainel(plano, lista, ent(agora, { etapasAnteriores: etapas }));
+    assert.equal(s.pronto?.previsao, null, `${k}: sem ritmo das anteriores, "?"`);
+    assert.match(linhaPlano(s, 120), /ETA \?: n insuficiente/);
+  }
+  assert.equal(ritmoDasAnteriores([{ id: 'GM-13', eventos: D([ini(0, 'Z')]) }, { id: 'GM-15', eventos: ev }], 'GM-15'), null, 'a atual e a sem integrada não medem ritmo');
 });
 
 test('eta-fallback-produtor-cli: o painel.mjs mede as etapas das entregas anteriores do diário e as entrega à projeção (MAJOR 2 r1)', () => {
@@ -408,10 +435,11 @@ test('eta-fallback-produtor-cli: o painel.mjs mede as etapas das entregas anteri
   ];
   semear('GM-14', [...c('T1', 0), ...c('T2', 10), ...c('T3', 20)]);
   semear('GM-15', c('T1', 1000));
-  let visto: unknown = 'não chamado';
-  const r = estadoDoPainel(repo, { agoraMs: T0 + 1100 * MIN, projetar: (_p: unknown, _e: unknown, entrada: { etapasAnteriores?: unknown }) => { visto = entrada.etapasAnteriores; return {}; } }) as { ok: boolean };
+  let visto: unknown = 'não chamado', ritmo: unknown = 'não chamado';
+  const r = estadoDoPainel(repo, { agoraMs: T0 + 1100 * MIN, projetar: (_p: unknown, _e: unknown, entrada: { etapasAnteriores?: unknown; ritmoAnterioresS?: unknown }) => { visto = entrada.etapasAnteriores; ritmo = entrada.ritmoAnterioresS; return {}; } }) as { ok: boolean };
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(visto, { impl: [60, 60, 60], rev: [60, 60, 60], integ: [60, 60, 60] }, 'as 3 da GM-14; a T1 da GM-15 (a atual) fica fora');
+  assert.equal(ritmo, (23 * 60) / 3, 'ritmo da GM-14: da 1ª iniciada (0) à última integrada (23 min) ÷ 3 tasks (r2 MAJOR 1)');
 });
 
 test('eta-faixa-com-ritmo: quando o ritmo domina, a faixa segue os quartis em volta do ponto e o ponto não é a ponta de cima (MINOR 6 r1)', () => {
