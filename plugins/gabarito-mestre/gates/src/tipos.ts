@@ -248,6 +248,11 @@ export type EntradaPainel = {
   etapasAnteriores?: { impl: number[]; rev: number[]; integ: number[] } | null;
   /** GM-15 T30 (Emenda 3, fallback, r2 MAJOR 1): ritmo (s por task integrada) das entregas anteriores (`ritmoDasAnteriores`); só o CLI preenche. Ausente/`null` ⇒ fallback em "?". */
   ritmoAnterioresS?: number | null;
+  /**
+   * GM-15 T9 (REQ-ENT-2): o `plano.json` da entrega existe e não vale (o motivo, de `carregarPlano`). Só o CLI preenche. Presente ⇒ o painel não tem plano
+   * (nada do plano velho), mostra "?" com o motivo e não julga o diário pelas tasks de plano nenhum (sem PAROU `diario_invalido` por isso).
+   */
+  planoInvalido?: string | null;
 };
 /** Botão do painel: `comando` null quando a ação é uma instrução ao dono, sem comando que a execute. (Não confundir com `AcaoFerramenta`.) */
 export type Acao = { rotulo: string; comando: string | null };

@@ -1577,3 +1577,57 @@ test('entregue-com-pendencia-volta-aos-blocos: fonte falha, pergunta, PAROU ou A
     assert.ok(ls.some((l) => re.test(l)), `${nome}: o item aparece: ${JSON.stringify(ls)}`);
   }
 });
+
+// ---------------------------------------------------------------- GM-15 T9 (REQ-ENT-2): o alvo é só o que não foi feito; plano relido
+
+const fora = (t: number, task: string, como: 'adiada' | 'cortada' = 'adiada') => e(t, 'task.fora', { task, como, motivo: 'fora do corte', origem: 'sombra', fonte: 'spec:35' });
+const fatosT9 = (ids: string[]) => ({ branch: 'feat/GM-12-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ids }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' });
+const projNovo = (plano: Plano, eventos: Evento[], extra: Partial<EntradaPainel> = {}): EstadoPainel =>
+  projetarPainel(plano, eventos, entrada({ fatos: fatosT9(plano.tasks.map((t) => t.id)), ...extra } as Partial<EntradaPainel>) as EntradaPainel);
+const desenho = (s: EstadoPainel, largura = 100): string => renderPainel(s, { preset: 'esquadrao', tema: 'mono', narracao: true, largura }).map((l) => l.map((x) => x.texto).join('')).join('\n');
+
+test('adiada-fora-do-alvo (painel): 58 tasks, 57 integradas e a T8 adiada ⇒ PRONTO "57 de 57", 100 %, sem a T8 na fila nem em voo', () => {
+  const ids = Array.from({ length: 58 }, (_, i) => `T${i + 1}`);
+  const itens: Item[] = [];
+  ids.forEach((id, i) => { if (id !== 'T8') itens.push(...ciclo(id, i * 10, i * 10 + 5)); });
+  itens.push(fora(58 * 10, 'T8'));
+  const s = projNovo(P(...ids), D(itens));
+  assert.equal(s.parar, null, 'diário válido: nenhum PAROU');
+  assert.deepEqual([s.pronto?.integradas, s.pronto?.total], [57, 57], 'a adiada sai do denominador');
+  assert.deepEqual([s.plano.feitas, s.plano.total, s.plano.pct], [57, 57, 100]);
+  assert.equal(s.pronto?.previsao ?? null, null, 'nada falta: sem previsão');
+  assert.equal(s.plano.tasks.some((t) => t.id === 'T8'), false, 'a task fora não é item do alvo');
+  assert.equal(s.equipe.lider.narrativa, 'todas as tasks integradas');
+  const tela = desenho(s);
+  assert.match(tela, /57\/57 tasks/);
+  assert.doesNotMatch(tela, /\bT8\b/);
+});
+
+test('cortada-fora-do-alvo: a cortada também sai do denominador e da fila; a pendente que sobra continua na conta', () => {
+  const s = projNovo(P('T1', 'T2', 'T3'), D([...ciclo('T1', 0, 5), fora(10, 'T3', 'cortada')]));
+  assert.deepEqual([s.pronto?.integradas, s.pronto?.total, s.plano.total, s.plano.pct], [1, 2, 2, 50]);
+  assert.deepEqual(s.plano.tasks.map((t) => t.id), ['T1', 'T2']);
+});
+
+test('fora-nao-aparece-no-depende: a task no limite de revisões que vira adiada sai do DEPENDE e o PAROU de teto dela some', () => {
+  const noTeto: Item[] = [ini(0, 'T2'), con(1, 'T2'), ini(2, 'T2', 'revisor'), ver(3, 'T2', false, 1, 1), ini(4, 'T2', 'correcao'), con(5, 'T2'), ini(6, 'T2', 'revisor'), ver(7, 'T2', false, 2, 1)];
+  const antes = projNovo(P('T1', 'T2'), D([...ciclo('T1', 20, 25), ...noTeto, parar(30, 'teto_rodadas', { task: 'T2' })]));
+  assert.ok(motivos(antes).some((m) => /T2/.test(m)), `antes: ${JSON.stringify(motivos(antes))}`);
+  const depois = projNovo(P('T1', 'T2'), D([...ciclo('T1', 20, 25), ...noTeto, parar(30, 'teto_rodadas', { task: 'T2' }), fora(40, 'T2')]));
+  assert.equal(depois.parar, null);
+  assert.equal(motivos(depois).some((m) => /T2/.test(m)), false, JSON.stringify(motivos(depois)));
+  assert.deepEqual([depois.pronto?.integradas, depois.pronto?.total], [1, 1]);
+});
+
+test('plano-invalido-mostra-interrogacao (núcleo): `planoInvalido` ⇒ sem PRONTO, FASE "?" com o motivo, DEPENDE "?" e nenhum PAROU de diário por task fora do plano', () => {
+  const evs = D([...ciclo('T1', 0, 5), ini(10, 'T2')]);
+  const s = projetarPainel(null, evs, entrada({ fatos: { ...fatosT9([]), plano: null }, planoInvalido: 'plano.json não é JSON', fontesFalhas: ['o plano'] } as Partial<EntradaPainel>) as EntradaPainel);
+  assert.equal(s.pronto, null, 'nunca o plano velho');
+  assert.equal(s.parar, null, 'plano ilegível não é diário inválido');
+  assert.equal(s.fase?.numero, null);
+  assert.match(String(s.fase?.motivo), /plano\.json não é JSON/);
+  assert.ok(motivos(s).includes('depende de você: ? (não consegui ler o plano)'), JSON.stringify(motivos(s)));
+  const tela = desenho(s);
+  assert.match(tela, /FASE \? de 7/);
+  assert.match(tela, /\? plano inválido: plano.json não é JSON/, 'o render troca o ponto por espaço (natural), o motivo chega');
+});

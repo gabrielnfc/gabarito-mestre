@@ -666,7 +666,8 @@ function calcular(plano       , eventos                 , entrada               
   const fuso = fusoValido(entrada.fuso);
   const lista           = Array.isArray(eventos) ? eventos : [];
   const ord = Array.isArray(eventos) ? tentarOrdenar(lista) : null;
-  const valido = ord !== null && conteudoValido(plano, lista);
+  // GM-15 T9 (REQ-ENT-2): sem plano legível não há tabela de tasks contra a qual julgar o diário; vale a ordem (o PAROU do diário é do diário, não do plano)
+  const valido = ord !== null && (planoInvalidoDe(entrada) !== null || conteudoValido(plano, lista));
   const estados = estadosDe(plano, ord);
   const base = { plano, entrada, fuso, lista, ord, valido, estados };
   const parar = calcularParar(base);
@@ -677,6 +678,23 @@ function calcular(plano       , eventos                 , entrada               
     parar.alteracoes = prod.alteracoes;
   }
   return { ...base, parar, emVoo, prod };
+}
+
+/** REQ-ENT-2: `adiada`/`cortada` são terminais fora do alvo (o mesmo `FORA` do núcleo, loop.ts). */
+const FORA_DO_ALVO                        = ['adiada', 'cortada'];
+const foraDoAlvo = (r                                    )          => r !== undefined && FORA_DO_ALVO.includes(r.estado);
+/** As tasks do alvo: as do plano que não estão fora (o denominador do PRONTO, do % e da ETA). */
+const alvoDe = (plano       , estados                    )                 => plano.tasks.filter((t) => !foraDoAlvo(estados.get(t.id)));
+
+/** GM-15 T9: o motivo do `plano.json` inválido, 1 linha sem controle, no máximo 120 caracteres; ausente ou vazio ⇒ `null`. */
+function planoInvalidoDe(entrada               )                {
+  const m = (entrada                               )?.planoInvalido;
+  if (typeof m !== 'string') return null;
+  // eslint-disable-next-line no-control-regex
+  const limpo = m.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (limpo === '') return null;
+  const cps = [...limpo];
+  return cps.length <= 120 ? limpo : `${cps.slice(0, 119).join('')}…`;
 }
 
 function montarDepende(c         )                {
@@ -785,7 +803,8 @@ function narrativaDo(c         , feitas        )         {
     return `despachou ${quem}${sufixoInt}${aguardam.length > 0 ? ` · aguarda revisão de ${listaE(aguardam)}` : ''}`;
   }
   if (integrando.length > 0) return `integrando ${listaE(integrando)}`;
-  if (plano.tasks.length > 0 && feitas === plano.tasks.length) return 'todas as tasks integradas';
+  const alvo = alvoDe(plano, estados).length;
+  if (alvo > 0 && feitas === alvo) return 'todas as tasks integradas';
   return 'aguarda o próximo despacho';
 }
 
@@ -812,7 +831,7 @@ function projetarLegado(plano       , eventos                 , entrada         
   const tasks               = [];
   for (const t of plano.tasks) {
     const r = estados.get(t.id);
-    if (r === undefined) continue;
+    if (r === undefined || foraDoAlvo(r)) continue; // REQ-ENT-2: a task fora não é item do alvo (nem fila, nem em voo)
     const ms = msDe(r.ultimo);
     const desdeS = Number.isFinite(agora) && Number.isFinite(ms) ? Math.max(0, Math.floor((agora - ms) / 1000)) : undefined;
     const papel = PAPEL_DO_ESTADO[r.estado];
@@ -830,7 +849,7 @@ function projetarLegado(plano       , eventos                 , entrada         
     });
   }
   const feitas = tasks.filter((t) => t.estado === 'integrada').length;
-  const total = plano.tasks.length;
+  const total = alvoDe(plano, estados).length; // REQ-ENT-2: adiada e cortada saem do denominador
   const integradas = [...estados.values()].filter((r) => r.estado === 'integrada');
   const rodadaMedia = integradas.length === 0 ? null : Math.round((integradas.reduce((s, r) => s + r.rodada, 0) / integradas.length) * 10) / 10;
   // g.13: a mediana e a ETA saem do MESMO vetor, o das integradas
@@ -1084,8 +1103,9 @@ function projetarNovo(plano              , eventos                 , entrada    
 
   // PRONTO (com plano) ou FASE (sem plano)
   const feitas = legado.plano.feitas;
-  const total = p.tasks.length;
-  const pronto = !zera && plano !== null && total > 0
+  const total = legado.plano.total; // REQ-ENT-2: o alvo (sem as tasks fora), o mesmo do legado
+  const invalido = planoInvalidoDe(entrada);
+  const pronto = !zera && plano !== null && invalido === null && total > 0
     ? { integradas: feitas, total, previsao: feitas < total && (PREVISAO_DO_ESTADO.get(legado) ?? null) !== null ? previsaoDoPronto(legado)
       : feitas >= 3 && feitas < total && legado.plano.eta !== null ? previsaoDoPronto(legado) : null }
     : null;
@@ -1095,7 +1115,10 @@ function projetarNovo(plano              , eventos                 , entrada    
     if (nAtivos > 0) sufixo.push(`${nAtivos} ${nAtivos === 1 ? 'agente trabalhando' : 'agentes trabalhando'}: ${(agentes?.[0]?.acao ?? '?').replace(/ \(registrado\)$/, '')}`);
     if (projetarEmendas(lista).abertas.length > 0) sufixo.push('emenda aguardando você');
   }
-  const fase = pronto !== null ? null : {
+  // GM-15 T9 (REQ-ENT-2): plano.json inválido ⇒ "?" com o motivo, nunca o plano velho nem uma fase que finja saber
+  const fase = pronto !== null ? null : invalido !== null ? {
+    numero: null, marcas: [...trilha.marcas], motivo: `plano inválido: ${invalido}`, progresso: trilha.progresso, sufixo,
+  } : {
     numero: trilha.fase, marcas: [...trilha.marcas], motivo: trilha.motivos.find((m) => typeof m === 'string') ?? null, progresso: trilha.progresso, sufixo,
   };
 
