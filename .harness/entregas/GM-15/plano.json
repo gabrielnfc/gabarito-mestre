@@ -183,7 +183,8 @@
         "T4",
         "T29",
         "T30",
-        "T33"
+        "T33",
+        "T23"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel.ts",
@@ -528,7 +529,10 @@
         "plugins/gabarito-mestre/gates/test/cartao-sessao.test.mjs",
         "plugins/gabarito-mestre/gates/test/onboarding-criterio.test.mjs",
         "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
-        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs"
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+        "plugins/gabarito-mestre/hooks/test/sessao.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-costura.test.mjs"
       ],
       "reqs": [
         "REQ-HIG-1"
