@@ -193,13 +193,18 @@ function doctorEmCache(root, pluginRoot, agora) {
 }
 
 /**
- * O ÚNICO critério de onboarding (GM-14 FIEL-14 h): `fluxo.resolvidoEm` não vazio no harness.config.json LOCAL. O cartão (`coletar`), o `loop.mjs` e o
- * `painel.mjs` o usam; nenhuma outra definição nem outra leitura (nunca o config de origin/HEAD).
+ * O ÚNICO critério de onboarding (GM-15 T23, REQ-HIG-1): `temOnboarding` da guarda (`gates/dist/guarda.js`) — `harness.config.json` em
+ * `refs/remotes/origin/HEAD` OU na árvore local. O cartão (`coletar`), o `loop.mjs`, o `stop-loop.mjs`, o `painel.mjs` e a ponte do mod
+ * o usam por este módulo, que só delega (a única exceção é o degradado abaixo, sem `dist/`).
  */
-export const onboardingDe = (raw) => Boolean(raw && typeof raw === 'object' && raw.fluxo && typeof raw.fluxo === 'object' && typeof raw.fluxo.resolvidoEm === 'string' && raw.fluxo.resolvidoEm);
+// Import dinâmico: sem `dist/` (instalação quebrada, caso F5) o cartão ainda sai — com o predicado degradado abaixo, que só vale nesse caso.
+let guardaTemOnboarding = null;
+try { guardaTemOnboarding = (await import('../dist/guarda.js')).temOnboarding; } catch { /* sem dist: degradado */ }
+/** Degradado (só sem `dist/guarda.js`): o `harness.config.json` local existe e é um objeto JSON — a metade local do critério da guarda. */
+const onboardingLocal = (raiz) => { const c = lerJson(join(raiz, 'harness.config.json')); return c !== null && c !== undefined && typeof c === 'object'; };
 /** `raiz` já resolvida (como no cartão: `resolverRaiz(cwd)`). Nunca lança. */
 export function temOnboarding(raiz) {
-  try { return onboardingDe(lerJson(join(raiz, 'harness.config.json'))); } catch { return false; }
+  try { return guardaTemOnboarding ? guardaTemOnboarding(raiz) === true : onboardingLocal(raiz); } catch { return false; }
 }
 
 export function coletar(cwd, pluginRoot, opts = {}) {
@@ -207,15 +212,17 @@ export function coletar(cwd, pluginRoot, opts = {}) {
   const root = resolverRaiz(cwd);
   const raw = lerJson(join(root, 'harness.config.json'));
   const base = { agora, root, semOnboarding: false, configInvalido: raw === undefined };
-  if (!onboardingDe(raw)) return { ...base, semOnboarding: true };
+  if (!temOnboarding(root)) return { ...base, semOnboarding: true };
+  // Onboarding só em origin/HEAD (ou config local ilegível): o cartão segue com os padrões, sem lançar.
+  const cfg = raw && typeof raw === 'object' ? raw : {};
 
   const config = {
-    fluxo: { ...DEFAULTS.fluxo, ...raw.fluxo },
-    versionamento: { ...DEFAULTS.versionamento, ...(raw.versionamento ?? {}) },
-    orquestracao: { ...DEFAULTS.orquestracao, ...(raw.orquestracao ?? {}), modelo: { ...DEFAULTS.orquestracao.modelo, ...(raw.orquestracao?.modelo ?? {}) } },
+    fluxo: { ...DEFAULTS.fluxo, ...cfg.fluxo },
+    versionamento: { ...DEFAULTS.versionamento, ...(cfg.versionamento ?? {}) },
+    orquestracao: { ...DEFAULTS.orquestracao, ...(cfg.orquestracao ?? {}), modelo: { ...DEFAULTS.orquestracao.modelo, ...(cfg.orquestracao?.modelo ?? {}) } },
   };
   // O cartão diz quando está operando com defaults (mesma frase que capacidade.mjs põe no stderr).
-  const orquestracaoAusente = !(raw.orquestracao && typeof raw.orquestracao === 'object');
+  const orquestracaoAusente = !(cfg.orquestracao && typeof cfg.orquestracao === 'object');
   const idRe = new RegExp(config.fluxo.idPadrao);
 
   let branch;
@@ -275,7 +282,7 @@ export function coletar(cwd, pluginRoot, opts = {}) {
   }
 
   const medidas = medir(process.env, root);
-  const capacidade = calcularSlots(raw.orquestracao?.paralelismo, medidas, process.env);
+  const capacidade = calcularSlots(cfg.orquestracao?.paralelismo, medidas, process.env);
   const doctor = doctorEmCache(root, pluginRoot, agora);
   const instalada = lerJson(join(root, 'tools', 'gabarito-gates', 'package.json'))?.version ?? null;
   const plugin = lerJson(join(pluginRoot, '.claude-plugin', 'plugin.json'))?.version ?? null;

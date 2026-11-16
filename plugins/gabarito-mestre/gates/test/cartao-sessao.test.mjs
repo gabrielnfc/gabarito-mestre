@@ -445,8 +445,8 @@ describe('coletar/CLI — config ausente/vazia/inválida/sem fluxo (Review Focus
     assert.equal(r.status, 0);
     assert.deepEqual(r.stdout.trimEnd().split('\n'), [LINHA_SEM_ONBOARDING]);
   });
-  test('config vazia, sem fluxo, ou fluxo sem resolvidoEm → uma linha', () => {
-    for (const c of ['', '{}', '{"fluxo":{"ferramenta":"arquivos"}}', '{"versionamento":{"resolvidoEm":"2026-09-20"}}']) {
+  test('config vazia (0 bytes) ou que não é objeto JSON → uma linha (GM-15 T23: `{}` e config sem fluxo.resolvidoEm contam como onboarding, critério da guarda)', () => {
+    for (const c of ['', '[]', '"x"']) {
       const dir = repo({ 'harness.config.json': c });
       const r = cli(['--root', dir, '--plugin-root', pluginFalso()], dir);
       assert.equal(r.status, 0, c);
@@ -951,7 +951,7 @@ describe('T9 · aprendizados, linha de retomada e ordem de corte (GM-13, REQ-APR
   });
 
   test('cartao-sem-onboarding-uma-linha (GM-14 T34, FIEL-14 h): sem fluxo.resolvidoEm o session_id do stdin NÃO vira linha "sessão"; o cartão segue com 1 linha', () => {
-    const dir = repoGit({ 'harness.config.json': '{}' });
+    const dir = repoGit({ 'harness.config.json': '' }); // 0 bytes: a guarda não vê onboarding (GM-15 T23)
     for (const source of ['startup', 'clear']) {
       const r = hook(dir, { session_id: 's-sem-onb', source });
       assert.equal(r.code, 0, r.stderr);
