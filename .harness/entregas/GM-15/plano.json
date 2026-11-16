@@ -870,7 +870,8 @@
       "reqs": [
         "REQ-POU-3",
         "REQ-HIG-1",
-        "REQ-ENT-2"
+        "REQ-ENT-2",
+        "REQ-ENT-1"
       ]
     },
     {
