@@ -754,7 +754,9 @@
         "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
         "plugins/gabarito-mestre/gates/test/painel-blocos.test.ts",
         "plugins/gabarito-mestre/gates/src/painel-executivo.ts",
-        "plugins/gabarito-mestre/gates/dist/painel-executivo.js"
+        "plugins/gabarito-mestre/gates/dist/painel-executivo.js",
+        "plugins/gabarito-mestre/gates/test/painel-esquadrao.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-executivo.test.ts"
       ],
       "reqs": [
         "REQ-ENT-2"
