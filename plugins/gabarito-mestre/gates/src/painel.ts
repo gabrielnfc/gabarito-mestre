@@ -20,7 +20,7 @@ import { formaInvalida } from './formas.ts';
 import { renderBlocos, renderEsquadrao } from './painel-esquadrao.ts';
 import { historicoDe } from './painel-texto.ts';
 import { renderExecutivo } from './painel-executivo.ts';
-import { chaveDoPar, higienizarDescricao, nomesPorPapel, projetarEquipe, resolverAtivos } from './painel-equipe.ts';
+import { chaveDoPar, higienizarDescricao, integrandoDe, nomesPorPapel, projetarEquipe, resolverAtivos } from './painel-equipe.ts';
 import type { AtivosDaEquipe } from './painel-equipe.ts';
 import { dataCivil, fusoValido, horaLocal } from './painel-hora.ts';
 import type { Acao, AgenteAgora, EntradaPainel, EstadoPainel, Evento, GlifoTask, ItemDepende, ItemRecente, Linha, MotivoParar, OpcoesRender, Papel, PapelPainel, Plano, QuemPainel, Sinais, TaskPainel } from './tipos.ts';
@@ -135,8 +135,10 @@ function paralelismo(eventos: Evento[]): number {
  * ETA (REQ-PNL-1, D5): restante = mediana × ⌈restantes ÷ p⌉; ± = (Q3 − Q1)/2 × ⌈restantes ÷ p⌉ sobre as durações (quartis tipo 7, sem desvio-padrão).
  * n < 3 ⇒ `null` (antes de `restantes = 0`). `restantes ≤ 0` ou não finito ⇒ 0 e 0. A hora nunca fica antes de `agoraMs`. O render arredonda para minutos.
  */
-export function etaDe(eventos: Evento[], restantes: number, agoraMs: number, fuso: string): EstadoPainel['plano']['eta'] {
-  const ds = duracoes(eventos.filter(ehObj));
+export function etaDe(eventos: Evento[], restantes: number, agoraMs: number, fuso: string, integradas?: ReadonlySet<string>): EstadoPainel['plano']['eta'] {
+  // GM-15 T33 (g.13): com `integradas`, a conta usa só as durações das tasks integradas (a aprovada que ainda não integrou é de quem vai integrar, não amostra); o
+  // paralelismo segue medido sobre todos os eventos (o que de fato rodou junto)
+  const ds = duracoes(eventos.filter(ehObj).filter((ev) => integradas === undefined || !TIPOS_TASK.has(String(ev.tipo)) || integradas.has(String(taskDe(ev)))));
   if (ds.length < 3) return null;
   const falta = Number.isFinite(restantes) && restantes > 0 ? restantes : 0;
   const ondas = Math.ceil(falta / paralelismo(eventos));
@@ -424,19 +426,28 @@ function narrativaDo(c: Calculo, feitas: number): string {
     return `parado · ${v.length === 0 ? 'nada continua' : v.length === 1 ? `${v[0]} continua` : `${v.join(' ')} continuam`}`;
   }
   if (entrada.pausado === true) return 'pausado, nada novo é despachado';
+  // GM-15 T33 (g.15): a narração cita só os despachos da ÚLTIMA janela (o mesmo minuto do despacho mais recente) e o shell de fundo que integra ("integrando T16")
+  const integrando = integrandoDe((entrada as EntradaPainel & { segundoPlano?: unknown }).segundoPlano);
+  const sufixoInt = integrando.length > 0 ? ` · integrando ${listaE(integrando)}` : '';
   if (emVoo.length > 0) {
     const ultimo = new Map<string, number>();
+    const quando = new Map<string, number>();
     (ord ?? []).forEach((ev, i) => {
       if (ev.tipo === 'task.iniciada') {
         const t = taskDe(ev);
-        if (t !== null) ultimo.set(t, i);
+        if (t !== null) { ultimo.set(t, i); quando.set(t, msDe(ev)); }
       }
     });
-    const ids = [...emVoo].sort((a, b) => (ultimo.get(a) ?? 0) - (ultimo.get(b) ?? 0));
+    const minuto = (id: string): number => Math.floor((quando.get(id) ?? Number.NaN) / 60_000);
+    const todos = [...emVoo].sort((a, b) => (ultimo.get(a) ?? 0) - (ultimo.get(b) ?? 0));
+    const fim = minuto(todos[todos.length - 1]);
+    const janela = todos.filter((id) => !Number.isFinite(fim) || minuto(id) === fim);
+    const ids = janela.length > 0 ? janela : todos;
     const quem = ids.length === 1 ? ids[0] : ids.length === 2 ? `${ids[0]} e ${ids[1]} em paralelo` : `${ids[0]}, ${ids[1]} e mais ${ids.length - 2} em paralelo`;
     const aguardam = plano.tasks.filter((t) => estados.get(t.id)?.estado === 'concluida').map((t) => t.id);
-    return `despachou ${quem}${aguardam.length > 0 ? ` · aguarda revisão de ${listaE(aguardam)}` : ''}`;
+    return `despachou ${quem}${sufixoInt}${aguardam.length > 0 ? ` · aguarda revisão de ${listaE(aguardam)}` : ''}`;
   }
+  if (integrando.length > 0) return `integrando ${listaE(integrando)}`;
   if (plano.tasks.length > 0 && feitas === plano.tasks.length) return 'todas as tasks integradas';
   return 'aguarda o próximo despacho';
 }
@@ -485,7 +496,9 @@ function projetarLegado(plano: Plano, eventos: Evento[] | null, entrada: Entrada
   const total = plano.tasks.length;
   const integradas = [...estados.values()].filter((r) => r.estado === 'integrada');
   const rodadaMedia = integradas.length === 0 ? null : Math.round((integradas.reduce((s, r) => s + r.rodada, 0) / integradas.length) * 10) / 10;
-  const medidas = ord === null ? [] : duracoes(ord);
+  // g.13: a mediana e a ETA saem do MESMO vetor, o das integradas
+  const idsIntegradas = new Set([...estados].filter(([, r]) => r.estado === 'integrada').map(([id]) => id));
+  const medidas = ord === null ? [] : duracoes(ord.filter((ev) => !TIPOS_TASK.has(String(ev.tipo)) || idsIntegradas.has(String(taskDe(ev)))));
   let mortas: number | null = null;
   for (const ev of lista) {
     if (tipoDe(ev) !== 'task.integrada') continue;
@@ -523,7 +536,7 @@ function projetarLegado(plano: Plano, eventos: Evento[] | null, entrada: Entrada
     pacote: entrada.pacote.nome,
     plano: {
       tasks, feitas, total, pct: total === 0 ? 0 : Math.round((feitas / total) * 100),
-      eta: valido ? etaDe(ord as Evento[], total - feitas, agora, fuso) : null,
+      eta: valido ? etaDe(ord as Evento[], total - feitas, agora, fuso, idsIntegradas) : null,
       rodadaMedia,
       medianaS: medidas.length >= 3 ? mediana(medidas) : null,
     },
@@ -709,7 +722,7 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
   const feitas = legado.plano.feitas;
   const total = p.tasks.length;
   const pronto = plano !== null && total > 0
-    ? { integradas: feitas, total, previsao: feitas >= 3 && feitas < total && legado.plano.eta !== null ? { hora: legado.plano.eta.hora, base: feitas } : null }
+    ? { integradas: feitas, total, previsao: feitas >= 3 && feitas < total && legado.plano.eta !== null ? { hora: legado.plano.eta.hora, base: legado.plano.eta.n } : null }
     : null;
   const nAtivos = agentes?.length ?? 0;
   const sufixo: string[] = [];

@@ -4300,6 +4300,16 @@ test('contexto-json-gravado: a leitura do mod vai a `.harness/contexto/<sessao>.
   expect(new Date(c.em).toISOString()).toBe(c.em)
   expect(m.est.contextoInit[0].cwd).toBe(RAIZ)
 })
+test('contexto-grava-o-pacote-vigente (g.17): o pacote do mod vai no contexto da sessão para a CLI; fora da forma ⇒ a gravação segue sem ele', async ($, on) => {
+  const g = gravarContexto({ sessao: 'abc-1', percent: 55, fonte: 'mod', emMs: Date.UTC(2026, 10, 12), pacote: 'hogwarts' })
+  expect(JSON.parse(g!.stdin)).toEqual({ sessao: 'abc-1', percent: 55, fonte: 'mod', em: '2026-11-12T00:00:00.000Z', pacote: 'hogwarts' })
+  expect(String(g?.argv[2])).toContain('pacote')
+  for (const ruim of ['../x', 'Hogwarts', '', 'a'.repeat(40), 7, null]) expect(JSON.parse(gravarContexto({ sessao: 'abc-1', percent: 1, fonte: 'mod', emMs: 0, pacote: ruim as any })!.stdin).pacote).toBeUndefined()
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: 37 })
+  await m.store.set(PREFS_STORE, { preset: 'esquadrao', tema: 'color', narracao: true, ligado: true, pacote: 'herois' })
+  await arrancar(m)
+  expect(m.est.contextos.at(-1).pacote).toBe('herois')
+})
 test('contexto-gravar-pura: gravarContexto devolve argv de node -e com o script e o stdin; sessão fora da forma ou percent não número ⇒ null', () => {
   const g = gravarContexto({ sessao: 'abc-1', percent: 55, fonte: 'mod', emMs: Date.UTC(2026, 10, 12) })
   expect(g?.argv.slice(0, 2)).toEqual(['node', '-e'])

@@ -243,3 +243,44 @@ test('medicaoDoPouso-e-a-do-loop: o painel a importa de loop.mjs (não monta a l
   assert.match(src, /medicaoDoPouso/);
   assert.equal(typeof medicaoDoPouso, 'function');
 });
+
+// ───────────────────────────── g.17: o pacote de nomes da CLI é o da sessão
+import { gravarContexto } from '../../mod/painel.mjs';
+
+/** Roda o script que o mod manda o `$.process.run` executar (o `node -e` de verdade), no repo `r`. */
+const gravaPeloMod = (r, dados) => {
+  const g = gravarContexto(dados);
+  assert.ok(g !== null);
+  const p = spawnSync(g.argv[0], g.argv.slice(1), { cwd: r, input: g.stdin, encoding: 'utf8' });
+  assert.equal(p.status, 0, p.stderr);
+};
+const origemOnb = { fluxo: { resolvidoEm: '2026-11-01T00:00:00Z' } };
+
+test('cli-pacote-da-sessao: o mod grava o pacote vigente no contexto da sessão e `painel.mjs` o usa (--sessao e o session_id do stdin), sem pacote cai em terra-media', () => {
+  const { r } = repo({ origem: origemOnb, eventos: [['task.iniciada', { task: 'T1', papel: 'implementador' }]] });
+  gravaPeloMod(r, { sessao: 'sessao-p', percent: 19, fonte: 'mod', emMs: Date.now(), pacote: 'hogwarts' });
+  const arq = JSON.parse(readFileSync(join(r, '.harness', 'contexto', 'sessao-p.json'), 'utf8'));
+  assert.equal(arq.pacote, 'hogwarts');
+  assert.equal(arq.percent, 19);
+  const pelaFlag = estadoDoPainel(r, { agoraMs: Date.now(), sessao: 'sessao-p' });
+  assert.equal(pelaFlag.estado.pacote, 'Hogwarts');
+  const pelaMod = estadoDoPainel(r, { agoraMs: Date.now(), agentes: { session_id: 'sessao-p', agentes: [], sessao: {} } });
+  assert.equal(pelaMod.estado.pacote, 'Hogwarts');
+  const semSessao = estadoDoPainel(r, { agoraMs: Date.now() });
+  assert.equal(semSessao.estado.pacote, 'Hogwarts', 'sem sessão dada: a leitura recente do mod é a vigente');
+  const flag = estadoDoPainel(r, { agoraMs: Date.now(), sessao: 'sessao-p', pacote: 'galaxia' });
+  assert.notEqual(flag.estado.pacote, 'Hogwarts', 'a flag --pacote vence a leitura gravada');
+  const stdin = estadoDoPainel(r, { agoraMs: Date.now(), agentes: { session_id: 'sessao-p', agentes: [], sessao: { pacote: 'herois' } } });
+  assert.notEqual(stdin.estado.pacote, 'Hogwarts', 'o pacote do stdin do mod vence a leitura gravada');
+});
+
+test('cli-pacote-da-sessao: leitura sem pacote, pacote fora da forma ou velha de 1 h não decide; fica a fábrica (terra-media)', () => {
+  const { r } = repo({ origem: origemOnb, eventos: [['task.iniciada', { task: 'T1', papel: 'implementador' }]] });
+  gravaPeloMod(r, { sessao: 'sessao-p', percent: 19, fonte: 'mod', emMs: Date.now() });
+  assert.equal(estadoDoPainel(r, { agoraMs: Date.now(), sessao: 'sessao-p' }).estado.pacote, 'Terra Média');
+  gravaPeloMod(r, { sessao: 'sessao-p', percent: 19, fonte: 'mod', emMs: Date.now(), pacote: '../x' });
+  assert.equal(estadoDoPainel(r, { agoraMs: Date.now(), sessao: 'sessao-p' }).estado.pacote, 'Terra Média');
+  gravaPeloMod(r, { sessao: 'sessao-v', percent: 19, fonte: 'mod', emMs: Date.now() - 3_600_000, pacote: 'hogwarts' });
+  assert.equal(estadoDoPainel(r, { agoraMs: Date.now() }).estado.pacote, 'Terra Média', 'sem --sessao a leitura de 1 h atrás não vale');
+  assert.equal(estadoDoPainel(r, { agoraMs: Date.now(), sessao: 'sessao-v' }).estado.pacote, 'Hogwarts', 'pedindo a sessão pelo id, o pacote dela vale');
+});

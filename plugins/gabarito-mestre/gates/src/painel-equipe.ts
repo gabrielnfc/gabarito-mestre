@@ -225,7 +225,9 @@ export function validarStdinAgentes(bruto: unknown): { ok: true; valor: StdinAge
         if (typeof dono !== 'string' || (dono !== 'orquestrador' && !AGENT_ID_RE.test(dono))) return falha('segundoPlano', `[${i}].dono`);
         if (typeof texto !== 'string' || texto.length > TEXTO_MAX) return falha('segundoPlano', `[${i}].texto`);
         if (typeof desde !== 'number' || !Number.isSafeInteger(desde) || desde < 0) return falha('segundoPlano', `[${i}].desde`);
-        segundoPlano.push({ id, dono, texto, desde });
+        // GM-15 T33 (g.11): `comando` opcional (o mod o manda para o painel rotular o shell: integrando, teste, aguardando, comando)
+        if (v.comando !== undefined && (typeof v.comando !== 'string' || v.comando.length > TEXTO_MAX)) return falha('segundoPlano', `[${i}].comando`);
+        segundoPlano.push({ id, dono, texto, desde, ...(typeof v.comando === 'string' ? { comando: v.comando } : {}) });
       }
     }
     return { ok: true, valor: { nomes: n.nomes, encerrados, acoes, segundoPlano } };
@@ -256,6 +258,51 @@ export function sortearPacote(sessionId: string, nomes: string[], anterior: stri
   return lista[fnv1a32(typeof sessionId === 'string' ? sessionId : '') % lista.length];
 }
 
+// ---------- rótulo do shell de fundo (GM-15 T33, g.11) ----------
+
+/**
+ * A MESMA regra que o hook Stop (`gates/scripts/stop-loop.mjs`, `SHELL_INTEGRANDO`) usa para dizer que um shell de fundo está integrando: o núcleo puro não importa
+ * o script, então o literal vive aqui e um teste compara os dois (`fonte-unica-shell-integrando`).
+ */
+export const SHELL_INTEGRANDO = /\b(integrar|gate-task)\b/;
+const SUITE_DE_TESTE = /\b(node\s+(?:--[\w=-]+\s+)*--test|npm\s+(?:run\s+)?test|mod-test\.sh|claude\s+plugin\s+test|pytest|vitest|jest)\b|\.test\.[a-z]+/;
+const LACO_DE_ESPERA = /\b(until|while)\b[\s\S]*\b(sleep|grep)\b/;
+export type TipoShell = 'Integrando' | 'Teste' | 'Aguardando' | 'Comando';
+
+/**
+ * Rótulo e task de um shell de fundo, pelo COMANDO e pela DESCRIÇÃO: `integrar`/`gate-task` ⇒ Integrando; suíte de teste ⇒ Teste; laço de espera ⇒ Aguardando; o resto ⇒ Comando.
+ * Um laço (`until`/`while` no início do comando) que só ESPERA por uma integração é Aguardando, não Integrando. A task vem do cwd da worktree (`.harness/worktrees/<T>`),
+ * de `integrar|gate-task <T>` ou da descrição; sem prova ⇒ `null` (nunca palpite). Nunca lança.
+ */
+export function rotuloDoShell(item: { texto?: unknown; comando?: unknown } | null | undefined): { tipo: TipoShell; task: string | null } {
+  const cmd = typeof item?.comando === 'string' ? item.comando.slice(0, 2000) : '';
+  const txt = typeof item?.texto === 'string' ? item.texto.slice(0, 2000) : '';
+  const laco = /^\s*(until|while)\b/.test(cmd) && LACO_DE_ESPERA.test(cmd);
+  let tipo: TipoShell = 'Comando';
+  if (!laco && (SHELL_INTEGRANDO.test(cmd) || SHELL_INTEGRANDO.test(txt))) tipo = 'Integrando';
+  else if (SUITE_DE_TESTE.test(cmd) || SUITE_DE_TESTE.test(txt)) tipo = 'Teste';
+  else if (laco || LACO_DE_ESPERA.test(cmd) || LACO_DE_ESPERA.test(txt)) tipo = 'Aguardando';
+  const id = '(T\\d+[A-Za-z]?)(?![\\w-])';
+  const task = new RegExp(`\\.harness/worktrees/${id}`).exec(cmd)?.[1]
+    ?? new RegExp(`\\b(?:integrar|gate-task)\\s+${id}`).exec(cmd)?.[1]
+    ?? new RegExp(`\\b(?:integrar|gate-task)\\s+${id}`).exec(txt)?.[1]
+    ?? new RegExp(`\\b${id}`).exec(txt)?.[1]
+    ?? null;
+  return { tipo, task };
+}
+
+/** As tasks que um shell de fundo do orquestrador está integrando agora (`rotuloDoShell` ⇒ Integrando com task provada), sem repetir. */
+export function integrandoDe(segundoPlano: unknown): string[] {
+  if (!Array.isArray(segundoPlano)) return [];
+  const tasks: string[] = [];
+  for (const b of segundoPlano) {
+    if (!ehObjeto(b)) continue;
+    const r = rotuloDoShell(b);
+    if (r.tipo === 'Integrando' && r.task !== null && !tasks.includes(r.task)) tasks.push(r.task);
+  }
+  return tasks;
+}
+
 // ---------- nome por papel ----------
 
 const PAPEIS: readonly string[] = ['implementador', 'revisor', 'correcao'];
@@ -278,12 +325,27 @@ export function nomesPorPapel(eventos: Evento[], pacote: PacoteNomes): Map<strin
   const ord = ordemSegura(eventos);
   const nomes = pacote !== null && typeof pacote === 'object' && Array.isArray(pacote.nomes) ? pacote.nomes : [];
   if (ord === null || nomes.length === 0) return mapa;
+  // GM-15 T33 (g.12): o nome do par é único entre os pares de tasks NÃO integradas; o 1º livre do pacote, na ordem do diário (a decisão só olha o passado,
+  // então evento novo no fim nunca troca nome antigo). `task.integrada` devolve os nomes da task; sem nome livre (mais vivos que nomes) vale a volta de antes.
+  const doPar = new Map<string, string>(); // par → nome
+  const vivas = new Map<string, Set<string>>(); // task → pares nomeados e ainda não integrados
   for (const e of ord) {
-    if (e.tipo !== 'task.iniciada' || !ehObjeto(e.dados)) continue;
-    const { task, papel } = e.dados;
-    if (typeof task !== 'string' || task === '' || typeof papel !== 'string' || !PAPEIS.includes(papel)) continue;
+    if (!ehObjeto(e.dados) || typeof e.dados.task !== 'string' || e.dados.task === '') continue;
+    const { task } = e.dados;
+    if (e.tipo === 'task.integrada') { vivas.delete(task); continue; }
+    if (e.tipo !== 'task.iniciada') continue;
+    const { papel } = e.dados;
+    if (typeof papel !== 'string' || !PAPEIS.includes(papel)) continue;
     const chave = chaveDoPar(task, papel);
-    if (!mapa.has(chave)) mapa.set(chave, nomes[mapa.size % nomes.length]);
+    if (!mapa.has(chave)) {
+      const ocupados = new Set<string>();
+      for (const pares of vivas.values()) for (const c of pares) ocupados.add(doPar.get(c) as string);
+      mapa.set(chave, nomes.find((n) => !ocupados.has(n)) ?? nomes[mapa.size % nomes.length]);
+      doPar.set(chave, mapa.get(chave) as string);
+    }
+    const pares = vivas.get(task) ?? new Set<string>();
+    pares.add(chave);
+    vivas.set(task, pares);
   }
   return mapa;
 }
@@ -545,12 +607,18 @@ export function projetarEquipe(plano: Plano, eventos: Evento[] | null, entrada: 
     const i = nome === null ? -1 : entrada.pacote.nomes.indexOf(nome);
     return i < 0 ? 'inactive' : ORDEM_COR[i % ORDEM_COR.length];
   };
-  const janela = entrada.contexto?.window;
-  const pctDe = (uso: UsoLido | null): number | null =>
-    uso !== null && typeof uso.modelo === 'string' && typeof entrada.modeloSessao === 'string' && uso.modelo === entrada.modeloSessao
-      && typeof janela === 'number' && Number.isFinite(janela) && janela > 0
-      ? Math.round((uso.contexto / janela) * 100)
-      : null;
+  // GM-15 T33 (g.16): a janela é sempre MEDIDA: a da sessão (`contexto.window`) para o modelo da sessão; para outro modelo, a que o mod mediu para ele (`janelas[modelo]`,
+  // o mesmo campo `context_window` da plataforma). Sem janela medida ⇒ sem % (só os tokens). Nenhuma tabela fixa de janelas (D-P13).
+  const janelaSessao = entrada.contexto?.window;
+  const janelas = (entrada as EntradaPainel & { janelas?: unknown }).janelas;
+  const janelaDe = (modelo: string): number | null => {
+    const j = modelo === entrada.modeloSessao ? janelaSessao : ehObjeto(janelas) && Object.hasOwn(janelas, modelo) ? janelas[modelo] : undefined;
+    return typeof j === 'number' && Number.isFinite(j) && j > 0 ? j : null;
+  };
+  const pctDe = (uso: UsoLido | null): number | null => {
+    const j = uso !== null && typeof uso.modelo === 'string' ? janelaDe(uso.modelo) : null;
+    return uso !== null && j !== null ? Math.round((uso.contexto / j) * 100) : null;
+  };
 
   // líder
   const medicoes = base.filter((e) => e.tipo === 'custo.medicao');

@@ -15,7 +15,7 @@ import { renderPainel } from '../src/painel.ts';
 import { append, duracoes, lerEstrito, mediana } from '../src/diario.ts';
 import { contarConsultas } from '../src/sombra.ts';
 import { tokensDe } from '../src/pouso.ts';
-import { projetarEquipe } from '../src/painel-equipe.ts';
+import { nomesPorPapel, projetarEquipe } from '../src/painel-equipe.ts';
 import { horaLocal } from '../src/painel-hora.ts';
 import type { AgenteVivo, EntradaPainel, EstadoPainel, Evento, MotivoParar, Plano, TipoEvento } from '../src/tipos.ts';
 
@@ -926,12 +926,13 @@ test('narrativa-tabela: parar ▸ pausado ▸ em voo ▸ todas integradas ▸ ag
   assert.equal(narr(plano, [ini(0, 'T1'), parar(1)], { pausado: true }), 'parado · T1 continua');
   // em voo: 1, 2, 3 e 4+, na ordem do último task.iniciada
   assert.equal(narr(plano, [ini(0, 'T1')]), 'despachou T1');
-  assert.equal(narr(plano, [ini(0, 'T1'), ini(5, 'T2')]), 'despachou T1 e T2 em paralelo');
-  assert.equal(narr(plano, [ini(0, 'T2'), ini(5, 'T1')]), 'despachou T2 e T1 em paralelo', 'ordem do despacho, não a do plano');
-  assert.equal(narr(plano, [ini(0, 'T1'), ini(1, 'T2'), ini(2, 'T3')]), 'despachou T1, T2 e mais 1 em paralelo');
-  assert.equal(narr(plano, [ini(0, 'T1'), ini(1, 'T2'), ini(2, 'T3'), ini(3, 'T4')]), 'despachou T1, T2 e mais 2 em paralelo');
+  assert.equal(narr(plano, [ini(0, 'T1'), ini(0.5, 'T2')]), 'despachou T1 e T2 em paralelo');
+  assert.equal(narr(plano, [ini(0, 'T1'), ini(5, 'T2')]), 'despachou T2', 'g.15: só a última janela (o T1 foi despachado em outro minuto)');
+  assert.equal(narr(plano, [ini(0, 'T2'), ini(0.5, 'T1')]), 'despachou T2 e T1 em paralelo', 'ordem do despacho, não a do plano');
+  assert.equal(narr(plano, [ini(0, 'T1'), ini(0.1, 'T2'), ini(0.2, 'T3')]), 'despachou T1, T2 e mais 1 em paralelo');
+  assert.equal(narr(plano, [ini(0, 'T1'), ini(0.1, 'T2'), ini(0.2, 'T3'), ini(0.3, 'T4')]), 'despachou T1, T2 e mais 2 em paralelo');
   // o ÚLTIMO task.iniciada da task decide a ordem (T1 volta a ser despachada depois de T2)
-  assert.equal(narr(plano, [ini(0, 'T1'), con(1, 'T1'), ini(2, 'T1', 'revisor'), ver(3, 'T1', false, 1, 1), ini(4, 'T2'), ini(5, 'T1', 'correcao')]), 'despachou T2 e T1 em paralelo');
+  assert.equal(narr(plano, [ini(0, 'T1'), con(1, 'T1'), ini(2, 'T1', 'revisor'), ver(3, 'T1', false, 1, 1), ini(4, 'T2'), ini(4.5, 'T1', 'correcao')]), 'despachou T2 e T1 em paralelo');
   // aguarda revisão: tasks em `concluida`, só quando há task em voo
   assert.equal(narr(plano, [ini(0, 'T1'), ini(1, 'T2'), con(2, 'T2')]), 'despachou T1 · aguarda revisão de T2');
   assert.equal(narr(plano, [ini(0, 'T1'), ini(1, 'T2'), con(2, 'T2'), ini(3, 'T3'), con(4, 'T3')]), 'despachou T1 · aguarda revisão de T2 e T3');
@@ -1159,13 +1160,15 @@ test('fecho-plano-sem-ciclo: dist/plano.js não importa, direto ou transitivo, p
   const rVer = (n: number, s: number | string, task: string, veredito = 'APROVADO', rodada = 1, major = 0) =>
     R(n, s, 'review.veredito', { task, veredito, blocker: 0, major, rodada });
   const rReab = (n: number, s: number | string, task: string, origem: 'dono' | 'retomada') => R(n, s, 'task.reaberta', { task, origem });
+  // GM-15 T33 (g.13): só a task INTEGRADA entra na amostra da mediana e da ETA; o cronômetro continua sendo o da task aprovada
+  const rInt = (n: number, s: number, task: string) => R(n, s, 'task.integrada', { task, sha: 'b'.repeat(40) });
   const rCiclo = (b: number, task: string, a: number | string, f: number | string, veredito = 'APROVADO'): Evento[] =>
     [rIni(b * 10, a, task), rCon(b * 10 + 1, a, task), rIni(b * 10 + 2, a, task, 'revisor'), rVer(b * 10 + 3, f, task, veredito)];
-  const duas = (a: number, b: number): Evento[] => [...rCiclo(1, 'T1', 1000, 1000 + a), ...rCiclo(3, 'T2', 3000, 3000 + b)];
+  const duas = (a: number, b: number): Evento[] => [...rCiclo(1, 'T1', 1000, 1000 + a), rInt(14, 1000 + a + 1, 'T1'), ...rCiclo(3, 'T2', 3000, 3000 + b), rInt(34, 3000 + b + 1, 'T2')];
 
   test('cronometro-veredito-antes-do-inicio-nao-soma-negativo: o intervalo com ts anterior ao início é descartado e a task segue na amostra (R-M1)', () => {
     const t3 = [...rCiclo(5, 'T3', '2026-11-03T20:00:00.000Z', '2026-11-03T19:00:00.000Z', 'REPROVADO'),
-      rIni(60, 30000, 'T3', 'correcao'), rCon(61, 30010, 'T3'), rIni(62, 30020, 'T3', 'revisor'), rVer(63, 30300, 'T3', 'APROVADO', 2)];
+      rIni(60, 30000, 'T3', 'correcao'), rCon(61, 30010, 'T3'), rIni(62, 30020, 'T3', 'revisor'), rVer(63, 30300, 'T3', 'APROVADO', 2), rInt(64, 30301, 'T3')];
     const s = proj(P('T1', 'T2', 'T3'), [...duas(100, 900), ...t3]);
     assert.equal(s.plano.medianaS, 300);
     assert.deepEqual(s.plano.eta && s.plano.eta.n, 3);
@@ -1175,7 +1178,7 @@ test('fecho-plano-sem-ciclo: dist/plano.js não importa, direto ou transitivo, p
     const t3 = [...rCiclo(5, 'T3', 10000, 10400, 'REPROVADO'),
       rIni(60, 10410, 'T3', 'correcao'), rCon(61, 10420, 'T3'), rIni(62, 10430, 'T3', 'revisor'), rVer(63, 10900, 'T3', 'REPROVADO', 2, 1),
       rReab(64, 12000, 'T3', 'dono'),
-      rIni(65, 13000, 'T3'), rCon(66, 13010, 'T3'), rIni(67, 13020, 'T3', 'revisor'), rVer(68, 13100, 'T3', 'APROVADO', 1)];
+      rIni(65, 13000, 'T3'), rCon(66, 13010, 'T3'), rIni(67, 13020, 'T3', 'revisor'), rVer(68, 13100, 'T3', 'APROVADO', 1), rInt(69, 13101, 'T3')];
     assert.equal(proj(P('T1', 'T2', 'T3'), [...duas(50, 1000), ...t3]).plano.medianaS, 100);
   });
 }
@@ -1340,4 +1343,103 @@ test('regra-unica-estatica: shaAceito é a única decisão; painel, trilha e reg
   assert.doesNotMatch(fonte('painel.ts'), /tipoDe\(ev\) === 'spec\.aprovada' && typeof/);
   assert.doesNotMatch(fonte('trilha.ts'), /ultimaAprovacao\.sha256 !==/);
   assert.doesNotMatch(fonte('registro.ts'), /specSha === ultima\b/);
+});
+
+// ---------------------------------------------------------------- GM-15 T33 (emenda 11, g.12 a g.16)
+
+const nomesDe = (eventos: Evento[], nomes: string[]): Map<string, string> => nomesPorPapel(eventos, { nome: 'T', lider: 'L', sabio: 'S', nomes });
+
+test('nomes-unicos-entre-vivos (g.12): o par novo leva o 1º nome que nenhum par de task NÃO integrada usa; a volta do pacote não repete nome de vivo', () => {
+  // 4 nomes: T1..T4 pegam A..D; T1 e T4 integram; T5 pega A (livre) e T6 deve pegar D (livre), não B (de T2, ainda vivo) como a volta fazia
+  const itens: Item[] = [ini(0, 'T1'), ini(1, 'T2'), ini(2, 'T3'), ini(3, 'T4'), ...[integ(10, 'T1'), integ(11, 'T4')], ini(20, 'T5'), ini(21, 'T6')];
+  const m = nomesDe(D(itens), ['A', 'B', 'C', 'D']);
+  assert.deepEqual(['T1', 'T2', 'T3', 'T4', 'T5', 'T6'].map((t) => m.get(`${t}:trabalho`)), ['A', 'B', 'C', 'D', 'A', 'D']);
+  const vivos = ['T2', 'T3', 'T5', 'T6'].map((t) => m.get(`${t}:trabalho`));
+  assert.equal(new Set(vivos).size, vivos.length, `nomes repetidos entre vivos: ${vivos.join(' ')}`);
+});
+
+test('nomes-unicos-entre-vivos (g.12): implementador e revisor de task viva não dividem nome; o nome volta só quando a task integra; sem nome livre cai na volta de antes', () => {
+  const itens: Item[] = [ini(0, 'T14'), ini(1, 'T15'), ini(2, 'T16'), ini(3, 'T16', 'revisor')];
+  const m = nomesDe(D(itens), ['A', 'B', 'C', 'D']);
+  assert.deepEqual([m.get('T14:trabalho'), m.get('T15:trabalho'), m.get('T16:trabalho'), m.get('T16:revisor')], ['A', 'B', 'C', 'D']);
+  const cheio = nomesDe(D([ini(0, 'T1'), ini(1, 'T2'), ini(2, 'T3')]), ['A', 'B']);
+  assert.deepEqual(['T1', 'T2', 'T3'].map((t) => cheio.get(`${t}:trabalho`)), ['A', 'B', 'A'], 'mais vivos que nomes: a volta, como antes');
+  // evento novo no fim nunca troca nome antigo
+  const antes = nomesDe(D(itens), ['A', 'B', 'C', 'D']);
+  const depois = nomesDe(D([...itens, integ(30, 'T14'), ini(31, 'T17')]), ['A', 'B', 'C', 'D']);
+  for (const [k, v] of antes) assert.equal(depois.get(k), v, `${k} mudou de nome`);
+  assert.equal(depois.get('T17:trabalho'), 'A', 'o nome de T14 integrada volta');
+});
+
+/** 6 integradas (10…60 min) e a T7 só aprovada (200 min): a mediana e a base da conta saem das integradas. */
+const SETE = [...ciclo('T1', 0, 10), ...ciclo('T2', 20, 40), ...ciclo('T3', 50, 80), ...ciclo('T4', 90, 130), ...ciclo('T5', 140, 190), ...ciclo('T6', 200, 260),
+  ini(270, 'T7'), con(271, 'T7'), ini(272, 'T7', 'revisor'), ver(470, 'T7', true)];
+
+test('mediana-so-integradas (g.13): a mediana do plano usa só as durações das tasks integradas (a aprovada que não integrou fica de fora)', () => {
+  const s = proj(P('T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'), D(SETE));
+  assert.equal(s.plano.feitas, 6);
+  assert.equal(s.plano.medianaS, 35 * 60, 'mediana de 10,20,30,40,50,60 = 35 min (com a T7 seriam 40)');
+  assert.equal(s.plano.eta?.n, 6);
+});
+
+test('base-igual-ao-vetor (g.14): a base da previsão é o tamanho do vetor da conta (as integradas), nunca o das aprovadas', () => {
+  const fatos = { branch: 'feat/GM-12-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' };
+  const s = projetarPainel(P('T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'), D(SETE), entrada({ fatos } as Partial<EntradaPainel>) as EntradaPainel & { fatos: typeof fatos });
+  assert.equal(s.pronto?.previsao?.base, s.plano.eta?.n, 'a base exibida e a conta saem do mesmo vetor');
+  assert.equal(s.pronto?.previsao?.base, 6);
+});
+
+const emVooIni = (min: number, task: string, extra: Record<string, unknown> = {}): Item => ini(min, task, 'implementador', extra);
+
+test('narracao-janela (g.15): a narração cita só os despachos da última janela (mesmo minuto), não junta os de horas diferentes', () => {
+  const s = proj(P('T1', 'T2', 'T3', 'T4'), D([emVooIni(0, 'T1'), emVooIni(8, 'T2'), emVooIni(11, 'T3'), emVooIni(11.5, 'T4')]));
+  assert.equal(s.equipe.lider.narrativa, 'despachou T3 e T4 em paralelo');
+  const um = proj(P('T1', 'T2'), D([emVooIni(0, 'T1'), emVooIni(8, 'T2')]));
+  assert.equal(um.equipe.lider.narrativa, 'despachou T2');
+});
+
+test('narracao-integrando (g.15): o shell de fundo que integra entra na narração, com a task da linha de comando', () => {
+  const sp = [{ id: 'b1', dono: 'orquestrador', texto: 'integrar T16 em fundo', comando: 'cd /r && node plugins/gabarito-mestre/gates/scripts/loop.mjs integrar T16 2>&1 | tail', desde: 1 }];
+  const s = proj(P('T14', 'T16'), D([emVooIni(0, 'T14')]), { segundoPlano: sp } as Partial<EntradaPainel>);
+  assert.match(s.equipe.lider.narrativa, /^despachou T14 · integrando T16/);
+  const sem = proj(P('T14', 'T16'), D([emVooIni(0, 'T14')]), { segundoPlano: [{ ...sp[0], comando: 'sleep 5', texto: 'esperar' }] } as Partial<EntradaPainel>);
+  assert.doesNotMatch(sem.equipe.lider.narrativa, /integrando/);
+  const so = proj(P('T14', 'T16'), D([]), { segundoPlano: sp } as Partial<EntradaPainel>);
+  assert.equal(so.equipe.lider.narrativa, 'integrando T16');
+});
+
+const ENT_ZERO = { modeloSessao: 'claude-sonnet-4-6', contexto: { percent: 30, tokens: 60_000, window: 200_000 } };
+const agOpus = (extra: Partial<AgenteVivo> = {}): AgenteVivo => ({ id: 'a-1', type: 'general-purpose', description: 'T1 implementador', status: 'running', uso: { contexto: 90_000, tok: 1000, modelo: 'claude-opus-4-8' }, ...extra });
+
+test('ctx-pct-janela-medida (g.16): o % do agente sai da janela MEDIDA do modelo dele (mesmo de outro modelo que o da sessão)', () => {
+  const eq = projetarEquipe(P('T1'), D([ini(0, 'T1')]), entrada({ ...ENT_ZERO, agentes: [agOpus()], janelas: { 'claude-opus-4-8': 1_000_000 } } as Partial<EntradaPainel>));
+  assert.equal(eq.agentes[0].ctxPct, 9, '90k de 1M');
+  assert.equal(eq.agentes[0].ctxTok, 90_000);
+  const mesmo = projetarEquipe(P('T1'), D([ini(0, 'T1')]), entrada({ ...ENT_ZERO, agentes: [agOpus({ uso: { contexto: 90_000, tok: 1, modelo: 'claude-sonnet-4-6' } })] } as Partial<EntradaPainel>));
+  assert.equal(mesmo.agentes[0].ctxPct, 45, 'o modelo da sessão segue com a janela da sessão (200k)');
+});
+
+test('ctx-sem-janela-so-k (g.16): sem janela medida para o modelo do agente o % some e ficam os tokens; nenhuma tabela fixa', () => {
+  const eq = projetarEquipe(P('T1'), D([ini(0, 'T1')]), entrada({ ...ENT_ZERO, agentes: [agOpus()] } as Partial<EntradaPainel>));
+  assert.equal(eq.agentes[0].ctxPct, null);
+  assert.equal(eq.agentes[0].ctxTok, 90_000);
+  for (const ruim of [0, -5, Number.NaN, '1000000', null]) {
+    const e2 = projetarEquipe(P('T1'), D([ini(0, 'T1')]), entrada({ ...ENT_ZERO, agentes: [agOpus()], janelas: { 'claude-opus-4-8': ruim } } as unknown as Partial<EntradaPainel>));
+    assert.equal(e2.agentes[0].ctxPct, null, `janela ${String(ruim)}`);
+  }
+  assert.doesNotMatch(readFileSync(join(AQUI, '..', 'src', 'painel-equipe.ts'), 'utf8'), /1_?000_?000|200_?000|\b1m\b/i, 'sem tabela de janelas');
+});
+
+test('base-igual-ao-vetor (g.14): integrada sem duração medida (veredito com ts antes do início) não entra na base; a base é o n da ETA, não a contagem de integradas', () => {
+  const fatos = { branch: 'feat/GM-12-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['T1', 'T2', 'T3', 'T4', 'T5'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' };
+  const base = D([...ciclo('T1', 0, 10), ...ciclo('T2', 20, 40), ...ciclo('T3', 50, 80)]);
+  let seq = base.length;
+  const cru = (min: number, tipo: TipoEvento, dados: Record<string, unknown>): Evento => ({ seq: ++seq, ts: iso(min), autor: 't', sessao: 's1', agente: 'orquestrador', tipo, dados, hash_anterior: null }) as unknown as Evento;
+  // T4: iniciada em 200, concluída em 201, revisor em 202, veredito APROVADO com ts em 100 (antes do início): a duração não existe, mas ela integra
+  const t4 = [cru(200, 'task.iniciada', { task: 'T4', papel: 'implementador' }), cru(201, 'task.concluida', { task: 'T4' }), cru(202, 'task.iniciada', { task: 'T4', papel: 'revisor' }),
+    cru(100, 'review.veredito', { task: 'T4', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }), cru(203, 'task.integrada', { task: 'T4', sha: 'b'.repeat(40) })];
+  const s = projetarPainel(P('T1', 'T2', 'T3', 'T4', 'T5'), [...base, ...t4], entrada({ fatos } as Partial<EntradaPainel>) as EntradaPainel & { fatos: typeof fatos });
+  assert.equal(s.plano.feitas, 4);
+  assert.equal(s.plano.eta?.n, 3, 'a conta tem 3 durações');
+  assert.equal(s.pronto?.previsao?.base, 3, 'a base mostrada é a da conta');
 });

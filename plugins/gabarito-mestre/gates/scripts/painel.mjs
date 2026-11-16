@@ -409,6 +409,31 @@ function ghDe(raiz, chave, fontes) {
   return it.gh;
 }
 
+/**
+ * GM-15 T33 (g.17): o pacote de nomes vigente da sessão, de onde o mod o grava (`.harness/contexto/<sessao>.json`, campo `pacote`). A sessão dada (`--sessao` ou o
+ * `session_id` do mod) vale com qualquer idade; sem ela, só a leitura mais recente do mod (`fonte: mod`, até 10 min). Fora da forma, ilegível ou ausente ⇒ `null`.
+ */
+const JANELA_PACOTE_MS = 600_000;
+function pacoteVigente(raiz, sessao, agoraMs) {
+  const dir = join(raiz, '.harness', 'contexto');
+  const ler = (arq) => {
+    try {
+      const j = JSON.parse(readFileSync(arq, 'utf8'));
+      return ehObj(j) && typeof j.pacote === 'string' && PACOTE_RE.test(j.pacote) ? { pacote: j.pacote, fonte: j.fonte, emMs: Date.parse(j.em) } : null;
+    } catch { return null; }
+  };
+  if (typeof sessao === 'string' && SESSAO_RE.test(sessao)) return ler(join(dir, `${sessao}.json`))?.pacote ?? null;
+  let melhor = null;
+  let nomes = [];
+  try { nomes = readdirSync(dir); } catch { return null; }
+  for (const n of nomes) {
+    if (!/^[A-Za-z0-9-]{1,128}\.json$/.test(n)) continue;
+    const l = ler(join(dir, n));
+    if (l !== null && l.fonte === 'mod' && Number.isFinite(l.emMs) && agoraMs - l.emMs <= JANELA_PACOTE_MS && l.emMs - agoraMs <= 5_000 && (melhor === null || l.emMs > melhor.emMs)) melhor = l;
+  }
+  return melhor === null ? null : melhor.pacote;
+}
+
 /** A medição do pouso de `loop.mjs proxima` (`medicaoDoPouso`) para a sessão do painel, mais a de cada sessão que retomou depois do pouso (`sessoesDeRetomada`). */
 function medicaoDoPainel(raiz, sessao, x, eventos, agoraMs) {
   const m = medicaoDoPouso(raiz, sessao, x, agoraMs);
@@ -552,6 +577,9 @@ export function estadoDoPainel(cwd, opts = {}) {
     else if (typeof sessao.pacote === 'string') {
       if (PACOTE_RE.test(sessao.pacote)) nomePacote = sessao.pacote;
       else avisos.push(`sessao.pacote ${JSON.stringify(sessao.pacote.slice(0, 40))} fora da forma: usando ${PACOTE_PADRAO}`);
+    } else if (raiz !== null) {
+      // g.17: sem pacote no pedido, o da sessão (o que o mod gravou), não o de fábrica
+      nomePacote = pacoteVigente(raiz, opts.sessao ?? sessaoMod, agoraMs) ?? PACOTE_PADRAO;
     }
     const pacote = carregarPacote(nomePacote, raiz, avisos);
 

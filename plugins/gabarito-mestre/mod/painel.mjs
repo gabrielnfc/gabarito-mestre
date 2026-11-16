@@ -439,7 +439,7 @@ const comum = cp.execFileSync('git', ['rev-parse', '--path-format=absolute', '--
 const dir = path.join(path.dirname(comum), '.harness', 'contexto');
 fs.mkdirSync(dir, { recursive: true });
 const fim = path.join(dir, d.sessao + '.json'), tmp = fim + '.' + process.pid + '.tmp';
-try { fs.writeFileSync(tmp, JSON.stringify({ percent: d.percent, fonte: d.fonte, em: d.em }) + '\\n'); fs.renameSync(tmp, fim); }
+try { fs.writeFileSync(tmp, JSON.stringify({ percent: d.percent, fonte: d.fonte, em: d.em, ...(/^[a-z0-9-]{1,32}$/.test(String(d.pacote)) ? { pacote: d.pacote } : {}) }) + '\\n'); fs.renameSync(tmp, fim); }
 catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }`;
 
 /**
@@ -447,10 +447,11 @@ catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }`;
  * PRINCIPAL (`--git-common-dir`, a mesma raiz de `loop.mjs`) e grava `.harness/contexto/<sessao>.json` `{percent, fonte, em}` por tmp + rename.
  * Pura (a T34 a usa no P9 com `spawnSync`). Sessão fora da forma, percent não número ou fonte fora de `mod|transcript` ⇒ `null`.
  */
-export function gravarContexto({ sessao, percent, fonte, emMs } = {}) {
+export function gravarContexto({ sessao, percent, fonte, emMs, pacote } = {}) {
   if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) return null;
   if (numero(percent) === null || (fonte !== 'mod' && fonte !== 'transcript') || numero(emMs) === null) return null;
-  return { argv: ['node', '-e', SCRIPT_CONTEXTO], stdin: JSON.stringify({ sessao, percent, fonte, em: new Date(emMs).toISOString() }) };
+  // GM-15 T33 (g.17): o pacote de nomes vigente vai junto, para a CLI (`painel.mjs`) desenhar os mesmos nomes da sessão; fora da forma ⇒ não vai
+  return { argv: ['node', '-e', SCRIPT_CONTEXTO], stdin: JSON.stringify({ sessao, percent, fonte, em: new Date(emMs).toISOString(), ...(typeof pacote === 'string' && PACOTE_RE.test(pacote) ? { pacote } : {}) }) };
 }
 
 const SCRIPT_ONBOARDING = `/*gabarito:onboarding*/
@@ -797,7 +798,7 @@ async function lerContexto($, cwd, pedido, agoraMs) {
     }
   }
   S.contexto = contexto;
-  const g = contexto === null || !(await comOnboarding($, cwd)) ? null : gravarContexto({ sessao: S.sessaoId, percent: contexto.percent, fonte: contexto.fonte, emMs: agoraMs });
+  const g = contexto === null || !(await comOnboarding($, cwd)) ? null : gravarContexto({ sessao: S.sessaoId, percent: contexto.percent, fonte: contexto.fonte, emMs: agoraMs, pacote: S.prefs.pacote ?? S.pacoteSorteado ?? undefined });
   if (g !== null) {
     try { await $.process.run(g.argv, { cwd, stdin: g.stdin, timeoutMs: TIMEOUT_MS }); } catch { /* o arquivo fica velho e `proxima` o descarta após 120 s */ }
   }
