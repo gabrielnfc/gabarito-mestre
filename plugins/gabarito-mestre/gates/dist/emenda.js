@@ -144,7 +144,11 @@ export function validarProposta(plano       , est               , dados         
     arquivos.push(n);
   }
   const origem = campo(dados, 'origem');
-  const rejeicoes = est.rejeitadas.filter((p) => p.req === campo(dados, 'req') && p.task === task && p.origem !== 'sombra').length;
+  // Emenda 13 (REQ-EME-3): a âncora é só o REQ; trocar ou omitir `--task` não zera a contagem. Redação da Sombra rejeitada ⇒ dono:
+  // a Sombra não repropõe no mesmo REQ (o orquestrador já está barrado pela 3ª proposta).
+  const daAncora = est.rejeitadas.filter((p) => p.req === campo(dados, 'req'));
+  if (origem === 'sombra' && daAncora.some((p) => p.origem === 'sombra')) return 'redação da Sombra rejeitada nesta âncora: vai ao dono (a Sombra não repropõe)';
+  const rejeicoes = daAncora.filter((p) => p.origem !== 'sombra').length;
   if (origem === 'sombra' && rejeicoes < 2) return 'origem sombra só depois da 2ª rejeição da mesma âncora';
   if (origem !== 'sombra' && rejeicoes >= 2) return 'terceira proposta do orquestrador na mesma âncora: a Sombra redige o texto (origem sombra)';
   if (task !== undefined) {

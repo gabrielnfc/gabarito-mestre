@@ -303,12 +303,18 @@ test('t11-terceira-proposta-do-orquestrador-recusa-na-mesma-ancora', () => {
   assert.equal(validarProposta(plano(T('t', [], []), T('u', [], [], ['REQ-EME-2'])), dois, dadosProp({ req: 'REQ-EME-2' })), null);
 });
 
-test('t11-ancora-e-req-mais-task', () => {
+test('ancora-por-req-ignora-task', () => {
+  // Emenda 13 (REQ-EME-3): a âncora é só o REQ; trocar ou omitir --task não zera a contagem de rejeições do orquestrador.
   const dois = rejeitadas2({ task: 't1' });
   const pl = plano(T('t1', [], ['a.ts']), T('t2', [], ['b.ts']));
-  assert.notEqual(validarProposta(pl, dois, dadosProp({ task: 't1' })), null, 'mesma task e REQ');
-  assert.equal(validarProposta(pl, dois, dadosProp({ task: 't2' })), null, 'outra task, mesmo REQ');
-  assert.equal(validarProposta(pl, dois, dadosProp()), null, 'sem task é outra âncora');
+  const terceira = 'terceira proposta do orquestrador na mesma âncora: a Sombra redige o texto (origem sombra)';
+  assert.equal(validarProposta(pl, dois, dadosProp({ task: 't1' })), terceira, 'mesma task e REQ');
+  assert.equal(validarProposta(pl, dois, dadosProp({ task: 't2' })), terceira, 'outra task, mesmo REQ');
+  assert.equal(validarProposta(pl, dois, dadosProp()), terceira, 'sem task, mesmo REQ');
+  // 1 rejeição com task e 1 sem task somam 2 na mesma âncora (o REQ)
+  const misto = projetarEmendas([prop(1, { task: 't1' }), prop(2), rejeita('s', 1, 1), rejeita('s', 2, 2)]);
+  assert.equal(validarProposta(pl, misto, dadosProp({ task: 't2' })), terceira, 'rejeições com e sem task somam');
+  assert.equal(validarProposta(pl, misto, dadosProp({ origem: 'sombra' })), null, 'a Sombra redige na âncora do REQ, com ou sem task');
 });
 
 test('t11-sombra-so-redige-depois-da-segunda-rejeicao', () => {
@@ -321,4 +327,19 @@ test('t11-sombra-so-redige-depois-da-segunda-rejeicao', () => {
 test('t11-rejeicao-de-proposta-da-sombra-nao-conta-para-o-orquestrador', () => {
   const est = projetarEmendas([prop(1), prop(2, { origem: 'sombra' }), rejeita('s', 1, 1), rejeita('s', 2, 2)]);
   assert.equal(validarProposta(plano(T('t', [], [])), est, dadosProp()), null, 'só 1 rejeição do orquestrador');
+});
+
+test('rejeicao-da-redacao-da-sombra-vai-ao-dono', () => {
+  // Emenda 13 (REQ-EME-3): proposta `origem: sombra` rejeitada vai ao dono; a Sombra não repropõe no mesmo REQ (o orquestrador já está na 3ª).
+  const pl = plano(T('t1', [], ['a.ts']), T('u', [], [], ['REQ-EME-2']));
+  const est = projetarEmendas([prop(1), prop(2), rejeita('s', 1, 1), rejeita('s', 2, 2), prop(3, { origem: 'sombra' }), rejeita('s', 3, 3)]);
+  const aoDono = 'redação da Sombra rejeitada nesta âncora: vai ao dono (a Sombra não repropõe)';
+  assert.equal(validarProposta(pl, est, dadosProp({ origem: 'sombra' })), aoDono, 'a Sombra não repropõe');
+  assert.equal(validarProposta(pl, est, dadosProp({ origem: 'sombra', task: 't1' })), aoDono, 'nem trocando a task');
+  assert.match(validarProposta(pl, est, dadosProp()) ?? '', /^terceira proposta do orquestrador/, 'nem o orquestrador');
+  // aberta (ainda não julgada) não é rejeição: a Sombra ainda não foi recusada
+  const aberta = projetarEmendas([prop(1), prop(2), rejeita('s', 1, 1), rejeita('s', 2, 2), prop(3, { origem: 'sombra' })]);
+  assert.equal(validarProposta(pl, aberta, dadosProp({ origem: 'sombra' })), null, 'só a rejeitada trava');
+  // outra âncora segue livre
+  assert.equal(validarProposta(pl, est, dadosProp({ req: 'REQ-EME-2' })), null);
 });
