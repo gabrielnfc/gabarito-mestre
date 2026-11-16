@@ -688,7 +688,8 @@
         "plugins/gabarito-mestre/gates/src/projeto.ts",
         "plugins/gabarito-mestre/gates/dist/projeto.js",
         "plugins/gabarito-mestre/gates/test/projeto.test.ts",
-        "plugins/gabarito-mestre/gates/test/fixtures/projeto/"
+        "plugins/gabarito-mestre/gates/test/fixtures/projeto/",
+        "plugins/gabarito-mestre/gates/scripts/build.mjs"
       ],
       "reqs": [
         "REQ-ENT-2"
