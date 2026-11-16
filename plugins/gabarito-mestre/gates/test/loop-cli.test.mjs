@@ -5931,3 +5931,198 @@ describe('GM-14 T54: `emenda aplicar <seq>` grava spec.aplicada com os sha do di
     assert.doesNotMatch(apr, /if \(antesN > 0\)/);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════ GM-15 T6: adiar, cortar e reabrir pela Sombra (REQ-ENT-2, condição 1)
+// MUTAÇÕES PRESCRITAS: M6a --origem dono aceito em adiar · M6b idem em cortar · M6c idem em reabrir · M6d Sombra sem --fonte aceita · M6e reabrir --origem sombra sem julga_emendas.
+
+describe('GM-15 T6: adiar, cortar e reabrir (a Sombra, com fonte; o dono só pelo hook)', () => {
+  const COM_JULGA = { sombra: { julga_emendas: true } };
+  const fora = (cmd, t, extra = {}) => [cmd, t, ...Object.entries({ motivo: 'adiada por teste', origem: 'sombra', fonte: 'decisao.sombra 1', ...extra }).flatMap(([k, v]) => (v === undefined ? [] : [`--${k}`, v]))];
+  const foraDoDiario = (amb) => amb.eventos().filter((e) => e.tipo === 'task.fora');
+  const estadoDe = (amb, t) => {
+    const ord = ordenarNucleo(amb.eventos());
+    return estadoNucleo(ord.eventos.filter((e) => e.dados?.task === t && /^(task|review)\./.test(e.tipo)));
+  };
+  const ambJulga = () => { const amb = ambReq(); comOrigin(amb, COM_JULGA); return amb; };
+
+  test('cortar-com-dependente-recusa: T3 depende de T1 e não está fora ⇒ recusa listando T3; nada gravado; fora o dependente, passa', () => {
+    const amb = ambJulga();
+    const antes = bytesDoDiario(amb);
+    const r = amb.cli(fora('cortar', 'T1'));
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'dependentes_nao_fora');
+    assert.deepEqual(r.j.dependentes, ['T3']);
+    assert.match(r.j.mensagem, /T3/);
+    assert.deepEqual(bytesDoDiario(amb), antes);
+    assert.equal(amb.cli(fora('adiar', 'T1')).j.erro, 'dependentes_nao_fora', 'adiar recusa igual');
+    // o dependente sai primeiro (adiada): agora T1 pode ser cortada
+    assert.equal(amb.cli(fora('adiar', 'T3')).rc, 0);
+    const ok = amb.cli(fora('cortar', 'T1'));
+    assert.equal(ok.rc, 0, ok.out);
+    assert.equal(estadoDe(amb, 'T1').estado, 'cortada');
+    assert.equal(estadoDe(amb, 'T3').estado, 'adiada');
+  });
+
+  test('cortar-sombra-sem-fonte-recusa: sem --fonte (ou com fonte vazia) é uso e não grava', () => {
+    const amb = ambJulga();
+    const antes = bytesDoDiario(amb);
+    for (const cmd of ['cortar', 'adiar']) {
+      const r = amb.cli(fora(cmd, 'T2', { fonte: undefined }));
+      assert.equal(r.rc, 2, cmd);
+      assert.match(r.j.mensagem, /fonte/);
+      assert.notEqual(amb.cli(fora(cmd, 'T2', { fonte: '  ' })).rc, 0, `${cmd} fonte em branco`);
+      assert.equal(amb.cli(fora(cmd, 'T2', { motivo: undefined })).rc, 2, `${cmd} sem motivo`);
+      assert.equal(amb.cli(fora(cmd, 'T2', { origem: undefined })).rc, 2, `${cmd} sem origem`);
+    }
+    assert.deepEqual(bytesDoDiario(amb), antes);
+  });
+
+  test('cortar-sombra-sem-julga-emendas-recusa: sem a opção em origin/HEAD (ausente, falsa, string ou só no config local) a Sombra não corta nem adia', () => {
+    for (const preparar of [() => ({ amb: ambReq() }), () => ({ amb: (() => { const a = ambReq(); comOrigin(a, { sombra: { julga_emendas: 'true' } }); return a; })() }),
+      () => ({ amb: ambReq({ config: { ...CONFIG_PADRAO, sombra: { julga_emendas: true } } }) })]) {
+      const { amb } = preparar();
+      const antes = bytesDoDiario(amb);
+      for (const cmd of ['cortar', 'adiar']) {
+        const r = amb.cli(fora(cmd, 'T2'));
+        assert.equal(r.rc, 1, `${cmd} ${r.out}`);
+        assert.equal(r.j.erro, 'julga_emendas_desligado');
+      }
+      assert.deepEqual(bytesDoDiario(amb), antes);
+    }
+  });
+
+  test('adiar-sombra-grava-task-fora: grava task.fora com task, como, motivo, origem e fonte; a task sai do alvo', () => {
+    const amb = ambJulga();
+    const r = amb.cli(fora('adiar', 'T2', { motivo: 'fica para a 2.1.1', fonte: 'decisao.sombra 7' }));
+    assert.equal(r.rc, 0, r.out);
+    const e = foraDoDiario(amb);
+    assert.equal(e.length, 1);
+    assert.deepEqual(e[0].dados, { task: 'T2', como: 'adiada', motivo: 'fica para a 2.1.1', origem: 'sombra', fonte: 'decisao.sombra 7' });
+    assert.equal(estadoDe(amb, 'T2').estado, 'adiada');
+    const c = amb.cli(fora('cortar', 'T2'));
+    assert.equal(c.rc, 1, 'terminal: adiada não vira cortada sem reabrir');
+    assert.equal(c.j.erro, 'task_nao_pode_sair');
+    // cortar grava como: cortada
+    assert.equal(amb.cli(fora('cortar', 'T3', { motivo: 'sem valor' })).rc, 0);
+    assert.equal(foraDoDiario(amb).at(-1).dados.como, 'cortada');
+  });
+
+  test('fora-em-voo-e-integrada-recusa: agente em voo ou task integrada não sai do alvo; nada gravado', () => {
+    const amb = ambJulga();
+    amb.semear([['task.iniciada', { task: 'T2', papel: 'implementador' }], ...IMPL_E('T1'), APROVA_E('T1'), INTEGRA_E('T1')].filter((x, i) => i !== 1 || true));
+    const antes = bytesDoDiario(amb);
+    for (const t of ['T2', 'T1']) {
+      const r = amb.cli(fora('adiar', t));
+      assert.equal(r.rc, 1, `${t} ${r.out}`);
+      assert.equal(r.j.erro, 'task_nao_pode_sair');
+    }
+    assert.deepEqual(bytesDoDiario(amb), antes);
+  });
+
+  test('reabrir-sombra-exige-julga-e-fonte: de fora volta a pendente rodada 0 só com origem sombra, julga_emendas em origin e --fonte', () => {
+    const amb = ambReq();
+    amb.semear([['task.fora', { task: 'T2', como: 'adiada', motivo: 'm', origem: 'sombra', fonte: 'f' }]]);
+    const antes = bytesDoDiario(amb);
+    const sem = amb.cli(['reabrir', 'T2', '--origem', 'sombra']);
+    assert.equal(sem.rc, 2, 'sem --fonte');
+    assert.match(sem.j.mensagem, /fonte/);
+    const semJulga = amb.cli(['reabrir', 'T2', '--origem', 'sombra', '--fonte', 'decisao.sombra 9']);
+    assert.equal(semJulga.rc, 1);
+    assert.equal(semJulga.j.erro, 'julga_emendas_desligado');
+    assert.deepEqual(bytesDoDiario(amb), antes);
+    comOrigin(amb, COM_JULGA);
+    const ok = amb.cli(['reabrir', 'T2', '--origem', 'sombra', '--fonte', 'decisao.sombra 9']);
+    assert.equal(ok.rc, 0, ok.out);
+    const e = amb.eventos().filter((x) => x.tipo === 'task.reaberta').at(-1);
+    assert.deepEqual(e.dados, { task: 'T2', origem: 'sombra', fonte: 'decisao.sombra 9', de: 'fora' });
+    assert.deepEqual(estadoDe(amb, 'T2'), { estado: 'pendente', rodada: 0 });
+  });
+
+  test('reabrir-sombra-de-task-nao-fora-recusa: reabrir --origem sombra numa task que não está fora não grava', () => {
+    const amb = ambJulga();
+    const antes = bytesDoDiario(amb);
+    const r = amb.cli(['reabrir', 'T2', '--origem', 'sombra', '--fonte', 'f']);
+    assert.equal(r.rc, 1);
+    assert.equal(r.j.erro, 'transicao_invalida');
+    assert.deepEqual(bytesDoDiario(amb), antes);
+  });
+
+  test('reabrir-sem-origem-segue-retomada: o reabrir da 2.0 não muda (origem retomada, sem fonte nem de)', () => {
+    const amb = ambReq();
+    amb.semear([...IMPL_E('T2')]);
+    const r = amb.cli(['reabrir', 'T2']);
+    assert.equal(r.rc, 0, r.out);
+    assert.deepEqual(amb.eventos().filter((e) => e.tipo === 'task.reaberta').at(-1).dados, { task: 'T2', origem: 'retomada' });
+    assert.equal(amb.cli(['reabrir', 'T2', '--origem', 'retomada']).rc, 2, 'retomada é o padrão sem flag, não um valor');
+    assert.equal(amb.cli(['reabrir', 'T2', '--fonte', 'x']).rc, 2, '--fonte sem --origem sombra é uso');
+  });
+
+  test('cli-origem-dono-recusa: --origem dono em adiar, cortar e reabrir é uso (rc 2) e o diário fica byte a byte igual', () => {
+    const amb = ambJulga();
+    amb.semear([['task.fora', { task: 'T2', como: 'adiada', motivo: 'm', origem: 'sombra', fonte: 'f' }]]);
+    const antes = bytesDoDiario(amb);
+    for (const a of [fora('adiar', 'T3', { origem: 'dono' }), fora('cortar', 'T3', { origem: 'dono' }), ['reabrir', 'T2', '--origem', 'dono', '--fonte', 'f'], ['reabrir', 'T2', '--origem', 'dono'],
+      fora('adiar', 'T3', { origem: 'qualquer' }), ['reabrir', 'T2', '--origem', 'qualquer', '--fonte', 'f']]) {
+      const r = amb.cli(a);
+      assert.equal(r.rc, 2, a.join(' '));
+      assert.equal(r.j.erro, 'uso');
+    }
+    assert.deepEqual(bytesDoDiario(amb), antes);
+  });
+
+  test('cli-nenhum-subcomando-grava-dono: varre todo ESPEC com --origem dono; nenhum grava evento de origem dono', async () => {
+    const { ESPEC_DO_CLI } = await import('../scripts/loop.mjs');
+    const cmds = Object.keys(ESPEC_DO_CLI);
+    assert.ok(cmds.includes('adiar') && cmds.includes('cortar') && cmds.includes('reabrir') && cmds.includes('liberar'));
+    const amb = ambJulga();
+    amb.semear([['task.fora', { task: 'T2', como: 'adiada', motivo: 'm', origem: 'sombra', fonte: 'f' }]]);
+    const antes = bytesDoDiario(amb);
+    for (const cmd of cmds) {
+      const esp = ESPEC_DO_CLI[cmd];
+      const pos = Array.from({ length: esp.pos ?? 0 }, () => 'T2');
+      const flags = (esp.obrig ?? []).filter((f) => f !== 'origem').flatMap((f) => [`--${f}`, 'x']);
+      const r = amb.cli([cmd, ...pos, ...flags, '--origem', 'dono', '--fonte', 'x', '--hash', 'a'.repeat(64)].filter((_, i, v) => (esp.flags.includes('fonte') || v[i] !== '--fonte' && v[i - 1] !== '--fonte') && (esp.flags.includes('hash') || v[i] !== '--hash' && v[i - 1] !== '--hash')));
+      assert.equal(r.rc, 2, `${cmd}: ${r.out}`);
+    }
+    assert.deepEqual(bytesDoDiario(amb), antes);
+    assert.equal(amb.eventos().some((e) => e.dados?.origem === 'dono'), false);
+  });
+
+  test('fora-dono-e-reabrir-dono-so-em-processo: foraDono e reabrirDono gravam origem dono, recusam dependente e ficam fora de ESPEC', async () => {
+    const { foraDono, reabrirDono, ESPEC_DO_CLI } = await import('../scripts/loop.mjs');
+    assert.equal(Object.keys(ESPEC_DO_CLI).some((k) => /dono/i.test(k)), false);
+    const amb = ambReq(); // sem julga_emendas: o dono não depende dele
+    const recusa = foraDono(amb.dir, 'T1', 'cortada', 'sem valor', 'S-dono');
+    assert.equal(recusa.ok, false);
+    assert.equal(recusa.erro, 'dependentes_nao_fora');
+    assert.deepEqual(recusa.dependentes, ['T3']);
+    assert.equal(foraDono(amb.dir, 'T3', 'adiada', 'fica para depois', 'S-dono').ok, true);
+    const e = foraDoDiario(amb).at(-1);
+    assert.deepEqual(e.dados, { task: 'T3', como: 'adiada', motivo: 'fica para depois', origem: 'dono' });
+    assert.equal(e.sessao, 'S-dono');
+    assert.equal(foraDono(amb.dir, 'T9', 'adiada', 'm', 'S-dono').erro, 'task_fora_do_plano');
+    assert.equal(foraDono(amb.dir, 'T2', 'talvez', 'm', 'S-dono').erro, 'argumento_invalido');
+    assert.equal(reabrirDono(amb.dir, 'T2', 'S-dono').ok, false, 'T2 não está fora');
+    const r = reabrirDono(amb.dir, 'T3', 'S-dono');
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(amb.eventos().filter((x) => x.tipo === 'task.reaberta').at(-1).dados, { task: 'T3', origem: 'dono', fonte: 'comando do dono', de: 'fora' });
+    assert.deepEqual(estadoDe(amb, 'T3'), { estado: 'pendente', rodada: 0 });
+  });
+
+  test('lista-de-tipos-de-task-e-a-do-nucleo: o loop.mjs importa TIPOS_DE_TASK de dist/loop.js e não repete a lista', () => {
+    const t = readFileSync(join(AQUI, '..', 'scripts', 'loop.mjs'), 'utf8');
+    assert.match(t, /import \{[^}]*\bTIPOS_DE_TASK\b[^}]*\} from '\.\.\/dist\/loop\.js'/);
+    assert.doesNotMatch(t, /^const TIPOS_DE_TASK = \[/m);
+    assert.match(t, /foraPermitido\(/);
+  });
+
+  test('adiar-conta-no-estado-da-task: depois do adiar o proxima já não despacha a task e a reabertura a devolve', () => {
+    const amb = ambJulga();
+    assert.equal(amb.cli(fora('adiar', 'T2')).rc, 0);
+    const p = amb.cli(['proxima']);
+    assert.equal(p.rc, 0, p.out);
+    assert.doesNotMatch(JSON.stringify(p.j), /"task":"T2"/);
+    assert.equal(amb.cli(['reabrir', 'T2', '--origem', 'sombra', '--fonte', 'f']).rc, 0);
+    assert.match(JSON.stringify(amb.cli(['proxima']).j), /T2/);
+  });
+});

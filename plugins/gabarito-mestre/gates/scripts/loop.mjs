@@ -24,6 +24,10 @@
  *       (`sombra.mjs perguntar --task <t> --libera-teto`) com `decisao.sombra` vigente `libera: true`, sem `fora_da_regra`, depois do veredito do teto na
  *       ordem do diário, com brief e resposta no disco. Recusa: `libera_teto_desligado`, `teto_sombra_esgotado`, `fora_do_teto`, `hash_invalido`,
  *       `sombra_nao_liberou` (decisão íntegra com `libera` ausente ou false; GM-14 T39) (e `relogio_do_diario`); nada gravado. `--origem` só aceita `sombra` (uso, rc 2): `dono` sai só de `liberarTeto`.
+ *   loop.mjs adiar|cortar <task> --motivo <t> --origem sombra --fonte <f>   (GM-15 T6, REQ-ENT-2) grava `task.fora {task, como: adiada|cortada, motivo, origem, fonte}`; exige
+ *       `sombra.julga_emendas: true` em `origin/HEAD` (o config local não conta) e `foraPermitido` do núcleo (task não integrada, sem agente em voo, todo dependente já fora; recusa com a lista
+ *       em `dependentes`). `--origem dono` (ou outra) é uso, rc 2: o dono sai só de `foraDono`/`reabrirDono`, exportadas e fora de `ESPEC`.
+ *   loop.mjs reabrir <task> [--origem sombra --fonte <f>]   sem `--origem` segue `retomada`; `--origem sombra` exige `--fonte` e `julga_emendas` em origin e devolve a task de fora a `pendente` (rodada 0)
  *   loop.mjs aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>]
  *       (GM-13 T8; contrato e ordem de recusa em `loop-aprendizado.mjs`; `aprendizados` não exige entrega na branch).
  *   loop.mjs anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--entrega <ID>] [--sessao <id>] [--opcao <r>]…   (GM-14 REQ-DIA-2; sem plano)
@@ -35,7 +39,7 @@
  *
  * QUEM GRAVA NO DIÁRIO. Só `iniciar` (task.iniciada), `concluir` (task.concluida), `veredito` (review.veredito),
  * `desvio`, `descoberta`, `emenda propor` (emenda.proposta), `emenda aplicar` (spec.aplicada, T54) e `emenda julgar` (spec.emendada ou emenda.rejeitada, origem `sombra`; a origem `dono` sai só de
- * `julgarEmendaDono`, que o hook `emenda-dono.mjs` chama), `reabrir` (task.reaberta, SÓ origem `retomada`: nenhum argumento produz `dono`; `dono` sai só de `liberarTeto`, que o hook do comando humano `/gabarito-mestre:liberar` chama),
+ * `julgarEmendaDono`, que o hook `emenda-dono.mjs` chama), `reabrir` (task.reaberta, origem `retomada`, ou `sombra` com `--fonte` e `de: fora`: nenhum argumento produz `dono`; `adiar`/`cortar` gravam `task.fora`, origem `sombra`, e o `dono` delas sai só de `foraDono`; `dono` sai só de `liberarTeto`, que o hook do comando humano `/gabarito-mestre:liberar` chama),
  * `liberar` (task.reaberta, SÓ origem `sombra` com o `hash` da decisão; GM-14 T36), `integrar` (task.integrada),
  * `ci` (ci.resultado), `parar` (loop.parar) e `anotar` (nota, GM-14: sem plano, sem tabela de transições; confere só a forma, o canário e a legibilidade do diário). `concluir` e `integrar` gravam o `sha`. `abrir` não grava no diário (grava o nome da base em `branch.<branch>.gabaritoBase` e o sha dela em `branch.<branch>.gabaritoBaseSha`)
  * e é idempotente: worktree registrada com HEAD na branch da task devolve o mesmo resultado com `ja_aberta: true`; qualquer outro estado recusa. Todo evento de task é conferido contra `TRANSICOES` ANTES de gravar:
@@ -72,7 +76,7 @@ import * as diario from '../dist/diario.js';
 import { escopoDaTask, pontaDaSpec, projetarEmendas, SESSAO_EMENDAS, shaAceito, validarAplicacao, validarJulgamento, validarProposta } from '../dist/emenda.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { formaInvalida, formaNaGravacao, MOTIVOS_REENTREGA, REQ_RE } from '../dist/formas.js';
-import { estadoDe, ordenar, podeIntegrar, proximaAcao, tasksCongeladas } from '../dist/loop.js';
+import { estadoDe, foraPermitido, ordenar, podeIntegrar, proximaAcao, TIPOS_DE_TASK, tasksCongeladas } from '../dist/loop.js';
 import { lerLeitura, pousoPendente } from '../dist/pouso-pendente.js';
 import { temOnboarding } from './cartao-sessao.mjs';
 import { normalizarCaminho, validarPlano } from '../dist/plano.js';
@@ -93,7 +97,6 @@ const NUM_RE = /^(0|[1-9]\d{0,14})$/;
 const PAPEIS = ['implementador', 'revisor', 'correcao'];
 const MODELOS_INICIAR = ['haiku', 'sonnet', 'opus', 'fable'];
 const MOTIVOS = ['teto_rodadas', 'ci_vermelho', 'teto_tokens', 'sem_pouso', 'sem_progresso', 'diario_invalido', 'nao_conseguiu', 'smoke', 'rollback', 'janela_ausente'];
-const TIPOS_DE_TASK = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
 const GLOB = /[*?[\]{}]/;
 const TMP = '.tmp-gabarito';
 const X_PADRAO = 50;
@@ -129,7 +132,7 @@ function recusarSePublicada(c) {
   throw new Falha('entrega_publicada', `a entrega ${c.entrega} já está publicada (PR mergeado, sem outro aberto): task, sessão e parar não gravam nela; nada foi feito`);
 }
 const TIPO_VEDADO_EM_PUBLICADA = (tipo) => TIPOS_DE_TASK.includes(tipo) || tipo.startsWith('sessao.') || tipo.startsWith('guarda.') || tipo === 'operacao.destrutiva' || tipo === 'loop.parar';
-const COMANDOS_VEDADOS_EM_PUBLICADA = new Set(['parar', 'iniciar', 'concluir', 'veredito', 'integrar', 'reabrir', 'liberar', 'pousar']);
+const COMANDOS_VEDADOS_EM_PUBLICADA = new Set(['parar', 'iniciar', 'concluir', 'veredito', 'integrar', 'reabrir', 'liberar', 'adiar', 'cortar', 'pousar']);
 
 // ─────────────────────────────────────────────────────────────── git
 
@@ -185,31 +188,37 @@ export function checkoutDaSessao(cwd) {
 
 // ─────────────────────────────────────────────────────────────── entrada
 
+/** Tabela de comandos do CLI (posicionais, flags, obrigatórias). Exportada só para o teste varrer todo subcomando (GM-15 T6, condição 1). */
+const ESPEC = {
+  proxima: { pos: 0, flags: ['entrega', 'vivos', 'sessao'] },
+  abrir: { pos: 1, flags: ['entrega'] },
+  fechar: { pos: 1, flags: ['entrega'] },
+  integrar: { pos: 1, flags: ['entrega', 'sessao'] },
+  iniciar: { pos: 2, flags: ['entrega', 'sessao', 'modelo'] },
+  concluir: { pos: 1, flags: ['entrega', 'sessao', 'motivo'] },
+  reabrir: { pos: 1, flags: ['entrega', 'sessao', 'origem', 'fonte'] },
+  // GM-15 T6 (REQ-ENT-2): só a Sombra, com fonte; `--origem dono` é uso (rc 2). O dono sai só de `foraDono` e `reabrirDono`, fora de `ESPEC`.
+  adiar: { pos: 1, flags: ['entrega', 'sessao', 'motivo', 'origem', 'fonte'], obrig: ['motivo', 'origem', 'fonte'] },
+  cortar: { pos: 1, flags: ['entrega', 'sessao', 'motivo', 'origem', 'fonte'], obrig: ['motivo', 'origem', 'fonte'] },
+  liberar: { pos: 1, flags: ['entrega', 'sessao', 'origem', 'hash'], obrig: ['origem', 'hash'] },
+  veredito: { pos: 5, flags: ['entrega', 'sessao'] },
+  parar: { pos: 1, flags: ['entrega', 'sessao'] },
+  ci: { pos: 1, flags: ['entrega', 'sessao', 'alvo'] },
+  desvio: { pos: 1, flags: ['entrega', 'sessao', 'req', 'evidencia', 'arquivos', 'causa'], obrig: ['req', 'evidencia', 'arquivos', 'causa'] },
+  descoberta: { pos: 0, flags: ['entrega', 'sessao', 'evidencia', 'causa'], obrig: ['evidencia', 'causa'] },
+  // E5a (GM-13): `aprendizado` confere os posicionais e as flags por tipo em `loop-aprendizado.mjs` (uso, rc 2); `aprendizados` lê a árvore, sem entrega (T8).
+  aprendizado: { pos: null, flags: ['entrega', 'sessao', 'regra', 'entra-em', 'gatilho', 'eventos', 'fonte', 'numero', 'substitui', 'motivo'] },
+  aprendizados: { pos: 0, flags: ['para', 'exportar'], semValor: ['exportar'] },
+  pousar: { pos: null, flags: ['entrega', 'sessao'] },
+  registro: { pos: null, flags: ['entrega', 'sessao'] },
+  emenda: { pos: null, flags: ['entrega', 'sessao', 'req', 'task', 'diff', 'fato', 'alternativa', 'evidencia', 'causa', 'arquivos'] },
+};
+export const ESPEC_DO_CLI = ESPEC;
+
 /** Argumentos estritos. Flag desconhecida, sem valor ou repetida e posicional a mais ou a menos é uso (rc 2). */
 function lerArgs(argv) {
   const [cmd, ...resto] = argv;
-  const ESPEC = {
-    proxima: { pos: 0, flags: ['entrega', 'vivos', 'sessao'] },
-    abrir: { pos: 1, flags: ['entrega'] },
-    fechar: { pos: 1, flags: ['entrega'] },
-    integrar: { pos: 1, flags: ['entrega', 'sessao'] },
-    iniciar: { pos: 2, flags: ['entrega', 'sessao', 'modelo'] },
-    concluir: { pos: 1, flags: ['entrega', 'sessao', 'motivo'] },
-    reabrir: { pos: 1, flags: ['entrega', 'sessao'] },
-    liberar: { pos: 1, flags: ['entrega', 'sessao', 'origem', 'hash'], obrig: ['origem', 'hash'] },
-    veredito: { pos: 5, flags: ['entrega', 'sessao'] },
-    parar: { pos: 1, flags: ['entrega', 'sessao'] },
-    ci: { pos: 1, flags: ['entrega', 'sessao', 'alvo'] },
-    desvio: { pos: 1, flags: ['entrega', 'sessao', 'req', 'evidencia', 'arquivos', 'causa'], obrig: ['req', 'evidencia', 'arquivos', 'causa'] },
-    descoberta: { pos: 0, flags: ['entrega', 'sessao', 'evidencia', 'causa'], obrig: ['evidencia', 'causa'] },
-    // E5a (GM-13): `aprendizado` confere os posicionais e as flags por tipo em `loop-aprendizado.mjs` (uso, rc 2); `aprendizados` lê a árvore, sem entrega (T8).
-    aprendizado: { pos: null, flags: ['entrega', 'sessao', 'regra', 'entra-em', 'gatilho', 'eventos', 'fonte', 'numero', 'substitui', 'motivo'] },
-    aprendizados: { pos: 0, flags: ['para', 'exportar'], semValor: ['exportar'] },
-    pousar: { pos: null, flags: ['entrega', 'sessao'] },
-    registro: { pos: null, flags: ['entrega', 'sessao'] },
-    emenda: { pos: null, flags: ['entrega', 'sessao', 'req', 'task', 'diff', 'fato', 'alternativa', 'evidencia', 'causa', 'arquivos'] },
-  };
-  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | liberar <task> --origem sombra --hash <h> | concluir <task> --motivo <gate|sombra|dono> | iniciar <task> <papel> [--modelo <haiku|sonnet|opus|fable>] | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | emenda aplicar <seq> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | aprendizados --exportar | pousar | registro | anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--opcao <r>]…  [--entrega GM-10]';
+  const uso = 'uso: loop.mjs proxima | abrir|fechar|integrar|concluir|reabrir <task> | reabrir <task> --origem sombra --fonte <f> | adiar|cortar <task> --motivo <t> --origem sombra --fonte <f> | liberar <task> --origem sombra --hash <h> | concluir <task> --motivo <gate|sombra|dono> | iniciar <task> <papel> [--modelo <haiku|sonnet|opus|fable>] | veredito <task> <APROVADO|REPROVADO> <rodada> <blocker> <major> | parar <motivo> | ci <verde|vermelho> [--alvo homolog] | desvio <task> --req --evidencia --arquivos --causa | descoberta --evidencia --causa | emenda propor --req [--task] --diff --fato --alternativa --evidencia --causa [--arquivos] | emenda julgar <seq> <aprovar|rejeitar> | emenda aplicar <seq> | aprendizado <E|A> <D|M> --regra --entra-em [--gatilho --eventos --fonte --numero --substitui] | aprendizado nada --gatilho --motivo | aprendizados [--para <destino>] | aprendizados --exportar | pousar | registro | anotar --tipo <ideia|desvio|assunto|duvida|pendencia> --texto <t> [--opcao <r>]…  [--entrega GM-10]';
   if (typeof cmd !== 'string' || !Object.hasOwn(ESPEC, cmd)) throw new Falha('uso', `comando desconhecido ou ausente. ${uso}`, {}, 2);
   const esp = ESPEC[cmd];
   const pos = [];
@@ -379,6 +388,20 @@ function validarForma(cmd, pos, flags) {
     // GM-14 T36: a origem é só `sombra` (uso, rc 2): nenhum argumento produz `dono`. O hash fora da forma é motivo, não uso (FIEL-15 b).
     if (flags.origem !== 'sombra') throw new Falha('uso', `liberar só aceita --origem sombra (a liberação do dono é o comando /gabarito-mestre:liberar); veio ${JSON.stringify(flags.origem)}`, {}, 2);
     return { task, hash: flags.hash };
+  }
+  if (cmd === 'adiar' || cmd === 'cortar') {
+    // GM-15 T6: a origem é só `sombra` (uso, rc 2): nenhum argumento produz `dono`; a Sombra sempre cita a fonte.
+    if (flags.origem !== 'sombra') throw new Falha('uso', `${cmd} só aceita --origem sombra (o dono usa o comando /gabarito-mestre:${cmd}); veio ${JSON.stringify(flags.origem)}`, {}, 2);
+    return { task, como: cmd === 'adiar' ? 'adiada' : 'cortada', ...textoDe('motivo', flags.motivo), ...textoDe('fonte', flags.fonte) };
+  }
+  if (cmd === 'reabrir') {
+    if (flags.origem === undefined) {
+      if (flags.fonte !== undefined) throw new Falha('uso', 'reabrir --fonte só vale com --origem sombra', {}, 2);
+      return { task };
+    }
+    if (flags.origem !== 'sombra') throw new Falha('uso', `reabrir só aceita --origem sombra ou nenhuma, a retomada é o padrão sem flag (o dono usa o comando /gabarito-mestre:reabrir); veio ${JSON.stringify(flags.origem)}`, {}, 2);
+    if (flags.fonte === undefined) throw new Falha('uso', 'reabrir --origem sombra exige --fonte (a decisão que a autorizou)', {}, 2);
+    return { task, sombra: true, ...textoDe('fonte', flags.fonte) };
   }
   if (cmd === 'concluir') {
     // FIEL-8 b6: o motivo da reentrega é forma; fora dos 3 literais recusa antes de abrir plano ou diário.
@@ -1706,14 +1729,98 @@ export function aplicarEmenda(cwd, seq, { antes, sessao, entrega } = {}) {
   }
 }
 
-function julgarComoSombra(c, plano, seq, decisao) {
+/** A Sombra só age (julga emenda, adia, corta, reabre de fora) com `sombra.julga_emendas: true` em `origin/HEAD`; o config local não conta. Uma regra, todas as bordas. */
+function exigirJulgaEmendas(c, verbo) {
   const o = lerConfigOrigin(c.raiz);
   const liga = o.fonte === 'origin' && o.cfg.sombra !== null && typeof o.cfg.sombra === 'object' && o.cfg.sombra.julga_emendas === true;
   if (!liga) {
     throw new Falha('julga_emendas_desligado', o.invalida
-      ? `config de origin/HEAD inválida (${o.motivo}): sem sombra.julga_emendas verdadeiro lá, a Sombra não julga; nada foi gravado`
-      : 'sombra.julga_emendas não é true em origin/HEAD (o config local não conta): a Sombra não julga; nada foi gravado');
+      ? `config de origin/HEAD inválida (${o.motivo}): sem sombra.julga_emendas verdadeiro lá, a Sombra não ${verbo}; nada foi gravado`
+      : `sombra.julga_emendas não é true em origin/HEAD (o config local não conta): a Sombra não ${verbo}; nada foi gravado`);
   }
+}
+
+/** `foraPermitido` do núcleo ⇒ `Falha` com o código da recusa; a lista de dependentes vai no corpo e na mensagem. */
+function recusarSeNaoPodeSair(p, task) {
+  if (p.ok) return;
+  if (p.motivo === 'dependentes') throw new Falha('dependentes_nao_fora', `a task ${task} tem dependente que ainda não está fora (${p.dependentes.join(', ')}): tire-os primeiro; nada foi gravado`, { dependentes: p.dependentes });
+  if (p.motivo === 'estado') throw new Falha('task_nao_pode_sair', `a task ${task} está em ${p.estado}: só sai do alvo task não integrada e sem agente em voo; nada foi gravado`);
+  if (p.motivo === 'task_desconhecida') throw new Falha('task_fora_do_plano', `task ${task} não está no plano`);
+  throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições; nada foi gravado');
+}
+
+/**
+ * REQ-ENT-2: grava `task.fora` (a task sai do alvo). `foraPermitido` roda antes e DENTRO de `gravar`, sobre o diário que ele leu (outra sessão pode ter gravado no meio).
+ * Relê o diário: só `{task, estado}` com o estado novo lido do disco é sucesso. Lança `Falha`.
+ */
+function gravarFora(c, plano, { task, como, motivo, origem, fonte }) {
+  const conferir = (_candidato, lidos) => recusarSeNaoPodeSair(foraPermitido(plano, lidos, task), task);
+  conferir(null, lerDiarioEstrito(c.dirEntrega));
+  gravar(c, plano, 'task.fora', { task, como, motivo, origem, ...(fonte !== undefined ? { fonte } : {}) }, conferir);
+  const depois = estadoDaTask(c, task);
+  if (depois.estado !== como) throw new Falha('fora_sem_efeito', `o evento de ${task} foi gravado mas o diário relido mostra a task em ${depois.estado}, não ${como}; confira o diário`);
+  return { task, entrega: c.entrega, estado: depois.estado };
+}
+
+/** `loop.mjs adiar|cortar <task> --motivo --origem sombra --fonte`: a Sombra tira a task do alvo (exige `sombra.julga_emendas` em `origin/HEAD`). */
+function foraComoSombra(c, plano, { task, como, motivo, fonte }) {
+  tarefa(plano, task);
+  exigirJulgaEmendas(c, como === 'adiada' ? 'adia' : 'corta');
+  return { ...gravarFora(c, plano, { task, como, motivo, origem: 'sombra', fonte }), origem: 'sombra', fonte };
+}
+
+/** `loop.mjs reabrir <task> --origem sombra --fonte`: devolve a task de `adiada`/`cortada` a `pendente` rodada 0 (a tabela recusa fora de `fora`). */
+function reabrirComoSombra(c, plano, task, fonte) {
+  exigirJulgaEmendas(c, 'reabre');
+  gravar(c, plano, 'task.reaberta', { task, origem: 'sombra', fonte, de: 'fora' });
+  const depois = estadoDaTask(c, task);
+  if (depois.estado !== 'pendente') throw new Falha('reabertura_sem_efeito', `o evento de ${task} foi gravado mas o diário relido mostra a task em ${depois.estado}; confira o diário`);
+  return { task, entrega: c.entrega, estado: depois.estado, origem: 'sombra', fonte };
+}
+
+/** Comum aos dois caminhos do dono: valida a forma, abre o contexto e recusa entrega publicada. Nunca lança para fora das funções exportadas. */
+function contextoDoDono(cwd, task, sessao) {
+  if (typeof task !== 'string' || !ID_RE.test(task)) throw new Falha('id_invalido', `task ${JSON.stringify(task)} fora da forma ${ID_RE}`);
+  if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) throw new Falha('argumento_invalido', `sessão fora da forma ${SESSAO_RE}`);
+  const c = contexto(cwd, { sessao });
+  recusarSePublicada(c);
+  const plano = carregarPlano(c);
+  tarefa(plano, task);
+  return { c, plano };
+}
+
+/**
+ * REQ-ENT-2: a ÚNICA gravação de `task.fora {origem:"dono"}`. Fora de `ESPEC` de propósito, como `liberarTeto`: nenhum argumento do CLI chega aqui,
+ * só o hook `UserPromptExpansion` do comando que o dono digita (T7). Nunca lança: `{ok:true, task, estado}` ou `{ok:false, erro, mensagem}`.
+ */
+export function foraDono(cwd, task, como, motivo, sessao) {
+  try {
+    if (como !== 'adiada' && como !== 'cortada') throw new Falha('argumento_invalido', `como ${JSON.stringify(como)}: esperado adiada ou cortada`);
+    if (typeof motivo !== 'string' || motivo.trim() === '') throw new Falha('argumento_invalido', 'motivo vazio: esperado texto');
+    const { c, plano } = contextoDoDono(cwd, task, sessao);
+    return { ok: true, ...gravarFora(c, plano, { task, como, motivo, origem: 'dono' }) };
+  } catch (e) {
+    if (e instanceof Falha) return { ok: false, erro: e.erro, mensagem: e.message, ...(e.extra?.dependentes !== undefined ? { dependentes: e.extra.dependentes } : {}) };
+    return { ok: false, erro: 'excecao', mensagem: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** REQ-ENT-2: a ÚNICA gravação de `task.reaberta {origem:"dono", de:"fora"}` (fora de `ESPEC`; só o hook do comando humano a chama, T7). Nunca lança. */
+export function reabrirDono(cwd, task, sessao) {
+  try {
+    const { c, plano } = contextoDoDono(cwd, task, sessao);
+    gravar(c, plano, 'task.reaberta', { task, origem: 'dono', fonte: 'comando do dono', de: 'fora' });
+    const depois = estadoDaTask(c, task);
+    if (depois.estado !== 'pendente') throw new Falha('reabertura_sem_efeito', `o evento de ${task} foi gravado mas o diário relido mostra a task em ${depois.estado}; confira o diário`);
+    return { ok: true, task, entrega: c.entrega, estado: depois.estado };
+  } catch (e) {
+    if (e instanceof Falha) return { ok: false, erro: e.erro, mensagem: e.message };
+    return { ok: false, erro: 'excecao', mensagem: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+function julgarComoSombra(c, plano, seq, decisao) {
+  exigirJulgaEmendas(c, 'julga');
   return { ...julgar(c, plano, seq, decisao, 'sombra'), origem: 'sombra' };
 }
 
@@ -1898,7 +2005,11 @@ async function executar(argv, cwd) {
       const dados = { task, veredito: forma.veredito, rodada: forma.rodada, blocker: forma.blocker, major: forma.major, ...(sha !== undefined ? { sha } : {}) };
       return { evento: gravar(c, plano, 'review.veredito', dados, conferir) };
     }
-    case 'reabrir': tarefa(plano, task); return { evento: gravar(c, plano, 'task.reaberta', { task, origem: 'retomada' }) };
+    case 'reabrir':
+      tarefa(plano, task);
+      if (forma.sombra) return reabrirComoSombra(c, plano, task, forma.fonte);
+      return { evento: gravar(c, plano, 'task.reaberta', { task, origem: 'retomada' }) };
+    case 'adiar': case 'cortar': return foraComoSombra(c, plano, forma);
     case 'liberar': return liberarComoSombra(c, plano, task, forma.hash);
     default: throw new Falha('uso', `comando desconhecido: ${cmd}`, {}, 2);
   }
