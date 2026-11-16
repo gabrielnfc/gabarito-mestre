@@ -497,6 +497,28 @@ function proximoNome(pacote             , usados                     )         {
  * leem esta função, nunca cada um a sua. Nome: casado ⇒ o do par, se nenhum outro ativo o usa; senão (e para o sem task) o recebido do mod
  * (`nome`, estável) quando livre, senão o 1º livre do pacote, na ordem em que o mod viu o agente (`vistoEm`); o líder e o sábio nunca entram.
  */
+/** GM-15 T35 (r.11, D-G11 d): limite FIXO sem sinal de vida (C3). */
+export const SEM_SINAL_MS = 30 * 60_000;
+/**
+ * GM-15 T35 (r.11, C2, C3): agente da EQUIPE (só agente; processo de fundo é do SEGUNDO PLANO, D-G8) que a lista do mod ainda dá por vivo, mas está morto:
+ * (a) a task casada já está integrada; ou (b) o mod mediu a última ação ao vivo dele (`acoes`, FIEL-11 b) e nem ela nem o último evento da task no diário
+ * têm 30 min ou menos. Sem ação medida pelo mod não há prova de morte (o diário só tem início e fim da task; agente longo é normal): fica (r.15). Nunca lança.
+ */
+function semSinalDeVida(a            , c           , estados                         , lista          , entrada               )          {
+  if (c.task !== null && estados.get(c.task) === 'integrada') return true;
+  const acao = ehObjeto(entrada.acoes) && typeof a.id === 'string' && Object.hasOwn(entrada.acoes, a.id) ? (entrada.acoes                           )[a.id] : undefined;
+  if (!ehObjeto(acao) || typeof acao.em !== 'number' || !Number.isFinite(acao.em)) return false;
+  const sinais           = [acao.em];
+  if (c.task !== null) {
+    for (const e of lista) {
+      if (!ehObjeto(e) || !TIPOS_DE_TASK.includes(e.tipo) || !ehObjeto(e.dados) || e.dados.task !== c.task) continue;
+      const ms = Date.parse(e.ts);
+      if (Number.isFinite(ms)) sinais.push(ms);
+    }
+  }
+  return typeof entrada.agoraMs === 'number' && entrada.agoraMs - Math.max(...sinais) > SEM_SINAL_MS;
+}
+
 export function resolverAtivos(plano       , eventos                 , entrada               )                 {
   const lista           = Array.isArray(eventos) ? eventos : [];
   const ord = ordemSegura(lista);
@@ -513,7 +535,9 @@ export function resolverAtivos(plano       , eventos                 , entrada  
     if (e === 'desconhecido') { desconhecidos++; return; }
     if (e === 'encerrado') return;
     const agente = a              ;
-    ativos.push({ agente, id: typeof agente.id === 'string' ? agente.id : '', casamento: casarVivo(agente, plano, estados), nome: null, i });
+    const casamento = casarVivo(agente, plano, estados);
+    if (semSinalDeVida(agente, casamento, estados, lista, entrada)) return;
+    ativos.push({ agente, id: typeof agente.id === 'string' ? agente.id : '', casamento, nome: null, i });
   });
   const usados = new Set        ([entrada.pacote?.lider, entrada.pacote?.sabio].filter((n)              => typeof n === 'string'));
   // 1º, os casados com o nome do par, se nenhum outro ativo o usa: nem já escolhido, nem recebido do mod por um não casado (FIEL-3 d: o nome recebido não muda)
