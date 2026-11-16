@@ -35,6 +35,7 @@
 
 import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, renameSync, lstatSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'node:fs';
 import { join, relative, sep, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
 import { lerGuarda, lerConfigOrigin, DENY_GUARDA, CHAVES_MORTAS, ORDEM_MODELO, PERFIS_MODELO, resolverPerfil } from '../lib/config.mjs';
 import { diasEntre } from '../lib/datas.mjs';
@@ -1057,6 +1058,32 @@ export function modDoLoop(raiz, agora = Date.now()) {
   return melhor === null ? { mod: false } : { mod: true, ha: Math.max(0, (agoraMs - melhor) / 3_600_000) };
 }
 
+const PLUGIN_JSON_PADRAO = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.claude-plugin', 'plugin.json');
+
+/**
+ * GM-15 T20 (REQ-POU-3): o mod do painel está carregado NESTA sessão e qual versão?
+ * `mod` = a prova de `modDoLoop` (medição do orquestrador da sessão do marcador local, de hoje: ≤ 24 h). `versaoDisco` = a do
+ * `plugin.json` ao lado deste script (ou `null`). `versaoCarregada` é SEMPRE `null` e `estado` SEMPRE `nao-conferivel`: o spike S4 (i)
+ * refutou ler a versão que o Claude Code tem em memória (o mod só vê o próprio módulo, que o hot-reload recarrega do disco, então
+ * a comparação daria "ok" por construção). Plano B da spec: "não conferível" e reabrir o CLI depois de atualizar; nunca "ok".
+ */
+export function painelCarregado(raiz, { agora = Date.now(), pluginJson = PLUGIN_JSON_PADRAO } = {}) {
+  let versaoDisco = null;
+  try {
+    const v = JSON.parse(readFileSync(pluginJson, 'utf8'))?.version;
+    if (typeof v === 'string' && v.length > 0 && v.length <= 64) versaoDisco = v;
+  } catch {
+    /* sem plugin.json (cópia instalada sem o plugin): "não lida" */
+  }
+  return { mod: modDoLoop(raiz, agora).mod === true, versaoDisco, versaoCarregada: null, estado: 'nao-conferivel' };
+}
+
+/** A linha `painel:` do relatório. */
+export function linhaPainel(p) {
+  const mod = p.mod ? 'mod carregado nesta sessão' : 'mod não carregado nesta sessão (sem prova de hoje: reabra o CLI)';
+  return `painel: ${mod} · versão no disco: ${p.versaoDisco ?? 'não lida'} · versão do painel carregado: não conferível, reabra o CLI depois de atualizar`;
+}
+
 /** `db` do harness.config.json: `declarado` (válido) · `n/a` (sem bloco) · `inválido` (bloco que o loop recusaria) · `indisponível` (config ilegível). */
 function estadoDb(fileCfg, configInvalido) {
   if (configInvalido) return { estado: 'indisponível', erro: 'harness.config.json inválido' };
@@ -1289,6 +1316,7 @@ export function run(root = process.cwd(), overrides = {}) {
     camada,
     autonomia: autonomiaDoProjeto(root),
     loop: modDoLoop(root),
+    painel: painelCarregado(root),
     db: estadoDb(fileCfg, configInvalido),
     aprendizados: aprendizadosNoInstantaneo(root),
     perfil,
@@ -1344,6 +1372,7 @@ function render(out, explain) {
   if (au.descompasso === 'maquina-sem-config') linhas.push('  DESCOMPASSO: esta máquina liga a autonomia, mas o projeto não a pede (guarda.autonomia != "orquestrador" em origin/HEAD): a guarda segue pedindo.');
   if (out.perfil) linhas.push(`Perfil: ${out.perfil}`);
   linhas.push(out.loop.mod ? `loop: mod ativo (custo.medicao do orquestrador há ${Math.round(out.loop.ha)} h)` : 'loop: sem mod (sem pouso automático) · sem gatilho de mensagem do dono');
+  linhas.push(linhaPainel(out.painel));
   linhas.push(out.db.estado === 'declarado' || out.db.estado === 'n/a' ? `db: ${out.db.estado}` : `db: ${out.db.estado} (${out.db.erro})`);
   linhas.push(out.aprendizados === null ? 'aprendizados: não conferidos (dist/ do núcleo não carregou)' : `aprendizados: ${out.aprendizados.n} no instantâneo de ${out.aprendizados.m}`);
   linhas.push('');
