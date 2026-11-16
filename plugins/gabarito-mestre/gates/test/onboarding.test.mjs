@@ -1911,12 +1911,23 @@ describe('gravar costura', () => {
 
 // ────────────────────────────────────────────────────────────── S6: os 3 repos reais, só leitura
 
+/** Motivo de pular o golden S6 (ou `false`): repo ausente, ou HEAD diferente do sha em que o golden foi medido. Exportada no teste para a prova de mutação. */
+export function skipS6(raiz, shaGolden) {
+  if (!existsSync(join(raiz, '.git'))) return `sem ${raiz}/.git (defina S6_REPOS_DIR)`;
+  if (typeof shaGolden !== 'string') return false;
+  let head = '';
+  try { head = execFileSync('git', ['-C', raiz, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); } catch { return `sem HEAD legível em ${raiz}`; }
+  return head === shaGolden ? false : `${raiz} está em ${head.slice(0, 8)}, o golden foi medido em ${shaGolden.slice(0, 8)}: remedir o golden`;
+}
+
 describe('s6', () => {
   const dirRepos = process.env.S6_REPOS_DIR ?? join(homedir(), 'projetos-true');
   const gabarito = JSON.parse(readFileSync(join(FIX, 's6-gabarito.json'), 'utf8'));
   for (const repo of [...new Set(gabarito.map((g) => g.repo))]) {
     const raiz = join(dirRepos, repo);
-    test(`s6-gabarito-zero-errado: ${repo}`, { skip: !existsSync(join(raiz, '.git')) ? `sem ${raiz}/.git (defina S6_REPOS_DIR)` : false }, () => {
+    // GM-15 T34 (r.6): o golden de um repo real vale para o sha em que foi medido; HEAD diferente ⇒ o teste pula com o motivo (repo evoluiu, golden a remedir).
+    const shaGolden = gabarito.find((g) => g.repo === repo && typeof g.sha === 'string')?.sha;
+    test(`s6-gabarito-zero-errado: ${repo}`, { skip: skipS6(raiz, shaGolden) }, () => {
       const itens = Object.fromEntries(detectar(coletarFatos(raiz, { rodar: rodarCom(CLICKUP), hoje: new Date().toISOString().slice(0, 10) })).map((i) => [i.item, i]));
       for (const g of gabarito.filter((x) => x.repo === repo)) {
         const i = itens[g.item];
@@ -1932,4 +1943,15 @@ describe('s6', () => {
       }
     });
   }
+  test('s6-golden-pula-com-motivo-se-o-sha-diverge', () => {
+    const d = mkdtempSync(join(tmpdir(), 's6-sha '));
+    G(d, ['init', '-q', '-b', 'main']);
+    G(d, ['commit', '-q', '--allow-empty', '-m', 'a']);
+    const head = G(d, ['rev-parse', 'HEAD']).trim();
+    assert.equal(skipS6(d, head), false, 'mesmo sha: roda');
+    assert.equal(skipS6(d, undefined), false, 'sem sha no golden: roda');
+    assert.match(skipS6(d, 'b'.repeat(40)), /golden foi medido em bbbbbbbb/, 'sha diferente: pula com motivo');
+    assert.match(skipS6(join(d, 'nao-existe'), head), /sem .*\.git/);
+    assert.ok(gabarito.filter((g) => g.repo === 'true_force').every((g) => /^[0-9a-f]{40}$/.test(g.sha)), 'o golden do true_force traz o sha medido');
+  });
 });
