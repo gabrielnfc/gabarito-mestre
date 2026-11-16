@@ -27,7 +27,10 @@ export function raizesDeCheckout(aqui = dirname(fileURLToPath(import.meta.url)))
 }
 
 /** Devolve `raiz` se segura; lança se for um checkout, contiver um (ancestral) ou estiver dentro de um (subdiretório). `checkouts` é injetável nos testes. */
-export function raizSegura(raiz, { checkouts = raizesDeCheckout() } = {}) {
+let cache = null; // as raízes do checkout não mudam durante o processo: 2 `git` por chamada custavam ~20 ms × cada raiz do loop-cli
+const checkoutsDoProcesso = () => (cache ??= raizesDeCheckout());
+
+export function raizSegura(raiz, { checkouts = checkoutsDoProcesso() } = {}) {
   if (typeof raiz !== 'string' || !raiz) throw new Error('raiz de teste ausente');
   const r = real(raiz);
   for (const c0 of checkouts) {
