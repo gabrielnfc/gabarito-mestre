@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { etapasDasAnteriores, etapasDe, fechamentoDasAnteriores, fechamentoDe, ocupacaoDe, previsaoExata, projetarPainel, renderPainel, ritmoDasAnteriores, ritmoDe } from '../src/painel.ts';
 import { colunas } from '../src/painel-largura.ts';
 import { mediana } from '../src/diario-puro.ts';
+import { linhaTecnica } from '../src/origem.ts';
 import * as dist from '../dist/painel.js';
 import * as diario from '../dist/diario.js';
 import { estadoDoPainel } from '../scripts/painel.mjs';
@@ -210,18 +211,20 @@ const linhaPlano = (s: EstadoPainel, w: number): string =>
 /** Etapas diferentes nas 3 integradas: a faixa tem largura (de ≠ até). */
 const IRREG = D([...ciclo('A', 0, 1, 4, 1), ...ciclo('B', 0.5, 3, 8, 1), ...ciclo('C', 1, 2, 12, 2)]);
 
-test('eta-base-visivel-100col: em >= 100 colunas a linha da previsão diz a faixa e a base da MESMA conta (caminho, min/task, rodada, fechamento) (h.2)', () => {
+test('eta-base-visivel-100col: em >= 100 colunas a linha da previsão diz a faixa e a base da MESMA conta (caminho, min por task, rodada, fechamento) (h.2)', () => {
   const s = projetarPainel(P5, IRREG, E5({ fechamentoS: 4800, agoraMs: T0 + 20 * MIN }));
   const pv = s.pronto?.previsao as Record<string, any>;
   assert.notEqual(pv.faixa.de, pv.faixa.ate, 'premissa: faixa com largura');
-  const l140 = linhaPlano(s, 140); // largura em que a base inteira cabe ao lado da barra cheia
-  assert.ok(l140.endsWith(`previsão ${pv.hora} (${pv.faixa.de}–${pv.faixa.ate}) · caminho 2 tasks · ${pv.conta.minPorTask} min/task · 1,0 rodada · fechamento 1h20`), l140);
+  const l150 = linhaPlano(s, 150); // largura em que a base inteira cabe ao lado da barra cheia ("min por task", REQ-LNG-1, pede 150)
+  assert.ok(l150.endsWith(`previsão ${pv.hora} (${pv.faixa.de}–${pv.faixa.ate}) · caminho 2 tasks · ${pv.conta.minPorTask} min por task · 1,0 rodada · fechamento 1h20`), l150);
+  // REQ-LNG-1: a base é linguagem natural ("min/task" casa `\/[a-z]` da REGEX_TECNICA e reprova o lng-propriedade)
+  for (const w of [100, 120, 140, 160, 200]) assert.ok(!linhaTecnica(linhaPlano(s, w)), `linha técnica em ${w}: ${linhaPlano(s, w)}`);
   const l100 = linhaPlano(s, 100);
   assert.ok(colunas(l100) <= 100, l100);
-  assert.match(l100, /previsão \d\d:\d\d \(\d\d:\d\d–\d\d:\d\d\) · fechamento 1h20$/, 'em 100, ao lado da barra cheia, a base sai por campo inteiro (rodada, min/task, caminho) e o fechamento fica');
+  assert.match(l100, /previsão \d\d:\d\d \(\d\d:\d\d–\d\d:\d\d\) · fechamento 1h20$/, 'em 100, ao lado da barra cheia, a base sai por campo inteiro (rodada, min por task, caminho) e o fechamento fica');
   // a base é a do estado: outro número na conta muda o texto (nada recalculado no render)
   const outro = { ...s, pronto: { ...s.pronto, previsao: { ...pv, conta: { ...pv.conta, caminho: 7, minPorTask: 41, rodadas: 1.7, fechamentoS: 1500 } } } } as EstadoPainel;
-  assert.match(linhaPlano(outro, 160), / · caminho 7 tasks · 41 min\/task · 1,7 rodada · fechamento 25 min$/);
+  assert.match(linhaPlano(outro, 160), / · caminho 7 tasks · 41 min por task · 1,7 rodada · fechamento 25 min$/);
 });
 
 test('eta-base-cortada-80col: abaixo de 100 colunas só a faixa, sem a base (h.2, D-P8)', () => {
@@ -229,7 +232,7 @@ test('eta-base-cortada-80col: abaixo de 100 colunas só a faixa, sem a base (h.2
   for (const w of [99, 80]) {
     const l = linhaPlano(s, w);
     assert.match(l, /previsão \d\d:\d\d \(\d\d:\d\d–\d\d:\d\d\)$/, `${w}: ${l}`);
-    assert.doesNotMatch(l, /caminho|min\/task|rodada|fechamento|base:/);
+    assert.doesNotMatch(l, /caminho|min por task|min\/task|rodada|fechamento|base:/);
     assert.ok(colunas(l) <= w);
   }
 });
@@ -249,7 +252,7 @@ test('eta-base-nunca-encolhe-barra: a base só ocupa o que sobra ao lado da barr
 
 test('eta-fechamento-sem-medicao-interroga: sem fechamento medido a faixa abre em "?" e, em >= 100, a base diz que o fechamento não foi medido (h.1)', () => {
   const s = projetarPainel(P5, TRES, E5());
-  assert.match(linhaPlano(s, 140), /previsão \d\d:\d\d–\? · caminho 2 tasks · 6 min\/task · 1,0 rodada · fechamento não medido$/);
+  assert.match(linhaPlano(s, 140), /previsão \d\d:\d\d–\? · caminho 2 tasks · 6 min por task · 1,0 rodada · fechamento não medido$/);
   assert.match(linhaPlano(s, 80), /previsão \d\d:\d\d–\?$/);
 });
 
@@ -295,7 +298,7 @@ test('replay-gm14: erro mediano da previsão contra o término real, em cada int
   }
   const med = (xs: number[]): number => [...xs].sort((a, b) => a - b)[xs.length >> 1];
   console.log(`replay GM-14 (${novo.length} pontos): erro mediano caminho ${(med(novo) * 100).toFixed(1)}% · com fechamento ${(med(comFecho) * 100).toFixed(1)}% · conta antiga ${(med(antigo) * 100).toFixed(1)}%`);
-  // a meta da D-G2 é ≤ 15 %. Medido em 2026-11-16: ritmo da entrega inteira 32,9 % / 29,1 % (com fechamento, contra o término real); ritmo do último
+  // a meta é ≤ 30 % (D-G9, emenda 14; a D-G2 pedia ≤ 15 %). Medido em 2026-11-16: ritmo da entrega inteira 32,9 % / 29,1 % (com fechamento, contra o término real); ritmo do último
   // dia 26,4 % / 25,4 %. Teto: o ritmo médio FINAL da GM-14 (94 min/task, que nenhum ponto conhece) erra 14,8 %. Este teto TRAVA o que se mediu, não a meta.
   assert.ok(med(novo) < 0.28, `erro mediano ${med(novo)}`);
   assert.ok(med(comFecho) < 0.27, `erro mediano com fechamento ${med(comFecho)}`);

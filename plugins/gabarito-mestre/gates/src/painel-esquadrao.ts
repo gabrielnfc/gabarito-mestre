@@ -494,8 +494,8 @@ function fmtFechamento(s: number): string {
 
 /**
  * Texto da previsão do PLANO (GM-15 T30, h.1/h.2). Com a conta exata (`faixa`): a faixa `de–ate` (`ate` `?` = fechamento não medido); em `w >= 100`
- * a base da MESMA conta (`pronto.previsao.conta`, nada recalculado): caminho, min/task, rodada, fechamento, por campo inteiro até caber em `cabe`
- * colunas (saem rodada, min/task e caminho, nesta ordem; o fechamento fica). Número inválido ⇒ o campo some (D-P13). Sem a conta exata, o texto do E4.
+ * a base da MESMA conta (`pronto.previsao.conta`, nada recalculado): caminho, min por task, rodada, fechamento, por campo inteiro até caber em `cabe`
+ * colunas (saem rodada, min por task e caminho, nesta ordem; o fechamento fica). Número inválido ⇒ o campo some (D-P13). Sem a conta exata, o texto do E4.
  */
 function textoPrevisao(pv: NonNullable<NonNullable<EstadoPainel['pronto']>['previsao']>, w: number, cabe: number): string {
   const fx = pv.faixa;
@@ -513,7 +513,7 @@ function textoPrevisao(pv: NonNullable<NonNullable<EstadoPainel['pronto']>['prev
   const fe = c?.fechamentoS === null ? 'fechamento não medido' : nn(c?.fechamentoS) !== null ? `fechamento ${fmtFechamento(nn(c?.fechamentoS) as number)}` : null;
   // [texto, ordem de saída] — sai primeiro o de maior número
   const campos: [string | null, number][] = [
-    [caminho === null ? null : `caminho ${caminho} ${caminho === 1 ? 'task' : 'tasks'}`, 3], [mpt === null ? null : `${mpt} min/task`, 2],
+    [caminho === null ? null : `caminho ${caminho} ${caminho === 1 ? 'task' : 'tasks'}`, 3], [mpt === null ? null : `${mpt} min por task`, 2],
     [rod === null ? null : `${rod.toFixed(1).replace('.', ',')} rodada`, 1], [fe, 4],
   ];
   let vivos = campos.filter((x): x is [string, number] => x[0] !== null);

@@ -218,8 +218,8 @@ test('previsao-so-com-base: previsão só com ≥ 3 integradas nesta entrega, di
   assert.doesNotMatch(texto(dois), /previsão/);
   const tres = proj(P(...IDS), [...ciclo('T1', 0), ...ciclo('T2', 10), ...ciclo('T3', 20)]);
   assert.equal(tres.pronto?.previsao?.base, 3);
-  // h.2 (GM-15 T30): faixa (sem fechamento medido, abre em "?") e a base da mesma conta: caminho, min/task, rodada, fechamento
-  assert.match(texto(tres), /^PLANO   ▰+▱+  50%  3\/6 tasks +previsão \d\d:\d\d–\? · caminho 1 task · 6 min\/task · 1,0 rodada · fechamento não medido$/m);
+  // h.2 (GM-15 T30): faixa (sem fechamento medido, abre em "?") e a base da mesma conta: caminho, min por task, rodada, fechamento
+  assert.match(texto(tres), /^PLANO   ▰+▱+  50%  3\/6 tasks +previsão \d\d:\d\d–\? · caminho 1 task · 6 min por task · 1,0 rodada · fechamento não medido$/m);
 });
 
 test('fase-fora-de-entrega: sem plano, a linha FASE mostra n de 7, barra só de ✓, progresso e a trilha', () => {
@@ -1109,8 +1109,8 @@ for (const largura of [120, 80]) {
     assert.match(novo[0], /^GABARITO · GM-14 Clareza para quem usa +esquadrão · terra média$/, 'cabeçalho com o preset à direita; título uma vez (o E4 dizia "GM-14 GM-14")');
     assert.equal((novo[0].match(/GM-14/g) ?? []).length, 1);
     assert.match(t, /^◆ DEPENDE DE VOCÊ {2}1 item\n {2}renovar o certificado \[feito\]$/m, 'DEPENDE');
-    // h.2 (GM-15 T30): em >= 100 col a faixa e a base que cabe ao lado da barra cheia do E4 (em 120 sai a rodada); abaixo, só a faixa
-    const prev = largura >= 100 ? 'previsão \\d\\d:\\d\\d–\\? · caminho 2 tasks · 6 min\\/task · fechamento não medido' : 'previsão \\d\\d:\\d\\d–\\?';
+    // h.2 (GM-15 T30): em >= 100 col a faixa e a base que cabe ao lado da barra cheia do E4 (em 120 saem a rodada e o "min por task"); abaixo, só a faixa
+    const prev = largura >= 100 ? 'previsão \\d\\d:\\d\\d–\\? · caminho 2 tasks · fechamento não medido' : 'previsão \\d\\d:\\d\\d–\\?';
     assert.match(t, new RegExp(`^PLANO {3}▰+▱+ {2}38% {2}3\\/8 tasks +${prev}$`, 'm'), 'PLANO com barra, %, k/N tasks e o status à direita');
     assert.match(t, /^ {2}✓ 3 integradas · 1\.0 rodada média · mediana \d+ min$/m, 'faixa das integradas');
     assert.match(t, /^ {2}● T4 {2}(Tarefa T4 do painel {2})?implementando {2}\S+ +\d+(m|h\d\d)$/m, 'task em voo com estado, nome e tempo');
