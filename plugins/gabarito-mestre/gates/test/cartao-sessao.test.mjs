@@ -850,6 +850,18 @@ describe('cartão em duas vias — hook SessionStart (T7)', () => {
     assert.equal(existsSync(join(dir, '.harness', 'entregas')), false);
     assert.equal(existsSync(join(dir, '.harness', 'heartbeat.json')), false);
   });
+  test('T23 (critério único): sem dist/guarda.js o onboarding não é conferível ⇒ falha fechada (uma linha), mesmo com harness.config.json válido — não há 2ª definição', () => {
+    const raiz = mkdtempSync(join(tmpdir(), 'sem-dist-onb-'));
+    mkdirSync(join(raiz, 'scripts'), { recursive: true });
+    mkdirSync(join(raiz, 'lib'), { recursive: true });
+    for (const f of readdirSync(join(here, '..', 'scripts'))) if (f.endsWith('.mjs')) copyFileSync(join(here, '..', 'scripts', f), join(raiz, 'scripts', f));
+    for (const f of readdirSync(join(here, '..', 'lib'))) copyFileSync(join(here, '..', 'lib', f), join(raiz, 'lib', f));
+    const dir = repoGit({ ...CACHE_123 });
+    const r = spawnSync(process.execPath, [join(raiz, 'scripts', 'cartao-sessao.mjs'), '--root', dir, '--plugin-root', pluginFalso(), '--agora', AGORA], { cwd: dir, encoding: 'utf8', env: { ...process.env, GABARITO_INSTALLED_PLUGINS: '/nao/existe.json' } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout.trim().split('\n').length, 1, r.stdout);
+    assert.match(r.stdout, /sem onboarding/);
+  });
   test('sem --hook a CLI de texto continua igual e não grava diário', () => {
     const dir = repoGit({ ...CACHE_123 });
     const r = spawnSync(process.execPath, [SCRIPT, '--root', dir, '--plugin-root', pluginFalso(), '--agora', AGORA], { cwd: dir, encoding: 'utf8', env: { ...process.env, GABARITO_INSTALLED_PLUGINS: '/nao/existe.json' } });

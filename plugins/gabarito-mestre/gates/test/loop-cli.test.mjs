@@ -5482,7 +5482,7 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
     assert.match(painel(com), /limpar a conversa/);
   });
 
-  test('pouso-onboarding-le-config-local (FIEL-14 h; GM-15 T23, critério da guarda): config em origin/HEAD com a local vazia ⇒ pendente; sem config em lugar nenhum ⇒ não pendente', () => {
+  test('pouso-onboarding-criterio-da-guarda (FIEL-14 h; GM-15 T23): config só em origin/HEAD (sem a local) ⇒ pendente; sem config em lugar nenhum ⇒ não pendente', () => {
     const amb = semConfig(plano1());
     comOrigin(amb, ONBOARDING);
     assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
