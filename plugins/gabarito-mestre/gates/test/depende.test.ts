@@ -14,7 +14,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dependeDe, ideiasAbertas, pendenciaAberta } from '../src/depende.ts';
+import { dependeDe, ideiasAbertas, pendenciaAberta, proximaEntrega } from '../src/depende.ts';
 import { dependeDeVoce } from '../src/painel.ts';
 import { trilhaDe } from '../src/trilha.ts';
 import type { FatosTrilha, Trilha } from '../src/trilha.ts';
@@ -508,4 +508,16 @@ test('opcao-agora-nao-nao-e-adiamento (review r1 MINOR-2): resposta com `opcao` 
   const adiada = expandir([pend, { t: 'dono.resposta', s: 'sessao-dono', d: { pergunta: 'sessao-a:1', rotulo: 'agora não' } } as C]);
   assert.deepEqual([...adiadas(adiada)], ['sessao-a:1']);
   assert.deepEqual(pendenciaAberta(adiada, adiada[0]), { id: 'sessao-a:1', texto: 'renovar o domínio' });
+});
+
+// ── GM-15 T8 (REQ-ENT-1 d i): a próxima entrega, regra pura ──────────────────────────────────────────────────────────────────────────────
+test('proxima-entrega-pura: spec sem encerramento mais nova pelo nome; id inseguro e encerrada fora; entrada torta nunca lança', () => {
+  const sp = (caminho: string, pbi: string | null, titulo = 'T') => ({ caminho, pbi, titulo, sha256: '', secoes: 1 });
+  const specs = [sp('docs/a/2026-01-01-x.md', 'GM-1'), sp('docs/a/2026-03-01-y.md', 'GM-3', 'Painel `x` com_tema'), sp('docs/a/2026-02-01-z.md', 'GM-2'),
+    sp('docs/a/2026-04-01-w.md', 'GM 4'), sp('docs/a/2026-05-01-v.md', null)];
+  assert.deepEqual(proximaEntrega(specs, new Set(), []), { tipo: 'spec', texto: 'GM-3 Painel x com tema', acoes: [{ rotulo: 'seguir', comando: '/gabarito-mestre:gabarito-loop' }] });
+  assert.equal(proximaEntrega(specs, new Set(['GM-3']), []).texto, 'GM-2 T', 'a encerrada nunca é oferecida (M8b)');
+  assert.doesNotMatch(proximaEntrega(specs, new Set(), []).texto, REGEX_TECNICA);
+  for (const torto of [null, 7, 'x', [null, 1, { pbi: 'GM-9' }]]) assert.equal(proximaEntrega(torto, new Set(), null).tipo, 'nenhuma');
+  assert.deepEqual(proximaEntrega([], new Set(), 'diario torto'), { tipo: 'nenhuma', texto: 'nenhuma próxima anotada', acoes: [] });
 });

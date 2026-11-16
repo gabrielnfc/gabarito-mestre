@@ -13,7 +13,8 @@ import { projetarEmendas } from './emenda.ts';
 import { ehRespostaDeAdiamento, formaInvalida, ID_PERGUNTA_RE } from './formas.ts';
 import { AGORA_NAO_TETO } from './pouso.ts';
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.ts';
-import type { Acao, Evento, ItemDepende } from './tipos.ts';
+import { cmp } from './diario-puro.ts';
+import type { Acao, Evento, ItemDepende, Proxima } from './tipos.ts';
 import { idDaBranch } from './trilha.ts';
 import type { Trilha } from './trilha.ts';
 
@@ -147,6 +148,37 @@ function higienizar(texto: string): string {
   const t = texto.replace(/`/g, '').replace(/--+/g, ' ').replace(/\/[a-z]/g, (m) => ` ${m[1]}`).replace(/\bnode\b/g, 'no')
     .replace(/([A-Za-z0-9])[_.]([A-Za-z0-9])/g, '$1 $2').replace(/([A-Za-z0-9])[_.]([A-Za-z0-9])/g, '$1 $2').replace(/\s+/g, ' ').trim();
   return t === '' ? 'uma pendência' : t;
+}
+
+/** GM-15 T8 (REQ-ENT-1 d i): o botão "seguir" da próxima entrega abre o loop (a skill que conduz a entrega a partir da spec e do plano). */
+export const CMD_SEGUIR = '/gabarito-mestre:gabarito-loop';
+export const NENHUMA_PROXIMA = 'nenhuma próxima anotada';
+
+/**
+ * GM-15 T8 (REQ-ENT-1 d i): a próxima entrega, nesta ordem: (1) a spec com `PBI:` (id seguro) cuja entrega não tem `entrega.encerrada` vigente, a mais
+ * nova pelo nome do arquivo (as specs levam a data no nome); (2) as ideias para a próxima anotadas na entrega encerrada (`eventos`, a regra única
+ * `ideiasAbertas`, sem as do orquestrador, que são lembrete dele); (3) "nenhuma próxima anotada", sem botão. `encerradas` = ids com encerramento vigente
+ * (inclui a própria entregue). O título passa pela higiene de linguagem do DEPENDE. Puro, nunca lança.
+ */
+export function proximaEntrega(specs: unknown, encerradas: ReadonlySet<string>, eventos: unknown): Proxima {
+  const seguir = [{ rotulo: 'seguir', comando: CMD_SEGUIR }];
+  const candidatas = (Array.isArray(specs) ? specs : [])
+    .map((x) => obj(x))
+    .filter((x) => typeof x.pbi === 'string' && ENTREGA_SEGURA.test(x.pbi) && typeof x.caminho === 'string' && !encerradas.has(x.pbi))
+    .sort((a, b) => cmp(a.caminho as string, b.caminho as string));
+  const nova = candidatas[candidatas.length - 1];
+  if (nova !== undefined) {
+    const titulo = typeof nova.titulo === 'string' && nova.titulo.trim() !== '' ? higienizar(nova.titulo) : '';
+    return { tipo: 'spec', texto: titulo === '' ? (nova.pbi as string) : `${nova.pbi as string} ${titulo}`, acoes: seguir };
+  }
+  let evs: Evento[] = [];
+  try {
+    const ord = Array.isArray(eventos) ? ordenar(eventos as Evento[]) : { ok: false as const };
+    if (ord.ok) evs = ord.eventos;
+  } catch { evs = []; }
+  const ideias = ideiasAbertas(evs.filter((e) => !notaDoOrquestrador(e)));
+  if (ideias !== null && ideias.n > 0) return { tipo: 'ideias', texto: textoIdeias(ideias.n), acoes: seguir };
+  return { tipo: 'nenhuma', texto: NENHUMA_PROXIMA, acoes: [] };
 }
 
 /** D-G12 (emenda 16 r.13): sem item que trave, 1 linha com este texto literal. */

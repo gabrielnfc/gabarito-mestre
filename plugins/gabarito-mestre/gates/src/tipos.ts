@@ -315,7 +315,15 @@ export type EstadoPainel = {
   desatualizadoS?: number | null;
   /** Fontes que falharam (nomes naturais), para o DEPENDE nunca dizer "nada" com falha. */
   fontesFalhas?: string[];
+  /** GM-15 T8 (REQ-ENT-1 d): a entrega com `entrega.encerrada` vigente (a da branch ou, sem ela, a última conhecida); `versao` X.Y.Z ou `null`. Presente ⇒ o painel é 1 linha. */
+  entregue?: Entregue | null;
+  /** GM-15 T8 (REQ-ENT-1 d i): a próxima entrega oferecida com a entregue; `acoes` traz o botão "seguir" (vazia em `nenhuma`). */
+  proxima?: Proxima | null;
 };
+/** GM-15 T8 (REQ-ENT-1 d). */
+export type Entregue = { id: string; versao: string | null };
+/** GM-15 T8: na ordem, a spec com `PBI:` sem `entrega.encerrada` mais nova, as ideias para a próxima ou nenhuma. `texto` em linguagem natural. */
+export type Proxima = { tipo: 'spec' | 'ideias' | 'nenhuma'; texto: string; acoes: Acao[] };
 /** Papel de quem aparece no AGORA e no RECENTE; o executivo troca o nome por `PAPEL_EXECUTIVO[papel]` (FIEL-12). */
 export type PapelPainel = 'orquestrador' | 'implementador' | 'correcao' | 'spike' | 'revisor' | 'sombra' | 'teste';
 /** `nome` = nome temático (só com dados da sessão; FIEL-4); `null` ⇒ o render usa o papel. */
