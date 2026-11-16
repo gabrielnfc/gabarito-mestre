@@ -179,8 +179,14 @@ export function estadoDe(eventosDaTask: Evento[]): { estado: EstadoTask; rodada:
 
 type EstadoRodada = { estado: EstadoTask; rodada: number };
 
-/** Estado por task, ou `null` se algum evento sai do plano, do contrato de `dados` ou da tabela. */
-function projetar(plano: Plano, eventos: Evento[]): { estados: Map<string, EstadoRodada>; ciVermelhos: number } | null {
+/**
+ * Causas de `estadoDe` que atingem só a task dela (GM-15 T25, REQ-HIG-1 D; aprendizado 585): `task.reaberta` com `origem` ou `de` fora da lista, já gravada.
+ * O `append` a recusa (T1); o que já está no diário não invalida o diário inteiro. Qualquer outra causa segue derrubando a projeção.
+ */
+const CAUSAS_DA_TASK: readonly string[] = ['origem inválida', 'de inválido'];
+
+/** Estado por task, ou `null` se algum evento sai do plano, do contrato de `dados` ou da tabela. A task com reabertura de origem inválida sai de `estados` e entra em `invalidas` com a causa. */
+function projetar(plano: Plano, eventos: Evento[]): { estados: Map<string, EstadoRodada>; ciVermelhos: number; invalidas: Map<string, string> } | null {
   const porTask = new Map<string, Evento[]>();
   for (const t of plano.tasks) porTask.set(t.id, []);
   let ciVermelhos = 0;
@@ -198,12 +204,24 @@ function projetar(plano: Plano, eventos: Evento[]): { estados: Map<string, Estad
     }
   }
   const estados = new Map<string, EstadoRodada>();
+  const invalidas = new Map<string, string>();
   for (const [id, fila] of porTask) {
     const r = estadoDe(fila);
-    if ('invalido' in r) return null;
+    if ('invalido' in r) {
+      if (!CAUSAS_DA_TASK.includes(r.invalido)) return null;
+      invalidas.set(id, r.invalido);
+      continue;
+    }
     estados.set(id, r);
   }
-  return { estados, ciVermelhos };
+  return { estados, ciVermelhos, invalidas };
+}
+
+/** Tasks do plano cuja reabertura gravada tem `origem`/`de` fora da lista, com a causa (REQ-HIG-1 D). Diário que não projeta ⇒ vazio (quem decide é `proximaAcao`). */
+export function tasksInvalidas(plano: Plano, eventos: Evento[]): Map<string, string> {
+  const ord = ordenar(eventos);
+  const proj = ord.ok ? projetar(plano, ord.eventos) : null;
+  return proj === null ? new Map() : proj.invalidas;
 }
 
 const de = (estados: Map<string, EstadoRodada>, id: string): EstadoTask | undefined => estados.get(id)?.estado;
@@ -297,6 +315,7 @@ export function foraPermitido(plano: Plano, eventos: Evento[], task: string): Fo
   const ord = ordenar(eventos);
   const proj = ord.ok ? projetar(plano, ord.eventos) : null;
   if (!proj) return { ok: false, motivo: 'diario_invalido' };
+  if (proj.invalidas.has(task)) return { ok: false, motivo: 'diario_invalido' };
   const e = proj.estados.get(task);
   if (e === undefined) return { ok: false, motivo: 'task_desconhecida' };
   if (!FORA_PERMITIDO.includes(e.estado)) return { ok: false, motivo: 'estado', estado: e.estado };
@@ -304,11 +323,14 @@ export function foraPermitido(plano: Plano, eventos: Evento[], task: string): Fo
   return dependentes.length > 0 ? { ok: false, motivo: 'dependentes', dependentes } : { ok: true };
 }
 
-export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais & { pousoPendente?: boolean }): AcaoLoop {
+export function proximaAcao(planoInteiro: Plano, eventos: Evento[], sinais: Sinais & { pousoPendente?: boolean }): AcaoLoop {
   // (1)
   const ord = ordenar(eventos);
-  const proj = ord.ok ? projetar(plano, ord.eventos) : null;
+  const proj = ord.ok ? projetar(planoInteiro, ord.eventos) : null;
   if (!proj) return { tipo: 'parar', motivo: 'diario_invalido' };
+  // REQ-HIG-1 D: a task com reabertura de origem inválida não anda e não conta como feita; as demais seguem. Dependente dela nunca tem a dependência liberada.
+  const { invalidas } = proj;
+  const plano: Plano = invalidas.size === 0 ? planoInteiro : { ...planoInteiro, tasks: planoInteiro.tasks.filter((t) => !invalidas.has(t.id)) };
   // (2)
   if (sinais.pausado) return { tipo: 'esperar', motivo: 'pausado' };
   // (3)
@@ -326,19 +348,20 @@ export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais & { 
   // barrou o diário fora da tabela: `pendenciasAprendizado` devolve `[]` nele e nunca é lido como "sem pendência".
   // GM-14 T27 (FIEL-2 b): a pendência `dono` (conversa) não trava despacho nem integração; só `pousar` e `concluir` a esperam, porque o diário
   // guarda hash e tamanho, nunca o texto, e depois do `/clear` ela só fecharia às cegas. O filtro mora aqui, nunca em `pendenciasAprendizado`.
-  const pendencias = pendenciasAprendizado(plano, ord.eventos);
+  const pendencias = pendenciasAprendizado(planoInteiro, ord.eventos);
   const aprender = (): AcaoLoop => ({ tipo: 'aprender', pendencias });
   if (pendencias.some((p) => p.tipo !== 'dono')) return aprender();
   const donoAberto = pendencias.length > 0;
   // Plano vazio não é sucesso: nada foi entregue.
-  if (plano.tasks.length === 0) return { tipo: 'parar', motivo: 'nao_conseguiu' };
+  if (planoInteiro.tasks.length === 0) return { tipo: 'parar', motivo: 'nao_conseguiu' };
   // REQ-ENT-2: o alvo é só o que não está fora; plano com tudo fora também não entregou nada.
+  if (plano.tasks.length === 0) return { tipo: 'parar', motivo: 'nao_conseguiu', task: [...invalidas.keys()][0] }; // só sobrou task inválida (REQ-HIG-1 D)
   if (plano.tasks.every((t) => FORA.includes(de(proj.estados, t.id) as EstadoTask))) return { tipo: 'parar', motivo: 'nao_conseguiu' };
 
   const { estados } = proj;
   const est = (id: string): EstadoRodada => estados.get(id) as EstadoRodada;
   const ids = plano.tasks.map((t) => t.id);
-  const { congeladas, abertas } = congelamento(plano, ord.eventos);
+  const { congeladas, abertas } = congelamento(planoInteiro, ord.eventos);
   // REQ-AUT-1: a retomada é de 1 vez por task, contada no diário inteiro; só a origem `retomada` gasta (o dono e a Sombra não).
   const retomadas = (id: string): number => ord.eventos.filter((e) => e.tipo === 'task.reaberta' && e.dados?.task === id && e.dados?.origem === 'retomada').length;
   const orfa = (): string | undefined => ids.find((id) => EM_VOO.includes(est(id).estado));
@@ -385,6 +408,12 @@ export function proximaAcao(plano: Plano, eventos: Evento[], sinais: Sinais & { 
   const itens = [...correcoes, ...revisores, ...novas];
   if (itens.length > 0) {
     return capacidade >= 1 ? despachar(itens) : { tipo: 'esperar', motivo: 'sem slot livre' };
+  }
+
+  // (7b) Sobrou só o que a task inválida segura: nunca `concluir` (ela não foi entregue); com agente vivo espera, sem ele para e nomeia a task.
+  if (invalidas.size > 0) {
+    if (sinais.vivos > 0) return { tipo: 'esperar', motivo: 'agentes vivos' };
+    return { tipo: 'parar', motivo: 'nao_conseguiu', task: [...invalidas.keys()][0] };
   }
 
   // (8) Tudo integrado: com proposta aberta a spec está em disputa, então nem `concluir` nem entrega (REQ-EME-2).

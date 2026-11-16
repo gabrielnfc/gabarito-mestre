@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { CHAVES_DE_EVENTO, estadoDe, foraPermitido, ordenar, podeIntegrar, proximaAcao as proximaAcaoNucleo, tasksCongeladas, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK, TRANSICOES } from '../src/loop.ts';
+import { CHAVES_DE_EVENTO, estadoDe, foraPermitido, ordenar, podeIntegrar, proximaAcao as proximaAcaoNucleo, tasksCongeladas, tasksInvalidas, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK, TRANSICOES } from '../src/loop.ts';
 import { fecharPendencias } from './_adaptador-helpers.mjs';
 import * as diarioFs from '../src/diario.ts';
 import { projetarEmendas, reqsCongelados, SESSAO_EMENDAS } from '../src/emenda.ts';
@@ -566,8 +566,12 @@ test('retomada-nao-apaga-concluida-nem-veredito', () => {
   assert.deepEqual(proximaAcao(plano(['a']), diario(...pronta('a'), retomada('a')), sinais()), { tipo: 'concluir' });
 });
 test('reaberta-invalida', () => {
-  for (const d of [{ task: 'a' }, { task: 'a', origem: 'orquestrador' }, { task: 'zz', origem: 'dono' }, { task: 'zz', origem: 'retomada' }, { origem: 'dono' }]) {
+  // task fora do plano ou sem `task` segue derrubando o diário; origem fora da lista numa task do plano afeta só ela (GM-15 T25, REQ-HIG-1 D: ver `reaberta-invalida-gravada-afeta-so-a-task`)
+  for (const d of [{ task: 'zz', origem: 'dono' }, { task: 'zz', origem: 'retomada' }, { origem: 'dono' }]) {
     assert.deepEqual(proximaAcao(plano(['a']), diario(['task.reaberta', d]), sinais()), invalido, JSON.stringify(d));
+  }
+  for (const d of [{ task: 'a' }, { task: 'a', origem: 'orquestrador' }]) {
+    assert.deepEqual(proximaAcao(plano(['a']), diario(['task.reaberta', d]), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' }, JSON.stringify(d));
   }
 });
 // integrada sem aprovação
@@ -1997,4 +2001,27 @@ test('acao-retomar-na-uniao: AcaoLoop de tipos.ts tem { tipo: retomar; task } e 
   assert.doesNotMatch(loop, /as unknown as AcaoLoop/);
   // o comportamento segue: a 1ª morte pede retomar
   assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a')), sinais()), { tipo: 'retomar', task: 'a' });
+});
+
+// GM-15 T25 (REQ-HIG-1 D; aprendizado 585): `task.reaberta` com origem fora da lista, JÁ gravada, afeta só a task dela (a causa nomeada), nunca o diário inteiro.
+const reabRuim = (task: string, origem: unknown = 'xpto', de?: unknown): [TipoEvento, Record<string, unknown>] => ['task.reaberta', { task, origem, ...(de === undefined ? {} : { de }) }];
+test('reaberta-invalida-gravada-afeta-so-a-task: a task dela não anda e nomeia a causa; as outras seguem; só sem outra coisa a fazer para, nomeando a task', () => {
+  const p = plano(['a'], ['b'], ['c', ['a']]);
+  const evsA = diario(ini('a'), reabRuim('a'));
+  assert.deepEqual(tasksInvalidas(p, evsA), new Map([['a', 'origem inválida']]), 'a causa é nomeada, por task');
+  assert.deepEqual(tasksInvalidas(p, diario(ini('a'))), new Map(), 'controle: diário sem o evento ruim não tem task inválida');
+  // b independente segue sendo despachada; a (inválida) e c (depende dela) não
+  assert.deepEqual(proximaAcao(p, evsA, sinais()), { tipo: 'despachar', itens: [{ task: 'b', papel: 'implementador' }] });
+  // b em voo: espera, não para
+  assert.deepEqual(proximaAcao(p, diario(ini('a'), reabRuim('a'), ini('b')), sinais({ vivos: 1 })), { tipo: 'esperar', motivo: 'agentes vivos' });
+  // b pronta e o resto bloqueado pela inválida: para nomeando a task, nunca `concluir` nem diario_invalido
+  assert.deepEqual(proximaAcao(p, diario(ini('a'), reabRuim('a'), ...pronta('b')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+  // a variante `de` fora da lista tem o mesmo efeito
+  assert.deepEqual(tasksInvalidas(p, diario(fora('a'), reabRuim('a', 'dono', 'x'))), new Map([['a', 'de inválido']]));
+  // o resto do diário continua exigindo a tabela: outro defeito segue sendo diario_invalido, mesmo com uma task inválida
+  assert.deepEqual(proximaAcao(p, diario(reabRuim('a'), ['task.iniciada', { task: 'b' }]), sinais()), { tipo: 'parar', motivo: 'diario_invalido' });
+  // podeIntegrar e foraPermitido não tratam a task inválida como integrável nem como fora
+  assert.equal(podeIntegrar(p, diario(ini('a'), reabRuim('a')), 'a'), false);
+  assert.deepEqual(foraPermitido(p, evsA, 'a'), { ok: false, motivo: 'diario_invalido' });
+  assert.equal(foraPermitido(p, evsA, 'b').ok, true, 'a outra task segue podendo sair');
 });
