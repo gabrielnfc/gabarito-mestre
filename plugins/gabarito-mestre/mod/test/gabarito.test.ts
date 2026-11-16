@@ -1909,6 +1909,19 @@ test('orfa-reabre-e-abre-turno: 0 vivos, 0 a caminho, sem pausa, sem parar ⇒ t
   expect(m.est.submits[0]).toContain('gabarito-loop')
   expect(parou(m)).toHaveLength(0)
 })
+// GM-15 T25 (review r1 MAJOR-2): reabertura de origem inválida numa task (aqui `b`) não derruba o diário para o mod: a órfã `a` é reaberta e o despacho não é negado.
+const B_RUIM = ['task.reaberta', { task: 'b', origem: 'xpto' }] as [string, Record<string, unknown>]
+test('orfa-com-outra-task-invalida-reabre (GM-15 T25): a reabertura de origem inválida de b afeta só b; a órfã a é reaberta e abre turno', async ($, on) => {
+  const m = mundo($, on, { eventos: aposB(B_RUIM, A_INI) })
+  await m.inicio()
+  await recuperar(m)
+  expect(reabertas(m)).toEqual([ORQ_RETOMADA])
+  expect(m.est.submits).toHaveLength(1)
+})
+test('agent-permitido-com-outra-task-invalida (GM-15 T25): a leitura de pendência não nega por causa da task inválida', async ($, on) => {
+  const m = mundo($, on, { percent: 49, eventos: aposB(B_RUIM) })
+  expect((await m.agent('gabarito-implementador')).deny).toBeUndefined()
+})
 test('orfa-nao-pousa-no-mesmo-turno: com contexto acima de X o turno aberto vem antes de qualquer pouso', async ($, on) => {
   const m = mundo($, on, { eventos: ORFA, percent: 60 })
   await m.inicio()

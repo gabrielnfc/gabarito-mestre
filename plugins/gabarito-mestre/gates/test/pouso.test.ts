@@ -224,6 +224,14 @@ test('tasks-em-voo-por-estado: implementando, corrigindo e em_revisao contam; os
   );
   assert.deepEqual(r, { ok: true, tasks: ['a', 'b', 'c'] });
 });
+test('tasks-em-voo-com-task-invalida (GM-15 T25, MAJOR-2): reabertura de origem inválida em `a` afeta só `a`; `b` em voo segue contada e o pouso/o mod não veem diário inválido', () => {
+  const ruim: [TipoEvento, Record<string, unknown>] = ['task.reaberta', { task: 'a', origem: 'xpto' }];
+  assert.deepEqual(emVoo(iniP('a', 'implementador'), ruim, iniP('b', 'implementador')), { ok: true, tasks: ['b'] });
+  assert.deepEqual(emVoo(iniP('a', 'implementador'), ruim), { ok: true, tasks: [] }, 'sem outra task em voo, o pouso é permitido');
+  // controle: outro defeito do diário segue sendo diário inválido
+  const r = emVoo(iniP('a', 'implementador'), ['task.integrada', { task: 'b', sha: 'x' }]);
+  assert.equal(r.ok, false);
+});
 test('tasks-em-voo-nenhuma: aprovada, integrada, reprovada, pendente e diário vazio dão lista vazia', () => {
   assert.deepEqual(emVoo(), { ok: true, tasks: [] });
   assert.deepEqual(emVoo(ini('a'), con('a'), ver('a')), { ok: true, tasks: [] });

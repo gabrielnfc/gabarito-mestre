@@ -13,7 +13,7 @@
  * - 2+ specs da entrega ⇒ spec `?` e `ambigua`, até uma `dono.resposta` com o título ou o caminho de uma delas, posterior à
  *   entrada da última spec do conjunto (DP-2 ajuste 2); a escolhida passa a ser "a spec".
  */
-import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.js';
+import { estadosPorTask, ordenar } from './loop.js';
 import { shaAceito } from './emenda.js';
                                          
 
@@ -225,14 +225,15 @@ function escolhaDaSpec(evs          , specs            )                  {
   return null;
 }
 
-/** Integradas do plano; `null` se algum ciclo de task do diário é impossível (diário inválido para a execução). */
+/**
+ * Integradas do plano; `null` se algum ciclo de task do diário é impossível (diário inválido para a execução). Reabertura de origem inválida afeta só a task
+ * dela (GM-15 T25, MAJOR-2: `estadosPorTask`, a regra única de `proximaAcao` e do pouso): ela não conta como integrada e as outras seguem contadas.
+ */
 function integradas(tasks          , evs          )                {
+  const r = estadosPorTask(tasks, evs, true);
+  if (!r.ok) return null;
   let n = 0;
-  for (const id of tasks) {
-    const r = estadoDe(evs.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && obj(e.dados).task === id));
-    if ('invalido' in r) return null;
-    if (r.estado === 'integrada') n++;
-  }
+  for (const est of r.estados.values()) if (est.estado === 'integrada') n++;
   return n;
 }
 

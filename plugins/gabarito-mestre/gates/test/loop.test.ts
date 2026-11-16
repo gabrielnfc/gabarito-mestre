@@ -2025,3 +2025,19 @@ test('reaberta-invalida-gravada-afeta-so-a-task: a task dela não anda e nomeia 
   assert.deepEqual(foraPermitido(p, evsA, 'a'), { ok: false, motivo: 'diario_invalido' });
   assert.equal(foraPermitido(p, evsA, 'b').ok, true, 'a outra task segue podendo sair');
 });
+
+// GM-15 T25 (review r1 MAJOR-1): a task inválida só para o loop quando nada mais é acionável; a recuperação das outras (retomada, teto, emenda) vem antes.
+test('reaberta-invalida-nao-bloqueia-a-recuperacao-das-outras: b órfã ⇒ retomar b; b no teto ⇒ teto_rodadas b; emenda aberta ⇒ esperar emenda; b em voo ⇒ esperar', () => {
+  const p = plano(['a'], ['b']);
+  const ruim = ['task.reaberta', { task: 'a', origem: 'xpto' }] as [TipoEvento, Record<string, unknown>];
+  assert.deepEqual(proximaAcao(p, diario(ini('a'), ruim, ini('b')), sinais()), { tipo: 'retomar', task: 'b' }, 'órfã de outra task é retomada');
+  assert.deepEqual(proximaAcao(p, diario(ini('a'), ruim, ini('b'), retomada('b'), ini('b')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'b' }, 'já retomada 1x: a causa é a b, não a inválida');
+  assert.deepEqual(proximaAcao(p, diario(ini('a'), ruim, ...noTeto('b')), sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'b' }, 'b no teto mantém o teto_rodadas');
+  assert.deepEqual(proximaAcao(p, diario(ini('a'), ruim, ini('b')), sinais({ vivos: 1 })), { tipo: 'esperar', motivo: 'agentes vivos' });
+  const pr = planoR(T('T1', [], ['REQ-A-1']), T('T2', []));
+  const evs = [...diarioT(ini('T2'), ['task.reaberta', { task: 'T2', origem: 'xpto' }], ...pronta('T1')), prop(1, 'REQ-A-1')];
+  const a = proximaAcao(pr, evs, sinais());
+  assert.deepEqual([a.tipo, (a as { motivo?: string }).motivo], ['esperar', 'emenda'], 'a espera de emenda continua valendo');
+  // controle: resolvida a emenda, o que resta é só a inválida ⇒ para nomeando-a
+  assert.deepEqual(proximaAcao(pr, [...diarioT(ini('T2'), ['task.reaberta', { task: 'T2', origem: 'xpto' }], ...pronta('T1'))], sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'T2' });
+});

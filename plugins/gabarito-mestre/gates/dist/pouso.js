@@ -1,4 +1,4 @@
-import { estadoDe, ordenar } from './loop.js';
+import { estadosPorTask, ordenar } from './loop.js';
                                             
                                                           
 import { leituraPropria, pousoPendente,              } from './pouso-pendente.js';
@@ -148,20 +148,12 @@ export function tasksEmVoo(plano         , eventos         )                    
     return { ok: false, motivo: 'diário ilegível' };
   }
   if (!ord.ok) return { ok: false, motivo: 'diário fora de ordem' };
-  const porTask = new Map                  (tasks.map((t) => [t.id, []]));
-  for (const e of ord.eventos) {
-    if (!TIPOS_DE_TASK.includes(e.tipo)) continue;
-    const t = e.dados !== null && typeof e.dados === 'object' ? e.dados.task : undefined;
-    const fila = typeof t === 'string' ? porTask.get(t) : undefined;
-    if (fila === undefined) return { ok: false, motivo: 'evento de task fora do plano' };
-    fila.push(e);
-  }
+  // GM-15 T25 (MAJOR-2): a regra única de validade por task (`estadosPorTask`, a mesma de `proximaAcao` e da trilha): reabertura de origem inválida
+  // afeta só a task dela (não está em voo e não trava o pouso); qualquer outro defeito segue sendo diário inválido.
+  const r = estadosPorTask(tasks.map((t) => t.id), ord.eventos);
+  if (!r.ok) return { ok: false, motivo: r.motivo === 'fora_do_plano' ? 'evento de task fora do plano' : `diário fora da tabela de transições (task ${r.task})` };
   const voo           = [];
-  for (const [id, fila] of porTask) {
-    const r = estadoDe(fila);
-    if ('invalido' in r) return { ok: false, motivo: `diário fora da tabela de transições (task ${id})` };
-    if (EM_VOO.includes(r.estado)) voo.push(id);
-  }
+  for (const [id, est] of r.estados) if (EM_VOO.includes(est.estado)) voo.push(id);
   return { ok: true, tasks: voo };
 }
 

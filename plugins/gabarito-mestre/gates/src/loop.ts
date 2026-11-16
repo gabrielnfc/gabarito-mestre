@@ -185,10 +185,43 @@ type EstadoRodada = { estado: EstadoTask; rodada: number };
  */
 const CAUSAS_DA_TASK: readonly string[] = ['origem inválida', 'de inválido'];
 
+/**
+ * A regra ÚNICA de validade por task (GM-15 T25 MAJOR-2): `proximaAcao`, `tasksEmVoo` (pouso, `loop.mjs pousar` e o mod) e a trilha usam esta função.
+ * `eventos` já ordenados. Evento de task fora de `ids` ⇒ `fora_do_plano` (ou ignorado com `ignorarFora`, como a trilha faz); causa que atinge só a task
+ * ⇒ `invalidas` (task → causa, sem estado); qualquer outro defeito ⇒ `tabela` com a task.
+ */
+export type EstadosPorTask =
+  | { ok: true; estados: Map<string, EstadoRodada>; invalidas: Map<string, string> }
+  | { ok: false; motivo: 'fora_do_plano' }
+  | { ok: false; motivo: 'tabela'; task: string };
+export function estadosPorTask(ids: readonly string[], eventosOrdenados: Evento[], ignorarFora = false): EstadosPorTask {
+  const porTask = new Map<string, Evento[]>(ids.map((id) => [id, []]));
+  for (const e of eventosOrdenados) {
+    if (!TIPOS_DE_TASK.includes(e.tipo)) continue;
+    const t = e.dados !== null && typeof e.dados === 'object' ? (e.dados as Record<string, unknown>).task : undefined;
+    const fila = typeof t === 'string' ? porTask.get(t) : undefined;
+    if (fila === undefined) {
+      if (ignorarFora) continue;
+      return { ok: false, motivo: 'fora_do_plano' };
+    }
+    fila.push(e);
+  }
+  const estados = new Map<string, EstadoRodada>();
+  const invalidas = new Map<string, string>();
+  for (const [id, fila] of porTask) {
+    const r = estadoDe(fila);
+    if ('invalido' in r) {
+      if (!CAUSAS_DA_TASK.includes(r.invalido)) return { ok: false, motivo: 'tabela', task: id };
+      invalidas.set(id, r.invalido);
+      continue;
+    }
+    estados.set(id, r);
+  }
+  return { ok: true, estados, invalidas };
+}
+
 /** Estado por task, ou `null` se algum evento sai do plano, do contrato de `dados` ou da tabela. A task com reabertura de origem inválida sai de `estados` e entra em `invalidas` com a causa. */
 function projetar(plano: Plano, eventos: Evento[]): { estados: Map<string, EstadoRodada>; ciVermelhos: number; invalidas: Map<string, string> } | null {
-  const porTask = new Map<string, Evento[]>();
-  for (const t of plano.tasks) porTask.set(t.id, []);
   let ciVermelhos = 0;
   for (const e of eventos) {
     if (e.tipo === 'ci.resultado') {
@@ -197,24 +230,11 @@ function projetar(plano: Plano, eventos: Evento[]): { estados: Map<string, Estad
       // CI de homolog é da entrega (T4/T8), não do loop: não soma nem zera os vermelhos. Só `homolog` exato sai da conta.
       if (dados.alvo === 'homolog') continue;
       ciVermelhos = dados.verde ? 0 : ciVermelhos + 1;
-    } else if (TIPOS_DE_TASK.includes(e.tipo)) {
-      const fila = porTask.get((e.dados ?? {}).task as string);
-      if (!fila) return null;
-      fila.push(e);
     }
   }
-  const estados = new Map<string, EstadoRodada>();
-  const invalidas = new Map<string, string>();
-  for (const [id, fila] of porTask) {
-    const r = estadoDe(fila);
-    if ('invalido' in r) {
-      if (!CAUSAS_DA_TASK.includes(r.invalido)) return null;
-      invalidas.set(id, r.invalido);
-      continue;
-    }
-    estados.set(id, r);
-  }
-  return { estados, ciVermelhos, invalidas };
+  const r = estadosPorTask(plano.tasks.map((t) => t.id), eventos);
+  if (!r.ok) return null;
+  return { estados: r.estados, ciVermelhos, invalidas: r.invalidas };
 }
 
 /** Tasks do plano cuja reabertura gravada tem `origem`/`de` fora da lista, com a causa (REQ-HIG-1 D). Diário que não projeta ⇒ vazio (quem decide é `proximaAcao`). */
@@ -410,17 +430,12 @@ export function proximaAcao(planoInteiro: Plano, eventos: Evento[], sinais: Sina
     return capacidade >= 1 ? despachar(itens) : { tipo: 'esperar', motivo: 'sem slot livre' };
   }
 
-  // (7b) Sobrou só o que a task inválida segura: nunca `concluir` (ela não foi entregue); com agente vivo espera, sem ele para e nomeia a task.
-  if (invalidas.size > 0) {
-    if (sinais.vivos > 0) return { tipo: 'esperar', motivo: 'agentes vivos' };
-    return { tipo: 'parar', motivo: 'nao_conseguiu', task: [...invalidas.keys()][0] };
-  }
-
   // (8) Tudo integrado: com proposta aberta a spec está em disputa, então nem `concluir` nem entrega (REQ-EME-2).
   const esperaEmenda = (): AcaoLoop => ({ tipo: 'esperar', motivo: 'emenda', propostas: abertas });
   if (ids.every((id) => est(id).estado === 'integrada' || FORA.includes(est(id).estado))) {
     if (abertas.length > 0) return esperaEmenda();
-    return donoAberto ? aprender() : { tipo: 'concluir' };
+    // Com task inválida o resto está pronto, mas a entrega não: nunca `concluir`; cai no (9), que espera agente vivo e só para quando nada mais é acionável.
+    if (invalidas.size === 0) return donoAberto ? aprender() : { tipo: 'concluir' };
   }
 
   // (9)
@@ -435,7 +450,11 @@ export function proximaAcao(planoInteiro: Plano, eventos: Evento[], sinais: Sina
   if (morta !== undefined) return { tipo: 'parar', motivo: 'nao_conseguiu', task: morta };
   // Só espera o dono quando TUDO que falta está congelado; uma task fora do congelamento que ninguém despacha está presa.
   const faltam = ids.filter((id) => est(id).estado !== 'integrada' && !FORA.includes(est(id).estado));
+  // REQ-HIG-1 D: nada mais a fazer além da task inválida (que não anda sozinha): para nomeando a task. Só aqui, depois de espera, retomada, teto e emenda.
+  if (faltam.length === 0 && invalidas.size > 0) return { tipo: 'parar', motivo: 'nao_conseguiu', task: [...invalidas.keys()][0] };
   if (faltam.every((id) => congeladas.has(id))) return esperaEmenda();
+  // O que resta só espera a task inválida (dependentes dela): a causa é ela, não o dependente.
+  if (invalidas.size > 0) return { tipo: 'parar', motivo: 'nao_conseguiu', task: [...invalidas.keys()][0] };
   // Sem agente vivo e sem próxima ação (ex.: task iniciada cujo agente morreu): para, nunca em silêncio.
   return { tipo: 'parar', motivo: 'nao_conseguiu', task: faltam.find(livre) as string };
 }
