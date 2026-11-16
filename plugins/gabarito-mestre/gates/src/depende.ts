@@ -10,8 +10,8 @@
  * vive em `acoes[].comando`, e só quando provado seguro (id de task em formato fechado; branch da entrega, DP-3 ajuste 3).
  */
 import { projetarEmendas } from './emenda.ts';
-import { formaInvalida, ID_PERGUNTA_RE } from './formas.ts';
-import { AGORA_NAO_TETO, ehAdiamento } from './pouso.ts';
+import { ehRespostaDeAdiamento, formaInvalida, ID_PERGUNTA_RE } from './formas.ts';
+import { AGORA_NAO_TETO } from './pouso.ts';
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.ts';
 import type { Acao, Evento, ItemDepende } from './tipos.ts';
 import { idDaBranch } from './trilha.ts';
@@ -84,7 +84,7 @@ export function pendenciaAberta(evs: Evento[], nota: Evento): { id: string; text
   const i = evs.indexOf(nota);
   if (i < 0) return null;
   // GM-15 T35 (r.14): "agora não" adia, nunca fecha
-  const fechada = evs.some((r, j) => j > i && r.tipo === 'dono.resposta' && formaInvalida('dono.resposta', r.dados) === null && r.dados.pergunta === id && 'rotulo' in r.dados && !ehAdiamento(r.dados.rotulo));
+  const fechada = evs.some((r, j) => j > i && r.tipo === 'dono.resposta' && formaInvalida('dono.resposta', r.dados) === null && r.dados.pergunta === id && 'rotulo' in r.dados && !ehRespostaDeAdiamento(r.dados));
   return fechada ? null : { id, texto: nota.dados.texto as string };
 }
 
@@ -96,7 +96,7 @@ export function adiadas(evs: Evento[]): Set<string> {
   const ultima = new Map<string, boolean>();
   for (const r of Array.isArray(evs) ? evs : []) {
     if (obj(r).tipo !== 'dono.resposta' || formaInvalida('dono.resposta', r.dados) !== null || !('rotulo' in r.dados)) continue;
-    ultima.set(r.dados.pergunta as string, ehAdiamento(r.dados.rotulo));
+    ultima.set(r.dados.pergunta as string, ehRespostaDeAdiamento(r.dados));
   }
   return new Set([...ultima].filter(([, a]) => a).map(([id]) => id));
 }

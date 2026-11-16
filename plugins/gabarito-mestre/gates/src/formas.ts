@@ -408,6 +408,13 @@ const nota: Regra = (o) => primeiro(
 export const AGORA_NAO = 'agora não';
 /** Rótulo que adia: texto que começa por "agora não" (sem caixa, pontas aparadas). */
 export const ehRotuloDeAdiamento = (rotulo: unknown): boolean => typeof rotulo === 'string' && rotulo.trim().toLowerCase().startsWith(AGORA_NAO);
+/**
+ * `dono.resposta` que ADIA: a forma própria `{pergunta, rotulo: "agora não…"}`, SEM `opcao` (review r1 MINOR-2). Opção legítima da pergunta que
+ * comece por "agora não", escolhida pelo botão, vem com `opcao` e responde (fecha), nunca adia.
+ */
+export const ehRespostaDeAdiamento = (dados: unknown): boolean =>
+  dados !== null && typeof dados === 'object' && !Array.isArray(dados) && (dados as Record<string, unknown>).opcao === undefined
+  && ehRotuloDeAdiamento((dados as Record<string, unknown>).rotulo);
 
 /** `dono.resposta`: `{pergunta, opcao, rotulo}` OU `{pergunta, sha256, chars}` OU, no adiamento, `{pergunta, rotulo: "agora não…"}`; misturar, ou qualquer outra chave (`texto`), recusa. */
 const donoResposta: Regra = (o) => {

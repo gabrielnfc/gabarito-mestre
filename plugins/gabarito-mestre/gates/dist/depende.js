@@ -10,8 +10,8 @@
  * vive em `acoes[].comando`, e só quando provado seguro (id de task em formato fechado; branch da entrega, DP-3 ajuste 3).
  */
 import { projetarEmendas } from './emenda.js';
-import { formaInvalida, ID_PERGUNTA_RE } from './formas.js';
-import { AGORA_NAO_TETO, ehAdiamento } from './pouso.js';
+import { ehRespostaDeAdiamento, formaInvalida, ID_PERGUNTA_RE } from './formas.js';
+import { AGORA_NAO_TETO } from './pouso.js';
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.js';
                                                             
 import { idDaBranch } from './trilha.js';
@@ -84,7 +84,7 @@ export function pendenciaAberta(evs          , nota        )                    
   const i = evs.indexOf(nota);
   if (i < 0) return null;
   // GM-15 T35 (r.14): "agora não" adia, nunca fecha
-  const fechada = evs.some((r, j) => j > i && r.tipo === 'dono.resposta' && formaInvalida('dono.resposta', r.dados) === null && r.dados.pergunta === id && 'rotulo' in r.dados && !ehAdiamento(r.dados.rotulo));
+  const fechada = evs.some((r, j) => j > i && r.tipo === 'dono.resposta' && formaInvalida('dono.resposta', r.dados) === null && r.dados.pergunta === id && 'rotulo' in r.dados && !ehRespostaDeAdiamento(r.dados));
   return fechada ? null : { id, texto: nota.dados.texto           };
 }
 
@@ -96,7 +96,7 @@ export function adiadas(evs          )              {
   const ultima = new Map                 ();
   for (const r of Array.isArray(evs) ? evs : []) {
     if (obj(r).tipo !== 'dono.resposta' || formaInvalida('dono.resposta', r.dados) !== null || !('rotulo' in r.dados)) continue;
-    ultima.set(r.dados.pergunta          , ehAdiamento(r.dados.rotulo));
+    ultima.set(r.dados.pergunta          , ehRespostaDeAdiamento(r.dados));
   }
   return new Set([...ultima].filter(([, a]) => a).map(([id]) => id));
 }

@@ -21,8 +21,8 @@
  * Id que não casa `ID_PERGUNTA_RE` (sessão com `.` ou `_`) seria irrespondível pelo hook: não vira pergunta.
  */
 import { adiadas, ideiasAbertas, pendenciaAberta, textoIdeias } from './depende.js';
-import { AGORA_NAO, ehAdiamento } from './pouso.js';
-import { ID_PERGUNTA_RE } from './formas.js';
+import { AGORA_NAO } from './pouso.js';
+import { ehRespostaDeAdiamento, ID_PERGUNTA_RE } from './formas.js';
 import { ordenar } from './loop.js';
                                                      
 import { ancoraDaPerguntaB, ancoraDaPerguntaC, rotuloCasaSpec } from './trilha.js';
@@ -62,7 +62,7 @@ function respondidas(evs          )              {
   for (const e of evs) {
     const d = obj(e.dados);
     // GM-15 T35 (r.14): "agora não" adia, não fecha (a regra de adiada é `adiadas`, de depende.ts)
-    if (e.tipo === 'dono.resposta' && typeof d.pergunta === 'string' && typeof d.rotulo === 'string' && Number.isInteger(d.opcao) && !ehAdiamento(d.rotulo)) ids.add(d.pergunta);
+    if (e.tipo === 'dono.resposta' && typeof d.pergunta === 'string' && typeof d.rotulo === 'string' && Number.isInteger(d.opcao) && !ehRespostaDeAdiamento(d)) ids.add(d.pergunta);
   }
   return ids;
 }

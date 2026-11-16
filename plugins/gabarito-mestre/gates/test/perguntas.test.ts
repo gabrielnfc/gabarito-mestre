@@ -752,3 +752,16 @@ test('lote-so-recomendadas (r.16): só pergunta com exatamente 1 opção "(recom
   assert.notEqual(impressaoDoLote(lote), impressaoDoLote(lote.slice(0, 1)));
   assert.deepEqual(loteRecomendadas([]), []);
 });
+
+test('opcao-que-comeca-por-agora-nao-responde (review r1 MINOR-2): opção legítima "agora não…" escolhida pelo botão ({pergunta, opcao, rotulo}) FECHA a dúvida; só a forma sem `opcao` adia', () => {
+  const opcoes = ['agora não, depois do deploy', 'já'];
+  const base: Compacto[] = [notaDe('duvida', 'quando subir?', 'sessao-a', opcoes)];
+  assert.equal(perguntasAbertas(expandir(base), identificada()).length, 1);
+  const escolhida = [...base, { t: 'dono.resposta', d: { pergunta: 'sessao-a:1', opcao: 1, rotulo: opcoes[0] }, s: 'sessao-dono' } as Compacto];
+  assert.equal(formaInvalida('dono.resposta', escolhida[1].d), null);
+  assert.deepEqual(perguntasAbertas(expandir(escolhida), identificada()), [], 'a escolha da opção 1 responde (nunca adia)');
+  assert.equal(respostaValida([], 'sessao-a:1', 1, expandir(escolhida)).erro, 'respondida', 'fechada, não adiada');
+  // controle: o adiamento de verdade (sem `opcao`) segue escondendo sem fechar
+  assert.deepEqual(perguntasAbertas(expandir([...base, adia('sessao-a:1')]), identificada()), []);
+  assert.equal(respostaValida([], 'sessao-a:1', 1, expandir([...base, adia('sessao-a:1')])).erro, 'inexistente');
+});

@@ -498,3 +498,14 @@ test('pendencia-adiada-nao-fecha-e-some (r.14): "agora não" à pendência do do
   const lista = expandir(evs);
   assert.deepEqual(pendenciaAberta(lista, lista[0]), { id: 'sessao-a:1', texto: 'renovar o domínio' });
 });
+
+import { adiadas } from '../src/depende.ts';
+test('opcao-agora-nao-nao-e-adiamento (review r1 MINOR-2): resposta com `opcao` cujo rótulo começa por "agora não" fecha a pendência e não entra em `adiadas`; sem `opcao` adia', () => {
+  const pend = nota('pendencia', 'renovar o domínio');
+  const porOpcao = expandir([pend, { t: 'dono.resposta', s: 'sessao-dono', d: { pergunta: 'sessao-a:1', opcao: 1, rotulo: 'agora não, em dezembro' } } as C]);
+  assert.deepEqual([...adiadas(porOpcao)], []);
+  assert.equal(pendenciaAberta(porOpcao, porOpcao[0]), null, 'a escolha por opção fecha');
+  const adiada = expandir([pend, { t: 'dono.resposta', s: 'sessao-dono', d: { pergunta: 'sessao-a:1', rotulo: 'agora não' } } as C]);
+  assert.deepEqual([...adiadas(adiada)], ['sessao-a:1']);
+  assert.deepEqual(pendenciaAberta(adiada, adiada[0]), { id: 'sessao-a:1', texto: 'renovar o domínio' });
+});
