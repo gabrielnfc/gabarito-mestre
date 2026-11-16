@@ -51,9 +51,24 @@ const chaveDe = (dir) => `pouso:${dir}`;
 // Medido na T0b (S4 ii, `.superpowers/sdd/2026-11-15-2-1-1/t0b-relatorio.md`): o `/loop` real arma um item em `Stop.session_crons`
 // (`recurring:true` = intervalo, `recurring:false` = wakeup dinâmico). Nada armado ⇒ lista vazia. A sentinela `<<autonomous-loop-dynamic>>`
 // NUNCA aparece ali: não se casa o prompt. Campo ausente ou fora da forma ⇒ "não conferível", nunca "ausente" nem "armado".
-// Forma publicada (a T18 e a T19 leem): `.harness/loop-dinamico.json` = `{estado: 'armado'|'ausente'|'nao_conferivel', intervalo, dinamico, sessao, em}`
-// (um arquivo só por repo, não por sessão: o id da sessão do mod e o do hook divergem depois do /clear; `sessao` e `em` dizem quem e quando).
-export const ARQUIVO_SINAL_LOOP = 'loop-dinamico.json';
+// Forma publicada (a T18 e a T19 leem): `.harness/loop-dinamico.<session_id do hook>.json` = `{estado: 'armado'|'ausente'|'nao_conferivel', intervalo, dinamico, sessao, em}`.
+// Um arquivo POR SESSÃO (aprendizado D: estado de hook do mod é chaveado pelo session_id do hook): sessões no checkout e nas worktrees partilham a raiz
+// principal e não se sobrescrevem. O leitor é `interpretarSinalLoop(texto, sessao)`: só aceita o arquivo da sessão pedida; o resto é `nao_conferivel`.
+// Id fora de `[A-Za-z0-9-]{1,128}` (path traversal) ⇒ não grava e não lê. Arquivos de sessões antigas se acumulam: limpeza fica para quem for dono (não é trivial sem apagar).
+const ID_SESSAO = /^[A-Za-z0-9-]{1,128}$/;
+/** Nome do arquivo do sinal da sessão (relativo a `.harness/`), ou `null` se o id não serve de chave. Pura. */
+export const arquivoSinalLoop = (sessao) => (typeof sessao === 'string' && ID_SESSAO.test(sessao) ? `loop-dinamico.${sessao}.json` : null);
+
+/** Texto do arquivo da sessão `sessao` ⇒ sinal. Ausente (`null`/`undefined`), corrompido, fora da forma ou de OUTRA sessão ⇒ `nao_conferivel`; nunca "armado" por engano. Pura. */
+export function interpretarSinalLoop(texto, sessao) {
+  const nc = { estado: 'nao_conferivel', intervalo: 0, dinamico: 0, sessao: null, em: null };
+  if (arquivoSinalLoop(sessao) === null || typeof texto !== 'string') return nc;
+  let o;
+  try { o = JSON.parse(texto); } catch { return nc; }
+  if (o === null || typeof o !== 'object' || Array.isArray(o) || o.sessao !== sessao) return nc;
+  if (!['armado', 'ausente', 'nao_conferivel'].includes(o.estado) || !Number.isSafeInteger(o.intervalo) || !Number.isSafeInteger(o.dinamico) || typeof o.em !== 'string') return nc;
+  return { estado: o.estado, intervalo: o.intervalo, dinamico: o.dinamico, sessao: o.sessao, em: o.em };
+}
 
 /** `session_crons` do Stop ⇒ `{estado, intervalo, dinamico}`. Pura. */
 export function sinalDoLoop(e) {
@@ -67,23 +82,24 @@ export function sinalDoLoop(e) {
 
 const SCRIPT_SINAL_LOOP = `/*gabarito:loop*/
 const fs = require('node:fs'), path = require('node:path'), cp = require('node:child_process');
-const { url, sinal } = JSON.parse(fs.readFileSync(0, 'utf8'));
+const { url, sinal, arquivo } = JSON.parse(fs.readFileSync(0, 'utf8'));
 const comum = cp.execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' }).trim();
 const raiz = path.dirname(comum);
 import(url).then((m) => {
   if (m.temOnboarding(raiz) !== true) return;
   const dir = path.join(raiz, '.harness'); fs.mkdirSync(dir, { recursive: true });
-  const fim = path.join(dir, '${ARQUIVO_SINAL_LOOP}'), tmp = fim + '.' + process.pid + '.tmp';
+  const fim = path.join(dir, arquivo), tmp = fim + '.' + process.pid + '.tmp';
   try { fs.writeFileSync(tmp, JSON.stringify(sinal) + '\\n'); fs.renameSync(tmp, fim); } catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }
 }).catch(() => process.exit(1));`;
 
-/** `{argv, stdin}` para `$.process.run` (cwd = a raiz da sessão): grava o sinal na raiz PRINCIPAL, só em repo com onboarding. Dado fora da forma ⇒ `null`. */
+/** `{argv, stdin}` para `$.process.run` (cwd = a raiz da sessão): grava o sinal da sessão na raiz PRINCIPAL, só em repo com onboarding. Dado fora da forma ⇒ `null`. */
 export function gravarSinalLoop({ pluginRoot, estado, intervalo, dinamico, sessao, emMs } = {}) {
   if (typeof pluginRoot !== 'string' || pluginRoot === '' || !['armado', 'ausente', 'nao_conferivel'].includes(estado)) return null;
   if (!Number.isSafeInteger(intervalo) || !Number.isSafeInteger(dinamico) || !Number.isFinite(emMs)) return null;
   const url = ('file://' + encodeURI(`${pluginRoot}/gates/dist/guarda.js`)).replace(/#/g, '%23').replace(/\?/g, '%3F');
-  const id = typeof sessao === 'string' && /^[A-Za-z0-9-]{1,128}$/.test(sessao) ? sessao : null;
-  return { argv: ['node', '-e', SCRIPT_SINAL_LOOP], stdin: JSON.stringify({ url, sinal: { estado, intervalo, dinamico, sessao: id, em: new Date(emMs).toISOString() } }) };
+  const arquivo = arquivoSinalLoop(sessao);
+  if (arquivo === null) return null; // sem id do hook não há chave: não grava (arquivo único por repo foi o MAJOR do review r1)
+  return { argv: ['node', '-e', SCRIPT_SINAL_LOOP], stdin: JSON.stringify({ url, arquivo, sinal: { estado, intervalo, dinamico, sessao, em: new Date(emMs).toISOString() } }) };
 }
 
 async function publicarSinalLoop($, e) {

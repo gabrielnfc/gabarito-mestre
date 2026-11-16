@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import { pendenciasAprendizado } from '../../gates/dist/pendencias.js'
 import { CABECALHO, codigoPonte, PROMPT_RECUPERACAO, PROMPT_RETOMADA } from '../../gates/dist/pouso.js'
 import { validarStdinAgentes } from '../../gates/dist/painel-equipe.js'
-import { gravarSinalLoop, sinalDoLoop } from '../gabarito.mjs'
+import { arquivoSinalLoop, gravarSinalLoop, interpretarSinalLoop, sinalDoLoop } from '../gabarito.mjs'
 import { chavePouso, colunasDosBotoes, faixaDe, faixaUmaLinha, avisoPaneEspera, botoesDoTopo, gravarContexto, indiceDoTopo, LIMITE_DESATUALIZADO_S } from '../painel.mjs'
 import { lerLeitura, pousoPendente, tentativasDoPouso } from '../../gates/dist/pouso-pendente.js'
 import { proximaAcao } from '../../gates/dist/loop.js'
@@ -5264,11 +5264,43 @@ test('mod-sinal-sessao-nao-interativa-nao-grava: sem sessão interativa o Stop n
   await $.classic.Stop({ session_id: 's-1', session_crons: [SINAL_ARMADO_WAKEUP] }); await drena(m)
   expect(m.est.sinaisLoop).toHaveLength(0)
 })
-test('mod-sinal-gravar-pura: gravarSinalLoop fora da forma ⇒ null; sessão fora do padrão vira null no arquivo', () => {
+test('mod-sinal-gravar-pura: gravarSinalLoop fora da forma ⇒ null; sessão fora do padrão não grava (sem chave)', () => {
   const ok = { pluginRoot: '/p', estado: 'armado', intervalo: 0, dinamico: 1, sessao: 's-1', emMs: 0 }
   expect(gravarSinalLoop(ok)?.argv.slice(0, 2)).toEqual(['node', '-e'])
-  expect(JSON.parse(gravarSinalLoop({ ...ok, sessao: '../x' })!.stdin).sinal.sessao).toBeNull()
+  for (const ruim of ['../x', 'a/b', '', undefined, 'x'.repeat(129)]) expect(gravarSinalLoop({ ...ok, sessao: ruim })).toBeNull()
+  expect(JSON.parse(gravarSinalLoop(ok)!.stdin).arquivo).toBe('loop-dinamico.s-1.json')
   expect(gravarSinalLoop({ ...ok, estado: 'talvez' })).toBeNull()
   expect(gravarSinalLoop({ ...ok, pluginRoot: '' })).toBeNull()
   expect(gravarSinalLoop({ ...ok, intervalo: 1.5 })).toBeNull()
+})
+
+// Aprendizado D: o sinal é por sessão do hook. Cada Stop grava no arquivo da SUA sessão; o leitor só aceita o da sessão pedida.
+test('mod-sinal-2-sessoes: B arma, A continua não vendo armado (um arquivo por sessão, não por repo)', async ($, on) => {
+  const m = mundo($, on, {})
+  await arrancar(m)
+  const disco = new Map<string, string>() // simula `.harness/` compartilhado entre checkout e worktrees
+  const grava = () => { const { arquivo, sinal } = m.est.sinaisLoop.at(-1).q; disco.set(arquivo, JSON.stringify(sinal)) }
+  await $.classic.Stop({ session_id: 'sessao-A', session_crons: [] }); await drena(m); grava()
+  await $.classic.Stop({ session_id: 'sessao-B', session_crons: [SINAL_ARMADO_WAKEUP] }); await drena(m); grava()
+  expect(disco.size).toBe(2)
+  const le = (id: string) => interpretarSinalLoop(disco.get(arquivoSinalLoop(id)!), id)
+  expect(le('sessao-B').estado).toBe('armado')
+  expect(le('sessao-A').estado).toBe('ausente')
+  // A não vê o arquivo de B, nem se o leitor for apontado para ele
+  expect(interpretarSinalLoop(disco.get('loop-dinamico.sessao-B.json'), 'sessao-A').estado).toBe('nao_conferivel')
+})
+test('mod-sinal-leitor: ausente (arquivo não existe) ≠ corrompido ≠ de outra sessão; só o conteúdo da sessão vale', () => {
+  const bom = JSON.stringify({ estado: 'armado', intervalo: 0, dinamico: 1, sessao: 's-1', em: '2026-11-15T12:00:00.000Z' })
+  expect(interpretarSinalLoop(bom, 's-1')).toMatchObject({ estado: 'armado', dinamico: 1, sessao: 's-1' })
+  expect(interpretarSinalLoop(undefined, 's-1').estado).toBe('nao_conferivel')
+  expect(interpretarSinalLoop(null, 's-1').estado).toBe('nao_conferivel')
+  expect(interpretarSinalLoop('{nao json', 's-1').estado).toBe('nao_conferivel')
+  expect(interpretarSinalLoop('[]', 's-1').estado).toBe('nao_conferivel')
+  expect(interpretarSinalLoop(bom, 's-2').estado).toBe('nao_conferivel')
+  expect(interpretarSinalLoop(bom, '../s-1').estado).toBe('nao_conferivel')
+  expect(interpretarSinalLoop(bom, undefined).estado).toBe('nao_conferivel')
+  expect(interpretarSinalLoop(JSON.stringify({ estado: 'talvez', intervalo: 0, dinamico: 0, sessao: 's-1', em: 'x' }), 's-1').estado).toBe('nao_conferivel')
+  // `ausente` gravado é um fato (loop desligado), diferente de arquivo ausente (nunca medido)
+  expect(interpretarSinalLoop(JSON.stringify({ estado: 'ausente', intervalo: 0, dinamico: 0, sessao: 's-1', em: 'x' }), 's-1').estado).toBe('ausente')
+  expect(arquivoSinalLoop('../x')).toBeNull()
 })
