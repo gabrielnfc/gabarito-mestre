@@ -8,10 +8,10 @@
  *  M3  card "Concluído" não faz o PBI feito                                    ⇒ projeto-n-pbis-feitas-total
  *  M4  task cortada/adiada fica no denominador                                 ⇒ projeto-n-pbis-feitas-total
  *  M5  card que não casa o idPadrao (PBI-EXEMPLO) vira linha                   ⇒ projeto-n-pbis-feitas-total
- *  M6  `entrega.encerrada` não faz o PBI feito                                 ⇒ entrega-encerrada-faz-feito
+ *  M6  `entrega.encerrada` não faz o PBI feito                                 ⇒ pbi-concluido-por-card-ou-encerrada
  *  M7  só a árvore atual é lida (porcelana ignorada)                           ⇒ worktrees-varridas
- *  M8  vale o card da 1ª árvore, não o mais novo (atualizadoEm)                ⇒ worktrees-varridas
- *  M9  evento repetido em 2 árvores entra 2 vezes                              ⇒ worktrees-varridas
+ *  M8  vale o card da 1ª árvore, não o mais novo (atualizadoEm)                ⇒ card-mais-novo-vence
+ *  M9  evento repetido em 2 árvores entra 2 vezes                              ⇒ diario-uniao-sem-repetir
  *  M10 worktree `prunable` vira árvore a ler                                   ⇒ worktrees-varridas
  *  M11 falha do `git worktree list` sem aviso (ou sem a árvore atual)          ⇒ git-worktree-falha-avisa
  *  M12 sem plano.json escreve "FASE n de 7"                                    ⇒ entrega-sem-plano-fase-nao-medida
@@ -19,10 +19,15 @@
  *  M14 plano.json inválido cai no plano .md / conta 0                          ⇒ plano-json-invalido-interroga
  *  M15 a parte estimada (sem plano) soma na previsão medida                    ⇒ previsao-medida-e-estimada
  *  M16 "### Task" de nível errado (####) conta como task do plano .md          ⇒ plano-md-conta-tasks
- *  M17 PBI feito não conta as tasks dele como feitas no total                 ⇒ entrega-encerrada-faz-feito
+ *  M17 as estimadas somem dos totais                                           ⇒ pbi-concluido-por-card-ou-encerrada
  *  M18 id numérico do diário ("1") não casa a "### Task 1:" do plano .md       ⇒ plano-md-casa-id-numerico
  *  M19 PBI feito sem plano entra na previsão estimada                          ⇒ feito-sem-plano-e-diario-ilegivel
  *  M20 diário ilegível some sem aviso                                          ⇒ feito-sem-plano-e-diario-ilegivel
+ * Emenda 18 (aprovada, .claude-tmp/gm15r/emenda-t31b.md):
+ *  M21 tasks de PBI concluído sem diário contam como integradas medidas         ⇒ concluido-sem-diario-e-estimado
+ *  M22 Sombra sem task devolve null (exceção)                                  ⇒ sombra-sem-task-fora-do-loop
+ *  M23 empate de atualizadoEm vence a outra árvore, não a atual                ⇒ card-mais-novo-vence
+ *  M24 diário só da 1ª árvore (sem união)                                      ⇒ diario-uniao-sem-repetir
  * Variantes a/b/c (M11, M12, M13, M14) e o roteiro: .claude-tmp/t31/mut.mjs (fora do repo).
  */
 import { test } from 'node:test';
@@ -86,19 +91,30 @@ test('projeto-n-pbis-feitas-total: uma linha por PBI, feitos pelo card, cortada 
   assert.equal(e.totais.pbis, 6);
   assert.equal(e.totais.feitos, 1);
   assert.equal(linha(e, 'PBI-1').feito, true);
-  assert.equal(linha(e, 'PBI-1').pct, 100);
   // PBI-4: plano .md de 4 tasks, T1 e T2 integradas, T3 cortada ⇒ 2 de 3
-  assert.deepEqual(linha(e, 'PBI-4').tasks, { total: 3, integradas: 2, restantes: 1, fora: 1 });
+  assert.deepEqual(linha(e, 'PBI-4').tasks, { total: 3, integradas: 2, estimadas: 0, restantes: 1, fora: 1 });
   assert.equal(linha(e, 'PBI-4').pct, 67);
   assert.equal(linha(e, 'PBI-4').feito, false);
-  // totais: PBI-1 (feito, 3) + PBI-2 (1 de 3) + PBI-4 (2 de 3) = 6 de 9
+  // totais: PBI-1 (feito, 3 estimadas) + PBI-2 (1 de 3) + PBI-4 (2 de 3): 3 medidas + 3 estimadas de 9
   assert.equal(e.totais.tasks, 9);
-  assert.equal(e.totais.integradas, 6);
+  assert.equal(e.totais.integradas, 3);
+  assert.equal(e.totais.estimadas, 3);
   assert.equal(e.totais.restantes, 3);
-  assert.equal(e.totais.pct, 67);
+  assert.equal(e.totais.pct, 33);
+  assert.equal(e.totais.pctComEstimadas, 67);
 });
 
-test('entrega-encerrada-faz-feito: `entrega.encerrada` sem reabertura depois faz o PBI feito; reaberta depois desfaz', () => {
+test('concluido-sem-diario-e-estimado: tasks de PBI concluído sem registro no diário são estimadas e sinalizadas, nunca integradas medidas', () => {
+  const l = linha(projetoCompleto(), 'PBI-1');
+  assert.deepEqual(l.tasks, { total: 3, integradas: 0, estimadas: 3, restantes: 0, fora: 0 });
+  assert.equal(l.pct, 0);
+  assert.equal(l.pctComEstimadas, 100);
+  assert.equal(l.texto, 'feito (3 tasks estimadas)');
+});
+
+test('pbi-concluido-por-card-ou-encerrada: card "Concluído" OU `entrega.encerrada` sem reabertura depois; reaberta depois desfaz', () => {
+  assert.equal(linha(projetoCompleto(), 'PBI-1').feito, true); // pelo card
+  assert.equal(linha(projetoCompleto(), 'PBI-4').feito, false); // card "Em execução", sem encerrada
   const ev = (seq: number, hm: string, tipo: string, dados: Record<string, unknown>): Evento =>
     ({ seq, ts: `2026-11-10T${hm}:00.000Z`, autor: 'a', sessao: 's', agente: 'orquestrador', tipo, dados, hash_anterior: null }) as Evento;
   const plano = { ok: true as const, bruto: { entrega: 'GM-9', tasks: [{ id: 'T1', titulo: 'a', deps: [], arquivos: ['a.ts'] }, { id: 'T2', titulo: 'b', deps: [], arquivos: ['b.ts'] }] } };
@@ -109,6 +125,8 @@ test('entrega-encerrada-faz-feito: `entrega.encerrada` sem reabertura depois faz
   assert.equal(linha(fechado, 'GM-9').feito, true);
   assert.equal(fechado.totais.feitos, 1);
   assert.equal(fechado.totais.restantes, 0);
+  assert.equal(fechado.totais.integradas, 0);
+  assert.equal(fechado.totais.estimadas, 2);
   const reaberto = projetarProjeto(arv([...base, encerrada, ev(3, '12', 'entrega.reaberta', { entrega: 'GM-9', em: '2026-11-10T12:00:00.000Z' })]), OPC);
   assert.equal(linha(reaberto, 'GM-9').feito, false);
   assert.equal(reaberto.totais.restantes, 2);
@@ -158,13 +176,35 @@ test('worktrees-varridas: as 2 worktrees entram; card mais novo vence; evento re
   const e = projetoCompleto();
   // PBI-5 só existe na worktree; o plano.json do PBI-2 também
   assert.equal(linha(e, 'PBI-5').status, 'Backlog');
-  assert.equal(linha(e, 'PBI-2').status, 'Revisão e teste');
   assert.equal(linha(e, 'PBI-2').plano, 'json');
-  // o diário do PBI-2 está nas 2 árvores: duplicado, a T1 integrada 2 vezes seria estado inválido
-  assert.deepEqual(linha(e, 'PBI-2').tasks, { total: 3, integradas: 1, restantes: 2, fora: 0 });
   assert.deepEqual(e.avisos, []);
   // a árvore atual vem primeiro mesmo fora da ordem do git
   assert.deepEqual(worktreesDe({ ok: true, saida: PORCELANA }, '/FIX/wt-pbi-2').caminhos, ['/FIX/wt-pbi-2', '/FIX/principal']);
+});
+
+test('card-mais-novo-vence: entre worktrees vale o atualizadoEm mais novo; empate ⇒ o da árvore atual', () => {
+  assert.equal(linha(projetoCompleto(), 'PBI-2').status, 'Revisão e teste'); // 2026-11-05 na worktree > 2026-11-02 na atual
+  const card = (status: string): { arquivo: string; texto: string; planoMd: null } =>
+    ({ arquivo: 'PBI-7.md', texto: `---\nid: "PBI-7"\nstatus: ${status}\natualizadoEm: "2026-11-05"\n---\n# X\n`, planoMd: null });
+  const r = projetarProjeto([{ caminho: '/atual', cards: [card('Em execução')], entregas: [] }, { caminho: '/outra', cards: [card('Backlog')], entregas: [] }], OPC);
+  assert.equal(linha(r, 'PBI-7').status, 'Em execução');
+});
+
+test('diario-uniao-sem-repetir: diário = união das worktrees, evento repetido conta 1 vez', () => {
+  // o diário do PBI-2 está nas 2 árvores: duplicado, a T1 integrada 2 vezes seria estado inválido
+  const e = projetoCompleto();
+  assert.deepEqual(linha(e, 'PBI-2').tasks, { total: 3, integradas: 1, estimadas: 0, restantes: 2, fora: 0 });
+  assert.deepEqual(e.avisos, []);
+  // eventos diferentes em árvores diferentes somam: T1 integrada numa, T2 noutra
+  const ev = (sessao: string, seq: number, mm: string, tipo: string, dados: Record<string, unknown>): Evento =>
+    ({ seq, ts: `2026-11-10T10:${mm}:00.000Z`, autor: 'a', sessao, agente: 'orquestrador', tipo, dados, hash_anterior: null }) as Evento;
+  const ciclo = (s: string, t: string, m: number): Evento[] => [ev(s, 1, String(m).padStart(2, '0'), 'task.iniciada', { task: t, papel: 'implementador' }),
+    ev(s, 2, String(m + 1).padStart(2, '0'), 'task.concluida', { task: t }), ev(s, 3, String(m + 2).padStart(2, '0'), 'review.veredito', { task: t, veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }),
+    ev(s, 4, String(m + 3).padStart(2, '0'), 'task.integrada', { task: t })];
+  const plano = { ok: true as const, bruto: { entrega: 'GM-9', tasks: [{ id: 'T1', titulo: 'a', deps: [], arquivos: ['a.ts'] }, { id: 'T2', titulo: 'b', deps: [], arquivos: ['b.ts'] }] } };
+  const r = projetarProjeto([{ caminho: '/a', cards: [], entregas: [{ id: 'GM-9', plano, eventos: ciclo('sa', 'T1', 0) }] },
+    { caminho: '/b', cards: [], entregas: [{ id: 'GM-9', plano: null, eventos: [...ciclo('sa', 'T1', 0), ...ciclo('sb', 'T2', 10)] }] }], OPC);
+  assert.deepEqual(linha(r, 'GM-9').tasks, { total: 2, integradas: 2, estimadas: 0, restantes: 0, fora: 0 });
 });
 
 test('git-worktree-falha-avisa: falha do git ⇒ só a árvore atual e um aviso', () => {
@@ -204,7 +244,10 @@ test('agente-fora-do-loop: agente sem `loop.mjs iniciar` ⇒ "agente fora do loo
   assert.equal(rotuloAgente({ task: 'T2', papelExibido: 'implementador' }, estados), 'agente fora do loop'); // casou a task, mas ninguém iniciou
   assert.equal(rotuloAgente({ task: 'T9', papelExibido: 'implementador' }, estados), 'agente fora do loop'); // task sem estado
   assert.equal(rotuloAgente({ task: 'T1', papelExibido: 'implementador' }, estados), 'T1');
-  assert.equal(rotuloAgente({ task: null, papelExibido: 'sombra' }, estados), null); // a Sombra não é agente de task: o render decide
+});
+
+test('sombra-sem-task-fora-do-loop: a Sombra sem task também é "agente fora do loop" (emenda 4 item 5, sem exceção)', () => {
+  assert.equal(rotuloAgente({ task: null, papelExibido: 'sombra' }, new Map()), 'agente fora do loop');
 });
 
 test('previsao-medida-e-estimada: ritmo medido × restantes (a); sem plano entra só na estimada (b), sinalizada', () => {
@@ -238,7 +281,7 @@ test('plano-md-casa-id-numerico: no plano .md, a task "1" do diário é a "### T
     ev(3, '20', 'review.veredito', { task: '1', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }), ev(4, '30', 'task.integrada', { task: '1' })];
   const r = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-8.md', texto: '---\nid: "PBI-8"\nstatus: Em execução\n---\n# X\nPlano: `p.md`\n', planoMd: '### Task 1: a\n### Task 2: b\n' }],
     entregas: [{ id: 'PBI-8', plano: null, eventos }] }], OPC);
-  assert.deepEqual(linha(r, 'PBI-8').tasks, { total: 2, integradas: 1, restantes: 1, fora: 0 });
+  assert.deepEqual(linha(r, 'PBI-8').tasks, { total: 2, integradas: 1, estimadas: 0, restantes: 1, fora: 0 });
 });
 
 test('feito-sem-plano-e-diario-ilegivel: PBI feito sem plano não entra na estimada; diário ilegível vira aviso', () => {

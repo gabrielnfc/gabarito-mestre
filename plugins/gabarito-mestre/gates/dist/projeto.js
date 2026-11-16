@@ -33,7 +33,8 @@ const ID_PADRAO = /^[A-Z]+-\d+$/;
   
 
                                                                                                                                      
-                                                                                                
+/** `integradas` = medidas no diário; `estimadas` = de PBI concluído sem registro no diário (emenda 18 p.2): nunca somam às medidas. */
+                                                                                                                   
                             
              
                         
@@ -44,8 +45,10 @@ const ID_PADRAO = /^[A-Z]+-\d+$/;
                                                                                 
                     
                            
-                                                               
+                                                                            
                      
+                                                                                      
+                                 
                                                                  
                 
                                                             
@@ -66,7 +69,7 @@ const ID_PADRAO = /^[A-Z]+-\d+$/;
   
                              
                          
-                                                                                                                                                                     
+                                                                                                                                                                                                                        
                    
   
 
@@ -131,10 +134,9 @@ export function rotuloFase(temPlanoJson         , n               )         {
 
 /**
  * Item 5: o agente só é da task se ela saiu de `pendente` (alguém rodou `loop.mjs iniciar`); sem task casada, ou task sem início ⇒ "agente fora
- * do loop". A Sombra sem task não é agente de task: `null` (o render mantém o tratamento dela).
+ * do loop". Sem exceção, a Sombra sem task também (emenda 18 p.6).
  */
-export function rotuloAgente(c                                                      , estados                                 )                {
-  if (c.task === null && c.papelExibido === 'sombra') return null;
+export function rotuloAgente(c                                                      , estados                                 )         {
   if (c.task === null) return ROTULO_FORA_DO_LOOP;
   const e = estados.get(c.task);
   return e === undefined || e === 'pendente' ? ROTULO_FORA_DO_LOOP : c.task;
@@ -191,8 +193,8 @@ export function projetarProjeto(arvores              , opcoes                   
     eventos.sort((a, b) => msDe(a) - msDe(b) || cmp(String(a.sessao), String(b.sessao)) || a.seq - b.seq);
     if (eventos.length > 0) diarios.push({ id, eventos });
     const feito = (card !== null && semAcento(card.status ?? '') === 'concluido') || encerrada(eventos);
-    // plano: o plano.json da 1ª árvore que tem um; inválido ⇒ "?" (nunca o .md nem plano velho); sem ele, o .md do card
-    const comJson = ents.find((e) => e.plano !== null);
+    // plano: inválido ⇒ "?" (nunca o .md nem plano velho); sem plano.json, o .md do card
+    const comJson = escolherPlanoJson(ents);
     let plano                        = null;
     let taskIds                  = null;
     let motivo                = null;
@@ -223,32 +225,39 @@ export function projetarProjeto(arvores              , opcoes                   
         else if (r.estado === 'adiada' || r.estado === 'cortada') fora++;
       }
       const total = taskIds.length - fora;
-      tasks = { total, integradas, restantes: total - integradas, fora };
+      // p.2: PBI concluído sem registro das tasks no diário ⇒ o que falta registrar é ESTIMADO como feito, sinalizado, nunca medido
+      const estimadas = feito ? total - integradas : 0;
+      tasks = { total, integradas, estimadas, restantes: total - integradas - estimadas, fora };
     }
     const semPlano = tasks === null;
-    const pct = tasks === null ? null : feito ? 100 : tasks.total > 0 ? Math.round((tasks.integradas / tasks.total) * 100) : null;
+    const pctDe = (n        )                => (tasks === null || tasks.total <= 0 ? null : Math.round((n / tasks.total) * 100));
+    const pct = tasks === null ? null : pctDe(tasks.integradas);
+    const pctComEstimadas = tasks === null ? null : pctDe(tasks.integradas + tasks.estimadas);
     const texto = motivo !== null ? '? plano inválido'
       : tasks === null ? (feito ? 'feito, sem plano' : 'sem plano')
-        : feito ? 'feito' : pct === null ? '? sem task no plano' : `${pct} % (${tasks.integradas} de ${tasks.total})`;
+        : feito ? (tasks.estimadas > 0 ? `feito (${tasks.estimadas} tasks estimadas)` : 'feito')
+          : pct === null ? '? sem task no plano' : `${pct} % (${tasks.integradas} de ${tasks.total})`;
     linhas.push({
-      id, titulo: card?.titulo ?? null, status: card?.status ?? null, feito, plano, semPlano, tasks, pct, texto, motivo,
+      id, titulo: card?.titulo ?? null, status: card?.status ?? null, feito, plano, semPlano, tasks, pct, pctComEstimadas, texto, motivo,
       fase: plano === 'json' ? null : ROTULO_FASE_NAO_MEDIDA, origem,
     });
   }
-  // totais: o feito conta todas as suas tasks como feitas; o sem plano fica fora da conta
-  let tasks = 0, integradas = 0;
+  // totais: medidas e estimadas separadas (p.2); o sem plano fica fora da conta
+  let tasks = 0, integradas = 0, estimadas = 0;
   for (const l of linhas) {
     if (l.tasks === null) continue;
     tasks += l.tasks.total;
-    integradas += l.feito ? l.tasks.total : l.tasks.integradas;
+    integradas += l.tasks.integradas;
+    estimadas += l.tasks.estimadas;
   }
-  const restantes = tasks - integradas;
+  const restantes = tasks - integradas - estimadas;
   const foraDaConta = linhas.filter((l) => l.semPlano).length;
   return {
     linhas,
     totais: {
-      pbis: linhas.length, feitos: linhas.filter((l) => l.feito).length, foraDaConta, tasks, integradas, restantes,
+      pbis: linhas.length, feitos: linhas.filter((l) => l.feito).length, foraDaConta, tasks, integradas, estimadas, restantes,
       pct: tasks > 0 ? Math.round((integradas / tasks) * 100) : null,
+      pctComEstimadas: tasks > 0 ? Math.round(((integradas + estimadas) / tasks) * 100) : null,
       previsao: previsaoDoProjeto(linhas, diarios, restantes, opcoes.agoraMs, opcoes.fuso),
     },
     avisos,
@@ -262,11 +271,29 @@ function previsaoDoProjeto(linhas                , diarios                      
   const hora = (s        )         => horaLocal(agoraMs + s * 1000, agoraMs, fuso);
   const medidaS = ritmo * restantes;
   const medida = { restanteS: medidaS, hora: hora(medidaS) };
+  const est = estimativaSemPlano(linhas);
+  if (est === null) return { ritmoS: ritmo, medida, estimada: null, motivo: null };
+  if ('motivo' in est) return { ritmoS: ritmo, medida, estimada: null, motivo: est.motivo };
+  const estS = medidaS + ritmo * est.tasksPorPbi * est.abertos;
+  return { ritmoS: ritmo, medida, estimada: { restanteS: estS, hora: hora(estS), pbisSemPlano: est.abertos, tasksPorPbi: est.tasksPorPbi }, motivo: null };
+}
+
+/**
+ * PENDENTE DE DECISÃO DO DONO (emenda 18 deixa fora): fórmula da estimativa dos PBIs sem plano. Hoje: PBIs sem plano e não feitos × mediana de
+ * tasks dos PBIs com plano. `null` = nenhum PBI sem plano aberto.
+ */
+function estimativaSemPlano(linhas                )                                                                       {
   const abertos = linhas.filter((l) => l.semPlano && !l.feito).length;
-  if (abertos === 0) return { ritmoS: ritmo, medida, estimada: null, motivo: null };
+  if (abertos === 0) return null;
   const porPbi = linhas.filter((l) => l.tasks !== null && l.tasks.total > 0).map((l) => (l.tasks              ).total);
-  if (porPbi.length === 0) return { ritmoS: ritmo, medida, estimada: null, motivo: `sem PBI com plano para estimar os ${abertos} sem plano` };
-  const tasksPorPbi = mediana(porPbi);
-  const estS = medidaS + ritmo * tasksPorPbi * abertos;
-  return { ritmoS: ritmo, medida, estimada: { restanteS: estS, hora: hora(estS), pbisSemPlano: abertos, tasksPorPbi }, motivo: null };
+  if (porPbi.length === 0) return { motivo: `sem PBI com plano para estimar os ${abertos} sem plano` };
+  return { abertos, tasksPorPbi: mediana(porPbi) };
+}
+
+/**
+ * PENDENTE DE DECISÃO DO DONO (emenda 18 deixa fora): qual plano.json vale entre worktrees. Hoje: o da 1ª árvore que tem um (a atual primeiro,
+ * depois a ordem do git); `ents` já vem nessa ordem.
+ */
+function escolherPlanoJson                              (ents     )                {
+  return ents.find((e) => e.plano !== null);
 }
