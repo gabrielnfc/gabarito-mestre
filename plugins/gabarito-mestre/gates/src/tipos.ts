@@ -184,6 +184,8 @@ export type AcaoLoop =
   | { tipo: 'pousar' }
   | { tipo: 'aprender'; pendencias: Pendencia[] }
   | { tipo: 'parar'; motivo: MotivoParar; task?: string }
+  /** GM-15 T12/T13 (REQ-AUT-1): reabertura única de task em voo cujo agente morreu (`loop.mjs reabrir`, `task.reaberta {origem: retomada}`). */
+  | { tipo: 'retomar'; task: string }
   | { tipo: 'concluir' };
 
 // E4 (GM-12): contratos do painel. Núcleo puro em `painel*.ts`; `EntradaPainel` é o que o CLI (`painel.mjs`) monta, `EstadoPainel` o que o render lê.

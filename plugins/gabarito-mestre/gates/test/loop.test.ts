@@ -1986,3 +1986,15 @@ test('sintetica-1-teto-3-independentes-concluir: com 1 task no teto, 3 independe
   assert.deepEqual(proximaAcao(p, evs, sinais()), tetoDe('t'));
   assert.notEqual(proximaAcao(p, evs, sinais()).tipo, 'concluir', 'a task no teto ainda é do dono');
 });
+
+// GM-15 T13 (obrigação da T12): `retomar` é membro de `AcaoLoop` em `tipos.ts`, sem tipo paralelo nem cast em `loop.ts`.
+test('acao-retomar-na-uniao: AcaoLoop de tipos.ts tem { tipo: retomar; task } e loop.ts devolve retomar sem cast nem AcaoRetomar', () => {
+  const tipos = readFileSync(new URL('../src/tipos.ts', import.meta.url), 'utf8');
+  const uniao = tipos.slice(tipos.indexOf('export type AcaoLoop ='), tipos.indexOf(';\n\n', tipos.indexOf('export type AcaoLoop =')));
+  assert.match(uniao, /\|\s*\{ tipo: 'retomar'; task: string \}/);
+  const loop = readFileSync(new URL('../src/loop.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(loop, /AcaoRetomar/);
+  assert.doesNotMatch(loop, /as unknown as AcaoLoop/);
+  // o comportamento segue: a 1ª morte pede retomar
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a')), sinais()), { tipo: 'retomar', task: 'a' });
+});

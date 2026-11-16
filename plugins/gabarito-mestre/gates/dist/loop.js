@@ -304,12 +304,6 @@ export function foraPermitido(plano       , eventos          , task        )    
   return dependentes.length > 0 ? { ok: false, motivo: 'dependentes', dependentes } : { ok: true };
 }
 
-/**
- * GM-15 T12 (REQ-AUT-1): ação `retomar`, a reabertura única de task em voo cujo agente morreu (`task.reaberta {origem: retomada}`, gravada por
- * `loop.mjs reabrir`). Fica aqui porque `tipos.ts` não é da task: o orquestrador a trata como qualquer outra ação do núcleo.
- */
-                                                            
-
 export function proximaAcao(plano       , eventos          , sinais                                      )           {
   // (1)
   const ord = ordenar(eventos);
@@ -350,7 +344,7 @@ export function proximaAcao(plano       , eventos          , sinais             
   const orfa = ()                     => ids.find((id) => EM_VOO.includes(est(id).estado));
   const retomavel = ()                       => {
     const id = orfa();
-    return id !== undefined && retomadas(id) === 0 ? ({ tipo: 'retomar', task: id }                                      ) : undefined;
+    return id !== undefined && retomadas(id) === 0 ? { tipo: 'retomar', task: id } : undefined;
   };
   const livre = (id        )          => !congeladas.has(id);
   const capacidade = Math.max(0, sinais.slots - sinais.vivos);
