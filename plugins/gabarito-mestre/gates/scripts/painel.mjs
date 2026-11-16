@@ -45,6 +45,13 @@ import { temOnboarding } from './cartao-sessao.mjs';
 import { carregarPlano, checkoutDaSessao, configDoLote, contexto, lerDiarioEstrito, lerSpec, lerSpecs, medicaoDoPouso, tetoDaSombra } from './loop.mjs';
 import { decisaoDe, pausado, prepararLeitura } from './entrega.mjs';
 import { medir } from './painel-medir.mjs';
+import { SINAL_FRESCO_MS } from './stop-loop.mjs';
+
+/**
+ * GM-15 T19 (REQ-POU-4): o leitor do sinal do loop é o do mod (`mod/gabarito.mjs`, T17: `arquivoSinalLoop` + `interpretarSinalLoop`, o mesmo que o Stop importa), sem cópia.
+ * A cópia dos gates em `tools/` não leva o mod: sem ele o sinal é não conferível (`null`), nunca lança.
+ */
+const MOD_GABARITO = await import(new URL('../../mod/gabarito.mjs', import.meta.url).href).catch(() => null);
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const MOD_NOMES = join(AQUI, '..', '..', 'mod', 'temas', 'nomes');
@@ -443,6 +450,25 @@ function pacoteVigente(raiz, sessao, agoraMs) {
   return melhor === null ? null : melhor.pacote;
 }
 
+/**
+ * GM-15 T19 (REQ-POU-4): o sinal do loop automático da `sessao` (`.harness/contexto/loop-dinamico.<sessao>.json` da raiz principal, gravado pelo mod a cada Stop):
+ * `armado` | `ausente`, só da própria sessão, na forma do mod e fresco (o frescor é do consumidor, contrato da T17: o mesmo `SINAL_FRESCO_MS` do Stop; futuro além de
+ * 5 min também não vale). Sem sessão, sem mod, sem arquivo, `nao_conferivel`, corrompido, velho ou de outra sessão ⇒ `null` (não conferível: o painel não muda nada).
+ */
+export function loopDaSessao(raiz, sessao, agoraMs, mod = MOD_GABARITO) {
+  if (mod === null || typeof mod?.arquivoSinalLoop !== 'function' || typeof mod?.interpretarSinalLoop !== 'function') return null;
+  try {
+    const arquivo = mod.arquivoSinalLoop(sessao);
+    if (arquivo === null) return null;
+    const s = mod.interpretarSinalLoop(readFileSync(join(raiz, '.harness', arquivo), 'utf8'), sessao);
+    if (s.estado !== 'armado' && s.estado !== 'ausente') return null;
+    const em = Date.parse(s.em);
+    return Number.isFinite(em) && agoraMs - em <= SINAL_FRESCO_MS && em - agoraMs <= 5 * 60_000 ? s.estado : null;
+  } catch {
+    return null;
+  }
+}
+
 /** A medição do pouso de `loop.mjs proxima` (`medicaoDoPouso`) para a sessão do painel, mais a de cada sessão que retomou depois do pouso (`sessoesDeRetomada`). */
 function medicaoDoPainel(raiz, sessao, x, eventos, agoraMs) {
   const m = medicaoDoPouso(raiz, sessao, x, agoraMs);
@@ -651,6 +677,8 @@ export function estadoDoPainel(cwd, opts = {}) {
       // ... e o ritmo delas (relógio por task integrada); sem ritmo medido o fallback mostra "?" (r2 MAJOR 1)
       ritmoAnterioresS: ritmoDasAnteriores(ativ.diarios, id),
       ...(medicaoPouso !== undefined ? { medicaoPouso } : {}),
+      // GM-15 T19 (REQ-POU-4): o sinal do loop da mesma sessão do pouso (`--sessao`, senão a do mod)
+      loopDinamico: raiz === null || sessaoPouso === null ? null : loopDaSessao(raiz, sessaoPouso, agoraMs),
       entregue,
       proxima,
       // r1 MAJOR-2: a entregue só zera o diário projetado quando é a dele (branch com ID ou `--entrega`); a última conhecida não zera o `_sem-id`

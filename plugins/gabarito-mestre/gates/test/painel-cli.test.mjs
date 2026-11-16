@@ -1573,3 +1573,59 @@ describe('GM-15 T13: lote do dono no painel', () => {
     assert.ok(!motivos.some((x) => /emenda 1|levar next/.test(x)), JSON.stringify(motivos));
   });
 });
+
+// ─────────────────────────────────────────────── GM-15 T19 (REQ-POU-4): o painel lê o sinal do loop da sessão (T17) com o leitor do mod e o frescor do Stop
+// Mutações: M19-k sem o frescor (sinal velho vale) ⇒ painel-le-o-sinal-do-loop · M19-l sinal de outra sessão vale ⇒ painel-le-o-sinal-do-loop ·
+// M19-m o sinal não chega à projeção ⇒ painel-cli-loop-desligado-avisa
+import { SINAL_FRESCO_MS } from '../scripts/stop-loop.mjs';
+import { loopDaSessao } from '../scripts/painel.mjs';
+describe('GM-15 T19: sinal do loop no painel', { timeout: 60_000 }, () => {
+  const sinal = (m, sessao, o) => {
+    mkdirSync(join(m.repo, '.harness', 'contexto'), { recursive: true });
+    writeFileSync(join(m.repo, '.harness', 'contexto', `loop-dinamico.${sessao}.json`), typeof o === 'string' ? o : `${JSON.stringify(o)}\n`);
+  };
+  const forma = (estado, sessao, emMs) => ({ estado, intervalo: 0, dinamico: estado === 'armado' ? 1 : 0, sessao, em: new Date(emMs).toISOString() });
+  const visto = (m, opts) => {
+    let e = null;
+    const r = estadoDoPainel(m.repo, { agoraMs: AGORA, ...opts, projetar: (p, ev, entrada) => { e = entrada; return {}; } });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    return e.loopDinamico ?? null;
+  };
+
+  test('painel-le-o-sinal-do-loop: só o sinal DESTA sessão, na forma do mod e fresco (o frescor do Stop) vale; o resto é não conferível', () => {
+    const m = montar({ origem: {} });
+    assert.equal(visto(m, { sessao: 'S1' }), null, 'sem arquivo');
+    sinal(m, 'S1', forma('armado', 'S1', AGORA - 60_000));
+    assert.equal(visto(m, { sessao: 'S1' }), 'armado');
+    assert.equal(visto(m, {}), null, 'sem sessão não há sinal a ler');
+    assert.equal(visto(m, { sessao: 'S2' }), null, 'o sinal de S1 não vale para S2');
+    sinal(m, 'S1', forma('ausente', 'S1', AGORA - 60_000));
+    assert.equal(visto(m, { sessao: 'S1' }), 'ausente');
+    // o frescor é do consumidor (contrato do mod): o mesmo limite do Stop
+    sinal(m, 'S1', forma('ausente', 'S1', AGORA - SINAL_FRESCO_MS));
+    assert.equal(visto(m, { sessao: 'S1' }), 'ausente', 'no limite ainda vale');
+    sinal(m, 'S1', forma('ausente', 'S1', AGORA - SINAL_FRESCO_MS - 1));
+    assert.equal(visto(m, { sessao: 'S1' }), null, 'velho');
+    sinal(m, 'S1', forma('armado', 'S1', AGORA + 10 * 60_000));
+    assert.equal(visto(m, { sessao: 'S1' }), null, 'futuro');
+    for (const [nome, o] of [['de outra sessão', forma('armado', 'S9', AGORA)], ['não conferível', forma('nao_conferivel', 'S1', AGORA)], ['corrompido', '{nao-json']]) {
+      sinal(m, 'S1', o);
+      assert.equal(visto(m, { sessao: 'S1' }), null, nome);
+    }
+    // a sessão do mod (stdin de --agentes) também serve
+    sinal(m, 'S1', forma('armado', 'S1', AGORA));
+    assert.equal(visto(m, { agentes: { session_id: 'S1', sessao: {}, agentes: [] } }), 'armado');
+    // função pura exposta: mod ausente (cópia em tools/ sem o mod) ⇒ não conferível, nunca lança
+    assert.equal(loopDaSessao(m.repo, 'S1', AGORA, null), null);
+    assert.equal(loopDaSessao(m.repo, '../x', AGORA), null, 'id fora da forma');
+  });
+
+  test('painel-cli-loop-desligado-avisa: o painel real (texto) com o sinal "ausente" da sessão e trabalho a seguir diz "ligar o loop automático"; armado, não', () => {
+    const m = montar({ origem: {} });
+    const texto = () => { let out = ''; const rc = main(['texto', '--sessao', 'S1'], m.repo, IO({ saida: (t) => { out += t; } })); assert.equal(rc, 0, out); return out; };
+    sinal(m, 'S1', forma('ausente', 'S1', AGORA - 60_000));
+    assert.match(texto(), /ligar o loop automático/);
+    sinal(m, 'S1', forma('armado', 'S1', AGORA - 60_000));
+    assert.doesNotMatch(texto(), /ligar o loop automático/);
+  });
+});
