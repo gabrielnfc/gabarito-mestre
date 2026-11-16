@@ -4521,6 +4521,18 @@ test('contexto-json-gravado: a leitura do mod vai a `.harness/contexto/<sessao>.
   expect(new Date(c.em).toISOString()).toBe(c.em)
   expect(m.est.contextoInit[0].cwd).toBe(RAIZ)
 })
+test('mod-contexto-id-apos-clear (GM-15 T34, emenda 7 r.1): a sessão muda sem novo session.start ⇒ a gravação sai sob o id vigente, e a antiga não recebe mais nada', async ($, on) => {
+  const m = comPainel($, on, { estado: estadoNovo() }, { percent: 37, sessaoId: 'sess-A' })
+  await arrancar(m)
+  expect(m.est.contextos.at(-1).sessao).toBe('sess-A')
+  m.est.sessaoId = 'sess-B' // /clear: o id do hook muda; o mod não refaz o session.start
+  const antes = m.est.contextos.length
+  await m.clock.advance(PERIODO); await drena(m)
+  expect(m.est.contextos.length).toBeGreaterThan(antes)
+  expect(m.est.contextos.slice(antes).every((c: any) => c.sessao === 'sess-B')).toBe(true)
+  // 2 sessões: a leitura posterior ao /clear nunca cai sob a anterior
+  expect(m.est.contextos.slice(antes).some((c: any) => c.sessao === 'sess-A')).toBe(false)
+})
 test('contexto-grava-o-pacote-vigente (g.17): o pacote do mod vai no contexto da sessão para a CLI; fora da forma ⇒ a gravação segue sem ele', async ($, on) => {
   const g = gravarContexto({ sessao: 'abc-1', percent: 55, fonte: 'mod', emMs: Date.UTC(2026, 10, 12), pacote: 'hogwarts' })
   expect(JSON.parse(g!.stdin)).toEqual({ sessao: 'abc-1', percent: 55, fonte: 'mod', em: '2026-11-12T00:00:00.000Z', pacote: 'hogwarts' })

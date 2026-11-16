@@ -890,6 +890,8 @@ async function lerContexto($, cwd, pedido, agoraMs) {
     }
   }
   S.contexto = contexto;
+  // GM-15 T34 (emenda 7 r.1): após /clear o hook recebe outro id sem novo session.start; relê o id vigente a cada gravação (falha ⇒ mantém o último).
+  try { const id = await $.session.id(); if (typeof id === 'string' && SESSAO_RE.test(id)) S.sessaoId = id; } catch { /* mantém o último */ }
   const g = contexto === null || !(await comOnboarding($, cwd)) ? null : gravarContexto({ sessao: S.sessaoId, percent: contexto.percent, fonte: contexto.fonte, emMs: agoraMs, pacote: S.prefs.pacote ?? S.pacoteSorteado ?? undefined });
   if (g !== null) {
     try { await $.process.run(g.argv, { cwd, stdin: g.stdin, timeoutMs: TIMEOUT_MS }); } catch { /* o arquivo fica velho e `proxima` o descarta após 120 s */ }
