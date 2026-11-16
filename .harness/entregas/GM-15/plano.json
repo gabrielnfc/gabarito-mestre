@@ -863,7 +863,9 @@
         "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
         "plugins/gabarito-mestre/gates/test/pouso.test.ts",
         "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
-        "plugins/gabarito-mestre/scripts/test/mod-test.sh"
+        "plugins/gabarito-mestre/scripts/test/mod-test.sh",
+        "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs"
       ],
       "reqs": [
         "REQ-POU-3",
