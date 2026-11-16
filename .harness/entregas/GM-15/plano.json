@@ -885,7 +885,8 @@
         "T22",
         "T23",
         "T25",
-        "T35"
+        "T35",
+        "T32"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/mod/painel.mjs",
@@ -900,7 +901,11 @@
         "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
         "plugins/gabarito-mestre/scripts/test/mod-test.sh",
         "plugins/gabarito-mestre/gates/scripts/painel-medir.mjs",
-        "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs"
+        "plugins/gabarito-mestre/gates/test/painel-medir.test.mjs",
+        "plugins/gabarito-mestre/gates/test/onboarding.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fixtures/onboarding/s6-gabarito.json",
+        "plugins/gabarito-mestre/gates/test/e2e/avaliar-e5.mjs",
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs"
       ],
       "reqs": [
         "REQ-POU-3",
