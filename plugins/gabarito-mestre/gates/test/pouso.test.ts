@@ -224,6 +224,13 @@ test('tasks-em-voo-por-estado: implementando, corrigindo e em_revisao contam; os
   );
   assert.deepEqual(r, { ok: true, tasks: ['a', 'b', 'c'] });
 });
+test('tasks-em-voo-fora: task.fora e a volta de fora (task.reaberta {de:fora}) são lidas como o loop lê, sem "fora da tabela"', () => {
+  const fora: [TipoEvento, Record<string, unknown>] = ['task.fora', { task: 'a', como: 'adiada', motivo: 'm', origem: 'dono' }];
+  const volta: [TipoEvento, Record<string, unknown>] = ['task.reaberta', { task: 'a', origem: 'dono', fonte: 'f', de: 'fora' }];
+  assert.deepEqual(emVoo(fora), { ok: true, tasks: [] });
+  assert.deepEqual(emVoo(fora, volta), { ok: true, tasks: [] });
+  assert.deepEqual(emVoo(fora, volta, iniP('a', 'implementador')), { ok: true, tasks: ['a'] });
+});
 test('tasks-em-voo-nenhuma: aprovada, integrada, reprovada, pendente e diário vazio dão lista vazia', () => {
   assert.deepEqual(emVoo(), { ok: true, tasks: [] });
   assert.deepEqual(emVoo(ini('a'), con('a'), ver('a')), { ok: true, tasks: [] });

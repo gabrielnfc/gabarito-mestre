@@ -775,7 +775,7 @@ test('stop-linha-corrompida-nao-zera: nem derruba o hook', () => {
 });
 
 // GM-11 T6: o julgamento de emenda (descongela) também é progresso; a `emenda.proposta` não.
-const LISTA_REQ_LOOP_5 = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'ci.resultado', 'spec.emendada', 'emenda.rejeitada', 'aprendizado', 'aprendizado.nada'];
+const LISTA_REQ_LOOP_5 = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'task.fora', 'ci.resultado', 'spec.emendada', 'emenda.rejeitada', 'aprendizado', 'aprendizado.nada'];
 
 test('stop-lista-progresso-igual-loop: a lista única é a que proximaAcao consome (REQ-LOOP-5)', () => {
   const fonte = readFileSync(join(GATES, 'src', 'loop.ts'), 'utf8');

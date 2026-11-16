@@ -23,7 +23,7 @@ export const ehObjeto = (x: unknown): x is Record<string, unknown> => x !== null
 
 /** Task com trabalho em curso: o cronômetro anda enquanto o estado da T2 está aqui. */
 export const EM_TRABALHO: ReadonlySet<EstadoTask> = new Set<EstadoTask>(['implementando', 'concluida', 'em_revisao', 'corrigindo']);
-const TIPOS_DE_TASK: ReadonlySet<string> = new Set(['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta']);
+const TIPOS_DE_TASK: ReadonlySet<string> = new Set(['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'task.fora']);
 
 /**
  * Duração de UMA task aprovada (REQ-OBS-1), seguindo a transição da T2 (`estadoDe`) e nunca lendo

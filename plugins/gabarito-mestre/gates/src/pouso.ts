@@ -89,7 +89,7 @@ export function vivosDe(lista: unknown): number {
   return n;
 }
 
-const TIPOS_DE_TASK: readonly string[] = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
+const TIPOS_DE_TASK: readonly string[] = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'task.fora'];
 
 export type AnaliseFronteira = { consumida: boolean; motivo: string | null };
 
