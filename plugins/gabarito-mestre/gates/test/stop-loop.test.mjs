@@ -1757,7 +1757,7 @@ const CI_VERMELHO_HA = (min, sessao = 'ci') => [
   evAgo(sessao, 1, 'ci.resultado', { verde: false }, min + 1),
   evAgo(sessao, 2, 'ci.resultado', { verde: false }, min),
 ];
-const avisosDoStop = (raiz) => join(raiz, '.harness', 'stop-avisos.json');
+const avisosDoStop = (raiz, sessao = 'S1') => join(raiz, '.harness', 'contexto', `stop-avisos.${sessao}.json`);
 /** O sinal do loop como o mod da T17 o grava: `.harness/contexto/loop-dinamico.<sessao>.json`. */
 const sinalLoop = (raiz, sessao = 'S1', { estado = 'armado', idadeMs = 0, sessaoNoArquivo = sessao, texto } = {}) => {
   mkdirSync(join(raiz, '.harness', 'contexto'), { recursive: true });
@@ -1803,6 +1803,63 @@ test('motivo-novo-aviso-novo: a mesma entrega parada por OUTRO motivo (outra cha
   avisa(r, /[Pp]arado há 7\d min: sem próxima ação e sem agente vivo/);
   assert.match(r.json.systemMessage, /`\/gabarito retomar`/);
   assert.equal(JSON.parse(readFileSync(avisosDoStop(raiz), 'utf8')).trava.length, 2, 'duas chaves: motivo + início de cada trava');
+});
+
+test('mesmo-motivo-inicio-novo-avisa-de-novo (REQ-AUT-2 c, chave = motivo + início): a mesma trava reaberta depois de progresso ganha o texto longo outra vez', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'ci', CI_VERMELHO_HA(90));
+  avisa(stop(raiz), /[Pp]arado há \d+ min: CI vermelho duas vezes/);
+  avisa(stop(raiz), /parou: CI vermelho/);
+  // o CI fica verde (progresso) e vermelho 2 vezes de novo, há ~40 min: mesmo motivo, início novo
+  diario(raiz, 'ci', [
+    evAgo('ci', 3, 'ci.resultado', { verde: true }, 80),
+    evAgo('ci', 4, 'ci.resultado', { verde: false }, 41),
+    evAgo('ci', 5, 'ci.resultado', { verde: false }, 40),
+  ]);
+  const r = stop(raiz);
+  avisa(r, /[Pp]arado há 4\d min: CI vermelho duas vezes/);
+  assert.equal(JSON.parse(readFileSync(avisosDoStop(raiz), 'utf8')).trava.length, 2, 'duas chaves, o mesmo motivo com inícios diferentes');
+});
+
+test('avisos-por-sessao-sob-contexto: o estado fica em .harness/contexto/stop-avisos.<sessao>.json (ignorado pelo git) e uma sessão não cala a outra', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'ci', CI_VERMELHO_HA(90));
+  avisa(stop(raiz, { session_id: 'SA' }), /[Pp]arado há/);
+  avisa(stop(raiz, { session_id: 'SA' }), /parou: CI vermelho/);
+  assert.equal(existsSync(avisosDoStop(raiz, 'SA')), true);
+  assert.equal(existsSync(join(raiz, '.harness', 'stop-avisos.json')), false, 'nada de arquivo único por repo');
+  avisa(stop(raiz, { session_id: 'SB' }), /[Pp]arado há/); // SB não vê o que se disse a SA
+  assert.equal(existsSync(avisosDoStop(raiz, 'SB')), true);
+  const real = spawnSync('git', ['check-ignore', '-q', '.harness/contexto/stop-avisos.SA.json'], { cwd: join(GATES, '..', '..', '..') }); // o .gitignore do repo (o fixture não tem um)
+  assert.equal(real.status, 0, 'o arquivo cai no que o .gitignore do repo cobre');
+});
+
+test('avisos-id-ruim-nao-grava: session_id fora de [A-Za-z0-9-]{1,128} avisa (nunca prende) e não grava arquivo', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'ci', CI_VERMELHO_HA(90));
+  for (const id of ['../x', 'a.b', 'a'.repeat(129)]) {
+    avisa(stop(raiz, { session_id: id }), /[Pp]arado há/);
+    avisa(stop(raiz, { session_id: id }), /[Pp]arado há/); // sem chave, repete: só o custo de repetir
+  }
+  assert.deepEqual(existsSync(join(raiz, '.harness', 'contexto')) ? readdirSync(join(raiz, '.harness', 'contexto')).filter((n) => n.startsWith('stop-avisos')) : [], []);
+  assert.equal(existsSync(join(raiz, 'x.json')), false);
+});
+
+test('leitura-propria-ausente-perde-so-o-aviso-de-contexto: dist/pouso-pendente.js sem leituraPropria não derruba o Stop em "hook falhou"', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  contextoDe(raiz, 'S1', 61);
+  const script = copiaSemDist(false, readdirSync(join(GATES, 'dist')));
+  const dpp = join(dirname(dirname(script)), 'dist', 'pouso-pendente.js');
+  writeFileSync(dpp, readFileSync(dpp, 'utf8').replace('export function leituraPropria', 'function leituraPropria'));
+  const r = stop(raiz, {}, { script });
+  assert.equal(r.rc, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /hook Stop falhou/);
+  avisa(r, /ligar o loop automático/);
 });
 
 test('trava-longa-texto-puro: o comando de quem destrava o teto cita a task; id hostil não entra cru', () => {
@@ -1878,6 +1935,14 @@ test('sem-loop-dinamico-avisa (REQ-POU-4): com onboarding, ação pendente e sem
   assert.match(r3.json.systemMessage, /ligar o loop automático/);
 });
 
+test('sinal-futuro-curto-tolerado: `em` 1 min à frente (relógio levemente torto) ainda vale como armado', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  sinalLoop(raiz, 'S1', { idadeMs: -60_000 });
+  assert.doesNotMatch(stop(raiz).json?.systemMessage ?? '', /ligar o loop automático/);
+});
+
 for (const [nome, preparar] of [
   ['sinal-ausente', () => {}],
   ['sinal-ausente-estado', (raiz) => sinalLoop(raiz, 'S1', { estado: 'ausente' })],
@@ -1886,6 +1951,7 @@ for (const [nome, preparar] of [
   ['sinal-de-outra-sessao-no-arquivo', (raiz) => sinalLoop(raiz, 'S1', { sessaoNoArquivo: 'S9' })],
   ['sinal-velho-3h', (raiz) => sinalLoop(raiz, 'S1', { idadeMs: 3 * 3600_000 })],
   ['sinal-so-de-outra-sessao', (raiz) => sinalLoop(raiz, 'S9')],
+  ['sinal-do-futuro-10min (relógio torto: não conferível)', (raiz) => sinalLoop(raiz, 'S1', { idadeMs: -10 * 60_000 })],
 ]) {
   test(`sinal-nao-arma (${nome}): só o "armado" da PRÓPRIA sessão e fresco vale; o resto avisa ligar o loop`, () => {
     const raiz = repo();
@@ -1943,9 +2009,10 @@ test('entrega-encerrada-stop-quieto: entrega publicada (PR mergeado) fica muda m
   const raiz = repo();
   plano(raiz);
   comOnboarding(raiz);
-  diario(raiz, 'pub', [PR_MERGEADO()]);
+  diario(raiz, 'pub', [ev('pub', 1, 'entrega.encerrada', { entrega: 'GM-10', pr: 7, via: 'head', mergeado_em: '2026-11-03T08:00:00.000Z' })]);
   contextoDe(raiz, 'S1', 61);
   mudo(stop(raiz));
+  assert.equal(existsSync(avisosDoStop(raiz)), false, 'nada gravado numa entrega encerrada');
 });
 
 test('avisos-nao-bloqueiam: trava longa, contexto alto e loop desligado juntos continuam sendo aviso (nunca decision)', () => {

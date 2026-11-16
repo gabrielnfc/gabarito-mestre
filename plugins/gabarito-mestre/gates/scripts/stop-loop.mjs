@@ -17,7 +17,7 @@
  *   concluir ...................... silêncio, ou systemMessage listando as liberações do teto (`task.reaberta` origem `dono`, REQ-LOOP-2, e
  *                                   origem `sombra` como "a Sombra liberou a <task>", GM-14 T36 FIEL-15 c)
  * Avisos de GM-15 T18 (REQ-AUT-2 c, REQ-POU-3, REQ-POU-4), todos `systemMessage`, nunca `block`, só depois de o loop estar de pé (plano válido, sem agente vivo, sem pausa, sem entrega publicada):
- *   - `parar` há mais de 30 min (idade = o último evento de progresso ou `loop.parar` do diário): texto com o comando, 1 vez por trava (chave = motivo + início, `.harness/stop-avisos.json`);
+ *   - `parar` há mais de 30 min (idade = o último evento de progresso ou `loop.parar` do diário): texto com o comando, 1 vez por trava (chave = motivo + início, `.harness/contexto/stop-avisos.<sessao>.json`);
  *   - contexto próprio (mod, fresco) >= X sem `sessao.pouso` DESTA sessão na fronteira atual: "limpar a conversa", dito que quem limpa é o mod;
  *   - sem o sinal do loop (T17, `contexto/loop-dinamico.<sessao>.json` da raiz principal, só o `armado` da PRÓPRIA sessão, escrito há até 2 h): "ligar o loop automático" 1 vez por sessão,
  *     e nunca `/clear` nem "limpar a conversa" enquanto o loop não está armado (aprendizado 185). Só com onboarding: sem ele o mod não grava o sinal.
@@ -350,8 +350,11 @@ export function textoTravaLonga(acao, minutos) {
   return `Parado há ${minutos} min: ${motivo}. Para destravar: \`${comandoDaTrava(acao)}\`.`;
 }
 
+/** Id de sessão aceito no nome do arquivo de avisos (a mesma forma do mod/gabarito.mjs). */
+const ID_AVISOS = /^[A-Za-z0-9-]{1,128}$/;
+
 /**
- * `.harness/stop-avisos.json {entrega, trava: string[], loop: string[]}`: o que já foi dito (chaves de trava e sessões já avisadas de loop desligado).
+ * `.harness/contexto/stop-avisos.<sessao>.json {entrega, trava: string[], loop: string[]}`: o que já foi dito (chaves de trava e sessões já avisadas de loop desligado).
  * Ausente, ilegível, de outra entrega ou fora da forma ⇒ vazio (só repetiria um aviso, nunca prende nada).
  */
 function lerAvisos(caminho, entrega) {
@@ -367,8 +370,9 @@ function lerAvisos(caminho, entrega) {
 }
 
 /** `true` se `chave` já constava em `campo`; senão grava (poda nas últimas 50) e devolve `false`. Gravar falhou ⇒ `false` (o aviso sai; nunca bloqueia, só pode repetir). */
-function jaAvisou(raiz, entrega, campo, chave) {
-  const caminho = join(raiz, '.harness', 'stop-avisos.json');
+function jaAvisou(raiz, sessao, entrega, campo, chave) {
+  if (typeof sessao !== 'string' || !ID_AVISOS.test(sessao)) return false; // sem id utilizável não há chave: não grava (o aviso sai)
+  const caminho = join(raiz, '.harness', 'contexto', `stop-avisos.${sessao}.json`);
   const estado = lerAvisos(caminho, entrega);
   if (estado[campo].includes(chave)) return true;
   estado[campo] = [...estado[campo], chave].slice(-AVISOS_MAX);
@@ -398,6 +402,11 @@ async function sinalArmado(raiz, sessao, agoraMs) {
   }
 }
 
+/** Percentual da leitura própria; `leituraPropria` ausente ou falhando perde só o aviso de contexto (0), nunca o Stop. */
+function percentePropria(dpp, medicao) {
+  try { return dpp.mod.leituraPropria(medicao)?.percent ?? 0; } catch { return 0; }
+}
+
 /** Há `sessao.pouso` DESTA sessão depois do último `review.veredito` (a fronteira atual)? */
 function pousouNaFronteira(eventos, sessao) {
   if (sessao === null) return false;
@@ -410,13 +419,13 @@ function pousouNaFronteira(eventos, sessao) {
 }
 
 /** `parar`: o aviso de sempre; com a trava há mais de 30 min, e ainda não dita (motivo + início), o texto longo com o comando. */
-function avisoParar(raiz, entrega, acao, eventos, tiposDeProgresso, agoraMs) {
+function avisoParar(raiz, sessao, entrega, acao, eventos, tiposDeProgresso, agoraMs) {
   const saida = saidaParaAcao(acao, entrega);
   const inicio = eventos
     .filter((e) => tiposDeProgresso.includes(e.tipo) || e.tipo === 'loop.parar')
     .reduce((m, e) => Math.max(m, Date.parse(e.ts)), Number.NEGATIVE_INFINITY);
   if (!Number.isFinite(inicio) || agoraMs - inicio <= TRAVA_LONGA_MS) return saida;
-  if (jaAvisou(raiz, entrega, 'trava', `${typeof acao.motivo === 'string' ? limpo(acao.motivo) : '?'}@${new Date(inicio).toISOString()}`)) return saida;
+  if (jaAvisou(raiz, sessao, entrega, 'trava', `${typeof acao.motivo === 'string' ? limpo(acao.motivo) : '?'}@${new Date(inicio).toISOString()}`)) return saida;
   return aviso(`${saida.systemMessage} ${textoTravaLonga(acao, Math.floor((agoraMs - inicio) / 60_000))}`);
 }
 
@@ -430,7 +439,7 @@ function acrescentarAvisos(saida, ctx) {
   }
   const precisaDoLoop = p.pendente || p.noTeto || ['despachar', 'integrar', 'pousar'].includes(p.acao.tipo);
   if (p.onboarding && !p.armado && precisaDoLoop && !p.falouLoop
-    && !jaAvisou(p.raiz, p.entrega, 'loop', p.sessao ?? 'sem-sessao')) {
+    && !jaAvisou(p.raiz, p.sessao, p.entrega, 'loop', p.sessao ?? 'sem-sessao')) {
     msgs.push(`Loop da entrega ${limpo(p.entrega)}: ligar o loop automático (um /loop sem intervalo, com a tarefa de seguir o loop da entrega): sem o sinal dele nesta sessão nada retoma o trabalho depois do pouso.`);
   }
   if (msgs.length === 0) return saida;
@@ -553,7 +562,7 @@ async function decidir(texto, ambiente, cwdProcesso, ctx) {
 
   ctx.p = {
     raiz, entrega, sessao: sessaoAtual, acao, pendente, noTeto, onboarding, armado, x: xTeto,
-    percent: dpp.mod.leituraPropria(medicao)?.percent ?? 0, pousou: pousouNaFronteira(eventos, sessaoAtual), falouLoop: false,
+    percent: percentePropria(dpp, medicao), pousou: pousouNaFronteira(eventos, sessaoAtual), falouLoop: false,
   };
   // Pendência à parte: `parar` por ci_vermelho/teto_rodadas/nao_conseguiu vence o `aprender`, e o `loop.parar` do mod abre pendência `parar`.
   if (ord.ok) {
@@ -587,7 +596,7 @@ async function decidir(texto, ambiente, cwdProcesso, ctx) {
   if (noTeto && acao.tipo === 'despachar' && !acao.itens.some((i) => i?.papel === 'revisor')) {
     return aviso(`Loop da entrega ${limpo(entrega)}: contexto no teto, aguardando o pouso do mod (nada novo é despachado antes)`);
   }
-  if (acao.tipo === 'parar') return avisoParar(raiz, entrega, acao, ord.ok ? ord.eventos : [], TIPOS_DE_PROGRESSO, Date.now());
+  if (acao.tipo === 'parar') return avisoParar(raiz, sessaoAtual, entrega, acao, ord.ok ? ord.eventos : [], TIPOS_DE_PROGRESSO, Date.now());
   if (acao.tipo !== 'despachar' && acao.tipo !== 'integrar') return saidaParaAcao(acao, entrega);
 
   const saida = saidaParaAcao(acao, entrega);
