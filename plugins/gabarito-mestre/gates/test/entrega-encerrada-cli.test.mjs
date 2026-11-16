@@ -19,6 +19,7 @@ import { spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { raizSegura } from './_raiz-segura.mjs';
 import { append, ler } from '../dist/diario.js';
+import { botoesPorLinha, estadoParaDesenho, linhasDaPane } from '../../mod/painel.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const PAINEL = join(AQUI, '..', 'scripts', 'painel.mjs');
@@ -131,13 +132,14 @@ test('entregue-sai-do-alvo: GM-14 + gh com o #22 ⇒ medir grava entrega.encerra
   assert.equal(e.parar, null);
   assert.equal(e.pergunta, null);
   assert.equal(e.perguntasMais, 0);
-  assert.ok(soNada(e), `DEPENDE sem item da entrega: ${JSON.stringify(e.depende)}`);
+  // 0 item da GM-14 no DEPENDE: o único item é a oferta da próxima (as ideias "para a próxima", spec (d)(i)), com o botão "seguir" (r1 MAJOR-1)
+  assert.deepEqual(e.depende, [{ nivel: 'dono', motivo: 'próxima entrega: decidir se a ideia vira a próxima entrega', acoes: [{ rotulo: 'seguir', comando: '/gabarito-mestre:gabarito-loop' }] }]);
   assert.deepEqual(e.atencao, [], 'ATENÇÃO sem item da entrega');
   assert.equal(e.umaLinha, null, 'a linha é a de entregue, não a de "sem entrega em curso"');
 
   const ls = texto(d);
   assert.equal(ls.length, 1, ls.join('\n'));
-  assert.equal(ls[0], 'GABARITO · GM-14 entregue (versão 2.1.0) · próxima: decidir se a ideia vira a próxima entrega');
+  assert.equal(ls[0], '◆ GABARITO · GM-14 entregue (versão 2.1.0) · próxima: decidir se a ideia vira a próxima entrega');
 
   const s = stop(d);
   assert.equal(s.status, 0, s.stderr);
@@ -154,7 +156,7 @@ test('entregue-sai-do-alvo (sessão em outra branch): em main, a GM-14 encerrada
   const e = estado(d);
   assert.deepEqual(e.entregue, { id: 'GM-14', versao: null }, 'sem release medido na GM-14 (foi para _sem-id): sem versão');
   assert.equal(e.umaLinha, null);
-  assert.deepEqual(texto(d), ['GABARITO · GM-14 entregue · próxima: decidir se a ideia vira a próxima entrega']);
+  assert.deepEqual(texto(d), ['◆ GABARITO · GM-14 entregue · próxima: decidir se a ideia vira a próxima entrega']);
 });
 
 test('consultas-sombra-somem-com-entregue: "N consultas à Sombra sem decisão" sai do ATENÇÃO só com a entrega encerrada (M8a)', () => {
@@ -173,7 +175,7 @@ test('versao-do-encerramento-vence-o-release: entrega.encerrada com versao ⇒ "
   w(d, 'GM-31', 'loop', 'fato.medido', { chave: 'release', fonte: 'gh', valor: { tag: 'v9.9.9' } }, '2026-11-15T10:00:00.000Z');
   w(d, 'GM-31', 'loop', 'entrega.encerrada', { entrega: 'GM-31', pr: 41, via: 'head', mergeado_em: '2026-11-15T11:00:00.000Z', versao: '3.0.0' }, '2026-11-15T11:00:01.000Z', 'painel');
   assert.deepEqual(estado(d).entregue, { id: 'GM-31', versao: '3.0.0' });
-  assert.match(texto(d)[0], /^GABARITO · GM-31 entregue \(versão 3\.0\.0\) · /);
+  assert.match(texto(d)[0], /^(◆ )?GABARITO · GM-31 entregue \(versão 3\.0\.0\) · /);
 });
 
 test('seguir-oferece-proxima: spec com PBI sem encerramento mais nova ⇒ ideias ⇒ "nenhuma próxima anotada" (M8b)', () => {
@@ -200,7 +202,7 @@ test('seguir-oferece-proxima: spec com PBI sem encerramento mais nova ⇒ ideias
   w(d, 'GM-33', 'loop', 'entrega.encerrada', { entrega: 'GM-33', pr: 43, via: 'head', mergeado_em: '2026-11-14T11:00:00.000Z' }, '2026-11-14T11:00:01.000Z', 'painel');
   e = estado(d);
   assert.deepEqual(e.proxima, { tipo: 'spec', texto: 'GM-35 Painel novo com tema', acoes: [{ rotulo: 'seguir', comando: '/gabarito-mestre:gabarito-loop' }] });
-  assert.deepEqual(texto(d), ['GABARITO · GM-32 entregue · próxima: GM-35 Painel novo com tema']);
+  assert.deepEqual(texto(d), ['◆ GABARITO · GM-32 entregue · próxima: GM-35 Painel novo com tema']);
 });
 
 test('linha-entregue-sem-regex-tecnica: a linha de entregue não tem comando, crase, evento, snake_case nem caminho', () => {
@@ -210,7 +212,7 @@ test('linha-entregue-sem-regex-tecnica: a linha de entregue não tem comando, cr
   for (const largura of [40, 80, 200]) {
     const ls = texto(d, largura);
     assert.equal(ls.length, 1, ls.join('\n'));
-    if (largura >= 80) assert.match(ls[0], /^GABARITO · GM-36 entregue \(versão 1\.2\.3\) · próxima: GM-37 /);
+    if (largura >= 80) assert.match(ls[0], /^◆ GABARITO · GM-36 entregue \(versão 1\.2\.3\) · próxima: GM-37 /);
     for (const re of [/`/, /--/, /\/[a-z]/, /\b[a-z]+_[a-z]+\b/, /\b[a-z]+\.[a-z]+\b/, /\bnode\b/]) assert.doesNotMatch(ls[0], re, `${largura}: ${ls[0]}`);
     assert.ok([...ls[0]].length <= largura, `${largura}: ${ls[0]}`);
   }
@@ -265,4 +267,36 @@ test('pendencia-vista-some: "visto" gravado na sessão do dono fecha as ideias',
   assert.ok(estado(d).depende.some((i) => /ideia vira a próxima entrega/.test(i.motivo)), 'controle: aberta antes do visto');
   w(d, 'GM-40', UUID, 'dono.resposta', { pergunta: 'loop:1', opcao: 1, rotulo: 'visto' }, '2026-11-15T10:05:00.000Z', 'dono');
   assert.ok(!estado(d).depende.some((i) => /ideia/.test(i.motivo)));
+});
+
+// ── review r1 MAJOR-1: o botão "seguir" chega ao dono pelo caminho que o mod JÁ desenha (o item do DEPENDE com `acoes`) ──────────────────────
+/** As linhas e os botões como o mod os desenha na Pane (funções puras reais de `mod/painel.mjs`, sem cópia). */
+function botoesDoMod(e, largura = 120) {
+  const linhas = linhasDaPane(estadoParaDesenho(e), { preset: 'esquadrao' }, largura, {});
+  return { linhas: linhas.map((l) => l.map((s) => s.texto).join('')), mapa: botoesPorLinha(e, '/raiz', linhas) };
+}
+const SEGUIR = { rotulo: 'seguir', comando: '/gabarito-mestre:gabarito-loop' };
+
+test('seguir-chega-ao-mod: a próxima vira item do DEPENDE com a ação "seguir" e o mod desenha o botão na linha única', () => {
+  const d = repo('enabler/GM-42-x');
+  spec(d, '2026-11-10-nova.md', 'GM-43', 'Painel novo');
+  w(d, 'GM-42', 'loop', 'entrega.encerrada', { entrega: 'GM-42', pr: 47, via: 'head', mergeado_em: '2026-11-15T11:00:00.000Z' }, '2026-11-15T11:00:01.000Z', 'painel');
+  const e = estado(d);
+  // A próxima (GM-43) NÃO é item da entrega encerrada (GM-42): é a oferta da spec (d)(i). O aceite "0 itens da encerrada no DEPENDE" segue valendo:
+  // o único item é o da próxima, com o botão "seguir".
+  assert.deepEqual(e.depende, [{ nivel: 'dono', motivo: 'próxima entrega: GM-43 Painel novo', acoes: [SEGUIR] }]);
+  const { linhas, mapa } = botoesDoMod(e);
+  assert.equal(linhas.length, 1, linhas.join('\n'));
+  assert.match(linhas[0], /GM-42 entregue · próxima: GM-43 Painel novo$/);
+  assert.deepEqual([...mapa.entries()], [[0, [SEGUIR]]], 'o mod põe o botão "seguir" na linha única');
+});
+
+test('seguir-chega-ao-mod (nenhuma): sem próxima anotada não há item nem botão', () => {
+  const d = repo('enabler/GM-44-x');
+  w(d, 'GM-44', 'loop', 'entrega.encerrada', { entrega: 'GM-44', pr: 48, via: 'head', mergeado_em: '2026-11-15T11:00:00.000Z' }, '2026-11-15T11:00:01.000Z', 'painel');
+  const e = estado(d);
+  assert.ok(soNada(e), JSON.stringify(e.depende));
+  const { linhas, mapa } = botoesDoMod(e);
+  assert.deepEqual(linhas, ['GABARITO · GM-44 entregue · nenhuma próxima anotada']);
+  assert.equal(mapa.size, 0);
 });

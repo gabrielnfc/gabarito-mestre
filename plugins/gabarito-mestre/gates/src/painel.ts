@@ -46,14 +46,20 @@ export function renderPainel(e: EstadoPainel, o: OpcoesRender): Linha[] {
 function linhaEntregue(e: EstadoPainel, o: OpcoesRender): Linha | null {
   const ent = e.entregue;
   if (ent === null || ent === undefined || typeof ent.id !== 'string' || !ID_ENTREGUE.test(ent.id)) return null;
-  if ((e.agora?.agentes?.length ?? 0) > 0 || (e.agora?.segundoPlano?.length ?? 0) > 0 || (Array.isArray(e.depende) && e.depende.some((i) => i?.motivo !== NADA))) return null;
+  const p = e.proxima;
+  const daProxima = p !== null && p !== undefined && typeof p.texto === 'string' ? motivoDaProxima(p.texto) : null;
+  if ((e.agora?.agentes?.length ?? 0) > 0 || (e.agora?.segundoPlano?.length ?? 0) > 0
+    || (Array.isArray(e.depende) && e.depende.some((i) => i?.motivo !== NADA && i?.motivo !== daProxima))) return null;
   const w = typeof o?.largura === 'number' && Number.isFinite(o.largura) && o.largura >= 1 ? Math.floor(o.largura) : 80;
   const versao = typeof ent.versao === 'string' && VERSAO_RE.test(ent.versao) ? ` (versão ${ent.versao})` : '';
-  const p = e.proxima;
   const prox = p === null || p === undefined || typeof p.texto !== 'string' || p.texto === '' ? ''
     : p.tipo === 'nenhuma' ? ` · ${p.texto}` : ` · próxima: ${p.texto}`;
-  return [{ texto: cortar(`GABARITO · ${ent.id} entregue${versao}${prox}`, w), cor: 'inactive' }];
+  // com o botão "seguir" a linha é item do dono (`◆ `): é a marca que o mod lê para pôr nela os botões do 1º item do DEPENDE (o da próxima)
+  const comBotao = daProxima !== null && Array.isArray(p?.acoes) && p.acoes.length > 0 && Array.isArray(e.depende) && e.depende.some((i) => i?.motivo === daProxima);
+  return [{ texto: cortar(`${comBotao ? '◆ ' : ''}GABARITO · ${ent.id} entregue${versao}${prox}`, w), cor: comBotao ? 'warning' : 'inactive' }];
 }
+/** GM-15 T8 (review r1 MAJOR-1): o item do DEPENDE que leva o botão "seguir" da próxima entrega. Não é item da entrega encerrada: é a oferta da próxima. */
+export const motivoDaProxima = (texto: string): string => `próxima entrega: ${texto}`;
 const ID_ENTREGUE = /^[A-Za-z0-9-]{1,40}$/;
 const VERSAO_RE = /^\d+\.\d+\.\d+$/;
 
@@ -1015,6 +1021,10 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
   const pousoDe: ReturnType<typeof pousoPendente> = clear.pendente && !clear.adiado ? { pendente: true, sessao: sessaoPouso, seq: seqPouso } : { pendente: false, sessao: null, seq: null };
   let depende = entregue !== null ? dependeDe(null as unknown as typeof trilha, [], [], { falhou: fontes }, false, { branch: null, idPadrao: fatos.idPadrao }) : dependeDe(trilha, lista, legado.depende, { falhou: fontes }, entrada.pousoPendente === true ? true : { pendente: pousoDe.pendente, id: clear.id },
     { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao });
+  // GM-15 T8 (review r1 MAJOR-1): a próxima com botão vira item do DEPENDE (o mod já desenha os botões dos itens); nunca é item da encerrada
+  if (entregue !== null && proxima !== null && Array.isArray(proxima.acoes) && proxima.acoes.length > 0) {
+    depende = [...depende.filter((i) => i.motivo !== NADA), { nivel: 'dono', motivo: motivoDaProxima(proxima.texto), acoes: proxima.acoes.map((a) => ({ ...a })) }];
+  }
   if (pergunta !== null) depende = depende.filter((i) => i.motivo !== NADA);
   if (velho) depende = depende.map((i) => (i.motivo === NADA ? { ...i, motivo: DESATUALIZADO } : i));
 
