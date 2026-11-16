@@ -1,4 +1,4 @@
-import { estadosPorTask, ordenar } from './loop.js';
+import { estadosPorTask, ordenar, TIPOS_DE_TASK } from './loop.js';
                                             
                                                           
 import { leituraPropria, pousoPendente,              } from './pouso-pendente.js';
@@ -90,8 +90,6 @@ export function vivosDe(lista         )         {
   }
   return n;
 }
-
-const TIPOS_DE_TASK                    = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
 
                                                                              
 

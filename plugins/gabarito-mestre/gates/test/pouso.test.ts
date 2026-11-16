@@ -232,6 +232,23 @@ test('tasks-em-voo-com-task-invalida (GM-15 T25, MAJOR-2): reabertura de origem 
   const r = emVoo(iniP('a', 'implementador'), ['task.integrada', { task: 'b', sha: 'x' }]);
   assert.equal(r.ok, false);
 });
+test('tasks-em-voo-fora (GM-15 T34, emenda 7 r.3, loop 44): task.fora tira a task do voo e a volta de fora é lida; o diário não vira "fora da tabela"', () => {
+  const fora = (task: string): [TipoEvento, Record<string, unknown>] => ['task.fora', { task, como: 'adiada', motivo: 'depois', origem: 'dono' }];
+  const volta = (task: string): [TipoEvento, Record<string, unknown>] => ['task.reaberta', { task, origem: 'dono', de: 'fora' }];
+  assert.deepEqual(emVoo(fora('a'), iniP('b', 'implementador')), { ok: true, tasks: ['b'] }, 'fora ⇒ não está em voo');
+  assert.deepEqual(emVoo(fora('a'), volta('a'), iniP('a', 'implementador')), { ok: true, tasks: ['a'] }, 'volta de fora + iniciar ⇒ em voo');
+  assert.deepEqual(emVoo(fora('a'), volta('a')), { ok: true, tasks: [] }, 'volta de fora ⇒ pendente');
+  // a fronteira lê o `task` de um evento task.fora como de qualquer evento de task (sem task ⇒ ilegível)
+  assert.equal(analisarFronteira(diario(fora('a'))).motivo, null);
+  assert.notEqual(analisarFronteira(diario(['task.fora', { como: 'adiada', motivo: 'x', origem: 'dono' }])).motivo, null, 'task.fora sem task: ilegível, como os outros tipos de task');
+});
+test('task-fora-em-toda-lista (GM-15 T34, emenda 7 r.3): nenhuma lista literal de tipos de task fora de loop.ts; os leitores importam TIPOS_DE_TASK', () => {
+  for (const arq of ['src/diario-puro.ts', 'src/pouso.ts', 'test/e2e/avaliar.mjs', 'scripts/loop.mjs']) {
+    const t = readFileSync(join(GATES, arq), 'utf8');
+    assert.doesNotMatch(t, /'task\.iniciada',\s*'task\.concluida',\s*'review\.veredito'/, `${arq} repete a lista literal`);
+    assert.match(t, /\bTIPOS_DE_TASK\b/, `${arq} não usa TIPOS_DE_TASK`);
+  }
+});
 test('tasks-em-voo-nenhuma: aprovada, integrada, reprovada, pendente e diário vazio dão lista vazia', () => {
   assert.deepEqual(emVoo(), { ok: true, tasks: [] });
   assert.deepEqual(emVoo(ini('a'), con('a'), ver('a')), { ok: true, tasks: [] });

@@ -647,6 +647,17 @@ describe('reparo, tolerância e projeção', () => {
     assert.deepEqual(projetar([...base2(50, 1000), ...t3]).eta, { medianaS: 100, n: 3 });
   });
 
+  test('duracoes-com-fora-e-volta-de-fora (GM-15 T34, emenda 7 r.3, loop 44): task.fora + reaberta{de:fora} contam na mesma lista de tipos; só a tentativa depois da volta soma', () => {
+    const fora = (n: number, s: number, task: string): Evento => evT(n, s, 'task.fora', { task, como: 'adiada', motivo: 'depois', origem: 'dono' });
+    const volta = (n: number, s: number, task: string): Evento => evT(n, s, 'task.reaberta', { task, origem: 'dono', de: 'fora' });
+    const t3 = [fora(50, 10000, 'T3'), volta(51, 11000, 'T3'), ...ciclo(6, 'T3', 13000, 13100)];
+    legalNaT2(t3, 'T3', 'aprovada');
+    assert.deepEqual(projetar([...base2(50, 1000), ...t3]).eta, { medianaS: 100, n: 3 });
+    // controle: sem o evento `task.fora`, a volta de fora seria transição inválida e a task sairia da amostra
+    const so = [volta(51, 11000, 'T3'), ...ciclo(6, 'T3', 13000, 13100)];
+    assert.equal(projetar([...base2(50, 1000), ...so]).eta, null);
+  });
+
   test('eta-ts-fora-de-ordem-nao-some: veredito com ts anterior ao início perde só o intervalo, não a task', () => {
     const t3 = [...ciclo(5, 'T3', '2026-11-03T20:00:00.000Z', '2026-11-03T19:00:00.000Z', 'REPROVADO'),
       ini(60, 30000, 'T3', 'correcao'), conc(61, 30010, 'T3'), ini(62, 30020, 'T3', 'revisor'), ver(63, 30300, 'T3', 'APROVADO', 2)];

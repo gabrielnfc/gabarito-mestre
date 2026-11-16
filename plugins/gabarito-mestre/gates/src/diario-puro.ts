@@ -6,7 +6,7 @@
  * aqui cai nas suítes do diário e do painel.
  */
 import { formaInvalida } from './formas.ts';
-import { estadoDe, ordenar } from './loop.ts';
+import { estadoDe, ordenar, TIPOS_DE_TASK as TIPOS_LOOP } from './loop.ts';
 import type { EstadoTask } from './loop.ts';
 import type { Evento } from './tipos.ts';
 
@@ -23,7 +23,8 @@ export const ehObjeto = (x: unknown): x is Record<string, unknown> => x !== null
 
 /** Task com trabalho em curso: o cronômetro anda enquanto o estado da T2 está aqui. */
 export const EM_TRABALHO: ReadonlySet<EstadoTask> = new Set<EstadoTask>(['implementando', 'concluida', 'em_revisao', 'corrigindo']);
-const TIPOS_DE_TASK: ReadonlySet<string> = new Set(['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta']);
+/** Fonte única: a lista do loop (inclui `task.fora`, GM-15 T34 emenda 7 r.3). */
+const TIPOS_DE_TASK: ReadonlySet<string> = new Set(TIPOS_LOOP);
 
 /**
  * Duração de UMA task aprovada (REQ-OBS-1), seguindo a transição da T2 (`estadoDe`) e nunca lendo

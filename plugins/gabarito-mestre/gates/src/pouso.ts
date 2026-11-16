@@ -1,4 +1,4 @@
-import { estadosPorTask, ordenar } from './loop.ts';
+import { estadosPorTask, ordenar, TIPOS_DE_TASK } from './loop.ts';
 import type { EstadoTask } from './loop.ts';
 import type { AcaoLoop, Evento, Plano } from './tipos.ts';
 import { leituraPropria, pousoPendente, type Medicao } from './pouso-pendente.ts';
@@ -90,8 +90,6 @@ export function vivosDe(lista: unknown): number {
   }
   return n;
 }
-
-const TIPOS_DE_TASK: readonly string[] = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
 
 export type AnaliseFronteira = { consumida: boolean; motivo: string | null };
 
