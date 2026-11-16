@@ -23,7 +23,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { isatty } from 'node:tty';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { append, dirEntrega, lerEstrito, padraoDeRecusa } from '../dist/diario.js';
 import { encerramentoDe, idDaBranch, podeEncerrar } from '../dist/trilha.js';
 import { temOnboarding } from '../dist/guarda.js';
@@ -161,6 +161,37 @@ function pbiDoCabecalho(linhas, reId) {
     if (m !== null) return reId.test(m[1]) ? m[1] : null;
   }
   return null;
+}
+
+const PRE_VERSAO_RE = /(?<![\d.])\d+\.\d+\.\d+-(?:alpha|beta|rc)(?:\.[0-9A-Za-z-]+)*/gi;
+
+/**
+ * GM-15 T34 (REQ-ENT-1 r.13p): a versão-alvo da entrega, do cabeçalho `Versão: X.Y.Z[-pre]` da spec que o `plano.json` aponta (`spec`, relativo à raiz).
+ * Qualquer falha (plano ou spec ausente, fora da raiz, grande, sem a linha) ⇒ `null` (alvo desconhecido).
+ */
+export function versaoAlvo(raiz, dirAlvo) {
+  try {
+    const plano = JSON.parse(readFileSync(join(dirAlvo, 'plano.json'), 'utf8'));
+    if (typeof plano?.spec !== 'string' || plano.spec === '' || isAbsolute(plano.spec)) return null;
+    const arq = resolve(raiz, plano.spec);
+    const rel = relative(raiz, arq);
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel) || statSync(arq).size > SPEC_MAX) return null;
+    for (const l of readFileSync(arq, 'utf8').split('\n').slice(0, 30)) {
+      const m = /(?:^|[\s·])Vers[ãa]o:\s*(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/.exec(l);
+      if (m !== null) return m[1];
+    }
+  } catch { /* alvo desconhecido */ }
+  return null;
+}
+
+/**
+ * PR de virada de pré-versão não encerra a entrega: o título ou o head traz semver com sufixo -alpha/-beta/-rc. Exceção: a versão-alvo da spec É essa
+ * pré-versão (a entrega que se declara alpha encerra pelo PR dela). `release` prerelease não é medido aqui (o `medir` só lê o `tagName`): fora desta regra.
+ */
+export function ehViradaDePreVersao(pr, alvo) {
+  const versoes = [...`${pr.titulo ?? ''}\n${pr.branch ?? ''}`.matchAll(PRE_VERSAO_RE)].map((m) => m[0].toLowerCase());
+  if (versoes.length === 0) return false;
+  return !(typeof alvo === 'string' && versoes.includes(alvo.toLowerCase()));
 }
 
 /** Specs do checkout `cwd` com o PBI da entrega. Pasta ausente ⇒ nenhuma; ilegível ⇒ falha. */
@@ -336,7 +367,7 @@ export function medir(cwd, opcoes = {}) {
       const guarda = (p, via) => {
         if (achados.has(p.numero)) return;
         const comBase = p.base !== null;
-        achados.set(p.numero, { numero: p.numero, estado: p.estado, branch: p.head ?? alvo.branch ?? 'desconhecida', base: p.base, via: comBase ? via : null, mergeado_em: p.mergeado_em });
+        achados.set(p.numero, { numero: p.numero, estado: p.estado, branch: p.head ?? alvo.branch ?? 'desconhecida', base: p.base, via: comBase ? via : null, mergeado_em: p.mergeado_em, titulo: p.titulo });
       };
       if (alvo.branch !== null) {
         const r = ghPrs(rodar, cwd, timeoutMs, ['pr', 'list', `--head=${alvo.branch}`, '--state', 'all', '--limit', '30', '--json', CAMPOS_PR], 'pr list');
@@ -369,7 +400,7 @@ export function medir(cwd, opcoes = {}) {
         if (p.base !== null) valor.base = p.base;
         if (p.via !== null) valor.via = p.via;
         deGh.push({ chave: 'pr', fonte: 'gh', valor, alvo });
-        if (p.base === 'main' && p.mergeado_em !== null) encerrar.push({ alvo, pr: p });
+        if (p.base === 'main' && p.mergeado_em !== null && !ehViradaDePreVersao(p, versaoAlvo(raiz, alvo.dir))) encerrar.push({ alvo, pr: p });
       }
     }
     if (falhaGh === null) {

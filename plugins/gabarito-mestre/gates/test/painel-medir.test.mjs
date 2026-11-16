@@ -808,10 +808,56 @@ describe('medir: grava o encerramento da entrega (REQ-ENT-1 a, c)', () => {
     assert.equal(r.ok, true);
   };
 
+  /** Planta o `plano.json` da entrega apontando para uma spec cujo cabeçalho declara `Versão: <v>`. */
+  const comVersaoAlvo = (d, id, versao) => {
+    mkdirSync(join(d, 'docs', 'superpowers', 'specs'), { recursive: true });
+    writeFileSync(join(d, 'docs', 'superpowers', 'specs', `${id}.md`), `# Spec ${id}\n\nIniciativa: x · PBI: ${id} · Versão: ${versao} · Data: 2026-11-15\n`);
+    mkdirSync(dirDe(d, id), { recursive: true });
+    writeFileSync(join(dirDe(d, id), 'plano.json'), JSON.stringify({ entrega: id, spec: `docs/superpowers/specs/${id}.md`, tasks: [] }));
+  };
+  const prVirada = (numero, titulo, head = 'chore/GM-15-virada') => ({ number: numero, state: 'MERGED', baseRefName: 'main', headRefName: head, title: titulo, mergedAt: '2026-11-16T08:00:00Z' });
+
+  test('virada-alpha-nao-encerra (GM-15 T34, r.13p): PR estilo #24 (base main, título com 2.1.0-alpha.2) grava o fato pr e NÃO grava entrega.encerrada', () => {
+    const d = repo('enabler/GM-15-fluidez');
+    const r = medirEnc(d, { extra: [prVirada(24, 'enabler(GM-15): virada 2.1.0-alpha.2 (next ⇒ main)')] });
+    assert.equal(r.ok, true, JSON.stringify(r.falhas));
+    assert.ok(fatos(d, 'GM-15', 'pr').some((e) => e.dados.valor.numero === 24 && e.dados.valor.base === 'main'), 'o fato pr do #24 é gravado');
+    assert.equal(encerradas(d, 'GM-15').length, 0);
+  });
+
+  test('virada-final-encerra (GM-15 T34, r.13p): o mesmo PR com 2.1.0 (sem sufixo) encerra', () => {
+    const d = repo('enabler/GM-15-fluidez');
+    assert.equal(medirEnc(d, { extra: [prVirada(24, 'enabler(GM-15): virada 2.1.0 (next ⇒ main)')] }).ok, true);
+    assert.deepEqual(encerradas(d, 'GM-15').map((e) => e.dados.pr), [24]);
+  });
+
+  test('virada-pre-versao-no-head-e-em-beta-rc (r.13p): o sufixo no head ou -beta/-rc também não encerra; título sem versão segue encerrando', () => {
+    for (const [titulo, head] of [['enabler(GM-15): virada', 'release/GM-15-2.1.0-rc.1'], ['enabler(GM-15): virada 2.1.0-beta.3', 'chore/GM-15-virada']]) {
+      const d = repo('enabler/GM-15-fluidez');
+      assert.equal(medirEnc(d, { extra: [prVirada(24, titulo, head)] }).ok, true);
+      assert.equal(encerradas(d, 'GM-15').length, 0, `${titulo} | ${head}`);
+    }
+    const d = repo('enabler/GM-15-fluidez');
+    assert.equal(medirEnc(d, { extra: [prVirada(24, 'enabler(GM-15): virada (next ⇒ main)')] }).ok, true);
+    assert.equal(encerradas(d, 'GM-15').length, 1, 'sem versão no título: a regra atual (encerra)');
+  });
+
+  test('virada-alvo-e-a-pre-versao (r.13p, ressalva da Sombra): a versão-alvo da spec é 2.1.0-alpha.2 e o PR é dela ⇒ encerra; PR de outra pré-versão não', () => {
+    const d = repo('enabler/GM-15-fluidez');
+    comVersaoAlvo(d, 'GM-15', '2.1.0-alpha.2');
+    assert.equal(medirEnc(d, { extra: [prVirada(24, 'enabler(GM-15): virada 2.1.0-alpha.2 (next ⇒ main)')] }).ok, true);
+    assert.deepEqual(encerradas(d, 'GM-15').map((e) => e.dados.pr), [24]);
+    const d2 = repo('enabler/GM-15-fluidez');
+    comVersaoAlvo(d2, 'GM-15', '2.1.0-alpha.2');
+    assert.equal(medirEnc(d2, { extra: [prVirada(25, 'enabler(GM-15): virada 2.1.0-alpha.1 (next ⇒ main)')] }).ok, true);
+    assert.equal(encerradas(d2, 'GM-15').length, 0);
+  });
+
   test('medir-encerra-entrega-de-outra-branch: sessão em enabler/GM-15-…, a GM-14 (última conhecida) encerra pelo #22; o #17 (base next) não', () => {
     const d = repo('enabler/GM-15-fluidez');
     planta(d, 'GM-14', 'branch', { nome: 'enabler/GM-14-clareza' }, '2026-11-15T10:00:00.000Z');
     planta(d, 'GM-14', 'pr', { numero: 17, estado: 'aberto', branch: 'enabler/GM-14-clareza' }, '2026-11-15T10:01:00.000Z');
+    comVersaoAlvo(d, 'GM-14', '2.1.0-alpha.1'); // GM-15 T34 (r.13p): a versão-alvo da GM-14 É a pré-versão, então o PR dela encerra
     const r = medirEnc(d);
     assert.equal(r.ok, true, JSON.stringify(r.falhas));
     const enc = encerradas(d, 'GM-14');
@@ -884,6 +930,7 @@ describe('medir: grava o encerramento da entrega (REQ-ENT-1 a, c)', () => {
   test('encerrada-em-dir-entrega-nunca-sem-id: em main (sem ID) a GM-14 encerra no diário da GM-14; _sem-id nunca recebe entrega.encerrada', () => {
     const d = repo('main');
     planta(d, 'GM-14', 'branch', { nome: 'enabler/GM-14-clareza' }, '2026-11-15T10:00:00.000Z');
+    comVersaoAlvo(d, 'GM-14', '2.1.0-alpha.1'); // a versão-alvo da GM-14 é a pré-versão (GM-15 T34, r.13p)
     const r = medirEnc(d);
     assert.equal(r.ok, true, JSON.stringify(r.falhas));
     assert.equal(encerradas(d, 'GM-14').length, 1);
@@ -939,6 +986,7 @@ describe('medir: grava o encerramento da entrega (REQ-ENT-1 a, c)', () => {
   test('reaberta-nao-reencerra-pelo-mesmo-pr / reaberta-reencerra-com-pr-novo: depois da reabertura, o #22 remedido não encerra; um PR novo mergeado depois encerra', () => {
     const d = repo('main');
     planta(d, 'GM-14', 'branch', { nome: 'enabler/GM-14-clareza' }, '2026-11-15T10:00:00.000Z');
+    comVersaoAlvo(d, 'GM-14', '2.1.0-alpha.1'); // a versão-alvo da GM-14 é a pré-versão (GM-15 T34, r.13p)
     assert.equal(medirEnc(d).ok, true);
     assert.equal(encerradas(d, 'GM-14').length, 1);
     assert.equal(append(dirDe(d, 'GM-14'), 'dono', { ts: '2026-11-15T13:00:00.000Z', autor: 'dono', sessao: 'dono', agente: 'dono', tipo: 'entrega.reaberta', dados: { entrega: 'GM-14', em: '2026-11-15T13:00:00.000Z' } }).ok, true);
