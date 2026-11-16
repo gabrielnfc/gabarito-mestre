@@ -79,7 +79,7 @@ import * as diario from '../dist/diario.js';
 import { escopoDaTask, pontaDaSpec, projetarEmendas, SESSAO_EMENDAS, shaAceito, validarAplicacao, validarJulgamento, validarProposta } from '../dist/emenda.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { formaInvalida, formaNaGravacao, ID_PERGUNTA_RE, MOTIVOS_REENTREGA, REQ_RE } from '../dist/formas.js';
-import { pendenciaAberta } from '../dist/depende.js';
+import { itemSemFonte, loteDoDono, pendenciaAberta } from '../dist/depende.js';
 import { estadoDe, foraPermitido, ordenar, podeIntegrar, proximaAcao, TIPOS_DE_TASK, tasksCongeladas } from '../dist/loop.js';
 import { lerLeitura } from '../dist/pouso-pendente.js';
 import { pedidoDeClear } from '../dist/pouso.js';
@@ -260,8 +260,16 @@ function lerArgs(argv) {
   }
   if (esp.pos !== null && pos.length !== esp.pos) throw new Falha('uso', `${cmd} espera ${esp.pos} argumento(s) posicional(is), veio ${pos.length}. ${uso}`, {}, 2);
   const falta = (esp.obrig ?? []).find((n) => !Object.hasOwn(flags, n));
-  if (falta !== undefined) throw new Falha('uso', `${cmd} exige --${falta}. ${uso}`, {}, 2);
+  if (falta !== undefined) throw new Falha('uso', `${cmd} exige --${falta}. ${uso}`, falta === 'fonte' ? semFonte(cmd, pos[0], flags) : {}, 2);
   return { cmd, pos, flags };
+}
+
+/**
+ * GM-15 T13 (review T6 r1 P9, REQ-ENT-2): a Sombra sem fonte para adiar, cortar ou reabrir é recusada e vira item do dono (Sombra sem fonte ⇒ dono):
+ * a recusa leva `item_do_dono` com o comando humano (`itemSemFonte`), para o orquestrador levar ao dono; nada é gravado. Sem `--origem sombra` não é a Sombra.
+ */
+function semFonte(cmd, task, flags) {
+  return flags.origem === 'sombra' && ['adiar', 'cortar', 'reabrir'].includes(cmd) ? { item_do_dono: itemSemFonte(cmd, task) } : {};
 }
 
 // ─────────────────────────────────────────────────────────────── formas de desvio, descoberta e emenda
@@ -400,7 +408,9 @@ function validarForma(cmd, pos, flags) {
   if (cmd === 'adiar' || cmd === 'cortar') {
     // GM-15 T6: a origem é só `sombra` (uso, rc 2): nenhum argumento produz `dono`; a Sombra sempre cita a fonte.
     if (flags.origem !== 'sombra') throw new Falha('uso', `${cmd} só aceita --origem sombra (o dono usa o comando /gabarito-mestre:${cmd}); veio ${JSON.stringify(flags.origem)}`, {}, 2);
-    return { task, como: cmd === 'adiar' ? 'adiada' : 'cortada', ...textoDe('motivo', flags.motivo), ...textoDe('fonte', flags.fonte) };
+    const motivo = textoDe('motivo', flags.motivo);
+    if (typeof flags.fonte !== 'string' || flags.fonte.trim() === '') throw new Falha('argumento_invalido', '--fonte vazio: esperado texto', semFonte(cmd, task, flags));
+    return { task, como: cmd === 'adiar' ? 'adiada' : 'cortada', ...motivo, fonte: flags.fonte };
   }
   if (cmd === 'reabrir') {
     if (flags.origem === undefined) {
@@ -408,8 +418,9 @@ function validarForma(cmd, pos, flags) {
       return { task };
     }
     if (flags.origem !== 'sombra') throw new Falha('uso', `reabrir só aceita --origem sombra ou nenhuma, a retomada é o padrão sem flag (o dono usa o comando /gabarito-mestre:reabrir); veio ${JSON.stringify(flags.origem)}`, {}, 2);
-    if (flags.fonte === undefined) throw new Falha('uso', 'reabrir --origem sombra exige --fonte (a decisão que a autorizou)', {}, 2);
-    return { task, sombra: true, ...textoDe('fonte', flags.fonte) };
+    if (flags.fonte === undefined) throw new Falha('uso', 'reabrir --origem sombra exige --fonte (a decisão que a autorizou)', semFonte(cmd, task, flags), 2);
+    if (typeof flags.fonte !== 'string' || flags.fonte.trim() === '') throw new Falha('argumento_invalido', '--fonte vazio: esperado texto', semFonte(cmd, task, flags));
+    return { task, sombra: true, fonte: flags.fonte };
   }
   if (cmd === 'concluir') {
     // FIEL-8 b6: o motivo da reentrega é forma; fora dos 3 literais recusa antes de abrir plano ou diário.
@@ -1434,7 +1445,10 @@ function proxima(c, plano, flags) {
   aviso.push(...avisosDeEmenda(plano, ordenados, est));
   // A árvore de aprendizados é lida UMA vez por chamada (nunca por item); só quando há o que despachar.
   const extra = { cfg, ordenados, est, decisoes: projetarDecisoes(eventos), vigentes: acao.tipo === 'despachar' ? aprendizadosDaArvore(c, aviso) : [] };
-  return { acao: acao.tipo === 'despachar' ? { ...acao, itens: acao.itens.map((i) => enriquecer(c, plano, eventos, i, aviso, extra)) } : acao, sinais, ...(aviso.length ? { aviso } : {}) };
+  // GM-15 T13 (REQ-AUT-1): o que só o dono destrava sai em 1 lote, ao lado da ação (o loop segue no permitido); a Sombra só de origin, a entrega de `lerConfigEntrega`.
+  const sombraOrigin = origin.fonte === 'origin' && origin.cfg?.sombra !== null && typeof origin.cfg?.sombra === 'object' ? origin.cfg.sombra : {};
+  const lote = loteDoDono(plano, eventos, { liberaTeto: sombraOrigin.libera_teto === true, julgaEmendas: sombraOrigin.julga_emendas === true, autonomiaEntrega: ce.autonomia === true, base: ce.base });
+  return { acao: acao.tipo === 'despachar' ? { ...acao, itens: acao.itens.map((i) => enriquecer(c, plano, eventos, i, aviso, extra)) } : acao, lote, sinais, ...(aviso.length ? { aviso } : {}) };
 }
 
 /** Aprendizados vigentes da árvore (todas as entregas). Entrega ilegível vira aviso; falha na leitura nunca derruba o despacho (lista vazia e aviso). */

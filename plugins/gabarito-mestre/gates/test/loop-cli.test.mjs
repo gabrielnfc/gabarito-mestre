@@ -6325,3 +6325,80 @@ describe('GM-15 T35 (r.10, C5): o orquestrador fecha só a própria pendência',
     assert.equal(amb.cli(['anotar', '--fechar', 'loop:1', '--tipo', 'pendencia']).rc, 2, '--fechar não se mistura com --tipo/--texto');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════ GM-15 T13: o lote do dono no `proxima` (REQ-AUT-1) e Sombra sem fonte ⇒ dono (REQ-ENT-2)
+// MUTAÇÕES: M13a omitir `next ⇒ main` no fim ⇒ lote-do-dono-unico-cli · M13b DEPENDE com lista diferente do proxima ⇒ lote-igual-no-depende-cli
+// · M13c a config de origin não chega ao lote (lê local) ⇒ lote-le-origin · M13d recusa sem fonte sem item do dono ⇒ sem-fonte-vira-item-do-dono.
+describe('GM-15 T13: lote do dono no proxima', () => {
+  const NO_TETO_E = (t) => [
+    ['task.iniciada', { task: t, papel: 'implementador' }], ['task.concluida', { task: t, sha: 'a'.repeat(40) }],
+    ['task.iniciada', { task: t, papel: 'revisor' }], ['review.veredito', { task: t, veredito: 'REPROVADO', rodada: 1, blocker: 0, major: 1 }],
+    ['task.iniciada', { task: t, papel: 'correcao' }], ['task.concluida', { task: t, sha: 'b'.repeat(40) }],
+    ['task.iniciada', { task: t, papel: 'revisor' }], ['review.veredito', { task: t, veredito: 'REPROVADO', rodada: 2, blocker: 0, major: 1 }],
+  ];
+  const DESLIGADA = { entrega: { base: 'next', autonomia: false }, sombra: { julga_emendas: false, libera_teto: false } };
+  const MOTIVOS_4 = ['decidir a T2: chegou ao limite de revisões', 'decidir a emenda 1', 'atualizar o plugin: o diário tem evento de uma versão mais nova', 'no fim da entrega: levar next para main'];
+  const montar = (cfgOrigin, { config } = {}) => {
+    const amb = ambReq(config ? { config } : {});
+    if (cfgOrigin !== null) comOrigin(amb, cfgOrigin);
+    amb.semear([...NO_TETO_E('T2'), ['evento.do.futuro', { x: 1 }]]);
+    // a proposta é do REQ da T2 (já no teto): T1 segue livre e o núcleo despacha
+    grava(amb, relogioDe(), [['emendas', 'emenda.proposta', PROPOSTA({ req: 'REQ-B-1' })]]);
+    return amb;
+  };
+
+  test('lote-do-dono-unico-cli: os 4 previsíveis num proxima só, na ordem, com os comandos; a ação do núcleo segue (T1 despacha)', () => {
+    const amb = montar(DESLIGADA);
+    const r = amb.cli(['proxima']);
+    assert.equal(r.rc, 0, r.out);
+    assert.deepEqual(r.j.lote.map((i) => i.motivo), MOTIVOS_4);
+    assert.equal(r.j.lote[0].acoes[0].comando, '/gabarito-mestre:liberar T2');
+    assert.equal(r.j.lote.at(-1).motivo, 'no fim da entrega: levar next para main', 'next ⇒ main é o último');
+    assert.deepEqual(r.j.acao.itens?.map((i) => i.task), ['T1'], `o lote não para o loop: ${JSON.stringify(r.j.acao)}`);
+  });
+
+  test('lote-le-origin: a Sombra ligada e a autonomia de entrega em origin/HEAD esvaziam o lote (fica só o plugin atrás); o config local não conta', () => {
+    const lig = montar({ entrega: { base: 'next', autonomia: true }, sombra: { julga_emendas: true, libera_teto: true } }).cli(['proxima']);
+    assert.equal(lig.rc, 0, lig.out);
+    assert.deepEqual(lig.j.lote.map((i) => i.motivo), ['atualizar o plugin: o diário tem evento de uma versão mais nova']);
+    const soLocal = montar(null, { config: { ...CONFIG_PADRAO, entrega: { base: 'next', autonomia: true }, sombra: { julga_emendas: true, libera_teto: true } } }).cli(['proxima']);
+    assert.deepEqual(soLocal.j.lote.map((i) => i.motivo), ['decidir a T2: chegou ao limite de revisões', 'decidir a emenda 1', 'atualizar o plugin: o diário tem evento de uma versão mais nova'],
+      'sem origin: Sombra desligada e base main (sem next ⇒ main)');
+  });
+
+  test('lote-vazio-sem-item-cli: sem nada previsível o proxima devolve lote vazio', () => {
+    const amb = ambReq();
+    comOrigin(amb, { entrega: { base: 'main' } });
+    const r = amb.cli(['proxima']);
+    assert.equal(r.rc, 0, r.out);
+    assert.deepEqual(r.j.lote, []);
+  });
+
+  test('lote-igual-no-depende-cli: o DEPENDE montado com o lote do proxima tem os mesmos itens, na mesma ordem', async () => {
+    const { dependeDe } = await import('../dist/depende.js');
+    const amb = montar(DESLIGADA);
+    const r = amb.cli(['proxima']);
+    const dep = dependeDe({ entrega: 'GM-10', identificada: true, marcas: [], mudouDepois: false }, amb.eventos(), [], { falhou: [] }, false, { branch: null, idPadrao: '[A-Z]+-\\d+' }, r.j.lote);
+    const i = dep.findIndex((x) => x.motivo === r.j.lote[0].motivo);
+    assert.deepEqual(dep.slice(i, i + r.j.lote.length), r.j.lote);
+    assert.equal(dep.length, r.j.lote.length, 'nada mais neste diário');
+  });
+
+  test('sem-fonte-vira-item-do-dono: adiar, cortar e reabrir pela Sombra sem --fonte recusam (rc 2, nada gravado) e devolvem o item do dono com o comando humano', () => {
+    const amb = ambReq();
+    comOrigin(amb, { sombra: { julga_emendas: true } });
+    amb.semear([['task.fora', { task: 'T3', como: 'adiada', motivo: 'm', origem: 'sombra', fonte: 'f' }]]);
+    const antes = bytesDoDiario(amb);
+    for (const [args, cmd] of [[['adiar', 'T2', '--motivo', 'm', '--origem', 'sombra'], 'adiar'], [['cortar', 'T2', '--motivo', 'm', '--origem', 'sombra'], 'cortar'],
+      [['reabrir', 'T3', '--origem', 'sombra'], 'reabrir'], [['adiar', 'T2', '--motivo', 'm', '--origem', 'sombra', '--fonte', '  '], 'adiar']]) {
+      const r = amb.cli(args);
+      assert.notEqual(r.rc, 0, args.join(' '));
+      assert.match(r.j.mensagem, /fonte/);
+      assert.equal(r.j.item_do_dono.nivel, 'dono', args.join(' '));
+      assert.deepEqual(r.j.item_do_dono.acoes, [{ rotulo: cmd, comando: `/gabarito-mestre:${cmd} ${args[1]}` }]);
+    }
+    assert.equal(amb.cli(['adiar', 'T2', '--motivo', 'm', '--origem', 'sombra']).rc, 2, 'segue uso');
+    assert.equal(amb.cli(['adiar', 'T2', '--motivo', 'm']).j.item_do_dono, undefined, 'sem --origem sombra não é a Sombra: só uso');
+    assert.deepEqual(bytesDoDiario(amb), antes);
+  });
+});
