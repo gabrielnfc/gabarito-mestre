@@ -433,6 +433,22 @@ export function colunasDosBotoes(botoes) {
   return (Array.isArray(botoes) ? botoes : []).reduce((n, b) => n + 1 + colunas(b.rotulo ?? '') + 4, 0);
 }
 
+/**
+ * GM-15 T22 (MAJOR-1/3): os botões do topo (PAROU/pergunta) ficam sempre; os de `painel nomes` entram depois enquanto couberem em `largura`
+ * (sobram `MIN_TEXTO_COM_BOTOES` colunas para o texto). O resto vira 1 botão `+N` que põe `/gabarito painel nomes ` no input.
+ */
+const MIN_TEXTO_COM_BOTOES = 24;
+export function botoesComNomes(topo, nomes, largura) {
+  const t = Array.isArray(topo) ? topo : [];
+  if (!Array.isArray(nomes) || nomes.length === 0) return t;
+  const orc = (largura > 0 ? largura : 80) - RESERVA_BORDA_DIREITA - MIN_TEXTO_COM_BOTOES - colunasDosBotoes(t);
+  if (colunasDosBotoes(nomes) <= orc) return [...t, ...nomes];
+  const mais = (n) => ({ rotulo: `+${n}`, comando: '/gabarito painel nomes ' });
+  let k = nomes.length - 1;
+  while (k > 0 && colunasDosBotoes(nomes.slice(0, k)) + colunasDosBotoes([mais(nomes.length - k)]) > orc) k -= 1;
+  return [...t, ...nomes.slice(0, k), mais(nomes.length - k)];
+}
+
 /** A plataforma põe `[-]` na borda direita da linha do AbovePrompt (3 colunas, medido em sessão real): a linha única as reserva. */
 const RESERVA_BORDA_DIREITA = 3;
 
@@ -1442,6 +1458,13 @@ export function registrarPainel(on) {
     return next(e);
   });
 
+  // GM-15 T22 (MAJOR-2): os botões de `painel nomes` valem até o próximo comando do `/gabarito` (qualquer um) ou o próximo prompt do dono
+  on('command.run', { command: 'gabarito' }, async ($, e, next) => { S.escolhaNomes = null; return next(e); });
+  on('prompt.submit', { origin: { kind: 'composer' } }, async ($, e, next) => {
+    if (S.escolhaNomes !== null && e?.origin?.kind !== 'peer') { S.escolhaNomes = null; redesenhar($); }
+    return next(e);
+  });
+
   on('ui.close', async ($, e, next) => {
     if (e?.id === ID_PANE && e?.origin?.kind === 'person') S.fechadaPeloDono = true;
     return next(e);
@@ -1463,7 +1486,7 @@ export function registrarPainel(on) {
       // GM-14 T20: orçamento = `scroll.bodyRows` (ausente ⇒ 7, nunca rola); o estado novo ganha os botões do topo
       const bodyRows = e.props?.scroll?.bodyRows;
       const novo = estadoNovo(S.estado);
-      botoes = S.escolhaNomes ?? (novo ? botoesDoTopo(S.estado, $.plugin.root) : []);
+      botoes = botoesComNomes(novo ? botoesDoTopo(S.estado, $.plugin.root) : [], S.escolhaNomes, larg);
       linhas = linhasDaPane(novo ? estadoParaDesenho(S.estado) : S.estado, S.prefs, larg, {
         falha: S.falha, avisos: S.avisos, semLoop: S.semLoop, semLerS: S.semLerS, altura: bodyRows, orcamento: orcamentoLateral(bodyRows), local: 'lateral',
       });
@@ -1491,7 +1514,7 @@ export function registrarPainel(on) {
       let linhas;
       let botoes;
       try {
-        botoes = S.escolhaNomes ?? botoesDoTopo(S.estado, $.plugin.root);
+        botoes = botoesComNomes(botoesDoTopo(S.estado, $.plugin.root), S.escolhaNomes, larg);
         linhas = linhasDaFaixa(S.estado, S.prefs, { largura: larg, h: hDoViewport(e), maxRows: e.props?.maxRows, falha: S.falha, avisos: S.avisos, semLerS: S.semLerS });
       } catch {
         linhas = [[{ texto: 'painel: não consegui desenhar', cor: 'warning' }]];
@@ -1508,7 +1531,7 @@ export function registrarPainel(on) {
     }
     let f;
     try { f = faixaUmaLinha(S.estado, { root: $.plugin.root, aviso }); } catch { f = null; }
-    if (S.escolhaNomes !== null) f = { texto: 'nomes da equipe: escolha um pacote', cor: 'warning', botoes: S.escolhaNomes };
+    if (S.escolhaNomes !== null) f = f === null ? { texto: 'nomes da equipe: escolha um pacote', cor: 'warning', botoes: botoesComNomes([], S.escolhaNomes, larg) } : { ...f, botoes: botoesComNomes(f.botoes, S.escolhaNomes, larg) }; // PAROU e pergunta ficam (commands/gabarito.md:52)
     if (f === null) return next(e);
     const cabe = Math.max(1, larg - colunasDosBotoes(f.botoes) - RESERVA_BORDA_DIREITA);
     const cor = S.prefs.tema === 'mono' ? null : { color: f.cor };
