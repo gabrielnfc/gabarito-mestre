@@ -1185,18 +1185,19 @@ describe('GM-15 T11: perguntar --proposta', () => {
     assert.ok(!readFileSync(join(r.raiz, sobre(r, 3, 'q3?', ['--req', 'REQ-A-2']).out.brief), 'utf8').includes('redija'));
   });
 
-  test('t11-ancora-da-redacao-e-req-mais-task: rejeições de outra task, sem task ou da própria Sombra não contam', () => {
+  test('t11-ancora-da-redacao-e-so-req: task não separa âncora; rejeição da própria Sombra não conta nem pede nova redação', () => {
     const r = novoRepo();
     propostaCom(r, 'REQ-A-1', { task: 'T1' }); // 1
-    propostaCom(r, 'REQ-A-1', { task: 'T1' }); // 2
-    propostaCom(r, 'REQ-A-1'); // 3, sem task: outra âncora
+    propostaCom(r, 'REQ-A-1'); // 2, sem task: mesma âncora (REQ)
+    propostaCom(r, 'REQ-A-1', { task: 'T2' }); // 3, outra task: mesma âncora
     propostaCom(r, 'REQ-A-1', { task: 'T1', origem: 'sombra' }); // 4, da Sombra
     rejeitar(r, 1);
     rejeitar(r, 4);
     const brief = (seq, q, ancora) => readFileSync(join(r.raiz, sobre(r, seq, q, ancora).out.brief), 'utf8');
-    assert.ok(!brief(2, 'a?', ['--task', 'T1']).includes('redija'), '1 do orquestrador + 1 da Sombra = 1');
+    assert.ok(!brief(3, 'a?', ['--task', 'T2']).includes('redija'), '1 do orquestrador + 1 da Sombra = 1');
     rejeitar(r, 2);
-    assert.ok(brief(2, 'b?', ['--task', 'T1']).includes('redija'), '2 do orquestrador na âncora');
-    assert.ok(!brief(3, 'c?').includes('redija'), 'a proposta sem task é outra âncora');
+    assert.ok(brief(3, 'b?', ['--task', 'T2']).includes('redija'), 'caso misto (com e sem task) soma 2 por REQ');
+    rejeitar(r, 3);
+    assert.ok(!brief(4, 'c?', ['--task', 'T1']).includes('redija'), 'proposta da Sombra já rejeitada não pede redação');
   });
 });

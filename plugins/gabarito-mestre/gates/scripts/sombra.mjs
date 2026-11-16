@@ -299,12 +299,12 @@ function comAchados(brief, task, achados) {
   return i < 0 ? `${brief}\n${secao}` : `${brief.slice(0, i + 1)}${secao}${brief.slice(i)}`;
 }
 
-/** GM-15 T11 (REQ-EME-3 B): a proposta de seq `seq` no estado projetado, com o estado e as rejeições do orquestrador na mesma âncora (REQ + task). */
+/** GM-15 T11 (REQ-EME-3 B): a proposta de seq `seq` no estado projetado, com o estado e as rejeições do orquestrador na mesma âncora (só o REQ: emenda 13). */
 function propostaDoEstado(est, seq) {
   for (const [estado, lista] of [['aberta', est.abertas], ['aprovada', est.aprovadas], ['rejeitada', est.rejeitadas]]) {
     const p = lista.find((x) => x.seq === seq);
     if (p !== undefined) {
-      const rejeicoes = est.rejeitadas.filter((x) => x.req === p.req && x.task === p.task && x.origem !== 'sombra').length;
+      const rejeicoes = est.rejeitadas.filter((x) => x.req === p.req && x.origem !== 'sombra').length;
       return { p, estado, rejeicoes };
     }
   }
@@ -317,9 +317,10 @@ function comProposta(brief, { p, estado, rejeicoes }) {
   const partes = ['## Proposta de emenda sob julgamento', '',
     `Proposta de emenda #${p.seq} (${p.req}${p.task !== undefined ? `, task ${p.task}` : ''}) · ${estado} · causa ${p.causa}${p.origem === 'sombra' ? ' · redigida pela Sombra' : ''}`, '',
     ...bloco('Diff', p.diff), ...bloco('Fato', p.fato), ...bloco('Alternativa', p.alternativa)];
-  if (rejeicoes >= 2) {
+  // Emenda 13: proposta da própria Sombra rejeitada vai ao dono; a Sombra não redige de novo.
+  if (rejeicoes >= 2 && p.origem !== 'sombra') {
     partes.push('### Redação', '',
-      `Esta âncora (${p.req}${p.task !== undefined ? `, task ${p.task}` : ''}) já teve ${rejeicoes} propostas do orquestrador rejeitadas: esta é a 2ª rejeição e não há 3ª proposta dele. `
+      `Esta âncora (${p.req}) já teve ${rejeicoes} propostas do orquestrador rejeitadas: esta é a 2ª rejeição e não há 3ª proposta dele. `
       + 'Se a hipótese da emenda procede, redija o texto da emenda (diff, fato e alternativa) no campo `texto` da resposta; o orquestrador a grava com `emenda propor --origem sombra`.', '');
   }
   const i = brief.lastIndexOf('\n## Instrução\n');
