@@ -521,3 +521,87 @@ test('proxima-entrega-pura: spec sem encerramento mais nova pelo nome; id insegu
   for (const torto of [null, 7, 'x', [null, 1, { pbi: 'GM-9' }]]) assert.equal(proximaEntrega(torto, new Set(), null).tipo, 'nenhuma');
   assert.deepEqual(proximaEntrega([], new Set(), 'diario torto'), { tipo: 'nenhuma', texto: 'nenhuma próxima anotada', acoes: [] });
 });
+
+// ── GM-15 T13 (REQ-AUT-1): o lote do dono, a mesma lista no `proxima` e no DEPENDE ─────────────────────────────────────────────────────────
+// Mutações: M13a omitir `next ⇒ main` no fim ⇒ lote-do-dono-unico · M13b DEPENDE com lista diferente do lote ⇒ lote-igual-no-depende
+import { itemSemFonte, loteDoDono } from '../src/depende.ts';
+import type { Plano } from '../src/tipos.ts';
+
+const PLANO_LOTE: Plano = { entrega: 'GM-14', tasks: [{ id: 'T1', deps: [], arquivos: ['a'] }, { id: 'T2', deps: [], arquivos: ['b'] }, { id: 'T3', deps: [], arquivos: ['c'] }] };
+const CFG_DESLIGADA = { liberaTeto: false, julgaEmendas: false, autonomiaEntrega: false, base: 'next' };
+const CFG_LIGADA = { liberaTeto: true, julgaEmendas: true, autonomiaEntrega: true, base: 'next' };
+const evNovo = (): C => ({ t: 'evento.do.futuro' as TipoEvento, d: { x: 1 } });
+const liberacaoDono = (task: string): C => ({ t: 'task.reaberta', d: { task, origem: 'dono' } });
+
+test('lote-do-dono-unico: no_teto sem liberação, emenda sem julga_emendas, plugin atrás do diário e next ⇒ main no fim, nessa ordem e com os comandos', () => {
+  const evs = expandir([...noTeto('T2'), emendaProposta(), evNovo()]);
+  const lote = loteDoDono(PLANO_LOTE, evs, CFG_DESLIGADA);
+  assert.deepEqual(motivos(lote), [
+    'decidir a T2: chegou ao limite de revisões', 'decidir a emenda 1', 'atualizar o plugin: o diário tem evento de uma versão mais nova', 'no fim da entrega: levar next para main',
+  ]);
+  assert.deepEqual(lote[0].acoes, [{ rotulo: 'liberar mais uma rodada', comando: '/gabarito-mestre:liberar T2' }]);
+  assert.deepEqual(lote[1].acoes.map((a) => a.comando), ['/gabarito-mestre:emenda aprovar 1', '/gabarito-mestre:emenda rejeitar 1']);
+  assert.deepEqual(lote[2].acoes, [{ rotulo: 'atualizar', comando: '/plugin' }]);
+  assert.deepEqual(lote[3].acoes, []);
+  for (const i of lote) assert.equal(i.nivel, 'dono');
+  for (const i of lote) assert.doesNotMatch(i.motivo, REGEX_TECNICA);
+});
+
+test('lote-vazio-sem-item: sem teto, sem emenda, diário conhecido e autonomia de entrega (ou base main, ou entregue) ⇒ lote vazio e DEPENDE "nada"', () => {
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([]), CFG_LIGADA), []);
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([]), { ...CFG_DESLIGADA, base: 'main' }), [], 'base main: o pedido de revisão da entrega já é o item do dono');
+  const encerrada: C = { t: 'entrega.encerrada', d: { entrega: 'GM-14', pr: 7, via: 'merge', mergeado_em: '2026-11-11T12:00:00Z' } };
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([encerrada]), CFG_DESLIGADA), [], 'entregue: nada a levar');
+  assert.deepEqual(loteDoDono({ entrega: 'GM-14', tasks: [] }, expandir([]), CFG_DESLIGADA), [], 'plano sem task: sem fim previsível');
+  assert.deepEqual(motivos(dependeDe(APROVADA, expandir([]), [], OK, false, GIT, [])), ['nada depende de você']);
+});
+
+test('lote-teto-so-sem-liberacao: com libera_teto e a 1ª liberação livre a Sombra decide; gasta (dono ou Sombra já liberou) ou flag desligada ⇒ dono', () => {
+  const sem = { ...CFG_LIGADA };
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir(noTeto('T1')), sem)), []);
+  const gasta = expandir([...noTeto('T1'), liberacaoDono('T1'), ...noTeto('T1')]);
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, gasta, sem)), ['decidir a T1: chegou ao limite de revisões']);
+  const daSombra = expandir([...noTeto('T1'), { t: 'task.reaberta', d: { task: 'T1', origem: 'sombra', hash } }, ...noTeto('T1')]);
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, daSombra, sem)), ['decidir a T1: chegou ao limite de revisões']);
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir(noTeto('T1')), { ...sem, liberaTeto: false })), ['decidir a T1: chegou ao limite de revisões']);
+  // ordem do plano, não do diário
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([...noTeto('T3'), ...noTeto('T1')]), { ...sem, liberaTeto: false })),
+    ['decidir a T1: chegou ao limite de revisões', 'decidir a T3: chegou ao limite de revisões']);
+});
+
+test('lote-emenda-so-sem-julga: com julga_emendas a Sombra julga (não é do dono); desligada ⇒ uma por proposta aberta', () => {
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([emendaProposta()]), CFG_LIGADA), []);
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([emendaProposta(), emendaProposta()]), { ...CFG_LIGADA, julgaEmendas: false })), ['decidir a emenda 1', 'decidir a emenda 2']);
+});
+
+test('versao-plugin-atras-do-diario: tipo de evento que este plugin não conhece ⇒ 1 item só; só tipos conhecidos ⇒ nenhum', () => {
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([evNovo(), evNovo(), emendaProposta()]), CFG_LIGADA)), ['atualizar o plugin: o diário tem evento de uma versão mais nova']);
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([emendaProposta(), nota('ideia', 'x')]), CFG_LIGADA), []);
+});
+
+test('lote-igual-no-depende: o DEPENDE traz o lote inteiro, contíguo e na mesma ordem, sem repetir o teto da base nem a emenda; sem lote segue o de antes', () => {
+  const evs = [...noTeto('T2'), emendaProposta(), evNovo()];
+  const lote = loteDoDono(PLANO_LOTE, expandir(evs), CFG_DESLIGADA);
+  const baseTeto: ItemDepende = { nivel: 'parar', motivo: 'teto de rodadas de review em T2', acoes: [{ rotulo: 'liberar', comando: '/gabarito-mestre:liberar T2' }] };
+  const dep = dependeDe(APROVADA, expandir([...evs, nota('pendencia', 'renovar o domínio')]), [baseTeto], OK, false, GIT, lote);
+  const i = dep.findIndex((x) => x.motivo === lote[0].motivo);
+  assert.ok(i >= 0, JSON.stringify(motivos(dep)));
+  assert.deepEqual(dep.slice(i, i + lote.length), lote);
+  assert.equal(dep.filter((x) => x.acoes.some((a) => a.comando === '/gabarito-mestre:liberar T2')).length, 1, 'o liberar aparece 1 vez');
+  assert.equal(dep.filter((x) => /emenda 1/.test(x.motivo)).length, 1);
+  assert.ok(motivos(dep).includes('renovar o domínio'), 'o resto do DEPENDE segue');
+  // com a Sombra ligada, o lote não traz teto nem emenda, e o DEPENDE também não
+  const loteLig = loteDoDono(PLANO_LOTE, expandir(evs), CFG_LIGADA);
+  const depLig = dependeDe(APROVADA, expandir(evs), [], OK, false, GIT, loteLig);
+  assert.ok(!depLig.some((x) => /limite de revisões|emenda/.test(x.motivo)), JSON.stringify(motivos(depLig)));
+  // sem lote (o painel de antes): (5) e (7) seguem
+  assert.ok(motivos(dependeDe(APROVADA, expandir(evs), [], OK, false, GIT)).includes('decidir a emenda 1'));
+});
+
+test('item-sem-fonte: a Sombra sem fonte para adiar, cortar ou reabrir vira item do dono com o comando humano; id fora da forma sai sem botão', () => {
+  assert.deepEqual(itemSemFonte('adiar', 'T5'), { nivel: 'dono', motivo: 'decidir se a T5 sai do alvo (adiar): a Sombra não tem fonte', acoes: [{ rotulo: 'adiar', comando: '/gabarito-mestre:adiar T5' }] });
+  assert.deepEqual(itemSemFonte('cortar', 'T5').acoes, [{ rotulo: 'cortar', comando: '/gabarito-mestre:cortar T5' }]);
+  assert.deepEqual(itemSemFonte('reabrir', 'T5'), { nivel: 'dono', motivo: 'decidir se a T5 volta ao alvo: a Sombra não tem fonte', acoes: [{ rotulo: 'reabrir', comando: '/gabarito-mestre:reabrir T5' }] });
+  assert.deepEqual(itemSemFonte('adiar', 'T5; rm').acoes, []);
+  for (const v of ['adiar', 'cortar', 'reabrir'] as const) assert.doesNotMatch(itemSemFonte(v, 'T5').motivo, REGEX_TECNICA);
+});

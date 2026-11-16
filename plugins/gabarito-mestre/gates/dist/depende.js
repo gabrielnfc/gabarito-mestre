@@ -10,11 +10,11 @@
  * vive em `acoes[].comando`, e só quando provado seguro (id de task em formato fechado; branch da entrega, DP-3 ajuste 3).
  */
 import { projetarEmendas } from './emenda.js';
-import { ehRespostaDeAdiamento, formaInvalida, ID_PERGUNTA_RE } from './formas.js';
+import { ehRespostaDeAdiamento, formaInvalida, ID_PERGUNTA_RE, TIPOS_EVENTO } from './formas.js';
 import { AGORA_NAO_TETO } from './pouso.js';
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.js';
 import { cmp } from './diario-puro.js';
-                                                                     
+                                                                            
 import { idDaBranch } from './trilha.js';
                                           
 
@@ -36,6 +36,15 @@ function nomeDeFonte(v         )         {
   const t = limpo.replace(/\s+/g, ' ').trim();
   return t === '' ? 'uma fonte' : Array.from(t).slice(0, NOME_FONTE_MAX).join('');
 }
+
+/** (5) e o lote: a task no limite de revisões, com o botão do dono só para id seguro. */
+const itemTeto = (id        )              => (TASK_SEGURA.test(id)
+  ? item(`decidir a ${id}: chegou ao limite de revisões`, [{ rotulo: 'liberar mais uma rodada', comando: `/gabarito-mestre:liberar ${id}` }])
+  : item('decidir uma task: chegou ao limite de revisões'));
+/** (7) e o lote: a emenda aberta com os botões da E4. */
+const itemEmenda = (seq        )              => item(`decidir a emenda ${seq}`, [
+  { rotulo: 'aprovar', comando: `/gabarito-mestre:emenda aprovar ${seq}` }, { rotulo: 'rejeitar', comando: `/gabarito-mestre:emenda rejeitar ${seq}` },
+]);
 
 const copia = (i             )              => ({ nivel: i.nivel, motivo: i.motivo, acoes: (Array.isArray(i.acoes) ? i.acoes : []).map((a) => ({ ...a })) });
 
@@ -187,7 +196,12 @@ export const NADA_DEPENDE = 'nada depende de você';
 export function dependeDe(
   trilha        , eventos          , base               ,
   fontes                      , pousoPendente                                                    , git                                             ,
+  lote                       ,
 )                {
+  // GM-15 T13 (REQ-AUT-1): com o lote do dono (`loteDoDono`, o MESMO que `loop.mjs proxima` devolve), ele substitui (5) e (7), inteiro e na mesma ordem.
+  const comLote = Array.isArray(lote);
+  const doLote = comLote ? (lote                 ).map(copia) : [];
+  const comandosDoLote = new Set(doLote.flatMap((i) => i.acoes.map((a) => a.comando)).filter((c)              => typeof c === 'string'));
   const falhou           = [];
   for (const f of Array.isArray(fontes?.falhou) ? fontes.falhou : []) {
     const n = nomeDeFonte(f);
@@ -221,9 +235,7 @@ export function dependeDe(
   // (5) task no limite de revisões; a base (PAROU de teto, REQ-PNL-3) já traz o mesmo botão `liberar <task>`: não repete.
   const jaNaBase = (id        )          => (Array.isArray(base) ? base : []).some((b) => Array.isArray(b?.acoes) && b.acoes.some((a) => a?.comando === `/gabarito-mestre:liberar ${id}`)
     || b?.motivo === `teto de rodadas de review em ${id}` || (!TASK_SEGURA.test(id) && typeof b?.motivo === 'string' && b.motivo.startsWith('teto de rodadas de review')));
-  const limite = tasksNoTeto(evs).filter((id) => !jaNaBase(id)).map((id) => (TASK_SEGURA.test(id)
-    ? item(`decidir a ${id}: chegou ao limite de revisões`, [{ rotulo: 'liberar mais uma rodada', comando: `/gabarito-mestre:liberar ${id}` }])
-    : item('decidir uma task: chegou ao limite de revisões')));
+  const limite = tasksNoTeto(evs).filter((id) => !jaNaBase(id)).map(itemTeto);
 
   // (1) aprovação: "mudou depois" ou aprovação `●`; os dois juntos são 1 item (a versão nova). Botão só na branch da entrega (DP-3 aj. 3).
   const aprovar                = [];
@@ -253,19 +265,68 @@ export function dependeDe(
 
   // (7) emendas abertas (os botões são os da E4)
   const emendas = ord.ok ? projetarEmendas(evs).abertas : [];
-  const decidirEmendas = emendas.map((p) => item(`decidir a emenda ${p.seq}`, [
-    { rotulo: 'aprovar', comando: `/gabarito-mestre:emenda aprovar ${p.seq}` }, { rotulo: 'rejeitar', comando: `/gabarito-mestre:emenda rejeitar ${p.seq}` },
-  ]));
+  const decidirEmendas = emendas.map((p) => itemEmenda(p.seq));
 
   // A base não repete o que (1) e (7) já dizem (a E4 também lista "spec aguardando" e "emenda #n").
   const daBase = (Array.isArray(base) ? base : []).filter((b) => {
+    // o lote já traz o botão de liberar do teto: a base não o repete
+    if (comLote && Array.isArray(b?.acoes) && b.acoes.some((a) => typeof a?.comando === 'string' && a.comando.startsWith('/gabarito-mestre:liberar ') && comandosDoLote.has(a.comando))) return false;
     if (aprovar.length > 0 && Array.isArray(b?.acoes) && b.acoes.some((a) => a?.comando === CMD_APROVAR)) return false;
     if (emendas.length > 0 && typeof b?.motivo === 'string' && /^(emenda #\d+ |e mais \d+ emenda)/.test(b.motivo)) return false;
     return true;
   }).map(copia);
 
-  const saida = [...daBase, ...limpar, ...limite, ...aprovar, ...revisar, ...pendencias, ...decidirIdeias, ...decidirEmendas];
+  const saida = comLote
+    ? [...daBase, ...limpar, ...doLote, ...aprovar, ...revisar, ...pendencias, ...decidirIdeias]
+    : [...daBase, ...limpar, ...limite, ...aprovar, ...revisar, ...pendencias, ...decidirIdeias, ...decidirEmendas];
   if (falhou.length > 0) saida.push(item(`depende de você: ? (não consegui ler ${listaE(falhou)})`));
   else if (saida.length === 0) saida.push(item(NADA_DEPENDE)); // D-G12 (r.13): o texto literal
   return saida;
+}
+
+/** GM-15 T13 (REQ-AUT-1): o que o lote lê da config de `origin/HEAD` (Sombra) e da entrega (`lerConfigEntrega`). */
+                                                                                                                 
+
+export const MOTIVO_PLUGIN_ATRAS = 'atualizar o plugin: o diário tem evento de uma versão mais nova';
+const CONHECIDOS                      = new Set(TIPOS_EVENTO);
+
+/**
+ * GM-15 T13 (REQ-AUT-1): o lote do dono, o que é previsível e só o dono destrava, 1 item cada, nesta ordem:
+ * (a) task `no_teto` (ordem do plano) sem liberação da Sombra: `sombra.libera_teto` desligado em origin ou a 1ª liberação já gasta (`task.reaberta`
+ * de origem dono ou sombra da task, a regra de `conferirLiberacao`); (b) emenda aberta com `sombra.julga_emendas` desligado; (c) o plugin atrás do diário
+ * (evento de tipo que este plugin não conhece, aprendizado 585); (d) por último, `next ⇒ main` no fim da entrega: base diferente de `main`, sem
+ * `entrega.autonomia` e sem `entrega.encerrada`. `loop.mjs proxima` o devolve em `lote` e `dependeDe` o mostra igual. Puro, nunca lança; diário que
+ * não ordena ⇒ lote vazio (o PAROU e o "?" do DEPENDE já cobrem).
+ */
+export function loteDoDono(plano              , eventos          , cfg            )                {
+  let evs          ;
+  try {
+    const ord = Array.isArray(eventos) ? ordenar(eventos) : { ok: false          };
+    if (!ord.ok) return [];
+    evs = ord.eventos;
+  } catch { return []; }
+  const c = obj(cfg);
+  const tasks = Array.isArray(plano?.tasks) ? (plano         ).tasks.map((t) => t?.id).filter((id)               => typeof id === 'string') : [];
+  const daTask = (id        )           => evs.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && obj(e.dados).task === id);
+  const gasta = (id        )          => daTask(id).some((e) => e.tipo === 'task.reaberta' && (obj(e.dados).origem === 'dono' || obj(e.dados).origem === 'sombra'));
+  const noTeto = (id        )          => { const r = estadoDe(daTask(id)); return !('invalido' in r) && r.estado === 'no_teto'; };
+  const teto = tasks.filter((id) => noTeto(id) && (c.liberaTeto !== true || gasta(id))).map(itemTeto);
+  const emendas = c.julgaEmendas === true ? [] : projetarEmendas(evs).abertas.map((p) => itemEmenda(p.seq));
+  const versao = evs.some((e) => !CONHECIDOS.has(e.tipo)) ? [item(MOTIVO_PLUGIN_ATRAS, [{ rotulo: 'atualizar', comando: '/plugin' }])] : [];
+  const base = typeof c.base === 'string' && c.base !== '' ? c.base : 'main';
+  const encerrada = evs.some((e) => e.tipo === 'entrega.encerrada');
+  const main = tasks.length > 0 && base !== 'main' && c.autonomiaEntrega !== true && !encerrada
+    ? [item(`no fim da entrega: levar ${higienizar(base)} para main`)] : [];
+  return [...teto, ...emendas, ...versao, ...main];
+}
+
+/**
+ * GM-15 T13 (obrigação da review T6 r1 P9, REQ-ENT-2): `adiar`/`cortar`/`reabrir --origem sombra` sem `--fonte` é recusado e vira item do dono
+ * (Sombra sem fonte ⇒ dono), com o comando humano. Id fora da forma segura sai sem botão.
+ */
+export function itemSemFonte(verbo                                , task        )              {
+  const seguro = typeof task === 'string' && TASK_SEGURA.test(task);
+  const quem = seguro ? `a ${task}` : 'uma task';
+  const motivo = verbo === 'reabrir' ? `decidir se ${quem} volta ao alvo: a Sombra não tem fonte` : `decidir se ${quem} sai do alvo (${verbo}): a Sombra não tem fonte`;
+  return item(motivo, seguro ? [{ rotulo: verbo, comando: `/gabarito-mestre:${verbo} ${task}` }] : []);
 }
