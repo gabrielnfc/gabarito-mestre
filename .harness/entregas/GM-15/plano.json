@@ -867,7 +867,7 @@
     },
     {
       "id": "T35",
-      "titulo": "Painel limpo: botões por item, clear 'agora não', pendência própria, agente morto, sem medição sem pouso (D-G11)",
+      "titulo": "Painel limpo (D-G11)",
       "deps": [
         "T30",
         "T33",
