@@ -9,7 +9,7 @@ Para quem usa o Gabarito Mestre. O que mudou em detalhe está no `CHANGELOG.md`,
 - **O orquestrador anota na hora.** Ideia nova, desvio, mudança de assunto, dúvida que só você resolve e tarefa sua fora da entrega viram uma anotação de uma linha, nas palavras dele, sem plano e sem interromper o trabalho.
 - **O chat fica mais limpo.** As linhas de ferramenta aparecem em linguagem natural ("consultou 3 arquivos"). Quem prefere o texto cru escolhe `/gabarito chat cru`.
 - **Modo foco, só com o seu ok.** O onboarding oferece o chat só com a sua pergunta, um resumo do que a IA fez e a resposta. Fica no arquivo pessoal `.claude/settings.local.json` (fora do git) e se desfaz apagando as chaves `viewMode` e `tui` desse arquivo.
-- **O pouso pede para limpar a conversa.** Perto de metade do contexto, o loop grava o ponto de retomada, arma o retorno e pede que você limpe a conversa. Enquanto isso não acontece, nada novo é despachado; o que já está em andamento termina.
+- **O pouso pede para limpar a conversa.** Perto de metade do contexto, o loop grava o ponto de retomada, arma o retorno e, com o mod do Gabarito, limpa a conversa sozinho e avisa você por notificação; sem o mod, pede que você digite `/clear`. Enquanto isso não acontece, nada novo é despachado; o que já está em andamento termina.
 - **Os aprendizados chegam a um clone novo.** As regras comprovadas ficam versionadas no repositório e voltam sozinhas ao brief do agente que as precisa.
 
 ## Onde fica o painel
