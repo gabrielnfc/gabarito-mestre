@@ -584,10 +584,17 @@ test('lote-igual-no-depende: o DEPENDE traz o lote inteiro, contíguo e na mesma
   const lote = loteDoDono(PLANO_LOTE, expandir(evs), CFG_DESLIGADA);
   const baseTeto: ItemDepende = { nivel: 'parar', motivo: 'teto de rodadas de review em T2', acoes: [{ rotulo: 'liberar', comando: '/gabarito-mestre:liberar T2' }] };
   const dep = dependeDe(APROVADA, expandir([...evs, nota('pendencia', 'renovar o domínio')]), [baseTeto], OK, false, GIT, lote);
-  const i = dep.findIndex((x) => x.motivo === lote[0].motivo);
+  // o PAROU de teto da base já é o item do dono da T2 (mesmo botão): o resto do lote vem inteiro, contíguo e na ordem
+  assert.equal(dep[0], dep.find((x) => x.motivo === baseTeto.motivo), 'o PAROU fica');
+  const resto = lote.slice(1);
+  const i = dep.findIndex((x) => x.motivo === resto[0].motivo);
   assert.ok(i >= 0, JSON.stringify(motivos(dep)));
-  assert.deepEqual(dep.slice(i, i + lote.length), lote);
+  assert.deepEqual(dep.slice(i, i + resto.length), resto);
   assert.equal(dep.filter((x) => x.acoes.some((a) => a.comando === '/gabarito-mestre:liberar T2')).length, 1, 'o liberar aparece 1 vez');
+  // sem o PAROU na base, o lote inteiro
+  const semBase = dependeDe(APROVADA, expandir(evs), [], OK, false, GIT, lote);
+  const j = semBase.findIndex((x) => x.motivo === lote[0].motivo);
+  assert.deepEqual(semBase.slice(j, j + lote.length), lote);
   assert.equal(dep.filter((x) => /emenda 1/.test(x.motivo)).length, 1);
   assert.ok(motivos(dep).includes('renovar o domínio'), 'o resto do DEPENDE segue');
   // com a Sombra ligada, o lote não traz teto nem emenda, e o DEPENDE também não

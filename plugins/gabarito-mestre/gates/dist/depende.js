@@ -201,7 +201,7 @@ export function dependeDe(
   // GM-15 T13 (REQ-AUT-1): com o lote do dono (`loteDoDono`, o MESMO que `loop.mjs proxima` devolve), ele substitui (5) e (7), inteiro e na mesma ordem.
   const comLote = Array.isArray(lote);
   const doLote = comLote ? (lote                 ).map(copia) : [];
-  const comandosDoLote = new Set(doLote.flatMap((i) => i.acoes.map((a) => a.comando)).filter((c)              => typeof c === 'string'));
+
   const falhou           = [];
   for (const f of Array.isArray(fontes?.falhou) ? fontes.falhou : []) {
     const n = nomeDeFonte(f);
@@ -269,15 +269,17 @@ export function dependeDe(
 
   // A base não repete o que (1) e (7) já dizem (a E4 também lista "spec aguardando" e "emenda #n").
   const daBase = (Array.isArray(base) ? base : []).filter((b) => {
-    // o lote já traz o botão de liberar do teto: a base não o repete
-    if (comLote && Array.isArray(b?.acoes) && b.acoes.some((a) => typeof a?.comando === 'string' && a.comando.startsWith('/gabarito-mestre:liberar ') && comandosDoLote.has(a.comando))) return false;
     if (aprovar.length > 0 && Array.isArray(b?.acoes) && b.acoes.some((a) => a?.comando === CMD_APROVAR)) return false;
     if (emendas.length > 0 && typeof b?.motivo === 'string' && /^(emenda #\d+ |e mais \d+ emenda)/.test(b.motivo)) return false;
     return true;
   }).map(copia);
 
+  // O PAROU de teto da base (REQ-PNL-3) já é o item do dono daquela task, com o mesmo botão: o lote não o repete (a regra de (5)); o resto vai inteiro e na ordem.
+  const LIBERAR = '/gabarito-mestre:liberar ';
+  const loteSemBase = doLote.filter((i) => !(i.motivo === 'decidir uma task: chegou ao limite de revisões' && jaNaBase(''))
+    && !i.acoes.some((a) => typeof a.comando === 'string' && a.comando.startsWith(LIBERAR) && jaNaBase(a.comando.slice(LIBERAR.length))));
   const saida = comLote
-    ? [...daBase, ...limpar, ...doLote, ...aprovar, ...revisar, ...pendencias, ...decidirIdeias]
+    ? [...daBase, ...limpar, ...loteSemBase, ...aprovar, ...revisar, ...pendencias, ...decidirIdeias]
     : [...daBase, ...limpar, ...limite, ...aprovar, ...revisar, ...pendencias, ...decidirIdeias, ...decidirEmendas];
   if (falhou.length > 0) saida.push(item(`depende de você: ? (não consegui ler ${listaE(falhou)})`));
   else if (saida.length === 0) saida.push(item(NADA_DEPENDE)); // D-G12 (r.13): o texto literal
