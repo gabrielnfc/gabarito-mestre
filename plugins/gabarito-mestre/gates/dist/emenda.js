@@ -14,7 +14,11 @@ import { normalizarCaminho, temDependencia } from './plano.js';
 
 export const SESSAO_EMENDAS = 'emendas';
 
-                                                                                                                               
+                        
+                                                                                                                                         
+                                                                                                                          
+                    
+  
                              
                       
                                                          
@@ -50,6 +54,9 @@ function comoProposta(e        )                  {
     req: campo(d, 'req')          ,
     ...(typeof task === 'string' ? { task } : {}),
     diff: campo(d, 'diff')          ,
+    fato: campo(d, 'fato')          ,
+    alternativa: campo(d, 'alternativa')          ,
+    ...(campo(d, 'origem') === 'sombra' ? { origem: 'sombra'          } : {}),
     arquivos: Array.isArray(arquivos) ? normalizados(arquivos) : [],
     causa: campo(d, 'causa')         ,
     ts: e.ts,
@@ -136,6 +143,10 @@ export function validarProposta(plano       , est               , dados         
     if (n === null) return `caminho inválido: ${c}`;
     arquivos.push(n);
   }
+  const origem = campo(dados, 'origem');
+  const rejeicoes = est.rejeitadas.filter((p) => p.req === campo(dados, 'req') && p.task === task && p.origem !== 'sombra').length;
+  if (origem === 'sombra' && rejeicoes < 2) return 'origem sombra só depois da 2ª rejeição da mesma âncora';
+  if (origem !== 'sombra' && rejeicoes >= 2) return 'terceira proposta do orquestrador na mesma âncora: a Sombra redige o texto (origem sombra)';
   if (task !== undefined) {
     for (const outra of plano.tasks) {
       if (outra.id === task || temDependencia(plano, task, outra.id)) continue;

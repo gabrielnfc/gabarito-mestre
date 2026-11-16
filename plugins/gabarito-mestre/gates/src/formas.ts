@@ -487,6 +487,8 @@ const REGRAS: ReadonlyMap<string, Regra> = new Map<string, Regra>([
       return primeiro(
         exigirReq(o), opcionalTexto(o, 'task'), exigirTexto(o, 'diff'), exigirTexto(o, 'fato'), exigirTexto(o, 'alternativa'),
         exigirTexto(o, 'evidencia'), exigirEnum(o, 'causa', CAUSAS), arquivos === undefined ? null : listaDeTextos(o, 'arquivos', { vazia: true }),
+        // GM-15 T11 (REQ-EME-3 B): `origem` só existe como `sombra` (a redação da 3ª proposta); ausente = orquestrador
+        campo(o, 'origem') === undefined ? null : exigirEnum(o, 'origem', ['sombra']),
       );
     },
   ],

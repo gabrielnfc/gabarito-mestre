@@ -14,7 +14,11 @@ import type { Causa, Evento, OrigemJulgamento, Plano } from './tipos.ts';
 
 export const SESSAO_EMENDAS = 'emendas';
 
-export type Proposta = { seq: number; req: string; task?: string; diff: string; arquivos: string[]; causa: Causa; ts: string };
+export type Proposta = {
+  seq: number; req: string; task?: string; diff: string; fato: string; alternativa: string; arquivos: string[]; causa: Causa; ts: string;
+  /** GM-15 T11: só `sombra` (texto redigido pela Sombra na 3ª proposta da âncora); ausente = proposta do orquestrador. */
+  origem?: 'sombra';
+};
 export type EstadoEmendas = {
   abertas: Proposta[];
   aprovadas: (Proposta & { origem: OrigemJulgamento })[];
@@ -50,6 +54,9 @@ function comoProposta(e: Evento): Proposta | null {
     req: campo(d, 'req') as string,
     ...(typeof task === 'string' ? { task } : {}),
     diff: campo(d, 'diff') as string,
+    fato: campo(d, 'fato') as string,
+    alternativa: campo(d, 'alternativa') as string,
+    ...(campo(d, 'origem') === 'sombra' ? { origem: 'sombra' as const } : {}),
     arquivos: Array.isArray(arquivos) ? normalizados(arquivos) : [],
     causa: campo(d, 'causa') as Causa,
     ts: e.ts,
@@ -136,6 +143,10 @@ export function validarProposta(plano: Plano, est: EstadoEmendas, dados: Record<
     if (n === null) return `caminho inválido: ${c}`;
     arquivos.push(n);
   }
+  const origem = campo(dados, 'origem');
+  const rejeicoes = est.rejeitadas.filter((p) => p.req === campo(dados, 'req') && p.task === task && p.origem !== 'sombra').length;
+  if (origem === 'sombra' && rejeicoes < 2) return 'origem sombra só depois da 2ª rejeição da mesma âncora';
+  if (origem !== 'sombra' && rejeicoes >= 2) return 'terceira proposta do orquestrador na mesma âncora: a Sombra redige o texto (origem sombra)';
   if (task !== undefined) {
     for (const outra of plano.tasks) {
       if (outra.id === task || temDependencia(plano, task, outra.id)) continue;

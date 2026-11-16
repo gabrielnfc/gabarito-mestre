@@ -276,10 +276,49 @@ test('proposta-projetada-com-todos-os-campos', () => {
   const p1 = prop(1, { diff: 'DIFF-1', fato: 'FATO-1', causa: 'regra_negocio', task: 't1', arquivos: ['./src//a.ts'] }, SESSAO_EMENDAS, 10);
   const p2 = prop(2, { diff: 'DIFF-2', fato: 'FATO-2', causa: 'tecnica', req: 'REQ-B-1' }, SESSAO_EMENDAS, 20);
   const est = projetarEmendas([p1, p2, aprova('s', 1, 1, 'sombra', 30)]);
-  assert.deepEqual(est.aprovadas, [{ seq: 1, req: 'REQ-EME-1', task: 't1', diff: 'DIFF-1', arquivos: ['src/a.ts'], causa: 'regra_negocio', ts: ts(10), origem: 'sombra' }]);
-  assert.deepEqual(est.abertas, [{ seq: 2, req: 'REQ-B-1', diff: 'DIFF-2', arquivos: [], causa: 'tecnica', ts: ts(20) }]);
+  assert.deepEqual(est.aprovadas, [{ seq: 1, req: 'REQ-EME-1', task: 't1', diff: 'DIFF-1', fato: 'FATO-1', alternativa: 'a', arquivos: ['src/a.ts'], causa: 'regra_negocio', ts: ts(10), origem: 'sombra' }]);
+  assert.deepEqual(est.abertas, [{ seq: 2, req: 'REQ-B-1', diff: 'DIFF-2', fato: 'FATO-2', alternativa: 'a', arquivos: [], causa: 'tecnica', ts: ts(20) }]);
   const rej = projetarEmendas([p1, rejeita('s', 1, 1, 'dono', 30)]);
-  assert.deepEqual(rej.rejeitadas, [{ seq: 1, req: 'REQ-EME-1', task: 't1', diff: 'DIFF-1', arquivos: ['src/a.ts'], causa: 'regra_negocio', ts: ts(10) }]);
+  assert.deepEqual(rej.rejeitadas, [{ seq: 1, req: 'REQ-EME-1', task: 't1', diff: 'DIFF-1', fato: 'FATO-1', alternativa: 'a', arquivos: ['src/a.ts'], causa: 'regra_negocio', ts: ts(10) }]);
   assert.equal(rej.invalido, undefined);
   assert.equal(est.invalido, undefined);
+});
+
+// ───────────────────────────────────────────────────────────── GM-15 T11 (REQ-EME-3 B): fato, alternativa e a 3ª proposta
+
+test('t11-proposta-carrega-fato-e-alternativa-e-origem', () => {
+  const est = projetarEmendas([prop(1, { fato: 'FATO-X', alternativa: 'ALT-Y' }), prop(2, { origem: 'sombra' })]);
+  assert.deepEqual(est.abertas.map((p) => [p.fato, p.alternativa, p.origem]), [['FATO-X', 'ALT-Y', undefined], ['f', 'a', 'sombra']]);
+});
+
+const rejeitadas2 = (extra: Record<string, unknown> = {}) =>
+  projetarEmendas([prop(1, extra), prop(2, extra), rejeita('s', 1, 1, 'dono'), rejeita('s', 2, 2, 'dono')]);
+
+test('t11-terceira-proposta-do-orquestrador-recusa-na-mesma-ancora', () => {
+  const um = projetarEmendas([prop(1), rejeita('s', 1, 1)]);
+  assert.equal(validarProposta(plano(T('t', [], [])), um, dadosProp()), null, 'a 2ª proposta passa');
+  const dois = rejeitadas2();
+  assert.equal(validarProposta(plano(T('t', [], [])), dois, dadosProp()), 'terceira proposta do orquestrador na mesma âncora: a Sombra redige o texto (origem sombra)');
+  // outra âncora (outro REQ) não é afetada
+  assert.equal(validarProposta(plano(T('t', [], []), T('u', [], [], ['REQ-EME-2'])), dois, dadosProp({ req: 'REQ-EME-2' })), null);
+});
+
+test('t11-ancora-e-req-mais-task', () => {
+  const dois = rejeitadas2({ task: 't1' });
+  const pl = plano(T('t1', [], ['a.ts']), T('t2', [], ['b.ts']));
+  assert.notEqual(validarProposta(pl, dois, dadosProp({ task: 't1' })), null, 'mesma task e REQ');
+  assert.equal(validarProposta(pl, dois, dadosProp({ task: 't2' })), null, 'outra task, mesmo REQ');
+  assert.equal(validarProposta(pl, dois, dadosProp()), null, 'sem task é outra âncora');
+});
+
+test('t11-sombra-so-redige-depois-da-segunda-rejeicao', () => {
+  const um = projetarEmendas([prop(1), rejeita('s', 1, 1)]);
+  assert.equal(validarProposta(plano(T('t', [], [])), um, dadosProp({ origem: 'sombra' })), 'origem sombra só depois da 2ª rejeição da mesma âncora');
+  assert.equal(validarProposta(plano(T('t', [], [])), vazio, dadosProp({ origem: 'sombra' })), 'origem sombra só depois da 2ª rejeição da mesma âncora');
+  assert.equal(validarProposta(plano(T('t', [], [])), rejeitadas2(), dadosProp({ origem: 'sombra' })), null);
+});
+
+test('t11-rejeicao-de-proposta-da-sombra-nao-conta-para-o-orquestrador', () => {
+  const est = projetarEmendas([prop(1), prop(2, { origem: 'sombra' }), rejeita('s', 1, 1), rejeita('s', 2, 2)]);
+  assert.equal(validarProposta(plano(T('t', [], [])), est, dadosProp()), null, 'só 1 rejeição do orquestrador');
 });

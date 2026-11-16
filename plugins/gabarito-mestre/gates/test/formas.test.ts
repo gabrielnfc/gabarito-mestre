@@ -843,3 +843,10 @@ test('reaberta-volta-de-fora-exige-fonte: {de: fora} leva fonte, origem dono ou 
   ruim('task.reaberta', { ...v, hash: H }, /`hash`/);
   ruim('task.reaberta', { ...v, task: '' }, /`task`/);
 });
+
+test('t11-forma-proposta-origem-so-sombra', () => {
+  ok('emenda.proposta', proposta({ origem: 'sombra' }));
+  ruim('emenda.proposta', proposta({ origem: 'dono' }), /origem/);
+  ruim('emenda.proposta', proposta({ origem: '' }), /origem/);
+  ruim('emenda.proposta', proposta({ origem: 3 }), /origem/);
+});
