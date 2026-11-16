@@ -790,7 +790,12 @@
         "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
         "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
         "plugins/gabarito-mestre/gates/test/painel-blocos.test.ts",
-        "plugins/gabarito-mestre/gates/test/painel-lng.test.ts"
+        "plugins/gabarito-mestre/gates/test/painel-lng.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-equipe.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-costura.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-e4.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-e4/esquadrao.txt",
+        "plugins/gabarito-mestre/gates/test/fumaca-e4/executivo.txt"
       ],
       "reqs": [
         "REQ-POU-3",
