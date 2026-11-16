@@ -7,6 +7,7 @@
  */
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { raizSegura, raizesDeCheckout } from './_raiz-segura.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -31,7 +32,7 @@ const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'u
 
 /** Repo descartável na `branch` (`null` ⇒ HEAD solto). `onboarding: false` ⇒ sem `harness.config.json` (T60: o painel só lê). */
 function repo(branch = 'enabler/GM-14-clareza', { onboarding = true } = {}) {
-  const d = join(realpathSync(mkdtempSync(join(tmpdir(), 'medir teste '))), 'r');
+  const d = join(raizSegura(realpathSync(mkdtempSync(join(tmpdir(), 'medir teste ')))), 'r');
   mkdirSync(d, { recursive: true });
   git(d, 'init', '-q', '-b', 'main');
   git(d, 'commit', '-q', '--allow-empty', '-m', 'ini');
@@ -763,4 +764,10 @@ describe('regra única de publicada: a função e o loop.mjs concordam no mesmo 
     assert.equal(entregaPublicada(d, 'GM-14', SESSAO_QUALQUER), false);
     assert.equal(entregaPublicada(d, 'GM-77', SESSAO_QUALQUER), false, 'outra entrega sem diário não é publicada');
   });
+});
+
+test('teste-de-origem-s2-usa-raiz-segura: repo() só devolve raiz que não é a do checkout', () => {
+  const d = repo();
+  assert.equal(raizSegura(dirname(d)), dirname(d));
+  assert.throws(() => raizSegura(raizesDeCheckout()[0]), /do checkout/);
 });

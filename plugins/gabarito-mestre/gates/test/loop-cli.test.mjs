@@ -6,6 +6,7 @@
  */
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { raizSegura } from './_raiz-segura.mjs';
 import {
   mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, realpathSync, lstatSync, statSync, symlinkSync, chmodSync, readdirSync, appendFileSync, rmSync, renameSync,
 } from 'node:fs';
@@ -63,7 +64,7 @@ exec "${GIT_REAL}" "$@"
 
 const raizes = [];
 const novoTmp = (prefixo) => {
-  const d = realpathSync(mkdtempSync(join(tmpdir(), prefixo)));
+  const d = raizSegura(realpathSync(mkdtempSync(join(tmpdir(), prefixo))));
   raizes.push(d);
   return d;
 };
@@ -4039,7 +4040,7 @@ describe('E4 T7: dados do painel no loop (iniciar, integrar, proxima)', () => {
   ];
   const ambMut = (lista) => {
     const amb = ambiente({
-      config: { gates: { suites: ["echo '# pass 1'"] } },
+      config: { gates: { suites: ["sleep 1; echo '# pass 1'"] } },
       plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], ...(lista === undefined ? {} : { mutacoes: 'mut.json' }) }]),
     });
     if (lista !== undefined) writeFileSync(join(amb.dir, 'mut.json'), JSON.stringify(lista));

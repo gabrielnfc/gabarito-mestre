@@ -12,6 +12,7 @@
  */
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { raizSegura } from './_raiz-segura.mjs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -34,7 +35,7 @@ const comEnv = (k, valor, fn) => {
   return r && typeof r.then === 'function' ? r.finally(() => restaurarEnv(k, antes)) : (restaurarEnv(k, antes), r);
 };
 const temExpect = (t) => { if (spawnSync('expect', ['-v'], { encoding: 'utf8' }).error) { t.skip('expect ausente'); return false; } return true; };
-const tmp = () => { const d = realpathSync(mkdtempSync(join(tmpdir(), 'conversa-pontos-'))); // real: sem TMPDIR o macOS cai em /tmp (symlink de /private/tmp)
+const tmp = () => { const d = raizSegura(realpathSync(mkdtempSync(join(tmpdir(), 'conversa-pontos-')))); // real: sem TMPDIR o macOS cai em /tmp (symlink de /private/tmp)
   TMPS.push(d); return d; };
 test('T58: restaurar variável de ambiente ausente a deixa AUSENTE (nunca a string "undefined"); com valor, devolve o valor', () => {
   const salvo = process.env.TMPDIR;

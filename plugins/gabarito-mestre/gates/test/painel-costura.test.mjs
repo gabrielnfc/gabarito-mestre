@@ -7,6 +7,7 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { raizSegura } from './_raiz-segura.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, copyFileSync, readdirSync, readFileSync, chmodSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -25,7 +26,7 @@ const CLI = join(AQUI, '..', 'scripts', 'painel.mjs');
 const LOOP = join(AQUI, '..', 'scripts', 'loop.mjs');
 const FIXTURE = join(AQUI, 'fixtures', 'transcript-agente.jsonl');
 const ROOT = '/opt/gabarito mestre';
-const novoTmp = (p) => realpathSync(mkdtempSync(join(tmpdir(), p)));
+const novoTmp = (p) => raizSegura(realpathSync(mkdtempSync(join(tmpdir(), p))));
 const g = (dir, ...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const texto = (linhas) => linhas.map((l) => l.map((s) => s.texto).join('')).join('\n');
 const cores = (linhas) => new Set(linhas.flatMap((l) => l.map((s) => s.cor ?? null)));

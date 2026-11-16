@@ -7,6 +7,7 @@
  */
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { raizSegura } from './_raiz-segura.mjs';
 import {
   mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, appendFileSync, copyFileSync, existsSync, symlinkSync, statSync, renameSync,
 } from 'node:fs';
@@ -35,7 +36,7 @@ const raizes = [];
 /** Toda chamada em processo de `main` sem `--agentes` recebe um stdin que LANÇA: ler o stdin sem a flag falha em ms, nunca trava. */
 const SEM_STDIN = () => { throw new Error('stdin lido sem --agentes'); };
 const IO = (extra) => ({ aviso: () => {}, agoraMs: AGORA, stdin: SEM_STDIN, ...extra });
-const novoTmp = (p) => { const d = realpathSync(mkdtempSync(join(tmpdir(), p))); raizes.push(d); return d; };
+const novoTmp = (p) => { const d = raizSegura(realpathSync(mkdtempSync(join(tmpdir(), p)))); raizes.push(d); return d; };
 after(() => { /* os temporários vivem no TMPDIR do sistema; nada a apagar daqui (R2) */ });
 
 const g = (dir, ...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });

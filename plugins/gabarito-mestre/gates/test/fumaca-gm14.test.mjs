@@ -14,6 +14,7 @@
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { raizSegura } from './_raiz-segura.mjs';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,6 +28,11 @@ const SPEC_FIXTURE = readFileSync(join(AQUI, 'fumaca-gm14', 'spec.md'));
 const sha = (t) => createHash('sha256').update(t, 'utf8').digest('hex');
 
 const o = caminhar();
+// toda raiz da caminhada nasce fora do checkout (T24)
+test('fumaca-raizes-seguras: cada repositório da caminhada é raiz de teste', () => {
+  for (const d of [o.setefases.dir, o.pergunta.dir, o.sentinela.dir, o.aprendizado.dir]) raizSegura(d);
+});
+
 // a caminhada cria repositórios e bares sob `<tmp>/fumaca-gm14-*`: nada fica depois do `npm test`
 after(() => { limparSemLancar(o); });
 
