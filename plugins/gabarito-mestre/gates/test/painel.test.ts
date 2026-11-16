@@ -1632,6 +1632,19 @@ test('plano-invalido-mostra-interrogacao (núcleo): `planoInvalido` ⇒ sem PRON
   assert.match(tela, /\? plano inválido: plano.json não é JSON/, 'o render troca o ponto por espaço (natural), o motivo chega');
 });
 
+test('reaberta-invalida-gravada-mostra-interrogacao (GM-15 T25, REQ-HIG-1 D): a task com origem inválida vira "?" nomeando a causa, no DEPENDE e no desenho real; as outras seguem e não há PAROU de diário', () => {
+  const evs = D([ini(0, 'T1'), e(1, 'task.reaberta', { task: 'T1', origem: 'xpto' }), ...ciclo('T2', 10, 15)]);
+  const s = projNovo(P('T1', 'T2'), evs);
+  assert.equal(s.parar, null, 'um evento ruim de 1 task não derruba o diário');
+  assert.deepEqual(s.plano.tasks.map((t) => t.id), ['T2'], 'a task inválida não é pintada com estado inventado');
+  assert.ok(motivos(s).includes('depende de você: ? (T1: a reabertura gravada tem origem inválida)'), JSON.stringify(motivos(s)));
+  assert.match(desenho(s), /\? \(T1: a reabertura gravada tem origem inválida\)/, 'o texto desenhado pelo render real nomeia a task e a causa');
+  const deRuim = projNovo(P('T1', 'T2'), D([ini(0, 'T1'), e(1, 'task.reaberta', { task: 'T1', origem: 'dono', de: 'x' })]));
+  assert.ok(motivos(deRuim).includes('depende de você: ? (T1: a reabertura gravada tem o campo de volta inválido)'), JSON.stringify(motivos(deRuim)));
+  // controle: sem o evento ruim, nenhum "?" de task
+  assert.equal(motivos(projNovo(P('T1', 'T2'), D([ini(0, 'T1')]))).some((m) => /reabertura gravada/.test(m)), false);
+});
+
 // ---------------------------------------------------------------- GM-15 T19 (REQ-AUT-2 c, REQ-POU-3, REQ-POU-4): trava, pouso e loop avisam no painel
 // Mutações: M19-d a trava avisa antes dos 30 min ⇒ trava-30min-avisa-painel · M19-e o relógio da trava pelo último `loop.parar` regravado ⇒
 // parar-regravado-nao-zera-o-relogio · M19-f trava com agente vivo ⇒ trava-com-agente-vivo-nao-avisa · M19-g contexto alto sem conferir o `sessao.pouso` da sessão ⇒

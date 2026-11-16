@@ -15,7 +15,7 @@ import { leituraPropria, noTeto, pousoPendente,              } from './pouso-pen
 import { pedidoDeClear } from './pouso.js';
 import { encerramentoDe, trilhaDe } from './trilha.js';
                                                
-import { estadoDe, ordenar, proximaAcao, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK } from './loop.js';
+import { estadoDe, ordenar, proximaAcao, tasksInvalidas, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK } from './loop.js';
                                             
 import { formaInvalida } from './formas.js';
 import { renderBlocos, renderEsquadrao } from './painel-esquadrao.js';
@@ -715,6 +715,9 @@ function montarDepende(c         )                {
     });
   }
   if (abertas.length > 3) itens.push({ nivel: 'dono', motivo: `e mais ${abertas.length - 3} emenda(s) aberta(s)`, acoes: [] });
+  // GM-15 T25 (REQ-HIG-1 D; aprendizado 585): reabertura gravada com origem inválida afeta só a task dela: "?" nomeando a task e a causa, nunca um número inventado.
+  const CAUSA_DA_TASK                         = { 'origem inválida': 'origem inválida', 'de inválido': 'o campo de volta inválido' };
+  for (const [id, causa] of tasksInvalidas(c.plano, lista)) itens.push({ nivel: 'dono', motivo: `depende de você: ? (${id}: a reabertura gravada tem ${CAUSA_DA_TASK[causa] ?? causa})`, acoes: [] });
   if (entrada.pausado) itens.push({ nivel: 'dono', motivo: 'loop pausado', acoes: [{ rotulo: 'retomar', comando: '/gabarito retomar' }] });
   if (ord !== null) {
     let devolvida = -1;
