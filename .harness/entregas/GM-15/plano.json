@@ -910,7 +910,12 @@
         "plugins/gabarito-mestre/gates/scripts/painel.mjs",
         "plugins/gabarito-mestre/gates/dist/depende.js",
         "plugins/gabarito-mestre/gates/src/depende.ts",
-        "plugins/gabarito-mestre/gates/test/diario.test.ts"
+        "plugins/gabarito-mestre/gates/test/diario.test.ts",
+        "plugins/gabarito-mestre/gates/src/guarda.ts",
+        "plugins/gabarito-mestre/gates/dist/guarda.js",
+        "plugins/gabarito-mestre/gates/test/encerramento.test.ts",
+        "plugins/gabarito-mestre/gates/scripts/gate-task.mjs",
+        "plugins/gabarito-mestre/gates/test/gate-task.test.mjs"
       ],
       "reqs": [
         "REQ-POU-3",
