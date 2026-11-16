@@ -612,3 +612,11 @@ test('item-sem-fonte: a Sombra sem fonte para adiar, cortar ou reabrir vira item
   assert.deepEqual(itemSemFonte('adiar', 'T5; rm').acoes, []);
   for (const v of ['adiar', 'cortar', 'reabrir'] as const) assert.doesNotMatch(itemSemFonte(v, 'T5').motivo, REGEX_TECNICA);
 });
+
+test('parou-de-uma-task-nao-esconde-teto-de-outra: base com PAROU de teto da T2 e lote [T2, T3] ⇒ DEPENDE mostra o PAROU da T2 e o item da T3 (review r1 MAJOR-1)', () => {
+  const lote = loteDoDono(PLANO_LOTE, expandir([...noTeto('T2'), ...noTeto('T3')]), { ...CFG_DESLIGADA, autonomiaEntrega: true });
+  assert.deepEqual(motivos(lote), ['decidir a T2: chegou ao limite de revisões', 'decidir a T3: chegou ao limite de revisões']);
+  const baseT2: ItemDepende = { nivel: 'parar', motivo: 'teto de rodadas de review em T2', acoes: [{ rotulo: 'liberar', comando: '/gabarito-mestre:liberar T2' }] };
+  const dep = dependeDe(APROVADA, expandir([...noTeto('T2'), ...noTeto('T3')]), [baseT2], OK, false, GIT, lote);
+  assert.deepEqual(motivos(dep).filter((m) => /T2|T3/.test(m)), ['teto de rodadas de review em T2', 'decidir a T3: chegou ao limite de revisões']);
+});
