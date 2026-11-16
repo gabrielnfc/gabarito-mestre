@@ -114,7 +114,7 @@ test('alt-ordem-dos-cortes (Esquadrão 80): separadores → narrativa ▶ → 5h
   for (const alt of [12, 5, 1]) {
     ls = linhas(voo(), 'esquadrao', 80, alt);
     assert.ok(!tem(ls, /✓ T1/), `${alt}: faixa ficou`);
-    for (const re of [/^GABARITO/, /^depende de você/, /^PLANO/, /● T8 /, /● T9 /, /◐ T10 /, /○ T11–T12/, /^EQUIPE/, /^GANDALF {2}orquestra/, /^│ {2}ctx /, /^├─ ● GIMLI/, /^├─ ● LEGOLAS/, /^├─ ◐ revisor/, /^└─ ○ ELROND/, /^◆ ATENÇÃO/, /^CI /]) assert.ok(tem(ls, re), `${alt}: faltou ${String(re)}`);
+    for (const re of [/^GABARITO/, /^(nada )?depende de você/, /^PLANO/, /● T8 /, /● T9 /, /◐ T10 /, /○ T11–T12/, /^EQUIPE/, /^GANDALF {2}orquestra/, /^│ {2}ctx /, /^├─ ● GIMLI/, /^├─ ● LEGOLAS/, /^├─ ◐ revisor/, /^└─ ○ ELROND/, /^◆ ATENÇÃO/, /^CI /]) assert.ok(tem(ls, re), `${alt}: faltou ${String(re)}`);
     assert.equal(ls.length, 27 - 2 - 1 - 1 - 1 - 1, `${alt}: só as 6 linhas das 5 classes, acima do agente, caem`);
   }
   // abaixo do agente não se corta: revisor aguardando, Sombra, ATENÇÃO, histórico e rodapé ficam mesmo com a janela menor que o desenho
@@ -125,7 +125,7 @@ test('alt-ordem-dos-cortes (Executivo 80): separadores → Limites → Contexto 
   const tem = (ls: string[], re: RegExp): boolean => ls.some((l) => re.test(l));
   const inteiro = linhas(voo(), 'executivo', 80);
   assert.equal(inteiro.length, 17);
-  const fixos = [/^GABARITO/, /^depende de você/, /^Entrega /, /^Previsão /, /^Tasks /, /^Qualidade /, /^CI /, /^Agentes em voo/, /^● implementador 1/, /^● revisor 1/, /^◐ revisor/, /^○ Sombra/];
+  const fixos = [/^GABARITO/, /^(nada )?depende de você/, /^Entrega /, /^Previsão /, /^Tasks /, /^Qualidade /, /^CI /, /^Agentes em voo/, /^● implementador 1/, /^● revisor 1/, /^◐ revisor/, /^○ Sombra/];
   assert.deepEqual(linhas(voo(), 'executivo', 80, 15), inteiro, 'o último agente está na linha 15: 15 não corta nada');
   for (const alt of [13, 14]) {
     const ls = linhas(voo(), 'executivo', 80, alt);
