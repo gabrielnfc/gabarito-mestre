@@ -907,7 +907,10 @@
         "plugins/gabarito-mestre/gates/test/onboarding.test.mjs",
         "plugins/gabarito-mestre/gates/test/fixtures/onboarding/s6-gabarito.json",
         "plugins/gabarito-mestre/gates/test/e2e/avaliar-e5.mjs",
-        "plugins/gabarito-mestre/gates/scripts/painel.mjs"
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/dist/depende.js",
+        "plugins/gabarito-mestre/gates/src/depende.ts",
+        "plugins/gabarito-mestre/gates/test/diario.test.ts"
       ],
       "reqs": [
         "REQ-POU-3",
