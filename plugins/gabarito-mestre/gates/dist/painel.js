@@ -865,7 +865,7 @@ function projetarLegado(plano       , eventos                 , entrada         
 
 /** FIEL-13 b: limite de "desatualizado" (180 s provisório = 3 × o relógio do mod, até o valor do S15). */
 export const LIMITE_DESATUALIZADO_S = 180;
-const NADA = 'depende de você: nada';
+const NADA = 'nada depende de você'; // D-G12 (r.13): o mesmo texto de `dependeDe`
 const DESATUALIZADO = 'depende de você: ? (o painel está sem ler o diário)';
 const ACAO_DO_PAPEL                        = { implementador: 'implementando', revisor: 'revisando', correcao: 'corrigindo' };
 const finitoNaoNeg = (v         )                => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);

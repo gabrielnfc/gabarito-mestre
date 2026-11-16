@@ -88,9 +88,9 @@ describe('costura mod → CLI real → mod', () => {
     assert.match(txt, /^│ {2}7d █░{9} 9%$/m, txt);
     assert.doesNotMatch(txt, /\b5h\b/, 'rateLimits sem five_hour ⇒ nenhum campo de 5h');
     assert.equal(a.estado.equipe.lider.d7, 9, 'seven_day (9) chega ao líder no estado');
-    // GM-14 T18: o estado novo traz o item "depende de você: nada" (T13/T17, D-P13). `faixaDe` do mod (mod/painel.mjs, T20) ainda o lê como
-    // pendência ("depende de você: depende de você: nada"): defeito de costura relatado à T20, fora dos arquivos da T18. Aqui só o que o CLI entrega.
-    assert.deepEqual(a.estado.depende.map((i) => i.motivo), ['depende de você: nada']);
+    // GM-14 T18: o estado novo traz o item "nada depende de você" (T13/T17, D-P13). `faixaDe` do mod (mod/painel.mjs, T20) ainda o lê como
+    // pendência ("depende de você: nada depende de você"): defeito de costura relatado à T20, fora dos arquivos da T18. Aqui só o que o CLI entrega.
+    assert.deepEqual(a.estado.depende.map((i) => i.motivo), ['nada depende de você']);
 
     // (B) o loop PARA pelo CLI real do loop, com T2 no teto
     for (const [tipo, dados] of [['task.concluida', { task: 'T2', sha: 'c'.repeat(40) }],
@@ -600,7 +600,7 @@ describe('costura T18: CLI real em toda fase', { timeout: 180_000 }, () => {
       const t = rodar(repo, 'texto', sessao);
       if (fx.fatos.plano === null && e.umaLinha !== null) {
         // GM-15 T35 (r.13): sem nada que trave o dono (as ideias da fixture são do orquestrador, lembrete dele), o painel fora de entrega é 1 linha
-        assert.deepEqual(e.depende.map((d) => d.motivo), ['depende de você: nada']);
+        assert.deepEqual(e.depende.map((d) => d.motivo), ['nada depende de você']);
         assert.match(t, /^GABARITO · sem entrega em curso/, t);
       } else if (fx.fatos.plano === null) {
         assert.equal(e.pronto, null);

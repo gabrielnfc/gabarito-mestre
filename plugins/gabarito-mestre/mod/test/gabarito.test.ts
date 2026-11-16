@@ -2250,7 +2250,7 @@ function estadoNovo(o: Record<string, any> = {}) {
     pronto: { integradas: 2, total: 5, previsao: null }, fase: null,
     agora: { orquestrador: { nome: 'GANDALF', contexto: 40, estimado: false, pousar: false }, agentes: [], segundoPlano: [] },
     recente: [], desatualizadoS: null, fontesFalhas: [], atencao: [],
-    depende: [{ nivel: 'dono', motivo: 'depende de você: nada', acoes: [] }],
+    depende: [{ nivel: 'dono', motivo: 'nada depende de você', acoes: [] }],
     ...o,
   })
 }
@@ -4423,7 +4423,7 @@ test('indice-do-topo-e4 (GM-15 T29): PAROU; item depois do rótulo; `◆ item` s
   expect(indiceDoTopo(L('GABARITO · GM-14', '■ PAROU 12:00 · x', '◆ DEPENDE DE VOCÊ  1 item', '  y'))).toBe(1)
   expect(indiceDoTopo(L('GABARITO · GM-14', '◆ DEPENDE DE VOCÊ  2 itens', '  y [ok]', '  z'))).toBe(2)
   expect(indiceDoTopo(L('GABARITO · GM-14', '◆ y [ok] (+1)', '────'))).toBe(1)
-  expect(indiceDoTopo(L('GABARITO · GM-14', 'depende de você: nada', '◆ ATENÇÃO  CI vermelho'))).toBe(1)
+  expect(indiceDoTopo(L('GABARITO · GM-14', 'nada depende de você', '◆ ATENÇÃO  CI vermelho'))).toBe(1)
   expect(indiceDoTopo(L('GABARITO · GM-14', 'PLANO   ▰▱  50%', '◆ ATENÇÃO  CI vermelho'))).toBe(-1)
   expect(indiceDoTopo(L('GABARITO · GM-14', '◆ DEPENDE DE VOCÊ  1 item'))).toBe(-1)
   expect(indiceDoTopo(L('GABARITO · GM-14', '◆ DEPENDE DE VOCÊ  1 item', 'PLANO'))).toBe(-1)
@@ -4678,7 +4678,7 @@ test('sem-pouso-sem-push: sem o item de limpar ⇒ nenhum push do pouso, e o PAR
 })
 
 // ---- pendências herdadas: "depende de você" sem duplicar; medição não é progresso ----
-test('faixa-sem-depende-duplicado: o item "depende de você: nada" do estado novo nunca vira "depende de você: depende de você: nada"', () => {
+test('faixa-sem-depende-duplicado: o item "nada depende de você" do estado novo nunca vira "depende de você: nada depende de você"', () => {
   const e = estadoNovo()
   expect(faixaDe(e, true, null, {})).toBeNull()
   const f = faixaDe(e, false, null, {})

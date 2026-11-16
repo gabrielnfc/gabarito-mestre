@@ -62,7 +62,7 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.deepEqual([i.estado.trilha.fase, i.estado.trilha.marcas], [1, ['●', '○', '○', '○', '○', '○', '○']]);
   assert.equal(i.estado.trilha.progresso, '2 ideias anotadas');
   assert.equal(i.texto, 'GABARITO · sem entrega em curso\n');
-  assert.deepEqual(i.estado.depende.map((d) => d.motivo), ['depende de você: nada']);
+  assert.deepEqual(i.estado.depende.map((d) => d.motivo), ['nada depende de você']);
   assert.deepEqual(i.estado.recente, [], 'sem origem a mostrar: nenhum fato aconteceu ainda');
   assert.ok(!/^\d\d:\d\d /m.test(i.texto)); // GM-15 T29: o RECENTE é o histórico hh:mm do E4
 
@@ -97,8 +97,8 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   const a = P.aprovada;
   assert.deepEqual([a.estado.trilha.fase, a.estado.trilha.marcas], [4, ['✓', '✓', '✓', '●', '○', '○', '○']]);
   assert.equal(a.estado.trilha.progresso, 'spec com 3 seções');
-  assert.deepEqual(a.estado.depende.map((d) => d.motivo), ['depende de você: nada'], 'REQ-DEP-1: todas as fontes leram ⇒ "nada"');
-  assert.equal(topo(a)[1], 'depende de você: nada', 'REQ-DEP-1: no render também');
+  assert.deepEqual(a.estado.depende.map((d) => d.motivo), ['nada depende de você'], 'REQ-DEP-1: todas as fontes leram ⇒ "nada"');
+  assert.equal(topo(a)[1], 'nada depende de você', 'REQ-DEP-1: no render também');
   assert.match(a.texto, /^FASE 4 de 7 ▰{3}▱{4} · spec com 3 seções/m);
   assert.equal(a.estado.recente[0].texto, 'spec aprovada');
   assert.equal(a.estado.recente[0].origem, '(você)', 'REQ-LNG-1: spec.aprovada é do dono');
@@ -112,8 +112,8 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.match(pl.texto, /^PLANO {3}▱{21} {2}0% {2}0\/2 tasks$/m);
   assert.equal(pl.estado.fase, null, 'FIEL-10 (b): com plano o PRONTO ocupa o lugar da FASE');
   assert.ok(!/^FASE/m.test(pl.texto), 'e o texto não mostra a FASE junto');
-  assert.deepEqual(pl.estado.depende.map((d) => d.motivo), ['depende de você: nada'], 'REQ-DEP-1: com a spec aprovada, nada espera o dono');
-  assert.equal(topo(pl)[1], 'depende de você: nada');
+  assert.deepEqual(pl.estado.depende.map((d) => d.motivo), ['nada depende de você'], 'REQ-DEP-1: com a spec aprovada, nada espera o dono');
+  assert.equal(topo(pl)[1], 'nada depende de você');
   assert.deepEqual(pl.estado.recente.map((r) => [r.texto, r.origem]), [['spec aprovada', '(você)']], 'REQ-LNG-1: a origem da aprovação');
   assert.match(pl.texto, /^\d\d:\d\d ✓ spec aprovada \(você\)$/m);
 
@@ -124,8 +124,8 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.match(u.texto, /^PLANO {3}▰{11}▱{10} {2}50% {2}1\/2 tasks$/m);
   assert.deepEqual([u.estado.trilha.fase, u.estado.trilha.marcas], [5, ['✓', '✓', '✓', '✓', '●', '○', '○']], 'ainda na execução (REQ-TRI-1)');
   assert.ok(!/^FASE/m.test(u.texto));
-  assert.deepEqual(u.estado.depende.map((d) => d.motivo), ['depende de você: nada']);
-  assert.equal(topo(u)[1], 'depende de você: nada');
+  assert.deepEqual(u.estado.depende.map((d) => d.motivo), ['nada depende de você']);
+  assert.equal(topo(u)[1], 'nada depende de você');
   assert.match(u.texto, /^\d\d:\d\d ✓ integrou T1 \(automático\)$/m);
   assert.ok(!/previsão/.test(u.texto));
   assert.deepEqual(u.estado.recente.map((r) => [r.texto, r.origem]).slice(0, 2), [['integrou T1', '(automático)'], ['aprovou T1', '(automático)']]);
@@ -134,9 +134,9 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.deepEqual([t.estado.trilha.fase, t.estado.trilha.marcas], [6, ['✓', '✓', '✓', '✓', '✓', '●', '○']]);
   assert.equal(t.estado.trilha.progresso, '2 de 2 tasks integradas');
   assert.match(t.texto, /^PLANO {3}▰{21} {2}100% {2}2\/2 tasks +todas integradas$/m);
-  assert.equal(topo(t)[1], 'depende de você: nada');
+  assert.equal(topo(t)[1], 'nada depende de você');
   assert.match(t.texto, /^\d\d:\d\d ✓ integrou T2 \(automático\)$/m);
-  assert.deepEqual(t.estado.depende.map((d) => d.motivo), ['depende de você: nada']);
+  assert.deepEqual(t.estado.depende.map((d) => d.motivo), ['nada depende de você']);
 
   // (8) pedido de revisão aberto: item (2) do REQ-DEP-1, sem botão; o progresso diz o número
   const pa = P.prAberto;
@@ -162,9 +162,9 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.deepEqual([ac.estado.trilha.fase, ac.estado.trilha.marcas], [7, ['✓', '✓', '✓', '✓', '✓', '✓', '●']]);
   assert.match(ac.estado.trilha.progresso, /^pedido de revisão #7 aceito · aguardando publicação$/);
   assert.equal(ac.estado.recente[0].origem, '(você respondeu: GM-50)', 'REQ-LNG-1: o rótulo é o da opção');
-  assert.deepEqual(ac.estado.depende.map((d) => d.motivo), ['depende de você: nada']);
+  assert.deepEqual(ac.estado.depende.map((d) => d.motivo), ['nada depende de você']);
   assert.equal(topo(ac)[0], 'GABARITO · GM-50 Spec de fumaça da clareza', 'a entrega voltou: ID e título (REQ-TRI-1)');
-  assert.equal(topo(ac)[1], 'depende de você: nada');
+  assert.equal(topo(ac)[1], 'nada depende de você');
   assert.match(ac.texto, /^PLANO {3}▰{21} {2}100% {2}2\/2 tasks +todas integradas$/m);
   assert.match(ac.texto, /^\d\d:\d\d ● pergunta respondida \(você respondeu: GM-50\)$/m);
 
@@ -173,8 +173,8 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.ok(!/gabarito-mestre--v/.test(P.publicada.texto), 'a tag crua não chega à tela');
   const pu = P.publicada;
   assert.deepEqual([pu.estado.trilha.fase, pu.estado.trilha.marcas], [7, ['✓', '✓', '✓', '✓', '✓', '✓', '●']]);
-  assert.deepEqual(pu.estado.depende.map((d) => d.motivo), ['depende de você: nada']);
-  assert.equal(topo(pu)[1], 'depende de você: nada');
+  assert.deepEqual(pu.estado.depende.map((d) => d.motivo), ['nada depende de você']);
+  assert.equal(topo(pu)[1], 'nada depende de você');
   assert.match(pu.texto, /^PLANO {3}▰{21} {2}100% {2}2\/2 tasks +todas integradas$/m);
   assert.equal(pu.estado.recente[0].origem, '(você respondeu: GM-50)');
   assert.match(pu.texto, /^\d\d:\d\d .+\(você respondeu: GM-50\)$/m);

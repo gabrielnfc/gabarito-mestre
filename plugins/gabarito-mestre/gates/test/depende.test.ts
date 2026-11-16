@@ -68,7 +68,7 @@ const noTeto = (task: string): C[] => [
   { t: 'task.iniciada', d: { task, papel: 'revisor' } }, { t: 'review.veredito', d: { task, veredito: 'REPROVADO', rodada: 2, major: 1, blocker: 0 } },
 ];
 const emendaProposta = (): C => ({ t: 'emenda.proposta', s: 'emendas', d: { req: 'REQ-DEP-1', diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'tecnica', arquivos: ['docs/x.md'] } });
-const nada = [{ nivel: 'dono', motivo: 'depende de você: nada', acoes: [] }];
+const nada = [{ nivel: 'dono', motivo: 'nada depende de você', acoes: [] }];
 const BASE_PARAR: ItemDepende = { nivel: 'parar', motivo: 'o loop parou: decida', acoes: [] };
 const BASE_PAUSA: ItemDepende = { nivel: 'dono', motivo: 'loop pausado', acoes: [{ rotulo: 'retomar', comando: '/gabarito retomar' }] };
 
@@ -365,8 +365,8 @@ test('pendenciaAberta: regra única e cada borda decidida 1x (MAJOR-2)', () => {
   assert.equal(pendenciaAberta(evs, { ...evs[0] }), null, 'nota fora do diário dado não é aberta');
   assert.equal(pendenciaAberta(null as never, evs[0]), null);
   // o item (3) é a mesma regra: tudo acima visto pela saída
-  assert.deepEqual(motivos(chamar(APROVADA, [pend, feito('sessao-a:1')])), ['depende de você: nada']);
-  assert.deepEqual(motivos(chamar(APROVADA, [nota('pendencia', 'a', 'a.b'), nota('pendencia', 'b', 'x y')])), ['depende de você: nada']);
+  assert.deepEqual(motivos(chamar(APROVADA, [pend, feito('sessao-a:1')])), ['nada depende de você']);
+  assert.deepEqual(motivos(chamar(APROVADA, [nota('pendencia', 'a', 'a.b'), nota('pendencia', 'b', 'x y')])), ['nada depende de você']);
   assert.equal(chamar(APROVADA, [pend, { t: 'dono.resposta', s: 'sessao-dono', d: { pergunta: 'sessao-a:1', opcao: 1, rotulo: 'x'.repeat(200) } }])[0].motivo, 'renovar o certificado');
 });
 
@@ -378,11 +378,11 @@ test('cláusulas negativas (MAJOR-3): entrega de id inseguro, pedido de revisão
   assert.equal(chamar(trilha({ entrega: 'GM-14' }), [], [], { git: { branch: 'x', idPadrao: ID_PADRAO } })[0].motivo.includes('da GM-14'), true);
   // pedido de revisão: mesmo critério da trilha (número inteiro, estado texto)
   for (const v of [{ numero: '7', estado: 'aberto' }, { numero: 7.5, estado: 'aberto' }, { numero: 7, estado: 1 }, { numero: 7 }, 'x', null]) {
-    assert.deepEqual(motivos(chamar(APROVADA, [{ t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: v } }])), ['depende de você: nada'], JSON.stringify(v));
+    assert.deepEqual(motivos(chamar(APROVADA, [{ t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: v } }])), ['nada depende de você'], JSON.stringify(v));
   }
-  assert.deepEqual(motivos(chamar(APROVADA, [pr(7, 'aberto'), pr(7, 'mergeado')])), ['depende de você: nada']);
+  assert.deepEqual(motivos(chamar(APROVADA, [pr(7, 'aberto'), pr(7, 'mergeado')])), ['nada depende de você']);
   assert.deepEqual(motivos(chamar(APROVADA, [pr(7, 'aberto'), { t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 1 } } }])), ['revisar e aceitar o pedido de revisão #7'], 'leitura sem estado texto não derruba o último válido');
-  assert.deepEqual(motivos(chamar(trilha({ ...APROVADA, entrega: null, identificada: false }), [pr(7, 'aberto')])), ['depende de você: nada']);
+  assert.deepEqual(motivos(chamar(trilha({ ...APROVADA, entrega: null, identificada: false }), [pr(7, 'aberto')])), ['nada depende de você']);
 });
 
 test('texto da pendência é higienizado (MINOR-2, REQ-LNG-1): nada técnico no motivo; o id do botão segue exato', () => {
@@ -472,7 +472,7 @@ import { AGORA_NAO_TETO } from '../src/pouso.ts';
 test('nota-do-orquestrador-fora-do-depende (r.13): as 17 pendências e as ideias do orquestrador abertas não entram; a do dono entra (controle)', () => {
   const orq = Array.from({ length: 17 }, (_, i) => nota('pendencia', `lembrete ${i + 1} do orquestrador`, 'loop', {}, 'orquestrador'));
   const ideiasOrq = [nota('ideia', 'ideia do orquestrador', 'loop', {}, 'orquestrador')];
-  assert.deepEqual(motivos(chamar(APROVADA, [...orq, ...ideiasOrq])), ['depende de você: nada']);
+  assert.deepEqual(motivos(chamar(APROVADA, [...orq, ...ideiasOrq])), ['nada depende de você']);
   const comDono = chamar(APROVADA, [...orq, nota('pendencia', 'renovar o domínio', 'sessao-a')]);
   assert.deepEqual(motivos(comDono), ['renovar o domínio']);
 });
@@ -480,21 +480,21 @@ test('nota-do-orquestrador-fora-do-depende (r.13): as 17 pendências e as ideias
 test('depende-vazio-uma-linha (r.13): sem item que trave, o DEPENDE é 1 item só, a linha de situação', () => {
   const r = chamar(APROVADA, [nota('pendencia', 'lembrete', 'loop', {}, 'orquestrador'), nota('desvio', 'x')]);
   assert.equal(r.length, 1);
-  assert.equal(r[0].motivo, 'depende de você: nada');
+  assert.equal(r[0].motivo, 'nada depende de você', 'D-G12: o texto literal da emenda 16 r.13');
   assert.deepEqual(r[0].acoes, []);
 });
 
 test('clear-com-agora-nao-no-teto (r.9): o pedido de /clear traz "limpar" e "agora não (loop parado)" para o id do pouso; pedido adiado some', () => {
   const r = dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'S1:2' }, GIT);
   assert.deepEqual(r, [{ nivel: 'dono', motivo: 'limpar a conversa', acoes: [{ rotulo: 'limpar', comando: '/clear' }, { rotulo: AGORA_NAO_TETO, comando: '/gabarito-mestre:responder S1:2 agora' }] }]);
-  assert.deepEqual(motivos(dependeDe(APROVADA, [], [], OK, { pendente: false, id: 'S1:2' }, GIT)), ['depende de você: nada']);
+  assert.deepEqual(motivos(dependeDe(APROVADA, [], [], OK, { pendente: false, id: 'S1:2' }, GIT)), ['nada depende de você']);
   // id fora da forma: só o "limpar" (o hook recusaria o botão)
   assert.deepEqual(dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'a.b:2' }, GIT)[0].acoes, [{ rotulo: 'limpar', comando: '/clear' }]);
 });
 
 test('pendencia-adiada-nao-fecha-e-some (r.14): "agora não" à pendência do dono a tira do DEPENDE sem fechá-la (pendenciaAberta segue aberta)', () => {
   const evs = [nota('pendencia', 'renovar o domínio'), { t: 'dono.resposta', s: 'sessao-dono', d: { pergunta: 'sessao-a:1', rotulo: 'agora não' } } as C];
-  assert.deepEqual(motivos(chamar(APROVADA, evs)), ['depende de você: nada']);
+  assert.deepEqual(motivos(chamar(APROVADA, evs)), ['nada depende de você']);
   const lista = expandir(evs);
   assert.deepEqual(pendenciaAberta(lista, lista[0]), { id: 'sessao-a:1', texto: 'renovar o domínio' });
 });

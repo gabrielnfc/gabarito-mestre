@@ -13,6 +13,9 @@ import { horaLocal } from './painel-hora.ts';
 import { colunas, cortar, limpar } from './painel-largura.ts';
 import type { CorTema, EstadoPainel, Evento, Linha, Segmento } from './tipos.ts';
 
+/** D-G12 (emenda 16 r.13): o mesmo texto de `NADA_DEPENDE` (depende.ts) — 1 linha quando nada depende do dono. */
+const NADA_DEPENDE = 'nada depende de você';
+
 // limpeza e largura moram em `painel-largura.ts` (sem import, para `plano.ts` não fechar ciclo com `loop.ts`)
 export { GLIFOS, limpar, colunas, cortar } from './painel-largura.ts';
 
@@ -231,7 +234,7 @@ function blocoParar(p: NonNullable<EstadoPainel['parar']>, notificacao: unknown,
 }
 
 /**
- * Topo do painel, idêntico nos presets: PAROU (se houver), depois `◆ DEPENDE DE VOCÊ  N item(ns)` e os itens `dono`, ou `depende de você: nada`.
+ * Topo do painel, idêntico nos presets: PAROU (se houver), depois `◆ DEPENDE DE VOCÊ  N item(ns)` e os itens `dono`, ou `nada depende de você` (D-G12).
  * Itens `nivel:'parar'` não se repetem (o bloco PAROU já os mostra); sem PAROU, um item `parar` solto é mostrado como os demais (nunca some). Nenhuma linha passa de `largura`.
  */
 export function blocoTopo(e: EstadoPainel, largura: number): Linha[] {
@@ -241,12 +244,13 @@ export function blocoTopo(e: EstadoPainel, largura: number): Linha[] {
   const parar = ehObj(e?.parar) ? (e.parar as NonNullable<EstadoPainel['parar']>) : null;
   if (parar !== null) linhas.push(...blocoParar(parar, e.notificacao, w));
 
-  const itens = (Array.isArray(e?.depende) ? e.depende : []).filter((i) => ehObj(i) && (parar === null || i.nivel === 'dono'));
+  // D-G12 (r.13): o "nada depende de você" do núcleo é a linha de situação, não item (nunca "1 item")
+  const itens = (Array.isArray(e?.depende) ? e.depende : []).filter((i) => ehObj(i) && (parar === null || i.nivel === 'dono') && i.motivo !== NADA_DEPENDE);
   if (itens.length > 0) {
     linhas.push([seg('◆ DEPENDE DE VOCÊ', 'warning'), seg(`  ${itens.length} ${itens.length === 1 ? 'item' : 'itens'}`, 'warning')]);
     for (const i of itens) linhas.push(...linhasDoItem(limpar(typeof i.motivo === 'string' ? i.motivo : ''), corposDas(acoesDe(i.acoes), false), w));
   } else if (parar === null) {
-    linhas.push([seg('depende de você: nada', 'inactive')]);
+    linhas.push([seg(NADA_DEPENDE, 'inactive')]);
   }
   return linhas.map((l) => cortarLinha(l, w));
 }

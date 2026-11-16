@@ -1,5 +1,5 @@
 GM-12 ▰▰▰▰▰▰▰▱▱▱▱▱ 58% ETA 17:42
-depende de você: nada
+nada depende de você
 ────────────────────────────────────────────
 ● T8 GIMLI    implementando    9m
 ● T9 LEGOLAS  em revisão       3m

@@ -195,7 +195,7 @@ test('esq-44-desenho: cabeçalho curto com barra 12, tasks sem título, árvore 
 
 test('esq-menor-44-so-essencial: topo, plano numa linha e as tasks em voo; sem separador, equipe, histórico nem rodapé', () => {
   const ls = render(voo(), 43);
-  assert.deepEqual(ls, ['depende de você: nada', '7/12 · ETA 17:42', '● T8 implementando', '● T9 em revisão', '◐ T10 aguarda revisão']);
+  assert.deepEqual(ls, ['nada depende de você', '7/12 · ETA 17:42', '● T8 implementando', '● T9 em revisão', '◐ T10 aguarda revisão']);
   const p = render(ESTADOS['parou-diario'], 30);
   assert.equal(p[0].startsWith('■ PAROU'), true, 'o topo vem antes de tudo');
   assert.ok(p.includes('4/6 · loop parado'));

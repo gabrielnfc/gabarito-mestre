@@ -1255,7 +1255,7 @@ test('uma-linha-regra-unica: umaLinhaDe sobre o estado projetado == umaLinha da 
     if (!pede) assert.deepEqual(r.umaLinha, { ultima: { id: 'GM-13', estado: 'publicada' } }, `${nome}: ultima da entrada`);
   }
   // a regra isolada, campo a campo (o CLI passa o estado com o plano e o modo da apresentação)
-  const livre = { modo: 'projeto', parar: null, pergunta: null, depende: [{ nivel: 'dono', motivo: 'depende de você: nada', acoes: [] }], agora: { agentes: [] }, trilha: { ultimaConhecida: 'GM-9' } } as unknown as EstadoPainel;
+  const livre = { modo: 'projeto', parar: null, pergunta: null, depende: [{ nivel: 'dono', motivo: 'nada depende de você', acoes: [] }], agora: { agentes: [] }, trilha: { ultimaConhecida: 'GM-9' } } as unknown as EstadoPainel;
   assert.deepEqual(umaLinhaDe(livre, { id: 'GM-3', estado: 'x' }), { ultima: { id: 'GM-3', estado: 'x' } }, 'a da entrada vence');
   assert.deepEqual(umaLinhaDe(livre, undefined), { ultima: { id: 'GM-9', estado: null } }, 'cai na conhecida da trilha');
   assert.deepEqual(umaLinhaDe({ ...livre, trilha: { ultimaConhecida: null } } as unknown as EstadoPainel, null), { ultima: null });

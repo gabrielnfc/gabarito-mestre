@@ -38,8 +38,8 @@ test('fumaca-spec-aprovada-pelo-hook: aguardando ⇒ aprova (sha256 dos bytes) �
   assert.deepEqual(tipos('spec.aprovada').map((e) => e.dados), [{ spec: 'docs/spec.md', sha256: sha }], 'um único spec.aprovada, com o caminho e o sha256 dos bytes');
   assert.equal(o.aprovarDeNovo.j.decision, 'block');
   assert.match(o.aprovarDeNovo.j.reason, /ja_aprovada/);
-  // REQ-DEP-1: todas as fontes leram e a lista é vazia ⇒ o único item é "depende de você: nada", sem botão
-  assert.deepEqual(o.estadoAprovada.j.estado.depende, [{ nivel: 'dono', motivo: 'depende de você: nada', acoes: [] }], 'aprovada: nada depende do dono');
+  // REQ-DEP-1: todas as fontes leram e a lista é vazia ⇒ o único item é "nada depende de você", sem botão
+  assert.deepEqual(o.estadoAprovada.j.estado.depende, [{ nivel: 'dono', motivo: 'nada depende de você', acoes: [] }], 'aprovada: nada depende do dono');
 });
 
 test('fumaca-emenda-aberta-e-agente-vivo: a proposta aparece em depende com os comandos reais; o transcript de fixture chega a ctxTok 92762 e tok 86900 pelo CLI', () => {
@@ -111,7 +111,7 @@ test('fumaca-painel-e4: painel.mjs texto, nos dois presets, é byte a byte o tex
     const iSep = l.findIndex((x) => /^─+$/.test(x));
     assert.equal(iSep, 5, 'o topo acaba no 1º separador do E4');
     assert.ok(l.slice(0, iSep).every((x) => [...x].length <= 80 && !x.endsWith('…')), 'REQ-GLB-1: nenhuma linha do topo passa de 80 colunas nem termina em "…"');
-    assert.ok(!/limite de revisões|depende de você: nada/.test(t), 'com PAROU e emenda o topo não diz "nada" nem repete o teto');
+    assert.ok(!/limite de revisões|nada depende de você/.test(t), 'com PAROU e emenda o topo não diz "nada" nem repete o teto');
     // FIEL-10 (b): PLANO pinta só integradas (1 de 3 ⇒ 7 de 21 marcas), status do loop à direita
     assert.match(l[6], /^PLANO {3}▰{7}▱{14} {2}33% {2}1\/3 tasks +loop parado$/);
     // FIEL-11 (a)(b): o orquestrador com o contexto; o agente vivo da T3 pelo último fato registrado, com a medição do uso (93k)
@@ -170,7 +170,7 @@ test('fumaca-devolver-sem-rodar-comando: hooks do dono + conclusão ⇒ decisão
   assert.match(topoD.join(' ').replace(/ +/g, ' '), /^◆ DEPENDE DE VOCÊ 1 item deploy devolvido ao dono: quero revisar antes de subir \[executar\]$/);
   assert.equal(ld.filter((x) => x.startsWith('  deploy devolvido')).length, 1, '1 item');
   assert.match(ld[iP], /^PLANO {3}▰{21} {2}100% {2}3\/3 tasks +todas integradas$/);
-  assert.ok(!/PAROU|depende de você: nada/.test(o.textoDevolvido.out));
+  assert.ok(!/PAROU|nada depende de você/.test(o.textoDevolvido.out));
 });
 
 test('fumaca-limpa-o-temporario: o diretório da caminhada existe durante os testes; limpar() o apaga e recusa qualquer outro caminho', () => {

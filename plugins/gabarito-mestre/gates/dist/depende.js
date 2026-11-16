@@ -149,6 +149,9 @@ function higienizar(texto        )         {
   return t === '' ? 'uma pendência' : t;
 }
 
+/** D-G12 (emenda 16 r.13): sem item que trave, 1 linha com este texto literal. */
+export const NADA_DEPENDE = 'nada depende de você';
+
 export function dependeDe(
   trilha        , eventos          , base               ,
   fontes                      , pousoPendente                                                    , git                                             ,
@@ -231,6 +234,6 @@ export function dependeDe(
 
   const saida = [...daBase, ...limpar, ...limite, ...aprovar, ...revisar, ...pendencias, ...decidirIdeias, ...decidirEmendas];
   if (falhou.length > 0) saida.push(item(`depende de você: ? (não consegui ler ${listaE(falhou)})`));
-  else if (saida.length === 0) saida.push(item('depende de você: nada'));
+  else if (saida.length === 0) saida.push(item(NADA_DEPENDE)); // D-G12 (r.13): o texto literal
   return saida;
 }

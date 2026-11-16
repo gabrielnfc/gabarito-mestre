@@ -598,7 +598,8 @@ export function renderBlocos(e              , o              )          {
   for (const i of Array.isArray(e.depende) ? e.depende : []) {
     if (i === null || typeof i !== 'object' || (p !== null && i.nivel === 'parar')) continue;
     const m = typeof i.motivo === 'string' ? i.motivo : '';
-    if (/^depende de você:/.test(m)) {
+    if (m === 'nada depende de você') itensTopo.push({ texto: m, cor: 'inactive', tipo: 'proprio', peso: 0 }); // D-G12 (r.13): linha de situação
+    else if (/^depende de você:/.test(m)) {
       const resto = natural(m.slice('depende de você:'.length));
       itensTopo.push({ texto: `depende de você:${resto === '' ? '' : ` ${resto}`}`, cor: /nada$/.test(m) ? 'inactive' : 'warning', tipo: 'proprio', peso: 0 });
     } else itensTopo.push({ texto: `${natural(m)}${botoes(i.acoes)}`, tipo: 'item', peso: 1 });

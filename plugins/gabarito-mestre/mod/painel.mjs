@@ -92,7 +92,7 @@ export const PREFS_PADRAO = Object.freeze({ preset: 'esquadrao', tema: 'color', 
 
 /** Só classifica (a costura de `gates/test/painel-costura.test.mjs` ainda a exige); desde a T20 a classe `sem_loop` não esconde nada: é falha de leitura. */
 const SEM_LOOP = new Set(['plano_ausente', 'entrega_nao_inferida', 'fora_de_repo']);
-const SITUACAO_RE = /^depende de você:/;
+const SITUACAO_RE = /^depende de você:|^nada depende de você$/; // D-G12 (r.13): "nada depende de você" também é linha de situação
 const ID_PERGUNTA_RE = /^[A-Za-z0-9._-]{1,128}:[0-9]{1,9}$/;
 const PRESETS = ['esquadrao', 'executivo'];
 const TEMAS = ['color', 'mono'];
@@ -223,7 +223,7 @@ export function faixaDe(estado, paneVisivel, falha, opc = {}) {
     return { texto: limpar(`■ PAROU ${estado.parar.hora} ${estado.parar.texto}`), cor: 'error', ...botaoDe(estado.parar.acoes, root) };
   }
   if (!ligado) return null;
-  // GM-14 T20: "depende de você: nada" e "depende de você: ? (...)" do estado novo são a linha de situação do bloco, não pendência (sem prefixar 2×)
+  // GM-14 T20: "nada depende de você" (D-G12) e "depende de você: ? (...)" do estado novo são a linha de situação do bloco, não pendência (sem prefixar 2×)
   const donos = (Array.isArray(estado.depende) ? estado.depende : []).filter((d) => ehObj(d) && d.nivel === 'dono' && !SITUACAO_RE.test(String(d.motivo ?? '')));
   if (donos.length > 0) {
     const mais = donos.length > 1 ? ` (+${donos.length - 1})` : '';
@@ -423,7 +423,7 @@ const textoDaLinha = (l) => (Array.isArray(l) ? l.map((s) => String(s?.texto ?? 
  * GM-15 T29 (D-G1c): o topo tem a cara do E4. Linha dos botões: o PAROU; senão o 1º item depois do rótulo `◆ DEPENDE DE VOCÊ  N itens`
  * (o rótulo nunca leva botão); com pouca altura o rótulo sai e o item começa por `◆ `. `◆ ATENÇÃO` nunca é topo. `depende de você: …` (linha de situação) segue valendo.
  */
-const TOPO_RE = /^(■ )?PAROU |^depende de você: /;
+const TOPO_RE = /^(■ )?PAROU |^depende de você: |^nada depende de você$/;
 /** `◆ item` (rótulo fora): só é topo como 1ª ou 2ª linha de conteúdo (logo depois do cabeçalho); a ATENÇÃO estreita (`◆ T2 …`, < 60 col) vem depois. */
 const ITEM_SEM_ROTULO_RE = /^◆ (?!ATENÇÃO|DEPENDE DE VOCÊ)/;
 const ROTULO_DEPENDE_RE = /^◆ DEPENDE DE VOCÊ/;

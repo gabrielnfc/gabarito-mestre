@@ -1160,7 +1160,7 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     const c = ler();
     assert.deepEqual([c.trilha.marcas[5], c.fontesFalhas], ['●', ['o registro de medição do painel']]);
     assert.ok(c.depende.some((i) => i.motivo === 'depende de você: ? (não consegui ler o registro de medição do painel)'), JSON.stringify(c.depende));
-    assert.ok(!c.depende.some((i) => i.motivo === 'depende de você: nada'));
+    assert.ok(!c.depende.some((i) => i.motivo === 'nada depende de você'));
     medirJson(m, '[1,2]');
     assert.deepEqual(ler().fontesFalhas, ['o registro de medição do painel'], 'JSON que não é objeto também é corrompido');
     medirJson(m, { 'GM-12': { gh: 'falhou', em: '2026-11-09T12:00:00.000Z' } });
@@ -1278,7 +1278,7 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
       const e = estado(m).estado;
       assert.ok(e.fontesFalhas.includes('a lista de entregas'), JSON.stringify(e.fontesFalhas));
       assert.ok(e.depende.some((i) => /^depende de você: \? \(não consegui ler (.+ e )?a lista de entregas( e .+)?\)$/.test(i.motivo)), JSON.stringify(e.depende));
-      assert.ok(!e.depende.some((i) => i.motivo === 'depende de você: nada'));
+      assert.ok(!e.depende.some((i) => i.motivo === 'nada depende de você'));
     } finally { execFileSync('chmod', ['755', base]); }
   });
 
@@ -1348,7 +1348,7 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.equal(e.parar, null);
     assert.doesNotMatch(cli(m, ['texto', '--agentes'], { input: JSON.stringify(VIVO) }).stdout, /^PLANO/m);
     // o defeito por outro canal: o "depende de você" também vem do cálculo com o plano (sem a "diário fora da tabela" do plano ausente)
-    assert.deepEqual(e.depende, [{ nivel: 'dono', motivo: 'depende de você: nada', acoes: [] }]);
+    assert.deepEqual(e.depende, [{ nivel: 'dono', motivo: 'nada depende de você', acoes: [] }]);
     assert.doesNotMatch(cli(m, ['texto', '--agentes'], { input: JSON.stringify(VIVO) }).stdout, /diário fora da tabela/);
   });
   test('publicada-campos-do-plano (T47): atenção, recente e AGORA da publicada são os da MESMA entrega com o PR aberto (identificada); PRONTO e plano saem', () => {
@@ -1388,7 +1388,7 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
       parar: [estado(publicada([['loop.parar', { motivo: 'sem_progresso' }]])).estado, (e) => e.parar !== null],
       pergunta: [estado(comPergunta, { agentes: { session_id: 's1', sessao: {}, agentes: [] } }).estado, (e) => e.pergunta !== null],
       // GM-15 T35 (r.13): pendência de autoria do orquestrador é lembrete dele (fora do DEPENDE); a de outro autor apaga a linha
-      depende: [estado(publicada([['nota', { tipo: 'pendencia', texto: 'a' }, 'dono']])).estado, (e) => e.depende.some((d) => d.motivo !== 'depende de você: nada')],
+      depende: [estado(publicada([['nota', { tipo: 'pendencia', texto: 'a' }, 'dono']])).estado, (e) => e.depende.some((d) => d.motivo !== 'nada depende de você')],
       vivo: [estado(publicada(), { agentes: VIVO }).estado, (e) => e.agora.agentes.length > 0],
     };
     for (const [nome, [e, pede]] of Object.entries(casos)) {

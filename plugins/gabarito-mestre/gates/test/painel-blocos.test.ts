@@ -156,7 +156,7 @@ test('prioridades-por-h-e-maxrows: 9 pares de H × maxRows ⇒ ≤ orçamento, t
 test('blocos-na-ordem-e-vazios-somem: cabeçalho · DEPENDE · PLANO · EQUIPE · ATENÇÃO · histórico (desenho do E4); bloco sem conteúdo não ocupa linha', () => {
   const cheio = proj(P(...IDS), [...EXECUCAO, e(60, 'ci.resultado', { verde: false, alvo: 'main' })], { agentes: [vivo('T4 implementador')] });
   const l = linhas(cheio);
-  const rotulos = l.map((x) => (ehRecente(x) ? 'RECENTE' : /^(GABARITO|depende de você|◆ DEPENDE DE VOCÊ|PLANO|FASE|EQUIPE|◆ ATENÇÃO|CI ●)/.exec(x)?.[1])).filter((x) => x !== undefined)
+  const rotulos = l.map((x) => (ehRecente(x) ? 'RECENTE' : /^(GABARITO|(?:nada )?depende de você|◆ DEPENDE DE VOCÊ|PLANO|FASE|EQUIPE|◆ ATENÇÃO|CI ●)/.exec(x)?.[1]?.replace(/^nada /, ''))).filter((x) => x !== undefined)
     .filter((x, i, xs) => i === 0 || xs[i - 1] !== x);
   assert.deepEqual(rotulos, ['GABARITO', 'depende de você', 'PLANO', 'EQUIPE', '◆ ATENÇÃO', 'RECENTE', 'CI ●']);
   // separadores do E4 entre as seções, nunca 2 colados
@@ -255,14 +255,14 @@ test('nada-so-com-todas-as-fontes: fixture 18:40 com T12 no limite ⇒ item (5),
   const s = proj(P('T11', 'T12', 'T13'), noTeto('T12', 0), { fatos: fatos({ plano: { tasks: ['T11', 'T12', 'T13'] } }) });
   const t = texto(s);
   assert.match(t, /^◆ DEPENDE DE VOCÊ {2}1 item\n {2}decidir a T12: chegou ao limite de revisões \[liberar mais uma rodada\]$/m);
-  assert.doesNotMatch(t, /depende de você: nada/);
+  assert.doesNotMatch(t, /nada depende de você/);
   const falhou = proj(P(...IDS), [], { fontesFalhas: ['o GitHub'] });
   assert.match(texto(falhou), /depende de você: \? \(não consegui ler o GitHub\)/);
   assert.doesNotMatch(texto(falhou), /nada/);
   const ilegivel = proj(P(...IDS), null);
   assert.match(texto(ilegivel), /não consegui ler o diário/);
   const tudoOk = proj(P(...IDS), []);
-  assert.match(texto(tudoOk), /^depende de você: nada$/m);
+  assert.match(texto(tudoOk), /^nada depende de você$/m);
 });
 
 test('limpar-no-depende: pouso pendente ⇒ "limpar a conversa" com o botão, sem o comando no texto', () => {
@@ -277,10 +277,10 @@ test('desatualizado-atencao-e-nunca-nada: passou de 180 s ⇒ ATENÇÃO e o topo
   const s = proj(P(...IDS), [], { desatualizadoS: 600 });
   const t = texto(s);
   assert.match(t, /^◆ ATENÇÃO {2}painel sem ler o diário há 10 min$/m);
-  assert.doesNotMatch(t, /depende de você: nada/);
+  assert.doesNotMatch(t, /nada depende de você/);
   assert.match(t, /depende de você: \?/);
   const dentro = proj(P(...IDS), [], { desatualizadoS: 180 });
-  assert.match(texto(dentro), /depende de você: nada/);
+  assert.match(texto(dentro), /nada depende de você/);
   assert.doesNotMatch(texto(dentro), /ATENÇÃO/);
 });
 
@@ -290,7 +290,7 @@ test('pergunta-real-pelo-projetar (P9): nota de dúvida vira pergunta no topo; r
   assert.equal(s.pergunta?.id, 's1:1');
   assert.equal(s.perguntasMais, 1);
   assert.match(texto(s), /^◆ DEPENDE DE VOCÊ {2}2 itens\n {2}qual caminho seguir\? · 1 este · 2 aquele\n {2}mais 1 pergunta aberta$/m);
-  assert.doesNotMatch(texto(s), /depende de você: nada/, 'com pergunta aberta o topo não diz "nada"');
+  assert.doesNotMatch(texto(s), /nada depende de você/, 'com pergunta aberta o topo não diz "nada"');
   const outra = proj(P(...IDS), [...base, e(3, 'dono.resposta', { pergunta: 's1:2', opcao: 1, rotulo: 'azul' }, 'dono')]);
   assert.equal(outra.pergunta?.id, 's1:1', 'resposta a s1:2 não fecha s1:1');
   assert.equal(outra.perguntasMais, 0);
@@ -601,7 +601,7 @@ test('ultima-entrega-conhecida: sem entrega, a 1ª linha fora do topo é exatame
     const l = renderPainel(sem, { largura: 80, preset } as OpcoesRender).map((x) => x.map((s) => s.texto).join(''));
     assert.equal(semRotulo(l[0]), 'GABARITO · entrega não identificada', preset);
     assert.ok(l.includes('última entrega conhecida: GM-12'), `${preset}: ${JSON.stringify(l)}`);
-    assert.equal(l.indexOf('última entrega conhecida: GM-12'), l.findIndex((x) => !/^(depende de você|◆ DEPENDE DE VOCÊ|  |■ PAROU)/.test(x) && x !== l[0]), preset);
+    assert.equal(l.indexOf('última entrega conhecida: GM-12'), l.findIndex((x) => !/^(depende de você|nada depende de você|◆ DEPENDE DE VOCÊ|  |■ PAROU)/.test(x) && x !== l[0]), preset);
     const nula = renderPainel({ ...sem, trilha: { ...(trilha as object), ultimaConhecida: null } } as EstadoPainel, { largura: 80, preset } as OpcoesRender).map((x) => x.map((s) => s.texto).join(''));
     assert.ok(!nula.join('\n').includes('última entrega conhecida'), `${preset}: sem dado, sem linha`);
     const com = renderPainel({ ...base, trilha } as EstadoPainel, { largura: 80, preset } as OpcoesRender).map((x) => x.map((s) => s.texto).join(''));
@@ -1404,7 +1404,7 @@ test('segundo-plano-1-linha-80col: 1 linha por shell com tipo · task · quem di
   assert.match(sec[3], /^ {2}◦ Comando · GANDALF · 0m$/, 'o resto ⇒ Comando');
   assert.ok(l.every((x) => colunas(x) <= 80), 'nada passa de 80 colunas');
   // ordem das seções (D-G8)
-  const marcas = l.map((x, i) => [i, /^depende de você|^◆ DEPENDE/.test(x) ? 'DEPENDE' : /^PLANO/.test(x) ? 'PLANO' : /^EQUIPE/.test(x) ? 'EQUIPE' : /^SEGUNDO PLANO/.test(x) ? 'SEGUNDO' : /^◆ ATENÇÃO/.test(x) ? 'ATENÇÃO' : ehRecente(x) ? 'RECENTE' : /^CI ●/.test(x) ? 'RODAPÉ' : ''] as const).filter(([, m]) => m !== '').map(([, m]) => m)
+  const marcas = l.map((x, i) => [i, /^depende de você|^nada depende de você|^◆ DEPENDE/.test(x) ? 'DEPENDE' : /^PLANO/.test(x) ? 'PLANO' : /^EQUIPE/.test(x) ? 'EQUIPE' : /^SEGUNDO PLANO/.test(x) ? 'SEGUNDO' : /^◆ ATENÇÃO/.test(x) ? 'ATENÇÃO' : ehRecente(x) ? 'RECENTE' : /^CI ●/.test(x) ? 'RODAPÉ' : ''] as const).filter(([, m]) => m !== '').map(([, m]) => m)
     .filter((m, i, ms) => i === 0 || ms[i - 1] !== m);
   assert.deepEqual(marcas, ['DEPENDE', 'PLANO', 'EQUIPE', 'SEGUNDO', 'RECENTE', 'RODAPÉ']);
   // o separador do E4 vai entre a EQUIPE e o SEGUNDO PLANO (seção própria, não continuação da árvore) e entre ele e o que vem depois
