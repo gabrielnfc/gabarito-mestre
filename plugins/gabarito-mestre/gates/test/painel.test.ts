@@ -1742,7 +1742,7 @@ test('sem-loop-dinamico-avisa-painel (REQ-POU-4): com onboarding, sinal "ausente
   assert.match(desenho(s), /ligar o loop automático: sem ele nada retoma o trabalho depois do pouso/);
   const sem = (extra: Record<string, unknown>, itens: Item[] = FRONTEIRA) => !motivos(projP(itens, extra)).includes(MOTIVO_LIGAR_LOOP);
   assert.ok(sem({ loopDinamico: 'armado' }), 'armado');
-  assert.ok(sem({ loopDinamico: null }), 'não conferível');
+  assert.ok(!sem({ loopDinamico: null }), 'não conferível (nao_conferivel, velho, sem arquivo) = desligado, a régua do Stop');
   assert.ok(sem({}), 'sem o sinal lido');
   assert.ok(sem({ loopDinamico: 'ausente', onboarding: false }), 'sem onboarding o mod não grava o sinal');
   assert.ok(sem({ loopDinamico: 'ausente' }, [...FRONTEIRA, ...ciclo('T2', 10, 15)]), 'tudo integrado: nada a seguir');
@@ -1755,6 +1755,10 @@ test('clear-so-com-wakeup-painel (REQ-POU-4, aprendizado 185): pouso pendente co
   assert.ok(!motivos(off).includes('limpar a conversa'));
   assert.ok(motivos(off).includes(MOTIVO_LIGAR_ANTES_DO_CLEAR));
   assert.equal(motivos(off).filter((m) => m.startsWith('ligar o loop')).length, 1, 'um item só');
+  // r1 MAJOR-1: não conferível (null) é desligado: nunca /clear, manda ligar o loop
+  const nc = projP(itens, { medicaoPouso: med(62), loopDinamico: null });
+  assert.ok(!comandos(nc).includes('/clear'), JSON.stringify(nc.depende));
+  assert.ok(motivos(nc).includes(MOTIVO_LIGAR_ANTES_DO_CLEAR));
   const on = projP(itens, { medicaoPouso: med(62), loopDinamico: 'armado' });
   assert.ok(comandos(on).includes('/clear'));
   assert.ok(motivos(on).includes('limpar a conversa'));

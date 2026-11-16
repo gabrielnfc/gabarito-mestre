@@ -640,9 +640,13 @@ test('clear-so-com-wakeup-depende (REQ-POU-4, aprendizado 185): pouso pendente c
   assert.equal(MOTIVO_LIGAR_ANTES_DO_CLEAR, 'ligar o loop automático antes de limpar a conversa');
   assert.equal(CMD_LIGAR_LOOP, '/loop /gabarito-mestre:gabarito-loop', 'o /loop sem intervalo (dinâmico) com a tarefa de seguir o loop');
   // armado ou não conferível (sinal ausente, velho, de outra sessão: `loop` ausente ou null) ⇒ o pedido de /clear de sempre
-  for (const loop of ['armado', null, undefined] as const) {
+  // (r1 MAJOR-1: a régua é a do Stop; tudo que não é `armado` — nao_conferivel, velho, sem arquivo, de outra sessão: `null` — é desligado)
+  for (const loop of ['armado', undefined] as const) {
     assert.deepEqual(dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'S1:2', loop }, GIT)[0].acoes[0], { rotulo: 'limpar', comando: '/clear' }, String(loop));
   }
+  const nc = dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'S1:2', loop: null }, GIT);
+  assert.deepEqual(motivos(nc), [MOTIVO_LIGAR_ANTES_DO_CLEAR], 'sinal não conferível = desligado');
+  assert.ok(!JSON.stringify(nc).includes('/clear'), 'nunca /clear sem o sinal armado');
   // REQ-LNG-1: o texto não leva comando
   assert.doesNotMatch(r[0].motivo, REGEX_TECNICA);
 });
@@ -666,6 +670,8 @@ test('sem-loop-dinamico-avisa-depende (REQ-POU-4): o painel decidiu que falta o 
   assert.equal(MOTIVO_LIGAR_LOOP, 'ligar o loop automático: sem ele nada retoma o trabalho depois do pouso');
   assert.doesNotMatch(r[0].motivo, REGEX_TECNICA);
   assert.deepEqual(dependeDe(APROVADA, [], [], OK, { pendente: false, id: null, ligarLoop: 'sim' } as never, GIT), nada, 'só true exato');
+  // não conferível (`loop: null`) também falta o loop
+  assert.deepEqual(motivos(dependeDe(APROVADA, [], [], OK, { pendente: false, id: null, loop: null, ligarLoop: true }, GIT)), [MOTIVO_LIGAR_LOOP]);
   // com o pedido de /clear e o loop desligado o item é 1 só (o de antes do /clear)
   assert.deepEqual(motivos(dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'S1:2', loop: 'ausente', ligarLoop: true }, GIT)), [MOTIVO_LIGAR_ANTES_DO_CLEAR]);
 });

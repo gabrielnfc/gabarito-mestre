@@ -8,7 +8,7 @@
 
 import { projetarEmendas, shaAceito } from './emenda.ts';
 import { cmp, contarConsultas, duracoes, EM_TRABALHO, mediana, projetarDecisoes } from './diario-puro.ts';
-import { dependeDe, loteDoDono } from './depende.ts';
+import { dependeDe, loopDesligado, loteDoDono } from './depende.ts';
 import { origemDe } from './origem.ts';
 import { loteRecomendadas, perguntasAbertas } from './perguntas.ts';
 import { leituraPropria, noTeto, pousoPendente, type Medicao } from './pouso-pendente.ts';
@@ -931,7 +931,7 @@ export type EntradaNova = EntradaPainel & {
   entregueDoDiario?: boolean;
   /**
    * GM-15 T19 (REQ-POU-4): o sinal do loop automático da sessão do painel (`.harness/contexto/loop-dinamico.<sessao>.json` da T17, lido por `painel.mjs` com o
-   * leitor do mod e o frescor do Stop): `armado` | `ausente`. Ausente ou `null` = não conferível (sem sessão, sem arquivo, velho, de outra sessão): nada muda.
+   * leitor do mod e o frescor do Stop): `armado` | `ausente`. Só `armado` é ligado (a régua do Stop, `loopDesligado`): ausente ou `null` (sem sessão, sem arquivo, `nao_conferivel`, velho, de outra sessão) é desligado; `undefined` = não medido.
    */
   loopDinamico?: 'armado' | 'ausente' | null;
 };
@@ -1076,7 +1076,8 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
   const [sessaoPouso, seqPouso] = clear.id === null ? [null, null] : [clear.id.slice(0, clear.id.lastIndexOf(':')), Number(clear.id.slice(clear.id.lastIndexOf(':') + 1))];
   const pousoDe: ReturnType<typeof pousoPendente> = clear.pendente && !clear.adiado ? { pendente: true, sessao: sessaoPouso, seq: seqPouso } : { pendente: false, sessao: null, seq: null };
   // GM-15 T19 (REQ-POU-3, REQ-POU-4): o sinal do loop da sessão, o contexto alto sem pouso desta sessão e o "ligar o loop", com a régua do Stop
-  const loopDinamico = entrada.loopDinamico === 'armado' || entrada.loopDinamico === 'ausente' ? entrada.loopDinamico : null;
+  // régua única (`loopDesligado`, a do Stop): `undefined` = não medido; qualquer valor que não seja `armado` é desligado
+  const loopDinamico = entrada.loopDinamico === undefined ? undefined : entrada.loopDinamico === 'armado' ? 'armado' : entrada.loopDinamico === 'ausente' ? 'ausente' : null;
   const comLoop = plano !== null && p.tasks.length > 0 && !zera && c.valido && entrada.onboarding === true;
   let acaoLoop: ReturnType<typeof proximaAcao> | null = null;
   if (comLoop && ord !== null) {
@@ -1089,7 +1090,7 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
   // pedido aberto (adiado ou não) ⇒ o aviso de contexto não sai, o DEPENDE mostra o pedido
   const contextoAlto = comLoop && loopDinamico === 'armado' && alto && propria !== null && !clear.pendente && acaoLoop !== null && acaoLoop.tipo !== 'concluir'
     ? { percent: propria.percent, x: (med as Medicao).x } : null;
-  const ligarLoop = comLoop && loopDinamico === 'ausente' && (clear.pendente || alto || (acaoLoop !== null && ['despachar', 'integrar', 'pousar'].includes(acaoLoop.tipo)));
+  const ligarLoop = comLoop && loopDesligado(loopDinamico) && (clear.pendente || alto || (acaoLoop !== null && ['despachar', 'integrar', 'pousar'].includes(acaoLoop.tipo)));
   const extrasLoop = { loop: loopDinamico, contexto: contextoAlto, ligarLoop };
   // o pedido de /clear é da sessão, não da entrega: entra nos dois ramos (r1 MAJOR-2)
   const pedidoClear = entrada.pousoPendente === true ? { pendente: true, id: null, ...extrasLoop } : { pendente: pousoDe.pendente, id: clear.id, ...extrasLoop };

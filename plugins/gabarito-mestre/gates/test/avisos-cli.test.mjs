@@ -100,13 +100,12 @@ test('avisos-atravessam-mod-e-painel (REQ-POU-4): o argv real do mod cria `.harn
   assert.doesNotMatch(d1.linha, /\/loop/, 'o comando só no botão');
   assert.deepEqual(d1.botoes, [CMD_LIGAR_LOOP], 'o mod põe o botão na linha do item');
 
-  // outra sessão não vê o sinal de S1 (estado por sessão, aprendizado 116)
-  assert.ok(!estadoCli(m, 'S2').depende.some((i) => i.motivo === MOTIVO_LIGAR_LOOP));
-
   gravarSinal(m, 'S1', [{ recurring: false }]);
   const e2 = estadoCli(m, 'S1');
   assert.ok(!e2.depende.some((i) => i.motivo === MOTIVO_LIGAR_LOOP), JSON.stringify(e2.depende));
   assert.doesNotMatch(doMod(e2, /x^/).texto, /ligar o loop automático/);
+  // outra sessão não herda o sinal armado de S1 (estado por sessão, aprendizado 116): sem o seu, é desligado (a régua do Stop, r1 MAJOR-1)
+  assert.ok(estadoCli(m, 'S2').depende.some((i) => i.motivo === MOTIVO_LIGAR_LOOP));
 });
 
 test('avisos-atravessam-mod-e-painel: sem onboarding o script do mod não grava nada e o painel não avisa o loop', () => {

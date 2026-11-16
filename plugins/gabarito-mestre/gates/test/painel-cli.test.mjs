@@ -1627,5 +1627,13 @@ describe('GM-15 T19: sinal do loop no painel', { timeout: 60_000 }, () => {
     assert.match(texto(), /ligar o loop automático/);
     sinal(m, 'S1', forma('armado', 'S1', AGORA - 60_000));
     assert.doesNotMatch(texto(), /ligar o loop automático/);
+    // r1 MAJOR-1: a régua do Stop: tudo que não é armado (não conferível, velho, de outra sessão, sem arquivo) também avisa
+    for (const [nome, o] of [['não conferível', forma('nao_conferivel', 'S1', AGORA - 60_000)], ['velho', forma('armado', 'S1', AGORA - SINAL_FRESCO_MS - 1)], ['de outra sessão', forma('armado', 'S9', AGORA - 60_000)]]) {
+      sinal(m, 'S1', o);
+      assert.match(texto(), /ligar o loop automático/, nome);
+    }
+    let out = ''; // sem arquivo: sessão que nunca gravou sinal
+    assert.equal(main(['texto', '--sessao', 'S7'], m.repo, IO({ saida: (t) => { out += t; } })), 0, out);
+    assert.match(out, /ligar o loop automático/, 'sem arquivo');
   });
 });

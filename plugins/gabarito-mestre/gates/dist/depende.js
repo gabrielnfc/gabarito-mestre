@@ -14,6 +14,14 @@ import { ehRespostaDeAdiamento, formaInvalida, ID_PERGUNTA_RE, TIPOS_EVENTO } fr
 import { AGORA_NAO_TETO } from './pouso.js';
 import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.js';
 import { cmp } from './diario-puro.js';
+/**
+ * GM-15 T19 (REQ-POU-4, r1 MAJOR-1): a régua ÚNICA do sinal do loop, a mesma do Stop (`sinalArmado`): só `armado` (da sessão, fresco) é loop ligado; tudo mais
+ * (ausente, `nao_conferivel`, velho, de outra sessão, sem arquivo, sem sessão: `null`) é desligado ⇒ avisa "ligar o loop" e nunca oferece /clear.
+ * `undefined` = o chamador não mediu o sinal (projeção pura, sem a CLI): nada muda.
+ */
+export function loopDesligado(sinal                                         )          {
+  return sinal !== undefined && sinal !== 'armado';
+}
                                                                                         
 import { idDaBranch } from './trilha.js';
                                           
@@ -212,8 +220,8 @@ export const NADA_DEPENDE = 'nada depende de você';
 export function dependeDe(
   trilha        , eventos          , base               ,
   fontes                      ,
-  // GM-15 T19: `loop` = o sinal do loop automático da sessão do painel (`armado` | `ausente`; ausente ou `null` = não conferível, nada muda); `contexto` = a leitura
-  // própria em X ou acima sem pouso desta sessão (o painel já decidiu); `ligarLoop` = o painel decidiu que falta o loop (onboarding, sinal `ausente` e trabalho a seguir)
+  // GM-15 T19: `loop` = o sinal do loop automático da sessão do painel (`armado` | `ausente` | `null`; só `armado` é ligado, a régua do Stop: `loopDesligado`; `undefined` = não medido, nada muda); `contexto` = a leitura
+  // própria em X ou acima sem pouso desta sessão (o painel já decidiu); `ligarLoop` = o painel decidiu que falta o loop (onboarding, sinal não armado e trabalho a seguir)
   pousoPendente                                                                                                                                                               ,
   git                                             ,
   lote                       ,
@@ -247,10 +255,10 @@ export function dependeDe(
   const idPouso = typeof pouso.id === 'string' && ID_PERGUNTA_RE.test(pouso.id) && !pouso.id.startsWith('herdar:') ? pouso.id : null;
   const agoraNao = idPouso === null ? [] : [{ rotulo: AGORA_NAO_TETO, comando: `/gabarito-mestre:responder ${idPouso} agora` }];
   // GM-15 T19 (REQ-POU-4, aprendizado 185): com o loop sabidamente desligado nunca se pede /clear: o item manda ligar o loop antes
-  const loopDesligado = pouso.loop === 'ausente';
+  const semLoop = loopDesligado(pouso.loop                                           );
   const contexto = contextoValido(pouso.contexto);
   const limpar = pedeClear
-    ? [loopDesligado ? item(MOTIVO_LIGAR_ANTES_DO_CLEAR, [{ ...BOTAO_LIGAR_LOOP }, ...agoraNao]) : item('limpar a conversa', [{ rotulo: 'limpar', comando: '/clear' }, ...agoraNao])]
+    ? [semLoop ? item(MOTIVO_LIGAR_ANTES_DO_CLEAR, [{ ...BOTAO_LIGAR_LOOP }, ...agoraNao]) : item('limpar a conversa', [{ rotulo: 'limpar', comando: '/clear' }, ...agoraNao])]
     : [
       // GM-15 T19 (REQ-POU-3): contexto alto sem pouso desta sessão: "limpar a conversa", e quem limpa é o mod (sem botão)
       ...(contexto !== null ? [item(motivoContextoAlto(contexto.percent, contexto.x))] : []),
