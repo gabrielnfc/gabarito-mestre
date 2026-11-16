@@ -320,7 +320,12 @@
         "plugins/gabarito-mestre/gates/test/depende.test.ts",
         "plugins/gabarito-mestre/gates/src/loop.ts",
         "plugins/gabarito-mestre/gates/dist/loop.js",
-        "plugins/gabarito-mestre/gates/test/loop.test.ts"
+        "plugins/gabarito-mestre/gates/test/loop.test.ts",
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/test/painel.test.ts",
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs"
       ],
       "reqs": [
         "REQ-AUT-1"
