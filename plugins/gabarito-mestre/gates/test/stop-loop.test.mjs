@@ -2075,3 +2075,35 @@ test('sinal-na-raiz-principal: o Stop numa worktree lê o sinal do checkout prin
   bloqueia(r, /T1/);
   assert.doesNotMatch(r.json.systemMessage ?? '', /ligar o loop automático/);
 });
+
+test('pouso-medido-sem-mod-ativo-avisa-ligar-ou-clear (REQ-POU-4, aprendizado 185; review r1 MAJOR-2): leitura própria fresca + pouso pendente da fronteira, mas o mod não está ativo ⇒ desligado manda ligar o loop antes de limpar; armado manda digitar /clear', () => {
+  // Com o diário real, `pendente` (pedidoDeClear) já implica leitura própria e pouso da fronteira, então `modAtivo` só cai por `jaParou`, e o loop.parar
+  // que o torna verdadeiro faz o Stop sair antes (pendência `parar` aberta, ou fechada e sem task depois: stop-loop.mjs, bloco do `iParar`).
+  // O ramo segue vivo para a falha de `jaParou` (dist fora de sincronia; o try põe modAtivo=false), que é o que este teste exercita.
+  // cópia do plugin (gates + mod): o sinal do loop armado é lido por ../../mod/gabarito.mjs a partir do script
+  const copia = mkdtempSync(join(tmpdir(), 'stop-plugin-'));
+  for (const n of ['dist', 'lib', 'scripts', 'package.json']) cpSync(join(GATES, n), join(copia, 'gates', n), { recursive: true });
+  cpSync(join(GATES, '..', 'mod'), join(copia, 'mod'), { recursive: true, filter: (f) => !/[/\\](test|node_modules)$/.test(f) });
+  const script = join(copia, 'gates', 'scripts', 'stop-loop.mjs');
+  const dpo = join(copia, 'gates', 'dist', 'pouso.js');
+  const fonte = readFileSync(dpo, 'utf8');
+  const assinatura = /export function jaParou\(eventos\s*\)\s*\{/;
+  assert.match(fonte, assinatura);
+  writeFileSync(dpo, fonte.replace(assinatura, (m) => `${m} throw new Error('jaParou quebrado');`));
+  const cena = (arma) => {
+    const raiz = repo();
+    plano(raiz);
+    comOnboarding(raiz);
+    if (arma) sinalLoop(raiz);
+    diario(raiz, 's', TASK_APROVADA('s'));
+    diario(raiz, 'S1', [ev('S1', 1, 'sessao.pouso', { percent: 61, x: 50 })]);
+    contextoDe(raiz, 'S1', 61);
+    return stop(raiz, {}, { script });
+  };
+  const desligado = cena(false);
+  avisa(desligado, /pouso pendente; ligar o loop automático .* antes de limpar a conversa/);
+  assert.doesNotMatch(desligado.json.systemMessage, /\/clear|aguardando o pouso do mod/);
+  const armado = cena(true);
+  avisa(armado, /pouso pendente; digite \/clear para retomar em conversa limpa/);
+  assert.doesNotMatch(armado.json.systemMessage, /aguardando o pouso do mod/);
+});
