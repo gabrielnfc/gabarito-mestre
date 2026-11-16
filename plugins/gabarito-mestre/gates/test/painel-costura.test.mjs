@@ -598,7 +598,11 @@ describe('costura T18: CLI real em toda fase', { timeout: 180_000 }, () => {
         [esp.marcas, esp.identificada, esp.entrega, esp.fase, esp.progresso, esp.mudouDepois, esp.ultimaConhecida], `${fx.nome}\n${JSON.stringify(e.trilha)}`);
       assert.doesNotMatch(JSON.stringify(out), /sem_loop|plano_ausente/);
       const t = rodar(repo, 'texto', sessao);
-      if (fx.fatos.plano === null) {
+      if (fx.fatos.plano === null && e.umaLinha !== null) {
+        // GM-15 T35 (r.13): sem nada que trave o dono (as ideias da fixture são do orquestrador, lembrete dele), o painel fora de entrega é 1 linha
+        assert.deepEqual(e.depende.map((d) => d.motivo), ['depende de você: nada']);
+        assert.match(t, /^GABARITO · sem entrega em curso/, t);
+      } else if (fx.fatos.plano === null) {
         assert.equal(e.pronto, null);
         assert.match(t, new RegExp(`^FASE ${esp.fase} de 7 `, 'm'), t);
       } else {
@@ -609,18 +613,18 @@ describe('costura T18: CLI real em toda fase', { timeout: 180_000 }, () => {
     });
   }
 
-  test('costura-fora-de-entrega: fase 1 sem eventos ⇒ 1 linha com a última conhecida; com as ideias ⇒ FASE 1 de 7 e o item das ideias', () => {
+  test('costura-fora-de-entrega: fase 1 sem eventos ⇒ 1 linha com a última conhecida; com as ideias do orquestrador também (T35 r.13: lembrete dele não trava o dono)', () => {
     const fx = JSON.parse(readFileSync(join(TRILHA, 'fase-1.json'), 'utf8'));
     const vazio = materializar(fx, { semEventos: true });
     assert.equal(rodar(vazio.repo, 'texto'), 'GABARITO · sem entrega em curso · última: GM-19\n');
     const cheio = materializar(fx);
     const t = rodar(cheio.repo, 'texto');
-    assert.match(t, /^FASE 1 de 7 /m, t);
-    assert.match(t, /2 ideias/, t);
+    assert.equal(t, 'GABARITO · sem entrega em curso · última: GM-19\n');
+    assert.equal(JSON.parse(rodar(cheio.repo, 'estado')).estado.trilha.progresso, '2 ideias anotadas', 'as ideias seguem contadas na trilha');
   });
 
-  /** Repo novo + `loop.mjs anotar --tipo pendencia` REAL; devolve o repo. */
-  const anotarReal = (texto) => {
+  /** Repo novo + `loop.mjs anotar --tipo pendencia` REAL; devolve o repo. GM-15 T35 (r.13): o CLI recusa (status 1) e nada é gravado. */
+  const anotarReal = (texto, status = 1) => {
     const base = novoTmp('painel anotar ');
     const repo = join(base, 'repo');
     mkdirSync(repo);
@@ -629,17 +633,17 @@ describe('costura T18: CLI real em toda fase', { timeout: 180_000 }, () => {
     writeFileSync(join(repo, 'README.md'), 'x\n'); g(repo, 'add', '-A'); g(repo, 'commit', '-q', '-m', 'inicio');
     assert.equal(rodar(repo, 'texto'), 'GABARITO · sem entrega em curso\n');
     const a = spawnSync(process.execPath, [LOOP, 'anotar', '--tipo', 'pendencia', '--texto', texto], { cwd: repo, encoding: 'utf8' });
-    assert.equal(a.status, 0, a.stdout + a.stderr);
+    assert.equal(a.status, status, a.stdout + a.stderr);
+    if (status === 1) assert.match(a.stdout, /pendencia_do_orquestrador/);
     return repo;
   };
 
-  test('anotar-real-aparece-no-depende (P9): `loop.mjs anotar --tipo pendencia` real ⇒ `estado` ⇒ o DEPENDE do render mostra a pendência com o botão "feito"', () => {
+  // GM-15 T35 (r.13, D-G12 1) revoga "a pendência anotada pelo orquestrador aparece no DEPENDE": o CLI a recusa e o painel segue em 1 linha
+  test('anotar-real-pendencia-recusa-e-painel-limpo (P9, T35 r.13): `loop.mjs anotar --tipo pendencia` real recusa ⇒ `estado` sem o item ⇒ o render segue 1 linha', () => {
     const repo = anotarReal('assinar o contrato do fornecedor');
     const e = JSON.parse(rodar(repo, 'estado')).estado;
-    const item = e.depende.find((i) => i.motivo === 'assinar o contrato do fornecedor');
-    assert.ok(item, JSON.stringify(e.depende));
-    assert.equal(item.acoes[0].rotulo, 'feito');
-    assert.match(rodar(repo, 'texto'), /^◆ DEPENDE DE VOCÊ {2}1 item\n {2}assinar o contrato do fornecedor \[feito\]$/m); // GM-15 T29: topo do E4
+    assert.equal(e.depende.some((i) => i.motivo === 'assinar o contrato do fornecedor'), false, JSON.stringify(e.depende));
+    assert.equal(rodar(repo, 'texto'), 'GABARITO · sem entrega em curso\n');
   });
 
   test('anotar-real-aparece-com-origem (P9, REQ-LNG-1): a pendência anotada pelo orquestrador aparece no render com "(anotado pelo orquestrador)"',

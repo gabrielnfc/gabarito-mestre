@@ -11,7 +11,7 @@ import { fecharPendencias } from './_adaptador-helpers.mjs';
 import * as diarioFs from '../src/diario.ts';
 import { projetarEmendas, reqsCongelados, SESSAO_EMENDAS } from '../src/emenda.ts';
 import type { ChaveEvento, EstadoTask } from '../src/loop.ts';
-import { analisarFronteira, negaDespacho } from '../src/pouso.ts';
+import { analisarFronteira, negaDespacho, pedidoDeClear } from '../src/pouso.ts';
 import { pousoPendente } from '../src/pouso-pendente.ts';
 import { pendenciasAprendizado } from '../src/pendencias.ts';
 import type { Evento, Plano, Sinais, TipoEvento } from '../src/tipos.ts';
@@ -1694,9 +1694,11 @@ test('pouso-pendente-chave-por-pouso: o estado do painel carrega pousoPendente.s
     entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26, onboarding: true,
     fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['a'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 'S1' },
   };
-  const base = diario(ini('a'), con('a'));
-  const e1 = projetarPainel(p, [...base, pouso(10, 30)], entrada as never) as unknown as Record<string, unknown>;
-  const e2 = projetarPainel(p, [...base, pouso(10, 30), inicio(1, 40, 'S2', 'clear'), pouso(2, 50, 'S2')], entrada as never) as unknown as Record<string, unknown>;
+  // GM-15 T35 (r.12, D-P13): o pedido de /clear é medido: fronteira (veredito) e a leitura própria da sessão S1 em 60 %
+  const base = diario(ini('a'), con('a'), ver('a', 'APROVADO', 1));
+  const comMedicao = { ...entrada, medicaoPouso: { x: 50, agoraMs: entrada.agoraMs, sessaoAtual: 'S1', leituras: [{ sessao: 'S1', percent: 60, fonte: 'mod', emMs: entrada.agoraMs }] } };
+  const e1 = projetarPainel(p, [...base, pouso(10, 30)], comMedicao as never) as unknown as Record<string, unknown>;
+  const e2 = projetarPainel(p, [...base, pouso(10, 30), inicio(1, 40, 'S2', 'clear'), pouso(2, 50, 'S2')], comMedicao as never) as unknown as Record<string, unknown>;
   assert.equal((e1.pousoPendente as { pendente: boolean }).pendente, true);
   const k1 = chavePouso(e1), k2 = chavePouso(e2);
   assert.match(k1, /^GM-14\|pouso\|\d+$/);
@@ -1753,7 +1755,7 @@ test('pouso-pendente-nao-vence-o-que-vem-antes: pausa, teto de tokens e podePous
   assert.deepEqual(viaCli(p, evs, sinais({ podePousar: false })), { tipo: 'parar', motivo: 'sem_pouso' });
 });
 
-test('pouso-pendente-regra-unica: o painel e o núcleo dão a mesma resposta para a mesma tabela, e as duas camadas importam a mesma função', async () => {
+test('pouso-pendente-regra-unica (GM-15 T35 r.12): o painel e o núcleo dão a resposta de `pedidoDeClear` para a mesma tabela, medida; sem medição nenhum pede /clear', async () => {
   const { projetarPainel } = await import('../src/painel.ts');
   const p: Plano = { entrega: 'GM-14', tasks: [{ id: 'a', deps: [], arquivos: [] }] };
   const entrada = {
@@ -1770,13 +1772,18 @@ test('pouso-pendente-regra-unica: o painel e o núcleo dão a mesma resposta par
     ['resume', [pouso(10, 30), inicio(1, 40, 'S2', 'resume')]],
     ['clear e novo pouso', [pouso(10, 30), inicio(1, 40, 'S2', 'clear'), pouso(2, 50, 'S2')]],
   ];
+  const med = { x: 50, agoraMs: entrada.agoraMs, sessaoAtual: 'S1', leituras: [{ sessao: 'S1', percent: 60, fonte: 'mod', emMs: entrada.agoraMs }] };
   for (const [nome, extra] of casos) {
-    const evs = [...diario(ini('a'), con('a')), ...extra];
-    const noPainel = JSON.stringify(projetarPainel(p, evs, entrada as never).depende ?? []).includes('limpar a conversa');
-    const noNucleo = viaCli(plano(['a']), evs, sinais()).tipo === 'pousar';
-    assert.equal(noPainel, pp(evs).pendente, `painel: ${nome}`);
-    assert.equal(noNucleo, pp(evs).pendente, `núcleo: ${nome}`);
+    const evs = [...diario(ini('a'), con('a'), ver('a', 'APROVADO', 1)), ...extra];
+    const esperado = pedidoDeClear(evs, true, med).pendente;
+    const noPainel = JSON.stringify(projetarPainel(p, evs, { ...entrada, medicaoPouso: med } as never).depende ?? []).includes('limpar a conversa');
+    const noNucleo = proximaAcaoNucleo(plano(['a']), evs, { ...sinais(), pousoPendente: esperado } as Sinais).tipo === 'pousar';
+    assert.equal(noPainel, esperado, `painel: ${nome}`);
+    assert.equal(noNucleo, esperado, `núcleo: ${nome}`);
+    // sem medição (D-P13): nunca pede /clear, mesmo com o pouso por evento pendente
+    assert.equal(JSON.stringify(projetarPainel(p, evs, entrada as never).depende ?? []).includes('limpar a conversa'), false, `sem medição: ${nome}`);
   }
+  assert.equal(pedidoDeClear([...diario(ini('a'), con('a'), ver('a', 'APROVADO', 1)), pouso(10, 30)], true, med).pendente, true, 'controle: o caso "pouso" pede');
   for (const f of ['../src/painel.ts', '../scripts/loop.mjs']) {
     const fonte = readFileSync(fileURLToPath(new URL(f, import.meta.url)), 'utf8');
     assert.match(fonte, /from '\.{1,2}\/(dist\/)?pouso-pendente\.(ts|js)'/, f);
@@ -1799,7 +1806,7 @@ test('pouso-pendente-sem-onboarding-nunca-pendente (FIEL-14 h): sem o fato de on
   assert.equal(semOnb.tipo, 'despachar');
 });
 
-test('pouso-pendente-painel-sem-onboarding: o painel só mostra "limpar a conversa" com o fato onboarding verdadeiro na entrada', async () => {
+test('pouso-pendente-painel-sem-onboarding (GM-15 T35 r.12): sem medição o painel não mostra "limpar a conversa", com ou sem onboarding; medido, mostra', async () => {
   const { projetarPainel } = await import('../src/painel.ts');
   const p: Plano = { entrega: 'GM-14', tasks: [{ id: 'a', deps: [], arquivos: [] }] };
   const entrada = {
@@ -1808,11 +1815,13 @@ test('pouso-pendente-painel-sem-onboarding: o painel só mostra "limpar a conver
     entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26,
     fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['a'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 'S1' },
   };
-  const evs = [...diario(ini('a'), con('a')), pouso(10, 30)];
+  const evs = [...diario(ini('a'), con('a'), ver('a', 'APROVADO', 1)), pouso(10, 30)];
   const txt = (o: Record<string, unknown>) => JSON.stringify(projetarPainel(p, evs, { ...entrada, ...o } as never).depende ?? []);
-  assert.equal(txt({ onboarding: true }).includes('limpar a conversa'), true);
+  assert.equal(txt({ onboarding: true }).includes('limpar a conversa'), false);
   assert.equal(txt({ onboarding: false }).includes('limpar a conversa'), false);
   assert.equal(txt({}).includes('limpar a conversa'), false);
+  const med = { x: 50, agoraMs: entrada.agoraMs, sessaoAtual: 'S1', leituras: [{ sessao: 'S1', percent: 60, fonte: 'mod', emMs: entrada.agoraMs }] };
+  assert.equal(txt({ onboarding: true, medicaoPouso: med }).includes('limpar a conversa'), true);
   const e = projetarPainel(p, evs, { ...entrada, onboarding: false } as never) as unknown as { pousoPendente: { pendente: boolean } };
   assert.equal(e.pousoPendente.pendente, false);
 });

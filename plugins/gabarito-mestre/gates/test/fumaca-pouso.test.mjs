@@ -80,8 +80,9 @@ function ambiente() {
       assert.ok(r.ok, JSON.stringify(r));
     });
   };
-  const painel = () => {
-    const r = spawnSync(process.execPath, [PAINEL, 'estado'], { cwd: dir, encoding: 'utf8', env, input: '' });
+  /** GM-15 T35 (r.12): o pedido de /clear é medido pela leitura da sessão que pergunta (`--sessao`). */
+  const painel = (sessao) => {
+    const r = spawnSync(process.execPath, [PAINEL, 'estado', ...(sessao === undefined ? [] : ['--sessao', sessao])], { cwd: dir, encoding: 'utf8', env, input: '' });
     const j = JSON.parse(r.stdout.trim());
     assert.equal(j.ok, true, r.stdout + r.stderr);
     return JSON.stringify(j.estado.depende ?? []);
@@ -97,16 +98,18 @@ function ambiente() {
 
 test('fumaca-pouso-retomada: pousar ⇒ /clear (simulado) ⇒ sessão nova medida abaixo do teto ⇒ proxima despacha e o painel não pede mais limpar', () => {
   const a = ambiente();
+  a.veredito(); // GM-15 T35 (r.12, D-P13): o pedido de /clear exige a fronteira e a leitura própria medida
+  a.medir('S1', 60);
   assert.equal(a.cli(['pousar', '--sessao', 'S1']).rc, 0);
   assert.deepEqual(a.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' }, 'controle: antes do /clear o pouso está pendente');
-  assert.match(a.painel(), /limpar a conversa/);
+  assert.match(a.painel('S1'), /limpar a conversa/);
   a.clearDe('S2');
   a.medir('S2', 19);
   const r = a.cli(['proxima', '--sessao', 'S2', '--vivos', '0']);
   assert.equal(r.rc, 0, r.out);
   assert.equal(r.j.acao.tipo, 'despachar', r.out);
   assert.equal(r.j.sinais.percent, 19);
-  assert.doesNotMatch(a.painel(), /limpar a conversa/);
+  assert.doesNotMatch(a.painel('S2'), /limpar a conversa/);
   assert.deepEqual(a.tipos().filter((t) => t === 'sessao.pouso' || t === 'sessao.inicio'), ['sessao.pouso', 'sessao.inicio']);
 });
 

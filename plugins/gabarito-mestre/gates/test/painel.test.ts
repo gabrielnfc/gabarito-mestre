@@ -1236,12 +1236,14 @@ test('uma-linha-regra-unica: umaLinhaDe sobre o estado projetado == umaLinha da 
     pacote: { nome: 'Terra Média', lider: 'GANDALF', sabio: 'ELROND', nomes: ['ARAGORN', 'LEGOLAS'] }, notificacao: null, agoraMs: AGORA, fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
     entregaId: null, modeloSessao: null, specSha: null, tetoSombra: 26, fatos: trilhaFatos, ultima: { id: 'GM-13', estado: 'publicada' }, ...extra,
   }) as unknown as Parameters<typeof projetarPainel>[2];
-  const ev = (tipo: string, dados: unknown, sessao = 's1', seq = 1): Evento => ({ seq, ts: iso(seq), autor: 't', sessao, agente: 'orquestrador', tipo, dados, hash_anterior: null } as unknown as Evento);
+  const ev = (tipo: string, dados: unknown, sessao = 's1', seq = 1, agente = 'orquestrador'): Evento => ({ seq, ts: iso(seq), autor: 't', sessao, agente, tipo, dados, hash_anterior: null } as unknown as Evento);
   const casos: Array<[string, Evento[], Record<string, unknown>, boolean]> = [
     ['nada', [], {}, false],
     ['parar', [ev('loop.parar', { motivo: 'sem_progresso' }, 's1', 1), ev('loop.parar', { motivo: 'sem_progresso' }, 's1', 2), ev('loop.parar', { motivo: 'sem_progresso' }, 's1', 3)], {}, true],
     ['pergunta', [ev('fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'main' } }, 's1', 1)], { fatos: { ...trilhaFatos, branch: 'feat/GM-12-x', idPadrao: '[A-Z]+-\\d+' } }, true],
-    ['depende', [ev('nota', { tipo: 'pendencia', texto: 'a' }, 's1', 1)], {}, true],
+    // GM-15 T35 (r.13): pendência do orquestrador é lembrete dele, fora do DEPENDE: não apaga a linha; a de outro autor apaga
+    ['lembrete do orquestrador', [ev('nota', { tipo: 'pendencia', texto: 'a' }, 's1', 1)], {}, false],
+    ['depende', [ev('nota', { tipo: 'pendencia', texto: 'a' }, 's1', 1, 'dono')], {}, true],
     ['vivo', [], { agentes: [{ id: 'a1', type: 'implementador', description: 'faz coisa', status: 'running', uso: null }] }, true],
   ];
   for (const [nome, eventos, extra, pede] of casos) {

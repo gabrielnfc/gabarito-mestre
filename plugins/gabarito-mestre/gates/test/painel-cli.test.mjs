@@ -593,7 +593,7 @@ describe('stdin (--agentes)', { timeout: 60_000 }, () => {
   test('acoes-e-segundo-plano-pelo-cli-real: a ação ao vivo e o segundo plano do stdin chegam ao AGORA (FIEL-11 b, c)', () => {
     const m = montar({ ...comEventos([['task.iniciada', { task: 'T1', papel: 'implementador' }]]) });
     const entrada = { sessao: {}, agentes: [{ id: 'a1', type: 'implementador', description: 'T1 implementador', status: 'running' }],
-      acoes: { a1: { texto: 'lendo 3 arquivos', fonte: 'tool', em: 1 } }, segundoPlano: [{ id: 'b1', dono: 'orquestrador', texto: 'build do plugin', desde: 1 }, { id: 'b2', dono: 'a1', texto: 'rodar a suíte', desde: 1, comando: 'npm test' }] };
+      acoes: { a1: { texto: 'lendo 3 arquivos', fonte: 'tool', em: Date.now() } }, /* T35 r.11: ação de 1970 seria agente sem sinal */ segundoPlano: [{ id: 'b1', dono: 'orquestrador', texto: 'build do plugin', desde: 1 }, { id: 'b2', dono: 'a1', texto: 'rodar a suíte', desde: 1, comando: 'npm test' }] };
     const r = cli(m, ['estado', '--agentes'], { input: JSON.stringify(entrada) });
     assert.equal(r.rc, 0, r.stdout + r.stderr);
     const agora = r.json.estado.agora;
@@ -1037,9 +1037,9 @@ function repoT18({ branch = 'feat/GM-12-painel', specs = [], planos = {}, ledger
   return { base, repo, seq: 0 };
 }
 const dirDe = (m, id) => join(m.repo, '.harness', 'entregas', id ?? '_sem-id');
-function evEm(m, id, tipo, dados, { sessao = 'loop', ts } = {}) {
+function evEm(m, id, tipo, dados, { sessao = 'loop', ts, agente = 'orquestrador' } = {}) {
   m.seq += 1;
-  const r = diario.append(dirDe(m, id), sessao, { ts: ts ?? new Date(Date.UTC(2026, 10, 9, 12, 0, m.seq)).toISOString(), autor: 't@t.test', sessao, agente: 'orquestrador', tipo, dados });
+  const r = diario.append(dirDe(m, id), sessao, { ts: ts ?? new Date(Date.UTC(2026, 10, 9, 12, 0, m.seq)).toISOString(), autor: 't@t.test', sessao, agente, tipo, dados });
   assert.ok(r.ok && r.gravado === 'evento', `preparo: ${tipo} não gravado: ${JSON.stringify(r)}`);
 }
 const integrarEm = (m, id, t, extras) => { for (const [tipo, dados] of INTEGRAR(t)) evEm(m, id, tipo, dados, extras); };
@@ -1320,7 +1320,7 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
   const publicada = (extra = [], prEstado = 'mergeado') => {
     const m = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
     evEm(m, 'GM-12', 'task.iniciada', { task: 'T1', papel: 'implementador' });
-    for (const [tipo, dados] of extra) evEm(m, 'GM-12', tipo, dados);
+    for (const [tipo, dados, agente] of extra) evEm(m, 'GM-12', tipo, dados, { agente });
     evEm(m, 'GM-12', 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: prEstado, branch: 'feat/GM-12-painel' } });
     return m;
   };
@@ -1387,7 +1387,8 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     const casos = {
       parar: [estado(publicada([['loop.parar', { motivo: 'sem_progresso' }]])).estado, (e) => e.parar !== null],
       pergunta: [estado(comPergunta, { agentes: { session_id: 's1', sessao: {}, agentes: [] } }).estado, (e) => e.pergunta !== null],
-      depende: [estado(publicada([['nota', { tipo: 'pendencia', texto: 'a' }]])).estado, (e) => e.depende.some((d) => d.motivo !== 'depende de você: nada')],
+      // GM-15 T35 (r.13): pendência de autoria do orquestrador é lembrete dele (fora do DEPENDE); a de outro autor apaga a linha
+      depende: [estado(publicada([['nota', { tipo: 'pendencia', texto: 'a' }, 'dono']])).estado, (e) => e.depende.some((d) => d.motivo !== 'depende de você: nada')],
       vivo: [estado(publicada(), { agentes: VIVO }).estado, (e) => e.agora.agentes.length > 0],
     };
     for (const [nome, [e, pede]] of Object.entries(casos)) {
@@ -1397,6 +1398,8 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     }
     const todas = publicada([...INTEGRAR('T1').slice(1), ...INTEGRAR('T2')]);
     assert.deepEqual(estado(todas).estado.umaLinha, { ultima: { id: 'GM-12', estado: 'tasks todas integradas' } });
+    // r.13: o lembrete do orquestrador não apaga a linha
+    assert.deepEqual(estado(publicada([['nota', { tipo: 'pendencia', texto: 'a' }]])).estado.umaLinha, { ultima: { id: 'GM-12', estado: '0 de 2 tasks integradas' } });
   });
   test('publicada-vizinhos (T47): a mesma entrega com o PR aberto (identificada) segue igual; publicada com plano todo integrado segue sem PRONTO e sem PAROU', () => {
     const a = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });

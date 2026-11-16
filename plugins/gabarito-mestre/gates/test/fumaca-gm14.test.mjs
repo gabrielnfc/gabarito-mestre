@@ -56,13 +56,13 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   // ("N ideias anotadas" spec:52, "as N ideias viram" spec:55); o singular não tem regra na spec e fica fora da fumaça
   assert.equal(f.eventosSemId.filter((e) => e.tipo === 'nota' && e.dados.tipo === 'ideia').length, 2, 'REQ-DIA-2: as notas entraram sem plano, em _sem-id');
   const i = P.ideiaAnotada;
-  assert.equal(i.estado.umaLinha, null);
+  // GM-15 T35 (r.13, D-G12 1): ideia anotada pelo orquestrador é lembrete dele (vai ao plano), não item do dono: nada trava, o painel é 1 linha
+  assert.deepEqual(i.estado.umaLinha, { ultima: null });
   assert.equal(i.estado.trilha.identificada, false);
   assert.deepEqual([i.estado.trilha.fase, i.estado.trilha.marcas], [1, ['●', '○', '○', '○', '○', '○', '○']]);
   assert.equal(i.estado.trilha.progresso, '2 ideias anotadas');
-  assert.equal(topo(i)[1], '◆ DEPENDE DE VOCÊ  1 item'); assert.match(topo(i)[2], /^  decidir se as 2 ideias viram a próxima entrega \[visto\]/);
-  assert.match(i.texto, /^FASE 1 de 7 ▱{7} · 2 ideias anotadas/m);
-  assert.deepEqual(i.estado.depende.map((d) => d.motivo), ['decidir se as 2 ideias viram a próxima entrega']);
+  assert.equal(i.texto, 'GABARITO · sem entrega em curso\n');
+  assert.deepEqual(i.estado.depende.map((d) => d.motivo), ['depende de você: nada']);
   assert.deepEqual(i.estado.recente, [], 'sem origem a mostrar: nenhum fato aconteceu ainda');
   assert.ok(!/^\d\d:\d\d /m.test(i.texto)); // GM-15 T29: o RECENTE é o histórico hh:mm do E4
 

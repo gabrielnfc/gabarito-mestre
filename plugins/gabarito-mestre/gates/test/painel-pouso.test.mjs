@@ -110,10 +110,12 @@ test('painel-pouso-leitura-acima-x-com-item: pouso no diário + leitura própria
   }
 });
 
-test('painel-pouso-sem-leitura-regra-sem-mod: sem leitura própria a regra é a de hoje (pouso sem clear ⇒ item; com clear ⇒ sem)', () => {
-  assert.equal(limpar(projetarPainel(PLANO, base(), entrada())), true, 'sem medicaoPouso');
-  assert.equal(limpar(projetarPainel(PLANO, base(), entrada({ medicaoPouso: medicao('sP', []) }))), true, 'medição sem leitura');
-  assert.equal(limpar(projetarPainel(PLANO, base(), entrada({ medicaoPouso: medicao('sP', [leitura('sP', 19, 500)]) }))), true, 'leitura velha');
+// GM-15 T35 (r.12, D-P13) revoga a regra sem medição no painel: sem leitura própria fresca não há pedido de /clear
+test('painel-pouso-sem-leitura-sem-pedido (T35 r.12): sem leitura própria fresca o painel não pede limpar (nem sem medição, nem sem leitura, nem com leitura velha)', () => {
+  assert.equal(limpar(projetarPainel(PLANO, base(), entrada())), false, 'sem medicaoPouso');
+  assert.equal(limpar(projetarPainel(PLANO, base(), entrada({ medicaoPouso: medicao('sP', []) }))), false, 'medição sem leitura');
+  assert.equal(limpar(projetarPainel(PLANO, base(), entrada({ medicaoPouso: medicao('sP', [leitura('sP', 61, 500)]) }))), false, 'leitura velha');
+  assert.equal(limpar(projetarPainel(PLANO, base(), entrada({ medicaoPouso: medicao('sP', [leitura('sP', 61)]) }))), true, 'controle: leitura fresca em 61 %');
   const comClear = [...base(), ev(-300, 'sessao.inicio', { origem: 'clear' }, 'sB', 1)];
   assert.equal(limpar(projetarPainel(PLANO, comClear, entrada())), false, 'o /clear fecha');
 });
@@ -121,7 +123,8 @@ test('painel-pouso-sem-leitura-regra-sem-mod: sem leitura própria a regra é a 
 test('painel-retomada-medida: a retomada com a leitura da sessão nova abaixo de X tira o item do painel', () => {
   const eventos = [...base(), ev(-300, 'sessao.retomada', { via: 'mod', chars: 10 }, 'sB', 1)];
   assert.equal(limpar(projetarPainel(PLANO, eventos, entrada({ medicaoPouso: medicao('sP', [leitura('sB', 9)]) }))), false);
-  assert.equal(limpar(projetarPainel(PLANO, eventos, entrada({ medicaoPouso: medicao('sP', []) }))), true);
+  // GM-15 T35 (r.12): sem a leitura própria da sessão que pergunta não há pedido de /clear algum
+  assert.equal(limpar(projetarPainel(PLANO, eventos, entrada({ medicaoPouso: medicao('sP', []) }))), false);
 });
 
 // ───────────────────────────── pelo CLI: o mesmo diário e a mesma leitura dão a mesma resposta que `proxima`
@@ -195,19 +198,24 @@ test('painel-medicao-pela-flag-sessao: `painel.mjs estado --sessao <id>` usa a l
   assert.equal(JSON.parse(saidas.join('')).estado.pousoPendente.pendente, false);
   const rc2 = main(['estado'], r, { saida: (t) => saidas.push(t), aviso: () => {}, agoraMs: Date.now(), stdin: () => { throw new Error('stdin lido'); } });
   assert.equal(rc2, 0);
-  assert.equal(JSON.parse(saidas.slice(1).join('')).estado.pousoPendente.pendente, true, 'sem --sessao e sem stdin ⇒ regra sem mod');
+  assert.equal(JSON.parse(saidas.slice(1).join('')).estado.pousoPendente.pendente, false, 'sem --sessao e sem stdin ⇒ sem medição ⇒ sem pedido (T35 r.12)');
+  gravaContexto(r, 'sessao-p', 61);
+  const s3 = [];
+  assert.equal(main(['estado', '--sessao', 'sessao-p'], r, { saida: (t) => s3.push(t), aviso: () => {}, agoraMs: Date.now(), stdin: () => { throw new Error('stdin lido'); } }), 0);
+  assert.equal(JSON.parse(s3.join('')).estado.pousoPendente.pendente, true, 'controle: a leitura da flag em 61 % pede');
   assert.equal(main(['estado', '--sessao', '../x'], r, { saida: () => {}, aviso: () => {} }), 2, 'forma inválida é uso errado');
 });
 
-test('painel-retomada-medida-cli: leitura gravada sob o id da sessão que retomou fecha o pouso no painel', () => {
+// GM-15 T35 (r.12, D-P13): o pedido de /clear exige a leitura PRÓPRIA da sessão que pergunta; a da sessão que retomou não o abre nem o mantém
+test('painel-retomada-medida-cli (T35 r.12): sem a leitura própria da sessão que pergunta não há pedido, qualquer que seja a leitura da sessão que retomou; com a própria em 61 %, há', () => {
   const origem = { fluxo: { resolvidoEm: '2026-11-01T00:00:00Z' } };
   const { r } = repo({ origem, eventos: [...FRONTEIRA, ['sessao.retomada', { via: 'mod', chars: 5 }, 'sessao-nova']] });
   const pedir = () => estadoDoPainel(r, { agoraMs: Date.now(), agentes: { session_id: 'sessao-velha', agentes: [], sessao: {} } });
-  assert.equal(pedir().estado.pousoPendente.pendente, true, 'sem leitura da sessão nova');
-  gravaContexto(r, 'sessao-nova', 9);
-  assert.equal(pedir().estado.pousoPendente.pendente, false, 'com a leitura sob o id novo');
+  assert.equal(pedir().estado.pousoPendente.pendente, false, 'sem leitura nenhuma');
   gravaContexto(r, 'sessao-nova', 77);
-  assert.equal(pedir().estado.pousoPendente.pendente, true, 'a leitura acima de X não fecha');
+  assert.equal(pedir().estado.pousoPendente.pendente, false, 'a leitura da sessão nova não decide pela velha');
+  gravaContexto(r, 'sessao-velha', 61);
+  assert.equal(pedir().estado.pousoPendente.pendente, true, 'a própria em 61 % pede');
 });
 
 test('painel-texto-entrega-da-branch-enabler: enabler/GM-15-fluidez ⇒ a entrega GM-15, não "entrega não identificada"', () => {
