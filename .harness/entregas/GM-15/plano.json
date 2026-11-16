@@ -608,7 +608,10 @@
         "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
         "plugins/gabarito-mestre/mod/gabarito.mjs",
         "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
-        "docs/virada-2.1.md"
+        "plugins/gabarito-mestre/docs/virada-2.1.md",
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/test/painel.test.ts"
       ],
       "reqs": [
         "REQ-HIG-1"
