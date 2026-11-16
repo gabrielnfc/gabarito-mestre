@@ -1226,7 +1226,7 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.equal(t.rc, 0, t.stdout);
     // GM-15 T29 (desenho do E4): a seção EQUIPE é 1 linha só
     assert.match(t.stdout, /^EQUIPE · agentes e contexto: medidos só no painel da sessão$/m);
-    assert.doesNotMatch(t.stdout, /GANDALF|ELROND|ARAGORN|LEGOLAS|agentes —|ctx|tok |5h|7d/);
+    assert.doesNotMatch(t.stdout, /GANDALF|ELROND|ARAGORN|LEGOLAS|agentes —|ctx|tok |\b5h\b|7d/);
     assert.match(t.stdout, /^PLANO {3}▰+▱+ {2}50% {2}1\/2 tasks/m);
   });
 

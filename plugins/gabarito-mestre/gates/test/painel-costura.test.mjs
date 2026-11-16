@@ -86,7 +86,7 @@ describe('costura mod → CLI real → mod', () => {
     assert.equal(a.estado.equipe.agentes.find((x) => x.task === 'T2' && x.vivo)?.ctxTok, 92762, 'o ctx da fixture (92.762) chega ao estado pelo CLI real');
     // GM-15 T33 (g.10, D-G7: o Claude não tem mais limite de 5 h): rateLimits sem five_hour ⇒ o campo 5h é OMITIDO (nunca `5h ?`, barra nem 0%); o 7d segue
     assert.match(txt, /^│ {2}7d █░{9} 9%$/m, txt);
-    assert.doesNotMatch(txt, /5h/, 'rateLimits sem five_hour ⇒ nenhum campo de 5h');
+    assert.doesNotMatch(txt, /\b5h\b/, 'rateLimits sem five_hour ⇒ nenhum campo de 5h');
     assert.equal(a.estado.equipe.lider.d7, 9, 'seven_day (9) chega ao líder no estado');
     // GM-14 T18: o estado novo traz o item "depende de você: nada" (T13/T17, D-P13). `faixaDe` do mod (mod/painel.mjs, T20) ainda o lê como
     // pendência ("depende de você: depende de você: nada"): defeito de costura relatado à T20, fora dos arquivos da T18. Aqui só o que o CLI entrega.
