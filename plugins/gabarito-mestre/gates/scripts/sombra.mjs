@@ -45,7 +45,7 @@ import { ehEntrypoint } from '../lib/cli.mjs';
 import { lerConfigOrigin } from '../lib/config.mjs';
 import { ACHADO_MAX_BYTES, achadosDoCiclo, estadoNoDiario, hashDaLiberacao, perguntaDaLiberacao, reqsDaLiberacao, tetoDaSombra } from './loop.mjs';
 import * as diario from '../dist/diario.js';
-import { projetarEmendas } from '../dist/emenda.js';
+import { projetarEmendas, quemRedigeNaAncora } from '../dist/emenda.js';
 import { formaInvalida, REQ_RE } from '../dist/formas.js';
 import { validarPlano } from '../dist/plano.js';
 import {
@@ -304,24 +304,27 @@ function propostaDoEstado(est, seq) {
   for (const [estado, lista] of [['aberta', est.abertas], ['aprovada', est.aprovadas], ['rejeitada', est.rejeitadas]]) {
     const p = lista.find((x) => x.seq === seq);
     if (p !== undefined) {
-      const rejeicoes = est.rejeitadas.filter((x) => x.req === p.req && x.origem !== 'sombra').length;
-      return { p, estado, rejeicoes };
+      const { quem, rejeicoes } = quemRedigeNaAncora(est, p.req);
+      return { p, estado, rejeicoes, quem };
     }
   }
   return undefined;
 }
 
 /** GM-15 T11: a seção da proposta (diff, fato, alternativa) antes da `## Instrução`; com 2 rejeições na âncora, também o pedido de redação. */
-function comProposta(brief, { p, estado, rejeicoes }) {
+function comProposta(brief, { p, estado, rejeicoes, quem }) {
   const bloco = (rotulo, texto) => { const f = cerca(texto); return [`### ${rotulo}`, '', `${f}`, texto.replace(/\n$/u, ''), f, '']; };
   const partes = ['## Proposta de emenda sob julgamento', '',
     `Proposta de emenda #${p.seq} (${p.req}${p.task !== undefined ? `, task ${p.task}` : ''}) · ${estado} · causa ${p.causa}${p.origem === 'sombra' ? ' · redigida pela Sombra' : ''}`, '',
     ...bloco('Diff', p.diff), ...bloco('Fato', p.fato), ...bloco('Alternativa', p.alternativa)];
-  // Emenda 13: proposta da própria Sombra rejeitada vai ao dono; a Sombra não redige de novo.
-  if (rejeicoes >= 2 && p.origem !== 'sombra') {
+  // Emenda 13 (REQ-AUT-1): só `quemRedigeNaAncora` decide; redação da Sombra já rejeitada no REQ ⇒ dono, sem pedir redação.
+  if (quem === 'sombra' && p.origem !== 'sombra') {
     partes.push('### Redação', '',
       `Esta âncora (${p.req}) já teve ${rejeicoes} propostas do orquestrador rejeitadas: esta é a 2ª rejeição e não há 3ª proposta dele. `
       + 'Se a hipótese da emenda procede, redija o texto da emenda (diff, fato e alternativa) no campo `texto` da resposta; o orquestrador a grava com `emenda propor --origem sombra`.', '');
+  }
+  if (quem === 'dono') {
+    partes.push('### Redação', '', `Esta âncora (${p.req}) já teve redação da Sombra rejeitada: a Sombra não repropõe e o item vai ao dono.`, '');
   }
   const i = brief.lastIndexOf('\n## Instrução\n');
   const secao = `${partes.join('\n')}\n`;

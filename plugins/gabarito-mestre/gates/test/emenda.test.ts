@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { projetarEmendas, versaoDoReq, reqsCongelados, escopoDaTask, validarProposta, validarJulgamento, SESSAO_EMENDAS } from '../src/emenda.ts';
+import { quemRedigeNaAncora, projetarEmendas, versaoDoReq, reqsCongelados, escopoDaTask, validarProposta, validarJulgamento, SESSAO_EMENDAS } from '../src/emenda.ts';
 import type { EstadoEmendas } from '../src/emenda.ts';
 import { normalizarCaminho, validarPlano } from '../src/plano.ts';
 import type { Evento, Plano } from '../src/tipos.ts';
@@ -342,4 +342,14 @@ test('rejeicao-da-redacao-da-sombra-vai-ao-dono', () => {
   assert.equal(validarProposta(pl, aberta, dadosProp({ origem: 'sombra' })), null, 'só a rejeitada trava');
   // outra âncora segue livre
   assert.equal(validarProposta(pl, est, dadosProp({ req: 'REQ-EME-2' })), null);
+});
+
+test('t26-quem-redige-na-ancora: só por REQ; orquestrador até 2 rejeições, Sombra redige, rejeitada a Sombra vai ao dono', () => {
+  const q = (...e: Evento[]) => quemRedigeNaAncora(projetarEmendas(e), 'REQ-EME-1');
+  assert.deepEqual(q(), { quem: 'orquestrador', rejeicoes: 0 });
+  assert.equal(q(prop(1), rejeita('s', 1, 1)).quem, 'orquestrador');
+  assert.deepEqual(q(prop(1), prop(2, { task: 't' }), rejeita('s', 1, 1), rejeita('s', 2, 2)), { quem: 'sombra', rejeicoes: 2 });
+  assert.equal(q(prop(1), prop(2), prop(3, { origem: 'sombra' }), rejeita('s', 1, 1), rejeita('s', 2, 2), rejeita('s', 3, 3)).quem, 'dono');
+  const outro = projetarEmendas([prop(1, { req: 'REQ-EME-2' }), prop(2, { req: 'REQ-EME-2' }), rejeita('s', 1, 1), rejeita('s', 2, 2)]);
+  assert.equal(quemRedigeNaAncora(outro, 'REQ-EME-1').quem, 'orquestrador', 'outro REQ não conta');
 });

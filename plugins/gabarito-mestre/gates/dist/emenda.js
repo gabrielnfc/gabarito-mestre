@@ -125,6 +125,18 @@ export function escopoDaTask(plano       , est               , task        )    
   return normalizados([...t.arquivos, ...est.aprovadas.filter((p) => p.task === task).flatMap((p) => p.arquivos)]);
 }
 
+/**
+ * Emenda 13 (REQ-EME-3, REQ-AUT-1): a ÚNICA regra de quem age numa âncora (só o REQ). 2+ rejeições do orquestrador e redação da Sombra
+ * já rejeitada ⇒ `dono` (a Sombra não repropõe e o orquestrador não tem 3ª); só as 2+ ⇒ `sombra` redige; senão o `orquestrador` propõe.
+ * `validarProposta` e o brief de `sombra.mjs perguntar --proposta` usam esta função; nenhuma das duas camadas recontagem por conta própria.
+ */
+export function quemRedigeNaAncora(est               , req        )                                                                  {
+  const daAncora = est.rejeitadas.filter((p) => p.req === req);
+  const rejeicoes = daAncora.filter((p) => p.origem !== 'sombra').length;
+  if (rejeicoes < 2) return { quem: 'orquestrador', rejeicoes };
+  return { quem: daAncora.some((p) => p.origem === 'sombra') ? 'dono' : 'sombra', rejeicoes };
+}
+
 /** Motivo pelo qual a proposta não pode ser gravada, ou `null`. Ordem V0..V6: o 1º que casa vence. */
 export function validarProposta(plano       , est               , dados                         )                {
   if (est.invalido !== undefined) return est.invalido;
@@ -144,13 +156,15 @@ export function validarProposta(plano       , est               , dados         
     arquivos.push(n);
   }
   const origem = campo(dados, 'origem');
-  // Emenda 13 (REQ-EME-3): a âncora é só o REQ; trocar ou omitir `--task` não zera a contagem. Redação da Sombra rejeitada ⇒ dono:
-  // a Sombra não repropõe no mesmo REQ (o orquestrador já está barrado pela 3ª proposta).
-  const daAncora = est.rejeitadas.filter((p) => p.req === campo(dados, 'req'));
-  if (origem === 'sombra' && daAncora.some((p) => p.origem === 'sombra')) return 'redação da Sombra rejeitada nesta âncora: vai ao dono (a Sombra não repropõe)';
-  const rejeicoes = daAncora.filter((p) => p.origem !== 'sombra').length;
-  if (origem === 'sombra' && rejeicoes < 2) return 'origem sombra só depois da 2ª rejeição da mesma âncora';
-  if (origem !== 'sombra' && rejeicoes >= 2) return 'terceira proposta do orquestrador na mesma âncora: a Sombra redige o texto (origem sombra)';
+  // Emenda 13 (REQ-EME-3): a âncora é só o REQ; a decisão vem da MESMA função que o brief da Sombra usa (REQ-AUT-1).
+  const { quem } = quemRedigeNaAncora(est, campo(dados, 'req')          );
+  if (origem === 'sombra') {
+    if (quem === 'dono') return 'redação da Sombra rejeitada nesta âncora: vai ao dono (a Sombra não repropõe)';
+    if (quem === 'orquestrador') return 'origem sombra só depois da 2ª rejeição da mesma âncora';
+  } else if (quem !== 'orquestrador') {
+    // dono: a Sombra já foi rejeitada e o orquestrador não tem 3ª; sombra: ainda cabe à Sombra o texto. Nos dois, esta proposta não grava.
+    return 'terceira proposta do orquestrador na mesma âncora: a Sombra redige o texto (origem sombra)';
+  }
   if (task !== undefined) {
     for (const outra of plano.tasks) {
       if (outra.id === task || temDependencia(plano, task, outra.id)) continue;

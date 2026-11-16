@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import * as diario from '../dist/diario.js';
 import { formaInvalida } from '../dist/formas.js';
 import { promptSombra } from '../dist/sombra.js';
+import { quemRedigeNaAncora, projetarEmendas, validarProposta } from '../dist/emenda.js';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(AQUI, '..', 'scripts', 'sombra.mjs');
@@ -1192,12 +1193,36 @@ describe('GM-15 T11: perguntar --proposta', () => {
     propostaCom(r, 'REQ-A-1', { task: 'T2' }); // 3, outra task: mesma âncora
     propostaCom(r, 'REQ-A-1', { task: 'T1', origem: 'sombra' }); // 4, da Sombra
     rejeitar(r, 1);
-    rejeitar(r, 4);
     const brief = (seq, q, ancora) => readFileSync(join(r.raiz, sobre(r, seq, q, ancora).out.brief), 'utf8');
-    assert.ok(!brief(3, 'a?', ['--task', 'T2']).includes('redija'), '1 do orquestrador + 1 da Sombra = 1');
+    assert.ok(!brief(3, 'a?', ['--task', 'T2']).includes('redija'), '1 do orquestrador = 1');
     rejeitar(r, 2);
     assert.ok(brief(3, 'b?', ['--task', 'T2']).includes('redija'), 'caso misto (com e sem task) soma 2 por REQ');
+    rejeitar(r, 4); // a redação da Sombra rejeitada ⇒ dono (T26): nem a proposta 3, do orquestrador, pede redação
+    assert.ok(!brief(3, 'b2?', ['--task', 'T2']).includes('redija'), 'após a Sombra rejeitada, não pede redação');
     rejeitar(r, 3);
     assert.ok(!brief(4, 'c?', ['--task', 'T1']).includes('redija'), 'proposta da Sombra já rejeitada não pede redação');
+  });
+
+  test('t26-duas-camadas: após rejeição da redação da Sombra no REQ, o CLI não pede redação, o item vai ao dono e validarProposta concorda', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-1'); // 1
+    propostaCom(r, 'REQ-A-1'); // 2
+    propostaCom(r, 'REQ-A-1', { origem: 'sombra' }); // 3: redação da Sombra
+    propostaCom(r, 'REQ-A-1', { task: 'T1' }); // 4: do orquestrador, mesmo REQ, aberta
+    rejeitar(r, 1);
+    rejeitar(r, 2);
+    rejeitar(r, 3);
+    const { rc, out } = sobre(r, 4);
+    assert.equal(rc, 0, JSON.stringify(out));
+    const brief = readFileSync(join(r.raiz, out.brief), 'utf8');
+    assert.ok(!brief.includes('redija'), 'CLI: não pede redação');
+    assert.ok(brief.includes('o item vai ao dono'), 'CLI: diz que vai ao dono');
+    const eventos = eventosDe(r);
+    const est = projetarEmendas(eventos);
+    assert.equal(quemRedigeNaAncora(est, 'REQ-A-1').quem, 'dono', 'núcleo: a mesma função');
+    const dados = { req: 'REQ-A-1', diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'regra_negocio' };
+    const plano = { entrega: 'GM-10', tasks: [] };
+    assert.match(validarProposta(plano, est, dados) ?? '', /^terceira proposta do orquestrador/, 'validarProposta: orquestrador no mesmo REQ não grava');
+    assert.match(validarProposta(plano, est, { ...dados, origem: 'sombra' }) ?? '', /vai ao dono/, 'validarProposta: Sombra não repropõe');
   });
 });
