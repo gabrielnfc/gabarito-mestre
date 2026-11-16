@@ -1483,13 +1483,26 @@ test('stop-pouso-pendente-com-onboarding-nao-despacha-nem-para: vários Stops, n
   plano(raiz);
   comOnboarding(raiz);
   sinalLoop(raiz); // GM-15 T18: o /clear só é pedido com o loop armado
+  diario(raiz, 's', TASK_APROVADA('s')); // GM-15 T35 (r.12, D-P13): o pedido de /clear exige a fronteira e a leitura própria medida
   pousoDe(raiz);
+  contextoDe(raiz, 'S1', 61);
   for (let i = 0; i < 6; i += 1) {
     const r = stop(raiz); // session_id S1 vem do stdin
-    avisa(r, /\/clear/);
+    avisa(r, /aguardando o pouso do mod/);
   }
   assert.equal(linhasDoDiario(raiz).some((e) => e.tipo === 'loop.parar'), false);
   assert.equal(existsSync(contadorDe(raiz)), false, 'o Stop não conta sem progresso sob pouso pendente');
+});
+
+test('stop-sem-medicao-nao-pede-pouso (GM-15 T35 r.12, D-P13): pouso gravado com onboarding e loop armado, SEM leitura de contexto ⇒ o Stop segue despachando e não pede /clear', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  sinalLoop(raiz);
+  pousoDe(raiz);
+  const r = stop(raiz);
+  bloqueia(r, /T1/);
+  assert.doesNotMatch(JSON.stringify(r.json ?? {}), /\/clear|pouso pendente/);
 });
 
 test('stop-pouso-sem-onboarding-segue-a-2-0: o mesmo diário sem fluxo.resolvidoEm ainda despacha', () => {
@@ -1647,7 +1660,10 @@ test('stop-mod-desligado-o-clear-do-dono-libera (r1 MAJOR-3): leitura do mod vel
   sinalLoop(raiz); // GM-15 T18: o /clear só é pedido com o loop armado
   pousoDe(raiz);
   contextoDe(raiz, 'S0', 61, { idadeMs: 600_000 }); // o mod calou depois do pouso
-  avisa(stop(raiz), /digite \/clear/); // sem mod fresco: a regra por evento, e o texto manda o dono limpar
+  // GM-15 T35 (r.12, D-P13): sem leitura fresca não há pedido de /clear; o Stop segue o despacho em vez de mandar limpar às cegas
+  const r0 = stop(raiz);
+  bloqueia(r0, /T1/);
+  assert.doesNotMatch(JSON.stringify(r0.json ?? {}), /digite \/clear/);
   diario(raiz, 'S9', [ev('S9', 1, 'sessao.inicio', { origem: 'clear' })]);
   bloqueia(stop(raiz, { session_id: 'S9' }), /T1/); // o /clear do dono libera
 });
@@ -1878,7 +1894,8 @@ test('leitura-propria-ausente-perde-so-o-aviso-de-contexto: dist/pouso-pendente.
   const r = stop(raiz, {}, { script });
   assert.equal(r.rc, 0, r.stderr);
   assert.doesNotMatch(r.stdout, /hook Stop falhou/);
-  avisa(r, /ligar o loop automático/);
+  // GM-15 T35 (r.12): sem a leitura própria não há pedido de /clear; o Stop não manda limpar nem ligar o loop por ele
+  assert.doesNotMatch(r.stdout, /digite \/clear/);
 });
 
 test('trava-longa-texto-puro: o comando de quem destrava o teto cita a task; id hostil não entra cru', () => {
@@ -2008,10 +2025,8 @@ test('clear-so-com-wakeup (aprendizado 185): com o pouso pendente, o Stop só ma
     if (arma) sinalLoop(raiz);
     return stop(raiz);
   };
-  avisa(dono(true), /digite \/clear/);
-  const r = dono(false);
-  avisa(r, /ligar o loop automático/);
-  assert.doesNotMatch(r.json.systemMessage, /\/clear/, 'sem o wakeup o /clear deixaria a sessão parada');
+  // GM-15 T35 (r.12, D-P13): sem a leitura própria medida não há pedido de /clear, com ou sem o loop armado: nenhum dos dois manda limpar
+  for (const arma of [true, false]) assert.doesNotMatch(JSON.stringify(dono(arma).json ?? {}), /\/clear/, `armado=${arma}`);
 });
 
 test('clear-so-com-wakeup-contexto-alto: contexto >= X com o loop desligado também não fala em limpar a conversa nem em /clear', () => {

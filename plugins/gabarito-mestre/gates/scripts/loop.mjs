@@ -79,7 +79,8 @@ import { escopoDaTask, pontaDaSpec, projetarEmendas, SESSAO_EMENDAS, shaAceito, 
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { formaInvalida, formaNaGravacao, MOTIVOS_REENTREGA, REQ_RE } from '../dist/formas.js';
 import { estadoDe, foraPermitido, ordenar, podeIntegrar, proximaAcao, TIPOS_DE_TASK, tasksCongeladas } from '../dist/loop.js';
-import { lerLeitura, pousoPendente } from '../dist/pouso-pendente.js';
+import { lerLeitura } from '../dist/pouso-pendente.js';
+import { pedidoDeClear } from '../dist/pouso.js';
 import { temOnboarding } from './cartao-sessao.mjs';
 import { normalizarCaminho, validarPlano } from '../dist/plano.js';
 import { contarConsultas, hashPergunta, projetarDecisoes, textoAncora, trechoDoReq } from '../dist/sombra.js';
@@ -1412,7 +1413,11 @@ function proxima(c, plano, flags) {
   if (cfg === null) aviso.push('harness.config.json ausente');
   // FIEL-14 e: a regra única (`pouso-pendente.ts`), a mesma que o painel passa a `dependeDe`.
   // GM-14 T53: com o mod medindo ESTA sessão, só a leitura dela decide (I1); sem mod fresco, o /clear do dono
-  const acao = proximaAcao(plano, eventos, { ...sinais, politica: pol.politica, pousoPendente: pousoPendente(eventos, temOnboarding(c.raiz), medicaoDoPouso(c.raiz, flags.sessao, sinais.x)).pendente });
+  // GM-15 T35 (r.12, r.9): o pedido de /clear da regra única `pedidoDeClear` (pouso.ts): sem medição de contexto não há pedido; adiado pelo dono
+  // ("agora não") segue pendente, então nada novo despacha, mas o loop espera em vez de pousar.
+  const clear = pedidoDeClear(eventos, temOnboarding(c.raiz), medicaoDoPouso(c.raiz, flags.sessao, sinais.x));
+  const acaoNucleo = proximaAcao(plano, eventos, { ...sinais, politica: pol.politica, pousoPendente: clear.pendente });
+  const acao = clear.adiado && acaoNucleo.tipo === 'pousar' ? { tipo: 'esperar', motivo: 'pouso_adiado' } : acaoNucleo;
   if (acao.tipo === 'parar' && acao.motivo === 'diario_invalido') {
     throw new Falha('diario_invalido', 'o diário da entrega não passa na tabela de transições (evento fora de ordem ou de task desconhecida)', { acao, sinais });
   }

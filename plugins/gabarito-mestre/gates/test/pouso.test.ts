@@ -891,3 +891,34 @@ test('costura-mensagem-do-dono: prompt.submit do composer no mod real grava even
   assert.equal(a2?.ok, true);
   assert.equal((await H['tool.call']($, { tool: 'Agent', subagent_type: 'gabarito-revisor' }, ok)).ok, true);
 });
+
+// ---- GM-15 T35 (D-G11 b, e): pedido de /clear só com medição; "agora não" volta em +10 p.p. ----
+import { AGORA_NAO_TETO, pedidoDeClear, rotuloAdiamentoClear } from '../src/pouso.ts';
+{
+  const T0 = Date.UTC(2026, 10, 16, 12, 0, 0);
+  const ev = (seq: number, tipo: TipoEvento, dados: Record<string, unknown>, sessao = 'S1'): Evento =>
+    ({ seq, ts: new Date(T0 + seq * 1000).toISOString(), autor: 't', sessao, agente: 'orquestrador', tipo, dados, hash_anterior: null } as Evento);
+  const veredito = ev(1, 'review.veredito', { task: 'T1', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }, 'loop');
+  const pouso = ev(2, 'sessao.pouso', {}, 'S1');
+  const med = (percent: number | null) => ({ x: 50, agoraMs: T0 + 60_000, sessaoAtual: 'S1', leituras: percent === null ? [] : [{ sessao: 'S1', percent, fonte: 'mod', emMs: T0 + 59_000 }] });
+  const adiar = (seq: number, percent: number) => ev(seq, 'dono.resposta', { pergunta: 'S1:2', opcao: 1, rotulo: rotuloAdiamentoClear(percent) }, 'dono');
+
+  test('sem-medicao-nao-pede-pouso (r.12, D-P13): sem leitura própria fresca nunca há pedido de /clear, nem com onboarding e o pouso gravado sem /clear', () => {
+    assert.deepEqual(pedidoDeClear([veredito, pouso], true, med(null)), { pendente: false, adiado: false, id: null, percent: null });
+    assert.equal(pedidoDeClear([veredito, pouso], true, undefined).pendente, false);
+    // controle: com a leitura própria em 55 % (teto 50) o pedido existe, com o id do pouso
+    assert.deepEqual(pedidoDeClear([veredito, pouso], true, med(55)), { pendente: true, adiado: false, id: 'S1:2', percent: 55 });
+  });
+
+  test('clear-agora-nao-volta-em-mais-10 (r.9): adiado em 55 % some até 64 % e volta em 65 %; o adiamento NÃO tira a pendência (o loop segue parado)', () => {
+    assert.equal(rotuloAdiamentoClear(55).startsWith(AGORA_NAO_TETO.slice(0, -1)), true);
+    assert.ok([...rotuloAdiamentoClear(100)].length <= 60);
+    const evs = [veredito, pouso, adiar(3, 55)];
+    assert.deepEqual(pedidoDeClear(evs, true, med(55)), { pendente: true, adiado: true, id: 'S1:2', percent: 55 });
+    assert.equal(pedidoDeClear(evs, true, med(64)).adiado, true);
+    assert.equal(pedidoDeClear(evs, true, med(65)).adiado, false);
+    assert.equal(pedidoDeClear(evs, true, med(64)).pendente, true);
+    // adiamento a outro pouso (id diferente) não adia este
+    assert.equal(pedidoDeClear([veredito, pouso, ev(3, 'dono.resposta', { pergunta: 'S1:9', opcao: 1, rotulo: rotuloAdiamentoClear(55) }, 'dono')], true, med(55)).adiado, false);
+  });
+}

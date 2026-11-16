@@ -545,7 +545,8 @@ async function decidir(texto, ambiente, cwdProcesso, ctx) {
       } catch { /* sem arquivo: sem leitura */ }
     }
     medicao = { x: xTeto, agoraMs: Date.now(), sessaoAtual, leituras };
-    pendente = dpp.mod.pousoPendente(eventos, onboarding, medicao).pendente === true;
+    // GM-15 T35 (r.12, r.9): a regra única `pedidoDeClear` (dist/pouso.js): sem leitura própria não há pedido de /clear (D-P13); o adiado segue pendente.
+    pendente = dpx.ok && typeof dpx.mod.pedidoDeClear === 'function' ? dpx.mod.pedidoDeClear(eventos, onboarding, medicao).pendente === true : false;
     noTeto = dpp.mod.noTeto(medicao) === true;
   } catch { pendente = false; noTeto = false; }
   // "Aguardando o pouso do mod" só é verdade com o mod medindo AGORA (leitura fresca: a mesma situação da regra única), com veredito (há fronteira) e sem o mod já

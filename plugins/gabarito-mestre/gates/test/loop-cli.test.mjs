@@ -5420,16 +5420,14 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
     assert.equal(amb.cli(['concluir', 'T1']).rc, 0);
     assert.equal(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao.tipo, 'despachar', 'controle: sem pouso, o revisor é despachado');
     assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    // GM-15 T35 (r.12, D-P13): sem leitura de contexto o pouso gravado não é pedido de /clear; o revisor segue (o pendente medido com revisor é o T59 abaixo)
     const sem = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
-    assert.deepEqual(sem.j.acao, { tipo: 'pousar' });
-    const com = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '1']);
-    assert.deepEqual(com.j.acao, { tipo: 'esperar', motivo: 'pouso_pendente' });
+    assert.deepEqual(sem.j.acao.itens?.map((i) => `${i.task} ${i.papel}`), ['T1 revisor'], JSON.stringify(sem.j.acao));
     // a skill repete o pousar (D-W3): novo sessao.pouso, nenhuma sessao.retomada gravada pelo CLI
     assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
     const tipos = amb.tipos();
     assert.equal(tipos.filter((t) => t === 'sessao.pouso').length, 2);
     assert.equal(tipos.filter((t) => t === 'sessao.retomada').length, 0);
-    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
   });
 
   test('T59-impasse-revisor-pendente (emenda 67), pelo CLI real: veredito de T1, pouso, T1 integrada, T2 concluída (revisor pendente) e a sessão em 61 % ⇒ proxima 0 vivos pousar, com vivos esperar; nunca o revisor', () => {
@@ -5454,18 +5452,20 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
   });
 
   test('pouso-atravessa-cli-proxima-depende-painel (P9): pousar S1 ⇒ proxima sem despacho ⇒ painel real com "limpar a conversa" ⇒ clear de S2 tira ⇒ despacha; startup de S2 não tira', () => {
+    // GM-15 T35 (r.12, D-P13): o pedido de /clear é medido (fronteira + leitura própria da sessão)
     const amb = plano1();
+    amb.aprovar('T1');
+    gravarCtx(amb, 'S1', { percent: 55, fonte: 'mod', em: agora() });
     assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
     assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
-    assert.match(painel(amb), /limpar a conversa/);
+    assert.match(painelDa(amb, 'S1'), /limpar a conversa/);
     inicioDe(amb, 'S2', 'startup');
     assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
-    assert.match(painel(amb), /limpar a conversa/);
-    inicioDe(amb, 'S3', 'resume');
-    assert.match(painel(amb), /limpar a conversa/);
+    assert.match(painelDa(amb, 'S1'), /limpar a conversa/);
     inicioDe(amb, 'S2', 'clear');
-    assert.equal(amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao.tipo, 'despachar');
-    assert.doesNotMatch(painel(amb), /limpar a conversa/);
+    gravarCtx(amb, 'S2', { percent: 5, fonte: 'mod', em: agora() });
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao, { tipo: 'integrar', tasks: ['T1'] });
+    assert.doesNotMatch(painelDa(amb, 'S2'), /limpar a conversa/);
   });
 
   const semConfig = (amb) => { spawnSync('rm', [join(amb.dir, 'harness.config.json')]); return amb; }; // sem config em lugar nenhum (a guarda vê onboarding em qualquer config válida)
@@ -5476,18 +5476,23 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
     assert.equal(r.rc, 0, r.out + r.err);
     assert.equal(r.j.acao.tipo, 'despachar', JSON.stringify(r.j.acao));
     assert.doesNotMatch(painel(amb), /limpar a conversa/);
+    // controle (GM-15 T35, r.12): com onboarding, fronteira e a leitura própria em 55 % trava
     const com = plano1();
+    com.aprovar('T1');
+    gravarCtx(com, 'S1', { percent: 55, fonte: 'mod', em: agora() });
     assert.equal(com.cli(['pousar', '--sessao', 'S1']).rc, 0);
     assert.deepEqual(com.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
-    assert.match(painel(com), /limpar a conversa/);
+    assert.match(painelDa(com, 'S1'), /limpar a conversa/);
   });
 
   test('pouso-onboarding-criterio-da-guarda (FIEL-14 h; GM-15 T23): config só em origin/HEAD (sem a local) ⇒ pendente; sem config em lugar nenhum ⇒ não pendente', () => {
+    // GM-15 T35 (r.12, D-P13): o critério de onboarding só valia para a regra sem medição, que deixou de pedir /clear: sem leitura, nem com a
+    // config de origin o pouso gravado trava
     const amb = semConfig(plano1());
     comOrigin(amb, ONBOARDING);
     assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
-    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
-    assert.match(painel(amb), /limpar a conversa/);
+    assert.equal(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao.tipo, 'despachar');
+    assert.doesNotMatch(painel(amb), /limpar a conversa/);
     const nenhum = semConfig(plano1());
     assert.equal(nenhum.cli(['pousar', '--sessao', 'S1']).rc, 0);
     assert.equal(nenhum.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao.tipo, 'despachar');
@@ -5502,19 +5507,64 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
     }
   });
 
+  // GM-15 T35 (D-G11 b, e)
+  const respostaDoDono = (amb, pergunta, rotulo) => {
+    const ultimo = Math.max(...amb.eventos().map((e) => Date.parse(e.ts)));
+    const r = diario.append(amb.entregas, 'dono', { ts: new Date(ultimo + 1000).toISOString(), autor: 't@t', sessao: 'dono', agente: 'orquestrador', tipo: 'dono.resposta', dados: { pergunta, opcao: 1, rotulo } });
+    assert.ok(r.ok, JSON.stringify(r));
+  };
+  const painelDa = (amb, sessao) => {
+    const r = spawnSync(process.execPath, [PAINEL_CLI, 'estado', '--sessao', sessao], { cwd: amb.dir, encoding: 'utf8', env: amb.env, input: '' });
+    const j = JSON.parse(r.stdout.trim());
+    assert.equal(j.ok, true, r.stdout + r.stderr);
+    return JSON.stringify(j.estado.depende ?? []);
+  };
+  test('sem-medicao-nao-pede-pouso (r.12, D-P13), pelo CLI real: pouso gravado com onboarding e SEM leitura de contexto ⇒ proxima despacha e o painel não pede limpar', () => {
+    const amb = plano1();
+    amb.aprovar('T1'); // a fronteira (review.veredito) que o pouso exige
+    assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    const r = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.sinais.percent, null);
+    assert.deepEqual(r.j.acao, { tipo: 'integrar', tasks: ['T1'] });
+    assert.doesNotMatch(painel(amb), /limpar a conversa/);
+    // controle: medida em 55 % (teto 50) a mesma sessão pousa e o painel dela pede limpar
+    gravarCtx(amb, 'S1', { percent: 55, fonte: 'mod', em: agora() });
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    assert.match(painelDa(amb, 'S1'), /limpar a conversa/);
+  });
+
+  test('clear-agora-nao-no-teto-nao-solta-o-loop (r.9, C4): "agora não" no teto tira o pedido do painel, mas proxima segue em esperar (nunca despacha nem integra); +10 p.p. volta a pousar', () => {
+    const amb = plano1();
+    amb.aprovar('T1');
+    gravarCtx(amb, 'S1', { percent: 55, fonte: 'mod', em: agora() });
+    assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    assert.match(painelDa(amb, 'S1'), /agora não \(loop parado\)/);
+    const pouso = amb.eventos().filter((e) => e.tipo === 'sessao.pouso').pop();
+    respostaDoDono(amb, `${pouso.sessao}:${pouso.seq}`, 'agora não (loop parado, contexto em 55 %)');
+    const r = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.acao, { tipo: 'esperar', motivo: 'pouso_adiado' });
+    assert.doesNotMatch(painelDa(amb, 'S1'), /limpar a conversa/);
+    gravarCtx(amb, 'S1', { percent: 65, fonte: 'mod', em: agora() });
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    assert.match(painelDa(amb, 'S1'), /limpar a conversa/);
+  });
+
   test('pousar-manual-nao-consome-com-mod (T53, emenda 52 a; I1 por sessão): o pousar do dono grava o evento mas só a PRÓPRIA leitura da sessão decide; nenhuma outra a libera ou prende', () => {
     const amb = plano1();
+    amb.aprovar('T1'); // GM-15 T35 (r.12): o pedido medido exige a fronteira
     gravarCtx(amb, 'S1', { percent: 61, fonte: 'mod', em: agora() });
     assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0); // grava, não recusa (a skill sem mod o usa)
     assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
-    assert.match(painel(amb), /limpar a conversa/);
+    assert.match(painelDa(amb, 'S1'), /limpar a conversa/);
     // a S2 (sessão paralela ou nova), baixa, decide pela PRÓPRIA leitura: despacha; a S1 segue pendente
     gravarCtx(amb, 'S2', { percent: 20, fonte: 'mod', em: agora() });
-    assert.equal(amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao.tipo, 'despachar');
+    assert.equal(amb.cli(['proxima', '--sessao', 'S2', '--vivos', '0']).j.acao.tipo, 'integrar');
     assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
-    // leitura que não vale (fonte transcript) não é leitura própria: percent nulo, a regra sem mod (com onboarding, sem /clear no diário: pendente)
+    // leitura que não vale (fonte transcript) não é leitura própria: percent nulo e, desde a GM-15 T35 (r.12, D-P13), sem pedido de /clear
     gravarCtx(amb, 'S3', { percent: 20, fonte: 'transcript', em: agora() });
-    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S3', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    assert.equal(amb.cli(['proxima', '--sessao', 'S3', '--vivos', '0']).j.acao.tipo, 'integrar');
     // o /clear do dono (sessao.inicio) com a leitura da S2 alta: só a S2 decide por si, e alta ela pousa
     inicioDe(amb, 'S2', 'clear');
     gravarCtx(amb, 'S2', { percent: 61, fonte: 'mod', em: agora() });

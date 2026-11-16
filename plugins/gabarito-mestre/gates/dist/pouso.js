@@ -1,6 +1,7 @@
 import { estadoDe, ordenar } from './loop.js';
                                             
                                                           
+import { leituraPropria, pousoPendente,              } from './pouso-pendente.js';
 
 /**
  * Núcleo do pouso (REQ-POU-1, GM-10 T9). Puro e sem `node:`: o mod o importa dentro do ambiente dele, que não tem Node.
@@ -427,4 +428,51 @@ export function codigoPonte(
     `  out({ ok: false, erro: String(x?.message ?? x).slice(0, 200) });`,
     `}`,
   ].join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────── GM-15 T35 (D-G11 b, e; D-G12 2): pedido de /clear medido e "agora não"
+
+/** Rótulo de adiamento de qualquer pergunta do dono (D-G12 2). Resposta cujo rótulo começa por ele adia; nunca fecha. */
+export const AGORA_NAO = 'agora não';
+/** Botão do pedido de /clear: no teto (pouso obrigatório) o loop segue parado mesmo adiado (REGRA 4). */
+export const AGORA_NAO_TETO = 'agora não (loop parado)';
+/** Quanto o contexto tem de subir, desde o adiamento, para o pedido de /clear voltar (D-G11 b). */
+export const VOLTA_DO_CLEAR_PP = 10;
+
+/** `dono.resposta` por rótulo que adia (`agora não…`, sem caixa, pontas aparadas). */
+export const ehAdiamento = (rotulo         )          => typeof rotulo === 'string' && rotulo.trim().toLowerCase().startsWith(AGORA_NAO);
+
+/** Rótulo gravado no adiamento do /clear: leva o contexto medido na hora (a resposta não tem outro campo, formas.ts). ≤ 60 caracteres. */
+export const rotuloAdiamentoClear = (percent        )         => `${AGORA_NAO_TETO.slice(0, -1)}, contexto em ${Math.round(percent)} %)`;
+/** O contexto medido no adiamento do /clear, lido do rótulo; fora da forma ⇒ `null`. */
+export function percentDoAdiamento(rotulo         )                {
+  if (!ehAdiamento(rotulo)) return null;
+  const m = /contexto em (\d{1,3}) %\)$/.exec(String(rotulo).trim());
+  return m === null ? null : Number(m[1]);
+}
+
+                                                                                                              
+
+/**
+ * REGRA ÚNICA do pedido de /clear (loop.mjs proxima, stop-loop.mjs, painel, responder.mjs). `pousoPendente` (pouso-pendente.ts) decide a pendência, mas:
+ * (r.12, D-P13) sem leitura própria fresca do contexto NÃO há pedido: nada de `pousar`/`pouso_pendente` nem "limpar"; o painel mostra o contexto "?".
+ * (r.9) `dono.resposta` "agora não" ao id `<sessao>:<seq>` do último `sessao.pouso` adia: o pedido some até o contexto medido chegar a
+ * (contexto do adiamento + 10 p.p.). Adiado continua pendente: o loop segue parado no teto (só o pedido some do painel). Nunca lança.
+ */
+export function pedidoDeClear(eventos                             , onboarding                     , medicao                     )                {
+  const nenhum                = { pendente: false, adiado: false, id: null, percent: null };
+  const propria = leituraPropria(medicao);
+  if (propria === null || !Array.isArray(eventos)) return nenhum;
+  const pp = pousoPendente(eventos, onboarding, medicao);
+  if (!pp.pendente || pp.sessao === null || pp.seq === null) return nenhum;
+  const id = `${pp.sessao}:${pp.seq}`;
+  let adiadoEm                = null;
+  for (const e of eventos) {
+    const d = e?.dados                                              ;
+    if (e?.tipo !== 'dono.resposta' || d === null || typeof d !== 'object' || d.pergunta !== id) continue;
+    const p = percentDoAdiamento(d.rotulo);
+    if (p !== null) adiadoEm = p;
+  }
+  const adiado = adiadoEm !== null && propria.percent < adiadoEm + VOLTA_DO_CLEAR_PP;
+  return { pendente: true, adiado, id, percent: propria.percent };
 }

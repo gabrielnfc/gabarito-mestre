@@ -12,6 +12,7 @@ import { dependeDe } from './depende.ts';
 import { origemDe } from './origem.ts';
 import { perguntasAbertas } from './perguntas.ts';
 import { pousoPendente, type Medicao } from './pouso-pendente.ts';
+import { pedidoDeClear } from './pouso.ts';
 import { trilhaDe } from './trilha.ts';
 import type { FatosTrilha } from './trilha.ts';
 import { estadoDe, ordenar, proximaAcao, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK } from './loop.ts';
@@ -959,8 +960,11 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
   const abertas = perguntasAbertas(lista, trilha, { sessao: typeof fatos.sessao === 'string' ? fatos.sessao : null, ...(Array.isArray(fatos.ultimas) ? { ultimas: fatos.ultimas } : {}) })
     .filter((q) => q.gatilho !== 'pendencia' && q.gatilho !== 'ideia'); // pendência (3) e ideia (4) são itens de `dependeDe`, com o botão "feito"/"visto"
   const pergunta = abertas[0] ?? null;
-  const pousoDe = pousoPendente(eventos, entrada.onboarding === true, entrada.medicaoPouso);
-  let depende = dependeDe(trilha, lista, legado.depende, { falhou: fontes }, entrada.pousoPendente === true || pousoDe.pendente,
+  // GM-15 T35 (r.12, r.9): o pedido de /clear da regra única `pedidoDeClear`: sem medição não há pedido; adiado ("agora não") some do painel até +10 p.p.
+  const clear = pedidoDeClear(eventos, entrada.onboarding === true, entrada.medicaoPouso);
+  const [sessaoPouso, seqPouso] = clear.id === null ? [null, null] : [clear.id.slice(0, clear.id.lastIndexOf(':')), Number(clear.id.slice(clear.id.lastIndexOf(':') + 1))];
+  const pousoDe: ReturnType<typeof pousoPendente> = clear.pendente && !clear.adiado ? { pendente: true, sessao: sessaoPouso, seq: seqPouso } : { pendente: false, sessao: null, seq: null };
+  let depende = dependeDe(trilha, lista, legado.depende, { falhou: fontes }, entrada.pousoPendente === true ? true : { pendente: pousoDe.pendente, id: clear.id },
     { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao });
   if (pergunta !== null) depende = depende.filter((i) => i.motivo !== NADA);
   if (velho) depende = depende.map((i) => (i.motivo === NADA ? { ...i, motivo: DESATUALIZADO } : i));
