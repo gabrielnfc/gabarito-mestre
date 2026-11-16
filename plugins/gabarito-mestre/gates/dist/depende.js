@@ -190,12 +190,32 @@ export function proximaEntrega(specs         , encerradas                     , 
   return { tipo: 'nenhuma', texto: NENHUMA_PROXIMA, acoes: [] };
 }
 
+/**
+ * GM-15 T19 (REQ-POU-4, aprendizado 185): o botão que liga o loop automático: um `/loop` sem intervalo (dinâmico) com a tarefa de seguir o loop da entrega.
+ * O texto do item nunca leva o comando (REQ-LNG-1): ele só vive no botão.
+ */
+export const CMD_LIGAR_LOOP = `/loop ${CMD_SEGUIR}`;
+export const MOTIVO_LIGAR_LOOP = 'ligar o loop automático: sem ele nada retoma o trabalho depois do pouso';
+export const MOTIVO_LIGAR_ANTES_DO_CLEAR = 'ligar o loop automático antes de limpar a conversa';
+const BOTAO_LIGAR_LOOP       = { rotulo: 'ligar o loop', comando: CMD_LIGAR_LOOP };
+/** GM-15 T19 (REQ-POU-3): contexto em X ou acima sem pouso da sessão. Quem limpa é o mod (pouso automático), nunca o agente: não há botão. */
+export const motivoContextoAlto = (percent        , x        )         =>
+  `limpar a conversa: contexto em ${Math.round(percent)} % (teto ${Math.round(x)} %); quem limpa é o mod, não o agente`;
+const contextoValido = (v         )                                        => {
+  const c = obj(v);
+  return typeof c.percent === 'number' && Number.isFinite(c.percent) && typeof c.x === 'number' && Number.isFinite(c.x) && c.x > 0 ? { percent: c.percent, x: c.x } : null;
+};
+
 /** D-G12 (emenda 16 r.13): sem item que trave, 1 linha com este texto literal. */
 export const NADA_DEPENDE = 'nada depende de você';
 
 export function dependeDe(
   trilha        , eventos          , base               ,
-  fontes                      , pousoPendente                                                    , git                                             ,
+  fontes                      ,
+  // GM-15 T19: `loop` = o sinal do loop automático da sessão do painel (`armado` | `ausente`; ausente ou `null` = não conferível, nada muda); `contexto` = a leitura
+  // própria em X ou acima sem pouso desta sessão (o painel já decidiu); `ligarLoop` = o painel decidiu que falta o loop (onboarding, sinal `ausente` e trabalho a seguir)
+  pousoPendente                                                                                                                                                               ,
+  git                                             ,
   lote                       ,
 )                {
   // GM-15 T13 (REQ-AUT-1): com o lote do dono (`loteDoDono`, o MESMO que `loop.mjs proxima` devolve), ele substitui (5) e (7), inteiro e na mesma ordem.
@@ -225,9 +245,17 @@ export function dependeDe(
   const pouso = obj(pousoPendente);
   const pedeClear = pousoPendente === true || pouso.pendente === true;
   const idPouso = typeof pouso.id === 'string' && ID_PERGUNTA_RE.test(pouso.id) && !pouso.id.startsWith('herdar:') ? pouso.id : null;
+  const agoraNao = idPouso === null ? [] : [{ rotulo: AGORA_NAO_TETO, comando: `/gabarito-mestre:responder ${idPouso} agora` }];
+  // GM-15 T19 (REQ-POU-4, aprendizado 185): com o loop sabidamente desligado nunca se pede /clear: o item manda ligar o loop antes
+  const loopDesligado = pouso.loop === 'ausente';
+  const contexto = contextoValido(pouso.contexto);
   const limpar = pedeClear
-    ? [item('limpar a conversa', [{ rotulo: 'limpar', comando: '/clear' }, ...(idPouso === null ? [] : [{ rotulo: AGORA_NAO_TETO, comando: `/gabarito-mestre:responder ${idPouso} agora` }])])]
-    : [];
+    ? [loopDesligado ? item(MOTIVO_LIGAR_ANTES_DO_CLEAR, [{ ...BOTAO_LIGAR_LOOP }, ...agoraNao]) : item('limpar a conversa', [{ rotulo: 'limpar', comando: '/clear' }, ...agoraNao])]
+    : [
+      // GM-15 T19 (REQ-POU-3): contexto alto sem pouso desta sessão: "limpar a conversa", e quem limpa é o mod (sem botão)
+      ...(contexto !== null ? [item(motivoContextoAlto(contexto.percent, contexto.x))] : []),
+      ...(pouso.ligarLoop === true ? [item(MOTIVO_LIGAR_LOOP, [{ ...BOTAO_LIGAR_LOOP }])] : []),
+    ];
   // GM-15 T35 (r.13, r.14): o DEPENDE não mostra lembrete do orquestrador nem item adiado pelo dono
   const adiados = adiadas(evs);
   const doDono = evs.filter((e) => !notaDoOrquestrador(e));

@@ -627,3 +627,45 @@ test('plugin-atras-nomeia-a-versao: o item do lote traz a versão instalada e o 
   assert.match(i.motivo, /2\.1\.0-alpha\.2/);
   assert.deepEqual(i.acoes, [{ rotulo: 'atualizar', comando: '/plugin' }]);
 });
+
+// ─────────────────────────────────────────────── GM-15 T19 (REQ-POU-3, REQ-POU-4): o DEPENDE avisa o contexto alto e o loop desligado
+// Mutações: M19-a o pedido de /clear sai com o loop desligado ⇒ clear-so-com-wakeup-depende · M19-b o aviso de contexto sem o mod como quem limpa ⇒
+// contexto-alto-sem-pouso-avisa-depende · M19-c "ligar o loop" sem o sinal conferido ⇒ sem-loop-dinamico-avisa-depende
+import { CMD_LIGAR_LOOP, MOTIVO_LIGAR_LOOP, MOTIVO_LIGAR_ANTES_DO_CLEAR, motivoContextoAlto } from '../src/depende.ts';
+
+test('clear-so-com-wakeup-depende (REQ-POU-4, aprendizado 185): pouso pendente com o loop desligado ⇒ nada de /clear; "ligar o loop automático antes de limpar a conversa" com o botão do /loop', () => {
+  const r = dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'S1:2', loop: 'ausente' }, GIT);
+  assert.deepEqual(r, [{ nivel: 'dono', motivo: MOTIVO_LIGAR_ANTES_DO_CLEAR, acoes: [{ rotulo: 'ligar o loop', comando: CMD_LIGAR_LOOP }, { rotulo: AGORA_NAO_TETO, comando: '/gabarito-mestre:responder S1:2 agora' }] }]);
+  assert.ok(!JSON.stringify(r).includes('/clear'), 'nenhum botão nem texto de /clear com o loop desligado');
+  assert.equal(MOTIVO_LIGAR_ANTES_DO_CLEAR, 'ligar o loop automático antes de limpar a conversa');
+  assert.equal(CMD_LIGAR_LOOP, '/loop /gabarito-mestre:gabarito-loop', 'o /loop sem intervalo (dinâmico) com a tarefa de seguir o loop');
+  // armado ou não conferível (sinal ausente, velho, de outra sessão: `loop` ausente ou null) ⇒ o pedido de /clear de sempre
+  for (const loop of ['armado', null, undefined] as const) {
+    assert.deepEqual(dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'S1:2', loop }, GIT)[0].acoes[0], { rotulo: 'limpar', comando: '/clear' }, String(loop));
+  }
+  // REQ-LNG-1: o texto não leva comando
+  assert.doesNotMatch(r[0].motivo, REGEX_TECNICA);
+});
+
+test('contexto-alto-sem-pouso-avisa-depende (REQ-POU-3): contexto em X ou acima sem pouso desta sessão ⇒ "limpar a conversa", dito que quem limpa é o mod, sem botão de /clear', () => {
+  const r = dependeDe(APROVADA, [], [], OK, { pendente: false, id: null, contexto: { percent: 62.4, x: 50 } }, GIT);
+  assert.deepEqual(r, [{ nivel: 'dono', motivo: 'limpar a conversa: contexto em 62 % (teto 50 %); quem limpa é o mod, não o agente', acoes: [] }]);
+  assert.equal(motivoContextoAlto(62.4, 50), r[0].motivo);
+  assert.doesNotMatch(r[0].motivo, REGEX_TECNICA);
+  // com o pedido de /clear (o pouso já feito) o aviso de contexto não repete
+  assert.deepEqual(motivos(dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'S1:2', contexto: { percent: 62, x: 50 } }, GIT)), ['limpar a conversa']);
+  // fora da forma ⇒ nada
+  for (const contexto of [{ percent: Number.NaN, x: 50 }, { percent: 60, x: 0 }, null, 'alto']) {
+    assert.deepEqual(dependeDe(APROVADA, [], [], OK, { pendente: false, id: null, contexto } as never, GIT), nada, JSON.stringify(contexto));
+  }
+});
+
+test('sem-loop-dinamico-avisa-depende (REQ-POU-4): o painel decidiu que falta o loop ⇒ "ligar o loop automático" com o botão; sem a decisão, nada', () => {
+  const r = dependeDe(APROVADA, [], [], OK, { pendente: false, id: null, ligarLoop: true }, GIT);
+  assert.deepEqual(r, [{ nivel: 'dono', motivo: MOTIVO_LIGAR_LOOP, acoes: [{ rotulo: 'ligar o loop', comando: CMD_LIGAR_LOOP }] }]);
+  assert.equal(MOTIVO_LIGAR_LOOP, 'ligar o loop automático: sem ele nada retoma o trabalho depois do pouso');
+  assert.doesNotMatch(r[0].motivo, REGEX_TECNICA);
+  assert.deepEqual(dependeDe(APROVADA, [], [], OK, { pendente: false, id: null, ligarLoop: 'sim' } as never, GIT), nada, 'só true exato');
+  // com o pedido de /clear e o loop desligado o item é 1 só (o de antes do /clear)
+  assert.deepEqual(motivos(dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'S1:2', loop: 'ausente', ligarLoop: true }, GIT)), [MOTIVO_LIGAR_ANTES_DO_CLEAR]);
+});
