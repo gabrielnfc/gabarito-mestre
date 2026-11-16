@@ -247,13 +247,27 @@ export function ritmoDe(eventos: Evento[], integradas: ReadonlySet<string>, agor
   return na.size === 0 ? (agoraMs - ini) / 1000 / integradas.size : (agoraMs - desde) / 1000 / na.size;
 }
 
-/** h.1: segundos da última `task.integrada` ao primeiro `entrega.encerrada` depois dela; `null` sem os dois (nunca palpite). */
+/**
+ * h.1: segundos da última `task.integrada` ao primeiro `entrega.encerrada` depois dela; o fim é o `mergeado_em` (o merge na main, T4) quando válido,
+ * senão o `ts` do evento (o `medir` pode gravar dias depois do merge). `null` sem os dois (nunca palpite).
+ */
 export function fechamentoDe(eventos: Evento[]): number | null {
   let ultima = Number.NaN;
   for (const ev of eventos) if (tipoDe(ev) === 'task.integrada' && !(msDe(ev) <= ultima)) ultima = msDe(ev);
   if (!Number.isFinite(ultima)) return null;
-  const fim = eventos.filter((ev) => tipoDe(ev) === 'entrega.encerrada' && msDe(ev) >= ultima).map(msDe).filter(Number.isFinite).sort((a, b) => a - b)[0];
+  const fimDe = (ev: Evento): number => {
+    const m = dadosDe(ev).mergeado_em;
+    const t = typeof m === 'string' ? Date.parse(m) : Number.NaN;
+    return Number.isFinite(t) ? t : msDe(ev);
+  };
+  const fim = eventos.filter((ev) => tipoDe(ev) === 'entrega.encerrada').map(fimDe).filter((t) => Number.isFinite(t) && t >= ultima).sort((a, b) => a - b)[0];
   return fim === undefined ? null : (fim - ultima) / 1000;
+}
+
+/** h.1, a fonte do painel: mediana de `fechamentoDe` nas OUTRAS entregas do repo (a `atual` fica fora); nenhuma medida ⇒ `null`. */
+export function fechamentoDasAnteriores(diarios: ReadonlyArray<{ id: string; eventos: Evento[] }>, atual: string | null): number | null {
+  const fs = diarios.filter((d) => d.id !== atual).map((d) => fechamentoDe(d.eventos)).filter((x): x is number => x !== null);
+  return fs.length === 0 ? null : mediana(fs);
 }
 
 /** Tempo que falta para a task, com crédito do que já rodou na etapa atual (piso 0). `q` escolhe a medida da etapa (mediana ou quartil). */
@@ -366,7 +380,7 @@ function previsaoDoPronto(legado: EstadoPainel): NonNullable<NonNullable<EstadoP
 const PREVISAO_DO_ESTADO = new WeakMap<object, PrevisaoExata | null>();
 
 function previsaoDo(plano: Plano, ord: Evento[], c: Calculo, integradas: ReadonlySet<string>, agora: number, fuso: string, rodadas: number | null, entrada: EntradaPainel): PrevisaoExata | null {
-  const dado = (entrada as { fechamentoS?: unknown }).fechamentoS;
+  const dado: unknown = entrada.fechamentoS; // tipo declarado; o valor ainda pode vir de fora do contrato
   const fechamento = typeof dado === 'number' && Number.isFinite(dado) && dado >= 0 ? dado : fechamentoDe(ord);
   return previsaoExata(plano, ord, c.estados, integradas, agora, fuso, fechamento, rodadas);
 }

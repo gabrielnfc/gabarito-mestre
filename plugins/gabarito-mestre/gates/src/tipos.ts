@@ -200,6 +200,20 @@ export type NomesAgentes = { [agentId: string]: { nome: string; vistoEm: number 
 export type AcoesAgentes = { [agentId: string]: { texto: string; fonte: 'tool' | 'bash'; em: number } };
 /** stdin de `--agentes`, `segundoPlano` (FIEL-11 c): `dono` = `orquestrador` ou o `agent_id`; `desde` em ms. */
 export type SegundoPlanoItem = { id: string; dono: string; texto: string; desde: number };
+/**
+ * GM-15 T30 (D-G2, h.2): a previsão do PRONTO. `hora`/`base` sempre; o resto só quando a previsão exata foi medida (sem ela, a conta antiga D5).
+ * `conta` é a base da conta, a MESMA dos números (g.14): tasks do caminho crítico, min/task medidos por etapa, rodada média, fechamento (s, `null` =
+ * não medido), ocupação do relógio e ritmo (min/task no último dia). `faixa.ate` `'?'` = fechamento não medido (h.1), com o `motivo`.
+ */
+export type PrevisaoPronto = {
+  hora: string;
+  base: number;
+  faixa?: { de: string; ate: string };
+  conta?: { caminho: number; minPorTask: number; rodadas: number | null; fechamentoS: number | null; ocupacao: number; ritmoMin: number | null };
+  motivo?: string | null;
+  restanteS?: number;
+  maisMenosS?: number;
+};
 /** `fuso`, `entregaId`, `modeloSessao`, `specSha` e `tetoSombra` só o CLI preenche (Sombra 5); o mod nunca. */
 export type EntradaPainel = {
   /** Só preenchida pelo CLI com o loop em `concluir` (toda task integrada e sem proposta aberta). */
@@ -228,6 +242,8 @@ export type EntradaPainel = {
   specSha: string | null;
   /** `sombra.teto` de origin (26 padrão). */
   tetoSombra: number;
+  /** GM-15 T30 (h.1): fechamento medido (s) nas entregas anteriores do repo (`fechamentoDasAnteriores`); só o CLI preenche. Ausente/`null` = não medido. */
+  fechamentoS?: number | null;
 };
 /** Botão do painel: `comando` null quando a ação é uma instrução ao dono, sem comando que a execute. (Não confundir com `AcaoFerramenta`.) */
 export type Acao = { rotulo: string; comando: string | null };
@@ -281,7 +297,7 @@ export type EstadoPainel = {
   /** FIEL-10 e: sem entrega em curso e nada pendente ⇒ o painel é 1 linha. `estado` em palavras, `null` = não conhecido. */
   umaLinha?: { ultima: { id: string; estado: string | null } | null } | null;
   /** FIEL-10 b, com plano: só integradas pintam; previsão só com ≥ 3 integradas nesta entrega (`base`). */
-  pronto?: { integradas: number; total: number; previsao: { hora: string; base: number } | null } | null;
+  pronto?: { integradas: number; total: number; previsao: PrevisaoPronto | null } | null;
   /** FIEL-10 b, sem plano: a trilha em 1 linha. `motivo` = o do 1º `?`; `sufixo` = N17 b (fora da execução). */
   fase?: { numero: number | null; marcas: string[]; motivo: string | null; progresso: string; sufixo: string[] } | null;
   /** FIEL-11: `agentes` `null` = sem dados da sessão (CLI sem `--agentes`, FIEL-4); `contexto` `null` = não medido. */

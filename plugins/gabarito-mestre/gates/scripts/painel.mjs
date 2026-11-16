@@ -33,7 +33,7 @@ import { idPadraoDe, lerConfigOrigin } from '../lib/config.mjs';
 import { dirEntrega, lerEstrito } from '../dist/diario.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { estadoDe, ordenar, proximaAcao, TIPOS_DE_TASK } from '../dist/loop.js';
-import { projetarPainel, renderPainel, umaLinhaDe } from '../dist/painel.js';
+import { fechamentoDasAnteriores, projetarPainel, renderPainel, umaLinhaDe } from '../dist/painel.js';
 import { validarPacote, validarStdinAgentes, usoDoTranscript } from '../dist/painel-equipe.js';
 import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
@@ -360,6 +360,7 @@ function estadoEmPalavras(dir, eventos) {
 /**
  * Pontos de atividade `{id, data}` (pendência T14/T15: a MESMA regra do `responder.mjs`): 1 por `ts` distinto de cada entrega de
  * `.harness/entregas/` fora das pastas `_*`. Diário ilegível ⇒ a fonte entra em `fontes` (nunca lista vazia calada). `ultima` = a de `ts` mais recente.
+ * `diarios` (GM-15 T30, h.1): os eventos de cada entrega lida, para medir o fechamento das anteriores sem reler.
  */
 function atividades(raiz, fontes) {
   const base = join(raiz, '.harness', 'entregas');
@@ -368,15 +369,17 @@ function atividades(raiz, fontes) {
     nomes = readdirSync(base).filter((n) => !n.startsWith('_')).sort();
   } catch (e) {
     if (!ausenteFs(e)) fontes.push(FONTE.entregas);
-    return { ultimas: [], ultima: null };
+    return { ultimas: [], ultima: null, diarios: [] };
   }
   const ultimas = [];
+  const diarios = [];
   let ultima = null;
   for (const id of nomes) {
     const dir = join(base, id);
     try { if (!lstatSync(dir).isDirectory()) continue; } catch { continue; }
     const lido = lerEstrito(dir);
     if (!lido.ok) { fontes.push(FONTE.diarioDe(id)); continue; }
+    diarios.push({ id, eventos: lido.eventos });
     const vistos = new Set();
     let maior = null;
     for (const e of lido.eventos) {
@@ -387,7 +390,7 @@ function atividades(raiz, fontes) {
     }
     if (maior !== null && (ultima === null || maior > ultima.data)) ultima = { id, data: maior, dir, eventos: lido.eventos };
   }
-  return { ultimas, ultima: ultima === null ? null : { id: ultima.id, estado: estadoEmPalavras(ultima.dir, ultima.eventos) } };
+  return { ultimas, ultima: ultima === null ? null : { id: ultima.id, estado: estadoEmPalavras(ultima.dir, ultima.eventos) }, diarios };
 }
 
 /** `gh` da entrega pelo `.harness/painel-medir.json` (T11; `estado` só lê): ausente ⇒ `nunca`; corrompido ⇒ `nunca` + fonte que falhou; `falhou` ⇒ o GitHub. */
@@ -514,7 +517,7 @@ export function estadoDoPainel(cwd, opts = {}) {
     if (raiz !== null) {
       try { specs = lerSpecs(sessaoRaiz, idPadrao); } catch (e) { if (typeof e?.erro !== 'string') throw e; fontes.push(FONTE.specs); }
     }
-    const ativ = raiz === null ? { ultimas: [], ultima: null } : atividades(raiz, fontes);
+    const ativ = raiz === null ? { ultimas: [], ultima: null, diarios: [] } : atividades(raiz, fontes);
     const gh = raiz === null ? 'nunca' : ghDe(raiz, id !== null && c.dirEntrega.endsWith(id) ? id : '_sem-id', fontes);
     const sessaoMod = sessaoDoMod(opts.agentes);
     const fatos = {
@@ -621,6 +624,8 @@ export function estadoDoPainel(cwd, opts = {}) {
       fora: raiz === null,
       onboarding: raiz !== null && temOnboarding(raiz), // FIEL-14 h: o mesmo critério e a mesma leitura do cartão (config LOCAL)
       ultima: ativ.ultima,
+      // h.1: o fechamento medido nas entregas anteriores do repo (da última integrada ao merge na main); sem medida ⇒ `null` e a faixa abre em "?"
+      fechamentoS: fechamentoDasAnteriores(ativ.diarios, id),
       ...(medicaoPouso !== undefined ? { medicaoPouso } : {}),
     };
     const projetar = opts.projetar ?? projetarPainel;

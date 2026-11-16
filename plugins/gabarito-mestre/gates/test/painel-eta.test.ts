@@ -6,11 +6,16 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { etapasDe, fechamentoDe, ocupacaoDe, previsaoExata, projetarPainel, ritmoDe } from '../src/painel.ts';
+import { etapasDe, fechamentoDasAnteriores, fechamentoDe, ocupacaoDe, previsaoExata, projetarPainel, ritmoDe } from '../src/painel.ts';
 import * as dist from '../dist/painel.js';
+import * as diario from '../dist/diario.js';
+import { estadoDoPainel } from '../scripts/painel.mjs';
+import { raizSegura } from './_raiz-segura.mjs';
 import type { EntradaPainel, Evento, Plano, TipoEvento } from '../src/tipos.ts';
 
 const T0 = Date.parse('2026-11-16T12:00:00Z');
@@ -102,6 +107,47 @@ test('fechamento-medido-do-diario: da última integrada ao entrega.encerrada; se
   assert.equal(fechamentoDe(D(base)), null, 'sem encerramento não há medida');
   assert.equal(fechamentoDe(D([e(5, 'entrega.encerrada', {}), ...base])), null, 'encerrada antes da última integrada não é fechamento');
   assert.equal(fechamentoDe([]), null);
+  // o fim é o merge (`mergeado_em`), não a hora em que o `medir` gravou o encerramento (pode ser dias depois)
+  const merge = iso(60);
+  assert.equal(fechamentoDe(D([...base, e(900, 'entrega.encerrada', { entrega: 'GM-15', pr: 1, via: 'head', mergeado_em: merge })])), (60 - 16) * 60);
+});
+
+test('fechamento-das-anteriores: mediana dos fechamentos medidos das OUTRAS entregas do repo; a atual e as sem medida não entram (h.1)', () => {
+  const enc = (min: number) => e(min, 'entrega.encerrada', { entrega: 'X', pr: 1, via: 'head', mergeado_em: iso(min) });
+  const com = (min: number) => D([...ciclo('A', 0), enc(6 + min)]); // última integrada em 6: fechamento = min
+  const diarios = [
+    { id: 'GM-11', eventos: com(30) }, { id: 'GM-12', eventos: com(90) }, { id: 'GM-13', eventos: com(60) },
+    { id: 'GM-14', eventos: D(ciclo('A', 0)) }, // sem encerramento: fora
+    { id: 'GM-15', eventos: com(5) }, // a atual: fora
+  ];
+  assert.equal(fechamentoDasAnteriores(diarios, 'GM-15'), 60 * 60, 'mediana de 30, 60 e 90 min');
+  assert.equal(fechamentoDasAnteriores(diarios.slice(3), 'GM-15'), null, 'nenhuma anterior medida ⇒ null (nunca palpite)');
+  assert.equal(fechamentoDasAnteriores([{ id: 'GM-11', eventos: com(30) }, { id: 'GM-12', eventos: com(90) }], null), 60 * 60, 'nº par: média das 2 do meio');
+});
+
+test('fechamento-produtor-cli: o painel.mjs mede o fechamento nas entregas anteriores do diário e o entrega à projeção (h.1)', () => {
+  const repo = raizSegura(realpathSync(mkdtempSync(join(tmpdir(), 'painel eta '))));
+  const g = (...a: string[]) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  g('init', '-q', '-b', 'feat/GM-15-x'); g('config', 'user.email', 't@t.test'); g('config', 'user.name', 't'); g('config', 'commit.gpgsign', 'false');
+  writeFileSync(join(repo, 'README.md'), 'x\n'); g('add', '.'); g('commit', '-q', '-m', 'inicio');
+  const semear = (id: string, itens: [string, Record<string, unknown>, string][]) => {
+    const dir = join(repo, '.harness', 'entregas', id);
+    mkdirSync(dir, { recursive: true });
+    for (const [tipo, dados, ts] of itens) {
+      const r = diario.append(dir, 'loop', { ts, autor: 't@t.test', sessao: 'loop', agente: 'orquestrador', tipo, dados } as never) as { ok: boolean };
+      assert.ok(r.ok, `preparo ${tipo}`);
+    }
+  };
+  const ciclo14 = (t: string, m: number): [string, Record<string, unknown>, string][] => [
+    ['task.iniciada', { task: t, papel: 'implementador' }, iso(m)], ['task.concluida', { task: t, sha: 'a'.repeat(40) }, iso(m + 1)],
+    ['review.veredito', { task: t, veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }, iso(m + 2)], ['task.integrada', { task: t, sha: 'b'.repeat(40), mutacoes: { total: 1, mortas: 1 } }, iso(m + 3)],
+  ];
+  semear('GM-14', [...ciclo14('T1', 0), ['entrega.encerrada', { entrega: 'GM-14', pr: 22, via: 'head', mergeado_em: iso(3 + 80) }, iso(3 + 500)]]);
+  semear('GM-15', ciclo14('T1', 1000));
+  let visto: unknown = 'não chamado';
+  const r = estadoDoPainel(repo, { agoraMs: T0 + 1100 * MIN, projetar: (_p: unknown, _e: unknown, entrada: { fechamentoS?: unknown }) => { visto = entrada.fechamentoS; return {}; } }) as { ok: boolean };
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(visto, 80 * 60, 'fechamento da GM-14: da última integrada (3) ao merge (83), não ao registro (503)');
 });
 
 test('ocupacao-e-ritmo: o tempo parado alarga a previsão; o ritmo medido vira o ponto quando o caminho não o vê', () => {
