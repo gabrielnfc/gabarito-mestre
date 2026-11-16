@@ -304,7 +304,8 @@
       "deps": [
         "T9",
         "T11",
-        "T12"
+        "T12",
+        "T23"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/loop.mjs",
@@ -516,7 +517,8 @@
         "T15",
         "T22",
         "T29",
-        "T33"
+        "T33",
+        "T11"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/cartao-sessao.mjs",
@@ -525,7 +527,8 @@
         "plugins/gabarito-mestre/mod/painel.mjs",
         "plugins/gabarito-mestre/gates/test/cartao-sessao.test.mjs",
         "plugins/gabarito-mestre/gates/test/onboarding-criterio.test.mjs",
-        "plugins/gabarito-mestre/mod/test/gabarito.test.ts"
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs"
       ],
       "reqs": [
         "REQ-HIG-1"
