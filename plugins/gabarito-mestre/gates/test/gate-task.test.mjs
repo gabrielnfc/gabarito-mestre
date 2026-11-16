@@ -392,6 +392,13 @@ describe('gate-task', () => {
     assert.equal(r.mutacoes, 1);
   });
 
+  test('alerta-tempo-relativo-suite-rapida: comando base de 65 ms, 12 mortes em 0,09 s ⇒ nenhum alerta (M24b)', async () => {
+    const r = await rodaMut(65, 65, 90);
+    assert.equal(r.alertas, 0, texto(r));
+    assert.match(texto(r), /mutação m1 morta/);
+    assert.equal(r.mutacoes, 1);
+  });
+
   test('alerta-tempo-relativo-ao-comando: comando de 4 s sem mutação, morte em 0,09 s ⇒ alerta', async () => {
     const r = await rodaMut(65, 4000, 90);
     assert.equal(r.alertas, 1, texto(r));
