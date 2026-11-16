@@ -659,7 +659,8 @@
         "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
         "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
         "plugins/gabarito-mestre/gates/src/tipos.ts",
-        "plugins/gabarito-mestre/gates/scripts/painel.mjs"
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-blocos.test.ts"
       ],
       "reqs": [
         "REQ-HIG-1"
