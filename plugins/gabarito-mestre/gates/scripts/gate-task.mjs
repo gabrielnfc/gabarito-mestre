@@ -33,7 +33,7 @@ const SEGREDO = /ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|\bAKIA[A-Z0-9]{12,}|\
 // Literais montados: o gate não pode acusar o próprio código-fonte (hatch e allow).
 const HATCH = ['GABARITO', 'ALLOW'].join('_');
 const ALLOW_ADD = new RegExp(`permissionDecision["': ]+["']${['al', 'low'].join('')}`);
-const FRACAO_ZERO = 0.25; // mutação "morta" em menos que isto da suíte mais lenta não mediu nada (E19, relativo: aprendizado 136)
+const FRACAO_ZERO = 0.25; // mutação "morta" em menos que isto do tempo do MESMO comando sem mutação não mediu nada (E19, relativo: aprendizado 136)
 
 // Leitor estrito do diário (dist/diario.js). Ausente ⇒ `desviosDaTask` avisa; o resto do gate não depende dele.
 let lerEstrito = null;
@@ -317,7 +317,6 @@ export async function avaliar(opts) {
   if (opts.mutacoes !== undefined && (!Array.isArray(opts.mutacoes) || !opts.mutacoes.length)) {
     falhar('mutações deve ser uma lista não vazia de objetos {nome, arquivo, de, para, teste}');
   } else if (mutacoes.length) {
-    const minMs = opts.minMs ?? FRACAO_ZERO * Math.max(0, ...rs.map((x) => x.ms));
     const basal = new Map();
     for (const m of mutacoes) {
       const bem = m && typeof m === 'object' && ['nome', 'arquivo', 'de', 'para', 'teste'].every((k) => typeof m[k] === 'string')
@@ -331,10 +330,10 @@ export async function avaliar(opts) {
       const chave = `${cwd}\0${m.teste}`;
       if (!basal.has(chave)) {
         const r0 = await rodar(`${m.nome} sem mutação`, m.teste, cwd);
-        basal.set(chave, r0.rc);
+        basal.set(chave, { rc: r0.rc, ms: r0.ms });
         if (r0.rc !== 0) falhar(`teste da mutação ${m.nome} já falha sem mutação: morte seria falsa`);
       }
-      if (basal.get(chave) !== 0) continue;
+      if (basal.get(chave).rc !== 0) continue;
       const alvo = resolve(wt, m.arquivo);
       const rel = relative(resolve(wt), alvo);
       if (rel.startsWith('..') || isAbsolute(rel)) { falhar(`mutação ${m.nome}: arquivo fora da worktree (${m.arquivo})`); continue; }
@@ -352,6 +351,7 @@ export async function avaliar(opts) {
         writeFileSync(alvo, orig);
       }
       const seg = (r.ms / 1000).toFixed(2);
+      const minMs = opts.minMs ?? FRACAO_ZERO * basal.get(chave).ms;
       if (r.rc === 0) falhar(`mutação ${m.nome} VIVA (${seg}s)`);
       else if (r.ms < minMs) alerta(`mutação ${m.nome} falhou em ${seg}s (tempo ~zero): o teste provavelmente não rodou; morte não provada`);
       else { ok(`mutação ${m.nome} morta (${seg}s)`); nMortas++; }

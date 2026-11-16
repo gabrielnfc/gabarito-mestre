@@ -374,34 +374,40 @@ describe('gate-task', () => {
     assert.doesNotMatch(texto(r), /m1 morta/);
   });
 
-  // `rodar` injetado: suíte com `suiteMs` e mutação que morre em `mutMs` (tempos declarados, não medidos).
-  const rodarCom = (suiteMs, mutMs) => async (nome, cmd) => (
+  // `rodar` injetado (tempos declarados, não medidos): suíte em `suiteMs`; o comando da mutação leva `basalMs` sem mutação e `mutMs` com ela.
+  const rodarCom = (suiteMs, basalMs, mutMs) => async (nome) => (
     nome === 'ok' ? { nome, rc: 0, out: 'ℹ tests 1\nℹ pass 1\nℹ fail 0\n', ms: suiteMs }
-      : nome.endsWith('sem mutação') ? { nome, rc: 0, out: '', ms: mutMs }
+      : nome.endsWith('sem mutação') ? { nome, rc: 0, out: '', ms: basalMs }
         : { nome, rc: 1, out: '', ms: mutMs });
-
-  test('alerta-tempo-relativo-suite-rapida: suíte de 65 ms, morte em 0,09 s ⇒ sem alerta (M24b)', async () => {
+  const rodaMut = async (suiteMs, basalMs, mutMs, extra = {}) => {
     const { dir, base } = repo();
     commit(dir, 'src/b.txt', 'b\n');
-    const r = await avaliar({ wt: dir, base, mutacoes: [mut()], rodar: rodarCom(65, 90), ...verde });
+    return avaliar({ wt: dir, base, mutacoes: [mut()], rodar: rodarCom(suiteMs, basalMs, mutMs), ...extra, ...verde });
+  };
+
+  test('alerta-tempo-relativo-ao-comando: suíte de minutos, teste focado de 2 s morrendo em 1,5 s ⇒ sem alerta (M24b)', async () => {
+    const r = await rodaMut(300000, 2000, 1500);
     assert.equal(r.alertas, 0, texto(r));
     assert.match(texto(r), /mutação m1 morta/);
     assert.equal(r.mutacoes, 1);
   });
 
-  test('alerta-tempo-relativo-suite-lenta: suíte de 4 s, morte em 0,09 s ⇒ alerta', async () => {
-    const { dir, base } = repo();
-    commit(dir, 'src/b.txt', 'b\n');
-    const r = await avaliar({ wt: dir, base, mutacoes: [mut()], rodar: rodarCom(4000, 90), ...verde });
+  test('alerta-tempo-relativo-ao-comando: comando de 4 s sem mutação, morte em 0,09 s ⇒ alerta', async () => {
+    const r = await rodaMut(65, 4000, 90);
     assert.equal(r.alertas, 1, texto(r));
     assert.match(texto(r), /ALERTA.*m1.*tempo/);
     assert.equal(r.mutacoes, 0);
   });
 
+  test('alerta-tempo-minMs-prevalece: opts.minMs substitui o limiar relativo, nos dois sentidos', async () => {
+    assert.equal((await rodaMut(65, 4000, 90, { minMs: 50 })).alertas, 0, 'piso baixo: 90 ms basta');
+    assert.equal((await rodaMut(300000, 2000, 1500, { minMs: 5000 })).alertas, 1, 'piso alto: 1,5 s alerta mesmo com basal de 2 s');
+  });
+
   test('gate-tempo-zero-alerta: alerta visível, não veredito', async () => {
     const { dir, base } = repo();
     commit(dir, 'src/b.txt', 'b\n');
-    const r = await avaliar({ wt: dir, base, mutacoes: [mut()], rodar: rodarCom(4000, 1), ...verde });
+    const r = await avaliar({ wt: dir, base, mutacoes: [mut()], rodar: rodarCom(4000, 4000, 1), ...verde });
     assert.match(texto(r), /ALERTA.*m1.*tempo/);
     assert.doesNotMatch(texto(r), /m1 morta/);
     assert.doesNotMatch(texto(r), /m1 VIVA/);

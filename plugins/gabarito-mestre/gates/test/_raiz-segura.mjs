@@ -5,7 +5,17 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const real = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+/** realpath que também resolve caminho inexistente: sobe até o ancestral existente, resolve o symlink dele e recompõe o resto. */
+const real = (p) => {
+  let atual = resolve(p); const resto = [];
+  for (;;) {
+    try { return join(realpathSync(atual), ...resto.reverse()); } catch { /* inexistente: sobe */ }
+    const pai = dirname(atual);
+    if (pai === atual) return resolve(p);
+    resto.push(atual.slice(pai.length + 1)); atual = pai;
+  }
+};
+const dentro = (filho, pai) => filho === pai || filho.startsWith(pai.endsWith(sep) ? pai : pai + sep);
 
 /** Raízes de checkout a proteger: a do worktree que contém este arquivo e a do checkout principal (git-common-dir). */
 export function raizesDeCheckout(aqui = dirname(fileURLToPath(import.meta.url))) {
@@ -16,12 +26,14 @@ export function raizesDeCheckout(aqui = dirname(fileURLToPath(import.meta.url)))
   return [...r];
 }
 
-/** Devolve `raiz` se segura; lança se for um checkout, ou contiver um (ancestral). `checkouts` é injetável nos testes. */
+/** Devolve `raiz` se segura; lança se for um checkout, contiver um (ancestral) ou estiver dentro de um (subdiretório). `checkouts` é injetável nos testes. */
 export function raizSegura(raiz, { checkouts = raizesDeCheckout() } = {}) {
   if (typeof raiz !== 'string' || !raiz) throw new Error('raiz de teste ausente');
   const r = real(raiz);
-  for (const c of checkouts) {
-    if (r === c || c.startsWith(r.endsWith(sep) ? r : r + sep)) throw new Error(`raiz de teste é a do checkout (${c}): use mkdtemp; o diário real não é de teste`);
+  for (const c0 of checkouts) {
+    const c = real(c0);
+    // a própria raiz, um ancestral (contém o checkout) ou um subdiretório (medir/loop acham a raiz pelo git-common-dir do cwd)
+    if (dentro(r, c) || dentro(c, r)) throw new Error(`raiz de teste é a do checkout (${c}): use mkdtemp; o diário real não é de teste`);
   }
   return raiz;
 }

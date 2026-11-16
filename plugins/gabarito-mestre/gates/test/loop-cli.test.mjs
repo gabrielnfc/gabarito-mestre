@@ -4036,11 +4036,11 @@ describe('E4 T7: dados do painel no loop (iniciar, integrar, proxima)', () => {
 
   const GATE_MUT = [
     { nome: 'lenta', arquivo: 'src/t1.txt', de: 'x', para: 'y', teste: 'sleep 0.4; test "$(cat src/t1.txt)" = x' },
-    { nome: 'rapida', arquivo: 'src/t1.txt', de: 'x', para: 'y', teste: 'grep -q x src/t1.txt' },
+    { nome: 'rapida', arquivo: 'src/t1.txt', de: 'x', para: 'y', teste: 'if grep -q x src/t1.txt; then sleep 0.4; fi; grep -q x src/t1.txt' }, // sem mutação leva 0,4 s; mutada morre na hora (limiar relativo ao MESMO comando)
   ];
   const ambMut = (lista) => {
     const amb = ambiente({
-      config: { gates: { suites: ["sleep 1; echo '# pass 1'"] } },
+      config: { gates: { suites: ["echo '# pass 1'"] } },
       plano: planoDe([{ id: 'T1', deps: [], arquivos: ['src/t1.txt'], ...(lista === undefined ? {} : { mutacoes: 'mut.json' }) }]),
     });
     if (lista !== undefined) writeFileSync(join(amb.dir, 'mut.json'), JSON.stringify(lista));

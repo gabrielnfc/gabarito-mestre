@@ -31,8 +31,12 @@ const GIT_ENV = { ...process.env, HOME: tmpdir(), GIT_CONFIG_GLOBAL: '/dev/null'
 const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'user.useConfigOnly=true', ...args], { cwd, encoding: 'utf8', env: GIT_ENV }).trim();
 
 /** Repo descartável na `branch` (`null` ⇒ HEAD solto). `onboarding: false` ⇒ sem `harness.config.json` (T60: o painel só lê). */
-function repo(branch = 'enabler/GM-14-clareza', { onboarding = true } = {}) {
-  const d = join(raizSegura(realpathSync(mkdtempSync(join(tmpdir(), 'medir teste ')))), 'r');
+function repo(branch = 'enabler/GM-14-clareza', opts = {}) {
+  return repoEm(realpathSync(mkdtempSync(join(tmpdir(), 'medir teste '))), branch, opts);
+}
+/** Mesmo repo descartável numa base dada: a base passa por `raizSegura` ANTES de qualquer escrita (T24, origem S2). */
+function repoEm(base, branch = 'enabler/GM-14-clareza', { onboarding = true } = {}) {
+  const d = join(raizSegura(base), 'r');
   mkdirSync(d, { recursive: true });
   git(d, 'init', '-q', '-b', 'main');
   git(d, 'commit', '-q', '--allow-empty', '-m', 'ini');
@@ -766,8 +770,13 @@ describe('regra única de publicada: a função e o loop.mjs concordam no mesmo 
   });
 });
 
-test('teste-de-origem-s2-usa-raiz-segura: repo() só devolve raiz que não é a do checkout', () => {
+test('teste-de-origem-s2-usa-raiz-segura: repo() só cria repositório em base que não é a do checkout nem está dentro dela', () => {
   const d = repo();
-  assert.equal(raizSegura(dirname(d)), dirname(d));
-  assert.throws(() => raizSegura(raizesDeCheckout()[0]), /do checkout/);
+  assert.equal(raizSegura(dirname(d)), dirname(d), 'o caminho normal (mkdtemp) passa');
+  const [co] = raizesDeCheckout();
+  // bases do checkout: a raiz, um subdiretório existente (cwd do npm test) e um inexistente — nada é criado antes da recusa
+  for (const base of [co, process.cwd(), join(co, '.claude-tmp', 'base-s2-inexistente')]) {
+    assert.throws(() => repoEm(base), /do checkout/, `repoEm(${base})`);
+    assert.equal(existsSync(join(base, 'r')), false, 'recusou antes de escrever');
+  }
 });
