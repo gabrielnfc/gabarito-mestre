@@ -1,0 +1,9 @@
+{"seq":1,"ts":"2026-11-10T10:00:00.000Z","autor":"fixture@exemplo","sessao":"s4","agente":"orquestrador","tipo":"task.iniciada","dados":{"task":"T1","papel":"implementador"},"hash_anterior":null}
+{"seq":2,"ts":"2026-11-10T10:30:00.000Z","autor":"fixture@exemplo","sessao":"s4","agente":"orquestrador","tipo":"task.concluida","dados":{"task":"T1"},"hash_anterior":null}
+{"seq":3,"ts":"2026-11-10T10:40:00.000Z","autor":"fixture@exemplo","sessao":"s4","agente":"orquestrador","tipo":"review.veredito","dados":{"task":"T1","veredito":"APROVADO","rodada":1,"blocker":0,"major":0},"hash_anterior":null}
+{"seq":4,"ts":"2026-11-10T10:50:00.000Z","autor":"fixture@exemplo","sessao":"s4","agente":"orquestrador","tipo":"task.integrada","dados":{"task":"T1"},"hash_anterior":null}
+{"seq":5,"ts":"2026-11-10T11:00:00.000Z","autor":"fixture@exemplo","sessao":"s4","agente":"orquestrador","tipo":"task.iniciada","dados":{"task":"T2","papel":"implementador"},"hash_anterior":null}
+{"seq":6,"ts":"2026-11-10T11:30:00.000Z","autor":"fixture@exemplo","sessao":"s4","agente":"orquestrador","tipo":"task.concluida","dados":{"task":"T2"},"hash_anterior":null}
+{"seq":7,"ts":"2026-11-10T11:40:00.000Z","autor":"fixture@exemplo","sessao":"s4","agente":"orquestrador","tipo":"review.veredito","dados":{"task":"T2","veredito":"APROVADO","rodada":1,"blocker":0,"major":0},"hash_anterior":null}
+{"seq":8,"ts":"2026-11-10T11:50:00.000Z","autor":"fixture@exemplo","sessao":"s4","agente":"orquestrador","tipo":"task.integrada","dados":{"task":"T2"},"hash_anterior":null}
+{"seq":9,"ts":"2026-11-10T12:00:00.000Z","autor":"fixture@exemplo","sessao":"s4","agente":"orquestrador","tipo":"task.fora","dados":{"task":"T3","como":"cortada","motivo":"fora do escopo","origem":"dono"},"hash_anterior":null}

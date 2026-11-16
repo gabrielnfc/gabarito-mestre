@@ -1,0 +1,1 @@
+{"entrega":"PBI-2","tasks":[{"id":"T1","titulo":"a","deps":[],"arquivos":["a.ts"]},{"id":"T2","titulo":"b","deps":["T1"],"arquivos":["b.ts"]},{"id":"T3","titulo":"c","deps":["T2"],"arquivos":["c.ts"]}]}
