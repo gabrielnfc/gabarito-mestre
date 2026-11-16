@@ -783,7 +783,8 @@ test('teste-de-origem-s2-usa-raiz-segura: repo() só cria repositório em base q
 
 // ── GM-15 T4 (REQ-ENT-1 a, c; R2-1): o medir grava o encerramento ────────────────────────────────────────────────────────────────────────────
 // `gh` de fixture (fixtures/gh-encerramento/gh) com os PRs #7, #8, #16, #17, #22 e #23 como no GitHub. MUTAÇÕES: M4a não remedir o `aberto` · M4b gravar em
-// `_sem-id` · M4c `mergeado_em` do relógio local · M4d base `next` aceita na busca por título · M4e fato sem `base` encerrando · M4f `via` perdido.
+// `_sem-id` · M4c `mergeado_em` do relógio local · M4d base `next` aceita na busca por título · M4e fato sem `base` encerrando (EQUIVALENTE no adaptador: `podeEncerrar`, trilha.ts:174, já recusa base≠main; só a T3 a mata) · M4f `via` perdido ·
+// X1 sem `casaTitulo` na busca por título · X3 sem `casaTitulo` no `pr view` · X5 título casa qualquer ocorrência do ID (não só o prefixo).
 describe('medir: grava o encerramento da entrega (REQ-ENT-1 a, c)', () => {
   const GH_ENC = join(AQUI, 'fixtures', 'gh-encerramento');
   const SID2 = 'sessao-2';
@@ -950,5 +951,39 @@ describe('medir: grava o encerramento da entrega (REQ-ENT-1 a, c)', () => {
     const e = encerramentoDe(lerEstrito(dirDe(d, 'GM-14')).eventos, 'GM-14');
     assert.equal(e.encerrada, true);
     assert.equal(e.primeira.pr, 30);
+  });
+
+  test('titulo-fronteira-do-id: a GM-1 não é encerrada pelo #16 "release(GM-13)", nem na busca por título nem no pr view (X1, X3)', () => {
+    const d = repo('enabler/GM-1-x');
+    planta(d, 'GM-1', 'pr', { numero: 16, estado: 'aberto', branch: 'next' }, '2026-11-10T10:00:00.000Z'); // o diário o dá como aberto ⇒ pr view 16
+    const log = novoLog();
+    const r = medirEnc(d, { log });
+    assert.equal(r.ok, true, JSON.stringify(r.falhas));
+    assert.ok(readFileSync(log, 'utf8').split('\n').some((l) => /^pr view 16 /.test(l)), 'remediu o #16 por número');
+    assert.equal(encerradas(d, 'GM-1').length, 0);
+    const v = fatos(d, 'GM-1', 'pr').filter((e) => e.dados.valor.numero === 16).at(-1)?.dados.valor;
+    assert.equal(v?.via, undefined, 'sem via: o #16 não é da GM-1');
+  });
+
+  test('titulo-cita-outra-entrega: o #40 "release(GM-31): corrige regressão da GM-30" encerra a GM-31 e NÃO a GM-30 (X5)', () => {
+    const d = repo('enabler/GM-31-x');
+    planta(d, 'GM-30', 'branch', { nome: 'enabler/GM-30-y' }, '2026-11-15T10:00:00.000Z');
+    const extra = [{ number: 40, state: 'MERGED', baseRefName: 'main', headRefName: 'next', title: 'release(GM-31): corrige regressão da GM-30', mergedAt: '2026-11-16T08:00:00Z' }];
+    const r = medirEnc(d, { extra });
+    assert.equal(r.ok, true, JSON.stringify(r.falhas));
+    assert.deepEqual(encerradas(d, 'GM-31').map((e) => e.dados.pr), [40]);
+    assert.equal(encerradas(d, 'GM-30').length, 0);
+  });
+
+  test('titulo-ambiguo-sem-prefixo: dois IDs e nenhum prefixo não encerram ninguém; um único ID sem prefixo encerra', () => {
+    const d = repo('enabler/GM-31-x');
+    planta(d, 'GM-30', 'branch', { nome: 'enabler/GM-30-y' }, '2026-11-15T10:00:00.000Z');
+    const extra = [{ number: 41, state: 'MERGED', baseRefName: 'main', headRefName: 'next', title: 'corrige a GM-30 e a GM-31', mergedAt: '2026-11-16T08:00:00Z' }];
+    assert.equal(medirEnc(d, { extra }).ok, true);
+    assert.equal(encerradas(d, 'GM-31').length + encerradas(d, 'GM-30').length, 0);
+    const d2 = repo('enabler/GM-32-x');
+    const extra2 = [{ number: 42, state: 'MERGED', baseRefName: 'main', headRefName: 'next', title: 'entra a GM-32 na main', mergedAt: '2026-11-16T08:00:00Z' }];
+    assert.equal(medirEnc(d2, { extra: extra2 }).ok, true);
+    assert.deepEqual(encerradas(d2, 'GM-32').map((e) => e.dados.pr), [42]);
   });
 });

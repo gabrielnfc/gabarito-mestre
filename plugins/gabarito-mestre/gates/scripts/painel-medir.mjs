@@ -32,7 +32,6 @@ import { contexto } from './loop.mjs';
 
 const ID_FORA_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const CAMPOS_PR = 'number,state,baseRefName,headRefName,title,mergedAt';
-const escaparRe = (t) => t.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
 
 /** Item da lista do `gh` ⇒ PR normalizado ou `null` (forma inválida). `base`/`mergeado_em` só existem quando o `gh` os devolve. */
 function prDoGh(p) {
@@ -327,7 +326,13 @@ export function medir(cwd, opcoes = {}) {
     /** Mede os PRs de uma entrega: head (se há branch), título e remedição por número do que o diário dá como `aberto`. */
     const medirPrs = (alvo) => {
       const achados = new Map();
-      const casaTitulo = new RegExp(`(?<![A-Za-z0-9-])${escaparRe(alvo.id)}(?![A-Za-z0-9-])`);
+      /** O título é da entrega `alvo` só pelo ID do prefixo `tipo(ID):`; sem prefixo, só se for o ÚNICO ID do padrão (título que cita outra entrega é ambíguo: não encerra). */
+      const casaTitulo = (titulo) => {
+        const pre = /^[A-Za-z]+\(([^)]*)\)!?:/.exec(titulo);
+        if (pre !== null) return pre[1].trim() === alvo.id;
+        const ids = new Set(titulo.match(new RegExp(`(?<![A-Za-z0-9-])(?:${idPadrao.replace(/^\^/, '').replace(/\$$/, '')})(?![A-Za-z0-9-])`, 'g')) ?? []);
+        return ids.size === 1 && ids.has(alvo.id);
+      };
       const guarda = (p, via) => {
         if (achados.has(p.numero)) return;
         const comBase = p.base !== null;
@@ -340,7 +345,7 @@ export function medir(cwd, opcoes = {}) {
       }
       const t = ghPrs(rodar, cwd, timeoutMs, ['pr', 'list', '--base', 'main', '--state', 'merged', '--search', `${alvo.id} in:title`, '--limit', '30', '--json', CAMPOS_PR], 'pr list titulo');
       if (t.falha) return t;
-      for (const p of t.lista) if (p.base === 'main' && p.head !== null && casaTitulo.test(p.titulo)) guarda(p, 'titulo');
+      for (const p of t.lista) if (p.base === 'main' && p.head !== null && casaTitulo(p.titulo)) guarda(p, 'titulo');
       for (const n of abertosDoDiario(alvo.eventos)) {
         if (achados.has(n)) continue;
         const v = ghPrs(rodar, cwd, timeoutMs, ['pr', 'view', String(n), '--json', CAMPOS_PR], 'pr view', true);
@@ -348,7 +353,7 @@ export function medir(cwd, opcoes = {}) {
         const p = v.lista[0];
         const porHead = idDaBranch(p.head, idPadrao) === alvo.id;
         // head de outra entrega e título sem o ID (`via` ausente): o fato sai da entrega na releitura (`prs()`)
-        guarda(p, porHead ? 'head' : p.base === 'main' && p.mergeado_em !== null && casaTitulo.test(p.titulo) ? 'titulo' : null);
+        guarda(p, porHead ? 'head' : p.base === 'main' && p.mergeado_em !== null && casaTitulo(p.titulo) ? 'titulo' : null);
       }
       return { prs: [...achados.values()] };
     };
