@@ -611,7 +611,10 @@
       ],
       "arquivos": [
         "plugins/gabarito-mestre/skills/gabarito-loop/SKILL.md",
-        "plugins/gabarito-mestre/gates/test/skill-loop-gm15.test.mjs"
+        "plugins/gabarito-mestre/gates/test/skill-loop-gm15.test.mjs",
+        "plugins/gabarito-mestre/gates/src/emenda.ts",
+        "plugins/gabarito-mestre/gates/dist/emenda.js",
+        "plugins/gabarito-mestre/gates/test/emenda.test.ts"
       ],
       "reqs": [
         "REQ-CI-1",
