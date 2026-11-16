@@ -111,13 +111,31 @@ function montar(base, nome, { config = {} } = {}) {
   const rodar = (script, args, input, extraEnv = {}) => {
     agora += PASSO_MS;
     const env = ambiente(agora, { PATH: `${bin}:${process.env.PATH}`, GH_FIXTURE: ghEstado, ...extraEnv });
-    const r = spawnSync(NODE, ['--import', RELOGIO, join(SCRIPTS, script), ...args], { cwd: dir, encoding: 'utf8', env, input, timeout: 120_000 });
+    const r = spawnSync(NODE, ['--import', RELOGIO, join(SCRIPTS, script), ...(script === 'painel.mjs' ? armarLoop(dir, args, input, agora) : args)], { cwd: dir, encoding: 'utf8', env, input, timeout: 120_000 });
     let j = null;
     try { j = JSON.parse(r.stdout.trim()); } catch { /* texto do painel ou vazio */ }
     return { rc: r.status, j, out: r.stdout, err: r.stderr };
   };
   const gh = (estado) => writeFileSync(ghEstado, JSON.stringify(estado));
   return { dir, bare, bin, rodar, gh, agoraMs: () => agora };
+}
+
+
+/**
+ * GM-15 T19: a fumaça não é sobre o loop, então arma o sinal do loop da sessão do painel (forma do mod: gabarito.mjs `interpretarSinalLoop`, `em` no relógio congelado do passo)
+ * antes de `estado`/`texto`; sem ele a régua do Stop trata o loop como desligado e o painel avisa "ligar o loop". Sem `session_id` no stdin, passa `--sessao S-loop`.
+ */
+function armarLoop(dir, args, input, agora) {
+  if (args[0] !== 'estado' && args[0] !== 'texto') return args;
+  let sessao = null;
+  try { const j = JSON.parse(input ?? ''); sessao = j?.session_id ?? j?.sessao?.session_id ?? null; } catch { /* sem stdin JSON */ }
+  const flag = args.indexOf('--sessao');
+  if (flag >= 0) sessao = args[flag + 1];
+  const comFlag = sessao === null ? 'S-loop' : null;
+  const id = sessao ?? 'S-loop';
+  mkdirSync(join(dir, '.harness', 'contexto'), { recursive: true });
+  writeFileSync(join(dir, '.harness', 'contexto', `loop-dinamico.${id}.json`), `${JSON.stringify({ estado: 'armado', intervalo: 0, dinamico: 1, sessao: id, em: new Date(agora).toISOString() })}\n`);
+  return comFlag === null ? args : [...args, '--sessao', comFlag];
 }
 
 function ok(res, rotulo) {
