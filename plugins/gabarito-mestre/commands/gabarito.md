@@ -49,7 +49,7 @@ ou "continua pausado". Reconsulta que falha: "não sei".
 
 ## O que só o mod entende (não passa por este comando)
 
-Com o mod, o mesmo `/gabarito` aceita mais: `painel ocultar|mostrar` (menos o PAROU e a pergunta aberta, que ficam), `painel lateral|acima` (onde o painel fica), `painel nomes` (lista os pacotes de nomes da equipe, de fábrica e do repo, com botão por pacote; `painel nomes <pacote>` troca e `painel nomes sortear` volta ao sorteio por sessão) e `chat cru|natural` (as linhas de ferramenta do chat em linguagem natural, ou cruas). Sem o mod, nada disto existe.
+Com o mod, o mesmo `/gabarito` aceita mais: `painel ocultar|mostrar` (menos o PAROU e a pergunta aberta, que ficam), `painel lateral|acima` (onde o painel fica), `painel nomes` (lista os pacotes de nomes da equipe, de fábrica e do repo, com botão por pacote; `painel nomes <pacote>` troca e `painel nomes sortear` volta ao sorteio por sessão), `painel depende` (o "depende de você" mostra até 5 itens, cada um com os próprios botões, e o resto em "mais N itens"; alterna entre esses 5 e todos) e `chat cru|natural` (as linhas de ferramenta do chat em linguagem natural, ou cruas). Sem o mod, nada disto existe.
 
 Local do painel, com o limite da plataforma: Pane (lateral): a plataforma só a põe sozinha com ≥ 144 colunas (ao lado em tela cheia, acima da linha de digitar nas outras); abaixo disso o painel avisa e a Pane abre quando você pede /gabarito painel, em qualquer largura — sempre um só local. O mod nunca troca de local sozinho pela largura; o padrão é `lateral`.
 

@@ -22,7 +22,7 @@ import { pendenciasAprendizado } from '../gates/dist/pendencias.js';
 import * as nucleo from '../gates/dist/loop.js'; // `nucleo.TIPOS_DE_PROGRESSO`: fonte única da lista (lida só em marcarPousoPendente)
 import {
   analisarFronteira, codigoPonte, dadosMedicao, ehMensagemDoDono, ehRevisor, jaParou, lerX, marcaDeProgresso, negaDespacho, pendenciasQueBarram, portaDoPouso, PROMPT_RECUPERACAO, PROMPT_RETOMADA,
-  pousoDaFronteira, tasksDoNegado, tasksEmVoo, textoPendencia, textoPendenciaNaoVerificada, textoRetomada, tokensDe, vivosDe,
+  pedidoDeClear, pousoDaFronteira, tasksDoNegado, tasksEmVoo, textoPendencia, textoPendenciaNaoVerificada, textoRetomada, tokensDe, vivosDe,
 } from '../gates/dist/pouso.js';
 import { ESPERA_ENTRE_TENTATIVAS_MS, MAX_TENTATIVAS, tentativasDoPouso } from '../gates/dist/pouso-pendente.js'; // GM-14 T53: a ÚNICA definição da contagem de tentativas
 import { comandoPainel, iniciarPainel, registrarPainel, turnoDoPainel, USO_GABARITO } from './painel.mjs'; // E4 T10: Pane, faixa, atualização e aviso do PAROU (nada do pouso depende dele)
@@ -417,6 +417,15 @@ async function avaliar($, c) {
   return r;
 }
 
+/** GM-15 T35 (r.9): o pedido de /clear deste pouso está adiado pelo dono, pela leitura do próprio mod (`r.percent`). Sem leitura ou sem eventos ⇒ não. */
+function clearAdiado(r) {
+  if (r.percent === null || !Array.isArray(r.eventos)) return false;
+  const agora = Number.isFinite(r.agora) ? r.agora : Date.now();
+  try {
+    return pedidoDeClear(r.eventos, true, { x: r.x, agoraMs: agora, sessaoAtual: 'mod', leituras: [{ sessao: 'mod', percent: r.percent, fonte: 'mod', emMs: agora }] }).adiado === true;
+  } catch { return false; }
+}
+
 /** `parar` do núcleo (teto de rodadas, CI, teto de tokens, `nao_conseguiu`): grava `loop.parar` uma vez, com aviso. Sem pouso. */
 async function pararDoNucleo($, c, acao, m) {
   if (acao.motivo === 'diario_invalido') { await avisarDiario($, 'sequência de eventos fora da tabela de transições'); return; }
@@ -489,6 +498,9 @@ async function decidir($, c, r) {
   const acao = r.acao?.tipo === 'retomar' ? { tipo: 'parar', motivo: 'nao_conseguiu', task: r.acao.task } : r.acao;
   if (acao === null || acao.tipo !== 'parar' || acao.motivo !== 'nao_conseguiu') espera = null;
   if (acao === null) return false;
+  // GM-15 T35 (r.9): o dono disse "agora não" ao pedido de /clear deste pouso ⇒ o mod não repete o /clear até o contexto subir 10 p.p. (a regra única
+  // `pedidoDeClear`, medida pela PRÓPRIA leitura do mod); o Agent segue negado pelo pouso pendente: o loop fica parado no teto
+  if ((acao.tipo === 'pousar' || (acao.tipo === 'aprender' && r.pousarComDono)) && clearAdiado(r)) return false;
   if (acao.tipo === 'pousar') return await pousarSeguro($, c, r);
   if (acao.tipo === 'aprender' && r.pousarComDono) return await pousarSeguro($, c, r); // T53 (52 c): a conversa do dono não segura o /clear
   if (acao.tipo === 'parar') await pararDoNucleo($, c, acao, r.mundo);

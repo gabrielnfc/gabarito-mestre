@@ -2906,6 +2906,7 @@ const USO_ESPERADO = [
   '/gabarito painel lateral    painel ao lado  (ou: acima, acima da conversa)',
   '/gabarito painel ocultar    esconde o painel; PAROU e perguntas ficam',
   '/gabarito painel mostrar    traz o painel de volta',
+  '/gabarito painel depende    mostra todos os itens que dependem de você (ou só 5)', // GM-15 T35 (r.8)
   '/gabarito painel ligar      volta a abrir sozinho',
   '/gabarito painel desligar   fecha e não abre sozinho; só o aviso de PAROU',
   '                            continua',
@@ -3266,7 +3267,7 @@ test('comando-store-nega-vale-na-sessao: store.set rejeita ⇒ a troca vale e a 
 test('comando-resposta-uma-linha: todas as variantes (menos a ajuda), inclusive erro e store negando, sem \\n e ≤ 200 colunas', async ($, on) => {
   const m = comPainel($, on, {}, { openResult: { isPlaced: false, reason: 'linha 1\nlinha 2\r\n' + 'z'.repeat(400) }, storeSetFalha: true, arquivos: [] })
   await arrancar(m)
-  const args = ['', 'x', 'pausar', 'retomar', 'painel', 'painel esquadrao', 'painel executivo', 'painel color', 'painel mono', 'painel narracao on', 'painel narracao off', 'painel nomes herois', 'painel nomes ../x', 'painel nomes zzz', 'painel ligar', 'painel desligar', 'painel \x1b[2J', 'painel nomes \x1b[2Jabc', 'painel\nnomes\nherois']
+  const args = ['', 'x', 'pausar', 'retomar', 'painel', 'painel esquadrao', 'painel executivo', 'painel color', 'painel mono', 'painel narracao on', 'painel narracao off', 'painel nomes herois', 'painel depende', 'painel nomes ../x', 'painel nomes zzz', 'painel ligar', 'painel desligar', 'painel \x1b[2J', 'painel nomes \x1b[2Jabc', 'painel\nnomes\nherois']
   for (const a of args) {
     const t = (await m.cmd(a)).text
     expect(typeof t).toBe('string')
@@ -3633,6 +3634,22 @@ test('submit-falho-repete-pela-contagem: submit que falhou depois do /clear não
   expect(m.est.clears).toBe(2) // a sessão nova, a 70 %, pousa a si mesma: tentativa 2 da contagem da fronteira
   expect(tentativas(m)).toEqual([2])
   expect(parou(m)).toHaveLength(0)
+})
+test('pouso-auto-respeita-agora-nao (GM-15 T35 r.9): "agora não" ao pedido de /clear segura a repetição do pouso do mod até +10 p.p.; o Agent segue negado (loop parado)', async ($, on) => {
+  const m = mundo($, on, { submitFalha: true })
+  await pousar(m)
+  expect(m.est.clears).toBe(1)
+  const pouso = m.evs.filter((e) => e.tipo === 'sessao.pouso').at(-1)
+  m.add('orquestrador', 'dono.resposta', { pergunta: `${pouso.sessao}:${pouso.seq}`, rotulo: 'agora não (loop parado, contexto em 70 %)' }, 'dono')
+  m.est.percent = 70
+  await m.avancar(61_000)
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(1) // adiado: sem 2ª tentativa
+  expect((await m.agent('gabarito-implementador')).deny).toMatch(/pouso/) // o loop segue parado no teto
+  m.est.percent = 80 // +10 p.p.: o pedido volta e o pouso repete
+  await m.avancar(61_000)
+  await m.turno(); await m.clock.settle()
+  expect(m.est.clears).toBe(2)
 })
 test('aprendizados-indisponiveis-avisa-e-pousa: a ponte devolve avisos, o pouso segue e o aviso vem uma vez', async ($, on) => {
   const m = mundo($, on, { instantaneoAvisos: ['aprendizados indisponíveis'] })
@@ -4047,7 +4064,7 @@ test('lateral-pane-fechada-so-parou-e-pergunta: Pane fechada ⇒ 1 linha só com
   expect(t).toContain('Qual caminho seguir agora')
   expect(t).not.toContain('PLANO')
   expect(t).not.toContain('aprovar a spec')
-  expect((await ui.findAll({ type: 'Button' })).length).toBe(2)
+  expect((await ui.findAll({ type: 'Button' })).length).toBe(3) // as 2 opções + "agora não" (GM-15 T35 r.14)
   await ui.unmount()
   m.est.painel.estado = estadoNovo({ depende: [dep] })
   await m.turno(); await drena(m)
@@ -4132,7 +4149,7 @@ test('linha-unica-cabe-com-a-moldura-real: texto longo + botões (rótulo+4) + "
     const textos = await todosTextos(ui)
     const rotulos = (await ui.findAll({ type: 'Button' })).map((b: any) => (b.props?.label ?? b.label) as string)
     await ui.unmount()
-    expect(rotulos).toEqual(['1 uma nova', '2 conversa avulsa'])
+    expect(rotulos).toEqual(['1 uma nova', '2 conversa avulsa', 'agora não']) // GM-15 T35 (r.14)
     const principal = textos.find((t) => t.trim() !== '') as string
     const total = [...principal].length + rotulos.reduce((n, r) => n + 1 + [...r].length + MOLDURA_BOTAO, 0) + RESERVA_BORDA
     expect(total).toBeLessThanOrEqual(larg)
@@ -4170,7 +4187,7 @@ test('aviso-nao-regride-botoes: PAROU + aviso e pergunta aberta + aviso mantêm 
   expect(fp.botoes).toEqual(botoesDoTopo(parar, '/repo'))
   const perg = estadoNovo({ pergunta: PERGUNTA })
   const fq = faixaUmaLinha(perg, { root: '/repo', aviso }) as any
-  expect(fq.botoes.length).toBe(2)
+  expect(fq.botoes.length).toBe(3) // GM-15 T35 (r.14): + "agora não"
   expect(fq.botoes).toEqual(botoesDoTopo(perg, '/repo'))
   expect(fq.texto).toContain(aviso)
 })
@@ -4359,24 +4376,27 @@ test('botao-pergunta-fill-responder: acima, cada opção é um botão `<n> <rót
   await arrancar(m)
   const ui = await montarFaixaH($, 50, 19)
   const rotulos = (await ui.findAll({ type: 'Button' })).map((b: any) => b.props?.label ?? b.label)
-  expect(rotulos).toEqual(['1 manter', '2 trocar'])
+  expect(rotulos).toEqual(['1 manter', '2 trocar', 'agora não']) // GM-15 T35 (r.14): toda pergunta tem "agora não"
   await ui.press({ key: 'painel-acao' })
   await ui.press({ key: 'painel-acao-2' })
-  expect(m.est.fills.map((f) => [f.text, f.mode])).toEqual([['/gabarito-mestre:responder sess-1:7 1', 'replace'], ['/gabarito-mestre:responder sess-1:7 2', 'replace']])
+  await ui.press({ key: 'painel-acao-3' })
+  expect(m.est.fills.map((f) => [f.text, f.mode])).toEqual([['/gabarito-mestre:responder sess-1:7 1', 'replace'], ['/gabarito-mestre:responder sess-1:7 2', 'replace'], ['/gabarito-mestre:responder sess-1:7 agora', 'replace']])
   expect(m.est.submits).toEqual([])
   await ui.unmount()
 })
-test('botao-so-no-topo: com pergunta no topo, o item seguinte do "depende de você" não ganha botão', async ($, on) => {
+// GM-15 T35 (r.8, D-G11 a) revoga "botão só no topo": cada item do DEPENDE leva os próprios botões na sua linha
+test('botao-por-item-no-depende (r.8): com pergunta no topo, o item seguinte do "depende de você" ganha o próprio botão na linha dele', async ($, on) => {
   const dep = { nivel: 'dono', motivo: 'aprovar a spec da GM-14', acoes: [acaoP('aprovar', '/gabarito-mestre:aprovar')] }
   const m = comPainel($, on, { estado: estadoNovo({ pergunta: PERGUNTA, depende: [dep] }) }, { local: 'acima' })
   await arrancar(m)
   const ui = await montarFaixaH($, 50, 19)
   const botoes = await ui.findAll({ type: 'Button' })
-  expect(botoes.length).toBe(2)
+  expect(botoes.length).toBe(4) // 2 opções + "agora não" + o "aprovar" do item
   const linhas = ((await ui.drawn()).children ?? []).map((l: any) => JSON.stringify(l))
   const iTopo = linhas.findIndex((l: string) => l.includes('Qual caminho seguir agora'))
+  const iItem = linhas.findIndex((l: string) => l.includes('aprovar a spec'))
   const comBotao = linhas.map((l: string, i: number) => [i, l.includes('"Button"') || l.includes('painel-acao')] as const).filter(([, b]) => b).map(([i]) => i)
-  expect(comBotao).toEqual([iTopo])
+  expect(comBotao).toEqual([iTopo, iItem])
   expect(linhas.some((l: string) => l.includes('aprovar a spec'))).toBe(true)
   await ui.unmount()
 })
