@@ -5468,8 +5468,9 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
     assert.doesNotMatch(painel(amb), /limpar a conversa/);
   });
 
-  test('proxima-sem-onboarding-nao-trava-pelo-pouso (FIEL-14 h): sem fluxo.resolvidoEm o pouso gravado não trava proxima nem o painel; com onboarding trava (controle)', () => {
-    const amb = plano1(CONFIG_PADRAO);
+  const semConfig = (amb) => { spawnSync('rm', [join(amb.dir, 'harness.config.json')]); return amb; }; // sem config em lugar nenhum (a guarda vê onboarding em qualquer config válida)
+  test('proxima-sem-onboarding-nao-trava-pelo-pouso (FIEL-14 h; GM-15 T23, critério da guarda): sem config o pouso gravado não trava proxima nem o painel; com onboarding trava (controle)', () => {
+    const amb = semConfig(plano1());
     assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
     const r = amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']);
     assert.equal(r.rc, 0, r.out + r.err);
@@ -5481,17 +5482,16 @@ describe('GM-14 T34: pouso é regra do produto (FIEL-14 a, b, c, e, f)', () => {
     assert.match(painel(com), /limpar a conversa/);
   });
 
-  test('pouso-onboarding-le-config-local (FIEL-14 h): origin/HEAD com fluxo.resolvidoEm e config local sem ⇒ não pendente; o inverso ⇒ pendente', () => {
-    const amb = plano1(CONFIG_PADRAO);
+  test('pouso-onboarding-le-config-local (FIEL-14 h; GM-15 T23, critério da guarda): config em origin/HEAD com a local vazia ⇒ pendente; sem config em lugar nenhum ⇒ não pendente', () => {
+    const amb = semConfig(plano1());
     comOrigin(amb, ONBOARDING);
     assert.equal(amb.cli(['pousar', '--sessao', 'S1']).rc, 0);
-    assert.equal(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao.tipo, 'despachar');
-    assert.doesNotMatch(painel(amb), /limpar a conversa/);
-    const inv = plano1();
-    comOrigin(inv, CONFIG_PADRAO);
-    assert.equal(inv.cli(['pousar', '--sessao', 'S1']).rc, 0);
-    assert.deepEqual(inv.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
-    assert.match(painel(inv), /limpar a conversa/);
+    assert.deepEqual(amb.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao, { tipo: 'pousar' });
+    assert.match(painel(amb), /limpar a conversa/);
+    const nenhum = semConfig(plano1());
+    assert.equal(nenhum.cli(['pousar', '--sessao', 'S1']).rc, 0);
+    assert.equal(nenhum.cli(['proxima', '--sessao', 'S1', '--vivos', '0']).j.acao.tipo, 'despachar');
+    assert.doesNotMatch(painel(nenhum), /limpar a conversa/);
   });
 
   test('pouso-onboarding-criterio-unico: loop.mjs e painel.mjs importam temOnboarding de cartao-sessao.mjs e não têm critério próprio', () => {
