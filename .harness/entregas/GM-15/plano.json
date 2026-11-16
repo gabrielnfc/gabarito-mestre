@@ -925,7 +925,14 @@
         "plugins/gabarito-mestre/mod/gabarito.mjs",
         "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
         "plugins/gabarito-mestre/gates/src/formas.ts",
-        "plugins/gabarito-mestre/gates/dist/formas.js"
+        "plugins/gabarito-mestre/gates/dist/formas.js",
+        "plugins/gabarito-mestre/gates/src/painel-texto.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-texto.js",
+        "plugins/gabarito-mestre/gates/test/painel-golden/",
+        "plugins/gabarito-mestre/gates/test/painel-esquadrao.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-texto.test.ts",
+        "plugins/gabarito-mestre/gates/test/fumaca-e4.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-e4/"
       ]
     }
   ]
