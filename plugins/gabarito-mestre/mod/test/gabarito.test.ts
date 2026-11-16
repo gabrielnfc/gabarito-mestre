@@ -1967,23 +1967,22 @@ test('orfa-negado-nao-duplica: Agent negado desfaz a negada e o núcleo decide; 
   expect(reabertas(m)).toHaveLength(1)
   expect(m.est.submits.filter((s) => s.includes('gabarito-loop') && !s.includes('Diário'))).toHaveLength(0)
 })
-test('orfa-terceira-vez-grava-parar: 2 recuperações por task; na seguinte loop.parar nao_conseguiu com aviso, sem nova reabertura nem turno', async ($, on) => {
+test('orfa-reabre-1x-na-2a-grava-parar (GM-15 T12, REQ-AUT-1; mata "reabrir 2 vezes"): a 2ª órfã da mesma task ⇒ loop.parar nao_conseguiu com aviso, sem reabertura nem turno', async ($, on) => {
   const m = mundo($, on, { eventos: ORFA })
   await m.inicio()
   await recuperar(m)
-  m.add('o', ...A_INI_DE_NOVO)
-  await recuperar(m)
-  expect(reabertas(m)).toHaveLength(2)
+  expect(reabertas(m)).toEqual([ORQ_RETOMADA])
   expect(parou(m)).toHaveLength(0)
   m.add('o', ...A_INI_DE_NOVO)
   await recuperar(m)
-  expect(reabertas(m)).toHaveLength(2)
-  expect(m.est.submits).toHaveLength(2)
+  expect(reabertas(m)).toHaveLength(1)
+  expect(m.est.submits).toHaveLength(1)
   expect(parou(m)).toHaveLength(1)
   expect(parou(m)[0].dados).toEqual({ motivo: 'nao_conseguiu', task: 'a' })
   expect(m.toasts.some((t) => t.includes('nao_conseguiu') && t.includes('a'))).toBe(true)
   await recuperar(m)
   expect(parou(m)).toHaveLength(1)
+  expect(reabertas(m)).toHaveLength(1)
 })
 test('orfa-parar-nao-grava-avisa: loop.parar que não grava não vira "parado"; o aviso diz que não gravou', async ($, on) => {
   const m = mundo($, on, { eventos: ORFA, appendFalha: ['loop.parar'] })
@@ -1991,10 +1990,8 @@ test('orfa-parar-nao-grava-avisa: loop.parar que não grava não vira "parado"; 
   await recuperar(m)
   m.add('o', ...A_INI_DE_NOVO)
   await recuperar(m)
-  m.add('o', ...A_INI_DE_NOVO)
-  await recuperar(m)
   expect(parou(m)).toHaveLength(0)
-  expect(reabertas(m)).toHaveLength(2)
+  expect(reabertas(m)).toHaveLength(1)
   expect(m.toasts.some((t) => t.includes('loop.parar') && t.includes('não'))).toBe(true)
 })
 test('orfa-reaberta-nao-grava-avisa: task.reaberta que falha ⇒ aviso com reabrir <task>, nenhum turno, nenhum pouso', async ($, on) => {
@@ -2083,6 +2080,7 @@ test('orfa-subagent-nao-reabre: turn.complete de subagent nunca recupera', async
 })
 test('orfa-corrigindo-volta-a-reprovada: correção sem agente reabre a task reprovada', async ($, on) => {
   const m = mundo($, on, { eventos: aposB(A_INI, A_CON, A_VER_REP, A_COR) })
+  fecharEm(m) // GM-15 T12: o núcleo decide a retomada; a pendência de aprendizado do REPROVADO (REQ-APR-2) vem antes dela
   await m.inicio()
   await recuperar(m)
   expect(reabertas(m)).toEqual([ORQ_RETOMADA])
@@ -2147,22 +2145,20 @@ test('orfa-ci-vermelho-nao-reabre: 2 CI vermelhos ⇒ grava parar ci_vermelho, 0
   expect(parou(m)[0].dados).toEqual({ motivo: 'ci_vermelho' })
   expect(m.toasts.some((t) => t.includes('ci_vermelho'))).toBe(true)
 })
-test('orfa-nao-conseguiu-do-nucleo-reabre: núcleo com `parar nao_conseguiu` (ou sem parar) a órfã é reaberta e o turno abre', async ($, on) => {
-  const m = mundo($, on, { eventos: ORFA }) // sem teto, sem CI vermelho: o núcleo diz `parar nao_conseguiu` (task em voo sem agente)
+test('orfa-retomar-do-nucleo-reabre: núcleo com `retomar` (órfã sem retomada) ⇒ a órfã é reaberta e o turno abre', async ($, on) => {
+  const m = mundo($, on, { eventos: ORFA }) // sem teto, sem CI vermelho: o núcleo diz `retomar` (task em voo sem agente, 0 retomadas)
   await m.inicio()
   await recuperar(m)
   expect(reabertas(m)).toEqual([ORQ_RETOMADA])
   expect(m.est.submits).toHaveLength(1)
   expect(parou(m)).toHaveLength(0)
 })
-test('orfa-conta-recomeca-depois-de-liberar: 2 recuperações esgotam a conta; task.reaberta {dono} na task a recomeça (liberar)', async ($, on) => {
+test('orfa-liberar-nao-zera-a-conta (GM-15 T12, REQ-AUT-1): a conta é a do núcleo, no diário inteiro; depois de liberar, a 2ª órfã para', async ($, on) => {
   const m = mundo($, on, { eventos: ORFA })
   await m.inicio()
   await recuperar(m)
-  m.add('o', ...A_INI_DE_NOVO)
-  await recuperar(m)
-  expect(reabertas(m)).toHaveLength(2)
-  // a chega ao teto e o dono a libera: novo ciclo, conta zerada
+  expect(reabertas(m)).toHaveLength(1)
+  // a chega ao teto e o dono a libera: a retomada já gasta continua gasta
   m.add('o', ...A_INI_DE_NOVO)
   m.add('o', ...A_CON)
   m.add('o', 'review.veredito', { task: 'a', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 })
@@ -2171,10 +2167,12 @@ test('orfa-conta-recomeca-depois-de-liberar: 2 recuperações esgotam a conta; t
   m.add('o', 'review.veredito', { task: 'a', veredito: 'REPROVADO', rodada: 2, major: 1, blocker: 0 })
   m.add('o', ...DONO_A)
   m.add('o', ...A_INI_DE_NOVO)
+  fecharEm(m) // a pendência de aprendizado dos REPROVADOS (REQ-APR-2) vem antes da decisão sobre a órfã
   await recuperar(m)
-  expect(parou(m)).toHaveLength(0)
-  expect(reabertas(m)).toHaveLength(3)
-  expect(m.est.submits).toHaveLength(3)
+  expect(reabertas(m)).toHaveLength(1)
+  expect(m.est.submits).toHaveLength(1)
+  expect(parou(m)).toHaveLength(1)
+  expect(parou(m)[0].dados).toEqual({ motivo: 'nao_conseguiu', task: 'a' })
 })
 test('orfa-nucleo-lanca-nao-reabre: proximaAcao que lança ⇒ não reabre, não abre turno, não grava parar; aviso de que o núcleo falhou', async ($, on) => {
   // `c` pendente sem `deps`: `t.deps.every` lança dentro de `proximaAcao`
@@ -2196,29 +2194,17 @@ test('orfa-diario-invalido-do-nucleo-so-avisa: ci.resultado {verde:"x"} com a ó
   expect(parou(m)).toHaveLength(0)
   expect(m.toasts.length).toBeGreaterThan(0)
 })
-test('orfa-liberar-zera-so-a-task-liberada: liberar a não recomeça a conta esgotada de c', async ($, on) => {
+test('orfa-conta-por-task (GM-15 T12, REQ-AUT-1): c com a retomada gasta não impede a 1ª de a; só a task que o núcleo manda retomar é reaberta', async ($, on) => {
   const plano = { entrega: 'PBI-7', tasks: [...PLANO.tasks, { id: 'c', deps: [], arquivos: ['c.ts'] }] }
-  const C_INI = ['task.iniciada', { task: 'c', papel: 'implementador' }] as [string, Record<string, unknown>]
-  const m = mundo($, on, { eventos: [...ORFA, EV(8, 'task.iniciada', { task: 'c', papel: 'implementador' })], plano_json: plano })
+  const m = mundo($, on, {
+    eventos: [...ORFA, EV(8, 'task.iniciada', { task: 'c', papel: 'implementador' }), EV(9, 'task.reaberta', { task: 'c', origem: 'retomada' }), EV(10, 'task.iniciada', { task: 'c', papel: 'implementador' })],
+    plano_json: plano,
+  })
   await m.inicio()
   await recuperar(m)
-  m.add('o', ...A_INI_DE_NOVO)
-  m.add('o', ...C_INI)
-  await recuperar(m)
-  expect(reabertas(m)).toHaveLength(4)
-  m.add('o', ...A_INI_DE_NOVO)
-  m.add('o', ...A_CON)
-  m.add('o', 'review.veredito', { task: 'a', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 })
-  m.add('o', 'task.iniciada', { task: 'a', papel: 'correcao' })
-  m.add('o', ...A_CON)
-  m.add('o', 'review.veredito', { task: 'a', veredito: 'REPROVADO', rodada: 2, major: 1, blocker: 0 })
-  m.add('o', ...DONO_A)
-  m.add('o', ...A_INI_DE_NOVO)
-  m.add('o', ...C_INI)
-  await recuperar(m)
-  expect(parou(m)).toHaveLength(1)
-  expect(parou(m)[0].dados).toEqual({ motivo: 'nao_conseguiu', task: 'c' })
-  expect(reabertas(m)).toHaveLength(4)
+  expect(reabertas(m)).toEqual([ORQ_RETOMADA])
+  expect(parou(m)).toHaveLength(0)
+  expect(m.est.submits).toHaveLength(1)
 })
 
 // ======================================================================================================================================

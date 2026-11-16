@@ -41,8 +41,6 @@ let negadoAte = null; // hora (relógio de parede, como o diário) da última ne
 let espera = null; // { dir, marca, n }: turnos seguidos sem evento novo com o núcleo respondendo `nao_conseguiu`
 let terminados = 0; // `turn.complete` de subagent: cada um traz um hand-back (`prompt.submit` peer) a caminho
 let recebidos = 0; // `prompt.submit` com `origin.kind === 'peer'`; `terminados > recebidos` ⇒ hand-back ainda a caminho
-const recuperadas = new Map(); // `${dir}|${task}` → vezes que o mod reabriu a task em voo sem agente
-const MAX_RECUPERACOES = 2; // REQ-LOOP-5: até 2 por task; na seguinte `loop.parar {nao_conseguiu}`
 const TURNOS_ESPERA = 3; // alinhado a REQ-LOOP-5: o hand-back pode ainda não ter chegado
 
 const chaveDe = (dir) => `pouso:${dir}`;
@@ -535,10 +533,13 @@ async function desfazerNegados($) {
 
 /**
  * REQ-LOOP-5, task em voo sem agente (Q-T13F D1): `iniciar` sem `Agent` (um hand-back entrou entre os dois). No fim normal do turno, com
- * vivos = 0, sem hand-back a caminho, sem pausa e sem `parar`, reabre as tasks em voo (origem `retomada`) e abre um turno, sem pousar nele.
- * Antes de reabrir, pergunta ao núcleo (Q-T13G): `parar` com motivo diferente de `nao_conseguiu` é gravado e não reabre nem abre turno.
- * Até 2 vezes por task em cada ciclo (`liberar` recomeça a conta); na seguinte grava `loop.parar {nao_conseguiu}` e avisa. Qualquer leitura ruim, ou `task.reaberta` que não grava:
- * não reabre e devolve `false` (o núcleo decide, como antes). `true` = o mod agiu e o turno não decide mais nada.
+ * vivos = 0, sem hand-back a caminho, sem pausa e sem `parar`, pergunta ao núcleo (Q-T13G) e segue a resposta dele, sem conta própria:
+ * - `retomar` ⇒ reabre a task que o núcleo nomeou (origem `retomada`) e abre um turno, sem pousar nele. GM-15 T12 (REQ-AUT-1): a retomada
+ *   é de 1 vez por task, contada pelo núcleo no diário inteiro (`loop.ts` `retomadas`); `liberar` não a devolve.
+ * - `parar nao_conseguiu` de uma task em voo (a 2ª órfã) ⇒ grava `loop.parar {nao_conseguiu, task}` e avisa; nunca reabre de novo.
+ * - `parar` com outro motivo ⇒ grava esse `parar` e não reabre nem abre turno.
+ * Qualquer outra ação, leitura ruim ou `task.reaberta` que não grava: não reabre e devolve `false` (o núcleo decide, como antes).
+ * `true` = o mod agiu e o turno não decide mais nada.
  */
 async function recuperarOrfas($) {
   const { c } = await loopAtivo($);
@@ -563,27 +564,22 @@ async function recuperarOrfas($) {
     await pararDoNucleo($, c, acao, m);
     return true;
   }
-  // a conta é por ciclo: cada `task.reaberta {dono}` (liberar) da task recomeça a contagem
-  const donos = (t) => m.eventos.filter((e) => e?.tipo === 'task.reaberta' && e.dados?.origem === 'dono' && e.dados?.task === t).length;
-  const chave = (t) => `${c.dir}|${t}|${donos(t)}`;
-  const esgotada = voo.tasks.find((t) => (recuperadas.get(chave(t)) ?? 0) >= MAX_RECUPERACOES);
-  if (esgotada !== undefined) {
-    const gravou = await gravar($, c, { agente: 'orquestrador', tipo: 'loop.parar', dados: { motivo: 'nao_conseguiu', task: esgotada } });
+  if (acao.tipo === 'parar' && voo.tasks.includes(acao.task)) {
+    // REQ-AUT-1: a retomada desta task já foi gasta (o núcleo conta); a 2ª vez em voo sem agente para, sem reabrir.
+    const gravou = await gravar($, c, { agente: 'orquestrador', tipo: 'loop.parar', dados: { motivo: 'nao_conseguiu', task: acao.task } });
     espera = null;
     await avisar($, gravou
-      ? `gabarito: loop parado (nao_conseguiu, task ${esgotada}): iniciada ${MAX_RECUPERACOES + 1} vezes sem agente. Nenhum pouso automático; veja o diário da entrega.`
-      : `gabarito: a task ${esgotada} ficou ${MAX_RECUPERACOES + 1} vezes em voo sem agente e não consegui gravar loop.parar. O loop não segue sozinho; veja o diário da entrega.`);
+      ? `gabarito: loop parado (nao_conseguiu, task ${acao.task}): em voo sem agente de novo depois da retomada. Nenhum pouso automático; veja o diário da entrega.`
+      : `gabarito: a task ${acao.task} ficou em voo sem agente de novo depois da retomada e não consegui gravar loop.parar. O loop não segue sozinho; veja o diário da entrega.`);
     return false;
   }
-  for (const task of voo.tasks) {
-    if (!(await gravar($, c, { agente: 'orquestrador', tipo: 'task.reaberta', dados: { task, origem: 'retomada' } }))) {
-      await avisar($, `gabarito: não consegui gravar task.reaberta da task ${task}; nenhum turno aberto. Rode reabrir ${task} pelo loop.mjs.`);
-      return false;
-    }
-    recuperadas.set(chave(task), (recuperadas.get(chave(task)) ?? 0) + 1);
+  if (acao.tipo !== 'retomar' || !voo.tasks.includes(acao.task)) return false;
+  if (!(await gravar($, c, { agente: 'orquestrador', tipo: 'task.reaberta', dados: { task: acao.task, origem: 'retomada' } }))) {
+    await avisar($, `gabarito: não consegui gravar task.reaberta da task ${acao.task}; nenhum turno aberto. Rode reabrir ${acao.task} pelo loop.mjs.`);
+    return false;
   }
   espera = null;
-  if (!abrirTurno($, PROMPT_RECUPERACAO)) await avisar($, `gabarito: ${voo.tasks.join(', ')} reaberta(s), mas não consegui agendar o turno do loop. Digite uma mensagem para continuar.`);
+  if (!abrirTurno($, PROMPT_RECUPERACAO)) await avisar($, `gabarito: ${acao.task} reaberta, mas não consegui agendar o turno do loop. Digite uma mensagem para continuar.`);
   return true;
 }
 
