@@ -748,7 +748,13 @@
         "plugins/gabarito-mestre/gates/src/painel.ts",
         "plugins/gabarito-mestre/gates/dist/painel.js",
         "plugins/gabarito-mestre/gates/scripts/painel.mjs",
-        "plugins/gabarito-mestre/gates/test/painel-projeto.test.ts"
+        "plugins/gabarito-mestre/gates/test/painel-projeto.test.ts",
+        "plugins/gabarito-mestre/gates/test/fumaca-gm14.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-costura.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/painel-blocos.test.ts",
+        "plugins/gabarito-mestre/gates/src/painel-executivo.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-executivo.js"
       ],
       "reqs": [
         "REQ-ENT-2"
