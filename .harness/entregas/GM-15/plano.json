@@ -274,12 +274,16 @@
       "id": "T12",
       "titulo": "Trava parcial não para o loop",
       "deps": [
-        "T10"
+        "T10",
+        "T18",
+        "T3"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/loop.ts",
         "plugins/gabarito-mestre/gates/dist/loop.js",
-        "plugins/gabarito-mestre/gates/test/loop.test.ts"
+        "plugins/gabarito-mestre/gates/test/loop.test.ts",
+        "plugins/gabarito-mestre/gates/scripts/stop-loop.mjs",
+        "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs"
       ],
       "reqs": [
         "REQ-AUT-1"
@@ -784,7 +788,9 @@
         "plugins/gabarito-mestre/gates/src/painel-equipe.ts",
         "plugins/gabarito-mestre/gates/dist/painel-equipe.js",
         "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
-        "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js"
+        "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
+        "plugins/gabarito-mestre/gates/test/painel-blocos.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-lng.test.ts"
       ],
       "reqs": [
         "REQ-POU-3",
