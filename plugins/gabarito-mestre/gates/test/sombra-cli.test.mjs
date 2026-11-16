@@ -1225,4 +1225,18 @@ describe('GM-15 T11: perguntar --proposta', () => {
     assert.match(validarProposta(plano, est, dados) ?? '', /^terceira proposta do orquestrador/, 'validarProposta: orquestrador no mesmo REQ não grava');
     assert.match(validarProposta(plano, est, { ...dados, origem: 'sombra' }) ?? '', /vai ao dono/, 'validarProposta: Sombra não repropõe');
   });
+
+  test('t26-proposta-da-sombra-aberta-nao-pede-redacao: 2 rejeições do orquestrador e a proposta 3 de origem sombra aberta', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-1'); // 1
+    propostaCom(r, 'REQ-A-1'); // 2
+    propostaCom(r, 'REQ-A-1', { origem: 'sombra' }); // 3, aberta
+    rejeitar(r, 1);
+    rejeitar(r, 2);
+    const { rc, out } = sobre(r, 3);
+    assert.equal(rc, 0, JSON.stringify(out));
+    const brief = readFileSync(join(r.raiz, out.brief), 'utf8');
+    assert.match(brief, /Proposta de emenda #3 \(REQ-A-1\)[^\n]*redigida pela Sombra/);
+    assert.ok(!brief.includes('redija'), 'proposta da própria Sombra não pede redação');
+  });
 });
