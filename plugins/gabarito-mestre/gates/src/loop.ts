@@ -5,7 +5,7 @@
 
 // O mod carrega `dist/loop.js` como módulo de hook: só import relativo e, no fecho inteiro, nenhum módulo embutido do Node (por isso `plano.ts` normaliza caminho por conta própria).
 // A projeção das propostas abertas é UMA só, a de `emenda.ts`; `emenda.ts` importa `ordenar` daqui (ciclo medido nos runners).
-import { projetarEmendas } from './emenda.ts';
+import { escopoDaTask, projetarEmendas } from './emenda.ts';
 import { MOTIVOS_REENTREGA, PAPEIS } from './formas.ts';
 import { pendenciasAprendizado } from './pendencias.ts';
 import type { AcaoLoop, Evento, Papel, Plano, PropostaAberta, Sinais } from './tipos.ts';
@@ -227,19 +227,36 @@ function integravel(plano: Plano, estados: Map<string, EstadoRodada>, id: string
 }
 
 /**
- * Congelamento por REQ (REQ-EME-2). `congeladas`: task cujo `reqs` tem REQ com proposta aberta (casamento exato, não por prefixo,
- * e nunca pela `task` citada na proposta) e toda dependente transitiva, de qualquer estado, integrada ou não. `abertas`: TODAS as
- * propostas abertas válidas por `seq`, citem ou não uma task. Diário que não ordena ⇒ todas as tasks congeladas (falha fechada).
+ * Congelamento mínimo (REQ-EME-2, GM-15 T10 REQ-EME-3 A). `congeladas`: task NÃO integrada que tem o REQ de uma proposta aberta (casamento exato, não por
+ * prefixo, e nunca pela `task` citada) ou arquivo em comum com o `--arquivos` dela (escopo da task: `arquivos` do plano + os das aprovadas); e, só quando a
+ * proposta cita `task` ou `arquivos`, as dependentes não integradas dessas. Sem `--task` e sem `--arquivos` congela só as diretas pelo REQ. Task integrada
+ * nunca congela nem propaga. `abertas`: TODAS as propostas abertas válidas por `seq`, citem ou não uma task. Diário que não ordena, ou que não projeta
+ * estado, ⇒ todas as tasks congeladas (falha fechada).
  */
 function congelamento(plano: Plano, eventos: Evento[]): { congeladas: Set<string>; abertas: PropostaAberta[] } {
   const todas = new Set(plano.tasks.map((t) => t.id));
   const ord = ordenar(eventos);
   if (!ord.ok) return { congeladas: todas, abertas: [] };
-  const abertas = projetarEmendas(eventos).abertas.map((p) => ({ seq: p.seq, req: p.req }));
-  const reqs = new Set(abertas.map((p) => p.req));
-  const diretas = plano.tasks.filter((t) => Array.isArray(t.reqs) && t.reqs.some((r) => reqs.has(r))).map((t) => t.id);
+  const emendas = projetarEmendas(eventos);
+  const abertas = emendas.abertas.map((p) => ({ seq: p.seq, req: p.req }));
+  const proj = projetar(plano, ord.eventos);
+  if (proj === null) return { congeladas: todas, abertas };
+  const naoIntegrada = (id: string): boolean => de(proj.estados, id) !== 'integrada';
+  const diretas = new Set<string>();
+  const propagam = new Set<string>();
+  for (const p of emendas.abertas) {
+    const arqs = new Set(p.arquivos);
+    for (const t of plano.tasks) {
+      if (!naoIntegrada(t.id)) continue;
+      const porReq = Array.isArray(t.reqs) && t.reqs.includes(p.req);
+      const porArquivo = arqs.size > 0 && escopoDaTask(plano, emendas, t.id).some((a) => arqs.has(a));
+      if (!porReq && !porArquivo) continue;
+      diretas.add(t.id);
+      if (p.task !== undefined || arqs.size > 0) propagam.add(t.id);
+    }
+  }
   const congeladas = new Set(diretas);
-  for (const t of plano.tasks) if (ancestrais(plano, t.id).some((a) => diretas.includes(a))) congeladas.add(t.id);
+  for (const t of plano.tasks) if (naoIntegrada(t.id) && ancestrais(plano, t.id).some((a) => propagam.has(a))) congeladas.add(t.id);
   return { congeladas, abertas };
 }
 

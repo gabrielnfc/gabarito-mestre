@@ -839,7 +839,7 @@ const exigeProd = (p: Plano, extra: Record<string, unknown> = {}): Plano => ({ .
 // --- tasksCongeladas
 test('tasks-congeladas-por-req-exato-e-dependentes', () => {
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1'], ['REQ-B-1']), T('T3', [], ['REQ-C-1']));
-  const c = tasksCongeladas(p, [prop(1, 'REQ-A-1')]);
+  const c = tasksCongeladas(p, [prop(1, 'REQ-A-1', { task: 'T1' })]);
   assert.deepEqual([...c].sort(), ['T1', 'T2']);
 });
 test('congela-por-req-nao-por-task-da-proposta', () => {
@@ -859,12 +859,53 @@ test('task-sem-reqs-nao-congela', () => {
 });
 test('congela-dependente-transitivo', () => {
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']), T('T3', ['T2']), T('T4', []));
-  assert.deepEqual([...tasksCongeladas(p, [prop(1, 'REQ-A-1')])].sort(), ['T1', 'T2', 'T3']);
+  assert.deepEqual([...tasksCongeladas(p, [prop(1, 'REQ-A-1', { task: 'T1' })])].sort(), ['T1', 'T2', 'T3']);
 });
 test('dependente-de-integrada-congelada-congela', () => {
+  // GM-15 T10 (REQ-EME-3 A): a integrada não congela e não propaga; o dependente não integrado só congela por REQ/arquivo próprio ou por direta não integrada
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']));
   const evs = [...diarioT(...pronta('T1')), prop(1, 'REQ-A-1')];
-  assert.deepEqual([...tasksCongeladas(p, evs)].sort(), ['T1', 'T2']);
+  assert.deepEqual([...tasksCongeladas(p, evs)], []);
+});
+
+// --- GM-15 T10 (REQ-EME-3 A): congelamento mínimo
+const TA = (id: string, deps: string[], reqs: string[], arquivos: string[]) => ({ id, deps, arquivos, reqs });
+test('congela-so-nao-integradas', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', [], ['REQ-A-1']), T('T3', ['T2']), T('T4', []));
+  const evs = [...diarioT(...pronta('T1')), prop(1, 'REQ-A-1', { task: 'T2' })];
+  assert.deepEqual([...tasksCongeladas(p, evs)].sort(), ['T2', 'T3'], 'T1 integrada fora; T2 direta e T3 dependente não integrada dentro');
+});
+test('congela-por-arquivo-comum', () => {
+  const p = planoR(TA('T1', [], ['REQ-X-1'], ['a.ts', 'b.ts']), TA('T2', ['T1'], ['REQ-X-2'], ['c.ts']), TA('T3', [], ['REQ-X-3'], ['d.ts']), TA('T4', [], ['REQ-X-4'], ['b.ts']));
+  const evs = [prop(1, 'REQ-Z-9', { task: 'T3', arquivos: ['b.ts'] })];
+  assert.deepEqual([...tasksCongeladas(p, evs)].sort(), ['T1', 'T2', 'T4'], 'b.ts em T1 e T4; T2 depende de T1; T3 (a task citada) não tem b.ts');
+});
+test('sem-task-sem-arquivos-so-diretas', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1'], ['REQ-B-1']), T('T3', ['T2']));
+  assert.deepEqual([...tasksCongeladas(p, [prop(1, 'REQ-A-1')])], ['T1'], 'sem --task e sem --arquivos não propaga às dependentes');
+});
+test('integrada-nao-propaga', () => {
+  // T1 (REQ) integrada; T2 depende dela e T3 de T2: nada congela. T4 direta não integrada: T5 (dependente) congela, T6 (integrada) não
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']), T('T3', ['T2']), T('T4', [], ['REQ-A-1']), T('T5', ['T4']), T('T6', ['T4']));
+  const evs = [...diarioT(...pronta('T1'), ...pronta('T6')), prop(1, 'REQ-A-1', { task: 'T4' })];
+  assert.deepEqual([...tasksCongeladas(p, evs)].sort(), ['T4', 'T5']);
+});
+test('congela-por-arquivo-comum-integrada-fora', () => {
+  const p = planoR(TA('T1', [], ['REQ-X-1'], ['b.ts']), TA('T2', [], ['REQ-X-2'], ['b.ts']));
+  const evs = [...diarioT(...pronta('T1')), prop(1, 'REQ-Z-9', { task: 'T2', arquivos: ['b.ts'] })];
+  assert.deepEqual([...tasksCongeladas(p, evs)], ['T2']);
+});
+test('replay-s7-plano-da-gm14', () => {
+  // plano real da GM-14 (58 tasks, tracked); nada integrado: sem --task/--arquivos congela exatamente as diretas pelo REQ
+  const real = JSON.parse(readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), '../../../../.harness/entregas/GM-14/plano.json'), 'utf8')) as Plano;
+  assert.equal(real.tasks.length, 58);
+  const diretas = real.tasks.filter((t) => (t.reqs ?? []).includes('REQ-DIA-1')).map((t) => t.id);
+  assert.equal(diretas.length, 10);
+  assert.deepEqual([...tasksCongeladas(real, [prop(1, 'REQ-DIA-1')])].sort(), [...diretas].sort());
+  // S7 seq 71 (REQ-DIA-1): tudo integrado menos uma direta ⇒ 1 task congelada (a regra antiga congelava as integradas e os dependentes: >= 56)
+  const resto = real.tasks.filter((t) => t.id !== diretas[0]).flatMap((t) => pronta(t.id));
+  const evs = [...diarioT(...resto), prop(1, 'REQ-DIA-1')];
+  assert.deepEqual([...tasksCongeladas(real, evs)], [diretas[0]]);
 });
 test('tasks-congeladas-sem-evento-de-emenda-vazio', () => {
   const p = planoR(T('T1', [], ['REQ-A-1']));
@@ -928,7 +969,7 @@ test('pode-integrar-congelada-false', () => {
 });
 test('pode-integrar-dependente-de-congelada-false', () => {
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']));
-  const evs = [...diarioT(...pronta('T1'), ...aprovada('T2')), prop(1, 'REQ-A-1')];
+  const evs = [...diarioT(...aprovada('T1'), ...aprovada('T2')), prop(1, 'REQ-A-1', { task: 'T1' })];
   assert.equal(podeIntegrar(p, evs, 'T2'), false);
 });
 
@@ -939,7 +980,7 @@ test('congela-so-req-afetado', () => {
 });
 test('congela-dependente', () => {
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']), T('T3', []));
-  const evs = [...diarioT(...pronta('T1')), prop(1, 'REQ-A-1')];
+  const evs = [...diarioT(...aprovada('T1')), prop(1, 'REQ-A-1', { task: 'T1' })];
   assert.deepEqual(proximaAcao(p, evs, sinais()), { tipo: 'despachar', itens: [{ task: 'T3', papel: 'implementador' }] });
 });
 test('aprovada-congelada-nao-integra', () => {
@@ -987,7 +1028,7 @@ test('em-voo-termina', () => {
 // --- proximaAcao: (8) e (9)
 test('esperar-emenda-com-propostas', () => {
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']));
-  const evs = [...diarioT(...aprovada('T1')), prop(1, 'REQ-A-1')];
+  const evs = [...diarioT(...aprovada('T1')), prop(1, 'REQ-A-1', { task: 'T1' })];
   assert.deepEqual(proximaAcao(p, evs, sinais()), { tipo: 'esperar', motivo: 'emenda', propostas: [{ seq: 1, req: 'REQ-A-1' }] });
 });
 test('esperar-emenda-lista-todas-as-abertas', () => {
@@ -1216,7 +1257,7 @@ test('loop-congela-pela-projecao-de-emenda', () => {
   for (const [i, evs] of cenarios.entries()) {
     const est = projetarEmendas(evs);
     const esperadas = new Set(est.abertas.length === 0 ? [] : p.tasks.filter((t) => t.reqs?.some((r) => reqsCongelados(est).has(r))).map((t) => t.id));
-    for (const t of p.tasks) if (t.deps.some((d) => esperadas.has(d)) || t.deps.some((d) => p.tasks.find((x) => x.id === d)?.deps.some((dd) => esperadas.has(dd)))) esperadas.add(t.id);
+    // GM-15 T10: propostas sem `task` e sem `arquivos` congelam só as diretas pelo REQ, sem dependentes
     assert.deepEqual([...tasksCongeladas(p, evs)].sort(), [...esperadas].sort(), `cenário ${i}`);
     const a = proximaAcao(p, evs, sinais());
     if (est.abertas.length > 0 && a.tipo === 'esperar' && a.motivo === 'emenda') {
