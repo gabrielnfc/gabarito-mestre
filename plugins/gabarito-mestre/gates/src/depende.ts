@@ -352,12 +352,16 @@ export function loteDoDono(plano: Plano | null, eventos: Evento[], cfg: ConfigLo
   const noTeto = (id: string): boolean => { const r = estadoDe(daTask(id)); return !('invalido' in r) && r.estado === 'no_teto'; };
   const teto = tasks.filter((id) => noTeto(id) && (c.liberaTeto !== true || gasta(id))).map(itemTeto);
   const emendas = c.julgaEmendas === true ? [] : projetarEmendas(evs).abertas.map((p) => itemEmenda(p.seq));
+  // GM-15 T34 (backlog T26 MINOR-1, REQ-EME-3 B): a redação da Sombra (`emenda.proposta` com `origem: sombra`) REJEITADA vai ao dono; a Sombra não repropõe na âncora.
+  // Aqui (e não no `proxima`) para o painel e o `proxima` terem o mesmo lote pela mesma função.
+  const redacoes = projetarEmendas(evs).rejeitadas.filter((p) => p.origem === 'sombra' && /^[A-Za-z0-9._-]{1,60}$/.test(p.req))
+    .map((p) => item(`decidir a redação da Sombra rejeitada (emenda ${p.seq}, ${p.req}): a Sombra não repropõe nessa âncora`));
   const versao = evs.some((e) => !CONHECIDOS.has(e.tipo)) ? [item(motivoPluginAtras(typeof c.versaoPlugin === 'string' ? c.versaoPlugin : undefined), [{ rotulo: 'atualizar', comando: '/plugin' }])] : [];
   const base = typeof c.base === 'string' && c.base !== '' ? c.base : 'main';
   const encerrada = evs.some((e) => e.tipo === 'entrega.encerrada');
   const main = tasks.length > 0 && base !== 'main' && c.autonomiaEntrega !== true && !encerrada
     ? [item(`no fim da entrega: levar ${higienizar(base)} para main`)] : [];
-  return [...teto, ...emendas, ...versao, ...main];
+  return [...teto, ...emendas, ...redacoes, ...versao, ...main];
 }
 
 /**

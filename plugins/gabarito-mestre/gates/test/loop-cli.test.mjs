@@ -6440,6 +6440,25 @@ describe('GM-15 T13: lote do dono no proxima', () => {
     assert.deepEqual(amb2.cli(['proxima']).j.lote.map((i) => i.motivo), ['decidir a emenda 1']);
   });
 
+  test('lote-redacao-igual-no-painel-e-no-proxima (GM-15 T34): o mesmo diário com redação da Sombra rejeitada dá o mesmo lote no painel real (estado.depende) e no proxima', () => {
+    const amb = ambReq();
+    comOrigin(amb, { entrega: { base: 'main' } });
+    grava(amb, relogioDe(), [
+      ['emendas', 'emenda.proposta', PROPOSTA({ origem: 'sombra', req: 'REQ-B-1' })],
+      ['dono', 'emenda.rejeitada', { proposta_seq: 1, origem: 'dono' }],
+    ]);
+    const lote = amb.cli(['proxima']).j.lote;
+    assert.equal(lote.length, 1, JSON.stringify(lote));
+    const r = spawnSync(process.execPath, [join(AQUI, '..', 'scripts', 'painel.mjs'), 'estado'], { cwd: amb.dir, encoding: 'utf8', env: amb.env, input: '' });
+    const j = JSON.parse(r.stdout.trim());
+    assert.equal(j.ok, true, r.stdout + r.stderr);
+    const motivos = (j.estado.depende ?? []).map((i) => i.motivo);
+    // o painel soma o que é só dele (spec aguardando, ligar o loop); o lote do proxima entra inteiro, na mesma ordem, contíguo
+    const k = motivos.indexOf(lote[0].motivo);
+    assert.ok(k >= 0, JSON.stringify(motivos));
+    assert.deepEqual(motivos.slice(k, k + lote.length), lote.map((i) => i.motivo), 'o DEPENDE do painel traz o lote do proxima');
+  });
+
   test('lote-vazio-sem-item-cli: sem nada previsível o proxima devolve lote vazio', () => {
     const amb = ambReq();
     comOrigin(amb, { entrega: { base: 'main' } });

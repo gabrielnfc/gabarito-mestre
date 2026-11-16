@@ -1439,21 +1439,6 @@ function avisosDeEmenda(plano, ord, est) {
   return avisos;
 }
 
-/**
- * GM-15 T34 (backlog da review T26, MINOR-1; REQ-EME-3 B): a redação da Sombra (`emenda.proposta` com `origem: sombra`) REJEITADA vai ao dono como item do lote, sem
- * ninguém anotar à mão; a Sombra não repropõe na mesma âncora. Entra antes do "atualizar o plugin"/"levar para main", que seguem por último. Nunca lança.
- */
-export function loteComRedacoes(eventos, lote) {
-  let itens;
-  try {
-    itens = projetarEmendas(eventos).rejeitadas.filter((p) => p.origem === 'sombra' && /^[A-Za-z0-9._-]{1,60}$/.test(p.req))
-      .map((p) => ({ nivel: 'dono', motivo: `decidir a redação da Sombra rejeitada (emenda ${p.seq}, ${p.req}): a Sombra não repropõe nessa âncora`, acoes: [] }));
-  } catch { return lote; }
-  if (itens.length === 0) return lote;
-  const i = lote.findIndex((x) => /^(atualizar o plugin|no fim da entrega)/.test(x.motivo));
-  return i < 0 ? [...lote, ...itens] : [...lote.slice(0, i), ...itens, ...lote.slice(i)];
-}
-
 function proxima(c, plano, flags) {
   const { cfg } = lerConfig(c.raiz);
   const eventos = lerDiarioEstrito(c.dirEntrega);
@@ -1489,7 +1474,7 @@ function proxima(c, plano, flags) {
   // A árvore de aprendizados é lida UMA vez por chamada (nunca por item); só quando há o que despachar.
   const extra = { cfg, ordenados, est, decisoes: projetarDecisoes(eventos), vigentes: acao.tipo === 'despachar' ? aprendizadosDaArvore(c, aviso) : [] };
   // GM-15 T13 (REQ-AUT-1): o que só o dono destrava sai em 1 lote, ao lado da ação (o loop segue no permitido); a Sombra só de origin, a entrega de `lerConfigEntrega`.
-  const lote = loteComRedacoes(eventos, loteDoDono(plano, eventos, configDoLote(origin, ce)));
+  const lote = loteDoDono(plano, eventos, configDoLote(origin, ce));
   return { acao: acao.tipo === 'despachar' ? { ...acao, itens: acao.itens.map((i) => enriquecer(c, plano, eventos, i, aviso, extra)) } : acao, lote, sinais, ...(aviso.length ? { aviso } : {}) };
 }
 
