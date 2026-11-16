@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { saidaParaAcao } from '../scripts/stop-loop.mjs';
+import { saidaParaAcao, textoTravaLonga } from '../scripts/stop-loop.mjs';
 import { TIPOS_DE_PROGRESSO } from '../dist/loop.js';
 import { append as anexar } from '../dist/diario.js';
 import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
@@ -1463,6 +1463,7 @@ test('stop-pouso-pendente-com-onboarding-nao-despacha-nem-para: vários Stops, n
   const raiz = repo();
   plano(raiz);
   comOnboarding(raiz);
+  sinalLoop(raiz); // GM-15 T18: o /clear só é pedido com o loop armado
   pousoDe(raiz);
   for (let i = 0; i < 6; i += 1) {
     const r = stop(raiz); // session_id S1 vem do stdin
@@ -1624,6 +1625,7 @@ test('stop-mod-desligado-o-clear-do-dono-libera (r1 MAJOR-3): leitura do mod vel
   const raiz = repo();
   plano(raiz);
   comOnboarding(raiz);
+  sinalLoop(raiz); // GM-15 T18: o /clear só é pedido com o loop armado
   pousoDe(raiz);
   contextoDe(raiz, 'S0', 61, { idadeMs: 600_000 }); // o mod calou depois do pouso
   avisa(stop(raiz), /digite \/clear/); // sem mod fresco: a regra por evento, e o texto manda o dono limpar
@@ -1743,4 +1745,232 @@ test('stop-branch-hotfix-respeita-idPadrao-da-origem (GM-15 hotfix, MINOR r1): o
   git(raiz, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
   mudo(stop(raiz));
   assert.equal(existsSync(contadorDe(raiz)), false);
+});
+
+// ------------------------------------------------------------------------------------- GM-15 T18 (REQ-AUT-2 c, REQ-POU-3, REQ-POU-4): o Stop avisa trava longa, pouso e loop desligado
+
+/** Evento com o `ts` relativo ao AGORA (a trava mede idade; fixture datada de 2026-11-03 já nasce "há dias"). */
+const evAgo = (sessao, seq, tipo, dados, minAtras) => ({
+  seq, ts: new Date(Date.now() - minAtras * 60_000).toISOString(), autor: 'a', sessao, agente: 'orquestrador', tipo, dados, hash_anterior: null,
+});
+const CI_VERMELHO_HA = (min, sessao = 'ci') => [
+  evAgo(sessao, 1, 'ci.resultado', { verde: false }, min + 1),
+  evAgo(sessao, 2, 'ci.resultado', { verde: false }, min),
+];
+const avisosDoStop = (raiz) => join(raiz, '.harness', 'stop-avisos.json');
+/** O sinal do loop como o mod da T17 o grava: `.harness/contexto/loop-dinamico.<sessao>.json`. */
+const sinalLoop = (raiz, sessao = 'S1', { estado = 'armado', idadeMs = 0, sessaoNoArquivo = sessao, texto } = {}) => {
+  mkdirSync(join(raiz, '.harness', 'contexto'), { recursive: true });
+  writeFileSync(join(raiz, '.harness', 'contexto', `loop-dinamico.${sessao}.json`), texto ?? JSON.stringify({
+    estado, intervalo: 0, dinamico: estado === 'armado' ? 1 : 0, sessao: sessaoNoArquivo, em: new Date(Date.now() - idadeMs).toISOString(),
+  }));
+};
+
+test('trava-30min-avisa-1x (REQ-AUT-2 c): parar há mais de 30 min ⇒ "parado há N min: <motivo>" com o comando, 1 vez por trava; o 2º Stop volta ao aviso curto', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'ci', CI_VERMELHO_HA(45));
+  const r1 = stop(raiz);
+  avisa(r1, /[Pp]arado há 4\d min: CI vermelho duas vezes/);
+  assert.match(r1.json.systemMessage, /`\/gabarito retomar`/, 'o comando vem no texto');
+  assert.match(r1.json.systemMessage, /\[ci_vermelho\]/, 'o aviso de sempre continua inteiro');
+  for (let i = 0; i < 3; i += 1) {
+    const r = stop(raiz);
+    avisa(r, /parou: CI vermelho duas vezes \[ci_vermelho\]/);
+    assert.doesNotMatch(r.json.systemMessage, /[Pp]arado há|`\/gabarito retomar`/, 'a trava já foi avisada: o texto longo não repete');
+  }
+});
+
+test('trava-recente-sem-texto-longo: parar há 10 min fica no aviso curto e não grava estado', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'ci', CI_VERMELHO_HA(10));
+  const r = stop(raiz);
+  avisa(r, /parou: CI vermelho duas vezes/);
+  assert.doesNotMatch(r.json.systemMessage, /[Pp]arado há/);
+  assert.equal(existsSync(avisosDoStop(raiz)), false);
+});
+
+test('motivo-novo-aviso-novo: a mesma entrega parada por OUTRO motivo (outra chave) avisa de novo', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'ci', CI_VERMELHO_HA(90));
+  avisa(stop(raiz), /[Pp]arado há \d+ min: CI vermelho duas vezes/);
+  avisa(stop(raiz), /parou: CI vermelho/); // 2º: curto
+  // o CI fica verde e a única task sai do alvo: outro motivo (nao_conseguiu), outro início
+  diario(raiz, 'ci', [evAgo('ci', 3, 'ci.resultado', { verde: true }, 80), evAgo('ci', 4, 'task.fora', { task: 'T1', como: 'cortada', motivo: 'x', origem: 'dono' }, 70)]);
+  const r = stop(raiz);
+  avisa(r, /[Pp]arado há 7\d min: sem próxima ação e sem agente vivo/);
+  assert.match(r.json.systemMessage, /`\/gabarito retomar`/);
+  assert.equal(JSON.parse(readFileSync(avisosDoStop(raiz), 'utf8')).trava.length, 2, 'duas chaves: motivo + início de cada trava');
+});
+
+test('trava-longa-texto-puro: o comando de quem destrava o teto cita a task; id hostil não entra cru', () => {
+  const t = textoTravaLonga({ tipo: 'parar', motivo: 'teto_rodadas', task: 'T1' }, 45);
+  assert.match(t, /[Pp]arado há 45 min: teto de rodadas de review/);
+  assert.match(t, /`\/gabarito-mestre:liberar T1`/);
+  const h = textoTravaLonga({ tipo: 'parar', motivo: 'teto_rodadas', task: 'T1`; rm -rf *' }, 31);
+  assert.doesNotMatch(h, /`;|rm -rf \*/);
+  assert.match(textoTravaLonga({ tipo: 'parar', motivo: 'nao_conseguiu' }, 31), /`\/gabarito retomar`/);
+});
+
+
+test('contexto-alto-sem-pouso-avisa (REQ-POU-3): contexto >= X, sem sessao.pouso desta sessão e loop armado ⇒ "limpar a conversa", e quem limpa é o mod', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  sinalLoop(raiz);
+  contextoDe(raiz, 'S1', 61);
+  const r = stop(raiz);
+  avisa(r, /limpar a conversa/);
+  assert.match(r.json.systemMessage, /[Qq]uem limpa é o mod/);
+  assert.match(r.json.systemMessage, /61 %/);
+  assert.doesNotMatch(r.json.systemMessage, /\/clear/, 'o agente nunca é mandado digitar /clear');
+});
+
+test('contexto-alto-com-pouso-quieto: a sessão já pousou (sessao.pouso dela na fronteira) ⇒ o aviso de limpar não repete; o do mod esperando segue', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  sinalLoop(raiz);
+  diario(raiz, 's', TASK_APROVADA('s'));
+  diario(raiz, 'S1', [{ ...ev('S1', 1, 'sessao.pouso', { percent: 61, x: 50 }) }]);
+  contextoDe(raiz, 'S1', 61);
+  const r = stop(raiz);
+  avisa(r, /aguardando o pouso do mod/);
+  assert.doesNotMatch(r.json.systemMessage, /limpar a conversa/);
+});
+
+test('contexto-alto-pouso-de-outra-sessao-ainda-avisa: o pouso de OUTRA sessão não cala esta (I1, por sessão)', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  sinalLoop(raiz);
+  diario(raiz, 's', TASK_APROVADA('s'));
+  diario(raiz, 'S0', [ev('S0', 1, 'sessao.pouso', { percent: 61, x: 50 })]);
+  contextoDe(raiz, 'S1', 61);
+  avisa(stop(raiz), /limpar a conversa/);
+});
+
+test('contexto-abaixo-de-x-quieto: leitura própria abaixo de X não manda limpar nada', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  sinalLoop(raiz);
+  contextoDe(raiz, 'S1', 20);
+  const r = stop(raiz);
+  bloqueia(r, /T1/);
+  assert.doesNotMatch(r.json.systemMessage ?? '', /limpar a conversa/);
+});
+
+test('sem-loop-dinamico-avisa (REQ-POU-4): com onboarding, ação pendente e sem o sinal da T17 ⇒ "ligar o loop automático", sem bloquear por isso e 1 vez por sessão', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  const r1 = stop(raiz);
+  bloqueia(r1, /T1/); // a ação do loop segue valendo
+  assert.match(r1.json.systemMessage, /ligar o loop automático/);
+  const r2 = stop(raiz);
+  bloqueia(r2, /T1/);
+  assert.doesNotMatch(r2.json.systemMessage ?? '', /ligar o loop automático/, '1 vez por sessão, não a cada turno');
+  // outra sessão: avisa de novo
+  const r3 = stop(raiz, { session_id: 'S2' });
+  assert.match(r3.json.systemMessage, /ligar o loop automático/);
+});
+
+for (const [nome, preparar] of [
+  ['sinal-ausente', () => {}],
+  ['sinal-ausente-estado', (raiz) => sinalLoop(raiz, 'S1', { estado: 'ausente' })],
+  ['sinal-nao-conferivel', (raiz) => sinalLoop(raiz, 'S1', { estado: 'nao_conferivel' })],
+  ['sinal-corrompido', (raiz) => sinalLoop(raiz, 'S1', { texto: '{nao-json' })],
+  ['sinal-de-outra-sessao-no-arquivo', (raiz) => sinalLoop(raiz, 'S1', { sessaoNoArquivo: 'S9' })],
+  ['sinal-velho-3h', (raiz) => sinalLoop(raiz, 'S1', { idadeMs: 3 * 3600_000 })],
+  ['sinal-so-de-outra-sessao', (raiz) => sinalLoop(raiz, 'S9')],
+]) {
+  test(`sinal-nao-arma (${nome}): só o "armado" da PRÓPRIA sessão e fresco vale; o resto avisa ligar o loop`, () => {
+    const raiz = repo();
+    plano(raiz);
+    comOnboarding(raiz);
+    preparar(raiz);
+    assert.match(stop(raiz).json.systemMessage, /ligar o loop automático/);
+  });
+}
+
+test('sinal-armado-quieto: com o sinal armado, fresco e da própria sessão, não há aviso de ligar o loop', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  sinalLoop(raiz);
+  const r = stop(raiz);
+  bloqueia(r, /T1/);
+  assert.doesNotMatch(r.json.systemMessage ?? '', /ligar o loop automático/);
+});
+
+test('sem-onboarding-sem-aviso-de-loop: sem onboarding o mod nem grava o sinal; o Stop segue como na 2.0, sem pedir o loop', () => {
+  const raiz = repo();
+  plano(raiz);
+  const r = stop(raiz);
+  bloqueia(r, /T1/);
+  assert.equal(r.json.systemMessage, undefined);
+});
+
+test('clear-so-com-wakeup (aprendizado 185): com o pouso pendente, o Stop só manda digitar /clear se o loop está armado; desligado, manda ligar o loop e nunca pede /clear', () => {
+  const dono = (arma) => {
+    const raiz = repo();
+    plano(raiz);
+    comOnboarding(raiz);
+    pousoDe(raiz);
+    if (arma) sinalLoop(raiz);
+    return stop(raiz);
+  };
+  avisa(dono(true), /digite \/clear/);
+  const r = dono(false);
+  avisa(r, /ligar o loop automático/);
+  assert.doesNotMatch(r.json.systemMessage, /\/clear/, 'sem o wakeup o /clear deixaria a sessão parada');
+});
+
+test('clear-so-com-wakeup-contexto-alto: contexto >= X com o loop desligado também não fala em limpar a conversa nem em /clear', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  contextoDe(raiz, 'S1', 61);
+  const r = stop(raiz);
+  avisa(r, /ligar o loop automático/);
+  assert.doesNotMatch(r.json.systemMessage, /\/clear|limpar a conversa/);
+});
+
+test('entrega-encerrada-stop-quieto: entrega publicada (PR mergeado) fica muda mesmo com contexto no teto e loop desligado', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  diario(raiz, 'pub', [PR_MERGEADO()]);
+  contextoDe(raiz, 'S1', 61);
+  mudo(stop(raiz));
+});
+
+test('avisos-nao-bloqueiam: trava longa, contexto alto e loop desligado juntos continuam sendo aviso (nunca decision)', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  diario(raiz, 'ci', CI_VERMELHO_HA(60));
+  contextoDe(raiz, 'S1', 61);
+  const r = stop(raiz);
+  assert.equal(r.json.decision, undefined);
+  assert.match(r.json.systemMessage, /[Pp]arado há/);
+});
+
+test('sinal-na-raiz-principal: o Stop numa worktree lê o sinal do checkout principal (onde o mod o grava), não da worktree', () => {
+  const principal = repo('main');
+  git(principal, 'commit', '--allow-empty', '-q', '-m', 'i');
+  const wt = join(mkdtempSync(join(tmpdir(), 'stop wt ')), 'wt'); // espaço no caminho
+  assert.equal(git(principal, 'worktree', 'add', '-q', '-b', 'wt/GM-10-9', wt).status, 0);
+  plano(wt);
+  comOnboarding(wt);
+  assert.match(stop(wt, { cwd: wt }, { cwd: wt, env: { CLAUDE_PROJECT_DIR: wt } }).json.systemMessage, /ligar o loop automático/);
+  const caminho = join(principal, '.harness', 'contexto');
+  mkdirSync(caminho, { recursive: true });
+  writeFileSync(join(caminho, 'loop-dinamico.S2.json'), JSON.stringify({ estado: 'armado', intervalo: 0, dinamico: 1, sessao: 'S2', em: new Date().toISOString() }));
+  const r = stop(wt, { cwd: wt, session_id: 'S2' }, { cwd: wt, env: { CLAUDE_PROJECT_DIR: wt } }); // outra sessão: o aviso de S1 (1 vez) não a cala
+  bloqueia(r, /T1/);
+  assert.doesNotMatch(r.json.systemMessage ?? '', /ligar o loop automático/);
 });
