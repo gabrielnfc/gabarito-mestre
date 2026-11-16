@@ -241,11 +241,37 @@ test('projeto-1-pbi-nao-aparece: com 0 ou 1 PBI a visão de entrega já é o pro
   assert.equal(doProjeto(linhas(estadoComPlano([ini(0, 'T1')]))).length, 0);
 });
 
-test('projeto-sem-entrega-em-curso: a visão de entrega "sem entrega em curso" continua 1 linha (REQ-ENT-1 d i), mesmo com projeto no estado', () => {
+test('projeto-sem-entrega-em-curso: o projeto vem ACIMA da linha única "sem entrega em curso", que segue 1 linha e é a última (emenda 4; o caso do repo com main e nada em curso)', () => {
   const pr = projetoDaFixture();
   const base = projetarPainel(null, null, entrada({ fatos: fatos({ plano: null, branch: 'main' }), entregaId: null, ultima: null, fora: false }));
-  const ls = linhas(comProjeto({ ...base, umaLinha: { ultima: null } } as unknown as EstadoPainel, pr));
-  assert.deepEqual(ls, ['GABARITO · sem entrega em curso']);
+  const s = comProjeto({ ...base, umaLinha: { ultima: null } } as unknown as EstadoPainel, pr);
+  for (const w of [120, 72, 60, 40]) {
+    const ls = linhas(s, { largura: w });
+    assert.equal(ls[ls.length - 1], 'GABARITO · sem entrega em curso', `w=${w}`);
+    assert.equal(ls.filter((l) => /^GABARITO/.test(l)).length, 1, `w=${w}: a linha única é 1 só`);
+    assert.equal(doProjeto(ls).length, w >= 72 ? nLinhasProjeto(pr) : 1, `w=${w}: ${ls.join(' | ')}`);
+    assert.ok(ls.every((l) => colunas(l) <= w), `w=${w}`);
+  }
+  // sem projeto (ou com 1 PBI): exatamente a linha única de antes
+  assert.deepEqual(linhas(comProjeto({ ...base, umaLinha: { ultima: null } } as unknown as EstadoPainel, null)), ['GABARITO · sem entrega em curso']);
+});
+
+test('projeto-entregue: a linha "<ID> entregue" também leva o projeto acima; com o botão "seguir" (◆) ela fica 1ª e o projeto abaixo, para o mod achar o topo', () => {
+  const pr = projetoDaFixture();
+  // nada vivo, nada pendente além da entrega: a condição da linha única (`linhaEntregue`)
+  const base = { ...estadoComPlano([ini(0, 'T1')]), agora: { agentes: [], segundoPlano: [], orquestrador: null }, atencao: [], pergunta: null, depende: [] } as unknown as EstadoPainel;
+  const entregue = { id: 'GM-14', versao: '2.1.0' };
+  const s = comProjeto({ ...base, entregue, proxima: { tipo: 'nenhuma', texto: 'nada pendente', acoes: [] } } as unknown as EstadoPainel, pr);
+  const ls = linhas(s);
+  assert.match(ls[ls.length - 1], /^GABARITO · GM-14 entregue \(versão 2\.1\.0\)/);
+  assert.equal(doProjeto(ls).length, nLinhasProjeto(pr), ls.join('\n'));
+  assert.equal(ls.filter((l) => /^GABARITO/.test(l)).length, 1);
+  // com botão: item do dono (◆) é a 1ª linha
+  const comBotao = comProjeto({ ...base, entregue, proxima: { tipo: 'entrega', texto: 'GM-15', acoes: [{ rotulo: 'seguir', comando: 'x' }] }, depende: [{ motivo: 'próxima entrega: GM-15', nivel: 'item', acoes: [{ rotulo: 'seguir', comando: 'x' }] }] } as unknown as EstadoPainel, pr);
+  const lb = linhas(comBotao);
+  assert.match(lb[0], /^◆ GABARITO · GM-14 entregue/);
+  assert.equal(doProjeto(lb).length, nLinhasProjeto(pr));
+  assert.equal(lb.filter((l) => /GABARITO/.test(l)).length, 1);
 });
 
 // ───────────────────────────── render: itens 4 e 5 (rótulos)
@@ -457,7 +483,8 @@ test('cli-plano-json-invalido-conta-como-plano: `plano.json` ilegível da entreg
 });
 
 test('cli-FL1-fora-da-arvore-ignorado: `fluxo.mapeamento.FL1` absoluto ou com ".." não é lido (nada fora da árvore), sem derrubar o painel', () => {
-  for (const fl1 of ['../cards-de-fora', '/tmp/cards-de-fora', 'docs/../../x']) {
+  // `/docs/fluxo/pbis` ABSOLUTO existe DENTRO da árvore (join o leria): a regra manda ignorar, não "caiu fora por acaso"
+  for (const fl1 of ['../cards-de-fora', '/tmp/cards-de-fora', 'docs/../../x', `/${FL1}`, `/${FL1}/`]) {
     const { repo } = montarRepo({ fl1 });
     mkdirSync(join(repo, '..', 'cards-de-fora'), { recursive: true });
     writeFileSync(join(repo, '..', 'cards-de-fora', 'PBI-8.md'), card('PBI-8', 'Concluído', '2026-11-01', 'Fora'));
@@ -467,11 +494,32 @@ test('cli-FL1-fora-da-arvore-ignorado: `fluxo.mapeamento.FL1` absoluto ou com ".
   }
 });
 
+test('cli-plano-md-do-card-fora-da-arvore-ignorado: "Plano: `../../x.md`" (ou absoluto) no card não é lido; a linha fica sem plano, sem contar tasks de fora', () => {
+  const { repo } = montarRepo();
+  const fora = join(repo, '..', 'x.md');
+  writeFileSync(fora, '### Task 1: a\n### Task 2: b\n### Task 3: c\n');
+  for (const plano of ['`../x.md`', '`../../x.md`', '`/docs/dentro.md`']) {
+    mkdirSync(join(repo, 'docs'), { recursive: true });
+    writeFileSync(join(repo, 'docs', 'dentro.md'), '### Task 1: a\n### Task 2: b\n');
+    writeFileSync(join(repo, FL1, 'PBI-3.md'), card('PBI-3', 'Backlog', '2026-11-02', 'Treino semanal', plano));
+    const l = (estadoDe(repo).estado.projeto as EstadoProjeto).linhas.find((x) => x.id === 'PBI-3');
+    assert.equal(l?.plano, null, `${plano}: plano .md de fora lido`);
+    assert.equal(l?.tasks, null, plano);
+    assert.equal(l?.texto, '? plano inválido', `${plano}: o card aponta um plano que não foi achado na árvore`);
+  }
+  // o mesmo card com o plano DENTRO da árvore (relativo) é lido: a cláusula não bloqueia o caso bom
+  writeFileSync(join(repo, FL1, 'PBI-3.md'), card('PBI-3', 'Backlog', '2026-11-02', 'Treino semanal', '`docs/dentro.md`'));
+  const bom = (estadoDe(repo).estado.projeto as EstadoProjeto).linhas.find((x) => x.id === 'PBI-3');
+  assert.equal(bom?.plano, 'md');
+  assert.equal(bom?.tasks?.total, 2);
+});
+
 test('agente-fora-do-loop-legado: renderEsquadrao (legado) e renderExecutivo escrevem o MESMO rótulo, sem task ou com task pendente; task iniciada mostra o id', () => {
   const txt = (ls: { texto: string }[][]): string[] => ls.map((l) => l.map((x) => x.texto).join(''));
   for (const w of [44, 80, 120]) {
     const esq = txt(renderEsquadrao(EXTRAS['sem-task'], { preset: 'esquadrao', tema: 'mono', narracao: true, largura: w }));
-    assert.ok(esq.some((l) => l.includes(ROTULO_FORA_DO_LOOP)), `esquadrão ${w}: ${esq.join('\n')}`);
+    const curto = ROTULO_FORA_DO_LOOP.replace(/^agente /, ''); // a escada de corte do legado encurta o rótulo antes de tirar o modelo
+    assert.ok(esq.some((l) => (w >= 100 ? l.includes(ROTULO_FORA_DO_LOOP) : l.includes(curto))), `esquadrão ${w}: ${esq.join('\n')}`);
     assert.ok(esq.every((l) => !/sem task/.test(l) && colunas(l) <= w));
     const exe = txt(renderExecutivo(EXTRAS['sem-task'], { preset: 'executivo', tema: 'mono', narracao: true, largura: w }));
     assert.ok(exe.some((l) => l.includes(ROTULO_FORA_DO_LOOP)), `executivo ${w}: ${exe.join('\n')}`);

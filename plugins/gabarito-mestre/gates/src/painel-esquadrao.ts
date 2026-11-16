@@ -225,14 +225,17 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
     const modelos = eq.agentes.filter((a) => a.vivo).map((a) => (t(a.modelo) !== '' ? ` · ${t(a.modelo)}` : ''));
     const mw = maxCol(modelos);
     const estadosLegado = new Map<string, EstadoTask>(e.plano.tasks.map((x) => [x.id, x.estado as EstadoTask]));
-    const tw = maxCol(eq.agentes.map((a) => (a.vivo && rotuloAgente({ task: typeof a.task === 'string' && t(a.task) !== '' ? t(a.task) : null, papelExibido: null }, estadosLegado) === ROTULO_FORA_DO_LOOP ? ROTULO_FORA_DO_LOOP : t(a.task))));
+    // MINOR-4: o rótulo longo é o primeiro a ceder ("fora do loop"), antes de o modelo sair; o texto continua o da regra única
+    let curto = false;
+    const twDe = (): number => maxCol(eq.agentes.map((a) => (a.vivo && rotuloAgente({ task: typeof a.task === 'string' && t(a.task) !== '' ? t(a.task) : null, papelExibido: null }, estadosLegado) === ROTULO_FORA_DO_LOOP ? (curto ? rotuloCurto() : ROTULO_FORA_DO_LOOP) : t(a.task))));
     if (vivos !== null) {
       // número nunca é cortado (P1c D-R6): se a linha mais larga não cabe, TODAS cedem juntas, texto primeiro (nível 1: sem modelo), depois o tempo inteiro (nível 2)
       // níveis: 0 tudo · 1 sem modelo · 2 sem tempo · 3 sem o verbo do papel · 4 nome encurtado com `…` (texto, nunca número)
       let nivel = 0;
       let nwUsado = nw;
-      const montar = (n: number): Linha[] => eq.agentes.map((a) => linhaAgente(a, larga, nwUsado, n >= 3 ? 0 : vw, n === 0 ? mw : 0, tw, n, estadosLegado));
+      const montar = (n: number): Linha[] => eq.agentes.map((a) => linhaAgente(a, larga, nwUsado, n >= 3 ? 0 : vw, n === 0 ? mw : 0, twDe(), n, estadosLegado, curto ? rotuloCurto() : ROTULO_FORA_DO_LOOP));
       while (nivel < 4 && larga && montar(nivel).some((l) => larg(l) > w)) {
+        if (!curto && nivel === 0 && rotuloCurto() !== ROTULO_FORA_DO_LOOP) { curto = true; continue; } // 1º o rótulo, depois o modelo
         nivel++;
         if (nivel === 4) {
           const sobra = Math.max(...montar(3).map(larg)) - w;
@@ -310,7 +313,7 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
 }
 
 /** Linha de agente: vivo (`●`), `agente fora do loop`, ou `◌ sem agente` (task em voo sem agente de papel compatível). */
-function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw: number, tw: number, nivel = 0, estados: ReadonlyMap<string, EstadoTask> = new Map()): Linha {
+function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw: number, tw: number, nivel = 0, estados: ReadonlyMap<string, EstadoTask> = new Map(), rotuloFora: string = ROTULO_FORA_DO_LOOP): Linha {
   const pre = seg(PREFIXO(false, larga), 'inactive');
   // GM-15 T32 (item 5): o rótulo único de `projeto.ts` (agente sem task ou com task não iniciada)
   const tarefa = rotuloAgente({ task: typeof a.task === 'string' && t(a.task) !== '' ? t(a.task) : null, papelExibido: null }, estados);
@@ -325,7 +328,7 @@ function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw
   const gc: CorTema = semTask || a.estadoTask === null ? 'inactive' : corEstadoTask(a.estadoTask);
   if (!larga) {
     const fim = [pct !== null ? fmtPct(pct) : '', tok !== null ? fmtTok(tok) : ''].filter((x) => x !== '').join(' ');
-    return aparar([pre, seg('●', gc), seg(' '), seg(semTask ? ROTULO_FORA_DO_LOOP : pad(nome, nw), semTask ? 'inactive' : a.cor), seg(fim !== '' ? ` ${fim}` : '', 'inactive')]);
+    return aparar([pre, seg('●', gc), seg(' '), seg(semTask ? rotuloFora : pad(nome, nw), semTask ? 'inactive' : a.cor), seg(fim !== '' ? ` ${fim}` : '', 'inactive')]);
   }
   const ctx: Linha = pct !== null
     ? [seg('ctx '), ...barraSegs(pct, nivel >= 3 ? 1 : 10, '█', '░', 'success'), seg(` ${fmtPct(pct)}`)] // nível 3: a barra cede (o rótulo "agente fora do loop" é largo), o nome só depois
@@ -333,10 +336,10 @@ function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw
   const cauda = [...(pct !== null && tok !== null ? [fmtTok(tok)] : []), ...(nivel < 2 && tempoDe(a.desdeS) !== '' ? [tempoDe(a.desdeS)] : [])];
   const modelo = nivel === 0 && t(a.modelo) !== '' ? ` · ${t(a.modelo)}` : '';
   const fim = cauda.length > 0 ? [seg(`  ${cauda.join(' · ')}`, 'inactive')] : [];
-  if (semTask) return aparar([pre, seg('●', gc), seg(' '), seg(ROTULO_FORA_DO_LOOP, 'inactive'), seg(modelo, 'inactive'), seg('  '), ...ctx, ...fim]);
+  if (semTask) return aparar([pre, seg('●', gc), seg(' '), seg(rotuloFora, 'inactive'), seg(modelo, 'inactive'), seg('  '), ...ctx, ...fim]);
   return aparar([
     pre, seg('●', gc), seg(' '), seg(pad(nivel >= 4 ? cortar(nome, nw) : nome, nw), a.cor), seg('  '), ...(vw > 0 ? [seg(pad(textoDoPapel(a.papel), vw))] : []), seg(pad(modelo, mw), 'inactive'),
-    seg('  '), seg(pad(foraDoLoop ? ROTULO_FORA_DO_LOOP : t(a.task), tw)), seg('  '), ...ctx, ...fim,
+    seg('  '), seg(pad(foraDoLoop ? rotuloFora : t(a.task), tw)), seg('  '), ...ctx, ...fim,
   ]);
 }
 
@@ -347,6 +350,10 @@ function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw
 // mantém a prioridade dela, o projeto é o 1º a encolher); < 44, só a contagem. Número nunca cortado: o que cede é o título; a linha cortada termina em "…".
 // PBI sem plano: "sem plano", nunca 0 % (o total diz quantos ficam fora da conta). Previsão: "(medida)" = ritmo medido (T30) só do que tem plano;
 // a parte dos PBIs sem plano vem com "~" e "estimadas" (emenda 19 p.5, D-G13), nunca somada ao %.
+
+/** Forma curta do rótulo único ("fora do loop"), só para a escada de corte do legado: cede antes do modelo. */
+// função, não const: `projeto.ts` e este módulo se importam em ciclo; a const importada ainda não existe na carga
+const rotuloCurto = (): string => ROTULO_FORA_DO_LOOP.replace(/^agente /, '');
 
 /** Largura mínima das linhas por PBI; abaixo, 1 linha de totais. */
 const LARGURA_PROJETO_LINHAS = 72;
@@ -402,6 +409,19 @@ function linhasDoProjeto(p: EstadoProjeto, w: number, mot: (m: string) => string
     return aparar([seg('  '), seg(g, cor), seg(` ${pad(t(l.id), idW)}  `), ...(tw > 0 ? [seg(`${pad(titulos[i], tw)}  `)] : []), seg(txt(l), l.semPlano === true && g !== '?' ? 'inactive' : undefined)]);
   });
   return { totais, pbis };
+}
+
+/**
+ * As linhas únicas (`sem entrega em curso`, `<ID> entregue`) seguem 1 linha, MAS a visão de projeto vem ACIMA delas (emenda 4; é o caso do repo com main
+ * e nada em curso). Exceção: linha única que é item do dono (`◆ …`, o botão "seguir"): o mod só a acha como 1ª/2ª linha de conteúdo, então o projeto vai abaixo.
+ */
+export function comProjetoAcima(e: EstadoPainel, w: number, unica: Linha[]): Linha[] {
+  const p = projetoDe(e);
+  if (p === null) return unica;
+  const dp = linhasDoProjeto(p, w, (m) => (w >= 100 ? ` (${m})` : ''));
+  const proj = [...dp.totais, ...dp.pbis].map((l) => cortarNatural(l, w));
+  const itemDoDono = unica.length > 0 && textoDe(unica[0]).startsWith('◆ ');
+  return itemDoDono ? [...unica, ...proj] : [...proj, ...unica];
 }
 
 // ───────────────────────────── GM-14 T17 (regra dos 5 blocos) + GM-15 T29 (desenho do E4): `renderBlocos` (REQ-GLB-1, REQ-LNG-1, FIEL-10..13) ─────────────────────────────
@@ -630,7 +650,7 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   if (e.umaLinha !== null && e.umaLinha !== undefined) {
     const u = e.umaLinha.ultima;
     const ult = u === null || typeof u?.id !== 'string' ? '' : ` · última: ${idNatural(u.id)}${typeof u.estado === 'string' && u.estado !== '' ? ` (${natural(u.estado)})` : ''}`;
-    return [fim([seg(`GABARITO · sem entrega em curso${ult}`, 'inactive')])]; // GM-15 T32: continua 1 linha (REQ-ENT-1 d i); o projeto só entra na visão de entrega
+    return comProjetoAcima(e, w, [fim([seg(`GABARITO · sem entrega em curso${ult}`, 'inactive')])]); // a linha única segue 1 linha; o projeto vem acima (emenda 4)
   }
 
   const quemTexto = (q: QuemPainel | null | undefined): string => {

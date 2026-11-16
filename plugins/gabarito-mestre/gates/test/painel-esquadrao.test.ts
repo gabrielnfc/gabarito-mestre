@@ -320,8 +320,11 @@ test('esq-zero-vivos-com-sem-agente: mod presente, 0 vivos e 1 ◌ ⇒ "agentes 
 
 test('esq-sem-task: vivo sem task escreve "agente fora do loop" (GM-15 T32) e a cor do glifo é inactive', () => {
   const ls = renderEsquadrao(EXTRAS['sem-task'], op(80));
-  const l = ls.find((x) => TEXTO(x).startsWith('├─ ● agente fora do loop'))!;
-  assert.match(TEXTO(l), /^├─ ● agente fora do loop {2}ctx █░{9} 12% {2}24k$/);
+  // em 80 colunas o rótulo cede ("fora do loop") ANTES de o modelo sair; com folga (100) o rótulo inteiro
+  const l = ls.find((x) => TEXTO(x).startsWith('├─ ● fora do loop'))!;
+  assert.match(TEXTO(l), /^├─ ● fora do loop · sonnet {2}ctx █░{9} 12% {2}24k$/);
+  assert.ok(ls.filter((x) => /^├─ ● /.test(TEXTO(x))).every((x) => TEXTO(x).includes(' · ')), 'o modelo segue em todos os agentes em 80 colunas');
+  assert.match(achar(render(EXTRAS['sem-task'], 100), /^├─ ● agente fora do loop/), /^├─ ● agente fora do loop · sonnet {2}ctx /);
   assert.equal(l.find((s) => s.texto === '●')!.cor, 'inactive');
   assert.ok(render(EXTRAS['sem-task'], 44).includes('├ ● agente fora do loop 12% 24k'));
 });
@@ -716,7 +719,8 @@ test('esq-numero-nunca-cortado-propriedade: todos os nomes de pacote × ids de t
     const l = achar(render(e, w), /^├─ ● /);
     assert.ok(colunas(l) <= w, `${w}: estourou`);
     assert.match(l, /ctx █+░* 64%  128k$/, `${w}: ${l}`);
-    if (w < 70) assert.match(l, /^├─ ● NOME\S*…/, `${w}: o nome é que cede, com …: ${l}`);
-    else assert.match(l, /^├─ ● NOMEMUITOCOMPRIDODOPACOTE /, `${w}: com folga o nome fica inteiro: ${l}`);
+    // GM-15 T32: com o rótulo curto e a barra cedendo, o nome fica inteiro em mais larguras; quando ainda cede, é com `…` e o número intacto
+    assert.match(l, /^├─ ● (NOME\S*…|NOMEMUITOCOMPRIDODOPACOTE )/, `${w}: o nome ou fica inteiro ou cede com …: ${l}`);
+    if (w >= 70) assert.match(l, /^├─ ● NOMEMUITOCOMPRIDODOPACOTE /, `${w}: com folga o nome fica inteiro: ${l}`);
   }
 });

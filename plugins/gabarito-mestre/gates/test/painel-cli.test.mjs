@@ -1119,7 +1119,11 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.equal(e.modo, 'projeto');
     assert.deepEqual(e.umaLinha, { ultima: { id: 'GM-7', estado: '1 de 2 tasks integradas' } });
     assert.equal(e.trilha.ultimaConhecida, 'GM-7');
-    assert.equal(cli(m, ['texto']).stdout, 'GABARITO · sem entrega em curso · última: GM-7 (1 de 2 tasks integradas)\n');
+    // GM-15 T32 (emenda 4): a linha única segue 1 linha e é a ÚLTIMA; o projeto (GM-5 e GM-7, 2 entregas) vem acima dela
+    const txt = cli(m, ['texto']).stdout.trimEnd().split('\n');
+    assert.equal(txt.at(-1), 'GABARITO · sem entrega em curso · última: GM-7 (1 de 2 tasks integradas)');
+    assert.match(txt[0], /^PROJETO /);
+    assert.equal(txt.filter((l) => /^GABARITO/.test(l)).length, 1);
     // GM-5 passa a ser a mais recente ⇒ a linha muda (a regra é o ts, não a ordem das pastas)
     evEm(m, 'GM-5', 'nota', { tipo: 'ideia', texto: 'nova' }, { ts: '2026-11-20T10:00:00.000Z' });
     assert.deepEqual(cli(m, ['estado']).json.estado.umaLinha, { ultima: { id: 'GM-5', estado: '0 de 1 tasks integradas' } });

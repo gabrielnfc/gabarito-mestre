@@ -18,7 +18,7 @@ import { encerramentoDe, trilhaDe } from './trilha.js';
 import { estadoDe, ordenar, proximaAcao, tasksInvalidas, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK } from './loop.js';
                                             
 import { formaInvalida } from './formas.js';
-import { renderBlocos, renderEsquadrao } from './painel-esquadrao.js';
+import { comProjetoAcima, renderBlocos, renderEsquadrao } from './painel-esquadrao.js';
 import { historicoDe } from './painel-texto.js';
 import { renderExecutivo } from './painel-executivo.js';
 import { cortar } from './painel-largura.js';
@@ -32,7 +32,7 @@ export function renderPainel(e              , o              )          {
   // GM-14 T17: estado novo (projetado com `fatos`) ⇒ um renderizador só, os 5 blocos; o executivo é o mesmo sem lúdico (FIEL-12)
   if (e !== null && typeof e === 'object' && e.modo !== undefined && (o?.preset === 'esquadrao' || o?.preset === 'executivo')) {
     const l = linhaEntregue(e, o);
-    return l !== null ? [l] : renderBlocos(e, o);
+    return l !== null ? comProjetoAcima(e, typeof o?.largura === 'number' && Number.isFinite(o.largura) && o.largura >= 1 ? Math.floor(o.largura) : 80, [l]) : renderBlocos(e, o);
   }
   if (o.preset === 'esquadrao') return renderEsquadrao(e, o);
   if (o.preset === 'executivo') return renderExecutivo(e, o);

@@ -601,7 +601,7 @@ describe('costura T18: CLI real em toda fase', { timeout: 180_000 }, () => {
       if (fx.fatos.plano === null && e.umaLinha !== null) {
         // GM-15 T35 (r.13): sem nada que trave o dono (as ideias da fixture são do orquestrador, lembrete dele), o painel fora de entrega é 1 linha
         assert.deepEqual(e.depende.map((d) => d.motivo), ['nada depende de você']);
-        assert.match(t, /^GABARITO · sem entrega em curso/, t);
+        assert.match(t, /^GABARITO · sem entrega em curso/m, t);
       } else if (fx.fatos.plano === null) {
         assert.equal(e.pronto, null);
         assert.match(t, /^fase não medida · /m, t); // GM-15 T32 (emenda 4 item 4): sem plano.json a fase não é medida
@@ -616,10 +616,13 @@ describe('costura T18: CLI real em toda fase', { timeout: 180_000 }, () => {
   test('costura-fora-de-entrega: fase 1 sem eventos ⇒ 1 linha com a última conhecida; com as ideias do orquestrador também (T35 r.13: lembrete dele não trava o dono)', () => {
     const fx = JSON.parse(readFileSync(join(TRILHA, 'fase-1.json'), 'utf8'));
     const vazio = materializar(fx, { semEventos: true });
-    assert.equal(rodar(vazio.repo, 'texto'), 'GABARITO · sem entrega em curso · última: GM-19\n');
+    // GM-15 T32 (emenda 4): a linha única segue 1 linha e é a ÚLTIMA; o projeto (2 entregas no diário) vem acima
+    const unica = (txt) => txt.trimEnd().split('\n').at(-1);
+    assert.equal(unica(rodar(vazio.repo, 'texto')), 'GABARITO · sem entrega em curso · última: GM-19');
     const cheio = materializar(fx);
     const t = rodar(cheio.repo, 'texto');
-    assert.equal(t, 'GABARITO · sem entrega em curso · última: GM-19\n');
+    assert.equal(unica(t), 'GABARITO · sem entrega em curso · última: GM-19');
+    assert.equal(t.split('\n').filter((l) => /^GABARITO/.test(l)).length, 1);
     assert.equal(JSON.parse(rodar(cheio.repo, 'estado')).estado.trilha.progresso, '2 ideias anotadas', 'as ideias seguem contadas na trilha');
   });
 
