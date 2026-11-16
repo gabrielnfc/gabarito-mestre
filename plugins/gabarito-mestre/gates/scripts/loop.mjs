@@ -82,7 +82,7 @@ import { formaInvalida, formaNaGravacao, ID_PERGUNTA_RE, MOTIVOS_REENTREGA, REQ_
 import { itemSemFonte, loteDoDono, pendenciaAberta } from '../dist/depende.js';
 import { estadoDe, foraPermitido, ordenar, podeIntegrar, proximaAcao, TIPOS_DE_TASK, tasksCongeladas } from '../dist/loop.js';
 import { lerLeitura } from '../dist/pouso-pendente.js';
-import { pedidoDeClear } from '../dist/pouso.js';
+import { lerX, pedidoDeClear } from '../dist/pouso.js';
 import { temOnboarding } from './cartao-sessao.mjs';
 import { normalizarCaminho, validarPlano } from '../dist/plano.js';
 import { contarConsultas, hashPergunta, projetarDecisoes, textoAncora, trechoDoReq } from '../dist/sombra.js';
@@ -742,6 +742,10 @@ function abrir(c, plano, task) {
   const v = validarDb(cfg ?? {});
   if (!v.ok) throw new Falha('db_invalido', v.erro);
   const base = ramoDoPrincipal(c.raiz);
+  // GM-15 T34 (emenda 7 r.4): a base é a branch atual do principal; fora da entrega, nasceriam worktrees sobre a branch errada (medido 19:00).
+  if (idDaBranch(base, idPadraoDe(c.raiz)) !== c.entrega) {
+    throw new Falha('base_fora_da_entrega', `a branch atual do principal (${base}) não é da entrega ${c.entrega}: abrir basearia a task na branch errada; volte à branch da entrega e repita`, { base, entrega: c.entrega });
+  }
   const branch = ramo(c, task);
   const existentes = git(c.raiz, 'for-each-ref', '--format=%(refname:short)', 'refs/heads').split('\n').filter(Boolean);
   if (existentes.includes(branch)) {
@@ -832,6 +836,26 @@ function validarTmp(wt) {
 /** Sujeira lida sempre igual, sem depender de `status.showUntrackedFiles` do usuário: modificado, `??` e ignorado (`!!`). */
 const STATUS_SUJEIRA = ['status', '--porcelain', '--untracked-files=normal', '--ignored', '--ignore-submodules=none'];
 
+/**
+ * GM-15 T34 (emenda 7 r.5): depois de remover a worktree, a branch sem commit além da base sai (`git branch -d`, nunca --force), para reabrir não dar `branch_existe`.
+ * Commit próprio, base não gravada ou `-d` recusando ⇒ a branch fica e o motivo vai no retorno.
+ */
+function soltarBranch(c, task) {
+  const branch = ramo(c, task);
+  let tip;
+  let baseSha = '';
+  try {
+    tip = git(c.raiz, 'rev-parse', '--verify', '-q', `refs/heads/${branch}`);
+  } catch {
+    return { branch_removida: false, branch_motivo: `a branch ${branch} não existe mais` };
+  }
+  try { baseSha = git(c.raiz, 'config', '--get', `branch.${branch}.gabaritoBaseSha`); } catch { /* ausente: sem prova */ }
+  if (baseSha === '') return { branch_removida: false, branch_motivo: `a branch ${branch} ficou: sem o sha da base gravado não provo que não há commit próprio` };
+  if (tip !== baseSha) return { branch_removida: false, branch_motivo: `a branch ${branch} ficou: tem commit próprio além da base` };
+  const r = gitOk(c.raiz, 'branch', '-d', branch);
+  return r.ok ? { branch_removida: true } : { branch_removida: false, branch_motivo: `a branch ${branch} ficou: git branch -d recusou (${r.motivo})` };
+}
+
 function fechar(c, task) {
   const wt = worktreeViva(c, task);
   const tmpValido = validarTmp(wt);
@@ -879,7 +903,8 @@ function fechar(c, task) {
     throw new Falha('remove_falhou', `git worktree remove (sem --force) recusou: ${e.message}; a worktree foi mantida`, { banco });
   }
   if (existsSync(wt)) throw new Falha('remove_falhou', `git worktree remove saiu sem erro, mas ${relative(c.raiz, wt)} continua existindo`, { banco });
-  return { task, worktree: wt, removida: true, banco, ignorados_removidos: ignorados };
+  const br = soltarBranch(c, task);
+  return { task, worktree: wt, removida: true, banco, ignorados_removidos: ignorados, ...br };
 }
 
 function carregarMutacoes(c, t) {
@@ -1274,7 +1299,10 @@ function sinaisDe(c, cfg, eventos, flags) {
   else aviso.push('--vivos ausente: assumido 0 (o orquestrador conhece os agentes vivos; o diário não)');
 
   const xEnv = process.env.GABARITO_POUSO_X;
-  const x = xEnv !== undefined && /^\d{1,3}$/.test(xEnv) && Number(xEnv) >= 1 && Number(xEnv) <= 100 ? Number(xEnv) : X_PADRAO;
+  // GM-15 T34 (emenda 7 r.2): o mesmo `lerX` do Stop e do mod (decimal em (0, 100]; inválido ⇒ 50 com aviso).
+  const lx = lerX(xEnv);
+  const x = lx.x;
+  if (lx.aviso !== null) aviso.push(lx.aviso);
 
   let pausado = existsSync(join(c.raiz, '.harness', 'PAUSAR'));
   try {
@@ -1411,6 +1439,21 @@ function avisosDeEmenda(plano, ord, est) {
   return avisos;
 }
 
+/**
+ * GM-15 T34 (backlog da review T26, MINOR-1; REQ-EME-3 B): a redação da Sombra (`emenda.proposta` com `origem: sombra`) REJEITADA vai ao dono como item do lote, sem
+ * ninguém anotar à mão; a Sombra não repropõe na mesma âncora. Entra antes do "atualizar o plugin"/"levar para main", que seguem por último. Nunca lança.
+ */
+export function loteComRedacoes(eventos, lote) {
+  let itens;
+  try {
+    itens = projetarEmendas(eventos).rejeitadas.filter((p) => p.origem === 'sombra' && /^[A-Za-z0-9._-]{1,60}$/.test(p.req))
+      .map((p) => ({ nivel: 'dono', motivo: `decidir a redação da Sombra rejeitada (emenda ${p.seq}, ${p.req}): a Sombra não repropõe nessa âncora`, acoes: [] }));
+  } catch { return lote; }
+  if (itens.length === 0) return lote;
+  const i = lote.findIndex((x) => /^(atualizar o plugin|no fim da entrega)/.test(x.motivo));
+  return i < 0 ? [...lote, ...itens] : [...lote.slice(0, i), ...itens, ...lote.slice(i)];
+}
+
 function proxima(c, plano, flags) {
   const { cfg } = lerConfig(c.raiz);
   const eventos = lerDiarioEstrito(c.dirEntrega);
@@ -1446,7 +1489,7 @@ function proxima(c, plano, flags) {
   // A árvore de aprendizados é lida UMA vez por chamada (nunca por item); só quando há o que despachar.
   const extra = { cfg, ordenados, est, decisoes: projetarDecisoes(eventos), vigentes: acao.tipo === 'despachar' ? aprendizadosDaArvore(c, aviso) : [] };
   // GM-15 T13 (REQ-AUT-1): o que só o dono destrava sai em 1 lote, ao lado da ação (o loop segue no permitido); a Sombra só de origin, a entrega de `lerConfigEntrega`.
-  const lote = loteDoDono(plano, eventos, configDoLote(origin, ce));
+  const lote = loteComRedacoes(eventos, loteDoDono(plano, eventos, configDoLote(origin, ce)));
   return { acao: acao.tipo === 'despachar' ? { ...acao, itens: acao.itens.map((i) => enriquecer(c, plano, eventos, i, aviso, extra)) } : acao, lote, sinais, ...(aviso.length ? { aviso } : {}) };
 }
 

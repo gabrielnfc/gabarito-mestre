@@ -1567,6 +1567,17 @@ describe('proxima', () => {
     assert.equal(r.j.erro, 'diario_invalido');
   });
 
+  test('proxima-x-decimal (GM-15 T34, emenda 7 r.2): GABARITO_POUSO_X decimal vale como no Stop e no mod (lerX); fora de (0, 100] ⇒ 50 com aviso', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['proxima', '--vivos', '0'], { extra: { GABARITO_POUSO_X: '37.5' } }).j.sinais.x, 37.5);
+    assert.equal(amb.cli(['proxima', '--vivos', '0'], { extra: { GABARITO_POUSO_X: ' 0.5 ' } }).j.sinais.x, 0.5);
+    for (const ruim of ['0', '100.5', '1e2', '-3', '50%']) {
+      const r = amb.cli(['proxima', '--vivos', '0'], { extra: { GABARITO_POUSO_X: ruim } });
+      assert.equal(r.j.sinais.x, 50, ruim);
+      assert.ok((r.j.aviso ?? []).some((a) => /GABARITO_POUSO_X inválido/.test(a)), `${ruim}: ${JSON.stringify(r.j.aviso)}`);
+    }
+  });
+
   test('proxima-x-vem-do-ambiente', () => {
     const amb = ambiente();
     assert.equal(amb.cli(['proxima', '--vivos', '0'], { extra: { GABARITO_POUSO_X: '1' } }).j.sinais.x, 1);
@@ -1605,6 +1616,48 @@ describe('integrar entra só o commit aprovado', () => {
     assert.deepEqual(semEfeito(amb), antes);
     assert.ok(!amb.tipos().includes('task.integrada'));
   };
+
+  test('abrir-recusa-branch-de-outra-entrega (GM-15 T34, emenda 7 r.4): base fora da entrega ⇒ base_fora_da_entrega, nada criado', () => {
+    // sem --entrega, a branch de outra entrega infere a outra entrega (plano_ausente, recusa antes); a regra pega o `--entrega` apontando para uma e a base em outra
+    for (const [branch, extra] of [['scratch', ['--entrega', 'GM-10']], ['enabler/GM-11-outra', ['--entrega', 'GM-10']]]) {
+      const amb = ambiente();
+      g(amb.dir, 'checkout', '-q', '-b', branch);
+      const antes = semEfeito(amb);
+      const r = amb.cli(['abrir', 'T1', ...extra]);
+      assert.equal(r.rc, 1, r.out + r.err);
+      assert.equal(r.j.erro, 'base_fora_da_entrega', `${branch} ${extra}`);
+      assert.deepEqual(semEfeito(amb), antes, 'abrir não criou branch nem worktree');
+    }
+  });
+
+  test('abrir-na-branch-da-entrega-segue (a recusa não pega a base certa)', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    g(amb.dir, 'checkout', '-q', '-b', 'enabler/GM-10-outra-faceta');
+    assert.equal(amb.cli(['abrir', 'T2']).rc, 0, 'branch que também resolve para GM-10 é da entrega');
+  });
+
+  test('fechar-sem-commit-apaga-branch (GM-15 T34, emenda 7 r.5): worktree sem commit próprio ⇒ a branch sai (git branch -d) e reabrir não dá branch_existe', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    const r = amb.cli(['fechar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.branch_removida, true);
+    assert.ok(!amb.branches().includes('wt/GM-10-T1'));
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0, 'reabrir depois de fechar sem trabalho');
+    assert.ok(!amb.gitChamadas().some((l) => /branch.*(-D|--force)/.test(l)), 'nunca com force');
+  });
+
+  test('fechar-com-commit-mantem (GM-15 T34, emenda 7 r.5): commit próprio ⇒ a branch fica e o retorno diz', () => {
+    const amb = ambiente();
+    assert.equal(amb.cli(['abrir', 'T1']).rc, 0);
+    amb.commitNaWt('T1', 'src/t1.txt');
+    const r = amb.cli(['fechar', 'T1']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(r.j.branch_removida, false);
+    assert.match(r.j.branch_motivo, /commit/);
+    assert.ok(amb.branches().includes('wt/GM-10-T1'));
+  });
 
   test('abrir-grava-base', () => {
     const amb = ambiente();
@@ -6365,6 +6418,26 @@ describe('GM-15 T13: lote do dono no proxima', () => {
     const soLocal = montar(null, { config: { ...CONFIG_PADRAO, entrega: { base: 'next', autonomia: true }, sombra: { julga_emendas: true, libera_teto: true } } }).cli(['proxima']);
     assert.deepEqual(soLocal.j.lote.map((i) => i.motivo), ['decidir a T2: chegou ao limite de revisões', 'decidir a emenda 1', `atualizar o plugin (instalado: ${VERSAO_PLUGIN}): o diário tem evento de uma versão mais nova`],
       'sem origin: Sombra desligada e base main (sem next ⇒ main)');
+  });
+
+  test('lote-redacao-da-sombra-rejeitada (GM-15 T34, backlog T26 MINOR-1, REQ-EME-3 B): a proposta de origem sombra rejeitada entra no lote do proxima como item do dono, sem ser anotada à mão; a rejeitada do orquestrador e a aberta não', () => {
+    const amb = ambReq();
+    comOrigin(amb, { entrega: { base: 'main' } });
+    grava(amb, relogioDe(), [
+      ['emendas', 'emenda.proposta', PROPOSTA({ origem: 'sombra', req: 'REQ-B-1' })], // seq 1: redação da Sombra
+      ['emendas', 'emenda.proposta', PROPOSTA({ req: 'REQ-C-1' })], // seq 2: do orquestrador
+      ['dono', 'emenda.rejeitada', { proposta_seq: 1, origem: 'dono' }],
+      ['dono', 'emenda.rejeitada', { proposta_seq: 2, origem: 'dono' }],
+    ]);
+    const r = amb.cli(['proxima']);
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.deepEqual(r.j.lote.map((i) => i.motivo), ['decidir a redação da Sombra rejeitada (emenda 1, REQ-B-1): a Sombra não repropõe nessa âncora']);
+    assert.equal(r.j.lote[0].nivel, 'dono');
+    // a proposta da Sombra ainda aberta é a emenda comum a decidir (lote já cobre); rejeitada é que vira o item novo
+    const amb2 = ambReq();
+    comOrigin(amb2, { entrega: { base: 'main' } });
+    grava(amb2, relogioDe(), [['emendas', 'emenda.proposta', PROPOSTA({ origem: 'sombra', req: 'REQ-B-1' })]]);
+    assert.deepEqual(amb2.cli(['proxima']).j.lote.map((i) => i.motivo), ['decidir a emenda 1']);
   });
 
   test('lote-vazio-sem-item-cli: sem nada previsível o proxima devolve lote vazio', () => {
