@@ -33,7 +33,7 @@ import { idPadraoDe, lerConfigOrigin } from '../lib/config.mjs';
 import { dirEntrega, lerEstrito } from '../dist/diario.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { estadoDe, ordenar, proximaAcao, TIPOS_DE_TASK } from '../dist/loop.js';
-import { fechamentoDasAnteriores, projetarPainel, renderPainel, umaLinhaDe } from '../dist/painel.js';
+import { etapasDasAnteriores, fechamentoDasAnteriores, projetarPainel, renderPainel, umaLinhaDe } from '../dist/painel.js';
 import { validarPacote, validarStdinAgentes, usoDoTranscript } from '../dist/painel-equipe.js';
 import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
@@ -626,6 +626,8 @@ export function estadoDoPainel(cwd, opts = {}) {
       ultima: ativ.ultima,
       // h.1: o fechamento medido nas entregas anteriores do repo (da última integrada ao merge na main); sem medida ⇒ `null` e a faixa abre em "?"
       fechamentoS: fechamentoDasAnteriores(ativ.diarios, id),
+      // Emenda 3: as etapas das entregas anteriores, para a previsão com menos de 3 integradas nesta entrega
+      etapasAnteriores: etapasDasAnteriores(ativ.diarios, id),
       ...(medicaoPouso !== undefined ? { medicaoPouso } : {}),
     };
     const projetar = opts.projetar ?? projetarPainel;

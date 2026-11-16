@@ -11,8 +11,9 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } fro
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { etapasDe, fechamentoDasAnteriores, fechamentoDe, ocupacaoDe, previsaoExata, projetarPainel, renderPainel, ritmoDe } from '../src/painel.ts';
+import { etapasDasAnteriores, etapasDe, fechamentoDasAnteriores, fechamentoDe, ocupacaoDe, previsaoExata, projetarPainel, renderPainel, ritmoDe } from '../src/painel.ts';
 import { colunas } from '../src/painel-largura.ts';
+import { mediana } from '../src/diario-puro.ts';
 import * as dist from '../dist/painel.js';
 import * as diario from '../dist/diario.js';
 import { estadoDoPainel } from '../scripts/painel.mjs';
@@ -102,7 +103,7 @@ test('fechamento-na-previsao: soma o fechamento medido depois do caminho; sem me
   assert.equal(sem.conta.fechamentoS, null);
 });
 
-test('fechamento-medido-do-diario: da última integrada ao entrega.encerrada; sem os dois ou fora de ordem, null', () => {
+test('eta-fechamento-medido: da última integrada ao entrega.encerrada; sem os dois ou fora de ordem, null', () => {
   const base = [...ciclo('A', 0), ...ciclo('B', 10)];
   assert.equal(fechamentoDe(D([...base, e(120, 'entrega.encerrada', { entrega: 'GM-15' })])), (120 - 16) * 60);
   assert.equal(fechamentoDe(D(base)), null, 'sem encerramento não há medida');
@@ -355,6 +356,62 @@ test('eta-numero-exibido-e-o-ponto: no replay da GM-14 o 1º número da linha PL
   console.log(`replay GM-14: erro mediano do número exibido ${(med(exibido) * 100).toFixed(1)}% · do ponto ${(med(ponto) * 100).toFixed(1)}%`);
   assert.ok(Math.abs(med(exibido) - med(ponto)) < 0.005, `exibido ${med(exibido)} × ponto ${med(ponto)}`);
   assert.ok(dentro > (ints.length - 3) / 2, `a faixa tem largura abaixo do ponto na maioria dos pontos (${dentro})`);
+});
+
+test('eta-fallback-anteriores: com menos de 3 integradas nesta entrega, as etapas vêm das entregas anteriores do repo (Emenda 3, MAJOR 2 r1)', () => {
+  // as anteriores: o diário real da GM-14 (fixture) e uma entrega sem integrada; a atual (GM-15) fica fora mesmo com etapas
+  const { ev } = replayGm14();
+  const atual = D([...ciclo('A', 0)]);
+  const diarios = [{ id: 'GM-14', eventos: ev }, { id: 'GM-13', eventos: D([ini(0, 'Z')]) }, { id: 'GM-15', eventos: D([...ciclo('Q', 0, 50, 50, 50), ...ciclo('R', 0, 50, 50, 50), ...ciclo('S', 0, 50, 50, 50)]) }];
+  const ant = etapasDasAnteriores(diarios, 'GM-15');
+  const gm14 = etapasDe(ev, new Set(ev.filter((x) => x.tipo === 'task.integrada').map((x) => (x.dados as { task: string }).task)));
+  assert.ok(gm14.impl.length >= 3, 'premissa: a GM-14 tem etapas medidas');
+  assert.deepEqual(ant, gm14, 'só a GM-14 mede; a atual e a sem integrada não entram');
+  const plano = P([['A', []], ['X', []], ['Y', ['X']]]);
+  const est = new Map<string, Est>([['A', { estado: 'integrada', ultimo: atual[0] }], ...pend(['X', 'Y'])]);
+  const agora = T0 + 10 * MIN;
+  assert.equal(previsaoExata(plano, atual, est as never, feitas(['A']), agora, 'UTC', null, 1), null, 'sem as anteriores: 1 integrada não mede');
+  const p = previsaoExata(plano, atual, est as never, feitas(['A']), agora, 'UTC', null, 1, ant) as NonNullable<ReturnType<typeof previsaoExata>>;
+  assert.ok(p !== null, 'com as anteriores a previsão sai');
+  const porTask = mediana(gm14.impl) + mediana(gm14.rev) + mediana(gm14.integ);
+  assert.equal(p.conta.minPorTask, Math.round(porTask / 60), 'min/task = a mediana das etapas da GM-14');
+  assert.equal(p.n, gm14.impl.length, 'a base diz quantas tasks mediram');
+  assert.match(p.motivo as string, /entregas anteriores/, 'o motivo diz de onde vieram as etapas');
+  // 3 integradas nesta entrega: as dela mandam, as anteriores não entram
+  const tres = prever(P([['A', []], ['B', []], ['C', []], ['X', []]]), pend(['X']));
+  const tresAnt = previsaoExata(P([['A', []], ['B', []], ['C', []], ['X', []]]), TRES, comIntegradas(pend(['X'])) as never, feitas(['A', 'B', 'C']), AGORA_TRES, 'UTC', null, 1, ant);
+  assert.deepEqual(tresAnt, tres);
+  // no painel: com 1 integrada e as anteriores na entrada, o PRONTO traz a previsão
+  const s = projetarPainel(plano, atual, E5({ agoraMs: agora, etapasAnteriores: ant, fatos: { branch: 'b', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['A', 'X', 'Y'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' } }));
+  const pv = s.pronto?.previsao as Record<string, any>;
+  assert.ok(pv && pv.conta, 'pronto.previsao com a conta exata');
+  assert.equal(pv.conta.minPorTask, Math.round(porTask / 60));
+  assert.equal(projetarPainel(plano, atual, E5({ agoraMs: agora })).pronto?.previsao, null, 'sem as anteriores, nada');
+});
+
+test('eta-fallback-produtor-cli: o painel.mjs mede as etapas das entregas anteriores do diário e as entrega à projeção (MAJOR 2 r1)', () => {
+  const repo = raizSegura(realpathSync(mkdtempSync(join(tmpdir(), 'painel eta '))));
+  const g = (...a: string[]) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  g('init', '-q', '-b', 'feat/GM-15-x'); g('config', 'user.email', 't@t.test'); g('config', 'user.name', 't'); g('config', 'commit.gpgsign', 'false');
+  writeFileSync(join(repo, 'README.md'), 'x\n'); g('add', '.'); g('commit', '-q', '-m', 'inicio');
+  const semear = (id: string, itens: [string, Record<string, unknown>, string][]) => {
+    const dir = join(repo, '.harness', 'entregas', id);
+    mkdirSync(dir, { recursive: true });
+    for (const [tipo, dados, ts] of itens) {
+      const r = diario.append(dir, 'loop', { ts, autor: 't@t.test', sessao: 'loop', agente: 'orquestrador', tipo, dados } as never) as { ok: boolean };
+      assert.ok(r.ok, `preparo ${tipo}`);
+    }
+  };
+  const c = (t: string, m: number): [string, Record<string, unknown>, string][] => [
+    ['task.iniciada', { task: t, papel: 'implementador' }, iso(m)], ['task.concluida', { task: t, sha: 'a'.repeat(40) }, iso(m + 1)],
+    ['review.veredito', { task: t, veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }, iso(m + 2)], ['task.integrada', { task: t, sha: 'b'.repeat(40), mutacoes: { total: 1, mortas: 1 } }, iso(m + 3)],
+  ];
+  semear('GM-14', [...c('T1', 0), ...c('T2', 10), ...c('T3', 20)]);
+  semear('GM-15', c('T1', 1000));
+  let visto: unknown = 'não chamado';
+  const r = estadoDoPainel(repo, { agoraMs: T0 + 1100 * MIN, projetar: (_p: unknown, _e: unknown, entrada: { etapasAnteriores?: unknown }) => { visto = entrada.etapasAnteriores; return {}; } }) as { ok: boolean };
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(visto, { impl: [60, 60, 60], rev: [60, 60, 60], integ: [60, 60, 60] }, 'as 3 da GM-14; a T1 da GM-15 (a atual) fica fora');
 });
 
 test('eta-faixa-com-ritmo: quando o ritmo domina, a faixa segue os quartis em volta do ponto e o ponto não é a ponta de cima (MINOR 6 r1)', () => {

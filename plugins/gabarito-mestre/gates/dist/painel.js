@@ -270,6 +270,22 @@ export function fechamentoDasAnteriores(diarios                                 
   return fs.length === 0 ? null : mediana(fs);
 }
 
+/**
+ * Emenda 3 (fallback): as etapas das OUTRAS entregas do repo, juntas (cada uma com as suas integradas); a `atual` fica fora. A previsão usa
+ * quando a entrega corrente ainda não mediu 3 tasks.
+ */
+export function etapasDasAnteriores(diarios                                                  , atual               )         {
+  const saida         = { impl: [], rev: [], integ: [] };
+  for (const d of diarios) {
+    if (d.id === atual || !Array.isArray(d.eventos)) continue;
+    const ints = new Set        ();
+    for (const ev of d.eventos) { const id = taskDe(ev); if (tipoDe(ev) === 'task.integrada' && id !== null) ints.add(id); }
+    const et = etapasDe(d.eventos, ints);
+    saida.impl.push(...et.impl); saida.rev.push(...et.rev); saida.integ.push(...et.integ);
+  }
+  return saida;
+}
+
 /** Tempo que falta para a task, com crédito do que já rodou na etapa atual (piso 0). `q` escolhe a medida da etapa (mediana ou quartil). */
 function faltaDaTask(est                              , agoraMs        , e                                              )         {
   if (est === undefined || est.estado === 'pendente' || est.estado === 'reprovada' || est.estado === 'no_teto') return e.impl + e.rev + e.integ;
@@ -330,9 +346,12 @@ function escalonar(deps                       , falta                     , p   
  */
 export function previsaoExata(
   plano       , eventos          , estados                                       , integradas                     ,
-  agoraMs        , fuso        , fechamentoS               , rodadas               ,
+  agoraMs        , fuso        , fechamentoS               , rodadas               , anteriores                = null,
 )                       {
-  const et = etapasDe(eventos, integradas);
+  const daqui = etapasDe(eventos, integradas);
+  // Emenda 3: menos de 3 medidas aqui ⇒ as das entregas anteriores do repo; o ritmo desta entrega (de 0 a 2 integradas) não sustenta conta e fica fora
+  const fallback = daqui.impl.length < 3 && anteriores !== null && Array.isArray(anteriores.impl) && anteriores.impl.length >= 3;
+  const et = fallback ? (anteriores          ) : daqui;
   if (et.impl.length < 3) return null;
   const med = (xs          )         => mediana(xs);
   const q = (xs          , x        )         => quantil([...xs].sort((a, b) => a - b), x);
@@ -348,7 +367,7 @@ export function previsaoExata(
   const soma = f ?? 0;
   // o caminho crítico é o piso; o ritmo medido (relógio por task integrada, com as paradas dentro) é o que ele não vê. O ponto é o maior dos dois.
   const abertas = plano.tasks.filter((t) => faltaDaTask(estados.get(t.id), agoraMs, medidas) > 0).length;
-  const ritmo = ritmoDe(eventos, integradas, agoraMs);
+  const ritmo = fallback ? null : ritmoDe(eventos, integradas, agoraMs);
   const piso = meio.fim / oc;
   const pontoS = Math.max(piso, ritmo === null ? 0 : ritmo * abertas);
   // a faixa é a do ponto: a razão P25 ÷ mediana e P75 ÷ mediana do caminho aplicada a ELE (ritmo ou caminho), então o ponto fica dentro dela
@@ -363,7 +382,8 @@ export function previsaoExata(
     hora: hora(restanteS), restanteS, maisMenosS: (alto - baixo) / 2, n: et.impl.length,
     conta: { caminho: meio.cadeia, minPorTask: Math.round(porTaskS / 60), rodadas, fechamentoS: f, ocupacao: oc, ritmoMin: ritmo === null ? null : Math.round(ritmo / 60) },
     faixa: { de: hora(baixo), ate: f === null ? '?' : hora(alto) },
-    motivo: f === null ? 'fechamento não medido: sem entrega anterior com registro' : null,
+    motivo: [fallback ? `etapas das entregas anteriores: ${daqui.impl.length} de 3 integradas nesta` : null, f === null ? 'fechamento não medido: sem entrega anterior com registro' : null]
+      .filter((x) => x !== null).join('; ') || null,
   };
 }
 
@@ -385,7 +405,11 @@ const PREVISAO_DO_ESTADO = new WeakMap                              ();
 function previsaoDo(plano       , ord          , c         , integradas                     , agora        , fuso        , rodadas               , entrada               )                       {
   const dado          = entrada.fechamentoS; // tipo declarado; o valor ainda pode vir de fora do contrato
   const fechamento = typeof dado === 'number' && Number.isFinite(dado) && dado >= 0 ? dado : fechamentoDe(ord);
-  return previsaoExata(plano, ord, c.estados, integradas, agora, fuso, fechamento, rodadas);
+  const ant          = entrada.etapasAnteriores;
+  const ok = (xs         )                 => Array.isArray(xs) && xs.every((x) => typeof x === 'number' && Number.isFinite(x) && x >= 0);
+  const anteriores = ant !== null && typeof ant === 'object' && ok((ant          ).impl) && ok((ant          ).rev) && ok((ant          ).integ)
+    && (ant          ).impl.length === (ant          ).rev.length && (ant          ).rev.length === (ant          ).integ.length ? (ant          ) : null;
+  return previsaoExata(plano, ord, c.estados, integradas, agora, fuso, fechamento, rodadas, anteriores);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -968,7 +992,8 @@ function projetarNovo(plano              , eventos                 , entrada    
   const feitas = legado.plano.feitas;
   const total = p.tasks.length;
   const pronto = plano !== null && total > 0
-    ? { integradas: feitas, total, previsao: feitas >= 3 && feitas < total && legado.plano.eta !== null ? previsaoDoPronto(legado) : null }
+    ? { integradas: feitas, total, previsao: feitas < total && (PREVISAO_DO_ESTADO.get(legado) ?? null) !== null ? previsaoDoPronto(legado)
+      : feitas >= 3 && feitas < total && legado.plano.eta !== null ? previsaoDoPronto(legado) : null }
     : null;
   const nAtivos = agentes?.length ?? 0;
   const sufixo           = [];
