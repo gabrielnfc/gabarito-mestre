@@ -903,7 +903,9 @@
         "plugins/gabarito-mestre/gates/scripts/stop-loop.mjs",
         "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
         "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs",
-        "plugins/gabarito-mestre/mod/painel.mjs"
+        "plugins/gabarito-mestre/mod/painel.mjs",
+        "plugins/gabarito-mestre/gates/scripts/responder.mjs",
+        "plugins/gabarito-mestre/gates/test/responder.test.mjs"
       ]
     }
   ]
