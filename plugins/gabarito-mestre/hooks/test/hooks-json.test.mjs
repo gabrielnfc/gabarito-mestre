@@ -10,6 +10,8 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { HOOKS, PLUGIN } from './_comum.mjs';
 
+const COMANDOS_DO_DONO = ['reabrir-entrega', 'adiar', 'cortar', 'reabrir'];
+
 describe('hooks.json — registro dos hooks (T16)', () => {
   const cfg = JSON.parse(readFileSync(join(HOOKS, 'hooks.json'), 'utf8')).hooks;
   const cmds = (grupo) => grupo.hooks.map((h) => h.command);
@@ -107,7 +109,7 @@ describe('hooks.json — registro dos hooks (T16)', () => {
   });
   test('emenda-user-prompt-expansion-onfailure-block: matcher ancorado, node, timeout 10, onFailure block; liberar intacto', () => {
     const grupos = cfg.UserPromptExpansion;
-    assert.deepEqual(grupos.map((g) => g.matcher), ['^gabarito-mestre:liberar$', '^gabarito-mestre:emenda$', '^gabarito-mestre:aprovar$', '^gabarito-mestre:responder$']);
+    assert.deepEqual(grupos.map((g) => g.matcher), ['^gabarito-mestre:liberar$', '^gabarito-mestre:emenda$', '^gabarito-mestre:aprovar$', '^gabarito-mestre:responder$', ...COMANDOS_DO_DONO.map((n) => `^gabarito-mestre:${n}$`)]);
     const g = grupos[1];
     assert.equal(g.hooks.length, 1);
     assert.equal(g.hooks[0].type, 'command');
@@ -141,9 +143,25 @@ describe('hooks.json — registro dos hooks (T16)', () => {
       assert.equal(JSON.parse(b.stdout).decision, 'block', ruim);
     }
   });
+  test('comandos-do-dono-onfailure-block: 4 matchers ancorados, 1 só script, node, timeout 10, onFailure block (GM-15 T7; M7d)', () => {
+    const grupos = cfg.UserPromptExpansion.filter((g) => COMANDOS_DO_DONO.some((n) => g.matcher === `^gabarito-mestre:${n}$`));
+    assert.equal(grupos.length, 4);
+    assert.ok(existsSync(join(PLUGIN, 'gates', 'scripts', 'comando-dono.mjs')));
+    for (const g of grupos) {
+      assert.equal(g.hooks.length, 1);
+      assert.equal(g.hooks[0].type, 'command');
+      assert.equal(g.hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/comando-dono.mjs"');
+      assert.equal(g.hooks[0].timeout, 10);
+      assert.equal(g.hooks[0].onFailure, 'block', g.matcher);
+      const re = new RegExp(g.matcher);
+      for (const n of ['gabarito-mestre:reabrir-entregaX', 'gabarito-mestre:adiarX', 'x:gabarito-mestre:cortar', 'gabarito-mestre:reabrir ', 'reabrir']) assert.equal(re.test(n), false, `${g.matcher} pegou ${n}`);
+    }
+    // `reabrir` não pega `reabrir-entrega` (e vice-versa): cada comando cai em exatamente 1 grupo
+    for (const n of COMANDOS_DO_DONO) assert.equal(cfg.UserPromptExpansion.filter((g) => new RegExp(g.matcher).test(`gabarito-mestre:${n}`)).length, 1, n);
+  });
   test('hooks-json-aprovar-onfailure-block: matcher ancorado, node, timeout 10, onFailure block; liberar e emenda intactos (E4 T1)', () => {
     const grupos = cfg.UserPromptExpansion;
-    assert.equal(grupos.length, 4);
+    assert.equal(grupos.length, 4 + COMANDOS_DO_DONO.length);
     const g = grupos[2];
     assert.equal(g.matcher, '^gabarito-mestre:aprovar$');
     assert.equal(g.hooks.length, 1);
