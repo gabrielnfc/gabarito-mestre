@@ -48,8 +48,8 @@ function linhaEntregue(e              , o              )               {
   if (ent === null || ent === undefined || typeof ent.id !== 'string' || !ID_ENTREGUE.test(ent.id)) return null;
   const p = e.proxima;
   const daProxima = p !== null && p !== undefined && typeof p.texto === 'string' ? motivoDaProxima(p.texto) : null;
-  // r1 MAJOR-2: o que não é da entrega e ficou no estado (PAROU, pergunta, ATENÇÃO do `_sem-id`, o /clear da sessão, fonte que falhou) ⇒ os blocos
-  if ((e.agora?.agentes?.length ?? 0) > 0 || (e.agora?.segundoPlano?.length ?? 0) > 0 || ehObj(e.parar) || ehObj(e.pergunta)
+  // r1 MAJOR-2: o que não é da entrega e ficou no estado (pergunta, ATENÇÃO do `_sem-id`; no DEPENDE o PAROU, o /clear da sessão, fonte que falhou) ⇒ os blocos
+  if ((e.agora?.agentes?.length ?? 0) > 0 || (e.agora?.segundoPlano?.length ?? 0) > 0 || ehObj(e.pergunta)
     || (Array.isArray(e.atencao) && e.atencao.length > 0)
     || (Array.isArray(e.depende) && e.depende.some((i) => i?.motivo !== NADA && i?.motivo !== daProxima))) return null;
   const w = typeof o?.largura === 'number' && Number.isFinite(o.largura) && o.largura >= 1 ? Math.floor(o.largura) : 80;

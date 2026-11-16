@@ -1551,3 +1551,29 @@ test('entregue-so-zera-a-entrega: em main (diário _sem-id) a GM-14 encerrada ma
     assert.ok(c.depende.some((i) => i.motivo === 'limpar a conversa'), `${doDiario}: /clear continua: ${JSON.stringify(c.depende)}`);
   }
 });
+
+// ── review r1 MINOR-4: cada guarda da linha única (`linhaEntregue`) tem caso próprio que a derruba sozinha: fonte que falhou, pergunta, PAROU, ATENÇÃO ──
+test('entregue-com-pendencia-volta-aos-blocos: fonte falha, pergunta, PAROU ou ATENÇÃO que não são da entrega ⇒ os blocos, nunca a linha única', () => {
+  const fatosMain = { branch: 'main', idPadrao: '[A-Z]+-\\d+', specs: [], plano: null, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' };
+  const base = (extra: Record<string, unknown> = {}) => ({
+    decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+    pacote: { nome: 'Terra Média', lider: 'GANDALF', sabio: 'ELROND', nomes: ['ARAGORN', 'LEGOLAS'] }, notificacao: null, agoraMs: AGORA, fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
+    entregaId: null, modeloSessao: null, specSha: null, tetoSombra: 26, fatos: fatosMain,
+    entregue: { id: 'GM-14', versao: null }, proxima: { tipo: 'nenhuma', texto: 'nenhuma próxima anotada', acoes: [] }, entregueDoDiario: false, ...extra,
+  }) as unknown as Parameters<typeof projetarPainel>[2];
+  const ev = (tipo: string, dados: unknown, seq: number, agente = 'orquestrador'): Evento => ({ seq, ts: iso(seq), autor: 't', sessao: 's1', agente, tipo, dados, hash_anterior: null } as unknown as Evento);
+  const linhas = (evs: Evento[], extra: Record<string, unknown> = {}) => renderPainel(projetarPainel(null, evs, base(extra)), { preset: 'esquadrao', largura: 100, tema: 'color' } as never).map((l) => (Array.isArray(l) ? l.map((s) => s.texto).join('') : l.texto));
+  // controle: nada além da entregue ⇒ a linha única
+  assert.deepEqual(linhas([]), ['GABARITO · GM-14 entregue · nenhuma próxima anotada']);
+  const casos: Array<[string, Evento[], Record<string, unknown>, RegExp]> = [
+    ['fonte que falhou', [], { fontesFalhas: ['as specs'] }, /specs/],
+    ['pergunta', [ev('nota', { tipo: 'duvida', texto: 'qual cor?', opcoes: ['azul', 'verde'] }, 1, 'implementador')], {}, /qual cor\?/],
+    ['PAROU', [1, 2, 3].map((n) => ev('loop.parar', { motivo: 'sem_progresso' }, n)), {}, /PAROU/],
+    ['ATENÇÃO', [ev('sombra.consulta', { pergunta_hash: 'd'.repeat(64), req: 'REQ-A-1' }, 1, 'sombra')], {}, /consulta à Sombra/],
+  ];
+  for (const [nome, evs, extra, re] of casos) {
+    const ls = linhas(evs, extra);
+    assert.ok(ls.length > 1, `${nome}: blocos, não a linha única: ${JSON.stringify(ls)}`);
+    assert.ok(ls.some((l) => re.test(l)), `${nome}: o item aparece: ${JSON.stringify(ls)}`);
+  }
+});
