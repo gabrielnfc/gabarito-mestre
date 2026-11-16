@@ -75,6 +75,7 @@ export const USO_GABARITO = [
   '/gabarito painel lateral    painel ao lado  (ou: acima, acima da conversa)',
   '/gabarito painel ocultar    esconde o painel; PAROU e perguntas ficam',
   '/gabarito painel mostrar    traz o painel de volta',
+  '/gabarito painel depende    mostra todos os itens que dependem de você (ou só 5)',
   '/gabarito painel ligar      volta a abrir sozinho',
   '/gabarito painel desligar   fecha e não abre sozinho; só o aviso de PAROU',
   '                            continua',
