@@ -353,3 +353,21 @@ test('t26-quem-redige-na-ancora: só por REQ; orquestrador até 2 rejeições, S
   const outro = projetarEmendas([prop(1, { req: 'REQ-EME-2' }), prop(2, { req: 'REQ-EME-2' }), rejeita('s', 1, 1), rejeita('s', 2, 2)]);
   assert.equal(quemRedigeNaAncora(outro, 'REQ-EME-1').quem, 'orquestrador', 'outro REQ não conta');
 });
+
+test('t26-sombra-rejeitada-em-outro-req-nao-prende-esta-ancora', () => {
+  const est = projetarEmendas([
+    prop(1, { req: 'REQ-EME-2' }), prop(2, { req: 'REQ-EME-2', origem: 'sombra' }), rejeita('s', 2, 2), // Sombra rejeitada no REQ-EME-2
+    prop(3), prop(4), rejeita('s', 3, 3), rejeita('s', 4, 4), // 2 rejeições do orquestrador no REQ-EME-1
+  ]);
+  assert.deepEqual(quemRedigeNaAncora(est, 'REQ-EME-1'), { quem: 'sombra', rejeicoes: 2 });
+  assert.equal(validarProposta(plano(T('t', [], [])), est, dadosProp({ origem: 'sombra' })), null, 'a Sombra ainda redige no REQ-EME-1');
+});
+
+test('t26-mensagem-dono-nao-manda-a-sombra-redigir', () => {
+  const est = projetarEmendas([prop(1), prop(2), prop(3, { origem: 'sombra' }), rejeita('s', 1, 1), rejeita('s', 2, 2), rejeita('s', 3, 3)]);
+  const m = validarProposta(plano(T('t', [], [])), est, dadosProp()) ?? '';
+  assert.match(m, /vai ao dono/);
+  assert.ok(!m.includes('Sombra redige'), m);
+  const so2 = projetarEmendas([prop(1), prop(2), rejeita('s', 1, 1), rejeita('s', 2, 2)]);
+  assert.match(validarProposta(plano(T('t', [], [])), so2, dadosProp()) ?? '', /a Sombra redige o texto/, 'quem=sombra mantém a mensagem');
+});

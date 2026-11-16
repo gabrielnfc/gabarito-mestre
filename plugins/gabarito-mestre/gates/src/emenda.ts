@@ -161,8 +161,9 @@ export function validarProposta(plano: Plano, est: EstadoEmendas, dados: Record<
   if (origem === 'sombra') {
     if (quem === 'dono') return 'redação da Sombra rejeitada nesta âncora: vai ao dono (a Sombra não repropõe)';
     if (quem === 'orquestrador') return 'origem sombra só depois da 2ª rejeição da mesma âncora';
-  } else if (quem !== 'orquestrador') {
-    // dono: a Sombra já foi rejeitada e o orquestrador não tem 3ª; sombra: ainda cabe à Sombra o texto. Nos dois, esta proposta não grava.
+  } else if (quem === 'dono') {
+    return 'terceira proposta do orquestrador na mesma âncora: a redação da Sombra já foi rejeitada, vai ao dono';
+  } else if (quem === 'sombra') {
     return 'terceira proposta do orquestrador na mesma âncora: a Sombra redige o texto (origem sombra)';
   }
   if (task !== undefined) {

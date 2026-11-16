@@ -1239,4 +1239,17 @@ describe('GM-15 T11: perguntar --proposta', () => {
     assert.match(brief, /Proposta de emenda #3 \(REQ-A-1\)[^\n]*redigida pela Sombra/);
     assert.ok(!brief.includes('redija'), 'proposta da própria Sombra não pede redação');
   });
+
+  test('t26-sombra-rejeitada-em-outro-req-nao-prende-esta-ancora: o brief do REQ-A-1 ainda pede redação', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-2'); // 1
+    propostaCom(r, 'REQ-A-2', { origem: 'sombra' }); // 2
+    propostaCom(r, 'REQ-A-1'); // 3
+    propostaCom(r, 'REQ-A-1'); // 4
+    propostaCom(r, 'REQ-A-1'); // 5, aberta
+    for (const n of [2, 3, 4]) rejeitar(r, n); // Sombra rejeitada no REQ-A-2; 2 do orquestrador no REQ-A-1
+    const { rc, out } = sobre(r, 5);
+    assert.equal(rc, 0, JSON.stringify(out));
+    assert.ok(readFileSync(join(r.raiz, out.brief), 'utf8').includes('redija'), 'REQ-A-1 segue com a Sombra redigindo');
+  });
 });
