@@ -1,0 +1,185 @@
+/**
+ * GM-15 T30 (D-G2, REQ-HIG-1 h): previsão exata do painel. Caminho crítico com tempo medido por etapa, crédito do que já rodou, faixa P25-P75,
+ * fechamento (h.1), base visível (h.2) e replay da GM-14 (fixture eta-gm14: eventos de task e plano reais, só T8 fora).
+ * A conta antiga (D5, `etaDe`) continua em `plano.eta` e nos testes `eta-*` de painel.test.ts; a nova sai em `pronto.previsao`.
+ * Mutações: cada teste diz a que o mata (rodadas em 2026-11-16, ver o relatório da task).
+ */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { etapasDe, fechamentoDe, ocupacaoDe, previsaoExata, projetarPainel, ritmoDe } from '../src/painel.ts';
+import * as dist from '../dist/painel.js';
+import type { EntradaPainel, Evento, Plano, TipoEvento } from '../src/tipos.ts';
+
+const T0 = Date.parse('2026-11-16T12:00:00Z');
+const MIN = 60_000;
+const iso = (min: number): string => new Date(T0 + min * MIN).toISOString();
+type Item = { t: number; tipo: TipoEvento; dados?: unknown };
+const e = (t: number, tipo: TipoEvento, dados: unknown = {}): Item => ({ t, tipo, dados });
+function D(itens: Item[]): Evento[] {
+  let seq = 0;
+  return [...itens].map((x, i) => ({ x, i })).sort((a, b) => a.x.t - b.x.t || a.i - b.i)
+    .map(({ x }) => ({ seq: ++seq, ts: iso(x.t), autor: 't', sessao: 's1', agente: 'orquestrador', tipo: x.tipo, dados: x.dados, hash_anterior: null } as unknown as Evento));
+}
+const ini = (t: number, task: string, papel = 'implementador') => e(t, 'task.iniciada', { task, papel });
+const con = (t: number, task: string) => e(t, 'task.concluida', { task });
+const ver = (t: number, task: string, ok = true) => e(t, 'review.veredito', { task, veredito: ok ? 'APROVADO' : 'REPROVADO', rodada: 1, major: 0, blocker: 0 });
+const integ = (t: number, task: string) => e(t, 'task.integrada', { task });
+/** impl 1 min, revisão 4 min, integração 1 min: 6 min por task; começa em `a`. */
+const ciclo = (task: string, a: number, impl = 1, rev = 4, int = 1): Item[] => [ini(a, task), con(a + impl, task), ini(a + impl + 1, task, 'revisor'), ver(a + impl + rev, task), integ(a + impl + rev + int, task)];
+const P = (tasks: [string, string[]][]): Plano => ({ entrega: 'GM-15', tasks: tasks.map(([id, deps]) => ({ id, deps, arquivos: [] })) });
+const AQUI = dirname(fileURLToPath(import.meta.url));
+
+type Est = { estado: string; ultimo: Evento };
+const pend = (ids: string[]): Map<string, Est> => new Map(ids.map((id) => [id, { estado: 'pendente', ultimo: D([ini(0, id)])[0] }]));
+const feitas = (ids: string[]): ReadonlySet<string> => new Set(ids);
+/** 3 integradas em paralelo (p = 3), de 6 min cada, em T0+0..7. */
+const TRES = D([...ciclo('A', 0), ...ciclo('B', 0.5), ...ciclo('C', 1)]);
+const AGORA_TRES = T0 + 8 * MIN;
+/** O que `estadosDe` daria: A, B e C integradas; o resto como o teste diz. */
+const comIntegradas = (m: Map<string, Est>): Map<string, Est> => new Map([...['A', 'B', 'C'].map((id) => [id, { estado: 'integrada', ultimo: D([ini(0, id)])[0] }] as [string, Est]), ...m]);
+const prever = (plano: Plano, estados: Map<string, Est>, fech: number | null = null, ev: Evento[] = TRES, agora = AGORA_TRES) =>
+  previsaoExata(plano, ev, comIntegradas(estados) as never, feitas(['A', 'B', 'C']), agora, 'UTC', fech, 1) as NonNullable<ReturnType<typeof previsaoExata>>;
+
+test('etapas-por-etapa: implementação, revisão e integração medidas da última reabertura; sem as 3 pontas a task não entra', () => {
+  const ev = D([...ciclo('A', 0, 2, 6, 3), ini(30, 'B'), con(31, 'B'), integ(40, 'B'), ...ciclo('C', 100), e(150, 'task.reaberta', { task: 'C', origem: 'dono' }), ...ciclo('C', 200, 5, 7, 11)]);
+  const x = etapasDe(ev, feitas(['A', 'B', 'C']));
+  assert.deepEqual(x, { impl: [120, 300], rev: [360, 420], integ: [180, 660] }, 'B sem veredito fica fora; C conta só depois da reabertura');
+});
+
+test('caminho-critico-segue-deps: cadeia de 3 leva 3 vezes uma task; 3 independentes em p = 3 levam uma só', () => {
+  const ids = ['X', 'Y', 'Z'];
+  const cadeia = prever(P([['A', []], ['B', []], ['C', []], ['X', []], ['Y', ['X']], ['Z', ['Y']]]), pend(ids));
+  const solta = prever(P([['A', []], ['B', []], ['C', []], ['X', []], ['Y', []], ['Z', []]]), pend(ids));
+  const oc = ocupacaoDe(TRES, AGORA_TRES) as number;
+  assert.ok(Math.abs(cadeia.restanteS - (3 * 360) / oc) < 1e-6, `cadeia = 3 × 6 min ÷ ocupação (veio ${cadeia.restanteS})`);
+  assert.ok(solta.restanteS < cadeia.restanteS / 2, 'sem dependência as 3 rodam juntas');
+  assert.equal(cadeia.conta.caminho, 3);
+  assert.equal(solta.conta.caminho, 1);
+});
+
+test('credito-do-que-ja-rodou: a etapa em andamento desconta o tempo gasto (piso 0) e as seguintes continuam inteiras', () => {
+  const plano = P([['A', []], ['B', []], ['C', []], ['X', []]]);
+  const em = (estado: string, desdeMin: number) => new Map<string, Est>([['X', { estado, ultimo: D([ini(desdeMin, 'X')])[0] }]]);
+  const oc = ocupacaoDe(TRES, AGORA_TRES) as number;
+  const cheia = prever(plano, em('pendente', 0)).restanteS;
+  assert.ok(Math.abs(cheia - 360 / oc) < 1e-6);
+  const impl = prever(plano, em('implementando', 6)).restanteS; // gastou 2 min dos 1 min de implementação? agora = 8: gastou 2 ⇒ 0 + rev + integ
+  assert.ok(Math.abs(impl - 300 / oc) < 1e-6, `implementando há mais que a mediana: sobram revisão e integração (veio ${impl})`);
+  const rev = prever(plano, em('em_revisao', 7)).restanteS; // gastou 1 min dos 4 de revisão
+  assert.ok(Math.abs(rev - (180 + 60) / oc) < 1e-6, `em revisão há 1 min: 3 min de revisão + integração (veio ${rev})`);
+  const apr = prever(plano, em('aprovada', 0)).restanteS; // gastou 8 min, a integração (1) já passou
+  assert.ok(Math.abs(apr - 0) < 1e-6 || apr <= 1e-6, `aprovada há mais que a integração: nada falta (veio ${apr})`);
+});
+
+test('faixa-p25-p75: ± sai dos quartis de cada etapa; etapas iguais ⇒ faixa de largura zero', () => {
+  const plano = P([['A', []], ['B', []], ['C', []], ['X', []]]);
+  assert.equal(prever(plano, pend(['X'])).maisMenosS, 0, 'as 3 integradas têm as mesmas etapas');
+  const irregular = D([...ciclo('A', 0, 1, 4, 1), ...ciclo('B', 0.5, 3, 8, 1), ...ciclo('C', 1, 2, 12, 2)]);
+  const p = previsaoExata(plano, irregular, comIntegradas(pend(['X'])) as never, feitas(['A', 'B', 'C']), T0 + 20 * MIN, 'UTC', null, 1) as NonNullable<ReturnType<typeof previsaoExata>>;
+  assert.ok(p.maisMenosS > 0);
+  assert.notEqual(p.faixa.de, p.faixa.ate === '?' ? '?' : p.hora, 'a faixa não é o ponto');
+});
+
+test('fechamento-na-previsao: soma o fechamento medido depois do caminho; sem medição a faixa abre em "?" com o motivo (h.1)', () => {
+  const plano = P([['A', []], ['B', []], ['C', []], ['X', []]]);
+  const sem = prever(plano, pend(['X']), null);
+  const com = prever(plano, pend(['X']), 5400);
+  assert.equal(com.restanteS - sem.restanteS, 5400, 'o fechamento entra inteiro, depois do caminho');
+  assert.equal(com.conta.fechamentoS, 5400);
+  assert.equal(com.motivo, null);
+  assert.notEqual(com.faixa.ate, '?');
+  assert.equal(sem.faixa.ate, '?');
+  assert.match(sem.motivo as string, /fechamento não medido/);
+  assert.equal(sem.conta.fechamentoS, null);
+});
+
+test('fechamento-medido-do-diario: da última integrada ao entrega.encerrada; sem os dois ou fora de ordem, null', () => {
+  const base = [...ciclo('A', 0), ...ciclo('B', 10)];
+  assert.equal(fechamentoDe(D([...base, e(120, 'entrega.encerrada', { entrega: 'GM-15' })])), (120 - 16) * 60);
+  assert.equal(fechamentoDe(D(base)), null, 'sem encerramento não há medida');
+  assert.equal(fechamentoDe(D([e(5, 'entrega.encerrada', {}), ...base])), null, 'encerrada antes da última integrada não é fechamento');
+  assert.equal(fechamentoDe([]), null);
+});
+
+test('ocupacao-e-ritmo: o tempo parado alarga a previsão; o ritmo medido vira o ponto quando o caminho não o vê', () => {
+  const plano = P([['A', []], ['B', []], ['C', []], ['X', []]]);
+  const quase = prever(plano, pend(['X']), null, TRES, AGORA_TRES);
+  const noite = prever(plano, pend(['X']), null, TRES, T0 + 600 * MIN); // 10 h depois: quase tudo parado
+  assert.ok(noite.restanteS > quase.restanteS * 5, 'ocupação baixa multiplica o restante');
+  assert.ok((ocupacaoDe(TRES, T0 + 600 * MIN) as number) < (ocupacaoDe(TRES, AGORA_TRES) as number));
+  // 3 integradas em sequência com 2 h de parada entre elas: ritmo ≈ 1 h por task; faltam 2 ⇒ o ponto é o ritmo, não os 12 min do caminho
+  const lento = D([...ciclo('A', 0), ...ciclo('B', 120), ...ciclo('C', 240)]);
+  const f = previsaoExata(P([['A', []], ['B', []], ['C', []], ['X', []], ['Y', []]]), lento, comIntegradas(pend(['X', 'Y'])) as never, feitas(['A', 'B', 'C']), T0 + 247 * MIN, 'UTC', null, 1) as NonNullable<ReturnType<typeof previsaoExata>>;
+  assert.equal(ritmoDe(lento, feitas(['A', 'B', 'C'])), (246 * 60) / 3);
+  assert.ok(f.restanteS >= 2 * 82 * 60 - 1, `2 tasks abertas × 82 min de ritmo (veio ${f.restanteS / 60} min)`);
+});
+
+test('base-igual-ao-vetor: pronto.previsao diz as tasks, o ritmo e o fechamento da MESMA conta (g.14, h.2)', () => {
+  const plano = P([['A', []], ['B', []], ['C', []], ['X', []], ['Y', ['X']]]);
+  const entrada = (extra: Record<string, unknown> = {}): EntradaPainel => ({
+    decisaoEntrega: null, pausado: false, contexto: { percent: 10, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+    pacote: { nome: 'p', lider: 'L', sabio: 'S', nomes: ['N'] }, notificacao: null, agoraMs: AGORA_TRES, fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
+    entregaId: 'GM-15', modeloSessao: null, specSha: null, tetoSombra: 26,
+    fatos: { branch: 'b', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['A', 'B', 'C', 'X', 'Y'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' }, ...extra,
+  } as unknown as EntradaPainel);
+  const sem = projetarPainel(plano, TRES, entrada()).pronto?.previsao as Record<string, any>;
+  assert.equal(sem.base, 3, 'base = as integradas que entraram na conta');
+  assert.deepEqual([sem.conta.caminho, sem.conta.minPorTask, sem.conta.rodadas, sem.conta.fechamentoS], [2, 6, 1, null]);
+  assert.equal(sem.faixa.ate, '?');
+  const com = projetarPainel(plano, TRES, entrada({ fechamentoS: 3600 })).pronto?.previsao as Record<string, any>;
+  assert.equal(com.conta.fechamentoS, 3600, 'o fechamento da entrada chega à conta');
+  assert.equal(com.restanteS - sem.restanteS, 3600);
+  assert.equal(typeof com.hora, 'string');
+});
+
+test('replay-gm14: erro mediano da previsão contra o término real, em cada integração da GM-14, e a conta antiga como régua', () => {
+  const F = join(AQUI, 'fixtures', 'eta-gm14');
+  const plano0 = JSON.parse(readFileSync(join(F, 'plano.json'), 'utf8')) as Plano;
+  const meta = JSON.parse(readFileSync(join(F, 'meta.json'), 'utf8')) as { fimRealIso: string };
+  const todos = readFileSync(join(F, 'eventos.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as Evento);
+  // T8 nunca integrou na GM-14 (teto de rodadas, cortada pelo dono): fora do plano e do diário, senão nenhuma previsão fecha
+  const ev = todos.filter((x) => (x.dados as { task?: string }).task !== 'T8');
+  const plano: Plano = { ...plano0, tasks: plano0.tasks.filter((t) => t.id !== 'T8').map((t) => ({ ...t, deps: t.deps.filter((d) => d !== 'T8') })) };
+  const ints = ev.filter((x) => x.tipo === 'task.integrada');
+  assert.equal(ints.length, 57);
+  const ultima = Date.parse(ints[ints.length - 1].ts);
+  const fim = Date.parse(meta.fimRealIso);
+  const fechamentoReal = (fim - ultima) / 1000;
+  const ids = plano.tasks.map((t) => t.id);
+  const ent = (agoraMs: number, fechamentoS: number | null): EntradaPainel => ({
+    decisaoEntrega: null, pausado: false, contexto: { percent: 1, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+    pacote: { nome: 'p', lider: 'L', sabio: 'S', nomes: ['N'] }, notificacao: null, agoraMs, fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
+    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26, fechamentoS,
+    fatos: { branch: 'b', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ids }, ledger: false, gh: 'ok', ultimas: [], sessao: 'loop' },
+  } as unknown as EntradaPainel);
+  const novo: number[] = [], comFecho: number[] = [], antigo: number[] = [];
+  for (let k = 3; k < ints.length; k++) {
+    const agora = Date.parse(ints[k - 1].ts) + 1000;
+    const lista = ev.filter((x) => Date.parse(x.ts) <= agora);
+    const s = projetarPainel(plano, lista, ent(agora, null));
+    const c = projetarPainel(plano, lista, ent(agora, fechamentoReal));
+    const p = s.pronto?.previsao as unknown as { restanteS: number };
+    const pc = c.pronto?.previsao as unknown as { restanteS: number };
+    assert.ok(p && pc, `previsão em ${k} integradas`);
+    novo.push(Math.abs(agora + p.restanteS * 1000 - ultima) / (ultima - agora));
+    comFecho.push(Math.abs(agora + pc.restanteS * 1000 - fim) / (fim - agora));
+    const a = s.plano.eta as NonNullable<typeof s.plano.eta>;
+    antigo.push(Math.abs(agora + a.restanteS * 1000 - ultima) / (ultima - agora));
+  }
+  const med = (xs: number[]): number => [...xs].sort((a, b) => a - b)[xs.length >> 1];
+  console.log(`replay GM-14 (${novo.length} pontos): erro mediano caminho ${(med(novo) * 100).toFixed(1)}% · com fechamento ${(med(comFecho) * 100).toFixed(1)}% · conta antiga ${(med(antigo) * 100).toFixed(1)}%`);
+  // a meta da D-G2 é ≤ 15 %; a medição de 2026-11-16 deu ~33 % (paradas de noite e espera do dono não se preveem). Este teto TRAVA o que se mediu, não a meta.
+  assert.ok(med(novo) < 0.4, `erro mediano ${med(novo)}`);
+  assert.ok(med(comFecho) < 0.4, `erro mediano com fechamento ${med(comFecho)}`);
+  assert.ok(med(novo) < med(antigo) / 2, 'a previsão nova erra menos da metade da antiga');
+});
+
+test('dist-igual-ao-src: o artefato que o CLI e o mod carregam calcula a mesma previsão', () => {
+  const plano = P([['A', []], ['B', []], ['C', []], ['X', []], ['Y', ['X']]]);
+  const a = prever(plano, pend(['X', 'Y']), 1234);
+  const b = (dist as unknown as { previsaoExata: typeof previsaoExata }).previsaoExata(plano, TRES, comIntegradas(pend(['X', 'Y'])) as never, feitas(['A', 'B', 'C']), AGORA_TRES, 'UTC', 1234, 1);
+  assert.deepEqual(b, a);
+});

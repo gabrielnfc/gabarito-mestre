@@ -132,6 +132,38 @@ function paralelismo(eventos          )         {
 }
 
 /**
+ * Ocupação (GM-15 T30, D-G2): da 1ª task iniciada até `agoraMs`, a fração do relógio com ao menos uma task em `EM_TRABALHO`. O tempo parado (noite,
+ * `loop.parar`, espera do dono) é o que faz a previsão pelo tempo de trabalho errar para menos; o restante é dividido por esta fração (piso 0,1).
+ * `null` sem o que medir (menos de 1 min de relógio ou diário sem task).
+ */
+export function ocupacaoDe(eventos          , agoraMs        )                {
+  const alvo = eventos.filter((ev) => ehObj(ev) && TIPOS_TASK.has(String(ev.tipo)) && taskDe(ev) !== null && Number.isFinite(msDe(ev)) && msDe(ev) <= agoraMs);
+  alvo.sort((a, b) => msDe(a) - msDe(b) || cmp(String(a.sessao), String(b.sessao)) || Number(a.seq) - Number(b.seq));
+  if (alvo.length === 0) return null;
+  const filas = new Map                  ();
+  const trabalhando = new Set        ();
+  let ativo = 0;
+  let desde                = null;
+  const inicio = msDe(alvo[0]);
+  for (const ev of alvo) {
+    const id = taskDe(ev)          ;
+    const fila = filas.get(id) ?? [];
+    fila.push(ev);
+    filas.set(id, fila);
+    const r = estadoDe(fila);
+    if (!('invalido' in r) && EM_TRABALHO.has(r.estado)) trabalhando.add(id);
+    else trabalhando.delete(id);
+    const t = msDe(ev);
+    if (trabalhando.size > 0 && desde === null) desde = t;
+    else if (trabalhando.size === 0 && desde !== null) { ativo += t - desde; desde = null; }
+  }
+  if (desde !== null) ativo += Math.max(0, agoraMs - desde);
+  const total = agoraMs - inicio;
+  if (!(total >= 60_000)) return null;
+  return Math.min(1, Math.max(0.1, ativo / total));
+}
+
+/**
  * ETA (REQ-PNL-1, D5): restante = mediana × ⌈restantes ÷ p⌉; ± = (Q3 − Q1)/2 × ⌈restantes ÷ p⌉ sobre as durações (quartis tipo 7, sem desvio-padrão).
  * n < 3 ⇒ `null` (antes de `restantes = 0`). `restantes ≤ 0` ou não finito ⇒ 0 e 0. A hora nunca fica antes de `agoraMs`. O render arredonda para minutos.
  */
@@ -146,6 +178,187 @@ export function etaDe(eventos          , restantes        , agoraMs        , fus
   const restanteS = mediana(ds) * ondas;
   const maisMenosS = ((quantil(ordenadas, 0.75) - quantil(ordenadas, 0.25)) / 2) * ondas;
   return { hora: horaLocal(agoraMs + restanteS * 1000, agoraMs, fuso), restanteS, maisMenosS, n: ds.length };
+}
+
+/**
+ * Previsão exata (GM-15 T30, D-G2, REQ-HIG-1 h): caminho crítico do plano com o tempo medido de cada etapa (implementação, revisão, integração),
+ * crédito do que já rodou e faixa P25-P75. Tudo sai do MESMO vetor, o das tasks integradas (g.13/g.14); o fechamento (h.1) soma depois do caminho.
+ */
+                                                                        
+                                                                         
+                                                                                                                                             
+                                                                                                                                                
+                                                                                    
+                                     
+                        
+  
+                                                               
+
+/** Etapas das tasks integradas: iniciada → concluída (implementação), concluída → aprovada (revisão com correções), aprovada → integrada. Segundos. */
+export function etapasDe(eventos          , integradas                     )         {
+  const porTask = new Map                  ();
+  for (const ev of eventos) {
+    const id = taskDe(ev);
+    if (id === null || !integradas.has(id) || !TIPOS_TASK.has(String(ev.tipo)) || !Number.isFinite(msDe(ev))) continue;
+    const f = porTask.get(id) ?? [];
+    f.push(ev);
+    porTask.set(id, f);
+  }
+  const saida         = { impl: [], rev: [], integ: [] };
+  for (const f of porTask.values()) {
+    f.sort((a, b) => msDe(a) - msDe(b) || cmp(String(a.sessao), String(b.sessao)) || Number(a.seq) - Number(b.seq));
+    let ini = f.map((ev) => tipoDe(ev)).lastIndexOf('task.reaberta') + 1; // a última reabertura recomeça o relógio
+    const sub = f.slice(ini);
+    const t0 = sub.find((ev) => tipoDe(ev) === 'task.iniciada');
+    const integ = [...sub].reverse().find((ev) => tipoDe(ev) === 'task.integrada');
+    if (t0 === undefined || integ === undefined) continue;
+    const conc = sub.find((ev) => tipoDe(ev) === 'task.concluida' && msDe(ev) >= msDe(t0));
+    const apr = [...sub].reverse().find((ev) => tipoDe(ev) === 'review.veredito' && dadosDe(ev).veredito === 'APROVADO' && msDe(ev) <= msDe(integ));
+    if (conc === undefined || apr === undefined) continue;
+    const a = msDe(t0), b = msDe(conc), c = msDe(apr), d = msDe(integ);
+    if (!(a <= b && b <= c && c <= d)) continue;
+    saida.impl.push((b - a) / 1000);
+    saida.rev.push((c - b) / 1000);
+    saida.integ.push((d - c) / 1000);
+    ini = 0;
+  }
+  return saida;
+}
+
+/** Relógio por task integrada: da 1ª `task.iniciada` à última `task.integrada`, dividido pelas integradas. `null` sem as duas pontas. */
+export function ritmoDe(eventos          , integradas                     )                {
+  let ini = Number.NaN, fim = Number.NaN;
+  for (const ev of eventos) {
+    const t = msDe(ev);
+    if (!Number.isFinite(t)) continue;
+    if (tipoDe(ev) === 'task.iniciada' && !(t >= ini)) ini = t;
+    if (tipoDe(ev) === 'task.integrada' && !(t <= fim)) fim = t;
+  }
+  return integradas.size === 0 || !(fim > ini) ? null : (fim - ini) / 1000 / integradas.size;
+}
+
+/** h.1: segundos da última `task.integrada` ao primeiro `entrega.encerrada` depois dela; `null` sem os dois (nunca palpite). */
+export function fechamentoDe(eventos          )                {
+  let ultima = Number.NaN;
+  for (const ev of eventos) if (tipoDe(ev) === 'task.integrada' && !(msDe(ev) <= ultima)) ultima = msDe(ev);
+  if (!Number.isFinite(ultima)) return null;
+  const fim = eventos.filter((ev) => tipoDe(ev) === 'entrega.encerrada' && msDe(ev) >= ultima).map(msDe).filter(Number.isFinite).sort((a, b) => a - b)[0];
+  return fim === undefined ? null : (fim - ultima) / 1000;
+}
+
+/** Tempo que falta para a task, com crédito do que já rodou na etapa atual (piso 0). `q` escolhe a medida da etapa (mediana ou quartil). */
+function faltaDaTask(est                              , agoraMs        , e                                              )         {
+  if (est === undefined || est.estado === 'pendente' || est.estado === 'reprovada' || est.estado === 'no_teto') return e.impl + e.rev + e.integ;
+  const gasto = Math.max(0, (agoraMs - msDe(est.ultimo)) / 1000);
+  switch (est.estado) {
+    case 'implementando': return Math.max(0, e.impl - gasto) + e.rev + e.integ;
+    case 'concluida': case 'em_revisao': case 'corrigindo': return Math.max(0, e.rev - gasto) + e.integ;
+    case 'aprovada': return Math.max(0, e.integ - gasto);
+    default: return 0; // integrada, adiada, cortada
+  }
+}
+
+/** Escalonamento por lista, `p` vagas, a task de maior cauda primeiro (caminho crítico). Devolve o término (s) e o nº de tasks da cadeia crítica. */
+function escalonar(deps                       , falta                     , p        )                                  {
+  const abertas = [...falta.keys()].filter((id) => (falta.get(id)          ) > 0);
+  const aberta = new Set(abertas);
+  const filhos = new Map                  ();
+  for (const id of abertas) for (const d of deps.get(id) ?? []) if (aberta.has(d)) filhos.set(d, [...(filhos.get(d) ?? []), id]);
+  const cauda = new Map                                  ();
+  const visitando = new Set        ();
+  const caudaDe = (id        )                           => {
+    const c = cauda.get(id);
+    if (c !== undefined) return c;
+    if (visitando.has(id)) return { s: 0, n: 0 }; // ciclo: não segue
+    visitando.add(id);
+    let melhor = { s: 0, n: 0 };
+    for (const f of filhos.get(id) ?? []) { const x = caudaDe(f); if (x.s > melhor.s) melhor = x; }
+    visitando.delete(id);
+    const r = { s: (falta.get(id)          ) + melhor.s, n: 1 + melhor.n };
+    cauda.set(id, r);
+    return r;
+  };
+  for (const id of abertas) caudaDe(id);
+  const fimDe = new Map                ();
+  const vagas = new Array        (Math.max(1, p)).fill(0);
+  const restantes = new Set(abertas);
+  let fim = 0;
+  while (restantes.size > 0) {
+    const prontas = [...restantes].filter((id) => (deps.get(id) ?? []).every((d) => !aberta.has(d) || fimDe.has(d)));
+    const pool = prontas.length > 0 ? prontas : [...restantes]; // ciclo no plano: segue sem travar
+    pool.sort((a, b) => (cauda.get(b)                 ).s - (cauda.get(a)                 ).s || cmp(a, b));
+    const id = pool[0];
+    const k = vagas.indexOf(Math.min(...vagas));
+    const prontoEm = Math.max(0, ...(deps.get(id) ?? []).map((d) => fimDe.get(d) ?? 0));
+    const termina = Math.max(vagas[k], prontoEm) + (falta.get(id)          );
+    vagas[k] = termina;
+    fimDe.set(id, termina);
+    restantes.delete(id);
+    fim = Math.max(fim, termina);
+  }
+  const cadeia = abertas.length === 0 ? 0 : Math.max(...abertas.map((id) => (cauda.get(id)                 ).n));
+  return { fim, cadeia };
+}
+
+/**
+ * Previsão exata. `null` sem etapa medida em ≥ 3 tasks integradas. O ponto é a mediana de cada etapa; a faixa usa o quartil 1 e o 3 de cada etapa.
+ * `fechamentoS` `null` ⇒ a conta fecha no caminho crítico, a faixa abre em `'?'` e o motivo diz por quê (h.1).
+ */
+export function previsaoExata(
+  plano       , eventos          , estados                                       , integradas                     ,
+  agoraMs        , fuso        , fechamentoS               , rodadas               ,
+)                       {
+  const et = etapasDe(eventos, integradas);
+  if (et.impl.length < 3) return null;
+  const med = (xs          )         => mediana(xs);
+  const q = (xs          , x        )         => quantil([...xs].sort((a, b) => a - b), x);
+  const medidas = { impl: med(et.impl), rev: med(et.rev), integ: med(et.integ) };
+  const lo = { impl: q(et.impl, 0.25), rev: q(et.rev, 0.25), integ: q(et.integ, 0.25) };
+  const hi = { impl: q(et.impl, 0.75), rev: q(et.rev, 0.75), integ: q(et.integ, 0.75) };
+  const deps = new Map(plano.tasks.map((t) => [t.id, [...t.deps]]));
+  const fazer = (e                                              )                                  =>
+    escalonar(deps, new Map(plano.tasks.map((t) => [t.id, faltaDaTask(estados.get(t.id), agoraMs, e)])), paralelismo(eventos));
+  const oc = ocupacaoDe(eventos, agoraMs) ?? 1;
+  const meio = fazer(medidas);
+  const f = fechamentoS !== null && Number.isFinite(fechamentoS) && fechamentoS >= 0 ? fechamentoS : null;
+  const soma = f ?? 0;
+  // o caminho crítico é o piso; o ritmo medido (relógio por task integrada, com as paradas dentro) é o que ele não vê. O ponto é o maior dos dois.
+  const abertas = plano.tasks.filter((t) => faltaDaTask(estados.get(t.id), agoraMs, medidas) > 0).length;
+  const ritmo = ritmoDe(eventos, integradas);
+  const piso = meio.fim / oc;
+  const pontoS = Math.max(piso, ritmo === null ? 0 : ritmo * abertas);
+  const baixo = Math.min(pontoS, fazer(lo).fim / oc) + soma;
+  const alto = Math.max(pontoS, fazer(hi).fim / oc) + soma;
+  const restanteS = pontoS + soma;
+  const hora = (s        )         => horaLocal(agoraMs + s * 1000, agoraMs, fuso);
+  const porTaskS = medidas.impl + medidas.rev + medidas.integ;
+  return {
+    hora: hora(restanteS), restanteS, maisMenosS: (alto - baixo) / 2, n: et.impl.length,
+    conta: { caminho: meio.cadeia, minPorTask: Math.round(porTaskS / 60), rodadas, fechamentoS: f, ocupacao: oc, ritmoMin: ritmo === null ? null : Math.round(ritmo / 60) },
+    faixa: { de: hora(baixo), ate: f === null ? '?' : hora(alto) },
+    motivo: f === null ? 'fechamento não medido: sem entrega anterior com registro' : null,
+  };
+}
+
+/** `pronto.previsao`: a exata quando medida (hora, base, faixa e motivo da mesma conta); senão a antiga, com a base = o `n` dela. */
+function previsaoDoPronto(legado              )                                                               {
+  const x = PREVISAO_DO_ESTADO.get(legado) ?? null;
+  const eta = legado.plano.eta                                             ;
+  if (x === null) return { hora: eta.hora, base: eta.n };
+  const exata = { hora: x.hora, base: x.n, faixa: x.faixa, conta: x.conta, motivo: x.motivo, restanteS: x.restanteS, maisMenosS: x.maisMenosS };
+  return exata;
+}
+
+/**
+ * A previsão exata de cada estado legado, ao lado do estado (sem mudar a forma de `plano.eta`, que a conta antiga D5 segue ocupando).
+ * `projetarNovo` a lê para `pronto.previsao`: hora, base e faixa saem da mesma conta (g.14, h.2).
+ */
+const PREVISAO_DO_ESTADO = new WeakMap                              ();
+
+function previsaoDo(plano       , ord          , c         , integradas                     , agora        , fuso        , rodadas               , entrada               )                       {
+  const dado = (entrada                             ).fechamentoS;
+  const fechamento = typeof dado === 'number' && Number.isFinite(dado) && dado >= 0 ? dado : fechamentoDe(ord);
+  return previsaoExata(plano, ord, c.estados, integradas, agora, fuso, fechamento, rodadas);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -530,7 +743,7 @@ function projetarLegado(plano       , eventos                 , entrada         
   const equipe = projetarEquipe(plano, lista, entrada);
   equipe.lider.narrativa = narrativaDo(c, feitas);
 
-  return {
+  const estado               = {
     id: plano.entrega,
     titulo,
     pacote: entrada.pacote.nome,
@@ -551,6 +764,8 @@ function projetarLegado(plano       , eventos                 , entrada         
     notificacao,
     qualidade: { rodadaMedia, mortas },
   };
+  PREVISAO_DO_ESTADO.set(estado, valido ? previsaoDo(plano, ord            , c, idsIntegradas, agora, fuso, rodadaMedia, entrada) : null);
+  return estado;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -726,7 +941,7 @@ function projetarNovo(plano              , eventos                 , entrada    
   const feitas = legado.plano.feitas;
   const total = p.tasks.length;
   const pronto = plano !== null && total > 0
-    ? { integradas: feitas, total, previsao: feitas >= 3 && feitas < total && legado.plano.eta !== null ? { hora: legado.plano.eta.hora, base: legado.plano.eta.n } : null }
+    ? { integradas: feitas, total, previsao: feitas >= 3 && feitas < total && legado.plano.eta !== null ? previsaoDoPronto(legado) : null }
     : null;
   const nAtivos = agentes?.length ?? 0;
   const sufixo           = [];
