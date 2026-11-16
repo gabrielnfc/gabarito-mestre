@@ -317,7 +317,10 @@
         "plugins/gabarito-mestre/gates/src/tipos.ts",
         "plugins/gabarito-mestre/gates/dist/depende.js",
         "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
-        "plugins/gabarito-mestre/gates/test/depende.test.ts"
+        "plugins/gabarito-mestre/gates/test/depende.test.ts",
+        "plugins/gabarito-mestre/gates/src/loop.ts",
+        "plugins/gabarito-mestre/gates/dist/loop.js",
+        "plugins/gabarito-mestre/gates/test/loop.test.ts"
       ],
       "reqs": [
         "REQ-AUT-1"
