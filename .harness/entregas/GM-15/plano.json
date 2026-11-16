@@ -184,7 +184,8 @@
         "T29",
         "T30",
         "T33",
-        "T23"
+        "T23",
+        "T35"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel.ts",
@@ -212,7 +213,8 @@
         "T8",
         "T29",
         "T30",
-        "T33"
+        "T33",
+        "T35"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel.ts",
@@ -306,7 +308,8 @@
         "T9",
         "T11",
         "T12",
-        "T23"
+        "T23",
+        "T35"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/loop.mjs",
@@ -438,7 +441,8 @@
         "T18",
         "T29",
         "T30",
-        "T33"
+        "T33",
+        "T35"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel.ts",
@@ -700,7 +704,8 @@
         "T9",
         "T19",
         "T25",
-        "T33"
+        "T33",
+        "T35"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
@@ -838,7 +843,8 @@
         "T13",
         "T22",
         "T23",
-        "T25"
+        "T25",
+        "T35"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/mod/painel.mjs",
@@ -857,6 +863,47 @@
         "REQ-POU-3",
         "REQ-HIG-1",
         "REQ-ENT-2"
+      ]
+    },
+    {
+      "id": "T35",
+      "titulo": "Painel limpo: botões por item, clear 'agora não', pendência própria, agente morto, sem medição sem pouso (D-G11)",
+      "deps": [
+        "T30",
+        "T33",
+        "T23",
+        "T22",
+        "T12",
+        "T4"
+      ],
+      "reqs": [
+        "REQ-HIG-1"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/depende.ts",
+        "plugins/gabarito-mestre/gates/dist/depende.js",
+        "plugins/gabarito-mestre/gates/src/perguntas.ts",
+        "plugins/gabarito-mestre/gates/dist/perguntas.js",
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/src/painel-equipe.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-equipe.js",
+        "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
+        "plugins/gabarito-mestre/gates/src/painel-executivo.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-executivo.js",
+        "plugins/gabarito-mestre/gates/src/pouso.ts",
+        "plugins/gabarito-mestre/gates/dist/pouso.js",
+        "plugins/gabarito-mestre/gates/test/depende.test.ts",
+        "plugins/gabarito-mestre/gates/test/perguntas.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-equipe.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-blocos.test.ts",
+        "plugins/gabarito-mestre/gates/test/pouso.test.ts",
+        "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+        "plugins/gabarito-mestre/gates/scripts/stop-loop.mjs",
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs",
+        "plugins/gabarito-mestre/mod/painel.mjs"
       ]
     }
   ]
