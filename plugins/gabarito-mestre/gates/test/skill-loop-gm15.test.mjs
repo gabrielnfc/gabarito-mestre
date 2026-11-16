@@ -151,7 +151,9 @@ test('skill-emenda-ancora-e-redacao-da-sombra: âncora = REQ, 2ª rejeição ⇒
 test('skill-ci-da-main-antes-de-entregue: só declara entregue lendo a CI do push na main; vermelho por ruído ⇒ rerun e item de correção (REQ-CI-1)', () => {
   const ent = secao('Entrega');
   assert.match(ent, /gh run list --branch main/);
-  assert.match(ent, /gh run rerun <id> --failed/);
+  assert.match(ent, /gh run rerun <run> --failed/);
+  assert.match(ent, /run <run>" --sessao <sessao>/);
+  assert.doesNotMatch(ent, /<id>/, 'run da CI e sessão não dividem o placeholder');
   assert.match(ent, /loop\.mjs" anotar --tipo desvio/);
   assert.match(ent, /nunca[^\n]*(entregue|pronto)[^\n]*sem/i);
   assert.match(ent, /X silencioso|calad/);
