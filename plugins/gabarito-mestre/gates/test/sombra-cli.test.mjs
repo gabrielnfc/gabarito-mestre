@@ -1252,4 +1252,13 @@ describe('GM-15 T11: perguntar --proposta', () => {
     assert.equal(rc, 0, JSON.stringify(out));
     assert.ok(readFileSync(join(r.raiz, out.brief), 'utf8').includes('redija'), 'REQ-A-1 segue com a Sombra redigindo');
   });
+
+  test('t26-numero-de-rejeicoes-do-brief-vem-da-contagem: 3 rejeições do orquestrador ⇒ "3 propostas" e "3ª rejeição"', () => {
+    const r = novoRepo();
+    for (let i = 0; i < 4; i++) propostaCom(r, 'REQ-A-1'); // 1..4
+    for (const n of [1, 2, 3]) rejeitar(r, n);
+    const brief = readFileSync(join(r.raiz, sobre(r, 4).out.brief), 'utf8');
+    assert.match(brief, /já teve 3 propostas do orquestrador rejeitadas: esta é a 3ª rejeição/);
+    assert.ok(brief.includes('redija'));
+  });
 });

@@ -320,7 +320,7 @@ function comProposta(brief, { p, estado, rejeicoes, quem }) {
   // Emenda 13 (REQ-AUT-1): só `quemRedigeNaAncora` decide; redação da Sombra já rejeitada no REQ ⇒ dono, sem pedir redação.
   if (quem === 'sombra' && p.origem !== 'sombra') {
     partes.push('### Redação', '',
-      `Esta âncora (${p.req}) já teve ${rejeicoes} propostas do orquestrador rejeitadas: esta é a 2ª rejeição e não há 3ª proposta dele. `
+      `Esta âncora (${p.req}) já teve ${rejeicoes} propostas do orquestrador rejeitadas: esta é a ${rejeicoes}ª rejeição e não há proposta seguinte dele. `
       + 'Se a hipótese da emenda procede, redija o texto da emenda (diff, fato e alternativa) no campo `texto` da resposta; o orquestrador a grava com `emenda propor --origem sombra`.', '');
   }
   if (quem === 'dono') {

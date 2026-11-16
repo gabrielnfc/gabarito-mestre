@@ -150,7 +150,15 @@ test('skill-emenda-ancora-e-redacao-da-sombra: âncora = REQ, 2ª rejeição ⇒
 
 test('skill-ci-da-main-antes-de-entregue: só declara entregue lendo a CI do push na main; vermelho por ruído ⇒ rerun e item de correção (REQ-CI-1)', () => {
   const ent = secao('Entrega');
-  assert.match(ent, /gh run list --branch main/);
+  assert.match(ent, /gh run list --commit <sha do push>/, 'filtra pelo sha do push');
+  assert.match(ent, /gh run list[^\n]*--limit 100/, 'lê a página inteira, não 1');
+  assert.doesNotMatch(ent, /gh run list[^\n]*--limit 1\b(?!\d)/, 'sem --limit 1');
+  assert.doesNotMatch(ent, /--branch main/, 'não lê "o último da main"');
+  assert.match(ent, /--json[^\n]*status[^\n]*workflowName|--json[^\n]*workflowName[^\n]*status/, 'status e workflowName entram no JSON');
+  assert.match(ent, /TODOS os runs desse sha/);
+  assert.match(ent, /todos `status: completed` e `conclusion: success`/);
+  assert.match(ent, /Run em curso \(`status` diferente de `completed`\) ⇒ esperar e reler, nunca declarar/, 'em curso ⇒ esperar');
+  assert.match(ent, /gh run rerun <run> --failed` 1 vez E item de correção, mesmo que o rerun fique verde/, 'ruído ⇒ rerun E item');
   assert.match(ent, /gh run rerun <run> --failed/);
   assert.match(ent, /run <run>" --sessao <sessao>/);
   assert.doesNotMatch(ent, /<id>/, 'run da CI e sessão não dividem o placeholder');
