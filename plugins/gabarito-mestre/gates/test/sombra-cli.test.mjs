@@ -1099,3 +1099,89 @@ describe('agente', () => {
     assert.match(texto, /fora_da_regra/);
   });
 });
+
+// ───────────────────────────────────────────────────────────── GM-15 T11 (REQ-EME-3 B): o brief sobre uma proposta leva o diff
+
+describe('GM-15 T11: perguntar --proposta', () => {
+  const dadosDe = (req, extra = {}) => ({ req, diff: 'DIFF-DA-PROPOSTA-linha1\n+ regra nova', fato: 'FATO-XYZ-medido', alternativa: 'ALT-QRS-descartada', evidencia: 'e', causa: 'regra_negocio', ...extra });
+  const propostaCom = (r, req, extra) => evento(r, 'emendas', 'emenda.proposta', dadosDe(req, extra));
+  const rejeitar = (r, proposta_seq) => evento(r, 'loop', 'emenda.rejeitada', { proposta_seq, origem: 'sombra' });
+  const sobre = (r, seq, pergunta = 'A emenda cabe?', ancora = ['--req', 'REQ-A-1']) => perguntar(r.raiz, pergunta, [...ancora, '--proposta', String(seq)]);
+
+  test('brief-com-diff-da-proposta: diff, fato e alternativa entram no brief, com o estado da proposta', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-1');
+    const { rc, out } = sobre(r, 1);
+    assert.equal(rc, 0, JSON.stringify(out));
+    const brief = readFileSync(join(r.raiz, out.brief), 'utf8');
+    assert.ok(brief.includes('DIFF-DA-PROPOSTA-linha1') && brief.includes('+ regra nova'), 'o diff');
+    assert.ok(brief.includes('FATO-XYZ-medido'), 'o fato');
+    assert.ok(brief.includes('ALT-QRS-descartada'), 'a alternativa');
+    assert.match(brief, /Proposta de emenda #1 \(REQ-A-1\)[^\n]*aberta/);
+    assert.ok(brief.indexOf('DIFF-DA-PROPOSTA') < brief.indexOf('## Instrução'), 'antes da instrução, que segue no fim');
+    assert.ok(!brief.includes('redija'), 'sem 2ª rejeição não pede redação');
+  });
+
+  test('brief-sem-proposta-nao-leva-secao: sem --proposta o brief é o de antes', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-1');
+    const out = perguntar(r.raiz, 'A emenda cabe?').out;
+    assert.ok(!readFileSync(join(r.raiz, out.brief), 'utf8').includes('DIFF-DA-PROPOSTA'));
+    assert.equal(out.hash, sha256('REQ-A-1\n0\na emenda cabe?'), 'o hash de antes não muda');
+  });
+
+  test('proposta-distinta-hash-distinto: a mesma pergunta sobre outra proposta é outra consulta', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-1');
+    propostaCom(r, 'REQ-A-1', { diff: 'OUTRO-DIFF' });
+    const a = sobre(r, 1).out;
+    const b = sobre(r, 2).out;
+    assert.notEqual(a.hash, b.hash);
+    assert.notEqual(a.hash, perguntar(r.raiz, 'A emenda cabe?').out.hash);
+    assert.ok(readFileSync(join(r.raiz, b.brief), 'utf8').includes('OUTRO-DIFF'));
+  });
+
+  test('proposta-por-task: --task com a proposta da task', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-1', { task: 'T1' });
+    const { rc, out } = sobre(r, 1, 'cabe?', ['--task', 'T1']);
+    assert.equal(rc, 0, JSON.stringify(out));
+    assert.ok(readFileSync(join(r.raiz, out.brief), 'utf8').includes('DIFF-DA-PROPOSTA'));
+  });
+
+  test('proposta-inexistente-ou-fora-da-ancora-recusa: nada gravado', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-2');
+    const antes = eventosDe(r).length;
+    assert.equal(sobre(r, 9).out.erro, 'proposta_inexistente');
+    const fora = sobre(r, 1);
+    assert.equal(fora.rc, 1);
+    assert.equal(fora.out.erro, 'proposta_fora_da_ancora');
+    assert.equal(eventosDe(r).length, antes);
+    assert.deepEqual(arquivosSombra(r), []);
+  });
+
+  test('proposta-uso: seq torta e com --libera-teto são uso (rc 2)', () => {
+    const r = novoRepo();
+    for (const seq of ['0', 'x', '-1', '1.5']) assert.equal(rodar(r.raiz, ['perguntar', '--req', 'REQ-A-1', '--proposta', seq, '--pergunta', 'q?', '--entrega', 'GM-10']).rc, 2, seq);
+    assert.equal(rodar(r.raiz, ['perguntar', '--task', 'T1', '--libera-teto', '--proposta', '1', '--entrega', 'GM-10']).rc, 2);
+  });
+
+  test('segunda-rejeicao-sombra-redige: com 2 rejeições do orquestrador na âncora o brief manda redigir o texto da emenda', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-1'); // 1
+    propostaCom(r, 'REQ-A-1'); // 2
+    rejeitar(r, 1);
+    const uma = readFileSync(join(r.raiz, sobre(r, 2, 'q1?').out.brief), 'utf8');
+    assert.ok(!uma.includes('redija'), 'com 1 rejeição não pede redação');
+    rejeitar(r, 2);
+    const duas = readFileSync(join(r.raiz, sobre(r, 2, 'q2?').out.brief), 'utf8');
+    assert.match(duas, /2ª rejeição/);
+    assert.ok(duas.includes('redija o texto da emenda'), 'pede o texto');
+    assert.ok(duas.includes('emenda propor --origem sombra'), 'diz como o orquestrador grava');
+    assert.ok(duas.indexOf('redija o texto da emenda') < duas.indexOf('## Instrução'));
+    // proposta de outra âncora não conta
+    propostaCom(r, 'REQ-A-2'); // 3
+    assert.ok(!readFileSync(join(r.raiz, sobre(r, 3, 'q3?', ['--req', 'REQ-A-2']).out.brief), 'utf8').includes('redija'));
+  });
+});
