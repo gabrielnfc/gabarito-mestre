@@ -1109,8 +1109,8 @@ for (const largura of [120, 80]) {
     assert.match(novo[0], /^GABARITO · GM-14 Clareza para quem usa +esquadrão · terra média$/, 'cabeçalho com o preset à direita; título uma vez (o E4 dizia "GM-14 GM-14")');
     assert.equal((novo[0].match(/GM-14/g) ?? []).length, 1);
     assert.match(t, /^◆ DEPENDE DE VOCÊ {2}1 item\n {2}renovar o certificado \[feito\]$/m, 'DEPENDE');
-    // h.2 (GM-15 T30): em >= 100 col a faixa e a base da conta; abaixo, só a faixa
-    const prev = largura >= 100 ? 'previsão \\d\\d:\\d\\d–\\? · caminho 2 tasks · 6 min\\/task · 1,0 rodada · fechamento não medido' : 'previsão \\d\\d:\\d\\d–\\?';
+    // h.2 (GM-15 T30): em >= 100 col a faixa e a base que cabe ao lado da barra cheia do E4 (em 120 sai a rodada); abaixo, só a faixa
+    const prev = largura >= 100 ? 'previsão \\d\\d:\\d\\d–\\? · caminho 2 tasks · 6 min\\/task · fechamento não medido' : 'previsão \\d\\d:\\d\\d–\\?';
     assert.match(t, new RegExp(`^PLANO {3}▰+▱+ {2}38% {2}3\\/8 tasks +${prev}$`, 'm'), 'PLANO com barra, %, k/N tasks e o status à direita');
     assert.match(t, /^ {2}✓ 3 integradas · 1\.0 rodada média · mediana \d+ min$/m, 'faixa das integradas');
     assert.match(t, /^ {2}● T4 {2}(Tarefa T4 do painel {2})?implementando {2}\S+ +\d+(m|h\d\d)$/m, 'task em voo com estado, nome e tempo');

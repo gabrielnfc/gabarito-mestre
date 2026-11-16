@@ -648,8 +648,10 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
     const pctTxt = pct === null ? '?' : `${pct}%`;
     const tasksTxt = `${integ ?? '?'}/${total ?? '?'} tasks`;
     const prevV = pr.previsao !== null && typeof pr.previsao?.hora === 'string' && limpar(pr.previsao.hora) !== '' ? pr.previsao : null;
-    // h.2: o que sobra para a previsão ao lado de "PLANO", da barra mínima (5), do % e de k/N
-    const cabePrev = w - (8 + 5 + 2 + colunas(pctTxt) + 2 + colunas(tasksTxt) + 1);
+    // h.2: a base nunca encolhe a barra do PLANO (paridade com o E4): cabe no que sobra ao lado da barra que a faixa sozinha deixaria
+    const fixo = 8 + 2 + colunas(pctTxt) + 2 + colunas(tasksTxt);
+    const barraDaFaixa = prevV === null ? 5 : Math.min(21, Math.max(5, w - (fixo + 3 + colunas(textoPrevisao(prevV, 0, 0)))));
+    const cabePrev = w - (fixo + barraDaFaixa + 3);
     const status = prevV !== null ? textoPrevisao(prevV, w, cabePrev)
       : p !== null && typeof p === 'object' ? 'loop parado' : e.parado === true ? 'loop pausado' : integ !== null && total !== null && total > 0 && integ >= total ? 'todas integradas'
         : w >= 100 && integ !== null && integ < 3 ? 'ETA ?: n insuficiente' : '';

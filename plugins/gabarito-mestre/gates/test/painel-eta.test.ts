@@ -213,14 +213,14 @@ test('eta-base-visivel-100col: em >= 100 colunas a linha da previsão diz a faix
   const s = projetarPainel(P5, IRREG, E5({ fechamentoS: 4800, agoraMs: T0 + 20 * MIN }));
   const pv = s.pronto?.previsao as Record<string, any>;
   assert.notEqual(pv.faixa.de, pv.faixa.ate, 'premissa: faixa com largura');
-  const l120 = linhaPlano(s, 120);
-  assert.ok(l120.endsWith(`previsão ${pv.faixa.de}–${pv.faixa.ate} · caminho 2 tasks · ${pv.conta.minPorTask} min/task · 1,0 rodada · fechamento 1h20`), l120);
+  const l140 = linhaPlano(s, 140); // largura em que a base inteira cabe ao lado da barra cheia
+  assert.ok(l140.endsWith(`previsão ${pv.faixa.de}–${pv.faixa.ate} · caminho 2 tasks · ${pv.conta.minPorTask} min/task · 1,0 rodada · fechamento 1h20`), l140);
   const l100 = linhaPlano(s, 100);
   assert.ok(colunas(l100) <= 100, l100);
-  assert.match(l100, /previsão \d\d:\d\d–\d\d:\d\d · caminho 2 tasks · .*fechamento 1h20$/, 'em 100 a base sai por campo inteiro, o fechamento fica');
+  assert.match(l100, /previsão \d\d:\d\d–\d\d:\d\d · fechamento 1h20$/, 'em 100, ao lado da barra cheia, a base sai por campo inteiro (rodada, min/task, caminho) e o fechamento fica');
   // a base é a do estado: outro número na conta muda o texto (nada recalculado no render)
   const outro = { ...s, pronto: { ...s.pronto, previsao: { ...pv, conta: { ...pv.conta, caminho: 7, minPorTask: 41, rodadas: 1.7, fechamentoS: 1500 } } } } as EstadoPainel;
-  assert.match(linhaPlano(outro, 120), / · caminho 7 tasks · 41 min\/task · 1,7 rodada · fechamento 25 min$/);
+  assert.match(linhaPlano(outro, 160), / · caminho 7 tasks · 41 min\/task · 1,7 rodada · fechamento 25 min$/);
 });
 
 test('eta-base-cortada-80col: abaixo de 100 colunas só a faixa, sem a base (h.2, D-P8)', () => {
@@ -233,9 +233,22 @@ test('eta-base-cortada-80col: abaixo de 100 colunas só a faixa, sem a base (h.2
   }
 });
 
+test('eta-base-nunca-encolhe-barra: a base só ocupa o que sobra ao lado da barra que a faixa sozinha deixaria (paridade da barra do E4)', () => {
+  const s = projetarPainel(P5, IRREG, E5({ fechamentoS: 4800, agoraMs: T0 + 20 * MIN }));
+  const pv = s.pronto?.previsao as Record<string, any>;
+  const soFaixa = { ...s, pronto: { ...s.pronto, previsao: { ...pv, conta: null } } } as EstadoPainel;
+  const barra = (l: string): string => (l.match(/[▰▱]+/) as RegExpMatchArray)[0];
+  for (const w of [100, 110, 120, 140, 200]) {
+    const l = linhaPlano(s, w);
+    assert.equal(barra(l), barra(linhaPlano(soFaixa, w)), `${w}: ${l}`);
+    assert.match(l, /fechamento 1h20$/, `${w}: o fechamento fica`);
+  }
+  assert.equal(barra(linhaPlano(s, 120)).length, 21, 'em 120 a barra é a cheia do E4');
+});
+
 test('eta-fechamento-sem-medicao-interroga: sem fechamento medido a faixa abre em "?" e, em >= 100, a base diz que o fechamento não foi medido (h.1)', () => {
   const s = projetarPainel(P5, TRES, E5());
-  assert.match(linhaPlano(s, 120), /previsão \d\d:\d\d–\? · caminho 2 tasks · 6 min\/task · 1,0 rodada · fechamento não medido$/);
+  assert.match(linhaPlano(s, 140), /previsão \d\d:\d\d–\? · caminho 2 tasks · 6 min\/task · 1,0 rodada · fechamento não medido$/);
   assert.match(linhaPlano(s, 80), /previsão \d\d:\d\d–\?$/);
 });
 
