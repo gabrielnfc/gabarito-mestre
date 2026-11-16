@@ -25,6 +25,7 @@ import { aprovarSpec, tetoDaSombra } from '../scripts/loop.mjs';
 import { medir } from '../scripts/painel-medir.mjs';
 import { prepararLeitura as prepararLeituraReal } from '../scripts/entrega.mjs';
 import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
+import { estadoParaDesenho, linhasDaPane } from '../../mod/painel.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(AQUI, '..', 'scripts', 'painel.mjs');
@@ -1483,6 +1484,9 @@ describe('GM-15 T9: alvo sem fora, plano relido', { timeout: 60_000 }, () => {
     assert.deepEqual([c.pronto.integradas, c.pronto.total, c.plano.total], [1, 2, 2]);
     assert.equal(c.plano.tasks.some((t) => t.id === 'T3'), false);
     assert.match(cli(m, ['texto']).stdout, /1\/2 tasks/);
+    const pane = linhasDaPane(estadoParaDesenho(c), { preset: 'esquadrao' }, 120, {}).map((l) => l.map((x) => x.texto).join('')).join('\n');
+    assert.match(pane, /1\/2 tasks/, 'o mod desenha o alvo sem a cortada');
+    assert.doesNotMatch(pane, /\bT3\b/);
   });
 
   test('plano-invalido-mostra-interrogacao: plano.json inválido depois de um válido ⇒ rc 0, "?" com o motivo, nunca o plano velho', () => {
@@ -1504,6 +1508,10 @@ describe('GM-15 T9: alvo sem fora, plano relido', { timeout: 60_000 }, () => {
       assert.equal(t.rc, 0, corpo);
       assert.match(t.stdout, /FASE \? de 7 .*\? plano inválido: /, corpo);
       assert.doesNotMatch(t.stdout, /\d+\/2 tasks/, `${corpo}: nada do plano velho`);
+      // o estado que o MOD desenha (funções puras reais de mod/painel.mjs): a Pane traz o "?" com o motivo e nada do plano velho
+      const pane = linhasDaPane(estadoParaDesenho(e), { preset: 'esquadrao' }, 120, {}).map((l) => l.map((x) => x.texto).join('')).join('\n');
+      assert.match(pane, /FASE \? de 7 .*\? plano inválido: /, `${corpo}: ${pane}`);
+      assert.doesNotMatch(pane, /\d+\/2 tasks/, corpo);
       // corrigido o plano, a leitura seguinte volta ao PRONTO (nada guardado)
       reescrever(m, [TASK('T1'), TASK('T2', ['T1'])]);
       assert.deepEqual([estado(m).estado.pronto.integradas, estado(m).estado.pronto.total], [1, 2], corpo);

@@ -1105,7 +1105,7 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
   const feitas = legado.plano.feitas;
   const total = legado.plano.total; // REQ-ENT-2: o alvo (sem as tasks fora), o mesmo do legado
   const invalido = planoInvalidoDe(entrada);
-  const pronto = !zera && plano !== null && invalido === null && total > 0
+  const pronto = !zera && plano !== null && total > 0
     ? { integradas: feitas, total, previsao: feitas < total && (PREVISAO_DO_ESTADO.get(legado) ?? null) !== null ? previsaoDoPronto(legado)
       : feitas >= 3 && feitas < total && legado.plano.eta !== null ? previsaoDoPronto(legado) : null }
     : null;
