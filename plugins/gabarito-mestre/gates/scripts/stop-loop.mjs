@@ -97,6 +97,12 @@ export function saidaParaAcao(acao, entrega) {
       const resto = tasks.length - lista.length;
       return { decision: 'block', reason: `Loop da entrega ${e} segue: integre ${lista.join(', ')}${resto > 0 ? ` e mais ${resto}` : ''}.` };
     }
+    case 'retomar': {
+      // GM-15 T12: task em voo cujo agente morreu; 1 reabertura por task (a 2ª morte vira nao_conseguiu no núcleo).
+      if (typeof acao.task !== 'string' || acao.task === '') return null;
+      const t = limpo(acao.task);
+      return { decision: 'block', reason: `Loop da entrega ${e} segue: o agente da task ${t} morreu; reabra a task ${t} (loop.mjs reabrir ${t}) e despache de novo.` };
+    }
     case 'parar': {
       const id = typeof acao.motivo === 'string' ? limpo(acao.motivo) : '?';
       const task = acao.task !== undefined ? ` (task ${limpo(acao.task)})` : '';

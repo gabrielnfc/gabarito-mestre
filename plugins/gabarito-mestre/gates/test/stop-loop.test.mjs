@@ -426,6 +426,15 @@ test('stop-pousar-sai: o hook não pousa (função pura)', () => {
   assert.equal(saidaParaAcao({ tipo: 'pousar' }, 'GM-10'), null);
 });
 
+test('stop-retomar-bloqueia-com-reabra-a-task: a ação retomar manda reabrir a task travada (função pura, T12)', () => {
+  const r = saidaParaAcao({ tipo: 'retomar', task: 'T3' }, 'GM-10');
+  assert.equal(r?.decision, 'block');
+  assert.match(r.reason, /reabra a task T3/);
+  assert.match(r.reason, /GM-10/);
+  const torta = saidaParaAcao({ tipo: 'retomar', task: 'T3\n$(x)' }, 'GM-10');
+  assert.doesNotMatch(torta.reason, /[\n$`]/, 'id da task é sanitizado');
+});
+
 test('stop-despachar-vazio-sai: sem itens não há o que mandar', () => {
   assert.equal(saidaParaAcao({ tipo: 'despachar', itens: [] }, 'GM-10'), null);
 });
@@ -433,7 +442,7 @@ test('stop-despachar-vazio-sai: sem itens não há o que mandar', () => {
 test('stop-parar-avisa-com-motivo-e-task-e-nao-grava', () => {
   const raiz = repo();
   plano(raiz);
-  diario(raiz, 's', [ev('s', 1, 'task.iniciada', { task: 'T1', papel: 'implementador' })]); // agente morreu
+  diario(raiz, 's', [ev('s', 1, 'task.iniciada', { task: 'T1', papel: 'implementador' }), ev('s', 2, 'task.reaberta', { task: 'T1', origem: 'retomada' }), ev('s', 3, 'task.iniciada', { task: 'T1', papel: 'implementador' })]); // agente morreu 2x: a retomada única já foi usada (T12)
   const antes = linhasDoDiario(raiz).length;
   const r = stop(raiz);
   avisa(r, /nao_conseguiu/);
