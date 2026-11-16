@@ -652,7 +652,7 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
     const so = await coleta({ soDuranteExecucao: true, mergeadaDuranteExecucao: true });
     assert.deepEqual(so.entregasPublicadas, [], 'um PR mergeado medido DURANTE a execução não torna a entrega publicada (filtro `ts <= inicio`)');
     let n = 0;
-    const ev = (numero, estado, ts) => ({ sessao: 's', seq: ++n, ts, tipo: 'fato.medido', dados: { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: 'b' } } });
+    const ev = (numero, estado, ts, branch) => ({ sessao: 's', seq: ++n, ts, tipo: 'fato.medido', dados: { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: branch ?? `enabler/${ENTREGA_PUBLICADA}-a1` } } });
     const Z = '2026-11-13T00:00:00.000Z';
     const T = (h) => `2026-11-12T0${h}:00:00.000Z`;
     assert.equal(await publicadaPeloProduto([ev(14, 'mergeado', T(1))], Z), true);
@@ -660,6 +660,8 @@ describe('coletar: a evidência vem do que a execução produziu (P3: negada fix
     assert.equal(await publicadaPeloProduto([ev(14, 'aberto', T(1)), ev(15, 'mergeado', T(2))], Z), false, 'último mergeado MAS com outro PR aberto ⇒ não publicada (FIEL-1 b: nenhum aberto)');
     assert.equal(await publicadaPeloProduto([{ sessao: 's', seq: 1, ts: T(1), tipo: 'entrega.fim', dados: { ok: true } }], Z), false, 'entrega.fim não é o critério do produto');
     assert.equal(await publicadaPeloProduto([ev(14, 'mergeado', T(1))], T(0)), false, 'medido depois do início não conta');
+    // REQ-ENT-1 (a): o fato sem `via` cujo head não casa o ID sai da entrega (descarte por head); o fixture antigo com head `b` era publicada só porque `prs()` não descartava
+    assert.equal(await publicadaPeloProduto([ev(14, 'mergeado', T(1), 'enabler/GM-99-x')], Z), false, 'head de outra entrega não publica esta');
     assert.equal(await publicadaPeloProduto([], Z), false);
   });
 
