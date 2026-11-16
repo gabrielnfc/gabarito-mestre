@@ -604,7 +604,7 @@ describe('costura T18: CLI real em toda fase', { timeout: 180_000 }, () => {
         assert.match(t, /^GABARITO · sem entrega em curso/, t);
       } else if (fx.fatos.plano === null) {
         assert.equal(e.pronto, null);
-        assert.match(t, new RegExp(`^FASE ${esp.fase} de 7 `, 'm'), t);
+        assert.match(t, /^fase não medida · /m, t); // GM-15 T32 (emenda 4 item 4): sem plano.json a fase não é medida
       } else {
         assert.equal(e.fase, null);
         const n = fx.eventos.flatMap((c) => c.integradas ?? []).length;

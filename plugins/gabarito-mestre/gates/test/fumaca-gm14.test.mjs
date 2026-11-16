@@ -74,7 +74,7 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.deepEqual(b.estado.pergunta.opcoes, ['GM-50', 'uma nova', 'conversa avulsa']);
   assert.equal(topo(b)[1], '◆ DEPENDE DE VOCÊ  1 item'); assert.match(topo(b)[2], /^  Esta conversa é da entrega GM-50\? · 1 GM-50 · 2 uma nova/);
   assert.deepEqual([b.estado.trilha.fase, b.estado.trilha.marcas], [1, ['●', '○', '○', '○', '○', '○', '○']], 'a branch sozinha não adianta fase (REQ-TRI-1)');
-  assert.match(b.texto, /^FASE 1 de 7 ▱{7} · /m);
+  assert.match(b.texto, /^fase não medida · 0 ideias anotadas/m);
   assert.ok(!/GM-50/.test(topo(b)[0]), 'a branch sozinha não liga a entrega: o cabeçalho não traz o ID nem o título (REQ-TRI-1)');
   assert.ok(!/GM-50 Spec/.test(b.texto));
 
@@ -88,7 +88,7 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.equal(topo(s)[1], '◆ DEPENDE DE VOCÊ  1 item'); assert.match(topo(s)[2], /^  aprovar a spec da GM-50 \[aprovar a spec\]/);
   assert.deepEqual(s.estado.depende.map((d) => [d.motivo, d.acoes.map((a) => a.rotulo)]), [['aprovar a spec da GM-50', ['aprovar a spec']]]);
   assert.equal(s.estado.depende[0].acoes[0].comando, '/gabarito-mestre:aprovar', 'o comando só existe na ação do botão');
-  assert.match(s.texto, /^FASE 3 de 7 ▰{2}▱{5} · spec com 3 seções · falta aprovar/m, '`?` não pinta; só as 2 marcas ✓');
+  assert.match(s.texto, /^fase não medida · spec com 3 seções · falta aprovar · ✓ ideia › ✓ spec › ● /m, '`?` não pinta; só as 2 marcas ✓');
   assert.deepEqual(s.estado.recente, [], 'a spec ainda não foi aprovada: nenhuma origem a mostrar');
 
   // (5) aprovada pelo hook, ainda sem plano (REQ-TRI-1: a aprovação vem antes do plano): fase 4; nada depende do dono
@@ -99,7 +99,7 @@ test('fumaca-sete-fases: da primeira ideia ao PR aceito, cada passo diz a fase, 
   assert.equal(a.estado.trilha.progresso, 'spec com 3 seções');
   assert.deepEqual(a.estado.depende.map((d) => d.motivo), ['nada depende de você'], 'REQ-DEP-1: todas as fontes leram ⇒ "nada"');
   assert.equal(topo(a)[1], 'nada depende de você', 'REQ-DEP-1: no render também');
-  assert.match(a.texto, /^FASE 4 de 7 ▰{3}▱{4} · spec com 3 seções/m);
+  assert.match(a.texto, /^fase não medida · spec com 3 seções/m);
   assert.equal(a.estado.recente[0].texto, 'spec aprovada');
   assert.equal(a.estado.recente[0].origem, '(você)', 'REQ-LNG-1: spec.aprovada é do dono');
   assert.match(a.texto, /^\d\d:\d\d ✓ spec aprovada \(você\)$/m);

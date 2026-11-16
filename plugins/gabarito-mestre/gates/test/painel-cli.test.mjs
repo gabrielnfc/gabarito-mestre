@@ -1076,8 +1076,8 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.ok(e.depende.some((i) => i.motivo === 'aprovar a spec da GM-12'), JSON.stringify(e.depende));
     const t = cli(m, ['texto']);
     assert.equal(t.rc, 0, t.stdout);
-    assert.match(t.stdout, /^FASE 3 de 7 ▰▰▱▱▱▱▱ · spec com 2 seções · falta aprovar · ✓ ideia › ✓ spec › ● /m);
-    assert.match(textoDe(m, ['--largura', '200']), /^FASE 3 de 7 ▰▰▱▱▱▱▱ · spec com 2 seções · falta aprovar · ✓ ideia › ✓ spec › ● aprovação › ○ plano › ○ execução › ○ PR › ○ uso$/m);
+    assert.match(t.stdout, /^fase não medida · spec com 2 seções · falta aprovar · ✓ ideia › ✓ spec › ● /m);
+    assert.match(textoDe(m, ['--largura', '200']), /^fase não medida · spec com 2 seções · falta aprovar · ✓ ideia › ✓ spec › ● aprovação › ○ plano › ○ execução › ○ PR › ○ uso$/m);
     assert.doesNotMatch(t.stdout, /sem loop|sem_loop/);
     // spec aprovada pelo sha REAL dos bytes ⇒ fase 4 (o sha vem de lerSpecs, não inventado)
     const bytes = readFileSync(join(m.repo, 'docs', 'superpowers', 'specs', SPEC12.nome));

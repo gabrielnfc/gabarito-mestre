@@ -459,9 +459,9 @@ test('cli-sem-agentes-sem-nomes-nem-traco: sem --agentes, 1 linha no AGORA e nen
 test('descricao-tecnica-higienizada e vivo-sem-task-mostra-descricao', () => {
   const s = proj(P(...IDS), [ini(0, 'T1')], { agentes: [vivo('Rascunho spec-brief.md com node'), vivo('Explorar o repositório'), vivo('T1 implementador')] });
   const l = linhas(s);
-  assert.ok(l.includes('├─ ● LEGOLAS  sem task  ctx ? (sem medição)        Rascunho … com … (registrado)'), l.join('\n')); // todo vivo tem nome (FIEL-3 d): o par da T1 fica com o 1º, os sem task com os livres
-  assert.ok(l.includes('├─ ● GIMLI    sem task  ctx ? (sem medição)        Explorar o repositório (registrado)'), l.join('\n'));
-  assert.ok(l.some((x) => /^├─ ● ARAGORN  T1        ctx \? \(sem medição\)  \d+(m|h\d\d)  implementando \(registrado\)$/.test(x)), l.join('\n'));
+  assert.ok(l.includes('├─ ● LEGOLAS  agente fora do loop  ctx ? (sem medição)        Rascunho … com … (registrado)'), l.join('\n')); // todo vivo tem nome (FIEL-3 d): o par da T1 fica com o 1º, os sem task com os livres
+  assert.ok(l.includes('├─ ● GIMLI    agente fora do loop  ctx ? (sem medição)        Explorar o repositório (registrado)'), l.join('\n'));
+  assert.ok(l.some((x) => /^├─ ● ARAGORN  T1                   ctx \? \(sem medição\)  \d+(m|h\d\d)  implementando \(registrado\)$/.test(x)), l.join('\n'));
   assert.equal(s.agora?.agentes?.length, 3, 'vivos-igual-linhas-de-agente');
   assert.equal(l.filter((x) => /^[├└]─ ● /.test(x)).length, 3);
   assert.ok(l.includes('└─ ○ ELROND'), 'a Sombra fecha a árvore (g.8) e não conta como agente vivo');
@@ -795,7 +795,7 @@ const DEPENDE_ROTEIRO = PONTOS.pontos.find((x) => x.msg === 3)!.esperado.depende
 const doRoteiro = (s: EstadoPainel): EstadoPainel => ({ ...s, depende: DEPENDE_ROTEIRO.map((motivo) => ({ motivo, acoes: [], nivel: 'dono' })) }) as EstadoPainel;
 const VIVOS = ['T4 implementador', 'T5 revisor', 'T6 implementador'];
 const roteiro = (n: number, itens: Item[] = [DEC(50, 'seguir com a T3')], extra: Partial<Entrada> = {}): EstadoPainel =>
-  doRoteiro(proj(P(...IDS), [...EXECUCAO, ...itens], { agentes: VIVOS.slice(0, n).map((d) => vivo(d)), ...extra }));
+  doRoteiro(proj(P(...IDS), [...EXECUCAO, ini(44, 'T6'), ...itens], { agentes: VIVOS.slice(0, n).map((d) => vivo(d)), ...extra }));
 /** 80x24 acima do input: 7 linhas + 1 da linha da Sombra (g.8, GM-15 T33), que é do bloco 3 e fecha a árvore (antes de a Sombra ter linha fixa eram 7). */
 const ORC_80X24 = orcamentoDe(24, 12);
 const ORC_ACIMA = ORC_80X24 + 1;
