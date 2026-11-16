@@ -156,7 +156,34 @@ test('entregue-sai-do-alvo (sessão em outra branch): em main, a GM-14 encerrada
   const e = estado(d);
   assert.deepEqual(e.entregue, { id: 'GM-14', versao: null }, 'sem release medido na GM-14 (foi para _sem-id): sem versão');
   assert.equal(e.umaLinha, null);
+  // r1 MAJOR-2: o `medir` desta sessão gravou em `_sem-id` e abriu a pergunta (b) da sessão; ela é do `_sem-id`, não da GM-14, e fica (com os blocos)
+  assert.equal(e.pergunta?.gatilho, 'b', JSON.stringify(e.pergunta));
+  assert.ok(e.depende.some((i) => i.motivo === 'próxima entrega: decidir se a ideia vira a próxima entrega'), JSON.stringify(e.depende));
+  assert.ok(texto(d).length > 1);
+});
+
+test('entregue-sai-do-alvo (main sem nada no _sem-id): a GM-14 encerrada, última conhecida, é a mesma 1 linha', () => {
+  const d = repo('main');
+  diarioGm14(d);
+  itensDaEntrega(d);
+  w(d, 'GM-14', 'loop', 'entrega.encerrada', { entrega: 'GM-14', pr: 22, via: 'titulo', mergeado_em: '2026-11-15T12:00:00Z' }, '2026-11-15T12:30:00.000Z', 'painel');
+  const e = estado(d);
+  assert.deepEqual(e.entregue, { id: 'GM-14', versao: null });
   assert.deepEqual(texto(d), ['◆ GABARITO · GM-14 entregue · próxima: decidir se a ideia vira a próxima entrega']);
+});
+
+test('ultima-conhecida-nao-zera-sem-id (r1 MAJOR-2): em main, pendência e consulta à Sombra do _sem-id ficam com a GM-14 encerrada', () => {
+  const d = repo('main');
+  diarioGm14(d);
+  w(d, 'GM-14', 'loop', 'entrega.encerrada', { entrega: 'GM-14', pr: 22, via: 'titulo', mergeado_em: '2026-11-15T12:00:00Z' }, '2026-11-15T12:30:00.000Z', 'painel');
+  w(d, '_sem-id', 'loop', 'nota', { tipo: 'pendencia', texto: 'renovar o certificado' }, '2026-11-15T12:40:00.000Z', 'implementador');
+  w(d, '_sem-id', 'loop', 'sombra.consulta', { pergunta_hash: H, req: 'REQ-A-1' }, '2026-11-15T12:41:00.000Z', 'sombra');
+  const e = estado(d);
+  assert.deepEqual(e.entregue, { id: 'GM-14', versao: null }, 'controle: a GM-14 encerrada é a última conhecida');
+  assert.ok(e.depende.some((i) => i.motivo === 'renovar o certificado'), `a pendência do _sem-id continua: ${JSON.stringify(e.depende)}`);
+  assert.ok(e.atencao.includes('1 consulta à Sombra sem decisão registrada'), `a ATENÇÃO do _sem-id continua: ${JSON.stringify(e.atencao)}`);
+  const ls = texto(d);
+  assert.ok(ls.length > 1 && ls.some((l) => /renovar o certificado/.test(l)), ls.join('\n'));
 });
 
 test('consultas-sombra-somem-com-entregue: "N consultas à Sombra sem decisão" sai do ATENÇÃO só com a entrega encerrada (M8a)', () => {

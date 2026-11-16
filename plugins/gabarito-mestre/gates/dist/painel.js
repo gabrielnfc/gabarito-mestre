@@ -48,7 +48,9 @@ function linhaEntregue(e              , o              )               {
   if (ent === null || ent === undefined || typeof ent.id !== 'string' || !ID_ENTREGUE.test(ent.id)) return null;
   const p = e.proxima;
   const daProxima = p !== null && p !== undefined && typeof p.texto === 'string' ? motivoDaProxima(p.texto) : null;
-  if ((e.agora?.agentes?.length ?? 0) > 0 || (e.agora?.segundoPlano?.length ?? 0) > 0
+  // r1 MAJOR-2: o que não é da entrega e ficou no estado (PAROU, pergunta, ATENÇÃO do `_sem-id`, o /clear da sessão, fonte que falhou) ⇒ os blocos
+  if ((e.agora?.agentes?.length ?? 0) > 0 || (e.agora?.segundoPlano?.length ?? 0) > 0 || ehObj(e.parar) || ehObj(e.pergunta)
+    || (Array.isArray(e.atencao) && e.atencao.length > 0)
     || (Array.isArray(e.depende) && e.depende.some((i) => i?.motivo !== NADA && i?.motivo !== daProxima))) return null;
   const w = typeof o?.largura === 'number' && Number.isFinite(o.largura) && o.largura >= 1 ? Math.floor(o.largura) : 80;
   const versao = typeof ent.versao === 'string' && VERSAO_RE.test(ent.versao) ? ` (versão ${ent.versao})` : '';
@@ -912,6 +914,8 @@ function projetarLegado(plano       , eventos                 , entrada         
                                                                                                                                                 
                              
                            
+                                                                                                                                                                 
+                             
   
 
 /** FIEL-13 b: limite de "desatualizado" (180 s provisório = 3 × o relógio do mod, até o valor do S15). */
@@ -1009,17 +1013,21 @@ function projetarNovo(plano              , eventos                 , entrada    
   // GM-15 T8 (REQ-ENT-1 d ii): com a entrega encerrada, os itens dela saem do topo (PAROU, pergunta, DEPENDE), do ATENÇÃO e do PRONTO
   const entregue                  = ehObj(entrada.entregue) && typeof entrada.entregue.id === 'string' ? { id: entrada.entregue.id, versao: typeof entrada.entregue.versao === 'string' ? entrada.entregue.versao : null } : null;
   const proxima                 = entregue !== null && ehObj(entrada.proxima) ? entrada.proxima : null;
+  // (d)(ii) tira só os itens DA entrega: só some o que é do diário projetado quando ele é o da entregue (r1 MAJOR-2); a última conhecida não zera o `_sem-id`
+  const zera = entregue !== null && entrada.entregueDoDiario !== false;
 
   // trilha, perguntas e "depende de você" pelas funções únicas (T3, T12, T13)
   const trilha = trilhaDe(fatos, lista);
-  const abertas = entregue !== null ? [] : perguntasAbertas(lista, trilha, { sessao: typeof fatos.sessao === 'string' ? fatos.sessao : null, ...(Array.isArray(fatos.ultimas) ? { ultimas: fatos.ultimas } : {}) })
+  const abertas = zera ? [] : perguntasAbertas(lista, trilha, { sessao: typeof fatos.sessao === 'string' ? fatos.sessao : null, ...(Array.isArray(fatos.ultimas) ? { ultimas: fatos.ultimas } : {}) })
     .filter((q) => q.gatilho !== 'pendencia' && q.gatilho !== 'ideia'); // pendência (3) e ideia (4) são itens de `dependeDe`, com o botão "feito"/"visto"
   const pergunta = abertas[0] ?? null;
   // GM-15 T35 (r.12, r.9): o pedido de /clear da regra única `pedidoDeClear`: sem medição não há pedido; adiado ("agora não") some do painel até +10 p.p.
   const clear = pedidoDeClear(eventos, entrada.onboarding === true, entrada.medicaoPouso);
   const [sessaoPouso, seqPouso] = clear.id === null ? [null, null] : [clear.id.slice(0, clear.id.lastIndexOf(':')), Number(clear.id.slice(clear.id.lastIndexOf(':') + 1))];
   const pousoDe                                   = clear.pendente && !clear.adiado ? { pendente: true, sessao: sessaoPouso, seq: seqPouso } : { pendente: false, sessao: null, seq: null };
-  let depende = entregue !== null ? dependeDe(null                            , [], [], { falhou: fontes }, false, { branch: null, idPadrao: fatos.idPadrao }) : dependeDe(trilha, lista, legado.depende, { falhou: fontes }, entrada.pousoPendente === true ? true : { pendente: pousoDe.pendente, id: clear.id },
+  // o pedido de /clear é da sessão, não da entrega: entra nos dois ramos (r1 MAJOR-2)
+  const pedidoClear = entrada.pousoPendente === true ? true : { pendente: pousoDe.pendente, id: clear.id };
+  let depende = zera ? dependeDe(null                            , [], [], { falhou: fontes }, pedidoClear, { branch: null, idPadrao: fatos.idPadrao }) : dependeDe(trilha, lista, legado.depende, { falhou: fontes }, pedidoClear,
     { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao });
   // GM-15 T8 (review r1 MAJOR-1): a próxima com botão vira item do DEPENDE (o mod já desenha os botões dos itens); nunca é item da encerrada
   if (entregue !== null && proxima !== null && Array.isArray(proxima.acoes) && proxima.acoes.length > 0) {
@@ -1077,13 +1085,13 @@ function projetarNovo(plano              , eventos                 , entrada    
   const semRegistro = contarConsultas(lista) - projetarDecisoes(lista).size;
   const sombraAtiva = (ativos ?? []).some((x) => x.casamento.papelExibido === 'sombra');
   if (semRegistro > 0 && !sombraAtiva) atencao.push(`${semRegistro} ${semRegistro === 1 ? 'consulta' : 'consultas'} à Sombra sem decisão registrada`);
-  if (entregue !== null) atencao.length = 0; // M8a: nada da entrega encerrada (consultas à Sombra, CI, produção, task sem agente) fica no ATENÇÃO
+  if (zera) atencao.length = 0; // M8a: nada da entrega encerrada (consultas à Sombra, CI, produção, task sem agente) fica no ATENÇÃO
   if (velho) atencao.push(`painel sem ler o diário há ${Math.floor((desat          ) / 60)} min`);
 
   // PRONTO (com plano) ou FASE (sem plano)
   const feitas = legado.plano.feitas;
   const total = p.tasks.length;
-  const pronto = entregue === null && plano !== null && total > 0
+  const pronto = !zera && plano !== null && total > 0
     ? { integradas: feitas, total, previsao: feitas < total && (PREVISAO_DO_ESTADO.get(legado) ?? null) !== null ? previsaoDoPronto(legado)
       : feitas >= 3 && feitas < total && legado.plano.eta !== null ? previsaoDoPronto(legado) : null }
     : null;
@@ -1114,7 +1122,7 @@ function projetarNovo(plano              , eventos                 , entrada    
     id: plano !== null ? p.entrega : (trilha.entrega ?? ''),
     modo, trilha, pergunta, perguntasMais: Math.max(0, abertas.length - 1), umaLinha, pronto, fase,
     depende, atencao, entregue, proxima,
-    ...(entregue !== null ? { parar: null, parado: false } : {}),
+    ...(zera ? { parar: null, parado: false } : {}),
     agora: {
       orquestrador: { nome: comNomes ? entrada.pacote?.lider ?? null : null, contexto: pct, estimado: false, pousar: pct !== null && pct >= entrada.x },
       agentes, segundoPlano,

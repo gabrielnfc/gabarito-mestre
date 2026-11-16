@@ -640,6 +640,8 @@ export function estadoDoPainel(cwd, opts = {}) {
       ...(medicaoPouso !== undefined ? { medicaoPouso } : {}),
       entregue,
       proxima,
+      // r1 MAJOR-2: a entregue só zera o diário projetado quando é a dele (branch com ID ou `--entrega`); a última conhecida não zera o `_sem-id`
+      entregueDoDiario: id !== null,
     };
     const projetar = opts.projetar ?? projetarPainel;
     const estado = projetar(descartado ? planoDoDiario : plano, eventos, entrada);

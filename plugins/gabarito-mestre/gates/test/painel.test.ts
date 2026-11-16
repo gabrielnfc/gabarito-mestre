@@ -1506,3 +1506,42 @@ test('entregue-de: encerrada ⇒ {id, versao}; reaberta depois ⇒ null; versão
   assert.equal(entregueDe([enc], 'GM 9'), null);
   assert.equal(entregueDe([enc, { ...enc }], 'GM-9'), null, 'diário que não ordena (seq repetido) não afirma');
 });
+
+// ── review r1 MAJOR-2: a entregue que é só a "última conhecida" (branch sem ID, diário `_sem-id`) não zera o que é do `_sem-id`; o pedido de /clear é
+// da sessão e nunca some com a entrega encerrada ───────────────────────────────────────────────────────────────────────────────────────────
+test('entregue-so-zera-a-entrega: em main (diário _sem-id) a GM-14 encerrada mantém PAROU, DEPENDE e ATENÇÃO do _sem-id; o /clear da sessão fica sempre', () => {
+  const fatosMain = { branch: 'main', idPadrao: '[A-Z]+-\\d+', specs: [], plano: null, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' };
+  const base = (extra: Record<string, unknown> = {}) => ({
+    decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+    pacote: { nome: 'Terra Média', lider: 'GANDALF', sabio: 'ELROND', nomes: ['ARAGORN', 'LEGOLAS'] }, notificacao: null, agoraMs: AGORA, fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
+    entregaId: null, modeloSessao: null, specSha: null, tetoSombra: 26, fatos: fatosMain, ...extra,
+  }) as unknown as Parameters<typeof projetarPainel>[2];
+  const ev = (tipo: string, dados: unknown, seq: number, agente = 'orquestrador'): Evento => ({ seq, ts: iso(seq), autor: 't', sessao: 's1', agente, tipo, dados, hash_anterior: null } as unknown as Evento);
+  const semId = [
+    ev('nota', { tipo: 'pendencia', texto: 'renovar o certificado' }, 1, 'implementador'),
+    ev('sombra.consulta', { pergunta_hash: 'c'.repeat(64), req: 'REQ-A-1' }, 2, 'sombra'),
+    ev('loop.parar', { motivo: 'sem_progresso' }, 3), ev('loop.parar', { motivo: 'sem_progresso' }, 4), ev('loop.parar', { motivo: 'sem_progresso' }, 5),
+  ];
+  const entregue = { id: 'GM-14', versao: null };
+  const proxima = { tipo: 'nenhuma', texto: 'nenhuma próxima anotada', acoes: [] };
+  // controle: sem encerramento, o _sem-id mostra os 3
+  const sem = projetarPainel(null, semId, base());
+  assert.ok(sem.parar !== null && sem.parar !== undefined, 'controle: PAROU do _sem-id');
+  // a GM-14 encerrada é a última conhecida (não é o diário projetado) ⇒ nada do _sem-id some
+  const ult = projetarPainel(null, semId, base({ entregue, proxima, entregueDoDiario: false }));
+  assert.deepEqual(ult.entregue, entregue);
+  assert.ok(ult.parar !== null && ult.parar !== undefined, `PAROU do _sem-id continua: ${JSON.stringify(ult.parar)}`);
+  assert.ok(ult.depende.some((i) => i.motivo === 'renovar o certificado'), `pendência do _sem-id continua: ${JSON.stringify(ult.depende)}`);
+  assert.ok(ult.atencao.some((a) => /consulta à Sombra sem decisão/.test(a)), `ATENÇÃO do _sem-id continua: ${JSON.stringify(ult.atencao)}`);
+  assert.equal(renderPainel(ult, { preset: 'esquadrao', largura: 100, tema: 'color' } as never).length > 1, true, 'com item pendente, os blocos (não a linha única)');
+  // a entregue É o diário projetado ⇒ os itens dela somem (d)(ii) ...
+  const daEnt = projetarPainel(null, semId, base({ entregue, proxima, entregueDoDiario: true }));
+  assert.equal(daEnt.parar, null);
+  assert.ok(daEnt.depende.every((i) => i.motivo === 'nada depende de você'), JSON.stringify(daEnt.depende));
+  assert.deepEqual(daEnt.atencao, []);
+  // ... mas o pedido de /clear é da sessão, não da entrega: fica nos dois casos
+  for (const doDiario of [true, false]) {
+    const c = projetarPainel(null, semId, base({ entregue, proxima, entregueDoDiario: doDiario, pousoPendente: true }));
+    assert.ok(c.depende.some((i) => i.motivo === 'limpar a conversa'), `${doDiario}: /clear continua: ${JSON.stringify(c.depende)}`);
+  }
+});
