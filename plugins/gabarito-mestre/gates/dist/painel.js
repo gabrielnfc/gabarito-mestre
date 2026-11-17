@@ -6,7 +6,7 @@
  * Decisões: `.superpowers/sdd/2026-11-09-e4-painel/sombra-p1a.md` §0 (D-A a D-C) e "Task 2".
  */
 
-import { projetarEmendas, shaAceito } from './emenda.js';
+import { pontaDaSpec, projetarEmendas, shaAceito } from './emenda.js';
 import { cmp, contarConsultas, duracoes, EM_TRABALHO, mediana, projetarDecisoes } from './diario-puro.js';
 import { dependeDe, loopDesligado, loteDoDono } from './depende.js';
 import { origemDe } from './origem.js';
@@ -14,7 +14,7 @@ import { loteRecomendadas, perguntasAbertas } from './perguntas.js';
 import { leituraPropria, noTeto, pousoPendente,              } from './pouso-pendente.js';
 import { pedidoDeClear } from './pouso.js';
 import { encerramentoDe, trilhaDe } from './trilha.js';
-                                               
+                                                       
 import { estadoDe, ordenar, proximaAcao, sombraDecideOTeto, tasksInvalidas, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK } from './loop.js';
                                             
 import { formaInvalida } from './formas.js';
@@ -60,6 +60,20 @@ function linhaEntregue(e              , o              )               {
   const comBotao = daProxima !== null && Array.isArray(p?.acoes) && p.acoes.length > 0 && Array.isArray(e.depende) && e.depende.some((i) => i?.motivo === daProxima);
   return [{ texto: cortar(`${comBotao ? '◆ ' : ''}GABARITO · ${ent.id} entregue${versao}${prox}`, w), cor: comBotao ? 'warning' : 'inactive' }];
 }
+/** GM-15 T36 (emenda 25 m.4): o motivo do "?" da spec quando o dono reverteu emenda já aplicada (o texto segue no arquivo). */
+export const motivoSpecDivergente = (seq        )         => `texto da emenda ${seq} revertida ainda na spec`;
+const IDX_SPEC = 1; // a célula "spec" da trilha (`trilha.ts`, IDX.spec)
+export function comSpecDivergente(trilha        , eventos          )         {
+  if (!trilha.identificada || trilha.marcas[IDX_SPEC] !== '✓') return trilha;
+  const d = pontaDaSpec(eventos).divergente;
+  if (d === null) return trilha;
+  const marcas = [...trilha.marcas];
+  const motivos = [...trilha.motivos];
+  marcas[IDX_SPEC] = '?';
+  motivos[IDX_SPEC] = motivoSpecDivergente(d.seq);
+  return { ...trilha, marcas, motivos };
+}
+
 /** GM-15 T8 (review r1 MAJOR-1): o item do DEPENDE que leva o botão "seguir" da próxima entrega. Não é item da entrega encerrada: é a oferta da próxima. */
 export const motivoDaProxima = (texto        )         => `próxima entrega: ${texto}`;
 const ID_ENTREGUE = /^[A-Za-z0-9-]{1,40}$/;
@@ -1129,7 +1143,8 @@ function projetarNovo(plano              , eventos                 , entrada    
   const zera = entregue !== null && entrada.entregueDoDiario !== false;
 
   // trilha, perguntas e "depende de você" pelas funções únicas (T3, T12, T13)
-  const trilha = trilhaDe(fatos, lista);
+  // GM-15 T36 (emenda 25 m.4): emenda aplicada e revertida pelo dono ⇒ a spec aparece com "?" e o motivo (REQ-ENT-2), nunca um ✓ que finja coerência; fora do DEPENDE
+  const trilha = comSpecDivergente(trilhaDe(fatos, lista), lista);
   const abertas = zera ? [] : perguntasAbertas(lista, trilha, { sessao: typeof fatos.sessao === 'string' ? fatos.sessao : null, ...(Array.isArray(fatos.ultimas) ? { ultimas: fatos.ultimas } : {}) })
     .filter((q) => q.gatilho !== 'pendencia' && q.gatilho !== 'ideia'); // pendência (3) e ideia (4) são itens de `dependeDe`, com o botão "feito"/"visto"
   const pergunta = abertas[0] ?? null;

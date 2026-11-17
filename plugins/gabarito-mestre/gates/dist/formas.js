@@ -153,9 +153,15 @@ function exigirSha64(o     , nome        )                {
   return typeof v === 'string' && HASH_RE.test(v) ? null : `campo \`${nome}\` inválido: esperado sha256 em hex minúsculo (64)`;
 }
 
+/** GM-15 T36 (emenda 25 m.4): `reverte`, quando presente, é o literal `true` (o desfazer do texto de emenda revertida pelo dono). */
+function exigirReverte(o     )                {
+  const v = campo(o, 'reverte');
+  return v === undefined || v === true ? null : 'campo `reverte` inválido: esperado true';
+}
+
 const specAplicada        = (o) => primeiro(
-  chaveExtra(o, ['seq', 'spec', 'sha256_antes', 'sha256_depois'], '`spec.aplicada` carrega só {seq, spec, sha256_antes, sha256_depois}'),
-  inteiroPos(o, 'seq'), exigirTexto(o, 'spec'), exigirSha64(o, 'sha256_antes'), exigirSha64(o, 'sha256_depois'),
+  chaveExtra(o, ['seq', 'spec', 'sha256_antes', 'sha256_depois', 'reverte'], '`spec.aplicada` carrega só {seq, spec, sha256_antes, sha256_depois, reverte?}'),
+  inteiroPos(o, 'seq'), exigirTexto(o, 'spec'), exigirSha64(o, 'sha256_antes'), exigirSha64(o, 'sha256_depois'), exigirReverte(o),
 );
 
 function motivoDevolvida(o     )                {

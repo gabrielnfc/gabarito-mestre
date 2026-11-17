@@ -1479,6 +1479,9 @@ function proxima(c, plano, flags) {
   const ordenados = ord.ok ? ord.eventos : [];
   const est = projetarEmendas(eventos);
   aviso.push(...avisosDeEmenda(plano, ordenados, est));
+  // GM-15 T36 (emenda 25 m.4): o dono reverteu emenda já aplicada: o orquestrador desfaz o texto (obrigação dele; fora do DEPENDE e do lote do dono)
+  const div = pontaDaSpec(eventos).divergente;
+  if (div !== null) aviso.push(`desfazer na spec o texto da emenda ${div.seq} (revertida pelo dono) e rodar \`emenda aplicar ${div.seq}\``);
   // A árvore de aprendizados é lida UMA vez por chamada (nunca por item); só quando há o que despachar.
   const extra = { cfg, ordenados, est, decisoes: projetarDecisoes(eventos), vigentes: acao.tipo === 'despachar' ? aprendizadosDaArvore(c, aviso) : [] };
   // GM-15 T13 (REQ-AUT-1): o que só o dono destrava sai em 1 lote, ao lado da ação (o loop segue no permitido); a Sombra só de origin, a entrega de `lerConfigEntrega`.
@@ -1781,11 +1784,13 @@ function aplicar(c, plano, seq, antesDaGravacao) {
   const depois = shaDaSpec(checkout, alvo);
   if (!depois.ok) throw new Falha(depois.erro, `${depois.mensagem}; nada foi gravado`);
   if (depois.sha256 === v.ponta.sha256) throw new Falha('nada_a_aplicar', `a spec ${v.ponta.spec} está igual ao último sha aceito (${v.ponta.sha256.slice(0, 12)}…): edite o texto da emenda antes de aplicar; nada foi gravado`);
-  const dados = { seq, spec: v.ponta.spec, sha256_antes: v.ponta.sha256, sha256_depois: depois.sha256 };
+  // GM-15 T36 (emenda 25 m.4): o desfazer do texto de emenda revertida pelo dono; o arquivo que volta ao sha que a emenda deixou não desfez nada
+  if (v.reverte === true && depois.sha256 === v.sha_aplicado) throw new Falha('nada_a_aplicar', `a spec ${v.ponta.spec} segue com o sha256 que a emenda ${seq} deixou (${depois.sha256.slice(0, 12)}…): desfaça o texto da emenda revertida antes de aplicar; nada foi gravado`);
+  const dados = { seq, spec: v.ponta.spec, sha256_antes: v.ponta.sha256, sha256_depois: depois.sha256, ...(v.reverte === true ? { reverte: true } : {}) };
   const conferir = () => {
     antesDaGravacao?.();
     const de_novo = validarAplicacao(lerDiarioEstrito(c.dirEntrega), seq);
-    if (!de_novo.ok || de_novo.ponta.sha256 !== v.ponta.sha256 || de_novo.ponta.spec !== v.ponta.spec) {
+    if (!de_novo.ok || de_novo.ponta.sha256 !== v.ponta.sha256 || de_novo.ponta.spec !== v.ponta.spec || de_novo.reverte !== v.reverte) {
       throw new Falha('cadeia_quebrada', 'a cadeia de specs aceitas mudou entre a leitura e a gravação (outra aprovação ou aplicação); leia o diário e aplique de novo. Nada foi gravado');
     }
     const rel = shaDaSpec(checkout, alvo);

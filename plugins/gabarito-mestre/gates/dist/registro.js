@@ -58,7 +58,7 @@ export function montarRegistro(entrega        , eventos          , specSha      
   // T54 (emenda 54): cada emenda aplicada no texto aparece (para o revisor da entrega conferir o diff contra a emenda) e o sha atual confere com a CADEIA.
   const aplicadas = lista.filter((e) => e.tipo === 'spec.aplicada');
   aplicadas.forEach(exigirValido);
-  linhasSpec.push(...aplicadas.map((e) => `- ${ref(e)} · emenda #${limpa(campo(e.dados, 'seq'), 16)} aplicada · spec ${limpa(campo(e.dados, 'spec'), 200)} · sha256 ${limpa(campo(e.dados, 'sha256_antes'), 64)} ⇒ ${limpa(campo(e.dados, 'sha256_depois'), 64)}`));
+  linhasSpec.push(...aplicadas.map((e) => `- ${ref(e)} · emenda #${limpa(campo(e.dados, 'seq'), 16)} ${campo(e.dados, 'reverte') === true ? 'desfeita (texto da emenda revertida pelo dono)' : 'aplicada'} · spec ${limpa(campo(e.dados, 'spec'), 200)} · sha256 ${limpa(campo(e.dados, 'sha256_antes'), 64)} ⇒ ${limpa(campo(e.dados, 'sha256_depois'), 64)}`));
   if (aprovacoes.length > 0) {
     const { ponta } = pontaDaSpec(lista);
     const n = ponta === null ? 0 : ponta.aplicadas;
@@ -88,10 +88,15 @@ export function montarRegistro(entrega        , eventos          , specSha      
   const julgamentos = lista.filter((e) => e.tipo === 'spec.emendada' || e.tipo === 'emenda.rejeitada');
   julgamentos.forEach(exigirValido);
   const fechamento = fecharJulgamentos(lista);
+  // GM-15 T36 (emenda 25 m.4): emenda aplicada e revertida pelo dono: "texto ainda na spec" até o desfazer (`spec.aplicada` com `reverte`), depois "texto desfeito"
+  const pontas = pontaDaSpec(lista);
+  const desfeita = (seq        )          => pontas.aplicacoes.some((a) => a.seq === seq && a.reverte === true);
+  const aplicada = (seq        )          => pontas.aplicacoes.some((a) => a.seq === seq && a.reverte !== true);
   const linhasEmendas           = [];
   for (const p of propostas) {
     const j = fechamento.get(p.seq);
-    const estado = j === undefined ? 'aberta' : `${j.aprova ? 'aprovada' : 'rejeitada'} por ${limpa(j.origem, 16)}`;
+    let estado = j === undefined ? 'aberta' : `${j.aprova ? 'aprovada' : 'rejeitada'} por ${limpa(j.origem, 16)}`;
+    if (j !== undefined && !j.aprova && j.origem === 'dono' && aplicada(p.seq)) estado = desfeita(p.seq) ? 'revertida pelo dono; texto desfeito na spec' : 'revertida pelo dono; texto ainda na spec';
     const task = campo(p.dados, 'task') !== undefined ? ` · task ${limpa(campo(p.dados, 'task'), 64)}` : '';
     linhasEmendas.push(`- #${limpa(p.seq, 16)} · ${limpa(campo(p.dados, 'req'), 64)}${task} · ${limpa(campo(p.dados, 'causa'), 32)} · ${estado} · fato: ${limpa(campo(p.dados, 'fato'))} · diff: ${limpa(campo(p.dados, 'diff'))}`);
   }

@@ -291,3 +291,26 @@ describe('T54 (emenda 54): o registro confere o sha atual com a cadeia de emenda
     assert.throws(() => montarRegistro('GM-14', [APROVA, PROP, APROV_DONO, torta], SHA), /spec\.aplicada/);
   });
 });
+
+describe('GM-15 T36 (emenda 25 m.4): emenda aplicada e revertida pelo dono', () => {
+  const SB = 'b'.repeat(64);
+  const SC = 'c'.repeat(64);
+  const aplic = (seq: number, antes: string, depois: string, n: number, ts: number, extra: Record<string, unknown> = {}): Evento =>
+    ev('loop', 20 + n, 'spec.aplicada', { seq, spec: 'docs/spec.md', sha256_antes: antes, sha256_depois: depois, ...extra }, t(ts));
+  const APROV_SOMBRA = ev('sombra', 1, 'spec.emendada', { proposta_seq: 1, origem: 'sombra' }, t(4));
+  const REVERTE_DONO = ev('dono', 1, 'emenda.rejeitada', { proposta_seq: 1, origem: 'dono' }, t(25));
+  const BASE = [APROVA, PROP, APROV_SOMBRA, aplic(1, SHA, SB, 1, 20), REVERTE_DONO];
+
+  test('registro-revertida-texto-na-spec: a emenda aparece como "revertida pelo dono; texto ainda na spec" até o desfazer, que aparece como desfeita', () => {
+    const emendas = corpo(montarRegistro('GM-15', BASE, SB), 'Emendas');
+    assert.match(emendas[0], /^- #1 · REQ-APR-1 · task T4 · tecnica · revertida pelo dono; texto ainda na spec · /);
+    const feito = [...BASE, aplic(1, SB, SC, 2, 30, { reverte: true })];
+    const depois = corpo(montarRegistro('GM-15', feito, SC), 'Emendas');
+    assert.match(depois[0], /revertida pelo dono; texto desfeito na spec/);
+    const spec = corpo(montarRegistro('GM-15', feito, SC), 'Aprovação da spec');
+    assert.ok(spec.includes(`- loop:22 · emenda #1 desfeita (texto da emenda revertida pelo dono) · spec docs/spec.md · sha256 ${SB} ⇒ ${SC}`), spec.join('\n'));
+    // controle: rejeitada pelo dono SEM ter sido aplicada segue só "rejeitada por dono"
+    const so = corpo(montarRegistro('GM-15', [APROVA, PROP, APROV_SOMBRA, REVERTE_DONO], SHA), 'Emendas');
+    assert.match(so[0], /· rejeitada por dono · /);
+  });
+});

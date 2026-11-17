@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { quemRedigeNaAncora, projetarEmendas, fecharJulgamentos, versaoDoReq, reqsCongelados, escopoDaTask, validarProposta, validarJulgamento, SESSAO_EMENDAS } from '../src/emenda.ts';
+import { quemRedigeNaAncora, projetarEmendas, fecharJulgamentos, versaoDoReq, reqsCongelados, escopoDaTask, validarProposta, validarJulgamento, pontaDaSpec, shaAceito, validarAplicacao, SESSAO_EMENDAS } from '../src/emenda.ts';
 import type { EstadoEmendas } from '../src/emenda.ts';
 import { normalizarCaminho, validarPlano } from '../src/plano.ts';
 import type { Evento, Plano } from '../src/tipos.ts';
@@ -404,4 +404,59 @@ test('t26-mensagem-dono-nao-manda-a-sombra-redigir', () => {
   assert.ok(!m.includes('Sombra redige'), m);
   const so2 = projetarEmendas([prop(1), prop(2), rejeita('s', 1, 1), rejeita('s', 2, 2)]);
   assert.match(validarProposta(plano(T('t', [], [])), so2, dadosProp()) ?? '', /a Sombra redige o texto/, 'quem=sombra mantém a mensagem');
+});
+
+// ── GM-15 T36 r1 MAJOR-3 (emenda 25 m.4, D-G19): o dono reverte emenda JÁ aplicada ⇒ vale e a spec fica divergente ────────────────────────────────────────────────
+const SA = 'a'.repeat(64);
+const SB = 'b'.repeat(64);
+const SC = 'c'.repeat(64);
+const SD = 'd'.repeat(64);
+const aprovadaSpec = (seq: number, sha = SA) => ev('dono', seq, 'spec.aprovada', { spec: 'docs/s.md', sha256: sha });
+const aplicada = (seq: number, emenda: number, antes: string, depois: string, extra: Record<string, unknown> = {}) =>
+  ev('loop', seq, 'spec.aplicada', { seq: emenda, spec: 'docs/s.md', sha256_antes: antes, sha256_depois: depois, ...extra });
+/** spec A aprovada, emenda 1 aprovada pela SOMBRA e aplicada (A ⇒ B). */
+const aplicadaB = () => [aprovadaSpec(1), prop(1), aprova('sombra', 1, 1, 'sombra'), aplicada(1, 1, SA, SB)];
+const revertida = () => [...aplicadaB(), rejeita('dono', 2, 1, 'dono')];
+
+test('reverter-apos-aplicada-vale-e-diverge: o dono rejeita a aprovação da Sombra depois do spec.aplicada ⇒ a reversão vale, a cadeia segue o arquivo (B) e a projeção marca divergente {seq, sha_aplicado}', () => {
+  const est = projetarEmendas(aplicadaB());
+  assert.equal(validarJulgamento(est, 1, 'dono', true), null, 'o dono reverte mesmo depois de aplicada');
+  assert.match(validarJulgamento(est, 1, 'sombra', true) ?? '', /já julgada/, 'a Sombra não');
+  const antes = pontaDaSpec(aplicadaB());
+  assert.equal(antes.divergente, null, 'enquanto a aprovação vale não há divergência');
+  const r = pontaDaSpec(revertida());
+  assert.deepEqual(r.divergente, { seq: 1, sha_aplicado: SB });
+  assert.equal(r.ponta?.sha256, SB, 'a cadeia não quebra: o texto segue no arquivo');
+  assert.equal(shaAceito(revertida(), SB), true);
+  assert.equal(projetarEmendas(revertida()).rejeitadas[0].rejeitadaPor, 'dono');
+});
+
+test('desfazer-fecha-divergencia: spec.aplicada com reverte (antes = ponta, depois ≠ sha_aplicado) encerra a divergência; sem ela, ou torta, ela segue', () => {
+  const desfaz = aplicada(2, 1, SB, SC, { reverte: true });
+  const ok = pontaDaSpec([...revertida(), desfaz]);
+  assert.equal(ok.divergente, null);
+  assert.equal(ok.ponta?.sha256, SC);
+  assert.deepEqual(ok.aplicacoes.map((a) => [a.seq, a.reverte === true]), [[1, false], [1, true]]);
+  const segue = (...extra: Evento[]) => pontaDaSpec([...revertida(), ...extra]).divergente;
+  assert.deepEqual(segue(), { seq: 1, sha_aplicado: SB }, 'sem novo spec.aplicada a divergência não some');
+  assert.deepEqual(segue(aplicada(2, 1, SB, SC)), { seq: 1, sha_aplicado: SB }, 'aplicada sem reverte da mesma seq (já aplicada) não desfaz');
+  assert.deepEqual(segue(aplicada(2, 1, SB, SB, { reverte: true })), { seq: 1, sha_aplicado: SB }, 'depois = sha_aplicado: nada foi desfeito');
+  assert.deepEqual(segue(aplicada(2, 1, SA, SC, { reverte: true })), { seq: 1, sha_aplicado: SB }, 'antes fora da ponta');
+  assert.deepEqual(segue(aplicada(2, 9, SB, SC, { reverte: true })), { seq: 1, sha_aplicado: SB }, 'reverte de seq que não foi aplicada');
+  assert.deepEqual(segue(aplicada(2, 1, SB, SC, { reverte: false })), { seq: 1, sha_aplicado: SB }, 'reverte só vale true (e a forma recusa)');
+  // aprovação nova do dono (ele aprovou o texto de agora) também encerra
+  assert.equal(pontaDaSpec([...revertida(), aprovadaSpec(3, SD)]).divergente, null);
+  // a reversão que NÃO foi depois de aplicada não gera divergência (o dono rejeita a aprovação da Sombra antes de aplicar)
+  assert.equal(pontaDaSpec([aprovadaSpec(1), prop(1), aprova('sombra', 1, 1, 'sombra'), rejeita('dono', 2, 1, 'dono')]).divergente, null);
+});
+
+test('validarAplicacao-desfazer: a emenda aplicada e revertida pelo dono aceita o desfazer 1 vez (reverte:true, com o sha_aplicado); rejeição que nunca foi aplicada segue recusada', () => {
+  const v = validarAplicacao(revertida(), 1);
+  assert.deepEqual(v.ok && [v.ponta.sha256, v.reverte, v.sha_aplicado], [SB, true, SB]);
+  const feito = validarAplicacao([...revertida(), aplicada(2, 1, SB, SC, { reverte: true })], 1);
+  assert.deepEqual(feito, { ok: false, motivo: 'ja_aplicada' });
+  assert.deepEqual(validarAplicacao([aprovadaSpec(1), prop(1), rejeita('dono', 2, 1, 'dono')], 1), { ok: false, motivo: 'emenda_nao_aprovada' });
+  assert.deepEqual(validarAplicacao([aprovadaSpec(1), prop(1), prop(2), aprova('sombra', 1, 1, 'sombra'), rejeita('dono', 2, 1, 'dono')], 1), { ok: false, motivo: 'emenda_nao_aprovada' }, 'revertida mas nunca aplicada');
+  // a emenda aprovada e aplicada segue recusada na 2ª aplicação (ja_aplicada), como antes
+  assert.deepEqual(validarAplicacao(aplicadaB(), 1), { ok: false, motivo: 'ja_aplicada' });
 });

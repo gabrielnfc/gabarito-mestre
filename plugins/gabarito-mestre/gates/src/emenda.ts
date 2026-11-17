@@ -215,18 +215,22 @@ export function validarJulgamento(est: EstadoEmendas, proposta_seq: number, orig
 const HEX64 = /^[0-9a-f]{64}$/;
 
 export type PontaDaSpec = { spec: string; sha256: string; aplicadas: number; ref: string };
-export type Aplicacao = { seq: number; spec: string; antes: string; depois: string; ref: string };
+export type Aplicacao = { seq: number; spec: string; antes: string; depois: string; ref: string; reverte?: true };
+/** GM-15 T36 (emenda 25 m.4): o texto da emenda `seq` (revertida pelo dono) segue na spec; `sha_aplicado` é o sha que a aplicação dela deixou. */
+export type Divergencia = { seq: number; sha_aplicado: string };
 
 /**
  * A REGRA ÚNICA do sha aceito da spec (REQ-TRI-1, REQ-DEP-1 (1), REQ-DIA-1, emenda 54). A cadeia, na ordem do diário (`ordenar`):
  * `spec.aprovada` válida REINICIA a cadeia (a ponta é o sha aprovado); `spec.aplicada` válida AVANÇA a ponta só se (a) o `spec` é o da
- * aprovação de origem, (b) `sha256_antes` é a ponta, (c) `seq` tem `spec.emendada` na mesma entrega (1º julgamento válido, aprovando) e
- * (d) a `seq` ainda não foi aplicada. Qualquer outra aplicada é ignorada (cadeia quebrada nunca vira aceito). Diário fora de ordem ⇒ `null`.
- * `filtro` restringe as aprovações a um caminho (a trilha da spec candidata); sem ele, toda aprovação vale.
+ * aprovação de origem, (b) `sha256_antes` é a ponta, (c) `seq` tem `spec.emendada` na mesma entrega (qualquer julgamento aprovando, mesmo o que o dono reverteu depois:
+ * o texto JÁ foi aplicado, a cadeia descreve o arquivo) e (d) a `seq` ainda não foi aplicada. Qualquer outra aplicada é ignorada (cadeia quebrada nunca vira aceito).
+ * GM-15 T36 (emenda 25 m.4, D-G19): a emenda aplicada e DEPOIS rejeitada pelo dono deixa a spec DIVERGENTE `{seq, sha_aplicado}` (a primeira em aberto) até uma
+ * `spec.aplicada` com `reverte: true` da mesma seq (sha_antes = ponta, sha_depois ≠ sha_aplicado) registrar o texto desfeito; nova `spec.aprovada` do dono também
+ * a encerra (ele aprovou o texto de agora). Diário fora de ordem ⇒ `null`. `filtro` restringe as aprovações a um caminho (a trilha da spec candidata).
  * Quem decide "o sha atual da spec está aceito?" é só `shaAceito`; painel, trilha e registro não comparam sha por conta própria.
  */
-export function pontaDaSpec(eventos: Evento[], filtro?: (spec: string) => boolean): { ponta: PontaDaSpec | null; aplicacoes: Aplicacao[] } {
-  const vazio = { ponta: null, aplicacoes: [] };
+export function pontaDaSpec(eventos: Evento[], filtro?: (spec: string) => boolean): { ponta: PontaDaSpec | null; aplicacoes: Aplicacao[]; divergente: Divergencia | null } {
+  const vazio = { ponta: null, aplicacoes: [], divergente: null };
   if (!Array.isArray(eventos)) return vazio;
   let ordem: ReturnType<typeof ordenar>;
   try {
@@ -235,8 +239,11 @@ export function pontaDaSpec(eventos: Evento[], filtro?: (spec: string) => boolea
     return vazio;
   }
   if (!ordem.ok) return vazio;
-  const julgadas = new Set(projetarEmendas(eventos).aprovadas.map((p) => p.seq));
+  const emendadas = new Set(ordem.eventos.filter((e) => ehObjeto(e) && comoJulgamento(e)?.aprova === true).map((e) => comoJulgamento(e)!.seq));
+  const vigentes = new Set(projetarEmendas(eventos).aprovadas.map((p) => p.seq));
   const aplicadas = new Set<number>();
+  const doTexto = new Map<number, Aplicacao>(); // aplicada que deixou o texto na spec, desde a última aprovação do dono
+  const desfeitas = new Set<number>();
   const aplicacoes: Aplicacao[] = [];
   let ponta: PontaDaSpec | null = null;
   for (const e of ordem.eventos) {
@@ -247,19 +254,34 @@ export function pontaDaSpec(eventos: Evento[], filtro?: (spec: string) => boolea
       const spec = campo(e.dados, 'spec') as string;
       if (filtro !== undefined && !filtro(spec)) continue;
       ponta = { spec, sha256: campo(e.dados, 'sha256') as string, aplicadas: 0, ref };
+      doTexto.clear();
     } else if (e.tipo === 'spec.aplicada') {
       if (ponta === null || formaInvalida('spec.aplicada', e.dados) !== null) continue;
       const seq = campo(e.dados, 'seq') as number;
       const spec = campo(e.dados, 'spec') as string;
       const antes = campo(e.dados, 'sha256_antes') as string;
       const depois = campo(e.dados, 'sha256_depois') as string;
-      if (spec !== ponta.spec || antes !== ponta.sha256 || !julgadas.has(seq) || aplicadas.has(seq)) continue;
-      aplicadas.add(seq);
-      aplicacoes.push({ seq, spec, antes, depois, ref });
+      if (spec !== ponta.spec || antes !== ponta.sha256) continue;
+      if (campo(e.dados, 'reverte') === true) {
+        const feita = doTexto.get(seq);
+        if (feita === undefined || vigentes.has(seq) || desfeitas.has(seq) || depois === feita.depois) continue;
+        desfeitas.add(seq);
+        aplicacoes.push({ seq, spec, antes, depois, ref, reverte: true });
+      } else {
+        if (!emendadas.has(seq) || aplicadas.has(seq)) continue;
+        aplicadas.add(seq);
+        const a: Aplicacao = { seq, spec, antes, depois, ref };
+        doTexto.set(seq, a);
+        aplicacoes.push(a);
+      }
       ponta = { spec, sha256: depois, aplicadas: ponta.aplicadas + 1, ref };
     }
   }
-  return { ponta, aplicacoes };
+  let divergente: Divergencia | null = null;
+  for (const [seq, a] of doTexto) {
+    if (!vigentes.has(seq) && !desfeitas.has(seq)) { divergente = { seq, sha_aplicado: a.depois }; break; }
+  }
+  return { ponta, aplicacoes, divergente };
 }
 
 /** `true` só se `sha` (64 hex minúsculos) é o último sha aceito da spec: o da última aprovação, ou o fim da cadeia de aplicadas que parte dela. */
@@ -274,13 +296,22 @@ export type MotivoAplicar = 'diario_invalido' | 'seq_invalido' | 'emenda_nao_apr
 /**
  * Pode gravar `spec.aplicada` da `seq`? Só `seq` com `spec.emendada` (aprovada) nesta entrega, uma vez por seq, e só com spec aprovada (ponta
  * da cadeia) para partir dela. Emenda rejeitada, aberta ou inexistente ⇒ `emenda_nao_aprovada`. Devolve o motivo fechado ou a ponta (`sha256_antes`).
+ * GM-15 T36 (emenda 25 m.4): a emenda aplicada e depois REJEITADA PELO DONO aceita o desfazer, 1 vez (`reverte: true`, com o `sha_aplicado` que o texto novo não pode repetir).
  */
-export function validarAplicacao(eventos: Evento[], seq: unknown): { ok: false; motivo: MotivoAplicar } | { ok: true; ponta: PontaDaSpec } {
+export function validarAplicacao(eventos: Evento[], seq: unknown): { ok: false; motivo: MotivoAplicar } | { ok: true; ponta: PontaDaSpec; reverte?: true; sha_aplicado?: string } {
   const est = projetarEmendas(eventos);
   if (est.invalido !== undefined) return { ok: false, motivo: 'diario_invalido' };
   if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 1) return { ok: false, motivo: 'seq_invalido' };
-  if (!est.aprovadas.some((p) => p.seq === seq)) return { ok: false, motivo: 'emenda_nao_aprovada' };
-  const { ponta, aplicacoes } = pontaDaSpec(eventos);
+  const { ponta, aplicacoes, divergente } = pontaDaSpec(eventos);
+  if (!est.aprovadas.some((p) => p.seq === seq)) {
+    const revertida = est.rejeitadas.some((p) => p.seq === seq && p.rejeitadaPor === 'dono');
+    const feita = aplicacoes.find((a) => a.seq === seq && a.reverte !== true);
+    if (!revertida || feita === undefined || ponta === null) return { ok: false, motivo: 'emenda_nao_aprovada' };
+    // desfazer 1 vez por seq (o de cada divergência é independente, na ordem que o orquestrador quiser); sem divergência (nova aprovação do dono a encerrou) não há o que desfazer
+    if (aplicacoes.some((a) => a.seq === seq && a.reverte === true)) return { ok: false, motivo: 'ja_aplicada' };
+    if (divergente === null) return { ok: false, motivo: 'emenda_nao_aprovada' };
+    return { ok: true, ponta, reverte: true, sha_aplicado: feita.depois };
+  }
   // Já gravada na cadeia ou em qualquer `spec.aplicada` válido da mesma seq (mesmo de cadeia que a aprovação nova reiniciou).
   const jaGravada = eventos.some((e) => ehObjeto(e) && e.tipo === 'spec.aplicada' && ehObjeto(e.dados) && formaInvalida('spec.aplicada', e.dados) === null && campo(e.dados, 'seq') === seq);
   if (aplicacoes.some((a) => a.seq === seq) || jaGravada) return { ok: false, motivo: 'ja_aplicada' };

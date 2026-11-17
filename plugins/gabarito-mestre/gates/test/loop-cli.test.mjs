@@ -6371,6 +6371,73 @@ describe('GM-14 T54: `emenda aplicar <seq>` grava spec.aplicada com os sha do di
     assert.match(apr, /shaAceito\(eventos, atual\.sha256\)/);
     assert.doesNotMatch(apr, /if \(antesN > 0\)/);
   });
+
+  // ── GM-15 T36 r1 MAJOR-3 (emenda 25 m.4): o dono reverte emenda JÁ aplicada ─────────────────────────────────────────────────────────────────────────────────────
+  const PAINEL_T36 = join(AQUI, '..', 'scripts', 'painel.mjs');
+  /** Aprovação da SOMBRA forjada (sessão própria, `ts` à frente do diário) e a reversão do dono pelo comando real. */
+  async function aplicadaERevertida() {
+    const { julgarEmendaDono } = await import('../scripts/loop.mjs');
+    const { amb, texto0, editar, aplicadas } = await pronto({ aprovadas: [] });
+    const forja = (sessao, tipo, dados, desloc) => {
+      const r = diario.append(amb.entregas, sessao, { ts: new Date(Date.now() + desloc).toISOString(), autor: 't@t', sessao, agente: 'orquestrador', tipo, dados });
+      assert.ok(r.ok, JSON.stringify(r));
+    };
+    forja('sombra-j', 'spec.emendada', { proposta_seq: 1, origem: 'sombra' }, 1000);
+    const texto1 = `${texto0}\ntexto da emenda 1\n`;
+    editar(texto1);
+    const ap = amb.cli(['emenda', 'aplicar', '1']);
+    assert.equal(ap.rc, 0, ap.out + ap.err);
+    const rev = julgarEmendaDono(amb.dir, 1, 'rejeitar', 'S-dono');
+    assert.equal(rev.ok, true, JSON.stringify(rev));
+    return { amb, texto0, texto1, editar, aplicadas };
+  }
+  const avisoDesfazer = (amb) => (amb.cli(['proxima', '--vivos', '0']).j.aviso ?? []).filter((a) => /desfazer na spec/.test(a));
+
+  test('divergente-aviso-ao-orquestrador-fora-do-depende: reversão do dono depois de aplicada ⇒ o `proxima` avisa o ORQUESTRADOR (texto + comando); o lote e o DEPENDE do painel real não têm item; o desfazer calou o aviso', async () => {
+    const { amb, texto0, editar } = await aplicadaERevertida();
+    const p = amb.cli(['proxima', '--vivos', '0']).j;
+    assert.deepEqual((p.aviso ?? []).filter((a) => /desfazer na spec/.test(a)), ['desfazer na spec o texto da emenda 1 (revertida pelo dono) e rodar `emenda aplicar 1`']);
+    assert.equal(JSON.stringify(p.lote).includes('emenda 1'), false, `o lote do dono não leva a divergência: ${JSON.stringify(p.lote)}`);
+    const r = spawnSync(process.execPath, [PAINEL_T36, 'estado'], { cwd: amb.dir, encoding: 'utf8', env: amb.env, input: '' });
+    const j = JSON.parse(r.stdout.trim());
+    assert.equal(j.ok, true, r.stdout + r.stderr);
+    assert.equal(JSON.stringify(j.estado.depende).includes('revertida'), false, JSON.stringify(j.estado.depende));
+    assert.equal(JSON.stringify(j.estado.depende).includes('emenda 1'), false);
+    // desfeito o texto e gravado o desfazer, o aviso some
+    editar(texto0.replace(/\n$/, '') + '\nsem a emenda 1\n');
+    assert.equal(amb.cli(['emenda', 'aplicar', '1']).rc, 0);
+    assert.deepEqual(avisoDesfazer(amb), []);
+  });
+
+  test('emenda-aplicar-desfaz-revertida: `emenda aplicar <seq>` da emenda revertida grava spec.aplicada com reverte:true; arquivo igual à ponta ou ao sha da emenda ⇒ nada_a_aplicar; 2ª vez ⇒ ja_aplicada', async () => {
+    const { amb, texto0, texto1, editar, aplicadas } = await aplicadaERevertida();
+    const antes = bytesDoDiario(amb);
+    const nada = amb.cli(['emenda', 'aplicar', '1']); // o texto da emenda 1 segue no arquivo
+    assert.equal(nada.rc, 1, nada.out);
+    assert.equal(nada.j.erro, 'nada_a_aplicar');
+    assert.deepEqual(bytesDoDiario(amb), antes, 'nada gravado');
+    editar(texto0);
+    const d = amb.cli(['emenda', 'aplicar', '1']);
+    assert.equal(d.rc, 0, d.out + d.err);
+    assert.deepEqual(aplicadas().map((e) => e.dados).at(-1), { seq: 1, spec: SPEC, sha256_antes: sha(texto1), sha256_depois: sha(texto0), reverte: true });
+    editar(`${texto0}\noutra\n`);
+    const de_novo = amb.cli(['emenda', 'aplicar', '1']);
+    assert.equal(de_novo.j.erro, 'ja_aplicada');
+  });
+
+  test('emenda-aplicar-voltar-ao-sha-da-emenda-nao-desfaz: com a ponta já adiante, o arquivo que volta ao sha que a emenda 1 deixou ⇒ nada_a_aplicar (reverte exige sha novo)', async () => {
+    const { amb, texto1, editar } = await aplicadaERevertida();
+    const { julgarEmendaDono } = await import('../scripts/loop.mjs');
+    // a emenda 2 (dono) aplicada depois: a ponta sai de B
+    assert.equal(julgarEmendaDono(amb.dir, 2, 'aprovar', 'S-dono').ok, true);
+    editar(`${texto1}\ntexto da emenda 2\n`);
+    assert.equal(amb.cli(['emenda', 'aplicar', '2']).rc, 0);
+    editar(texto1); // volta ao sha que a emenda 1 deixou: não desfez nada
+    const r = amb.cli(['emenda', 'aplicar', '1']);
+    assert.equal(r.rc, 1, r.out);
+    assert.equal(r.j.erro, 'nada_a_aplicar');
+  });
+
 });
 
 // ═══════════════════════════════════════════════════════════════ GM-15 T6: adiar, cortar e reabrir pela Sombra (REQ-ENT-2, condição 1)

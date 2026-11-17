@@ -1820,3 +1820,29 @@ test('clear-so-com-wakeup-painel (REQ-POU-4, aprendizado 185): pouso pendente co
   assert.ok(comandos(on).includes('/clear'));
   assert.ok(motivos(on).includes('limpar a conversa'));
 });
+
+// ---------------------------------------------------------------- GM-15 T36 r1 MAJOR-3 (emenda 25 m.4): emenda aplicada e revertida pelo dono
+
+test('painel-spec-divergente-interroga-com-motivo: a spec vira "?" com o motivo e o DEPENDE não ganha item; o desfazer devolve o ✓', () => {
+  const SPEC = 'docs/superpowers/specs/2026-11-20-gm12-design.md';
+  const [A, B, C] = ['a', 'b', 'c'].map((x) => x.repeat(64));
+  const fatos = (sha: string) => ({ branch: 'feat/GM-12-x', idPadrao: '[A-Z]+-\\d+', specs: [{ caminho: SPEC, pbi: 'GM-12', sha256: sha, secoes: 3, titulo: 'x' }], plano: { tasks: ['T1'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' });
+  const base: Item[] = [
+    e(1, 'spec.aprovada', { spec: SPEC, sha256: A }, 'dono'),
+    e(2, 'emenda.proposta', { req: 'REQ-DIA-1', diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'tecnica' }, 'emendas'),
+    e(3, 'spec.emendada', { proposta_seq: 1, origem: 'sombra' }, 'sombra'),
+    e(4, 'spec.aplicada', { seq: 1, spec: SPEC, sha256_antes: A, sha256_depois: B }, 'loop'),
+  ];
+  const projeta = (itens: Item[], sha: string) => projetarPainel(P('T1'), D(itens), entrada({ fatos: fatos(sha) } as Partial<EntradaPainel>) as EntradaPainel);
+  const controle = projeta(base, B);
+  assert.equal(controle.trilha.marcas[1], '✓', 'a aprovação da Sombra vale: sem divergência');
+  const rev = e(5, 'emenda.rejeitada', { proposta_seq: 1, origem: 'dono' }, 'dono');
+  const s = projeta([...base, rev], B);
+  assert.equal(s.trilha.marcas[1], '?');
+  assert.equal(s.trilha.motivos[1], 'texto da emenda 1 revertida ainda na spec');
+  assert.equal(JSON.stringify(s.depende).includes('revertida'), false, `nada no DEPENDE: ${JSON.stringify(s.depende)}`);
+  assert.equal(s.depende.some((i) => /spec aguardando|aprovar a spec|aprovar a versão/.test(i.motivo)), false, 'o sha B é o da cadeia: o dono não é chamado a aprovar');
+  const desfeito = projeta([...base, rev, e(6, 'spec.aplicada', { seq: 1, spec: SPEC, sha256_antes: B, sha256_depois: C, reverte: true }, 'loop')], C);
+  assert.equal(desfeito.trilha.marcas[1], '✓');
+  assert.equal(desfeito.trilha.motivos[1], null);
+});
