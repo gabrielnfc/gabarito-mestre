@@ -6439,7 +6439,7 @@ describe('GM-15 T13: lote do dono no proxima', () => {
     assert.deepEqual(amb2.cli(['proxima']).j.lote.map((i) => i.motivo), ['decidir a emenda 1'], 'aberta: a emenda comum');
   });
 
-  test('lote-redacao-sai-quando-o-dono-decide (review r1 MAJOR-3): rejeição do próprio dono, proposta posterior do mesmo REQ e entrega encerrada tiram o item; proposta posterior de OUTRO REQ ou da Sombra não', () => {
+  test('lote-redacao-sai-so-por-decisao-do-dono-ou-fim (review r1 MAJOR-3, r2 MAJOR-1): só a rejeição do próprio dono e a entrega encerrada tiram o item; proposta do orquestrador (qualquer REQ, antes ou depois) e nova redação da Sombra não', () => {
     const base = () => {
       const amb = ambReq();
       comOrigin(amb, { entrega: { base: 'main' } });
@@ -6451,17 +6451,26 @@ describe('GM-15 T13: lote do dono no proxima', () => {
     assert.equal(itens(amb), 1, 'controle: o item existe');
     amb = base(); grava(amb, relogioDe(), [rej[0], ['dono', 'emenda.rejeitada', { proposta_seq: 1, origem: 'dono' }]]);
     assert.equal(itens(amb), 0, 'rejeitada pelo próprio dono');
-    amb = base(); grava(amb, relogioDe(), [...rej, ['emendas', 'emenda.proposta', PROPOSTA({ req: 'REQ-B-1', diff: '+ texto do dono' })]]);
-    assert.equal(itens(amb), 0, 'proposta posterior do mesmo REQ (não da Sombra)');
+    amb = base(); grava(amb, relogioDe(), [...rej, ['emendas', 'emenda.proposta', PROPOSTA({ req: 'REQ-B-1', diff: '+ texto do orquestrador' })]]);
+    assert.equal(itens(amb), 1, 'proposta posterior do orquestrador, mesmo REQ, não tira o item');
     amb = base(); grava(amb, relogioDe(), [...rej, ['emendas', 'emenda.proposta', PROPOSTA({ req: 'REQ-C-1' })]]);
-    assert.equal(itens(amb), 1, 'proposta de outro REQ não resolve');
+    assert.equal(itens(amb), 1, 'proposta de outro REQ não tira');
     amb = base(); grava(amb, relogioDe(), [...rej, ['emendas', 'emenda.proposta', PROPOSTA({ req: 'REQ-B-1', origem: 'sombra' })]]);
-    assert.equal(itens(amb), 1, 'nova redação da Sombra não resolve');
-    amb = base(); grava(amb, relogioDe(), [['emendas', 'emenda.proposta', PROPOSTA({ req: 'REQ-B-1' })], ['emendas', 'emenda.proposta', PROPOSTA({ origem: 'sombra', req: 'REQ-B-1' })], ['sombra', 'emenda.rejeitada', { proposta_seq: 2, origem: 'sombra' }]]);
-    assert.equal(itens(amb), 1, 'proposta ANTERIOR do mesmo REQ não resolve');
+    assert.equal(itens(amb), 1, 'nova redação da Sombra não tira');
     amb = base(); grava(amb, relogioDe(), rej);
     amb.semear([['entrega.encerrada', { entrega: 'GM-10', pr: 7, via: 'head', mergeado_em: '2026-11-13T09:00:00.000Z' }]]);
     assert.equal(itens(amb), 0, 'entrega encerrada');
+  });
+
+  test('lote-redacao-emenda-propor-do-orquestrador-nao-tira (r2 MAJOR-1), pelo CLI real: com o item no lote, `emenda propor` do orquestrador com outra âncora passa (rc 0) e o item continua', () => {
+    const amb = ambReq();
+    comOrigin(amb, { entrega: { base: 'main' } });
+    grava(amb, relogioDe(), [['emendas', 'emenda.proposta', PROPOSTA({ origem: 'sombra', req: 'REQ-B-1' })], ['sombra', 'emenda.rejeitada', { proposta_seq: 1, origem: 'sombra' }]]);
+    const itens = () => amb.cli(['proxima']).j.lote.filter((i) => /redação da Sombra/.test(i.motivo)).length;
+    assert.equal(itens(), 1, 'controle');
+    const r = amb.cli(proporArgs(amb, { req: 'REQ-B-1', task: 'T2' }));
+    assert.equal(r.rc, 0, r.out + r.err);
+    assert.equal(itens(), 1, 'a proposta do orquestrador não decide pelo dono');
   });
 
   test('lote-redacao-igual-no-painel-e-no-proxima (GM-15 T34): o mesmo diário com redação da Sombra rejeitada dá o mesmo lote no painel real (estado.depende) e no proxima', () => {

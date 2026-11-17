@@ -352,15 +352,15 @@ export function loteDoDono(plano              , eventos          , cfg          
   const noTeto = (id        )          => { const r = estadoDe(daTask(id)); return !('invalido' in r) && r.estado === 'no_teto'; };
   const teto = tasks.filter((id) => noTeto(id) && (c.liberaTeto !== true || gasta(id))).map(itemTeto);
   const emendas = c.julgaEmendas === true ? [] : projetarEmendas(evs).abertas.map((p) => itemEmenda(p.seq));
-  // GM-15 T34 (backlog T26 MINOR-1, REQ-EME-3 B; review r1 MAJOR-3): a redação da Sombra (`emenda.proposta` com `origem: sombra`) REJEITADA (por quem não é o dono) vai ao dono; a Sombra não
-  // repropõe na âncora. Fonte do texto: emenda de âncora de REQ-EME-3 B ("proposta com origem sombra rejeitada vai ao dono"). O item SAI quando o dono decide: (a) ele mesmo rejeitou
-  // (`emenda.rejeitada` origem dono: a decisão é dele), (b) há proposta POSTERIOR do mesmo REQ que não é da Sombra (o dono/orquestrador redigiu o texto novo, a saída que a spec
-  // prevê para uma âncora sem Sombra), ou (c) a entrega foi encerrada. Aqui (e não no `proxima`) para o painel e o `proxima` terem o mesmo lote pela mesma função.
+  // GM-15 T34 (backlog T26 MINOR-1, REQ-EME-3 B; review r1 MAJOR-3 e r2 MAJOR-1): a redação da Sombra (`emenda.proposta` com `origem: sombra`) REJEITADA (por quem não é o dono) vai
+  // ao dono; a Sombra não repropõe na âncora. Fonte: emenda de âncora de REQ-EME-3 B ("proposta com origem sombra rejeitada vai ao dono"), D-G10 ("não há 3ª proposta do orquestrador"),
+  // emenda 15 r.10 e emenda 16 r.15. O item é do DONO e SÓ sai por decisão dele ou pelo fim da entrega: (a) ele mesmo rejeitou (`emenda.rejeitada` origem dono) ou (c) a entrega foi
+  // encerrada. Proposta do orquestrador NÃO tira o item. Aqui (e não no `proxima`) para o painel e o `proxima` terem o mesmo lote pela mesma função.
   const encerrada = evs.some((e) => e.tipo === 'entrega.encerrada');
   const est = projetarEmendas(evs);
   const rejeitadoPeloDono = (seq        )          => evs.some((e) => e.tipo === 'emenda.rejeitada' && obj(e.dados).proposta_seq === seq && obj(e.dados).origem === 'dono');
   const redacoes = encerrada ? [] : est.rejeitadas
-    .filter((p) => p.origem === 'sombra' && /^[A-Za-z0-9._-]{1,60}$/.test(p.req) && !rejeitadoPeloDono(p.seq) && !evs.some((e) => e.tipo === 'emenda.proposta' && e.sessao === 'emendas' && e.seq > p.seq && obj(e.dados).req === p.req && obj(e.dados).origem !== 'sombra'))
+    .filter((p) => p.origem === 'sombra' && /^[A-Za-z0-9._-]{1,60}$/.test(p.req) && !rejeitadoPeloDono(p.seq))
     .map((p) => item(`decidir a redação da Sombra rejeitada (emenda ${p.seq}, ${p.req}): a Sombra não repropõe nessa âncora`));
   const versao = evs.some((e) => !CONHECIDOS.has(e.tipo)) ? [item(motivoPluginAtras(typeof c.versaoPlugin === 'string' ? c.versaoPlugin : undefined), [{ rotulo: 'atualizar', comando: '/plugin' }])] : [];
   const base = typeof c.base === 'string' && c.base !== '' ? c.base : 'main';
