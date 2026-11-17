@@ -556,17 +556,33 @@ test('lote-vazio-sem-item: sem teto, sem emenda, diário conhecido e autonomia d
   assert.deepEqual(motivos(dependeDe(APROVADA, expandir([]), [], OK, false, GIT, [])), ['nada depende de você']);
 });
 
-test('lote-teto-so-sem-liberacao: com libera_teto e a 1ª liberação livre a Sombra decide; gasta (dono ou Sombra já liberou) ou flag desligada ⇒ dono', () => {
+test('lote-teto-so-nos-freios: com libera_teto a Sombra decide (liberada antes pelo dono ou por ela não gasta nada: sem limite numérico); só flag desligada ou freio ⇒ dono (GM-15 T36, emenda 22 l.4)', () => {
   const sem = { ...CFG_LIGADA };
   assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir(noTeto('T1')), sem)), []);
   const gasta = expandir([...noTeto('T1'), liberacaoDono('T1'), ...noTeto('T1')]);
-  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, gasta, sem)), ['decidir a T1: chegou ao limite de revisões']);
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, gasta, sem)), [], 'o dono já liberou: a Sombra segue decidindo');
   const daSombra = expandir([...noTeto('T1'), { t: 'task.reaberta', d: { task: 'T1', origem: 'sombra', hash } }, ...noTeto('T1')]);
-  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, daSombra, sem)), ['decidir a T1: chegou ao limite de revisões']);
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, daSombra, sem)), [], 'a Sombra já liberou: sem limite numérico');
   assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir(noTeto('T1')), { ...sem, liberaTeto: false })), ['decidir a T1: chegou ao limite de revisões']);
   // ordem do plano, não do diário
   assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([...noTeto('T3'), ...noTeto('T1')]), { ...sem, liberaTeto: false })),
     ['decidir a T1: chegou ao limite de revisões', 'decidir a T3: chegou ao limite de revisões']);
+});
+
+test('depende-so-em-abordagens-esgotadas: 2 liberações da Sombra com abordagem_nova e novo teto ⇒ 1 item do dono com 1 linha, com o botão de liberar; sem a 2ª abordagem ou com a do dono no meio, a regra é a do freio', () => {
+  const ab = (n: string): C => ({ t: 'task.reaberta', d: { task: 'T1', origem: 'sombra', hash, abordagem_nova: n } });
+  const esgotada = expandir([...noTeto('T1'), ab('A'), ...noTeto('T1'), ab('B'), ...noTeto('T1')]);
+  const lote = loteDoDono(PLANO_LOTE, esgotada, CFG_LIGADA);
+  assert.equal(lote.length, 1);
+  assert.match(lote[0].motivo, /^decidir a T1: chegou ao limite de revisões \(2 abordagens novas da Sombra/);
+  assert.doesNotMatch(lote[0].motivo, REGEX_TECNICA);
+  assert.deepEqual(lote[0].acoes, [{ rotulo: 'liberar mais uma rodada', comando: '/gabarito-mestre:liberar T1' }]);
+  assert.ok(!/\n/.test(lote[0].motivo));
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([...noTeto('T1'), ab('A'), ...noTeto('T1')]), CFG_LIGADA)), [], '1 abordagem não esgota');
+  const comDono = expandir([...noTeto('T1'), ab('A'), ...noTeto('T1'), liberacaoDono('T1'), ...noTeto('T1'), ab('B'), ...noTeto('T1')]);
+  assert.equal(loteDoDono(PLANO_LOTE, comDono, CFG_LIGADA).length, 1, 'a do dono no meio não zera');
+  // flag desligada: o item sai sem o resumo do freio
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, esgotada, { ...CFG_LIGADA, liberaTeto: false })), ['decidir a T1: chegou ao limite de revisões']);
 });
 
 test('lote-emenda-so-sem-julga: com julga_emendas a Sombra julga (não é do dono); desligada ⇒ uma por proposta aberta', () => {

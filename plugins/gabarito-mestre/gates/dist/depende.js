@@ -12,7 +12,7 @@
 import { projetarEmendas } from './emenda.js';
 import { ehRespostaDeAdiamento, formaInvalida, ID_PERGUNTA_RE, TIPOS_EVENTO } from './formas.js';
 import { AGORA_NAO_TETO } from './pouso.js';
-import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.js';
+import { estadoDe, freioDaLiberacao, ordenar, TIPOS_DE_TASK } from './loop.js';
 import { cmp } from './diario-puro.js';
 /**
  * GM-15 T19 (REQ-POU-4, r1 MAJOR-1): a régua ÚNICA do sinal do loop, a mesma do Stop (`sinalArmado`): só `armado` (da sessão, fresco) é loop ligado; tudo mais
@@ -46,9 +46,12 @@ function nomeDeFonte(v         )         {
 }
 
 /** (5) e o lote: a task no limite de revisões, com o botão do dono só para id seguro. */
-const itemTeto = (id        )              => (TASK_SEGURA.test(id)
-  ? item(`decidir a ${id}: chegou ao limite de revisões`, [{ rotulo: 'liberar mais uma rodada', comando: `/gabarito-mestre:liberar ${id}` }])
-  : item('decidir uma task: chegou ao limite de revisões'));
+const itemTeto = (id        , freio         )              => {
+  const porque = freio === undefined ? '' : ` (${freio})`; // GM-15 T36: o freio da Sombra, 1 linha (`freioDaLiberacao`)
+  return TASK_SEGURA.test(id)
+    ? item(`decidir a ${id}: chegou ao limite de revisões${porque}`, [{ rotulo: 'liberar mais uma rodada', comando: `/gabarito-mestre:liberar ${id}` }])
+    : item(`decidir uma task: chegou ao limite de revisões${porque}`);
+};
 /** (7) e o lote: a emenda aberta com os botões da E4. */
 const itemEmenda = (seq        )              => item(`decidir a emenda ${seq}`, [
   { rotulo: 'aprovar', comando: `/gabarito-mestre:emenda aprovar ${seq}` }, { rotulo: 'rejeitar', comando: `/gabarito-mestre:emenda rejeitar ${seq}` },
@@ -271,7 +274,7 @@ export function dependeDe(
   // (5) task no limite de revisões; a base (PAROU de teto, REQ-PNL-3) já traz o mesmo botão `liberar <task>`: não repete.
   const jaNaBase = (id        )          => (Array.isArray(base) ? base : []).some((b) => Array.isArray(b?.acoes) && b.acoes.some((a) => a?.comando === `/gabarito-mestre:liberar ${id}`)
     || b?.motivo === `teto de rodadas de review em ${id}` || (!TASK_SEGURA.test(id) && typeof b?.motivo === 'string' && b.motivo.startsWith('teto de rodadas de review')));
-  const limite = tasksNoTeto(evs).filter((id) => !jaNaBase(id)).map(itemTeto);
+  const limite = tasksNoTeto(evs).filter((id) => !jaNaBase(id)).map((id) => itemTeto(id));
 
   // (1) aprovação: "mudou depois" ou aprovação `●`; os dois juntos são 1 item (a versão nova). Botão só na branch da entrega (DP-3 aj. 3).
   const aprovar                = [];
@@ -312,7 +315,7 @@ export function dependeDe(
 
   // O PAROU de teto da base (REQ-PNL-3) já é o item do dono daquela task, com o mesmo botão: o lote não o repete (a regra de (5)); o resto vai inteiro e na ordem.
   const LIBERAR = '/gabarito-mestre:liberar ';
-  const loteSemBase = doLote.filter((i) => !(i.motivo === 'decidir uma task: chegou ao limite de revisões' && jaNaBase(''))
+  const loteSemBase = doLote.filter((i) => !(i.motivo.startsWith('decidir uma task: chegou ao limite de revisões') && jaNaBase(''))
     && !i.acoes.some((a) => typeof a.comando === 'string' && a.comando.startsWith(LIBERAR) && jaNaBase(a.comando.slice(LIBERAR.length))));
   const saida = comLote
     ? [...daBase, ...limpar, ...loteSemBase, ...aprovar, ...revisar, ...pendencias, ...decidirIdeias]
@@ -332,8 +335,8 @@ const CONHECIDOS                      = new Set(TIPOS_EVENTO);
 
 /**
  * GM-15 T13 (REQ-AUT-1): o lote do dono, o que é previsível e só o dono destrava, 1 item cada, nesta ordem:
- * (a) task `no_teto` (ordem do plano) sem liberação da Sombra: `sombra.libera_teto` desligado em origin ou a 1ª liberação já gasta (`task.reaberta`
- * de origem dono ou sombra da task, a regra de `conferirLiberacao`); (b) emenda aberta com `sombra.julga_emendas` desligado; (c) o plugin atrás do diário
+ * (a) task `no_teto` (ordem do plano) que a Sombra não pode liberar: `sombra.libera_teto` desligado em origin ou um freio (`freioDaLiberacao`: abordagens esgotadas ou
+ * orçamento 3×; GM-15 T36, sem limite numérico de liberações); (b) emenda aberta com `sombra.julga_emendas` desligado; (c) o plugin atrás do diário
  * (evento de tipo que este plugin não conhece, aprendizado 585); (d) por último, `next ⇒ main` no fim da entrega: base diferente de `main`, sem
  * `entrega.autonomia` e sem `entrega.encerrada`. `loop.mjs proxima` o devolve em `lote` e `dependeDe` o mostra igual. Puro, nunca lança; diário que
  * não ordena ⇒ lote vazio (o PAROU e o "?" do DEPENDE já cobrem).
@@ -348,9 +351,13 @@ export function loteDoDono(plano              , eventos          , cfg          
   const c = obj(cfg);
   const tasks = Array.isArray(plano?.tasks) ? (plano         ).tasks.map((t) => t?.id).filter((id)               => typeof id === 'string') : [];
   const daTask = (id        )           => evs.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && obj(e.dados).task === id);
-  const gasta = (id        )          => daTask(id).some((e) => e.tipo === 'task.reaberta' && (obj(e.dados).origem === 'dono' || obj(e.dados).origem === 'sombra'));
   const noTeto = (id        )          => { const r = estadoDe(daTask(id)); return !('invalido' in r) && r.estado === 'no_teto'; };
-  const teto = tasks.filter((id) => noTeto(id) && (c.liberaTeto !== true || gasta(id))).map(itemTeto);
+  // GM-15 T36 (emenda 22 l.4, emenda 24 m.2): no_teto só vira item do dono com a flag desligada ou num freio da Sombra (`freioDaLiberacao`, a regra única do `liberar`); antes disso a Sombra decide.
+  const teto = tasks.filter(noTeto).flatMap((id) => {
+    if (c.liberaTeto !== true) return [itemTeto(id)];
+    const { freio } = freioDaLiberacao(plano         , evs, id);
+    return freio === null ? [] : [itemTeto(id, freio.resumo)];
+  });
   const emendas = c.julgaEmendas === true ? [] : projetarEmendas(evs).abertas.map((p) => itemEmenda(p.seq));
   // GM-15 T34 (backlog T26 MINOR-1, REQ-EME-3 B; review r1 MAJOR-3 e r2 MAJOR-1): a redação da Sombra (`emenda.proposta` com `origem: sombra`) REJEITADA (por quem não é o dono) vai
   // ao dono; a Sombra não repropõe na âncora. Fonte: emenda de âncora de REQ-EME-3 B ("proposta com origem sombra rejeitada vai ao dono"), D-G10 ("não há 3ª proposta do orquestrador"),
