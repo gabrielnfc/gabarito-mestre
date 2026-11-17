@@ -230,7 +230,12 @@ test('seguir-oferece-proxima: spec com PBI sem encerramento mais nova ⇒ ideias
   w(d, 'GM-33', 'loop', 'entrega.encerrada', { entrega: 'GM-33', pr: 43, via: 'head', mergeado_em: '2026-11-14T11:00:00.000Z' }, '2026-11-14T11:00:01.000Z', 'painel');
   e = estado(d);
   assert.deepEqual(e.proxima, { tipo: 'spec', texto: 'GM-35 Painel novo com tema', acoes: [{ rotulo: 'seguir', comando: '/gabarito-mestre:gabarito-loop' }] });
-  assert.deepEqual(texto(d), ['◆ GABARITO · GM-32 entregue · próxima: GM-35 Painel novo com tema']);
+  // GM-15 T32 (emenda 4): a linha única segue 1 linha e é a 1ª (item do dono com o botão "seguir"); com 2 PBIs entregues (GM-32, GM-33) o projeto vem abaixo dela
+  const ls = texto(d);
+  assert.equal(ls[0], '◆ GABARITO · GM-32 entregue · próxima: GM-35 Painel novo com tema');
+  assert.equal(ls.filter((l) => /^(◆ )?GABARITO/.test(l)).length, 1);
+  assert.match(ls[1], /^PROJETO {2}2 de 2 PBIs feitos/);
+  assert.deepEqual(ls.slice(3).map((l) => l.trim().split(/\s+/).slice(0, 2).join(' ')), ['✓ GM-32', '✓ GM-33']);
 });
 
 test('linha-entregue-sem-regex-tecnica: a linha de entregue não tem comando, crase, evento, snake_case nem caminho', () => {
