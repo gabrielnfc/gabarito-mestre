@@ -58,13 +58,29 @@ function w(d, id, sessao, tipo, dados, ts, agente = 'orquestrador') {
 }
 
 // ── o checkout não muda (c9) ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-function fotoDoCheckout() {
-  const [raiz] = raizesDeCheckout();
+function fotoDoCheckout(raiz = raizesDeCheckout()[0]) {
   const g = (...a) => execFileSync('git', ['-C', raiz, ...a], { encoding: 'utf8', env: GIT_ENV, timeout: TETO }).trim();
-  const branch = g('rev-parse', '--abbrev-ref', 'HEAD');
+  const branch = g('rev-parse', '--abbrev-ref', 'HEAD'); // "HEAD" quando destacado (checkout da CI): então não há refs/heads/<branch> a conferir
   const meu = g('worktree', 'list', '--porcelain').split('\n\n').filter((b) => b.split('\n')[0] === `worktree ${raiz}`);
-  return { raiz, status: g('status', '--porcelain=v1', '--untracked-files=all'), head: g('rev-parse', 'HEAD'), ref: g('rev-parse', `refs/heads/${branch}`), meu };
+  return { raiz, status: g('status', '--porcelain=v1', '--untracked-files=all'), head: g('rev-parse', 'HEAD'), ref: branch === 'HEAD' ? null : g('rev-parse', `refs/heads/${branch}`), meu };
 }
+
+// (T38) a CI faz checkout com HEAD destacado: a foto do checkout não pode exigir refs/heads/<branch>
+test('aceite-foto-do-checkout-funciona-com-HEAD-destacado: branch nomeada e HEAD destacado dão foto, e a foto é estável', () => {
+  const d = join(raizSegura(realpathSync(mkdtempSync(join(tmpdir(), 'aceite foto ')))), 'r');
+  mkdirSync(d, { recursive: true });
+  git(d, 'init', '-q', '-b', 'main');
+  writeFileSync(join(d, 'a'), 'a\n');
+  git(d, 'add', 'a');
+  git(d, 'commit', '-q', '-m', 'a');
+  const nomeada = fotoDoCheckout(d);
+  assert.ok(nomeada.ref, 'branch nomeada: ref preenchida');
+  git(d, 'checkout', '-q', '--detach');
+  const destacado = fotoDoCheckout(d);
+  assert.equal(destacado.ref, null, 'destacado: sem ref de branch');
+  assert.equal(destacado.head, nomeada.head);
+  assert.deepEqual(fotoDoCheckout(d), destacado, 'destacado: a foto não muda sozinha');
+});
 
 // ── o replay da GM-14 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 const SPEC_PROXIMA = 'GM-15 Fluidez do loop'; // "<PBI> <título da spec>"
