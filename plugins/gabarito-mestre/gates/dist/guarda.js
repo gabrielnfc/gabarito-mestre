@@ -14,7 +14,7 @@
 import { spawnSync } from 'node:child_process';
 import { accessSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, statSync, writeSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { precisaContexto } from './classificar-alvo.js';
 import { decidir } from './decidir.js';
@@ -204,6 +204,42 @@ function ledgerDirDe(raiz        )         {
  * grava como `loop` e não sabe qual conversa o dono ligou): a entrega deixa de ser publicada se QUALQUER sessão com `dono.resposta` no diário a liga.
  */
 export const SESSAO_QUALQUER = '*';
+
+const PRE_VERSAO_RE = /(?<![\d.])\d+\.\d+\.\d+-(?:alpha|beta|rc)(?:\.[0-9A-Za-z-]+)*/gi;
+const SPEC_ALVO_MAX = 1024 * 1024;
+
+/** GM-15 T34 (REQ-ENT-1 r.13p): as pré-versões semver (`X.Y.Z-alpha|beta|rc[.n]`) citadas nos textos (título, head, `pre_versao` do fato). */
+export function preVersoesDe(...textos           )           {
+  return textos.flatMap((t) => (typeof t === 'string' ? [...t.matchAll(PRE_VERSAO_RE)].map((m) => m[0]) : []));
+}
+
+/**
+ * UMA função de "PR de virada de pré-versão" (REQ-ENT-1 r.13p): título, head ou `pre_versao` do fato com semver `-alpha|-beta|-rc`, a menos que a versão-alvo da spec SEJA essa
+ * pré-versão. Quem decide encerrar (o `medir`) e quem decide publicada (`entregaPublicada`) chamam esta, nunca uma cópia. `release` prerelease não é medido (só `tagName`).
+ */
+export function ehViradaDePreVersao(pr                                                              , alvo               )          {
+  const versoes = preVersoesDe(pr.titulo, pr.branch, pr.pre_versao).map((v) => v.toLowerCase());
+  if (versoes.length === 0) return false;
+  return !(typeof alvo === 'string' && versoes.includes(alvo.toLowerCase()));
+}
+
+/** A versão-alvo da entrega: `Versão: X.Y.Z[-pre]` no cabeçalho da spec que o `plano.json` aponta (`spec`, relativo à raiz). Qualquer falha ⇒ `null` (alvo desconhecido). */
+export function versaoAlvo(raiz        , dirAlvo        )                {
+  try {
+    const plano = objeto(JSON.parse(readFileSync(join(dirAlvo, 'plano.json'), 'utf8')));
+    const spec = plano?.spec;
+    if (typeof spec !== 'string' || spec === '' || isAbsolute(spec)) return null;
+    const arq = resolve(raiz, spec);
+    const rel = relative(raiz, arq);
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel) || statSync(arq).size > SPEC_ALVO_MAX) return null;
+    for (const l of readFileSync(arq, 'utf8').split('\n').slice(0, 30)) {
+      const m = /(?:^|[\s·])Vers[ãa]o:\s*(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/.exec(l);
+      if (m !== null) return m[1];
+    }
+  } catch { /* alvo desconhecido */ }
+  return null;
+}
+
 const SESSOES_LIGADAS_MAX = 64;
 export function entregaPublicada(raiz        , entrega               , sessao                = null)          {
   if (entrega === null || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(entrega)) return false;
@@ -216,7 +252,14 @@ export function entregaPublicada(raiz        , entrega               , sessao   
     }
     const lido = lerEstrito(dir);
     if (!lido.ok) return false;
-    const eventos = lido.eventos;
+    const todos = lido.eventos;
+    // GM-15 T34 (MAJOR-1 da review r1): o fato `pr` de um PR de VIRADA DE PRÉ-VERSÃO não publica (a mesma função do `medir`, `ehViradaDePreVersao`); o resto do diário segue.
+    const alvoVersao = versaoAlvo(raiz, dir);
+    const eventos = todos.filter((e) => {
+      const d = objeto(e.dados);
+      const v = e.tipo === 'fato.medido' && d?.chave === 'pr' ? objeto(d.valor) : null;
+      return v === null || !ehViradaDePreVersao(v, alvoVersao);
+    });
     // GM-15 T3 (REQ-ENT-1 c): com `entrega.encerrada` no diário o estado é só ele (sem `entrega.reaberta` posterior); a ligação por sessão (`dono.resposta`,
     // inclusive o "feito" de pendência) não vence o encerramento nem o reabre. A regra antiga (abaixo) vale só para entrega sem `entrega.encerrada`.
     if (eventos.some((e) => e.tipo === 'entrega.encerrada' && objeto(e.dados)?.entrega === entrega)) return encerramentoDe(eventos, entrega).encerrada;

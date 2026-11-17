@@ -368,6 +368,8 @@ const FORMAS_FATO                                                               
     numero: inteiroPos, estado: (o, n) => exigirEnum(o, n, ESTADOS_PR), branch: (o, n) => textoLinha(o, n),
     base: (o, n) => (campo(o, n) === undefined ? null : textoLinha(o, n)),
     via: (o, n) => (campo(o, n) === undefined ? null : exigirEnum(o, n, VIAS_ENCERRAMENTO)),
+    // GM-15 T34 (r.13p): a pré-versão semver citada no título ou no head do PR (o que a guarda lê para não dar a entrega como publicada pela virada alpha)
+    pre_versao: (o, n) => (campo(o, n) === undefined ? null : textoLinha(o, n, 64)),
   }],
   ['release', { tag: (o, n) => textoLinha(o, n) }],
   ['agente', { id: (o, n) => textoLinha(o, n), papel: (o, n) => textoLinha(o, n), estado: (o, n) => textoLinha(o, n) }],
