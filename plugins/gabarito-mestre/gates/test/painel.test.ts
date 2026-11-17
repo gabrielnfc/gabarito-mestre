@@ -787,6 +787,28 @@ test('lista-sombra-com-comando-de-reverter: cada decisão em 1 linha com âncora
   assert.deepEqual(decisoesDaSombra('x' as unknown as Evento[]), []);
 });
 
+test('lista-sombra-aponta-a-emenda-da-decisao (r1 MINOR-4): cada decisão aponta a emenda que ELA julgou (não a maior seq do REQ); a que não julgou emenda nenhuma sai sem comando', () => {
+  const prop = (t: number) => e(t, 'emenda.proposta', { req: 'REQ-PNL-5', diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'tecnica' }, 'emendas');
+  const julga = (t: number, seq: number, tipo: 'spec.emendada' | 'emenda.rejeitada' = 'spec.emendada') => e(t, tipo, { proposta_seq: seq, origem: 'sombra' }, 'sombra-j');
+  // 2 decisões do MESMO REQ, cada uma com a sua emenda (#1 e #2); e uma 3ª decisão, depois, que não julgou nada
+  const evs = D([prop(0), prop(1), decSombra(2, 'REQ-PNL-5', 'primeira'), julga(3, 1), decSombra(4, 'REQ-PNL-5', 'segunda'), julga(5, 2, 'emenda.rejeitada'), decSombra(6, 'REQ-PNL-5', 'terceira, sem julgar')]);
+  const l = decisoesDaSombra(evs).map((x) => x.frase);
+  assert.equal(l.length, 3);
+  assert.match(l[0], /primeira.*emenda aprovar 1 ou \/gabarito-mestre:emenda rejeitar 1$/);
+  assert.match(l[1], /segunda.*emenda aprovar 2 ou \/gabarito-mestre:emenda rejeitar 2$/);
+  assert.match(l[2], /terceira, sem julgar — nada a reverter/);
+  assert.ok(!/emenda (aprovar|rejeitar)/.test(l[2]), 'sem comando de reverter');
+  // a decisão que não julgou nada e vem ANTES de outra do mesmo REQ não herda a emenda que a seguinte julgou
+  const antes = decisoesDaSombra(D([prop(0), decSombra(1, 'REQ-PNL-5', 'sem julgar'), decSombra(2, 'REQ-PNL-5', 'julgou'), julga(3, 1)])).map((x) => x.frase);
+  assert.match(antes[0], /sem julgar — nada a reverter/);
+  assert.match(antes[1], /julgou.*emenda aprovar 1 ou/);
+  // o julgamento de outro REQ, ou do dono, não é "a emenda desta decisão"
+  const outro = D([prop(0), e(1, 'emenda.proposta', { req: 'REQ-OUTRO-1', diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'tecnica' }, 'emendas'), decSombra(2, 'REQ-PNL-5', 'x'), julga(3, 2)]);
+  assert.match(decisoesDaSombra(outro)[0].frase, /nada a reverter/, 'julgamento de emenda de outro REQ');
+  const doDono = D([prop(0), decSombra(1, 'REQ-PNL-5', 'x'), e(2, 'spec.emendada', { proposta_seq: 1, origem: 'dono' }, 'dono')]);
+  assert.deepEqual(decisoesDaSombra(doDono), [], 'a resposta do dono vem depois: nada da Sombra a listar');
+});
+
 test('atencao-ci-zera-no-verde: vermelho, verde ⇒ nada; vermelho ×2 é do PAROU do loop, não da atenção; verde depois do vermelho zera', () => {
   const ci = (t: number, verde: boolean, extra: Record<string, unknown> = {}) => e(t, 'ci.resultado', { verde, ...extra });
   assert.deepEqual(proj(P('T1'), D([ci(0, false), ci(1, true)])).atencao, []);

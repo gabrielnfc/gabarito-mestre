@@ -478,6 +478,9 @@ const guardaAutonomiaUsada: Regra = (o) => primeiro(
   textoLinha(o, 'anel', 60), textoLinha(o, 'alvo', 200), textoLinha(o, 'acao', 60), textoLinha(o, 'ambiente', 60),
 );
 
+/** Tamanho máximo de `abordagem_nova` (a borda `liberar --abordagem-nova` do loop.mjs usa o mesmo limite). */
+const ABORDAGEM_NOVA_MAX = 500;
+
 /** `task.reaberta`: `origem` ∈ dono|retomada|sombra (F7 a); `hash` só na liberação da Sombra; a volta de `fora` ({de: 'fora'}) leva `fonte` e nunca `hash`. */
 const taskReaberta: Regra = (o) => {
   const origem = campo(o, 'origem');
@@ -493,6 +496,14 @@ const taskReaberta: Regra = (o) => {
     );
   }
   const hash = campo(o, 'hash');
+  // GM-15 T36 r1 (MINOR-3): `abordagem_nova` (replanejar, dividir a task ou emenda proposta) só na liberação da Sombra: texto de 1 linha, 1 a 500 caracteres
+  const abordagem = campo(o, 'abordagem_nova');
+  if (abordagem !== undefined) {
+    if (origem !== 'sombra') return 'campo `abordagem_nova` só na liberação da Sombra (`origem: sombra`)';
+    if (typeof abordagem !== 'string' || abordagem.trim() === '' || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(abordagem) || [...abordagem].length > ABORDAGEM_NOVA_MAX) {
+      return `campo \`abordagem_nova\` inválido: esperado 1 linha de texto (1 a ${ABORDAGEM_NOVA_MAX} caracteres), sem quebra de linha`;
+    }
+  }
   if (origem === 'sombra') {
     if (hash === undefined) return 'campo `hash` ausente: a liberação da Sombra cita a decisão (sha256 em hex minúsculo)';
     return typeof hash === 'string' && HASH_RE.test(hash) ? null : 'campo `hash` inválido: esperado sha256 em hex minúsculo (64)';

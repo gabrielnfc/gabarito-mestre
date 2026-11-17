@@ -812,10 +812,19 @@ export function decisoesDaSombra(eventos                 )                    {
     const evs = ord.eventos;
     const ultimo = evs.findLastIndex(eventoDoDono);
     const est = projetarEmendas(evs);
-    const daSombra = (req        )                => {
-      const julgados = new Set(evs.filter((e) => (e.tipo === 'spec.emendada' || e.tipo === 'emenda.rejeitada') && formaInvalida(e.tipo, e.dados) === null && dadosDe(e).origem === 'sombra').map((e) => dadosDe(e).proposta_seq));
-      const ps = [...est.aprovadas, ...est.rejeitadas].filter((p) => p.req === req && julgados.has(p.seq)).map((p) => p.seq);
-      return ps.length === 0 ? null : Math.max(...ps);
+    // r1 MINOR-4: a emenda a que a decisão SE REFERE = o 1º julgamento da Sombra (spec.emendada|emenda.rejeitada, origem sombra) de emenda do mesmo REQ que vem DEPOIS dela no diário e
+    // antes da próxima decisão da Sombra sobre o mesmo REQ; a que não julgou emenda nenhuma não leva comando (nunca a emenda de outra decisão).
+    const reqDaProposta = new Map                ([...est.abertas, ...est.aprovadas, ...est.rejeitadas].map((p) => [p.seq, p.req]));
+    const julgouEmenda = (i        , req        )                => {
+      for (let j = i + 1; j < evs.length; j++) {
+        const x = evs[j];
+        if (x.tipo === 'decisao.sombra' && formaInvalida(x.tipo, x.dados) === null && dadosDe(x).req === req) return null;
+        if ((x.tipo === 'spec.emendada' || x.tipo === 'emenda.rejeitada') && formaInvalida(x.tipo, x.dados) === null && dadosDe(x).origem === 'sombra') {
+          const seq = dadosDe(x).proposta_seq;
+          if (typeof seq === 'number' && reqDaProposta.get(seq) === req) return seq;
+        }
+      }
+      return null;
     };
     const saida                    = [];
     evs.forEach((ev, i) => {
@@ -827,7 +836,7 @@ export function decisoesDaSombra(eventos                 )                    {
       } else if (ev.tipo === 'decisao.sombra' && formaInvalida(ev.tipo, ev.dados) === null) {
         const req = typeof d.req === 'string' ? limpo(d.req, 40) : null;
         const ancora = req !== null ? req : `a ${limpo(d.task, 40)}`;
-        const seq = req !== null ? daSombra(req) : null;
+        const seq = req !== null ? julgouEmenda(i, req) : null;
         const reverter = seq === null ? 'nada a reverter (só uma resposta)' : `reverter: /gabarito-mestre:emenda aprovar ${seq} ou /gabarito-mestre:emenda rejeitar ${seq}`;
         saida.push({ id: `${ev.sessao}:${ev.seq}`, frase: `a Sombra decidiu sobre ${ancora}: ${limpo(d.resposta, 60)} — ${reverter}` });
       }

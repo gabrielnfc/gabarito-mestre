@@ -485,7 +485,7 @@ test('sombra-decisao-no-recente, sombra-consulta-sem-registro-na-atencao e sem-l
   const s = proj(P(...IDS), [consulta(1), consulta(2), DEC(3, 'sim', 'T1')]);
   const t = texto(s);
   assert.match(t, /^\d\d:\d\d ● ELROND decidiu: sim \(anotado pelo orquestrador\)$/m);
-  assert.match(t, /^◆ ATENÇÃO {2}1 consulta à Sombra sem decisão registrada( · 1 decisão da Sombra desde a sua última resposta)?$/m); // GM-15 T36: a decisão do fixture ainda não teve resposta do dono
+  assert.match(t, /^◆ ATENÇÃO {2}1 consulta à Sombra sem decisão registrada · 1 decisão da Sombra desde a sua última resposta$/m); // GM-15 T36 (r1 MINOR-5): a decisão do fixture ainda não teve resposta do dono; sem corte por altura aqui, a linha tem de aparecer
   // g.8 (emenda 11, revoga a D-P4 só neste ponto): a Sombra é o último └ da EQUIPE: nome, "aconselha", nº de decisões e a última #seq resposta (fonte)
   assert.match(t, /^└─ ○ ELROND {2}aconselha {2}1 decisão · #3 sim \(spec:1\)$/m, 'a Sombra fecha a árvore, com a contagem e a última decisão');
   assert.ok(t.split('\n').filter((x) => /^[├└]─? [●○] ELROND/.test(x)).length === 1, '1 linha só da Sombra');
@@ -1129,7 +1129,9 @@ for (const largura of [120, 80]) {
       'agente sem medição: "?", nunca barra vazia; o motivo (g.9) só a partir de 100 colunas');
     assert.match(t, /^└─ ○ ELROND {2}aconselha {2}1 decisão · #\d+ seguir com a T3 \(spec:1\)$/m, 'g.8: a Sombra é o último └ da EQUIPE (nome, aconselha, nº de decisões, última #seq resposta (fonte))');
     assert.ok(novo.every((x) => !/^[├└]─ [●○] \S+ +(Teste|Integrando|Comando|Aguardando)/.test(x)), 'g.11: shell de fundo nunca na árvore da EQUIPE');
-    assert.match(t, /^◆ ATENÇÃO {2}CI vermelho na última execução( · 1 decisão da Sombra desde a sua última resposta)?$/m); // GM-15 T36
+    // GM-15 T36 (r1 MINOR-5): a linha da Sombra SEMPRE aparece (sem corte por altura neste fixture): inteira a 120 colunas, em continuação alinhada a 80
+    assert.match(t, largura === 120 ? /^◆ ATENÇÃO {2}CI vermelho na última execução · 1 decisão da Sombra desde a sua última resposta$/m : /^◆ ATENÇÃO {2}CI vermelho na última execução/m);
+    assert.ok(novo.some((x) => /1 decisão da Sombra desde a sua última resposta$/.test(x)), 'a linha "N decisões da Sombra" aparece');
     assert.match(t, /^\d\d:\d\d ● ELROND decidiu: seguir com a T3 \(anotado pelo orquestrador\)$/m, 'histórico com origem');
     assert.match(t, /^CI ● vermelho {3}PROD leu 0 · alterou 0 {3}política continua$/m, 'rodapé');
     if (largura === 120) {

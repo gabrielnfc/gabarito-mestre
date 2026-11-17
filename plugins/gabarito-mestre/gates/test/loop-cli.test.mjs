@@ -5288,6 +5288,16 @@ describe('T36: a Sombra libera o teto', () => {
     assert.ok(reaberta(amb).every((d) => d.abordagem_nova === undefined), 'com progresso não pede abordagem');
   });
 
+  test('t36-progresso-caminho-absoluto-igual-ao-relativo (r1 MINOR-6): o mesmo achado citado absoluto (worktree da raiz) num ciclo e relativo no outro NÃO é progresso, pelo CLI real', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    ciclo(amb, REV(trecho(100, `${amb.dir}/.harness/worktrees/T1/src/t1.txt`)));
+    ok(amb, ['liberar', 'T1', '--origem', 'sombra', '--hash', sombraDecide(amb)]); // 1º teto: dispensado
+    ciclo(amb, REV(trecho(100)));
+    const r = recusa(amb, 'T1', sombraDecide(amb), 'sem_progresso_sem_abordagem');
+    assert.match(r.j.mensagem, /src\/t1\.txt:100/);
+  });
+
   test('t36-sem-progresso-exige-abordagem: o mesmo achado (±10 linhas) 2 ciclos seguidos ⇒ sem_progresso_sem_abordagem, nada gravado; com --abordagem-nova grava no task.reaberta', () => {
     const amb = ambReq();
     comLibera(amb);

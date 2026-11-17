@@ -470,20 +470,31 @@ export const FATOR_ORCAMENTO = 3;
 /** Liberações da Sombra com `abordagem_nova` que esgotam a task (emenda 22 l.3). */
 export const ABORDAGENS_MAX = 2;
 
-const LOCAL_RE = /([A-Za-z0-9_./@-]+\.[A-Za-z0-9]+)(?::(\d+))?/;
+// A extensão começa por LETRA: versão ("2.1.0", "v2.1.0-alpha.2") não é arquivo (T36 r1 MINOR-6).
+const LOCAL_RE = /([A-Za-z0-9_./@-]+\.[A-Za-z][A-Za-z0-9]*)(?::(\d+))?/;
+
+/** Caminho do achado na forma relativa à raiz do repo: tira `./`, a raiz e o `.harness/worktrees/<task>/` (o mesmo arquivo citado absoluto num ciclo e relativo no outro é UM achado). */
+function relativoARaiz(arquivo: string, raiz?: string): string {
+  let n = arquivo;
+  if (typeof raiz === 'string' && raiz !== '') {
+    const base = `${raiz.replace(/\/+$/, '')}/`;
+    if (n.startsWith(base)) n = n.slice(base.length).replace(/^\.harness\/worktrees\/[^/]+\//, '');
+  }
+  return n.replace(/^(?:\.\/)+/, '');
+}
 
 /**
  * Os achados BLOCKER/MAJOR de um `review-r<n>.md` (o revisor grava um por linha, `agents/gabarito-revisor.md`): a 1ª severidade da linha e o 1º
  * `arquivo[:linha]` (nome com extensão) dela; sem arquivo ⇒ `arquivo: null`. MINOR e linha sem severidade não entram. Total: nunca lança.
  */
-export function achadosDeReview(texto: string): AchadoDeReview[] {
+export function achadosDeReview(texto: string, raiz?: string): AchadoDeReview[] {
   const saida: AchadoDeReview[] = [];
   if (typeof texto !== 'string') return saida;
   for (const l of texto.split(/\r?\n/)) {
     const sev = /\b(BLOCKER|MAJOR)\b/.exec(l);
     if (sev === null) continue;
     const loc = LOCAL_RE.exec(l.slice(sev.index + sev[0].length));
-    saida.push({ severidade: sev[1] as 'BLOCKER' | 'MAJOR', arquivo: loc === null ? null : loc[1], linha: loc === null || loc[2] === undefined ? null : Number(loc[2]) });
+    saida.push({ severidade: sev[1] as 'BLOCKER' | 'MAJOR', arquivo: loc === null ? null : relativoARaiz(loc[1], raiz), linha: loc === null || loc[2] === undefined ? null : Number(loc[2]) });
   }
   return saida;
 }
@@ -495,10 +506,10 @@ export type ProgressoMedido = { progresso: boolean | null; motivo: string };
  * mesmo arquivo e trecho (±`TRECHO_LINHAS` linhas; achado com arquivo e sem linha casa o arquivo todo) de um do anterior E total BLOCKER+MAJOR não maior.
  * Review ausente, vazio ou sem nenhum BLOCKER/MAJOR legível ⇒ `progresso: null` com motivo (conta como sem progresso: falha não vira sucesso).
  */
-export function progressoMedido(ultimo: string | null | undefined, anterior: string | null | undefined): ProgressoMedido {
+export function progressoMedido(ultimo: string | null | undefined, anterior: string | null | undefined, raiz?: string): ProgressoMedido {
   const quem = (t: string | null | undefined, nome: string): AchadoDeReview[] | string => {
     if (typeof t !== 'string' || t.trim() === '') return `review do ${nome} ciclo ausente ou vazio`;
-    const a = achadosDeReview(t);
+    const a = achadosDeReview(t, raiz);
     return a.length === 0 ? `review do ${nome} ciclo sem nenhum BLOCKER/MAJOR legível` : a;
   };
   const u = quem(ultimo, 'último');
@@ -538,7 +549,11 @@ function tempoDaTask(eventos: Evento[], task: string): number {
   return total;
 }
 
-/** Tokens medidos da task: entrada + saída + criação de cache dos `custo.medicao` que citam `task` (leitura de cache não conta, a régua do teto de tokens); nenhum ⇒ `null`. */
+/**
+ * Tokens medidos da task: entrada + saída + criação de cache dos `custo.medicao` que citam `task` (leitura de cache não conta, a régua do teto de tokens); nenhum ⇒ `null`.
+ * LIMITE DECLARADO (T36 r1 MINOR-1, D-G18 "tokens quando medidos"): hoje NENHUM produtor grava `custo.medicao` com `task` (o `uso-subagent.mjs` grava o agente, não a task),
+ * então esta fonte fica inerte e só o TEMPO freia o orçamento; quando um produtor passar a gravar `task`, os tokens entram sem mudar esta regra. Não há produtor novo aqui.
+ */
 function tokensDaTask(eventos: Evento[], task: string): number | null {
   let total: number | null = null;
   for (const e of eventos) {

@@ -126,8 +126,9 @@ export type Evento = {
 };
 
 // E2 (GM-10): plano como dado e contratos do loop. `dados` do diário nunca carrega comando cru.
-// `task.reaberta`: `dados = {task, origem: 'dono' | 'retomada'}` ou `{task, origem: 'sombra', hash}`. `dono`, por comando humano, libera o teto;
-// `sombra` (GM-14 T36, FIEL-15) libera 1 vez por task, só a 1ª liberação, com `sombra.libera_teto: true` em origin e a decisão `hash` com `libera: true`.
+// `task.reaberta`: `dados = {task, origem: 'dono' | 'retomada'}` ou `{task, origem: 'sombra', hash, abordagem_nova?}`. `dono`, por comando humano, libera o teto;
+// `sombra` (GM-14 T36, FIEL-15; GM-15 T36: sem limite numérico) libera com `sombra.libera_teto: true` em origin e a decisão `hash` com `libera: true`; sem progresso medido só com `abordagem_nova`;
+// os freios (2 abordagens novas sem convergir, orçamento 3× a mediana) passam a task ao dono (`freioDaLiberacao`).
 export type Causa = 'regra_negocio' | 'tecnica';
 export type OrigemJulgamento = 'dono' | 'sombra';
 export type PoliticaEntrega = 'continua' | 'janela' | 'sob_demanda';
@@ -216,7 +217,7 @@ export type PrevisaoPronto = {
   restanteS?: number;
   maisMenosS?: number;
 };
-/** `fuso`, `entregaId`, `modeloSessao`, `specSha` e `tetoSombra` só o CLI preenche (Sombra 5); o mod nunca. */
+/** `fuso`, `entregaId`, `modeloSessao` e `specSha` só o CLI preenche (Sombra 5); o mod nunca. */
 export type EntradaPainel = {
   /** Só preenchida pelo CLI com o loop em `concluir` (toda task integrada e sem proposta aberta). */
   decisaoEntrega: DecisaoEntrega | null;
@@ -242,8 +243,6 @@ export type EntradaPainel = {
   modeloSessao: string | null;
   /** sha256 atual de `plano.spec`. */
   specSha: string | null;
-  /** `sombra.teto` de origin (26 padrão). */
-  tetoSombra: number;
   /**
    * GM-15 T13 (REQ-AUT-1): config do lote do dono, a MESMA de `loop.mjs proxima` (`configDoLote`: Sombra só de origin/HEAD, entrega de `lerConfigEntrega`);
    * só o CLI preenche. Ausente = sem lote (o DEPENDE de antes, com (5) e (7)).

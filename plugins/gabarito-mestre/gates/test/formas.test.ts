@@ -742,6 +742,15 @@ test('t36-reaberta-da-sombra-exige-hash-e-so-ela-o-tem', () => {
   assert.match(String(formaInvalida('task.reaberta', { task: 'T1', origem: 'sombra' })), /hash/);
 });
 
+test('t36-reaberta-abordagem-nova-forma (r1 MINOR-3): só na liberação da Sombra; texto de 1 linha, 1 a 500 caracteres', () => {
+  ok('task.reaberta', { task: 'T1', origem: 'sombra', hash: H, abordagem_nova: 'dividir a T1 em duas' });
+  ok('task.reaberta', { task: 'T1', origem: 'sombra', hash: H, abordagem_nova: 'x'.repeat(500) });
+  for (const a of ['', '   ', 'x'.repeat(501), 'duas\nlinhas', 'cr\rlinha', 7, null, {}, ['a'], 'tab\taqui']) ruim('task.reaberta', { task: 'T1', origem: 'sombra', hash: H, abordagem_nova: a }, /abordagem_nova/);
+  ruim('task.reaberta', { task: 'T1', origem: 'dono', abordagem_nova: 'a' }, /abordagem_nova/);
+  ruim('task.reaberta', { task: 'T1', origem: 'retomada', abordagem_nova: 'a' }, /abordagem_nova/);
+  assert.match(String(formaInvalida('task.reaberta', { task: 'T1', origem: 'sombra', hash: H, abordagem_nova: 'x'.repeat(501) })), /abordagem_nova/, 'o append confere a forma');
+});
+
 // ── GM-15 T1: contratos dos 4 eventos novos (R2, condição 6; HIG-1 D) ─────────────────────────────────────────────────────────
 // Mutações prescritas: M1a tirar um dos 4 de TIPOS_EVENTO · M1b task.fora sombra sem `fonte` aceita · M1c task.reaberta origem `xyz` aceita
 // · M1d entrega.reaberta com origem (automático) · M1e guarda.autonomia_usada aceitando `comando`.

@@ -2055,6 +2055,33 @@ test('t36-achados-de-review: só BLOCKER/MAJOR contam; arquivo:linha vem do text
   assert.deepEqual(achadosDeReview(''), []);
 });
 
+test('t36-achados-versao-nao-e-arquivo-e-caminho-normaliza (r1 MINOR-6): "2.1.0" e "v2.1.0-alpha.2" não são arquivo; absoluto, ./ e worktree da raiz viram o mesmo caminho relativo', () => {
+  const R = '/repo';
+  assert.deepEqual(achadosDeReview(rev('MAJOR a versão 2.1.0 quebra', 'MAJOR v2.1.0-alpha.2 sem local', 'MAJOR 3.10 etapas')), [
+    { severidade: 'MAJOR', arquivo: null, linha: null }, { severidade: 'MAJOR', arquivo: null, linha: null }, { severidade: 'MAJOR', arquivo: null, linha: null },
+  ], 'versão não vira arquivo');
+  assert.deepEqual(achadosDeReview('MAJOR 2.1.0 em src/a.ts:5 quebra').map((x) => [x.arquivo, x.linha]), [['src/a.ts', 5]], 'a versão antes do arquivo não o esconde');
+  const norm = (t: string) => achadosDeReview(t, R).map((x) => x.arquivo);
+  assert.deepEqual(norm('MAJOR /repo/src/a.ts:1 x'), ['src/a.ts']);
+  assert.deepEqual(norm('MAJOR ./src/a.ts:1 x'), ['src/a.ts']);
+  assert.deepEqual(norm('MAJOR /repo/.harness/worktrees/T36/src/a.ts:1 x'), ['src/a.ts']);
+  assert.deepEqual(norm('MAJOR /outra/raiz/src/a.ts:1 x'), ['/outra/raiz/src/a.ts'], 'fora da raiz fica como está');
+  // o mesmo achado absoluto num ciclo e relativo no outro NÃO é progresso (é o mesmo trecho)
+  assert.equal(progressoMedido(rev('MAJOR /repo/src/a.ts:100 x'), rev('MAJOR src/a.ts:100 x'), R).progresso, false);
+  assert.equal(progressoMedido(rev('MAJOR ./src/a.ts:100 x'), rev('MAJOR /repo/.harness/worktrees/T1/src/a.ts:105 x'), R).progresso, false);
+  assert.equal(progressoMedido(rev('MAJOR /repo/src/a.ts:100 x'), rev('MAJOR src/a.ts:100 x')).progresso, true, 'sem a raiz não há como saber: o comportamento de antes');
+  // a versão não gera achado "no mesmo trecho" falso entre os ciclos: "2.1.0" no anterior e no último não casa um com o outro
+  assert.equal(progressoMedido(rev('MAJOR 2.1.0 quebra'), rev('MAJOR 2.1.0 quebra')).progresso, true, 'sem arquivo não casa (1 e 1)');
+});
+
+test('t36-tokens-so-de-custo-medicao-com-task (r1 MINOR-1): custo.medicao SEM task não conta para a task (nenhum produtor grava task hoje; só o tempo freia)', () => {
+  const custo = (n: number, extra: Record<string, unknown>): Evento => at(1, 'custo.medicao', { input_tokens: n, output_tokens: 0, cache_creation: 0, ...extra });
+  const integradas = [custo(1000, { task: 'I1' }), custo(1000, { task: 'I2' }), custo(1000, { task: 'I3' })];
+  const semTask = fl([...base(), ...integradas, ...gasto(5), custo(9_000_000, {}), custo(9_000_000, { agente: 'subagent:x' })]);
+  assert.equal(semTask.freio, null, 'medição do agente, sem task, não vira tokens da task');
+  assert.equal(fl([...base(), ...integradas, ...gasto(5), custo(9_000_000, { task: 'T' })]).freio?.motivo, 'orcamento_estourado', 'controle: com task conta');
+});
+
 const A = (n: number, arq = 'a.ts') => `MAJOR ${arq}:${n} achado`;
 test('t36-progresso-medido-mesmo-trecho-sem-progresso: o mesmo arquivo a ≤ 10 linhas de um achado do ciclo anterior ⇒ sem progresso (e 11 já é outro trecho)', () => {
   assert.equal(progressoMedido(rev(A(110)), rev(A(100))).progresso, false, '+10 é o mesmo trecho');

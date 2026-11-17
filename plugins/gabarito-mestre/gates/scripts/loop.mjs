@@ -113,7 +113,7 @@ const DIFF_MAX = 4000;
 const ARQUIVOS_MAX = 50;
 const DADOS_MAX = 12000;
 /** Tamanho máximo do texto de `--abordagem-nova` (GM-15 T36). */
-const ABORDAGEM_MAX_CHARS = 500;
+const ABORDAGEM_MAX_CHARS = 500; // = ABORDAGEM_NOVA_MAX de formas.ts (a forma do evento)
 const SEQ_RE = /^[1-9]\d{0,8}$/;
 const SINAIS_NEUTROS = { slots: 1, percent: null, x: X_PADRAO, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false };
 const GIT_REDIRECIONA = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_NAMESPACE'];
@@ -2393,7 +2393,7 @@ export function progressoDaTask(raiz, eventos, task) {
   let ciclos = [];
   try { ciclos = readdirSync(tmp).map((n) => /^ciclo-(\d+)$/.exec(n)).filter(Boolean).map((m) => Number(m[1])); } catch { /* sem ciclos: review anterior ausente */ }
   const ant = ciclos.length === 0 ? null : join(tmp, `ciclo-${Math.max(...ciclos)}`);
-  return { dispensado: false, ...progressoMedido(ultimoReviewDe(tmp), ant !== null && comum(ant) ? ultimoReviewDe(ant) : null) };
+  return { dispensado: false, ...progressoMedido(ultimoReviewDe(tmp), ant !== null && comum(ant) ? ultimoReviewDe(ant) : null, raiz) };
 }
 
 const ehArquivoRegular = (p) => { try { return lstatSync(p).isFile(); } catch { return false; } };
