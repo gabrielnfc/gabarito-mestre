@@ -118,6 +118,7 @@
 - loop:115 · tecnica · T33 (agente): painel real mostra 'entrega não identificada' na enabler/GM-15-fluidez porque o diário GM-15 tem fato.medido pr #23 mergeado de hotfix/GM-15-alpha2 e prs() (trilha.ts:102) não filtra pela branch da sessão; risco de a GM-15 ser…
 - loop:132 · tecnica · integrar T15: gate recusa os 19 commits do Allan (fix(guarda)/test(guarda)/docs(guarda)) por padrão Conventional com card; PR externo precisa de reword do assunto preservando autor antes do integrar
 - loop:133 · tecnica · integrar T24: loop-cli sem resumo de falhas aos 446 s; reproduzido inteiro verde (392/394, 431 s) sob gate simulado; provável corte por tempo/carga (load ~26); mitigação ac9ed02 memoiza raizesDeCheckout (292 s)
+- loop:501 · tecnica · CI run 44100122785 (PR #25, 97ccc09b): aceite-gm15 fotoDoCheckout usa refs/heads/<branch> e falha em HEAD destacado (refs/heads/HEAD); mod-test timeout >114s no runner (teto medido só local)
 
 ## Aprendizados D
 
@@ -167,3 +168,5 @@
 - loop:480 · E · Emenda que muda uma regra (ex.: pré-versão não encerra) relê o aceite final e os testes nomeados da spec que dependem do comportamento antigo e os emenda no mesmo ato; aceite com fixture 'como no GitHub' confere os valores com gh real antes… · entra em: instantaneo, brief:implementador · sem medição · gatilho: loop:474
 - loop:493 · E · Brief de virada/CHANGELOG manda ler o resultado medido de cada spike e limite (relatórios e commits) e escrever o fato, nunca copiar o condicional do plano ('se refutadas') · entra em: instantaneo, brief:implementador · sem medição · gatilho: loop:492
 - loop:499 · A · Sombra fora_da_regra vira 1 pergunta ao dono com fato medido, 2-3 opções e a recomendada; a resposta vira D-G registrada e emenda julgada pela Sombra na hora: 4 decisões na GM-15 sem parar o loop · entra em: instantaneo · sem medição · gatilho: loop:498
+- loop:512 · E · Regra nova de 'quem decide' vale também para o estado JÁ gravado pela regra antiga (loop.parar de antes, plugin antigo, ponte que falhou): teste com o evento antigo no diário e cada camada reavaliando, nunca saída precoce antes da regra nov… · entra em: instantaneo, brief:implementador · sem medição · gatilho: loop:510
+- loop:520 · E · Bloco novo em hook com saída antecipada (ex.: silêncio pós-loop.parar): teste com o evento que dispara a saída já gravado no diário, não só o estado limpo; e guardas que se cobrem ganham 1 teste cada que isola a outra. · entra em: instantaneo, brief:implementador · sem medição · gatilho: loop:519
