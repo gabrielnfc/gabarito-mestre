@@ -3,7 +3,7 @@
  * REQ-SOM-1 a SOM-4 pela borda — `sombra.mjs`: a dúvida do loop vai à Sombra por caminho fixo e nunca é perguntada duas vezes.
  *
  *   sombra.mjs perguntar (--req <REQ> | --task <id>) --pergunta <texto> [--entrega <GM-10>] [--sessao <id>]
- *       → {ok, hash, cache:true, decisao} | {ok, hash, pendente:true, brief, prompt} | {ok, hash, brief, prompt, consultas, teto}
+ *       → {ok, hash, cache:true, decisao} | {ok, hash, pendente:true, brief, prompt} | {ok, hash, brief, prompt, consultas}
  *   sombra.mjs perguntar --task <id> --libera-teto [--entrega <GM-10>] [--sessao <id>]   (GM-14 T36, FIEL-15) a PERGUNTA FECHADA de liberação do
  *       teto (texto fixo, `perguntaDaLiberacao` de `loop.mjs`); só o hash dela serve a `loop.mjs liberar --origem sombra`. Sem `--pergunta`.
  *       GM-14 T39 (emenda 16, FIEL-15 e): o texto traz o critério; o brief traz SEMPRE as emendas aprovadas de REQ-DIA-2 (onde a FIEL-15 mora)
@@ -42,8 +42,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { lerConfigOrigin } from '../lib/config.mjs';
-import { ACHADO_MAX_BYTES, achadosDoCiclo, estadoNoDiario, hashDaLiberacao, perguntaDaLiberacao, reqsDaLiberacao, tetoDaSombra } from './loop.mjs';
+import { ACHADO_MAX_BYTES, achadosDoCiclo, estadoNoDiario, hashDaLiberacao, perguntaDaLiberacao, progressoDaTask, reqsDaLiberacao } from './loop.mjs';
 import * as diario from '../dist/diario.js';
 import { projetarEmendas, quemRedigeNaAncora } from '../dist/emenda.js';
 import { formaInvalida, REQ_RE } from '../dist/formas.js';
@@ -56,7 +55,6 @@ const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
 const ENTREGA_RE = /^[A-Z]+-\d+$/;
 const SESSAO_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const HASH_RE = /^[0-9a-f]{64}$/;
-const TETO_PADRAO = 26;
 const RESPOSTA_MAX = 1000;
 const GIT_REDIRECIONA = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_NAMESPACE'];
 
@@ -223,13 +221,6 @@ function validarFlagsComuns(flags) {
   if (flags.sessao !== undefined && !SESSAO_RE.test(flags.sessao)) throw new Falha('argumento_invalido', `--sessao fora da forma ${SESSAO_RE}`, {}, 2);
 }
 
-/** `sombra.teto` de `origin/HEAD`: ausente ⇒ 26 sem aviso; presente e inválido, ou config de origin corrompida ⇒ 26 com `aviso` (ausente ≠ corrompido). A regra do teto é `tetoDaSombra` de `loop.mjs` (E4, T9: sem terceira cópia). */
-function tetoDe(raiz) {
-  const o = lerConfigOrigin(raiz);
-  if (o.fonte !== 'origin' && o.invalida === true) return { teto: TETO_PADRAO, aviso: `config de origin/HEAD inválida (${o.motivo}): teto ${TETO_PADRAO}` };
-  return tetoDaSombra(o);
-}
-
 /** Caminho do brief, LITERAL: a mesma string que a guarda monta (T12); nunca `relative` de `realpath`. */
 const caminhoLiteral = (c, hash) => `.harness/entregas/${c.entrega}/sombra/${hash}.md`;
 
@@ -296,6 +287,22 @@ function comAchados(brief, task, achados) {
   });
   const i = brief.lastIndexOf('\n## Instrução\n');
   const secao = `${partes.join('\n')}\n`;
+  return i < 0 ? `${brief}\n${secao}` : `${brief.slice(0, i + 1)}${secao}${brief.slice(i)}`;
+}
+
+/**
+ * GM-15 T36 (emenda 24 m.1): o brief da liberação traz o progresso MEDIDO pelo CLI (`progressoDaTask`, a mesma função de `loop.mjs liberar`); a Sombra não declara
+ * progresso. Sem progresso (ou não medido) ela só pode liberar com `abordagem_nova`, que o orquestrador passa em `loop.mjs liberar --abordagem-nova <texto>`.
+ */
+function comProgresso(brief, pr) {
+  const linhas = pr.dispensado
+    ? ['progresso: dispensado (1º teto da task)', `- ${pr.motivo}`]
+    : pr.progresso === true
+      ? ['progresso: sim', `- ${pr.motivo}`]
+      : ['progresso: sem progresso' + (pr.progresso === null ? ' (não medido)' : ''), `- ${pr.motivo}`,
+        '- Sem progresso medido, você só pode liberar com uma abordagem nova (replanejar, dividir a task ou emenda proposta): responda `libera: true` e escreva a abordagem em `texto`; o orquestrador a passa em `loop.mjs liberar --abordagem-nova <texto>`. Se não houver abordagem nova a propor, `libera: false`.'];
+  const secao = ['## Progresso medido', '', 'Medido pelo CLI nos reviews dos 2 últimos ciclos (não declarado por você).', '', ...linhas, ''].join('\n');
+  const i = brief.lastIndexOf('\n## Instrução\n');
   return i < 0 ? `${brief}\n${secao}` : `${brief.slice(0, i + 1)}${secao}${brief.slice(i)}`;
 }
 
@@ -404,22 +411,19 @@ function perguntar(cwd, flags) {
 
   const emendas = est.aprovadas.filter((p) => reqsDasEmendas.includes(p.req)).map((p) => ({ proposta_seq: p.seq, req: p.req, diff: p.diff }));
   const base = montarBrief({ pergunta, ancora: textoAncora(ancora), spec: plano.spec, trechos, emendas, ...(tarefa !== undefined ? { task: tarefa } : {}) });
-  const comBase = liberacao ? comAchados(base, task, achados) : base;
+  const comBase = liberacao ? comProgresso(comAchados(base, task, achados), progressoDaTask(c.raiz, eventos, task)) : base;
   const conteudo = sobreProposta === undefined ? comBase : comProposta(comBase, sobreProposta);
-  const { teto, aviso: avisoTeto } = tetoDe(c.raiz);
 
   if (consultasAbertas(eventos).includes(hash)) {
     escreverBrief(c, hash, conteudo, { sobrescrever: false });
     const brief = caminhoLiteral(c, hash);
-    return { hash, pendente: true, brief, prompt: promptSombra(brief), ...(avisoTeto !== undefined ? { aviso: avisoTeto } : {}) };
+    return { hash, pendente: true, brief, prompt: promptSombra(brief) };
   }
 
   gravarEvento(c, 'sombra.consulta', { pergunta_hash: hash, ...(req !== undefined ? { req } : { task }) });
   escreverBrief(c, hash, conteudo, { sobrescrever: true });
   const brief = caminhoLiteral(c, hash);
-  const consultas = contarConsultas(eventos) + 1;
-  const avisos = [avisoTeto, consultas > teto ? `consultas à Sombra (${consultas}) acima do teto (${teto})` : undefined].filter((a) => a !== undefined);
-  return { hash, brief, prompt: promptSombra(brief), consultas, teto, ...(avisos.length > 0 ? { aviso: avisos.join('; ') } : {}) };
+  return { hash, brief, prompt: promptSombra(brief), consultas: contarConsultas(eventos) + 1 };
 }
 
 // ─────────────────────────────────────────────────────────────── registrar

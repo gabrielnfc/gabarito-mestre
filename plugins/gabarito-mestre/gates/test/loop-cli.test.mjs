@@ -3382,31 +3382,17 @@ describe('E3 T10: proxima, modelo, decisões, emendas e avisos', () => {
     }
   });
 
-  test('proxima-aviso-acima-do-teto: 26 não avisa (teto padrão), 27 avisa com o número e o teto', () => {
-    const amb = ambiente();
-    const rel = relogioDe();
-    const consultas = (n, de = 0) => Array.from({ length: n }, (_, i) => ['sombra.consulta', { pergunta_hash: (de + i + 1).toString(16).padStart(64, '0'), req: 'REQ-A-1' }]);
-    grava(amb, rel, consultas(26));
-    const p26 = amb.cli(['proxima', '--vivos', '0']).j;
-    assert.ok(!(p26.aviso ?? []).some((a) => /Sombra/.test(a)), JSON.stringify(p26.aviso));
-    grava(amb, rel, consultas(1, 26));
-    const p27 = amb.cli(['proxima', '--vivos', '0']).j;
-    assert.ok(p27.aviso.includes('Atenção: 27 consultas à Sombra, teto 26'), JSON.stringify(p27.aviso));
-  });
-
-  test('proxima-teto-de-origin: 5 vale; "30", 0 e 1.5 caem em 26 com aviso; origin corrompida cai em 26 com aviso do motivo', () => {
+  test('proxima-sem-teto-de-consultas (GM-15 T36, emenda 22 l.5): 27 consultas à Sombra não avisam, `sombra.teto` de origin (válido, "30", 0, 1.5) é ignorado sem aviso; origin corrompida segue avisada pelo motivo', () => {
     const consultas = (n) => Array.from({ length: n }, (_, i) => ['sombra.consulta', { pergunta_hash: (i + 1).toString(16).padStart(64, '0'), req: 'REQ-A-1' }]);
-    const a5 = ambiente();
-    comOrigin(a5, { sombra: { teto: 5 } });
-    grava(a5, relogioDe(), consultas(6));
-    assert.ok(a5.cli(['proxima', '--vivos', '0']).j.aviso.includes('Atenção: 6 consultas à Sombra, teto 5'));
-    for (const teto of ['30', 0, 1.5]) {
+    const sem = ambiente();
+    grava(sem, relogioDe(), consultas(27));
+    assert.ok(!(sem.cli(['proxima', '--vivos', '0']).j.aviso ?? []).some((a) => /Sombra|teto/.test(a)));
+    for (const teto of [5, '30', 0, 1.5]) {
       const amb = ambiente();
       comOrigin(amb, { sombra: { teto } });
       grava(amb, relogioDe(), consultas(27));
       const j = amb.cli(['proxima', '--vivos', '0']).j;
-      assert.ok(j.aviso.includes('Atenção: 27 consultas à Sombra, teto 26'), `${teto}: ${JSON.stringify(j.aviso)}`);
-      assert.ok(j.aviso.some((x) => /sombra\.teto/.test(x)), `${teto}: aviso do teto inválido ${JSON.stringify(j.aviso)}`);
+      assert.ok(!(j.aviso ?? []).some((x) => /teto|consultas à Sombra/.test(x)), `${teto}: ${JSON.stringify(j.aviso)}`);
     }
     const ruim = ambiente();
     comOrigin(ruim, '{nao json');
@@ -4904,7 +4890,7 @@ describe('T36: a Sombra libera o teto', () => {
   /** O hash de liberação que `liberar` recalcula HOJE: emendas, rodadas do ciclo e sha de cada achado (T39 r1). Não depende do caminho da raiz. */
   const hashT = (amb, t = 'T1') => hashDaLiberacao(JSON.parse(readFileSync(join(amb.entregas, 'plano.json'), 'utf8')), amb.eventos(), t, amb.dir);
 
-  test('t36-p9-cli-real: no_teto ⇒ registrar libera:true ⇒ liberar --origem sombra ⇒ pendente r0 ⇒ registro e painel listam ⇒ 2ª recusa teto_sombra_esgotado', async () => {
+  test('t36-p9-cli-real: no_teto ⇒ registrar libera:true ⇒ liberar --origem sombra ⇒ pendente r0 ⇒ registro e painel listam ⇒ o mesmo hash depois ⇒ fora_do_teto', async () => {
     const amb = ambReq();
     comLibera(amb);
     aoTeto(amb);
@@ -4935,10 +4921,8 @@ describe('T36: a Sombra libera o teto', () => {
     const { fraseHistorico } = await import('../dist/painel-texto.js');
     const ctx = { nomes: new Map(), lider: 'L', sabio: 'S', porAgente: new Map(), fuso: 'UTC', agoraMs: Date.now(), textoParar: () => null };
     assert.equal(fraseHistorico(novos[0], ctx)?.texto, 'a Sombra liberou a T1');
-    // 2ª tentativa: sempre do dono
-    const dois = recusa(amb, 'T1', h, 'teto_sombra_esgotado');
-    assert.match(dois.j.mensagem, /dono/);
-    assert.match(dois.j.mensagem, /gabarito-mestre:liberar/);
+    // GM-15 T36 (D-G17): sem limite numérico; o mesmo hash num diário já fora do teto é `fora_do_teto` (não existe mais `teto_sombra_esgotado`)
+    recusa(amb, 'T1', h, 'fora_do_teto');
   });
 
   test('t36-sem-flag: sem origin, origin sem a chave, chave que não é true, só no config local e origin ilegível ⇒ libera_teto_desligado', () => {
@@ -5212,27 +5196,23 @@ describe('T36: a Sombra libera o teto', () => {
     assert.equal(r.rc, 0, r.out);
   });
 
-  test('t36-furo-6: a Sombra só dá a 1ª liberação; depois do dono, mesmo no teto de novo, teto_sombra_esgotado; depois da Sombra, o dono libera', () => {
-    const amb = ambReq();
-    comLibera(amb);
-    ok(amb, ['abrir', 'T1']);
+  test('t36-furo-6 (GM-15 T36, D-G17): sem limite numérico: depois da liberação do dono OU da Sombra, no teto de novo a Sombra libera de novo (sem progresso medido ⇒ só com abordagem_nova)', () => {
     const ciclo = [['task.iniciada', { task: 'T1', papel: 'implementador' }], ['task.concluida', { task: 'T1', sha: 'a'.repeat(40) }],
       ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, blocker: 0, major: 1 }], ['task.iniciada', { task: 'T1', papel: 'correcao' }],
       ['task.concluida', { task: 'T1', sha: 'b'.repeat(40) }], ['review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 2, blocker: 0, major: 1 }]];
-    amb.semear([...ciclo, ['task.reaberta', { task: 'T1', origem: 'dono' }], ...ciclo]);
-    assert.deepEqual(estadoT(amb), { estado: 'no_teto', rodada: 2 });
-    const h = sombraDecide(amb);
-    assert.match(recusa(amb, 'T1', h, 'teto_sombra_esgotado').j.mensagem, /dono/);
-    // a liberação da Sombra é aceita pela tabela e o dono tira do teto depois dela
-    const amb2 = ambReq();
-    ok(amb2, ['abrir', 'T1']);
-    amb2.semear([...ciclo, ['task.reaberta', { task: 'T1', origem: 'sombra', hash: 'e'.repeat(64) }], ...ciclo]);
-    assert.deepEqual(estadoT(amb2), { estado: 'no_teto', rodada: 2 });
-    comLibera(amb2);
-    recusa(amb2, 'T1', sombraDecide(amb2), 'teto_sombra_esgotado');
-    const d = liberarTeto(amb2.dir, 'T1', 'S-dono');
-    assert.equal(d.ok, true, JSON.stringify(d));
-    assert.deepEqual(estadoT(amb2), { estado: 'pendente', rodada: 0 });
+    for (const origem of ['dono', 'sombra']) {
+      const amb = ambReq();
+      comLibera(amb);
+      ok(amb, ['abrir', 'T1']);
+      amb.semear([...ciclo, ['task.reaberta', origem === 'dono' ? { task: 'T1', origem } : { task: 'T1', origem, hash: 'e'.repeat(64) }], ...ciclo]);
+      assert.deepEqual(estadoT(amb), { estado: 'no_teto', rodada: 2 });
+      const h = sombraDecide(amb);
+      // reviews ausentes dos 2 últimos ciclos ⇒ sem progresso medido ⇒ só com abordagem
+      assert.match(recusa(amb, 'T1', h, 'sem_progresso_sem_abordagem').j.mensagem, /abordagem/, origem);
+      const r = liberar(amb, 'T1', h, ['--abordagem-nova', 'dividir a task em duas']);
+      assert.equal(r.rc, 0, r.out);
+      assert.deepEqual(estadoT(amb), { estado: 'pendente', rodada: 0 });
+    }
   });
 
   test('t36-registrar-libera: não booleano ⇒ resposta_invalida; libera:true fora da pergunta de liberação ⇒ libera_fora_da_liberacao; nada gravado', () => {
@@ -5269,6 +5249,214 @@ describe('T36: a Sombra libera o teto', () => {
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.deepEqual(amb.eventos().filter((e) => e.tipo === 'task.reaberta').map((e) => [e.sessao, e.dados]), [['S-dono', { task: 'T1', origem: 'dono' }]]);
   });
+
+  // ── GM-15 T36 (emendas 22 e 24): progresso medido, abordagem nova, freios e orçamento ───────────────────────────────────────────────────────
+  const REV = (...ls) => ls.map((n) => `${n.startsWith('BLOCKER') ? '' : 'MAJOR '}${n}`).join('\n') + '\n';
+  const trecho = (n, arq = 'src/t1.txt') => `${arq}:${n} achado`;
+  let _c = 0;
+  /** Um ciclo inteiro pelo CLI até o teto, com o texto dos reviews r1 e r2 dados; a 1ª vez abre a task. */
+  function ciclo(amb, texto1, texto2 = texto1, t = 'T1') {
+    _c += 1;
+    if (estadoT(amb, t).estado === 'pendente' && !amb.eventos().some((e) => e.dados?.task === t && e.tipo === 'task.iniciada')) ok(amb, ['abrir', t]);
+    ok(amb, ['iniciar', t, 'implementador']);
+    amb.commitNaWt(t, `src/${t.toLowerCase()}.txt`, `v${_c}a\n`);
+    ok(amb, ['concluir', t]);
+    ok(amb, ['iniciar', t, 'revisor']);
+    mkdirSync(join(amb.wt(t), '.tmp-gabarito'), { recursive: true });
+    writeFileSync(join(amb.wt(t), '.tmp-gabarito', 'review-r1.md'), texto1);
+    ok(amb, ['veredito', t, 'REPROVADO', '1', '1', '0']);
+    ok(amb, ['iniciar', t, 'correcao']);
+    amb.commitNaWt(t, `src/${t.toLowerCase()}.txt`, `v${_c}b\n`);
+    ok(amb, ['concluir', t]);
+    ok(amb, ['iniciar', t, 'revisor']);
+    writeFileSync(join(amb.wt(t), '.tmp-gabarito', 'review-r2.md'), texto2);
+    ok(amb, ['veredito', t, 'REPROVADO', '2', '1', '0']);
+    assert.equal(estadoT(amb, t).estado, 'no_teto');
+  }
+  const reaberta = (amb) => amb.eventos().filter((e) => e.tipo === 'task.reaberta').map((e) => e.dados);
+
+  test('t36-sombra-libera-sem-limite-com-progresso: 6 ciclos seguidos, cada um com achados em outro trecho e total não maior ⇒ 6 liberações da Sombra, nenhuma recusa por contagem', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    for (let k = 1; k <= 6; k++) {
+      ciclo(amb, REV(trecho(1000 * k)), REV(trecho(1000 * k + 500)));
+      const h = sombraDecide(amb);
+      const r = liberar(amb, 'T1', h);
+      assert.equal(r.rc, 0, `ciclo ${k}: ${r.out}`);
+    }
+    assert.equal(reaberta(amb).filter((d) => d.origem === 'sombra').length, 6);
+    assert.ok(reaberta(amb).every((d) => d.abordagem_nova === undefined), 'com progresso não pede abordagem');
+  });
+
+  test('t36-sem-progresso-exige-abordagem: o mesmo achado (±10 linhas) 2 ciclos seguidos ⇒ sem_progresso_sem_abordagem, nada gravado; com --abordagem-nova grava no task.reaberta', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    ciclo(amb, REV(trecho(100)));
+    ok(amb, ['liberar', 'T1', '--origem', 'sombra', '--hash', sombraDecide(amb)]); // 1º teto: dispensado
+    ciclo(amb, REV(trecho(105)));
+    const h = sombraDecide(amb);
+    const r = recusa(amb, 'T1', h, 'sem_progresso_sem_abordagem');
+    assert.match(r.j.mensagem, /src\/t1\.txt:105/, 'a mensagem diz o achado que reapareceu');
+    assert.ok(achadosNoLugar(amb), 'os achados ficaram no lugar');
+    const ok2 = liberar(amb, 'T1', h, ['--abordagem-nova', 'dividir a task em duas']);
+    assert.equal(ok2.rc, 0, ok2.out);
+    assert.deepEqual(reaberta(amb).at(-1), { task: 'T1', origem: 'sombra', hash: h, abordagem_nova: 'dividir a task em duas' });
+    assert.deepEqual(ok2.j.abordagem_nova, 'dividir a task em duas');
+  });
+
+  test('t36-abordagem-nova-forma: vazia, só espaços, com quebra de linha ou acima de 500 caracteres ⇒ argumento_invalido (rc 2), nada gravado', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    ciclo(amb, REV(trecho(100)));
+    const h = sombraDecide(amb);
+    for (const ruim of ['', '   ', 'a\nb', 'x'.repeat(501)]) {
+      const antes = bytesDoDiario(amb);
+      const r = liberar(amb, 'T1', h, ['--abordagem-nova', ruim]);
+      assert.equal(r.rc, 2, JSON.stringify(ruim));
+      assert.equal(r.j.erro, 'argumento_invalido');
+      assert.deepEqual(bytesDoDiario(amb), antes);
+    }
+    assert.equal(liberar(amb, 'T1', h, ['--abordagem-nova', 'x'.repeat(500)]).rc, 0, '500 é o limite que passa');
+  });
+
+  test('t36-primeiro-teto-dispensa-progresso: no 1º teto da task a liberação vale sem abordagem mesmo com review ilegível', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    ciclo(amb, 'texto sem achado legível\n');
+    const r = liberar(amb, 'T1', sombraDecide(amb));
+    assert.equal(r.rc, 0, r.out);
+  });
+
+  test('t36-progresso-review-ausente-conta-sem: o review do ciclo anterior ausente (ciclo-N apagado), vazio ou ilegível ⇒ sem progresso ⇒ exige abordagem (falha não vira sucesso)', () => {
+    for (const ruim of ['ausente', 'vazio', 'ilegivel']) {
+      const amb = ambReq();
+      comLibera(amb);
+      ciclo(amb, REV(trecho(100)));
+      ok(amb, ['liberar', 'T1', '--origem', 'sombra', '--hash', sombraDecide(amb)]);
+      const dirCiclo = join(amb.wt('T1'), '.tmp-gabarito', 'ciclo-1');
+      if (ruim === 'ausente') rmSync(dirCiclo, { recursive: true });
+      else for (const n of ['review-r1.md', 'review-r2.md']) writeFileSync(join(dirCiclo, n), ruim === 'vazio' ? '  \n' : 'sem severidade nenhuma\n');
+      ciclo(amb, REV(trecho(9000)));
+      const r = recusa(amb, 'T1', sombraDecide(amb), 'sem_progresso_sem_abordagem');
+      assert.match(r.j.mensagem, /ausente|vazio|legível/, ruim);
+    }
+    // controle: o ciclo anterior legível e em outro trecho ⇒ progresso
+    const amb = ambReq();
+    comLibera(amb);
+    ciclo(amb, REV(trecho(100)));
+    ok(amb, ['liberar', 'T1', '--origem', 'sombra', '--hash', sombraDecide(amb)]);
+    ciclo(amb, REV(trecho(9000)));
+    assert.equal(liberar(amb, 'T1', sombraDecide(amb)).rc, 0);
+  });
+
+  test('t36-progresso-compara-ultimas-rodadas-dos-2-ultimos-ciclos: vale o review de MAIOR rodada de cada ciclo e o ciclo anterior IMEDIATO (não o 1º): r2 novo e ciclo-2 diferente do ciclo-1 ⇒ progresso mesmo com r1 igual', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    ciclo(amb, REV(trecho(100)), REV(trecho(7000)));
+    ok(amb, ['liberar', 'T1', '--origem', 'sombra', '--hash', sombraDecide(amb)]);
+    ciclo(amb, REV(trecho(100)), REV(trecho(9000))); // r1 repete o anterior, a r2 (a última) é outro trecho
+    ok(amb, ['liberar', 'T1', '--origem', 'sombra', '--hash', sombraDecide(amb)]);
+    // 3º ciclo: a última rodada repete a do ciclo-2 (9000), mas não a do ciclo-1 (7000) ⇒ sem progresso (o anterior é o imediato)
+    ciclo(amb, REV(trecho(50)), REV(trecho(9000)));
+    recusa(amb, 'T1', sombraDecide(amb), 'sem_progresso_sem_abordagem');
+  });
+
+  test('t36-duas-abordagens-sem-convergir-vai-ao-dono: 2 liberações com abordagem_nova e o 3º teto ⇒ abordagens_esgotadas (mesmo com decisão íntegra e abordagem), 1 linha no lote; só o dono solta', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    ciclo(amb, REV(trecho(100)));
+    ok(amb, ['liberar', 'T1', '--origem', 'sombra', '--hash', sombraDecide(amb), '--abordagem-nova', 'A']);
+    ciclo(amb, REV(trecho(100)));
+    ok(amb, ['liberar', 'T1', '--origem', 'sombra', '--hash', sombraDecide(amb), '--abordagem-nova', 'B']);
+    ciclo(amb, REV(trecho(100)));
+    const h = sombraDecide(amb);
+    const r = recusa(amb, 'T1', h, 'abordagens_esgotadas', ['--abordagem-nova', 'C']);
+    assert.match(r.j.mensagem, /gabarito-mestre:liberar T1/);
+    const lote = amb.cli(['proxima', '--vivos', '0']).j.lote;
+    assert.equal(lote.filter((i) => /T1/.test(i.motivo) && /abordagens/.test(i.motivo)).length, 1, JSON.stringify(lote));
+    assert.equal(liberarTeto(amb.dir, 'T1', 'S-dono').ok, true);
+  });
+
+  test('t36-liberacao-do-dono-nao-conta-no-freio: 1 abordagem da Sombra + liberação do dono + 2ª abordagem ⇒ aceita (o dono não conta) e só o teto seguinte esgota (o dono não zera)', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    ciclo(amb, REV(trecho(100)));
+    ok(amb, ['liberar', 'T1', '--origem', 'sombra', '--hash', sombraDecide(amb), '--abordagem-nova', 'A']);
+    ciclo(amb, REV(trecho(100)));
+    assert.equal(liberarTeto(amb.dir, 'T1', 'S-dono').ok, true);
+    ciclo(amb, REV(trecho(100)));
+    ok(amb, ['liberar', 'T1', '--origem', 'sombra', '--hash', sombraDecide(amb), '--abordagem-nova', 'B']);
+    ciclo(amb, REV(trecho(100)));
+    recusa(amb, 'T1', sombraDecide(amb), 'abordagens_esgotadas', ['--abordagem-nova', 'C']);
+  });
+
+  test('t36-hash-de-ciclo-anterior-recusa: a decisão do ciclo anterior (mesmo hash, reviews idênticos) não libera o teto de agora; vale a decisão nova do ciclo', () => {
+    const amb = ambReq();
+    comLibera(amb);
+    ciclo(amb, REV(trecho(100)));
+    const h1 = sombraDecide(amb);
+    ok(amb, ['liberar', 'T1', '--origem', 'sombra', '--hash', h1]);
+    ciclo(amb, REV(trecho(100)));
+    assert.equal(hashT(amb), h1, 'controle: os reviews iguais dão o mesmo hash');
+    const r = recusa(amb, 'T1', h1, 'hash_invalido');
+    assert.match(r.j.mensagem, /antes do teto/);
+    const h2 = sombraDecide(amb);
+    assert.equal(liberar(amb, 'T1', h2, ['--abordagem-nova', 'dividir']).rc, 0);
+  });
+
+  // ── orçamento 3× (emenda 24 m.2) e a oferta do `proxima` (emenda 22 l.4): diário semeado com 1 s por evento (relógio de `semear`, relativo ao evento) ──────────────
+  const SHA = (n) => String(n).repeat(40).slice(0, 40);
+  const integrada = (t) => [['task.iniciada', { task: t, papel: 'implementador' }], ['task.concluida', { task: t, sha: SHA(1) }], ['task.iniciada', { task: t, papel: 'revisor' }],
+    ['review.veredito', { task: t, veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }], ['task.integrada', { task: t, sha: SHA(2) }]]; // implementador 1 s + revisor 1 s = 2 s
+  /** T3 no teto com `parado` eventos de enchimento entre o início e a conclusão do implementador (cada um custa 1 s) */
+  const t3NoTeto = (parado) => [['task.iniciada', { task: 'T3', papel: 'implementador' }], ...Array.from({ length: parado }, () => ['ci.resultado', { verde: true }]), ['task.concluida', { task: 'T3', sha: SHA(3) }],
+    ['task.iniciada', { task: 'T3', papel: 'revisor' }], ['review.veredito', { task: 'T3', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 }], ['task.iniciada', { task: 'T3', papel: 'correcao' }],
+    ['task.concluida', { task: 'T3', sha: SHA(4) }], ['task.iniciada', { task: 'T3', papel: 'revisor' }], ['review.veredito', { task: 'T3', veredito: 'REPROVADO', rodada: 2, major: 1, blocker: 0 }]];
+  const ambOrcamento = (parado) => {
+    const amb = ambReq();
+    comLibera(amb);
+    amb.semear([...integrada('T1'), ...integrada('T2'), ...t3NoTeto(parado)]);
+    assert.equal(estadoT(amb, 'T3').estado, 'no_teto');
+    return amb;
+  };
+
+  test('t36-orcamento-3x-vai-ao-dono: T3 gasta mais de 3× a mediana (2 s ⇒ limite 6 s) ⇒ liberar recusa orcamento_estourado mesmo com decisão íntegra; proxima não oferece a pergunta e o lote tem 1 linha', () => {
+    const amb = ambOrcamento(8); // implementador 10 s + 1 + 1 + 1 = 13 s
+    const h = sombraDecide(amb, 'T3');
+    const r = recusa(amb, 'T3', h, 'orcamento_estourado');
+    assert.match(r.j.mensagem, /mediana/);
+    const p = amb.cli(['proxima', '--vivos', '0']).j;
+    assert.deepEqual([p.acao.tipo, p.acao.motivo, p.acao.task, p.acao.liberacao.oferecer, p.acao.liberacao.motivo], ['parar', 'teto_rodadas', 'T3', false, 'orcamento_estourado']);
+    assert.equal(p.lote.filter((i) => /T3/.test(i.motivo) && /gastou/.test(i.motivo)).length, 1, JSON.stringify(p.lote));
+    assert.ok(p.lote.find((i) => /T3/.test(i.motivo)).acoes.some((a) => a.comando === '/gabarito-mestre:liberar T3'));
+  });
+
+  test('t36-orcamento-dentro-do-limite-oferece: T3 abaixo de 3× a mediana ⇒ proxima oferece a pergunta (liberacao.oferecer true), o lote não tem a T2 e liberar passa', () => {
+    const amb = ambOrcamento(0); // implementador 1 s + 1 + 1 + 1 = 4 s < 6 s
+    const p = amb.cli(['proxima', '--vivos', '0']).j;
+    assert.equal(p.acao.liberacao.oferecer, true);
+    assert.equal(p.acao.liberacao.dispensado, true);
+    assert.equal(p.lote.filter((i) => /T3/.test(i.motivo)).length, 0);
+    assert.equal(liberar(amb, 'T3', sombraDecide(amb, 'T3')).rc, 0);
+  });
+
+  test('t36-proxima-flag-desligada-nao-oferece: sem sombra.libera_teto em origin ⇒ liberacao.oferecer false (libera_teto_desligado) e a task no lote do dono', () => {
+    const amb = ambiente();
+    amb.semear([...integrada('T1'), ...integrada('T2'), ...t3NoTeto(0)]);
+    const p = amb.cli(['proxima', '--vivos', '0']).j;
+    assert.deepEqual([p.acao.liberacao.oferecer, p.acao.liberacao.motivo], [false, 'libera_teto_desligado']);
+    assert.equal(p.lote.filter((i) => /T3/.test(i.motivo)).length, 1);
+  });
+
+  test('t36-orcamento-sem-mediana-avisa: nenhuma task integrada ⇒ sem freio por orçamento (a liberação segue) e aviso no proxima', () => {
+    const amb = ambiente({ plano: planoDe([{ id: 'T3', deps: [], arquivos: ['src/t2.txt'] }]) });
+    comLibera(amb);
+    amb.semear(t3NoTeto(500));
+    const p = amb.cli(['proxima', '--vivos', '0']).j;
+    assert.ok((p.aviso ?? []).some((a) => /sem mediana/.test(a)), JSON.stringify(p.aviso));
+    assert.equal(p.acao.liberacao.oferecer, true, 'sem mediana não freia');
+  });
+
 });
 
 // ─────────────────────────────────────────────────────────────── GM-14 T38: spec do checkout da sessão (DP-3 aj. 4 e 5)

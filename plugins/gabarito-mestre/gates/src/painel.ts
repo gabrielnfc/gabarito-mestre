@@ -761,11 +761,63 @@ function montarAtencao(c: Calculo): string[] {
     }
     if (ciVermelhos(ord) === 1) atencao.push('CI vermelho 1× depois do último verde');
   }
-  const consultas = contarConsultas(lista);
-  if (consultas > entrada.tetoSombra) atencao.push(`Sombra: ${consultas} consultas, acima do teto de ${entrada.tetoSombra}`);
+  // GM-15 T36 (emenda 22 l.5): o teto de consultas à Sombra saiu; nenhuma linha de atenção por quantidade de consultas.
   const soltas = emVoo.filter((id) => !citadas.has(id));
   if (atencao.length > 0 && soltas.length > 0) atencao.push(`loop segue em ${soltas.join(' ')}`);
+  // GM-15 T36 (emenda 24 m.3): "decide agora, dono confere depois": 1 linha com N (some com 0); a lista e o comando de reverter vêm de `painel.mjs texto --sombra`. Não entra no DEPENDE.
+  const n = decisoesDaSombra(ord).length;
+  if (n > 0) atencao.push(`${n} ${n === 1 ? 'decisão' : 'decisões'} da Sombra desde a sua última resposta`);
   return atencao;
+}
+
+export type DecisaoDaSombra = { id: string; frase: string };
+
+/** Evento que o dono fez: resposta, comando de task, aprovação de spec ou julgamento de emenda com origem `dono` (a origem de `origemDe` mais o julgamento de emenda, que ela não classifica). */
+function eventoDoDono(ev: Evento): boolean {
+  const o = origemDe(ev);
+  if (o === '(você)' || (typeof o === 'string' && o.startsWith('(você respondeu'))) return true;
+  return (ev.tipo === 'spec.emendada' || ev.tipo === 'emenda.rejeitada') && dadosDe(ev).origem === 'dono';
+}
+
+const LIMPO_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029`]/gu;
+const limpo = (t: unknown, max: number): string => Array.from(String(t).replace(LIMPO_RE, ' ').replace(/\s+/g, ' ').trim()).slice(0, max).join('');
+
+/**
+ * A regra ÚNICA do "desde a sua última resposta" (GM-15 T36, emenda 24 m.3): as `decisao.sombra` (forma válida) e as `task.reaberta` de origem `sombra` DEPOIS do último evento do
+ * dono (`eventoDoDono`), na ordem do diário. N da linha do painel = `.length`; `painel.mjs texto --sombra` lista cada uma: 1 linha com a âncora e o comando de reverter
+ * (liberação: `/gabarito-mestre:adiar|cortar <task>`; decisão sobre REQ com emenda julgada pela Sombra: `/gabarito-mestre:emenda aprovar|rejeitar <seq>`; a palavra final é do dono).
+ * Diário que não ordena ⇒ `[]`. Nunca lança.
+ */
+export function decisoesDaSombra(eventos: Evento[] | null): DecisaoDaSombra[] {
+  try {
+    if (!Array.isArray(eventos)) return [];
+    const ord = ordenar(eventos);
+    if (!ord.ok) return [];
+    const evs = ord.eventos;
+    const ultimo = evs.findLastIndex(eventoDoDono);
+    const est = projetarEmendas(evs);
+    const daSombra = (req: string): number | null => {
+      const julgados = new Set(evs.filter((e) => (e.tipo === 'spec.emendada' || e.tipo === 'emenda.rejeitada') && formaInvalida(e.tipo, e.dados) === null && dadosDe(e).origem === 'sombra').map((e) => dadosDe(e).proposta_seq));
+      const ps = [...est.aprovadas, ...est.rejeitadas].filter((p) => p.req === req && julgados.has(p.seq)).map((p) => p.seq);
+      return ps.length === 0 ? null : Math.max(...ps);
+    };
+    const saida: DecisaoDaSombra[] = [];
+    evs.forEach((ev, i) => {
+      if (i <= ultimo) return;
+      const d = dadosDe(ev);
+      if (ev.tipo === 'task.reaberta' && d.origem === 'sombra' && typeof d.task === 'string') {
+        const t = limpo(d.task, 40);
+        saida.push({ id: `${ev.sessao}:${ev.seq}`, frase: `a Sombra liberou a ${t} — reverter: /gabarito-mestre:adiar ${t} ou /gabarito-mestre:cortar ${t}` });
+      } else if (ev.tipo === 'decisao.sombra' && formaInvalida(ev.tipo, ev.dados) === null) {
+        const req = typeof d.req === 'string' ? limpo(d.req, 40) : null;
+        const ancora = req !== null ? req : `a ${limpo(d.task, 40)}`;
+        const seq = req !== null ? daSombra(req) : null;
+        const reverter = seq === null ? 'nada a reverter (só uma resposta)' : `reverter: /gabarito-mestre:emenda aprovar ${seq} ou /gabarito-mestre:emenda rejeitar ${seq}`;
+        saida.push({ id: `${ev.sessao}:${ev.seq}`, frase: `a Sombra decidiu sobre ${ancora}: ${limpo(d.resposta, 60)} — ${reverter}` });
+      }
+    });
+    return saida;
+  } catch { return []; }
 }
 
 /** `A`, `A e B`, `A, B e C`. */
@@ -1175,6 +1227,9 @@ function projetarNovo(plano: Plano | null, eventos: Evento[] | null, entrada: En
   const semRegistro = contarConsultas(lista) - projetarDecisoes(lista).size;
   const sombraAtiva = (ativos ?? []).some((x) => x.casamento.papelExibido === 'sombra');
   if (semRegistro > 0 && !sombraAtiva) atencao.push(`${semRegistro} ${semRegistro === 1 ? 'consulta' : 'consultas'} à Sombra sem decisão registrada`);
+  // GM-15 T36 (emenda 24 m.3): a mesma linha do legado (`montarAtencao`), pela mesma função `decisoesDaSombra`; some com 0
+  const nDec = decisoesDaSombra(lista).length;
+  if (nDec > 0) atencao.push(`${nDec} ${nDec === 1 ? 'decisão' : 'decisões'} da Sombra desde a sua última resposta`);
   if (travaNoParou !== null) atencao.unshift(travaNoParou);
   if (zera) atencao.length = 0; // M8a: nada da entrega encerrada (consultas à Sombra, CI, produção, task sem agente) fica no ATENÇÃO
   if (velho) atencao.push(`painel sem ler o diário há ${Math.floor((desat as number) / 60)} min`);

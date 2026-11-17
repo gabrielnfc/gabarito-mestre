@@ -88,7 +88,7 @@ const VEREDITOS = {
  * `concluida.reentrega` (FIEL-8 b, `concluir --motivo`): commit novo depois do `concluir` só em `concluida` (b1, rodada igual) e em
  * `aprovada` (b2, rodada − 1: o APROVADO anulado não conta); em qualquer outro estado é par ausente (b3). O motivo não dá poder: não tira do teto, não pula review.
  * `reaberta.sombra` (GM-14 T36, FIEL-15): SÓ em `no_teto` (⇒ `pendente`, rodada 0); em qualquer outro estado é par ausente: a Sombra nunca grava
- * evento sem efeito que pareça liberação. "1 vez por task e só a 1ª liberação" é da borda (`loop.mjs liberar`), que conta no diário.
+ * evento sem efeito que pareça liberação. Os limites da liberação (progresso medido, abordagens esgotadas, orçamento 3×; sem limite numérico, GM-15 T36) são da borda e de `freioDaLiberacao`, que contam no diário.
  * GM-15 T5 (REQ-ENT-2): `fora.adiada` e `fora.cortada` (`task.fora`) levam a `adiada`/`cortada` SÓ de estado não integrado e sem agente em voo
  * (`pendente`, `concluida`, `reprovada`, `aprovada`, `no_teto`); de `implementando`, `corrigindo`, `em_revisao`, `integrada` ou de outro fora é par ausente.
  * `adiada` e `cortada` são terminais: só `reaberta.fora` (`task.reaberta {de:'fora'}`, dono ou Sombra) sai, para `pendente` com rodada 0 (aprendizado 142).

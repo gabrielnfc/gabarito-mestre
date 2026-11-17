@@ -3,7 +3,7 @@
  * Painel (E4, GM-12, T9): CLI de LEITURA. Única borda de E/S do painel; o núcleo (`dist/painel*.js`) é puro.
  *
  *   painel.mjs estado [--agentes] [--pacote <nome>] [--entrega <ID>]
- *   painel.mjs texto  [--largura N] [--preset esquadrao|executivo] [--tema color|mono] [--pacote <nome>] [--agentes] [--entrega <ID>]
+ *   painel.mjs texto  [--sombra] [--largura N] [--preset esquadrao|executivo] [--tema color|mono] [--pacote <nome>] [--agentes] [--entrega <ID>]
  *   painel.mjs medir  [--agentes]   (GM-14 REQ-DIA-1: o ÚNICO subcomando que grava; em `painel-medir.mjs`. GM-15 T4 (REQ-ENT-1 c), papel novo: além de
  *                                    `fato.medido` grava `entrega.encerrada` (origem automática) quando um PR com base `main` encerra a entrega)
  *
@@ -36,7 +36,7 @@ import { idPadraoDe, lerConfigOrigin } from '../lib/config.mjs';
 import { dirEntrega, lerEstrito } from '../dist/diario.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { estadoDe, ordenar, proximaAcao, TIPOS_DE_TASK } from '../dist/loop.js';
-import { entregueDe, etapasDasAnteriores, fechamentoDasAnteriores, projetarPainel, renderPainel, ritmoDasAnteriores, umaLinhaDe } from '../dist/painel.js';
+import { decisoesDaSombra, entregueDe, etapasDasAnteriores, fechamentoDasAnteriores, projetarPainel, renderPainel, ritmoDasAnteriores, umaLinhaDe } from '../dist/painel.js';
 import { validarPacote, validarStdinAgentes, usoDoTranscript } from '../dist/painel-equipe.js';
 import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
@@ -46,7 +46,7 @@ import { encerramentoDe, idDaBranch, trilhaDe } from '../dist/trilha.js';
 import { proximaEntrega } from '../dist/depende.js';
 import { planoMdDoCard, projetarProjeto, worktreesDe } from '../dist/projeto.js';
 import { temOnboarding } from './cartao-sessao.mjs';
-import { carregarPlano, checkoutDaSessao, configDoLote, contexto, lerDiarioEstrito, lerSpec, lerSpecs, medicaoDoPouso, tetoDaSombra } from './loop.mjs';
+import { carregarPlano, checkoutDaSessao, configDoLote, contexto, lerDiarioEstrito, lerSpec, lerSpecs, medicaoDoPouso } from './loop.mjs';
 import { decisaoDe, pausado, prepararLeitura } from './entrega.mjs';
 import { medir } from './painel-medir.mjs';
 import { SINAL_FRESCO_MS } from './stop-loop.mjs';
@@ -71,7 +71,7 @@ const STDIN_MAX = 4 * 1024 * 1024;
 const TENTATIVAS = 3;
 const INTERVALO_MS = 50;
 const SINAIS_NEUTROS = { slots: 1, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false };
-const USO = 'uso: painel.mjs estado [--agentes] [--pacote <nome>] [--entrega <ID>] [--sessao <id>] | painel.mjs texto [--largura N] [--preset esquadrao|executivo] [--tema color|mono] [--pacote <nome>] [--agentes] [--entrega <ID>] [--sessao <id>] | painel.mjs medir [--agentes]';
+const USO = 'uso: painel.mjs estado [--agentes] [--pacote <nome>] [--entrega <ID>] [--sessao <id>] | painel.mjs texto [--sombra] [--largura N] [--preset esquadrao|executivo] [--tema color|mono] [--pacote <nome>] [--agentes] [--entrega <ID>] [--sessao <id>] | painel.mjs medir [--agentes]';
 
 /** Falha com código: vira `{ok:false, erro, mensagem}` (rc 1; uso é 2). */
 class Falha extends Error {
@@ -100,6 +100,8 @@ export function lerArgs(argv) {
     if (Object.hasOwn(flags, nome)) throw new Falha('uso', `${a} repetido. ${USO}`, 2);
     if (nome === 'agentes') {
       flags.agentes = true;
+    } else if (nome === 'sombra' && cmd === 'texto') {
+      flags.sombra = true; // GM-15 T36 (emenda 24 m.3): lista as decisões da Sombra desde a última resposta do dono
     } else if (COM_VALOR.includes(nome)) {
       const v = resto[i + 1];
       if (v === undefined || v.startsWith('--')) throw new Falha('uso', `${a} exige um valor. ${USO}`, 2);
@@ -685,9 +687,7 @@ export function estadoDoPainel(cwd, opts = {}) {
       if (daEntrega.length === 1 && daEntrega[0].titulo !== '') titulo = daEntrega[0].titulo;
     }
 
-    // origem: teto da Sombra e política
-    const teto = tetoDaSombra(origin);
-    if (teto.aviso !== undefined) avisos.push(teto.aviso);
+    // origem: política (GM-15 T36: o teto de consultas à Sombra saiu; `sombra.teto` é ignorado)
     const config = lerConfigEntrega(origin.cfg);
     avisos.push(...config.erros);
     const efetiva = politicaEfetiva(config, plano?.politica_entrega);
@@ -759,7 +759,6 @@ export function estadoDoPainel(cwd, opts = {}) {
       entregaId: plano !== null ? c.entrega : id,
       modeloSessao: modeloDoDiario(eventos),
       specSha,
-      tetoSombra: teto.teto,
       configLote: configDoLote(origin, config), // GM-15 T13: o lote do dono com a mesma leitura de origin que `loop.mjs proxima`
       fatos,
       fontesFalhas: fontes,
@@ -794,7 +793,7 @@ export function estadoDoPainel(cwd, opts = {}) {
         avisos.push(`visão de projeto não lida: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`);
       }
     }
-    return { ok: true, estado: { ...apresentado, projeto, temPlanoJson: planoDoDiario !== null || planoInvalido !== null }, avisos };
+    return { ok: true, estado: { ...apresentado, projeto, temPlanoJson: planoDoDiario !== null || planoInvalido !== null }, avisos, decisoesSombra: decisoesDaSombra(eventos) };
   } catch (e) {
     if (e instanceof Falha || typeof e?.erro === 'string') return { ok: false, erro: e.erro, mensagem: e.message };
     return { ok: false, erro: 'erro_interno', mensagem: String(e instanceof Error ? e.message : e).slice(0, 200) };
@@ -825,6 +824,12 @@ export function main(argv, cwd = process.cwd(), io = {}) {
     if (!r.ok) return falha(new Falha(r.erro, r.mensagem));
     if (cmd === 'estado') {
       saida(`${JSON.stringify({ ok: true, estado: r.estado, avisos: r.avisos })}\n`);
+      return 0;
+    }
+    if (cmd === 'texto' && flags.sombra === true) {
+      const lista = r.decisoesSombra ?? [];
+      for (const a of r.avisos) aviso(`painel: aviso: ${a}\n`);
+      saida(`${lista.length === 0 ? 'nenhuma decisão da Sombra desde a sua última resposta' : lista.map((d) => `- ${d.id} ${d.frase}`).join('\n')}\n`);
       return 0;
     }
     const texto = paraTexto(

@@ -21,7 +21,7 @@ import * as diario from '../dist/diario.js';
 import { renderPainel } from '../dist/painel.js';
 import { paraTexto } from '../dist/painel-texto.js';
 import { estadoDoPainel, lerArgs, lerCauda, lerDiarioEstavel, lerEntradaAgentes, main, sessaoDoMod } from '../scripts/painel.mjs';
-import { aprovarSpec, tetoDaSombra } from '../scripts/loop.mjs';
+import { aprovarSpec } from '../scripts/loop.mjs';
 import { medir } from '../scripts/painel-medir.mjs';
 import { prepararLeitura as prepararLeituraReal } from '../scripts/entrega.mjs';
 import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
@@ -782,7 +782,7 @@ describe('spec, título, pausa, teto e política', { timeout: 60_000 }, () => {
     assert.ok(!estado(n).estado.depende.some((d) => d.motivo === 'loop pausado'), 'o principal não tem PAUSAR');
   });
 
-  test('atencao-sombra-sem-registro: com `fatos` a ATENÇÃO conta consultas sem decisão (FIEL-10 c), com ou sem teto em origin; teto inválido ⇒ aviso; tetoDaSombra do loop lê origin (o valor na projeção: teto-da-sombra-de-origin-chega-a-projecao)', () => {
+  test('atencao-sombra-sem-registro: com `fatos` a ATENÇÃO conta consultas sem decisão (FIEL-10 c), com ou sem teto em origin; `sombra.teto` inválido é ignorado sem aviso (GM-15 T36, emenda 22 l.5)', () => {
     const m = montar({ origem: { sombra: { teto: 3 } } });
     for (let i = 0; i < 4; i++) ev(m, 'sombra.consulta', { pergunta_hash: `${i}`.repeat(64).slice(0, 64), task: 'T1' });
     // GM-14 T18: o CLI passa `fatos` ⇒ ATENÇÃO é a da T17 (FIEL-10 c): consultas sem decisão registrada, não o teto (que a FIEL-10 c não lista)
@@ -793,9 +793,7 @@ describe('spec, título, pausa, teto e política', { timeout: 60_000 }, () => {
     assert.deepEqual(estado(sem).estado.atencao, ['4 consultas à Sombra sem decisão registrada']);
     const ruim = montar({ origem: { sombra: { teto: 0 } } });
     const rr = estado(ruim);
-    assert.ok(rr.avisos.some((a) => /sombra\.teto inválido/.test(a)));
-    assert.equal(tetoDaSombra({ fonte: 'origin', cfg: { sombra: { teto: 7 } } }).teto, 7);
-    assert.equal(tetoDaSombra({ fonte: 'nenhuma', cfg: null }).teto, 26);
+    assert.ok(!rr.avisos.some((a) => /sombra\.teto|teto/.test(a)), JSON.stringify(rr.avisos));
   });
 
   test('política e base da origem: rodape.politica e o merge da release usam entrega.politica e entrega.base', () => {
@@ -1305,18 +1303,36 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     } finally { execFileSync('chmod', ['755', base]); }
   });
 
-  test('teto-da-sombra-de-origin-chega-a-projecao (R7): `sombra.teto` de origin vira `tetoSombra` da projeção; ausente ou inválido ⇒ 26', () => {
-    const teto = (origem) => {
+  test('t36-teto-da-sombra-de-origin-e-ignorado (GM-15 T36, emenda 22 l.5): `sombra.teto` não chega à projeção, não gera aviso nem linha de atenção', () => {
+    for (const origem of [{ sombra: { teto: 3 } }, { sombra: { teto: 'muitos' } }, { sombra: { teto: 0 } }, {}]) {
       const m = repoT18({ specs: [SPEC12], origem });
-      let visto;
-      const r = estadoDoPainel(m.repo, { agoraMs: AGORA, projetar: (p, ev, entrada) => { visto = entrada.tetoSombra; return {}; } });
+      let visto = 'nao-chamou';
+      const r = estadoDoPainel(m.repo, { agoraMs: AGORA, projetar: (p, ev, entrada) => { visto = Object.hasOwn(entrada, 'tetoSombra'); return {}; } });
       assert.equal(r.ok, true, JSON.stringify(r));
-      return visto;
-    };
-    assert.equal(teto({ sombra: { teto: 3 } }), 3);
-    assert.equal(teto({ sombra: { teto: 41 } }), 41);
-    assert.equal(teto({}), 26);
-    assert.equal(teto({ sombra: { teto: 0 } }), 26);
+      assert.equal(visto, false, JSON.stringify(origem));
+      assert.ok(!r.avisos.some((a) => /teto/i.test(a)), JSON.stringify(r.avisos));
+    }
+  });
+
+  const DECISAO = ['decisao.sombra', { pergunta_hash: 'a'.repeat(64), req: 'REQ-A-1', resposta: 'seguir com a regra', arquivo: '.harness/entregas/GM-12/sombra/x.md', pergunta_enviesada: false, fontes: ['docs/spec.md:3'] }];
+
+  test('t36-painel-lista-sombra-flag-real: `texto --sombra` pelo CLI real lista a decisão com o comando (rc 0); sem decisão a frase "nenhuma"; flag em `estado` é uso (rc 2); a linha N aparece nos 2 presets', () => {
+    const m = montar({ eventos: [DECISAO] });
+    const r = cli(m, ['texto', '--sombra']);
+    assert.equal(r.rc, 0, r.stderr);
+    assert.match(r.stdout, /^- loop:1 a Sombra decidiu sobre REQ-A-1: seguir com a regra — nada a reverter/m);
+    for (const preset of ['esquadrao', 'executivo']) {
+      const t = cli(m, ['texto', '--preset', preset]).stdout;
+      assert.match(t, /1 decisão da Sombra desde a sua última resposta/, preset);
+    }
+    const e = cli(m, ['estado']).json.estado;
+    assert.ok(e.atencao.includes('1 decisão da Sombra desde a sua última resposta'), JSON.stringify(e.atencao));
+    assert.ok(!e.depende.some((i) => /Sombra/.test(i.motivo)), 'não entra no DEPENDE');
+    const vazio = cli(montar({}), ['texto', '--sombra']);
+    assert.equal(vazio.rc, 0);
+    assert.match(vazio.stdout, /nenhuma decisão da Sombra desde a sua última resposta/);
+    const uso = cli(m, ['estado', '--sombra']);
+    assert.equal(uso.rc, 2);
   });
 
   test('pr-mergeado-sem-resposta-nao-liga (spec:53, FIEL-1 b): plano todo integrado + PR mergeado como fato ⇒ sem PRONTO e sem a entrega ligada; última conhecida é a GM-12', () => {

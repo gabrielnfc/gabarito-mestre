@@ -180,7 +180,7 @@ describe('fumaça do loop sem LLM', { concurrency: 4 }, () => {
       assert.equal(r.pouso, x === '1' ? 1 : 0, `pousos${m}`);
       assert.deepEqual(r.defeitos, [], `defeitos${m}`);
       assert.ok(!r.trilha.some((l) => /iniciar T3/.test(l)), `T3 nunca iniciada${m}`);
-      assert.deepEqual(r.proximaFinal, { tipo: 'parar', motivo: 'teto_rodadas', task: 'T1' }, `proxima final${m}`);
+      assert.deepEqual(r.proximaFinal, { tipo: 'parar', motivo: 'teto_rodadas', task: 'T1', liberacao: { oferecer: false, motivo: 'libera_teto_desligado' } }, `proxima final${m}`);
     });
     test(`tres-teto-liberar (X=${x}): depois de liberar T1 o loop conclui com 3 integradas`, async () => {
       const r = await rodar({ plano: planos('tres'), vereditos: { T1: ['REPROVADO', 'REPROVADO'] }, x, liberar: true });
@@ -295,7 +295,7 @@ describe('fumaça do loop sem LLM', { concurrency: 4 }, () => {
     assert.ok(r.submits >= 1, `o mod abriu o turno da recuperação${m}`);
     assert.equal(r.integradas, 1, `T2 integra apesar do teto de T1${m}`);
     assert.equal(r.fim, 'parar teto_rodadas T1', `fim${m}`);
-    assert.deepEqual(r.proximaFinal, { tipo: 'parar', motivo: 'teto_rodadas', task: 'T1' }, `proxima final${m}`);
+    assert.deepEqual(r.proximaFinal, { tipo: 'parar', motivo: 'teto_rodadas', task: 'T1', liberacao: { oferecer: false, motivo: 'libera_teto_desligado' } }, `proxima final${m}`);
     assert.deepEqual(r.parar, [], `loop.parar (X=50)${m}`);
     assert.deepEqual(r.defeitos, [], `defeitos${m}`);
   });

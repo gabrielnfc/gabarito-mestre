@@ -122,7 +122,7 @@ describe('perguntar', () => {
     assert.equal(out.hash, sha256('REQ-A-1\n0\nqual o limite?'));
     assert.equal(out.brief, `.harness/entregas/GM-10/sombra/${out.hash}.md`);
     assert.equal(out.consultas, 1);
-    assert.equal(out.teto, 26);
+    assert.equal(Object.hasOwn(out, 'teto'), false, 'GM-15 T36: sai o teto de consultas');
     assert.equal(out.aviso, undefined);
     assert.equal(out.cache, undefined);
     assert.equal(out.pendente, undefined);
@@ -460,13 +460,7 @@ describe('perguntar', () => {
     assert.equal(a.out.hash, sha256('REQ-A-1\n0\n--e se for zero?'));
   });
 
-  test('teto-invalido-26-com-aviso', () => {
-    // sem origin: ausente ⇒ 26 sem aviso
-    const sem = novoRepo();
-    const s = perguntar(sem.raiz, 'x?').out;
-    assert.equal(s.teto, 26);
-    assert.equal(s.aviso, undefined);
-    // com origin: teto inválido ⇒ 26 e aviso; válido ⇒ o valor; JSON corrompido ⇒ 26 e aviso
+  test('sem-aviso-de-teto-de-consultas (GM-15 T36, emenda 22 l.5): sombra.teto no origin (válido, inválido, 0, JSON corrompido) é ignorado sem erro e sem aviso; muitas consultas não avisam e não trazem `teto`', () => {
     const comOrigin = (cfg) => {
       const r = novoRepo();
       writeFileSync(join(r.raiz, 'harness.config.json'), cfg);
@@ -479,40 +473,20 @@ describe('perguntar', () => {
       g(r.raiz, 'remote', 'set-head', 'origin', 'main');
       return r;
     };
-    const inv = perguntar(comOrigin('{"sombra":{"teto":"muitos"}}').raiz, 'x?').out;
-    assert.equal(inv.teto, 26);
-    assert.match(inv.aviso, /teto/);
-    const ok = perguntar(comOrigin('{"sombra":{"teto":3}}').raiz, 'x?').out;
-    assert.equal(ok.teto, 3);
-    assert.equal(ok.aviso, undefined);
-    const quebrado = perguntar(comOrigin('{nao json').raiz, 'x?').out;
-    assert.equal(quebrado.teto, 26);
-    assert.match(quebrado.aviso, /origin/);
-    const zero = perguntar(comOrigin('{"sombra":{"teto":0}}').raiz, 'x?').out;
-    assert.equal(zero.teto, 26);
-    assert.ok(zero.aviso);
-  });
-
-  test('acima-do-teto-segue-com-aviso', () => {
-    const r = novoRepo();
-    writeFileSync(join(r.raiz, 'harness.config.json'), '{"sombra":{"teto":1}}');
-    g(r.raiz, 'add', 'harness.config.json');
-    g(r.raiz, 'commit', '-q', '-m', 'cfg');
-    const bare = join(novoTmp('sombra-bare-'), 'o.git');
-    execFileSync('git', ['init', '-q', '--bare', '-b', 'main', bare]);
-    g(r.raiz, 'remote', 'add', 'origin', bare);
-    g(r.raiz, 'push', '-q', 'origin', 'main');
-    g(r.raiz, 'remote', 'set-head', 'origin', 'main');
-    const a = perguntar(r.raiz, 'primeira?').out;
-    assert.equal(a.consultas, 1);
-    assert.equal(a.aviso, undefined, 'no teto ainda não avisa');
-    const b = perguntar(r.raiz, 'segunda?');
-    assert.equal(b.rc, 0, 'acima do teto a consulta segue');
-    assert.equal(b.out.consultas, 2);
-    assert.match(b.out.aviso, /acima do teto/);
-    assert.equal(dosTipo(r, 'sombra.consulta').length, 2);
-    registrar(r, a.hash, BOA);
-    assert.equal(perguntar(r.raiz, 'primeira?').out.aviso, undefined, 'acerto de cache não avisa');
+    for (const cfg of ['{"sombra":{"teto":1}}', '{"sombra":{"teto":"muitos"}}', '{"sombra":{"teto":0}}', '{"sombra":{}}']) {
+      const r = comOrigin(cfg);
+      for (let k = 0; k < 3; k++) {
+        const x = perguntar(r.raiz, `pergunta ${k}?`);
+        assert.equal(x.rc, 0, cfg);
+        assert.equal(x.out.aviso, undefined, `${cfg}: sem aviso na consulta ${k + 1}`);
+        assert.equal(Object.hasOwn(x.out, 'teto'), false, cfg);
+        assert.equal(x.out.consultas, k + 1);
+      }
+    }
+    // config corrompida em origin não vira aviso de TETO (o assunto saiu): a consulta segue
+    const q = perguntar(comOrigin('{nao json').raiz, 'x?');
+    assert.equal(q.rc, 0);
+    assert.ok(!/teto/i.test(q.out.aviso ?? ''), q.out.aviso);
   });
 
   test('uso-e-argumento-invalido', () => {
@@ -846,6 +820,55 @@ describe('T39: brief da liberação', () => {
     const fim = resto.search(/\n(### Rodada |## )/u);
     return fim < 0 ? resto : resto.slice(0, fim);
   };
+
+  // ── GM-15 T36 (emenda 24 m.1): o brief traz o progresso MEDIDO pelo CLI; a Sombra não o declara ─────────────────────────────────────────────────
+  const anterior = (r, texto, task = 'T1') => {
+    mkdirSync(join(tmpDe(r, task), 'ciclo-1'), { recursive: true });
+    writeFileSync(join(tmpDe(r, task), 'ciclo-1', 'review-r2.md'), texto);
+  };
+  const segundoTeto = (r) => { aoTeto(r); evento(r, 'loop', 'task.reaberta', { task: 'T1', origem: 'dono' }); aoTeto(r); };
+  const secaoProgresso = (brief) => { const i = brief.indexOf('## Progresso medido'); assert.ok(i >= 0, 'seção do progresso no brief'); return brief.slice(i, brief.indexOf('\n## ', i + 5) < 0 ? undefined : brief.indexOf('\n## ', i + 5)); };
+
+  test('t36-brief-progresso-medido: 1º teto dispensa; mesmo trecho ⇒ sem progresso e só com --abordagem-nova; outro trecho ⇒ progresso; review do ciclo anterior ausente ⇒ sem progresso com o motivo', () => {
+    const r1 = novoRepo();
+    aoTeto(r1);
+    achado(r1, 2, 'MAJOR a.ts:10 x\n');
+    assert.match(secaoProgresso(briefDe(r1, liberacao(r1).out)), /dispensado/i, '1º teto');
+
+    const r2 = novoRepo();
+    segundoTeto(r2);
+    anterior(r2, 'MAJOR a.ts:100 x\n');
+    achado(r2, 2, 'MAJOR a.ts:108 y\n');
+    const sem = secaoProgresso(briefDe(r2, liberacao(r2).out));
+    assert.match(sem, /sem progresso/i);
+    assert.match(sem, /a\.ts:108/, 'diz o achado que reapareceu');
+    assert.match(sem, /--abordagem-nova/, 'sem progresso, só libera com abordagem_nova');
+
+    const r3 = novoRepo();
+    segundoTeto(r3);
+    anterior(r3, 'MAJOR a.ts:100 x\n');
+    achado(r3, 2, 'MAJOR a.ts:500 y\n');
+    const com = secaoProgresso(briefDe(r3, liberacao(r3).out));
+    assert.match(com, /progresso: sim/i);
+    assert.doesNotMatch(com, /--abordagem-nova/);
+
+    const r4 = novoRepo();
+    segundoTeto(r4);
+    achado(r4, 2, 'MAJOR a.ts:500 y\n');
+    const aus = secaoProgresso(briefDe(r4, liberacao(r4).out));
+    assert.match(aus, /sem progresso/i);
+    assert.match(aus, /ausente|vazio/);
+    assert.match(aus, /--abordagem-nova/);
+  });
+
+  test('t36-pergunta-sem-limite-de-liberacoes: o texto fixo da pergunta não diz mais "1 vez por task"', () => {
+    const r = novoRepo();
+    aoTeto(r);
+    achado(r, 2, 'MAJOR a.ts:1 x\n');
+    const brief = briefDe(r, liberacao(r).out);
+    assert.doesNotMatch(brief, /1 vez por task/);
+    assert.match(brief, /sem limite numérico/);
+  });
 
   test('brief-liberacao-traz-fiel15-sem-req-dia2-na-task', () => {
     const r = novoRepo();

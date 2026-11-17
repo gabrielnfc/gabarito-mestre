@@ -10,7 +10,7 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { dependeDeVoce, entregueDe, etaDe, projetarPainel, TABELA_PARAR, umaLinhaDe } from '../src/painel.ts';
+import { decisoesDaSombra, dependeDeVoce, entregueDe, etaDe, projetarPainel, TABELA_PARAR, umaLinhaDe } from '../src/painel.ts';
 import { renderPainel } from '../src/painel.ts';
 import { append, duracoes, lerEstrito, mediana } from '../src/diario.ts';
 import { contarConsultas } from '../src/sombra.ts';
@@ -731,16 +731,60 @@ test('atencao-segunda-rodada-ci-teto: os três textos fixos', () => {
   assert.deepEqual(proj(P('T1'), D(ATE.concluida)).atencao, []); // 1ª rodada
   assert.deepEqual(proj(P('T1'), D(ATE.aprovada)).atencao, []);
   assert.deepEqual(proj(P('T1'), D([e(0, 'ci.resultado', { verde: false })])).atencao, ['CI vermelho 1× depois do último verde']);
-  const teto = proj(P('T1'), D([consulta(0, 1), consulta(1, 2), consulta(2, 3)]), { tetoSombra: 2 });
-  assert.deepEqual(teto.atencao, ['Sombra: 3 consultas, acima do teto de 2']);
-  assert.deepEqual(proj(P('T1'), D([consulta(0, 1), consulta(1, 2)]), { tetoSombra: 2 }).atencao, []); // no teto não passa dele
-  // N do texto = contarConsultas (sombra.ts): consulta de forma inválida não conta
+  // GM-15 T36 (emenda 22 l.5): o teto de consultas à Sombra saiu: nenhuma quantidade de consultas vira atenção, mesmo com `tetoSombra` pequeno na entrada (ignorado)
+  assert.deepEqual(proj(P('T1'), D([consulta(0, 1), consulta(1, 2), consulta(2, 3)]), { tetoSombra: 2 }).atencao, []);
   const mistas = D([consulta(0, 1), e(1, 'sombra.consulta', { pergunta_hash: 'curto', req: 'REQ-PNL-1' }), e(2, 'sombra.consulta', { pergunta_hash: SHA_A }), consulta(3, 2), e(4, 'decisao.sombra', {})]);
   assert.equal(contarConsultas(mistas), 2);
-  assert.deepEqual(proj(P('T1'), mistas, { tetoSombra: 1 }).atencao, ['Sombra: 2 consultas, acima do teto de 1']);
-  // ordem do texto: 2ª rodada, CI, Sombra
+  assert.deepEqual(proj(P('T1'), mistas, { tetoSombra: 1 }).atencao, []);
   const tudo = proj(P('T1'), D([...ATE.reprovada, e(10, 'ci.resultado', { verde: false }), consulta(11, 1), consulta(12, 2)]), { tetoSombra: 1 });
-  assert.deepEqual(tudo.atencao, ['T1 na 2ª rodada de review', 'CI vermelho 1× depois do último verde', 'Sombra: 2 consultas, acima do teto de 1']);
+  assert.deepEqual(tudo.atencao, ['T1 na 2ª rodada de review', 'CI vermelho 1× depois do último verde']);
+});
+
+// ── GM-15 T36 (emenda 24 m.3): "N decisões da Sombra desde a sua última resposta" ──────────────────────────────────────────────────────────────
+const decSombra = (t: number, req = 'REQ-PNL-5', resposta = 'seguir') => e(t, 'decisao.sombra', { pergunta_hash: SHA_A, req, resposta, arquivo: 'sombra.md', pergunta_enviesada: false, fontes: ['spec:1'] });
+const reabSombra = (t: number, task = 'T1') => e(t, 'task.reaberta', { task, origem: 'sombra', hash: 'e'.repeat(64) });
+const respostaDono = (t: number) => e(t, 'dono.resposta', { pergunta: 's1:1', rotulo: 'agora não' });
+const linhaSombra = (est: EstadoPainel) => est.atencao.filter((x) => /da Sombra desde a sua última resposta/.test(x));
+
+test('painel-n-decisoes-sombra-desde-resposta: N = decisao.sombra + task.reaberta(sombra) depois do último evento do dono; singular com 1; antes da resposta do dono não conta', () => {
+  assert.deepEqual(linhaSombra(proj(P('T1'), D([decSombra(0), decSombra(1), reabSombra(2)]))), ['3 decisões da Sombra desde a sua última resposta']);
+  assert.deepEqual(linhaSombra(proj(P('T1'), D([decSombra(0)]))), ['1 decisão da Sombra desde a sua última resposta']);
+  // só depois do último evento do dono: a resposta (por opção), o comando de task e o julgamento de emenda do dono zeram a contagem
+  assert.deepEqual(linhaSombra(proj(P('T1'), D([decSombra(0), decSombra(1), respostaDono(2), decSombra(3)]))), ['1 decisão da Sombra desde a sua última resposta']);
+  assert.deepEqual(linhaSombra(proj(P('T1'), D([decSombra(0), e(1, 'task.reaberta', { task: 'T1', origem: 'dono' }, 'dono'), reabSombra(2, 'T2')]))), ['1 decisão da Sombra desde a sua última resposta'], 'liberação do dono');
+  assert.deepEqual(linhaSombra(proj(P('T1'), D([decSombra(0), e(1, 'emenda.rejeitada', { proposta_seq: 1, origem: 'dono' }, 'dono')]))), [], 'julgamento de emenda do dono');
+  // liberação da Sombra de outra origem (retomada) e decisão de forma inválida não contam
+  assert.deepEqual(linhaSombra(proj(P('T1'), D([e(0, 'task.reaberta', { task: 'T1', origem: 'retomada' }), e(1, 'decisao.sombra', {})]))), []);
+  // a linha vem DEPOIS das de atenção técnica e não puxa o "loop segue em"
+  const mista = proj(P('T1', 'T2'), D([...ATE.reprovada, decSombra(20)]));
+  assert.deepEqual(mista.atencao, ['T1 na 2ª rodada de review', '1 decisão da Sombra desde a sua última resposta']);
+  assert.deepEqual(proj(P('T1', 'T2'), D([ini(0, 'T2'), decSombra(1)])).atencao, ['1 decisão da Sombra desde a sua última resposta'], 'sozinha, não liga o "loop segue em"');
+});
+
+test('painel-zero-decisoes-some: sem decisão da Sombra (ou todas antes da resposta do dono) a linha não existe', () => {
+  assert.deepEqual(linhaSombra(proj(P('T1'), D([]))), []);
+  assert.deepEqual(linhaSombra(proj(P('T1'), D([decSombra(0), respostaDono(1)]))), []);
+  assert.deepEqual(proj(P('T1'), D([ini(0, 'T1')])).atencao, []);
+});
+
+test('lista-sombra-com-comando-de-reverter: cada decisão em 1 linha com âncora e o comando (liberação ⇒ adiar|cortar; decisão de REQ com emenda julgada pela Sombra ⇒ emenda aprovar|rejeitar <seq>)', () => {
+  const prop = e(0, 'emenda.proposta', { req: 'REQ-PNL-5', diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'tecnica' }, 'emendas');
+  const evs = D([prop, decSombra(1, 'REQ-PNL-5', 'aprovar a emenda'), e(2, 'spec.emendada', { proposta_seq: 1, origem: 'sombra' }, 'sombra-j'), reabSombra(3, 'T2'), decSombra(4, 'REQ-OUTRO-1', 'só uma resposta')]);
+  const l = decisoesDaSombra(evs);
+  assert.equal(l.length, 3);
+  for (const x of l) assert.ok(!/\n/.test(x.frase), '1 linha');
+  assert.match(l[0].frase, /REQ-PNL-5.*aprovar a emenda.*\/gabarito-mestre:emenda aprovar 1 ou \/gabarito-mestre:emenda rejeitar 1/);
+  assert.match(l[1].frase, /liberou a T2.*\/gabarito-mestre:adiar T2 ou \/gabarito-mestre:cortar T2/);
+  assert.match(l[2].frase, /REQ-OUTRO-1.*nada a reverter/);
+  assert.deepEqual(l.map((x) => x.id), ['s1:1', 's1:2', 's1:3'], 'id = sessão:seq do evento');
+  // resposta com controle, crase e texto longo vira 1 linha de até 60 caracteres
+  const longa = decisoesDaSombra(D([decSombra(0, 'REQ-PNL-5', `a\nb \`c\` ${'x'.repeat(200)}`)]))[0].frase;
+  assert.ok(!/[\n`]/.test(longa));
+  assert.ok(longa.length < 200);
+  // diário fora de ordem ⇒ vazio, sem lançar; tipo errado ⇒ vazio
+  assert.deepEqual(decisoesDaSombra([evs[1], { ...evs[1] }] as Evento[]), [], 'seq repetido: o diário não ordena');
+  assert.deepEqual(decisoesDaSombra(null), []);
+  assert.deepEqual(decisoesDaSombra('x' as unknown as Evento[]), []);
 });
 
 test('atencao-ci-zera-no-verde: vermelho, verde ⇒ nada; vermelho ×2 é do PAROU do loop, não da atenção; verde depois do vermelho zera', () => {
