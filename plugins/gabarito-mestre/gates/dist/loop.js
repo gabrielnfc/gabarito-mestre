@@ -458,3 +458,132 @@ export function proximaAcao(planoInteiro       , eventos          , sinais      
   // Sem agente vivo e sem próxima ação (ex.: task iniciada cujo agente morreu): para, nunca em silêncio.
   return { tipo: 'parar', motivo: 'nao_conseguiu', task: faltam.find(livre)           };
 }
+
+// ───────────────────────────────────────────────────────────── GM-15 T36 (REQ-AUT-1, emendas 22 e 24): progresso medido e freios da liberação da Sombra
+
+                                                                                                               
+
+/** Janela de "mesmo trecho" (emenda 24 m.1): o mesmo arquivo a até 10 linhas de distância. */
+export const TRECHO_LINHAS = 10;
+/** Orçamento (emenda 24 m.2): tempo ou tokens da task acima de 3× a mediana das integradas da entrega. */
+export const FATOR_ORCAMENTO = 3;
+/** Liberações da Sombra com `abordagem_nova` que esgotam a task (emenda 22 l.3). */
+export const ABORDAGENS_MAX = 2;
+
+const LOCAL_RE = /([A-Za-z0-9_./@-]+\.[A-Za-z0-9]+)(?::(\d+))?/;
+
+/**
+ * Os achados BLOCKER/MAJOR de um `review-r<n>.md` (o revisor grava um por linha, `agents/gabarito-revisor.md`): a 1ª severidade da linha e o 1º
+ * `arquivo[:linha]` (nome com extensão) dela; sem arquivo ⇒ `arquivo: null`. MINOR e linha sem severidade não entram. Total: nunca lança.
+ */
+export function achadosDeReview(texto        )                   {
+  const saida                   = [];
+  if (typeof texto !== 'string') return saida;
+  for (const l of texto.split(/\r?\n/)) {
+    const sev = /\b(BLOCKER|MAJOR)\b/.exec(l);
+    if (sev === null) continue;
+    const loc = LOCAL_RE.exec(l.slice(sev.index + sev[0].length));
+    saida.push({ severidade: sev[1]                       , arquivo: loc === null ? null : loc[1], linha: loc === null || loc[2] === undefined ? null : Number(loc[2]) });
+  }
+  return saida;
+}
+
+                                                                            
+
+/**
+ * A régua ÚNICA do progresso (emenda 24 m.1), pura sobre os textos dos reviews do ÚLTIMO e do ciclo ANTERIOR: progresso = nenhum BLOCKER/MAJOR do último com o
+ * mesmo arquivo e trecho (±`TRECHO_LINHAS` linhas; achado com arquivo e sem linha casa o arquivo todo) de um do anterior E total BLOCKER+MAJOR não maior.
+ * Review ausente, vazio ou sem nenhum BLOCKER/MAJOR legível ⇒ `progresso: null` com motivo (conta como sem progresso: falha não vira sucesso).
+ */
+export function progressoMedido(ultimo                           , anterior                           )                  {
+  const quem = (t                           , nome        )                            => {
+    if (typeof t !== 'string' || t.trim() === '') return `review do ${nome} ciclo ausente ou vazio`;
+    const a = achadosDeReview(t);
+    return a.length === 0 ? `review do ${nome} ciclo sem nenhum BLOCKER/MAJOR legível` : a;
+  };
+  const u = quem(ultimo, 'último');
+  if (typeof u === 'string') return { progresso: null, motivo: u };
+  const a = quem(anterior, 'anterior');
+  if (typeof a === 'string') return { progresso: null, motivo: a };
+  for (const x of u) {
+    if (x.arquivo === null) continue;
+    const igual = a.find((y) => y.arquivo === x.arquivo && (x.linha === null || y.linha === null || Math.abs(x.linha - y.linha) <= TRECHO_LINHAS));
+    if (igual !== undefined) return { progresso: false, motivo: `o achado ${x.arquivo}${x.linha === null ? '' : `:${x.linha}`} reapareceu do ciclo anterior (${igual.arquivo}${igual.linha === null ? '' : `:${igual.linha}`})` };
+  }
+  if (u.length > a.length) return { progresso: false, motivo: `${u.length} BLOCKER/MAJOR no último ciclo contra ${a.length} no anterior` };
+  return { progresso: true, motivo: `${u.length} BLOCKER/MAJOR no último ciclo contra ${a.length} no anterior, nenhum no mesmo trecho` };
+}
+
+const medianaDe = (v          )                => {
+  if (v.length === 0) return null;
+  const o = [...v].sort((x, y) => x - y);
+  const m = o.length >> 1;
+  return o.length % 2 === 1 ? o[m] : (o[m - 1] + o[m]) / 2;
+};
+
+/** Tempo medido da task (ms): soma, em ordem, de cada `task.iniciada` até o 1º `task.concluida` (implementador e correção) ou `review.veredito` (revisor) seguinte; início sem fim não conta. */
+function tempoDaTask(eventos          , task        )         {
+  let total = 0;
+  let aberto                                       = null;
+  for (const e of eventos) {
+    if (e.dados?.task !== task || !TIPOS_DE_TASK.includes(e.tipo)) continue;
+    if (e.tipo === 'task.iniciada') {
+      aberto = { ms: Date.parse(e.ts), fecha: e.dados?.papel === 'revisor' ? 'review.veredito' : 'task.concluida' };
+    } else if (aberto !== null && e.tipo === aberto.fecha) {
+      const d = Date.parse(e.ts) - aberto.ms;
+      if (Number.isFinite(d) && d > 0) total += d;
+      aberto = null;
+    } else if (e.tipo === 'task.reaberta') aberto = null;
+  }
+  return total;
+}
+
+/** Tokens medidos da task: entrada + saída + criação de cache dos `custo.medicao` que citam `task` (leitura de cache não conta, a régua do teto de tokens); nenhum ⇒ `null`. */
+function tokensDaTask(eventos          , task        )                {
+  let total                = null;
+  for (const e of eventos) {
+    if (e.tipo !== 'custo.medicao' || e.dados?.task !== task) continue;
+    let soma = 0;
+    for (const c of ['input_tokens', 'output_tokens', 'cache_creation']) {
+      const n = e.dados?.[c];
+      if (typeof n === 'number' && Number.isFinite(n) && n >= 0) soma += n;
+    }
+    total = (total ?? 0) + soma;
+  }
+  return total;
+}
+
+                                                                                                          
+
+/**
+ * Os freios da liberação pela Sombra, a regra ÚNICA do `liberar --origem sombra`, do `proxima` e do lote do dono (emendas 22 l.3 e 24 m.2), puros sobre o diário:
+ * (1) `abordagens_esgotadas`: `ABORDAGENS_MAX` liberações da Sombra desta task com `abordagem_nova` (texto não vazio); as do dono não contam nem zeram;
+ * (2) `orcamento_estourado`: tempo da task OU tokens medidos acima de `FATOR_ORCAMENTO`× a mediana das tasks integradas do plano (só as com medida > 0
+ * entram). `semMediana`: nenhuma mediana (nem de tempo nem de tokens) ⇒ sem freio por orçamento e o `proxima` avisa. Diário que não ordena ⇒ sem freio.
+ */
+export function freioDaLiberacao(plano       , eventos          , task        )                                                          {
+  const ord = Array.isArray(eventos) ? ordenar(eventos) : { ok: false          };
+  if (!ord.ok) return { freio: null, semMediana: false };
+  const evs = ord.eventos;
+  const abordagens = evs.filter((e) => e.tipo === 'task.reaberta' && e.dados?.task === task && e.dados?.origem === 'sombra' && typeof e.dados?.abordagem_nova === 'string' && e.dados.abordagem_nova.trim() !== '').length;
+  const integradas = (plano?.tasks ?? []).map((t) => t.id).filter((id) => {
+    const r = estadoDe(evs.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === id));
+    return !('invalido' in r) && r.estado === 'integrada';
+  });
+  const medT = medianaDe(integradas.map((id) => tempoDaTask(evs, id)).filter((n) => n > 0));
+  const medK = medianaDe(integradas.map((id) => tokensDaTask(evs, id)).filter((n)              => n !== null && n > 0));
+  const semMediana = medT === null && medK === null;
+  if (abordagens >= ABORDAGENS_MAX) {
+    return { freio: { motivo: 'abordagens_esgotadas', resumo: `${abordagens} abordagens novas da Sombra e a task voltou ao teto sem convergir` }, semMediana };
+  }
+  const min = (ms        )         => Math.round((ms / 60_000) * 10) / 10;
+  const tempo = tempoDaTask(evs, task);
+  if (medT !== null && tempo > FATOR_ORCAMENTO * medT) {
+    return { freio: { motivo: 'orcamento_estourado', resumo: `gastou ${min(tempo)} min contra a mediana de ${min(medT)} min das integradas (limite ${FATOR_ORCAMENTO}×)` }, semMediana };
+  }
+  const tokens = tokensDaTask(evs, task);
+  if (medK !== null && tokens !== null && tokens > FATOR_ORCAMENTO * medK) {
+    return { freio: { motivo: 'orcamento_estourado', resumo: `gastou ${tokens} tokens contra a mediana de ${medK} das integradas (limite ${FATOR_ORCAMENTO}×)` }, semMediana };
+  }
+  return { freio: null, semMediana };
+}

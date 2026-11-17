@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { CHAVES_DE_EVENTO, estadoDe, foraPermitido, ordenar, podeIntegrar, proximaAcao as proximaAcaoNucleo, tasksCongeladas, tasksInvalidas, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK, TRANSICOES } from '../src/loop.ts';
+import { achadosDeReview, CHAVES_DE_EVENTO, estadoDe, freioDaLiberacao, progressoMedido, foraPermitido, ordenar, podeIntegrar, proximaAcao as proximaAcaoNucleo, tasksCongeladas, tasksInvalidas, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK, TRANSICOES } from '../src/loop.ts';
 import { fecharPendencias } from './_adaptador-helpers.mjs';
 import * as diarioFs from '../src/diario.ts';
 import { projetarEmendas, reqsCongelados, SESSAO_EMENDAS } from '../src/emenda.ts';
@@ -2040,4 +2040,126 @@ test('reaberta-invalida-nao-bloqueia-a-recuperacao-das-outras: b órfã ⇒ reto
   assert.deepEqual([a.tipo, (a as { motivo?: string }).motivo], ['esperar', 'emenda'], 'a espera de emenda continua valendo');
   // controle: resolvida a emenda, o que resta é só a inválida ⇒ para nomeando-a
   assert.deepEqual(proximaAcao(pr, [...diarioT(ini('T2'), ['task.reaberta', { task: 'T2', origem: 'xpto' }], ...pronta('T1'))], sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'T2' });
+});
+
+
+// ═══════════════════════════════════════ GM-15 T36 (REQ-AUT-1, emendas 22 e 24): progresso medido e freios da liberação da Sombra
+const rev = (...linhas: string[]) => linhas.join('\n');
+test('t36-achados-de-review: só BLOCKER/MAJOR contam; arquivo:linha vem do texto; MINOR e linha sem severidade ficam fora', () => {
+  const a = achadosDeReview(rev('1. BLOCKER gates/scripts/loop.mjs:120 aceita sem hash', '2. MAJOR gates/src/loop.ts:40 falta teste', '3. MINOR gates/src/loop.ts:41 nome', '4. MAJOR sem local', 'texto solto'));
+  assert.deepEqual(a, [
+    { severidade: 'BLOCKER', arquivo: 'gates/scripts/loop.mjs', linha: 120 },
+    { severidade: 'MAJOR', arquivo: 'gates/src/loop.ts', linha: 40 },
+    { severidade: 'MAJOR', arquivo: null, linha: null },
+  ]);
+  assert.deepEqual(achadosDeReview(''), []);
+});
+
+const A = (n: number, arq = 'a.ts') => `MAJOR ${arq}:${n} achado`;
+test('t36-progresso-medido-mesmo-trecho-sem-progresso: o mesmo arquivo a ≤ 10 linhas de um achado do ciclo anterior ⇒ sem progresso (e 11 já é outro trecho)', () => {
+  assert.equal(progressoMedido(rev(A(110)), rev(A(100))).progresso, false, '+10 é o mesmo trecho');
+  assert.equal(progressoMedido(rev(A(90)), rev(A(100))).progresso, false, '-10 é o mesmo trecho');
+  assert.equal(progressoMedido(rev(A(111)), rev(A(100))).progresso, true, '+11 é outro trecho');
+  assert.equal(progressoMedido(rev(A(89)), rev(A(100))).progresso, true, '-11 é outro trecho');
+  assert.equal(progressoMedido(rev(A(100, 'b.ts')), rev(A(100))).progresso, true, 'outro arquivo, mesma linha: outro achado');
+  assert.match(progressoMedido(rev(A(100)), rev(A(100))).motivo, /a\.ts:100/, 'o motivo nomeia o achado que reapareceu');
+});
+test('t36-progresso-medido-achados-novos-com-progresso: achados novos em outro trecho, total não maior ⇒ progresso; total maior ⇒ sem progresso', () => {
+  assert.deepEqual(progressoMedido(rev(A(300), A(500)), rev(A(100), A(200))).progresso, true, 'total igual (2 e 2), nada reapareceu');
+  assert.equal(progressoMedido(rev(A(300)), rev(A(100), A(200))).progresso, true, 'total menor');
+  const mais = progressoMedido(rev(A(300), A(500), A(700)), rev(A(100), A(200)));
+  assert.equal(mais.progresso, false, 'total maior (3 > 2)');
+  assert.match(mais.motivo, /3.*2/);
+  assert.equal(progressoMedido(rev('BLOCKER a.ts:300 x'), rev(A(100))).progresso, true, 'BLOCKER e MAJOR contam juntos: 1 e 1');
+  assert.equal(progressoMedido(rev(A(300), 'MINOR a.ts:301 x'), rev(A(100))).progresso, true, 'MINOR não conta no total');
+});
+test('t36-progresso-review-ausente-conta-sem: ausente, vazio ou sem nenhum BLOCKER/MAJOR legível ⇒ progresso null (conta como sem progresso), com motivo', () => {
+  for (const [u, a] of [[null, rev(A(1))], [rev(A(1)), null], [undefined, undefined], ['  \n', rev(A(1))], [rev(A(1)), '   '], ['só MINOR a.ts:1', rev(A(1))], [rev(A(1)), 'só MINOR a.ts:1']] as const) {
+    const r = progressoMedido(u as string | null | undefined, a as string | null | undefined);
+    assert.equal(r.progresso, null, JSON.stringify([u, a]));
+    assert.ok(r.motivo.length > 0);
+  }
+});
+test('t36-progresso-sem-linha: achado sem arquivo não casa com nada e só entra no total; com arquivo sem linha casa o arquivo inteiro', () => {
+  assert.equal(progressoMedido(rev('MAJOR sem local'), rev('MAJOR sem local')).progresso, true, 'sem local não casa (1 e 1)');
+  assert.equal(progressoMedido(rev('MAJOR a.ts sem número'), rev(A(100))).progresso, false, 'arquivo sem linha: o mesmo arquivo reaparece');
+});
+
+// ── freios da liberação (emenda 22 l.3 e emenda 24 m.2) ────────────────────────────────────────────────────────────────────────────────────
+const T0 = Date.UTC(2026, 10, 10, 0, 0, 0);
+let _seq = 0;
+const at = (min: number, tipo: TipoEvento, dados: Record<string, unknown>, sessao = 's1'): Evento => ev(++_seq, new Date(T0 + min * 60_000).toISOString(), sessao, tipo, dados);
+/** Task integrada com `d` minutos de implementador e `r` de revisor, começando em `m0`. */
+const integradaEm = (t: string, m0: number, d: number, r: number): Evento[] => [
+  at(m0, 'task.iniciada', { task: t, papel: 'implementador' }), at(m0 + d, 'task.concluida', { task: t, sha: 'abc' }),
+  at(m0 + d + 1, 'task.iniciada', { task: t, papel: 'revisor' }), at(m0 + d + 1 + r, 'review.veredito', { task: t, veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }),
+  at(m0 + d + 2 + r, 'task.integrada', { task: t, sha: 'def' }),
+];
+/** Task no teto depois de `d` minutos de implementador e duas rodadas (revisor 1 min, correção `d` min). */
+const noTetoEm = (t: string, m0: number, d: number): Evento[] => [
+  at(m0, 'task.iniciada', { task: t, papel: 'implementador' }), at(m0 + d, 'task.concluida', { task: t, sha: 'abc' }),
+  at(m0 + d + 1, 'task.iniciada', { task: t, papel: 'revisor' }), at(m0 + d + 2, 'review.veredito', { task: t, veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 }),
+  at(m0 + d + 3, 'task.iniciada', { task: t, papel: 'correcao' }), at(m0 + d + 3 + d, 'task.concluida', { task: t, sha: 'abd' }),
+  at(m0 + 2 * d + 4, 'task.iniciada', { task: t, papel: 'revisor' }), at(m0 + 2 * d + 5, 'review.veredito', { task: t, veredito: 'REPROVADO', rodada: 2, major: 1, blocker: 0 }),
+];
+const planoFreio = plano(['I1'], ['I2'], ['I3'], ['T']);
+/** Os eventos na ordem do array (seq = posição): o teste descreve o diário, não a numeração. */
+const fl = (evs: Evento[], t = 'T') => freioDaLiberacao(planoFreio, evs.map((e, k) => ({ ...e, seq: k + 1 })), t);
+// as 3 integradas gastam 10 + 1 + 1 min = 12 min cada ⇒ mediana 12, 3× = 36
+const base = (): Evento[] => [...integradaEm('I1', 0, 10, 1), ...integradaEm('I2', 100, 10, 1), ...integradaEm('I3', 200, 10, 1)];
+const gasto = (d: number): Evento[] => noTetoEm('T', 400, d); // gasta d + 1 + 1 + d + 1 = 2d + 3 min no total? (intervalos fechados abaixo)
+
+test('t36-orcamento-3x-vai-ao-dono: tempo da task acima de 3× a mediana das integradas ⇒ orcamento_estourado com 1 linha (gasto × mediana); no limite e abaixo não freia', () => {
+  // I1..I3: impl 10 + rev 1 = 11 min cada ⇒ mediana 11, limite 33. T: impl d + rev 1 + correção d + rev 1 = 2d + 2.
+  const fre = (d: number) => fl([...base(), ...gasto(d)]);
+  assert.equal(fre(15).freio, null, '2·15+2 = 32 < 33');
+  assert.equal(fre(15.5).freio, null, '2·15,5+2 = 33 = 3× a mediana: não passa (estrito)');
+  const alto = fre(16);
+  assert.equal(alto.freio?.motivo, 'orcamento_estourado', '2·16+2 = 34 > 33');
+  assert.match(alto.freio?.resumo ?? '', /34 min.*mediana.*11 min/);
+  assert.ok(!/\n/.test(alto.freio?.resumo ?? ''), '1 linha');
+});
+test('t36-orcamento-tempo-ou-tokens: tokens medidos acima de 3× a mediana de tokens das integradas freiam sozinhos, com o tempo dentro do limite', () => {
+  const custo = (t: string, n: number): Evento => at(1, 'custo.medicao', { task: t, input_tokens: n, output_tokens: 0, cache_creation: 0, cache_read: 999_999_999 });
+  const tok = (n: number) => fl([...base(), custo('I1', 1000), custo('I2', 1000), custo('I3', 1000), ...gasto(5), custo('T', n)]);
+  assert.equal(tok(3000).freio, null, '3× exato não passa; cache_read não conta');
+  const f = tok(3001);
+  assert.equal(f.freio?.motivo, 'orcamento_estourado');
+  assert.match(f.freio?.resumo ?? '', /3001 tokens.*mediana.*1000/);
+  // soma de várias medições da task
+  const soma = fl([...base(), custo('I1', 1000), custo('I2', 1000), custo('I3', 1000), ...gasto(5), custo('T', 2000), custo('T', 1001)]);
+  assert.equal(soma.freio?.motivo, 'orcamento_estourado');
+  // task com tokens medidos mas integradas sem tokens medidos ⇒ sem freio de tokens
+  assert.equal(fl([...base(), ...gasto(5), custo('T', 9_000_000)]).freio, null);
+  // tempo dentro do limite e tokens dentro ⇒ nada
+  assert.equal(tok(10).freio, null);
+});
+test('t36-orcamento-sem-mediana-avisa: nenhuma task integrada na entrega ⇒ sem freio por orçamento e semMediana (o proxima avisa); integrada sem tempo medido não faz mediana', () => {
+  const r = fl(gasto(500));
+  assert.equal(r.freio, null);
+  assert.equal(r.semMediana, true);
+  assert.equal(fl([...base(), ...gasto(5)]).semMediana, false);
+  const jaNaBase: Evento[] = [at(0, 'task.iniciada', { task: 'I1', papel: 'implementador' }), at(0, 'task.concluida', { task: 'I1', sha: 'abc' }), at(0, 'task.iniciada', { task: 'I1', papel: 'revisor' }), at(0, 'review.veredito', { task: 'I1', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }), at(0, 'task.integrada', { task: 'I1', sha: 'def' })];
+  assert.equal(fl([...jaNaBase, ...gasto(500)]).semMediana, true, 'tempo 0 não é medição');
+});
+const reabSombra = (t: string, extra: Record<string, unknown> = {}): Evento => at(500, 'task.reaberta', { task: t, origem: 'sombra', hash: 'e'.repeat(64), ...extra });
+const reabDono = (t: string): Evento => at(501, 'task.reaberta', { task: t, origem: 'dono' });
+test('t36-duas-abordagens-sem-convergir-vai-ao-dono: 2 liberações da Sombra com abordagem_nova e novo teto ⇒ abordagens_esgotadas; 1 só, sem abordagem ou do dono não contam', () => {
+  const noTeto2 = (a: Evento[]) => [...base(), ...noTetoEm('T', 400, 3), ...a, ...noTetoEm('T', 600, 3)];
+  const f = (...a: Evento[]) => fl(noTeto2(a)).freio;
+  assert.equal(f(reabSombra('T', { abordagem_nova: 'dividir a task' })), null, '1 abordagem');
+  assert.equal(f(reabSombra('T', { abordagem_nova: 'a' }), reabSombra('T')), null, 'liberação da Sombra sem abordagem não conta');
+  assert.equal(f(reabSombra('T', { abordagem_nova: 'a' }), reabDono('T')), null, 'liberação do dono não conta (nem zera)');
+  const dois = f(reabSombra('T', { abordagem_nova: 'a' }), reabSombra('T', { abordagem_nova: 'b' }));
+  assert.equal(dois?.motivo, 'abordagens_esgotadas');
+  assert.ok(/2/.test(dois?.resumo ?? '') && !/\n/.test(dois?.resumo ?? ''));
+  const comDono = f(reabSombra('T', { abordagem_nova: 'a' }), reabDono('T'), reabSombra('T', { abordagem_nova: 'b' }));
+  assert.equal(comDono?.motivo, 'abordagens_esgotadas', 'o dono no meio não zera');
+  assert.equal(f(reabSombra('T', { abordagem_nova: '   ' }), reabSombra('T', { abordagem_nova: 'b' })), null, 'abordagem em branco não conta');
+  assert.equal(f(reabSombra('OUTRA', { abordagem_nova: 'a' }), reabSombra('OUTRA', { abordagem_nova: 'b' })), null, 'outra task não conta');
+});
+test('t36-freio-esgotado-vence-orcamento-e-diario-invalido-nao-freia: a ordem dos freios é esgotadas primeiro; diário fora de ordem ⇒ nenhum freio e sem lançar', () => {
+  assert.equal(fl([at(5, 'task.iniciada', { task: 'T', papel: 'implementador' }), ev(1, 'ontem', 's1', 'ci.resultado', { verde: true })]).freio, null);
+  const ambos = fl([...base(), ...noTetoEm('T', 400, 500), reabSombra('T', { abordagem_nova: 'a' }), reabSombra('T', { abordagem_nova: 'b' }), ...noTetoEm('T', 2000, 500)]);
+  assert.equal(ambos.freio?.motivo, 'abordagens_esgotadas', 'com os dois freios, o das abordagens é o dito');
 });
