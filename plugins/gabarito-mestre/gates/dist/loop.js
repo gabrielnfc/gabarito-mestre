@@ -587,3 +587,12 @@ export function freioDaLiberacao(plano       , eventos          , task        ) 
   }
   return { freio: null, semMediana };
 }
+
+/**
+ * GM-15 T36 r1 (MAJOR-2): QUEM decide a task no teto, a regra ÚNICA do `proxima` (oferta da pergunta), do lote do dono e do painel (PAROU, trava longa e DEPENDE):
+ * a Sombra decide (`true`) com `sombra.libera_teto` ligado em origin e nenhum freio (`freioDaLiberacao`); com a flag desligada ou um freio, é o dono (`false`). Puro, nunca lança.
+ */
+export function sombraDecideOTeto(plano       , eventos          , task        , liberaTeto         )          {
+  if (liberaTeto !== true) return false;
+  try { return freioDaLiberacao(plano, eventos, task).freio === null; } catch { return false; }
+}

@@ -12,7 +12,7 @@
 import { projetarEmendas } from './emenda.ts';
 import { ehRespostaDeAdiamento, formaInvalida, ID_PERGUNTA_RE, TIPOS_EVENTO } from './formas.ts';
 import { AGORA_NAO_TETO } from './pouso.ts';
-import { estadoDe, freioDaLiberacao, ordenar, TIPOS_DE_TASK } from './loop.ts';
+import { estadoDe, freioDaLiberacao, ordenar, sombraDecideOTeto, TIPOS_DE_TASK } from './loop.ts';
 import { cmp } from './diario-puro.ts';
 /**
  * GM-15 T19 (REQ-POU-4, r1 MAJOR-1): a régua ÚNICA do sinal do loop, a mesma do Stop (`sinalArmado`): só `armado` (da sessão, fresco) é loop ligado; tudo mais
@@ -354,9 +354,10 @@ export function loteDoDono(plano: Plano | null, eventos: Evento[], cfg: ConfigLo
   const noTeto = (id: string): boolean => { const r = estadoDe(daTask(id)); return !('invalido' in r) && r.estado === 'no_teto'; };
   // GM-15 T36 (emenda 22 l.4, emenda 24 m.2): no_teto só vira item do dono com a flag desligada ou num freio da Sombra (`freioDaLiberacao`, a regra única do `liberar`); antes disso a Sombra decide.
   const teto = tasks.filter(noTeto).flatMap((id) => {
+    if (sombraDecideOTeto(plano as Plano, evs, id, c.liberaTeto)) return []; // a regra única de quem decide (`proxima` e painel usam a mesma)
     if (c.liberaTeto !== true) return [itemTeto(id)];
     const { freio } = freioDaLiberacao(plano as Plano, evs, id);
-    return freio === null ? [] : [itemTeto(id, freio.resumo)];
+    return [itemTeto(id, freio?.resumo)];
   });
   const emendas = c.julgaEmendas === true ? [] : projetarEmendas(evs).abertas.map((p) => itemEmenda(p.seq));
   // GM-15 T34 (backlog T26 MINOR-1, REQ-EME-3 B; review r1 MAJOR-3 e r2 MAJOR-1): a redação da Sombra (`emenda.proposta` com `origem: sombra`) REJEITADA (por quem não é o dono) vai

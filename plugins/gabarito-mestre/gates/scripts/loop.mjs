@@ -82,7 +82,7 @@ import { escopoDaTask, fecharJulgamentos, pontaDaSpec, projetarEmendas, SESSAO_E
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { formaInvalida, formaNaGravacao, ID_PERGUNTA_RE, MOTIVOS_REENTREGA, REQ_RE } from '../dist/formas.js';
 import { itemSemFonte, loteDoDono, pendenciaAberta } from '../dist/depende.js';
-import { estadoDe, foraPermitido, freioDaLiberacao, ordenar, podeIntegrar, progressoMedido, proximaAcao, TIPOS_DE_TASK, tasksCongeladas } from '../dist/loop.js';
+import { estadoDe, foraPermitido, freioDaLiberacao, ordenar, podeIntegrar, progressoMedido, proximaAcao, sombraDecideOTeto, TIPOS_DE_TASK, tasksCongeladas } from '../dist/loop.js';
 import { lerLeitura } from '../dist/pouso-pendente.js';
 import { lerX, pedidoDeClear } from '../dist/pouso.js';
 import { temOnboarding } from './cartao-sessao.mjs';
@@ -1445,7 +1445,8 @@ function ofertaDeLiberacao(c, plano, eventos, task, cfgLote, aviso) {
   if (cfgLote.liberaTeto !== true) return { oferecer: false, motivo: 'libera_teto_desligado' };
   const { freio, semMediana } = freioDaLiberacao(plano, eventos, task);
   if (semMediana) aviso.push(`sem mediana de tasks integradas nesta entrega: sem freio por orçamento para ${task}`);
-  if (freio !== null) return { oferecer: false, motivo: freio.motivo, resumo: freio.resumo };
+  // r1 MAJOR-2: a decisão de QUEM decide é a regra única `sombraDecideOTeto` (a do lote e do painel); o `freio` só dá o motivo da recusa
+  if (!sombraDecideOTeto(plano, eventos, task, cfgLote.liberaTeto)) return { oferecer: false, motivo: freio?.motivo ?? 'libera_teto_desligado', ...(freio !== null ? { resumo: freio.resumo } : {}) };
   const pr = progressoDaTask(c.raiz, eventos, task);
   return { oferecer: true, dispensado: pr.dispensado, progresso: pr.progresso, motivo: pr.motivo, exigeAbordagem: !pr.dispensado && pr.progresso !== true };
 }

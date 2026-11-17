@@ -5447,6 +5447,40 @@ describe('T36: a Sombra libera o teto', () => {
     assert.equal(liberar(amb, 'T3', sombraDecide(amb, 'T3')).rc, 0);
   });
 
+  /** O DEPENDE do painel REAL (`painel.mjs estado`) no mesmo diário que o `proxima` leu (P9: a regra de "quem decide" vale nas duas camadas). */
+  const dependePainel = (amb) => {
+    const r = spawnSync(process.execPath, [join(AQUI, '..', 'scripts', 'painel.mjs'), 'estado'], { cwd: amb.dir, encoding: 'utf8', env: amb.env, input: '' });
+    const j = JSON.parse(r.stdout.trim());
+    assert.equal(j.ok, true, r.stdout + r.stderr);
+    return j.estado.depende ?? [];
+  };
+  const itemDoTeto = (itens) => itens.filter((i) => /teto de rodadas|limite de revis/.test(i.motivo) || i.acoes.some((a) => a.comando === '/gabarito-mestre:liberar T3'));
+
+  test('t36-painel-e-proxima-concordam-quem-decide (r1 MAJOR-2): a Sombra decide (oferta ativa, sem freio) ⇒ o DEPENDE do painel real NÃO mostra o teto nem o botão liberar; com freio ou flag desligada os dois mostram o item do dono', () => {
+    // sem freio: proxima oferece a Sombra, lote vazio ⇒ painel sem item do teto
+    const amb = ambOrcamento(0);
+    const p = amb.cli(['proxima', '--vivos', '0']).j;
+    assert.equal(p.acao.liberacao.oferecer, true);
+    assert.equal(p.lote.length, 0, JSON.stringify(p.lote));
+    assert.deepEqual(itemDoTeto(dependePainel(amb)), [], JSON.stringify(dependePainel(amb)));
+    // o PAROU gravado (o mod regrava `loop.parar teto_rodadas`) também não vira item do dono quando a Sombra decide
+    assert.equal(amb.cli(['parar', 'teto_rodadas']).rc, 0);
+    assert.deepEqual(itemDoTeto(dependePainel(amb)), [], JSON.stringify(dependePainel(amb)));
+    // com freio (orçamento 3x): proxima não oferece, o lote tem o item ⇒ o painel mostra o do dono, 1 só, com o botão
+    const fr = ambOrcamento(8);
+    const pf = fr.cli(['proxima', '--vivos', '0']).j;
+    assert.equal(pf.acao.liberacao.oferecer, false);
+    assert.equal(fr.cli(['parar', 'teto_rodadas']).rc, 0);
+    const itens = itemDoTeto(dependePainel(fr));
+    assert.equal(itens.length, 1, JSON.stringify(dependePainel(fr)));
+    assert.ok(itens[0].acoes.some((a) => a.comando === '/gabarito-mestre:liberar T3'));
+    // flag desligada: idem
+    const off = ambiente();
+    off.semear([...integrada('T1'), ...integrada('T2'), ...t3NoTeto(0)]);
+    assert.equal(off.cli(['proxima', '--vivos', '0']).j.acao.liberacao.oferecer, false);
+    assert.equal(itemDoTeto(dependePainel(off)).length, 1, JSON.stringify(dependePainel(off)));
+  });
+
   test('t36-proxima-flag-desligada-nao-oferece: sem sombra.libera_teto em origin ⇒ liberacao.oferecer false (libera_teto_desligado) e a task no lote do dono', () => {
     const amb = ambiente();
     amb.semear([...integrada('T1'), ...integrada('T2'), ...t3NoTeto(0)]);

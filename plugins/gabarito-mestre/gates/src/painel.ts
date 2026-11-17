@@ -15,7 +15,7 @@ import { leituraPropria, noTeto, pousoPendente, type Medicao } from './pouso-pen
 import { pedidoDeClear } from './pouso.ts';
 import { encerramentoDe, trilhaDe } from './trilha.ts';
 import type { FatosTrilha } from './trilha.ts';
-import { estadoDe, ordenar, proximaAcao, tasksInvalidas, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK } from './loop.ts';
+import { estadoDe, ordenar, proximaAcao, sombraDecideOTeto, tasksInvalidas, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK } from './loop.ts';
 import type { EstadoTask } from './loop.ts';
 import { formaInvalida } from './formas.ts';
 import { comProjetoAcima, renderBlocos, renderEsquadrao } from './painel-esquadrao.ts';
@@ -578,6 +578,8 @@ function calcularParar(c: { plano: Plano; entrada: EntradaPainel; fuso: string; 
   const noTeto = plano.tasks.find((t) => estados.get(t.id)?.estado === 'no_teto')?.id ?? null;
   const montar = (motivo: MotivoParar, chave: string, hora: string, taskDoDiario: unknown) => {
     const task = typeof taskDoDiario === 'string' && plano.tasks.some((t) => t.id === taskDoDiario) ? taskDoDiario : noTeto;
+    // GM-15 T36 r1 (MAJOR-2): teto que a Sombra decide (flag ligada e sem freio, a regra única `sombraDecideOTeto` do `proxima` e do lote) não é item do dono: sem PAROU de teto
+    if (motivo === 'teto_rodadas' && task !== null && ord !== null && sombraDecideOTeto(plano, ord, task, entrada.configLote?.liberaTeto)) return null;
     const { texto, acoes } = linhaDaTabela(motivo, task);
     return { motivo, texto, acoes, hora, chave, emVoo: [], alteracoes: 0 };
   };
@@ -1014,6 +1016,11 @@ function travaLonga(plano: Plano, c: Calculo, entrada: EntradaPainel, ocupado: b
     task = typeof a.task === 'string' && plano.tasks.some((t) => t.id === a.task) ? a.task : null;
   }
   if (motivo === null || motivo === 'diario_invalido') return null;
+  // GM-15 T36 r1 (MAJOR-2): a Sombra decide o teto (regra única `sombraDecideOTeto`): esperar por ela não é trava do dono
+  if (motivo === 'teto_rodadas') {
+    const alvo = task ?? plano.tasks.find((t) => estadoDe(ord.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && dadosDe(e).task === t.id)).estado === 'no_teto')?.id ?? null;
+    if (alvo !== null && sombraDecideOTeto(plano, ord, alvo, entrada.configLote?.liberaTeto)) return null;
+  }
   let inicio = Number.NEGATIVE_INFINITY;
   for (const ev of ord) if (TIPOS_DE_PROGRESSO.includes(ev.tipo) && msDe(ev) > inicio) inicio = msDe(ev);
   const v = pararVigente(ord);
