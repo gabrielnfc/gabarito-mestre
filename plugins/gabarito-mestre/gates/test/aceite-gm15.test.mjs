@@ -1,17 +1,22 @@
 /**
- * GM-15 T27 (REQ-ENT-1, REQ-ENT-2, REQ-AUT-1): o ACEITE FINAL da spec ("Aceite final"), pelos CLIs reais num repo temporário, nunca pelo repo real.
+ * GM-15 T27 (REQ-ENT-1, REQ-ENT-2, REQ-AUT-1): o ACEITE FINAL da spec ("Aceite final", emenda 26 / D-G20), pelos CLIs reais num repo temporário, nunca pelo repo real.
  *
- * REPLAY da GM-14 (fixtures/gm15-aceite/: `eventos.jsonl` = os eventos reais do diário da GM-14 que o painel lê (task, nota, pendência, consulta à Sombra, parar,
- * fato medido...), regravados por sessão; `plano.json` real; `events.sessao-1.jsonl` real do backup, com o #8 "aberto" e a release v2.0.0 já velhos; `gh` com os
- * PRs #7, #8, #17, #22 e o #30 como no GitHub). Rodado COM e SEM o `events.sessao-1.jsonl`, cada cláusula tem a asserção própria:
- *   c1 painel em 1 linha "GM-14 entregue" · c2 0 item da GM-14 no DEPENDE (só a oferta da próxima, com o botão "seguir") · c3 Stop silencioso ·
- *   c4 a próxima entrega oferecida · c5 tudo isso de novo depois de uma `dono.resposta` posterior ao merge · c6 o PR de PRÉ-VERSÃO (#22 alpha.1) não encerra (emenda 20).
- * ENTREGA SINTÉTICA (c7): 1 task `no_teto` + 3 independentes ⇒ `proxima` nunca para antes das 3 (liberação da Sombra ligada e desligada), a Sombra adia a task
- * (`adiar --origem sombra --fonte`) ⇒ `concluir`, sem `loop.parar`, com a adiada FORA do total do PRONTO (c8).
+ * REPLAY da GM-14 (fixtures/gm15-aceite/: `eventos.jsonl` = RECORTE do diário real da GM-14 (os eventos que o painel lê: task, nota, pendência, consulta à Sombra, parar,
+ * fato medido...), regravados por sessão; o revisor mediu o MESMO resultado com os 21 events.*.jsonl inteiros; `plano.json` real; `events.sessao-1.jsonl` real do backup, com o
+ * #8 "aberto" e a release v2.0.0 já velhos; `gh` com os PRs #7, #8, #17 e #22 com os VALORES REAIS do GitHub). Rodado COM e SEM o `events.sessao-1.jsonl`:
+ *   (a.1) `aceite-replay-gm14-prs-reais-nao-encerra`: com os PRs reais a única publicação é a PRÉ-VERSÃO (#22 alpha.1) e ela NÃO encerra (emenda 20, D-G14) ⇒ nenhum
+ *     entrega.encerrada, o painel não diz "entregue", nem antes nem depois de uma `dono.resposta` posterior; nenhum item da GM-14 trava o DEPENDE nem o Stop (o que aparece é só
+ *     informativo e está declarado abaixo, com o motivo).
+ *   (a.2) `aceite-versao-final-sintetica-encerra`: o MECANISMO da versão final, com UM PR de versão final SINTÉTICO de fixture (9001, não existe no GitHub) ⇒ c1 1 linha
+ *     "GM-14 entregue" · c2 0 item da GM-14 no DEPENDE (só a oferta da próxima, com o botão "seguir") · c3 Stop silencioso · c4 a próxima entrega oferecida · c5 tudo isso de novo
+ *     depois de uma `dono.resposta` posterior ao merge. (Regra para a última publicação pré-versão encerrar com a versão final: backlog 2.1.1, D-G20.)
+ * ENTREGA SINTÉTICA (c7): 1 task `no_teto` + 3 independentes ⇒ `proxima` nunca para enquanto há independente (conferido em TODO `proxima`, liberação da Sombra ligada e
+ * desligada), a Sombra adia a task (`adiar --origem sombra --fonte`) ⇒ `concluir`, sem `loop.parar`, com a adiada FORA do total do PRONTO (c8).
  * O teste só vê a cópia: o checkout (status, HEAD, branch, worktrees) é conferido antes e depois (c9).
  *
- * MUTAÇÕES (nomeadas no plano): M27a `entregaPublicada` na regra antiga (a pré-versão encerra) ⇒ c6 e c1 · M27b `prs()` sem remedir o #8 ⇒ a variante COM sessão-1 ·
- * M27c `adiada` no total ⇒ c8.
+ * MUTAÇÕES (nomeadas no plano): M27a `entregaPublicada` na regra antiga (a pré-versão encerra) ⇒ (a.1) cai · M27a' o PR final sintético não encerra ⇒ (a.2) cai ·
+ * M27b `prs()` sem REMEDIR o #8 (o `aberto` do diário fica) ⇒ cai a asserção c10 (['aberto','mergeado']) · `prs()` sem o DESCARTE por head é EQUIVALENTE neste aceite (declarado): com os PRs reais
+ *   o `ultimo` é o #22 (maior número, mergeado), então o #8 de outra entrega nunca é o `ultimo` nem o `aberto` visível; quem mata essa mutação é trilha.test.ts `titulo-sem-id-no-head-encerra` · M27c `adiada` no total ⇒ c8 · M27d `proxima` para com independente restante ⇒ c7.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -106,7 +111,7 @@ function stop(d) {
   return spawnSync(process.execPath, [STOP], { cwd: d, input: JSON.stringify({ session_id: SID, cwd: d, background_tasks: [] }), encoding: 'utf8', env: env({ CLAUDE_PROJECT_DIR: d }), timeout: TETO });
 }
 const SEGUIR = { rotulo: 'seguir', comando: '/gabarito-mestre:gabarito-loop' };
-const MERGE_FINAL = '2026-11-15T13:00:00Z'; // o mergedAt do #30 no `gh` de fixture: o `dono.resposta` "posterior ao merge" é relativo a ele, nunca ao relógio
+const MERGE_FINAL = '2026-11-16T12:00:00Z'; // o mergedAt do PR final SINTÉTICO (9001) no `gh` de fixture: o `dono.resposta` "posterior ao merge" é relativo a ele, nunca ao relógio
 
 /** O que o aceite exige, uma asserção por cláusula, com a mensagem dizendo qual. */
 function confere(d, quando) {
@@ -133,10 +138,15 @@ function confere(d, quando) {
   assert.equal(s.stderr, '', `${quando} c3: Stop sem stderr`);
 }
 
+const FINAL = { GH_FINAL_SINTETICO: '1' };
+const encerradas = (d) => ler(dirDe(d, 'GM-14')).filter((x) => x.tipo === 'entrega.encerrada');
+const fato8 = (d) => ler(dirDe(d, 'GM-14')).filter((x) => x.tipo === 'fato.medido' && x.dados?.chave === 'pr' && x.dados?.valor?.numero === 8).sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+
 for (const comSessao1 of [true, false]) {
   const nome = comSessao1 ? 'COM events.sessao-1.jsonl' : 'SEM events.sessao-1.jsonl';
 
-  test(`aceite-replay-gm14-${comSessao1 ? 'com' : 'sem'}-sessao-1: ${nome} ⇒ 1 linha "GM-14 entregue", 0 item no DEPENDE, Stop mudo, próxima oferecida; o mesmo depois de dono.resposta posterior ao merge`, () => {
+  // (a.2) o MECANISMO da versão final: PR final SINTÉTICO de fixture (9001), declarado como tal no nome, no comentário e no `gh`
+  test(`aceite-versao-final-sintetica-encerra: ${nome}, PR de versão final SINTÉTICO (fixture 9001) ⇒ 1 linha "GM-14 entregue", 0 item no DEPENDE, Stop mudo, próxima oferecida; o mesmo depois de dono.resposta posterior ao merge`, () => {
     const antes = fotoDoCheckout();
     const d = replayGm14({ comSessao1 });
 
@@ -145,16 +155,15 @@ for (const comSessao1 of [true, false]) {
     assert.equal(aberta.entregue ?? null, null, 'controle: antes do medir a GM-14 não está entregue');
     assert.ok(texto(d).length > 1 || aberta.umaLinha !== null || aberta.depende.length > 0 || aberta.pronto !== null, 'controle: a entrega aberta desenha mais que a linha de entregue');
 
-    // o `medir` pelo CLI real, com o `gh` de fixture: só o #30 (virada final) encerra; o #22 (alpha.1) e o #8 (mergeado de outra entrega) não
-    const m = medir(d);
+    // o `medir` pelo CLI real, com o `gh` de fixture: só o PR final SINTÉTICO encerra; o #22 (alpha.1) e o #8 (mergeado de outra entrega) não
+    const m = medir(d, FINAL);
     assert.equal(m.ok, true, JSON.stringify(m));
-    const enc = ler(dirDe(d, 'GM-14')).filter((x) => x.tipo === 'entrega.encerrada');
-    assert.deepEqual(enc.map((x) => x.dados), [{ entrega: 'GM-14', pr: 30, via: 'titulo', mergeado_em: MERGE_FINAL }], 'c6: encerra pelo #30, nunca pelo #22 (pré-versão) nem pelo #8');
+    assert.deepEqual(encerradas(d).map((x) => x.dados), [{ entrega: 'GM-14', pr: 9001, via: 'titulo', mergeado_em: MERGE_FINAL }], 'c6: encerra pelo PR final sintético (9001), nunca pelo #22 (pré-versão) nem pelo #8');
     // c10 (M27b): o #8 que o `events.sessao-1.jsonl` dá como `aberto` é REMEDIDO por número e vira mergeado (de outra entrega); sem o arquivo, nenhum fato do #8 existe
-    const f8 = ler(dirDe(d, 'GM-14')).filter((x) => x.tipo === 'fato.medido' && x.dados?.chave === 'pr' && x.dados?.valor?.numero === 8).sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+    const f8 = fato8(d);
     if (comSessao1) {
       assert.deepEqual(f8.map((x) => x.dados.valor.estado), ['aberto', 'mergeado'], 'c10: o #8 aberto do diário foi remedido e está mergeado');
-      assert.equal(f8.at(-1).dados.valor.branch, 'enabler/GM-9-fundacao', 'c10: a remedição traz o head de outra entrega');
+      assert.equal(f8.at(-1).dados.valor.branch, 'enabler/GM-9-fundacao-2.0', 'c10: a remedição traz o head real de outra entrega');
     } else assert.deepEqual(f8, [], 'c10: sem o arquivo da sessão 1 não há #8 no diário');
     confere(d, 'depois do merge');
 
@@ -170,19 +179,57 @@ for (const comSessao1 of [true, false]) {
     // c9: o checkout real não mudou (a cópia é a única coisa que o teste escreveu)
     assert.deepEqual(fotoDoCheckout(), antes, 'c9: o checkout real ficou intocado');
   });
+
+  // (a.1) o replay REAL: valores reais dos PRs, só a pré-versão ⇒ não encerra
+  test(`aceite-replay-gm14-prs-reais-nao-encerra: ${nome}, PRs #7 #8 #17 #22 com os valores reais ⇒ nenhum entrega.encerrada, painel não diz "entregue", o #8 fora do DEPENDE, Stop mudo`, () => {
+    const antes = fotoDoCheckout();
+    const d = replayGm14({ comSessao1 });
+    const m = medir(d);
+    assert.equal(m.ok, true, JSON.stringify(m));
+    // M27a: a pré-versão (#22 alpha.1, head chore/GM-14-virada-2-1) voltando a encerrar derruba aqui
+    assert.deepEqual(encerradas(d), [], 'c6: a pré-versão (#22) não encerra com os PRs reais');
+    // M27b: o #8 do diário (aberto) é remedido por número (mergeado, head de OUTRA entrega, GM-9) e não vira item da GM-14 aberta (o descarte por head em prs() é equivalente aqui: ver o docstring)
+    const f8 = fato8(d);
+    if (comSessao1) assert.deepEqual(f8.map((x) => x.dados.valor.estado), ['aberto', 'mergeado'], 'c10: o #8 aberto do diário foi remedido e está mergeado');
+    else assert.deepEqual(f8, [], 'c10: sem o arquivo da sessão 1 não há #8 no diário');
+
+    const checa = (quando) => {
+      const e = estado(d);
+      assert.equal(e.entregue ?? null, null, `${quando}: a GM-14 não está entregue só com a pré-versão`);
+      assert.notEqual(texto(d)[0].includes('entregue'), true, `${quando}: o painel não diz "entregue"`);
+      // o "#8" (de outra entrega, head GM-9) não é item da GM-14 (M27b); os itens que a GM-14 aberta AINDA mostra estão no teste `...-depende-sem-item-da-gm14` (todo)
+      assert.ok(!e.depende.some((i) => /#8\b/.test(i.motivo)), `${quando}: o #8 sai do DEPENDE ${JSON.stringify(e.depende)}`);
+      const s = stop(d);
+      assert.equal(s.status, 0, `${quando} Stop: ${s.stderr}`);
+      assert.equal(s.stdout, '', `${quando}: Stop silencioso (a GM-14 não trava o Stop)`);
+      assert.equal(s.stderr, '', `${quando}: Stop sem stderr`);
+    };
+    checa('depois do medir');
+
+    // c5: uma `dono.resposta` posterior ao último merge real não encerra nem traz bloqueio
+    const posterior = Date.parse('2026-11-15T13:50:59Z') + 3_600_000;
+    w(d, 'GM-14', '01db6bdc-aaaa-4bbb-8ccc-0123456789ab', 'dono.resposta', { pergunta: 'loop:1', opcao: 1, rotulo: 'visto' }, new Date(posterior).toISOString(), 'dono');
+    assert.deepEqual(encerradas(d), [], 'c5: a dono.resposta não encerra');
+    checa('depois da dono.resposta');
+    assert.deepEqual(encerradas(d), [], 'c5: nenhum entrega.encerrada depois da medição repetida');
+
+    assert.deepEqual(fotoDoCheckout(), antes, 'c9: o checkout real ficou intocado');
+  });
 }
 
-test('aceite-replay-gm14-pre-versao-nao-encerra: só o #22 (alpha.1) na `main` ⇒ nenhum entrega.encerrada e a GM-14 segue em aberto (c6, M27a)', () => {
-  for (const comSessao1 of [true, false]) {
+// (a.1) cláusula "nenhum item da GM-14 trava o DEPENDE" (emenda 26 + ressalva da Sombra): MEDIDO com os PRs reais, a GM-14 aberta mostra itens do dono no DEPENDE
+// (`decidir a T8: chegou ao limite de revisões`, a pergunta de gatilho `loop:529` "a conversa mudou de assunto..." e mais perguntas abertas): NÃO são informativos, então
+// NÃO podem ser declarados como aceitos. Fica como `todo` (a falha é reportada, não derruba a suíte) até a decisão do dono/Sombra sobre como a GM-14 aberta deixa o DEPENDE.
+for (const comSessao1 of [true, false]) {
+  test(`aceite-replay-gm14-prs-reais-depende-sem-item-da-gm14: ${comSessao1 ? 'COM' : 'SEM'} events.sessao-1.jsonl, PRs reais ⇒ DEPENDE sem item da GM-14`, { todo: 'MEDIDO: a GM-14 aberta ainda mostra T8 no teto e perguntas abertas no DEPENDE; emenda 26 não aceita item que trava; decisão pendente (relatório da T27 r1)' }, () => {
     const d = replayGm14({ comSessao1 });
-    const m = medir(d, { GH_SEM_FINAL: '1' });
+    const m = medir(d);
     assert.equal(m.ok, true, JSON.stringify(m));
-    assert.deepEqual(ler(dirDe(d, 'GM-14')).filter((x) => x.tipo === 'entrega.encerrada'), [], `c6: a pré-versão não encerra (comSessao1=${comSessao1})`);
     const e = estado(d);
-    assert.equal(e.entregue ?? null, null, 'c6: a GM-14 não está entregue só com a pré-versão');
-    assert.notEqual(texto(d)[0].includes('GM-14 entregue'), true, 'c6: o painel não diz "GM-14 entregue"');
-  }
-});
+    assert.deepEqual(e.depende, [], `nenhum item da GM-14 no DEPENDE ${JSON.stringify(e.depende)}`);
+    assert.equal(e.pergunta, null, `nenhuma pergunta da GM-14 aberta ${JSON.stringify(e.pergunta)}`);
+  });
+}
 
 // ── a entrega sintética (c7, c8) ────────────────────────────────────────────────────────────────────────────────────────────────────────
 const V = 'a'.repeat(40);
@@ -247,16 +294,26 @@ for (const liberaTeto of [true, false]) {
     const antes = fotoDoCheckout();
     const { d, E, loop, integrar } = sintetica({ liberaTeto });
 
-    // 1. a task no teto NÃO para o loop: as 3 independentes saem primeiro (c7), e a no_teto vai ao lote do dono só com a Sombra sem poder liberar
-    const p1 = loop(['proxima', '--vivos', '0']);
-    assert.equal(p1.rc, 0, p1.out);
-    assert.equal(p1.j.acao.tipo, 'despachar', `c7: com T2..T4 permitidas a ação é despachar, não parar: ${JSON.stringify(p1.j.acao)}`);
-    assert.deepEqual(p1.j.acao.itens.map((i) => i.task).sort(), ['T2', 'T3', 'T4'].slice(0, p1.j.acao.itens.length), 'c7: só as tasks que não estão no teto');
-    assert.ok(!p1.j.acao.itens.some((i) => i.task === 'T1'), 'c7: a T1 no teto não é despachada');
-    assert.ok(p1.j.acao.itens.length >= 1);
-
-    // 2. as 3 integram; só a T1 sobra: a oferta da liberação segue a flag (REQ-AUT-1, emendas 22/24)
-    for (const t of ['T2', 'T3', 'T4']) integrar(t);
+    // c7: em TODO `proxima` até o concluir, `parar` nunca aparece enquanto há task independente (M27d: parar com 1 ou 2 restantes)
+    const semParar = (p, restantes, quando) => {
+      assert.equal(p.rc, 0, p.out);
+      if (restantes.length > 0) {
+        assert.equal(p.j.acao.tipo, 'despachar', `c7 ${quando}: com ${restantes} independente(s) a ação é despachar, nunca parar: ${JSON.stringify(p.j.acao)}`);
+        const t = p.j.acao.itens.map((i) => i.task).sort();
+        assert.equal(t.length, Math.min(2, restantes.length), `c7 ${quando}: despacha até os 2 slots (loop.slots=2) ${t}`);
+        assert.ok(t.every((x) => restantes.includes(x)), `c7 ${quando}: só independentes que faltam, a T1 no teto fora ${t}`);
+      }
+    };
+    // 1. a task no teto NÃO para o loop: as 3 independentes saem primeiro, e a no_teto só vai ao lote do dono quando não há mais nenhuma
+    const restantes = ['T2', 'T3', 'T4'];
+    semParar(loop(['proxima', '--vivos', '0']), restantes, 'com 3');
+    // 2. cada uma integra e o `proxima` seguinte ainda não para (com 2 e com 1 restantes); só a T1 sobra no fim
+    for (const t of ['T2', 'T3']) {
+      integrar(t);
+      restantes.splice(restantes.indexOf(t), 1);
+      semParar(loop(['proxima', '--vivos', '0']), restantes, `com ${restantes.length}`);
+    }
+    integrar('T4');
     const p2 = loop(['proxima', '--vivos', '0']);
     assert.equal(p2.rc, 0, p2.out);
     assert.equal(p2.j.acao.tipo, 'parar', `a única pendência é a T1 no teto: ${JSON.stringify(p2.j.acao)}`);
@@ -286,7 +343,7 @@ for (const liberaTeto of [true, false]) {
     assert.equal(r.status, 0, r.stdout + r.stderr);
     const e = JSON.parse(r.stdout).estado;
     assert.equal(e.pronto?.total, 3, `c8: a adiada fora do total do PRONTO ${JSON.stringify(e.pronto)}`);
-    assert.equal(e.pronto?.feitas ?? e.pronto?.feito ?? e.pronto?.integradas, 3, `c8: 3 de 3 feitas ${JSON.stringify(e.pronto)}`);
+    assert.equal(e.pronto?.integradas, 3, `c8: 3 de 3 feitas ${JSON.stringify(e.pronto)}`);
     assert.equal(e.parar, null, 'c7: o painel não diz PAROU');
     assert.ok(!e.depende.some((i) => /T1/.test(i.motivo)), `c8: a adiada fora do DEPENDE ${JSON.stringify(e.depende)}`);
     assert.deepEqual(e.plano.tasks.map((t) => t.id), ['T2', 'T3', 'T4'], 'c8: a T1 adiada não é task do alvo do painel');
