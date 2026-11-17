@@ -889,7 +889,8 @@
         "T23",
         "T25",
         "T35",
-        "T32"
+        "T32",
+        "T26"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/mod/painel.mjs",
