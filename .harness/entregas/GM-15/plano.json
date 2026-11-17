@@ -917,7 +917,8 @@
         "plugins/gabarito-mestre/gates/scripts/gate-task.mjs",
         "plugins/gabarito-mestre/gates/test/gate-task.test.mjs",
         "plugins/gabarito-mestre/gates/dist/formas.js",
-        "plugins/gabarito-mestre/gates/src/formas.ts"
+        "plugins/gabarito-mestre/gates/src/formas.ts",
+        "plugins/gabarito-mestre/gates/test/entrega-encerrada-cli.test.mjs"
       ],
       "reqs": [
         "REQ-POU-3",
