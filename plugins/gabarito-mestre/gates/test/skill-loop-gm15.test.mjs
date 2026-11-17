@@ -158,6 +158,11 @@ test('skill-ci-da-main-antes-de-entregue: só declara entregue lendo a CI do pus
   assert.match(ent, /TODOS os runs desse sha/);
   assert.match(ent, /todos `status: completed` e `conclusion: success`/);
   assert.match(ent, /Run em curso \(`status` diferente de `completed`\) ⇒ esperar e reler, nunca declarar/, 'em curso ⇒ esperar');
+  assert.match(ent, /git fetch origin main` e só então `git rev-parse origin\/main/, 'fetch antes do rev-parse, na ordem');
+  assert.ok(ent.indexOf('git fetch origin main') < ent.indexOf('git rev-parse origin/main'), 'fetch vem antes');
+  assert.doesNotMatch(ent, /git rev-parse HEAD/, 'o sha não vem do HEAD local');
+  assert.match(ent, /sem o fetch a ref local fica no sha anterior/, 'diz por que');
+  assert.match(ent, /nenhum run ainda ⇒ esperar também/, 'lista vazia não é verde (verdade vácua)');
   assert.match(ent, /gh run rerun <run> --failed` 1 vez E item de correção, mesmo que o rerun fique verde/, 'ruído ⇒ rerun E item');
   assert.match(ent, /gh run rerun <run> --failed/);
   assert.match(ent, /run <run>" --sessao <sessao>/);
