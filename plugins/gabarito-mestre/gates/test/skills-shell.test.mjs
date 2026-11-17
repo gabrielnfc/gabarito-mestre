@@ -329,10 +329,14 @@ test('skill-loop-cita-anotar-cinco-tipos: a seção "Anotar na hora" traz o coma
   for (const tipo of ['ideia', 'desvio', 'assunto', 'duvida', 'pendencia']) assert.ok(secao.includes('`' + tipo + '`'), `tipo ${tipo} ausente`);
   assert.match(secao, /2 a 4 `--opcao <rótulo>`/);
   assert.match(secao, /suas\*\* palavras/);
+  // GM-15 T35 (r.13): a skill ensina que pendência do orquestrador vai ao plano ou à retomada, e como fechar a antiga
+  assert.match(secao, /`pendencia` o CLI recusa/);
+  assert.match(secao, /plano \(plano\.json, brief da task\) ou à retomada/);
+  assert.match(secao, /anotar --fechar <sessao>:<seq>/);
   assert.match(secao, /loop\.mjs" anotar --tipo <tipo> --texto <t> --sessao <id>`/);
   // o comando como escrito grava uma `nota` (bash e zsh, caminho com espaço)
   const cmd = secao.match(/node "\$\{CLAUDE_PLUGIN_ROOT\}\/gates\/scripts\/loop\.mjs" anotar[^`\n]*/)[0]
-    .replace('<tipo>', 'pendencia').replace('<t>', 'ligar para o banco').replace('<id>', 'sessao-1');
+    .replace('<tipo>', 'ideia').replace('<t>', 'ligar para o banco').replace('<id>', 'sessao-1'); // GM-15 T35 (r.13): pendência do orquestrador recusa
   const base = mkdtempSync(join(tmpdir(), 'skills-anotar-'));
   const raiz = join(base, 'raiz com espaco');
   mkdirSync(raiz);
@@ -343,7 +347,7 @@ test('skill-loop-cita-anotar-cinco-tipos: a seção "Anotar na hora" traz o coma
     const ctx = `${sh}: ${cmd}\nrc=${r.status} stdout=${r.stdout} stderr=${r.stderr}`;
     assert.equal(JSON.parse(r.stdout.trim().split('\n').pop()).ok, true, ctx);
     const nota = diario.ler(join(repo, '.harness', 'entregas', 'GM-10')).filter((e) => e.tipo === 'nota').at(-1);
-    assert.equal(nota?.dados?.tipo, 'pendencia', ctx);
+    assert.equal(nota?.dados?.tipo, 'ideia', ctx);
     assert.equal(nota?.dados?.texto, 'ligar para o banco', ctx);
   }
 });

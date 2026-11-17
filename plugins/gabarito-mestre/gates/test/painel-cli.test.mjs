@@ -7,6 +7,7 @@
  */
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { raizSegura } from './_raiz-segura.mjs';
 import {
   mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, appendFileSync, copyFileSync, existsSync, symlinkSync, statSync, renameSync,
 } from 'node:fs';
@@ -19,11 +20,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as diario from '../dist/diario.js';
 import { renderPainel } from '../dist/painel.js';
 import { paraTexto } from '../dist/painel-texto.js';
-import { estadoDoPainel, lerArgs, lerCauda, lerDiarioEstavel, lerEntradaAgentes, main } from '../scripts/painel.mjs';
-import { aprovarSpec, tetoDaSombra } from '../scripts/loop.mjs';
+import { estadoDoPainel, lerArgs, lerCauda, lerDiarioEstavel, lerEntradaAgentes, main, sessaoDoMod } from '../scripts/painel.mjs';
+import { aprovarSpec } from '../scripts/loop.mjs';
 import { medir } from '../scripts/painel-medir.mjs';
 import { prepararLeitura as prepararLeituraReal } from '../scripts/entrega.mjs';
 import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
+import { estadoParaDesenho, linhasDaPane } from '../../mod/painel.mjs';
+import { readFileSync as lerArqVersao } from 'node:fs';
+const VERSAO_PLUGIN = JSON.parse(lerArqVersao(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(AQUI, '..', 'scripts', 'painel.mjs');
@@ -35,7 +39,7 @@ const raizes = [];
 /** Toda chamada em processo de `main` sem `--agentes` recebe um stdin que LANÇA: ler o stdin sem a flag falha em ms, nunca trava. */
 const SEM_STDIN = () => { throw new Error('stdin lido sem --agentes'); };
 const IO = (extra) => ({ aviso: () => {}, agoraMs: AGORA, stdin: SEM_STDIN, ...extra });
-const novoTmp = (p) => { const d = realpathSync(mkdtempSync(join(tmpdir(), p))); raizes.push(d); return d; };
+const novoTmp = (p) => { const d = raizSegura(realpathSync(mkdtempSync(join(tmpdir(), p)))); raizes.push(d); return d; };
 after(() => { /* os temporários vivem no TMPDIR do sistema; nada a apagar daqui (R2) */ });
 
 const g = (dir, ...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -187,12 +191,12 @@ describe('forma do estado e do texto', { timeout: 60_000 }, () => {
   });
 
   test('texto-falha-e-json: em falha o texto imprime a mesma linha JSON, rc 1', () => {
+    // GM-15 T9 (REQ-ENT-2): plano.json inválido deixou de ser falha (vira "?" no estado); a falha aqui é o stdin de `--agentes` que não é JSON
     const m = montar();
-    writeFileSync(join(m.dir, 'plano.json'), '{ não é json');
-    const r = cli(m, ['texto']);
+    const r = cli(m, ['texto', '--agentes'], { input: '{ não é json' });
     assert.equal(r.rc, 1);
     assert.equal(r.json.ok, false);
-    assert.equal(r.json.erro, 'plano_invalido');
+    assert.equal(r.json.erro, 'stdin_invalido');
   });
 });
 
@@ -256,13 +260,19 @@ describe('uso errado (rc 2) e falhas de contexto (rc 1)', { timeout: 60_000 }, (
     assert.equal(hashArvore(join(m.repo, '.harness')), antes);
   });
 
-  test('plano-invalido: não JSON, forma errada e outra entrega são `plano_invalido`, distintos de ausente', () => {
+  test('plano-invalido: não JSON, forma errada e outra entrega são "plano inválido" (rc 0, GM-15 T9 REQ-ENT-2), distintos de ausente', () => {
+    const ausente = montar();
+    renameSync(join(ausente.dir, 'plano.json'), join(ausente.base, 'plano.fora'));
+    const a = cli(ausente, ['estado']).json.estado;
+    assert.equal(a.depende.some((d) => /não consegui ler o plano/.test(d.motivo)), false, 'ausente não é falha de leitura');
+    assert.doesNotMatch(String(a.fase?.motivo), /plano inválido/);
     for (const corpo of ['{ não é json', '{"entrega":"GM-12","tasks":"x"}', JSON.stringify({ entrega: 'GM-99', tasks: [{ id: 'T1', deps: [], arquivos: ['a'] }] })]) {
       const m = montar();
       writeFileSync(join(m.dir, 'plano.json'), corpo);
       const r = cli(m, ['estado']);
-      assert.equal(r.rc, 1, corpo);
-      assert.equal(r.json.erro, 'plano_invalido', corpo);
+      assert.equal(r.rc, 0, corpo);
+      assert.match(r.json.estado.fase.motivo, /^plano inválido: /, corpo);
+      assert.ok(r.json.estado.depende.some((d) => d.motivo === 'depende de você: ? (não consegui ler o plano)'), corpo);
     }
   });
 });
@@ -592,12 +602,13 @@ describe('stdin (--agentes)', { timeout: 60_000 }, () => {
   test('acoes-e-segundo-plano-pelo-cli-real: a ação ao vivo e o segundo plano do stdin chegam ao AGORA (FIEL-11 b, c)', () => {
     const m = montar({ ...comEventos([['task.iniciada', { task: 'T1', papel: 'implementador' }]]) });
     const entrada = { sessao: {}, agentes: [{ id: 'a1', type: 'implementador', description: 'T1 implementador', status: 'running' }],
-      acoes: { a1: { texto: 'lendo 3 arquivos', fonte: 'tool', em: 1 } }, segundoPlano: [{ id: 'b1', dono: 'orquestrador', texto: 'build do plugin', desde: 1 }] };
+      acoes: { a1: { texto: 'lendo 3 arquivos', fonte: 'tool', em: Date.now() } }, /* T35 r.11: ação de 1970 seria agente sem sinal */ segundoPlano: [{ id: 'b1', dono: 'orquestrador', texto: 'build do plugin', desde: 1 }, { id: 'b2', dono: 'a1', texto: 'rodar a suíte', desde: 1, comando: 'npm test' }] };
     const r = cli(m, ['estado', '--agentes'], { input: JSON.stringify(entrada) });
     assert.equal(r.rc, 0, r.stdout + r.stderr);
     const agora = r.json.estado.agora;
     assert.equal(agora.agentes.find((a) => a.task === 'T1')?.acao, 'lendo 3 arquivos');
-    assert.deepEqual(agora.segundoPlano.map((x) => [x.quem.papel, x.acao]), [['teste', 'build do plugin']]);
+    // GM-15 T33 (g.11): o painel rotula o shell pelo comando (Teste, Integrando, Aguardando, Comando); `quem` = quem disparou, `task` = a do agente dono
+    assert.deepEqual(agora.segundoPlano.map((x) => [x.quem.papel, x.task, x.acao]), [['orquestrador', null, 'Comando'], ['implementador', 'T1', 'Teste']]);
     const sem = cli(m, ['estado', '--agentes'], { input: JSON.stringify({ ...entrada, acoes: undefined, segundoPlano: undefined }) });
     assert.equal(sem.json.estado.agora.agentes.find((a) => a.task === 'T1')?.acao, 'implementando (registrado)');
     assert.deepEqual(sem.json.estado.agora.segundoPlano, []);
@@ -771,7 +782,7 @@ describe('spec, título, pausa, teto e política', { timeout: 60_000 }, () => {
     assert.ok(!estado(n).estado.depende.some((d) => d.motivo === 'loop pausado'), 'o principal não tem PAUSAR');
   });
 
-  test('atencao-sombra-sem-registro: com `fatos` a ATENÇÃO conta consultas sem decisão (FIEL-10 c), com ou sem teto em origin; teto inválido ⇒ aviso; tetoDaSombra do loop lê origin (o valor na projeção: teto-da-sombra-de-origin-chega-a-projecao)', () => {
+  test('atencao-sombra-sem-registro: com `fatos` a ATENÇÃO conta consultas sem decisão (FIEL-10 c), com ou sem teto em origin; `sombra.teto` inválido é ignorado sem aviso (GM-15 T36, emenda 22 l.5)', () => {
     const m = montar({ origem: { sombra: { teto: 3 } } });
     for (let i = 0; i < 4; i++) ev(m, 'sombra.consulta', { pergunta_hash: `${i}`.repeat(64).slice(0, 64), task: 'T1' });
     // GM-14 T18: o CLI passa `fatos` ⇒ ATENÇÃO é a da T17 (FIEL-10 c): consultas sem decisão registrada, não o teto (que a FIEL-10 c não lista)
@@ -782,9 +793,7 @@ describe('spec, título, pausa, teto e política', { timeout: 60_000 }, () => {
     assert.deepEqual(estado(sem).estado.atencao, ['4 consultas à Sombra sem decisão registrada']);
     const ruim = montar({ origem: { sombra: { teto: 0 } } });
     const rr = estado(ruim);
-    assert.ok(rr.avisos.some((a) => /sombra\.teto inválido/.test(a)));
-    assert.equal(tetoDaSombra({ fonte: 'origin', cfg: { sombra: { teto: 7 } } }).teto, 7);
-    assert.equal(tetoDaSombra({ fonte: 'nenhuma', cfg: null }).teto, 26);
+    assert.ok(!rr.avisos.some((a) => /sombra\.teto|teto/.test(a)), JSON.stringify(rr.avisos));
   });
 
   test('política e base da origem: rodape.politica e o merge da release usam entrega.politica e entrega.base', () => {
@@ -1035,9 +1044,9 @@ function repoT18({ branch = 'feat/GM-12-painel', specs = [], planos = {}, ledger
   return { base, repo, seq: 0 };
 }
 const dirDe = (m, id) => join(m.repo, '.harness', 'entregas', id ?? '_sem-id');
-function evEm(m, id, tipo, dados, { sessao = 'loop', ts } = {}) {
+function evEm(m, id, tipo, dados, { sessao = 'loop', ts, agente = 'orquestrador' } = {}) {
   m.seq += 1;
-  const r = diario.append(dirDe(m, id), sessao, { ts: ts ?? new Date(Date.UTC(2026, 10, 9, 12, 0, m.seq)).toISOString(), autor: 't@t.test', sessao, agente: 'orquestrador', tipo, dados });
+  const r = diario.append(dirDe(m, id), sessao, { ts: ts ?? new Date(Date.UTC(2026, 10, 9, 12, 0, m.seq)).toISOString(), autor: 't@t.test', sessao, agente, tipo, dados });
   assert.ok(r.ok && r.gravado === 'evento', `preparo: ${tipo} não gravado: ${JSON.stringify(r)}`);
 }
 const integrarEm = (m, id, t, extras) => { for (const [tipo, dados] of INTEGRAR(t)) evEm(m, id, tipo, dados, extras); };
@@ -1065,8 +1074,8 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.ok(e.depende.some((i) => i.motivo === 'aprovar a spec da GM-12'), JSON.stringify(e.depende));
     const t = cli(m, ['texto']);
     assert.equal(t.rc, 0, t.stdout);
-    assert.match(t.stdout, /^FASE 3 de 7 ▰▰▱▱▱▱▱ · spec com 2 seções · falta aprovar · ✓ ideia › ✓ spec › ● /m);
-    assert.match(textoDe(m, ['--largura', '200']), /^FASE 3 de 7 ▰▰▱▱▱▱▱ · spec com 2 seções · falta aprovar · ✓ ideia › ✓ spec › ● aprovação › ○ plano › ○ execução › ○ PR › ○ uso$/m);
+    assert.match(t.stdout, /^fase não medida · spec com 2 seções · falta aprovar · ✓ ideia › ✓ spec › ● /m);
+    assert.match(textoDe(m, ['--largura', '200']), /^fase não medida · spec com 2 seções · falta aprovar · ✓ ideia › ✓ spec › ● aprovação › ○ plano › ○ execução › ○ PR › ○ uso$/m);
     assert.doesNotMatch(t.stdout, /sem loop|sem_loop/);
     // spec aprovada pelo sha REAL dos bytes ⇒ fase 4 (o sha vem de lerSpecs, não inventado)
     const bytes = readFileSync(join(m.repo, 'docs', 'superpowers', 'specs', SPEC12.nome));
@@ -1108,7 +1117,11 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.equal(e.modo, 'projeto');
     assert.deepEqual(e.umaLinha, { ultima: { id: 'GM-7', estado: '1 de 2 tasks integradas' } });
     assert.equal(e.trilha.ultimaConhecida, 'GM-7');
-    assert.equal(cli(m, ['texto']).stdout, 'GABARITO · sem entrega em curso · última: GM-7 (1 de 2 tasks integradas)\n');
+    // GM-15 T32 (emenda 4): a linha única segue 1 linha e é a ÚLTIMA; o projeto (GM-5 e GM-7, 2 entregas) vem acima dela
+    const txt = cli(m, ['texto']).stdout.trimEnd().split('\n');
+    assert.equal(txt.at(-1), 'GABARITO · sem entrega em curso · última: GM-7 (1 de 2 tasks integradas)');
+    assert.match(txt[0], /^PROJETO /);
+    assert.equal(txt.filter((l) => /^GABARITO/.test(l)).length, 1);
     // GM-5 passa a ser a mais recente ⇒ a linha muda (a regra é o ts, não a ordem das pastas)
     evEm(m, 'GM-5', 'nota', { tipo: 'ideia', texto: 'nova' }, { ts: '2026-11-20T10:00:00.000Z' });
     assert.deepEqual(cli(m, ['estado']).json.estado.umaLinha, { ultima: { id: 'GM-5', estado: '0 de 1 tasks integradas' } });
@@ -1158,7 +1171,7 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     const c = ler();
     assert.deepEqual([c.trilha.marcas[5], c.fontesFalhas], ['●', ['o registro de medição do painel']]);
     assert.ok(c.depende.some((i) => i.motivo === 'depende de você: ? (não consegui ler o registro de medição do painel)'), JSON.stringify(c.depende));
-    assert.ok(!c.depende.some((i) => i.motivo === 'depende de você: nada'));
+    assert.ok(!c.depende.some((i) => i.motivo === 'nada depende de você'));
     medirJson(m, '[1,2]');
     assert.deepEqual(ler().fontesFalhas, ['o registro de medição do painel'], 'JSON que não é objeto também é corrompido');
     medirJson(m, { 'GM-12': { gh: 'falhou', em: '2026-11-09T12:00:00.000Z' } });
@@ -1216,6 +1229,16 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.equal(aninhado.pergunta?.id, com.pergunta.id, '`sessao.session_id` vale como no `medir`');
   });
 
+  test('regex-sessao-painel: `sessaoDoMod` aceita a mesma forma do `medir` (SESSAO_RE): das 5 entradas do T0 só `abc-123` vale; `sessao.session_id` aninhado também', () => {
+    const forma = /^[A-Za-z0-9._-]{1,128}$/;
+    const entradas = ['abc-123', 'a b', '../x', 'x'.repeat(200), 'a:b'];
+    assert.deepEqual(entradas.map((s) => sessaoDoMod({ session_id: s })), ['abc-123', null, null, null, null]);
+    for (const s of entradas) assert.equal(sessaoDoMod({ session_id: s }) !== null, forma.test(s), `mesma decisão da forma do medir: ${s.slice(0, 12)}`);
+    assert.equal(sessaoDoMod({ sessao: { session_id: 'abc-123' } }), 'abc-123');
+    assert.equal(sessaoDoMod({ sessao: { session_id: 'a b' } }), null);
+    for (const ruim of [undefined, null, {}, { session_id: 7 }, { session_id: '' }]) assert.equal(sessaoDoMod(ruim), null);
+  });
+
   test('cli-sem-agentes-sem-nomes-nem-traco: `painel.mjs texto` real sem --agentes ⇒ AGORA em 1 linha e nenhum nome sorteado', () => {
     const m = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
     integrarEm(m, 'GM-12', 'T1');
@@ -1224,7 +1247,7 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.equal(t.rc, 0, t.stdout);
     // GM-15 T29 (desenho do E4): a seção EQUIPE é 1 linha só
     assert.match(t.stdout, /^EQUIPE · agentes e contexto: medidos só no painel da sessão$/m);
-    assert.doesNotMatch(t.stdout, /GANDALF|ELROND|ARAGORN|LEGOLAS|agentes —|ctx|tok |5h|7d/);
+    assert.doesNotMatch(t.stdout, /GANDALF|ELROND|ARAGORN|LEGOLAS|agentes —|ctx|tok |\b5h\b|7d/);
     assert.match(t.stdout, /^PLANO {3}▰+▱+ {2}50% {2}1\/2 tasks/m);
   });
 
@@ -1276,22 +1299,40 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
       const e = estado(m).estado;
       assert.ok(e.fontesFalhas.includes('a lista de entregas'), JSON.stringify(e.fontesFalhas));
       assert.ok(e.depende.some((i) => /^depende de você: \? \(não consegui ler (.+ e )?a lista de entregas( e .+)?\)$/.test(i.motivo)), JSON.stringify(e.depende));
-      assert.ok(!e.depende.some((i) => i.motivo === 'depende de você: nada'));
+      assert.ok(!e.depende.some((i) => i.motivo === 'nada depende de você'));
     } finally { execFileSync('chmod', ['755', base]); }
   });
 
-  test('teto-da-sombra-de-origin-chega-a-projecao (R7): `sombra.teto` de origin vira `tetoSombra` da projeção; ausente ou inválido ⇒ 26', () => {
-    const teto = (origem) => {
+  test('t36-teto-da-sombra-de-origin-e-ignorado (GM-15 T36, emenda 22 l.5): `sombra.teto` não chega à projeção, não gera aviso nem linha de atenção', () => {
+    for (const origem of [{ sombra: { teto: 3 } }, { sombra: { teto: 'muitos' } }, { sombra: { teto: 0 } }, {}]) {
       const m = repoT18({ specs: [SPEC12], origem });
-      let visto;
-      const r = estadoDoPainel(m.repo, { agoraMs: AGORA, projetar: (p, ev, entrada) => { visto = entrada.tetoSombra; return {}; } });
+      let visto = 'nao-chamou';
+      const r = estadoDoPainel(m.repo, { agoraMs: AGORA, projetar: (p, ev, entrada) => { visto = Object.hasOwn(entrada, 'tetoSombra'); return {}; } });
       assert.equal(r.ok, true, JSON.stringify(r));
-      return visto;
-    };
-    assert.equal(teto({ sombra: { teto: 3 } }), 3);
-    assert.equal(teto({ sombra: { teto: 41 } }), 41);
-    assert.equal(teto({}), 26);
-    assert.equal(teto({ sombra: { teto: 0 } }), 26);
+      assert.equal(visto, false, JSON.stringify(origem));
+      assert.ok(!r.avisos.some((a) => /teto/i.test(a)), JSON.stringify(r.avisos));
+    }
+  });
+
+  const DECISAO = ['decisao.sombra', { pergunta_hash: 'a'.repeat(64), req: 'REQ-A-1', resposta: 'seguir com a regra', arquivo: '.harness/entregas/GM-12/sombra/x.md', pergunta_enviesada: false, fontes: ['docs/spec.md:3'] }];
+
+  test('t36-painel-lista-sombra-flag-real: `texto --sombra` pelo CLI real lista a decisão com o comando (rc 0); sem decisão a frase "nenhuma"; flag em `estado` é uso (rc 2); a linha N aparece nos 2 presets', () => {
+    const m = montar({ eventos: [DECISAO] });
+    const r = cli(m, ['texto', '--sombra']);
+    assert.equal(r.rc, 0, r.stderr);
+    assert.match(r.stdout, /^- loop:1 a Sombra decidiu sobre REQ-A-1: seguir com a regra — nada a reverter/m);
+    for (const preset of ['esquadrao', 'executivo']) {
+      const t = cli(m, ['texto', '--preset', preset]).stdout;
+      assert.match(t, /1 decisão da Sombra desde a sua última resposta/, preset);
+    }
+    const e = cli(m, ['estado']).json.estado;
+    assert.ok(e.atencao.includes('1 decisão da Sombra desde a sua última resposta'), JSON.stringify(e.atencao));
+    assert.ok(!e.depende.some((i) => /Sombra/.test(i.motivo)), 'não entra no DEPENDE');
+    const vazio = cli(montar({}), ['texto', '--sombra']);
+    assert.equal(vazio.rc, 0);
+    assert.match(vazio.stdout, /nenhuma decisão da Sombra desde a sua última resposta/);
+    const uso = cli(m, ['estado', '--sombra']);
+    assert.equal(uso.rc, 2);
   });
 
   test('pr-mergeado-sem-resposta-nao-liga (spec:53, FIEL-1 b): plano todo integrado + PR mergeado como fato ⇒ sem PRONTO e sem a entrega ligada; última conhecida é a GM-12', () => {
@@ -1318,7 +1359,7 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
   const publicada = (extra = [], prEstado = 'mergeado') => {
     const m = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
     evEm(m, 'GM-12', 'task.iniciada', { task: 'T1', papel: 'implementador' });
-    for (const [tipo, dados] of extra) evEm(m, 'GM-12', tipo, dados);
+    for (const [tipo, dados, agente] of extra) evEm(m, 'GM-12', tipo, dados, { agente });
     evEm(m, 'GM-12', 'fato.medido', { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: prEstado, branch: 'feat/GM-12-painel' } });
     return m;
   };
@@ -1346,7 +1387,7 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.equal(e.parar, null);
     assert.doesNotMatch(cli(m, ['texto', '--agentes'], { input: JSON.stringify(VIVO) }).stdout, /^PLANO/m);
     // o defeito por outro canal: o "depende de você" também vem do cálculo com o plano (sem a "diário fora da tabela" do plano ausente)
-    assert.deepEqual(e.depende, [{ nivel: 'dono', motivo: 'depende de você: nada', acoes: [] }]);
+    assert.deepEqual(e.depende, [{ nivel: 'dono', motivo: 'nada depende de você', acoes: [] }]);
     assert.doesNotMatch(cli(m, ['texto', '--agentes'], { input: JSON.stringify(VIVO) }).stdout, /diário fora da tabela/);
   });
   test('publicada-campos-do-plano (T47): atenção, recente e AGORA da publicada são os da MESMA entrega com o PR aberto (identificada); PRONTO e plano saem', () => {
@@ -1385,7 +1426,8 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     const casos = {
       parar: [estado(publicada([['loop.parar', { motivo: 'sem_progresso' }]])).estado, (e) => e.parar !== null],
       pergunta: [estado(comPergunta, { agentes: { session_id: 's1', sessao: {}, agentes: [] } }).estado, (e) => e.pergunta !== null],
-      depende: [estado(publicada([['nota', { tipo: 'pendencia', texto: 'a' }]])).estado, (e) => e.depende.some((d) => d.motivo !== 'depende de você: nada')],
+      // GM-15 T35 (r.13): pendência de autoria do orquestrador é lembrete dele (fora do DEPENDE); a de outro autor apaga a linha
+      depende: [estado(publicada([['nota', { tipo: 'pendencia', texto: 'a' }, 'dono']])).estado, (e) => e.depende.some((d) => d.motivo !== 'nada depende de você')],
       vivo: [estado(publicada(), { agentes: VIVO }).estado, (e) => e.agora.agentes.length > 0],
     };
     for (const [nome, [e, pede]] of Object.entries(casos)) {
@@ -1395,6 +1437,8 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     }
     const todas = publicada([...INTEGRAR('T1').slice(1), ...INTEGRAR('T2')]);
     assert.deepEqual(estado(todas).estado.umaLinha, { ultima: { id: 'GM-12', estado: 'tasks todas integradas' } });
+    // r.13: o lembrete do orquestrador não apaga a linha
+    assert.deepEqual(estado(publicada([['nota', { tipo: 'pendencia', texto: 'a' }]])).estado.umaLinha, { ultima: { id: 'GM-12', estado: '0 de 2 tasks integradas' } });
   });
   test('publicada-vizinhos (T47): a mesma entrega com o PR aberto (identificada) segue igual; publicada com plano todo integrado segue sem PRONTO e sem PAROU', () => {
     const a = repoT18({ specs: [SPEC12], planos: { 'GM-12': ['T1', 'T2'] } });
@@ -1444,5 +1488,182 @@ describe('T18: painel.mjs estado em toda fase, fora do loop', { timeout: 120_000
     assert.equal(depois.trilha.mudouDepois, false, JSON.stringify(depois.trilha));
     assert.equal(JSON.stringify(depois.depende).includes('versão nova'), false, JSON.stringify(depois.depende));
     assert.equal(depois.depende.some((i) => i.acoes?.some((a) => a.comando === '/gabarito-mestre:aprovar')), false, JSON.stringify(depois.depende));
+  });
+});
+
+// ─────────────────────────────────────────────── GM-15 T9 (REQ-ENT-2): o alvo é só o que não foi feito; o plano é relido a cada leitura
+describe('GM-15 T9: alvo sem fora, plano relido', { timeout: 60_000 }, () => {
+  const FORA = (task, como = 'adiada') => ['task.fora', { task, como, motivo: 'fora do corte', origem: 'sombra', fonte: 'spec:35' }];
+  const reescrever = (m, tasks, extra = {}) => writeFileSync(join(m.dir, 'plano.json'), JSON.stringify({ entrega: ENTREGA, spec: 'docs/spec.md', tasks, ...extra }));
+  const TASK = (id, deps = []) => ({ id, titulo: `task ${id}`, deps, arquivos: [`src/${id}.txt`] });
+
+  test('plano-mudou-painel-muda: plano, spec e `task.fora` relidos a cada leitura ⇒ PRONTO e DEPENDE mudam sem comando do dono', () => {
+    const spec = '# Titulo\n\nv1\n';
+    const m = montar({ spec, eventos: [...INTEGRAR('T1')] });
+    ev(m, 'spec.aprovada', { spec: 'docs/spec.md', sha256: sha256(Buffer.from(spec)) });
+    const a = estado(m).estado;
+    assert.deepEqual([a.pronto.integradas, a.pronto.total], [1, 2]);
+    assert.equal(a.depende.some((d) => d.motivo === 'spec aguardando aprovação'), false);
+    // o plano ganha a T3 e passa a apontar outra spec (sha novo): a próxima leitura já vê os dois
+    writeFileSync(join(m.repo, 'docs', 'spec2.md'), '# Titulo\n\nv2\n');
+    reescrever(m, [TASK('T1'), TASK('T2', ['T1']), TASK('T3')], { spec: 'docs/spec2.md' });
+    const b = estado(m).estado;
+    assert.deepEqual([b.pronto.integradas, b.pronto.total], [1, 3]);
+    assert.ok(b.depende.some((d) => d.motivo === 'spec aguardando aprovação'), JSON.stringify(b.depende));
+    // a T3 é cortada pela Sombra (evento no diário): a próxima leitura tira a T3 do alvo
+    ev(m, ...FORA('T3', 'cortada'));
+    const c = estado(m).estado;
+    assert.deepEqual([c.pronto.integradas, c.pronto.total, c.plano.total], [1, 2, 2]);
+    assert.equal(c.plano.tasks.some((t) => t.id === 'T3'), false);
+    assert.match(cli(m, ['texto']).stdout, /1\/2 tasks/);
+    const pane = linhasDaPane(estadoParaDesenho(c), { preset: 'esquadrao' }, 120, {}).map((l) => l.map((x) => x.texto).join('')).join('\n');
+    assert.match(pane, /1\/2 tasks/, 'o mod desenha o alvo sem a cortada');
+    assert.doesNotMatch(pane, /\bT3\b/);
+  });
+
+  test('plano-invalido-mostra-interrogacao: plano.json inválido depois de um válido ⇒ rc 0, "?" com o motivo, nunca o plano velho', () => {
+    for (const corpo of ['{ não é json', '{"entrega":"GM-12","tasks":"x"}', JSON.stringify({ entrega: 'GM-99', tasks: [{ id: 'T1', deps: [], arquivos: ['a'] }] })]) {
+      const m = montar({ eventos: [...INTEGRAR('T1'), ['task.iniciada', { task: 'T2', papel: 'implementador' }]] });
+      assert.deepEqual([estado(m).estado.pronto.integradas, estado(m).estado.pronto.total], [1, 2], corpo);
+      writeFileSync(join(m.dir, 'plano.json'), corpo);
+      const r = cli(m, ['estado']);
+      assert.equal(r.rc, 0, `${corpo}: ${r.stdout}`);
+      const e = r.json.estado;
+      assert.equal(e.pronto, null, `${corpo}: sem PRONTO do plano velho`);
+      assert.deepEqual([e.plano.total, e.plano.tasks], [0, []], corpo);
+      assert.equal(e.parar, null, `${corpo}: plano ilegível não vira PAROU de diário`);
+      assert.equal(e.fase.numero, null, corpo);
+      assert.match(e.fase.motivo, /^plano inválido: /, corpo);
+      assert.ok(e.depende.some((d) => d.motivo === 'depende de você: ? (não consegui ler o plano)'), `${corpo}: ${JSON.stringify(e.depende)}`);
+      assert.ok(r.json.avisos.some((a) => /^plano: /.test(a)), `${corpo}: o motivo inteiro vai nos avisos`);
+      const t = cli(m, ['texto']);
+      assert.equal(t.rc, 0, corpo);
+      assert.match(t.stdout, /FASE \? de 7 .*\? plano inválido: /, corpo);
+      assert.doesNotMatch(t.stdout, /\d+\/2 tasks/, `${corpo}: nada do plano velho`);
+      // o estado que o MOD desenha (funções puras reais de mod/painel.mjs): a Pane traz o "?" com o motivo e nada do plano velho
+      const pane = linhasDaPane(estadoParaDesenho(e), { preset: 'esquadrao' }, 120, {}).map((l) => l.map((x) => x.texto).join('')).join('\n');
+      assert.match(pane, /FASE \? de 7 .*\? plano inválido: /, `${corpo}: ${pane}`);
+      assert.doesNotMatch(pane, /\d+\/2 tasks/, corpo);
+      // corrigido o plano, a leitura seguinte volta ao PRONTO (nada guardado)
+      reescrever(m, [TASK('T1'), TASK('T2', ['T1'])]);
+      assert.deepEqual([estado(m).estado.pronto.integradas, estado(m).estado.pronto.total], [1, 2], corpo);
+    }
+  });
+
+  test('ultima-em-palavras-sem-fora: a última entrega com a T2 cortada e a T1 integrada é "tasks todas integradas"', () => {
+    const m = repoT18({ branch: 'feat/GM-7-x', planos: { 'GM-7': ['T1', 'T2'] } });
+    integrarEm(m, 'GM-7', 'T1');
+    evEm(m, 'GM-7', ...FORA('T2', 'cortada'));
+    g(m.repo, 'checkout', '-q', '--detach');
+    assert.deepEqual(cli(m, ['estado']).json.estado.umaLinha, { ultima: { id: 'GM-7', estado: 'tasks todas integradas' } });
+  });
+});
+
+// GM-15 T13 (REQ-AUT-1): o lote do dono chega ao DEPENDE que o painel desenha, igual ao do `proxima` (mesma config da Sombra de origin/HEAD).
+// Mutação: painel sem lote (não passa `configLote` / `dependeDe` sem o lote) ⇒ lote-igual-no-painel morre.
+describe('GM-15 T13: lote do dono no painel', () => {
+  const NO_TETO = (t) => [
+    ['task.iniciada', { task: t, papel: 'implementador' }], ['task.concluida', { task: t, sha: 'a'.repeat(40) }],
+    ['task.iniciada', { task: t, papel: 'revisor' }], ['review.veredito', { task: t, veredito: 'REPROVADO', rodada: 1, blocker: 0, major: 1 }],
+    ['task.iniciada', { task: t, papel: 'correcao' }], ['task.concluida', { task: t, sha: 'b'.repeat(40) }],
+    ['task.iniciada', { task: t, papel: 'revisor' }], ['review.veredito', { task: t, veredito: 'REPROVADO', rodada: 2, blocker: 0, major: 1 }],
+  ];
+  const PROP = { req: 'REQ-A-1', diff: '+ x', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'regra_negocio' };
+  const montarLote = (origem) => {
+    const m = montar({ origem, eventos: [...NO_TETO('T1'), ['evento.do.futuro', { x: 1 }]] });
+    ev(m, 'emenda.proposta', PROP, { sessao: 'emendas' });
+    return m;
+  };
+  const proximaDe = (m) => {
+    const r = spawnSync(process.execPath, [LOOP, 'proxima'], { cwd: m.repo, encoding: 'utf8', timeout: 60_000 });
+    const j = JSON.parse(r.stdout.trim().split('\n').at(-1));
+    assert.equal(j.ok, true, r.stdout + r.stderr);
+    return j.lote;
+  };
+
+  test('lote-igual-no-painel: o DEPENDE do painel (CLI) traz o lote do proxima inteiro, contíguo e na mesma ordem', () => {
+    const m = montarLote({ entrega: { base: 'next', autonomia: false }, sombra: { julga_emendas: false, libera_teto: false } });
+    const lote = proximaDe(m);
+    assert.deepEqual(lote.map((i) => i.motivo), ['decidir a T1: chegou ao limite de revisões', 'decidir a emenda 1',
+      `atualizar o plugin (instalado: ${VERSAO_PLUGIN}): o diário tem evento de uma versão mais nova`, 'no fim da entrega: levar next para main']);
+    const r = cli(m, ['estado']);
+    assert.equal(r.rc, 0, r.stdout + r.stderr);
+    const dep = r.json.estado.depende;
+    const i = dep.findIndex((d) => d.motivo === lote[0].motivo);
+    assert.ok(i >= 0, JSON.stringify(dep.map((d) => d.motivo)));
+    assert.deepEqual(dep.slice(i, i + lote.length), lote);
+    assert.equal(dep.filter((d) => d.acoes.some((a) => a.comando === '/gabarito-mestre:liberar T1')).length, 1, 'liberar 1 vez');
+  });
+
+  test('lote-no-painel-segue-origin: com a Sombra e a autonomia ligadas em origin/HEAD, painel e proxima tiram teto, emenda e next ⇒ main juntos', () => {
+    const m = montarLote({ entrega: { base: 'next', autonomia: true }, sombra: { julga_emendas: true, libera_teto: true } });
+    assert.deepEqual(proximaDe(m).map((i) => i.motivo), [`atualizar o plugin (instalado: ${VERSAO_PLUGIN}): o diário tem evento de uma versão mais nova`]);
+    const motivos = cli(m, ['estado']).json.estado.depende.map((d) => d.motivo);
+    assert.ok(motivos.includes(`atualizar o plugin (instalado: ${VERSAO_PLUGIN}): o diário tem evento de uma versão mais nova`), JSON.stringify(motivos));
+    assert.ok(!motivos.some((x) => /emenda 1|levar next/.test(x)), JSON.stringify(motivos));
+  });
+});
+
+// ─────────────────────────────────────────────── GM-15 T19 (REQ-POU-4): o painel lê o sinal do loop da sessão (T17) com o leitor do mod e o frescor do Stop
+// Mutações: M19-k sem o frescor (sinal velho vale) ⇒ painel-le-o-sinal-do-loop · M19-l sinal de outra sessão vale ⇒ painel-le-o-sinal-do-loop ·
+// M19-m o sinal não chega à projeção ⇒ painel-cli-loop-desligado-avisa
+import { SINAL_FRESCO_MS } from '../scripts/stop-loop.mjs';
+import { loopDaSessao } from '../scripts/painel.mjs';
+describe('GM-15 T19: sinal do loop no painel', { timeout: 60_000 }, () => {
+  const sinal = (m, sessao, o) => {
+    mkdirSync(join(m.repo, '.harness', 'contexto'), { recursive: true });
+    writeFileSync(join(m.repo, '.harness', 'contexto', `loop-dinamico.${sessao}.json`), typeof o === 'string' ? o : `${JSON.stringify(o)}\n`);
+  };
+  const forma = (estado, sessao, emMs) => ({ estado, intervalo: 0, dinamico: estado === 'armado' ? 1 : 0, sessao, em: new Date(emMs).toISOString() });
+  const visto = (m, opts) => {
+    let e = null;
+    const r = estadoDoPainel(m.repo, { agoraMs: AGORA, ...opts, projetar: (p, ev, entrada) => { e = entrada; return {}; } });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    return e.loopDinamico ?? null;
+  };
+
+  test('painel-le-o-sinal-do-loop: só o sinal DESTA sessão, na forma do mod e fresco (o frescor do Stop) vale; o resto é não conferível', () => {
+    const m = montar({ origem: {} });
+    assert.equal(visto(m, { sessao: 'S1' }), null, 'sem arquivo');
+    sinal(m, 'S1', forma('armado', 'S1', AGORA - 60_000));
+    assert.equal(visto(m, { sessao: 'S1' }), 'armado');
+    assert.equal(visto(m, {}), null, 'sem sessão não há sinal a ler');
+    assert.equal(visto(m, { sessao: 'S2' }), null, 'o sinal de S1 não vale para S2');
+    sinal(m, 'S1', forma('ausente', 'S1', AGORA - 60_000));
+    assert.equal(visto(m, { sessao: 'S1' }), 'ausente');
+    // o frescor é do consumidor (contrato do mod): o mesmo limite do Stop
+    sinal(m, 'S1', forma('ausente', 'S1', AGORA - SINAL_FRESCO_MS));
+    assert.equal(visto(m, { sessao: 'S1' }), 'ausente', 'no limite ainda vale');
+    sinal(m, 'S1', forma('ausente', 'S1', AGORA - SINAL_FRESCO_MS - 1));
+    assert.equal(visto(m, { sessao: 'S1' }), null, 'velho');
+    sinal(m, 'S1', forma('armado', 'S1', AGORA + 10 * 60_000));
+    assert.equal(visto(m, { sessao: 'S1' }), null, 'futuro');
+    for (const [nome, o] of [['de outra sessão', forma('armado', 'S9', AGORA)], ['não conferível', forma('nao_conferivel', 'S1', AGORA)], ['corrompido', '{nao-json']]) {
+      sinal(m, 'S1', o);
+      assert.equal(visto(m, { sessao: 'S1' }), null, nome);
+    }
+    // a sessão do mod (stdin de --agentes) também serve
+    sinal(m, 'S1', forma('armado', 'S1', AGORA));
+    assert.equal(visto(m, { agentes: { session_id: 'S1', sessao: {}, agentes: [] } }), 'armado');
+    // função pura exposta: mod ausente (cópia em tools/ sem o mod) ⇒ não conferível, nunca lança
+    assert.equal(loopDaSessao(m.repo, 'S1', AGORA, null), null);
+    assert.equal(loopDaSessao(m.repo, '../x', AGORA), null, 'id fora da forma');
+  });
+
+  test('painel-cli-loop-desligado-avisa: o painel real (texto) com o sinal "ausente" da sessão e trabalho a seguir diz "ligar o loop automático"; armado, não', () => {
+    const m = montar({ origem: {} });
+    const texto = () => { let out = ''; const rc = main(['texto', '--sessao', 'S1'], m.repo, IO({ saida: (t) => { out += t; } })); assert.equal(rc, 0, out); return out; };
+    sinal(m, 'S1', forma('ausente', 'S1', AGORA - 60_000));
+    assert.match(texto(), /ligar o loop automático/);
+    sinal(m, 'S1', forma('armado', 'S1', AGORA - 60_000));
+    assert.doesNotMatch(texto(), /ligar o loop automático/);
+    // r1 MAJOR-1: a régua do Stop: tudo que não é armado (não conferível, velho, de outra sessão, sem arquivo) também avisa
+    for (const [nome, o] of [['não conferível', forma('nao_conferivel', 'S1', AGORA - 60_000)], ['velho', forma('armado', 'S1', AGORA - SINAL_FRESCO_MS - 1)], ['de outra sessão', forma('armado', 'S9', AGORA - 60_000)]]) {
+      sinal(m, 'S1', o);
+      assert.match(texto(), /ligar o loop automático/, nome);
+    }
+    let out = ''; // sem arquivo: sessão que nunca gravou sinal
+    assert.equal(main(['texto', '--sessao', 'S7'], m.repo, IO({ saida: (t) => { out += t; } })), 0, out);
+    assert.match(out, /ligar o loop automático/, 'sem arquivo');
   });
 });

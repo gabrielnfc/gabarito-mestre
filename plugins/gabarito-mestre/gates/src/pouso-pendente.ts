@@ -12,6 +12,10 @@ import { pousoDaFronteira } from './pouso.ts';
  *  - leitura própria fresca ⇒ pendente = há `sessao.pouso` e a própria leitura segue em X ou acima (o /clear não a limpou); abaixo de X não há pendência;
  *  - sem leitura própria fresca (mod desligado, sessão sem mod) ⇒ a regra sem mod: `sessao.pouso` sem `sessao.inicio {origem: 'clear'}` posterior, de OUTRA
  *    sessão que a do pouso (sessão paralela, `startup` e `resume` não tiram; `ts` ilegível no início ⇒ ele não conta).
+ *  - GM-15 T33 (emenda 12, g.18): ACRESCENTA um caminho de fechamento, sem tirar nenhum. Sem leitura própria, o pouso também fecha quando há `sessao.retomada`
+ *    (ou `sessao.inicio` de origem diferente de `clear`) de sessão DIFERENTE da que pousou, posterior ao pouso, E a leitura medida DESSA sessão nova (a mesma
+ *    fonte, validade e X de `leituraPropria`, em `medicao.leituras`) está abaixo de X; sem medição dela, esse caminho não fecha. `sessao.inicio {clear}` segue
+ *    fechando como antes, sem leitura.
  * `sessao.pouso.tentativa {n}` (a repetição do pouso pelo mod) NÃO é `sessao.pouso`: não entra na procura do último pouso, portanto não muda `seq`
  * (a chave do push `chavePouso`, mod/painel.mjs). Só conta tentativas (`tentativasDoPouso`).
  */
@@ -97,6 +101,25 @@ export function tentativasDoPouso(eventos: Evento[] | null | undefined): { n: nu
   return { n, ultimoMs: ultimo };
 }
 
+const origemDe = (e: Evento): unknown => (e?.dados !== null && typeof e?.dados === 'object' ? (e.dados as Record<string, unknown>).origem : undefined);
+
+/**
+ * As sessões que podem ter retomado o trabalho depois do último pouso (g.18): `sessao.retomada` ou `sessao.inicio` de origem diferente de `clear`, de sessão
+ * DIFERENTE da que pousou, com `ts` legível e posterior ao pouso. Sem repetir, na ordem do diário. Quem lê o disco usa a lista para medir cada uma (`medicaoDoPouso`).
+ */
+export function sessoesDeRetomada(eventos: Evento[] | null | undefined): string[] {
+  if (!Array.isArray(eventos)) return [];
+  const p = ultimoPouso(eventos);
+  if (p === null || !Number.isFinite(p.ms)) return [];
+  const ids: string[] = [];
+  for (const e of eventos) {
+    const t = msDe(e);
+    if (!Number.isFinite(t) || t <= p.ms || e.sessao === p.e.sessao || typeof e.sessao !== 'string' || ids.includes(e.sessao)) continue;
+    if (e.tipo === 'sessao.retomada' || (e.tipo === 'sessao.inicio' && origemDe(e) !== 'clear')) ids.push(e.sessao);
+  }
+  return ids;
+}
+
 export function pousoPendente(eventos: Evento[] | null | undefined, onboarding?: boolean, medicao?: Medicao): PousoPendente {
   const nenhum: PousoPendente = { pendente: false, sessao: null, seq: null };
   if (!Array.isArray(eventos)) return nenhum;
@@ -118,5 +141,11 @@ export function pousoPendente(eventos: Evento[] | null | undefined, onboarding?:
     if (d === null || typeof d !== 'object') return false;
     return e.tipo === 'sessao.inicio' && e.sessao !== p.e.sessao && d.origem === 'clear';
   });
-  return limpou ? nenhum : { pendente: true, sessao: p.e.sessao, seq: p.e.seq };
+  if (limpou) return nenhum;
+  // g.18: retomada de outra sessão com o contexto MEDIDO dela abaixo de X (sem medição, não fecha)
+  const retomou = medicao !== undefined && sessoesDeRetomada(eventos).some((id) => {
+    const l = leituraPropria({ ...medicao, sessaoAtual: id });
+    return l !== null && l.percent < medicao.x;
+  });
+  return retomou ? nenhum : { pendente: true, sessao: p.e.sessao, seq: p.e.seq };
 }

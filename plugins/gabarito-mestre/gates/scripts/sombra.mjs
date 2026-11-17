@@ -3,7 +3,7 @@
  * REQ-SOM-1 a SOM-4 pela borda — `sombra.mjs`: a dúvida do loop vai à Sombra por caminho fixo e nunca é perguntada duas vezes.
  *
  *   sombra.mjs perguntar (--req <REQ> | --task <id>) --pergunta <texto> [--entrega <GM-10>] [--sessao <id>]
- *       → {ok, hash, cache:true, decisao} | {ok, hash, pendente:true, brief, prompt} | {ok, hash, brief, prompt, consultas, teto}
+ *       → {ok, hash, cache:true, decisao} | {ok, hash, pendente:true, brief, prompt} | {ok, hash, brief, prompt, consultas}
  *   sombra.mjs perguntar --task <id> --libera-teto [--entrega <GM-10>] [--sessao <id>]   (GM-14 T36, FIEL-15) a PERGUNTA FECHADA de liberação do
  *       teto (texto fixo, `perguntaDaLiberacao` de `loop.mjs`); só o hash dela serve a `loop.mjs liberar --origem sombra`. Sem `--pergunta`.
  *       GM-14 T39 (emenda 16, FIEL-15 e): o texto traz o critério; o brief traz SEMPRE as emendas aprovadas de REQ-DIA-2 (onde a FIEL-15 mora)
@@ -11,6 +11,9 @@
  *       `review-r<n>.md` até 40 KB com corte marcado e o sha256 do arquivo inteiro; ausente, ilegível ou cortado aparece marcado.
  *       T39 r1: só com a task em `no_teto` (`fora_do_teto`, nada gravado); o hash leva a identidade do insumo (rodadas do ciclo + sha256 de
  *       cada achado): veredito novo ou achado reescrito ⇒ hash novo, consulta nova e brief novo; a decisão do hash velho não libera.
+ *   sombra.mjs perguntar (--req <REQ> | --task <id>) --pergunta <texto> --proposta <seq>   (GM-15 T11, REQ-EME-3 B) o brief leva o `diff`, o `fato` e a
+ *       `alternativa` da proposta, com o estado dela; a proposta entra no hash (`[proposta #<seq>]`); com 2 rejeições do orquestrador na mesma âncora
+ *       (REQ + task) o brief pede à Sombra o texto da emenda, que o orquestrador grava com `loop.mjs emenda propor --origem sombra`.
  *   sombra.mjs registrar <hash> <resposta.json> [--entrega <GM-10>] [--sessao <id>]  → {ok, evento}
  *       resposta.json: { resposta, texto, pergunta_enviesada, fontes?, medicao?, fora_da_regra?, emenda_seq?, substitui?: {sessao, seq}, libera? }
  *       `libera` (booleano, GM-14 T36): só na pergunta de liberação da task (`libera_fora_da_liberacao`); ausente, a decisão grava os campos de antes.
@@ -39,10 +42,9 @@ import { createHash } from 'node:crypto';
 import { lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { lerConfigOrigin } from '../lib/config.mjs';
-import { ACHADO_MAX_BYTES, achadosDoCiclo, estadoNoDiario, hashDaLiberacao, perguntaDaLiberacao, reqsDaLiberacao, tetoDaSombra } from './loop.mjs';
+import { ACHADO_MAX_BYTES, achadosDoCiclo, estadoNoDiario, hashDaLiberacao, perguntaDaLiberacao, progressoDaTask, reqsDaLiberacao } from './loop.mjs';
 import * as diario from '../dist/diario.js';
-import { projetarEmendas } from '../dist/emenda.js';
+import { projetarEmendas, quemRedigeNaAncora } from '../dist/emenda.js';
 import { formaInvalida, REQ_RE } from '../dist/formas.js';
 import { validarPlano } from '../dist/plano.js';
 import {
@@ -53,7 +55,6 @@ const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
 const ENTREGA_RE = /^[A-Z]+-\d+$/;
 const SESSAO_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const HASH_RE = /^[0-9a-f]{64}$/;
-const TETO_PADRAO = 26;
 const RESPOSTA_MAX = 1000;
 const GIT_REDIRECIONA = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_NAMESPACE'];
 
@@ -182,13 +183,13 @@ function gravarEvento(c, tipo, dados) {
 
 // ─────────────────────────────────────────────────────────────── entrada
 
-const USO = 'uso: sombra.mjs perguntar (--req <REQ> | --task <id>) --pergunta <texto> [--entrega GM-10] [--sessao <id>] | perguntar --task <id> --libera-teto | registrar <hash> <resposta.json> [--entrega GM-10] [--sessao <id>]';
+const USO = 'uso: sombra.mjs perguntar (--req <REQ> | --task <id>) --pergunta <texto> [--proposta <seq>] [--entrega GM-10] [--sessao <id>] | perguntar --task <id> --libera-teto | registrar <hash> <resposta.json> [--entrega GM-10] [--sessao <id>]';
 
 /** Argumentos estritos. Flag desconhecida, sem valor ou repetida, e posicional a mais ou a menos é uso (rc 2). */
 function lerArgs(argv) {
   const [cmd, ...resto] = argv;
   const ESPEC = {
-    perguntar: { pos: 0, flags: ['req', 'task', 'pergunta', 'entrega', 'sessao', 'libera-teto'], semValor: ['libera-teto'] },
+    perguntar: { pos: 0, flags: ['req', 'task', 'pergunta', 'entrega', 'sessao', 'libera-teto', 'proposta'], semValor: ['libera-teto'] },
     registrar: { pos: 2, flags: ['entrega', 'sessao'] },
   };
   if (typeof cmd !== 'string' || !Object.hasOwn(ESPEC, cmd)) throw new Falha('uso', `comando desconhecido ou ausente. ${USO}`, {}, 2);
@@ -218,13 +219,6 @@ function lerArgs(argv) {
 function validarFlagsComuns(flags) {
   if (flags.entrega !== undefined && !ENTREGA_RE.test(flags.entrega)) throw new Falha('argumento_invalido', `--entrega "${flags.entrega}" fora da forma ${ENTREGA_RE}`, {}, 2);
   if (flags.sessao !== undefined && !SESSAO_RE.test(flags.sessao)) throw new Falha('argumento_invalido', `--sessao fora da forma ${SESSAO_RE}`, {}, 2);
-}
-
-/** `sombra.teto` de `origin/HEAD`: ausente ⇒ 26 sem aviso; presente e inválido, ou config de origin corrompida ⇒ 26 com `aviso` (ausente ≠ corrompido). A regra do teto é `tetoDaSombra` de `loop.mjs` (E4, T9: sem terceira cópia). */
-function tetoDe(raiz) {
-  const o = lerConfigOrigin(raiz);
-  if (o.fonte !== 'origin' && o.invalida === true) return { teto: TETO_PADRAO, aviso: `config de origin/HEAD inválida (${o.motivo}): teto ${TETO_PADRAO}` };
-  return tetoDaSombra(o);
 }
 
 /** Caminho do brief, LITERAL: a mesma string que a guarda monta (T12); nunca `relative` de `realpath`. */
@@ -296,9 +290,60 @@ function comAchados(brief, task, achados) {
   return i < 0 ? `${brief}\n${secao}` : `${brief.slice(0, i + 1)}${secao}${brief.slice(i)}`;
 }
 
+/**
+ * GM-15 T36 (emenda 24 m.1): o brief da liberação traz o progresso MEDIDO pelo CLI (`progressoDaTask`, a mesma função de `loop.mjs liberar`); a Sombra não declara
+ * progresso. Sem progresso (ou não medido) ela só pode liberar com `abordagem_nova`, que o orquestrador passa em `loop.mjs liberar --abordagem-nova <texto>`.
+ */
+function comProgresso(brief, pr) {
+  const linhas = pr.dispensado
+    ? ['progresso: dispensado (1º teto da task)', `- ${pr.motivo}`]
+    : pr.progresso === true
+      ? ['progresso: sim', `- ${pr.motivo}`]
+      : ['progresso: sem progresso' + (pr.progresso === null ? ' (não medido)' : ''), `- ${pr.motivo}`,
+        '- Sem progresso medido, você só pode liberar com uma abordagem nova (replanejar, dividir a task ou emenda proposta): responda `libera: true` e escreva a abordagem em `texto`; o orquestrador a passa em `loop.mjs liberar --abordagem-nova <texto>`. Se não houver abordagem nova a propor, `libera: false`.'];
+  const secao = ['## Progresso medido', '', 'Medido pelo CLI nos reviews dos 2 últimos ciclos (não declarado por você).', '', ...linhas, ''].join('\n');
+  const i = brief.lastIndexOf('\n## Instrução\n');
+  return i < 0 ? `${brief}\n${secao}` : `${brief.slice(0, i + 1)}${secao}${brief.slice(i)}`;
+}
+
+/** GM-15 T11 (REQ-EME-3 B): a proposta de seq `seq` no estado projetado, com o estado e as rejeições do orquestrador na mesma âncora (só o REQ: emenda 13). */
+function propostaDoEstado(est, seq) {
+  for (const [estado, lista] of [['aberta', est.abertas], ['aprovada', est.aprovadas], ['rejeitada', est.rejeitadas]]) {
+    const p = lista.find((x) => x.seq === seq);
+    if (p !== undefined) {
+      const { quem, rejeicoes } = quemRedigeNaAncora(est, p.req);
+      return { p, estado, rejeicoes, quem };
+    }
+  }
+  return undefined;
+}
+
+/** GM-15 T11: a seção da proposta (diff, fato, alternativa) antes da `## Instrução`; com 2 rejeições na âncora, também o pedido de redação. */
+function comProposta(brief, { p, estado, rejeicoes, quem }) {
+  const bloco = (rotulo, texto) => { const f = cerca(texto); return [`### ${rotulo}`, '', `${f}`, texto.replace(/\n$/u, ''), f, '']; };
+  const partes = ['## Proposta de emenda sob julgamento', '',
+    `Proposta de emenda #${p.seq} (${p.req}${p.task !== undefined ? `, task ${p.task}` : ''}) · ${estado} · causa ${p.causa}${p.origem === 'sombra' ? ' · redigida pela Sombra' : ''}`, '',
+    ...bloco('Diff', p.diff), ...bloco('Fato', p.fato), ...bloco('Alternativa', p.alternativa)];
+  // Emenda 13 (REQ-AUT-1): só `quemRedigeNaAncora` decide; redação da Sombra já rejeitada no REQ ⇒ dono, sem pedir redação.
+  if (quem === 'sombra' && p.origem !== 'sombra') {
+    partes.push('### Redação', '',
+      `Esta âncora (${p.req}) já teve ${rejeicoes} propostas do orquestrador rejeitadas: esta é a ${rejeicoes}ª rejeição e não há proposta seguinte dele. `
+      + 'Se a hipótese da emenda procede, redija o texto da emenda (diff, fato e alternativa) no campo `texto` da resposta; o orquestrador a grava com `emenda propor --origem sombra`.', '');
+  }
+  if (quem === 'dono') {
+    partes.push('### Redação', '', `Esta âncora (${p.req}) já teve redação da Sombra rejeitada: a Sombra não repropõe e o item vai ao dono.`, '');
+  }
+  const i = brief.lastIndexOf('\n## Instrução\n');
+  const secao = `${partes.join('\n')}\n`;
+  return i < 0 ? `${brief}\n${secao}` : `${brief.slice(0, i + 1)}${secao}${brief.slice(i)}`;
+}
+
 function perguntar(cwd, flags) {
   const { req, task } = flags;
   // GM-14 T36: `--libera-teto` é a pergunta fechada de liberação, ancorada na task; o texto é o de `loop.mjs`, nunca digitado.
+  if (flags.proposta !== undefined && (!/^[1-9][0-9]{0,8}$/.test(flags.proposta) || flags['libera-teto'] === true)) {
+    throw new Falha('uso', `--proposta espera o seq da emenda.proposta (inteiro >= 1) e não vale com --libera-teto. ${USO}`, {}, 2);
+  }
   if (flags['libera-teto'] === true && (task === undefined || req !== undefined || flags.pergunta !== undefined)) {
     throw new Falha('uso', `perguntar --libera-teto exige --task e não aceita --req nem --pergunta. ${USO}`, {}, 2);
   }
@@ -333,6 +378,15 @@ function perguntar(cwd, flags) {
 
   const { eventos, est } = diarioConferido(c);
   const ancora = req !== undefined ? { req } : { task };
+  let sobreProposta;
+  if (flags.proposta !== undefined) {
+    sobreProposta = propostaDoEstado(est, Number(flags.proposta));
+    if (sobreProposta === undefined) throw new Falha('proposta_inexistente', `nenhuma emenda.proposta de seq ${flags.proposta} (sessão emendas); nada foi gravado`);
+    const { p } = sobreProposta;
+    if (req !== undefined ? p.req !== req : p.task !== task) {
+      throw new Falha('proposta_fora_da_ancora', `a proposta ${p.seq} é de ${p.req}${p.task !== undefined ? `, task ${p.task}` : ''}, não de ${req ?? `a task ${task}`}; nada foi gravado`);
+    }
+  }
   const liberacao = flags['libera-teto'] === true;
   // T39 r1 (MAJOR 1): só há liberação a perguntar com a task no teto; fora dele, recusa antes de gravar
   if (liberacao) {
@@ -346,7 +400,7 @@ function perguntar(cwd, flags) {
   const achados = liberacao ? achadosDoCiclo(c.raiz, eventos, task) : undefined;
   let hash;
   try {
-    hash = liberacao ? hashDaLiberacao(plano, eventos, task, c.raiz, achados) : hashPergunta(textoAncora(ancora), versaoDe(est, reqsDasEmendas), pergunta);
+    hash = liberacao ? hashDaLiberacao(plano, eventos, task, c.raiz, achados) : hashPergunta(textoAncora(ancora), versaoDe(est, reqsDasEmendas), sobreProposta === undefined ? pergunta : `${pergunta} [proposta #${sobreProposta.p.seq}]`);
   } catch (e) {
     throw new Falha('argumento_invalido', `não deu para calcular o hash da pergunta (${e.message})`, {}, 2);
   }
@@ -357,21 +411,19 @@ function perguntar(cwd, flags) {
 
   const emendas = est.aprovadas.filter((p) => reqsDasEmendas.includes(p.req)).map((p) => ({ proposta_seq: p.seq, req: p.req, diff: p.diff }));
   const base = montarBrief({ pergunta, ancora: textoAncora(ancora), spec: plano.spec, trechos, emendas, ...(tarefa !== undefined ? { task: tarefa } : {}) });
-  const conteudo = liberacao ? comAchados(base, task, achados) : base;
-  const { teto, aviso: avisoTeto } = tetoDe(c.raiz);
+  const comBase = liberacao ? comProgresso(comAchados(base, task, achados), progressoDaTask(c.raiz, eventos, task)) : base;
+  const conteudo = sobreProposta === undefined ? comBase : comProposta(comBase, sobreProposta);
 
   if (consultasAbertas(eventos).includes(hash)) {
     escreverBrief(c, hash, conteudo, { sobrescrever: false });
     const brief = caminhoLiteral(c, hash);
-    return { hash, pendente: true, brief, prompt: promptSombra(brief), ...(avisoTeto !== undefined ? { aviso: avisoTeto } : {}) };
+    return { hash, pendente: true, brief, prompt: promptSombra(brief) };
   }
 
   gravarEvento(c, 'sombra.consulta', { pergunta_hash: hash, ...(req !== undefined ? { req } : { task }) });
   escreverBrief(c, hash, conteudo, { sobrescrever: true });
   const brief = caminhoLiteral(c, hash);
-  const consultas = contarConsultas(eventos) + 1;
-  const avisos = [avisoTeto, consultas > teto ? `consultas à Sombra (${consultas}) acima do teto (${teto})` : undefined].filter((a) => a !== undefined);
-  return { hash, brief, prompt: promptSombra(brief), consultas, teto, ...(avisos.length > 0 ? { aviso: avisos.join('; ') } : {}) };
+  return { hash, brief, prompt: promptSombra(brief), consultas: contarConsultas(eventos) + 1 };
 }
 
 // ─────────────────────────────────────────────────────────────── registrar

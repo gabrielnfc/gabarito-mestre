@@ -204,8 +204,14 @@ test('cortar-linha-corta-o-ultimo-segmento-que-estoura', () => {
 // ───────────────────────────── topo ─────────────────────────────
 
 test('topo-nada', () => {
-  assert.deepEqual(blocoTopo(estado('vazio'), 80), [[{ texto: 'depende de você: nada', cor: 'inactive' }]]);
+  assert.deepEqual(blocoTopo(estado('vazio'), 80), [[{ texto: 'nada depende de você', cor: 'inactive' }]]);
   assert.deepEqual(blocoTopo(estado('vazio'), 0), []);
+});
+
+test('topo-nada-do-nucleo-uma-linha (r.13): o item "nada depende de você" do núcleo é a linha de situação, nunca "1 item"', () => {
+  const e = estado('vazio');
+  e.depende = [{ nivel: 'dono', motivo: 'nada depende de você', acoes: [] }];
+  assert.deepEqual(blocoTopo(e, 80), [[{ texto: 'nada depende de você', cor: 'inactive' }]]);
 });
 
 test('topo-cabecalho-n-itens', () => {

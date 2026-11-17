@@ -1,6 +1,6 @@
 # gabarito-instalar: trocar um item que não é pergunta do onboarding
 
-Carregado só quando o usuário pede `trocar orquestracao`, `trocar settings`, `trocar codeowners`, `trocar apendice`, `trocar iniciativa`, `trocar contenda` ou `trocar painel`. Siga só a seção do item pedido. `<raiz>` é a raiz do git (passo 1 do Fluxo em `SKILL.md`). Antes de qualquer gravação, mostre o bloco e peça ok.
+Carregado só quando o usuário pede `trocar autonomia`, `trocar orquestracao`, `trocar settings`, `trocar codeowners`, `trocar apendice`, `trocar iniciativa`, `trocar contenda` ou `trocar painel`. Siga só a seção do item pedido. `<raiz>` é a raiz do git (passo 1 do Fluxo em `SKILL.md`). Antes de qualquer gravação, mostre o bloco e peça ok.
 
 Os dois scripts de config (`onboarding-config.mjs`) fazem merge chave a chave, nunca removem e imprimem o diff. Decida pelo **stdout** (a primeira linha diz o que aconteceu); o stderr só explica:
 
@@ -13,6 +13,10 @@ Os dois scripts de config (`onboarding-config.mjs`) fazem merge chave a chave, n
 | vazio (stderr: `uso: …`, `JSON inválido no argumento`, `seção desconhecida`) | 1 | o erro é do seu JSON: mostre o stderr, corrija e repita |
 
 Exit 0 não é sucesso sozinho: exit 0 com `NÃO escrito` é falha declarada.
+
+## autonomia
+
+Uma pergunta, 3 respostas, 4 chaves que andam juntas: `espera` (padrão) ⇒ `entrega.autonomia: false`, `guarda.autonomia: "nenhuma"`, `sombra.julga_emendas: false`, `sombra.libera_teto: false`; `trabalha` ⇒ `false`, `"orquestrador"`, `true`, `true`; `publica` ⇒ `true`, `"orquestrador"`, `true`, `true`. Rode os passos 5 a 7 do Fluxo com só esta pergunta e as outras no `default`. Config mista ou legada (as 4 chaves não combinam com nenhuma resposta, ou só `continua`/`janela` sobe sozinha) vem com `mista: true` e sem default: diga "autonomia mista", mostre as 4 chaves de hoje e só grave com a escolha do usuário; sem escolha, nada muda (nem promove, nem rebaixa). A resposta `publica` continua obedecendo a política escolhida: autonomia não troca a política.
 
 ## orquestracao
 

@@ -14,11 +14,16 @@ import { normalizarCaminho, temDependencia } from './plano.js';
 
 export const SESSAO_EMENDAS = 'emendas';
 
-                                                                                                                               
+                        
+                                                                                                                                         
+                                                                                                                          
+                    
+  
                              
                       
                                                          
-                         
+                                                                                                                                              
+                                                                
                                                                                          
                     
   
@@ -50,6 +55,9 @@ function comoProposta(e        )                  {
     req: campo(d, 'req')          ,
     ...(typeof task === 'string' ? { task } : {}),
     diff: campo(d, 'diff')          ,
+    fato: campo(d, 'fato')          ,
+    alternativa: campo(d, 'alternativa')          ,
+    ...(campo(d, 'origem') === 'sombra' ? { origem: 'sombra'          } : {}),
     arquivos: Array.isArray(arquivos) ? normalizados(arquivos) : [],
     causa: campo(d, 'causa')         ,
     ts: e.ts,
@@ -61,6 +69,25 @@ function comoJulgamento(e        )                                              
   if (e.tipo !== 'spec.emendada' && e.tipo !== 'emenda.rejeitada') return null;
   if (formaInvalida(e.tipo, e.dados) !== null) return null;
   return { seq: campo(e.dados, 'proposta_seq')          , origem: campo(e.dados, 'origem')                    , aprova: e.tipo === 'spec.emendada' };
+}
+
+/**
+ * Regra ÚNICA de fechamento (projeção, registro e `loop.mjs` a usam): por `proposta_seq`, o 1º julgamento válido na ordem do diário fecha a proposta; os
+ * seguintes são ignorados. EXCEÇÃO (GM-15 T34 D-G15, estendida na T36 por D-G18): o julgamento da SOMBRA (rejeição OU aprovação) é revertido pelo 1º
+ * julgamento do DONO que vier depois (palavra final dele); o julgamento do dono é final. `eventos` já ordenados por `ordenar`; julgamento de forma
+ * inválida é ignorado. `evento` é o que fecha (a posição dele em `eventos` é a do julgamento que vale).
+ */
+export function fecharJulgamentos(eventos          )                                                                             {
+  const fecha = new Map                                                                       ();
+  for (const e of eventos) {
+    if (!ehObjeto(e)) continue;
+    const j = comoJulgamento(e);
+    if (j === null) continue;
+    const atual = fecha.get(j.seq);
+    if (atual !== undefined && !(atual.origem === 'sombra' && j.origem === 'dono')) continue;
+    fecha.set(j.seq, { aprova: j.aprova, origem: j.origem, evento: e });
+  }
+  return fecha;
 }
 
 export function projetarEmendas(eventos          )                {
@@ -82,18 +109,15 @@ export function projetarEmendas(eventos          )                {
     if (p !== null) propostas.set(p.seq, p);
   }
 
-  // 2ª passada: o 1º julgamento válido na ordem do diário fecha a proposta; os seguintes são ignorados.
+  // 2ª passada: a regra de fechamento é `fecharJulgamentos` (única, o registro a importa).
   const est = vazio();
   const julgadas = new Set        ();
-  for (const e of ordem.eventos) {
-    if (!ehObjeto(e)) continue;
-    const j = comoJulgamento(e);
-    if (j === null) continue;
-    const p = propostas.get(j.seq);
-    if (p === undefined || julgadas.has(j.seq)) continue;
-    julgadas.add(j.seq);
+  for (const [seq, j] of fecharJulgamentos(ordem.eventos)) {
+    const p = propostas.get(seq);
+    if (p === undefined) continue;
+    julgadas.add(seq);
     if (j.aprova) est.aprovadas.push({ ...p, origem: j.origem });
-    else est.rejeitadas.push(p);
+    else est.rejeitadas.push({ ...p, rejeitadaPor: j.origem });
   }
   est.abertas = [...propostas.values()].filter((p) => !julgadas.has(p.seq)).sort((a, b) => a.seq - b.seq);
   return est;
@@ -118,6 +142,18 @@ export function escopoDaTask(plano       , est               , task        )    
   return normalizados([...t.arquivos, ...est.aprovadas.filter((p) => p.task === task).flatMap((p) => p.arquivos)]);
 }
 
+/**
+ * Emenda 13 (REQ-EME-3, REQ-AUT-1): a ÚNICA regra de quem age numa âncora (só o REQ). 2+ rejeições do orquestrador e redação da Sombra
+ * já rejeitada ⇒ `dono` (a Sombra não repropõe e o orquestrador não tem 3ª); só as 2+ ⇒ `sombra` redige; senão o `orquestrador` propõe.
+ * `validarProposta` e o brief de `sombra.mjs perguntar --proposta` usam esta função; nenhuma das duas camadas recontagem por conta própria.
+ */
+export function quemRedigeNaAncora(est               , req        )                                                                  {
+  const daAncora = est.rejeitadas.filter((p) => p.req === req);
+  const rejeicoes = daAncora.filter((p) => p.origem !== 'sombra').length;
+  if (rejeicoes < 2) return { quem: 'orquestrador', rejeicoes };
+  return { quem: daAncora.some((p) => p.origem === 'sombra') ? 'dono' : 'sombra', rejeicoes };
+}
+
 /** Motivo pelo qual a proposta não pode ser gravada, ou `null`. Ordem V0..V6: o 1º que casa vence. */
 export function validarProposta(plano       , est               , dados                         )                {
   if (est.invalido !== undefined) return est.invalido;
@@ -136,6 +172,17 @@ export function validarProposta(plano       , est               , dados         
     if (n === null) return `caminho inválido: ${c}`;
     arquivos.push(n);
   }
+  const origem = campo(dados, 'origem');
+  // Emenda 13 (REQ-EME-3): a âncora é só o REQ; a decisão vem da MESMA função que o brief da Sombra usa (REQ-AUT-1).
+  const { quem } = quemRedigeNaAncora(est, campo(dados, 'req')          );
+  if (origem === 'sombra') {
+    if (quem === 'dono') return 'redação da Sombra rejeitada nesta âncora: vai ao dono (a Sombra não repropõe)';
+    if (quem === 'orquestrador') return 'origem sombra só depois da 2ª rejeição da mesma âncora';
+  } else if (quem === 'dono') {
+    return 'terceira proposta do orquestrador na mesma âncora: a redação da Sombra já foi rejeitada, vai ao dono';
+  } else if (quem === 'sombra') {
+    return 'terceira proposta do orquestrador na mesma âncora: a Sombra redige o texto (origem sombra)';
+  }
   if (task !== undefined) {
     for (const outra of plano.tasks) {
       if (outra.id === task || temDependencia(plano, task, outra.id)) continue;
@@ -153,7 +200,12 @@ export function validarJulgamento(est               , proposta_seq        , orig
   if (typeof proposta_seq !== 'number' || !Number.isInteger(proposta_seq) || proposta_seq < 1) return 'proposta_seq inválido: esperado inteiro ≥ 1';
   if (origem !== 'dono' && origem !== 'sombra') return 'origem inválida: esperado dono ou sombra';
   if (origem === 'sombra' && julgaEmendas !== true) return 'origem sombra sem sombra.julga_emendas';
-  if (est.aprovadas.some((p) => p.seq === proposta_seq) || est.rejeitadas.some((p) => p.seq === proposta_seq)) return 'proposta já julgada';
+  // GM-15 T36 (D-G18, emenda 24 m.3): o dono reverte também a APROVAÇÃO da Sombra (palavra final dele); a aprovação do dono é final.
+  const apr = est.aprovadas.find((p) => p.seq === proposta_seq);
+  if (apr !== undefined) return origem === 'dono' && apr.origem === 'sombra' ? null : 'proposta já julgada';
+  const rej = est.rejeitadas.find((p) => p.seq === proposta_seq);
+  // GM-15 T34 (D-G15): só o DONO reverte, e só o julgamento que foi da SOMBRA (rejeição, D-G15; aprovação, D-G18); o dono não re-julga o que ele mesmo julgou, nem a Sombra (ou o orquestrador) o já julgado.
+  if (rej !== undefined) return origem === 'dono' && rej.rejeitadaPor === 'sombra' ? null : 'proposta já julgada';
   if (!est.abertas.some((p) => p.seq === proposta_seq)) return 'proposta inexistente';
   return null;
 }
@@ -163,18 +215,23 @@ export function validarJulgamento(est               , proposta_seq        , orig
 const HEX64 = /^[0-9a-f]{64}$/;
 
                                                                                            
-                                                                                                  
+                                                                                                                  
+/** GM-15 T36 (emenda 25 m.4): o texto da emenda `seq` (revertida pelo dono) segue na spec; `sha_aplicado` é o sha que a aplicação dela deixou. */
+                                                                
 
 /**
  * A REGRA ÚNICA do sha aceito da spec (REQ-TRI-1, REQ-DEP-1 (1), REQ-DIA-1, emenda 54). A cadeia, na ordem do diário (`ordenar`):
  * `spec.aprovada` válida REINICIA a cadeia (a ponta é o sha aprovado); `spec.aplicada` válida AVANÇA a ponta só se (a) o `spec` é o da
- * aprovação de origem, (b) `sha256_antes` é a ponta, (c) `seq` tem `spec.emendada` na mesma entrega (1º julgamento válido, aprovando) e
- * (d) a `seq` ainda não foi aplicada. Qualquer outra aplicada é ignorada (cadeia quebrada nunca vira aceito). Diário fora de ordem ⇒ `null`.
- * `filtro` restringe as aprovações a um caminho (a trilha da spec candidata); sem ele, toda aprovação vale.
+ * aprovação de origem, (b) `sha256_antes` é a ponta, (c) `seq` tem `spec.emendada` na mesma entrega (qualquer julgamento aprovando, mesmo o que o dono reverteu depois:
+ * o texto JÁ foi aplicado, a cadeia descreve o arquivo) e (d) a `seq` ainda não foi aplicada. Qualquer outra aplicada é ignorada (cadeia quebrada nunca vira aceito).
+ * GM-15 T36 (emenda 25 m.4, D-G19): a emenda aplicada e DEPOIS rejeitada pelo dono deixa a spec DIVERGENTE `{seq, sha_aplicado}` (a primeira em aberto) até uma
+ * `spec.aplicada` com `reverte: true` da mesma seq (sha_antes = ponta, sha_depois ≠ sha_aplicado) registrar o texto desfeito: só ela a fecha, nova `spec.aprovada`
+ * não (emenda 25 diz "até um novo spec.aplicada"). Limite declarado (c2 MINOR-1): com 2 divergências só a 1ª (a de menor ordem de aplicação) é citada em `divergente`;
+ * a 2ª aparece quando a 1ª é desfeita (cada desfazer é um `emenda aplicar <seq>`). Diário fora de ordem ⇒ `null`. `filtro` restringe as aprovações a um caminho (a trilha da spec candidata).
  * Quem decide "o sha atual da spec está aceito?" é só `shaAceito`; painel, trilha e registro não comparam sha por conta própria.
  */
-export function pontaDaSpec(eventos          , filtro                            )                                                         {
-  const vazio = { ponta: null, aplicacoes: [] };
+export function pontaDaSpec(eventos          , filtro                            )                                                                                         {
+  const vazio = { ponta: null, aplicacoes: [], divergente: null };
   if (!Array.isArray(eventos)) return vazio;
   let ordem                            ;
   try {
@@ -183,8 +240,11 @@ export function pontaDaSpec(eventos          , filtro                           
     return vazio;
   }
   if (!ordem.ok) return vazio;
-  const julgadas = new Set(projetarEmendas(eventos).aprovadas.map((p) => p.seq));
+  const emendadas = new Set(ordem.eventos.filter((e) => ehObjeto(e) && comoJulgamento(e)?.aprova === true).map((e) => comoJulgamento(e) .seq));
+  const vigentes = new Set(projetarEmendas(eventos).aprovadas.map((p) => p.seq));
   const aplicadas = new Set        ();
+  const doTexto = new Map                   (); // aplicada que deixou o texto na spec (só um `reverte` a tira; nova aprovação não)
+  const desfeitas = new Set        ();
   const aplicacoes              = [];
   let ponta                     = null;
   for (const e of ordem.eventos) {
@@ -201,13 +261,27 @@ export function pontaDaSpec(eventos          , filtro                           
       const spec = campo(e.dados, 'spec')          ;
       const antes = campo(e.dados, 'sha256_antes')          ;
       const depois = campo(e.dados, 'sha256_depois')          ;
-      if (spec !== ponta.spec || antes !== ponta.sha256 || !julgadas.has(seq) || aplicadas.has(seq)) continue;
-      aplicadas.add(seq);
-      aplicacoes.push({ seq, spec, antes, depois, ref });
+      if (spec !== ponta.spec || antes !== ponta.sha256) continue;
+      if (campo(e.dados, 'reverte') === true) {
+        const feita = doTexto.get(seq);
+        if (feita === undefined || vigentes.has(seq) || desfeitas.has(seq) || depois === feita.depois) continue;
+        desfeitas.add(seq);
+        aplicacoes.push({ seq, spec, antes, depois, ref, reverte: true });
+      } else {
+        if (!emendadas.has(seq) || aplicadas.has(seq)) continue;
+        aplicadas.add(seq);
+        const a            = { seq, spec, antes, depois, ref };
+        doTexto.set(seq, a);
+        aplicacoes.push(a);
+      }
       ponta = { spec, sha256: depois, aplicadas: ponta.aplicadas + 1, ref };
     }
   }
-  return { ponta, aplicacoes };
+  let divergente                     = null;
+  for (const [seq, a] of doTexto) {
+    if (!vigentes.has(seq) && !desfeitas.has(seq)) { divergente = { seq, sha_aplicado: a.depois }; break; }
+  }
+  return { ponta, aplicacoes, divergente };
 }
 
 /** `true` só se `sha` (64 hex minúsculos) é o último sha aceito da spec: o da última aprovação, ou o fim da cadeia de aplicadas que parte dela. */
@@ -222,13 +296,23 @@ export function shaAceito(eventos          , sha         , filtro               
 /**
  * Pode gravar `spec.aplicada` da `seq`? Só `seq` com `spec.emendada` (aprovada) nesta entrega, uma vez por seq, e só com spec aprovada (ponta
  * da cadeia) para partir dela. Emenda rejeitada, aberta ou inexistente ⇒ `emenda_nao_aprovada`. Devolve o motivo fechado ou a ponta (`sha256_antes`).
+ * GM-15 T36 (emenda 25 m.4): a emenda aplicada e depois REJEITADA PELO DONO aceita o desfazer, 1 vez (`reverte: true`, com o `sha_aplicado` que o texto novo não pode repetir).
  */
-export function validarAplicacao(eventos          , seq         )                                                                          {
+export function validarAplicacao(eventos          , seq         )                                                                                                                 {
   const est = projetarEmendas(eventos);
   if (est.invalido !== undefined) return { ok: false, motivo: 'diario_invalido' };
   if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 1) return { ok: false, motivo: 'seq_invalido' };
-  if (!est.aprovadas.some((p) => p.seq === seq)) return { ok: false, motivo: 'emenda_nao_aprovada' };
-  const { ponta, aplicacoes } = pontaDaSpec(eventos);
+  const { ponta, aplicacoes, divergente } = pontaDaSpec(eventos);
+  if (!est.aprovadas.some((p) => p.seq === seq)) {
+    const revertida = est.rejeitadas.some((p) => p.seq === seq && p.rejeitadaPor === 'dono');
+    const feita = aplicacoes.find((a) => a.seq === seq && a.reverte !== true);
+    if (!revertida || feita === undefined || ponta === null) return { ok: false, motivo: 'emenda_nao_aprovada' };
+    // desfazer 1 vez por seq (o de cada divergência é independente, na ordem que o orquestrador quiser); sem divergência não há o que desfazer
+    if (aplicacoes.some((a) => a.seq === seq && a.reverte === true)) return { ok: false, motivo: 'ja_aplicada' };
+    if (divergente === null) return { ok: false, motivo: 'emenda_nao_aprovada' };
+    // Limite declarado: todo desfazer exige que o arquivo tenha mudado desde a ponta (loop.mjs `aplicar`): 1 emenda por edição (edita, `aplicar 1`, edita, `aplicar 2`)
+    return { ok: true, ponta, reverte: true, sha_aplicado: feita.depois };
+  }
   // Já gravada na cadeia ou em qualquer `spec.aplicada` válido da mesma seq (mesmo de cadeia que a aprovação nova reiniciou).
   const jaGravada = eventos.some((e) => ehObjeto(e) && e.tipo === 'spec.aplicada' && ehObjeto(e.dados) && formaInvalida('spec.aplicada', e.dados) === null && campo(e.dados, 'seq') === seq);
   if (aplicacoes.some((a) => a.seq === seq) || jaGravada) return { ok: false, motivo: 'ja_aplicada' };

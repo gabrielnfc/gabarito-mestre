@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { saidaParaAcao } from '../scripts/stop-loop.mjs';
+import { saidaParaAcao, textoTravaLonga } from '../scripts/stop-loop.mjs';
 import { TIPOS_DE_PROGRESSO } from '../dist/loop.js';
 import { append as anexar } from '../dist/diario.js';
 import { fecharPendenciasNoDiario } from './_adaptador-helpers.mjs';
@@ -246,6 +246,47 @@ test('stop-shell-background-nao-conta', () => {
   bloqueia(stop(raiz, { background_tasks: [{ id: 'sh', type: 'shell', status: 'running' }] }));
 });
 
+/** Forma medida pelo S5 (GM-15 T0b): shell de fundo do orquestrador no stdin do Stop. */
+const shellDe = (description, extra = {}) => ({ id: 'sh1', type: 'shell', status: 'running', description, command: 'node loop.mjs x', ...extra });
+
+test('stop-integrar-em-fundo-silencio (GM-15 STP-1): shell de fundo com "integrar" na description conta como vivo, igual ao subagent', () => {
+  const raiz = repo();
+  plano(raiz);
+  mudo(stop(raiz, { background_tasks: [shellDe('integrar T3 em fundo')] }));
+  assert.equal(existsSync(contadorDe(raiz)), false, 'trabalho vivo não mexe no contador');
+});
+
+test('stop-gate-task-em-fundo-silencio (GM-15 STP-1): shell de fundo com "gate-task" na description conta como vivo', () => {
+  const raiz = repo();
+  plano(raiz);
+  mudo(stop(raiz, { background_tasks: [shellDe('gate-task T3 em fundo')] }));
+});
+
+test('stop-integrar-em-fundo-so-no-command: a description vem do modelo; o command com integrar também conta', () => {
+  const raiz = repo();
+  plano(raiz);
+  mudo(stop(raiz, { background_tasks: [shellDe('rodando', { command: 'node plugins/x/loop.mjs integrar T3' })] }));
+});
+
+test('stop-outro-shell-nao-conta (GM-15 STP-1): shell de fundo sem integrar/gate-task segue sem contar (npm test, servidor, build)', () => {
+  const raiz = repo();
+  plano(raiz);
+  bloqueia(stop(raiz, { background_tasks: [shellDe('rodar a suíte em fundo', { command: 'npm test' })] }), /T1/);
+  bloqueia(stop(raiz, { background_tasks: [shellDe('subir servidor', { command: 'node server.mjs', status: 'running' })] }), /T1/);
+});
+
+test('stop-integrar-em-fundo-encerrado-nao-conta: shell com integrar mas já completed/failed/killed não segura o Stop', () => {
+  const raiz = repo();
+  plano(raiz);
+  for (const status of ['completed', 'failed', 'killed']) bloqueia(stop(raiz, { background_tasks: [shellDe('integrar T3 em fundo', { status })] }), /T1/);
+});
+
+test('stop-integrar-em-fundo-nao-fura-plano-invalido: a linha 3 (plano) vem antes do trabalho vivo', () => {
+  const raiz = repo();
+  plano(raiz, '{ nao e json');
+  avisa(stop(raiz, { background_tasks: [shellDe('integrar T3 em fundo')] }), /plano/i);
+});
+
 test('stop-shell-e-agente-juntos: o agente conta', () => {
   const raiz = repo();
   plano(raiz);
@@ -385,6 +426,25 @@ test('stop-pousar-sai: o hook não pousa (função pura)', () => {
   assert.equal(saidaParaAcao({ tipo: 'pousar' }, 'GM-10'), null);
 });
 
+test('stop-retomar-avisa-com-reabra-a-task: a ação retomar manda reabrir a task travada, em aviso e nunca block (função pura, T12)', () => {
+  const r = saidaParaAcao({ tipo: 'retomar', task: 'T3' }, 'GM-10');
+  assert.equal(r?.decision, undefined, 'block prenderia o turno e o mod nunca reabriria no fim dele');
+  assert.match(r.systemMessage, /reabra a task T3/);
+  assert.match(r.systemMessage, /GM-10/);
+  const torta = saidaParaAcao({ tipo: 'retomar', task: 'T3\n$(x)' }, 'GM-10');
+  assert.doesNotMatch(torta.systemMessage, /[\n$`]/, 'id da task é sanitizado');
+});
+
+test('stop-retomar-deixa-o-turno-acabar: task em voo sem agente (1ª vez) ⇒ aviso em todo Stop, nenhum block, nada gravado, contador intocado', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 's', [ev('s', 1, 'task.iniciada', { task: 'T1', papel: 'implementador' })]);
+  const antes = linhasDoDiario(raiz).length;
+  for (let i = 0; i < 4; i += 1) avisa(stop(raiz), /reabra a task T1/);
+  assert.equal(linhasDoDiario(raiz).length, antes);
+  assert.equal(existsSync(contadorDe(raiz)), false);
+});
+
 test('stop-despachar-vazio-sai: sem itens não há o que mandar', () => {
   assert.equal(saidaParaAcao({ tipo: 'despachar', itens: [] }, 'GM-10'), null);
 });
@@ -392,7 +452,7 @@ test('stop-despachar-vazio-sai: sem itens não há o que mandar', () => {
 test('stop-parar-avisa-com-motivo-e-task-e-nao-grava', () => {
   const raiz = repo();
   plano(raiz);
-  diario(raiz, 's', [ev('s', 1, 'task.iniciada', { task: 'T1', papel: 'implementador' })]); // agente morreu
+  diario(raiz, 's', [ev('s', 1, 'task.iniciada', { task: 'T1', papel: 'implementador' }), ev('s', 2, 'task.reaberta', { task: 'T1', origem: 'retomada' }), ev('s', 3, 'task.iniciada', { task: 'T1', papel: 'implementador' })]); // agente morreu 2x: a retomada única já foi usada (T12)
   const antes = linhasDoDiario(raiz).length;
   const r = stop(raiz);
   avisa(r, /nao_conseguiu/);
@@ -734,7 +794,7 @@ test('stop-linha-corrompida-nao-zera: nem derruba o hook', () => {
 });
 
 // GM-11 T6: o julgamento de emenda (descongela) também é progresso; a `emenda.proposta` não.
-const LISTA_REQ_LOOP_5 = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'ci.resultado', 'spec.emendada', 'emenda.rejeitada', 'aprendizado', 'aprendizado.nada'];
+const LISTA_REQ_LOOP_5 = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'task.fora', 'ci.resultado', 'spec.emendada', 'emenda.rejeitada', 'aprendizado', 'aprendizado.nada'];
 
 test('stop-lista-progresso-igual-loop: a lista única é a que proximaAcao consome (REQ-LOOP-5)', () => {
   const fonte = readFileSync(join(GATES, 'src', 'loop.ts'), 'utf8');
@@ -1422,13 +1482,27 @@ test('stop-pouso-pendente-com-onboarding-nao-despacha-nem-para: vários Stops, n
   const raiz = repo();
   plano(raiz);
   comOnboarding(raiz);
+  sinalLoop(raiz); // GM-15 T18: o /clear só é pedido com o loop armado
+  diario(raiz, 's', TASK_APROVADA('s')); // GM-15 T35 (r.12, D-P13): o pedido de /clear exige a fronteira e a leitura própria medida
   pousoDe(raiz);
+  contextoDe(raiz, 'S1', 61);
   for (let i = 0; i < 6; i += 1) {
     const r = stop(raiz); // session_id S1 vem do stdin
-    avisa(r, /\/clear/);
+    avisa(r, /aguardando o pouso do mod/);
   }
   assert.equal(linhasDoDiario(raiz).some((e) => e.tipo === 'loop.parar'), false);
   assert.equal(existsSync(contadorDe(raiz)), false, 'o Stop não conta sem progresso sob pouso pendente');
+});
+
+test('stop-sem-medicao-nao-pede-pouso (GM-15 T35 r.12, D-P13): pouso gravado com onboarding e loop armado, SEM leitura de contexto ⇒ o Stop segue despachando e não pede /clear', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  sinalLoop(raiz);
+  pousoDe(raiz);
+  const r = stop(raiz);
+  bloqueia(r, /T1/);
+  assert.doesNotMatch(JSON.stringify(r.json ?? {}), /\/clear|pouso pendente/);
 });
 
 test('stop-pouso-sem-onboarding-segue-a-2-0: o mesmo diário sem fluxo.resolvidoEm ainda despacha', () => {
@@ -1583,9 +1657,13 @@ test('stop-mod-desligado-o-clear-do-dono-libera (r1 MAJOR-3): leitura do mod vel
   const raiz = repo();
   plano(raiz);
   comOnboarding(raiz);
+  sinalLoop(raiz); // GM-15 T18: o /clear só é pedido com o loop armado
   pousoDe(raiz);
   contextoDe(raiz, 'S0', 61, { idadeMs: 600_000 }); // o mod calou depois do pouso
-  avisa(stop(raiz), /digite \/clear/); // sem mod fresco: a regra por evento, e o texto manda o dono limpar
+  // GM-15 T35 (r.12, D-P13): sem leitura fresca não há pedido de /clear; o Stop segue o despacho em vez de mandar limpar às cegas
+  const r0 = stop(raiz);
+  bloqueia(r0, /T1/);
+  assert.doesNotMatch(JSON.stringify(r0.json ?? {}), /digite \/clear/);
   diario(raiz, 'S9', [ev('S9', 1, 'sessao.inicio', { origem: 'clear' })]);
   bloqueia(stop(raiz, { session_id: 'S9' }), /T1/); // o /clear do dono libera
 });
@@ -1638,6 +1716,20 @@ test('publicada-nao-recebe-loop.parar: entrega com PR mergeado e plano.json fica
   assert.equal(existsSync(contadorDe(raiz)), false, 'o Stop não conta sem_progresso em publicada');
 });
 
+test('encerrada-ligada-pelo-dono-segue-publicada (GM-15 T3, REQ-ENT-1 c): entrega.encerrada + dono.resposta ligando a sessão do Stop ⇒ silêncio, nada gravado', () => {
+  const raiz = repo();
+  plano(raiz);
+  const w = (sessao, tipo, dados, ts) => assert.equal(anexar(entregaDir(raiz), sessao, { ts, autor: 'a', sessao, agente: 'orquestrador', tipo, dados }).ok, true);
+  w('SDONO', 'fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'wt/GM-10-8' } }, '2026-11-03T09:00:00.000Z');
+  w('SDONO', 'dono.resposta', { pergunta: 'SDONO:1', opcao: 1, rotulo: 'GM-10' }, '2026-11-03T09:00:01.000Z');
+  w('pub', 'entrega.encerrada', { entrega: 'GM-10', pr: 7, via: 'head', mergeado_em: '2026-11-03T08:00:00.000Z' }, '2026-11-03T08:00:01.000Z');
+  const antes = linhasDoDiario(raiz).length;
+  for (let i = 0; i < 6; i++) mudo(stop(raiz, { session_id: 'SDONO' }));
+  assert.equal(linhasDoDiario(raiz).length, antes);
+  assert.equal(linhasDoDiario(raiz).filter((e) => e.tipo === 'loop.parar').length, 0);
+  assert.equal(existsSync(contadorDe(raiz)), false, 'o Stop não conta sem_progresso em entrega encerrada, ainda que o dono a tenha ligado');
+});
+
 test('publicada-vizinho-pr-aberto-continua-gravando: PR mergeado e outro aberto não é publicada; o 3º Stop grava loop.parar', () => {
   const raiz = repo();
   plano(raiz);
@@ -1655,4 +1747,495 @@ test('publicada-vizinho-sem-2o-fato: PR mergeado sem plano.json, spec nem ledger
   const antes = linhasDoDiario(raiz).length;
   mudo(stop(raiz));
   assert.equal(linhasDoDiario(raiz).length, antes);
+});
+
+// ------------------------------------------------------------------------------------- GM-15 T16: X decimal e ligação com idPadraoDe
+
+test('stop-x-decimal (GM-15 STP-1/HIG-1): GABARITO_POUSO_X=37.5 vale igual ao pouso.ts; 40 % já é teto, e com X inteiro só (50) não seria', () => {
+  const raiz = repo();
+  plano(raiz);
+  contextoDe(raiz, 'S1', 40);
+  avisa(stop(raiz, {}, { env: { GABARITO_POUSO_X: '37.5' } }), /contexto no teto, aguardando o pouso do mod/);
+  bloqueia(stop(raiz, {}, { env: { GABARITO_POUSO_X: '45.5' } }), /T1/); // 40 < 45.5: fora do teto
+  bloqueia(stop(raiz), /T1/); // sem a variável: X = 50, 40 % fora do teto
+});
+
+test('stop-x-invalido-volta-ao-padrao: 0, 100.1, texto e "37,5" caem em 50 (40 % fora do teto), como lerX', () => {
+  for (const x of ['0', '100.1', 'abc', '37,5', '-5', '']) {
+    const raiz = repo(); // repo novo por caso: o contador de "sem progresso" é por repo
+    plano(raiz);
+    contextoDe(raiz, 'S1', 40);
+    bloqueia(stop(raiz, {}, { env: { GABARITO_POUSO_X: x } }), /T1/);
+  }
+});
+
+test('stop-branch-hotfix-respeita-idPadrao-da-origem (GM-15 hotfix, MINOR r1): origin/HEAD com fluxo.idPadrao só PBI-n ⇒ hotfix/GM-10-x não é entrega e o Stop fica mudo', () => {
+  bloqueia(stop((() => { const r = repo('hotfix/GM-10-x'); plano(r); return r; })()), /T1/); // controle: sem config própria o padrão acha GM-10
+  const raiz = repo('hotfix/GM-10-x');
+  plano(raiz);
+  writeFileSync(join(raiz, 'harness.config.json'), JSON.stringify({ fluxo: { idPadrao: '^PBI-\\d+$' } }));
+  git(raiz, 'add', 'harness.config.json');
+  git(raiz, 'commit', '-q', '-m', 'chore: config');
+  git(raiz, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  git(raiz, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  mudo(stop(raiz));
+  assert.equal(existsSync(contadorDe(raiz)), false);
+});
+
+// ------------------------------------------------------------------------------------- GM-15 T18 (REQ-AUT-2 c, REQ-POU-3, REQ-POU-4): o Stop avisa trava longa, pouso e loop desligado
+
+/** Evento com o `ts` relativo ao AGORA (a trava mede idade; fixture datada de 2026-11-03 já nasce "há dias"). */
+const evAgo = (sessao, seq, tipo, dados, minAtras) => ({
+  seq, ts: new Date(Date.now() - minAtras * 60_000).toISOString(), autor: 'a', sessao, agente: 'orquestrador', tipo, dados, hash_anterior: null,
+});
+const CI_VERMELHO_HA = (min, sessao = 'ci') => [
+  evAgo(sessao, 1, 'ci.resultado', { verde: false }, min + 1),
+  evAgo(sessao, 2, 'ci.resultado', { verde: false }, min),
+];
+const avisosDoStop = (raiz, sessao = 'S1') => join(raiz, '.harness', 'contexto', `stop-avisos.${sessao}.json`);
+/** O sinal do loop como o mod da T17 o grava: `.harness/contexto/loop-dinamico.<sessao>.json`. */
+const sinalLoop = (raiz, sessao = 'S1', { estado = 'armado', idadeMs = 0, sessaoNoArquivo = sessao, texto } = {}) => {
+  mkdirSync(join(raiz, '.harness', 'contexto'), { recursive: true });
+  writeFileSync(join(raiz, '.harness', 'contexto', `loop-dinamico.${sessao}.json`), texto ?? JSON.stringify({
+    estado, intervalo: 0, dinamico: estado === 'armado' ? 1 : 0, sessao: sessaoNoArquivo, em: new Date(Date.now() - idadeMs).toISOString(),
+  }));
+};
+
+test('trava-30min-avisa-1x (REQ-AUT-2 c): parar há mais de 30 min ⇒ "parado há N min: <motivo>" com o comando, 1 vez por trava; o 2º Stop volta ao aviso curto', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'ci', CI_VERMELHO_HA(45));
+  const r1 = stop(raiz);
+  avisa(r1, /[Pp]arado há 4\d min: CI vermelho duas vezes/);
+  assert.match(r1.json.systemMessage, /`\/gabarito retomar`/, 'o comando vem no texto');
+  assert.match(r1.json.systemMessage, /\[ci_vermelho\]/, 'o aviso de sempre continua inteiro');
+  for (let i = 0; i < 3; i += 1) {
+    const r = stop(raiz);
+    avisa(r, /parou: CI vermelho duas vezes \[ci_vermelho\]/);
+    assert.doesNotMatch(r.json.systemMessage, /[Pp]arado há|`\/gabarito retomar`/, 'a trava já foi avisada: o texto longo não repete');
+  }
+});
+
+test('trava-recente-sem-texto-longo: parar há 10 min fica no aviso curto e não grava estado', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'ci', CI_VERMELHO_HA(10));
+  const r = stop(raiz);
+  avisa(r, /parou: CI vermelho duas vezes/);
+  assert.doesNotMatch(r.json.systemMessage, /[Pp]arado há/);
+  assert.equal(existsSync(avisosDoStop(raiz)), false);
+});
+
+test('motivo-novo-aviso-novo: a mesma entrega parada por OUTRO motivo (outra chave) avisa de novo', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'ci', CI_VERMELHO_HA(90));
+  avisa(stop(raiz), /[Pp]arado há \d+ min: CI vermelho duas vezes/);
+  avisa(stop(raiz), /parou: CI vermelho/); // 2º: curto
+  // o CI fica verde e a única task sai do alvo: outro motivo (nao_conseguiu), outro início
+  diario(raiz, 'ci', [evAgo('ci', 3, 'ci.resultado', { verde: true }, 80), evAgo('ci', 4, 'task.fora', { task: 'T1', como: 'cortada', motivo: 'x', origem: 'dono' }, 70)]);
+  const r = stop(raiz);
+  avisa(r, /[Pp]arado há 7\d min: sem próxima ação e sem agente vivo/);
+  assert.match(r.json.systemMessage, /`\/gabarito retomar`/);
+  assert.equal(JSON.parse(readFileSync(avisosDoStop(raiz), 'utf8')).trava.length, 2, 'duas chaves: motivo + início de cada trava');
+});
+
+test('mesmo-motivo-inicio-novo-avisa-de-novo (REQ-AUT-2 c, chave = motivo + início): a mesma trava reaberta depois de progresso ganha o texto longo outra vez', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'ci', CI_VERMELHO_HA(90));
+  avisa(stop(raiz), /[Pp]arado há \d+ min: CI vermelho duas vezes/);
+  avisa(stop(raiz), /parou: CI vermelho/);
+  // o CI fica verde (progresso) e vermelho 2 vezes de novo, há ~40 min: mesmo motivo, início novo
+  diario(raiz, 'ci', [
+    evAgo('ci', 3, 'ci.resultado', { verde: true }, 80),
+    evAgo('ci', 4, 'ci.resultado', { verde: false }, 41),
+    evAgo('ci', 5, 'ci.resultado', { verde: false }, 40),
+  ]);
+  const r = stop(raiz);
+  avisa(r, /[Pp]arado há 4\d min: CI vermelho duas vezes/);
+  assert.equal(JSON.parse(readFileSync(avisosDoStop(raiz), 'utf8')).trava.length, 2, 'duas chaves, o mesmo motivo com inícios diferentes');
+});
+
+test('avisos-por-sessao-sob-contexto: o estado fica em .harness/contexto/stop-avisos.<sessao>.json (ignorado pelo git) e uma sessão não cala a outra', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'ci', CI_VERMELHO_HA(90));
+  avisa(stop(raiz, { session_id: 'SA' }), /[Pp]arado há/);
+  avisa(stop(raiz, { session_id: 'SA' }), /parou: CI vermelho/);
+  assert.equal(existsSync(avisosDoStop(raiz, 'SA')), true);
+  assert.equal(existsSync(join(raiz, '.harness', 'stop-avisos.json')), false, 'nada de arquivo único por repo');
+  avisa(stop(raiz, { session_id: 'SB' }), /[Pp]arado há/); // SB não vê o que se disse a SA
+  assert.equal(existsSync(avisosDoStop(raiz, 'SB')), true);
+  const real = spawnSync('git', ['check-ignore', '-q', '.harness/contexto/stop-avisos.SA.json'], { cwd: join(GATES, '..', '..', '..') }); // o .gitignore do repo (o fixture não tem um)
+  assert.equal(real.status, 0, 'o arquivo cai no que o .gitignore do repo cobre');
+});
+
+test('avisos-id-ruim-nao-grava: session_id fora de [A-Za-z0-9-]{1,128} avisa (nunca prende) e não grava arquivo', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 'ci', CI_VERMELHO_HA(90));
+  for (const id of ['../x', 'a.b', 'a'.repeat(129)]) {
+    avisa(stop(raiz, { session_id: id }), /[Pp]arado há/);
+    avisa(stop(raiz, { session_id: id }), /[Pp]arado há/); // sem chave, repete: só o custo de repetir
+  }
+  assert.deepEqual(existsSync(join(raiz, '.harness', 'contexto')) ? readdirSync(join(raiz, '.harness', 'contexto')).filter((n) => n.startsWith('stop-avisos')) : [], []);
+  assert.equal(existsSync(join(raiz, 'x.json')), false);
+});
+
+test('leitura-propria-ausente-perde-so-o-aviso-de-contexto: dist/pouso-pendente.js sem leituraPropria não derruba o Stop em "hook falhou"', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  contextoDe(raiz, 'S1', 61);
+  const script = copiaSemDist(false, readdirSync(join(GATES, 'dist')));
+  const dpp = join(dirname(dirname(script)), 'dist', 'pouso-pendente.js');
+  writeFileSync(dpp, readFileSync(dpp, 'utf8').replace('export function leituraPropria', 'function leituraPropria'));
+  const r = stop(raiz, {}, { script });
+  assert.equal(r.rc, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /hook Stop falhou/);
+  // GM-15 T35 (r.12): sem a leitura própria não há pedido de /clear; o Stop não manda limpar nem ligar o loop por ele
+  assert.doesNotMatch(r.stdout, /digite \/clear/);
+});
+
+test('trava-longa-texto-puro: o comando de quem destrava o teto cita a task; id hostil não entra cru', () => {
+  const t = textoTravaLonga({ tipo: 'parar', motivo: 'teto_rodadas', task: 'T1' }, 45);
+  assert.match(t, /[Pp]arado há 45 min: teto de rodadas de review/);
+  assert.match(t, /`\/gabarito-mestre:liberar T1`/);
+  const h = textoTravaLonga({ tipo: 'parar', motivo: 'teto_rodadas', task: 'T1`; rm -rf *' }, 31);
+  assert.doesNotMatch(h, /`;|rm -rf \*/);
+  assert.match(textoTravaLonga({ tipo: 'parar', motivo: 'nao_conseguiu' }, 31), /`\/gabarito retomar`/);
+});
+
+
+test('contexto-alto-sem-pouso-avisa (REQ-POU-3): contexto >= X, sem sessao.pouso desta sessão e loop armado ⇒ "limpar a conversa", e quem limpa é o mod', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  sinalLoop(raiz);
+  contextoDe(raiz, 'S1', 61);
+  const r = stop(raiz);
+  avisa(r, /limpar a conversa/);
+  assert.match(r.json.systemMessage, /[Qq]uem limpa é o mod/);
+  assert.match(r.json.systemMessage, /61 %/);
+  assert.doesNotMatch(r.json.systemMessage, /\/clear/, 'o agente nunca é mandado digitar /clear');
+});
+
+test('contexto-alto-com-pouso-quieto: a sessão já pousou (sessao.pouso dela na fronteira) ⇒ o aviso de limpar não repete; o do mod esperando segue', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  sinalLoop(raiz);
+  diario(raiz, 's', TASK_APROVADA('s'));
+  diario(raiz, 'S1', [{ ...ev('S1', 1, 'sessao.pouso', { percent: 61, x: 50 }) }]);
+  contextoDe(raiz, 'S1', 61);
+  const r = stop(raiz);
+  avisa(r, /aguardando o pouso do mod/);
+  assert.doesNotMatch(r.json.systemMessage, /limpar a conversa/);
+});
+
+test('contexto-alto-pouso-de-outra-sessao-ainda-avisa: o pouso de OUTRA sessão não cala esta (I1, por sessão)', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  sinalLoop(raiz);
+  diario(raiz, 's', TASK_APROVADA('s'));
+  diario(raiz, 'S0', [ev('S0', 1, 'sessao.pouso', { percent: 61, x: 50 })]);
+  contextoDe(raiz, 'S1', 61);
+  avisa(stop(raiz), /limpar a conversa/);
+});
+
+test('contexto-abaixo-de-x-quieto: leitura própria abaixo de X não manda limpar nada', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  sinalLoop(raiz);
+  contextoDe(raiz, 'S1', 20);
+  const r = stop(raiz);
+  bloqueia(r, /T1/);
+  assert.doesNotMatch(r.json.systemMessage ?? '', /limpar a conversa/);
+});
+
+test('sem-loop-dinamico-avisa (REQ-POU-4): com onboarding, ação pendente e sem o sinal da T17 ⇒ "ligar o loop automático", sem bloquear por isso e 1 vez por sessão', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  const r1 = stop(raiz);
+  bloqueia(r1, /T1/); // a ação do loop segue valendo
+  assert.match(r1.json.systemMessage, /ligar o loop automático/);
+  const r2 = stop(raiz);
+  bloqueia(r2, /T1/);
+  assert.doesNotMatch(r2.json.systemMessage ?? '', /ligar o loop automático/, '1 vez por sessão, não a cada turno');
+  // outra sessão: avisa de novo
+  const r3 = stop(raiz, { session_id: 'S2' });
+  assert.match(r3.json.systemMessage, /ligar o loop automático/);
+});
+
+test('sinal-futuro-curto-tolerado: `em` 1 min à frente (relógio levemente torto) ainda vale como armado', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  sinalLoop(raiz, 'S1', { idadeMs: -60_000 });
+  assert.doesNotMatch(stop(raiz).json?.systemMessage ?? '', /ligar o loop automático/);
+});
+
+for (const [nome, preparar] of [
+  ['sinal-ausente', () => {}],
+  ['sinal-ausente-estado', (raiz) => sinalLoop(raiz, 'S1', { estado: 'ausente' })],
+  ['sinal-nao-conferivel', (raiz) => sinalLoop(raiz, 'S1', { estado: 'nao_conferivel' })],
+  ['sinal-corrompido', (raiz) => sinalLoop(raiz, 'S1', { texto: '{nao-json' })],
+  ['sinal-de-outra-sessao-no-arquivo', (raiz) => sinalLoop(raiz, 'S1', { sessaoNoArquivo: 'S9' })],
+  ['sinal-velho-3h', (raiz) => sinalLoop(raiz, 'S1', { idadeMs: 3 * 3600_000 })],
+  ['sinal-so-de-outra-sessao', (raiz) => sinalLoop(raiz, 'S9')],
+  ['sinal-do-futuro-10min (relógio torto: não conferível)', (raiz) => sinalLoop(raiz, 'S1', { idadeMs: -10 * 60_000 })],
+]) {
+  test(`sinal-nao-arma (${nome}): só o "armado" da PRÓPRIA sessão e fresco vale; o resto avisa ligar o loop`, () => {
+    const raiz = repo();
+    plano(raiz);
+    comOnboarding(raiz);
+    preparar(raiz);
+    assert.match(stop(raiz).json.systemMessage, /ligar o loop automático/);
+  });
+}
+
+test('sinal-armado-quieto: com o sinal armado, fresco e da própria sessão, não há aviso de ligar o loop', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  sinalLoop(raiz);
+  const r = stop(raiz);
+  bloqueia(r, /T1/);
+  assert.doesNotMatch(r.json.systemMessage ?? '', /ligar o loop automático/);
+});
+
+test('sem-onboarding-sem-aviso-de-loop: sem onboarding o mod nem grava o sinal; o Stop segue como na 2.0, sem pedir o loop', () => {
+  const raiz = repo();
+  plano(raiz);
+  const r = stop(raiz);
+  bloqueia(r, /T1/);
+  assert.equal(r.json.systemMessage, undefined);
+});
+
+test('clear-so-com-wakeup (aprendizado 185): com o pouso pendente, o Stop só manda digitar /clear se o loop está armado; desligado, manda ligar o loop e nunca pede /clear', () => {
+  const dono = (arma) => {
+    const raiz = repo();
+    plano(raiz);
+    comOnboarding(raiz);
+    pousoDe(raiz);
+    if (arma) sinalLoop(raiz);
+    return stop(raiz);
+  };
+  // GM-15 T35 (r.12, D-P13): sem a leitura própria medida não há pedido de /clear, com ou sem o loop armado: nenhum dos dois manda limpar
+  for (const arma of [true, false]) assert.doesNotMatch(JSON.stringify(dono(arma).json ?? {}), /\/clear/, `armado=${arma}`);
+});
+
+test('clear-so-com-wakeup-contexto-alto: contexto >= X com o loop desligado também não fala em limpar a conversa nem em /clear', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  contextoDe(raiz, 'S1', 61);
+  const r = stop(raiz);
+  avisa(r, /ligar o loop automático/);
+  assert.doesNotMatch(r.json.systemMessage, /\/clear|limpar a conversa/);
+});
+
+test('entrega-encerrada-stop-quieto: entrega publicada (PR mergeado) fica muda mesmo com contexto no teto e loop desligado', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  diario(raiz, 'pub', [ev('pub', 1, 'entrega.encerrada', { entrega: 'GM-10', pr: 7, via: 'head', mergeado_em: '2026-11-03T08:00:00.000Z' })]);
+  contextoDe(raiz, 'S1', 61);
+  mudo(stop(raiz));
+  assert.equal(existsSync(avisosDoStop(raiz)), false, 'nada gravado numa entrega encerrada');
+});
+
+test('avisos-nao-bloqueiam: trava longa, contexto alto e loop desligado juntos continuam sendo aviso (nunca decision)', () => {
+  const raiz = repo();
+  plano(raiz);
+  comOnboarding(raiz);
+  diario(raiz, 'ci', CI_VERMELHO_HA(60));
+  contextoDe(raiz, 'S1', 61);
+  const r = stop(raiz);
+  assert.equal(r.json.decision, undefined);
+  assert.match(r.json.systemMessage, /[Pp]arado há/);
+});
+
+test('sinal-na-raiz-principal: o Stop numa worktree lê o sinal do checkout principal (onde o mod o grava), não da worktree', () => {
+  const principal = repo('main');
+  git(principal, 'commit', '--allow-empty', '-q', '-m', 'i');
+  const wt = join(mkdtempSync(join(tmpdir(), 'stop wt ')), 'wt'); // espaço no caminho
+  assert.equal(git(principal, 'worktree', 'add', '-q', '-b', 'wt/GM-10-9', wt).status, 0);
+  plano(wt);
+  comOnboarding(wt);
+  assert.match(stop(wt, { cwd: wt }, { cwd: wt, env: { CLAUDE_PROJECT_DIR: wt } }).json.systemMessage, /ligar o loop automático/);
+  const caminho = join(principal, '.harness', 'contexto');
+  mkdirSync(caminho, { recursive: true });
+  writeFileSync(join(caminho, 'loop-dinamico.S2.json'), JSON.stringify({ estado: 'armado', intervalo: 0, dinamico: 1, sessao: 'S2', em: new Date().toISOString() }));
+  const r = stop(wt, { cwd: wt, session_id: 'S2' }, { cwd: wt, env: { CLAUDE_PROJECT_DIR: wt } }); // outra sessão: o aviso de S1 (1 vez) não a cala
+  bloqueia(r, /T1/);
+  assert.doesNotMatch(r.json.systemMessage ?? '', /ligar o loop automático/);
+});
+
+test('pouso-medido-sem-mod-ativo-avisa-ligar-ou-clear (REQ-POU-4, aprendizado 185; review r1 MAJOR-2): leitura própria fresca + pouso pendente da fronteira, mas o mod não está ativo ⇒ desligado manda ligar o loop antes de limpar; armado manda digitar /clear', () => {
+  // Com o diário real, `pendente` (pedidoDeClear) já implica leitura própria e pouso da fronteira, então `modAtivo` só cai por `jaParou`, e o loop.parar
+  // que o torna verdadeiro faz o Stop sair antes (pendência `parar` aberta, ou fechada e sem task depois: stop-loop.mjs, bloco do `iParar`).
+  // O ramo segue vivo para a falha de `jaParou` (dist fora de sincronia; o try põe modAtivo=false), que é o que este teste exercita.
+  // cópia do plugin (gates + mod): o sinal do loop armado é lido por ../../mod/gabarito.mjs a partir do script
+  const copia = mkdtempSync(join(tmpdir(), 'stop-plugin-'));
+  for (const n of ['dist', 'lib', 'scripts', 'package.json']) cpSync(join(GATES, n), join(copia, 'gates', n), { recursive: true });
+  cpSync(join(GATES, '..', 'mod'), join(copia, 'mod'), { recursive: true, filter: (f) => !/[/\\](test|node_modules)$/.test(f) });
+  const script = join(copia, 'gates', 'scripts', 'stop-loop.mjs');
+  const dpo = join(copia, 'gates', 'dist', 'pouso.js');
+  const fonte = readFileSync(dpo, 'utf8');
+  const assinatura = /export function jaParou\(eventos\s*\)\s*\{/;
+  assert.match(fonte, assinatura);
+  writeFileSync(dpo, fonte.replace(assinatura, (m) => `${m} throw new Error('jaParou quebrado');`));
+  const cena = (arma) => {
+    const raiz = repo();
+    plano(raiz);
+    comOnboarding(raiz);
+    if (arma) sinalLoop(raiz);
+    diario(raiz, 's', TASK_APROVADA('s'));
+    diario(raiz, 'S1', [ev('S1', 1, 'sessao.pouso', { percent: 61, x: 50 })]);
+    contextoDe(raiz, 'S1', 61);
+    return stop(raiz, {}, { script });
+  };
+  const desligado = cena(false);
+  avisa(desligado, /pouso pendente; ligar o loop automático .* antes de limpar a conversa/);
+  assert.doesNotMatch(desligado.json.systemMessage, /\/clear|aguardando o pouso do mod/);
+  const armado = cena(true);
+  avisa(armado, /pouso pendente; digite \/clear para retomar em conversa limpa/);
+  assert.doesNotMatch(armado.json.systemMessage, /aguardando o pouso do mod/);
+});
+
+// ------------------------------------------------------------------------------------- GM-15 T39 (MAJOR-1 do review final, REQ-AUT-1, emendas 22 e 24): o teto que a Sombra decide não para o Stop
+
+const TETO_T1 = () => [
+  ev('s', 1, 'task.iniciada', { task: 'T1', papel: 'implementador' }), ev('s', 2, 'task.concluida', { task: 'T1' }),
+  ev('s', 3, 'review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 }),
+  ev('s', 4, 'task.iniciada', { task: 'T1', papel: 'correcao' }), ev('s', 5, 'task.concluida', { task: 'T1' }),
+  ev('s', 6, 'review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 2, major: 1, blocker: 0 }),
+];
+/** `harness.config.json` em origin/HEAD (a única fonte de `sombra.libera_teto`). */
+function comOrigin(raiz, cfg) {
+  writeFileSync(join(raiz, 'harness.config.json'), JSON.stringify(cfg));
+  git(raiz, 'add', 'harness.config.json');
+  git(raiz, 'commit', '-q', '-m', 'chore: config');
+  git(raiz, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  git(raiz, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+}
+/** Entrega com T1 no teto (2 rodadas reprovadas), pendências de aprendizado fechadas, com a config de origin dada (`null` = sem origin). */
+function noTeto(cfg, extra = [], antes = (e) => e) {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 's', antes([...TETO_T1(), ...extra]));
+  fecharPendenciasNoDiario(entregaDir(raiz), PLANO);
+  if (cfg !== null) comOrigin(raiz, cfg);
+  return raiz;
+}
+
+test('t39-stop-sombra-decide-nao-deixa-parar: libera_teto ligado e sem freio ⇒ block pedindo a pergunta à Sombra; nunca "parou" nem /liberar', () => {
+  const raiz = noTeto({ sombra: { libera_teto: true } });
+  const r = stop(raiz);
+  bloqueia(r, /T1/);
+  assert.match(r.json.reason, /Sombra/);
+  assert.match(r.json.reason, /sombra\.mjs perguntar --task T1 --libera-teto/);
+  assert.doesNotMatch(r.json.reason, /parou|comando do dono|\/gabarito-mestre:liberar/);
+});
+
+test('t39-stop-freio-cita-liberar: libera_teto ligado mas com freio (2 abordagens novas sem convergir) ⇒ parada do dono', () => {
+  const ciclo = (n, hash, abordagem) => [
+    ev('s', n, 'task.reaberta', { task: 'T1', origem: 'sombra', hash, abordagem_nova: abordagem }),
+    ev('s', n + 1, 'task.iniciada', { task: 'T1', papel: 'implementador' }), ev('s', n + 2, 'task.concluida', { task: 'T1' }),
+    ev('s', n + 3, 'review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 }),
+    ev('s', n + 4, 'task.iniciada', { task: 'T1', papel: 'correcao' }), ev('s', n + 5, 'task.concluida', { task: 'T1' }),
+    ev('s', n + 6, 'review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 2, major: 1, blocker: 0 }),
+  ];
+  const hist = [...ciclo(7, 'a'.repeat(64), 'x'), ...ciclo(14, 'b'.repeat(64), 'y')];
+  const raiz = noTeto({ sombra: { libera_teto: true } }, hist);
+  const r = stop(raiz);
+  avisa(r, /parou.*teto de rodadas/);
+});
+
+test('t39-stop-flag-desligada-cita-liberar: sem libera_teto em origin (ausente ou false) ⇒ parada do dono; a trava longa manda /liberar', () => {
+  const velho = (evs) => evs.map((e, i) => ({ ...e, ts: new Date(Date.now() - (120 - i) * 60_000).toISOString() }));
+  for (const cfg of [null, { sombra: { libera_teto: false } }]) {
+    const raiz = noTeto(cfg, [], velho);
+    const r = stop(raiz);
+    avisa(r, /parou.*teto de rodadas/);
+    assert.match(r.json.systemMessage, /`\/gabarito-mestre:liberar T1`/);
+  }
+});
+
+test('t39-costura-cli-real: proxima, Stop, painel e a ponte do mod concordam sobre QUEM decide o teto (Sombra com a flag e sem freio; dono sem a flag)', async () => {
+  const { SCRIPT_ORIGEM } = await import('../../mod/gabarito.mjs');
+  const { liberaTetoDeOrigin, sombraDecideOTeto } = await import('../dist/loop.js');
+  const cli = (raiz, script, args, input) => {
+    const r = spawnSync(process.execPath, [join(GATES, 'scripts', script), ...args], { cwd: raiz, input, encoding: 'utf8', env: env({ CLAUDE_PROJECT_DIR: raiz }) });
+    let j = null;
+    try { j = JSON.parse(r.stdout.trim()); } catch { /* fica null */ }
+    return { rc: r.status, j, out: r.stdout + r.stderr };
+  };
+  for (const [rotulo, cfg, sombra] of [['flag ligada, sem freio', { sombra: { libera_teto: true } }, true], ['flag desligada', { sombra: { libera_teto: false } }, false]]) {
+    // diário pela cadeia real (`anexar`): o CLI do `proxima` e do painel recusam a cadeia de hash que a fixture crua não tem
+    const raiz = repo();
+    plano(raiz);
+    TETO_T1().forEach((e, i) => assert.equal(anexar(entregaDir(raiz), 's', { ts: new Date(Date.now() - (60 - i) * 1000).toISOString(), autor: 'a', sessao: 's', agente: 'orquestrador', tipo: e.tipo, dados: e.dados }).ok, true));
+    fecharPendenciasNoDiario(entregaDir(raiz), PLANO);
+    comOrigin(raiz, cfg);
+    const p = cli(raiz, 'loop.mjs', ['proxima', '--vivos', '0']);
+    assert.equal(p.j?.acao?.motivo, 'teto_rodadas', `${rotulo}: ${p.out}`);
+    assert.equal(p.j.acao.liberacao?.oferecer, sombra, `${rotulo}: proxima ${p.out}`);
+    const e = cli(raiz, 'painel.mjs', ['estado', '--entrega', 'GM-10', '--agentes'], JSON.stringify({ session_id: 'S1', agentes: [] }));
+    assert.equal(e.j?.ok, true, e.out);
+    // o painel só tem PAROU depois do `loop.parar` (que o mod não grava mais quando a Sombra decide); o item do dono (DEPENDE) é a leitura do mesmo fato
+    assert.equal((e.j.estado.depende ?? []).filter((i) => i.motivo !== 'nada depende de você').length === 0, sombra, `${rotulo}: painel depende ${JSON.stringify(e.j.estado.depende)}`);
+    const s = stop(raiz);
+    if (sombra) { bloqueia(s, /Sombra/); assert.doesNotMatch(s.json.reason, /parou|\/gabarito-mestre:liberar/); } else avisa(s, /parou.*teto de rodadas/);
+    const o = spawnSync(process.execPath, ['-e', SCRIPT_ORIGEM], { cwd: raiz, input: JSON.stringify({ url: pathToFileURL(join(GATES, 'lib', 'config.mjs')).href, raiz }), encoding: 'utf8', env: env() });
+    const ponte = JSON.parse(o.stdout);
+    assert.equal(ponte.ok, true, o.stderr);
+    assert.equal(liberaTetoDeOrigin(ponte.origin), sombra, `${rotulo}: ponte do mod ${o.stdout}`);
+    const evs = linhasDoDiario(raiz);
+    assert.equal(sombraDecideOTeto(PLANO, evs, 'T1', liberaTetoDeOrigin(ponte.origin)), sombra);
+  }
+});
+
+// ------------------------------------------------------------------------------------- GM-15 T39 r1 (MAJOR-1, MINOR-1, MINOR-2)
+
+test('t39-r1-stop-loop-parar-teto-com-sombra-decidindo-nao-silencia: loop.parar{teto_rodadas,T1} (ponte do mod que falhou) + libera_teto em origin ⇒ block pedindo a Sombra, nunca saída vazia', () => {
+  const raiz = noTeto({ sombra: { libera_teto: true } }, [ev('s', 7, 'loop.parar', { motivo: 'teto_rodadas', task: 'T1' })]);
+  const r = stop(raiz);
+  bloqueia(r, /T1/);
+  assert.match(r.json.reason, /sombra\.mjs perguntar --task T1 --libera-teto/);
+  assert.doesNotMatch(r.json.reason, /comando do dono|\/gabarito-mestre:liberar/);
+});
+
+test('t39-r1-stop-loop-parar-teto-sem-flag-segue-silencioso: o mesmo diário com a flag desligada ⇒ o silêncio pós-parar de sempre', () => {
+  const raiz = noTeto({ sombra: { libera_teto: false } }, [ev('s', 7, 'loop.parar', { motivo: 'teto_rodadas', task: 'T1' })]);
+  mudo(stop(raiz));
+});
+
+test('t39-r1-stop-loop-parar-de-outra-task-ou-motivo-segue-silencioso: o silêncio só cai para o parar do MESMO teto/task', () => {
+  const raiz = noTeto({ sombra: { libera_teto: true } }, [ev('s', 7, 'loop.parar', { motivo: 'sem_progresso', stops: 3 })]);
+  mudo(stop(raiz));
+});
+
+test('t39-r1-stop-config-local-ligada-origin-desligada-nao-conta: sombra.libera_teto só em harness.config.json LOCAL ⇒ parada do dono', () => {
+  const raiz = noTeto({ sombra: { libera_teto: false } });
+  writeFileSync(join(raiz, 'harness.config.json'), JSON.stringify({ sombra: { libera_teto: true } })); // local, sem commit: origin segue desligada
+  const r = stop(raiz);
+  avisa(r, /parou.*teto de rodadas/);
+  assert.doesNotMatch(r.json.systemMessage ?? '', /perguntar --task/);
+});
+
+test('t39-r1-stop-nao-conseguiu-com-task-e-flag-ligada-nao-vira-pergunta-a-Sombra: só o teto_rodadas é decisão da Sombra', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 's', [ev('s', 1, 'task.iniciada', { task: 'T1', papel: 'implementador' }), ev('s', 2, 'task.reaberta', { task: 'T1', origem: 'retomada' }), ev('s', 3, 'task.iniciada', { task: 'T1', papel: 'implementador' })]); // retomada já gasta ⇒ nao_conseguiu{task:T1}
+  fecharPendenciasNoDiario(entregaDir(raiz), PLANO);
+  comOrigin(raiz, { sombra: { libera_teto: true } });
+  const r = stop(raiz);
+  avisa(r, /nao_conseguiu/); // a parada do dono de sempre
+  assert.doesNotMatch(JSON.stringify(r.json ?? {}), /perguntar --task|pergunte à Sombra/);
 });

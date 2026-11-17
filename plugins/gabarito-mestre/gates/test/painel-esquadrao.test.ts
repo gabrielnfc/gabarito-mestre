@@ -23,6 +23,10 @@ const op = (largura: number, extra: Partial<OpcoesRender> = {}): OpcoesRender =>
 const render = (e: EstadoPainel, largura: number, extra: Partial<OpcoesRender> = {}): string[] => LINHAS(renderEsquadrao(e, op(largura, extra)));
 const voo = (): EstadoPainel => clone(ESTADOS['em-voo-7-12']);
 const achar = (ls: string[], re: RegExp): string => ls.find((l) => re.test(l)) ?? '';
+/** GM-15 T32: o agente só mostra o id da task se ela foi iniciada (`loop.mjs iniciar`); coloca `id` no plano da fixture como `implementando`. */
+const comTaskIniciada = (e: EstadoPainel, id: string): void => {
+  e.plano.tasks = [...e.plano.tasks.filter((x) => x.id !== id), { ...e.plano.tasks[0], id, deps: [], estado: 'implementando' }];
+};
 
 // ---------- cabeçalho, plano, faixa, fila ----------
 
@@ -195,7 +199,7 @@ test('esq-44-desenho: cabeçalho curto com barra 12, tasks sem título, árvore 
 
 test('esq-menor-44-so-essencial: topo, plano numa linha e as tasks em voo; sem separador, equipe, histórico nem rodapé', () => {
   const ls = render(voo(), 43);
-  assert.deepEqual(ls, ['depende de você: nada', '7/12 · ETA 17:42', '● T8 implementando', '● T9 em revisão', '◐ T10 aguarda revisão']);
+  assert.deepEqual(ls, ['nada depende de você', '7/12 · ETA 17:42', '● T8 implementando', '● T9 em revisão', '◐ T10 aguarda revisão']);
   const p = render(ESTADOS['parou-diario'], 30);
   assert.equal(p[0].startsWith('■ PAROU'), true, 'o topo vem antes de tudo');
   assert.ok(p.includes('4/6 · loop parado'));
@@ -318,12 +322,15 @@ test('esq-zero-vivos-com-sem-agente: mod presente, 0 vivos e 1 ◌ ⇒ "agentes 
   assert.ok(render(semNome, 80).some((l) => l.includes('◌ implementador  sem agente')), 'sem nome ⇒ o papel literal');
 });
 
-test('esq-sem-task: vivo sem task escreve "sem task" e a cor do glifo é inactive', () => {
+test('esq-sem-task: vivo sem task escreve "agente fora do loop" (GM-15 T32) e a cor do glifo é inactive', () => {
   const ls = renderEsquadrao(EXTRAS['sem-task'], op(80));
-  const l = ls.find((x) => TEXTO(x).startsWith('├─ ● sem task'))!;
-  assert.match(TEXTO(l), /^├─ ● sem task · sonnet {2}ctx █░{9} 12% {2}24k$/);
-  assert.equal(l.find((s) => s.texto === '●')!.cor, 'inactive');
-  assert.ok(render(EXTRAS['sem-task'], 44).includes('├ ● sem task 12% 24k'));
+  // o texto é SEMPRE "agente fora do loop" (emenda 4 item 5): em 80 colunas ele é CORTADO com `…` ANTES de o modelo sair; com folga (100), inteiro
+  const l = ls.find((x) => TEXTO(x).startsWith('├─ ● agente fora'))!;
+  assert.match(TEXTO(l), /^├─ ● agente fora… · sonnet {2}ctx █░{9} 12% {2}24k$/);
+  assert.ok(ls.filter((x) => /^├─ ● /.test(TEXTO(x))).every((x) => TEXTO(x).includes(' · ')), 'o modelo segue em todos os agentes em 80 colunas');
+  assert.match(achar(render(EXTRAS['sem-task'], 100), /^├─ ● agente fora/), /^├─ ● agente fora do loop · sonnet {2}ctx /);
+  // nenhuma forma alternativa do rótulo, em nenhuma largura
+  for (let w = 44; w <= 120; w++) assert.ok(render(EXTRAS['sem-task'], w).every((x) => !/(^|[ ●])fora do loop/.test(x) || /agente fora do loop/.test(x)), `${w}: rótulo trocado`);
 });
 
 test('esq-limite-zero-aparece: tok 0 e h5 0 aparecem (ausente ≠ zero)', () => {
@@ -693,13 +700,14 @@ test('esq-numero-nunca-cortado-propriedade: todos os nomes de pacote × ids de t
     for (const id of ids) {
       for (const tok of ctxs) {
         const e = voo();
+        comTaskIniciada(e, id);
         e.equipe.agentes = e.equipe.agentes.slice(0, 2).map((a, i) => ({ ...a, nome: i === 0 ? nome : `${nome}X`.slice(0, 10), task: id, ctxTok: tok, ctxPct: tok === null ? null : 64, desdeS: 5400 }));
         e.equipe.vivos = 2;
         for (let w = 44; w <= 200; w += w < 80 ? 1 : 7) {
           for (const l of render(e, w).filter((x) => /^├─ [●◌] /.test(x) || /^└─ [●◌] /.test(x))) {
             linhas++;
             assert.ok(colunas(l) <= w, `${w}: estourou em "${l}"`);
-            assert.doesNotMatch(l, /\d+(k|M|%|m)?…/, `${w} ${nome} ${id} ${tok}: número cortado em "${l}"`);
+            assert.ok(new RegExp(`\\s${id}(\\s|$)`).test(l), `${w} ${nome} ${id} ${tok}: o id da task é desenhado inteiro em "${l}"`);
           }
         }
       }
@@ -711,11 +719,13 @@ test('esq-numero-nunca-cortado-propriedade: todos os nomes de pacote × ids de t
   e.equipe.agentes = [{ ...e.equipe.agentes[0], nome: 'DUMBLEDORE', task: 'T10', ctxTok: 128_000, ctxPct: 64 }];
   assert.match(achar(render(e, 60), /^├─ ● DUMBLEDORE/), /ctx █+░* 64%  128k$/);
   // nome comprido (pacote de terceiro) + id de 10 caracteres: quando nem sem o verbo cabe, o NOME cede com `…`, o número não
+  comTaskIniciada(e, 'T123456789'); // iniciada: o id é desenhado (senão o rótulo "agente fora do loop" o esconde e o caso nem é exercido)
   e.equipe.agentes = [{ ...e.equipe.agentes[0], nome: 'NOMEMUITOCOMPRIDODOPACOTE', task: 'T123456789', ctxTok: 128_000, ctxPct: 64 }];
   for (let w = 60; w <= 80; w++) {
     const l = achar(render(e, w), /^├─ ● /);
     assert.ok(colunas(l) <= w, `${w}: estourou`);
     assert.match(l, /ctx █+░* 64%  128k$/, `${w}: ${l}`);
+    assert.match(l, / T123456789 /, `${w}: o id de 10 caracteres é desenhado inteiro: ${l}`);
     if (w < 70) assert.match(l, /^├─ ● NOME\S*…/, `${w}: o nome é que cede, com …: ${l}`);
     else assert.match(l, /^├─ ● NOMEMUITOCOMPRIDODOPACOTE /, `${w}: com folga o nome fica inteiro: ${l}`);
   }

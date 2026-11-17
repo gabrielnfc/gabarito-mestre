@@ -20,8 +20,9 @@
  * (`rotuloCasaSpec`): (c) sempre abre com 2+ specs; só deixa de abrir se nenhum rótulo resolver (caminhos com o mesmo final de 59 caracteres).
  * Id que não casa `ID_PERGUNTA_RE` (sessão com `.` ou `_`) seria irrespondível pelo hook: não vira pergunta.
  */
-import { ideiasAbertas, pendenciaAberta, textoIdeias } from './depende.js';
-import { ID_PERGUNTA_RE } from './formas.js';
+import { adiadas, ideiasAbertas, pendenciaAberta, textoIdeias } from './depende.js';
+import { AGORA_NAO } from './pouso.js';
+import { ehRespostaDeAdiamento, ID_PERGUNTA_RE } from './formas.js';
 import { ordenar } from './loop.js';
                                                      
 import { ancoraDaPerguntaB, ancoraDaPerguntaC, rotuloCasaSpec } from './trilha.js';
@@ -60,7 +61,8 @@ function respondidas(evs          )              {
   const ids = new Set        ();
   for (const e of evs) {
     const d = obj(e.dados);
-    if (e.tipo === 'dono.resposta' && typeof d.pergunta === 'string' && typeof d.rotulo === 'string' && Number.isInteger(d.opcao)) ids.add(d.pergunta);
+    // GM-15 T35 (r.14): "agora não" adia, não fecha (a regra de adiada é `adiadas`, de depende.ts)
+    if (e.tipo === 'dono.resposta' && typeof d.pergunta === 'string' && typeof d.rotulo === 'string' && Number.isInteger(d.opcao) && !ehRespostaDeAdiamento(d)) ids.add(d.pergunta);
   }
   return ids;
 }
@@ -84,18 +86,35 @@ function sessaoAtual(evs          , ctx                   )                {
   return null;
 }
 
+/** GM-15 T35 (r.15): `Emenda <n>` no começo do texto da dúvida ⇒ a proposta `n`; senão `null` (a dúvida não é de emenda). */
+const emendaDaDuvida = (texto        )                => {
+  const m = /^\s*emenda\s+#?(\d{1,6})\b/i.exec(texto);
+  return m === null ? null : Number(m[1]);
+};
+/** Proposta ⇒ posição do último julgamento (`spec.emendada`/`emenda.rejeitada` com `proposta_seq` inteiro) em `evs`. */
+function emendasJulgadas(evs          )                      {
+  const m = new Map                ();
+  evs.forEach((e, i) => {
+    const n = obj(e.dados).proposta_seq;
+    if ((e.tipo === 'spec.emendada' || e.tipo === 'emenda.rejeitada') && Number.isInteger(n)) m.set(n          , i);
+  });
+  return m;
+}
+
 /** Perguntas abertas, a mais antiga (pela âncora) primeiro. */
 export function perguntasAbertas(eventos          , trilha        , ctx                    = {})             {
   const t = obj(trilha)          ;
   const c = obj(ctx)                     ;
   const evs = emOrdem(eventos);
   const fechadas = respondidas(evs);
+  const adiados = adiadas(evs);
+  const julgadas = emendasJulgadas(evs);
   const semEntrega = t.identificada !== true;
   const achadas                                 = [];
   const pos = new Map(evs.map((e, i) => [e, i]));
   const abrir = (ancora        , gatilho                     , texto        , opcoes          , jaFiltrada = false) => {
     const id = idDe(ancora);
-    if (!ID_PERGUNTA_RE.test(id) || (!jaFiltrada && fechadas.has(id)) || opcoes.length === 0) return;
+    if (!ID_PERGUNTA_RE.test(id) || (!jaFiltrada && fechadas.has(id)) || opcoes.length === 0 || adiados.has(id)) return;
     achadas.push({ pos: pos.get(ancora)          , p: { id, gatilho, texto, opcoes } });
   };
 
@@ -109,6 +128,9 @@ export function perguntasAbertas(eventos          , trilha        , ctx         
         : `A conversa mudou de assunto. Isto é ${IDEIA} ou ${AVULSA}?`;
       abrir(e, 'a', texto, ultima !== undefined ? [ultima, IDEIA, AVULSA] : [IDEIA, AVULSA]);
     } else if (d.tipo === 'duvida' && umaLinha(d.texto)) {
+      // GM-15 T35 (r.15): dúvida de emenda julgada DEPOIS dela é obsoleta (prova no diário); sem prova, fica
+      const n = emendaDaDuvida(d.texto);
+      if (n !== null && (julgadas.get(n) ?? -1) > (pos.get(e)          )) continue;
       abrir(e, 'd', d.texto, lista         (d.opcoes).filter(cabe));
     } else {
       const pendencia = pendenciaAberta(evs, e);
@@ -168,4 +190,35 @@ export function respostaValida(p            , id            , opcao        , eve
   }
   if (!Number.isInteger(opcao) || opcao < 1 || opcao > pergunta.opcoes.length) return { ok: false, erro: 'opcao_fora' };
   return { ok: true, rotulo: pergunta.opcoes[opcao - 1] };
+}
+
+/**
+ * GM-15 T35 (r.14, D-G12 2): toda pergunta aberta aceita "agora não" (o hook `responder` grava `{pergunta, rotulo: "agora não"}`, a forma própria do
+ * adiamento em formas.ts, sem `opcao`). Só pergunta ABERTA (a adiada já não está em `p`). Nunca lança.
+ */
+export function adiamentoValido(p            , id            )                                                                    {
+  return lista          (p).some((q) => q?.id === id) ? { ok: true, rotulo: AGORA_NAO } : { ok: false, erro: 'inexistente' };
+}
+
+                                                                                        
+const RECOMENDADO = /\(recomendado\)/i;
+/**
+ * GM-15 T35 (r.16, D-G12 4): "aprovar todas as recomendadas" = as perguntas abertas com EXATAMENTE 1 opção marcada "(recomendado)" (sem caixa);
+ * pergunta sem recomendação (ou com 2+) fica fora. Cada item leva o número e o rótulo da opção recomendada. Na ordem de `p`. Nunca lança.
+ */
+export function loteRecomendadas(p            )             {
+  return lista          (p).flatMap((q) => {
+    const marcadas = lista        (q?.opcoes).map((o, i) => ({ o, i })).filter((x) => typeof x.o === 'string' && RECOMENDADO.test(x.o));
+    return marcadas.length === 1 ? [{ id: q.id, opcao: marcadas[0].i + 1, rotulo: marcadas[0].o, texto: q.texto }] : [];
+  });
+}
+
+/** Impressão do lote (12 hex, FNV-1a de 64 bits sobre `id=opcao` em ordem): a confirmação só grava o MESMO lote que o dono viu. Pura, sem `node:`. */
+export function impressaoDoLote(itens            )         {
+  let h = 0xcbf29ce484222325n;
+  for (const ch of lista          (itens).map((i) => `${i.id}=${i.opcao}`).join('\n')) {
+    h ^= BigInt(ch.codePointAt(0)          );
+    h = (h * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return h.toString(16).padStart(16, '0').slice(0, 12);
 }

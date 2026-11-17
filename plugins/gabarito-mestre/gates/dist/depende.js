@@ -10,9 +10,19 @@
  * vive em `acoes[].comando`, e só quando provado seguro (id de task em formato fechado; branch da entrega, DP-3 ajuste 3).
  */
 import { projetarEmendas } from './emenda.js';
-import { formaInvalida, ID_PERGUNTA_RE } from './formas.js';
-import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.js';
-                                                            
+import { ehRespostaDeAdiamento, formaInvalida, ID_PERGUNTA_RE, TIPOS_EVENTO } from './formas.js';
+import { AGORA_NAO_TETO } from './pouso.js';
+import { estadoDe, freioDaLiberacao, ordenar, sombraDecideOTeto, TIPOS_DE_TASK } from './loop.js';
+import { cmp } from './diario-puro.js';
+/**
+ * GM-15 T19 (REQ-POU-4, r1 MAJOR-1): a régua ÚNICA do sinal do loop, a mesma do Stop (`sinalArmado`): só `armado` (da sessão, fresco) é loop ligado; tudo mais
+ * (ausente, `nao_conferivel`, velho, de outra sessão, sem arquivo, sem sessão: `null`) é desligado ⇒ avisa "ligar o loop" e nunca oferece /clear.
+ * `undefined` = o chamador não mediu o sinal (projeção pura, sem a CLI): nada muda.
+ */
+export function loopDesligado(sinal                                         )          {
+  return sinal !== undefined && sinal !== 'armado';
+}
+                                                                                        
 import { idDaBranch } from './trilha.js';
                                           
 
@@ -34,6 +44,18 @@ function nomeDeFonte(v         )         {
   const t = limpo.replace(/\s+/g, ' ').trim();
   return t === '' ? 'uma fonte' : Array.from(t).slice(0, NOME_FONTE_MAX).join('');
 }
+
+/** (5) e o lote: a task no limite de revisões, com o botão do dono só para id seguro. */
+const itemTeto = (id        , freio         )              => {
+  const porque = freio === undefined ? '' : ` (${freio})`; // GM-15 T36: o freio da Sombra, 1 linha (`freioDaLiberacao`)
+  return TASK_SEGURA.test(id)
+    ? item(`decidir a ${id}: chegou ao limite de revisões${porque}`, [{ rotulo: 'liberar mais uma rodada', comando: `/gabarito-mestre:liberar ${id}` }])
+    : item(`decidir uma task: chegou ao limite de revisões${porque}`);
+};
+/** (7) e o lote: a emenda aberta com os botões da E4. */
+const itemEmenda = (seq        )              => item(`decidir a emenda ${seq}`, [
+  { rotulo: 'aprovar', comando: `/gabarito-mestre:emenda aprovar ${seq}` }, { rotulo: 'rejeitar', comando: `/gabarito-mestre:emenda rejeitar ${seq}` },
+]);
 
 const copia = (i             )              => ({ nivel: i.nivel, motivo: i.motivo, acoes: (Array.isArray(i.acoes) ? i.acoes : []).map((a) => ({ ...a })) });
 
@@ -82,9 +104,27 @@ export function pendenciaAberta(evs          , nota        )                    
   if (!ID_PERGUNTA_RE.test(id)) return null;
   const i = evs.indexOf(nota);
   if (i < 0) return null;
-  const fechada = evs.some((r, j) => j > i && r.tipo === 'dono.resposta' && formaInvalida('dono.resposta', r.dados) === null && r.dados.pergunta === id && 'rotulo' in r.dados);
+  // GM-15 T35 (r.14): "agora não" adia, nunca fecha
+  const fechada = evs.some((r, j) => j > i && r.tipo === 'dono.resposta' && formaInvalida('dono.resposta', r.dados) === null && r.dados.pergunta === id && 'rotulo' in r.dados && !ehRespostaDeAdiamento(r.dados));
   return fechada ? null : { id, texto: nota.dados.texto           };
 }
+
+/**
+ * GM-15 T35 (r.14, D-G12 2): ids adiados pelo dono = a ÚLTIMA `dono.resposta` por rótulo (forma válida) ao id é "agora não…". Resposta
+ * de verdade depois do adiamento o desfaz (e fecha); o gatilho que muda abre id novo (âncora nova), que não está aqui. Nunca lança.
+ */
+export function adiadas(evs          )              {
+  const ultima = new Map                 ();
+  for (const r of Array.isArray(evs) ? evs : []) {
+    if (obj(r).tipo !== 'dono.resposta' || formaInvalida('dono.resposta', r.dados) !== null || !('rotulo' in r.dados)) continue;
+    ultima.set(r.dados.pergunta          , ehRespostaDeAdiamento(r.dados));
+  }
+  return new Set([...ultima].filter(([, a]) => a).map(([id]) => id));
+}
+
+/** GM-15 T35 (r.13, D-G12 1): nota de pendência/ideia escrita pelo orquestrador é lembrete dele (vai ao plano/brief), nunca item do dono. */
+export const notaDoOrquestrador = (e        )          => obj(e).tipo === 'nota' && obj(e).agente === 'orquestrador'
+  && (obj(obj(e).dados).tipo === 'pendencia' || obj(obj(e).dados).tipo === 'ideia');
 
 const pendenciasAbertas = (evs          )                                  =>
   evs.flatMap((e) => { const p = pendenciaAberta(evs, e); return p === null ? [] : [p]; });
@@ -130,10 +170,69 @@ function higienizar(texto        )         {
   return t === '' ? 'uma pendência' : t;
 }
 
+/** GM-15 T8 (REQ-ENT-1 d i): o botão "seguir" da próxima entrega abre o loop (a skill que conduz a entrega a partir da spec e do plano). */
+export const CMD_SEGUIR = '/gabarito-mestre:gabarito-loop';
+export const NENHUMA_PROXIMA = 'nenhuma próxima anotada';
+
+/**
+ * GM-15 T8 (REQ-ENT-1 d i): a próxima entrega, nesta ordem: (1) a spec com `PBI:` (id seguro) cuja entrega não tem `entrega.encerrada` vigente, a mais
+ * nova pelo nome do arquivo (as specs levam a data no nome); (2) as ideias para a próxima anotadas na entrega encerrada (`eventos`, a regra única
+ * `ideiasAbertas`, sem as do orquestrador, que são lembrete dele); (3) "nenhuma próxima anotada", sem botão. `encerradas` = ids com encerramento vigente
+ * (inclui a própria entregue). O título passa pela higiene de linguagem do DEPENDE. Puro, nunca lança.
+ */
+export function proximaEntrega(specs         , encerradas                     , eventos         )          {
+  const seguir = [{ rotulo: 'seguir', comando: CMD_SEGUIR }];
+  const candidatas = (Array.isArray(specs) ? specs : [])
+    .map((x) => obj(x))
+    .filter((x) => typeof x.pbi === 'string' && ENTREGA_SEGURA.test(x.pbi) && typeof x.caminho === 'string' && !encerradas.has(x.pbi))
+    .sort((a, b) => cmp(a.caminho          , b.caminho          ));
+  const nova = candidatas[candidatas.length - 1];
+  if (nova !== undefined) {
+    const titulo = typeof nova.titulo === 'string' && nova.titulo.trim() !== '' ? higienizar(nova.titulo) : '';
+    return { tipo: 'spec', texto: titulo === '' ? (nova.pbi          ) : `${nova.pbi          } ${titulo}`, acoes: seguir };
+  }
+  let evs           = [];
+  try {
+    const ord = Array.isArray(eventos) ? ordenar(eventos            ) : { ok: false          };
+    if (ord.ok) evs = ord.eventos;
+  } catch { evs = []; }
+  const ideias = ideiasAbertas(evs.filter((e) => !notaDoOrquestrador(e)));
+  if (ideias !== null && ideias.n > 0) return { tipo: 'ideias', texto: textoIdeias(ideias.n), acoes: seguir };
+  return { tipo: 'nenhuma', texto: NENHUMA_PROXIMA, acoes: [] };
+}
+
+/**
+ * GM-15 T19 (REQ-POU-4, aprendizado 185): o botão que liga o loop automático: um `/loop` sem intervalo (dinâmico) com a tarefa de seguir o loop da entrega.
+ * O texto do item nunca leva o comando (REQ-LNG-1): ele só vive no botão.
+ */
+export const CMD_LIGAR_LOOP = `/loop ${CMD_SEGUIR}`;
+export const MOTIVO_LIGAR_LOOP = 'ligar o loop automático: sem ele nada retoma o trabalho depois do pouso';
+export const MOTIVO_LIGAR_ANTES_DO_CLEAR = 'ligar o loop automático antes de limpar a conversa';
+const BOTAO_LIGAR_LOOP       = { rotulo: 'ligar o loop', comando: CMD_LIGAR_LOOP };
+/** GM-15 T19 (REQ-POU-3): contexto em X ou acima sem pouso da sessão. Quem limpa é o mod (pouso automático), nunca o agente: não há botão. */
+export const motivoContextoAlto = (percent        , x        )         =>
+  `limpar a conversa: contexto em ${Math.round(percent)} % (teto ${Math.round(x)} %); quem limpa é o mod, não o agente`;
+const contextoValido = (v         )                                        => {
+  const c = obj(v);
+  return typeof c.percent === 'number' && Number.isFinite(c.percent) && typeof c.x === 'number' && Number.isFinite(c.x) && c.x > 0 ? { percent: c.percent, x: c.x } : null;
+};
+
+/** D-G12 (emenda 16 r.13): sem item que trave, 1 linha com este texto literal. */
+export const NADA_DEPENDE = 'nada depende de você';
+
 export function dependeDe(
   trilha        , eventos          , base               ,
-  fontes                      , pousoPendente         , git                                             ,
+  fontes                      ,
+  // GM-15 T19: `loop` = o sinal do loop automático da sessão do painel (`armado` | `ausente` | `null`; só `armado` é ligado, a régua do Stop: `loopDesligado`; `undefined` = não medido, nada muda); `contexto` = a leitura
+  // própria em X ou acima sem pouso desta sessão (o painel já decidiu); `ligarLoop` = o painel decidiu que falta o loop (onboarding, sinal não armado e trabalho a seguir)
+  pousoPendente                                                                                                                                                               ,
+  git                                             ,
+  lote                       ,
 )                {
+  // GM-15 T13 (REQ-AUT-1): com o lote do dono (`loteDoDono`, o MESMO que `loop.mjs proxima` devolve), ele substitui (5) e (7), inteiro e na mesma ordem.
+  const comLote = Array.isArray(lote);
+  const doLote = comLote ? (lote                 ).map(copia) : [];
+
   const falhou           = [];
   for (const f of Array.isArray(fontes?.falhou) ? fontes.falhou : []) {
     const n = nomeDeFonte(f);
@@ -153,14 +252,29 @@ export function dependeDe(
   const marcas = Array.isArray(t.marcas) ? t.marcas : [];
 
   // (6) pouso pendente
-  const limpar = pousoPendente === true ? [item('limpar a conversa', [{ rotulo: 'limpar', comando: '/clear' }])] : [];
+  // GM-15 T35 (r.9): com o id do pouso, o pedido traz "agora não (loop parado)" (o hook `responder` grava o adiamento; no teto o loop segue parado)
+  const pouso = obj(pousoPendente);
+  const pedeClear = pousoPendente === true || pouso.pendente === true;
+  const idPouso = typeof pouso.id === 'string' && ID_PERGUNTA_RE.test(pouso.id) && !pouso.id.startsWith('herdar:') ? pouso.id : null;
+  const agoraNao = idPouso === null ? [] : [{ rotulo: AGORA_NAO_TETO, comando: `/gabarito-mestre:responder ${idPouso} agora` }];
+  // GM-15 T19 (REQ-POU-4, aprendizado 185): com o loop sabidamente desligado nunca se pede /clear: o item manda ligar o loop antes
+  const semLoop = loopDesligado(pouso.loop                                           );
+  const contexto = contextoValido(pouso.contexto);
+  const limpar = pedeClear
+    ? [semLoop ? item(MOTIVO_LIGAR_ANTES_DO_CLEAR, [{ ...BOTAO_LIGAR_LOOP }, ...agoraNao]) : item('limpar a conversa', [{ rotulo: 'limpar', comando: '/clear' }, ...agoraNao])]
+    : [
+      // GM-15 T19 (REQ-POU-3): contexto alto sem pouso desta sessão: "limpar a conversa", e quem limpa é o mod (sem botão)
+      ...(contexto !== null ? [item(motivoContextoAlto(contexto.percent, contexto.x))] : []),
+      ...(pouso.ligarLoop === true ? [item(MOTIVO_LIGAR_LOOP, [{ ...BOTAO_LIGAR_LOOP }])] : []),
+    ];
+  // GM-15 T35 (r.13, r.14): o DEPENDE não mostra lembrete do orquestrador nem item adiado pelo dono
+  const adiados = adiadas(evs);
+  const doDono = evs.filter((e) => !notaDoOrquestrador(e));
 
   // (5) task no limite de revisões; a base (PAROU de teto, REQ-PNL-3) já traz o mesmo botão `liberar <task>`: não repete.
   const jaNaBase = (id        )          => (Array.isArray(base) ? base : []).some((b) => Array.isArray(b?.acoes) && b.acoes.some((a) => a?.comando === `/gabarito-mestre:liberar ${id}`)
     || b?.motivo === `teto de rodadas de review em ${id}` || (!TASK_SEGURA.test(id) && typeof b?.motivo === 'string' && b.motivo.startsWith('teto de rodadas de review')));
-  const limite = tasksNoTeto(evs).filter((id) => !jaNaBase(id)).map((id) => (TASK_SEGURA.test(id)
-    ? item(`decidir a ${id}: chegou ao limite de revisões`, [{ rotulo: 'liberar mais uma rodada', comando: `/gabarito-mestre:liberar ${id}` }])
-    : item('decidir uma task: chegou ao limite de revisões')));
+  const limite = tasksNoTeto(evs).filter((id) => !jaNaBase(id)).map((id) => itemTeto(id));
 
   // (1) aprovação: "mudou depois" ou aprovação `●`; os dois juntos são 1 item (a versão nova). Botão só na branch da entrega (DP-3 aj. 3).
   const aprovar                = [];
@@ -180,19 +294,17 @@ export function dependeDe(
   const revisar = aberto !== null ? [item(`revisar e aceitar o pedido de revisão #${aberto}`)] : [];
 
   // (3) pendências abertas, com o botão "feito"
-  const pendencias = pendenciasAbertas(evs).map((p) => item(higienizar(p.texto), [{ rotulo: 'feito', comando: `/gabarito-mestre:responder ${p.id} 1` }]));
+  const pendencias = pendenciasAbertas(doDono).filter((p) => !adiados.has(p.id)).map((p) => item(higienizar(p.texto), [{ rotulo: 'feito', comando: `/gabarito-mestre:responder ${p.id} 1` }]));
 
   // (4) ideias para a próxima entrega
-  const ideias = ideiasAbertas(evs);
-  const decidirIdeias = ideias !== null
+  const ideias = ideiasAbertas(doDono);
+  const decidirIdeias = ideias !== null && !adiados.has(ideias.id)
     ? [item(textoIdeias(ideias.n), [{ rotulo: VISTO, comando: `/gabarito-mestre:responder ${ideias.id} 1` }])]
     : [];
 
   // (7) emendas abertas (os botões são os da E4)
   const emendas = ord.ok ? projetarEmendas(evs).abertas : [];
-  const decidirEmendas = emendas.map((p) => item(`decidir a emenda ${p.seq}`, [
-    { rotulo: 'aprovar', comando: `/gabarito-mestre:emenda aprovar ${p.seq}` }, { rotulo: 'rejeitar', comando: `/gabarito-mestre:emenda rejeitar ${p.seq}` },
-  ]));
+  const decidirEmendas = emendas.map((p) => itemEmenda(p.seq));
 
   // A base não repete o que (1) e (7) já dizem (a E4 também lista "spec aguardando" e "emenda #n").
   const daBase = (Array.isArray(base) ? base : []).filter((b) => {
@@ -201,8 +313,77 @@ export function dependeDe(
     return true;
   }).map(copia);
 
-  const saida = [...daBase, ...limpar, ...limite, ...aprovar, ...revisar, ...pendencias, ...decidirIdeias, ...decidirEmendas];
+  // O PAROU de teto da base (REQ-PNL-3) já é o item do dono daquela task, com o mesmo botão: o lote não o repete (a regra de (5)); o resto vai inteiro e na ordem.
+  const LIBERAR = '/gabarito-mestre:liberar ';
+  const loteSemBase = doLote.filter((i) => !(i.motivo.startsWith('decidir uma task: chegou ao limite de revisões') && jaNaBase(''))
+    && !i.acoes.some((a) => typeof a.comando === 'string' && a.comando.startsWith(LIBERAR) && jaNaBase(a.comando.slice(LIBERAR.length))));
+  const saida = comLote
+    ? [...daBase, ...limpar, ...loteSemBase, ...aprovar, ...revisar, ...pendencias, ...decidirIdeias]
+    : [...daBase, ...limpar, ...limite, ...aprovar, ...revisar, ...pendencias, ...decidirIdeias, ...decidirEmendas];
   if (falhou.length > 0) saida.push(item(`depende de você: ? (não consegui ler ${listaE(falhou)})`));
-  else if (saida.length === 0) saida.push(item('depende de você: nada'));
+  else if (saida.length === 0) saida.push(item(NADA_DEPENDE)); // D-G12 (r.13): o texto literal
   return saida;
+}
+
+                           
+
+export const MOTIVO_PLUGIN_ATRAS = 'atualizar o plugin: o diário tem evento de uma versão mais nova';
+/** O motivo com a versão instalada (a medível: o evento desconhecido não traz a que o diário exige); sem versão, o motivo de antes. */
+export const motivoPluginAtras = (versao         )         =>
+  typeof versao === 'string' && /^[0-9A-Za-z.+-]{1,40}$/.test(versao) ? `atualizar o plugin (instalado: ${versao}): o diário tem evento de uma versão mais nova` : MOTIVO_PLUGIN_ATRAS;
+const CONHECIDOS                      = new Set(TIPOS_EVENTO);
+
+/**
+ * GM-15 T13 (REQ-AUT-1): o lote do dono, o que é previsível e só o dono destrava, 1 item cada, nesta ordem:
+ * (a) task `no_teto` (ordem do plano) que a Sombra não pode liberar: `sombra.libera_teto` desligado em origin ou um freio (`freioDaLiberacao`: abordagens esgotadas ou
+ * orçamento 3×; GM-15 T36, sem limite numérico de liberações); (b) emenda aberta com `sombra.julga_emendas` desligado; (c) o plugin atrás do diário
+ * (evento de tipo que este plugin não conhece, aprendizado 585); (d) por último, `next ⇒ main` no fim da entrega: base diferente de `main`, sem
+ * `entrega.autonomia` e sem `entrega.encerrada`. `loop.mjs proxima` o devolve em `lote` e `dependeDe` o mostra igual. Puro, nunca lança; diário que
+ * não ordena ⇒ lote vazio (o PAROU e o "?" do DEPENDE já cobrem).
+ */
+export function loteDoDono(plano              , eventos          , cfg            )                {
+  let evs          ;
+  try {
+    const ord = Array.isArray(eventos) ? ordenar(eventos) : { ok: false          };
+    if (!ord.ok) return [];
+    evs = ord.eventos;
+  } catch { return []; }
+  const c = obj(cfg);
+  const tasks = Array.isArray(plano?.tasks) ? (plano         ).tasks.map((t) => t?.id).filter((id)               => typeof id === 'string') : [];
+  const daTask = (id        )           => evs.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && obj(e.dados).task === id);
+  const noTeto = (id        )          => { const r = estadoDe(daTask(id)); return !('invalido' in r) && r.estado === 'no_teto'; };
+  // GM-15 T36 (emenda 22 l.4, emenda 24 m.2): no_teto só vira item do dono com a flag desligada ou num freio da Sombra (`freioDaLiberacao`, a regra única do `liberar`); antes disso a Sombra decide.
+  const teto = tasks.filter(noTeto).flatMap((id) => {
+    if (sombraDecideOTeto(plano         , evs, id, c.liberaTeto)) return []; // a regra única de quem decide (`proxima` e painel usam a mesma)
+    if (c.liberaTeto !== true) return [itemTeto(id)];
+    const { freio } = freioDaLiberacao(plano         , evs, id);
+    return [itemTeto(id, freio?.resumo)];
+  });
+  const emendas = c.julgaEmendas === true ? [] : projetarEmendas(evs).abertas.map((p) => itemEmenda(p.seq));
+  // GM-15 T34 (backlog T26 MINOR-1, REQ-EME-3 B; review r1 MAJOR-3 e r2 MAJOR-1): a redação da Sombra (`emenda.proposta` com `origem: sombra`) REJEITADA (por quem não é o dono) vai
+  // ao dono; a Sombra não repropõe na âncora. Fonte: emenda de âncora de REQ-EME-3 B ("proposta com origem sombra rejeitada vai ao dono"), D-G10 ("não há 3ª proposta do orquestrador"),
+  // emenda 15 r.10 e emenda 16 r.15. O item é do DONO e SÓ sai por decisão dele ou pelo fim da entrega: (a) ele mesmo rejeitou (`emenda.rejeitada` origem dono) ou (c) a entrega foi
+  // encerrada. Proposta do orquestrador NÃO tira o item. Aqui (e não no `proxima`) para o painel e o `proxima` terem o mesmo lote pela mesma função.
+  const encerrada = evs.some((e) => e.tipo === 'entrega.encerrada');
+  const est = projetarEmendas(evs);
+  const rejeitadoPeloDono = (seq        )          => evs.some((e) => e.tipo === 'emenda.rejeitada' && obj(e.dados).proposta_seq === seq && obj(e.dados).origem === 'dono');
+  const redacoes = encerrada ? [] : est.rejeitadas
+    .filter((p) => p.origem === 'sombra' && /^[A-Za-z0-9._-]{1,60}$/.test(p.req) && !rejeitadoPeloDono(p.seq))
+    .map((p) => item(`decidir a redação da Sombra rejeitada (emenda ${p.seq}, ${p.req}): a Sombra não repropõe nessa âncora`));
+  const versao = evs.some((e) => !CONHECIDOS.has(e.tipo)) ? [item(motivoPluginAtras(typeof c.versaoPlugin === 'string' ? c.versaoPlugin : undefined), [{ rotulo: 'atualizar', comando: '/plugin' }])] : [];
+  const base = typeof c.base === 'string' && c.base !== '' ? c.base : 'main';
+  const main = tasks.length > 0 && base !== 'main' && c.autonomiaEntrega !== true && !encerrada
+    ? [item(`no fim da entrega: levar ${higienizar(base)} para main`)] : [];
+  return [...teto, ...emendas, ...redacoes, ...versao, ...main];
+}
+
+/**
+ * GM-15 T13 (obrigação da review T6 r1 P9, REQ-ENT-2): `adiar`/`cortar`/`reabrir --origem sombra` sem `--fonte` é recusado e vira item do dono
+ * (Sombra sem fonte ⇒ dono), com o comando humano. Id fora da forma segura sai sem botão.
+ */
+export function itemSemFonte(verbo                                , task        )              {
+  const seguro = typeof task === 'string' && TASK_SEGURA.test(task);
+  const quem = seguro ? `a ${task}` : 'uma task';
+  const motivo = verbo === 'reabrir' ? `decidir se ${quem} volta ao alvo: a Sombra não tem fonte` : `decidir se ${quem} sai do alvo (${verbo}): a Sombra não tem fonte`;
+  return item(motivo, seguro ? [{ rotulo: verbo, comando: `/gabarito-mestre:${verbo} ${task}` }] : []);
 }

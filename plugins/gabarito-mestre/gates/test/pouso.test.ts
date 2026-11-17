@@ -224,6 +224,31 @@ test('tasks-em-voo-por-estado: implementando, corrigindo e em_revisao contam; os
   );
   assert.deepEqual(r, { ok: true, tasks: ['a', 'b', 'c'] });
 });
+test('tasks-em-voo-com-task-invalida (GM-15 T25, MAJOR-2): reabertura de origem inválida em `a` afeta só `a`; `b` em voo segue contada e o pouso/o mod não veem diário inválido', () => {
+  const ruim: [TipoEvento, Record<string, unknown>] = ['task.reaberta', { task: 'a', origem: 'xpto' }];
+  assert.deepEqual(emVoo(iniP('a', 'implementador'), ruim, iniP('b', 'implementador')), { ok: true, tasks: ['b'] });
+  assert.deepEqual(emVoo(iniP('a', 'implementador'), ruim), { ok: true, tasks: [] }, 'sem outra task em voo, o pouso é permitido');
+  // controle: outro defeito do diário segue sendo diário inválido
+  const r = emVoo(iniP('a', 'implementador'), ['task.integrada', { task: 'b', sha: 'x' }]);
+  assert.equal(r.ok, false);
+});
+test('tasks-em-voo-fora (GM-15 T34, emenda 7 r.3, loop 44): task.fora tira a task do voo e a volta de fora é lida; o diário não vira "fora da tabela"', () => {
+  const fora = (task: string): [TipoEvento, Record<string, unknown>] => ['task.fora', { task, como: 'adiada', motivo: 'depois', origem: 'dono' }];
+  const volta = (task: string): [TipoEvento, Record<string, unknown>] => ['task.reaberta', { task, origem: 'dono', de: 'fora' }];
+  assert.deepEqual(emVoo(fora('a'), iniP('b', 'implementador')), { ok: true, tasks: ['b'] }, 'fora ⇒ não está em voo');
+  assert.deepEqual(emVoo(fora('a'), volta('a'), iniP('a', 'implementador')), { ok: true, tasks: ['a'] }, 'volta de fora + iniciar ⇒ em voo');
+  assert.deepEqual(emVoo(fora('a'), volta('a')), { ok: true, tasks: [] }, 'volta de fora ⇒ pendente');
+  // a fronteira lê o `task` de um evento task.fora como de qualquer evento de task (sem task ⇒ ilegível)
+  assert.equal(analisarFronteira(diario(fora('a'))).motivo, null);
+  assert.notEqual(analisarFronteira(diario(['task.fora', { como: 'adiada', motivo: 'x', origem: 'dono' }])).motivo, null, 'task.fora sem task: ilegível, como os outros tipos de task');
+});
+test('task-fora-em-toda-lista (GM-15 T34, emenda 7 r.3): nenhuma lista literal de tipos de task fora de loop.ts; os leitores importam TIPOS_DE_TASK', () => {
+  for (const arq of ['src/diario-puro.ts', 'src/pouso.ts', 'test/e2e/avaliar.mjs', 'scripts/loop.mjs']) {
+    const t = readFileSync(join(GATES, arq), 'utf8');
+    assert.doesNotMatch(t, /'task\.iniciada',\s*'task\.concluida',\s*'review\.veredito'/, `${arq} repete a lista literal`);
+    assert.match(t, /\bTIPOS_DE_TASK\b/, `${arq} não usa TIPOS_DE_TASK`);
+  }
+});
 test('tasks-em-voo-nenhuma: aprovada, integrada, reprovada, pendente e diário vazio dão lista vazia', () => {
   assert.deepEqual(emVoo(), { ok: true, tasks: [] });
   assert.deepEqual(emVoo(ini('a'), con('a'), ver('a')), { ok: true, tasks: [] });
@@ -891,3 +916,34 @@ test('costura-mensagem-do-dono: prompt.submit do composer no mod real grava even
   assert.equal(a2?.ok, true);
   assert.equal((await H['tool.call']($, { tool: 'Agent', subagent_type: 'gabarito-revisor' }, ok)).ok, true);
 });
+
+// ---- GM-15 T35 (D-G11 b, e): pedido de /clear só com medição; "agora não" volta em +10 p.p. ----
+import { AGORA_NAO_TETO, pedidoDeClear, rotuloAdiamentoClear } from '../src/pouso.ts';
+{
+  const T0 = Date.UTC(2026, 10, 16, 12, 0, 0);
+  const ev = (seq: number, tipo: TipoEvento, dados: Record<string, unknown>, sessao = 'S1'): Evento =>
+    ({ seq, ts: new Date(T0 + seq * 1000).toISOString(), autor: 't', sessao, agente: 'orquestrador', tipo, dados, hash_anterior: null } as Evento);
+  const veredito = ev(1, 'review.veredito', { task: 'T1', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }, 'loop');
+  const pouso = ev(2, 'sessao.pouso', {}, 'S1');
+  const med = (percent: number | null) => ({ x: 50, agoraMs: T0 + 60_000, sessaoAtual: 'S1', leituras: percent === null ? [] : [{ sessao: 'S1', percent, fonte: 'mod', emMs: T0 + 59_000 }] });
+  const adiar = (seq: number, percent: number) => ev(seq, 'dono.resposta', { pergunta: 'S1:2', rotulo: rotuloAdiamentoClear(percent) }, 'dono');
+
+  test('sem-medicao-nao-pede-pouso (r.12, D-P13): sem leitura própria fresca nunca há pedido de /clear, nem com onboarding e o pouso gravado sem /clear', () => {
+    assert.deepEqual(pedidoDeClear([veredito, pouso], true, med(null)), { pendente: false, adiado: false, id: null, percent: null });
+    assert.equal(pedidoDeClear([veredito, pouso], true, undefined).pendente, false);
+    // controle: com a leitura própria em 55 % (teto 50) o pedido existe, com o id do pouso
+    assert.deepEqual(pedidoDeClear([veredito, pouso], true, med(55)), { pendente: true, adiado: false, id: 'S1:2', percent: 55 });
+  });
+
+  test('clear-agora-nao-volta-em-mais-10 (r.9): adiado em 55 % some até 64 % e volta em 65 %; o adiamento NÃO tira a pendência (o loop segue parado)', () => {
+    assert.equal(rotuloAdiamentoClear(55).startsWith(AGORA_NAO_TETO.slice(0, -1)), true);
+    assert.ok([...rotuloAdiamentoClear(100)].length <= 60);
+    const evs = [veredito, pouso, adiar(3, 55)];
+    assert.deepEqual(pedidoDeClear(evs, true, med(55)), { pendente: true, adiado: true, id: 'S1:2', percent: 55 });
+    assert.equal(pedidoDeClear(evs, true, med(64)).adiado, true);
+    assert.equal(pedidoDeClear(evs, true, med(65)).adiado, false);
+    assert.equal(pedidoDeClear(evs, true, med(64)).pendente, true);
+    // adiamento a outro pouso (id diferente) não adia este
+    assert.equal(pedidoDeClear([veredito, pouso, ev(3, 'dono.resposta', { pergunta: 'S1:9', rotulo: rotuloAdiamentoClear(55) }, 'dono')], true, med(55)).adiado, false);
+  });
+}

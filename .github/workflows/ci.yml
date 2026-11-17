@@ -33,7 +33,10 @@ jobs:
       - run: npm install -g @anthropic-ai/claude-code
       # `claude plugin test .` sai sempre 1: carrega os gates/test/*.test.ts, que são node:test. O script sai 0 só se o
       # teste do mod carregou (`(pass)`) e nenhum teste falhou; "did not load" dos *.test.ts de gates/ não conta.
-      - run: cd plugins/gabarito-mestre && bash scripts/test/mod-test.sh
+      # GM-15 T38: o teto padrão (114 s) vem de medição só na máquina local; no runner o passo é mais lento (estourou na PR #25).
+      # Teto da CI = 3× a mediana do passo "mod-test" nos 20 últimos runs verdes do ci.yml (gh run view --json jobs, 2026-11-17), mesma regra da T34 r.7:
+      # n = 20, segundos: 26 27 33 35 35 41 42 42 43 51 61 62 63 67 67 69 73 82 84 88; mediana = (51+61)/2 = 56 s => 168 s.
+      - run: cd plugins/gabarito-mestre && MOD_TEST_TIMEOUT=168 bash scripts/test/mod-test.sh
 
   gates:
     name: gates — node --test (mjs + ts)
@@ -85,8 +88,8 @@ jobs:
           node-version: '22'
       - run: bash --version | head -1
       - run: node --test plugins/gabarito-mestre/hooks/test/*.test.mjs
-      - name: latência da guarda (p95 wall ≤ 150 ms no runner; local ≤ 60 ms)
-        run: node plugins/gabarito-mestre/gates/scripts/bench-guarda.mjs --n 20 --limite 150
+      - name: latência da guarda (excesso p95 sobre o piso do node ≤ 240 ms, repete 1×; local ≤ 60 ms absoluto)
+        run: node plugins/gabarito-mestre/gates/scripts/bench-guarda.mjs --n 20 --limite-excesso 240
 
   texto:
     name: texto — invariantes da 1.1.0 (grep)

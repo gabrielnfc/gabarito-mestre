@@ -39,7 +39,9 @@ import { lerConfig } from '../lib/config.mjs';
 import { PADROES } from '../lib/git.mjs';
 import * as diario from '../dist/diario.js';
 import { ID_PERGUNTA_RE } from '../dist/formas.js';
-import { perguntasAbertas, respostaValida } from '../dist/perguntas.js';
+import { adiamentoValido, impressaoDoLote, loteRecomendadas, perguntasAbertas, respostaValida } from '../dist/perguntas.js';
+import { lerX, pedidoDeClear, rotuloAdiamentoClear } from '../dist/pouso.js';
+import { medicaoDoPouso } from './loop.mjs';
 import { idDaBranch, trilhaDe } from '../dist/trilha.js';
 
 /** Falha com código: o despachante a devolve como `{ok:false, erro, ...}` e rc 1. */
@@ -158,8 +160,11 @@ function diarios(raiz, branch, idPadrao) {
   return out;
 }
 
-/** Procura a pergunta e valida a resposta. Devolve `{ok, ...}`; lança `Falha` quando uma fonte não lê. */
-function avaliar(raiz, ctxHook, id, opcao) {
+/**
+ * Os diários onde a pergunta pode estar (`diarios`), cada um lido com `lerEstrito` e com as perguntas abertas pelo MESMO contexto do painel.
+ * Pasta ausente não entra; diário ilegível lança `Falha` (ausente não é corrompido). `[{rotulo, dir, eventos, abertas}]`.
+ */
+function lerDiarios(raiz, ctxHook) {
   const cfg = lerConfig(raiz).cfg;
   const idPadrao = typeof cfg?.fluxo?.idPadrao === 'string' ? cfg.fluxo.idPadrao : PADROES.idPadrao;
   let branch = null;
@@ -167,8 +172,7 @@ function avaliar(raiz, ctxHook, id, opcao) {
   const ultimas = atividades(raiz);
   const specs = lerSpecs(raiz);
   const ctx = { sessao: ctxHook.sessao, ultimas };
-  const achadas = [];
-  let respondida = false;
+  const lidos = [];
   for (const d of diarios(raiz, branch, idPadrao)) {
     try { lstatSync(d.dir); } catch (e) { if (ausente(e)) continue; throw new Falha('diario_ilegivel', `não consegui abrir o diário de ${d.rotulo} (${e.code ?? 'erro'}); nada foi gravado`); } // ausente ≠ corrompido
     const lido = diario.lerEstrito(d.dir);
@@ -181,9 +185,18 @@ function avaliar(raiz, ctxHook, id, opcao) {
       gh: 'nunca', ultimas, sessao: ctxHook.sessao ?? null,
     };
     const trilha = trilhaDe(fatos, lido.eventos);
-    const abertas = perguntasAbertas(lido.eventos, trilha, ctx);
-    if (abertas.some((p) => p.id === id)) achadas.push({ ...d, eventos: lido.eventos, abertas });
-    else if (respostaValida(abertas, id, opcao ?? 1, lido.eventos).erro === 'respondida') respondida = true;
+    lidos.push({ ...d, eventos: lido.eventos, abertas: perguntasAbertas(lido.eventos, trilha, ctx) });
+  }
+  return lidos;
+}
+
+/** Procura a pergunta e valida a resposta. Devolve `{ok, ...}`; lança `Falha` quando uma fonte não lê. */
+function avaliar(raiz, ctxHook, id, opcao) {
+  const achadas = [];
+  let respondida = false;
+  for (const l of lerDiarios(raiz, ctxHook)) {
+    if (l.abertas.some((p) => p.id === id)) achadas.push(l);
+    else if (respostaValida(l.abertas, id, opcao ?? 1, l.eventos).erro === 'respondida') respondida = true;
   }
   if (achadas.length >= 2) {
     return { ok: false, erro: 'ambigua', mensagem: `a pergunta ${id} existe nos diários de ${achadas.map((a) => a.rotulo).join(' e ')}; nada foi gravado` };
@@ -210,6 +223,55 @@ function gravar(raiz, dir, sessao, tipo, dados) {
   if (r.gravado !== 'evento') throw new Falha('evento_nao_gravado', `${tipo} recusado pelo diário (canário ou tamanho)`);
 }
 
+/**
+ * GM-15 T35 (r.9, r.14): "agora não" para o id `<sessao>:<seq>`. Vale para pergunta ABERTA (`adiamentoValido`, rótulo "agora não") e para o pedido de
+ * /clear em curso desta sessão (`pedidoDeClear` com a leitura própria de `medicaoDoPouso`, a mesma de `loop.mjs proxima`; rótulo com o contexto medido,
+ * que a volta em +10 p.p. lê). Grava `{pergunta, rotulo}` (a forma própria do adiamento, formas.ts: sem `opcao`) e relê. `{ok, ...}` ou Falha.
+ */
+function adiar(raiz, ctxHook, sessao, id) {
+  const x = lerX(process.env.GABARITO_POUSO_X).x;
+  const medicao = medicaoDoPouso(raiz, ctxHook.sessao, x);
+  const achadas = [];
+  for (const l of lerDiarios(raiz, ctxHook)) {
+    if (adiamentoValido(l.abertas, id).ok) achadas.push({ dir: l.dir, rotulo: l.rotulo, gravar: adiamentoValido(l.abertas, id).rotulo });
+    const clear = pedidoDeClear(l.eventos, false, medicao);
+    if (clear.pendente && !clear.adiado && clear.id === id) achadas.push({ dir: l.dir, rotulo: l.rotulo, gravar: rotuloAdiamentoClear(clear.percent) });
+  }
+  if (achadas.length === 0) return bloquear(`inexistente: não há pergunta aberta nem pedido de limpar a conversa ${id} para adiar; nada foi gravado`);
+  if (achadas.length >= 2) return bloquear(`ambigua: ${id} existe nos diários de ${achadas.map((a) => a.rotulo).join(' e ')}; nada foi gravado`);
+  const [a] = achadas;
+  gravar(raiz, a.dir, sessao, 'dono.resposta', { pergunta: id, rotulo: a.gravar });
+  const lido = diario.lerEstrito(a.dir);
+  if (!lido.ok) throw new Falha('resposta_sem_efeito', `o adiamento foi gravado mas o diário não relê (${lido.motivo}); confira o diário`);
+  const ultima = respostasDe(lido.eventos, id).pop();
+  if (ultima?.dados?.rotulo !== a.gravar || ultima.sessao !== sessao) throw new Falha('resposta_sem_efeito', 'a releitura não mostra o adiamento gravado; confira o diário');
+  return { systemMessage: `Resposta registrada: ${a.gravar}.` };
+}
+
+/** Itens do lote das recomendadas nos diários lidos (`loteRecomendadas`, perguntas.ts), cada um com o diário dele. */
+const itensDoLote = (lidos) => lidos.flatMap((l) => loteRecomendadas(l.abertas).map((i) => ({ ...i, dir: l.dir })));
+
+/**
+ * GM-15 T35 (r.16, D-G12 4, C6): "aprovar todas as recomendadas". `lote` só mostra (quantas, 1 linha de cada, o comando com a impressão) e não grava;
+ * `lote <impressão>` grava 1 `dono.resposta {pergunta, opcao, rotulo}` por item com o rótulo recomendado, só se o lote é o MESMO que o dono viu, e relê.
+ */
+function lote(raiz, ctxHook, sessao, impressao) {
+  const itens = itensDoLote(lerDiarios(raiz, ctxHook));
+  if (itens.length === 0) return bloquear('nenhuma pergunta aberta com opção recomendada; nada foi gravado');
+  const imp = impressaoDoLote(itens);
+  if (impressao === null) {
+    const linhas = itens.map((i, k) => `${k + 1}) ${i.texto} ⇒ ${i.rotulo}`).join('; ');
+    return bloquear(`${itens.length} ${itens.length === 1 ? 'pergunta' : 'perguntas'} com recomendação: ${linhas}. Para gravar ${itens.length === 1 ? 'esta resposta' : `as ${itens.length}`}, digite /${COMANDO} lote ${imp}; nada foi gravado`, 'Confirme o lote');
+  }
+  if (impressao !== imp) return bloquear(`o lote mudou desde que você o viu (outra pergunta abriu ou fechou); peça de novo com /${COMANDO} lote; nada foi gravado`);
+  for (const i of itens) gravar(raiz, i.dir, sessao, 'dono.resposta', { pergunta: i.id, opcao: i.opcao, rotulo: i.rotulo });
+  const depois = lerDiarios(raiz, ctxHook);
+  const abertos = new Set(depois.flatMap((l) => l.abertas.map((p) => p.id)));
+  const faltou = itens.filter((i) => abertos.has(i.id) || !depois.some((l) => respostasDe(l.eventos, i.id).some((r) => r.dados.rotulo === i.rotulo && r.sessao === sessao)));
+  if (faltou.length > 0) throw new Falha('resposta_sem_efeito', `${faltou.length} do lote não aparecem fechadas na releitura (${faltou.map((i) => i.id).join(', ')}); confira o diário`);
+  return { systemMessage: `Respostas registradas: ${itens.length} ${itens.length === 1 ? 'recomendada' : 'recomendadas'}.` };
+}
+
 const respostasDe = (eventos, id) => eventos.filter((e) => e.tipo === 'dono.resposta' && e.dados?.pergunta === id && 'rotulo' in e.dados);
 
 /** Núcleo puro de decisão: devolve o objeto a imprimir, ou `null` para silêncio. Nunca lança. `opcoes.antes`/`depois`: só o teste usa. */
@@ -227,6 +289,18 @@ export async function decidir(texto, cwdProcesso = process.cwd(), opcoes = {}) {
     const palavras = args.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '').split(/[ \t\r\n]+/).filter((p) => p !== '');
     if (palavras.length === 0) return bloquear(`falta a pergunta e a opção (uso: /${COMANDO} <pergunta> <n>); nada foi gravado`);
     const id = palavras[0];
+    // GM-15 T35 (r.16): `lote` e `lote <impressão>` (o resto do caminho é o mesmo: sessão, raiz, gravação e releitura)
+    const ehLote = id === 'lote' && (palavras.length === 1 || (palavras.length === 2 && /^[0-9a-f]{12}$/.test(palavras[1])));
+    const ehAdiar = palavras.length === 2 && palavras[1] === 'agora';
+    if (ehLote || ehAdiar) {
+      if (ehAdiar && (!ID_PERGUNTA_RE.test(id) || /^herdar:/.test(id))) return bloquear(`pergunta ${JSON.stringify(id.slice(0, 60))} fora da forma <sessao>:<seq>; nada foi gravado`);
+      const sessaoStdin = typeof o.session_id === 'string' && SESSAO_RE.test(o.session_id) ? o.session_id : null;
+      const cwd = typeof o.cwd === 'string' && o.cwd !== '' ? o.cwd : cwdProcesso;
+      let raiz;
+      try { raiz = raizPrincipal(cwd); } catch (e) { return bloquear(`não é um repositório git utilizável (${e instanceof Error ? e.message : String(e)}); nada foi gravado`); }
+      const ctxHook = { sessao: sessaoStdin, cwd };
+      return ehLote ? lote(raiz, ctxHook, sessaoStdin ?? SESSAO_PADRAO, palavras.length === 2 ? palavras[1] : null) : adiar(raiz, ctxHook, sessaoStdin ?? SESSAO_PADRAO, id);
+    }
     if (/^herdar:/.test(id)) return bloquear('perguntas de herança não são respondidas por este comando; nada foi gravado');
     if (!ID_PERGUNTA_RE.test(id)) return bloquear(`pergunta ${JSON.stringify(id.slice(0, 60))} fora da forma <sessao>:<seq>; nada foi gravado`);
     if (palavras.length === 1) return bloquear(`falta a opção (uso: /${COMANDO} ${id} <n>); nada foi gravado`);

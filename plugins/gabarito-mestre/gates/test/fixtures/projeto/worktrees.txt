@@ -1,0 +1,13 @@
+worktree /FIX/principal
+HEAD 1111111111111111111111111111111111111111
+branch refs/heads/feat/PBI-4-x
+
+worktree /FIX/wt-pbi-2
+HEAD 2222222222222222222222222222222222222222
+branch refs/heads/wt/PBI-2-1
+
+worktree /FIX/sumida
+HEAD 3333333333333333333333333333333333333333
+detached
+prunable gitdir file points to non-existent location
+

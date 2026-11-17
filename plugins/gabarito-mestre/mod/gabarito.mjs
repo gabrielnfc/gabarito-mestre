@@ -22,7 +22,7 @@ import { pendenciasAprendizado } from '../gates/dist/pendencias.js';
 import * as nucleo from '../gates/dist/loop.js'; // `nucleo.TIPOS_DE_PROGRESSO`: fonte única da lista (lida só em marcarPousoPendente)
 import {
   analisarFronteira, codigoPonte, dadosMedicao, ehMensagemDoDono, ehRevisor, jaParou, lerX, marcaDeProgresso, negaDespacho, pendenciasQueBarram, portaDoPouso, PROMPT_RECUPERACAO, PROMPT_RETOMADA,
-  pousoDaFronteira, tasksDoNegado, tasksEmVoo, textoPendencia, textoPendenciaNaoVerificada, textoRetomada, tokensDe, vivosDe,
+  pedidoDeClear, pousoDaFronteira, tasksDoNegado, tasksEmVoo, textoPendencia, textoPendenciaNaoVerificada, textoRetomada, tokensDe, vivosDe,
 } from '../gates/dist/pouso.js';
 import { ESPERA_ENTRE_TENTATIVAS_MS, MAX_TENTATIVAS, tentativasDoPouso } from '../gates/dist/pouso-pendente.js'; // GM-14 T53: a ÚNICA definição da contagem de tentativas
 import { comandoPainel, iniciarPainel, registrarPainel, turnoDoPainel, USO_GABARITO } from './painel.mjs'; // E4 T10: Pane, faixa, atualização e aviso do PAROU (nada do pouso depende dele)
@@ -41,11 +41,75 @@ let negadoAte = null; // hora (relógio de parede, como o diário) da última ne
 let espera = null; // { dir, marca, n }: turnos seguidos sem evento novo com o núcleo respondendo `nao_conseguiu`
 let terminados = 0; // `turn.complete` de subagent: cada um traz um hand-back (`prompt.submit` peer) a caminho
 let recebidos = 0; // `prompt.submit` com `origin.kind === 'peer'`; `terminados > recebidos` ⇒ hand-back ainda a caminho
-const recuperadas = new Map(); // `${dir}|${task}` → vezes que o mod reabriu a task em voo sem agente
-const MAX_RECUPERACOES = 2; // REQ-LOOP-5: até 2 por task; na seguinte `loop.parar {nao_conseguiu}`
 const TURNOS_ESPERA = 3; // alinhado a REQ-LOOP-5: o hand-back pode ainda não ter chegado
 
 const chaveDe = (dir) => `pouso:${dir}`;
+
+// ─────────────────────────────────────────────────────────────── GM-15 T17 (REQ-POU-4): o sinal do loop automático
+// Medido na T0b (S4 ii, `.superpowers/sdd/2026-11-15-2-1-1/t0b-relatorio.md`): o `/loop` real arma um item em `Stop.session_crons`
+// (`recurring:true` = intervalo, `recurring:false` = wakeup dinâmico). Nada armado ⇒ lista vazia. A sentinela `<<autonomous-loop-dynamic>>`
+// NUNCA aparece ali: não se casa o prompt. Campo ausente ou fora da forma ⇒ "não conferível", nunca "ausente" nem "armado".
+// Forma publicada (a T18 e a T19 leem): `.harness/contexto/loop-dinamico.<session_id do hook>.json` = `{estado: 'armado'|'ausente'|'nao_conferivel', intervalo, dinamico, sessao, em}`.
+// Fica em `.harness/contexto/` (já ignorado em .gitignore e emendado por scripts/instalar.sh): estado de sessão nunca entra em commit. O frescor de `em` é do consumidor (T18/T19): o leitor só confere forma e sessão.
+// Um arquivo POR SESSÃO (aprendizado D: estado de hook do mod é chaveado pelo session_id do hook): sessões no checkout e nas worktrees partilham a raiz
+// principal e não se sobrescrevem. O leitor é `interpretarSinalLoop(texto, sessao)`: só aceita o arquivo da sessão pedida; o resto é `nao_conferivel`.
+// Id fora de `[A-Za-z0-9-]{1,128}` (path traversal) ⇒ não grava e não lê. Arquivos de sessões antigas se acumulam: limpeza fica para quem for dono (não é trivial sem apagar).
+const ID_SESSAO = /^[A-Za-z0-9-]{1,128}$/;
+/** Nome do arquivo do sinal da sessão (relativo a `.harness/`), ou `null` se o id não serve de chave. Pura. */
+export const arquivoSinalLoop = (sessao) => (typeof sessao === 'string' && ID_SESSAO.test(sessao) ? `contexto/loop-dinamico.${sessao}.json` : null);
+
+/** Texto do arquivo da sessão `sessao` ⇒ sinal. Ausente (`null`/`undefined`), corrompido, fora da forma ou de OUTRA sessão ⇒ `nao_conferivel`; nunca "armado" por engano. Pura. */
+export function interpretarSinalLoop(texto, sessao) {
+  const nc = { estado: 'nao_conferivel', intervalo: 0, dinamico: 0, sessao: null, em: null };
+  if (arquivoSinalLoop(sessao) === null || typeof texto !== 'string') return nc;
+  let o;
+  try { o = JSON.parse(texto); } catch { return nc; }
+  if (o === null || typeof o !== 'object' || Array.isArray(o) || o.sessao !== sessao) return nc;
+  if (!['armado', 'ausente', 'nao_conferivel'].includes(o.estado) || !Number.isSafeInteger(o.intervalo) || !Number.isSafeInteger(o.dinamico) || typeof o.em !== 'string') return nc;
+  return { estado: o.estado, intervalo: o.intervalo, dinamico: o.dinamico, sessao: o.sessao, em: o.em };
+}
+
+/** `session_crons` do Stop ⇒ `{estado, intervalo, dinamico}`. Pura. */
+export function sinalDoLoop(e) {
+  const l = e?.session_crons;
+  if (!Array.isArray(l)) return { estado: 'nao_conferivel', intervalo: 0, dinamico: 0 };
+  if (l.length === 0) return { estado: 'ausente', intervalo: 0, dinamico: 0 };
+  if (!l.every((c) => c !== null && typeof c === 'object' && !Array.isArray(c) && typeof c.recurring === 'boolean')) return { estado: 'nao_conferivel', intervalo: 0, dinamico: 0 };
+  const intervalo = l.filter((c) => c.recurring === true).length;
+  return { estado: 'armado', intervalo, dinamico: l.length - intervalo };
+}
+
+const SCRIPT_SINAL_LOOP = `/*gabarito:loop*/
+const fs = require('node:fs'), path = require('node:path'), cp = require('node:child_process');
+const { url, sinal, arquivo } = JSON.parse(fs.readFileSync(0, 'utf8'));
+const comum = cp.execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' }).trim();
+const raiz = path.dirname(comum);
+import(url).then((m) => {
+  if (m.temOnboarding(raiz) !== true) return;
+  const fim = path.join(raiz, '.harness', arquivo); fs.mkdirSync(path.dirname(fim), { recursive: true });
+  const tmp = fim + '.' + process.pid + '.tmp';
+  try { fs.writeFileSync(tmp, JSON.stringify(sinal) + '\\n'); fs.renameSync(tmp, fim); } catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }
+}).catch(() => process.exit(1));`;
+
+/** `{argv, stdin}` para `$.process.run` (cwd = a raiz da sessão): grava o sinal da sessão na raiz PRINCIPAL, só em repo com onboarding. Dado fora da forma ⇒ `null`. */
+export function gravarSinalLoop({ pluginRoot, estado, intervalo, dinamico, sessao, emMs } = {}) {
+  if (typeof pluginRoot !== 'string' || pluginRoot === '' || !['armado', 'ausente', 'nao_conferivel'].includes(estado)) return null;
+  if (!Number.isSafeInteger(intervalo) || !Number.isSafeInteger(dinamico) || !Number.isFinite(emMs)) return null;
+  const url = ('file://' + encodeURI(`${pluginRoot}/gates/dist/guarda.js`)).replace(/#/g, '%23').replace(/\?/g, '%3F');
+  const arquivo = arquivoSinalLoop(sessao);
+  if (arquivo === null) return null; // sem id do hook não há chave: não grava (arquivo único por repo foi o MAJOR do review r1)
+  return { argv: ['node', '-e', SCRIPT_SINAL_LOOP], stdin: JSON.stringify({ url, arquivo, sinal: { estado, intervalo, dinamico, sessao, em: new Date(emMs).toISOString() } }) };
+}
+
+async function publicarSinalLoop($, e) {
+  let cwd;
+  try { cwd = await $.session.root(); } catch { return; }
+  let emMs;
+  try { emMs = Number(await $.clock.now()); } catch { emMs = Date.now(); }
+  const q = gravarSinalLoop({ pluginRoot: $.plugin.root, ...sinalDoLoop(e), sessao: e?.session_id, emMs });
+  if (q === null) return;
+  try { await $.process.run(q.argv, { cwd, stdin: q.stdin, timeoutMs: 5000 }); } catch { /* sem ponte: o sinal fica velho, o leitor trata como não conferível */ }
+}
 
 async function avisar($, texto) {
   try { await $.ui.toast(texto, { timeoutMs: 20000 }); } catch { /* sem tela */ }
@@ -276,6 +340,7 @@ function descrever(r) {
   if (a.tipo === 'pousar') return 'pouso pendente';
   if (a.tipo === 'esperar') return `esperar (${a.motivo})`;
   if (a.tipo === 'parar') return `loop parado (${a.motivo})`;
+  if (a.tipo === 'retomar') return `task ${a.task} em voo sem agente: reabra antes de despachar (sem reabrir, nao_conseguiu)`;
   return a.tipo === 'despachar' ? 'revisão pendente' : a.tipo;
 }
 
@@ -352,10 +417,46 @@ async function avaliar($, c) {
   return r;
 }
 
+/** GM-15 T35 (r.9): o pedido de /clear deste pouso está adiado pelo dono, pela leitura do próprio mod (`r.percent`). Sem leitura ou sem eventos ⇒ não. */
+function clearAdiado(r) {
+  if (r.percent === null || !Array.isArray(r.eventos)) return false;
+  const agora = Number.isFinite(r.agora) ? r.agora : Date.now();
+  try {
+    return pedidoDeClear(r.eventos, true, { x: r.x, agoraMs: agora, sessaoAtual: 'mod', leituras: [{ sessao: 'mod', percent: r.percent, fonte: 'mod', emMs: agora }] }).adiado === true;
+  } catch { return false; }
+}
+
+export const SCRIPT_ORIGEM = `/*gabarito:origem*/
+const fs = require('node:fs');
+const { url, raiz } = JSON.parse(fs.readFileSync(0, 'utf8'));
+import(url).then((m) => {
+  const o = m.lerConfigOrigin(raiz);
+  const s = o?.cfg?.sombra;
+  process.stdout.write(JSON.stringify({ ok: true, origin: { fonte: o?.fonte ?? 'nenhuma', cfg: s !== null && typeof s === 'object' ? { sombra: { libera_teto: s.libera_teto } } : null } }));
+}).catch(() => process.exit(1));`;
+
+/**
+ * GM-15 T39 (MAJOR-1 do review final, REQ-AUT-1, emendas 22 e 24): a Sombra decide o teto desta task? A MESMA `sombraDecideOTeto` do núcleo (dist/loop.js, a do `proxima`, do lote, do painel e do Stop)
+ * com `sombra.libera_teto` lido só de `origin/HEAD` (`lerConfigOrigin` pela ponte, `liberaTetoDeOrigin` no núcleo). Ponte que falha ou responde fora da forma ⇒ `false`: o dono decide, nunca por palpite.
+ */
+async function sombraDecideNoMod($, c, acao, m) {
+  if (acao.motivo !== 'teto_rodadas' || typeof acao.task !== 'string') return false;
+  try {
+    const url = ('file://' + encodeURI(`${$.plugin.root}/gates/lib/config.mjs`)).replace(/#/g, '%23').replace(/\?/g, '%3F');
+    const r = await $.process.run(['node', '-e', SCRIPT_ORIGEM], { cwd: c.cwd, stdin: JSON.stringify({ url, raiz: c.raiz }), timeoutMs: 5000 });
+    if (r.exitCode !== 0) return false;
+    const o = JSON.parse(r.stdout);
+    if (o?.ok !== true) return false;
+    const ord = nucleo.ordenar(m.eventos);
+    return nucleo.sombraDecideOTeto(m.plano, ord.ok ? ord.eventos : m.eventos, acao.task, nucleo.liberaTetoDeOrigin(o.origin)) === true;
+  } catch { return false; }
+}
+
 /** `parar` do núcleo (teto de rodadas, CI, teto de tokens, `nao_conseguiu`): grava `loop.parar` uma vez, com aviso. Sem pouso. */
 async function pararDoNucleo($, c, acao, m) {
   if (acao.motivo === 'diario_invalido') { await avisarDiario($, 'sequência de eventos fora da tabela de transições'); return; }
   if (jaParou(m.eventos)) return;
+  if (await sombraDecideNoMod($, c, acao, m)) return; // a pergunta à Sombra é ação permitida: o loop NÃO para (o Stop pede a pergunta)
   if (acao.motivo === 'nao_conseguiu') {
     // task em voo sem agente: o hand-back pode ainda não ter chegado; só para depois de N turnos sem evento novo
     espera = espera !== null && espera.dir === c.dir && espera.marca === m.marca ? { ...espera, n: espera.n + 1 } : { dir: c.dir, marca: m.marca, n: 1 };
@@ -419,9 +520,14 @@ async function decidir($, c, r) {
     await falharPouso($, c, 'nao_interativo');
     return false;
   }
-  const acao = r.acao;
+  // GM-15 T12 (REQ-AUT-1): `retomar` é a task em voo sem agente. A reabertura do mod é a de `recuperarOrfas`; se ela não reabriu
+  // (hand-back a caminho, negação pendente, `task.reaberta` que não grava), vale a regra de antes: N turnos sem evento novo ⇒ `nao_conseguiu`.
+  const acao = r.acao?.tipo === 'retomar' ? { tipo: 'parar', motivo: 'nao_conseguiu', task: r.acao.task } : r.acao;
   if (acao === null || acao.tipo !== 'parar' || acao.motivo !== 'nao_conseguiu') espera = null;
   if (acao === null) return false;
+  // GM-15 T35 (r.9): o dono disse "agora não" ao pedido de /clear deste pouso ⇒ o mod não repete o /clear até o contexto subir 10 p.p. (a regra única
+  // `pedidoDeClear`, medida pela PRÓPRIA leitura do mod); o Agent segue negado pelo pouso pendente: o loop fica parado no teto
+  if ((acao.tipo === 'pousar' || (acao.tipo === 'aprender' && r.pousarComDono)) && clearAdiado(r)) return false;
   if (acao.tipo === 'pousar') return await pousarSeguro($, c, r);
   if (acao.tipo === 'aprender' && r.pousarComDono) return await pousarSeguro($, c, r); // T53 (52 c): a conversa do dono não segura o /clear
   if (acao.tipo === 'parar') await pararDoNucleo($, c, acao, r.mundo);
@@ -466,10 +572,13 @@ async function desfazerNegados($) {
 
 /**
  * REQ-LOOP-5, task em voo sem agente (Q-T13F D1): `iniciar` sem `Agent` (um hand-back entrou entre os dois). No fim normal do turno, com
- * vivos = 0, sem hand-back a caminho, sem pausa e sem `parar`, reabre as tasks em voo (origem `retomada`) e abre um turno, sem pousar nele.
- * Antes de reabrir, pergunta ao núcleo (Q-T13G): `parar` com motivo diferente de `nao_conseguiu` é gravado e não reabre nem abre turno.
- * Até 2 vezes por task em cada ciclo (`liberar` recomeça a conta); na seguinte grava `loop.parar {nao_conseguiu}` e avisa. Qualquer leitura ruim, ou `task.reaberta` que não grava:
- * não reabre e devolve `false` (o núcleo decide, como antes). `true` = o mod agiu e o turno não decide mais nada.
+ * vivos = 0, sem hand-back a caminho, sem pausa e sem `parar`, pergunta ao núcleo (Q-T13G) e segue a resposta dele, sem conta própria:
+ * - `retomar` ⇒ reabre a task que o núcleo nomeou (origem `retomada`) e abre um turno, sem pousar nele. GM-15 T12 (REQ-AUT-1): a retomada
+ *   é de 1 vez por task, contada pelo núcleo no diário inteiro (`loop.ts` `retomadas`); `liberar` não a devolve.
+ * - `parar nao_conseguiu` de uma task em voo (a 2ª órfã) ⇒ grava `loop.parar {nao_conseguiu, task}` e avisa; nunca reabre de novo.
+ * - `parar` com outro motivo ⇒ grava esse `parar` e não reabre nem abre turno.
+ * Qualquer outra ação, leitura ruim ou `task.reaberta` que não grava: não reabre e devolve `false` (o núcleo decide, como antes).
+ * `true` = o mod agiu e o turno não decide mais nada.
  */
 async function recuperarOrfas($) {
   const { c } = await loopAtivo($);
@@ -494,27 +603,22 @@ async function recuperarOrfas($) {
     await pararDoNucleo($, c, acao, m);
     return true;
   }
-  // a conta é por ciclo: cada `task.reaberta {dono}` (liberar) da task recomeça a contagem
-  const donos = (t) => m.eventos.filter((e) => e?.tipo === 'task.reaberta' && e.dados?.origem === 'dono' && e.dados?.task === t).length;
-  const chave = (t) => `${c.dir}|${t}|${donos(t)}`;
-  const esgotada = voo.tasks.find((t) => (recuperadas.get(chave(t)) ?? 0) >= MAX_RECUPERACOES);
-  if (esgotada !== undefined) {
-    const gravou = await gravar($, c, { agente: 'orquestrador', tipo: 'loop.parar', dados: { motivo: 'nao_conseguiu', task: esgotada } });
+  if (acao.tipo === 'parar' && voo.tasks.includes(acao.task)) {
+    // REQ-AUT-1: a retomada desta task já foi gasta (o núcleo conta); a 2ª vez em voo sem agente para, sem reabrir.
+    const gravou = await gravar($, c, { agente: 'orquestrador', tipo: 'loop.parar', dados: { motivo: 'nao_conseguiu', task: acao.task } });
     espera = null;
     await avisar($, gravou
-      ? `gabarito: loop parado (nao_conseguiu, task ${esgotada}): iniciada ${MAX_RECUPERACOES + 1} vezes sem agente. Nenhum pouso automático; veja o diário da entrega.`
-      : `gabarito: a task ${esgotada} ficou ${MAX_RECUPERACOES + 1} vezes em voo sem agente e não consegui gravar loop.parar. O loop não segue sozinho; veja o diário da entrega.`);
+      ? `gabarito: loop parado (nao_conseguiu, task ${acao.task}): em voo sem agente de novo depois da retomada. Nenhum pouso automático; veja o diário da entrega.`
+      : `gabarito: a task ${acao.task} ficou em voo sem agente de novo depois da retomada e não consegui gravar loop.parar. O loop não segue sozinho; veja o diário da entrega.`);
     return false;
   }
-  for (const task of voo.tasks) {
-    if (!(await gravar($, c, { agente: 'orquestrador', tipo: 'task.reaberta', dados: { task, origem: 'retomada' } }))) {
-      await avisar($, `gabarito: não consegui gravar task.reaberta da task ${task}; nenhum turno aberto. Rode reabrir ${task} pelo loop.mjs.`);
-      return false;
-    }
-    recuperadas.set(chave(task), (recuperadas.get(chave(task)) ?? 0) + 1);
+  if (acao.tipo !== 'retomar' || !voo.tasks.includes(acao.task)) return false;
+  if (!(await gravar($, c, { agente: 'orquestrador', tipo: 'task.reaberta', dados: { task: acao.task, origem: 'retomada' } }))) {
+    await avisar($, `gabarito: não consegui gravar task.reaberta da task ${acao.task}; nenhum turno aberto. Rode reabrir ${acao.task} pelo loop.mjs.`);
+    return false;
   }
   espera = null;
-  if (!abrirTurno($, PROMPT_RECUPERACAO)) await avisar($, `gabarito: ${voo.tasks.join(', ')} reaberta(s), mas não consegui agendar o turno do loop. Digite uma mensagem para continuar.`);
+  if (!abrirTurno($, PROMPT_RECUPERACAO)) await avisar($, `gabarito: ${acao.task} reaberta, mas não consegui agendar o turno do loop. Digite uma mensagem para continuar.`);
   return true;
 }
 
@@ -703,6 +807,11 @@ async function negaPorPendencia($, c) {
 export const register = (on) => {
   registrarPainel(on);
   registrarChat(on);
+  // REQ-POU-4: a cada Stop o mod publica se o loop automático está armado; agenda e volta (o Stop nunca espera o node).
+  on('classic.Stop', { hook_event_name: 'Stop' }, async ($, e, next) => {
+    if (interativo) { try { $.clock.after(0, () => { publicarSinalLoop($, e).catch(() => {}); }); } catch { /* sem relógio */ } }
+    return next(e);
+  });
   on('session.start', async ($, e, next) => {
     interativo = e.isInteractive === true;
     await iniciarPainel($, e);

@@ -100,19 +100,27 @@ describe('GM-14 T6: loop.mjs anotar', () => {
     assert.equal(r.j.sessao, 'loop');
   });
 
-  test('anotar-cada-tipo: ideia, desvio, assunto, pendencia gravam o tipo pedido (troca de tipo não passa)', () => {
+  test('orquestrador-nao-anota-pendencia (GM-15 T35 r.13, D-G12 1): `--tipo pendencia` recusa apontando plano/retomada e não grava; os outros tipos seguem', () => {
     const amb = ambiente();
-    for (const tipo of ['ideia', 'desvio', 'assunto', 'pendencia']) {
+    const r = recusa(amb, ['anotar', '--tipo', 'pendencia', '--texto', 'lembrar de medir o bench'], 'pendencia_do_orquestrador');
+    assert.match(r.j.mensagem, /plano/);
+    assert.match(r.j.mensagem, /retomada/);
+    assert.equal(amb.cli(['anotar', '--tipo', 'desvio', '--texto', 'controle']).rc, 0);
+  });
+
+  test('anotar-cada-tipo: ideia, desvio, assunto gravam o tipo pedido (troca de tipo não passa; pendência do orquestrador recusa desde a T35 r.13)', () => {
+    const amb = ambiente();
+    for (const tipo of ['ideia', 'desvio', 'assunto']) {
       const r = amb.cli(['anotar', '--tipo', tipo, '--texto', `texto de ${tipo}`]);
       assert.equal(r.rc, 0, r.out + r.err);
     }
     assert.deepEqual(amb.eventos('GM-10').map((e) => [e.dados.tipo, e.dados.texto]), [
-      ['ideia', 'texto de ideia'], ['desvio', 'texto de desvio'], ['assunto', 'texto de assunto'], ['pendencia', 'texto de pendencia'],
+      ['ideia', 'texto de ideia'], ['desvio', 'texto de desvio'], ['assunto', 'texto de assunto'],
     ]);
-    // a cadeia fecha: seq 1..4 e hash_anterior conferem pelo leitor estrito do núcleo
+    // a cadeia fecha: seq 1..3 e hash_anterior conferem pelo leitor estrito do núcleo
     const lido = diario.lerEstrito(amb.pasta('GM-10'));
     assert.equal(lido.ok, true, JSON.stringify(lido));
-    assert.deepEqual(lido.eventos.map((e) => e.seq), [1, 2, 3, 4]);
+    assert.deepEqual(lido.eventos.map((e) => e.seq), [1, 2, 3]);
   });
 
   test('anotar-sem-id-vai-a-sem-id: branch sem ID e HEAD destacado ⇒ _sem-id, nada em pasta de entrega', () => {
@@ -139,7 +147,7 @@ describe('GM-14 T6: loop.mjs anotar', () => {
 
   test('anotar-entrega-explicita-vence-a-branch-e-o-sem-id: --entrega GM-5 numa branch main vai a GM-5, não a _sem-id', () => {
     const amb = ambiente({ branch: 'main' });
-    const r = amb.cli(['anotar', '--tipo', 'pendencia', '--texto', 'avisar o time', '--entrega', 'GM-5']);
+    const r = amb.cli(['anotar', '--tipo', 'ideia', '--texto', 'avisar o time', '--entrega', 'GM-5']);
     assert.equal(r.rc, 0, r.out + r.err);
     assert.deepEqual(readdirSync(amb.entregas), ['GM-5']);
   });
@@ -167,7 +175,7 @@ describe('GM-14 T6: loop.mjs anotar', () => {
 
   test('opcao-fora-da-duvida-recusa: só `duvida` leva opção', () => {
     const amb = ambiente();
-    for (const tipo of ['ideia', 'desvio', 'assunto', 'pendencia']) {
+    for (const tipo of ['ideia', 'desvio', 'assunto']) {
       recusa(amb, ['anotar', '--tipo', tipo, '--texto', 'algo', '--opcao', 'sim', '--opcao', 'não'], 'forma_invalida');
     }
   });
@@ -328,7 +336,7 @@ describe('GM-14 T6: loop.mjs anotar', () => {
     const amb = ambiente();
     mkdirSync(amb.pasta('GM-10'), { recursive: true });
     writeFileSync(join(amb.pasta('GM-10'), 'plano.json'), '{isto nao e json');
-    const r = amb.cli(['anotar', '--tipo', 'pendencia', '--texto', 'comprar o domínio']);
+    const r = amb.cli(['anotar', '--tipo', 'ideia', '--texto', 'comprar o domínio']);
     assert.equal(r.rc, 0, r.out + r.err);
     assert.equal(readFileSync(join(amb.pasta('GM-10'), 'plano.json'), 'utf8'), '{isto nao e json'); // intocado
   });

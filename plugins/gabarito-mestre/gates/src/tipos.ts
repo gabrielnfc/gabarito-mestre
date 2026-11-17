@@ -126,8 +126,9 @@ export type Evento = {
 };
 
 // E2 (GM-10): plano como dado e contratos do loop. `dados` do diário nunca carrega comando cru.
-// `task.reaberta`: `dados = {task, origem: 'dono' | 'retomada'}` ou `{task, origem: 'sombra', hash}`. `dono`, por comando humano, libera o teto;
-// `sombra` (GM-14 T36, FIEL-15) libera 1 vez por task, só a 1ª liberação, com `sombra.libera_teto: true` em origin e a decisão `hash` com `libera: true`.
+// `task.reaberta`: `dados = {task, origem: 'dono' | 'retomada'}` ou `{task, origem: 'sombra', hash, abordagem_nova?}`. `dono`, por comando humano, libera o teto;
+// `sombra` (GM-14 T36, FIEL-15; GM-15 T36: sem limite numérico) libera com `sombra.libera_teto: true` em origin e a decisão `hash` com `libera: true`; sem progresso medido só com `abordagem_nova`;
+// os freios (2 abordagens novas sem convergir, orçamento 3× a mediana) passam a task ao dono (`freioDaLiberacao`).
 export type Causa = 'regra_negocio' | 'tecnica';
 export type OrigemJulgamento = 'dono' | 'sombra';
 export type PoliticaEntrega = 'continua' | 'janela' | 'sob_demanda';
@@ -184,6 +185,8 @@ export type AcaoLoop =
   | { tipo: 'pousar' }
   | { tipo: 'aprender'; pendencias: Pendencia[] }
   | { tipo: 'parar'; motivo: MotivoParar; task?: string }
+  /** GM-15 T12/T13 (REQ-AUT-1): reabertura única de task em voo cujo agente morreu (`loop.mjs reabrir`, `task.reaberta {origem: retomada}`). */
+  | { tipo: 'retomar'; task: string }
   | { tipo: 'concluir' };
 
 // E4 (GM-12): contratos do painel. Núcleo puro em `painel*.ts`; `EntradaPainel` é o que o CLI (`painel.mjs`) monta, `EstadoPainel` o que o render lê.
@@ -200,7 +203,21 @@ export type NomesAgentes = { [agentId: string]: { nome: string; vistoEm: number 
 export type AcoesAgentes = { [agentId: string]: { texto: string; fonte: 'tool' | 'bash'; em: number } };
 /** stdin de `--agentes`, `segundoPlano` (FIEL-11 c): `dono` = `orquestrador` ou o `agent_id`; `desde` em ms. */
 export type SegundoPlanoItem = { id: string; dono: string; texto: string; desde: number };
-/** `fuso`, `entregaId`, `modeloSessao`, `specSha` e `tetoSombra` só o CLI preenche (Sombra 5); o mod nunca. */
+/**
+ * GM-15 T30 (D-G2, h.2): a previsão do PRONTO. `hora`/`base` sempre; o resto só quando a previsão exata foi medida (sem ela, a conta antiga D5).
+ * `conta` é a base da conta, a MESMA dos números (g.14): tasks do caminho crítico, min/task medidos por etapa, rodada média, fechamento (s, `null` =
+ * não medido), ocupação do relógio e ritmo (min/task no último dia). `faixa.ate` `'?'` = fechamento não medido (h.1), com o `motivo`.
+ */
+export type PrevisaoPronto = {
+  hora: string;
+  base: number;
+  faixa?: { de: string; ate: string };
+  conta?: { caminho: number; minPorTask: number; rodadas: number | null; fechamentoS: number | null; ocupacao: number; ritmoMin: number | null };
+  motivo?: string | null;
+  restanteS?: number;
+  maisMenosS?: number;
+};
+/** `fuso`, `entregaId`, `modeloSessao` e `specSha` só o CLI preenche (Sombra 5); o mod nunca. */
 export type EntradaPainel = {
   /** Só preenchida pelo CLI com o loop em `concluir` (toda task integrada e sem proposta aberta). */
   decisaoEntrega: DecisaoEntrega | null;
@@ -226,11 +243,27 @@ export type EntradaPainel = {
   modeloSessao: string | null;
   /** sha256 atual de `plano.spec`. */
   specSha: string | null;
-  /** `sombra.teto` de origin (26 padrão). */
-  tetoSombra: number;
+  /**
+   * GM-15 T13 (REQ-AUT-1): config do lote do dono, a MESMA de `loop.mjs proxima` (`configDoLote`: Sombra só de origin/HEAD, entrega de `lerConfigEntrega`);
+   * só o CLI preenche. Ausente = sem lote (o DEPENDE de antes, com (5) e (7)).
+   */
+  configLote?: ConfigLote;
+  /** GM-15 T30 (h.1): fechamento medido (s) nas entregas anteriores do repo (`fechamentoDasAnteriores`); só o CLI preenche. Ausente/`null` = não medido. */
+  fechamentoS?: number | null;
+  /** GM-15 T30 (Emenda 3, fallback): etapas medidas (s) nas entregas anteriores do repo (`etapasDasAnteriores`); só o CLI preenche. Ausente/`null` = sem fallback. */
+  etapasAnteriores?: { impl: number[]; rev: number[]; integ: number[] } | null;
+  /** GM-15 T30 (Emenda 3, fallback, r2 MAJOR 1): ritmo (s por task integrada) das entregas anteriores (`ritmoDasAnteriores`); só o CLI preenche. Ausente/`null` ⇒ fallback em "?". */
+  ritmoAnterioresS?: number | null;
+  /**
+   * GM-15 T9 (REQ-ENT-2): o `plano.json` da entrega existe e não vale (o motivo, de `carregarPlano`). Só o CLI preenche. Presente ⇒ o painel não tem plano
+   * (nada do plano velho), mostra "?" com o motivo e não julga o diário pelas tasks de plano nenhum (sem PAROU `diario_invalido` por isso).
+   */
+  planoInvalido?: string | null;
 };
 /** Botão do painel: `comando` null quando a ação é uma instrução ao dono, sem comando que a execute. (Não confundir com `AcaoFerramenta`.) */
 export type Acao = { rotulo: string; comando: string | null };
+/** GM-15 T13 (REQ-AUT-1): o que o lote do dono lê da config (Sombra de origin/HEAD; entrega de `lerConfigEntrega`). */
+export type ConfigLote = { liberaTeto: boolean; julgaEmendas: boolean; autonomiaEntrega: boolean; base: string; versaoPlugin?: string };
 export type ItemDepende = { nivel: 'parar' | 'dono'; motivo: string; acoes: Acao[] };
 export type GlifoTask = '✓' | '●' | '◐' | '○' | '✗';
 export type TaskPainel = { id: string; titulo?: string; estado: EstadoTask; glifo: GlifoTask; nome?: string; papel?: Papel; modelo?: string; desdeS?: number; deps: string[] };
@@ -281,7 +314,7 @@ export type EstadoPainel = {
   /** FIEL-10 e: sem entrega em curso e nada pendente ⇒ o painel é 1 linha. `estado` em palavras, `null` = não conhecido. */
   umaLinha?: { ultima: { id: string; estado: string | null } | null } | null;
   /** FIEL-10 b, com plano: só integradas pintam; previsão só com ≥ 3 integradas nesta entrega (`base`). */
-  pronto?: { integradas: number; total: number; previsao: { hora: string; base: number } | null } | null;
+  pronto?: { integradas: number; total: number; previsao: PrevisaoPronto | null } | null;
   /** FIEL-10 b, sem plano: a trilha em 1 linha. `motivo` = o do 1º `?`; `sufixo` = N17 b (fora da execução). */
   fase?: { numero: number | null; marcas: string[]; motivo: string | null; progresso: string; sufixo: string[] } | null;
   /** FIEL-11: `agentes` `null` = sem dados da sessão (CLI sem `--agentes`, FIEL-4); `contexto` `null` = não medido. */
@@ -295,7 +328,15 @@ export type EstadoPainel = {
   desatualizadoS?: number | null;
   /** Fontes que falharam (nomes naturais), para o DEPENDE nunca dizer "nada" com falha. */
   fontesFalhas?: string[];
+  /** GM-15 T8 (REQ-ENT-1 d): a entrega com `entrega.encerrada` vigente (a da branch ou, sem ela, a última conhecida); `versao` X.Y.Z ou `null`. Presente ⇒ o painel é 1 linha. */
+  entregue?: Entregue | null;
+  /** GM-15 T8 (REQ-ENT-1 d i): a próxima entrega oferecida com a entregue; `acoes` traz o botão "seguir" (vazia em `nenhuma`). */
+  proxima?: Proxima | null;
 };
+/** GM-15 T8 (REQ-ENT-1 d). */
+export type Entregue = { id: string; versao: string | null };
+/** GM-15 T8: na ordem, a spec com `PBI:` sem `entrega.encerrada` mais nova, as ideias para a próxima ou nenhuma. `texto` em linguagem natural. */
+export type Proxima = { tipo: 'spec' | 'ideias' | 'nenhuma'; texto: string; acoes: Acao[] };
 /** Papel de quem aparece no AGORA e no RECENTE; o executivo troca o nome por `PAPEL_EXECUTIVO[papel]` (FIEL-12). */
 export type PapelPainel = 'orquestrador' | 'implementador' | 'correcao' | 'spike' | 'revisor' | 'sombra' | 'teste';
 /** `nome` = nome temático (só com dados da sessão; FIEL-4); `null` ⇒ o render usa o papel. */

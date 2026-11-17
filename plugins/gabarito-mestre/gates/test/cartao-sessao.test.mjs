@@ -445,8 +445,8 @@ describe('coletar/CLI — config ausente/vazia/inválida/sem fluxo (Review Focus
     assert.equal(r.status, 0);
     assert.deepEqual(r.stdout.trimEnd().split('\n'), [LINHA_SEM_ONBOARDING]);
   });
-  test('config vazia, sem fluxo, ou fluxo sem resolvidoEm → uma linha', () => {
-    for (const c of ['', '{}', '{"fluxo":{"ferramenta":"arquivos"}}', '{"versionamento":{"resolvidoEm":"2026-09-20"}}']) {
+  test('config vazia (0 bytes) ou que não é objeto JSON → uma linha (GM-15 T23: `{}` e config sem fluxo.resolvidoEm contam como onboarding, critério da guarda)', () => {
+    for (const c of ['', '[]', '"x"']) {
       const dir = repo({ 'harness.config.json': c });
       const r = cli(['--root', dir, '--plugin-root', pluginFalso()], dir);
       assert.equal(r.status, 0, c);
@@ -850,6 +850,18 @@ describe('cartão em duas vias — hook SessionStart (T7)', () => {
     assert.equal(existsSync(join(dir, '.harness', 'entregas')), false);
     assert.equal(existsSync(join(dir, '.harness', 'heartbeat.json')), false);
   });
+  test('T23 (critério único): sem dist/guarda.js o onboarding não é conferível ⇒ falha fechada (uma linha), mesmo com harness.config.json válido — não há 2ª definição', () => {
+    const raiz = mkdtempSync(join(tmpdir(), 'sem-dist-onb-'));
+    mkdirSync(join(raiz, 'scripts'), { recursive: true });
+    mkdirSync(join(raiz, 'lib'), { recursive: true });
+    for (const f of readdirSync(join(here, '..', 'scripts'))) if (f.endsWith('.mjs')) copyFileSync(join(here, '..', 'scripts', f), join(raiz, 'scripts', f));
+    for (const f of readdirSync(join(here, '..', 'lib'))) copyFileSync(join(here, '..', 'lib', f), join(raiz, 'lib', f));
+    const dir = repoGit({ ...CACHE_123 });
+    const r = spawnSync(process.execPath, [join(raiz, 'scripts', 'cartao-sessao.mjs'), '--root', dir, '--plugin-root', pluginFalso(), '--agora', AGORA], { cwd: dir, encoding: 'utf8', env: { ...process.env, GABARITO_INSTALLED_PLUGINS: '/nao/existe.json' } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout.trim().split('\n').length, 1, r.stdout);
+    assert.match(r.stdout, /sem onboarding/);
+  });
   test('sem --hook a CLI de texto continua igual e não grava diário', () => {
     const dir = repoGit({ ...CACHE_123 });
     const r = spawnSync(process.execPath, [SCRIPT, '--root', dir, '--plugin-root', pluginFalso(), '--agora', AGORA], { cwd: dir, encoding: 'utf8', env: { ...process.env, GABARITO_INSTALLED_PLUGINS: '/nao/existe.json' } });
@@ -951,7 +963,7 @@ describe('T9 · aprendizados, linha de retomada e ordem de corte (GM-13, REQ-APR
   });
 
   test('cartao-sem-onboarding-uma-linha (GM-14 T34, FIEL-14 h): sem fluxo.resolvidoEm o session_id do stdin NÃO vira linha "sessão"; o cartão segue com 1 linha', () => {
-    const dir = repoGit({ 'harness.config.json': '{}' });
+    const dir = repoGit({ 'harness.config.json': '' }); // 0 bytes: a guarda não vê onboarding (GM-15 T23)
     for (const source of ['startup', 'clear']) {
       const r = hook(dir, { session_id: 's-sem-onb', source });
       assert.equal(r.code, 0, r.stderr);

@@ -278,6 +278,21 @@ test('skill-sem-comando-para-colar', () => {
   assert.deepEqual(violacoesSkill(SKILL), []);
 });
 
+test('skill-autonomia-tres-respostas-quatro-chaves', () => {
+  // GM-15 T14: a skill e o `trocar.md` descrevem as 3 respostas e as 4 chaves, sem prometer default para config mista
+  const sec = secao(TROCAR, 'autonomia');
+  assert.ok(sec.length > 0, 'trocar.md tem a seção autonomia');
+  for (const chave of ['entrega.autonomia', 'guarda.autonomia', 'sombra.julga_emendas', 'sombra.libera_teto']) {
+    assert.ok(sec.includes(chave), `trocar.md cita ${chave}`);
+    assert.ok(secao(SKILL, 'Fluxo').includes(chave), `o passo 4 cita ${chave}`);
+  }
+  for (const r of ['espera', 'trabalha', 'publica']) assert.ok(sec.includes(`\`${r}\``) && secao(SKILL, 'Fluxo').includes(`\`${r}\``), r);
+  assert.match(sec, /autonomia mista/);
+  assert.match(sec, /nem promove, nem rebaixa/);
+  assert.match(secao(SKILL, 'Trocar um item'), /`autonomia`: .*as 4 chaves/);
+  assert.match(TROCAR.split('\n')[2], /`trocar autonomia`/, 'o cabeçalho de trocar.md lista o item');
+});
+
 test('skill-cita-trocar', () => {
   const FECHA = SKILL.split('\n').find((l) => /trocar <item>/.test(l) && /tipo_repo/.test(l));
   assert.ok(FECHA, 'o fechamento tem a linha `trocar <item>`');
@@ -559,8 +574,8 @@ test('skill-exemplo-respostas-aceito-pelo-gravar', () => {
   assert.equal(r5.ok, true, JSON.stringify(r5));
   const n5 = perguntas(detectar(coletarFatos(mono, { rodar: rodarCom(SEM_MCP), hoje: HOJE })), null).length;
   assert.equal(n5, 5, 'fixture de 5 perguntas');
-  // (3) o exemplo é o do contrato: tipos JSON (booleano, não "não")
-  assert.equal(typeof ex.autonomia, 'boolean');
+  // (3) o exemplo é o do contrato: a autonomia é uma das 3 respostas em texto (nunca booleano nem "não")
+  assert.ok(['espera', 'trabalha', 'publica'].includes(ex.autonomia));
   assert.equal(typeof ex.politica, 'string');
 });
 

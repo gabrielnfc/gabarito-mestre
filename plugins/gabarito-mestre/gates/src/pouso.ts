@@ -1,6 +1,8 @@
-import { estadoDe, ordenar } from './loop.ts';
+import { estadosPorTask, ordenar, TIPOS_DE_TASK } from './loop.ts';
 import type { EstadoTask } from './loop.ts';
 import type { AcaoLoop, Evento, Plano } from './tipos.ts';
+import { leituraPropria, pousoPendente, type Medicao } from './pouso-pendente.ts';
+import { AGORA_NAO, ehRotuloDeAdiamento } from './formas.ts';
 
 /**
  * Núcleo do pouso (REQ-POU-1, GM-10 T9). Puro e sem `node:`: o mod o importa dentro do ambiente dele, que não tem Node.
@@ -89,8 +91,6 @@ export function vivosDe(lista: unknown): number {
   return n;
 }
 
-const TIPOS_DE_TASK: readonly string[] = ['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta'];
-
 export type AnaliseFronteira = { consumida: boolean; motivo: string | null };
 
 const sem = (motivo: string | null): AnaliseFronteira => ({ consumida: false, motivo });
@@ -146,20 +146,12 @@ export function tasksEmVoo(plano: unknown, eventos: unknown): { ok: true; tasks:
     return { ok: false, motivo: 'diário ilegível' };
   }
   if (!ord.ok) return { ok: false, motivo: 'diário fora de ordem' };
-  const porTask = new Map<string, Evento[]>(tasks.map((t) => [t.id, []]));
-  for (const e of ord.eventos) {
-    if (!TIPOS_DE_TASK.includes(e.tipo)) continue;
-    const t = e.dados !== null && typeof e.dados === 'object' ? e.dados.task : undefined;
-    const fila = typeof t === 'string' ? porTask.get(t) : undefined;
-    if (fila === undefined) return { ok: false, motivo: 'evento de task fora do plano' };
-    fila.push(e);
-  }
+  // GM-15 T25 (MAJOR-2): a regra única de validade por task (`estadosPorTask`, a mesma de `proximaAcao` e da trilha): reabertura de origem inválida
+  // afeta só a task dela (não está em voo e não trava o pouso); qualquer outro defeito segue sendo diário inválido.
+  const r = estadosPorTask(tasks.map((t) => t.id), ord.eventos);
+  if (!r.ok) return { ok: false, motivo: r.motivo === 'fora_do_plano' ? 'evento de task fora do plano' : `diário fora da tabela de transições (task ${r.task})` };
   const voo: string[] = [];
-  for (const [id, fila] of porTask) {
-    const r = estadoDe(fila);
-    if ('invalido' in r) return { ok: false, motivo: `diário fora da tabela de transições (task ${id})` };
-    if (EM_VOO.includes(r.estado)) voo.push(id);
-  }
+  for (const [id, est] of r.estados) if (EM_VOO.includes(est.estado)) voo.push(id);
   return { ok: true, tasks: voo };
 }
 
@@ -427,4 +419,51 @@ export function codigoPonte(
     `  out({ ok: false, erro: String(x?.message ?? x).slice(0, 200) });`,
     `}`,
   ].join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────── GM-15 T35 (D-G11 b, e; D-G12 2): pedido de /clear medido e "agora não"
+
+/** Rótulo de adiamento (D-G12 2): a forma vive em formas.ts (`{pergunta, rotulo}`, sem `opcao`). */
+export { AGORA_NAO };
+/** Botão do pedido de /clear: no teto (pouso obrigatório) o loop segue parado mesmo adiado (REGRA 4). */
+export const AGORA_NAO_TETO = 'agora não (loop parado)';
+/** Quanto o contexto tem de subir, desde o adiamento, para o pedido de /clear voltar (D-G11 b). */
+export const VOLTA_DO_CLEAR_PP = 10;
+
+/** `dono.resposta` por rótulo que adia (`agora não…`, sem caixa, pontas aparadas). */
+export const ehAdiamento = ehRotuloDeAdiamento;
+
+/** Rótulo gravado no adiamento do /clear: leva o contexto medido na hora (a resposta não tem outro campo, formas.ts). ≤ 60 caracteres. */
+export const rotuloAdiamentoClear = (percent: number): string => `${AGORA_NAO_TETO.slice(0, -1)}, contexto em ${Math.round(percent)} %)`;
+/** O contexto medido no adiamento do /clear, lido do rótulo; fora da forma ⇒ `null`. */
+export function percentDoAdiamento(rotulo: unknown): number | null {
+  if (!ehAdiamento(rotulo)) return null;
+  const m = /contexto em (\d{1,3}) %\)$/.exec(String(rotulo).trim());
+  return m === null ? null : Number(m[1]);
+}
+
+export type PedidoDeClear = { pendente: boolean; adiado: boolean; id: string | null; percent: number | null };
+
+/**
+ * REGRA ÚNICA do pedido de /clear (loop.mjs proxima, stop-loop.mjs, painel, responder.mjs). `pousoPendente` (pouso-pendente.ts) decide a pendência, mas:
+ * (r.12, D-P13) sem leitura própria fresca do contexto NÃO há pedido: nada de `pousar`/`pouso_pendente` nem "limpar"; o painel mostra o contexto "?".
+ * (r.9) `dono.resposta` "agora não" ao id `<sessao>:<seq>` do último `sessao.pouso` adia: o pedido some até o contexto medido chegar a
+ * (contexto do adiamento + 10 p.p.). Adiado continua pendente: o loop segue parado no teto (só o pedido some do painel). Nunca lança.
+ */
+export function pedidoDeClear(eventos: Evento[] | null | undefined, onboarding: boolean | undefined, medicao: Medicao | undefined): PedidoDeClear {
+  const nenhum: PedidoDeClear = { pendente: false, adiado: false, id: null, percent: null };
+  const propria = leituraPropria(medicao);
+  if (propria === null || !Array.isArray(eventos)) return nenhum;
+  const pp = pousoPendente(eventos, onboarding, medicao);
+  if (!pp.pendente || pp.sessao === null || pp.seq === null) return nenhum;
+  const id = `${pp.sessao}:${pp.seq}`;
+  let adiadoEm: number | null = null;
+  for (const e of eventos) {
+    const d = e?.dados as Record<string, unknown> | null | undefined;
+    if (e?.tipo !== 'dono.resposta' || d === null || typeof d !== 'object' || d.pergunta !== id) continue;
+    const p = percentDoAdiamento(d.rotulo);
+    if (p !== null) adiadoEm = p;
+  }
+  const adiado = adiadoEm !== null && propria.percent < adiadoEm + VOLTA_DO_CLEAR_PP;
+  return { pendente: true, adiado, id, percent: propria.percent };
 }

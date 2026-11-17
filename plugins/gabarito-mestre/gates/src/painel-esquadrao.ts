@@ -15,6 +15,9 @@ import { PRIORIDADE_RESERVA, cortarComReserva, cortarPorPrioridade } from './orc
 import type { LinhaPrioridade } from './orcamento.ts';
 import { linhaTecnica, nomeNatural, tagNatural } from './origem.ts';
 import type { Previsao } from './painel-formato.ts';
+import { ROTULO_FORA_DO_LOOP, rotuloAgente, rotuloFase } from './projeto.ts';
+import type { EstadoProjeto, LinhaProjeto } from './projeto.ts';
+import type { EstadoTask } from './loop.ts';
 import { colunas, cortar, limpar } from './painel-largura.ts';
 import { alturaValida, barra, blocoTopo, cortarLinha, cortarPorAltura } from './painel-texto.ts';
 import type { LinhaMarcada } from './painel-texto.ts';
@@ -221,19 +224,38 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
     const vw = maxCol(verbos);
     const modelos = eq.agentes.filter((a) => a.vivo).map((a) => (t(a.modelo) !== '' ? ` · ${t(a.modelo)}` : ''));
     const mw = maxCol(modelos);
-    const tw = maxCol(eq.agentes.map((a) => t(a.task)));
+    const estadosLegado = new Map<string, EstadoTask>(e.plano.tasks.map((x) => [x.id, x.estado as EstadoTask]));
+    // o rótulo único ("agente fora do loop", emenda 4 item 5) é o 1º a ceder, CORTADO com `…` (nunca trocado por outro texto), antes de o modelo sair
+    let labW: number | null = null;
+    let rotuloTentado = false;
+    const rotulo = (): string => (labW === null ? ROTULO_FORA_DO_LOOP : cortar(ROTULO_FORA_DO_LOOP, labW));
+    const twDe = (): number => maxCol(eq.agentes.map((a) => (a.vivo && rotuloAgente({ task: typeof a.task === 'string' && t(a.task) !== '' ? t(a.task) : null, papelExibido: null }, estadosLegado) === ROTULO_FORA_DO_LOOP ? rotulo() : t(a.task))));
     if (vivos !== null) {
       // número nunca é cortado (P1c D-R6): se a linha mais larga não cabe, TODAS cedem juntas, texto primeiro (nível 1: sem modelo), depois o tempo inteiro (nível 2)
       // níveis: 0 tudo · 1 sem modelo · 2 sem tempo · 3 sem o verbo do papel · 4 nome encurtado com `…` (texto, nunca número)
       let nivel = 0;
       let nwUsado = nw;
-      const montar = (n: number): Linha[] => eq.agentes.map((a) => linhaAgente(a, larga, nwUsado, n >= 3 ? 0 : vw, n === 0 ? mw : 0, tw, n));
+      const montar = (n: number): Linha[] => eq.agentes.map((a) => linhaAgente(a, larga, nwUsado, n >= 3 ? 0 : vw, n === 0 ? mw : 0, twDe(), n, estadosLegado, rotulo()));
       while (nivel < 4 && larga && montar(nivel).some((l) => larg(l) > w)) {
+        if (!rotuloTentado && nivel === 0) {
+          // 1º o rótulo (cortado com `…`, no mínimo 8 colunas), depois o modelo; só vale se a linha mais larga realmente encolhe
+          rotuloTentado = true;
+          const antes = Math.max(...montar(0).map(larg));
+          labW = Math.max(8, colunas(ROTULO_FORA_DO_LOOP) - (antes - w));
+          if (Math.max(...montar(0).map(larg)) >= antes) labW = null;
+          else continue;
+        }
         nivel++;
         if (nivel === 4) {
           const sobra = Math.max(...montar(3).map(larg)) - w;
           nwUsado = Math.max(1, nw - sobra);
         }
+      }
+      // o rótulo cortado só perde o que o nível final exige: o maior corte que ainda cabe
+      if (labW !== null) {
+        const cheio = colunas(ROTULO_FORA_DO_LOOP);
+        for (let k = cheio; k >= 8; k--) { labW = k; if (!montar(nivel).some((l) => larg(l) > w)) break; }
+        if (labW === cheio) labW = null;
       }
       montar(nivel).forEach((l, i) => { saida.push(cortarLinha(l, w)); if (eq.agentes[i].vivo) marca('vivo'); });
     }
@@ -305,9 +327,12 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
   return cortarPorAltura(saida.map((l, i): LinhaMarcada => ({ l, tag: marcas.get(i)?.tag ?? '', ...(marcas.get(i)?.trocar === undefined ? {} : { trocar: marcas.get(i)?.trocar }) })), o.altura, ['sep', 'narr', 'lim', 'fila', 'faixa']);
 }
 
-/** Linha de agente: vivo (`●`), `sem task`, ou `◌ sem agente` (task em voo sem agente de papel compatível). */
-function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw: number, tw: number, nivel = 0): Linha {
+/** Linha de agente: vivo (`●`), `agente fora do loop`, ou `◌ sem agente` (task em voo sem agente de papel compatível). */
+function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw: number, tw: number, nivel = 0, estados: ReadonlyMap<string, EstadoTask> = new Map(), rotuloFora: string = ROTULO_FORA_DO_LOOP): Linha {
   const pre = seg(PREFIXO(false, larga), 'inactive');
+  // GM-15 T32 (item 5): o rótulo único de `projeto.ts` (agente sem task ou com task não iniciada)
+  const tarefa = rotuloAgente({ task: typeof a.task === 'string' && t(a.task) !== '' ? t(a.task) : null, papelExibido: null }, estados);
+  const foraDoLoop = tarefa === ROTULO_FORA_DO_LOOP;
   const nome = t(a.nome ?? a.papel);
   if (!a.vivo) {
     return aparar([pre, seg('◌', 'inactive'), seg(` ${larga ? pad(nome, nw) : nome}`, a.cor), seg(larga ? '  sem agente' : '', 'inactive'), seg(`${larga ? ' · ' : ' '}${t(a.task)}`, 'inactive')]);
@@ -318,7 +343,7 @@ function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw
   const gc: CorTema = semTask || a.estadoTask === null ? 'inactive' : corEstadoTask(a.estadoTask);
   if (!larga) {
     const fim = [pct !== null ? fmtPct(pct) : '', tok !== null ? fmtTok(tok) : ''].filter((x) => x !== '').join(' ');
-    return aparar([pre, seg('●', gc), seg(' '), seg(semTask ? 'sem task' : pad(nome, nw), semTask ? 'inactive' : a.cor), seg(fim !== '' ? ` ${fim}` : '', 'inactive')]);
+    return aparar([pre, seg('●', gc), seg(' '), seg(semTask ? rotuloFora : pad(nome, nw), semTask ? 'inactive' : a.cor), seg(fim !== '' ? ` ${fim}` : '', 'inactive')]);
   }
   const ctx: Linha = pct !== null
     ? [seg('ctx '), ...barraSegs(pct, 10, '█', '░', 'success'), seg(` ${fmtPct(pct)}`)]
@@ -326,11 +351,91 @@ function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw
   const cauda = [...(pct !== null && tok !== null ? [fmtTok(tok)] : []), ...(nivel < 2 && tempoDe(a.desdeS) !== '' ? [tempoDe(a.desdeS)] : [])];
   const modelo = nivel === 0 && t(a.modelo) !== '' ? ` · ${t(a.modelo)}` : '';
   const fim = cauda.length > 0 ? [seg(`  ${cauda.join(' · ')}`, 'inactive')] : [];
-  if (semTask) return aparar([pre, seg('●', gc), seg(' '), seg('sem task', 'inactive'), seg(modelo, 'inactive'), seg('  '), ...ctx, ...fim]);
+  if (semTask) return aparar([pre, seg('●', gc), seg(' '), seg(rotuloFora, 'inactive'), seg(modelo, 'inactive'), seg('  '), ...ctx, ...fim]);
   return aparar([
     pre, seg('●', gc), seg(' '), seg(pad(nivel >= 4 ? cortar(nome, nw) : nome, nw), a.cor), seg('  '), ...(vw > 0 ? [seg(pad(textoDoPapel(a.papel), vw))] : []), seg(pad(modelo, mw), 'inactive'),
-    seg('  '), seg(pad(t(a.task), tw)), seg('  '), ...ctx, ...fim,
+    seg('  '), seg(pad(foraDoLoop ? rotuloFora : t(a.task), tw)), seg('  '), ...ctx, ...fim,
   ]);
+}
+
+// ───────────────────────────── GM-15 T32 (REQ-ENT-2 emenda 4, D-G3): visão de PROJETO, acima da visão de entrega ─────────────────────────────
+//
+// O núcleo é `projeto.ts` (T31, puro); a borda (`painel.mjs`) lê todas as worktrees e cola `estado.projeto`. Aqui só se DESENHA. Aparece com 2 ou mais PBIs/entregas
+// (com 1 só, a visão de entrega já é o projeto). ≥ 72 colunas: totais em 2 ou 3 linhas (contagens · previsão medida · previsão estimada) + 1 linha por PBI; abaixo, 1 linha de totais (D-P8: a visão de entrega
+// mantém a prioridade dela, o projeto é o 1º a encolher); < 44, só a contagem. Número nunca cortado: o que cede é o título; a linha cortada termina em "…".
+// PBI sem plano: "sem plano", nunca 0 % (o total diz quantos ficam fora da conta). Previsão: "(medida)" = ritmo medido (T30) só do que tem plano;
+// a parte dos PBIs sem plano vem com "~" e "estimadas" (emenda 19 p.5, D-G13), nunca somada ao %.
+
+/** GM-15 T33 (g.9): todo "?" diz por que falta o dado, em 1–3 palavras, a partir de 100 colunas; abaixo disso só o "?". A regra única (renderBlocos e o projeto). */
+const motivoEm = (w: number) => (m: string): string => (w >= 100 ? ` (${m})` : '');
+
+/** Largura mínima das linhas por PBI; abaixo, 1 linha de totais. */
+const LARGURA_PROJETO_LINHAS = 72;
+
+/** `estado.projeto` válido e com 2 ou mais linhas; senão `null` (nada desenhado). */
+function projetoDe(e: EstadoPainel): EstadoProjeto | null {
+  const p = (e as EstadoPainel & { projeto?: EstadoProjeto | null }).projeto;
+  if (p === null || p === undefined || typeof p !== 'object' || !Array.isArray(p.linhas) || p.totais === null || typeof p.totais !== 'object') return null;
+  return p.linhas.filter((l) => l !== null && typeof l === 'object' && typeof l.id === 'string').length >= 2 ? p : null;
+}
+
+function linhasDoProjeto(p: EstadoProjeto, w: number, mot: (m: string) => string): { totais: Linha[]; pbis: Linha[] } {
+  const tt = p.totais;
+  const feitos = ouInterroga(tt.feitos);
+  const total = ouInterroga(tt.pbis);
+  const pctN = nn(tt.pct);
+  const pct = pctN === null ? '?' : `${Math.round(pctN)}%`;
+  const fora = inteiroNaoNeg(tt.foraDaConta) ?? 0;
+  const med = tt.previsao?.medida ?? null;
+  const est = tt.previsao?.estimada ?? null;
+  if (w < 44) return { totais: [[seg(`PBIs ${feitos}/${total} · ${pct}`)]], pbis: [] };
+  if (w < LARGURA_PROJETO_LINHAS) {
+    const prev = est !== null ? `~${t(est.hora)} estimada` : med !== null ? `${t(med.hora)} medida` : '?';
+    return { totais: [[seg(`PROJETO ${feitos}/${total} PBIs · ${pct} · ${prev}${fora > 0 ? ` · ${fora} sem plano` : ''}`)]], pbis: [] };
+  }
+  // linha 1: contagens (o número nunca é cortado: o que não cabe em `w` sai por variantes mais curtas, a mais longa primeiro)
+  const estimadas = inteiroNaoNeg(tt.estimadas) ?? 0;
+  const tasks = `${pct} das tasks (${ouInterroga(tt.integradas)} de ${ouInterroga(tt.tasks)}${estimadas > 0 ? `, +${estimadas} estimadas` : ''})`;
+  const base = `PROJETO  ${feitos} de ${total} PBIs feitos · ${tasks}`;
+  const variantes = [
+    `${base} · ${ouInterroga(tt.restantes)} restantes${fora > 0 ? ` · ${fora} sem plano, fora da conta` : ''}`,
+    `${base} · ${ouInterroga(tt.restantes)} restantes${fora > 0 ? ` · ${fora} sem plano` : ''}`,
+    `${base}${fora > 0 ? ` · ${fora} sem plano` : ''}`,
+    base,
+  ];
+  const l1 = variantes.find((v) => colunas(v) <= w) ?? variantes[variantes.length - 1];
+  // linha 2: a previsão medida (a); linha 3: a parte dos PBIs sem plano, estimada (b), com "~"
+  const totais: Linha[] = [
+    [seg(l1)],
+    [seg(med !== null ? `  previsão ${t(med.hora)} (medida)` : `  previsão ?${mot(tt.previsao?.ritmoS === null || tt.previsao?.ritmoS === undefined ? 'sem ritmo medido' : 'sem fonte')}`, 'inactive')],
+    ...(est !== null ? [[seg(`  ${t(est.texto)}`, 'inactive')] as Linha] : []),
+  ];
+  const ls = p.linhas.filter((l): l is LinhaProjeto => l !== null && typeof l === 'object' && typeof l.id === 'string');
+  const idW = maxCol(ls.map((l) => t(l.id)));
+  const txt = (l: LinhaProjeto): string => t(l.texto) || '?';
+  const txtW = maxCol(ls.map(txt));
+  const tcol = Math.min(40, w - (8 + idW + txtW));
+  const titulos = ls.map((l) => (tcol >= 4 ? cortar(natural(l.titulo), tcol) : ''));
+  const tw = maxCol(titulos);
+  const pbis = ls.map((l, i): Linha => {
+    const g = l.motivo !== null && l.motivo !== undefined ? '?' : l.feito === true ? '✓' : l.semPlano === true ? '○' : '●';
+    const cor: CorTema | undefined = g === '✓' ? 'success' : g === '○' ? 'inactive' : g === '?' ? 'warning' : undefined;
+    return aparar([seg('  '), seg(g, cor), seg(` ${pad(t(l.id), idW)}  `), ...(tw > 0 ? [seg(`${pad(titulos[i], tw)}  `)] : []), seg(txt(l), l.semPlano === true && g !== '?' ? 'inactive' : undefined)]);
+  });
+  return { totais, pbis };
+}
+
+/**
+ * As linhas únicas (`sem entrega em curso`, `<ID> entregue`) seguem 1 linha, MAS a visão de projeto vem ACIMA delas (emenda 4; é o caso do repo com main
+ * e nada em curso). Exceção: linha única que é item do dono (`◆ …`, o botão "seguir"): o mod só a acha como 1ª/2ª linha de conteúdo, então o projeto vai abaixo.
+ */
+export function comProjetoAcima(e: EstadoPainel, w: number, unica: Linha[]): Linha[] {
+  const p = projetoDe(e);
+  if (p === null) return unica;
+  const dp = linhasDoProjeto(p, w, motivoEm(w));
+  const proj = [...dp.totais, ...dp.pbis].map((l) => cortarNatural(l, w));
+  const itemDoDono = unica.length > 0 && textoDe(unica[0]).startsWith('◆ ');
+  return itemDoDono ? [...unica, ...proj] : [...proj, ...unica];
 }
 
 // ───────────────────────────── GM-14 T17 (regra dos 5 blocos) + GM-15 T29 (desenho do E4): `renderBlocos` (REQ-GLB-1, REQ-LNG-1, FIEL-10..13) ─────────────────────────────
@@ -451,7 +556,7 @@ function linhaReserva(r: ItemRecente, quemTexto: (q: QuemPainel | null | undefin
 
 /**
  * Linha-resumo do AGORA (T42, emenda 37): `  <N> agentes: <rótulo> <task> · <rótulo> <task> …`. N = TODOS os vivos (mesmo os que o "…" esconde);
- * itens = agentes e linhas de segundo plano; ação e tempo saem. Corta em fronteira de item e termina em "…" quando algum não coube.
+ * itens = só agentes (o segundo plano é seção própria, g.11); ação e tempo saem. Corta em fronteira de item e termina em "…" quando algum não coube.
  */
 function linhaResumo(n: number, itens: { r: string; t: string }[], w: number): Linha {
   const pre = `  ${n} agentes:`;
@@ -486,6 +591,45 @@ const horaDe = (h: unknown): string => {
 const FASES_NOME = ['ideia', 'spec', 'aprovação', 'plano', 'execução', 'PR', 'uso'];
 const inteiroNaoNeg = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null);
 
+/** Duração do fechamento (h.2): `< 1 h` em minutos, senão `1h20`. */
+function fmtFechamento(s: number): string {
+  const min = Math.round(s / 60);
+  return min < 60 ? `${min} min` : `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`;
+}
+
+/**
+ * Texto da previsão do PLANO (GM-15 T30, h.1/h.2). Com a conta exata (`faixa`): a faixa `de–ate` (`ate` `?` = fechamento não medido); em `w >= 100`
+ * a base da MESMA conta (`pronto.previsao.conta`, nada recalculado): caminho, min por task, rodada, fechamento, por campo inteiro até caber em `cabe`
+ * colunas (saem rodada, min por task e caminho, nesta ordem; o fechamento fica). Número inválido ⇒ o campo some (D-P13). Sem a conta exata, o texto do E4.
+ */
+function textoPrevisao(pv: NonNullable<NonNullable<EstadoPainel['pronto']>['previsao']>, w: number, cabe: number): string {
+  const fx = pv.faixa;
+  if (fx === null || typeof fx !== 'object' || typeof fx.de !== 'string' || limpar(fx.de) === '') return `previsão ${limpar(pv.hora)} (base: ${inteiroNaoNeg(pv.base) ?? '?'} tasks desta entrega)`;
+  // o 1º número é sempre o ponto (`hora`), a faixa vem atrás (r1 MAJOR 1: a ponta de baixo sozinha erra o que o ponto não erra)
+  const ponto = horaDe(pv.hora);
+  const de = limpar(fx.de);
+  const ate = typeof fx.ate === 'string' && limpar(fx.ate) !== '' ? limpar(fx.ate) : '?';
+  const faixa = `previsão ${de === ate && de === ponto ? ponto : de === ponto ? `${ponto}–${ate}` : `${ponto} (${de}–${ate})`}`;
+  if (w < 100) return faixa;
+  const c = pv.conta !== null && typeof pv.conta === 'object' ? pv.conta : null;
+  const caminho = inteiroNaoNeg(c?.caminho);
+  const mpt = inteiroNaoNeg(c?.minPorTask);
+  const rod = nn(c?.rodadas);
+  const fe = c?.fechamentoS === null ? 'fechamento não medido' : nn(c?.fechamentoS) !== null ? `fechamento ${fmtFechamento(nn(c?.fechamentoS) as number)}` : null;
+  // [texto, ordem de saída] — sai primeiro o de maior número
+  const campos: [string | null, number][] = [
+    [caminho === null ? null : `caminho ${caminho} ${caminho === 1 ? 'task' : 'tasks'}`, 3], [mpt === null ? null : `${mpt} min por task`, 2],
+    [rod === null ? null : `${rod.toFixed(1).replace('.', ',')} rodada`, 1], [fe, 4],
+  ];
+  let vivos = campos.filter((x): x is [string, number] => x[0] !== null);
+  const montar = (): string => [faixa, ...vivos.map((x) => x[0])].join(' · ');
+  while (vivos.length > 0 && colunas(montar()) > cabe) {
+    const menor = Math.min(...vivos.map((x) => x[1]));
+    vivos = vivos.filter((x) => x[1] !== menor);
+  }
+  return montar();
+}
+
 
 /** Glifo de task da forma (`TaskPainel.glifo`); outro texto (corrompido) vira "?". */
 const glifoTask = (g: unknown): string => (typeof g === 'string' && ['✓', '●', '◐', '○', '✗'].includes(g) ? g : '?');
@@ -513,12 +657,14 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   const minima = w < 44;
   const id = idNatural(e.id);
   const fim = (l: Linha): Linha => cortarNatural(l, w);
+  /** GM-15 T33 (g.9): todo "?" diz por que falta o dado, em 1–3 palavras, a partir de 100 colunas; abaixo disso fica só o "?". */
+  const mot = motivoEm(w);
 
   if (e.modo === 'fora') return [fim([seg('GABARITO · fora de um projeto', 'inactive')])];
   if (e.umaLinha !== null && e.umaLinha !== undefined) {
     const u = e.umaLinha.ultima;
     const ult = u === null || typeof u?.id !== 'string' ? '' : ` · última: ${idNatural(u.id)}${typeof u.estado === 'string' && u.estado !== '' ? ` (${natural(u.estado)})` : ''}`;
-    return [fim([seg(`GABARITO · sem entrega em curso${ult}`, 'inactive')])];
+    return comProjetoAcima(e, w, [fim([seg(`GABARITO · sem entrega em curso${ult}`, 'inactive')])]); // a linha única segue 1 linha; o projeto vem acima (emenda 4)
   }
 
   const quemTexto = (q: QuemPainel | null | undefined): string => {
@@ -557,7 +703,8 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   for (const i of Array.isArray(e.depende) ? e.depende : []) {
     if (i === null || typeof i !== 'object' || (p !== null && i.nivel === 'parar')) continue;
     const m = typeof i.motivo === 'string' ? i.motivo : '';
-    if (/^depende de você:/.test(m)) {
+    if (m === 'nada depende de você') itensTopo.push({ texto: m, cor: 'inactive', tipo: 'proprio', peso: 0 }); // D-G12 (r.13): linha de situação
+    else if (/^depende de você:/.test(m)) {
       const resto = natural(m.slice('depende de você:'.length));
       itensTopo.push({ texto: `depende de você:${resto === '' ? '' : ` ${resto}`}`, cor: /nada$/.test(m) ? 'inactive' : 'warning', tipo: 'proprio', peso: 0 });
     } else itensTopo.push({ texto: `${natural(m)}${botoes(i.acoes)}`, tipo: 'item', peso: 1 });
@@ -585,6 +732,14 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   const ultima = id === '' && typeof e.trilha?.ultimaConhecida === 'string' ? idNatural(e.trilha.ultimaConhecida) : '';
   if (ultima !== '') por(2, [seg(`última entrega conhecida: ${ultima}`, 'inactive')], 0);
 
+  // ───────── PROJETO (GM-15 T32, emenda 4): acima da visão de entrega; o 1º a encolher no corte (a entrega mantém a prioridade D-P8) ─────────
+  const projeto = projetoDe(e);
+  if (projeto !== null) {
+    const dp = linhasDoProjeto(projeto, w, mot);
+    for (const l of dp.totais) por(6.94, l, 0.5);
+    for (const l of dp.pbis) por(6.96, l, 0.5);
+  }
+
   // nomes e cores dos agentes do AGORA (FIEL-3 d): o nome é único entre os ativos; a medição (ctx, tokens, modelo, cor) é a da equipe
   const ag = e.agora;
   const agentesAg: AgenteAgora[] | null = ag !== undefined && ag !== null && Array.isArray(ag.agentes) ? ag.agentes.filter((a) => a !== null && typeof a === 'object') : null;
@@ -609,8 +764,13 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
     const pctTxt = pct === null ? '?' : `${pct}%`;
     const tasksTxt = `${integ ?? '?'}/${total ?? '?'} tasks`;
     const prevV = pr.previsao !== null && typeof pr.previsao?.hora === 'string' && limpar(pr.previsao.hora) !== '' ? pr.previsao : null;
-    const status = prevV !== null ? `previsão ${limpar(prevV.hora)} (base: ${inteiroNaoNeg(prevV.base) ?? '?'} tasks desta entrega)`
-      : p !== null && typeof p === 'object' ? 'loop parado' : e.parado === true ? 'loop pausado' : integ !== null && total !== null && total > 0 && integ >= total ? 'todas integradas' : '';
+    // h.2: a base nunca encolhe a barra do PLANO (paridade com o E4): cabe no que sobra ao lado da barra que a faixa sozinha deixaria
+    const fixo = 8 + 2 + colunas(pctTxt) + 2 + colunas(tasksTxt);
+    const barraDaFaixa = prevV === null ? 5 : Math.min(21, Math.max(5, w - (fixo + 3 + colunas(textoPrevisao(prevV, 0, 0)))));
+    const cabePrev = w - (fixo + barraDaFaixa + 3);
+    const status = prevV !== null ? textoPrevisao(prevV, w, cabePrev)
+      : p !== null && typeof p === 'object' ? 'loop parado' : e.parado === true ? 'loop pausado' : integ !== null && total !== null && total > 0 && integ >= total ? 'todas integradas'
+        : w >= 100 && integ !== null && integ < 3 ? 'ETA ?: n insuficiente' : '';
     // a barra pinta só integradas (D-P6); sem número, "?" no lugar da barra (nunca barra vazia que pareça 0 %)
     const barraPlano = (bw: number): Linha => (pct === null ? [seg('?')] : barraSegs(pct, bw, '▰', '▱', 'success'));
     if (larga) {
@@ -622,6 +782,11 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
     } else {
       por(2, [seg('PLANO '), ...barraPlano(minima ? 5 : 10), ...(pct === null ? [seg(` ${tasksTxt}`)] : [seg(` ${pctTxt} ${tasksTxt}`)]), ...(status !== '' ? [seg(` · ${status}`, 'inactive')] : [])], 1);
     }
+
+    // GM-15 T36 (c2 MAJOR-1, emenda 25 m.4): com plano a trilha não é desenhada (`fase` é null); a spec divergente (emenda revertida pelo dono, texto ainda na spec)
+    // aparece aqui com o "?" e o motivo (REQ-ENT-2), na prioridade do PLANO, nunca um ✓ que finja coerência
+    const motivoSpec = natural(e.trilha?.motivos?.[1]); // a célula `spec` só tem motivo quando é "?" (`trilha.ts`)
+    if (motivoSpec !== '') por(2, [seg('? ', 'warning'), seg(`spec · ${motivoSpec}`, 'inactive')], 1);
 
     // faixa das integradas (E4): a contagem, nunca a lista (FIEL-10 b: task integrada não é listada)
     if (larga && integ !== null && integ > 0) {
@@ -693,11 +858,16 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
     const barra7 = FASES_NOME.map((_, i) => (marcas[i] === '✓' ? '▰' : '▱')).join('');
     const trilha = FASES_NOME.map((nome, i) => `${['✓', '●', '○', '?'].includes(marcas[i]) ? marcas[i] : '?'} ${nome}`).join(' › ');
     const partes = [natural(f.progresso), ...(Array.isArray(f.sufixo) ? f.sufixo.map((x) => natural(x)) : []), ...(typeof f.motivo === 'string' ? [`? ${natural(f.motivo)}`] : [])].filter((x) => x !== '');
-    por(2, [seg(`FASE ${n === null ? '?' : n} de 7 `), seg(barra7, 'success'), seg(`${partes.map((x) => ` · ${x}`).join('')} · `), seg(trilha, 'inactive')], 1);
+    // GM-15 T32 (emenda 4 item 4, D-P13): sem `plano.json` a fase não é medida ("fase não medida", sem "n de 7" nem barra); com ele, "FASE n de 7". Sem a marca (estado de fora do CLI), como antes.
+    const semPlanoJson = (e as EstadoPainel & { temPlanoJson?: boolean }).temPlanoJson === false;
+    const rotuloF = rotuloFase(!semPlanoJson, n);
+    por(2, semPlanoJson
+      ? [seg(rotuloF), seg(`${partes.map((x) => ` · ${x}`).join('')} · `), seg(trilha, 'inactive')]
+      : [seg(`${rotuloF} `), seg(barra7, 'success'), seg(`${partes.map((x) => ` · ${x}`).join('')} · `), seg(trilha, 'inactive')], 1);
   }
 
   // ───────── EQUIPE: o AGORA (FIEL-4, FIEL-11) no desenho do E4 ─────────
-  const agoraAgentes: LinhaPrioridade[] = []; // as linhas de agente e de segundo plano (candidatas à linha-resumo, T42 emenda 37)
+  const agoraAgentes: LinhaPrioridade[] = []; // as linhas de agente (candidatas à linha-resumo, T42 emenda 37)
   const resumo: { r: string; t: string }[] = [];
   let nVivos = 0;
   let linhaNomeOrq: Linha | null = null;
@@ -719,7 +889,7 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
       const xp = nn(lider?.x);
       const hora = pct !== null && or?.pousar === true ? ' · hora de pousar' : '';
       const tokV = nn(lider?.tok);
-      const tokTxt = `   tok ${tokV === null ? '?' : fmtTok(tokV)}`;
+      const tokTxt = `   tok ${tokV === null ? `?${mot('sem medição')}` : fmtTok(tokV)}`;
       /** Linha do contexto do orquestrador: barra █░ (sem medição, "?" no lugar dela); "hora de pousar" nunca é cortada: a barra cede, depois o "pouso em". */
       const ctxOrq = (comNome: boolean, comTok: boolean): Linha => {
         let pre: Linha = comNome ? [seg(nomeOrq), seg(' ctx ')] : [seg('│', 'inactive'), seg('  ctx ')];
@@ -727,7 +897,7 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
         const teto = comNome ? 19 : w >= 72 ? 29 : 19;
         let pz = xp === null ? '' : ` · pouso em ${fmtPct(xp)}`;
         let est = estim ? ' (estimado)' : '';
-        const txtPct = (): string => (pct === null ? '?' : `${estim ? '~' : ''}${pct}%${est}`);
+        const txtPct = (): string => (pct === null ? `?${mot('sem medição')}` : `${estim ? '~' : ''}${pct}%${est}`);
         const fixo = (): number => larg(pre) + (pct === null ? 0 : 1) + colunas(txtPct()) + colunas(pz) + colunas(hora) + colunas(tk);
         let bw = Math.min(teto, w - fixo());
         // "hora de pousar" nunca é cortada: cede a barra, depois o "pouso em", depois o "(estimado)" (o "~" segue dizendo que é estimado),
@@ -757,34 +927,38 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
         linhaCtx = por(3, ctxOrq(false, true), 2);
         ctxComNome = ctxOrq(true, true);
         // limites 5h e 7d com a barra de 10 do E4; sem medição, "?" no lugar da barra (D-P13)
-        const lim = (rot: string, v: number | null): Linha => (v === null ? [seg(`${rot} ?`)] : [seg(`${rot} `), ...barraSegs(v, 10, '█', '░', 'success'), seg(` ${fmtPct(v)}`)]);
-        por(6.1, [seg('│', 'inactive'), seg('  '), ...lim('5h', h5), seg('   '), ...lim('7d', d7)], 2);
+        // D-G7 (g.10): sem `five_hour` na plataforma o campo 5h não existe (omitido, nunca "5h ?"); o 7d segue, com "?" quando não medido (D-P13)
+        const lim = (rot: string, v: number | null): Linha => (v === null ? [seg(`${rot} ?${mot('sem medição')}`)] : [seg(`${rot} `), ...barraSegs(v, 10, '█', '░', 'success'), seg(` ${fmtPct(v)}`)]);
+        por(6.1, [seg('│', 'inactive'), seg('  '), ...(h5 !== null ? [...lim('5h', h5), seg('   ')] : []), ...lim('7d', d7)], 2);
         const narr = natural(lider?.narrativa);
         // `▶` do E4 é pictográfico (vira emoji em terminal, FIEL-13 c): `▸`
         if (o.narracao === true && w >= 72 && narr !== '') por(6.7, [seg('│', 'inactive'), seg('  '), seg('▸', 'success'), seg(` ${narr}`)], 2);
       } else {
         linhaCtx = por(3, ctxOrq(true, false), 2);
-        por(6.1, [seg('│ ', 'inactive'), seg(`5h ${h5 === null ? '?' : fmtPct(h5)} 7d ${d7 === null ? '?' : fmtPct(d7)}${tokTxt.replace(/^ +/, ' ')}`)], 2);
+        por(6.1, [seg('│ ', 'inactive'), seg(`${h5 === null ? '' : `5h ${fmtPct(h5)} `}7d ${d7 === null ? '?' : fmtPct(d7)}${tokTxt.replace(/^ +/, ' ')}`)], 2);
       }
 
       // árvore dos agentes (├─ … └─): só ativos (FIEL-6); o que faz (FIEL-11 b) no fim da linha, onde o corte não alcança número
-      const segundo = Array.isArray(ag.segundoPlano) ? ag.segundoPlano.filter((a) => a !== null && typeof a === 'object') : [];
-      const itens = [...agentesAg.map((a) => ({ a, bg: false })), ...segundo.map((a) => ({ a: { ...a, quem: { nome: null, papel: 'teste' as const } }, bg: true }))];
-      const dados = itens.map(({ a, bg }) => {
-        const eq = bg ? undefined : daEquipe(a);
+      // GM-15 T33 (g.11, D-G8): a EQUIPE tem só agentes (+ Sombra); o shell de fundo vai para a seção SEGUNDO PLANO, abaixo
+      // GM-15 T32 (emenda 4 item 5): o agente só é da task se ela saiu de `pendente` (alguém rodou `loop.mjs iniciar`); senão "agente fora do loop" (a regra única de `projeto.ts`)
+      const estadosDasTasks = new Map<string, EstadoTask>((Array.isArray(e.plano?.tasks) ? e.plano.tasks : []).filter((x) => x !== null && typeof x === 'object' && typeof x.id === 'string').map((x) => [x.id, x.estado as EstadoTask]));
+      const dados = agentesAg.map((a) => {
+        const eq = daEquipe(a);
         const tempo = inteiroNaoNeg(a.desdeS);
         return {
-          nome: quemTexto(a.quem), cor: eq?.cor, gc: (bg || eq?.estadoTask == null ? 'inactive' : corEstadoTask(eq.estadoTask)) as CorTema, modelo: t(eq?.modelo),
-          task: typeof a.task === 'string' && t(a.task) !== '' ? t(a.task) : bg ? 'orquestrador' : 'sem task',
-          pct: bg ? null : nn(eq?.ctxPct), tok: bg ? null : nn(eq?.ctxTok), bg, tempo: tempo === null ? '' : fmtTempo(tempo),
-          acao: a.acao === null || a.acao === undefined ? '?' : natural(a.acao, 'reticencia') || '?',
+          nome: quemTexto(a.quem), cor: eq?.cor, gc: (eq?.estadoTask == null ? 'inactive' : corEstadoTask(eq.estadoTask)) as CorTema, modelo: t(eq?.modelo),
+          task: rotuloAgente({ task: typeof a.task === 'string' && t(a.task) !== '' ? t(a.task) : null, papelExibido: null }, estadosDasTasks),
+          pct: nn(eq?.ctxPct), tok: nn(eq?.ctxTok), tempo: tempo === null ? '' : fmtTempo(tempo),
+          acao: a.acao === null || a.acao === undefined ? `?${mot('sem fonte')}` : natural(a.acao, 'reticencia') || `?${mot('sem fonte')}`,
         };
       });
       type Dado = (typeof dados)[number];
-      const ctxSegs = (d: Dado): Linha => (d.bg ? [] : d.pct !== null
+      const ctxSegs = (d: Dado): Linha => (d.pct !== null
         ? [seg('ctx '), ...barraSegs(d.pct, 10, '█', '░', 'success'), seg(` ${fmtPct(d.pct)}`)]
-        : [seg(d.tok !== null ? `ctx ${fmtTok(d.tok)}` : 'ctx ?')]);
+        : [seg(d.tok !== null ? `ctx ${fmtTok(d.tok)}` : `ctx ?${mot('sem medição')}`)]);
       const linhas: Linha[] = [];
+      const sb = e.equipe?.sombra;
+      const temSombra = sb !== null && typeof sb === 'object';
       if (larga) {
         const nw = maxCol(dados.map((d) => d.nome));
         const tw = maxCol(dados.map((d) => d.task));
@@ -798,7 +972,7 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
           const caudas = dados.map((d) => [...(d.pct !== null && d.tok !== null ? [fmtTok(d.tok)] : []), ...(nivel < 2 && d.tempo !== '' ? [d.tempo] : [])].join(' · '));
           const caw = maxCol(caudas);
           return dados.map((d, i) => [
-            seg(PREFIXO(i === dados.length - 1, true), 'inactive'), seg('●', d.gc), seg(' '), seg(nomeDe(d), d.cor),
+            seg(PREFIXO(i === dados.length - 1 && !temSombra, true), 'inactive'), seg('●', d.gc), seg(' '), seg(nomeDe(d), d.cor),
             ...(modeloDe(d) !== '' ? [seg(modeloDe(d), 'inactive')] : []), seg(' '.repeat(nmw - colunas(`${nomeDe(d)}${modeloDe(d)}`))), seg('  '), seg(pad(d.task, tw)), seg('  '),
             ...ctxSegs(d), seg(' '.repeat(cw - colunas(textoDe(ctxSegs(d))))), ...(caw > 0 ? [seg(`  ${pad(caudas[i], caw)}`, 'inactive')] : []),
           ]);
@@ -814,9 +988,9 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
       } else {
         const nw = maxCol(dados.map((d) => d.nome));
         dados.forEach((d, i) => {
-          const nums = d.bg ? '' : [d.pct !== null ? fmtPct(d.pct) : '', d.tok !== null ? fmtTok(d.tok) : ''].filter((x) => x !== '').join(' ') || '?';
+          const nums = [d.pct !== null ? fmtPct(d.pct) : '', d.tok !== null ? fmtTok(d.tok) : ''].filter((x) => x !== '').join(' ') || '?';
           linhas.push(aparar([
-            seg(PREFIXO(i === dados.length - 1, false), 'inactive'), seg('●', d.gc), seg(' '), seg(pad(d.nome, nw), d.cor), seg(` ${d.task}`),
+            seg(PREFIXO(i === dados.length - 1 && !temSombra, false), 'inactive'), seg('●', d.gc), seg(' '), seg(pad(d.nome, nw), d.cor), seg(` ${d.task}`),
             seg(`${nums !== '' ? ` ${nums}` : ''}${d.tempo !== '' ? ` ${d.tempo}` : ''}`, 'inactive'), seg(` ${d.acao}`),
           ]));
         });
@@ -825,6 +999,46 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
         por(3, l, 2); agoraAgentes.push(ls[ls.length - 1]);
         resumo.push({ r: dados[i].nome, t: dados[i].task });
       });
+      // GM-15 T33 (g.8, emenda 11): a Sombra é o último `└` da EQUIPE, como no E4 (`renderEsquadrao`): nome, "aconselha", modelo, nº de decisões e a última
+      // `#seq resposta (fonte)`; estreito ⇒ nome + `#seq`; sem decisão ⇒ só o nome. Nos 2 presets (o executivo chama de Conselheiro, `PAPEL_EXECUTIVO`).
+      if (temSombra) {
+        const nomeS = quemTexto({ nome: typeof sb.nome === 'string' ? sb.nome : null, papel: 'sombra' });
+        const decS = nn(sb.decisoes);
+        const ultS = sb.ultima !== null && typeof sb.ultima === 'object' ? sb.ultima : null;
+        const seqS = ultS === null ? null : nn(ultS.seq);
+        const temDecisao = (decS !== null && decS > 0) || seqS !== null;
+        if (larga) {
+          const cont = decS === null || decS === 0 ? '' : `${Math.round(decS)} ${Math.round(decS) === 1 ? 'decisão' : 'decisões'}`;
+          const resp = ultS !== null && seqS !== null ? `#${Math.round(seqS)} ${natural(ultS.resposta)}${t(ultS.fonte) !== '' ? ` (${t(ultS.fonte)})` : ''}` : '';
+          const mod = t(sb.modelo);
+          por(3, aparar(temDecisao
+            ? [seg(PREFIXO(true, true), 'inactive'), seg('○', 'inactive'), seg(' '), seg(nomeS, 'planMode'), seg('  aconselha'), ...(mod !== '' ? [seg(` · ${mod}`, 'inactive')] : []),
+              seg(`  ${[cont, resp].filter((x) => x !== '').join(' · ')}`, 'inactive')]
+            : [seg(PREFIXO(true, true), 'inactive'), seg('○', 'inactive'), seg(' '), seg(nomeS, 'planMode')]), 2);
+        } else {
+          const fim2 = ultS !== null && seqS !== null ? ` #${Math.round(seqS)}` : '';
+          por(3, aparar([seg(PREFIXO(true, false), 'inactive'), seg('○', 'inactive'), seg(' '), seg(nomeS, 'planMode'), ...(fim2 !== '' ? [seg(fim2, 'inactive')] : [])]), 2);
+        }
+      }
+      // GM-15 T33 (g.11, D-G8): SEGUNDO PLANO, seção própria abaixo da EQUIPE, 1 linha por shell de fundo (tipo · task · quem disparou · tempo); `agora.segundoPlano`
+      // já vem rotulado por `painel.ts` (`quem` = quem disparou, `task`, `acao` = tipo). É a 1ª a encolher no corte (prioridade 7; o resumo da seção, 6,9); vazia, some.
+      const shells = Array.isArray(ag.segundoPlano) ? ag.segundoPlano.filter((a) => a !== null && typeof a === 'object') : [];
+      if (shells.length > 0) {
+        const TIPOS: [string, string, string][] = [['Integrando', 'integrando', 'integrando'], ['Teste', 'teste', 'testes'], ['Aguardando', 'aguardando', 'aguardando'], ['Comando', 'comando', 'comandos']];
+        const tipoDe = (a: AgenteAgora): string => (TIPOS.some((x) => x[0] === a.acao) ? (a.acao as string) : 'Comando');
+        const contagem = TIPOS.map(([k, um, varios]) => { const n = shells.filter((a) => tipoDe(a) === k).length; return n === 0 ? '' : k === 'Integrando' || k === 'Aguardando' ? `${n} ${um}` : `${n} ${n === 1 ? um : varios}`; }).filter((x) => x !== '').join(' · ');
+        if (larga) {
+          por(6.9, alinhar([seg('SEGUNDO PLANO')], [seg(contagem, 'inactive')], w), 2.5);
+          for (const a of shells) {
+            const quemS = a.quem !== null && typeof a.quem === 'object' && a.quem.papel === 'orquestrador' ? nomeOrq : quemTexto(a.quem);
+            const taskS = typeof a.task === 'string' && t(a.task) !== '' ? ` ${t(a.task)}` : '';
+            const tempoS = inteiroNaoNeg(a.desdeS);
+            por(7, aparar([seg('  ◦ ', 'inactive'), seg(`${tipoDe(a)}${taskS}`), seg(` · ${quemS}${tempoS !== null ? ` · ${fmtTempo(tempoS)}` : ''}`, 'inactive')]), 2.5);
+          }
+        } else {
+          por(6.9, [seg(`segundo plano: ${contagem}`, 'inactive')], 2.5);
+        }
+      }
     }
   }
 
@@ -853,12 +1067,13 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   // rodapé do E4: CI, produção e política; sem medição, "?" (D-P13); `▼ N` = resultados que o teto do local escondeu
   if (e.rodape !== null && typeof e.rodape === 'object') {
     const ci = e.rodape.ci?.verde;
-    const ciTxt = ci === true ? 'verde' : ci === false ? 'vermelho' : '?';
+    // g.9: nenhum `ci.resultado` da entrega ⇒ "CI sem execução"; `rodape.ci.pendente` (execução rodando) ⇒ "CI pendente"
+    const ciTxt = ci === true ? 'verde' : ci === false ? 'vermelho' : `?${mot((e.rodape.ci as { pendente?: boolean } | undefined)?.pendente === true ? 'CI pendente' : 'CI sem execução')}`;
     const ciCor: CorTema = ci === true ? 'success' : ci === false ? 'warning' : 'inactive';
-    const leu = ouInterroga(e.rodape.prod?.leituras);
-    const alt = ouInterroga(e.rodape.prod?.alteracoes);
+    const leu = ouInterroga(e.rodape.prod?.leituras) + (nn(e.rodape.prod?.leituras) === null ? mot('diário sem leitura') : '');
+    const alt = ouInterroga(e.rodape.prod?.alteracoes) + (nn(e.rodape.prod?.alteracoes) === null ? mot('diário sem leitura') : '');
     const pol0 = natural(e.rodape.politica);
-    const pol = pol0 === '' || pol0 === 'undefined' || pol0 === 'null' ? '?' : pol0;
+    const pol = pol0 === '' || pol0 === 'undefined' || pol0 === 'null' ? `?${mot('sem política')}` : pol0;
     const k = Math.max(0, todosRec.length - rec.length);
     por(6.8, larga
       ? alinhar([seg('CI '), seg('●', ciCor), seg(` ${ciTxt}   PROD leu ${leu} · alterou ${alt}   política ${pol}`)], k > 0 ? [seg(`▼ ${k} ${k === 1 ? 'evento' : 'eventos'}`, 'inactive')] : [], w)
@@ -872,7 +1087,7 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   // corte por orçamento (REQ-GLB-1): `orcamento`, senão `altura`; sem os dois, sem corte
   const orc = alturaValida(o.orcamento) ?? alturaValida(o.altura);
   let cortado: { linhas: Linha[]; cortadasTopo: number } = orc === undefined ? { linhas: ls.map((x) => x.l), cortadasTopo: 0 } : cortarComReserva(ls, orc, reserva, daDecisao);
-  // Linha-resumo (T42, emenda 37): só quando há reserva da Sombra, ela NÃO coube e compactar o AGORA (agentes + segundo plano) em 1 linha a faz caber.
+  // Linha-resumo (T42, emenda 37): só quando há reserva da Sombra, ela NÃO coube e compactar o AGORA (agentes) em 1 linha a faz caber.
   if (orc !== undefined && reserva !== null && !cortado.linhas.includes(reserva) && nVivos >= 1 && agoraAgentes.length >= 2) {
     const recente = ls.filter((x) => x.prioridade === 5).map((x) => x.l);
     if (recente.length > 0 && !recente.some((l) => cortado.linhas.includes(l))) {

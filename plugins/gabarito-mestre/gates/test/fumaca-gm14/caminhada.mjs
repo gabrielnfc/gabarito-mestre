@@ -48,6 +48,13 @@ const a = process.argv.slice(2);
 if (process.env.GH_FIXTURE_FALHA === '1') { process.stderr.write('gh de fixture: falha pedida\\n'); process.exit(1); }
 let est;
 try { est = JSON.parse(readFileSync(process.env.GH_FIXTURE, 'utf8')); } catch { process.stderr.write('gh de fixture sem estado\\n'); process.exit(1); }
+// GM-15 T4: a busca por título (--search) não tem PR na fixture => []; pr view <n> devolve o PR do estado.
+if (a[0] === 'pr' && a[1] === 'list' && a.includes('--search')) { process.stdout.write('[]'); process.exit(0); }
+if (a[0] === 'pr' && a[1] === 'view') {
+  const p = (est.pr ?? []).find((x) => String(x.number) === a[2]);
+  if (!p) { process.stderr.write('no pull requests found\\n'); process.exit(1); }
+  process.stdout.write(JSON.stringify(p)); process.exit(0);
+}
 if (a[0] === 'pr' && a[1] === 'list') {
   if (est.branch !== undefined && !a.includes('--head=' + est.branch)) { process.stderr.write('gh de fixture: pr list sem --head=' + est.branch + ': ' + a.join(' ') + '\\n'); process.exit(2); }
   process.stdout.write(JSON.stringify(est.pr ?? [])); process.exit(0);
@@ -104,13 +111,31 @@ function montar(base, nome, { config = {} } = {}) {
   const rodar = (script, args, input, extraEnv = {}) => {
     agora += PASSO_MS;
     const env = ambiente(agora, { PATH: `${bin}:${process.env.PATH}`, GH_FIXTURE: ghEstado, ...extraEnv });
-    const r = spawnSync(NODE, ['--import', RELOGIO, join(SCRIPTS, script), ...args], { cwd: dir, encoding: 'utf8', env, input, timeout: 120_000 });
+    const r = spawnSync(NODE, ['--import', RELOGIO, join(SCRIPTS, script), ...(script === 'painel.mjs' ? armarLoop(dir, args, input, agora) : args)], { cwd: dir, encoding: 'utf8', env, input, timeout: 120_000 });
     let j = null;
     try { j = JSON.parse(r.stdout.trim()); } catch { /* texto do painel ou vazio */ }
     return { rc: r.status, j, out: r.stdout, err: r.stderr };
   };
   const gh = (estado) => writeFileSync(ghEstado, JSON.stringify(estado));
   return { dir, bare, bin, rodar, gh, agoraMs: () => agora };
+}
+
+
+/**
+ * GM-15 T19: a fumaça não é sobre o loop, então arma o sinal do loop da sessão do painel (forma do mod: gabarito.mjs `interpretarSinalLoop`, `em` no relógio congelado do passo)
+ * antes de `estado`/`texto`; sem ele a régua do Stop trata o loop como desligado e o painel avisa "ligar o loop". Sem `session_id` no stdin, passa `--sessao S-loop`.
+ */
+function armarLoop(dir, args, input, agora) {
+  if (args[0] !== 'estado' && args[0] !== 'texto') return args;
+  let sessao = null;
+  try { const j = JSON.parse(input ?? ''); sessao = j?.session_id ?? j?.sessao?.session_id ?? null; } catch { /* sem stdin JSON */ }
+  const flag = args.indexOf('--sessao');
+  if (flag >= 0) sessao = args[flag + 1];
+  const comFlag = sessao === null ? 'S-loop' : null;
+  const id = sessao ?? 'S-loop';
+  mkdirSync(join(dir, '.harness', 'contexto'), { recursive: true });
+  writeFileSync(join(dir, '.harness', 'contexto', `loop-dinamico.${id}.json`), `${JSON.stringify({ estado: 'armado', intervalo: 0, dinamico: 1, sessao: id, em: new Date(agora).toISOString() })}\n`);
+  return comFlag === null ? args : [...args, '--sessao', comFlag];
 }
 
 function ok(res, rotulo) {

@@ -180,7 +180,7 @@ describe('fumaça do loop sem LLM', { concurrency: 4 }, () => {
       assert.equal(r.pouso, x === '1' ? 1 : 0, `pousos${m}`);
       assert.deepEqual(r.defeitos, [], `defeitos${m}`);
       assert.ok(!r.trilha.some((l) => /iniciar T3/.test(l)), `T3 nunca iniciada${m}`);
-      assert.deepEqual(r.proximaFinal, { tipo: 'parar', motivo: 'teto_rodadas', task: 'T1' }, `proxima final${m}`);
+      assert.deepEqual(r.proximaFinal, { tipo: 'parar', motivo: 'teto_rodadas', task: 'T1', liberacao: { oferecer: false, motivo: 'libera_teto_desligado' } }, `proxima final${m}`);
     });
     test(`tres-teto-liberar (X=${x}): depois de liberar T1 o loop conclui com 3 integradas`, async () => {
       const r = await rodar({ plano: planos('tres'), vereditos: { T1: ['REPROVADO', 'REPROVADO'] }, x, liberar: true });
@@ -274,26 +274,29 @@ describe('fumaça do loop sem LLM', { concurrency: 4 }, () => {
     });
   }
 
-  test('esquece-sempre: o modelo esquece o Agent de T3 em toda tentativa; depois de 2 recuperações o mod grava loop.parar nao_conseguiu', async () => {
+  test('esquece-sempre: o modelo esquece o Agent de T3 em toda tentativa; depois de 1 recuperação (REQ-AUT-1) o mod grava loop.parar nao_conseguiu', async () => {
     const r = await rodar({ plano: planos('tres'), esquece: 'T3', esqueceSempre: true });
     const m = TRILHA(r);
     assert.deepEqual(r.parar, ['nao_conseguiu'], `loop.parar${m}`);
-    assert.equal(r.reabertas, 2, `2 reaberturas${m}`);
+    assert.equal(r.reabertas, 1, `1 reabertura (GM-15 T12: reabrir 2 vezes morre)${m}`);
     assert.deepEqual(r.defeitos, [], `defeitos${m}`);
     assert.equal(r.integradas, 2, `T3 nunca integra${m}`);
     assert.ok(r.avisos.some((a) => /nao_conseguiu/.test(a)), `aviso visível${m}`);
     assert.equal(r.guarda.deny, 0, `guarda deny${m}`);
   });
 
-  // T31 (Q-T13G, REQ-LOOP-5, P9): `duas`, T1 reprovada duas vezes (teto) e T2 iniciada sem Agent. O núcleo já parou (teto_rodadas T1): o mod
-  // não reabre a órfã nem abre turno e grava esse `parar`. Com `liberar`, T1 recomeça e T2 (que esperou) é reaberta no fim de turno seguinte.
-  test('esquece-teto: T1 R,R + T2 órfã ⇒ o mod grava teto_rodadas, não reabre T2 nem abre turno', async () => {
+  // T31 (Q-T13G, REQ-LOOP-5, P9), revisto na GM-15 T12 (REQ-AUT-1: trava parcial não para o loop): `duas`, T1 reprovada duas vezes (teto) e T2
+  // iniciada sem Agent. O teto de T1 não segura a órfã: o mod reabre T2 1 vez e abre o turno, T2 integra, e só então o loop para no teto de T1
+  // (X=50: sem pouso, o `parar` não é gravado pelo mod, como em `tres-teto (X=50)`). Com `liberar`, T1 recomeça e o loop conclui.
+  test('esquece-teto: T1 R,R + T2 órfã ⇒ o mod reabre T2 1 vez, T2 integra e só então o loop para em teto_rodadas T1', async () => {
     const r = await rodar({ plano: planos('duas'), vereditos: { T1: ['REPROVADO', 'REPROVADO'] }, esquece: 'T2', x: '50' });
     const m = TRILHA(r);
-    assert.deepEqual(r.parar, ['teto_rodadas'], `loop.parar${m}`);
-    assert.ok(!r.reabertasDe.includes('T2'), `T2 não é reaberta${m}`);
-    assert.equal(r.submits, 0, `nenhum turno aberto pelo mod${m}`);
-    assert.notEqual(r.fim, 'concluir', `não conclui${m}`);
+    assert.deepEqual(r.reabertasDe.filter((t) => t === 'T2'), ['T2'], `T2 reaberta 1 vez${m}`);
+    assert.ok(r.submits >= 1, `o mod abriu o turno da recuperação${m}`);
+    assert.equal(r.integradas, 1, `T2 integra apesar do teto de T1${m}`);
+    assert.equal(r.fim, 'parar teto_rodadas T1', `fim${m}`);
+    assert.deepEqual(r.proximaFinal, { tipo: 'parar', motivo: 'teto_rodadas', task: 'T1', liberacao: { oferecer: false, motivo: 'libera_teto_desligado' } }, `proxima final${m}`);
+    assert.deepEqual(r.parar, [], `loop.parar (X=50)${m}`);
     assert.deepEqual(r.defeitos, [], `defeitos${m}`);
   });
   test('esquece-teto-liberar: depois de liberar T1 a órfã T2 é reaberta, o loop conclui com 2 integradas', async () => {
@@ -301,8 +304,8 @@ describe('fumaça do loop sem LLM', { concurrency: 4 }, () => {
     const m = TRILHA(r);
     assert.equal(r.fim, 'concluir', `fim${m}`);
     assert.equal(r.integradas, 2, `T1 e T2 integradas${m}`);
-    assert.deepEqual(r.parar, ['teto_rodadas'], `loop.parar uma vez${m}`);
-    assert.ok(r.reabertasDe.includes('T2'), `T2 é reaberta depois de liberar${m}`);
+    assert.deepEqual(r.parar, [], `loop.parar (X=50, GM-15 T12: T2 segue antes do teto)${m}`);
+    assert.ok(r.reabertasDe.includes('T2'), `T2 é reaberta${m}`);
     assert.deepEqual(r.defeitos, [], `defeitos${m}`);
     assert.equal(r.proximaFinal.tipo, 'concluir', `proxima final${m}`);
   });
@@ -316,12 +319,17 @@ describe('fumaça do loop sem LLM', { concurrency: 4 }, () => {
     assert.deepEqual(r.parar, [], `sem loop.parar${m}`);
   });
 
-  test('controle positivo: com tasksDoNegado devolvendo lista vazia o REPROVADO trava em nao_conseguiu', async () => {
+  test('controle positivo: com tasksDoNegado devolvendo lista vazia o REPROVADO trava (retomar que ninguém faz)', async () => {
     const r = await rodar({ plano: planos('uma'), vereditos: { T1: ['REPROVADO'] }, semReabrir: true });
     const m = TRILHA(r);
     assert.equal(r.pouso, 0, `sem reabrir não há pouso${m}`);
-    assert.deepEqual(r.proximaFinal, { tipo: 'parar', motivo: 'nao_conseguiu', task: 'T1' }, `trava em nao_conseguiu${m}`);
+    // GM-15 T12 (REQ-AUT-1): sem a reabertura do mod, o núcleo segue pedindo a retomada única de T1, que ninguém fez: o loop trava ali
+    assert.deepEqual(r.proximaFinal, { tipo: 'retomar', task: 'T1' }, `trava em retomar${m}`);
     assert.notEqual(r.fim, 'concluir', `não chega a concluir${m}`);
     assert.equal(r.reabertas, 0, `nada reaberto${m}`);
+    // a trava não é calada: o Stop (que não bloqueia no `retomar`) avisa a task morta. A espera do mod (N turnos sem evento novo ⇒ `nao_conseguiu`)
+    // não chega a gravar aqui: sem Stop bloqueando, não há turno seguinte (limite declarado da T12).
+    assert.ok(r.trilha.some((l) => /Stop ->.*task T1 morreu/.test(l)), `Stop avisa a task morta${m}`);
+    assert.deepEqual(r.parar, [], `sem turno seguinte, nada gravado${m}`);
   });
 });

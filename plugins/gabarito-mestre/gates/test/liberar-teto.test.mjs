@@ -238,7 +238,9 @@ test('CLI: nenhum argumento do loop.mjs produz a liberação do dono (uso, rc 2)
     [['liberar', 'T1', '--origem', 'dono', '--hash', h, '--sessao', 'dono'], /só aceita --origem sombra/],
     [['liberar', 'T1', '--dono'], /argumento desconhecido para liberar: --dono/],
     [['liberarTeto', 'T1'], /desconhecido ou ausente/],
-    [['reabrir', 'T1', '--origem', 'dono'], /argumento desconhecido para reabrir: --origem/],
+    [['reabrir', 'T1', '--origem', 'dono'], /reabrir só aceita --origem sombra ou nenhuma/],
+    [['adiar', 'T1', '--motivo', 'x', '--origem', 'dono', '--fonte', 'f'], /adiar só aceita --origem sombra/],
+    [['cortar', 'T1', '--motivo', 'x', '--origem', 'dono', '--fonte', 'f'], /cortar só aceita --origem sombra/],
   ];
   for (const [args, re] of casos) {
     const r = loop(amb.dir, ...args);

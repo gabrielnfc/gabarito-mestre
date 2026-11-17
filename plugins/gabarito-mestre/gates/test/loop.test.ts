@@ -6,12 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { CHAVES_DE_EVENTO, estadoDe, ordenar, podeIntegrar, proximaAcao as proximaAcaoNucleo, tasksCongeladas, TIPOS_DE_PROGRESSO, TRANSICOES } from '../src/loop.ts';
+import { achadosDeReview, CHAVES_DE_EVENTO, estadoDe, freioDaLiberacao, liberaTetoDeOrigin, progressoMedido, foraPermitido, ordenar, podeIntegrar, proximaAcao as proximaAcaoNucleo, tasksCongeladas, tasksInvalidas, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK, TRANSICOES } from '../src/loop.ts';
 import { fecharPendencias } from './_adaptador-helpers.mjs';
 import * as diarioFs from '../src/diario.ts';
 import { projetarEmendas, reqsCongelados, SESSAO_EMENDAS } from '../src/emenda.ts';
 import type { ChaveEvento, EstadoTask } from '../src/loop.ts';
-import { analisarFronteira, negaDespacho } from '../src/pouso.ts';
+import { analisarFronteira, negaDespacho, pedidoDeClear } from '../src/pouso.ts';
 import { pousoPendente } from '../src/pouso-pendente.ts';
 import { pendenciasAprendizado } from '../src/pendencias.ts';
 import type { Evento, Plano, Sinais, TipoEvento } from '../src/tipos.ts';
@@ -190,22 +190,26 @@ test('tabela-H-concluida-despacha-revisor: com ou sem agente vivo, o revisor vem
 test('tabela-I-vivos-sem-concluida-espera', () => {
   assert.equal(proximaAcao(plano(['a'], ['b']), diario(...aprovada('a')), NX({ vivos: 2 })).tipo, 'esperar');
 });
-test('tabela-J-em-voo-sem-agente-nao-pousa: implementando, corrigindo e em_revisao sem vivo caem em nao_conseguiu (5b)', () => {
+test('tabela-J-em-voo-sem-agente-nao-pousa: implementando, corrigindo e em_revisao sem vivo pedem retomar 1x e, reaberta, nao_conseguiu (5b)', () => {
   const impl = diario(ini('a'));
-  assert.deepEqual(proximaAcao(plano(['a']), impl, NX()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['a']), impl, NX()), { tipo: 'retomar', task: 'a' });
   const corr = diario(ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), ini('a', 'correcao'));
-  assert.deepEqual(proximaAcao(plano(['a']), corr, NX()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['a']), corr, NX()), { tipo: 'retomar', task: 'a' });
   const rev = diario(ini('a'), con('a'), ini('a', 'revisor'));
-  assert.deepEqual(proximaAcao(plano(['a']), rev, NX()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['a']), rev, NX()), { tipo: 'retomar', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a'), retomada('a'), ini('a')), NX()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' }, 'já retomada 1x');
 });
 test('tabela-J-motivo-e-da-task-em-voo: outra task no teto não troca o motivo para teto_rodadas', () => {
   const evs = diario(...noTeto('a'), ini('b'));
-  assert.deepEqual(proximaAcao(plano(['a'], ['b']), evs, NX()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'b' });
+  assert.deepEqual(proximaAcao(plano(['a'], ['b']), evs, NX()), { tipo: 'retomar', task: 'b' });
+  assert.deepEqual(proximaAcao(plano(['a'], ['b']), diario(...noTeto('a'), ini('b'), retomada('b'), ini('b')), NX()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'b' });
 });
-test('tabela-9b-antes-de-9c: no_teto vence task em voo quando o percent não manda pousar (r2 MINOR)', () => {
+test('tabela-9b-antes-de-9c: no_teto vence task em voo já retomada 1x quando o percent não manda pousar (r2 MINOR; a 1ª retomada vem antes, T12)', () => {
   const evs = diario(...noTeto('a'), ini('b'));
-  assert.deepEqual(proximaAcao(plano(['a'], ['b']), evs, sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'a' });
-  assert.deepEqual(proximaAcao(plano(['b'], ['a']), diario(ini('b'), ...noTeto('a')), sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['a'], ['b']), evs, sinais()), { tipo: 'retomar', task: 'b' });
+  const velha = diario(...noTeto('a'), ini('b'), retomada('b'), ini('b'));
+  assert.deepEqual(proximaAcao(plano(['a'], ['b']), velha, sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['b'], ['a']), diario(ini('b'), retomada('b'), ini('b'), ...noTeto('a')), sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'a' });
 });
 test('tabela-K-aprovada-nao-integrada-pousa', () => {
   assert.deepEqual(proximaAcao(plano(['a']), diario(...aprovada('a')), NX()), { tipo: 'pousar' });
@@ -519,7 +523,7 @@ test('teto-em-dep-transitiva-apos-dono-libera', () => {
 });
 test('dono-sem-rodada-anterior-nao-muda-nada', () => {
   assert.deepEqual(proximaAcao(plano(['a']), diario(dono('a')), sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'implementador' }] });
-  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a'), dono('a')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a'), dono('a')), sinais()), { tipo: 'retomar', task: 'a' }, 'dono não conta como retomada');
   assert.deepEqual(proximaAcao(plano(['a']), diario(...aprovada('a'), dono('a')), sinais()), { tipo: 'integrar', tasks: ['a'] });
   assert.deepEqual(proximaAcao(plano(['a']), diario(...pronta('a'), dono('a')), sinais()), { tipo: 'concluir' });
 });
@@ -562,8 +566,12 @@ test('retomada-nao-apaga-concluida-nem-veredito', () => {
   assert.deepEqual(proximaAcao(plano(['a']), diario(...pronta('a'), retomada('a')), sinais()), { tipo: 'concluir' });
 });
 test('reaberta-invalida', () => {
-  for (const d of [{ task: 'a' }, { task: 'a', origem: 'orquestrador' }, { task: 'zz', origem: 'dono' }, { task: 'zz', origem: 'retomada' }, { origem: 'dono' }]) {
+  // task fora do plano ou sem `task` segue derrubando o diário; origem fora da lista numa task do plano afeta só ela (GM-15 T25, REQ-HIG-1 D: ver `reaberta-invalida-gravada-afeta-so-a-task`)
+  for (const d of [{ task: 'zz', origem: 'dono' }, { task: 'zz', origem: 'retomada' }, { origem: 'dono' }]) {
     assert.deepEqual(proximaAcao(plano(['a']), diario(['task.reaberta', d]), sinais()), invalido, JSON.stringify(d));
+  }
+  for (const d of [{ task: 'a' }, { task: 'a', origem: 'orquestrador' }]) {
+    assert.deepEqual(proximaAcao(plano(['a']), diario(['task.reaberta', d]), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' }, JSON.stringify(d));
   }
 });
 // integrada sem aprovação
@@ -588,7 +596,7 @@ test('concluir-exige-todas-integradas', () => {
   assert.notEqual(proximaAcao(p, diario(...pronta('a'), ...aprovada('b')), sinais()).tipo, 'concluir');
   assert.notEqual(proximaAcao(p, diario(...pronta('a')), sinais()).tipo, 'concluir');
   assert.deepEqual(proximaAcao(p, diario(...pronta('a'), ...noTeto('b')), sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'b' });
-  assert.deepEqual(proximaAcao(p, diario(...pronta('a'), ini('b')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'b' });
+  assert.deepEqual(proximaAcao(p, diario(...pronta('a'), ini('b')), sinais()), { tipo: 'retomar', task: 'b' });
 });
 // (9)
 test('nada-a-fazer-vivos-espera', () => {
@@ -601,11 +609,15 @@ test('nada-a-fazer-no-teto-para-com-a-task', () => {
 test('rodada-2-reprovada-sem-major-nao-e-teto', () => {
   assert.deepEqual(proximaAcao(plano(['a']), diario(...noTeto('a', 0, 0)), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
 });
-test('orfa-sem-vivos-para-sem-silencio', () => {
-  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+test('orfa-sem-vivos-para-sem-silencio: 1ª vez retomar, 2ª nao_conseguiu', () => {
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a')), sinais()), { tipo: 'retomar', task: 'a' });
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a'), retomada('a'), ini('a')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
 });
 // tabela de estados e transições (rodada 3)
 type Par = [TipoEvento, Record<string, unknown>];
+/** GM-15 T5: `task.fora` e a volta de `fora`, como o diário os grava (forma de `formas.ts`). */
+const fora = (task: string, como: 'adiada' | 'cortada' = 'adiada', origem = 'dono'): Par => ['task.fora', { task, como, motivo: 'm', origem, ...(origem === 'sombra' ? { fonte: 'spec:1' } : {}) }];
+const reabFora = (task: string, origem = 'dono'): Par => ['task.reaberta', { task, origem, fonte: 'f', de: 'fora' }];
 const corrigida = (rodada: number, major = 1): Par[] => [ini('a', 'correcao'), con('a'), ver('a', 'REPROVADO', rodada, major)];
 /** Eventos que levam uma task 'a' ao estado, dado quantos vereditos já houve (só concluida e em_revisao variam). */
 const PREFIXO: Record<EstadoTask, (anterior: number) => { evs: Par[]; rodada: number }> = {
@@ -618,6 +630,8 @@ const PREFIXO: Record<EstadoTask, (anterior: number) => { evs: Par[]; rodada: nu
   aprovada: () => ({ evs: aprovada('a'), rodada: 1 }),
   no_teto: () => ({ evs: noTeto('a'), rodada: 2 }),
   integrada: () => ({ evs: pronta('a'), rodada: 1 }),
+  adiada: () => ({ evs: [fora('a', 'adiada')], rodada: 0 }),
+  cortada: () => ({ evs: [fora('a', 'cortada')], rodada: 0 }),
 };
 /** Um evento por chave; o veredito declara a rodada que o redutor espera, para só a aresta decidir. */
 function eventoDaChave(chave: ChaveEvento, rodadaAtual: number): Par {
@@ -637,6 +651,9 @@ function eventoDaChave(chave: ChaveEvento, rodadaAtual: number): Par {
     case 'reaberta.dono': return dono('a');
     case 'reaberta.sombra': return sombraLib('a');
     case 'concluida.reentrega': return ree('a');
+    case 'fora.adiada': return fora('a', 'adiada');
+    case 'fora.cortada': return fora('a', 'cortada');
+    case 'reaberta.fora': return reabFora('a');
   }
 }
 /** Oráculo independente: a tabela escrita por extenso, uma aresta por linha. Alterar `TRANSICOES` exige alterar isto. */
@@ -685,6 +702,18 @@ no_teto reaberta.dono pendente
 no_teto reaberta.sombra pendente
 integrada reaberta.retomada integrada
 integrada reaberta.dono integrada
+pendente fora.adiada adiada
+pendente fora.cortada cortada
+concluida fora.adiada adiada
+concluida fora.cortada cortada
+reprovada fora.adiada adiada
+reprovada fora.cortada cortada
+aprovada fora.adiada adiada
+aprovada fora.cortada cortada
+no_teto fora.adiada adiada
+no_teto fora.cortada cortada
+adiada reaberta.fora pendente
+cortada reaberta.fora pendente
 `.trim().split('\n').map((l) => l.split(' ') as [EstadoTask, ChaveEvento, EstadoTask]);
 const alvoEsperado = (estado: EstadoTask, chave: ChaveEvento): EstadoTask | undefined => ARESTAS.find(([e, c]) => e === estado && c === chave)?.[2];
 test('tabela-igual-ao-oraculo-escrito-por-extenso', () => {
@@ -733,16 +762,16 @@ test('pausa-revisor-retoma', () => {
   const p = plano(['a']);
   const morto = [ini('a'), con('a'), ini('a', 'revisor')];
   const pausa: Par = ['loop.pausa', {}];
-  assert.deepEqual(proximaAcao(p, diario(...morto, pausa), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' }, 'sem reabertura não adivinha');
+  assert.deepEqual(proximaAcao(p, diario(...morto, pausa), sinais()), { tipo: 'retomar', task: 'a' }, 'sem reabertura pede retomar');
   assert.deepEqual(proximaAcao(p, diario(...morto, pausa, retomada('a')), sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'revisor' }] });
   const r2 = [ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), ...corrigida(2, 0).slice(0, 2), ini('a', 'revisor'), pausa, retomada('a')];
   assert.deepEqual(proximaAcao(p, diario(...r2), sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'revisor' }] }, 'rodada 2');
-  assert.deepEqual(proximaAcao(p, diario(...morto, pausa, dono('a')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' }, 'dono não é retomada');
+  assert.deepEqual(proximaAcao(p, diario(...morto, pausa, dono('a')), sinais()), { tipo: 'retomar', task: 'a' }, 'dono não é retomada');
 });
 test('pausa-correcao-retoma', () => {
   const p = plano(['a']);
   const morta = [ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), ini('a', 'correcao')];
-  assert.deepEqual(proximaAcao(p, diario(...morta), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+  assert.deepEqual(proximaAcao(p, diario(...morta), sinais()), { tipo: 'retomar', task: 'a' });
   assert.deepEqual(proximaAcao(p, diario(...morta, retomada('a')), sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'correcao' }] });
   assert.equal(proximaAcao(p, diario(...morta, retomada('a')), sinais({ vivos: 1 })).tipo, 'despachar', 'a tabela não olha vivos: quem grava a reabertura decide');
 });
@@ -819,7 +848,7 @@ const exigeProd = (p: Plano, extra: Record<string, unknown> = {}): Plano => ({ .
 // --- tasksCongeladas
 test('tasks-congeladas-por-req-exato-e-dependentes', () => {
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1'], ['REQ-B-1']), T('T3', [], ['REQ-C-1']));
-  const c = tasksCongeladas(p, [prop(1, 'REQ-A-1')]);
+  const c = tasksCongeladas(p, [prop(1, 'REQ-A-1', { task: 'T1' })]);
   assert.deepEqual([...c].sort(), ['T1', 'T2']);
 });
 test('congela-por-req-nao-por-task-da-proposta', () => {
@@ -839,12 +868,53 @@ test('task-sem-reqs-nao-congela', () => {
 });
 test('congela-dependente-transitivo', () => {
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']), T('T3', ['T2']), T('T4', []));
-  assert.deepEqual([...tasksCongeladas(p, [prop(1, 'REQ-A-1')])].sort(), ['T1', 'T2', 'T3']);
+  assert.deepEqual([...tasksCongeladas(p, [prop(1, 'REQ-A-1', { task: 'T1' })])].sort(), ['T1', 'T2', 'T3']);
 });
 test('dependente-de-integrada-congelada-congela', () => {
+  // GM-15 T10 (REQ-EME-3 A): a integrada não congela e não propaga; o dependente não integrado só congela por REQ/arquivo próprio ou por direta não integrada
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']));
   const evs = [...diarioT(...pronta('T1')), prop(1, 'REQ-A-1')];
-  assert.deepEqual([...tasksCongeladas(p, evs)].sort(), ['T1', 'T2']);
+  assert.deepEqual([...tasksCongeladas(p, evs)], []);
+});
+
+// --- GM-15 T10 (REQ-EME-3 A): congelamento mínimo
+const TA = (id: string, deps: string[], reqs: string[], arquivos: string[]) => ({ id, deps, arquivos, reqs });
+test('congela-so-nao-integradas', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', [], ['REQ-A-1']), T('T3', ['T2']), T('T4', []));
+  const evs = [...diarioT(...pronta('T1')), prop(1, 'REQ-A-1', { task: 'T2' })];
+  assert.deepEqual([...tasksCongeladas(p, evs)].sort(), ['T2', 'T3'], 'T1 integrada fora; T2 direta e T3 dependente não integrada dentro');
+});
+test('congela-por-arquivo-comum', () => {
+  const p = planoR(TA('T1', [], ['REQ-X-1'], ['a.ts', 'b.ts']), TA('T2', ['T1'], ['REQ-X-2'], ['c.ts']), TA('T3', [], ['REQ-X-3'], ['d.ts']), TA('T4', [], ['REQ-X-4'], ['b.ts']));
+  const evs = [prop(1, 'REQ-Z-9', { task: 'T3', arquivos: ['b.ts'] })];
+  assert.deepEqual([...tasksCongeladas(p, evs)].sort(), ['T1', 'T2', 'T4'], 'b.ts em T1 e T4; T2 depende de T1; T3 (a task citada) não tem b.ts');
+});
+test('sem-task-sem-arquivos-so-diretas', () => {
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1'], ['REQ-B-1']), T('T3', ['T2']));
+  assert.deepEqual([...tasksCongeladas(p, [prop(1, 'REQ-A-1')])], ['T1'], 'sem --task e sem --arquivos não propaga às dependentes');
+});
+test('integrada-nao-propaga', () => {
+  // T1 (REQ) integrada; T2 depende dela e T3 de T2: nada congela. T4 direta não integrada: T5 (dependente) congela, T6 (integrada) não
+  const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']), T('T3', ['T2']), T('T4', [], ['REQ-A-1']), T('T5', ['T4']), T('T6', ['T4']));
+  const evs = [...diarioT(...pronta('T1'), ...pronta('T6')), prop(1, 'REQ-A-1', { task: 'T4' })];
+  assert.deepEqual([...tasksCongeladas(p, evs)].sort(), ['T4', 'T5']);
+});
+test('congela-por-arquivo-comum-integrada-fora', () => {
+  const p = planoR(TA('T1', [], ['REQ-X-1'], ['b.ts']), TA('T2', [], ['REQ-X-2'], ['b.ts']));
+  const evs = [...diarioT(...pronta('T1')), prop(1, 'REQ-Z-9', { task: 'T2', arquivos: ['b.ts'] })];
+  assert.deepEqual([...tasksCongeladas(p, evs)], ['T2']);
+});
+test('replay-s7-plano-da-gm14', () => {
+  // plano real da GM-14 (58 tasks, tracked); nada integrado: sem --task/--arquivos congela exatamente as diretas pelo REQ
+  const real = JSON.parse(readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), '../../../../.harness/entregas/GM-14/plano.json'), 'utf8')) as Plano;
+  assert.equal(real.tasks.length, 58);
+  const diretas = real.tasks.filter((t) => (t.reqs ?? []).includes('REQ-DIA-1')).map((t) => t.id);
+  assert.equal(diretas.length, 10);
+  assert.deepEqual([...tasksCongeladas(real, [prop(1, 'REQ-DIA-1')])].sort(), [...diretas].sort());
+  // S7 seq 71 (REQ-DIA-1): tudo integrado menos uma direta ⇒ 1 task congelada (a regra antiga congelava as integradas e os dependentes: >= 56)
+  const resto = real.tasks.filter((t) => t.id !== diretas[0]).flatMap((t) => pronta(t.id));
+  const evs = [...diarioT(...resto), prop(1, 'REQ-DIA-1')];
+  assert.deepEqual([...tasksCongeladas(real, evs)], [diretas[0]]);
 });
 test('tasks-congeladas-sem-evento-de-emenda-vazio', () => {
   const p = planoR(T('T1', [], ['REQ-A-1']));
@@ -908,7 +978,7 @@ test('pode-integrar-congelada-false', () => {
 });
 test('pode-integrar-dependente-de-congelada-false', () => {
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']));
-  const evs = [...diarioT(...pronta('T1'), ...aprovada('T2')), prop(1, 'REQ-A-1')];
+  const evs = [...diarioT(...aprovada('T1'), ...aprovada('T2')), prop(1, 'REQ-A-1', { task: 'T1' })];
   assert.equal(podeIntegrar(p, evs, 'T2'), false);
 });
 
@@ -919,7 +989,7 @@ test('congela-so-req-afetado', () => {
 });
 test('congela-dependente', () => {
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']), T('T3', []));
-  const evs = [...diarioT(...pronta('T1')), prop(1, 'REQ-A-1')];
+  const evs = [...diarioT(...aprovada('T1')), prop(1, 'REQ-A-1', { task: 'T1' })];
   assert.deepEqual(proximaAcao(p, evs, sinais()), { tipo: 'despachar', itens: [{ task: 'T3', papel: 'implementador' }] });
 });
 test('aprovada-congelada-nao-integra', () => {
@@ -967,7 +1037,7 @@ test('em-voo-termina', () => {
 // --- proximaAcao: (8) e (9)
 test('esperar-emenda-com-propostas', () => {
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', ['T1']));
-  const evs = [...diarioT(...aprovada('T1')), prop(1, 'REQ-A-1')];
+  const evs = [...diarioT(...aprovada('T1')), prop(1, 'REQ-A-1', { task: 'T1' })];
   assert.deepEqual(proximaAcao(p, evs, sinais()), { tipo: 'esperar', motivo: 'emenda', propostas: [{ seq: 1, req: 'REQ-A-1' }] });
 });
 test('esperar-emenda-lista-todas-as-abertas', () => {
@@ -1000,16 +1070,17 @@ test('emenda-nao-mascara-task-presa', () => {
 test('emenda-nao-mascara-agente-morto', () => {
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', []));
   const morto = [...diarioT(ini('T2')), prop(1, 'REQ-A-1')];
-  assert.deepEqual(proximaAcao(p, morto, sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'T2' });
+  assert.deepEqual(proximaAcao(p, morto, sinais()), { tipo: 'retomar', task: 'T2' });
   // a própria task congelada em voo, sem agente vivo: também morreu
   const p1 = planoR(T('T1', [], ['REQ-A-1']));
-  assert.deepEqual(proximaAcao(p1, [...diarioT(ini('T1')), prop(1, 'REQ-A-1')], sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'T1' });
+  assert.deepEqual(proximaAcao(p1, [...diarioT(ini('T1')), prop(1, 'REQ-A-1')], sinais()), { tipo: 'retomar', task: 'T1' });
 });
 test('9c-aponta-a-task-em-voo-nao-a-primeira-nao-integrada', () => {
   // T1 congelada pendente vem antes no plano, mas quem morreu é T2
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', []));
-  const a = proximaAcao(p, [...diarioT(ini('T2')), prop(1, 'REQ-A-1')], sinais());
+  const a = proximaAcao(p, [...diarioT(ini('T2'), ['task.reaberta', { task: 'T2', origem: 'retomada' }], ini('T2')), prop(1, 'REQ-A-1')], sinais());
   assert.equal(a.tipo === 'parar' ? a.task : null, 'T2');
+  assert.deepEqual(proximaAcao(p, [...diarioT(ini('T2')), prop(1, 'REQ-A-1')], sinais()), { tipo: 'retomar', task: 'T2' }, '1ª vez: retomar a que morreu');
 });
 test('sem-slot-livre-segue-na-presenca-de-emenda', () => {
   const p = planoR(T('T1', [], ['REQ-A-1']), T('T2', []));
@@ -1196,7 +1267,7 @@ test('loop-congela-pela-projecao-de-emenda', () => {
   for (const [i, evs] of cenarios.entries()) {
     const est = projetarEmendas(evs);
     const esperadas = new Set(est.abertas.length === 0 ? [] : p.tasks.filter((t) => t.reqs?.some((r) => reqsCongelados(est).has(r))).map((t) => t.id));
-    for (const t of p.tasks) if (t.deps.some((d) => esperadas.has(d)) || t.deps.some((d) => p.tasks.find((x) => x.id === d)?.deps.some((dd) => esperadas.has(dd)))) esperadas.add(t.id);
+    // GM-15 T10: propostas sem `task` e sem `arquivos` congelam só as diretas pelo REQ, sem dependentes
     assert.deepEqual([...tasksCongeladas(p, evs)].sort(), [...esperadas].sort(), `cenário ${i}`);
     const a = proximaAcao(p, evs, sinais());
     if (est.abertas.length > 0 && a.tipo === 'esperar' && a.motivo === 'emenda') {
@@ -1558,7 +1629,7 @@ test('t36-historico-e-recente-dizem-a-sombra-liberou', async () => {
   const entrada = {
     decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
     pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T01:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
-    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26,
+    entregaId: 'GM-14', modeloSessao: null, specSha: null,
     fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['T1'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' },
   };
   const s = projetarPainel(p, evs, entrada as never);
@@ -1624,12 +1695,14 @@ test('pouso-pendente-chave-por-pouso: o estado do painel carrega pousoPendente.s
   const entrada = {
     decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
     pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T03:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
-    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26, onboarding: true,
+    entregaId: 'GM-14', modeloSessao: null, specSha: null, onboarding: true,
     fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['a'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 'S1' },
   };
-  const base = diario(ini('a'), con('a'));
-  const e1 = projetarPainel(p, [...base, pouso(10, 30)], entrada as never) as unknown as Record<string, unknown>;
-  const e2 = projetarPainel(p, [...base, pouso(10, 30), inicio(1, 40, 'S2', 'clear'), pouso(2, 50, 'S2')], entrada as never) as unknown as Record<string, unknown>;
+  // GM-15 T35 (r.12, D-P13): o pedido de /clear é medido: fronteira (veredito) e a leitura própria da sessão S1 em 60 %
+  const base = diario(ini('a'), con('a'), ver('a', 'APROVADO', 1));
+  const comMedicao = { ...entrada, medicaoPouso: { x: 50, agoraMs: entrada.agoraMs, sessaoAtual: 'S1', leituras: [{ sessao: 'S1', percent: 60, fonte: 'mod', emMs: entrada.agoraMs }] } };
+  const e1 = projetarPainel(p, [...base, pouso(10, 30)], comMedicao as never) as unknown as Record<string, unknown>;
+  const e2 = projetarPainel(p, [...base, pouso(10, 30), inicio(1, 40, 'S2', 'clear'), pouso(2, 50, 'S2')], comMedicao as never) as unknown as Record<string, unknown>;
   assert.equal((e1.pousoPendente as { pendente: boolean }).pendente, true);
   const k1 = chavePouso(e1), k2 = chavePouso(e2);
   assert.match(k1, /^GM-14\|pouso\|\d+$/);
@@ -1686,13 +1759,13 @@ test('pouso-pendente-nao-vence-o-que-vem-antes: pausa, teto de tokens e podePous
   assert.deepEqual(viaCli(p, evs, sinais({ podePousar: false })), { tipo: 'parar', motivo: 'sem_pouso' });
 });
 
-test('pouso-pendente-regra-unica: o painel e o núcleo dão a mesma resposta para a mesma tabela, e as duas camadas importam a mesma função', async () => {
+test('pouso-pendente-regra-unica (GM-15 T35 r.12): o painel e o núcleo dão a resposta de `pedidoDeClear` para a mesma tabela, medida; sem medição nenhum pede /clear', async () => {
   const { projetarPainel } = await import('../src/painel.ts');
   const p: Plano = { entrega: 'GM-14', tasks: [{ id: 'a', deps: [], arquivos: [] }] };
   const entrada = {
     decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
     pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T03:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
-    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26, onboarding: true,
+    entregaId: 'GM-14', modeloSessao: null, specSha: null, onboarding: true,
     fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['a'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 'S1' },
   };
   const casos: [string, Evento[]][] = [
@@ -1703,13 +1776,18 @@ test('pouso-pendente-regra-unica: o painel e o núcleo dão a mesma resposta par
     ['resume', [pouso(10, 30), inicio(1, 40, 'S2', 'resume')]],
     ['clear e novo pouso', [pouso(10, 30), inicio(1, 40, 'S2', 'clear'), pouso(2, 50, 'S2')]],
   ];
+  const med = { x: 50, agoraMs: entrada.agoraMs, sessaoAtual: 'S1', leituras: [{ sessao: 'S1', percent: 60, fonte: 'mod', emMs: entrada.agoraMs }] };
   for (const [nome, extra] of casos) {
-    const evs = [...diario(ini('a'), con('a')), ...extra];
-    const noPainel = JSON.stringify(projetarPainel(p, evs, entrada as never).depende ?? []).includes('limpar a conversa');
-    const noNucleo = viaCli(plano(['a']), evs, sinais()).tipo === 'pousar';
-    assert.equal(noPainel, pp(evs).pendente, `painel: ${nome}`);
-    assert.equal(noNucleo, pp(evs).pendente, `núcleo: ${nome}`);
+    const evs = [...diario(ini('a'), con('a'), ver('a', 'APROVADO', 1)), ...extra];
+    const esperado = pedidoDeClear(evs, true, med).pendente;
+    const noPainel = JSON.stringify(projetarPainel(p, evs, { ...entrada, medicaoPouso: med } as never).depende ?? []).includes('limpar a conversa');
+    const noNucleo = proximaAcaoNucleo(plano(['a']), evs, { ...sinais(), pousoPendente: esperado } as Sinais).tipo === 'pousar';
+    assert.equal(noPainel, esperado, `painel: ${nome}`);
+    assert.equal(noNucleo, esperado, `núcleo: ${nome}`);
+    // sem medição (D-P13): nunca pede /clear, mesmo com o pouso por evento pendente
+    assert.equal(JSON.stringify(projetarPainel(p, evs, entrada as never).depende ?? []).includes('limpar a conversa'), false, `sem medição: ${nome}`);
   }
+  assert.equal(pedidoDeClear([...diario(ini('a'), con('a'), ver('a', 'APROVADO', 1)), pouso(10, 30)], true, med).pendente, true, 'controle: o caso "pouso" pede');
   for (const f of ['../src/painel.ts', '../scripts/loop.mjs']) {
     const fonte = readFileSync(fileURLToPath(new URL(f, import.meta.url)), 'utf8');
     assert.match(fonte, /from '\.{1,2}\/(dist\/)?pouso-pendente\.(ts|js)'/, f);
@@ -1732,20 +1810,392 @@ test('pouso-pendente-sem-onboarding-nunca-pendente (FIEL-14 h): sem o fato de on
   assert.equal(semOnb.tipo, 'despachar');
 });
 
-test('pouso-pendente-painel-sem-onboarding: o painel só mostra "limpar a conversa" com o fato onboarding verdadeiro na entrada', async () => {
+test('pouso-pendente-painel-sem-onboarding (GM-15 T35 r.12): sem medição o painel não mostra "limpar a conversa", com ou sem onboarding; medido, mostra', async () => {
   const { projetarPainel } = await import('../src/painel.ts');
   const p: Plano = { entrega: 'GM-14', tasks: [{ id: 'a', deps: [], arquivos: [] }] };
   const entrada = {
     decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
     pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T03:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
-    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26,
+    entregaId: 'GM-14', modeloSessao: null, specSha: null,
     fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['a'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 'S1' },
   };
-  const evs = [...diario(ini('a'), con('a')), pouso(10, 30)];
+  const evs = [...diario(ini('a'), con('a'), ver('a', 'APROVADO', 1)), pouso(10, 30)];
   const txt = (o: Record<string, unknown>) => JSON.stringify(projetarPainel(p, evs, { ...entrada, ...o } as never).depende ?? []);
-  assert.equal(txt({ onboarding: true }).includes('limpar a conversa'), true);
+  assert.equal(txt({ onboarding: true }).includes('limpar a conversa'), false);
   assert.equal(txt({ onboarding: false }).includes('limpar a conversa'), false);
   assert.equal(txt({}).includes('limpar a conversa'), false);
+  const med = { x: 50, agoraMs: entrada.agoraMs, sessaoAtual: 'S1', leituras: [{ sessao: 'S1', percent: 60, fonte: 'mod', emMs: entrada.agoraMs }] };
+  assert.equal(txt({ onboarding: true, medicaoPouso: med }).includes('limpar a conversa'), true);
   const e = projetarPainel(p, evs, { ...entrada, onboarding: false } as never) as unknown as { pousoPendente: { pendente: boolean } };
   assert.equal(e.pousoPendente.pendente, false);
+});
+
+// ── GM-15 T5 (REQ-ENT-2): adiada e cortada saem do alvo ───────────────────────────────────────────────────────────────────────
+const muitas = (n: number): Plano => plano(...Array.from({ length: n }, (_, i) => [`t${i + 1}`] as [string]));
+test('adiada-fora-do-alvo: 58 tasks, 57 integradas, T8 adiada => concluir', () => {
+  const p = muitas(58);
+  const feitas = Array.from({ length: 58 }, (_, i) => `t${i + 1}`).filter((t) => t !== 't8').flatMap((t) => pronta(t));
+  assert.equal(feitas.filter(([t]) => t === 'task.integrada').length, 57);
+  assert.deepEqual(proximaAcao(p, diario(...feitas, fora('t8', 'adiada')), sinais()), { tipo: 'concluir' });
+  assert.deepEqual(proximaAcao(p, diario(...feitas, fora('t8', 'cortada')), sinais()), { tipo: 'concluir' }, 'cortada idem');
+  assert.deepEqual(proximaAcao(p, diario(...feitas), sinais()), { tipo: 'despachar', itens: [{ task: 't8', papel: 'implementador' }] }, 'sem o task.fora ela ainda é alvo');
+});
+test('cortada-nao-segura-concluir: nem a aprovada nem a pendente cortada seguram, e a mensagem de plano vazio não vale', () => {
+  assert.deepEqual(proximaAcao(plano(['a'], ['b']), diario(...pronta('a'), fora('b', 'cortada')), sinais()), { tipo: 'concluir' });
+  assert.deepEqual(proximaAcao(plano(['a'], ['b']), diario(...pronta('a'), ...aprovada('b'), fora('b', 'cortada')), sinais()), { tipo: 'concluir' });
+  assert.deepEqual(proximaAcao(plano(['a'], ['b']), diario(...pronta('a'), ...noTeto('b'), fora('b', 'cortada')), sinais()), { tipo: 'concluir' });
+});
+test('cortada-com-emenda-aberta-espera-e-nao-concluir', () => {
+  const p = planoR(T('a', [], ['REQ-A-1']), T('b', [], ['REQ-B-1']));
+  const evs = [...diarioT(...pronta('a'), fora('b', 'cortada')), prop(1, 'REQ-A-1')];
+  assert.deepEqual(proximaAcao(p, evs, sinais()), { tipo: 'esperar', motivo: 'emenda', propostas: [{ seq: 1, req: 'REQ-A-1' }] });
+  assert.deepEqual(proximaAcao(p, diarioT(...pronta('a'), fora('b', 'cortada')), sinais()), { tipo: 'concluir' }, 'controle: sem proposta conclui');
+});
+test('tudo-fora-nao-e-sucesso: plano com todas adiadas/cortadas não conclui', () => {
+  assert.deepEqual(proximaAcao(plano(['a'], ['b']), diario(fora('a', 'adiada'), fora('b', 'cortada')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu' });
+});
+test('no-teto-adiada-nao-para: o teto da task fora não gera parar teto_rodadas', () => {
+  const p = plano(['a'], ['b']);
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ...pronta('b')), sinais()), tetoDe('a'), 'controle: no teto sem fora para');
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), fora('a', 'adiada'), ...pronta('b')), sinais()), { tipo: 'concluir' });
+  const q = plano(['a'], ['c']);
+  assert.deepEqual(proximaAcao(q, diario(...noTeto('a'), fora('a', 'adiada')), sinais()), { tipo: 'despachar', itens: [{ task: 'c', papel: 'implementador' }] }, 'o resto segue');
+  assert.deepEqual(proximaAcao(q, diario(...noTeto('a'), fora('a', 'adiada'), ini('c'), retomada('c'), ini('c')), sinais({ vivos: 0 })), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'c' }, 'a órfã já retomada ainda para');
+});
+test('fora-no-pouso: so resta task fora => o pouso não é pedido (5d)', () => {
+  const evs = diario(...pronta('a'), fora('b', 'adiada'));
+  assert.deepEqual(proximaAcao(plano(['a'], ['b']), evs, NX()), { tipo: 'concluir' });
+});
+test('dependente-de-task-fora-nao-despacha nem integra', () => {
+  const p = plano(['a'], ['b', ['a']]);
+  assert.deepEqual(proximaAcao(p, diario(fora('a', 'adiada')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'b' });
+  assert.equal(podeIntegrar(p, diario(fora('a', 'adiada'), ...aprovada('b')), 'b'), false);
+  assert.deepEqual(proximaAcao(p, diario(fora('a', 'adiada'), ...aprovada('b')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'b' }, 'nunca integrar sobre dependência fora');
+});
+test('reabrir-volta-pendente-rodada-0: de qualquer fora, com dono ou Sombra', () => {
+  for (const origem of ['dono', 'sombra']) {
+    assert.deepEqual(estadoDe(diario(...noTeto('a'), fora('a', 'adiada'), reabFora('a', origem))), { estado: 'pendente', rodada: 0 }, `no_teto ${origem}`);
+    assert.deepEqual(estadoDe(diario(ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), fora('a', 'cortada'), reabFora('a', origem))), { estado: 'pendente', rodada: 0 }, `reprovada ${origem}`);
+  }
+  assert.deepEqual(estadoDe(diario(...noTeto('a'), fora('a', 'adiada'))), { estado: 'adiada', rodada: 2 }, 'fora guarda a rodada até a volta');
+  assert.deepEqual(proximaAcao(plano(['a']), diario(...noTeto('a'), fora('a'), reabFora('a')), sinais()), { tipo: 'despachar', itens: [{ task: 'a', papel: 'implementador' }] });
+  // rodada 0 de verdade: o 1º veredito depois da volta é a rodada 1
+  assert.deepEqual(estadoDe(diario(...noTeto('a'), fora('a'), reabFora('a'), ini('a'), con('a'), ver('a', 'APROVADO', 1))), { estado: 'aprovada', rodada: 1 });
+});
+test('reabrir-so-sai-de-fora: de:fora fora de adiada/cortada, sem de, retomada ou de errado => inválido', () => {
+  assert.deepEqual(estadoDe(diario(reabFora('a'))), { invalido: 'reaberta.fora em pendente' });
+  assert.deepEqual(estadoDe(diario(...pronta('a'), reabFora('a'))), { invalido: 'reaberta.fora em integrada' });
+  assert.deepEqual(estadoDe(diario(fora('a'), reabFora('a', 'retomada'))), { invalido: 'origem inválida' });
+  assert.deepEqual(estadoDe(diario(fora('a'), ['task.reaberta', { task: 'a', origem: 'dono', de: 'x' }])), { invalido: 'de inválido' });
+  for (const origem of ['dono', 'retomada']) {
+    assert.deepEqual(estadoDe(diario(fora('a'), ['task.reaberta', { task: 'a', origem }])), { invalido: 'reaberta.' + origem + ' em adiada' }, `sem de, ${origem}`);
+  }
+  assert.deepEqual(estadoDe(diario(fora('a', 'cortada'), reabFora('a'), reabFora('a'))), { invalido: 'reaberta.fora em pendente' }, 'volta 2x');
+});
+test('fora-em-voo-recusado: implementando, corrigindo e em_revisao não vão para fora', () => {
+  const casos: [string, Par[]][] = [
+    ['implementando', [ini('a')]],
+    ['corrigindo', [ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1), ini('a', 'correcao')]],
+    ['em_revisao', [ini('a'), con('a'), ini('a', 'revisor')]],
+  ];
+  for (const [estado, evs] of casos) {
+    for (const como of ['adiada', 'cortada'] as const) {
+      assert.deepEqual(estadoDe(diario(...evs, fora('a', como))), { invalido: `fora.${como} em ${estado}` }, `${estado} ${como}`);
+    }
+    assert.deepEqual(foraPermitido(plano(['a']), diario(...evs), 'a'), { ok: false, motivo: 'estado', estado }, estado);
+    assert.deepEqual(proximaAcao(plano(['a']), diario(...evs, fora('a')), sinais()), invalido, `${estado}: o diário com o evento vira inválido`);
+  }
+});
+test('fora-de-integrada-recusado: integrada e fora de novo não vão para fora', () => {
+  assert.deepEqual(estadoDe(diario(...pronta('a'), fora('a'))), { invalido: 'fora.adiada em integrada' });
+  assert.deepEqual(estadoDe(diario(...pronta('a'), fora('a', 'cortada'))), { invalido: 'fora.cortada em integrada' });
+  assert.deepEqual(estadoDe(diario(fora('a', 'adiada'), fora('a', 'cortada'))), { invalido: 'fora.cortada em adiada' }, 'adiada não vira cortada');
+  assert.deepEqual(foraPermitido(plano(['a']), diario(...pronta('a')), 'a'), { ok: false, motivo: 'estado', estado: 'integrada' });
+  assert.deepEqual(foraPermitido(plano(['a']), diario(fora('a')), 'a'), { ok: false, motivo: 'estado', estado: 'adiada' });
+  assert.deepEqual(proximaAcao(plano(['a']), diario(...pronta('a'), fora('a')), sinais()), invalido);
+});
+test('task.fora com `como` fora do contrato => inválido (o campo é lido)', () => {
+  assert.deepEqual(estadoDe(diario(['task.fora', { task: 'a', como: 'x', motivo: 'm', origem: 'dono' }])), { invalido: 'como inválido' });
+  assert.deepEqual(estadoDe(diario(['task.fora', { task: 'a', motivo: 'm', origem: 'dono' }])), { invalido: 'como inválido' });
+});
+test('foraPermitido: livre, dependentes listados, dependente fora libera, diário inválido e task desconhecida', () => {
+  const p = plano(['a'], ['b', ['a']], ['c', ['a']], ['d']);
+  assert.deepEqual(foraPermitido(p, diario(), 'd'), { ok: true });
+  assert.deepEqual(foraPermitido(p, diario(), 'a'), { ok: false, motivo: 'dependentes', dependentes: ['b', 'c'] });
+  assert.deepEqual(foraPermitido(p, diario(fora('b', 'cortada')), 'a'), { ok: false, motivo: 'dependentes', dependentes: ['c'] });
+  assert.deepEqual(foraPermitido(p, diario(fora('b', 'cortada'), fora('c', 'adiada')), 'a'), { ok: true });
+  for (const de of [['aprovada', aprovada('a')], ['no_teto', noTeto('a')], ['reprovada', [ini('a'), con('a'), ver('a', 'REPROVADO', 1, 1)]], ['concluida', [ini('a'), con('a')]]] as [string, Par[]][]) {
+    assert.deepEqual(foraPermitido(plano(['a']), diario(...de[1]), 'a'), { ok: true }, de[0]);
+  }
+  assert.deepEqual(foraPermitido(p, diario(), 'zz'), { ok: false, motivo: 'task_desconhecida' });
+  assert.deepEqual(foraPermitido(p, [ev(2, '2026-11-03T00:00:01.000Z', 's1', ...ini('a')), ev(1, '2026-11-03T00:00:02.000Z', 's1', ...con('a'))], 'a'), { ok: false, motivo: 'diario_invalido' });
+});
+test('task.fora é evento de task e de progresso (o Stop e o painel o enxergam)', () => {
+  assert.ok(TIPOS_DE_TASK.includes('task.fora'));
+  assert.ok(TIPOS_DE_PROGRESSO.includes('task.fora'));
+});
+
+// GM-15 T12 (REQ-AUT-1 núcleo): trava parcial não para o loop
+const retomarA = (t: string) => ({ tipo: 'retomar', task: t });
+test('teto-numa-task-outra-segue: a no_teto e b independente em curso; o loop despacha, revê e integra b antes de parar no teto de a', () => {
+  const p = plano(['a'], ['b']);
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a')), sinais()), { tipo: 'despachar', itens: [{ task: 'b', papel: 'implementador' }] });
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ini('b'), con('b')), sinais()), { tipo: 'despachar', itens: [{ task: 'b', papel: 'revisor' }] });
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ...aprovada('b')), sinais()), { tipo: 'integrar', tasks: ['b'] });
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ...pronta('b')), sinais()), tetoDe('a'), 'só depois de tudo o que corre para');
+});
+test('em-voo-sem-agente-reabre-1x: sem vivo, a task em voo pede retomar antes de qualquer parar, inclusive do teto de outra', () => {
+  const p = plano(['a'], ['b']);
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a')), sinais()), retomarA('a'));
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('b'), ini('a')), sinais()), retomarA('a'), 'o teto de b não vence a retomada de a');
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('b'), ini('a')), NX()), retomarA('a'), 'também na cláusula do pouso (5b)');
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a'), con('a'), ini('a', 'revisor')), sinais()), retomarA('a'), 'revisor morto');
+  assert.equal(proximaAcao(p, diario(ini('a')), sinais({ vivos: 1 })).tipo, 'despachar', 'com agente vivo nada é retomado: b (livre) segue');
+});
+test('em-voo-segunda-vez-nao-conseguiu: depois de task.reaberta retomada e nova morte, para', () => {
+  const p = plano(['a'], ['b']);
+  const bOk = pronta('b');
+  assert.deepEqual(proximaAcao(p, diario(...bOk, ini('a'), retomada('a'), ini('a')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+  assert.deepEqual(proximaAcao(p, diario(...bOk, ini('a'), retomada('a'), ini('a')), NX()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' }, '5b');
+  assert.deepEqual(proximaAcao(p, diario(...bOk, ini('a'), dono('a')), sinais()), retomarA('a'), 'reabertura do dono não gasta a retomada');
+  assert.deepEqual(proximaAcao(p, diario(...bOk, retomada('b'), ini('a')), sinais()), retomarA('a'), 'a conta é por task: a retomada de b não gasta a de a');
+});
+test('barrado-global-para: diário inválido, pendência de review e fechamento seguem parando tudo mesmo com task em voo sem agente e outra livre', () => {
+  const p = plano(['a'], ['b']);
+  const invalidoEv = [ev(2, '2026-11-03T00:00:01.000Z', 's1', ...ini('a')), ev(1, '2026-11-03T00:00:02.000Z', 's1', ...ini('b'))];
+  assert.deepEqual(proximaAcao(p, invalidoEv, sinais()), { tipo: 'parar', motivo: 'diario_invalido' });
+  assert.equal(proximaAcaoNucleo(p, diario(...noTeto('a'), ini('b'), ['loop.parar', { motivo: 'teto_rodadas', task: 'a' }]), sinais()).tipo, 'aprender', 'pendência de aprendizado do parar vence a retomada');
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ini('b')), sinais({ tokens: 5, tetoTokens: 5 })), { tipo: 'parar', motivo: 'teto_tokens' });
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ini('b'), ci(false), ci(false)), sinais()), { tipo: 'parar', motivo: 'ci_vermelho' });
+  assert.deepEqual(proximaAcao(p, diario(...noTeto('a'), ini('b')), sinais({ pausado: true })), { tipo: 'esperar', motivo: 'pausado' });
+  assert.deepEqual(proximaAcao(p, diario(...pronta('a'), ...pronta('b')), sinais()), { tipo: 'concluir' }, 'fechamento: tudo integrado conclui, sem retomar nada');
+});
+test('liberacao-gasta-aguarda-dono-sem-parar: a no_teto com a liberação da Sombra gasta não segura b; só ao fim para, apontando a', () => {
+  const p = plano(['a'], ['b']);
+  const gasta = [...noTeto('a'), sombraLib('a'), ...noTeto('a')];
+  assert.deepEqual(estadoDe(diario(...gasta)).estado, 'no_teto', 'controle: voltou ao teto');
+  assert.deepEqual(proximaAcao(p, diario(...gasta), sinais()), { tipo: 'despachar', itens: [{ task: 'b', papel: 'implementador' }] });
+  assert.deepEqual(proximaAcao(p, diario(...gasta, ...aprovada('b')), sinais()), { tipo: 'integrar', tasks: ['b'] });
+  assert.deepEqual(proximaAcao(p, diario(...gasta, ini('b')), sinais({ vivos: 1 })).tipo, 'esperar');
+  assert.deepEqual(proximaAcao(p, diario(...gasta, ini('b')), sinais()), retomarA('b'));
+  assert.deepEqual(proximaAcao(p, diario(...gasta, ...pronta('b')), sinais()), tetoDe('a'), 'fila do dono: só a a espera');
+});
+test('sintetica-1-teto-3-independentes-concluir: com 1 task no teto, 3 independentes e 1 adiada, as 3 integram e só então o loop para no teto', () => {
+  const p = plano(['t'], ['i1'], ['i2'], ['i3'], ['x']);
+  let evs = diario(...noTeto('t'), fora('x', 'adiada'));
+  assert.deepEqual(proximaAcao(p, evs, sinais({ slots: 3 })), { tipo: 'despachar', itens: [{ task: 'i1', papel: 'implementador' }, { task: 'i2', papel: 'implementador' }, { task: 'i3', papel: 'implementador' }] });
+  evs = diario(...noTeto('t'), fora('x', 'adiada'), ...aprovada('i1'), ...aprovada('i2'), ...aprovada('i3'));
+  assert.deepEqual(proximaAcao(p, evs, sinais()), { tipo: 'integrar', tasks: ['i1', 'i2', 'i3'] });
+  evs = diario(...noTeto('t'), fora('x', 'adiada'), ...pronta('i1'), ...pronta('i2'), ...pronta('i3'));
+  assert.deepEqual(proximaAcao(p, evs, sinais()), tetoDe('t'));
+  assert.notEqual(proximaAcao(p, evs, sinais()).tipo, 'concluir', 'a task no teto ainda é do dono');
+});
+
+// GM-15 T13 (obrigação da T12): `retomar` é membro de `AcaoLoop` em `tipos.ts`, sem tipo paralelo nem cast em `loop.ts`.
+test('acao-retomar-na-uniao: AcaoLoop de tipos.ts tem { tipo: retomar; task } e loop.ts devolve retomar sem cast nem AcaoRetomar', () => {
+  const tipos = readFileSync(new URL('../src/tipos.ts', import.meta.url), 'utf8');
+  const uniao = tipos.slice(tipos.indexOf('export type AcaoLoop ='), tipos.indexOf(';\n\n', tipos.indexOf('export type AcaoLoop =')));
+  assert.match(uniao, /\|\s*\{ tipo: 'retomar'; task: string \}/);
+  const loop = readFileSync(new URL('../src/loop.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(loop, /AcaoRetomar/);
+  assert.doesNotMatch(loop, /as unknown as AcaoLoop/);
+  // o comportamento segue: a 1ª morte pede retomar
+  assert.deepEqual(proximaAcao(plano(['a']), diario(ini('a')), sinais()), { tipo: 'retomar', task: 'a' });
+});
+
+// GM-15 T25 (REQ-HIG-1 D; aprendizado 585): `task.reaberta` com origem fora da lista, JÁ gravada, afeta só a task dela (a causa nomeada), nunca o diário inteiro.
+const reabRuim = (task: string, origem: unknown = 'xpto', de?: unknown): [TipoEvento, Record<string, unknown>] => ['task.reaberta', { task, origem, ...(de === undefined ? {} : { de }) }];
+test('reaberta-invalida-gravada-afeta-so-a-task: a task dela não anda e nomeia a causa; as outras seguem; só sem outra coisa a fazer para, nomeando a task', () => {
+  const p = plano(['a'], ['b'], ['c', ['a']]);
+  const evsA = diario(ini('a'), reabRuim('a'));
+  assert.deepEqual(tasksInvalidas(p, evsA), new Map([['a', 'origem inválida']]), 'a causa é nomeada, por task');
+  assert.deepEqual(tasksInvalidas(p, diario(ini('a'))), new Map(), 'controle: diário sem o evento ruim não tem task inválida');
+  // b independente segue sendo despachada; a (inválida) e c (depende dela) não
+  assert.deepEqual(proximaAcao(p, evsA, sinais()), { tipo: 'despachar', itens: [{ task: 'b', papel: 'implementador' }] });
+  // b em voo: espera, não para
+  assert.deepEqual(proximaAcao(p, diario(ini('a'), reabRuim('a'), ini('b')), sinais({ vivos: 1 })), { tipo: 'esperar', motivo: 'agentes vivos' });
+  // b pronta e o resto bloqueado pela inválida: para nomeando a task, nunca `concluir` nem diario_invalido
+  assert.deepEqual(proximaAcao(p, diario(ini('a'), reabRuim('a'), ...pronta('b')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'a' });
+  // a variante `de` fora da lista tem o mesmo efeito
+  assert.deepEqual(tasksInvalidas(p, diario(fora('a'), reabRuim('a', 'dono', 'x'))), new Map([['a', 'de inválido']]));
+  // o resto do diário continua exigindo a tabela: outro defeito segue sendo diario_invalido, mesmo com uma task inválida
+  assert.deepEqual(proximaAcao(p, diario(reabRuim('a'), ['task.iniciada', { task: 'b' }]), sinais()), { tipo: 'parar', motivo: 'diario_invalido' });
+  // podeIntegrar e foraPermitido não tratam a task inválida como integrável nem como fora
+  assert.equal(podeIntegrar(p, diario(ini('a'), reabRuim('a')), 'a'), false);
+  assert.deepEqual(foraPermitido(p, evsA, 'a'), { ok: false, motivo: 'diario_invalido' });
+  assert.equal(foraPermitido(p, evsA, 'b').ok, true, 'a outra task segue podendo sair');
+});
+
+// GM-15 T25 (review r1 MAJOR-1): a task inválida só para o loop quando nada mais é acionável; a recuperação das outras (retomada, teto, emenda) vem antes.
+test('reaberta-invalida-nao-bloqueia-a-recuperacao-das-outras: b órfã ⇒ retomar b; b no teto ⇒ teto_rodadas b; emenda aberta ⇒ esperar emenda; b em voo ⇒ esperar', () => {
+  const p = plano(['a'], ['b']);
+  const ruim = ['task.reaberta', { task: 'a', origem: 'xpto' }] as [TipoEvento, Record<string, unknown>];
+  assert.deepEqual(proximaAcao(p, diario(ini('a'), ruim, ini('b')), sinais()), { tipo: 'retomar', task: 'b' }, 'órfã de outra task é retomada');
+  assert.deepEqual(proximaAcao(p, diario(ini('a'), ruim, ini('b'), retomada('b'), ini('b')), sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'b' }, 'já retomada 1x: a causa é a b, não a inválida');
+  assert.deepEqual(proximaAcao(p, diario(ini('a'), ruim, ...noTeto('b')), sinais()), { tipo: 'parar', motivo: 'teto_rodadas', task: 'b' }, 'b no teto mantém o teto_rodadas');
+  assert.deepEqual(proximaAcao(p, diario(ini('a'), ruim, ini('b')), sinais({ vivos: 1 })), { tipo: 'esperar', motivo: 'agentes vivos' });
+  const pr = planoR(T('T1', [], ['REQ-A-1']), T('T2', []));
+  const evs = [...diarioT(ini('T2'), ['task.reaberta', { task: 'T2', origem: 'xpto' }], ...pronta('T1')), prop(1, 'REQ-A-1')];
+  const a = proximaAcao(pr, evs, sinais());
+  assert.deepEqual([a.tipo, (a as { motivo?: string }).motivo], ['esperar', 'emenda'], 'a espera de emenda continua valendo');
+  // controle: resolvida a emenda, o que resta é só a inválida ⇒ para nomeando-a
+  assert.deepEqual(proximaAcao(pr, [...diarioT(ini('T2'), ['task.reaberta', { task: 'T2', origem: 'xpto' }], ...pronta('T1'))], sinais()), { tipo: 'parar', motivo: 'nao_conseguiu', task: 'T2' });
+});
+
+
+// ═══════════════════════════════════════ GM-15 T36 (REQ-AUT-1, emendas 22 e 24): progresso medido e freios da liberação da Sombra
+const rev = (...linhas: string[]) => linhas.join('\n');
+test('t36-achados-de-review: só BLOCKER/MAJOR contam; arquivo:linha vem do texto; MINOR e linha sem severidade ficam fora', () => {
+  const a = achadosDeReview(rev('1. BLOCKER gates/scripts/loop.mjs:120 aceita sem hash', '2. MAJOR gates/src/loop.ts:40 falta teste', '3. MINOR gates/src/loop.ts:41 nome', '4. MAJOR sem local', 'texto solto'));
+  assert.deepEqual(a, [
+    { severidade: 'BLOCKER', arquivo: 'gates/scripts/loop.mjs', linha: 120 },
+    { severidade: 'MAJOR', arquivo: 'gates/src/loop.ts', linha: 40 },
+    { severidade: 'MAJOR', arquivo: null, linha: null },
+  ]);
+  assert.deepEqual(achadosDeReview(''), []);
+});
+
+test('t36-achados-versao-nao-e-arquivo-e-caminho-normaliza (r1 MINOR-6): "2.1.0" e "v2.1.0-alpha.2" não são arquivo; absoluto, ./ e worktree da raiz viram o mesmo caminho relativo', () => {
+  const R = '/repo';
+  assert.deepEqual(achadosDeReview(rev('MAJOR a versão 2.1.0 quebra', 'MAJOR v2.1.0-alpha.2 sem local', 'MAJOR 3.10 etapas')), [
+    { severidade: 'MAJOR', arquivo: null, linha: null }, { severidade: 'MAJOR', arquivo: null, linha: null }, { severidade: 'MAJOR', arquivo: null, linha: null },
+  ], 'versão não vira arquivo');
+  assert.deepEqual(achadosDeReview('MAJOR 2.1.0 em src/a.ts:5 quebra').map((x) => [x.arquivo, x.linha]), [['src/a.ts', 5]], 'a versão antes do arquivo não o esconde');
+  const norm = (t: string) => achadosDeReview(t, R).map((x) => x.arquivo);
+  assert.deepEqual(norm('MAJOR /repo/src/a.ts:1 x'), ['src/a.ts']);
+  assert.deepEqual(norm('MAJOR ./src/a.ts:1 x'), ['src/a.ts']);
+  assert.deepEqual(norm('MAJOR /repo/.harness/worktrees/T36/src/a.ts:1 x'), ['src/a.ts']);
+  assert.deepEqual(norm('MAJOR /outra/raiz/src/a.ts:1 x'), ['/outra/raiz/src/a.ts'], 'fora da raiz fica como está');
+  // o mesmo achado absoluto num ciclo e relativo no outro NÃO é progresso (é o mesmo trecho)
+  assert.equal(progressoMedido(rev('MAJOR /repo/src/a.ts:100 x'), rev('MAJOR src/a.ts:100 x'), R).progresso, false);
+  assert.equal(progressoMedido(rev('MAJOR ./src/a.ts:100 x'), rev('MAJOR /repo/.harness/worktrees/T1/src/a.ts:105 x'), R).progresso, false);
+  assert.equal(progressoMedido(rev('MAJOR /repo/src/a.ts:100 x'), rev('MAJOR src/a.ts:100 x')).progresso, true, 'sem a raiz não há como saber: o comportamento de antes');
+  // a versão não gera achado "no mesmo trecho" falso entre os ciclos: "2.1.0" no anterior e no último não casa um com o outro
+  assert.equal(progressoMedido(rev('MAJOR 2.1.0 quebra'), rev('MAJOR 2.1.0 quebra')).progresso, true, 'sem arquivo não casa (1 e 1)');
+});
+
+test('t36-tokens-so-de-custo-medicao-com-task (r1 MINOR-1): custo.medicao SEM task não conta para a task (nenhum produtor grava task hoje; só o tempo freia)', () => {
+  const custo = (n: number, extra: Record<string, unknown>): Evento => at(1, 'custo.medicao', { input_tokens: n, output_tokens: 0, cache_creation: 0, ...extra });
+  const integradas = [custo(1000, { task: 'I1' }), custo(1000, { task: 'I2' }), custo(1000, { task: 'I3' })];
+  const semTask = fl([...base(), ...integradas, ...gasto(5), custo(9_000_000, {}), custo(9_000_000, { agente: 'subagent:x' })]);
+  assert.equal(semTask.freio, null, 'medição do agente, sem task, não vira tokens da task');
+  assert.equal(fl([...base(), ...integradas, ...gasto(5), custo(9_000_000, { task: 'T' })]).freio?.motivo, 'orcamento_estourado', 'controle: com task conta');
+});
+
+const A = (n: number, arq = 'a.ts') => `MAJOR ${arq}:${n} achado`;
+test('t36-progresso-medido-mesmo-trecho-sem-progresso: o mesmo arquivo a ≤ 10 linhas de um achado do ciclo anterior ⇒ sem progresso (e 11 já é outro trecho)', () => {
+  assert.equal(progressoMedido(rev(A(110)), rev(A(100))).progresso, false, '+10 é o mesmo trecho');
+  assert.equal(progressoMedido(rev(A(90)), rev(A(100))).progresso, false, '-10 é o mesmo trecho');
+  assert.equal(progressoMedido(rev(A(111)), rev(A(100))).progresso, true, '+11 é outro trecho');
+  assert.equal(progressoMedido(rev(A(89)), rev(A(100))).progresso, true, '-11 é outro trecho');
+  assert.equal(progressoMedido(rev(A(100, 'b.ts')), rev(A(100))).progresso, true, 'outro arquivo, mesma linha: outro achado');
+  assert.match(progressoMedido(rev(A(100)), rev(A(100))).motivo, /a\.ts:100/, 'o motivo nomeia o achado que reapareceu');
+});
+test('t36-progresso-medido-achados-novos-com-progresso: achados novos em outro trecho, total não maior ⇒ progresso; total maior ⇒ sem progresso', () => {
+  assert.deepEqual(progressoMedido(rev(A(300), A(500)), rev(A(100), A(200))).progresso, true, 'total igual (2 e 2), nada reapareceu');
+  assert.equal(progressoMedido(rev(A(300)), rev(A(100), A(200))).progresso, true, 'total menor');
+  const mais = progressoMedido(rev(A(300), A(500), A(700)), rev(A(100), A(200)));
+  assert.equal(mais.progresso, false, 'total maior (3 > 2)');
+  assert.match(mais.motivo, /3.*2/);
+  assert.equal(progressoMedido(rev('BLOCKER a.ts:300 x'), rev(A(100))).progresso, true, 'BLOCKER e MAJOR contam juntos: 1 e 1');
+  assert.equal(progressoMedido(rev(A(300), 'MINOR a.ts:301 x'), rev(A(100))).progresso, true, 'MINOR não conta no total');
+});
+test('t36-progresso-review-ausente-conta-sem: ausente, vazio ou sem nenhum BLOCKER/MAJOR legível ⇒ progresso null (conta como sem progresso), com motivo', () => {
+  for (const [u, a] of [[null, rev(A(1))], [rev(A(1)), null], [undefined, undefined], ['  \n', rev(A(1))], [rev(A(1)), '   '], ['só MINOR a.ts:1', rev(A(1))], [rev(A(1)), 'só MINOR a.ts:1']] as const) {
+    const r = progressoMedido(u as string | null | undefined, a as string | null | undefined);
+    assert.equal(r.progresso, null, JSON.stringify([u, a]));
+    assert.ok(r.motivo.length > 0);
+  }
+});
+test('t36-progresso-sem-linha: achado sem arquivo não casa com nada e só entra no total; com arquivo sem linha casa o arquivo inteiro', () => {
+  assert.equal(progressoMedido(rev('MAJOR sem local'), rev('MAJOR sem local')).progresso, true, 'sem local não casa (1 e 1)');
+  assert.equal(progressoMedido(rev('MAJOR a.ts sem número'), rev(A(100))).progresso, false, 'arquivo sem linha: o mesmo arquivo reaparece');
+});
+
+// ── freios da liberação (emenda 22 l.3 e emenda 24 m.2) ────────────────────────────────────────────────────────────────────────────────────
+const T0 = Date.UTC(2026, 10, 10, 0, 0, 0);
+let _seq = 0;
+const at = (min: number, tipo: TipoEvento, dados: Record<string, unknown>, sessao = 's1'): Evento => ev(++_seq, new Date(T0 + min * 60_000).toISOString(), sessao, tipo, dados);
+/** Task integrada com `d` minutos de implementador e `r` de revisor, começando em `m0`. */
+const integradaEm = (t: string, m0: number, d: number, r: number): Evento[] => [
+  at(m0, 'task.iniciada', { task: t, papel: 'implementador' }), at(m0 + d, 'task.concluida', { task: t, sha: 'abc' }),
+  at(m0 + d + 1, 'task.iniciada', { task: t, papel: 'revisor' }), at(m0 + d + 1 + r, 'review.veredito', { task: t, veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }),
+  at(m0 + d + 2 + r, 'task.integrada', { task: t, sha: 'def' }),
+];
+/** Task no teto depois de `d` minutos de implementador e duas rodadas (revisor 1 min, correção `d` min). */
+const noTetoEm = (t: string, m0: number, d: number): Evento[] => [
+  at(m0, 'task.iniciada', { task: t, papel: 'implementador' }), at(m0 + d, 'task.concluida', { task: t, sha: 'abc' }),
+  at(m0 + d + 1, 'task.iniciada', { task: t, papel: 'revisor' }), at(m0 + d + 2, 'review.veredito', { task: t, veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 }),
+  at(m0 + d + 3, 'task.iniciada', { task: t, papel: 'correcao' }), at(m0 + d + 3 + d, 'task.concluida', { task: t, sha: 'abd' }),
+  at(m0 + 2 * d + 4, 'task.iniciada', { task: t, papel: 'revisor' }), at(m0 + 2 * d + 5, 'review.veredito', { task: t, veredito: 'REPROVADO', rodada: 2, major: 1, blocker: 0 }),
+];
+const planoFreio = plano(['I1'], ['I2'], ['I3'], ['T']);
+/** Os eventos na ordem do array (seq = posição): o teste descreve o diário, não a numeração. */
+const fl = (evs: Evento[], t = 'T') => freioDaLiberacao(planoFreio, evs.map((e, k) => ({ ...e, seq: k + 1 })), t);
+// as 3 integradas gastam 10 + 1 + 1 min = 12 min cada ⇒ mediana 12, 3× = 36
+const base = (): Evento[] => [...integradaEm('I1', 0, 10, 1), ...integradaEm('I2', 100, 10, 1), ...integradaEm('I3', 200, 10, 1)];
+const gasto = (d: number): Evento[] => noTetoEm('T', 400, d); // gasta d + 1 + 1 + d + 1 = 2d + 3 min no total? (intervalos fechados abaixo)
+
+test('t36-orcamento-3x-vai-ao-dono: tempo da task acima de 3× a mediana das integradas ⇒ orcamento_estourado com 1 linha (gasto × mediana); no limite e abaixo não freia', () => {
+  // I1..I3: impl 10 + rev 1 = 11 min cada ⇒ mediana 11, limite 33. T: impl d + rev 1 + correção d + rev 1 = 2d + 2.
+  const fre = (d: number) => fl([...base(), ...gasto(d)]);
+  assert.equal(fre(15).freio, null, '2·15+2 = 32 < 33');
+  assert.equal(fre(15.5).freio, null, '2·15,5+2 = 33 = 3× a mediana: não passa (estrito)');
+  const alto = fre(16);
+  assert.equal(alto.freio?.motivo, 'orcamento_estourado', '2·16+2 = 34 > 33');
+  assert.match(alto.freio?.resumo ?? '', /34 min.*mediana.*11 min/);
+  assert.ok(!/\n/.test(alto.freio?.resumo ?? ''), '1 linha');
+});
+test('t36-orcamento-tempo-ou-tokens: tokens medidos acima de 3× a mediana de tokens das integradas freiam sozinhos, com o tempo dentro do limite', () => {
+  const custo = (t: string, n: number): Evento => at(1, 'custo.medicao', { task: t, input_tokens: n, output_tokens: 0, cache_creation: 0, cache_read: 999_999_999 });
+  const tok = (n: number) => fl([...base(), custo('I1', 1000), custo('I2', 1000), custo('I3', 1000), ...gasto(5), custo('T', n)]);
+  assert.equal(tok(3000).freio, null, '3× exato não passa; cache_read não conta');
+  const f = tok(3001);
+  assert.equal(f.freio?.motivo, 'orcamento_estourado');
+  assert.match(f.freio?.resumo ?? '', /3001 tokens.*mediana.*1000/);
+  // soma de várias medições da task
+  const soma = fl([...base(), custo('I1', 1000), custo('I2', 1000), custo('I3', 1000), ...gasto(5), custo('T', 2000), custo('T', 1001)]);
+  assert.equal(soma.freio?.motivo, 'orcamento_estourado');
+  // task com tokens medidos mas integradas sem tokens medidos ⇒ sem freio de tokens
+  assert.equal(fl([...base(), ...gasto(5), custo('T', 9_000_000)]).freio, null);
+  // tempo dentro do limite e tokens dentro ⇒ nada
+  assert.equal(tok(10).freio, null);
+});
+test('t36-orcamento-sem-mediana-avisa: nenhuma task integrada na entrega ⇒ sem freio por orçamento e semMediana (o proxima avisa); integrada sem tempo medido não faz mediana', () => {
+  const r = fl(gasto(500));
+  assert.equal(r.freio, null);
+  assert.equal(r.semMediana, true);
+  assert.equal(fl([...base(), ...gasto(5)]).semMediana, false);
+  const jaNaBase: Evento[] = [at(0, 'task.iniciada', { task: 'I1', papel: 'implementador' }), at(0, 'task.concluida', { task: 'I1', sha: 'abc' }), at(0, 'task.iniciada', { task: 'I1', papel: 'revisor' }), at(0, 'review.veredito', { task: 'I1', veredito: 'APROVADO', rodada: 1, major: 0, blocker: 0 }), at(0, 'task.integrada', { task: 'I1', sha: 'def' })];
+  assert.equal(fl([...jaNaBase, ...gasto(500)]).semMediana, true, 'tempo 0 não é medição');
+});
+const reabSombra = (t: string, extra: Record<string, unknown> = {}): Evento => at(500, 'task.reaberta', { task: t, origem: 'sombra', hash: 'e'.repeat(64), ...extra });
+const reabDono = (t: string): Evento => at(501, 'task.reaberta', { task: t, origem: 'dono' });
+test('t36-duas-abordagens-sem-convergir-vai-ao-dono: 2 liberações da Sombra com abordagem_nova e novo teto ⇒ abordagens_esgotadas; 1 só, sem abordagem ou do dono não contam', () => {
+  const noTeto2 = (a: Evento[]) => [...base(), ...noTetoEm('T', 400, 3), ...a, ...noTetoEm('T', 600, 3)];
+  const f = (...a: Evento[]) => fl(noTeto2(a)).freio;
+  assert.equal(f(reabSombra('T', { abordagem_nova: 'dividir a task' })), null, '1 abordagem');
+  assert.equal(f(reabSombra('T', { abordagem_nova: 'a' }), reabSombra('T')), null, 'liberação da Sombra sem abordagem não conta');
+  assert.equal(f(reabSombra('T', { abordagem_nova: 'a' }), reabDono('T')), null, 'liberação do dono não conta (nem zera)');
+  const dois = f(reabSombra('T', { abordagem_nova: 'a' }), reabSombra('T', { abordagem_nova: 'b' }));
+  assert.equal(dois?.motivo, 'abordagens_esgotadas');
+  assert.ok(/2/.test(dois?.resumo ?? '') && !/\n/.test(dois?.resumo ?? ''));
+  const comDono = f(reabSombra('T', { abordagem_nova: 'a' }), reabDono('T'), reabSombra('T', { abordagem_nova: 'b' }));
+  assert.equal(comDono?.motivo, 'abordagens_esgotadas', 'o dono no meio não zera');
+  assert.equal(f(reabSombra('T', { abordagem_nova: '   ' }), reabSombra('T', { abordagem_nova: 'b' })), null, 'abordagem em branco não conta');
+  assert.equal(f(reabSombra('OUTRA', { abordagem_nova: 'a' }), reabSombra('OUTRA', { abordagem_nova: 'b' })), null, 'outra task não conta');
+});
+test('t36-freio-esgotado-vence-orcamento-e-diario-invalido-nao-freia: a ordem dos freios é esgotadas primeiro; diário fora de ordem ⇒ nenhum freio e sem lançar', () => {
+  assert.equal(fl([at(5, 'task.iniciada', { task: 'T', papel: 'implementador' }), ev(1, 'ontem', 's1', 'ci.resultado', { verde: true })]).freio, null);
+  const ambos = fl([...base(), ...noTetoEm('T', 400, 500), reabSombra('T', { abordagem_nova: 'a' }), reabSombra('T', { abordagem_nova: 'b' }), ...noTetoEm('T', 2000, 500)]);
+  assert.equal(ambos.freio?.motivo, 'abordagens_esgotadas', 'com os dois freios, o das abordagens é o dito');
+});
+
+test('t39-libera-teto-de-origin: só `fonte: origin` com sombra.libera_teto === true liga; local, ausente, falso, truthy e forma torta desligam', () => {
+  assert.equal(liberaTetoDeOrigin({ fonte: 'origin', cfg: { sombra: { libera_teto: true } } }), true);
+  for (const o of [
+    { fonte: 'nenhuma', cfg: { sombra: { libera_teto: true } } }, { fonte: 'local', cfg: { sombra: { libera_teto: true } } },
+    { fonte: 'origin', cfg: { sombra: { libera_teto: false } } }, { fonte: 'origin', cfg: { sombra: { libera_teto: 'true' } } }, { fonte: 'origin', cfg: { sombra: { libera_teto: 1 } } },
+    { fonte: 'origin', cfg: { sombra: null } }, { fonte: 'origin', cfg: {} }, { fonte: 'origin', cfg: null }, { fonte: 'origin' }, null, undefined, 'origin', 7,
+  ]) assert.equal(liberaTetoDeOrigin(o), false, JSON.stringify(o));
 });

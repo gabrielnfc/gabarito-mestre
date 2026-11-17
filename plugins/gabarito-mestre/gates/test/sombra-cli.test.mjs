@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import * as diario from '../dist/diario.js';
 import { formaInvalida } from '../dist/formas.js';
 import { promptSombra } from '../dist/sombra.js';
+import { quemRedigeNaAncora, projetarEmendas, validarProposta } from '../dist/emenda.js';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(AQUI, '..', 'scripts', 'sombra.mjs');
@@ -121,7 +122,7 @@ describe('perguntar', () => {
     assert.equal(out.hash, sha256('REQ-A-1\n0\nqual o limite?'));
     assert.equal(out.brief, `.harness/entregas/GM-10/sombra/${out.hash}.md`);
     assert.equal(out.consultas, 1);
-    assert.equal(out.teto, 26);
+    assert.equal(Object.hasOwn(out, 'teto'), false, 'GM-15 T36: sai o teto de consultas');
     assert.equal(out.aviso, undefined);
     assert.equal(out.cache, undefined);
     assert.equal(out.pendente, undefined);
@@ -459,13 +460,7 @@ describe('perguntar', () => {
     assert.equal(a.out.hash, sha256('REQ-A-1\n0\n--e se for zero?'));
   });
 
-  test('teto-invalido-26-com-aviso', () => {
-    // sem origin: ausente ⇒ 26 sem aviso
-    const sem = novoRepo();
-    const s = perguntar(sem.raiz, 'x?').out;
-    assert.equal(s.teto, 26);
-    assert.equal(s.aviso, undefined);
-    // com origin: teto inválido ⇒ 26 e aviso; válido ⇒ o valor; JSON corrompido ⇒ 26 e aviso
+  test('sem-aviso-de-teto-de-consultas (GM-15 T36, emenda 22 l.5): sombra.teto no origin (válido, inválido, 0, JSON corrompido) é ignorado sem erro e sem aviso; muitas consultas não avisam e não trazem `teto`', () => {
     const comOrigin = (cfg) => {
       const r = novoRepo();
       writeFileSync(join(r.raiz, 'harness.config.json'), cfg);
@@ -478,40 +473,20 @@ describe('perguntar', () => {
       g(r.raiz, 'remote', 'set-head', 'origin', 'main');
       return r;
     };
-    const inv = perguntar(comOrigin('{"sombra":{"teto":"muitos"}}').raiz, 'x?').out;
-    assert.equal(inv.teto, 26);
-    assert.match(inv.aviso, /teto/);
-    const ok = perguntar(comOrigin('{"sombra":{"teto":3}}').raiz, 'x?').out;
-    assert.equal(ok.teto, 3);
-    assert.equal(ok.aviso, undefined);
-    const quebrado = perguntar(comOrigin('{nao json').raiz, 'x?').out;
-    assert.equal(quebrado.teto, 26);
-    assert.match(quebrado.aviso, /origin/);
-    const zero = perguntar(comOrigin('{"sombra":{"teto":0}}').raiz, 'x?').out;
-    assert.equal(zero.teto, 26);
-    assert.ok(zero.aviso);
-  });
-
-  test('acima-do-teto-segue-com-aviso', () => {
-    const r = novoRepo();
-    writeFileSync(join(r.raiz, 'harness.config.json'), '{"sombra":{"teto":1}}');
-    g(r.raiz, 'add', 'harness.config.json');
-    g(r.raiz, 'commit', '-q', '-m', 'cfg');
-    const bare = join(novoTmp('sombra-bare-'), 'o.git');
-    execFileSync('git', ['init', '-q', '--bare', '-b', 'main', bare]);
-    g(r.raiz, 'remote', 'add', 'origin', bare);
-    g(r.raiz, 'push', '-q', 'origin', 'main');
-    g(r.raiz, 'remote', 'set-head', 'origin', 'main');
-    const a = perguntar(r.raiz, 'primeira?').out;
-    assert.equal(a.consultas, 1);
-    assert.equal(a.aviso, undefined, 'no teto ainda não avisa');
-    const b = perguntar(r.raiz, 'segunda?');
-    assert.equal(b.rc, 0, 'acima do teto a consulta segue');
-    assert.equal(b.out.consultas, 2);
-    assert.match(b.out.aviso, /acima do teto/);
-    assert.equal(dosTipo(r, 'sombra.consulta').length, 2);
-    registrar(r, a.hash, BOA);
-    assert.equal(perguntar(r.raiz, 'primeira?').out.aviso, undefined, 'acerto de cache não avisa');
+    for (const cfg of ['{"sombra":{"teto":1}}', '{"sombra":{"teto":"muitos"}}', '{"sombra":{"teto":0}}', '{"sombra":{}}']) {
+      const r = comOrigin(cfg);
+      for (let k = 0; k < 3; k++) {
+        const x = perguntar(r.raiz, `pergunta ${k}?`);
+        assert.equal(x.rc, 0, cfg);
+        assert.equal(x.out.aviso, undefined, `${cfg}: sem aviso na consulta ${k + 1}`);
+        assert.equal(Object.hasOwn(x.out, 'teto'), false, cfg);
+        assert.equal(x.out.consultas, k + 1);
+      }
+    }
+    // config corrompida em origin não vira aviso de TETO (o assunto saiu): a consulta segue
+    const q = perguntar(comOrigin('{nao json').raiz, 'x?');
+    assert.equal(q.rc, 0);
+    assert.ok(!/teto/i.test(q.out.aviso ?? ''), q.out.aviso);
   });
 
   test('uso-e-argumento-invalido', () => {
@@ -846,6 +821,55 @@ describe('T39: brief da liberação', () => {
     return fim < 0 ? resto : resto.slice(0, fim);
   };
 
+  // ── GM-15 T36 (emenda 24 m.1): o brief traz o progresso MEDIDO pelo CLI; a Sombra não o declara ─────────────────────────────────────────────────
+  const anterior = (r, texto, task = 'T1') => {
+    mkdirSync(join(tmpDe(r, task), 'ciclo-1'), { recursive: true });
+    writeFileSync(join(tmpDe(r, task), 'ciclo-1', 'review-r2.md'), texto);
+  };
+  const segundoTeto = (r) => { aoTeto(r); evento(r, 'loop', 'task.reaberta', { task: 'T1', origem: 'dono' }); aoTeto(r); };
+  const secaoProgresso = (brief) => { const i = brief.indexOf('## Progresso medido'); assert.ok(i >= 0, 'seção do progresso no brief'); return brief.slice(i, brief.indexOf('\n## ', i + 5) < 0 ? undefined : brief.indexOf('\n## ', i + 5)); };
+
+  test('t36-brief-progresso-medido: 1º teto dispensa; mesmo trecho ⇒ sem progresso e só com --abordagem-nova; outro trecho ⇒ progresso; review do ciclo anterior ausente ⇒ sem progresso com o motivo', () => {
+    const r1 = novoRepo();
+    aoTeto(r1);
+    achado(r1, 2, 'MAJOR a.ts:10 x\n');
+    assert.match(secaoProgresso(briefDe(r1, liberacao(r1).out)), /dispensado/i, '1º teto');
+
+    const r2 = novoRepo();
+    segundoTeto(r2);
+    anterior(r2, 'MAJOR a.ts:100 x\n');
+    achado(r2, 2, 'MAJOR a.ts:108 y\n');
+    const sem = secaoProgresso(briefDe(r2, liberacao(r2).out));
+    assert.match(sem, /sem progresso/i);
+    assert.match(sem, /a\.ts:108/, 'diz o achado que reapareceu');
+    assert.match(sem, /--abordagem-nova/, 'sem progresso, só libera com abordagem_nova');
+
+    const r3 = novoRepo();
+    segundoTeto(r3);
+    anterior(r3, 'MAJOR a.ts:100 x\n');
+    achado(r3, 2, 'MAJOR a.ts:500 y\n');
+    const com = secaoProgresso(briefDe(r3, liberacao(r3).out));
+    assert.match(com, /progresso: sim/i);
+    assert.doesNotMatch(com, /--abordagem-nova/);
+
+    const r4 = novoRepo();
+    segundoTeto(r4);
+    achado(r4, 2, 'MAJOR a.ts:500 y\n');
+    const aus = secaoProgresso(briefDe(r4, liberacao(r4).out));
+    assert.match(aus, /sem progresso/i);
+    assert.match(aus, /ausente|vazio/);
+    assert.match(aus, /--abordagem-nova/);
+  });
+
+  test('t36-pergunta-sem-limite-de-liberacoes: o texto fixo da pergunta não diz mais "1 vez por task"', () => {
+    const r = novoRepo();
+    aoTeto(r);
+    achado(r, 2, 'MAJOR a.ts:1 x\n');
+    const brief = briefDe(r, liberacao(r).out);
+    assert.doesNotMatch(brief, /1 vez por task/);
+    assert.match(brief, /sem limite numérico/);
+  });
+
   test('brief-liberacao-traz-fiel15-sem-req-dia2-na-task', () => {
     const r = novoRepo();
     // a FIEL-15 mora em REQ-DIA-2, que a T1 não lista: a emenda aprovada vai ao brief mesmo assim, ao lado das dos REQ da task
@@ -1097,5 +1121,167 @@ describe('agente', () => {
     assert.match(texto, /`env`/);
     assert.match(texto, /\.env/);
     assert.match(texto, /fora_da_regra/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────── GM-15 T11 (REQ-EME-3 B): o brief sobre uma proposta leva o diff
+
+describe('GM-15 T11: perguntar --proposta', () => {
+  const dadosDe = (req, extra = {}) => ({ req, diff: 'DIFF-DA-PROPOSTA-linha1\n+ regra nova', fato: 'FATO-XYZ-medido', alternativa: 'ALT-QRS-descartada', evidencia: 'e', causa: 'regra_negocio', ...extra });
+  const propostaCom = (r, req, extra) => evento(r, 'emendas', 'emenda.proposta', dadosDe(req, extra));
+  const rejeitar = (r, proposta_seq) => evento(r, 'loop', 'emenda.rejeitada', { proposta_seq, origem: 'sombra' });
+  const sobre = (r, seq, pergunta = 'A emenda cabe?', ancora = ['--req', 'REQ-A-1']) => perguntar(r.raiz, pergunta, [...ancora, '--proposta', String(seq)]);
+
+  test('brief-com-diff-da-proposta: diff, fato e alternativa entram no brief, com o estado da proposta', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-1');
+    const { rc, out } = sobre(r, 1);
+    assert.equal(rc, 0, JSON.stringify(out));
+    const brief = readFileSync(join(r.raiz, out.brief), 'utf8');
+    assert.ok(brief.includes('DIFF-DA-PROPOSTA-linha1') && brief.includes('+ regra nova'), 'o diff');
+    assert.ok(brief.includes('FATO-XYZ-medido'), 'o fato');
+    assert.ok(brief.includes('ALT-QRS-descartada'), 'a alternativa');
+    assert.match(brief, /Proposta de emenda #1 \(REQ-A-1\)[^\n]*aberta/);
+    assert.ok(brief.indexOf('DIFF-DA-PROPOSTA') < brief.indexOf('## Instrução'), 'antes da instrução, que segue no fim');
+    assert.ok(!brief.includes('redija'), 'sem 2ª rejeição não pede redação');
+  });
+
+  test('brief-sem-proposta-nao-leva-secao: sem --proposta o brief é o de antes', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-1');
+    const out = perguntar(r.raiz, 'A emenda cabe?').out;
+    assert.ok(!readFileSync(join(r.raiz, out.brief), 'utf8').includes('DIFF-DA-PROPOSTA'));
+    assert.equal(out.hash, sha256('REQ-A-1\n0\na emenda cabe?'), 'o hash de antes não muda');
+  });
+
+  test('proposta-distinta-hash-distinto: a mesma pergunta sobre outra proposta é outra consulta', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-1');
+    propostaCom(r, 'REQ-A-1', { diff: 'OUTRO-DIFF' });
+    const a = sobre(r, 1).out;
+    const b = sobre(r, 2).out;
+    assert.notEqual(a.hash, b.hash);
+    assert.notEqual(a.hash, perguntar(r.raiz, 'A emenda cabe?').out.hash);
+    assert.ok(readFileSync(join(r.raiz, b.brief), 'utf8').includes('OUTRO-DIFF'));
+  });
+
+  test('proposta-por-task: --task com a proposta da task', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-1', { task: 'T1' });
+    const { rc, out } = sobre(r, 1, 'cabe?', ['--task', 'T1']);
+    assert.equal(rc, 0, JSON.stringify(out));
+    assert.ok(readFileSync(join(r.raiz, out.brief), 'utf8').includes('DIFF-DA-PROPOSTA'));
+  });
+
+  test('proposta-inexistente-ou-fora-da-ancora-recusa: nada gravado', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-2');
+    const antes = eventosDe(r).length;
+    assert.equal(sobre(r, 9).out.erro, 'proposta_inexistente');
+    const fora = sobre(r, 1);
+    assert.equal(fora.rc, 1);
+    assert.equal(fora.out.erro, 'proposta_fora_da_ancora');
+    assert.equal(eventosDe(r).length, antes);
+    assert.deepEqual(arquivosSombra(r), []);
+  });
+
+  test('proposta-uso: seq torta e com --libera-teto são uso (rc 2)', () => {
+    const r = novoRepo();
+    for (const seq of ['0', 'x', '-1', '1.5']) assert.equal(rodar(r.raiz, ['perguntar', '--req', 'REQ-A-1', '--proposta', seq, '--pergunta', 'q?', '--entrega', 'GM-10']).rc, 2, seq);
+    assert.equal(rodar(r.raiz, ['perguntar', '--task', 'T1', '--libera-teto', '--proposta', '1', '--entrega', 'GM-10']).rc, 2);
+  });
+
+  test('segunda-rejeicao-sombra-redige: com 2 rejeições do orquestrador na âncora o brief manda redigir o texto da emenda', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-1'); // 1
+    propostaCom(r, 'REQ-A-1'); // 2
+    rejeitar(r, 1);
+    const uma = readFileSync(join(r.raiz, sobre(r, 2, 'q1?').out.brief), 'utf8');
+    assert.ok(!uma.includes('redija'), 'com 1 rejeição não pede redação');
+    rejeitar(r, 2);
+    const duas = readFileSync(join(r.raiz, sobre(r, 2, 'q2?').out.brief), 'utf8');
+    assert.match(duas, /2ª rejeição/);
+    assert.ok(duas.includes('redija o texto da emenda'), 'pede o texto');
+    assert.ok(duas.includes('emenda propor --origem sombra'), 'diz como o orquestrador grava');
+    assert.ok(duas.indexOf('redija o texto da emenda') < duas.indexOf('## Instrução'));
+    // proposta de outra âncora não conta
+    propostaCom(r, 'REQ-A-2'); // 3
+    assert.ok(!readFileSync(join(r.raiz, sobre(r, 3, 'q3?', ['--req', 'REQ-A-2']).out.brief), 'utf8').includes('redija'));
+  });
+
+  test('t11-ancora-da-redacao-e-so-req: task não separa âncora; rejeição da própria Sombra não conta nem pede nova redação', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-1', { task: 'T1' }); // 1
+    propostaCom(r, 'REQ-A-1'); // 2, sem task: mesma âncora (REQ)
+    propostaCom(r, 'REQ-A-1', { task: 'T2' }); // 3, outra task: mesma âncora
+    propostaCom(r, 'REQ-A-1', { task: 'T1', origem: 'sombra' }); // 4, da Sombra
+    rejeitar(r, 1);
+    const brief = (seq, q, ancora) => readFileSync(join(r.raiz, sobre(r, seq, q, ancora).out.brief), 'utf8');
+    assert.ok(!brief(3, 'a?', ['--task', 'T2']).includes('redija'), '1 do orquestrador = 1');
+    rejeitar(r, 2);
+    assert.ok(brief(3, 'b?', ['--task', 'T2']).includes('redija'), 'caso misto (com e sem task) soma 2 por REQ');
+    rejeitar(r, 4); // a redação da Sombra rejeitada ⇒ dono (T26): nem a proposta 3, do orquestrador, pede redação
+    assert.ok(!brief(3, 'b2?', ['--task', 'T2']).includes('redija'), 'após a Sombra rejeitada, não pede redação');
+    rejeitar(r, 3);
+    assert.ok(!brief(4, 'c?', ['--task', 'T1']).includes('redija'), 'proposta da Sombra já rejeitada não pede redação');
+  });
+
+  test('t26-duas-camadas: após rejeição da redação da Sombra no REQ, o CLI não pede redação, o item vai ao dono e validarProposta concorda', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-1'); // 1
+    propostaCom(r, 'REQ-A-1'); // 2
+    propostaCom(r, 'REQ-A-1', { origem: 'sombra' }); // 3: redação da Sombra
+    propostaCom(r, 'REQ-A-1', { task: 'T1' }); // 4: do orquestrador, mesmo REQ, aberta
+    rejeitar(r, 1);
+    rejeitar(r, 2);
+    rejeitar(r, 3);
+    const { rc, out } = sobre(r, 4);
+    assert.equal(rc, 0, JSON.stringify(out));
+    const brief = readFileSync(join(r.raiz, out.brief), 'utf8');
+    assert.ok(!brief.includes('redija'), 'CLI: não pede redação');
+    assert.ok(brief.includes('o item vai ao dono'), 'CLI: diz que vai ao dono');
+    const eventos = eventosDe(r);
+    const est = projetarEmendas(eventos);
+    assert.equal(quemRedigeNaAncora(est, 'REQ-A-1').quem, 'dono', 'núcleo: a mesma função');
+    const dados = { req: 'REQ-A-1', diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'regra_negocio' };
+    const plano = { entrega: 'GM-10', tasks: [] };
+    assert.match(validarProposta(plano, est, dados) ?? '', /^terceira proposta do orquestrador/, 'validarProposta: orquestrador no mesmo REQ não grava');
+    assert.match(validarProposta(plano, est, { ...dados, origem: 'sombra' }) ?? '', /vai ao dono/, 'validarProposta: Sombra não repropõe');
+  });
+
+  test('t26-proposta-da-sombra-aberta-nao-pede-redacao: 2 rejeições do orquestrador e a proposta 3 de origem sombra aberta', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-1'); // 1
+    propostaCom(r, 'REQ-A-1'); // 2
+    propostaCom(r, 'REQ-A-1', { origem: 'sombra' }); // 3, aberta
+    rejeitar(r, 1);
+    rejeitar(r, 2);
+    const { rc, out } = sobre(r, 3);
+    assert.equal(rc, 0, JSON.stringify(out));
+    const brief = readFileSync(join(r.raiz, out.brief), 'utf8');
+    assert.match(brief, /Proposta de emenda #3 \(REQ-A-1\)[^\n]*redigida pela Sombra/);
+    assert.ok(!brief.includes('redija'), 'proposta da própria Sombra não pede redação');
+  });
+
+  test('t26-sombra-rejeitada-em-outro-req-nao-prende-esta-ancora: o brief do REQ-A-1 ainda pede redação', () => {
+    const r = novoRepo();
+    propostaCom(r, 'REQ-A-2'); // 1
+    propostaCom(r, 'REQ-A-2', { origem: 'sombra' }); // 2
+    propostaCom(r, 'REQ-A-1'); // 3
+    propostaCom(r, 'REQ-A-1'); // 4
+    propostaCom(r, 'REQ-A-1'); // 5, aberta
+    for (const n of [2, 3, 4]) rejeitar(r, n); // Sombra rejeitada no REQ-A-2; 2 do orquestrador no REQ-A-1
+    const { rc, out } = sobre(r, 5);
+    assert.equal(rc, 0, JSON.stringify(out));
+    assert.ok(readFileSync(join(r.raiz, out.brief), 'utf8').includes('redija'), 'REQ-A-1 segue com a Sombra redigindo');
+  });
+
+  test('t26-numero-de-rejeicoes-do-brief-vem-da-contagem: 3 rejeições do orquestrador ⇒ "3 propostas" e "3ª rejeição"', () => {
+    const r = novoRepo();
+    for (let i = 0; i < 4; i++) propostaCom(r, 'REQ-A-1'); // 1..4
+    for (const n of [1, 2, 3]) rejeitar(r, n);
+    const brief = readFileSync(join(r.raiz, sobre(r, 4).out.brief), 'utf8');
+    assert.match(brief, /já teve 3 propostas do orquestrador rejeitadas: esta é a 3ª rejeição/);
+    assert.ok(brief.includes('redija'));
   });
 });

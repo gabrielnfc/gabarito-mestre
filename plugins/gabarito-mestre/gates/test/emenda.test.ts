@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { projetarEmendas, versaoDoReq, reqsCongelados, escopoDaTask, validarProposta, validarJulgamento, SESSAO_EMENDAS } from '../src/emenda.ts';
+import { quemRedigeNaAncora, projetarEmendas, fecharJulgamentos, versaoDoReq, reqsCongelados, escopoDaTask, validarProposta, validarJulgamento, pontaDaSpec, shaAceito, validarAplicacao, SESSAO_EMENDAS } from '../src/emenda.ts';
 import type { EstadoEmendas } from '../src/emenda.ts';
 import { normalizarCaminho, validarPlano } from '../src/plano.ts';
 import type { Evento, Plano } from '../src/tipos.ts';
@@ -40,6 +40,30 @@ test('segundo-julgamento-ignorado', () => {
   const est = projetarEmendas([prop(1), aprova('s', 1, 1), rejeita('s', 2, 1), aprova('s', 3, 1, 'sombra')]);
   assert.deepEqual(est.aprovadas.map((p) => [p.seq, p.origem]), [[1, 'dono']]);
   assert.deepEqual(est.rejeitadas, []);
+});
+
+test('d-g15-sombra-nao-reverte-a-propria-rejeicao: 2º julgamento da SOMBRA depois da rejeição dela não reverte (só o dono), aprovando ou rejeitando', () => {
+  for (const segundo of [aprova('s', 2, 1, 'sombra'), rejeita('s', 2, 1, 'sombra')]) {
+    const est = projetarEmendas([prop(1), rejeita('s', 1, 1, 'sombra'), segundo]);
+    assert.deepEqual(est.rejeitadas.map((p) => [p.seq, p.rejeitadaPor]), [[1, 'sombra']]);
+    assert.deepEqual(est.aprovadas, []);
+  }
+  // controle: o dono reverte
+  const rev = projetarEmendas([prop(1), rejeita('s', 1, 1, 'sombra'), aprova('s', 2, 1, 'dono')]);
+  assert.deepEqual(rev.aprovadas.map((p) => [p.seq, p.origem]), [[1, 'dono']]);
+  assert.deepEqual(rev.rejeitadas, []);
+});
+
+test('fecharJulgamentos (regra única): cada condição da exceção tem mutação morta (rejeição, origem sombra, julgador dono)', () => {
+  const f = (...e: Evento[]) => [...fecharJulgamentos(e)].map(([k, v]) => [k, v.aprova, v.origem]);
+  assert.deepEqual(f(rejeita('s', 1, 1, 'sombra'), aprova('s', 2, 1, 'dono')), [[1, true, 'dono']], 'dono reverte rejeição da sombra');
+  assert.deepEqual(f(rejeita('s', 1, 1, 'dono'), aprova('s', 2, 1, 'dono')), [[1, false, 'dono']], 'rejeição do dono é final');
+  // GM-15 T36 (D-G18, emenda 24 m.3): o dono reverte também a APROVAÇÃO da Sombra; a aprovação do dono segue final
+  assert.deepEqual(f(aprova('s', 1, 1, 'sombra'), rejeita('s', 2, 1, 'dono')), [[1, false, 'dono']], 'dono reverte a aprovação da sombra');
+  assert.deepEqual(f(aprova('s', 1, 1, 'sombra'), aprova('s', 2, 1, 'sombra')), [[1, true, 'sombra']], 'sombra não reverte a própria aprovação');
+  assert.deepEqual(f(aprova('s', 1, 1, 'dono'), rejeita('s', 2, 1, 'dono')), [[1, true, 'dono']], 'aprovação do dono é final');
+  assert.deepEqual(f(rejeita('s', 1, 1, 'sombra'), aprova('s', 2, 1, 'sombra'), aprova('s', 3, 1, 'dono')), [[1, true, 'dono']], 'corrida: Sombra rejeita, 2ª Sombra aprova, dono aprova ⇒ fecha o dono');
+  assert.deepEqual(f(rejeita('s', 1, 1, 'sombra'), rejeita('s', 2, 1, 'sombra')), [[1, false, 'sombra']], 'sombra não reverte');
 });
 
 test('julgamento-misto-rejeitada-depois-emendada', () => {
@@ -249,6 +273,16 @@ test('julgar-ja-julgada-recusa', () => {
   assert.equal(validarJulgamento(est, 2, 'dono', false), 'proposta já julgada');
 });
 
+test('t36-dono-reverte-emenda-aprovada-pela-sombra (D-G18): validarJulgamento aceita o dono sobre a aprovação da Sombra, e só ele', () => {
+  const est = projetarEmendas([prop(1), aprova('s', 1, 1, 'sombra')]);
+  assert.equal(validarJulgamento(est, 1, 'dono', false), null);
+  assert.equal(validarJulgamento(est, 1, 'sombra', true), 'proposta já julgada', 'a Sombra não revê a própria aprovação');
+  const feita = projetarEmendas([prop(1), aprova('s', 1, 1, 'sombra'), rejeita('s', 2, 1, 'dono')]);
+  assert.equal(validarJulgamento(feita, 1, 'dono', false), 'proposta já julgada', 'depois do dono, final');
+  const doDono = projetarEmendas([prop(1), aprova('s', 1, 1, 'dono')]);
+  assert.equal(validarJulgamento(doDono, 1, 'dono', false), 'proposta já julgada', 'aprovação do dono é final');
+});
+
 test('julgar-sombra-sem-flag-recusa', () => {
   const est = projetarEmendas([prop(1)]);
   assert.match(validarJulgamento(est, 1, 'sombra', false) ?? '', /julga_emendas/);
@@ -276,10 +310,154 @@ test('proposta-projetada-com-todos-os-campos', () => {
   const p1 = prop(1, { diff: 'DIFF-1', fato: 'FATO-1', causa: 'regra_negocio', task: 't1', arquivos: ['./src//a.ts'] }, SESSAO_EMENDAS, 10);
   const p2 = prop(2, { diff: 'DIFF-2', fato: 'FATO-2', causa: 'tecnica', req: 'REQ-B-1' }, SESSAO_EMENDAS, 20);
   const est = projetarEmendas([p1, p2, aprova('s', 1, 1, 'sombra', 30)]);
-  assert.deepEqual(est.aprovadas, [{ seq: 1, req: 'REQ-EME-1', task: 't1', diff: 'DIFF-1', arquivos: ['src/a.ts'], causa: 'regra_negocio', ts: ts(10), origem: 'sombra' }]);
-  assert.deepEqual(est.abertas, [{ seq: 2, req: 'REQ-B-1', diff: 'DIFF-2', arquivos: [], causa: 'tecnica', ts: ts(20) }]);
+  assert.deepEqual(est.aprovadas, [{ seq: 1, req: 'REQ-EME-1', task: 't1', diff: 'DIFF-1', fato: 'FATO-1', alternativa: 'a', arquivos: ['src/a.ts'], causa: 'regra_negocio', ts: ts(10), origem: 'sombra' }]);
+  assert.deepEqual(est.abertas, [{ seq: 2, req: 'REQ-B-1', diff: 'DIFF-2', fato: 'FATO-2', alternativa: 'a', arquivos: [], causa: 'tecnica', ts: ts(20) }]);
   const rej = projetarEmendas([p1, rejeita('s', 1, 1, 'dono', 30)]);
-  assert.deepEqual(rej.rejeitadas, [{ seq: 1, req: 'REQ-EME-1', task: 't1', diff: 'DIFF-1', arquivos: ['src/a.ts'], causa: 'regra_negocio', ts: ts(10) }]);
+  assert.deepEqual(rej.rejeitadas, [{ seq: 1, req: 'REQ-EME-1', task: 't1', diff: 'DIFF-1', fato: 'FATO-1', alternativa: 'a', arquivos: ['src/a.ts'], causa: 'regra_negocio', ts: ts(10), rejeitadaPor: 'dono' }]);
   assert.equal(rej.invalido, undefined);
   assert.equal(est.invalido, undefined);
+});
+
+// ───────────────────────────────────────────────────────────── GM-15 T11 (REQ-EME-3 B): fato, alternativa e a 3ª proposta
+
+test('t11-proposta-carrega-fato-e-alternativa-e-origem', () => {
+  const est = projetarEmendas([prop(1, { fato: 'FATO-X', alternativa: 'ALT-Y' }), prop(2, { origem: 'sombra' })]);
+  assert.deepEqual(est.abertas.map((p) => [p.fato, p.alternativa, p.origem]), [['FATO-X', 'ALT-Y', undefined], ['f', 'a', 'sombra']]);
+});
+
+const rejeitadas2 = (extra: Record<string, unknown> = {}) =>
+  projetarEmendas([prop(1, extra), prop(2, extra), rejeita('s', 1, 1, 'dono'), rejeita('s', 2, 2, 'dono')]);
+
+test('t11-terceira-proposta-do-orquestrador-recusa-na-mesma-ancora', () => {
+  const um = projetarEmendas([prop(1), rejeita('s', 1, 1)]);
+  assert.equal(validarProposta(plano(T('t', [], [])), um, dadosProp()), null, 'a 2ª proposta passa');
+  const dois = rejeitadas2();
+  assert.equal(validarProposta(plano(T('t', [], [])), dois, dadosProp()), 'terceira proposta do orquestrador na mesma âncora: a Sombra redige o texto (origem sombra)');
+  // outra âncora (outro REQ) não é afetada
+  assert.equal(validarProposta(plano(T('t', [], []), T('u', [], [], ['REQ-EME-2'])), dois, dadosProp({ req: 'REQ-EME-2' })), null);
+});
+
+test('ancora-por-req-ignora-task', () => {
+  // Emenda 13 (REQ-EME-3): a âncora é só o REQ; trocar ou omitir --task não zera a contagem de rejeições do orquestrador.
+  const dois = rejeitadas2({ task: 't1' });
+  const pl = plano(T('t1', [], ['a.ts']), T('t2', [], ['b.ts']));
+  const terceira = 'terceira proposta do orquestrador na mesma âncora: a Sombra redige o texto (origem sombra)';
+  assert.equal(validarProposta(pl, dois, dadosProp({ task: 't1' })), terceira, 'mesma task e REQ');
+  assert.equal(validarProposta(pl, dois, dadosProp({ task: 't2' })), terceira, 'outra task, mesmo REQ');
+  assert.equal(validarProposta(pl, dois, dadosProp()), terceira, 'sem task, mesmo REQ');
+  // 1 rejeição com task e 1 sem task somam 2 na mesma âncora (o REQ)
+  const misto = projetarEmendas([prop(1, { task: 't1' }), prop(2), rejeita('s', 1, 1), rejeita('s', 2, 2)]);
+  assert.equal(validarProposta(pl, misto, dadosProp({ task: 't2' })), terceira, 'rejeições com e sem task somam');
+  assert.equal(validarProposta(pl, misto, dadosProp({ origem: 'sombra' })), null, 'a Sombra redige na âncora do REQ, com ou sem task');
+});
+
+test('t11-sombra-so-redige-depois-da-segunda-rejeicao', () => {
+  const um = projetarEmendas([prop(1), rejeita('s', 1, 1)]);
+  assert.equal(validarProposta(plano(T('t', [], [])), um, dadosProp({ origem: 'sombra' })), 'origem sombra só depois da 2ª rejeição da mesma âncora');
+  assert.equal(validarProposta(plano(T('t', [], [])), vazio, dadosProp({ origem: 'sombra' })), 'origem sombra só depois da 2ª rejeição da mesma âncora');
+  assert.equal(validarProposta(plano(T('t', [], [])), rejeitadas2(), dadosProp({ origem: 'sombra' })), null);
+});
+
+test('t11-rejeicao-de-proposta-da-sombra-nao-conta-para-o-orquestrador', () => {
+  const est = projetarEmendas([prop(1), prop(2, { origem: 'sombra' }), rejeita('s', 1, 1), rejeita('s', 2, 2)]);
+  assert.equal(validarProposta(plano(T('t', [], [])), est, dadosProp()), null, 'só 1 rejeição do orquestrador');
+});
+
+test('rejeicao-da-redacao-da-sombra-vai-ao-dono', () => {
+  // Emenda 13 (REQ-EME-3): proposta `origem: sombra` rejeitada vai ao dono; a Sombra não repropõe no mesmo REQ (o orquestrador já está na 3ª).
+  const pl = plano(T('t1', [], ['a.ts']), T('u', [], [], ['REQ-EME-2']));
+  const est = projetarEmendas([prop(1), prop(2), rejeita('s', 1, 1), rejeita('s', 2, 2), prop(3, { origem: 'sombra' }), rejeita('s', 3, 3)]);
+  const aoDono = 'redação da Sombra rejeitada nesta âncora: vai ao dono (a Sombra não repropõe)';
+  assert.equal(validarProposta(pl, est, dadosProp({ origem: 'sombra' })), aoDono, 'a Sombra não repropõe');
+  assert.equal(validarProposta(pl, est, dadosProp({ origem: 'sombra', task: 't1' })), aoDono, 'nem trocando a task');
+  assert.match(validarProposta(pl, est, dadosProp()) ?? '', /^terceira proposta do orquestrador/, 'nem o orquestrador');
+  // aberta (ainda não julgada) não é rejeição: a Sombra ainda não foi recusada
+  const aberta = projetarEmendas([prop(1), prop(2), rejeita('s', 1, 1), rejeita('s', 2, 2), prop(3, { origem: 'sombra' })]);
+  assert.equal(validarProposta(pl, aberta, dadosProp({ origem: 'sombra' })), null, 'só a rejeitada trava');
+  // outra âncora segue livre
+  assert.equal(validarProposta(pl, est, dadosProp({ req: 'REQ-EME-2' })), null);
+});
+
+test('t26-quem-redige-na-ancora: só por REQ; orquestrador até 2 rejeições, Sombra redige, rejeitada a Sombra vai ao dono', () => {
+  const q = (...e: Evento[]) => quemRedigeNaAncora(projetarEmendas(e), 'REQ-EME-1');
+  assert.deepEqual(q(), { quem: 'orquestrador', rejeicoes: 0 });
+  assert.equal(q(prop(1), rejeita('s', 1, 1)).quem, 'orquestrador');
+  assert.deepEqual(q(prop(1), prop(2, { task: 't' }), rejeita('s', 1, 1), rejeita('s', 2, 2)), { quem: 'sombra', rejeicoes: 2 });
+  assert.equal(q(prop(1), prop(2), prop(3, { origem: 'sombra' }), rejeita('s', 1, 1), rejeita('s', 2, 2), rejeita('s', 3, 3)).quem, 'dono');
+  const outro = projetarEmendas([prop(1, { req: 'REQ-EME-2' }), prop(2, { req: 'REQ-EME-2' }), rejeita('s', 1, 1), rejeita('s', 2, 2)]);
+  assert.equal(quemRedigeNaAncora(outro, 'REQ-EME-1').quem, 'orquestrador', 'outro REQ não conta');
+});
+
+test('t26-sombra-rejeitada-em-outro-req-nao-prende-esta-ancora', () => {
+  const est = projetarEmendas([
+    prop(1, { req: 'REQ-EME-2' }), prop(2, { req: 'REQ-EME-2', origem: 'sombra' }), rejeita('s', 2, 2), // Sombra rejeitada no REQ-EME-2
+    prop(3), prop(4), rejeita('s', 3, 3), rejeita('s', 4, 4), // 2 rejeições do orquestrador no REQ-EME-1
+  ]);
+  assert.deepEqual(quemRedigeNaAncora(est, 'REQ-EME-1'), { quem: 'sombra', rejeicoes: 2 });
+  assert.equal(validarProposta(plano(T('t', [], [])), est, dadosProp({ origem: 'sombra' })), null, 'a Sombra ainda redige no REQ-EME-1');
+});
+
+test('t26-mensagem-dono-nao-manda-a-sombra-redigir', () => {
+  const est = projetarEmendas([prop(1), prop(2), prop(3, { origem: 'sombra' }), rejeita('s', 1, 1), rejeita('s', 2, 2), rejeita('s', 3, 3)]);
+  const m = validarProposta(plano(T('t', [], [])), est, dadosProp()) ?? '';
+  assert.match(m, /vai ao dono/);
+  assert.ok(!m.includes('Sombra redige'), m);
+  const so2 = projetarEmendas([prop(1), prop(2), rejeita('s', 1, 1), rejeita('s', 2, 2)]);
+  assert.match(validarProposta(plano(T('t', [], [])), so2, dadosProp()) ?? '', /a Sombra redige o texto/, 'quem=sombra mantém a mensagem');
+});
+
+// ── GM-15 T36 r1 MAJOR-3 (emenda 25 m.4, D-G19): o dono reverte emenda JÁ aplicada ⇒ vale e a spec fica divergente ────────────────────────────────────────────────
+const SA = 'a'.repeat(64);
+const SB = 'b'.repeat(64);
+const SC = 'c'.repeat(64);
+const SD = 'd'.repeat(64);
+const aprovadaSpec = (seq: number, sha = SA) => ev('dono', seq, 'spec.aprovada', { spec: 'docs/s.md', sha256: sha });
+const aplicada = (seq: number, emenda: number, antes: string, depois: string, extra: Record<string, unknown> = {}) =>
+  ev('loop', seq, 'spec.aplicada', { seq: emenda, spec: 'docs/s.md', sha256_antes: antes, sha256_depois: depois, ...extra });
+/** spec A aprovada, emenda 1 aprovada pela SOMBRA e aplicada (A ⇒ B). */
+const aplicadaB = () => [aprovadaSpec(1), prop(1), aprova('sombra', 1, 1, 'sombra'), aplicada(1, 1, SA, SB)];
+const revertida = () => [...aplicadaB(), rejeita('dono', 2, 1, 'dono')];
+
+test('reverter-apos-aplicada-vale-e-diverge: o dono rejeita a aprovação da Sombra depois do spec.aplicada ⇒ a reversão vale, a cadeia segue o arquivo (B) e a projeção marca divergente {seq, sha_aplicado}', () => {
+  const est = projetarEmendas(aplicadaB());
+  assert.equal(validarJulgamento(est, 1, 'dono', true), null, 'o dono reverte mesmo depois de aplicada');
+  assert.match(validarJulgamento(est, 1, 'sombra', true) ?? '', /já julgada/, 'a Sombra não');
+  const antes = pontaDaSpec(aplicadaB());
+  assert.equal(antes.divergente, null, 'enquanto a aprovação vale não há divergência');
+  const r = pontaDaSpec(revertida());
+  assert.deepEqual(r.divergente, { seq: 1, sha_aplicado: SB });
+  assert.equal(r.ponta?.sha256, SB, 'a cadeia não quebra: o texto segue no arquivo');
+  assert.equal(shaAceito(revertida(), SB), true);
+  assert.equal(projetarEmendas(revertida()).rejeitadas[0].rejeitadaPor, 'dono');
+});
+
+test('desfazer-fecha-divergencia: spec.aplicada com reverte (antes = ponta, depois ≠ sha_aplicado) encerra a divergência; sem ela, ou torta, ela segue', () => {
+  const desfaz = aplicada(2, 1, SB, SC, { reverte: true });
+  const ok = pontaDaSpec([...revertida(), desfaz]);
+  assert.equal(ok.divergente, null);
+  assert.equal(ok.ponta?.sha256, SC);
+  assert.deepEqual(ok.aplicacoes.map((a) => [a.seq, a.reverte === true]), [[1, false], [1, true]]);
+  const segue = (...extra: Evento[]) => pontaDaSpec([...revertida(), ...extra]).divergente;
+  assert.deepEqual(segue(), { seq: 1, sha_aplicado: SB }, 'sem novo spec.aplicada a divergência não some');
+  assert.deepEqual(segue(aplicada(2, 1, SB, SC)), { seq: 1, sha_aplicado: SB }, 'aplicada sem reverte da mesma seq (já aplicada) não desfaz');
+  assert.deepEqual(segue(aplicada(2, 1, SB, SB, { reverte: true })), { seq: 1, sha_aplicado: SB }, 'depois = sha_aplicado: nada foi desfeito');
+  assert.deepEqual(segue(aplicada(2, 1, SA, SC, { reverte: true })), { seq: 1, sha_aplicado: SB }, 'antes fora da ponta');
+  assert.deepEqual(segue(aplicada(2, 9, SB, SC, { reverte: true })), { seq: 1, sha_aplicado: SB }, 'reverte de seq que não foi aplicada');
+  assert.deepEqual(segue(aplicada(2, 1, SB, SC, { reverte: false })), { seq: 1, sha_aplicado: SB }, 'reverte só vale true (e a forma recusa)');
+  // c2 MINOR-2: a divergência só fecha por spec.aplicada com reverte (emenda 25); nova spec.aprovada NÃO a encerra, e o desfazer parte da ponta nova
+  assert.deepEqual(pontaDaSpec([...revertida(), aprovadaSpec(3, SD)]).divergente, { seq: 1, sha_aplicado: SB }, 'spec.aprovada não fecha a divergência');
+  assert.equal(pontaDaSpec([...revertida(), aprovadaSpec(3, SD), aplicada(4, 1, SD, SC, { reverte: true })]).divergente, null, 'o desfazer depois da aprovação nova fecha');
+  // a reversão que NÃO foi depois de aplicada não gera divergência (o dono rejeita a aprovação da Sombra antes de aplicar)
+  assert.equal(pontaDaSpec([aprovadaSpec(1), prop(1), aprova('sombra', 1, 1, 'sombra'), rejeita('dono', 2, 1, 'dono')]).divergente, null);
+});
+
+test('validarAplicacao-desfazer: a emenda aplicada e revertida pelo dono aceita o desfazer 1 vez (reverte:true, com o sha_aplicado); rejeição que nunca foi aplicada segue recusada', () => {
+  const v = validarAplicacao(revertida(), 1);
+  assert.deepEqual(v.ok && [v.ponta.sha256, v.reverte, v.sha_aplicado], [SB, true, SB]);
+  const feito = validarAplicacao([...revertida(), aplicada(2, 1, SB, SC, { reverte: true })], 1);
+  assert.deepEqual(feito, { ok: false, motivo: 'ja_aplicada' });
+  assert.deepEqual(validarAplicacao([aprovadaSpec(1), prop(1), rejeita('dono', 2, 1, 'dono')], 1), { ok: false, motivo: 'emenda_nao_aprovada' });
+  assert.deepEqual(validarAplicacao([aprovadaSpec(1), prop(1), prop(2), aprova('sombra', 1, 1, 'sombra'), rejeita('dono', 2, 1, 'dono')], 1), { ok: false, motivo: 'emenda_nao_aprovada' }, 'revertida mas nunca aplicada');
+  // a emenda aprovada e aplicada segue recusada na 2ª aplicação (ja_aplicada), como antes
+  assert.deepEqual(validarAplicacao(aplicadaB(), 1), { ok: false, motivo: 'ja_aplicada' });
 });

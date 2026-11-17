@@ -13,7 +13,7 @@
  * - 2+ specs da entrega ⇒ spec `?` e `ambigua`, até uma `dono.resposta` com o título ou o caminho de uma delas, posterior à
  *   entrada da última spec do conjunto (DP-2 ajuste 2); a escolhida passa a ser "a spec".
  */
-import { estadoDe, ordenar, TIPOS_DE_TASK } from './loop.js';
+import { estadosPorTask, ordenar } from './loop.js';
 import { shaAceito } from './emenda.js';
                                          
 
@@ -98,12 +98,21 @@ function ligadaPorResposta(evs          , re               , sessao         )   
 
                                                                                                             
 
-/** Último estado medido por número; "último PR" = maior número; `aberto` = maior número aberto. */
-function prs(evs          )           {
+/**
+ * Último estado medido por número; "último PR" = maior número; `aberto` = maior número aberto. GM-15 (T3): o PR achado por `via: 'titulo'`
+ * vale mesmo com head sem o ID; o descarte por head (head que não casa a entrega) vale só para `via: 'head'` ou fato sem `via`.
+ * `entrega` ausente ⇒ sem descarte (só os testes antigos de `prs` não passam por `trilhaDe`).
+ */
+function prs(evs          , entrega               , idPadrao        )           {
   const por = new Map                ();
   for (const e of evs) {
     const v = fatoMedido(e, 'pr');
-    if (v && Number.isInteger(v.numero) && typeof v.estado === 'string') por.set(v.numero          , v.estado);
+    if (!v || !Number.isInteger(v.numero) || typeof v.estado !== 'string') continue;
+    if (entrega !== null && v.via !== 'titulo' && typeof v.branch === 'string' && v.branch !== '' && idDaBranch(v.branch, idPadrao) !== entrega) {
+      por.delete(v.numero          ); // o PR "saiu" da entrega: o head de outra entrega (a remedição por número pode revelá-lo)
+      continue;
+    }
+    por.set(v.numero          , v.estado);
   }
   let ultimo                     = null;
   let aberto                = null;
@@ -112,6 +121,62 @@ function prs(evs          )           {
     if (estado === 'aberto' && (aberto === null || numero > aberto)) aberto = numero;
   }
   return { ultimo, aberto, total: por.size };
+}
+
+const escapar = (id        )         => id.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
+const ms = (v         )         => (typeof v === 'string' ? Date.parse(v) : NaN);
+
+                            
+                                                                                   
+                     
+                                                                                                  
+                                                                                     
+                                                      
+                            
+                                                                                                  
+                             
+  
+
+/**
+ * GM-15 T3 (REQ-ENT-1 c, d): estado de encerramento da entrega `id`, puro (nunca lança). O diário que não ordena não afirma (`encerrada: false`).
+ * Depois de uma `entrega.reaberta` só vale uma `entrega.encerrada` posterior a ela, de PR que ainda não encerrou e cujo `mergeado_em`
+ * (o `mergedAt` do GitHub, nunca o `ts` da medição) é posterior a `em`.
+ */
+export function encerramentoDe(eventos          , id        )               {
+  const vazio               = { encerrada: false, primeira: null, reabertaEm: null, prsQueEncerraram: [] };
+  const ord = Array.isArray(eventos) ? ordenar(eventos) : { ok: false          };
+  if (!ord.ok) return vazio;
+  const usados = new Set        ();
+  let reabertaEm                = null;
+  let primeira                           = null;
+  for (const e of ord.eventos) {
+    const d = obj(e.dados);
+    if (d.entrega !== id) continue;
+    if (e.tipo === 'entrega.reaberta') {
+      reabertaEm = typeof d.em === 'string' ? d.em : reabertaEm;
+      primeira = null;
+    } else if (e.tipo === 'entrega.encerrada' && primeira === null && Number.isInteger(d.pr) && typeof d.mergeado_em === 'string') {
+      if (reabertaEm !== null && !(ms(d.mergeado_em) > ms(reabertaEm) && !usados.has(d.pr          ))) continue; // re-encerramento só com PR novo
+      primeira = { pr: d.pr          , via: String(d.via), mergeado_em: d.mergeado_em, ...(typeof d.versao === 'string' ? { versao: d.versao } : {}) };
+      usados.add(d.pr          );
+    }
+  }
+  return { encerrada: primeira !== null, primeira, reabertaEm, prsQueEncerraram: [...usados] };
+}
+
+                                                                                                                                                          
+
+/**
+ * GM-15 T3 (REQ-ENT-1 a, b, c): este PR pode encerrar a entrega `id`? PR com `base: 'main'` (fato sem `base` nunca encerra), mergeado, head casando
+ * o ID (`via: 'head'`) ou título casando (`via: 'titulo'`), que ainda não encerrou; depois de `entrega.reaberta`, só com `mergeado_em` posterior a `em`.
+ */
+export function podeEncerrar(eventos          , id        , pr          )          {
+  if (pr === null || typeof pr !== 'object' || pr.estado !== 'mergeado' || pr.base !== 'main' || !Number.isInteger(pr.numero)) return false;
+  if (pr.via === 'head') { if (idDaBranch(pr.branch ?? null, escapar(id)) !== id) return false; }
+  else if (pr.via !== 'titulo') return false;
+  const enc = encerramentoDe(eventos, id);
+  if (enc.encerrada || enc.prsQueEncerraram.includes(pr.numero)) return false;
+  return enc.reabertaEm === null || ms(pr.mergeado_em) > ms(enc.reabertaEm);
 }
 
 /**
@@ -160,14 +225,15 @@ function escolhaDaSpec(evs          , specs            )                  {
   return null;
 }
 
-/** Integradas do plano; `null` se algum ciclo de task do diário é impossível (diário inválido para a execução). */
+/**
+ * Integradas do plano; `null` se algum ciclo de task do diário é impossível (diário inválido para a execução). Reabertura de origem inválida afeta só a task
+ * dela (GM-15 T25, MAJOR-2: `estadosPorTask`, a regra única de `proximaAcao` e do pouso): ela não conta como integrada e as outras seguem contadas.
+ */
 function integradas(tasks          , evs          )                {
+  const r = estadosPorTask(tasks, evs, true);
+  if (!r.ok) return null;
   let n = 0;
-  for (const id of tasks) {
-    const r = estadoDe(evs.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && obj(e.dados).task === id));
-    if ('invalido' in r) return null;
-    if (r.estado === 'integrada') n++;
-  }
+  for (const est of r.estados.values()) if (est.estado === 'integrada') n++;
   return n;
 }
 
@@ -210,7 +276,7 @@ export function trilhaDe(fatos             , eventos          )         {
   const plano = f.plano !== null && typeof f.plano === 'object' ? { tasks: lista        (f.plano.tasks) } : null;
   const segundo = doId.length >= 1 || plano !== null || f.ledger === true;
   const semFonte = daBranch !== candidato; // sem branch com o ID: nem plano.json nem `gh pr list --head` têm onde procurar
-  const pr = prs(evs);
+  const pr = prs(evs, candidato, f.idPadrao);
 
   // Fase PR: fonte falhou ⇒ `?`; senão último (maior número) mergeado e nenhum aberto.
   let celPr        ;

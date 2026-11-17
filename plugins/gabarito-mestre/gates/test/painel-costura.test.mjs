@@ -7,6 +7,7 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { raizSegura } from './_raiz-segura.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, copyFileSync, readdirSync, readFileSync, chmodSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -25,7 +26,7 @@ const CLI = join(AQUI, '..', 'scripts', 'painel.mjs');
 const LOOP = join(AQUI, '..', 'scripts', 'loop.mjs');
 const FIXTURE = join(AQUI, 'fixtures', 'transcript-agente.jsonl');
 const ROOT = '/opt/gabarito mestre';
-const novoTmp = (p) => realpathSync(mkdtempSync(join(tmpdir(), p)));
+const novoTmp = (p) => raizSegura(realpathSync(mkdtempSync(join(tmpdir(), p))));
 const g = (dir, ...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const texto = (linhas) => linhas.map((l) => l.map((s) => s.texto).join('')).join('\n');
 const cores = (linhas) => new Set(linhas.flatMap((l) => l.map((s) => s.cor ?? null)));
@@ -83,13 +84,13 @@ describe('costura mod → CLI real → mod', () => {
     // GM-15 T29 (desenho do E4): a linha do contexto do líder com a barra
     assert.match(txt, /^│ {2}ctx █+░+ 46% · pouso em 50% {3}tok \S+$/m, txt);
     assert.equal(a.estado.equipe.agentes.find((x) => x.task === 'T2' && x.vivo)?.ctxTok, 92762, 'o ctx da fixture (92.762) chega ao estado pelo CLI real');
-    // GM-15 T29 (D-G1, emenda 2: sem medição ⇒ "?", nunca some nem vira 0): rateLimits sem five_hour ⇒ `5h ?`, nunca barra nem 0%
-    assert.match(txt, /^│ {2}5h \? {3}7d █░{9} 9%$/m, txt);
-    assert.doesNotMatch(txt, /5h [█░]|5h 0%/, 'rateLimits sem five_hour ⇒ nenhuma barra de 5h');
+    // GM-15 T33 (g.10, D-G7: o Claude não tem mais limite de 5 h): rateLimits sem five_hour ⇒ o campo 5h é OMITIDO (nunca `5h ?`, barra nem 0%); o 7d segue
+    assert.match(txt, /^│ {2}7d █░{9} 9%$/m, txt);
+    assert.doesNotMatch(txt, /\b5h\b/, 'rateLimits sem five_hour ⇒ nenhum campo de 5h');
     assert.equal(a.estado.equipe.lider.d7, 9, 'seven_day (9) chega ao líder no estado');
-    // GM-14 T18: o estado novo traz o item "depende de você: nada" (T13/T17, D-P13). `faixaDe` do mod (mod/painel.mjs, T20) ainda o lê como
-    // pendência ("depende de você: depende de você: nada"): defeito de costura relatado à T20, fora dos arquivos da T18. Aqui só o que o CLI entrega.
-    assert.deepEqual(a.estado.depende.map((i) => i.motivo), ['depende de você: nada']);
+    // GM-14 T18: o estado novo traz o item "nada depende de você" (T13/T17, D-P13). `faixaDe` do mod (mod/painel.mjs, T20) ainda o lê como
+    // pendência ("depende de você: nada depende de você"): defeito de costura relatado à T20, fora dos arquivos da T18. Aqui só o que o CLI entrega.
+    assert.deepEqual(a.estado.depende.map((i) => i.motivo), ['nada depende de você']);
 
     // (B) o loop PARA pelo CLI real do loop, com T2 no teto
     for (const [tipo, dados] of [['task.concluida', { task: 'T2', sha: 'c'.repeat(40) }],
@@ -477,6 +478,7 @@ describe('T11: pacotes de fábrica e funções puras do comando', () => {
     assert.deepEqual(prefsValidas({ ...cheio, ligado: 0 }).prefs, { ...cheio, ligado: true });
     assert.deepEqual(prefsValidas({ ...cheio, pacote: '../x' }).prefs, { ...cheio, pacote: null });
     assert.deepEqual(prefsValidas({ ...cheio, pacote: 9 }).prefs, { ...cheio, pacote: null });
+    assert.deepEqual(prefsValidas({ ...cheio, pacote: 'sortear' }).prefs, { ...cheio, pacote: null }, 'sortear é reservado (T22)');
   });
 
   test('umaLinha: sem controle nem quebra, ≤ 200 colunas', () => {
@@ -486,9 +488,30 @@ describe('T11: pacotes de fábrica e funções puras do comando', () => {
     assert.equal(umaLinha('painel: color'), 'painel: color');
   });
 
-  test('USO_GABARITO: ajuda do adotante, cada opção explicada, ≤ 14 linhas de ≤ 80 colunas, sem jargão interno', () => {
+  test('ajuda-cobre-todos-os-ramos: toda palavra que o comando aceita (varrida do código de painel, chat e gabarito) aparece na USO_GABARITO', () => {
+    const MOD = join(AQUI, '..', '..', 'mod');
+    const lerMod = (n) => readFileSync(join(MOD, n), 'utf8');
+    const corpo = (src, nome) => {
+      const i = src.indexOf(`function ${nome}(`);
+      assert.ok(i >= 0, `sem função ${nome}`);
+      const j = src.indexOf('\n}\n', i);
+      return src.slice(i, j);
+    };
+    const painel = lerMod('painel.mjs'), chat = lerMod('chat.mjs'), gab = lerMod('gabarito.mjs');
+    const achadas = new Set();
+    for (const m of corpo(painel, 'comandoPainelBruto').matchAll(/\b[ab] === '([a-z]+)'/g)) achadas.add(m[1]);
+    for (const m of corpo(painel, 'nomesDoPainel').matchAll(/\bp === (?:'([a-z]+)'|(PACOTE_[A-Z]+))/g)) achadas.add(m[1] ?? painel.match(new RegExp(`const ${m[2]} = '([a-z]+)'`))?.[1]);
+    for (const nome of ['PRESETS', 'TEMAS', 'LOCAIS']) for (const m of painel.match(new RegExp(`const ${nome} = (?:Object\\.freeze\\()?\\[([^\\]]*)\\]`))[1].matchAll(/'([a-z]+)'/g)) achadas.add(m[1]);
+    for (const m of corpo(chat, 'comandoChat').matchAll(/modo [!=]== '([a-z]+)'/g)) achadas.add(m[1]);
+    for (const m of gab.matchAll(/\bacao (?:===|!==) '([a-z]+)'|\bacao\.startsWith\('([a-z]+) '\)/g)) achadas.add(m[1] ?? m[2]);
+    assert.ok(achadas.size >= 16, `a varredura achou pouco (${[...achadas].join(' ')})`);
+    const faltam = [...achadas].filter((w) => !new RegExp(`(^|[^a-z])${w}([^a-z]|$)`).test(USO_GABARITO));
+    assert.deepEqual(faltam, [], `ramos aceitos que a ajuda não cita: ${faltam.join(', ')}`);
+  });
+
+  test('USO_GABARITO: ajuda do adotante, cada opção explicada, ≤ 20 linhas de ≤ 80 colunas, sem jargão interno', () => {
     const linhas = USO_GABARITO.split('\n');
-    assert.ok(linhas.length <= 14, `linhas: ${linhas.length}`);
+    assert.ok(linhas.length <= 20, `linhas: ${linhas.length}`);
     for (const l of linhas) assert.ok([...l].length <= 80, `larga (${[...l].length}): ${l}`);
     const achar = (re) => linhas.find((l) => re.test(l)) ?? assert.fail(`sem linha ${re}`);
     assert.match(`${linhas[0]} ${linhas[1]}`, /^Uso: o painel abre sozinho ao lado, em terminal largo, quando uma entrega começa\.$/);
@@ -497,7 +520,12 @@ describe('T11: pacotes de fábrica e funções puras do comando', () => {
     assert.match(achar(/painel executivo/), /executivo {2}resumido/);
     assert.match(achar(/painel color/), /color {6}com cores {2}\(ou: mono, sem cores\)/);
     assert.match(achar(/narracao/), /narracao on\|off {3}liga ou desliga a narração/);
-    assert.match(achar(/nomes/), /nomes <pacote> {4}troca os nomes da equipe/);
+    assert.match(achar(/painel nomes {6}/), /nomes {6}lista os pacotes de nomes; <pacote> troca/);
+    assert.match(achar(/nomes sortear/), /nomes sortear {5}volta a sortear os nomes da equipe/);
+    assert.match(achar(/painel lateral/), /lateral {4}painel ao lado {2}\(ou: acima, acima da conversa\)/);
+    assert.match(achar(/painel ocultar/), /ocultar {4}esconde o painel; PAROU e perguntas ficam/);
+    assert.match(achar(/painel mostrar/), /mostrar {4}traz o painel de volta/);
+    assert.match(achar(/\/gabarito chat/), /chat cru\|natural {2}linhas de ferramenta cruas ou em linguagem natural/);
     assert.match(achar(/painel ligar/), /volta a abrir sozinho/);
     assert.match(USO_GABARITO, /desligar {3}fecha e não abre sozinho; só o aviso de PAROU\n {28}continua\n/);
     assert.match(achar(/\/gabarito pausar/), /para o trabalho automático da entrega/);
@@ -570,9 +598,13 @@ describe('costura T18: CLI real em toda fase', { timeout: 180_000 }, () => {
         [esp.marcas, esp.identificada, esp.entrega, esp.fase, esp.progresso, esp.mudouDepois, esp.ultimaConhecida], `${fx.nome}\n${JSON.stringify(e.trilha)}`);
       assert.doesNotMatch(JSON.stringify(out), /sem_loop|plano_ausente/);
       const t = rodar(repo, 'texto', sessao);
-      if (fx.fatos.plano === null) {
+      if (fx.fatos.plano === null && e.umaLinha !== null) {
+        // GM-15 T35 (r.13): sem nada que trave o dono (as ideias da fixture são do orquestrador, lembrete dele), o painel fora de entrega é 1 linha
+        assert.deepEqual(e.depende.map((d) => d.motivo), ['nada depende de você']);
+        assert.match(t, /^GABARITO · sem entrega em curso/m, t);
+      } else if (fx.fatos.plano === null) {
         assert.equal(e.pronto, null);
-        assert.match(t, new RegExp(`^FASE ${esp.fase} de 7 `, 'm'), t);
+        assert.match(t, /^fase não medida · /m, t); // GM-15 T32 (emenda 4 item 4): sem plano.json a fase não é medida
       } else {
         assert.equal(e.fase, null);
         const n = fx.eventos.flatMap((c) => c.integradas ?? []).length;
@@ -581,18 +613,21 @@ describe('costura T18: CLI real em toda fase', { timeout: 180_000 }, () => {
     });
   }
 
-  test('costura-fora-de-entrega: fase 1 sem eventos ⇒ 1 linha com a última conhecida; com as ideias ⇒ FASE 1 de 7 e o item das ideias', () => {
+  test('costura-fora-de-entrega: fase 1 sem eventos ⇒ 1 linha com a última conhecida; com as ideias do orquestrador também (T35 r.13: lembrete dele não trava o dono)', () => {
     const fx = JSON.parse(readFileSync(join(TRILHA, 'fase-1.json'), 'utf8'));
     const vazio = materializar(fx, { semEventos: true });
-    assert.equal(rodar(vazio.repo, 'texto'), 'GABARITO · sem entrega em curso · última: GM-19\n');
+    // GM-15 T32 (emenda 4): a linha única segue 1 linha e é a ÚLTIMA; o projeto (2 entregas no diário) vem acima
+    const unica = (txt) => txt.trimEnd().split('\n').at(-1);
+    assert.equal(unica(rodar(vazio.repo, 'texto')), 'GABARITO · sem entrega em curso · última: GM-19');
     const cheio = materializar(fx);
     const t = rodar(cheio.repo, 'texto');
-    assert.match(t, /^FASE 1 de 7 /m, t);
-    assert.match(t, /2 ideias/, t);
+    assert.equal(unica(t), 'GABARITO · sem entrega em curso · última: GM-19');
+    assert.equal(t.split('\n').filter((l) => /^GABARITO/.test(l)).length, 1);
+    assert.equal(JSON.parse(rodar(cheio.repo, 'estado')).estado.trilha.progresso, '2 ideias anotadas', 'as ideias seguem contadas na trilha');
   });
 
-  /** Repo novo + `loop.mjs anotar --tipo pendencia` REAL; devolve o repo. */
-  const anotarReal = (texto) => {
+  /** Repo novo + `loop.mjs anotar --tipo pendencia` REAL; devolve o repo. GM-15 T35 (r.13): o CLI recusa (status 1) e nada é gravado. */
+  const anotarReal = (texto, status = 1) => {
     const base = novoTmp('painel anotar ');
     const repo = join(base, 'repo');
     mkdirSync(repo);
@@ -601,17 +636,17 @@ describe('costura T18: CLI real em toda fase', { timeout: 180_000 }, () => {
     writeFileSync(join(repo, 'README.md'), 'x\n'); g(repo, 'add', '-A'); g(repo, 'commit', '-q', '-m', 'inicio');
     assert.equal(rodar(repo, 'texto'), 'GABARITO · sem entrega em curso\n');
     const a = spawnSync(process.execPath, [LOOP, 'anotar', '--tipo', 'pendencia', '--texto', texto], { cwd: repo, encoding: 'utf8' });
-    assert.equal(a.status, 0, a.stdout + a.stderr);
+    assert.equal(a.status, status, a.stdout + a.stderr);
+    if (status === 1) assert.match(a.stdout, /pendencia_do_orquestrador/);
     return repo;
   };
 
-  test('anotar-real-aparece-no-depende (P9): `loop.mjs anotar --tipo pendencia` real ⇒ `estado` ⇒ o DEPENDE do render mostra a pendência com o botão "feito"', () => {
+  // GM-15 T35 (r.13, D-G12 1) revoga "a pendência anotada pelo orquestrador aparece no DEPENDE": o CLI a recusa e o painel segue em 1 linha
+  test('anotar-real-pendencia-recusa-e-painel-limpo (P9, T35 r.13): `loop.mjs anotar --tipo pendencia` real recusa ⇒ `estado` sem o item ⇒ o render segue 1 linha', () => {
     const repo = anotarReal('assinar o contrato do fornecedor');
     const e = JSON.parse(rodar(repo, 'estado')).estado;
-    const item = e.depende.find((i) => i.motivo === 'assinar o contrato do fornecedor');
-    assert.ok(item, JSON.stringify(e.depende));
-    assert.equal(item.acoes[0].rotulo, 'feito');
-    assert.match(rodar(repo, 'texto'), /^◆ DEPENDE DE VOCÊ {2}1 item\n {2}assinar o contrato do fornecedor \[feito\]$/m); // GM-15 T29: topo do E4
+    assert.equal(e.depende.some((i) => i.motivo === 'assinar o contrato do fornecedor'), false, JSON.stringify(e.depende));
+    assert.equal(rodar(repo, 'texto'), 'GABARITO · sem entrega em curso\n');
   });
 
   test('anotar-real-aparece-com-origem (P9, REQ-LNG-1): a pendência anotada pelo orquestrador aparece no render com "(anotado pelo orquestrador)"',

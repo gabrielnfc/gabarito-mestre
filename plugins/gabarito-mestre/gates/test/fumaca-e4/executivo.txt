@@ -14,7 +14,8 @@ Orquestrador  orquestra
 │  ctx █████████████░░░░░░░░░░░░░░░░ 46% · pouso em 50%   tok ?
 │  5h █░░░░░░░░░ 12%   7d █░░░░░░░░░ 5%
 │  ▸ parado · T3 continua
-└─ ● Implementador · haiku  T3  ctx 93k  7m  implementando (registrado)
+├─ ● Implementador · haiku  T3  ctx 93k  7m  implementando (registrado)
+└─ ○ Conselheiro
 ────────────────────────────────────────────────────────────────────────────────
 12:25 ✗ travou: teto de rodadas de review (automático)
 12:19 ✗ Revisor reprovou T2 · 1 achado (automático)

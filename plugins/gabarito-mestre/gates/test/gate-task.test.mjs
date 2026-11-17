@@ -365,6 +365,24 @@ describe('gate-task', () => {
     assert.match(texto(r), /mutação m1 VIVA/);
   });
 
+  test('suite-do-mod-roda-depois-dos-gates (GM-15 T34, emenda 7 r.7): a suíte com mod-test.sh só começa quando todas as outras terminaram; as outras seguem em paralelo; o relato sai na ordem declarada', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const log = [];
+    const rodar = async (nome) => {
+      log.push(`ini:${nome}`);
+      await new Promise((r) => setTimeout(r, nome === 'gates' ? 60 : 10));
+      log.push(`fim:${nome}`);
+      return { nome, rc: 0, out: 'ℹ tests 1\nℹ pass 1\nℹ fail 0\n', ms: 1 };
+    };
+    const r = await avaliar({ wt: dir, base, rodar, suites: [{ nome: 'mod', cmd: 'bash scripts/test/mod-test.sh' }, { nome: 'gates', cmd: 'npm test' }, { nome: 'hooks', cmd: 'node --test' }] });
+    assert.equal(r.reprova, 0, texto(r));
+    assert.ok(log.indexOf('ini:mod') > log.indexOf('fim:gates') && log.indexOf('ini:mod') > log.indexOf('fim:hooks'), log.join(' '));
+    assert.ok(log.indexOf('ini:hooks') < log.indexOf('fim:gates'), `as outras seguem em paralelo: ${log.join(' ')}`);
+    const t = texto(r);
+    assert.ok(t.indexOf('mod verde') < t.indexOf('gates verde') && t.indexOf('gates verde') < t.indexOf('hooks verde'), 'a ordem do relato é a declarada');
+  });
+
   test('gate-teste-ja-falha-sem-mutacao (E19): morte falsa não conta', async () => {
     const { dir, base } = repo();
     commit(dir, 'src/b.txt', 'b\n');
@@ -374,10 +392,47 @@ describe('gate-task', () => {
     assert.doesNotMatch(texto(r), /m1 morta/);
   });
 
+  // `rodar` injetado (tempos declarados, não medidos): suíte em `suiteMs`; o comando da mutação leva `basalMs` sem mutação e `mutMs` com ela.
+  const rodarCom = (suiteMs, basalMs, mutMs) => async (nome) => (
+    nome === 'ok' ? { nome, rc: 0, out: 'ℹ tests 1\nℹ pass 1\nℹ fail 0\n', ms: suiteMs }
+      : nome.endsWith('sem mutação') ? { nome, rc: 0, out: '', ms: basalMs }
+        : { nome, rc: 1, out: '', ms: mutMs });
+  const rodaMut = async (suiteMs, basalMs, mutMs, extra = {}) => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    return avaliar({ wt: dir, base, mutacoes: [mut()], rodar: rodarCom(suiteMs, basalMs, mutMs), ...extra, ...verde });
+  };
+
+  test('alerta-tempo-relativo-ao-comando: suíte de minutos, teste focado de 2 s morrendo em 1,5 s ⇒ sem alerta (M24b)', async () => {
+    const r = await rodaMut(300000, 2000, 1500);
+    assert.equal(r.alertas, 0, texto(r));
+    assert.match(texto(r), /mutação m1 morta/);
+    assert.equal(r.mutacoes, 1);
+  });
+
+  test('alerta-tempo-relativo-suite-rapida: comando base de 65 ms, 12 mortes em 0,09 s ⇒ nenhum alerta (M24b)', async () => {
+    const r = await rodaMut(65, 65, 90);
+    assert.equal(r.alertas, 0, texto(r));
+    assert.match(texto(r), /mutação m1 morta/);
+    assert.equal(r.mutacoes, 1);
+  });
+
+  test('alerta-tempo-relativo-ao-comando: comando de 4 s sem mutação, morte em 0,09 s ⇒ alerta', async () => {
+    const r = await rodaMut(65, 4000, 90);
+    assert.equal(r.alertas, 1, texto(r));
+    assert.match(texto(r), /ALERTA.*m1.*tempo/);
+    assert.equal(r.mutacoes, 0);
+  });
+
+  test('alerta-tempo-minMs-prevalece: opts.minMs substitui o limiar relativo, nos dois sentidos', async () => {
+    assert.equal((await rodaMut(65, 4000, 90, { minMs: 50 })).alertas, 0, 'piso baixo: 90 ms basta');
+    assert.equal((await rodaMut(300000, 2000, 1500, { minMs: 5000 })).alertas, 1, 'piso alto: 1,5 s alerta mesmo com basal de 2 s');
+  });
+
   test('gate-tempo-zero-alerta: alerta visível, não veredito', async () => {
     const { dir, base } = repo();
     commit(dir, 'src/b.txt', 'b\n');
-    const r = await avaliar({ wt: dir, base, mutacoes: [mut()], ...verde });
+    const r = await avaliar({ wt: dir, base, mutacoes: [mut()], rodar: rodarCom(4000, 4000, 1), ...verde });
     assert.match(texto(r), /ALERTA.*m1.*tempo/);
     assert.doesNotMatch(texto(r), /m1 morta/);
     assert.doesNotMatch(texto(r), /m1 VIVA/);

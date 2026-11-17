@@ -42,7 +42,8 @@ const noTeto = (task: string, a: number): Item[] => [
   ini(a + 4, task, 'correcao'), con(a + 5, task), ini(a + 6, task, 'revisor'), ver(a + 7, task, false, 2, 1),
 ];
 const DEC = (t: number, resposta: string, task = 'T3') => e(t, 'decisao.sombra', { pergunta_hash: 'a'.repeat(64), task, resposta, arquivo: 'sombra.md', pergunta_enviesada: false, fontes: ['spec:1'] });
-const nota = (t: number, tipo: string, texto: string, extra: Record<string, unknown> = {}, sessao = 's1') => e(t, 'nota', { tipo, texto, ...extra }, sessao);
+/** GM-15 T35 (r.13): pendência/ideia do orquestrador não entra no DEPENDE; os testes de pendência/ideia usam autoria `dono` (`agente` explícito). */
+const nota = (t: number, tipo: string, texto: string, extra: Record<string, unknown> = {}, sessao = 's1', agente = 'dono') => e(t, 'nota', { tipo, texto, ...extra }, sessao, agente);
 
 const ID_PADRAO = '[A-Z]+-\\d+';
 const IDS = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6'];
@@ -82,8 +83,9 @@ const itensTopo = (xs: string[]): string[] => {
  */
 const prioDe = (x: string): number => {
   if (/^(GABARITO|PLANO|FASE|última entrega)/.test(x)) return 2;
-  if (/^◆ DEPENDE DE VOCÊ|^EQUIPE {2,}|^\S+ {2}orquestra|^│ {1,2}(5h|▸)|^CI ●|^ {2}[●○◐✓✗?] |^[●○◐✓✗?] T|^○ /.test(x)) return 6;
-  if (/^│ {2}ctx |^\S+ ctx |^[├└]─? ●|^ {2}\d+ agentes:|^EQUIPE · /.test(x)) return 3;
+  if (/^◆ DEPENDE DE VOCÊ|^EQUIPE {2,}|^\S+ {2}orquestra|^│ {1,2}(5h|7d|▸)|^SEGUNDO PLANO|^segundo plano:|^CI ●|^ {2}[●○◐✓✗?] |^[●○◐✓✗?] T|^○ /.test(x)) return 6;
+  if (/^│ {2}ctx |^\S+ ctx |^[├└]─? [●○]|^ {2}\d+ agentes:|^EQUIPE · /.test(x)) return 3;
+  if (/^ {2}◦ /.test(x)) return 7; // SEGUNDO PLANO (GM-15 T33, g.11): a 1ª a encolher
   if (/^◆ ATENÇÃO|^ {11}\S/.test(x)) return 4;
   if (ehRecente(x)) return 5;
   return 1;
@@ -147,14 +149,15 @@ test('prioridades-por-h-e-maxrows: 9 pares de H × maxRows ⇒ ≤ orçamento, t
     const presente = (x: string): boolean => presentes.has(x) || normais.has(norm(x));
     // exceção declarada (emenda 37, 2ª ao D-P8): com a decisão da Sombra, o AGORA encolhe para a linha-resumo `N agentes:` antes de o RECENTE sair
     const resumido = l.some((x) => /^  \d+ agentes:/.test(x));
-    for (const x of cheio) if (prioDe(x) < maxPrio && !(resumido && /^[├└]/.test(x))) assert.ok(presente(x) || /\(\+\d+\)/.test(l.join('\n')), `H ${h}: "${x}" (prio ${prioDe(x)}) saiu antes de prio ${maxPrio}`);
+    // GM-15 T36: a linha "N decisões da Sombra desde a sua última resposta" é informativa e cede antes da reserva do `decidiu:` (reserva-vence-atencao)
+    for (const x of cheio) if (prioDe(x) < maxPrio && !(resumido && /^[├└]/.test(x)) && !/da Sombra desde a sua última resposta/.test(x)) assert.ok(presente(x) || /\(\+\d+\)/.test(l.join('\n')), `H ${h}: "${x}" (prio ${prioDe(x)}) saiu antes de prio ${maxPrio}`);
   }
 });
 
 test('blocos-na-ordem-e-vazios-somem: cabeçalho · DEPENDE · PLANO · EQUIPE · ATENÇÃO · histórico (desenho do E4); bloco sem conteúdo não ocupa linha', () => {
   const cheio = proj(P(...IDS), [...EXECUCAO, e(60, 'ci.resultado', { verde: false, alvo: 'main' })], { agentes: [vivo('T4 implementador')] });
   const l = linhas(cheio);
-  const rotulos = l.map((x) => (ehRecente(x) ? 'RECENTE' : /^(GABARITO|depende de você|◆ DEPENDE DE VOCÊ|PLANO|FASE|EQUIPE|◆ ATENÇÃO|CI ●)/.exec(x)?.[1])).filter((x) => x !== undefined)
+  const rotulos = l.map((x) => (ehRecente(x) ? 'RECENTE' : /^(GABARITO|(?:nada )?depende de você|◆ DEPENDE DE VOCÊ|PLANO|FASE|EQUIPE|◆ ATENÇÃO|CI ●)/.exec(x)?.[1]?.replace(/^nada /, ''))).filter((x) => x !== undefined)
     .filter((x, i, xs) => i === 0 || xs[i - 1] !== x);
   assert.deepEqual(rotulos, ['GABARITO', 'depende de você', 'PLANO', 'EQUIPE', '◆ ATENÇÃO', 'RECENTE', 'CI ●']);
   // separadores do E4 entre as seções, nunca 2 colados
@@ -206,7 +209,8 @@ test('pronto-pinta-so-integradas: aprovada esperando não pinta; integrada não 
   const s = proj(P(...IDS), [...ciclo('T1', 0), ini(10, 'T2'), con(11, 'T2'), ini(12, 'T2', 'revisor'), ver(13, 'T2', true)]);
   assert.deepEqual(s.pronto, { integradas: 1, total: 6, previsao: null });
   const l = linhas(s).find((x) => /^PLANO/.test(x)) as string;
-  assert.match(l, /^PLANO   ▰{4}▱{17}  17%  1\/6 tasks$/, 'barra do E4 (21) pinta só a integrada: 1/6 ≈ 4 de 21');
+  assert.match(l, /^PLANO   ▰{4}▱{17}  17%  1\/6 tasks +ETA \?: n insuficiente$/, 'barra do E4 (21) pinta só a integrada: 1/6 ≈ 4 de 21; a ETA sem base diz por quê (g.9)');
+  assert.match(linhas(s, { largura: 80 }).find((x) => /^PLANO/.test(x)) as string, /1\/6 tasks$/, 'abaixo de 100 colunas fica só o "?" (sem o motivo)');
   assert.ok(linhas(s).some((x) => /^  ◐ T2 +aprovada/.test(x)), 'a aprovada esperando aparece na fila do E4, sem pintar');
 });
 
@@ -216,7 +220,8 @@ test('previsao-so-com-base: previsão só com ≥ 3 integradas nesta entrega, di
   assert.doesNotMatch(texto(dois), /previsão/);
   const tres = proj(P(...IDS), [...ciclo('T1', 0), ...ciclo('T2', 10), ...ciclo('T3', 20)]);
   assert.equal(tres.pronto?.previsao?.base, 3);
-  assert.match(texto(tres), /^PLANO   ▰+▱+  50%  3\/6 tasks +previsão \d\d:\d\d \(base: 3 tasks desta entrega\)$/m);
+  // h.2 (GM-15 T30): faixa (sem fechamento medido, abre em "?") e a base da mesma conta: caminho, min por task, rodada, fechamento
+  assert.match(texto(tres), /^PLANO   ▰+▱+  50%  3\/6 tasks +previsão \d\d:\d\d–\? · caminho 1 task · 6 min por task · 1,0 rodada · fechamento não medido$/m);
 });
 
 test('fase-fora-de-entrega: sem plano, a linha FASE mostra n de 7, barra só de ✓, progresso e a trilha', () => {
@@ -251,14 +256,14 @@ test('nada-so-com-todas-as-fontes: fixture 18:40 com T12 no limite ⇒ item (5),
   const s = proj(P('T11', 'T12', 'T13'), noTeto('T12', 0), { fatos: fatos({ plano: { tasks: ['T11', 'T12', 'T13'] } }) });
   const t = texto(s);
   assert.match(t, /^◆ DEPENDE DE VOCÊ {2}1 item\n {2}decidir a T12: chegou ao limite de revisões \[liberar mais uma rodada\]$/m);
-  assert.doesNotMatch(t, /depende de você: nada/);
+  assert.doesNotMatch(t, /nada depende de você/);
   const falhou = proj(P(...IDS), [], { fontesFalhas: ['o GitHub'] });
   assert.match(texto(falhou), /depende de você: \? \(não consegui ler o GitHub\)/);
   assert.doesNotMatch(texto(falhou), /nada/);
   const ilegivel = proj(P(...IDS), null);
   assert.match(texto(ilegivel), /não consegui ler o diário/);
   const tudoOk = proj(P(...IDS), []);
-  assert.match(texto(tudoOk), /^depende de você: nada$/m);
+  assert.match(texto(tudoOk), /^nada depende de você$/m);
 });
 
 test('limpar-no-depende: pouso pendente ⇒ "limpar a conversa" com o botão, sem o comando no texto', () => {
@@ -273,10 +278,10 @@ test('desatualizado-atencao-e-nunca-nada: passou de 180 s ⇒ ATENÇÃO e o topo
   const s = proj(P(...IDS), [], { desatualizadoS: 600 });
   const t = texto(s);
   assert.match(t, /^◆ ATENÇÃO {2}painel sem ler o diário há 10 min$/m);
-  assert.doesNotMatch(t, /depende de você: nada/);
+  assert.doesNotMatch(t, /nada depende de você/);
   assert.match(t, /depende de você: \?/);
   const dentro = proj(P(...IDS), [], { desatualizadoS: 180 });
-  assert.match(texto(dentro), /depende de você: nada/);
+  assert.match(texto(dentro), /nada depende de você/);
   assert.doesNotMatch(texto(dentro), /ATENÇÃO/);
 });
 
@@ -286,7 +291,7 @@ test('pergunta-real-pelo-projetar (P9): nota de dúvida vira pergunta no topo; r
   assert.equal(s.pergunta?.id, 's1:1');
   assert.equal(s.perguntasMais, 1);
   assert.match(texto(s), /^◆ DEPENDE DE VOCÊ {2}2 itens\n {2}qual caminho seguir\? · 1 este · 2 aquele\n {2}mais 1 pergunta aberta$/m);
-  assert.doesNotMatch(texto(s), /depende de você: nada/, 'com pergunta aberta o topo não diz "nada"');
+  assert.doesNotMatch(texto(s), /nada depende de você/, 'com pergunta aberta o topo não diz "nada"');
   const outra = proj(P(...IDS), [...base, e(3, 'dono.resposta', { pergunta: 's1:2', opcao: 1, rotulo: 'azul' }, 'dono')]);
   assert.equal(outra.pergunta?.id, 's1:1', 'resposta a s1:2 não fecha s1:1');
   assert.equal(outra.perguntasMais, 0);
@@ -428,13 +433,16 @@ test('orquestrador-primeira-linha-do-agora: contexto e hora de pousar; contexto 
   // desenho do E4: rótulo EQUIPE, o líder e, logo abaixo, a linha do contexto com a barra
   const i = l.findIndex((x) => /^EQUIPE/.test(x));
   assert.equal(l[i + 1], 'GANDALF  orquestra');
-  assert.equal(l[i + 2], `│  ctx ${'█'.repeat(16)}${'░'.repeat(13)} 55% · pouso em 50% · hora de pousar   tok ?`);
-  assert.ok(l.some((x) => /^└─ ● ARAGORN  T1  ctx \?  \d+(m|h\d\d)  implementando \(registrado\)$/.test(x)), l.join('\n'));
+  assert.equal(l[i + 2], `│  ctx ${'█'.repeat(16)}${'░'.repeat(13)} 55% · pouso em 50% · hora de pousar   tok ? (sem medição)`);
+  assert.equal(l[i + 3], '│  7d ? (sem medição)', 'g.10 (D-G7): sem five_hour o campo 5h some (nunca "5h ?"); o 7d segue, com o motivo');
+  assert.ok(l.every((x) => !/5h/.test(x)), '5h omitido');
+  assert.ok(l.some((x) => /^├─ ● ARAGORN  T1  ctx \? \(sem medição\)  \d+(m|h\d\d)  implementando \(registrado\)$/.test(x)), l.join('\n'));
+  assert.ok(l.some((x) => /^└─ ○ ELROND$/.test(x)), 'g.8: a Sombra é o último └ da EQUIPE, sem decisão só o nome');
   const semCtx = linhas(proj(P(...IDS), [], { contexto: { percent: null, tokens: null, window: null } }));
-  assert.ok(semCtx.includes('│  ctx ? · pouso em 50%   tok ?'), 'sem medição: "?" no lugar da barra, nunca barra vazia nem 0');
+  assert.ok(semCtx.includes('│  ctx ? (sem medição) · pouso em 50%   tok ? (sem medição)'), 'sem medição: "?" com o motivo (g.9) no lugar da barra, nunca barra vazia nem 0');
   assert.ok(semCtx.every((x) => !/ctx [█░]|ctx 0%|hora de pousar/.test(x)));
   const abaixo = linhas(proj(P(...IDS), [], { contexto: { percent: 49, tokens: null, window: null } }));
-  assert.ok(abaixo.includes(`│  ctx ${'█'.repeat(14)}${'░'.repeat(15)} 49% · pouso em 50%   tok ?`), abaixo.join('\n'));
+  assert.ok(abaixo.includes(`│  ctx ${'█'.repeat(14)}${'░'.repeat(15)} 49% · pouso em 50%   tok ? (sem medição)`), abaixo.join('\n'));
 });
 
 test('cli-sem-agentes-sem-nomes-nem-traco: sem --agentes, 1 linha no AGORA e nenhum nome sorteado', () => {
@@ -452,11 +460,12 @@ test('cli-sem-agentes-sem-nomes-nem-traco: sem --agentes, 1 linha no AGORA e nen
 test('descricao-tecnica-higienizada e vivo-sem-task-mostra-descricao', () => {
   const s = proj(P(...IDS), [ini(0, 'T1')], { agentes: [vivo('Rascunho spec-brief.md com node'), vivo('Explorar o repositório'), vivo('T1 implementador')] });
   const l = linhas(s);
-  assert.ok(l.includes('├─ ● LEGOLAS  sem task  ctx ?        Rascunho … com … (registrado)'), l.join('\n')); // todo vivo tem nome (FIEL-3 d): o par da T1 fica com o 1º, os sem task com os livres
-  assert.ok(l.includes('├─ ● GIMLI    sem task  ctx ?        Explorar o repositório (registrado)'), l.join('\n'));
-  assert.ok(l.some((x) => /^└─ ● ARAGORN  T1        ctx \?  \d+(m|h\d\d)  implementando \(registrado\)$/.test(x)), l.join('\n'));
+  assert.ok(l.includes('├─ ● LEGOLAS  agente fora do loop  ctx ? (sem medição)        Rascunho … com … (registrado)'), l.join('\n')); // todo vivo tem nome (FIEL-3 d): o par da T1 fica com o 1º, os sem task com os livres
+  assert.ok(l.includes('├─ ● GIMLI    agente fora do loop  ctx ? (sem medição)        Explorar o repositório (registrado)'), l.join('\n'));
+  assert.ok(l.some((x) => /^├─ ● ARAGORN  T1                   ctx \? \(sem medição\)  \d+(m|h\d\d)  implementando \(registrado\)$/.test(x)), l.join('\n'));
   assert.equal(s.agora?.agentes?.length, 3, 'vivos-igual-linhas-de-agente');
   assert.equal(l.filter((x) => /^[├└]─ ● /.test(x)).length, 3);
+  assert.ok(l.includes('└─ ○ ELROND'), 'a Sombra fecha a árvore (g.8) e não conta como agente vivo');
   assert.ok(l.some((x) => /^EQUIPE +agentes 3 vivos$/.test(x)), 'N vivos = linhas de agente');
 });
 
@@ -476,9 +485,13 @@ test('sombra-decisao-no-recente, sombra-consulta-sem-registro-na-atencao e sem-l
   const s = proj(P(...IDS), [consulta(1), consulta(2), DEC(3, 'sim', 'T1')]);
   const t = texto(s);
   assert.match(t, /^\d\d:\d\d ● ELROND decidiu: sim \(anotado pelo orquestrador\)$/m);
-  assert.match(t, /^◆ ATENÇÃO {2}1 consulta à Sombra sem decisão registrada$/m);
-  assert.ok(t.split('\n').every((x) => !/^[├└]─? [●○] ELROND/.test(x)), 'a Sombra não tem linha fixa na árvore do E4 (FIEL-7, D-P4)');
-  assert.doesNotMatch(t, /aconselha|\d+ decis(ão|ões)\b/, 'sem linha fixa da Sombra com contagem');
+  assert.match(t, /^◆ ATENÇÃO {2}1 consulta à Sombra sem decisão registrada · 1 decisão da Sombra desde a sua última resposta$/m); // GM-15 T36 (r1 MINOR-5): a decisão do fixture ainda não teve resposta do dono; sem corte por altura aqui, a linha tem de aparecer
+  // g.8 (emenda 11, revoga a D-P4 só neste ponto): a Sombra é o último └ da EQUIPE: nome, "aconselha", nº de decisões e a última #seq resposta (fonte)
+  assert.match(t, /^└─ ○ ELROND {2}aconselha {2}1 decisão · #3 sim \(spec:1\)$/m, 'a Sombra fecha a árvore, com a contagem e a última decisão');
+  assert.ok(t.split('\n').filter((x) => /^[├└]─? [●○] ELROND/.test(x)).length === 1, '1 linha só da Sombra');
+  const semDecisao = texto(proj(P(...IDS), [consulta(1)]));
+  assert.match(semDecisao, /^└─ ○ ELROND$/m, 'sem decisão só o nome');
+  assert.doesNotMatch(semDecisao, /aconselha|\d+ decis(ão|ões)\b/);
   const semConsulta = texto(proj(P(...IDS), [consulta(1), DEC(3, 'sim', 'T1')]));
   assert.doesNotMatch(semConsulta, /consulta/);
 });
@@ -527,8 +540,9 @@ test('executivo-igual-esquadrao-menos-nomes e executivo-papeis-da-tabela', () =>
     revisor: 'Revisor', sombra: 'Conselheiro', teste: 'Teste',
   });
   assert.match(exe, /^Orquestrador orquestra$/m);
-  assert.match(exe, /^├─ ● Implementador T4 ctx \? \d+(m|h\d\d) implementando \(registrado\)$/m);
-  assert.match(exe, /^└─ ● Revisor T5 ctx \? \d+(m|h\d\d) revisando \(registrado\)$/m);
+  assert.match(exe, /^├─ ● Implementador T4 ctx \? \(sem medição\) \d+(m|h\d\d) implementando \(registrado\)$/m);
+  assert.match(exe, /^├─ ● Revisor T5 ctx \? \(sem medição\) \d+(m|h\d\d) revisando \(registrado\)$/m);
+  assert.match(exe, /^└─ ○ Conselheiro aconselha 1 decisão · #\d+ seguir com a T3 \(spec:1\)$/m, 'a Sombra no executivo é o Conselheiro (g.8, nos 2 presets)');
   assert.match(exe, /^ ● T4 implementando Implementador /m, 'o nome na fila do E4 também vira papel');
 });
 
@@ -588,7 +602,7 @@ test('ultima-entrega-conhecida: sem entrega, a 1ª linha fora do topo é exatame
     const l = renderPainel(sem, { largura: 80, preset } as OpcoesRender).map((x) => x.map((s) => s.texto).join(''));
     assert.equal(semRotulo(l[0]), 'GABARITO · entrega não identificada', preset);
     assert.ok(l.includes('última entrega conhecida: GM-12'), `${preset}: ${JSON.stringify(l)}`);
-    assert.equal(l.indexOf('última entrega conhecida: GM-12'), l.findIndex((x) => !/^(depende de você|◆ DEPENDE DE VOCÊ|  |■ PAROU)/.test(x) && x !== l[0]), preset);
+    assert.equal(l.indexOf('última entrega conhecida: GM-12'), l.findIndex((x) => !/^(depende de você|nada depende de você|◆ DEPENDE DE VOCÊ|  |■ PAROU)/.test(x) && x !== l[0]), preset);
     const nula = renderPainel({ ...sem, trilha: { ...(trilha as object), ultimaConhecida: null } } as EstadoPainel, { largura: 80, preset } as OpcoesRender).map((x) => x.map((s) => s.texto).join(''));
     assert.ok(!nula.join('\n').includes('última entrega conhecida'), `${preset}: sem dado, sem linha`);
     const com = renderPainel({ ...base, trilha } as EstadoPainel, { largura: 80, preset } as OpcoesRender).map((x) => x.map((s) => s.texto).join(''));
@@ -782,17 +796,21 @@ const DEPENDE_ROTEIRO = PONTOS.pontos.find((x) => x.msg === 3)!.esperado.depende
 const doRoteiro = (s: EstadoPainel): EstadoPainel => ({ ...s, depende: DEPENDE_ROTEIRO.map((motivo) => ({ motivo, acoes: [], nivel: 'dono' })) }) as EstadoPainel;
 const VIVOS = ['T4 implementador', 'T5 revisor', 'T6 implementador'];
 const roteiro = (n: number, itens: Item[] = [DEC(50, 'seguir com a T3')], extra: Partial<Entrada> = {}): EstadoPainel =>
-  doRoteiro(proj(P(...IDS), [...EXECUCAO, ...itens], { agentes: VIVOS.slice(0, n).map((d) => vivo(d)), ...extra }));
-const ORC_ACIMA = orcamentoDe(24, 12);
+  doRoteiro(proj(P(...IDS), [...EXECUCAO, ini(44, 'T6'), ...itens], { agentes: VIVOS.slice(0, n).map((d) => vivo(d)), ...extra }));
+/** 80x24 acima do input: 7 linhas + 1 da linha da Sombra (g.8, GM-15 T33), que é do bloco 3 e fecha a árvore (antes de a Sombra ter linha fixa eram 7). */
+const ORC_80X24 = orcamentoDe(24, 12);
+const ORC_ACIMA = ORC_80X24 + 1;
+const ehSombraLinha = (x: string): boolean => /^└─ ○ /.test(x);
 /** Linhas do AGORA no desenho do E4: contexto do líder, árvore dos agentes e linha-resumo (prioridade 3). */
-const linhasAgora = (l: string[]): string[] => l.filter((x) => prioDe(x) === 3);
+const linhasAgora = (l: string[]): string[] => l.filter((x) => prioDe(x) === 3 && !ehSombraLinha(x));
 /** Linhas dos blocos 1–2 (prioridade ≤ 2): topo, cabeçalho, PLANO/FASE. */
 const blocos12 = (l: string[]): string[] => l.filter((x) => prioDe(x) <= 2);
 const resumoDe = (l: string[]): string[] => l.filter((x) => /^  \d+ agentes:/.test(x));
 
 test('roteiro-premissa: DEPENDE do roteiro tem 2 itens e orcamentoDe(24, 12) = 7', () => {
   assert.equal(DEPENDE_ROTEIRO.length, 2);
-  assert.equal(ORC_ACIMA, 7);
+  assert.equal(ORC_80X24, 7);
+  assert.equal(ORC_ACIMA, 8, 'a Sombra fixa pede +1 linha');
 });
 
 for (const n of [2, 3]) {
@@ -805,7 +823,7 @@ for (const n of [2, 3]) {
     assert.equal(l.filter(ehDecidiu).length, 1, `a decisão da Sombra fica: ${l.join('|')}`);
     const agora = linhasAgora(l);
     assert.equal(agora.length, 2, agora.join('|'));
-    assert.match(agora[0], /^GANDALF ctx █+░+ 40% · pouso em 50%   tok \?$/, 'sem a linha do nome, o contexto leva o nome (troca do E4)');
+    assert.match(agora[0], /^GANDALF ctx █+░+ 40% · pouso em 50%   tok \?$/, 'sem a linha do nome, o contexto leva o nome (troca do E4); a 80 colunas o "?" fica sem o motivo (g.9)');
     assert.match(agora[1], new RegExp(`^  ${n} agentes: .*T4`));
     for (const x of DEPENDE_ROTEIRO) assert.ok(l.some((y) => y.includes(x)), `DEPENDE presente: ${x}`);
     assert.ok(l.some((x) => /^PLANO|^FASE/.test(x)) && l[0].startsWith('GABARITO'));
@@ -813,16 +831,17 @@ for (const n of [2, 3]) {
   });
 }
 
-test('linha-resumo: rótulo (nome temático) e task de cada agente; N = vivos; o segundo plano entra como item e não conta em N', () => {
+test('linha-resumo: rótulo (nome temático) e task de cada agente; N = vivos; o segundo plano (seção própria, g.11) não entra na linha nem conta em N', () => {
   const s = roteiro(3, [DEC(50, 'seguir com a T3')], { segundoPlano: [{ id: 'bg1', dono: 'orquestrador', texto: 'npm test', desde: AGORA - 30_000 }] });
   assert.equal(s.agora?.segundoPlano.length, 1, 'premissa: 1 linha de segundo plano');
+  assert.equal(s.agora?.segundoPlano[0].acao, 'Teste', 'e o painel o rotulou pelo comando (npm test ⇒ Teste)');
   const [r] = resumoDe(cabe(s, { local: 'acima', orcamento: ORC_ACIMA }));
   assert.ok(r !== undefined, 'compactou');
   assert.match(r, /^  3 agentes: /, 'N conta só agentes');
   const nomes = (s.agora?.agentes ?? []).map((a) => `${a.quem.nome} ${a.task}`);
   assert.equal(nomes.length, 3);
   for (const x of nomes) assert.ok(r.includes(x), `"${x}" na linha-resumo: ${r}`);
-  assert.match(r, /Teste orquestrador$/, 'o segundo plano é um item da linha');
+  assert.doesNotMatch(r, /Teste|npm test/, 'o segundo plano não é item da linha-resumo: a EQUIPE só tem agentes (D-G8)');
   assert.ok(!/implementando|revisando|\d+ ?s\b|lendo/.test(r), 'ação e tempo saem');
 });
 
@@ -892,7 +911,7 @@ test('reserva-cede-mesmo-compactado: blocos 1–2 + 2 linhas de AGORA + reserva 
   const s = roteiro(3);
   const b12 = blocos12(cabe(s, { local: 'acima', orcamento: 200 })).length;
   assert.equal(b12, 4, 'blocos 1–2 do roteiro: GABARITO + 2 itens do DEPENDE + PLANO (o rótulo `◆ DEPENDE DE VOCÊ` do E4 é desenho, sai antes)');
-  const limiar = b12 + 2 + 1; // = 7: cabe compactado
+  const limiar = b12 + 2 + 1 + 1; // = 8: cabe compactado (blocos 1–2, contexto, linha-resumo, a Sombra fixa e a reserva)
   const cabeLa = cabe(s, { local: 'acima', orcamento: limiar });
   assert.equal(cabeLa.filter(ehDecidiu).length, 1);
   assert.equal(resumoDe(cabeLa).length, 1);
@@ -955,7 +974,7 @@ test('reserva-varredura-decisao-visivel-em-toda-celula: decisão + 0/1/2 eventos
       assert.deepEqual(blocos12(l).map(norm), blocos12(cheio).map(norm), `${rotulo}: blocos 1–2 intactos`);
       // a reserva só existe com corte por ORÇAMENTO no RECENTE (ciclo 3, emenda 32); sem corte, a decisão além do teto do local não aparece
       const corte = JSON.stringify(l.filter(ehRecente)) !== JSON.stringify(cheio.filter(ehRecente));
-      if (orc >= b12 + 2 + 1 && corte) {
+      if (orc >= b12 + 2 + 1 + 1 /* + a Sombra fixa (g.8) */ && corte) {
         comPiso++;
         assert.equal(l.filter(ehDecidiu).length, 1, `${rotulo}: a decisão da Sombra some: ${l.join('|')}`);
         assert.ok(l.some((x) => /ctx /.test(x) && prioDe(x) === 3), `${rotulo}: sem AGORA (bloco 3): ${l.join('|')}`);
@@ -968,10 +987,10 @@ test('reserva-varredura-decisao-visivel-em-toda-celula: decisão + 0/1/2 eventos
   assert.ok(casos >= 3 * 3 * 2 * 2 * 6 && comPiso > 20, `a varredura viu ${casos} casos (${comPiso} acima do piso)`);
 });
 
-test('reserva-parcial-toma-a-ultima-linha-do-recente: decisão + pausa, lateral, 2 vivos, orçamento 8 — 1 linha de RECENTE sobra e é a decisão, sem aumentar o total', () => {
+test('reserva-parcial-toma-a-ultima-linha-do-recente: decisão + pausa, lateral, 2 vivos, orçamento 9 — 1 linha de RECENTE sobra e é a decisão, sem aumentar o total', () => {
   const s = roteiro(2, [DEC(50, 'seguir com a T3'), e(55, 'loop.pausa', { estado: 'pausado' })]);
-  const l7 = cabe(s, { local: 'lateral', orcamento: 7 });
-  for (const orc of [8, 9]) {
+  const l7 = cabe(s, { local: 'lateral', orcamento: 8 }); // 7 do GM-14 + 1 da Sombra fixa (g.8)
+  for (const orc of [9, 10]) {
     const l = cabe(s, { local: 'lateral', orcamento: orc });
     assert.equal(l.filter(ehDecidiu).length, 1, l.join('|'));
     assert.ok(l.length <= orc);
@@ -1010,7 +1029,7 @@ test('reserva-varredura-teto-e-corte: decisão + 0–6 eventos × 1–3 vivos ×
         assert.equal(l.filter(ehDecidiu).length, cheio.filter(ehDecidiu).length, `${rotulo}: reserva sem corte por orçamento: ${l.join('|')}`);
       } else {
         comCorte++;
-        if (orc >= b12 + 2 + 1) assert.equal(l.filter(ehDecidiu).length, 1, `${rotulo}: corte por orçamento e a decisão some: ${l.join('|')}`);
+        if (orc >= b12 + 2 + 1 + 1 /* + a Sombra fixa (g.8) */) assert.equal(l.filter(ehDecidiu).length, 1, `${rotulo}: corte por orçamento e a decisão some: ${l.join('|')}`);
       }
     }
   }
@@ -1068,7 +1087,7 @@ const classe = (x: string): string => {
   if (/^│ {2}ctx /.test(x)) return 'ctx';
   if (/^│ {2}(5h|7d) /.test(x)) return 'limites';
   if (/^│ {2}[▶▸] /.test(x)) return 'narração';
-  if (/^[├└]─ ○ \S+ {2}aconselha/.test(x)) return 'sombra-fixa';
+  if (/^[├└]─ ○ \S+( {2}aconselha.*)?$/.test(x)) return 'sombra-fixa'; // sem decisão (g.8) só o nome
   if (/^[├└]─ ◐ /.test(x)) return 'revisor-aguarda';
   if (/^[├└]─ [●◌] /.test(x)) return 'agente';
   if (/^◆ ATENÇÃO/.test(x)) return 'atenção';
@@ -1083,16 +1102,19 @@ for (const largura of [120, 80]) {
     const s = rico();
     const novo = desenho(s, { largura }).map(segs);
     const velho = desenho(s, { largura }, true).map(segs);
-    // diferenças que a regra nova manda (cada uma, uma só): FIEL-7/D-P4 a Sombra não tem linha fixa; FIEL-6 c sem "revisor aguarda" falso
-    const esperado = estrutura(velho).filter((c) => c !== 'sombra-fixa' && c !== 'revisor-aguarda');
-    assert.deepEqual(estrutura(novo), esperado, `novo:\n${novo.join('\n')}\n\nE4:\n${velho.join('\n')}`);
+    // diferenças que a regra nova manda (cada uma, uma só): FIEL-6 c sem "revisor aguarda" falso (a Sombra voltou a ter a linha fixa de `renderEsquadrao`, g.8)
+    const esperado = estrutura(velho).filter((c) => c !== 'revisor-aguarda');
+    // GM-15 T36: a 80 colunas a linha nova de ATENÇÃO ("N decisões da Sombra desde a sua última resposta") quebra em continuação alinhada; o E4 não a tem
+    assert.deepEqual(estrutura(novo.filter((x) => !/^ +1 decisão da Sombra desde a sua última resposta$/.test(x))), esperado, `novo:\n${novo.join('\n')}\n\nE4:\n${velho.join('\n')}`);
     assert.ok(novo.every((x) => colunas(x) <= largura), 'nenhuma linha passa da largura');
     // campo a campo: cada dado do E4 está no novo (mutação que tira qualquer um morre)
     const t = novo.join('\n');
     assert.match(novo[0], /^GABARITO · GM-14 Clareza para quem usa +esquadrão · terra média$/, 'cabeçalho com o preset à direita; título uma vez (o E4 dizia "GM-14 GM-14")');
     assert.equal((novo[0].match(/GM-14/g) ?? []).length, 1);
     assert.match(t, /^◆ DEPENDE DE VOCÊ {2}1 item\n {2}renovar o certificado \[feito\]$/m, 'DEPENDE');
-    assert.match(t, /^PLANO {3}▰+▱+ {2}38% {2}3\/8 tasks +previsão \d\d:\d\d \(base: 3 tasks desta entrega\)$/m, 'PLANO com barra, %, k/N tasks e o status à direita');
+    // h.2 (GM-15 T30): em >= 100 col a faixa e a base que cabe ao lado da barra cheia do E4 (em 120 saem a rodada e o "min por task"); abaixo, só a faixa
+    const prev = largura >= 100 ? 'previsão \\d\\d:\\d\\d–\\? · caminho 2 tasks · fechamento não medido' : 'previsão \\d\\d:\\d\\d–\\?';
+    assert.match(t, new RegExp(`^PLANO {3}▰+▱+ {2}38% {2}3\\/8 tasks +${prev}$`, 'm'), 'PLANO com barra, %, k/N tasks e o status à direita');
     assert.match(t, /^ {2}✓ 3 integradas · 1\.0 rodada média · mediana \d+ min$/m, 'faixa das integradas');
     assert.match(t, /^ {2}● T4 {2}(Tarefa T4 do painel {2})?implementando {2}\S+ +\d+(m|h\d\d)$/m, 'task em voo com estado, nome e tempo');
     assert.match(t, /^ {2}○ T6 {2}(Tarefa T6 do painel {2})?fila · depende de T5$/m, 'fila com a dependência aberta');
@@ -1102,9 +1124,14 @@ for (const largura of [120, 80]) {
     assert.match(t, /^│ {2}ctx █+░+ 55% · pouso em 50% · hora de pousar {3}tok 732k$/m, 'barra de contexto, pouso, hora de pousar e tokens do líder');
     assert.match(t, /^│ {2}5h █{3}░{7} 30% {3}7d █{7}░{3} 70%$/m, 'barras de 10 dos limites 5h e 7d');
     assert.match(t, /^│ {2}▸ \S/m, 'narração');
-    assert.match(t, /^├─ ● \S+ · sonnet +T4 +ctx █{3}░{7} 30% {2}60k · \d+(m|h\d\d) +implementando( \(registrado\)| \(regis.*…)$/m, 'agente com barra de contexto, tokens, tempo e o que faz (cortado no fim, nunca no número)');
-    assert.match(t, /^└─ ● \S+ +T5 +ctx \? +\d+(m|h\d\d) +revisando \(registrado\)$/m, 'agente sem medição: "?", nunca barra vazia');
-    assert.match(t, /^◆ ATENÇÃO {2}CI vermelho na última execução$/m);
+    assert.match(t, /^├─ ● \S+ · sonnet +T4 +ctx █{3}░{7} 30% +60k · \d+(m|h\d\d) +implementando( \(registrado\)| \(regis.*…)$/m, 'agente com barra de contexto, tokens, tempo e o que faz (cortado no fim, nunca no número)');
+    assert.match(t, largura === 120 ? /^├─ ● \S+ +T5 +ctx \? \(sem medição\) +\d+(m|h\d\d) +revisando \(registrado\)$/m : /^├─ ● \S+ +T5 +ctx \? +\d+(m|h\d\d) +revisando \(regis/m,
+      'agente sem medição: "?", nunca barra vazia; o motivo (g.9) só a partir de 100 colunas');
+    assert.match(t, /^└─ ○ ELROND {2}aconselha {2}1 decisão · #\d+ seguir com a T3 \(spec:1\)$/m, 'g.8: a Sombra é o último └ da EQUIPE (nome, aconselha, nº de decisões, última #seq resposta (fonte))');
+    assert.ok(novo.every((x) => !/^[├└]─ [●○] \S+ +(Teste|Integrando|Comando|Aguardando)/.test(x)), 'g.11: shell de fundo nunca na árvore da EQUIPE');
+    // GM-15 T36 (r1 MINOR-5): a linha da Sombra SEMPRE aparece (sem corte por altura neste fixture): inteira a 120 colunas, em continuação alinhada a 80
+    assert.match(t, largura === 120 ? /^◆ ATENÇÃO {2}CI vermelho na última execução · 1 decisão da Sombra desde a sua última resposta$/m : /^◆ ATENÇÃO {2}CI vermelho na última execução/m);
+    assert.ok(novo.some((x) => /1 decisão da Sombra desde a sua última resposta$/.test(x)), 'a linha "N decisões da Sombra" aparece');
     assert.match(t, /^\d\d:\d\d ● ELROND decidiu: seguir com a T3 \(anotado pelo orquestrador\)$/m, 'histórico com origem');
     assert.match(t, /^CI ● vermelho {3}PROD leu 0 · alterou 0 {3}política continua$/m, 'rodapé');
     if (largura === 120) {
@@ -1196,8 +1223,8 @@ CI ● —   PROD leu 0 · alterou 0   política sob_demanda                    
 
 test('referencia-do-dono-2-0-0 (D-G1c): estado equivalente ao painel real de 89 col tem a mesma estrutura, sem os erros que não podem voltar', () => {
   const ref = REFERENCIA_DONO.split('\n').filter((l) => l !== '');
-  // erros da referência (regra nova): agentes falsos "revisor aguarda" e linha fixa da Sombra saem; o título não repete o ID; nada de "—"
-  const esperado = estrutura(ref).filter((c) => c !== 'sombra-fixa' && c !== 'revisor-aguarda');
+  // erros da referência (regra nova): agentes falsos "revisor aguarda" saem; o título não repete o ID; nada de "—"; a linha fixa da Sombra voltou (g.8)
+  const esperado = estrutura(ref).filter((c) => c !== 'revisor-aguarda');
   const IDSR = ['T0', 'T1', 'T1b', 'T2', 'T3', 'T11', 'T13', 'T14'];
   const s = proj({ entrega: 'GM-14', tasks: IDSR.map((id) => ({ id, titulo: `Tarefa ${id}`, deps: id === 'T11' ? ['T3'] : [], arquivos: [] })) },
     [...ciclo('T1', 0), ini(10, 'T0'), con(11, 'T0'), ini(12, 'T1b'), con(13, 'T1b'), ini(14, 'T2'), con(15, 'T2'), ini(16, 'T3'), con(17, 'T3'), nota(20, 'pendencia', 'retomar o loop'), e(30, 'ci.resultado', { verde: false, alvo: 'main' })],
@@ -1207,7 +1234,8 @@ test('referencia-do-dono-2-0-0 (D-G1c): estado equivalente ao painel real de 89 
   const t = l.join('\n');
   assert.match(l[0], /^GABARITO · GM-14 Clareza para quem usa +esquadrão · terra média$/);
   assert.doesNotMatch(t, /GM-14 GM-14|aguarda T|revisa aguarda|—|rodada de review/, 'erros da 2.0.0 que não voltam');
-  assert.match(t, /^│ {2}5h \? {3}7d █{3}░{7} 34%$/m, 'limite sem medição é "?", não some nem vira 0');
+  assert.match(t, /^│ {2}7d █{3}░{7} 34%$/m, 'g.10 (D-G7): sem five_hour o campo 5h é omitido (nunca "5h ?"), o 7d medido segue');
+  assert.doesNotMatch(t, /5h/, 'nenhum "5h ?"');
   assert.match(t, /^ {2}◐ T0 .* entregue/m, 'concluída se diz "entregue" (FIEL-8)');
   assert.ok(l.every((x) => colunas(x) <= 89));
 });
@@ -1281,26 +1309,30 @@ test('atencao-agrupada-nada-some (review T29 r1): N avisos que não cabem numa l
 
 test('ausente-corrompido-zero-distintos: ausente e corrompido viram "?" (nunca 0 nem "—"); 0 medido é 0', () => {
   const base = rico();
+  const base_ = (v: unknown, campo: 'h5' | 'd7' | 'tok'): EstadoPainel => ({ ...base, equipe: { ...base.equipe, lider: { ...base.equipe.lider, [campo]: v } } } as EstadoPainel);
   const comLider = (v: unknown, campo: 'h5' | 'd7' | 'tok'): string => cru({ ...base, equipe: { ...base.equipe, lider: { ...base.equipe.lider, [campo]: v } } } as EstadoPainel).join('\n');
   for (const v of [null, undefined, Number.NaN, -1, Number.POSITIVE_INFINITY, '30']) {
-    assert.match(comLider(v, 'h5'), /^│ {2}5h \? {3}7d █/m, `5h ${String(v)}`);
-    assert.match(comLider(v, 'd7'), / {3}7d \?$/m, `7d ${String(v)}`);
-    assert.match(comLider(v, 'tok'), /tok \?$/m, `tok ${String(v)}`);
+    // g.10 (D-G7): 5h ausente ou corrompido é OMITIDO (exceção à D-P13 só para este campo); 7d e tok seguem "?" e, a partir de 100 colunas, dizem por quê (g.9)
+    assert.match(comLider(v, 'h5'), /^│ {2}7d █/m, `5h ${String(v)}`);
+    assert.doesNotMatch(comLider(v, 'h5'), /5h/, `5h ${String(v)}: nunca "5h ?"`);
+    assert.match(comLider(v, 'd7'), / {3}7d \? \(sem medição\)$/m, `7d ${String(v)}`);
+    assert.match(comLider(v, 'tok'), /tok \? \(sem medição\)$/m, `tok ${String(v)}`);
+    assert.match(cru(base_(v, 'tok'), { largura: 80 }).join('\n'), /tok \?$/m, `tok ${String(v)} a 80 colunas: só o "?"`);
   }
   assert.match(comLider(0, 'h5'), /^│ {2}5h ░{10} 0% /m, '0 medido é barra vazia com 0%');
   assert.match(comLider(0, 'tok'), /tok 0$/m);
   const orq = (v: unknown): string => cru({ ...base, agora: { ...base.agora!, orquestrador: { ...base.agora!.orquestrador, contexto: v } } } as EstadoPainel).join('\n');
   for (const v of [null, Number.NaN, -5, '55']) {
-    assert.match(orq(v), /^│ {2}ctx \? · pouso em 50% {3}tok 732k$/m, `ctx ${String(v)}`);
+    assert.match(orq(v), /^│ {2}ctx \? \(sem medição\) · pouso em 50% {3}tok 732k$/m, `ctx ${String(v)}`);
     assert.doesNotMatch(orq(v), /hora de pousar/);
   }
   assert.match(orq(0), /^│ {2}ctx ░+ 0% · pouso em 50%/m);
   const agente = (v: unknown): string => cru({ ...base, equipe: { ...base.equipe, agentes: base.equipe.agentes.map((a) => (a.task === 'T4' ? { ...a, ctxPct: v, ctxTok: v } : a)) } } as EstadoPainel).join('\n');
   for (const v of [null, Number.NaN, -1]) assert.match(agente(v), /^├─ ● \S+ · sonnet +T4 +ctx \? /m, `agente ${String(v)}`);
-  assert.match(agente(0), /^├─ ● \S+ · sonnet +T4 +ctx ░{10} 0% {2}0 · /m);
+  assert.match(agente(0), /^├─ ● \S+ · sonnet +T4 +ctx ░{10} 0% +0 · /m);
   const rod = (v: unknown): string => cru({ ...base, rodape: { ...base.rodape, prod: { leituras: v, alteracoes: v }, ci: { verde: null, execucoesHoje: 0 } } } as EstadoPainel).join('\n');
-  assert.match(rod(Number.NaN), /^CI ● \? {3}PROD leu \? · alterou \?/m);
-  assert.match(rod(0), /^CI ● \? {3}PROD leu 0 · alterou 0/m);
+  assert.match(rod(Number.NaN), /^CI ● \? \(CI sem execução\) {3}PROD leu \? \(diário sem leitura\) · alterou \? \(diário sem leitura\) {3}política/m, 'g.9: cada "?" do rodapé diz por quê');
+  assert.match(rod(0), /^CI ● \? \(CI sem execução\) {3}PROD leu 0 · alterou 0/m);
   const pr = (v: unknown): string => cru({ ...base, pronto: { ...base.pronto!, integradas: v } } as EstadoPainel).join('\n');
   assert.match(pr(Number.NaN), /^PLANO {3}\? {2}\?\/8 tasks/m, 'sem número, "?" no lugar da barra');
   assert.match(pr(0), /^PLANO {3}▱+ {2}0% {2}0\/8 tasks/m);
@@ -1319,9 +1351,197 @@ test('fiel4-sem-agentes-em-toda-largura: sem --agentes nenhuma linha de ctx, tok
 test('arvore-cede-texto-antes-de-numero: a 60 colunas a linha do agente cede o modelo e o tempo para a ação aparecer; ctx e tokens nunca são cortados', () => {
   const s = rico();
   const linha = (largura: number): string => cru(s, { largura }).find((x) => /^├─ ● .* T4 /.test(x)) as string;
-  assert.match(linha(120), /· sonnet .* 30% {2}60k · \d+(m|h\d\d) {2}implementando \(registrado\)$/);
+  assert.match(linha(120), /· sonnet .* 30% +60k · \d+(m|h\d\d) {2}implementando \(registrado\)$/);
   const l60 = linha(60);
   assert.ok(colunas(l60) <= 60, l60);
   assert.match(l60, /ctx █{3}░{7} 30% {2}60k {2}implementa/, `nível do E4: sem modelo e sem tempo, a ação à vista: ${l60}`);
   assert.doesNotMatch(l60, /sonnet/);
+});
+
+// ───────────────────────────── GM-15 T33 (emenda 11, g.8–g.11; D-G7, D-G8): Sombra na EQUIPE, "?" com motivo, 5h omitido, SEGUNDO PLANO
+
+const SHELLS = [
+  { id: 'b1', dono: 'orquestrador', texto: 'integrar T16', desde: AGORA - 300_000, comando: 'node gates/scripts/loop.mjs integrar T16' },
+  { id: 'b2', dono: 'orquestrador', texto: 'rodar a suíte', desde: AGORA - 90_000, comando: 'bash plugins/gabarito-mestre/scripts/test/mod-test.sh' },
+  { id: 'b3', dono: 'a-T4 implementador', texto: 'esperar o arquivo', desde: AGORA - 45_000, comando: 'until grep -q pronto saida.txt; do sleep 5; done' },
+  { id: 'b4', dono: 'orquestrador', texto: 'listar', desde: AGORA - 12_000, comando: 'ls -la' },
+] as unknown as NonNullable<EntradaPainel['segundoPlano']>;
+const comShells = (extra: Partial<Entrada> = {}): EstadoPainel => proj(P(...IDS), [...EXECUCAO, DEC(50, 'seguir com a T3')], { agentes: [vivo('T4 implementador'), vivo('T5 revisor')], segundoPlano: SHELLS, ...extra });
+const arvore = (l: string[]): string[] => l.filter((x) => /^[├└]─? /.test(x));
+const secaoSegundoPlano = (l: string[]): string[] => { const i = l.findIndex((x) => /^SEGUNDO PLANO/.test(x)); return i < 0 ? [] : l.slice(i + 1).filter((x, k, xs) => xs.slice(0, k + 1).every((y) => /^ {2}◦ /.test(y))); };
+
+test('shell-nunca-na-equipe: nenhum shell de fundo (integrando, teste, aguardando, comando) vira linha da árvore da EQUIPE (D-G8)', () => {
+  const s = comShells();
+  assert.equal(s.agora?.agentes?.length, 2, 'agora.agentes só tem os agentes');
+  assert.equal(s.agora?.segundoPlano.length, 4, 'o shell vive em agora.segundoPlano');
+  for (const largura of [200, 120, 80, 60, 44]) for (const preset of ['esquadrao', 'executivo'] as const) {
+    const l = linhas(s, { largura, preset });
+    const t = arvore(l);
+    assert.equal(t.length, 3, `${largura} ${preset}: 2 agentes + a Sombra: ${t.join('|')}`);
+    assert.equal(t.filter((x) => /^[├└]─? ● /.test(x)).length, 2, `${largura} ${preset}: só os 2 agentes: ${t.join('|')}`);
+    assert.ok(t.every((x) => !/Integrando|Aguardando|Comando|\bTeste\b/.test(x)), `${largura} ${preset}: shell na árvore: ${t.join('|')}`);
+    assert.match(l.find((x) => /^EQUIPE/.test(x)) ?? 'EQUIPE agentes 2 vivos', /2 vivos$|^EQUIPE$/, 'N vivos não conta o shell');
+  }
+});
+
+test('subagente-nunca-no-segundo-plano: o SEGUNDO PLANO lista só shell; agente vivo (implementador, revisor) nunca é linha da seção, só aparece como QUEM disparou', () => {
+  const l = linhas(comShells(), { largura: 200 });
+  const sec = secaoSegundoPlano(l);
+  assert.equal(sec.length, 4, `4 shells, 1 linha cada: ${sec.join('|')}`);
+  assert.ok(sec.every((x) => /^ {2}◦ (Integrando|Teste|Aguardando|Comando)\b/.test(x)), `só tipos de shell: ${sec.join('|')}`);
+  assert.equal(sec.filter((x) => /^ {2}◦ (ARAGORN|GIMLI|Implementador|Revisor)/.test(x)).length, 0, 'nenhum agente como linha');
+  assert.equal(sec.filter((x) => x.includes('ARAGORN')).length, 1, 'o agente dono do shell b3 aparece só como quem o disparou');
+  const so = linhas(proj(P(...IDS), [...EXECUCAO], { agentes: [vivo('T4 implementador'), vivo('T5 revisor')], segundoPlano: [] }), { largura: 200 });
+  assert.equal(secaoSegundoPlano(so).length, 0, '2 agentes e 0 shell ⇒ seção nenhuma (agente não é shell)');
+});
+
+test('segundo-plano-1-linha-80col: 1 linha por shell com tipo · task · quem disparou · tempo, e nenhuma passa de 80 colunas; ordem DEPENDE · PLANO · EQUIPE · SEGUNDO PLANO · ATENÇÃO · RECENTE · rodapé', () => {
+  const l = linhas(comShells({ fatos: fatos() }), { largura: 80 });
+  const cab = l.findIndex((x) => /^SEGUNDO PLANO/.test(x));
+  assert.ok(cab > 0, l.join('\n'));
+  assert.match(l[cab], /^SEGUNDO PLANO +1 integrando · 1 teste · 1 aguardando · 1 comando$/, 'cabeçalho com a contagem por tipo');
+  const sec = secaoSegundoPlano(l);
+  assert.equal(sec.length, 4);
+  assert.match(sec[0], /^ {2}◦ Integrando T16 · GANDALF · 5m$/, 'integrar T16: task provada pelo comando, quem = a sessão principal, tempo');
+  assert.match(sec[1], /^ {2}◦ Teste · GANDALF · 1m$/, 'mod-test.sh ⇒ Teste; sem task provada não inventa task');
+  assert.match(sec[2], /^ {2}◦ Aguardando T4 · ARAGORN · 0m$/, 'laço until ⇒ Aguardando; a task e o nome são os do agente que o disparou');
+  assert.match(sec[3], /^ {2}◦ Comando · GANDALF · 0m$/, 'o resto ⇒ Comando');
+  assert.ok(l.every((x) => colunas(x) <= 80), 'nada passa de 80 colunas');
+  // ordem das seções (D-G8)
+  const marcas = l.map((x, i) => [i, /^depende de você|^nada depende de você|^◆ DEPENDE/.test(x) ? 'DEPENDE' : /^PLANO/.test(x) ? 'PLANO' : /^EQUIPE/.test(x) ? 'EQUIPE' : /^SEGUNDO PLANO/.test(x) ? 'SEGUNDO' : /^◆ ATENÇÃO/.test(x) ? 'ATENÇÃO' : ehRecente(x) ? 'RECENTE' : /^CI ●/.test(x) ? 'RODAPÉ' : ''] as const).filter(([, m]) => m !== '').map(([, m]) => m)
+    .filter((m, i, ms) => i === 0 || ms[i - 1] !== m);
+  assert.deepEqual(marcas.filter((m) => m !== 'ATENÇÃO'), ['DEPENDE', 'PLANO', 'EQUIPE', 'SEGUNDO', 'RECENTE', 'RODAPÉ']); // GM-15 T36: o fixture tem decisão da Sombra sem resposta do dono ⇒ a linha de ATENÇÃO existe
+  // o separador do E4 vai entre a EQUIPE e o SEGUNDO PLANO (seção própria, não continuação da árvore) e entre ele e o que vem depois
+  const c = cru(comShells(), { largura: 80 });
+  const ic = c.findIndex((x) => /^SEGUNDO PLANO/.test(x));
+  assert.ok(SEP.test(c[ic - 1]), `separador antes do SEGUNDO PLANO: ${c.join('|')}`);
+  assert.ok(SEP.test(c[ic + 5]), `separador depois das 4 linhas de shell: ${c.join('|')}`);
+  // a Sombra segue como último └ da EQUIPE, antes da seção
+  assert.ok(l.findIndex((x) => /^└─ ○ /.test(x)) < cab, 'a Sombra fecha a EQUIPE antes do SEGUNDO PLANO');
+});
+
+test('segundo-plano-estreito-resumo: abaixo de 60 colunas a seção é 1 linha-resumo "segundo plano: 1 integrando · 1 teste · …"', () => {
+  for (const largura of [59, 50, 44]) {
+    const l = linhas(comShells(), { largura });
+    const r = l.filter((x) => /^segundo plano:/.test(x));
+    assert.deepEqual(r, ['segundo plano: 1 integrando · 1 teste · 1 aguardando · 1 comando'].map((x) => (colunas(x) <= largura ? x : r[0])), `${largura}`);
+    assert.equal(r.length, 1);
+    assert.ok(l.every((x) => !/^ {2}◦ /.test(x)), 'sem 1 linha por shell');
+    assert.ok(l.every((x) => colunas(x) <= largura));
+  }
+});
+
+test('segundo-plano-e-a-1a-a-encolher: com o orçamento apertando, o SEGUNDO PLANO cai antes de tudo (prioridade 7; o resumo da seção, 6,9) e o resto fica', () => {
+  const s = comShells();
+  const cheio = cabe(s, { local: 'lateral', orcamento: 200, largura: 100 });
+  const dosShells = cheio.filter((x) => /^ {2}◦ /.test(x));
+  const resto = cheio.filter((x) => !/^ {2}◦ /.test(x) && !/^SEGUNDO PLANO/.test(x));
+  assert.equal(dosShells.length, 4);
+  // sem o SEGUNDO PLANO o desenho cabe em `resto.length` linhas (mais os separadores sobrando); cortando de 1 em 1 só sai shell até o resumo e depois nada do resto antes dele
+  let ultimoComShell = 0;
+  for (let orc = cru(s, { largura: 100, local: 'lateral' }).length; orc >= 9; orc--) {
+    const l = cabe(s, { local: 'lateral', orcamento: orc, largura: 100 });
+    const nShells = l.filter((x) => /^ {2}◦ /.test(x)).length;
+    if (nShells > 0) ultimoComShell = orc;
+    if (nShells < 4) for (const x of resto) assert.ok(l.map(norm).includes(norm(x)) || prioDe(x) >= 5, `orc ${orc}: "${x}" (prio ${prioDe(x)}) saiu antes do segundo plano`);
+  }
+  assert.ok(ultimoComShell > 0);
+  const apertado = cabe(s, { local: 'lateral', orcamento: resto.length + 1, largura: 100 });
+  assert.ok(apertado.every((x) => !/^ {2}◦ /.test(x)), 'sem folga, as linhas de shell são as primeiras a sair');
+});
+
+test('segundo-plano-vazio-some: sem shell de fundo não há cabeçalho, linha-resumo nem separador sobrando', () => {
+  for (const largura of [200, 100, 80, 60, 44]) {
+    const s = proj(P(...IDS), [...EXECUCAO, DEC(50, 'seguir com a T3')], { agentes: [vivo('T4 implementador')], segundoPlano: [] });
+    const c = cru(s, { largura });
+    assert.ok(c.every((x) => !/SEGUNDO PLANO|segundo plano|^ {2}◦ /.test(x)), `${largura}: ${c.join('|')}`);
+    assert.ok(c.every((x, i) => !(SEP.test(x) && SEP.test(c[i + 1] ?? ''))), 'nunca 2 separadores colados');
+    const sem = proj(P(...IDS), [...EXECUCAO], { agentes: [vivo('T4 implementador')] });
+    assert.ok(cru(sem, { largura }).every((x) => !/SEGUNDO PLANO|segundo plano/.test(x)), 'campo ausente também some');
+  }
+});
+
+test('sombra-ultimo-na-equipe (g.8): a Sombra é o último └ da árvore, nos 2 presets: nome, aconselha, modelo, decisões, última #seq resposta (fonte); estreito nome + #seq; sem decisão só o nome', () => {
+  const s = comShells();
+  for (const [preset, nome] of [['esquadrao', 'ELROND'], ['executivo', 'Conselheiro']] as const) {
+    const t = arvore(linhas(s, { largura: 200, preset }));
+    assert.equal(t.length, 3, `2 agentes + a Sombra: ${t.join('|')}`);
+    assert.match(t[2], new RegExp(`^└─ ○ ${nome} {2}aconselha(?: · \\S+)? {2}1 decisão · #\\d+ seguir com a T3 \\(spec:1\\)$`), t[2]);
+    assert.ok(t.slice(0, 2).every((x) => /^├─ ● /.test(x)), 'os agentes ficam com ├─; só a Sombra fecha');
+  }
+  const estreito = arvore(linhas(s, { largura: 50 }));
+  assert.match(estreito[estreito.length - 1], /^└ ○ ELROND #\d+$/, 'estreito: nome + #seq');
+  const sem = arvore(linhas(proj(P(...IDS), [...EXECUCAO], { agentes: [vivo('T4 implementador')] }), { largura: 200 }));
+  assert.equal(sem[sem.length - 1], '└─ ○ ELROND', 'sem decisão só o nome');
+  assert.ok(sem.slice(0, -1).every((x) => /^├─ /.test(x)) || sem.length === 2);
+  // 2 decisões: o contador pluraliza
+  const dois = arvore(linhas(proj(P(...IDS), [...EXECUCAO, DEC(50, 'a'), e(51, 'decisao.sombra', { pergunta_hash: 'b'.repeat(64), task: 'T3', resposta: 'b', arquivo: 'sombra.md', pergunta_enviesada: false, fontes: ['spec:1'] })], { agentes: [vivo('T4 implementador')] }), { largura: 200 }));
+  assert.match(dois[dois.length - 1], /2 decisões · #\d+ b \(spec:1\)$/);
+});
+
+test('limite-5h-ausente-omite e limite-5h-presente-mostra (D-G7, g.10): sem five_hour só o 7d; com five_hour os dois', () => {
+  const sem = linhas(proj(P(...IDS), [], { limites: { h5: null, d7: 70 } }), { largura: 200 });
+  assert.ok(sem.includes('│  7d ███████░░░ 70%'), sem.join('\n'));
+  assert.ok(sem.every((x) => !/5h/.test(x)), 'nunca "5h ?"');
+  const com = linhas(proj(P(...IDS), [], { limites: { h5: 30, d7: 70 } }), { largura: 200 });
+  assert.ok(com.includes('│  5h ███░░░░░░░ 30%   7d ███████░░░ 70%'), com.join('\n'));
+  for (const largura of [80, 60, 44]) {
+    assert.ok(linhas(proj(P(...IDS), [], { limites: { h5: null, d7: 70 } }), { largura }).every((x) => !/5h/.test(x)), `${largura}: omitido também no estreito`);
+    assert.ok(linhas(proj(P(...IDS), [], { limites: { h5: 30, d7: 70 } }), { largura }).some((x) => /5h .*30%/.test(x) && /7d/.test(x)), `${largura}: presente aparece`);
+  }
+});
+
+test('interrogacao-com-motivo (g.9): a partir de 100 colunas todo "?" diz por que falta; abaixo de 100 fica só o "?"', () => {
+  const s = proj(P(...IDS), [...EXECUCAO], { agentes: [vivo('T4 implementador')], contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null } });
+  const largo = linhas(s, { largura: 100 }).join('\n');
+  assert.match(largo, /ctx \? \(sem medição\)/);
+  assert.match(largo, /tok \? \(sem medição\)/);
+  assert.match(largo, /7d \? \(sem medição\)/);
+  assert.match(largo, /^CI ● \? \(CI sem execução\) {3}PROD leu 0 · alterou 0/m);
+  assert.match(largo, /^PLANO .*3\/6 tasks.*$/m);
+  const estreito = linhas(s, { largura: 99 }).join('\n');
+  assert.doesNotMatch(estreito, /sem medição|CI sem execução|n insuficiente|diário sem leitura|sem fonte/, '99 colunas: só o "?"');
+  assert.match(estreito, /ctx \?/);
+  // ETA sem base (menos de 3 integradas) diz por quê a partir de 100 colunas
+  const eta = proj(P(...IDS), [...ciclo('T1', 0)], {});
+  assert.match(linhas(eta, { largura: 100 }).find((x) => /^PLANO/.test(x)) as string, /ETA \?: n insuficiente$/);
+  assert.doesNotMatch(linhas(eta, { largura: 99 }).find((x) => /^PLANO/.test(x)) as string, /ETA|insuficiente/);
+  // CI em execução (rodape.ci.pendente) ⇒ "CI pendente"
+  const base = rico();
+  const pend = cru({ ...base, rodape: { ...base.rodape, ci: { verde: null, execucoesHoje: 0, pendente: true } } } as EstadoPainel, { largura: 120 }).join('\n');
+  assert.match(pend, /^CI ● \? \(CI pendente\)/m);
+});
+
+// ---- GM-15 T35 (D-G11 a, D-G12 5, r.8): botões por item no DEPENDE, até 5 + "mais N"; "agora não" e o lote na pergunta ----
+test('depende-botoes-por-item (r.8): 3 itens ⇒ 3 linhas com os próprios botões; 7 ⇒ 5 + "mais 2" com o botão de ver todos; expandido ⇒ os 7', async () => {
+  const mod = await import('../../mod/painel.mjs' as string);
+  const pend = (n: number): Item[] => Array.from({ length: n }, (_, i) => nota(i + 1, 'pendencia', `tarefa número ${i + 1}`));
+  const desenhar = (s: EstadoPainel) => {
+    const linhasM = mod.linhasDaPane(mod.estadoParaDesenho(s), { preset: 'esquadrao', tema: 'mono' }, 120, {});
+    const mapa: Map<number, { rotulo: string; comando: string }[]> = mod.botoesPorLinha(s, null, linhasM);
+    const textoDe = (i: number) => linhasM[i].map((x: { texto: string }) => x.texto).join('');
+    return [...mapa].map(([i, b]) => `${textoDe(i).trim()} | ${b.map((x) => `${x.rotulo}=${x.comando}`).join(' ')}`);
+  };
+  const tres = proj(P(...IDS), pend(3));
+  assert.deepEqual(desenhar(mod.dependeVisivel(tres, false)), [1, 2, 3].map((n) => `tarefa número ${n} | feito=/gabarito-mestre:responder s1:${n} 1`));
+  const sete = proj(P(...IDS), pend(7));
+  const vis = desenhar(mod.dependeVisivel(sete, false));
+  assert.equal(vis.length, 6);
+  assert.deepEqual(vis.slice(0, 5), [1, 2, 3, 4, 5].map((n) => `tarefa número ${n} | feito=/gabarito-mestre:responder s1:${n} 1`));
+  assert.equal(vis[5], 'mais 2 itens | ver todos=/gabarito painel depende');
+  assert.equal(desenhar(mod.dependeVisivel(sete, true)).length, 7);
+  // o texto do item não repete o botão: "[feito]" sai do desenho de todos os itens com botão
+  const linhasM = mod.linhasDaPane(mod.estadoParaDesenho(mod.dependeVisivel(sete, false)), { preset: 'esquadrao', tema: 'mono' }, 120, {});
+  assert.equal(linhasM.map((l: { texto: string }[]) => l.map((x) => x.texto).join('')).some((t: string) => /\[feito\]/.test(t)), false);
+});
+
+test('agora-nao-e-lote-na-pergunta (r.14, r.16): a pergunta aberta ganha "agora não" e, com recomendada, "aprovar recomendadas (N)"', async () => {
+  const mod = await import('../../mod/painel.mjs' as string);
+  const s = proj(P(...IDS), [nota(1, 'duvida', 'Emenda 13: aprovar?', { opcoes: ['aprovar (recomendado)', 'rejeitar'] }, 's1', 'orquestrador'),
+    nota(2, 'duvida', 'Meta?', { opcoes: ['manter', 'trocar (recomendado)'] }, 's1', 'orquestrador')]);
+  const b = mod.botoesDoTopo(s, null).map((x: { rotulo: string; comando: string }) => `${x.rotulo}=${x.comando}`);
+  assert.deepEqual(b, [
+    '1 aprovar (recomendado)=/gabarito-mestre:responder s1:1 1', '2 rejeitar=/gabarito-mestre:responder s1:1 2',
+    'agora não=/gabarito-mestre:responder s1:1 agora', 'aprovar recomendadas (2)=/gabarito-mestre:responder lote',
+  ]);
 });

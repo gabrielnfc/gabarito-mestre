@@ -33,7 +33,7 @@ const SEGREDO = /ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|\bAKIA[A-Z0-9]{12,}|\
 // Literais montados: o gate não pode acusar o próprio código-fonte (hatch e allow).
 const HATCH = ['GABARITO', 'ALLOW'].join('_');
 const ALLOW_ADD = new RegExp(`permissionDecision["': ]+["']${['al', 'low'].join('')}`);
-const MS_ZERO = 100; // mutação "morta" em menos que isto não mediu nada (E19)
+const FRACAO_ZERO = 0.25; // mutação "morta" em menos que isto do tempo do MESMO comando sem mutação não mediu nada (E19, relativo: aprendizado 136)
 
 // Leitor estrito do diário (dist/diario.js). Ausente ⇒ `desviosDaTask` avisa; o resto do gate não depende dele.
 let lerEstrito = null;
@@ -279,7 +279,13 @@ export async function avaliar(opts) {
   const { suites, erros: errosSuites } = normalizarSuites(opts.suites ?? cfg.gates?.suites ?? [], red.size > 0);
   errosSuites.forEach((e) => falhar(e));
   if (!suites.length && !errosSuites.length) falhar('nenhuma suíte declarada (--suite, --suite-sem-contagem ou gates.suites): nada foi executado');
-  const rs = await Promise.all(suites.map((s) => rodar(s.nome, s.cmd, s.cwd ? resolve(wt, s.cwd) : wt)));
+  // GM-15 T34 (emenda 7 r.7, review r1 MAJOR-2): a suíte do mod (`mod-test.sh`, 37 s isolada e >= 120 s ao lado dos gates, medido) roda DEPOIS das demais, nunca junto: a disputa de CPU
+  // era o que estourava o teto. As outras seguem em paralelo entre si; o resultado volta na ordem declarada.
+  const eMod = (x) => /mod-test\.sh/.test(x.cmd);
+  const exec = (x) => rodar(x.nome, x.cmd, x.cwd ? resolve(wt, x.cwd) : wt);
+  const rs = new Array(suites.length);
+  await Promise.all(suites.map(async (x, i) => { if (!eMod(x)) rs[i] = await exec(x); }));
+  for (const [i, x] of suites.entries()) if (eMod(x)) rs[i] = await exec(x);
   for (const [i, s] of rs.entries()) {
     const seg = (s.ms / 1000).toFixed(1);
     const { nomes, declaradas } = falhas(s.out);
@@ -317,7 +323,6 @@ export async function avaliar(opts) {
   if (opts.mutacoes !== undefined && (!Array.isArray(opts.mutacoes) || !opts.mutacoes.length)) {
     falhar('mutações deve ser uma lista não vazia de objetos {nome, arquivo, de, para, teste}');
   } else if (mutacoes.length) {
-    const minMs = opts.minMs ?? MS_ZERO;
     const basal = new Map();
     for (const m of mutacoes) {
       const bem = m && typeof m === 'object' && ['nome', 'arquivo', 'de', 'para', 'teste'].every((k) => typeof m[k] === 'string')
@@ -331,10 +336,10 @@ export async function avaliar(opts) {
       const chave = `${cwd}\0${m.teste}`;
       if (!basal.has(chave)) {
         const r0 = await rodar(`${m.nome} sem mutação`, m.teste, cwd);
-        basal.set(chave, r0.rc);
+        basal.set(chave, { rc: r0.rc, ms: r0.ms });
         if (r0.rc !== 0) falhar(`teste da mutação ${m.nome} já falha sem mutação: morte seria falsa`);
       }
-      if (basal.get(chave) !== 0) continue;
+      if (basal.get(chave).rc !== 0) continue;
       const alvo = resolve(wt, m.arquivo);
       const rel = relative(resolve(wt), alvo);
       if (rel.startsWith('..') || isAbsolute(rel)) { falhar(`mutação ${m.nome}: arquivo fora da worktree (${m.arquivo})`); continue; }
@@ -352,6 +357,7 @@ export async function avaliar(opts) {
         writeFileSync(alvo, orig);
       }
       const seg = (r.ms / 1000).toFixed(2);
+      const minMs = opts.minMs ?? FRACAO_ZERO * basal.get(chave).ms;
       if (r.rc === 0) falhar(`mutação ${m.nome} VIVA (${seg}s)`);
       else if (r.ms < minMs) alerta(`mutação ${m.nome} falhou em ${seg}s (tempo ~zero): o teste provavelmente não rodou; morte não provada`);
       else { ok(`mutação ${m.nome} morta (${seg}s)`); nMortas++; }

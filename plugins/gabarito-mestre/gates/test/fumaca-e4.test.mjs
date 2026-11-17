@@ -38,8 +38,8 @@ test('fumaca-spec-aprovada-pelo-hook: aguardando ⇒ aprova (sha256 dos bytes) �
   assert.deepEqual(tipos('spec.aprovada').map((e) => e.dados), [{ spec: 'docs/spec.md', sha256: sha }], 'um único spec.aprovada, com o caminho e o sha256 dos bytes');
   assert.equal(o.aprovarDeNovo.j.decision, 'block');
   assert.match(o.aprovarDeNovo.j.reason, /ja_aprovada/);
-  // REQ-DEP-1: todas as fontes leram e a lista é vazia ⇒ o único item é "depende de você: nada", sem botão
-  assert.deepEqual(o.estadoAprovada.j.estado.depende, [{ nivel: 'dono', motivo: 'depende de você: nada', acoes: [] }], 'aprovada: nada depende do dono');
+  // REQ-DEP-1: todas as fontes leram e a lista é vazia ⇒ o único item é "nada depende de você", sem botão
+  assert.deepEqual(o.estadoAprovada.j.estado.depende, [{ nivel: 'dono', motivo: 'nada depende de você', acoes: [] }], 'aprovada: nada depende do dono');
 });
 
 test('fumaca-emenda-aberta-e-agente-vivo: a proposta aparece em depende com os comandos reais; o transcript de fixture chega a ctxTok 92762 e tok 86900 pelo CLI', () => {
@@ -64,8 +64,10 @@ test('fumaca-emenda-aberta-e-agente-vivo: a proposta aparece em depende com os c
   assert.deepEqual([e.equipe.lider.h5, e.equipe.lider.d7], [12, 5]);
 });
 
-test('fumaca-teto-de-rodadas-e-parou: T2 reprovada 2× ⇒ no_teto ⇒ proxima decide parar ⇒ loop.parar ⇒ o estado diz PAROU com a task e o comando', () => {
-  assert.deepEqual(o.proximaTeto.j.acao, { tipo: 'parar', motivo: 'teto_rodadas', task: 'T2' });
+test('fumaca-teto-de-rodadas-e-parou: T2 reprovada 2× ⇒ no_teto ⇒ proxima pede retomar a órfã T3 antes do teto (T12) ⇒ loop.parar ⇒ o estado diz PAROU com a task e o comando', () => {
+  // GM-15 T12 (REQ-AUT-1): a caminhada chama `proxima --vivos 0` com T3 em voo, então a retomada única de T3 vem antes do teto de T2;
+  // o `parar teto_rodadas` segue gravado pelo `loop.mjs parar` logo abaixo, e o resto da cena não muda
+  assert.deepEqual(o.proximaTeto.j.acao, { tipo: 'retomar', task: 'T3' });
   assert.deepEqual(tipos('loop.parar').map((x) => x.dados), [{ motivo: 'teto_rodadas' }]);
   assert.deepEqual(tipos('review.veredito').filter((x) => x.dados.task === 'T2').map((x) => [x.dados.veredito, x.dados.rodada]), [['REPROVADO', 1], ['REPROVADO', 2], ['APROVADO', 1]], 'reprovada 2× (teto); a APROVADO é de depois da liberação do dono');
   const e = o.estadoParou.j.estado;
@@ -109,13 +111,15 @@ test('fumaca-painel-e4: painel.mjs texto, nos dois presets, é byte a byte o tex
     const iSep = l.findIndex((x) => /^─+$/.test(x));
     assert.equal(iSep, 5, 'o topo acaba no 1º separador do E4');
     assert.ok(l.slice(0, iSep).every((x) => [...x].length <= 80 && !x.endsWith('…')), 'REQ-GLB-1: nenhuma linha do topo passa de 80 colunas nem termina em "…"');
-    assert.ok(!/limite de revisões|depende de você: nada/.test(t), 'com PAROU e emenda o topo não diz "nada" nem repete o teto');
+    assert.ok(!/limite de revisões|nada depende de você/.test(t), 'com PAROU e emenda o topo não diz "nada" nem repete o teto');
     // FIEL-10 (b): PLANO pinta só integradas (1 de 3 ⇒ 7 de 21 marcas), status do loop à direita
     assert.match(l[6], /^PLANO {3}▰{7}▱{14} {2}33% {2}1\/3 tasks +loop parado$/);
     // FIEL-11 (a)(b): o orquestrador com o contexto; o agente vivo da T3 pelo último fato registrado, com a medição do uso (93k)
     assert.match(t, /^│ {2}ctx █+░+ 46% · pouso em 50% {3}tok \?$/m);
     assert.match(t, /^│ {2}5h █░{9} 12% {3}7d █░{9} 5%$/m);
-    assert.match(t, /^└─ ● \S+ · haiku {2}T3 {2}ctx 93k {2}\dm {2}implementando \(registrado\)$/m);
+    // GM-15 T33 (g.8): a Sombra é o último └ da EQUIPE; o agente fica com ├─
+    assert.match(t, /^├─ ● \S+ · haiku {2}T3 {2}ctx 93k {2}\dm {2}implementando \(registrado\)$/m);
+    assert.match(t, /^└─ ○ (ELROND|Conselheiro)$/m, 'a Sombra fecha a árvore (sem decisão: só o nome)');
     // FIEL-10 (c): o teto da T2 já está no topo e a T3 tem agente ⇒ sem ATENÇÃO
     assert.ok(!/ATENÇÃO/.test(t));
     // FIEL-10 (d): só resultados, mais novo no topo, com origem; "despachou" e "emenda proposta" não entram
@@ -127,9 +131,9 @@ test('fumaca-painel-e4: painel.mjs texto, nos dois presets, é byte a byte o tex
     assert.ok(l.every((x) => [...x].length <= 80), 'nada passa de 80 colunas');
   }
   assert.match(esq, /^[A-Z]{2,10} {2}orquestra$/m, 'o esquadrão leva o nome do pacote');
-  assert.match(esq, /^└─ ● [A-Z]{2,10} · haiku {2}T3 /m);
+  assert.match(esq, /^├─ ● [A-Z]{2,10} · haiku {2}T3 /m);
   assert.match(exe, /^Orquestrador {2}orquestra$/m);
-  assert.match(exe, /^└─ ● Implementador · haiku {2}T3 /m);
+  assert.match(exe, /^├─ ● Implementador · haiku {2}T3 /m);
   assert.ok(!/ARAGORN|SAM|FRODO|GANDALF|ELROND|LEGOLAS|terra média/.test(exe), 'o Executivo não tem nome de pacote (D-P10)');
   // o topo (PAROU, DEPENDE) e o PLANO têm as MESMAS linhas nos dois presets; o cabeçalho só difere no rótulo do preset
   assert.deepEqual(exe.split('\n').slice(1, 7), esq.split('\n').slice(1, 7));
@@ -166,7 +170,7 @@ test('fumaca-devolver-sem-rodar-comando: hooks do dono + conclusão ⇒ decisão
   assert.match(topoD.join(' ').replace(/ +/g, ' '), /^◆ DEPENDE DE VOCÊ 1 item deploy devolvido ao dono: quero revisar antes de subir \[executar\]$/);
   assert.equal(ld.filter((x) => x.startsWith('  deploy devolvido')).length, 1, '1 item');
   assert.match(ld[iP], /^PLANO {3}▰{21} {2}100% {2}3\/3 tasks +todas integradas$/);
-  assert.ok(!/PAROU|depende de você: nada/.test(o.textoDevolvido.out));
+  assert.ok(!/PAROU|nada depende de você/.test(o.textoDevolvido.out));
 });
 
 test('fumaca-limpa-o-temporario: o diretório da caminhada existe durante os testes; limpar() o apaga e recusa qualquer outro caminho', () => {

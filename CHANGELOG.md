@@ -3,7 +3,54 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/). Versionamento: [SemVer](https://semver.org/lang/pt-BR/).
 Usuários do plugin só recebem atualização quando `version` muda.
 
-## [Unreleased]
+## [2.1.0] — 2026-11-17
+
+Versão estável da 2.1.0 (GM-15, fluidez do loop e clareza para quem usa). Tag e release só o dono publica (`next` para `main`). Data da alpha.1 conferida pela data do commit da tag `gabarito-mestre--v2.1.0-alpha.1` (2026-11-15).
+
+### Resumo da GM-15 (por tema)
+
+- **Fluidez do loop**: o loop segue sozinho, lê a CI da main pelo sha do push, retoma depois do `/clear` e o painel/DEPENDE avisam trava de mais de 30 min, contexto alto sem pouso e loop desligado (régua do Stop); nunca pedem `/clear` com o loop desligado.
+- **Entrega encerrada e reaberta**: o encerramento vem do merge na main; PR de virada de pré-versão não encerra a entrega, e a visão do que foi entregue usa a versão inteira (nunca truncada).
+- **Adiar e cortar**: tasks adiadas e cortadas aparecem no painel; task com reabertura de origem inválida aparece como `?` nomeando a causa e não derruba pouso nem trilha.
+- **Visão de projeto**: render e CLI da visão de projeto, com o rótulo único "agente fora do loop".
+- **ETA**: previsão em faixa, com motivo.
+- **Painel**: o painel da entrega atual não traz item de entrega anterior.
+- **Robustez do loop (T34)**: o mod relê o id da sessão após `/clear`; `loop.mjs abrir` recusa base fora da entrega e `fechar` apaga só branch sem commit próprio; o dono reverte o julgamento da Sombra por `/emenda aprovar|rejeitar`; a suíte do mod roda depois dos gates, com teto de 3x a mediana medida.
+- **Sombra libera por progresso (T36)**: sem limite numérico de liberações; a decisão do teto é uma função só (progresso medido, abordagem nova, freios por abordagens esgotadas e orçamento); o dono pode reverter emenda já aplicada e a spec fica divergente (`?` no painel).
+- **Contribuições do Allan**: PRs #19 (autonomia do orquestrador na guarda, agora "projeto E máquina") e #20 incorporadas.
+
+### Limites declarados
+
+- Pré-versão não encerra a entrega: a GM-14 continua não encerrada até a 2.1.1 (D-G20, D-G21); o painel da GM-14 é limite até lá.
+- Só 1 emenda é desfeita por edição (T36).
+- Tokens por task seguem sem produtor (T36): o orçamento por task não usa tokens medidos.
+- Pré-versão com versão no título: o PR de virada de pré-versão não encerra a entrega, mas um PR de virada **sem a versão no título** cuja release é prerelease ainda encerra (`guarda.ts:218`, "release prerelease não é medido"); vai à 2.1.1.
+- Encerramento antecipado: um hotfix com o ID da entrega no título, mergeado na `main` no meio da entrega, a encerra; o dono reabre com `reabrir-entrega`.
+- O PROJETO do painel ainda mostra a GM-14 em 98 % (57 de 58), porque ela não encerra até a 2.1.1 (D-G20, D-G21).
+- S1 REFUTADA (medida): a busca por título no `gh` tem recall 1/2 na GM-13/GM-14 e precisão 8/15; o critério com ID exato e fronteira tem precisão 8/8. Efeito: o PR da virada precisa levar o ID da entrega no título; PR de virada sem o ID no título não é achado e a entrega não encerra por ele.
+- S4 REFUTADA (medida, T20): o mod não consegue ler a própria versão carregada. Efeito: o `harness-doctor` diz "versão do painel carregado: não conferível" e manda reabrir o CLI depois de atualizar; nunca diz "ok".
+- S8 REFUTADA (medida, T20): não dá para rodar um `/clear` real no CI. Efeito: a fumaça do pouso no CI simula o par `sessao.pouso` seguido de `sessao.inicio {origem: 'clear'}` e confere a retomada pelo `proxima`; o `/clear` real não é provado no CI e fica provado 1 vez por release, numa sessão local, com evidência anexada.
+- R5 da guarda (PR #19, é grep, não sandbox): nome do interruptor montado por variável ou concatenação não é pego; abreviação de opção do git e execução por config ou ambiente (`core.pager`, `GIT_EDITOR`, `sequence.editor`) não são classificadas; falta no corpus o caso de alias do git com `!` que cita as áreas protegidas. Só o orquestrador passa, e cada passagem fica no diário.
+- Aceites A2 e A1 **pendentes, não medidos**: a alpha.1 prometeu que a 2.1.0 só sairia depois do aceite A2 (quem nunca programou) e a alpha.2 deixou regravar o A1 no aceite da final. Não achei registro de A2 nem de regravação do A1 nas specs, decisões e commits da GM-15 (só o avaliador do A1 foi ajustado ao desenho do E4, T29). Por isso a 2.1.0 não declara A1 8/8 nem A2 feito; ficam como pendência explícita para o dono decidir antes de publicar.
+
+### Adicionado (autonomia e guarda)
+- **Autonomia do orquestrador na guarda: precisa do projeto E da máquina (GM-15 T15, REQ-AUT-2 b).** A guarda só deixa o `ask` do orquestrador passar quando as duas coisas valem: `guarda.autonomia` = `"orquestrador"` no `harness.config.json` lido de `origin/HEAD` (o projeto pede; exige merge) **e** o interruptor por máquina `~/.claude/gabarito-autonomia.json` (`{"orquestrador": true}`, protegido pelo anel integridade). Só um dos dois não basta: continua `ask`. A pergunta que grava `guarda.autonomia` é a única de autonomia do onboarding (3 respostas, 4 chaves; GM-15 T14).
+  - Com os dois ligados, todo `ask` do orquestrador passa em silêncio e grava o evento `guarda.autonomia_usada` no diário (só anel, alvo, ação e ambiente; nunca o comando).
+  - Continuam pedindo, mesmo com os dois ligados: anel `segredo`, exceção de classificação, comando acima do teto (65.536) e `cd` perdido.
+  - Subagente continua `deny`.
+  - O `harness-doctor` mostra as 4 chaves de autonomia, a "autonomia mista" e o descompasso nos dois sentidos (o projeto pede e a máquina não liga; a máquina liga e o projeto não pede).
+  - Mudança sobre a PR #19 (Allan): a regra era "um ou outro" (`||`) e passou a "os dois" (`&&`); o evento `guarda.autonomia` virou `guarda.autonomia_usada`.
+
+### Mudado
+- `git fetch` comum do orquestrador (remoto de nome simples, sem refspec com `:`/`+`/`refs/`, flags de uma allowlist) não pede mais confirmação.
+
+### Segurança
+- Viram anel integridade (`deny` para subagente):
+  - escrita no interruptor por qualquer caminho (Write, Edit, redirecionamento, `tee`, `cp`, `mv`, interpretadores, glob);
+  - escrita em `refs/remotes`/`packed-refs` por interpretador;
+  - `git branch -d/-D -r` e `-m` sobre ref remota;
+  - `git rebase -x` e `-c alias.*=!` que citam essas áreas.
+- Os testes que sobem `dist/guarda.js` usam `HOME` próprio em tmp e não dependem mais do `$HOME` real.
 
 ## [2.1.0-alpha.2] — 2026-11-15
 
@@ -20,7 +67,7 @@ Hotfix do painel (GM-15, decisões do dono D-G1, D-G1a, D-G1b, D-G1c e D-G4).
 - A comparação do aceite A1 com a gravação da sessão real feita no desenho de 5 blocos fica pendente: regravar no aceite da 2.1.0 final.
 - A 2.1.0 final segue em construção (GM-15): fechamento da entrega pelo merge na main, tasks adiadas, previsão exata, visão de projeto e chat em linguagem natural.
 
-## [2.1.0-alpha.1] — 2026-11-14
+## [2.1.0-alpha.1] — 2026-11-15
 
 Pré-versão da 2.1.0 (clareza para quem usa). Não é a versão estável: a 2.1.0 só sai depois do aceite de quem nunca programou (A2) e da publicação pelo dono (`next` para `main`).
 
