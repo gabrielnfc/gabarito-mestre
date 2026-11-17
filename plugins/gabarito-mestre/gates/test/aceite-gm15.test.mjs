@@ -6,7 +6,9 @@
  * #8 "aberto" e a release v2.0.0 já velhos; `gh` com os PRs #7, #8, #17 e #22 com os VALORES REAIS do GitHub). Rodado COM e SEM o `events.sessao-1.jsonl`:
  *   (a.1) `aceite-replay-gm14-prs-reais-nao-encerra`: com os PRs reais a única publicação é a PRÉ-VERSÃO (#22 alpha.1) e ela NÃO encerra (emenda 20, D-G14) ⇒ nenhum
  *     entrega.encerrada, o painel não diz "entregue", nem antes nem depois de uma `dono.resposta` posterior; nenhum item da GM-14 trava o DEPENDE nem o Stop (o que aparece é só
- *     informativo e está declarado abaixo, com o motivo).
+ *     informativo e está declarado abaixo, com o motivo). Emenda 27 (D-G21): `aceite-replay-gm14-prs-reais-painel-atual-sem-gm14` = o painel da ENTREGA ATUAL (branch da GM-15)
+ *     sem nenhum item da GM-14 (DEPENDE, pergunta, ATENÇÃO) e Stop mudo; LIMITE DECLARADO `aceite-replay-gm14-limite-painel-da-gm14`: o painel `--entrega GM-14` mostra o T8 no teto e a
+ *     pergunta antiga enquanto ela não encerrar (asserido como medido; resolve na 2.1.1 com o encerramento pela versão final, backlog D-G20).
  *   (a.2) `aceite-versao-final-sintetica-encerra`: o MECANISMO da versão final, com UM PR de versão final SINTÉTICO de fixture (9001, não existe no GitHub) ⇒ c1 1 linha
  *     "GM-14 entregue" · c2 0 item da GM-14 no DEPENDE (só a oferta da próxima, com o botão "seguir") · c3 Stop silencioso · c4 a próxima entrega oferecida · c5 tudo isso de novo
  *     depois de uma `dono.resposta` posterior ao merge. (Regra para a última publicação pré-versão encerrar com a versão final: backlog 2.1.1, D-G20.)
@@ -67,14 +69,14 @@ function fotoDoCheckout() {
 // ── o replay da GM-14 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 const SPEC_PROXIMA = 'GM-15 Fluidez do loop'; // "<PBI> <título da spec>"
 /** Repo descartável na branch da GM-14, com onboarding, a spec da próxima entrega (GM-15) e o diário real da GM-14 (com ou sem o `events.sessao-1.jsonl`). */
-function replayGm14({ comSessao1 }) {
+function replayGm14({ comSessao1, branch = 'enabler/GM-14-clareza' }) {
   const d = join(raizSegura(realpathSync(mkdtempSync(join(tmpdir(), 'aceite gm14 ')))), 'r');
   mkdirSync(d, { recursive: true });
   git(d, 'init', '-q', '-b', 'main');
   writeFileSync(join(d, 'harness.config.json'), '{}\n');
   git(d, 'add', 'harness.config.json');
   git(d, 'commit', '-q', '-m', 'onboarding');
-  git(d, 'checkout', '-q', '-b', 'enabler/GM-14-clareza');
+  git(d, 'checkout', '-q', '-b', branch);
   mkdirSync(join(d, 'docs', 'superpowers', 'specs'), { recursive: true });
   writeFileSync(join(d, 'docs', 'superpowers', 'specs', '2026-11-16-gm15.md'), `# Fluidez do loop\n\nPBI: GM-15\n\n## Seção\n`);
   mkdirSync(dirDe(d, 'GM-14'), { recursive: true });
@@ -217,19 +219,41 @@ for (const comSessao1 of [true, false]) {
   });
 }
 
-// (a.1) cláusula "nenhum item da GM-14 trava o DEPENDE" (emenda 26 + ressalva da Sombra): MEDIDO com os PRs reais, a GM-14 aberta mostra itens do dono no DEPENDE
-// (`decidir a T8: chegou ao limite de revisões`, a pergunta de gatilho `loop:529` "a conversa mudou de assunto..." e mais perguntas abertas): NÃO são informativos, então
-// NÃO podem ser declarados como aceitos. Fica como `todo` (a falha é reportada, não derruba a suíte) até a decisão do dono/Sombra sobre como a GM-14 aberta deixa o DEPENDE.
+// (a.1, emenda 27 / D-G21) o painel da ENTREGA ATUAL (a próxima, GM-15, como o dono o vê pela branch, sem `--entrega GM-14`) não traz NADA da GM-14 (DEPENDE, pergunta, ATENÇÃO)
+// e o Stop fica mudo, com os PRs reais (a GM-14 segue sem encerrar). Mutação: item da GM-14 vazando para esse painel ⇒ cai.
+const BRANCH_ATUAL = 'enabler/GM-15-fluidez';
+const DA_GM14 = /GM-14|\bT8\b|\bT41\b|conversa mudou de assunto|consultas? à Sombra|decis(ão|ões) da Sombra/;
 for (const comSessao1 of [true, false]) {
-  test(`aceite-replay-gm14-prs-reais-depende-sem-item-da-gm14: ${comSessao1 ? 'COM' : 'SEM'} events.sessao-1.jsonl, PRs reais ⇒ DEPENDE sem item da GM-14`, { todo: 'MEDIDO: a GM-14 aberta ainda mostra T8 no teto e perguntas abertas no DEPENDE; emenda 26 não aceita item que trava; decisão pendente (relatório da T27 r1)' }, () => {
-    const d = replayGm14({ comSessao1 });
+  test(`aceite-replay-gm14-prs-reais-painel-atual-sem-gm14: ${comSessao1 ? 'COM' : 'SEM'} events.sessao-1.jsonl, PRs reais, branch da GM-15 ⇒ Stop mudo e nenhum item da GM-14 no DEPENDE, na pergunta nem no ATENÇÃO`, () => {
+    const d = replayGm14({ comSessao1, branch: BRANCH_ATUAL });
     const m = medir(d);
     assert.equal(m.ok, true, JSON.stringify(m));
+    assert.deepEqual(encerradas(d), [], 'a GM-14 não encerra com os PRs reais');
     const e = estado(d);
-    assert.deepEqual(e.depende, [], `nenhum item da GM-14 no DEPENDE ${JSON.stringify(e.depende)}`);
-    assert.equal(e.pergunta, null, `nenhuma pergunta da GM-14 aberta ${JSON.stringify(e.pergunta)}`);
+    assert.deepEqual(e.depende.filter((i) => DA_GM14.test(`${i.motivo} ${JSON.stringify(i.acoes)}`)), [], `DEPENDE da entrega atual sem item da GM-14 ${JSON.stringify(e.depende)}`);
+    assert.equal(e.pergunta === null || !DA_GM14.test(JSON.stringify(e.pergunta)), true, `pergunta da entrega atual sem a da GM-14 ${JSON.stringify(e.pergunta)}`);
+    assert.deepEqual(e.atencao.filter((x) => DA_GM14.test(x)), [], `ATENÇÃO da entrega atual sem a da GM-14 ${JSON.stringify(e.atencao)}`);
+    const t = texto(d).join('\n');
+    assert.doesNotMatch(t, /conversa mudou de assunto|decidir a T8|consultas à Sombra sem decisão/, 'o painel desenhado da entrega atual sem texto da GM-14');
+    const s = stop(d);
+    assert.equal(s.status, 0, s.stderr);
+    assert.equal(s.stdout, '', 'Stop silencioso');
+    assert.equal(s.stderr, '', 'Stop sem stderr');
   });
 }
+
+// LIMITE DECLARADO (D-G21, backlog 2.1.1 / D-G20): o painel da própria GM-14 (`--entrega GM-14`) mostra itens antigos do dono enquanto ela não encerrar. Estado MEDIDO, asserido
+// como é (não `todo`): o T8 no teto com o botão "liberar mais uma rodada" e a pergunta de gatilho antiga. Resolve-se na 2.1.1 com o encerramento pela versão final.
+test('aceite-replay-gm14-limite-painel-da-gm14: `--entrega GM-14` com os PRs reais mostra o T8 no teto e a pergunta antiga (limite declarado, D-G21)', () => {
+  const d = replayGm14({ comSessao1: false });
+  assert.equal(medir(d).ok, true);
+  const r = cli(PAINEL, d, ['estado', '--entrega', 'GM-14', '--agentes']);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const e = JSON.parse(r.stdout).estado;
+  assert.deepEqual(e.depende, [{ nivel: 'dono', motivo: 'decidir a T8: chegou ao limite de revisões', acoes: [{ rotulo: 'liberar mais uma rodada', comando: '/gabarito-mestre:liberar T8' }] }], 'limite: o T8 no teto no DEPENDE da GM-14');
+  assert.match(e.pergunta?.texto ?? '', /conversa mudou de assunto/, 'limite: a pergunta antiga aberta');
+  assert.equal(e.entregue ?? null, null, 'limite: a GM-14 não está entregue');
+});
 
 // ── a entrega sintética (c7, c8) ────────────────────────────────────────────────────────────────────────────────────────────────────────
 const V = 'a'.repeat(40);
