@@ -764,6 +764,27 @@
       ]
     },
     {
+      "id": "T36",
+      "titulo": "Sombra libera até 5x por task (emenda 21, D-G16)",
+      "deps": [
+        "T34"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+        "plugins/gabarito-mestre/gates/src/depende.ts",
+        "plugins/gabarito-mestre/gates/dist/depende.js",
+        "plugins/gabarito-mestre/gates/test/loop-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/depende.test.ts",
+        "plugins/gabarito-mestre/skills/gabarito-loop/SKILL.md",
+        "plugins/gabarito-mestre/gates/src/loop.ts",
+        "plugins/gabarito-mestre/gates/dist/loop.js",
+        "plugins/gabarito-mestre/gates/test/loop.test.ts"
+      ],
+      "reqs": [
+        "REQ-AUT-1"
+      ]
+    },
+    {
       "id": "T27",
       "titulo": "Aceite final: replay da GM-14",
       "deps": [
@@ -779,7 +800,8 @@
         "T30",
         "T31",
         "T32",
-        "T34"
+        "T34",
+        "T36"
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/test/aceite-gm15.test.mjs",
