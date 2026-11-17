@@ -1054,6 +1054,24 @@
         "plugins/gabarito-mestre/gates/test/fumaca-e4/",
         "plugins/gabarito-mestre/gates/test/painel-altura.test.ts"
       ]
+    },
+    {
+      "id": "T38",
+      "titulo": "CI verde da PR da entrega",
+      "deps": [
+        "T27",
+        "T28",
+        "T34",
+        "T36"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/test/aceite-gm15.test.mjs",
+        "plugins/gabarito-mestre/scripts/test/mod-test.sh",
+        ".github/workflows/ci.yml"
+      ],
+      "reqs": [
+        "REQ-CI-1"
+      ]
     }
   ]
 }
