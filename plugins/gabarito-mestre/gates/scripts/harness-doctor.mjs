@@ -35,8 +35,9 @@
 
 import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, renameSync, lstatSync, openSync, fstatSync, readSync, closeSync, constants as fsConstants } from 'node:fs';
 import { join, relative, sep, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { lerGuarda, DENY_GUARDA, CHAVES_MORTAS, ORDEM_MODELO, PERFIS_MODELO, resolverPerfil } from '../lib/config.mjs';
+import { lerGuarda, lerConfigOrigin, DENY_GUARDA, CHAVES_MORTAS, ORDEM_MODELO, PERFIS_MODELO, resolverPerfil } from '../lib/config.mjs';
 import { diasEntre } from '../lib/datas.mjs';
 import { execFileSync } from 'node:child_process';
 import { checar, validarBranch, DEFAULTS as VERSIONAMENTO_DEFAULTS } from './versionamento-check.mjs';
@@ -60,6 +61,14 @@ try {
   nucleoErro = e instanceof Error ? e.message : 'erro desconhecido';
 }
 import { validarDb } from './db-template.mjs';
+
+/** Interruptor da máquina (`~/.claude/gabarito-autonomia.json`): a MESMA leitura da guarda (`lerAutonomia`), nunca uma cópia. `null` = guarda não carregou. */
+let lerInterruptor = null;
+try {
+  lerInterruptor = (await import('../dist/guarda.js')).lerAutonomia;
+} catch {
+  lerInterruptor = null;
+}
 
 const SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'coverage', '.next', '.turbo',
@@ -1049,6 +1058,32 @@ export function modDoLoop(raiz, agora = Date.now()) {
   return melhor === null ? { mod: false } : { mod: true, ha: Math.max(0, (agoraMs - melhor) / 3_600_000) };
 }
 
+const PLUGIN_JSON_PADRAO = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.claude-plugin', 'plugin.json');
+
+/**
+ * GM-15 T20 (REQ-POU-3): o mod do painel está carregado NESTA sessão e qual versão?
+ * `mod` = a prova de `modDoLoop` (medição do orquestrador da sessão do marcador local, de hoje: ≤ 24 h). `versaoDisco` = a do
+ * `plugin.json` ao lado deste script (ou `null`). `versaoCarregada` é SEMPRE `null` e `estado` SEMPRE `nao-conferivel`: o spike S4 (i)
+ * refutou ler a versão que o Claude Code tem em memória (o mod só vê o próprio módulo, que o hot-reload recarrega do disco, então
+ * a comparação daria "ok" por construção). Plano B da spec: "não conferível" e reabrir o CLI depois de atualizar; nunca "ok".
+ */
+export function painelCarregado(raiz, { agora = Date.now(), pluginJson = PLUGIN_JSON_PADRAO } = {}) {
+  let versaoDisco = null;
+  try {
+    const v = JSON.parse(readFileSync(pluginJson, 'utf8'))?.version;
+    if (typeof v === 'string' && v.length > 0 && v.length <= 64) versaoDisco = v;
+  } catch {
+    /* sem plugin.json (cópia instalada sem o plugin): "não lida" */
+  }
+  return { mod: modDoLoop(raiz, agora).mod === true, versaoDisco, versaoCarregada: null, estado: 'nao-conferivel' };
+}
+
+/** A linha `painel:` do relatório. */
+export function linhaPainel(p) {
+  const mod = p.mod ? 'mod carregado nesta sessão' : 'mod não carregado nesta sessão (sem prova de hoje: reabra o CLI)';
+  return `painel: ${mod} · versão no disco: ${p.versaoDisco ?? 'não lida'} · versão do painel carregado: não conferível, reabra o CLI depois de atualizar`;
+}
+
 /** `db` do harness.config.json: `declarado` (válido) · `n/a` (sem bloco) · `inválido` (bloco que o loop recusaria) · `indisponível` (config ilegível). */
 function estadoDb(fileCfg, configInvalido) {
   if (configInvalido) return { estado: 'indisponível', erro: 'harness.config.json inválido' };
@@ -1149,6 +1184,52 @@ export function camadaGuarda(raiz, agora = Date.now()) {
   return { estado, heartbeatHa, fonte, divergente, diario };
 }
 
+// ────────────────────────────────────────────────────────────── autonomia
+
+/** As 3 respostas da pergunta de autonomia (T14), nas 4 chaves que andam juntas: [entrega.autonomia, guarda.autonomia, sombra.julga_emendas, sombra.libera_teto]. */
+const RESPOSTAS_AUTONOMIA = [
+  [1, 'espera o seu ok para tudo', [false, 'nenhuma', false, false]],
+  [2, 'trabalha sozinha, espera o seu ok para publicar', [false, 'orquestrador', true, true]],
+  [3, 'trabalha e publica sozinha', [true, 'orquestrador', true, true]],
+];
+
+/**
+ * Autonomia deste projeto (REQ-AUT-2 b; condição 4): as 4 chaves, a resposta que elas formam (ou "mista"), o interruptor desta máquina e o descompasso
+ * entre o que o projeto PEDE e o que a máquina LIGA. A guarda só passa com os dois (`guarda.autonomia` de origin/HEAD E o interruptor): descompasso
+ * nos dois sentidos significa que ela segue pedindo. `guarda.autonomia` só vale lida de origin/HEAD; sem origin, a árvore local não conta (vale "nenhuma").
+ * `interruptor` injetável para teste; o padrão é a leitura da guarda (`null` se a guarda não carregou).
+ */
+export function autonomiaDoProjeto(raiz, { interruptor } = {}) {
+  const o = lerConfigOrigin(raiz);
+  let base = o.cfg;
+  if (base === null) {
+    try {
+      const lido = JSON.parse(readFileSync(join(raiz, 'harness.config.json'), 'utf8'));
+      base = lido && typeof lido === 'object' && !Array.isArray(lido) ? lido : {};
+    } catch {
+      base = {};
+    }
+  }
+  const obj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+  const bool = (v) => v === true;
+  const chaves = {
+    'entrega.autonomia': bool(obj(base.entrega).autonomia),
+    'guarda.autonomia': o.cfg !== null && obj(base.guarda).autonomia === 'orquestrador' ? 'orquestrador' : 'nenhuma',
+    'sombra.julga_emendas': bool(obj(base.sombra).julga_emendas),
+    'sombra.libera_teto': bool(obj(base.sombra).libera_teto),
+  };
+  const vals = Object.values(chaves);
+  const achada = RESPOSTAS_AUTONOMIA.find(([, , v]) => v.every((x, i) => x === vals[i]));
+  const ligado = interruptor !== undefined ? interruptor : lerInterruptor === null ? null : lerInterruptor();
+  const pede = chaves['guarda.autonomia'] === 'orquestrador';
+  let descompasso = null;
+  if (ligado !== null) {
+    if (pede && !ligado) descompasso = 'config-sem-maquina';
+    else if (!pede && ligado) descompasso = 'maquina-sem-config';
+  }
+  return { chaves, resposta: achada ? achada[0] : null, rotulo: achada ? achada[1] : null, mista: !achada, interruptor: ligado, descompasso, fonte: o.cfg !== null ? 'origin' : 'local' };
+}
+
 // ────────────────────────────────────────────────────────────── nível
 
 /** Perfil de repo sem aplicação (plugin, biblioteca de docs): G3 e teardown não se aplicam. */
@@ -1233,7 +1314,9 @@ export function run(root = process.cwd(), overrides = {}) {
   return {
     resultados,
     camada,
+    autonomia: autonomiaDoProjeto(root),
     loop: modDoLoop(root),
+    painel: painelCarregado(root),
     db: estadoDb(fileCfg, configInvalido),
     aprendizados: aprendizadosNoInstantaneo(root),
     perfil,
@@ -1281,8 +1364,15 @@ function render(out, explain) {
   const quente = c.heartbeatHa === null ? '' : ` (heartbeat há ${Math.round(c.heartbeatHa)} h)`;
   linhas.push(`Camada de guarda: ${c.estado}${c.estado === 'ativa' ? quente : ''}${c.estado !== 'ativa' && c.heartbeatHa !== null ? ` · último heartbeat local há ${Math.round(c.heartbeatHa)} h` : ''}${c.estado !== 'ativa' && c.diario ? ` · diário com heartbeat há ${Math.round(c.diario.ha)} h (${c.diario.autor})` : ''}${c.fonte ? ` · fonte ${c.fonte}` : ''}${c.divergente ? ' · DIVERGENTE (árvore ≠ origin/HEAD; vale o origin)' : ''}`);
   linhas.push(`Ambientes declarados: ${c.ambientes.length ? c.ambientes.join(', ') : '(nenhum)'}`);
+  const au = out.autonomia;
+  linhas.push(`Autonomia: ${au.mista ? 'autonomia mista (as chaves não combinam com nenhuma das 3 respostas; nada muda sem a sua escolha)' : au.rotulo}`);
+  linhas.push(`  ${Object.entries(au.chaves).map(([k, v]) => `${k}=${v}`).join(' · ')}${au.fonte === 'origin' ? '' : ' (sem origin/HEAD: guarda.autonomia vale nenhuma)'}`);
+  linhas.push(`  interruptor desta máquina: ${au.interruptor === null ? 'não lido (guarda não carregou)' : au.interruptor ? 'ligado' : 'desligado'}`);
+  if (au.descompasso === 'config-sem-maquina') linhas.push('  DESCOMPASSO: o projeto pede autonomia, mas esta máquina não a liga (falta `{"orquestrador": true}` em ~/.claude/gabarito-autonomia.json): a guarda segue pedindo.');
+  if (au.descompasso === 'maquina-sem-config') linhas.push('  DESCOMPASSO: esta máquina liga a autonomia, mas o projeto não a pede (guarda.autonomia != "orquestrador" em origin/HEAD): a guarda segue pedindo.');
   if (out.perfil) linhas.push(`Perfil: ${out.perfil}`);
   linhas.push(out.loop.mod ? `loop: mod ativo (custo.medicao do orquestrador há ${Math.round(out.loop.ha)} h)` : 'loop: sem mod (sem pouso automático) · sem gatilho de mensagem do dono');
+  linhas.push(linhaPainel(out.painel));
   linhas.push(out.db.estado === 'declarado' || out.db.estado === 'n/a' ? `db: ${out.db.estado}` : `db: ${out.db.estado} (${out.db.erro})`);
   linhas.push(out.aprendizados === null ? 'aprendizados: não conferidos (dist/ do núcleo não carregou)' : `aprendizados: ${out.aprendizados.n} no instantâneo de ${out.aprendizados.m}`);
   linhas.push('');

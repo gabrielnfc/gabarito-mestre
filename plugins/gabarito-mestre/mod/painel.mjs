@@ -35,6 +35,8 @@ export const ID_PANE = 'gabarito-painel';
 /** GM-14 T20: relógio de 60 s (FIEL-13 b, S15: p95 60,009 s entre leituras com `clock.every` 60 s + `turn.complete`). */
 export const INTERVALO_MS = 60000;
 export const TIMEOUT_MS = 5000;
+/** Quanto o `true` da ponte de onboarding vale sem perguntar de novo; menor que o período do painel (60 s), então toda leitura periódica reconfere (GM-15 T23). */
+export const TTL_ONBOARDING_MS = 30_000;
 /** `painel.mjs medir` chama `gh` com timeout próprio de 5 s, depois do `git`: a ponte espera mais que a do estado. */
 export const TIMEOUT_MEDIR_MS = 12000;
 /** FIEL-13 b: sem leitura boa do diário além disto ⇒ ATENÇÃO "painel sem ler o diário há N min" (2 × p95 do S15, no lugar dos 180 s provisórios). */
@@ -58,7 +60,7 @@ export const CHAVE_TRANSCRIPTS = 'painel:transcripts';
 export const TETO_TRANSCRIPTS = 64;
 /** Os pacotes de fábrica (`mod/temas/nomes/`). O mod não lê diretório sem `node:fs`: um teste em `gates/` compara esta lista com o diretório. */
 export const PACOTES_FABRICA = Object.freeze(['galaxia', 'herois', 'hogwarts', 'terra-media']);
-/** Ajuda do `/gabarito` (sem argumento ou desconhecido): linguagem do adotante, ≤ 14 linhas, ≤ 80 colunas. Multilinha de propósito (não passa por `umaLinha`). */
+/** Ajuda do `/gabarito` (sem argumento ou desconhecido): linguagem do adotante, ≤ 20 linhas, ≤ 80 colunas; lista todo ramo aceito (teste varre o código). Multilinha de propósito (não passa por `umaLinha`). */
 export const USO_GABARITO = [
   'Uso: o painel abre sozinho ao lado, em terminal largo, quando uma entrega',
   'começa.',
@@ -68,13 +70,21 @@ export const USO_GABARITO = [
   '/gabarito painel executivo  resumido: só o essencial da entrega',
   '/gabarito painel color      com cores  (ou: mono, sem cores)',
   '/gabarito painel narracao on|off   liga ou desliga a narração',
-  '/gabarito painel nomes <pacote>    troca os nomes da equipe',
+  '/gabarito painel nomes      lista os pacotes de nomes; <pacote> troca',
+  '/gabarito painel nomes sortear     volta a sortear os nomes da equipe',
+  '/gabarito painel lateral    painel ao lado  (ou: acima, acima da conversa)',
+  '/gabarito painel ocultar    esconde o painel; PAROU e perguntas ficam',
+  '/gabarito painel mostrar    traz o painel de volta',
+  '/gabarito painel depende    mostra todos os itens que dependem de você (ou só 5)',
   '/gabarito painel ligar      volta a abrir sozinho',
   '/gabarito painel desligar   fecha e não abre sozinho; só o aviso de PAROU',
   '                            continua',
+  '/gabarito chat cru|natural  linhas de ferramenta cruas ou em linguagem natural',
   '/gabarito pausar            para o trabalho automático da entrega',
   '/gabarito retomar           continua de onde parou',
 ].join('\n');
+/** Palavra reservada de `/gabarito painel nomes sortear` (volta ao sorteio): nunca é pacote, nem do repo nem das preferências. */
+const PACOTE_SORTEAR = 'sortear';
 const PACOTE_RE = /^[a-z0-9-]{1,32}$/;
 const AGENTE_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const SESSAO_RE = /^[A-Za-z0-9-]{1,128}$/;
@@ -82,7 +92,7 @@ export const PREFS_PADRAO = Object.freeze({ preset: 'esquadrao', tema: 'color', 
 
 /** Só classifica (a costura de `gates/test/painel-costura.test.mjs` ainda a exige); desde a T20 a classe `sem_loop` não esconde nada: é falha de leitura. */
 const SEM_LOOP = new Set(['plano_ausente', 'entrega_nao_inferida', 'fora_de_repo']);
-const SITUACAO_RE = /^depende de você:/;
+const SITUACAO_RE = /^depende de você:|^nada depende de você$/; // D-G12 (r.13): "nada depende de você" também é linha de situação
 const ID_PERGUNTA_RE = /^[A-Za-z0-9._-]{1,128}:[0-9]{1,9}$/;
 const PRESETS = ['esquadrao', 'executivo'];
 const TEMAS = ['color', 'mono'];
@@ -213,7 +223,7 @@ export function faixaDe(estado, paneVisivel, falha, opc = {}) {
     return { texto: limpar(`■ PAROU ${estado.parar.hora} ${estado.parar.texto}`), cor: 'error', ...botaoDe(estado.parar.acoes, root) };
   }
   if (!ligado) return null;
-  // GM-14 T20: "depende de você: nada" e "depende de você: ? (...)" do estado novo são a linha de situação do bloco, não pendência (sem prefixar 2×)
+  // GM-14 T20: "nada depende de você" (D-G12) e "depende de você: ? (...)" do estado novo são a linha de situação do bloco, não pendência (sem prefixar 2×)
   const donos = (Array.isArray(estado.depende) ? estado.depende : []).filter((d) => ehObj(d) && d.nivel === 'dono' && !SITUACAO_RE.test(String(d.motivo ?? '')));
   if (donos.length > 0) {
     const mais = donos.length > 1 ? ` (+${donos.length - 1})` : '';
@@ -331,7 +341,13 @@ export function botoesDoTopo(estado, root) {
   const q = perguntaDe(estado);
   if (q !== null) {
     if (typeof q.id !== 'string' || !ID_PERGUNTA_RE.test(q.id)) return [];
-    return q.opcoes.slice(0, 9).map((op, i) => ({ rotulo: `${i + 1} ${cortar(limpar(String(op)), 60)}`, comando: `/gabarito-mestre:responder ${q.id} ${i + 1}` }));
+    // GM-15 T35 (r.14, r.16): toda pergunta tem "agora não"; com recomendação aberta, o lote "aprovar recomendadas (N)" (o hook pede confirmação)
+    const n = Number.isInteger(estado.recomendadas) && estado.recomendadas > 0 ? estado.recomendadas : 0;
+    return [
+      ...q.opcoes.slice(0, 9).map((op, i) => ({ rotulo: `${i + 1} ${cortar(limpar(String(op)), 60)}`, comando: `/gabarito-mestre:responder ${q.id} ${i + 1}` })),
+      { rotulo: 'agora não', comando: `/gabarito-mestre:responder ${q.id} agora` },
+      ...(n > 0 ? [{ rotulo: `aprovar recomendadas (${n})`, comando: '/gabarito-mestre:responder lote' }] : []),
+    ];
   }
   const item = primeiroItem(estado);
   return item === null ? [] : dasAcoes(item.acoes);
@@ -344,9 +360,62 @@ export function estadoParaDesenho(estado) {
   if (ehObj(estado.parar)) return { ...estado, parar: { ...estado.parar, acoes: semComando(estado.parar.acoes) } };
   const q = perguntaDe(estado);
   if (q !== null) return { ...estado, pergunta: { ...q, opcoes: [] } };
-  const item = primeiroItem(estado);
-  if (item === null) return estado;
-  return { ...estado, depende: estado.depende.map((d) => (d === item ? { ...d, acoes: semComando(d.acoes) } : d)) };
+  // GM-15 T35 (r.8): cada item tem os próprios botões (`botoesPorLinha`), então nenhum item repete no texto a ação que virou botão
+  if (!Array.isArray(estado.depende)) return estado;
+  return { ...estado, depende: estado.depende.map((d) => (ehObj(d) && d.nivel === 'dono' ? { ...d, acoes: semComando(d.acoes) } : d)) };
+}
+
+/** GM-15 T35 (r.8, D-G12 5): itens do DEPENDE visíveis antes do "mais N". */
+export const DEPENDE_VISIVEIS = 5;
+const COMANDO_DEPENDE = '/gabarito painel depende';
+const ehItemDono = (d) => ehObj(d) && d.nivel === 'dono' && !SITUACAO_RE.test(String(d.motivo ?? ''));
+/**
+ * GM-15 T35 (r.8): até 5 itens do DEPENDE (na ordem do estado: a base e os itens mais antigos primeiro) e o resto num item "mais N itens" com o botão
+ * "ver todos" (`/gabarito painel depende`, que alterna `expandido`). Expandido ou com até 5 ⇒ o estado igual. Pura.
+ */
+export function dependeVisivel(estado, expandido = false) {
+  if (!estadoNovo(estado) || !Array.isArray(estado.depende)) return estado;
+  const donos = estado.depende.filter(ehItemDono);
+  if (expandido === true || donos.length <= DEPENDE_VISIVEIS) return estado;
+  const fora = new Set(donos.slice(DEPENDE_VISIVEIS));
+  const n = fora.size;
+  const mais = { nivel: 'dono', motivo: `mais ${n} ${n === 1 ? 'item' : 'itens'}`, acoes: [{ rotulo: 'ver todos', comando: COMANDO_DEPENDE }] };
+  return { ...estado, depende: [...estado.depende.filter((d) => !fora.has(d)), mais] };
+}
+
+/**
+ * GM-15 T35 (r.8, D-G11 a): botões POR ITEM. Mapa `índice da linha desenhada ⇒ botões`: PAROU ⇒ só a linha do topo; senão, depois do rótulo
+ * `◆ DEPENDE DE VOCÊ`, cada linha de item (recuo de 2, a mesma ordem de `painel-esquadrao`: pergunta, "mais N perguntas", itens) leva os botões dela;
+ * a pergunta leva os de `botoesDoTopo`. Sem o rótulo (pouca altura) ⇒ só o topo, como antes. Comando que `comandoParaPrompt` recusa não vira botão. Pura.
+ */
+export function botoesPorLinha(estado, root, linhas) {
+  const mapa = new Map();
+  if (!ehObj(estado)) return mapa;
+  const topo = () => {
+    const i = indiceDoTopo(linhas);
+    const b = botoesDoTopo(estado, root);
+    if (i >= 0 && b.length > 0) mapa.set(i, b);
+    return mapa;
+  };
+  if (ehObj(estado.parar)) return topo();
+  const dasAcoes = (acoes) => (Array.isArray(acoes) ? acoes : []).map((a) => ({ rotulo: limpar(String(a?.rotulo ?? '')), comando: comandoParaPrompt(a?.comando, root) }))
+    .filter((b) => b.comando !== null && b.rotulo !== '');
+  const filas = [];
+  if (perguntaDe(estado) !== null) filas.push(botoesDoTopo(estado, root));
+  if (Number.isInteger(estado.perguntasMais) && estado.perguntasMais > 0) filas.push([]);
+  // sem PAROU, item `parar` solto também é linha de item (painel-esquadrao): toda linha que não é a de situação conta
+  for (const d of Array.isArray(estado.depende) ? estado.depende : []) if (ehObj(d) && !SITUACAO_RE.test(String(d.motivo ?? ''))) filas.push(dasAcoes(d.acoes));
+  const ts = (Array.isArray(linhas) ? linhas : []).map(textoDaLinha);
+  const rotulo = ts.findIndex((t) => ROTULO_DEPENDE_RE.test(t));
+  if (rotulo < 0) return topo();
+  let k = 0;
+  for (let i = rotulo + 1; i < ts.length && k < filas.length; i++) {
+    if (!/^ /.test(ts[i])) break;
+    if (!/^ {2}\S/.test(ts[i])) continue; // continuação (recuo de 4)
+    if (filas[k].length > 0) mapa.set(i, filas[k]);
+    k += 1;
+  }
+  return mapa;
 }
 
 const textoDaLinha = (l) => (Array.isArray(l) ? l.map((s) => String(s?.texto ?? '')).join('') : '');
@@ -354,7 +423,7 @@ const textoDaLinha = (l) => (Array.isArray(l) ? l.map((s) => String(s?.texto ?? 
  * GM-15 T29 (D-G1c): o topo tem a cara do E4. Linha dos botões: o PAROU; senão o 1º item depois do rótulo `◆ DEPENDE DE VOCÊ  N itens`
  * (o rótulo nunca leva botão); com pouca altura o rótulo sai e o item começa por `◆ `. `◆ ATENÇÃO` nunca é topo. `depende de você: …` (linha de situação) segue valendo.
  */
-const TOPO_RE = /^(■ )?PAROU |^depende de você: /;
+const TOPO_RE = /^(■ )?PAROU |^depende de você: |^nada depende de você$/;
 /** `◆ item` (rótulo fora): só é topo como 1ª ou 2ª linha de conteúdo (logo depois do cabeçalho); a ATENÇÃO estreita (`◆ T2 …`, < 60 col) vem depois. */
 const ITEM_SEM_ROTULO_RE = /^◆ (?!ATENÇÃO|DEPENDE DE VOCÊ)/;
 const ROTULO_DEPENDE_RE = /^◆ DEPENDE DE VOCÊ/;
@@ -426,6 +495,22 @@ export function colunasDosBotoes(botoes) {
   return (Array.isArray(botoes) ? botoes : []).reduce((n, b) => n + 1 + colunas(b.rotulo ?? '') + 4, 0);
 }
 
+/**
+ * GM-15 T22 (MAJOR-1/3): os botões do topo (PAROU/pergunta) ficam sempre; os de `painel nomes` entram depois enquanto couberem em `largura`
+ * (sobram `MIN_TEXTO_COM_BOTOES` colunas para o texto). O resto vira 1 botão `+N` que põe `/gabarito painel nomes ` no input.
+ */
+const MIN_TEXTO_COM_BOTOES = 24;
+export function botoesComNomes(topo, nomes, largura) {
+  const t = Array.isArray(topo) ? topo : [];
+  if (!Array.isArray(nomes) || nomes.length === 0) return t;
+  const orc = (largura > 0 ? largura : 80) - RESERVA_BORDA_DIREITA - MIN_TEXTO_COM_BOTOES - colunasDosBotoes(t);
+  if (colunasDosBotoes(nomes) <= orc) return [...t, ...nomes];
+  const mais = (n) => ({ rotulo: `+${n}`, comando: '/gabarito painel nomes ' });
+  let k = nomes.length - 1;
+  while (k > 0 && colunasDosBotoes(nomes.slice(0, k)) + colunasDosBotoes([mais(nomes.length - k)]) > orc) k -= 1;
+  return [...t, ...nomes.slice(0, k), mais(nomes.length - k)];
+}
+
 /** A plataforma põe `[-]` na borda direita da linha do AbovePrompt (3 colunas, medido em sessão real): a linha única as reserva. */
 const RESERVA_BORDA_DIREITA = 3;
 
@@ -439,7 +524,7 @@ const comum = cp.execFileSync('git', ['rev-parse', '--path-format=absolute', '--
 const dir = path.join(path.dirname(comum), '.harness', 'contexto');
 fs.mkdirSync(dir, { recursive: true });
 const fim = path.join(dir, d.sessao + '.json'), tmp = fim + '.' + process.pid + '.tmp';
-try { fs.writeFileSync(tmp, JSON.stringify({ percent: d.percent, fonte: d.fonte, em: d.em }) + '\\n'); fs.renameSync(tmp, fim); }
+try { fs.writeFileSync(tmp, JSON.stringify({ percent: d.percent, fonte: d.fonte, em: d.em, ...(/^[a-z0-9-]{1,32}$/.test(String(d.pacote)) ? { pacote: d.pacote } : {}) }) + '\\n'); fs.renameSync(tmp, fim); }
 catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }`;
 
 /**
@@ -447,10 +532,11 @@ catch (e) { try { fs.unlinkSync(tmp); } catch {} throw e; }`;
  * PRINCIPAL (`--git-common-dir`, a mesma raiz de `loop.mjs`) e grava `.harness/contexto/<sessao>.json` `{percent, fonte, em}` por tmp + rename.
  * Pura (a T34 a usa no P9 com `spawnSync`). Sessão fora da forma, percent não número ou fonte fora de `mod|transcript` ⇒ `null`.
  */
-export function gravarContexto({ sessao, percent, fonte, emMs } = {}) {
+export function gravarContexto({ sessao, percent, fonte, emMs, pacote } = {}) {
   if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) return null;
   if (numero(percent) === null || (fonte !== 'mod' && fonte !== 'transcript') || numero(emMs) === null) return null;
-  return { argv: ['node', '-e', SCRIPT_CONTEXTO], stdin: JSON.stringify({ sessao, percent, fonte, em: new Date(emMs).toISOString() }) };
+  // GM-15 T33 (g.17): o pacote de nomes vigente vai junto, para a CLI (`painel.mjs`) desenhar os mesmos nomes da sessão; fora da forma ⇒ não vai
+  return { argv: ['node', '-e', SCRIPT_CONTEXTO], stdin: JSON.stringify({ sessao, percent, fonte, em: new Date(emMs).toISOString(), ...(typeof pacote === 'string' && PACOTE_RE.test(pacote) ? { pacote } : {}) }) };
 }
 
 const SCRIPT_ONBOARDING = `/*gabarito:onboarding*/
@@ -571,6 +657,7 @@ const S = {
   falha: null,
   semLoop: false,
   onboardingDe: null, // raiz em que a ponte já confirmou onboarding (T60); `false` nunca fica: a próxima leitura pergunta de novo
+  onboardingAte: 0, // até quando (ms do relógio do mod) o `true` acima vale sem perguntar de novo (GM-15 T23, O1: o config pode sumir)
   paneVisivel: false,
   paneEspera: false, // a plataforma lista a Pane sem colocá-la (T50): espera o pedido do dono ou um terminal mais largo
   razaoPane: null, // `reason` do último `ui.open` que não colocou (string; '' sem texto) | null
@@ -582,6 +669,8 @@ const S = {
   prefs: PREFS_PADRAO,
   preparando: null, // promessa de `preparar` (prefs + sorteio): uma por `session.start`
   pacoteSorteado: null,
+  dependeExpandido: false, // GM-15 T35 (r.8): `/gabarito painel depende` mostra todos os itens do DEPENDE
+  escolhaNomes: null, // GM-15 T22: botões `[{rotulo, comando}]` de `/gabarito painel nomes` sem pacote; some no próximo comando do painel
   transcripts: new Map(), // agent_id → caminho, em ordem de inserção (espelho do store, com teto)
   transcriptsLido: false,
   logados: new Set(), // avisos de `ui.log` já dados neste processo (1× por tipo)
@@ -618,6 +707,8 @@ export const JANELA_ACAO_MS = 2000;
 export const ESPERA_STOP_MS = 400;
 const TERMINAIS = new Set(['completed', 'failed', 'killed']);
 const MAX_TEXTO_SEGUNDO_PLANO = 120;
+/** O comando do shell de fundo que segue ao painel (mesmo teto de `TEXTO_MAX` do validador do CLI). */
+const MAX_COMANDO_SEGUNDO_PLANO = 400;
 
 /** Uma linha só: sem controle nem quebra, no máximo 200 colunas (REQ-PNL-13: a resposta do comando nunca vira bloco). */
 export function umaLinha(texto) {
@@ -639,7 +730,7 @@ export function prefsValidas(v) {
       tema: TEMAS.includes(v.tema) ? v.tema : d.tema,
       narracao: typeof v.narracao === 'boolean' ? v.narracao : d.narracao,
       ligado: typeof v.ligado === 'boolean' ? v.ligado : d.ligado,
-      pacote: typeof v.pacote === 'string' && PACOTE_RE.test(v.pacote) ? v.pacote : d.pacote,
+      pacote: typeof v.pacote === 'string' && PACOTE_RE.test(v.pacote) && v.pacote !== PACOTE_SORTEAR ? v.pacote : d.pacote,
     },
   };
 }
@@ -772,13 +863,15 @@ export function atualizarEncerrados(agentes) {
 
 /** Repo com onboarding? Resposta da ponte; qualquer falha ⇒ `false` (falha fechada: sem onboarding confirmado, nada grava). `true` fica na memória por raiz. */
 async function comOnboarding($, cwd) {
-  if (S.onboardingDe === cwd) return true;
+  const agoraMs = await agora($);
+  if (S.onboardingDe === cwd && agoraMs < S.onboardingAte) return true;
+  S.onboardingDe = null; // GM-15 T23 (O1): o `true` vence em `TTL_ONBOARDING_MS`; o config pode ter sumido (checkout trocado, origin/HEAD removido)
   const q = pedidoOnboarding(cwd, $.plugin.root);
   if (q === null) return false;
   try {
     const r = await $.process.run(q.argv, { cwd, stdin: q.stdin, timeoutMs: TIMEOUT_MS });
     const o = r?.exitCode === 0 && typeof r.stdout === 'string' ? JSON.parse(r.stdout) : null;
-    if (ehObj(o) && o.ok === true && o.onboarding === true) { S.onboardingDe = cwd; return true; }
+    if (ehObj(o) && o.ok === true && o.onboarding === true) { S.onboardingDe = cwd; S.onboardingAte = agoraMs + TTL_ONBOARDING_MS; return true; }
   } catch { /* ponte negada ou resposta torta */ }
   return false;
 }
@@ -797,7 +890,9 @@ async function lerContexto($, cwd, pedido, agoraMs) {
     }
   }
   S.contexto = contexto;
-  const g = contexto === null || !(await comOnboarding($, cwd)) ? null : gravarContexto({ sessao: S.sessaoId, percent: contexto.percent, fonte: contexto.fonte, emMs: agoraMs });
+  // GM-15 T34 (emenda 7 r.1): após /clear o hook recebe outro id sem novo session.start; relê o id vigente a cada gravação (falha ⇒ mantém o último).
+  try { const id = await $.session.id(); if (typeof id === 'string' && SESSAO_RE.test(id)) S.sessaoId = id; } catch { /* mantém o último */ }
+  const g = contexto === null || !(await comOnboarding($, cwd)) ? null : gravarContexto({ sessao: S.sessaoId, percent: contexto.percent, fonte: contexto.fonte, emMs: agoraMs, pacote: S.prefs.pacote ?? S.pacoteSorteado ?? undefined });
   if (g !== null) {
     try { await $.process.run(g.argv, { cwd, stdin: g.stdin, timeoutMs: TIMEOUT_MS }); } catch { /* o arquivo fica velho e `proxima` o descarta após 120 s */ }
   }
@@ -1012,7 +1107,7 @@ async function carregarPrefs($) {
 }
 
 /** Pacote da sessão (sombra-p1d T11): `prefs.pacote` vence; senão `{nome, sessao}` do store; mesma sessão ⇒ mantém; outra ⇒ sorteia sem repetir o anterior. */
-async function escolherPacote($) {
+async function escolherPacote($, forcar = false) {
   if (S.prefs.pacote !== null) return;
   let id;
   try { id = await $.session.id(); } catch { id = null; }
@@ -1021,7 +1116,7 @@ async function escolherPacote($) {
   try { v = await $.store.get(CHAVE_PACOTE); } catch { v = undefined; }
   let anterior = null;
   if (ehObj(v) && typeof v.nome === 'string' && PACOTE_RE.test(v.nome)) {
-    if (v.sessao === id) { S.pacoteSorteado = v.nome; return; }
+    if (v.sessao === id && !forcar) { S.pacoteSorteado = v.nome; return; }
     anterior = v.nome;
   } else if (typeof v === 'string' && PACOTE_RE.test(v)) {
     anterior = v; // formato legado: string
@@ -1148,7 +1243,9 @@ async function anotarSegundoPlano($, e, r) {
   const texto = descricaoLimpa(e.description)
     ?? ([...String(typeof e.command === 'string' ? e.command : '').replace(/[\p{Cc}\p{Cf}]/gu, ' ').trim()].slice(0, MAX_TEXTO_SEGUNDO_PLANO).join('').trim() || 'comando em segundo plano');
   const dono = typeof e.agentId === 'string' && AGENTE_RE.test(e.agentId) ? e.agentId : 'orquestrador';
-  inserirNoFim(S.segundoPlano, id, { id, dono, texto, desde: Math.max(0, Math.round(await agora($))) }, TETO_SEGUNDO_PLANO);
+  // GM-15 T33 (g.11): o comando (cortado, sem controle) segue para o painel rotular o shell (integrando, teste, aguardando, comando) e achar a task; só vai ao CLI local, nunca ao texto
+  const comando = [...String(typeof e.command === 'string' ? e.command : '').replace(/[\p{Cc}\p{Cf}]/gu, ' ').trim()].slice(0, MAX_COMANDO_SEGUNDO_PLANO).join('').trim();
+  inserirNoFim(S.segundoPlano, id, { id, dono, texto, desde: Math.max(0, Math.round(await agora($))), ...(comando !== '' ? { comando } : {}) }, TETO_SEGUNDO_PLANO);
   return true;
 }
 
@@ -1196,6 +1293,7 @@ async function abrirPeloDono($, rotulo = 'painel aberto') {
 async function comandoPainelBruto($, partes) {
   await preparar($);
   const [a, b] = partes;
+  S.escolhaNomes = null; // os botões de `nomes` valem até o próximo comando
   if (partes.length === 0) return abrirPeloDono($);
   const troca = async (mudanca, texto) => {
     const gravou = await gravarPrefs($, mudanca);
@@ -1218,6 +1316,12 @@ async function comandoPainelBruto($, partes) {
       return (a === 'ocultar' ? 'painel oculto (PAROU e perguntas continuam)' : 'painel desligado (PAROU ainda avisa)') + (gravou ? '' : SO_NA_SESSAO);
     }
     if (LOCAIS.includes(a)) return trocarLocal($, a);
+    if (a === 'nomes') return listarNomes($);
+    if (a === 'depende') { // GM-15 T35 (r.8): o botão "ver todos" do "mais N" alterna os itens do DEPENDE
+      S.dependeExpandido = !S.dependeExpandido;
+      redesenhar($);
+      return S.dependeExpandido ? 'painel: todos os itens do depende de você' : `painel: até ${DEPENDE_VISIVEIS} itens do depende de você`;
+    }
     return USO_GABARITO;
   }
   if (partes.length === 2) {
@@ -1257,13 +1361,61 @@ async function trocarLocal($, local) {
   return `painel ${NOME_LOCAL[local]}` + (gravou ? '' : SO_NA_SESSAO);
 }
 
+/** Raiz do repo da sessão (`session.repo`, senão `session.root`); `null` se nenhuma responde. */
+async function raizDoRepo($) {
+  let raiz = null;
+  try { raiz = (await $.session.repo())?.root ?? null; } catch { raiz = null; }
+  if (typeof raiz !== 'string') { try { raiz = await $.session.root(); } catch { raiz = null; } }
+  return typeof raiz === 'string' && raiz !== '' ? raiz : null;
+}
+
+const SCRIPT_LISTAR = `/*gabarito:listar*/
+const fs = require('node:fs'), path = require('node:path');
+const { raiz } = JSON.parse(fs.readFileSync(0, 'utf8'));
+let n = [];
+try { n = fs.readdirSync(path.join(raiz, '.harness', 'temas', 'nomes')).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)).sort(); }
+catch (e) { if (!e || e.code !== 'ENOENT') { process.stdout.write(JSON.stringify({ ok: false }) + '\\n'); process.exit(1); } }
+process.stdout.write(JSON.stringify({ ok: true, nomes: n }) + '\\n');`;
+
+/** Teto de pacotes na lista (e de botões): o resto não cabe numa linha. */
+const TETO_LISTA_NOMES = 9;
+
+/** Pacotes do repo (`.harness/temas/nomes/*.json`) com nome válido, fora da fábrica e fora do reservado. `null` ⇒ não consegui ler. */
+async function pacotesDoRepo($) {
+  const raiz = await raizDoRepo($);
+  if (raiz === null) return [];
+  try {
+    const r = await $.process.run(['node', '-e', SCRIPT_LISTAR], { cwd: raiz, stdin: JSON.stringify({ raiz }), timeoutMs: TIMEOUT_MS });
+    const o = r?.exitCode === 0 && typeof r.stdout === 'string' ? JSON.parse(r.stdout) : null;
+    if (!ehObj(o) || o.ok !== true || !Array.isArray(o.nomes)) return null;
+    return o.nomes.filter((n) => typeof n === 'string' && PACOTE_RE.test(n) && n !== PACOTE_SORTEAR && !PACOTES_FABRICA.includes(n));
+  } catch { return null; }
+}
+
+/** `/gabarito painel nomes` sem pacote: lista fábrica + repo numa linha, marca o atual e põe 1 botão por pacote (`S.escolhaNomes`). Não grava nada. */
+async function listarNomes($) {
+  const repo = await pacotesDoRepo($);
+  const todos = [...PACOTES_FABRICA, ...(repo ?? [])].slice(0, TETO_LISTA_NOMES);
+  const marca = (n) => (S.prefs.pacote === n ? ' (atual)' : S.prefs.pacote === null && S.pacoteSorteado === n ? ' (sorteado nesta sessão)' : '');
+  S.escolhaNomes = todos.map((n) => ({ rotulo: n, comando: `/gabarito painel nomes ${n}` }));
+  redesenhar($);
+  return `painel nomes: ${todos.map((n) => n + marca(n)).join(', ')}${repo === null ? ' (não li os do repo)' : ''} · botão ou /gabarito painel nomes <pacote> | ${PACOTE_SORTEAR}`;
+}
+
+/** `/gabarito painel nomes sortear`: grava `pacote: null` (o sorteio volta a valer) e sorteia na hora, sem repetir o da sessão. */
+async function sortearNomes($) {
+  const gravou = await gravarPrefs($, { pacote: null });
+  await escolherPacote($, true);
+  void atualizar($, 'prefs');
+  return `painel: nomes sorteados: ${S.pacoteSorteado ?? 'terra-media'}` + (gravou ? '' : SO_NA_SESSAO);
+}
+
 async function nomesDoPainel($, p) {
+  if (p === PACOTE_SORTEAR) return sortearNomes($);
   if (!PACOTE_RE.test(p)) return `pacote inválido: ${cortar(limpar(p), 40)} (fábrica: ${PACOTES_FABRICA.join(' ')})`;
   if (!PACOTES_FABRICA.includes(p)) {
-    let raiz = null;
-    try { raiz = (await $.session.repo())?.root ?? null; } catch { raiz = null; }
-    if (typeof raiz !== 'string') { try { raiz = await $.session.root(); } catch { raiz = null; } }
-    if (typeof raiz !== 'string' || raiz === '') return `pacote não encontrado: ${p}`;
+    const raiz = await raizDoRepo($);
+    if (raiz === null) return `pacote não encontrado: ${p}`;
     let existe;
     try { existe = await $.fs.exists(`${raiz}/.harness/temas/nomes/${p}.json`); } catch { return `não consegui verificar o pacote: ${p}`; }
     if (existe !== true) return `pacote não encontrado: ${p}`;
@@ -1288,9 +1440,10 @@ export async function comandoPainel($, partes) {
 const colunasDe = (props) => larguraDe(props?.bodyColumns);
 
 /** Um `Button` por ação: `onPress` põe o comando no input (`replace`), NUNCA envia. Chaves `painel-acao`, `painel-acao-2`, … */
-function botoesDe($, Button, Text, botoes) {
-  return botoes.flatMap((b, i) => [h(Text, { key: `painel-esp-${i + 1}` }, ' '), h(Button, {
-    key: i === 0 ? 'painel-acao' : `painel-acao-${i + 1}`,
+function botoesDe($, Button, Text, botoes, linha = null) {
+  const sufixo = linha === null ? '' : `-l${linha}`;
+  return botoes.flatMap((b, i) => [h(Text, { key: `painel-esp-${i + 1}${sufixo}` }, ' '), h(Button, {
+    key: (i === 0 ? 'painel-acao' : `painel-acao-${i + 1}`) + sufixo,
     label: b.rotulo,
     onPress: async () => {
       try {
@@ -1303,16 +1456,32 @@ function botoesDe($, Button, Text, botoes) {
   })]);
 }
 
-/** Linhas ⇒ árvore; `botoes` vão SÓ na linha do topo (`indiceDoTopo`), que é cortada para eles caberem em `largura`. */
+/**
+ * Linhas ⇒ árvore. `botoes`: um `Map` linha ⇒ botões (GM-15 T35 r.8, `botoesPorLinha`) ou, como antes, uma lista que vai SÓ na linha do topo
+ * (`indiceDoTopo`). Cada linha com botões é cortada para eles caberem em `largura`.
+ */
 function arvoreDeLinhas($, e, linhas, botoes = [], largura = 0) {
   const { Box, Button, Text } = $.ui.resolve(e);
-  const topo = botoes.length > 0 ? indiceDoTopo(linhas) : -1;
+  const topo = indiceDoTopo(linhas);
+  const mapa = botoes instanceof Map ? botoes : new Map(botoes.length > 0 && topo >= 0 ? [[topo, botoes]] : []);
   return h(Box, { flexDirection: 'column' }, ...linhas.map((l0, i) => {
-    const l = i === topo && largura > 0 ? cortarLinha(l0, largura - colunasDosBotoes(botoes)) : l0;
+    const bs = mapa.get(i) ?? [];
+    const l = bs.length > 0 && largura > 0 ? cortarLinha(l0, largura - colunasDosBotoes(bs)) : l0;
     const filhos = l.filter((s) => s.texto !== '').map((s) => h(Text, s.cor === undefined ? null : { color: s.cor }, s.texto));
     const texto = h(Text, null, ...(filhos.length === 0 ? [' '] : filhos));
-    return i === topo ? h(Box, { flexDirection: 'row' }, texto, ...botoesDe($, Button, Text, botoes)) : texto;
+    // a linha do topo mantém as chaves `painel-acao`, `painel-acao-2`…; as dos outros itens ganham `-l<linha>` (chave única por árvore)
+    return bs.length > 0 ? h(Box, { flexDirection: 'row' }, texto, ...botoesDe($, Button, Text, bs, i === topo ? null : i)) : texto;
   }));
+}
+
+/** GM-15 T35 (r.8): botões por linha do estado desenhado, com os de `painel nomes` na linha do topo (T22). */
+function mapaDeBotoes(estado, root, linhas, larg) {
+  const mapa = botoesPorLinha(estado, root, linhas);
+  if (Array.isArray(S.escolhaNomes) && S.escolhaNomes.length > 0) {
+    const i = indiceDoTopo(linhas);
+    if (i >= 0) mapa.set(i, botoesComNomes(mapa.get(i) ?? [], S.escolhaNomes, larg));
+  }
+  return mapa;
 }
 
 /**
@@ -1379,6 +1548,15 @@ export function registrarPainel(on) {
     return next(e);
   });
 
+  // GM-15 T22 (MAJOR-2): os botões de `painel nomes` valem até o próximo comando do `/gabarito` (qualquer um) ou o próximo prompt do dono
+  on('command.run', { command: 'gabarito' }, async ($, e, next) => { S.escolhaNomes = null; return next(e); });
+  on('prompt.submit', { origin: { kind: 'composer' } }, async ($, e, next) => {
+    // só mensagem do dono: o slash command digitado também dispara prompt.submit (com `command`) e não pode apagar os próprios botões; mesmo critério de `ehMensagemDoDono` (gates/src/pouso.ts)
+    const ehComando = (e?.command !== null && e?.command !== undefined) || e?.isMeta === true;
+    if (S.escolhaNomes !== null && e?.origin?.kind === 'composer' && !ehComando) { S.escolhaNomes = null; redesenhar($); }
+    return next(e);
+  });
+
   on('ui.close', async ($, e, next) => {
     if (e?.id === ID_PANE && e?.origin?.kind === 'person') S.fechadaPeloDono = true;
     return next(e);
@@ -1400,11 +1578,12 @@ export function registrarPainel(on) {
       // GM-14 T20: orçamento = `scroll.bodyRows` (ausente ⇒ 7, nunca rola); o estado novo ganha os botões do topo
       const bodyRows = e.props?.scroll?.bodyRows;
       const novo = estadoNovo(S.estado);
-      botoes = novo ? botoesDoTopo(S.estado, $.plugin.root) : [];
-      linhas = linhasDaPane(novo ? estadoParaDesenho(S.estado) : S.estado, S.prefs, larg, {
+      const vis = novo ? dependeVisivel(S.estado, S.dependeExpandido) : S.estado; // GM-15 T35 (r.8): até 5 itens + "mais N"
+      linhas = linhasDaPane(novo ? estadoParaDesenho(vis) : S.estado, S.prefs, larg, {
         falha: S.falha, avisos: S.avisos, semLoop: S.semLoop, semLerS: S.semLerS, altura: bodyRows, orcamento: orcamentoLateral(bodyRows), local: 'lateral',
       });
       if (novo) linhas = linhas.slice(0, orcamentoLateral(bodyRows));
+      botoes = novo ? mapaDeBotoes(vis, $.plugin.root, linhas, larg) : botoesComNomes([], S.escolhaNomes, larg);
     } catch {
       linhas = [[{ texto: 'painel: não consegui desenhar', cor: 'warning' }]];
       botoes = [];
@@ -1424,12 +1603,13 @@ export function registrarPainel(on) {
     const larg = colunasDe(e.props);
     const { Box, Button, Text } = $.ui.resolve(e);
     if (S.local === 'acima' && !oculto) {
-      if (S.estado === null && S.falha === null) return next(e);
+      if (S.estado === null && S.falha === null && S.escolhaNomes === null) return next(e);
       let linhas;
       let botoes;
       try {
-        botoes = botoesDoTopo(S.estado, $.plugin.root);
-        linhas = linhasDaFaixa(S.estado, S.prefs, { largura: larg, h: hDoViewport(e), maxRows: e.props?.maxRows, falha: S.falha, avisos: S.avisos, semLerS: S.semLerS });
+        const vis = dependeVisivel(S.estado, S.dependeExpandido); // GM-15 T35 (r.8)
+        linhas = linhasDaFaixa(vis, S.prefs, { largura: larg, h: hDoViewport(e), maxRows: e.props?.maxRows, falha: S.falha, avisos: S.avisos, semLerS: S.semLerS });
+        botoes = mapaDeBotoes(vis, $.plugin.root, linhas, larg);
       } catch {
         linhas = [[{ texto: 'painel: não consegui desenhar', cor: 'warning' }]];
         botoes = [];
@@ -1445,6 +1625,7 @@ export function registrarPainel(on) {
     }
     let f;
     try { f = faixaUmaLinha(S.estado, { root: $.plugin.root, aviso }); } catch { f = null; }
+    if (S.escolhaNomes !== null) f = f === null ? { texto: 'nomes da equipe: escolha um pacote', cor: 'warning', botoes: botoesComNomes([], S.escolhaNomes, larg) } : { ...f, botoes: botoesComNomes(f.botoes, S.escolhaNomes, larg) }; // PAROU e pergunta ficam (commands/gabarito.md:52)
     if (f === null) return next(e);
     const cabe = Math.max(1, larg - colunasDosBotoes(f.botoes) - RESERVA_BORDA_DIREITA);
     const cor = S.prefs.tema === 'mono' ? null : { color: f.cor };

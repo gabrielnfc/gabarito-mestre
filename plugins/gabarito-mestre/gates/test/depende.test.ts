@@ -14,7 +14,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dependeDe, ideiasAbertas, pendenciaAberta } from '../src/depende.ts';
+import { dependeDe, ideiasAbertas, pendenciaAberta, proximaEntrega } from '../src/depende.ts';
 import { dependeDeVoce } from '../src/painel.ts';
 import { trilhaDe } from '../src/trilha.ts';
 import type { FatosTrilha, Trilha } from '../src/trilha.ts';
@@ -28,7 +28,7 @@ const BRANCH = 'enabler/GM-14-clareza';
 const OK = { falhou: [] as string[] };
 const GIT = { branch: BRANCH, idPadrao: ID_PADRAO };
 
-type C = { t: TipoEvento; d: Record<string, unknown>; s?: string };
+type C = { t: TipoEvento; d: Record<string, unknown>; s?: string; a?: string };
 
 function expandir(compactos: C[]): Evento[] {
   const seqs = new Map<string, number>();
@@ -38,7 +38,7 @@ function expandir(compactos: C[]): Evento[] {
     const seq = (seqs.get(sessao) ?? 0) + 1;
     seqs.set(sessao, seq);
     const ts = new Date(Date.UTC(2026, 10, 11, 12, min++)).toISOString();
-    return { seq, ts, autor: 'teste', sessao, agente: 'orquestrador', tipo: c.t, dados: c.d, hash_anterior: null } as Evento;
+    return { seq, ts, autor: 'teste', sessao, agente: c.a ?? 'orquestrador', tipo: c.t, dados: c.d, hash_anterior: null } as Evento;
   });
 }
 
@@ -55,7 +55,8 @@ const chamar = (t: Trilha, evs: C[], base: ItemDepende[] = [], opc: { fontes?: {
   dependeDe(t, expandir(evs), base, opc.fontes ?? OK, opc.pouso ?? false, opc.git ?? GIT);
 const motivos = (xs: ItemDepende[]) => xs.map((i) => i.motivo);
 
-const nota = (tipo: string, texto: string, s = 'sessao-a', extra: Record<string, unknown> = {}): C => ({ t: 'nota', s, d: { tipo, texto, ...extra } });
+/** GM-15 T35 (r.13): nota de pendência/ideia de autoria do orquestrador não entra no DEPENDE; os testes antigos usam autoria `dono`. */
+const nota = (tipo: string, texto: string, s = 'sessao-a', extra: Record<string, unknown> = {}, a = 'dono'): C => ({ t: 'nota', s, a, d: { tipo, texto, ...extra } });
 const pr = (numero: number, estado: string): C => ({ t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: { numero, estado, branch: BRANCH } } });
 const feito = (pergunta: string): C => ({ t: 'dono.resposta', s: 'sessao-dono', d: { pergunta, opcao: 1, rotulo: 'feito' } });
 const hash = 'c'.repeat(64);
@@ -67,7 +68,7 @@ const noTeto = (task: string): C[] => [
   { t: 'task.iniciada', d: { task, papel: 'revisor' } }, { t: 'review.veredito', d: { task, veredito: 'REPROVADO', rodada: 2, major: 1, blocker: 0 } },
 ];
 const emendaProposta = (): C => ({ t: 'emenda.proposta', s: 'emendas', d: { req: 'REQ-DEP-1', diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'tecnica', arquivos: ['docs/x.md'] } });
-const nada = [{ nivel: 'dono', motivo: 'depende de você: nada', acoes: [] }];
+const nada = [{ nivel: 'dono', motivo: 'nada depende de você', acoes: [] }];
 const BASE_PARAR: ItemDepende = { nivel: 'parar', motivo: 'o loop parou: decida', acoes: [] };
 const BASE_PAUSA: ItemDepende = { nivel: 'dono', motivo: 'loop pausado', acoes: [{ rotulo: 'retomar', comando: '/gabarito retomar' }] };
 
@@ -326,7 +327,7 @@ test('fixtures do teste são eventos válidos do diário (forma conferida pela T
 
 test('item (5) não repete o PAROU de teto da base real (MAJOR-1): 1 item por task, com o mesmo botão', () => {
   const evs = expandir([...noTeto('T12'), { t: 'loop.parar', d: { motivo: 'teto_rodadas', task: 'T12' } }]);
-  const entrada = { decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: null, pacote: 'x', notificacao: null, agoraMs: Date.UTC(2026, 10, 11, 13), fuso: 'UTC', titulo: null, politica: { politica: 'pr', dias: null }, entregaId: 'GM-14', specSha: null, tetoSombra: 10 };
+  const entrada = { decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: null, pacote: 'x', notificacao: null, agoraMs: Date.UTC(2026, 10, 11, 13), fuso: 'UTC', titulo: null, politica: { politica: 'pr', dias: null }, entregaId: 'GM-14', specSha: null };
   const base = dependeDeVoce({ tasks: [{ id: 'T12', deps: [] }] } as never, evs, entrada as never);
   assert.ok(base.some((b) => b.acoes.some((a) => a.comando === '/gabarito-mestre:liberar T12')), 'a base traz o botão de liberar');
   const r = dependeDe(APROVADA, evs, base, OK, false, GIT);
@@ -364,8 +365,8 @@ test('pendenciaAberta: regra única e cada borda decidida 1x (MAJOR-2)', () => {
   assert.equal(pendenciaAberta(evs, { ...evs[0] }), null, 'nota fora do diário dado não é aberta');
   assert.equal(pendenciaAberta(null as never, evs[0]), null);
   // o item (3) é a mesma regra: tudo acima visto pela saída
-  assert.deepEqual(motivos(chamar(APROVADA, [pend, feito('sessao-a:1')])), ['depende de você: nada']);
-  assert.deepEqual(motivos(chamar(APROVADA, [nota('pendencia', 'a', 'a.b'), nota('pendencia', 'b', 'x y')])), ['depende de você: nada']);
+  assert.deepEqual(motivos(chamar(APROVADA, [pend, feito('sessao-a:1')])), ['nada depende de você']);
+  assert.deepEqual(motivos(chamar(APROVADA, [nota('pendencia', 'a', 'a.b'), nota('pendencia', 'b', 'x y')])), ['nada depende de você']);
   assert.equal(chamar(APROVADA, [pend, { t: 'dono.resposta', s: 'sessao-dono', d: { pergunta: 'sessao-a:1', opcao: 1, rotulo: 'x'.repeat(200) } }])[0].motivo, 'renovar o certificado');
 });
 
@@ -377,11 +378,11 @@ test('cláusulas negativas (MAJOR-3): entrega de id inseguro, pedido de revisão
   assert.equal(chamar(trilha({ entrega: 'GM-14' }), [], [], { git: { branch: 'x', idPadrao: ID_PADRAO } })[0].motivo.includes('da GM-14'), true);
   // pedido de revisão: mesmo critério da trilha (número inteiro, estado texto)
   for (const v of [{ numero: '7', estado: 'aberto' }, { numero: 7.5, estado: 'aberto' }, { numero: 7, estado: 1 }, { numero: 7 }, 'x', null]) {
-    assert.deepEqual(motivos(chamar(APROVADA, [{ t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: v } }])), ['depende de você: nada'], JSON.stringify(v));
+    assert.deepEqual(motivos(chamar(APROVADA, [{ t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: v } }])), ['nada depende de você'], JSON.stringify(v));
   }
-  assert.deepEqual(motivos(chamar(APROVADA, [pr(7, 'aberto'), pr(7, 'mergeado')])), ['depende de você: nada']);
+  assert.deepEqual(motivos(chamar(APROVADA, [pr(7, 'aberto'), pr(7, 'mergeado')])), ['nada depende de você']);
   assert.deepEqual(motivos(chamar(APROVADA, [pr(7, 'aberto'), { t: 'fato.medido', d: { chave: 'pr', fonte: 'gh', valor: { numero: 7, estado: 1 } } }])), ['revisar e aceitar o pedido de revisão #7'], 'leitura sem estado texto não derruba o último válido');
-  assert.deepEqual(motivos(chamar(trilha({ ...APROVADA, entrega: null, identificada: false }), [pr(7, 'aberto')])), ['depende de você: nada']);
+  assert.deepEqual(motivos(chamar(trilha({ ...APROVADA, entrega: null, identificada: false }), [pr(7, 'aberto')])), ['nada depende de você']);
 });
 
 test('texto da pendência é higienizado (MINOR-2, REQ-LNG-1): nada técnico no motivo; o id do botão segue exato', () => {
@@ -463,4 +464,230 @@ test('ideia-com-id-irrespondivel-falha-fechada: sessão com ponto ⇒ nada de bo
   // a ideia é a 1ª nota da sessão e ainda assim tem botão (a âncora de (b) a pula; ver trilha.ts)
   assert.deepEqual(ideiasDe(chamar(APROVADA, [nota('ideia', 'a')]))[0].acoes, botao('sessao-a:1'));
   assert.deepEqual(ideiasAbertas(expandir([nota('ideia', 'a')])), { id: 'sessao-a:1', n: 1 });
+});
+
+// ---- GM-15 T35 (D-G11, D-G12) ----
+import { AGORA_NAO_TETO } from '../src/pouso.ts';
+
+test('nota-do-orquestrador-fora-do-depende (r.13): as 17 pendências e as ideias do orquestrador abertas não entram; a do dono entra (controle)', () => {
+  const orq = Array.from({ length: 17 }, (_, i) => nota('pendencia', `lembrete ${i + 1} do orquestrador`, 'loop', {}, 'orquestrador'));
+  const ideiasOrq = [nota('ideia', 'ideia do orquestrador', 'loop', {}, 'orquestrador')];
+  assert.deepEqual(motivos(chamar(APROVADA, [...orq, ...ideiasOrq])), ['nada depende de você']);
+  const comDono = chamar(APROVADA, [...orq, nota('pendencia', 'renovar o domínio', 'sessao-a')]);
+  assert.deepEqual(motivos(comDono), ['renovar o domínio']);
+});
+
+test('depende-vazio-uma-linha (r.13): sem item que trave, o DEPENDE é 1 item só, a linha de situação', () => {
+  const r = chamar(APROVADA, [nota('pendencia', 'lembrete', 'loop', {}, 'orquestrador'), nota('desvio', 'x')]);
+  assert.equal(r.length, 1);
+  assert.equal(r[0].motivo, 'nada depende de você', 'D-G12: o texto literal da emenda 16 r.13');
+  assert.deepEqual(r[0].acoes, []);
+});
+
+test('clear-com-agora-nao-no-teto (r.9): o pedido de /clear traz "limpar" e "agora não (loop parado)" para o id do pouso; pedido adiado some', () => {
+  const r = dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'S1:2' }, GIT);
+  assert.deepEqual(r, [{ nivel: 'dono', motivo: 'limpar a conversa', acoes: [{ rotulo: 'limpar', comando: '/clear' }, { rotulo: AGORA_NAO_TETO, comando: '/gabarito-mestre:responder S1:2 agora' }] }]);
+  assert.deepEqual(motivos(dependeDe(APROVADA, [], [], OK, { pendente: false, id: 'S1:2' }, GIT)), ['nada depende de você']);
+  // id fora da forma: só o "limpar" (o hook recusaria o botão)
+  assert.deepEqual(dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'a.b:2' }, GIT)[0].acoes, [{ rotulo: 'limpar', comando: '/clear' }]);
+});
+
+test('pendencia-adiada-nao-fecha-e-some (r.14): "agora não" à pendência do dono a tira do DEPENDE sem fechá-la (pendenciaAberta segue aberta)', () => {
+  const evs = [nota('pendencia', 'renovar o domínio'), { t: 'dono.resposta', s: 'sessao-dono', d: { pergunta: 'sessao-a:1', rotulo: 'agora não' } } as C];
+  assert.deepEqual(motivos(chamar(APROVADA, evs)), ['nada depende de você']);
+  const lista = expandir(evs);
+  assert.deepEqual(pendenciaAberta(lista, lista[0]), { id: 'sessao-a:1', texto: 'renovar o domínio' });
+});
+
+import { adiadas } from '../src/depende.ts';
+test('opcao-agora-nao-nao-e-adiamento (review r1 MINOR-2): resposta com `opcao` cujo rótulo começa por "agora não" fecha a pendência e não entra em `adiadas`; sem `opcao` adia', () => {
+  const pend = nota('pendencia', 'renovar o domínio');
+  const porOpcao = expandir([pend, { t: 'dono.resposta', s: 'sessao-dono', d: { pergunta: 'sessao-a:1', opcao: 1, rotulo: 'agora não, em dezembro' } } as C]);
+  assert.deepEqual([...adiadas(porOpcao)], []);
+  assert.equal(pendenciaAberta(porOpcao, porOpcao[0]), null, 'a escolha por opção fecha');
+  const adiada = expandir([pend, { t: 'dono.resposta', s: 'sessao-dono', d: { pergunta: 'sessao-a:1', rotulo: 'agora não' } } as C]);
+  assert.deepEqual([...adiadas(adiada)], ['sessao-a:1']);
+  assert.deepEqual(pendenciaAberta(adiada, adiada[0]), { id: 'sessao-a:1', texto: 'renovar o domínio' });
+});
+
+// ── GM-15 T8 (REQ-ENT-1 d i): a próxima entrega, regra pura ──────────────────────────────────────────────────────────────────────────────
+test('proxima-entrega-pura: spec sem encerramento mais nova pelo nome; id inseguro e encerrada fora; entrada torta nunca lança', () => {
+  const sp = (caminho: string, pbi: string | null, titulo = 'T') => ({ caminho, pbi, titulo, sha256: '', secoes: 1 });
+  const specs = [sp('docs/a/2026-01-01-x.md', 'GM-1'), sp('docs/a/2026-03-01-y.md', 'GM-3', 'Painel `x` com_tema'), sp('docs/a/2026-02-01-z.md', 'GM-2'),
+    sp('docs/a/2026-04-01-w.md', 'GM 4'), sp('docs/a/2026-05-01-v.md', null)];
+  assert.deepEqual(proximaEntrega(specs, new Set(), []), { tipo: 'spec', texto: 'GM-3 Painel x com tema', acoes: [{ rotulo: 'seguir', comando: '/gabarito-mestre:gabarito-loop' }] });
+  assert.equal(proximaEntrega(specs, new Set(['GM-3']), []).texto, 'GM-2 T', 'a encerrada nunca é oferecida (M8b)');
+  assert.doesNotMatch(proximaEntrega(specs, new Set(), []).texto, REGEX_TECNICA);
+  for (const torto of [null, 7, 'x', [null, 1, { pbi: 'GM-9' }]]) assert.equal(proximaEntrega(torto, new Set(), null).tipo, 'nenhuma');
+  assert.deepEqual(proximaEntrega([], new Set(), 'diario torto'), { tipo: 'nenhuma', texto: 'nenhuma próxima anotada', acoes: [] });
+});
+
+// ── GM-15 T13 (REQ-AUT-1): o lote do dono, a mesma lista no `proxima` e no DEPENDE ─────────────────────────────────────────────────────────
+// Mutações: M13a omitir `next ⇒ main` no fim ⇒ lote-do-dono-unico · M13b DEPENDE com lista diferente do lote ⇒ lote-igual-no-depende
+import { itemSemFonte, loteDoDono } from '../src/depende.ts';
+import type { Plano } from '../src/tipos.ts';
+
+const PLANO_LOTE: Plano = { entrega: 'GM-14', tasks: [{ id: 'T1', deps: [], arquivos: ['a'] }, { id: 'T2', deps: [], arquivos: ['b'] }, { id: 'T3', deps: [], arquivos: ['c'] }] };
+const CFG_DESLIGADA = { liberaTeto: false, julgaEmendas: false, autonomiaEntrega: false, base: 'next' };
+const CFG_LIGADA = { liberaTeto: true, julgaEmendas: true, autonomiaEntrega: true, base: 'next' };
+const evNovo = (): C => ({ t: 'evento.do.futuro' as TipoEvento, d: { x: 1 } });
+const liberacaoDono = (task: string): C => ({ t: 'task.reaberta', d: { task, origem: 'dono' } });
+
+test('lote-do-dono-unico: no_teto sem liberação, emenda sem julga_emendas, plugin atrás do diário e next ⇒ main no fim, nessa ordem e com os comandos', () => {
+  const evs = expandir([...noTeto('T2'), emendaProposta(), evNovo()]);
+  const lote = loteDoDono(PLANO_LOTE, evs, CFG_DESLIGADA);
+  assert.deepEqual(motivos(lote), [
+    'decidir a T2: chegou ao limite de revisões', 'decidir a emenda 1', 'atualizar o plugin: o diário tem evento de uma versão mais nova', 'no fim da entrega: levar next para main',
+  ]);
+  assert.deepEqual(lote[0].acoes, [{ rotulo: 'liberar mais uma rodada', comando: '/gabarito-mestre:liberar T2' }]);
+  assert.deepEqual(lote[1].acoes.map((a) => a.comando), ['/gabarito-mestre:emenda aprovar 1', '/gabarito-mestre:emenda rejeitar 1']);
+  assert.deepEqual(lote[2].acoes, [{ rotulo: 'atualizar', comando: '/plugin' }]);
+  assert.deepEqual(lote[3].acoes, []);
+  for (const i of lote) assert.equal(i.nivel, 'dono');
+  for (const i of lote) assert.doesNotMatch(i.motivo, REGEX_TECNICA);
+});
+
+test('lote-vazio-sem-item: sem teto, sem emenda, diário conhecido e autonomia de entrega (ou base main, ou entregue) ⇒ lote vazio e DEPENDE "nada"', () => {
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([]), CFG_LIGADA), []);
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([]), { ...CFG_DESLIGADA, base: 'main' }), [], 'base main: o pedido de revisão da entrega já é o item do dono');
+  const encerrada: C = { t: 'entrega.encerrada', d: { entrega: 'GM-14', pr: 7, via: 'merge', mergeado_em: '2026-11-11T12:00:00Z' } };
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([encerrada]), CFG_DESLIGADA), [], 'entregue: nada a levar');
+  assert.deepEqual(loteDoDono({ entrega: 'GM-14', tasks: [] }, expandir([]), CFG_DESLIGADA), [], 'plano sem task: sem fim previsível');
+  assert.deepEqual(motivos(dependeDe(APROVADA, expandir([]), [], OK, false, GIT, [])), ['nada depende de você']);
+});
+
+test('lote-teto-so-nos-freios: com libera_teto a Sombra decide (liberada antes pelo dono ou por ela não gasta nada: sem limite numérico); só flag desligada ou freio ⇒ dono (GM-15 T36, emenda 22 l.4)', () => {
+  const sem = { ...CFG_LIGADA };
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir(noTeto('T1')), sem)), []);
+  const gasta = expandir([...noTeto('T1'), liberacaoDono('T1'), ...noTeto('T1')]);
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, gasta, sem)), [], 'o dono já liberou: a Sombra segue decidindo');
+  const daSombra = expandir([...noTeto('T1'), { t: 'task.reaberta', d: { task: 'T1', origem: 'sombra', hash } }, ...noTeto('T1')]);
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, daSombra, sem)), [], 'a Sombra já liberou: sem limite numérico');
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir(noTeto('T1')), { ...sem, liberaTeto: false })), ['decidir a T1: chegou ao limite de revisões']);
+  // ordem do plano, não do diário
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([...noTeto('T3'), ...noTeto('T1')]), { ...sem, liberaTeto: false })),
+    ['decidir a T1: chegou ao limite de revisões', 'decidir a T3: chegou ao limite de revisões']);
+});
+
+test('depende-so-em-abordagens-esgotadas: 2 liberações da Sombra com abordagem_nova e novo teto ⇒ 1 item do dono com 1 linha, com o botão de liberar; sem a 2ª abordagem ou com a do dono no meio, a regra é a do freio', () => {
+  const ab = (n: string): C => ({ t: 'task.reaberta', d: { task: 'T1', origem: 'sombra', hash, abordagem_nova: n } });
+  const esgotada = expandir([...noTeto('T1'), ab('A'), ...noTeto('T1'), ab('B'), ...noTeto('T1')]);
+  const lote = loteDoDono(PLANO_LOTE, esgotada, CFG_LIGADA);
+  assert.equal(lote.length, 1);
+  assert.match(lote[0].motivo, /^decidir a T1: chegou ao limite de revisões \(2 abordagens novas da Sombra/);
+  assert.doesNotMatch(lote[0].motivo, REGEX_TECNICA);
+  assert.deepEqual(lote[0].acoes, [{ rotulo: 'liberar mais uma rodada', comando: '/gabarito-mestre:liberar T1' }]);
+  assert.ok(!/\n/.test(lote[0].motivo));
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([...noTeto('T1'), ab('A'), ...noTeto('T1')]), CFG_LIGADA)), [], '1 abordagem não esgota');
+  const comDono = expandir([...noTeto('T1'), ab('A'), ...noTeto('T1'), liberacaoDono('T1'), ...noTeto('T1'), ab('B'), ...noTeto('T1')]);
+  assert.equal(loteDoDono(PLANO_LOTE, comDono, CFG_LIGADA).length, 1, 'a do dono no meio não zera');
+  // flag desligada: o item sai sem o resumo do freio
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, esgotada, { ...CFG_LIGADA, liberaTeto: false })), ['decidir a T1: chegou ao limite de revisões']);
+});
+
+test('lote-emenda-so-sem-julga: com julga_emendas a Sombra julga (não é do dono); desligada ⇒ uma por proposta aberta', () => {
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([emendaProposta()]), CFG_LIGADA), []);
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([emendaProposta(), emendaProposta()]), { ...CFG_LIGADA, julgaEmendas: false })), ['decidir a emenda 1', 'decidir a emenda 2']);
+});
+
+test('versao-plugin-atras-do-diario: tipo de evento que este plugin não conhece ⇒ 1 item só; só tipos conhecidos ⇒ nenhum', () => {
+  assert.deepEqual(motivos(loteDoDono(PLANO_LOTE, expandir([evNovo(), evNovo(), emendaProposta()]), CFG_LIGADA)), ['atualizar o plugin: o diário tem evento de uma versão mais nova']);
+  assert.deepEqual(loteDoDono(PLANO_LOTE, expandir([emendaProposta(), nota('ideia', 'x')]), CFG_LIGADA), []);
+});
+
+test('lote-igual-no-depende: o DEPENDE traz o lote inteiro, contíguo e na mesma ordem, sem repetir o teto da base nem a emenda; sem lote segue o de antes', () => {
+  const evs = [...noTeto('T2'), emendaProposta(), evNovo()];
+  const lote = loteDoDono(PLANO_LOTE, expandir(evs), CFG_DESLIGADA);
+  const baseTeto: ItemDepende = { nivel: 'parar', motivo: 'teto de rodadas de review em T2', acoes: [{ rotulo: 'liberar', comando: '/gabarito-mestre:liberar T2' }] };
+  const dep = dependeDe(APROVADA, expandir([...evs, nota('pendencia', 'renovar o domínio')]), [baseTeto], OK, false, GIT, lote);
+  // o PAROU de teto da base já é o item do dono da T2 (mesmo botão): o resto do lote vem inteiro, contíguo e na ordem
+  assert.equal(dep[0], dep.find((x) => x.motivo === baseTeto.motivo), 'o PAROU fica');
+  const resto = lote.slice(1);
+  const i = dep.findIndex((x) => x.motivo === resto[0].motivo);
+  assert.ok(i >= 0, JSON.stringify(motivos(dep)));
+  assert.deepEqual(dep.slice(i, i + resto.length), resto);
+  assert.equal(dep.filter((x) => x.acoes.some((a) => a.comando === '/gabarito-mestre:liberar T2')).length, 1, 'o liberar aparece 1 vez');
+  // sem o PAROU na base, o lote inteiro
+  const semBase = dependeDe(APROVADA, expandir(evs), [], OK, false, GIT, lote);
+  const j = semBase.findIndex((x) => x.motivo === lote[0].motivo);
+  assert.deepEqual(semBase.slice(j, j + lote.length), lote);
+  assert.equal(dep.filter((x) => /emenda 1/.test(x.motivo)).length, 1);
+  assert.ok(motivos(dep).includes('renovar o domínio'), 'o resto do DEPENDE segue');
+  // com a Sombra ligada, o lote não traz teto nem emenda, e o DEPENDE também não
+  const loteLig = loteDoDono(PLANO_LOTE, expandir(evs), CFG_LIGADA);
+  const depLig = dependeDe(APROVADA, expandir(evs), [], OK, false, GIT, loteLig);
+  assert.ok(!depLig.some((x) => /limite de revisões|emenda/.test(x.motivo)), JSON.stringify(motivos(depLig)));
+  // sem lote (o painel de antes): (5) e (7) seguem
+  assert.ok(motivos(dependeDe(APROVADA, expandir(evs), [], OK, false, GIT)).includes('decidir a emenda 1'));
+});
+
+test('item-sem-fonte: a Sombra sem fonte para adiar, cortar ou reabrir vira item do dono com o comando humano; id fora da forma sai sem botão', () => {
+  assert.deepEqual(itemSemFonte('adiar', 'T5'), { nivel: 'dono', motivo: 'decidir se a T5 sai do alvo (adiar): a Sombra não tem fonte', acoes: [{ rotulo: 'adiar', comando: '/gabarito-mestre:adiar T5' }] });
+  assert.deepEqual(itemSemFonte('cortar', 'T5').acoes, [{ rotulo: 'cortar', comando: '/gabarito-mestre:cortar T5' }]);
+  assert.deepEqual(itemSemFonte('reabrir', 'T5'), { nivel: 'dono', motivo: 'decidir se a T5 volta ao alvo: a Sombra não tem fonte', acoes: [{ rotulo: 'reabrir', comando: '/gabarito-mestre:reabrir T5' }] });
+  assert.deepEqual(itemSemFonte('adiar', 'T5; rm').acoes, []);
+  for (const v of ['adiar', 'cortar', 'reabrir'] as const) assert.doesNotMatch(itemSemFonte(v, 'T5').motivo, REGEX_TECNICA);
+});
+
+test('parou-de-uma-task-nao-esconde-teto-de-outra: base com PAROU de teto da T2 e lote [T2, T3] ⇒ DEPENDE mostra o PAROU da T2 e o item da T3 (review r1 MAJOR-1)', () => {
+  const lote = loteDoDono(PLANO_LOTE, expandir([...noTeto('T2'), ...noTeto('T3')]), { ...CFG_DESLIGADA, autonomiaEntrega: true });
+  assert.deepEqual(motivos(lote), ['decidir a T2: chegou ao limite de revisões', 'decidir a T3: chegou ao limite de revisões']);
+  const baseT2: ItemDepende = { nivel: 'parar', motivo: 'teto de rodadas de review em T2', acoes: [{ rotulo: 'liberar', comando: '/gabarito-mestre:liberar T2' }] };
+  const dep = dependeDe(APROVADA, expandir([...noTeto('T2'), ...noTeto('T3')]), [baseT2], OK, false, GIT, lote);
+  assert.deepEqual(motivos(dep).filter((m) => /T2|T3/.test(m)), ['teto de rodadas de review em T2', 'decidir a T3: chegou ao limite de revisões']);
+});
+
+test('plugin-atras-nomeia-a-versao: o item do lote traz a versão instalada e o comando /plugin (review r1 MINOR-2)', () => {
+  const evs = expandir([evNovo()]);
+  const [i] = loteDoDono(PLANO_LOTE, evs, { ...CFG_LIGADA, versaoPlugin: '2.1.0-alpha.2' });
+  assert.match(i.motivo, /2\.1\.0-alpha\.2/);
+  assert.deepEqual(i.acoes, [{ rotulo: 'atualizar', comando: '/plugin' }]);
+});
+
+// ─────────────────────────────────────────────── GM-15 T19 (REQ-POU-3, REQ-POU-4): o DEPENDE avisa o contexto alto e o loop desligado
+// Mutações: M19-a o pedido de /clear sai com o loop desligado ⇒ clear-so-com-wakeup-depende · M19-b o aviso de contexto sem o mod como quem limpa ⇒
+// contexto-alto-sem-pouso-avisa-depende · M19-c "ligar o loop" sem o sinal conferido ⇒ sem-loop-dinamico-avisa-depende
+import { CMD_LIGAR_LOOP, MOTIVO_LIGAR_LOOP, MOTIVO_LIGAR_ANTES_DO_CLEAR, motivoContextoAlto } from '../src/depende.ts';
+
+test('clear-so-com-wakeup-depende (REQ-POU-4, aprendizado 185): pouso pendente com o loop desligado ⇒ nada de /clear; "ligar o loop automático antes de limpar a conversa" com o botão do /loop', () => {
+  const r = dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'S1:2', loop: 'ausente' }, GIT);
+  assert.deepEqual(r, [{ nivel: 'dono', motivo: MOTIVO_LIGAR_ANTES_DO_CLEAR, acoes: [{ rotulo: 'ligar o loop', comando: CMD_LIGAR_LOOP }, { rotulo: AGORA_NAO_TETO, comando: '/gabarito-mestre:responder S1:2 agora' }] }]);
+  assert.ok(!JSON.stringify(r).includes('/clear'), 'nenhum botão nem texto de /clear com o loop desligado');
+  assert.equal(MOTIVO_LIGAR_ANTES_DO_CLEAR, 'ligar o loop automático antes de limpar a conversa');
+  assert.equal(CMD_LIGAR_LOOP, '/loop /gabarito-mestre:gabarito-loop', 'o /loop sem intervalo (dinâmico) com a tarefa de seguir o loop');
+  // armado ou não conferível (sinal ausente, velho, de outra sessão: `loop` ausente ou null) ⇒ o pedido de /clear de sempre
+  // (r1 MAJOR-1: a régua é a do Stop; tudo que não é `armado` — nao_conferivel, velho, sem arquivo, de outra sessão: `null` — é desligado)
+  for (const loop of ['armado', undefined] as const) {
+    assert.deepEqual(dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'S1:2', loop }, GIT)[0].acoes[0], { rotulo: 'limpar', comando: '/clear' }, String(loop));
+  }
+  const nc = dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'S1:2', loop: null }, GIT);
+  assert.deepEqual(motivos(nc), [MOTIVO_LIGAR_ANTES_DO_CLEAR], 'sinal não conferível = desligado');
+  assert.ok(!JSON.stringify(nc).includes('/clear'), 'nunca /clear sem o sinal armado');
+  // REQ-LNG-1: o texto não leva comando
+  assert.doesNotMatch(r[0].motivo, REGEX_TECNICA);
+});
+
+test('contexto-alto-sem-pouso-avisa-depende (REQ-POU-3): contexto em X ou acima sem pouso desta sessão ⇒ "limpar a conversa", dito que quem limpa é o mod, sem botão de /clear', () => {
+  const r = dependeDe(APROVADA, [], [], OK, { pendente: false, id: null, contexto: { percent: 62.4, x: 50 } }, GIT);
+  assert.deepEqual(r, [{ nivel: 'dono', motivo: 'limpar a conversa: contexto em 62 % (teto 50 %); quem limpa é o mod, não o agente', acoes: [] }]);
+  assert.equal(motivoContextoAlto(62.4, 50), r[0].motivo);
+  assert.doesNotMatch(r[0].motivo, REGEX_TECNICA);
+  // com o pedido de /clear (o pouso já feito) o aviso de contexto não repete
+  assert.deepEqual(motivos(dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'S1:2', contexto: { percent: 62, x: 50 } }, GIT)), ['limpar a conversa']);
+  // fora da forma ⇒ nada
+  for (const contexto of [{ percent: Number.NaN, x: 50 }, { percent: 60, x: 0 }, null, 'alto']) {
+    assert.deepEqual(dependeDe(APROVADA, [], [], OK, { pendente: false, id: null, contexto } as never, GIT), nada, JSON.stringify(contexto));
+  }
+});
+
+test('sem-loop-dinamico-avisa-depende (REQ-POU-4): o painel decidiu que falta o loop ⇒ "ligar o loop automático" com o botão; sem a decisão, nada', () => {
+  const r = dependeDe(APROVADA, [], [], OK, { pendente: false, id: null, ligarLoop: true }, GIT);
+  assert.deepEqual(r, [{ nivel: 'dono', motivo: MOTIVO_LIGAR_LOOP, acoes: [{ rotulo: 'ligar o loop', comando: CMD_LIGAR_LOOP }] }]);
+  assert.equal(MOTIVO_LIGAR_LOOP, 'ligar o loop automático: sem ele nada retoma o trabalho depois do pouso');
+  assert.doesNotMatch(r[0].motivo, REGEX_TECNICA);
+  assert.deepEqual(dependeDe(APROVADA, [], [], OK, { pendente: false, id: null, ligarLoop: 'sim' } as never, GIT), nada, 'só true exato');
+  // não conferível (`loop: null`) também falta o loop
+  assert.deepEqual(motivos(dependeDe(APROVADA, [], [], OK, { pendente: false, id: null, loop: null, ligarLoop: true }, GIT)), [MOTIVO_LIGAR_LOOP]);
+  // com o pedido de /clear e o loop desligado o item é 1 só (o de antes do /clear)
+  assert.deepEqual(motivos(dependeDe(APROVADA, [], [], OK, { pendente: true, id: 'S1:2', loop: 'ausente', ligarLoop: true }, GIT)), [MOTIVO_LIGAR_ANTES_DO_CLEAR]);
 });

@@ -758,7 +758,9 @@ describe('costura', () => {
 
 // ────────────────────────────────────────────────────────────── T6b: perguntas, prévia e gravação
 
-const FIXAS = { politica: 'sob_demanda', autonomia: false, perfil: 'padrao' };
+/** As 4 chaves da resposta 3, como o onboarding as grava (config que o `perguntas` lê de volta como `publica`). */
+const PUBLICA_CFG = { guarda: { autonomia: 'orquestrador' }, sombra: { julga_emendas: true, libera_teto: true } };
+const FIXAS = { politica: 'sob_demanda', autonomia: 'espera', perfil: 'padrao' };
 const SEM_MCP = 'No MCP servers configured.\n';
 const FUSO = 'America/Sao_Paulo';
 const cfgDe = (raiz) => JSON.parse(readFileSync(join(raiz, 'harness.config.json'), 'utf8'));
@@ -792,7 +794,7 @@ describe('perguntas', () => {
     assert.deepEqual(ps.map((p) => p.default), [FIXAS.politica, FIXAS.autonomia, FIXAS.perfil]);
     // D-T14-1: o default vem primeiro; as demais opções ficam na ordem original
     assert.deepEqual(ps[0].opcoes.map((o) => o.valor), ['sob_demanda', 'continua', 'janela']);
-    assert.deepEqual(ps[1].opcoes.map((o) => o.valor), [false, true]);
+    assert.deepEqual(ps[1].opcoes.map((o) => o.valor), ['espera', 'trabalha', 'publica']);
     assert.deepEqual(ps[2].opcoes.map((o) => o.valor), ['padrao', 'economia', 'qualidade']);
     for (const p of ps) {
       assert.ok(p.texto.length > 0 && p.opcoes.every((o) => o.rotulo.length > 0), p.id);
@@ -805,7 +807,7 @@ describe('perguntas', () => {
     assert.match(ps[2].texto, /gastar menos/);
     assert.match(ps[0].opcoes.find((o) => o.valor === 'sob_demanda').rotulo, /pedido de revisão/);
     assert.match(ps[0].opcoes.find((o) => o.valor === 'janela').rotulo, /horário/);
-    assert.match(ps[1].opcoes.find((o) => o.valor === true).rotulo, /^Pode publicar sozinha/);
+    assert.match(ps[1].opcoes.find((o) => o.valor === 'publica').rotulo, /^Pode publicar sozinha/);
     // os valores de cada perfil vêm de PERFIS_MODELO, não de outra tabela
     assert.deepEqual(ps[2].opcoes.map((o) => o.valor).sort(), Object.keys(PERFIS_MODELO).sort());
   });
@@ -814,10 +816,11 @@ describe('perguntas', () => {
     // Enter no AskUserQuestion escolhe a 1ª opção: ela TEM de ser o default (autonomia `sim` liberaria deploy sem pedido)
     const raiz = fixtureComGit('completa', 'trunk');
     const sem = perguntas(itensLista(raiz), existenteDe(raiz));
-    assert.deepEqual(sem.map((p) => p.opcoes[0].valor), ['sob_demanda', false, 'padrao']);
+    assert.deepEqual(sem.map((p) => p.opcoes[0].valor), ['sob_demanda', 'espera', 'padrao']);
     for (const p of sem) assert.equal(p.opcoes[0].valor, p.default, p.id);
     const cont = perguntas(itensLista(raiz), { entrega: { politica: 'continua' }, orquestracao: { perfil: 'qualidade' } });
-    assert.deepEqual(cont.map((p) => p.opcoes[0].valor), ['continua', true, 'qualidade']);
+    assert.deepEqual(cont.map((p) => p.opcoes[0].valor), ['continua', 'espera', 'qualidade'], 'legada sem autonomia: sem default, a ordem do script não promove nenhuma');
+    assert.equal(cont[1].default, null);
     assert.deepEqual(cont[0].opcoes.map((o) => o.valor), ['continua', 'janela', 'sob_demanda'], 'o resto na ordem original');
     // condicionais: o default também vai primeiro
     const wf = (nome) => `name: deploy-${nome}\non:\n  push:\n    branches: [main]\njobs:\n  d:\n    environment: ${nome}\n`;
@@ -897,25 +900,47 @@ describe('perguntas', () => {
 
   test('default-de-config-110', () => {
     const ps = perguntas(itensLista(repoVazio()), { entrega: { politica: 'janela' }, orquestracao: { perfil: 'qualidade' } });
-    assert.deepEqual(ps.slice(0, 3).map((p) => p.default), ['janela', true, 'qualidade']);
-    const ps2 = perguntas(itensLista(repoVazio()), { entrega: { politica: 'continua', autonomia: true }, orquestracao: { perfil: 'economia' } });
-    assert.deepEqual(ps2.slice(0, 3).map((p) => p.default), ['continua', true, 'economia']);
+    assert.deepEqual(ps.slice(0, 3).map((p) => p.default), ['janela', null, 'qualidade'], 'janela legada sem autonomia: sem default (mista)');
+    assert.equal(ps[1].mista, true);
+    const ps2 = perguntas(itensLista(repoVazio()), { entrega: { politica: 'continua', autonomia: true }, ...PUBLICA_CFG, orquestracao: { perfil: 'economia' } });
+    assert.deepEqual(ps2.slice(0, 3).map((p) => p.default), ['continua', 'publica', 'economia']);
   });
 
-  test('autonomia-default-sim-com-continua-legada', () => {
+  test('autonomia-default-pelas-quatro-chaves-e-legada-sem-default', () => {
     const it = itensLista(repoVazio());
-    const aut = (entrega) => perguntas(it, { entrega })[1].default;
-    assert.equal(aut({ politica: 'continua' }), true, 'continua legada sem autonomia ⇒ sim');
-    assert.equal(aut({ politica: 'janela' }), true, 'janela legada sem autonomia ⇒ sim');
-    assert.equal(aut({ politica: 'continua', autonomia: false }), false, 'o não explícito vale');
-    assert.equal(aut({ politica: 'sob_demanda' }), false);
-    assert.equal(aut({ politica: 'sob_demanda', autonomia: true }), true);
-    assert.equal(aut(undefined), false);
+    const aut = (cfg) => perguntas(it, cfg)[1];
+    // as 4 chaves, cada uma por si, batendo EXATAMENTE com uma resposta ⇒ é o default; chave ausente = a mais contida
+    assert.equal(aut({ entrega: { politica: 'sob_demanda' } }).default, 'espera');
+    assert.equal(aut({ entrega: { autonomia: false }, guarda: { autonomia: 'nenhuma' }, sombra: { julga_emendas: false, libera_teto: false } }).default, 'espera');
+    assert.equal(aut({ entrega: { autonomia: false }, ...PUBLICA_CFG }).default, 'trabalha');
+    assert.equal(aut({ entrega: { autonomia: true }, ...PUBLICA_CFG }).default, 'publica');
+    assert.equal(aut(undefined).default, 'espera');
+    // config mista ou legada (:615): SEM default, marcada, nada é herdado como "sim"
+    const mistas = {
+      'continua legada sem autonomia': { entrega: { politica: 'continua' } },
+      'janela legada sem autonomia': { entrega: { politica: 'janela' } },
+      'só entrega.autonomia true': { entrega: { autonomia: true } },
+      'só a guarda ligada': { guarda: { autonomia: 'orquestrador' } },
+      'só a Sombra liga': { sombra: { julga_emendas: true } },
+      'só libera_teto': { sombra: { libera_teto: true } },
+      'guarda valor estranho': { guarda: { autonomia: true } },
+      'publica sem a Sombra': { entrega: { autonomia: true }, guarda: { autonomia: 'orquestrador' } },
+    };
+    for (const [nome, cfg] of Object.entries(mistas)) {
+      const p = aut(cfg);
+      assert.equal(p.default, null, `${nome}: sem default`);
+      assert.equal(p.mista, true, `${nome}: marcada mista`);
+      assert.match(p.texto, /mista/);
+      assert.deepEqual(p.opcoes.map((o) => o.valor), ['espera', 'trabalha', 'publica'], `${nome}: ordem do script, nenhuma promovida`);
+    }
+    assert.equal('mista' in aut({ entrega: { autonomia: false } }), false, 'config sã não marca mista');
+    // `entrega.autonomia: false` explícito com continua NÃO é legado (o não explícito vale)
+    assert.equal(aut({ entrega: { politica: 'continua', autonomia: false } }).default, 'espera');
   });
 
   test('rotulo-nao-com-continua', () => {
     const it = itensLista(repoVazio());
-    const nao = (entrega) => perguntas(it, { entrega })[1].opcoes.find((o) => o.valor === false).rotulo;
+    const nao = (entrega) => perguntas(it, { entrega })[1].opcoes.find((o) => o.valor === 'espera').rotulo;
     const FRASE = 'Espere o meu "pode": só abra o pedido de revisão';
     assert.equal(nao({ politica: 'continua' }), FRASE);
     assert.equal(nao({ politica: 'janela' }), FRASE);
@@ -927,14 +952,14 @@ describe('perguntas', () => {
     const it = itensLista(repoVazio());
     const ruim = { entrega: { politica: 'rapida', autonomia: 'sim' }, orquestracao: { perfil: 'turbo' } };
     const ps = perguntas(it, ruim);
-    assert.deepEqual(ps.slice(0, 3).map((p) => p.default), ['sob_demanda', false, 'padrao']);
+    assert.deepEqual(ps.slice(0, 3).map((p) => p.default), ['sob_demanda', 'espera', 'padrao']);
     assert.match(ps[0].aviso, /config tinha "rapida" inválido/);
     assert.match(ps[1].aviso, /config tinha "sim" inválido/);
     assert.match(ps[2].aviso, /config tinha "turbo" inválido/);
     const p = previa(it, ps, { fuso: FUSO });
     for (const v of ['"rapida"', '"sim"', '"turbo"']) assert.ok(p.includes(`config tinha ${v} inválido`), `a prévia cita ${v}`);
     // config sã: nenhum aviso em lugar nenhum
-    const sa = perguntas(it, { entrega: { politica: 'continua', autonomia: true }, orquestracao: { perfil: 'qualidade' } });
+    const sa = perguntas(it, { entrega: { politica: 'continua', autonomia: true }, ...PUBLICA_CFG, orquestracao: { perfil: 'qualidade' } });
     assert.ok(sa.every((q) => !('aviso' in q)));
     assert.ok(!previa(it, sa, { fuso: FUSO }).includes('inválido'));
   });
@@ -942,8 +967,8 @@ describe('perguntas', () => {
   test('config-corrompida-nao-vira-default-silencioso', () => {
     const it = itensLista(repoVazio());
     // `{erro}` é o formato de configExistente corrompido: perguntas não tira default de dado ilegível
-    assert.deepEqual(perguntas(it, { erro: 'x' }).slice(0, 3).map((p) => p.default), ['sob_demanda', false, 'padrao']);
-    assert.deepEqual(perguntas(it, null).slice(0, 3).map((p) => p.default), ['sob_demanda', false, 'padrao']);
+    assert.deepEqual(perguntas(it, { erro: 'x' }).slice(0, 3).map((p) => p.default), ['sob_demanda', 'espera', 'padrao']);
+    assert.deepEqual(perguntas(it, null).slice(0, 3).map((p) => p.default), ['sob_demanda', 'espera', 'padrao']);
   });
 
   test('fixture-completa-tudo-detectado-3-perguntas', () => {
@@ -1076,13 +1101,20 @@ describe('previa', () => {
     const com = previa(it, perguntas(it, { entrega: { politica: 'continua', autonomia: false } }), { fuso: FUSO });
     assert.match(com, /política efetiva: sob_demanda/);
     assert.match(com, /continua/);
-    const igual = previa(it, perguntas(it, { entrega: { politica: 'continua', autonomia: true } }), { fuso: FUSO });
+    const igual = previa(it, perguntas(it, { entrega: { politica: 'continua', autonomia: true }, ...PUBLICA_CFG }), { fuso: FUSO });
     assert.ok(!igual.includes('política efetiva'), 'sem divergência, sem a linha');
     const nada = previa(it, perguntas(it, null), { fuso: FUSO });
     assert.ok(!nada.includes('política efetiva'));
     // as 3 decisões com default, e a janela padrão com o fuso recebido
     assert.match(nada, /política de entrega: sob_demanda/);
-    assert.match(nada, /autonomia em produção: não/);
+    assert.match(nada, /autonomia em produção: não\n/, 'a resposta 1 mantém o texto da prévia da 2.0.0');
+    const cfgA = (a, g, j, l) => ({ entrega: { politica: 'sob_demanda', autonomia: a }, guarda: { autonomia: g }, sombra: { julga_emendas: j, libera_teto: l } });
+    const pub = previa(it, perguntas(it, cfgA(true, 'orquestrador', true, true)), { fuso: FUSO });
+    assert.match(pub, /autonomia em produção: sim\n/);
+    const trab = previa(it, perguntas(it, cfgA(false, 'orquestrador', true, true)), { fuso: FUSO });
+    assert.match(trab, /autonomia em produção: trabalha sozinha, espera o seu ok para publicar\n/);
+    const mista = previa(it, perguntas(it, cfgA(false, 'nenhuma', true, false)), { fuso: FUSO });
+    assert.match(mista, /autonomia em produção: autonomia mista: preciso da sua escolha\n/);
     assert.match(nada, /perfil de modelos: padrao/);
     assert.ok(nada.includes(FUSO) && nada.includes('09:00') && nada.includes('17:00'));
   });
@@ -1166,13 +1198,15 @@ describe('gravar', () => {
     const antes = JSON.stringify(cfgDe(raiz).guarda);
     const r = gravarCom(raiz, FIXAS);
     assert.equal(r.ok, true, JSON.stringify(r));
-    assert.equal(JSON.stringify(cfgDe(raiz).guarda), antes, 'guarda igual pelo objeto');
+    // GM-15 T14: o onboarding grava só `guarda.autonomia` (uma das 4 chaves); `ambientes` e o resto ficam como o dono deixou
+    const { autonomia: gravadaNaGuarda, ...restoDaGuarda } = cfgDe(raiz).guarda;
+    assert.equal(gravadaNaGuarda, 'nenhuma');
+    assert.equal(JSON.stringify(restoDaGuarda), antes, 'guarda igual pelo objeto, fora da chave de autonomia');
     assert.deepEqual(cfgDe(raiz).onboarding.fatos.ambientes, { producao: 'production', outros: ['staging'] }, 'ambientes só informativo');
     // sem guarda no config, nenhuma é criada
     const so = fixtureComGit('completa', 'trunk');
     gravarCom(so, FIXAS);
-    assert.equal('guarda' in cfgDe(so), false);
-    assert.ok(!JSON.stringify(cfgDe(so)).includes('guarda'));
+    assert.deepEqual(cfgDe(so).guarda, { autonomia: 'nenhuma' }, 'só a chave de autonomia; nunca `ambientes`');
   });
 
   test('gravar-perfil-so-repo-sem-app', () => {
@@ -1215,7 +1249,7 @@ describe('gravar', () => {
     const boas = { ...FIXAS, tipo_repo: 'app', planejamento: null };
     const ruins = [
       { politica: 'rapida' }, { politica: null }, { politica: 1 }, { perfil: 'turbo' }, { perfil: 'Padrao' },
-      { autonomia: 'sim' }, { autonomia: 'não' }, { autonomia: 'true' }, { autonomia: 'false' }, { autonomia: 1 }, { autonomia: null }, { tipo_repo: 'outro' }, { planejamento: 'jira' },
+      { autonomia: 'sim' }, { autonomia: 'não' }, { autonomia: 'true' }, { autonomia: 'false' }, { autonomia: true }, { autonomia: false }, { autonomia: 1 }, { autonomia: null }, { tipo_repo: 'outro' }, { planejamento: 'jira' },
     ];
     for (const r of ruins) {
       const out = gravarCom(raiz, { ...boas, ...r }, { claude: SEM_MCP });
@@ -1476,7 +1510,7 @@ describe('gravar', () => {
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.deepEqual(cfgDe(raiz).onboarding.fatos, { ambientes: { producao: 'homolog', outros: ['staging'] } });
     assert.ok(!r.naoDetectado.includes('ambientes'));
-    assert.equal('guarda' in cfgDe(raiz), false);
+    assert.equal('ambientes' in (cfgDe(raiz).guarda ?? {}), false, 'a resposta de ambientes é só informativa: não vira guarda.ambientes');
   });
 
   test('gravar-planejamento-ambiguo-resposta-vira-ferramenta', () => {
@@ -1629,7 +1663,7 @@ describe('gravar', () => {
 
   test('gravar-efetiva-quando-difere', () => {
     const raiz = fixtureComGit('completa', 'trunk');
-    const a = gravarCom(raiz, { politica: 'continua', autonomia: false, perfil: 'padrao' });
+    const a = gravarCom(raiz, { politica: 'continua', autonomia: 'espera', perfil: 'padrao' });
     assert.equal(a.ok, true, JSON.stringify(a));
     assert.equal(a.efetiva, 'sob_demanda');
     assert.equal(cfgDe(raiz).entrega.politica, 'continua', 'grava a escolhida');
@@ -1637,17 +1671,17 @@ describe('gravar', () => {
     // a efetiva vem da função do produto sobre o config gravado
     const ef = politicaEfetiva(lerConfigEntrega(cfgDe(raiz)));
     assert.equal(ef.politica, a.efetiva);
-    const b = gravarCom(raiz, { politica: 'continua', autonomia: true, perfil: 'padrao' });
+    const b = gravarCom(raiz, { politica: 'continua', autonomia: 'publica', perfil: 'padrao' });
     assert.equal('efetiva' in b, false, 'igual à escolhida: sem efetiva');
-    const c = gravarCom(raiz, { politica: 'sob_demanda', autonomia: true, perfil: 'padrao' });
+    const c = gravarCom(raiz, { politica: 'sob_demanda', autonomia: 'publica', perfil: 'padrao' });
     assert.equal('efetiva' in c, false);
-    const d = gravarCom(raiz, { politica: 'janela', autonomia: false, perfil: 'padrao' }, { dryRun: true });
+    const d = gravarCom(raiz, { politica: 'janela', autonomia: 'espera', perfil: 'padrao' }, { dryRun: true });
     assert.equal(d.efetiva, 'sob_demanda', 'dry-run também diz a efetiva');
   });
 
   test('janela-padrao-valida', () => {
     const raiz = fixtureComGit('completa', 'trunk');
-    const r = gravarCom(raiz, { politica: 'janela', autonomia: true, perfil: 'padrao' });
+    const r = gravarCom(raiz, { politica: 'janela', autonomia: 'publica', perfil: 'padrao' });
     assert.equal(r.ok, true, JSON.stringify(r));
     const cfg = cfgDe(raiz);
     assert.deepEqual(cfg.entrega.janela, { dias: [1, 2, 3, 4, 5], inicio: '09:00', fim: '17:00', fuso: FUSO });
@@ -1661,14 +1695,14 @@ describe('gravar', () => {
     // janela do dono não é trocada; política que não é janela não grava janela
     const dono = { dias: [6], inicio: '02:00', fim: '04:00', fuso: 'UTC' };
     const raiz2 = comConfig(fixtureComGit('completa', 'trunk'), { entrega: { janela: dono } });
-    gravarCom(raiz2, { politica: 'janela', autonomia: true, perfil: 'padrao' });
+    gravarCom(raiz2, { politica: 'janela', autonomia: 'publica', perfil: 'padrao' });
     assert.deepEqual(cfgDe(raiz2).entrega.janela, dono);
     const raiz3 = fixtureComGit('completa', 'trunk');
-    gravarCom(raiz3, { politica: 'continua', autonomia: true, perfil: 'padrao' });
+    gravarCom(raiz3, { politica: 'continua', autonomia: 'publica', perfil: 'padrao' });
     assert.equal('janela' in cfgDe(raiz3).entrega, false);
     // janela do dono inválida com política janela: troca pela padrão (senão a entrega cairia em sob_demanda)
     const raiz4 = comConfig(fixtureComGit('completa', 'trunk'), { entrega: { janela: { dias: [] } } });
-    gravarCom(raiz4, { politica: 'janela', autonomia: true, perfil: 'padrao' });
+    gravarCom(raiz4, { politica: 'janela', autonomia: 'publica', perfil: 'padrao' });
     assert.deepEqual(lerConfigEntrega(cfgDe(raiz4)).erros, []);
   });
 
@@ -1679,10 +1713,156 @@ describe('gravar', () => {
     const copia = structuredClone(existente);
     const r = configDasRespostas(it, FIXAS, existente, HOJE, { fuso: FUSO });
     assert.deepEqual(existente, copia, 'não muta o existente');
-    assert.deepEqual(Object.keys(r.patches).sort(), ['entrega', 'fluxo', 'onboarding', 'orquestracao', 'versionamento']);
+    assert.deepEqual(Object.keys(r.patches).sort(), ['entrega', 'fluxo', 'guarda', 'onboarding', 'orquestracao', 'sombra', 'versionamento']);
     assert.equal(r.perfil, undefined);
     assert.deepEqual(r.naoDetectado, []);
     assert.deepEqual(r.patches.onboarding, { resolvidoEm: HOJE, naoDetectado: [], fatos: { ambientes: { producao: 'production', outros: ['staging'] } } });
+  });
+
+  // ────────────────────────────────────────────────────────── GM-15 T14 (AUT-2 a): 1 pergunta de autonomia, 3 respostas, 4 chaves
+  const QUATRO = (raiz) => {
+    const c = cfgDe(raiz);
+    return { entrega: c.entrega?.autonomia, guarda: c.guarda?.autonomia, julga_emendas: c.sombra?.julga_emendas, libera_teto: c.sombra?.libera_teto };
+  };
+  const ESPERADO = {
+    espera: { entrega: false, guarda: 'nenhuma', julga_emendas: false, libera_teto: false },
+    trabalha: { entrega: false, guarda: 'orquestrador', julga_emendas: true, libera_teto: true },
+    publica: { entrega: true, guarda: 'orquestrador', julga_emendas: true, libera_teto: true },
+  };
+
+  test('onboarding-autonomia-uma-pergunta', () => {
+    const raiz = fixtureComGit('completa', 'trunk');
+    const ps = perguntas(itensLista(raiz), null);
+    assert.equal(ps.filter((p) => /autonomia|guarda|sombra/i.test(p.id)).length, 1, 'um id só de autonomia; nada de pergunta separada da guarda');
+    assert.deepEqual(idsDe(ps), ['politica', 'autonomia', 'perfil']);
+    const a = ps[1];
+    assert.deepEqual(a.opcoes.map((o) => o.valor), ['espera', 'trabalha', 'publica']);
+    assert.equal(a.default, 'espera', 'o padrão é a mais contida');
+    assert.equal(a.opcoes[0].valor, 'espera', 'Enter escolhe a mais contida');
+    // cada resposta grava as 4 chaves, por valor, e só elas
+    for (const r of ['espera', 'trabalha', 'publica']) {
+      const alvo = fixtureComGit('completa', 'trunk');
+      const out = gravarCom(alvo, { ...FIXAS, autonomia: r });
+      assert.equal(out.ok, true, JSON.stringify(out));
+      assert.deepEqual(QUATRO(alvo), ESPERADO[r], `resposta ${r}`);
+    }
+  });
+
+  test('autonomia-resposta-1-nao-liga-nada-e-2-nao-liga-entrega', () => {
+    // M14a: a resposta 1 ligando a Sombra ou a guarda; M14b: a resposta 2 ligando `entrega.autonomia`
+    const um = fixtureComGit('completa', 'trunk');
+    gravarCom(um, { ...FIXAS, autonomia: 'espera' });
+    const c1 = cfgDe(um);
+    assert.equal(c1.entrega.autonomia, false);
+    assert.equal(c1.guarda.autonomia, 'nenhuma');
+    assert.equal(c1.sombra.julga_emendas, false);
+    assert.equal(c1.sombra.libera_teto, false);
+    const dois = fixtureComGit('completa', 'trunk');
+    gravarCom(dois, { ...FIXAS, autonomia: 'trabalha' });
+    const c2 = cfgDe(dois);
+    assert.equal(c2.entrega.autonomia, false, 'a resposta 2 espera o ok para publicar');
+    assert.equal(c2.guarda.autonomia, 'orquestrador');
+    assert.equal(c2.sombra.julga_emendas, true);
+    assert.equal(c2.sombra.libera_teto, true);
+  });
+
+  test('trocar-autonomia-troca-as-quatro', () => {
+    // "as-tres" da spec vira "as-quatro" (condição 4): trocar de 3 para 1, e de 1 para 2, move as 4 chaves juntas
+    const raiz = fixtureComGit('completa', 'trunk');
+    assert.equal(gravarCom(raiz, { ...FIXAS, autonomia: 'publica' }).ok, true);
+    assert.deepEqual(QUATRO(raiz), ESPERADO.publica);
+    // o "trocar" relê a config: o default da pergunta é a resposta gravada
+    assert.equal(perguntas(itensLista(raiz), existenteDe(raiz))[1].default, 'publica');
+    assert.equal(gravarCom(raiz, { ...FIXAS, autonomia: 'espera' }).ok, true);
+    assert.deepEqual(QUATRO(raiz), ESPERADO.espera, 'as 4 rebaixam juntas');
+    assert.equal(gravarCom(raiz, { ...FIXAS, autonomia: 'trabalha' }).ok, true);
+    assert.deepEqual(QUATRO(raiz), ESPERADO.trabalha, 'as 4 sobem juntas');
+    // chaves vizinhas da guarda e da Sombra que o dono tem ficam como estão
+    const viz = comConfig(fixtureComGit('completa', 'trunk'), { guarda: { ambientes: { prod: { branches: ['main'] } } }, sombra: { outra: 7 } });
+    gravarCom(viz, { ...FIXAS, autonomia: 'publica' });
+    assert.deepEqual(cfgDe(viz).guarda.ambientes, { prod: { branches: ['main'] } });
+    assert.equal(cfgDe(viz).sombra.outra, 7);
+  });
+
+  test('trocar-autonomia-config-mista-nao-promove', () => {
+    // condição 5: config mista e legado E3 não ganham default; sem escolha, nada muda (nem promove, nem rebaixa)
+    const mistas = [
+      { entrega: { politica: 'continua' } }, // legado E3: subia sozinha
+      { entrega: { autonomia: true } },
+      { guarda: { autonomia: 'orquestrador' }, sombra: { julga_emendas: true } },
+    ];
+    for (const cfg of mistas) {
+      const raiz = comConfig(fixtureComGit('completa', 'trunk'), cfg);
+      const it = itensLista(raiz);
+      const p = perguntas(it, existenteDe(raiz))[1];
+      assert.equal(p.default, null, JSON.stringify(cfg));
+      assert.equal(p.mista, true);
+      // a prévia fala em "autonomia mista" e não escolhe por ele
+      assert.match(previa(it, perguntas(it, existenteDe(raiz)), { fuso: FUSO }), /autonomia em produção: autonomia mista/);
+      // pura, sem resposta: as 4 chaves não entram no patch
+      const pura = configDasRespostas(it, { politica: 'sob_demanda', perfil: 'padrao' }, existenteDe(raiz), HOJE, { fuso: FUSO });
+      assert.equal('guarda' in pura.patches, false, 'não rebaixa/promove a guarda');
+      assert.equal('sombra' in pura.patches, false, 'não rebaixa/promove a Sombra');
+      assert.equal('autonomia' in pura.patches.entrega, false, 'não toca entrega.autonomia');
+      // pelo `gravar`: sem escolha explícita (nula ou ausente) falha fechado e a config fica byte a byte igual
+      const antes = readFileSync(join(raiz, 'harness.config.json'), 'utf8');
+      for (const ruim of [{ ...FIXAS, autonomia: null }, { politica: 'sob_demanda', perfil: 'padrao' }]) {
+        const r = gravarCom(raiz, ruim);
+        assert.equal(r.ok, false, JSON.stringify(ruim));
+        assert.equal(readFileSync(join(raiz, 'harness.config.json'), 'utf8'), antes, 'nada gravado sem escolha');
+      }
+      // com a escolha, grava as 4 chaves
+      assert.equal(gravarCom(raiz, { ...FIXAS, autonomia: 'espera' }).ok, true);
+      assert.deepEqual(QUATRO(raiz), ESPERADO.espera);
+    }
+    // config sã (as 4 chaves de uma resposta): default dela, sem marca de mista
+    const sa = comConfig(fixtureComGit('completa', 'trunk'), { entrega: { autonomia: true }, ...PUBLICA_CFG });
+    assert.equal(perguntas(itensLista(sa), existenteDe(sa))[1].default, 'publica');
+    // ausente (sem config) x corrompido são coisas diferentes: corrompido não vira mista nem sucesso
+    const quebrada = fixtureComGit('completa', 'trunk');
+    writeFileSync(join(quebrada, 'harness.config.json'), '{ nao e json');
+    const rq = gravarCom(quebrada, { ...FIXAS, autonomia: 'publica' });
+    assert.deepEqual([rq.ok, rq.erro], [false, 'config_invalida']);
+    assert.equal(readFileSync(join(quebrada, 'harness.config.json'), 'utf8'), '{ nao e json');
+    assert.equal(perguntas(itensLista(quebrada), { erro: 'x' })[1].default, 'espera', 'ilegível: default do produto, sem herdar sim');
+  });
+
+  test('resposta-3-respeita-politica', () => {
+    // condição 3: a resposta 3 libera a autonomia DENTRO da regra escolhida; não troca a política e não toca o config deste repo
+    const raiz = fixtureComGit('completa', 'trunk');
+    const a = gravarCom(raiz, { politica: 'sob_demanda', autonomia: 'publica', perfil: 'padrao' });
+    assert.equal(a.ok, true);
+    assert.equal(cfgDe(raiz).entrega.politica, 'sob_demanda', 'a política escolhida fica');
+    assert.equal(politicaEfetiva(lerConfigEntrega(cfgDe(raiz))).politica, 'sob_demanda', 'publica + sob_demanda continua pedindo o ok para publicar');
+    assert.equal('efetiva' in a, false);
+    const b = gravarCom(raiz, { politica: 'continua', autonomia: 'publica', perfil: 'padrao' });
+    assert.equal(cfgDe(raiz).entrega.politica, 'continua');
+    assert.equal(politicaEfetiva(lerConfigEntrega(cfgDe(raiz))).politica, 'continua', 'só com a resposta 3 a política frouxa vale');
+    assert.equal('efetiva' in b, false);
+    // M14c: as respostas 1 e 2 NÃO liberam a política frouxa (autonomia de entrega desligada)
+    for (const r of ['espera', 'trabalha']) {
+      const x = fixtureComGit('completa', 'trunk');
+      const out = gravarCom(x, { politica: 'continua', autonomia: r, perfil: 'padrao' });
+      assert.equal(out.efetiva, 'sob_demanda', r);
+    }
+    // o rótulo mantém "dentro da regra escolhida" (a regra de operação não vira sinônimo de publicar sempre)
+    const p3 = perguntas(itensLista(raiz), null)[1].opcoes.find((o) => o.valor === 'publica');
+    assert.match(p3.rotulo, /dentro da regra escolhida/);
+    // a prévia só cita "política efetiva" pelo que a resposta de verdade libera
+    const it = itensLista(raiz);
+    const pv = (aut) => previa(it, perguntas(it, { entrega: { politica: 'continua', autonomia: aut === 'publica' }, ...(aut === 'espera' ? {} : PUBLICA_CFG) }), { fuso: FUSO });
+    assert.match(pv('trabalha'), /política efetiva: sob_demanda/);
+    assert.doesNotMatch(pv('publica'), /política efetiva/);
+  });
+
+  test('teto-5-perguntas-e-ordem', () => {
+    // a pergunta única não gasta pergunta a mais: o teto e a ordem seguem os da 2.1.0-alpha
+    const raiz = fixtureComGit('monorepo', 'main');
+    const ps = perguntas(itensLista(raiz, { claude: SEM_MCP }), null);
+    assert.ok(ps.length <= MAX_PERGUNTAS);
+    assert.deepEqual(idsDe(ps).slice(0, 3), ['politica', 'autonomia', 'perfil']);
+    assert.equal(idsDe(ps).filter((i) => i === 'autonomia').length, 1);
+    assert.equal(MAX_PERGUNTAS, 5);
   });
 });
 
@@ -1731,12 +1911,23 @@ describe('gravar costura', () => {
 
 // ────────────────────────────────────────────────────────────── S6: os 3 repos reais, só leitura
 
+/** Motivo de pular o golden S6 (ou `false`): repo ausente, ou HEAD diferente do sha em que o golden foi medido. Exportada no teste para a prova de mutação. */
+export function skipS6(raiz, shaGolden) {
+  if (!existsSync(join(raiz, '.git'))) return `sem ${raiz}/.git (defina S6_REPOS_DIR)`;
+  if (typeof shaGolden !== 'string') return false;
+  let head = '';
+  try { head = execFileSync('git', ['-C', raiz, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); } catch { return `sem HEAD legível em ${raiz}`; }
+  return head === shaGolden ? false : `${raiz} está em ${head.slice(0, 8)}, o golden foi medido em ${shaGolden.slice(0, 8)}: remedir o golden`;
+}
+
 describe('s6', () => {
   const dirRepos = process.env.S6_REPOS_DIR ?? join(homedir(), 'projetos-true');
   const gabarito = JSON.parse(readFileSync(join(FIX, 's6-gabarito.json'), 'utf8'));
   for (const repo of [...new Set(gabarito.map((g) => g.repo))]) {
     const raiz = join(dirRepos, repo);
-    test(`s6-gabarito-zero-errado: ${repo}`, { skip: !existsSync(join(raiz, '.git')) ? `sem ${raiz}/.git (defina S6_REPOS_DIR)` : false }, () => {
+    // GM-15 T34 (r.6): o golden de um repo real vale para o sha em que foi medido; HEAD diferente ⇒ o teste pula com o motivo (repo evoluiu, golden a remedir).
+    const shaGolden = gabarito.find((g) => g.repo === repo && typeof g.sha === 'string')?.sha;
+    test(`s6-gabarito-zero-errado: ${repo}`, { skip: skipS6(raiz, shaGolden) }, () => {
       const itens = Object.fromEntries(detectar(coletarFatos(raiz, { rodar: rodarCom(CLICKUP), hoje: new Date().toISOString().slice(0, 10) })).map((i) => [i.item, i]));
       for (const g of gabarito.filter((x) => x.repo === repo)) {
         const i = itens[g.item];
@@ -1752,4 +1943,15 @@ describe('s6', () => {
       }
     });
   }
+  test('s6-golden-pula-com-motivo-se-o-sha-diverge', () => {
+    const d = mkdtempSync(join(tmpdir(), 's6-sha '));
+    G(d, ['init', '-q', '-b', 'main']);
+    G(d, ['commit', '-q', '--allow-empty', '-m', 'a']);
+    const head = G(d, ['rev-parse', 'HEAD']).trim();
+    assert.equal(skipS6(d, head), false, 'mesmo sha: roda');
+    assert.equal(skipS6(d, undefined), false, 'sem sha no golden: roda');
+    assert.match(skipS6(d, 'b'.repeat(40)), /golden foi medido em bbbbbbbb/, 'sha diferente: pula com motivo');
+    assert.match(skipS6(join(d, 'nao-existe'), head), /sem .*\.git/);
+    assert.ok(gabarito.filter((g) => g.repo === 'true_force').every((g) => /^[0-9a-f]{40}$/.test(g.sha)), 'o golden do true_force traz o sha medido');
+  });
 });

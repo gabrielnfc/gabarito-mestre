@@ -127,6 +127,23 @@ describe('montarRegistro: seções', () => {
     assert.match(l[0], /· aprovada por dono ·/);
   });
 
+  test('registro-d-g15-dono-reverte-rejeicao-da-sombra: mesma regra da projeção (fecharJulgamentos): a emenda revertida e aplicada pelo dono NÃO aparece como rejeitada por sombra', () => {
+    const rej = ev('loop', 3, 'emenda.rejeitada', { proposta_seq: 1, origem: 'sombra' }, t(5));
+    const apr = ev('dono', 1, 'spec.emendada', { proposta_seq: 1, origem: 'dono' }, t(6));
+    const l = corpo(montarRegistro('GM-13', [PROP, rej, apr], null), 'Emendas');
+    assert.equal(l.length, 1);
+    assert.match(l[0], /^- #1 · REQ-APR-1 · task T4 · tecnica · aprovada por dono · /);
+    assert.ok(!l.join('\n').includes('rejeitada por sombra'));
+    // e o dono que rejeita depois da Sombra: rejeitada por dono (uma linha só)
+    const rejDono = ev('dono', 1, 'emenda.rejeitada', { proposta_seq: 1, origem: 'dono' }, t(6));
+    const l2 = corpo(montarRegistro('GM-13', [PROP, rej, rejDono], null), 'Emendas');
+    assert.equal(l2.length, 1);
+    assert.match(l2[0], /· rejeitada por dono ·/);
+    // a Sombra que julga de novo depois da própria rejeição não reverte
+    const sombra2 = ev('dono', 1, 'spec.emendada', { proposta_seq: 1, origem: 'sombra' }, t(6));
+    assert.match(corpo(montarRegistro('GM-13', [PROP, rej, sombra2], null), 'Emendas')[0], /· rejeitada por sombra ·/);
+  });
+
   test('registro-emenda-julgamento-sem-proposta: não some calado', () => {
     const l = corpo(montarRegistro('GM-13', [APROV_DONO], null), 'Emendas');
     assert.equal(l[0], '- #1 · julgamento sem proposta no diário · aprovada por dono');
@@ -272,5 +289,28 @@ describe('T54 (emenda 54): o registro confere o sha atual com a cadeia de emenda
   test('registro-aplicada-fora-da-forma-lanca: o registro não omite aplicada inválida calado', () => {
     const torta = ev('loop', 21, 'spec.aplicada', { seq: 1, spec: 'docs/spec.md', sha256_antes: SHA, sha256_depois: 'xyz' }, t(20));
     assert.throws(() => montarRegistro('GM-14', [APROVA, PROP, APROV_DONO, torta], SHA), /spec\.aplicada/);
+  });
+});
+
+describe('GM-15 T36 (emenda 25 m.4): emenda aplicada e revertida pelo dono', () => {
+  const SB = 'b'.repeat(64);
+  const SC = 'c'.repeat(64);
+  const aplic = (seq: number, antes: string, depois: string, n: number, ts: number, extra: Record<string, unknown> = {}): Evento =>
+    ev('loop', 20 + n, 'spec.aplicada', { seq, spec: 'docs/spec.md', sha256_antes: antes, sha256_depois: depois, ...extra }, t(ts));
+  const APROV_SOMBRA = ev('sombra', 1, 'spec.emendada', { proposta_seq: 1, origem: 'sombra' }, t(4));
+  const REVERTE_DONO = ev('dono', 1, 'emenda.rejeitada', { proposta_seq: 1, origem: 'dono' }, t(25));
+  const BASE = [APROVA, PROP, APROV_SOMBRA, aplic(1, SHA, SB, 1, 20), REVERTE_DONO];
+
+  test('registro-revertida-texto-na-spec: a emenda aparece como "revertida pelo dono; texto ainda na spec" até o desfazer, que aparece como desfeita', () => {
+    const emendas = corpo(montarRegistro('GM-15', BASE, SB), 'Emendas');
+    assert.match(emendas[0], /^- #1 · REQ-APR-1 · task T4 · tecnica · revertida pelo dono; texto ainda na spec · /);
+    const feito = [...BASE, aplic(1, SB, SC, 2, 30, { reverte: true })];
+    const depois = corpo(montarRegistro('GM-15', feito, SC), 'Emendas');
+    assert.match(depois[0], /revertida pelo dono; texto desfeito na spec/);
+    const spec = corpo(montarRegistro('GM-15', feito, SC), 'Aprovação da spec');
+    assert.ok(spec.includes(`- loop:22 · emenda #1 desfeita (texto da emenda revertida pelo dono) · spec docs/spec.md · sha256 ${SB} ⇒ ${SC}`), spec.join('\n'));
+    // controle: rejeitada pelo dono SEM ter sido aplicada segue só "rejeitada por dono"
+    const so = corpo(montarRegistro('GM-15', [APROVA, PROP, APROV_SOMBRA, REVERTE_DONO], SHA), 'Emendas');
+    assert.match(so[0], /· rejeitada por dono · /);
   });
 });

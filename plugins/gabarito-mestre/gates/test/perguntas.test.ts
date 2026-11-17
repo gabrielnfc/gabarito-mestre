@@ -674,3 +674,94 @@ test('ideia-nao-divide-id-com-a-pergunta-b: sessão cuja 1ª nota é ideia, depo
   assert.equal(t2.identificada, false);
   assert.deepEqual(perguntasAbertas(visto, t2, { sessao: 's1' }).map((p) => [p.gatilho, p.id]), [['b', 's1:3']]);
 });
+
+// ---- GM-15 T35 (D-G12 2, 3, 4): "agora não" em toda pergunta, obsolescência com prova, lote das recomendadas ----
+import { adiamentoValido, impressaoDoLote, loteRecomendadas } from '../src/perguntas.ts';
+const adia = (pergunta: string, s = 'sessao-dono'): Compacto => ({ t: 'dono.resposta', d: { pergunta, rotulo: 'agora não' }, s });
+
+test('agora-nao-forma-propria (r.14, formas.ts): {pergunta, rotulo "agora não…"} sem opcao vale; rótulo comum sem opcao e adiamento com chave a mais recusam; e não fecha', () => {
+  assert.equal(formaInvalida('dono.resposta', { pergunta: 's:1', rotulo: 'agora não' }), null);
+  assert.equal(formaInvalida('dono.resposta', { pergunta: 's:1', rotulo: 'agora não (loop parado, contexto em 55 %)' }), null);
+  assert.match(String(formaInvalida('dono.resposta', { pergunta: 's:1', rotulo: 'feito' })), /`opcao` ausente/);
+  assert.notEqual(formaInvalida('dono.resposta', { pergunta: 's:1', rotulo: 'agora não', texto: 'x' }), null);
+  const evs = expandir([notaDe('duvida', 'qual?', 'sessao-a', ['x', 'y']), adia('sessao-a:1')]);
+  assert.equal(respostaValida([], 'sessao-a:1', 1, evs).erro, 'inexistente', 'adiada não conta como respondida');
+});
+
+test('agora-nao-em-toda-pergunta (r.14): toda pergunta aberta (a, b, d, pendência, ideia) aceita "agora não", que a esconde sem fechar as outras', () => {
+  const base: Compacto[] = [inicio('sessao-a'), branch('sessao-a'), notaDe('assunto', 'mudou'), notaDe('duvida', 'qual caminho?', 'sessao-a', ['por A', 'por B']),
+    notaDe('pendencia', 'renovar o domínio'), notaDe('ideia', 'painel com cores')];
+  const abertas = perguntasAbertas(expandir(base), trilha(), { sessao: 'sessao-a' });
+  assert.deepEqual(abertas.map((p) => p.gatilho).sort(), ['a', 'b', 'd', 'ideia', 'pendencia']);
+  for (const p of abertas) {
+    assert.deepEqual(adiamentoValido(abertas, p.id), { ok: true, rotulo: 'agora não' }, p.gatilho);
+    const depois = perguntasAbertas(expandir([...base, adia(p.id)]), trilha(), { sessao: 'sessao-a' });
+    assert.equal(depois.some((q) => q.id === p.id), false, `${p.gatilho} adiada some`);
+    assert.equal(depois.length, abertas.length - 1, `${p.gatilho}: só ela sai`);
+  }
+  assert.deepEqual(adiamentoValido(abertas, 'sessao-z:9'), { ok: false, erro: 'inexistente' });
+});
+
+test('adiada-volta-quando-gatilho-muda (r.14): ideia adiada volta com a ideia nova (âncora nova); dúvida adiada fica escondida sem evento novo', () => {
+  const ideia1 = [notaDe('ideia', 'cores')];
+  const abertas1 = perguntasAbertas(expandir(ideia1), identificada());
+  assert.equal(abertas1.length, 1);
+  const adiada = [...ideia1, adia(abertas1[0].id)];
+  assert.deepEqual(perguntasAbertas(expandir(adiada), identificada()), []);
+  const volta = perguntasAbertas(expandir([...adiada, notaDe('ideia', 'sons')]), identificada());
+  assert.equal(volta.length, 1);
+  assert.notEqual(volta[0].id, abertas1[0].id);
+  assert.match(volta[0].texto, /as 2 ideias/);
+  // dúvida adiada: sem evento novo da âncora, segue escondida; a resposta de verdade depois fecha
+  const duvida = [notaDe('duvida', 'qual?', 'sessao-a', ['x', 'y']), adia('sessao-a:1'), notaDe('desvio', 'outra coisa')];
+  assert.deepEqual(perguntasAbertas(expandir(duvida), identificada()), []);
+});
+
+test('duvida-de-emenda-julgada-some (r.15): dúvida "Emenda N" some com spec.emendada ou emenda.rejeitada da proposta N posterior a ela', () => {
+  const nota = notaDe('duvida', 'Emenda 13 (REQ-EME-3): âncora por REQ; redação da Sombra rejeitada vai ao dono', 'loop', ['aprovar (recomendado)', 'rejeitar']);
+  assert.equal(perguntasAbertas(expandir([nota]), identificada()).length, 1);
+  for (const tipo of ['spec.emendada', 'emenda.rejeitada'] as const) {
+    const evs = expandir([nota, { t: tipo, d: { proposta_seq: 13, origem: 'sombra' }, s: 'loop' }]);
+    assert.deepEqual(perguntasAbertas(evs, identificada()), [], tipo);
+  }
+});
+
+test('sem-prova-de-obsolescencia-fica (r.15): julgamento de outra emenda, julgamento anterior à dúvida e dúvida sem emenda não somem', () => {
+  const nota = notaDe('duvida', 'Emenda 13: congela só T26?', 'loop', ['sim', 'não']);
+  const outra: Compacto = { t: 'spec.emendada', d: { proposta_seq: 12, origem: 'sombra' }, s: 'loop' };
+  const antes: Compacto = { t: 'spec.emendada', d: { proposta_seq: 13, origem: 'sombra' }, s: 'loop' };
+  assert.equal(perguntasAbertas(expandir([nota, outra]), identificada()).length, 1);
+  assert.equal(perguntasAbertas(expandir([antes, nota]), identificada()).length, 1);
+  const semEmenda = notaDe('duvida', 'Meta D-G2 inalcançável: revisar?', 'loop', ['sim', 'não']);
+  assert.equal(perguntasAbertas(expandir([semEmenda, antes]), identificada()).length, 1);
+});
+
+test('lote-so-recomendadas (r.16): só pergunta com exatamente 1 opção "(recomendado)" entra, com o número e o rótulo dela; sem recomendação fica fora', () => {
+  const evs = expandir([
+    notaDe('duvida', 'Emenda 13: aprovar?', 'loop', ['aprovar (recomendado)', 'rejeitar']),
+    notaDe('duvida', 'Meta: qual?', 'loop', ['manter 15 %', 'meta ≤ 30 % (Recomendado)']),
+    notaDe('duvida', 'sem recomendação?', 'loop', ['a', 'b']),
+    notaDe('duvida', 'duas recomendadas?', 'loop', ['a (recomendado)', 'b (recomendado)']),
+  ]);
+  const lote = loteRecomendadas(perguntasAbertas(evs, identificada()));
+  assert.deepEqual(lote, [
+    { id: 'loop:1', opcao: 1, rotulo: 'aprovar (recomendado)', texto: 'Emenda 13: aprovar?' },
+    { id: 'loop:2', opcao: 2, rotulo: 'meta ≤ 30 % (Recomendado)', texto: 'Meta: qual?' },
+  ]);
+  assert.match(impressaoDoLote(lote), /^[0-9a-f]{12}$/);
+  assert.notEqual(impressaoDoLote(lote), impressaoDoLote(lote.slice(0, 1)));
+  assert.deepEqual(loteRecomendadas([]), []);
+});
+
+test('opcao-que-comeca-por-agora-nao-responde (review r1 MINOR-2): opção legítima "agora não…" escolhida pelo botão ({pergunta, opcao, rotulo}) FECHA a dúvida; só a forma sem `opcao` adia', () => {
+  const opcoes = ['agora não, depois do deploy', 'já'];
+  const base: Compacto[] = [notaDe('duvida', 'quando subir?', 'sessao-a', opcoes)];
+  assert.equal(perguntasAbertas(expandir(base), identificada()).length, 1);
+  const escolhida = [...base, { t: 'dono.resposta', d: { pergunta: 'sessao-a:1', opcao: 1, rotulo: opcoes[0] }, s: 'sessao-dono' } as Compacto];
+  assert.equal(formaInvalida('dono.resposta', escolhida[1].d), null);
+  assert.deepEqual(perguntasAbertas(expandir(escolhida), identificada()), [], 'a escolha da opção 1 responde (nunca adia)');
+  assert.equal(respostaValida([], 'sessao-a:1', 1, expandir(escolhida)).erro, 'respondida', 'fechada, não adiada');
+  // controle: o adiamento de verdade (sem `opcao`) segue escondendo sem fechar
+  assert.deepEqual(perguntasAbertas(expandir([...base, adia('sessao-a:1')]), identificada()), []);
+  assert.equal(respostaValida([], 'sessao-a:1', 1, expandir([...base, adia('sessao-a:1')])).erro, 'inexistente');
+});

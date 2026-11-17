@@ -1,6 +1,6 @@
 /**
  * T7 (GM-14, REQ-ONB-2, texto): o onboarding para quem nunca programou. Só o texto muda; ids, valores, defaults, ordem e
- * teto de 5 ficam idênticos à 2.0.0 (golden gerado ANTES da mudança, sem os campos de texto).
+ * teto de 5 ficam idênticos à 2.0.0 (exceto a pergunta de autonomia, que na 2.1 tem 3 respostas: GM-15 T14) (golden gerado ANTES da mudança, sem os campos de texto).
  *
  * Fixtures: `completa` e `monorepo` (repositório real em mkdtemp, remoto bare) e a 1.1.x (config antiga, sem entrega nem perfil).
  * Costura (P9): o CLI `detectar` atravessa `rodarReal` → `claude` falso (PATH) → repositório real → detectar → perguntas → previaSimples.
@@ -140,9 +140,9 @@ describe('perguntas pela consequência', () => {
     assert.doesNotMatch(porValor(a, 'continua'), /horário|pedido de revisão/);
     // (b) publicar sozinha ou esperar "pode"
     assert.match(b.texto, /sozinha/);
-    assert.match(porValor(b, true), /sozinha/);
-    assert.match(porValor(b, false), /pode/);
-    assert.doesNotMatch(porValor(b, true), /pode"/);
+    assert.match(porValor(b, 'publica'), /sozinha/);
+    assert.match(porValor(b, 'espera'), /pode/);
+    assert.doesNotMatch(porValor(b, 'publica'), /pode"/);
     // (c) gastar menos / equilibrar / errar menos
     assert.match(porValor(c, 'economia'), /Gastar menos/);
     assert.match(porValor(c, 'padrao'), /Equilibrar/);
@@ -153,7 +153,7 @@ describe('perguntas pela consequência', () => {
 
   test('o "não" da autonomia diz o que acontece quando a política já publicaria sozinha', () => {
     const it = CONJUNTOS[0].itens;
-    const nao = (entrega) => porValor(perguntas(it, { entrega })[1], false);
+    const nao = (entrega) => porValor(perguntas(it, { entrega })[1], 'espera');
     assert.match(nao({ politica: 'continua' }), /pedido de revisão/);
     assert.match(nao({ politica: 'janela' }), /pedido de revisão/);
     assert.equal(nao({ politica: 'continua' }), nao({ politica: 'janela' }));

@@ -1057,7 +1057,7 @@ test('acao-ao-vivo-vence-o-registrado: `acoes` do mod é a ação do agente; só
   const so = novo(PLANO, eventos, { agentes, acoes: { a1: acoes.a1 } });
   assert.equal(so.agora?.agentes?.find((x) => x.task === null)?.acao, 'rascunho do plano (registrado)', 'a ação de outro id não vaza');
   // o texto ao vivo é higienizado como a descrição (token técnico vira "…")
-  const tec = novo(PLANO, eventos, { agentes, acoes: { a1: { texto: 'editando spec-brief.md', fonte: 'tool', em: 1 } } });
+  const tec = novo(PLANO, eventos, { agentes, acoes: { a1: { texto: 'editando spec-brief.md', fonte: 'tool', em: AGORA - 1000 } } }); // T35 (r.11): ação de 1970 é agente sem sinal há 30 min
   assert.equal(tec.agora?.agentes?.find((x) => x.task === 'T07')?.acao, 'editando …');
 });
 
@@ -1087,10 +1087,11 @@ test('segundo-plano-no-agora: "Teste" com o dono, a description e o tempo; só c
   const s = novo(PLANO, eventos, { agentes, segundoPlano });
   const sp = s.agora?.segundoPlano ?? [];
   assert.equal(sp.length, 3);
-  assert.deepEqual(sp.map((x) => x.quem.papel), ['teste', 'teste', 'teste']);
-  assert.deepEqual(sp.map((x) => x.task), ['T07', null, 'T07'], 'dono agente ⇒ a task dele; orquestrador ⇒ sem task');
+  // GM-15 T33 (g.11, D-G8): `quem` = quem disparou (a sessão principal ou o agente dono), `acao` = o tipo do shell pelo comando/descrição (rotuloDoShell)
+  assert.deepEqual(sp.map((x) => x.quem.papel), ['implementador', 'orquestrador', 'implementador']);
+  assert.deepEqual(sp.map((x) => x.task), ['T07', null, 'T07'], 'dono agente ⇒ a task dele; orquestrador sem prova ⇒ sem task');
   assert.deepEqual(sp.map((x) => x.desdeS), [90, 30, null]);
-  assert.equal(sp[1].acao, 'build do plugin');
+  assert.deepEqual(sp.map((x) => x.acao), ['Teste', 'Comando', 'Comando'], 'npm test ⇒ Teste; o resto ⇒ Comando');
   assert.deepEqual(novo(PLANO, eventos, { agentes }).agora?.segundoPlano, [], 'sem lista ⇒ vazio');
   assert.deepEqual(novo(PLANO, eventos, { agentes: null, segundoPlano }).agora?.segundoPlano, [], 'sem mod ⇒ vazio');
 });
@@ -1104,4 +1105,32 @@ test('sombra-ativa-no-agora: Sombra viva é linha do AGORA e cala a consulta sem
   assert.ok(!com.atencao.some((x) => /Sombra/.test(x)), `Sombra ativa: ${com.atencao.join('|')}`);
   const sem = novo(PLANO, eventos, { agentes: [] });
   assert.ok(sem.atencao.some((x) => /^1 consulta à Sombra sem /.test(x)), `sem Sombra ativa: ${sem.atencao.join('|')}`);
+});
+
+// ---- GM-15 T35 (D-G11 d, C2, C3): agente sem sinal de vida sai da EQUIPE; dois casos, cada um sozinho ----
+const integradaT35 = (task: string): [TipoEvento, Record<string, unknown>] => ['task.integrada', { task }];
+
+test('equipe-tira-agente-morto (r.11, C3): agente de task INTEGRADA some da EQUIPE mesmo com sinal recente (caso real: integrada há 3 h, vivo na lista)', () => {
+  const evs = diario(ini('T07', 'implementador'), concl('T07'), ini('T07', 'revisor'), ['review.veredito', { task: 'T07', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }], integradaT35('T07'));
+  const a = ag('T07 revisor', { vistoEm: AGORA - 60_000 });
+  const e = entrada({ agentes: [a], acoes: { [a.id]: { texto: 'lendo', fonte: 'tool', em: AGORA - 60_000 } }, agoraMs: Date.parse('2026-11-09T15:05:00.000Z') });
+  assert.deepEqual(resolverAtivos(PLANO, evs, e).ativos, []);
+  assert.deepEqual(projetarEquipe(PLANO, evs, e).agentes, []);
+  // controle: a mesma task ainda não integrada mantém o agente
+  const vivo = diario(ini('T07', 'implementador'), concl('T07'), ini('T07', 'revisor'));
+  assert.equal(resolverAtivos(PLANO, vivo, e).ativos?.length, 1);
+});
+
+test('equipe-tira-agente-sem-sinal-30min (r.11, C3): task NÃO integrada, sem evento da task, ação nem visto há mais de 30 min ⇒ some; 30 min exatos fica', () => {
+  const evs = diario(ini('T08', 'implementador')); // 12:00Z
+  const a = ag('T08 implementador', { vistoEm: Date.parse('2026-11-09T12:00:30.000Z') });
+  const comAcao = (emMs: number, agoraMs: number) => entrada({ agentes: [a], acoes: { [a.id]: { texto: 'editando', fonte: 'tool', em: emMs } }, agoraMs });
+  const ultima = Date.parse('2026-11-09T12:10:00.000Z');
+  assert.equal(resolverAtivos(PLANO, evs, comAcao(ultima, ultima + 30 * 60_000)).ativos?.length, 1, '30 min exatos: fica');
+  assert.deepEqual(resolverAtivos(PLANO, evs, comAcao(ultima, ultima + 30 * 60_000 + 1)).ativos, [], 'acima de 30 min: some');
+  // evento da task no diário mais novo que a ação conta como sinal: 20 min depois do evento, fica
+  const recente = diario(ini('T08', 'implementador'), concl('T08')); // 12:01Z
+  assert.equal(resolverAtivos(PLANO, recente, comAcao(Date.parse('2026-11-09T11:00:00.000Z'), Date.parse('2026-11-09T12:21:00.000Z'))).ativos?.length, 1);
+  // sem ação medida pelo mod não há prova de morte, mesmo com o diário parado há 3 h: fica (r.15, sem prova não some)
+  assert.equal(resolverAtivos(PLANO, evs, entrada({ agentes: [a], agoraMs: AGORA })).ativos?.length, 1);
 });

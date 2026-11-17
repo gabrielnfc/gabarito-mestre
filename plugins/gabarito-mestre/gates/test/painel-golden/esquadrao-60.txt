@@ -1,5 +1,5 @@
 GABARITO · GM-12 E4 Painel           esquadrão · terra média
-depende de você: nada
+nada depende de você
 ────────────────────────────────────────────────────────────
 PLANO   ▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱  58%  7/12 tasks   ETA 17:42 ±9m
   ✓ T1–T7   integradas · 1.4 rodada média · mediana 18 min

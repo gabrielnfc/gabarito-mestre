@@ -10,12 +10,12 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { dependeDeVoce, etaDe, projetarPainel, TABELA_PARAR, umaLinhaDe } from '../src/painel.ts';
+import { decisoesDaSombra, dependeDeVoce, entregueDe, etaDe, projetarPainel, TABELA_PARAR, umaLinhaDe } from '../src/painel.ts';
 import { renderPainel } from '../src/painel.ts';
 import { append, duracoes, lerEstrito, mediana } from '../src/diario.ts';
 import { contarConsultas } from '../src/sombra.ts';
 import { tokensDe } from '../src/pouso.ts';
-import { projetarEquipe } from '../src/painel-equipe.ts';
+import { integrandoDe, nomesPorPapel, projetarEquipe, rotuloDoShell, SHELL_INTEGRANDO } from '../src/painel-equipe.ts';
 import { horaLocal } from '../src/painel-hora.ts';
 import type { AgenteVivo, EntradaPainel, EstadoPainel, Evento, MotivoParar, Plano, TipoEvento } from '../src/tipos.ts';
 
@@ -57,7 +57,7 @@ const IDS = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6'];
 const entrada = (extra: Partial<EntradaPainel> = {}): EntradaPainel => ({
   decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
   pacote: { nome: 'Terra Média', lider: 'GANDALF', sabio: 'ELROND', nomes: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] }, notificacao: null, agoraMs: AGORA, fuso: 'UTC',
-  titulo: null, politica: { politica: 'continua', dias: null }, base: 'main', entregaId: 'GM-12', modeloSessao: null, specSha: null, tetoSombra: 26, ...extra,
+  titulo: null, politica: { politica: 'continua', dias: null }, base: 'main', entregaId: 'GM-12', modeloSessao: null, specSha: null, ...extra,
 });
 const proj = (plano: Plano, eventos: Evento[] | null, extra: Partial<EntradaPainel> = {}): EstadoPainel => projetarPainel(plano, eventos, entrada(extra));
 const vivo = (description: string, status = 'running'): AgenteVivo => ({ id: `a-${description}`, type: 'general-purpose', description, status, uso: null });
@@ -731,16 +731,82 @@ test('atencao-segunda-rodada-ci-teto: os três textos fixos', () => {
   assert.deepEqual(proj(P('T1'), D(ATE.concluida)).atencao, []); // 1ª rodada
   assert.deepEqual(proj(P('T1'), D(ATE.aprovada)).atencao, []);
   assert.deepEqual(proj(P('T1'), D([e(0, 'ci.resultado', { verde: false })])).atencao, ['CI vermelho 1× depois do último verde']);
-  const teto = proj(P('T1'), D([consulta(0, 1), consulta(1, 2), consulta(2, 3)]), { tetoSombra: 2 });
-  assert.deepEqual(teto.atencao, ['Sombra: 3 consultas, acima do teto de 2']);
-  assert.deepEqual(proj(P('T1'), D([consulta(0, 1), consulta(1, 2)]), { tetoSombra: 2 }).atencao, []); // no teto não passa dele
-  // N do texto = contarConsultas (sombra.ts): consulta de forma inválida não conta
+  // GM-15 T36 (emenda 22 l.5): o teto de consultas à Sombra saiu: nenhuma quantidade de consultas vira atenção, mesmo com `tetoSombra` pequeno na entrada (ignorado)
+  assert.deepEqual(proj(P('T1'), D([consulta(0, 1), consulta(1, 2), consulta(2, 3)]), { tetoSombra: 2 }).atencao, []);
   const mistas = D([consulta(0, 1), e(1, 'sombra.consulta', { pergunta_hash: 'curto', req: 'REQ-PNL-1' }), e(2, 'sombra.consulta', { pergunta_hash: SHA_A }), consulta(3, 2), e(4, 'decisao.sombra', {})]);
   assert.equal(contarConsultas(mistas), 2);
-  assert.deepEqual(proj(P('T1'), mistas, { tetoSombra: 1 }).atencao, ['Sombra: 2 consultas, acima do teto de 1']);
-  // ordem do texto: 2ª rodada, CI, Sombra
+  assert.deepEqual(proj(P('T1'), mistas, { tetoSombra: 1 }).atencao, []);
   const tudo = proj(P('T1'), D([...ATE.reprovada, e(10, 'ci.resultado', { verde: false }), consulta(11, 1), consulta(12, 2)]), { tetoSombra: 1 });
-  assert.deepEqual(tudo.atencao, ['T1 na 2ª rodada de review', 'CI vermelho 1× depois do último verde', 'Sombra: 2 consultas, acima do teto de 1']);
+  assert.deepEqual(tudo.atencao, ['T1 na 2ª rodada de review', 'CI vermelho 1× depois do último verde']);
+});
+
+// ── GM-15 T36 (emenda 24 m.3): "N decisões da Sombra desde a sua última resposta" ──────────────────────────────────────────────────────────────
+const decSombra = (t: number, req = 'REQ-PNL-5', resposta = 'seguir') => e(t, 'decisao.sombra', { pergunta_hash: SHA_A, req, resposta, arquivo: 'sombra.md', pergunta_enviesada: false, fontes: ['spec:1'] });
+const reabSombra = (t: number, task = 'T1') => e(t, 'task.reaberta', { task, origem: 'sombra', hash: 'e'.repeat(64) });
+const respostaDono = (t: number) => e(t, 'dono.resposta', { pergunta: 's1:1', rotulo: 'agora não' });
+const linhaSombra = (est: EstadoPainel) => est.atencao.filter((x) => /da Sombra desde a sua última resposta/.test(x));
+
+test('painel-n-decisoes-sombra-desde-resposta: N = decisao.sombra + task.reaberta(sombra) depois do último evento do dono; singular com 1; antes da resposta do dono não conta', () => {
+  assert.deepEqual(linhaSombra(proj(P('T1'), D([decSombra(0), decSombra(1), reabSombra(2)]))), ['3 decisões da Sombra desde a sua última resposta']);
+  assert.deepEqual(linhaSombra(proj(P('T1'), D([decSombra(0)]))), ['1 decisão da Sombra desde a sua última resposta']);
+  // só depois do último evento do dono: a resposta (por opção), o comando de task e o julgamento de emenda do dono zeram a contagem
+  assert.deepEqual(linhaSombra(proj(P('T1'), D([decSombra(0), decSombra(1), respostaDono(2), decSombra(3)]))), ['1 decisão da Sombra desde a sua última resposta']);
+  assert.deepEqual(linhaSombra(proj(P('T1'), D([decSombra(0), e(1, 'task.reaberta', { task: 'T1', origem: 'dono' }, 'dono'), reabSombra(2, 'T2')]))), ['1 decisão da Sombra desde a sua última resposta'], 'liberação do dono');
+  assert.deepEqual(linhaSombra(proj(P('T1'), D([decSombra(0), e(1, 'emenda.rejeitada', { proposta_seq: 1, origem: 'dono' }, 'dono')]))), [], 'julgamento de emenda do dono');
+  // liberação da Sombra de outra origem (retomada) e decisão de forma inválida não contam
+  assert.deepEqual(linhaSombra(proj(P('T1'), D([e(0, 'task.reaberta', { task: 'T1', origem: 'retomada' }), e(1, 'decisao.sombra', {})]))), []);
+  // a linha vem DEPOIS das de atenção técnica e não puxa o "loop segue em"
+  const mista = proj(P('T1', 'T2'), D([...ATE.reprovada, decSombra(20)]));
+  assert.deepEqual(mista.atencao, ['T1 na 2ª rodada de review', '1 decisão da Sombra desde a sua última resposta']);
+  assert.deepEqual(proj(P('T1', 'T2'), D([ini(0, 'T2'), decSombra(1)])).atencao, ['1 decisão da Sombra desde a sua última resposta'], 'sozinha, não liga o "loop segue em"');
+});
+
+test('painel-zero-decisoes-some: sem decisão da Sombra (ou todas antes da resposta do dono) a linha não existe', () => {
+  assert.deepEqual(linhaSombra(proj(P('T1'), D([]))), []);
+  assert.deepEqual(linhaSombra(proj(P('T1'), D([decSombra(0), respostaDono(1)]))), []);
+  assert.deepEqual(proj(P('T1'), D([ini(0, 'T1')])).atencao, []);
+});
+
+test('lista-sombra-com-comando-de-reverter: cada decisão em 1 linha com âncora e o comando (liberação ⇒ adiar|cortar; decisão de REQ com emenda julgada pela Sombra ⇒ emenda aprovar|rejeitar <seq>)', () => {
+  const prop = e(0, 'emenda.proposta', { req: 'REQ-PNL-5', diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'tecnica' }, 'emendas');
+  const evs = D([prop, decSombra(1, 'REQ-PNL-5', 'aprovar a emenda'), e(2, 'spec.emendada', { proposta_seq: 1, origem: 'sombra' }, 'sombra-j'), reabSombra(3, 'T2'), decSombra(4, 'REQ-OUTRO-1', 'só uma resposta')]);
+  const l = decisoesDaSombra(evs);
+  assert.equal(l.length, 3);
+  for (const x of l) assert.ok(!/\n/.test(x.frase), '1 linha');
+  assert.match(l[0].frase, /REQ-PNL-5.*aprovar a emenda.*\/gabarito-mestre:emenda aprovar 1 ou \/gabarito-mestre:emenda rejeitar 1/);
+  assert.match(l[1].frase, /liberou a T2.*\/gabarito-mestre:adiar T2 ou \/gabarito-mestre:cortar T2/);
+  assert.match(l[2].frase, /REQ-OUTRO-1.*nada a reverter/);
+  assert.deepEqual(l.map((x) => x.id), ['s1:1', 's1:2', 's1:3'], 'id = sessão:seq do evento');
+  // resposta com controle, crase e texto longo vira 1 linha de até 60 caracteres
+  const longa = decisoesDaSombra(D([decSombra(0, 'REQ-PNL-5', `a\nb \`c\` ${'x'.repeat(200)}`)]))[0].frase;
+  assert.ok(!/[\n`]/.test(longa));
+  assert.ok(longa.length < 200);
+  // diário fora de ordem ⇒ vazio, sem lançar; tipo errado ⇒ vazio
+  assert.deepEqual(decisoesDaSombra([evs[1], { ...evs[1] }] as Evento[]), [], 'seq repetido: o diário não ordena');
+  assert.deepEqual(decisoesDaSombra(null), []);
+  assert.deepEqual(decisoesDaSombra('x' as unknown as Evento[]), []);
+});
+
+test('lista-sombra-aponta-a-emenda-da-decisao (r1 MINOR-4): cada decisão aponta a emenda que ELA julgou (não a maior seq do REQ); a que não julgou emenda nenhuma sai sem comando', () => {
+  const prop = (t: number) => e(t, 'emenda.proposta', { req: 'REQ-PNL-5', diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'tecnica' }, 'emendas');
+  const julga = (t: number, seq: number, tipo: 'spec.emendada' | 'emenda.rejeitada' = 'spec.emendada') => e(t, tipo, { proposta_seq: seq, origem: 'sombra' }, 'sombra-j');
+  // 2 decisões do MESMO REQ, cada uma com a sua emenda (#1 e #2); e uma 3ª decisão, depois, que não julgou nada
+  const evs = D([prop(0), prop(1), decSombra(2, 'REQ-PNL-5', 'primeira'), julga(3, 1), decSombra(4, 'REQ-PNL-5', 'segunda'), julga(5, 2, 'emenda.rejeitada'), decSombra(6, 'REQ-PNL-5', 'terceira, sem julgar')]);
+  const l = decisoesDaSombra(evs).map((x) => x.frase);
+  assert.equal(l.length, 3);
+  assert.match(l[0], /primeira.*emenda aprovar 1 ou \/gabarito-mestre:emenda rejeitar 1$/);
+  assert.match(l[1], /segunda.*emenda aprovar 2 ou \/gabarito-mestre:emenda rejeitar 2$/);
+  assert.match(l[2], /terceira, sem julgar — nada a reverter/);
+  assert.ok(!/emenda (aprovar|rejeitar)/.test(l[2]), 'sem comando de reverter');
+  // a decisão que não julgou nada e vem ANTES de outra do mesmo REQ não herda a emenda que a seguinte julgou
+  const antes = decisoesDaSombra(D([prop(0), decSombra(1, 'REQ-PNL-5', 'sem julgar'), decSombra(2, 'REQ-PNL-5', 'julgou'), julga(3, 1)])).map((x) => x.frase);
+  assert.match(antes[0], /sem julgar — nada a reverter/);
+  assert.match(antes[1], /julgou.*emenda aprovar 1 ou/);
+  // o julgamento de outro REQ, ou do dono, não é "a emenda desta decisão"
+  const outro = D([prop(0), e(1, 'emenda.proposta', { req: 'REQ-OUTRO-1', diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'tecnica' }, 'emendas'), decSombra(2, 'REQ-PNL-5', 'x'), julga(3, 2)]);
+  assert.match(decisoesDaSombra(outro)[0].frase, /nada a reverter/, 'julgamento de emenda de outro REQ');
+  const doDono = D([prop(0), decSombra(1, 'REQ-PNL-5', 'x'), e(2, 'spec.emendada', { proposta_seq: 1, origem: 'dono' }, 'dono')]);
+  assert.deepEqual(decisoesDaSombra(doDono), [], 'a resposta do dono vem depois: nada da Sombra a listar');
 });
 
 test('atencao-ci-zera-no-verde: vermelho, verde ⇒ nada; vermelho ×2 é do PAROU do loop, não da atenção; verde depois do vermelho zera', () => {
@@ -926,12 +992,13 @@ test('narrativa-tabela: parar ▸ pausado ▸ em voo ▸ todas integradas ▸ ag
   assert.equal(narr(plano, [ini(0, 'T1'), parar(1)], { pausado: true }), 'parado · T1 continua');
   // em voo: 1, 2, 3 e 4+, na ordem do último task.iniciada
   assert.equal(narr(plano, [ini(0, 'T1')]), 'despachou T1');
-  assert.equal(narr(plano, [ini(0, 'T1'), ini(5, 'T2')]), 'despachou T1 e T2 em paralelo');
-  assert.equal(narr(plano, [ini(0, 'T2'), ini(5, 'T1')]), 'despachou T2 e T1 em paralelo', 'ordem do despacho, não a do plano');
-  assert.equal(narr(plano, [ini(0, 'T1'), ini(1, 'T2'), ini(2, 'T3')]), 'despachou T1, T2 e mais 1 em paralelo');
-  assert.equal(narr(plano, [ini(0, 'T1'), ini(1, 'T2'), ini(2, 'T3'), ini(3, 'T4')]), 'despachou T1, T2 e mais 2 em paralelo');
+  assert.equal(narr(plano, [ini(0, 'T1'), ini(0.5, 'T2')]), 'despachou T1 e T2 em paralelo');
+  assert.equal(narr(plano, [ini(0, 'T1'), ini(5, 'T2')]), 'despachou T2', 'g.15: só a última janela (o T1 foi despachado em outro minuto)');
+  assert.equal(narr(plano, [ini(0, 'T2'), ini(0.5, 'T1')]), 'despachou T2 e T1 em paralelo', 'ordem do despacho, não a do plano');
+  assert.equal(narr(plano, [ini(0, 'T1'), ini(0.1, 'T2'), ini(0.2, 'T3')]), 'despachou T1, T2 e mais 1 em paralelo');
+  assert.equal(narr(plano, [ini(0, 'T1'), ini(0.1, 'T2'), ini(0.2, 'T3'), ini(0.3, 'T4')]), 'despachou T1, T2 e mais 2 em paralelo');
   // o ÚLTIMO task.iniciada da task decide a ordem (T1 volta a ser despachada depois de T2)
-  assert.equal(narr(plano, [ini(0, 'T1'), con(1, 'T1'), ini(2, 'T1', 'revisor'), ver(3, 'T1', false, 1, 1), ini(4, 'T2'), ini(5, 'T1', 'correcao')]), 'despachou T2 e T1 em paralelo');
+  assert.equal(narr(plano, [ini(0, 'T1'), con(1, 'T1'), ini(2, 'T1', 'revisor'), ver(3, 'T1', false, 1, 1), ini(4, 'T2'), ini(4.5, 'T1', 'correcao')]), 'despachou T2 e T1 em paralelo');
   // aguarda revisão: tasks em `concluida`, só quando há task em voo
   assert.equal(narr(plano, [ini(0, 'T1'), ini(1, 'T2'), con(2, 'T2')]), 'despachou T1 · aguarda revisão de T2');
   assert.equal(narr(plano, [ini(0, 'T1'), ini(1, 'T2'), con(2, 'T2'), ini(3, 'T3'), con(4, 'T3')]), 'despachou T1 · aguarda revisão de T2 e T3');
@@ -1159,13 +1226,15 @@ test('fecho-plano-sem-ciclo: dist/plano.js não importa, direto ou transitivo, p
   const rVer = (n: number, s: number | string, task: string, veredito = 'APROVADO', rodada = 1, major = 0) =>
     R(n, s, 'review.veredito', { task, veredito, blocker: 0, major, rodada });
   const rReab = (n: number, s: number | string, task: string, origem: 'dono' | 'retomada') => R(n, s, 'task.reaberta', { task, origem });
+  // GM-15 T33 (g.13): só a task INTEGRADA entra na amostra da mediana e da ETA; o cronômetro continua sendo o da task aprovada
+  const rInt = (n: number, s: number, task: string) => R(n, s, 'task.integrada', { task, sha: 'b'.repeat(40) });
   const rCiclo = (b: number, task: string, a: number | string, f: number | string, veredito = 'APROVADO'): Evento[] =>
     [rIni(b * 10, a, task), rCon(b * 10 + 1, a, task), rIni(b * 10 + 2, a, task, 'revisor'), rVer(b * 10 + 3, f, task, veredito)];
-  const duas = (a: number, b: number): Evento[] => [...rCiclo(1, 'T1', 1000, 1000 + a), ...rCiclo(3, 'T2', 3000, 3000 + b)];
+  const duas = (a: number, b: number): Evento[] => [...rCiclo(1, 'T1', 1000, 1000 + a), rInt(14, 1000 + a + 1, 'T1'), ...rCiclo(3, 'T2', 3000, 3000 + b), rInt(34, 3000 + b + 1, 'T2')];
 
   test('cronometro-veredito-antes-do-inicio-nao-soma-negativo: o intervalo com ts anterior ao início é descartado e a task segue na amostra (R-M1)', () => {
     const t3 = [...rCiclo(5, 'T3', '2026-11-03T20:00:00.000Z', '2026-11-03T19:00:00.000Z', 'REPROVADO'),
-      rIni(60, 30000, 'T3', 'correcao'), rCon(61, 30010, 'T3'), rIni(62, 30020, 'T3', 'revisor'), rVer(63, 30300, 'T3', 'APROVADO', 2)];
+      rIni(60, 30000, 'T3', 'correcao'), rCon(61, 30010, 'T3'), rIni(62, 30020, 'T3', 'revisor'), rVer(63, 30300, 'T3', 'APROVADO', 2), rInt(64, 30301, 'T3')];
     const s = proj(P('T1', 'T2', 'T3'), [...duas(100, 900), ...t3]);
     assert.equal(s.plano.medianaS, 300);
     assert.deepEqual(s.plano.eta && s.plano.eta.n, 3);
@@ -1175,7 +1244,7 @@ test('fecho-plano-sem-ciclo: dist/plano.js não importa, direto ou transitivo, p
     const t3 = [...rCiclo(5, 'T3', 10000, 10400, 'REPROVADO'),
       rIni(60, 10410, 'T3', 'correcao'), rCon(61, 10420, 'T3'), rIni(62, 10430, 'T3', 'revisor'), rVer(63, 10900, 'T3', 'REPROVADO', 2, 1),
       rReab(64, 12000, 'T3', 'dono'),
-      rIni(65, 13000, 'T3'), rCon(66, 13010, 'T3'), rIni(67, 13020, 'T3', 'revisor'), rVer(68, 13100, 'T3', 'APROVADO', 1)];
+      rIni(65, 13000, 'T3'), rCon(66, 13010, 'T3'), rIni(67, 13020, 'T3', 'revisor'), rVer(68, 13100, 'T3', 'APROVADO', 1), rInt(69, 13101, 'T3')];
     assert.equal(proj(P('T1', 'T2', 'T3'), [...duas(50, 1000), ...t3]).plano.medianaS, 100);
   });
 }
@@ -1231,14 +1300,16 @@ test('uma-linha-regra-unica: umaLinhaDe sobre o estado projetado == umaLinha da 
   const base = (extra: Record<string, unknown> = {}) => ({
     decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
     pacote: { nome: 'Terra Média', lider: 'GANDALF', sabio: 'ELROND', nomes: ['ARAGORN', 'LEGOLAS'] }, notificacao: null, agoraMs: AGORA, fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
-    entregaId: null, modeloSessao: null, specSha: null, tetoSombra: 26, fatos: trilhaFatos, ultima: { id: 'GM-13', estado: 'publicada' }, ...extra,
+    entregaId: null, modeloSessao: null, specSha: null, fatos: trilhaFatos, ultima: { id: 'GM-13', estado: 'publicada' }, ...extra,
   }) as unknown as Parameters<typeof projetarPainel>[2];
-  const ev = (tipo: string, dados: unknown, sessao = 's1', seq = 1): Evento => ({ seq, ts: iso(seq), autor: 't', sessao, agente: 'orquestrador', tipo, dados, hash_anterior: null } as unknown as Evento);
+  const ev = (tipo: string, dados: unknown, sessao = 's1', seq = 1, agente = 'orquestrador'): Evento => ({ seq, ts: iso(seq), autor: 't', sessao, agente, tipo, dados, hash_anterior: null } as unknown as Evento);
   const casos: Array<[string, Evento[], Record<string, unknown>, boolean]> = [
     ['nada', [], {}, false],
     ['parar', [ev('loop.parar', { motivo: 'sem_progresso' }, 's1', 1), ev('loop.parar', { motivo: 'sem_progresso' }, 's1', 2), ev('loop.parar', { motivo: 'sem_progresso' }, 's1', 3)], {}, true],
     ['pergunta', [ev('fato.medido', { chave: 'branch', fonte: 'git', valor: { nome: 'main' } }, 's1', 1)], { fatos: { ...trilhaFatos, branch: 'feat/GM-12-x', idPadrao: '[A-Z]+-\\d+' } }, true],
-    ['depende', [ev('nota', { tipo: 'pendencia', texto: 'a' }, 's1', 1)], {}, true],
+    // GM-15 T35 (r.13): pendência do orquestrador é lembrete dele, fora do DEPENDE: não apaga a linha; a de outro autor apaga
+    ['lembrete do orquestrador', [ev('nota', { tipo: 'pendencia', texto: 'a' }, 's1', 1)], {}, false],
+    ['depende', [ev('nota', { tipo: 'pendencia', texto: 'a' }, 's1', 1, 'dono')], {}, true],
     ['vivo', [], { agentes: [{ id: 'a1', type: 'implementador', description: 'faz coisa', status: 'running', uso: null }] }, true],
   ];
   for (const [nome, eventos, extra, pede] of casos) {
@@ -1250,7 +1321,7 @@ test('uma-linha-regra-unica: umaLinhaDe sobre o estado projetado == umaLinha da 
     if (!pede) assert.deepEqual(r.umaLinha, { ultima: { id: 'GM-13', estado: 'publicada' } }, `${nome}: ultima da entrada`);
   }
   // a regra isolada, campo a campo (o CLI passa o estado com o plano e o modo da apresentação)
-  const livre = { modo: 'projeto', parar: null, pergunta: null, depende: [{ nivel: 'dono', motivo: 'depende de você: nada', acoes: [] }], agora: { agentes: [] }, trilha: { ultimaConhecida: 'GM-9' } } as unknown as EstadoPainel;
+  const livre = { modo: 'projeto', parar: null, pergunta: null, depende: [{ nivel: 'dono', motivo: 'nada depende de você', acoes: [] }], agora: { agentes: [] }, trilha: { ultimaConhecida: 'GM-9' } } as unknown as EstadoPainel;
   assert.deepEqual(umaLinhaDe(livre, { id: 'GM-3', estado: 'x' }), { ultima: { id: 'GM-3', estado: 'x' } }, 'a da entrada vence');
   assert.deepEqual(umaLinhaDe(livre, undefined), { ultima: { id: 'GM-9', estado: null } }, 'cai na conhecida da trilha');
   assert.deepEqual(umaLinhaDe({ ...livre, trilha: { ultimaConhecida: null } } as unknown as EstadoPainel, null), { ultima: null });
@@ -1340,4 +1411,498 @@ test('regra-unica-estatica: shaAceito é a única decisão; painel, trilha e reg
   assert.doesNotMatch(fonte('painel.ts'), /tipoDe\(ev\) === 'spec\.aprovada' && typeof/);
   assert.doesNotMatch(fonte('trilha.ts'), /ultimaAprovacao\.sha256 !==/);
   assert.doesNotMatch(fonte('registro.ts'), /specSha === ultima\b/);
+});
+
+// ---------------------------------------------------------------- GM-15 T33 (emenda 11, g.12 a g.16)
+
+const nomesDe = (eventos: Evento[], nomes: string[]): Map<string, string> => nomesPorPapel(eventos, { nome: 'T', lider: 'L', sabio: 'S', nomes });
+
+test('nomes-unicos-entre-vivos (g.12): o par novo leva o 1º nome que nenhum par de task NÃO integrada usa; a volta do pacote não repete nome de vivo', () => {
+  // 4 nomes: T1..T4 pegam A..D; T1 e T4 integram; T5 pega A (livre) e T6 deve pegar D (livre), não B (de T2, ainda vivo) como a volta fazia
+  const itens: Item[] = [ini(0, 'T1'), ini(1, 'T2'), ini(2, 'T3'), ini(3, 'T4'), ...[integ(10, 'T1'), integ(11, 'T4')], ini(20, 'T5'), ini(21, 'T6')];
+  const m = nomesDe(D(itens), ['A', 'B', 'C', 'D']);
+  assert.deepEqual(['T1', 'T2', 'T3', 'T4', 'T5', 'T6'].map((t) => m.get(`${t}:trabalho`)), ['A', 'B', 'C', 'D', 'A', 'D']);
+  const vivos = ['T2', 'T3', 'T5', 'T6'].map((t) => m.get(`${t}:trabalho`));
+  assert.equal(new Set(vivos).size, vivos.length, `nomes repetidos entre vivos: ${vivos.join(' ')}`);
+});
+
+test('nomes-unicos-entre-vivos (g.12): implementador e revisor de task viva não dividem nome; o nome volta só quando a task integra; sem nome livre cai na volta de antes', () => {
+  const itens: Item[] = [ini(0, 'T14'), ini(1, 'T15'), ini(2, 'T16'), ini(3, 'T16', 'revisor')];
+  const m = nomesDe(D(itens), ['A', 'B', 'C', 'D']);
+  assert.deepEqual([m.get('T14:trabalho'), m.get('T15:trabalho'), m.get('T16:trabalho'), m.get('T16:revisor')], ['A', 'B', 'C', 'D']);
+  const cheio = nomesDe(D([ini(0, 'T1'), ini(1, 'T2'), ini(2, 'T3')]), ['A', 'B']);
+  assert.deepEqual(['T1', 'T2', 'T3'].map((t) => cheio.get(`${t}:trabalho`)), ['A', 'B', 'A'], 'mais vivos que nomes: a volta, como antes');
+  // evento novo no fim nunca troca nome antigo
+  const antes = nomesDe(D(itens), ['A', 'B', 'C', 'D']);
+  const depois = nomesDe(D([...itens, integ(30, 'T14'), ini(31, 'T17')]), ['A', 'B', 'C', 'D']);
+  for (const [k, v] of antes) assert.equal(depois.get(k), v, `${k} mudou de nome`);
+  assert.equal(depois.get('T17:trabalho'), 'A', 'o nome de T14 integrada volta');
+});
+
+/** 6 integradas (10…60 min) e a T7 só aprovada (200 min): a mediana e a base da conta saem das integradas. */
+const SETE = [...ciclo('T1', 0, 10), ...ciclo('T2', 20, 40), ...ciclo('T3', 50, 80), ...ciclo('T4', 90, 130), ...ciclo('T5', 140, 190), ...ciclo('T6', 200, 260),
+  ini(270, 'T7'), con(271, 'T7'), ini(272, 'T7', 'revisor'), ver(470, 'T7', true)];
+
+test('mediana-so-integradas (g.13): a mediana do plano usa só as durações das tasks integradas (a aprovada que não integrou fica de fora)', () => {
+  const s = proj(P('T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'), D(SETE));
+  assert.equal(s.plano.feitas, 6);
+  assert.equal(s.plano.medianaS, 35 * 60, 'mediana de 10,20,30,40,50,60 = 35 min (com a T7 seriam 40)');
+  assert.equal(s.plano.eta?.n, 6);
+});
+
+test('base-igual-ao-vetor (g.14): a base da previsão é o tamanho do vetor da conta (as integradas), nunca o das aprovadas', () => {
+  const fatos = { branch: 'feat/GM-12-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' };
+  const s = projetarPainel(P('T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'), D(SETE), entrada({ fatos } as Partial<EntradaPainel>) as EntradaPainel & { fatos: typeof fatos });
+  assert.equal(s.pronto?.previsao?.base, s.plano.eta?.n, 'a base exibida e a conta saem do mesmo vetor');
+  assert.equal(s.pronto?.previsao?.base, 6);
+});
+
+const emVooIni = (min: number, task: string, extra: Record<string, unknown> = {}): Item => ini(min, task, 'implementador', extra);
+
+test('narracao-janela (g.15): a narração cita só os despachos da última janela (mesmo minuto), não junta os de horas diferentes', () => {
+  const s = proj(P('T1', 'T2', 'T3', 'T4'), D([emVooIni(0, 'T1'), emVooIni(8, 'T2'), emVooIni(11, 'T3'), emVooIni(11.5, 'T4')]));
+  assert.equal(s.equipe.lider.narrativa, 'despachou T3 e T4 em paralelo');
+  const um = proj(P('T1', 'T2'), D([emVooIni(0, 'T1'), emVooIni(8, 'T2')]));
+  assert.equal(um.equipe.lider.narrativa, 'despachou T2');
+});
+
+test('narracao-integrando (g.15): o shell de fundo que integra entra na narração, com a task da linha de comando', () => {
+  const sp = [{ id: 'b1', dono: 'orquestrador', texto: 'integrar T16 em fundo', comando: 'cd /r && node plugins/gabarito-mestre/gates/scripts/loop.mjs integrar T16 2>&1 | tail', desde: 1 }];
+  const s = proj(P('T14', 'T16'), D([emVooIni(0, 'T14')]), { segundoPlano: sp } as Partial<EntradaPainel>);
+  assert.match(s.equipe.lider.narrativa, /^despachou T14 · integrando T16/);
+  const sem = proj(P('T14', 'T16'), D([emVooIni(0, 'T14')]), { segundoPlano: [{ ...sp[0], comando: 'sleep 5', texto: 'esperar' }] } as Partial<EntradaPainel>);
+  assert.doesNotMatch(sem.equipe.lider.narrativa, /integrando/);
+  const so = proj(P('T14', 'T16'), D([]), { segundoPlano: sp } as Partial<EntradaPainel>);
+  assert.equal(so.equipe.lider.narrativa, 'integrando T16');
+});
+
+const ENT_ZERO = { modeloSessao: 'claude-sonnet-4-6', contexto: { percent: 30, tokens: 60_000, window: 200_000 } };
+const agOpus = (extra: Partial<AgenteVivo> = {}): AgenteVivo => ({ id: 'a-1', type: 'general-purpose', description: 'T1 implementador', status: 'running', uso: { contexto: 90_000, tok: 1000, modelo: 'claude-opus-4-8' }, ...extra });
+
+test('ctx-pct-janela-medida (g.16): o % do agente sai da janela MEDIDA do modelo dele (mesmo de outro modelo que o da sessão)', () => {
+  const eq = projetarEquipe(P('T1'), D([ini(0, 'T1')]), entrada({ ...ENT_ZERO, agentes: [agOpus()], janelas: { 'claude-opus-4-8': 1_000_000 } } as Partial<EntradaPainel>));
+  assert.equal(eq.agentes[0].ctxPct, 9, '90k de 1M');
+  assert.equal(eq.agentes[0].ctxTok, 90_000);
+  const mesmo = projetarEquipe(P('T1'), D([ini(0, 'T1')]), entrada({ ...ENT_ZERO, agentes: [agOpus({ uso: { contexto: 90_000, tok: 1, modelo: 'claude-sonnet-4-6' } })] } as Partial<EntradaPainel>));
+  assert.equal(mesmo.agentes[0].ctxPct, 45, 'o modelo da sessão segue com a janela da sessão (200k)');
+});
+
+test('ctx-sem-janela-so-k (g.16): sem janela medida para o modelo do agente o % some e ficam os tokens; nenhuma tabela fixa', () => {
+  const eq = projetarEquipe(P('T1'), D([ini(0, 'T1')]), entrada({ ...ENT_ZERO, agentes: [agOpus()] } as Partial<EntradaPainel>));
+  assert.equal(eq.agentes[0].ctxPct, null);
+  assert.equal(eq.agentes[0].ctxTok, 90_000);
+  for (const ruim of [0, -5, Number.NaN, '1000000', null]) {
+    const e2 = projetarEquipe(P('T1'), D([ini(0, 'T1')]), entrada({ ...ENT_ZERO, agentes: [agOpus()], janelas: { 'claude-opus-4-8': ruim } } as unknown as Partial<EntradaPainel>));
+    assert.equal(e2.agentes[0].ctxPct, null, `janela ${String(ruim)}`);
+  }
+  assert.doesNotMatch(readFileSync(join(AQUI, '..', 'src', 'painel-equipe.ts'), 'utf8'), /1_?000_?000|200_?000|\b1m\b/i, 'sem tabela de janelas');
+});
+
+test('base-igual-ao-vetor (g.14): integrada sem duração medida (veredito com ts antes do início) não entra na base; a base é o n da ETA, não a contagem de integradas', () => {
+  const fatos = { branch: 'feat/GM-12-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['T1', 'T2', 'T3', 'T4', 'T5'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' };
+  const base = D([...ciclo('T1', 0, 10), ...ciclo('T2', 20, 40), ...ciclo('T3', 50, 80)]);
+  let seq = base.length;
+  const cru = (min: number, tipo: TipoEvento, dados: Record<string, unknown>): Evento => ({ seq: ++seq, ts: iso(min), autor: 't', sessao: 's1', agente: 'orquestrador', tipo, dados, hash_anterior: null }) as unknown as Evento;
+  // T4: iniciada em 200, concluída em 201, revisor em 202, veredito APROVADO com ts em 100 (antes do início): a duração não existe, mas ela integra
+  const t4 = [cru(200, 'task.iniciada', { task: 'T4', papel: 'implementador' }), cru(201, 'task.concluida', { task: 'T4' }), cru(202, 'task.iniciada', { task: 'T4', papel: 'revisor' }),
+    cru(100, 'review.veredito', { task: 'T4', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }), cru(203, 'task.integrada', { task: 'T4', sha: 'b'.repeat(40) })];
+  const s = projetarPainel(P('T1', 'T2', 'T3', 'T4', 'T5'), [...base, ...t4], entrada({ fatos } as Partial<EntradaPainel>) as EntradaPainel & { fatos: typeof fatos });
+  assert.equal(s.plano.feitas, 4);
+  assert.equal(s.plano.eta?.n, 3, 'a conta tem 3 durações');
+  assert.equal(s.pronto?.previsao?.base, 3, 'a base mostrada é a da conta');
+});
+
+// ---------------------------------------------------------------- g.11: rótulos do SEGUNDO PLANO (a regra; o desenho da seção depende de painel-blocos.test.ts)
+
+test('rotulo-integrando (g.11): `integrar` e `gate-task` no comando ou na descrição ⇒ Integrando, com a task', () => {
+  assert.deepEqual(rotuloDoShell({ texto: 'integrar T16', comando: 'cd /r && node plugins/gabarito-mestre/gates/scripts/loop.mjs integrar T16 2>&1 | tail' }), { tipo: 'Integrando', task: 'T16' });
+  assert.deepEqual(rotuloDoShell({ texto: 'gate da T14', comando: 'node gate-task.mjs T14' }), { tipo: 'Integrando', task: 'T14' });
+  assert.deepEqual(rotuloDoShell({ texto: 'integrar T3 em fundo' }), { tipo: 'Integrando', task: 'T3' }, 'só a descrição também vale');
+  assert.deepEqual(rotuloDoShell({ texto: 'esperar a integração', comando: 'until grep -q integrar out.txt; do sleep 2; done' }).tipo, 'Aguardando', 'laço que só espera a integração não é integrar');
+});
+
+test('rotulo-teste (g.11): suíte de teste (node --test, npm test, mod-test.sh, claude plugin test, *.test.*) ⇒ Teste', () => {
+  for (const comando of ['node --experimental-strip-types --test test/painel.test.ts', 'npm test', 'npm run test', 'bash scripts/test/mod-test.sh', 'claude plugin test .', 'node x/painel-pouso.test.mjs', 'bash scripts/test/texto.test.sh']) {
+    assert.equal(rotuloDoShell({ texto: 'rodar', comando }).tipo, 'Teste', comando);
+  }
+  assert.equal(rotuloDoShell({ texto: 'Find mod test setup', comando: 'grep -rn setup mod' }).tipo, 'Comando', 'a busca "mod test setup" não é teste');
+});
+
+test('rotulo-aguardando (g.11): laço de espera (until/while … sleep|grep) ⇒ Aguardando', () => {
+  assert.equal(rotuloDoShell({ texto: 'esperar', comando: 'until grep -q pronto out.txt; do sleep 3; done' }).tipo, 'Aguardando');
+  assert.equal(rotuloDoShell({ texto: 'esperar', comando: 'while ! test -f x; do sleep 1; done' }).tipo, 'Aguardando');
+  assert.equal(rotuloDoShell({ texto: 'aguardando', comando: 'while true; do date; done' }).tipo, 'Comando', 'laço sem sleep nem grep não espera nada');
+});
+
+test('rotulo-comando (g.11): o resto ⇒ Comando, sem task inventada; entrada fora da forma não lança', () => {
+  assert.deepEqual(rotuloDoShell({ texto: 'listar arquivos', comando: 'ls -la' }), { tipo: 'Comando', task: null });
+  for (const ruim of [null, undefined, {}, { texto: 7, comando: {} }]) assert.deepEqual(rotuloDoShell(ruim as never), { tipo: 'Comando', task: null });
+  assert.deepEqual(integrandoDe('x'), []);
+});
+
+test('rotulo-task-pelo-cwd (g.11): a task vem do cwd da worktree, depois de `integrar|gate-task <T>`, depois da descrição; sem prova ⇒ null', () => {
+  assert.equal(rotuloDoShell({ texto: 'rodar testes', comando: 'cd /r/.harness/worktrees/T14 && node --test test/a.test.ts' }).task, 'T14');
+  assert.equal(rotuloDoShell({ texto: 'testes da T9', comando: 'node --test x' }).task, 'T9');
+  assert.equal(rotuloDoShell({ texto: 'rodar', comando: 'cd /r/.harness/worktrees/T14b && npm test' }).task, 'T14b');
+  assert.equal(rotuloDoShell({ texto: 'rodar', comando: 'node --test x' }).task, null);
+  assert.equal(rotuloDoShell({ texto: 'rodar', comando: 'cd /r/.harness/worktrees/T14 && node scripts/loop.mjs integrar T16' }).task, 'T14', 'o cwd vence o argumento');
+});
+
+test('fonte-unica-shell-integrando (g.11): o literal do painel é o mesmo do hook Stop (stop-loop.mjs, SHELL_INTEGRANDO)', () => {
+  const stop = readFileSync(join(AQUI, '..', 'scripts', 'stop-loop.mjs'), 'utf8');
+  const m = /const SHELL_INTEGRANDO = (\/.+\/);/.exec(stop);
+  assert.ok(m !== null, 'stop-loop.mjs declara SHELL_INTEGRANDO');
+  assert.equal(String(SHELL_INTEGRANDO), (m as RegExpExecArray)[1]);
+});
+
+// ── GM-15 T8 (REQ-ENT-1 c, d): `entregueDe`, a mesma regra de encerramento da guarda (`encerramentoDe`) ─────────────────────────────────────
+test('entregue-de: encerrada ⇒ {id, versao}; reaberta depois ⇒ null; versão do encerramento > release medido; id inseguro ou diário torto ⇒ null', () => {
+  let seq = 0;
+  const e = (tipo: string, dados: Record<string, unknown>, ts: string) => ({ seq: ++seq, ts, autor: 'a', sessao: 's', agente: 'painel', tipo, dados, hash_anterior: null }) as unknown as Evento;
+  const rel = e('fato.medido', { chave: 'release', fonte: 'gh', valor: { tag: 'v2.1.0-alpha.1' } }, '2026-11-15T09:00:00.000Z');
+  const enc = e('entrega.encerrada', { entrega: 'GM-9', pr: 3, via: 'head', mergeado_em: '2026-11-15T10:00:00.000Z' }, '2026-11-15T10:00:01.000Z');
+  assert.deepEqual(entregueDe([enc], 'GM-9'), { id: 'GM-9', versao: null });
+  // r1 MAJOR-3: o release medido é o último do repo, sem amarra ao PR nem ao mergeado_em ⇒ não dá versão (nunca "2.1.0" de "v2.1.0-alpha.1")
+  assert.deepEqual(entregueDe([rel, enc], 'GM-9'), { id: 'GM-9', versao: null });
+  assert.equal(entregueDe([rel, enc], 'GM-8'), null, 'o encerramento é da entrega do evento');
+  const reab = e('entrega.reaberta', { entrega: 'GM-9', em: '2026-11-15T11:00:00.000Z' }, '2026-11-15T11:00:01.000Z');
+  assert.equal(entregueDe([rel, enc, reab], 'GM-9'), null, 'reaberta pelo dono deixa de ser entregue');
+  const comVersao = e('entrega.encerrada', { entrega: 'GM-7', pr: 4, via: 'titulo', mergeado_em: '2026-11-15T10:00:00.000Z', versao: '3.0.0' }, '2026-11-15T12:00:01.000Z');
+  assert.deepEqual(entregueDe([rel, comVersao], 'GM-7'), { id: 'GM-7', versao: '3.0.0' });
+  // a versão do encerramento inteira, pré-release incluída (o caso real de hoje: tag v2.1.0-alpha.2)
+  const alpha = e('entrega.encerrada', { entrega: 'GM-15', pr: 23, via: 'titulo', mergeado_em: '2026-11-15T20:00:00.000Z', versao: '2.1.0-alpha.2' }, '2026-11-15T20:00:01.000Z');
+  assert.deepEqual(entregueDe([rel, alpha], 'GM-15'), { id: 'GM-15', versao: '2.1.0-alpha.2' });
+  const torta = e('entrega.encerrada', { entrega: 'GM-16', pr: 24, via: 'titulo', mergeado_em: '2026-11-15T20:00:00.000Z', versao: 'versão 2.1.0 final' }, '2026-11-15T20:00:02.000Z');
+  assert.deepEqual(entregueDe([rel, torta], 'GM-16'), { id: 'GM-16', versao: null }, 'versão fora da forma semver não vira X.Y.Z recortado');
+  assert.equal(entregueDe(null, 'GM-9'), null);
+  assert.equal(entregueDe([enc], 'GM 9'), null);
+  assert.equal(entregueDe([enc, { ...enc }], 'GM-9'), null, 'diário que não ordena (seq repetido) não afirma');
+});
+
+// ── review r1 MAJOR-2: a entregue que é só a "última conhecida" (branch sem ID, diário `_sem-id`) não zera o que é do `_sem-id`; o pedido de /clear é
+// da sessão e nunca some com a entrega encerrada ───────────────────────────────────────────────────────────────────────────────────────────
+test('entregue-so-zera-a-entrega: em main (diário _sem-id) a GM-14 encerrada mantém PAROU, DEPENDE e ATENÇÃO do _sem-id; o /clear da sessão fica sempre', () => {
+  const fatosMain = { branch: 'main', idPadrao: '[A-Z]+-\\d+', specs: [], plano: null, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' };
+  const base = (extra: Record<string, unknown> = {}) => ({
+    decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+    pacote: { nome: 'Terra Média', lider: 'GANDALF', sabio: 'ELROND', nomes: ['ARAGORN', 'LEGOLAS'] }, notificacao: null, agoraMs: AGORA, fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
+    entregaId: null, modeloSessao: null, specSha: null, fatos: fatosMain, ...extra,
+  }) as unknown as Parameters<typeof projetarPainel>[2];
+  const ev = (tipo: string, dados: unknown, seq: number, agente = 'orquestrador'): Evento => ({ seq, ts: iso(seq), autor: 't', sessao: 's1', agente, tipo, dados, hash_anterior: null } as unknown as Evento);
+  const semId = [
+    ev('nota', { tipo: 'pendencia', texto: 'renovar o certificado' }, 1, 'implementador'),
+    ev('sombra.consulta', { pergunta_hash: 'c'.repeat(64), req: 'REQ-A-1' }, 2, 'sombra'),
+    ev('loop.parar', { motivo: 'sem_progresso' }, 3), ev('loop.parar', { motivo: 'sem_progresso' }, 4), ev('loop.parar', { motivo: 'sem_progresso' }, 5),
+  ];
+  const entregue = { id: 'GM-14', versao: null };
+  const proxima = { tipo: 'nenhuma', texto: 'nenhuma próxima anotada', acoes: [] };
+  // controle: sem encerramento, o _sem-id mostra os 3
+  const sem = projetarPainel(null, semId, base());
+  assert.ok(sem.parar !== null && sem.parar !== undefined, 'controle: PAROU do _sem-id');
+  // a GM-14 encerrada é a última conhecida (não é o diário projetado) ⇒ nada do _sem-id some
+  const ult = projetarPainel(null, semId, base({ entregue, proxima, entregueDoDiario: false }));
+  assert.deepEqual(ult.entregue, entregue);
+  assert.ok(ult.parar !== null && ult.parar !== undefined, `PAROU do _sem-id continua: ${JSON.stringify(ult.parar)}`);
+  assert.ok(ult.depende.some((i) => i.motivo === 'renovar o certificado'), `pendência do _sem-id continua: ${JSON.stringify(ult.depende)}`);
+  assert.ok(ult.atencao.some((a) => /consulta à Sombra sem decisão/.test(a)), `ATENÇÃO do _sem-id continua: ${JSON.stringify(ult.atencao)}`);
+  assert.equal(renderPainel(ult, { preset: 'esquadrao', largura: 100, tema: 'color' } as never).length > 1, true, 'com item pendente, os blocos (não a linha única)');
+  // a entregue É o diário projetado ⇒ os itens dela somem (d)(ii) ...
+  const daEnt = projetarPainel(null, semId, base({ entregue, proxima, entregueDoDiario: true }));
+  assert.equal(daEnt.parar, null);
+  assert.ok(daEnt.depende.every((i) => i.motivo === 'nada depende de você'), JSON.stringify(daEnt.depende));
+  assert.deepEqual(daEnt.atencao, []);
+  // ... mas o pedido de /clear é da sessão, não da entrega: fica nos dois casos
+  for (const doDiario of [true, false]) {
+    const c = projetarPainel(null, semId, base({ entregue, proxima, entregueDoDiario: doDiario, pousoPendente: true }));
+    assert.ok(c.depende.some((i) => i.motivo === 'limpar a conversa'), `${doDiario}: /clear continua: ${JSON.stringify(c.depende)}`);
+  }
+});
+
+// ── review r1 MINOR-4: cada guarda da linha única (`linhaEntregue`) tem caso próprio que a derruba sozinha: fonte que falhou, pergunta, PAROU, ATENÇÃO ──
+test('entregue-com-pendencia-volta-aos-blocos: fonte falha, pergunta, PAROU ou ATENÇÃO que não são da entrega ⇒ os blocos, nunca a linha única', () => {
+  const fatosMain = { branch: 'main', idPadrao: '[A-Z]+-\\d+', specs: [], plano: null, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' };
+  const base = (extra: Record<string, unknown> = {}) => ({
+    decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
+    pacote: { nome: 'Terra Média', lider: 'GANDALF', sabio: 'ELROND', nomes: ['ARAGORN', 'LEGOLAS'] }, notificacao: null, agoraMs: AGORA, fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
+    entregaId: null, modeloSessao: null, specSha: null, fatos: fatosMain,
+    entregue: { id: 'GM-14', versao: null }, proxima: { tipo: 'nenhuma', texto: 'nenhuma próxima anotada', acoes: [] }, entregueDoDiario: false, ...extra,
+  }) as unknown as Parameters<typeof projetarPainel>[2];
+  const ev = (tipo: string, dados: unknown, seq: number, agente = 'orquestrador'): Evento => ({ seq, ts: iso(seq), autor: 't', sessao: 's1', agente, tipo, dados, hash_anterior: null } as unknown as Evento);
+  const linhas = (evs: Evento[], extra: Record<string, unknown> = {}) => renderPainel(projetarPainel(null, evs, base(extra)), { preset: 'esquadrao', largura: 100, tema: 'color' } as never).map((l) => (Array.isArray(l) ? l.map((s) => s.texto).join('') : l.texto));
+  // controle: nada além da entregue ⇒ a linha única
+  assert.deepEqual(linhas([]), ['GABARITO · GM-14 entregue · nenhuma próxima anotada']);
+  const casos: Array<[string, Evento[], Record<string, unknown>, RegExp]> = [
+    ['fonte que falhou', [], { fontesFalhas: ['as specs'] }, /specs/],
+    ['pergunta', [ev('nota', { tipo: 'duvida', texto: 'qual cor?', opcoes: ['azul', 'verde'] }, 1, 'implementador')], {}, /qual cor\?/],
+    ['PAROU', [1, 2, 3].map((n) => ev('loop.parar', { motivo: 'sem_progresso' }, n)), {}, /PAROU/],
+    ['ATENÇÃO', [ev('sombra.consulta', { pergunta_hash: 'd'.repeat(64), req: 'REQ-A-1' }, 1, 'sombra')], {}, /consulta à Sombra/],
+  ];
+  for (const [nome, evs, extra, re] of casos) {
+    const ls = linhas(evs, extra);
+    assert.ok(ls.length > 1, `${nome}: blocos, não a linha única: ${JSON.stringify(ls)}`);
+    assert.ok(ls.some((l) => re.test(l)), `${nome}: o item aparece: ${JSON.stringify(ls)}`);
+  }
+});
+
+// ---------------------------------------------------------------- GM-15 T9 (REQ-ENT-2): o alvo é só o que não foi feito; plano relido
+
+const fora = (t: number, task: string, como: 'adiada' | 'cortada' = 'adiada') => e(t, 'task.fora', { task, como, motivo: 'fora do corte', origem: 'sombra', fonte: 'spec:35' });
+const fatosT9 = (ids: string[]) => ({ branch: 'feat/GM-12-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ids }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' });
+const projNovo = (plano: Plano, eventos: Evento[], extra: Partial<EntradaPainel> = {}): EstadoPainel =>
+  projetarPainel(plano, eventos, entrada({ fatos: fatosT9(plano.tasks.map((t) => t.id)), ...extra } as Partial<EntradaPainel>) as EntradaPainel);
+const desenho = (s: EstadoPainel, largura = 100): string => renderPainel(s, { preset: 'esquadrao', tema: 'mono', narracao: true, largura }).map((l) => l.map((x) => x.texto).join('')).join('\n');
+
+test('adiada-fora-do-alvo (painel): 58 tasks, 57 integradas e a T8 adiada ⇒ PRONTO "57 de 57", 100 %, sem a T8 na fila nem em voo', () => {
+  const ids = Array.from({ length: 58 }, (_, i) => `T${i + 1}`);
+  const itens: Item[] = [];
+  ids.forEach((id, i) => { if (id !== 'T8') itens.push(...ciclo(id, i * 10, i * 10 + 5)); });
+  itens.push(fora(58 * 10, 'T8'));
+  const s = projNovo(P(...ids), D(itens));
+  assert.equal(s.parar, null, 'diário válido: nenhum PAROU');
+  assert.deepEqual([s.pronto?.integradas, s.pronto?.total], [57, 57], 'a adiada sai do denominador');
+  assert.deepEqual([s.plano.feitas, s.plano.total, s.plano.pct], [57, 57, 100]);
+  assert.equal(s.pronto?.previsao ?? null, null, 'nada falta: sem previsão');
+  assert.equal(s.plano.tasks.some((t) => t.id === 'T8'), false, 'a task fora não é item do alvo');
+  assert.equal(s.equipe.lider.narrativa, 'todas as tasks integradas');
+  const tela = desenho(s);
+  assert.match(tela, /57\/57 tasks/);
+  assert.doesNotMatch(tela, /\bT8\b/);
+});
+
+test('cortada-fora-do-alvo: a cortada também sai do denominador e da fila; a pendente que sobra continua na conta', () => {
+  const s = projNovo(P('T1', 'T2', 'T3'), D([...ciclo('T1', 0, 5), fora(10, 'T3', 'cortada')]));
+  assert.deepEqual([s.pronto?.integradas, s.pronto?.total, s.plano.total, s.plano.pct], [1, 2, 2, 50]);
+  assert.deepEqual(s.plano.tasks.map((t) => t.id), ['T1', 'T2']);
+});
+
+test('fora-nao-aparece-no-depende: a task no limite de revisões que vira adiada sai do DEPENDE e o PAROU de teto dela some', () => {
+  const noTeto: Item[] = [ini(0, 'T2'), con(1, 'T2'), ini(2, 'T2', 'revisor'), ver(3, 'T2', false, 1, 1), ini(4, 'T2', 'correcao'), con(5, 'T2'), ini(6, 'T2', 'revisor'), ver(7, 'T2', false, 2, 1)];
+  const antes = projNovo(P('T1', 'T2'), D([...ciclo('T1', 20, 25), ...noTeto, parar(30, 'teto_rodadas', { task: 'T2' })]));
+  assert.ok(motivos(antes).some((m) => /T2/.test(m)), `antes: ${JSON.stringify(motivos(antes))}`);
+  const depois = projNovo(P('T1', 'T2'), D([...ciclo('T1', 20, 25), ...noTeto, parar(30, 'teto_rodadas', { task: 'T2' }), fora(40, 'T2')]));
+  assert.equal(depois.parar, null);
+  assert.equal(motivos(depois).some((m) => /T2/.test(m)), false, JSON.stringify(motivos(depois)));
+  assert.deepEqual([depois.pronto?.integradas, depois.pronto?.total], [1, 1]);
+});
+
+test('plano-invalido-mostra-interrogacao (núcleo): `planoInvalido` ⇒ sem PRONTO, FASE "?" com o motivo, DEPENDE "?" e nenhum PAROU de diário por task fora do plano', () => {
+  const evs = D([...ciclo('T1', 0, 5), ini(10, 'T2')]);
+  const s = projetarPainel(null, evs, entrada({ fatos: { ...fatosT9([]), plano: null }, planoInvalido: 'plano.json não é JSON', fontesFalhas: ['o plano'] } as Partial<EntradaPainel>) as EntradaPainel);
+  assert.equal(s.pronto, null, 'nunca o plano velho');
+  assert.equal(s.parar, null, 'plano ilegível não é diário inválido');
+  assert.equal(s.fase?.numero, null);
+  assert.match(String(s.fase?.motivo), /plano\.json não é JSON/);
+  assert.ok(motivos(s).includes('depende de você: ? (não consegui ler o plano)'), JSON.stringify(motivos(s)));
+  const tela = desenho(s);
+  assert.match(tela, /FASE \? de 7/);
+  assert.match(tela, /\? plano inválido: plano.json não é JSON/, 'o render troca o ponto por espaço (natural), o motivo chega');
+});
+
+test('reaberta-invalida-gravada-mostra-interrogacao (GM-15 T25, REQ-HIG-1 D): a task com origem inválida vira "?" nomeando a causa, no DEPENDE e no desenho real; as outras seguem e não há PAROU de diário', () => {
+  const evs = D([ini(0, 'T1'), e(1, 'task.reaberta', { task: 'T1', origem: 'xpto' }), ...ciclo('T2', 10, 15)]);
+  const s = projNovo(P('T1', 'T2'), evs);
+  assert.equal(s.parar, null, 'um evento ruim de 1 task não derruba o diário');
+  assert.deepEqual(s.plano.tasks.map((t) => t.id), ['T2'], 'a task inválida não é pintada com estado inventado');
+  assert.ok(motivos(s).includes('depende de você: ? (T1: a reabertura gravada tem origem inválida)'), JSON.stringify(motivos(s)));
+  assert.match(desenho(s), /\? \(T1: a reabertura gravada tem origem inválida\)/, 'o texto desenhado pelo render real nomeia a task e a causa');
+  const deRuim = projNovo(P('T1', 'T2'), D([ini(0, 'T1'), e(1, 'task.reaberta', { task: 'T1', origem: 'dono', de: 'x' })]));
+  assert.ok(motivos(deRuim).includes('depende de você: ? (T1: a reabertura gravada tem o campo de volta inválido)'), JSON.stringify(motivos(deRuim)));
+  // controle: sem o evento ruim, nenhum "?" de task
+  assert.equal(motivos(projNovo(P('T1', 'T2'), D([ini(0, 'T1')]))).some((m) => /reabertura gravada/.test(m)), false);
+});
+
+// ---------------------------------------------------------------- GM-15 T19 (REQ-AUT-2 c, REQ-POU-3, REQ-POU-4): trava, pouso e loop avisam no painel
+// Mutações: M19-d a trava avisa antes dos 30 min ⇒ trava-30min-avisa-painel · M19-e o relógio da trava pelo último `loop.parar` regravado ⇒
+// parar-regravado-nao-zera-o-relogio · M19-f trava com agente vivo ⇒ trava-com-agente-vivo-nao-avisa · M19-g contexto alto sem conferir o `sessao.pouso` da sessão ⇒
+// contexto-alto-sem-pouso-avisa-painel · M19-h contexto alto sem o loop armado ⇒ contexto-alto-so-com-loop-armado · M19-i "ligar o loop" sem trabalho a seguir ⇒
+// sem-loop-dinamico-avisa-painel · M19-j o pedido de /clear com o loop desligado ⇒ clear-so-com-wakeup-painel
+import { CMD_LIGAR_LOOP, MOTIVO_LIGAR_ANTES_DO_CLEAR, MOTIVO_LIGAR_LOOP, motivoContextoAlto } from '../src/depende.ts';
+import { TRAVA_LONGA_MS } from '../src/painel.ts';
+import { pendenciasAprendizado } from '../src/pendencias.ts';
+
+/** T1 no teto de rodadas: o último evento de progresso (o 2º veredito) cai no minuto 7. */
+/** As pendências de aprendizado das reprovações já fechadas (sem elas `proximaAcao` é `aprender`, não `parar`; o Stop também as trata à parte). */
+const TETO_T1: Item[] = [ini(0, 'T1'), con(1, 'T1'), ini(2, 'T1', 'revisor'), ver(3, 'T1', false, 1, 1), ini(4, 'T1', 'correcao'), con(5, 'T1'), ini(6, 'T1', 'revisor'), ver(7, 'T1', false, 2, 1),
+  e(7, 'aprendizado.nada', { gatilho: { sessao: 's1', seq: 4 }, motivo: 'teste' }, 'ap'), e(7, 'aprendizado.nada', { gatilho: { sessao: 's1', seq: 8 }, motivo: 'teste' }, 'ap')];
+const comandos = (s: EstadoPainel): string[] => s.depende.flatMap((i) => i.acoes.map((a) => a.comando ?? ''));
+
+test('trava-30min-avisa-painel (REQ-AUT-2 c): parar há mais de 30 min ⇒ "parado há N min: <motivo>", o comando só no botão; até 30 min, nada', () => {
+  const s = projNovo(P('T1'), D(TETO_T1));
+  const it = s.depende.find((i) => i.motivo.startsWith('parado há'));
+  assert.ok(it !== undefined, JSON.stringify(motivos(s)));
+  assert.equal(it.motivo, 'parado há 173 min: teto de rodadas de review em T1');
+  assert.ok(it.acoes.some((a) => a.comando === '/gabarito-mestre:liberar T1'), 'o comando está no botão');
+  assert.doesNotMatch(it.motivo, /\/|gabarito/, 'o texto não leva o comando');
+  assert.equal(s.depende.filter((i) => i.acoes.some((a) => a.comando === '/gabarito-mestre:liberar T1')).length, 1, 'o teto não repete: 1 item com o botão');
+  assert.match(desenho(s), /parado há 173 min: teto de rodadas de review em T1/, 'o render desenha o aviso');
+  assert.equal(TRAVA_LONGA_MS, 30 * 60_000);
+  // 30 min exatos ainda não é trava longa; 31 é
+  const ultimo = T0 + 7 * 60_000;
+  assert.ok(!motivos(projNovo(P('T1'), D(TETO_T1), { agoraMs: ultimo + TRAVA_LONGA_MS })).some((m) => m.startsWith('parado há')));
+  assert.ok(motivos(projNovo(P('T1'), D(TETO_T1), { agoraMs: ultimo + TRAVA_LONGA_MS + 60_000 })).includes('parado há 31 min: teto de rodadas de review em T1'));
+});
+
+test('trava-30min-avisa-painel: com o PAROU do diário (linha fixa, com a hora e os botões), o aviso é 1 linha do ATENÇÃO; nenhum item novo', () => {
+  const s = projNovo(P('T1', 'T2'), D([...ciclo('T1', 0, 5), parar(10)]));
+  assert.ok(s.parar !== null);
+  assert.equal(s.parar.texto, '3 paradas sem progresso', 'a linha do PAROU não muda');
+  assert.equal(s.atencao[0], 'parado há 170 min: 3 paradas sem progresso');
+  assert.match(desenho(s), /parado há 170 min: 3 paradas sem progresso/, 'o render desenha o aviso');
+  assert.ok(!motivos(s).some((m) => m.startsWith('parado há')));
+  // controle: 20 min depois do PAROU ainda não é trava longa
+  assert.ok(!projNovo(P('T1', 'T2'), D([...ciclo('T1', 0, 5), parar(10)]), { agoraMs: T0 + 30 * 60_000 }).atencao.some((a) => a.startsWith('parado há')));
+});
+
+test('parar-regravado-nao-zera-o-relogio: o mod regrava o `loop.parar` a cada evento; o relógio da trava conta do 1º da sequência', () => {
+  const s = projNovo(P('T1', 'T2'), D([...ciclo('T1', 0, 5), parar(10), parar(170)]));
+  assert.equal(s.atencao[0], 'parado há 170 min: 3 paradas sem progresso');
+});
+
+test('motivo-novo-aviso-novo (painel): progresso depois da trava recomeça o relógio; a trava nova conta dela', () => {
+  // T1 no teto às 7; um CI verde às 160 (evento de progresso) e nada mais: o relógio recomeça das 160 ⇒ 20 min, sem aviso
+  const evs = D([...TETO_T1, e(160, 'ci.resultado', { verde: true })]);
+  assert.ok(!motivos(projNovo(P('T1'), evs)).some((m) => m.startsWith('parado há')), JSON.stringify(motivos(projNovo(P('T1'), evs))));
+  { const m = motivos(projNovo(P('T1'), evs, { agoraMs: T0 + 200 * 60_000 })); assert.ok(m.some((x) => x.startsWith('parado há 40 min: ')), JSON.stringify(m)); }
+});
+
+test('trava-com-agente-vivo-nao-avisa: agente vivo, integração em segundo plano ou pausa não é trava', () => {
+  const evs = D(TETO_T1);
+  const tem = (s: EstadoPainel) => motivos(s).some((m) => m.startsWith('parado há'));
+  assert.ok(tem(projNovo(P('T1'), evs)), 'controle');
+  assert.ok(!tem(projNovo(P('T1'), evs, { agentes: [vivo('T1 correcao')] })), 'agente vivo');
+  assert.ok(!tem(projNovo(P('T1'), evs, { segundoPlano: [{ id: 'b1', texto: 'integrar T1', comando: 'node loop.mjs integrar T1', dono: 'orquestrador', desde: AGORA - 60_000 }] } as Partial<EntradaPainel>)), 'integrando');
+  assert.ok(!tem(projNovo(P('T1'), evs, { pausado: true })), 'pausado');
+  assert.ok(!tem(projNovo(P('T1'), D(ciclo('T1', 0, 5)))), 'tudo integrado não é trava');
+});
+
+// pouso e loop: a sessão do painel é S1, medida pelo mod 10 s antes de agora
+const med = (percent: number, sessaoAtual: string | null = 'S1') => ({ x: 50, agoraMs: AGORA, sessaoAtual, leituras: [{ sessao: 'S1', percent, fonte: 'mod', emMs: AGORA - 10_000 }] });
+const pouso = (t: number, sessao = 'S1') => e(t, 'sessao.pouso', { percent: 60, x: 50 }, sessao);
+/** T1 aprovada às 3 (fronteira), integrada às 4; T2 pendente (há o que despachar). */
+const FRONTEIRA: Item[] = [ini(0, 'T1'), con(1, 'T1'), ini(2, 'T1', 'revisor'), ver(3, 'T1', true), integ(4, 'T1')];
+const projP = (itens: Item[], extra: Partial<EntradaPainel> & Record<string, unknown>) =>
+  projNovo(P('T1', 'T2'), D(itens), { agoraMs: AGORA, onboarding: true, ...extra } as Partial<EntradaPainel>);
+
+test('contexto-alto-sem-pouso-avisa-painel (REQ-POU-3): contexto >= X, sem `sessao.pouso` desta sessão na fronteira e loop armado ⇒ "limpar a conversa", quem limpa é o mod', () => {
+  const s = projP(FRONTEIRA, { medicaoPouso: med(62), loopDinamico: 'armado' });
+  assert.ok(motivos(s).includes(motivoContextoAlto(62, 50)), JSON.stringify(motivos(s)));
+  assert.match(desenho(s), /limpar a conversa: contexto em 62 % \(teto 50 %\); quem limpa é o mod, não o agente/);
+  assert.ok(!comandos(s).includes('/clear'), 'quem limpa é o mod: sem botão de /clear');
+  // abaixo de X, sem leitura própria (outra sessão) ou leitura velha ⇒ nada
+  assert.ok(!motivos(projP(FRONTEIRA, { medicaoPouso: med(49), loopDinamico: 'armado' })).some((m) => m.startsWith('limpar a conversa')));
+  assert.ok(!motivos(projP(FRONTEIRA, { medicaoPouso: med(62, 'S9'), loopDinamico: 'armado' })).some((m) => m.startsWith('limpar a conversa')));
+  // entrega concluída (tudo integrado, sem pendência de aprendizado): o Stop também não avisa
+  const tudo = D([...FRONTEIRA, ...ciclo('T2', 10, 15)]);
+  const ap = pendenciasAprendizado(P('T1', 'T2'), tudo).map((x) => e(20, 'aprendizado.nada', { gatilho: { sessao: x.sessao, seq: x.seq }, motivo: 'teste' }, 'ap'));
+  assert.ok(ap.length > 0);
+  assert.ok(!motivos(projP([...FRONTEIRA, ...ciclo('T2', 10, 15), ...ap], { medicaoPouso: med(62), loopDinamico: 'armado' })).some((m) => m.startsWith('limpar a conversa')), 'concluir');
+  // pouso desta sessão numa fronteira anterior (antes do último veredito) não conta: avisa
+  assert.ok(motivos(projP([pouso(-1), ...FRONTEIRA], { medicaoPouso: med(62), loopDinamico: 'armado' })).includes(motivoContextoAlto(62, 50)));
+  // esta sessão já pousou nesta fronteira ⇒ o aviso de contexto não sai: o que aparece é o pedido de /clear (a regra única `pedidoDeClear`), adiado ou não
+  const pousou = projP([...FRONTEIRA, pouso(5, 'S1')], { medicaoPouso: med(62), loopDinamico: 'armado' });
+  assert.deepEqual(motivos(pousou).filter((m) => m.startsWith('limpar a conversa')), ['limpar a conversa'], JSON.stringify(motivos(pousou)));
+  const adiado = projP([...FRONTEIRA, pouso(5, 'S1'), e(6, 'dono.resposta', { pergunta: 'S1:1', rotulo: 'agora não (loop parado, contexto em 60 %)' }, 'S1')], { medicaoPouso: med(62), loopDinamico: 'armado' });
+  assert.ok(!motivos(adiado).some((m) => m.startsWith('limpar a conversa')), `adiado: o pedido some e o aviso de contexto não o repete ${JSON.stringify(motivos(adiado))}`);
+});
+
+test('contexto-alto-so-com-loop-armado (REQ-POU-4): sem o loop armado nunca há "limpar a conversa"; desligado ⇒ "ligar o loop automático"', () => {
+  const nc = projP(FRONTEIRA, { medicaoPouso: med(62) });
+  assert.ok(!motivos(nc).some((m) => m.startsWith('limpar a conversa') || m.startsWith('ligar o loop')), 'não conferível: nada');
+  const off = projP(FRONTEIRA, { medicaoPouso: med(62), loopDinamico: 'ausente' });
+  assert.ok(!motivos(off).some((m) => m.startsWith('limpar a conversa')), JSON.stringify(motivos(off)));
+  assert.ok(motivos(off).includes(MOTIVO_LIGAR_LOOP));
+});
+
+test('sem-loop-dinamico-avisa-painel (REQ-POU-4): com onboarding, sinal "ausente" da sessão e trabalho a seguir ⇒ "ligar o loop automático" com o botão; senão nada', () => {
+  const s = projP(FRONTEIRA, { loopDinamico: 'ausente' });
+  const it = s.depende.find((i) => i.motivo === MOTIVO_LIGAR_LOOP);
+  assert.ok(it !== undefined, JSON.stringify(motivos(s)));
+  assert.deepEqual(it.acoes, [{ rotulo: 'ligar o loop', comando: CMD_LIGAR_LOOP }]);
+  assert.match(desenho(s), /ligar o loop automático: sem ele nada retoma o trabalho depois do pouso/);
+  const sem = (extra: Record<string, unknown>, itens: Item[] = FRONTEIRA) => !motivos(projP(itens, extra)).includes(MOTIVO_LIGAR_LOOP);
+  assert.ok(sem({ loopDinamico: 'armado' }), 'armado');
+  assert.ok(!sem({ loopDinamico: null }), 'não conferível (nao_conferivel, velho, sem arquivo) = desligado, a régua do Stop');
+  assert.ok(sem({}), 'sem o sinal lido');
+  assert.ok(sem({ loopDinamico: 'ausente', onboarding: false }), 'sem onboarding o mod não grava o sinal');
+  assert.ok(sem({ loopDinamico: 'ausente' }, [...FRONTEIRA, ...ciclo('T2', 10, 15)]), 'tudo integrado: nada a seguir');
+});
+
+test('clear-so-com-wakeup-painel (REQ-POU-4, aprendizado 185): pouso pendente com o loop desligado ⇒ nenhum /clear no painel; armado ⇒ o "limpar" de sempre', () => {
+  const itens = [...FRONTEIRA, pouso(5, 'S1')];
+  const off = projP(itens, { medicaoPouso: med(62), loopDinamico: 'ausente' });
+  assert.ok(!comandos(off).includes('/clear'), JSON.stringify(off.depende));
+  assert.ok(!motivos(off).includes('limpar a conversa'));
+  assert.ok(motivos(off).includes(MOTIVO_LIGAR_ANTES_DO_CLEAR));
+  assert.equal(motivos(off).filter((m) => m.startsWith('ligar o loop')).length, 1, 'um item só');
+  // r1 MAJOR-1: não conferível (null) é desligado: nunca /clear, manda ligar o loop
+  const nc = projP(itens, { medicaoPouso: med(62), loopDinamico: null });
+  assert.ok(!comandos(nc).includes('/clear'), JSON.stringify(nc.depende));
+  assert.ok(motivos(nc).includes(MOTIVO_LIGAR_ANTES_DO_CLEAR));
+  const on = projP(itens, { medicaoPouso: med(62), loopDinamico: 'armado' });
+  assert.ok(comandos(on).includes('/clear'));
+  assert.ok(motivos(on).includes('limpar a conversa'));
+});
+
+// ---------------------------------------------------------------- GM-15 T36 r1 MAJOR-3 (emenda 25 m.4): emenda aplicada e revertida pelo dono
+
+test('painel-spec-divergente-interroga-com-motivo: a spec vira "?" com o motivo e o DEPENDE não ganha item; o desfazer devolve o ✓', () => {
+  const SPEC = 'docs/superpowers/specs/2026-11-20-gm12-design.md';
+  const [A, B, C] = ['a', 'b', 'c'].map((x) => x.repeat(64));
+  const fatos = (sha: string) => ({ branch: 'feat/GM-12-x', idPadrao: '[A-Z]+-\\d+', specs: [{ caminho: SPEC, pbi: 'GM-12', sha256: sha, secoes: 3, titulo: 'x' }], plano: { tasks: ['T1'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' });
+  const base: Item[] = [
+    e(1, 'spec.aprovada', { spec: SPEC, sha256: A }, 'dono'),
+    e(2, 'emenda.proposta', { req: 'REQ-DIA-1', diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'tecnica' }, 'emendas'),
+    e(3, 'spec.emendada', { proposta_seq: 1, origem: 'sombra' }, 'sombra'),
+    e(4, 'spec.aplicada', { seq: 1, spec: SPEC, sha256_antes: A, sha256_depois: B }, 'loop'),
+  ];
+  const projeta = (itens: Item[], sha: string) => projetarPainel(P('T1'), D(itens), entrada({ fatos: fatos(sha) } as Partial<EntradaPainel>) as EntradaPainel);
+  const controle = projeta(base, B);
+  assert.equal(controle.trilha.marcas[1], '✓', 'a aprovação da Sombra vale: sem divergência');
+  const rev = e(5, 'emenda.rejeitada', { proposta_seq: 1, origem: 'dono' }, 'dono');
+  const s = projeta([...base, rev], B);
+  assert.equal(s.trilha.marcas[1], '?');
+  assert.equal(s.trilha.motivos[1], 'texto da emenda 1 revertida ainda na spec');
+  assert.equal(JSON.stringify(s.depende).includes('revertida'), false, `nada no DEPENDE: ${JSON.stringify(s.depende)}`);
+  assert.equal(s.depende.some((i) => /spec aguardando|aprovar a spec|aprovar a versão/.test(i.motivo)), false, 'o sha B é o da cadeia: o dono não é chamado a aprovar');
+  const desfeito = projeta([...base, rev, e(6, 'spec.aplicada', { seq: 1, spec: SPEC, sha256_antes: B, sha256_depois: C, reverte: true }, 'loop')], C);
+  assert.equal(desfeito.trilha.marcas[1], '✓');
+  assert.equal(desfeito.trilha.motivos[1], null);
+});
+
+// c2 MAJOR-1 (r2): o sinal tem de estar no painel DESENHADO, no ramo COM plano (fase null, só a linha PLANO) e no sem plano (a trilha), nos 2 presets, em 80 e 120 colunas
+test('painel-spec-divergente-desenhada: o "?" e o motivo aparecem no texto desenhado com plano e sem plano, nos 2 presets, em 80 e 120 colunas; o controle não os tem', async () => {
+  const SPEC = 'docs/superpowers/specs/2026-11-20-gm12-design.md';
+  const [A, B, C] = ['a', 'b', 'c'].map((x) => x.repeat(64));
+  const fatos = (sha: string) => ({ branch: 'feat/GM-12-x', idPadrao: '[A-Z]+-\\d+', specs: [{ caminho: SPEC, pbi: 'GM-12', sha256: sha, secoes: 3, titulo: 'x' }], plano: { tasks: ['T1'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' });
+  const base: Item[] = [
+    e(1, 'spec.aprovada', { spec: SPEC, sha256: A }, 'dono'),
+    e(2, 'emenda.proposta', { req: 'REQ-DIA-1', diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'tecnica' }, 'emendas'),
+    e(3, 'spec.emendada', { proposta_seq: 1, origem: 'sombra' }, 'sombra'),
+    e(4, 'spec.aplicada', { seq: 1, spec: SPEC, sha256_antes: A, sha256_depois: B }, 'loop'),
+  ];
+  const rev = e(5, 'emenda.rejeitada', { proposta_seq: 1, origem: 'dono' }, 'dono');
+  const desfaz = e(6, 'spec.aplicada', { seq: 1, spec: SPEC, sha256_antes: B, sha256_depois: C, reverte: true }, 'loop');
+  const MOTIVO = 'texto da emenda 1 revertida ainda na spec';
+  const desenha = (itens: Item[], sha: string, comPlano: boolean, preset: 'esquadrao' | 'executivo', largura: number): string => {
+    const s = projetarPainel(comPlano ? P('T1') : null, D(itens), entrada({ fatos: fatos(sha) } as Partial<EntradaPainel>) as EntradaPainel);
+    return renderPainel(s, { preset, tema: 'mono', narracao: true, largura }).map((l) => l.map((x) => x.texto).join('')).join('\n');
+  };
+  for (const comPlano of [true, false]) for (const preset of ['esquadrao', 'executivo'] as const) for (const largura of [80, 120]) {
+    const rotulo = `${comPlano ? 'com' : 'sem'} plano · ${preset} · ${largura}`;
+    const d = desenha([...base, rev], B, comPlano, preset, largura);
+    // a linha exata da spec (não "ctx ?"/"tok ?"/"CI ● ?"): com plano é a linha própria `? spec · <motivo>`; sem plano, o "? <motivo>" na linha da FASE
+    const forma = comPlano ? /^\? spec · texto da emenda \d+ revertida ainda na spec/m : /^FASE .* · \? texto da emenda \d+ revertida ainda na spec/m;
+    assert.match(d, forma, `${rotulo}: o "?" da spec com o motivo na mesma linha\n${d}`);
+    assert.ok(d.includes(MOTIVO), `${rotulo}: o motivo no desenho\n${d}`);
+    for (const l of d.split('\n')) assert.ok([...l].length <= largura, `${rotulo}: linha passa de ${largura}: ${l}`);
+    assert.ok(!desenha(base, B, comPlano, preset, largura).includes('revertida'), `${rotulo}: controle sem divergência`);
+    assert.ok(!desenha([...base, rev, desfaz], C, comPlano, preset, largura).includes('revertida'), `${rotulo}: desfeito`);
+  }
+  // o que o `painel.mjs texto` desenha é o `dist` (o CLI importa o dist): o mesmo texto com plano e sem plano
+  const dist = (await import(join(AQUI, '..', 'dist', 'painel.js'))) as typeof import('../src/painel.ts');
+  for (const comPlano of [true, false]) {
+    const s = dist.projetarPainel(comPlano ? P('T1') : null, D([...base, rev]), entrada({ fatos: fatos(B) } as Partial<EntradaPainel>) as EntradaPainel);
+    const d = dist.renderPainel(s, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 80 }).map((l) => l.map((x) => x.texto).join('')).join('\n');
+    assert.ok(d.includes('?') && d.includes(MOTIVO), `dist ${comPlano ? 'com' : 'sem'} plano\n${d}`);
+  }
 });

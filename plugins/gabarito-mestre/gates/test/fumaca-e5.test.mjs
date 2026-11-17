@@ -123,6 +123,29 @@ test('fumaca-registro-deterministico: 2 execuções, mesmo sha256 e mesmos bytes
 const detectado = (c) => c.detectar.j;
 const respondidas = (c) => Object.keys(c.respostas);
 
+// GM-15 T14 (AUT-2 a): a pergunta de autonomia tem 3 respostas, cada uma grava as 4 chaves. Tabela escrita aqui, à mão, sem importar o produto.
+const AUT4 = {
+  espera: { entrega: false, guarda: 'nenhuma', julga_emendas: false, libera_teto: false },
+  trabalha: { entrega: false, guarda: 'orquestrador', julga_emendas: true, libera_teto: true },
+  publica: { entrega: true, guarda: 'orquestrador', julga_emendas: true, libera_teto: true },
+};
+/** `configEsperada` (oráculo da caminhada, só com a autonomia booleana) + as chaves `guarda` e `sombra` da resposta, logo depois de `entrega`. Resposta nula (config mista sem escolha) não grava nenhuma das 4. */
+function configEsperada4(antes, itens, perguntas, respostas) {
+  const r = respostas.autonomia;
+  const base = JSON.parse(configEsperada(antes, itens, perguntas, { ...respostas, autonomia: r == null ? undefined : AUT4[r].entrega }));
+  if (r == null) return `${JSON.stringify(base, null, 2)}\n`;
+  const out = {};
+  for (const k of Object.keys(base)) {
+    if (k === 'guarda' || k === 'sombra') continue;
+    out[k] = base[k];
+    if (k === 'entrega') {
+      out.guarda = { ...(antes.guarda ?? {}), autonomia: AUT4[r].guarda };
+      out.sombra = { ...(antes.sombra ?? {}), julga_emendas: AUT4[r].julga_emendas, libera_teto: AUT4[r].libera_teto };
+    }
+  }
+  return `${JSON.stringify(out, null, 2)}\n`;
+}
+
 test('fumaca-onboarding-respostas: respostas montadas das perguntas REAIS de `detectar`; a config gravada é, byte a byte, a esperada; o dry-run não escreve', () => {
   const FIXAS = ['politica', 'autonomia', 'perfil'];
   for (const [nome, c] of Object.entries({ completa: o.onboarding.completa, monorepo: o.onboarding.monorepo, configAntiga: o.onboarding.configAntiga })) {
@@ -137,7 +160,12 @@ test('fumaca-onboarding-respostas: respostas montadas das perguntas REAIS de `de
     assert.ok(ids.length <= 5, `${nome}: ${ids.length} perguntas`);
     assert.deepEqual(condicionais, abertos.slice(0, 5 - FIXAS.length), `${nome}: uma pergunta por fato aberto, na ordem dos itens`);
     assert.deepEqual(respondidas(c).sort(), [...ids].sort(), `${nome}: todas as perguntas respondidas, só elas`);
-    for (const p of d.perguntas) assert.ok(p.opcoes.some((x) => x.valor === c.respostas[p.id]), `${nome}: ${p.id} fora das opções`);
+    for (const p of d.perguntas) assert.ok((p.mista && c.respostas[p.id] === null) || p.opcoes.some((x) => x.valor === c.respostas[p.id]), `${nome}: ${p.id} fora das opções`);
+    if (c.respostas.autonomia === null) { // config mista/legada sem escolha: o `gravar` recusa, no dry-run e de verdade, e nada é escrito
+      for (const r of [c.seco, c.gravar]) assert.deepEqual([r.rc, r.j.ok, r.j.erro], [1, false, 'resposta_fora_das_opcoes'], `${nome}: ${r.out}`);
+      assert.equal(c.depois, c.antesTexto, `${nome}: sem escolha, o config mudou`);
+      continue;
+    }
     // o dry-run: ok, e NADA escrito
     assert.equal(c.seco.rc, 0, c.seco.out);
     assert.equal(c.seco.j.ok, true);
@@ -146,7 +174,7 @@ test('fumaca-onboarding-respostas: respostas montadas das perguntas REAIS de `de
     // a gravação: byte a byte a config das respostas
     assert.equal(c.gravar.rc, 0, c.gravar.out);
     assert.equal(c.gravar.j.ok, true);
-    assert.equal(c.depois, configEsperada(c.config, d.itens, d.perguntas, c.respostas), `${nome}: config gravada difere da esperada`);
+    assert.equal(c.depois, configEsperada4(c.config, d.itens, d.perguntas, c.respostas), `${nome}: config gravada difere da esperada`);
     assert.deepEqual(c.gravar.j.naoDetectado, JSON.parse(c.depois).onboarding.naoDetectado);
     assert.deepEqual(c.tmp, [], `${nome}: sobrou arquivo temporário`);
     assert.ok(!c.detectar.out.includes('SEGREDO-NAO-VAZAR') && !c.depois.includes('SEGREDO-NAO-VAZAR'), `${nome}: a URL do conector vazou`);
@@ -157,7 +185,8 @@ test('fumaca-onboarding-respostas: respostas montadas das perguntas REAIS de `de
   assert.deepEqual(c.detectar.j.perguntas.map((p) => p.id).sort(), [...FIXAS].sort());
   assert.deepEqual(c.detectar.j.itens.map((i) => i.estado), ['detectado', 'detectado', 'detectado', 'detectado', 'detectado']);
   const cfg = JSON.parse(c.depois);
-  assert.deepEqual([cfg.entrega.politica, cfg.entrega.autonomia, cfg.entrega.base], ['janela', true, 'trunk']);
+  assert.deepEqual([cfg.entrega.politica, cfg.entrega.autonomia, cfg.entrega.base], ['janela', false, 'trunk']);
+  assert.deepEqual([cfg.guarda.autonomia, cfg.sombra.julga_emendas, cfg.sombra.libera_teto], ['orquestrador', true, true], 'a resposta 2 ("trabalha") grava as 4 chaves juntas e não liga entrega.autonomia');
   assert.deepEqual(cfg.entrega.janela, { dias: [1, 2, 3, 4, 5], inicio: '09:00', fim: '17:00', fuso: 'UTC' });
   assert.equal(cfg.orquestracao.perfil, c.respostas.perfil);
   assert.deepEqual(cfg.onboarding.naoDetectado, []);
@@ -173,26 +202,31 @@ test('fumaca-onboarding-respostas: respostas montadas das perguntas REAIS de `de
   assert.equal('fatos' in mc.onboarding, false, 'ambientes sem opção: nada gravado para ele');
 });
 
-test('fumaca-onboarding-config-1-1-x-como-default: config da 1.1.x ⇒ respostas default preservam a política, ligam a autonomia e não mexem no que é do dono', () => {
+test('fumaca-onboarding-config-1-1-x-como-default: config da 1.1.x ⇒ respostas default preservam a política, não promovem a autonomia e não mexem no que é do dono', () => {
   const c = o.onboarding.configAntiga;
   const antes = o.onboarding.configAntigaAntes;
   // os defaults vêm da config existente, lidos da pergunta real
   const por = Object.fromEntries(c.detectar.j.perguntas.map((p) => [p.id, p]));
   assert.equal(por.politica.default, 'continua');
-  assert.equal(por.autonomia.default, true, 'a 1.1 que já subia sozinha mantém a escolha');
+  assert.equal(por.autonomia.default, null, 'a 1.1 que já subia sozinha é config mista: sem default, o dono escolhe');
+  assert.equal(por.autonomia.mista, true);
   assert.equal(por.perfil.default, 'padrao');
-  assert.deepEqual(c.respostas, { politica: 'continua', autonomia: true, perfil: 'padrao' });
+  assert.deepEqual(c.respostas, { politica: 'continua', autonomia: null, perfil: 'padrao' });
+  // sem escolha o `gravar` recusa e a config da 1.1.x fica byte a byte como estava: nem promove a autonomia, nem rebaixa
+  assert.equal(c.gravar.rc, 1);
+  assert.equal(c.gravar.j.erro, 'resposta_fora_das_opcoes');
+  assert.equal(c.depois, c.antesTexto);
   const cfg = JSON.parse(c.depois);
-  assert.deepEqual(cfg.entrega, { politica: 'continua', autonomia: true, base: 'trunk' });
+  assert.deepEqual(cfg.entrega, antes.entrega);
+  assert.equal('guarda' in cfg || 'sombra' in cfg, false, 'sem escolha, guarda e sombra não aparecem');
   // o que era do dono fica como estava
   assert.equal(cfg._comment, antes._comment);
   assert.deepEqual(cfg.gates, antes.gates);
-  assert.deepEqual(cfg.versionamento, { ...antes.versionamento, resolvidoEm: '2026-11-09' }, 'branchPadrao e tiposComEscopoDePbi intactos');
+  assert.deepEqual(cfg.versionamento, antes.versionamento, 'branchPadrao e tiposComEscopoDePbi intactos');
   assert.deepEqual([cfg.fluxo.idPadrao, cfg.fluxo.ledgerDir, cfg.fluxo.envelhecimentoDias], ['^[A-Z]+-\\d+$', 'docs/ledgers', 3]);
   assert.deepEqual(cfg.orquestracao.paralelismo, { simultaneos: 3, teto: 4 });
   assert.equal(cfg.orquestracao.modelo.validadeDias, 60);
-  assert.equal(cfg.orquestracao.modelo.resolvidoEm, '2026-11-09');
-  assert.equal(cfg.orquestracao.perfil, 'padrao');
+  assert.equal(cfg.orquestracao.modelo.resolvidoEm, '2026-09-01');
 });
 
 test('fumaca-escolher-e-nao-chuta: a resposta que não está nas opções reais é erro, não valor gravado', () => {

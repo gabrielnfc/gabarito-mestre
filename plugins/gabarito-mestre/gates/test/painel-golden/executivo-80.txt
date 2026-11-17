@@ -1,5 +1,5 @@
 GABARITO · GM-12 E4 Painel                                             executivo
-depende de você: nada
+nada depende de você
 ────────────────────────────────────────────────────────────────────────────────
 Entrega      ▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱ 58%
 Previsão     hoje 17:42 (±9 min, 7 medições)

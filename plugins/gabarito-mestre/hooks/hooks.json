@@ -93,6 +93,50 @@
             "onFailure": "block"
           }
         ]
+      },
+      {
+        "matcher": "^gabarito-mestre:reabrir-entrega$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/gates/scripts/comando-dono.mjs\"",
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "^gabarito-mestre:adiar$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/gates/scripts/comando-dono.mjs\"",
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "^gabarito-mestre:cortar$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/gates/scripts/comando-dono.mjs\"",
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "^gabarito-mestre:reabrir$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/gates/scripts/comando-dono.mjs\"",
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
       }
     ],
     "Stop": [

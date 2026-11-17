@@ -11,6 +11,8 @@ import { colunas, cortar, limpar } from './painel-largura.ts';
 import { barra, blocoTopo, cortarLinha, cortarPorAltura } from './painel-texto.ts';
 import type { LinhaMarcada } from './painel-texto.ts';
 import { alinhar, corEstadoTask, fmtPct, fmtTempo, fmtTok, num, previsao, separador } from './painel-formato.ts';
+import { rotuloAgente } from './projeto.ts';
+import type { EstadoTask } from './loop.ts';
 import type { AgentePainel, CorTema, EstadoPainel, Linha, OpcoesRender, PapelPainel, Segmento } from './tipos.ts';
 
 /**
@@ -181,7 +183,8 @@ function blocoAgentes(e: EstadoPainel, tasks: EstadoPainel['plano']['tasks'], w:
     } else {
       ctxTxt = pctTxt !== '' ? pctTxt : tokTxt !== '' ? tokTxt : `ctx ${MDASH}`;
     }
-    const resto: Linha = [seg(idTask === '' ? 'sem task' : idTask)];
+    // GM-15 T32 (item 5): o rótulo único de `projeto.ts`; a task só é do agente se saiu de `pendente`
+    const resto: Linha = [seg(rotuloAgente({ task: idTask === '' ? null : idTask, papelExibido: null }, new Map(tasks.map((x) => [x.id, x.estado as EstadoTask]))))];
     itens.push({
       glifo: '●', cor: corEstadoTask(a.estadoTask), nome,
       resto: longa ? [...resto, seg(texto(t?.titulo), undefined), seg(sufixo)] : resto,

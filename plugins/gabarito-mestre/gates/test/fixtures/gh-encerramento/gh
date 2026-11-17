@@ -1,0 +1,42 @@
+#!/usr/bin/env node
+// gh falso da GM-15 T4: os PRs #7, #8, #16, #17, #22 e #23 como estariam no GitHub (campos de `gh pr list|view --json`), com o filtro de
+// `--head=<branch>`, `--base <b>`, `--state all|open|merged|closed` e `--search "<ID> in:title"`. Só leitura.
+// Env: GH_PRS_EXTRA (JSON: lista de PRs a mais, na mesma forma), GH_LOG (uma linha por chamada), GH_MODO=rc1 (falha de rede).
+import { appendFileSync } from 'node:fs';
+
+const argv = process.argv.slice(2);
+if (process.env.GH_LOG) appendFileSync(process.env.GH_LOG, `${argv.join(' ')}\n`);
+if (process.env.GH_MODO === 'rc1') { process.stderr.write('falha de rede\n'); process.exit(1); }
+
+const BASE = [
+  // F3 legado: mergeado na `next`, head de outra entrega (GM-9)
+  { number: 7, state: 'MERGED', baseRefName: 'next', headRefName: 'hotfix/GM-7-arquivado', title: 'hotfix(GM-7): 1.1.1 arquivado', mergedAt: '2026-10-18T12:00:00Z' },
+  // o diário o dá como `aberto`; hoje está MERGED e o head é de OUTRA entrega
+  { number: 8, state: 'MERGED', baseRefName: 'next', headRefName: 'enabler/GM-9-fundacao', title: 'enabler(GM-9): E1 fundação', mergedAt: '2026-11-03T12:00:00Z' },
+  // estilo #16: o ID só no título, head `next`, base `main`
+  { number: 16, state: 'MERGED', baseRefName: 'main', headRefName: 'next', title: 'release(GM-13): 2.0.0 (next → main)', mergedAt: '2026-11-11T18:00:00Z' },
+  // a entrega GM-14 entrou na `next` pelo head dela
+  { number: 17, state: 'MERGED', baseRefName: 'next', headRefName: 'enabler/GM-14-clareza', title: 'enabler(GM-14): 2.1.0-alpha.1 clareza para quem usa', mergedAt: '2026-11-14T12:00:00Z' },
+  // e subiu para a `main` por um PR de título com o ID, head `next`
+  { number: 22, state: 'MERGED', baseRefName: 'main', headRefName: 'next', title: 'release(GM-14): 2.1.0-alpha.1 (next → main)', mergedAt: '2026-11-15T12:00:00Z' },
+  // hotfix da GM-15 na `next`: o head casa o ID, a base não é a `main`
+  { number: 23, state: 'MERGED', baseRefName: 'next', headRefName: 'hotfix/GM-15-alpha2', title: 'hotfix(GM-15): alpha.2', mergedAt: '2026-11-15T20:00:00Z' },
+];
+const PRS = [...BASE, ...(process.env.GH_PRS_EXTRA ? JSON.parse(process.env.GH_PRS_EXTRA) : [])];
+const flag = (nome) => { const i = argv.findIndex((a) => a === nome || a.startsWith(`${nome}=`)); return i < 0 ? undefined : argv[i].includes('=') ? argv[i].split('=').slice(1).join('=') : argv[i + 1]; };
+const campos = (flag('--json') ?? '').split(',').filter(Boolean);
+const so = (p) => Object.fromEntries(campos.map((c) => [c, p[c] ?? null]));
+
+if (argv[0] === 'pr' && argv[1] === 'view') {
+  const p = PRS.find((x) => String(x.number) === argv[2]);
+  if (!p) { process.stderr.write('no pull requests found\n'); process.exit(1); }
+  process.stdout.write(JSON.stringify(so(p)));
+} else if (argv[0] === 'pr' && argv[1] === 'list') {
+  const head = flag('--head'); const base = flag('--base'); const state = (flag('--state') ?? 'open').toLowerCase(); const busca = flag('--search');
+  const id = busca ? busca.replace(/ in:title$/, '') : null;
+  const lista = PRS.filter((p) => (head === undefined || p.headRefName === head) && (base === undefined || p.baseRefName === base)
+    && (state === 'all' || p.state.toLowerCase() === state) && (id === null || p.title.includes(id)));
+  process.stdout.write(JSON.stringify(lista.map(so)));
+} else if (argv[0] === 'release' && argv[1] === 'list') {
+  process.stdout.write(JSON.stringify([{ tagName: 'v2.1.0-alpha.1' }]));
+} else { process.stderr.write(`gh falso: ${argv.join(' ')}\n`); process.exit(2); }

@@ -293,6 +293,8 @@ test('exe-numeracao-por-generico: 2 implementadores e 1 correcao, ordem de equip
   const e = clone('em-voo-7-12');
   e.equipe.agentes = [mk('implementador', 'T8', 'implementando'), mk('implementador', 'T9', 'implementando'), mk('correcao', 'T10', 'corrigindo'), mk('revisor', 'T11', 'em_revisao')];
   e.equipe.vivos = 4;
+  // as tasks dos 4 agentes foram iniciadas (`loop.mjs iniciar`): sem isso o agente é "fora do loop" (GM-15 T32)
+  e.plano.tasks = e.plano.tasks.map((x) => (['T8', 'T9', 'T10', 'T11'].includes(x.id) ? { ...x, estado: x.id === 'T10' ? 'corrigindo' : x.id === 'T11' ? 'em_revisao' : 'implementando' } : x)) as typeof e.plano.tasks;
   const t = linhas(e);
   assert.match(t.find((l) => l.includes('implementador 1')) ?? '', /^● implementador 1 +T8 /);
   assert.match(t.find((l) => l.includes('implementador 2')) ?? '', /^● implementador 2 +T9 /);
@@ -314,10 +316,10 @@ test('exe-correcao-sem-titulo-ainda-escreve-sufixo e corte do título preserva o
   }
 });
 
-test('exe-numero-sempre-escrito: um só implementador é "implementador 1"; sem task é "agente 1"', () => {
+test('exe-numero-sempre-escrito: um só implementador é "implementador 1"; sem task é "agente 1" (fora do loop)', () => {
   assert.match(texto(clone('em-voo-7-12')), /● implementador 1 /);
   const t = linhas(clone('sem-task'));
-  assert.match(t.find((l) => l.includes('agente 1')) ?? '', /^● agente 1 +sem task +12% 24k$/);
+  assert.match(t.find((l) => l.includes('agente 1')) ?? '', /^● agente 1 +agente fora do loop +12% 24k$/);
 });
 
 test('exe-sem-agente-fora: ◌ não vira linha de agente, mas conta em "em curso"', () => {

@@ -153,9 +153,15 @@ function exigirSha64(o     , nome        )                {
   return typeof v === 'string' && HASH_RE.test(v) ? null : `campo \`${nome}\` inválido: esperado sha256 em hex minúsculo (64)`;
 }
 
+/** GM-15 T36 (emenda 25 m.4): `reverte`, quando presente, é o literal `true` (o desfazer do texto de emenda revertida pelo dono). */
+function exigirReverte(o     )                {
+  const v = campo(o, 'reverte');
+  return v === undefined || v === true ? null : 'campo `reverte` inválido: esperado true';
+}
+
 const specAplicada        = (o) => primeiro(
-  chaveExtra(o, ['seq', 'spec', 'sha256_antes', 'sha256_depois'], '`spec.aplicada` carrega só {seq, spec, sha256_antes, sha256_depois}'),
-  inteiroPos(o, 'seq'), exigirTexto(o, 'spec'), exigirSha64(o, 'sha256_antes'), exigirSha64(o, 'sha256_depois'),
+  chaveExtra(o, ['seq', 'spec', 'sha256_antes', 'sha256_depois', 'reverte'], '`spec.aplicada` carrega só {seq, spec, sha256_antes, sha256_depois, reverte?}'),
+  inteiroPos(o, 'seq'), exigirTexto(o, 'spec'), exigirSha64(o, 'sha256_antes'), exigirSha64(o, 'sha256_depois'), exigirReverte(o),
 );
 
 function motivoDevolvida(o     )                {
@@ -368,6 +374,8 @@ const FORMAS_FATO                                                               
     numero: inteiroPos, estado: (o, n) => exigirEnum(o, n, ESTADOS_PR), branch: (o, n) => textoLinha(o, n),
     base: (o, n) => (campo(o, n) === undefined ? null : textoLinha(o, n)),
     via: (o, n) => (campo(o, n) === undefined ? null : exigirEnum(o, n, VIAS_ENCERRAMENTO)),
+    // GM-15 T34 (r.13p): a pré-versão semver citada no título ou no head do PR (o que a guarda lê para não dar a entrega como publicada pela virada alpha)
+    pre_versao: (o, n) => (campo(o, n) === undefined ? null : textoLinha(o, n, 64)),
   }],
   ['release', { tag: (o, n) => textoLinha(o, n) }],
   ['agente', { id: (o, n) => textoLinha(o, n), papel: (o, n) => textoLinha(o, n), estado: (o, n) => textoLinha(o, n) }],
@@ -404,7 +412,19 @@ const nota        = (o) => primeiro(
   exigirEnum(o, 'tipo', TIPOS_NOTA), textoLinha(o, 'texto', NOTA_MAX), opcoesDaNota(o),
 );
 
-/** `dono.resposta`: `{pergunta, opcao, rotulo}` OU `{pergunta, sha256, chars}`; misturar, ou qualquer outra chave (`texto`), recusa. */
+/** GM-15 T35 (D-G12 2): rótulo de adiamento de pergunta do dono. Resposta cujo rótulo começa por ele adia; nunca fecha. */
+export const AGORA_NAO = 'agora não';
+/** Rótulo que adia: texto que começa por "agora não" (sem caixa, pontas aparadas). */
+export const ehRotuloDeAdiamento = (rotulo         )          => typeof rotulo === 'string' && rotulo.trim().toLowerCase().startsWith(AGORA_NAO);
+/**
+ * `dono.resposta` que ADIA: a forma própria `{pergunta, rotulo: "agora não…"}`, SEM `opcao` (review r1 MINOR-2). Opção legítima da pergunta que
+ * comece por "agora não", escolhida pelo botão, vem com `opcao` e responde (fecha), nunca adia.
+ */
+export const ehRespostaDeAdiamento = (dados         )          =>
+  dados !== null && typeof dados === 'object' && !Array.isArray(dados) && (dados                           ).opcao === undefined
+  && ehRotuloDeAdiamento((dados                           ).rotulo);
+
+/** `dono.resposta`: `{pergunta, opcao, rotulo}` OU `{pergunta, sha256, chars}` OU, no adiamento, `{pergunta, rotulo: "agora não…"}`; misturar, ou qualquer outra chave (`texto`), recusa. */
 const donoResposta        = (o) => {
   const porOpcao = campo(o, 'opcao') !== undefined || campo(o, 'rotulo') !== undefined;
   const porHash = campo(o, 'sha256') !== undefined || campo(o, 'chars') !== undefined;
@@ -417,6 +437,11 @@ const donoResposta        = (o) => {
     return primeiro(chaveExtra(o, ['pergunta', 'sha256', 'chars'], '`dono.resposta` digitada carrega só {pergunta, sha256, chars}'), perguntaErro, exigirSha256(o), inteiroNaoNegativo(o, 'chars'));
   }
   const opcao = campo(o, 'opcao');
+  // GM-15 T35 (r.9, r.14): o adiamento ("agora não…") não é opção da pergunta: forma própria {pergunta, rotulo}, sem `opcao`
+  const rotulo = campo(o, 'rotulo');
+  if (opcao === undefined && ehRotuloDeAdiamento(rotulo)) {
+    return primeiro(chaveExtra(o, ['pergunta', 'rotulo'], '`dono.resposta` de adiamento carrega só {pergunta, rotulo}'), perguntaErro, textoLinha(o, 'rotulo', OPCAO_MAX));
+  }
   const opcaoErro = opcao === undefined ? obrigatorio('opcao') : typeof opcao === 'number' && Number.isInteger(opcao) && opcao >= 1 && opcao <= 4 ? null : 'campo `opcao` inválido: esperado inteiro de 1 a 4';
   return primeiro(chaveExtra(o, ['pergunta', 'opcao', 'rotulo'], '`dono.resposta` carrega só {pergunta, opcao, rotulo}'), perguntaErro, opcaoErro, textoLinha(o, 'rotulo', OPCAO_MAX));
 };
@@ -453,6 +478,9 @@ const guardaAutonomiaUsada        = (o) => primeiro(
   textoLinha(o, 'anel', 60), textoLinha(o, 'alvo', 200), textoLinha(o, 'acao', 60), textoLinha(o, 'ambiente', 60),
 );
 
+/** Tamanho máximo de `abordagem_nova` (a borda `liberar --abordagem-nova` do loop.mjs usa o mesmo limite). */
+const ABORDAGEM_NOVA_MAX = 500;
+
 /** `task.reaberta`: `origem` ∈ dono|retomada|sombra (F7 a); `hash` só na liberação da Sombra; a volta de `fora` ({de: 'fora'}) leva `fonte` e nunca `hash`. */
 const taskReaberta        = (o) => {
   const origem = campo(o, 'origem');
@@ -468,6 +496,14 @@ const taskReaberta        = (o) => {
     );
   }
   const hash = campo(o, 'hash');
+  // GM-15 T36 r1 (MINOR-3): `abordagem_nova` (replanejar, dividir a task ou emenda proposta) só na liberação da Sombra: texto de 1 linha, 1 a 500 caracteres
+  const abordagem = campo(o, 'abordagem_nova');
+  if (abordagem !== undefined) {
+    if (origem !== 'sombra') return 'campo `abordagem_nova` só na liberação da Sombra (`origem: sombra`)';
+    if (typeof abordagem !== 'string' || abordagem.trim() === '' || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(abordagem) || [...abordagem].length > ABORDAGEM_NOVA_MAX) {
+      return `campo \`abordagem_nova\` inválido: esperado 1 linha de texto (1 a ${ABORDAGEM_NOVA_MAX} caracteres), sem quebra de linha`;
+    }
+  }
   if (origem === 'sombra') {
     if (hash === undefined) return 'campo `hash` ausente: a liberação da Sombra cita a decisão (sha256 em hex minúsculo)';
     return typeof hash === 'string' && HASH_RE.test(hash) ? null : 'campo `hash` inválido: esperado sha256 em hex minúsculo (64)';
@@ -487,6 +523,8 @@ const REGRAS                             = new Map               ([
       return primeiro(
         exigirReq(o), opcionalTexto(o, 'task'), exigirTexto(o, 'diff'), exigirTexto(o, 'fato'), exigirTexto(o, 'alternativa'),
         exigirTexto(o, 'evidencia'), exigirEnum(o, 'causa', CAUSAS), arquivos === undefined ? null : listaDeTextos(o, 'arquivos', { vazia: true }),
+        // GM-15 T11 (REQ-EME-3 B): `origem` só existe como `sombra` (a redação da 3ª proposta); ausente = orquestrador
+        campo(o, 'origem') === undefined ? null : exigirEnum(o, 'origem', ['sombra']),
       );
     },
   ],

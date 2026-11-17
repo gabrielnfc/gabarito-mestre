@@ -13,6 +13,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { raizSegura } from './_raiz-segura.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, symlinkSync, cpSync, chmodSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -40,7 +41,7 @@ const agora = () => (relogio = Math.max(Date.now(), relogio + 1));
 
 /** Repo descartável na branch da entrega, com plano, spec e diário semeado pelo núcleo (nunca à mão). */
 function repo({ plano = PLANO(), spec = 'spec v1\n', semear = [], branch = 'enabler/GM-10-teste' } = {}) {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'aprovar-')));
+  const dir = raizSegura(realpathSync(mkdtempSync(join(tmpdir(), 'aprovar-'))));
   git(dir, 'init', '-q', '-b', branch);
   mkdirSync(join(dir, 'docs'), { recursive: true });
   if (spec !== null) writeFileSync(join(dir, SPEC), spec);

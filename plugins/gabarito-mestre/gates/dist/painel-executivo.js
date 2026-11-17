@@ -11,6 +11,8 @@ import { colunas, cortar, limpar } from './painel-largura.js';
 import { barra, blocoTopo, cortarLinha, cortarPorAltura } from './painel-texto.js';
                                                       
 import { alinhar, corEstadoTask, fmtPct, fmtTempo, fmtTok, num, previsao, separador } from './painel-formato.js';
+import { rotuloAgente } from './projeto.js';
+                                            
                                                                                                                   
 
 /**
@@ -181,7 +183,8 @@ function blocoAgentes(e              , tasks                                , w 
     } else {
       ctxTxt = pctTxt !== '' ? pctTxt : tokTxt !== '' ? tokTxt : `ctx ${MDASH}`;
     }
-    const resto        = [seg(idTask === '' ? 'sem task' : idTask)];
+    // GM-15 T32 (item 5): o rótulo único de `projeto.ts`; a task só é do agente se saiu de `pendente`
+    const resto        = [seg(rotuloAgente({ task: idTask === '' ? null : idTask, papelExibido: null }, new Map(tasks.map((x) => [x.id, x.estado              ]))))];
     itens.push({
       glifo: '●', cor: corEstadoTask(a.estadoTask), nome,
       resto: longa ? [...resto, seg(texto(t?.titulo), undefined), seg(sufixo)] : resto,

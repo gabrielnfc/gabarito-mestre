@@ -16,6 +16,11 @@
  *   proximaAcao: esperar ......... silêncio (exceto `emenda`: systemMessage com as propostas abertas, sem block e sem contador); parar: systemMessage; despachar/integrar: block
  *   concluir ...................... silêncio, ou systemMessage listando as liberações do teto (`task.reaberta` origem `dono`, REQ-LOOP-2, e
  *                                   origem `sombra` como "a Sombra liberou a <task>", GM-14 T36 FIEL-15 c)
+ * Avisos de GM-15 T18 (REQ-AUT-2 c, REQ-POU-3, REQ-POU-4), todos `systemMessage`, nunca `block`, só depois de o loop estar de pé (plano válido, sem agente vivo, sem pausa, sem entrega publicada):
+ *   - `parar` há mais de 30 min (idade = o último evento de progresso ou `loop.parar` do diário): texto com o comando, 1 vez por trava (chave = motivo + início, `.harness/contexto/stop-avisos.<sessao>.json`);
+ *   - contexto próprio (mod, fresco) >= X sem `sessao.pouso` DESTA sessão na fronteira atual: "limpar a conversa", dito que quem limpa é o mod;
+ *   - sem o sinal do loop (T17, `contexto/loop-dinamico.<sessao>.json` da raiz principal, só o `armado` da PRÓPRIA sessão, escrito há até 2 h): "ligar o loop automático" 1 vez por sessão,
+ *     e nunca `/clear` nem "limpar a conversa" enquanto o loop não está armado (aprendizado 185). Só com onboarding: sem ele o mod não grava o sinal.
  * Pouso pendente (T18): `.harness/pouso-pendente.json {entrega, linhas}`, gravado pelo mod ao negar `Agent` porque a ação é `pousar`.
  * Marcador válido (mesma entrega e mesma contagem de progresso) ⇒ apaga marcador e contador, avisa e NÃO bloqueia, para o turno
  * terminar e o `turn.complete` pousar. Ausente, de outra contagem, ilegível ou que não apaga: regra normal, nunca silencia duas vezes.
@@ -30,7 +35,7 @@ import { join, dirname, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { idPadraoDe } from '../lib/config.mjs';
+import { idPadraoDe, lerConfigOrigin } from '../lib/config.mjs';
 import { raizPorFs, inferirPbi } from '../lib/git.mjs';
 import { temOnboarding } from './cartao-sessao.mjs';
 
@@ -53,6 +58,10 @@ const MOTIVO = {
   diario_invalido: 'diário inválido',
   nao_conseguiu: 'sem próxima ação e sem agente vivo',
 };
+export const TRAVA_LONGA_MS = 30 * 60_000;
+/** O mod regrava o sinal a cada Stop; um `armado` mais velho que isto (turno enorme, mod parado) não prova wakeup: vira "não conferível". Futuro > 5 min também. */
+export const SINAL_FRESCO_MS = 2 * 60 * 60_000;
+const AVISOS_MAX = 50;
 const DIST = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist');
 
 const aviso = (systemMessage) => ({ systemMessage });
@@ -88,6 +97,20 @@ export function saidaParaAcao(acao, entrega) {
       const resto = tasks.length - lista.length;
       return { decision: 'block', reason: `Loop da entrega ${e} segue: integre ${lista.join(', ')}${resto > 0 ? ` e mais ${resto}` : ''}.` };
     }
+    case 'sombra_decide_teto': {
+      // GM-15 T39: ação do Stop (não do núcleo): a task no teto é decidida pela Sombra, a pergunta fechada é a ação pendente.
+      if (typeof acao.task !== 'string' || acao.task === '') return null;
+      const t = limpo(acao.task);
+      return { decision: 'block', reason: `Loop da entrega ${e} segue: a task ${t} está no teto de rodadas e quem decide é a Sombra (sombra.libera_teto ligado, sem freio): faça a pergunta fechada (sombra.mjs perguntar --task ${t} --libera-teto), despache a Sombra e aplique a decisão (loop.mjs liberar ${t} --origem sombra --hash <h>).` };
+    }
+    case 'retomar': {
+      // GM-15 T12: task em voo cujo agente morreu; 1 reabertura por task (a 2ª morte vira nao_conseguiu no núcleo).
+      // Aviso, nunca block: quem reabre com o mod é ele, no FIM do turno (D1, REQ-LOOP-5); um block prenderia o turno e o mod nunca reabriria
+      // (correção do integrar da T12: a fumaça do loop ficava em `retomar` até o teto de ciclos).
+      if (typeof acao.task !== 'string' || acao.task === '') return null;
+      const t = limpo(acao.task);
+      return aviso(`Loop da entrega ${e}: o agente da task ${t} morreu; reabra a task ${t} (loop.mjs reabrir ${t}) e despache de novo (com o mod, ele reabre no fim do turno).`);
+    }
     case 'parar': {
       const id = typeof acao.motivo === 'string' ? limpo(acao.motivo) : '?';
       const task = acao.task !== undefined ? ` (task ${limpo(acao.task)})` : '';
@@ -105,6 +128,13 @@ export function saidaParaAcao(acao, entrega) {
     default:
       return null; // concluir e pousar: o hook não tem o que dizer
   }
+}
+
+/** GM-15 T39: a Sombra decide o teto desta task? A MESMA `sombraDecideOTeto` do núcleo (dist/loop.js) com `sombra.libera_teto` lido só de origin/HEAD (`liberaTetoDeOrigin`). Nunca lança. */
+function sombraDecideTeto(nucleo, plano, eventos, task, raiz) {
+  try {
+    return nucleo.sombraDecideOTeto(plano, eventos, task, nucleo.liberaTetoDeOrigin(lerConfigOrigin(raiz))) === true;
+  } catch { return false; }
 }
 
 async function carregar(nome) {
@@ -308,8 +338,143 @@ function avisoLiberacoes(eventos, entrega) {
   return aviso(`Loop da entrega ${limpo(entrega)} concluído. Liberações do teto: ${lista.join(', ')}${resto > 0 ? ` e mais ${resto}` : ''}. Se não foi você, confira o diário.`);
 }
 
+const SHELL_INTEGRANDO = /\b(integrar|gate-task)\b/;
+const SHELL_ENCERRADO = new Set(['idle', 'completed', 'failed', 'killed']);
+
+/**
+ * Trabalho vivo em segundo plano: subagent (qualquer status) ou shell de fundo do orquestrador que integra (GM-15 STP-1, forma medida no S5:
+ * `{type:'shell', status:'running', description, command}`). A `description` vem do modelo, então `command` também vale. Outro shell não conta;
+ * shell já encerrado também não.
+ */
+function temTrabalhoVivo(tarefas) {
+  if (!Array.isArray(tarefas)) return false;
+  return tarefas.some((t) => {
+    if (t === null || typeof t !== 'object') return false;
+    if (t.type === 'subagent') return true;
+    if (t.type !== 'shell' || (typeof t.status === 'string' && SHELL_ENCERRADO.has(t.status))) return false;
+    return [t.description, t.command].some((c) => typeof c === 'string' && c.length <= 2000 && SHELL_INTEGRANDO.test(c));
+  });
+}
+
+/** Comando de quem destrava: o teto de rodadas é do dono (`/gabarito-mestre:liberar <task>`), o resto se retoma pelo `/gabarito retomar`. Id fora do padrão cai no genérico. */
+function comandoDaTrava(acao) {
+  if (acao?.motivo === 'teto_rodadas' && typeof acao.task === 'string') {
+    const t = limpo(acao.task);
+    if (/^[\p{L}\p{N}._-]+$/u.test(t)) return `/gabarito-mestre:liberar ${t}`;
+  }
+  return '/gabarito retomar';
+}
+
+/** Texto longo de uma trava com `minutos` de idade: motivo e comando. Puro. */
+export function textoTravaLonga(acao, minutos) {
+  const motivo = MOTIVO[acao?.motivo] ?? (typeof acao?.motivo === 'string' ? limpo(acao.motivo) : '?');
+  return `Parado há ${minutos} min: ${motivo}. Para destravar: \`${comandoDaTrava(acao)}\`.`;
+}
+
+/** Id de sessão aceito no nome do arquivo de avisos (a mesma forma do mod/gabarito.mjs). */
+const ID_AVISOS = /^[A-Za-z0-9-]{1,128}$/;
+
+/**
+ * `.harness/contexto/stop-avisos.<sessao>.json {entrega, trava: string[], loop: string[]}`: o que já foi dito (chaves de trava e sessões já avisadas de loop desligado).
+ * Ausente, ilegível, de outra entrega ou fora da forma ⇒ vazio (só repetiria um aviso, nunca prende nada).
+ */
+function lerAvisos(caminho, entrega) {
+  const vazio = { trava: [], loop: [] };
+  try {
+    const o = JSON.parse(readFileSync(caminho, 'utf8'));
+    const lista = (v) => Array.isArray(v) && v.every((c) => typeof c === 'string');
+    if (o === null || typeof o !== 'object' || o.entrega !== entrega || !lista(o.trava) || !lista(o.loop)) return vazio;
+    return { trava: o.trava, loop: o.loop };
+  } catch {
+    return vazio;
+  }
+}
+
+/** `true` se `chave` já constava em `campo`; senão grava (poda nas últimas 50) e devolve `false`. Gravar falhou ⇒ `false` (o aviso sai; nunca bloqueia, só pode repetir). */
+function jaAvisou(raiz, sessao, entrega, campo, chave) {
+  if (typeof sessao !== 'string' || !ID_AVISOS.test(sessao)) return false; // sem id utilizável não há chave: não grava (o aviso sai)
+  const caminho = join(raiz, '.harness', 'contexto', `stop-avisos.${sessao}.json`);
+  const estado = lerAvisos(caminho, entrega);
+  if (estado[campo].includes(chave)) return true;
+  estado[campo] = [...estado[campo], chave].slice(-AVISOS_MAX);
+  gravarContador(caminho, { entrega, ...estado });
+  return false;
+}
+
+/** Raiz do checkout principal (onde o mod grava `.harness/contexto/`), mesma conta do `pausado`. */
+function raizPrincipal(raiz) {
+  const comum = git(raiz, ['rev-parse', '--git-common-dir']);
+  return comum === null ? raiz : dirname(resolve(raiz, comum));
+}
+
+/** O sinal do loop da T17 para ESTA sessão: `true` só com `armado`, da própria sessão e fresco. Qualquer outra coisa (ausente, corrompido, velho, de outra sessão, mod fora do lugar) ⇒ `false`. */
+async function sinalArmado(raiz, sessao, agoraMs) {
+  if (sessao === null) return false;
+  try {
+    const mod = await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'mod', 'gabarito.mjs')).href);
+    const arquivo = mod.arquivoSinalLoop(sessao);
+    if (arquivo === null) return false;
+    const s = mod.interpretarSinalLoop(readFileSync(join(raizPrincipal(raiz), '.harness', arquivo), 'utf8'), sessao);
+    if (s.estado !== 'armado') return false;
+    const em = Date.parse(s.em);
+    return Number.isFinite(em) && agoraMs - em <= SINAL_FRESCO_MS && em - agoraMs <= 5 * 60_000;
+  } catch {
+    return false;
+  }
+}
+
+/** Percentual da leitura própria; `leituraPropria` ausente ou falhando perde só o aviso de contexto (0), nunca o Stop. */
+function percentePropria(dpp, medicao) {
+  try { return dpp.mod.leituraPropria(medicao)?.percent ?? 0; } catch { return 0; }
+}
+
+/** Há `sessao.pouso` DESTA sessão depois do último `review.veredito` (a fronteira atual)? */
+function pousouNaFronteira(eventos, sessao) {
+  if (sessao === null) return false;
+  let veredito = Number.NEGATIVE_INFINITY;
+  for (const e of eventos) {
+    const t = e?.tipo === 'review.veredito' ? Date.parse(e.ts) : Number.NaN;
+    if (Number.isFinite(t) && t > veredito) veredito = t;
+  }
+  return eventos.some((e) => e?.tipo === 'sessao.pouso' && e.sessao === sessao && Date.parse(e.ts) > veredito);
+}
+
+/** `parar`: o aviso de sempre; com a trava há mais de 30 min, e ainda não dita (motivo + início), o texto longo com o comando. */
+function avisoParar(raiz, sessao, entrega, acao, eventos, tiposDeProgresso, agoraMs) {
+  const saida = saidaParaAcao(acao, entrega);
+  const inicio = eventos
+    .filter((e) => tiposDeProgresso.includes(e.tipo) || e.tipo === 'loop.parar')
+    .reduce((m, e) => Math.max(m, Date.parse(e.ts)), Number.NEGATIVE_INFINITY);
+  if (!Number.isFinite(inicio) || agoraMs - inicio <= TRAVA_LONGA_MS) return saida;
+  if (jaAvisou(raiz, sessao, entrega, 'trava', `${typeof acao.motivo === 'string' ? limpo(acao.motivo) : '?'}@${new Date(inicio).toISOString()}`)) return saida;
+  return aviso(`${saida.systemMessage} ${textoTravaLonga(acao, Math.floor((agoraMs - inicio) / 60_000))}`);
+}
+
+/** Junta ao que o hook decidiu os avisos de contexto e de loop desligado (nunca muda `decision`). `ctx.p` só existe com o loop de pé. */
+function acrescentarAvisos(saida, ctx) {
+  const p = ctx.p;
+  if (p === undefined || p.acao === undefined || p.acao.tipo === 'concluir') return saida;
+  const msgs = [];
+  if (p.noTeto && !p.pousou && p.armado) {
+    msgs.push(`Loop da entrega ${limpo(p.entrega)}: contexto em ${Math.round(p.percent)} % (teto ${p.x} %), é hora de limpar a conversa. Quem limpa é o mod (pouso automático), não o agente: nenhum comando seu é preciso.`);
+  }
+  const precisaDoLoop = p.pendente || p.noTeto || ['despachar', 'integrar', 'pousar', 'sombra_decide_teto'].includes(p.acao.tipo);
+  if (p.onboarding && !p.armado && precisaDoLoop && !p.falouLoop
+    && !jaAvisou(p.raiz, p.sessao, p.entrega, 'loop', p.sessao ?? 'sem-sessao')) {
+    msgs.push(`Loop da entrega ${limpo(p.entrega)}: ligar o loop automático (um /loop sem intervalo, com a tarefa de seguir o loop da entrega): sem o sinal dele nesta sessão nada retoma o trabalho depois do pouso.`);
+  }
+  if (msgs.length === 0) return saida;
+  const base = saida?.systemMessage;
+  return { ...(saida ?? {}), systemMessage: [base, ...msgs].filter((m) => typeof m === 'string' && m !== '').join(' ') };
+}
+
 /** Núcleo do hook. Devolve o objeto a imprimir, ou `null` para silêncio. */
 export async function executar(texto, ambiente = process.env, cwdProcesso = process.cwd()) {
+  const ctx = {};
+  return acrescentarAvisos(await decidir(texto, ambiente, cwdProcesso, ctx), ctx);
+}
+
+async function decidir(texto, ambiente, cwdProcesso, ctx) {
   const { entrada, aviso: erroEntrada } = lerEntrada(texto);
   if (erroEntrada) return erroEntrada;
 
@@ -349,7 +514,7 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   if (!v.ok) return aviso(`Loop: plano.json da entrega ${limpo(entrega)} inválido: ${curto(v.erro)}; nada decidido`);
   const plano = v.plano;
 
-  if (Array.isArray(entrada.background_tasks) && entrada.background_tasks.some((t) => t !== null && typeof t === 'object' && t.type === 'subagent')) return null;
+  if (temTrabalhoVivo(entrada.background_tasks)) return null;
   if (pausado(raiz)) return null;
 
   const dl = await carregar('loop');
@@ -376,8 +541,11 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   // GM-14 T53 (emendas 52 e 53, I1): com o mod medindo ESTA sessão só a leitura dela (`.harness/contexto/<sessao>.json`, fonte `mod`, `em` <= 120 s) decide; nenhuma outra
   // sessão libera ou prende esta. A regra é a mesma `pousoPendente` (nenhuma 2ª definição). Arquivo ausente/ilegível ⇒ sem leitura ⇒ a regra sem mod.
   const sessaoAtual = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;
-  const xEnv = process.env.GABARITO_POUSO_X;
-  const xTeto = xEnv !== undefined && /^\d{1,3}$/.test(xEnv) && Number(xEnv) >= 1 && Number(xEnv) <= 100 ? Number(xEnv) : X_PADRAO;
+  // GM-15 T16 (HIG-1): o mesmo `lerX` do mod e do `pouso.mjs` (decimal em (0, 100], inválido ⇒ 50); dist/pouso.js ausente ⇒ X padrão, sem lançar.
+  const dpx = await carregar('pouso');
+  const xTeto = dpx.ok && typeof dpx.mod.lerX === 'function' ? dpx.mod.lerX(process.env.GABARITO_POUSO_X).x : X_PADRAO;
+  const onboarding = temOnboarding(raiz);
+  const armado = await sinalArmado(raiz, sessaoAtual, Date.now());
   let medicao;
   let pendente = false;
   let noTeto = false;
@@ -390,7 +558,8 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
       } catch { /* sem arquivo: sem leitura */ }
     }
     medicao = { x: xTeto, agoraMs: Date.now(), sessaoAtual, leituras };
-    pendente = dpp.mod.pousoPendente(eventos, temOnboarding(raiz), medicao).pendente === true;
+    // GM-15 T35 (r.12, r.9): a regra única `pedidoDeClear` (dist/pouso.js): sem leitura própria não há pedido de /clear (D-P13); o adiado segue pendente.
+    pendente = dpx.ok && typeof dpx.mod.pedidoDeClear === 'function' ? dpx.mod.pedidoDeClear(eventos, onboarding, medicao).pendente === true : false;
     noTeto = dpp.mod.noTeto(medicao) === true;
   } catch { pendente = false; noTeto = false; }
   // "Aguardando o pouso do mod" só é verdade com o mod medindo AGORA (leitura fresca: a mesma situação da regra única), com veredito (há fronteira) e sem o mod já
@@ -413,6 +582,10 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   // Diário que a `proximaAcao` recusa: aviso de sempre, sem pendência (calculada sobre ele, o CLI do aprendizado não a fecharia).
   if (acao?.tipo === 'parar' && acao.motivo === 'diario_invalido') return saidaParaAcao(acao, entrega);
 
+  ctx.p = {
+    raiz, entrega, sessao: sessaoAtual, acao, pendente, noTeto, onboarding, armado, x: xTeto,
+    percent: percentePropria(dpp, medicao), pousou: pousouNaFronteira(eventos, sessaoAtual), falouLoop: false,
+  };
   // Pendência à parte: `parar` por ci_vermelho/teto_rodadas/nao_conseguiu vence o `aprender`, e o `loop.parar` do mod abre pendência `parar`.
   if (ord.ok) {
     const dpend = await carregar('pendencias');
@@ -425,13 +598,24 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
     }
     if (Array.isArray(abertas) && abertas.length > 0) return avisoAprendizado(raiz, entrega, abertas);
     const iParar = ord.eventos.map((e) => e.tipo).lastIndexOf('loop.parar');
-    if (iParar >= 0 && !ord.eventos.slice(iParar + 1).some((e) => TIPOS_DE_TASK.includes(e.tipo))) return null;
+    if (iParar >= 0 && !ord.eventos.slice(iParar + 1).some((e) => TIPOS_DE_TASK.includes(e.tipo))) {
+      // GM-15 T39 r1 (MAJOR-1): `loop.parar {teto_rodadas, task}` (ponte do mod que falhou, mod antigo) NÃO silencia o Stop quando a Sombra decide o teto dessa task: a pergunta à Sombra é ação permitida.
+      const dp = ord.eventos[iParar]?.dados;
+      const sombraDevia = acao.tipo === 'parar' && acao.motivo === 'teto_rodadas' && typeof acao.task === 'string'
+        && dp?.motivo === 'teto_rodadas' && dp?.task === acao.task && sombraDecideTeto(dl.mod, plano, ord.eventos, acao.task, raiz);
+      if (!sombraDevia) return null;
+    }
   }
   if (falhaAcao !== null) return falhaAcao;
   if (acao.tipo === 'concluir') return avisoLiberacoes(eventos, entrega);
   // Pouso pendente: nada novo começa e o Stop não conta "sem progresso" (a conversa precisa de /clear, não de despacho).
   if (pendente && (acao.tipo === 'despachar' || acao.tipo === 'integrar' || acao.tipo === 'pousar' || (acao.tipo === 'parar' && acao.motivo === 'sem_pouso'))) {
     // com o mod ativo quem limpa é ele (T53): o Stop nunca pede despacho e não manda o dono digitar /clear
+    // aprendizado 185 (REQ-POU-4): sem o wakeup armado nunca se pede /clear; manda ligar o loop primeiro
+    if (!modAtivo && !armado) {
+      ctx.p.falouLoop = true;
+      return aviso(`Loop da entrega ${limpo(entrega)}: pouso pendente; ligar o loop automático (um /loop sem intervalo, com a tarefa de seguir o loop da entrega) antes de limpar a conversa, porque sem ele nada retoma depois (nada novo é despachado antes)`);
+    }
     return aviso(modAtivo
       ? `Loop da entrega ${limpo(entrega)}: aguardando o pouso do mod (a conversa precisa ser limpa e medida; nada novo é despachado antes)`
       : `Loop da entrega ${limpo(entrega)}: pouso pendente; digite /clear para retomar em conversa limpa (nada novo é despachado antes)`);
@@ -440,7 +624,15 @@ export async function executar(texto, ambiente = process.env, cwdProcesso = proc
   if (noTeto && acao.tipo === 'despachar' && !acao.itens.some((i) => i?.papel === 'revisor')) {
     return aviso(`Loop da entrega ${limpo(entrega)}: contexto no teto, aguardando o pouso do mod (nada novo é despachado antes)`);
   }
-  if (acao.tipo !== 'despachar' && acao.tipo !== 'integrar') return saidaParaAcao(acao, entrega);
+  // GM-15 T39 (MAJOR-1 do review final, REQ-AUT-1, emendas 22 e 24): task no teto que a SOMBRA decide (a regra única `sombraDecideOTeto`, a do `proxima`, do lote e do painel:
+  // `sombra.libera_teto` ligado em origin e sem freio) NÃO é parada do dono: a pergunta à Sombra é ação permitida pendente, então o Stop bloqueia pedindo-a (sem "parou", sem /liberar).
+  // Freio ou flag desligada ⇒ a parada do dono de sempre (abaixo).
+  if (acao.tipo === 'parar' && acao.motivo === 'teto_rodadas' && typeof acao.task === 'string' && sombraDecideTeto(dl.mod, plano, ord.ok ? ord.eventos : eventos, acao.task, raiz)) {
+    acao = { tipo: 'sombra_decide_teto', task: acao.task };
+    ctx.p.acao = acao; // o aviso de loop desligado trata como ação pendente (precisaDoLoop)
+  }
+  if (acao.tipo === 'parar') return avisoParar(raiz, sessaoAtual, entrega, acao, ord.ok ? ord.eventos : [], TIPOS_DE_PROGRESSO, Date.now());
+  if (acao.tipo !== 'despachar' && acao.tipo !== 'integrar' && acao.tipo !== 'sombra_decide_teto') return saidaParaAcao(acao, entrega);
 
   const saida = saidaParaAcao(acao, entrega);
   if (saida === null) return null;

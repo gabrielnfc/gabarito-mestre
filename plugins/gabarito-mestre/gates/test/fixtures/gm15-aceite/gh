@@ -1,0 +1,32 @@
+#!/usr/bin/env node
+// gh falso do aceite da GM-15 (T27): os PRs #7, #8, #17 e #22 com os VALORES REAIS do GitHub (lidos por `gh pr view` em 2026-11-17: base, head, título, estado, mergedAt) e, só com
+// GH_FINAL_SINTETICO=1, UM PR de versão final SINTÉTICO (número 9001, inexistente no GitHub): o mecanismo da versão final, nunca um fato da GM-14. Campos de `gh pr list|view --json`,
+// com o filtro de `--head`, `--base`, `--state` e `--search "<ID> in:title"`. Só leitura. O #22 é a virada de PRÉ-VERSÃO (alpha.1) e NÃO encerra (emenda 20, D-G14). GH_MODO=rc1 simula falha de rede.
+const argv = process.argv.slice(2);
+if (process.env.GH_MODO === 'rc1') { process.stderr.write('falha de rede\n'); process.exit(1); }
+
+const PRS = [
+  {"baseRefName":"main","headRefName":"docs/GM-7-arquivo","mergedAt":"2026-11-03T13:10:07Z","number":7,"state":"MERGED","title":"docs(GM-7): arquiva hotfix 1.1.1 — ledger fechado (R13)"},
+  {"baseRefName":"next","headRefName":"enabler/GM-9-fundacao-2.0","mergedAt":"2026-11-03T13:06:34Z","number":8,"state":"MERGED","title":"enabler(GM-9): E1 Fundação do gabarito-mestre 2.0"},
+  {"baseRefName":"next","headRefName":"enabler/GM-14-clareza","mergedAt":"2026-11-15T13:38:25Z","number":17,"state":"MERGED","title":"GM-14: 2.1.0-alpha.1 clareza para quem usa (A1 parcial declarado)"},
+  {"baseRefName":"main","headRefName":"chore/GM-14-virada-2-1","mergedAt":"2026-11-15T13:50:59Z","number":22,"state":"MERGED","title":"enabler(GM-14): virada 2.1.0-alpha.1 (next ⇒ main)"},
+  // SINTÉTICO (não existe no GitHub): a virada final da GM-14, só com GH_FINAL_SINTETICO=1
+  ...(process.env.GH_FINAL_SINTETICO === '1' ? [{"baseRefName":"main","headRefName":"chore/GM-14-virada-final-sintetica","mergedAt":"2026-11-16T12:00:00Z","number":9001,"state":"MERGED","title":"release(GM-14): 2.1.0 (next ⇒ main)"}] : []),
+];
+const flag = (nome) => { const i = argv.findIndex((a) => a === nome || a.startsWith(`${nome}=`)); return i < 0 ? undefined : argv[i].includes('=') ? argv[i].split('=').slice(1).join('=') : argv[i + 1]; };
+const campos = (flag('--json') ?? '').split(',').filter(Boolean);
+const so = (p) => Object.fromEntries(campos.map((c) => [c, p[c] ?? null]));
+
+if (argv[0] === 'pr' && argv[1] === 'view') {
+  const p = PRS.find((x) => String(x.number) === argv[2]);
+  if (!p) { process.stderr.write('no pull requests found\n'); process.exit(1); }
+  process.stdout.write(JSON.stringify(so(p)));
+} else if (argv[0] === 'pr' && argv[1] === 'list') {
+  const head = flag('--head'); const base = flag('--base'); const state = (flag('--state') ?? 'open').toLowerCase(); const busca = flag('--search');
+  const id = busca ? busca.replace(/ in:title$/, '') : null;
+  const lista = PRS.filter((p) => (head === undefined || p.headRefName === head) && (base === undefined || p.baseRefName === base)
+    && (state === 'all' || p.state.toLowerCase() === state) && (id === null || p.title.includes(id)));
+  process.stdout.write(JSON.stringify(lista.map(so)));
+} else if (argv[0] === 'release' && argv[1] === 'list') {
+  process.stdout.write(JSON.stringify([{ tagName: 'v2.1.0-alpha.1' }]));
+} else { process.stderr.write(`gh falso: ${argv.join(' ')}\n`); process.exit(2); }

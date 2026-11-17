@@ -7,7 +7,7 @@
  * CONTRATO DE FALHA. Diário `[]` (ausente) é registro com todas as seções em `- nenhum`. Diário que não ordena, ou evento que o registro
  * lê e que não tem a forma do contrato, LANÇA `Error` (o CLI diz `diario_ilegivel`): nunca vira registro "sem aquela decisão".
  */
-import { pontaDaSpec, shaAceito } from './emenda.js';
+import { fecharJulgamentos, pontaDaSpec, shaAceito } from './emenda.js';
 import { formaInvalida } from './formas.js';
 import { ordenar } from './loop.js';
                                          
@@ -58,7 +58,7 @@ export function montarRegistro(entrega        , eventos          , specSha      
   // T54 (emenda 54): cada emenda aplicada no texto aparece (para o revisor da entrega conferir o diff contra a emenda) e o sha atual confere com a CADEIA.
   const aplicadas = lista.filter((e) => e.tipo === 'spec.aplicada');
   aplicadas.forEach(exigirValido);
-  linhasSpec.push(...aplicadas.map((e) => `- ${ref(e)} · emenda #${limpa(campo(e.dados, 'seq'), 16)} aplicada · spec ${limpa(campo(e.dados, 'spec'), 200)} · sha256 ${limpa(campo(e.dados, 'sha256_antes'), 64)} ⇒ ${limpa(campo(e.dados, 'sha256_depois'), 64)}`));
+  linhasSpec.push(...aplicadas.map((e) => `- ${ref(e)} · emenda #${limpa(campo(e.dados, 'seq'), 16)} ${campo(e.dados, 'reverte') === true ? 'desfeita (texto da emenda revertida pelo dono)' : 'aplicada'} · spec ${limpa(campo(e.dados, 'spec'), 200)} · sha256 ${limpa(campo(e.dados, 'sha256_antes'), 64)} ⇒ ${limpa(campo(e.dados, 'sha256_depois'), 64)}`));
   if (aprovacoes.length > 0) {
     const { ponta } = pontaDaSpec(lista);
     const n = ponta === null ? 0 : ponta.aplicadas;
@@ -82,25 +82,26 @@ export function montarRegistro(entrega        , eventos          , specSha      
     return partes.join(' · ');
   });
 
-  // 3. Emendas: a proposta e o 1º julgamento válido que a fecha (quem julgou: origem)
+  // 3. Emendas: a proposta e o julgamento que a fecha (`fecharJulgamentos`: a mesma regra da projeção; quem julgou: origem)
   const propostas = lista.filter((e) => e.tipo === 'emenda.proposta' && e.sessao === SESSAO_EMENDAS);
   propostas.forEach(exigirValido);
   const julgamentos = lista.filter((e) => e.tipo === 'spec.emendada' || e.tipo === 'emenda.rejeitada');
   julgamentos.forEach(exigirValido);
-  const fechamento = new Map                ();
-  for (const j of julgamentos) {
-    const seq = campo(j.dados, 'proposta_seq')          ;
-    if (!fechamento.has(seq)) fechamento.set(seq, j);
-  }
+  const fechamento = fecharJulgamentos(lista);
+  // GM-15 T36 (emenda 25 m.4): emenda aplicada e revertida pelo dono: "texto ainda na spec" até o desfazer (`spec.aplicada` com `reverte`), depois "texto desfeito"
+  const pontas = pontaDaSpec(lista);
+  const desfeita = (seq        )          => pontas.aplicacoes.some((a) => a.seq === seq && a.reverte === true);
+  const aplicada = (seq        )          => pontas.aplicacoes.some((a) => a.seq === seq && a.reverte !== true);
   const linhasEmendas           = [];
   for (const p of propostas) {
     const j = fechamento.get(p.seq);
-    const estado = j === undefined ? 'aberta' : `${j.tipo === 'spec.emendada' ? 'aprovada' : 'rejeitada'} por ${limpa(campo(j.dados, 'origem'), 16)}`;
+    let estado = j === undefined ? 'aberta' : `${j.aprova ? 'aprovada' : 'rejeitada'} por ${limpa(j.origem, 16)}`;
+    if (j !== undefined && !j.aprova && j.origem === 'dono' && aplicada(p.seq)) estado = desfeita(p.seq) ? 'revertida pelo dono; texto desfeito na spec' : 'revertida pelo dono; texto ainda na spec';
     const task = campo(p.dados, 'task') !== undefined ? ` · task ${limpa(campo(p.dados, 'task'), 64)}` : '';
     linhasEmendas.push(`- #${limpa(p.seq, 16)} · ${limpa(campo(p.dados, 'req'), 64)}${task} · ${limpa(campo(p.dados, 'causa'), 32)} · ${estado} · fato: ${limpa(campo(p.dados, 'fato'))} · diff: ${limpa(campo(p.dados, 'diff'))}`);
   }
   for (const [seq, j] of fechamento) {
-    if (!propostas.some((p) => p.seq === seq)) linhasEmendas.push(`- #${limpa(seq, 16)} · julgamento sem proposta no diário · ${j.tipo === 'spec.emendada' ? 'aprovada' : 'rejeitada'} por ${limpa(campo(j.dados, 'origem'), 16)}`);
+    if (!propostas.some((p) => p.seq === seq)) linhasEmendas.push(`- #${limpa(seq, 16)} · julgamento sem proposta no diário · ${j.aprova ? 'aprovada' : 'rejeitada'} por ${limpa(j.origem, 16)}`);
   }
 
   // 4. Liberações de teto: `task.reaberta` com origem `dono` ou `sombra` (GM-14 T36, FIEL-15 c); a retomada não libera teto

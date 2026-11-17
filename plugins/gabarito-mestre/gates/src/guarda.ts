@@ -13,14 +13,14 @@
 
 import { spawnSync } from 'node:child_process';
 import { accessSync, closeSync, constants, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, statSync, writeSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { precisaContexto } from './classificar-alvo.ts';
 import { decidir } from './decidir.ts';
 import { append, dirEntrega, lerEstrito } from './diario.ts';
 import { consultasAbertas, diarioEmOrdem, promptSombra } from './sombra.ts';
-import { trilhaDe } from './trilha.ts';
+import { encerramentoDe, trilhaDe } from './trilha.ts';
 import type { AmbienteDecl, ConfigGuarda, Contexto, Decisao, EntradaHook, TipoEvento } from './tipos.ts';
 
 const GIT_TIMEOUT_MS = 2000;
@@ -30,7 +30,7 @@ const ID_PADRAO = '[A-Z]+-\\d+';
 const CHAVES_AMBIENTE: Array<keyof AmbienteDecl> = ['hosts', 'projetos', 'bancos', 'mcps', 'variaveis', 'branches'];
 
 type Fonte = 'origin' | 'local' | 'nenhuma';
-type Guarda = { config: ConfigGuarda | null; fonte: Fonte; divergente: boolean; localIgnorada: boolean; onboarding: boolean; idPadrao: string };
+type Guarda = { config: ConfigGuarda | null; fonte: Fonte; divergente: boolean; localIgnorada: boolean; onboarding: boolean; idPadrao: string; autonomia: boolean };
 
 // ---------------------------------------------------------------------------------------------------------------
 // fs e git
@@ -116,13 +116,16 @@ function lerGuarda(raiz: string): Guarda {
     const divergente = l !== null && l.assinatura !== o.assinatura;
     // D2: origin sem seção `guarda` vence mesmo que a árvore local a tenha; a árvore local é ignorada, e isso se avisa.
     const localIgnorada = o.config === null && l !== null && l.config !== null;
-    return { config: o.config, fonte: 'origin', divergente, localIgnorada, onboarding: true, idPadrao: o.idPadrao };
+    // Autonomia por projeto (REQ-AUT-2 b): metade da regra, só a config de origin/HEAD (mudada por merge) vale; a árvore local nunca liga.
+    // Só o valor exato liga, e a passagem ainda exige o interruptor (`principal`: config E interruptor).
+    const autonomia = objeto(origem.guarda)?.autonomia === 'orquestrador';
+    return { config: o.config, fonte: 'origin', divergente, localIgnorada, onboarding: true, idPadrao: o.idPadrao, autonomia };
   }
   if (local !== null) {
     const l = normalizar(local, 'local');
-    return { config: l.config, fonte: 'local', divergente: false, localIgnorada: false, onboarding: true, idPadrao: l.idPadrao };
+    return { config: l.config, fonte: 'local', divergente: false, localIgnorada: false, onboarding: true, idPadrao: l.idPadrao, autonomia: false };
   }
-  return { config: null, fonte: 'nenhuma', divergente: false, localIgnorada: false, onboarding: false, idPadrao: ID_PADRAO };
+  return { config: null, fonte: 'nenhuma', divergente: false, localIgnorada: false, onboarding: false, idPadrao: ID_PADRAO, autonomia: false };
 }
 
 /**
@@ -201,6 +204,42 @@ function ledgerDirDe(raiz: string): string {
  * grava como `loop` e não sabe qual conversa o dono ligou): a entrega deixa de ser publicada se QUALQUER sessão com `dono.resposta` no diário a liga.
  */
 export const SESSAO_QUALQUER = '*';
+
+const PRE_VERSAO_RE = /(?<![\d.])\d+\.\d+\.\d+-(?:alpha|beta|rc)(?:\.[0-9A-Za-z-]+)*/gi;
+const SPEC_ALVO_MAX = 1024 * 1024;
+
+/** GM-15 T34 (REQ-ENT-1 r.13p): as pré-versões semver (`X.Y.Z-alpha|beta|rc[.n]`) citadas nos textos (título, head, `pre_versao` do fato). */
+export function preVersoesDe(...textos: unknown[]): string[] {
+  return textos.flatMap((t) => (typeof t === 'string' ? [...t.matchAll(PRE_VERSAO_RE)].map((m) => m[0]) : []));
+}
+
+/**
+ * UMA função de "PR de virada de pré-versão" (REQ-ENT-1 r.13p): título, head ou `pre_versao` do fato com semver `-alpha|-beta|-rc`, a menos que a versão-alvo da spec SEJA essa
+ * pré-versão. Quem decide encerrar (o `medir`) e quem decide publicada (`entregaPublicada`) chamam esta, nunca uma cópia. `release` prerelease não é medido (só `tagName`).
+ */
+export function ehViradaDePreVersao(pr: { titulo?: unknown; branch?: unknown; pre_versao?: unknown }, alvo: string | null): boolean {
+  const versoes = preVersoesDe(pr.titulo, pr.branch, pr.pre_versao).map((v) => v.toLowerCase());
+  if (versoes.length === 0) return false;
+  return !(typeof alvo === 'string' && versoes.includes(alvo.toLowerCase()));
+}
+
+/** A versão-alvo da entrega: `Versão: X.Y.Z[-pre]` no cabeçalho da spec que o `plano.json` aponta (`spec`, relativo à raiz). Qualquer falha ⇒ `null` (alvo desconhecido). */
+export function versaoAlvo(raiz: string, dirAlvo: string): string | null {
+  try {
+    const plano = objeto(JSON.parse(readFileSync(join(dirAlvo, 'plano.json'), 'utf8')));
+    const spec = plano?.spec;
+    if (typeof spec !== 'string' || spec === '' || isAbsolute(spec)) return null;
+    const arq = resolve(raiz, spec);
+    const rel = relative(raiz, arq);
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel) || statSync(arq).size > SPEC_ALVO_MAX) return null;
+    for (const l of readFileSync(arq, 'utf8').split('\n').slice(0, 30)) {
+      const m = /(?:^|[\s·])Vers[ãa]o:\s*(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/.exec(l);
+      if (m !== null) return m[1];
+    }
+  } catch { /* alvo desconhecido */ }
+  return null;
+}
+
 const SESSOES_LIGADAS_MAX = 64;
 export function entregaPublicada(raiz: string, entrega: string | null, sessao: string | null = null): boolean {
   if (entrega === null || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(entrega)) return false;
@@ -213,7 +252,17 @@ export function entregaPublicada(raiz: string, entrega: string | null, sessao: s
     }
     const lido = lerEstrito(dir);
     if (!lido.ok) return false;
-    const eventos = lido.eventos;
+    const todos = lido.eventos;
+    // GM-15 T34 (MAJOR-1 da review r1): o fato `pr` de um PR de VIRADA DE PRÉ-VERSÃO não publica (a mesma função do `medir`, `ehViradaDePreVersao`); o resto do diário segue.
+    const alvoVersao = versaoAlvo(raiz, dir);
+    const eventos = todos.filter((e) => {
+      const d = objeto(e.dados);
+      const v = e.tipo === 'fato.medido' && d?.chave === 'pr' ? objeto(d.valor) : null;
+      return v === null || !ehViradaDePreVersao(v, alvoVersao);
+    });
+    // GM-15 T3 (REQ-ENT-1 c): com `entrega.encerrada` no diário o estado é só ele (sem `entrega.reaberta` posterior); a ligação por sessão (`dono.resposta`,
+    // inclusive o "feito" de pendência) não vence o encerramento nem o reabre. A regra antiga (abaixo) vale só para entrega sem `entrega.encerrada`.
+    if (eventos.some((e) => e.tipo === 'entrega.encerrada' && objeto(e.dados)?.entrega === entrega)) return encerramentoDe(eventos, entrega).encerrada;
     const medido = (chave: string): Array<Record<string, unknown>> =>
       eventos.flatMap((e) => {
         const d = objeto(e.dados);
@@ -264,6 +313,16 @@ function diarioGravavel(dir: string): boolean {
     mkdirSync(dir, { recursive: true });
     accessSync(dir, constants.W_OK);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Autonomia do orquestrador: só `{"orquestrador": true}` (booleano) liga. Ausente, ilegível, JSON inválido ou outro valor ⇒ `false` (fail-closed). */
+export function lerAutonomia(caminho: string = join(homedir(), '.claude', 'gabarito-autonomia.json')): boolean {
+  try {
+    const j: unknown = JSON.parse(readFileSync(caminho, 'utf8'));
+    return typeof j === 'object' && j !== null && !Array.isArray(j) && (j as Record<string, unknown>).orquestrador === true;
   } catch {
     return false;
   }
@@ -609,7 +668,7 @@ function principal(): void {
   const guarda = raizSessao === null ? null : lerGuarda(raizSessao);
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..', '..');
   const contexto = montarContexto(entrada, raizCwd ?? raizSessao, cwd, pluginRoot, pausa.raizes, ancoraDaSessao(process.env.CLAUDE_PROJECT_DIR));
-  const r = decidir(entrada, guarda?.config ?? null, contexto);
+  const r = decidir(entrada, guarda?.config ?? null, contexto, guarda?.autonomia === true && lerAutonomia());
 
   const sessao = typeof entrada.session_id === 'string' && SESSAO_RE.test(entrada.session_id) ? entrada.session_id : null;
   const mensagens: string[] = [];

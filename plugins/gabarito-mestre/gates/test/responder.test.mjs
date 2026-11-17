@@ -48,10 +48,11 @@ function repo({ branch = 'main' } = {}) {
     entregas,
     pasta: (id) => join(entregas, id),
     /** `semear(entrega, [[tipo, dados], …], sessao)`: grava pelo núcleo; `entrega` `null` ⇒ `_sem-id`. */
-    semear(entrega, lista, sessao = 'loop') {
+    /** GM-15 T35 (r.13): `agente` ausente ⇒ orquestrador; pendência/ideia do DEPENDE precisam de autoria fora do orquestrador. */
+    semear(entrega, lista, sessao = 'loop', agente = 'orquestrador') {
       const alvo = amb.pasta(entrega ?? '_sem-id');
       for (const [tipo, dados] of lista) {
-        const r = diario.append(alvo, sessao, { ts: ts(), autor: 't@t', sessao, agente: 'orquestrador', tipo, dados });
+        const r = diario.append(alvo, sessao, { ts: ts(), autor: 't@t', sessao, agente, tipo, dados });
         assert.ok(r.ok && r.gravado === 'evento', JSON.stringify(r));
       }
     },
@@ -348,7 +349,7 @@ test('diario-ilegivel-block-ausente-nao: diário corrompido ⇒ block sem gravar
 
 test('botao-do-depende-responde (P9): dependeDe real ⇒ comando do botão ⇒ hook ⇒ perguntasAbertas sem a pergunta, e a pendência some do depende', () => {
   const amb = repo();
-  amb.semear(null, [['nota', { tipo: 'pendencia', texto: 'Mandar o contrato ao jurídico' }]]);
+  amb.semear(null, [['nota', { tipo: 'pendencia', texto: 'Mandar o contrato ao jurídico' }]], 'loop', 'dono');
   const fatos = { branch: 'main', idPadrao: IDPADRAO, specs: [], plano: null, ledger: false, gh: 'nunca', ultimas: [], sessao: 'S-dono' };
   const ler = () => diario.ler(amb.pasta('_sem-id'));
   const depende = () => dependeDe(trilhaDe(fatos, ler()), ler(), [], { falhou: [] }, false, { branch: 'main', idPadrao: IDPADRAO });
@@ -371,7 +372,7 @@ test('botao-do-depende-responde (P9): dependeDe real ⇒ comando do botão ⇒ h
 test('botao-ideias-visto-responde (P9, T13b): botão do item 4 ⇒ hook real ⇒ item some; ideia nova volta contando só as novas', () => {
   const amb = repo();
   const nota = (tipo, texto) => ['nota', { tipo, texto }];
-  amb.semear(null, [nota('desvio', 'abre a sessão'), nota('ideia', 'usar cores'), nota('ideia', 'outra ideia')]);
+  amb.semear(null, [nota('desvio', 'abre a sessão'), nota('ideia', 'usar cores'), nota('ideia', 'outra ideia')], 'loop', 'dono');
   const fatos = { branch: 'main', idPadrao: IDPADRAO, specs: [], plano: null, ledger: false, gh: 'nunca', ultimas: [], sessao: 'S-dono' };
   const ler = () => diario.ler(amb.pasta('_sem-id'));
   const depende = () => dependeDe(trilhaDe(fatos, ler()), ler(), [], { falhou: [] }, false, { branch: 'main', idPadrao: IDPADRAO });
@@ -390,7 +391,7 @@ test('botao-ideias-visto-responde (P9, T13b): botão do item 4 ⇒ hook real ⇒
   recusa(amb, stdinTui(amb.dir, args), /respondida/);
   // ideia nova depois do visto: volta contando só as novas, com o botão da nova
   // o hook grava com o relógio real: a ideia nova leva um ts depois da resposta
-  const g = diario.append(amb.pasta('_sem-id'), 'loop', { ts: new Date(Date.now() + 1).toISOString(), autor: 't@t', sessao: 'loop', agente: 'orquestrador', tipo: 'nota', dados: { tipo: 'ideia', texto: 'terceira ideia' } });
+  const g = diario.append(amb.pasta('_sem-id'), 'loop', { ts: new Date(Date.now() + 1).toISOString(), autor: 't@t', sessao: 'loop', agente: 'dono', tipo: 'nota', dados: { tipo: 'ideia', texto: 'terceira ideia' } }); // T35 (r.13): autoria fora do orquestrador
   assert.ok(g.ok && g.gravado === 'evento', JSON.stringify(g));
   assert.equal(ideias().motivo, 'decidir se a ideia vira a próxima entrega');
   assert.equal(ideias().acoes[0].comando, '/gabarito-mestre:responder loop:4 1');
@@ -513,4 +514,73 @@ test('skill-responder-frontmatter: só do dono (disable-model-invocation: true),
   assert.match(cab, /^description: .+/m);
   assert.match(cab, /^argument-hint: <pergunta> <n>$/m);
   assert.doesNotMatch(cab, /allowed-tools:.*(Write|Edit)/);
+});
+
+// ---- GM-15 T35 (D-G11 b, D-G12 2 e 4): "agora não" e o lote das recomendadas, pelo MESMO hook ----
+test('responder-agora-nao-adia-pergunta (r.14): `<id> agora` grava a forma do adiamento {pergunta, rotulo "agora não"} e a pergunta sai das abertas sem fechar; 2ª vez recusa', () => {
+  const amb = comDuvida();
+  const r = hook(stdinTui(amb.dir, 'loop:1 agora'));
+  assert.equal(r.rc, 0, r.err);
+  assert.equal(r.j?.systemMessage, 'Resposta registrada: agora não.', r.out);
+  assert.deepEqual(respostas(amb).map((e) => e.dados), [{ pergunta: 'loop:1', rotulo: 'agora não' }]);
+  const eventos = diario.ler(amb.pasta('_sem-id'));
+  const t = trilhaDe({ branch: 'main', idPadrao: IDPADRAO, specs: [], plano: null, ledger: false, gh: 'nunca', ultimas: [], sessao: 'S-dono' }, eventos);
+  assert.deepEqual(perguntasAbertas(eventos, t, { sessao: 'S-dono' }), []);
+  recusa(amb, stdinTui(amb.dir, 'loop:1 agora'), /inexistente|respondida/);
+  recusa(amb, stdinTui(amb.dir, 'loop:1 agora', { agent_id: 'a1' }), /agent_id/);
+});
+
+test('responder-agora-nao-no-pouso (r.9): o pedido de /clear da sessão (medida em 55 %) é adiado com o contexto no rótulo; sem medição recusa', () => {
+  const amb = repo();
+  amb.semear(null, [['review.veredito', { task: 'T1', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }]]);
+  amb.semear(null, [['sessao.pouso', { percent: 55, x: 50, via: 'dono' }]], 'S-dono');
+  const pouso = amb.eventos(null).find((e) => e.tipo === 'sessao.pouso');
+  const id = `${pouso.sessao}:${pouso.seq}`;
+  recusa(amb, stdinTui(amb.dir, `${id} agora`), /inexistente/); // sem leitura própria não há pedido (r.12)
+  mkdirSync(join(amb.dir, '.harness', 'contexto'), { recursive: true });
+  writeFileSync(join(amb.dir, '.harness', 'contexto', 'S-dono.json'), JSON.stringify({ percent: 55, fonte: 'mod', em: new Date().toISOString() }));
+  const r = hook(stdinTui(amb.dir, `${id} agora`));
+  assert.equal(r.j?.systemMessage, 'Resposta registrada: agora não (loop parado, contexto em 55 %).', r.out);
+  assert.deepEqual(respostas(amb).map((e) => e.dados), [{ pergunta: id, rotulo: 'agora não (loop parado, contexto em 55 %)' }]);
+  recusa(amb, stdinTui(amb.dir, `${id} agora`), /inexistente/); // já adiado
+});
+
+/** Repo com 3 dúvidas em `_sem-id`: 2 com recomendação (ids loop:1 e loop:3), 1 sem (loop:2). */
+function comRecomendadas() {
+  const amb = repo();
+  amb.semear(null, [
+    duvida('Emenda 13: aprovar?', ['aprovar (recomendado)', 'rejeitar']),
+    duvida('Qual caminho?', ['alfa', 'beta']),
+    duvida('Meta da previsão?', ['manter 15 %', 'aceitar 30 % (recomendado)']),
+  ]);
+  return amb;
+}
+
+test('lote-pede-confirmacao (r.16): `lote` não grava nada; devolve quantas, 1 linha de cada e o comando de confirmar com a impressão do lote', () => {
+  const amb = comRecomendadas();
+  const antes = amb.bytes();
+  const r = hook(stdinTui(amb.dir, 'lote'));
+  bloqueou(r, /2 perguntas com recomendação/);
+  assert.match(r.j.reason, /Emenda 13: aprovar\? ⇒ aprovar \(recomendado\)/);
+  assert.match(r.j.reason, /Meta da previsão\? ⇒ aceitar 30 % \(recomendado\)/);
+  assert.doesNotMatch(r.j.reason, /Qual caminho/);
+  assert.match(r.j.reason, /\/gabarito-mestre:responder lote [0-9a-f]{12}/);
+  assert.deepEqual(amb.bytes(), antes);
+});
+
+test('lote-grava-uma-resposta-por-item (r.16, C6): a confirmação grava 1 dono.resposta por recomendada, com o rótulo recomendado; impressão velha e subagent recusam', () => {
+  const amb = comRecomendadas();
+  const imp = /lote ([0-9a-f]{12})/.exec(hook(stdinTui(amb.dir, 'lote')).j.reason)[1];
+  recusa(amb, stdinTui(amb.dir, 'lote 000000000000'), /mudou/);
+  recusa(amb, stdinTui(amb.dir, `lote ${imp}`, { agent_id: 'a1' }), /agent_id/);
+  const r = hook(stdinTui(amb.dir, `lote ${imp}`));
+  assert.equal(r.j?.systemMessage, 'Respostas registradas: 2 recomendadas.', r.out);
+  assert.deepEqual(respostas(amb).map((e) => e.dados), [
+    { pergunta: 'loop:1', opcao: 1, rotulo: 'aprovar (recomendado)' },
+    { pergunta: 'loop:3', opcao: 2, rotulo: 'aceitar 30 % (recomendado)' },
+  ]);
+  const eventos = diario.ler(amb.pasta('_sem-id'));
+  const t = trilhaDe({ branch: 'main', idPadrao: IDPADRAO, specs: [], plano: null, ledger: false, gh: 'nunca', ultimas: [], sessao: 'S-dono' }, eventos);
+  assert.deepEqual(perguntasAbertas(eventos, t, { sessao: 'S-dono' }).map((p) => p.id), ['loop:2']);
+  recusa(amb, stdinTui(amb.dir, `lote ${imp}`), /mudou|nenhuma/);
 });

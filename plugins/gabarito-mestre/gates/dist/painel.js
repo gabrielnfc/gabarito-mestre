@@ -6,32 +6,91 @@
  * Decisões: `.superpowers/sdd/2026-11-09-e4-painel/sombra-p1a.md` §0 (D-A a D-C) e "Task 2".
  */
 
-import { projetarEmendas, shaAceito } from './emenda.js';
+import { pontaDaSpec, projetarEmendas, shaAceito } from './emenda.js';
 import { cmp, contarConsultas, duracoes, EM_TRABALHO, mediana, projetarDecisoes } from './diario-puro.js';
-import { dependeDe } from './depende.js';
+import { dependeDe, loopDesligado, loteDoDono } from './depende.js';
 import { origemDe } from './origem.js';
-import { perguntasAbertas } from './perguntas.js';
-import { pousoPendente } from './pouso-pendente.js';
-import { trilhaDe } from './trilha.js';
-                                               
-import { estadoDe, ordenar, proximaAcao, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK } from './loop.js';
+import { loteRecomendadas, perguntasAbertas } from './perguntas.js';
+import { leituraPropria, noTeto, pousoPendente,              } from './pouso-pendente.js';
+import { pedidoDeClear } from './pouso.js';
+import { encerramentoDe, trilhaDe } from './trilha.js';
+                                                       
+import { estadoDe, ordenar, proximaAcao, sombraDecideOTeto, tasksInvalidas, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK } from './loop.js';
                                             
 import { formaInvalida } from './formas.js';
-import { renderBlocos, renderEsquadrao } from './painel-esquadrao.js';
+import { comProjetoAcima, renderBlocos, renderEsquadrao } from './painel-esquadrao.js';
 import { historicoDe } from './painel-texto.js';
 import { renderExecutivo } from './painel-executivo.js';
-import { chaveDoPar, higienizarDescricao, nomesPorPapel, projetarEquipe, resolverAtivos } from './painel-equipe.js';
+import { cortar } from './painel-largura.js';
+import { chaveDoPar, higienizarDescricao, integrandoDe, nomesPorPapel, projetarEquipe, resolverAtivos, rotuloDoShell } from './painel-equipe.js';
                                                          
 import { dataCivil, fusoValido, horaLocal } from './painel-hora.js';
-                                                                                                                                                                                                                           
+                                                                                                                                                                                                                                              
 
 /** Despacha para o render do preset. Preset desconhecido não vira sucesso: lança (quem chama é o CLI, que já validou a flag). */
 export function renderPainel(e              , o              )          {
   // GM-14 T17: estado novo (projetado com `fatos`) ⇒ um renderizador só, os 5 blocos; o executivo é o mesmo sem lúdico (FIEL-12)
-  if (e !== null && typeof e === 'object' && e.modo !== undefined && (o?.preset === 'esquadrao' || o?.preset === 'executivo')) return renderBlocos(e, o);
+  if (e !== null && typeof e === 'object' && e.modo !== undefined && (o?.preset === 'esquadrao' || o?.preset === 'executivo')) {
+    const l = linhaEntregue(e, o);
+    return l !== null ? comProjetoAcima(e, typeof o?.largura === 'number' && Number.isFinite(o.largura) && o.largura >= 1 ? Math.floor(o.largura) : 80, [l]) : renderBlocos(e, o);
+  }
   if (o.preset === 'esquadrao') return renderEsquadrao(e, o);
   if (o.preset === 'executivo') return renderExecutivo(e, o);
   throw new RangeError(`preset desconhecido: ${String(o.preset)} (esquadrao | executivo)`);
+}
+
+/**
+ * GM-15 T8 (REQ-ENT-1 d i): com a entrega encerrada e nada vivo nem pendente além dela, o painel é 1 linha: "<ID> entregue (versão X.Y.Z)" e a próxima
+ * (o botão "seguir" vive em `estado.proxima.acoes`). Agente vivo ou item que não é da entrega (fonte que falhou) ⇒ `null` e os blocos de sempre.
+ */
+function linhaEntregue(e              , o              )               {
+  const ent = e.entregue;
+  if (ent === null || ent === undefined || typeof ent.id !== 'string' || !ID_ENTREGUE.test(ent.id)) return null;
+  const p = e.proxima;
+  const daProxima = p !== null && p !== undefined && typeof p.texto === 'string' ? motivoDaProxima(p.texto) : null;
+  // r1 MAJOR-2: o que não é da entrega e ficou no estado (pergunta, ATENÇÃO do `_sem-id`; no DEPENDE o PAROU, o /clear da sessão, fonte que falhou) ⇒ os blocos
+  if ((e.agora?.agentes?.length ?? 0) > 0 || (e.agora?.segundoPlano?.length ?? 0) > 0 || ehObj(e.pergunta)
+    || (Array.isArray(e.atencao) && e.atencao.length > 0)
+    || (Array.isArray(e.depende) && e.depende.some((i) => i?.motivo !== NADA && i?.motivo !== daProxima))) return null;
+  const w = typeof o?.largura === 'number' && Number.isFinite(o.largura) && o.largura >= 1 ? Math.floor(o.largura) : 80;
+  const versao = typeof ent.versao === 'string' && VERSAO_RE.test(ent.versao) ? ` (versão ${ent.versao})` : '';
+  const prox = p === null || p === undefined || typeof p.texto !== 'string' || p.texto === '' ? ''
+    : p.tipo === 'nenhuma' ? ` · ${p.texto}` : ` · próxima: ${p.texto}`;
+  // com o botão "seguir" a linha é item do dono (`◆ `): é a marca que o mod lê para pôr nela os botões do 1º item do DEPENDE (o da próxima)
+  const comBotao = daProxima !== null && Array.isArray(p?.acoes) && p.acoes.length > 0 && Array.isArray(e.depende) && e.depende.some((i) => i?.motivo === daProxima);
+  return [{ texto: cortar(`${comBotao ? '◆ ' : ''}GABARITO · ${ent.id} entregue${versao}${prox}`, w), cor: comBotao ? 'warning' : 'inactive' }];
+}
+/** GM-15 T36 (emenda 25 m.4): o motivo do "?" da spec quando o dono reverteu emenda já aplicada (o texto segue no arquivo). */
+export const motivoSpecDivergente = (seq        )         => `texto da emenda ${seq} revertida ainda na spec`;
+const IDX_SPEC = 1; // a célula "spec" da trilha (`trilha.ts`, IDX.spec)
+export function comSpecDivergente(trilha        , eventos          )         {
+  if (!trilha.identificada || trilha.marcas[IDX_SPEC] !== '✓') return trilha;
+  const d = pontaDaSpec(eventos).divergente;
+  if (d === null) return trilha;
+  const marcas = [...trilha.marcas];
+  const motivos = [...trilha.motivos];
+  marcas[IDX_SPEC] = '?';
+  motivos[IDX_SPEC] = motivoSpecDivergente(d.seq);
+  return { ...trilha, marcas, motivos };
+}
+
+/** GM-15 T8 (review r1 MAJOR-1): o item do DEPENDE que leva o botão "seguir" da próxima entrega. Não é item da entrega encerrada: é a oferta da próxima. */
+export const motivoDaProxima = (texto        )         => `próxima entrega: ${texto}`;
+const ID_ENTREGUE = /^[A-Za-z0-9-]{1,40}$/;
+/** X.Y.Z com pré-release opcional, a MESMA forma que `formas.ts` (SEMVER_RE) aceita no `entrega.encerrada`: a versão aparece inteira ou não aparece. */
+const VERSAO_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+
+/**
+ * GM-15 T8 (REQ-ENT-1 c, d): a entrega `id` com `entrega.encerrada` vigente (regra única `encerramentoDe`) ⇒ `{id, versao}`; senão `null`. `versao` = a do
+ * encerramento INTEIRA (pré-release incluída, sem o `v`: "v2.1.0-alpha.2" ⇒ "2.1.0-alpha.2", nunca "2.1.0"); sem ela, `null` (r1 MAJOR-3): o `fato.medido
+ * release` é o último release do repo, sem amarra ao PR nem ao `mergeado_em`, então não diz a versão desta entrega. Puro, nunca lança.
+ */
+export function entregueDe(eventos                 , id               )                  {
+  if (typeof id !== 'string' || !ID_ENTREGUE.test(id) || !Array.isArray(eventos)) return null;
+  const enc = encerramentoDe(eventos, id);
+  if (!enc.encerrada || enc.primeira === null) return null;
+  const v = typeof enc.primeira.versao === 'string' ? enc.primeira.versao.trim().replace(/^v/, '') : '';
+  return { id, versao: VERSAO_RE.test(v) ? v : null };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -132,11 +191,45 @@ function paralelismo(eventos          )         {
 }
 
 /**
+ * Ocupação (GM-15 T30, D-G2): da 1ª task iniciada até `agoraMs`, a fração do relógio com ao menos uma task em `EM_TRABALHO`. O tempo parado (noite,
+ * `loop.parar`, espera do dono) é o que faz a previsão pelo tempo de trabalho errar para menos; o restante é dividido por esta fração (piso 0,1).
+ * `null` sem o que medir (menos de 1 min de relógio ou diário sem task).
+ */
+export function ocupacaoDe(eventos          , agoraMs        )                {
+  const alvo = eventos.filter((ev) => ehObj(ev) && TIPOS_TASK.has(String(ev.tipo)) && taskDe(ev) !== null && Number.isFinite(msDe(ev)) && msDe(ev) <= agoraMs);
+  alvo.sort((a, b) => msDe(a) - msDe(b) || cmp(String(a.sessao), String(b.sessao)) || Number(a.seq) - Number(b.seq));
+  if (alvo.length === 0) return null;
+  const filas = new Map                  ();
+  const trabalhando = new Set        ();
+  let ativo = 0;
+  let desde                = null;
+  const inicio = msDe(alvo[0]);
+  for (const ev of alvo) {
+    const id = taskDe(ev)          ;
+    const fila = filas.get(id) ?? [];
+    fila.push(ev);
+    filas.set(id, fila);
+    const r = estadoDe(fila);
+    if (!('invalido' in r) && EM_TRABALHO.has(r.estado)) trabalhando.add(id);
+    else trabalhando.delete(id);
+    const t = msDe(ev);
+    if (trabalhando.size > 0 && desde === null) desde = t;
+    else if (trabalhando.size === 0 && desde !== null) { ativo += t - desde; desde = null; }
+  }
+  if (desde !== null) ativo += Math.max(0, agoraMs - desde);
+  const total = agoraMs - inicio;
+  if (!(total >= 60_000)) return null;
+  return Math.min(1, Math.max(0.1, ativo / total));
+}
+
+/**
  * ETA (REQ-PNL-1, D5): restante = mediana × ⌈restantes ÷ p⌉; ± = (Q3 − Q1)/2 × ⌈restantes ÷ p⌉ sobre as durações (quartis tipo 7, sem desvio-padrão).
  * n < 3 ⇒ `null` (antes de `restantes = 0`). `restantes ≤ 0` ou não finito ⇒ 0 e 0. A hora nunca fica antes de `agoraMs`. O render arredonda para minutos.
  */
-export function etaDe(eventos          , restantes        , agoraMs        , fuso        )                               {
-  const ds = duracoes(eventos.filter(ehObj));
+export function etaDe(eventos          , restantes        , agoraMs        , fuso        , integradas                      )                               {
+  // GM-15 T33 (g.13): com `integradas`, a conta usa só as durações das tasks integradas (a aprovada que ainda não integrou é de quem vai integrar, não amostra); o
+  // paralelismo segue medido sobre todos os eventos (o que de fato rodou junto)
+  const ds = duracoes(eventos.filter(ehObj).filter((ev) => integradas === undefined || !TIPOS_TASK.has(String(ev.tipo)) || integradas.has(String(taskDe(ev)))));
   if (ds.length < 3) return null;
   const falta = Number.isFinite(restantes) && restantes > 0 ? restantes : 0;
   const ondas = Math.ceil(falta / paralelismo(eventos));
@@ -144,6 +237,266 @@ export function etaDe(eventos          , restantes        , agoraMs        , fus
   const restanteS = mediana(ds) * ondas;
   const maisMenosS = ((quantil(ordenadas, 0.75) - quantil(ordenadas, 0.25)) / 2) * ondas;
   return { hora: horaLocal(agoraMs + restanteS * 1000, agoraMs, fuso), restanteS, maisMenosS, n: ds.length };
+}
+
+/**
+ * Previsão exata (GM-15 T30, D-G2, REQ-HIG-1 h): caminho crítico do plano com o tempo medido de cada etapa (implementação, revisão, integração),
+ * crédito do que já rodou e faixa P25-P75. Tudo sai do MESMO vetor, o das tasks integradas (g.13/g.14); o fechamento (h.1) soma depois do caminho.
+ */
+                                                                        
+                                                                         
+                                                                                                                                             
+                                                                                                                                                
+                                                                                    
+                                     
+                        
+  
+                                                               
+
+/** Etapas das tasks integradas: iniciada → concluída (implementação), concluída → aprovada (revisão com correções), aprovada → integrada. Segundos. */
+export function etapasDe(eventos          , integradas                     )         {
+  const porTask = new Map                  ();
+  for (const ev of eventos) {
+    const id = taskDe(ev);
+    if (id === null || !integradas.has(id) || !TIPOS_TASK.has(String(ev.tipo)) || !Number.isFinite(msDe(ev))) continue;
+    const f = porTask.get(id) ?? [];
+    f.push(ev);
+    porTask.set(id, f);
+  }
+  const saida         = { impl: [], rev: [], integ: [] };
+  for (const f of porTask.values()) {
+    f.sort((a, b) => msDe(a) - msDe(b) || cmp(String(a.sessao), String(b.sessao)) || Number(a.seq) - Number(b.seq));
+    let ini = f.map((ev) => tipoDe(ev)).lastIndexOf('task.reaberta') + 1; // a última reabertura recomeça o relógio
+    const sub = f.slice(ini);
+    const t0 = sub.find((ev) => tipoDe(ev) === 'task.iniciada');
+    const integ = [...sub].reverse().find((ev) => tipoDe(ev) === 'task.integrada');
+    if (t0 === undefined || integ === undefined) continue;
+    const conc = sub.find((ev) => tipoDe(ev) === 'task.concluida' && msDe(ev) >= msDe(t0));
+    const apr = [...sub].reverse().find((ev) => tipoDe(ev) === 'review.veredito' && dadosDe(ev).veredito === 'APROVADO' && msDe(ev) <= msDe(integ));
+    if (conc === undefined || apr === undefined) continue;
+    const a = msDe(t0), b = msDe(conc), c = msDe(apr), d = msDe(integ);
+    if (!(a <= b && b <= c && c <= d)) continue;
+    saida.impl.push((b - a) / 1000);
+    saida.rev.push((c - b) / 1000);
+    saida.integ.push((d - c) / 1000);
+    ini = 0;
+  }
+  return saida;
+}
+
+/** Um ciclo de relógio com noite dentro: a janela do ritmo. */
+const DIA_MS = 24 * 3_600_000;
+
+/**
+ * Relógio por task integrada no ÚLTIMO CICLO DE 24 h até `agoraMs` (uma noite e as esperas dentro): 24 h ÷ integradas na janela. Com menos de 24 h
+ * de história, a janela começa na 1ª `task.iniciada`. Nenhuma integrada na janela ⇒ da 1ª iniciada até agora ÷ todas. `null` sem integrada.
+ * Replay da GM-14 (2026-11-16): a conta da entrega inteira pesava a rajada do 1º dia e errava 29,1 % contra o término real; a do último dia, 25 %.
+ */
+export function ritmoDe(eventos          , integradas                     , agoraMs        )                {
+  let ini = Number.NaN;
+  for (const ev of eventos) if (tipoDe(ev) === 'task.iniciada' && msDe(ev) <= agoraMs && !(msDe(ev) >= ini)) ini = msDe(ev);
+  if (integradas.size === 0 || !(agoraMs > ini)) return null;
+  const desde = Math.max(ini, agoraMs - DIA_MS);
+  const na = new Set        ();
+  for (const ev of eventos) {
+    const t = msDe(ev);
+    const id = taskDe(ev);
+    if (tipoDe(ev) === 'task.integrada' && id !== null && integradas.has(id) && t > desde && t <= agoraMs) na.add(id);
+  }
+  return na.size === 0 ? (agoraMs - ini) / 1000 / integradas.size : (agoraMs - desde) / 1000 / na.size;
+}
+
+/**
+ * h.1: segundos da última `task.integrada` ao primeiro `entrega.encerrada` depois dela; o fim é o `mergeado_em` (o merge na main, T4) quando válido,
+ * senão o `ts` do evento (o `medir` pode gravar dias depois do merge). `null` sem os dois (nunca palpite).
+ */
+export function fechamentoDe(eventos          )                {
+  let ultima = Number.NaN;
+  for (const ev of eventos) if (tipoDe(ev) === 'task.integrada' && !(msDe(ev) <= ultima)) ultima = msDe(ev);
+  if (!Number.isFinite(ultima)) return null;
+  const fimDe = (ev        )         => {
+    const m = dadosDe(ev).mergeado_em;
+    const t = typeof m === 'string' ? Date.parse(m) : Number.NaN;
+    return Number.isFinite(t) ? t : msDe(ev);
+  };
+  const fim = eventos.filter((ev) => tipoDe(ev) === 'entrega.encerrada').map(fimDe).filter((t) => Number.isFinite(t) && t >= ultima).sort((a, b) => a - b)[0];
+  return fim === undefined ? null : (fim - ultima) / 1000;
+}
+
+/** h.1, a fonte do painel: mediana de `fechamentoDe` nas OUTRAS entregas do repo (a `atual` fica fora); nenhuma medida ⇒ `null`. */
+export function fechamentoDasAnteriores(diarios                                                  , atual               )                {
+  const fs = diarios.filter((d) => d.id !== atual).map((d) => fechamentoDe(d.eventos)).filter((x)              => x !== null);
+  return fs.length === 0 ? null : mediana(fs);
+}
+
+/**
+ * Emenda 3 (fallback): as etapas das OUTRAS entregas do repo, juntas (cada uma com as suas integradas); a `atual` fica fora. A previsão usa
+ * quando a entrega corrente ainda não mediu 3 tasks.
+ */
+export function etapasDasAnteriores(diarios                                                  , atual               )         {
+  const saida         = { impl: [], rev: [], integ: [] };
+  for (const d of diarios) {
+    if (d.id === atual || !Array.isArray(d.eventos)) continue;
+    const ints = new Set        ();
+    for (const ev of d.eventos) { const id = taskDe(ev); if (tipoDe(ev) === 'task.integrada' && id !== null) ints.add(id); }
+    const et = etapasDe(d.eventos, ints);
+    saida.impl.push(...et.impl); saida.rev.push(...et.rev); saida.integ.push(...et.integ);
+  }
+  return saida;
+}
+
+/**
+ * Emenda 3 (fallback, r2 MAJOR 1): o ritmo (s de relógio por task integrada) das OUTRAS entregas do repo, juntas: soma, em cada uma, da 1ª
+ * `task.iniciada` à última `task.integrada`, ÷ o total de tasks integradas. A `atual` fica fora; nenhuma integrada ⇒ `null` (a previsão vira "?").
+ * Replay GM-14 (2026-11-16): sem ele o ponto do fallback (caminho ÷ ocupação) errava 78,5 a 79,8 %; com ele, 2,4 a 2,8 % (anterior = a própria GM-14).
+ */
+export function ritmoDasAnteriores(diarios                                                  , atual               )                {
+  let relogio = 0, tasks = 0;
+  for (const d of diarios) {
+    if (d.id === atual || !Array.isArray(d.eventos)) continue;
+    let ini = Number.NaN, fim = Number.NaN;
+    const ints = new Set        ();
+    for (const ev of d.eventos) {
+      const t = msDe(ev), id = taskDe(ev);
+      if (!Number.isFinite(t)) continue;
+      if (tipoDe(ev) === 'task.iniciada' && !(t >= ini)) ini = t;
+      if (tipoDe(ev) === 'task.integrada' && id !== null) { ints.add(id); if (!(t <= fim)) fim = t; }
+    }
+    if (ints.size === 0 || !(fim > ini)) continue;
+    relogio += (fim - ini) / 1000;
+    tasks += ints.size;
+  }
+  return tasks === 0 ? null : relogio / tasks;
+}
+
+/** Tempo que falta para a task, com crédito do que já rodou na etapa atual (piso 0). `q` escolhe a medida da etapa (mediana ou quartil). */
+function faltaDaTask(est                              , agoraMs        , e                                              )         {
+  if (est === undefined || est.estado === 'pendente' || est.estado === 'reprovada' || est.estado === 'no_teto') return e.impl + e.rev + e.integ;
+  const gasto = Math.max(0, (agoraMs - msDe(est.ultimo)) / 1000);
+  switch (est.estado) {
+    case 'implementando': return Math.max(0, e.impl - gasto) + e.rev + e.integ;
+    case 'concluida': case 'em_revisao': case 'corrigindo': return Math.max(0, e.rev - gasto) + e.integ;
+    case 'aprovada': return Math.max(0, e.integ - gasto);
+    default: return 0; // integrada, adiada, cortada
+  }
+}
+
+/** Escalonamento por lista, `p` vagas, a task de maior cauda primeiro (caminho crítico). Devolve o término (s) e o nº de tasks da cadeia crítica. */
+function escalonar(deps                       , falta                     , p        )                                  {
+  const abertas = [...falta.keys()].filter((id) => (falta.get(id)          ) > 0);
+  const aberta = new Set(abertas);
+  const filhos = new Map                  ();
+  for (const id of abertas) for (const d of deps.get(id) ?? []) if (aberta.has(d)) filhos.set(d, [...(filhos.get(d) ?? []), id]);
+  const cauda = new Map                                  ();
+  const visitando = new Set        ();
+  const caudaDe = (id        )                           => {
+    const c = cauda.get(id);
+    if (c !== undefined) return c;
+    if (visitando.has(id)) return { s: 0, n: 0 }; // ciclo: não segue
+    visitando.add(id);
+    let melhor = { s: 0, n: 0 };
+    for (const f of filhos.get(id) ?? []) { const x = caudaDe(f); if (x.s > melhor.s) melhor = x; }
+    visitando.delete(id);
+    const r = { s: (falta.get(id)          ) + melhor.s, n: 1 + melhor.n };
+    cauda.set(id, r);
+    return r;
+  };
+  for (const id of abertas) caudaDe(id);
+  const fimDe = new Map                ();
+  const vagas = new Array        (Math.max(1, p)).fill(0);
+  const restantes = new Set(abertas);
+  let fim = 0;
+  while (restantes.size > 0) {
+    const prontas = [...restantes].filter((id) => (deps.get(id) ?? []).every((d) => !aberta.has(d) || fimDe.has(d)));
+    const pool = prontas.length > 0 ? prontas : [...restantes]; // ciclo no plano: segue sem travar
+    pool.sort((a, b) => (cauda.get(b)                 ).s - (cauda.get(a)                 ).s || cmp(a, b));
+    const id = pool[0];
+    const k = vagas.indexOf(Math.min(...vagas));
+    const prontoEm = Math.max(0, ...(deps.get(id) ?? []).map((d) => fimDe.get(d) ?? 0));
+    const termina = Math.max(vagas[k], prontoEm) + (falta.get(id)          );
+    vagas[k] = termina;
+    fimDe.set(id, termina);
+    restantes.delete(id);
+    fim = Math.max(fim, termina);
+  }
+  const cadeia = abertas.length === 0 ? 0 : Math.max(...abertas.map((id) => (cauda.get(id)                 ).n));
+  return { fim, cadeia };
+}
+
+/**
+ * Previsão exata. `null` sem etapa medida em ≥ 3 tasks integradas. O ponto é a mediana de cada etapa; a faixa usa o quartil 1 e o 3 de cada etapa.
+ * `fechamentoS` `null` ⇒ a conta fecha no caminho crítico, a faixa abre em `'?'` e o motivo diz por quê (h.1).
+ */
+export function previsaoExata(
+  plano       , eventos          , estados                                       , integradas                     ,
+  agoraMs        , fuso        , fechamentoS               , rodadas               , anteriores                = null, ritmoAnteriores                = null,
+)                       {
+  const daqui = etapasDe(eventos, integradas);
+  // Emenda 3: menos de 3 medidas aqui ⇒ as etapas E o ritmo das entregas anteriores do repo (o ritmo desta, de 0 a 2 integradas, não sustenta conta).
+  // Sem ritmo medido nas anteriores o ponto seria só caminho ÷ ocupação (erro ~79 % no replay, r2 MAJOR 1): nenhuma previsão, o painel mostra "?" (D-P13)
+  const rAnt = typeof ritmoAnteriores === 'number' && Number.isFinite(ritmoAnteriores) && ritmoAnteriores > 0 ? ritmoAnteriores : null;
+  const fallback = daqui.impl.length < 3 && anteriores !== null && Array.isArray(anteriores.impl) && anteriores.impl.length >= 3 && rAnt !== null;
+  // as 1 ou 2 tasks já medidas aqui somam às anteriores (r2 MINOR 4), não se descartam
+  const et         = fallback ? { impl: [...(anteriores          ).impl, ...daqui.impl], rev: [...(anteriores          ).rev, ...daqui.rev], integ: [...(anteriores          ).integ, ...daqui.integ] } : daqui;
+  if (et.impl.length < 3) return null;
+  const med = (xs          )         => mediana(xs);
+  const q = (xs          , x        )         => quantil([...xs].sort((a, b) => a - b), x);
+  const medidas = { impl: med(et.impl), rev: med(et.rev), integ: med(et.integ) };
+  const lo = { impl: q(et.impl, 0.25), rev: q(et.rev, 0.25), integ: q(et.integ, 0.25) };
+  const hi = { impl: q(et.impl, 0.75), rev: q(et.rev, 0.75), integ: q(et.integ, 0.75) };
+  const deps = new Map(plano.tasks.map((t) => [t.id, [...t.deps]]));
+  const fazer = (e                                              )                                  =>
+    escalonar(deps, new Map(plano.tasks.map((t) => [t.id, faltaDaTask(estados.get(t.id), agoraMs, e)])), paralelismo(eventos));
+  const oc = ocupacaoDe(eventos, agoraMs) ?? 1;
+  const meio = fazer(medidas);
+  const f = fechamentoS !== null && Number.isFinite(fechamentoS) && fechamentoS >= 0 ? fechamentoS : null;
+  const soma = f ?? 0;
+  // o caminho crítico é o piso; o ritmo medido (relógio por task integrada, com as paradas dentro) é o que ele não vê. O ponto é o maior dos dois.
+  const abertas = plano.tasks.filter((t) => faltaDaTask(estados.get(t.id), agoraMs, medidas) > 0).length;
+  const ritmo = fallback ? rAnt : ritmoDe(eventos, integradas, agoraMs);
+  const piso = meio.fim / oc;
+  const pontoS = Math.max(piso, ritmo === null ? 0 : ritmo * abertas);
+  // a faixa é a do ponto: a razão P25 ÷ mediana e P75 ÷ mediana do caminho aplicada a ELE (ritmo ou caminho), então o ponto fica dentro dela
+  // e nunca vira a ponta (r1 MINOR 6). Com o caminho no ponto, dá o mesmo que P25 ÷ ocupação e P75 ÷ ocupação.
+  const razao = (x        )         => (meio.fim > 0 ? x / meio.fim : 1);
+  const baixo = pontoS * Math.min(1, razao(fazer(lo).fim)) + soma;
+  const alto = pontoS * Math.max(1, razao(fazer(hi).fim)) + soma;
+  const restanteS = pontoS + soma;
+  const hora = (s        )         => horaLocal(agoraMs + s * 1000, agoraMs, fuso);
+  const porTaskS = medidas.impl + medidas.rev + medidas.integ;
+  return {
+    hora: hora(restanteS), restanteS, maisMenosS: (alto - baixo) / 2, n: et.impl.length,
+    conta: { caminho: meio.cadeia, minPorTask: Math.round(porTaskS / 60), rodadas, fechamentoS: f, ocupacao: oc, ritmoMin: ritmo === null ? null : Math.round(ritmo / 60) },
+    faixa: { de: hora(baixo), ate: f === null ? '?' : hora(alto) },
+    motivo: [fallback ? `etapas das entregas anteriores: ${daqui.impl.length} de 3 integradas nesta` : null, f === null ? 'fechamento não medido: sem entrega anterior com registro' : null]
+      .filter((x) => x !== null).join('; ') || null,
+  };
+}
+
+/** `pronto.previsao`: a exata quando medida (hora, base, faixa e motivo da mesma conta); senão a antiga, com a base = o `n` dela. */
+function previsaoDoPronto(legado              )                                                               {
+  const x = PREVISAO_DO_ESTADO.get(legado) ?? null;
+  const eta = legado.plano.eta                                             ;
+  if (x === null) return { hora: eta.hora, base: eta.n };
+  const exata = { hora: x.hora, base: x.n, faixa: x.faixa, conta: x.conta, motivo: x.motivo, restanteS: x.restanteS, maisMenosS: x.maisMenosS };
+  return exata;
+}
+
+/**
+ * A previsão exata de cada estado legado, ao lado do estado (sem mudar a forma de `plano.eta`, que a conta antiga D5 segue ocupando).
+ * `projetarNovo` a lê para `pronto.previsao`: hora, base e faixa saem da mesma conta (g.14, h.2).
+ */
+const PREVISAO_DO_ESTADO = new WeakMap                              ();
+
+function previsaoDo(plano       , ord          , c         , integradas                     , agora        , fuso        , rodadas               , entrada               )                       {
+  const dado          = entrada.fechamentoS; // tipo declarado; o valor ainda pode vir de fora do contrato
+  const fechamento = typeof dado === 'number' && Number.isFinite(dado) && dado >= 0 ? dado : fechamentoDe(ord);
+  const ant          = entrada.etapasAnteriores;
+  const ok = (xs         )                 => Array.isArray(xs) && xs.every((x) => typeof x === 'number' && Number.isFinite(x) && x >= 0);
+  const anteriores = ant !== null && typeof ant === 'object' && ok((ant          ).impl) && ok((ant          ).rev) && ok((ant          ).integ)
+    && (ant          ).impl.length === (ant          ).rev.length && (ant          ).rev.length === (ant          ).integ.length ? (ant          ) : null;
+  const r          = entrada.ritmoAnterioresS;
+  return previsaoExata(plano, ord, c.estados, integradas, agora, fuso, fechamento, rodadas, anteriores, typeof r === 'number' ? r : null);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -239,6 +592,8 @@ function calcularParar(c                                                        
   const noTeto = plano.tasks.find((t) => estados.get(t.id)?.estado === 'no_teto')?.id ?? null;
   const montar = (motivo             , chave        , hora        , taskDoDiario         ) => {
     const task = typeof taskDoDiario === 'string' && plano.tasks.some((t) => t.id === taskDoDiario) ? taskDoDiario : noTeto;
+    // GM-15 T36 r1 (MAJOR-2): teto que a Sombra decide (flag ligada e sem freio, a regra única `sombraDecideOTeto` do `proxima` e do lote) não é item do dono: sem PAROU de teto
+    if (motivo === 'teto_rodadas' && task !== null && ord !== null && sombraDecideOTeto(plano, ord, task, entrada.configLote?.liberaTeto)) return null;
     const { texto, acoes } = linhaDaTabela(motivo, task);
     return { motivo, texto, acoes, hora, chave, emVoo: [], alteracoes: 0 };
   };
@@ -327,7 +682,8 @@ function calcular(plano       , eventos                 , entrada               
   const fuso = fusoValido(entrada.fuso);
   const lista           = Array.isArray(eventos) ? eventos : [];
   const ord = Array.isArray(eventos) ? tentarOrdenar(lista) : null;
-  const valido = ord !== null && conteudoValido(plano, lista);
+  // GM-15 T9 (REQ-ENT-2): sem plano legível não há tabela de tasks contra a qual julgar o diário; vale a ordem (o PAROU do diário é do diário, não do plano)
+  const valido = ord !== null && (planoInvalidoDe(entrada) !== null || conteudoValido(plano, lista));
   const estados = estadosDe(plano, ord);
   const base = { plano, entrada, fuso, lista, ord, valido, estados };
   const parar = calcularParar(base);
@@ -338,6 +694,23 @@ function calcular(plano       , eventos                 , entrada               
     parar.alteracoes = prod.alteracoes;
   }
   return { ...base, parar, emVoo, prod };
+}
+
+/** REQ-ENT-2: `adiada`/`cortada` são terminais fora do alvo (o mesmo `FORA` do núcleo, loop.ts). */
+const FORA_DO_ALVO                        = ['adiada', 'cortada'];
+const foraDoAlvo = (r                                    )          => r !== undefined && FORA_DO_ALVO.includes(r.estado);
+/** As tasks do alvo: as do plano que não estão fora (o denominador do PRONTO, do % e da ETA). */
+const alvoDe = (plano       , estados                    )                 => plano.tasks.filter((t) => !foraDoAlvo(estados.get(t.id)));
+
+/** GM-15 T9: o motivo do `plano.json` inválido, 1 linha sem controle, no máximo 120 caracteres; ausente ou vazio ⇒ `null`. */
+function planoInvalidoDe(entrada               )                {
+  const m = (entrada                               )?.planoInvalido;
+  if (typeof m !== 'string') return null;
+  // eslint-disable-next-line no-control-regex
+  const limpo = m.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (limpo === '') return null;
+  const cps = [...limpo];
+  return cps.length <= 120 ? limpo : `${cps.slice(0, 119).join('')}…`;
 }
 
 function montarDepende(c         )                {
@@ -358,6 +731,9 @@ function montarDepende(c         )                {
     });
   }
   if (abertas.length > 3) itens.push({ nivel: 'dono', motivo: `e mais ${abertas.length - 3} emenda(s) aberta(s)`, acoes: [] });
+  // GM-15 T25 (REQ-HIG-1 D; aprendizado 585): reabertura gravada com origem inválida afeta só a task dela: "?" nomeando a task e a causa, nunca um número inventado.
+  const CAUSA_DA_TASK                         = { 'origem inválida': 'origem inválida', 'de inválido': 'o campo de volta inválido' };
+  for (const [id, causa] of tasksInvalidas(c.plano, lista)) itens.push({ nivel: 'dono', motivo: `depende de você: ? (${id}: a reabertura gravada tem ${CAUSA_DA_TASK[causa] ?? causa})`, acoes: [] });
   if (entrada.pausado) itens.push({ nivel: 'dono', motivo: 'loop pausado', acoes: [{ rotulo: 'retomar', comando: '/gabarito retomar' }] });
   if (ord !== null) {
     let devolvida = -1;
@@ -401,11 +777,72 @@ function montarAtencao(c         )           {
     }
     if (ciVermelhos(ord) === 1) atencao.push('CI vermelho 1× depois do último verde');
   }
-  const consultas = contarConsultas(lista);
-  if (consultas > entrada.tetoSombra) atencao.push(`Sombra: ${consultas} consultas, acima do teto de ${entrada.tetoSombra}`);
+  // GM-15 T36 (emenda 22 l.5): o teto de consultas à Sombra saiu; nenhuma linha de atenção por quantidade de consultas.
   const soltas = emVoo.filter((id) => !citadas.has(id));
   if (atencao.length > 0 && soltas.length > 0) atencao.push(`loop segue em ${soltas.join(' ')}`);
+  // GM-15 T36 (emenda 24 m.3): "decide agora, dono confere depois": 1 linha com N (some com 0); a lista e o comando de reverter vêm de `painel.mjs texto --sombra`. Não entra no DEPENDE.
+  const n = decisoesDaSombra(ord).length;
+  if (n > 0) atencao.push(`${n} ${n === 1 ? 'decisão' : 'decisões'} da Sombra desde a sua última resposta`);
   return atencao;
+}
+
+                                                            
+
+/** Evento que o dono fez: resposta, comando de task, aprovação de spec ou julgamento de emenda com origem `dono` (a origem de `origemDe` mais o julgamento de emenda, que ela não classifica). */
+function eventoDoDono(ev        )          {
+  const o = origemDe(ev);
+  if (o === '(você)' || (typeof o === 'string' && o.startsWith('(você respondeu'))) return true;
+  return (ev.tipo === 'spec.emendada' || ev.tipo === 'emenda.rejeitada') && dadosDe(ev).origem === 'dono';
+}
+
+const LIMPO_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029`]/gu;
+const limpo = (t         , max        )         => Array.from(String(t).replace(LIMPO_RE, ' ').replace(/\s+/g, ' ').trim()).slice(0, max).join('');
+
+/**
+ * A regra ÚNICA do "desde a sua última resposta" (GM-15 T36, emenda 24 m.3): as `decisao.sombra` (forma válida) e as `task.reaberta` de origem `sombra` DEPOIS do último evento do
+ * dono (`eventoDoDono`), na ordem do diário. N da linha do painel = `.length`; `painel.mjs texto --sombra` lista cada uma: 1 linha com a âncora e o comando de reverter
+ * (liberação: `/gabarito-mestre:adiar|cortar <task>`; decisão sobre REQ com emenda julgada pela Sombra: `/gabarito-mestre:emenda aprovar|rejeitar <seq>`; a palavra final é do dono).
+ * Diário que não ordena ⇒ `[]`. Nunca lança.
+ */
+export function decisoesDaSombra(eventos                 )                    {
+  try {
+    if (!Array.isArray(eventos)) return [];
+    const ord = ordenar(eventos);
+    if (!ord.ok) return [];
+    const evs = ord.eventos;
+    const ultimo = evs.findLastIndex(eventoDoDono);
+    const est = projetarEmendas(evs);
+    // r1 MINOR-4: a emenda a que a decisão SE REFERE = o 1º julgamento da Sombra (spec.emendada|emenda.rejeitada, origem sombra) de emenda do mesmo REQ que vem DEPOIS dela no diário e
+    // antes da próxima decisão da Sombra sobre o mesmo REQ; a que não julgou emenda nenhuma não leva comando (nunca a emenda de outra decisão).
+    const reqDaProposta = new Map                ([...est.abertas, ...est.aprovadas, ...est.rejeitadas].map((p) => [p.seq, p.req]));
+    const julgouEmenda = (i        , req        )                => {
+      for (let j = i + 1; j < evs.length; j++) {
+        const x = evs[j];
+        if (x.tipo === 'decisao.sombra' && formaInvalida(x.tipo, x.dados) === null && dadosDe(x).req === req) return null;
+        if ((x.tipo === 'spec.emendada' || x.tipo === 'emenda.rejeitada') && formaInvalida(x.tipo, x.dados) === null && dadosDe(x).origem === 'sombra') {
+          const seq = dadosDe(x).proposta_seq;
+          if (typeof seq === 'number' && reqDaProposta.get(seq) === req) return seq;
+        }
+      }
+      return null;
+    };
+    const saida                    = [];
+    evs.forEach((ev, i) => {
+      if (i <= ultimo) return;
+      const d = dadosDe(ev);
+      if (ev.tipo === 'task.reaberta' && d.origem === 'sombra' && typeof d.task === 'string') {
+        const t = limpo(d.task, 40);
+        saida.push({ id: `${ev.sessao}:${ev.seq}`, frase: `a Sombra liberou a ${t} — reverter: /gabarito-mestre:adiar ${t} ou /gabarito-mestre:cortar ${t}` });
+      } else if (ev.tipo === 'decisao.sombra' && formaInvalida(ev.tipo, ev.dados) === null) {
+        const req = typeof d.req === 'string' ? limpo(d.req, 40) : null;
+        const ancora = req !== null ? req : `a ${limpo(d.task, 40)}`;
+        const seq = req !== null ? julgouEmenda(i, req) : null;
+        const reverter = seq === null ? 'nada a reverter (só uma resposta)' : `reverter: /gabarito-mestre:emenda aprovar ${seq} ou /gabarito-mestre:emenda rejeitar ${seq}`;
+        saida.push({ id: `${ev.sessao}:${ev.seq}`, frase: `a Sombra decidiu sobre ${ancora}: ${limpo(d.resposta, 60)} — ${reverter}` });
+      }
+    });
+    return saida;
+  } catch { return []; }
 }
 
 /** `A`, `A e B`, `A, B e C`. */
@@ -424,20 +861,30 @@ function narrativaDo(c         , feitas        )         {
     return `parado · ${v.length === 0 ? 'nada continua' : v.length === 1 ? `${v[0]} continua` : `${v.join(' ')} continuam`}`;
   }
   if (entrada.pausado === true) return 'pausado, nada novo é despachado';
+  // GM-15 T33 (g.15): a narração cita só os despachos da ÚLTIMA janela (o mesmo minuto do despacho mais recente) e o shell de fundo que integra ("integrando T16")
+  const integrando = integrandoDe((entrada                                              ).segundoPlano);
+  const sufixoInt = integrando.length > 0 ? ` · integrando ${listaE(integrando)}` : '';
   if (emVoo.length > 0) {
     const ultimo = new Map                ();
+    const quando = new Map                ();
     (ord ?? []).forEach((ev, i) => {
       if (ev.tipo === 'task.iniciada') {
         const t = taskDe(ev);
-        if (t !== null) ultimo.set(t, i);
+        if (t !== null) { ultimo.set(t, i); quando.set(t, msDe(ev)); }
       }
     });
-    const ids = [...emVoo].sort((a, b) => (ultimo.get(a) ?? 0) - (ultimo.get(b) ?? 0));
+    const minuto = (id        )         => Math.floor((quando.get(id) ?? Number.NaN) / 60_000);
+    const todos = [...emVoo].sort((a, b) => (ultimo.get(a) ?? 0) - (ultimo.get(b) ?? 0));
+    const fim = minuto(todos[todos.length - 1]);
+    const janela = todos.filter((id) => !Number.isFinite(fim) || minuto(id) === fim);
+    const ids = janela.length > 0 ? janela : todos;
     const quem = ids.length === 1 ? ids[0] : ids.length === 2 ? `${ids[0]} e ${ids[1]} em paralelo` : `${ids[0]}, ${ids[1]} e mais ${ids.length - 2} em paralelo`;
     const aguardam = plano.tasks.filter((t) => estados.get(t.id)?.estado === 'concluida').map((t) => t.id);
-    return `despachou ${quem}${aguardam.length > 0 ? ` · aguarda revisão de ${listaE(aguardam)}` : ''}`;
+    return `despachou ${quem}${sufixoInt}${aguardam.length > 0 ? ` · aguarda revisão de ${listaE(aguardam)}` : ''}`;
   }
-  if (plano.tasks.length > 0 && feitas === plano.tasks.length) return 'todas as tasks integradas';
+  if (integrando.length > 0) return `integrando ${listaE(integrando)}`;
+  const alvo = alvoDe(plano, estados).length;
+  if (alvo > 0 && feitas === alvo) return 'todas as tasks integradas';
   return 'aguarda o próximo despacho';
 }
 
@@ -464,7 +911,7 @@ function projetarLegado(plano       , eventos                 , entrada         
   const tasks               = [];
   for (const t of plano.tasks) {
     const r = estados.get(t.id);
-    if (r === undefined) continue;
+    if (r === undefined || foraDoAlvo(r)) continue; // REQ-ENT-2: a task fora não é item do alvo (nem fila, nem em voo)
     const ms = msDe(r.ultimo);
     const desdeS = Number.isFinite(agora) && Number.isFinite(ms) ? Math.max(0, Math.floor((agora - ms) / 1000)) : undefined;
     const papel = PAPEL_DO_ESTADO[r.estado];
@@ -482,10 +929,12 @@ function projetarLegado(plano       , eventos                 , entrada         
     });
   }
   const feitas = tasks.filter((t) => t.estado === 'integrada').length;
-  const total = plano.tasks.length;
+  const total = alvoDe(plano, estados).length; // REQ-ENT-2: adiada e cortada saem do denominador
   const integradas = [...estados.values()].filter((r) => r.estado === 'integrada');
   const rodadaMedia = integradas.length === 0 ? null : Math.round((integradas.reduce((s, r) => s + r.rodada, 0) / integradas.length) * 10) / 10;
-  const medidas = ord === null ? [] : duracoes(ord);
+  // g.13: a mediana e a ETA saem do MESMO vetor, o das integradas
+  const idsIntegradas = new Set([...estados].filter(([, r]) => r.estado === 'integrada').map(([id]) => id));
+  const medidas = ord === null ? [] : duracoes(ord.filter((ev) => !TIPOS_TASK.has(String(ev.tipo)) || idsIntegradas.has(String(taskDe(ev)))));
   let mortas                = null;
   for (const ev of lista) {
     if (tipoDe(ev) !== 'task.integrada') continue;
@@ -517,13 +966,13 @@ function projetarLegado(plano       , eventos                 , entrada         
   const equipe = projetarEquipe(plano, lista, entrada);
   equipe.lider.narrativa = narrativaDo(c, feitas);
 
-  return {
+  const estado               = {
     id: plano.entrega,
     titulo,
     pacote: entrada.pacote.nome,
     plano: {
       tasks, feitas, total, pct: total === 0 ? 0 : Math.round((feitas / total) * 100),
-      eta: valido ? etaDe(ord            , total - feitas, agora, fuso) : null,
+      eta: valido ? etaDe(ord            , total - feitas, agora, fuso, idsIntegradas) : null,
       rodadaMedia,
       medianaS: medidas.length >= 3 ? mediana(medidas) : null,
     },
@@ -538,6 +987,8 @@ function projetarLegado(plano       , eventos                 , entrada         
     notificacao,
     qualidade: { rodadaMedia, mortas },
   };
+  PREVISAO_DO_ESTADO.set(estado, valido ? previsaoDo(plano, ord            , c, idsIntegradas, agora, fuso, rodadaMedia, entrada) : null);
+  return estado;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -551,11 +1002,60 @@ function projetarLegado(plano       , eventos                 , entrada         
                                            
                                                                                                                                               
                                                         
+                                                                                                                                                                                         
+                         
+                                                                                                                                                
+                             
+                           
+                                                                                                                                                                 
+                             
+     
+                                                                                                                                                               
+                                                                                                                                                                                                                                                    
+     
+                                             
   
+
+/** GM-15 T19 (REQ-AUT-2 c): `parar` há mais que isto é trava longa (o mesmo limite do hook Stop, `stop-loop.mjs` `TRAVA_LONGA_MS`). */
+export const TRAVA_LONGA_MS = 30 * 60_000;
+
+/**
+ * GM-15 T19 (REQ-AUT-2 c): a trava longa. Trava = o PAROU do diário (`c.parar`) ou, sem ele, `proximaAcao` em `parar` (a mesma régua do Stop: slots 1, sem
+ * agente vivo). Não é trava: diário inválido (o PAROU já diz), pouso pendente (o pedido de /clear diz), agente vivo, integração em segundo plano, pausa.
+ * Início = o último evento de progresso (`TIPOS_DE_PROGRESSO`) ou o 1º `loop.parar` da sequência vigente, o mais novo: o mod regrava o `loop.parar` a cada
+ * evento e o relógio não recomeça por isso. Puro; `null` até `TRAVA_LONGA_MS` inclusive.
+ */
+function travaLonga(plano       , c         , entrada               , ocupado         , pousoPedido         )                                                                       {
+  const { ord } = c;
+  if (ocupado || pousoPedido || entrada.pausado === true || ord === null || !c.valido || plano.tasks.length === 0) return null;
+  let motivo                     = null;
+  let task                = null;
+  if (c.parar !== null) motivo = c.parar.motivo;
+  else {
+    let a                                ;
+    try { a = proximaAcao(plano, ord, { ...SINAIS_NEUTROS, slots: 1, podePousar: true }); } catch { return null; }
+    if (a.tipo !== 'parar') return null;
+    motivo = ehMotivo(a.motivo) ? a.motivo : null;
+    task = typeof a.task === 'string' && plano.tasks.some((t) => t.id === a.task) ? a.task : null;
+  }
+  if (motivo === null || motivo === 'diario_invalido') return null;
+  // GM-15 T36 r1 (MAJOR-2): a Sombra decide o teto (regra única `sombraDecideOTeto`): esperar por ela não é trava do dono
+  if (motivo === 'teto_rodadas') {
+    const alvo = task ?? plano.tasks.find((t) => estadoDe(ord.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && dadosDe(e).task === t.id)).estado === 'no_teto')?.id ?? null;
+    if (alvo !== null && sombraDecideOTeto(plano, ord, alvo, entrada.configLote?.liberaTeto)) return null;
+  }
+  let inicio = Number.NEGATIVE_INFINITY;
+  for (const ev of ord) if (TIPOS_DE_PROGRESSO.includes(ev.tipo) && msDe(ev) > inicio) inicio = msDe(ev);
+  const v = pararVigente(ord);
+  if (v !== null && msDe(v.primeiro) > inicio) inicio = msDe(v.primeiro);
+  const idade = entrada.agoraMs - inicio;
+  if (!Number.isFinite(idade) || idade <= TRAVA_LONGA_MS) return null;
+  return { minutos: Math.floor(idade / 60_000), motivo, task };
+}
 
 /** FIEL-13 b: limite de "desatualizado" (180 s provisório = 3 × o relógio do mod, até o valor do S15). */
 export const LIMITE_DESATUALIZADO_S = 180;
-const NADA = 'depende de você: nada';
+const NADA = 'nada depende de você'; // D-G12 (r.13): o mesmo texto de `dependeDe`
 const DESATUALIZADO = 'depende de você: ? (o painel está sem ler o diário)';
 const ACAO_DO_PAPEL                        = { implementador: 'implementando', revisor: 'revisando', correcao: 'corrigindo' };
 const finitoNaoNeg = (v         )                => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
@@ -620,11 +1120,11 @@ function recenteDe(ord                 , plano       , entrada               , n
  * do cálculo com o plano e o `modo` da apresentação: os campos são os mesmos (`estado.parar` é `c.parar`; `agora.agentes` é `agentes`).
  */
 export function umaLinhaDe(
-  e                                                                                                                                                                                         ,
+  e                                                                                                                                                                                                             ,
   ultimaDaEntrada         ,
 )                                                                  {
   const pendente = e.parar !== null || e.pergunta !== null || (e.agora.agentes?.length ?? 0) > 0 || e.depende.some((i) => i.motivo !== NADA);
-  if (e.modo !== 'projeto' || pendente) return null;
+  if (e.modo !== 'projeto' || pendente || ehObj(e.entregue)) return null; // GM-15 T8: com a entrega encerrada a linha é a de entregue
   const u = ehObj(ultimaDaEntrada) ? ultimaDaEntrada : null;
   const ultima = u !== null && typeof u.id === 'string' ? { id: u.id, estado: typeof u.estado === 'string' ? u.estado : null }
     : typeof e.trilha.ultimaConhecida === 'string' ? { id: e.trilha.ultimaConhecida, estado: null } : null;
@@ -645,14 +1145,49 @@ function projetarNovo(plano              , eventos                 , entrada    
   const desat = finitoNaoNeg(entrada.desatualizadoS);
   const velho = desat !== null && desat > LIMITE_DESATUALIZADO_S;
 
+  // GM-15 T8 (REQ-ENT-1 d ii): com a entrega encerrada, os itens dela saem do topo (PAROU, pergunta, DEPENDE), do ATENÇÃO e do PRONTO
+  const entregue                  = ehObj(entrada.entregue) && typeof entrada.entregue.id === 'string' ? { id: entrada.entregue.id, versao: typeof entrada.entregue.versao === 'string' ? entrada.entregue.versao : null } : null;
+  const proxima                 = entregue !== null && ehObj(entrada.proxima) ? entrada.proxima : null;
+  // (d)(ii) tira só os itens DA entrega: só some o que é do diário projetado quando ele é o da entregue (r1 MAJOR-2); a última conhecida não zera o `_sem-id`
+  const zera = entregue !== null && entrada.entregueDoDiario !== false;
+
   // trilha, perguntas e "depende de você" pelas funções únicas (T3, T12, T13)
-  const trilha = trilhaDe(fatos, lista);
-  const abertas = perguntasAbertas(lista, trilha, { sessao: typeof fatos.sessao === 'string' ? fatos.sessao : null, ...(Array.isArray(fatos.ultimas) ? { ultimas: fatos.ultimas } : {}) })
+  // GM-15 T36 (emenda 25 m.4): emenda aplicada e revertida pelo dono ⇒ a spec aparece com "?" e o motivo (REQ-ENT-2), nunca um ✓ que finja coerência; fora do DEPENDE
+  const trilha = comSpecDivergente(trilhaDe(fatos, lista), lista);
+  const abertas = zera ? [] : perguntasAbertas(lista, trilha, { sessao: typeof fatos.sessao === 'string' ? fatos.sessao : null, ...(Array.isArray(fatos.ultimas) ? { ultimas: fatos.ultimas } : {}) })
     .filter((q) => q.gatilho !== 'pendencia' && q.gatilho !== 'ideia'); // pendência (3) e ideia (4) são itens de `dependeDe`, com o botão "feito"/"visto"
   const pergunta = abertas[0] ?? null;
-  const pousoDe = pousoPendente(eventos, entrada.onboarding === true);
-  let depende = dependeDe(trilha, lista, legado.depende, { falhou: fontes }, entrada.pousoPendente === true || pousoDe.pendente,
-    { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao });
+  // GM-15 T35 (r.12, r.9): o pedido de /clear da regra única `pedidoDeClear`: sem medição não há pedido; adiado ("agora não") some do painel até +10 p.p.
+  const clear = pedidoDeClear(eventos, entrada.onboarding === true, entrada.medicaoPouso);
+  const [sessaoPouso, seqPouso] = clear.id === null ? [null, null] : [clear.id.slice(0, clear.id.lastIndexOf(':')), Number(clear.id.slice(clear.id.lastIndexOf(':') + 1))];
+  const pousoDe                                   = clear.pendente && !clear.adiado ? { pendente: true, sessao: sessaoPouso, seq: seqPouso } : { pendente: false, sessao: null, seq: null };
+  // GM-15 T19 (REQ-POU-3, REQ-POU-4): o sinal do loop da sessão, o contexto alto sem pouso desta sessão e o "ligar o loop", com a régua do Stop
+  // régua única (`loopDesligado`, a do Stop): `undefined` = não medido; qualquer valor que não seja `armado` é desligado
+  const loopDinamico = entrada.loopDinamico === undefined ? undefined : entrada.loopDinamico === 'armado' ? 'armado' : entrada.loopDinamico === 'ausente' ? 'ausente' : null;
+  const comLoop = plano !== null && p.tasks.length > 0 && !zera && c.valido && entrada.onboarding === true;
+  let acaoLoop                                        = null;
+  if (comLoop && ord !== null) {
+    try { acaoLoop = proximaAcao(p, ord, { ...SINAIS_NEUTROS, slots: 1, podePousar: true, pousoPendente: clear.pendente }); } catch { acaoLoop = null; }
+  }
+  const med = entrada.medicaoPouso;
+  const alto = med !== undefined && noTeto(med);
+  const propria = leituraPropria(med);
+  // "sem `sessao.pouso` da sessão": com a leitura própria em X ou acima, o pouso da fronteira atual já é o pedido de /clear (`pedidoDeClear`, regra única):
+  // pedido aberto (adiado ou não) ⇒ o aviso de contexto não sai, o DEPENDE mostra o pedido
+  const contextoAlto = comLoop && loopDinamico === 'armado' && alto && propria !== null && !clear.pendente && acaoLoop !== null && acaoLoop.tipo !== 'concluir'
+    ? { percent: propria.percent, x: (med           ).x } : null;
+  const ligarLoop = comLoop && loopDesligado(loopDinamico) && (clear.pendente || alto || (acaoLoop !== null && ['despachar', 'integrar', 'pousar'].includes(acaoLoop.tipo)));
+  const extrasLoop = { loop: loopDinamico, contexto: contextoAlto, ligarLoop };
+  // o pedido de /clear é da sessão, não da entrega: entra nos dois ramos (r1 MAJOR-2)
+  const pedidoClear = entrada.pousoPendente === true ? { pendente: true, id: null, ...extrasLoop } : { pendente: pousoDe.pendente, id: clear.id, ...extrasLoop };
+  let depende = zera ? dependeDe(null                            , [], [], { falhou: fontes }, pedidoClear, { branch: null, idPadrao: fatos.idPadrao }) : dependeDe(trilha, lista, legado.depende, { falhou: fontes }, pedidoClear,
+    { branch: typeof fatos.branch === 'string' ? fatos.branch : null, idPadrao: fatos.idPadrao },
+    // GM-15 T13 (REQ-AUT-1): o lote do dono, o mesmo de `proxima` (mesma função e mesma config de origin); sem `configLote` (o mod) fica o DEPENDE de antes
+    entrada.configLote !== undefined ? loteDoDono(plano, lista, entrada.configLote) : undefined);
+  // GM-15 T8 (review r1 MAJOR-1): a próxima com botão vira item do DEPENDE (o mod já desenha os botões dos itens); nunca é item da encerrada
+  if (entregue !== null && proxima !== null && Array.isArray(proxima.acoes) && proxima.acoes.length > 0) {
+    depende = [...depende.filter((i) => i.motivo !== NADA), { nivel: 'dono', motivo: motivoDaProxima(proxima.texto), acoes: proxima.acoes.map((a) => ({ ...a })) }];
+  }
   if (pergunta !== null) depende = depende.filter((i) => i.motivo !== NADA);
   if (velho) depende = depende.map((i) => (i.motivo === NADA ? { ...i, motivo: DESATUALIZADO } : i));
 
@@ -681,12 +1216,34 @@ function projetarNovo(plano              , eventos                 , entrada    
     const registrado = util === null || soPapel ? `${ACAO_DO_PAPEL[c.papel]} (registrado)` : `${util} (registrado)`;
     return { quem: { nome, papel: c.papelExibido ?? c.papel }, task: c.task, acao: aoVivo ?? registrado, desdeS: desdeIni(c.task, c.papel) };
   });
-  // segundo plano (FIEL-11 c): "Teste · <task ou orquestrador> · <description> · <tempo>"
-  const taskDoDono = new Map((ativos ?? []).map((x) => [x.id, x.casamento.task]));
-  const segundoPlano                = ativos === null || !Array.isArray(entrada.segundoPlano) ? [] : entrada.segundoPlano.filter((b) => ehObj(b) && typeof b.id === 'string').map((b) => ({
-    quem: { nome: null, papel: 'teste'          }, task: b.dono === 'orquestrador' ? null : taskDoDono.get(b.dono) ?? null, acao: higienizarDescricao(b.texto),
-    desdeS: Number.isFinite(b.desde) ? Math.max(0, Math.floor((entrada.agoraMs - b.desde) / 1000)) : null,
-  }));
+  // segundo plano (FIEL-11 c, GM-15 T33 g.11/D-G8): seção própria, 1 linha por shell: `acao` = tipo (rotuloDoShell: Integrando/Teste/Aguardando/Comando), `task` = a que o
+  // comando ou a descrição provam (senão a do agente dono), `quem` = quem disparou (a sessão principal ou o agente); sem prova de task ⇒ `null` (nunca palpite)
+  const donoDe = new Map((ativos ?? []).map((x) => [x.id, x]));
+  const segundoPlano                = ativos === null || !Array.isArray(entrada.segundoPlano) ? [] : entrada.segundoPlano.filter((b) => ehObj(b) && typeof b.id === 'string').map((b) => {
+    const r = rotuloDoShell(b);
+    const d = b.dono === 'orquestrador' ? undefined : donoDe.get(b.dono);
+    const quem             = b.dono === 'orquestrador' ? { nome: null, papel: 'orquestrador' }
+      : d === undefined ? { nome: null, papel: 'implementador' } : { nome: comNomes ? d.nome : null, papel: d.casamento.papelExibido ?? d.casamento.papel ?? 'implementador' };
+    return { quem, task: r.task ?? d?.casamento.task ?? null, acao: r.tipo, desdeS: Number.isFinite(b.desde) ? Math.max(0, Math.floor((entrada.agoraMs - b.desde) / 1000)) : null };
+  });
+
+  // GM-15 T19 (REQ-AUT-2 c): parado há mais de 30 min ⇒ "parado há N min: <motivo>"; o comando fica só no botão. Com o PAROU (que já traz a hora e os
+  // botões, e cuja linha é fixa: REQ-PNL-3), 1 linha no ATENÇÃO; com o teto (o item que já tem o botão de liberar), o motivo daquele item; senão, item novo
+  // no topo com as ações da tabela do PAROU
+  let travaNoParou                = null;
+  const trava = zera ? null : travaLonga(p, c, entrada, (ativos?.length ?? 0) > 0 || integrandoDe((entrada                                              ).segundoPlano).length > 0, clear.pendente);
+  if (trava !== null) {
+    const prefixo = `parado há ${trava.minutos} min: `;
+    if (c.parar !== null) travaNoParou = `${prefixo}${c.parar.texto}`;
+    else {
+      const linha = linhaDaTabela(trava.motivo, trava.task);
+      const liberar = trava.task === null ? null : `/gabarito-mestre:liberar ${trava.task}`;
+      const k = liberar === null ? -1 : depende.findIndex((i) => i.acoes.some((a) => a.comando === liberar));
+      depende = k >= 0
+        ? depende.map((i, j) => (j === k ? { ...i, motivo: `${prefixo}${linha.texto}` } : i))
+        : [{ nivel: 'dono', motivo: `${prefixo}${linha.texto}`, acoes: linha.acoes }, ...depende.filter((i) => i.motivo !== NADA)];
+    }
+  }
 
   // ATENÇÃO (FIEL-10 c): só travado ou com problema
   const atencao           = [];
@@ -701,13 +1258,20 @@ function projetarNovo(plano              , eventos                 , entrada    
   const semRegistro = contarConsultas(lista) - projetarDecisoes(lista).size;
   const sombraAtiva = (ativos ?? []).some((x) => x.casamento.papelExibido === 'sombra');
   if (semRegistro > 0 && !sombraAtiva) atencao.push(`${semRegistro} ${semRegistro === 1 ? 'consulta' : 'consultas'} à Sombra sem decisão registrada`);
+  // GM-15 T36 (emenda 24 m.3): a mesma linha do legado (`montarAtencao`), pela mesma função `decisoesDaSombra`; some com 0
+  const nDec = decisoesDaSombra(lista).length;
+  if (nDec > 0) atencao.push(`${nDec} ${nDec === 1 ? 'decisão' : 'decisões'} da Sombra desde a sua última resposta`);
+  if (travaNoParou !== null) atencao.unshift(travaNoParou);
+  if (zera) atencao.length = 0; // M8a: nada da entrega encerrada (consultas à Sombra, CI, produção, task sem agente) fica no ATENÇÃO
   if (velho) atencao.push(`painel sem ler o diário há ${Math.floor((desat          ) / 60)} min`);
 
   // PRONTO (com plano) ou FASE (sem plano)
   const feitas = legado.plano.feitas;
-  const total = p.tasks.length;
-  const pronto = plano !== null && total > 0
-    ? { integradas: feitas, total, previsao: feitas >= 3 && feitas < total && legado.plano.eta !== null ? { hora: legado.plano.eta.hora, base: feitas } : null }
+  const total = legado.plano.total; // REQ-ENT-2: o alvo (sem as tasks fora), o mesmo do legado
+  const invalido = planoInvalidoDe(entrada);
+  const pronto = !zera && plano !== null && total > 0
+    ? { integradas: feitas, total, previsao: feitas < total && (PREVISAO_DO_ESTADO.get(legado) ?? null) !== null ? previsaoDoPronto(legado)
+      : feitas >= 3 && feitas < total && legado.plano.eta !== null ? previsaoDoPronto(legado) : null }
     : null;
   const nAtivos = agentes?.length ?? 0;
   const sufixo           = [];
@@ -715,13 +1279,16 @@ function projetarNovo(plano              , eventos                 , entrada    
     if (nAtivos > 0) sufixo.push(`${nAtivos} ${nAtivos === 1 ? 'agente trabalhando' : 'agentes trabalhando'}: ${(agentes?.[0]?.acao ?? '?').replace(/ \(registrado\)$/, '')}`);
     if (projetarEmendas(lista).abertas.length > 0) sufixo.push('emenda aguardando você');
   }
-  const fase = pronto !== null ? null : {
+  // GM-15 T9 (REQ-ENT-2): plano.json inválido ⇒ "?" com o motivo, nunca o plano velho nem uma fase que finja saber
+  const fase = pronto !== null ? null : invalido !== null ? {
+    numero: null, marcas: [...trilha.marcas], motivo: `plano inválido: ${invalido}`, progresso: trilha.progresso, sufixo,
+  } : {
     numero: trilha.fase, marcas: [...trilha.marcas], motivo: trilha.motivos.find((m) => typeof m === 'string') ?? null, progresso: trilha.progresso, sufixo,
   };
 
   // modo e "uma linha" (FIEL-10 e)
   const modo                       = entrada.fora === true ? 'fora' : plano !== null || trilha.identificada ? 'entrega' : 'projeto';
-  const umaLinha = umaLinhaDe({ modo, parar: c.parar, pergunta, depende, agora: { agentes }, trilha }, entrada.ultima);
+  const umaLinha = umaLinhaDe({ modo, parar: c.parar, pergunta, depende, agora: { agentes }, trilha, entregue }, entrada.ultima);
 
   const pct = finitoNaoNeg(entrada.contexto?.percent);
   const textoParar = (motivo        , task               )                =>
@@ -729,12 +1296,14 @@ function projetarNovo(plano              , eventos                 , entrada    
 
   // `pousoPendente {pendente, sessao, seq}` no estado (FIEL-14 d): a `chavePouso` do mod lê o `seq` do último `sessao.pouso` (pouso novo ⇒ chave nova ⇒ push novo).
   const rec = recenteDe(ord, p, entrada, nomes, comNomes, fuso, textoParar);
-  const estado                                                                                                        = {
+  const estado                                                                                                                              = {
     ...legado,
     pousoPendente: pousoDe,
+    recomendadas: loteRecomendadas(abertas).length, // GM-15 T35 (r.16): o botão "aprovar recomendadas (N)" do mod
     id: plano !== null ? p.entrega : (trilha.entrega ?? ''),
     modo, trilha, pergunta, perguntasMais: Math.max(0, abertas.length - 1), umaLinha, pronto, fase,
-    depende, atencao,
+    depende, atencao, entregue, proxima,
+    ...(zera ? { parar: null, parado: false } : {}),
     agora: {
       orquestrador: { nome: comNomes ? entrada.pacote?.lider ?? null : null, contexto: pct, estimado: false, pousar: pct !== null && pct >= entrada.x },
       agentes, segundoPlano,

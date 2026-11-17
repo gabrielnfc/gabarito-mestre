@@ -136,7 +136,7 @@ describe('session-card.sh — ORQ-3 (T14)', () => {
   });
   const REAL = join(PLUGIN, 'gates', 'scripts', 'cartao-sessao.mjs');
   test('smoke com o cartao-sessao.mjs real: repo sem onboarding → uma linha "sem onboarding"', { skip: !existsSync(REAL) && 'T9 ainda não integrada' }, () => {
-    const r = runAt('session-card.sh', '', { cwd: fixtureRepo({ config: {} }), env: { CLAUDE_PLUGIN_ROOT: PLUGIN }, event: 'SessionStart' });
+    const r = runAt('session-card.sh', '', { cwd: fixtureRepo({ config: null }), env: { CLAUDE_PLUGIN_ROOT: PLUGIN }, event: 'SessionStart' });
     assert.equal(r.code, 0, r.stderr);
     const texto = ctx(r).additionalContext;
     assert.match(texto, /sem onboarding/);
@@ -155,7 +155,7 @@ describe('session-card.sh — ORQ-3 (T14)', () => {
     assert.equal(JSON.parse(readFileSync(join(repo, '.harness', 'heartbeat.json'), 'utf8')).sessao, 'smoke-1');
   });
   test('smoke com o cartao-sessao.mjs real: repo sem onboarding não ganha .harness (nada gravado)', { skip: !existsSync(REAL) && 'T9 ainda não integrada' }, () => {
-    const repo = fixtureRepo({ config: {} });
+    const repo = fixtureRepo({ config: null });
     const r = spawnSync('bash', [join(HOOKS, 'session-card.sh')], { input: JSON.stringify({ session_id: 'smoke-2', source: 'startup' }), encoding: 'utf8', cwd: repo, env: cleanEnv({ CLAUDE_PLUGIN_ROOT: PLUGIN }) });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(existsSync(join(repo, '.harness')), false);

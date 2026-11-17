@@ -293,6 +293,15 @@ test('aprovacao-sem-evento-interrogacao', () => {
   assert.equal(trilhaDe(fatos(), []).marcas[2], '●');
 });
 
+test('execucao-com-task-invalida (GM-15 T25, MAJOR-2): reabertura de origem inválida em T2 afeta só T2; T1 integrada é contada e a execução não vira "?"', () => {
+  const t = trilhaDe(fatos({ plano: { tasks: ['T1', 'T2'] } }), expandir([{ integradas: ['T1'] }, { t: 'task.iniciada', d: { task: 'T2', papel: 'implementador' } }, { t: 'task.reaberta', d: { task: 'T2', origem: 'xpto' } }]));
+  assert.equal(t.progresso, '1 de 2 tasks integradas');
+  assert.notEqual(t.motivos[4], 'não consegui conferir a execução');
+  // controle: outro defeito do ciclo segue sendo "?"
+  const x = trilhaDe(fatos({ plano: { tasks: ['T1', 'T2'] } }), expandir([{ t: 'task.integrada', d: { task: 'T1' } }]));
+  assert.equal(x.motivos[4], 'não consegui conferir a execução');
+});
+
 test('interrogacao-nao-vira-barra', () => {
   const t = trilhaDe(fatos({ plano: { tasks: ['T1', 'T2'] } }), expandir([{ integradas: ['T1'] }]));
   assert.equal(marcas(t), '✓✓?✓●○○');

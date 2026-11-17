@@ -572,7 +572,40 @@ export const MAX_PERGUNTAS = 5;
 export const IDS_FIXAS = ['politica', 'autonomia', 'perfil'];
 const POLITICAS = ['continua', 'janela', 'sob_demanda'];
 const PERFIS = Object.keys(PERFIS_MODELO);
-const PRODUTO = { politica: 'sob_demanda', autonomia: false, perfil: 'padrao' };
+const PRODUTO = { politica: 'sob_demanda', autonomia: 'espera', perfil: 'padrao' };
+// GM-15 T14 (AUT-2 a): 1 pergunta, 3 respostas, 4 chaves. O padrão (1ª) é a mais contida; nenhuma resposta liga o que a anterior desliga.
+export const AUTONOMIAS = ['espera', 'trabalha', 'publica'];
+export const CHAVES_AUTONOMIA = {
+  espera: { entrega: false, guarda: 'nenhuma', julga_emendas: false, libera_teto: false },
+  trabalha: { entrega: false, guarda: 'orquestrador', julga_emendas: true, libera_teto: true },
+  publica: { entrega: true, guarda: 'orquestrador', julga_emendas: true, libera_teto: true },
+};
+// A prévia técnica segue byte a byte a da 2.0.0 nos dois extremos ("não"/"sim"); só a resposta nova ganha texto próprio.
+const TEXTO_AUTONOMIA = {
+  espera: 'não',
+  trabalha: 'trabalha sozinha, espera o seu ok para publicar',
+  publica: 'sim',
+};
+const ROTULO_AUTONOMIA_TRABALHA = 'Trabalhe sozinha, mas espere o meu "pode" para publicar';
+const ROTULO_AUTONOMIA_PUBLICA = 'Pode publicar sozinha, dentro da regra escolhida';
+const autonomiaGravavel = (a) => AUTONOMIAS.includes(a);
+
+/**
+ * As 4 chaves de autonomia lidas da config, cada uma por si (`entrega.autonomia`, `guarda.autonomia`, `sombra.julga_emendas`,
+ * `sombra.libera_teto`): `{ resposta }` quando batem EXATAMENTE com uma das 3 respostas (chave ausente = valor mais contido);
+ * `{ mista: true }` quando não batem, ou quando só a config legada da E3/1.1 (`continua`/`janela` sem `entrega.autonomia`) sobe sozinha;
+ * `{ invalida }` quando `entrega.autonomia` não é booleano (default do produto + aviso, como antes).
+ */
+function autonomiaDaConfig(cfg) {
+  const ent = ehObjeto(cfg.entrega) ? cfg.entrega : {};
+  const gu = ehObjeto(cfg.guarda) ? cfg.guarda : {};
+  const so = ehObjeto(cfg.sombra) ? cfg.sombra : {};
+  if (ent.autonomia !== undefined && typeof ent.autonomia !== 'boolean') return { invalida: ent.autonomia };
+  if (ent.autonomia === undefined && (ent.politica === 'continua' || ent.politica === 'janela')) return { mista: true };
+  const lido = { entrega: ent.autonomia ?? false, guarda: gu.autonomia ?? 'nenhuma', julga_emendas: so.julga_emendas ?? false, libera_teto: so.libera_teto ?? false };
+  const achada = AUTONOMIAS.find((r) => Object.keys(lido).every((k) => lido[k] === CHAVES_AUTONOMIA[r][k]));
+  return achada ? { resposta: achada } : { mista: true };
+}
 // GM-14 T7 (REQ-ONB-2): rótulos pela consequência, em palavras de quem não programa; os VALORES seguem os da 2.0.0.
 const ROTULO_POLITICA = {
   continua: 'Publique sozinha assim que os testes passarem',
@@ -608,12 +641,11 @@ function perguntasFixas(existente) {
   }
   let autonomia = PRODUTO.autonomia;
   let avisoAut;
-  if (ent.autonomia !== undefined) {
-    if (typeof ent.autonomia === 'boolean') autonomia = ent.autonomia;
-    else avisoAut = inval('entrega.autonomia', ent.autonomia, 'não');
-  } else if (politica === 'continua' || politica === 'janela') {
-    autonomia = true; // config da E3/1.1 que já subia sozinha: preserva a escolha
-  }
+  let mista = false;
+  const lidaAut = autonomiaDaConfig(cfg);
+  if ('invalida' in lidaAut) avisoAut = inval('entrega.autonomia', lidaAut.invalida, 'espera o seu ok para tudo');
+  else if (lidaAut.mista) mista = true; // config mista ou legada: sem default; o dono escolhe (nada é promovido nem rebaixado calado)
+  else autonomia = lidaAut.resposta;
   let perfil = PRODUTO.perfil;
   let avisoPerfil;
   if (orq.perfil !== undefined) {
@@ -625,12 +657,16 @@ function perguntasFixas(existente) {
     com({ id: 'politica', texto: 'Com a entrega pronta, a IA abre um pedido de revisão, ou publica sozinha se os testes passarem?', opcoes: POLITICAS.map((v) => ({ valor: v, rotulo: ROTULO_POLITICA[v] })), default: politica }, avisoPol),
     com({
       id: 'autonomia',
-      texto: 'Posso publicar sozinha, ou espero o seu "pode" a cada vez?',
+      texto: mista
+        ? 'Hoje a autonomia está mista (as chaves não combinam com nenhuma das opções): como a IA deve trabalhar a partir de agora? Nada muda sem a sua escolha.'
+        : 'Posso trabalhar e publicar sozinha, ou espero o seu "pode" a cada vez?',
       opcoes: [
-        { valor: true, rotulo: 'Pode publicar sozinha, dentro da regra escolhida' },
-        { valor: false, rotulo: politica !== 'sob_demanda' ? ROTULO_NAO_COM_POLITICA_FROUXA : 'Espere o meu "pode" antes de publicar' },
+        { valor: 'espera', rotulo: politica !== 'sob_demanda' ? ROTULO_NAO_COM_POLITICA_FROUXA : 'Espere o meu "pode" para tudo, inclusive antes de publicar' },
+        { valor: 'trabalha', rotulo: ROTULO_AUTONOMIA_TRABALHA },
+        { valor: 'publica', rotulo: ROTULO_AUTONOMIA_PUBLICA },
       ],
-      default: autonomia,
+      default: mista ? null : autonomia,
+      ...(mista ? { mista: true } : {}),
     }, avisoAut),
     com({ id: 'perfil', texto: 'Entre gastar menos e errar menos, o que pesa mais para você?', opcoes: PERFIS.map((v) => ({ valor: v, rotulo: rotuloPerfil(v) })), default: perfil }, avisoPerfil),
   ];
@@ -727,14 +763,15 @@ export function previa(itens, perguntasDoOnboarding, { fuso = fusoLocal(), calib
   for (const [id, nome] of fixas) {
     const p = ps[id];
     if (!p) continue;
-    const d = id === 'autonomia' ? (p.default ? 'sim' : 'não') : p.default;
+    const d = id === 'autonomia' ? (p.mista ? 'autonomia mista: preciso da sua escolha' : TEXTO_AUTONOMIA[p.default] ?? p.default) : p.default;
     linhas.push(`- ${nome}: ${d}${p.aviso ? ` (${p.aviso})` : ''}`);
   }
   const pol = ps.politica?.default;
   const aut = ps.autonomia?.default;
-  if (pol !== undefined && aut !== undefined) {
-    const ef = efetivaDe(pol, aut, fuso);
-    if (ef !== null && ef !== pol) linhas.push(`- política efetiva: ${ef} (escolhida ${pol}, mas a autonomia está ${aut ? 'sim' : 'não'}: só a autonomia libera a política)`);
+  if (pol !== undefined && autonomiaGravavel(aut)) {
+    const publica = aut === 'publica'; // só a resposta 3 liga `entrega.autonomia`: é ela que libera a política
+    const ef = efetivaDe(pol, publica, fuso);
+    if (ef !== null && ef !== pol) linhas.push(`- política efetiva: ${ef} (escolhida ${pol}, mas a autonomia está ${publica ? 'sim' : 'não'}: só a autonomia libera a política)`);
   }
   // FX4 item 5 (Sombra): a troca do alias do orquestrador aparece antes de gravar, não só depois.
   const orqAtual = ehObjeto(configLegivel(existente).orquestracao) ? configLegivel(existente).orquestracao : {};
@@ -777,7 +814,8 @@ export function configDasRespostas(itens, respostas, existente, hoje, { fuso = '
   const politica = resp('politica');
   const autonomia = resp('autonomia');
   const perfil = resp('perfil');
-  const entrega = { politica, autonomia };
+  // Sem escolha (config mista sem resposta): as 4 chaves ficam como estão; nada é promovido nem rebaixado calado.
+  const entrega = autonomiaGravavel(autonomia) ? { politica, autonomia: CHAVES_AUTONOMIA[autonomia].entrega } : { politica };
   if (politica === 'janela' && lerConfigEntrega(cfg).janela === null) entrega.janela = janelaPadrao(fuso);
 
   const por = Object.fromEntries(itens.map((i) => [i.item, i]));
@@ -791,6 +829,11 @@ export function configDasRespostas(itens, respostas, existente, hoje, { fuso = '
   }
 
   const patches = { entrega };
+  if (autonomiaGravavel(autonomia)) {
+    const k = CHAVES_AUTONOMIA[autonomia];
+    patches.guarda = { autonomia: k.guarda };
+    patches.sombra = { julga_emendas: k.julga_emendas, libera_teto: k.libera_teto };
+  }
   let perfilRaiz;
   if (resolvido.tipo_repo === 'repo-sem-app') perfilRaiz = 'repo-sem-app';
 

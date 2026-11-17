@@ -32,7 +32,7 @@ import { DENY_GUARDA, CHAVES_MORTAS } from '../lib/config.mjs';
 
 export { raizDoRepo }; // API pública: antes definida aqui, agora vem de lib/git
 
-export const SECOES = ['fluxo', 'versionamento', 'orquestracao', 'contexto', 'entrega', 'onboarding'];
+export const SECOES = ['fluxo', 'versionamento', 'orquestracao', 'contexto', 'entrega', 'guarda', 'sombra', 'onboarding'];
 /** Valores de `perfil` na raiz que o onboarding grava (E5a T6b): `app` é o default do produto e nunca é escrito. */
 export const PERFIS_RAIZ = ['repo-sem-app'];
 export const CONFIG_FILE = 'harness.config.json';

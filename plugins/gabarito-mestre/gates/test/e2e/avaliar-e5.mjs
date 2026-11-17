@@ -15,6 +15,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpat
 import { homedir, hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { TIPOS_DE_TASK } from '../../dist/loop.js';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ENTREGA = 'GM-99';
@@ -112,7 +113,7 @@ function lerDiario(repo) {
   return { ok: true, eventos: evs };
 }
 
-const PROGRESSO = new Set(['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta', 'ci.resultado', 'spec.emendada', 'emenda.rejeitada', 'aprendizado', 'aprendizado.nada']);
+const PROGRESSO = new Set([...TIPOS_DE_TASK, 'ci.resultado', 'spec.emendada', 'emenda.rejeitada', 'aprendizado', 'aprendizado.nada']);
 const conta = (evs, tipo) => evs.filter((e) => e.tipo === tipo).length;
 
 function estado(repo, rundir) {

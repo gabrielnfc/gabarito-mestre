@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFi
 import { homedir } from 'node:os';
 import { basename, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { TIPOS_DE_TASK as TIPOS_DO_NUCLEO } from '../../dist/loop.js';
 
 export const ENTREGA = 'GM-99';
 
@@ -55,7 +56,7 @@ export function proxima(repo, plugin, vivos) {
 }
 
 /** `parou` = o último `loop.parar` não tem evento de task depois (r8, sombra-t13g item 4): `liberar` grava `task.reaberta{dono}` e tira a corrida do PAROU. */
-const TIPOS_DE_TASK = new Set(['task.iniciada', 'task.concluida', 'review.veredito', 'task.integrada', 'task.reaberta']); // = diario.ts TIPOS_DE_TASK
+const TIPOS_DE_TASK = new Set(TIPOS_DO_NUCLEO); // fonte única: dist/loop.js (inclui task.fora, GM-15 T34 emenda 7 r.3)
 export const parouAgora = (ev) => {
   const i = ev.map((e) => e.tipo).lastIndexOf('loop.parar');
   return i >= 0 && !ev.slice(i + 1).some((e) => TIPOS_DE_TASK.has(e.tipo));

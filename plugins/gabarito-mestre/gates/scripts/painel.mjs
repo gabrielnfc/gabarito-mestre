@@ -3,14 +3,17 @@
  * Painel (E4, GM-12, T9): CLI de LEITURA. Única borda de E/S do painel; o núcleo (`dist/painel*.js`) é puro.
  *
  *   painel.mjs estado [--agentes] [--pacote <nome>] [--entrega <ID>]
- *   painel.mjs texto  [--largura N] [--preset esquadrao|executivo] [--tema color|mono] [--pacote <nome>] [--agentes] [--entrega <ID>]
- *   painel.mjs medir  [--agentes]   (GM-14 REQ-DIA-1: o ÚNICO subcomando que grava, e só `fato.medido`; em `painel-medir.mjs`. A T1 só liga o
- *                                    despacho: devolve `nao_implementado`, rc 1, nada lido do stdin nem gravado; a T11 implementa)
+ *   painel.mjs texto  [--sombra] [--largura N] [--preset esquadrao|executivo] [--tema color|mono] [--pacote <nome>] [--agentes] [--entrega <ID>]
+ *   painel.mjs medir  [--agentes]   (GM-14 REQ-DIA-1: o ÚNICO subcomando que grava; em `painel-medir.mjs`. GM-15 T4 (REQ-ENT-1 c), papel novo: além de
+ *                                    `fato.medido` grava `entrega.encerrada` (origem automática) quando um PR com base `main` encerra a entrega)
  *
  * `--agentes`: JSON em stdin `{sessao:{percent,tokens,window,h5,d7,x,notificacao,pacote}, agentes:[{id,type,description,status,transcript}]|null}`
  * (sombra-p1d D-M3). SEM `--agentes` o stdin NUNCA é lido (a skill chama pelo Bash com stdin herdado: o CLI travaria).
  * `estado` imprime `{ok:true, estado, avisos}`; `texto` imprime `paraTexto(renderPainel(...))` (padrão: 80 colunas, esquadrao, mono).
  * Falha: UMA linha JSON `{ok:false, erro, mensagem}`, rc 1; uso errado rc 2. `texto` falha com a mesma linha JSON.
+ *
+ * GM-15 T32 (REQ-ENT-2 emenda 4): o estado ganha `projeto` (uma linha por PBI/entrega, lidas em TODAS as worktrees de `git worktree list`; `projeto.ts` é o núcleo
+ * puro) e `temPlanoJson`; o `texto` desenha o projeto acima da entrega. Falha do `git worktree list` ⇒ só a árvore atual + aviso (stderr).
  *
  * `estado` e `texto` SÓ LEEM (D8). Nada de `decidirAgora`, lock, âncora, `append` ou `.harness/` criado: o painel pode rodar a cada 30 s, durante um deploy, com a janela fechada.
  * A decisão de entrega vem de `prepararLeitura` + `decisaoDe` (entrega.mjs), só com o loop em `concluir`.
@@ -24,32 +27,42 @@
  * CAUDA lida (≤ 256 KB), não do transcript inteiro (MINOR, backlog: nenhum render o lê).
  */
 import { execFileSync } from 'node:child_process';
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readFileSync, readdirSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { isatty } from 'node:tty';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { lerConfigOrigin } from '../lib/config.mjs';
-import { PADROES } from '../lib/git.mjs';
+import { idPadraoDe, lerConfigOrigin } from '../lib/config.mjs';
 import { dirEntrega, lerEstrito } from '../dist/diario.js';
 import { lerConfigEntrega, politicaEfetiva } from '../dist/entrega.js';
 import { estadoDe, ordenar, proximaAcao, TIPOS_DE_TASK } from '../dist/loop.js';
-import { projetarPainel, renderPainel, umaLinhaDe } from '../dist/painel.js';
+import { decisoesDaSombra, entregueDe, etapasDasAnteriores, fechamentoDasAnteriores, projetarPainel, renderPainel, ritmoDasAnteriores, umaLinhaDe } from '../dist/painel.js';
 import { validarPacote, validarStdinAgentes, usoDoTranscript } from '../dist/painel-equipe.js';
 import { fusoValido } from '../dist/painel-hora.js';
 import { paraTexto } from '../dist/painel-texto.js';
 import { lerX } from '../dist/pouso.js';
-import { idDaBranch, trilhaDe } from '../dist/trilha.js';
+import { sessoesDeRetomada } from '../dist/pouso-pendente.js';
+import { encerramentoDe, idDaBranch, trilhaDe } from '../dist/trilha.js';
+import { proximaEntrega } from '../dist/depende.js';
+import { planoMdDoCard, projetarProjeto, worktreesDe } from '../dist/projeto.js';
 import { temOnboarding } from './cartao-sessao.mjs';
-import { carregarPlano, checkoutDaSessao, contexto, lerDiarioEstrito, lerSpec, lerSpecs, tetoDaSombra } from './loop.mjs';
+import { carregarPlano, checkoutDaSessao, configDoLote, contexto, lerDiarioEstrito, lerSpec, lerSpecs, medicaoDoPouso } from './loop.mjs';
 import { decisaoDe, pausado, prepararLeitura } from './entrega.mjs';
 import { medir } from './painel-medir.mjs';
+import { SINAL_FRESCO_MS } from './stop-loop.mjs';
+
+/**
+ * GM-15 T19 (REQ-POU-4): o leitor do sinal do loop é o do mod (`mod/gabarito.mjs`, T17: `arquivoSinalLoop` + `interpretarSinalLoop`, o mesmo que o Stop importa), sem cópia.
+ * A cópia dos gates em `tools/` não leva o mod: sem ele o sinal é não conferível (`null`), nunca lança.
+ */
+const MOD_GABARITO = await import(new URL('../../mod/gabarito.mjs', import.meta.url).href).catch(() => null);
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const MOD_NOMES = join(AQUI, '..', '..', 'mod', 'temas', 'nomes');
 const PACOTE_PADRAO = 'terra-media';
 const PACOTE_RE = /^[a-z0-9-]{1,32}$/;
 const ENTREGA_RE = /^[A-Z]+-\d+$/;
+const SESSAO_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const LARGURA_RE = /^[1-9]\d{0,5}$/;
 const PRESETS = ['esquadrao', 'executivo'];
 const TEMAS = ['color', 'mono'];
@@ -58,7 +71,7 @@ const STDIN_MAX = 4 * 1024 * 1024;
 const TENTATIVAS = 3;
 const INTERVALO_MS = 50;
 const SINAIS_NEUTROS = { slots: 1, percent: null, x: 50, pausado: false, vivos: 0, tokens: null, tetoTokens: null, podePousar: false };
-const USO = 'uso: painel.mjs estado [--agentes] [--pacote <nome>] [--entrega <ID>] | painel.mjs texto [--largura N] [--preset esquadrao|executivo] [--tema color|mono] [--pacote <nome>] [--agentes] [--entrega <ID>] | painel.mjs medir [--agentes]';
+const USO = 'uso: painel.mjs estado [--agentes] [--pacote <nome>] [--entrega <ID>] [--sessao <id>] | painel.mjs texto [--sombra] [--largura N] [--preset esquadrao|executivo] [--tema color|mono] [--pacote <nome>] [--agentes] [--entrega <ID>] [--sessao <id>] | painel.mjs medir [--agentes]';
 
 /** Falha com código: vira `{ok:false, erro, mensagem}` (rc 1; uso é 2). */
 class Falha extends Error {
@@ -78,7 +91,7 @@ const numero = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
 export function lerArgs(argv) {
   const [cmd, ...resto] = argv;
   if (cmd !== 'estado' && cmd !== 'texto' && cmd !== 'medir') throw new Falha('uso', `subcomando ${JSON.stringify(cmd ?? null)}: esperado estado, texto ou medir. ${USO}`, 2);
-  const COM_VALOR = cmd === 'texto' ? ['largura', 'preset', 'tema', 'pacote', 'entrega'] : cmd === 'medir' ? [] : ['pacote', 'entrega'];
+  const COM_VALOR = cmd === 'texto' ? ['largura', 'preset', 'tema', 'pacote', 'entrega', 'sessao'] : cmd === 'medir' ? [] : ['pacote', 'entrega', 'sessao'];
   const flags = {};
   for (let i = 0; i < resto.length; i++) {
     const a = resto[i];
@@ -87,6 +100,8 @@ export function lerArgs(argv) {
     if (Object.hasOwn(flags, nome)) throw new Falha('uso', `${a} repetido. ${USO}`, 2);
     if (nome === 'agentes') {
       flags.agentes = true;
+    } else if (nome === 'sombra' && cmd === 'texto') {
+      flags.sombra = true; // GM-15 T36 (emenda 24 m.3): lista as decisões da Sombra desde a última resposta do dono
     } else if (COM_VALOR.includes(nome)) {
       const v = resto[i + 1];
       if (v === undefined || v.startsWith('--')) throw new Falha('uso', `${a} exige um valor. ${USO}`, 2);
@@ -100,6 +115,7 @@ export function lerArgs(argv) {
   if (flags.preset !== undefined && !PRESETS.includes(flags.preset)) throw new Falha('uso', `--preset ${JSON.stringify(flags.preset)}: esperado ${PRESETS.join(' | ')}. ${USO}`, 2);
   if (flags.tema !== undefined && !TEMAS.includes(flags.tema)) throw new Falha('uso', `--tema ${JSON.stringify(flags.tema)}: esperado ${TEMAS.join(' | ')}. ${USO}`, 2);
   if (flags.pacote !== undefined && !PACOTE_RE.test(flags.pacote)) throw new Falha('uso', `--pacote ${JSON.stringify(flags.pacote)} fora da forma ${PACOTE_RE}. ${USO}`, 2);
+  if (flags.sessao !== undefined && !SESSAO_RE.test(flags.sessao)) throw new Falha('uso', `--sessao ${JSON.stringify(flags.sessao)} fora da forma ${SESSAO_RE}. ${USO}`, 2);
   if (flags.entrega !== undefined && !ENTREGA_RE.test(flags.entrega)) throw new Falha('uso', `--entrega ${JSON.stringify(flags.entrega)} fora da forma ${ENTREGA_RE}. ${USO}`, 2);
   return { cmd, flags };
 }
@@ -240,6 +256,98 @@ export function lerDiarioEstavel(dir, deps = {}) {
   throw new Falha('diario_em_escrita', `o diário mudou durante a leitura ${tentativas} vezes seguidas (escrita em curso): tente de novo`);
 }
 
+// ─────────────────────────────────────────────────────────────── visão de projeto (GM-15 T32, REQ-ENT-2 emenda 4)
+
+const TEXTO_MAX = 1024 * 1024;
+
+/** Texto de arquivo regular (≤ 1 MiB, nunca link); qualquer falha ⇒ `null`. */
+function lerTextoSeguro(caminho) {
+  try {
+    const st = lstatSync(caminho);
+    return st.isFile() && st.size <= TEXTO_MAX ? readFileSync(caminho, 'utf8') : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Caminho relativo de config/card (`docs/fluxo/pbis/`): sem barra inicial, sem `..`, sem vazio; devolve sem barra final, ou `null`. */
+function relativoSeguro(c) {
+  if (typeof c !== 'string' || c === '' || c.length > 300 || isAbsolute(c) || c.includes('\0')) return null;
+  const limpo = c.replace(/\/+$/, '');
+  return limpo === '' || limpo.split('/').includes('..') ? null : limpo;
+}
+
+/** `git worktree list --porcelain` na árvore atual; falha ⇒ `{ok:false, motivo}` (o aviso é de `worktreesDe`). */
+function worktreeListDoGit(atual) {
+  try {
+    return { ok: true, saida: execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: atual, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000 }) };
+  } catch (e) {
+    return { ok: false, motivo: String(e?.stderr || e?.message || 'erro desconhecido').trim().split('\n')[0].slice(0, 120) };
+  }
+}
+
+/** Data (ms) do último commit que tocou `rel` na árvore `caminho`; sem git, não versionado ou saída estranha ⇒ `null` (emenda 19: empate/sem data ⇒ árvore atual). */
+function commitMsDe(caminho, rel) {
+  try {
+    const s = execFileSync('git', ['log', '-1', '--format=%ct', '--', rel], { cwd: caminho, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000 }).trim();
+    return /^\d{1,12}$/.test(s) ? Number(s) * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+/** O que a borda lê de UMA árvore, no formato de `ArvoreLida` (projeto.ts): cards de `fluxo.mapeamento.FL1`, o plano .md do card, `plano.json` e o diário de cada entrega. */
+function lerArvoreDoProjeto(caminho, fl1, idRe) {
+  const cards = [];
+  if (fl1 !== null) {
+    let nomes = [];
+    try { nomes = readdirSync(join(caminho, fl1)).filter((n) => n.endsWith('.md')).sort(); } catch { /* sem a pasta nesta árvore */ }
+    for (const arquivo of nomes) {
+      const texto = lerTextoSeguro(join(caminho, fl1, arquivo));
+      if (texto === null) continue;
+      const md = relativoSeguro(planoMdDoCard(texto));
+      cards.push({ arquivo, texto, planoMd: md === null ? null : lerTextoSeguro(join(caminho, md)) });
+    }
+  }
+  const entregas = [];
+  const base = join(caminho, '.harness', 'entregas');
+  let ids = [];
+  try { ids = readdirSync(base).filter((n) => idRe.test(n)).sort(); } catch { /* árvore sem entregas */ }
+  for (const id of ids) {
+    const dir = join(base, id);
+    try { if (!lstatSync(dir).isDirectory()) continue; } catch { continue; }
+    let plano = null;
+    let planoCommitMs = null;
+    if (existsFile(join(dir, 'plano.json'))) {
+      const texto = lerTextoSeguro(join(dir, 'plano.json'));
+      if (texto === null) plano = { ok: false, motivo: 'plano.json ilegível' };
+      else {
+        try { plano = { ok: true, bruto: JSON.parse(texto) }; } catch (e) { plano = { ok: false, motivo: `plano.json ilegível: ${String(e?.message ?? e).slice(0, 100)}` }; }
+      }
+      planoCommitMs = commitMsDe(caminho, join('.harness', 'entregas', id, 'plano.json'));
+    }
+    const lido = lerEstrito(dir);
+    entregas.push({ id, plano, planoCommitMs, eventos: lido.ok ? lido.eventos : null });
+  }
+  return { caminho, cards, entregas };
+}
+const existsFile = (c) => { try { return lstatSync(c).isFile(); } catch { return false; } };
+
+/**
+ * Visão de projeto (REQ-ENT-2 emenda 4): lê TODAS as worktrees de `git worktree list` (a atual primeiro; falha do git ⇒ só a atual + aviso) e entrega a
+ * `projetarProjeto` (núcleo puro, T31). Só LÊ. `deps.worktreeList(atual)` troca o `git` (testes).
+ */
+export function projetoDoRepo({ atual, cfg, idPadrao, agoraMs, fuso, deps = {} }) {
+  const fl1 = relativoSeguro(cfg?.fluxo?.mapeamento?.FL1);
+  let idRe;
+  try { idRe = new RegExp(idPadrao); } catch { idRe = /^[A-Z]+-\d+$/; }
+  const real = (c) => { try { return realpathSync(c); } catch { return c; } };
+  const wt = worktreesDe((deps.worktreeList ?? worktreeListDoGit)(atual), real(atual));
+  const caminhos = [...new Set(wt.caminhos.map(real))];
+  const arvores = caminhos.map((c) => lerArvoreDoProjeto(c, fl1, idRe));
+  return projetarProjeto(arvores, { agoraMs, fuso, idPadrao: idRe, avisos: wt.aviso === null ? [] : [wt.aviso] });
+}
+
 // ─────────────────────────────────────────────────────────────── pacote de nomes
 
 function lerPacoteDe(arquivo) {
@@ -318,7 +426,7 @@ function modeloDoDiario(eventos) {
 // ─────────────────────────────────────────────────────────────── fatos da trilha (GM-14 T18)
 
 /** Nomes naturais das fontes (D-P13): o render os mostra em "não consegui ler <fonte>"; nunca nome de arquivo nem código. */
-const FONTE = Object.freeze({ specs: 'as specs', medir: 'o registro de medição do painel', gh: 'o GitHub', entregas: 'a lista de entregas', diarioDe: (id) => `o diário da ${id}` });
+const FONTE = Object.freeze({ plano: 'o plano', specs: 'as specs', medir: 'o registro de medição do painel', gh: 'o GitHub', entregas: 'a lista de entregas', diarioDe: (id) => `o diário da ${id}` });
 const ausenteFs = (e) => e?.code === 'ENOENT' || e?.code === 'ENOTDIR';
 
 /** Branch do checkout da sessão; HEAD solto ou erro ⇒ `null` (não há branch a ler). */
@@ -328,14 +436,6 @@ function branchDe(cwd) {
   } catch {
     return null;
   }
-}
-
-/** `fluxo.idPadrao` de origin/HEAD, a mesma regra de `loop.mjs` (`idPadraoDe`, não exportada): ausente, longa ou inválida ⇒ o padrão. */
-function idPadraoDe(cfg) {
-  const v = cfg?.fluxo?.idPadrao;
-  if (typeof v !== 'string' || v.length === 0 || v.length > 200) return PADROES.idPadrao;
-  try { new RegExp(v); } catch { return PADROES.idPadrao; }
-  return v;
 }
 
 /** `<ledgerDir>/<ID>.md` (padrão `docs/ledgers`), a mesma regra do `responder.mjs`. */
@@ -355,17 +455,23 @@ function estadoEmPalavras(dir, eventos) {
     return null;
   }
   if (tasks.length === 0) return null;
+  // GM-15 T9 (REQ-ENT-2): adiada e cortada saem do alvo (o mesmo denominador do PRONTO)
   let n = 0;
+  let alvo = 0;
   for (const id of tasks) {
     const r = estadoDe(eventos.filter((e) => TIPOS_DE_TASK.includes(e?.tipo) && e?.dados?.task === id));
-    if (!('invalido' in r) && r.estado === 'integrada') n++;
+    const est = 'invalido' in r ? null : r.estado;
+    if (est === 'adiada' || est === 'cortada') continue;
+    alvo++;
+    if (est === 'integrada') n++;
   }
-  return n === tasks.length ? 'tasks todas integradas' : `${n} de ${tasks.length} tasks integradas`;
+  return n === alvo ? 'tasks todas integradas' : `${n} de ${alvo} tasks integradas`;
 }
 
 /**
  * Pontos de atividade `{id, data}` (pendência T14/T15: a MESMA regra do `responder.mjs`): 1 por `ts` distinto de cada entrega de
  * `.harness/entregas/` fora das pastas `_*`. Diário ilegível ⇒ a fonte entra em `fontes` (nunca lista vazia calada). `ultima` = a de `ts` mais recente.
+ * `diarios` (GM-15 T30, h.1): os eventos de cada entrega lida, para medir o fechamento das anteriores sem reler.
  */
 function atividades(raiz, fontes) {
   const base = join(raiz, '.harness', 'entregas');
@@ -374,15 +480,17 @@ function atividades(raiz, fontes) {
     nomes = readdirSync(base).filter((n) => !n.startsWith('_')).sort();
   } catch (e) {
     if (!ausenteFs(e)) fontes.push(FONTE.entregas);
-    return { ultimas: [], ultima: null };
+    return { ultimas: [], ultima: null, diarios: [] };
   }
   const ultimas = [];
+  const diarios = [];
   let ultima = null;
   for (const id of nomes) {
     const dir = join(base, id);
     try { if (!lstatSync(dir).isDirectory()) continue; } catch { continue; }
     const lido = lerEstrito(dir);
     if (!lido.ok) { fontes.push(FONTE.diarioDe(id)); continue; }
+    diarios.push({ id, eventos: lido.eventos });
     const vistos = new Set();
     let maior = null;
     for (const e of lido.eventos) {
@@ -393,7 +501,7 @@ function atividades(raiz, fontes) {
     }
     if (maior !== null && (ultima === null || maior > ultima.data)) ultima = { id, data: maior, dir, eventos: lido.eventos };
   }
-  return { ultimas, ultima: ultima === null ? null : { id: ultima.id, estado: estadoEmPalavras(ultima.dir, ultima.eventos) } };
+  return { ultimas, ultima: ultima === null ? null : { id: ultima.id, estado: estadoEmPalavras(ultima.dir, ultima.eventos) }, diarios };
 }
 
 /** `gh` da entrega pelo `.harness/painel-medir.json` (T11; `estado` só lê): ausente ⇒ `nunca`; corrompido ⇒ `nunca` + fonte que falhou; `falhou` ⇒ o GitHub. */
@@ -415,10 +523,61 @@ function ghDe(raiz, chave, fontes) {
   return it.gh;
 }
 
-/** `session_id` do mod (stdin de `--agentes`), a mesma leitura do `medir`; sem ele a trilha nunca liga por resposta (falha fechada). */
-function sessaoDoMod(agentes) {
+/**
+ * GM-15 T33 (g.17): o pacote de nomes vigente da sessão, de onde o mod o grava (`.harness/contexto/<sessao>.json`, campo `pacote`). A sessão dada (`--sessao` ou o
+ * `session_id` do mod) vale com qualquer idade; sem ela, só a leitura mais recente do mod (`fonte: mod`, até 10 min). Fora da forma, ilegível ou ausente ⇒ `null`.
+ */
+const JANELA_PACOTE_MS = 600_000;
+function pacoteVigente(raiz, sessao, agoraMs) {
+  const dir = join(raiz, '.harness', 'contexto');
+  const ler = (arq) => {
+    try {
+      const j = JSON.parse(readFileSync(arq, 'utf8'));
+      return ehObj(j) && typeof j.pacote === 'string' && PACOTE_RE.test(j.pacote) ? { pacote: j.pacote, fonte: j.fonte, emMs: Date.parse(j.em) } : null;
+    } catch { return null; }
+  };
+  if (typeof sessao === 'string' && SESSAO_RE.test(sessao)) return ler(join(dir, `${sessao}.json`))?.pacote ?? null;
+  let melhor = null;
+  let nomes = [];
+  try { nomes = readdirSync(dir); } catch { return null; }
+  for (const n of nomes) {
+    if (!/^[A-Za-z0-9-]{1,128}\.json$/.test(n)) continue;
+    const l = ler(join(dir, n));
+    if (l !== null && l.fonte === 'mod' && Number.isFinite(l.emMs) && agoraMs - l.emMs <= JANELA_PACOTE_MS && l.emMs - agoraMs <= 5_000 && (melhor === null || l.emMs > melhor.emMs)) melhor = l;
+  }
+  return melhor === null ? null : melhor.pacote;
+}
+
+/**
+ * GM-15 T19 (REQ-POU-4): o sinal do loop automático da `sessao` (`.harness/contexto/loop-dinamico.<sessao>.json` da raiz principal, gravado pelo mod a cada Stop):
+ * `armado` | `ausente`, só da própria sessão, na forma do mod e fresco (o frescor é do consumidor, contrato da T17: o mesmo `SINAL_FRESCO_MS` do Stop; futuro além de
+ * 5 min também não vale). Sem sessão, sem mod, sem arquivo, `nao_conferivel`, corrompido, velho ou de outra sessão ⇒ `null` (não conferível: o painel não muda nada).
+ */
+export function loopDaSessao(raiz, sessao, agoraMs, mod = MOD_GABARITO) {
+  if (mod === null || typeof mod?.arquivoSinalLoop !== 'function' || typeof mod?.interpretarSinalLoop !== 'function') return null;
+  try {
+    const arquivo = mod.arquivoSinalLoop(sessao);
+    if (arquivo === null) return null;
+    const s = mod.interpretarSinalLoop(readFileSync(join(raiz, '.harness', arquivo), 'utf8'), sessao);
+    if (s.estado !== 'armado' && s.estado !== 'ausente') return null;
+    const em = Date.parse(s.em);
+    return Number.isFinite(em) && agoraMs - em <= SINAL_FRESCO_MS && em - agoraMs <= 5 * 60_000 ? s.estado : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A medição do pouso de `loop.mjs proxima` (`medicaoDoPouso`) para a sessão do painel, mais a de cada sessão que retomou depois do pouso (`sessoesDeRetomada`). */
+function medicaoDoPainel(raiz, sessao, x, eventos, agoraMs) {
+  const m = medicaoDoPouso(raiz, sessao, x, agoraMs);
+  for (const id of sessoesDeRetomada(eventos)) m.leituras.push(...medicaoDoPouso(raiz, id, x, agoraMs).leituras);
+  return m;
+}
+
+/** `session_id` do mod (stdin de `--agentes`), a mesma leitura e a mesma forma (`SESSAO_RE`) do `medir`; sem ele, ou fora da forma, a trilha nunca liga por resposta (falha fechada). */
+export function sessaoDoMod(agentes) {
   const s = agentes?.session_id ?? agentes?.sessao?.session_id;
-  return typeof s === 'string' && s !== '' ? s : null;
+  return typeof s === 'string' && SESSAO_RE.test(s) ? s : null;
 }
 
 /**
@@ -443,7 +602,7 @@ function semPlanoNaApresentacao(comPlano, semPlano, entrada) {
 
 /**
  * Monta o estado do painel. `opts`: `agentes` (objeto do stdin; ausente = sem `--agentes`, equipe só do diário), `pacote`, `entrega`, `agoraMs`
- * (um só `Date.now()` por execução), `env` (padrão `process.env`), `fuso`, `diario` (deps de `lerDiarioEstavel`), `preparar` (troca `prepararLeitura`, para contar chamadas) e `projetar` (troca `projetarPainel`, para ler a entrada). Nunca lança: `{ok:true, estado, avisos}`
+ * (um só `Date.now()` por execução), `env` (padrão `process.env`), `fuso`, `diario` (deps de `lerDiarioEstavel`), `preparar` (troca `prepararLeitura`, para contar chamadas) `projetar` (troca `projetarPainel`, para ler a entrada) e `projetoDeps` (troca o `git worktree list` da visão de projeto). Nunca lança: `{ok:true, estado, avisos}`
  * ou `{ok:false, erro, mensagem}`.
  *
  * GM-14 T18 (REQ-GLB-1, FIEL-10 b/e): num repo git NUNCA devolve `sem_loop`/`plano_ausente`/`entrega_nao_inferida`. Sem plano ⇒ FASE pela trilha;
@@ -466,17 +625,24 @@ export function estadoDoPainel(cwd, opts = {}) {
     }
     const origin = raiz === null ? { cfg: null, fonte: 'nenhuma', invalida: false } : lerConfigOrigin(raiz);
     if (origin.invalida === true) avisos.push(`config de origin/HEAD inválida (${origin.motivo})`);
-    const idPadrao = idPadraoDe(origin.cfg);
+    const idPadrao = idPadraoDe(raiz ?? cwd); // a regra do loop (lib/config.mjs), sem cópia
     const branch = raiz === null ? null : branchDe(cwd);
     const id = opts.entrega ?? idDaBranch(branch, idPadrao);
     const c = raiz === null ? null : { cwd, raiz, entrega: id ?? '_sem-id', dirEntrega: dirEntrega(raiz, id ?? null), sessao: 'loop' };
 
+    // GM-15 T9 (REQ-ENT-2): o plano é relido a cada leitura; `plano.json` inválido NÃO derruba o estado (o mod guardaria o último, o plano velho): vai sem
+    // plano, com o motivo em `planoInvalido` ("?" na FASE) e "o plano" nas fontes que falharam (o DEPENDE diz "?"); o motivo inteiro vai nos avisos
     let plano = null;
+    let planoInvalido = null;
     if (c !== null && id !== null) {
       try {
         plano = carregarPlano(c);
       } catch (e) {
-        if (e?.erro !== 'plano_ausente') throw e;
+        if (e?.erro === 'plano_invalido') {
+          planoInvalido = String(e.message ?? '').replace(/^\S*plano\.json:? ?/, '') || 'plano.json ilegível';
+          fontes.push(FONTE.plano);
+          avisos.push(`plano: ${e.message}`);
+        } else if (e?.erro !== 'plano_ausente') throw e;
       }
     }
     const lido = c === null ? { eventos: [] } : lerDiarioEstavel(c.dirEntrega, opts.diario);
@@ -488,7 +654,13 @@ export function estadoDoPainel(cwd, opts = {}) {
     if (raiz !== null) {
       try { specs = lerSpecs(sessaoRaiz, idPadrao); } catch (e) { if (typeof e?.erro !== 'string') throw e; fontes.push(FONTE.specs); }
     }
-    const ativ = raiz === null ? { ultimas: [], ultima: null } : atividades(raiz, fontes);
+    const ativ = raiz === null ? { ultimas: [], ultima: null, diarios: [] } : atividades(raiz, fontes);
+    // GM-15 T8 (REQ-ENT-1 d): a entrega encerrada que o painel mostra: a da branch (ou `--entrega`); sem ela, a última conhecida (a do "sem entrega em
+    // curso · última"). A próxima: spec com PBI sem encerramento mais nova ⇒ ideias anotadas na entregue ⇒ nenhuma (regra de `proximaEntrega`).
+    const daEntregue = id !== null ? { id, eventos } : ativ.ultima === null ? null : { id: ativ.ultima.id, eventos: ativ.diarios.find((x) => x.id === ativ.ultima.id)?.eventos ?? null };
+    const entregue = daEntregue === null ? null : entregueDe(daEntregue.eventos, daEntregue.id);
+    const encerradas = new Set(ativ.diarios.filter((x) => encerramentoDe(x.eventos, x.id).encerrada).map((x) => x.id));
+    const proxima = entregue === null ? null : proximaEntrega(specs, encerradas, daEntregue.eventos);
     const gh = raiz === null ? 'nunca' : ghDe(raiz, id !== null && c.dirEntrega.endsWith(id) ? id : '_sem-id', fontes);
     const sessaoMod = sessaoDoMod(opts.agentes);
     const fatos = {
@@ -515,9 +687,7 @@ export function estadoDoPainel(cwd, opts = {}) {
       if (daEntrega.length === 1 && daEntrega[0].titulo !== '') titulo = daEntrega[0].titulo;
     }
 
-    // origem: teto da Sombra e política
-    const teto = tetoDaSombra(origin);
-    if (teto.aviso !== undefined) avisos.push(teto.aviso);
+    // origem: política (GM-15 T36: o teto de consultas à Sombra saiu; `sombra.teto` é ignorado)
     const config = lerConfigEntrega(origin.cfg);
     avisos.push(...config.erros);
     const efetiva = politicaEfetiva(config, plano?.politica_entrega);
@@ -551,6 +721,9 @@ export function estadoDoPainel(cwd, opts = {}) {
     else if (typeof sessao.pacote === 'string') {
       if (PACOTE_RE.test(sessao.pacote)) nomePacote = sessao.pacote;
       else avisos.push(`sessao.pacote ${JSON.stringify(sessao.pacote.slice(0, 40))} fora da forma: usando ${PACOTE_PADRAO}`);
+    } else if (raiz !== null) {
+      // g.17: sem pacote no pedido, o da sessão (o que o mod gravou), não o de fábrica
+      nomePacote = pacoteVigente(raiz, opts.sessao ?? sessaoMod, agoraMs) ?? PACOTE_PADRAO;
     }
     const pacote = carregarPacote(nomePacote, raiz, avisos);
 
@@ -565,6 +738,10 @@ export function estadoDoPainel(cwd, opts = {}) {
       }
     }
 
+    // GM-15 T33 (emenda 5): a MESMA medição do `loop.mjs proxima` (`medicaoDoPouso`): a leitura própria da sessão que pergunta (`--sessao`, senão o `session_id` do mod),
+    // fresca até 120 s; mais a leitura das sessões que retomaram depois do pouso (g.18). Sem sessão ou fora de repo ⇒ sem medição ⇒ a regra sem mod.
+    const sessaoPouso = opts.sessao ?? sessaoMod;
+    const medicaoPouso = raiz === null || sessaoPouso === null ? undefined : medicaoDoPainel(raiz, sessaoPouso, x.x, eventos, agoraMs);
     const entrada = {
       decisaoEntrega,
       pausado: c === null ? false : pausado(c),
@@ -582,16 +759,41 @@ export function estadoDoPainel(cwd, opts = {}) {
       entregaId: plano !== null ? c.entrega : id,
       modeloSessao: modeloDoDiario(eventos),
       specSha,
-      tetoSombra: teto.teto,
+      configLote: configDoLote(origin, config), // GM-15 T13: o lote do dono com a mesma leitura de origin que `loop.mjs proxima`
       fatos,
       fontesFalhas: fontes,
       fora: raiz === null,
       onboarding: raiz !== null && temOnboarding(raiz), // FIEL-14 h: o mesmo critério e a mesma leitura do cartão (config LOCAL)
       ultima: ativ.ultima,
+      // h.1: o fechamento medido nas entregas anteriores do repo (da última integrada ao merge na main); sem medida ⇒ `null` e a faixa abre em "?"
+      fechamentoS: fechamentoDasAnteriores(ativ.diarios, id),
+      // Emenda 3: as etapas das entregas anteriores, para a previsão com menos de 3 integradas nesta entrega
+      etapasAnteriores: etapasDasAnteriores(ativ.diarios, id),
+      // ... e o ritmo delas (relógio por task integrada); sem ritmo medido o fallback mostra "?" (r2 MAJOR 1)
+      ritmoAnterioresS: ritmoDasAnteriores(ativ.diarios, id),
+      ...(medicaoPouso !== undefined ? { medicaoPouso } : {}),
+      // GM-15 T19 (REQ-POU-4): o sinal do loop da mesma sessão do pouso (`--sessao`, senão a do mod)
+      loopDinamico: raiz === null || sessaoPouso === null ? null : loopDaSessao(raiz, sessaoPouso, agoraMs),
+      entregue,
+      proxima,
+      // r1 MAJOR-2: a entregue só zera o diário projetado quando é a dele (branch com ID ou `--entrega`); a última conhecida não zera o `_sem-id`
+      entregueDoDiario: id !== null,
+      planoInvalido,
     };
     const projetar = opts.projetar ?? projetarPainel;
     const estado = projetar(descartado ? planoDoDiario : plano, eventos, entrada);
-    return { ok: true, estado: descartado ? semPlanoNaApresentacao(estado, projetar(null, eventos, entrada), entrada) : estado, avisos };
+    const apresentado = descartado ? semPlanoNaApresentacao(estado, projetar(null, eventos, entrada), entrada) : estado;
+    // GM-15 T32 (REQ-ENT-2 emenda 4): a visão de projeto (todas as worktrees) acima da de entrega; `temPlanoJson` = a entrega tem `plano.json` (item 4: sem ele, "fase não medida")
+    let projeto = null;
+    if (raiz !== null) {
+      try {
+        projeto = projetoDoRepo({ atual: sessaoRaiz ?? raiz, cfg: origin.cfg, idPadrao, agoraMs, fuso, deps: opts.projetoDeps });
+        avisos.push(...projeto.avisos);
+      } catch (e) {
+        avisos.push(`visão de projeto não lida: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`);
+      }
+    }
+    return { ok: true, estado: { ...apresentado, projeto, temPlanoJson: planoDoDiario !== null || planoInvalido !== null }, avisos, decisoesSombra: decisoesDaSombra(eventos) };
   } catch (e) {
     if (e instanceof Falha || typeof e?.erro === 'string') return { ok: false, erro: e.erro, mensagem: e.message };
     return { ok: false, erro: 'erro_interno', mensagem: String(e instanceof Error ? e.message : e).slice(0, 200) };
@@ -618,10 +820,16 @@ export function main(argv, cwd = process.cwd(), io = {}) {
       return r?.ok === true ? 0 : 1;
     }
     const agentes = flags.agentes === true ? lerEntradaAgentes((io.stdin ?? lerStdin)()) : undefined;
-    const r = estadoDoPainel(cwd, { agentes, pacote: flags.pacote, entrega: flags.entrega, agoraMs: io.agoraMs });
+    const r = estadoDoPainel(cwd, { agentes, pacote: flags.pacote, entrega: flags.entrega, sessao: flags.sessao, agoraMs: io.agoraMs, projetoDeps: io.projetoDeps });
     if (!r.ok) return falha(new Falha(r.erro, r.mensagem));
     if (cmd === 'estado') {
       saida(`${JSON.stringify({ ok: true, estado: r.estado, avisos: r.avisos })}\n`);
+      return 0;
+    }
+    if (cmd === 'texto' && flags.sombra === true) {
+      const lista = r.decisoesSombra ?? [];
+      for (const a of r.avisos) aviso(`painel: aviso: ${a}\n`);
+      saida(`${lista.length === 0 ? 'nenhuma decisão da Sombra desde a sua última resposta' : lista.map((d) => `- ${d.id} ${d.frase}`).join('\n')}\n`);
       return 0;
     }
     const texto = paraTexto(
