@@ -765,7 +765,7 @@
     },
     {
       "id": "T36",
-      "titulo": "Sombra libera até 5x por task (emenda 21, D-G16)",
+      "titulo": "Sombra libera até 5x por task",
       "deps": [
         "T34"
       ],
