@@ -2107,3 +2107,96 @@ test('pouso-medido-sem-mod-ativo-avisa-ligar-ou-clear (REQ-POU-4, aprendizado 18
   avisa(armado, /pouso pendente; digite \/clear para retomar em conversa limpa/);
   assert.doesNotMatch(armado.json.systemMessage, /aguardando o pouso do mod/);
 });
+
+// ------------------------------------------------------------------------------------- GM-15 T39 (MAJOR-1 do review final, REQ-AUT-1, emendas 22 e 24): o teto que a Sombra decide não para o Stop
+
+const TETO_T1 = () => [
+  ev('s', 1, 'task.iniciada', { task: 'T1', papel: 'implementador' }), ev('s', 2, 'task.concluida', { task: 'T1' }),
+  ev('s', 3, 'review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 }),
+  ev('s', 4, 'task.iniciada', { task: 'T1', papel: 'correcao' }), ev('s', 5, 'task.concluida', { task: 'T1' }),
+  ev('s', 6, 'review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 2, major: 1, blocker: 0 }),
+];
+/** `harness.config.json` em origin/HEAD (a única fonte de `sombra.libera_teto`). */
+function comOrigin(raiz, cfg) {
+  writeFileSync(join(raiz, 'harness.config.json'), JSON.stringify(cfg));
+  git(raiz, 'add', 'harness.config.json');
+  git(raiz, 'commit', '-q', '-m', 'chore: config');
+  git(raiz, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  git(raiz, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+}
+/** Entrega com T1 no teto (2 rodadas reprovadas), pendências de aprendizado fechadas, com a config de origin dada (`null` = sem origin). */
+function noTeto(cfg, extra = [], antes = (e) => e) {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 's', antes([...TETO_T1(), ...extra]));
+  fecharPendenciasNoDiario(entregaDir(raiz), PLANO);
+  if (cfg !== null) comOrigin(raiz, cfg);
+  return raiz;
+}
+
+test('t39-stop-sombra-decide-nao-deixa-parar: libera_teto ligado e sem freio ⇒ block pedindo a pergunta à Sombra; nunca "parou" nem /liberar', () => {
+  const raiz = noTeto({ sombra: { libera_teto: true } });
+  const r = stop(raiz);
+  bloqueia(r, /T1/);
+  assert.match(r.json.reason, /Sombra/);
+  assert.match(r.json.reason, /sombra\.mjs perguntar --task T1 --libera-teto/);
+  assert.doesNotMatch(r.json.reason, /parou|comando do dono|\/gabarito-mestre:liberar/);
+});
+
+test('t39-stop-freio-cita-liberar: libera_teto ligado mas com freio (2 abordagens novas sem convergir) ⇒ parada do dono', () => {
+  const ciclo = (n, hash, abordagem) => [
+    ev('s', n, 'task.reaberta', { task: 'T1', origem: 'sombra', hash, abordagem_nova: abordagem }),
+    ev('s', n + 1, 'task.iniciada', { task: 'T1', papel: 'implementador' }), ev('s', n + 2, 'task.concluida', { task: 'T1' }),
+    ev('s', n + 3, 'review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 }),
+    ev('s', n + 4, 'task.iniciada', { task: 'T1', papel: 'correcao' }), ev('s', n + 5, 'task.concluida', { task: 'T1' }),
+    ev('s', n + 6, 'review.veredito', { task: 'T1', veredito: 'REPROVADO', rodada: 2, major: 1, blocker: 0 }),
+  ];
+  const hist = [...ciclo(7, 'a'.repeat(64), 'x'), ...ciclo(14, 'b'.repeat(64), 'y')];
+  const raiz = noTeto({ sombra: { libera_teto: true } }, hist);
+  const r = stop(raiz);
+  avisa(r, /parou.*teto de rodadas/);
+});
+
+test('t39-stop-flag-desligada-cita-liberar: sem libera_teto em origin (ausente ou false) ⇒ parada do dono; a trava longa manda /liberar', () => {
+  const velho = (evs) => evs.map((e, i) => ({ ...e, ts: new Date(Date.now() - (120 - i) * 60_000).toISOString() }));
+  for (const cfg of [null, { sombra: { libera_teto: false } }]) {
+    const raiz = noTeto(cfg, [], velho);
+    const r = stop(raiz);
+    avisa(r, /parou.*teto de rodadas/);
+    assert.match(r.json.systemMessage, /`\/gabarito-mestre:liberar T1`/);
+  }
+});
+
+test('t39-costura-cli-real: proxima, Stop, painel e a ponte do mod concordam sobre QUEM decide o teto (Sombra com a flag e sem freio; dono sem a flag)', async () => {
+  const { SCRIPT_ORIGEM } = await import('../../mod/gabarito.mjs');
+  const { liberaTetoDeOrigin, sombraDecideOTeto } = await import('../dist/loop.js');
+  const cli = (raiz, script, args, input) => {
+    const r = spawnSync(process.execPath, [join(GATES, 'scripts', script), ...args], { cwd: raiz, input, encoding: 'utf8', env: env({ CLAUDE_PROJECT_DIR: raiz }) });
+    let j = null;
+    try { j = JSON.parse(r.stdout.trim()); } catch { /* fica null */ }
+    return { rc: r.status, j, out: r.stdout + r.stderr };
+  };
+  for (const [rotulo, cfg, sombra] of [['flag ligada, sem freio', { sombra: { libera_teto: true } }, true], ['flag desligada', { sombra: { libera_teto: false } }, false]]) {
+    // diário pela cadeia real (`anexar`): o CLI do `proxima` e do painel recusam a cadeia de hash que a fixture crua não tem
+    const raiz = repo();
+    plano(raiz);
+    TETO_T1().forEach((e, i) => assert.equal(anexar(entregaDir(raiz), 's', { ts: new Date(Date.now() - (60 - i) * 1000).toISOString(), autor: 'a', sessao: 's', agente: 'orquestrador', tipo: e.tipo, dados: e.dados }).ok, true));
+    fecharPendenciasNoDiario(entregaDir(raiz), PLANO);
+    comOrigin(raiz, cfg);
+    const p = cli(raiz, 'loop.mjs', ['proxima', '--vivos', '0']);
+    assert.equal(p.j?.acao?.motivo, 'teto_rodadas', `${rotulo}: ${p.out}`);
+    assert.equal(p.j.acao.liberacao?.oferecer, sombra, `${rotulo}: proxima ${p.out}`);
+    const e = cli(raiz, 'painel.mjs', ['estado', '--entrega', 'GM-10', '--agentes'], JSON.stringify({ session_id: 'S1', agentes: [] }));
+    assert.equal(e.j?.ok, true, e.out);
+    // o painel só tem PAROU depois do `loop.parar` (que o mod não grava mais quando a Sombra decide); o item do dono (DEPENDE) é a leitura do mesmo fato
+    assert.equal((e.j.estado.depende ?? []).filter((i) => i.motivo !== 'nada depende de você').length === 0, sombra, `${rotulo}: painel depende ${JSON.stringify(e.j.estado.depende)}`);
+    const s = stop(raiz);
+    if (sombra) { bloqueia(s, /Sombra/); assert.doesNotMatch(s.json.reason, /parou|\/gabarito-mestre:liberar/); } else avisa(s, /parou.*teto de rodadas/);
+    const o = spawnSync(process.execPath, ['-e', SCRIPT_ORIGEM], { cwd: raiz, input: JSON.stringify({ url: pathToFileURL(join(GATES, 'lib', 'config.mjs')).href, raiz }), encoding: 'utf8', env: env() });
+    const ponte = JSON.parse(o.stdout);
+    assert.equal(ponte.ok, true, o.stderr);
+    assert.equal(liberaTetoDeOrigin(ponte.origin), sombra, `${rotulo}: ponte do mod ${o.stdout}`);
+    const evs = linhasDoDiario(raiz);
+    assert.equal(sombraDecideOTeto(PLANO, evs, 'T1', liberaTetoDeOrigin(ponte.origin)), sombra);
+  }
+});

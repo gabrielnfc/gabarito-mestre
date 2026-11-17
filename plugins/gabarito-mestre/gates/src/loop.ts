@@ -611,3 +611,13 @@ export function sombraDecideOTeto(plano: Plano, eventos: Evento[], task: string,
   if (liberaTeto !== true) return false;
   try { return freioDaLiberacao(plano, eventos, task).freio === null; } catch { return false; }
 }
+
+/**
+ * GM-15 T39 (MAJOR-1 do review final): `sombra.libera_teto` lido de `lerConfigOrigin` (`{fonte, cfg}`), a regra ÚNICA do lote (`configDoLote`), do Stop e do mod: só vale a config de
+ * `origin/HEAD` (`fonte: 'origin'`; a local não conta) com `sombra.libera_teto === true`. Qualquer outra forma ⇒ `false` (desligado). Puro, nunca lança.
+ */
+export function liberaTetoDeOrigin(origin: unknown): boolean {
+  const o = origin as { fonte?: unknown; cfg?: { sombra?: { libera_teto?: unknown } | null } | null } | null | undefined;
+  const s = o?.fonte === 'origin' ? o.cfg?.sombra : undefined;
+  return s !== null && typeof s === 'object' && s.libera_teto === true;
+}

@@ -426,10 +426,37 @@ function clearAdiado(r) {
   } catch { return false; }
 }
 
+export const SCRIPT_ORIGEM = `/*gabarito:origem*/
+const fs = require('node:fs');
+const { url, raiz } = JSON.parse(fs.readFileSync(0, 'utf8'));
+import(url).then((m) => {
+  const o = m.lerConfigOrigin(raiz);
+  const s = o?.cfg?.sombra;
+  process.stdout.write(JSON.stringify({ ok: true, origin: { fonte: o?.fonte ?? 'nenhuma', cfg: s !== null && typeof s === 'object' ? { sombra: { libera_teto: s.libera_teto } } : null } }));
+}).catch(() => process.exit(1));`;
+
+/**
+ * GM-15 T39 (MAJOR-1 do review final, REQ-AUT-1, emendas 22 e 24): a Sombra decide o teto desta task? A MESMA `sombraDecideOTeto` do núcleo (dist/loop.js, a do `proxima`, do lote, do painel e do Stop)
+ * com `sombra.libera_teto` lido só de `origin/HEAD` (`lerConfigOrigin` pela ponte, `liberaTetoDeOrigin` no núcleo). Ponte que falha ou responde fora da forma ⇒ `false`: o dono decide, nunca por palpite.
+ */
+async function sombraDecideNoMod($, c, acao, m) {
+  if (acao.motivo !== 'teto_rodadas' || typeof acao.task !== 'string') return false;
+  try {
+    const url = ('file://' + encodeURI(`${$.plugin.root}/gates/lib/config.mjs`)).replace(/#/g, '%23').replace(/\?/g, '%3F');
+    const r = await $.process.run(['node', '-e', SCRIPT_ORIGEM], { cwd: c.cwd, stdin: JSON.stringify({ url, raiz: c.raiz }), timeoutMs: 5000 });
+    if (r.exitCode !== 0) return false;
+    const o = JSON.parse(r.stdout);
+    if (o?.ok !== true) return false;
+    const ord = nucleo.ordenar(m.eventos);
+    return nucleo.sombraDecideOTeto(m.plano, ord.ok ? ord.eventos : m.eventos, acao.task, nucleo.liberaTetoDeOrigin(o.origin)) === true;
+  } catch { return false; }
+}
+
 /** `parar` do núcleo (teto de rodadas, CI, teto de tokens, `nao_conseguiu`): grava `loop.parar` uma vez, com aviso. Sem pouso. */
 async function pararDoNucleo($, c, acao, m) {
   if (acao.motivo === 'diario_invalido') { await avisarDiario($, 'sequência de eventos fora da tabela de transições'); return; }
   if (jaParou(m.eventos)) return;
+  if (await sombraDecideNoMod($, c, acao, m)) return; // a pergunta à Sombra é ação permitida: o loop NÃO para (o Stop pede a pergunta)
   if (acao.motivo === 'nao_conseguiu') {
     // task em voo sem agente: o hand-back pode ainda não ter chegado; só para depois de N turnos sem evento novo
     espera = espera !== null && espera.dir === c.dir && espera.marca === m.marca ? { ...espera, n: espera.n + 1 } : { dir: c.dir, marca: m.marca, n: 1 };

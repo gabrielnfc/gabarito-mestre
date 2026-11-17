@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { achadosDeReview, CHAVES_DE_EVENTO, estadoDe, freioDaLiberacao, progressoMedido, foraPermitido, ordenar, podeIntegrar, proximaAcao as proximaAcaoNucleo, tasksCongeladas, tasksInvalidas, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK, TRANSICOES } from '../src/loop.ts';
+import { achadosDeReview, CHAVES_DE_EVENTO, estadoDe, freioDaLiberacao, liberaTetoDeOrigin, progressoMedido, foraPermitido, ordenar, podeIntegrar, proximaAcao as proximaAcaoNucleo, tasksCongeladas, tasksInvalidas, TIPOS_DE_PROGRESSO, TIPOS_DE_TASK, TRANSICOES } from '../src/loop.ts';
 import { fecharPendencias } from './_adaptador-helpers.mjs';
 import * as diarioFs from '../src/diario.ts';
 import { projetarEmendas, reqsCongelados, SESSAO_EMENDAS } from '../src/emenda.ts';
@@ -2189,4 +2189,13 @@ test('t36-freio-esgotado-vence-orcamento-e-diario-invalido-nao-freia: a ordem do
   assert.equal(fl([at(5, 'task.iniciada', { task: 'T', papel: 'implementador' }), ev(1, 'ontem', 's1', 'ci.resultado', { verde: true })]).freio, null);
   const ambos = fl([...base(), ...noTetoEm('T', 400, 500), reabSombra('T', { abordagem_nova: 'a' }), reabSombra('T', { abordagem_nova: 'b' }), ...noTetoEm('T', 2000, 500)]);
   assert.equal(ambos.freio?.motivo, 'abordagens_esgotadas', 'com os dois freios, o das abordagens é o dito');
+});
+
+test('t39-libera-teto-de-origin: só `fonte: origin` com sombra.libera_teto === true liga; local, ausente, falso, truthy e forma torta desligam', () => {
+  assert.equal(liberaTetoDeOrigin({ fonte: 'origin', cfg: { sombra: { libera_teto: true } } }), true);
+  for (const o of [
+    { fonte: 'nenhuma', cfg: { sombra: { libera_teto: true } } }, { fonte: 'local', cfg: { sombra: { libera_teto: true } } },
+    { fonte: 'origin', cfg: { sombra: { libera_teto: false } } }, { fonte: 'origin', cfg: { sombra: { libera_teto: 'true' } } }, { fonte: 'origin', cfg: { sombra: { libera_teto: 1 } } },
+    { fonte: 'origin', cfg: { sombra: null } }, { fonte: 'origin', cfg: {} }, { fonte: 'origin', cfg: null }, { fonte: 'origin' }, null, undefined, 'origin', 7,
+  ]) assert.equal(liberaTetoDeOrigin(o), false, JSON.stringify(o));
 });

@@ -15,6 +15,8 @@ const PRINCIPAL = '/main'
 
 type Ev = { agente: string; tipo: string; dados: Record<string, unknown> }
 type Opc = {
+  /** GM-15 T39: o que a ponte de `origin/HEAD` devolve (`{fonte, cfg:{sombra}}`); `'falha'` = ponte que não responde; ausente = sem origin */
+  origin?: Record<string, unknown> | 'falha'
   /** GM-14 T35: o que o motor devolve ao `tool.call` (objeto ou função do evento); padrão `{}` */
   resultadoTool?: Record<string, unknown> | ((e: any) => Record<string, unknown>)
   percent?: number | null
@@ -165,7 +167,7 @@ function mundo($: any, on: any, o: Opc = {}) {
     // painel (T10)
     painel: { ...(o.painel ?? {}) } as PainelOpc, painelStdins: [] as any[], painelArgv: [] as string[][], painelInit: [] as any[], painelFlight: 0, painelLibera: [] as (() => void)[],
     surfaces: (o.surfaces ?? []) as string[], opens: [] as any[], panes: (o.panes ?? []) as any, openResult: (o.openResult ?? { isPlaced: true }) as any, notifies: [] as string[], fills: [] as any[], statuses: [] as (string | undefined)[],
-    subStarts: [] as any[], logs: [] as string[], closes: [] as any[], registros: [] as any[], sessaoId: o.sessaoId ?? 'sess-1', ordem: [] as string[], notifyModo: (o.notify ?? 'ok') as string, rateLimits: (o.rateLimits === undefined ? [] : o.rateLimits) as any, fillIsFilled: o.fillIsFilled !== false,
+    origens: [] as any[], subStarts: [] as any[], logs: [] as string[], closes: [] as any[], registros: [] as any[], sessaoId: o.sessaoId ?? 'sess-1', ordem: [] as string[], notifyModo: (o.notify ?? 'ok') as string, rateLimits: (o.rateLimits === undefined ? [] : o.rateLimits) as any, fillIsFilled: o.fillIsFilled !== false,
     agoraMs: null as number | null,
     semOnboarding: o.semOnboarding === true, // GM-15 T23: mutável, o config pode sumir com a sessão aberta
     msgs: [] as { sha256: string; chars: number }[], mensagemLibera: [] as (() => void)[],
@@ -271,6 +273,11 @@ function mundo($: any, on: any, o: Opc = {}) {
         est.onboardings.push({ q, init: e.init })
         if (o.onboardingFalha) return { deny: 'node não iniciou' }
         return cru0(`${JSON.stringify({ ok: true, onboarding: !est.semOnboarding })}\n`)
+      }
+      if (String(argv[2]).startsWith('/*gabarito:origem*/')) {
+        est.origens.push(q)
+        if (o.origin === 'falha') return { deny: 'node não iniciou' }
+        return cru0(`${JSON.stringify({ ok: true, origin: o.origin ?? { fonte: 'nenhuma', cfg: null } })}\n`)
       }
       if (String(argv[2]).startsWith('/*gabarito:loop*/')) { est.sinaisLoop.push({ q, init: e.init }); return cru0('') }
       if (String(argv[2]).startsWith('/*gabarito:contexto*/')) { est.contextos.push(q); est.contextoInit.push(e.init); return cru0('') }
@@ -797,6 +804,44 @@ test('so-no-teto-para-teto-rodadas-uma-vez (M, 5d): sem pouso; loop.parar com o 
   expect(parou(m)[0].dados).toEqual({ motivo: 'teto_rodadas', task: 'a' })
   expect(m.toasts.some((t) => t.includes('teto_rodadas'))).toBe(true)
 })
+// GM-15 T39 (MAJOR-1 do review final, REQ-AUT-1, emendas 22 e 24): o teto que a Sombra decide não vira `loop.parar` do mod
+const SO_A = { entrega: 'PBI-7', tasks: [PLANO.tasks[0]] }
+const LIBERA = { fonte: 'origin', cfg: { sombra: { libera_teto: true } } }
+const cicloSombra = (n: number, hash: string, abordagem: string) => [
+  EV(n, 'task.reaberta', { task: 'a', origem: 'sombra', hash, abordagem_nova: abordagem }),
+  EV(n + 1, 'task.iniciada', { task: 'a', papel: 'implementador' }), EV(n + 2, 'task.concluida', { task: 'a', sha: 'x' }),
+  EV(n + 3, 'review.veredito', { task: 'a', veredito: 'REPROVADO', rodada: 1, major: 1, blocker: 0 }),
+  EV(n + 4, 'task.iniciada', { task: 'a', papel: 'correcao' }), EV(n + 5, 'task.concluida', { task: 'a', sha: 'y' }),
+  EV(n + 6, 'review.veredito', { task: 'a', veredito: 'REPROVADO', rodada: 2, major: 1, blocker: 0 }),
+]
+const turnosNoTeto = async (m: ReturnType<typeof mundo>) => {
+  fecharEm(m, SO_A)
+  await m.inicio()
+  for (let i = 0; i < 4; i++) { await m.turno(); await m.clock.settle() }
+}
+test('t39-mod-sombra-decide-teto-nao-grava-parar: libera_teto em origin e sem freio ⇒ nenhum loop.parar, nenhum aviso de parada', async ($, on) => {
+  const m = mundo($, on, { plano_json: SO_A, eventos: NO_TETO, origin: LIBERA })
+  await turnosNoTeto(m)
+  expect(parou(m)).toHaveLength(0)
+  expect(m.toasts.some((t) => t.includes('loop parado'))).toBe(false)
+  expect(m.est.origens.length).toBeGreaterThan(0)
+})
+test('t39-mod-freio-grava-parar: libera_teto ligado mas com 2 abordagens novas sem convergir ⇒ loop.parar do dono como antes', async ($, on) => {
+  const m = mundo($, on, { plano_json: SO_A, eventos: [...NO_TETO, ...cicloSombra(7, 'a'.repeat(64), 'x'), ...cicloSombra(14, 'b'.repeat(64), 'y')], origin: LIBERA })
+  await turnosNoTeto(m)
+  expect(parou(m)).toHaveLength(1)
+  expect(parou(m)[0].dados).toEqual({ motivo: 'teto_rodadas', task: 'a' })
+})
+const paraSemDecidir = (nome: string, origin: Record<string, unknown> | 'falha' | undefined) =>
+  test(`t39-mod-grava-parar-${nome}: o dono decide (nunca por palpite) ⇒ loop.parar`, async ($, on) => {
+    const m = mundo($, on, { plano_json: SO_A, eventos: NO_TETO, ...(origin === undefined ? {} : { origin }) })
+    await turnosNoTeto(m)
+    expect(parou(m)).toHaveLength(1)
+  })
+paraSemDecidir('sem-origin', undefined)
+paraSemDecidir('flag-desligada', { fonte: 'origin', cfg: { sombra: { libera_teto: false } } })
+paraSemDecidir('config-so-local', { fonte: 'local', cfg: { sombra: { libera_teto: true } } })
+paraSemDecidir('ponte-falha', 'falha')
 test('pausado-nao-pousa: PAUSAR presente ⇒ esperar do núcleo, Agent negado', async ($, on) => {
   const m = mundo($, on, { arquivos: [`${PRINCIPAL}/.harness/PAUSAR`] })
   await pousar(m)

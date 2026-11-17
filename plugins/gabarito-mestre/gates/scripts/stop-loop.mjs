@@ -35,7 +35,7 @@ import { join, dirname, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { idPadraoDe } from '../lib/config.mjs';
+import { idPadraoDe, lerConfigOrigin } from '../lib/config.mjs';
 import { raizPorFs, inferirPbi } from '../lib/git.mjs';
 import { temOnboarding } from './cartao-sessao.mjs';
 
@@ -97,6 +97,12 @@ export function saidaParaAcao(acao, entrega) {
       const resto = tasks.length - lista.length;
       return { decision: 'block', reason: `Loop da entrega ${e} segue: integre ${lista.join(', ')}${resto > 0 ? ` e mais ${resto}` : ''}.` };
     }
+    case 'sombra_decide_teto': {
+      // GM-15 T39: ação do Stop (não do núcleo): a task no teto é decidida pela Sombra, a pergunta fechada é a ação pendente.
+      if (typeof acao.task !== 'string' || acao.task === '') return null;
+      const t = limpo(acao.task);
+      return { decision: 'block', reason: `Loop da entrega ${e} segue: a task ${t} está no teto de rodadas e quem decide é a Sombra (sombra.libera_teto ligado, sem freio): faça a pergunta fechada (sombra.mjs perguntar --task ${t} --libera-teto), despache a Sombra e aplique a decisão (loop.mjs liberar ${t} --origem sombra --hash <h>).` };
+    }
     case 'retomar': {
       // GM-15 T12: task em voo cujo agente morreu; 1 reabertura por task (a 2ª morte vira nao_conseguiu no núcleo).
       // Aviso, nunca block: quem reabre com o mod é ele, no FIM do turno (D1, REQ-LOOP-5); um block prenderia o turno e o mod nunca reabriria
@@ -122,6 +128,13 @@ export function saidaParaAcao(acao, entrega) {
     default:
       return null; // concluir e pousar: o hook não tem o que dizer
   }
+}
+
+/** GM-15 T39: a Sombra decide o teto desta task? A MESMA `sombraDecideOTeto` do núcleo (dist/loop.js) com `sombra.libera_teto` lido só de origin/HEAD (`liberaTetoDeOrigin`). Nunca lança. */
+function sombraDecideTeto(nucleo, plano, eventos, task, raiz) {
+  try {
+    return nucleo.sombraDecideOTeto(plano, eventos, task, nucleo.liberaTetoDeOrigin(lerConfigOrigin(raiz))) === true;
+  } catch { return false; }
 }
 
 async function carregar(nome) {
@@ -445,7 +458,7 @@ function acrescentarAvisos(saida, ctx) {
   if (p.noTeto && !p.pousou && p.armado) {
     msgs.push(`Loop da entrega ${limpo(p.entrega)}: contexto em ${Math.round(p.percent)} % (teto ${p.x} %), é hora de limpar a conversa. Quem limpa é o mod (pouso automático), não o agente: nenhum comando seu é preciso.`);
   }
-  const precisaDoLoop = p.pendente || p.noTeto || ['despachar', 'integrar', 'pousar'].includes(p.acao.tipo);
+  const precisaDoLoop = p.pendente || p.noTeto || ['despachar', 'integrar', 'pousar', 'sombra_decide_teto'].includes(p.acao.tipo);
   if (p.onboarding && !p.armado && precisaDoLoop && !p.falouLoop
     && !jaAvisou(p.raiz, p.sessao, p.entrega, 'loop', p.sessao ?? 'sem-sessao')) {
     msgs.push(`Loop da entrega ${limpo(p.entrega)}: ligar o loop automático (um /loop sem intervalo, com a tarefa de seguir o loop da entrega): sem o sinal dele nesta sessão nada retoma o trabalho depois do pouso.`);
@@ -605,8 +618,15 @@ async function decidir(texto, ambiente, cwdProcesso, ctx) {
   if (noTeto && acao.tipo === 'despachar' && !acao.itens.some((i) => i?.papel === 'revisor')) {
     return aviso(`Loop da entrega ${limpo(entrega)}: contexto no teto, aguardando o pouso do mod (nada novo é despachado antes)`);
   }
+  // GM-15 T39 (MAJOR-1 do review final, REQ-AUT-1, emendas 22 e 24): task no teto que a SOMBRA decide (a regra única `sombraDecideOTeto`, a do `proxima`, do lote e do painel:
+  // `sombra.libera_teto` ligado em origin e sem freio) NÃO é parada do dono: a pergunta à Sombra é ação permitida pendente, então o Stop bloqueia pedindo-a (sem "parou", sem /liberar).
+  // Freio ou flag desligada ⇒ a parada do dono de sempre (abaixo).
+  if (acao.tipo === 'parar' && acao.motivo === 'teto_rodadas' && typeof acao.task === 'string' && sombraDecideTeto(dl.mod, plano, ord.ok ? ord.eventos : eventos, acao.task, raiz)) {
+    acao = { tipo: 'sombra_decide_teto', task: acao.task };
+    ctx.p.acao = acao; // o aviso de loop desligado trata como ação pendente (precisaDoLoop)
+  }
   if (acao.tipo === 'parar') return avisoParar(raiz, sessaoAtual, entrega, acao, ord.ok ? ord.eventos : [], TIPOS_DE_PROGRESSO, Date.now());
-  if (acao.tipo !== 'despachar' && acao.tipo !== 'integrar') return saidaParaAcao(acao, entrega);
+  if (acao.tipo !== 'despachar' && acao.tipo !== 'integrar' && acao.tipo !== 'sombra_decide_teto') return saidaParaAcao(acao, entrega);
 
   const saida = saidaParaAcao(acao, entrega);
   if (saida === null) return null;
