@@ -225,22 +225,37 @@ export function renderEsquadrao(e: EstadoPainel, o: OpcoesRender): Linha[] {
     const modelos = eq.agentes.filter((a) => a.vivo).map((a) => (t(a.modelo) !== '' ? ` · ${t(a.modelo)}` : ''));
     const mw = maxCol(modelos);
     const estadosLegado = new Map<string, EstadoTask>(e.plano.tasks.map((x) => [x.id, x.estado as EstadoTask]));
-    // MINOR-4: o rótulo longo é o primeiro a ceder ("fora do loop"), antes de o modelo sair; o texto continua o da regra única
-    let curto = false;
-    const twDe = (): number => maxCol(eq.agentes.map((a) => (a.vivo && rotuloAgente({ task: typeof a.task === 'string' && t(a.task) !== '' ? t(a.task) : null, papelExibido: null }, estadosLegado) === ROTULO_FORA_DO_LOOP ? (curto ? rotuloCurto() : ROTULO_FORA_DO_LOOP) : t(a.task))));
+    // o rótulo único ("agente fora do loop", emenda 4 item 5) é o 1º a ceder, CORTADO com `…` (nunca trocado por outro texto), antes de o modelo sair
+    let labW: number | null = null;
+    let rotuloTentado = false;
+    const rotulo = (): string => (labW === null ? ROTULO_FORA_DO_LOOP : cortar(ROTULO_FORA_DO_LOOP, labW));
+    const twDe = (): number => maxCol(eq.agentes.map((a) => (a.vivo && rotuloAgente({ task: typeof a.task === 'string' && t(a.task) !== '' ? t(a.task) : null, papelExibido: null }, estadosLegado) === ROTULO_FORA_DO_LOOP ? rotulo() : t(a.task))));
     if (vivos !== null) {
       // número nunca é cortado (P1c D-R6): se a linha mais larga não cabe, TODAS cedem juntas, texto primeiro (nível 1: sem modelo), depois o tempo inteiro (nível 2)
       // níveis: 0 tudo · 1 sem modelo · 2 sem tempo · 3 sem o verbo do papel · 4 nome encurtado com `…` (texto, nunca número)
       let nivel = 0;
       let nwUsado = nw;
-      const montar = (n: number): Linha[] => eq.agentes.map((a) => linhaAgente(a, larga, nwUsado, n >= 3 ? 0 : vw, n === 0 ? mw : 0, twDe(), n, estadosLegado, curto ? rotuloCurto() : ROTULO_FORA_DO_LOOP));
+      const montar = (n: number): Linha[] => eq.agentes.map((a) => linhaAgente(a, larga, nwUsado, n >= 3 ? 0 : vw, n === 0 ? mw : 0, twDe(), n, estadosLegado, rotulo()));
       while (nivel < 4 && larga && montar(nivel).some((l) => larg(l) > w)) {
-        if (!curto && nivel === 0 && rotuloCurto() !== ROTULO_FORA_DO_LOOP) { curto = true; continue; } // 1º o rótulo, depois o modelo
+        if (!rotuloTentado && nivel === 0) {
+          // 1º o rótulo (cortado com `…`, no mínimo 8 colunas), depois o modelo; só vale se a linha mais larga realmente encolhe
+          rotuloTentado = true;
+          const antes = Math.max(...montar(0).map(larg));
+          labW = Math.max(8, colunas(ROTULO_FORA_DO_LOOP) - (antes - w));
+          if (Math.max(...montar(0).map(larg)) >= antes) labW = null;
+          else continue;
+        }
         nivel++;
         if (nivel === 4) {
           const sobra = Math.max(...montar(3).map(larg)) - w;
           nwUsado = Math.max(1, nw - sobra);
         }
+      }
+      // o rótulo cortado só perde o que o nível final exige: o maior corte que ainda cabe
+      if (labW !== null) {
+        const cheio = colunas(ROTULO_FORA_DO_LOOP);
+        for (let k = cheio; k >= 8; k--) { labW = k; if (!montar(nivel).some((l) => larg(l) > w)) break; }
+        if (labW === cheio) labW = null;
       }
       montar(nivel).forEach((l, i) => { saida.push(cortarLinha(l, w)); if (eq.agentes[i].vivo) marca('vivo'); });
     }
@@ -331,7 +346,7 @@ function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw
     return aparar([pre, seg('●', gc), seg(' '), seg(semTask ? rotuloFora : pad(nome, nw), semTask ? 'inactive' : a.cor), seg(fim !== '' ? ` ${fim}` : '', 'inactive')]);
   }
   const ctx: Linha = pct !== null
-    ? [seg('ctx '), ...barraSegs(pct, nivel >= 3 ? 1 : 10, '█', '░', 'success'), seg(` ${fmtPct(pct)}`)] // nível 3: a barra cede (o rótulo "agente fora do loop" é largo), o nome só depois
+    ? [seg('ctx '), ...barraSegs(pct, 10, '█', '░', 'success'), seg(` ${fmtPct(pct)}`)]
     : [seg(tok !== null ? `ctx ${fmtTok(tok)}` : 'ctx —')];
   const cauda = [...(pct !== null && tok !== null ? [fmtTok(tok)] : []), ...(nivel < 2 && tempoDe(a.desdeS) !== '' ? [tempoDe(a.desdeS)] : [])];
   const modelo = nivel === 0 && t(a.modelo) !== '' ? ` · ${t(a.modelo)}` : '';
@@ -351,9 +366,8 @@ function linhaAgente(a: AgentePainel, larga: boolean, nw: number, vw: number, mw
 // PBI sem plano: "sem plano", nunca 0 % (o total diz quantos ficam fora da conta). Previsão: "(medida)" = ritmo medido (T30) só do que tem plano;
 // a parte dos PBIs sem plano vem com "~" e "estimadas" (emenda 19 p.5, D-G13), nunca somada ao %.
 
-/** Forma curta do rótulo único ("fora do loop"), só para a escada de corte do legado: cede antes do modelo. */
-// função, não const: `projeto.ts` e este módulo se importam em ciclo; a const importada ainda não existe na carga
-const rotuloCurto = (): string => ROTULO_FORA_DO_LOOP.replace(/^agente /, '');
+/** GM-15 T33 (g.9): todo "?" diz por que falta o dado, em 1–3 palavras, a partir de 100 colunas; abaixo disso só o "?". A regra única (renderBlocos e o projeto). */
+const motivoEm = (w: number) => (m: string): string => (w >= 100 ? ` (${m})` : '');
 
 /** Largura mínima das linhas por PBI; abaixo, 1 linha de totais. */
 const LARGURA_PROJETO_LINHAS = 72;
@@ -418,7 +432,7 @@ function linhasDoProjeto(p: EstadoProjeto, w: number, mot: (m: string) => string
 export function comProjetoAcima(e: EstadoPainel, w: number, unica: Linha[]): Linha[] {
   const p = projetoDe(e);
   if (p === null) return unica;
-  const dp = linhasDoProjeto(p, w, (m) => (w >= 100 ? ` (${m})` : ''));
+  const dp = linhasDoProjeto(p, w, motivoEm(w));
   const proj = [...dp.totais, ...dp.pbis].map((l) => cortarNatural(l, w));
   const itemDoDono = unica.length > 0 && textoDe(unica[0]).startsWith('◆ ');
   return itemDoDono ? [...unica, ...proj] : [...proj, ...unica];
@@ -644,7 +658,7 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   const id = idNatural(e.id);
   const fim = (l: Linha): Linha => cortarNatural(l, w);
   /** GM-15 T33 (g.9): todo "?" diz por que falta o dado, em 1–3 palavras, a partir de 100 colunas; abaixo disso fica só o "?". */
-  const mot = (m: string): string => (w >= 100 ? ` (${m})` : '');
+  const mot = motivoEm(w);
 
   if (e.modo === 'fora') return [fim([seg('GABARITO · fora de um projeto', 'inactive')])];
   if (e.umaLinha !== null && e.umaLinha !== undefined) {

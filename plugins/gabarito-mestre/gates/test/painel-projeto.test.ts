@@ -266,6 +266,13 @@ test('projeto-entregue: a linha "<ID> entregue" também leva o projeto acima; co
   assert.match(ls[ls.length - 1], /^GABARITO · GM-14 entregue \(versão 2\.1\.0\)/);
   assert.equal(doProjeto(ls).length, nLinhasProjeto(pr), ls.join('\n'));
   assert.equal(ls.filter((l) => /^GABARITO/.test(l)).length, 1);
+  // estreito: --largura vale (nunca largura fixa); abaixo de 72 o projeto é 1 linha, abaixo de 44 só a contagem; cada linha cabe
+  for (const w of [60, 40]) {
+    const le = linhas(s, { largura: w });
+    assert.equal(doProjeto(le).length, 1, `w=${w}: ${le.join(' | ')}`);
+    assert.ok(le.every((l) => colunas(l) <= w), `w=${w}: ${le.filter((l) => colunas(l) > w).join(' | ')}`);
+    assert.match(le[le.length - 1], /^GABARITO · GM-14 entregue/);
+  }
   // com botão: item do dono (◆) é a 1ª linha
   const comBotao = comProjeto({ ...base, entregue, proxima: { tipo: 'entrega', texto: 'GM-15', acoes: [{ rotulo: 'seguir', comando: 'x' }] }, depende: [{ motivo: 'próxima entrega: GM-15', nivel: 'item', acoes: [{ rotulo: 'seguir', comando: 'x' }] }] } as unknown as EstadoPainel, pr);
   const lb = linhas(comBotao);
@@ -518,8 +525,9 @@ test('agente-fora-do-loop-legado: renderEsquadrao (legado) e renderExecutivo esc
   const txt = (ls: { texto: string }[][]): string[] => ls.map((l) => l.map((x) => x.texto).join(''));
   for (const w of [44, 80, 120]) {
     const esq = txt(renderEsquadrao(EXTRAS['sem-task'], { preset: 'esquadrao', tema: 'mono', narracao: true, largura: w }));
-    const curto = ROTULO_FORA_DO_LOOP.replace(/^agente /, ''); // a escada de corte do legado encurta o rótulo antes de tirar o modelo
-    assert.ok(esq.some((l) => (w >= 100 ? l.includes(ROTULO_FORA_DO_LOOP) : l.includes(curto))), `esquadrão ${w}: ${esq.join('\n')}`);
+    // o texto é o da regra única; a escada de corte do legado o CORTA com `…` (nunca o troca) antes de tirar o modelo
+    assert.ok(esq.some((l) => l.includes(ROTULO_FORA_DO_LOOP) || (w < 100 && /agente fora/.test(l) && l.includes('…'))), `esquadrão ${w}: ${esq.join('\n')}`);
+    assert.ok(esq.every((l) => !/(^|[ ●])fora do loop/.test(l) || l.includes('agente fora do loop')), `esquadrão ${w}: forma curta`);
     assert.ok(esq.every((l) => !/sem task/.test(l) && colunas(l) <= w));
     const exe = txt(renderExecutivo(EXTRAS['sem-task'], { preset: 'executivo', tema: 'mono', narracao: true, largura: w }));
     assert.ok(exe.some((l) => l.includes(ROTULO_FORA_DO_LOOP)), `executivo ${w}: ${exe.join('\n')}`);
@@ -538,4 +546,14 @@ test('agente-fora-do-loop-legado: renderEsquadrao (legado) e renderExecutivo esc
     for (const l of [...e1, ...e2]) assert.equal(l.includes(ROTULO_FORA_DO_LOOP), fora, `${est}: ${l}`);
     assert.ok(e1.length > 0 && e2.length > 0, `${est}: linhas do agente`);
   }
+});
+
+test('projeto-linha-unica-motivo-so-em-100: o "?" da previsão sem ritmo diz o motivo a partir de 100 colunas, nas linhas únicas também (regra única `motivoEm`)', () => {
+  const semRitmo = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-1.md', texto: '---\nid: "PBI-1"\nstatus: Em execução\n---\n# A\n', planoMd: null },
+    { arquivo: 'PBI-2.md', texto: '---\nid: "PBI-2"\nstatus: Backlog\n---\n# B\n', planoMd: null }], entregas: [] }], OPC);
+  const base = projetarPainel(null, null, entrada({ fatos: fatos({ plano: null, branch: 'main' }), entregaId: null, ultima: null, fora: false }));
+  const s = comProjeto({ ...base, umaLinha: { ultima: null } } as unknown as EstadoPainel, semRitmo);
+  assert.ok(linhas(s, { largura: 100 }).includes('  previsão ? (sem ritmo medido)'));
+  assert.ok(linhas(s, { largura: 99 }).includes('  previsão ?'));
+  assert.ok(linhas(s, { largura: 120 }).includes('  previsão ? (sem ritmo medido)'));
 });
