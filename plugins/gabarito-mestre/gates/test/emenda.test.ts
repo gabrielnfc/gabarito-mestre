@@ -279,7 +279,7 @@ test('proposta-projetada-com-todos-os-campos', () => {
   assert.deepEqual(est.aprovadas, [{ seq: 1, req: 'REQ-EME-1', task: 't1', diff: 'DIFF-1', fato: 'FATO-1', alternativa: 'a', arquivos: ['src/a.ts'], causa: 'regra_negocio', ts: ts(10), origem: 'sombra' }]);
   assert.deepEqual(est.abertas, [{ seq: 2, req: 'REQ-B-1', diff: 'DIFF-2', fato: 'FATO-2', alternativa: 'a', arquivos: [], causa: 'tecnica', ts: ts(20) }]);
   const rej = projetarEmendas([p1, rejeita('s', 1, 1, 'dono', 30)]);
-  assert.deepEqual(rej.rejeitadas, [{ seq: 1, req: 'REQ-EME-1', task: 't1', diff: 'DIFF-1', fato: 'FATO-1', alternativa: 'a', arquivos: ['src/a.ts'], causa: 'regra_negocio', ts: ts(10) }]);
+  assert.deepEqual(rej.rejeitadas, [{ seq: 1, req: 'REQ-EME-1', task: 't1', diff: 'DIFF-1', fato: 'FATO-1', alternativa: 'a', arquivos: ['src/a.ts'], causa: 'regra_negocio', ts: ts(10), rejeitadaPor: 'dono' }]);
   assert.equal(rej.invalido, undefined);
   assert.equal(est.invalido, undefined);
 });

@@ -22,7 +22,8 @@ export const SESSAO_EMENDAS = 'emendas';
                              
                       
                                                          
-                         
+                                                                                                                                              
+                                                                
                                                                                          
                     
   
@@ -89,7 +90,8 @@ export function projetarEmendas(eventos          )                {
     if (p !== null) propostas.set(p.seq, p);
   }
 
-  // 2ª passada: o 1º julgamento válido na ordem do diário fecha a proposta; os seguintes são ignorados.
+  // 2ª passada: o 1º julgamento válido na ordem do diário fecha a proposta; os seguintes são ignorados. EXCEÇÃO (GM-15 T34, D-G15): a rejeição da SOMBRA é revertida
+  // pelo 1º julgamento do DONO que vier depois (palavra final dele); a rejeição do dono e a aprovação (de quem for) são finais.
   const est = vazio();
   const julgadas = new Set        ();
   for (const e of ordem.eventos) {
@@ -97,10 +99,15 @@ export function projetarEmendas(eventos          )                {
     const j = comoJulgamento(e);
     if (j === null) continue;
     const p = propostas.get(j.seq);
-    if (p === undefined || julgadas.has(j.seq)) continue;
+    if (p === undefined) continue;
+    if (julgadas.has(j.seq)) {
+      const i = est.rejeitadas.findIndex((r) => r.seq === j.seq && r.rejeitadaPor === 'sombra');
+      if (i < 0 || j.origem !== 'dono') continue;
+      est.rejeitadas.splice(i, 1);
+    }
     julgadas.add(j.seq);
     if (j.aprova) est.aprovadas.push({ ...p, origem: j.origem });
-    else est.rejeitadas.push(p);
+    else est.rejeitadas.push({ ...p, rejeitadaPor: j.origem });
   }
   est.abertas = [...propostas.values()].filter((p) => !julgadas.has(p.seq)).sort((a, b) => a.seq - b.seq);
   return est;
@@ -183,7 +190,10 @@ export function validarJulgamento(est               , proposta_seq        , orig
   if (typeof proposta_seq !== 'number' || !Number.isInteger(proposta_seq) || proposta_seq < 1) return 'proposta_seq inválido: esperado inteiro ≥ 1';
   if (origem !== 'dono' && origem !== 'sombra') return 'origem inválida: esperado dono ou sombra';
   if (origem === 'sombra' && julgaEmendas !== true) return 'origem sombra sem sombra.julga_emendas';
-  if (est.aprovadas.some((p) => p.seq === proposta_seq) || est.rejeitadas.some((p) => p.seq === proposta_seq)) return 'proposta já julgada';
+  if (est.aprovadas.some((p) => p.seq === proposta_seq)) return 'proposta já julgada';
+  const rej = est.rejeitadas.find((p) => p.seq === proposta_seq);
+  // GM-15 T34 (D-G15): só o DONO reverte, e só a rejeição que foi da SOMBRA; o dono não re-julga o que ele mesmo julgou, nem a Sombra (ou o orquestrador) o já julgado.
+  if (rej !== undefined) return origem === 'dono' && rej.rejeitadaPor === 'sombra' ? null : 'proposta já julgada';
   if (!est.abertas.some((p) => p.seq === proposta_seq)) return 'proposta inexistente';
   return null;
 }

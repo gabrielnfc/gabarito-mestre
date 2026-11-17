@@ -3774,6 +3774,20 @@ describe('E3 T10: emenda propor, emenda julgar, desvio, descoberta e ci', () => 
     assert.equal(amb.cli(['proxima', '--vivos', '0']).j.acao.itens.find((i) => i.task === 'T1').emendas[0].proposta_seq, 1, 'costura: o julgamento descongela e chega ao item');
   });
 
+  test('julgar-sombra-nao-reverte-a-propria-rejeicao (GM-15 T34, D-G15): só o dono reverte; a Sombra julgando de novo (aprovar ou rejeitar) ⇒ ja_julgada, nada gravado', () => {
+    const amb = ambReq();
+    comOrigin(amb, { sombra: { julga_emendas: true } });
+    grava(amb, relogioDe(), [['emendas', 'emenda.proposta', PROPOSTA({ origem: 'sombra', req: 'REQ-B-1' })]]);
+    assert.equal(amb.cli(['emenda', 'julgar', '1', 'rejeitar', '--sessao', 'sombra-j']).rc, 0);
+    const antes = bytesDoDiario(amb);
+    for (const d of ['aprovar', 'rejeitar']) {
+      const r = amb.cli(['emenda', 'julgar', '1', d, '--sessao', 'sombra-j']);
+      assert.notEqual(r.rc, 0, d);
+      assert.equal(r.j.erro, 'ja_julgada', d);
+    }
+    assert.deepEqual(bytesDoDiario(amb), antes);
+  });
+
   test('julgar-seq-forma-invalida: 0, 03, -1, 3.0 e decisão fora do enum ⇒ argumento_invalido sem gravar', () => {
     const amb = ambReq();
     comJulga(amb);

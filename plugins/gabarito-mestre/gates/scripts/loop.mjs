@@ -1401,8 +1401,8 @@ function julgamentosAprovados(ord, est) {
     if ((e.tipo !== 'spec.emendada' && e.tipo !== 'emenda.rejeitada') || formaInvalida(e.tipo, e.dados) !== null) return;
     const seq = e.dados.proposta_seq;
     if (vistos.has(seq)) return;
-    vistos.add(seq);
-    if (e.tipo === 'spec.emendada' && aprovadas.has(seq)) saida.push({ seq, req: aprovadas.get(seq).req, idx });
+    if (!(e.tipo === 'emenda.rejeitada' && e.dados.origem === 'sombra')) vistos.add(seq); // GM-15 T34 (D-G15): a rejeição da Sombra não fecha: o dono pode reverter depois
+    if (e.tipo === 'spec.emendada' && aprovadas.get(seq)?.origem === e.dados.origem) saida.push({ seq, req: aprovadas.get(seq).req, idx });
   });
   return saida;
 }
@@ -1722,7 +1722,9 @@ export function proporEmenda(cwd, flags, { antes } = {}) {
 function julgamentoQueFecha(eventos, seq) {
   const ord = ordenar(eventos);
   if (!ord.ok) return null;
-  const e = ord.eventos.find((x) => (x.tipo === 'spec.emendada' || x.tipo === 'emenda.rejeitada') && formaInvalida(x.tipo, x.dados) === null && x.dados.proposta_seq === seq);
+  const dela = ord.eventos.filter((x) => (x.tipo === 'spec.emendada' || x.tipo === 'emenda.rejeitada') && formaInvalida(x.tipo, x.dados) === null && x.dados.proposta_seq === seq);
+  // GM-15 T34 (D-G15): a rejeição da Sombra é revertida pelo 1º julgamento do dono depois dela; esse é o que fecha
+  const e = dela[0]?.tipo === 'emenda.rejeitada' && dela[0].dados.origem === 'sombra' ? (dela.find((x) => x.dados.origem === 'dono') ?? dela[0]) : dela[0];
   return e === undefined ? null : { tipo: e.tipo, origem: e.dados.origem };
 }
 
@@ -1733,7 +1735,7 @@ function julgar(c, plano, seq, decisao, origem, antes) {
   const est = projetarEmendas(eventos);
   const motivo = validarJulgamento(est, seq, origem, origem === 'sombra');
   if (motivo !== null) throw new Falha(CODIGO_JULGAMENTO[motivo] ?? 'julgamento_invalido', motivo);
-  const proposta = est.abertas.find((p) => p.seq === seq);
+  const proposta = est.abertas.find((p) => p.seq === seq) ?? est.rejeitadas.find((p) => p.seq === seq); // rejeitada pela Sombra: revisão do dono (D-G15)
   const tipo = decisao === 'aprovar' ? 'spec.emendada' : 'emenda.rejeitada';
   gravar(c, plano, tipo, { proposta_seq: seq, origem }, () => { if (antes) antes(); });
   const fecha = julgamentoQueFecha(lerDiarioEstrito(c.dirEntrega), seq);
