@@ -2,7 +2,7 @@
  * GM-15 T8 (REQ-ENT-1 d): o painel com a entrega encerrada, pelos adaptadores reais (`painel.mjs medir|estado|texto`, `stop-loop.mjs`).
  *
  * - `entregue-sai-do-alvo` (P9, obrigação herdada da review T3 r1): o diário de task da GM-14 (fixture eta-gm14, eventos e plano reais) mais
- *   pendência, ideia e consulta à Sombra sem decisão ⇒ `painel.mjs medir` com o `gh` de fixture da T4 (o #22) grava `entrega.encerrada` ⇒
+ *   pendência, ideia e consulta à Sombra sem decisão ⇒ `painel.mjs medir` com o `gh` de fixture da T4 mais o #30 (virada final; o #22 alpha.1 não encerra, r.13p) grava `entrega.encerrada` ⇒
  *   `painel.mjs estado` sem PRONTO, DEPENDE, ATENÇÃO, PAROU nem pergunta da entrega ⇒ `painel.mjs texto` em 1 linha ⇒ `stop-loop.mjs` mudo.
  * - `pendencia-feita-some` / `pendencia-vista-some` (S3): a resposta do dono gravada numa sessão de nome que ordena ANTES de `loop` fecha a nota.
  * - `seguir-oferece-proxima` (as 3 ordens), `consultas-sombra-somem-com-entregue`, `linha-entregue-sem-regex-tecnica`.
