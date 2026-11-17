@@ -298,7 +298,7 @@ export function shaAceito(eventos          , sha         , filtro               
  * da cadeia) para partir dela. Emenda rejeitada, aberta ou inexistente ⇒ `emenda_nao_aprovada`. Devolve o motivo fechado ou a ponta (`sha256_antes`).
  * GM-15 T36 (emenda 25 m.4): a emenda aplicada e depois REJEITADA PELO DONO aceita o desfazer, 1 vez (`reverte: true`, com o `sha_aplicado` que o texto novo não pode repetir).
  */
-export function validarAplicacao(eventos          , seq         )                                                                                                                                     {
+export function validarAplicacao(eventos          , seq         )                                                                                                                 {
   const est = projetarEmendas(eventos);
   if (est.invalido !== undefined) return { ok: false, motivo: 'diario_invalido' };
   if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 1) return { ok: false, motivo: 'seq_invalido' };
@@ -310,9 +310,8 @@ export function validarAplicacao(eventos          , seq         )               
     // desfazer 1 vez por seq (o de cada divergência é independente, na ordem que o orquestrador quiser); sem divergência não há o que desfazer
     if (aplicacoes.some((a) => a.seq === seq && a.reverte === true)) return { ok: false, motivo: 'ja_aplicada' };
     if (divergente === null) return { ok: false, motivo: 'emenda_nao_aprovada' };
-    // `desfezAntes`: a ponta é o sha que um desfazer anterior deixou (2 textos desfeitos numa edição só: o arquivo já está igual à ponta e o desfazer seguinte é válido)
-    const desfezAntes = aplicacoes.some((a) => a.reverte === true && a.depois === ponta.sha256);
-    return { ok: true, ponta, reverte: true, sha_aplicado: feita.depois, ...(desfezAntes ? { desfezAntes: true          } : {}) };
+    // Limite declarado: todo desfazer exige que o arquivo tenha mudado desde a ponta (loop.mjs `aplicar`): 1 emenda por edição (edita, `aplicar 1`, edita, `aplicar 2`)
+    return { ok: true, ponta, reverte: true, sha_aplicado: feita.depois };
   }
   // Já gravada na cadeia ou em qualquer `spec.aplicada` válido da mesma seq (mesmo de cadeia que a aprovação nova reiniciou).
   const jaGravada = eventos.some((e) => ehObjeto(e) && e.tipo === 'spec.aplicada' && ehObjeto(e.dados) && formaInvalida('spec.aplicada', e.dados) === null && campo(e.dados, 'seq') === seq);

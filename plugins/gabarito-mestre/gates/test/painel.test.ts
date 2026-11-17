@@ -1890,7 +1890,9 @@ test('painel-spec-divergente-desenhada: o "?" e o motivo aparecem no texto desen
   for (const comPlano of [true, false]) for (const preset of ['esquadrao', 'executivo'] as const) for (const largura of [80, 120]) {
     const rotulo = `${comPlano ? 'com' : 'sem'} plano · ${preset} · ${largura}`;
     const d = desenha([...base, rev], B, comPlano, preset, largura);
-    assert.ok(d.includes('?'), `${rotulo}: "?" no desenho\n${d}`);
+    // a linha exata da spec (não "ctx ?"/"tok ?"/"CI ● ?"): com plano é a linha própria `? spec · <motivo>`; sem plano, o "? <motivo>" na linha da FASE
+    const forma = comPlano ? /^\? spec · texto da emenda \d+ revertida ainda na spec/m : /^FASE .* · \? texto da emenda \d+ revertida ainda na spec/m;
+    assert.match(d, forma, `${rotulo}: o "?" da spec com o motivo na mesma linha\n${d}`);
     assert.ok(d.includes(MOTIVO), `${rotulo}: o motivo no desenho\n${d}`);
     for (const l of d.split('\n')) assert.ok([...l].length <= largura, `${rotulo}: linha passa de ${largura}: ${l}`);
     assert.ok(!desenha(base, B, comPlano, preset, largura).includes('revertida'), `${rotulo}: controle sem divergência`);
