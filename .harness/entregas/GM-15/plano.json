@@ -925,7 +925,10 @@
         "plugins/gabarito-mestre/gates/dist/emenda.js",
         "plugins/gabarito-mestre/gates/test/emenda.test.ts",
         "plugins/gabarito-mestre/gates/scripts/emenda-dono.mjs",
-        "plugins/gabarito-mestre/gates/test/emenda-dono.test.mjs"
+        "plugins/gabarito-mestre/gates/test/emenda-dono.test.mjs",
+        "plugins/gabarito-mestre/gates/src/registro.ts",
+        "plugins/gabarito-mestre/gates/dist/registro.js",
+        "plugins/gabarito-mestre/gates/test/registro.test.ts"
       ],
       "reqs": [
         "REQ-POU-3",
