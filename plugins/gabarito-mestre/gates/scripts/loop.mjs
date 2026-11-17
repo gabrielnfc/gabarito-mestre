@@ -2320,8 +2320,29 @@ export function hashDaLiberacao(plano, eventos, task, raiz, achados) {
   const versao = aprovadas.length === 0 ? 0 : aprovadas[aprovadas.length - 1].seq;
   try {
     const insumo = insumoDaLiberacao(achados ?? achadosDoCiclo(raiz, eventos, task));
-    return hashPergunta(`${textoAncora({ task })} insumo:${insumo}`, versao, perguntaDaLiberacao(task));
+    // GM-15 T36 r1 (MAJOR-1): o nº do ciclo (ingressos em `no_teto`) entra no hash: cada teto gera pergunta NOVA mesmo com o review idêntico ao do ciclo anterior
+    return hashPergunta(`${textoAncora({ task })} insumo:${insumo} ciclo:${tetosDaTask(eventos, task).n}`, versao, perguntaDaLiberacao(task));
   } catch { return null; }
+}
+
+/**
+ * Tetos da task no diário (na ordem de `ordenar`): `n` = nº de ingressos em `no_teto` (o nº do ciclo, entra no hash da liberação) e `posTeto` = posição, na ordem,
+ * do evento do ÚLTIMO ingresso (-1 sem teto). A mesma regra serve ao hash (`hashDaLiberacao`) e ao "depois do teto" de `conferirLiberacao`.
+ */
+export function tetosDaTask(eventos, task) {
+  const ord = ordenar(eventos);
+  if (!ord.ok) return { n: 0, posTeto: -1 };
+  const daTask = ord.eventos.filter((e) => TIPOS_DE_TASK.includes(e.tipo) && e.dados?.task === task);
+  let n = 0;
+  let posTeto = -1;
+  let estavaNoTeto = false;
+  for (let i = 0; i < daTask.length; i++) {
+    const p = estadoDe(daTask.slice(0, i + 1));
+    const noTeto = !('invalido' in p) && p.estado === 'no_teto';
+    if (noTeto && !estavaNoTeto) { n++; posTeto = ord.eventos.indexOf(daTask[i]); }
+    estavaNoTeto = noTeto;
+  }
+  return { n, posTeto };
 }
 
 /** Estado da task pelo diário inteiro, na ordem de `ordenar` (a régua de `conferirLiberacao`); `{invalido}` se a ordem ou a tabela quebram. */
@@ -2401,14 +2422,7 @@ function conferirLiberacao(c, plano, task, hash, eventos, abordagem) {
   if (d.fora_da_regra === true) throw invalido('a decisão está fora da regra (fora_da_regra)');
   // furo 4: "depois do veredito que levou ao teto" pela ORDEM do diário (`ordenar`), nunca pelo ts cru
   // GM-15 T36 (D-G17): sem limite de liberações, o teto que vale é o ATUAL (o último ingresso em `no_teto`): decisão de ciclo anterior, com o mesmo hash, não libera
-  let posTeto = -1;
-  let estavaNoTeto = false;
-  for (let i = 0; i < daTask.length; i++) {
-    const p = estadoDe(daTask.slice(0, i + 1));
-    const noTeto = !('invalido' in p) && p.estado === 'no_teto';
-    if (noTeto && !estavaNoTeto) posTeto = ord.eventos.indexOf(daTask[i]);
-    estavaNoTeto = noTeto;
-  }
+  const { posTeto } = tetosDaTask(eventos, task);
   if (v.pos <= posTeto) throw invalido('a decisão vem antes do teto na ordem do diário (só vale a dada depois do veredito que levou ao teto)');
   // furo 2 (o que dá para fechar): o brief que `perguntar` gerou e a resposta que `registrar` gravou estão no disco, com o sha do texto
   if (!ehArquivoRegular(join(c.dirEntrega, 'sombra', `${hash}.md`))) throw invalido('o brief da pergunta não está no disco');

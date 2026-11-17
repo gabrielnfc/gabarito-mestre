@@ -5390,18 +5390,25 @@ describe('T36: a Sombra libera o teto', () => {
     recusa(amb, 'T1', sombraDecide(amb), 'abordagens_esgotadas', ['--abordagem-nova', 'C']);
   });
 
-  test('t36-hash-de-ciclo-anterior-recusa: a decisão do ciclo anterior (mesmo hash, reviews idênticos) não libera o teto de agora; vale a decisão nova do ciclo', () => {
+  test('t36-hash-de-ciclo-anterior-recusa: 2º teto com o MESMO review ⇒ o `perguntar --libera-teto` REAL (com cache) devolve pergunta NOVA, sem cache; a decisão do ciclo anterior (hash velho) não libera (r1 MAJOR-1)', () => {
     const amb = ambReq();
     comLibera(amb);
     ciclo(amb, REV(trecho(100)));
     const h1 = sombraDecide(amb);
     ok(amb, ['liberar', 'T1', '--origem', 'sombra', '--hash', h1]);
     ciclo(amb, REV(trecho(100)));
-    assert.equal(hashT(amb), h1, 'controle: os reviews iguais dão o mesmo hash');
+    // a Sombra é perguntada pelo CLI real, como o orquestrador faz: nada de `registrar` direto antes
+    const p2 = sombra(amb, ['perguntar', '--task', 'T1', '--libera-teto']);
+    assert.equal(p2.rc, 0, p2.out);
+    assert.notEqual(p2.j.cache, true, `o ciclo novo não pode vir do cache do anterior: ${p2.out}`);
+    assert.notEqual(p2.j.hash, h1, 'o nº do ciclo entra no hash: review idêntico, pergunta nova');
+    assert.ok(p2.j.prompt, 'prompt para a Sombra');
+    // a decisão do ciclo anterior (hash velho) não libera o teto de agora
     const r = recusa(amb, 'T1', h1, 'hash_invalido');
-    assert.match(r.j.mensagem, /antes do teto/);
-    const h2 = sombraDecide(amb);
-    assert.equal(liberar(amb, 'T1', h2, ['--abordagem-nova', 'dividir']).rc, 0);
+    assert.match(r.j.mensagem, /não é o hash/);
+    const rg = sombra(amb, ['registrar', p2.j.hash, respostaJson(amb, { ...BOA, libera: true })]);
+    assert.equal(rg.rc, 0, rg.out);
+    assert.equal(liberar(amb, 'T1', p2.j.hash, ['--abordagem-nova', 'dividir']).rc, 0);
   });
 
   // ── orçamento 3× (emenda 24 m.2) e a oferta do `proxima` (emenda 22 l.4): diário semeado com 1 s por evento (relógio de `semear`, relativo ao evento) ──────────────
