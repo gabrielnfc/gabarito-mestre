@@ -783,6 +783,11 @@ export function renderBlocos(e              , o              )          {
       por(2, [seg('PLANO '), ...barraPlano(minima ? 5 : 10), ...(pct === null ? [seg(` ${tasksTxt}`)] : [seg(` ${pctTxt} ${tasksTxt}`)]), ...(status !== '' ? [seg(` · ${status}`, 'inactive')] : [])], 1);
     }
 
+    // GM-15 T36 (c2 MAJOR-1, emenda 25 m.4): com plano a trilha não é desenhada (`fase` é null); a spec divergente (emenda revertida pelo dono, texto ainda na spec)
+    // aparece aqui com o "?" e o motivo (REQ-ENT-2), na prioridade do PLANO, nunca um ✓ que finja coerência
+    const motivoSpec = natural(e.trilha?.motivos?.[1]); // a célula `spec` só tem motivo quando é "?" (`trilha.ts`)
+    if (motivoSpec !== '') por(2, [seg('? ', 'warning'), seg(`spec · ${motivoSpec}`, 'inactive')], 1);
+
     // faixa das integradas (E4): a contagem, nunca a lista (FIEL-10 b: task integrada não é listada)
     if (larga && integ !== null && integ > 0) {
       const partes = [`${integ} ${integ === 1 ? 'integrada' : 'integradas'}`];

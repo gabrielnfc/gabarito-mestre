@@ -1868,3 +1868,39 @@ test('painel-spec-divergente-interroga-com-motivo: a spec vira "?" com o motivo 
   assert.equal(desfeito.trilha.marcas[1], '✓');
   assert.equal(desfeito.trilha.motivos[1], null);
 });
+
+// c2 MAJOR-1 (r2): o sinal tem de estar no painel DESENHADO, no ramo COM plano (fase null, só a linha PLANO) e no sem plano (a trilha), nos 2 presets, em 80 e 120 colunas
+test('painel-spec-divergente-desenhada: o "?" e o motivo aparecem no texto desenhado com plano e sem plano, nos 2 presets, em 80 e 120 colunas; o controle não os tem', async () => {
+  const SPEC = 'docs/superpowers/specs/2026-11-20-gm12-design.md';
+  const [A, B, C] = ['a', 'b', 'c'].map((x) => x.repeat(64));
+  const fatos = (sha: string) => ({ branch: 'feat/GM-12-x', idPadrao: '[A-Z]+-\\d+', specs: [{ caminho: SPEC, pbi: 'GM-12', sha256: sha, secoes: 3, titulo: 'x' }], plano: { tasks: ['T1'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' });
+  const base: Item[] = [
+    e(1, 'spec.aprovada', { spec: SPEC, sha256: A }, 'dono'),
+    e(2, 'emenda.proposta', { req: 'REQ-DIA-1', diff: 'd', fato: 'f', alternativa: 'a', evidencia: 'e', causa: 'tecnica' }, 'emendas'),
+    e(3, 'spec.emendada', { proposta_seq: 1, origem: 'sombra' }, 'sombra'),
+    e(4, 'spec.aplicada', { seq: 1, spec: SPEC, sha256_antes: A, sha256_depois: B }, 'loop'),
+  ];
+  const rev = e(5, 'emenda.rejeitada', { proposta_seq: 1, origem: 'dono' }, 'dono');
+  const desfaz = e(6, 'spec.aplicada', { seq: 1, spec: SPEC, sha256_antes: B, sha256_depois: C, reverte: true }, 'loop');
+  const MOTIVO = 'texto da emenda 1 revertida ainda na spec';
+  const desenha = (itens: Item[], sha: string, comPlano: boolean, preset: 'esquadrao' | 'executivo', largura: number): string => {
+    const s = projetarPainel(comPlano ? P('T1') : null, D(itens), entrada({ fatos: fatos(sha) } as Partial<EntradaPainel>) as EntradaPainel);
+    return renderPainel(s, { preset, tema: 'mono', narracao: true, largura }).map((l) => l.map((x) => x.texto).join('')).join('\n');
+  };
+  for (const comPlano of [true, false]) for (const preset of ['esquadrao', 'executivo'] as const) for (const largura of [80, 120]) {
+    const rotulo = `${comPlano ? 'com' : 'sem'} plano · ${preset} · ${largura}`;
+    const d = desenha([...base, rev], B, comPlano, preset, largura);
+    assert.ok(d.includes('?'), `${rotulo}: "?" no desenho\n${d}`);
+    assert.ok(d.includes(MOTIVO), `${rotulo}: o motivo no desenho\n${d}`);
+    for (const l of d.split('\n')) assert.ok([...l].length <= largura, `${rotulo}: linha passa de ${largura}: ${l}`);
+    assert.ok(!desenha(base, B, comPlano, preset, largura).includes('revertida'), `${rotulo}: controle sem divergência`);
+    assert.ok(!desenha([...base, rev, desfaz], C, comPlano, preset, largura).includes('revertida'), `${rotulo}: desfeito`);
+  }
+  // o que o `painel.mjs texto` desenha é o `dist` (o CLI importa o dist): o mesmo texto com plano e sem plano
+  const dist = (await import(join(AQUI, '..', 'dist', 'painel.js'))) as typeof import('../src/painel.ts');
+  for (const comPlano of [true, false]) {
+    const s = dist.projetarPainel(comPlano ? P('T1') : null, D([...base, rev]), entrada({ fatos: fatos(B) } as Partial<EntradaPainel>) as EntradaPainel);
+    const d = dist.renderPainel(s, { preset: 'esquadrao', tema: 'mono', narracao: true, largura: 80 }).map((l) => l.map((x) => x.texto).join('')).join('\n');
+    assert.ok(d.includes('?') && d.includes(MOTIVO), `dist ${comPlano ? 'com' : 'sem'} plano\n${d}`);
+  }
+});
