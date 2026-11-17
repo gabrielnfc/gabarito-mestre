@@ -803,7 +803,10 @@
         "plugins/gabarito-mestre/gates/scripts/liberar-teto.mjs",
         "plugins/gabarito-mestre/gates/src/formas.ts",
         "plugins/gabarito-mestre/gates/dist/formas.js",
-        "plugins/gabarito-mestre/gates/test/formas.test.ts"
+        "plugins/gabarito-mestre/gates/test/formas.test.ts",
+        "plugins/gabarito-mestre/gates/src/registro.ts",
+        "plugins/gabarito-mestre/gates/dist/registro.js",
+        "plugins/gabarito-mestre/gates/test/registro.test.ts"
       ],
       "reqs": [
         "REQ-AUT-1"
