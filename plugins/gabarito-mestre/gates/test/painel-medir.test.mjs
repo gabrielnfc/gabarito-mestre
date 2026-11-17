@@ -833,13 +833,15 @@ describe('medir: grava o encerramento da entrega (REQ-ENT-1 a, c)', () => {
     assert.equal(encerradas(d, 'GM-15').length, 0, 'medir');
     assert.equal(entregaPublicada(d, 'GM-15', null), false, 'entregaPublicada (sem sessão)');
     assert.equal(entregaPublicada(d, 'GM-15', SESSAO_QUALQUER), false, `entregaPublicada (qualquer sessão; antes do PR: ${antes})`);
-    const r = spawnSync(process.execPath, [join(AQUI, '..', 'scripts', 'loop.mjs'), 'anotar', '--tipo', 'ideia', '--texto', 'sonda', '--sessao', 'S-r1'], { cwd: d, encoding: 'utf8' });
-    assert.doesNotMatch(r.stdout, /entrega_publicada/, 'loop.mjs real não recusa como publicada');
+    // o loop.mjs real, com comandos que a publicada VEDA (iniciar e concluir; `anotar` não é vedado e não provaria nada): após a alpha não recusa por entrega_publicada
+    const loop = (dir, ...args) => spawnSync(process.execPath, [join(AQUI, '..', 'scripts', 'loop.mjs'), ...args, '--sessao', 'S-r1'], { cwd: dir, encoding: 'utf8' });
+    for (const args of [['iniciar', 'T1', 'implementador'], ['concluir', 'T1']]) assert.doesNotMatch(loop(d, ...args).stdout, /entrega_publicada/, `${args[0]}: o loop.mjs real não recusa como publicada após a alpha`);
     // controle: a virada final publica
     const d2 = repo('enabler/GM-15-fluidez');
     comVersaoAlvo(d2, 'GM-15', '2.1.1');
     assert.equal(medirEnc(d2, { extra: [prVirada(24, 'enabler(GM-15): virada 2.1.1 (next ⇒ main)')] }).ok, true);
     assert.equal(entregaPublicada(d2, 'GM-15', SESSAO_QUALQUER), true, 'a virada final publica');
+    for (const args of [['iniciar', 'T1', 'implementador'], ['concluir', 'T1']]) assert.match(loop(d2, ...args).stdout, /entrega_publicada/, `${args[0]}: após a virada final o loop.mjs real recusa`);
     // controle: a spec declara a pré-versão como alvo e o PR é dela ⇒ publica (a guarda usa a versão-alvo como o medir)
     const d3 = repo('enabler/GM-15-fluidez');
     comVersaoAlvo(d3, 'GM-15', '2.1.0-alpha.2');
