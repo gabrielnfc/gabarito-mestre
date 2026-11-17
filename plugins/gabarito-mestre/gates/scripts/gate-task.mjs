@@ -279,7 +279,13 @@ export async function avaliar(opts) {
   const { suites, erros: errosSuites } = normalizarSuites(opts.suites ?? cfg.gates?.suites ?? [], red.size > 0);
   errosSuites.forEach((e) => falhar(e));
   if (!suites.length && !errosSuites.length) falhar('nenhuma suíte declarada (--suite, --suite-sem-contagem ou gates.suites): nada foi executado');
-  const rs = await Promise.all(suites.map((s) => rodar(s.nome, s.cmd, s.cwd ? resolve(wt, s.cwd) : wt)));
+  // GM-15 T34 (emenda 7 r.7, review r1 MAJOR-2): a suíte do mod (`mod-test.sh`, 37 s isolada e >= 120 s ao lado dos gates, medido) roda DEPOIS das demais, nunca junto: a disputa de CPU
+  // era o que estourava o teto. As outras seguem em paralelo entre si; o resultado volta na ordem declarada.
+  const eMod = (x) => /mod-test\.sh/.test(x.cmd);
+  const exec = (x) => rodar(x.nome, x.cmd, x.cwd ? resolve(wt, x.cwd) : wt);
+  const rs = new Array(suites.length);
+  await Promise.all(suites.map(async (x, i) => { if (!eMod(x)) rs[i] = await exec(x); }));
+  for (const [i, x] of suites.entries()) if (eMod(x)) rs[i] = await exec(x);
   for (const [i, s] of rs.entries()) {
     const seg = (s.ms / 1000).toFixed(1);
     const { nomes, declaradas } = falhas(s.out);

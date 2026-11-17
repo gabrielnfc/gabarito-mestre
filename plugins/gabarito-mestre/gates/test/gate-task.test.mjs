@@ -365,6 +365,24 @@ describe('gate-task', () => {
     assert.match(texto(r), /mutação m1 VIVA/);
   });
 
+  test('suite-do-mod-roda-depois-dos-gates (GM-15 T34, emenda 7 r.7): a suíte com mod-test.sh só começa quando todas as outras terminaram; as outras seguem em paralelo; o relato sai na ordem declarada', async () => {
+    const { dir, base } = repo();
+    commit(dir, 'src/b.txt', 'b\n');
+    const log = [];
+    const rodar = async (nome) => {
+      log.push(`ini:${nome}`);
+      await new Promise((r) => setTimeout(r, nome === 'gates' ? 60 : 10));
+      log.push(`fim:${nome}`);
+      return { nome, rc: 0, out: 'ℹ tests 1\nℹ pass 1\nℹ fail 0\n', ms: 1 };
+    };
+    const r = await avaliar({ wt: dir, base, rodar, suites: [{ nome: 'mod', cmd: 'bash scripts/test/mod-test.sh' }, { nome: 'gates', cmd: 'npm test' }, { nome: 'hooks', cmd: 'node --test' }] });
+    assert.equal(r.reprova, 0, texto(r));
+    assert.ok(log.indexOf('ini:mod') > log.indexOf('fim:gates') && log.indexOf('ini:mod') > log.indexOf('fim:hooks'), log.join(' '));
+    assert.ok(log.indexOf('ini:hooks') < log.indexOf('fim:gates'), `as outras seguem em paralelo: ${log.join(' ')}`);
+    const t = texto(r);
+    assert.ok(t.indexOf('mod verde') < t.indexOf('gates verde') && t.indexOf('gates verde') < t.indexOf('hooks verde'), 'a ordem do relato é a declarada');
+  });
+
   test('gate-teste-ja-falha-sem-mutacao (E19): morte falsa não conta', async () => {
     const { dir, base } = repo();
     commit(dir, 'src/b.txt', 'b\n');

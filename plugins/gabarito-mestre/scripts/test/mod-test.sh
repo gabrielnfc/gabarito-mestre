@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Roda `claude plugin test .` na raiz do plugin. Sai 0 só se o teste do mod carregou e nenhum teste falhou.
 # Os *.test.ts de gates/test usam node:test e não carregam nesse runner: "did not load" deles não conta.
-# Teto de tempo (T14b, review final: teste que trava em vez de falhar segurava o job até o teto do CI): MOD_TEST_TIMEOUT segundos (padrão 360).
-# GM-15 T34 (emenda 7 r.7): teto = 3× a mediana medida. Medido 2026-11-16: isolada 36,0 / 34,5 s e com a suíte dos gates rodando ao lado 40,1 / 38,9 s (n = 4, mediana ~37 s;
-# a suíte cresceu, o "~13 s" antigo não vale); sob o gate do integrar (T16, 19:20-19:40) 120,1 s e 120,0 s (os dois cortados pelo teto de 120) e 103,8 s ⇒ mediana >= 120 s,
-# 3× = 360 s. Estourar o 360 é travamento, não disputa de CPU. MOD_TEST_TIMEOUT continua mandando.
+# Teto de tempo (T14b, review final: teste que trava em vez de falhar segurava o job até o teto do CI): MOD_TEST_TIMEOUT segundos (padrão 114).
+# GM-15 T34 (emenda 7 r.7, review r1 MAJOR-2): a disputa foi medida (37 s isolada contra 120,1 / 120,0 / 103,8 s ao lado da suíte dos gates no integrar do T16), então o gate-task.mjs
+# agora roda esta suíte DEPOIS das outras, nunca junto. Teto = 3× a mediana medida SERIALIZADA (máquina sem a suíte dos gates ao lado), 2026-11-16, n = 4: 36, 38, 38 e 40 s,
+# mediana 38 s ⇒ 114 s. MOD_TEST_TIMEOUT continua mandando (o orquestrador integra com 300 até medir de novo sob o gate real serializado).
 # Estourou ⇒ mata o grupo de processos inteiro, imprime `mod-test: timeout` e sai 1. MOD_TEST_CMD troca o comando (só para provar o teto).
-limite="${MOD_TEST_TIMEOUT:-360}"
+limite="${MOD_TEST_TIMEOUT:-114}"
 comando="${MOD_TEST_CMD:-claude plugin test .}"
 out=$(perl -e '
   my $t = shift; my $pid = fork();
