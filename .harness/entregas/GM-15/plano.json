@@ -795,7 +795,15 @@
         "harness.config.json",
         "plugins/gabarito-mestre/gates/test/sombra.test.ts",
         "plugins/gabarito-mestre/gates/src/sombra.ts",
-        "plugins/gabarito-mestre/gates/dist/sombra.js"
+        "plugins/gabarito-mestre/gates/dist/sombra.js",
+        "plugins/gabarito-mestre/gates/test/painel-blocos.test.ts",
+        "plugins/gabarito-mestre/gates/test/painel-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/test/fumaca-loop.test.mjs",
+        "plugins/gabarito-mestre/gates/src/tipos.ts",
+        "plugins/gabarito-mestre/gates/scripts/liberar-teto.mjs",
+        "plugins/gabarito-mestre/gates/src/formas.ts",
+        "plugins/gabarito-mestre/gates/dist/formas.js",
+        "plugins/gabarito-mestre/gates/test/formas.test.ts"
       ],
       "reqs": [
         "REQ-AUT-1"
