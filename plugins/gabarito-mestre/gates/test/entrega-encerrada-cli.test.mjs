@@ -79,8 +79,8 @@ function itensDaEntrega(d) {
 }
 
 const entradaMod = (sessao = SID) => JSON.stringify({ session_id: sessao, agentes: [] });
-function painel(d, args, { sessao = SID } = {}) {
-  const r = spawnSync(process.execPath, [PAINEL, ...args, '--agentes'], { cwd: d, input: entradaMod(sessao), encoding: 'utf8', env: env(), timeout: 60_000 });
+function painel(d, args, { sessao = SID, extraEnv = {} } = {}) {
+  const r = spawnSync(process.execPath, [PAINEL, ...args, '--agentes'], { cwd: d, input: entradaMod(sessao), encoding: 'utf8', env: env(extraEnv), timeout: 60_000 });
   return r;
 }
 function estado(d) {
@@ -95,8 +95,11 @@ function texto(d, largura = 120) {
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return r.stdout.replace(/\n$/, '').split('\n');
 }
+// GM-15 T34 (r.13p): a fixture deixou de usar o título literal do #22 ("release(GM-14): 2.1.0-alpha.1 (next → main)") para encerrar a GM-14: PR de virada de pré-versão não encerra
+// (a spec real da GM-14 não tem `Versão:`, alvo null). O PR que encerra aqui é o #30, a virada FINAL (título sem sufixo), somado ao `gh` de fixture por GH_PRS_EXTRA.
+const PR30 = { number: 30, state: 'MERGED', baseRefName: 'main', headRefName: 'next', title: 'release(GM-14): 2.1.0 (next → main)', mergedAt: '2026-11-15T13:00:00Z' };
 function medirCli(d) {
-  const r = painel(d, ['medir']);
+  const r = painel(d, ['medir'], { extraEnv: { GH_PRS_EXTRA: JSON.stringify([PR30]) } });
   assert.equal(r.status, 0, r.stdout + r.stderr);
   return JSON.parse(r.stdout);
 }
@@ -108,7 +111,7 @@ function stop(d, sessao = SID) {
 const NADA = 'nada depende de você';
 const soNada = (e) => e.depende.every((i) => i.motivo === NADA);
 
-test('entregue-sai-do-alvo: GM-14 + gh com o #22 ⇒ medir grava entrega.encerrada ⇒ estado sem os itens da entrega ⇒ texto em 1 linha ⇒ Stop mudo', () => {
+test('entregue-sai-do-alvo: GM-14 + gh com a virada final #30 ⇒ medir grava entrega.encerrada ⇒ estado sem os itens da entrega ⇒ texto em 1 linha ⇒ Stop mudo', () => {
   const d = repo('enabler/GM-14-clareza');
   diarioGm14(d);
   itensDaEntrega(d);
@@ -124,7 +127,7 @@ test('entregue-sai-do-alvo: GM-14 + gh com o #22 ⇒ medir grava entrega.encerra
   const m = medirCli(d);
   assert.equal(m.ok, true, JSON.stringify(m));
   const enc = ler(dirDe(d, 'GM-14')).filter((e) => e.tipo === 'entrega.encerrada');
-  assert.deepEqual(enc.map((e) => e.dados), [{ entrega: 'GM-14', pr: 22, via: 'titulo', mergeado_em: '2026-11-15T12:00:00Z' }]);
+  assert.deepEqual(enc.map((e) => e.dados), [{ entrega: 'GM-14', pr: 30, via: 'titulo', mergeado_em: '2026-11-15T13:00:00Z' }], 'o #22 (alpha.1) não encerra; o #30 (final) encerra');
 
   const e = estado(d);
   // r1 MAJOR-3: o release medido (v2.1.0-alpha.1, o último do repo) não é amarrado ao #22 ⇒ sem versão; nunca "2.1.0" recortado
