@@ -765,7 +765,7 @@
     },
     {
       "id": "T36",
-      "titulo": "Sombra libera até 5x por task",
+      "titulo": "Sombra libera por progresso",
       "deps": [
         "T34"
       ],
@@ -778,7 +778,21 @@
         "plugins/gabarito-mestre/skills/gabarito-loop/SKILL.md",
         "plugins/gabarito-mestre/gates/src/loop.ts",
         "plugins/gabarito-mestre/gates/dist/loop.js",
-        "plugins/gabarito-mestre/gates/test/loop.test.ts"
+        "plugins/gabarito-mestre/gates/test/loop.test.ts",
+        "plugins/gabarito-mestre/gates/scripts/sombra.mjs",
+        "plugins/gabarito-mestre/gates/test/sombra-cli.test.mjs",
+        "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
+        "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
+        "plugins/gabarito-mestre/gates/src/painel.ts",
+        "plugins/gabarito-mestre/gates/dist/painel.js",
+        "plugins/gabarito-mestre/gates/scripts/painel.mjs",
+        "plugins/gabarito-mestre/gates/test/painel.test.ts",
+        "plugins/gabarito-mestre/gates/src/emenda.ts",
+        "plugins/gabarito-mestre/gates/dist/emenda.js",
+        "plugins/gabarito-mestre/gates/test/emenda.test.ts",
+        "plugins/gabarito-mestre/gates/scripts/emenda-dono.mjs",
+        "plugins/gabarito-mestre/gates/test/emenda-dono.test.mjs",
+        "harness.config.json"
       ],
       "reqs": [
         "REQ-AUT-1"
