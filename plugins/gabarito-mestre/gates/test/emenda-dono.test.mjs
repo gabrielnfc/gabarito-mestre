@@ -173,14 +173,14 @@ test('emenda-dono-outro-comando-silencio: command_name diferente ⇒ rc 0, sem s
   assert.deepEqual(amb.bytes(), antes);
 });
 
-test('emenda-dono-ja-julgada-bloqueia: proposta julgada pela Sombra ⇒ ja_julgada e nada gravado; proposta inexistente ⇒ proposta_inexistente', () => {
-  const amb = repo({ semear: [...COM_PROPOSTA, ['sombra-j', 'spec.emendada', { proposta_seq: 1, origem: 'sombra' }]] });
+test('emenda-dono-ja-julgada-bloqueia: proposta julgada pelo dono ⇒ ja_julgada e nada gravado (GM-15 T36: a da Sombra o dono reverte); proposta inexistente ⇒ proposta_inexistente', () => {
+  const amb = repo({ semear: [...COM_PROPOSTA, ['dono-j', 'spec.emendada', { proposta_seq: 1, origem: 'dono' }]] });
   const antes = amb.bytes();
   bloqueou(hook(stdinTui(amb.dir)), /ja_julgada/);
   bloqueou(hook(stdinTui(amb.dir, { command_args: 'rejeitar 1' })), /ja_julgada/);
   bloqueou(hook(stdinTui(amb.dir, { command_args: 'aprovar 2' })), /proposta_inexistente/);
   assert.deepEqual(amb.bytes(), antes);
-  assert.equal(julgamentos(amb).filter((e) => e.dados.origem === 'dono').length, 0);
+  assert.equal(julgamentos(amb).length, 1);
 });
 
 test('emenda-dono-sem-plano-bloqueia: plano ausente e plano inválido são causas distintas (C10: comando explícito não vira silêncio)', () => {
@@ -212,23 +212,45 @@ test('emenda-dono-diario-ilegivel-x-fora-de-ordem: causas distintas, nada gravad
   assert.deepEqual(torto.bytes(), antesT);
 });
 
-test('emenda-dono-corrida-sombra-sem-efeito: julgamento da Sombra que entra entre a conferência e a gravação ⇒ ok:false julgamento_sem_efeito, com o evento gravado dito na mensagem', async () => {
+test('emenda-dono-corrida-sombra-aprova-antes-do-dono (GM-15 T36, D-G18): a Sombra aprova dentro de `antes` e o dono grava depois ⇒ ok:true, fecha=dono (o dono reverte a aprovação da Sombra)', async () => {
   const { julgarEmendaDono } = await import('../scripts/loop.mjs');
-  // a Sombra aprova antes de nós (final: o dono não reverte aprovação): o evento do dono existe e a proposta não é do dono.
-  // (GM-15 T34, D-G15: a REJEIÇÃO da Sombra antes do dono já não é corrida perdida: o dono a reverte, ver emenda-dono-reverte-rejeicao-da-sombra)
-  for (const tipoDaSombra of ['spec.emendada']) {
-    const amb = repo({ semear: COM_PROPOSTA });
-    const sombra = () => amb.semear([['sombra-j', tipoDaSombra, { proposta_seq: 1, origem: 'sombra' }]]);
-    const r = julgarEmendaDono(amb.dir, 1, 'aprovar', 'S-dono', { antes: sombra });
-    assert.equal(r.ok, false, tipoDaSombra);
-    assert.equal(r.erro, 'julgamento_sem_efeito');
-    assert.match(r.mensagem, /gravado/);
-    assert.match(r.mensagem, new RegExp(`${tipoDaSombra.replace('.', '\\.')}, origem sombra`));
-    assert.equal(julgamentos(amb).length, 2, 'os dois eventos existem; só um fecha a proposta');
-  }
+  const amb = repo({ semear: COM_PROPOSTA });
+  const sombra = () => amb.semear([['sombra-j', 'spec.emendada', { proposta_seq: 1, origem: 'sombra' }]]);
+  const r = julgarEmendaDono(amb.dir, 1, 'rejeitar', 'S-dono', { antes: sombra });
+  assert.deepEqual(r, { ok: true, seq: 1, req: 'REQ-A-1', tipo: 'emenda.rejeitada', entrega: 'GM-10' });
+  assert.deepEqual([...julgamentos(amb)].sort((a, b) => a.ts.localeCompare(b.ts)).map((e) => [e.tipo, e.dados.origem]), [['spec.emendada', 'sombra'], ['emenda.rejeitada', 'dono']]);
   const ok = repo({ semear: COM_PROPOSTA });
   const bom = julgarEmendaDono(ok.dir, 1, 'rejeitar', 'S-dono');
   assert.deepEqual(bom, { ok: true, seq: 1, req: 'REQ-A-1', tipo: 'emenda.rejeitada', entrega: 'GM-10' });
+});
+
+test('emenda-dono-corrida-sombra-sem-efeito: outro dono-julgamento que entra antes do nosso fecha a proposta ⇒ ok:false julgamento_sem_efeito', async () => {
+  const { julgarEmendaDono } = await import('../scripts/loop.mjs');
+  // o dono (outra sessão) rejeita dentro de `antes`: a 1ª decisão do dono é final, a nossa não fecha.
+  const amb = repo({ semear: COM_PROPOSTA });
+  const outro = () => amb.semear([['dono-j', 'emenda.rejeitada', { proposta_seq: 1, origem: 'dono' }]]);
+  const r = julgarEmendaDono(amb.dir, 1, 'aprovar', 'S-dono', { antes: outro });
+  assert.equal(r.ok, false);
+  assert.equal(r.erro, 'julgamento_sem_efeito');
+  assert.match(r.mensagem, /emenda\.rejeitada, origem dono/);
+  assert.equal(julgamentos(amb).length, 2);
+});
+
+test('t36-corrida-cli-sombra-rejeita-2a-sombra-aprova-dono-aprova (achado herdado da T34): regra única fecharJulgamentos pelo CLI real ⇒ fecha o dono, aplicada', () => {
+  const amb = repo({ semear: [
+    ['emendas', 'emenda.proposta', { ...PROPOSTA('REQ-A-1'), origem: 'sombra' }],
+    ['sombra-j', 'emenda.rejeitada', { proposta_seq: 1, origem: 'sombra' }],
+    ['sombra-j', 'spec.emendada', { proposta_seq: 1, origem: 'sombra' }],
+  ] });
+  const r = hook(stdinTui(amb.dir, { command_args: 'aprovar 1' }));
+  assert.equal(r.rc, 0, r.err);
+  assert.notEqual(r.j?.decision, 'block', r.out);
+  const p = loop(amb.dir, 'proxima', '--vivos', '0').j;
+  assert.equal(p.aviso === undefined || !p.aviso.some((x) => /diario_invalido/.test(x)), true);
+  assert.equal(julgamentos(amb).length, 3);
+  // o item da redação rejeitada some (a regra do lote vê o dono fechando)
+  assert.equal(itemRedacao(amb), 0);
+  bloqueou(hook(stdinTui(amb.dir, { command_args: 'rejeitar 1' })), /Emenda recusada/);
 });
 
 test('emenda-dono-corrida-dono-depois-da-rejeicao-da-sombra (D-G15): a Sombra rejeita dentro de `antes` e o dono grava depois ⇒ ok:true, fecha=dono', async () => {
@@ -267,11 +289,17 @@ for (const decisao of ['aprovar', 'rejeitar']) {
   });
 }
 
-test('emenda-dono-nao-reverte-aprovacao-da-sombra (D-G15): a aprovada segue final, o dono não a julga de novo', () => {
-  const amb = repo({ semear: [['emendas', 'emenda.proposta', { ...PROPOSTA('REQ-A-1'), origem: 'sombra' }], ['sombra-j', 'spec.emendada', { proposta_seq: 1, origem: 'sombra' }]] });
-  bloqueou(hook(stdinTui(amb.dir, { command_args: 'rejeitar 1' })), /Emenda recusada/);
-  assert.equal(julgamentos(amb).length, 1);
-});
+for (const decisao of ['aprovar', 'rejeitar']) {
+  test(`t36-dono-reverte-emenda-aprovada-pela-sombra-${decisao} (D-G18, emenda 24 m.3): a aprovação da Sombra é revertida pelo comando do dono; depois dele é final`, () => {
+    const amb = repo({ semear: [['emendas', 'emenda.proposta', { ...PROPOSTA('REQ-A-1'), origem: 'sombra' }], ['sombra-j', 'spec.emendada', { proposta_seq: 1, origem: 'sombra' }]] });
+    const r = hook(stdinTui(amb.dir, { command_args: `${decisao} 1` }));
+    assert.equal(r.rc, 0, r.err);
+    assert.notEqual(r.j?.decision, 'block', r.out);
+    assert.deepEqual([...julgamentos(amb)].sort((a, b) => a.ts.localeCompare(b.ts)).map((e) => [e.tipo, e.dados.origem]), [['spec.emendada', 'sombra'], [decisao === 'aprovar' ? 'spec.emendada' : 'emenda.rejeitada', 'dono']]);
+    for (const outra of ['aprovar', 'rejeitar']) bloqueou(hook(stdinTui(amb.dir, { command_args: `${outra} 1` })), /Emenda recusada/);
+    assert.equal(julgamentos(amb).length, 2, 'nada novo gravado');
+  });
+}
 
 test('emenda-dono-excecao-vira-block: núcleo que lança não vira sucesso nem silêncio', () => {
   const amb = repo({ semear: COM_PROPOSTA });

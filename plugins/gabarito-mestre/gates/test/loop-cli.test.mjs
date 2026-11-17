@@ -3487,6 +3487,13 @@ describe('E3 T10: proxima, modelo, decisões, emendas e avisos', () => {
     assert.deepEqual(AVISO_EMENDA(j, /emendado/), ['Atenção: REQ-A-1 emendado (#1) depois de T1 integrada/aprovada: acrescente task de ajuste']);
   });
 
+  test('t36-aviso-emenda-regra-unica-corrida (achado herdado da T34): Sombra rejeita, 2ª Sombra aprova, dono aprova ⇒ o julgamento que vale é o do dono e o aviso o enxerga (CLI real, fecharJulgamentos)', () => {
+    const amb = ambiente({ plano: PLANO_REQ });
+    grava(amb, relogioDe(), [...IMPL_E('T1'), APROVA_E('T1'), INTEGRA_E('T1'), ['emendas', 'emenda.proposta', PROPOSTA()],
+      ['sombra', 'emenda.rejeitada', { proposta_seq: 1, origem: 'sombra' }], ['sombra', 'spec.emendada', { proposta_seq: 1, origem: 'sombra' }], ['dono', 'spec.emendada', { proposta_seq: 1, origem: 'dono' }]]);
+    assert.deepEqual(AVISO_EMENDA(amb.cli(['proxima', '--vivos', '0']).j, /emendado/), ['Atenção: REQ-A-1 emendado (#1) depois de T1 integrada/aprovada: acrescente task de ajuste']);
+  });
+
   test('proxima-aviso-emenda-apos-aprovacao: task só aprovada (não integrada) também avisa (P1b D6-4)', () => {
     const amb = ambiente({ plano: { entrega: 'GM-10', tasks: [PLANO_AJUSTE.tasks[0]] } });
     grava(amb, relogioDe(), [...IMPL_E('T1'), APROVA_E('T1'), ['emendas', 'emenda.proposta', PROPOSTA()], ['dono', 'spec.emendada', { proposta_seq: 1, origem: 'dono' }]]);

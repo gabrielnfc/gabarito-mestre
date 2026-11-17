@@ -58,7 +58,11 @@ test('fecharJulgamentos (regra única): cada condição da exceção tem mutaç�
   const f = (...e: Evento[]) => [...fecharJulgamentos(e)].map(([k, v]) => [k, v.aprova, v.origem]);
   assert.deepEqual(f(rejeita('s', 1, 1, 'sombra'), aprova('s', 2, 1, 'dono')), [[1, true, 'dono']], 'dono reverte rejeição da sombra');
   assert.deepEqual(f(rejeita('s', 1, 1, 'dono'), aprova('s', 2, 1, 'dono')), [[1, false, 'dono']], 'rejeição do dono é final');
-  assert.deepEqual(f(aprova('s', 1, 1, 'sombra'), rejeita('s', 2, 1, 'dono')), [[1, true, 'sombra']], 'aprovação da sombra é final');
+  // GM-15 T36 (D-G18, emenda 24 m.3): o dono reverte também a APROVAÇÃO da Sombra; a aprovação do dono segue final
+  assert.deepEqual(f(aprova('s', 1, 1, 'sombra'), rejeita('s', 2, 1, 'dono')), [[1, false, 'dono']], 'dono reverte a aprovação da sombra');
+  assert.deepEqual(f(aprova('s', 1, 1, 'sombra'), aprova('s', 2, 1, 'sombra')), [[1, true, 'sombra']], 'sombra não reverte a própria aprovação');
+  assert.deepEqual(f(aprova('s', 1, 1, 'dono'), rejeita('s', 2, 1, 'dono')), [[1, true, 'dono']], 'aprovação do dono é final');
+  assert.deepEqual(f(rejeita('s', 1, 1, 'sombra'), aprova('s', 2, 1, 'sombra'), aprova('s', 3, 1, 'dono')), [[1, true, 'dono']], 'corrida: Sombra rejeita, 2ª Sombra aprova, dono aprova ⇒ fecha o dono');
   assert.deepEqual(f(rejeita('s', 1, 1, 'sombra'), rejeita('s', 2, 1, 'sombra')), [[1, false, 'sombra']], 'sombra não reverte');
 });
 
@@ -267,6 +271,16 @@ test('julgar-ja-julgada-recusa', () => {
   const est = projetarEmendas([prop(1), prop(2), aprova('s', 1, 1), rejeita('s', 2, 2)]);
   assert.equal(validarJulgamento(est, 1, 'dono', false), 'proposta já julgada');
   assert.equal(validarJulgamento(est, 2, 'dono', false), 'proposta já julgada');
+});
+
+test('t36-dono-reverte-emenda-aprovada-pela-sombra (D-G18): validarJulgamento aceita o dono sobre a aprovação da Sombra, e só ele', () => {
+  const est = projetarEmendas([prop(1), aprova('s', 1, 1, 'sombra')]);
+  assert.equal(validarJulgamento(est, 1, 'dono', false), null);
+  assert.equal(validarJulgamento(est, 1, 'sombra', true), 'proposta já julgada', 'a Sombra não revê a própria aprovação');
+  const feita = projetarEmendas([prop(1), aprova('s', 1, 1, 'sombra'), rejeita('s', 2, 1, 'dono')]);
+  assert.equal(validarJulgamento(feita, 1, 'dono', false), 'proposta já julgada', 'depois do dono, final');
+  const doDono = projetarEmendas([prop(1), aprova('s', 1, 1, 'dono')]);
+  assert.equal(validarJulgamento(doDono, 1, 'dono', false), 'proposta já julgada', 'aprovação do dono é final');
 });
 
 test('julgar-sombra-sem-flag-recusa', () => {

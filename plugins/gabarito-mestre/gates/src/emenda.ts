@@ -72,19 +72,20 @@ function comoJulgamento(e: Evento): { seq: number; origem: OrigemJulgamento; apr
 }
 
 /**
- * Regra ÚNICA de fechamento (projeção e registro a usam): por `proposta_seq`, o 1º julgamento válido na ordem do diário fecha a proposta; os seguintes são
- * ignorados. EXCEÇÃO (GM-15 T34, D-G15): a rejeição da SOMBRA é revertida pelo 1º julgamento do DONO que vier depois (palavra final dele); a rejeição do
- * dono e a aprovação (de quem for) são finais. `eventos` já ordenados por `ordenar`; julgamento de forma inválida é ignorado.
+ * Regra ÚNICA de fechamento (projeção, registro e `loop.mjs` a usam): por `proposta_seq`, o 1º julgamento válido na ordem do diário fecha a proposta; os
+ * seguintes são ignorados. EXCEÇÃO (GM-15 T34 D-G15, estendida na T36 por D-G18): o julgamento da SOMBRA (rejeição OU aprovação) é revertido pelo 1º
+ * julgamento do DONO que vier depois (palavra final dele); o julgamento do dono é final. `eventos` já ordenados por `ordenar`; julgamento de forma
+ * inválida é ignorado. `evento` é o que fecha (a posição dele em `eventos` é a do julgamento que vale).
  */
-export function fecharJulgamentos(eventos: Evento[]): Map<number, { aprova: boolean; origem: OrigemJulgamento }> {
-  const fecha = new Map<number, { aprova: boolean; origem: OrigemJulgamento }>();
+export function fecharJulgamentos(eventos: Evento[]): Map<number, { aprova: boolean; origem: OrigemJulgamento; evento: Evento }> {
+  const fecha = new Map<number, { aprova: boolean; origem: OrigemJulgamento; evento: Evento }>();
   for (const e of eventos) {
     if (!ehObjeto(e)) continue;
     const j = comoJulgamento(e);
     if (j === null) continue;
     const atual = fecha.get(j.seq);
-    if (atual !== undefined && !(atual.aprova === false && atual.origem === 'sombra' && j.origem === 'dono')) continue;
-    fecha.set(j.seq, { aprova: j.aprova, origem: j.origem });
+    if (atual !== undefined && !(atual.origem === 'sombra' && j.origem === 'dono')) continue;
+    fecha.set(j.seq, { aprova: j.aprova, origem: j.origem, evento: e });
   }
   return fecha;
 }
@@ -199,9 +200,11 @@ export function validarJulgamento(est: EstadoEmendas, proposta_seq: number, orig
   if (typeof proposta_seq !== 'number' || !Number.isInteger(proposta_seq) || proposta_seq < 1) return 'proposta_seq inválido: esperado inteiro ≥ 1';
   if (origem !== 'dono' && origem !== 'sombra') return 'origem inválida: esperado dono ou sombra';
   if (origem === 'sombra' && julgaEmendas !== true) return 'origem sombra sem sombra.julga_emendas';
-  if (est.aprovadas.some((p) => p.seq === proposta_seq)) return 'proposta já julgada';
+  // GM-15 T36 (D-G18, emenda 24 m.3): o dono reverte também a APROVAÇÃO da Sombra (palavra final dele); a aprovação do dono é final.
+  const apr = est.aprovadas.find((p) => p.seq === proposta_seq);
+  if (apr !== undefined) return origem === 'dono' && apr.origem === 'sombra' ? null : 'proposta já julgada';
   const rej = est.rejeitadas.find((p) => p.seq === proposta_seq);
-  // GM-15 T34 (D-G15): só o DONO reverte, e só a rejeição que foi da SOMBRA; o dono não re-julga o que ele mesmo julgou, nem a Sombra (ou o orquestrador) o já julgado.
+  // GM-15 T34 (D-G15): só o DONO reverte, e só o julgamento que foi da SOMBRA (rejeição, D-G15; aprovação, D-G18); o dono não re-julga o que ele mesmo julgou, nem a Sombra (ou o orquestrador) o já julgado.
   if (rej !== undefined) return origem === 'dono' && rej.rejeitadaPor === 'sombra' ? null : 'proposta já julgada';
   if (!est.abertas.some((p) => p.seq === proposta_seq)) return 'proposta inexistente';
   return null;
