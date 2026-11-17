@@ -225,8 +225,9 @@ const HEX64 = /^[0-9a-f]{64}$/;
  * aprovação de origem, (b) `sha256_antes` é a ponta, (c) `seq` tem `spec.emendada` na mesma entrega (qualquer julgamento aprovando, mesmo o que o dono reverteu depois:
  * o texto JÁ foi aplicado, a cadeia descreve o arquivo) e (d) a `seq` ainda não foi aplicada. Qualquer outra aplicada é ignorada (cadeia quebrada nunca vira aceito).
  * GM-15 T36 (emenda 25 m.4, D-G19): a emenda aplicada e DEPOIS rejeitada pelo dono deixa a spec DIVERGENTE `{seq, sha_aplicado}` (a primeira em aberto) até uma
- * `spec.aplicada` com `reverte: true` da mesma seq (sha_antes = ponta, sha_depois ≠ sha_aplicado) registrar o texto desfeito; nova `spec.aprovada` do dono também
- * a encerra (ele aprovou o texto de agora). Diário fora de ordem ⇒ `null`. `filtro` restringe as aprovações a um caminho (a trilha da spec candidata).
+ * `spec.aplicada` com `reverte: true` da mesma seq (sha_antes = ponta, sha_depois ≠ sha_aplicado) registrar o texto desfeito: só ela a fecha, nova `spec.aprovada`
+ * não (emenda 25 diz "até um novo spec.aplicada"). Limite declarado (c2 MINOR-1): com 2 divergências só a 1ª (a de menor ordem de aplicação) é citada em `divergente`;
+ * a 2ª aparece quando a 1ª é desfeita (cada desfazer é um `emenda aplicar <seq>`). Diário fora de ordem ⇒ `null`. `filtro` restringe as aprovações a um caminho (a trilha da spec candidata).
  * Quem decide "o sha atual da spec está aceito?" é só `shaAceito`; painel, trilha e registro não comparam sha por conta própria.
  */
 export function pontaDaSpec(eventos          , filtro                            )                                                                                         {
@@ -242,7 +243,7 @@ export function pontaDaSpec(eventos          , filtro                           
   const emendadas = new Set(ordem.eventos.filter((e) => ehObjeto(e) && comoJulgamento(e)?.aprova === true).map((e) => comoJulgamento(e) .seq));
   const vigentes = new Set(projetarEmendas(eventos).aprovadas.map((p) => p.seq));
   const aplicadas = new Set        ();
-  const doTexto = new Map                   (); // aplicada que deixou o texto na spec, desde a última aprovação do dono
+  const doTexto = new Map                   (); // aplicada que deixou o texto na spec (só um `reverte` a tira; nova aprovação não)
   const desfeitas = new Set        ();
   const aplicacoes              = [];
   let ponta                     = null;
@@ -254,7 +255,6 @@ export function pontaDaSpec(eventos          , filtro                           
       const spec = campo(e.dados, 'spec')          ;
       if (filtro !== undefined && !filtro(spec)) continue;
       ponta = { spec, sha256: campo(e.dados, 'sha256')          , aplicadas: 0, ref };
-      doTexto.clear();
     } else if (e.tipo === 'spec.aplicada') {
       if (ponta === null || formaInvalida('spec.aplicada', e.dados) !== null) continue;
       const seq = campo(e.dados, 'seq')          ;
@@ -298,7 +298,7 @@ export function shaAceito(eventos          , sha         , filtro               
  * da cadeia) para partir dela. Emenda rejeitada, aberta ou inexistente ⇒ `emenda_nao_aprovada`. Devolve o motivo fechado ou a ponta (`sha256_antes`).
  * GM-15 T36 (emenda 25 m.4): a emenda aplicada e depois REJEITADA PELO DONO aceita o desfazer, 1 vez (`reverte: true`, com o `sha_aplicado` que o texto novo não pode repetir).
  */
-export function validarAplicacao(eventos          , seq         )                                                                                                                 {
+export function validarAplicacao(eventos          , seq         )                                                                                                                                     {
   const est = projetarEmendas(eventos);
   if (est.invalido !== undefined) return { ok: false, motivo: 'diario_invalido' };
   if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 1) return { ok: false, motivo: 'seq_invalido' };
@@ -307,10 +307,12 @@ export function validarAplicacao(eventos          , seq         )               
     const revertida = est.rejeitadas.some((p) => p.seq === seq && p.rejeitadaPor === 'dono');
     const feita = aplicacoes.find((a) => a.seq === seq && a.reverte !== true);
     if (!revertida || feita === undefined || ponta === null) return { ok: false, motivo: 'emenda_nao_aprovada' };
-    // desfazer 1 vez por seq (o de cada divergência é independente, na ordem que o orquestrador quiser); sem divergência (nova aprovação do dono a encerrou) não há o que desfazer
+    // desfazer 1 vez por seq (o de cada divergência é independente, na ordem que o orquestrador quiser); sem divergência não há o que desfazer
     if (aplicacoes.some((a) => a.seq === seq && a.reverte === true)) return { ok: false, motivo: 'ja_aplicada' };
     if (divergente === null) return { ok: false, motivo: 'emenda_nao_aprovada' };
-    return { ok: true, ponta, reverte: true, sha_aplicado: feita.depois };
+    // `desfezAntes`: a ponta é o sha que um desfazer anterior deixou (2 textos desfeitos numa edição só: o arquivo já está igual à ponta e o desfazer seguinte é válido)
+    const desfezAntes = aplicacoes.some((a) => a.reverte === true && a.depois === ponta.sha256);
+    return { ok: true, ponta, reverte: true, sha_aplicado: feita.depois, ...(desfezAntes ? { desfezAntes: true          } : {}) };
   }
   // Já gravada na cadeia ou em qualquer `spec.aplicada` válido da mesma seq (mesmo de cadeia que a aprovação nova reiniciou).
   const jaGravada = eventos.some((e) => ehObjeto(e) && e.tipo === 'spec.aplicada' && ehObjeto(e.dados) && formaInvalida('spec.aplicada', e.dados) === null && campo(e.dados, 'seq') === seq);

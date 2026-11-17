@@ -444,8 +444,9 @@ test('desfazer-fecha-divergencia: spec.aplicada com reverte (antes = ponta, depo
   assert.deepEqual(segue(aplicada(2, 1, SA, SC, { reverte: true })), { seq: 1, sha_aplicado: SB }, 'antes fora da ponta');
   assert.deepEqual(segue(aplicada(2, 9, SB, SC, { reverte: true })), { seq: 1, sha_aplicado: SB }, 'reverte de seq que não foi aplicada');
   assert.deepEqual(segue(aplicada(2, 1, SB, SC, { reverte: false })), { seq: 1, sha_aplicado: SB }, 'reverte só vale true (e a forma recusa)');
-  // aprovação nova do dono (ele aprovou o texto de agora) também encerra
-  assert.equal(pontaDaSpec([...revertida(), aprovadaSpec(3, SD)]).divergente, null);
+  // c2 MINOR-2: a divergência só fecha por spec.aplicada com reverte (emenda 25); nova spec.aprovada NÃO a encerra, e o desfazer parte da ponta nova
+  assert.deepEqual(pontaDaSpec([...revertida(), aprovadaSpec(3, SD)]).divergente, { seq: 1, sha_aplicado: SB }, 'spec.aprovada não fecha a divergência');
+  assert.equal(pontaDaSpec([...revertida(), aprovadaSpec(3, SD), aplicada(4, 1, SD, SC, { reverte: true })]).divergente, null, 'o desfazer depois da aprovação nova fecha');
   // a reversão que NÃO foi depois de aplicada não gera divergência (o dono rejeita a aprovação da Sombra antes de aplicar)
   assert.equal(pontaDaSpec([aprovadaSpec(1), prop(1), aprova('sombra', 1, 1, 'sombra'), rejeita('dono', 2, 1, 'dono')]).divergente, null);
 });

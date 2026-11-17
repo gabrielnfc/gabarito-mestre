@@ -6211,7 +6211,7 @@ describe('GM-14 T54: `emenda aplicar <seq>` grava spec.aplicada com os sha do di
     const entrada = {
       decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
       pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.now(), fuso: 'UTC', titulo: null,
-      politica: { politica: 'continua', dias: null }, base: 'main', entregaId: 'GM-10', modeloSessao: null, specSha: sha(readFileSync(join(amb.dir, SPEC), 'utf8')), tetoSombra: 26,
+      politica: { politica: 'continua', dias: null }, base: 'main', entregaId: 'GM-10', modeloSessao: null, specSha: sha(readFileSync(join(amb.dir, SPEC), 'utf8')),
     };
     return projetarPainel(plano, amb.eventos(), entrada).depende.some((d) => d.motivo === 'spec aguardando aprovação');
   };
@@ -6446,6 +6446,32 @@ describe('GM-14 T54: `emenda aplicar <seq>` grava spec.aplicada com os sha do di
     const r = amb.cli(['emenda', 'aplicar', '1']);
     assert.equal(r.rc, 1, r.out);
     assert.equal(r.j.erro, 'nada_a_aplicar');
+  });
+
+  test('emenda-aplicar-duas-desfeitas-numa-edicao (c2 MINOR-1): 2 emendas aplicadas e revertidas, os 2 textos desfeitos numa edição só ⇒ só a 1ª é citada; `aplicar 1` e `aplicar 2` gravam (a 2ª com o arquivo igual à ponta); sem o desfazer anterior, arquivo = ponta segue nada_a_aplicar', async () => {
+    const { julgarEmendaDono } = await import('../scripts/loop.mjs');
+    const { amb, texto0, texto1, editar, aplicadas } = await aplicadaERevertida();
+    // a emenda 2: aprovada pela Sombra, aplicada e revertida pelo dono, com o texto dela em cima do da 1
+    const r2 = diario.append(amb.entregas, 'sombra-j2', { ts: new Date(Date.now() + 2000).toISOString(), autor: 't@t', sessao: 'sombra-j2', agente: 'orquestrador', tipo: 'spec.emendada', dados: { proposta_seq: 2, origem: 'sombra' } });
+    assert.ok(r2.ok, JSON.stringify(r2));
+    const texto2 = `${texto1}\ntexto da emenda 2\n`;
+    editar(texto2);
+    assert.equal(amb.cli(['emenda', 'aplicar', '2']).rc, 0);
+    assert.equal(julgarEmendaDono(amb.dir, 2, 'rejeitar', 'S-dono').ok, true);
+    // controle: sem desfazer anterior, o arquivo igual à ponta (nada editado) segue recusado
+    const antes = bytesDoDiario(amb);
+    assert.equal(amb.cli(['emenda', 'aplicar', '1']).j.erro, 'nada_a_aplicar');
+    assert.deepEqual(bytesDoDiario(amb), antes);
+    // limite declarado: com 2 divergências só a 1ª é citada
+    assert.deepEqual(avisoDesfazer(amb), ['desfazer na spec o texto da emenda 1 (revertida pelo dono) e rodar `emenda aplicar 1`']);
+    editar(texto0); // os dois textos desfeitos de uma vez
+    const a1 = amb.cli(['emenda', 'aplicar', '1']);
+    assert.equal(a1.rc, 0, a1.out + a1.err);
+    assert.deepEqual(avisoDesfazer(amb), ['desfazer na spec o texto da emenda 2 (revertida pelo dono) e rodar `emenda aplicar 2`'], 'a 2ª aparece quando a 1ª é desfeita');
+    const a2 = amb.cli(['emenda', 'aplicar', '2']); // arquivo = ponta (a 1ª já o deixou assim), difere do sha que a 2ª deixou
+    assert.equal(a2.rc, 0, a2.out + a2.err);
+    assert.deepEqual(aplicadas().map((e) => e.dados).at(-1), { seq: 2, spec: SPEC, sha256_antes: sha(texto0), sha256_depois: sha(texto0), reverte: true });
+    assert.deepEqual(avisoDesfazer(amb), []);
   });
 
 });

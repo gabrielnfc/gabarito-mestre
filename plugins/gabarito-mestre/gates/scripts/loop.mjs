@@ -1770,7 +1770,7 @@ const CODIGO_APLICAR = {
  * T54 (emenda 54): `emenda aplicar <seq>` grava `spec.aplicada {seq, spec, sha256_antes, sha256_depois}` depois que o orquestrador editou o texto da spec.
  * Nenhum sha vem por argumento: `sha256_antes` é a ponta da cadeia lida do diário (`validarAplicacao`, a regra única de `emenda.ts`) e `sha256_depois` é o
  * sha do arquivo em disco (`shaDaSpec`, bytes do checkout da sessão). Arquivo igual à ponta ⇒ `nada_a_aplicar`. Uma edição que cobre duas emendas
- * aplica UMA seq por vez (1 aplicar por seq; a 2ª fica `nada_a_aplicar` até outra edição). A conferência final relê o diário depois do gancho `antes`:
+ * aplica UMA seq por vez (1 aplicar por seq; a 2ª fica `nada_a_aplicar` até outra edição). Exceção (T36 c2): o desfazer (`reverte`) logo após outro desfazer aceita o arquivo igual à ponta. A conferência final relê o diário depois do gancho `antes`:
  * ponta que mudou ⇒ `cadeia_quebrada`; spec que mudou ⇒ `spec_mudou`. Limite declarado: o orquestrador redige o texto aplicado; conferi-lo contra o diff
  * aprovado é do revisor da entrega (o registro lista cada aplicada).
  */
@@ -1783,7 +1783,8 @@ function aplicar(c, plano, seq, antesDaGravacao) {
   const alvo = { spec: v.ponta.spec };
   const depois = shaDaSpec(checkout, alvo);
   if (!depois.ok) throw new Falha(depois.erro, `${depois.mensagem}; nada foi gravado`);
-  if (depois.sha256 === v.ponta.sha256) throw new Falha('nada_a_aplicar', `a spec ${v.ponta.spec} está igual ao último sha aceito (${v.ponta.sha256.slice(0, 12)}…): edite o texto da emenda antes de aplicar; nada foi gravado`);
+  // GM-15 T36 (c2 MINOR-1): o desfazer que vem logo depois de outro desfazer aceita o arquivo igual à ponta (os 2 textos saíram numa edição só); vale então só a conferência do `sha_aplicado`
+  if (depois.sha256 === v.ponta.sha256 && v.desfezAntes !== true) throw new Falha('nada_a_aplicar', `a spec ${v.ponta.spec} está igual ao último sha aceito (${v.ponta.sha256.slice(0, 12)}…): edite o texto da emenda antes de aplicar; nada foi gravado`);
   // GM-15 T36 (emenda 25 m.4): o desfazer do texto de emenda revertida pelo dono; o arquivo que volta ao sha que a emenda deixou não desfez nada
   if (v.reverte === true && depois.sha256 === v.sha_aplicado) throw new Falha('nada_a_aplicar', `a spec ${v.ponta.spec} segue com o sha256 que a emenda ${seq} deixou (${depois.sha256.slice(0, 12)}…): desfaça o texto da emenda revertida antes de aplicar; nada foi gravado`);
   const dados = { seq, spec: v.ponta.spec, sha256_antes: v.ponta.sha256, sha256_depois: depois.sha256, ...(v.reverte === true ? { reverte: true } : {}) };
