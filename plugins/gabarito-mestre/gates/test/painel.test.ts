@@ -57,7 +57,7 @@ const IDS = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6'];
 const entrada = (extra: Partial<EntradaPainel> = {}): EntradaPainel => ({
   decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
   pacote: { nome: 'Terra Média', lider: 'GANDALF', sabio: 'ELROND', nomes: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] }, notificacao: null, agoraMs: AGORA, fuso: 'UTC',
-  titulo: null, politica: { politica: 'continua', dias: null }, base: 'main', entregaId: 'GM-12', modeloSessao: null, specSha: null, tetoSombra: 26, ...extra,
+  titulo: null, politica: { politica: 'continua', dias: null }, base: 'main', entregaId: 'GM-12', modeloSessao: null, specSha: null, ...extra,
 });
 const proj = (plano: Plano, eventos: Evento[] | null, extra: Partial<EntradaPainel> = {}): EstadoPainel => projetarPainel(plano, eventos, entrada(extra));
 const vivo = (description: string, status = 'running'): AgenteVivo => ({ id: `a-${description}`, type: 'general-purpose', description, status, uso: null });
@@ -1300,7 +1300,7 @@ test('uma-linha-regra-unica: umaLinhaDe sobre o estado projetado == umaLinha da 
   const base = (extra: Record<string, unknown> = {}) => ({
     decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
     pacote: { nome: 'Terra Média', lider: 'GANDALF', sabio: 'ELROND', nomes: ['ARAGORN', 'LEGOLAS'] }, notificacao: null, agoraMs: AGORA, fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
-    entregaId: null, modeloSessao: null, specSha: null, tetoSombra: 26, fatos: trilhaFatos, ultima: { id: 'GM-13', estado: 'publicada' }, ...extra,
+    entregaId: null, modeloSessao: null, specSha: null, fatos: trilhaFatos, ultima: { id: 'GM-13', estado: 'publicada' }, ...extra,
   }) as unknown as Parameters<typeof projetarPainel>[2];
   const ev = (tipo: string, dados: unknown, sessao = 's1', seq = 1, agente = 'orquestrador'): Evento => ({ seq, ts: iso(seq), autor: 't', sessao, agente, tipo, dados, hash_anterior: null } as unknown as Evento);
   const casos: Array<[string, Evento[], Record<string, unknown>, boolean]> = [
@@ -1586,7 +1586,7 @@ test('entregue-so-zera-a-entrega: em main (diário _sem-id) a GM-14 encerrada ma
   const base = (extra: Record<string, unknown> = {}) => ({
     decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
     pacote: { nome: 'Terra Média', lider: 'GANDALF', sabio: 'ELROND', nomes: ['ARAGORN', 'LEGOLAS'] }, notificacao: null, agoraMs: AGORA, fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
-    entregaId: null, modeloSessao: null, specSha: null, tetoSombra: 26, fatos: fatosMain, ...extra,
+    entregaId: null, modeloSessao: null, specSha: null, fatos: fatosMain, ...extra,
   }) as unknown as Parameters<typeof projetarPainel>[2];
   const ev = (tipo: string, dados: unknown, seq: number, agente = 'orquestrador'): Evento => ({ seq, ts: iso(seq), autor: 't', sessao: 's1', agente, tipo, dados, hash_anterior: null } as unknown as Evento);
   const semId = [
@@ -1624,7 +1624,7 @@ test('entregue-com-pendencia-volta-aos-blocos: fonte falha, pergunta, PAROU ou A
   const base = (extra: Record<string, unknown> = {}) => ({
     decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
     pacote: { nome: 'Terra Média', lider: 'GANDALF', sabio: 'ELROND', nomes: ['ARAGORN', 'LEGOLAS'] }, notificacao: null, agoraMs: AGORA, fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
-    entregaId: null, modeloSessao: null, specSha: null, tetoSombra: 26, fatos: fatosMain,
+    entregaId: null, modeloSessao: null, specSha: null, fatos: fatosMain,
     entregue: { id: 'GM-14', versao: null }, proxima: { tipo: 'nenhuma', texto: 'nenhuma próxima anotada', acoes: [] }, entregueDoDiario: false, ...extra,
   }) as unknown as Parameters<typeof projetarPainel>[2];
   const ev = (tipo: string, dados: unknown, seq: number, agente = 'orquestrador'): Evento => ({ seq, ts: iso(seq), autor: 't', sessao: 's1', agente, tipo, dados, hash_anterior: null } as unknown as Evento);

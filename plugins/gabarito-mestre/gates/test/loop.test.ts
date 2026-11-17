@@ -1629,7 +1629,7 @@ test('t36-historico-e-recente-dizem-a-sombra-liberou', async () => {
   const entrada = {
     decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
     pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T01:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
-    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26,
+    entregaId: 'GM-14', modeloSessao: null, specSha: null,
     fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['T1'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 's1' },
   };
   const s = projetarPainel(p, evs, entrada as never);
@@ -1695,7 +1695,7 @@ test('pouso-pendente-chave-por-pouso: o estado do painel carrega pousoPendente.s
   const entrada = {
     decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
     pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T03:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
-    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26, onboarding: true,
+    entregaId: 'GM-14', modeloSessao: null, specSha: null, onboarding: true,
     fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['a'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 'S1' },
   };
   // GM-15 T35 (r.12, D-P13): o pedido de /clear é medido: fronteira (veredito) e a leitura própria da sessão S1 em 60 %
@@ -1765,7 +1765,7 @@ test('pouso-pendente-regra-unica (GM-15 T35 r.12): o painel e o núcleo dão a r
   const entrada = {
     decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
     pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T03:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
-    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26, onboarding: true,
+    entregaId: 'GM-14', modeloSessao: null, specSha: null, onboarding: true,
     fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['a'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 'S1' },
   };
   const casos: [string, Evento[]][] = [
@@ -1816,7 +1816,7 @@ test('pouso-pendente-painel-sem-onboarding (GM-15 T35 r.12): sem medição o pai
   const entrada = {
     decisaoEntrega: null, pausado: false, contexto: { percent: 40, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: [],
     pacote: { nome: 'P', lider: 'L', sabio: 'S', nomes: ['A', 'B', 'C', 'D'] }, notificacao: null, agoraMs: Date.parse('2026-11-03T03:00:00Z'), fuso: 'UTC', titulo: null, politica: { politica: 'continua', dias: null },
-    entregaId: 'GM-14', modeloSessao: null, specSha: null, tetoSombra: 26,
+    entregaId: 'GM-14', modeloSessao: null, specSha: null,
     fatos: { branch: 'enabler/GM-14-x', idPadrao: '[A-Z]+-\\d+', specs: [], plano: { tasks: ['a'] }, ledger: false, gh: 'ok', ultimas: [], sessao: 'S1' },
   };
   const evs = [...diario(ini('a'), con('a'), ver('a', 'APROVADO', 1)), pouso(10, 30)];

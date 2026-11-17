@@ -327,7 +327,7 @@ test('fixtures do teste são eventos válidos do diário (forma conferida pela T
 
 test('item (5) não repete o PAROU de teto da base real (MAJOR-1): 1 item por task, com o mesmo botão', () => {
   const evs = expandir([...noTeto('T12'), { t: 'loop.parar', d: { motivo: 'teto_rodadas', task: 'T12' } }]);
-  const entrada = { decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: null, pacote: 'x', notificacao: null, agoraMs: Date.UTC(2026, 10, 11, 13), fuso: 'UTC', titulo: null, politica: { politica: 'pr', dias: null }, entregaId: 'GM-14', specSha: null, tetoSombra: 10 };
+  const entrada = { decisaoEntrega: null, pausado: false, contexto: { percent: null, tokens: null, window: null }, limites: { h5: null, d7: null }, x: 50, agentes: null, pacote: 'x', notificacao: null, agoraMs: Date.UTC(2026, 10, 11, 13), fuso: 'UTC', titulo: null, politica: { politica: 'pr', dias: null }, entregaId: 'GM-14', specSha: null };
   const base = dependeDeVoce({ tasks: [{ id: 'T12', deps: [] }] } as never, evs, entrada as never);
   assert.ok(base.some((b) => b.acoes.some((a) => a.comando === '/gabarito-mestre:liberar T12')), 'a base traz o botão de liberar');
   const r = dependeDe(APROVADA, evs, base, OK, false, GIT);
