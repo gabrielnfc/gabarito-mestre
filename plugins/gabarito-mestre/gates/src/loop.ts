@@ -613,7 +613,7 @@ export function sombraDecideOTeto(plano: Plano, eventos: Evento[], task: string,
 }
 
 /**
- * GM-15 T39 (MAJOR-1 do review final): `sombra.libera_teto` lido de `lerConfigOrigin` (`{fonte, cfg}`), a regra ÚNICA do lote (`configDoLote`), do Stop e do mod: só vale a config de
+ * GM-15 T39 (MAJOR-1 do review final): `sombra.libera_teto` lido de `lerConfigOrigin` (`{fonte, cfg}`), a leitura usada pelo Stop e pelo mod (`configDoLote` e `liberarComoSombra` em loop.mjs mantêm leitura própria, de mesma semântica): só vale a config de
  * `origin/HEAD` (`fonte: 'origin'`; a local não conta) com `sombra.libera_teto === true`. Qualquer outra forma ⇒ `false` (desligado). Puro, nunca lança.
  */
 export function liberaTetoDeOrigin(origin: unknown): boolean {

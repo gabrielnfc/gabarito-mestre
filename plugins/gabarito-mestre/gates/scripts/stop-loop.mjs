@@ -598,7 +598,13 @@ async function decidir(texto, ambiente, cwdProcesso, ctx) {
     }
     if (Array.isArray(abertas) && abertas.length > 0) return avisoAprendizado(raiz, entrega, abertas);
     const iParar = ord.eventos.map((e) => e.tipo).lastIndexOf('loop.parar');
-    if (iParar >= 0 && !ord.eventos.slice(iParar + 1).some((e) => TIPOS_DE_TASK.includes(e.tipo))) return null;
+    if (iParar >= 0 && !ord.eventos.slice(iParar + 1).some((e) => TIPOS_DE_TASK.includes(e.tipo))) {
+      // GM-15 T39 r1 (MAJOR-1): `loop.parar {teto_rodadas, task}` (ponte do mod que falhou, mod antigo) NÃO silencia o Stop quando a Sombra decide o teto dessa task: a pergunta à Sombra é ação permitida.
+      const dp = ord.eventos[iParar]?.dados;
+      const sombraDevia = acao.tipo === 'parar' && acao.motivo === 'teto_rodadas' && typeof acao.task === 'string'
+        && dp?.motivo === 'teto_rodadas' && dp?.task === acao.task && sombraDecideTeto(dl.mod, plano, ord.eventos, acao.task, raiz);
+      if (!sombraDevia) return null;
+    }
   }
   if (falhaAcao !== null) return falhaAcao;
   if (acao.tipo === 'concluir') return avisoLiberacoes(eventos, entrega);

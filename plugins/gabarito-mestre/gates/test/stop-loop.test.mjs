@@ -2200,3 +2200,42 @@ test('t39-costura-cli-real: proxima, Stop, painel e a ponte do mod concordam sob
     assert.equal(sombraDecideOTeto(PLANO, evs, 'T1', liberaTetoDeOrigin(ponte.origin)), sombra);
   }
 });
+
+// ------------------------------------------------------------------------------------- GM-15 T39 r1 (MAJOR-1, MINOR-1, MINOR-2)
+
+test('t39-r1-stop-loop-parar-teto-com-sombra-decidindo-nao-silencia: loop.parar{teto_rodadas,T1} (ponte do mod que falhou) + libera_teto em origin ⇒ block pedindo a Sombra, nunca saída vazia', () => {
+  const raiz = noTeto({ sombra: { libera_teto: true } }, [ev('s', 7, 'loop.parar', { motivo: 'teto_rodadas', task: 'T1' })]);
+  const r = stop(raiz);
+  bloqueia(r, /T1/);
+  assert.match(r.json.reason, /sombra\.mjs perguntar --task T1 --libera-teto/);
+  assert.doesNotMatch(r.json.reason, /comando do dono|\/gabarito-mestre:liberar/);
+});
+
+test('t39-r1-stop-loop-parar-teto-sem-flag-segue-silencioso: o mesmo diário com a flag desligada ⇒ o silêncio pós-parar de sempre', () => {
+  const raiz = noTeto({ sombra: { libera_teto: false } }, [ev('s', 7, 'loop.parar', { motivo: 'teto_rodadas', task: 'T1' })]);
+  mudo(stop(raiz));
+});
+
+test('t39-r1-stop-loop-parar-de-outra-task-ou-motivo-segue-silencioso: o silêncio só cai para o parar do MESMO teto/task', () => {
+  const raiz = noTeto({ sombra: { libera_teto: true } }, [ev('s', 7, 'loop.parar', { motivo: 'sem_progresso', stops: 3 })]);
+  mudo(stop(raiz));
+});
+
+test('t39-r1-stop-config-local-ligada-origin-desligada-nao-conta: sombra.libera_teto só em harness.config.json LOCAL ⇒ parada do dono', () => {
+  const raiz = noTeto({ sombra: { libera_teto: false } });
+  writeFileSync(join(raiz, 'harness.config.json'), JSON.stringify({ sombra: { libera_teto: true } })); // local, sem commit: origin segue desligada
+  const r = stop(raiz);
+  avisa(r, /parou.*teto de rodadas/);
+  assert.doesNotMatch(r.json.systemMessage ?? '', /perguntar --task/);
+});
+
+test('t39-r1-stop-nao-conseguiu-com-task-e-flag-ligada-nao-vira-pergunta-a-Sombra: só o teto_rodadas é decisão da Sombra', () => {
+  const raiz = repo();
+  plano(raiz);
+  diario(raiz, 's', [ev('s', 1, 'task.iniciada', { task: 'T1', papel: 'implementador' }), ev('s', 2, 'task.reaberta', { task: 'T1', origem: 'retomada' }), ev('s', 3, 'task.iniciada', { task: 'T1', papel: 'implementador' })]); // retomada já gasta ⇒ nao_conseguiu{task:T1}
+  fecharPendenciasNoDiario(entregaDir(raiz), PLANO);
+  comOrigin(raiz, { sombra: { libera_teto: true } });
+  const r = stop(raiz);
+  avisa(r, /nao_conseguiu/); // a parada do dono de sempre
+  assert.doesNotMatch(JSON.stringify(r.json ?? {}), /perguntar --task|pergunte à Sombra/);
+});
