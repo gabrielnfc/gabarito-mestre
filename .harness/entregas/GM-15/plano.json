@@ -792,7 +792,10 @@
         "plugins/gabarito-mestre/gates/test/emenda.test.ts",
         "plugins/gabarito-mestre/gates/scripts/emenda-dono.mjs",
         "plugins/gabarito-mestre/gates/test/emenda-dono.test.mjs",
-        "harness.config.json"
+        "harness.config.json",
+        "plugins/gabarito-mestre/gates/test/sombra.test.ts",
+        "plugins/gabarito-mestre/gates/src/sombra.ts",
+        "plugins/gabarito-mestre/gates/dist/sombra.js"
       ],
       "reqs": [
         "REQ-AUT-1"
