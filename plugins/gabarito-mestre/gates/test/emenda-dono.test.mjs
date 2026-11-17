@@ -231,6 +231,17 @@ test('emenda-dono-corrida-sombra-sem-efeito: julgamento da Sombra que entra entr
   assert.deepEqual(bom, { ok: true, seq: 1, req: 'REQ-A-1', tipo: 'emenda.rejeitada', entrega: 'GM-10' });
 });
 
+test('emenda-dono-corrida-dono-depois-da-rejeicao-da-sombra (D-G15): a Sombra rejeita dentro de `antes` e o dono grava depois ⇒ ok:true, fecha=dono', async () => {
+  const { julgarEmendaDono } = await import('../scripts/loop.mjs');
+  const amb = repo({ semear: COM_PROPOSTA });
+  const sombra = () => amb.semear([['sombra-j', 'emenda.rejeitada', { proposta_seq: 1, origem: 'sombra' }]]);
+  const r = julgarEmendaDono(amb.dir, 1, 'aprovar', 'S-dono', { antes: sombra });
+  assert.deepEqual(r, { ok: true, seq: 1, req: 'REQ-A-1', tipo: 'spec.emendada', entrega: 'GM-10' });
+  const j = julgamentos(amb);
+  assert.equal(j.length, 2);
+  assert.deepEqual([...j].sort((a, b) => a.ts.localeCompare(b.ts)).map((e) => [e.tipo, e.dados.origem]), [['emenda.rejeitada', 'sombra'], ['spec.emendada', 'dono']]);
+});
+
 // ── GM-15 T34 (D-G15): o dono reverte a rejeição da Sombra; o item da redação sai do lote ──────────────────────────────────────────────────────────────────────────
 const SOMBRA_REJEITA_A_PROPRIA = [
   ['emendas', 'emenda.proposta', { ...PROPOSTA('REQ-A-1'), origem: 'sombra' }],

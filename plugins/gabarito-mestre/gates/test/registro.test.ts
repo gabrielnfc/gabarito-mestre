@@ -127,6 +127,23 @@ describe('montarRegistro: seções', () => {
     assert.match(l[0], /· aprovada por dono ·/);
   });
 
+  test('registro-d-g15-dono-reverte-rejeicao-da-sombra: mesma regra da projeção (fecharJulgamentos): a emenda revertida e aplicada pelo dono NÃO aparece como rejeitada por sombra', () => {
+    const rej = ev('loop', 3, 'emenda.rejeitada', { proposta_seq: 1, origem: 'sombra' }, t(5));
+    const apr = ev('dono', 1, 'spec.emendada', { proposta_seq: 1, origem: 'dono' }, t(6));
+    const l = corpo(montarRegistro('GM-13', [PROP, rej, apr], null), 'Emendas');
+    assert.equal(l.length, 1);
+    assert.match(l[0], /^- #1 · REQ-APR-1 · task T4 · tecnica · aprovada por dono · /);
+    assert.ok(!l.join('\n').includes('rejeitada por sombra'));
+    // e o dono que rejeita depois da Sombra: rejeitada por dono (uma linha só)
+    const rejDono = ev('dono', 1, 'emenda.rejeitada', { proposta_seq: 1, origem: 'dono' }, t(6));
+    const l2 = corpo(montarRegistro('GM-13', [PROP, rej, rejDono], null), 'Emendas');
+    assert.equal(l2.length, 1);
+    assert.match(l2[0], /· rejeitada por dono ·/);
+    // a Sombra que julga de novo depois da própria rejeição não reverte
+    const sombra2 = ev('dono', 1, 'spec.emendada', { proposta_seq: 1, origem: 'sombra' }, t(6));
+    assert.match(corpo(montarRegistro('GM-13', [PROP, rej, sombra2], null), 'Emendas')[0], /· rejeitada por sombra ·/);
+  });
+
   test('registro-emenda-julgamento-sem-proposta: não some calado', () => {
     const l = corpo(montarRegistro('GM-13', [APROV_DONO], null), 'Emendas');
     assert.equal(l[0], '- #1 · julgamento sem proposta no diário · aprovada por dono');

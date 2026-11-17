@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { quemRedigeNaAncora, projetarEmendas, versaoDoReq, reqsCongelados, escopoDaTask, validarProposta, validarJulgamento, SESSAO_EMENDAS } from '../src/emenda.ts';
+import { quemRedigeNaAncora, projetarEmendas, fecharJulgamentos, versaoDoReq, reqsCongelados, escopoDaTask, validarProposta, validarJulgamento, SESSAO_EMENDAS } from '../src/emenda.ts';
 import type { EstadoEmendas } from '../src/emenda.ts';
 import { normalizarCaminho, validarPlano } from '../src/plano.ts';
 import type { Evento, Plano } from '../src/tipos.ts';
@@ -40,6 +40,26 @@ test('segundo-julgamento-ignorado', () => {
   const est = projetarEmendas([prop(1), aprova('s', 1, 1), rejeita('s', 2, 1), aprova('s', 3, 1, 'sombra')]);
   assert.deepEqual(est.aprovadas.map((p) => [p.seq, p.origem]), [[1, 'dono']]);
   assert.deepEqual(est.rejeitadas, []);
+});
+
+test('d-g15-sombra-nao-reverte-a-propria-rejeicao: 2º julgamento da SOMBRA depois da rejeição dela não reverte (só o dono), aprovando ou rejeitando', () => {
+  for (const segundo of [aprova('s', 2, 1, 'sombra'), rejeita('s', 2, 1, 'sombra')]) {
+    const est = projetarEmendas([prop(1), rejeita('s', 1, 1, 'sombra'), segundo]);
+    assert.deepEqual(est.rejeitadas.map((p) => [p.seq, p.rejeitadaPor]), [[1, 'sombra']]);
+    assert.deepEqual(est.aprovadas, []);
+  }
+  // controle: o dono reverte
+  const rev = projetarEmendas([prop(1), rejeita('s', 1, 1, 'sombra'), aprova('s', 2, 1, 'dono')]);
+  assert.deepEqual(rev.aprovadas.map((p) => [p.seq, p.origem]), [[1, 'dono']]);
+  assert.deepEqual(rev.rejeitadas, []);
+});
+
+test('fecharJulgamentos (regra única): cada condição da exceção tem mutação morta (rejeição, origem sombra, julgador dono)', () => {
+  const f = (...e: Evento[]) => [...fecharJulgamentos(e)].map(([k, v]) => [k, v.aprova, v.origem]);
+  assert.deepEqual(f(rejeita('s', 1, 1, 'sombra'), aprova('s', 2, 1, 'dono')), [[1, true, 'dono']], 'dono reverte rejeição da sombra');
+  assert.deepEqual(f(rejeita('s', 1, 1, 'dono'), aprova('s', 2, 1, 'dono')), [[1, false, 'dono']], 'rejeição do dono é final');
+  assert.deepEqual(f(aprova('s', 1, 1, 'sombra'), rejeita('s', 2, 1, 'dono')), [[1, true, 'sombra']], 'aprovação da sombra é final');
+  assert.deepEqual(f(rejeita('s', 1, 1, 'sombra'), rejeita('s', 2, 1, 'sombra')), [[1, false, 'sombra']], 'sombra não reverte');
 });
 
 test('julgamento-misto-rejeitada-depois-emendada', () => {

@@ -71,6 +71,24 @@ function comoJulgamento(e        )                                              
   return { seq: campo(e.dados, 'proposta_seq')          , origem: campo(e.dados, 'origem')                    , aprova: e.tipo === 'spec.emendada' };
 }
 
+/**
+ * Regra ÚNICA de fechamento (projeção e registro a usam): por `proposta_seq`, o 1º julgamento válido na ordem do diário fecha a proposta; os seguintes são
+ * ignorados. EXCEÇÃO (GM-15 T34, D-G15): a rejeição da SOMBRA é revertida pelo 1º julgamento do DONO que vier depois (palavra final dele); a rejeição do
+ * dono e a aprovação (de quem for) são finais. `eventos` já ordenados por `ordenar`; julgamento de forma inválida é ignorado.
+ */
+export function fecharJulgamentos(eventos          )                                                             {
+  const fecha = new Map                                                       ();
+  for (const e of eventos) {
+    if (!ehObjeto(e)) continue;
+    const j = comoJulgamento(e);
+    if (j === null) continue;
+    const atual = fecha.get(j.seq);
+    if (atual !== undefined && !(atual.aprova === false && atual.origem === 'sombra' && j.origem === 'dono')) continue;
+    fecha.set(j.seq, { aprova: j.aprova, origem: j.origem });
+  }
+  return fecha;
+}
+
 export function projetarEmendas(eventos          )                {
   if (!Array.isArray(eventos)) return { ...vazio(), invalido: INVALIDO };
   if (eventos.length === 0) return vazio();
@@ -90,22 +108,13 @@ export function projetarEmendas(eventos          )                {
     if (p !== null) propostas.set(p.seq, p);
   }
 
-  // 2ª passada: o 1º julgamento válido na ordem do diário fecha a proposta; os seguintes são ignorados. EXCEÇÃO (GM-15 T34, D-G15): a rejeição da SOMBRA é revertida
-  // pelo 1º julgamento do DONO que vier depois (palavra final dele); a rejeição do dono e a aprovação (de quem for) são finais.
+  // 2ª passada: a regra de fechamento é `fecharJulgamentos` (única, o registro a importa).
   const est = vazio();
   const julgadas = new Set        ();
-  for (const e of ordem.eventos) {
-    if (!ehObjeto(e)) continue;
-    const j = comoJulgamento(e);
-    if (j === null) continue;
-    const p = propostas.get(j.seq);
+  for (const [seq, j] of fecharJulgamentos(ordem.eventos)) {
+    const p = propostas.get(seq);
     if (p === undefined) continue;
-    if (julgadas.has(j.seq)) {
-      const i = est.rejeitadas.findIndex((r) => r.seq === j.seq && r.rejeitadaPor === 'sombra');
-      if (i < 0 || j.origem !== 'dono') continue;
-      est.rejeitadas.splice(i, 1);
-    }
-    julgadas.add(j.seq);
+    julgadas.add(seq);
     if (j.aprova) est.aprovadas.push({ ...p, origem: j.origem });
     else est.rejeitadas.push({ ...p, rejeitadaPor: j.origem });
   }
