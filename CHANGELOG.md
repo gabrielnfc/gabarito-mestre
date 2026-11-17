@@ -3,9 +3,30 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/). Versionamento: [SemVer](https://semver.org/lang/pt-BR/).
 Usuários do plugin só recebem atualização quando `version` muda.
 
-## [Unreleased]
+## [2.1.0] — 2026-11-17
 
-### Adicionado
+Versão estável da 2.1.0 (GM-15, fluidez do loop e clareza para quem usa). Tag e release só o dono publica (`next` para `main`). Data da alpha.1 conferida pela data do commit da tag `gabarito-mestre--v2.1.0-alpha.1` (2026-11-15).
+
+### Resumo da GM-15 (por tema)
+
+- **Fluidez do loop**: o loop segue sozinho, lê a CI da main pelo sha do push, retoma depois do `/clear` e o painel/DEPENDE avisam trava de mais de 30 min, contexto alto sem pouso e loop desligado (régua do Stop); nunca pedem `/clear` com o loop desligado.
+- **Entrega encerrada e reaberta**: o encerramento vem do merge na main; PR de virada de pré-versão não encerra a entrega, e a visão do que foi entregue usa a versão inteira (nunca truncada).
+- **Adiar e cortar**: tasks adiadas e cortadas aparecem no painel; task com reabertura de origem inválida aparece como `?` nomeando a causa e não derruba pouso nem trilha.
+- **Visão de projeto**: render e CLI da visão de projeto, com o rótulo único "agente fora do loop".
+- **ETA**: previsão em faixa, com motivo.
+- **Painel**: o painel da entrega atual não traz item de entrega anterior.
+- **Robustez do loop (T34)**: o mod relê o id da sessão após `/clear`; `loop.mjs abrir` recusa base fora da entrega e `fechar` apaga só branch sem commit próprio; o dono reverte o julgamento da Sombra por `/emenda aprovar|rejeitar`; a suíte do mod roda depois dos gates, com teto de 3x a mediana medida.
+- **Sombra libera por progresso (T36)**: sem limite numérico de liberações; a decisão do teto é uma função só (progresso medido, abordagem nova, freios por abordagens esgotadas e orçamento); o dono pode reverter emenda já aplicada e a spec fica divergente (`?` no painel).
+- **Contribuições do Allan**: PRs #19 (autonomia do orquestrador na guarda, agora "projeto E máquina") e #20 incorporadas.
+
+### Limites declarados
+
+- Pré-versão não encerra a entrega: a GM-14 continua não encerrada até a 2.1.1 (D-G20, D-G21); o painel da GM-14 é limite até lá.
+- Só 1 emenda é desfeita por edição (T36).
+- Tokens por task seguem sem produtor (T36): o orçamento por task não usa tokens medidos.
+- Se as hipóteses S1, S4 e S8 forem refutadas na medição, o texto correspondente vira limite; a R5 da guarda segue como declarada no plano.
+
+### Adicionado (autonomia e guarda)
 - **Autonomia do orquestrador na guarda: precisa do projeto E da máquina (GM-15 T15, REQ-AUT-2 b).** A guarda só deixa o `ask` do orquestrador passar quando as duas coisas valem: `guarda.autonomia` = `"orquestrador"` no `harness.config.json` lido de `origin/HEAD` (o projeto pede; exige merge) **e** o interruptor por máquina `~/.claude/gabarito-autonomia.json` (`{"orquestrador": true}`, protegido pelo anel integridade). Só um dos dois não basta: continua `ask`. A pergunta que grava `guarda.autonomia` é a única de autonomia do onboarding (3 respostas, 4 chaves; GM-15 T14).
   - Com os dois ligados, todo `ask` do orquestrador passa em silêncio e grava o evento `guarda.autonomia_usada` no diário (só anel, alvo, ação e ambiente; nunca o comando).
   - Continuam pedindo, mesmo com os dois ligados: anel `segredo`, exceção de classificação, comando acima do teto (65.536) e `cd` perdido.
@@ -38,7 +59,7 @@ Hotfix do painel (GM-15, decisões do dono D-G1, D-G1a, D-G1b, D-G1c e D-G4).
 - A comparação do aceite A1 com a gravação da sessão real feita no desenho de 5 blocos fica pendente: regravar no aceite da 2.1.0 final.
 - A 2.1.0 final segue em construção (GM-15): fechamento da entrega pelo merge na main, tasks adiadas, previsão exata, visão de projeto e chat em linguagem natural.
 
-## [2.1.0-alpha.1] — 2026-11-14
+## [2.1.0-alpha.1] — 2026-11-15
 
 Pré-versão da 2.1.0 (clareza para quem usa). Não é a versão estável: a 2.1.0 só sai depois do aceite de quem nunca programou (A2) e da publicação pelo dono (`next` para `main`).
 
