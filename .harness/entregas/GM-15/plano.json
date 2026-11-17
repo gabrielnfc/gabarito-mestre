@@ -1072,6 +1072,25 @@
       "reqs": [
         "REQ-CI-1"
       ]
+    },
+    {
+      "id": "T39",
+      "titulo": "Stop e mod respeitam a Sombra no teto",
+      "deps": [
+        "T36"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/stop-loop.mjs",
+        "plugins/gabarito-mestre/gates/test/stop-loop.test.mjs",
+        "plugins/gabarito-mestre/mod/gabarito.mjs",
+        "plugins/gabarito-mestre/mod/test/gabarito.test.ts",
+        "plugins/gabarito-mestre/gates/src/loop.ts",
+        "plugins/gabarito-mestre/gates/dist/loop.js",
+        "plugins/gabarito-mestre/gates/test/loop.test.ts"
+      ],
+      "reqs": [
+        "REQ-AUT-1"
+      ]
     }
   ]
 }
