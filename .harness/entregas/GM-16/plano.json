@@ -36,7 +36,7 @@
       ],
       "reqs": ["REQ-PRJ-2"],
       "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/projeto.test.ts",
-      "mutacoes": "opção somando em pbis; ignorar fluxo.status.FL1; opção com diário sumindo; tirar o concluido fixo"
+      "mutacoes": "opção somando em pbis; ignorar fluxo.status.FL1; opção com diário sumindo; tirar o concluido fixo; opção entrando na previsão estimada"
     },
     {
       "id": "T3",

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node ≥ 22.18 sem dependências, TypeScript com strip-types e `dist/` commitado (`node scripts/build.mjs`; `build.mjs --check` sai 0), `node --test`.
 
-**Spec:** `docs/superpowers/specs/2026-11-19-gm16-painel-projeto-design.md` (r1). **Decisões do dono:** `2026-11-19-gm16-decisoes-dono.md` (D-G22). Pendências P1–P4 da spec não bloqueiam T1–T5; P4 bloqueia a T0 (ok nominal para ler o repositório consumidor).
+**Spec:** `docs/superpowers/specs/2026-11-19-gm16-painel-projeto-design.md` (r1). **Decisões do dono:** `2026-11-19-gm16-decisoes-dono.md` (D-G22 a D-G26). ~~Pendências P1–P4 da spec não bloqueiam T1–T5; P4 bloqueia a T0 (ok nominal para ler o repositório consumidor).~~ Emenda 2026-11-19: P1–P4 resolvidas (D-G23 a D-G26); nada bloqueia a T0. Item 5 da D-G22 fora do escopo (GM-17, `docs/backlog.md`, D-G25).
 
 ## Global Constraints
 
@@ -42,7 +42,7 @@
 
 | Onda | Tasks (dependências) | Observação |
 |---|---|---|
-| A | **T0** (—) | spike sem suíte; precisa do ok P4 |
+| A | **T0** (—) | spike sem suíte; ~~precisa do ok P4~~ liberada (D-G26, 2026-11-19) |
 | B | T1 (T0) | `projeto.ts` |
 | C | T2 (T1) | `projeto.ts` |
 | D | T3 (T2), T5 (T2) | arquivos disjuntos: podem correr juntas |
@@ -65,7 +65,7 @@
 
 ### Task 0: Spikes S1 e S2 no repositório consumidor de referência
 
-**Depende de:** —. **Onda A.** **Modelo:** Opus 5.5. Sem suíte, sem código de produto. **Precisa do ok P4.**
+**Depende de:** —. **Onda A.** **Modelo:** Opus 5.5. Sem suíte, sem código de produto. ~~**Precisa do ok P4.**~~ **Liberada (2026-11-19, D-G26):** só leitura do repositório consumidor local, relatório fora do git, só números; nada dele é copiado para este repositório.
 
 **Files:** Create `.superpowers/sdd/2026-11-19-gm16/t0-relatorio.md` (fora do git). Sondas em `.claude-tmp/gm16-t0/`.
 
@@ -91,8 +91,8 @@
 **Files:** Modify `gates/src/projeto.ts` (exporta `colunasFl1(statusCfg)` e `ehColunaFl1`, `ehFeito`; `projetarProjeto` recebe `statusFl1?` em `opcoes`; `totais.opcoes`), `gates/dist/projeto.js`, `gates/test/projeto.test.ts`, `gates/test/fixtures/projeto/` (cards com status de opção e config Jira).
 
 - [ ] **Step 1: Testes vermelhos** os 7 de REQ-PRJ-2. Regressão: a fixture da GM-15 dá as mesmas linhas e totais de hoje.
-- [ ] **Step 2:** predicado único (`ehColunaFl1`), exportado para o doctor (T5); opção fica fora de linhas e totais; opção com `plano.json` ou evento de task vira linha; previsão estimada segue a D-G13 até a resposta da P1 (ponto isolado numa função, para a resposta mudar 1 linha).
-- [ ] **Mutações** M2a opção somando em `pbis` · M2b ignorar `fluxo.status.FL1` · M2c opção com diário sumindo · M2d tirar o `concluido` fixo · M2e card sem status virar linha ⇒ morrem.
+- [ ] **Step 2:** predicado único (`ehColunaFl1`), exportado para o doctor (T5); opção fica fora de linhas e totais; opção com `plano.json` ou evento de task vira linha; ~~previsão estimada segue a D-G13 até a resposta da P1 (ponto isolado numa função, para a resposta mudar 1 linha)~~ opção fica fora da previsão medida **e da estimada** (emenda 2026-11-19, D-G23); teste `opcao-fora-da-previsao-estimada`.
+- [ ] **Mutações** M2a opção somando em `pbis` · M2b ignorar `fluxo.status.FL1` · M2c opção com diário sumindo · M2d tirar o `concluido` fixo · M2e card sem status virar linha · M2f opção entrando na previsão estimada ⇒ morrem.
 - [ ] **Step 3:** build, check, suíte afetada. **Commit** `feat(GM-16): card com status fora do quadro FL1 vira opção`.
 
 ### Task 3: Núcleo dos feitos recolhidos e do Epic (REQ-PRJ-3 a, b, c)
@@ -147,6 +147,6 @@
 
 **Depende de:** todas. **Onda G.** **Modelo:** Haiku 5.5.
 
-**Files:** Modify `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (raiz), `gates/package.json`, `gates/test/package.test.mjs:46-47`, `scripts/test/texto.test.sh:278-280`, `CHANGELOG.md` (seção `[2.2.0]` datada, sem `[Unreleased]`; limites declarados: P1 se não respondida, vínculo por MCP sem agrupamento).
+**Files:** Modify `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (raiz), `gates/package.json`, `gates/test/package.test.mjs:46-47`, `scripts/test/texto.test.sh:278-280`, `CHANGELOG.md` (seção `[2.2.0]` datada, sem `[Unreleased]`; limites declarados: ~~P1 se não respondida~~ (P1 resolvida, D-G23), vínculo por MCP sem agrupamento; item 5 da D-G22 segue na GM-17).
 
-- [ ] Versão conforme a resposta da P2 (padrão 2.2.0). `claude plugin validate ./plugins/gabarito-mestre --strict` e `claude plugin validate . --strict`. **Commit** `chore(GM-16): virada 2.2.0`. Tag, release e PR `next ⇒ main` são atos do dono (R1).
+- [ ] ~~Versão conforme a resposta da P2 (padrão 2.2.0).~~ Versão 2.2.0 (D-G24, 2026-11-19; a 2.1.1 segue reservada à GM-14). `claude plugin validate ./plugins/gabarito-mestre --strict` e `claude plugin validate . --strict`. **Commit** `chore(GM-16): virada 2.2.0`. Tag, release e PR `next ⇒ main` são atos do dono (R1).
