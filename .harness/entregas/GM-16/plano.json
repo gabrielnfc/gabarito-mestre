@@ -94,13 +94,15 @@
       ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/harness-doctor.mjs",
-        "plugins/gabarito-mestre/gates/test/harness-doctor-fluxo.test.mjs"
+        "plugins/gabarito-mestre/gates/test/harness-doctor-fluxo.test.mjs",
+        "plugins/gabarito-mestre/gates/lib/config.mjs",
+        "plugins/gabarito-mestre/gates/scripts/entrega.mjs"
       ],
       "reqs": [
         "REQ-DCT-1"
       ],
       "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/harness-doctor-fluxo.test.mjs",
-      "mutacoes": "M5a casar ID sem fronteira; M5b aviso entrando no nível; M5c git ilegível dizendo ok; M5d predicado copiado em vez de importado; M5e casar o ID fora do escopo (no assunto); M5f aceitar docs como tipo; M5g dist/projeto.js de volta ao Promise.all; M5h ler versionamento.branchPadrao como nome da branch; M5i base inexistente caindo em main ou em ok; M5j regra da base copiada em vez de resolverBaseEntrega importada"
+      "mutacoes": "M5a casar ID sem fronteira; M5b aviso entrando no nível; M5c git ilegível dizendo ok; M5d predicado copiado em vez de importado; M5e casar o ID fora do escopo (no assunto); M5f aceitar docs como tipo; M5g dist/projeto.js de volta ao Promise.all; M5h ler versionamento.branchPadrao como nome da branch; M5i base inexistente caindo em main ou em ok; M5j regra da base copiada em vez de resolverBaseEntrega importada; M5k ler o config da worktree em vez do objeto commitado no HEAD"
     },
     {
       "id": "T6",
