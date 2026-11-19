@@ -84,7 +84,7 @@
         "REQ-PRJ-3"
       ],
       "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/painel-projeto.test.ts",
-      "mutacoes": "M4a listar os feitos; M4b cortar o número de opções; M4c borda sem passar fluxo.status.FL1; M4d teto de linhas estourado; M4e borda sem passar a chave (ou \"true\" string como ligada); M4f projetoDe ignorando opcoes; M4g feitos com a prioridade das linhas de PBI"
+      "mutacoes": "M4a listar os feitos; M4b cortar o número de opções; M4c borda sem passar fluxo.status.FL1; M4d teto de linhas estourado; M4e borda sem passar a chave (ou \"true\" string como ligada); M4f projetoDe ignorando opcoes; M4g feitos com a prioridade das linhas de PBI; M4h helper doProjeto casando ✓ solto (sem âncora) ou sem a linha de feitos"
     },
     {
       "id": "T5",
@@ -100,7 +100,7 @@
         "REQ-DCT-1"
       ],
       "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/harness-doctor-fluxo.test.mjs",
-      "mutacoes": "M5a casar ID sem fronteira; M5b aviso entrando no nível; M5c git ilegível dizendo ok; M5d predicado copiado em vez de importado; M5e casar o ID fora do escopo (no assunto); M5f aceitar docs como tipo; M5g dist/projeto.js de volta ao Promise.all"
+      "mutacoes": "M5a casar ID sem fronteira; M5b aviso entrando no nível; M5c git ilegível dizendo ok; M5d predicado copiado em vez de importado; M5e casar o ID fora do escopo (no assunto); M5f aceitar docs como tipo; M5g dist/projeto.js de volta ao Promise.all; M5h ler versionamento.branchPadrao como nome da branch; M5i base inexistente caindo em main ou em ok; M5j regra da base copiada em vez de resolverBaseEntrega importada"
     },
     {
       "id": "T6",
