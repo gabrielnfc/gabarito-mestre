@@ -9,99 +9,147 @@
       "arquivos": [
         ".superpowers/sdd/2026-11-19-gm16/t0-relatorio.md"
       ],
-      "reqs": ["REQ-PRJ-1", "REQ-PRJ-2", "REQ-PRJ-3", "REQ-DCT-1"]
+      "reqs": [
+        "REQ-PRJ-1",
+        "REQ-PRJ-2",
+        "REQ-PRJ-3",
+        "REQ-DCT-1"
+      ]
     },
     {
       "id": "T1",
       "titulo": "Plano .md: cabeçalhos usuais",
-      "deps": ["T0"],
+      "deps": [
+        "T0"
+      ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/projeto.ts",
         "plugins/gabarito-mestre/gates/dist/projeto.js",
         "plugins/gabarito-mestre/gates/test/projeto.test.ts"
       ],
-      "reqs": ["REQ-PRJ-1"],
+      "reqs": [
+        "REQ-PRJ-1"
+      ],
       "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/projeto.test.ts",
-      "mutacoes": "aceitar ####; aceitar Task 1.1; contar dentro de bloco cercado; tirar o travessão do separador"
+      "mutacoes": "M1a aceitar ####; M1b aceitar Task 1.1; M1c contar dentro de bloco cercado; M1d tirar o travessão do separador; M1e id com letra virar só o número (0b => T0); M1f ignorar a cerca ~~~"
     },
     {
       "id": "T2",
       "titulo": "Status fora do quadro FL1 é opção",
-      "deps": ["T1"],
-      "arquivos": [
-        "plugins/gabarito-mestre/gates/src/projeto.ts",
-        "plugins/gabarito-mestre/gates/dist/projeto.js",
-        "plugins/gabarito-mestre/gates/test/projeto.test.ts",
-        "plugins/gabarito-mestre/gates/test/fixtures/projeto/"
+      "deps": [
+        "T1"
       ],
-      "reqs": ["REQ-PRJ-2"],
-      "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/projeto.test.ts",
-      "mutacoes": "opção somando em pbis; ignorar fluxo.status.FL1; opção com diário sumindo; tirar o concluido fixo; opção entrando na previsão estimada"
-    },
-    {
-      "id": "T3",
-      "titulo": "Núcleo: feitos recolhidos e Epic",
-      "deps": ["T2"],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/projeto.ts",
         "plugins/gabarito-mestre/gates/dist/projeto.js",
         "plugins/gabarito-mestre/gates/test/projeto.test.ts"
       ],
-      "reqs": ["REQ-PRJ-3"],
+      "reqs": [
+        "REQ-PRJ-2"
+      ],
       "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/projeto.test.ts",
-      "mutacoes": "agrupar com 1 Epic; ler epic fixo ignorando vinculoPbiEpic.nome; vínculo MCP agrupando"
+      "mutacoes": "M2a opção somando em pbis; M2b ignorar fluxo.status.FL1; M2c opção com diário sumindo; M2e card sem status virar opção; M2f opção entrando na previsão estimada; M2g opção valendo com a chave painel.projeto.opcoesComoContagem desligada ou com \"true\" string"
+    },
+    {
+      "id": "T3",
+      "titulo": "Núcleo: feitos recolhidos e Epic",
+      "deps": [
+        "T2"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/projeto.ts",
+        "plugins/gabarito-mestre/gates/dist/projeto.js",
+        "plugins/gabarito-mestre/gates/test/projeto.test.ts"
+      ],
+      "reqs": [
+        "REQ-PRJ-3"
+      ],
+      "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/projeto.test.ts",
+      "mutacoes": "M3a agrupar com 1 Epic; M3b ler epic fixo ignorando vinculoPbiEpic.nome; M3c vínculo MCP agrupando; M3d sem Epic fora da ordem (não por último); M3e tirar o concluido fixo; M3f ignorar o concluido de fluxo.status.FL1"
     },
     {
       "id": "T4",
       "titulo": "Render e borda do projeto",
-      "deps": ["T3"],
+      "deps": [
+        "T3"
+      ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/src/painel-esquadrao.ts",
         "plugins/gabarito-mestre/gates/dist/painel-esquadrao.js",
         "plugins/gabarito-mestre/gates/scripts/painel.mjs",
         "plugins/gabarito-mestre/gates/test/painel-projeto.test.ts"
       ],
-      "reqs": ["REQ-PRJ-2", "REQ-PRJ-3"],
+      "reqs": [
+        "REQ-PRJ-2",
+        "REQ-PRJ-3"
+      ],
       "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/painel-projeto.test.ts",
-      "mutacoes": "listar os feitos; cortar o número de opções; borda sem passar fluxo.status.FL1; teto de linhas estourado"
+      "mutacoes": "M4a listar os feitos; M4b cortar o número de opções; M4c borda sem passar fluxo.status.FL1; M4d teto de linhas estourado; M4e borda sem passar a chave (ou \"true\" string como ligada); M4f projetoDe ignorando opcoes; M4g feitos com a prioridade das linhas de PBI"
     },
     {
       "id": "T5",
       "titulo": "Doctor: status FL1 e PBI mergeado",
-      "deps": ["T2"],
+      "deps": [
+        "T2"
+      ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/scripts/harness-doctor.mjs",
         "plugins/gabarito-mestre/gates/test/harness-doctor-fluxo.test.mjs"
       ],
-      "reqs": ["REQ-DCT-1"],
+      "reqs": [
+        "REQ-DCT-1"
+      ],
       "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/harness-doctor-fluxo.test.mjs",
-      "mutacoes": "casar ID sem fronteira; aviso entrando no nível; git ilegível dizendo ok; predicado copiado em vez de importado"
+      "mutacoes": "M5a casar ID sem fronteira; M5b aviso entrando no nível; M5c git ilegível dizendo ok; M5d predicado copiado em vez de importado; M5e casar o ID fora do escopo (no assunto); M5f aceitar docs como tipo; M5g dist/projeto.js de volta ao Promise.all"
     },
     {
       "id": "T6",
       "titulo": "Aceite: repositório grande",
-      "deps": ["T4", "T5"],
+      "deps": [
+        "T4",
+        "T5"
+      ],
       "arquivos": [
         "plugins/gabarito-mestre/gates/test/aceite-gm16.test.mjs",
         "plugins/gabarito-mestre/gates/test/fixtures/gm16-repo-grande/"
       ],
-      "reqs": ["REQ-PRJ-1", "REQ-PRJ-2", "REQ-PRJ-3", "REQ-DCT-1"],
+      "reqs": [
+        "REQ-PRJ-1",
+        "REQ-PRJ-2",
+        "REQ-PRJ-3",
+        "REQ-DCT-1"
+      ],
       "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/aceite-gm16.test.mjs"
     },
     {
       "id": "T7",
       "titulo": "Referência do fluxo e do doctor",
-      "deps": ["T4", "T5"],
+      "deps": [
+        "T4",
+        "T5"
+      ],
       "arquivos": [
         "plugins/gabarito-mestre/reference/fluxo.md",
         "plugins/gabarito-mestre/commands/gabarito-doctor.md"
       ],
-      "reqs": ["REQ-PRJ-2", "REQ-DCT-1"]
+      "reqs": [
+        "REQ-PRJ-2",
+        "REQ-DCT-1"
+      ]
     },
     {
       "id": "T8",
       "titulo": "Virada 2.2.0",
-      "deps": ["T0", "T1", "T2", "T3", "T4", "T5", "T6", "T7"],
+      "deps": [
+        "T0",
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "T6",
+        "T7"
+      ],
       "arquivos": [
         "plugins/gabarito-mestre/.claude-plugin/plugin.json",
         ".claude-plugin/marketplace.json",
@@ -110,7 +158,12 @@
         "plugins/gabarito-mestre/scripts/test/texto.test.sh",
         "CHANGELOG.md"
       ],
-      "reqs": ["REQ-PRJ-1", "REQ-PRJ-2", "REQ-PRJ-3", "REQ-DCT-1"]
+      "reqs": [
+        "REQ-PRJ-1",
+        "REQ-PRJ-2",
+        "REQ-PRJ-3",
+        "REQ-DCT-1"
+      ]
     }
   ]
 }

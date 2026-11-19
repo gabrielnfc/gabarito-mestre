@@ -15,3 +15,7 @@ Numeração contínua com a GM-15 (`2026-11-15-gm15-decisoes-dono.md`, última D
 - **D-G24 (P2):** a GM-16 vira **2.2.0** (minor). A 2.1.1 continua reservada ao encerramento da GM-14 (D-G20/D-G21).
 - **D-G25 (P3):** a promoção de aprendizado de um repositório para regra do plugin vai para uma entrega própria (**GM-17**), com anonimização e revisão humana antes de publicar. A GM-16 fica só com painel e doctor.
 - **D-G26 (P4):** a T0 pode **ler** o repositório consumidor de referência local: só leitura, relatório fora do git, só números; nada do repositório consumidor é copiado para este repositório.
+
+## Decisão do dono depois do review adversarial da spec r2 (2026-11-19, AskUserQuestion)
+
+- **D-G27 (ajusta a D-G22 item 3 e o alcance da D-G23):** o item 3 da D-G22 (card FL1 com status fora das colunas do quadro vira contagem "N opções") é **opt-in por configuração, desligado por padrão**: chave `painel.projeto.opcoesComoContagem` (booleana, no `harness.config.json`, ao lado de `painel.local`); só o valor `true` liga, qualquer outro valor ou a chave ausente deixa desligada. Com ela desligada o painel desenha os cards como hoje (cada card é linha). O leitor de Task tolerante (item 1) e o recolhimento dos feitos (item 2) seguem automáticos. Card **sem `status` não é opção em nenhum modo** (segue linha, como hoje). A D-G23 (opção fora da previsão estimada) vale **só com a chave ligada**; com ela desligada vale a D-G13 literal. Os avisos do doctor (item 4) seguem automáticos e não dependem da chave.
