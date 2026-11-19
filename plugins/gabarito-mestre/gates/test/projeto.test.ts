@@ -290,6 +290,51 @@ test('plano-md-casa-id-numerico: no plano .md, a task "1" do diário é a "### T
   assert.deepEqual(linha(r, 'PBI-8').tasks, { total: 2, integradas: 1, estimadas: 0, restantes: 1, fora: 0 });
 });
 
+test('plano-md-formatos-aceitos: 2 níveis x separadores, espaço antes, id com letra, T<id>, anotação', () => {
+  for (const h of ['##', '###']) {
+    for (const sep of [':', ' :', '—', ' —', '–', ' –', ' - ']) {
+      assert.deepEqual(tasksDoPlanoMd(`${h} Task 1${sep} a\n${h} Task 0b${sep} b\n`), ['T1', 'T0b'], `${h} Task N${JSON.stringify(sep)}`);
+    }
+    for (const sep of [':', ' —', '–', ' - ']) assert.deepEqual(tasksDoPlanoMd(`${h} T3${sep} a\n${h} T0b${sep} b\n`), ['T3', 'T0b'], `${h} T<id>${JSON.stringify(sep)}`);
+  }
+  assert.deepEqual(tasksDoPlanoMd('## Task 4 (x) — a\n## Task 5 _(y)_ — b\n### Task 6 *(z)* : c\n### Task 7 (w): d\n'), ['T4', 'T5', 'T6', 'T7']);
+});
+
+test('plano-md-nao-casa: cada caso de (b)', () => {
+  const nao = ['# Task 1: a', '#### Task 1: a', '  ### Task 1: a', '## Tasks', '### Task Breakdown', '### Task 1.1: a', '### T1.1: a', '### Task 1 a', '### Task 1',
+    '### Task 1 (x)', '### T', '### T: a', '## Task 1 depende da Task 2 — x', '## T1 depende — x', '## 3. Visão', '## 3.', '### T3 (x) — a', '### T3 _(x)_: a',
+    '### Task 4 (x) (y) — a', '### Task 4 texto (x) — a', '### Task 1.1 — a', '###Task 1: a', '###  Task 1: a', '### Task 1  : a', '### task 1: a', '### t1: a', '### Task 1-: a'];
+  for (const l of nao) assert.deepEqual(tasksDoPlanoMd(`${l}\n`), [], JSON.stringify(l));
+  assert.deepEqual(tasksDoPlanoMd('#### Task 9: não\n'), []);
+});
+
+test('plano-md-bloco-cercado: ``` e ~~~; ~~~ não fecha ```', () => {
+  assert.deepEqual(tasksDoPlanoMd('### Task 1: a\n```\n### Task 2: x\n```\n### Task 3: b\n'), ['T1', 'T3']);
+  assert.deepEqual(tasksDoPlanoMd('### Task 1: a\n~~~\n### Task 2: x\n~~~\n### Task 3: b\n'), ['T1', 'T3']);
+  assert.deepEqual(tasksDoPlanoMd('### Task 1: a\n```\n### Task 2: x\n~~~\n### Task 4: y\n```\n### Task 3: b\n'), ['T1', 'T3']);
+  assert.deepEqual(tasksDoPlanoMd('### Task 1: a\n~~~\n### Task 2: x\n```\n### Task 4: y\n~~~\n### Task 3: b\n'), ['T1', 'T3']);
+  assert.deepEqual(tasksDoPlanoMd('```md\n### Task 2: x\n```\n### Task 3: b\n'), ['T3']);
+});
+
+test('plano-md-id-repetido-conta-1: vale a 1ª; T<id> e Task <id> são o mesmo id', () => {
+  assert.deepEqual(tasksDoPlanoMd('### Task 1: a\n### Task 2: b\n### Task 1: c\n## T2 — d\n'), ['T1', 'T2']);
+});
+
+test('plano-md-diario-casa-id-com-letra: diário com task "T0b" integra a linha', () => {
+  const ev = (seq: number, mm: string, tipo: string, dados: Record<string, unknown>): Evento =>
+    ({ seq, ts: `2026-11-10T10:${mm}:00.000Z`, autor: 'a', sessao: 's', agente: 'orquestrador', tipo, dados, hash_anterior: null }) as Evento;
+  const eventos = [ev(1, '00', 'task.iniciada', { task: 'T0b', papel: 'implementador' }), ev(2, '10', 'task.concluida', { task: 'T0b' }),
+    ev(3, '20', 'review.veredito', { task: 'T0b', veredito: 'APROVADO', rodada: 1, blocker: 0, major: 0 }), ev(4, '30', 'task.integrada', { task: 'T0b' })];
+  const r = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-8.md', texto: '---\nid: "PBI-8"\nstatus: Em execução\n---\n# X\nPlano: `p.md`\n', planoMd: '## Task 0b — a\n## Task 1 — b\n' }],
+    entregas: [{ id: 'PBI-8', plano: null, eventos }] }], OPC);
+  assert.deepEqual(linha(r, 'PBI-8').tasks, { total: 2, integradas: 1, estimadas: 0, restantes: 1, fora: 0 });
+  // id do diário sem o T ("0b"), como o numérico "1", também casa (norm aceita a letra)
+  const semT = eventos.map((e) => ({ ...e, dados: { ...(e.dados ?? {}), task: 'task' in (e.dados ?? {}) ? '0b' : undefined } }) as Evento);
+  const r2 = projetarProjeto([{ caminho: '/r', cards: [{ arquivo: 'PBI-8.md', texto: '---\nid: "PBI-8"\nstatus: Em execução\n---\n# X\nPlano: `p.md`\n', planoMd: '## Task 0b — a\n## Task 1 — b\n' }],
+    entregas: [{ id: 'PBI-8', plano: null, eventos: semT }] }], OPC);
+  assert.equal(linha(r2, 'PBI-8').tasks?.integradas, 1);
+});
+
 test('feito-sem-plano-e-diario-ilegivel: PBI feito sem plano não entra na estimada; diário ilegível vira aviso', () => {
   const e = projetoCompleto();
   const arvores = ler(['/FIX/principal', '/FIX/wt-pbi-2']);

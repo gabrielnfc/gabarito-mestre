@@ -123,10 +123,25 @@ export function cardDe(_arquivo: string, texto: string, idPadrao: RegExp = ID_PA
   return { id, status: fm.get('status') || null, titulo: tit === undefined ? null : tit.slice(2).trim(), atualizadoEm: fm.get('atualizadoEm') || null, planoMd: planoMdDoCard(texto) };
 }
 
-/** Tasks do plano .md: só `### Task N:` no começo da linha, como `TN`. */
+/**
+ * Cabeçalho de task do plano .md (REQ-PRJ-1): `##`/`###` + (`Task` id [anotação] | `T`id) + separador.
+ * Id `\d+[a-z]?`; anotação = 1 grupo entre parênteses (com `_`/`*` em volta), só na forma `Task`; separador = `:`/`—`/`–` com espaço opcional antes, ou ` - `.
+ */
+const CABECALHO_TASK = /^#{2,3} (?:Task (\d+[a-z]?)(?: [_*]?\([^()]*\)[_*]?)?|T(\d+[a-z]?))(?: ?[:—–]| - )/;
+
+/** Tasks do plano .md como `T<id>`, fora de bloco cercado (a cerca abre e fecha com o mesmo caractere); repetição conta 1 vez (a 1ª). */
 export function tasksDoPlanoMd(texto: string): string[] {
   const ids: string[] = [];
-  for (const m of String(texto).matchAll(/^### Task (\d+):/gm)) if (!ids.includes(`T${m[1]}`)) ids.push(`T${m[1]}`);
+  let cerca: string | null = null;
+  for (const linha of String(texto).split('\n')) {
+    const c = /^(```|~~~)/.exec(linha);
+    if (c !== null) { if (cerca === null) cerca = c[1][0]; else if (cerca === c[1][0]) cerca = null; continue; }
+    if (cerca !== null) continue;
+    const m = CABECALHO_TASK.exec(linha);
+    if (m === null) continue;
+    const id = `T${m[1] ?? m[2]}`;
+    if (!ids.includes(id)) ids.push(id);
+  }
   return ids;
 }
 
@@ -221,7 +236,7 @@ export function projetarProjeto(arvores: ArvoreLida[], opcoes: { agoraMs: number
     }
     let tasks: TasksLinha | null = null;
     if (taskIds !== null) {
-      const norm = (t: unknown): string | null => (typeof t !== 'string' ? null : plano === 'md' && /^\d+$/.test(t) ? `T${t}` : t);
+      const norm = (t: unknown): string | null => (typeof t !== 'string' ? null : plano === 'md' && /^\d+[a-z]?$/.test(t) ? `T${t}` : t);
       let integradas = 0, fora = 0;
       for (const t of taskIds) {
         const doTask = eventos.filter((ev) => TIPOS_DE_TASK.includes(ev.tipo) && norm((ev.dados ?? {}).task) === t);
