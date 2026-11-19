@@ -8,3 +8,10 @@ Numeração contínua com a GM-15 (`2026-11-15-gm15-decisoes-dono.md`, última D
   3. card FL1 cujo status não é coluna do quadro FL1 (`reference/fluxo.md §4.3`, `fluxo.status.FL1`) não vira linha: entra como contagem "N opções", fora do WIP e do %;
   4. o doctor ganha avisos (não contam no nível) para status FL1 inválido e para PBI mergeado na branch padrão (título de commit com o ID) cujo card não está "Concluído";
   5. caminho formal para PROMOVER aprendizado comprovado (status D) do `.harness/aprendizados.jsonl` de um repositório para regra do plugin (`reference/`, prompts de papel), com revisão. O dono pediu a recomendação do orquestrador sobre fazer como fase 2 desta entrega ou numa GM seguinte. **Recomendação registrada na spec (`2026-11-19-gm16-painel-projeto-design.md`, "Fora de escopo"): GM seguinte (GM-17); aguarda o ok do dono.**
+
+## Respostas do dono às pendências P1–P4 (2026-11-19, AskUserQuestion)
+
+- **D-G23 (P1, ajusta a D-G13 só neste ponto):** card FL1 de opção (status fora das colunas do quadro FL1) **não conta** na previsão estimada; a previsão fica só com o que está comprometido. O resto da D-G13 segue valendo.
+- **D-G24 (P2):** a GM-16 vira **2.2.0** (minor). A 2.1.1 continua reservada ao encerramento da GM-14 (D-G20/D-G21).
+- **D-G25 (P3):** a promoção de aprendizado de um repositório para regra do plugin vai para uma entrega própria (**GM-17**), com anonimização e revisão humana antes de publicar. A GM-16 fica só com painel e doctor.
+- **D-G26 (P4):** a T0 pode **ler** o repositório consumidor de referência local: só leitura, relatório fora do git, só números; nada do repositório consumidor é copiado para este repositório.
