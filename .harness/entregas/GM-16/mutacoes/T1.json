@@ -1,0 +1,82 @@
+[
+ {
+  "nome": "M1a_h4",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "/^#{2,3} (?:Task (\\d+[a-z]?)(?: [_*]?\\([^()]*\\)[_*]?)?|T(\\d+[a-z]?))(?: ?[:—–]| - )/",
+  "para": "/^#{2,4} (?:Task (\\d+[a-z]?)(?: [_*]?\\([^()]*\\)[_*]?)?|T(\\d+[a-z]?))(?: ?[:—–]| - )/",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M1b_1_1",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "/^#{2,3} (?:Task (\\d+[a-z]?)(?: [_*]?\\([^()]*\\)[_*]?)?|T(\\d+[a-z]?))(?: ?[:—–]| - )/",
+  "para": "/^#{2,3} (?:Task (\\d+[a-z]?(?:\\.\\d+)?)(?: [_*]?\\([^()]*\\)[_*]?)?|T(\\d+[a-z]?))(?: ?[:—–]| - )/",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M1c_conta_cercado",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "if (cerca !== null) continue;",
+  "para": "",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M1d_sem_travessao",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "/^#{2,3} (?:Task (\\d+[a-z]?)(?: [_*]?\\([^()]*\\)[_*]?)?|T(\\d+[a-z]?))(?: ?[:—–]| - )/",
+  "para": "/^#{2,3} (?:Task (\\d+[a-z]?)(?: [_*]?\\([^()]*\\)[_*]?)?|T(\\d+[a-z]?))(?: ?[:–]| - )/",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M1e_letra_vira_num",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "const id = `T${m[1] ?? m[2]}`;",
+  "para": "const id = `T${(m[1] ?? m[2]).replace(/[a-z]$/, \"\")}`;",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M1f_ignora_til",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "/^(```|~~~)/.exec(linha)",
+  "para": "/^(```)/.exec(linha)",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "S1a_texto_livre",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "/^#{2,3} (?:Task (\\d+[a-z]?)(?: [_*]?\\([^()]*\\)[_*]?)?|T(\\d+[a-z]?))(?: ?[:—–]| - )/",
+  "para": "/^#{2,3} (?:Task (\\d+[a-z]?)(?: [^—–:]*)?|T(\\d+[a-z]?))(?: ?[:—–]| - )/",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "S1b_sem_espaco_opc",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "/^#{2,3} (?:Task (\\d+[a-z]?)(?: [_*]?\\([^()]*\\)[_*]?)?|T(\\d+[a-z]?))(?: ?[:—–]| - )/",
+  "para": "/^#{2,3} (?:Task (\\d+[a-z]?)(?: [_*]?\\([^()]*\\)[_*]?)?|T(\\d+[a-z]?))(?:[:—–]| - )/",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "S1c_sem_forma_T",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "/^#{2,3} (?:Task (\\d+[a-z]?)(?: [_*]?\\([^()]*\\)[_*]?)?|T(\\d+[a-z]?))(?: ?[:—–]| - )/",
+  "para": "/^#{2,3} (?:Task (\\d+[a-z]?)(?: [_*]?\\([^()]*\\)[_*]?)?|T(\\d+[a-z]?)(?!))(?: ?[:—–]| - )/",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "S1d_anot_em_T",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "/^#{2,3} (?:Task (\\d+[a-z]?)(?: [_*]?\\([^()]*\\)[_*]?)?|T(\\d+[a-z]?))(?: ?[:—–]| - )/",
+  "para": "/^#{2,3} (?:Task (\\d+[a-z]?)(?: [_*]?\\([^()]*\\)[_*]?)?|T(\\d+[a-z]?)(?: [_*]?\\([^()]*\\)[_*]?)?)(?: ?[:—–]| - )/",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ }
+]

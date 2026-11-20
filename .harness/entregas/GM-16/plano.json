@@ -31,7 +31,7 @@
         "REQ-PRJ-1"
       ],
       "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/projeto.test.ts",
-      "mutacoes": "M1a aceitar ####; M1b aceitar Task 1.1; M1c contar dentro de bloco cercado; M1d tirar o travessão do separador; M1e id com letra virar só o número (0b => T0); M1f ignorar a cerca ~~~"
+      "mutacoes": ".harness/entregas/GM-16/mutacoes/T1.json"
     },
     {
       "id": "T2",
@@ -48,7 +48,7 @@
         "REQ-PRJ-2"
       ],
       "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/projeto.test.ts",
-      "mutacoes": "M2a opção somando em pbis; M2b ignorar fluxo.status.FL1; M2c opção com diário sumindo; M2e card sem status virar opção; M2f opção entrando na previsão estimada; M2g opção valendo com a chave painel.projeto.opcoesComoContagem desligada ou com \"true\" string"
+      "mutacoes": ".harness/entregas/GM-16/mutacoes/T2.json"
     },
     {
       "id": "T3",
@@ -65,7 +65,7 @@
         "REQ-PRJ-3"
       ],
       "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/projeto.test.ts",
-      "mutacoes": "M3a agrupar com 1 Epic; M3b ler epic fixo ignorando vinculoPbiEpic.nome; M3c vínculo MCP agrupando; M3d sem Epic fora da ordem (não por último); M3e tirar o concluido fixo; M3f ignorar o concluido de fluxo.status.FL1"
+      "mutacoes": ".harness/entregas/GM-16/mutacoes/T3.json"
     },
     {
       "id": "T4",
@@ -84,7 +84,7 @@
         "REQ-PRJ-3"
       ],
       "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/painel-projeto.test.ts",
-      "mutacoes": "M4a listar os feitos; M4b cortar o número de opções; M4c borda sem passar fluxo.status.FL1; M4d teto de linhas estourado; M4e borda sem passar a chave (ou \"true\" string como ligada); M4f projetoDe ignorando opcoes; M4g feitos com a prioridade das linhas de PBI; M4h helper doProjeto casando ✓ solto (sem âncora) ou sem a linha de feitos"
+      "mutacoes": ".harness/entregas/GM-16/mutacoes/T4.json"
     },
     {
       "id": "T5",
@@ -102,7 +102,7 @@
         "REQ-DCT-1"
       ],
       "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/harness-doctor-fluxo.test.mjs",
-      "mutacoes": "M5a casar ID sem fronteira; M5b aviso entrando no nível; M5c git ilegível dizendo ok; M5d predicado copiado em vez de importado; M5e casar o ID fora do escopo (no assunto); M5f aceitar docs como tipo; M5g dist/projeto.js de volta ao Promise.all; M5h ler versionamento.branchPadrao como nome da branch; M5i base inexistente caindo em main ou em ok; M5j regra da base copiada em vez de resolverBaseEntrega importada; M5k ler o config da worktree em vez do objeto commitado no HEAD"
+      "mutacoes": ".harness/entregas/GM-16/mutacoes/T5.json"
     },
     {
       "id": "T6",
