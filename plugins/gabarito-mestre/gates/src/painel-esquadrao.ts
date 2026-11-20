@@ -372,14 +372,21 @@ const motivoEm = (w: number) => (m: string): string => (w >= 100 ? ` (${m})` : '
 /** Largura mínima das linhas por PBI; abaixo, 1 linha de totais. */
 const LARGURA_PROJETO_LINHAS = 72;
 
-/** `estado.projeto` válido e com 2 ou mais linhas; senão `null` (nada desenhado). */
+/** Prioridade de corte (D-P8, REQ-PRJ-3 h): totais 6.94, "✓ N feitos" e cabeçalhos de Epic 6.95, linhas de PBI 6.96 (o projeto é o 1º a encolher; as linhas de PBI saem antes). */
+export const PRIORIDADE_PROJETO = { totais: 6.94, feitosECabecalhos: 6.95, pbi: 6.96 } as const;
+
+/** `estado.projeto` válido e com `linhas + opções` >= 2 (REQ-PRJ-3 g; sem a chave `opcoes` é 0 ⇒ a regra de hoje); senão `null` (nada desenhado). */
 function projetoDe(e: EstadoPainel): EstadoProjeto | null {
   const p = (e as EstadoPainel & { projeto?: EstadoProjeto | null }).projeto;
   if (p === null || p === undefined || typeof p !== 'object' || !Array.isArray(p.linhas) || p.totais === null || typeof p.totais !== 'object') return null;
-  return p.linhas.filter((l) => l !== null && typeof l === 'object' && typeof l.id === 'string').length >= 2 ? p : null;
+  const n = p.linhas.filter((l) => l !== null && typeof l === 'object' && typeof l.id === 'string').length;
+  return n + (inteiroNaoNeg(p.totais.opcoes) ?? 0) >= 2 ? p : null;
 }
 
-function linhasDoProjeto(p: EstadoProjeto, w: number, mot: (m: string) => string): { totais: Linha[]; pbis: Linha[] } {
+/** Linhas do projeto: `totais` (6.94) e `corpo` na ordem do desenho, cada uma com a prioridade de corte (feitos e cabeçalhos 6.95, PBI 6.96). */
+type CorpoProjeto = { l: Linha; prioridade: number };
+
+function linhasDoProjeto(p: EstadoProjeto, w: number, mot: (m: string) => string): { totais: Linha[]; corpo: CorpoProjeto[] } {
   const tt = p.totais;
   const feitos = ouInterroga(tt.feitos);
   const total = ouInterroga(tt.pbis);
@@ -388,19 +395,27 @@ function linhasDoProjeto(p: EstadoProjeto, w: number, mot: (m: string) => string
   const fora = inteiroNaoNeg(tt.foraDaConta) ?? 0;
   const med = tt.previsao?.medida ?? null;
   const est = tt.previsao?.estimada ?? null;
-  if (w < 44) return { totais: [[seg(`PBIs ${feitos}/${total} · ${pct}`)]], pbis: [] };
+  const opcoes = inteiroNaoNeg(tt.opcoes) ?? 0;
+  if (w < 44) return { totais: [[seg(`PBIs ${feitos}/${total} · ${pct}`)]], corpo: [] };
   if (w < LARGURA_PROJETO_LINHAS) {
     const prev = est !== null ? `~${t(est.hora)} estimada` : med !== null ? `${t(med.hora)} medida` : '?';
-    return { totais: [[seg(`PROJETO ${feitos}/${total} PBIs · ${pct} · ${prev}${fora > 0 ? ` · ${fora} sem plano` : ''}`)]], pbis: [] };
+    // variantes da mais longa para a mais curta: primeiro sai "sem plano", depois "opções"; o número nunca é cortado
+    const curta = `PROJETO ${feitos}/${total} PBIs · ${pct} · ${prev}`;
+    const opc = opcoes > 0 ? ` · ${textoOpcoes(opcoes)}` : '';
+    const semPlano = fora > 0 ? ` · ${fora} sem plano` : '';
+    const vs = [`${curta}${semPlano}${opc}`, `${curta}${opc}`, curta];
+    return { totais: [[seg(vs.find((v) => colunas(v) <= w) ?? vs[vs.length - 1])]], corpo: [] };
   }
   // linha 1: contagens (o número nunca é cortado: o que não cabe em `w` sai por variantes mais curtas, a mais longa primeiro)
   const estimadas = inteiroNaoNeg(tt.estimadas) ?? 0;
   const tasks = `${pct} das tasks (${ouInterroga(tt.integradas)} de ${ouInterroga(tt.tasks)}${estimadas > 0 ? `, +${estimadas} estimadas` : ''})`;
   const base = `PROJETO  ${feitos} de ${total} PBIs feitos · ${tasks}`;
+  const opc = opcoes > 0 ? ` · ${textoOpcoes(opcoes)}` : '';
   const variantes = [
-    `${base} · ${ouInterroga(tt.restantes)} restantes${fora > 0 ? ` · ${fora} sem plano, fora da conta` : ''}`,
-    `${base} · ${ouInterroga(tt.restantes)} restantes${fora > 0 ? ` · ${fora} sem plano` : ''}`,
-    `${base}${fora > 0 ? ` · ${fora} sem plano` : ''}`,
+    `${base} · ${ouInterroga(tt.restantes)} restantes${fora > 0 ? ` · ${fora} sem plano, fora da conta` : ''}${opc}`,
+    `${base} · ${ouInterroga(tt.restantes)} restantes${fora > 0 ? ` · ${fora} sem plano` : ''}${opc}`,
+    `${base}${fora > 0 ? ` · ${fora} sem plano` : ''}${opc}`,
+    `${base}${opc}`,
     base,
   ];
   const l1 = variantes.find((v) => colunas(v) <= w) ?? variantes[variantes.length - 1];
@@ -410,20 +425,47 @@ function linhasDoProjeto(p: EstadoProjeto, w: number, mot: (m: string) => string
     [seg(med !== null ? `  previsão ${t(med.hora)} (medida)` : `  previsão ?${mot(tt.previsao?.ritmoS === null || tt.previsao?.ritmoS === undefined ? 'sem ritmo medido' : 'sem fonte')}`, 'inactive')],
     ...(est !== null ? [[seg(`  ${t(est.texto)}`, 'inactive')] as Linha] : []),
   ];
-  const ls = p.linhas.filter((l): l is LinhaProjeto => l !== null && typeof l === 'object' && typeof l.id === 'string');
+  const todas = p.linhas.filter((l): l is LinhaProjeto => l !== null && typeof l === 'object' && typeof l.id === 'string');
+  // REQ-PRJ-3 (a): os feitos saem do desenho e entram numa linha só, logo abaixo dos totais; o núcleo segue com as linhas deles
+  const nFeitos = todas.filter((l) => l.feito === true).length;
+  const ls = todas.filter((l) => l.feito !== true);
+  const corpo: CorpoProjeto[] = [];
+  if (nFeitos > 0) corpo.push({ l: [seg('  '), seg('✓', 'success'), seg(` ${nFeitos} ${nFeitos === 1 ? 'feito' : 'feitos'}`, 'inactive')], prioridade: PRIORIDADE_PROJETO.feitosECabecalhos });
+  // REQ-PRJ-3 (c): cabeçalho de Epic só com 2 grupos ou mais (o núcleo só preenche `grupos` assim); os PBIs do grupo recuados embaixo
+  const grupos = Array.isArray(p.grupos) ? p.grupos.filter((g) => g !== null && typeof g === 'object' && Array.isArray(g.ids)) : [];
+  const agrupado = grupos.length >= 2;
+  const recuo = agrupado ? '    ' : '  ';
   const idW = maxCol(ls.map((l) => t(l.id)));
   const txt = (l: LinhaProjeto): string => t(l.texto) || '?';
   const txtW = maxCol(ls.map(txt));
-  const tcol = Math.min(40, w - (8 + idW + txtW));
+  const tcol = Math.min(40, w - (colunas(recuo) + 6 + idW + txtW));
   const titulos = ls.map((l) => (tcol >= 4 ? cortar(natural(l.titulo), tcol) : ''));
   const tw = maxCol(titulos);
-  const pbis = ls.map((l, i): Linha => {
-    const g = l.motivo !== null && l.motivo !== undefined ? '?' : l.feito === true ? '✓' : l.semPlano === true ? '○' : '●';
-    const cor: CorTema | undefined = g === '✓' ? 'success' : g === '○' ? 'inactive' : g === '?' ? 'warning' : undefined;
-    return aparar([seg('  '), seg(g, cor), seg(` ${pad(t(l.id), idW)}  `), ...(tw > 0 ? [seg(`${pad(titulos[i], tw)}  `)] : []), seg(txt(l), l.semPlano === true && g !== '?' ? 'inactive' : undefined)]);
-  });
-  return { totais, pbis };
+  const pbi = (l: LinhaProjeto, i: number): Linha => {
+    const g = l.motivo !== null && l.motivo !== undefined ? '?' : l.semPlano === true ? '○' : '●';
+    const cor: CorTema | undefined = g === '○' ? 'inactive' : g === '?' ? 'warning' : undefined;
+    return aparar([seg(recuo), seg(g, cor), seg(` ${pad(t(l.id), idW)}  `), ...(tw > 0 ? [seg(`${pad(titulos[i], tw)}  `)] : []), seg(txt(l), l.semPlano === true && g !== '?' ? 'inactive' : undefined)]);
+  };
+  if (!agrupado) ls.forEach((l, i) => corpo.push({ l: pbi(l, i), prioridade: PRIORIDADE_PROJETO.pbi }));
+  else {
+    const usados = new Set<number>();
+    for (const g of grupos) {
+      const n = Number.isInteger(g.abertos) && g.abertos >= 0 ? g.abertos : g.ids.length;
+      const fim = ` · ${n} ${n === 1 ? 'aberto' : 'abertos'}`;
+      const nome = g.epic === null ? 'sem Epic' : t(g.epic);
+      const tit = g.epic === null || g.titulo === null || g.titulo === undefined ? '' : natural(g.titulo);
+      const sobra = w - colunas(`  ${nome} `) - colunas(fim);
+      const titCortado = tit === '' || sobra < 4 ? '' : cortar(tit, sobra);
+      corpo.push({ l: [seg(`  ${nome}${titCortado !== '' ? ` ${titCortado}` : ''}${fim}`, 'inactive')], prioridade: PRIORIDADE_PROJETO.feitosECabecalhos });
+      ls.forEach((l, i) => { if (g.ids.includes(l.id) && !usados.has(i)) { usados.add(i); corpo.push({ l: pbi(l, i), prioridade: PRIORIDADE_PROJETO.pbi }); } });
+    }
+    ls.forEach((l, i) => { if (!usados.has(i)) corpo.push({ l: pbi(l, i), prioridade: PRIORIDADE_PROJETO.pbi }); });
+  }
+  return { totais, corpo };
 }
+
+/** "N opções" (singular "1 opção"): só entra na linha de totais com N > 0 (a chave liga as opções no núcleo, REQ-PRJ-2). */
+const textoOpcoes = (n: number): string => `${n} ${n === 1 ? 'opção' : 'opções'}`;
 
 /**
  * As linhas únicas (`sem entrega em curso`, `<ID> entregue`) seguem 1 linha, MAS a visão de projeto vem ACIMA delas (emenda 4; é o caso do repo com main
@@ -433,7 +475,7 @@ export function comProjetoAcima(e: EstadoPainel, w: number, unica: Linha[]): Lin
   const p = projetoDe(e);
   if (p === null) return unica;
   const dp = linhasDoProjeto(p, w, motivoEm(w));
-  const proj = [...dp.totais, ...dp.pbis].map((l) => cortarNatural(l, w));
+  const proj = [...dp.totais, ...dp.corpo.map((x) => x.l)].map((l) => cortarNatural(l, w));
   const itemDoDono = unica.length > 0 && textoDe(unica[0]).startsWith('◆ ');
   return itemDoDono ? [...unica, ...proj] : [...proj, ...unica];
 }
@@ -736,8 +778,8 @@ export function renderBlocos(e: EstadoPainel, o: OpcoesRender): Linha[] {
   const projeto = projetoDe(e);
   if (projeto !== null) {
     const dp = linhasDoProjeto(projeto, w, mot);
-    for (const l of dp.totais) por(6.94, l, 0.5);
-    for (const l of dp.pbis) por(6.96, l, 0.5);
+    for (const l of dp.totais) por(PRIORIDADE_PROJETO.totais, l, 0.5);
+    for (const x of dp.corpo) por(x.prioridade, x.l, 0.5);
   }
 
   // nomes e cores dos agentes do AGORA (FIEL-3 d): o nome é único entre os ativos; a medição (ctx, tokens, modelo, cor) é a da equipe
