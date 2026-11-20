@@ -14,7 +14,7 @@
  */
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, rmSync, chmodSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -171,6 +171,35 @@ describe('fluxo-status-fl1 (REQ-DCT-1 a)', () => {
     assert.equal(r.found, false);
     assert.match(r.evidence, /não conferido/);
     assert.match(r.evidence, /PBI-2\.md/);
+  });
+
+  // Um teste por ramo de falha da leitura do card (teto, não-arquivo, erro de I/O): leitura ilegível nunca vira ok nem 0.
+  test('doctor-card-sem-permissao: card com EACCES ao lado de um Concluído vira "não conferido" nos DOIS checks', (t) => {
+    if (process.getuid?.() === 0) return t.skip('root lê card chmod 000');
+    const { dir } = fixture({ config: cfgFluxo({ entrega: { base: 'trunk' } }), cards: { 'PBI-1': 'Concluído', 'PBI-2': 'Preparado' }, subjects: ['feat(PBI-2): x'] });
+    const card = join(dir, FL1, 'PBI-2.md');
+    chmodSync(card, 0);
+    t.after(() => chmodSync(card, 0o644));
+    const out = doctor(dir);
+    for (const id of ['fluxo-status-fl1', 'pbi-mergeado-aberto']) {
+      const r = achar(out, id);
+      assert.equal(r.found, false, `${id}: ${r.evidence}`);
+      assert.match(r.evidence, /não conferido/, id);
+      assert.match(r.evidence, /PBI-2\.md/, id);
+    }
+  });
+
+  test('doctor-card-symlink: card que é symlink para fora da pasta não é seguido; vira "não conferido"', () => {
+    const { dir } = fixture({ cards: { 'PBI-1': 'Concluído' } });
+    const fora = join(novoDir('doctor-fluxo-fora-'), 'alvo.md');
+    writeFileSync(fora, cardTexto('PBI-2', 'Backlog'));
+    symlinkSync(fora, join(dir, FL1, 'PBI-2.md'));
+    const out = doctor(dir);
+    const r = achar(out, 'fluxo-status-fl1');
+    assert.equal(r.found, false, r.evidence);
+    assert.match(r.evidence, /não conferido/);
+    assert.match(r.evidence, /PBI-2\.md/);
+    assert.ok(!/Backlog/.test(r.evidence), 'o alvo do symlink não foi lido');
   });
 });
 
