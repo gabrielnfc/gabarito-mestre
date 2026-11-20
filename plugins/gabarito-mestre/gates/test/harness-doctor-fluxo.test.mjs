@@ -164,6 +164,33 @@ describe('fluxo-status-fl1 (REQ-DCT-1 a)', () => {
     }
   });
 
+  test('doctor-config-ilegivel: harness.config.json quebrado ou que não é objeto ⇒ "não conferido" nos DOIS checks, nunca "não se aplica"', () => {
+    for (const configTexto of ['{', '[]', '"texto"']) {
+      const { dir } = fixture({ configTexto, cards: { 'PBI-1': 'Preparado' }, subjects: ['feat(PBI-1): x'] });
+      const out = doctor(dir);
+      for (const id of ['fluxo-status-fl1', 'pbi-mergeado-aberto']) {
+        const r = achar(out, id);
+        assert.equal(r.found, false, `${configTexto} ${id}: ${r.evidence}`);
+        assert.match(r.evidence, /não conferido/, `${configTexto} ${id}`);
+        assert.match(r.evidence, /harness\.config\.json inválido/, `${configTexto} ${id}`);
+        assert.ok(!/não se aplica/.test(r.evidence), `${configTexto} ${id}`);
+      }
+    }
+  });
+
+  test('doctor-fl1-invalido: fluxo.mapeamento.FL1 com `..`, absoluto, vazio ou não texto ⇒ "não conferido", nunca "não se aplica"', () => {
+    for (const FL1Cfg of ['../x', 'a/../b', '/etc', '/', '', 5]) {
+      const { dir } = fixture({ config: cfgFluxo({}, { mapeamento: { FL1: FL1Cfg } }), cards: { 'PBI-1': 'Preparado' }, subjects: ['feat(PBI-1): x'] });
+      const out = doctor(dir);
+      for (const id of ['fluxo-status-fl1', 'pbi-mergeado-aberto']) {
+        const r = achar(out, id);
+        assert.equal(r.found, false, `FL1=${JSON.stringify(FL1Cfg)} ${id}: ${r.evidence}`);
+        assert.match(r.evidence, /não conferido/, `FL1=${JSON.stringify(FL1Cfg)} ${id}`);
+        assert.match(r.evidence, /fluxo\.mapeamento\.FL1 inválido/, `FL1=${JSON.stringify(FL1Cfg)} ${id}`);
+      }
+    }
+  });
+
   test('doctor-card-gigante: card acima do teto não passa por regex; vira "não conferido"', () => {
     const { dir } = fixture({ cards: { 'PBI-1': 'Preparado' } });
     writeFileSync(join(dir, FL1, 'PBI-2.md'), `${cardTexto('PBI-2', 'Backlog')}${'a'.repeat(2 * 1024 * 1024)}`);
