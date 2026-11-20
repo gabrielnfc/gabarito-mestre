@@ -38,7 +38,7 @@ import { closeSync, existsSync, fsyncSync, lstatSync, openSync, readdirSync, rea
 import { basename, dirname, join, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { lerConfigOrigin } from '../lib/config.mjs';
+import { lerConfigOrigin, lerConfigHead } from '../lib/config.mjs';
 import * as diario from '../dist/diario.js';
 import { decidirEntrega, lerConfigEntrega, politicaEfetiva, resolverBaseEntrega } from '../dist/entrega.js';
 import { ordenar, proximaAcao } from '../dist/loop.js';
@@ -82,16 +82,6 @@ function git(cwd, ...args) {
   } catch (e) {
     const texto = String(e.stderr ?? '').trim() || String(e.stdout ?? '').trim() || e.message;
     throw new Error(texto.split('\n').filter(Boolean).slice(-3).join(' / '));
-  }
-}
-
-/** `harness.config.json` COMMITADO no HEAD (objeto do git, nunca a worktree); `null` se ausente ou ilegível. Só a base da entrega cai para ele. */
-function lerConfigHead(cwd) {
-  try {
-    const raw = JSON.parse(git(cwd, 'show', 'HEAD:harness.config.json'));
-    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
-  } catch {
-    return null;
   }
 }
 

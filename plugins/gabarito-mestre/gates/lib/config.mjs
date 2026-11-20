@@ -155,6 +155,19 @@ export function lerConfigOrigin(raiz) {
 }
 
 /**
+ * `harness.config.json` COMMITADO no HEAD (objeto do git, nunca a worktree); `null` se ausente, ilegível ou não objeto. Fonte única (GM-16 T5, emenda
+ * r4.1): a entrega e o doctor leem a base da entrega por aqui, ambos entregues a `resolverBaseEntrega`; nenhuma das duas camadas tem cópia.
+ */
+export function lerConfigHead(cwd) {
+  try {
+    const raw = JSON.parse(gitSeguro(['show', 'HEAD:harness.config.json'], cwd));
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * `fluxo.idPadrao` de `origin/HEAD`, a chave que a guarda, o painel, o loop e o cartão leem (GM-14 T15, REQ-TRI-1; GM-15 hotfix: movida de
  * `loop.mjs` para ser a fonte única): ausente, não texto, longo ou regex inválida ⇒ o padrão de `lib/git.mjs`. Nunca lança.
  */
