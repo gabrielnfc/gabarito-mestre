@@ -281,6 +281,11 @@ check "CHANGELOG: [2.1.0] com data, sem [Unreleased], alpha.1 em 2026-11-15" 'gr
 # GM-16 T8 r1 MINOR-2: a [2.2.0] é datada (mesmo separador das outras seções) e traz a subseção "Muda para quem já usa" dentro dela
 check "CHANGELOG: [2.2.0] com data (travessão, como as demais)" 'grep -qE "^## \\[2\\.2\\.0\\] — [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$ROOT/CHANGELOG.md"' "seção [2.2.0] ausente, sem data ou com separador diferente"
 check "CHANGELOG: [2.2.0] traz '### Muda para quem já usa'" '[ "$(sed -n "/^## \\[2\\.2\\.0\\]/,/^## \\[2\\.1\\.0\\]/p" "$ROOT/CHANGELOG.md" | grep -c "^### Muda para quem já usa$")" -eq 1 ]' "subseção ausente na [2.2.0]"
+HOJE=$(date -u +%Y-%m-%d)
+# GM-16 T8 r2 MINOR-2: a data da [2.2.0] também é data válida do calendário e não futura (igual à [2.1.0])
+D220=$(grep -E '^## \[2\.2\.0\] — ' "$ROOT/CHANGELOG.md" | sed -E 's/.*— //')
+RT220=$(date -j -f %Y-%m-%d "$D220" +%Y-%m-%d 2>/dev/null || date -d "$D220" +%Y-%m-%d 2>/dev/null)
+check "CHANGELOG: data da [2.2.0] é válida e não futura (achei '$D220')" '[ "'"$RT220"'" = "'"$D220"'" ] && ! [ "'"$D220"'" \> "'"$HOJE"'" ]' "data inválida ou futura"
 # GM-15 T28 r1 MINOR-4: a data da [2.1.0] é data válida do calendário e não futura
 D210=$(grep -E '^## \[2\.1\.0\] — ' "$ROOT/CHANGELOG.md" | sed -E 's/.*— //')
 HOJE=$(date -u +%Y-%m-%d)
