@@ -80,7 +80,7 @@ A fixture `gates/test/fixtures/projeto/` **não muda** (F10). Com a chave deslig
   - (emenda r4, 2026-11-19, MINOR do review r3) `:118` helper `doProjeto`: a regex `^PROJETO|^PBIs |^ {2}[✓●○?] PBI-|^ {2}[✓●○?] GM-|^ {2}previsão|^ {2}~\d+ tasks estimadas` ganha 2 alternativas ancoradas, a linha de feitos `^ {2}✓ \d+ feitos?$` e o cabeçalho de Epic (fim `· \d+ abertos?$`), e nada mais. Sem isso `:207` (`doProjeto(ls).length === nLinhasProjeto(pr)`, larguras 72 a 200) contaria 8 e não 9. Tão específica quanto a antiga: alternativas ancoradas, nunca um casamento solto de `✓`; `:207` segue sem edição e vale 9 nas 5 larguras.
   - Seguem iguais: `:131-133` (totais "1 de 6 PBIs feitos"), `:153-171` (sem plano e plano inválido), ~~`:189-211` (< 72 e < 44)~~ `:189-211` (< 72 e < 44; nenhuma asserção do bloco é editada, mas a de `:207` só passa com a emenda do helper `:118` acima; emenda r4), `:234-240` (1 PBI não aparece), e as asserções pela borda real `:376-419` (`pr.linhas` do núcleo e o texto da linha de totais).
 - (d) **Com a chave ligada**: só testes novos (REQ-PRJ-2 e, `fixture-gm15-com-chave`), nunca edição da fixture.
-- (e) A task que muda cada arquivo de teste é a dona do arquivo (aprendizado 139): `projeto.test.ts` T1 → T2 → T3; `painel-projeto.test.ts` só a T4.
+- (e) A task que muda cada arquivo de teste é a dona do arquivo (aprendizado 139): `projeto.test.ts` T1 → T2 → T3; `painel-projeto.test.ts` só a T4. `entrega-encerrada-cli.test.mjs` também a T4 (emenda 6, 2026-11-19, Step 0 da T4): `:241` troca `['✓ GM-32', '✓ GM-33']` pela linha recolhida `^ {2}✓ 2 feitos$` logo depois dos totais, pelo REQ-PRJ-3 (a); `:240` segue sem edição.
 
 ## Spikes (Task 0)
 
