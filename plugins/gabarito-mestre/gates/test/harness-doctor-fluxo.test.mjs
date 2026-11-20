@@ -191,6 +191,38 @@ describe('fluxo-status-fl1 (REQ-DCT-1 a)', () => {
     }
   });
 
+  test('doctor-config-ausente: sem harness.config.json (no HEAD e na worktree) ⇒ "não se aplica" nos 2 checks, por desenho', () => {
+    const { dir, git: g } = fixture({ cards: { 'PBI-1': 'Preparado' }, subjects: ['feat(PBI-1): x'] });
+    g('rm', '-q', 'harness.config.json');
+    g('commit', '-q', '-m', 'chore: sem config');
+    const out = doctor(dir);
+    for (const id of ['fluxo-status-fl1', 'pbi-mergeado-aberto']) {
+      const r = achar(out, id);
+      assert.equal(r.found, true, `${id}: ${r.evidence}`);
+      assert.match(r.evidence, /não se aplica/, id);
+    }
+  });
+
+  test('doctor-config-ignorada-pelo-git: config ignorada pelo git vale como ausente (como no clone) ⇒ "não se aplica"', () => {
+    const { dir } = fixture({ cards: { 'PBI-1': 'Preparado' }, subjects: ['feat(PBI-1): x'], extra: { '.gitignore': 'harness.config.json\n' } });
+    const out = doctor(dir);
+    for (const id of ['fluxo-status-fl1', 'pbi-mergeado-aberto']) {
+      const r = achar(out, id);
+      assert.equal(r.found, true, `${id}: ${r.evidence}`);
+      assert.match(r.evidence, /não se aplica/, id);
+    }
+  });
+
+  test('doctor-fl1-ausente: fluxo por arquivos sem fluxo.mapeamento.FL1 ⇒ "não se aplica", nunca "inválido"', () => {
+    const { dir } = fixture({ config: cfgFluxo({}, { mapeamento: {} }), cards: { 'PBI-1': 'Preparado' }, subjects: ['feat(PBI-1): x'] });
+    const out = doctor(dir);
+    for (const id of ['fluxo-status-fl1', 'pbi-mergeado-aberto']) {
+      const r = achar(out, id);
+      assert.equal(r.found, true, `${id}: ${r.evidence}`);
+      assert.match(r.evidence, /não se aplica/, id);
+    }
+  });
+
   test('doctor-card-gigante: card acima do teto não passa por regex; vira "não conferido"', () => {
     const { dir } = fixture({ cards: { 'PBI-1': 'Preparado' } });
     writeFileSync(join(dir, FL1, 'PBI-2.md'), `${cardTexto('PBI-2', 'Backlog')}${'a'.repeat(2 * 1024 * 1024)}`);
