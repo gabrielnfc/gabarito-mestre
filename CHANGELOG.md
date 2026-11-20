@@ -37,7 +37,7 @@ Tudo abaixo vale por padrão, sem chave nova. O painel lê `fluxo.status.FL1`, `
 - O leitor do plano `.md` difere do CommonMark em cercas: não guarda o comprimento (4 crases fecham com 3), uma linha de cerca com texto depois da cerca também fecha o bloco, e cerca indentada não é reconhecida; a anotação entre parênteses aceita marcas trocadas (`_(x)*`). Registrado em `docs/backlog.md`.
 - O vínculo PBI para Epic por MCP não agrupa: só o vínculo por frontmatter agrupa (a leitura por MCP fica sem agrupamento).
 - A pendência P1 (opção sem plano entrar ou não na previsão estimada) está resolvida (D-G23): com a chave ligada, a opção fica fora da previsão medida e da estimada; com a chave desligada vale a regra de antes.
-- Card FL1 com frontmatter quebrado (sem `id` válido) é ignorado em silêncio pelos avisos `fluxo-status-fl1` e `pbi-mergeado-aberto`: não vira "não conferido" nem entra na lista. É decisão aberta do dono (ignorar como hoje, avisar o aviso inteiro ou listar o card como ilegível), registrada no `docs/backlog.md`.
+- Card FL1 com frontmatter quebrado (sem `id` válido) é ignorado em silêncio pelos avisos `fluxo-status-fl1` e `pbi-mergeado-aberto`: não vira "não conferido" nem entra na lista. O dono decidiu (2026-11-20) listar o card como ilegível sem derrubar o resto do aviso; a mudança entra numa próxima versão, registrada no `docs/backlog.md`.
 - O item 5 da D-G22 segue na GM-17.
 - A chave `painel.projeto.opcoesComoContagem` não tem pergunta no onboarding; fica para o 1º pedido de usuário ou a 2ª entrega que a ligar à mão.
 
