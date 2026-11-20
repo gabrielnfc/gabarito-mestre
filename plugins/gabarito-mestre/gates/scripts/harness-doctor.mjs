@@ -37,7 +37,7 @@ import { readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, rename
 import { join, relative, sep, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { lerGuarda, lerConfigOrigin, lerConfigHead, idPadraoDe, DENY_GUARDA, CHAVES_MORTAS, ORDEM_MODELO, PERFIS_MODELO, resolverPerfil } from '../lib/config.mjs';
+import { lerGuarda, lerConfigOrigin, lerBaseDaEntrega, idPadraoDe, DENY_GUARDA, CHAVES_MORTAS, ORDEM_MODELO, PERFIS_MODELO, resolverPerfil } from '../lib/config.mjs';
 import { diasEntre } from '../lib/datas.mjs';
 import { execFileSync } from 'node:child_process';
 import { checar, validarBranch, DEFAULTS as VERSIONAMENTO_DEFAULTS } from './versionamento-check.mjs';
@@ -942,17 +942,21 @@ export const CHECKS = [
       if (l.estado === 'erro') return { found: false, evidence: `não conferido (${l.motivo})` };
       const abertos = l.cards.filter((c) => !projeto.ehFeito(c.status, l.statusCfg));
       const ilegiveis = linhaIlegiveis(l);
-      const fecha = (linhas) => (linhas.length === 0 ? { found: true, evidence: `${abertos.length} PBI(s) em aberto, nenhum com commit de PBI na base` } : { found: false, evidence: linhas.join('\n') });
+      let baseUsada = '';
+      const fecha = (linhas) => (linhas.length === 0 ? { found: true, evidence: `${abertos.length} PBI(s) em aberto, nenhum com commit de PBI na base${baseUsada}` } : { found: false, evidence: linhas.join('\n') });
       if (abertos.length === 0) return fecha(ilegiveis);
       if (baseEntrega === null) return { found: false, evidence: `não conferido (dist/entrega.js não carregou: ${baseEntregaErro}; reconstrua o dist/ do plugin)` };
       // A base é a da ENTREGA, pela mesma função da entrega (nunca `versionamento.branchPadrao`, que é a regex das branches de feature).
       const raiz = ix.root;
       let resolvida;
       try {
-        const origin = lerConfigOrigin(raiz);
-        const cfgHead = lerConfigHead(raiz);
-        const origemDeclarou = origin.cfg?.entrega?.base !== undefined;
-        resolvida = baseEntrega.resolverBaseEntrega(baseEntrega.lerConfigEntrega(origin.cfg), origemDeclarou, cfgHead);
+        // A MESMA função da entrega; o sinal de "inválida" de origin e os erros da base não somem: viram "não conferido", nunca a `main` calada.
+        const lida = lerBaseDaEntrega(raiz, baseEntrega);
+        const errosBase = lida.config.erros.filter((e) => /^(entrega\.base|entrega:|config:)/.test(e));
+        if (lida.origin.invalida || errosBase.length > 0) {
+          return { found: false, evidence: [`não conferido (config de origin inválida: ${lida.origin.invalida ? lida.origin.motivo : errosBase.join('; ')})`, ...ilegiveis].join('\n') };
+        }
+        resolvida = lida.resolvida;
       } catch (e) {
         return { found: false, evidence: [`não conferido (base da entrega ilegível: ${textoDoErro(e)})`, ...ilegiveis].join('\n') };
       }
@@ -970,6 +974,7 @@ export const CHECKS = [
         return { found: false, evidence: [`não conferido (base \`${base}\` não existe; declare \`entrega.base\`) — ${origem}`, ...ilegiveis].join('\n') };
       }
       const ref = existe.remota === 'sim' ? `refs/remotes/origin/${base}` : `refs/heads/${base}`;
+      baseUsada = ` \`${base}\` (${origem})`;
       const lido = escoposDePbiNoLog(raiz, ref);
       if (lido === null) return { found: false, evidence: [`não conferido (git ilegível ao ler o log de ${ref})`, ...ilegiveis].join('\n') };
       const mergeados = abertos.filter((c) => lido.escopos.has(c.id));

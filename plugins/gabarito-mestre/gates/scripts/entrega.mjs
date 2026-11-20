@@ -38,7 +38,7 @@ import { closeSync, existsSync, fsyncSync, lstatSync, openSync, readdirSync, rea
 import { basename, dirname, join, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 import { ehEntrypoint } from '../lib/cli.mjs';
-import { lerConfigOrigin, lerConfigHead } from '../lib/config.mjs';
+import { lerBaseDaEntrega } from '../lib/config.mjs';
 import * as diario from '../dist/diario.js';
 import { decidirEntrega, lerConfigEntrega, politicaEfetiva, resolverBaseEntrega } from '../dist/entrega.js';
 import { ordenar, proximaAcao } from '../dist/loop.js';
@@ -268,15 +268,8 @@ function preparar(c, agoraMs, { conferirPausa = true } = {}) {
     throw new Falha('entrega_incompleta', `a entrega só sobe com todas as tasks integradas (próxima ação do loop: ${acao.tipo}${acao.motivo ? ` — ${acao.motivo}` : ''})`, { acao });
   }
   conferirRegistro(c);
-  const origin = lerConfigOrigin(c.raiz);
-  const config = lerConfigEntrega(origin.cfg);
-  const avisos = [];
-  if (origin.invalida) avisos.push(`config de origin inválida: ${origin.motivo}`);
-  avisos.push(...config.erros);
-  const origemDeclarou = origin.cfg?.entrega?.base !== undefined;
-  const resolvida = resolverBaseEntrega(config, origemDeclarou, lerConfigHead(c.raiz));
+  const { config, resolvida, avisos } = lerBaseDaEntrega(c.raiz, { lerConfigEntrega, resolverBaseEntrega });
   config.base = resolvida.base;
-  if (resolvida.aviso !== undefined) avisos.push(resolvida.aviso);
   const efetiva = politicaEfetiva(config, plano.politica_entrega);
   if (!efetiva.ok) throw new Falha(efetiva.erro, efetiva.mensagem);
   return {

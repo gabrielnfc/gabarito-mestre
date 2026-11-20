@@ -451,6 +451,69 @@ describe('pbi-mergeado-aberto (REQ-DCT-1 b, e)', () => {
     assert.match(r.evidence, /PBI-7/);
   });
 
+  // Config de origin/HEAD: commit à parte com o texto dado, a ref de nome completo aponta para ele e o HEAD volta ao estado de antes.
+  const comOrigin = (dir, texto) => {
+    const antes = git(dir, 'rev-parse', 'HEAD');
+    writeFileSync(join(dir, 'harness.config.json'), texto);
+    git(dir, 'commit', '-q', '-am', 'chore: config de origin');
+    git(dir, 'update-ref', 'refs/remotes/origin/HEAD', git(dir, 'rev-parse', 'HEAD'));
+    git(dir, 'reset', '-q', '--hard', antes);
+  };
+  const cenarioOrigin = (entregaHead) => fixture({
+    config: cfgFluxo(entregaHead === undefined ? {} : { entrega: entregaHead }), cards: { 'PBI-2': 'Preparado', 'PBI-3': 'Preparado' },
+    subjects: ['feat(PBI-2): x'], branches: { release: ['feat(PBI-3): x'] },
+  });
+
+  test('doctor-origin-vence-o-head: `entrega.base` de origin/HEAD vale mais que a do HEAD, e a evidência diz de onde veio (R2-A)', () => {
+    const { dir } = cenarioOrigin({ base: 'trunk' });
+    comOrigin(dir, JSON.stringify(cfgFluxo({ entrega: { base: 'release' } })));
+    const r = aviso(dir, 'pbi-mergeado-aberto');
+    assert.equal(r.found, false, r.evidence);
+    assert.match(r.evidence, /base `release`/);
+    assert.match(r.evidence, /PBI-3 \(/, 'lê a branch da base de origin');
+    assert.ok(!r.evidence.includes('PBI-2'), `não lê a base do HEAD: ${r.evidence}`);
+    assert.match(r.evidence, /origin\/HEAD/, 'diz de onde veio a base');
+  });
+
+  test('doctor-origem-da-base-no-ok: sem PBI mergeado a evidência (ok) ainda diz a base usada e de onde veio', () => {
+    const { dir } = fixture({ config: cfgFluxo(), cards: { 'PBI-9': 'Preparado' }, branches: { release: ['chore: x'] } });
+    comOrigin(dir, JSON.stringify(cfgFluxo({ entrega: { base: 'release' } })));
+    const r = aviso(dir, 'pbi-mergeado-aberto');
+    assert.equal(r.found, true, r.evidence);
+    assert.match(r.evidence, /na base `release` \(entrega\.base de origin\/HEAD\)/);
+  });
+
+  test('doctor-origin-ilegivel: config de origin/HEAD ilegível ⇒ "não conferido" com o motivo, nunca "nenhuma base declarada" nem ok', () => {
+    for (const [nome, texto, motivo] of [['JSON quebrado', '{ nao json', /JSON ilegível/], ['array', '[]', /array|não é objeto/], ['escalar', '42', /não é objeto/]]) {
+      const { dir } = cenarioOrigin({ base: 'trunk' });
+      comOrigin(dir, texto);
+      const r = aviso(dir, 'pbi-mergeado-aberto');
+      assert.equal(r.found, false, `${nome}: ${r.evidence}`);
+      assert.match(r.evidence, /não conferido \(config de origin inválida: /, nome);
+      assert.match(r.evidence, motivo, nome);
+      assert.ok(!/nenhuma base declarada/.test(r.evidence), `${nome}: ${r.evidence}`);
+      assert.ok(!/PBI-2|PBI-3/.test(r.evidence), `${nome}: não leu base nenhuma: ${r.evidence}`);
+    }
+  });
+
+  test('doctor-origin-base-invalida: `entrega.base` inválida em origin/HEAD ⇒ "não conferido" com o erro, nunca a `main` por baixo', () => {
+    for (const base of ['..x', 'a b', 7]) {
+      const { dir } = cenarioOrigin({ base: 'trunk' });
+      comOrigin(dir, JSON.stringify(cfgFluxo({ entrega: { base } })));
+      const r = aviso(dir, 'pbi-mergeado-aberto');
+      assert.equal(r.found, false, `base ${JSON.stringify(base)}: ${r.evidence}`);
+      assert.match(r.evidence, /não conferido \(config de origin inválida: entrega\.base/, JSON.stringify(base));
+      assert.ok(!/PBI-2|PBI-3/.test(r.evidence), r.evidence);
+    }
+  });
+
+  test('doctor-origin-ausente-nao-e-invalida: sem origin/HEAD ou sem arquivo nela, vale o HEAD (ausente não vira "inválida")', () => {
+    const sem = cenarioOrigin({ base: 'trunk' });
+    const rs = aviso(sem.dir, 'pbi-mergeado-aberto');
+    assert.match(rs.evidence, /base `trunk`/);
+    assert.ok(!/inválida/.test(rs.evidence), rs.evidence);
+  });
+
   test('doctor-avisos-nao-mudam-nivel: os 2 avisos ativos (nível 2 mantido, exit 0) e o texto sai na tabela do CLI real', () => {
     const arquivos = {
       ...fixtureNivel2_110(2, cfgFluxo({ entrega: { base: 'main' } }, { resolvidoEm: hoje, idPadrao: '^[A-Z]+-\\d+$' })),
