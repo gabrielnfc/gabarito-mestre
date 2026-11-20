@@ -278,6 +278,9 @@ v3=$(node -p "require('$P/gates/package.json').version" 2>/dev/null)
 check "version plugin == gates == 2.2.0 (achei '$v1' '$v3')" '[ "$v1" = "$v3" ] && [ "$v1" = "2.2.0" ]' "versões divergem ou ≠ 2.2.0"
 # GM-15 T28: a virada 2.1.0 no CHANGELOG (seção estável com data; alpha.1 com a data medida da tag, 2026-11-15)
 check "CHANGELOG: [2.1.0] com data, sem [Unreleased], alpha.1 em 2026-11-15" 'grep -qE "^## \\[2\\.1\\.0\\] — [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$ROOT/CHANGELOG.md" && ! grep -q "^## \\[Unreleased\\]" "$ROOT/CHANGELOG.md" && grep -qF "## [2.1.0-alpha.1] — 2026-11-15" "$ROOT/CHANGELOG.md"' "CHANGELOG sem a seção [2.1.0] datada, com [Unreleased] ou com a data errada da alpha.1"
+# GM-16 T8 r1 MINOR-2: a [2.2.0] é datada (mesmo separador das outras seções) e traz a subseção "Muda para quem já usa" dentro dela
+check "CHANGELOG: [2.2.0] com data (travessão, como as demais)" 'grep -qE "^## \\[2\\.2\\.0\\] — [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$ROOT/CHANGELOG.md"' "seção [2.2.0] ausente, sem data ou com separador diferente"
+check "CHANGELOG: [2.2.0] traz '### Muda para quem já usa'" '[ "$(sed -n "/^## \\[2\\.2\\.0\\]/,/^## \\[2\\.1\\.0\\]/p" "$ROOT/CHANGELOG.md" | grep -c "^### Muda para quem já usa$")" -eq 1 ]' "subseção ausente na [2.2.0]"
 # GM-15 T28 r1 MINOR-4: a data da [2.1.0] é data válida do calendário e não futura
 D210=$(grep -E '^## \[2\.1\.0\] — ' "$ROOT/CHANGELOG.md" | sed -E 's/.*— //')
 HOJE=$(date -u +%Y-%m-%d)
