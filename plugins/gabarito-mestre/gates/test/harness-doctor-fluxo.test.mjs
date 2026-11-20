@@ -626,3 +626,103 @@ describe('dist/ do doctor: import próprio, nunca cópia da regra (REQ-DCT-1 d)'
     } finally { desfaz(); }
   });
 });
+
+// REQ-DCT-1 (f): card com nome de ID válido e frontmatter sem id não some em silêncio (emenda 7, opção (iii) do dono).
+describe('card FL1 ilegível listado (REQ-DCT-1 f)', () => {
+  const SEM_ID = '---\ntitulo: sem id\nstatus: Preparado\n---\n# quebrado\n';
+  const quebrado = (...nomes) => Object.fromEntries(nomes.map((n) => [`${FL1}/${n}.md`, SEM_ID]));
+  const cfgBase = () => cfgFluxo({ entrega: { base: 'trunk' } });
+  const AVISOS = ['fluxo-status-fl1', 'pbi-mergeado-aberto'];
+
+  test('doctor-card-frontmatter-quebrado-listado: 1 quebrado + 1 com status inválido ⇒ o inválido segue listado E o quebrado aparece, nos 2 avisos', () => {
+    const { dir } = fixture({ config: cfgBase(), cards: { 'PBI-1': 'Backlog', 'PBI-2': 'Preparado' }, subjects: ['feat(PBI-2): x'], extra: quebrado('PBI-9') });
+    const f = aviso(dir, 'fluxo-status-fl1');
+    assert.equal(f.found, false, f.evidence);
+    assert.match(f.evidence, /^1 cards; 3 primeiros: PBI-1 \(Backlog\)/m, 'o status inválido segue listado');
+    assert.match(f.evidence, /^1 cards ilegíveis; 3 primeiros: PBI-9\.md$/m, f.evidence);
+    assert.ok(!f.evidence.includes('PBI-2'), 'o card legível com status do quadro segue calado');
+    const p = aviso(dir, 'pbi-mergeado-aberto');
+    assert.equal(p.found, false, p.evidence);
+    assert.match(p.evidence, /PBI-2 \(Preparado\)/, 'o resto do aviso segue conferido (mergeado listado)');
+    assert.match(p.evidence, /^1 cards ilegíveis; 3 primeiros: PBI-9\.md$/m, p.evidence);
+    assert.ok(!/^não conferido/m.test(p.evidence), `o quebrado não derruba o aviso em "não conferido": ${p.evidence}`);
+  });
+
+  test('doctor-card-frontmatter-quebrado-listado: só os 3 primeiros, em ordem, com a contagem total', () => {
+    const { dir } = fixture({ config: cfgBase(), cards: { 'PBI-1': 'Preparado' }, extra: quebrado('PBI-5', 'PBI-6', 'PBI-7', 'PBI-8') });
+    for (const id of AVISOS) {
+      const r = aviso(dir, id);
+      assert.match(r.evidence, /^4 cards ilegíveis; 3 primeiros: PBI-5\.md, PBI-6\.md, PBI-7\.md$/m, `${id}: ${r.evidence}`);
+      assert.ok(!r.evidence.includes('PBI-8'), id);
+    }
+  });
+
+  test('doctor-card-frontmatter-quebrado-listado: id no frontmatter que não é ID válido também é ilegível; sem frontmatter também', () => {
+    const { dir } = fixture({ config: cfgBase(), cards: { 'PBI-1': 'Preparado' }, extra: { [`${FL1}/PBI-4.md`]: '---\nid: qualquer coisa\n---\n# x\n', [`${FL1}/PBI-3.md`]: '# sem frontmatter\n' } });
+    for (const id of AVISOS) assert.match(aviso(dir, id).evidence, /^2 cards ilegíveis; 3 primeiros: PBI-3\.md, PBI-4\.md$/m, id);
+  });
+
+  test('doctor-card-frontmatter-quebrado-listado: arquivo cujo nome NÃO é ID válido (README.md) não entra na lista (cláusula negativa)', () => {
+    const { dir } = fixture({ config: cfgBase(), cards: { 'PBI-1': 'Preparado' }, extra: { [`${FL1}/README.md`]: '# índice\n', [`${FL1}/notas.md`]: SEM_ID } });
+    for (const id of AVISOS) {
+      const r = aviso(dir, id);
+      assert.equal(r.found, true, `${id}: ${r.evidence}`);
+      assert.ok(!/ilegíveis/.test(r.evidence), `${id}: ${r.evidence}`);
+    }
+  });
+
+  test('doctor-card-frontmatter-quebrado-listado: o idPadrao de origin/HEAD decide o que é nome de ID (idPadraoDe)', () => {
+    const { dir } = fixture({ config: cfgBase(), cards: {}, extra: { ...quebrado('ENT-1', 'PBI-9') } });
+    const antes = git(dir, 'rev-parse', 'HEAD');
+    writeFileSync(join(dir, 'harness.config.json'), JSON.stringify(cfgFluxo({ entrega: { base: 'trunk' } }, { idPadrao: '^ENT-\\d+$' })));
+    git(dir, 'commit', '-q', '-am', 'chore: idPadrao de origin');
+    git(dir, 'update-ref', 'refs/remotes/origin/HEAD', git(dir, 'rev-parse', 'HEAD'));
+    git(dir, 'reset', '-q', '--hard', antes);
+    for (const id of AVISOS) {
+      const r = aviso(dir, id);
+      assert.match(r.evidence, /^1 cards ilegíveis; 3 primeiros: ENT-1\.md$/m, `${id}: ${r.evidence}`);
+      assert.ok(!r.evidence.includes('PBI-9'), `PBI-9 não casa o idPadrao de origin: ${id}`);
+    }
+    // sem idPadrao em origin, vale o padrão: PBI-9 é nome de ID e ENT-1 também
+    const { dir: d2 } = fixture({ config: cfgBase(), cards: {}, extra: { ...quebrado('ENT-1', 'PBI-9') } });
+    assert.match(aviso(d2, 'fluxo-status-fl1').evidence, /^2 cards ilegíveis; 3 primeiros: ENT-1\.md, PBI-9\.md$/m);
+  });
+
+  test('doctor-so-card-quebrado-nao-ok: só ilegíveis e nenhum achado ⇒ found false com a lista, nos 2 avisos, nunca "ok"', () => {
+    const { dir } = fixture({ config: cfgBase(), cards: {}, extra: quebrado('PBI-9') });
+    for (const id of AVISOS) {
+      const r = aviso(dir, id);
+      assert.equal(r.level, 'warn');
+      assert.equal(r.found, false, `${id}: ${r.evidence}`);
+      assert.equal(r.evidence, '1 cards ilegíveis; 3 primeiros: PBI-9.md', id);
+    }
+    // com card legível em aberto e nada mergeado (caminho de git), o quebrado também impede o "ok"
+    const b = fixture({ config: cfgBase(), cards: { 'PBI-1': 'Preparado' }, extra: quebrado('PBI-9') });
+    const rb = aviso(b.dir, 'pbi-mergeado-aberto');
+    assert.equal(rb.found, false, rb.evidence);
+    assert.match(rb.evidence, /^1 cards ilegíveis; 3 primeiros: PBI-9\.md$/m);
+  });
+
+  test('doctor-card-quebrado-com-base-ruim: base inexistente ⇒ "não conferido" da base E o quebrado listado, nunca um só dos dois', () => {
+    const { dir } = fixture({ config: cfgFluxo({ entrega: { base: 'naoexiste' } }), cards: { 'PBI-1': 'Preparado' }, extra: quebrado('PBI-9') });
+    const r = aviso(dir, 'pbi-mergeado-aberto');
+    assert.equal(r.found, false, r.evidence);
+    assert.match(r.evidence, /^não conferido \(base `naoexiste` não existe/m);
+    assert.match(r.evidence, /^1 cards ilegíveis; 3 primeiros: PBI-9\.md$/m);
+  });
+
+  test('doctor-card-quebrado-nao-muda-nivel: card ilegível não muda nível nem exit code (c)', () => {
+    const arquivos = fixtureNivel2_110(2, cfgFluxo({ entrega: { base: 'main' } }, { resolvidoEm: hoje, idPadrao: '^[A-Z]+-\\d+$' }));
+    const limpo = repoComGit({ ...arquivos, [`${FL1}/PBI-1.md`]: cardTexto('PBI-1', 'Preparado') });
+    const comQuebrado = repoComGit({ ...arquivos, [`${FL1}/PBI-1.md`]: cardTexto('PBI-1', 'Preparado'), [`${FL1}/PBI-9.md`]: SEM_ID });
+    dirs.push(limpo, comQuebrado);
+    const a = doctor(limpo);
+    const b = doctor(comQuebrado);
+    assert.equal(achar(a, 'fluxo-status-fl1').found, true);
+    for (const id of AVISOS) { assert.equal(achar(b, id).found, false, id); assert.equal(achar(b, id).level, 'warn', id); }
+    assert.equal(a.json.alcancado, 2, 'premissa: a fixture limpa chega ao nível 2');
+    assert.equal(b.json.alcancado, a.json.alcancado);
+    assert.equal(b.status, a.status);
+    assert.equal(b.status, 0);
+  });
+});

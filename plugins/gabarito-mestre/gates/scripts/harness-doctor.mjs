@@ -386,7 +386,8 @@ function pastaFl1De(valor) {
 
 /**
  * Cards da pasta FL1 como `{ id, status }`. `estado`: `na` (não se aplica: sem fluxo por arquivos ou pasta ausente) · `erro` (não conferido, com o motivo)
- * · `ok` (`cards` e `ilegiveis`, os arquivos que não deu para ler ou que passam do teto de FL1_TETO_CARD). Ausente e ilegível são casos distintos.
+ * · `ok` (`cards`; `ilegiveis`, os arquivos que não deu para ler ou que passam do teto de FL1_TETO_CARD; `quebrados`, os de nome de ID válido
+ * cujo frontmatter não dá `id`, REQ-DCT-1 f). Ausente e ilegível são casos distintos.
  */
 function lerCardsFl1(ix, cfg) {
   const root = ix.root;
@@ -410,6 +411,7 @@ function lerCardsFl1(ix, cfg) {
   try { idRe = new RegExp(idPadraoDe(root)); } catch { idRe = new RegExp(VERSIONAMENTO_DEFAULTS.idPadrao); }
   const cards = [];
   const ilegiveis = [];
+  const quebrados = [];
   for (const nome of nomes) {
     const arquivo = join(root, pasta, nome);
     let texto = null;
@@ -420,10 +422,13 @@ function lerCardsFl1(ix, cfg) {
     if (texto === null) { ilegiveis.push(limpa(nome, 60)); continue; }
     const c = projeto.cardDe(nome, texto, idRe, null);
     if (c !== null) cards.push({ id: limpa(c.id), status: c.status });
+    else if (idRe.test(nome.replace(/\.md$/, ''))) quebrados.push(limpa(nome, 60));
   }
-  return { estado: 'ok', cards, ilegiveis, statusCfg: fluxo.status?.FL1 };
+  return { estado: 'ok', cards, ilegiveis, quebrados, statusCfg: fluxo.status?.FL1 };
 }
 
+/** REQ-DCT-1 f: card de nome de ID válido e frontmatter sem id aparece, nunca some; o resto do aviso segue conferido. */
+const linhaQuebrados = (l) => (l.quebrados.length === 0 ? [] : [`${l.quebrados.length} cards ilegíveis; 3 primeiros: ${l.quebrados.slice(0, 3).join(', ')}`]);
 const linhaIlegiveis = (l) => (l.ilegiveis.length === 0 ? [] : [`não conferido (${l.ilegiveis.length} card(s) ilegível(is) ou acima de 1 MB: ${l.ilegiveis.slice(0, 3).join(', ')})`]);
 const tres = (itens) => `${itens.slice(0, 3).join(', ')}${itens.length > 3 ? `, +${itens.length - 3}` : ''}`;
 
@@ -923,7 +928,7 @@ export const CHECKS = [
         const dica = cfg.painel?.projeto?.opcoesComoContagem === true ? '' : ' — com `painel.projeto.opcoesComoContagem: true` eles viram "N opções" no painel';
         linhas.push(`${fora.length} cards; 3 primeiros: ${fora.slice(0, 3).map((c) => `${c.id} (${limpa(c.status)})`).join(', ')}${dica}`);
       }
-      linhas.push(...linhaIlegiveis(l));
+      linhas.push(...linhaIlegiveis(l), ...linhaQuebrados(l));
       return linhas.length === 0
         ? { found: true, evidence: `${l.cards.length} cards, todos com status do quadro ou sem status` }
         : { found: false, evidence: linhas.join('\n') };
@@ -941,7 +946,7 @@ export const CHECKS = [
       if (l.estado === 'na') return { found: true, evidence: `não se aplica: ${l.motivo}` };
       if (l.estado === 'erro') return { found: false, evidence: `não conferido (${l.motivo})` };
       const abertos = l.cards.filter((c) => !projeto.ehFeito(c.status, l.statusCfg));
-      const ilegiveis = linhaIlegiveis(l);
+      const ilegiveis = [...linhaIlegiveis(l), ...linhaQuebrados(l)];
       let baseUsada = '';
       const fecha = (linhas) => (linhas.length === 0 ? { found: true, evidence: `${abertos.length} PBI(s) em aberto, nenhum com commit de PBI na base${baseUsada}` } : { found: false, evidence: linhas.join('\n') });
       if (abertos.length === 0) return fecha(ilegiveis);
