@@ -1,0 +1,9 @@
+{
+  "fluxo": {
+    "ferramenta": "arquivos",
+    "mapeamento": { "FL1": "docs/fluxo/pbis/", "FL2": "docs/fluxo/epics/" },
+    "status": { "FL1": { "preparado": "Preparado", "em_execucao": "Em execução", "revisao": "Revisão e teste", "pronto": "Pronto para liberar", "concluido": "Concluído" } },
+    "vinculoPbiEpic": { "tipo": "frontmatter", "nome": "epic" }
+  },
+  "entrega": { "base": "main" }
+}
