@@ -711,6 +711,26 @@ describe('card FL1 ilegível listado (REQ-DCT-1 f)', () => {
     assert.match(r.evidence, /^1 cards ilegíveis; 3 primeiros: PBI-9\.md$/m);
   });
 
+  test('doctor-card-quebrado-com-base-ruim: origin inválida e log ilegível também listam o quebrado', () => {
+    // origin/HEAD com config inválida (:962)
+    const o = fixture({ config: cfgBase(), cards: { 'PBI-1': 'Preparado' }, extra: quebrado('PBI-9') });
+    const antes = git(o.dir, 'rev-parse', 'HEAD');
+    writeFileSync(join(o.dir, 'harness.config.json'), '{ nao json');
+    git(o.dir, 'commit', '-q', '-am', 'chore: config de origin');
+    git(o.dir, 'update-ref', 'refs/remotes/origin/HEAD', git(o.dir, 'rev-parse', 'HEAD'));
+    git(o.dir, 'reset', '-q', '--hard', antes);
+    const ro = aviso(o.dir, 'pbi-mergeado-aberto');
+    assert.match(ro.evidence, /^não conferido \(config de origin inválida/m, ro.evidence);
+    assert.match(ro.evidence, /^1 cards ilegíveis; 3 primeiros: PBI-9\.md$/m, `origin inválida: ${ro.evidence}`);
+    // log ilegível (:984): objeto faltando no histórico
+    const l = fixture({ config: cfgBase(), cards: { 'PBI-7': 'Preparado' }, subjects: ['feat(PBI-7): x', 'chore: topo'], extra: quebrado('PBI-9') });
+    const meio = l.git('rev-parse', 'HEAD~1');
+    rmSync(join(l.dir, '.git', 'objects', meio.slice(0, 2), meio.slice(2)), { force: true });
+    const rl = aviso(l.dir, 'pbi-mergeado-aberto');
+    assert.match(rl.evidence, /^não conferido \(git ilegível ao ler o log/m, rl.evidence);
+    assert.match(rl.evidence, /^1 cards ilegíveis; 3 primeiros: PBI-9\.md$/m, `log ilegível: ${rl.evidence}`);
+  });
+
   test('doctor-card-quebrado-nao-muda-nivel: card ilegível não muda nível nem exit code (c)', () => {
     const arquivos = fixtureNivel2_110(2, cfgFluxo({ entrega: { base: 'main' } }, { resolvidoEm: hoje, idPadrao: '^[A-Z]+-\\d+$' }));
     const limpo = repoComGit({ ...arquivos, [`${FL1}/PBI-1.md`]: cardTexto('PBI-1', 'Preparado') });
