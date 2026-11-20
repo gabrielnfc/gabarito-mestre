@@ -113,8 +113,13 @@ describe('aceite-gm16-repo-grande', () => {
       const grupos = proj.grupos.length;
       assert.equal(grupos, 5, '5 Epics com PBI aberto');
       assert.equal(proj.grupos.reduce((s, g) => s + g.abertos, 0), N_ABERTOS);
-      const totais = 3; // linha de contagens, previsão medida, previsão estimada
-      assert.ok(bloco.length <= totais + 1 + N_ABERTOS + grupos, `${bloco.length} linhas > teto ${totais + 1 + N_ABERTOS + grupos}`);
+      // linhas de totais que o desenho produz neste cenário: contagens + previsão medida/sem ritmo (+ estimada, se houver)
+      const totais = 2 + (proj.totais.previsao.estimada !== null ? 1 : 0);
+      assert.equal(totais, 2, 'cenário sem ritmo e sem previsão estimada: 2 linhas de totais');
+      const teto = totais + 1 + N_ABERTOS + grupos;
+      assert.ok(bloco.length <= teto, `${bloco.length} linhas > teto ${teto}`);
+      assert.equal(bloco.length, teto, 'neste cenário fixo o desenho tem exatamente o teto');
+      assert.equal(bloco.filter((l) => /^ {2}previsão /.test(l)).length, 1, 'previsão aparece uma vez');
       assert.equal(bloco.filter((l) => /✓ \d+ feitos?$/.test(l)).length, 1);
       assert.ok(bloco.some((l) => /^ {2}✓ 1 feito$/.test(l)), 'o feito é 1 linha, com a contagem');
       const feito = desc.cards.find((c) => c.status === 'Concluído').id;
@@ -163,7 +168,12 @@ describe('aceite-gm16-repo-grande', () => {
       const grupos = proj.grupos.length;
       assert.equal(grupos, new Set(desc.cards.filter((c) => c.status !== 'Concluído').map((c) => c.epic)).size);
       assert.equal(proj.grupos.reduce((s, g) => s + g.abertos, 0), naoFeitos);
-      assert.ok(bloco.length <= 3 + 1 + naoFeitos + grupos, `${bloco.length} linhas > teto ${3 + 1 + naoFeitos + grupos}`);
+      const totais = 2 + (proj.totais.previsao.estimada !== null ? 1 : 0);
+      assert.equal(totais, 2, 'cenário sem ritmo e sem previsão estimada: 2 linhas de totais');
+      const teto = totais + 1 + naoFeitos + grupos;
+      assert.ok(bloco.length <= teto, `${bloco.length} linhas > teto ${teto}`);
+      assert.equal(bloco.length, teto, 'neste cenário fixo o desenho tem exatamente o teto');
+      assert.equal(bloco.filter((l) => /^ {2}previsão /.test(l)).length, 1, 'previsão aparece uma vez');
       assert.equal(bloco.filter((l) => /✓ \d+ feitos?$/.test(l)).length, 1);
       assert.ok(bloco.some((l) => /^ {2}✓ 1 feito$/.test(l)));
       const feito = desc.cards.find((c) => c.status === 'Concluído').id;
