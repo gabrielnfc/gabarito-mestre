@@ -703,6 +703,13 @@ describe('card FL1 ilegível listado (REQ-DCT-1 f)', () => {
     assert.match(rb.evidence, /^1 cards ilegíveis; 3 primeiros: PBI-9\.md$/m);
   });
 
+  test('doctor-quebrado-nao-e-card-aberto: só card quebrado ⇒ não há PBI aberto, então nem consulta a base (sem "não conferido" da base)', () => {
+    const { dir } = fixture({ config: cfgFluxo({ entrega: { base: 'naoexiste' } }), cards: {}, extra: quebrado('PBI-9') });
+    const r = aviso(dir, 'pbi-mergeado-aberto');
+    assert.equal(r.found, false, r.evidence);
+    assert.equal(r.evidence, '1 cards ilegíveis; 3 primeiros: PBI-9.md');
+  });
+
   test('doctor-card-quebrado-com-base-ruim: base inexistente ⇒ "não conferido" da base E o quebrado listado, nunca um só dos dois', () => {
     const { dir } = fixture({ config: cfgFluxo({ entrega: { base: 'naoexiste' } }), cards: { 'PBI-1': 'Preparado' }, extra: quebrado('PBI-9') });
     const r = aviso(dir, 'pbi-mergeado-aberto');
