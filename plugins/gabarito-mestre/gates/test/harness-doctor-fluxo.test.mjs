@@ -187,6 +187,31 @@ describe('pbi-mergeado-aberto (REQ-DCT-1 b, e)', () => {
     assert.match(r.evidence, /base `trunk`/);
   });
 
+  test('doctor-mergeado-card-ilegivel: card ilegível nunca vira "0 em aberto" calado, com ou sem outros abertos', () => {
+    const gigante = (dir) => writeFileSync(join(dir, FL1, 'PBI-2.md'), `${cardTexto('PBI-2', 'Backlog')}${'a'.repeat(2 * 1024 * 1024)}`);
+    // (1) nenhum card aberto legível: só o ilegível pode estar aberto
+    const a = fixture({ config: cfgFluxo({ entrega: { base: 'trunk' } }), cards: { 'PBI-1': 'Concluído' }, subjects: ['feat(PBI-1): x'] });
+    gigante(a.dir);
+    const ra = aviso(a.dir, 'pbi-mergeado-aberto');
+    assert.equal(ra.found, false, ra.evidence);
+    assert.match(ra.evidence, /não conferido/);
+    assert.match(ra.evidence, /PBI-2\.md/);
+    assert.ok(!/0 PBI\(s\) em aberto/.test(ra.evidence), ra.evidence);
+    // (2) há aberto legível, sem commit de PBI na base: o ilegível ainda tem de aparecer
+    const b = fixture({ config: cfgFluxo({ entrega: { base: 'trunk' } }), cards: { 'PBI-1': 'Preparado' }, subjects: [] });
+    gigante(b.dir);
+    const rb = aviso(b.dir, 'pbi-mergeado-aberto');
+    assert.equal(rb.found, false, rb.evidence);
+    assert.match(rb.evidence, /PBI-2\.md/);
+    // (3) há aberto mergeado: aviso do mergeado e o ilegível, juntos
+    const c = fixture({ config: cfgFluxo({ entrega: { base: 'trunk' } }), cards: { 'PBI-7': 'Preparado' }, subjects: ['feat(PBI-7): x'] });
+    gigante(c.dir);
+    const rc = aviso(c.dir, 'pbi-mergeado-aberto');
+    assert.equal(rc.found, false);
+    assert.match(rc.evidence, /PBI-7 \(Preparado\)/);
+    assert.match(rc.evidence, /PBI-2\.md/);
+  });
+
   test('doctor-mergeado-nao-concluido-avisa: "feito" é o `concluido` configurado (Done) e o fixo', () => {
     const { dir } = fixture({ config: cfgFluxo({ entrega: { base: 'trunk' } }, { status: { FL1: { concluido: 'Done' } } }), cards: { 'PBI-7': 'Done', 'PBI-8': 'Concluído', 'PBI-9': 'Backlog' }, subjects: ['feat(PBI-7): x', 'feat(PBI-8): x', 'feat(PBI-9): x'] });
     const r = aviso(dir, 'pbi-mergeado-aberto');
