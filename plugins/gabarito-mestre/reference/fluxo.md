@@ -344,6 +344,16 @@ Uma coluna só existe quando representa uma espera ou uma decisão real, e cada 
 | 04 | Pronto para liberar (`pronto`) | — | publicado no ambiente alvo conforme o padrão da área |
 | 05 | Concluído (`concluido`) | — | estado final: item liberado e validado |
 
+**Como o painel do projeto lê este quadro** (GM-16):
+
+- O painel lê `fluxo.status.FL1` da config; se a chave não for um objeto, vale o quadro padrão e o painel avisa. (a) `gates/scripts/painel.mjs:375-378`; as colunas aceitas vêm de `gates/src/projeto.ts:191-211`.
+- Um PBI conta como **feito** quando o `status` é o `concluido` da config ou o `concluido` fixo, sem diferença de acento, caixa ou espaço nas pontas, ou quando a entrega dele foi encerrada. (a) `gates/src/projeto.ts:218-226` e `:276`.
+- Os PBIs feitos saem da lista e viram uma linha só, "✓ N feitos". (a) `gates/src/painel-esquadrao.ts:429-433`.
+- Os PBIs abertos se agrupam por Epic só quando há 2 ou mais grupos (conta o grupo "sem Epic") e só com `fluxo.vinculoPbiEpic.tipo: frontmatter`; com outro vínculo, não há agrupamento. (a) `gates/src/projeto.ts:229-235` e `:349-354`; `gates/scripts/painel.mjs:380-382`; `gates/src/painel-esquadrao.ts:434`.
+- Com `painel.projeto.opcoesComoContagem: true` (padrão: desligado; só o booleano `true` liga), um card com status fora das colunas do quadro é **opção**: não vira linha do projeto e aparece no total como "N opções". (a) `gates/src/projeto.ts:241` e `:274`; `gates/scripts/painel.mjs:382`; `gates/src/painel-esquadrao.ts:467-468`.
+- A medição vence o card: se o PBI já tem `plano.json` ou evento de task na entrega, ele continua sendo linha, mesmo com status fora das colunas. (a) `gates/src/projeto.ts:272-274`.
+- O aviso do doctor sobre esses cards vale SEMPRE, com a chave ligada ou desligada; desligada, ele só acrescenta a dica de ligar a chave. (a) `gates/scripts/harness-doctor.mjs:921-925`.
+
 ### 4.4 As cinco regras de movimentação
 
 1. **Todo movimento é puxado.** O card avança quando quem executa a etapa seguinte tem espaço no WIP, não quando alguém decide empurrar.
@@ -382,6 +392,8 @@ Cada quadro carrega três marcos: onde o compromisso é assumido, onde o WIP é 
 | Decide | quantas frentes ficam abertas e qual entra a seguir; o que não cabe na vazão fica no Funil | o prazo prometido ao solicitante, no percentil 85; reposição no máximo igual à vazão observada | o que destravar hoje e quando parar de puxar: item novo entra quando um sai, não quando alguém fica livre |
 
 Iniciativa em Preparado ainda é opção, mesmo pronta — tratar item não priorizado como promessa é a origem mais comum de portfólio inflado. Um Epic só é comprometido quando a vazão do período comporta.
+
+No painel do projeto, a mesma ideia aparece assim: com `painel.projeto.opcoesComoContagem: true` (padrão: desligado), PBI com status fora das colunas do FL1 é opção, não linha, e entra como "N opções"; a medição (`plano.json` ou evento de task) vence o card; e os feitos se recolhem em "✓ N feitos" (detalhes em §4.3). (a) `gates/src/projeto.ts:272-276`; `gates/src/painel-esquadrao.ts:433` e `:467-468`.
 
 ## 7. Métricas medem item, nunca pessoa
 
