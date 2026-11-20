@@ -42,7 +42,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  cardDe, planoMdDoCard, projetarProjeto, ROTULO_FASE_NAO_MEDIDA, ROTULO_FORA_DO_LOOP, rotuloAgente, rotuloFase, tasksDoPlanoMd, worktreesDe,
+  cardDe, colunasFl1, ehColunaFl1, planoMdDoCard, projetarProjeto, ROTULO_FASE_NAO_MEDIDA, ROTULO_FORA_DO_LOOP, rotuloAgente, rotuloFase, tasksDoPlanoMd, worktreesDe,
 } from '../src/projeto.ts';
 import type { ArvoreLida, EstadoProjeto, LinhaProjeto } from '../src/projeto.ts';
 import type { Evento } from '../src/tipos.ts';
@@ -86,9 +86,9 @@ const linha = (e: EstadoProjeto, id: string): LinhaProjeto => {
   assert.ok(l, `linha ${id} ausente`);
   return l;
 };
-function projetoCompleto(): EstadoProjeto {
+function projetoCompleto(extra: Record<string, unknown> = {}): EstadoProjeto {
   const wt = worktreesDe({ ok: true, saida: PORCELANA }, '/FIX/principal');
-  return projetarProjeto(ler(wt.caminhos), { ...OPC, avisos: wt.aviso === null ? [] : [wt.aviso] });
+  return projetarProjeto(ler(wt.caminhos), { ...OPC, ...extra, avisos: wt.aviso === null ? [] : [wt.aviso] });
 }
 
 test('projeto-n-pbis-feitas-total: uma linha por PBI, feitos pelo card, cortada fora do denominador, modelo de card fora', () => {
@@ -378,4 +378,141 @@ test('previsao-estima-pbi-sem-plano-com-til: tasks estimadas = mediana × PBIs s
   assert.match(est.texto, /estimad/);
   assert.match(est.texto, new RegExp(`~${est.hora}`));
   assert.doesNotMatch(est.texto, /[`]|--|\/[a-z]|\bnode\b|\.(json|mjs|md)\b|[a-z]+_[a-z_]+|[a-z]+\.[a-z]+\b/); // REQ-LNG-1
+});
+
+// ---------- REQ-PRJ-2: status fora do quadro FL1 é opção (só com a chave ligada, D-G27) ----------
+
+const LIGA = { opcoesComoContagem: true };
+const cartao = (id: string, status: string | null, plano = 'a escrever'): { arquivo: string; texto: string; planoMd: string | null } =>
+  ({ arquivo: `${id}.md`, texto: `---\nid: "${id}"\n${status === null ? '' : `status: ${status}\n`}---\n# Sintético ${id}\nPlano: ${plano}\n`, planoMd: null });
+const soCards = (...cards: Array<ReturnType<typeof cartao>>): ArvoreLida[] => [{ caminho: '/r', cards, entregas: [] }];
+const evTask = (seq: number, tipo: string, dados: Record<string, unknown>): Evento =>
+  ({ seq, ts: `2026-11-10T10:0${seq}:00.000Z`, autor: 'a', sessao: 's', agente: 'orquestrador', tipo, dados, hash_anterior: null }) as Evento;
+
+test('opcao-nao-vira-linha: chave ligada, status "Backlog" ⇒ 0 linhas, opcoes 1, fora de pbis/feitos/foraDaConta', () => {
+  const e = projetarProjeto(soCards(cartao('PBI-1', 'Backlog')), { ...OPC, ...LIGA });
+  assert.deepEqual(e.linhas, []);
+  assert.equal(e.totais.opcoes, 1);
+  assert.equal(e.totais.pbis, 0);
+  assert.equal(e.totais.feitos, 0);
+  assert.equal(e.totais.foraDaConta, 0);
+  const duas = projetarProjeto(soCards(cartao('PBI-1', 'Backlog'), cartao('PBI-2', 'Ideia'), cartao('PBI-3', 'Em execução')), { ...OPC, ...LIGA });
+  assert.deepEqual(duas.linhas.map((l) => l.id), ['PBI-3']);
+  assert.equal(duas.totais.opcoes, 2);
+  assert.equal(duas.totais.pbis, 1);
+});
+
+test('chave-desligada-backlog-e-linha: mesmo card, chave ausente ou false ⇒ 1 linha, opcoes 0', () => {
+  for (const opc of [OPC, { ...OPC, opcoesComoContagem: false }]) {
+    const e = projetarProjeto(soCards(cartao('PBI-1', 'Backlog')), opc);
+    assert.deepEqual(e.linhas.map((l) => l.id), ['PBI-1']);
+    assert.equal(e.linhas[0].status, 'Backlog');
+    assert.equal(e.totais.opcoes, 0);
+    assert.equal(e.totais.pbis, 1);
+    assert.equal(e.totais.foraDaConta, 1);
+  }
+});
+
+test('chave-so-true-liga: "true", 1, null, undefined, "" ⇒ desligada', () => {
+  for (const v of ['true', 1, null, undefined, '', 'sim', {}, [true]]) {
+    const e = projetarProjeto(soCards(cartao('PBI-1', 'Backlog')), { ...OPC, opcoesComoContagem: v as unknown as boolean });
+    assert.equal(e.linhas.length, 1, JSON.stringify(v));
+    assert.equal(e.totais.opcoes, 0, JSON.stringify(v));
+  }
+  assert.equal(projetarProjeto(soCards(cartao('PBI-1', 'Backlog')), { ...OPC, opcoesComoContagem: true }).totais.opcoes, 1);
+});
+
+test('opcao-fora-do-pct: a opção não entra em pbis, feitos, tasks nem %; os totais são os de quando o card não existe', () => {
+  const comPlano = { arquivo: 'PBI-1.md', texto: '---\nid: "PBI-1"\nstatus: Em execução\n---\n# X\nPlano: `p.md`\n', planoMd: '### Task 1: a\n### Task 2: b\n' };
+  const sem = projetarProjeto([{ caminho: '/r', cards: [comPlano], entregas: [{ id: 'PBI-1', plano: null, eventos: [evTask(1, 'task.iniciada', { task: '1', papel: 'implementador' })] }] }], { ...OPC, ...LIGA });
+  const com = projetarProjeto([{ caminho: '/r', cards: [comPlano, cartao('PBI-2', 'Backlog', '`q.md`'), cartao('PBI-3', 'Concluído')], entregas: [{ id: 'PBI-1', plano: null, eventos: [evTask(1, 'task.iniciada', { task: '1', papel: 'implementador' })] }] }], { ...OPC, ...LIGA });
+  assert.equal(com.totais.opcoes, 1);
+  assert.equal(com.totais.pbis, sem.totais.pbis + 1); // só o PBI-3 "Concluído" (coluna) a mais
+  assert.equal(com.totais.feitos, 1);
+  assert.equal(com.totais.tasks, sem.totais.tasks);
+  assert.equal(com.totais.integradas, sem.totais.integradas);
+  assert.equal(com.totais.restantes, sem.totais.restantes);
+  assert.equal(com.totais.pct, sem.totais.pct);
+  assert.deepEqual(com.linhas.map((l) => l.id), ['PBI-1', 'PBI-3']);
+});
+
+test('status-da-config-vale: chave ligada, config Jira: "To Do" e "Done" são colunas; o padrão "Preparado" vira opção', () => {
+  const cfg = { preparado: 'To Do', em_execucao: 'In Progress', concluido: 'Done' };
+  const e = projetarProjeto(soCards(cartao('PBI-1', 'To Do'), cartao('PBI-2', ' in progress '), cartao('PBI-3', 'Done'), cartao('PBI-4', 'Pronto para liberar'), cartao('PBI-5', 'preparado')),
+    { ...OPC, ...LIGA, statusFl1: cfg });
+  assert.deepEqual(e.linhas.map((l) => l.id), ['PBI-1', 'PBI-2', 'PBI-3', 'PBI-5']); // a chave `preparado` também é coluna
+  assert.equal(e.totais.opcoes, 1); // PBI-4 "Pronto para liberar": o nome padrão não vale com a config (nem a chave `pronto` está nela)
+  assert.equal(linha(e, 'PBI-3').status, 'Done');
+});
+
+test('sem-config-usa-fluxo-md: sem fluxo.status.FL1 legível valem os 5 nomes e as 5 chaves; sem acento, caixa nem espaço nas pontas', () => {
+  const ok = ['Preparado', 'Em execução', 'Revisão e teste', 'Pronto para liberar', 'Concluído', 'preparado', 'em_execucao', 'revisao', 'pronto', 'concluido', '  EM EXECUCAO ', 'concluído'];
+  for (const cfg of [undefined, null, {}, 'x', [], { a: 1, b: null }, { a: '  ' }]) {
+    const cards = ok.map((st, i) => cartao(`PBI-${i + 1}`, st));
+    const e = projetarProjeto(soCards(...cards, cartao('PBI-90', 'Backlog')), { ...OPC, ...LIGA, statusFl1: cfg });
+    assert.equal(e.linhas.length, ok.length, JSON.stringify(cfg));
+    assert.equal(e.totais.opcoes, 1, JSON.stringify(cfg));
+  }
+  assert.equal(ehColunaFl1('Backlog'), false);
+  assert.equal(ehColunaFl1('Concluído'), true);
+  assert.equal(ehColunaFl1('Done', { concluido: 'Done' }), true);
+  assert.equal(ehColunaFl1('Pronto para liberar', { concluido: 'Done' }), false);
+  assert.equal(ehColunaFl1('Concluído', { concluido: 'Done' }), true); // a chave também é coluna
+  assert.deepEqual([...colunasFl1({ concluido: 'Done', x: 3 })].sort(), ['concluido', 'done']);
+});
+
+test('opcao-com-diario-vira-linha: status de opção com plano.json OU evento de task vira linha (a medição vence o card); evento sem task não', () => {
+  const plano = { ok: true as const, bruto: { entrega: 'PBI-1', tasks: [{ id: 'T1', titulo: 'a', deps: [], arquivos: ['a.ts'] }] } };
+  const arv: ArvoreLida[] = [{ caminho: '/r', cards: [cartao('PBI-1', 'Backlog'), cartao('PBI-2', 'Backlog'), cartao('PBI-3', 'Backlog'), cartao('PBI-4', 'Backlog')], entregas: [
+    { id: 'PBI-1', plano, eventos: [] },
+    { id: 'PBI-2', plano: null, eventos: [evTask(1, 'task.iniciada', { task: 'T1', papel: 'implementador' })] },
+    { id: 'PBI-3', plano: null, eventos: [evTask(1, 'entrega.iniciada', {})] },
+  ] }];
+  const e = projetarProjeto(arv, { ...OPC, ...LIGA });
+  assert.deepEqual(e.linhas.map((l) => l.id), ['PBI-1', 'PBI-2']);
+  assert.equal(e.totais.opcoes, 2); // PBI-3 (diário sem task) e PBI-4 (sem entrega)
+  assert.equal(linha(e, 'PBI-1').plano, 'json');
+  assert.equal(linha(e, 'PBI-1').status, 'Backlog');
+});
+
+test('card-sem-status-nunca-e-opcao: com a chave ligada e desligada o card sem status segue linha', () => {
+  for (const opc of [OPC, { ...OPC, ...LIGA }]) {
+    const e = projetarProjeto(soCards(cartao('PBI-1', null)), opc);
+    assert.deepEqual(e.linhas.map((l) => l.id), ['PBI-1']);
+    assert.equal(linha(e, 'PBI-1').status, null);
+    assert.equal(e.totais.opcoes, 0);
+    assert.equal(e.totais.pbis, 1);
+  }
+});
+
+test('fixture-gm15-com-chave: chave ligada sobre a fixture da GM-15 ⇒ PBI-1, 2, 4 e 6 linhas; PBI-3 e PBI-5 opções; só o PBI-6 fora da conta e da estimada', () => {
+  const e = projetoCompleto(LIGA);
+  assert.deepEqual(e.linhas.map((l) => l.id), ['PBI-1', 'PBI-2', 'PBI-4', 'PBI-6']);
+  assert.equal(e.totais.opcoes, 2);
+  assert.equal(e.totais.pbis, 4);
+  assert.equal(e.totais.foraDaConta, 1);
+  assert.deepEqual(e.linhas.filter((l) => l.semPlano).map((l) => l.id), ['PBI-6']);
+  assert.equal(e.totais.previsao.estimada?.pbisSemPlano, 1);
+  // desligada: a fixture segue igual (regressão)
+  const off = projetoCompleto();
+  assert.equal(off.totais.opcoes, 0);
+  assert.equal(off.linhas.length, 6);
+  assert.equal(off.totais.previsao.estimada?.pbisSemPlano, 3);
+});
+
+test('opcao-fora-da-previsao-estimada: com a chave ligada a opção sem plano não entra na estimada; desligada vale a D-G13 literal', () => {
+  const wt = worktreesDe({ ok: true, saida: PORCELANA }, '/FIX/principal');
+  const comExtra = (): ArvoreLida[] => { const a = ler(wt.caminhos); a[0].cards.push(cartao('PBI-7', 'Backlog')); return a; };
+  const base = projetoCompleto(LIGA).totais.previsao.estimada;
+  assert.ok(base !== null);
+  const ligada = projetarProjeto(comExtra(), { ...OPC, ...LIGA }).totais.previsao.estimada;
+  assert.ok(ligada !== null);
+  assert.equal(ligada.pbisSemPlano, 1);
+  assert.equal(ligada.tasks, base.tasks);
+  assert.equal(ligada.restanteS, base.restanteS);
+  assert.equal(ligada.texto, base.texto);
+  const desligada = projetarProjeto(comExtra(), OPC).totais.previsao.estimada;
+  assert.ok(desligada !== null);
+  assert.equal(desligada.pbisSemPlano, 4); // PBI-3, PBI-5, PBI-6 e o PBI-7 "Backlog"
+  assert.ok(desligada.restanteS > ligada.restanteS);
 });

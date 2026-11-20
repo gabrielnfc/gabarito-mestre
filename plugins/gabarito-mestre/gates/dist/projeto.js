@@ -75,7 +75,7 @@ const ID_PADRAO = /^[A-Z]+-\d+$/;
   
                              
                          
-                                                                                                                                                                                                                        
+                                                                                                                                                                                                                                        
                    
   
 
@@ -181,9 +181,36 @@ function encerrada(eventos          )          {
   return ultimo === 'entrega.encerrada';
 }
 
+/** Colunas do quadro FL1 sem `fluxo.status.FL1` legível (F6): nomes e chaves. */
+const COLUNAS_FL1_PADRAO = ['Preparado', 'Em execução', 'Revisão e teste', 'Pronto para liberar', 'Concluído', 'preparado', 'em_execucao', 'revisao', 'pronto', 'concluido'];
+
+/**
+ * Colunas do quadro FL1 (REQ-PRJ-2 a): as chaves e os valores de `fluxo.status.FL1` (`statusCfg`), normalizados (sem acento, caixa e espaço nas
+ * pontas). Sem objeto legível (ausente, não objeto, vazio, sem valor texto) ⇒ os 5 nomes e as 5 chaves padrão.
+ */
+export function colunasFl1(statusCfg         )              {
+  const cols = new Set        ();
+  if (typeof statusCfg === 'object' && statusCfg !== null && !Array.isArray(statusCfg)) {
+    for (const [k, v] of Object.entries(statusCfg                           )) {
+      if (typeof v !== 'string' || semAcento(v) === '') continue;
+      cols.add(semAcento(k));
+      cols.add(semAcento(v));
+    }
+  }
+  return cols.size > 0 ? cols : new Set(COLUNAS_FL1_PADRAO.map(semAcento));
+}
+
+/** Predicado único (REQ-PRJ-2 a; o doctor o importa do `dist/`): `status` é coluna do quadro FL1? */
+export function ehColunaFl1(status        , statusCfg          )          {
+  return colunasFl1(statusCfg).has(semAcento(status));
+}
+
                                               
 
-export function projetarProjeto(arvores              , opcoes                                                                         )                {
+export function projetarProjeto(arvores              , opcoes                                                                                                                            )                {
+  // D-G27: só o booleano `true` liga; a borda lê a config, o núcleo nunca
+  const opcoesLigadas = opcoes.opcoesComoContagem === true;
+  let nOpcoes = 0;
   const idPadrao = opcoes.idPadrao ?? ID_PADRAO;
   const avisos = [...(opcoes.avisos ?? [])];
   const cards = new Map                                                          ();
@@ -212,6 +239,9 @@ export function projetarProjeto(arvores              , opcoes                   
       for (const ev of e.eventos) { const k = chaveEv(ev); if (!vistos.has(k)) { vistos.add(k); eventos.push(ev); } }
     }
     eventos.sort((a, b) => msDe(a) - msDe(b) || cmp(String(a.sessao), String(b.sessao)) || a.seq - b.seq);
+    // REQ-PRJ-2 (b, c): com a chave ligada, card COM status fora do quadro FL1 é opção (não vira linha); a medição vence o card
+    const medido = ents.some((e) => e.plano !== null) || eventos.some((ev) => TIPOS_DE_TASK.includes(ev.tipo));
+    if (opcoesLigadas && card !== null && card.status !== null && !ehColunaFl1(card.status, opcoes.statusFl1) && !medido) { nOpcoes++; continue; }
     if (eventos.length > 0) diarios.push({ id, eventos });
     const feito = (card !== null && semAcento(card.status ?? '') === 'concluido') || encerrada(eventos);
     // plano: inválido ⇒ "?" (nunca o .md nem plano velho); sem plano.json, o .md do card
@@ -276,7 +306,7 @@ export function projetarProjeto(arvores              , opcoes                   
   return {
     linhas,
     totais: {
-      pbis: linhas.length, feitos: linhas.filter((l) => l.feito).length, foraDaConta, tasks, integradas, estimadas, restantes,
+      pbis: linhas.length, opcoes: nOpcoes, feitos: linhas.filter((l) => l.feito).length, foraDaConta, tasks, integradas, estimadas, restantes,
       pct: tasks > 0 ? Math.round((integradas / tasks) * 100) : null,
       pctComEstimadas: tasks > 0 ? Math.round(((integradas + estimadas) / tasks) * 100) : null,
       previsao: previsaoDoProjeto(linhas, diarios, restantes, opcoes.agoraMs, opcoes.fuso),
