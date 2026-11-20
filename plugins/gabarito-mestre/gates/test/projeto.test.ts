@@ -42,7 +42,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  cardDe, colunasFl1, ehColunaFl1, planoMdDoCard, projetarProjeto, ROTULO_FASE_NAO_MEDIDA, ROTULO_FORA_DO_LOOP, rotuloAgente, rotuloFase, tasksDoPlanoMd, worktreesDe,
+  cardDe, colunasFl1, ehColunaFl1, ehFeito, planoMdDoCard, projetarProjeto, ROTULO_FASE_NAO_MEDIDA, ROTULO_FORA_DO_LOOP, rotuloAgente, rotuloFase, tasksDoPlanoMd, worktreesDe,
 } from '../src/projeto.ts';
 import type { ArvoreLida, EstadoProjeto, LinhaProjeto } from '../src/projeto.ts';
 import type { Evento } from '../src/tipos.ts';
@@ -171,7 +171,7 @@ test('plano-md-conta-tasks: só "### Task N:" conta; card aponta o plano', () =>
   assert.equal(planoMdDoCard('Plano: `docs/plans/x.md` (em main) · Ledger: `l.md`'), 'docs/plans/x.md');
   assert.equal(planoMdDoCard('Plano: a escrever · Ledger: `l.md`'), null);
   const c = cardDe('PBI-4.md', readFileSync(join(FIX, 'principal', 'cards', 'PBI-4.md'), 'utf8'));
-  assert.deepEqual(c, { id: 'PBI-4', status: 'Em execução', titulo: 'Hoje', atualizadoEm: '2026-11-03', planoMd: 'planos/pbi-4.md' });
+  assert.deepEqual(c, { id: 'PBI-4', status: 'Em execução', titulo: 'Hoje', atualizadoEm: '2026-11-03', planoMd: 'planos/pbi-4.md', epic: null });
   assert.equal(cardDe('PBI-EXEMPLO.md', readFileSync(join(FIX, 'principal', 'cards', 'PBI-EXEMPLO.md'), 'utf8')), null);
 });
 
@@ -524,4 +524,128 @@ test('opcao-fora-da-previsao-estimada: com a chave ligada a opção sem plano n�
   assert.ok(desligada !== null);
   assert.equal(desligada.pbisSemPlano, 4); // PBI-3, PBI-5, PBI-6 e o PBI-7 "Backlog"
   assert.ok(desligada.restanteS > ligada.restanteS);
+});
+
+// ---------- REQ-PRJ-3 (a, b, c, f): núcleo dos feitos e do Epic (T3) ----------
+
+const FM = { tipo: 'frontmatter', nome: 'epic' };
+const cardEpic = (id: string, status: string, epic: string | null, chave = 'epic'): { arquivo: string; texto: string; planoMd: string | null } =>
+  ({ arquivo: `${id}.md`, texto: `---\nid: "${id}"\nstatus: ${status}\n${epic === null ? '' : `${chave}: ${epic}\n`}---\n# Sintético ${id}\nPlano: a escrever\n`, planoMd: null });
+const comEpics = (cards: Array<ReturnType<typeof cartao>>, extra: Record<string, unknown> = {}): EstadoProjeto =>
+  projetarProjeto(soCards(...cards), { ...OPC, vinculo: FM, ...extra } as Parameters<typeof projetarProjeto>[1]);
+const idsDe = (e: EstadoProjeto): string[][] => e.grupos.map((g) => g.ids);
+
+test('carde-epic: Card.epic lê a chave do frontmatter; sem chave é null; chave com dígito, hífen e _', () => {
+  const t = (extra: string): string => `---\nid: "PBI-1"\nstatus: Backlog\n${extra}---\n# X\n`;
+  assert.equal(cardDe('a.md', t('epic: "EPIC-2"\n'))?.epic, 'EPIC-2');
+  assert.equal(cardDe('a.md', t(''))?.epic, null);
+  assert.equal(cardDe('a.md', t('epic:\n'))?.epic, null);
+  assert.equal(cardDe('a.md', t('epico_2-x: EPIC-9\n'), undefined, 'epico_2-x')?.epic, 'EPIC-9');
+  assert.equal(cardDe('a.md', t('epic: EPIC-2\n'), undefined, 'outra')?.epic, null);
+  assert.equal(cardDe('a.md', t('epic: EPIC-2\n'), undefined, null)?.epic, null);
+});
+
+test('agrupa-com-2-epics: abertos em 2 Epics ⇒ 2 grupos, ordem pelo menor ID aberto; LinhaProjeto.epic lido', () => {
+  const e = comEpics([cardEpic('PBI-1', 'Em execução', 'EPIC-B'), cardEpic('PBI-2', 'Em execução', 'EPIC-A'), cardEpic('PBI-3', 'Backlog', 'EPIC-B')]);
+  assert.deepEqual(e.grupos.map((g) => g.epic), ['EPIC-B', 'EPIC-A']);
+  assert.deepEqual(idsDe(e), [['PBI-1', 'PBI-3'], ['PBI-2']]);
+  assert.deepEqual(e.grupos.map((g) => g.abertos), [2, 1]);
+  assert.deepEqual(e.linhas.map((l) => l.epic), ['EPIC-B', 'EPIC-A', 'EPIC-B']);
+});
+
+test('um-epic-nao-agrupa: 1 Epic, ou 1 Epic + feitos de outro Epic, ou só "sem Epic" ⇒ grupos vazio', () => {
+  assert.deepEqual(comEpics([cardEpic('PBI-1', 'Em execução', 'EPIC-A'), cardEpic('PBI-2', 'Backlog', 'EPIC-A')]).grupos, []);
+  assert.deepEqual(comEpics([cardEpic('PBI-1', 'Em execução', 'EPIC-A'), cardEpic('PBI-2', 'Concluído', 'EPIC-B')]).grupos, []);
+  assert.deepEqual(comEpics([cardEpic('PBI-1', 'Em execução', null), cardEpic('PBI-2', 'Backlog', null)]).grupos, []);
+  assert.deepEqual(comEpics([]).grupos, []);
+  assert.equal(comEpics([cardEpic('PBI-1', 'Em execução', 'EPIC-A')]).linhas[0].epic, 'EPIC-A');
+});
+
+test('vinculo-mcp-nao-agrupa: vínculo MCP, ausente ou inválido ⇒ sem grupos e epic null, mesmo com a chave no card', () => {
+  const cards = [cardEpic('PBI-1', 'Em execução', 'EPIC-A'), cardEpic('PBI-2', 'Em execução', 'EPIC-B')];
+  for (const vinculo of [{ tipo: 'mcp', nome: 'epic' }, undefined, null, 'frontmatter', { nome: 'epic' }]) {
+    const e = projetarProjeto(soCards(...cards), { ...OPC, vinculo } as Parameters<typeof projetarProjeto>[1]);
+    assert.deepEqual(e.grupos, [], JSON.stringify(vinculo));
+    assert.deepEqual(e.linhas.map((l) => l.epic), [null, null], JSON.stringify(vinculo));
+  }
+  assert.equal(comEpics(cards).grupos.length, 2);
+});
+
+test('epic-chave-da-config: `nome` do vínculo escolhe a chave; nome ausente ou inválido ⇒ "epic"; a chave "epic" some quando nome é outro', () => {
+  const cards = [cardEpic('PBI-1', 'Em execução', 'E-1', 'pai'), cardEpic('PBI-2', 'Em execução', 'E-2', 'pai')];
+  const e = comEpics(cards, { vinculo: { tipo: 'frontmatter', nome: 'pai' } });
+  assert.deepEqual(e.grupos.map((g) => g.epic), ['E-1', 'E-2']);
+  assert.deepEqual(comEpics(cards).grupos, []); // nome padrão "epic": os cards usam "pai"
+  const pad = [cardEpic('PBI-1', 'Em execução', 'E-1'), cardEpic('PBI-2', 'Em execução', 'E-2')];
+  for (const nome of [undefined, '', 7, '9x', 'a b']) {
+    assert.equal(comEpics(pad, { vinculo: { tipo: 'frontmatter', nome } }).grupos.length, 2, String(nome));
+  }
+});
+
+test('sem-epic-por-ultimo: o grupo "sem Epic" fica no fim, mesmo com o menor ID; títulos vêm de titulosEpic', () => {
+  const e = comEpics([cardEpic('PBI-1', 'Em execução', null), cardEpic('PBI-2', 'Em execução', 'EPIC-1'), cardEpic('PBI-3', 'Backlog', 'EPIC-2')],
+    { titulosEpic: { 'EPIC-1': 'Primeiro' } });
+  assert.deepEqual(e.grupos.map((g) => g.epic), ['EPIC-1', 'EPIC-2', null]);
+  assert.deepEqual(e.grupos.map((g) => g.titulo), ['Primeiro', null, null]);
+  assert.deepEqual(idsDe(e), [['PBI-2'], ['PBI-3'], ['PBI-1']]);
+});
+
+test('feitos-contados-para-recolher: o núcleo mantém a linha do feito (feito true) e conta; feito fica fora dos grupos', () => {
+  const e = comEpics([cardEpic('PBI-1', 'Concluído', 'EPIC-A'), cardEpic('PBI-2', 'Em execução', 'EPIC-A'), cardEpic('PBI-3', 'Concluído', null), cardEpic('PBI-4', 'Backlog', 'EPIC-B')]);
+  assert.equal(e.totais.feitos, 2);
+  assert.deepEqual(e.linhas.map((l) => [l.id, l.feito]), [['PBI-1', true], ['PBI-2', false], ['PBI-3', true], ['PBI-4', false]]);
+  assert.deepEqual(idsDe(e), [['PBI-2'], ['PBI-4']]);
+  assert.deepEqual(e.grupos.map((g) => g.abertos), [1, 1]);
+  assert.equal(projetoCompleto().totais.feitos, 1);
+});
+
+test('feito-pela-config: config Jira "Done" e card "Concluído": os dois feitos, chave ausente; status aberto segue aberto', () => {
+  const statusFl1 = { preparado: 'To Do', em_execucao: 'In Progress', concluido: 'Done' };
+  const e = projetarProjeto(soCards(cartao('PBI-1', 'Done'), cartao('PBI-2', 'Concluído'), cartao('PBI-3', 'In Progress'), cartao('PBI-4', 'done '), cartao('PBI-5', null)), { ...OPC, statusFl1 });
+  assert.deepEqual(e.linhas.map((l) => [l.id, l.feito]), [['PBI-1', true], ['PBI-2', true], ['PBI-3', false], ['PBI-4', true], ['PBI-5', false]]);
+  assert.equal(e.totais.feitos, 3);
+  assert.equal(e.totais.opcoes, 0);
+  const sem = projetarProjeto(soCards(cartao('PBI-1', 'Done'), cartao('PBI-2', 'Concluído')), OPC);
+  assert.deepEqual(sem.linhas.map((l) => l.feito), [false, true]); // sem config, só o fixo
+});
+
+test('ehfeito: concluido da config OU o fixo, sem acento nem caixa; nulo, vazio e config ilegível não são feito', () => {
+  assert.equal(ehFeito('Done', { concluido: 'Done' }), true);
+  assert.equal(ehFeito('DONE ', { concluido: 'done' }), true);
+  assert.equal(ehFeito('Concluído', { concluido: 'Done' }), true);
+  assert.equal(ehFeito('concluido', undefined), true);
+  assert.equal(ehFeito('Concluído', null), true);
+  assert.equal(ehFeito('Done', undefined), false);
+  assert.equal(ehFeito('Done', { concluido: 7 }), false);
+  assert.equal(ehFeito('Done', { concluido: '' }), false);
+  assert.equal(ehFeito('', { concluido: '' }), false);
+  assert.equal(ehFeito(null, { concluido: 'Done' }), false);
+  assert.equal(ehFeito('In Progress', { concluido: 'Done' }), false);
+  assert.equal(ehFeito('Done', ['Done']), false);
+});
+
+test('feito-por-encerrada-com-config: entrega.encerrada segue fazendo o PBI feito com statusFl1 presente', () => {
+  const ev = (seq: number, tipo: string): Evento => evTask(seq, tipo, { entrega: 'PBI-1' });
+  const e = projetarProjeto([{ caminho: '/r', cards: [cartao('PBI-1', 'In Progress')], entregas: [{ id: 'PBI-1', plano: null, eventos: [ev(1, 'entrega.encerrada')] }] }],
+    { ...OPC, statusFl1: { concluido: 'Done' } });
+  assert.equal(e.linhas[0].feito, true);
+});
+
+test('epic-e-feito-entre-arvores: vale o card mais novo (Epic e status); diário ilegível na secundária não desfaz o feito da principal', () => {
+  const c = (id: string, status: string, epic: string, em: string): { arquivo: string; texto: string; planoMd: string | null } =>
+    ({ arquivo: `${id}.md`, texto: `---\nid: "${id}"\nstatus: ${status}\nepic: ${epic}\natualizadoEm: "${em}"\n---\n# S\n`, planoMd: null });
+  const e = projetarProjeto([
+    { caminho: '/a', cards: [c('PBI-1', 'Em execução', 'EPIC-A', '2026-11-01'), c('PBI-2', 'Em execução', 'EPIC-A', '2026-11-01')], entregas: [] },
+    { caminho: '/b', cards: [c('PBI-1', 'Em execução', 'EPIC-B', '2026-11-05')], entregas: [] },
+  ], { ...OPC, vinculo: FM });
+  assert.deepEqual(e.linhas.map((l) => l.epic), ['EPIC-B', 'EPIC-A']);
+  assert.deepEqual(idsDe(e), [['PBI-1'], ['PBI-2']]);
+  const enc: Evento = evTask(1, 'entrega.encerrada', { entrega: 'PBI-3' });
+  const f = projetarProjeto([
+    { caminho: '/a', cards: [cartao('PBI-3', 'Em execução')], entregas: [{ id: 'PBI-3', plano: null, eventos: [enc] }] },
+    { caminho: '/b', cards: [], entregas: [{ id: 'PBI-3', plano: null, eventos: null }] },
+  ], OPC);
+  assert.equal(f.linhas[0].feito, true);
+  assert.equal(f.totais.feitos, 1);
+  assert.ok(f.avisos.some((a) => /PBI-3.*ilegível.*\/b/.test(a)));
 });
