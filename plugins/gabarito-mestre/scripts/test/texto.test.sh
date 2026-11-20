@@ -275,7 +275,7 @@ check "SKILL.md conformidade: fio condutor · contenda (R21) · Epic: PBIs" "gre
 echo "── pacote — versões, sem hooks em plugin.json, sem 77 testes, nomes da 1.0.1"
 v1=$(node -p "require('$P/.claude-plugin/plugin.json').version" 2>/dev/null)
 v3=$(node -p "require('$P/gates/package.json').version" 2>/dev/null)
-check "version plugin == gates == 2.1.0 (achei '$v1' '$v3')" '[ "$v1" = "$v3" ] && [ "$v1" = "2.1.0" ]' "versões divergem ou ≠ 2.1.0"
+check "version plugin == gates == 2.2.0 (achei '$v1' '$v3')" '[ "$v1" = "$v3" ] && [ "$v1" = "2.2.0" ]' "versões divergem ou ≠ 2.2.0"
 # GM-15 T28: a virada 2.1.0 no CHANGELOG (seção estável com data; alpha.1 com a data medida da tag, 2026-11-15)
 check "CHANGELOG: [2.1.0] com data, sem [Unreleased], alpha.1 em 2026-11-15" 'grep -qE "^## \\[2\\.1\\.0\\] — [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$ROOT/CHANGELOG.md" && ! grep -q "^## \\[Unreleased\\]" "$ROOT/CHANGELOG.md" && grep -qF "## [2.1.0-alpha.1] — 2026-11-15" "$ROOT/CHANGELOG.md"' "CHANGELOG sem a seção [2.1.0] datada, com [Unreleased] ou com a data errada da alpha.1"
 # GM-15 T28 r1 MINOR-4: a data da [2.1.0] é data válida do calendário e não futura

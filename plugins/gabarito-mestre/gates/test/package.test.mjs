@@ -43,8 +43,8 @@ describe('ehRepoDoPlugin — cópia instalada sob um pai com marketplace.json al
 });
 
 describe('gates/package.json 1.1.0', () => {
-  test('version é 2.1.0 (a estável; tag e release só o dono publica, next ⇒ main)', () => {
-    assert.equal(pkg.version, '2.1.0');
+  test('version é 2.2.0 (a estável; tag e release só o dono publica, next ⇒ main)', () => {
+    assert.equal(pkg.version, '2.2.0');
   });
   test('versao-formato: plugin.json e gates dizem a mesma versão SemVer, com no máximo o sufixo alpha.N', { skip: noPlugin }, () => {
     for (const v of [ler(PLUGIN_JSON).version, pkg.version]) assert.match(v, /^\d+\.\d+\.\d+(-alpha\.\d+)?$/, `versão fora do formato: ${v}`);

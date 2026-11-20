@@ -3,6 +3,37 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/). Versionamento: [SemVer](https://semver.org/lang/pt-BR/).
 Usuários do plugin só recebem atualização quando `version` muda.
 
+## [2.2.0] - 2026-11-20
+
+Painel de projeto mais curto e doctor que confere o quadro contra o git (GM-16, versão minor, D-G24). Tag, release e o PR `next` para `main` só o dono publica. A 2.1.1 segue reservada ao encerramento da GM-14 (D-G20, D-G21).
+
+### Muda para quem já usa
+
+- **PBIs feitos saem do desenho.** No painel de projeto, as linhas dos PBIs feitos deixam de ser desenhadas e entra uma linha só, "✓ N feitos" (singular "✓ 1 feito"), logo abaixo dos totais. Vale por padrão, sem config. Repositório sem PBI feito desenha as mesmas linhas de antes. Os dados não mudam: o JSON da visão de projeto segue trazendo a linha de cada feito, só o desenho as recolhe.
+- **O `concluido` de `fluxo.status.FL1` conta como feito.** Antes só o status "concluido" fixo valia; agora o valor que o seu `fluxo.status.FL1` dá a `concluido` (por exemplo "Done") também. O `concluido` fixo continua valendo, e a entrega encerrada também marca o PBI como feito.
+- **Nenhum card some do painel sem a chave nova.** Com o padrão, todo card continua sendo uma linha (ou entra em "✓ N feitos" se estiver feito). Só o recolhimento dos feitos muda o desenho.
+- **Como ligar as opções.** Quem quer que o card com status fora do quadro FL1 (por exemplo "Backlog") deixe de contar como trabalho põe, no `harness.config.json`:
+
+  ```json
+  { "painel": { "projeto": { "opcoesComoContagem": true } } }
+  ```
+
+  Só o valor `true` liga; ausente, `false` ou qualquer outro valor deixa desligada. Ligada, esse card não vira linha, não entra nos totais, na porcentagem nem na previsão, e aparece como "N opções" na linha de totais (só quando N é maior que 0). Card sem status nunca é opção, e card cuja entrega já tem plano ou eventos de task continua linha, porque o loop está trabalhando nele. O onboarding não grava essa chave: é escolha de quem usa, à mão.
+- **Dois avisos novos no doctor, sem mudar o nível.** `fluxo-status-fl1` lista cards do quadro FL1 com status que não é coluna, e `pbi-mergeado-aberto` lista PBI ainda aberto no quadro que já tem commit de PBI no 1º pai da base da entrega (título `tipo(ID): ...`, com `tipo` entre os que levam escopo de PBI, e o ID inteiro igual). Os dois são avisos: não mudam o nível de adoção nem o exit code do CI. Sem git, sem a base da entrega ou com card ilegível, dizem "não conferido", nunca "ok".
+
+### Adicionado
+
+- **O plano `.md` conta as tasks nos cabeçalhos usuais.** `##` ou `###` com `Task N` ou `TN` (e id com 1 letra minúscula, como `0b`), seguido de `:`, `—`, `–` ou ` - `, fora de bloco cercado; título com ponto (`Task 1.1`), `####` e texto livre entre o id e o separador continuam sem contar.
+- **Projeto agrupado por Epic.** Com `fluxo.vinculoPbiEpic.tipo` igual a `frontmatter`, os PBIs abertos são agrupados pelo Epic do frontmatter do card, com cabeçalho `EPIC-n título · a abertos`; só quando os abertos estão em 2 Epics ou mais.
+- **Painel estreito e baixo.** Abaixo de 72 colunas a linha de totais perde primeiro "sem plano", depois "opções"; abaixo de 44 colunas fica `PBIs f/t · pct`. Com pouca altura saem primeiro as linhas de PBI, depois os feitos e cabeçalhos, por último os totais.
+
+### Limites declarados
+
+- O vínculo PBI para Epic por MCP não agrupa: só o vínculo por frontmatter agrupa (a leitura por MCP fica sem agrupamento).
+- A pendência P1 (opção sem plano entrar ou não na previsão estimada) está resolvida (D-G23): com a chave ligada, a opção fica fora da previsão medida e da estimada; com a chave desligada vale a regra de antes.
+- O item 5 da D-G22 segue na GM-17.
+- A chave `painel.projeto.opcoesComoContagem` não tem pergunta no onboarding; fica para o 1º pedido de usuário ou a 2ª entrega que a ligar à mão.
+
 ## [2.1.0] — 2026-11-17
 
 Versão estável da 2.1.0 (GM-15, fluidez do loop e clareza para quem usa). Tag e release só o dono publica (`next` para `main`). Data da alpha.1 conferida pela data do commit da tag `gabarito-mestre--v2.1.0-alpha.1` (2026-11-15).
