@@ -402,6 +402,15 @@ test('opcao-nao-vira-linha: chave ligada, status "Backlog" ⇒ 0 linhas, opcoes 
   assert.equal(duas.totais.pbis, 1);
 });
 
+test('diario-ilegivel-nao-esconde-opcao: chave ligada, {plano:null, eventos:null} ⇒ o card segue linha, com aviso de diário ilegível', () => {
+  const arv: ArvoreLida[] = [{ caminho: '/r', cards: [cartao('PBI-1', 'Backlog')], entregas: [{ id: 'PBI-1', plano: null, eventos: null }] }];
+  const e = projetarProjeto(arv, { ...OPC, ...LIGA });
+  assert.deepEqual(e.linhas.map((l) => l.id), ['PBI-1']);
+  assert.equal(e.totais.opcoes, 0);
+  assert.equal(e.totais.pbis, 1);
+  assert.ok(e.avisos.some((a) => /PBI-1.*diário ilegível/.test(a)), JSON.stringify(e.avisos));
+});
+
 test('chave-desligada-backlog-e-linha: mesmo card, chave ausente ou false ⇒ 1 linha, opcoes 0', () => {
   for (const opc of [OPC, { ...OPC, opcoesComoContagem: false }]) {
     const e = projetarProjeto(soCards(cartao('PBI-1', 'Backlog')), opc);
