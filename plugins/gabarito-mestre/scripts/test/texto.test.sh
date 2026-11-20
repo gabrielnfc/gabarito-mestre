@@ -281,6 +281,8 @@ check "CHANGELOG: [2.1.0] com data, sem [Unreleased], alpha.1 em 2026-11-15" 'gr
 # GM-16 T8 r1 MINOR-2: a [2.2.0] é datada (mesmo separador das outras seções) e traz a subseção "Muda para quem já usa" dentro dela
 check "CHANGELOG: [2.2.0] com data (travessão, como as demais)" 'grep -qE "^## \\[2\\.2\\.0\\] — [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$ROOT/CHANGELOG.md"' "seção [2.2.0] ausente, sem data ou com separador diferente"
 check "CHANGELOG: [2.2.0] traz '### Muda para quem já usa'" '[ "$(sed -n "/^## \\[2\\.2\\.0\\]/,/^## \\[2\\.1\\.0\\]/p" "$ROOT/CHANGELOG.md" | grep -c "^### Muda para quem já usa$")" -eq 1 ]' "subseção ausente na [2.2.0]"
+# GM-16 T8 c2 r1 MINOR-3: "Como ligar" é item de "Muda para quem já usa" (não de outra subseção), com o bloco JSON da chave
+check "CHANGELOG: 'Muda para quem já usa' da [2.2.0] traz o item 'Como ligar' com opcoesComoContagem" '[ "$(sed -n "/^## \\[2\\.2\\.0\\]/,/^## \\[2\\.1\\.0\\]/p" "$ROOT/CHANGELOG.md" | sed -n "/^### Muda para quem já usa$/,/^### Adicionado$/p" | grep -c "^- \\*\\*Como ligar")" -eq 1 ] && sed -n "/^## \\[2\\.2\\.0\\]/,/^## \\[2\\.1\\.0\\]/p" "$ROOT/CHANGELOG.md" | sed -n "/^### Muda para quem já usa$/,/^### Adicionado$/p" | grep -q "opcoesComoContagem\": true"' "item 'Como ligar' ausente em 'Muda para quem já usa' da [2.2.0]"
 HOJE=$(date -u +%Y-%m-%d)
 # GM-16 T8 r2 MINOR-2: a data da [2.2.0] também é data válida do calendário e não futura (igual à [2.1.0])
 D220=$(grep -E '^## \[2\.2\.0\] — ' "$ROOT/CHANGELOG.md" | sed -E 's/.*— //')
