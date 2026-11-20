@@ -351,7 +351,7 @@ Uma coluna só existe quando representa uma espera ou uma decisão real, e cada 
 - Os PBIs feitos saem da lista e viram uma linha só, "✓ N feitos". (a) `gates/src/painel-esquadrao.ts:429-433`.
 - Os PBIs abertos se agrupam por Epic só quando há 2 ou mais grupos (conta o grupo "sem Epic") e só com `fluxo.vinculoPbiEpic.tipo: frontmatter`; com outro vínculo, não há agrupamento. (a) `gates/src/projeto.ts:229-235` e `:349-354`; `gates/scripts/painel.mjs:380-382`; `gates/src/painel-esquadrao.ts:434`.
 - Com `painel.projeto.opcoesComoContagem: true` (padrão: desligado; só o booleano `true` liga), um card com status fora das colunas do quadro é **opção**: não vira linha do projeto e aparece no total como "N opções". (a) `gates/src/projeto.ts:241` e `:274`; `gates/scripts/painel.mjs:382`; `gates/src/painel-esquadrao.ts:467-468`.
-- A medição vence o card: se o PBI já tem `plano.json` ou evento de task na entrega, ele continua sendo linha, mesmo com status fora das colunas. (a) `gates/src/projeto.ts:272-274`.
+- A medição vence o card: se o PBI já tem `plano.json` ou evento de task na entrega, ele continua sendo linha, mesmo com status fora das colunas; diário ilegível também conta como medição. (a) `gates/src/projeto.ts:272-274` (diário ilegível: `:273`).
 - O aviso do doctor sobre esses cards vale SEMPRE, com a chave ligada ou desligada; desligada, ele só acrescenta a dica de ligar a chave. (a) `gates/scripts/harness-doctor.mjs:921-925`.
 
 ### 4.4 As cinco regras de movimentação
