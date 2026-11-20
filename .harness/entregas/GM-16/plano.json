@@ -65,7 +65,7 @@
         "REQ-PRJ-3"
       ],
       "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/projeto.test.ts",
-      "mutacoes": ".harness/entregas/GM-16/mutacoes/T3.json"
+      "mutacoes": ".superpowers/sdd/2026-11-19-gm16/mutacoes/T3.json"
     },
     {
       "id": "T4",
@@ -84,7 +84,7 @@
         "REQ-PRJ-3"
       ],
       "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/painel-projeto.test.ts",
-      "mutacoes": ".harness/entregas/GM-16/mutacoes/T4.json"
+      "mutacoes": ".superpowers/sdd/2026-11-19-gm16/mutacoes/T4.json"
     },
     {
       "id": "T5",
@@ -102,7 +102,7 @@
         "REQ-DCT-1"
       ],
       "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/harness-doctor-fluxo.test.mjs",
-      "mutacoes": ".harness/entregas/GM-16/mutacoes/T5.json"
+      "mutacoes": ".superpowers/sdd/2026-11-19-gm16/mutacoes/T5.json"
     },
     {
       "id": "T6",

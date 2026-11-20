@@ -1,0 +1,162 @@
+[
+ {
+  "nome": "M2a-opcao-soma-em-pbis",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "pbis: linhas.length, opcoes: nOpcoes,",
+  "para": "pbis: linhas.length + nOpcoes, opcoes: nOpcoes,",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2b-ignora-fluxo-status-FL1",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "if (typeof statusCfg === 'object' && statusCfg !== null && !Array.isArray(statusCfg)) {",
+  "para": "if (false) {",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2c1-opcao-ignora-evento-de-task",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": " || eventos.some((ev) => TIPOS_DE_TASK.includes(ev.tipo));",
+  "para": ";",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2c2-opcao-ignora-plano-json",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "const medido = ents.some((e) => e.plano !== null) || ",
+  "para": "const medido = ",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2c3-medicao-nao-vence",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "&& !ehColunaFl1(card.status, opcoes.statusFl1) && !medido)",
+  "para": "&& !ehColunaFl1(card.status, opcoes.statusFl1))",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2e-card-sem-status-vira-opcao",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "card !== null && card.status !== null && !ehColunaFl1(card.status, opcoes.statusFl1)",
+  "para": "card !== null && !ehColunaFl1(card.status ?? '', opcoes.statusFl1)",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2f-opcao-vira-linha-na-estimada",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "{ nOpcoes++; continue; }",
+  "para": "{ nOpcoes++; }",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2g1-chave-truthy-liga",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "opcoes.opcoesComoContagem === true;",
+  "para": "!!opcoes.opcoesComoContagem;",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2g2-chave-frouxa-liga",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "opcoes.opcoesComoContagem === true;",
+  "para": "opcoes.opcoesComoContagem == true;",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2g3-chave-sempre-ligada",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "opcoes.opcoesComoContagem === true;",
+  "para": "opcoes.opcoesComoContagem === true || true;",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2h-predicado-invertido",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "!ehColunaFl1(card.status, opcoes.statusFl1) && !medido",
+  "para": "ehColunaFl1(card.status, opcoes.statusFl1) && !medido",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2i-sem-config-sem-padrao",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "return cols.size > 0 ? cols : new Set(COLUNAS_FL1_PADRAO.map(semAcento));",
+  "para": "return cols;",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2j-comparacao-com-acento",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "return colunasFl1(statusCfg).has(semAcento(status));",
+  "para": "return colunasFl1(statusCfg).has(status.trim());",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2k-so-valores-sem-chaves",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "      cols.add(semAcento(k));\n",
+  "para": "",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2l-so-chaves-sem-valores",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "      cols.add(semAcento(v));\n",
+  "para": "",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2m-conta-opcao-sempre-zero",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "opcoes: nOpcoes,",
+  "para": "opcoes: 0,",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2f2-opcao-so-na-estimada",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "previsao: previsaoDoProjeto(linhas, diarios, restantes, opcoes.agoraMs, opcoes.fuso),",
+  "para": "previsao: previsaoDoProjeto([...linhas, ...Array.from({ length: nOpcoes }, () => ({ semPlano: true, feito: false, tasks: null }) as unknown as LinhaProjeto)], diarios, restantes, opcoes.agoraMs, opcoes.fuso),",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2n-medido-por-qualquer-evento",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": " || eventos.some((ev) => TIPOS_DE_TASK.includes(ev.tipo));",
+  "para": " || eventos.length > 0;",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2o-opcao-conta-em-foraDaConta",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": "  const foraDaConta = linhas.filter((l) => l.semPlano).length;",
+  "para": "  const foraDaConta = linhas.filter((l) => l.semPlano).length + nOpcoes;",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ },
+ {
+  "nome": "M2p-diario-ilegivel-conta-como-nao-medido",
+  "arquivo": "plugins/gabarito-mestre/gates/src/projeto.ts",
+  "de": " || ents.some((e) => e.eventos === null)",
+  "para": "",
+  "teste": "node --test test/projeto.test.ts",
+  "cwd": "plugins/gabarito-mestre/gates"
+ }
+]
