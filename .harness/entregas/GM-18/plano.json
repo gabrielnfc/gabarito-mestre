@@ -64,6 +64,25 @@
         "REQ-ENC-2",
         "REQ-ENC-3"
       ]
+    },
+    {
+      "id": "T4",
+      "titulo": "Skills conferem a entrega nomeada",
+      "deps": [
+        "T3"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/skills/cortar/SKILL.md",
+        "plugins/gabarito-mestre/skills/adiar/SKILL.md",
+        "plugins/gabarito-mestre/skills/reabrir/SKILL.md",
+        "plugins/gabarito-mestre/skills/encerrar/SKILL.md",
+        "plugins/gabarito-mestre/scripts/test/texto.test.sh",
+        "CHANGELOG.md"
+      ],
+      "reqs": [
+        "REQ-ENC-2",
+        "REQ-ENC-3"
+      ]
     }
   ]
 }
