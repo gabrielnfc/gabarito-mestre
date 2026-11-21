@@ -15,5 +15,5 @@ node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/painel.mjs" estado
 ```
 
 1. Rode o comando acima e relate ao dono o que ele mostra: a entrega deixa de constar como entregue e volta a aceitar task, sessão e `parar`.
-2. Um novo encerramento só vem de um PR novo, mergeado na `main` depois da reabertura; o PR que já encerrou não encerra de novo.
+2. Um novo encerramento automático só vem de um PR novo, mergeado na `main` depois da reabertura; o PR que já encerrou não encerra de novo. O dono pode encerrar de novo, com o mesmo PR, por `/gabarito-mestre:encerrar <entrega> <PR>`.
 3. Não grave nem edite o diário e não tente repetir a reabertura por outro meio: ela é só do comando do dono.

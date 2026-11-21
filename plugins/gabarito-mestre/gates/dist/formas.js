@@ -62,8 +62,10 @@ const OPCAO_MAX = 60;
 const TIPOS_NOTA                    = ['ideia', 'desvio', 'assunto', 'duvida', 'pendencia'];
 const FONTES_FATO                    = ['git', 'gh', 'arquivo', 'mod'];
 const ESTADOS_PR                    = ['aberto', 'mergeado', 'fechado'];
-/** GM-15: como o PR foi ligado à entrega (head da branch ou título do PR). */
-const VIAS_ENCERRAMENTO                    = ['head', 'titulo'];
+/** GM-15: como o PR foi ligado à entrega (head da branch ou título do PR): o `via` do `fato.medido pr`. */
+export const VIAS_PR                    = ['head', 'titulo'];
+/** GM-18 (DS1): o `via` de `entrega.encerrada` acrescenta `dono` (comando humano); `fato.medido pr` segue só com `VIAS_PR`. */
+export const VIAS_ENCERRAMENTO                    = [...VIAS_PR, 'dono'];
 const SEMVER_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const MOTIVO_FORA_MAX = 160;
 const CONFIRMACAO_FONTE_RE = /^(.+):([1-9]\d{0,8})$/;
@@ -373,7 +375,7 @@ const FORMAS_FATO                                                               
   ['pr', {
     numero: inteiroPos, estado: (o, n) => exigirEnum(o, n, ESTADOS_PR), branch: (o, n) => textoLinha(o, n),
     base: (o, n) => (campo(o, n) === undefined ? null : textoLinha(o, n)),
-    via: (o, n) => (campo(o, n) === undefined ? null : exigirEnum(o, n, VIAS_ENCERRAMENTO)),
+    via: (o, n) => (campo(o, n) === undefined ? null : exigirEnum(o, n, VIAS_PR)),
     // GM-15 T34 (r.13p): a pré-versão semver citada no título ou no head do PR (o que a guarda lê para não dar a entrega como publicada pela virada alpha)
     pre_versao: (o, n) => (campo(o, n) === undefined ? null : textoLinha(o, n, 64)),
   }],

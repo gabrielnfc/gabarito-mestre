@@ -275,7 +275,7 @@ check "SKILL.md conformidade: fio condutor · contenda (R21) · Epic: PBIs" "gre
 echo "── pacote — versões, sem hooks em plugin.json, sem 77 testes, nomes da 1.0.1"
 v1=$(node -p "require('$P/.claude-plugin/plugin.json').version" 2>/dev/null)
 v3=$(node -p "require('$P/gates/package.json').version" 2>/dev/null)
-check "version plugin == gates == 2.2.0 (achei '$v1' '$v3')" '[ "$v1" = "$v3" ] && [ "$v1" = "2.2.0" ]' "versões divergem ou ≠ 2.2.0"
+check "version plugin == gates == 2.2.1 (achei '$v1' '$v3')" '[ "$v1" = "$v3" ] && [ "$v1" = "2.2.1" ]' "versões divergem ou ≠ 2.2.1"
 # GM-15 T28: a virada 2.1.0 no CHANGELOG (seção estável com data; alpha.1 com a data medida da tag, 2026-11-15)
 check "CHANGELOG: [2.1.0] com data, sem [Unreleased], alpha.1 em 2026-11-15" 'grep -qE "^## \\[2\\.1\\.0\\] — [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$ROOT/CHANGELOG.md" && ! grep -q "^## \\[Unreleased\\]" "$ROOT/CHANGELOG.md" && grep -qF "## [2.1.0-alpha.1] — 2026-11-15" "$ROOT/CHANGELOG.md"' "CHANGELOG sem a seção [2.1.0] datada, com [Unreleased] ou com a data errada da alpha.1"
 # GM-16 T8 r1 MINOR-2: a [2.2.0] é datada (mesmo separador das outras seções) e traz a subseção "Muda para quem já usa" dentro dela
@@ -288,6 +288,16 @@ HOJE=$(date -u +%Y-%m-%d)
 D220=$(grep -E '^## \[2\.2\.0\] — ' "$ROOT/CHANGELOG.md" | sed -E 's/.*— //')
 RT220=$(date -j -f %Y-%m-%d "$D220" +%Y-%m-%d 2>/dev/null || date -d "$D220" +%Y-%m-%d 2>/dev/null)
 check "CHANGELOG: data da [2.2.0] é válida e não futura (achei '$D220')" '[ "'"$RT220"'" = "'"$D220"'" ] && ! [ "'"$D220"'" \> "'"$HOJE"'" ]' "data inválida ou futura"
+# GM-18 T3: a [2.2.1] é datada, traz "Adicionado" com o comando encerrar e "Limites declarados" com PR obrigatório, e a data é válida e não futura
+check "CHANGELOG: [2.2.1] com data (travessão) e sem [Unreleased]" 'grep -qE "^## \\[2\\.2\\.1\\] — [0-9]{4}-[0-9]{2}-[0-9]{2}$" "$ROOT/CHANGELOG.md" && ! grep -q "^## \\[Unreleased\\]" "$ROOT/CHANGELOG.md"' "seção [2.2.1] ausente, sem data, com separador diferente ou com [Unreleased]"
+check "CHANGELOG: [2.2.1] vem acima da [2.2.0]" '[ "$(grep -n "^## \\[2\\.2\\.1\\]" "$ROOT/CHANGELOG.md" | cut -d: -f1)" -lt "$(grep -n "^## \\[2\\.2\\.0\\]" "$ROOT/CHANGELOG.md" | cut -d: -f1)" ]' "[2.2.1] abaixo da [2.2.0] ou ausente"
+check "CHANGELOG: [2.2.1] 'Adicionado' traz o comando encerrar com via dono e a entrega em cortar/adiar/reabrir" 'sed -n "/^## \\[2\\.2\\.1\\]/,/^## \\[2\\.2\\.0\\]/p" "$ROOT/CHANGELOG.md" | sed -n "/^### Adicionado$/,/^### Limites declarados$/p" | grep -qF "/gabarito-mestre:encerrar <entrega> <PR> [<versão>]" && sed -n "/^## \\[2\\.2\\.1\\]/,/^## \\[2\\.2\\.0\\]/p" "$ROOT/CHANGELOG.md" | sed -n "/^### Adicionado$/,/^### Limites declarados$/p" | grep -qF "via: '"'"'dono'"'"'" && sed -n "/^## \\[2\\.2\\.1\\]/,/^## \\[2\\.2\\.0\\]/p" "$ROOT/CHANGELOG.md" | grep -qF "[<entrega>]"' "Adicionado da [2.2.1] sem o comando encerrar, o via dono ou o [<entrega>]"
+check "CHANGELOG: [2.2.1] 'Limites declarados' traz PR obrigatório e release só pelo campo versao" 'sed -n "/^## \\[2\\.2\\.1\\]/,/^## \\[2\\.2\\.0\\]/p" "$ROOT/CHANGELOG.md" | sed -n "/^### Limites declarados$/,\$p" | grep -q "PR é obrigatório" && sed -n "/^## \\[2\\.2\\.1\\]/,/^## \\[2\\.2\\.0\\]/p" "$ROOT/CHANGELOG.md" | sed -n "/^### Limites declarados$/,\$p" | grep -qF "campo \`versao\`"' "Limites declarados da [2.2.1] sem PR obrigatório ou sem o campo versao"
+check "CHANGELOG: [2.2.1] 'Limites declarados' traz o gh obrigatório no momento do comando e o PR mergeado" 'sed -n "/^## \\[2\\.2\\.1\\]/,/^## \\[2\\.2\\.0\\]/p" "$ROOT/CHANGELOG.md" | sed -n "/^### Limites declarados$/,\$p" | grep -qF "exige \`gh\` no momento em que roda" && sed -n "/^## \\[2\\.2\\.1\\]/,/^## \\[2\\.2\\.0\\]/p" "$ROOT/CHANGELOG.md" | sed -n "/^### Limites declarados$/,\$p" | grep -qF "só \"PR mergeado\""' "limite do gh ausente na [2.2.1]"
+check "CHANGELOG: [2.2.1] 'Limites declarados' traz task com id de entrega e a regra própria da visão de projeto" 'sed -n "/^## \\[2\\.2\\.1\\]/,/^## \\[2\\.2\\.0\\]/p" "$ROOT/CHANGELOG.md" | sed -n "/^### Limites declarados$/,\$p" | grep -qF "Task com id no formato de entrega exige a entrega escrita" && sed -n "/^## \\[2\\.2\\.1\\]/,/^## \\[2\\.2\\.0\\]/p" "$ROOT/CHANGELOG.md" | sed -n "/^### Limites declarados$/,\$p" | grep -qF "A visão de projeto tem regra própria de encerrada"' "limite de task com id de entrega ou da visão de projeto ausente na [2.2.1]"
+D221=$(grep -E '^## \[2\.2\.1\] — ' "$ROOT/CHANGELOG.md" | sed -E 's/.*— //')
+RT221=$(date -j -f %Y-%m-%d "$D221" +%Y-%m-%d 2>/dev/null || date -d "$D221" +%Y-%m-%d 2>/dev/null)
+check "CHANGELOG: data da [2.2.1] é válida e não futura (achei '$D221')" '[ "'"$RT221"'" = "'"$D221"'" ] && ! [ "'"$D221"'" \> "'"$HOJE"'" ]' "data inválida ou futura"
 # GM-15 T28 r1 MINOR-4: a data da [2.1.0] é data válida do calendário e não futura
 D210=$(grep -E '^## \[2\.1\.0\] — ' "$ROOT/CHANGELOG.md" | sed -E 's/.*— //')
 HOJE=$(date -u +%Y-%m-%d)
