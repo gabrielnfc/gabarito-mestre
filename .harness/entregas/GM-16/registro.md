@@ -8,7 +8,8 @@
 - loop:18 · emenda #4 aplicada · spec docs/superpowers/specs/2026-11-19-gm16-painel-projeto-design.md · sha256 ace005cd0c237a99110bdf976a57c96bd823068cb10c12c7ccd666abba3bc0f7 ⇒ 6038338aa2ff3546cfbf4fe30bd884ad354f6907907a8361aa29047dcaefb7dd
 - loop:22 · emenda #5 aplicada · spec docs/superpowers/specs/2026-11-19-gm16-painel-projeto-design.md · sha256 6038338aa2ff3546cfbf4fe30bd884ad354f6907907a8361aa29047dcaefb7dd ⇒ 793eebf09fd47cadfdce7638c9d0af2317371cf1555f1053e4646e7ac776bb7e
 - loop:56 · emenda #6 aplicada · spec docs/superpowers/specs/2026-11-19-gm16-painel-projeto-design.md · sha256 793eebf09fd47cadfdce7638c9d0af2317371cf1555f1053e4646e7ac776bb7e ⇒ e6aaaf7956793b8a648727c13832ae45f0241cc1482f50c9177794e1f29f3007
-- sha256 atual da spec: e6aaaf7956793b8a648727c13832ae45f0241cc1482f50c9177794e1f29f3007 (confere com a aprovação + 5 emendas aplicadas)
+- loop:153 · emenda #7 aplicada · spec docs/superpowers/specs/2026-11-19-gm16-painel-projeto-design.md · sha256 e6aaaf7956793b8a648727c13832ae45f0241cc1482f50c9177794e1f29f3007 ⇒ 00d165400343a1afdbac1d3b68b69c21e7f8b87b4dcd90c53cd01d8ebaeee8a0
+- sha256 atual da spec: 00d165400343a1afdbac1d3b68b69c21e7f8b87b4dcd90c53cd01d8ebaeee8a0 (confere com a aprovação + 6 emendas aplicadas)
 
 ## Decisões da Sombra
 
