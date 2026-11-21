@@ -6,6 +6,7 @@
  *  M-T4c  `nomeNatural` troca todo `.` por espaço      ⇒ `nome-natural-ponto-so-antes-de-letra` falha (DP-4)
  *  M-T4d  `linhaTecnica` ignora TipoEvento/MotivoParar ⇒ `linha-tecnica-tipo-e-motivo-como-palavra` falha
  *  M-T4j  palavra de tipo sensível a caixa (sem flag `i`) ⇒ `palavra-tipo-qualquer-caixa` falha
+ * GM-18 T1: M1c e M1d ⇒ `origem-encerrada-dono-voce` (a lista M1a..M1g completa está em formas.test.ts)
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -256,4 +257,13 @@ test('origem-dos-eventos-novos: tabela fechada, (você)/(automático)/(Sombra); 
   assert.equal(origemDe(ev('task.fora', null as never)), null);
   // tipo vizinho inventado continua fora da tabela
   for (const t of ['entrega.encerrada2', 'entrega.reabrir', 'task.fora.x', 'guarda.autonomia']) assert.equal(origemDe(ev(t)), null, t);
+});
+
+// ── GM-18 T1 (REQ-ENC-1 iii) ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+test('origem-encerrada-dono-voce', () => {
+  const enc = (via: unknown) => origemDe(ev('entrega.encerrada', { entrega: 'GM-13', pr: 16, via, mergeado_em: '2026-11-01T00:00:00.000Z' }));
+  assert.equal(enc('dono'), VOCE);
+  for (const via of ['head', 'titulo', undefined]) assert.equal(enc(via), AUTO, String(via));
+  assert.equal(origemDe({ ...ev('entrega.encerrada'), dados: null as unknown as Record<string, unknown> }), AUTO);
 });

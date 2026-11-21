@@ -10,11 +10,19 @@
  *  M-F6     tipo antigo com regra nova ⇒ `forma-tipo-antigo-sem-regra` falha
  *  M-F7     `formaInvalida` sem try/catch ⇒ `forma-total-nunca-lanca` falha
  *  M-F8     `formaInvalida` por tipo novo aceita `{}` ⇒ `forma-invalida-por-tipo-novo` falha
+ * GM-18 T1 (REQ-ENC-1, M1a..M1g; as de origem/trilha estão em origem.test.ts e encerramento.test.ts):
+ *  M1a  `dono` em VIAS_PR                                   ⇒ `fato-pr-via-dono-recusado`
+ *  M1b  VIAS_ENCERRAMENTO como literal copiado              ⇒ `vias-encerramento-deriva-de-vias-pr`
+ *  M1c  origem "(automático)" para `dono`                   ⇒ `origem-encerrada-dono-voce` (origem.test.ts)
+ *  M1d  origem "(você)" para todo `entrega.encerrada`       ⇒ `origem-encerrada-dono-voce` (origem.test.ts)
+ *  M1e  re-encerramento do dono exigindo PR novo            ⇒ `dono-reencerra-apos-reabrir` (encerramento.test.ts)
+ *  M1f  exceção valendo para todo `via`                     ⇒ `automatico-segue-exigindo-pr-novo` (encerramento.test.ts)
+ *  M1g  `podeEncerrar` aceitando `via: 'dono'`              ⇒ `medir-nao-encerra-sobre-dono` (encerramento.test.ts)
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { formaInvalida, formaNaGravacao, ID_PERGUNTA_RE, MOTIVOS_PARAR, REQ_RE, TIPOS_EVENTO } from '../src/formas.ts';
+import { formaInvalida, formaNaGravacao, ID_PERGUNTA_RE, MOTIVOS_PARAR, REQ_RE, TIPOS_EVENTO, VIAS_ENCERRAMENTO, VIAS_PR } from '../src/formas.ts';
 
 const H = 'a'.repeat(64);
 const ok = (tipo: string, dados: unknown) => assert.equal(formaInvalida(tipo, dados), null, `${tipo} ${JSON.stringify(dados)}`);
@@ -858,4 +866,31 @@ test('t11-forma-proposta-origem-so-sombra', () => {
   ruim('emenda.proposta', proposta({ origem: 'dono' }), /origem/);
   ruim('emenda.proposta', proposta({ origem: '' }), /origem/);
   ruim('emenda.proposta', proposta({ origem: 3 }), /origem/);
+});
+
+// ── GM-18 T1 (REQ-ENC-1 i, ii) ────────────────────────────────────────────────────────────────────────────────────────────────
+
+test('encerrada-dono-forma', () => {
+  const base = { entrega: 'GM-13', pr: 16, via: 'dono', mergeado_em: '2026-11-01T00:00:00.000Z' };
+  ok('entrega.encerrada', base);
+  ok('entrega.encerrada', { ...base, versao: '2.0.0' });
+  const { pr: _pr, ...semPr } = base;
+  ruim('entrega.encerrada', semPr, /`pr`/);
+  ruim('entrega.encerrada', { ...base, pr: 0 }, /`pr`/);
+  ruim('entrega.encerrada', { ...base, versao: 'v2.0.0' }, /`versao`/);
+});
+
+test('fato-pr-via-dono-recusado', () => {
+  const pr = (via: string) => ({ chave: 'pr', fonte: 'gh', valor: { numero: 16, estado: 'mergeado', branch: 'feat/GM-13-x', via } });
+  ok('fato.medido', pr('head'));
+  ok('fato.medido', pr('titulo'));
+  ruim('fato.medido', pr('dono'), /via/);
+});
+
+test('vias-encerramento-deriva-de-vias-pr', () => {
+  assert.deepEqual([...VIAS_ENCERRAMENTO], [...VIAS_PR, 'dono']);
+  assert.equal(VIAS_PR.includes('dono'), false);
+  const fonte = readFileSync(new URL('../src/formas.ts', import.meta.url), 'utf8');
+  assert.ok(fonte.includes("[...VIAS_PR, 'dono']"), 'VIAS_ENCERRAMENTO deriva de VIAS_PR');
+  assert.equal(fonte.split("'head', 'titulo'").length - 1, 1, "o literal 'head', 'titulo' só aparece na definição de VIAS_PR");
 });

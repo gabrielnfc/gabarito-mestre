@@ -156,7 +156,8 @@ export function encerramentoDe(eventos          , id        )               {
       reabertaEm = typeof d.em === 'string' ? d.em : reabertaEm;
       primeira = null;
     } else if (e.tipo === 'entrega.encerrada' && primeira === null && Number.isInteger(d.pr) && typeof d.mergeado_em === 'string') {
-      if (reabertaEm !== null && !(ms(d.mergeado_em) > ms(reabertaEm) && !usados.has(d.pr          ))) continue; // re-encerramento só com PR novo
+      // GM-18 (REQ-ENC-1 iv, D4): o dono re-encerra pela ordem do diário, sem PR novo; `head`/`titulo` seguem exigindo PR novo.
+      if (reabertaEm !== null && d.via !== 'dono' && !(ms(d.mergeado_em) > ms(reabertaEm) && !usados.has(d.pr          ))) continue; // re-encerramento só com PR novo
       primeira = { pr: d.pr          , via: String(d.via), mergeado_em: d.mergeado_em, ...(typeof d.versao === 'string' ? { versao: d.versao } : {}) };
       usados.add(d.pr          );
     }
