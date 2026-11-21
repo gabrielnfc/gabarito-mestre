@@ -8,7 +8,8 @@
 - loop:18 · emenda #4 aplicada · spec docs/superpowers/specs/2026-11-19-gm16-painel-projeto-design.md · sha256 ace005cd0c237a99110bdf976a57c96bd823068cb10c12c7ccd666abba3bc0f7 ⇒ 6038338aa2ff3546cfbf4fe30bd884ad354f6907907a8361aa29047dcaefb7dd
 - loop:22 · emenda #5 aplicada · spec docs/superpowers/specs/2026-11-19-gm16-painel-projeto-design.md · sha256 6038338aa2ff3546cfbf4fe30bd884ad354f6907907a8361aa29047dcaefb7dd ⇒ 793eebf09fd47cadfdce7638c9d0af2317371cf1555f1053e4646e7ac776bb7e
 - loop:56 · emenda #6 aplicada · spec docs/superpowers/specs/2026-11-19-gm16-painel-projeto-design.md · sha256 793eebf09fd47cadfdce7638c9d0af2317371cf1555f1053e4646e7ac776bb7e ⇒ e6aaaf7956793b8a648727c13832ae45f0241cc1482f50c9177794e1f29f3007
-- sha256 atual da spec: e6aaaf7956793b8a648727c13832ae45f0241cc1482f50c9177794e1f29f3007 (confere com a aprovação + 5 emendas aplicadas)
+- loop:153 · emenda #7 aplicada · spec docs/superpowers/specs/2026-11-19-gm16-painel-projeto-design.md · sha256 e6aaaf7956793b8a648727c13832ae45f0241cc1482f50c9177794e1f29f3007 ⇒ 00d165400343a1afdbac1d3b68b69c21e7f8b87b4dcd90c53cd01d8ebaeee8a0
+- sha256 atual da spec: 3ee651b5d7cec91d37671101a89ba5e77acd48e689f929d1858af4b962d3fe35 (difere da última aprovação)
 
 ## Decisões da Sombra
 
@@ -50,6 +51,7 @@
 
 - loop:43 · tecnica · Plano .md T5 (linha 126) manda o doctor importar ehColunaFl1 E ehFeito de dist/projeto.js, mas ehFeito nasce na T3 (linha 105); plano.json dá à T5 só deps [T2]. Rodar T5 em paralelo à T3 deixaria a worktree da T5 sem ehFeito. Orquestrador d…
 - loop:108 · tecnica · integrar T6 2x concorrente (sessão anterior + esta): gates rc=1 em cauda-apagada-com-inicio-nao-roda-deploy e ancora-hash-diferente-no-mesmo-seq-e-ilegivel; entrega-cli.test.mjs isolado 138/138 na base e na wt T6; load 29
+- loop:154 · tecnica · review final r2 GM-16: emenda 7 foi aplicada (dcbecb83, spec.aplicada loop:153, sha 00d16540) com a linha no fim do arquivo (@@ -111,0 +112) em vez de @@ -65,0 +66 aprovado; git apply de diff sem contexto colocou no EOF. Corrigido movendo a…
 
 ## Aprendizados D
 
@@ -75,3 +77,4 @@
 - loop:136 · E · No modo auto, 'emenda julgar' rodado pelo orquestrador é negado (Undermining Oversight) mesmo com Sombra aprovando: com a resposta da Sombra registrada, passar ao dono '/gabarito-mestre:emenda aprovar <seq>' na mesma mensagem, sem tentar o … · entra em: instantaneo · sem medição · gatilho: dono:8
 - loop:142 · E · Task que desloca linhas de um script citado por arquivo:linha em doc: git grep de TODAS as citações daquele arquivo no repo e confere cada uma contra o código novo, não só as do bloco perto da mudança · entra em: instantaneo, brief:implementador · sem medição · gatilho: loop:140
 - loop:152 · E · Campo 'teste' de mutação roda pelo shell: padrão com | sem aspas vira pipe e dá morte falsa; implementador usa 1 --test-name-pattern sem metacaractere e roda o comando exato sem a mutação (rc 0, >=1 teste) antes de declarar morta · entra em: instantaneo, brief:implementador · sem medição · gatilho: loop:151
+- loop:155 · E · Emenda aplicada à mão: conferir 'git diff -U0 <base> -- <spec>' contra o hunk aprovado (posição e texto) ANTES de 'emenda aplicar <seq>', que é 1 vez por seq e trava o sha; git apply de diff sem contexto pode cair no fim do arquivo · entra em: instantaneo · sem medição · gatilho: loop:153

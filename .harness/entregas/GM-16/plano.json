@@ -166,6 +166,25 @@
         "REQ-PRJ-3",
         "REQ-DCT-1"
       ]
+    },
+    {
+      "id": "T9",
+      "titulo": "Doctor: card FL1 ilegível listado",
+      "deps": [
+        "T8"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/harness-doctor.mjs",
+        "plugins/gabarito-mestre/gates/test/harness-doctor-fluxo.test.mjs",
+        "plugins/gabarito-mestre/commands/gabarito-doctor.md",
+        "CHANGELOG.md",
+        "docs/backlog.md"
+      ],
+      "reqs": [
+        "REQ-DCT-1"
+      ],
+      "teste_afetado": "cd plugins/gabarito-mestre/gates && node --test test/harness-doctor-fluxo.test.mjs",
+      "mutacoes": ".superpowers/sdd/2026-11-19-gm16/mutacoes/T9.json"
     }
   ]
 }
