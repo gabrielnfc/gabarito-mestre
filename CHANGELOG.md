@@ -11,10 +11,12 @@ Patch sobre a 2.2.0 (GM-18, D-G30): o dono encerra por comando a entrega já pub
 
 - **`/gabarito-mestre:encerrar <entrega> <PR> [<versão>]`.** Grava `entrega.encerrada` com `via: 'dono'` e origem do dono, no diário da entrega nomeada. A visão de projeto e o `entregueDe` passam a tratar a entrega como feita; `<versão>` (opcional) vira o campo `versao`.
 - **`[<entrega>]` em `cortar`, `adiar` e `reabrir`.** O 1º token que casa o formato de entrega (ex. `GM-14`) é sempre a entrega; sem ele vale a entrega da branch, como na 2.2.0. Com 2 entregas com a mesma task, o comando acerta a pretendida.
+- **Efeitos do encerrar.** A entrega encerrada pelo dono deixa de aceitar task, sessão e `parar`. Depois de `/gabarito-mestre:reabrir-entrega <entrega>`, o dono pode encerrar de novo com o mesmo PR.
 
 ### Limites declarados
 
 - O PR é obrigatório no encerramento do dono. A release entra só pelo campo `versao`, junto com o PR (D-G32); encerrar só pela release, sem PR, fica no backlog.
+- O 2º encerrar sem `<versão>` deixa a versão exibida vazia: o dono deve repetir a versão.
 - O comando exige `gh` no momento em que roda e confere só "PR mergeado" (`mergeado_em` recebe o `mergedAt`), sem base nem ID no título (D-G34).
 - Task com id no formato de entrega exige a entrega escrita no comando.
 - A visão de projeto tem regra própria de encerrada (não exige `pr` nem `mergeado_em`): com `via: 'dono'` as duas regras concordam, um evento automático fora da regra ainda divergiria (backlog).

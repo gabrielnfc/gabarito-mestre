@@ -12,6 +12,7 @@ O dono digitou `/gabarito-mestre:adiar [<entrega>] <task> <motivo>` (sem `<entre
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" proxima --vivos <n>   # n = agentes seus ainda vivos
+node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" proxima --vivos <n> --entrega <entrega>   # com <entrega> no argumento: confere a entrega nomeada, não a da branch
 ```
 
 1. Rode `proxima --vivos <n>` e relate ao dono o que ele mostra. A task adiada não é mais despachada nem conta no que falta; `/gabarito-mestre:reabrir <task>` a devolve a `pendente`.

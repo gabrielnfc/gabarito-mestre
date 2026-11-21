@@ -11,7 +11,7 @@ allowed-tools: Read, Bash(node:*)
 O dono digitou `/gabarito-mestre:encerrar <entrega> <PR> [<versão>]` (ex.: `GM-13 16 2.0.0`). O hook `UserPromptExpansion` já tentou gravar `entrega.encerrada` com origem do dono, depois de conferir pelo `gh` que o PR está mergeado: se foi recusado (entrega inexistente, já encerrada, PR não mergeado ou não conferido, argumento fora da forma), o comando nem chegou aqui, e o motivo apareceu ao dono. **Não afirme que encerrou.** Quem diz o estado é o painel:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/painel.mjs" estado
+node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/painel.mjs" estado --entrega <entrega>   # sempre com a entrega nomeada
 ```
 
 1. Rode o comando acima e relate ao dono o que ele mostra: a entrega passa a constar como entregue (com a versão, se o dono a deu) e deixa de aceitar task, sessão e `parar`.

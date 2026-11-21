@@ -12,6 +12,7 @@ O dono digitou `/gabarito-mestre:reabrir [<entrega>] <task>` (sem `<entrega>`, v
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" proxima --vivos <n>   # n = agentes seus ainda vivos
+node "${CLAUDE_PLUGIN_ROOT}/gates/scripts/loop.mjs" proxima --vivos <n> --entrega <entrega>   # com <entrega> no argumento: confere a entrega nomeada, não a da branch
 ```
 
 1. Rode `proxima --vivos <n>` e relate ao dono o que ele mostra. A task recomeça em `pendente`, rodada 0.
