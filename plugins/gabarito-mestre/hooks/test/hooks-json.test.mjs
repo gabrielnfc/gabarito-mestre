@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { HOOKS, PLUGIN } from './_comum.mjs';
 
-const COMANDOS_DO_DONO = ['reabrir-entrega', 'adiar', 'cortar', 'reabrir'];
+const COMANDOS_DO_DONO = ['reabrir-entrega', 'adiar', 'cortar', 'reabrir', 'encerrar'];
 
 describe('hooks.json — registro dos hooks (T16)', () => {
   const cfg = JSON.parse(readFileSync(join(HOOKS, 'hooks.json'), 'utf8')).hooks;
@@ -109,7 +109,7 @@ describe('hooks.json — registro dos hooks (T16)', () => {
   });
   test('emenda-user-prompt-expansion-onfailure-block: matcher ancorado, node, timeout 10, onFailure block; liberar intacto', () => {
     const grupos = cfg.UserPromptExpansion;
-    assert.deepEqual(grupos.map((g) => g.matcher), ['^gabarito-mestre:liberar$', '^gabarito-mestre:emenda$', '^gabarito-mestre:aprovar$', '^gabarito-mestre:responder$', ...COMANDOS_DO_DONO.map((n) => `^gabarito-mestre:${n}$`)]);
+    assert.deepEqual(grupos.map((g) => g.matcher), ['^gabarito-mestre:liberar$', '^gabarito-mestre:emenda$', '^gabarito-mestre:aprovar$', '^gabarito-mestre:responder$', '^gabarito-mestre:reabrir-entrega$', '^gabarito-mestre:adiar$', '^gabarito-mestre:cortar$', '^gabarito-mestre:reabrir$', '^gabarito-mestre:encerrar$']);
     const g = grupos[1];
     assert.equal(g.hooks.length, 1);
     assert.equal(g.hooks[0].type, 'command');
@@ -143,9 +143,9 @@ describe('hooks.json — registro dos hooks (T16)', () => {
       assert.equal(JSON.parse(b.stdout).decision, 'block', ruim);
     }
   });
-  test('comandos-do-dono-onfailure-block: 4 matchers ancorados, 1 só script, node, timeout 10, onFailure block (GM-15 T7; M7d)', () => {
+  test('comandos-do-dono-onfailure-block: 5 matchers ancorados, 1 só script, node, timeout 10, onFailure block (GM-15 T7; GM-18 T2 M2c)', () => {
     const grupos = cfg.UserPromptExpansion.filter((g) => COMANDOS_DO_DONO.some((n) => g.matcher === `^gabarito-mestre:${n}$`));
-    assert.equal(grupos.length, 4);
+    assert.equal(grupos.length, 5);
     assert.ok(existsSync(join(PLUGIN, 'gates', 'scripts', 'comando-dono.mjs')));
     for (const g of grupos) {
       assert.equal(g.hooks.length, 1);
@@ -154,7 +154,7 @@ describe('hooks.json — registro dos hooks (T16)', () => {
       assert.equal(g.hooks[0].timeout, 10);
       assert.equal(g.hooks[0].onFailure, 'block', g.matcher);
       const re = new RegExp(g.matcher);
-      for (const n of ['gabarito-mestre:reabrir-entregaX', 'gabarito-mestre:adiarX', 'x:gabarito-mestre:cortar', 'gabarito-mestre:reabrir ', 'reabrir']) assert.equal(re.test(n), false, `${g.matcher} pegou ${n}`);
+      for (const n of ['gabarito-mestre:reabrir-entregaX', 'gabarito-mestre:adiarX', 'x:gabarito-mestre:cortar', 'gabarito-mestre:reabrir ', 'reabrir', 'gabarito-mestre:encerrarX', 'x:gabarito-mestre:encerrar', 'gabarito-mestre:encerrar ']) assert.equal(re.test(n), false, `${g.matcher} pegou ${n}`);
     }
     // `reabrir` não pega `reabrir-entrega` (e vice-versa): cada comando cai em exatamente 1 grupo
     for (const n of COMANDOS_DO_DONO) assert.equal(cfg.UserPromptExpansion.filter((g) => new RegExp(g.matcher).test(`gabarito-mestre:${n}`)).length, 1, n);

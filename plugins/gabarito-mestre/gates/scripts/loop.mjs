@@ -1866,10 +1866,15 @@ function reabrirComoSombra(c, plano, task, fonte) {
 }
 
 /** Comum aos dois caminhos do dono: valida a forma, abre o contexto e recusa entrega publicada. Nunca lança para fora das funções exportadas. */
-function contextoDoDono(cwd, task, sessao) {
+function contextoDoDono(cwd, task, sessao, entrega) {
   if (typeof task !== 'string' || !ID_RE.test(task)) throw new Falha('id_invalido', `task ${JSON.stringify(task)} fora da forma ${ID_RE}`);
   if (typeof sessao !== 'string' || !SESSAO_RE.test(sessao)) throw new Falha('argumento_invalido', `sessão fora da forma ${SESSAO_RE}`);
-  const c = contexto(cwd, { sessao });
+  // GM-18 (REQ-ENC-3): com a entrega no argumento, a forma e a pasta vêm antes de tudo (nada é criado); sem ela, a entrega da branch, como na 2.2.0.
+  if (entrega !== undefined && (typeof entrega !== 'string' || !ENTREGA_RE.test(entrega))) throw new Falha('id_invalido', `entrega ${JSON.stringify(entrega)} fora da forma ${ENTREGA_RE}`);
+  const c = contexto(cwd, entrega === undefined ? { sessao } : { entrega, sessao });
+  if (entrega !== undefined && !(existsSync(c.dirEntrega) && statSync(c.dirEntrega).isDirectory())) {
+    throw new Falha('entrega_inexistente', `a entrega ${entrega} não existe (sem .harness/entregas/${entrega}); nada foi criado nem gravado`);
+  }
   recusarSePublicada(c);
   const plano = carregarPlano(c);
   tarefa(plano, task);
@@ -1880,11 +1885,11 @@ function contextoDoDono(cwd, task, sessao) {
  * REQ-ENT-2: a ÚNICA gravação de `task.fora {origem:"dono"}`. Fora de `ESPEC` de propósito, como `liberarTeto`: nenhum argumento do CLI chega aqui,
  * só o hook `UserPromptExpansion` do comando que o dono digita (T7). Nunca lança: `{ok:true, task, estado}` ou `{ok:false, erro, mensagem}`.
  */
-export function foraDono(cwd, task, como, motivo, sessao) {
+export function foraDono(cwd, task, como, motivo, sessao, entrega) {
   try {
     if (como !== 'adiada' && como !== 'cortada') throw new Falha('argumento_invalido', `como ${JSON.stringify(como)}: esperado adiada ou cortada`);
     if (typeof motivo !== 'string' || motivo.trim() === '') throw new Falha('argumento_invalido', 'motivo vazio: esperado texto');
-    const { c, plano } = contextoDoDono(cwd, task, sessao);
+    const { c, plano } = contextoDoDono(cwd, task, sessao, entrega);
     return { ok: true, ...gravarFora(c, plano, { task, como, motivo, origem: 'dono' }) };
   } catch (e) {
     if (e instanceof Falha) return { ok: false, erro: e.erro, mensagem: e.message, ...(e.extra?.dependentes !== undefined ? { dependentes: e.extra.dependentes } : {}) };
@@ -1893,9 +1898,9 @@ export function foraDono(cwd, task, como, motivo, sessao) {
 }
 
 /** REQ-ENT-2: a ÚNICA gravação de `task.reaberta {origem:"dono", de:"fora"}` (fora de `ESPEC`; só o hook do comando humano a chama, T7). Nunca lança. */
-export function reabrirDono(cwd, task, sessao) {
+export function reabrirDono(cwd, task, sessao, entrega) {
   try {
-    const { c, plano } = contextoDoDono(cwd, task, sessao);
+    const { c, plano } = contextoDoDono(cwd, task, sessao, entrega);
     gravar(c, plano, 'task.reaberta', { task, origem: 'dono', fonte: 'comando do dono', de: 'fora' });
     const depois = estadoDaTask(c, task);
     if (depois.estado !== 'pendente') throw new Falha('reabertura_sem_efeito', `o evento de ${task} foi gravado mas o diário relido mostra a task em ${depois.estado}; confira o diário`);

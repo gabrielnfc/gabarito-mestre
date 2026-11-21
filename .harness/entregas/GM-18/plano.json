@@ -1,0 +1,88 @@
+{
+  "entrega": "GM-18",
+  "spec": "docs/superpowers/specs/2026-11-21-gm18-encerrar-design.md",
+  "tasks": [
+    {
+      "id": "T1",
+      "titulo": "Núcleo do encerramento do dono",
+      "deps": [],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/src/formas.ts",
+        "plugins/gabarito-mestre/gates/src/origem.ts",
+        "plugins/gabarito-mestre/gates/src/trilha.ts",
+        "plugins/gabarito-mestre/gates/dist/formas.js",
+        "plugins/gabarito-mestre/gates/dist/origem.js",
+        "plugins/gabarito-mestre/gates/dist/trilha.js",
+        "plugins/gabarito-mestre/gates/test/formas.test.ts",
+        "plugins/gabarito-mestre/gates/test/origem.test.ts",
+        "plugins/gabarito-mestre/gates/test/encerramento.test.ts"
+      ],
+      "reqs": [
+        "REQ-ENC-1"
+      ]
+    },
+    {
+      "id": "T2",
+      "titulo": "Comando encerrar e <entrega> opcional",
+      "deps": [
+        "T1"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/gates/scripts/comando-dono.mjs",
+        "plugins/gabarito-mestre/gates/scripts/loop.mjs",
+        "plugins/gabarito-mestre/hooks/hooks.json",
+        "plugins/gabarito-mestre/hooks/test/hooks-json.test.mjs",
+        "plugins/gabarito-mestre/gates/test/comando-dono.test.mjs",
+        "plugins/gabarito-mestre/skills/encerrar/SKILL.md",
+        "plugins/gabarito-mestre/skills/reabrir-entrega/SKILL.md",
+        "plugins/gabarito-mestre/skills/cortar/SKILL.md",
+        "plugins/gabarito-mestre/skills/adiar/SKILL.md",
+        "plugins/gabarito-mestre/skills/reabrir/SKILL.md"
+      ],
+      "reqs": [
+        "REQ-ENC-2",
+        "REQ-ENC-3"
+      ]
+    },
+    {
+      "id": "T3",
+      "titulo": "Virada 2.2.1",
+      "deps": [
+        "T1",
+        "T2"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/.claude-plugin/plugin.json",
+        "plugins/gabarito-mestre/gates/package.json",
+        "plugins/gabarito-mestre/gates/test/package.test.mjs",
+        "plugins/gabarito-mestre/scripts/test/texto.test.sh",
+        "CHANGELOG.md",
+        "docs/backlog.md"
+      ],
+      "reqs": [
+        "REQ-ENC-1",
+        "REQ-ENC-2",
+        "REQ-ENC-3"
+      ]
+    },
+    {
+      "id": "T4",
+      "titulo": "Skills conferem a entrega nomeada",
+      "deps": [
+        "T3"
+      ],
+      "arquivos": [
+        "plugins/gabarito-mestre/skills/cortar/SKILL.md",
+        "plugins/gabarito-mestre/skills/adiar/SKILL.md",
+        "plugins/gabarito-mestre/skills/reabrir/SKILL.md",
+        "plugins/gabarito-mestre/skills/encerrar/SKILL.md",
+        "plugins/gabarito-mestre/scripts/test/texto.test.sh",
+        "CHANGELOG.md"
+      ],
+      "reqs": [
+        "REQ-ENC-2",
+        "REQ-ENC-3"
+      ]
+    }
+  ]
+}

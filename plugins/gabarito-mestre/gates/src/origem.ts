@@ -42,6 +42,10 @@ export function origemDe(ev: Evento): string | null {
     const origem = dados !== null && typeof dados === 'object' ? (dados as Record<string, unknown>).origem : undefined;
     return origem === 'dono' ? VOCE : origem === 'sombra' ? SOMBRA : null;
   }
+  // GM-18 (REQ-ENC-1 iii): `entrega.encerrada` com `via: 'dono'` é do comando humano; qualquer outro `via` (ou dados ilegíveis) segue automático.
+  if (tipo === 'entrega.encerrada') {
+    return dados !== null && typeof dados === 'object' && (dados as Record<string, unknown>).via === 'dono' ? VOCE : AUTOMATICO;
+  }
   if (AUTOMATICOS.has(tipo)) return AUTOMATICO;
   if (tipo === 'nota' || tipo === 'decisao.sombra' || tipo === 'spec.aplicada') return ORQUESTRADOR;
   if (tipo === 'spec.aprovada') return VOCE;
